@@ -1,0 +1,32 @@
+name: CI
+
+# Faz Q.2 (bkz. docs/uretim-hazirlik-analizi.md): her push/PR'da `zig build
+# test`i HEM Debug HEM ReleaseFast modunda çalıştırır. `runtime/async_rt`
+# şu an yalnızca aarch64'ü desteklediği için (bkz. Faz R.2, henüz
+# tamamlanmadı) `macos-14` (Apple Silicon) runner'ı kullanılıyor — Linux
+# runner'ı R.3 ile birlikte eklenecek.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Zig kur
+        uses: mlugg/setup-zig@v1
+        with:
+          version: "0.16.0"
+
+      - name: qbe kur
+        run: brew install qbe
+
+      - name: zig build test (Debug)
+        run: zig build test
+
+      - name: zig build test (ReleaseFast)
+        run: zig build test -Doptimize=ReleaseFast
