@@ -1,0 +1,25 @@
+import nox.strings
+
+def churn(n: int) -> int:
+    s: str = "  The Quick Brown Fox Jumps Over The Lazy Dog, again and again!  "
+    total: int = 0
+    i: int = 0
+    while i < n:
+        t: str = nox.strings.trim(s)
+        u: str = nox.strings.upper(t)
+        l: str = nox.strings.lower(u)
+        r: str = nox.strings.replace(l, "fox", "cat")
+        parts: list[str] = nox.strings.split(r, " ")
+        joined: str = nox.strings.join(parts, "-")
+        total = total + len(joined)
+        if nox.strings.contains(joined, "cat"):
+            total = total + 1
+        if nox.strings.starts_with(joined, "the"):
+            total = total + 1
+        if nox.strings.ends_with(joined, "!"):
+            total = total + 1
+        total = total + nox.strings.index_of(joined, "cat")
+        i = i + 1
+    return total
+
+print(churn(2000))

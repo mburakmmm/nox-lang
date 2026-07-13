@@ -1,0 +1,34 @@
+# Stdlib fazı §J — bkz. nox-teknik-spesifikasyon.md. `runtime/stdlib_shims/
+# os.zig`ye sarar. `arg_count`/`arg(i)` `$main`in (codegen.zig'in `genMain`/
+# `genMainAsync`si, KOŞULSUZ) yakaladığı GERÇEK `argc`/`argv`e dayanır.
+# Sınır dışı `arg(i)` istisna FIRLATMAZ (bilinçli basitleştirme, bkz.
+# `nox_os_arg`in belge notu) — BOŞ bir str döner.
+
+class OsError:
+    def __init__(self: OsError, message: str) -> None:
+        self.message = message
+
+# NOT: `arg_count`/`arg`/`exit` extern def'leri `_raw` SONEKİ TAŞIR —
+# aşağıdaki AYNI KISA adlı sarmalayıcı fonksiyonlarla (module_loader'ın
+# mangle ETTİĞİ "nox_os_arg_count" gibi) İSİM ÇAKIŞMASINI önlemek İÇİN
+# (bkz. `runtime/stdlib_shims/os.zig`nin belge notu — bu çakışma GERÇEKTEN
+# yaşandı, "fonksiyon zaten tanımlı" derleme hatasıyla YAKALANDI).
+extern def nox_os_arg_count_raw() -> int from "zig-out/lib/noxrt.o"
+extern def nox_os_arg_raw(i: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_os_has_env(name: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_os_getenv_raw(name: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_os_exit_raw(code: int) -> None from "zig-out/lib/noxrt.o"
+
+def arg_count() -> int:
+    return nox_os_arg_count_raw()
+
+def arg(i: int) -> str:
+    return nox_os_arg_raw(i)
+
+def getenv(name: str) -> str:
+    if nox_os_has_env(name) == 0:
+        raise OsError("ortam degiskeni bulunamadi: " + name)
+    return nox_os_getenv_raw(name)
+
+def exit(code: int) -> None:
+    nox_os_exit_raw(code)

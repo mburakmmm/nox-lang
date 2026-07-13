@@ -1,0 +1,41 @@
+# Stdlib fazı §I — bkz. nox-teknik-spesifikasyon.md. `sqrt`/`pow`/`floor`/
+# `ceil` doğrudan libm'e ince `extern def` sarmalayıcıları (`cc` KOMUTU
+# ZATEN `-lm` bağlıyor, `with_rt` bile GEREKMEZ — ikisi de ARC-dışı
+# float<->float, bkz. Faz 20'nin ZATEN kanıtladığı `from "m"` deseni).
+# `min`/`max`/`abs` İSE TAMAMEN saf Nox (hiç FFI gerekmez).
+#
+# ÖNEMLİ ASİMETRİ (bilinçli, ÇÖZÜLEMEYEN bir kısıtlama — bkz. `module_
+# loader.zig`in belge notu): `extern def`ler ASLA mangle EDİLMEZ (isimleri
+# GERÇEK bir C ABI sembolüne bağlıdır — `sqrt`in KENDİSİ, `nox_math_sqrt`
+# DEĞİL, libm'de arandığından). Bu yüzden `import nox.math` SONRASI:
+#   - `sqrt`/`pow`/`floor`/`ceil` ÇIPLAK (niteliksiz) çağrılır: `sqrt(2.0)`
+#     — `nox.math.sqrt(2.0)` ÇALIŞMAZ (nitelikli çağrı çözümlemesi yalnızca
+#     MANGLE EDİLMİŞ isimlere bakar, `tryResolveQualifiedCall`in belge
+#     notu).
+#   - `min`/`max`/`abs` (sıradan `func_def`, MANGLE EDİLİR) NİTELİKLİ
+#     çağrılır: `nox.math.min(3.0, 5.0)`.
+# (Sarmalayıcıya AYNI kısa adı vermek — ör. `def sqrt(x): return sqrt(x)`
+# — DENENMEDİ/REDDEDİLDİ: `module_loader`in yeniden adlandırma haritası TEK
+# bir düz ad alanı kullandığından, sarmalayıcının KENDİ adı "sqrt" olsaydı
+# gövdesindeki "sqrt" çağrısı da mangled ada YENİDEN YAZILIR, KENDİ
+# KENDİNİ özyinelemeli çağıran sonsuz bir döngüye yol açardı.)
+
+extern def sqrt(x: float) -> float from "m"
+extern def pow(x: float, y: float) -> float from "m"
+extern def floor(x: float) -> float from "m"
+extern def ceil(x: float) -> float from "m"
+
+def min(a: float, b: float) -> float:
+    if a < b:
+        return a
+    return b
+
+def max(a: float, b: float) -> float:
+    if a > b:
+        return a
+    return b
+
+def abs(x: float) -> float:
+    if x < 0.0:
+        return 0.0 - x
+    return x

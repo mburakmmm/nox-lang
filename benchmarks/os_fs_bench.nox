@@ -1,0 +1,23 @@
+import nox.os
+import nox.fs
+
+def build_payload(n: int) -> str:
+    out: str = ""
+    i: int = 0
+    while i < n:
+        out = out + "0123456789"
+        i = i + 1
+    return out
+
+def churn(n: int) -> int:
+    total: int = 0
+    i: int = 0
+    while i < n:
+        total = total + nox.os.arg_count()
+        i = i + 1
+    payload: str = build_payload(1000)
+    nox.fs.write_string("/tmp/nox_bench_fs_scratch.txt", payload)
+    content: str = nox.fs.read_to_string("/tmp/nox_bench_fs_scratch.txt")
+    return total + len(content)
+
+print(churn(20000))

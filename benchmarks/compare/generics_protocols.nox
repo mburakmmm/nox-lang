@@ -1,0 +1,42 @@
+protocol Shape:
+    def area(self: Shape) -> float:
+        pass
+
+class Circle:
+    def __init__(self: Circle, r: float) -> None:
+        self.r = r
+
+    def area(self: Circle) -> float:
+        return 3.14159 * self.r * self.r
+
+class Square:
+    def __init__(self: Square, s: float) -> None:
+        self.s = s
+
+    def area(self: Square) -> float:
+        return self.s * self.s
+
+def identity[T](x: T) -> T:
+    return x
+
+def total_area(shape: Shape, n: int) -> float:
+    total: float = 0.0
+    i: int = 0
+    while i < n:
+        total = total + shape.area()
+        i = i + 1
+    return total
+
+def compute(n: int) -> float:
+    c: Circle = Circle(2.0)
+    s: Square = Square(3.0)
+    total: float = 0.0
+    total = total + total_area(c, n)
+    total = total + total_area(s, n)
+    i: int = 0
+    while i < n:
+        total = total + identity(i) * 1.0
+        i = i + 1
+    return total
+
+print(compute(15000000))

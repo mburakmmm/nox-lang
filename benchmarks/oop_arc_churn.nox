@@ -1,0 +1,25 @@
+class Engine:
+    def __init__(self: Engine, hp: int) -> None:
+        self.hp = hp
+
+class Car:
+    def __init__(self: Car, engine: Engine) -> None:
+        self.engine = engine
+
+    def swap(self: Car, other: Engine) -> None:
+        self.engine = other
+
+def make_car(hp: int) -> Car:
+    return Car(Engine(hp))
+
+def compute(n: int) -> int:
+    total: int = 0
+    c: Car = Car(Engine(0))
+    i: int = 0
+    while i < n:
+        c.swap(make_car(i).engine)
+        total = total + c.engine.hp
+        i = i + 1
+    return total
+
+print(compute(10000))

@@ -1,0 +1,24 @@
+import nox.json
+
+def build_json(n: int) -> str:
+    out: str = "["
+    i: int = 0
+    while i < n:
+        if i > 0:
+            out = out + ","
+        out = out + "{\"id\":" + str(i) + ",\"name\":\"item\",\"active\":true}"
+        i = i + 1
+    return out + "]"
+
+def decode_encode_once(s: str) -> int:
+    v: JsonValue = nox.json.decode(s)
+    out: str = nox.json.encode(v)
+    return len(out)
+
+s: str = build_json(200)
+total: int = 0
+i: int = 0
+while i < 50:
+    total = total + decode_encode_once(s)
+    i = i + 1
+print(total)

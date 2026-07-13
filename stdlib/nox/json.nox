@@ -1,0 +1,129 @@
+# Stdlib fazı §L — bkz. nox-teknik-spesifikasyon.md. `JsonValue` sınıfının
+# KENDİSİ VE `nox_json_make_json_value` fabrikası `stdlib/nox/core.nox`da
+# tanımlıdır (bkz. onun belge notu — Zig kabuğunun `noxrt.o` üzerinden HER
+# programa KOŞULSUZ bağlanması YÜZÜNDEN ZORUNLU bir tasarım kararı).
+#
+# STRATEJİ 1 (kullanıcının "tam olarak yapalım" talebiyle seçilen, bkz. plan
+# dosyası): `nox.json.decode`, Zig'in `std.json`iyle (savaş-test edilmiş,
+# keyfi iç içe/kaçış/sayı ayrıştırması) ayrıştırır — Nox tarafında KARAKTER
+# KARAKTER bir ayrıştırıcı YAZILMAZ. Zig kabuğu (`runtime/stdlib_shims/
+# json.zig`), ayrıştırılan ağacı ÖZYİNELEMELİ olarak gezip HER düğüm için
+# `nox_json_make_json_value`yi (bkz. core.nox) ÇAĞIRIR — Zig KAYNAK kodunun
+# (önceden derlenmiş, `noxrt.o` içinde) QBE'nin DERLEYECEĞİ bir Nox sembolünü
+# `extern fn` ile çağırması bu PROJEDE İLK KEZ denenen bir yön (ŞİMDİYE KADAR
+# hep tersi oldu). Bu, doğru `class_id`nin (derleme sırası bağımlı, Zig'den
+# ASLA güvenle tahmin edilemez) ve doğru ARC muhasebesinin OTOMATİK, TEST
+# EDİLMİŞ mekanizmayla elde edilmesini sağlar.
+#
+# `arr`/`keys`/`vals` alanları HER ZAMAN gerçek (gerekmeyen durumlarda SIFIR
+# elemanlı) `list[T]` değerleridir (bkz. core.nox'un belge notu) — bu sayede
+# ne kendine-başvuran bir literal ne de bir `MAX_CHILDREN` sınırı GEREKİR
+# (GERÇEKTEN "tam" — keyfi derinlik).
+
+class JsonError:
+    def __init__(self: JsonError, message: str) -> None:
+        self.message = message
+
+extern def nox_json_decode_raw(s: str) -> JsonValue from "zig-out/lib/noxrt.o" with_rt
+extern def nox_json_last_op_ok() -> int from "zig-out/lib/noxrt.o"
+
+def decode(s: str) -> JsonValue:
+    v: JsonValue = nox_json_decode_raw(s)
+    if nox_json_last_op_ok() == 0:
+        raise JsonError("gecersiz JSON: " + s)
+    return v
+
+def is_null(v: JsonValue) -> bool:
+    return v.kind == 0
+
+def is_bool(v: JsonValue) -> bool:
+    return v.kind == 1
+
+def is_number(v: JsonValue) -> bool:
+    return v.kind == 2
+
+def is_string(v: JsonValue) -> bool:
+    return v.kind == 3
+
+def is_array(v: JsonValue) -> bool:
+    return v.kind == 4
+
+def is_object(v: JsonValue) -> bool:
+    return v.kind == 5
+
+def as_bool(v: JsonValue) -> bool:
+    return v.b
+
+def as_number(v: JsonValue) -> float:
+    return v.n
+
+def as_string(v: JsonValue) -> str:
+    return v.s
+
+def array_len(v: JsonValue) -> int:
+    return len(v.arr)
+
+def array_get(v: JsonValue, i: int) -> JsonValue:
+    return v.arr[i]
+
+def object_len(v: JsonValue) -> int:
+    return len(v.keys)
+
+def object_key(v: JsonValue, i: int) -> str:
+    return v.keys[i]
+
+def object_value(v: JsonValue, i: int) -> JsonValue:
+    return v.vals[i]
+
+def encode_string(s: str) -> str:
+    out: str = "\""
+    i: int = 0
+    while i < len(s):
+        c: str = s[i]
+        if c == "\"":
+            out = out + "\\\""
+        elif c == "\\":
+            out = out + "\\\\"
+        elif c == "\n":
+            out = out + "\\n"
+        else:
+            out = out + c
+        i = i + 1
+    return out + "\""
+
+def encode(v: JsonValue) -> str:
+    if is_null(v):
+        return "null"
+    if is_bool(v):
+        if as_bool(v):
+            return "true"
+        return "false"
+    if is_number(v):
+        return str(as_number(v))
+    if is_string(v):
+        return encode_string(as_string(v))
+    if is_array(v):
+        return encode_array(v)
+    return encode_object(v)
+
+def encode_array(v: JsonValue) -> str:
+    out: str = "["
+    i: int = 0
+    n: int = array_len(v)
+    while i < n:
+        if i > 0:
+            out = out + ","
+        out = out + encode(array_get(v, i))
+        i = i + 1
+    return out + "]"
+
+def encode_object(v: JsonValue) -> str:
+    out: str = "{"
+    i: int = 0
+    n: int = object_len(v)
+    while i < n:
+        if i > 0:
+            out = out + ","
+        out = out + encode_string(object_key(v, i)) + ":" + encode(object_value(v, i))
+        i = i + 1
+    return out + "}"

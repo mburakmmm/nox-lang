@@ -1,0 +1,22 @@
+# Stdlib fazı §K — bkz. nox-teknik-spesifikasyon.md. `runtime/stdlib_shims/
+# time.zig`ye sarar. İkisi de ARC-dışı (`with_rt` yok, yalnızca `int` alır/
+# döner).
+#
+# BİLİNÇLİ v1 SINIRLAMASI: `sleep_ms` bir fiber İÇİNDEYKEN bile GERÇEKTEN
+# BLOKE OLUR — `runtime/async_rt`in kqueue reaktörü (bkz. D.0) YALNIZCA
+# soket G/Ç'si İÇİN hazır-olma bildirimi sağlar, bir ZAMANLAYICI (timer)
+# olayı İÇİN DEĞİL. `nox.http.serve` İÇİNDEKİ bir `handle`in `sleep_ms`
+# çağırması TÜM sunucuyu o süre boyunca DURDURUR.
+#
+# `now_ms`/`sleep_ms` extern def'leri `_raw` SONEKİ TAŞIR — AYNI KISA adlı
+# sarmalayıcılarla (module_loader'ın mangle ETTİĞİ "nox_time_now_ms" gibi)
+# İSİM ÇAKIŞMASINI önlemek İÇİN (bkz. Alt-Faz J'nin `nox.os`de yaşadığı
+# GERÇEK çakışma dersi).
+extern def nox_time_now_ms_raw() -> int from "zig-out/lib/noxrt.o"
+extern def nox_time_sleep_ms_raw(ms: int) -> None from "zig-out/lib/noxrt.o"
+
+def now_ms() -> int:
+    return nox_time_now_ms_raw()
+
+def sleep_ms(ms: int) -> None:
+    nox_time_sleep_ms_raw(ms)

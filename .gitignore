@@ -1,0 +1,35 @@
+.zig-cache/
+zig-out/
+.hpy-venv/
+.DS_Store
+tests/compat/hpy_ext/*.so
+tests/compat/hpy_ext/*.dylib
+tests/compat/hpy_ext/*.o
+tests/compat/wasm_ext/*.wasm
+tests/compat/c_ext/*.o
+tests/compat/zig_ext/*.o
+runtime/async_rt/*.o
+benchmarks/*.ssa
+benchmarks/*.s
+benchmarks/compare/*.ssa
+benchmarks/compare/*.s
+# noxc, bir `.nox` dosyasını uzantısız aynı ada derler (bkz. compiler/main.zig,
+# `stemOf`) — bu yüzden derlenmiş ikili dosyalar burada uzantısızdır. Alt
+# dizinler (`compare/`) gitignore'da ayrıca un-ignore edilmeli — bir üst
+# joker (`benchmarks/*`) bir dizini dışladığında, o dizin İÇİNDEKİ dosyalar
+# için negasyon kalıpları devreye girmez (git'in belgelenmiş davranışı).
+benchmarks/*
+!benchmarks/*.nox
+!benchmarks/*.zig
+!benchmarks/README.md
+!benchmarks/RESULTS.md
+!benchmarks/compare/
+benchmarks/compare/*
+!benchmarks/compare/*.nox
+!benchmarks/compare/*.py
+!benchmarks/compare/*.c
+# `noxc`, golden test kaynaklarını (`tests/golden/**/*.nox`) elle derlerken
+# (ör. manuel doğrulama/profilleme sırasında) aynı dizine `.ssa`/`.s`/uzantısız
+# ikili bırakır — bunlar da build artifact'idir, commit edilmemeli.
+tests/golden/**/*.ssa
+tests/golden/**/*.s

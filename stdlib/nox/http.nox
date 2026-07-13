@@ -1,0 +1,60 @@
+class HttpError:
+    def __init__(self: HttpError, message: str) -> None:
+        self.message = message
+
+class HttpResponse:
+    def __init__(self: HttpResponse, status: int, body: str, headers: dict[str, str]) -> None:
+        self.status = status
+        self.body = body
+        self.headers = headers
+
+# stdlib fazı §D.1.6: `nox.http.serve`in `handle` çağrı sitesine geçtiği
+# istek nesnesi — alan SIRASI (method, target, body, headers) codegen'in
+# `genHttpServeWrapper`ının HANGİ `nox_http_request_*` erişimcisini hangi
+# alana yazacağını AD üzerinden çözmesiyle EŞLEŞMELİDİR (bkz. codegen.zig).
+class HttpRequest:
+    def __init__(self: HttpRequest, method: str, target: str, body: str, headers: dict[str, str]) -> None:
+        self.method = method
+        self.target = target
+        self.body = body
+        self.headers = headers
+
+extern def nox_http_get_raw(url: str, headers: dict[str, str]) -> ptr from "zig-out/lib/noxrt.o" with_rt
+extern def nox_http_post_raw(url: str, body: str, headers: dict[str, str]) -> ptr from "zig-out/lib/noxrt.o" with_rt
+extern def nox_http_response_ok(h: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_http_response_status(h: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_http_response_body(h: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_http_response_headers(h: ptr) -> dict[str, str] from "zig-out/lib/noxrt.o" with_rt
+extern def nox_http_response_free(h: ptr) -> None from "zig-out/lib/noxrt.o"
+
+def get(url: str, headers: dict[str, str]) -> HttpResponse:
+    h: ptr = nox_http_get_raw(url, headers)
+    if nox_http_response_ok(h) == 0:
+        nox_http_response_free(h)
+        raise HttpError("istek basarisiz: " + url)
+    status: int = nox_http_response_status(h)
+    body: str = nox_http_response_body(h)
+    # `nox_http_response_headers(h)` DOĞRUDAN kurucu argümanı olarak
+    # geçirilir — adlandırılmış bir YERELE BAĞLANMAZ (bkz. `dict[K,V]`nin
+    # ARC-yönetimli OLMADIĞI, kapsam sonunda KOŞULSUZ yıkıldığı tasarımı):
+    # bu değer adlandırılmış bir yerelde TUTULSAYDI, bu fonksiyonun kapsam
+    # sonu temizliği onu YOK EDERDİ — dönen `HttpResponse` örneği HÂLÂ ona
+    # işaret ederken (sallanan işaretçi). Geçici bir DEĞER olarak (bir
+    # çağrının argümanı) hiçbir yerel DEĞİŞKENE bağlanmadığından, kapsam
+    # sonu temizliği ona hiç DOKUNMAZ — sahiplik TAMAMEN `HttpResponse.headers`e
+    # GEÇER, sınıf örneği yok edildiğinde `genClassRelease` onu serbest bırakır.
+    resp: HttpResponse = HttpResponse(status, body, nox_http_response_headers(h))
+    nox_http_response_free(h)
+    return resp
+
+def post(url: str, body: str, headers: dict[str, str]) -> HttpResponse:
+    h: ptr = nox_http_post_raw(url, body, headers)
+    if nox_http_response_ok(h) == 0:
+        nox_http_response_free(h)
+        raise HttpError("istek basarisiz: " + url)
+    status: int = nox_http_response_status(h)
+    resp_body: str = nox_http_response_body(h)
+    # Bkz. `get`in AYNI notu.
+    resp: HttpResponse = HttpResponse(status, resp_body, nox_http_response_headers(h))
+    nox_http_response_free(h)
+    return resp

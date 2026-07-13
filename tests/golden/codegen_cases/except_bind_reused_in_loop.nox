@@ -1,0 +1,19 @@
+class E:
+    def __init__(self: E, value: int) -> None:
+        self.value = value
+
+def check(x: int) -> int:
+    raise E(x)
+
+def compute(n: int) -> int:
+    total: int = 0
+    i: int = 0
+    while i < n:
+        try:
+            total = check(i)
+        except E as e:
+            total = total + e.value
+        i = i + 1
+    return total
+
+print(compute(5))

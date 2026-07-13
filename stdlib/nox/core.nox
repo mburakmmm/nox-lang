@@ -1,0 +1,44 @@
+# Çekirdek yerleşikler — HİÇBİR `import` GEREKMEDEN her programa otomatik
+# birleştirilir (bkz. `compiler/module_loader.zig`'in `resolveImports`ı,
+# stdlib fazı §E). Buradaki isimler MANGLE EDİLMEZ (`ValueError` gibi
+# ÇIPLAK kullanılır) — `print`/`len` gibi modül gerektirmeyen çekirdek dil
+# yerleşikleriyle AYNI "her yerde hazır" statüsü.
+
+class ValueError:
+    def __init__(self: ValueError, message: str) -> None:
+        self.message = message
+
+class IndexError:
+    def __init__(self: IndexError, message: str) -> None:
+        self.message = message
+
+# Stdlib fazı §L (`nox.json`, bkz. nox-teknik-spesifikasyon.md) — `JsonValue`
+# ve onun fabrika fonksiyonu BİLİNÇLİ OLARAK burada, `stdlib/nox/json.nox`
+# YERİNE, ÇEKİRDEKTE tanımlanır: `runtime/stdlib_shims/json.zig`nin
+# `extern fn nox_json_make_json_value(...)` bildirimi, BU sembole SABİT
+# bir isimle başvurur — `noxrt.o` (json.zig'in makine kodu DAHİL) HER
+# derlenen Nox programına KOŞULSUZ bağlanır (`cc -o bin prog.s noxrt.o`),
+# ama `stdlib/nox/json.nox` yalnızca `import nox.json` YAPAN programlara
+# dahil edilir. Fabrika `json.nox`da olsaydı, `nox.json`u HİÇ import
+# ETMEYEN bir program (ör. `os_args_basic.nox`) `nox_json_make_json_value`
+# sembolünü ASLA tanımlamaz, ama noxrt.o'nun (HER programa bağlanan)
+# `json.zig` kodu YİNE DE ona başvurduğundan `cc`nin bağlama adımı "symbol
+# not found" hatasıyla ÇÖKERDİ (GERÇEKTEN denenip yakalandı — HER golden
+# testin `nox.json` İTHAL ETMEMESİNE RAĞMEN başarısız olduğu görüldü).
+# Çözüm: `ValueError`/`IndexError` İLE AYNI ilkeyi izleyip `JsonValue`yi
+# de HER programa KOŞULSUZ dahil ETMEK — kullanılmadığında yalnızca birkaç
+# yüz bayt ölü kod dışında hiçbir maliyeti yoktur.
+class JsonValue:
+    def __init__(self: JsonValue, kind: int, b: bool, n: float, s: str,
+                 arr: list[JsonValue], keys: list[str], vals: list[JsonValue]) -> None:
+        self.kind = kind
+        self.b = b
+        self.n = n
+        self.s = s
+        self.arr = arr
+        self.keys = keys
+        self.vals = vals
+
+def nox_json_make_json_value(kind: int, b: bool, n: float, s: str,
+                              arr: list[JsonValue], keys: list[str], vals: list[JsonValue]) -> JsonValue:
+    return JsonValue(kind, b, n, s, arr, keys, vals)

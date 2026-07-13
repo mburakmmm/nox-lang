@@ -1,0 +1,23 @@
+class NegativeError:
+    def __init__(self: NegativeError, value: int) -> None:
+        self.value = value
+
+def check(x: int) -> int:
+    if x % 3 == 0:
+        raise NegativeError(x)
+    return x * 2
+
+def compute(n: int) -> int:
+    total: int = 0
+    i: int = 0
+    while i < n:
+        try:
+            total = total + check(i)
+        except NegativeError as e:
+            total = total + e.value
+        finally:
+            total = total + 1
+        i = i + 1
+    return total
+
+print(compute(5000000))

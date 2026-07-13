@@ -1,0 +1,81 @@
+# Stdlib fazı §H — bkz. nox-teknik-spesifikasyon.md. `split`/`trim`/`upper`/
+# `lower`/`replace`, değişken uzunluklu sonuç üretir/byte-seviyeli tarama
+# gerektirdiğinden Zig kabuğuna (`runtime/stdlib_shims/strings.zig`) sarar.
+# `join`/`contains`/`starts_with`/`ends_with`/`index_of` İSE TAMAMEN saf
+# Nox'ta — `for x in list:` + `+` birleştirme + Alt-Faz G'nin `s[i]`siyle,
+# hiç Zig/extern def GEREKMEDEN.
+
+extern def nox_strings_split_raw(s: str, sep: str) -> list[str] from "zig-out/lib/noxrt.o" with_rt
+extern def nox_strings_trim_raw(s: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_strings_upper_raw(s: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_strings_lower_raw(s: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_strings_replace_raw(s: str, old: str, new: str) -> str from "zig-out/lib/noxrt.o" with_rt
+
+def split(s: str, sep: str) -> list[str]:
+    return nox_strings_split_raw(s, sep)
+
+def trim(s: str) -> str:
+    return nox_strings_trim_raw(s)
+
+def upper(s: str) -> str:
+    return nox_strings_upper_raw(s)
+
+def lower(s: str) -> str:
+    return nox_strings_lower_raw(s)
+
+def replace(s: str, old: str, new: str) -> str:
+    return nox_strings_replace_raw(s, old, new)
+
+def join(parts: list[str], sep: str) -> str:
+    result: str = ""
+    first: bool = True
+    for p in parts:
+        if first:
+            result = p
+            first = False
+        else:
+            result = result + sep + p
+    return result
+
+def starts_with(s: str, prefix: str) -> bool:
+    if len(prefix) > len(s):
+        return False
+    i: int = 0
+    while i < len(prefix):
+        if s[i] != prefix[i]:
+            return False
+        i = i + 1
+    return True
+
+def ends_with(s: str, suffix: str) -> bool:
+    if len(suffix) > len(s):
+        return False
+    offset: int = len(s) - len(suffix)
+    i: int = 0
+    while i < len(suffix):
+        if s[offset + i] != suffix[i]:
+            return False
+        i = i + 1
+    return True
+
+def index_of(s: str, needle: str) -> int:
+    n: int = len(needle)
+    if n == 0:
+        return 0
+    total: int = len(s)
+    i: int = 0
+    while i + n <= total:
+        j: int = 0
+        matched: bool = True
+        while j < n:
+            if s[i + j] != needle[j]:
+                matched = False
+                j = n
+            j = j + 1
+        if matched:
+            return i
+        i = i + 1
+    return -1
+
+def contains(s: str, needle: str) -> bool:
+    return index_of(s, needle) >= 0

@@ -1,0 +1,12 @@
+async def make_value(x: int) -> int:
+    return x * 2
+
+total: int = 0
+i: int = 0
+n: int = 500000
+while i < n:
+    t: Task[int] = spawn make_value(i)
+    total = total + await t
+    i = i + 1
+
+print(total)

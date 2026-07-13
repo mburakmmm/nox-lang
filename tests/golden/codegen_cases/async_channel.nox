@@ -1,0 +1,15 @@
+async def producer(ch: Channel[int]) -> None:
+    await ch.send(10)
+    await ch.send(20)
+
+async def main_task() -> None:
+    ch: Channel[int] = Channel[int](0)
+    t: Task[None] = spawn producer(ch)
+    a: int = await ch.recv()
+    b: int = await ch.recv()
+    print(a)
+    print(b)
+    await t
+
+t2: Task[None] = spawn main_task()
+await t2

@@ -1,0 +1,31 @@
+class NegativeError:
+    def __init__(self: NegativeError, message: str) -> None:
+        self.message = message
+
+class KeyError:
+    def __init__(self: KeyError, key: int) -> None:
+        self.key = key
+
+def check(x: int) -> int:
+    if x < 0:
+        raise NegativeError("negatif olamaz")
+    if x == 0:
+        raise KeyError(0)
+    return x * 2
+
+def safe_check(x: int) -> int:
+    try:
+        result: int = check(x)
+        return result
+    except NegativeError as e1:
+        print(e1.message)
+        return -1
+    except KeyError as e2:
+        print(e2.key)
+        return -2
+    finally:
+        print("temizlik")
+
+print(safe_check(5))
+print(safe_check(-3))
+print(safe_check(0))

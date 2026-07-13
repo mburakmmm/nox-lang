@@ -1,0 +1,4206 @@
+//! Nox v0.1 QBE IR codegen — AGENTS.md §7 adım 4.
+//!
+//! **Kapsam (bu geçiş):** değer tipleri (`int`/`float`/`bool`/`None`) + iki
+//! heap tipi (`str`, `list[T]`, yalnızca `T` bir değer tipiyken) + sınıflar.
+//!
+//! **`str` neden hep tahsissiz:** v0.1 grameri hiçbir string ÜRETEN işlem
+//! (birleştirme, biçimlendirme, okuma) içermiyor — tek kaynak string
+//! LİTERALLERİdir. Her `str` değeri statik salt-okunur veriye (QBE `data`)
+//! işaret eder; hiçbir zaman tahsis edilmez, hiçbir zaman serbest bırakılmaz.
+//!
+//! **`list[T]` ve sınıflar — ödünç alma (borrow) + referans sayımı:**
+//! Her ikisi de `runtime/alloc/arc.zig`'in görünmez refcount başlığıyla
+//! tahsis edilir (refcount 1 ile başlar). Kural seti:
+//!   - Bir fonksiyona/metoda PARAMETRE olarak ya da bir çağrıya ARGÜMAN
+//!     olarak ya da bir metod çağrısının ALICISI olarak geçmek yalnızca bir
+//!     "ödünç"tür — refcount'u ETKİLEMEZ (çağrı senkron, çağrılan referansı
+//!     kalıcı olarak saklamıyorsa hiçbir sayaç değişikliği gerekmez).
+//!   - Bir değeri BAŞKA BİR İSME atamak (`y = x` / `y: T = x`, `x` zaten
+//!     izlenen bir heap bağlamıysa) bir `nox_rc_retain` üretir — iki bağımsız
+//!     "sahip" artık aynı nesneyi paylaşıyor.
+//!   - Bir yerel değişkeni (parametre DEĞİL) `return` etmek özel bir işlem
+//!     GEREKTİRMEZ: bu fonksiyonun kapsam-sonu temizliği zaten `return`'da
+//!     atlanıyor (aşağıdaki bilinen sınırlamaya bakın), bu da net bir
+//!     "taşıma" (sıfır maliyetli sahiplik devri) ile sonuçlanır.
+//!   - Yerel (parametre olmayan) her heap bağlamı, kapsam sonunda (ya da
+//!     yeniden atama/tanımlamada, önce) tam olarak bir `nox_rc_release` alır.
+//!     Sıfıra inen refcount gerçek belleği serbest bırakır; inmeyen (başka
+//!     bir yerde retain edilmiş) yalnızca sayacı azaltır.
+//!   - Parametreler HİÇBİR ZAMAN release edilmez (ödünç alınmıştır); yeniden
+//!     atanırlarsa bile (bilinçli, muhafazakâr bir sınırlama — bkz. aşağı).
+//!
+//! **Sınıflar:** Alanlar yalnızca `__init__` gövdesindeki `self.<ad> = <ifade>`
+//! atamalarından çıkarılır ve yalnızca doğrudan bir parametre ya da bir
+//! literal olabilirler (bkz. `inferFieldType`) — bu, checker'ın (Faz 2) tam
+//! ifade tipi çıkarımını burada yeniden uygulamadan gerçekçi/yaygın deseni
+//! (`self.x = x`) kapsayan bilinçli bir kapsam sınırlamasıdır. Alan tipleri
+//! değer tipleri, `str` ya da (Faz 9'dan beri) BAŞKA BİR SINIF olabilir;
+//! `list[T]` alanı henüz desteklenmiyor.
+//!
+//! **İç içe sınıf tipli alanlar ve özyinelemeli release (Faz 9):** bir sınıf
+//! alanı başka bir sınıf tipinde olabilir (ör. `Car.engine: Engine`), AMA
+//! yalnızca DAHA ÖNCE kaydedilmiş bir sınıfa referans verebilir —
+//! `resolveType`/`registerClass`'ın tek geçişli, sıralı doğası (bir sınıf
+//! kendi `__init__`'i işlenirken henüz `self.classes`'a eklenmemiştir) bunu
+//! doğal olarak dayatır. Bu, ÖZ-REFERANSI (`class Node: self.next: Node`) ve
+//! İLERİ-REFERANSLI karşılıklı döngüleri (`A`nın bir `B` alanı VE `B`nin bir
+//! `A` alanı olması) derleme zamanında imkansız kılar — yani bu fazda hiçbir
+//! referans DÖNGÜSÜ kurulamaz, bu yüzden Katman 3 (döngü çözücü) hâlâ
+//! gerekmiyor. Her sınıf için üretilen `$ClassName_release` (bkz.
+//! `genClassRelease`), refcount'u azaltıp (`nox_rc_predecrement`) sıfıra
+//! düştüğünde ÖNCE sınıf tipli her alanı (varsa, null değilse) özyinelemeli
+//! olarak serbest bırakır, SONRA belleği gerçekten serbest bırakır
+//! (`nox_rc_free_payload`) — çalışma zamanının (`arc.zig`) aksine bu, derleme
+//! zamanında bilinen alan düzenini kullanabilir. Bir alanın üzerine yeniden
+//! yazmak (`self.attr = ...`) önce YENİ değeri (takma ad ise) retain eder,
+//! SONRA eski değeri (varsa) serbest bırakır — sıra, eskiyle yeni AYNI nesne
+//! olduğunda (`self.attr = self.attr`) bile doğru çalışır. Taze inşa edilen
+//! bir örneğin alanları, `__init__` çalışmadan ÖNCE sıfırlanır (bkz.
+//! `genConstruct`) — aksi halde ilk atamada "eskiyi serbest bırak" mantığı
+//! çöp bir işaretçiyi release etmeye çalışırdı.
+//!
+//! **Ödünç alma artık her zaman zaman-uyumsuz DEĞİL — "geçici" (temporary)
+//! değerler için istisna:** parametre geçişi hâlâ bir ödünçtür, ama bir
+//! callee artık parametreyi (Faz 9'dan beri) bir ALANA ya da yeni bir yerele
+//! atayarak KALICI hale getirebilir. Çağıranın bir ÇAĞRI/LİSTE-LİTERALİ
+//! sonucunu (`.call`/`.list_lit` — TAZE, hiçbir bağımsız sahibi olmayan bir
+//! değer, bkz. `isTemporaryExpr`) argüman/alıcı olarak geçirdiği durumlarda,
+//! çağrı DÖNDÜKTEN SONRA bu değer serbest bırakılır (`releaseTemporaryArgs`/
+//! `releaseIfTemporary`) — callee onu retain ettiyse (kalıcı kıldıysa) bu,
+//! refcount'u doğru şekilde 1'e indirir; etmediyse zaten 1 olan refcount'u
+//! 0'a indirip gerçekten serbest bırakır. AYNI mekanizma bir alan
+//! okumasının/indekslemenin TABANI (`genFieldRead`/`genIndex`, ör.
+//! `make_car(i).engine`) ve tamamen dolaylanmış bir deyim (`expr_stmt`) için
+//! de geçerlidir. Simetrik olarak, `return`, KENDİ münhasır yerel
+//! bağlamasını (parametre DEĞİL) döndürüyorsa hâlâ retain GEREKTİRMEZ (sıfır
+//! maliyetli taşıma), ama bir PARAMETREYİ olduğu gibi (`return p`) ya da bir
+//! ALAN OKUMASINI (`return self.attr`) döndürüyorsa retain GEREKİR (bkz.
+//! `returnNeedsRetain`) — bu, "passthrough" fonksiyonları (ör.
+//! `def identity(p): return p`, ya da bir alanı dışarı veren bir metod) bile
+//! yukarıdaki çağıran-taraf telafi release'iyle birlikte güvenli kılar.
+//!
+//! **Erken `return` artık güvenli (Faz 7'de düzeltildi):** her `return`,
+//! gerçek `ret`ten hemen önce dönen değerin KENDİ bağlaması HARİÇ tüm heap
+//! tipli yerelleri serbest bırakır (`releaseAllLocalsExcept`) — böylece aynı
+//! kapsamdaki başka bir heap yerel artık sızmaz. `finally` blokları da her
+//! çıkış yolunda (normal tamamlanma, `return`, yakalanmamış istisna) satır
+//! içi üretilerek çalıştırılır (`drainFinally`/`finally_stack`) — Python'daki
+//! gibi, QBE'de paylaşılan bir "unwind" hedefi olmadan (İlke #3).
+//!
+//! **Hata yayılımı (`raise`/`try`/`except`/`finally`, AGENTS.md §9):** QBE
+//! hiçbir zaman unwind tablosu üretmediği için, her kullanıcı fonksiyonu/
+//! metodu/kurucu çağrısından hemen sonra derleyici örtük bir "bekleyen
+//! istisna var mı?" kontrolü (`emitExceptionCheck`) üretir — Zig'in error
+//! union'larına benzer bir örtük hata-döndürme zinciri. Sınıf örnekleri artık
+//! (refcount başlığından sonra) çalışma zamanında bir tip etiketi taşır;
+//! `except ClassName:` eşleşmesi bu etiketin doğrudan (tam/isim bazlı,
+//! kalıtım olmadığı için hiyerarşik DEĞİL) karşılaştırılmasıyla yapılır.
+//! `main`'den yakalanmamış bir istisna sessizce başarıyla bitmiş gibi
+//! davranmaz — `nox_unhandled_exception` bir hata mesajı basıp sıfırdan
+//! farklı bir kodla sonlanır.
+//!
+//! **Çalışma zamanı bağlamı (`rt`):** İlke #6 gereği, her Nox fonksiyonu
+//! (main hariç) gizli bir ilk parametre olarak `%rt` alır ve bunu ihtiyaç
+//! duyan her çağrıya açıkça taşır — bu bir "gizli global" değildir.
+//!
+//! **`lowlevel` bloğu (Katman 4, Faz 8, AGENTS.md §8):** İlke #2 gereği bu
+//! yalnızca tahsis STRATEJİSİNİ değiştirir, tip sistemini DEĞİL — gövde
+//! `checker.zig`'de tamamen normal kurallarla denetlenir. Blok girişinde
+//! `nox_arena_create` çağrılır (sonucu `arena_stack`'e itilir); bu blok
+//! içinde inşa edilen her `list[T]`/sınıf örneği (bkz. `currentArena`,
+//! `genConstruct`/`genListLit`) ARC yerine bu arenadan (`nox_arena_alloc`)
+//! tahsis edilir — hiçbir bireysel `nox_rc_retain`/`nox_rc_release` ASLA
+//! çağrılmaz (arena belleğinde refcount başlığı yoktur; bir retain/release
+//! bitişik belleği bozardı). Blok normal tamamlandığında arena TEK SEFERDE
+//! yıkılır (`nox_arena_destroy`); her erken çıkışta (`return`, yakalanmamış
+//! istisna) `drainArenas` aynı işi `drainFinally` ile aynı "her çıkışta satır
+//! içi yıkım" desenini izleyerek yapar.
+//!
+//! **Kaçış engelleme — bilinçli olarak GENİŞ bir kural:** arena-lık
+//! (`.arena`), bir fonksiyonun statik imzasının bir parçası DEĞİLDİR —
+//! yalnızca belirli bir ÇAĞRI YERİNDEKİ belirli bir DEĞERİN özelliğidir ve
+//! fonksiyon sınırını asla aşmaz (bir parametrenin `VarInfo.arena`'sı çağıran
+//! ne geçirirse geçirsin her zaman `false`'dur). Bu yüzden ADAY olarak daha
+//! dar bir kural ("yalnızca dönüş/`self.alan=` gibi GERÇEKTEN kaçıran
+//! kullanımları engelle") YETERSİZDİR: bir arena değerini bir fonksiyona
+//! argüman/alıcı olarak geçirmek güvenli GÖRÜNÜR (çağrı senkron, "ödünç"),
+//! ama çağrılan gövde bu parametreyi `return`/bir alana atama yoluyla kaçırırsa
+//! (arena-lığından HABERSİZ olarak, çünkü bu bilgi imzada yok) çağıran taraf
+//! sonucu normal bir ARC değeriymiş gibi retain/release edip refcount başlığı
+//! OLMAYAN belleği bozar. Ara-yordamsal (interprocedural) analiz olmadan bunu
+//! ayırt edemeyiz; bu yüzden `checkNoLowlevelEscape` KASITLI olarak geniş bir
+//! kural uygular: bir `lowlevel` bloğunun içinde lexical olarak bulunulduğu
+//! SÜRECE (`in_lowlevel_depth > 0`) ya da değer zaten `.arena` işaretliyken,
+//! heap tipli hiçbir değer bir çağrıya ARGÜMAN, bir metod çağrısının ALICISI
+//! olamaz, `return` edilemez ya da başka bir isme takma ad olamaz. Bu, aksi
+//! halde güvenli olan bazı desenleri (ör. arena bir nesnenin bir metodunu
+//! çağırmak) da engeller — ama basit ve SAĞLAMDIR; v0.1 için doğru ödünleşim.
+//!
+//! **Kapsam:** `lowlevel` içinde tanımlanan adlar bloktan SONRA kapsam dışına
+//! alınır (bkz. `checker.zig`, `.lowlevel_stmt` — önce/sonra anlık görüntü
+//! farkıyla scope'tan çıkarılır), çünkü arena blok çıkışında yıkılır; aksi
+//! halde bloktan sonraki bir kullanım kullanım-sonrası-serbest-bırakma olurdu.
+//!
+//! **Bilinen sınırlama (kabul edildi, çözülmedi):** yukarıdaki geniş kural,
+//! bir arena değerinin BİZZAT KENDİSİNİN herhangi bir çağrı sınırını aşmasını
+//! engeller — ama teorik olarak kalan tek risk, `lowlevel` DIŞINDA tanımlı
+//! "passthrough" bir fonksiyonun (ör. `def identity(p: Point) -> Point: return
+//! p`) `lowlevel` dışından ARC bir değerle çağrılıp normal davranmasıdır; bu
+//! zaten güvenlidir çünkü `identity` kendi içinde `lowlevel`de değildir ve
+//! aldığı değer zaten ARC'tır. Geniş kuralımız bu fonksiyonun bir ARENA
+//! değeriyle çağrılmasını zaten YASAKLADIĞI için (argüman kontrolü) bu
+//! senaryo pratikte oluşamaz — ara-yordamsal analiz gerektiren tek durum, bir
+//! `lowlevel` bloğunun DIŞINDAN çağrılamayacağı için bu tasarımda ortaya
+//! çıkmaz. Belgelenmiş, kasıtlı bir tasarım kararıdır.
+
+const std = @import("std");
+const ast = @import("../parser/ast.zig");
+
+pub const CodegenError = error{
+    OutOfMemory,
+    Unsupported,
+} || std.Io.Writer.Error;
+
+const QbeType = enum { l, d, w, none };
+/// `task`/`channel`: Faz 21 aşama 4'ün `Task[T]`/`Channel[T]`si — BİLEREK
+/// `isHeapManaged`in DIŞINDA tutulur (ARC/refcount başlığı YOK, zamanlayıcı
+/// kendi ömrünü kendi yönetir, bkz. `runtime/async_rt/bridge.zig`) — ama
+/// `.none`den AYRI bir etiket olmaları, kapsam-sonu temizliğinin (bkz.
+/// `releaseAllLocalsExcept`) onları `nox_async_destroy_task`/
+/// `nox_channel_destroy` ile (predecrement/retain OLMADAN, doğrudan bir
+/// kez) serbest bırakabilmesi için GEREKLİDİR — aksi halde her `spawn`/
+/// `Channel[T](...)` sızardı (bkz. spec, bulunan gerçek hata).
+/// `dict`: stdlib fazı §C (bkz. nox-teknik-spesifikasyon.md). `task`/
+/// `channel` İLE AYNI gerekçeyle BİLEREK `isHeapManaged`in DIŞINDA tutulur
+/// (opak bir `ptr` — gerçek hash tablosu `runtime/collections/dict.zig`de
+/// yaşar, ARC başlığı/retain-on-alias YOK, tek sahiplilik) — kapsam-sonu
+/// temizliği DOĞRUDAN bir `nox_dict_destroy` çağrısıdır (bkz.
+/// `releaseAllLocalsExcept`).
+const HeapKind = enum { none, str, list, class, task, channel, dict };
+
+/// `list[T]`nin elemanları KENDİLERİ heap-yönetimliyse (sınıf ya da iç içe
+/// `list[T']`) bunu ÖZYİNELEMELİ olarak betimler (bkz. modül üstü not, "Faz 21
+/// ön-koşulu: list[T] için özyinelemeli release"). `heap` yalnızca `.class`
+/// ya da `.list` olabilir (çağıran garanti eder) — elemanlar int/float/bool/
+/// str/None ise bu yapı hiç YOK (`null`), DEĞİŞMEMİŞ eski yol kullanılır.
+const ElemHeapInfo = struct {
+    heap: HeapKind,
+    /// `heap == .class` ise sınıfın adı.
+    class_name: ?[]const u8 = null,
+    /// `heap == .list` ise BU (iç) listenin KENDİ elemanlarının QBE tipi
+    /// (`TypeInfo.elem_qtype`nin özyineli karşılığı — bir döngü değişkeni
+    /// gibi yerlerde tam `TypeInfo`yu yeniden kurabilmek için gerekir).
+    elem_qtype: QbeType = .none,
+    /// `heap == .list` ise İÇ listenin KENDİ elemanının açıklayıcısı — `null`:
+    /// iç eleman primitive (int/float/bool/None); `str` DAHİL heap-yönetimli
+    /// (`class`/`list`/`str`) TÜM eleman tipleri için `non-null`dur (bkz.
+    /// stdlib fazı §B — `str` ARC-yönetimli olduktan SONRA `list[str]`
+    /// elemanlarının da özyinelemeli release'e girmesi GEREKTİ, `genListElemRelease`in
+    /// `info.nested`in `.str` özel durumuna bkz.).
+    nested: ?*const ElemHeapInfo = null,
+    /// `heap == .list` ise: BU (iç) listenin KENDİ elemanlarının `str` olup
+    /// olmadığı (`TypeInfo.elem_is_str`nin özyineli karşılığı) — SADECE derin
+    /// yapısal eşitlik (`==`/`!=`, bkz. görev "list/class için derin yapısal
+    /// eşitlik") `list[str]`i `list[int]`den ayırt edebilmek İÇİNDİR
+    /// (`strcmp` ile `ceql` FARKLI karşılaştırma operasyonlarıdır) — release
+    /// KARARI `nested`in KENDİSİNİN `.heap == .str` olup olmamasından gelir
+    /// (bu alandan DEĞİL).
+    elem_is_str: bool = false,
+};
+
+/// `dict[K, V]`nin anahtar/değer "şeklini" betimler — `ElemHeapInfo` İLE
+/// AYNI amaç (list[T]'nin elemanı), ama dict'in İKİ bağımsız tip parametresi
+/// olduğundan (K ayrıca hash/eşitlik için, V yalnızca depolama için) tek bir
+/// `elem_*` alan seti YETMEZ. v1 kapsamı bilinçli olarak dar (bkz. checker.zig'in
+/// `typeExprToType`indeki `"dict"` dalı): K int/bool/str, V int/float/bool/str
+/// — sınıf anahtar/değer ERTELENDİ, bu yüzden `nested`/`class_name` gibi
+/// özyineli alanlara GEREK YOK (list[T]'nin AKSİNE).
+const DictInfo = struct {
+    key_is_str: bool,
+    value_qtype: QbeType,
+    value_is_str: bool,
+};
+
+const TypeInfo = struct {
+    qtype: QbeType,
+    heap: HeapKind = .none,
+    elem_qtype: QbeType = .none,
+    class_name: ?[]const u8 = null,
+    elem_heap_info: ?*const ElemHeapInfo = null,
+    /// `heap == .list` ise: elemanların `str` olup olmadığı — `str` release
+    /// GEREKTİRMEDİĞİNDEN (bkz. `isHeapManaged`) `elem_heap_info` bunu
+    /// KAPSAMAZ (o yalnızca özyinelemeli release gereken `.class`/`.list`
+    /// elemanlar içindir), ama `genIndex`/for-döngüsü değişkeni gibi
+    /// OKUMA noktalarının okunan değeri `heap = .str` olarak DOĞRU
+    /// etiketleyebilmesi (aksi halde `print` onu int gibi basar) için
+    /// AYRI, basit bir bayrak gerekir.
+    elem_is_str: bool = false,
+    /// `heap == .dict` ise anahtar/değer "şekli" (bkz. `DictInfo`in belge
+    /// notu) — aksi halde `null`.
+    dict_info: ?*const DictInfo = null,
+};
+
+const Value = struct {
+    text: []const u8,
+    qtype: QbeType,
+    heap: HeapKind = .none,
+    elem_qtype: QbeType = .none,
+    class_name: ?[]const u8 = null,
+    elem_heap_info: ?*const ElemHeapInfo = null,
+    elem_is_str: bool = false,
+    dict_info: ?*const DictInfo = null,
+    /// `true`: bir `lowlevel` bloğunun arenasından tahsis edildi — refcount
+    /// başlığı YOK, `nox_rc_retain`/`nox_rc_release` bu değer üzerinde asla
+    /// çağrılamaz (bkz. modül üstü not).
+    arena: bool = false,
+    /// Stdlib fazı §G: `s[i]`nin (bkz. `genStrIndex`) BİLİNÇLİ bir istisnası
+    /// — `isTemporaryExpr`/`isAliasingExpr`in `.index` dalı, `list[T]`/
+    /// `dict[K,V]` indekslemesi İÇİN (sonuç TABANIN İÇİNE bir takma addır,
+    /// "temporary"liği TABANINKİNE bağlıdır) DOĞRU olsa da, `str` indekslemesi
+    /// İÇİN YANLIŞTIR: `nox_str_char_at` HER ZAMAN TABANDAN BAĞIMSIZ, TAZE
+    /// bir tahsis döndürür — TABANIN kendisi (adlandırılmış bir isim de
+    /// olsa) temporary olmasa BİLE, sonuç ASLA bir takma ad DEĞİLDİR ve HER
+    /// ZAMAN çağıran tarafından serbest bırakılMALIDIR. `isTemporaryExpr`
+    /// SALT AST'YE bakan pür bir fonksiyon olduğundan (tip bilgisi YOK, bu
+    /// bilgiyi TAŞIYAMAZ) bu ayrım `Value`nin KENDİSİNDE bir bayrakla
+    /// taşınır — `retainIfAliasing`/`releaseIfTemporary`/`releaseTemporaryArgs`
+    /// (ki HEPSİ zaten hesaplanmış `Value`ye erişimi var) bu bayrak
+    /// `true` İSE AST-tabanlı sezgiyi (`isAliasingExpr`/`isTemporaryExpr`)
+    /// GEÇERSİZ KILAR: ASLA takma ad SAYILMAZ (retain GEREKMEZ), HER ZAMAN
+    /// temporary SAYILIR (release GEREKİR).
+    always_fresh: bool = false,
+};
+
+const FuncSig = struct {
+    params: []const TypeInfo,
+    ret: TypeInfo,
+    /// Yalnızca `extern def`ler İÇİN anlamlıdır (bkz. `ast.ExternDef.needs_rt`in
+    /// belge notu, stdlib fazı §D.1) — `genCall`in `extern_functions` dalı
+    /// bu bayrak `true` İSE `RT_PARAM`ı argüman listesinin BAŞINA GİZLİCE
+    /// ekler. Normal fonksiyonlar İÇİN her zaman `false`tur (zaten HER
+    /// çağrıda `RT_PARAM` KOŞULSUZ geçirilir, bu alan onlar için anlamsızdır).
+    needs_rt: bool = false,
+};
+
+/// Faz 21 aşama 4: `spawn <hedef_fn>(args...)` çağrı sitesi başına TEMBEL
+/// kaydedilen, `generateModule`nin sonunda üretilen bir sarmalayıcı
+/// fonksiyonun tarifi (bkz. `genSpawnWrapper`). Sarmalayıcı, `nox_async_spawn`
+/// tarafından bir fiber girişi olarak çağrılır (`fn(l %argp) l`) — argümanları
+/// `%argp`nin gösterdiği kapanış (closure) struct'ından (`rt` + her argüman,
+/// 8 baytlık aralıklarla) paketten çıkarıp `target_fn`i normal şekilde çağırır,
+/// sonucu bir i64 "payload"a çevirir (bkz. `toPayload`).
+/// stdlib fazı §D.1.6: `nox.http.serve(port, handle[, max_connections])`
+/// çağrı sitesi başına TEMBEL kaydedilen, `generateModule`nin sonunda
+/// üretilen bir C-ABI sarmalayıcının tarifi (bkz. `genHttpServeWrapper`) —
+/// `SpawnWrapperSpec` İLE AYNI "tembel iş kuyruğu" deseni. Sarmalayıcı,
+/// `runtime/stdlib_shims/http_server.zig`nin `HandlerFn`i olarak
+/// `nox_http_serve_raw`a geçirilir (`fn(l %rt, l %req) l` — `rt` bir
+/// KAPANIŞTAN DEĞİL doğrudan `handler_ctx` parametresi olarak taşınır,
+/// bkz. `genHttpServe`nin belge notu — `spawn`ın kapanış paketlemesine
+/// GEREK YOK, çünkü tek "yakalanan" değer zaten `rt`nin KENDİSİ).
+const HttpServeWrapperSpec = struct {
+    name: []const u8,
+    handler_fn: []const u8,
+    req_class: []const u8,
+    resp_class: []const u8,
+};
+
+const SpawnWrapperSpec = struct {
+    name: []const u8,
+    target_fn: []const u8,
+    sig: FuncSig,
+};
+
+const VarInfo = struct {
+    slot: []const u8,
+    qtype: QbeType,
+    heap: HeapKind = .none,
+    elem_qtype: QbeType = .none,
+    class_name: ?[]const u8 = null,
+    elem_heap_info: ?*const ElemHeapInfo = null,
+    elem_is_str: bool = false,
+    dict_info: ?*const DictInfo = null,
+    is_param: bool = false,
+    arena: bool = false,
+};
+
+const LocalDecl = struct {
+    name: []const u8,
+    info: TypeInfo,
+    is_param: bool = false,
+    arena: bool = false,
+};
+
+const StringDatum = struct {
+    symbol: []const u8,
+    escaped: []const u8,
+};
+
+const ClassField = struct {
+    name: []const u8,
+    info: TypeInfo,
+    offset: usize,
+};
+
+const ClassInfo = struct {
+    fields: std.ArrayListUnmanaged(ClassField) = .empty,
+    total_size: usize = 0,
+    init_params: []const TypeInfo = &.{},
+    methods: std.StringHashMapUnmanaged(FuncSig) = .empty,
+    class_id: usize = 0,
+    /// `false`: sınıfın bir `__init__`i yok (bkz. `registerClass`) — o zaman
+    /// alan yoktur (`fields.items.len == 0`), kurucu 0 argüman alır ve
+    /// `genConstruct` `$ClassName___init__`i HİÇ ÇAĞIRMAZ (çünkü üretilmedi,
+    /// bkz. `generateModule`'ün yalnızca VAR OLAN metodları derlediği döngü).
+    has_init: bool = true,
+    /// `true`: `__init__`in ASLA istisna fırlatmadığı KANITLANDI (bkz.
+    /// `computeMustNotRaise`) — bu durumda `genConstruct` kurucu çağrısından
+    /// sonra `emitExceptionCheck`i ATLAR (performans fazı — bkz. görev
+    /// "exception-check elision"). `has_init == false` ise zaten hiç çağrı
+    /// üretilmediğinden bu alan anlamsızdır (kontrol edilmez).
+    init_is_safe: bool = false,
+};
+
+const RT_PARAM = "%rt";
+const FIELD_SLOT_SIZE: usize = 8;
+/// Her sınıf örneğinin (refcount başlığından SONRA) taşıdığı, çalışma
+/// zamanında `except ClassName:` eşleştirmesi için kullanılan tip etiketi.
+const TAG_SIZE: usize = 8;
+
+fn qbeTypeName(t: QbeType) []const u8 {
+    return switch (t) {
+        .l => "l",
+        .d => "d",
+        .w => "w",
+        .none => "",
+    };
+}
+
+fn qbeSizeOf(t: QbeType) usize {
+    return switch (t) {
+        .w => 4,
+        .l, .d => 8,
+        .none => 0,
+    };
+}
+
+/// Bir KONTEYNERİN (`list[T]`, `Task[T]`, `Channel[T]`) `elem_qtype`/
+/// `elem_heap_info`/`elem_is_str` alanlarından, KENDİSİ okunan TEK bir
+/// elemanın (`text`/`qtype` zaten hesaplanmış) TAM `Value`sini (doğru
+/// `heap`/`class_name`/iç içe `elem_heap_info` ile) yeniden kurar —
+/// `genIndex` (liste indeksleme), `genAwaitExpr` (`Task` sonucu) ve
+/// `genChannelOp` (`Channel.recv`) arasında PAYLAŞILAN tek bir mantık.
+fn valueFromElemDescriptor(text: []const u8, qtype: QbeType, container_elem_heap_info: ?*const ElemHeapInfo, container_elem_is_str: bool) Value {
+    return .{
+        .text = text,
+        .qtype = qtype,
+        .heap = if (container_elem_heap_info) |ehi| ehi.heap else if (container_elem_is_str) .str else .none,
+        .class_name = if (container_elem_heap_info) |ehi| ehi.class_name else null,
+        .elem_qtype = if (container_elem_heap_info) |ehi| ehi.elem_qtype else .none,
+        .elem_heap_info = if (container_elem_heap_info) |ehi| ehi.nested else null,
+    };
+}
+
+fn cmpMnemonic(op: ast.BinaryOp, common: QbeType) []const u8 {
+    if (common == .d) {
+        return switch (op) {
+            .eq => "ceqd",
+            .ne => "cned",
+            .lt => "cltd",
+            .le => "cled",
+            .gt => "cgtd",
+            .ge => "cged",
+            else => unreachable,
+        };
+    }
+    if (common == .w) {
+        return switch (op) {
+            .eq => "ceqw",
+            .ne => "cnew",
+            else => unreachable,
+        };
+    }
+    return switch (op) {
+        .eq => "ceql",
+        .ne => "cnel",
+        .lt => "csltl",
+        .le => "cslel",
+        .gt => "csgtl",
+        .ge => "csgel",
+        else => unreachable,
+    };
+}
+
+fn escapeForQbeString(allocator: std.mem.Allocator, s: []const u8) CodegenError![]const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    for (s) |c| {
+        switch (c) {
+            '"' => try out.appendSlice(allocator, "\\\""),
+            '\\' => try out.appendSlice(allocator, "\\\\"),
+            '\n' => try out.appendSlice(allocator, "\\n"),
+            '\t' => try out.appendSlice(allocator, "\\t"),
+            else => try out.append(allocator, c),
+        }
+    }
+    return out.toOwnedSlice(allocator);
+}
+
+fn isHeapManaged(h: HeapKind) bool {
+    return h == .list or h == .class or h == .str;
+}
+
+/// `expr` değerlendirildiğinde TAZE (henüz hiçbir isme/alana/elemana
+/// bağlanmamış, hiçbir bağımsız release'i olmayan) bir heap değeri üretir mi?
+/// Bir çağrı (`.call` — fonksiyon/metod/kurucu), bir liste literali
+/// (`.list_lit`) YA DA bir ikili ifade (`.binary` — v1'de yalnızca `str + str`
+/// birleştirmesi HEAP değeri üretir, bkz. `genBinary`; diğer ikili operatörler
+/// zaten `heap = .none` ürettiğinden çağıran taraftaki `isHeapManaged(v.heap)`
+/// eşlik-kontrolü onları ZATEN elemektedir — bu yüzden `.binary`yi KOŞULSUZ
+/// `true` saymak güvenlidir) taze bir değer üretir; bir isim (`.identifier`),
+/// bir alan okuması (`.attribute`) ya da bir indeksleme (`.index`) her zaman
+/// BAŞKA BİR YERDE (yerel, alan, parametre) ZATEN sahibi olan, ödünç alınmış
+/// bir referanstır ve ASLA körlemesine serbest bırakılmamalıdır — bkz.
+/// `releaseTemporaryArgs`/`releaseIfTemporary`.
+fn isTemporaryExpr(expr: ast.Expr) bool {
+    return switch (expr) {
+        .call, .list_lit, .binary => true,
+        // Bir alan zincirinin (ör. `make_car(i).engine`) TABANI temporary
+        // ise, `genFieldRead` heap tipli alanı taban serbest bırakılmadan
+        // ÖNCE retain eder (bkz. genFieldRead) — bu da okunan alanı, tıpkı
+        // bir `.call` sonucu gibi, kendi releaser'ı olmayan TAZE bir değere
+        // dönüştürür. Bu yüzden zincir özyinelemeli olarak kök nesneye kadar
+        // izlenmeli; taban sıradan bir isimse (`x.engine`) bu ödünç alınmış
+        // kalır ve hâlâ `false` döner.
+        .attribute => |a| isTemporaryExpr(a.obj.*),
+        // `.attribute`nin AYNI gerekçesi (bkz. yukarıdaki not) `.index`e de
+        // uygulanır: bir liste zincirinin (ör. `make_list()[0]`) TABANI
+        // temporary ise, `genIndex` heap tipli elemanı taban serbest
+        // bırakılmadan ÖNCE retain eder (bkz. genIndex) — okunan eleman da
+        // kendi releaser'ı olmayan TAZE bir değere dönüşür. Stdlib fazı
+        // §F'de BULUNAN gerçek bir sızıntı: `list[str]` döndüren bir
+        // `with_rt extern def`in sonucu ADLANDIRILMIŞ bir yerele
+        // BAĞLANMADAN doğrudan indekslenince (ör.
+        // `print(nox_test_make_list(3)[0])`), bu dal EKSİKTİ — `genIndex`
+        // elemanı doğru retain ediyordu ama ÇAĞIRAN (`print`) bunu ASLA
+        // serbest bırakmıyordu (taban SIRADAN bir isim SANILDIĞINDAN,
+        // `else => false`e düşüyordu) — gerçek bir sızıntı.
+        .index => |idx| isTemporaryExpr(idx.obj.*),
+        else => false,
+    };
+}
+
+fn containsName(list: []const []const u8, name: []const u8) bool {
+    for (list) |n| {
+        if (std.mem.eql(u8, n, name)) return true;
+    }
+    return false;
+}
+
+/// Modülün (üst düzey deyimler + tüm fonksiyon/metod gövdeleri) HERHANGİ bir
+/// yerinde `async` özelliği (bir `async def`, `spawn`, `await`, ya da
+/// `Channel[T](...)`) kullanılıp kullanılmadığını belirler — `generateModule`
+/// bunu, `main`i fiber-sarmalı bir kökle mi (`genMainAsync`) yoksa ŞİMDİYE
+/// KADAR OLDUĞU GİBİ değişmeden mi (`genMain`) üreteceğine karar vermek için
+/// kullanır (bkz. nox-teknik-spesifikasyon.md §3.21, aşama 4 — "async
+/// KULLANMAYAN programlar sıfır ek maliyetle DEĞİŞMEDEN derlenir").
+fn moduleUsesAsync(module: ast.Module, extra_functions: []const ast.FuncDef) bool {
+    for (module.body) |stmt| if (stmtUsesAsync(stmt)) return true;
+    for (extra_functions) |fd| {
+        if (fd.is_async) return true;
+        for (fd.body) |s| if (stmtUsesAsync(s)) return true;
+    }
+    return false;
+}
+
+fn stmtUsesAsync(stmt: ast.Stmt) bool {
+    return switch (stmt) {
+        .expr_stmt => |e| exprUsesAsync(e),
+        .var_decl => |v| exprUsesAsync(v.value),
+        .assign => |a| exprUsesAsync(a.target) or exprUsesAsync(a.value),
+        .if_stmt => |f| blk: {
+            if (exprUsesAsync(f.cond)) break :blk true;
+            for (f.then_body) |s| if (stmtUsesAsync(s)) break :blk true;
+            for (f.elif_clauses) |ec| {
+                if (exprUsesAsync(ec.cond)) break :blk true;
+                for (ec.body) |s| if (stmtUsesAsync(s)) break :blk true;
+            }
+            if (f.else_body) |eb| for (eb) |s| if (stmtUsesAsync(s)) break :blk true;
+            break :blk false;
+        },
+        .while_stmt => |w| blk: {
+            if (exprUsesAsync(w.cond)) break :blk true;
+            for (w.body) |s| if (stmtUsesAsync(s)) break :blk true;
+            break :blk false;
+        },
+        .for_stmt => |f| blk: {
+            if (exprUsesAsync(f.iterable)) break :blk true;
+            for (f.body) |s| if (stmtUsesAsync(s)) break :blk true;
+            break :blk false;
+        },
+        .func_def => |fd| blk: {
+            if (fd.is_async) break :blk true;
+            for (fd.body) |s| if (stmtUsesAsync(s)) break :blk true;
+            break :blk false;
+        },
+        .class_def => |cd| blk: {
+            for (cd.methods) |m| {
+                if (m.is_async) break :blk true;
+                for (m.body) |s| if (stmtUsesAsync(s)) break :blk true;
+            }
+            break :blk false;
+        },
+        .protocol_def, .extern_def, .pass_stmt, .import_stmt => false,
+        .return_stmt => |r| if (r) |e| exprUsesAsync(e) else false,
+        .raise_stmt => |e| exprUsesAsync(e),
+        .try_stmt => |t| blk: {
+            for (t.try_body) |s| if (stmtUsesAsync(s)) break :blk true;
+            for (t.except_clauses) |ec| for (ec.body) |s| if (stmtUsesAsync(s)) break :blk true;
+            if (t.finally_body) |fb| for (fb) |s| if (stmtUsesAsync(s)) break :blk true;
+            break :blk false;
+        },
+        .lowlevel_stmt => |ll| blk: {
+            for (ll.body) |s| if (stmtUsesAsync(s)) break :blk true;
+            break :blk false;
+        },
+    };
+}
+
+/// `nox.http.serve(port, handle[, max_connections])` çağrı sitesinin
+/// callee'sinin TAM OLARAK `nox.http.serve` şeklinde (üç seviyeli
+/// `Attribute`/`Attribute`/`identifier` zinciri) ayrıştırılıp
+/// ayrıştırılMADIĞINI belirler — hem `exprUsesAsync`in `.call` dalı hem de
+/// `Codegen.genCall`in `.attribute` dalı bu ŞEKLİ tanıyıp özel işlemeye
+/// yönlendirmek için kullanır (bkz. checker.zig'in `tryResolveHttpServeCall`ı
+/// İLE AYNI desen — o da AYNI şekli tanır, ama BU noktada çağrının callee'si
+/// `tryResolveQualifiedCall`in AKSİNE mangled bir isme YENİDEN YAZILMAZ,
+/// bkz. `tryResolveHttpServeCall`in belge notu — bu yüzden codegen KENDİSİ
+/// şekli TANIMAK ZORUNDADIR).
+fn isHttpServeCallee(callee: ast.Expr) bool {
+    if (callee != .attribute) return false;
+    const serve_attr = callee.attribute;
+    if (!std.mem.eql(u8, serve_attr.attr, "serve")) return false;
+    if (serve_attr.obj.* != .attribute) return false;
+    const http_attr = serve_attr.obj.attribute;
+    if (!std.mem.eql(u8, http_attr.attr, "http")) return false;
+    if (http_attr.obj.* != .identifier) return false;
+    return std.mem.eql(u8, http_attr.obj.identifier, "nox");
+}
+
+fn exprUsesAsync(expr: ast.Expr) bool {
+    return switch (expr) {
+        .await_expr, .spawn_expr, .generic_construct => true,
+        .unary => |u| exprUsesAsync(u.operand.*),
+        .binary => |b| exprUsesAsync(b.left.*) or exprUsesAsync(b.right.*),
+        .call => |c| blk: {
+            // stdlib fazı §D.1.6: `nox.http.serve`nin KENDİSİ (kqueue
+            // reaktörü üzerinden fiber-native `accept`/`read`/`write` yapan
+            // `nox_http_serve_raw`ı ÇAĞIRDIĞINDAN) bir programın TEK async
+            // özelliği OLABİLİR — `handle` (çıplak bir isim argümanı) VE
+            // `nox.http.serve`nin KENDİSİ (bir `.identifier`/`.attribute`
+            // zinciri) buradaki DİĞER dallardan HİÇBİRİNİ TETİKLEMEZ, bu
+            // yüzden ŞEKLİ AÇIKÇA tanımak GEREKİR (bkz. `isHttpServeCallee`).
+            if (isHttpServeCallee(c.callee.*)) break :blk true;
+            if (exprUsesAsync(c.callee.*)) break :blk true;
+            for (c.args) |a| if (exprUsesAsync(a)) break :blk true;
+            break :blk false;
+        },
+        .attribute => |a| exprUsesAsync(a.obj.*),
+        .index => |idx| exprUsesAsync(idx.obj.*) or exprUsesAsync(idx.index.*),
+        .list_lit => |elems| blk: {
+            for (elems) |el| if (exprUsesAsync(el)) break :blk true;
+            break :blk false;
+        },
+        .dict_lit => |pairs| blk: {
+            for (pairs) |p| {
+                if (exprUsesAsync(p.key) or exprUsesAsync(p.value)) break :blk true;
+            }
+            break :blk false;
+        },
+        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => false,
+    };
+}
+
+/// `genForList`nin gizli döngü indeksi için `self.vars` içinde kullanılan
+/// isim — kullanıcı tanımlı isimlerle asla çakışmayan `$` önekiyle (bkz.
+/// `collectLocals`deki belge notu).
+fn forListIdxName(allocator: std.mem.Allocator, var_name: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(allocator, "$idx_{s}", .{var_name});
+}
+
+const Codegen = struct {
+    allocator: std.mem.Allocator,
+    out: std.Io.Writer.Allocating,
+    functions: std.StringHashMapUnmanaged(FuncSig) = .empty,
+    /// `extern def` bildirimleri — AYRI bir tablo (normal `functions`dan
+    /// bağımsız): çağrı sitesi kodgen'i temelde farklıdır (bkz. `genCall`) —
+    /// extern fonksiyonlar Nox'un `rt` bağlamını (İlke #6'nın gerektirdiği
+    /// açık parametre) ALMAZ ve Nox'un istisna mekanizmasına katılmaz
+    /// (bkz. nox-teknik-spesifikasyon.md §3.20).
+    extern_functions: std.StringHashMapUnmanaged(FuncSig) = .empty,
+    classes: std.StringHashMapUnmanaged(ClassInfo) = .empty,
+    vars: std.StringHashMapUnmanaged(VarInfo) = .empty,
+    temp_counter: usize = 0,
+    label_counter: usize = 0,
+    string_counter: usize = 0,
+    string_data: std.ArrayListUnmanaged(StringDatum) = .empty,
+    next_class_id: usize = 1,
+    /// `list[T]`nin elemanları heap-yönetimliyken (sınıf/iç içe liste) gereken
+    /// `$List_<mangled>_release` fonksiyonlarının TEMBEL kaydı — `string_data`
+    /// gibi kodgen sırasında keşfedilir, `generateModule`nin sonunda TÜKETİLİR
+    /// (işlenirken YENİ iç içe ihtiyaçlar keşfedilebileceğinden bir kuyruk).
+    list_release_seen: std.StringHashMapUnmanaged(void) = .empty,
+    list_release_queue: std.ArrayListUnmanaged(struct { name: []const u8, info: ElemHeapInfo }) = .empty,
+    /// list[T] için derin yapısal eşitlik (bkz. görev "list/class için derin
+    /// yapısal eşitlik") — `$List_<mangled>_eq(rt, a, b) w` fonksiyonlarının
+    /// TEMBEL kaydı. `list_release_queue` ile AYNI desen (kuyruk + görülenler
+    /// kümesi), ama AYRI bir mangling şeması kullanır (`eqMangleFor`):
+    /// release yalnızca heap-yönetimli (sınıf/iç içe liste) elemanları önemser
+    /// (str/int/float/bool AYNI "prim" kovasına düşer, release'leri hiç
+    /// gerekmediğinden), eşitlik ise HER eleman türü için FARKLI bir
+    /// karşılaştırma operasyonu (str→strcmp, int/float/bool→ceq*) gerektirir —
+    /// bu yüzden `str` ile `int` burada AYRI mangled adlara sahiptir.
+    list_eq_seen: std.StringHashMapUnmanaged(void) = .empty,
+    list_eq_queue: std.ArrayListUnmanaged(struct { name: []const u8, elem_qtype: QbeType, elem_heap_info: ?*const ElemHeapInfo, elem_is_str: bool }) = .empty,
+    /// `print(list[T]/sınıf)` görüntülemesinin (bkz. `internFmtString`) sınıf/
+    /// alan adı gibi derleme-zamanı sabit metinlerden ürettiği `printf` format
+    /// dizesi sembolleri — `string_data`den FARKLI olarak pinned-refcount
+    /// başlığı TAŞIMAZLAR (asla bir Nox `str` DEĞERİ olarak dolaşmazlar).
+    fmt_counter: usize = 0,
+    fmt_data: std.ArrayListUnmanaged(StringDatum) = .empty,
+    /// Faz 21 aşama 4: her `spawn <çağrı>` çağrı sitesi için üretilecek
+    /// `$spawn_wrap_N(l %argp) l` sarmalayıcılarının TEMBEL kaydı —
+    /// `list_release_queue` ile AYNI desen, `generateModule`nin sonunda
+    /// tüketilir (bkz. `genSpawnWrapper`).
+    spawn_wrapper_counter: usize = 0,
+    spawn_wrappers: std.ArrayListUnmanaged(SpawnWrapperSpec) = .empty,
+    /// stdlib fazı §D.1.6 — `spawn_wrapper_counter`/`spawn_wrappers` İLE
+    /// AYNI desen, `nox.http.serve` çağrı siteleri İÇİN.
+    http_serve_wrapper_counter: usize = 0,
+    http_serve_wrappers: std.ArrayListUnmanaged(HttpServeWrapperSpec) = .empty,
+    /// Serbest fonksiyon adlarının (ve `"ClassName___init__"` biçimindeki
+    /// kurucu sembollerinin) kümesi — YALNIZCA (transitif olarak) ASLA bir
+    /// istisna FIRLATAMAYACAKLARI KANITLANMIŞ olanlar (bkz.
+    /// `computeMustNotRaise`in belge notu, performans fazı: `nox_exception_
+    /// pending` çağrıları `fib`-tarzı özyinelemeli kodda örneklerin ~%49'unu
+    /// oluşturuyordu). `genCall`/`genConstruct` bu kümedeki bir çağrı
+    /// SONRASI `emitExceptionCheck`i ATLAR. Metod çağrıları (`obj.method()`)
+    /// BU KÜMEYE HİÇ GİRMEZ (bkz. `computeMustNotRaise`in "muhafazakâr"
+    /// notu) — her zaman kontrol edilirler, bu yüzden bu alan yalnızca
+    /// serbest fonksiyon/kurucu sembolleri içerir.
+    must_not_raise: std.StringHashMapUnmanaged(void) = .empty,
+    /// İşlenmekte olan fonksiyon/metodun dönüş tipi — bir çağrıdan sonra
+    /// bekleyen bir istisna varsa ve yakalayan bir `try` yoksa, bu tipte
+    /// varsayılan bir değerle erken çıkmak için gerekli (bkz. `emitExceptionCheck`).
+    current_ret_qtype: QbeType = .none,
+    /// İçinde bulunulan en yakın `try` bloğunun sevk (dispatch) etiketi;
+    /// `null` ise (try dışındaysak) bir istisna doğrudan fonksiyon dışına
+    /// yayılır (bkz. `emitExceptionCheck`).
+    current_catch_label: ?[]const u8 = null,
+    /// `main`'in kendi gövdesini üretirken `true` — yakalanmamış bir istisna
+    /// `main`'den sızarsa (bkz. `emitExceptionCheck`) bu, sessizce `ret 0`
+    /// yerine `nox_unhandled_exception` çağrısıyla programı sıfırdan farklı
+    /// bir kodla sonlandırmak gerektiğini bildirir (bkz. bilinen sınırlama:
+    /// diğer fonksiyonlardan sızan istisnalar normal şekilde çağırana yayılır).
+    in_main: bool = false,
+    /// İçinde bulunulan `try`lerin `finally` gövdelerinin yığını (en dıştan en
+    /// içe). Python gibi, `finally` `try`/`except` içindeki bir `return`'de
+    /// bile ÇALIŞMALIDIR — QBE'de paylaşılan bir "unwind" hedefi olmadığından
+    /// (İlke #3), bu `return_stmt` tarafından `drainFinally` ile gerçek
+    /// `ret`ten hemen önce satır içi (inline) üretilerek sağlanır.
+    finally_stack: std.ArrayListUnmanaged([]const ast.Stmt) = .empty,
+    /// İçinde bulunulan `lowlevel` bloklarının arena işaretçileri yığını (en
+    /// dıştan en içe) — Katman 4 (AGENTS.md §8). Her `return`/yakalanmamış
+    /// istisna, `finally` gibi, bu arenaları da (`drainArenas`) gerçek
+    /// çıkıştan önce toplu olarak yıkmalıdır.
+    arena_stack: std.ArrayListUnmanaged([]const u8) = .empty,
+    /// `> 0`: şu an bir `lowlevel` bloğunun (doğrudan ya da iç içe) içindeyiz.
+    /// Basitlik ve güvenlik için, bu blok içindeyken heap tipli (`list`/sınıf)
+    /// hiçbir değer bir çağrıya argüman/alıcı olamaz, döndürülemez, başka bir
+    /// isme takma ad olamaz ya da bir liste literaline eklenemez — arena mı
+    /// ARC mı olduğuna bakılmaksızın (bkz. nox-teknik-spesifikasyon.md §3.8).
+    in_lowlevel_depth: usize = 0,
+
+    fn newTemp(self: *Codegen) CodegenError![]const u8 {
+        const n = self.temp_counter;
+        self.temp_counter += 1;
+        return std.fmt.allocPrint(self.allocator, "%t{d}", .{n});
+    }
+
+    fn newLabel(self: *Codegen, comptime prefix: []const u8) CodegenError![]const u8 {
+        const n = self.label_counter;
+        self.label_counter += 1;
+        return std.fmt.allocPrint(self.allocator, "@{s}{d}", .{ prefix, n });
+    }
+
+    fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
+        switch (te) {
+            .simple => |name| {
+                if (std.mem.eql(u8, name, "int")) return .{ .qtype = .l };
+                if (std.mem.eql(u8, name, "float")) return .{ .qtype = .d };
+                if (std.mem.eql(u8, name, "bool")) return .{ .qtype = .w };
+                if (std.mem.eql(u8, name, "None")) return .{ .qtype = .none };
+                if (std.mem.eql(u8, name, "str")) return .{ .qtype = .l, .heap = .str };
+                // `ptr` — Faz 20'nin ikinci artımı (bkz. nox-teknik-
+                // spesifikasyon.md §3.20): ARC-İZLENMEYEN opak bir işaretçi
+                // (`heap = .none`, `list`/`class` gibi ÖZEL bir dispatch
+                // GEREKTİRMEZ — düz bir `l` değeridir, `int` gibi).
+                if (std.mem.eql(u8, name, "ptr")) return .{ .qtype = .l, .heap = .none };
+                if (self.classes.contains(name)) return .{ .qtype = .l, .heap = .class, .class_name = name };
+                return error.Unsupported;
+            },
+            .generic => |g| {
+                if (std.mem.eql(u8, g.name, "dict")) {
+                    if (g.args.len != 2) return error.Unsupported;
+                    const key = try self.resolveType(g.args[0]);
+                    const value = try self.resolveType(g.args[1]);
+                    // v1 kapsamı (checker.zig'in `typeExprToType`indeki
+                    // `"dict"` dalıyla TUTARLI): K int/bool/str, V int/float/
+                    // bool/str — sınıf/list/dict/Task/Channel anahtar/değer
+                    // checker'da ZATEN reddedilir, burası savunmacıdır.
+                    if (key.heap != .none and key.heap != .str) return error.Unsupported;
+                    if (value.heap != .none and value.heap != .str) return error.Unsupported;
+                    const dinfo = try self.allocator.create(DictInfo);
+                    dinfo.* = .{ .key_is_str = key.heap == .str, .value_qtype = value.qtype, .value_is_str = value.heap == .str };
+                    return .{ .qtype = .l, .heap = .dict, .dict_info = dinfo };
+                }
+                const is_list = std.mem.eql(u8, g.name, "list");
+                const is_task = std.mem.eql(u8, g.name, "Task");
+                const is_channel = std.mem.eql(u8, g.name, "Channel");
+                if (!(is_list or is_task or is_channel) or g.args.len != 1) return error.Unsupported;
+                const elem = try self.resolveType(g.args[0]);
+                var elem_heap_info: ?*const ElemHeapInfo = null;
+                // `str` DAHİL — bkz. `ElemHeapInfo.nested`in belge notu:
+                // stdlib fazı §B'den beri `str` de ARC-yönetimli, `list[str]`
+                // elemanlarının özyinelemeli release'e girmesi İÇİN burada da
+                // `elem_heap_info` doldurulmalı (`genListElemRelease`in
+                // `info.nested`in `.str` özel durumuna bkz.).
+                if (elem.heap == .class or elem.heap == .list or elem.heap == .str) {
+                    const info = try self.allocator.create(ElemHeapInfo);
+                    info.* = .{ .heap = elem.heap, .class_name = elem.class_name, .elem_qtype = elem.elem_qtype, .nested = elem.elem_heap_info, .elem_is_str = elem.elem_is_str };
+                    elem_heap_info = info;
+                } else if (elem.heap != .none) {
+                    return error.Unsupported;
+                }
+                // `list[T]`nin KENDİSİ (heap=.list) ARC-yönetimlidir (refcount
+                // başlığı, retain-on-alias). `Task[T]`/`Channel[T]`nin KENDİSİ
+                // İSE DEĞİLDİR (heap=.task/.channel, `isHeapManaged`in DIŞINDA
+                // — bkz. `HeapKind`in belge notu) — zamanlayıcı kendi ömrünü
+                // kendi yönetir, kapsam-sonu temizliği DOĞRUDAN bir `nox_async_
+                // destroy_task`/`nox_channel_destroy` çağrısıdır (predecrement
+                // YOK, bkz. `releaseAllLocalsExcept`). `elem_qtype`/
+                // `elem_heap_info`/`elem_is_str` PAYLOAD (T) tipini tam olarak
+                // taşır — `await`/`Channel.recv`in doğru tipte bir SONUÇ değeri
+                // üretebilmesi için (bkz. `genAwaitExpr`, `genChannelOp`).
+                return .{
+                    .qtype = .l,
+                    .heap = if (is_list) .list else if (is_task) .task else .channel,
+                    .elem_qtype = elem.qtype,
+                    .elem_heap_info = elem_heap_info,
+                    .elem_is_str = elem.heap == .str,
+                };
+            },
+        }
+    }
+
+    // ---- Sınıf kaydı (fonksiyon/main gövdeleri üretilmeden ÖNCE tamamlanmalı) ----
+
+    fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
+        var init_fd: ?ast.FuncDef = null;
+        for (cd.methods) |m| {
+            if (std.mem.eql(u8, m.name, "__init__")) init_fd = m;
+        }
+
+        var info: ClassInfo = .{};
+        if (init_fd) |init| {
+            for (init.body) |stmt| {
+                if (stmt != .assign) continue;
+                const a = stmt.assign;
+                if (a.target != .attribute) continue;
+                const attr = a.target.attribute;
+                if (attr.obj.* != .identifier or !std.mem.eql(u8, attr.obj.identifier, "self")) continue;
+                var exists = false;
+                for (info.fields.items) |f| {
+                    if (std.mem.eql(u8, f.name, attr.attr)) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (exists) continue;
+                const ftype = try self.inferFieldType(init.params[1..], a.value);
+                try info.fields.append(self.allocator, .{
+                    .name = attr.attr,
+                    .info = ftype,
+                    .offset = TAG_SIZE + info.fields.items.len * FIELD_SLOT_SIZE,
+                });
+            }
+            info.total_size = TAG_SIZE + info.fields.items.len * FIELD_SLOT_SIZE;
+
+            const iparams = try self.allocator.alloc(TypeInfo, init.params.len - 1);
+            for (init.params[1..], 0..) |p, i| iparams[i] = try self.resolveType(p.type_expr);
+            info.init_params = iparams;
+        } else {
+            // `__init__`i olmayan sınıf (bkz. `ClassInfo.has_init`in belge
+            // notu): alan yok, kurucu 0 argüman alır — checker zaten bu
+            // durumda çağrı sitesinde 0 argüman şart koşar (bkz. checker.zig,
+            // `checkCall`in `.identifier` dalı, `init_sig orelse` varsayılanı).
+            info.has_init = false;
+            info.total_size = TAG_SIZE;
+        }
+        info.class_id = self.next_class_id;
+        self.next_class_id += 1;
+
+        for (cd.methods) |m| {
+            if (std.mem.eql(u8, m.name, "__init__")) continue;
+            const params = try self.allocator.alloc(TypeInfo, m.params.len - 1);
+            for (m.params[1..], 0..) |p, i| params[i] = try self.resolveType(p.type_expr);
+            const ret = try self.resolveType(m.return_type);
+            try info.methods.put(self.allocator, m.name, .{ .params = params, .ret = ret });
+        }
+
+        try self.classes.put(self.allocator, cd.name, info);
+    }
+
+    /// Bir sınıf alanının tipini yalnızca gerçekçi/yaygın örüntülerden çıkarır:
+    /// doğrudan bir `__init__` parametresi ya da bir literal. Daha karmaşık
+    /// ifadeler (checker'ın tam tip çıkarımını burada yeniden uygulamamak
+    /// için) bilinçli olarak desteklenmiyor.
+    fn inferFieldType(self: *Codegen, init_params: []const ast.Param, expr: ast.Expr) CodegenError!TypeInfo {
+        switch (expr) {
+            .identifier => |name| {
+                for (init_params) |p| {
+                    if (std.mem.eql(u8, p.name, name)) {
+                        // `list[T]` alanlar (bkz. görev "Sınıf alanı list[T]
+                        // tipinde olabilsin") — `resolveType` zaten TAM
+                        // `elem_qtype`/`elem_heap_info`/`elem_is_str`
+                        // betimleyicisini üretir; `genClassRelease` bunu
+                        // `releaseValueIfSet` üzerinden özyinelemeli release
+                        // için kullanır (bkz. `genClassRelease`in belge
+                        // notu). Sınıf tipli alanlar `resolveType`'ın kendisi
+                        // yüzünden yalnızca DAHA ÖNCE kaydedilmiş bir sınıfa
+                        // referans verebilir (bkz. `registerClass` sırası) —
+                        // bu da öz-referansı ve ileri-referanslı döngüleri
+                        // derleme zamanında doğal olarak imkansız kılar.
+                        return try self.resolveType(p.type_expr);
+                    }
+                }
+                return error.Unsupported;
+            },
+            .int_lit => return .{ .qtype = .l },
+            .float_lit => return .{ .qtype = .d },
+            .bool_lit => return .{ .qtype = .w },
+            .string_lit => return .{ .qtype = .l, .heap = .str },
+            else => return error.Unsupported,
+        }
+    }
+
+    fn registerFunc(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
+        const params = try self.allocator.alloc(TypeInfo, fd.params.len);
+        for (fd.params, 0..) |p, i| params[i] = try self.resolveType(p.type_expr);
+        const ret = try self.resolveType(fd.return_type);
+        try self.functions.put(self.allocator, fd.name, .{ .params = params, .ret = ret });
+    }
+
+    fn registerExternFunc(self: *Codegen, ed: ast.ExternDef) CodegenError!void {
+        const params = try self.allocator.alloc(TypeInfo, ed.params.len);
+        for (ed.params, 0..) |p, i| params[i] = try self.resolveType(p.type_expr);
+        const ret = try self.resolveType(ed.return_type);
+        try self.extern_functions.put(self.allocator, ed.name, .{ .params = params, .ret = ret, .needs_rt = ed.needs_rt });
+    }
+
+    fn collectLocals(self: *Codegen, locals: *std.ArrayListUnmanaged(LocalDecl), stmts: []const ast.Stmt, in_lowlevel: bool) CodegenError!void {
+        for (stmts) |stmt| {
+            switch (stmt) {
+                .var_decl => |v| {
+                    const info = try self.resolveType(v.type_expr);
+                    try locals.append(self.allocator, .{ .name = v.name, .info = info, .arena = in_lowlevel });
+                },
+                .for_stmt => |f| {
+                    if (isRangeCall(f.iterable)) {
+                        try locals.append(self.allocator, .{ .name = f.var_name, .info = .{ .qtype = .l } });
+                    } else if (f.iterable == .identifier) {
+                        const src = findLocal(locals.items, f.iterable.identifier) orelse return error.Unsupported;
+                        if (src.heap != .list) return error.Unsupported;
+                        // Döngü değişkeni listenin İÇİNDEKİ bir elemana ÖDÜNÇ
+                        // ALINMIŞ bir referanstır (listenin kendisi hâlâ
+                        // sahibidir) — heap-yönetimli elemanlarda (Faz 21
+                        // ön-koşulu) bunu `is_param = true` ile işaretlemek
+                        // (teknik olarak parametre olmasa da) kapsam-sonu
+                        // otomatik release'i ATLATIR; aksi halde listenin
+                        // KENDİ sahipliğini bozan bir çifte-serbest-bırakma
+                        // riski doğardı. `.class`/iç-içe `.list` DIŞINDA
+                        // (int/float/bool/str) bu zaten etkisizdir.
+                        var loop_var_info: TypeInfo = .{ .qtype = src.elem_qtype };
+                        if (src.elem_heap_info) |ehi| {
+                            loop_var_info.heap = ehi.heap;
+                            loop_var_info.class_name = ehi.class_name;
+                            loop_var_info.elem_qtype = ehi.elem_qtype;
+                            loop_var_info.elem_heap_info = ehi.nested;
+                        } else if (src.elem_is_str) {
+                            loop_var_info.heap = .str;
+                        }
+                        try locals.append(self.allocator, .{ .name = f.var_name, .info = loop_var_info, .is_param = true });
+                        // `genForList`nin dahili döngü indeksi için gizli bir
+                        // yerel — FONKSİYON GİRİŞİNDE (`allocSlot` ile) BİR
+                        // KEZ tahsis edilmesi gerekir. Aksi halde (bu `for`
+                        // başka bir döngünün içine gömülüyse) `genForList`nin
+                        // kendi `alloc8`'i her dış yinelemede yığını küçültüp
+                        // asla geri almaz — bkz. `adjustModSign`deki AYNI
+                        // yığın taşması hatası ve oradaki belge notu.
+                        try locals.append(self.allocator, .{ .name = try forListIdxName(self.allocator, f.var_name), .info = .{ .qtype = .l } });
+                    } else {
+                        return error.Unsupported;
+                    }
+                    try self.collectLocals(locals, f.body, in_lowlevel);
+                },
+                .if_stmt => |f| {
+                    try self.collectLocals(locals, f.then_body, in_lowlevel);
+                    for (f.elif_clauses) |ec| try self.collectLocals(locals, ec.body, in_lowlevel);
+                    if (f.else_body) |eb| try self.collectLocals(locals, eb, in_lowlevel);
+                },
+                .while_stmt => |w| try self.collectLocals(locals, w.body, in_lowlevel),
+                .try_stmt => |t| {
+                    try self.collectLocals(locals, t.try_body, in_lowlevel);
+                    for (t.except_clauses) |ec| {
+                        if (!self.classes.contains(ec.class_name)) return error.Unsupported;
+                        if (ec.bind_name) |bn| {
+                            try locals.append(self.allocator, .{
+                                .name = bn,
+                                .info = .{ .qtype = .l, .heap = .class, .class_name = ec.class_name },
+                                .arena = in_lowlevel,
+                            });
+                        }
+                        try self.collectLocals(locals, ec.body, in_lowlevel);
+                    }
+                    if (t.finally_body) |fb| try self.collectLocals(locals, fb, in_lowlevel);
+                },
+                .lowlevel_stmt => |ll| try self.collectLocals(locals, ll.body, true),
+                .class_def, .func_def, .protocol_def, .extern_def => return error.Unsupported,
+                else => {},
+            }
+        }
+    }
+
+    fn allocSlot(self: *Codegen, name: []const u8, info: TypeInfo, is_param: bool, arena: bool) CodegenError!void {
+        const slot = try self.newTemp();
+        const size: usize = if (info.qtype == .w) 4 else 8;
+        try self.out.writer.print("    {s} =l alloc{d} {d}\n", .{ slot, size, size });
+        if (isHeapManaged(info.heap) and !is_param) {
+            try self.out.writer.print("    storel 0, {s}\n", .{slot});
+        }
+        try self.vars.put(self.allocator, name, .{
+            .slot = slot,
+            .qtype = info.qtype,
+            .heap = info.heap,
+            .elem_qtype = info.elem_qtype,
+            .class_name = info.class_name,
+            .elem_heap_info = info.elem_heap_info,
+            .elem_is_str = info.elem_is_str,
+            .dict_info = info.dict_info,
+            .is_param = is_param,
+            .arena = arena,
+        });
+    }
+
+    fn genFunction(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
+        self.vars.clearRetainingCapacity();
+        self.temp_counter = 0;
+        self.label_counter = 0;
+
+        const ret_info = try self.resolveType(fd.return_type);
+        self.current_ret_qtype = ret_info.qtype;
+        self.current_catch_label = null;
+        self.in_main = false;
+
+        var locals: std.ArrayListUnmanaged(LocalDecl) = .empty;
+        defer locals.deinit(self.allocator);
+        for (fd.params) |p| {
+            try locals.append(self.allocator, .{ .name = p.name, .info = try self.resolveType(p.type_expr), .is_param = true });
+        }
+        try self.collectLocals(&locals, fd.body, false);
+
+        if (ret_info.qtype == .none) {
+            try self.out.writer.print("export function ${s}(l {s}", .{ fd.name, RT_PARAM });
+        } else {
+            try self.out.writer.print("export function {s} ${s}(l {s}", .{ qbeTypeName(ret_info.qtype), fd.name, RT_PARAM });
+        }
+        for (fd.params) |p| {
+            try self.out.writer.writeAll(", ");
+            const info = try self.resolveType(p.type_expr);
+            try self.out.writer.print("{s} %p_{s}", .{ qbeTypeName(info.qtype), p.name });
+        }
+        try self.out.writer.writeAll(") {\n@start\n");
+
+        for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
+        for (fd.params) |p| {
+            const info = self.vars.get(p.name).?;
+            try self.out.writer.print("    store{s} %p_{s}, {s}\n", .{ qbeTypeName(info.qtype), p.name, info.slot });
+        }
+
+        try self.genStmts(fd.body, ret_info.qtype);
+        try self.releaseAllLocals();
+
+        const end_label = try self.newLabel("fn_end");
+        try self.out.writer.print("{s}\n", .{end_label});
+        try self.emitDefaultReturn(ret_info.qtype);
+        try self.out.writer.writeAll("}\n");
+    }
+
+    fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) CodegenError!void {
+        self.vars.clearRetainingCapacity();
+        self.temp_counter = 0;
+        self.label_counter = 0;
+
+        const ret_info = try self.resolveType(m.return_type);
+        self.current_ret_qtype = ret_info.qtype;
+        self.current_catch_label = null;
+        self.in_main = false;
+
+        var locals: std.ArrayListUnmanaged(LocalDecl) = .empty;
+        defer locals.deinit(self.allocator);
+        try locals.append(self.allocator, .{
+            .name = "self",
+            .info = .{ .qtype = .l, .heap = .class, .class_name = class_name },
+            .is_param = true,
+        });
+        for (m.params[1..]) |p| {
+            try locals.append(self.allocator, .{ .name = p.name, .info = try self.resolveType(p.type_expr), .is_param = true });
+        }
+        try self.collectLocals(&locals, m.body, false);
+
+        const fn_name = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ class_name, m.name });
+        if (ret_info.qtype == .none) {
+            try self.out.writer.print("export function ${s}(l {s}, l %p_self", .{ fn_name, RT_PARAM });
+        } else {
+            try self.out.writer.print("export function {s} ${s}(l {s}, l %p_self", .{ qbeTypeName(ret_info.qtype), fn_name, RT_PARAM });
+        }
+        for (m.params[1..]) |p| {
+            try self.out.writer.writeAll(", ");
+            const info = try self.resolveType(p.type_expr);
+            try self.out.writer.print("{s} %p_{s}", .{ qbeTypeName(info.qtype), p.name });
+        }
+        try self.out.writer.writeAll(") {\n@start\n");
+
+        for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
+        {
+            const info = self.vars.get("self").?;
+            try self.out.writer.print("    storel %p_self, {s}\n", .{info.slot});
+        }
+        for (m.params[1..]) |p| {
+            const info = self.vars.get(p.name).?;
+            try self.out.writer.print("    store{s} %p_{s}, {s}\n", .{ qbeTypeName(info.qtype), p.name, info.slot });
+        }
+
+        try self.genStmts(m.body, ret_info.qtype);
+        try self.releaseAllLocals();
+
+        const end_label = try self.newLabel("fn_end");
+        try self.out.writer.print("{s}\n", .{end_label});
+        try self.emitDefaultReturn(ret_info.qtype);
+        try self.out.writer.writeAll("}\n");
+    }
+
+    /// Her sınıf için `$ClassName_release(rt, p)` üretir: refcount'u azaltır
+    /// (`nox_rc_predecrement`); sıfıra düştüyse, ÖNCE heap-yönetimli her alanı
+    /// (sınıf TİPLİ ya da — bkz. görev "Sınıf alanı list[T] tipinde olabilsin"
+    /// — `list[T]` TİPLİ, varsa/null değilse) özyinelemeli olarak serbest
+    /// bırakır, SONRA belleği gerçekten serbest bırakır (`nox_rc_free_payload`).
+    /// Çalışma zamanının (`arc.zig`) aksine bu, derleme zamanında bilinen alan
+    /// düzenini (`cinfo.fields`) kullanabildiği için iç içe serbest bırakmayı
+    /// yapabilir — bkz. modül üstü not, "İç içe sınıf alanları". Her iki alan
+    /// türü de (sınıf/liste) `releaseValueIfSet` ile AYNI tek yoldan geçer —
+    /// bu, bir yerel değişkenin kapsam-sonu temizliğiyle (`releaseSlotIfSet`)
+    /// TAMAMEN aynı mantıktır (null kontrolü + doğru release fonksiyonuna
+    /// dispatch).
+    fn genClassRelease(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) CodegenError!void {
+        self.temp_counter = 0;
+        self.label_counter = 0;
+
+        try self.out.writer.print("export function ${s}_release(l {s}, l %p) {{\n@start\n", .{ class_name, RT_PARAM });
+        const should_free = try self.emitInlinePredecrement("%p");
+        const free_label = try self.newLabel("release_free");
+        const done_label = try self.newLabel("release_done");
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ should_free, free_label, done_label });
+        try self.out.writer.print("{s}\n", .{free_label});
+        for (cinfo.fields.items) |f| {
+            if (isHeapManaged(f.info.heap)) {
+                const addr = try self.newTemp();
+                try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, f.offset });
+                const fv = try self.newTemp();
+                try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
+                try self.releaseValueIfSet(fv, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info);
+            } else if (f.info.heap == .dict) {
+                // `dict[K, V]` sınıf alanı (ör. `HttpResponse.headers`) —
+                // `Task`/`Channel` İLE AYNI gerekçeyle ARC-yönetimli DEĞİLDİR
+                // (`isHeapManaged` bunu KAPSAMAZ), bu yüzden AYRI bir dal:
+                // DOĞRUDAN bir kez `nox_dict_destroy` (bkz. `releaseAllLocalsExcept`in
+                // AYNI desenidir — yalnızca YEREL değil, sınıf ALANI için).
+                const dinfo = f.info.dict_info.?;
+                const addr = try self.newTemp();
+                try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, f.offset });
+                const fv = try self.newTemp();
+                try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
+                const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
+                const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
+                try self.out.writer.print("    call $nox_dict_destroy(l {s}, l {s}, w {s}, w {s})\n", .{ RT_PARAM, fv, key_is_str_lit, value_is_str_lit });
+            }
+        }
+        try self.out.writer.print("    call $nox_rc_free_payload(l {s}, l %p, l {d})\n", .{ RT_PARAM, cinfo.total_size });
+        try self.out.writer.print("    jmp {s}\n", .{done_label});
+        try self.out.writer.print("{s}\n", .{done_label});
+        try self.out.writer.writeAll("    ret\n}\n");
+    }
+
+    /// Her sınıf için `$ClassName_eq(rt, a, b) w` üretir — Python'un varsayılan
+    /// `__eq__`inin AKSİNE (kimlik/`is` karşılaştırması), Nox'ta `==`/`!=`
+    /// PYTHON'daki `dataclass`lar gibi ALAN ALANA YAPISAL karşılaştırmadır
+    /// (bkz. görev "list/class için derin yapısal eşitlik"). Alanı olmayan
+    /// bir sınıf (bkz. `ClassInfo.has_init`) için sonuç her zaman `1`dir (iki
+    /// örnek yapısal olarak her zaman "eşit"tir — kimlik önemsizdir). Her alan
+    /// için `genEqCompareOrJump` kullanılır (bkz. onun belge notu — NEDEN
+    /// alloc/yığın yuvası KULLANILMADIĞI için).
+    fn genClassEq(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) CodegenError!void {
+        self.temp_counter = 0;
+        self.label_counter = 0;
+
+        try self.out.writer.print("export function w ${s}_eq(l {s}, l %a, l %b) {{\n@start\n", .{ class_name, RT_PARAM });
+        const mismatch_label = try self.newLabel("classeq_mismatch");
+        for (cinfo.fields.items) |f| {
+            const addr_a = try self.newTemp();
+            try self.out.writer.print("    {s} =l add %a, {d}\n", .{ addr_a, f.offset });
+            const addr_b = try self.newTemp();
+            try self.out.writer.print("    {s} =l add %b, {d}\n", .{ addr_b, f.offset });
+            const va = try self.newTemp();
+            try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ va, qbeTypeName(f.info.qtype), qbeTypeName(f.info.qtype), addr_a });
+            const vb = try self.newTemp();
+            try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ vb, qbeTypeName(f.info.qtype), qbeTypeName(f.info.qtype), addr_b });
+            try self.genEqCompareOrJump(va, vb, f.info.qtype, f.info.heap, f.info.class_name, f.info.elem_qtype, f.info.elem_heap_info, f.info.elem_is_str, mismatch_label);
+        }
+        try self.out.writer.writeAll("    ret 1\n");
+        try self.out.writer.print("{s}\n", .{mismatch_label});
+        try self.out.writer.writeAll("    ret 0\n}\n");
+    }
+
+    /// Verilen iki (zaten yüklenmiş) `w`/`l`/`d` değerini `heap`/`class_name`/
+    /// `elem_*` betimleyicisine göre karşılaştırır: uyuşmuyorsa `mismatch_label`e
+    /// ATLAR, uyuşuyorsa NORMAL AKIŞA (çağıranın bir sonraki satırına) DEVAM
+    /// EDER — bir DEĞER DÖNDÜRMEZ. Bu BİLİNÇLİ bir tasarım: `heap == .class`/
+    /// `.list` durumunda (`va`/`vb` NULL OLABİLİR — bkz. `__init__`in koşullu
+    /// bir dalda alan atlaması bilinen sınırlaması) sonucu bir dal SONRASI
+    /// TEK bir değere birleştirmek ya QBE'nin `phi`sini ya da bir yığın
+    /// yuvasını (`alloc4`/`alloc8`) gerektirirdi — İKİNCİSİ, bu fonksiyon bir
+    /// KULLANICI DÖNGÜSÜ içinden çağrılan `==`/`!=`de (bkz. `genBinary`) HER
+    /// yinelemede tekrar tekrar çalışıp QBE'nin fonksiyon-girişi-tahsisi
+    /// varsayımını ihlal ederek yığın taşmasına yol açardı (bkz. §3.16'daki
+    /// AYNI hata sınıfı, `adjustModSign`/`genForList`). Çözüm: hiç DEĞER
+    /// TAŞIMADAN, doğrudan `mismatch_label`e ATLAMAK ya da DEVAM ETMEK —
+    /// `genClassEq`/`genListEq`nin KENDİ döngü/alan yapısı zaten "eşleşmedi ->
+    /// dışarı" ile "eşleşti -> bir sonraki alan/elemana geç" ayrımını doğal
+    /// olarak taşıdığından, ayrı bir taşınabilir değere hiç gerek YOKTUR.
+    fn genEqCompareOrJump(
+        self: *Codegen,
+        va: []const u8,
+        vb: []const u8,
+        qtype: QbeType,
+        heap: HeapKind,
+        class_name: ?[]const u8,
+        elem_qtype: QbeType,
+        elem_heap_info: ?*const ElemHeapInfo,
+        elem_is_str: bool,
+        mismatch_label: []const u8,
+    ) CodegenError!void {
+        if (heap == .none) {
+            const t = try self.newTemp();
+            const mnemonic: []const u8 = switch (qtype) {
+                .l => "ceql",
+                .w => "ceqw",
+                .d => "ceqd",
+                .none => unreachable,
+            };
+            try self.out.writer.print("    {s} =w {s} {s}, {s}\n", .{ t, mnemonic, va, vb });
+            const cont_label = try self.newLabel("eqcmp_cont");
+            try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ t, cont_label, mismatch_label });
+            try self.out.writer.print("{s}\n", .{cont_label});
+            return;
+        }
+        if (heap == .str) {
+            const cmp = try self.newTemp();
+            try self.out.writer.print("    {s} =w call $strcmp(l {s}, l {s})\n", .{ cmp, va, vb });
+            const cont_label = try self.newLabel("eqcmp_cont");
+            try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cmp, mismatch_label, cont_label });
+            try self.out.writer.print("{s}\n", .{cont_label});
+            return;
+        }
+
+        // `heap == .class` ya da `.list` — NULL olabilir (bkz. belge notu).
+        const a_null = try self.newTemp();
+        try self.out.writer.print("    {s} =w ceql {s}, 0\n", .{ a_null, va });
+        const b_null = try self.newTemp();
+        try self.out.writer.print("    {s} =w ceql {s}, 0\n", .{ b_null, vb });
+        const either_null = try self.newTemp();
+        try self.out.writer.print("    {s} =w or {s}, {s}\n", .{ either_null, a_null, b_null });
+        const null_case_label = try self.newLabel("eqcmp_nullcase");
+        const rec_label = try self.newLabel("eqcmp_rec");
+        const cont_label = try self.newLabel("eqcmp_cont");
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ either_null, null_case_label, rec_label });
+        try self.out.writer.print("{s}\n", .{null_case_label});
+        const both_null = try self.newTemp();
+        try self.out.writer.print("    {s} =w and {s}, {s}\n", .{ both_null, a_null, b_null });
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ both_null, cont_label, mismatch_label });
+        try self.out.writer.print("{s}\n", .{rec_label});
+        const rec: []const u8 = switch (heap) {
+            .class => blk: {
+                const t = try self.newTemp();
+                try self.out.writer.print("    {s} =w call ${s}_eq(l {s}, l {s}, l {s})\n", .{ t, class_name.?, RT_PARAM, va, vb });
+                break :blk t;
+            },
+            .list => blk: {
+                const fn_name = try self.eqFnNameForList(elem_qtype, elem_heap_info, elem_is_str);
+                const t = try self.newTemp();
+                try self.out.writer.print("    {s} =w call ${s}_eq(l {s}, l {s}, l {s})\n", .{ t, fn_name, RT_PARAM, va, vb });
+                break :blk t;
+            },
+            // `dict`/`Task`/`Channel` — opak tutamaçlar, YAPISAL derinlemesine
+            // eşitliği YOK (stdlib fazı §C'nin `dict` KAPSAM dışı bıraktığı
+            // bir özellik, bkz. checker.zig). `HttpResponse.headers` gibi bir
+            // `dict[str,str]` sınıf ALANI, HER sınıf İÇİN OTOMATİK üretilen
+            // `$ClassName_eq`de (kullanıcı `==` HİÇ kullanmasa BİLE) bu dala
+            // düşer — güvenli varsayılan: TUTAMAÇ KİMLİĞİ (pointer) karşılaştırması.
+            .dict, .task, .channel => blk: {
+                const t = try self.newTemp();
+                try self.out.writer.print("    {s} =w ceql {s}, {s}\n", .{ t, va, vb });
+                break :blk t;
+            },
+            .none, .str => unreachable,
+        };
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ rec, cont_label, mismatch_label });
+        try self.out.writer.print("{s}\n", .{cont_label});
+    }
+
+    /// `releaseFnNameFor` ile AYNI özyineli mangling şeması, ama derin
+    /// yapısal eşitlik İÇİN: `str` elemanlar `int`/`float`/`bool`dan (`prim*`)
+    /// AYRI bir ad alır — release'in aksine eşitlik `strcmp` ile `ceq*`i
+    /// KARIŞTIRAMAZ (bkz. `list_eq_queue`nin belge notu).
+    fn eqMangleFor(self: *Codegen, elem_qtype: QbeType, elem_heap_info: ?*const ElemHeapInfo, elem_is_str: bool) CodegenError![]const u8 {
+        if (elem_heap_info) |ehi| {
+            return switch (ehi.heap) {
+                .class => ehi.class_name.?,
+                .str => "str",
+                .list => blk: {
+                    const inner = try self.eqMangleFor(ehi.elem_qtype, ehi.nested, ehi.elem_is_str);
+                    break :blk try std.fmt.allocPrint(self.allocator, "List_{s}", .{inner});
+                },
+                else => unreachable,
+            };
+        }
+        if (elem_is_str) return "str";
+        return try std.fmt.allocPrint(self.allocator, "prim{s}", .{qbeTypeName(elem_qtype)});
+    }
+
+    /// Bir `list[T]`nin (elemanları `elem_qtype`/`elem_heap_info`/`elem_is_str`
+    /// ile betimlenen) `$List_<mangled>_eq`ini ister — ilk istekte
+    /// `list_eq_queue`ya TEMBEL kaydedilir (`list_release_queue` ile AYNI
+    /// desen, bkz. `releaseFnNameFor`).
+    fn eqFnNameForList(self: *Codegen, elem_qtype: QbeType, elem_heap_info: ?*const ElemHeapInfo, elem_is_str: bool) CodegenError![]const u8 {
+        const inner = try self.eqMangleFor(elem_qtype, elem_heap_info, elem_is_str);
+        const name = try std.fmt.allocPrint(self.allocator, "List_{s}", .{inner});
+        if (!self.list_eq_seen.contains(name)) {
+            try self.list_eq_seen.put(self.allocator, name, {});
+            try self.list_eq_queue.append(self.allocator, .{ .name = name, .elem_qtype = elem_qtype, .elem_heap_info = elem_heap_info, .elem_is_str = elem_is_str });
+        }
+        return name;
+    }
+
+    /// `eqFnNameForList`in kuyruğa aldığı `$List_<name>_eq(rt, a, b) w`i
+    /// üretir: önce uzunlukları karşılaştırır (farklıysa hemen `0`), sonra
+    /// elemanları TEK TEK (`genEqCompareOrJump` ile) karşılaştırır — ilk
+    /// uyuşmazlıkta erken `0` döner (kısa devre), tümü eşleşirse `1`.
+    fn genListEq(self: *Codegen, name: []const u8, elem_qtype: QbeType, elem_heap_info: ?*const ElemHeapInfo, elem_is_str: bool) CodegenError!void {
+        self.temp_counter = 0;
+        self.label_counter = 0;
+
+        try self.out.writer.print("export function w ${s}_eq(l {s}, l %a, l %b) {{\n@start\n", .{ name, RT_PARAM });
+        const len_a = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl %a\n", .{len_a});
+        const len_b = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl %b\n", .{len_b});
+        const len_diff = try self.newTemp();
+        try self.out.writer.print("    {s} =w cnel {s}, {s}\n", .{ len_diff, len_a, len_b });
+        const false_label = try self.newLabel("listeq_lendiff");
+        const loop_init_label = try self.newLabel("listeq_init");
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ len_diff, false_label, loop_init_label });
+        try self.out.writer.print("{s}\n", .{loop_init_label});
+
+        const idx_slot = try self.newTemp();
+        try self.out.writer.print("    {s} =l alloc8 8\n", .{idx_slot});
+        try self.out.writer.print("    storel 0, {s}\n", .{idx_slot});
+
+        const cond_label = try self.newLabel("listeq_cond");
+        const body_label = try self.newLabel("listeq_body");
+        const true_label = try self.newLabel("listeq_true");
+
+        try self.out.writer.print("    jmp {s}\n", .{cond_label});
+        try self.out.writer.print("{s}\n", .{cond_label});
+        const idx_cur = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ idx_cur, idx_slot });
+        const cont = try self.newTemp();
+        try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ cont, idx_cur, len_a });
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cont, body_label, true_label });
+        try self.out.writer.print("{s}\n", .{body_label});
+
+        const off = try self.newTemp();
+        try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ off, idx_cur, qbeSizeOf(elem_qtype) });
+        const off8 = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 8\n", .{ off8, off });
+        const addr_a = try self.newTemp();
+        try self.out.writer.print("    {s} =l add %a, {s}\n", .{ addr_a, off8 });
+        const addr_b = try self.newTemp();
+        try self.out.writer.print("    {s} =l add %b, {s}\n", .{ addr_b, off8 });
+        const ea = try self.newTemp();
+        try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ ea, qbeTypeName(elem_qtype), qbeTypeName(elem_qtype), addr_a });
+        const eb = try self.newTemp();
+        try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ eb, qbeTypeName(elem_qtype), qbeTypeName(elem_qtype), addr_b });
+        const elem_heap: HeapKind = if (elem_heap_info) |ehi| ehi.heap else if (elem_is_str) .str else .none;
+        const elem_class_name: ?[]const u8 = if (elem_heap_info) |ehi| ehi.class_name else null;
+        try self.genEqCompareOrJump(ea, eb, elem_qtype, elem_heap, elem_class_name, if (elem_heap_info) |ehi| ehi.elem_qtype else .none, if (elem_heap_info) |ehi| ehi.nested else null, if (elem_heap_info) |ehi| ehi.elem_is_str else false, false_label);
+        const idx_next = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 1\n", .{ idx_next, idx_cur });
+        try self.out.writer.print("    storel {s}, {s}\n", .{ idx_next, idx_slot });
+        try self.out.writer.print("    jmp {s}\n", .{cond_label});
+        try self.out.writer.print("{s}\n", .{true_label});
+        try self.out.writer.writeAll("    ret 1\n");
+        try self.out.writer.print("{s}\n", .{false_label});
+        try self.out.writer.writeAll("    ret 0\n}\n");
+    }
+
+    fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool) CodegenError!void {
+        if (use_async) return self.genMainAsync(stmts);
+
+        self.vars.clearRetainingCapacity();
+        self.temp_counter = 0;
+        self.label_counter = 0;
+        self.current_ret_qtype = .w;
+        self.current_catch_label = null;
+        self.in_main = true;
+
+        var locals: std.ArrayListUnmanaged(LocalDecl) = .empty;
+        defer locals.deinit(self.allocator);
+        try self.collectLocals(&locals, stmts, false);
+
+        // Stdlib fazı §J: `w %argc, l %argv` — C ABI'nin GERÇEK `main(int
+        // argc, char **argv)` imzasıyla UYUMLU (bkz. `nox_os_init`in belge
+        // notu, `runtime/stdlib_shims/os.zig`) — `nox.os` HİÇ import
+        // edilmese BİLE KOŞULSUZ eklenir (basitlik: ikinci bir `$main`
+        // kodgen yolu YOK, argv'yi HİÇ kullanmayan programlar İÇİN bu
+        // parametreler yalnızca kullanılmadan geçilir, sıfıra yakın
+        // maliyet).
+        try self.out.writer.writeAll("export function w $main(w %argc, l %argv) {\n@start\n");
+        try self.out.writer.print("    {s} =l call $nox_runtime_init()\n", .{RT_PARAM});
+        try self.out.writer.writeAll("    call $nox_os_init(w %argc, l %argv)\n");
+        // Not: `main`in kendi PARAMETRESİ yoktur, ama `collectLocals` artık
+        // BAZI yerelleri (heap-yönetimli elemanlı bir `for`nin döngü
+        // değişkeni — bkz. `collectLocals`) ödünç alınmış olarak `is_param =
+        // true` ile işaretleyebiliyor; bu bilgiyi burada YOK SAYMAK
+        // (eskiden olduğu gibi sabit `false`) kapsam-sonu otomatik release'i
+        // yanlışlıkla tetikleyip listenin sahipliğini bozardı.
+        for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
+        try self.genStmts(stmts, .w);
+        try self.releaseAllLocals();
+        try self.out.writer.print("    call $nox_runtime_deinit(l {s})\n", .{RT_PARAM});
+        const end_label = try self.newLabel("fn_end");
+        try self.out.writer.print("{s}\n", .{end_label});
+        try self.out.writer.writeAll("    ret 0\n}\n");
+    }
+
+    /// `moduleUsesAsync` `true` döndüğünde `genMain` yerine kullanılır —
+    /// modülün üst düzey deyimleri (Nox'ta açık bir `def main()` sözleşmesi
+    /// YOK, bkz. `checkModule`nin `top_ctx.in_async = true` notu) bir fiber
+    /// GİRİŞİ olarak (`$main_body`) derlenir, `$main` (gerçek C ABI girişi)
+    /// yalnızca onu zamanlayıcıya spawn edip tamamlanmasını bekleyen İNCE
+    /// bir sürücüye dönüşür. Bu, async KULLANMAYAN programların (büyük
+    /// çoğunluk) `genMain`in DEĞİŞMEMİŞ, sıfır-ek-maliyetli yolundan
+    /// geçmeye devam etmesini sağlar (bkz. nox-teknik-spesifikasyon.md
+    /// §3.21, aşama 4).
+    fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt) CodegenError!void {
+        self.vars.clearRetainingCapacity();
+        self.temp_counter = 0;
+        self.label_counter = 0;
+        self.current_ret_qtype = .l;
+        self.current_catch_label = null;
+        self.in_main = true;
+
+        var locals: std.ArrayListUnmanaged(LocalDecl) = .empty;
+        defer locals.deinit(self.allocator);
+        try self.collectLocals(&locals, stmts, false);
+
+        try self.out.writer.writeAll("export function l $main_body(l %argp) {\n@start\n");
+        try self.out.writer.print("    {s} =l loadl %argp\n", .{RT_PARAM});
+        for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
+        try self.genStmts(stmts, .l);
+        try self.releaseAllLocals();
+        try self.out.writer.print("    call $nox_free(l {s}, l %argp, l 8)\n", .{RT_PARAM});
+        const end_label = try self.newLabel("fn_end");
+        try self.out.writer.print("{s}\n", .{end_label});
+        try self.out.writer.writeAll("    ret 0\n}\n");
+
+        // `$main` — gerçek C ABI girişi: çalışma zamanını/zamanlayıcıyı
+        // başlatır, üst düzey kodu (`$main_body`) TEK bir görev olarak
+        // spawn eder, tamamlanmasını (ya da bir kilitlenmeyi) bekler.
+        self.temp_counter = 0;
+        self.label_counter = 0;
+        // Bkz. `genMain`in AYNI notu — `w %argc, l %argv` KOŞULSUZ eklenir.
+        try self.out.writer.writeAll("export function w $main(w %argc, l %argv) {\n@start\n");
+        try self.out.writer.print("    {s} =l call $nox_runtime_init()\n", .{RT_PARAM});
+        try self.out.writer.writeAll("    call $nox_os_init(w %argc, l %argv)\n");
+        try self.out.writer.print("    call $nox_async_init(l {s})\n", .{RT_PARAM});
+        const closure_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_alloc(l {s}, l 8)\n", .{ closure_t, RT_PARAM });
+        try self.out.writer.print("    storel {s}, {s}\n", .{ RT_PARAM, closure_t });
+        const task_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_async_spawn(l {s}, l $main_body, l {s})\n", .{ task_t, RT_PARAM, closure_t });
+        const run_result_t = try self.newTemp();
+        try self.out.writer.print("    {s} =w call $nox_async_run_to_completion(l {s})\n", .{ run_result_t, RT_PARAM });
+        const deadlock_label = try self.newLabel("deadlock");
+        const ok_label = try self.newLabel("no_deadlock");
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ run_result_t, deadlock_label, ok_label });
+        try self.out.writer.print("{s}\n", .{deadlock_label});
+        try self.out.writer.print("    call $nox_async_deadlock_abort(l {s})\n", .{RT_PARAM});
+        try self.out.writer.writeAll("    ret 0\n"); // erişilemez — savunmacı (bkz. `emitExceptionCheck`in AYNI deseni)
+        try self.out.writer.print("{s}\n", .{ok_label});
+        try self.out.writer.print("    call $nox_async_destroy_task(l {s}, l {s})\n", .{ RT_PARAM, task_t });
+        try self.out.writer.print("    call $nox_async_deinit(l {s})\n", .{RT_PARAM});
+        try self.out.writer.print("    call $nox_runtime_deinit(l {s})\n", .{RT_PARAM});
+        try self.out.writer.writeAll("    ret 0\n}\n");
+    }
+
+    /// Bu fonksiyonun/main'in TÜM heap tipli YEREL (parametre olmayan)
+    /// değişkenlerini serbest bırakır (slotta ne varsa — sıfır/null dahil,
+    /// güvenle atlanır). Kapsam sonu için çağrılır. Bilinen sınırlama: erken
+    /// `return` noktalarında bu temizlik ÇALIŞMAZ (bkz. modül üstü not).
+    fn releaseAllLocals(self: *Codegen) CodegenError!void {
+        try self.releaseAllLocalsExcept(null);
+    }
+
+    /// `releaseAllLocals` ile aynıdır, yalnızca `except_name` adlı yerel hariç
+    /// (varsa) — `return <isim>` bir "taşıma"dır: döndürülen bağlamanın kendi
+    /// slotu serbest bırakılmaz (aksi hâlde döndürülen değer serbest
+    /// bırakılmış bir belleğe işaret ederdi), ama AYNI kapsamdaki DİĞER heap
+    /// tipli yereller (bkz. bilinen sınırlama — artık yalnızca `return`'ün
+    /// KENDİ değeri için değil, `except ... as` ile yakalanan nesneler gibi
+    /// diğer yereller için de doğru serbest bırakılıyor) hâlâ serbest bırakılır.
+    fn releaseAllLocalsExcept(self: *Codegen, except_name: ?[]const u8) CodegenError!void {
+        var it = self.vars.iterator();
+        while (it.next()) |entry| {
+            if (except_name) |name| {
+                if (std.mem.eql(u8, entry.key_ptr.*, name)) continue;
+            }
+            // Arena tipli bağlamalar hiçbir zaman bireysel release edilmez —
+            // refcount başlıkları yoktur, yaşam süreleri yalnızca kendi
+            // `lowlevel` bloğunun `nox_arena_destroy`'una bağlıdır.
+            if (entry.value_ptr.is_param or entry.value_ptr.arena) continue;
+            if (isHeapManaged(entry.value_ptr.heap)) {
+                try self.releaseSlotIfSet(entry.value_ptr.*);
+            } else if (entry.value_ptr.heap == .task or entry.value_ptr.heap == .channel) {
+                // `Task[T]`/`Channel[T]` ARC-yönetimli DEĞİLDİR (bkz.
+                // `HeapKind`in belge notu) — predecrement/koşullu free YOK,
+                // DOĞRUDAN bir kez yıkılır. **Bilinçli v0.1 sınırlaması:**
+                // yeniden atamada (`t = spawn ...`) eski değer BURADAN
+                // GEÇMEZ (yalnızca kapsam SONU) — bu durumda eski görev/kanal
+                // sızar (kaçak Task'la AYNI kabul edilmiş sınıf, bkz. spec).
+                const ptr = try self.newTemp();
+                try self.out.writer.print("    {s} =l loadl {s}\n", .{ ptr, entry.value_ptr.slot });
+                const fn_name = if (entry.value_ptr.heap == .task) "nox_async_destroy_task" else "nox_channel_destroy";
+                try self.out.writer.print("    call ${s}(l {s}, l {s})\n", .{ fn_name, RT_PARAM, ptr });
+            } else if (entry.value_ptr.heap == .dict) {
+                // `dict[K, V]` — `Task`/`Channel` İLE AYNI gerekçeyle ARC-
+                // yönetimli DEĞİLDİR (bkz. `HeapKind`in belge notu):
+                // DOĞRUDAN bir kez `nox_dict_destroy` çağrılır (bu, İÇİNDEKİ
+                // TÜM `str` anahtar/değerleri de özyinelemesiz ÖZ olarak
+                // serbest bırakır — bkz. `runtime/collections/dict.zig`).
+                // **Bilinçli v0.1 sınırlaması:** `Task`/`Channel`le AYNI —
+                // yeniden atamada eski dict BURADAN geçmez, sızar.
+                const dinfo = entry.value_ptr.dict_info.?;
+                const ptr = try self.newTemp();
+                try self.out.writer.print("    {s} =l loadl {s}\n", .{ ptr, entry.value_ptr.slot });
+                const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
+                const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
+                try self.out.writer.print("    call $nox_dict_destroy(l {s}, l {s}, w {s}, w {s})\n", .{ RT_PARAM, ptr, key_is_str_lit, value_is_str_lit });
+            }
+        }
+    }
+
+    /// Yalnızca `list[T]` için: boyut çalışma zamanında `len` alanından
+    /// hesaplanır (sınıflar için artık `genClassRelease`'in ürettiği
+    /// `$ClassName_release` kullanılır — `total_size` derleme zamanında
+    /// zaten sabittir, bu yol üzerinden hesaplanmaya gerek yoktur).
+    fn listPayloadSize(self: *Codegen, ptr: []const u8, elem_qtype: QbeType) CodegenError![]const u8 {
+        const len_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ len_t, ptr });
+        const size_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ size_t, len_t, qbeSizeOf(elem_qtype) });
+        const total_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 8\n", .{ total_t, size_t });
+        return total_t;
+    }
+
+    /// `info`nin betimlediği TEK bir DEĞERİ (bir sınıf örneği ya da bir
+    /// `list[T]`nin KENDİSİ) serbest bırakacak `$<isim>_release(rt, p)`
+    /// fonksiyonunun ismini (baştaki `$` OLMADAN) döner.
+    ///   - `info.heap == .class`: doğrudan sınıf adı (`genClassRelease`
+    ///     tarafından ZATEN üretilmiştir, burada YENİ bir şey kaydedilmez).
+    ///   - `info.heap == .list`: `p`nin KENDİSİ bir listedir; `info.elem_qtype`/
+    ///     `info.nested` BU listenin KENDİ elemanlarını betimler (bkz. modül
+    ///     üstü not, "Faz 21 ön-koşulu"). Gereken `$List_<mangled>_release`i
+    ///     TEMBEL olarak kaydeder (henüz üretilmemişse `list_release_queue`ya
+    ///     ekler — gerçek üretim `generateModule`nin sonunda, `string_data`
+    ///     gibi drenaj yoluyla olur, bkz. `genListElemRelease`).
+    /// **Dikkat — iki farklı "elemanları betimleme" düzeyi:** bu fonksiyona
+    /// verilen `info`, RELEASE EDİLECEK DEĞERİN KENDİSİNİ betimler (`info.heap`
+    /// o değerin KENDİ heap türüdür) — `Value`/`VarInfo.elem_heap_info` gibi
+    /// "BİR listenin İÇİNDEKİ elemanların türü" alanlarıyla KARIŞTIRILMAMALI;
+    /// çağıran taraf (bkz. `releaseValueIfSet`) bu ikisini birbirine
+    /// dönüştürmekle sorumludur.
+    fn releaseFnNameFor(self: *Codegen, info: ElemHeapInfo) CodegenError![]const u8 {
+        switch (info.heap) {
+            .class => return info.class_name.?,
+            // Yalnızca DIŞ `$List_str_release` sembolünün adını üretmek için
+            // bir "etiket" — GERÇEK release ÇAĞRISI `nox_str_release`e gider
+            // (`$str_release` diye bir sembol YOK) — bkz. `genListElemRelease`in
+            // `info.nested` dalındaki ÖZEL durum.
+            .str => return "str",
+            .list => {
+                const inner_tag = if (info.nested) |n|
+                    try self.releaseFnNameFor(n.*)
+                else
+                    try std.fmt.allocPrint(self.allocator, "prim{s}", .{qbeTypeName(info.elem_qtype)});
+                const name = try std.fmt.allocPrint(self.allocator, "List_{s}", .{inner_tag});
+                if (!self.list_release_seen.contains(name)) {
+                    try self.list_release_seen.put(self.allocator, name, {});
+                    try self.list_release_queue.append(self.allocator, .{ .name = name, .info = info });
+                }
+                return name;
+            },
+            else => return error.Unsupported,
+        }
+    }
+
+    /// `fn_name`/`info` = `releaseFnNameFor`den gelen kayıt (`info.heap`
+    /// HER ZAMAN `.list`dir — `.class` değerler zaten `genClassRelease`
+    /// tarafından üretilir, bu kuyruğa hiç girmez). `genClassRelease` ile
+    /// AYNI şekilde refcount'u azaltır (`nox_rc_predecrement`); sıfıra
+    /// düştüyse:
+    ///   - `info.nested == null` (BU listenin elemanları primitive/str):
+    ///     hiçbir eleman release'i GEREKMEZ — doğrudan (genel `nox_rc_release`
+    ///     ile AYNI hesapla) belleği serbest bırakır.
+    ///   - `info.nested != null` (elemanları heap-yönetimli): `genForList`deki
+    ///     AYNI güvenli döngü deseniyle (indeks sayacı FONKSİYON GİRİŞİNDE bir
+    ///     kez `alloc8` — bu fonksiyon başına TEK sefer çalışır, döngü
+    ///     YİNELEMESİ başına değil, bu yüzden Faz 16'da bulunan alloc-döngü-
+    ///     içi yığın taşması hatasına yol AÇMAZ) her elemanı (null değilse)
+    ///     `$<releaseFnNameFor(info.nested.*)>_release` ile özyinelemeli
+    ///     olarak serbest bırakır — SONRA belleği gerçekten serbest bırakır.
+    fn genListElemRelease(self: *Codegen, fn_name: []const u8, info: ElemHeapInfo) CodegenError!void {
+        self.temp_counter = 0;
+        self.label_counter = 0;
+
+        try self.out.writer.print("export function ${s}_release(l {s}, l %p) {{\n@start\n", .{ fn_name, RT_PARAM });
+        const should_free = try self.emitInlinePredecrement("%p");
+        const free_label = try self.newLabel("list_release_free");
+        const done_label = try self.newLabel("list_release_done");
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ should_free, free_label, done_label });
+        try self.out.writer.print("{s}\n", .{free_label});
+
+        const len_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl %p\n", .{len_t});
+
+        if (info.nested) |n| {
+            const callee: ?[]const u8 = if (n.heap == .str) null else try self.releaseFnNameFor(n.*);
+            const idx_slot = try self.newTemp();
+            try self.out.writer.print("    {s} =l alloc8 8\n", .{idx_slot});
+            try self.out.writer.print("    storel 0, {s}\n", .{idx_slot});
+
+            const cond_label = try self.newLabel("list_release_cond");
+            const body_label = try self.newLabel("list_release_body");
+            const loopend_label = try self.newLabel("list_release_loopend");
+            const skip_label = try self.newLabel("list_release_skip");
+            const rel_label = try self.newLabel("list_release_elem");
+
+            try self.out.writer.print("    jmp {s}\n", .{cond_label});
+            try self.out.writer.print("{s}\n", .{cond_label});
+            const idx_cur = try self.newTemp();
+            try self.out.writer.print("    {s} =l loadl {s}\n", .{ idx_cur, idx_slot });
+            const cont = try self.newTemp();
+            try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ cont, idx_cur, len_t });
+            try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cont, body_label, loopend_label });
+            try self.out.writer.print("{s}\n", .{body_label});
+
+            const off = try self.newTemp();
+            try self.out.writer.print("    {s} =l mul {s}, 8\n", .{ off, idx_cur });
+            const off8 = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, 8\n", .{ off8, off });
+            const addr = try self.newTemp();
+            try self.out.writer.print("    {s} =l add %p, {s}\n", .{ addr, off8 });
+            const elem = try self.newTemp();
+            try self.out.writer.print("    {s} =l loadl {s}\n", .{ elem, addr });
+            const is_null = try self.newTemp();
+            try self.out.writer.print("    {s} =w ceql {s}, 0\n", .{ is_null, elem });
+            try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ is_null, skip_label, rel_label });
+            try self.out.writer.print("{s}\n", .{rel_label});
+            if (callee) |c| {
+                try self.out.writer.print("    call ${s}_release(l {s}, l {s})\n", .{ c, RT_PARAM, elem });
+            } else {
+                try self.out.writer.print("    call $nox_str_release(l {s}, l {s})\n", .{ RT_PARAM, elem });
+            }
+            try self.out.writer.print("    jmp {s}\n", .{skip_label});
+            try self.out.writer.print("{s}\n", .{skip_label});
+            const idx_next = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, 1\n", .{ idx_next, idx_cur });
+            try self.out.writer.print("    storel {s}, {s}\n", .{ idx_next, idx_slot });
+            try self.out.writer.print("    jmp {s}\n", .{cond_label});
+            try self.out.writer.print("{s}\n", .{loopend_label});
+
+            const size_t = try self.newTemp();
+            try self.out.writer.print("    {s} =l mul {s}, 8\n", .{ size_t, len_t });
+            const total_t = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, 8\n", .{ total_t, size_t });
+            try self.out.writer.print("    call $nox_rc_free_payload(l {s}, l %p, l {s})\n", .{ RT_PARAM, total_t });
+        } else {
+            const size_t = try self.newTemp();
+            try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ size_t, len_t, qbeSizeOf(info.elem_qtype) });
+            const total_t = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, 8\n", .{ total_t, size_t });
+            try self.out.writer.print("    call $nox_rc_free_payload(l {s}, l %p, l {s})\n", .{ RT_PARAM, total_t });
+        }
+        try self.out.writer.print("    jmp {s}\n", .{done_label});
+        try self.out.writer.print("{s}\n", .{done_label});
+        try self.out.writer.writeAll("    ret\n}\n");
+    }
+
+    /// `ptr` içindeki değer null değilse serbest bırakır: sınıf örnekleri
+    /// üretilmiş `$ClassName_release`'e (iç içe alanları özyinelemeli olarak
+    /// serbest bırakır), primitif elemanlı `list[T]` genel `nox_rc_release`'e,
+    /// heap-yönetimli elemanlı `list[T]` (`elem_heap_info != null`) ise
+    /// üretilmiş `$List_<...>_release`'e (elemanları ÖNCE özyinelemeli olarak
+    /// serbest bırakır — bkz. `genListElemRelease`) gider. Hem yerel değişken
+    /// kapsam-sonu temizliğinde (`releaseSlotIfSet`) hem de bir sınıf
+    /// alanının üzerine yazılırken eski değeri serbest bırakmak için
+    /// (`genAssign`, `.attribute` durumu) kullanılan tek ortak yoldur.
+    fn releaseValueIfSet(self: *Codegen, ptr: []const u8, heap: HeapKind, elem_qtype: QbeType, class_name: ?[]const u8, elem_heap_info: ?*const ElemHeapInfo) CodegenError!void {
+        const is_null = try self.newTemp();
+        try self.out.writer.print("    {s} =w ceql {s}, 0\n", .{ is_null, ptr });
+        const release_label = try self.newLabel("release");
+        const skip_label = try self.newLabel("release_skip");
+        const done_label = try self.newLabel("release_done");
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ is_null, skip_label, release_label });
+        try self.out.writer.print("{s}\n", .{release_label});
+        if (heap == .class) {
+            try self.out.writer.print("    call ${s}_release(l {s}, l {s})\n", .{ class_name.?, RT_PARAM, ptr });
+        } else if (heap == .str) {
+            // `str`nin boyutu (`list[T]`nin AKSİNE) başlıkta SAKLANMAZ (bkz.
+            // `runtime/str.zig`in modül üstü notu) — `nox_str_release`
+            // `strlen` ile kendisi hesaplar, bu yüzden `listPayloadSize`
+            // (bir `l`nin İLK 8 baytını "uzunluk" sanan) YOLUNA ASLA
+            // düşülmemelidir.
+            try self.out.writer.print("    call $nox_str_release(l {s}, l {s})\n", .{ RT_PARAM, ptr });
+        } else if (elem_heap_info) |info| {
+            // `ptr`nin KENDİSİ bir listedir; `info` bu listenin İÇİNDEKİ
+            // elemanları betimler — `releaseFnNameFor` ise "release edilecek
+            // DEĞERİN KENDİ türü"nü ister, bu yüzden burada `ptr`nin KENDİ
+            // tam betimleyicisi sentezlenir (`heap = .list` her zaman, çünkü
+            // bu dal zaten `heap != .class` demektir).
+            const self_info: ElemHeapInfo = .{ .heap = .list, .elem_qtype = elem_qtype, .nested = info };
+            const fn_name = try self.releaseFnNameFor(self_info);
+            try self.out.writer.print("    call ${s}_release(l {s}, l {s})\n", .{ fn_name, RT_PARAM, ptr });
+        } else {
+            const size = try self.listPayloadSize(ptr, elem_qtype);
+            try self.out.writer.print("    call $nox_rc_release(l {s}, l {s}, l {s})\n", .{ RT_PARAM, ptr, size });
+        }
+        try self.out.writer.print("    jmp {s}\n", .{done_label});
+        try self.out.writer.print("{s}\n", .{skip_label});
+        try self.out.writer.print("    jmp {s}\n", .{done_label});
+        try self.out.writer.print("{s}\n", .{done_label});
+    }
+
+    fn releaseSlotIfSet(self: *Codegen, info: VarInfo) CodegenError!void {
+        const ptr = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ ptr, info.slot });
+        try self.releaseValueIfSet(ptr, info.heap, info.elem_qtype, info.class_name, info.elem_heap_info);
+    }
+
+    fn emitDefaultReturn(self: *Codegen, ret_qtype: QbeType) CodegenError!void {
+        switch (ret_qtype) {
+            .none => try self.out.writer.writeAll("    ret\n"),
+            .l, .w => try self.out.writer.writeAll("    ret 0\n"),
+            .d => try self.out.writer.writeAll("    ret d_0\n"),
+        }
+    }
+
+    /// `value` tam olarak izlenen bir heap bağlamına (takma ad) işaret
+    /// ediyorsa, o değeri retain eder (iki bağımsız sahip artık aynı nesneyi
+    /// paylaşıyor). Aksi halde `v0`'ı olduğu gibi döndürür.
+    /// `v`, bir `lowlevel` bloğunun arenasından gelen (`.arena`) ya da şu an
+    /// lexical olarak bir `lowlevel` bloğunun içinde bulunulan (`in_lowlevel_depth
+    /// > 0`) bir heap tipli (`list`/sınıf) değerse hata döner. Basitlik ve
+    /// güvenlik için, bir `lowlevel` bloğu içindeyken HİÇBİR heap tipli değer
+    /// (arena olsun olmasın) bir çağrıya argüman/alıcı olamaz, döndürülemez ya
+    /// da başka bir isme takma ad olamaz — bkz. modül üstü not.
+    fn checkNoLowlevelEscape(self: *Codegen, v: Value) CodegenError!void {
+        if (isHeapManaged(v.heap) and (v.arena or self.in_lowlevel_depth > 0)) return error.Unsupported;
+    }
+
+    /// `nox_rc_retain`in çalışma zamanı ÇAĞRISI YERİNE doğrudan gömülen (inline)
+    /// karşılığı — performans fazında (bkz. nox-teknik-spesifikasyon.md,
+    /// benchmark darboğaz denetimi) ARC-ağırlıklı kodda (`oop_arc_churn`,
+    /// liste takma adı) ölçülen bir darboğaz: retain, refcount'u (payload'dan
+    /// HEMEN ÖNCEKİ görünmez 8 baytlık başlık, bkz. `runtime/alloc/arc.zig`'in
+    /// `HEADER_SIZE`i — bu ofset iki taraf arasında SABİT bir sözleşmedir) bir
+    /// artırmaktan İBARETTİR; AYRI bir nesne dosyasına (kendi çağrı/yığın
+    /// çerçevesi maliyetiyle) bir fonksiyon çağrısı GEREKTİRMEZ. `nox_rc_alloc`/
+    /// `nox_rc_free_payload` (gerçek `malloc`/`free`e ihtiyaç duyar) İSE inline
+    /// EDİLEMEZ — yalnızca bu saf aritmetik işlem inline edilir.
+    fn emitInlineRetain(self: *Codegen, ptr: []const u8) CodegenError!void {
+        const hdr = try self.newTemp();
+        try self.out.writer.print("    {s} =l sub {s}, 8\n", .{ hdr, ptr });
+        const rc = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ rc, hdr });
+        const rc2 = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 1\n", .{ rc2, rc });
+        try self.out.writer.print("    storel {s}, {s}\n", .{ rc2, hdr });
+    }
+
+    /// `nox_rc_predecrement`in gömülü (inline) karşılığı — `emitInlineRetain`
+    /// ile AYNI gerekçe. Dönüş (bir `%temp`, `w`) AYNI anlamı taşır: `1` —
+    /// refcount sıfıra/altına düştü, belleği GERÇEKTEN serbest bırakma
+    /// sorumluluğu ÇAĞIRANDADIR (`nox_rc_free_payload`, HÂLÂ bir runtime
+    /// çağrısı — gerçek `free` allocator'a ihtiyaç duyduğundan inline
+    /// edilemez); `0` — nesne hâlâ canlı (başka bir sahibi var).
+    fn emitInlinePredecrement(self: *Codegen, ptr: []const u8) CodegenError![]const u8 {
+        const hdr = try self.newTemp();
+        try self.out.writer.print("    {s} =l sub {s}, 8\n", .{ hdr, ptr });
+        const rc = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ rc, hdr });
+        const rc2 = try self.newTemp();
+        try self.out.writer.print("    {s} =l sub {s}, 1\n", .{ rc2, rc });
+        try self.out.writer.print("    storel {s}, {s}\n", .{ rc2, hdr });
+        const should_free = try self.newTemp();
+        try self.out.writer.print("    {s} =w cslel {s}, 0\n", .{ should_free, rc2 });
+        return should_free;
+    }
+
+    /// `expr` değerlendirildiğinde BAŞKA BİR YERDE ZATEN sahibi olan, ÖDÜNÇ
+    /// ALINMIŞ bir heap referansı mı üretir (bu durumda yeni bir isme takma ad
+    /// olması `nox_rc_retain` GEREKTİRİR), yoksa TAZE bir değer mi (`isTemporaryExpr`
+    /// — retain GEREKTİRMEZ, zaten tek sahiplidir) ya da alanın/elemanın
+    /// KENDİSİ genFieldRead/genIndex TARAFINDAN ZATEN retain edilmiş mi
+    /// (taze bir TABAN üzerinden okunmuşsa — bu durumda BURADA TEKRAR retain
+    /// etmek ÇİFTE retain'e yol açardı) belirler:
+    ///   - `.identifier`: her zaman bir takma ad (ödünç alınmış, retain gerekir).
+    ///   - `.attribute`/`.index`: tabanı (`obj`) TAZE değilse bir takma addır
+    ///     (retain gerekir, çünkü `genFieldRead`/`genIndex` bu durumda retain
+    ///     ETMEMİŞTİR); tabanı TAZE ise `genFieldRead`/`genIndex` ZATEN
+    ///     retain etmiştir (bkz. o fonksiyonların belge notu) — burada
+    ///     retain YAPILMAMALIDIR.
+    ///   - Diğerleri (`.call`, `.list_lit`, ...): taze, retain gerekmez.
+    fn isAliasingExpr(expr: ast.Expr) bool {
+        return switch (expr) {
+            .identifier => true,
+            .attribute => |a| !isTemporaryExpr(a.obj.*),
+            .index => |idx| !isTemporaryExpr(idx.obj.*),
+            else => false,
+        };
+    }
+
+    fn retainIfAliasing(self: *Codegen, value: ast.Expr, v0: Value) CodegenError!Value {
+        // `v0.always_fresh` (bkz. `Value`nin belge notu, stdlib fazı §G):
+        // `s[i]` gibi TABANDAN BAĞIMSIZ TAZE bir tahsis üreten ifadeler
+        // ASLA aliasing SAYILMAZ — `isAliasingExpr`in AST-tabanlı sezgisi
+        // (`.index`in tabanı temporary DEĞİLSE aliasing SAYAR) burada
+        // GEÇERSİZDİR (tip bilgisi olmadan `.index`in `str` mi `list`/
+        // `dict` mi olduğunu AYIRT EDEMEZ).
+        if (!v0.always_fresh and isAliasingExpr(value) and isHeapManaged(v0.heap)) {
+            try self.checkNoLowlevelEscape(v0);
+            try self.emitInlineRetain(v0.text);
+        }
+        return v0;
+    }
+
+    /// `return <ifade>` bir heap değeri döndürüyorsa, bu değerin BU
+    /// FONKSİYONUN kendi münhasır (ve zaten terk edilecek) sahipliğini mi
+    /// devrettiğini, yoksa BAŞKA BİR YERDE ZATEN sahibi olan ödünç alınmış
+    /// bir referansı mı dışarı verdiğini belirler:
+    ///   - Yerel bir değişkeni (`return x`, `x` bir PARAMETRE DEĞİL)
+    ///     döndürmek retain GEREKTİRMEZ: sıfır maliyetli bir "taşıma"dır
+    ///     (`x` zaten kapsam-sonu temizliğinden muaf tutulur).
+    ///   - TAZE bir değer (`.call`/`.list_lit`) döndürmek de bir taşımadır
+    ///     (başka hiçbir sahibi yoktur).
+    ///   - Bir PARAMETREYİ olduğu gibi döndürmek (`return p`) ya da bir ALAN
+    ///     OKUMASINI döndürmek (`return self.attr`) retain GEREKTİRİR: bu
+    ///     değerin BAŞKA BİR sahibi zaten var (çağıranın kendi bağlaması ya
+    ///     da içinde bulunulan nesnenin alanı) — çağıran bunu kendi (yeni)
+    ///     bir sahipliğine bağlayabilir. Bu retain, olası bir çağıran-taraf
+    ///     telafi release'iyle (bkz. `releaseTemporaryArgs`/
+    ///     `releaseIfTemporary` — TAZE bir argüman/alıcının çağrı sonrası
+    ///     serbest bırakılması) doğru dengeye ulaşır; bu ikisi birlikte
+    ///     "passthrough" fonksiyonları (ör. `def identity(p): return p`)
+    ///     bile güvenli kılar.
+    fn returnNeedsRetain(self: *Codegen, e: ast.Expr) bool {
+        return switch (e) {
+            .identifier => |name| blk: {
+                const info = self.vars.get(name) orelse break :blk false;
+                break :blk info.is_param;
+            },
+            .attribute => true,
+            // Stdlib fazı §L: `.index` İÇİN eksik dal — `return list[i]`
+            // (ör. `nox.json.array_get`in `return v.arr[i]`si) `list`/
+            // `dict`in İÇİNE ÖDÜNÇ ALINMIŞ bir referansı (bkz. `genIndex`'in
+            // AYNI "taban temporary DEĞİLSE retain gerekmez" gerekçesi)
+            // OLDUĞU GİBİ dışarı verir — TABAN temporary DEĞİLSE bu ödünç
+            // retain EDİLMEDEN döndürülürse çağıran onu KENDİ sahipliğiymiş
+            // gibi (bir `.call` sonucu) release eder, bu da listenin PAYLAŞTIĞI
+            // referansı ERKEN sıfıra indirip bir kullanım-sonrası-serbest-
+            // bırakmaya yol açar (GERÇEKTEN yaşandı — `nox.json.array_get`
+            // "incorrect alignment" ile ÇÖKEN bir çift-serbest-bırakmaya yol
+            // açtı). TABAN temporary İSE `genIndex` KENDİSİ zaten BİR retain
+            // yapmıştır (`emitInlineRetain`, taban serbest bırakılmadan ÖNCE)
+            // — burada TEKRAR retain etmek ÇİFT retain (kalıcı sızıntı)
+            // olurdu, bu yüzden koşul `isAliasingExpr`in AYNI `.index` dalıyla
+            // BİREBİR eşleşir.
+            .index => |idx| !isTemporaryExpr(idx.obj.*),
+            else => false,
+        };
+    }
+
+    fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) CodegenError!void {
+        for (stmts) |stmt| {
+            switch (stmt) {
+                .return_stmt => |r| {
+                    if (r) |e| {
+                        const v0 = try self.genExpr(e);
+                        try self.checkNoLowlevelEscape(v0);
+                        // Bir parametreyi ya da bir alan okumasını OLDUĞU
+                        // GİBİ döndürmek, BAŞKA BİR YERDE ZATEN sahibi olan
+                        // ödünç alınmış bir referansı dışarı vermektir —
+                        // çağıran bunu kendi (yeni) bir sahipliğine
+                        // bağlayabileceği için retain GEREKİR (bkz.
+                        // `returnNeedsRetain`). Bu retain, aşağıdaki
+                        // `releaseAllLocalsExcept`'TEN ÖNCE yapılmalıdır —
+                        // aksi halde bu fonksiyonun kendi yerel temizliği
+                        // (ör. döndürülen değere daha önce takma ad olmuş
+                        // başka bir yerel) onu erken sıfıra indirebilirdi.
+                        if (isHeapManaged(v0.heap) and self.returnNeedsRetain(e)) {
+                            try self.emitInlineRetain(v0.text);
+                        }
+                        const v = try self.convert(v0, ret_qtype);
+                        // Sıra önemli: finally/arena yıkımı, yereller hâlâ
+                        // geçerliyken (serbest bırakılmadan ÖNCE) çalışmalıdır —
+                        // aksi hâlde içlerindeki bir okuma, kullanım-sonrası-
+                        // serbest-bırakma (use-after-free) olurdu.
+                        try self.drainFinally(ret_qtype);
+                        try self.drainArenas();
+                        const except_name: ?[]const u8 = if (e == .identifier) e.identifier else null;
+                        try self.releaseAllLocalsExcept(except_name);
+                        try self.out.writer.print("    ret {s}\n", .{v.text});
+                    } else {
+                        try self.drainFinally(ret_qtype);
+                        try self.drainArenas();
+                        try self.releaseAllLocalsExcept(null);
+                        try self.out.writer.writeAll("    ret\n");
+                    }
+                    const label = try self.newLabel("after_return");
+                    try self.out.writer.print("{s}\n", .{label});
+                },
+                .var_decl => |v| {
+                    const info = self.vars.get(v.name).?;
+                    const v0 = try self.genExpr(v.value);
+                    const retained = try self.retainIfAliasing(v.value, v0);
+                    const val = try self.convert(retained, info.qtype);
+                    // `.arena` bir yerelse (bir `lowlevel` bloğu içindeyse),
+                    // bu bildirim bir DÖNGÜ gövdesinde olabilir ve slot önceki
+                    // yinelemeden kalan bir işaretçi tutuyor olabilir — ama o
+                    // bellek zaten arenanın TOPLU `nox_arena_destroy`'u ile
+                    // serbest bırakılmıştır (bkz. `genLowLevel`). Burada normal
+                    // ARC serbest bırakmayı çağırmak, ZATEN serbest bırakılmış
+                    // belleği tekrar serbest bırakmaya (geçersiz free) yol açar.
+                    if (isHeapManaged(info.heap) and !info.arena) try self.releaseSlotIfSet(info);
+                    try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(info.qtype), val.text, info.slot });
+                },
+                .assign => |a| try self.genAssign(a),
+                .expr_stmt => |e| {
+                    const v = try self.genExpr(e);
+                    // Tamamen dolaylanmış (hiçbir yere bağlanmamış) bir taze
+                    // heap değeri (ör. bir çağrının sonucunu bir deyim olarak
+                    // kullanmak) sızmaz — bkz. `releaseIfTemporary`.
+                    try self.releaseIfTemporary(e, v);
+                },
+                .if_stmt => |f| try self.genIf(f, ret_qtype),
+                .while_stmt => |w| try self.genWhile(w, ret_qtype),
+                .for_stmt => |f| try self.genFor(f, ret_qtype),
+                .raise_stmt => |e| try self.genRaise(e),
+                .try_stmt => |t| try self.genTry(t, ret_qtype),
+                .lowlevel_stmt => |ll| try self.genLowLevel(ll, ret_qtype),
+                .pass_stmt => {},
+                .func_def, .class_def, .protocol_def, .extern_def, .import_stmt => return error.Unsupported,
+            }
+        }
+    }
+
+    fn genRaise(self: *Codegen, expr: ast.Expr) CodegenError!void {
+        const obj = try self.genExpr(expr);
+        if (obj.heap != .class) return error.Unsupported;
+        try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, obj.text });
+        try self.emitExceptionCheck();
+    }
+
+    /// Şu an aktif olan (en içten en dışa) tüm `finally` gövdelerini satır
+    /// içi (inline) üretir — `return_stmt` tarafından gerçek `ret`ten hemen
+    /// önce çağrılır (bkz. `finally_stack` alanının belge notu).
+    fn drainFinally(self: *Codegen, ret_qtype: QbeType) CodegenError!void {
+        var i = self.finally_stack.items.len;
+        while (i > 0) {
+            i -= 1;
+            try self.genStmts(self.finally_stack.items[i], ret_qtype);
+        }
+    }
+
+    /// Şu an aktif olan (en içten en dışa) tüm `lowlevel` arenalarını yıkar —
+    /// `drainFinally` ile aynı gerekçeyle, bir `return`/yakalanmamış istisna
+    /// gerçek çıkıştan önce (bkz. `finally_stack`'in belge notu, aynı mantık
+    /// arenalar için de geçerlidir).
+    fn drainArenas(self: *Codegen) CodegenError!void {
+        var i = self.arena_stack.items.len;
+        while (i > 0) {
+            i -= 1;
+            try self.out.writer.print("    call $nox_arena_destroy(l {s}, l {s})\n", .{ RT_PARAM, self.arena_stack.items[i] });
+        }
+    }
+
+    fn genTry(self: *Codegen, t: ast.TryStmt, ret_qtype: QbeType) CodegenError!void {
+        const dispatch_label = try self.newLabel("try_dispatch");
+        const after_label = try self.newLabel("try_after");
+        const end_label = try self.newLabel("try_end");
+
+        if (t.finally_body) |fb| try self.finally_stack.append(self.allocator, fb);
+
+        const saved_catch = self.current_catch_label;
+        self.current_catch_label = dispatch_label;
+        try self.genStmts(t.try_body, ret_qtype);
+        self.current_catch_label = saved_catch;
+        // Normal tamamlanma (ne `return` ne yakalanmamış istisna): finally'i
+        // burada BİR KEZ çalıştır. `t.try_body` bir `return` ile bittiyse bu
+        // nokta hiç erişilmez (üstteki `genStmts` zaten bir `ret` üretti ve
+        // `drainFinally` orada devreye girdi) — o durumda burası ölü koddur.
+        if (t.finally_body) |fb| try self.genStmts(fb, ret_qtype);
+        try self.out.writer.print("    jmp {s}\n", .{after_label});
+
+        try self.out.writer.print("{s}\n", .{dispatch_label});
+        const exc_ptr = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_exception_take(l {s})\n", .{ exc_ptr, RT_PARAM });
+        const tag = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ tag, exc_ptr });
+
+        var next_check = try self.newLabel("except_check");
+        try self.out.writer.print("    jmp {s}\n", .{next_check});
+
+        for (t.except_clauses, 0..) |ec, i| {
+            const cinfo = self.classes.get(ec.class_name) orelse return error.Unsupported;
+            try self.out.writer.print("{s}\n", .{next_check});
+            const matches = try self.newTemp();
+            try self.out.writer.print("    {s} =w ceql {s}, {d}\n", .{ matches, tag, cinfo.class_id });
+            const handler_label = try self.newLabel("except_body");
+            const is_last = i == t.except_clauses.len - 1;
+            const following = if (!is_last) try self.newLabel("except_check") else try self.newLabel("except_reraise");
+            try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ matches, handler_label, following });
+            try self.out.writer.print("{s}\n", .{handler_label});
+            if (ec.bind_name) |bn| {
+                const info = self.vars.get(bn).?;
+                // Bu `except` gövdesi bir döngü içindeyse aynı bağlama ismi
+                // (`e`) her yinelemede yeniden kullanılır — sıradan bir isme
+                // atama gibi (bkz. `genAssign`'in `.identifier` kolu), ESKİ
+                // değeri (varsa) ÜZERİNE YAZMADAN ÖNCE serbest bırakmazsak
+                // önceki istisna nesnesi sonsuza dek sızar.
+                try self.releaseSlotIfSet(info);
+                try self.out.writer.print("    storel {s}, {s}\n", .{ exc_ptr, info.slot });
+            }
+            try self.genStmts(ec.body, ret_qtype);
+            if (t.finally_body) |fb| try self.genStmts(fb, ret_qtype);
+            try self.out.writer.print("    jmp {s}\n", .{after_label});
+            next_check = following;
+        }
+
+        // Bu `try`nin korumalı bölgesinden (try_body + except gövdeleri) çıkıldı;
+        // `finally` artık `return_stmt`'in örtük olarak bulacağı yığında olmamalı.
+        if (t.finally_body != null) _ = self.finally_stack.pop();
+
+        // Hiçbir `except` eşleşmedi: finally'i çalıştır, istisnayı yeniden
+        // işaretle ve dışarıya yay (bu `try`'ın kendi dispatch'i artık devrede
+        // değil — `current_catch_label` yukarıda eski değerine geri alındı).
+        try self.out.writer.print("{s}\n", .{next_check});
+        if (t.finally_body) |fb| try self.genStmts(fb, ret_qtype);
+        try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, exc_ptr });
+        try self.emitExceptionCheck();
+        try self.out.writer.print("    jmp {s}\n", .{after_label});
+
+        try self.out.writer.print("{s}\n", .{after_label});
+        try self.out.writer.print("{s}\n", .{end_label});
+    }
+
+    /// Bir `lowlevel:` bloğu için yeni bir arena oluşturur, blok boyunca
+    /// `arena_stack`'e iter (böylece `genConstruct`/`genListLit` bu arenadan
+    /// tahsis eder), gövdeyi üretir ve normal tamamlanmada arenayı yıkar.
+    /// Gövde içinde bir `return`/yakalanmamış istisna olduysa, o çıkış yolu
+    /// `drainArenas` ile arenayı ZATEN yıkmıştır — bu durumda buradaki yıkım
+    /// çağrısı erişilemez (ölü) koddur, `genTry`'deki eşdeğer durum gibi.
+    fn genLowLevel(self: *Codegen, ll: ast.LowLevelStmt, ret_qtype: QbeType) CodegenError!void {
+        const arena_temp = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_arena_create(l {s})\n", .{ arena_temp, RT_PARAM });
+        try self.arena_stack.append(self.allocator, arena_temp);
+        self.in_lowlevel_depth += 1;
+        try self.genStmts(ll.body, ret_qtype);
+        self.in_lowlevel_depth -= 1;
+        _ = self.arena_stack.pop();
+        try self.out.writer.print("    call $nox_arena_destroy(l {s}, l {s})\n", .{ RT_PARAM, arena_temp });
+    }
+
+    fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {
+        switch (a.target) {
+            .identifier => |name| {
+                const info = self.vars.get(name) orelse return error.Unsupported;
+                const v0 = try self.genExpr(a.value);
+                const retained = try self.retainIfAliasing(a.value, v0);
+                const val = try self.convert(retained, info.qtype);
+                // Bkz. `var_decl` kolundaki aynı gerekçe: arena yerelleri asla
+                // ARC ile serbest bırakılmaz (arenanın toplu yıkımı zaten
+                // bunu yapar) — aksi halde döngü içinde yeniden atama, önceki
+                // yinelemede zaten yıkılmış bir arenaya ait belleği tekrar
+                // serbest bırakmaya çalışır.
+                if (isHeapManaged(info.heap) and !info.is_param and !info.arena) try self.releaseSlotIfSet(info);
+                try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(info.qtype), val.text, info.slot });
+            },
+            .attribute => |attr| {
+                // Genel durum (bkz. checker.zig'in `checkAssign`indeki AYNI
+                // genelleme): `<ifade>.<alan> = <değer>` — `<ifade>` HERHANGİ
+                // bir sınıf örneğine değerlenebilir, `self` OLMAK ZORUNDA
+                // DEĞİL. `obj`, bir metod çağrısının ALICISI gibi (bkz.
+                // `genMethodCall`) TAZE bir değer OLABİLİR — bu yüzden aynı
+                // "lowlevel kaçışını engelle" + "taze ise sonda serbest
+                // bırak" deseni burada da uygulanır.
+                const obj = try self.genExpr(attr.obj.*);
+                if (obj.heap != .class) return error.Unsupported;
+                try self.checkNoLowlevelEscape(obj);
+                const cinfo = self.classes.get(obj.class_name.?).?;
+                for (cinfo.fields.items) |f| {
+                    if (!std.mem.eql(u8, f.name, attr.attr)) continue;
+                    const v0 = try self.genExpr(a.value);
+                    // Bir sınıf alanına atamak, bir isme atamakla (`y = x`)
+                    // aynı anlamı taşır: nesne artık bu değeri KALICI olarak
+                    // paylaşıyor — bu yüzden aynı takma ad/kaçış kuralları
+                    // uygulanır (bkz. `retainIfAliasing`/`checkNoLowlevelEscape`).
+                    try self.checkNoLowlevelEscape(v0);
+                    const retained = try self.retainIfAliasing(a.value, v0);
+                    const val = try self.convert(retained, f.info.qtype);
+                    const addr = try self.newTemp();
+                    try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, obj.text, f.offset });
+                    if (isHeapManaged(f.info.heap)) {
+                        // Üzerine yazılacak ESKİ değeri önce oku (adres henüz
+                        // üzerine yazılmadı), yeni değeri sakla, SONRA eskiyi
+                        // serbest bırak — aksi halde eski nesne sonsuza dek
+                        // sızardı (kendi refcount'u hiç azalmazdı).
+                        const old_ptr = try self.newTemp();
+                        try self.out.writer.print("    {s} =l loadl {s}\n", .{ old_ptr, addr });
+                        try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(f.info.qtype), val.text, addr });
+                        try self.releaseValueIfSet(old_ptr, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info);
+                    } else {
+                        try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(f.info.qtype), val.text, addr });
+                    }
+                    try self.releaseIfTemporary(attr.obj.*, obj);
+                    return;
+                }
+                return error.Unsupported;
+            },
+            // `d[key] = value` — YALNIZCA `dict` için (bkz. checker.zig'in
+            // `checkAssign`indeki AYNI kısıtlama, `list[T]` İÇİN indeksli
+            // atama HENÜZ desteklenmiyor).
+            .index => |idx| try self.genDictAssign(idx, a.value),
+            else => return error.Unsupported,
+        }
+    }
+
+    /// `d[key] = value` — `nox_dict_set`e lowerlanır (bkz. `genDictLit`in
+    /// belge notu, AYNI "sahiplik çağırandan devralınır" ilkesi). Anahtar/
+    /// değer, bir isme atamakla (`y = x`) AYNI takma ad kuralına tabidir
+    /// (`retainIfAliasing`) — `nox_dict_set`in KENDİSİ (runtime tarafında)
+    /// yalnızca bir anahtar ZATEN VARSA eski değeri (VE `str` ise eski
+    /// değeri/anahtarı) serbest bırakır (bkz. `runtime/collections/dict.zig`).
+    fn genDictAssign(self: *Codegen, idx: ast.Index, value_expr: ast.Expr) CodegenError!void {
+        const obj = try self.genExpr(idx.obj.*);
+        if (obj.heap != .dict) return error.Unsupported;
+        try self.checkNoLowlevelEscape(obj);
+        const dinfo = obj.dict_info.?;
+
+        const key_v0 = try self.genExpr(idx.index.*);
+        try self.checkNoLowlevelEscape(key_v0);
+        const key_v = try self.retainIfAliasing(idx.index.*, key_v0);
+
+        const value_v0 = try self.genExpr(value_expr);
+        try self.checkNoLowlevelEscape(value_v0);
+        const value_v = try self.retainIfAliasing(value_expr, value_v0);
+        const value_converted = try self.convert(value_v, dinfo.value_qtype);
+
+        const key_payload = try self.toPayload(key_v);
+        const value_payload = try self.toPayload(value_converted);
+        const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
+        const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
+        try self.out.writer.print("    call $nox_dict_set(l {s}, l {s}, w {s}, w {s}, l {s}, l {s})\n", .{ RT_PARAM, obj.text, key_is_str_lit, value_is_str_lit, key_payload.text, value_payload.text });
+        try self.releaseIfTemporary(idx.obj.*, obj);
+    }
+
+    /// `d[key]` (okuma) — `nox_dict_get`e lowerlanır. BORROWED bir okumadır
+    /// (`list[T]` eleman okumasıyla AYNI — dict `str` değerin sahipliğini
+    /// KORUR, dönen değer retain EDİLMEZ). `key_expr` TAZE bir heap değerse
+    /// (ör. `d["a" + "b"]`), arama SONRASI serbest bırakılır (`nox_dict_get`
+    /// anahtarı SAKLAMAZ, yalnızca hash/eşitlik için ÖDÜNÇ kullanır).
+    fn genDictGet(self: *Codegen, obj: Value, key_expr: ast.Expr) CodegenError!Value {
+        const dinfo = obj.dict_info.?;
+        const key_v0 = try self.genExpr(key_expr);
+        try self.checkNoLowlevelEscape(key_v0);
+        const key_payload = try self.toPayload(key_v0);
+        const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
+
+        const payload_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_dict_get(l {s}, l {s}, w {s}, l {s})\n", .{ payload_t, RT_PARAM, obj.text, key_is_str_lit, key_payload.text });
+        const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, dinfo.value_qtype);
+        try self.releaseIfTemporary(key_expr, key_v0);
+        return .{ .text = converted.text, .qtype = converted.qtype, .heap = if (dinfo.value_is_str) .str else .none };
+    }
+
+    fn genIf(self: *Codegen, f: ast.IfStmt, ret_qtype: QbeType) CodegenError!void {
+        const end_label = try self.newLabel("if_end");
+
+        const cond0 = try self.genExpr(f.cond);
+        const then_label = try self.newLabel("if_then");
+        var next_label = if (f.elif_clauses.len > 0)
+            try self.newLabel("if_elif")
+        else if (f.else_body != null)
+            try self.newLabel("if_else")
+        else
+            end_label;
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cond0.text, then_label, next_label });
+        try self.out.writer.print("{s}\n", .{then_label});
+        try self.genStmts(f.then_body, ret_qtype);
+        try self.out.writer.print("    jmp {s}\n", .{end_label});
+
+        for (f.elif_clauses, 0..) |ec, i| {
+            try self.out.writer.print("{s}\n", .{next_label});
+            const cond_i = try self.genExpr(ec.cond);
+            const body_label = try self.newLabel("if_elif_body");
+            const is_last = i == f.elif_clauses.len - 1;
+            const following = if (!is_last)
+                try self.newLabel("if_elif")
+            else if (f.else_body != null)
+                try self.newLabel("if_else")
+            else
+                end_label;
+            try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cond_i.text, body_label, following });
+            try self.out.writer.print("{s}\n", .{body_label});
+            try self.genStmts(ec.body, ret_qtype);
+            try self.out.writer.print("    jmp {s}\n", .{end_label});
+            next_label = following;
+        }
+
+        if (f.else_body) |eb| {
+            try self.out.writer.print("{s}\n", .{next_label});
+            try self.genStmts(eb, ret_qtype);
+            try self.out.writer.print("    jmp {s}\n", .{end_label});
+        }
+
+        try self.out.writer.print("{s}\n", .{end_label});
+    }
+
+    fn genWhile(self: *Codegen, w: ast.WhileStmt, ret_qtype: QbeType) CodegenError!void {
+        const cond_label = try self.newLabel("while_cond");
+        const body_label = try self.newLabel("while_body");
+        const end_label = try self.newLabel("while_end");
+
+        try self.out.writer.print("    jmp {s}\n", .{cond_label});
+        try self.out.writer.print("{s}\n", .{cond_label});
+        const cond_v = try self.genExpr(w.cond);
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cond_v.text, body_label, end_label });
+        try self.out.writer.print("{s}\n", .{body_label});
+        try self.genStmts(w.body, ret_qtype);
+        try self.out.writer.print("    jmp {s}\n", .{cond_label});
+        try self.out.writer.print("{s}\n", .{end_label});
+    }
+
+    fn isRangeCall(e: ast.Expr) bool {
+        return e == .call and e.call.callee.* == .identifier and
+            std.mem.eql(u8, e.call.callee.identifier, "range") and e.call.args.len == 1;
+    }
+
+    fn findLocal(locals: []const LocalDecl, name: []const u8) ?TypeInfo {
+        var i = locals.len;
+        while (i > 0) {
+            i -= 1;
+            if (std.mem.eql(u8, locals[i].name, name)) return locals[i].info;
+        }
+        return null;
+    }
+
+    fn genFor(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenError!void {
+        if (isRangeCall(f.iterable)) return self.genForRange(f, ret_qtype);
+        if (f.iterable == .identifier) return self.genForList(f, ret_qtype);
+        return error.Unsupported;
+    }
+
+    fn genForRange(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenError!void {
+        const limit = try self.genExpr(f.iterable.call.args[0]);
+        const var_info = self.vars.get(f.var_name).?;
+        try self.out.writer.print("    storel 0, {s}\n", .{var_info.slot});
+
+        const cond_label = try self.newLabel("for_cond");
+        const body_label = try self.newLabel("for_body");
+        const end_label = try self.newLabel("for_end");
+
+        try self.out.writer.print("    jmp {s}\n", .{cond_label});
+        try self.out.writer.print("{s}\n", .{cond_label});
+        const cur = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ cur, var_info.slot });
+        const cmp = try self.newTemp();
+        try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ cmp, cur, limit.text });
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cmp, body_label, end_label });
+        try self.out.writer.print("{s}\n", .{body_label});
+        try self.genStmts(f.body, ret_qtype);
+        const cur2 = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ cur2, var_info.slot });
+        const next = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 1\n", .{ next, cur2 });
+        try self.out.writer.print("    storel {s}, {s}\n", .{ next, var_info.slot });
+        try self.out.writer.print("    jmp {s}\n", .{cond_label});
+        try self.out.writer.print("{s}\n", .{end_label});
+    }
+
+    fn genForList(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenError!void {
+        const list_info = self.vars.get(f.iterable.identifier) orelse return error.Unsupported;
+        if (list_info.heap != .list) return error.Unsupported;
+        const loop_var = self.vars.get(f.var_name).?;
+
+        // İndeks yuvası, `collectLocals`de (bkz. `forListIdxName`) FONKSİYON
+        // GİRİŞİNDE bir kez tahsis edilmiş olmalıdır — burada taze bir
+        // `alloc8` yapmak, bu `for` başka bir döngünün içine gömülüyse her
+        // dış yinelemede yığını küçültüp asla geri almaz (yığın taşması).
+        const idx_name = try forListIdxName(self.allocator, f.var_name);
+        const idx_slot = self.vars.get(idx_name).?.slot;
+        try self.out.writer.print("    storel 0, {s}\n", .{idx_slot});
+
+        const list_ptr = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ list_ptr, list_info.slot });
+        const len_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ len_t, list_ptr });
+
+        const cond_label = try self.newLabel("forlist_cond");
+        const body_label = try self.newLabel("forlist_body");
+        const end_label = try self.newLabel("forlist_end");
+
+        try self.out.writer.print("    jmp {s}\n", .{cond_label});
+        try self.out.writer.print("{s}\n", .{cond_label});
+        const idx_cur = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ idx_cur, idx_slot });
+        const cmp = try self.newTemp();
+        try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ cmp, idx_cur, len_t });
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cmp, body_label, end_label });
+        try self.out.writer.print("{s}\n", .{body_label});
+
+        const byte_off = try self.newTemp();
+        try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ byte_off, idx_cur, qbeSizeOf(loop_var.qtype) });
+        const off8 = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 8\n", .{ off8, byte_off });
+        const elem_addr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ elem_addr, list_ptr, off8 });
+        const elem_val = try self.newTemp();
+        try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ elem_val, qbeTypeName(loop_var.qtype), qbeTypeName(loop_var.qtype), elem_addr });
+        try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(loop_var.qtype), elem_val, loop_var.slot });
+
+        try self.genStmts(f.body, ret_qtype);
+
+        const idx_base = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ idx_base, idx_slot });
+        const idx_next = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 1\n", .{ idx_next, idx_base });
+        try self.out.writer.print("    storel {s}, {s}\n", .{ idx_next, idx_slot });
+        try self.out.writer.print("    jmp {s}\n", .{cond_label});
+        try self.out.writer.print("{s}\n", .{end_label});
+    }
+
+    fn convert(self: *Codegen, v: Value, target: QbeType) CodegenError!Value {
+        if (v.qtype == target) return v;
+        if (v.qtype == .l and target == .d) {
+            const t = try self.newTemp();
+            try self.out.writer.print("    {s} =d sltof {s}\n", .{ t, v.text });
+            return .{ .text = t, .qtype = .d };
+        }
+        if (v.qtype == .d and target == .l) {
+            const t = try self.newTemp();
+            try self.out.writer.print("    {s} =l dtosi {s}\n", .{ t, v.text });
+            return .{ .text = t, .qtype = .l };
+        }
+        return error.Unsupported;
+    }
+
+    /// Faz 21 aşama 4: `v`yi (doğal QBE tipinde — `l`/`w`/`d`) `Task`/
+    /// `Channel`in çalışma zamanı köprüsünün (bkz. `runtime/async_rt/
+    /// bridge.zig`) beklediği tekdüze 8 baytlık `i64` "payload"a çevirir.
+    /// `convert`in AKSİNE (sayısal DEĞER dönüşümü, ör. int->float), bu
+    /// BİT-KORUYUCU bir yeniden yorumlamadır (`l`/`d` zaten 8 bayt — `cast`
+    /// yalnızca bit örüntüsünü ikisi arasında taşır; `w`/bool `extuw` ile
+    /// sıfır-genişletilir). `None` dönüşü önemsiz bir `0`dır.
+    fn toPayload(self: *Codegen, v: Value) CodegenError!Value {
+        return switch (v.qtype) {
+            .l => v,
+            .w => blk: {
+                const t = try self.newTemp();
+                try self.out.writer.print("    {s} =l extuw {s}\n", .{ t, v.text });
+                break :blk .{ .text = t, .qtype = .l };
+            },
+            .d => blk: {
+                const t = try self.newTemp();
+                try self.out.writer.print("    {s} =l cast {s}\n", .{ t, v.text });
+                break :blk .{ .text = t, .qtype = .l };
+            },
+            .none => .{ .text = "0", .qtype = .l },
+        };
+    }
+
+    /// `toPayload`in tersi: bir `i64` payload'ı `target_qtype`e geri çevirir
+    /// (`l`->`w` düz `copy` ile DÜŞÜK 32 biti alır — QBE'de geçerli bir
+    /// daraltma; `l`->`d` `cast` ile bit örüntüsünü geri yorumlar).
+    fn fromPayload(self: *Codegen, payload: Value, target_qtype: QbeType) CodegenError!Value {
+        return switch (target_qtype) {
+            .l => payload,
+            .w => blk: {
+                const t = try self.newTemp();
+                try self.out.writer.print("    {s} =w copy {s}\n", .{ t, payload.text });
+                break :blk .{ .text = t, .qtype = .w };
+            },
+            .d => blk: {
+                const t = try self.newTemp();
+                try self.out.writer.print("    {s} =d cast {s}\n", .{ t, payload.text });
+                break :blk .{ .text = t, .qtype = .d };
+            },
+            .none => .{ .text = "0", .qtype = .none },
+        };
+    }
+
+    /// Bir dize LİTERALİNİ (kaynak kodda YAZILMIŞ bir `.string_lit` İÇİN
+    /// `genExpr` TARAFINDAN, ya da codegen'İN KENDİSİNİN sentezlediği sabit
+    /// bir mesaj İÇİN — bkz. `genParseOrRaise`, stdlib fazı §E — DOĞRUDAN)
+    /// `.data` bölümüne PINNED-refcount'lu bir dize olarak yayar, `str`
+    /// tipli bir `Value` döner. Bkz. modül üstü not (`PINNED_REFCOUNT`
+    /// hilesi) — `nox_rc_alloc`'un ürettüğü payload'larla AYNI temsili
+    /// TAŞIMALIDIR, aksi halde bu değer bir ARC release'e uğradığında
+    /// statik belleği bozardı.
+    fn emitStringLiteral(self: *Codegen, s: []const u8) CodegenError!Value {
+        const sym = try std.fmt.allocPrint(self.allocator, "$str{d}", .{self.string_counter});
+        self.string_counter += 1;
+        const escaped = try escapeForQbeString(self.allocator, s);
+        try self.string_data.append(self.allocator, .{ .symbol = sym, .escaped = escaped });
+        const addr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 8\n", .{ addr, sym });
+        return .{ .text = addr, .qtype = .l, .heap = .str };
+    }
+
+    fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
+        return switch (expr) {
+            .int_lit => |v| .{ .text = try std.fmt.allocPrint(self.allocator, "{d}", .{v}), .qtype = .l },
+            .float_lit => |v| .{ .text = try std.fmt.allocPrint(self.allocator, "d_{d}", .{v}), .qtype = .d },
+            .bool_lit => |v| .{ .text = if (v) "1" else "0", .qtype = .w },
+            .string_lit => |s| try self.emitStringLiteral(s),
+            .identifier => |name| blk: {
+                const info = self.vars.get(name) orelse return error.Unsupported;
+                const t = try self.newTemp();
+                try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ t, qbeTypeName(info.qtype), qbeTypeName(info.qtype), info.slot });
+                break :blk .{ .text = t, .qtype = info.qtype, .heap = info.heap, .elem_qtype = info.elem_qtype, .class_name = info.class_name, .elem_heap_info = info.elem_heap_info, .elem_is_str = info.elem_is_str, .dict_info = info.dict_info, .arena = info.arena };
+            },
+            .unary => |u| try self.genUnary(u),
+            .binary => |b| try self.genBinary(b),
+            .call => |c| try self.genCall(c),
+            .index => |idx| try self.genIndex(idx),
+            .list_lit => |elems| try self.genListLit(elems),
+            .dict_lit => |pairs| try self.genDictLit(pairs),
+            .attribute => |a| try self.genFieldRead(a),
+            .none_lit => error.Unsupported,
+            // Faz 21 aşama 4 (bkz. nox-teknik-spesifikasyon.md §3.21):
+            // `Task[T]`/`Channel[T]`in çalışma zamanı köprüsüne (bkz.
+            // runtime/async_rt/bridge.zig) lowering.
+            .await_expr => |operand| try self.genAwaitExpr(operand.*),
+            .spawn_expr => |operand| try self.genSpawnExpr(operand.*),
+            .generic_construct => |g| try self.genGenericConstruct(g),
+        };
+    }
+
+    fn genFieldRead(self: *Codegen, a: ast.Attribute) CodegenError!Value {
+        const obj = try self.genExpr(a.obj.*);
+        if (obj.heap != .class) return error.Unsupported;
+        const cinfo = self.classes.get(obj.class_name.?).?;
+        for (cinfo.fields.items) |f| {
+            if (!std.mem.eql(u8, f.name, a.attr)) continue;
+            const addr = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, obj.text, f.offset });
+            const result = try self.newTemp();
+            try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ result, qbeTypeName(f.info.qtype), qbeTypeName(f.info.qtype), addr });
+            // `obj` TAZE bir değerse (ör. `make_car(i).engine`), okunan alanı
+            // döndürmeden ÖNCE `obj`'yi serbest bırakırız (bkz.
+            // `releaseIfTemporary`) — ama alanın KENDİSİ heap tipliyse (sınıf
+            // YA DA list[T], bkz. görev "Sınıf alanı list[T] tipinde
+            // olabilsin"), önce ONU retain etmeliyiz: aksi halde `obj`'nin
+            // serbest bırakılması (özellikle refcount'u sıfıra düşüp `obj`
+            // yok edilirse) bu alanı da özyinelemeli olarak serbest bırakabilir
+            // (`genClassRelease`) — az önce okuduğumuz değeri kullanım-
+            // sonrası-serbest-bırakmaya dönüştürür.
+            if (isTemporaryExpr(a.obj.*) and isHeapManaged(f.info.heap)) {
+                try self.emitInlineRetain(result);
+            }
+            try self.releaseIfTemporary(a.obj.*, obj);
+            return .{ .text = result, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str, .dict_info = f.info.dict_info };
+        }
+        return error.Unsupported;
+    }
+
+    /// `genFieldRead`in AST-BAĞIMSIZ, BASİTLEŞTİRİLMİŞ çekirdeği — stdlib
+    /// fazı §D.1.6'nın `nox.http.serve` sarmalayıcısı (bkz.
+    /// `genHttpServeWrapper`), kullanıcının döndürdüğü bir `HttpResponse`
+    /// örneğinden (`ast.Expr`den DEĞİL, zaten hesaplanmış bir `Value`den)
+    /// `status`/`body`/`headers` alanlarını okumak İÇİN kullanır. `genFieldRead`in
+    /// AKSİNE `obj`i retain/release ETMEZ — sarmalayıcı `obj`nin (yanıt
+    /// örneğinin) TÜM YAŞAM DÖNGÜSÜNÜ kendisi yönetir (alanları okuduktan
+    /// SONRA `releaseValueIfSet` ile AÇIKÇA serbest bırakır), bu yüzden
+    /// `genFieldRead`in "taban taze bir geçiciyse ÖNCE retain et" dansına
+    /// GEREK YOKTUR.
+    fn genFieldReadFromValue(self: *Codegen, obj: Value, field_name: []const u8) CodegenError!Value {
+        if (obj.heap != .class) return error.Unsupported;
+        const cinfo = self.classes.get(obj.class_name.?).?;
+        for (cinfo.fields.items) |f| {
+            if (!std.mem.eql(u8, f.name, field_name)) continue;
+            const addr = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, obj.text, f.offset });
+            const result = try self.newTemp();
+            try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ result, qbeTypeName(f.info.qtype), qbeTypeName(f.info.qtype), addr });
+            return .{ .text = result, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str, .dict_info = f.info.dict_info };
+        }
+        return error.Unsupported;
+    }
+
+    fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
+        const obj = try self.genExpr(idx.obj.*);
+        if (obj.heap == .dict) return self.genDictGet(obj, idx.index.*);
+        if (obj.heap == .str) return self.genStrIndex(obj, idx);
+        if (obj.heap != .list) return error.Unsupported;
+        const index_v = try self.genExpr(idx.index.*);
+        const byte_off = try self.newTemp();
+        try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ byte_off, index_v.text, qbeSizeOf(obj.elem_qtype) });
+        const off8 = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 8\n", .{ off8, byte_off });
+        const addr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ addr, obj.text, off8 });
+        const result = try self.newTemp();
+        try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ result, qbeTypeName(obj.elem_qtype), qbeTypeName(obj.elem_qtype), addr });
+        // `list[T]`nin elemanları (Faz 21 ön-koşulundan beri) heap tipli
+        // (sınıf/iç içe liste) OLABİLİR — okunan değer listenin İÇİNDEKİ bir
+        // elemana ÖDÜNÇ ALINMIŞ bir referanstır (bu okuma BAŞLI BAŞINA retain
+        // gerektirmez, tıpkı bir `.attribute` okuması gibi), ama `.heap`/
+        // `.class_name`/`.elem_heap_info`nin DOĞRU taşınması, bu değerin
+        // sonradan bir çağrıya argüman/başka bir listeye eleman olarak doğru
+        // release edilebilmesi için GEREKLİDİR. `obj`'nin KENDİSİ taze bir
+        // liste olabilir (ör. `make_list()[0]`), bu yüzden yine de serbest
+        // bırakılmalıdır — ama `obj` TAZE VE eleman heap tipliyse (bkz.
+        // `genFieldRead`'deki AYNI gerekçe), `obj`'yi serbest bırakmadan ÖNCE
+        // okunan elemanı retain ETMELİYİZ: aksi halde `obj`'nin refcount'u
+        // sıfıra düşüp (`releaseIfTemporary`) elemanları özyinelemeli olarak
+        // serbest bırakırsa (`genListElemRelease`), az önce okuduğumuz
+        // elemanı kullanım-sonrası-serbest-bırakmaya çeviririz.
+        if (isTemporaryExpr(idx.obj.*) and obj.elem_heap_info != null) {
+            try self.emitInlineRetain(result);
+        }
+        try self.releaseIfTemporary(idx.obj.*, obj);
+        return valueFromElemDescriptor(result, obj.elem_qtype, obj.elem_heap_info, obj.elem_is_str);
+    }
+
+    /// `s[i]` — stdlib fazı §G. Sınır KONTROLÜ QBE'de yapılır (`strlen` +
+    /// karşılaştırma) — `genParseOrRaise`in AYNI "önce doğrula, hata
+    /// dalında raise et, `phi`SİZ `ok`e atla" deseni (bkz. onun belge
+    /// notu). Sonuç TEMEL diziden BAĞIMSIZ TAZE bir tahsistir (bkz.
+    /// `nox_str_char_at`in belge notu) — `list`/`dict` indekslemesinin
+    /// AKSİNE (o TABANIN İÇİNE bir takma addır), bu yüzden taban temporary
+    /// olsa BİLE ÖNCE retain etmeye GEREK YOKTUR, yalnızca SONRADAN
+    /// `releaseIfTemporary` ile tabanı serbest bırakmak yeterlidir.
+    fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Value {
+        const index_v = try self.genExpr(idx.index.*);
+        const len_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $strlen(l {s})\n", .{ len_t, obj.text });
+        const neg_t = try self.newTemp();
+        try self.out.writer.print("    {s} =w csltl {s}, 0\n", .{ neg_t, index_v.text });
+        const oob_hi_t = try self.newTemp();
+        try self.out.writer.print("    {s} =w csgel {s}, {s}\n", .{ oob_hi_t, index_v.text, len_t });
+        const oob_t = try self.newTemp();
+        try self.out.writer.print("    {s} =w or {s}, {s}\n", .{ oob_t, neg_t, oob_hi_t });
+        const err_label = try self.newLabel("str_idx_err");
+        const ok_label = try self.newLabel("str_idx_ok");
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ oob_t, err_label, ok_label });
+        try self.out.writer.print("{s}\n", .{err_label});
+
+        const msg_value = try self.emitStringLiteral("str indeksi sinirlarin disinda");
+        const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
+        const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value});
+        try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ie_obj.text });
+        try self.emitExceptionCheck();
+        try self.out.writer.print("    jmp {s}\n", .{ok_label});
+
+        try self.out.writer.print("{s}\n", .{ok_label});
+        const result_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_str_char_at(l {s}, l {s}, l {s})\n", .{ result_t, RT_PARAM, obj.text, index_v.text });
+        try self.releaseIfTemporary(idx.obj.*, obj);
+        return .{ .text = result_t, .qtype = .l, .heap = .str, .always_fresh = true };
+    }
+
+    fn genListLit(self: *Codegen, elems: []const ast.Expr) CodegenError!Value {
+        if (elems.len == 0) return error.Unsupported; // checker zaten reddeder; savunmacı
+
+        const values = try self.allocator.alloc(Value, elems.len);
+        for (elems, 0..) |el, i| {
+            const v0 = try self.genExpr(el);
+            // checker.zig burada tip düzeyinde kısıtlamıyor (bir `list_lit`
+            // ifadesinin kendisi, isimlendirilmiş bir `list[T]` bildirimi
+            // gerektirmeden `list[Sınıf]` olarak da tiplenebilir). Faz 21
+            // ön-koşulundan beri heap-yönetimli (sınıf/iç içe liste) elemanlar
+            // da DESTEKLENİYOR — bkz. modül üstü not, `releaseValueIfSet`/
+            // `genListElemRelease`. Bir isim ALIASI ise (`retainIfAliasing`)
+            // retain edilir; `lowlevel` içindeyken bu, `checkNoLowlevelEscape`
+            // aracılığıyla ZATEN reddedilir (mevcut, değişmemiş geniş kural).
+            values[i] = try self.retainIfAliasing(el, v0);
+        }
+        const first = values[0];
+        const elem_qtype = first.qtype;
+        var elem_heap_info: ?*const ElemHeapInfo = null;
+        // `str` DAHİL (bkz. `resolveType`in list dalındaki AYNI gerekçe,
+        // stdlib fazı §B) — `list[str]` elemanlarının kapsam-sonu/yeniden
+        // atamada özyinelemeli release'e girmesi için gerekli.
+        if (first.heap == .class or first.heap == .list or first.heap == .str) {
+            const info = try self.allocator.create(ElemHeapInfo);
+            info.* = .{ .heap = first.heap, .class_name = first.class_name, .elem_qtype = first.elem_qtype, .nested = first.elem_heap_info, .elem_is_str = first.elem_is_str };
+            elem_heap_info = info;
+        }
+        const elem_is_str = first.heap == .str;
+        const elem_size = qbeSizeOf(elem_qtype);
+        const payload_size = 8 + elem_size * elems.len;
+
+        const t = try self.newTemp();
+        const arena = self.currentArena();
+        if (arena) |ap| {
+            try self.out.writer.print("    {s} =l call $nox_arena_alloc(l {s}, l {d})\n", .{ t, ap, payload_size });
+        } else {
+            try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ t, RT_PARAM, payload_size });
+        }
+        try self.out.writer.print("    storel {d}, {s}\n", .{ elems.len, t });
+        for (values, 0..) |v, i| {
+            const off = 8 + elem_size * i;
+            const addr = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, t, off });
+            try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(elem_qtype), v.text, addr });
+        }
+        return .{ .text = t, .qtype = .l, .heap = .list, .elem_qtype = elem_qtype, .elem_heap_info = elem_heap_info, .elem_is_str = elem_is_str, .arena = arena != null };
+    }
+
+    /// `{k1: v1, k2: v2, ...}` — `runtime/collections/dict.zig`nin
+    /// `nox_dict_new`/`nox_dict_set`ine lowerlanır (bkz. nox-teknik-
+    /// spesifikasyon.md §3.28). `dict`in KENDİSİ ARC-yönetimli DEĞİLDİR
+    /// (bkz. `HeapKind`in belge notu, `Task`/`Channel`le AYNI desen) — ama
+    /// `str` anahtar/değerler `retainIfAliasing` ile (list_lit İLE AYNI
+    /// desen) doğru şekilde retain edilir; `nox_dict_set` bunları OLDUĞU
+    /// GİBİ (ek bir retain OLMADAN) depolar — sahiplik ÇAĞIRANDAN (buradan)
+    /// devralınır.
+    fn genDictLit(self: *Codegen, pairs: []const ast.DictPair) CodegenError!Value {
+        if (pairs.len == 0) return error.Unsupported; // checker zaten reddeder; savunmacı
+
+        const key_values = try self.allocator.alloc(Value, pairs.len);
+        const value_values = try self.allocator.alloc(Value, pairs.len);
+        for (pairs, 0..) |p, i| {
+            const k0 = try self.genExpr(p.key);
+            try self.checkNoLowlevelEscape(k0);
+            key_values[i] = try self.retainIfAliasing(p.key, k0);
+            const v0 = try self.genExpr(p.value);
+            try self.checkNoLowlevelEscape(v0);
+            value_values[i] = try self.retainIfAliasing(p.value, v0);
+        }
+        const key_is_str = key_values[0].heap == .str;
+        const value_is_str = value_values[0].heap == .str;
+        const value_qtype = value_values[0].qtype;
+
+        const dinfo = try self.allocator.create(DictInfo);
+        dinfo.* = .{ .key_is_str = key_is_str, .value_qtype = value_qtype, .value_is_str = value_is_str };
+
+        const key_is_str_lit: []const u8 = if (key_is_str) "1" else "0";
+        const value_is_str_lit: []const u8 = if (value_is_str) "1" else "0";
+
+        const d = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_dict_new(l {s}, w {s})\n", .{ d, RT_PARAM, key_is_str_lit });
+
+        for (key_values, 0..) |kv, i| {
+            const key_payload = try self.toPayload(kv);
+            const value_payload = try self.toPayload(value_values[i]);
+            try self.out.writer.print("    call $nox_dict_set(l {s}, l {s}, w {s}, w {s}, l {s}, l {s})\n", .{ RT_PARAM, d, key_is_str_lit, value_is_str_lit, key_payload.text, value_payload.text });
+        }
+
+        return .{ .text = d, .qtype = .l, .heap = .dict, .dict_info = dinfo };
+    }
+
+    fn genUnary(self: *Codegen, u: ast.Unary) CodegenError!Value {
+        const operand = try self.genExpr(u.operand.*);
+        return switch (u.op) {
+            .neg => blk: {
+                const t = try self.newTemp();
+                try self.out.writer.print("    {s} ={s} neg {s}\n", .{ t, qbeTypeName(operand.qtype), operand.text });
+                break :blk .{ .text = t, .qtype = operand.qtype };
+            },
+            .not_ => blk: {
+                const t = try self.newTemp();
+                try self.out.writer.print("    {s} =w xor {s}, 1\n", .{ t, operand.text });
+                break :blk .{ .text = t, .qtype = .w };
+            },
+        };
+    }
+
+    fn emitBin(self: *Codegen, mnemonic: []const u8, l: Value, r: Value, result_qtype: QbeType) CodegenError!Value {
+        const t = try self.newTemp();
+        try self.out.writer.print("    {s} ={s} {s} {s}, {s}\n", .{ t, qbeTypeName(result_qtype), mnemonic, l.text, r.text });
+        return .{ .text = t, .qtype = result_qtype };
+    }
+
+    fn emitCmp(self: *Codegen, op: ast.BinaryOp, l: Value, r: Value, common: QbeType) CodegenError!Value {
+        const t = try self.newTemp();
+        try self.out.writer.print("    {s} =w {s} {s}, {s}\n", .{ t, cmpMnemonic(op, common), l.text, r.text });
+        return .{ .text = t, .qtype = .w };
+    }
+
+    fn callLibm1(self: *Codegen, comptime name: []const u8, v: Value) CodegenError!Value {
+        const t = try self.newTemp();
+        try self.out.writer.print("    {s} =d call ${s}(d {s})\n", .{ t, name, v.text });
+        return .{ .text = t, .qtype = .d };
+    }
+
+    fn callLibm2(self: *Codegen, comptime name: []const u8, l: Value, r: Value) CodegenError!Value {
+        const t = try self.newTemp();
+        try self.out.writer.print("    {s} =d call ${s}(d {s}, d {s})\n", .{ t, name, l.text, r.text });
+        return .{ .text = t, .qtype = .d };
+    }
+
+    /// `strcmp` (libc, `cc` bağlantısında zaten mevcut — `printf` gibi başka
+    /// çağrılarla AYNI şekilde ekstra bir bağlama argümanı gerekmez) ile iki
+    /// `str`in İÇERİĞİNİ karşılaştırır; sonucu `0`a karşı `w` bir bool'a çevirir.
+    fn genStrCompare(self: *Codegen, op: ast.BinaryOp, l: Value, r: Value) CodegenError!Value {
+        const cmp_t = try self.newTemp();
+        try self.out.writer.print("    {s} =w call $strcmp(l {s}, l {s})\n", .{ cmp_t, l.text, r.text });
+        const result = try self.newTemp();
+        const mnemonic: []const u8 = if (op == .eq) "ceqw" else "cnew";
+        try self.out.writer.print("    {s} =w {s} {s}, 0\n", .{ result, mnemonic, cmp_t });
+        return .{ .text = result, .qtype = .w };
+    }
+
+    fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
+        if (b.op == .and_ or b.op == .or_) {
+            const l = try self.genExpr(b.left.*);
+            const r = try self.genExpr(b.right.*);
+            const mnemonic: []const u8 = if (b.op == .and_) "and" else "or";
+            return self.emitBin(mnemonic, l, r, .w);
+        }
+
+        const l0 = try self.genExpr(b.left.*);
+        const r0 = try self.genExpr(b.right.*);
+
+        // `str == str` / `str != str` — GERÇEK içerik karşılaştırması
+        // (`strcmp`, çünkü `str` her zaman sıfırla-sonlanan bir C dizesidir).
+        // checker.zig zaten yalnızca `==`/`!=`i (ve yalnızca AYNI tipteki iki
+        // tarafı) buraya kadar geçirir (bkz. `checkBinary`in `.eq, .ne`
+        // dalı). **Düzeltme (stdlib fazı §H'de BULUNAN gerçek bir sızıntı):**
+        // bu dalın ESKİ belge notu "str HİÇBİR ZAMAN ARC-yönetimli değildir"
+        // diyordu — bu, Alt-Faz B'nin `str`i ARC-yönetimli YAPMASINDAN
+        // ÖNCEKİ bir varsayımdı, ASLA güncellenmemişti. Operandlardan biri
+        // TEMPORARY ise (ör. `s[i] != prefix[j]` — Alt-Faz G'nin `s[i]`si,
+        // YA DA `(a + b) == c` gibi bir concat sonucu) SERBEST BIRAKILMASI
+        // GEREKİR — `list`/`class` eşitlik dalıyla (aşağı) VE `str + str`
+        // dalıyla (aşağı) AYNI desen.
+        if (l0.heap == .str and r0.heap == .str and (b.op == .eq or b.op == .ne)) {
+            const result = try self.genStrCompare(b.op, l0, r0);
+            try self.releaseIfTemporary(b.left.*, l0);
+            try self.releaseIfTemporary(b.right.*, r0);
+            return result;
+        }
+
+        // `list[T] == list[T]` / `sınıf == sınıf` — ÖZYİNELEMELİ yapısal
+        // karşılaştırma (bkz. görev "list/class için derin yapısal eşitlik",
+        // `genClassEq`/`genListEq`). checker zaten yalnızca AYNI (iç içe)
+        // tipteki iki tarafı buraya kadar geçirir (`types.eql`, bkz.
+        // `checkBinary`in `.eq, .ne` dalı) — bu yüzden `l0`nin
+        // betimleyicileri (`class_name`/`elem_*`) `r0` için de geçerlidir.
+        // Operandlar `lowlevel` arenasından gelemez (aşağıdaki
+        // `checkNoLowlevelEscape` ile AYNI geniş kural, bkz. modül üstü not) —
+        // bir arena işaretçisini `$..._eq`e ARGÜMAN olarak geçirmek de
+        // "çağrıya argüman" kısıtlamasına girer. `l0`/`r0`nin KENDİLERİ
+        // (bir DEĞİŞKENE bağlı tam liste/sınıf DEĞERLERİ, bir ALAN/ELEMAN
+        // DEĞİL) hiçbir zaman null OLAMAZ — bu yüzden `genEqCompareOrJump`'ın
+        // alan/eleman-seviyesi null-güvenliği burada GEREKMEZ; `$..._eq`
+        // DOĞRUDAN çağrılır.
+        if ((l0.heap == .list or l0.heap == .class) and r0.heap == l0.heap and (b.op == .eq or b.op == .ne)) {
+            try self.checkNoLowlevelEscape(l0);
+            try self.checkNoLowlevelEscape(r0);
+            const eq_temp = try self.newTemp();
+            if (l0.heap == .class) {
+                try self.out.writer.print("    {s} =w call ${s}_eq(l {s}, l {s}, l {s})\n", .{ eq_temp, l0.class_name.?, RT_PARAM, l0.text, r0.text });
+            } else {
+                const fn_name = try self.eqFnNameForList(l0.elem_qtype, l0.elem_heap_info, l0.elem_is_str);
+                try self.out.writer.print("    {s} =w call ${s}_eq(l {s}, l {s}, l {s})\n", .{ eq_temp, fn_name, RT_PARAM, l0.text, r0.text });
+            }
+            const result: []const u8 = if (b.op == .ne) blk: {
+                const t = try self.newTemp();
+                try self.out.writer.print("    {s} =w xor {s}, 1\n", .{ t, eq_temp });
+                break :blk t;
+            } else eq_temp;
+            try self.releaseIfTemporary(b.left.*, l0);
+            try self.releaseIfTemporary(b.right.*, r0);
+            return .{ .text = result, .qtype = .w };
+        }
+
+        // `str + str` — YENİ bir birleştirilmiş dize üretir (stdlib fazı §B,
+        // bkz. `runtime/str.zig`). checker zaten yalnızca iki tarafı da
+        // `str` olan bir `+`i buraya kadar geçirir (`checkBinary`in `.add`
+        // dalı). Sonuç TAZE bir heap değeridir (refcount 1 ile başlar) —
+        // `.call` sonucuyla AYNI şekilde ele alınır (bkz. `isTemporaryExpr`in
+        // `.binary` dalı).
+        if (l0.heap == .str and r0.heap == .str and b.op == .add) {
+            try self.checkNoLowlevelEscape(l0);
+            try self.checkNoLowlevelEscape(r0);
+            const result_t = try self.newTemp();
+            try self.out.writer.print("    {s} =l call $nox_str_concat(l {s}, l {s}, l {s})\n", .{ result_t, RT_PARAM, l0.text, r0.text });
+            try self.releaseIfTemporary(b.left.*, l0);
+            try self.releaseIfTemporary(b.right.*, r0);
+            return .{ .text = result_t, .qtype = .l, .heap = .str };
+        }
+
+        // list[T]/sınıf içerik karşılaştırması yalnızca `==`/`!=` içindir —
+        // başka bir ikili operatör (`<`, `+`, ...) heap tipli bir işlenenle
+        // hâlâ reddedilir (checker zaten bunu sayısal/bool tiplerle
+        // sınırlar, burası savunmacıdır).
+        if (l0.heap != .none or r0.heap != .none) return error.Unsupported;
+
+        if (b.op == .div) {
+            const l = try self.convert(l0, .d);
+            const r = try self.convert(r0, .d);
+            return self.emitBin("div", l, r, .d);
+        }
+
+        const common: QbeType = if (l0.qtype == .d or r0.qtype == .d)
+            .d
+        else if (l0.qtype == .w or r0.qtype == .w)
+            .w
+        else
+            .l;
+        const l = try self.convert(l0, common);
+        const r = try self.convert(r0, common);
+
+        return switch (b.op) {
+            .add => self.emitBin("add", l, r, common),
+            .sub => self.emitBin("sub", l, r, common),
+            .mul => self.emitBin("mul", l, r, common),
+            .floordiv => self.genFloorDiv(l, r, common),
+            .mod => self.genMod(l, r, common),
+            .pow => self.genPow(l, r, common),
+            .eq, .ne, .lt, .le, .gt, .ge => self.emitCmp(b.op, l, r, common),
+            .div, .and_, .or_ => unreachable,
+        };
+    }
+
+    fn genFloorDiv(self: *Codegen, l: Value, r: Value, common: QbeType) CodegenError!Value {
+        if (common == .d) {
+            const divided = try self.emitBin("div", l, r, .d);
+            return self.callLibm1("floor", divided);
+        }
+
+        const q = try self.emitBin("div", l, r, .l);
+        const rem = try self.emitBin("rem", l, r, .l);
+
+        const rem_nonzero = try self.newTemp();
+        try self.out.writer.print("    {s} =w cnel {s}, 0\n", .{ rem_nonzero, rem.text });
+        const rem_neg = try self.newTemp();
+        try self.out.writer.print("    {s} =w csltl {s}, 0\n", .{ rem_neg, rem.text });
+        const r_neg = try self.newTemp();
+        try self.out.writer.print("    {s} =w csltl {s}, 0\n", .{ r_neg, r.text });
+        const sign_diff = try self.newTemp();
+        try self.out.writer.print("    {s} =w xor {s}, {s}\n", .{ sign_diff, rem_neg, r_neg });
+        const need_adjust = try self.newTemp();
+        try self.out.writer.print("    {s} =w and {s}, {s}\n", .{ need_adjust, rem_nonzero, sign_diff });
+
+        // Dallanma/yığın yuvası KULLANMADAN (bkz. `adjustModSign`'daki aynı
+        // gerekçe) `need_adjust`i (0 ya da 1) `l`ye genişletip bölümden
+        // çıkarırız — 0 ise değişiklik yok, 1 ise bir eksiltilmiş olur.
+        const mask = try self.newTemp();
+        try self.out.writer.print("    {s} =l extuw {s}\n", .{ mask, need_adjust });
+        const result = try self.newTemp();
+        try self.out.writer.print("    {s} =l sub {s}, {s}\n", .{ result, q.text, mask });
+        return .{ .text = result, .qtype = .l };
+    }
+
+    fn genMod(self: *Codegen, l: Value, r: Value, common: QbeType) CodegenError!Value {
+        const rem = if (common == .d) try self.callLibm2("fmod", l, r) else try self.emitBin("rem", l, r, .l);
+        return self.adjustModSign(rem, r, common);
+    }
+
+    /// Not (kritik): bu fonksiyon eskiden bir `alloc8` yığın yuvası + dallanma
+    /// (jnz/label) kullanıyordu. Bir `%`/`//` ifadesi bir DÖNGÜ gövdesi
+    /// içinde tekrar tekrar değerlendirildiğinde (ör. `while i < n: x = i % 3`),
+    /// QBE'nin `alloc8`'i FONKSİYON GİRİŞİNDE bir kez yapılacak bir tahsis
+    /// olarak varsayması nedeniyle, döngü içine gömülü her `alloc8` her
+    /// yinelemede yığın işaretçisini (`sub sp, sp, 16`) küçültüyor ve ASLA
+    /// geri almıyordu — bu da (deneyerek doğrulandı, bkz. benchmark suite
+    /// kalibrasyonu) yüz binlerce yinelemeden sonra sessiz bir yığın
+    /// taşmasına (stack overflow → segfault) yol açıyordu. Çözüm: dallanma/
+    /// bellek KULLANMADAN, `need_adjust`i (0 ya da 1) ortak tipe genişletip
+    /// bölene çarpıp kalana eklemek — SAF aritmetik, hiçbir döngü derinliğinde
+    /// yığın büyümesi olmaz (ayrıca dallanmasız olduğu için daha hızlıdır).
+    fn adjustModSign(self: *Codegen, rem: Value, divisor: Value, common: QbeType) CodegenError!Value {
+        const zero_lit: []const u8 = if (common == .d) "d_0" else "0";
+        const eq_ne_suffix: []const u8 = if (common == .d) "d" else "l";
+        const lt_op: []const u8 = if (common == .d) "cltd" else "csltl";
+
+        const rem_nonzero = try self.newTemp();
+        try self.out.writer.print("    {s} =w cne{s} {s}, {s}\n", .{ rem_nonzero, eq_ne_suffix, rem.text, zero_lit });
+        const rem_neg = try self.newTemp();
+        try self.out.writer.print("    {s} =w {s} {s}, {s}\n", .{ rem_neg, lt_op, rem.text, zero_lit });
+        const div_neg = try self.newTemp();
+        try self.out.writer.print("    {s} =w {s} {s}, {s}\n", .{ div_neg, lt_op, divisor.text, zero_lit });
+        const sign_diff = try self.newTemp();
+        try self.out.writer.print("    {s} =w xor {s}, {s}\n", .{ sign_diff, rem_neg, div_neg });
+        const need_adjust = try self.newTemp();
+        try self.out.writer.print("    {s} =w and {s}, {s}\n", .{ need_adjust, rem_nonzero, sign_diff });
+
+        const mask = try self.newTemp();
+        if (common == .d) {
+            try self.out.writer.print("    {s} =d uwtof {s}\n", .{ mask, need_adjust });
+        } else {
+            try self.out.writer.print("    {s} =l extuw {s}\n", .{ mask, need_adjust });
+        }
+        const amount = try self.newTemp();
+        try self.out.writer.print("    {s} ={s} mul {s}, {s}\n", .{ amount, qbeTypeName(common), mask, divisor.text });
+        const result = try self.newTemp();
+        try self.out.writer.print("    {s} ={s} add {s}, {s}\n", .{ result, qbeTypeName(common), rem.text, amount });
+        return .{ .text = result, .qtype = common };
+    }
+
+    fn genPow(self: *Codegen, l: Value, r: Value, common: QbeType) CodegenError!Value {
+        const lf = try self.convert(l, .d);
+        const rf = try self.convert(r, .d);
+        const t = try self.newTemp();
+        try self.out.writer.print("    {s} =d call $pow(d {s}, d {s})\n", .{ t, lf.text, rf.text });
+        const result: Value = .{ .text = t, .qtype = .d };
+        if (common == .l) return self.convert(result, .l);
+        return result;
+    }
+
+    /// `print(<ifade>)`in tek giriş noktası. `list[T]`/sınıf İÇİN
+    /// `genPrintFragment`e (özyineli, tırnaksız-OLMAYAN `str` biçimi — bkz.
+    /// onun belge notu) yönlenip bir satır sonu ekler; değer tipleri İÇİN
+    /// (Python'un `print()`i `str()` kullanır, `repr()` DEĞİL — bu yüzden en
+    /// dıştaki bir `str` TIRNAKSIZ basılır, `genPrintFragment`in `str_frag`
+    /// biçiminden BİLEREK FARKLI) DEĞİŞMEMİŞ eski (satır-sonu dahil) format
+    /// sabitlerini kullanır.
+    fn genPrint(self: *Codegen, v: Value) CodegenError!void {
+        if (v.heap == .list or v.heap == .class) {
+            try self.genPrintFragment(v);
+            try self.out.writer.writeAll("    call $printf(l $fmt_newline)\n");
+            return;
+        }
+        switch (v.qtype) {
+            .l => if (v.heap == .str)
+                try self.out.writer.print("    call $printf(l $fmt_str, ..., l {s})\n", .{v.text})
+            else
+                try self.out.writer.print("    call $printf(l $fmt_int, ..., l {s})\n", .{v.text}),
+            .d => try self.out.writer.print("    call $printf(l $fmt_float, ..., d {s})\n", .{v.text}),
+            .w => {
+                const true_label = try self.newLabel("print_true");
+                const false_label = try self.newLabel("print_false");
+                const done_label = try self.newLabel("print_done");
+                try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ v.text, true_label, false_label });
+                try self.out.writer.print("{s}\n", .{true_label});
+                try self.out.writer.writeAll("    call $printf(l $fmt_bool_true)\n");
+                try self.out.writer.print("    jmp {s}\n", .{done_label});
+                try self.out.writer.print("{s}\n", .{false_label});
+                try self.out.writer.writeAll("    call $printf(l $fmt_bool_false)\n");
+                try self.out.writer.print("    jmp {s}\n", .{done_label});
+                try self.out.writer.print("{s}\n", .{done_label});
+            },
+            .none => return error.Unsupported,
+        }
+    }
+
+    /// `v`yi satır SONU OLMADAN basar — `list[T]`/sınıf görüntülemesi (bkz.
+    /// görev "print(list)/print(class) görüntüleme biçimi") ÖZYİNELEMELİDİR
+    /// (bir listenin/sınıfın elemanı/alanı yine bir liste/sınıf olabilir);
+    /// yalnızca en dıştaki `genPrint` çağrısı bir satır sonu ekler.
+    fn genPrintFragment(self: *Codegen, v: Value) CodegenError!void {
+        if (v.heap == .list) return self.genPrintList(v);
+        if (v.heap == .class) return self.genPrintClass(v);
+        switch (v.qtype) {
+            .l => if (v.heap == .str)
+                try self.out.writer.print("    call $printf(l $fmt_str_frag, ..., l {s})\n", .{v.text})
+            else
+                try self.out.writer.print("    call $printf(l $fmt_int_frag, ..., l {s})\n", .{v.text}),
+            .d => try self.out.writer.print("    call $printf(l $fmt_float_frag, ..., d {s})\n", .{v.text}),
+            .w => {
+                const true_label = try self.newLabel("print_true");
+                const false_label = try self.newLabel("print_false");
+                const done_label = try self.newLabel("print_done");
+                try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ v.text, true_label, false_label });
+                try self.out.writer.print("{s}\n", .{true_label});
+                try self.out.writer.writeAll("    call $printf(l $fmt_bool_true_frag)\n");
+                try self.out.writer.print("    jmp {s}\n", .{done_label});
+                try self.out.writer.print("{s}\n", .{false_label});
+                try self.out.writer.writeAll("    call $printf(l $fmt_bool_false_frag)\n");
+                try self.out.writer.print("    jmp {s}\n", .{done_label});
+                try self.out.writer.print("{s}\n", .{done_label});
+            },
+            .none => return error.Unsupported,
+        }
+    }
+
+    /// Derleme zamanında bilinen (kullanıcı verisi İÇERMEYEN — yalnızca sınıf/
+    /// alan adları gibi kaynak-kodu metinleri) sabit bir metni `printf`e
+    /// FORMAT dizesi olarak geçirilebilecek bir `data` sembolüne dönüştürür.
+    /// Normal `str` literallerinden (`string_data`) FARKLI: burada üretilen
+    /// sembol ARC'ın "pinned refcount" başlığını TAŞIMAZ (bu metin hiçbir
+    /// zaman bir Nox `str` DEĞERİ olarak dolaşmaz, yalnızca `printf`in İLK
+    /// argümanı olarak kullanılır) — bu yüzden `.string_lit`in aksine `+8`
+    /// ofsetlemesi GEREKMEZ.
+    fn internFmtString(self: *Codegen, text: []const u8) CodegenError![]const u8 {
+        const sym = try std.fmt.allocPrint(self.allocator, "$fmt_lit{d}", .{self.fmt_counter});
+        self.fmt_counter += 1;
+        const escaped = try escapeForQbeString(self.allocator, text);
+        try self.fmt_data.append(self.allocator, .{ .symbol = sym, .escaped = escaped });
+        return sym;
+    }
+
+    /// `list[T]` görüntülemesi — Python'un `repr([...])`ine benzer:
+    /// `[e1, e2, ...]`, elemanlar `genPrintFragment` ile ÖZYİNELEMELİ basılır
+    /// (bir liste elemanı yine bir liste/sınıf olabilir). Liste UZUNLUĞU
+    /// yalnızca ÇALIŞMA ZAMANINDA bilindiğinden (derleme zamanında sabit bir
+    /// format dizesi ÇÖZÜLEMEZ), `genForList`/`genListElemRelease` ile AYNI
+    /// güvenli döngü desenini (FONKSİYON GİRİŞİNDE bir kez `alloc8`) kullanır.
+    fn genPrintList(self: *Codegen, v: Value) CodegenError!void {
+        try self.out.writer.writeAll("    call $printf(l $fmt_lbracket)\n");
+
+        const len_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ len_t, v.text });
+        const idx_slot = try self.newTemp();
+        try self.out.writer.print("    {s} =l alloc8 8\n", .{idx_slot});
+        try self.out.writer.print("    storel 0, {s}\n", .{idx_slot});
+
+        const cond_label = try self.newLabel("printlist_cond");
+        const body_label = try self.newLabel("printlist_body");
+        const end_label = try self.newLabel("printlist_end");
+        try self.out.writer.print("    jmp {s}\n", .{cond_label});
+        try self.out.writer.print("{s}\n", .{cond_label});
+        const idx_cur = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ idx_cur, idx_slot });
+        const cont = try self.newTemp();
+        try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ cont, idx_cur, len_t });
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cont, body_label, end_label });
+        try self.out.writer.print("{s}\n", .{body_label});
+
+        const not_first = try self.newTemp();
+        try self.out.writer.print("    {s} =w cnel {s}, 0\n", .{ not_first, idx_cur });
+        const comma_label = try self.newLabel("printlist_comma");
+        const skip_comma_label = try self.newLabel("printlist_skipcomma");
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ not_first, comma_label, skip_comma_label });
+        try self.out.writer.print("{s}\n", .{comma_label});
+        try self.out.writer.writeAll("    call $printf(l $fmt_comma_sp)\n");
+        try self.out.writer.print("    jmp {s}\n", .{skip_comma_label});
+        try self.out.writer.print("{s}\n", .{skip_comma_label});
+
+        const off = try self.newTemp();
+        try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ off, idx_cur, qbeSizeOf(v.elem_qtype) });
+        const off8 = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 8\n", .{ off8, off });
+        const addr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ addr, v.text, off8 });
+        const elem = try self.newTemp();
+        try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ elem, qbeTypeName(v.elem_qtype), qbeTypeName(v.elem_qtype), addr });
+        try self.genPrintFragment(valueFromElemDescriptor(elem, v.elem_qtype, v.elem_heap_info, v.elem_is_str));
+
+        const idx_next = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 1\n", .{ idx_next, idx_cur });
+        try self.out.writer.print("    storel {s}, {s}\n", .{ idx_next, idx_slot });
+        try self.out.writer.print("    jmp {s}\n", .{cond_label});
+        try self.out.writer.print("{s}\n", .{end_label});
+
+        try self.out.writer.writeAll("    call $printf(l $fmt_rbracket)\n");
+    }
+
+    /// Sınıf görüntülemesi — `ClassName(alan1=değer1, alan2=değer2, ...)`.
+    /// Alan sayısı/adları/tipleri derleme zamanında SABİTTİR (`cinfo.fields`),
+    /// bu yüzden döngü GEREKMEZ — ama alan DEĞERLERİ (özellikle iç içe
+    /// sınıf/`list[T]` alanları) `genPrintFragment` ile ÖZYİNELEMELİ basılır.
+    fn genPrintClass(self: *Codegen, v: Value) CodegenError!void {
+        const class_name = v.class_name.?;
+        const cinfo = self.classes.get(class_name).?;
+        const open_sym = try self.internFmtString(try std.fmt.allocPrint(self.allocator, "{s}(", .{class_name}));
+        try self.out.writer.print("    call $printf(l {s})\n", .{open_sym});
+        for (cinfo.fields.items, 0..) |f, i| {
+            if (i != 0) try self.out.writer.writeAll("    call $printf(l $fmt_comma_sp)\n");
+            const name_sym = try self.internFmtString(try std.fmt.allocPrint(self.allocator, "{s}=", .{f.name}));
+            try self.out.writer.print("    call $printf(l {s})\n", .{name_sym});
+            const addr = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, v.text, f.offset });
+            const fv = try self.newTemp();
+            try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ fv, qbeTypeName(f.info.qtype), qbeTypeName(f.info.qtype), addr });
+            try self.genPrintFragment(.{ .text = fv, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str });
+        }
+        try self.out.writer.writeAll("    call $printf(l $fmt_rparen)\n");
+    }
+
+    /// Bir serbest fonksiyonun/kurucunun (`__init__`) gövdesi hakkında
+    /// toplanan ham bilgi — bkz. `computeMustNotRaise`.
+    const FuncSafetyInfo = struct {
+        /// `true`: gövde İÇİNDE doğrudan bir `raise`, bir METOD ÇAĞRISI
+        /// (`obj.method()` — bkz. `computeMustNotRaise`in "muhafazakâr" notu)
+        /// ya da bir `await`/`spawn` var — bu durumda BU sembol HER ZAMAN
+        /// "güvensiz" sayılır, çağırdıklarından bağımsız olarak.
+        direct_unsafe: bool = false,
+        /// Gövdenin çağırdığı serbest fonksiyon/kurucu sembollerinin listesi
+        /// (deduplike edilmemiş — önemli değil, yalnızca üyelik kontrolü
+        /// için kullanılır). Bu sembollerden HERHANGİ BİRİ güvensizse, BU
+        /// sembol de (fixpoint yoluyla) güvensiz sayılır.
+        callees: std.ArrayListUnmanaged([]const u8) = .empty,
+    };
+
+    /// `stmts`i özyinelemeli olarak gezip `info`yi doldurur — `moduleUsesAsync`/
+    /// `stmtUsesAsync`in AYNI ağaç gezinme deseni (bkz. onların belge notu),
+    /// ama "async kullanımı var mı" yerine "raise/metod-çağrısı/await-spawn
+    /// var mı VE hangi serbest fonksiyon/kurucular çağrılıyor" topluyor.
+    fn collectRaiseInfoStmts(self: *Codegen, stmts: []const ast.Stmt, info: *FuncSafetyInfo) CodegenError!void {
+        for (stmts) |stmt| try self.collectRaiseInfoStmt(stmt, info);
+    }
+
+    fn collectRaiseInfoStmt(self: *Codegen, stmt: ast.Stmt, info: *FuncSafetyInfo) CodegenError!void {
+        switch (stmt) {
+            .expr_stmt => |e| try self.collectRaiseInfoExpr(e, info),
+            .var_decl => |v| try self.collectRaiseInfoExpr(v.value, info),
+            .assign => |a| {
+                try self.collectRaiseInfoExpr(a.target, info);
+                try self.collectRaiseInfoExpr(a.value, info);
+            },
+            .if_stmt => |f| {
+                try self.collectRaiseInfoExpr(f.cond, info);
+                try self.collectRaiseInfoStmts(f.then_body, info);
+                for (f.elif_clauses) |ec| {
+                    try self.collectRaiseInfoExpr(ec.cond, info);
+                    try self.collectRaiseInfoStmts(ec.body, info);
+                }
+                if (f.else_body) |eb| try self.collectRaiseInfoStmts(eb, info);
+            },
+            .while_stmt => |w| {
+                try self.collectRaiseInfoExpr(w.cond, info);
+                try self.collectRaiseInfoStmts(w.body, info);
+            },
+            .for_stmt => |f| {
+                try self.collectRaiseInfoExpr(f.iterable, info);
+                try self.collectRaiseInfoStmts(f.body, info);
+            },
+            .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .import_stmt => {},
+            .return_stmt => |r| if (r) |e| try self.collectRaiseInfoExpr(e, info),
+            .raise_stmt => |e| {
+                info.direct_unsafe = true;
+                try self.collectRaiseInfoExpr(e, info);
+            },
+            .try_stmt => |t| {
+                try self.collectRaiseInfoStmts(t.try_body, info);
+                for (t.except_clauses) |ec| try self.collectRaiseInfoStmts(ec.body, info);
+                if (t.finally_body) |fb| try self.collectRaiseInfoStmts(fb, info);
+            },
+            .lowlevel_stmt => |ll| try self.collectRaiseInfoStmts(ll.body, info),
+        }
+    }
+
+    fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInfo) CodegenError!void {
+        switch (expr) {
+            // `await`/`spawn`: async istisna yayılımı ZATEN bilinçli olarak
+            // eksik/ele alınmamış bir alan (bkz. nox-teknik-spesifikasyon.md
+            // §3.21) — bu analiz oraya HİÇ dokunmaz, muhafazakâr kalır.
+            // `generic_construct` (`Channel[T](...)`): Nox'un istisna
+            // mekanizmasına katılmaz (kendi runtime çağrısı `emitExceptionCheck`
+            // KULLANMAZ), bu yüzden güvenlidir.
+            .await_expr, .spawn_expr => info.direct_unsafe = true,
+            .generic_construct => {},
+            .unary => |u| try self.collectRaiseInfoExpr(u.operand.*, info),
+            .binary => |b| {
+                try self.collectRaiseInfoExpr(b.left.*, info);
+                try self.collectRaiseInfoExpr(b.right.*, info);
+            },
+            .call => |c| {
+                switch (c.callee.*) {
+                    .identifier => |name| {
+                        if (self.classes.contains(name)) {
+                            const cinfo = self.classes.get(name).?;
+                            if (cinfo.has_init) {
+                                const sym = try std.fmt.allocPrint(self.allocator, "{s}___init__", .{name});
+                                try info.callees.append(self.allocator, sym);
+                            }
+                            // `has_init == false`: kurucu çağrısı hiçbir zaman
+                            // `emitExceptionCheck` üretmez (bkz. `genConstruct`) —
+                            // bağımlılık eklemeye gerek yok.
+                        } else if (self.functions.contains(name)) {
+                            try info.callees.append(self.allocator, name);
+                        }
+                        // `extern`/`print`/`hpy_call`/`wasm_call`: Nox'un istisna
+                        // mekanizmasına HİÇ katılmazlar (bkz. modül üstü notlar) —
+                        // güvenli, bağımlılık eklenmez.
+                    },
+                    // Metod çağrısı (`obj.method()`) — hedefin STATİK sınıfını
+                    // bilmek tam bir tip çıkarımı gerektirirdi (bu, checker'ın
+                    // İŞİDİR, burada YENİDEN UYGULANMAZ); bu yüzden MUHAFAZAKÂR
+                    // davranılır: HERHANGİ bir metod çağrısı, İÇİNDE BULUNDUĞU
+                    // fonksiyonu/kurucuyu KOŞULSUZ güvensiz sayar. Metod çağrısının
+                    // KENDİSİ de HER ZAMAN kendi `emitExceptionCheck`ini alır
+                    // (bkz. `genMethodCall` — bu optimizasyondan HİÇ etkilenmez).
+                    else => info.direct_unsafe = true,
+                }
+                for (c.args) |a| try self.collectRaiseInfoExpr(a, info);
+            },
+            .attribute => |a| try self.collectRaiseInfoExpr(a.obj.*, info),
+            .index => |idx| {
+                try self.collectRaiseInfoExpr(idx.obj.*, info);
+                try self.collectRaiseInfoExpr(idx.index.*, info);
+            },
+            .list_lit => |elems| for (elems) |el| try self.collectRaiseInfoExpr(el, info),
+            .dict_lit => |pairs| for (pairs) |p| {
+                try self.collectRaiseInfoExpr(p.key, info);
+                try self.collectRaiseInfoExpr(p.value, info);
+            },
+            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+        }
+    }
+
+    /// Performans fazı — `nox_exception_pending` çağrılarının (özyinelemeli/
+    /// küçük-fonksiyon-ağırlıklı kodda, bkz. `fib`in profillenmesi) baskın
+    /// bir maliyet olduğu bulundu. Bu fonksiyon, HER serbest fonksiyonun/
+    /// kurucunun (`__init__`) TRANSİTİF olarak ASLA istisna FIRLATAMAYACAĞINI
+    /// KANITLAYABİLDİĞİMİZ bir küme (`self.must_not_raise`) hesaplar —
+    /// `genCall`/`genConstruct` bu kümedeki bir çağrı SONRASI
+    /// `emitExceptionCheck`i ATLAYABİLİR.
+    ///
+    /// **Bilinçli olarak MUHAFAZAKÂR (yanlış negatifte İSTİSNA ASLA
+    /// YUTULMAZ, yalnızca gereksiz bir kontrol FAZLADAN kalabilir):**
+    ///   - Metod çağrıları (`obj.method()`) hiçbir zaman bu kümeye giren bir
+    ///     fonksiyonu "güvenli" kılmaz — İÇİNDE bulundukları fonksiyon/kurucu
+    ///     KOŞULSUZ güvensiz sayılır (STATİK tip çıkarımı olmadan hedef metodu
+    ///     belirlemek mümkün değildir — bkz. `collectRaiseInfoExpr`).
+    ///   - `await`/`spawn` içeren HERHANGİ bir gövde KOŞULSUZ güvensiz sayılır
+    ///     (async istisna yayılımı zaten bilinçli olarak eksik bir alan).
+    ///   - Sabit nokta (fixpoint) hesabı: `direct_unsafe` bulunanlarla
+    ///     başlanır, sonra HERHANGİ bir çağrı hedefi (`callees`) güvensiz
+    ///     kümedeyse çağıran da güvensiz kümeye eklenir — değişiklik
+    ///     kalmayana kadar tekrarlanır (yalnızca BÜYÜYEN, sonlu bir küme,
+    ///     bu yüzden sonlanması garantidir). Özyinelemeli fonksiyonlar
+    ///     (ör. `fib`) doğru şekilde ele alınır: `fib` kendi kendini
+    ///     çağırır, ama kendisi `direct_unsafe` değilse VE kendisi (henüz)
+    ///     güvensiz kümede DEĞİLSE, bu öz-çağrı fixpoint'i ASLA tetiklemez —
+    ///     `fib` güvenli kalır (doğru sonuç, çünkü `fib` GERÇEKTEN hiçbir
+    ///     zaman raise etmez).
+    fn computeMustNotRaise(self: *Codegen, module: ast.Module, extra_functions: []const ast.FuncDef) CodegenError!void {
+        var info_map: std.StringHashMapUnmanaged(FuncSafetyInfo) = .empty;
+
+        for (module.body) |stmt| {
+            switch (stmt) {
+                .func_def => |fd| {
+                    if (fd.is_async) continue; // async fonksiyonlar yalnızca `spawn` ile başlatılır, bu optimizasyonun çağrı sitelerinde hiç görünmezler.
+                    var info: FuncSafetyInfo = .{};
+                    try self.collectRaiseInfoStmts(fd.body, &info);
+                    try info_map.put(self.allocator, fd.name, info);
+                },
+                .class_def => |cd| {
+                    for (cd.methods) |m| {
+                        if (!std.mem.eql(u8, m.name, "__init__")) continue;
+                        var info: FuncSafetyInfo = .{};
+                        try self.collectRaiseInfoStmts(m.body, &info);
+                        const sym = try std.fmt.allocPrint(self.allocator, "{s}___init__", .{cd.name});
+                        try info_map.put(self.allocator, sym, info);
+                    }
+                },
+                else => {},
+            }
+        }
+        for (extra_functions) |fd| {
+            if (fd.is_async) continue;
+            var info: FuncSafetyInfo = .{};
+            try self.collectRaiseInfoStmts(fd.body, &info);
+            try info_map.put(self.allocator, fd.name, info);
+        }
+
+        // Dil stabilizasyonu fazı §M.1: ÖNCEDEN burada naif bir
+        // `while (changed)` sabit-nokta döngüsü vardı — HER turda TÜM
+        // `info_map`i (VE her fonksiyonun TÜM çağrı listesini) YENİDEN
+        // tarardı; uzun bir çağrı zincirinde (A→B→C→…→Z, Z güvensiz)
+        // güvensizlik HER turda yalnızca BİR sıçrama ilerlediğinden bu
+        // O(F²) (fonksiyon SAYISININ karesi) idi. `core.nox` artık HER
+        // programa koşulsuz dahil olduğundan F her zaman büyük bir taban
+        // içeriyor — bu YÜZDEN bunun yerine TERS çağrı grafiği
+        // (`callee -> callers`) ÖNCEDEN inşa edilip GERÇEK bir worklist
+        // kullanılır: yalnızca YENİ güvensiz işaretlenen bir fonksiyonun
+        // ÇAĞIRANLARI kuyruğa eklenir, HER düğüm/kenar EN FAZLA bir kez
+        // işlenir — O(F+E).
+        var callers_of: std.StringHashMapUnmanaged(std.ArrayListUnmanaged([]const u8)) = .empty;
+        {
+            var it = info_map.iterator();
+            while (it.next()) |entry| {
+                const caller_name = entry.key_ptr.*;
+                for (entry.value_ptr.callees.items) |callee| {
+                    const gop = try callers_of.getOrPut(self.allocator, callee);
+                    if (!gop.found_existing) gop.value_ptr.* = .empty;
+                    try gop.value_ptr.append(self.allocator, caller_name);
+                }
+            }
+        }
+
+        var unsafe_set: std.StringHashMapUnmanaged(void) = .empty;
+        var worklist: std.ArrayListUnmanaged([]const u8) = .empty;
+        {
+            var it = info_map.iterator();
+            while (it.next()) |entry| {
+                if (entry.value_ptr.direct_unsafe) {
+                    try unsafe_set.put(self.allocator, entry.key_ptr.*, {});
+                    try worklist.append(self.allocator, entry.key_ptr.*);
+                }
+            }
+        }
+        while (worklist.pop()) |name| {
+            const callers = callers_of.get(name) orelse continue;
+            for (callers.items) |caller| {
+                if (unsafe_set.contains(caller)) continue;
+                try unsafe_set.put(self.allocator, caller, {});
+                try worklist.append(self.allocator, caller);
+            }
+        }
+
+        var it = info_map.iterator();
+        while (it.next()) |entry| {
+            if (!unsafe_set.contains(entry.key_ptr.*)) {
+                try self.must_not_raise.put(self.allocator, entry.key_ptr.*, {});
+            }
+        }
+
+        // `ClassInfo.init_is_safe`i doldur — `genConstruct`in tekrar tekrar
+        // `"{s}___init__"` biçimlendirip `must_not_raise`de aramak yerine
+        // doğrudan okuyabileceği tek bir alan (bkz. onun belge notu).
+        var cit = self.classes.iterator();
+        while (cit.next()) |entry| {
+            if (!entry.value_ptr.has_init) continue;
+            const sym = try std.fmt.allocPrint(self.allocator, "{s}___init__", .{entry.key_ptr.*});
+            if (self.must_not_raise.contains(sym)) entry.value_ptr.init_is_safe = true;
+        }
+    }
+
+    fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
+        switch (c.callee.*) {
+            .identifier => |name| {
+                if (std.mem.eql(u8, name, "print")) {
+                    if (c.args.len != 1) return error.Unsupported;
+                    const v = try self.genExpr(c.args[0]);
+                    try self.genPrint(v);
+                    // `v` TAZE bir liste/sınıf olabilir (ör. `print(Point(1,2))`,
+                    // `print([1, 2, 3])`) — artık `print` bunları BASABİLDİĞİNDEN
+                    // (bkz. görev "print(list)/print(class)"), tamamen
+                    // dolaylanmış diğer heap değerlerle (bkz. `expr_stmt`,
+                    // `releaseIfTemporary`) AYNI şekilde sızmaması gerekir.
+                    try self.releaseIfTemporary(c.args[0], v);
+                    return .{ .text = "0", .qtype = .w };
+                }
+                // `len(s) -> int` — stdlib fazı §B (bkz. checker.zig'deki
+                // eşdeğer not). Libc'nin `strlen`ine (zaten `cc` bağlantısında
+                // mevcut) doğrudan bir çağrıya lowerlanır — `str` her zaman
+                // sıfırla-sonlanan bir C dizesi olduğundan (bkz. modül üstü
+                // not) dönüşüm gerekmez.
+                if (std.mem.eql(u8, name, "len")) {
+                    if (c.args.len != 1) return error.Unsupported;
+                    const v = try self.genExpr(c.args[0]);
+                    const result_t = try self.newTemp();
+                    // Stdlib fazı §L: `list[T]` dalı — `genListLit`in AYNI
+                    // bayt düzeni (8 bayt uzunluk başlığı, ofset 0) DOĞRUDAN
+                    // okunur (`nox.json`nin `array_len`/`object_len`si İÇİN
+                    // eklendi — GENEL bir yerleşik, JSON'a özgü DEĞİL).
+                    if (v.heap == .list) {
+                        try self.out.writer.print("    {s} =l loadl {s}\n", .{ result_t, v.text });
+                    } else {
+                        try self.out.writer.print("    {s} =l call $strlen(l {s})\n", .{ result_t, v.text });
+                    }
+                    try self.releaseIfTemporary(c.args[0], v);
+                    return .{ .text = result_t, .qtype = .l };
+                }
+                // `str(x)` — stdlib fazı §E (bkz. checker.zig'deki eşdeğer
+                // not). `x`in qtype'ına göre (checker `int`/`float`e
+                // ZATEN sınırladı) doğru runtime dönüştürücüsüne
+                // lowerlanır — İKİSİ de HER ZAMAN başarılıdır (bkz.
+                // runtime/str.zig'in belge notu), istisna kontrolü GEREKMEZ.
+                if (std.mem.eql(u8, name, "str")) {
+                    if (c.args.len != 1) return error.Unsupported;
+                    const v = try self.genExpr(c.args[0]);
+                    const result_t = try self.newTemp();
+                    if (v.qtype == .d) {
+                        try self.out.writer.print("    {s} =l call $nox_float_to_str(l {s}, d {s})\n", .{ result_t, RT_PARAM, v.text });
+                    } else {
+                        try self.out.writer.print("    {s} =l call $nox_int_to_str(l {s}, l {s})\n", .{ result_t, RT_PARAM, v.text });
+                    }
+                    return .{ .text = result_t, .qtype = .l, .heap = .str };
+                }
+                // `int(s)`/`float(s)` — stdlib fazı §E. Ayrıştırma
+                // BAŞARISIZSA bir `ValueError` `raise` eder (bkz.
+                // `genParseOrRaise`in belge notu).
+                if (std.mem.eql(u8, name, "int")) {
+                    if (c.args.len != 1) return error.Unsupported;
+                    const v = try self.genExpr(c.args[0]);
+                    const result = try self.genParseOrRaise(v, "nox_str_is_valid_int", "nox_str_to_int", .l, "int(): gecersiz sayi bicimi");
+                    try self.releaseIfTemporary(c.args[0], v);
+                    return result;
+                }
+                if (std.mem.eql(u8, name, "float")) {
+                    if (c.args.len != 1) return error.Unsupported;
+                    const v = try self.genExpr(c.args[0]);
+                    const result = try self.genParseOrRaise(v, "nox_str_is_valid_float", "nox_str_to_float", .d, "float(): gecersiz sayi bicimi");
+                    try self.releaseIfTemporary(c.args[0], v);
+                    return result;
+                }
+                // Faz 14: `hpy_call`/`wasm_call` — bkz. checker.zig'deki
+                // eşdeğer not. Runtime'ın `nox_hpy_call`/`nox_wasm_call`sine
+                // (bkz. runtime/foreign_bridge.zig) doğrudan çağrıya çevrilir;
+                // `str` argümanları zaten sıfırla-sonlanan verilere işaret
+                // eden düz `l` işaretçileridir (bkz. modül üstü not, "str
+                // neden hep tahsissiz") — hiçbir dönüşüm gerekmez.
+                if (std.mem.eql(u8, name, "hpy_call")) {
+                    if (c.args.len != 4) return error.Unsupported;
+                    const path_v = try self.genExpr(c.args[0]);
+                    const ext_v = try self.genExpr(c.args[1]);
+                    const func_v = try self.genExpr(c.args[2]);
+                    const arg_v = try self.genExpr(c.args[3]);
+                    const result_temp = try self.newTemp();
+                    try self.out.writer.print("    {s} =l call $nox_hpy_call(l {s}, l {s}, l {s}, l {s}, l {s})\n", .{ result_temp, RT_PARAM, path_v.text, ext_v.text, func_v.text, arg_v.text });
+                    return .{ .text = result_temp, .qtype = .l };
+                }
+                if (std.mem.eql(u8, name, "wasm_call")) {
+                    if (c.args.len != 3) return error.Unsupported;
+                    const path_v = try self.genExpr(c.args[0]);
+                    const func_v = try self.genExpr(c.args[1]);
+                    const arg_v = try self.genExpr(c.args[2]);
+                    const result_temp = try self.newTemp();
+                    try self.out.writer.print("    {s} =l call $nox_wasm_call(l {s}, l {s}, l {s}, l {s})\n", .{ result_temp, RT_PARAM, path_v.text, func_v.text, arg_v.text });
+                    return .{ .text = result_temp, .qtype = .l };
+                }
+
+                if (self.classes.get(name)) |cinfo| return self.genConstruct(name, cinfo, c.args);
+
+                // `extern def` — Nox'un runtime çağrılarıyla (`RT_PARAM`) VE
+                // istisna yayılımıyla (`emitExceptionCheck`) HİÇ ilgisi
+                // olmayan, doğrudan bir C ABI çağrısı (bkz. nox-teknik-
+                // spesifikasyon.md §3.20). `str` argümanları/dönüşü zaten
+                // sıfırla-sonlanan ham işaretçiler olduğundan dönüşüm
+                // gerekmez (`hpy_call`/`wasm_call` ile AYNI ücretsiz tasarım).
+                if (self.extern_functions.get(name)) |esig| {
+                    if (esig.params.len != c.args.len) return error.Unsupported;
+                    const arg_values = try self.allocator.alloc(Value, c.args.len);
+                    for (c.args, 0..) |a, i| {
+                        const v0 = try self.genExpr(a);
+                        try self.checkNoLowlevelEscape(v0);
+                        arg_values[i] = try self.convert(v0, esig.params[i].qtype);
+                    }
+                    const result_temp: ?[]const u8 = if (esig.ret.qtype == .none) null else try self.newTemp();
+                    if (result_temp) |rt| {
+                        try self.out.writer.print("    {s} ={s} call ${s}(", .{ rt, qbeTypeName(esig.ret.qtype), name });
+                    } else {
+                        try self.out.writer.print("    call ${s}(", .{name});
+                    }
+                    // `with_rt` (bkz. `ast.ExternDef.needs_rt`in belge notu,
+                    // stdlib fazı §D.1): `RT_PARAM` GİZLİCE argüman
+                    // listesinin BAŞINA eklenir (normal fonksiyon
+                    // çağrılarıyla AYNI kalıp) — Zig tarafının İLK parametresi
+                    // `rt: ?*anyopaque` olmalıdır.
+                    var wrote_arg = false;
+                    if (esig.needs_rt) {
+                        try self.out.writer.print("l {s}", .{RT_PARAM});
+                        wrote_arg = true;
+                    }
+                    for (arg_values) |v| {
+                        if (wrote_arg) try self.out.writer.writeAll(", ");
+                        try self.out.writer.print("{s} {s}", .{ qbeTypeName(v.qtype), v.text });
+                        wrote_arg = true;
+                    }
+                    try self.out.writer.writeAll(")\n");
+                    // Stdlib fazı §F: `elem_qtype`/`elem_heap_info`/
+                    // `elem_is_str` ÖNCEDEN eksikti (yalnızca `qtype`/`heap`
+                    // kopyalanıyordu) — D.1.5'in `genFieldRead`de bulunan
+                    // `dict_info` eksikliğiyle AYNI KATEGORİDE bir hataydı.
+                    // `list[str]` DÖNÜŞ tipi FFI-güvenli sayılınca (bkz.
+                    // `isFfiSafeListReturnType`) bu eksiklik GERÇEK bir
+                    // çökmeye yol açardı (dönen listenin elemanları `str`
+                    // olarak İŞARETLENMEDEN indekslenir/serbest bırakılırdı).
+                    // Stdlib fazı §L: `class_name` ÖNCEDEN eksikti (bkz.
+                    // yukarıdaki `elem_qtype`/`elem_heap_info`/`elem_is_str`
+                    // notu, Alt-Faz F — AYNI KATEGORİDE bir hata). `JsonValue`
+                    // DÖNEN bir extern def (`isFfiSafeClassReturnType`)
+                    // olmadan ÖNCE HİÇBİR extern def sınıf DÖNDÜRMEDİĞİNDEN
+                    // bu eksiklik fark edilmemişti — `class_name` OLMADAN
+                    // sonraki `.attribute` okumaları/`genClassRelease`
+                    // `self.classes.get(obj.class_name.?)`de ÇÖKERDİ.
+                    if (result_temp) |rt| return .{ .text = rt, .qtype = esig.ret.qtype, .heap = esig.ret.heap, .class_name = esig.ret.class_name, .elem_qtype = esig.ret.elem_qtype, .elem_heap_info = esig.ret.elem_heap_info, .elem_is_str = esig.ret.elem_is_str };
+                    return .{ .text = "0", .qtype = .w };
+                }
+
+                const sig = self.functions.get(name) orelse return error.Unsupported;
+                if (sig.params.len != c.args.len) return error.Unsupported;
+
+                const arg_values = try self.allocator.alloc(Value, c.args.len);
+                for (c.args, 0..) |a, i| {
+                    const v0 = try self.genExpr(a);
+                    try self.checkNoLowlevelEscape(v0);
+                    arg_values[i] = try self.convert(v0, sig.params[i].qtype);
+                }
+
+                const result_temp: ?[]const u8 = if (sig.ret.qtype == .none) null else try self.newTemp();
+                if (result_temp) |rt| {
+                    try self.out.writer.print("    {s} ={s} call ${s}(l {s}", .{ rt, qbeTypeName(sig.ret.qtype), name, RT_PARAM });
+                } else {
+                    try self.out.writer.print("    call ${s}(l {s}", .{ name, RT_PARAM });
+                }
+                for (arg_values) |v| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(v.qtype), v.text });
+                try self.out.writer.writeAll(")\n");
+                // Performans fazı: `name`in ASLA istisna fırlatamayacağı
+                // KANITLANDIYSA (bkz. `self.must_not_raise`, `computeMustNotRaise`)
+                // kontrolü ATLA.
+                if (!self.must_not_raise.contains(name)) try self.emitExceptionCheck();
+                try self.releaseTemporaryArgs(c.args, arg_values);
+
+                if (result_temp) |rt| {
+                    return .{ .text = rt, .qtype = sig.ret.qtype, .heap = sig.ret.heap, .elem_qtype = sig.ret.elem_qtype, .class_name = sig.ret.class_name, .elem_heap_info = sig.ret.elem_heap_info, .elem_is_str = sig.ret.elem_is_str };
+                }
+                return .{ .text = "0", .qtype = .w };
+            },
+            .attribute => |a| {
+                // stdlib fazı §D.1.6: `nox.http.serve(...)`nin callee'si
+                // checker tarafından mangled bir isme YENİDEN YAZILMAZ (bkz.
+                // `isHttpServeCallee`in belge notu), bu yüzden burada, sıradan
+                // metod-çağrısı çözümlemesinden (`genMethodCall`) ÖNCE ŞEKLİ
+                // tanımak GEREKİR.
+                if (isHttpServeCallee(c.callee.*)) return self.genHttpServe(c);
+                return self.genMethodCall(a, c.args);
+            },
+            else => return error.Unsupported,
+        }
+    }
+
+    /// `int(s)`/`float(s)` — stdlib fazı §E: `valid_fn(s) -> w` ÖNCE
+    /// çağrılır; geçersizse bir `ValueError` inşa edilip `raise` edilir
+    /// (`emitExceptionCheck` DEVREYE girer — bkz. `genRaise`in AYNI
+    /// deseni); geçerliyse `convert_fn(s) -> result_qtype` gerçek
+    /// dönüşümü yapar. `genEqCompareOrJump`in belge notuyla AYNI gerekçeyle
+    /// QBE'nin `phi`sinden BİLİNÇLİ olarak KAÇINILIR: hata dalı `nox_raise`
+    /// ÇAĞIRDIKTAN SONRA (bu koşulsuz olarak istisnayı BEKLEYEN bir dal
+    /// olduğundan `emitExceptionCheck`in `exc_continue` etiketi PRATİKTE
+    /// asla erişilmez) doğrudan `ok_label`e ATLAR — TEK bir SSA değeri
+    /// (`result`), YALNIZCA `ok_label` İÇİNDE, hangi kenardan gelinirse
+    /// gelinsin YENİDEN hesaplanır (iki farklı DEĞERİ birleştirmek YERİNE
+    /// "buraya vardıysan şunu hesapla" deseni — bkz. `genEqCompareOrJump`in
+    /// belge notu, aynı yığın-taşması endişesi burada da geçerli olmasa
+    /// bile TUTARLILIK için AYNI desen tercih edildi).
+    fn genParseOrRaise(self: *Codegen, v: Value, valid_fn: []const u8, convert_fn: []const u8, result_qtype: QbeType, message: []const u8) CodegenError!Value {
+        const valid_t = try self.newTemp();
+        try self.out.writer.print("    {s} =w call ${s}(l {s})\n", .{ valid_t, valid_fn, v.text });
+        const err_label = try self.newLabel("parse_err");
+        const ok_label = try self.newLabel("parse_ok");
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ valid_t, ok_label, err_label });
+        try self.out.writer.print("{s}\n", .{err_label});
+
+        const msg_value = try self.emitStringLiteral(message);
+        const ve_cinfo = self.classes.get("ValueError") orelse return error.Unsupported;
+        const ve_obj = try self.genConstructFromValues("ValueError", ve_cinfo, &.{msg_value});
+        try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ve_obj.text });
+        try self.emitExceptionCheck();
+        try self.out.writer.print("    jmp {s}\n", .{ok_label});
+
+        try self.out.writer.print("{s}\n", .{ok_label});
+        const result_t = try self.newTemp();
+        try self.out.writer.print("    {s} ={s} call ${s}(l {s})\n", .{ result_t, qbeTypeName(result_qtype), convert_fn, v.text });
+        return .{ .text = result_t, .qtype = result_qtype };
+    }
+
+    /// Bir çağrının (fonksiyon/metod/kurucu) argümanları arasındaki TAZE
+    /// (henüz hiçbir isme bağlanmamış — yalnızca `.call`/`.list_lit`
+    /// ifadelerinden gelen) heap değerlerini çağrı DÖNDÜKTEN SONRA serbest
+    /// bırakır.
+    ///
+    /// Neden gerekli: bir argümanı geçirmek yalnızca bir "ödünç"tür (refcount
+    /// etkilenmez, bkz. modül üstü not) — ama çağrılan taraf (Faz 9'dan beri)
+    /// parametreyi bir sınıf ALANINA (`self.attr = param`) ya da yeni bir
+    /// yerel değişkene (`q = param`) atayarak KALICI hale getirebilir; bu
+    /// durumda `retainIfAliasing` parametreyi retain eder (çağrı sınırında
+    /// hiçbir şey bunu telafi etmez). Çağıran taraf, argümanın ORİJİNAL
+    /// ifadesinin bir isim mi (kendi releaser'ı zaten var — `.identifier`/
+    /// `.attribute`/`.index`, dokunulmaz) yoksa TAZE bir değer mi (`.call`/
+    /// `.list_lit`, hiçbir releaser'ı yok) olduğunu bilen tek taraftır — bu
+    /// yüzden dengeleme sorumluluğu burada, çağrı noktasındadır: çağrılan
+    /// taraf değeri kalıcı hale getirdiyse refcount 2'ye çıkmıştır, bu release
+    /// onu doğru şekilde 1'e (tek kalıcı sahip) indirir; getirmediyse
+    /// (yalnızca okuduysa) refcount zaten 1'dir, bu release onu 0'a indirip
+    /// gerçekten serbest bırakır — iki durumda da doğru.
+    fn releaseTemporaryArgs(self: *Codegen, exprs: []const ast.Expr, values: []const Value) CodegenError!void {
+        for (exprs, 0..) |e, i| {
+            const v = values[i];
+            // `v.always_fresh` (bkz. `Value`nin belge notu, stdlib fazı §G):
+            // `s[i]` HER ZAMAN serbest bırakılmalıdır — AST-tabanlı
+            // `isTemporaryExpr` sezgisi burada GEÇERSİZDİR.
+            if (isHeapManaged(v.heap) and (v.always_fresh or isTemporaryExpr(e))) {
+                try self.releaseValueIfSet(v.text, v.heap, v.elem_qtype, v.class_name, v.elem_heap_info);
+            }
+        }
+    }
+
+    /// `releaseTemporaryArgs` ile aynı gerekçe, tek bir değer için — bir metod
+    /// çağrısının ALICISI (ör. `Engine(1).some_method()`), bir alan
+    /// okumasının/indekslemenin TABANI (ör. `make_car(i).engine`,
+    /// `make_list()[0]`) da aynı şekilde taze bir geçici olabilir.
+    fn releaseIfTemporary(self: *Codegen, e: ast.Expr, v: Value) CodegenError!void {
+        // Bkz. `releaseTemporaryArgs`in AYNI notu (`v.always_fresh`).
+        if (isHeapManaged(v.heap) and (v.always_fresh or isTemporaryExpr(e))) {
+            try self.releaseValueIfSet(v.text, v.heap, v.elem_qtype, v.class_name, v.elem_heap_info);
+        }
+    }
+
+    /// İçinde bulunulan en yakın `lowlevel` bloğunun arena işaretçisi (varsa).
+    fn currentArena(self: *Codegen) ?[]const u8 {
+        if (self.arena_stack.items.len == 0) return null;
+        return self.arena_stack.items[self.arena_stack.items.len - 1];
+    }
+
+    fn genConstruct(self: *Codegen, class_name: []const u8, cinfo: ClassInfo, args: []const ast.Expr) CodegenError!Value {
+        if (cinfo.init_params.len != args.len) return error.Unsupported;
+        const arg_values = try self.allocator.alloc(Value, args.len);
+        for (args, 0..) |a, i| {
+            const v0 = try self.genExpr(a);
+            try self.checkNoLowlevelEscape(v0);
+            arg_values[i] = try self.convert(v0, cinfo.init_params[i].qtype);
+        }
+        const result = try self.genConstructFromValues(class_name, cinfo, arg_values);
+        try self.releaseTemporaryArgs(args, arg_values);
+        return result;
+    }
+
+    /// `genConstruct`ın AST-BAĞIMSIZ çekirdeği — stdlib fazı §D.1.6'nın
+    /// `nox.http.serve` sarmalayıcısı (bkz. `genHttpServeWrapper`), bir
+    /// `HttpRequest` örneğini kaynak-düzeyi `ast.Expr` argümanlarından DEĞİL,
+    /// zaten HESAPLANMIŞ `Value`lerden (extern erişimci çağrılarının
+    /// sonuçlarından) inşa etmesi GEREKTİĞİNDEN bu ayrım gerekli — çağıran
+    /// TARAF, `arg_values`in serbest bırakılması/geçici argüman temizliği
+    /// GEREKİP GEREKMEDİĞİNİ kendisi bilir (bkz. `genConstruct`ın
+    /// `releaseTemporaryArgs` çağrısı — bu YARDIMCI onu YAPMAZ).
+    fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: ClassInfo, arg_values: []const Value) CodegenError!Value {
+        if (cinfo.init_params.len != arg_values.len) return error.Unsupported;
+        const t = try self.newTemp();
+        const arena = self.currentArena();
+        if (arena) |ap| {
+            try self.out.writer.print("    {s} =l call $nox_arena_alloc(l {s}, l {d})\n", .{ t, ap, cinfo.total_size });
+        } else {
+            try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ t, RT_PARAM, cinfo.total_size });
+        }
+        try self.out.writer.print("    storel {d}, {s}\n", .{ cinfo.class_id, t });
+        // Alanlar `__init__` çalışmadan ÖNCE sıfırlanır: bu sayede sınıf tipli
+        // bir alana ilk kez yazarken `genAssign`'in "önce eskiyi serbest
+        // bırak" mantığı (bkz. `.attribute` durumu) çöp bir işaretçiyi asla
+        // release etmeye çalışmaz — tahsis edilmiş bellek sıfırla
+        // doldurulmuş SAYILAMAZ (bkz. runtime/alloc/asap.zig, DebugAllocator).
+        for (cinfo.fields.items) |f| {
+            const addr = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, t, f.offset });
+            try self.out.writer.print("    storel 0, {s}\n", .{addr});
+        }
+        // `has_init == false`: sınıfın hiç `__init__`i yok (bkz.
+        // `ClassInfo.has_init`in belge notu) — `generateModule` bu sınıf için
+        // `$ClassName___init__`i HİÇ ÜRETMEDİ, bu yüzden burada çağırmak
+        // bağlantı zamanında çözülemeyen bir sembole yol açardı.
+        if (cinfo.has_init) {
+            try self.out.writer.print("    call ${s}_{s}(l {s}, l {s}", .{ class_name, "__init__", RT_PARAM, t });
+            for (arg_values) |v| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(v.qtype), v.text });
+            try self.out.writer.writeAll(")\n");
+            // Performans fazı: `__init__`in ASLA istisna fırlatamayacağı
+            // KANITLANDIYSA (bkz. `ClassInfo.init_is_safe`, `computeMustNotRaise`)
+            // kontrolü ATLA.
+            if (!cinfo.init_is_safe) try self.emitExceptionCheck();
+        }
+        return .{ .text = t, .qtype = .l, .heap = .class, .class_name = class_name, .arena = arena != null };
+    }
+
+    fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
+        const obj = try self.genExpr(a.obj.*);
+        if (obj.heap == .dict) return self.genDictMethod(obj, a, args);
+        if (obj.heap != .class) return error.Unsupported;
+        try self.checkNoLowlevelEscape(obj);
+        const cinfo = self.classes.get(obj.class_name.?).?;
+        const msig = cinfo.methods.get(a.attr) orelse return error.Unsupported;
+        if (msig.params.len != args.len) return error.Unsupported;
+
+        const arg_values = try self.allocator.alloc(Value, args.len);
+        for (args, 0..) |arg, i| {
+            const v0 = try self.genExpr(arg);
+            try self.checkNoLowlevelEscape(v0);
+            arg_values[i] = try self.convert(v0, msig.params[i].qtype);
+        }
+
+        const result_temp: ?[]const u8 = if (msig.ret.qtype == .none) null else try self.newTemp();
+        if (result_temp) |rt| {
+            try self.out.writer.print("    {s} ={s} call ${s}_{s}(l {s}, l {s}", .{ rt, qbeTypeName(msig.ret.qtype), obj.class_name.?, a.attr, RT_PARAM, obj.text });
+        } else {
+            try self.out.writer.print("    call ${s}_{s}(l {s}, l {s}", .{ obj.class_name.?, a.attr, RT_PARAM, obj.text });
+        }
+        for (arg_values) |v| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(v.qtype), v.text });
+        try self.out.writer.writeAll(")\n");
+        try self.emitExceptionCheck();
+        try self.releaseIfTemporary(a.obj.*, obj);
+        try self.releaseTemporaryArgs(args, arg_values);
+
+        if (result_temp) |rt| {
+            return .{ .text = rt, .qtype = msig.ret.qtype, .heap = msig.ret.heap, .elem_qtype = msig.ret.elem_qtype, .class_name = msig.ret.class_name, .elem_heap_info = msig.ret.elem_heap_info, .elem_is_str = msig.ret.elem_is_str };
+        }
+        return .{ .text = "0", .qtype = .w };
+    }
+
+    /// `d.contains(key)`/`d.len()` — `Channel.send/recv` İLE AYNI desen
+    /// (bir kullanıcı sınıfı DEĞİL, burada özel işlenir — bkz. checker.zig'in
+    /// eşdeğer notu).
+    fn genDictMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
+        const dinfo = obj.dict_info.?;
+        if (std.mem.eql(u8, a.attr, "contains")) {
+            if (args.len != 1) return error.Unsupported;
+            const key_v0 = try self.genExpr(args[0]);
+            try self.checkNoLowlevelEscape(key_v0);
+            const key_payload = try self.toPayload(key_v0);
+            const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
+            const result = try self.newTemp();
+            try self.out.writer.print("    {s} =w call $nox_dict_contains(l {s}, w {s}, l {s})\n", .{ result, obj.text, key_is_str_lit, key_payload.text });
+            try self.releaseIfTemporary(args[0], key_v0);
+            try self.releaseIfTemporary(a.obj.*, obj);
+            return .{ .text = result, .qtype = .w };
+        }
+        if (std.mem.eql(u8, a.attr, "len")) {
+            if (args.len != 0) return error.Unsupported;
+            const result = try self.newTemp();
+            try self.out.writer.print("    {s} =l call $nox_dict_len(l {s})\n", .{ result, obj.text });
+            try self.releaseIfTemporary(a.obj.*, obj);
+            return .{ .text = result, .qtype = .l };
+        }
+        return error.Unsupported;
+    }
+
+    /// `spawn <hedef_fn>(args...)` — checker ZATEN operandın `.call` olup
+    /// `.identifier` bir `async def`e başvurduğunu doğruladı (bkz.
+    /// checker.zig'in `.spawn_expr` dalı); codegen burada bu ŞEKLE GÜVENİR.
+    /// Argümanlar bir kapanış (closure) struct'ına PAKETLENİR (`rt` + her
+    /// argüman, 8 baytlık aralıklarla — `nox_alloc` ile tahsis edilir,
+    /// sarmalayıcı KENDİSİ tüketip serbest bırakır, bkz. `genSpawnWrapper`).
+    /// `async def` parametreleri checker tarafından FFI-güvenli tiplerle
+    /// (int/float/bool/str/None) SINIRLANDI (bkz. checker.zig, `registerFunc`)
+    /// — bu yüzden hiçbir ARC retain/release GEREKMEZ.
+    fn genSpawnExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
+        const call = operand.call;
+        const fn_name = call.callee.identifier;
+        const sig = self.functions.get(fn_name) orelse return error.Unsupported;
+        if (sig.params.len != call.args.len) return error.Unsupported;
+
+        const arg_values = try self.allocator.alloc(Value, call.args.len);
+        for (call.args, 0..) |a, i| {
+            const v0 = try self.genExpr(a);
+            arg_values[i] = try self.convert(v0, sig.params[i].qtype);
+        }
+
+        const closure_size = 8 + 8 * call.args.len;
+        const closure = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_alloc(l {s}, l {d})\n", .{ closure, RT_PARAM, closure_size });
+        try self.out.writer.print("    storel {s}, {s}\n", .{ RT_PARAM, closure });
+        for (arg_values, 0..) |av, i| {
+            const off = 8 + 8 * i;
+            const addr = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, closure, off });
+            try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(av.qtype), av.text, addr });
+        }
+
+        const wrapper_name = try std.fmt.allocPrint(self.allocator, "spawn_wrap_{d}", .{self.spawn_wrapper_counter});
+        self.spawn_wrapper_counter += 1;
+        try self.spawn_wrappers.append(self.allocator, .{ .name = wrapper_name, .target_fn = fn_name, .sig = sig });
+
+        const task_ptr = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_async_spawn(l {s}, l ${s}, l {s})\n", .{ task_ptr, RT_PARAM, wrapper_name, closure });
+
+        var elem_heap_info: ?*const ElemHeapInfo = null;
+        if (sig.ret.heap == .class or sig.ret.heap == .list) {
+            const info = try self.allocator.create(ElemHeapInfo);
+            info.* = .{ .heap = sig.ret.heap, .class_name = sig.ret.class_name, .elem_qtype = sig.ret.elem_qtype, .nested = sig.ret.elem_heap_info, .elem_is_str = sig.ret.elem_is_str };
+            elem_heap_info = info;
+        }
+        // `Task[T]`nin KENDİSİ (görev tutamacı) ARC-yönetimli DEĞİLDİR (bkz.
+        // `HeapKind`in belge notu) — `heap = .task` yalnızca kapsam-sonu
+        // `nox_async_destroy_task` çağrısını tetiklemek İÇİNDİR; `elem_*`
+        // alanları T'yi (payload tipini) taşır.
+        return .{
+            .text = task_ptr,
+            .qtype = .l,
+            .heap = .task,
+            .elem_qtype = sig.ret.qtype,
+            .elem_heap_info = elem_heap_info,
+            .elem_is_str = sig.ret.heap == .str,
+        };
+    }
+
+    /// `nox_async_spawn`in çağırdığı, `spawn` çağrı sitesi başına üretilen
+    /// bir fiber girişi — bkz. `SpawnWrapperSpec`in belge notu. `%argp`den
+    /// (kapanış) argümanları paketten çıkarır, `spec.target_fn`i normal
+    /// şekilde çağırır, sonucu bir `i64` payload'a çevirir, kapanışı serbest
+    /// bırakır.
+    ///
+    /// **Bilinçli v0.1 sınırlaması:** `spec.target_fn`in içinde bir istisna
+    /// oluşup YAKALANMAZSA, bu BURADA denetlenmez/temizlenmez (bkz.
+    /// nox-teknik-spesifikasyon.md §3.21'in "kalan" notu) — Nox'un istisna
+    /// mekanizmasının async görevlerle tam entegrasyonu ayrı bir artımdır.
+    fn genSpawnWrapper(self: *Codegen, spec: SpawnWrapperSpec) CodegenError!void {
+        self.temp_counter = 0;
+        self.label_counter = 0;
+
+        try self.out.writer.print("export function l ${s}(l %argp) {{\n@start\n", .{spec.name});
+        try self.out.writer.print("    {s} =l loadl %argp\n", .{RT_PARAM});
+
+        const arg_texts = try self.allocator.alloc([]const u8, spec.sig.params.len);
+        for (spec.sig.params, 0..) |p, i| {
+            const off = 8 + 8 * i;
+            const addr = try self.newTemp();
+            try self.out.writer.print("    {s} =l add %argp, {d}\n", .{ addr, off });
+            const val = try self.newTemp();
+            try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ val, qbeTypeName(p.qtype), qbeTypeName(p.qtype), addr });
+            arg_texts[i] = val;
+        }
+
+        const payload = blk: {
+            if (spec.sig.ret.qtype == .none) {
+                try self.out.writer.print("    call ${s}(l {s}", .{ spec.target_fn, RT_PARAM });
+                for (spec.sig.params, arg_texts) |p, at| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(p.qtype), at });
+                try self.out.writer.writeAll(")\n");
+                break :blk Value{ .text = "0", .qtype = .l };
+            }
+            const result_t = try self.newTemp();
+            try self.out.writer.print("    {s} ={s} call ${s}(l {s}", .{ result_t, qbeTypeName(spec.sig.ret.qtype), spec.target_fn, RT_PARAM });
+            for (spec.sig.params, arg_texts) |p, at| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(p.qtype), at });
+            try self.out.writer.writeAll(")\n");
+            break :blk try self.toPayload(.{ .text = result_t, .qtype = spec.sig.ret.qtype });
+        };
+
+        const closure_size = 8 + 8 * spec.sig.params.len;
+        try self.out.writer.print("    call $nox_free(l {s}, l %argp, l {d})\n", .{ RT_PARAM, closure_size });
+        try self.out.writer.print("    ret {s}\n}}\n", .{payload.text});
+    }
+
+    /// `nox.http.serve(port, handle[, max_connections])` çağrı sitesi
+    /// codegen'i — checker ZATEN `handle`in bir `(HttpRequest) -> HttpResponse`
+    /// imzalı, `async def` OLMAYAN çıplak bir isim olduğunu doğruladı (bkz.
+    /// checker.zig'in `tryResolveHttpServeCall`ı). `port` (ve varsa üçüncü
+    /// `max_connections` argümanı) değerlendirilir, `nox_http_server_listen`
+    /// ile dinlemeye başlanır, HER çağrı sitesi İÇİN AYRI bir C-ABI
+    /// sarmalayıcı (bkz. `HttpServeWrapperSpec`) TEMBEL kaydedilip
+    /// `nox_http_serve_raw`a `HandlerFn` olarak geçirilir — `rt`nin KENDİSİ
+    /// `handler_ctx` parametresi olarak taşınır (bkz. `HttpServeWrapperSpec`in
+    /// belge notu, `spawn`ın kapanış paketlemesinin AKSİNE).
+    fn genHttpServe(self: *Codegen, c: ast.Call) CodegenError!Value {
+        if (c.args.len != 2 and c.args.len != 3) return error.Unsupported;
+
+        const port_v0 = try self.genExpr(c.args[0]);
+        try self.checkNoLowlevelEscape(port_v0);
+        const port_v = try self.convert(port_v0, .l);
+        try self.releaseIfTemporary(c.args[0], port_v0);
+
+        const handle_name = switch (c.args[1]) {
+            .identifier => |n| n,
+            else => return error.Unsupported,
+        };
+        const sig = self.functions.get(handle_name) orelse return error.Unsupported;
+        if (sig.params.len != 1) return error.Unsupported;
+        if (sig.params[0].heap != .class or sig.params[0].class_name == null) return error.Unsupported;
+        if (sig.ret.heap != .class or sig.ret.class_name == null) return error.Unsupported;
+        const req_class = sig.params[0].class_name.?;
+        const resp_class = sig.ret.class_name.?;
+
+        var max_conn_text: []const u8 = "0";
+        if (c.args.len == 3) {
+            const mc_v0 = try self.genExpr(c.args[2]);
+            try self.checkNoLowlevelEscape(mc_v0);
+            const mc_v = try self.convert(mc_v0, .l);
+            try self.releaseIfTemporary(c.args[2], mc_v0);
+            max_conn_text = mc_v.text;
+        }
+
+        const server = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_http_server_listen(l {s}, l {s})\n", .{ server, RT_PARAM, port_v.text });
+
+        const wrapper_name = try std.fmt.allocPrint(self.allocator, "http_serve_wrap_{d}", .{self.http_serve_wrapper_counter});
+        self.http_serve_wrapper_counter += 1;
+        try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class });
+
+        try self.out.writer.print("    call $nox_http_serve_raw(l {s}, l {s}, l ${s}, l {s}, l {s})\n", .{ RT_PARAM, server, wrapper_name, RT_PARAM, max_conn_text });
+        try self.out.writer.print("    call $nox_http_server_close(l {s}, l {s})\n", .{ RT_PARAM, server });
+        return .{ .text = "0", .qtype = .none };
+    }
+
+    /// `nox_http_serve_raw`nin (bkz. runtime/stdlib_shims/http_server.zig'in
+    /// `HandlerFn`i, `fn(?*anyopaque, ?*anyopaque) callconv(.c) ?*anyopaque`)
+    /// bağlantı başına ÇAĞIRDIĞI, `nox.http.serve` çağrı sitesi başına
+    /// üretilen C-ABI sarmalayıcı — bkz. `HttpServeWrapperSpec`in belge notu.
+    /// `%ctx` (`rt`nin KENDİSİ, `genHttpServe`nin `handler_ctx` olarak
+    /// geçirdiği) ve `%req` (ham istek tutamacı) alır: `req_class`ın (ör.
+    /// `HttpRequest`) alanlarını ham `nox_http_request_*` erişimcileriyle
+    /// doldurup bir örnek İNŞA EDER (`genConstructFromValues`), kullanıcının
+    /// `handler_fn`ini çağırır, dönen `resp_class` (ör. `HttpResponse`)
+    /// örneğinden `status`/`body`/`headers`i okuyup (`genFieldReadFromValue`)
+    /// `nox_http_response_new`e geçirir (BU çağrı KENDİ kopyasını
+    /// tuttuğundan, bkz. `runtime/stdlib_shims/http_server.zig`nin
+    /// `nox_http_response_new`ı — `body`/`headers`i `gpa.dupe`/`copyHeaders`
+    /// ile KOPYALAR), SONRA hem istek hem yanıt örneğini TAMAMEN serbest
+    /// bırakır.
+    ///
+    /// **Bilinçli v0.1 sınırlaması (`genSpawnWrapper` İLE AYNI gerekçe):**
+    /// `handler_fn` içinde bir istisna oluşup YAKALANMAZSA, bu BURADA
+    /// denetlenmez/temizlenmez.
+    fn genHttpServeWrapper(self: *Codegen, spec: HttpServeWrapperSpec) CodegenError!void {
+        self.temp_counter = 0;
+        self.label_counter = 0;
+
+        try self.out.writer.print("export function l ${s}(l %ctx, l %req) {{\n@start\n", .{spec.name});
+        try self.out.writer.print("    {s} =l copy %ctx\n", .{RT_PARAM});
+
+        const req_cinfo = self.classes.get(spec.req_class) orelse return error.Unsupported;
+        const req_values = try self.allocator.alloc(Value, req_cinfo.fields.items.len);
+        for (req_cinfo.fields.items, 0..) |f, i| {
+            const t = try self.newTemp();
+            if (std.mem.eql(u8, f.name, "method")) {
+                try self.out.writer.print("    {s} =l call $nox_http_request_method(l {s}, l %req)\n", .{ t, RT_PARAM });
+                req_values[i] = .{ .text = t, .qtype = .l, .heap = .str };
+            } else if (std.mem.eql(u8, f.name, "target")) {
+                try self.out.writer.print("    {s} =l call $nox_http_request_target(l {s}, l %req)\n", .{ t, RT_PARAM });
+                req_values[i] = .{ .text = t, .qtype = .l, .heap = .str };
+            } else if (std.mem.eql(u8, f.name, "body")) {
+                try self.out.writer.print("    {s} =l call $nox_http_request_body(l {s}, l %req)\n", .{ t, RT_PARAM });
+                req_values[i] = .{ .text = t, .qtype = .l, .heap = .str };
+            } else if (std.mem.eql(u8, f.name, "headers")) {
+                try self.out.writer.print("    {s} =l call $nox_http_request_headers(l {s}, l %req)\n", .{ t, RT_PARAM });
+                req_values[i] = .{ .text = t, .qtype = .l, .heap = .dict, .dict_info = f.info.dict_info };
+            } else {
+                return error.Unsupported;
+            }
+        }
+        const req_obj = try self.genConstructFromValues(spec.req_class, req_cinfo, req_values);
+        // `req_values` — `releaseTemporaryArgs`in gerekçesiyle AYNI (bkz.
+        // onun belge notu): her biri TAZE bir `nox_http_request_*` çağrısının
+        // SONUCUdur (KENDİ releaser'ı yok). `__init__`in `self.x = x` alan
+        // ataması heap-yönetimli (str) olanları ZATEN retain ETTİĞİNDEN
+        // (bkz. `genAssign`in `.attribute` dalı), burada BİR KEZ daha
+        // serbest bırakmak DENGELER (aksi halde sızarlar) — `dict` (headers)
+        // İSE `isHeapManaged`e GİRMEDİĞİNDEN (bkz. `HeapKind`in belge notu)
+        // `__init__` onu HİÇ retain ETMEZ, ownership doğrudan alana
+        // GEÇER; bu yüzden BURADA release EDİLMEMELİDİR (çifte serbest
+        // bırakma olurdu) — `isHeapManaged` kontrolü bunu doğal olarak
+        // ELER.
+        for (req_values) |v| {
+            if (isHeapManaged(v.heap)) {
+                try self.releaseValueIfSet(v.text, v.heap, v.elem_qtype, v.class_name, v.elem_heap_info);
+            }
+        }
+
+        const resp_obj_text = try self.newTemp();
+        try self.out.writer.print("    {s} =l call ${s}(l {s}, l {s})\n", .{ resp_obj_text, spec.handler_fn, RT_PARAM, req_obj.text });
+        const resp_obj: Value = .{ .text = resp_obj_text, .qtype = .l, .heap = .class, .class_name = spec.resp_class };
+
+        try self.releaseValueIfSet(req_obj.text, req_obj.heap, req_obj.elem_qtype, req_obj.class_name, req_obj.elem_heap_info);
+
+        const status = try self.genFieldReadFromValue(resp_obj, "status");
+        const body = try self.genFieldReadFromValue(resp_obj, "body");
+        const headers = try self.genFieldReadFromValue(resp_obj, "headers");
+
+        const raw_resp = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_http_response_new(l {s}, l {s}, l {s}, l {s})\n", .{ raw_resp, RT_PARAM, status.text, body.text, headers.text });
+
+        try self.releaseValueIfSet(resp_obj.text, resp_obj.heap, resp_obj.elem_qtype, resp_obj.class_name, resp_obj.elem_heap_info);
+
+        try self.out.writer.print("    ret {s}\n}}\n", .{raw_resp});
+    }
+
+    /// `await <ifade>` — checker ZATEN operandın ya bir `Task` değeri ya da
+    /// bir `Channel.send`/`recv` çağrısı olduğunu doğruladı (bkz. checker'ın
+    /// `.await_expr` dalı); codegen AYNI şekle bakarak dallanır.
+    fn genAwaitExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
+        if (operand == .call) {
+            const c = operand.call;
+            if (c.callee.* == .attribute) {
+                const a = c.callee.attribute;
+                if (std.mem.eql(u8, a.attr, "send") or std.mem.eql(u8, a.attr, "recv")) {
+                    return self.genChannelOp(a, c.args);
+                }
+            }
+        }
+        const task_val = try self.genExpr(operand);
+        const payload_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_async_await(l {s}, l {s})\n", .{ payload_t, RT_PARAM, task_val.text });
+        const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, task_val.elem_qtype);
+        return valueFromElemDescriptor(converted.text, converted.qtype, task_val.elem_heap_info, task_val.elem_is_str);
+    }
+
+    /// `ch.send(v)`/`ch.recv()` — YALNIZCA `await` üzerinden (bkz.
+    /// `genAwaitExpr`) çağrılır, `genCall`in normal metod-çağrısı yolundan
+    /// GEÇMEZ (`Channel` `self.classes`de yok, yerleşik bir tiptir).
+    fn genChannelOp(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
+        const ch_val = try self.genExpr(a.obj.*);
+        if (std.mem.eql(u8, a.attr, "send")) {
+            if (args.len != 1) return error.Unsupported;
+            const v = try self.genExpr(args[0]);
+            const converted = try self.convert(v, ch_val.elem_qtype);
+            const payload = try self.toPayload(converted);
+            try self.out.writer.print("    call $nox_channel_send(l {s}, l {s}, l {s})\n", .{ RT_PARAM, ch_val.text, payload.text });
+            return .{ .text = "0", .qtype = .none };
+        }
+        if (std.mem.eql(u8, a.attr, "recv")) {
+            if (args.len != 0) return error.Unsupported;
+            const payload_t = try self.newTemp();
+            try self.out.writer.print("    {s} =l call $nox_channel_recv(l {s}, l {s})\n", .{ payload_t, RT_PARAM, ch_val.text });
+            const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, ch_val.elem_qtype);
+            return valueFromElemDescriptor(converted.text, converted.qtype, ch_val.elem_heap_info, ch_val.elem_is_str);
+        }
+        return error.Unsupported;
+    }
+
+    /// `Channel[T](capacity)` — dilde başka HİÇBİR yerde olmayan, AÇIK tip
+    /// argümanlı bir kurucu çağrısı (bkz. `ast.GenericConstruct`in ve
+    /// `parser.zig`, `isGenericConstructName`in belge notu).
+    fn genGenericConstruct(self: *Codegen, g: ast.GenericConstruct) CodegenError!Value {
+        if (!std.mem.eql(u8, g.name, "Channel") or g.type_args.len != 1 or g.args.len != 1) return error.Unsupported;
+        const elem = try self.resolveType(g.type_args[0]);
+        const cap_val = try self.genExpr(g.args[0]);
+        const ch_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_channel_new(l {s}, l {s})\n", .{ ch_t, RT_PARAM, cap_val.text });
+
+        var elem_heap_info: ?*const ElemHeapInfo = null;
+        if (elem.heap == .class or elem.heap == .list) {
+            const info = try self.allocator.create(ElemHeapInfo);
+            info.* = .{ .heap = elem.heap, .class_name = elem.class_name, .elem_qtype = elem.elem_qtype, .nested = elem.elem_heap_info, .elem_is_str = elem.elem_is_str };
+            elem_heap_info = info;
+        }
+        return .{
+            .text = ch_t,
+            .qtype = .l,
+            .heap = .channel,
+            .elem_qtype = elem.qtype,
+            .elem_heap_info = elem_heap_info,
+            .elem_is_str = elem.heap == .str,
+        };
+    }
+
+    /// Bir kullanıcı fonksiyonu/metodu/kurucu çağrısından hemen sonra çağrılır.
+    /// QBE hiçbir zaman unwind tablosu üretmez (İlke #3); bunun yerine bekleyen
+    /// bir istisna olup olmadığı burada AÇIKÇA kontrol edilir — Zig'in error
+    /// union'larına benzer örtük bir hata-döndürme zinciri. İçinde bulunulan
+    /// bir `try` varsa (`current_catch_label`) oraya, yoksa doğrudan bu
+    /// fonksiyonun erken (temizlenmiş) çıkışına dallanır.
+    fn emitExceptionCheck(self: *Codegen) CodegenError!void {
+        const pending = try self.newTemp();
+        try self.out.writer.print("    {s} =w call $nox_exception_pending(l {s})\n", .{ pending, RT_PARAM });
+        const propagate_label = try self.newLabel("exc_propagate");
+        const continue_label = try self.newLabel("exc_continue");
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ pending, propagate_label, continue_label });
+        try self.out.writer.print("{s}\n", .{propagate_label});
+        if (self.current_catch_label) |cl| {
+            // Bu `try`nin kendi dispatch'ine giriyoruz — henüz onun korumalı
+            // bölgesinden ÇIKMIYORUZ, bu yüzden `finally` burada DEĞİL,
+            // dispatch'in kendi tamamlanma/yeniden-fırlatma yollarında çalışır.
+            try self.out.writer.print("    jmp {s}\n", .{cl});
+        } else if (self.in_main) {
+            // Gerçekten dışarı sızıyoruz: aradan geçtiğimiz her `try`nin
+            // `finally`'si ve her `lowlevel` arenası burada, program
+            // sonlanmadan ÖNCE çalışmalıdır/yıkılmalıdır.
+            try self.drainFinally(self.current_ret_qtype);
+            try self.drainArenas();
+            // `nox_unhandled_exception` `noreturn`dur (process.exit çağırır),
+            // ama QBE bunu bilmez — bloğun bir sonlandırıcıyla bitmesi için
+            // savunmacı (asla çalışmayacak) bir `ret` gerekir.
+            try self.out.writer.print("    call $nox_unhandled_exception(l {s})\n", .{RT_PARAM});
+            try self.out.writer.writeAll("    ret 0\n");
+        } else {
+            try self.drainFinally(self.current_ret_qtype);
+            try self.drainArenas();
+            try self.releaseAllLocals();
+            try self.emitDefaultReturn(self.current_ret_qtype);
+        }
+        try self.out.writer.print("{s}\n", .{continue_label});
+    }
+};
+
+/// `module`'ü QBE IL metnine çevirir. Girdinin Faz 2 tip denetiminden geçmiş
+/// olması önkoşuldur. Desteklenmeyen bir yapı bulunursa (bkz. modül üstü
+/// belge notu) `error.Unsupported` döner.
+/// `extra_functions`: Faz 10'un checker tarafından üretilen somut
+/// (monomorphize edilmiş) generic fonksiyon örneklemeleri (generics
+/// kullanılmıyorsa `&.{}`) — sıradan, generic olmayan fonksiyonlar gibi
+/// derlenir (bkz. modül üstü not).
+/// `generic_template_names`: `module.body`de kalan (asla doğrudan
+/// derlenmeyen) generic fonksiyon ŞABLONLARININ adları — `checker.Checker`in
+/// `generic_functions` haritasının anahtarları. Bunun ayrıca gerekmesinin
+/// nedeni: bir fonksiyon yalnızca bir PROTOKOL parametresi (Faz 11) yoluyla
+/// örtük olarak generic olabilir — bu durumda ORİJİNAL AST düğümünün
+/// `type_params` alanı BOŞ kalır (kullanıcı hiç `[T]` yazmadı), bu yüzden
+/// yalnızca `type_params.len > 0` kontrolü YETERSİZDİR.
+pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8) CodegenError![]u8 {
+    var gen: Codegen = .{ .allocator = allocator, .out = .init(allocator) };
+
+    try gen.out.writer.writeAll(
+        \\data $fmt_int = { b "%lld\n", b 0 }
+        \\data $fmt_float = { b "%g\n", b 0 }
+        \\data $fmt_str = { b "%s\n", b 0 }
+        \\data $fmt_bool_true = { b "True\n", b 0 }
+        \\data $fmt_bool_false = { b "False\n", b 0 }
+        \\data $fmt_newline = { b "\n", b 0 }
+        \\data $fmt_int_frag = { b "%lld", b 0 }
+        \\data $fmt_float_frag = { b "%g", b 0 }
+        \\data $fmt_str_frag = { b "'%s'", b 0 }
+        \\data $fmt_bool_true_frag = { b "True", b 0 }
+        \\data $fmt_bool_false_frag = { b "False", b 0 }
+        \\data $fmt_lbracket = { b "[", b 0 }
+        \\data $fmt_rbracket = { b "]", b 0 }
+        \\data $fmt_rparen = { b ")", b 0 }
+        \\data $fmt_comma_sp = { b ", ", b 0 }
+        \\
+    );
+
+    // Stdlib fazı §L: kendi kendine başvuran (self-referential) bir sınıf
+    // alanı (`class JsonValue: arr: list[JsonValue]`) `resolveType`in
+    // `.generic`→`list`→`.simple` yolunda `self.classes.contains(name)`e
+    // BAKAR — ama `registerClass` (aşağıdaki asıl döngü) HER sınıfı
+    // TAMAMEN işleyip (alan tiplerini ÇÖZÜP) EN SONUNDA `self.classes.put`
+    // yapıyordu, bu yüzden bir sınıf KENDİ alan tipini çözerken KENDİ ADI
+    // HENÜZ `self.classes`da YOKTU (`error.Unsupported`). checker.zig BUNU
+    // ZATEN `collectClassNames`→`registerSignatures` İKİ GEÇİŞLİ deseniyle
+    // çözmüştü (bkz. onun belge notu) — codegen'İN AYNI iki geçişten YOKSUN
+    // olması, `nox.json`nin `JsonValue` sınıfı YAZILANA kadar HİÇ test
+    // EDİLMEMİŞ bir kod yoluydu (bkz. plan dosyasının "doğrulanmamış
+    // varsayım" notu). Düzeltme: TÜM sınıf adlarını (alanları ÇÖZÜLMEDEN
+    // ÖNCE) BOŞ bir yer tutucuyla `self.classes`a ÖNCEDEN ekle —
+    // `resolveType` yalnızca `.contains` sorar (haritanın DEĞERİNE hiç
+    // bakmaz), asıl `registerClass` çağrısı SONRA gerçek `ClassInfo`yla
+    // ÜZERİNE YAZAR.
+    for (module.body) |stmt| {
+        if (stmt == .class_def) try gen.classes.put(gen.allocator, stmt.class_def.name, .{});
+    }
+    for (module.body) |stmt| {
+        if (stmt == .class_def) try gen.registerClass(stmt.class_def);
+    }
+    for (module.body) |stmt| {
+        if (stmt == .extern_def) try gen.registerExternFunc(stmt.extern_def);
+    }
+    // Faz 10/11: `module.body`'deki generic fonksiyon ŞABLONLARI (açık
+    // `[T]` VEYA protokol parametresi yoluyla örtük) hiçbir zaman doğrudan
+    // derlenmez (tip parametreleri/protokol adları QBE'nin bilmediği
+    // isimlerdir) — yalnızca checker'ın ürettiği somut örneklemeler
+    // (`extra_functions`) derlenir.
+    for (module.body) |stmt| {
+        if (stmt == .func_def and stmt.func_def.type_params.len == 0 and !containsName(generic_template_names, stmt.func_def.name)) {
+            try gen.registerFunc(stmt.func_def);
+        }
+    }
+    for (extra_functions) |fd| try gen.registerFunc(fd);
+
+    // Performans fazı: HANGİ serbest fonksiyon/kurucuların (transitif
+    // olarak) ASLA istisna fırlatamayacağı kanıtlanabiliyorsa `genCall`/
+    // `genConstruct`in çağrı-sonrası `emitExceptionCheck`i atlayabilmesi
+    // için — bkz. `computeMustNotRaise`in belge notu. `self.classes`/
+    // `self.functions` (yukarıdaki register* döngüleri) DOLU olmalı.
+    try gen.computeMustNotRaise(module, extra_functions);
+
+    for (module.body) |stmt| {
+        if (stmt == .class_def) {
+            const cd = stmt.class_def;
+            for (cd.methods) |m| try gen.genMethod(cd.name, m);
+            try gen.genClassRelease(cd.name, gen.classes.get(cd.name).?);
+            try gen.genClassEq(cd.name, gen.classes.get(cd.name).?);
+        }
+    }
+    for (module.body) |stmt| {
+        if (stmt == .func_def and stmt.func_def.type_params.len == 0 and !containsName(generic_template_names, stmt.func_def.name)) {
+            try gen.genFunction(stmt.func_def);
+        }
+    }
+    for (extra_functions) |fd| try gen.genFunction(fd);
+
+    var loose: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+    defer loose.deinit(allocator);
+    for (module.body) |stmt| {
+        switch (stmt) {
+            .func_def, .class_def, .protocol_def, .extern_def, .import_stmt => {},
+            else => try loose.append(allocator, stmt),
+        }
+    }
+    // Faz 21 aşama 4: modül HERHANGİ bir async özelliği (async def/spawn/
+    // await/Channel) kullanıyorsa `main`, üst düzey kodu bir fiber olarak
+    // çalıştıran fiber-sarmalı bir kökle üretilir; kullanmıyorsa (büyük
+    // çoğunluk) `genMain` DEĞİŞMEDEN, sıfır ek maliyetle çalışır.
+    const use_async = moduleUsesAsync(module, extra_functions);
+    try gen.genMain(loose.items, use_async);
+
+    // `list[T]`nin elemanları heap-yönetimliyken (sınıf/iç içe liste) gereken
+    // `$List_<...>_release` fonksiyonları — `string_data` gibi TEMBEL keşfedilir
+    // (herhangi bir `resolveType`/`genListLit`/`releaseValueIfSet` çağrısı
+    // sırasında). Bir kuyruk kullanılır çünkü BİR fonksiyonu üretmek (iç içe
+    // liste durumunda) YENİ bir ihtiyacı keşfedebilir — `while` bunu geçişli
+    // olarak TÜKETENE kadar döner.
+    while (gen.list_release_queue.pop()) |item| {
+        try gen.genListElemRelease(item.name, item.info);
+    }
+
+    // list[T] için derin yapısal eşitlik (bkz. görev "list/class için derin
+    // yapısal eşitlik") — `list_release_queue` ile AYNI "sonda tüket" deseni
+    // (bir `$List_..._eq`i üretmek İÇ İÇE bir liste durumunda YENİ bir
+    // ihtiyacı keşfedebilir, bkz. `eqFnNameForList`/`eqMangleFor`).
+    while (gen.list_eq_queue.pop()) |item| {
+        try gen.genListEq(item.name, item.elem_qtype, item.elem_heap_info, item.elem_is_str);
+    }
+
+    // Faz 21 aşama 4: her `spawn` çağrı sitesi için TEMBEL kaydedilen
+    // sarmalayıcı fonksiyonlar (bkz. `SpawnWrapperSpec`in belge notu) —
+    // AYNI "sonda tüket" deseni.
+    while (gen.spawn_wrappers.pop()) |spec| {
+        try gen.genSpawnWrapper(spec);
+    }
+
+    // stdlib fazı §D.1.6: her `nox.http.serve` çağrı sitesi için TEMBEL
+    // kaydedilen sarmalayıcı fonksiyonlar (bkz. `HttpServeWrapperSpec`in
+    // belge notu) — AYNI "sonda tüket" deseni.
+    while (gen.http_serve_wrappers.pop()) |spec| {
+        try gen.genHttpServeWrapper(spec);
+    }
+
+    for (gen.string_data.items) |sd| {
+        // `l 1073741824` (1<<30): HPy'nin `PINNED_REFCOUNT`iyle (bkz.
+        // runtime/hpy_bridge/context.zig) AYNI "pinned" refcount hilesi —
+        // string literalinin görünmez ARC başlığı, hiçbir gerçekçi
+        // retain/release dizisinin sıfıra indiremeyeceği kadar büyük bir
+        // değerle başlar, bu yüzden `nox_rc_release` bu statik belleği asla
+        // gerçekten serbest bırakmaya çalışmaz (bkz. `.string_lit` kolu).
+        try gen.out.writer.print("data {s} = {{ l 1073741824, b \"{s}\", b 0 }}\n", .{ sd.symbol, sd.escaped });
+    }
+
+    // `print(list[T]/sınıf)` görüntülemesinin (bkz. `internFmtString`)
+    // sınıf/alan adı fragmanları — `string_data`nın AKSİNE pinned-refcount
+    // başlığı OLMADAN, düz birer `printf` format dizesi olarak yayılır.
+    for (gen.fmt_data.items) |fd| {
+        try gen.out.writer.print("data {s} = {{ b \"{s}\", b 0 }}\n", .{ fd.symbol, fd.escaped });
+    }
+
+    return gen.out.toOwnedSlice();
+}

@@ -1,0 +1,22 @@
+# Stdlib fazı §J — bkz. nox-teknik-spesifikasyon.md. `runtime/stdlib_shims/
+# fs.zig`ye sarar — `nox.http`in `nox_http_response_ok` deseniyle AYNI
+# "ham çağrı + AYRI durum sorgusu" (`nox_fs_last_op_ok`) tasarımı.
+
+class FsError:
+    def __init__(self: FsError, message: str) -> None:
+        self.message = message
+
+extern def nox_fs_read_to_string_raw(path: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_fs_write_string_raw(path: str, content: str) -> None from "zig-out/lib/noxrt.o" with_rt
+extern def nox_fs_last_op_ok() -> int from "zig-out/lib/noxrt.o"
+
+def read_to_string(path: str) -> str:
+    content: str = nox_fs_read_to_string_raw(path)
+    if nox_fs_last_op_ok() == 0:
+        raise FsError("dosya okunamadi: " + path)
+    return content
+
+def write_string(path: str, content: str) -> None:
+    nox_fs_write_string_raw(path, content)
+    if nox_fs_last_op_ok() == 0:
+        raise FsError("dosya yazilamadi: " + path)

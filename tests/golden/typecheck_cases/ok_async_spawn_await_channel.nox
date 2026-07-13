@@ -1,0 +1,9 @@
+async def fetch(x: int) -> int:
+    return x * 2
+
+async def main() -> None:
+    t: Task[int] = spawn fetch(21)
+    result: int = await t
+    ch: Channel[int] = Channel[int](0)
+    await ch.send(result)
+    v: int = await ch.recv()

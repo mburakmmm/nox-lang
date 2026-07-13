@@ -1,0 +1,27 @@
+# Stdlib fazı §K — bkz. nox-teknik-spesifikasyon.md. TAMAMEN saf Nox —
+# hiç Zig/extern def GEREKMEZ (yalnızca mevcut ==/!=/raise/str() mekanizması
+# ile yazılır).
+#
+# NOT: Nox'ta fonksiyon overload'ı YOK, bu yüzden TEK bir generic `assert_eq`
+# yerine tipe göre AYRI adlı fonksiyonlar kullanılır (`assert_eq_int`/
+# `assert_eq_str`/`assert_eq_float`).
+
+class AssertionError:
+    def __init__(self: AssertionError, message: str) -> None:
+        self.message = message
+
+def assert_eq_int(actual: int, expected: int, msg: str) -> None:
+    if actual != expected:
+        raise AssertionError(msg + ": beklenen " + str(expected) + ", alinan " + str(actual))
+
+def assert_eq_str(actual: str, expected: str, msg: str) -> None:
+    if actual != expected:
+        raise AssertionError(msg + ": beklenen \"" + expected + "\", alinan \"" + actual + "\"")
+
+def assert_eq_float(actual: float, expected: float, msg: str) -> None:
+    if actual != expected:
+        raise AssertionError(msg + ": beklenen " + str(expected) + ", alinan " + str(actual))
+
+def assert_true(cond: bool, msg: str) -> None:
+    if not cond:
+        raise AssertionError(msg)

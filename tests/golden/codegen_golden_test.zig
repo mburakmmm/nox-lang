@@ -1,0 +1,580 @@
+//! Codegen golden testleri: kaynağı gerçekten `qbe` + sistem `cc`'siyle
+//! native bir binary'ye derler, çalıştırır ve stdout'unu karşılaştırır.
+//! AGENTS.md'nin izin verdiği "kaynak → beklenen davranış" golden test
+//! biçimidir (yalnızca IR metni değil, gerçek çalışma zamanı davranışı).
+//!
+//! Önkoşul: `qbe` ve `cc` sistemde PATH üzerinde bulunmalıdır (bkz. AGENTS.md,
+//! Faz 0 karar notları — `brew install qbe`).
+
+const std = @import("std");
+const nox = @import("nox");
+
+/// Kaynağı derler, native bir binary üretir ve çalıştırır; ham `RunResult`'ı
+/// döner (çıkış kodu/stderr üzerindeki iddialar çağırana bırakılır — normal
+/// başarı senaryoları ile "yakalanmamış istisna" senaryosu farklı beklentiler
+/// taşır, bkz. `expectGolden` / `expectUncaughtException`).
+fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.RunResult {
+    const io = std.testing.io;
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const user_module = try nox.parser.parseModule(allocator, tokens);
+    // `import nox.xxx` deyimlerini çözer (bkz. compiler/module_loader.zig'in
+    // belge notu) — golden testler `stdlib/` altındaki GERÇEK dosyaları
+    // KULLANICI kodundakiyle AYNI şekilde okur (proje kökünden çalıştırılan
+    // `zig build test` varsayımıyla TUTARLI, bkz. bu dosyanın alt satırlarında
+    // ZATEN kullanılan `zig-out/lib/noxrt.o` göreli yolu).
+    const module = try nox.module_loader.resolveImports(allocator, io, user_module);
+
+    var checker_state = nox.checker.Checker.init(allocator);
+    checker_state.checkModule(module) catch |e| {
+        std.debug.print("beklenmeyen tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
+        return error.FixtureNotWellTyped;
+    };
+
+    var generic_names: std.ArrayListUnmanaged([]const u8) = .empty;
+    var generic_it = checker_state.generic_functions.keyIterator();
+    while (generic_it.next()) |k| try generic_names.append(allocator, k.*);
+
+    const ir = try nox.codegen.generateModule(allocator, module, checker_state.instantiations.items, generic_names.items);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &path_buf);
+    const dir_path = path_buf[0..len];
+
+    const ssa_path = try std.fmt.allocPrint(allocator, "{s}/prog.ssa", .{dir_path});
+    const asm_path = try std.fmt.allocPrint(allocator, "{s}/prog.s", .{dir_path});
+    const bin_path = try std.fmt.allocPrint(allocator, "{s}/prog", .{dir_path});
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "prog.ssa", .data = ir });
+
+    const qbe_result = try std.process.run(allocator, io, .{
+        .argv = &.{ "qbe", "-o", asm_path, ssa_path },
+    });
+    if (qbe_result.term != .exited or qbe_result.term.exited != 0) {
+        std.debug.print("qbe basarisiz: {s}\n", .{qbe_result.stderr});
+        return error.QbeFailed;
+    }
+
+    const cc_result = try std.process.run(allocator, io, .{
+        .argv = &.{ "cc", "-o", bin_path, asm_path, "zig-out/lib/noxrt.o", "-lm" },
+    });
+    if (cc_result.term != .exited or cc_result.term.exited != 0) {
+        std.debug.print("cc basarisiz: {s}\n", .{cc_result.stderr});
+        return error.CcFailed;
+    }
+
+    return std.process.run(allocator, io, .{ .argv = &.{bin_path} });
+}
+
+fn expectGolden(comptime source: []const u8, comptime expected: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const run_result = try compileAndRun(arena.allocator(), source);
+    if (run_result.term != .exited or run_result.term.exited != 0) {
+        std.debug.print("program basarisiz cikti (stderr): {s}\n", .{run_result.stderr});
+        return error.ProgramFailed;
+    }
+    // AGENTS.md §13: bellek yönetimiyle ilgili değişikliklerde leak testi
+    // yeşil olmalı — runtime bir sızıntı tespit ederse bunu stderr'e yazar
+    // (bkz. runtime/alloc/asap.zig, nox_runtime_deinit).
+    if (run_result.stderr.len != 0) {
+        std.debug.print("program stderr'e beklenmeyen bir çıktı yazdı (olası bellek sızıntısı): {s}\n", .{run_result.stderr});
+        return error.UnexpectedStderrOutput;
+    }
+    try std.testing.expectEqualStrings(expected, run_result.stdout);
+}
+
+/// Yakalanmamış bir istisnayla sonlanması BEKLENEN programlar için: çıkış
+/// kodunun sıfırdan farklı olduğunu ve istisnaya kadarki stdout'un doğru
+/// olduğunu doğrular (bkz. runtime/errors/handle.zig, nox_unhandled_exception).
+fn expectUncaughtException(comptime source: []const u8, comptime expected_stdout: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const run_result = try compileAndRun(arena.allocator(), source);
+    if (run_result.term != .exited or run_result.term.exited == 0) {
+        std.debug.print("program beklenenden farklı sonlandı (sıfırdan farklı bir çıkış kodu bekleniyordu)\n", .{});
+        return error.ExpectedNonZeroExit;
+    }
+    try std.testing.expectEqualStrings(expected_stdout, run_result.stdout);
+}
+
+test "codegen(çalıştır): fibonacci (özyineleme + while + print)" {
+    try expectGolden(
+        @embedFile("codegen_cases/fibonacci.nox"),
+        @embedFile("codegen_cases/fibonacci.expected"),
+    );
+}
+
+test "codegen(çalıştır): tam bölme ve mod işaret düzeltmesi (negatif işlenenler)" {
+    try expectGolden(
+        @embedFile("codegen_cases/floordiv_mod_signs.nox"),
+        @embedFile("codegen_cases/floordiv_mod_signs.expected"),
+    );
+}
+
+test "codegen(çalıştır): üs alma (pow) ve karışık int/float aritmetik" {
+    try expectGolden(
+        @embedFile("codegen_cases/pow_and_float_mix.nox"),
+        @embedFile("codegen_cases/pow_and_float_mix.expected"),
+    );
+}
+
+test "codegen(çalıştır): bool yazdırma ve mantıksal operatörler" {
+    try expectGolden(
+        @embedFile("codegen_cases/bool_logic.nox"),
+        @embedFile("codegen_cases/bool_logic.expected"),
+    );
+}
+
+test "codegen(çalıştır): for-range ve if/elif/else" {
+    try expectGolden(
+        @embedFile("codegen_cases/for_range_and_if.nox"),
+        @embedFile("codegen_cases/for_range_and_if.expected"),
+    );
+}
+
+test "codegen(çalıştır): str parametresi ve yazdırma" {
+    try expectGolden(
+        @embedFile("codegen_cases/str_param_and_print.nox"),
+        @embedFile("codegen_cases/str_param_and_print.expected"),
+    );
+}
+
+test "codegen(çalıştır): list[int] oluşturma, indeksleme, iterasyon" {
+    try expectGolden(
+        @embedFile("codegen_cases/list_build_index_iterate.nox"),
+        @embedFile("codegen_cases/list_build_index_iterate.expected"),
+    );
+}
+
+test "codegen(çalıştır): liste yeniden ataması eskisini serbest bırakır (çift serbest bırakma yok)" {
+    try expectGolden(
+        @embedFile("codegen_cases/list_reassignment_frees_old.nox"),
+        @embedFile("codegen_cases/list_reassignment_frees_old.expected"),
+    );
+}
+
+test "codegen(çalıştır): liste parametre/dönüş/takma ad (ARC ödünç alma + retain)" {
+    try expectGolden(
+        @embedFile("codegen_cases/list_param_return_alias.nox"),
+        @embedFile("codegen_cases/list_param_return_alias.expected"),
+    );
+}
+
+test "codegen(çalıştır): sınıf — kurucu, metod, alan okuma/yazma, takma ad" {
+    try expectGolden(
+        @embedFile("codegen_cases/class_point.nox"),
+        @embedFile("codegen_cases/class_point.expected"),
+    );
+}
+
+test "codegen(çalıştır): list[str] (açıkça anotasyonlu, iç içe heap OLMAYAN tip)" {
+    try expectGolden(
+        @embedFile("codegen_cases/list_str_elements.nox"),
+        @embedFile("codegen_cases/list_str_elements.expected"),
+    );
+}
+
+test "codegen(çalıştır): list[Sınıf] — heap-yönetimli elemanlar, özyinelemeli ARC release (Faz 21 ön-koşulu)" {
+    try expectGolden(
+        @embedFile("codegen_cases/list_class_elements.nox"),
+        @embedFile("codegen_cases/list_class_elements.expected"),
+    );
+}
+
+test "codegen(çalıştır): list[list[int]] — iç içe liste elemanları, özyinelemeli ARC release" {
+    try expectGolden(
+        @embedFile("codegen_cases/list_nested_list_elements.nox"),
+        @embedFile("codegen_cases/list_nested_list_elements.expected"),
+    );
+}
+
+test "codegen(çalıştır): raise/try/except/finally — eşleşen tip, eşleşmeyen tip, finally her zaman çalışır" {
+    try expectGolden(
+        @embedFile("codegen_cases/try_except_finally.nox"),
+        @embedFile("codegen_cases/try_except_finally.expected"),
+    );
+}
+
+test "codegen(çalıştır): yakalanmamış istisna programı sıfırdan farklı bir kodla sonlandırır" {
+    try expectUncaughtException(
+        @embedFile("codegen_cases/uncaught_exception.nox"),
+        @embedFile("codegen_cases/uncaught_exception.expected"),
+    );
+}
+
+test "codegen(çalıştır): performans fazı — 'raise etmez' analizi, dolaylı (transitif) raise yine de yakalanır" {
+    try expectGolden(
+        @embedFile("codegen_cases/indirect_raise_propagation.nox"),
+        @embedFile("codegen_cases/indirect_raise_propagation.expected"),
+    );
+}
+
+test "codegen(çalıştır): performans fazı — dolaylı (3 katmanlı) yakalanmamış istisna hâlâ net şekilde sonlanır" {
+    try expectUncaughtException(
+        @embedFile("codegen_cases/indirect_uncaught_exception.nox"),
+        @embedFile("codegen_cases/indirect_uncaught_exception.expected"),
+    );
+}
+
+test "codegen(çalıştır): lowlevel — arena üzerinden sınıf + liste, alan okuma, sızıntı yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/lowlevel_basic.nox"),
+        @embedFile("codegen_cases/lowlevel_basic.expected"),
+    );
+}
+
+test "codegen: lowlevel arenasından bir değeri bloktan return etmek reddedilir (Unsupported)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/rejected_lowlevel_escape.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    try std.testing.expectError(error.Unsupported, nox.codegen.generateModule(allocator, module, &.{}, &.{}));
+}
+
+test "codegen(çalıştır): except X as e bir döngü içinde yeniden kullanılır — eski istisna sızmaz" {
+    try expectGolden(
+        @embedFile("codegen_cases/except_bind_reused_in_loop.nox"),
+        @embedFile("codegen_cases/except_bind_reused_in_loop.expected"),
+    );
+}
+
+test "codegen(çalıştır): iç içe sınıf tipli alanlar — inşa, zincirleme okuma, yeniden atama, passthrough, sızıntı yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/nested_class_fields.nox"),
+        @embedFile("codegen_cases/nested_class_fields.expected"),
+    );
+}
+
+test "codegen(çalıştır): bir döngü içindeki '%' yığın taşmasına yol açmaz (milyonlarca yineleme)" {
+    try expectGolden(
+        @embedFile("codegen_cases/mod_in_loop_no_stack_growth.nox"),
+        @embedFile("codegen_cases/mod_in_loop_no_stack_growth.expected"),
+    );
+}
+
+test "codegen(çalıştır): bir döngü içine gömülü 'for ... in list' yığın taşmasına yol açmaz" {
+    try expectGolden(
+        @embedFile("codegen_cases/nested_forlist_no_stack_growth.nox"),
+        @embedFile("codegen_cases/nested_forlist_no_stack_growth.expected"),
+    );
+}
+
+test "codegen(çalıştır): bir döngü içindeki list[T]/sınıf '==' yığın taşmasına yol açmaz (milyonlarca yineleme)" {
+    try expectGolden(
+        @embedFile("codegen_cases/deep_equality_in_loop_no_stack_growth.nox"),
+        @embedFile("codegen_cases/deep_equality_in_loop_no_stack_growth.expected"),
+    );
+}
+
+test "codegen(çalıştır): zincirlenmiş alan okuması bir çağrı sonucu üzerinde — ara nesne sızmaz" {
+    try expectGolden(
+        @embedFile("codegen_cases/chained_attr_temporary_release.nox"),
+        @embedFile("codegen_cases/chained_attr_temporary_release.expected"),
+    );
+}
+
+test "codegen(çalıştır): ileri referanslı (henüz tanımlanmamış) sınıf tipli alan artık DESTEKLENİYOR" {
+    // Stdlib fazı §L: `nox.json`nin `JsonValue`si (bkz. core.nox) KENDİ
+    // KENDİNE başvuran bir `list[JsonValue]` alanı taşıdığından, codegen'in
+    // `registerClass`ı artık TÜM sınıf adlarını (alan tipleri ÇÖZÜLMEDEN
+    // ÖNCE) önceden kaydediyor (bkz. `generateModule`nin yeni ön-geçiş
+    // döngüsü) — bu, ileri-referanslı (VE öz-referanslı) sınıf alanlarını
+    // ARTIK DESTEKLER. Bu test ESKİDEN (bkz. git geçmişi) `error.Unsupported`
+    // BEKLERDİ — şimdi TAM TERSİNİ, doğru çalışan bir uçtan uca golden test
+    // olarak doğruluyor.
+    try expectGolden(
+        @embedFile("codegen_cases/class_field_forward_ref.nox"),
+        @embedFile("codegen_cases/class_field_forward_ref.expected"),
+    );
+}
+
+test "codegen(çalıştır): list[T] tipli bir sınıf alanı — inşa, takma ad, passthrough, sızıntı yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/list_class_field.nox"),
+        @embedFile("codegen_cases/list_class_field.expected"),
+    );
+}
+
+test "codegen(çalıştır): TAZE olmayan bir tabandan alan/indeks okuması yeni bir yerele atanınca retain edilir" {
+    try expectGolden(
+        @embedFile("codegen_cases/attr_index_read_into_local_retain.nox"),
+        @embedFile("codegen_cases/attr_index_read_into_local_retain.expected"),
+    );
+}
+
+test "codegen(çalıştır): generic fonksiyonlar — birden çok somut tip, list[T], sınıf argümanı, sızıntı yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/generic_functions.nox"),
+        @embedFile("codegen_cases/generic_functions.expected"),
+    );
+}
+
+test "codegen(çalıştır): yapısal protokol — iki farklı sınıf, monomorphize edilmiş dispatch, sızıntı yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/protocol_dispatch.nox"),
+        @embedFile("codegen_cases/protocol_dispatch.expected"),
+    );
+}
+
+test "codegen(çalıştır): wasm_call — gerçek bir .nox programından gerçek bir WASM modülü çağrılır" {
+    try expectGolden(
+        @embedFile("codegen_cases/wasm_call_builtin.nox"),
+        @embedFile("codegen_cases/wasm_call_builtin.expected"),
+    );
+}
+
+test "codegen(çalıştır): async — spawn + await, i64 payload, sızıntı yok (Faz 21 aşama 4)" {
+    try expectGolden(
+        @embedFile("codegen_cases/async_spawn_await.nox"),
+        @embedFile("codegen_cases/async_spawn_await.expected"),
+    );
+}
+
+test "codegen(çalıştır): async — Channel[T] (rendezvous) iki görev arasında, sızıntı yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/async_channel.nox"),
+        @embedFile("codegen_cases/async_channel.expected"),
+    );
+}
+
+test "codegen(çalıştır): async — kasıtlı deadlock, net hatayla sonlanır (asılı KALMAZ)" {
+    try expectUncaughtException(
+        @embedFile("codegen_cases/async_deadlock.nox"),
+        @embedFile("codegen_cases/async_deadlock.expected"),
+    );
+}
+
+test "codegen(çalıştır): __init__ içermeyen sınıf (alansız, yalnızca metod)" {
+    try expectGolden(
+        @embedFile("codegen_cases/class_no_init.nox"),
+        @embedFile("codegen_cases/class_no_init.expected"),
+    );
+}
+
+test "codegen(çalıştır): 'obj.attr = değer' ataması self dışından — değer tipli VE sınıf tipli alan, sızıntı yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/attr_assign_external.nox"),
+        @embedFile("codegen_cases/attr_assign_external.expected"),
+    );
+}
+
+test "codegen(çalıştır): str == str / != — gerçek içerik karşılaştırması (strcmp), işaretçi karşılaştırması DEĞİL" {
+    try expectGolden(
+        @embedFile("codegen_cases/str_equality.nox"),
+        @embedFile("codegen_cases/str_equality.expected"),
+    );
+}
+
+test "codegen(çalıştır): list[T]/sınıf için derin yapısal == / != — int/str/iç içe liste/sınıf/list[sınıf], sızıntı yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/deep_equality.nox"),
+        @embedFile("codegen_cases/deep_equality.expected"),
+    );
+}
+
+test "codegen(çalıştır): print(list)/print(sınıf) — Python benzeri görüntüleme, iç içe, sızıntı yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/print_list_class.nox"),
+        @embedFile("codegen_cases/print_list_class.expected"),
+    );
+}
+
+test "codegen(çalıştır): import nox.testmod — nitelikli fonksiyon/sınıf çağrıları, iç modül içi çapraz-başvurular" {
+    try expectGolden(
+        @embedFile("codegen_cases/import_basic.nox"),
+        @embedFile("codegen_cases/import_basic.expected"),
+    );
+}
+
+test "codegen(çalıştır): import nox.testmod — kullanıcının aynı adlı KENDİ fonksiyonuyla ÇAKIŞMAZ" {
+    try expectGolden(
+        @embedFile("codegen_cases/import_name_collision.nox"),
+        @embedFile("codegen_cases/import_name_collision.expected"),
+    );
+}
+
+test "codegen(çalıştır): str + str birleştirme (zincirleme) + len(), sızıntı yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/str_concat_basic.nox"),
+        @embedFile("codegen_cases/str_concat_basic.expected"),
+    );
+}
+
+test "codegen(çalıştır): str yeniden ataması eskisini serbest bırakır (çift serbest bırakma yok)" {
+    try expectGolden(
+        @embedFile("codegen_cases/str_concat_reassignment_frees_old.nox"),
+        @embedFile("codegen_cases/str_concat_reassignment_frees_old.expected"),
+    );
+}
+
+test "codegen(çalıştır): len(str) — literal ve değişken üzerinde" {
+    try expectGolden(
+        @embedFile("codegen_cases/str_len.nox"),
+        @embedFile("codegen_cases/str_len.expected"),
+    );
+}
+
+test "codegen(çalıştır): dict[int, int] — literal, indeksleme, contains/len, üzerine yazma" {
+    try expectGolden(
+        @embedFile("codegen_cases/dict_int_key_basic.nox"),
+        @embedFile("codegen_cases/dict_int_key_basic.expected"),
+    );
+}
+
+test "codegen(çalıştır): dict[str, int] — anahtar İÇERİK eşitliğiyle bulunur (pointer eşitliği DEĞİL)" {
+    try expectGolden(
+        @embedFile("codegen_cases/dict_str_key_basic.nox"),
+        @embedFile("codegen_cases/dict_str_key_basic.expected"),
+    );
+}
+
+test "codegen(çalıştır): dict[str, str] — str anahtar/değer ARC doğruluğu (üzerine yazma eskiyi serbest bırakır, sızıntı yok)" {
+    try expectGolden(
+        @embedFile("codegen_cases/dict_str_key_str_value_arc.nox"),
+        @embedFile("codegen_cases/dict_str_key_str_value_arc.expected"),
+    );
+}
+
+test "codegen(çalıştır): str(int)/int(str) roundtrip" {
+    try expectGolden(
+        @embedFile("codegen_cases/str_int_roundtrip.nox"),
+        @embedFile("codegen_cases/str_int_roundtrip.expected"),
+    );
+}
+
+test "codegen(çalıştır): str(float)/float(str) roundtrip" {
+    try expectGolden(
+        @embedFile("codegen_cases/str_float_roundtrip.nox"),
+        @embedFile("codegen_cases/str_float_roundtrip.expected"),
+    );
+}
+
+test "codegen(çalıştır): int(s)/float(s) geçersiz girdide ValueError raise eder, try/except yakalar" {
+    try expectGolden(
+        @embedFile("codegen_cases/int_parse_error_raises.nox"),
+        @embedFile("codegen_cases/int_parse_error_raises.expected"),
+    );
+}
+
+test "codegen(çalıştır): str indeksleme s[i] — adlandırılmış/temporary taban, yeniden atama (sızıntı yok)" {
+    try expectGolden(
+        @embedFile("codegen_cases/str_index_basic.nox"),
+        @embedFile("codegen_cases/str_index_basic.expected"),
+    );
+}
+
+test "codegen(çalıştır): str indeksleme sınır dışı erişimde IndexError raise eder" {
+    try expectGolden(
+        @embedFile("codegen_cases/str_index_out_of_bounds_raises.nox"),
+        @embedFile("codegen_cases/str_index_out_of_bounds_raises.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.strings.split/join" {
+    try expectGolden(
+        @embedFile("codegen_cases/strings_split_join.nox"),
+        @embedFile("codegen_cases/strings_split_join.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.strings.trim/upper/lower/replace" {
+    try expectGolden(
+        @embedFile("codegen_cases/strings_case_trim_replace.nox"),
+        @embedFile("codegen_cases/strings_case_trim_replace.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.strings.starts_with/ends_with/contains/index_of (str[i] karşılaştırma sızıntısı yok)" {
+    try expectGolden(
+        @embedFile("codegen_cases/strings_search.nox"),
+        @embedFile("codegen_cases/strings_search.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.math — sqrt/pow/floor/ceil (çıplak) + min/max/abs (nitelikli)" {
+    try expectGolden(
+        @embedFile("codegen_cases/math_basic.nox"),
+        @embedFile("codegen_cases/math_basic.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.os.arg_count/arg (argc/argv $main'e taşınmış)" {
+    try expectGolden(
+        @embedFile("codegen_cases/os_args_basic.nox"),
+        @embedFile("codegen_cases/os_args_basic.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.os.getenv eksik değişken OsError raise eder" {
+    try expectGolden(
+        @embedFile("codegen_cases/os_getenv_missing_raises.nox"),
+        @embedFile("codegen_cases/os_getenv_missing_raises.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.fs.write_string/read_to_string round-trip" {
+    try expectGolden(
+        @embedFile("codegen_cases/fs_read_write_roundtrip.nox"),
+        @embedFile("codegen_cases/fs_read_write_roundtrip.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.fs.read_to_string eksik dosya FsError raise eder" {
+    try expectGolden(
+        @embedFile("codegen_cases/fs_read_missing_raises.nox"),
+        @embedFile("codegen_cases/fs_read_missing_raises.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.time.now_ms/sleep_ms (monoton artış)" {
+    try expectGolden(
+        @embedFile("codegen_cases/time_now_monotonic_increases.nox"),
+        @embedFile("codegen_cases/time_now_monotonic_increases.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.test.assert_eq_*/assert_true (başarılı yol)" {
+    try expectGolden(
+        @embedFile("codegen_cases/test_assert_eq_pass.nox"),
+        @embedFile("codegen_cases/test_assert_eq_pass.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.test.assert_eq_int başarısız olursa AssertionError raise eder" {
+    try expectGolden(
+        @embedFile("codegen_cases/test_assert_eq_fail_raises.nox"),
+        @embedFile("codegen_cases/test_assert_eq_fail_raises.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.json.decode — iç içe dizi/obje, sayı/string/bool/null karışık" {
+    try expectGolden(
+        @embedFile("codegen_cases/json_decode_nested.nox"),
+        @embedFile("codegen_cases/json_decode_nested.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.json — decode/encode round-trip" {
+    try expectGolden(
+        @embedFile("codegen_cases/json_encode_roundtrip.nox"),
+        @embedFile("codegen_cases/json_encode_roundtrip.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.json.decode bozuk JSON JsonError raise eder" {
+    try expectGolden(
+        @embedFile("codegen_cases/json_decode_malformed_raises.nox"),
+        @embedFile("codegen_cases/json_decode_malformed_raises.expected"),
+    );
+}
