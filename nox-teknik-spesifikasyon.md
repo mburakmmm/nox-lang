@@ -4519,6 +4519,59 @@ fonksiyonu DAHİL) `build` edilip ÇALIŞTIRILDI — hem stdlib çözümlemesi
 hem runtime bağlama BAŞARILI (önceden bu SESSİZCE `error.ModuleNotFound`/
 `cc` `FileNotFound` ile BAŞARISIZ olurdu).
 
+### 3.7.3 Q.5 — `nox.http.serve` DoS Sertleştirmesi
+
+**Problem:** `runtime/stdlib_shims/http_server.zig`nin `connectionEntry`/
+`nox_http_serve_raw`ı sıfır kaynak-tüketimi sınırı taşıyordu: (1) bir
+isteğin gövdesi `streamRemaining` ile SINIRSIZ okunuyordu (bir saldırgan
+KEYFİ büyüklükte bir gövde göndererek belleği tüketebilirdi); (2) kabul
+döngüsü `accept()`i SINIRSIZ tekrarlayıp HER bağlantı İÇİN bir fiber+yığın
+(havuzdan ya da taze 256 KiB) harcıyordu (bir saldırgan bağlantıları hiç
+kapatmadan biriktirerek bellek/fd tüketebilirdi).
+
+**Çözüm (İKİ SABİT güvenlik sınırı, `docs/uretim-hazirlik-analizi.md`nin P0
+bulgusuna karşılık):**
+1. **Gövde boyutu sınırı** (`MAX_REQUEST_BODY_BYTES = 10 MiB`):
+   `connectionEntry`, `streamRemaining` YERİNE `body_reader.stream(...,
+   .unlimited)`i (her çağrısı `FiberReader.stream` aracılığıyla TEK bir
+   soket okumasına denk gelir) bir döngüde çağırıp HER adımda toplam
+   boyutu kontrol eder — sınır AŞILDIĞI ANDA (saldırganın gönderdiği KALAN
+   baytlar hiç OKUNMADAN/tahsis edilmeden) `413 Payload Too Large` yanıtı
+   yazılıp bağlantı kapatılır, `handler` HİÇ ÇAĞRILMAZ.
+2. **Eşzamanlı bağlantı sınırı** (`DEFAULT_MAX_CONCURRENT_CONNECTIONS =
+   4096`): `nox_http_serve_raw`nin kabul döngüsü basit bir `active_
+   connections: usize` sayacı tutar (tek OS iş parçacığında kooperatif
+   çalıştığından atomik GEREKMEZ) — sınır DOLUYSA yeni bağlantı `receiveHead`e
+   bile ULAŞMADAN reddedilir (fd sessizce kapatılır, hiçbir HTTP yanıtı
+   YAZILMAZ — en ucuz tepki).
+3. **Testte KÜÇÜK sınırlarla egzersiz:** dışa açık `nox_http_serve_raw`nin
+   C ABI imzası (`genHttpServe`'in codegen'de SABİT 5 argümanla çağırdığı)
+   DEĞİŞTİRİLMEDİ — gerçek gövde/sarmalayıcı `serveImpl` adlı özel bir
+   fonksiyona taşındı, bu da `max_concurrent`/`max_body_bytes`i PARAMETRE
+   olarak alır; `nox_http_serve_raw` bunu SABİT varsayılanlarla çağırır.
+   Testler `serveImpl`i KÜÇÜK/HIZLI değerlerle (16 bayt gövde sınırı, 1
+   eşzamanlı bağlantı) DOĞRUDAN çağırarak gerçekçi (büyük) varsayılanları
+   BEKLEMEDEN sınırları GERÇEKTEN egzersiz eder.
+
+**Bilinçli KAPSAM DIŞI (dürüstçe belgelendi):** bir bağlantının BAŞLIK/
+GÖVDE göndermeden (slowloris tarzı) SINIRSIZ süre askıda kalmasına karşı
+bir OKUMA ZAMAN AŞIMI henüz YOK — mevcut kqueue reaktörü (D.0) yalnızca
+soket G/Ç olaylarını dinliyor, bir ZAMANLAYICI (`EVFILT_TIMER`) desteği
+YOK (`nox.time.sleep_ms`in "bloklayıcı" kısıtıyla AYNI kök neden). Bu,
+GELECEKTEKİ bir faza (muhtemelen Faz R'nin platform genişletmesiyle
+BİRLİKTE) bırakıldı — eşzamanlı-bağlantı sınırı bu riski KISMEN azaltır
+(askıda kalan bağlantılar da o sınıra dahildir, sınırsız ÇOĞALAMAZLAR).
+
+**Doğrulama:** İKİ yeni birim testi (`http_server.zig`) — biri 16 baytlık
+KASITLI küçük bir gövde sınırının aşılınca `413`e VE `handler`ın HİÇ
+çağrılMADIĞINA, diğeri `max_concurrent=1` iken (D.0'ın "sıra kanıtı"
+tekniğiyle: yavaş bir bağlantı önce kabul edilip sayaç sınırı doldururken,
+hemen ardından gelen bir bağlantının fd'sinin HİÇBİR yanıt almadan
+kapatıldığına) kanıt sağlar. **Kasıtlı boz→doğrula→düzelt:** her İKİ
+kontrol de (`if (false and ...)`) AYRI AYRI devre dışı bırakılıp İLGİLİ
+testin GERÇEKTEN KIRMIZI olduğu doğrulandı, SONRA düzeltme geri
+getirilip `zig build test` (Debug+ReleaseFast) TEKRAR yeşile döndü.
+
 ---
 
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
