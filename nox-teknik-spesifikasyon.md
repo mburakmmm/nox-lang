@@ -4641,6 +4641,67 @@ ritüelinin KENDİSİ) hatayı KANITLADI. macOS'ta `zig build test`
 
 ---
 
+## 3.9 Faz R.2 — x86-64 Fiber Bağlam Değişimi Desteği
+
+`fiber.zig` ŞİMDİYE KADAR `builtin.cpu.arch != .aarch64` İSE `@compileError`
+veriyordu (bkz. §3.21). Bu bölüm x86-64'ü (SysV ABI) ekler — `runtime/
+async_rt` artık HEM aarch64 HEM x86-64'te çalışıyor.
+
+**Doğrulama metodolojisi (R.1 İLE AYNI dürüstlük ilkesiyle):** bu makine
+macOS/arm64 — x86-64 doğrulaması GERÇEK donanım OLMADAN mümkün DEĞİL, bu
+yüzden Docker (OrbStack, Apple'ın Rosetta ikili çevirisini KULLANIYOR —
+QEMU TCG YORUMLAMASINDAN daha YÜKSEK sadakatli) üzerinden bir x86-64 Linux
+konteynerinde doğrulandı. Bu, GERÇEK x86-64 donanımında çalıştırmaktan
+DAHA AZ kesin bir güven seviyesidir — kullanıcıya AÇIKÇA belirtilir.
+
+**Mimari fark (aarch64'e göre KÖKTEN farklı `Context` şekli):** SysV ABI'de
+callee-saved yazmaçlar (rbx, rbp, r12-r15) GELENEKSEL OLARAK yığın üzerinden
+`push`/`pop` edilir (aarch64'ün AKSİNE, ki ONDA callee-saved yazmaçlar
+`Context`in DÜZ ALANLARINDA saklanır) — bu yüzden x86-64'ün `Context`i
+YALNIZCA TEK bir alan (`sp`) taşır. XMM/YMM yazmaçları HİÇ KAYDEDİLMEZ
+(SysV ABI'de TÜMÜ caller-saved'dir — aarch64'ün d8-d15'i callee-saved
+OLDUĞUNDAN AÇIKÇA kaydedilmesi GEREKENİN AKSİNE). `swap_x86_64.S`:
+`nox_swap_context`, 6 yazmacı (rbp, rbx, r12-r15) KENDİ yığınına `push`lar,
+`rsp`i `old->sp`e yazar, `new->sp`i `rsp`e yükler, AYNI 6 yazmacı TERS
+sırayla `pop`lar, `ret`.
+
+**İLK KEZ resume edilecek bir fiber İÇİN sahte çerçeve (aarch64'ün DÜZ
+alan atamasının AKSİNE, `Fiber.createWithStack` fiber'ın KENDİ yığınına
+ELLE 7 sözcüklük — 6 yazmaç + dönüş adresi — bir "önceden push edilmiş"
+çerçeve YAZAR):** `self` işaretçisi rbx'e ("kaçak" olarak, aarch64'ün x19'u
+KULLANMASIYLA AYNI teknik — İKİSİ de callee-saved, `trampoline` girişte
+DOĞRUDAN OKUYABİLİR) yerleştirilir; dönüş adresi `trampoline`dır. Çerçeve
+tabanı 16 bayt HİZALI olmalıdır (SysV ABI'nin fonksiyon-girişi hizalama
+gereksinimini KARŞILAMAK İÇİN — hesap: çerçeve tabanı X İSE, 6 pop (48
+bayt) + `ret` (8 bayt) SONRASI `trampoline` girişinde `rsp = X+56`,
+X'in 16-hizalı OLMASI `X+56 ≡ 8 (mod 16)` GARANTİ eder, SysV'nin `call`
+sonrası BEKLENEN hizalamasıyla AYNI).
+
+**Bulunan VE düzeltilen bir yazım hatası:** ilk `swap_x86_64.S` taslağı,
+C ön işlemcisi yorum bloğu İÇİNDE `/*rdi*/` gibi İÇ İÇE `/* */` yorumlar
+kullanıyordu — bu, dış yorumu ERKEN kapatıp GEÇERSİZ bir sözdizimi
+hatasına yol açıyordu (derleme sırasında YAKALANDI, `[rdi]` gibi köşeli
+parantezlere DEĞİŞTİRİLDİ).
+
+**Doğrulama:** `zig test -target x86_64-linux-gnu`e çapraz derlenip
+Docker'daki x86-64 konteynerinde ÇALIŞTIRILAN `fiber`/`scheduler`/
+`channel`/`io`/`io_reactor` testlerinin TAMAMI yeşil (R.1'in epoll'uyla
+BİRLİKTE, TAM async_rt yığını x86-64'te doğrulandı). **Kasıtlı boz→
+doğrula→düzelt:** `pop` sırasındaki SON İKİ yazmacı (`rbp`/`rbx`) KASITLI
+olarak TERS çevrilip test GERÇEKTEN "null pointer" panikleriyle ÇÖKTÜĞÜ
+(`self` işaretçisinin YANLIŞ yazmaca gittiği İÇİN) doğrulandı, SONRA
+düzeltme geri getirildi. macOS'ta `zig build test` (Debug+ReleaseFast)
+DEĞİŞMEDEN yeşil.
+
+**`build.zig`:** `compile_swap_asm`, HEDEFİN `cpu.arch`ına göre
+`swap_aarch64.S`/`swap_x86_64.S`den DOĞRU olanı SEÇER. **Bilinçli
+sınırlama (Faz R.3'e bırakıldı, R.1'in AYNI notuyla TUTARLI):** `cc` HÂLÂ
+HOST derleyicisidir — GERÇEK çapraz derleme (`-Dtarget` ile HOST'tan
+FARKLI bir mimari İÇİN doğrudan `zig build` ile üretim) bu fazın kapsamı
+DIŞINDA, `zig cc -target ...`e geçiş Faz R.3'ün İŞİDİR.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

@@ -1,47 +1,69 @@
 //! Nox async runtime — yığınlı (stackful) fiber ilkeli (bkz. nox-teknik-
 //! spesifikasyon.md §3.21, "Eşzamanlılık modeli"). Go'nun goroutine'leri
 //! gibi: her `Fiber` kendi SABİT boyutlu yığınını alır; bağlam değişimi
-//! `swap_aarch64.s`teki elle yazılmış montaj rutinüyle yapılır (Zig'in
-//! kendisi 0.11'den beri dilde async/await İÇERMEDİĞİNDEN).
+//! elle yazılmış montaj rutinleriyle yapılır (Zig'in kendisi 0.11'den beri
+//! dilde async/await İÇERMEDİĞİNDEN) — aarch64 İÇİN `swap_aarch64.S`,
+//! x86-64 İÇİN `swap_x86_64.S` (Faz R.2, bkz. o dosyanın belge notu).
 //!
-//! **Kapsam (v0.1, yalnızca aarch64):** bu katman TEK BAŞINA "eşzamanlı
-//! çalıştırma" sağlamaz — yalnızca "iki bağlam arasında elle geçiş"
-//! ilkelini sağlar. Zamanlanma (hangi fiber'ın ne zaman çalışacağı),
+//! **Kapsam (v0.1: aarch64 + x86-64, Faz R.2):** bu katman TEK BAŞINA
+//! "eşzamanlı çalıştırma" sağlamaz — yalnızca "iki bağlam arasında elle
+//! geçiş" ilkelini sağlar. Zamanlanma (hangi fiber'ın ne zaman çalışacağı),
 //! `Task`/`Channel` semantiği ve deadlock tespiti `scheduler.zig`dedir.
+//!
+//! **Faz R.2 mimari notu — `Context`in mimariye göre KÖKTEN FARKLI şekli:**
+//! aarch64'te callee-saved (çağrı-korumalı) yazmaçlar (x19-x28, fp, lr,
+//! d8-d15) `Context`in DÜZ alanlarında SAKLANIR (bkz. `swap_aarch64.S`).
+//! x86-64'te İSE SysV ABI'nin callee-saved yazmaçları (rbx, rbp, r12-r15)
+//! GELENEKSEL OLARAK yığın üzerinden `push`/`pop` edilir (bkz. `swap_x86_64.
+//! S`nin belge notu) — `Context` bu yüzden yalnızca TEK bir alan (`sp`)
+//! taşır, kaydedilen yazmaçların KENDİSİ fiber'ın KENDİ yığınının İÇİNDE
+//! yaşar. Bu, `Fiber.createWithStack`ın İLK (hiç resume edilmemiş) bağlamı
+//! HAZIRLAMA şeklini de DOĞRUDAN etkiler (bkz. o fonksiyonun belge notu) —
+//! aarch64'te alanlar DOĞRUDAN atanır, x86-64'te İSE fiber'ın KENDİ
+//! yığınına `nox_swap_context`in BEKLEDİĞİ SAHTE bir "önceden push edilmiş"
+//! çerçeve ELLE YAZILIR.
 
 const std = @import("std");
 const builtin = @import("builtin");
 
 comptime {
-    if (builtin.cpu.arch != .aarch64) {
-        @compileError("runtime/async_rt şu an yalnızca aarch64 için uygulandı (bkz. nox-teknik-spesifikasyon.md §3.21, v0.1 sınırlaması)");
+    if (builtin.cpu.arch != .aarch64 and builtin.cpu.arch != .x86_64) {
+        @compileError("runtime/async_rt şu an yalnızca aarch64/x86-64 için uygulandı (bkz. nox-teknik-spesifikasyon.md §3.21/Faz R.2, v0.1 sınırlaması)");
     }
 }
 
-/// `swap_aarch64.s`teki alan ofsetleriyle BİRE BİR eşleşmelidir — sıra
-/// ya da alan eklemek/çıkarmak montaj dosyasını da güncellemeyi gerektirir.
-pub const Context = extern struct {
-    x19: usize = 0,
-    x20: usize = 0,
-    x21: usize = 0,
-    x22: usize = 0,
-    x23: usize = 0,
-    x24: usize = 0,
-    x25: usize = 0,
-    x26: usize = 0,
-    x27: usize = 0,
-    x28: usize = 0,
-    fp: usize = 0,
-    lr: usize = 0,
-    sp: usize = 0,
-    d8: u64 = 0,
-    d9: u64 = 0,
-    d10: u64 = 0,
-    d11: u64 = 0,
-    d12: u64 = 0,
-    d13: u64 = 0,
-    d14: u64 = 0,
-    d15: u64 = 0,
+pub const Context = switch (builtin.cpu.arch) {
+    // `swap_aarch64.S`teki alan ofsetleriyle BİRE BİR eşleşmelidir — sıra
+    // ya da alan eklemek/çıkarmak montaj dosyasını da güncellemeyi gerektirir.
+    .aarch64 => extern struct {
+        x19: usize = 0,
+        x20: usize = 0,
+        x21: usize = 0,
+        x22: usize = 0,
+        x23: usize = 0,
+        x24: usize = 0,
+        x25: usize = 0,
+        x26: usize = 0,
+        x27: usize = 0,
+        x28: usize = 0,
+        fp: usize = 0,
+        lr: usize = 0,
+        sp: usize = 0,
+        d8: u64 = 0,
+        d9: u64 = 0,
+        d10: u64 = 0,
+        d11: u64 = 0,
+        d12: u64 = 0,
+        d13: u64 = 0,
+        d14: u64 = 0,
+        d15: u64 = 0,
+    },
+    // Bkz. `swap_x86_64.S`nin belge notu — callee-saved yazmaçlar yığında
+    // yaşadığından tek alan yeterlidir.
+    .x86_64 => extern struct {
+        sp: usize = 0,
+    },
+    else => @compileError("runtime/async_rt şu an yalnızca aarch64/x86-64 için uygulandı (bkz. nox-teknik-spesifikasyon.md §3.21/Faz R.2, v0.1 sınırlaması)"),
 };
 
 extern fn nox_swap_context(old: *Context, new: *Context) void;
@@ -87,15 +109,39 @@ pub const Fiber = struct {
             .allocator = allocator,
         };
         // İlk yığın işaretçisi: yığının TEPESİ (aşağı doğru büyür), 16
-        // baytlık hizalamaya (AAPCS64'ün gerektirdiği) yuvarlanmış.
+        // baytlık hizalamaya (AAPCS64/SysV ABI'nin gerektirdiği) yuvarlanmış.
         const stack_top = @intFromPtr(self.stack.ptr) + self.stack.len;
-        self.ctx.sp = stack_top & ~@as(usize, STACK_ALIGN - 1);
-        self.ctx.lr = @intFromPtr(&trampoline);
-        // `self` işaretçisini x19'a (çağrı-korumalı, bu yüzden ilk
-        // `nox_swap_context` onu OLDUĞU GİBİ `trampoline`a taşır)
-        // "kaçak" olarak yerleştiriyoruz — bkz. `trampoline`ın x19'u
-        // okuması.
-        self.ctx.x19 = @intFromPtr(self);
+        const stack_top_aligned = stack_top & ~@as(usize, STACK_ALIGN - 1);
+        switch (builtin.cpu.arch) {
+            .aarch64 => {
+                self.ctx.sp = stack_top_aligned;
+                self.ctx.lr = @intFromPtr(&trampoline);
+                // `self` işaretçisini x19'a (çağrı-korumalı, bu yüzden ilk
+                // `nox_swap_context` onu OLDUĞU GİBİ `trampoline`a taşır)
+                // "kaçak" olarak yerleştiriyoruz — bkz. `trampoline`ın x19'u
+                // okuması.
+                self.ctx.x19 = @intFromPtr(self);
+            },
+            .x86_64 => {
+                // Faz R.2: `swap_x86_64.S`nin `pop` dizisinin (r15, r14,
+                // r13, r12, rbx, rbp — BU SIRAYLA) ve ARDINDAN `ret`in
+                // BEKLEDİĞİ SAHTE çerçeveyi fiber'ın KENDİ yığınına ELLE
+                // yazıyoruz (bkz. o dosyanın belge notu, "sahte ilk çerçeve
+                // hizalaması"). `self`i rbx'e ("kaçak" olarak — çağrı-
+                // korumalı, `trampoline` OKUYACAK) yerleştiriyoruz.
+                const frame_base = stack_top_aligned - 64;
+                const frame: *[7]usize = @ptrFromInt(frame_base);
+                frame[0] = 0; // r15 (kullanılmıyor)
+                frame[1] = 0; // r14 (kullanılmıyor)
+                frame[2] = 0; // r13 (kullanılmıyor)
+                frame[3] = 0; // r12 (kullanılmıyor)
+                frame[4] = @intFromPtr(self); // rbx — "kaçak" self işaretçisi
+                frame[5] = 0; // rbp (kullanılmıyor)
+                frame[6] = @intFromPtr(&trampoline); // dönüş adresi (ret hedefi)
+                self.ctx.sp = frame_base;
+            },
+            else => comptime unreachable,
+        }
         return self;
     }
 
@@ -132,12 +178,20 @@ pub const Fiber = struct {
     }
 };
 
-/// Bir fiber İLK KEZ resume edildiğinde atlanan nokta. x19, `Fiber.create`
-/// tarafından yerleştirilen `self` işaretçisini taşır (bkz. yukarısı).
+/// Bir fiber İLK KEZ resume edildiğinde atlanan nokta. aarch64'te x19,
+/// x86-64'te rbx `Fiber.create`/`createWithStack` tarafından yerleştirilen
+/// `self` işaretçisini taşır (bkz. yukarısı — İKİ mimaride de callee-saved
+/// bir yazmaç, "kaçak" taşıma İÇİN seçildi).
 fn trampoline() callconv(.c) noreturn {
-    const self_addr = asm volatile (""
-        : [ret] "={x19}" (-> usize),
-    );
+    const self_addr = switch (builtin.cpu.arch) {
+        .aarch64 => asm volatile (""
+            : [ret] "={x19}" (-> usize),
+        ),
+        .x86_64 => asm volatile (""
+            : [ret] "={rbx}" (-> usize),
+        ),
+        else => comptime unreachable,
+    };
     const self: *Fiber = @ptrFromInt(self_addr);
     callEntryPadded(self);
     self.finished = true;

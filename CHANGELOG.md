@@ -15,6 +15,10 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
 - Linux epoll I/O reaktör backend'i (Faz R.1) — `runtime/async_rt`in
   async G/Ç'si artık macOS (kqueue) yanında Linux'u (epoll) da destekliyor.
   Gerçek (emülasyonsuz) bir Docker aarch64 Linux konteynerinde doğrulandı.
+- x86-64 fiber bağlam değişimi desteği (Faz R.2) — `runtime/async_rt`
+  artık aarch64 yanında x86-64'ü (SysV ABI) de destekliyor. Docker'daki bir
+  x86-64 Linux konteynerinde (Rosetta ikili çevirisi üzerinden — gerçek
+  donanım kadar kesin DEĞİL, dürüstçe belirtilir) doğrulandı.
 
 ### Düzeltildi
 - `noxc` artık proje kökü DIŞINDAN (ör. sistem geneli bir kurulumdan)

@@ -7,21 +7,35 @@ pub fn build(b: *std.Build) void {
     // ---- Faz 21: async çalışma zamanı çekirdeği (`runtime/async_rt`) ----
     //
     // nox-teknik-spesifikasyon.md §3.21: Go tarzı yığınlı (stackful) fiber
-    // ilkeli — elle yazılmış aarch64 montaj bağlam değişimi (`swap_aarch64.S`,
-    // Zig'in kendisi 0.11'den beri dilde async/await İÇERMEDİĞİNDEN, ve
-    // `callconv(.naked)` Zig'de normal çağrı sözdizimiyle ÇAĞRILAMADIĞINDAN).
-    // v0.1 yalnızca aarch64'ü destekler (bkz. fiber.zig'deki comptime denetim).
+    // ilkeli — elle yazılmış montaj bağlam değişimi (Zig'in kendisi 0.11'den
+    // beri dilde async/await İÇERMEDİĞİNDEN, ve `callconv(.naked)` Zig'de
+    // normal çağrı sözdizimiyle ÇAĞRILAMADIĞINDAN). Faz R.2: aarch64 VE
+    // x86-64 destekleniyor (bkz. fiber.zig'deki comptime denetim) — HANGİ
+    // `.S` dosyasının derleneceği HEDEF'in `cpu.arch`ına göre SEÇİLİR.
     // `noxrt_mod`dan ÖNCE tanımlanmalı ki hem gerçek `noxrt.o`ya (aşama 4'ten
     // beri `runtime/async_rt/bridge.zig` üzerinden) HEM standalone
     // fiber/scheduler/channel testlerine bağlanabilsin.
     //
-    // Faz R.1: dosya `.S` (BÜYÜK harf) uzantısına taşındı ki `cc` onu C ÖN
-    // İŞLEMCİSİNDEN geçirsin (`SYM(...)` makrosu Mach-O/ELF sembol adlandırma
-    // FARKINI çözer, bkz. dosyanın KENDİ belge notu) — macOS/Linux AYNI
-    // kaynaktan doğru sembol adıyla derlenir.
-    const swap_asm_o_path = "runtime/async_rt/swap_aarch64.o";
+    // Faz R.1: dosyalar `.S` (BÜYÜK harf) uzantısına sahiptir ki `cc` onları
+    // C ÖN İŞLEMCİSİNDEN geçirsin (`SYM(...)` makrosu Mach-O/ELF sembol
+    // adlandırma FARKINI çözer, bkz. dosyaların KENDİ belge notu) — macOS/
+    // Linux AYNI kaynaktan doğru sembol adıyla derlenir.
+    //
+    // **Bilinçli sınırlama (Faz R.3'e bırakıldı):** `cc` burada HER ZAMAN
+    // HOST derleyicisidir — `-Dtarget` ile ÇAPRAZ derleme yapılırken bu
+    // adım HÂLÂ host'un KENDİ mimarisi İÇİN derler (`zig cc -target ...`e
+    // geçiş, GERÇEK çapraz derleme desteği İÇİN, Faz R.3'ün kapsamıdır).
+    const swap_asm_arch: enum { aarch64, x86_64 } = switch (target.result.cpu.arch) {
+        .aarch64 => .aarch64,
+        .x86_64 => .x86_64,
+        else => @panic("runtime/async_rt şu an yalnızca aarch64/x86-64 hedeflerini destekler"),
+    };
+    const swap_asm_src, const swap_asm_o_path = switch (swap_asm_arch) {
+        .aarch64 => .{ "runtime/async_rt/swap_aarch64.S", "runtime/async_rt/swap_aarch64.o" },
+        .x86_64 => .{ "runtime/async_rt/swap_x86_64.S", "runtime/async_rt/swap_x86_64.o" },
+    };
     const compile_swap_asm = b.addSystemCommand(&.{
-        "cc", "-c", "-o", swap_asm_o_path, "runtime/async_rt/swap_aarch64.S",
+        "cc", "-c", "-o", swap_asm_o_path, swap_asm_src,
     });
 
     const nox_mod = b.addModule("nox", .{
