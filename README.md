@@ -105,6 +105,16 @@ tamamen offline çalışır.
 7x-122x hızlı; C'ye karşı genelde 1x-4x yavaş, bazı senaryolarda C İLE
 BAŞA BAŞ ya da daha hızlı).
 
+## Güvenlik
+
+`extern def`/`lowlevel`, çıplak native kod yürütme yetkisidir — Nox'un
+tip/sahiplik garantilerinin dışında, hiçbir sandbox/doğrulama olmadan
+çalışır. Bir `nox.json` bağımlılığı eklemek, o paketin (ve geçişli
+bağımlılıklarının) `extern def` ile bildirdiği native koda güvenmek
+demektir. `nox.fs`/`nox.os` gibi stdlib modülleri de path/girdi
+doğrulaması yapmaz (ör. `nox.fs` path-traversal'a karşı korumasızdır).
+Ayrıntılar için [AGENTS.md §9.5](AGENTS.md#95-güven-sınırı-trust-boundary--extern-def--lowlevel).
+
 ## Proje Yapısı
 
 | Dizin | İçerik |

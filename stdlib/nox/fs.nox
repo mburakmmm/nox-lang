@@ -1,6 +1,15 @@
 # Stdlib fazı §J — bkz. nox-teknik-spesifikasyon.md. `runtime/stdlib_shims/
 # fs.zig`ye sarar — `nox.http`in `nox_http_response_ok` deseniyle AYNI
 # "ham çağrı + AYRI durum sorgusu" (`nox_fs_last_op_ok`) tasarımı.
+#
+# **GÜVENLİK UYARISI (Faz Q.6, bkz. AGENTS.md "Güven Sınırı" bölümü):**
+# `read_to_string`/`write_string` `path`i HİÇBİR doğrulama/kanonikleştirme
+# YAPMADAN doğrudan işletim sistemine iletir — `..` ile dizin çıkışı
+# (path traversal), sembolik link takibi, ya da mutlak yol enjeksiyonuna
+# KARŞI HİÇBİR koruma YOKTUR. `path` GÜVENİLMEYEN bir kaynaktan (kullanıcı
+# girdisi, ağ isteği) geliyorsa, ÇAĞIRAN kod path'i KENDİSİ doğrulamalı/
+# kısıtlamalıdır (ör. izin verilen bir kök dizine göre kanonikleştirip
+# `..` segmentlerini reddederek) — bu modül BUNU YAPMAZ.
 
 class FsError:
     def __init__(self: FsError, message: str) -> None:

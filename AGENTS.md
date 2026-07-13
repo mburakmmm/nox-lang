@@ -154,6 +154,49 @@ Bu sıra atlanamaz; özellikle **golden test olmadan codegen değişikliği merg
 
 ---
 
+## 9.5 Güven Sınırı (Trust Boundary) — `extern def` / `lowlevel`
+
+**Faz Q.6 (bkz. `docs/uretim-hazirlik-analizi.md`, P0 bulgusu #10):** Bu
+bölüm ÖNCEDEN hiçbir yerde açıkça belgelenmemişti — §5/§6/§8/§9 yalnızca
+tip disiplinini ve bellek yönetimi/hata çevirisi MEKANİZMALARINI tartışır,
+ama **`extern def`in KULLANICIYA ne kadar geniş bir yetki verdiğini
+AÇIKÇA UYARMAZ.**
+
+- **`extern def ... from "<lib>"` ÇIPLAK NATIVE KOD YÜRÜTME yetkisidir.**
+  §9'daki trampoline mekanizması yalnızca ARC/hata-çevirisi MUHASEBESİNİ
+  yapar — çağrılan native fonksiyonun KENDİSİNİN ne yaptığını (bellek
+  güvenliği, yan etkiler, dosya/ağ erişimi) HİÇBİR ŞEKİLDE SINIRLAMAZ ya
+  da SANDBOX'LAMAZ. Bir `extern def` bildirimi, Nox'un KENDİ tip/sahiplik
+  garantilerinin **DIŞINDA**, C ABI'nin (ve dolayısıyla işletim
+  sisteminin) tüm yetkileriyle çalışır.
+- **`lowlevel` bloğu da AYNI güven sınırının bir PARÇASIdır** (bkz. §8,
+  Katman 4) — yalnızca tahsis STRATEJİSİNİ (arena/pool) gevşetir, ama
+  İÇİNDEKİ `extern def` çağrıları YİNE DE tam native yetkiyle çalışır.
+- **Bir bağımlılığın (`nox.json`'ın `requires[]`i, bkz. §3.6/Faz O)
+  KENDİ `extern def`leri OLABİLİR** — bir üçüncü-taraf paketi projeye
+  eklemek, o paketin (VE onun geçişli bağımlılıklarının) `extern def`
+  ile bildirdiği HERHANGİ bir native koda güvenmek DEMEKTİR. Nox'un
+  paket sistemi (bkz. Faz O §P.5-P.7) bu native kodu DOĞRULAMAZ/
+  İMZALAMAZ/SANDBOX'LAMAZ — bu tamamen kullanıcının SORUMLULUĞUNDADIR
+  (npm/PyPI/crates.io ile AYNI güven modeli, HENÜZ bir "capability"
+  sistemi YOK).
+- **`nox.fs`/`nox.os` gibi stdlib modülleri de bu sınırın bir SONUCUDUR:**
+  `nox.fs.read_to_string`/`write_string` `path`i hiçbir doğrulama
+  yapmadan native `open()`e iletir — path-traversal'a karşı KORUMA
+  YOKTUR (bkz. `stdlib/nox/fs.nox`'un KENDİ uyarısı). Bir ajan `nox.fs`yi
+  GÜVENİLMEYEN girdiyle (kullanıcı/ağ kaynaklı bir `path`) çağıran kod
+  YAZARKEN, doğrulamayı (izin verilen kök dizine göre kanonikleştirme +
+  `..` reddi) ÇAĞIRAN TARAFTA elle EKLEMELİDİR — stdlib bunu OTOMATİK
+  yapmaz.
+- **Bir ajanın bu sınırı İHLAL EDEN bir "kolaylık" EKLEMESİ YASAK:**
+  ör. `extern def`e otomatik bir "güvenli mod"/sandbox eklemek gibi bir
+  değişiklik, KAPSAMLI bir güvenlik tasarımı gerektirir (bkz. Faz X.3'ün
+  ARC atomiklik resmileştirmesiyle AYNI kategori — "gelecekte ele
+  alınacak" olarak işaretlenmiş, ŞİMDİ rastgele bir PR'ın parçası olarak
+  YARIM yapılmamalı).
+
+---
+
 ## 10. HPy / CPython Uyumluluk Katmanı Kılavuzu
 
 Hedef: **mümkün olan en geniş HPy/CPython API desteği**, önceliklendirilmiş katmanlar halinde uygulanır. Bir ajan bu katmanda çalışırken önce bir alttaki tier tamamlanmadan bir üsttekine geçmemelidir (aksi durumda test coverage'ı tutarsızlaşır).
