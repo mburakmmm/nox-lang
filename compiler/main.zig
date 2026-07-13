@@ -45,11 +45,25 @@ pub fn main(init: std.process.Init) !void {
     // değişkeni VERİLMİŞSE (testlerin GERÇEK `~/.nox`a dokunmaması İÇİN
     // KRİTİK override) doğrudan KULLANILIR, aksi halde `$HOME/.nox`
     // varsayılır (bkz. plan dosyası §3.3 — "$NOX_HOME varsayılan ~/.nox").
-    const nox_home = blk: {
-        if (init.environ_map.get("NOX_HOME")) |h| break :blk try a.dupe(u8, h);
+    const nox_home_env_override = if (init.environ_map.get("NOX_HOME")) |h| try a.dupe(u8, h) else null;
+    const nox_home = nox_home_env_override orelse blk: {
         const home = init.environ_map.get("HOME") orelse "";
         break :blk try std.fmt.allocPrint(a, "{s}/.nox", .{home});
     };
+
+    // Faz Q.3: `noxc`nin KENDİ stdlib/runtime kaynak dizinleri — `NOX_HOME`
+    // İLE KARIŞTIRILMAMASI GEREKEN AYRI bir override: `NOX_HOME` üçüncü-
+    // taraf paket ÖNBELLEĞİNİN köküdür (bkz. `nox_home`), stdlib/runtime
+    // İSE `noxc` İKİLİSİNİN KENDİ kurulumunun bir PARÇASIdır — ikisi AYNI
+    // dizine denk gelmesi GEREKMEZ (ör. `tests/cli/package_resolution_test.
+    // zig`nin izole `$NOX_HOME`si SADECE paket önbelleğini izole eder, HİÇ
+    // stdlib/runtime İÇERMEZ). `NOX_RESOURCE_DIR` AÇIKÇA verilmişse O KÖK
+    // KULLANILIR; AKSİ HALDE `noxc`nin KENDİ çalıştırılabilir dosya
+    // konumundan (`<exe_dir>/../lib/...`) hesaplanır — bkz. `project.
+    // resolveResourceDirs`in belge notu. Bu, `noxc`nin proje kökü DIŞINDAN
+    // (ör. sistem geneli bir kurulumdan) çalıştırılabilmesini SAĞLAR.
+    const resource_dir_override = if (init.environ_map.get("NOX_RESOURCE_DIR")) |h| try a.dupe(u8, h) else null;
+    const resource_dirs = try project.resolveResourceDirs(a, io, resource_dir_override);
 
     const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, legacy };
     const sub: Subcommand = blk: {
@@ -66,10 +80,10 @@ pub fn main(init: std.process.Init) !void {
     const rest: []const []const u8 = if (sub == .legacy) all_args.items else all_args.items[1..];
 
     switch (sub) {
-        .build => try cmdBuild(gpa, io, a, rest, "kullanim: noxc build [--dump|-v] [-o <cikti>] <dosya.nox>\n", nox_home),
-        .legacy => try cmdBuild(gpa, io, a, rest, "kullanim: noxc [--dump|-v] <dosya.nox>\n", nox_home),
-        .run => try cmdRun(gpa, io, a, rest, nox_home),
-        .test_cmd => try cmdTest(gpa, io, a, rest, nox_home),
+        .build => try cmdBuild(gpa, io, a, rest, "kullanim: noxc build [--dump|-v] [-o <cikti>] <dosya.nox>\n", nox_home, resource_dirs),
+        .legacy => try cmdBuild(gpa, io, a, rest, "kullanim: noxc [--dump|-v] <dosya.nox>\n", nox_home, resource_dirs),
+        .run => try cmdRun(gpa, io, a, rest, nox_home, resource_dirs),
+        .test_cmd => try cmdTest(gpa, io, a, rest, nox_home, resource_dirs),
         .fmt, .fetch, .update => {
             std.debug.print("noxc {s}: henuz uygulanmadi (bkz. plan dosyasi, Faz O)\n", .{@tagName(sub)});
             std.process.exit(1);
@@ -111,13 +125,13 @@ fn splitOnDoubleDash(args: []const []const u8) struct { before: []const []const 
     return .{ .before = args, .after = &.{} };
 }
 
-fn cmdBuild(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, usage: []const u8, nox_home: []const u8) !void {
+fn cmdBuild(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, usage: []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs) !void {
     const opts = parseBuildOpts(args);
     const path_arg = opts.path orelse {
         std.debug.print("{s}", .{usage});
         std.process.exit(1);
     };
-    const out = try buildOne(gpa, io, a, path_arg, opts.verbose, opts.output, nox_home);
+    const out = try buildOne(gpa, io, a, path_arg, opts.verbose, opts.output, nox_home, resource_dirs);
     std.debug.print("derlendi: {s}\n", .{out});
 }
 
@@ -128,7 +142,7 @@ fn cmdBuild(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
 /// önbelleğe (`<proje_kökü_veya_dosya_dizini>/.nox/cache/bin/<isim>`,
 /// KAYNAĞIN YANINA DEĞİL) derler, çalıştırılabilir dosyayı stdio'yu
 /// MİRAS ALARAK çalıştırır, çocuğun çıkış kodunu AYNEN yansıtır.
-fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8) !void {
+fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs) !void {
     const split = splitOnDoubleDash(args);
     const opts = parseBuildOpts(split.before);
     const path_arg = opts.path orelse {
@@ -137,7 +151,7 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
     };
 
     const cache_bin_path = try cacheBinPath(io, a, path_arg);
-    const bin_path = try buildOne(gpa, io, a, path_arg, opts.verbose, cache_bin_path, nox_home);
+    const bin_path = try buildOne(gpa, io, a, path_arg, opts.verbose, cache_bin_path, nox_home, resource_dirs);
 
     const code = try runAndWait(io, a, bin_path, split.after);
     std.process.exit(code);
@@ -176,13 +190,13 @@ fn runAndWait(io: std.Io, a: std.mem.Allocator, bin_path: []const u8, argv_tail:
 /// AYNI kategoride bir davranış — bir test dosyasının derlenmemesi zaten
 /// KENDİ BAŞINA acil düzeltilmesi gereken bir hata, "diğer testlere devam
 /// et" mantığıyla GİZLENMEMELİ.
-fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8) !void {
+fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs) !void {
     const opts = parseBuildOpts(args);
 
     if (opts.path) |t| {
         if (std.mem.endsWith(u8, t, ".nox")) {
             const cache_bin_path = try cacheBinPath(io, a, t);
-            const bin_path = try buildOne(gpa, io, a, t, opts.verbose, cache_bin_path, nox_home);
+            const bin_path = try buildOne(gpa, io, a, t, opts.verbose, cache_bin_path, nox_home, resource_dirs);
             const code = try runAndWait(io, a, bin_path, &.{});
             std.process.exit(code);
         }
@@ -208,7 +222,7 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
         const fa = file_arena.allocator();
 
         const cache_bin_path = try cacheBinPath(io, fa, file);
-        const bin_path = try buildOne(gpa, io, fa, file, opts.verbose, cache_bin_path, nox_home);
+        const bin_path = try buildOne(gpa, io, fa, file, opts.verbose, cache_bin_path, nox_home, resource_dirs);
         const code = runAndWait(io, fa, bin_path, &.{}) catch 1;
         if (code == 0) {
             std.debug.print("GECTI: {s}\n", .{file});
@@ -264,6 +278,7 @@ fn resolveImportsForBuild(
     user_module: ast.Module,
     path_arg: []const u8,
     nox_home: []const u8,
+    resource_dirs: project.ResourceDirs,
 ) !ast.Module {
     const cwd_abs = try std.process.currentPathAlloc(io, a);
     const path_dir = std.fs.path.dirname(path_arg) orelse ".";
@@ -273,9 +288,9 @@ fn resolveImportsForBuild(
         try std.fs.path.resolve(a, &.{ cwd_abs, path_dir });
 
     const root = (try project.findProjectRoot(a, io, start_dir)) orelse {
-        return module_loader.resolveImports(a, io, user_module) catch |e| switch (e) {
+        return module_loader.resolveImportsFrom(a, io, user_module, resource_dirs.stdlib_dir) catch |e| switch (e) {
             error.ModuleNotFound => {
-                std.debug.print("import: stdlib modülü bulunamadı (bkz. 'stdlib/' dizini, proje köküne göre)\n", .{});
+                std.debug.print("import: stdlib modülü bulunamadı ({s} altında aranır)\n", .{resource_dirs.stdlib_dir});
                 std.process.exit(1);
             },
             else => |err| return err,
@@ -332,7 +347,7 @@ fn resolveImportsForBuild(
         try project.saveLockfile(a, io, root, .{ .packages = new_packages.items });
     }
 
-    return module_loader.resolveProjectImports(a, io, user_module, roots) catch |e| switch (e) {
+    return module_loader.resolveProjectImports(a, io, user_module, roots, resource_dirs.stdlib_dir) catch |e| switch (e) {
         error.ModuleNotFound => {
             std.debug.print("import: modül bulunamadı (ne 'stdlib/' altında ne bir bağımlılık dizininde)\n", .{});
             std.process.exit(1);
@@ -350,7 +365,7 @@ fn resolveImportsForBuild(
 /// yolunu döner. Hata durumlarında (mevcut davranışla BİREBİR aynı mesaj/
 /// çıkış kodu) doğrudan `std.process.exit(1)` çağırır — `cmdBuild`/`cmdRun`
 /// bu davranışı DEĞİŞTİRMEDEN miras alır.
-fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: []const u8, verbose: bool, output_override: ?[]const u8, nox_home: []const u8) ![]const u8 {
+fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: []const u8, verbose: bool, output_override: ?[]const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs) ![]const u8 {
     const source = try std.Io.Dir.cwd().readFileAlloc(io, path_arg, gpa, .limited(1024 * 1024));
     defer gpa.free(source);
 
@@ -360,8 +375,10 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // Faz O §P.6: proje kökü (`nox.json`) BULUNAMAZSA `resolveImports`in
     // ESKİ, DEĞİŞMEMİŞ davranışına (yalnızca `nox.*` stdlib) DÜŞER;
     // BULUNURSA `requires[]`i ÇÖZÜP `resolveProjectImports`i ÇAĞIRIR (bkz.
-    // `resolveImportsForBuild`'in belge notu).
-    const module = try resolveImportsForBuild(io, a, user_module, path_arg, nox_home);
+    // `resolveImportsForBuild`'in belge notu). Her iki yol da (Faz Q.3)
+    // `resource_dirs.stdlib_dir`i (CWD-göreli `"stdlib"` DEĞİL, `noxc`nin
+    // KENDİ çözülmüş kaynak dizinini) kullanır.
+    const module = try resolveImportsForBuild(io, a, user_module, path_arg, nox_home, resource_dirs);
 
     // `checker.check`'in kullanışlı ok/err sarmalayıcısı yerine `Checker`
     // doğrudan kullanılır: Faz 10 generics'i somut örneklemeleri
@@ -428,15 +445,11 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         std.process.exit(1);
     }
 
-    // Not (v0.1 basitleştirmesi): runtime nesne dosyasının yolu şimdilik proje
-    // köküne göre sabit kabul ediliyor (`zig build` sonrası `zig-out/lib/noxrt.o`).
-    // noxc'nin proje kökü dışından çalıştırılabilmesi, kurulum/paketleme ile
-    // birlikte ele alınacak ayrı bir iyileştirmedir (bkz. Faz O §P.1'in
-    // `project.resolveResourceDirs`i — bu fonksiyona BAĞLANMASI, üçüncü-taraf
-    // paket çözümlemesi codegen/import'a bağlandığında, P.6 ile birlikte
-    // yapılacak).
+    // Faz Q.3: runtime nesne dosyasının yolu artık `resource_dirs.noxrt_path`
+    // (bkz. `project.resolveResourceDirs`) — `noxc`nin KENDİ çalıştırılabilir
+    // dosya konumuna göre çözülür, CWD'ye (proje köküne) BAĞIMLI DEĞİLDİR.
     var cc_argv: std.ArrayListUnmanaged([]const u8) = .empty;
-    try cc_argv.appendSlice(a, &.{ "cc", "-o", stem, asm_path, "zig-out/lib/noxrt.o", "-lm" });
+    try cc_argv.appendSlice(a, &.{ "cc", "-o", stem, asm_path, resource_dirs.noxrt_path, "-lm" });
     try appendExternLinkArgs(a, &cc_argv, module);
 
     const cc_result = try std.process.run(gpa, io, .{
@@ -465,12 +478,18 @@ fn stemOf(path: []const u8) []const u8 {
 /// kütüphanesi ADI sayılıp `-l<ad>` olarak eklenir. Aynı `from_lib` birden
 /// çok `extern def`de kullanılmışsa yalnızca BİR KEZ eklenir. **Düzeltme
 /// (stdlib fazı §D.1.5):** `"zig-out/lib/noxrt.o"` `seen`e ÖNCEDEN eklenir
-/// (çağıran ZATEN bunu koşulsuz argv'ye ekliyor, bkz. üstteki çağrı sitesi)
-/// — `noxrt.o`nun İÇİNDEKİ bir sembole `extern def ... from "zig-out/lib/
-/// noxrt.o" with_rt` İLE başvuran stdlib dosyaları (ör. `stdlib/nox/http.nox`)
-/// İÇİN bu dosyayı `cc`ye İKİNCİ KEZ GEÇMEMEK için — macOS'un `ld64`sü
-/// (önceki "yinelenen dosya argümanları zararsızdır" varsayımının AKSİNE)
-/// AYNI `.o` dosyası İKİ KEZ geçildiğinde "duplicate symbol" hatası verir.
+/// (çağıran ZATEN runtime nesne dosyasını — Faz Q.3'ten beri `resource_dirs.
+/// noxrt_path`, ÇÖZÜLMÜŞ MUTLAK yol — koşulsuz argv'ye ekliyor, bkz. üstteki
+/// çağrı sitesi) — `noxrt.o`nun İÇİNDEKİ bir sembole `extern def ... from
+/// "zig-out/lib/noxrt.o" with_rt` İLE başvuran stdlib dosyaları (ör. `stdlib/
+/// nox/http.nox`) İÇİN bu dosyayı `cc`ye İKİNCİ KEZ GEÇMEMEK için — macOS'un
+/// `ld64`sü AYNI `.o` dosyası İKİ KEZ geçildiğinde "duplicate symbol" hatası
+/// verir. **ÖNEMLİ:** `seen`e eklenen `"zig-out/lib/noxrt.o"` LİTERALİ,
+/// runtime'ın GERÇEK (çözülmüş) yolu DEĞİL, stdlib yazarlarının KENDİ
+/// `extern def`lerinde KULLANDIKLARI SABİT KURAL/SENTİNEL'dir (bkz. stdlib/
+/// nox/*.nox — HEPSİ bu TAM literal dizgeyi `from_lib` olarak yazar) — bu
+/// yüzden gerçek `noxrt_path` ne olursa olsun (sistem geneli bir kurulumda
+/// CWD-göreli DEĞİL, mutlak bir yol) eşleşme DOĞRU çalışır.
 fn appendExternLinkArgs(allocator: std.mem.Allocator, argv: *std.ArrayListUnmanaged([]const u8), module: ast.Module) !void {
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     try seen.put(allocator, "zig-out/lib/noxrt.o", {});

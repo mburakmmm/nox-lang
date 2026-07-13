@@ -4450,6 +4450,77 @@ kararıyla TUTARLI).
 
 ---
 
+## 3.7 Faz Q — Üretim Hazırlığı: Temel Sağlamlaştırma
+
+`docs/uretim-hazirlik-analizi.md`nin (derin üretim-hazırlığı boşluk analizi
+ve MVP-sonrası yol haritası, P0-P3 önceliklendirmesiyle) Faz Q-Z'sinin
+İLKİ. Faz Q, P0 (kritik) boşlukları hedefler: sürüm kontrolü, CI, sistem
+geneli kurulum, kullanıcı dokümantasyonu, HTTP DoS sertleştirmesi, güven
+sınırı dokümantasyonu.
+
+### 3.7.1 Q.1/Q.2 — Git + CI
+
+İlk `git init`/commit (`93ddb0d`) + `CHANGELOG.md` başlatıldı; ardından
+`.github/workflows/ci.yml` eklendi (`macos-14` runner'ında `zig build test`
+Debug+ReleaseFast — `runtime/async_rt`in v0.1'de yalnızca aarch64
+desteklemesi GEREKÇESİYLE Apple Silicon runner'ı, bkz. Faz R.2).
+
+### 3.7.2 Q.3 — `main.zig`'i `resolveResourceDirs`'e Bağlama
+
+**Problem:** `noxc` iki ayrı yerde CWD-göreli SABİT yol varsayıyordu: (1)
+`compiler/main.zig`nin `buildOne`i, son `cc` bağlama argümanına DOĞRUDAN
+`"zig-out/lib/noxrt.o"` string literalini yazıyordu; (2)
+`compiler/module_loader.zig`nin `resolveImportsImpl`/`loadImportsRecursive`i
+`import` çözümlemesi İÇİN `"stdlib/{yol}.nox"` yolunu SABİT KODLUYORDU.
+Faz O §P.1'in `project.resolveResourceDirs`i (self-exe-göreli `<exe_dir>/
+../lib/...` hesaplaması) DOĞRU yazılmıştı ama HİÇBİR ÇAĞRI SİTESİNDEN
+KULLANILMIYORDU — yani `noxc`, `zig-out/`in içeriği görünür OLMAYAN bir
+CWD'den (ör. sistem geneli bir kuruluma göre `/opt/homebrew/bin/noxc`)
+çalıştırıldığında SESSİZCE bozulurdu.
+
+**Çözüm:**
+1. `module_loader.zig`: `resolveImportsImpl`/`loadImportsRecursive`e bir
+   `stdlib_root: []const u8` parametresi eklendi. `resolveImports` (İMZASI
+   DONDURULMUŞ — golden testler DOĞRUDAN çağırıyor, CWD'leri HER ZAMAN
+   proje kökü) `stdlib_root = "stdlib"` ile DEĞİŞMEDEN çalışmaya devam
+   eder. YENİ `resolveImportsFrom(a, io, user_module, stdlib_root)` VE
+   genişletilmiş `resolveProjectImports(..., stdlib_root)` (yalnızca
+   main.zig'in çağırdığı, imzası SERBEST) `noxc`nin KENDİ çözülmüş
+   `stdlib_dir`ini kabul eder.
+2. `main.zig`: `main()` başında `project.resolveResourceDirs`i çağırıp
+   `resource_dirs: ResourceDirs`i HESAPLAR, bunu `cmdBuild`/`cmdRun`/
+   `cmdTest` → `buildOne` → `resolveImportsForBuild` zincirinin TAMAMINA
+   parametre olarak GEÇİRİR. `buildOne`in `cc_argv`si artık
+   `resource_dirs.noxrt_path`i (SABİT literal DEĞİL) kullanır.
+3. **Yeni, AYRI bir `NOX_RESOURCE_DIR` ortam değişkeni** eklendi (`NOX_HOME`
+   İLE KARIŞTIRILMAMALI — bkz. main.zig'in belge notu): `NOX_HOME` ÜÇÜNCÜ-
+   TARAF PAKET ÖNBELLEĞİNİN köküdür, `NOX_RESOURCE_DIR` İSE `noxc`nin KENDİ
+   stdlib/runtime kurulumunun köküdür — İKİSİ FARKLI KAVRAMLAR. Bu ayrım,
+   `tests/cli/package_resolution_test.zig`nin İZOLE `$NOX_HOME`sinin (paket
+   önbelleğini izole eder, stdlib/runtime İÇERMEZ) `resolveResourceDirs`e
+   YANLIŞLIKLA sızıp testleri BOZMASINI önlemek İÇİN GEREKLİ oldu (İLK
+   deneme `NOX_HOME`i İKİ AMAÇ İÇİN de KULLANMAYA çalıştı, `zig build test`
+   3 `package_resolution_test` başarısızlığıyla bunun YANLIŞ olduğunu
+   KANITLADI — düzeltme: AYRI env var).
+4. **`appendExternLinkArgs`nin `seen` ÖN-tohumlaması KORUNDU** (`"zig-out/
+   lib/noxrt.o"` literal STRING'i, GERÇEK `noxrt_path` NE OLURSA olsun) —
+   bu literal artık "gerçek bir yol" DEĞİL, stdlib yazarlarının KENDİ
+   `extern def`lerinde (ör. `stdlib/nox/http.nox`, `strings.nox`, `os.nox`)
+   KULLANDIĞI SABİT bir KURAL/SENTİNEL'dir; `seen` bu SENTİNEL'i tanıyarak
+   `noxrt.o`nun cc'ye İKİNCİ KEZ (ve YANLIŞ, CWD-göreli bir yolla)
+   geçmesini ÖNLER.
+
+**Doğrulama:** `zig build test` (Debug+ReleaseFast) yeşil (256/256, dahil
+3 P.6/P.7 uçtan-uca paket testi). **Kasıtlı boz→doğrula→düzelt:** `noxc`
+kurulu ikilisi (`zig-out/bin/noxc`) proje kökünün TAMAMEN DIŞINDA bir
+geçici dizinden (`import nox.strings`/`nox.math` KULLANAN bir program,
+`nox.strings.upper` GİBİ `with_rt extern def`lere DAYANAN bir stdlib
+fonksiyonu DAHİL) `build` edilip ÇALIŞTIRILDI — hem stdlib çözümlemesi
+hem runtime bağlama BAŞARILI (önceden bu SESSİZCE `error.ModuleNotFound`/
+`cc` `FileNotFound` ile BAŞARISIZ olurdu).
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

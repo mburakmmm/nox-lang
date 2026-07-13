@@ -6,11 +6,12 @@
 //! CWD-göreli SABİT yol olması, `noxc`nin yalnızca proje kökünden
 //! çalıştırılabilmesi) kısıtın çözümünün ALTYAPISIdır.
 //!
-//! **Bilinçli olarak SALT EKLEYİCİ:** bu dosya `module_loader.resolveImports`
-//! (4 ayrı çağrı sitesinden birebir aynı imzayla çağrılıyor — main.zig,
-//! 3 golden test dosyası) DAHİL mevcut hiçbir koda DOKUNMAZ. `main.zig`nin
-//! bu modülü GERÇEKTEN kullanması (proje kökü keşfini `build`/`run`/`test`
-//! alt komutlarına bağlamak) Faz O'nun SONRAKİ alt-fazıdır (P.2).
+//! **Bilinçli olarak SALT EKLEYİCİ:** bu dosya, golden testlerin (3 ayrı
+//! dosya) DOĞRUDAN çağırdığı `module_loader.resolveImports`ın imzasına HİÇ
+//! DOKUNMAZ. `main.zig` (Faz Q.3'ten beri) `resolveResourceDirs`i GERÇEKTEN
+//! kullanır — `buildOne`in `cc` bağlama argümanı VE `resolveImportsForBuild`in
+//! stdlib arama kökü, artık BU fonksiyonun döndürdüğü `ResourceDirs`e dayanır
+//! (bkz. main.zig'in `main()`i, `resource_dirs` değişkeni).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -97,13 +98,16 @@ pub const ResourceDirs = struct {
     noxrt_path: []const u8,
 };
 
-/// `nox_home_override` VERİLMİŞSE (`NOX_HOME` ortam değişkeni ya da bir
-/// testin geçici dizini) doğrudan bu KÖK kullanılır; VERİLMEMİŞSE
-/// çalıştırılabilir dosyanın KENDİ dizininden (`<exe_dir>/..`) hesaplanır.
-/// Kurulum düzeni `build.zig`nin `b.addInstallFile`/`b.addInstallDirectory`
-/// çağrılarıyla EŞLEŞİR: `<kök>/lib/noxrt.o` ve `<kök>/lib/nox/stdlib/`.
-pub fn resolveResourceDirs(a: Allocator, io: Io, nox_home_override: ?[]const u8) !ResourceDirs {
-    const base = if (nox_home_override) |h|
+/// `resource_dir_override` VERİLMİŞSE (`main.zig`de `NOX_RESOURCE_DIR`
+/// ortam değişkeni ya da bir testin geçici dizini — **DİKKAT:** bu, paket
+/// önbelleği kökü olan `NOX_HOME` İLE AYNI ŞEY DEĞİLDİR, bkz. `main.zig`nin
+/// `resource_dirs` hesaplamasının belge notu) doğrudan bu KÖK kullanılır;
+/// VERİLMEMİŞSE çalıştırılabilir dosyanın KENDİ dizininden (`<exe_dir>/..`)
+/// hesaplanır. Kurulum düzeni `build.zig`nin `b.addInstallFile`/
+/// `b.addInstallDirectory` çağrılarıyla EŞLEŞİR: `<kök>/lib/noxrt.o` ve
+/// `<kök>/lib/nox/stdlib/`.
+pub fn resolveResourceDirs(a: Allocator, io: Io, resource_dir_override: ?[]const u8) !ResourceDirs {
+    const base = if (resource_dir_override) |h|
         try a.dupe(u8, h)
     else blk: {
         const exe_dir = try std.process.executableDirPathAlloc(io, a);

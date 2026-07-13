@@ -44,7 +44,20 @@ pub const LoadError = error{ ModuleNotFound, UnknownImportAlias } || lexer.LexEr
 /// `user_module`ü DEĞİŞTİRMEDEN döndürmez, HER ZAMAN en az `core.nox`u
 /// içeren YENİ bir modül döner.
 pub fn resolveImports(a: std.mem.Allocator, io: std.Io, user_module: ast.Module) LoadError!ast.Module {
-    return resolveImportsImpl(a, io, user_module, null);
+    return resolveImportsImpl(a, io, user_module, null, "stdlib");
+}
+
+/// Faz Q.3 (bkz. docs/uretim-hazirlik-analizi.md, main.zig'in
+/// `resolveResourceDirs`e bağlanması): `resolveImports`in stdlib KÖK
+/// DİZİNİ parametreli hali — `noxc`nin KENDİSİ (`main.zig`) `project.
+/// resolveResourceDirs`in çözdüğü MUTLAK `stdlib_dir`i geçirir (proje
+/// kökünden/CWD'den BAĞIMSIZ çalışabilmek için, ör. sistem geneli bir
+/// kurulumdan). `resolveImports`ın KENDİSİ (İMZASI ASLA DEĞİŞTİRİLMEYEN,
+/// bkz. modül üstü not — golden testler CWD'si HER ZAMAN proje kökü
+/// olduğundan sabit `"stdlib"` göreli kökünü kullanmaya DEVAM eder)
+/// DEĞİŞMEDEN bu fonksiyonun `stdlib_root = "stdlib"` özel durumudur.
+pub fn resolveImportsFrom(a: std.mem.Allocator, io: std.Io, user_module: ast.Module, stdlib_root: []const u8) LoadError!ast.Module {
+    return resolveImportsImpl(a, io, user_module, null, stdlib_root);
 }
 
 /// Faz O §P.6 (bkz. plan dosyası "Faz O" bölümü, nox-teknik-spesifikasyon.md
@@ -54,19 +67,22 @@ pub fn resolveImports(a: std.mem.Allocator, io: std.Io, user_module: ast.Module)
 /// `resolveImportsForBuild`i TARAFINDAN `nox.json` bulunduğunda inşa edilir)
 /// VERİLDİĞİNDE, `import somepkg.util` gibi bir deyimin İLK segmenti
 /// (`"somepkg"`) `"nox"` OLMAYIP `alias_roots`ta eşleşiyorsa, dosya
-/// `stdlib/{yol}.nox` YERİNE `<alias_roots["somepkg"]>/{kalan-yol}.nox`dan
+/// `<stdlib_root>/{yol}.nox` YERİNE `<alias_roots["somepkg"]>/{kalan-yol}.nox`dan
 /// okunur — GERİ KALAN HER ŞEY (özyineleme, mangling, `core.nox` önceliği)
 /// `resolveImports` İLE BİREBİR AYNI kalır. İlk segment `"nox"` DEĞİLSE VE
 /// `alias_roots`ta da YOKSA `error.UnknownImportAlias` döner (`resolveImports`ın
 /// KENDİSİ hiçbir zaman bu hatayı üretmez — `alias_roots == null` olduğunda
 /// HER ZAMAN eski `error.ModuleNotFound` yoluna düşülür, bkz. `loadImportsRecursive`).
+/// **`stdlib_root` (Faz Q.3'te eklendi):** `resolveImportsFrom` İLE AYNI
+/// gerekçeyle — `noxc`nin KENDİ çözülmüş stdlib dizinini geçirmesi için.
 pub fn resolveProjectImports(
     a: std.mem.Allocator,
     io: std.Io,
     user_module: ast.Module,
     alias_roots: std.StringHashMapUnmanaged([]const u8),
+    stdlib_root: []const u8,
 ) LoadError!ast.Module {
-    return resolveImportsImpl(a, io, user_module, &alias_roots);
+    return resolveImportsImpl(a, io, user_module, &alias_roots, stdlib_root);
 }
 
 fn resolveImportsImpl(
@@ -74,16 +90,18 @@ fn resolveImportsImpl(
     io: std.Io,
     user_module: ast.Module,
     alias_roots: ?*const std.StringHashMapUnmanaged([]const u8),
+    stdlib_root: []const u8,
 ) LoadError!ast.Module {
     var loaded: std.StringHashMapUnmanaged(void) = .empty;
     var extra: std.ArrayListUnmanaged(ast.Stmt) = .empty;
 
-    const core_source = try std.Io.Dir.cwd().readFileAlloc(io, "stdlib/nox/core.nox", a, .limited(1024 * 1024));
+    const core_path = try std.fmt.allocPrint(a, "{s}/nox/core.nox", .{stdlib_root});
+    const core_source = try std.Io.Dir.cwd().readFileAlloc(io, core_path, a, .limited(1024 * 1024));
     const core_tokens = try lexer.tokenize(a, core_source);
     const core_module = try parser.parseModule(a, core_tokens);
     try extra.appendSlice(a, core_module.body);
 
-    try loadImportsRecursive(a, io, user_module.body, &loaded, &extra, alias_roots);
+    try loadImportsRecursive(a, io, user_module.body, &loaded, &extra, alias_roots, stdlib_root);
 
     const combined = try a.alloc(ast.Stmt, extra.items.len + user_module.body.len);
     @memcpy(combined[0..extra.items.len], extra.items);
@@ -98,6 +116,7 @@ fn loadImportsRecursive(
     loaded: *std.StringHashMapUnmanaged(void),
     out: *std.ArrayListUnmanaged(ast.Stmt),
     alias_roots: ?*const std.StringHashMapUnmanaged([]const u8),
+    stdlib_root: []const u8,
 ) LoadError!void {
     for (stmts) |stmt| {
         if (stmt != .import_stmt) continue;
@@ -125,7 +144,7 @@ fn loadImportsRecursive(
                 }
             }
             const rel_path = try joinWith(a, imp.segments, '/');
-            break :blk try std.fmt.allocPrint(a, "stdlib/{s}.nox", .{rel_path});
+            break :blk try std.fmt.allocPrint(a, "{s}/{s}.nox", .{ stdlib_root, rel_path });
         };
 
         // ÖNEMLİ: `source` ARENA (`a`) üzerinden tahsis edilir ve HİÇBİR ZAMAN
@@ -147,7 +166,7 @@ fn loadImportsRecursive(
         // ÖNCE bu stdlib modülünün KENDİ import'larını özyinelemeli çöz
         // (transitif — bir stdlib modülü başka bir stdlib modülünü import
         // edebilir).
-        try loadImportsRecursive(a, io, stdlib_module.body, loaded, out, alias_roots);
+        try loadImportsRecursive(a, io, stdlib_module.body, loaded, out, alias_roots, stdlib_root);
 
         // Bu modülün KENDİ üst-düzey `func_def`/`class_def` adlarını topla.
         var rename_map: std.StringHashMapUnmanaged([]const u8) = .empty;

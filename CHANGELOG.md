@@ -10,3 +10,14 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
 ### Eklendi
 - İlk git commit'i — proje artık gerçek sürüm kontrolü altında (Faz Q.1).
 - `CHANGELOG.md` (bu dosya).
+- GitHub Actions CI (Faz Q.2) — her push/PR'da `zig build test` (Debug +
+  ReleaseFast).
+
+### Düzeltildi
+- `noxc` artık proje kökü DIŞINDAN (ör. sistem geneli bir kurulumdan)
+  çalıştırılabiliyor — `main.zig`, kendi stdlib/runtime kaynak dizinlerini
+  artık CWD-göreli sabit `"stdlib"`/`"zig-out/lib/noxrt.o"` yolları yerine
+  `project.resolveResourceDirs`in (kendi çalıştırılabilir dosya konumuna
+  göre) çözdüğü yolları kullanıyor (Faz Q.3). Yeni, isteğe bağlı
+  `NOX_RESOURCE_DIR` ortam değişkeni eklendi (paket önbelleği kökü olan
+  `NOX_HOME`den AYRI bir kavram).
