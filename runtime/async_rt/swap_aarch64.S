@@ -17,11 +17,27 @@
  *   0:x19 8:x20 16:x21 24:x22 32:x23 40:x24 48:x25 56:x26 64:x27 72:x28
  *   80:fp 88:lr 96:sp
  *   104:d8 112:d9 120:d10 128:d11 136:d12 144:d13 152:d14 160:d15
+ *
+ * Faz R.1 (bkz. docs/uretim-hazirlik-analizi.md): bu dosya `.S` (BÜYÜK
+ * harf) uzantısına sahiptir ki `cc`/`zig cc` onu C ÖN İŞLEMCİSİNDEN
+ * GEÇİRSİN — `SYM(...)` makrosu, Mach-O (macOS, sembol adının BAŞINA `_`
+ * EKLENMESİNİ BEKLER) İLE ELF (Linux, `_` ÖNEKİ EKLEMEZ) arasındaki C ABI
+ * sembol adlandırma kuralı FARKINI TEK bir kaynak dosyadan (platform
+ * başına AYRI bir `.s` dosyası GEREKMEDEN) çözer — `fiber.zig`nin `extern
+ * fn nox_swap_context` bildirimi (ÖNEK YOK) HER İKİ platformda da AYNI
+ * kalır, Zig'in KENDİSİ Mach-O hedefte ÖNEKİ otomatik ekler/Linux'ta
+ * eklemez (bu makro yalnızca ASSEMBLY tarafındaki sembolü buna UYDURUR).
  */
+#if defined(__APPLE__)
+#define SYM(name) _##name
+#else
+#define SYM(name) name
+#endif
+
 .text
 .balign 4
-.globl _nox_swap_context
-_nox_swap_context:
+.globl SYM(nox_swap_context)
+SYM(nox_swap_context):
     mov x9, sp
     str x9,  [x0, #96]
     str x19, [x0, #0]

@@ -4574,6 +4574,73 @@ getirilip `zig build test` (Debug+ReleaseFast) TEKRAR yeşile döndü.
 
 ---
 
+## 3.8 Faz R.1 — Linux epoll I/O Reaktör Backend'i
+
+`docs/uretim-hazirlik-analizi.md`nin Faz R'si (Platform Genişletme) — v0.1'in
+`runtime/async_rt`i şimdiye kadar YALNIZCA macOS/kqueue destekliyordu (bkz.
+§3.29). Bu bölüm, `IoReactor`in Linux/epoll karşılığını ekler.
+
+**Doğrulama metodolojisi (ÖNEMLİ, dürüstçe belgelendi):** bu makine
+macOS/arm64 — Linux'ta GERÇEK doğrulama İÇİN Docker (OrbStack) üzerinden
+**native aarch64 Linux konteyneri** (emülasyon YOK — `uname -m` → `aarch64`,
+host'un KENDİ mimarisiyle AYNI) kullanıldı: `zig test -target aarch64-linux-gnu`
+ile çapraz derlenip `docker run` İÇİNDE ÇALIŞTIRILDI. Bu, x86-64 (Faz R.2)
+İÇİN mümkün OLMAYAN bir güven seviyesi sağlıyor (QEMU emülasyonu GEREKMEDEN
+gerçek donanımda çalışan gerçek bir ikili).
+
+**Bulunan VE düzeltilen ÜÇ ayrı, önceden GİZLİ Linux-uyumsuzluğu (hepsi bu
+doğrulama SÜRECİNDE, gerçek Docker testleriyle keşfedildi):**
+
+1. **`swap_aarch64.s` → `swap_aarch64.S`, taşınabilir sembol adı:** dosya
+   `_nox_swap_context` (Mach-O'nun baştaki `_` KURALI) hardcode ediyordu —
+   Linux/ELF'te C sembolleri ÖNEKSİZDİR, bu yüzden `fiber.zig`nin `extern fn
+   nox_swap_context` (öneksiz) bildirimi Linux'ta ASLA eşleşmezdi (link
+   hatası). Çözüm: dosya `.S`ye (BÜYÜK harf, C ön işlemcisinden GEÇER)
+   taşındı, `#if defined(__APPLE__)` ile `SYM(name)` makrosu (`_name` ya da
+   `name`) TEK kaynaktan HER İKİ platformu da doğru üretir.
+2. **Ham Linux sistem çağrısı sarmalayıcıları + libc-TLS `errno` KARIŞIMI
+   (GERÇEK bir çalışma zamanı hatası, Docker'da YAKALANDI):** İLK
+   `EpollReactor` taslağı `std.os.linux.epoll_ctl/wait/create1`i (HAM
+   sistem çağrısı, hata negatif `errno`yu BÜYÜK bir `usize` olarak KODLAR)
+   `posix.errno()` İLE (bu proje libc'ye bağlandığında `std.c`nin TLS
+   `errno`SUNU okur) BİRLİKTE kullanıyordu — bu İKİSİ UYUMSUZ: `posix.
+   errno()` HER ZAMAN `.SUCCESS` dönüyordu, HATA durumunda BİLE. Somut
+   belirti: "aynı fd'yi ikinci kez register et" testi Docker'da SESSİZCE
+   SONSUZA DEK ASILI KALDI (`EPOLL_CTL_ADD`in `EEXIST`i YANLIŞ `.SUCCESS`
+   sayılıp `EPOLL_CTL_MOD`a hiç DÜŞÜLMEDİĞİ İÇİN fd BİR DAHA ASLA olay
+   ÜRETMEDİ). Çözüm: `KqueueReactor`nin ZATEN doğru kullandığı `posix.
+   system.epoll_*` (libc bağlıyken `std.c.epoll_*`ye çözülür, GERÇEK
+   `errno` yan etkisiyle) KULLANILDI.
+3. **`build.zig`de `link_libc` HİÇ AYARLANMAMIŞTI:** `runtime/`nin HER
+   YERİNDE `std.c.*` KULLANILIYOR (soket/dosya ilkelleri) — macOS'ta bu
+   HER ZAMAN örtük ÇALIŞIYORDU (Darwin ikilileri libSystem'i KOŞULSUZ
+   bağlar), Linux'ta İSE AÇIKÇA `link_libc = true` İSTENMEDEN "libc'ye
+   bağımlılık açıkça belirtilmeli" derleme HATASI verir. `noxrt_mod` +
+   4 standalone async_rt test modülüne (`fiber_test_mod`/`scheduler_
+   test_mod`/`channel_test_mod`/`io_test_mod`) eklendi.
+
+**Mimari:** `io_reactor.zig`, `KqueueReactor`/`EpollReactor`i `if (builtin.
+os.tag == ...) struct {...} else struct {}` deseniyle SARAR (YANLIŞ
+platformda OS-özgü tiplerin HİÇ semantik analiz EDİLMEMESİNİ garanti eder),
+`pub const IoReactor` bunlardan BİRİNİ comptime SEÇER — `scheduler.zig`/
+`io.zig` HİÇBİR platform dallanması İÇERMEZ. `EPOLLONESHOT`, kqueue'nun
+`EV_ONESHOT`unun AKSİNE fd'yi interest listesinden SİLMEZ (yalnızca YENİDEN
+`EPOLL_CTL_MOD` İLE silahlandırılana kadar olay ÜRETMEYİ durdurur) —
+`register`, ÖNCE `EPOLL_CTL_ADD` DENER, `EEXIST` alırsa `EPOLL_CTL_MOD`a
+DÜŞER (nginx/libevent'in KENDİ yeniden-silahlandırma deseniyle AYNI).
+
+**Doğrulama:** aarch64-linux-gnu'ya çapraz derlenip GERÇEK (emülasyonsuz)
+bir Docker aarch64 Linux konteynerinde ÇALIŞTIRILAN `fiber`/`scheduler`/
+`channel`/`io`/`io_reactor` testlerinin TAMAMI (io.zig'in "fiber G/Ç
+beklerken BAŞKA bir fiber çalışabilir" testi DAHİL — reaktörün ASIL amacının
+EN DERİN kanıtı) yeşil. YENİ bir `io_reactor.zig` testi ("AYNI fd birden
+çok kez register edilebilir") EKLENDİ — bu test, DÜZELTMEDEN ÖNCE Docker'da
+GERÇEKTEN SONSUZA DEK ASILI KALARAK (kasıtlı boz→kırmızıyı doğrula→düzelt
+ritüelinin KENDİSİ) hatayı KANITLADI. macOS'ta `zig build test`
+(Debug+ReleaseFast) DEĞİŞMEDEN yeşil (regresyon YOK).
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

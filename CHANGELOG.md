@@ -12,6 +12,9 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
 - `CHANGELOG.md` (bu dosya).
 - GitHub Actions CI (Faz Q.2) — her push/PR'da `zig build test` (Debug +
   ReleaseFast).
+- Linux epoll I/O reaktör backend'i (Faz R.1) — `runtime/async_rt`in
+  async G/Ç'si artık macOS (kqueue) yanında Linux'u (epoll) da destekliyor.
+  Gerçek (emülasyonsuz) bir Docker aarch64 Linux konteynerinde doğrulandı.
 
 ### Düzeltildi
 - `noxc` artık proje kökü DIŞINDAN (ör. sistem geneli bir kurulumdan)
@@ -21,6 +24,12 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   göre) çözdüğü yolları kullanıyor (Faz Q.3). Yeni, isteğe bağlı
   `NOX_RESOURCE_DIR` ortam değişkeni eklendi (paket önbelleği kökü olan
   `NOX_HOME`den AYRI bir kavram).
+- `swap_aarch64.s` → `swap_aarch64.S`: Mach-O'ya özgü `_` sembol öneki
+  KALDIRILDI, macOS/Linux'ta AYNI kaynaktan doğru derlenen taşınabilir bir
+  `SYM(...)` makrosu eklendi (önceden Linux'ta linklenmezdi).
+- `build.zig`ye Linux hedefleri İÇİN `link_libc = true` eklendi (`runtime/`
+  genelinde kullanılan `std.c.*` çağrıları Linux'ta AÇIK libc bağlama
+  gerektirir — macOS'ta bu her zaman örtüktü).
 
 ### Güvenlik
 - `nox.http.serve`e iki DoS sertleştirmesi eklendi (Faz Q.5): bir isteğin

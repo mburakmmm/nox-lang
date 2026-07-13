@@ -7,16 +7,21 @@ pub fn build(b: *std.Build) void {
     // ---- Faz 21: async çalışma zamanı çekirdeği (`runtime/async_rt`) ----
     //
     // nox-teknik-spesifikasyon.md §3.21: Go tarzı yığınlı (stackful) fiber
-    // ilkeli — elle yazılmış aarch64 montaj bağlam değişimi (`swap_aarch64.s`,
+    // ilkeli — elle yazılmış aarch64 montaj bağlam değişimi (`swap_aarch64.S`,
     // Zig'in kendisi 0.11'den beri dilde async/await İÇERMEDİĞİNDEN, ve
     // `callconv(.naked)` Zig'de normal çağrı sözdizimiyle ÇAĞRILAMADIĞINDAN).
     // v0.1 yalnızca aarch64'ü destekler (bkz. fiber.zig'deki comptime denetim).
     // `noxrt_mod`dan ÖNCE tanımlanmalı ki hem gerçek `noxrt.o`ya (aşama 4'ten
     // beri `runtime/async_rt/bridge.zig` üzerinden) HEM standalone
     // fiber/scheduler/channel testlerine bağlanabilsin.
+    //
+    // Faz R.1: dosya `.S` (BÜYÜK harf) uzantısına taşındı ki `cc` onu C ÖN
+    // İŞLEMCİSİNDEN geçirsin (`SYM(...)` makrosu Mach-O/ELF sembol adlandırma
+    // FARKINI çözer, bkz. dosyanın KENDİ belge notu) — macOS/Linux AYNI
+    // kaynaktan doğru sembol adıyla derlenir.
     const swap_asm_o_path = "runtime/async_rt/swap_aarch64.o";
     const compile_swap_asm = b.addSystemCommand(&.{
-        "cc", "-c", "-o", swap_asm_o_path, "runtime/async_rt/swap_aarch64.s",
+        "cc", "-c", "-o", swap_asm_o_path, "runtime/async_rt/swap_aarch64.S",
     });
 
     const nox_mod = b.addModule("nox", .{
@@ -60,6 +65,14 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("runtime/lib.zig"),
         .target = target,
         .optimize = optimize,
+        // Faz R.1: `runtime/`nin HER YERİNDE (async_rt, stdlib_shims, alloc)
+        // `std.c.*` (soket/dosya sistemi ilkelleri, kqueue/epoll) KULLANILIYOR
+        // — macOS'ta bu HER ZAMAN ÖRTÜK olarak çalışıyordu (Darwin ikilileri
+        // libSystem'i KOŞULSUZ bağlar), ama Linux'ta `std.c.*` KULLANIMI
+        // AÇIKÇA `link_libc` İSTEMEDEN "libc'ye bağımlılık AÇIKÇA belirtilmeli"
+        // derleme hatası verir (bkz. Faz R.1'in Docker/aarch64-linux
+        // doğrulaması sırasında keşfedilen gerçek hata).
+        .link_libc = true,
         .imports = &.{
             .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
             .{ .name = "wasm_bridge", .module = wasm_bridge_mod },
@@ -416,6 +429,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("runtime/async_rt/fiber.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
     fiber_test_mod.addObjectFile(b.path(swap_asm_o_path));
     const fiber_test = b.addTest(.{ .root_module = fiber_test_mod });
@@ -431,6 +445,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("runtime/async_rt/scheduler.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
     scheduler_test_mod.addObjectFile(b.path(swap_asm_o_path));
     const scheduler_test = b.addTest(.{ .root_module = scheduler_test_mod });
@@ -442,6 +457,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("runtime/async_rt/channel.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
     channel_test_mod.addObjectFile(b.path(swap_asm_o_path));
     const channel_test = b.addTest(.{ .root_module = channel_test_mod });
@@ -459,6 +475,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("runtime/async_rt/io.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
     io_test_mod.addObjectFile(b.path(swap_asm_o_path));
     const io_test = b.addTest(.{ .root_module = io_test_mod });
