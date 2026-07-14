@@ -5353,6 +5353,107 @@ yerleştirilmesi) AYRI bir görev olarak takip edilmektedir.
 
 ---
 
+## 3.19 Faz T.4b — `noxc fmt` Gerçek Formatlayıcı Gövdesi
+
+T.4a'nın (bkz. §3.18) yorum/boş-satır yakalama altyapısı üzerine kurulu,
+`noxc fmt <dosya.nox>`in GERÇEK implementasyonu — YENİ `compiler/fmt/
+formatter.zig` (`ast_dump.zig`nin S-expression yazıcısıyla AYNI TAM AST
+gezinme kapsamını, ama GERÇEK Nox söz dizimi üreterek, izler).
+
+**Tasarım — TEK monoton trivia imleci:** `Trivia` (T.4a) kaynak sırasına
+göre SIRALI olduğundan VE yazıcı AST'yi TAM OLARAK kaynaktaki gibi (üstten-
+alta, iç içe gövdeler KARŞILAŞILDIKLARI ANDA) gezdiğinden, TEK bir ilerleyen
+`trivia_idx` YETERLİDİR — `emitLeadingTrivia(upto_line)` VERİLEN satırdan
+ÖNCEKİ tüketilmemiş TÜM trivia'yı basar (ardışık boş satırlar TEK satıra
+düşürülür); `line()` yardımcısı bir deyimin başlık satırını YAZDIKTAN HEMEN
+SONRA AYNI satırdaki bir `trailing` yorumu satırın SONUNA ekler.
+
+**Precedence-farkındalıklı parens:** `compiler/parser/parser.zig`nin
+precedence-climbing zincirinin (parseOr→parseAnd→parseNot→parseComparison→
+parseAddSub→parseMulDiv→parseUnary→parsePower→parsePostfix) TERSİ bir sayısal
+precedence tablosu (`binPrec`/`unaryPrec`) kurulup, HER ikili/tekli ifade
+için "ambient" (üst operatörden gelen) bir `(precedence, taraf)` bağlamıyla
+karşılaştırılarak SADECE GEREKLİ parens eklenir (gereksiz olanlar—kaynakta
+VARSA BİLE—ATILIR, ör. `(a + b) + c` → `a + b + c`) — sağ-birleşimli TEK
+operatör (`**`) VE sol-birleşimli TÜM diğerleri (eşit precedence'ta hangi
+tarafın "strict" parens gerektirdiği) AYRICA ele alınır. `not (a == b)` →
+`not a == b` (parser'ın `parseNot`i operandını `parseComparison`a KADAR
+özyinelemeli çözdüğünden semantik olarak AYNI — bkz. testler) gibi
+sadeleştirmeler bu YÜZDEN GÜVENLİDİR.
+
+**Diğer kararlar:** float literalleri HER ZAMAN bir ondalık nokta TAŞIYACAK
+yazdırılır (`3.0` DEĞİL `3` — aksi halde yeniden lex edilince `int_lit`e
+DÖNÜŞÜP AST'nin tip ayrımını BOZARDI); string literalleri HER ZAMAN çift
+tırnakla (kaynakta tek tırnak KULLANILMIŞ olsa BİLE) yeniden kaçışlanır;
+4 boşluk girinti; satır-uzunluğu SARMA (line wrapping) YOK.
+
+**Zig 0.16 gotcha'sı — karşılıklı özyinelemeli çıkarılmış hata kümeleri:**
+`printExprAt`↔`printPrimary` (birbirini ÇAĞIRAN, İKİSİ de `!void` DÖNEN)
+`error: dependency loop with length 2` ile derleme hatası verdi — Zig'in
+hata kümesi ÇIKARIMI (`!void`) karşılıklı özyineleme İÇİN çözülemez bir
+döngü kurar. Düzeltme: TÜM `Printer` metodlarına AÇIK bir `pub const
+FormatError = std.Io.Writer.Error || error{NoSpaceLeft};` dönüş tipi
+verildi (`ast_dump.zig`nin `std.Io.Writer.Error!void` deseniyle AYNI
+prensip, BURADA `std.fmt.bufPrint`in (float biçimlendirme) EK hata kümesi
+İÇİN genişletilmiş).
+
+**`noxc fmt` CLI davranışı (`main.zig`nin `cmdFmt`i):** dosyayı YERİNDE
+(in-place) yeniden yazar (`gofmt`/`rustfmt`in varsayılanıyla TUTARLI).
+**Tip denetimi ÇALIŞTIRILMAZ** — yalnızca lex/parse hatası başarısızlık
+sayılır (`gofmt`ın DAVRANIŞIYLA AYNI: sözdizimsel olarak geçerli ama tipçe
+HATALI bir program YİNE DE formatlanabilir olmalıdır). `module_loader.
+resolveImports` KASITLI olarak ÇAĞRILMAZ — yalnızca KULLANICININ KENDİ
+dosyası formatlanır (bkz. modül üstü not, "çok-dosyalı" sınırlaması).
+
+**Doğrulama (üç katman):**
+1. **`tests/golden/fmt_golden_test.zig`** — YENİ `tests/golden/fmt_cases/
+   kitchen_sink.nox` (sınıf+metod, fonksiyon, if/elif/else, while, for,
+   try/except/finally, extern def, import DIŞINDA TÜM deyim türleri +
+   standalone/trailing yorumlar + boş satırlar) İÇİN: (a) İKİ KEZ
+   formatlamanın AYNI sonucu verdiği (idempotency); (b) formatlanmış
+   kaynağın DERLENİP ÇALIŞTIRILDIĞINDA orijinaliyle BİREBİR AYNI stdout'u
+   ürettiği (`compileAndRun`, `codegen_golden_test.zig` İLE AYNI desen);
+   (c) yorum METİNLERİNİN çıktıda YER ALDIĞI. AYRICA precedence/parens
+   mantığını ÇALIŞMA ZAMANI davranışından BAĞIMSIZ, KESİN dizge
+   karşılaştırmalarıyla sınayan SEKİZ örnekli bir tablo testi (`(a + b) *
+   2` KORUNUR, `(a + b) + c` → `a + b + c` SADELEŞİR, `a - (b - c)` KORUNUR,
+   `a ** (b ** c)` → `a ** b ** c` SADELEŞİR, vb.).
+2. **`tests/cli/subcommand_test.zig`** (GÜNCELLENDİ) — `fmt/fetch/update:
+   henüz uygulanmadı` testi İKİYE BÖLÜNDÜ (`fetch`/`update` HÂLÂ "henüz
+   uygulanmadı" der; YENİ bir test `noxc fmt`in dosyayı GERÇEKTEN yerinde
+   yeniden yazdığını VE İKİNCİ formatlamanın dosyayı DEĞİŞTİRMEDİĞİNİ, bir
+   ALT SÜREÇ olarak GERÇEKTEN kurulu `noxc`yi çalıştırarak kanıtlar).
+3. **Manuel doğrulama (bu makine):** `noxc fmt` GERÇEKTEN çalıştırılıp
+   çıktı GÖZLE incelendi — yorumlar/boş satırlar KORUNDU, `(a + b) * 2`
+   parens'i KORUNDU, `not (a == b)` → `not a == b` (SEMANTİK AÇIDAN
+   DOĞRULANMIŞ) sadeleşti; İKİNCİ bir `noxc fmt` çalıştırması dosyayı
+   BAYT-BAYT DEĞİŞTİRMEDİ (idempotency); formatlanmış ikilinin ÇALIŞTIRILAN
+   ÇIKTISI orijinaliyle BİREBİR AYNIYDI.
+
+**Kasıtlı boz→kırmızı→düzelt ritüeli — İKİ AYRI bulgu:**
+- **İlk deneme YETERSİZDİ:** `printExprAt`in binary dalındaki `need_parens`i
+  KOŞULSUZ `false`e sabitleyip (parens mantığını TAMAMEN devre dışı bırakıp)
+  `zig build test`i çalıştırdığımda TÜM testler YEŞİL KALDI — `kitchen_
+  sink.nox`nin `y: int = (a + b) * 2` DEĞİŞKENİNİN aslında HİÇBİR ÇALIŞMA
+  YOLUNDA GÖZLEMLENMEDİĞİ (fonksiyonun `if z:` dalı HER ZAMAN `x`i
+  döndürüyordu, `y` HİÇ kullanılmıyordu) ortaya çıktı — T.1/T.2'nin AYNI
+  dersini (bir testin GERÇEKTEN iddia ettiği şeyi sınadığını KANITLAMADAN
+  güvenilmemesi) BURADA da doğruladı. **Düzeltme:** parens mantığını
+  ÇALIŞMA ZAMANI davranışından TAMAMEN BAĞIMSIZ, KESİN dizge
+  karşılaştırmalı SEKİZ örnekli bir tablo testi eklendi.
+- **İkinci deneme (düzeltmeyle) BAŞARILI:** AYNI boz (`need_parens = false`)
+  bu KEZ YENİ tablo testini GERÇEKTEN kırmızıya döndürdü (`y: int = (a + b)
+  * 2` beklenirken `y: int = a + b * 2` bulundu) → geri getirildi, YEŞİLE
+  döndüğü doğrulandı.
+- AYRICA, implementasyon SIRASINDA `tests/cli/subcommand_test.zig`nin
+  ÖNCEDEN VAR OLAN bir testinin (`fmt`in "henüz uygulanmadı" dediğini
+  varsayan) ARTIK YANLIŞ olduğu KEŞFEDİLDİ (T.4b'nin KENDİSİNİN, bir
+  regresyonun DEĞİL, DOĞAL bir sonucu) — GÜNCELLENDİ (yukarı bkz.).
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

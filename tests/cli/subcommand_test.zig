@@ -216,14 +216,14 @@ test "test: bos dizin -> 0 test dosyasi, cikis kodu 0" {
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "0 test dosyasi bulundu") != null);
 }
 
-test "fmt/fetch/update: henuz uygulanmadi mesaji, cikis kodu 1" {
+test "fetch/update: henuz uygulanmadi mesaji, cikis kodu 1" {
     const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
     const noxc = try noxcPath(a);
 
-    inline for (.{ "fmt", "fetch", "update" }) |sub| {
+    inline for (.{ "fetch", "update" }) |sub| {
         const result = try std.process.run(std.testing.allocator, io, .{
             .argv = &.{ noxc, sub },
         });
@@ -232,4 +232,45 @@ test "fmt/fetch/update: henuz uygulanmadi mesaji, cikis kodu 1" {
         try std.testing.expect(result.term == .exited and result.term.exited == 1);
         try std.testing.expect(std.mem.indexOf(u8, result.stderr, "henuz uygulanmadi") != null);
     }
+}
+
+// Faz T.4b: `noxc fmt` artık GERÇEK bir formatlayıcıdır (bkz.
+// `compiler/fmt/formatter.zig`) — `fetch`/`update`in AKSİNE "henüz
+// uygulanmadı" DEMEZ, dosyayı YERİNDE (in-place) yeniden yazar.
+test "fmt: gercek formatlayici dosyayi yerinde yeniden yazar, IDEMPOTENTTIR" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "messy.nox", .data = "x:int=1+2\nprint(x)\n" });
+
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &path_buf);
+    const dir_path = path_buf[0..len];
+
+    const noxc = try noxcPath(a);
+    const src_path = try std.fmt.allocPrint(a, "{s}/messy.nox", .{dir_path});
+
+    const fmt_result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxc, "fmt", src_path },
+    });
+    defer std.testing.allocator.free(fmt_result.stdout);
+    defer std.testing.allocator.free(fmt_result.stderr);
+    try std.testing.expect(fmt_result.term == .exited and fmt_result.term.exited == 0);
+
+    const once = try tmp.dir.readFileAlloc(io, "messy.nox", a, .limited(4096));
+    try std.testing.expectEqualStrings("x: int = 1 + 2\nprint(x)\n", once);
+
+    // İkinci kez formatlamak (İDEMPOTENT olmalı) dosyayı DEĞİŞTİRMEMELİ.
+    const fmt_again = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxc, "fmt", src_path },
+    });
+    defer std.testing.allocator.free(fmt_again.stdout);
+    defer std.testing.allocator.free(fmt_again.stderr);
+    try std.testing.expect(fmt_again.term == .exited and fmt_again.term.exited == 0);
+    const twice = try tmp.dir.readFileAlloc(io, "messy.nox", a, .limited(4096));
+    try std.testing.expectEqualStrings(once, twice);
 }

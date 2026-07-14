@@ -6,6 +6,7 @@ pub const lexer = @import("lexer/lexer.zig");
 pub const ast = @import("parser/ast.zig");
 pub const parser = @import("parser/parser.zig");
 pub const ast_dump = @import("parser/ast_dump.zig");
+pub const formatter = @import("fmt/formatter.zig");
 pub const types = @import("typecheck/types.zig");
 pub const checker = @import("typecheck/checker.zig");
 pub const ownership = @import("ownership/analysis.zig");

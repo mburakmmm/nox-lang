@@ -69,6 +69,14 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   formatlayıcısının (T.4b) yorumları SESSİZCE SİLMEDEN yeniden yerleştirebilmesi
   İÇİN ön koşul (kullanıcıyla netleşti: yorum-koruma OLMADAN bir formatlayıcı
   gerçek kullanıcı kodunda veri kaybına yol açardı).
+- `noxc fmt` gerçek bir formatlayıcıya kavuştu (Faz T.4b) — YENİ `compiler/
+  fmt/formatter.zig`, AST'yi 4-boşluk girinti + precedence-farkındalıklı
+  (yalnızca GEREKLİ) parens ile kanonik Nox söz dizimine yeniden yazar,
+  T.4a'nın yakaladığı yorumları/boş satırları en yakın deyime göre yeniden
+  yerleştirir. Dosyayı YERİNDE (in-place) yeniden yazar, İDEMPOTENTTİR
+  (ikinci formatlama dosyayı değiştirmez), tip denetimi ÇALIŞTIRMAZ
+  (`gofmt`ın davranışıyla tutarlı — sözdizimsel olarak geçerli ama tipçe
+  hatalı kod da formatlanabilir).
 
 ### Düzeltildi
 - `noxc` artık proje kökü DIŞINDAN (ör. sistem geneli bir kurulumdan)

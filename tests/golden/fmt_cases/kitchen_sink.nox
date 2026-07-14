@@ -1,0 +1,45 @@
+# standalone yorum: modül başı
+class MyError:
+    def __init__(self: MyError, msg: str) -> None:
+        self.msg = msg  # trailing yorum: alan ataması
+
+def combine(a: int, b: int) -> int:
+    # standalone yorum: gövde içi
+    x: int = a + b * 2
+    y: int = (a + b) * 2
+    z: bool = a < b and b < 10 or not (a == b)
+
+    if z:
+        return x
+    elif y > 100:
+        return y
+    else:
+        return 0
+
+def risky(n: int) -> int:
+    try:
+        if n < 0:
+            raise MyError("negatif")
+        return 100 // n
+    except MyError as e:
+        print(e.msg)
+        return -1
+    finally:
+        pass
+
+extern def raw_sqrt(x: float) -> float from "m"
+
+n: int = 0
+while n < 3:
+    print(combine(n, n + 1))
+    n = n + 1
+
+items: list[int] = [1, 2, 3]
+for i in items:
+    print(i)
+
+headers: dict[str, str] = {"a": "1", "b": "2"}
+print(headers["a"])
+
+print(risky(5))
+print(risky(-1))

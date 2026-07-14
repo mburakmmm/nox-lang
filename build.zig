@@ -233,6 +233,7 @@ pub fn build(b: *std.Build) void {
         "tests/golden/golden_test.zig",
         "tests/golden/typecheck_golden_test.zig",
         "tests/golden/ownership_golden_test.zig",
+        "tests/golden/fmt_golden_test.zig",
     };
 
     for (external_test_files) |path| {

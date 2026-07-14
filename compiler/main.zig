@@ -5,14 +5,15 @@
 //!
 //! **Faz O §P.2/§P.3 (bkz. plan dosyası "Faz O" bölümü, nox-teknik-
 //! spesifikasyon.md §3.6):** `noxc` artık Cargo/Go tarzı alt komutlar
-//! tanır — `build`/`run`/`test` (+ henüz REZERVE edilmiş `fmt`/`fetch`/
-//! `update`, bkz. P.5/P.7/P.8). Çıplak `noxc <dosya.nox>` (alt komut
+//! tanır — `build`/`run`/`test`/`fmt` (+ henüz REZERVE edilmiş `fetch`/
+//! `update`, bkz. P.5). Çıplak `noxc <dosya.nox>` (alt komut
 //! OLMADAN) **geriye dönük uyumluluk İÇİN `build`in bir takma adı olarak
 //! KORUNUR** — çıktı/mesaj/çıkış kodu BİREBİR aynı (bkz. `cmdBuild`'e
 //! geçirilen `usage` argümanının legacy/yeni-CLI için AYRI tutulması).
 //! İlk bayrak-olmayan argüman bilinen bir alt komut anahtar kelimesiyle
 //! EŞLEŞMİYORSA (ör. bir `.nox` yolu ya da `--dump`) eski tekil-dosya
-//! yoluna DÜŞÜLÜR.
+//! yoluna DÜŞÜLÜR. `fmt`in GERÇEK implementasyonu Faz T.4a/T.4b'dir
+//! (bkz. `cmdFmt`/`fmt/formatter.zig`).
 
 const std = @import("std");
 const lexer = @import("lexer/lexer.zig");
@@ -27,6 +28,7 @@ const project = @import("project.zig");
 const qbe_target = @import("qbe_target.zig");
 const test_runner = @import("pkg/test_runner.zig");
 const fetch = @import("pkg/fetch.zig");
+const formatter = @import("fmt/formatter.zig");
 
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
@@ -85,7 +87,8 @@ pub fn main(init: std.process.Init) !void {
         .legacy => try cmdBuild(gpa, io, a, rest, "kullanim: noxc [--dump|-v] <dosya.nox>\n", nox_home, resource_dirs),
         .run => try cmdRun(gpa, io, a, rest, nox_home, resource_dirs),
         .test_cmd => try cmdTest(gpa, io, a, rest, nox_home, resource_dirs),
-        .fmt, .fetch, .update => {
+        .fmt => try cmdFmt(gpa, io, a, rest),
+        .fetch, .update => {
             std.debug.print("noxc {s}: henuz uygulanmadi (bkz. plan dosyasi, Faz O)\n", .{@tagName(sub)});
             std.process.exit(1);
         },
@@ -243,6 +246,37 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
 
     std.debug.print("\n{d} gecti, {d} basarisiz ({d} toplam)\n", .{ pass_count, fail_count, files.len });
     if (fail_count > 0) std.process.exit(1);
+}
+
+/// Faz T.4b: `noxc fmt <dosya.nox>` — kaynağı `lexer.tokenizeWithTrivia` +
+/// `parser.parseModule` ile ayrıştırır, `formatter.formatModule`e verir,
+/// SONUCU DOSYANIN YERİNE (in-place) YAZAR (`gofmt`/`rustfmt`in varsayılan
+/// davranışıyla TUTARLI). **Tip denetimi ÇALIŞTIRILMAZ** — sözdizimsel
+/// olarak geçerli ama tipçe HATALI bir program (gofmt'ın DAVRANIŞIYLA AYNI)
+/// YİNE DE formatlanabilir olmalıdır; yalnızca lex/parse hatası BAŞARISIZLIK
+/// sayılır. `module_loader.resolveImports` KASITLI olarak ÇAĞRILMAZ —
+/// KULLANICININ KENDİ dosyası formatlanır, stdlib'in TÜM merge edilmiş
+/// içeriği DEĞİL (bkz. `formatter.zig`nin modül üstü notu).
+fn cmdFmt(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
+    if (args.len == 0) {
+        std.debug.print("kullanim: noxc fmt <dosya.nox>\n", .{});
+        std.process.exit(1);
+    }
+    const path_arg = args[0];
+    const source = try std.Io.Dir.cwd().readFileAlloc(io, path_arg, gpa, .limited(1024 * 1024));
+    defer gpa.free(source);
+
+    const result = lexer.tokenizeWithTrivia(a, source) catch |e| {
+        std.debug.print("fmt: lex hatasi ({t})\n", .{e});
+        std.process.exit(1);
+    };
+    const module = parser.parseModule(a, result.tokens) catch |e| {
+        std.debug.print("fmt: ayristirma hatasi ({t})\n", .{e});
+        std.process.exit(1);
+    };
+    const formatted = try formatter.formatModule(a, module, result.trivia);
+
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path_arg, .data = formatted });
 }
 
 /// `path_arg`in (proje kökü BULUNURSA o kök, BULUNAMAZSA dosyanın KENDİ
