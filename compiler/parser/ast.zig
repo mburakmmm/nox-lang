@@ -191,6 +191,23 @@ pub const LowLevelStmt = struct {
     body: []Stmt,
 };
 
+/// `with EXPR as NAME:` / `with EXPR:` — Faz U.5 (bkz. nox-teknik-
+/// spesifikasyon.md §3.28). `EXPR` bir `__enter__(self) -> T`/`__exit__(self)
+/// -> None` metod çiftine sahip bir SINIF örneği DEĞERLENDİRMELİDİR
+/// (checker zorunlu kılar). `binding` (`as NAME` verildiyse) `__enter__`in
+/// dönüş DEĞERİNE bağlanır — `EXPR`in KENDİSİNE DEĞİL (Python'un KENDİ
+/// `__enter__`/CM ayrımıyla TUTARLI, ör. `open(...)`in `__enter__`i dosya
+/// tutamacının KENDİSİNİ döner ama bir contextlib tarzı sarmalayıcı FARKLI
+/// bir değer dönebilir). `__exit__` HER ZAMAN (normal tamamlanma, `return`,
+/// yakalanmamış istisna DAHİL) çağrılır — v1 kapsamı bilinçli DAR: `__exit__`
+/// hiçbir istisna bilgisi ALMAZ ve bir istisnayı ASLA BASTIRAMAZ (Python'un
+/// `__exit__(exc_type, exc_value, tb) -> bool`sinin AKSİNE) — bkz. spec.
+pub const WithStmt = struct {
+    ctx_expr: Expr,
+    binding: ?[]const u8,
+    body: []Stmt,
+};
+
 /// `import nox.http` — Python'un `import a.b` semantiğiyle BİREBİR aynı:
 /// yerel kapsama `segments[0]` (ör. `"nox"`) adı girer, çağrı sitelerinde
 /// TAM noktalı yol (`nox.http.get(...)`) kullanılır (bkz. nox-teknik-
@@ -248,6 +265,7 @@ pub const StmtKind = union(enum) {
     import_stmt: ImportStmt,
     from_import_stmt: FromImportStmt,
     pass_stmt,
+    with_stmt: WithStmt,
 };
 
 /// `parser.zig`nin `parseStmt`i (TÜM deyim ayrıştırmasının TEK dağıtım

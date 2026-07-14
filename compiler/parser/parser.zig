@@ -107,6 +107,7 @@ pub const Parser = struct {
             .kw_return => try self.parseReturn(),
             .kw_raise => try self.parseRaise(),
             .kw_try => try self.parseTry(),
+            .kw_with => try self.parseWith(),
             .kw_lowlevel => try self.parseLowLevel(),
             .kw_import => try self.parseImport(),
             .kw_from => try self.parseFromImport(),
@@ -383,6 +384,21 @@ pub const Parser = struct {
             .except_clauses = try except_clauses.toOwnedSlice(self.allocator),
             .finally_body = finally_body,
         } };
+    }
+
+    /// `with EXPR as NAME:` / `with EXPR:` — Faz U.5 (bkz. `ast.WithStmt`in
+    /// belge notu). `as NAME` isteğe bağlıdır (bağlama olmadan yalnızca
+    /// `__enter__`/`__exit__` yan etkileri İÇİN kullanılabilir).
+    fn parseWith(self: *Parser) ParseError!ast.StmtKind {
+        _ = try self.expect(.kw_with);
+        const ctx_expr = try self.parseExpr();
+        var binding: ?[]const u8 = null;
+        if (self.match(.kw_as)) {
+            binding = (try self.expect(.identifier)).lexeme;
+        }
+        _ = try self.expect(.colon);
+        const body = try self.parseBlock();
+        return .{ .with_stmt = .{ .ctx_expr = ctx_expr, .binding = binding, .body = body } };
     }
 
     fn parseLowLevel(self: *Parser) ParseError!ast.StmtKind {

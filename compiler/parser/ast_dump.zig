@@ -173,6 +173,15 @@ fn dumpStmt(writer: *std.Io.Writer, stmt: ast.Stmt, depth: usize) std.Io.Writer.
             }
             try writer.writeAll(")\n");
         },
+        .with_stmt => |w| {
+            try writer.writeAll("(with ");
+            try dumpExpr(writer, w.ctx_expr);
+            if (w.binding) |bn| try writer.print(" as {s}", .{bn});
+            try writer.writeAll("\n");
+            for (w.body) |s| try dumpStmt(writer, s, depth + 1);
+            try indent(writer, depth);
+            try writer.writeAll(")\n");
+        },
     }
 }
 

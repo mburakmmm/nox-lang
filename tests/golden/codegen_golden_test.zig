@@ -321,6 +321,41 @@ test "codegen(çalıştır): Faz U.4.4 — closure func-tipli bir PARAMETRE olar
     );
 }
 
+test "codegen(çalıştır): Faz U.5 — 'with EXPR as NAME:' temel __enter__/__exit__ akışı" {
+    try expectGolden(
+        @embedFile("codegen_cases/with_basic_enter_exit.nox"),
+        @embedFile("codegen_cases/with_basic_enter_exit.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz U.5 — 'with' gövdesi içindeki 'return', __exit__'i BEKLEYİP SONRA dönüş yapar" {
+    try expectGolden(
+        @embedFile("codegen_cases/with_return_inside_runs_exit.nox"),
+        @embedFile("codegen_cases/with_return_inside_runs_exit.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz U.5 — 'with' içinde raise edilen istisna DIŞ bir try/except tarafından yakalanır, __exit__ ARADA çalışır" {
+    try expectGolden(
+        @embedFile("codegen_cases/with_exception_caught_by_outer_try_runs_exit.nox"),
+        @embedFile("codegen_cases/with_exception_caught_by_outer_try_runs_exit.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz U.5 — heap-yönetimli bir bağlam değeri döngü içinde tekrar tekrar with'lenir, sızıntı yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/with_heap_capture_loop_no_leak.nox"),
+        @embedFile("codegen_cases/with_heap_capture_loop_no_leak.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz U.5 — 'as NAME' OLMADAN 'with EXPR:' (yalnızca yan etki İÇİN)" {
+    try expectGolden(
+        @embedFile("codegen_cases/with_no_binding.nox"),
+        @embedFile("codegen_cases/with_no_binding.expected"),
+    );
+}
+
 test "codegen: Faz T.3 — debug_source_path VERİLMEDEN dbgfile/dbgloc HİÇ üretilmez (opt-in, sıfır davranış değişikliği)" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

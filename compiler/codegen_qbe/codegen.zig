@@ -698,6 +698,11 @@ fn stmtUsesAsync(stmt: ast.Stmt) bool {
             for (ll.body) |s| if (stmtUsesAsync(s)) break :blk true;
             break :blk false;
         },
+        .with_stmt => |w| blk: {
+            if (exprUsesAsync(w.ctx_expr)) break :blk true;
+            for (w.body) |s| if (stmtUsesAsync(s)) break :blk true;
+            break :blk false;
+        },
     };
 }
 
@@ -1187,9 +1192,57 @@ const Codegen = struct {
                     const mangled = try sanitizePathToSymbol(self.allocator, path);
                     try locals.append(self.allocator, .{ .name = fd.name, .info = .{ .qtype = .l, .heap = .closure, .class_name = mangled } });
                 },
+                // Faz U.5: `with EXPR as NAME:` — İKİ gizli/örtük yerel
+                // GEREKİR: (1) `EXPR`in değerini TUTAN, fonksiyon-genelinde
+                // bir gizli yerel (`__with_ctx_L<satır>` — bkz. `genWith`in
+                // belge notu, AYNI formül) ve (2) `binding` VERİLDİYSE onun
+                // KENDİ slotu. `EXPR`in SINIFI (bkz. `inferWithCtxClassName`)
+                // codegen'in (checker'ın AKSİNE tam tip çıkarımı OLMAYAN)
+                // KISITLI desenlerinden (`ClassAdı(...)` kurucu çağrısı YA
+                // DA ZATEN bilinen bir yerel) çıkarılır — `for x in xs:`nin
+                // AYNI kısıtıyla TUTARLI (bkz. yukarıdaki `.for_stmt` dalı).
+                .with_stmt => |w| {
+                    const class_name = try self.inferWithCtxClassName(w.ctx_expr, locals.items);
+                    try locals.append(self.allocator, .{
+                        .name = try std.fmt.allocPrint(self.allocator, "__with_ctx_L{d}", .{stmt.line}),
+                        .info = .{ .qtype = .l, .heap = .class, .class_name = class_name },
+                        .arena = in_lowlevel,
+                    });
+                    if (w.binding) |bn| {
+                        const cinfo = self.classes.get(class_name).?;
+                        const enter_sig = cinfo.methods.get("__enter__") orelse return error.Unsupported;
+                        try locals.append(self.allocator, .{ .name = bn, .info = enter_sig.ret, .arena = in_lowlevel });
+                    }
+                    try self.collectLocals(locals, w.body, in_lowlevel);
+                },
                 .class_def, .protocol_def, .extern_def => return error.Unsupported,
                 else => {},
             }
+        }
+    }
+
+    /// Faz U.5: `collectLocals`in `.with_stmt` dalı İÇİN — `ctx_expr`in
+    /// SINIFINI, checker'ın TAM tip çıkarımı OLMADAN, YALNIZCA iki gerçekçi
+    /// desenden çıkarır: doğrudan bir `ClassAdı(...)` kurucu çağrısı (ör.
+    /// `with FileHandle("x.txt") as f:`) ya da ZATEN bilinen (önceden
+    /// `locals`e eklenmiş) bir sınıf tipli yerelin adı (ör. `with existing_
+    /// resource:`). Başka HİÇBİR ifade şekli (alan okuması, metod çağrısı,
+    /// indeksleme...) v1 kapsamında DESTEKLENMEZ — `inferFieldType`in AYNI
+    /// bilinçli dar kapsamıyla TUTARLI.
+    fn inferWithCtxClassName(self: *Codegen, ctx_expr: ast.Expr, locals: []const LocalDecl) CodegenError![]const u8 {
+        switch (ctx_expr) {
+            .call => |c| {
+                if (c.callee.* != .identifier) return error.Unsupported;
+                const name = c.callee.identifier;
+                if (!self.classes.contains(name)) return error.Unsupported;
+                return name;
+            },
+            .identifier => |name| {
+                const info = findLocal(locals, name) orelse return error.Unsupported;
+                if (info.heap != .class) return error.Unsupported;
+                return info.class_name orelse return error.Unsupported;
+            },
+            else => return error.Unsupported,
         }
     }
 
@@ -2551,6 +2604,7 @@ const Codegen = struct {
                 .lowlevel_stmt => |ll| try self.genLowLevel(ll, ret_qtype),
                 .pass_stmt => {},
                 .func_def => |fd| try self.genNestedFuncDef(fd),
+                .with_stmt => |w| try self.genWith(w, stmt.line, ret_qtype),
                 .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => return error.Unsupported,
             }
         }
@@ -2586,6 +2640,37 @@ const Codegen = struct {
         }
     }
 
+    /// `genTry`nin KENDİ `finally_body`sini (`fb`) "gerçek", KORUNMASIZ bir
+    /// çıkış eylemi OLARAK çalıştırır — `fb`, ÇAĞRILDIĞI ANDA `finally_stack`in
+    /// EN ÜSTÜNDEDİR (genTry'nin push'u SAYESİNDE, bkz. `finally_stack`in
+    /// belge notu); GEÇİCİ olarak POP'lanıp (KENDİ İÇİNDEKİ bir çağrı istisna
+    /// fırlatırsa bu istisnanın `emitExceptionCheck` ARACILIĞIYLA `fb`yi
+    /// TEKRAR draine ETMEK YERİNE doğru şekilde DIŞARIYA, `saved_catch`e
+    /// yayılması İÇİN) çalıştırılır, SONRA (BAŞKA bir çıkış yolu — ör. bir
+    /// SONRAKİ `except` dalının KENDİ `return`ü — HÂLÂ onu gerektirebileceğinden)
+    /// GERİ EKLENİR.
+    ///
+    /// **Düzeltilen kritik hata (Faz U.5'in doğrulaması SIRASINDA bulundu):**
+    /// bu SARMALAMA OLMADAN, `fb` `finally_stack`deYKEN doğrudan `genStmts(fb)`
+    /// İLE çalıştırılırsa VE `fb` bir METOD ÇAĞRISI İÇERİYORSA (metod
+    /// çağrıları HER ZAMAN `emitExceptionCheck` üretir, `must_not_raise`
+    /// elemesi onlar İÇİN UYGULANMAZ — bkz. M.8'in ertelenmiş notu),
+    /// `current_catch_label` bu noktada ZATEN eski değerine (genellikle
+    /// `null`) DÖNMÜŞ OLDUĞUNDAN `emitExceptionCheck` `drainFinally`yi
+    /// ÇAĞIRIR — bu da `finally_stack`de HÂLÂ DURAN `fb`yi TEKRAR çalıştırır,
+    /// bu da AYNI metod çağrısını TEKRAR üretir... SONSUZ DERLEME-ZAMANI
+    /// özyinelemesi (noxc'nin KENDİSİNİN yığın taşmasıyla ÇÖKMESİ). Bu,
+    /// Faz U.5'in `with` desteğini genTry'ye DEVREDEN `genWith`i doğrularken
+    /// KEŞFEDİLDİ — `__exit__()` HER ZAMAN bir metod çağrısı OLDUĞUNDAN, İÇİNDE
+    /// bir METOD ÇAĞRISI OLAN HER `finally`/`with` bloğu bunu tetikler
+    /// (yalnızca `with`e özgü DEĞİL — sıradan `try/finally` İÇİN de GEÇERLİ
+    /// bir düzeltmedir, `with` bunu YALNIZCA İLK KEZ ORTAYA ÇIKARDI).
+    fn runDetachedFinally(self: *Codegen, fb: []const ast.Stmt, ret_qtype: QbeType) CodegenError!void {
+        _ = self.finally_stack.pop();
+        try self.genStmts(fb, ret_qtype);
+        try self.finally_stack.append(self.allocator, fb);
+    }
+
     fn genTry(self: *Codegen, t: ast.TryStmt, ret_qtype: QbeType) CodegenError!void {
         const dispatch_label = try self.newLabel("try_dispatch");
         const after_label = try self.newLabel("try_after");
@@ -2601,7 +2686,14 @@ const Codegen = struct {
         // burada BİR KEZ çalıştır. `t.try_body` bir `return` ile bittiyse bu
         // nokta hiç erişilmez (üstteki `genStmts` zaten bir `ret` üretti ve
         // `drainFinally` orada devreye girdi) — o durumda burası ölü koddur.
-        if (t.finally_body) |fb| try self.genStmts(fb, ret_qtype);
+        // `runDetachedFinally` (bkz. onun belge notu) kullanılır — `fb`nin
+        // KENDİSİ `finally_stack`de İKEN çalıştırılırsa, İÇİNDE bir metod
+        // çağrısı (HER ZAMAN `emitExceptionCheck` üretir) varsa `current_
+        // catch_label` ZATEN eski değerine döndüğünden `drainFinally`
+        // `fb`yi TEKRAR çalıştırıp SONSUZ derleme-zamanı özyinelemesine
+        // yol açardı (bkz. Faz U.5'in doğrulaması, bunu İLK KEZ ortaya
+        // çıkaran senaryo).
+        if (t.finally_body) |fb| try self.runDetachedFinally(fb, ret_qtype);
         try self.out.writer.print("    jmp {s}\n", .{after_label});
 
         try self.out.writer.print("{s}\n", .{dispatch_label});
@@ -2634,7 +2726,7 @@ const Codegen = struct {
                 try self.out.writer.print("    storel {s}, {s}\n", .{ exc_ptr, info.slot });
             }
             try self.genStmts(ec.body, ret_qtype);
-            if (t.finally_body) |fb| try self.genStmts(fb, ret_qtype);
+            if (t.finally_body) |fb| try self.runDetachedFinally(fb, ret_qtype);
             try self.out.writer.print("    jmp {s}\n", .{after_label});
             next_check = following;
         }
@@ -2654,6 +2746,70 @@ const Codegen = struct {
 
         try self.out.writer.print("{s}\n", .{after_label});
         try self.out.writer.print("{s}\n", .{end_label});
+    }
+
+    /// Faz U.5: `with EXPR as NAME:` — bkz. `ast.WithStmt`in belge notu.
+    /// `EXPR`in DEĞERİ (`ctx_val`), fonksiyonun geri kalanıyla AYNI
+    /// "fonksiyon-genelinde yerel" modelini paylaşan GİZLİ bir yerelde
+    /// (`__with_ctx_L<satır>`, bkz. `collectLocals`in `.with_stmt` dalı —
+    /// AYNI isim FORMÜLÜ) TUTULUR — GERÇEK bellek serbest bırakması normal
+    /// fonksiyon-sonu `releaseAllLocals`e ERTELENİR (Python'un HEMEN bloğun
+    /// SONUNDA serbest bırakmasından FARKLI, ama ARC doğruluğu AÇISINDAN
+    /// eşdeğerdir).
+    ///
+    /// **Kritik tasarım kararı — gövde/temizlik İLİŞKİSİ, SIFIR `except`
+    /// dallı bir `try/finally` İLE BİREBİR AYNIDIR:** İlk tasarım (`__exit__`
+    /// çağrısını `finally_stack`e itip yalnızca NORMAL tamamlanmada elle
+    /// çalıştırmak) YANLIŞTI — bir istisna, `with` gövdesini SARAN bir DIŞ
+    /// `try`nin dispatch'i tarafından yakalandığında, `emitExceptionCheck`
+    /// `current_catch_label` AYARLIYSA doğrudan O dispatch'e ATLAR
+    /// (`drainFinally`Yİ HİÇ ÇAĞIRMADAN, bkz. onun belge notu) — bu durumda
+    /// `with`in `__exit__`i ASLA çalışmazdı. `genTry`nin KENDİSİ bunu TAM
+    /// OLARAK ÇÖZER: `current_catch_label`i KENDİ dispatch'ine ÇEVİRİP HER
+    /// çıkış yolunda (normal/eşleşen-except/eşleşmeyen-yeniden-fırlatma)
+    /// `finally_body`yi SATIR İÇİNDE ÇALIŞTIRIR — `with`in `__exit__`i TAM
+    /// OLARAK bu `finally_body` ROLÜNÜ oynar. Bu yüzden `genWith`, KENDİ
+    /// dispatch/reraise mantığını YENİDEN YAZMAK YERİNE, `except_clauses`i
+    /// BOŞ bir sentetik `ast.TryStmt` inşa edip DOĞRUDAN `genTry`ye
+    /// (battle-tested, `raise`/`return`/normal tamamlanma DAHİL HER yolu
+    /// zaten doğru işleyen) DEVREDER.
+    fn genWith(self: *Codegen, w: ast.WithStmt, line: u32, ret_qtype: QbeType) CodegenError!void {
+        const hidden_name = try std.fmt.allocPrint(self.allocator, "__with_ctx_L{d}", .{line});
+        const ctx_val = try self.genExpr(w.ctx_expr);
+        if (ctx_val.heap != .class) return error.Unsupported;
+        const hidden = self.vars.get(hidden_name).?;
+        const retained = try self.retainIfAliasing(w.ctx_expr, ctx_val);
+        if (isHeapManaged(hidden.heap) and !hidden.arena) try self.releaseSlotIfSet(hidden);
+        try self.out.writer.print("    storel {s}, {s}\n", .{ retained.text, hidden.slot });
+
+        const enter_call = try self.buildMethodCallExpr(hidden_name, "__enter__");
+        const enter_result = try self.genExpr(enter_call);
+        if (w.binding) |bn| {
+            const bind_info = self.vars.get(bn).?;
+            const converted = try self.convert(enter_result, bind_info.qtype);
+            if (isHeapManaged(bind_info.heap) and !bind_info.arena) try self.releaseSlotIfSet(bind_info);
+            try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(bind_info.qtype), converted.text, bind_info.slot });
+        } else {
+            try self.releaseIfTemporary(enter_call, enter_result);
+        }
+
+        const exit_call = try self.buildMethodCallExpr(hidden_name, "__exit__");
+        const exit_stmts = try self.allocator.alloc(ast.Stmt, 1);
+        exit_stmts[0] = .{ .kind = .{ .expr_stmt = exit_call }, .line = line };
+
+        try self.genTry(.{ .try_body = w.body, .except_clauses = &.{}, .finally_body = exit_stmts }, ret_qtype);
+    }
+
+    /// `genWith`in sentetik `obj.method()` çağrı ifadesi kurucusu —
+    /// `__enter__`/`__exit__`i, `genExpr`in NORMAL `.call`/`.attribute`
+    /// dağıtımından (`genMethodCall`) geçirebilmek İÇİN (retain/release/
+    /// istisna kontrolü DAHİL, HİÇBİR ÖZEL kod GEREKMEDEN).
+    fn buildMethodCallExpr(self: *Codegen, obj_name: []const u8, method: []const u8) CodegenError!ast.Expr {
+        const obj_expr = try self.allocator.create(ast.Expr);
+        obj_expr.* = .{ .identifier = obj_name };
+        const attr_expr = try self.allocator.create(ast.Expr);
+        attr_expr.* = .{ .attribute = .{ .obj = obj_expr, .attr = method } };
+        return .{ .call = .{ .callee = attr_expr, .args = &.{} } };
     }
 
     /// Bir `lowlevel:` bloğu için yeni bir arena oluşturur, blok boyunca
@@ -3863,6 +4019,15 @@ const Codegen = struct {
                 if (t.finally_body) |fb| try self.collectRaiseInfoStmts(fb, info);
             },
             .lowlevel_stmt => |ll| try self.collectRaiseInfoStmts(ll.body, info),
+            // Faz U.5: bir `with` deyimi HER ZAMAN örtük `__enter__`/
+            // `__exit__` METOD ÇAĞRILARI içerir — metod çağrılarının
+            // muhafazakâr olarak HER ZAMAN "güvensiz" sayılmasıyla (bkz.
+            // yukarıdaki belge notu) TUTARLI.
+            .with_stmt => |w| {
+                info.direct_unsafe = true;
+                try self.collectRaiseInfoExpr(w.ctx_expr, info);
+                try self.collectRaiseInfoStmts(w.body, info);
+            },
         }
     }
 

@@ -150,6 +150,14 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   kaldırıldı. Bilinçli v1 sınırı: yalnızca bir iç içe `def`den inşa edilen
   closure'lar func-tipli olabilir — üst-düzey bir `def`e çıplak referans
   (`f: (int) -> int = add`) henüz desteklenmiyor.
+- `with EXPR as NAME:` / `with EXPR:` (bağlam yöneticisi / context manager)
+  eklendi (Faz U.5) — `EXPR`, bir `__enter__(self) -> T` / `__exit__(self)
+  -> None` metod çiftine sahip bir sınıf örneği olmalıdır; `__exit__` HER
+  ZAMAN çalışır (normal tamamlanma, `return`, yakalanmamış istisna DAHİL).
+  Bilinçli v1 sınırları: `__enter__`/`__exit__` argüman almaz, `__exit__`
+  bir istisnayı bastıramaz, birden çok bağlam yöneticisi tek bir `with`de
+  virgülle birleştirilemez (her biri ayrı bir `with` olarak iç içe
+  yazılmalıdır).
 
 ### Düzeltildi
 - **Önemli test-altyapısı düzeltmesi:** `compiler/*.zig` dosyalarına gömülü
@@ -210,6 +218,19 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   manuel uçtan-uca testte bulundu). `class_name.?` → `class_name orelse
   return error.Unsupported` — artık main.zig'in zaten yakaladığı güvenli
   "henüz desteklenmiyor" hatasına düşüyor, panik yok.
+- **Kritik, Faz 7'den beri var olan bir `try/finally` hatası düzeltildi**
+  (Faz U.5'in `with` doğrulaması sırasında bulundu): bir `finally` bloğu
+  İÇİNDE bir METOD ÇAĞRISI varsa (metod çağrıları her zaman bir istisna
+  kontrolü üretir) VE bu finally normal-tamamlanma/eşleşen-`except`
+  yolunda çalıştırılıyorsa, noxc'nin KENDİSİ derleme sırasında sonsuz
+  özyinelemeyle (yığın taşması) çöküyordu — `finally_body`, KENDİSİ
+  çalışırken hâlâ `finally_stack`de olduğundan, içindeki çağrının istisna
+  kontrolü `drainFinally`yi tetikleyip aynı `finally`yi tekrar tekrar
+  çalıştırıyordu. Yeni `runDetachedFinally` yardımcısı bunu düzeltiyor
+  (finally'yi çalıştırmadan önce geçici olarak yığından çıkarıp sonra
+  geri ekliyor). Önceden hiçbir test bir metod çağrısı içeren `finally`
+  yazmadığından fark edilmemişti — `with`in `__exit__`i her zaman bir
+  metod çağrısı olduğundan bunu ilk kez ortaya çıkardı.
 
 ### Güvenlik
 - `nox.http.serve`e iki DoS sertleştirmesi eklendi (Faz Q.5): bir isteğin

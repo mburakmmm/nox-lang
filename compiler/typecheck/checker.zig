@@ -998,6 +998,7 @@ pub const Checker = struct {
                 if (t != .class) return self.fail(error.TypeMismatch, "'raise' yalnızca bir sınıf örneği alabilir", .{});
             },
             .try_stmt => |t| try self.checkTry(ctx, t),
+            .with_stmt => |w| try self.checkWith(ctx, w),
             .lowlevel_stmt => |ll| {
                 // İlke #2: `lowlevel` yalnızca tahsis STRATEJİSİNİ gevşetir;
                 // tip sistemi burada da tam olarak zorunludur — gövde normal
@@ -1041,6 +1042,40 @@ pub const Checker = struct {
             for (ec.body) |s| try self.checkStmt(ctx, s);
         }
         if (t.finally_body) |fb| for (fb) |s| try self.checkStmt(ctx, s);
+    }
+
+    /// Faz U.5: `with EXPR as NAME:` — `EXPR` bir `__enter__(self) -> T`/
+    /// `__exit__(self) -> None` metod çiftine sahip bir SINIF örneği
+    /// DEĞERLENDİRMELİDİR (bkz. `ast.WithStmt`in belge notu — v1 kapsamı
+    /// bilinçli DAR: İKİ metod da argümansızdır, `__exit__` bir istisnayı
+    /// ASLA bastıramaz). `binding` VERİLDİYSE `__enter__`in DÖNÜŞ tipine
+    /// bağlanır (`EXPR`in KENDİ tipine DEĞİL — Python'un KENDİ ayrımıyla
+    /// TUTARLI).
+    fn checkWith(self: *Checker, ctx: *FnCtx, w: ast.WithStmt) TypeError!void {
+        const ctx_t = try self.checkExpr(ctx, w.ctx_expr);
+        const class_name = switch (ctx_t) {
+            .class => |n| n,
+            else => return self.fail(error.TypeMismatch, "'with' yalnızca bir sınıf örneği üzerinde çalışır", .{}),
+        };
+        const info = self.classes.getPtr(class_name) orelse
+            return self.fail(error.UndefinedClass, "bilinmeyen sınıf: {s}", .{class_name});
+        const enter_sig = info.methods.get("__enter__") orelse
+            return self.fail(error.UndefinedMethod, "'{s}' sınıfının '__enter__' metodu yok ('with' için gerekli)", .{class_name});
+        if (enter_sig.params.len != 0) {
+            return self.fail(error.TypeMismatch, "'{s}.__enter__' hiçbir argüman ALMAMALIDIR", .{class_name});
+        }
+        const exit_sig = info.methods.get("__exit__") orelse
+            return self.fail(error.UndefinedMethod, "'{s}' sınıfının '__exit__' metodu yok ('with' için gerekli)", .{class_name});
+        if (exit_sig.params.len != 0) {
+            return self.fail(error.TypeMismatch, "'{s}.__exit__' hiçbir argüman ALMAMALIDIR", .{class_name});
+        }
+        if (exit_sig.return_type != .none) {
+            return self.fail(error.TypeMismatch, "'{s}.__exit__' None DÖNMELİDİR", .{class_name});
+        }
+        if (w.binding) |bn| {
+            try ctx.scope.declare(self.allocator, bn, enter_sig.return_type);
+        }
+        for (w.body) |s| try self.checkStmt(ctx, s);
     }
 
     /// Faz U.4.2: bir İÇ İÇE `def`in gövdesini, `ctx.scope`u `parent` OLARAK
@@ -1862,6 +1897,11 @@ pub const Checker = struct {
                 } };
             },
             .lowlevel_stmt => |ll| .{ .lowlevel_stmt = .{ .body = try self.substituteStmts(ll.body, bindings) } },
+            .with_stmt => |w| .{ .with_stmt = .{
+                .ctx_expr = w.ctx_expr,
+                .binding = w.binding,
+                .body = try self.substituteStmts(w.body, bindings),
+            } },
             // expr_stmt/assign/return_stmt/raise_stmt/pass_stmt hiç TypeExpr
             // içermez; func_def/class_def bir fonksiyon gövdesi içinde zaten
             // reddedilir (bkz. checkStmt) — bu yüzden buraya hiç ulaşmazlar.

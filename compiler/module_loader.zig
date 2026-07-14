@@ -435,6 +435,11 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
         // gerek yok.
         .from_import_stmt => return s,
         .pass_stmt => return s,
+        .with_stmt => |w| .{ .with_stmt = .{
+            .ctx_expr = try renameExpr(a, w.ctx_expr, map),
+            .binding = w.binding,
+            .body = try renameStmts(a, w.body, map),
+        } },
     };
     return .{ .kind = kind, .line = s.line };
 }

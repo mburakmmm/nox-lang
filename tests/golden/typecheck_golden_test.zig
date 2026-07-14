@@ -352,3 +352,31 @@ test "golden(typecheck): Faz U.4.2 — async iç içe def reddedilir" {
         @embedFile("typecheck_cases/err_nested_def_async.expected"),
     );
 }
+
+test "golden(typecheck): Faz U.5 — 'with EXPR as NAME:' __enter__/__exit__ çifti olan bir sınıfla kabul edilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_with_basic.nox"),
+        @embedFile("typecheck_cases/ok_with_basic.expected"),
+    );
+}
+
+test "golden(typecheck): Faz U.5 — '__enter__' metodu OLMAYAN bir sınıfla 'with' reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_with_missing_enter.nox"),
+        @embedFile("typecheck_cases/err_with_missing_enter.expected"),
+    );
+}
+
+test "golden(typecheck): Faz U.5 — '__exit__' metodu OLMAYAN bir sınıfla 'with' reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_with_missing_exit.nox"),
+        @embedFile("typecheck_cases/err_with_missing_exit.expected"),
+    );
+}
+
+test "golden(typecheck): Faz U.5 — sınıf örneği OLMAYAN bir ifadeyle 'with' reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_with_not_a_class.nox"),
+        @embedFile("typecheck_cases/err_with_not_a_class.expected"),
+    );
+}

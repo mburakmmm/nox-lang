@@ -335,6 +335,15 @@ const Printer = struct {
                 try self.writer.writeAll("pass");
                 try self.line(stmt.line);
             },
+            .with_stmt => |w| {
+                try self.indentTo(depth);
+                try self.writer.writeAll("with ");
+                try self.printExpr(w.ctx_expr);
+                if (w.binding) |bn| try self.writer.print(" as {s}", .{bn});
+                try self.writer.writeAll(":");
+                try self.line(stmt.line);
+                try self.printStmts(w.body, depth + 1);
+            },
         }
     }
 

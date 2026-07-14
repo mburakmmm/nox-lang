@@ -38,6 +38,7 @@ pub const TokenKind = enum {
     kw_spawn,
     kw_import,
     kw_with_rt,
+    kw_with,
 
     // punctuation
     colon,
@@ -135,6 +136,7 @@ const keyword_table = .{
     .{ "spawn", TokenKind.kw_spawn },
     .{ "import", TokenKind.kw_import },
     .{ "with_rt", TokenKind.kw_with_rt },
+    .{ "with", TokenKind.kw_with },
 };
 
 /// Bir tanımlayıcı sözcüğün anahtar kelime olup olmadığını denetler.

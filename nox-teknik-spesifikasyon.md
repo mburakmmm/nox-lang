@@ -6356,6 +6356,122 @@ fonksiyon değeri modeline sahip.
 
 ---
 
+## 3.28 Faz U.5 — `with` / Bağlam Yöneticisi (Context Manager)
+
+**Kapsam:** `with EXPR as NAME:` / `with EXPR:` — Python'un `__enter__`/
+`__exit__` protokolüyle BENZER, ama BİLİNÇLİ olarak DAHA DAR bir v1: `EXPR`
+bir `__enter__(self) -> T` / `__exit__(self) -> None` metod ÇİFTİNE sahip
+bir SINIF örneği değerlendirmelidir (İKİSİ de argümansızdır); `__exit__`
+HİÇBİR istisna bilgisi ALMAZ ve bir istisnayı ASLA BASTIRAMAZ (Python'un
+`__exit__(exc_type, exc_value, tb) -> bool`sinin AKSİNE — v1 kapsamı
+BİLİNÇLİ olarak yalnızca "kaynak temizliği garantisi" senaryosunu hedefler,
+"istisna yutma" YOK). `binding` (`as NAME` VERİLDİYSE) `__enter__`in DÖNÜŞ
+DEĞERİNE bağlanır — `EXPR`in KENDİSİNE DEĞİL (Python'un KENDİ ayrımıyla
+TUTARLI, `open(...)`in `__enter__`i dosya tutamacının KENDİSİNİ döner ama
+bir contextlib tarzı sarmalayıcı FARKLI bir değer dönebilir).
+
+**Mimari — `EXPR`in DEĞERİ fonksiyon-genelinde GİZLİ bir yerelde tutulur,
+gövde/temizlik ilişkisi SIFIR `except` dallı bir `try/finally`YLE BİREBİR
+AYNIDIR:** yeni `ast.WithStmt = struct { ctx_expr: Expr, binding: ?[]const
+u8, body: []Stmt }` (yeni `kw_with` anahtar kelimesi, `parseWith`).
+Checker'ın `checkWith`i: `EXPR`in tipinin `.class` olduğunu, o sınıfın
+`__enter__`/`__exit__` metod ÇİFTİNE (argümansız, `__exit__`in `None`
+DÖNDÜĞÜ) sahip olduğunu doğrular; `binding` VERİLDİYSE `__enter__`in dönüş
+tipine bağlar; gövdeyi NORMAL `checkStmt` yoluyla denetler. Codegen'in
+`genWith`i: `EXPR`i değerlendirip fonksiyon-genelinde GİZLİ bir yerele
+(`__with_ctx_L<satır>` — `collectLocals`in YENİ `inferWithCtxClassName`
+yardımcısı, `for x in xs:`nin AYNI "kısıtlı desen tabanlı tip çıkarımı"
+kısıtıyla, `EXPR`in sınıfını YALNIZCA doğrudan bir `ClassAdı(...)` kurucu
+çağrısından YA DA ZATEN bilinen bir yerelden çıkarır) depolar; `__enter__()`
+çağrısını (sentetik bir `obj.method()` AST ifadesi İNŞA EDİP `genExpr`in
+NORMAL `.call`/`.attribute` dağıtımından — `genMethodCall` — geçirerek,
+HİÇBİR özel kod GEREKMEDEN retain/release/istisna kontrolü DAHİL doğru
+işler) yapıp `binding`e bağlar; SONRA gövde/temizlik çiftini, `except_
+clauses` BOŞ bir sentetik `ast.TryStmt` (`finally_body` = sentetik
+`__exit__()` çağrısı) inşa edip DOĞRUDAN `genTry`ye DEVREDEREK üretir —
+`return`/istisna yayılımı/normal tamamlanma DAHİL HER çıkış yolu, `try/
+finally`nin ZATEN battle-tested olan mekanizmasıyla AYNEN işlenir. GERÇEK
+bellek serbest bırakması (GİZLİ ctx yerelinin KENDİSİ) normal fonksiyon-
+sonu `releaseAllLocals`e ERTELENİR (Python'un HEMEN bloğun SONUNDA serbest
+bırakmasından FARKLI, ama ARC doğruluğu AÇISINDAN eşdeğerdir — TÜM yereller
+zaten fonksiyon-genelinde bu şekilde yönetiliyor, bkz. §3.1).
+
+**KRİTİK, ÖNCEDEN VAR OLAN bir hata BULUNDU ve DÜZELTİLDİ — `genTry`nin
+`finally_body`si KENDİSİ ÇALIŞIRKEN `finally_stack`de KALIYORDU:** `genWith`i
+`genTry`ye devretme tasarımı doğrulanırken (bir `return`, bir `with` GÖVDESİ
+İÇİNDEN, `__exit__` GİBİ bir METOD ÇAĞRISI İÇEREN bir temizlik gövdesiyle
+BİRLEŞTİĞİNDE) noxc'NİN KENDİSİ derleme sırasında SONSUZ özyinelemeyle
+ÇÖKTÜ (yığın taşması). Kök neden: `genTry`nin normal-tamamlanma VE
+eşleşen-`except` yollarında `finally_body` (`fb`) DOĞRUDAN `genStmts(fb,
+...)` İLE çalıştırılıyordu — AMA `fb`, `self.finally_stack`den YALNIZCA
+İLGİLİ `try`nin korumalı bölgesinden TAMAMEN çıkıldıktan SONRA (except
+döngüsünün EN SONUNDA) çıkarılıyordu. `fb` İÇİNDE bir METOD ÇAĞRISI VARSA
+(metod çağrıları HER ZAMAN `emitExceptionCheck` üretir, `must_not_raise`
+elemesi onlara UYGULANMAZ — bkz. M.8'in ertelenmiş notu) VE `current_catch_
+label` bu noktada ZATEN eski değerine (genellikle `null`) DÖNMÜŞ OLDUĞUNDAN,
+o METOD ÇAĞRISININ `emitExceptionCheck`i `drainFinally`yi ÇAĞIRIYORDU — bu
+da `finally_stack`de HÂLÂ DURAN `fb`yi TEKRAR çalıştırıyor, bu da AYNI metod
+çağrısını TEKRAR ÜRETİYOR... SONSUZ DERLEME-ZAMANI özyinelemesi. **Bu, YENİ
+BİR `with` HATASI DEĞİL, Faz 7'den BERİ var olan, hiçbir mevcut testin
+İÇİNDE bir metod çağrısı BARINDIRAN bir `finally` bloğu YAZMADIĞI İÇİN
+FARK EDİLMEMİŞ GERÇEK bir `try/finally` hatasıdır** — `with`in `__exit__`i
+HER ZAMAN bir metod çağrısı OLDUĞUNDAN bunu İLK KEZ ortaya çıkardı.
+**Düzeltme:** yeni `runDetachedFinally(fb, ret_qtype)` yardımcısı — `fb`yi
+çalıştırmadan HEMEN ÖNCE `finally_stack`den GEÇİCİ olarak POP'lar (KENDİ
+İÇİNDEKİ bir çağrı istisna fırlatırsa bunun DIŞARIYA, `saved_catch`e doğru
+yayılması İÇİN), çalıştırır, SONRA (bir SONRAKİ `except` dalının KENDİ
+`return`ü GİBİ BAŞKA bir çıkış yolu HÂLÂ onu gerektirebileceğinden) GERİ
+EKLER — `genTry`nin normal-tamamlanma VE her eşleşen-`except` yolundaki
+DOĞRUDAN `genStmts(fb, ...)` çağrıları BUNUNLA DEĞİŞTİRİLDİ (reraise
+yolundaki üçüncü çağrı, KENDİSİ ZATEN kalıcı pop'tan SONRA olduğundan
+DEĞİŞMEDİ, GÜVENLİYDİ).
+
+**Bilinçli v1 kapsam sınırları:** yalnızca bir iç içe `def` DEĞİL, herhangi
+bir SINIF örneği bağlam yöneticisi OLABİLİR (closure'lar İLE karıştırılmasın
+— bu TAMAMEN AYRI bir mekanizma); `__enter__`/`__exit__` argüman ALAMAZ;
+`__exit__` bir istisnayı BASTIRAMAZ; `EXPR`in sınıfı YALNIZCA doğrudan bir
+kurucu çağrısından YA DA ZATEN bilinen bir yerelden çıkarılabilir (bir alan
+okuması/metod çağrısı/indeksleme DEĞİL — `inferFieldType`in AYNI bilinçli
+dar kapsamıyla TUTARLI); birden çok bağlam yöneticisi TEK bir `with`de
+VİRGÜLLE birleştirilemez (`with A() as a, B() as b:` YOK — HER biri AYRI
+bir `with` deyimi olarak İÇ İÇE yazılmalıdır, kapsam/mekanizma AÇISINDAN
+FARK ETMEZ).
+
+**Doğrulama:**
+1. **5 uçtan-uca golden test** (`tests/golden/codegen_cases/`):
+   `with_basic_enter_exit.nox` (temel `as NAME` akışı); `with_return_
+   inside_runs_exit.nox` (`with` gövdesi içindeki `return`, `__exit__`i
+   BEKLEYİP SONRA döner); `with_exception_caught_by_outer_try_runs_exit.nox`
+   (KRİTİK — `with` içinde `raise` edilen bir istisna DIŞ bir `try/except`
+   tarafından yakalanır, `__exit__` ARADA doğru çalışır — TAM OLARAK
+   yukarıdaki `runDetachedFinally` düzeltmesinin doğruladığı senaryo);
+   `with_heap_capture_loop_no_leak.nox` (heap-yönetimli bir bağlam değeri
+   döngü içinde tekrar tekrar with'lenir, sızıntı yok); `with_no_binding.nox`
+   (`as NAME` OLMADAN `with EXPR:`).
+2. **4 typecheck golden testi**: `ok_with_basic`, `err_with_missing_enter`,
+   `err_with_missing_exit`, `err_with_not_a_class`.
+3. **Manuel uçtan-uca doğrulama** (`noxc build` + çalıştırma, `/tmp` scratch
+   dosyaları): TÜM yukarıdaki senaryolar + 1000 yinelemelik bir döngüde
+   heap-yönetimli bir capture'ın sızıntısız olduğu, HER SEFERİNDE stderr'de
+   "bellek sızıntısı tespit edildi" mesajının YOKLUĞU (bkz. `runtime/alloc/
+   asap.zig`nin `nox_runtime_deinit`i) doğrulanarak kanıtlandı. Bu manuel
+   test SIRASINDA `runDetachedFinally` düzeltmesi ORTAYA ÇIKTI — düzeltme
+   ÖNCESİ, `with_return_inside_runs_exit`in SENARYOSU noxc'nin KENDİSİNİN
+   (derleyicinin) yığın taşmasıyla ÇÖKMESİNE yol açıyordu (TAM stack trace
+   ile teşhis edildi — `drainFinally→genStmts→genMethodCall→emitExceptionCheck
+   →drainFinally` döngüsü); düzeltme SONRASI temiz "exit\n42\nafter\n" çıktısı
+   ÜRETTİĞİ doğrulandı. Bu GERÇEK, doğal olarak ORTAYA ÇIKAN bir "kırmızı"
+   kanıtı OLDUĞUNDAN (deliberate bir boz→kırmızı testi YERİNE), AYRICA
+   deliberate bir yeniden-tetikleme YAPILMADI — noxc'nin KENDİSİNİN sonsuz
+   özyinelemeyle çökmesi riski (potansiyel olarak uzun süre asılı kalan bir
+   `zig build test` çalıştırması) buna değecek EK bir doğrulama değeri
+   KATMIYORDU; ZATEN gözlemlenen çökme + kök-neden analizi + düzeltme SONRASI
+   doğrulama YETERLİ kanıt sağladı.
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
