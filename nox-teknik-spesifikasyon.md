@@ -5973,6 +5973,95 @@ atlanmayacak.
 
 ---
 
+## 3.25 Faz U.4.2 — İç İçe `def` + Serbest Değişken (Capture) Analizi
+
+**Kapsam:** U.4'ün İKİNCİ alt-fazı — checker'ın iç içe `def`i (KISITLI:
+generic OLMAYAN, `async` OLMAYAN) kabul etmesi, dış kapsamdaki serbest
+değişken referanslarını (capture) analiz etmesi, iç fonksiyonun adını dış
+kapsamda `.func` tipinde bir yerel değişken olarak bağlaması. Çalışma
+zamanı temsili/dolaylı çağrı HÂLÂ bu fazın DIŞINDA (U.4.3/U.4.4).
+
+**Mekanizma — `Scope`e ebeveyn zinciri + otomatik capture kaydı:**
+`Scope`e iki YENİ alan eklendi: `parent: ?*Scope` (yalnızca bir iç içe
+`def`in KENDİ scope'unda NON-null, dış kapsayan fonksiyonun scope'una
+işaret eder) ve `captures: ?*StringHashMapUnmanaged(Type)` (AYNI koşulda
+NON-null). `Scope.lookup` ARTIK bir allocator alıyor VE hata dönebiliyor
+(`!?Type`) — KENDİ değişkenlerinde bulamazsa `parent`a DÜŞER, bulursa VE
+`captures` AYARLIYSA bu ismi (İLK karşılaşmada) KAYDEDER. Bu, capture
+listesinin `checkNestedFuncDef`in iç fonksiyon gövdesini NORMAL şekilde
+(`checkStmt`/`checkExpr` DEĞİŞMEDEN) denetlemesinin YAN ÜRÜNÜ olarak,
+HİÇBİR ayrı "serbest değişken bulma" geçişi GEREKMEDEN ortaya çıkmasını
+sağlar — Scope zaten TEK dağıtım noktası (`ctx.scope.lookup`) olduğundan.
+
+**`checkNestedFuncDef`:** `ctx.scope`u `parent` olarak KULLANAN yeni bir
+`inner_scope` (+ `captures` haritası) inşa eder, iç fonksiyonun
+parametrelerini BUNA bildirir, gövdeyi normal `checkStmt` yoluyla denetler,
+`alwaysReturns` kontrolünü (üst-düzey fonksiyonlarla AYNI) uygular, SONRA
+toplanan capture'ları `Checker.closure_infos`e (anahtar: `"<dış_yol>.
+<iç_isim>"`, bkz. `FnCtx.path`in YENİ alanı — üst-düzey fonksiyonlar İÇİN
+kendi adı, metodlar İÇİN `"Sınıf.metod"`, iç içe İÇİN özyinelemeli olarak
+`"<dış_yol>.<iç_isim>"`) KAYDEDER VE iç fonksiyonun `Type.func` tipini
+DÖNER — `checkStmt`in `.func_def` dalı bunu `fd.name`e (dış kapsamda YEREL
+bir değişken olarak) BAĞLAR.
+
+**Bilinçli v1 kararı — YALNIZCA OKUNABİLİR yakalama (mutasyon-görünürlüğü
+YOK):** `checkAssign`in `.identifier` dalı `lookupLocal` (parent'a
+DÜŞMEYEN) kullanır — bulunamazsa VE isim `parent` zincirinde (`existsInChain`,
+yan etkisiz bir varlık kontrolü) VARSA, AÇIK bir hata verir ("iç içe
+fonksiyonun DIŞINDAN yakalanan bir değişkendir, yalnızca OKUNABİLİR").
+Kendi YEREL `var_decl`siyle GÖLGELEME (aynı isimde bir iç değişken
+tanımlamak) SORUNSUZ çalışır (`lookupLocal` KENDİ scope'ta bulur, `parent`a
+HİÇ bakmaz) — bu, Python'un "yerel atama YENİ bir yerel değişken yaratır"
+davranışına BENZER bir statik yaklaşımdır.
+
+**Bilinçli v1 kesintileri:** generic (`type_params.len > 0`) iç içe `def`
+REDDEDİLİR; `async def` iç içe REDDEDİLİR; capture'lar DEĞER anlık
+görüntüsüdür (dış değişkenin SONRADAN değişmesi closure İÇİNDEN
+GÖRÜNMEZ — U.4.3'ün ARC/codegen tasarımının DOĞAL bir sonucu, §3.23'te
+ÖNCEDEN kabul edildi); iç içe `def`in kendisi bir İFADE OLARAK
+kullanılamıyor (yalnızca bir STATEMENT — Python'daki GİBİ).
+
+**Yan düzeltme — `module_loader.zig`nin mangling'i iç içe `def`lere
+KARŞI KIRILGANDI:** `renameStmt`in `.func_def` dalı, `renameTopLevelFuncDef`i
+(`map.get(fd.name).?` — `fd.name`in rename haritasında KAYITLI olduğunu
+VARSAYAR) HER `func_def` deyimi İÇİN (top-level VEYA iç içe FARK ETMEKSİZİN)
+çağırıyordu. İç içe bir `def` (SADECE bir stdlib/proje modülünün İÇİNDE,
+kullanıcının KENDİ dosyasında DEĞİL — o hiç bu geçişten GEÇMİYOR) `map`de
+KAYITLI OLMADIĞINDAN bu, `.?`nin PANİK yapmasına yol AÇARDI (henüz hiçbir
+stdlib dosyası iç içe `def` KULLANMADIĞINDAN BUGÜNE kadar TETİKLENMEMİŞ bir
+gizli kusur). **Düzeltme:** YENİ `renameNestedFuncDef` (adı DEĞİŞTİRMEZ,
+yalnızca içindeki tip ifadelerini/gövdeyi yeniden adlandırır) eklendi;
+`renameStmt`in `.func_def` dalı `map.contains(fd.name)`e göre İKİSİ
+arasında dispatch eder.
+
+**Doğrulama:**
+1. **Manuel uçtan-uca:** `zig test` İLE doğrudan (harici bir Zig test
+   dosyası aracılığıyla, `nox.checker.check` ÇAĞRILARAK) BEŞ senaryo
+   doğrulandı: (a) geçerli bir capture (dış `n`yi okuyan bir iç `adder`)
+   → `OK`; (b) tanımsız serbest değişken → AÇIK `UndefinedVariable`; (c)
+   yakalanan bir değişkene atama → AÇIK, ÖZEL bir `TypeMismatch` mesajı;
+   (d) generic iç içe `def` → REDDEDİLİR; (e) `async` iç içe `def` →
+   REDDEDİLİR; (f) İÇ fonksiyonun KENDİ aynı-isimli yerel `var_decl`si dış
+   değişkeni GÖLGELER (capture DEĞİL, HATA da YOK). `noxc build` İLE de
+   manuel doğrulandı: checker AŞAMASI `OK` verirken, codegen (henüz U.4.3
+   UYGULANMADIĞINDAN) `error.Unsupported` İLE AÇIK/güvenli bir şekilde
+   BAŞARISIZ olur (ÇÖKME/YANLIŞ davranış DEĞİL) — bu, U.4.2/U.4.3
+   ARASINDAKİ sınırın TAM OLARAK tasarlandığı GİBİ çalıştığını kanıtlar.
+2. **Golden testler** (`tests/golden/typecheck_cases/`, 5 YENİ): `ok_nested_
+   def_capture.nox`, `err_nested_def_undefined_capture.nox`, `err_nested_
+   def_assign_to_capture.nox`, `err_nested_def_generic.nox`, `err_nested_
+   def_async.nox`.
+3. **Kasıtlı boz→kırmızı→düzelt:** `checkAssign`in "yakalanan değişkene
+   atama" kontrolü (`existsInChain` çağrısı) GEÇİCİ olarak `if (false and
+   ...)` İLE devre dışı BIRAKILDI → `err_nested_def_assign_to_capture`
+   testi GERÇEKTEN kırmızıya döndü (ÖZEL mesaj YERİNE genel "tanımsız
+   değişken" hatası — hâlâ bir hata, AMA YANLIŞ TÜRDEN), DİĞER 322 test
+   YEŞİL KALDI. Geri getirildi, 323/323 YEŞİLE döndü.
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

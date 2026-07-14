@@ -351,6 +351,26 @@ fn renameTopLevelFuncDef(a: std.mem.Allocator, fd: ast.FuncDef, map: *const Rena
     };
 }
 
+/// Faz U.4.2: İÇ İÇE (nested) `func_def`ler İÇİN — `renameTopLevelFuncDef`nin
+/// AKSİNE, `fd.name`in KENDİSİ `map`de KAYITLI DEĞİLDİR (yalnızca üst-düzey
+/// `func_def`/`class_def` adları kaydedilir, bkz. `loadImportsRecursive`)
+/// VE olmamalıdır — iç içe bir fonksiyonun adı DIŞ kapsama YEREL bir
+/// değişken bağlar (Faz U.4.2), qualified-call mangling'in KONUSU DEĞİLDİR.
+/// `renameStmt`in `.func_def` dalı, `fd.name`in `map`de olup OLMADIĞINA
+/// bakarak bu iki fonksiyon arasında dispatch eder.
+fn renameNestedFuncDef(a: std.mem.Allocator, fd: ast.FuncDef, map: *const RenameMap) std.mem.Allocator.Error!ast.FuncDef {
+    const params = try a.alloc(ast.Param, fd.params.len);
+    for (fd.params, 0..) |p, i| params[i] = .{ .name = p.name, .type_expr = try renameTypeExpr(a, p.type_expr, map) };
+    return .{
+        .name = fd.name,
+        .type_params = fd.type_params,
+        .params = params,
+        .return_type = try renameTypeExpr(a, fd.return_type, map),
+        .body = try renameStmts(a, fd.body, map),
+        .is_async = fd.is_async,
+    };
+}
+
 fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.Allocator.Error!ast.Stmt {
     const kind: ast.StmtKind = switch (s.kind) {
         .expr_stmt => |e| .{ .expr_stmt = try renameExpr(a, e, map) },
@@ -368,7 +388,14 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
         },
         .while_stmt => |w| .{ .while_stmt = .{ .cond = try renameExpr(a, w.cond, map), .body = try renameStmts(a, w.body, map) } },
         .for_stmt => |f| .{ .for_stmt = .{ .var_name = f.var_name, .iterable = try renameExpr(a, f.iterable, map), .body = try renameStmts(a, f.body, map) } },
-        .func_def => |fd| .{ .func_def = try renameTopLevelFuncDef(a, fd, map) },
+        // Faz U.4.2: `fd.name`in `map`de olup OLMAMASI, bu deyimin ÜST-DÜZEY
+        // (mangled edilmeli) mi YOKSA İÇ İÇE/nested (mangled EDİLMEMELİ,
+        // bkz. `renameNestedFuncDef`in belge notu) bir `func_def` mi
+        // OLDUĞUNU AYIRT EDER.
+        .func_def => |fd| if (map.contains(fd.name))
+            .{ .func_def = try renameTopLevelFuncDef(a, fd, map) }
+        else
+            .{ .func_def = try renameNestedFuncDef(a, fd, map) },
         .class_def => |cd| blk: {
             const methods = try a.alloc(ast.FuncDef, cd.methods.len);
             for (cd.methods, 0..) |m, i| methods[i] = try renameMethodDef(a, m, map);

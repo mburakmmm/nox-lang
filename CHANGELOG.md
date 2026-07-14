@@ -115,6 +115,16 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   U.4.4) geliyor. Kullanıcıyla netleşen karar: tam closure semantiği (dış
   kapsam değişkenlerini yakalama), yalnızca çıplak fonksiyon referansları
   değil.
+- İç içe `def` + serbest değişken (capture) analizi eklendi (Faz U.4.2) —
+  bir fonksiyon gövdesi içinde artık (generic/async olmayan) başka bir
+  `def` tanımlanabilir; dış kapsamdaki değişkenlere yapılan referanslar
+  otomatik olarak "yakalanır" (capture), iç fonksiyonun adı dış kapsamda
+  `.func` tipinde bir yerel değişkene bağlanır. Yakalama yalnızca okunabilir
+  (dış değişkene sonradan atama, closure'dan görünmez) — dış bir değişkene
+  ATANMAYA çalışmak açık bir hatayla reddedilir. Çalışma zamanı temsili/
+  dolaylı çağrı henüz yok (U.4.3/U.4.4'te geliyor) — şimdilik `noxc build`
+  bu tür bir programı derlerken checker aşamasını geçer ama codegen
+  aşamasında güvenli bir "henüz desteklenmiyor" hatasıyla durur.
 
 ### Düzeltildi
 - **Önemli test-altyapısı düzeltmesi:** `compiler/*.zig` dosyalarına gömülü

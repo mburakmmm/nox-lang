@@ -317,3 +317,38 @@ test "golden(typecheck): Faz U.4.1 — func tipi bir parametrenin ÇAĞRILMASI h
         @embedFile("typecheck_cases/err_func_type_call_not_yet_supported.expected"),
     );
 }
+
+test "golden(typecheck): Faz U.4.2 — iç içe def dış değişkeni yakalar (capture), kendisi çağrılmadan kabul edilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_nested_def_capture.nox"),
+        @embedFile("typecheck_cases/ok_nested_def_capture.expected"),
+    );
+}
+
+test "golden(typecheck): Faz U.4.2 — iç içe def'in gövdesindeki tanımsız serbest değişken açık hata verir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_nested_def_undefined_capture.nox"),
+        @embedFile("typecheck_cases/err_nested_def_undefined_capture.expected"),
+    );
+}
+
+test "golden(typecheck): Faz U.4.2 — yakalanan (capture) bir değişkene ATAMA reddedilir (yalnızca okunabilir)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_nested_def_assign_to_capture.nox"),
+        @embedFile("typecheck_cases/err_nested_def_assign_to_capture.expected"),
+    );
+}
+
+test "golden(typecheck): Faz U.4.2 — generic iç içe def reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_nested_def_generic.nox"),
+        @embedFile("typecheck_cases/err_nested_def_generic.expected"),
+    );
+}
+
+test "golden(typecheck): Faz U.4.2 — async iç içe def reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_nested_def_async.nox"),
+        @embedFile("typecheck_cases/err_nested_def_async.expected"),
+    );
+}

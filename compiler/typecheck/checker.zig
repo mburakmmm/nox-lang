@@ -96,15 +96,62 @@ const ProtocolInfo = struct {
 
 const Scope = struct {
     vars: std.StringHashMapUnmanaged(Type) = .{},
+    /// Faz U.4.2: yalnızca bir İÇ İÇE `def`in KENDİ scope'unda NON-null —
+    /// dış (kapsayan) fonksiyonun scope'una işaret eder. Üst-düzey bir
+    /// fonksiyonun/metodun scope'unda HER ZAMAN `null`dır.
+    parent: ?*Scope = null,
+    /// Faz U.4.2: yalnızca bir İÇ İÇE `def`in KENDİ scope'unda NON-null —
+    /// `lookup`un `parent` zincirine düşerek çözdüğü HER isim (bir "serbest
+    /// değişken"/capture) burada (isim → tip) KAYDEDİLİR (bkz. `checkStmt`in
+    /// `.func_def` dalı, `checkNestedFuncDef`).
+    captures: ?*std.StringHashMapUnmanaged(Type) = null,
 
     fn declare(self: *Scope, allocator: std.mem.Allocator, name: []const u8, ty: Type) !void {
         try self.vars.put(allocator, name, ty);
     }
 
-    fn lookup(self: *Scope, name: []const u8) ?Type {
+    /// YALNIZCA bu scope'un KENDİ değişkenlerine bakar — `parent` zincirine
+    /// DÜŞMEZ (bkz. `checkAssign`in `.identifier` dalı, "yakalanan bir
+    /// değişkene ATAMA denemesi" ayrımı İÇİN kullanılır).
+    fn lookupLocal(self: *Scope, name: []const u8) ?Type {
         return self.vars.get(name);
     }
+
+    /// KENDİ değişkenlerinde bulunamazsa `parent` zincirine DÜŞER — bulunursa
+    /// VE `self.captures` AYARLIYSA bu ismi (İLK karşılaşmada) bir "serbest
+    /// değişken" (capture) olarak KAYDEDER.
+    fn lookup(self: *Scope, allocator: std.mem.Allocator, name: []const u8) !?Type {
+        if (self.vars.get(name)) |t| return t;
+        if (self.parent) |p| {
+            if (try p.lookup(allocator, name)) |t| {
+                if (self.captures) |caps| {
+                    if (!caps.contains(name)) try caps.put(allocator, name, t);
+                }
+                return t;
+            }
+        }
+        return null;
+    }
+
+    /// `lookup`la AYNI zincir, ama HİÇBİR yan etkisi (capture kaydı) YOK —
+    /// yalnızca "bu isim BULUNABİLİR Mİ" sorusuna yanıt verir (bkz.
+    /// `checkAssign`in `.identifier` dalı, "yakalanan bir değişkene ATAMA
+    /// denemesi" İÇİN daha İYİ bir hata mesajı ÜRETMEK amacıyla kullanılır).
+    fn existsInChain(self: *Scope, name: []const u8) bool {
+        if (self.vars.contains(name)) return true;
+        if (self.parent) |p| return p.existsInChain(name);
+        return false;
+    }
 };
+
+/// Faz U.4.2: bir İÇ İÇE `def`in YAKALADIĞI TEK bir dış değişken (isim + tip).
+pub const CaptureVar = struct { name: []const u8, ty: Type };
+
+/// Faz U.4.2: bir İÇ İÇE `def`in TAM yakalama listesi — `Checker.closure_infos`da
+/// (anahtar: `"<dış_yol>.<iç_isim>"`, bkz. `FnCtx.path`in belge notu) saklanır,
+/// U.4.3'ün codegen'i TARAFINDAN (closure heap bloğunun İNŞASI İÇİN)
+/// TÜKETİLECEKTİR.
+pub const ClosureInfo = struct { captures: []const CaptureVar };
 
 /// Bir fonksiyon/metod gövdesi denetlenirken taşınan bağlam.
 const FnCtx = struct {
@@ -118,6 +165,11 @@ const FnCtx = struct {
     /// `true`: bir `async def` gövdesi içindeyiz — `await` yalnızca burada
     /// geçerlidir (bkz. nox-teknik-spesifikasyon.md §3.21).
     in_async: bool = false,
+    /// Faz U.4.2: şu an denetlenen fonksiyonun/metodun/İÇ İÇE `def`in
+    /// "yolu" (üst-düzey İÇİN yalnızca kendi adı, iç içe İÇİN
+    /// `"<dış_yol>.<iç_isim>"`) — `Checker.closure_infos`ın anahtarı olarak
+    /// kullanılır (bkz. `checkNestedFuncDef`).
+    path: []const u8 = "",
 };
 
 pub const Checker = struct {
@@ -178,6 +230,11 @@ pub const Checker = struct {
     /// yerel bir tanımla ÇAKIŞTIĞINDA yerel tanım HER ZAMAN ÖNCELİKLİDİR
     /// (Python'un gölgeleme davranışına BENZER, ama statik/tek-geçişli).
     from_imports: std.StringHashMapUnmanaged([]const u8) = .{},
+    /// Faz U.4.2: İÇ İÇE `def`lerin yakalama listeleri — anahtar
+    /// `"<dış_yol>.<iç_isim>"` (bkz. `FnCtx.path`in belge notu),
+    /// `checkNestedFuncDef` tarafından doldurulur. U.4.3'ün codegen'i
+    /// TARAFINDAN (closure heap bloğunun İNŞASI İÇİN) TÜKETİLECEKTİR.
+    closure_infos: std.StringHashMapUnmanaged(ClosureInfo) = .{},
     /// Faz T.2: `checkModule`nin üst-düzey döngüsünde (fonksiyon/sınıf/gevşek
     /// deyim SINIRINDA) VE `checkClassBody`nin metod döngüsünde YAKALANIP
     /// KURTARILAN tanılamalar — bkz. modül üstü not. `recordDiagnostic`
@@ -802,7 +859,7 @@ pub const Checker = struct {
             try scope.declare(self.allocator, p.name, pt);
         }
         const ret = try self.typeExprToType(fd.return_type);
-        var ctx: FnCtx = .{ .scope = &scope, .expected_return = ret, .in_async = fd.is_async };
+        var ctx: FnCtx = .{ .scope = &scope, .expected_return = ret, .in_async = fd.is_async, .path = fd.name };
         for (fd.body) |s| try self.checkStmt(&ctx, s);
         if (ret != .none and !alwaysReturns(fd.body)) {
             return self.fail(error.MissingReturn, "fonksiyon '{s}' tüm yollarda değer döndürmüyor", .{fd.name});
@@ -827,7 +884,8 @@ pub const Checker = struct {
             try scope.declare(self.allocator, p.name, pt);
         }
         const ret = try self.typeExprToType(m.return_type);
-        var ctx: FnCtx = .{ .scope = &scope, .expected_return = ret, .self_class = class_name, .is_init = is_init };
+        const path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ class_name, m.name });
+        var ctx: FnCtx = .{ .scope = &scope, .expected_return = ret, .self_class = class_name, .is_init = is_init, .path = path };
         for (m.body) |s| try self.checkStmt(&ctx, s);
         if (ret != .none and !alwaysReturns(m.body)) {
             return self.fail(error.MissingReturn, "metod '{s}.{s}' tüm yollarda değer döndürmüyor", .{ class_name, m.name });
@@ -903,7 +961,23 @@ pub const Checker = struct {
                 try ctx.scope.declare(self.allocator, f.var_name, elem_t);
                 for (f.body) |s| try self.checkStmt(ctx, s);
             },
-            .func_def => return self.fail(error.TypeMismatch, "iç içe fonksiyon tanımı v0.1'de desteklenmiyor", .{}),
+            // Faz U.4.2: iç içe `def` artık KISITLI bir biçimde
+            // desteklenir — yalnızca GENERIC OLMAYAN, `async` OLMAYAN
+            // basit closure'lar (bkz. nox-teknik-spesifikasyon.md §3.23/
+            // §3.2x). `checkNestedFuncDef`, dış kapsamdaki serbest
+            // değişken REFERANSLARINI (capture) analiz eder VE iç
+            // fonksiyonun ADINI dış kapsamda `.func` tipinde bir yerel
+            // değişken olarak BAĞLAR.
+            .func_def => |fd| {
+                if (fd.type_params.len > 0) {
+                    return self.fail(error.TypeMismatch, "iç içe fonksiyon tanımı generic OLAMAZ: {s}", .{fd.name});
+                }
+                if (fd.is_async) {
+                    return self.fail(error.TypeMismatch, "iç içe fonksiyon tanımı 'async def' OLAMAZ: {s}", .{fd.name});
+                }
+                const func_type = try self.checkNestedFuncDef(ctx, fd);
+                try ctx.scope.declare(self.allocator, fd.name, func_type);
+            },
             .class_def => return self.fail(error.TypeMismatch, "sınıf tanımı yalnızca modül seviyesinde olabilir", .{}),
             .protocol_def => return self.fail(error.TypeMismatch, "protokol tanımı yalnızca modül seviyesinde olabilir", .{}),
             .extern_def => return self.fail(error.TypeMismatch, "'extern def' yalnızca modül seviyesinde olabilir", .{}),
@@ -969,11 +1043,60 @@ pub const Checker = struct {
         if (t.finally_body) |fb| for (fb) |s| try self.checkStmt(ctx, s);
     }
 
+    /// Faz U.4.2: bir İÇ İÇE `def`in gövdesini, `ctx.scope`u `parent` OLARAK
+    /// KULLANAN YENİ bir scope İÇİNDE denetler — bu scope'un `captures`ı
+    /// AYARLIDIR, bu yüzden gövde İÇİNDE dış kapsama düşen HER isim
+    /// (bkz. `Scope.lookup`) otomatik olarak KAYDEDİLİR. Denetim
+    /// TAMAMLANINCA yakalama listesi `self.closure_infos`e (anahtar:
+    /// `"<ctx.path>.<fd.name>"`) YAZILIR VE iç fonksiyonun `Type.func`
+    /// tipi DÖNDÜRÜLÜR (çağıran, bunu `fd.name` yerel değişkenine BAĞLAR).
+    fn checkNestedFuncDef(self: *Checker, ctx: *FnCtx, fd: ast.FuncDef) TypeError!Type {
+        var captures: std.StringHashMapUnmanaged(Type) = .{};
+        var inner_scope: Scope = .{ .parent = ctx.scope, .captures = &captures };
+        for (fd.params) |p| {
+            const pt = try self.typeExprToType(p.type_expr);
+            try inner_scope.declare(self.allocator, p.name, pt);
+        }
+        const ret = try self.typeExprToType(fd.return_type);
+        var inner_ctx: FnCtx = .{
+            .scope = &inner_scope,
+            .expected_return = ret,
+            .in_async = false,
+            .path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ ctx.path, fd.name }),
+        };
+        for (fd.body) |s| try self.checkStmt(&inner_ctx, s);
+        if (ret != .none and !alwaysReturns(fd.body)) {
+            return self.fail(error.MissingReturn, "iç içe fonksiyon '{s}' tüm yollarda değer döndürmüyor", .{fd.name});
+        }
+
+        var capture_list: std.ArrayListUnmanaged(CaptureVar) = .empty;
+        var it = captures.iterator();
+        while (it.next()) |entry| {
+            try capture_list.append(self.allocator, .{ .name = entry.key_ptr.*, .ty = entry.value_ptr.* });
+        }
+        try self.closure_infos.put(self.allocator, inner_ctx.path, .{ .captures = try capture_list.toOwnedSlice(self.allocator) });
+
+        const params = try self.allocator.alloc(Type, fd.params.len);
+        for (fd.params, 0..) |p, i| params[i] = try self.typeExprToType(p.type_expr);
+        const ret_boxed = try self.allocator.create(Type);
+        ret_boxed.* = ret;
+        return Type{ .func = .{ .params = params, .return_type = ret_boxed } };
+    }
+
     fn checkAssign(self: *Checker, ctx: *FnCtx, a: ast.Assign) TypeError!void {
         switch (a.target) {
             .identifier => |name| {
-                const existing = ctx.scope.lookup(name) orelse
+                const existing = ctx.scope.lookupLocal(name) orelse {
+                    // Faz U.4.2: `name` bir İÇ İÇE `def`in yakaladığı DIŞ
+                    // bir değişkense (`parent` zincirinde bulunuyorsa) BUNU
+                    // AYIRT EDEN, daha AÇIK bir hata verilir — capture BİLİNÇLİ
+                    // olarak YALNIZCA OKUNABİLİR (bkz. nox-teknik-spesifikasyon.md
+                    // §3.23, "mutasyon-görünür closure YOK" kararı).
+                    if (ctx.scope.parent != null and ctx.scope.existsInChain(name)) {
+                        return self.fail(error.TypeMismatch, "'{s}' iç içe fonksiyonun DIŞINDAN yakalanan bir değişkendir, yalnızca OKUNABİLİR (atama desteklenmiyor)", .{name});
+                    }
                     return self.fail(error.UndefinedVariable, "tanımsız değişken: {s}", .{name});
+                };
                 const value_t = try self.checkExpr(ctx, a.value);
                 if (!assignable(existing, value_t)) {
                     return self.fail(error.TypeMismatch, "'{s}' için tip uyuşmazlığı", .{name});
@@ -1063,7 +1186,7 @@ pub const Checker = struct {
             .bool_lit => .boolean,
             .string_lit => .str,
             .none_lit => .none,
-            .identifier => |name| ctx.scope.lookup(name) orelse
+            .identifier => |name| (try ctx.scope.lookup(self.allocator, name)) orelse
                 return self.fail(error.UndefinedVariable, "tanımsız değişken: {s}", .{name}),
             .unary => |u| blk: {
                 const t = try self.checkExpr(ctx, u.operand.*);
