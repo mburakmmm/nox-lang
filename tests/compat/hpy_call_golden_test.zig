@@ -24,6 +24,15 @@ fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.
         std.debug.print("beklenmeyen tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
         return error.FixtureNotWellTyped;
     };
+    // Faz T.2: kurtarılmış tanılamalar artık FIRLATILMAZ, `diagnostics`e
+    // KAYDEDİLİR — bu fixture'ın hatasız derlenmesi BEKLENDİĞİNDEN, herhangi
+    // biri VARSA testin (öncekiyle AYNI şekilde) başarısız olması gerekir.
+    if (checker_state.diagnostics.items.len > 0) {
+        for (checker_state.diagnostics.items) |d| {
+            std.debug.print("beklenmeyen tip hatasi ({t}): {s}\n", .{ d.code, d.message });
+        }
+        return error.FixtureNotWellTyped;
+    }
 
     var generic_names: std.ArrayListUnmanaged([]const u8) = .empty;
     var generic_it = checker_state.generic_functions.keyIterator();

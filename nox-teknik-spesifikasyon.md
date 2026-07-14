@@ -5113,6 +5113,84 @@ bir faz) de AYNI şekilde ERTELENDİ.
 
 ---
 
+## 3.16 Faz T.2 — Checker'a Çoklu-Tanılama/Hata Kurtarma Ekleme
+
+**Kapsam kararı — İRİ GRANÜLERLİK (fonksiyon/metod/gevşek-deyim SINIRI),
+İÇ-BİRİM kurtarma DEĞİL:** "birden çok hata raporla" görevi, EN GENİŞ
+yorumuyla `checkExpr`/`checkStmt`in KENDİ kontrol akışını (bir deyimin/
+ifadenin İÇİNDE bile İKİNCİ bir hatadan SONRA devam edebilmeyi) yeniden
+yapılandırmayı gerektirebilirdi — bu, T.1'in `ast.Expr`e dokunmama kararıyla
+AYNI gerekçeyle (yüzlerce eşleştirme sitesi, YÜKSEK risk) BİLİNÇLİ olarak
+REDDEDİLDİ. Bunun yerine kurtarma YALNIZCA `checkModule`nin ÜST-DÜZEY
+döngüsünün (HER `func_def`/`class_def`/gevşek deyim BAĞIMSIZ bir birimdir)
+VE `checkClassBody`nin metod döngüsünün (HER metod BAĞIMSIZ bir birimdir)
+DOĞAL sınırlarında yapılır — Zig'in `catch` İFADESİ bu sınırlarda
+propagasyonu TEMİZ bir şekilde KESEBİLİR, çünkü DIŞ döngü bir SONRAKİ
+bağımsız birime geçerken İÇ birimin KISMİ durumunu (scope, kısmi tip
+çıkarımı) HİÇ yeniden inşa etmesi GEREKMEZ — o birim ZATEN tamamen
+terk edilir.
+
+**Uygulama:**
+1. **`compiler/typecheck/checker.zig`:** yeni `pub const Diagnostic = struct
+   { code: TypeError, line: u32, message: []const u8 }`; `Checker`e yeni
+   `diagnostics: std.ArrayListUnmanaged(Diagnostic) = .empty` alanı; yeni
+   `recordDiagnostic(self, err: TypeError) TypeError!void` yardımcısı —
+   `error.OutOfMemory`İ (KURTARILAMAZ, bir "tanılama" DEĞİL) DEĞİŞTİRMEDEN
+   yeniden fırlatır, AKSİ HALDE `self.diagnostic` (ZATEN `fail()`in "satır
+   N: " önekini taşıyan mesaj) + `self.current_line`den bir `Diagnostic`
+   İNŞA EDİP `self.diagnostics`e EKLER.
+2. **`checkModule`nin üst-düzey switch'i:** `.func_def`/`.class_def`
+   dalları VE gevşek deyimleri işleyen `else` dalı, ilgili denetim
+   çağrısını (`checkFunctionBody`/`checkClassBody`/`checkStmt`) `catch |e|
+   try self.recordDiagnostic(e)` İLE SARAR — bir birim BAŞARISIZ olursa
+   tanılama KAYDEDİLİR, döngü BİR SONRAKİ bağımsız birime DEVAM EDER.
+3. **`checkClassBody`nin İKİ metod döngüsü** (`__init__` + diğer metodlar)
+   AYNI deseni `checkMethodBody` çağrısına uygular — bir sınıftaki BİR
+   metodun hatası, AYNI sınıfın DİĞER metodlarının denetimini ENGELLEMEZ.
+4. **`CheckOutcome`:** `err` varyantı yeni bir `all: []const Diagnostic`
+   alanı KAZANDI (`code`/`message`, GERİYE DÖNÜK UYUMLULUK İÇİN İLK
+   tanılamayı taşımaya DEVAM EDER — TEK-hata tüketicileri DEĞİŞMEDEN
+   çalışır). `check()` ARTIK `checkModule`nin BAŞARIYLA (fırlatmadan)
+   DÖNMESİNDEN SONRA `checker.diagnostics.items.len > 0` mı diye AYRICA
+   kontrol eder — kurtarılan hatalar `checkModule`yi FIRLATMADIĞINDAN,
+   "başarılı dönüş" ARTIK TEK BAŞINA "hatasız" ANLAMINA GELMEZ.
+5. **Geriye dönük uyumluluk — 6 doğrudan `Checker` tüketicisi** (`main.zig`
+   + `tests/{compat/{hpy_call,extern_ffi,http_stdlib,http_serve}_golden_test,
+   golden/codegen_golden_test}.zig`, `checker.check()`in SARMALAYICISINI
+   DEĞİL `Checker.checkModule`yi DOĞRUDAN çağırıyorlar — bkz. Faz 10 notu):
+   HER BİRİNE `checkModule`nin `catch` bloğundan HEMEN SONRA AYNI
+   `checker_state.diagnostics.items.len > 0` kontrolü + TÜM tanılamaları
+   YAZDIRIP (ESKİ, TEK-hata "beklenmeyen tip hatası" mesajıyla AYNI biçimde)
+   başarısız SAYMA eklendi — AKSİ HALDE bu tüketiciler (`main.zig` DAHİL)
+   kurtarılmış bir hatayı SESSİZCE YUTUP hatalı bir modülü codegen'e
+   İLETİRDİ (GERÇEK bir REGRESYON olurdu, "çoklu tanılama" özelliğinin
+   TAM TERSİ bir sonuç).
+
+**Bilinçli sınırlama (KABUL EDİLDİ, v1 kapsamında):** kurtarma yalnızca İRİ
+granülerlikte — AYNI fonksiyon/metod İÇİNDEKİ İKİNCİ bir hata HÂLÂ
+raporlanMAZ (o birimin KENDİ denetimi İLK hatada durur, T.1'İN "DEYİM
+granülerliği" kararıyla AYNI ödünleşim). AYRICA bir üst-düzey `var_decl`
+BAŞARISIZ olursa o isim kapsama HİÇ girmez — SONRAKİ bir deyimin AYNI ismi
+kullanması İKİNCİL (cascading) bir "tanımsız değişken" hatası ÜRETEBİLİR;
+BENZER şekilde bir sınıfın `__init__`i BAŞARISIZ olursa alanları KAYDEDİLMEZ,
+o sınıfın DİĞER metodları `self.<alan>`e erişince kendi cascading hatalarını
+üretebilir. Bu, İYİ bilinen bir hata-kurtarma ödünleşimidir (gerçek
+derleyicilerin ÇOĞU AYNI sınırı çeker) — İÇ-BİRİM kurtarma/kısmi tip
+çıkarımı iyileştirmesi GELECEKTEKİ bir fazdır.
+
+**Doğrulama:** yeni golden test
+(`err_multi_diagnostic_recovery.nox` — İKİ bağımsız fonksiyon, HER BİRİ
+kendi gövdesinde bir `TypeMismatch`) — `check()`in `outcome.err.all.len ==
+2` VE HER İKİ tanılamanın DOĞRU satırı (2 ve 5) taşıdığını doğrular. Kasıtlı
+boz (`.func_def` dalındaki `catch |e| try self.recordDiagnostic(e)` GEÇİCİ
+olarak `try self.checkFunctionBody(fd)`e döndürüldü) → test GERÇEKTEN
+kırmızıya döndü (`expected 2, found 0` — kurtarma OLMADIĞINDA `checkModule`
+İLK hatada FIRLIYOR, `diagnostics` HİÇ dolmuyor) → geri getirildi, YEŞİLE
+döndüğü doğrulandı. `zig build test` (Debug + ReleaseFast) 275/275 yeşil,
+`zig fmt` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

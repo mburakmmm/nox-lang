@@ -7,9 +7,24 @@
 //! bu yalnızca alan *tipinin* çıkarımıdır, AGENTS.md İlke #1'in yasakladığı
 //! bir ownership/mutability sözdizimiyle karıştırılmamalıdır.
 //!
-//! Kapsam notu: kaynak konumu (satır/sütun) izlemez — v0.1 AST'si buna sahip
-//! değil (bkz. nox-teknik-spesifikasyon.md §3.1). Tanılamalar yalnızca metin
-//! mesajıdır; hassas konumlu tanılama sonraki bir fazda eklenebilir.
+//! Kapsam notu: kaynak konumu DEYİM (statement) granülerliğinde izlenir
+//! (Faz T.1, bkz. `current_line`/`ast.Stmt.line`) — İFADE (expression)
+//! düzeyi hassasiyet HENÜZ yok (bkz. nox-teknik-spesifikasyon.md §3.15).
+//!
+//! **Faz T.2 — çoklu-tanılama/hata kurtarma:** `fail()` HÂLÂ tek bir
+//! Zig hatası FIRLATIR (kontrol akışını KESER), ama `checkModule`nin
+//! ÜST-DÜZEY döngüsü (HER fonksiyon/sınıf/gevşek deyim İÇİN) VE
+//! `checkClassBody`nin metod döngüsü bunu YAKALAYIP `self.diagnostics`e
+//! KAYDEDER, SONRA bir SONRAKİ bağımsız birime DEVAM EDER — bu, TEK bir
+//! `noxc build` çalıştırmasında BİRDEN ÇOK (farklı fonksiyon/sınıf/metoddaki)
+//! hatanın RAPORLANMASINI sağlar. **Bilinçli sınırlama:** kurtarma yalnızca
+//! bu İRİ granülerlikte (fonksiyon/metod/gevşek-deyim SINIRINDA) — AYNI
+//! fonksiyon/metod İÇİNDEKİ İKİNCİ bir hata HÂLÂ raporlanMAZ (o birimin
+//! KENDİ denetimi İLK hatada durur); ayrıca bir üst-düzey `var_decl`
+//! BAŞARISIZ olursa o isim kapsama HİÇ girmez, bu yüzden SONRAKİ bir
+//! deyimin AYNI ismi kullanması İKİNCİL (cascading) bir "tanımsız değişken"
+//! hatası üretebilir — bu, İYİ bilinen bir hata-kurtarma ödünleşimidir,
+//! v1 kapsamında KABUL EDİLİR.
 //!
 //! **Faz 10 — generics (compile-time monomorphization):** bkz. bu dosyanın
 //! altındaki "Faz 10: generics" bölümü ve nox-teknik-spesifikasyon.md §3.10.
@@ -44,6 +59,16 @@ pub const TypeError = error{
     DuplicateDefinition,
     MissingReturn,
     OutOfMemory,
+};
+
+/// Faz T.2: `recordDiagnostic` tarafından `Checker.diagnostics`e eklenen tek
+/// bir kurtarılmış (recovered) tanılama — `message` ZATEN `fail()`in "satır
+/// N: " önekini taşır (bkz. `current_line`), `line` AYRICA yapısal erişim
+/// İÇİN saklanır.
+pub const Diagnostic = struct {
+    code: TypeError,
+    line: u32,
+    message: []const u8,
 };
 
 const FuncSig = struct {
@@ -139,6 +164,12 @@ pub const Checker = struct {
     /// düzleştirip bu kümeyle eşleştirir — bkz. `tryResolveQualifiedCall`in
     /// belge notu.
     imported_modules: std.StringHashMapUnmanaged(void) = .{},
+    /// Faz T.2: `checkModule`nin üst-düzey döngüsünde (fonksiyon/sınıf/gevşek
+    /// deyim SINIRINDA) VE `checkClassBody`nin metod döngüsünde YAKALANIP
+    /// KURTARILAN tanılamalar — bkz. modül üstü not. `recordDiagnostic`
+    /// tarafından doldurulur, `check()` tarafından `CheckOutcome.err.all`e
+    /// kopyalanır.
+    diagnostics: std.ArrayListUnmanaged(Diagnostic) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) Checker {
         return .{ .allocator = allocator };
@@ -152,6 +183,22 @@ pub const Checker = struct {
         else
             msg;
         return err;
+    }
+
+    /// Faz T.2: bir bağımsız birimin (fonksiyon/sınıf/metod/gevşek deyim)
+    /// denetiminden fırlayan bir `TypeError`i YAKALAYIP `self.diagnostics`e
+    /// kaydeder — `error.OutOfMemory` İSE KURTARILAMAZ bir durumdur, ASLA
+    /// bir "tanılama" DEĞİLDİR, bu yüzden DEĞİŞTİRİLMEDEN yeniden fırlatılır
+    /// (çağıranın KENDİSİ de OOM'u aynı şekilde yukarı ilettiğinden bu,
+    /// `checkModule`nin/`checkClassBody`nin TAMAMEN durmasına yol açar —
+    /// bu, İSTENEN davranıştır).
+    fn recordDiagnostic(self: *Checker, err: TypeError) TypeError!void {
+        if (err == error.OutOfMemory) return err;
+        try self.diagnostics.append(self.allocator, .{
+            .code = err,
+            .line = self.current_line,
+            .message = self.diagnostic orelse "(mesaj yok)",
+        });
     }
 
     fn typeExprToType(self: *Checker, te: ast.TypeExpr) TypeError!Type {
@@ -595,8 +642,11 @@ pub const Checker = struct {
                 // listeyi etkiler) — bu yüzden asıl kaynak `generic_functions`
                 // üyeliğidir. Denetim, `instantiateGeneric` tarafından somut
                 // bir örnekleme sentezlendiğinde yapılır.
-                .func_def => |fd| if (!self.generic_functions.contains(fd.name)) try self.checkFunctionBody(fd),
-                .class_def => |cd| try self.checkClassBody(cd),
+                .func_def => |fd| {
+                    if (!self.generic_functions.contains(fd.name))
+                        self.checkFunctionBody(fd) catch |e| try self.recordDiagnostic(e);
+                },
+                .class_def => |cd| self.checkClassBody(cd) catch |e| try self.recordDiagnostic(e),
                 // Protokoller `collectProtocols`te zaten tamamen doğrulandı;
                 // çalışma zamanı kodu üretmezler (yalnızca imza), bu yüzden
                 // burada başka bir işlem gerekmez.
@@ -617,7 +667,7 @@ pub const Checker = struct {
                     const joined = try self.joinSegments(imp.segments, '.');
                     try self.imported_modules.put(self.allocator, joined, {});
                 },
-                else => try self.checkStmt(&top_ctx, stmt),
+                else => self.checkStmt(&top_ctx, stmt) catch |e| try self.recordDiagnostic(e),
             }
         }
     }
@@ -679,10 +729,12 @@ pub const Checker = struct {
 
     fn checkClassBody(self: *Checker, cd: ast.ClassDef) TypeError!void {
         for (cd.methods) |m| {
-            if (std.mem.eql(u8, m.name, "__init__")) try self.checkMethodBody(cd.name, m, true);
+            if (std.mem.eql(u8, m.name, "__init__"))
+                self.checkMethodBody(cd.name, m, true) catch |e| try self.recordDiagnostic(e);
         }
         for (cd.methods) |m| {
-            if (!std.mem.eql(u8, m.name, "__init__")) try self.checkMethodBody(cd.name, m, false);
+            if (!std.mem.eql(u8, m.name, "__init__"))
+                self.checkMethodBody(cd.name, m, false) catch |e| try self.recordDiagnostic(e);
         }
     }
 
@@ -1631,14 +1683,30 @@ pub const Checker = struct {
 
 pub const CheckOutcome = union(enum) {
     ok,
-    err: struct { code: TypeError, message: []const u8 },
+    err: struct { code: TypeError, message: []const u8, all: []const Diagnostic },
 };
 
 /// Bir modülü tipçe denetler. Hatayı ve tanılama mesajını `CheckOutcome` olarak döner.
+///
+/// Faz T.2: `checkModule` artık ÇOĞU (fonksiyon/sınıf/metod/gevşek deyim
+/// SINIRINDAKİ) hatada FIRLATMAZ — bunun yerine `checker.diagnostics`e
+/// KAYDEDİP DEVAM eder (bkz. `recordDiagnostic`). Bu yüzden `checkModule`
+/// BAŞARIYLA (hatasız) DÖNSE BİLE `checker.diagnostics` DOLU olabilir —
+/// `err`, `code`/`message` alanlarında İLK tanılamayı (geriye dönük uyumluluk
+/// İÇİN, `all` alanı EKLENMEDEN ÖNCEKİ tek-hata tüketicileriyle AYNI biçimde),
+/// `all` alanında İSE TÜM (kurtarılmış + varsa fırlatılmış) tanılamaları taşır.
 pub fn check(allocator: std.mem.Allocator, module: ast.Module) CheckOutcome {
     var checker = Checker.init(allocator);
     checker.checkModule(module) catch |e| {
-        return .{ .err = .{ .code = e, .message = checker.diagnostic orelse "(mesaj yok)" } };
+        return .{ .err = .{
+            .code = e,
+            .message = checker.diagnostic orelse "(mesaj yok)",
+            .all = checker.diagnostics.items,
+        } };
     };
+    if (checker.diagnostics.items.len > 0) {
+        const first = checker.diagnostics.items[0];
+        return .{ .err = .{ .code = first.code, .message = first.message, .all = checker.diagnostics.items } };
+    }
     return .ok;
 }

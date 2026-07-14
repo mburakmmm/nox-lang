@@ -267,3 +267,25 @@ test "golden(typecheck): iki FARKLI sınıfı '==' ile karşılaştırmak redded
         @embedFile("typecheck_cases/err_class_eq_type_mismatch.expected"),
     );
 }
+
+test "golden(typecheck): Faz T.2 — İKİ bağımsız fonksiyondaki hata TEK çalıştırmada BİRLİKTE raporlanır" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = @embedFile("typecheck_cases/err_multi_diagnostic_recovery.nox");
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+
+    const outcome = nox.checker.check(allocator, module);
+    const err = switch (outcome) {
+        .ok => return error.TestUnexpectedResult,
+        .err => |e| e,
+    };
+    // İKİ bağımsız fonksiyon (`f`/`g`), HER İKİSİ de kendi gövdesinde TEK bir
+    // `TypeMismatch` üretiyor — kurtarma OLMASAYDI yalnızca İLKİ (satır 2)
+    // raporlanırdı, `g`nin (satır 5) hatası HİÇ görülmezdi.
+    try std.testing.expectEqual(@as(usize, 2), err.all.len);
+    try std.testing.expect(std.mem.indexOf(u8, err.all[0].message, "satır 2:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, err.all[1].message, "satır 5:") != null);
+}

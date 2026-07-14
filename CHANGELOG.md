@@ -42,6 +42,15 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   dokunmadan, yalnızca `ast.Stmt`i saran bir `{ kind, line }` yapısıyla
   güvenle uygulanabildi). 22 mevcut typecheck golden testinin `.expected`
   dosyası bu yeni önekle güncellendi.
+- Tip denetleyici artık TEK çalıştırmada BİRDEN ÇOK hata raporlayabiliyor
+  (Faz T.2) — kurtarma `checkModule`nin üst-düzey (fonksiyon/sınıf/gevşek
+  deyim) döngüsünde VE `checkClassBody`nin metod döngüsünde, HER bağımsız
+  birimin sınırında yapılır (AYNI birim İÇİNDEKİ İKİNCİ bir hata HÂLÂ
+  raporlanmaz — bilinçli bir sınırlama). `CheckOutcome.err`e yeni bir `all:
+  []const Diagnostic` alanı eklendi; `main.zig` VE doğrudan `Checker`
+  kullanan 5 test dosyası TÜM kurtarılmış tanılamaları kontrol edip
+  yazdıracak şekilde güncellendi (aksi halde bir hata sessizce codegen'e
+  sızardı).
 
 ### Düzeltildi
 - `noxc` artık proje kökü DIŞINDAN (ör. sistem geneli bir kurulumdan)

@@ -390,6 +390,16 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         std.debug.print("tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
         std.process.exit(1);
     };
+    // Faz T.2: `checkModule` artık fonksiyon/sınıf/metod/gevşek-deyim
+    // SINIRINDAKİ hatalarda FIRLATMAZ, `checker_state.diagnostics`e
+    // KAYDEDER (bkz. checker.zig, `recordDiagnostic`) — bu yüzden BAŞARILI
+    // dönüş TEK BAŞINA "tip hatasız" anlamına GELMEZ, AYRICA kontrol edilir.
+    if (checker_state.diagnostics.items.len > 0) {
+        for (checker_state.diagnostics.items) |d| {
+            std.debug.print("tip hatasi ({t}): {s}\n", .{ d.code, d.message });
+        }
+        std.process.exit(1);
+    }
     const instantiations = checker_state.instantiations.items;
 
     // Codegen'in `module.body`deki generic ŞABLONLARINI (açık `[T]` VEYA
