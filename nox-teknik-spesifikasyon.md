@@ -4806,6 +4806,84 @@ doğrulandı.
 
 ---
 
+## 3.12 Faz S.1 — Task/Channel/dict Yeniden Atama Sızıntısını Düzelt
+
+**Bulunan hata:** `Task[T]`/`Channel[T]`/`dict[K,V]` `isHeapManaged`in
+DIŞINDadır (bkz. `HeapKind`in belge notu, `compiler/codegen_qbe/codegen.zig`)
+— ARC başlığı/retain-on-alias YOK, kapsam-sonu temizliği DOĞRUDAN bir
+`nox_async_destroy_task`/`nox_channel_destroy`/`nox_dict_destroy` çağrısıdır.
+Ama `genAssign`in `.identifier` (yerel yeniden atama) VE `.attribute` (sınıf
+alanı yeniden atama) dalları bu üç türü HİÇ ele almıyordu — yalnızca
+`isHeapManaged` (list/class/str) İÇİN eski değeri serbest bırakıyordu. Yani
+`t: Task[None] = spawn f(); t = spawn g();` gibi bir yeniden atamada İLK
+`spawn`ın döndürdüğü `Task` tutamacı SIZIYORDU (kod, KENDİSİ tarafından
+ÖNCEDEN "bilinçli v0.1 sınırlaması" olarak DOĞRU şekilde belgelenmişti —
+bkz. eski `releaseAllLocalsExcept` yorumu).
+
+**İKİNCİ, DAHA DERİN bir bulgu — Task İÇİN saf "yeniden atamada serbest
+bırak" YETERSİZ, GÜVENSİZ:** `Task(T)` struct'ının KENDİSİ, fiber'ın
+`entryTrampoline`i tarafından TAMAMLANDIĞINDA `self.result`/`self.completed`e
+YAZILAN bellektir (bkz. `runtime/async_rt/scheduler.zig`). Bir görev HENÜZ
+tamamlanmadan (ör. `spawn` edilip HİÇ `await` edilmeden hemen yeniden atanırsa
+— fiber henüz hiç ÇALIŞMAMIŞ, yalnızca hazır kuyruğa EKLENMİŞ olabilir)
+struct'ı HEMEN serbest bırakmak, fiber SONRADAN tamamlanınca serbest
+bırakılmış belleğe YAZAN bir use-after-free olurdu — SIRADAN bir "eski
+değeri serbest bırak" düzeltmesi (dict/Channel İÇİN yeterli olan) Task İÇİN
+YENİ bir bellek güvenliği hatası AÇARDI.
+
+**Çözüm — iki katmanlı:**
+
+1. **`compiler/codegen_qbe/codegen.zig`:** yeni `destroyNonArcValue`/
+   `destroyNonArcSlotIfSet` yardımcıları (`releaseValueIfSet`/`releaseSlotIfSet`in
+   Task/Channel/dict karşılığı, `releaseAllLocalsExcept`in ESKİ tekrarlı
+   kodundan ÇIKARILDI). `genAssign`in HEM `.identifier` HEM `.attribute`
+   dalları artık yeniden atamada BU yardımcıyla eski değeri yok ediyor —
+   `releaseAllLocalsExcept` VE `genClassRelease` (sınıf alanı İÇİN, ÖNCEDEN
+   yalnızca `dict` kapsıyordu, ŞİMDİ Task/Channel'ı da kapsıyor) de AYNI
+   yardımcıyı kullanacak şekilde birleştirildi.
+2. **`runtime/async_rt/scheduler.zig` + `bridge.zig`:** `Task(T)`e yeni bir
+   `detached: bool` alanı eklendi. `nox_async_destroy_task` artık görev
+   `completed` İSE HEMEN serbest bırakır (ÖNCEKİ davranış — güvenli, çünkü
+   fiber ARTIK struct'a bir daha YAZMAZ); tamamlanMAMIŞSA yalnızca
+   `detached = true` işaretler, GERÇEK serbest bırakmayı `entryTrampoline`in
+   KENDİSİNE (görev bitince `self.detached` İSE `self`i KENDİSİ serbest
+   bırakıp `completed`/`waiter` mantığına HİÇ girmeden döner) ERTELER. Bu,
+   "fire-and-forget" (hiç `await` edilmeden bırakılan) görevlerin de HEM
+   sızmadan HEM bellek güvenliği ihlal edilmeden temizlenmesini sağlar —
+   yalnızca REASSIGNMENT YOLUNU değil, `releaseAllLocalsExcept`in ÖNCEDEN
+   VAR OLAN (bu fazdan ÖNCE de teorik olarak mevcut olan, ama HİÇ tetiklenmemiş)
+   AYNI riskini de KÖKTEN çözer.
+
+**ÜÇÜNCÜ bulgu — bu fazın doğrulama testi ReleaseFast'ta GERÇEK bir SIGSEGV'e
+yol açtı (kod hatası DEĞİL, test metodolojisi hatası):** yeni `Task.detached`
+mantığını doğrulayan `scheduler.zig` birim testi İLK yazıldığında GERÇEK bir
+`scheduler.run()` (yani GERÇEK bir fiber) üzerinden `std.testing.allocator`
+(DebugAllocator) ile `entryTrampoline`in `destroy` çağrısını tetikliyordu —
+Debug'da yeşildi ama `-Doptimize=ReleaseFast`ta `SIGSEGV`ile ÇÖKTÜ. Kök
+neden `runtime/async_rt/fiber.zig`nin ZATEN belgelediği, bu projenin
+GEÇMİŞİNDE de yaşanmış (bkz. `callEntryPadded`in belge notu) bir tuzak:
+DebugAllocator'ın çerçeve-işaretçisi TABANLI yığın-izi yakalaması, fiber'ın
+SAHTE önyükleme çerçevesinin ÖTESİNE geçmeye çalışır — ReleaseFast'ta
+çerçeve işaretçileri farklı/eksik davranabildiğinden bu YÜRÜYÜŞ geçersiz
+belleğe düşer. **Düzeltme kod TARAFINDA değil, TEST TARAFINDA yapıldı:**
+test artık GERÇEK bir fiber/`scheduler.run()` ÜZERİNDEN DEĞİL, `Task(i64).
+entryTrampoline`i DOĞRUDAN (fiber bağlamı OLMADAN, testin KENDİ normal çağrı
+yığınında) çağırıyor — `entryTrampoline`in `detached` dalı fiber bağlamına
+ÖZGÜ bir şey YAPMADIĞINDAN bu, AYNI mantığı güvenle egzersiz eder VE
+`std.testing.allocator`ın otomatik sızıntı/çift-serbest-bırakma denetiminden
+faydalanmaya devam eder.
+
+**Doğrulama:** üç kasıtlı boz→kırmızıyı doğrula→düzelt turu — (1) `genAssign`in
+Task/Channel/dict dalları GEÇİCİ olarak devre dışı bırakılıp YENİ 3 golden
+testin (`task_reassignment_frees_old.nox`, `channel_reassignment_frees_old.nox`,
+`dict_reassignment_frees_old.nox`) GERÇEKTEN kırmızıya döndüğü doğrulandı;
+(2) `entryTrampoline`in `detached` dalı GEÇİCİ olarak devre dışı bırakılıp
+YENİ scheduler birim testinin GERÇEKTEN "1 leaks" ile kırmızıya döndüğü
+doğrulandı — İKİSİ de SONRA geri getirildi. `zig build test` (Debug +
+ReleaseFast) 269/269 yeşil, `zig fmt --check` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

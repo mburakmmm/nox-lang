@@ -1,0 +1,10 @@
+async def worker(n: int) -> None:
+    print(n)
+
+async def main_task() -> None:
+    t: Task[None] = spawn worker(1)
+    t = spawn worker(2)
+    await t
+
+t2: Task[None] = spawn main_task()
+await t2

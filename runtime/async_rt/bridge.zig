@@ -104,13 +104,27 @@ pub export fn nox_async_await(rt: ?*anyopaque, task: ?*anyopaque) i64 {
     return t.await_();
 }
 
-/// Bir `Task` yapısını (yalnızca kendisini — fiber'ı DEĞİL, o zaten
-/// `Scheduler.run()` tarafından bitince serbest bırakılır) serbest bırakır.
-/// Codegen, modülün üst düzey kodunu sarmalayan `$main_body` görevi için
-/// (hiç `await`lenmediğinden, bkz. `genMain`) bunu `main`in sonunda çağırır.
+/// Bir `Task` tutamacını yok eder (yalnızca `Task` struct'ının kendisini —
+/// fiber'ı DEĞİL, o zaten `Scheduler.run()` tarafından bitince serbest
+/// bırakılır). Codegen bunu HEM modülün üst düzey kodunu sarmalayan
+/// `$main_body` görevi İÇİN (hiç `await`lenmediğinden, bkz. `genMain`) `main`in
+/// sonunda, HEM de bir `Task`/`Channel`/`dict` tipli değişken yeniden
+/// atandığında/kapsam dışına çıktığında ESKİ değer İÇİN çağırır (bkz. Faz S.1,
+/// `codegen.zig`nin `destroyNonArcValue`si).
+///
+/// Görev HENÜZ tamamlanMAMIŞSA struct'ı HEMEN serbest bırakmak GÜVENSİZDİR
+/// (bkz. `Task.detached`in belge notu, `scheduler.zig`) — bu durumda yalnızca
+/// `detached` bayrağı işaretlenir, GERÇEK serbest bırakma görev kendi kendine
+/// tamamlanınca `entryTrampoline` tarafından yapılır. Bu, "fire-and-forget"
+/// (hiç `await` edilmeden bırakılan) görevlerin de sızmadan VE bellek
+/// güvenliği ihlal edilmeden temizlenmesini sağlar.
 pub export fn nox_async_destroy_task(rt: ?*anyopaque, task: ?*anyopaque) void {
     const t: *TaskI64 = @ptrCast(@alignCast(task.?));
-    allocatorFromRt(rt).destroy(t);
+    if (t.completed) {
+        allocatorFromRt(rt).destroy(t);
+    } else {
+        t.detached = true;
+    }
 }
 
 /// Zamanlayıcıyı hazır kuyruk boşalana kadar çalıştırır — codegen, `main`in

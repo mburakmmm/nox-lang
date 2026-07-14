@@ -55,6 +55,14 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   VE bellek sızıntısına (bozuk JSON'un hata yolunda) yol açıyordu. `qbe -t`
   seçim mantığı da tekrarı önlemek İÇİN yeni `compiler/qbe_target.zig`ye
   taşındı.
+- `Task[T]`/`Channel[T]`/`dict[K,V]` tipli bir değişken/sınıf alanı YENİDEN
+  atandığında eski değer artık sızmıyor (Faz S.1) — `genAssign` artık bu üç
+  türü de `destroyNonArcValue` ile yok ediyor. `Task` İÇİN AYRICA bir bellek
+  güvenliği düzeltmesi: henüz TAMAMLANMAMIŞ bir görev "yok edilirse" (ör.
+  hiç `await` edilmeden yeniden atanırsa) artık struct'ı HEMEN serbest
+  BIRAKMIYOR (bu, fiber SONRADAN tamamlanınca serbest bırakılmış belleğe
+  yazan bir use-after-free olurdu) — yeni `Task.detached` bayrağı gerçek
+  serbest bırakmayı görev KENDİ KENDİNE tamamlanana kadar erteliyor.
 
 ### Güvenlik
 - `nox.http.serve`e iki DoS sertleştirmesi eklendi (Faz Q.5): bir isteğin

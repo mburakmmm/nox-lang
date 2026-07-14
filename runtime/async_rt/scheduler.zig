@@ -169,10 +169,29 @@ pub fn Task(comptime T: type) type {
         result: T = undefined,
         completed: bool = false,
         waiter: ?*Fiber = null,
+        /// Faz S.1: `destroy` (bkz. `bridge.zig`nin `nox_async_destroy_task`ı)
+        /// bu görev HENÜZ tamamlanmamışken çağrıldıysa `true` olur — bu
+        /// GÜVENLİK için ZORUNLUDUR: `self` (`Task` struct'ının KENDİSİ),
+        /// fiber'ın `entryTrampoline`si HENÜZ tamamlanmadığından, fiber
+        /// tarafından `self.result`/`self.completed`e YAZILACAK bellektir.
+        /// `self`i HEMEN serbest bırakmak (görev tamamlanmadan) fiber
+        /// sonunda serbest bırakılmış belleğe YAZAN bir use-after-free
+        /// olurdu. Bunun yerine yalnızca bu bayrak işaretlenir — GERÇEK
+        /// serbest bırakma `entryTrampoline`e ERTELENİR (bkz. orada).
+        detached: bool = false,
 
         fn entryTrampoline(arg_erased: *anyopaque) void {
             const self: *Self = @ptrCast(@alignCast(arg_erased));
             self.result = self.func(self.arg);
+            // Görev tamamlanmadan ÖNCE `destroy` edildiyse (bkz. `detached`in
+            // belge notu) — artık HİÇBİR bekleyen OLAMAZ (destroy anında
+            // sahip elindeki TEK tutamacı bıraktı), bu yüzden `self`i BURADA,
+            // GÜVENLE (fiber KENDİ yazımını BİTİRMİŞKEN) serbest bırakmak
+            // doğru "ertelenmiş temizlik" noktasıdır.
+            if (self.detached) {
+                self.scheduler.allocator.destroy(self);
+                return;
+            }
             self.completed = true;
             if (self.waiter) |w| self.scheduler.markReady(w);
         }
@@ -290,4 +309,53 @@ test "dairesel await -> Deadlock hatası net şekilde fırlatılır (asılı KAL
     pair.b.fiber.destroy();
     scheduler.allocator.destroy(pair.a);
     scheduler.allocator.destroy(pair.b);
+}
+
+test "Faz S.1: tamamlanmadan (fire-and-forget) 'destroy' edilen görev sızmadan/UAF'siz kendi kendini temizler" {
+    // `nox_async_destroy_task`in (bkz. `bridge.zig`) SİMÜLASYONU: görev
+    // HENÜZ tamamlanmamışken "yok et" isteği gelir. Eski (Faz S.1 ÖNCESİ)
+    // davranış struct'ı BURADA HEMEN serbest bırakırdı — fiber SONRADAN
+    // `entryTrampoline`de `self.result`/`self.completed`e YAZARKEN serbest
+    // bırakılmış belleğe yazan bir use-after-free olurdu. `Task.detached`
+    // (bkz. onun belge notu) bunun yerine gerçek serbest bırakmayı görev
+    // KENDİ KENDİNE tamamlanana kadar ERTELER.
+    //
+    // **`entryTrampoline` BİLEREK gerçek bir fiber/`scheduler.run()` ÜZERİNDEN
+    // DEĞİL, DOĞRUDAN çağrılır:** `runtime/async_rt/fiber.zig`nin modül üstü
+    // notu (bkz. `callEntryPadded`) bir fiber yığınının SAHTE önyükleme
+    // çerçevesi İÇİNDEN `std.testing.allocator` (DebugAllocator) İLE bir
+    // `alloc`/`free` yapmanın, ReleaseFast'ta çerçeve-işaretçisi tabanlı
+    // yığın-izi yakalamasının GEÇERSİZ belleğe düşüp SIGSEGV vermesine yol
+    // açtığını GERÇEKTEN kanıtlıyor (bu test İLK yazıldığında `scheduler.
+    // run()` üzerinden GERÇEK bir fiber içinde çalıştırılmıştı — `-Doptimize=
+    // ReleaseFast`ta TAM OLARAK bu şekilde çöktü). `entryTrampoline`in
+    // `detached` dalı fiber bağlamına ÖZGÜ bir şey YAPMADIĞINDAN (yalnızca
+    // `self.func`/`self.scheduler.allocator`e erişir), test onu doğrudan
+    // ÇAĞIRARAK AYNI mantığı fiber/yığın karmaşıklığı OLMADAN, güvenle
+    // egzersiz eder — `std.testing.allocator` da BU YÜZDEN güvenle
+    // kullanılabilir (test fonksiyonunun KENDİ, normal çağrı yığınında).
+    const Fn = struct {
+        fn triple(arg: *anyopaque) callconv(.c) i64 {
+            const x: *i64 = @ptrCast(@alignCast(arg));
+            return x.* * 3;
+        }
+    };
+
+    var scheduler = try Scheduler.init(std.testing.allocator);
+    defer scheduler.deinit();
+
+    const TaskI64 = Task(i64);
+    const task = try scheduler.allocator.create(TaskI64);
+    var input: i64 = 7;
+    task.* = .{ .scheduler = &scheduler, .func = Fn.triple, .arg = &input };
+
+    try std.testing.expect(!task.completed);
+    task.detached = true;
+
+    TaskI64.entryTrampoline(task);
+    // `task`e BURADA (serbest bırakıldıktan sonra) KASITLI olarak hiç
+    // erişilmiyor — `entryTrampoline` görevi tamamlayıp KENDİSİ serbest
+    // bıraktı (bkz. yukarıdaki not). Testin asıl iddiası, `std.testing.
+    // allocator`ın fonksiyon SONUNDA OTOMATİK olarak doğruladığı şeydir:
+    // struct ne SIZDI ne de ÇİFT serbest bırakıldı.
 }
