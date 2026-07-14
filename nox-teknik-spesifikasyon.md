@@ -6062,6 +6062,166 @@ arasında dispatch eder.
 
 ---
 
+## 3.26 Faz U.4.3 — Closure Çalışma Zamanı Temsili + QBE Codegen
+
+**Kapsam:** U.4'ün ÜÇÜNCÜ alt-fazı — U.4.2'nin checker seviyesinde kabul
+ettiği iç içe `def`ler İÇİN gerçek bir çalışma zamanı temsili + QBE codegen.
+Bir closure'ın DEĞER OLARAK dolaylı çağrılması/parametre-dönüş olarak
+GEÇİRİLMESİ HÂLÂ bu fazın DIŞINDA (U.4.4) — burada YALNIZCA "bir iç içe
+`def` tanımlandığında ne inşa edilir, çağrıldığında/kapsam dışına çıkınca
+ne olur" ele alınıyor.
+
+**Çalışma zamanı temsili — `HeapKind.closure`, `HeapKind.class` İLE YAPISAL
+OLARAK AYNI (ARC işaretçisi, AYNI havuz), ama farklı bellek düzeni:**
+`nox_rc_alloc`/`nox_rc_predecrement`/`nox_rc_free_payload` İLE AYNI ARC
+mekanizması kullanılır — YENİ bir ayırıcı/havuz GEREKMEDİ. Bellek düzeni
+`{fn_ptr: l @0, yakalanan_değerler... @8+}` — sınıf örneklerinin isimli
+alanlarının YERİNE, offset 0'da FONKSİYON İŞARETÇİSİ, sonrasında sırayla
+yakalanan değerler. Sınıflarla PAYLAŞILAN `class_name` alanı (`Value`
+struct'ının bir parçası) BU BAĞLAMDA closure'ın ÜRETİLMİŞ release
+fonksiyonunun mangled adını TUTACAK şekilde YENİDEN KULLANILDI (yeni bir
+alan EKLEMEDEN).
+
+**Ön-doğrulama — QBE'nin fonksiyon adresini SIRADAN bir işaretçi değeri
+olarak saklayıp/yükleyip çağırabildiği MANUEL bir deneyle (`/tmp/
+fnptr_test.ssa`) kanıtlandı:** `storel $add, %p` → `loadl` → `call %fp(...)`
+zinciri `qbe`+`cc` İLE derlenip ÇALIŞTIRILDI, doğru sonuç üretti. Bu,
+closure'ları BU codegen mimarisinde MÜMKÜN kılan TEK yük taşıyan
+mekanizma.
+
+**`sanitizePathToSymbol`:** checker'ın ürettiği nokta-ayrılmış yolu
+(`"outer.adder"`) QBE-güvenli bir sembol adına çevirir (`"closure_outer_
+adder"` — noktalar alt çizgiye, `"closure_"` ÖNEKİ çakışmaları ÖNLEMEK
+İÇİN).
+
+**Codegen'in KENDİ bağımsız capture-tipi çıkarımı (checker'dan `Type`
+AKTARILMAZ):** `Codegen.closure_infos: StringHashMapUnmanaged([]const
+[]const u8)` yalnızca YOL → capture İSİMLERİNİ taşır (checker'ın `Type`
+bilgisi DEĞİL) — codegen HER capture'ın TAM `TypeInfo`sunu construction
+NOKTASINDA KENDİ `self.vars`ından (kapsayan fonksiyonun O ANKİ yerel
+değişken tablosu) yeniden türetir. Bu, checker'ın `Type` ile codegen'in
+`TypeInfo`si ARASINDA bir dönüşüm katmanı GEREKTİRMEDEN iki AŞAMANIN
+bağımsız kalmasını sağlar.
+
+**Ana codegen akışı:**
+- `collectLocals`in `.func_def` dalı: `path = "{current_path}.{fd.name}"`
+  + `mangled = sanitizePathToSymbol(path)` hesaplayıp `fd.name`i
+  `heap = .closure, class_name = mangled` İLE bir YEREL olarak KAYDEDER —
+  bu, `genNestedFuncDef`in SONRADAN bağımsız olarak yeniden hesaplayacağı
+  AYNI mangled adı ÖNCEDEN sabitler (tutarlılık garantisi).
+- `genNestedFuncDef`: yol/mangled adı hesaplar; `closure_infos`den capture
+  isimlerini okur; HER capture İÇİN kapsayan fonksiyonun `self.vars`ından
+  O ANKİ `VarInfo`yu okuyup bir `ClosureCaptureField` listesi kurar;
+  `nox_rc_alloc(rt, 8 + 8*n)` İLE bloğu ayırır; offset 0'a `$mangled`
+  (fonksiyon işaretçisi) yazar; HER capture İÇİN kaynak slotundan DEĞERİ
+  okuyup (heap-yönetimliyse `emitInlineRetain` İLE retain EDEREK) offset
+  `8 + 8*i`ye yazar; SONRA bağlanacak isme AİT ÖNCEDEN-tahsis edilmiş
+  slotta (döngü içinde yeniden inşa gibi durumlar İÇİN) `releaseSlotIfSet`
+  yapıp YENİ blok işaretçisini yazar; SON olarak bir `ClosureFuncSpec`i
+  `self.closure_funcs`e (aynı "sonda tüket" tembel kuyruk deseni, `spawn_
+  wrappers`/`http_serve_wrappers`/`list_release_queue` İLE AYNI) EKLER.
+- `genClosureFunc`: `genFunction`e BENZER, İKİ farkla — (1) QBE imzasına
+  `RT_PARAM`dan HEMEN SONRA gizli bir `l %env` parametresi eklenir; (2) HER
+  capture `is_param = true` olarak KAYDEDİLİR (`releaseAllLocals` çıkışta
+  bunu ATLAR — closure bloğunun KENDİSİ zaten sahip, bu bir ÖDÜNÇ referans)
+  ve DEĞERİ `%env`den (offset `8+8*i`) YÜKLENİR — GERÇEK bildirilmiş
+  parametreler NORMAL `%p_<isim>` register'larından YÜKLENMEYE DEVAM eder.
+  Gövde/`releaseAllLocals`/default-return AYNEN normal fonksiyonlar GİBİ
+  işler — capture'ların "özel" olduğunu FARK ETMEZ, ÖNCEDEN-doldurulmuş
+  birer yerel gibi görünürler.
+- `genClosureRelease`: `genClassRelease` İLE AYNI yapı — predecrement,
+  sıfıra inerse HER heap-yönetimli capture'ı `releaseValueIfSet` İLE
+  serbest bırakır, Task/Channel/dict capture'ları `destroyNonArcValue`
+  İLE yok eder, `nox_rc_free_payload` TAM hesaplanan boyutla (`8 + 8*n`)
+  çağrılır.
+
+**Bilinçli v1 kapsam kesintileri:** Katman 3 döngü çözücüsüyle (`nox_
+cycle_possible_root`/`nox_cycle_forget`) HİÇBİR entegrasyon YOK — `list[T]`/
+`dict[K,V]` elemanlarının ZATEN döngü tespitinin DIŞINDA bırakılmasıyla
+TUTARLI bir kapsam kararı. Closure'lar İÇİN `==`/`!=` desteklenmiyor —
+derin-eşitlik yardımcısının `.dict, .task, .channel` dalına `.closure` da
+EKLENDİ ama işaretçi-kimliği karşılaştırmasına DÜŞÜYOR (checker BUGÜN
+closure'ları hiç `==`e YÖNLENDİRMEDİĞİNDEN pratikte ERİŞİLEMEZ, yalnızca
+switch'in KAPSAMLI/derlenebilir kalması İÇİN savunmacı bir dal).
+
+**KRİTİK çökme hatası bulundu ve düzeltildi — `releaseValueIfSet`in
+`class_name.?` ÇAĞRISI, func-TİPLİ bir değişkene atanan bir closure İÇİN
+PANİK yapıyordu:** `result: (int) -> int = make_adder(5)` gibi bir kod,
+manuel uçtan-uca test SIRASINDA (otomatik test SÜİTİ DEĞİL — o ana kadar
+HİÇBİR golden test bu SENARYOYU egzersiz ETMİYORDU) gerçek bir "attempt to
+use null value" PANİĞİNE yol AÇTI. Kök neden: `Type.func` YAPISAL/
+polimorfik bir tiptir (`Type.class`in AKSİNE HER ZAMAN TEK somut bir sınıfı
+ADLANDIRMAZ) — bir closure DEĞERİ, dönüş/yeniden-atama YOLUYLA çıplak bir
+tip ANNOTASYONUNA aktığında SOMUT kökeni (`class_name`) KAYBOLUR (bu
+yayılımı çözmek AÇIKÇA U.4.4'e ERTELENDİ, U.4.3'ün KAPSAMI DEĞİL).
+**Düzeltme:** `releaseValueIfSet`in `.class or .closure` dalındaki
+`class_name.?` `const cn = class_name orelse return error.Unsupported;`e
+ÇEVRİLDİ — çökme, main.zig'in ZATEN YAKALADIĞI güvenli hata yoluna
+("codegen: bu program şu an desteklenmeyen bir yapı içeriyor...") DÖNÜŞTÜ.
+Düzeltme SONRASI manuel yeniden-çalıştırma TEMİZ çıkış kodu 1 gösterdi
+(segfault/panik DEĞİL).
+
+**AYRI, İLGİSİZ bir hata bulundu ve BİLİNÇLİ olarak İÇERİDE DÜZELTİLMEDİ:**
+`None` dönen bir fonksiyonun ÇIPLAK üst-düzey bir deyim olarak çağrılması
+(ör. `foo(5)`, atama/print OLMADAN) codegen'de `error.Unsupported` İLE
+ÇÖKÜYOR — izolasyon testleriyle (closure'suz, YALNIZCA bu senaryo) DOĞRULANDI,
+closure ÇALIŞMASIYLA HİÇBİR İLGİSİ YOK. `mcp__ccd_session__spawn_task` İLE
+AYRI bir arka plan görevi olarak İŞARETLENDİ (`task_cda7e052`), BU FAZIN
+KAPSAMINA DAHİL EDİLMEDİ.
+
+**Test-tasarımı yakın-kaçırma dersi (T.4b'nin "y değişkeni" dersiyle AYNI
+KATEGORİDE, BU FAZDA İKİNCİ KEZ):** heap-capture golden testinin İLK
+sürümü (string LİTERALLERİ capture EDEN, dış fonksiyonun captured string'i
+DÖNDÜRDÜĞÜ bir tasarım) kasıtlı olarak DEVRE DIŞI bırakılan capture-retain'i
+otomatik `zig build test` SÜİTİNDE YAKALAYAMADI (sessizce YEŞİL kaldı) —
+kök neden dikkatli refcount ANALİZİYLE bulundu: (1) string LİTERALLERİ
+`PINNED_REFCOUNT` İLE "sabitlenmiş" olduğundan HİÇBİR dengesizlik sıfıra
+İNEMEZ/görünmez; (2) dış fonksiyonun `return greeting`i KENDİ telafi edici
+retain'ini (`returnNeedsRetain`) TETİKLEYİP eksik capture-retain'i SAYISAL
+olarak İPTAL ETTİ. **Test YENİDEN TASARLANDI:** `combined: str = a + b`
+(GERÇEKTEN heap-tahsisli, sabitlenmemiş bir birleştirme sonucu) capture
+EDEN, ama dış fonksiyonun (bir `int` DÖNDÜREREK) HİÇ ÇAĞIRMADIĞI/DÖNDÜRMEDİĞİ
+bir closure — böylece closure'ın KENDİ retain/release ÇİFTİ, BAŞKA
+telafi edici retain'ler OLMADAN İZOLE edilir. Manuel `/tmp` testiyle bunun
+retain YOKKEN GERÇEK bir SIGSEGV (çıkış kodu 139) ÜRETTİĞİ, SONRA GERÇEK
+`zig build test` SÜİTİYLE "81 pass, 1 fail (82 total)" / "325/326" (BOZUK) →
+326/326 (DÜZELTİLMİŞ) GEÇİŞİ Debug VE ReleaseFast'ta DOĞRULANDI.
+
+**`generateModule` imza değişikliği + 8 çağrı sitesi güncellemesi:**
+`generateModule` YENİ bir `closure_infos: StringHashMapUnmanaged([]const
+[]const u8)` parametresi ALDI. `main.zig` checker'ın `closure_infos`unu
+BU forma DÖNÜŞTÜRÜP geçiyor; `codegen_golden_test.zig`nin `compileAndRun`
+yardımcı fonksiyonu AYNI dönüşümü yapıyor; DİĞER 6 basit çağrı sitesi
+(`fmt_golden_test.zig`, `extern_ffi_test.zig`, `hpy_call_golden_test.zig`,
+`http_serve_golden_test.zig`, `http_stdlib_golden_test.zig` VE
+`codegen_golden_test.zig`nin 3 diğer DOĞRUDAN çağrısı) `.empty` geçiyor
+(bunlar TAM bir `Checker` örneği EXPOSE ETMEYEN basitleştirilmiş `nox.
+checker.check` OK/ERR sarmalayıcısını KULLANDIĞINDAN).
+
+**Doğrulama:**
+1. **3 YENİ golden test** (`tests/golden/codegen_cases/`):
+   `nested_def_capture_primitive.nox` (int capture, ÇAĞRILMAYAN iç `def`,
+   dış fonksiyon `n`yi DÖNDÜRÜR — temel yapı-inşa-serbest-bırak DÖNGÜSÜ,
+   sızıntısız); `nested_def_capture_heap.nox` (yukarıdaki, YENİDEN
+   TASARLANMIŞ heap-capture testi); `rejected_closure_return_type.nox`
+   (func-tipli bir değişkene atama, `error.Unsupported`e DÜŞTÜĞÜNÜ
+   `expectError` İLE kanıtlar — `rejected_lowlevel_escape` İLE AYNI
+   desen).
+2. **Kasıtlı boz→kırmızı→düzelt** (capture-retain): `genNestedFuncDef`deki
+   `if (isHeapManaged(c.info.heap)) try self.emitInlineRetain(v);` GEÇİCİ
+   olarak `if (false and ...)` İLE devre dışı BIRAKILDI → `zig build test`
+   GERÇEKTEN "81 pass, 1 fail (82 total)" / "325/326 tests passed"
+   GÖSTERDİ (BAŞARISIZ olan TAM OLARAK YENİ heap-capture testiydi) →
+   geri getirildi → 326/326 YEŞİLE döndü (Debug VE ReleaseFast).
+3. **Manuel uçtan-uca doğrulama** (`/tmp` scratch dosyaları): temel
+   closure inşası/çağrısı, KRİTİK `releaseValueIfSet` çökme hatasının
+   BULUNMASI/DÜZELTİLMESİ, İLGİSİZ None-dönüş hatasının İZOLASYONU
+   (üçü de yukarıda ayrıntılı).
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

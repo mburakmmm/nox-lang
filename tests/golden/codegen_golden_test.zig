@@ -44,7 +44,16 @@ fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.
     var generic_it = checker_state.generic_functions.keyIterator();
     while (generic_it.next()) |k| try generic_names.append(allocator, k.*);
 
-    const ir = try nox.codegen.generateModule(allocator, module, checker_state.instantiations.items, generic_names.items, null);
+    // Faz U.4.3: bkz. compiler/main.zig'in AYNI dönüştürme notu.
+    var closure_infos: std.StringHashMapUnmanaged([]const []const u8) = .empty;
+    var closure_it = checker_state.closure_infos.iterator();
+    while (closure_it.next()) |entry| {
+        const names = try allocator.alloc([]const u8, entry.value_ptr.captures.len);
+        for (entry.value_ptr.captures, 0..) |c, i| names[i] = c.name;
+        try closure_infos.put(allocator, entry.key_ptr.*, names);
+    }
+
+    const ir = try nox.codegen.generateModule(allocator, module, checker_state.instantiations.items, generic_names.items, null, closure_infos);
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -281,7 +290,36 @@ test "codegen: lowlevel arenasından bir değeri bloktan return etmek reddedilir
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    try std.testing.expectError(error.Unsupported, nox.codegen.generateModule(allocator, module, &.{}, &.{}, null));
+    try std.testing.expectError(error.Unsupported, nox.codegen.generateModule(allocator, module, &.{}, &.{}, null, .empty));
+}
+
+test "codegen(çalıştır): Faz U.4.3 — iç içe def bir int'i yakalar (capture), inşa+release döngüsü sızıntısız" {
+    try expectGolden(
+        @embedFile("codegen_cases/nested_def_capture_primitive.nox"),
+        @embedFile("codegen_cases/nested_def_capture_primitive.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz U.4.3 — iç içe def bir str'i (heap-yönetimli) yakalar, döngü içinde tekrar tekrar inşa+release sızıntısız" {
+    try expectGolden(
+        @embedFile("codegen_cases/nested_def_capture_heap.nox"),
+        @embedFile("codegen_cases/nested_def_capture_heap.expected"),
+    );
+}
+
+test "codegen: Faz U.4.3 — func-tipi bir DEĞİŞKENE atanan closure'ın release'i (SOMUT class_name bilinmiyor) GÜVENLİ reddedilir (Unsupported, ÇÖKME DEĞİL)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/rejected_closure_return_type.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    try std.testing.expectError(error.Unsupported, nox.codegen.generateModule(allocator, module, &.{}, &.{}, null, .empty));
 }
 
 test "codegen: Faz T.3 — debug_source_path VERİLMEDEN dbgfile/dbgloc HİÇ üretilmez (opt-in, sıfır davranış değişikliği)" {
@@ -296,7 +334,7 @@ test "codegen: Faz T.3 — debug_source_path VERİLMEDEN dbgfile/dbgloc HİÇ ü
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, null);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, null, .empty);
     try std.testing.expect(std.mem.indexOf(u8, ir, "dbgfile") == null);
     try std.testing.expect(std.mem.indexOf(u8, ir, "dbgloc") == null);
 }
@@ -313,7 +351,7 @@ test "codegen: Faz T.3 — debug_source_path VERİLİRSE dbgfile + doğru satır
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, "fibonacci.nox");
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, "fibonacci.nox", .empty);
     try std.testing.expect(std.mem.indexOf(u8, ir, "dbgfile \"fibonacci.nox\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, ir, "dbgloc") != null);
 }

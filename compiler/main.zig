@@ -450,6 +450,20 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     var generic_it = checker_state.generic_functions.keyIterator();
     while (generic_it.next()) |k| try generic_names.append(a, k.*);
 
+    // Faz U.4.3: checker'ın closure yakalama (capture) listelerini
+    // (`checker.ClosureInfo`, isim + SEMANTIK `Type`) codegen'in beklediği
+    // basitleştirilmiş şekle (yol → yalnızca yakalanan İSİMLER) çevirir —
+    // codegen, HER yakalanan ismin TAM `TypeInfo`sini KENDİSİ, dış
+    // fonksiyonun O ANKİ `self.vars`ından türetir (bkz. `genNestedFuncDef`in
+    // belge notu) — bu yüzden `Type`↔`TypeInfo` dönüştürücüsüne GEREK YOK.
+    var closure_infos: std.StringHashMapUnmanaged([]const []const u8) = .empty;
+    var closure_it = checker_state.closure_infos.iterator();
+    while (closure_it.next()) |entry| {
+        const names = try a.alloc([]const u8, entry.value_ptr.captures.len);
+        for (entry.value_ptr.captures, 0..) |c, i| names[i] = c.name;
+        try closure_infos.put(a, entry.key_ptr.*, names);
+    }
+
     if (verbose) {
         // `report` yalnızca BU dökümün İÇİN hesaplanır (codegen KENDİ
         // sahiplik kararlarını AYRICA/dahili olarak üretir, `report`ı asla
@@ -470,7 +484,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // codegen.zig'in modül üstü notu (TEK dosya, stdlib-merge yanlış-atıf
     // sınırlaması bilinçli olarak KABUL EDİLDİ).
     const debug_source_path: ?[]const u8 = if (debug_info) path_arg else null;
-    const ir = codegen.generateModule(a, module, instantiations, generic_names.items, debug_source_path) catch |err| switch (err) {
+    const ir = codegen.generateModule(a, module, instantiations, generic_names.items, debug_source_path, closure_infos) catch |err| switch (err) {
         error.Unsupported => {
             std.debug.print(
                 "codegen: bu program şu an desteklenmeyen bir yapı içeriyor " ++

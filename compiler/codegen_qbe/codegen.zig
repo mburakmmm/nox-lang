@@ -222,7 +222,15 @@ const QbeType = enum { l, d, w, none };
 /// yaşar, ARC başlığı/retain-on-alias YOK, tek sahiplilik) — kapsam-sonu
 /// temizliği DOĞRUDAN bir `nox_dict_destroy` çağrısıdır (bkz.
 /// `releaseAllLocalsExcept`).
-const HeapKind = enum { none, str, list, class, task, channel, dict };
+/// Faz U.4.3: `closure` — bir iç içe `def`in ARC'lı çalışma zamanı temsili.
+/// `class` İLE YAPISAL OLARAK AYNIDIR (ARC pointer, `nox_rc_alloc`/
+/// `nox_rc_predecrement`/`nox_rc_free_payload` AYNI havuzu kullanır) —
+/// TEK FARK İÇ DÜZENİ: `{fn_ptr: l @0, yakalanan_değerler... @8+}` (sınıfın
+/// isimli ALANLARI yerine, checker'ın capture SIRASINA göre). `Value`/
+/// `VarInfo`nin (sınıflarla PAYLAŞILAN) `class_name` alanı BU DURUMDA
+/// closure'ın ÜRETİLEN release fonksiyonunun mangled adını taşır (bkz.
+/// `genNestedFuncDef`/`genClosureRelease`).
+const HeapKind = enum { none, str, list, class, task, channel, dict, closure };
 
 /// `list[T]`nin elemanları KENDİLERİ heap-yönetimliyse (sınıf ya da iç içe
 /// `list[T']`) bunu ÖZYİNELEMELİ olarak betimler (bkz. modül üstü not, "Faz 21
@@ -357,6 +365,29 @@ const SpawnWrapperSpec = struct {
     sig: FuncSig,
 };
 
+/// Faz U.4.3: bir closure'ın TEK bir yakalanan (capture) değeri — `name`
+/// dış (kapsayan) fonksiyondaki KAYNAK isim, `info` o ismin DIŞ fonksiyondaki
+/// TAM `TypeInfo`si (qtype/heap/class_name/vb. — `genNestedFuncDef`in
+/// closure inşası SIRASINDA `self.vars.get(name)`den KOPYALANIR, çünkü
+/// `ClosureFuncSpec` işlenene KADAR dış fonksiyonun `self.vars`ı ÇOKTAN
+/// TEMİZLENMİŞ olur).
+const ClosureCaptureField = struct { name: []const u8, info: TypeInfo };
+
+/// Faz U.4.3: bir iç içe `def`in gövdesini (henüz derlenmemiş) TEMBEL
+/// kaydı — `SpawnWrapperSpec`/`HttpServeWrapperSpec` İLE AYNI "sonda tüket"
+/// deseni (bkz. `generateModule`nin ilgili `while` döngüsü). `path`,
+/// checker'ın `ClosureInfo`sini (`closure_infos`) ARAMAK İÇİN kullanılan
+/// AYNI dot-ayrılmış anahtardır (bkz. `genNestedFuncDef`in belge notu) —
+/// bu closure'ın KENDİ gövdesi BAŞKA bir iç içe `def` İÇERİYORSA, o iç
+/// içe def'in codegen'i `self.current_path`i BU DEĞERE (path) ayarlayarak
+/// devam eder (rastgele derinlikte iç içeliği DOĞAL olarak destekler).
+const ClosureFuncSpec = struct {
+    mangled_name: []const u8,
+    path: []const u8,
+    fd: ast.FuncDef,
+    captures: []const ClosureCaptureField,
+};
+
 const VarInfo = struct {
     slot: []const u8,
     qtype: QbeType,
@@ -427,6 +458,19 @@ const LIST_HEADER_SIZE: usize = 16;
 /// Her sınıf örneğinin (refcount başlığından SONRA) taşıdığı, çalışma
 /// zamanında `except ClassName:` eşleştirmesi için kullanılan tip etiketi.
 const TAG_SIZE: usize = 8;
+
+/// Faz U.4.3: `Codegen.current_path`i (checker'ın `FnCtx.path`iyle AYNI
+/// dot-ayrılmış format, ör. `"outer.adder"`) GEÇERLİ bir QBE sembol adına
+/// çevirir — QBE tanımlayıcıları `.` İÇEREMEZ, bu yüzden `.`→`_` DÖNÜŞTÜRÜLÜR.
+/// `"closure_"` ÖNEKİ, olası bir kullanıcı fonksiyon/sınıf adıyla ÇAKIŞMAYI
+/// ÖNLER (Nox tanımlayıcıları `_` İLE BAŞLAYABİLİR ama `mangleWith`/`registerFunc`
+/// ürettiği hiçbir isim BU tam ÖNEKLE eşleşmez).
+fn sanitizePathToSymbol(a: std.mem.Allocator, path: []const u8) ![]const u8 {
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    try buf.appendSlice(a, "closure_");
+    for (path) |c| try buf.append(a, if (c == '.') '_' else c);
+    return buf.toOwnedSlice(a);
+}
 
 fn qbeTypeName(t: QbeType) []const u8 {
     return switch (t) {
@@ -507,7 +551,7 @@ fn escapeForQbeString(allocator: std.mem.Allocator, s: []const u8) CodegenError!
 }
 
 fn isHeapManaged(h: HeapKind) bool {
-    return h == .list or h == .class or h == .str;
+    return h == .list or h == .class or h == .str or h == .closure;
 }
 
 /// `expr` değerlendirildiğinde TAZE (henüz hiçbir isme/alana/elemana
@@ -745,6 +789,24 @@ const Codegen = struct {
     /// AYNI desen, `nox.http.serve` çağrı siteleri İÇİN.
     http_serve_wrapper_counter: usize = 0,
     http_serve_wrappers: std.ArrayListUnmanaged(HttpServeWrapperSpec) = .empty,
+    /// Faz U.4.3: checker'ın hesapladığı closure yakalama (capture) listeleri
+    /// — anahtar `"<dış_yol>.<iç_isim>"` (bkz. `checker.zig`nin `ClosureInfo`si,
+    /// `Checker.closure_infos`), DEĞER yalnızca yakalanan İSİMLER (tipleri
+    /// codegen KENDİSİ, dış fonksiyonun O ANKİ `self.vars`ından türetir —
+    /// bkz. `genNestedFuncDef`in belge notu, checker<->codegen ARASINDA
+    /// bir `Type`↔`TypeInfo` dönüştürücüsüne gerek KALMAZ).
+    closure_infos: std.StringHashMapUnmanaged([]const []const u8) = .empty,
+    /// Şu an derlenen fonksiyonun/metodun/iç içe `def`in "yolu" — checker'ın
+    /// `FnCtx.path`i İLE BİREBİR AYNI FORMÜLLE hesaplanır (üst-düzey: kendi
+    /// adı; metod: `"Sınıf.metod"`; iç içe: `"<dış_yol>.<iç_isim>"`) —
+    /// `closure_infos`i DOĞRU anahtarla aramak İÇİN checker İLE TUTARLI
+    /// olmalıdır.
+    current_path: []const u8 = "",
+    /// `SpawnWrapperSpec`/`HttpServeWrapperSpec` İLE AYNI "TEMBEL kayıt,
+    /// sonda tüket" deseni — bir iç içe `def`in gövdesi, DIŞ fonksiyonun
+    /// KENDİ derlemesi SIRASINDA DEĞİL, `generateModule`nin SONUNDA (bkz.
+    /// onun ilgili `while` döngüsü) AYRI bir QBE fonksiyonu olarak derlenir.
+    closure_funcs: std.ArrayListUnmanaged(ClosureFuncSpec) = .empty,
     /// Serbest fonksiyon adlarının (ve `"ClassName___init__"` biçimindeki
     /// kurucu sembollerinin) kümesi — YALNIZCA (transitif olarak) ASLA bir
     /// istisna FIRLATAMAYACAKLARI KANITLANMIŞ olanlar (bkz.
@@ -867,10 +929,14 @@ const Codegen = struct {
                     .elem_is_str = elem.heap == .str,
                 };
             },
-            // Faz U.4.1: fonksiyon/closure tipi henüz codegen'de DESTEKLENMİYOR
-            // (çalışma zamanı temsili/çağrı mekanizması U.4.3/U.4.4'te
-            // eklenecek) — şimdilik yalnızca tip sistemi seviyesinde var.
-            .func_type => return error.Unsupported,
+            // Faz U.4.3: bir closure değeri, ARC pointer AÇISINDAN `class`
+            // İLE AYNIdır (bkz. `HeapKind.closure`nin belge notu) — YALNIZCA
+            // `class_name` (BURADA bilinçli olarak `null`, çünkü SALT bir
+            // TİP İFADESİNDEN hangi SOMUT closure kastedildiği bilinemez)
+            // gerçek bir SOMUT closure DEĞERİNİN (bir iç içe `def` deyiminin
+            // KENDİSİ tarafından, bkz. `genNestedFuncDef`) `VarInfo`sinde
+            // doldurulur. Dolaylı çağrı (U.4.4) HENÜZ desteklenmiyor.
+            .func_type => return .{ .qtype = .l, .heap = .closure },
         }
     }
 
@@ -1065,7 +1131,21 @@ const Codegen = struct {
                     if (t.finally_body) |fb| try self.collectLocals(locals, fb, in_lowlevel);
                 },
                 .lowlevel_stmt => |ll| try self.collectLocals(locals, ll.body, true),
-                .class_def, .func_def, .protocol_def, .extern_def => return error.Unsupported,
+                // Faz U.4.3: bir iç içe `def`in BAĞLADIĞI isim (`fd.name`)
+                // BAŞKA bir yerel gibi ÖNCEDEN (fonksiyon girişinde) bir
+                // slota sahip OLMALIDIR — `genNestedFuncDef` (bkz. `genStmts`in
+                // `.func_def` dalı) BU slotu construction ANINDA doldurur.
+                // `class_name` BURADA (mangled sembol adı) ÖNCEDEN
+                // hesaplanır — checker İLE AYNI FORMÜL (`self.current_path`
+                // + "." + `fd.name`), `genNestedFuncDef`in construction
+                // ANINDA BAĞIMSIZ olarak YENİDEN hesapladığı DEĞERLE
+                // TUTARLI kalması İÇİN (bkz. `sanitizePathToSymbol`).
+                .func_def => |fd| {
+                    const path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ self.current_path, fd.name });
+                    const mangled = try sanitizePathToSymbol(self.allocator, path);
+                    try locals.append(self.allocator, .{ .name = fd.name, .info = .{ .qtype = .l, .heap = .closure, .class_name = mangled } });
+                },
+                .class_def, .protocol_def, .extern_def => return error.Unsupported,
                 else => {},
             }
         }
@@ -1096,6 +1176,7 @@ const Codegen = struct {
         self.vars.clearRetainingCapacity();
         self.temp_counter = 0;
         self.label_counter = 0;
+        self.current_path = fd.name;
 
         const ret_info = try self.resolveType(fd.return_type);
         self.current_ret_qtype = ret_info.qtype;
@@ -1140,6 +1221,7 @@ const Codegen = struct {
         self.vars.clearRetainingCapacity();
         self.temp_counter = 0;
         self.label_counter = 0;
+        self.current_path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ class_name, m.name });
 
         const ret_info = try self.resolveType(m.return_type);
         self.current_ret_qtype = ret_info.qtype;
@@ -1188,6 +1270,179 @@ const Codegen = struct {
         try self.out.writer.print("{s}\n", .{end_label});
         try self.emitDefaultReturn(ret_info.qtype);
         try self.out.writer.writeAll("}\n");
+    }
+
+    /// Faz U.4.3: bir iç içe `def` DEYİMİNİN (`genStmts`in `.func_def` dalı)
+    /// codegen'i — DIŞ (kapsayan) fonksiyonun BAĞLAMINDA çalışır (`self.vars`
+    /// HÂLÂ dış fonksiyonun yerellerini İÇERİR). İKİ İŞ yapar:
+    /// 1. Closure HEAP BLOĞUNU İNŞA eder (`{fn_ptr: l @0, yakalananlar... @8+}`)
+    ///    — `genConstructFromValues`in AYNI `nox_rc_alloc` + alan-doldurma
+    ///    deseni, ama ALAN İSİMLERİ yerine checker'ın capture SIRASI kullanılır.
+    ///    Her yakalanan DEĞER, DIŞ fonksiyonun O ANKİ slotundan yüklenir;
+    ///    heap-yönetimliyse RETAIN edilir (closure KENDİ bağımsız referansını
+    ///    TUTAR — bkz. nox-teknik-spesifikasyon.md §3.23, "değer anlık
+    ///    görüntüsü" kararı).
+    /// 2. İç fonksiyonun GÖVDESİNİ (henüz DERLENMEMİŞ) `self.closure_funcs`e
+    ///    TEMBEL kaydeder (bkz. `ClosureFuncSpec`in belge notu) — GERÇEK QBE
+    ///    fonksiyonu `generateModule`nin SONUNDA (`genClosureFunc`) üretilir.
+    ///
+    /// `fd.name`, ÖNCEDEN (bkz. `collectLocals`in `.func_def` dalı, AYNI
+    /// `path`/`mangled` FORMÜLÜYLE) `self.vars`e KAYDEDİLMİŞ olmalıdır —
+    /// burada YALNIZCA o slotun DEĞERİ (yeni inşa edilen pointer) YAZILIR,
+    /// tıpkı bir `var_decl`in KENDİ slotuna yazması gibi (bkz. `genStmts`in
+    /// `.var_decl` dalı, AYNI "önce ESKİYİ serbest bırak, SONRA YENİYİ yaz"
+    /// sırası — bir DÖNGÜ İÇİNDE tekrar tekrar TANIMLANAN bir iç içe `def`
+    /// İÇİN GÜVENLİ olması İÇİN).
+    fn genNestedFuncDef(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
+        const path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ self.current_path, fd.name });
+        const mangled = try sanitizePathToSymbol(self.allocator, path);
+        const capture_names = self.closure_infos.get(path) orelse &[_][]const u8{};
+
+        const captures = try self.allocator.alloc(ClosureCaptureField, capture_names.len);
+        for (capture_names, 0..) |name, i| {
+            const src = self.vars.get(name) orelse return error.Unsupported;
+            captures[i] = .{ .name = name, .info = .{
+                .qtype = src.qtype,
+                .heap = src.heap,
+                .elem_qtype = src.elem_qtype,
+                .class_name = src.class_name,
+                .elem_heap_info = src.elem_heap_info,
+                .elem_is_str = src.elem_is_str,
+                .dict_info = src.dict_info,
+            } };
+        }
+
+        const total_size = 8 + 8 * captures.len;
+        const block = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ block, RT_PARAM, total_size });
+        try self.out.writer.print("    storel ${s}, {s}\n", .{ mangled, block });
+        for (captures, 0..) |c, i| {
+            const offset = 8 + 8 * i;
+            const addr = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, block, offset });
+            const src_slot = self.vars.get(c.name).?;
+            const v = try self.newTemp();
+            try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ v, qbeTypeName(src_slot.qtype), qbeTypeName(src_slot.qtype), src_slot.slot });
+            if (isHeapManaged(c.info.heap)) try self.emitInlineRetain(v);
+            try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(src_slot.qtype), v, addr });
+        }
+
+        const bound = self.vars.get(fd.name).?;
+        try self.releaseSlotIfSet(bound);
+        try self.out.writer.print("    storel {s}, {s}\n", .{ block, bound.slot });
+
+        try self.closure_funcs.append(self.allocator, .{ .mangled_name = mangled, .path = path, .fd = fd, .captures = captures });
+    }
+
+    /// Faz U.4.3: `self.closure_funcs`e TEMBEL kaydedilen bir iç içe `def`in
+    /// GERÇEK gövdesini üretir — `genFunction`in AYNI iskeleti, İKİ FARKLA:
+    /// (1) imzaya gizli bir `l %env` parametresi (RT_PARAM'DAN HEMEN SONRA)
+    /// eklenir; (2) HER yakalanan (capture) değer, NORMAL bir parametre
+    /// GİBİ (`is_param = true` — kapsam-sonu release'i ATLAR, bkz.
+    /// `LocalDecl`in belge notu, "ödünç alınmış referans" deseni) KENDİ
+    /// slotuna sahip olur, AMA değeri bir QBE `%p_<isim>` argüman
+    /// REGISTER'INDAN DEĞİL, `%env`nin `8 + 8*i` OFSETİNDEN YÜKLENEREK
+    /// doldurulur. Bu İKİ FARK dışında gövde (`genStmts`) TAMAMEN NORMAL
+    /// çalışır — capture'lar "sıradan, ÖNCEDEN doldurulmuş yereller" gibi
+    /// GÖRÜNÜR.
+    fn genClosureFunc(self: *Codegen, spec: ClosureFuncSpec) CodegenError!void {
+        self.vars.clearRetainingCapacity();
+        self.temp_counter = 0;
+        self.label_counter = 0;
+        self.current_path = spec.path;
+
+        const ret_info = try self.resolveType(spec.fd.return_type);
+        self.current_ret_qtype = ret_info.qtype;
+        self.current_catch_label = null;
+        self.in_main = false;
+
+        var locals: std.ArrayListUnmanaged(LocalDecl) = .empty;
+        defer locals.deinit(self.allocator);
+        for (spec.captures) |c| {
+            try locals.append(self.allocator, .{ .name = c.name, .info = c.info, .is_param = true });
+        }
+        for (spec.fd.params) |p| {
+            try locals.append(self.allocator, .{ .name = p.name, .info = try self.resolveType(p.type_expr), .is_param = true });
+        }
+        try self.collectLocals(&locals, spec.fd.body, false);
+
+        if (ret_info.qtype == .none) {
+            try self.out.writer.print("export function ${s}(l {s}, l %env", .{ spec.mangled_name, RT_PARAM });
+        } else {
+            try self.out.writer.print("export function {s} ${s}(l {s}, l %env", .{ qbeTypeName(ret_info.qtype), spec.mangled_name, RT_PARAM });
+        }
+        for (spec.fd.params) |p| {
+            try self.out.writer.writeAll(", ");
+            const info = try self.resolveType(p.type_expr);
+            try self.out.writer.print("{s} %p_{s}", .{ qbeTypeName(info.qtype), p.name });
+        }
+        try self.out.writer.writeAll(") {\n@start\n");
+
+        for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
+        for (spec.captures, 0..) |c, i| {
+            const offset = 8 + 8 * i;
+            const info = self.vars.get(c.name).?;
+            const addr = try self.newTemp();
+            try self.out.writer.print("    {s} =l add %env, {d}\n", .{ addr, offset });
+            const v = try self.newTemp();
+            try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ v, qbeTypeName(info.qtype), qbeTypeName(info.qtype), addr });
+            try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(info.qtype), v, info.slot });
+        }
+        for (spec.fd.params) |p| {
+            const info = self.vars.get(p.name).?;
+            try self.out.writer.print("    store{s} %p_{s}, {s}\n", .{ qbeTypeName(info.qtype), p.name, info.slot });
+        }
+
+        try self.genStmts(spec.fd.body, ret_info.qtype);
+        try self.releaseAllLocals();
+
+        const end_label = try self.newLabel("fn_end");
+        try self.out.writer.print("{s}\n", .{end_label});
+        try self.emitDefaultReturn(ret_info.qtype);
+        try self.out.writer.writeAll("}\n");
+
+        try self.genClosureRelease(spec.mangled_name, spec.captures);
+    }
+
+    /// Faz U.4.3: `$<mangled>_release(rt, p)` üretir — `genClassRelease`in
+    /// AYNI iskeleti (predecrement, sıfıra düşerse HER yakalanan
+    /// heap-yönetimli/Task/Channel/dict değeri release/destroy et, SONRA
+    /// `nox_rc_free_payload`). Katman 3'ün döngü-çözücü entegrasyonu
+    /// (`nox_cycle_possible_root`/`forget`) BİLİNÇLİ OLARAK atlanır — v1
+    /// kapsamı, `list[T]`/`dict[K,V]` elemanlarıyla AYNI gerekçeyle (bkz.
+    /// runtime/alloc/cycle_detector.zig'in modül üstü notu, "yalnızca SINIF
+    /// örnekleri") closure'ları döngü TARAMASININ dışında bırakır.
+    fn genClosureRelease(self: *Codegen, mangled_name: []const u8, captures: []const ClosureCaptureField) CodegenError!void {
+        self.temp_counter = 0;
+        self.label_counter = 0;
+
+        try self.out.writer.print("export function ${s}_release(l {s}, l %p) {{\n@start\n", .{ mangled_name, RT_PARAM });
+        const should_free = try self.emitInlinePredecrement("%p");
+        const free_label = try self.newLabel("release_free");
+        const done_label = try self.newLabel("release_done");
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ should_free, free_label, done_label });
+        try self.out.writer.print("{s}\n", .{free_label});
+        for (captures, 0..) |c, i| {
+            const offset = 8 + 8 * i;
+            if (isHeapManaged(c.info.heap)) {
+                const addr = try self.newTemp();
+                try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, offset });
+                const fv = try self.newTemp();
+                try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
+                try self.releaseValueIfSet(fv, c.info.heap, c.info.elem_qtype, c.info.class_name, c.info.elem_heap_info);
+            } else if (c.info.heap == .task or c.info.heap == .channel or c.info.heap == .dict) {
+                const addr = try self.newTemp();
+                try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, offset });
+                const fv = try self.newTemp();
+                try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
+                try self.destroyNonArcValue(fv, c.info.heap, c.info.dict_info);
+            }
+        }
+        const total_size = 8 + 8 * captures.len;
+        try self.out.writer.print("    call $nox_rc_free_payload(l {s}, l %p, l {d})\n", .{ RT_PARAM, total_size });
+        try self.out.writer.print("    jmp {s}\n", .{done_label});
+        try self.out.writer.print("{s}\n", .{done_label});
+        try self.out.writer.writeAll("    ret\n}\n");
     }
 
     /// Her sınıf için `$ClassName_release(rt, p)` üretir: refcount'u azaltır
@@ -1508,7 +1763,11 @@ const Codegen = struct {
             // `dict[str,str]` sınıf ALANI, HER sınıf İÇİN OTOMATİK üretilen
             // `$ClassName_eq`de (kullanıcı `==` HİÇ kullanmasa BİLE) bu dala
             // düşer — güvenli varsayılan: TUTAMAÇ KİMLİĞİ (pointer) karşılaştırması.
-            .dict, .task, .channel => blk: {
+            // Faz U.4.3: closure değerleri henüz `==` karşılaştırmasını
+            // DESTEKLEMİYOR (checker bu dala HİÇ düşürmemeli) — savunmacı
+            // olarak `dict`/`Task`/`Channel` İLE AYNI tutamaç-kimliği
+            // (pointer) karşılaştırmasına düşülür.
+            .dict, .task, .channel, .closure => blk: {
                 const t = try self.newTemp();
                 try self.out.writer.print("    {s} =w ceql {s}, {s}\n", .{ t, va, vb });
                 break :blk t;
@@ -1934,8 +2193,21 @@ const Codegen = struct {
         const done_label = try self.newLabel("release_done");
         try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ is_null, skip_label, release_label });
         try self.out.writer.print("{s}\n", .{release_label});
-        if (heap == .class) {
-            try self.out.writer.print("    call ${s}_release(l {s}, l {s})\n", .{ class_name.?, RT_PARAM, ptr });
+        if (heap == .class or heap == .closure) {
+            // Faz U.4.3: bir `.closure` değerinin `class_name`i (HANGİ
+            // SOMUT closure'ın release fonksiyonu çağrılacağı) YALNIZCA
+            // bir iç içe `def` DEYİMİNİN KENDİSİ tarafından (bkz.
+            // `genNestedFuncDef`) KESİN olarak bilinir — bir func-tipi
+            // DEĞİŞKEN/DÖNÜŞ TİPİ ANNOTASYONUNDAN (bkz. `resolveType`in
+            // `.func_type` dalı) `class_name` HER ZAMAN `null`dır (HANGİ
+            // SOMUT closure olduğu, YAPISAL tipten ÇIKARILAMAZ — `class`
+            // tipinin AKSİNE, `func` tipi tipi POLİMORFİKTİR). Bu durumda
+            // (henüz DESTEKLENMEYEN bir kullanım — closure'ı bir DEĞİŞKENE
+            // atayıp/döndürüp bir SONRAKİ noktada release ETMEK, U.4.4'ün
+            // dolaylı çağrı desteğiyle BİRLİKTE ele alınacak) PANİK YERİNE
+            // GÜVENLİ bir `error.Unsupported` döndürülür.
+            const cn = class_name orelse return error.Unsupported;
+            try self.out.writer.print("    call ${s}_release(l {s}, l {s})\n", .{ cn, RT_PARAM, ptr });
         } else if (heap == .str) {
             // `str`nin boyutu (`list[T]`nin AKSİNE) başlıkta SAKLANMAZ (bkz.
             // `runtime/str.zig`in modül üstü notu) — `nox_str_release`
@@ -2224,7 +2496,8 @@ const Codegen = struct {
                 .try_stmt => |t| try self.genTry(t, ret_qtype),
                 .lowlevel_stmt => |ll| try self.genLowLevel(ll, ret_qtype),
                 .pass_stmt => {},
-                .func_def, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => return error.Unsupported,
+                .func_def => |fd| try self.genNestedFuncDef(fd),
+                .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => return error.Unsupported,
             }
         }
     }
@@ -4635,8 +4908,8 @@ const Codegen = struct {
 /// `debug_source_path`: Faz T.3, `null` DIŞINDA VERİLİRSE (bkz. modül üstü
 /// not) `dbgfile`/`dbgloc` yönergeleri yayınlanır — `null` İKEN çıktı
 /// ÖNCEKİYLE BİREBİR AYNI kalır (opt-in, sıfır davranış değişikliği).
-pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, debug_source_path: ?[]const u8) CodegenError![]u8 {
-    var gen: Codegen = .{ .allocator = allocator, .out = .init(allocator) };
+pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8)) CodegenError![]u8 {
+    var gen: Codegen = .{ .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos };
 
     if (debug_source_path) |path| {
         gen.debug_info = true;
@@ -4768,6 +5041,15 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     // ihtiyacı keşfedebilir, bkz. `eqFnNameForList`/`eqMangleFor`).
     while (gen.list_eq_queue.pop()) |item| {
         try gen.genListEq(item.name, item.elem_qtype, item.elem_heap_info, item.elem_is_str);
+    }
+
+    // Faz U.4.3: her iç içe `def` deyimi için TEMBEL kaydedilen closure
+    // gövdeleri (bkz. `ClosureFuncSpec`in belge notu) — AYNI "sonda tüket"
+    // deseni; `while` KULLANILIR çünkü bir closure'ın GÖVDESİ BAŞKA bir
+    // iç içe `def` İÇEREBİLİR (rastgele derinlik, bkz. `genClosureFunc`in
+    // `self.current_path` güncellemesi).
+    while (gen.closure_funcs.pop()) |spec| {
+        try gen.genClosureFunc(spec);
     }
 
     // Faz 21 aşama 4: her `spawn` çağrı sitesi için TEMBEL kaydedilen

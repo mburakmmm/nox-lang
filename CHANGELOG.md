@@ -125,6 +125,18 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   dolaylı çağrı henüz yok (U.4.3/U.4.4'te geliyor) — şimdilik `noxc build`
   bu tür bir programı derlerken checker aşamasını geçer ama codegen
   aşamasında güvenli bir "henüz desteklenmiyor" hatasıyla durur.
+- Closure çalışma zamanı temsili + QBE codegen eklendi (Faz U.4.3) — iç içe
+  `def`ler artık gerçekten çalışıyor: yeni `HeapKind.closure` (sınıf
+  örnekleriyle aynı ARC havuzu, `{fn_ptr, yakalanan değerler...}` bellek
+  düzeni), `genNestedFuncDef`/`genClosureFunc`/`genClosureRelease`. Bir
+  closure oluşturulduğunda yakalanan heap-yönetimli değerler retain edilir,
+  closure serbest bırakıldığında (refcount sıfıra inince) release edilir —
+  döngü içinde tekrar tekrar oluşturma/serbest bırakma sızıntısız. Bilinçli
+  v1 kesintileri: Katman 3 döngü çözücüsüyle entegrasyon yok, closure'lar
+  için `==`/`!=` yok, closure'ı DEĞER olarak dolaylı çağırma/parametre-dönüş
+  olarak geçirme henüz yok (U.4.4'e ertelendi — bir closure'ı çıplak bir
+  func-tipli değişkene atamak/döndürmek şimdilik güvenli bir "henüz
+  desteklenmiyor" hatasına düşer, çökme değil).
 
 ### Düzeltildi
 - **Önemli test-altyapısı düzeltmesi:** `compiler/*.zig` dosyalarına gömülü
@@ -179,6 +191,12 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   desenle artık aralık dışı bir erişimde `IndexError` `raise` ediliyor.
   Yan bulgu: `tests/compat/extern_ffi_test.zig` `core.nox`u (dolayısıyla
   `IndexError`/`ValueError`i) hiç birleştirmiyordu — düzeltildi.
+- Codegen'in `releaseValueIfSet`i, func-tipli bir değişkene atanan/
+  döndürülen bir closure değerinin somut kökeni bilinmediğinde (`class_name
+  == null`) "attempt to use null value" ile ÇÖKÜYORDU (Faz U.4.3 sırasında
+  manuel uçtan-uca testte bulundu). `class_name.?` → `class_name orelse
+  return error.Unsupported` — artık main.zig'in zaten yakaladığı güvenli
+  "henüz desteklenmiyor" hatasına düşüyor, panik yok.
 
 ### Güvenlik
 - `nox.http.serve`e iki DoS sertleştirmesi eklendi (Faz Q.5): bir isteğin
