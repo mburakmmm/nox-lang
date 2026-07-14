@@ -1,0 +1,32 @@
+# Stdlib fazı V.2 — nox.random: basit PRNG sarmalayıcısı.
+# `runtime/stdlib_shims/random.zig`ye sarar (Xoshiro256, ARC-dışı —
+# yalnızca int/float alır/döner, with_rt YOK). Kriptografik güvenlik
+# İDDİASI YOK, yalnızca genel amaçlı/test/oyun senaryoları içindir.
+#
+# `seed`/`randint`/`random` extern def'leri `_raw` SONEKİ TAŞIR — `nox.os`/
+# `nox.time`in AYNI KISA adlı sarmalayıcı İSİM ÇAKIŞMASI dersiyle TUTARLI
+# (bkz. onların belge notları).
+#
+# BİLİNÇLİ İSİMLENDİRME NOTU: fonksiyonlar KASITLI OLARAK `int`/`float`
+# ADLANDIRILMADI (Python'un `random.randint`/`random.random`ıyla TUTARLI
+# `randint`/`random` seçildi) — `module_loader.zig`nin yeniden adlandırma
+# haritası, bir modülün KENDİ üst-düzey FONKSİYON adlarını `renameTypeExpr`
+# ARACILIĞIYLA TİP İFADELERİNE de UYGULAR (aynı isim dizesini AYIRT
+# ETMEDEN); `int`/`float` gibi ÇEKİRDEK TİP adlarıyla ÇAKIŞAN bir fonksiyon
+# adı, o modüldeki HER `int`/`float` TİP ANNOTASYONUNU da (YANLIŞLIKLA)
+# mangled fonksiyon adına YENİDEN YAZARDI ("bilinmeyen tip: nox_random_int"
+# GİBİ bir çöküşe yol açar — GERÇEKTEN denenip YAKALANDI, bkz. spec).
+extern def nox_random_seed_raw(s: int) -> None from "zig-out/lib/noxrt.o"
+extern def nox_random_randint_raw(lo: int, hi: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_random_random_raw() -> float from "zig-out/lib/noxrt.o"
+
+def seed(s: int) -> None:
+    nox_random_seed_raw(s)
+
+# `lo`/`hi` İKİSİ de DAHİLDİR (Python'un `random.randint`iyle TUTARLI).
+def randint(lo: int, hi: int) -> int:
+    return nox_random_randint_raw(lo, hi)
+
+# `[0.0, 1.0)` aralığında (Python'un `random.random`ıyla TUTARLI).
+def random() -> float:
+    return nox_random_random_raw()

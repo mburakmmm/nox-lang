@@ -164,6 +164,12 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   gerekmedi. Bilinçli v1 sınırı: çalışma zamanında yapılandırılabilir bir
   minimum-seviye filtresi yok (Nox'ta paylaşılan mutable modül-düzeyi
   durum yok), çıktı her zaman stdout'a gider.
+- `nox.random` modülü eklendi (Faz V.2) — basit PRNG (`seed`/`randint`/
+  `random`, Xoshiro256 — kriptografik güvenlik iddiası yok). Diğer stdlib
+  modüllerinden farklı olarak gerçek bir Zig kabuğu gerektirdi
+  (`runtime/stdlib_shims/random.zig`); PRNG durumu, `nox.os`nin argc/argv'si
+  ile aynı "süreç ömrü boyunca yaşayan statik değişken" deseninde tutulur.
+  `seed` hiç çağrılmadıysa ilk kullanımda otomatik tohumlanır.
 
 ### Düzeltildi
 - **Önemli test-altyapısı düzeltmesi:** `compiler/*.zig` dosyalarına gömülü

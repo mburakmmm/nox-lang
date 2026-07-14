@@ -18,6 +18,7 @@ pub const os_shim = @import("stdlib_shims/os.zig");
 pub const fs_shim = @import("stdlib_shims/fs.zig");
 pub const time_shim = @import("stdlib_shims/time.zig");
 pub const json_shim = @import("stdlib_shims/json.zig");
+pub const random_shim = @import("stdlib_shims/random.zig");
 
 // Bu modüllerin yalnızca isim üzerinden yeniden dışa aktarılması, Zig'in
 // tembel (lazy) analiz modelinde `export fn` bildirimlerinin nesne çıktısına
@@ -41,4 +42,5 @@ comptime {
     _ = fs_shim;
     _ = time_shim;
     _ = json_shim;
+    _ = random_shim;
 }

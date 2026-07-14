@@ -748,6 +748,13 @@ test "codegen(çalıştır): nox.log.format — seviye etiketi + zaman damgası 
     );
 }
 
+test "codegen(çalıştır): nox.random.seed/randint/random — aralık sınırları + aynı tohumla deterministik tekrar" {
+    try expectGolden(
+        @embedFile("codegen_cases/random_seeded_reproducible.nox"),
+        @embedFile("codegen_cases/random_seeded_reproducible.expected"),
+    );
+}
+
 test "codegen(çalıştır): nox.test.assert_eq_*/assert_true (başarılı yol)" {
     try expectGolden(
         @embedFile("codegen_cases/test_assert_eq_pass.nox"),

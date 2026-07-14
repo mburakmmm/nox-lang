@@ -6531,6 +6531,64 @@ bir stderr yazma ilkeli HENÜZ YOK).
 
 ---
 
+## 3.30 Faz V.2 — `nox.random` Modülü
+
+**Kapsam:** basit PRNG (`seed`/`randint`/`random`). Diğer stdlib
+modüllerinden FARKLI olarak GERÇEK bir Zig kabuğu GEREKTİRDİ (`runtime/
+stdlib_shims/random.zig`, `std.Random.DefaultPrng` — Xoshiro256, KRİPTOGRAFİK
+güvenlik İDDİASI YOK) — Nox'un KENDİSİNİN rastgelelik ÜRETECEK bir çekirdek
+ilkeli YOK.
+
+**Mimari — PRNG durumu, `nox.os`nin argc/argv'siyle AYNI "süreç ömrü
+boyunca yaşayan statik Zig değişkeni" deseninde tutulur:** Nox'ta
+fonksiyonlar arası PAYLAŞILAN mutable modül-düzeyi durum OLMADIĞINDAN (bkz.
+`nox.log`nin AYNI notu), rastgelelik durumunun (PRNG'nin İÇ durumu)
+BARINABİLECEĞİ TEK yer BUDUR — `g_prng`/`g_seeded` dosya-düzeyi `var`lar.
+`seed` HİÇ çağrılmadıysa İLK kullanımda `clock_gettime` tabanlı bir zaman
+damgasıyla OTOMATİK tohumlanır (Python'un `random` modülünün KENDİ
+varsayılan davranışıyla TUTARLI).
+
+**KRİTİK, GERÇEKTEN YAŞANAN bir isimlendirme hatası — çekirdek TİP
+adlarıyla (`int`/`float`) ÇAKIŞAN fonksiyon isimleri KULLANILAMAZ:**
+İLK tasarım `nox.random.int(lo, hi)`/`nox.random.float()` İSİMLERİNİ
+kullanıyordu — bu, "bilinmeyen tip: nox_random_int" hatasıyla ÇÖKTÜ.
+Kök neden: `module_loader.zig`nin yeniden adlandırma haritası (bkz.
+`mangleWith`), bir stdlib modülünün ÜST-DÜZEY FONKSİYON adlarını
+(`renameStmt` ARACILIĞIYLA) mangled sembol adlarına ÇEVİRİRKEN, AYNI
+haritayı `renameTypeExpr` ARACILIĞIYLA TİP İFADELERİNE de UYGULAR — İKİ
+farklı ROL (fonksiyon adı VE tip adı) AYNI isim DİZESİNİ paylaştığında
+(`int`), harita AYIRT ETMEDEN HER İKİSİNİ de yeniden yazar. Sonuç: `def
+int(lo: int, hi: int) -> int:` gövdesindeki `int` TİP ANNOTASYONLARI da
+`nox_random_int`e (fonksiyon adının KENDİ mangled hâline) YENİDEN
+YAZILDI — anlamsız bir "tip". **Düzeltme:** isimler `randint`/`random`
+OLARAK DEĞİŞTİRİLDİ (Python'un `random.randint`/`random.random`ıyla
+TUTARLI, üstelik DAHA TANIDIK) — çekirdek tip adlarıyla ÇAKIŞAN HİÇBİR
+stdlib fonksiyonu tanımlanmamalıdır (bu, `nox.os`/`nox.time`in `_raw`
+SONEKİ dersiyle AYNI KATEGORİDE ama FARKLI bir çakışma türüdür — o İSİM-
+İSİM çakışmasıydı, bu İSİM-TİP çakışmasıdır).
+
+**Doğrulama:**
+1. **1 uçtan-uca golden test** (`random_seeded_reproducible.nox`):
+   `randint`in DÖNÜŞ değerinin İSTENEN aralıkta olduğunu, `random`ın
+   `[0.0, 1.0)` aralığında olduğunu, VE — EN ÖNEMLİSİ — AYNI tohumla
+   (`seed`) İKİ KEZ çağrılan `randint`/`random`ın TAM OLARAK AYNI sonucu
+   ÜRETTİĞİNİ (deterministik tekrarlanabilirlik) kanıtlar.
+2. **Manuel uçtan-uca doğrulama** (`noxc build` + çalıştırma, `/tmp`
+   scratch dosyaları): yukarıdaki isimlendirme hatasının TAM OLARAK BU
+   YOLLA keşfedilip TEŞHİS EDİLDİĞİ, düzeltme SONRASI sızıntısız çalıştığı
+   doğrulandı.
+3. **Kasıtlı boz→kırmızı→düzelt:** `nox_random_seed_raw` GEÇİCİ olarak
+   tohumu YOK SAYACAK şekilde bozuldu (`g_prng`/`g_seeded`e HİÇ dokunmadan
+   `return`) → `zig build test` "89 pass, 1 fail (90 total)" / "337/338
+   tests passed" GÖSTERDİ — BAŞARISIZ olan TAM OLARAK YENİ `nox.random`
+   testiydi (deterministik-tekrar kontrolleri `False` DÖNDÜ, PRNG İKİ
+   çağrı ARASINDA aynı KALMAYIP İLERLEMEYE devam ettiğinden) — geri
+   getirildi, 338/338 YEŞİLE döndü (Debug VE ReleaseFast).
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
