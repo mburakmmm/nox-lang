@@ -1,0 +1,21 @@
+# Stdlib fazı V.6 — nox.regex: temel bir regex/desen-eşleştirme alt kümesi.
+# `runtime/stdlib_shims/regex.zig`ye sarar (Kernighan'ın KLASİK minimal
+# backtracking regex algoritmasının genişletilmiş bir versiyonu — bkz.
+# onun belge notu, TAM bir regex motoru DEĞİL).
+#
+# Desteklenenler: literal karakterler, `.`, `*`/`+`/`?`, `^`/`$`,
+# `[abc]`/`[a-z]`/`[^abc]`. Desteklenmeyenler (bilinçli v1 kapsam DIŞI):
+# gruplama `(...)`, yakalama grupları, alternasyon `a|b`, geri-referanslar,
+# `{m,n}`, escape dizileri (`\d`/`\w` vb.).
+extern def nox_regex_is_match_raw(pattern: str, text: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_regex_find_raw(pattern: str, text: str) -> int from "zig-out/lib/noxrt.o"
+
+# `pattern`in `text` içinde HERHANGİ bir yerde eşleşip eşleşmediğini
+# (`pattern` `^` ile BAŞLIYORSA yalnızca BAŞTAN) döner.
+def is_match(pattern: str, text: str) -> bool:
+    return nox_regex_is_match_raw(pattern, text) != 0
+
+# İlk eşleşmenin BAŞLADIĞI 0-tabanlı bayt indeksini döner, eşleşme YOKSA
+# `-1`.
+def find(pattern: str, text: str) -> int:
+    return nox_regex_find_raw(pattern, text)

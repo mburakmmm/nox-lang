@@ -6729,6 +6729,63 @@ KULLANILIR.
 
 ---
 
+## 3.34 Faz V.6 — `nox.regex` Modülü (Temel Desen Eşleştirme)
+
+**Kapsam ve BİLİNÇLİ SINIRLAMA — TAM bir regex motoru DEĞİL:** `is_match(pattern,
+text) -> bool` / `find(pattern, text) -> int`. Zig'in KENDİSİ (`nox.crypto`/
+`nox.json`nin AKSİNE) hiçbir regex ilkeli SAĞLAMADIĞINDAN (`std`da regex YOK),
+Brian Kernighan'ın KAMUYA MAL OLMUŞ, KLASİK minimal geri-izlemeli (backtracking)
+regex algoritmasının (`"Beautiful Code"`/`"The Practice of Programming"`)
+GENİŞLETİLMİŞ bir versiyonu (`runtime/stdlib_shims/regex.zig`) YAZILDI —
+`nox.json`nin "sıfırdan KARMAŞIK bir algoritma İCAT ETME" ilkesiyle AYNI
+RUHTA, ama BURADA "battle-tested bir KÜTÜPHANE SAR" SEÇENEĞİ YOK OLDUĞUNDAN,
+İYİ BİLİNEN/KÜÇÜK/doğruluğu KOLAY doğrulanabilir BİR ALGORİTMA seçildi.
+
+**Desteklenen sözdizimi:** literal karakterler, `.` (herhangi bir karakter),
+`*`/`+`/`?` (ÖNCEKİ atomun 0-veya-fazla/1-veya-fazla/0-veya-1 tekrarı,
+AÇGÖZLÜ/greedy — eşleşme bulunana KADAR geri ÇEKİLEREK), `^`/`$` (başlangıç/
+bitiş çapaları), `[abc]`/`[a-z]`/`[^abc]` (karakter sınıfları, ARALIK VE
+olumsuzlama DAHİL).
+
+**Desteklenmeyenler (bilinçli v1 kapsam DIŞI, HER BİRİ AYRI bir mühendislik
+turu GEREKTİRİRDİ):** gruplama (`(...)`), yakalama grupları, alternasyon
+(`a|b`), geri-referanslar (`\1`), `{m,n}` sayısal tekrar sözdizimi, escape
+dizileri (`\d`/`\w`/`\s` vb.). Birincil hedeflenen kullanım durumları
+(bir dosya adının bir uzantıyla BİTİP bitmediğini, bir metnin YALNIZCA
+rakam İÇERİP içermediğini KONTROL etmek) yukarıdaki alt küme İLE TAM
+olarak karşılanır.
+
+**Mimari — SKALER argüman/dönüş, `with_rt` GEREKMEZ:** `is_match`/`find`
+yalnızca `int`/`bool` alır/döner (ARC-dışı, `nox.math`nin `sqrt`/`pow`si
+İLE AYNI kategori). Algoritma, atom-tabanlı bir `matchHere`/`atomMatches`
+çiftine dayanır (`atomLen`, bir literal/`.`/`[...]`in bayt uzunluğunu
+hesaplar; `atomMatches`, TEK bir karakterin O atomla eşleşip eşleşmediğini
+kontrol eder) — `*`/`+` İÇİN ÖNCE AÇGÖZLÜCE mümkün olduğunca çok atom
+TÜKETİLİR, SONRA (eşleşme bulunana KADAR) TEK TEK geri ÇEKİLİR (klasik
+backtracking).
+
+**Doğrulama:**
+1. **9 embedded Zig birim testi** (`runtime/stdlib_shims/regex.zig`nin
+   KENDİSİNDE, Faz U.4.1'in `refAllDeclsRecursive` düzeltmesi SAYESİNDE
+   `zig build test`in GERÇEKTEN çalıştırdığı) — literal, `.`, `*`, `+`,
+   `?`, `^`/`$`, karakter sınıfları (aralık + olumsuzlama DAHİL), `find`in
+   doğru İNDEKS döndürdüğü.
+2. **1 uçtan-uca golden test** (`regex_basic_patterns.nox`): `is_match`/
+   `find`in yukarıdaki TÜM sözdizimi ÖZELLİKLERİNİ Nox tarafından ÇAĞRILAN
+   HALİYLE de doğru çalıştığını kanıtlar.
+3. **Kasıtlı boz→kırmızı→düzelt:** `?` niceleyicisinin "atomu ATLA" dalı
+   GEÇİCİ olarak KALDIRILDI (`?` fiilen `?`nin KENDİSİ İÇİN ZORUNLU hâle
+   GELDİ, "sıfır tekrar" durumu KAYBOLDU) → `zig build test` "93 pass, 1
+   fail (94 total)" (embedded Zig testi) VE "348/350 tests passed" (İKİ
+   AYRI test ADIMI — embedded regex.zig testleri VE golden test SÜİTİ —
+   HER İKİSİ de BAĞIMSIZ olarak YAKALADI, "colou?r" vs "color" ARTIK
+   eşleşmiyordu) — geri getirildi, TÜM testler YEŞİLE döndü (Debug VE
+   ReleaseFast).
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

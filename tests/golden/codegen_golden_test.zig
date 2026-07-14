@@ -776,6 +776,13 @@ test "codegen(çalıştır): nox.test.TestSuite — check_* HİÇ raise ETMEZ (s
     );
 }
 
+test "codegen(çalıştır): nox.regex.is_match/find — temel alt küme (karakter sınıfları, */+/?, ^/$)" {
+    try expectGolden(
+        @embedFile("codegen_cases/regex_basic_patterns.nox"),
+        @embedFile("codegen_cases/regex_basic_patterns.expected"),
+    );
+}
+
 test "codegen(çalıştır): nox.test.assert_eq_*/assert_true (başarılı yol)" {
     try expectGolden(
         @embedFile("codegen_cases/test_assert_eq_pass.nox"),

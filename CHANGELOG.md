@@ -185,6 +185,13 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   biriktirir) + `write_junit_xml`. `check_*`in raise etmemesi, kullanıcının
   kendi `setup()`/`teardown()`unu her kontrolün etrafına koyabilmesini
   sağlar — tek bir başarısız kontrol artık teardown'ı engellemez.
+- `nox.regex` modülü eklendi (Faz V.6) — `is_match(pattern, text) -> bool`
+  / `find(pattern, text) -> int`. Zig'de std'de regex bulunmadığından,
+  Brian Kernighan'ın kamuya mal olmuş klasik minimal backtracking regex
+  algoritmasının genişletilmiş bir versiyonu yazıldı. Desteklenenler:
+  literal karakterler, `.`, `*`/`+`/`?`, `^`/`$`, `[abc]`/`[a-z]`/`[^abc]`.
+  Bilinçli v1 kapsam dışı: gruplama, alternasyon, geri-referanslar,
+  `{m,n}`, escape dizileri (`\d` vb.).
 
 ### Düzeltildi
 - **Önemli test-altyapısı düzeltmesi:** `compiler/*.zig` dosyalarına gömülü
