@@ -6676,6 +6676,59 @@ TUTARLI). Nox tarafı, bu altı sonucu bir ARAYA getirip `DateTime` sınıf
 
 ---
 
+## 3.33 Faz V.5 — `nox.test` Genişletmesi (Setup/Teardown, JUnit XML)
+
+**Kapsam:** MEVCUT `raise`-tabanlı `assert_eq_int`/`assert_eq_str`/
+`assert_eq_float`/`assert_true` (bkz. §K, DEĞİŞMEDEN kalır — basit
+betikler İÇİN) YANINDA, YENİ bir `TestSuite` sınıfı + `check_eq_int`/
+`check_eq_str`/`check_eq_float`/`check_true` metodları + `write_junit_xml`
+serbest fonksiyonu. TAMAMEN saf Nox (`nox.fs`/`nox.strings` üzerine).
+
+**"Setup/teardown desteği"nin TAM ANLAMI (Nox'un kısıtları İÇİNDE
+YORUMLANDI):** Nox'ta first-class fonksiyon REFERANSLARI YALNIZCA iç içe
+`def`den İNŞA EDİLEN closure'lardır (bkz. Faz U.4) — üst-düzey bir `def`e
+ÇIPLAK bir referans YOK, bu yüzden OTOMATİK/reflection-tabanlı "her testten
+ÖNCE/SONRA bunu ÇALIŞTIR" kaydı (ör. pytest'in fixture'ları) KAPSAM DIŞI
+bırakıldı. Bunun yerine: `check_*` metodları `assert_*`nin AKSİNE HİÇBİR
+ZAMAN `raise` ETMEZ — SONUCU (`pass_count`/`fail_count` + biriken bir XML
+gövdesi) BİRİKTİRİR. Bu, KULLANICININ KENDİ yazdığı `setup()`/`teardown()`
+fonksiyonlarının HER `check_*` çağrısının ETRAFINA AÇIKÇA yerleştirilmesini
+sağlar — TEK bir başarısız kontrol ARTIK geri kalan kodu (teardown DAHİL)
+DURDURMAZ (bir `assert_*`nin, `raise` ile TÜM programı sonlandırmasının
+AKSİNE).
+
+**`list[T]` KULLANILMADI (bilinçli, KRİTİK bir kısıt keşfedildi):** Nox'ta
+BOŞ bir `list[T]` literali DESTEKLENMEZ (`[]`, tipi çıkarılamadığından —
+bkz. checker.zig'in `.list_lit` dalı, "boş liste literalinin tipi
+çıkarılamaz") — BAŞLANGIÇTA boş, HER `check_*` çağrısında büyüyen bir
+sonuç KOLEKSİYONU bu yüzden `list[T]`YLE ifade EDİLEMEZ (Alt-Faz F'nin
+"büyütülebilir/`append`li bir `list[T]`, DERLEME ZAMANINDA bilinen bir
+İLK boyut GEREKTİRİR" notuyla AYNI KÖK kısıt). Bunun yerine SAYAÇLAR
+(`pass_count`/`fail_count: int`) + BİRİKTİRİLEN bir XML gövde `str`i
+(`""` BOŞ string literali İLE BAŞLAR — `list_lit`in AKSİNE `str` İÇİN BU
+KISIT YOK, `nox.log`un/`nox.test`in KENDİSİNİN ZATEN kanıtladığı gibi)
+KULLANILIR.
+
+**Doğrulama:**
+1. **1 uçtan-uca golden test** (`test_suite_setup_teardown_junit.nox`):
+   DÖRT `check_*` çağrısı (biri BİLEREK BAŞARISIZ) — HER BİRİNİN ÖNCESİNDE/
+   SONRASINDA `setup()`/`teardown()` çağrılır VE HEPSİ, ARADAKİ başarısız
+   kontrole RAĞMEN çalışır (bu, "setup/teardown desteği"nin İDDİASININ
+   KENDİSİNİ KANITLAR); doğru `pass_count`/`fail_count`/`total_count`/
+   `all_passed`; `write_junit_xml` + `nox.fs.read_to_string` İLE GERİ
+   OKUNAN JUnit XML raporunun TAM İÇERİĞİ (Python'un `xml.etree.
+   ElementTree`ı İLE BAĞIMSIZ olarak da GEÇERLİ-XML olduğu doğrulandı).
+2. **Kasıtlı boz→kırmızı→düzelt:** `_record`in `passed == True` dalındaki
+   sayaç ARTIRIMI GEÇİCİ olarak `self.fail_count` (YANLIŞ sayaç) ARTIRACAK
+   ŞEKİLDE değiştirildi → `zig build test` "92 pass, 1 fail (93 total)" /
+   "340/341 tests passed" GÖSTERDİ (`pass_count=0`/`fail_count=4` — TÜM
+   BAŞARILI kontroller YANLIŞ sayaca YAZILDI) — geri getirildi, 341/341
+   YEŞİLE döndü (Debug VE ReleaseFast).
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

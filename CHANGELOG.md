@@ -179,6 +179,12 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   Zig'in kendi `std.time.epoch`u sarılır (sıfırdan takvim aritmetiği
   yazılmadı). Bilinçli v1 sınırı: yalnızca ayrıştırma (epoch-ms →
   DateTime), ters yön yok; yalnızca 1970 ve sonrası.
+- `nox.test` genişletildi (Faz V.5) — yeni `TestSuite` sınıfı
+  (`check_eq_int`/`check_eq_str`/`check_eq_float`/`check_true`, mevcut
+  `raise`-tabanlı `assert_*`in aksine hiçbir zaman raise etmez, sonucu
+  biriktirir) + `write_junit_xml`. `check_*`in raise etmemesi, kullanıcının
+  kendi `setup()`/`teardown()`unu her kontrolün etrafına koyabilmesini
+  sağlar — tek bir başarısız kontrol artık teardown'ı engellemez.
 
 ### Düzeltildi
 - **Önemli test-altyapısı düzeltmesi:** `compiler/*.zig` dosyalarına gömülü

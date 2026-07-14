@@ -769,6 +769,13 @@ test "codegen(çalıştır): nox.time.DateTime — bilinen epoch-ms'in doğru ta
     );
 }
 
+test "codegen(çalıştır): nox.test.TestSuite — check_* HİÇ raise ETMEZ (setup/teardown HER ZAMAN çalışır) + JUnit XML raporu" {
+    try expectGolden(
+        @embedFile("codegen_cases/test_suite_setup_teardown_junit.nox"),
+        @embedFile("codegen_cases/test_suite_setup_teardown_junit.expected"),
+    );
+}
+
 test "codegen(çalıştır): nox.test.assert_eq_*/assert_true (başarılı yol)" {
     try expectGolden(
         @embedFile("codegen_cases/test_assert_eq_pass.nox"),

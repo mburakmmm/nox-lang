@@ -25,3 +25,86 @@ def assert_eq_float(actual: float, expected: float, msg: str) -> None:
 def assert_true(cond: bool, msg: str) -> None:
     if not cond:
         raise AssertionError(msg)
+
+# Stdlib fazı V.5 — `TestSuite`: `raise`-tabanlı `assert_*`in (YUKARIDA,
+# DEĞİŞMEDEN kalır — basit betikler İÇİN) AKSİNE, `check_*` metodları HİÇBİR
+# ZAMAN `raise` ETMEZ — SONUCU BİRİKTİRİR. Bu, "setup/teardown" desteğinin
+# TAM OLARAK ANLAMI budur: `check_*` bir istisna fırlatmadığından, ÇAĞIRAN
+# kodun `check_*`DEN SONRAKİ satırları (ör. bir teardown çağrısı) HER ZAMAN
+# çalışır — bir `assert_*`in AKSİNE, TEK bir başarısız kontrol GERİ KALAN
+# HİÇBİR ŞEYİ (teardown DAHİL) durdurmaz. Nox'ta first-class fonksiyon
+# REFERANSLARI (yalnızca iç içe `def`den İNŞA edilen closure'lar, bkz. Faz
+# U.4) OLMADIĞINDAN otomatik/reflection-tabanlı bir "her testten ÖNCE/SONRA
+# ÇALIŞTIR" mekanizması YOK — kullanıcı `setup()`/`teardown()`ı KENDİ
+# fonksiyonları olarak yazıp HER `check_*` çağrısının ETRAFINA AÇIKÇA
+# yerleştirir; ÇERÇEVENİN garantisi YALNIZCA "bir kontrol başarısız olsa
+# BİLE SIRADAKİ kod (teardown DAHİL) çalışmaya devam eder"dir.
+#
+# **`list[T]` KULLANILMADI (BİLİNÇLİ):** Nox'ta boş bir `list[T]` literali
+# desteklenmez (`[]`, tipi çıkarılamadığından — bkz. checker.zig'in `.list_lit`
+# dalı) — BAŞLANGIÇTA boş, HER `check_*` çağrısında büyüyen bir sonuç
+# koleksiyonu bu yüzden `list[T]`YLE ifade EDİLEMEZ. Bunun yerine SAYAÇLAR
+# (`pass_count`/`fail_count`) + BİRİKTİRİLEN bir XML gövde `str`i (`""`
+# BOŞ string literali İLE başlar — `list_lit`in AKSİNE `str` İÇİN bu
+# kısıtlama YOK) kullanılır.
+import nox.fs
+import nox.strings
+
+def _xml_escape(s: str) -> str:
+    step1: str = nox.strings.replace(s, "&", "&amp;")
+    step2: str = nox.strings.replace(step1, "<", "&lt;")
+    step3: str = nox.strings.replace(step2, ">", "&gt;")
+    return nox.strings.replace(step3, "\"", "&quot;")
+
+class TestSuite:
+    def __init__(self: TestSuite, name: str) -> None:
+        self.name = name
+        self.pass_count = 0
+        self.fail_count = 0
+        self.xml_body = ""
+
+    def _record(self: TestSuite, case_name: str, passed: bool, message: str) -> None:
+        escaped_name: str = _xml_escape(case_name)
+        if passed:
+            self.pass_count = self.pass_count + 1
+            self.xml_body = self.xml_body + "  <testcase name=\"" + escaped_name + "\"/>\n"
+        else:
+            self.fail_count = self.fail_count + 1
+            self.xml_body = self.xml_body + "  <testcase name=\"" + escaped_name + "\">\n    <failure message=\"" + _xml_escape(message) + "\"/>\n  </testcase>\n"
+
+    def check_eq_int(self: TestSuite, case_name: str, actual: int, expected: int) -> None:
+        if actual == expected:
+            self._record(case_name, True, "")
+        else:
+            self._record(case_name, False, case_name + ": beklenen " + str(expected) + ", alinan " + str(actual))
+
+    def check_eq_str(self: TestSuite, case_name: str, actual: str, expected: str) -> None:
+        if actual == expected:
+            self._record(case_name, True, "")
+        else:
+            self._record(case_name, False, case_name + ": beklenen \"" + expected + "\", alinan \"" + actual + "\"")
+
+    def check_eq_float(self: TestSuite, case_name: str, actual: float, expected: float) -> None:
+        if actual == expected:
+            self._record(case_name, True, "")
+        else:
+            self._record(case_name, False, case_name + ": beklenen " + str(expected) + ", alinan " + str(actual))
+
+    def check_true(self: TestSuite, case_name: str, cond: bool) -> None:
+        if cond:
+            self._record(case_name, True, "")
+        else:
+            self._record(case_name, False, case_name + ": kosul False")
+
+    def total_count(self: TestSuite) -> int:
+        return self.pass_count + self.fail_count
+
+    def all_passed(self: TestSuite) -> bool:
+        return self.fail_count == 0
+
+# JUnit-uyumlu bir XML raporu `path`e yazar (bkz. `nox.fs.write_string`,
+# AYNI güven-sınırı uyarısı GEÇERLİDİR — `path` doğrulanmaz).
+def write_junit_xml(suite: TestSuite, path: str) -> None:
+    header: str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\"" + _xml_escape(suite.name) + "\" tests=\"" + str(suite.total_count()) + "\" failures=\"" + str(suite.fail_count) + "\">\n"
+    footer: str = "</testsuite>\n"
+    nox.fs.write_string(path, header + suite.xml_body + footer)

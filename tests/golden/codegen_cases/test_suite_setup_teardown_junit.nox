@@ -1,0 +1,35 @@
+import nox.test
+import nox.fs
+
+def setup() -> None:
+    print("setup")
+
+def teardown() -> None:
+    print("teardown")
+
+suite: nox_test_TestSuite = nox.test.TestSuite("demo suite")
+
+setup()
+suite.check_eq_int("addition", 2 + 2, 4)
+teardown()
+
+setup()
+suite.check_eq_int("broken", 2 + 2, 5)
+teardown()
+
+setup()
+suite.check_eq_str("greeting", "hi", "hi")
+teardown()
+
+setup()
+suite.check_true("truthy", 1 < 2)
+teardown()
+
+print(suite.pass_count)
+print(suite.fail_count)
+print(suite.total_count())
+print(suite.all_passed())
+
+nox.test.write_junit_xml(suite, "/tmp/nox_golden_junit_report.xml")
+report: str = nox.fs.read_to_string("/tmp/nox_golden_junit_report.xml")
+print(report)
