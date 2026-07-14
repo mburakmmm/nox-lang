@@ -289,3 +289,10 @@ test "golden(typecheck): Faz T.2 — İKİ bağımsız fonksiyondaki hata TEK ç
     try std.testing.expect(std.mem.indexOf(u8, err.all[0].message, "satır 2:") != null);
     try std.testing.expect(std.mem.indexOf(u8, err.all[1].message, "satır 5:") != null);
 }
+
+test "golden(typecheck): Faz U.1 — 'list.append()' alıcısı çıplak bir isim OLMALI (çağrı sonucu üzerinde çağrılamaz)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_list_append_non_identifier_receiver.nox"),
+        @embedFile("typecheck_cases/err_list_append_non_identifier_receiver.expected"),
+    );
+}

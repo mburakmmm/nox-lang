@@ -924,15 +924,24 @@ pub const Checker = struct {
                     try info.fields.put(self.allocator, attr.attr, value_t);
                 }
             },
-            // `d[key] = value` — YALNIZCA `dict` için desteklenir (v1
-            // kapsamı — bkz. nox-teknik-spesifikasyon.md §3.28; `list[T]`
-            // İÇİN indeksli atama HENÜZ desteklenmiyor, bu YENİ bir
-            // kısıtlama DEĞİL, mevcut bir v0.1 sınırlaması — bkz. bu
-            // switch'in önceki hâli, hiç `.index` kolu YOKTU).
+            // `d[key] = value` (dict) VE `xs[i] = value` (Faz U.1'den beri
+            // `list[T]` İÇİN de — bkz. nox-teknik-spesifikasyon.md §3.28/
+            // §3.20 — TUTARLILIK GEREKÇESİYLE, dict ZATEN destekliyordu).
             .index => |idx| {
                 const obj_t = try self.checkExpr(ctx, idx.obj.*);
+                if (obj_t == .list) {
+                    const key_t = try self.checkExpr(ctx, idx.index.*);
+                    if (key_t != .int) {
+                        return self.fail(error.TypeMismatch, "liste indeksi 'int' olmalı", .{});
+                    }
+                    const value_t = try self.checkExpr(ctx, a.value);
+                    if (!assignable(obj_t.list.*, value_t)) {
+                        return self.fail(error.TypeMismatch, "indeksli atamada tip uyuşmazlığı: listenin eleman tipiyle uyuşmuyor", .{});
+                    }
+                    return;
+                }
                 if (obj_t != .dict) {
-                    return self.fail(error.TypeMismatch, "indeksli atama yalnızca 'dict' üzerinde çalışır", .{});
+                    return self.fail(error.TypeMismatch, "indeksli atama yalnızca 'list'/'dict' üzerinde çalışır", .{});
                 }
                 const key_t = try self.checkExpr(ctx, idx.index.*);
                 if (!types.eql(key_t, obj_t.dict.key.*)) {
@@ -1326,6 +1335,28 @@ pub const Checker = struct {
                         return .int;
                     }
                     return self.fail(error.UndefinedMethod, "dict'in '{s}' metodu yok (yalnızca contains/len)", .{a.attr});
+                }
+                // `list[T]`in yerleşik `append`i — Faz U.1, `dict`in AYNI
+                // deseni. **Bilinçli v1 sınırlaması:** alıcı (`a.obj.*`)
+                // SADECE çıplak bir isim (yerel değişken/parametre)
+                // OLABİLİR — `spawn`in çağrı-hedefi kısıtıyla AYNI gerekçe
+                // (bkz. nox-teknik-spesifikasyon.md §3.21): codegen'in
+                // BÜYÜME durumunda YENİ bir bloğa geçmesi GEREKEBİLİR
+                // (kapasite dolduğunda), bu da alıcının KENDİ SLOTUNA geri
+                // yazma gerektirir — bu yalnızca bir DEĞİŞKENİN slotu İÇİN
+                // anlamlıdır (`getList().append(v)`/`obj.field.append(v)`
+                // gibi bir SLOTU OLMAYAN ifadeler İÇİN DEĞİL).
+                if (obj_t == .list) {
+                    if (std.mem.eql(u8, a.attr, "append")) {
+                        if (a.obj.* != .identifier) {
+                            return self.fail(error.TypeMismatch, "'append' yalnızca bir değişken üzerinde çağrılabilir (ör. 'xs.append(v)')", .{});
+                        }
+                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'append' tam olarak 1 argüman alır", .{});
+                        const vt = try self.checkExpr(ctx, c.args[0]);
+                        if (!assignable(obj_t.list.*, vt)) return self.fail(error.TypeMismatch, "'append' argümanı listenin eleman tipiyle uyuşmuyor", .{});
+                        return .none;
+                    }
+                    return self.fail(error.UndefinedMethod, "list'in '{s}' metodu yok (yalnızca append)", .{a.attr});
                 }
                 const class_name = switch (obj_t) {
                     .class => |n| n,

@@ -77,6 +77,17 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   (ikinci formatlama dosyayı değiştirmez), tip denetimi ÇALIŞTIRMAZ
   (`gofmt`ın davranışıyla tutarlı — sözdizimsel olarak geçerli ama tipçe
   hatalı kod da formatlanabilir).
+- `list[T]`e `.append()` (dinamik büyüme) VE indeksli atama (`xs[i] = v`)
+  eklendi (Faz U.1) — kullanıcıyla netleşen karar: GERÇEK paylaşım semantiği
+  (kapasite YETERLİYSE `.append()` YERİNDE yazar, TÜM alias'lar GÖRÜR;
+  kapasite DOLUNCA YENİ, 2× büyüklükte bir blok ayrılır — Python listeleri
+  gibi). Liste başlığı `{len, elemanlar...}`den `{len, cap, elemanlar...}`e
+  genişletildi (`nox.json`/`nox.strings.split`in Zig-taraflı el-yapımı liste
+  inşası DAHİL, TÜM liste kod yolları güncellendi). Bilinen v1 sınırlamaları:
+  büyüme ANINDA var olan bir alias yeni elemanı görmez (TEMİZ bir
+  `IndexError`e yol açar, bellek bozulması DEĞİL); alıcı bir parametre
+  OLAMAZ; arena listeleri büyütülemez; boş liste literali (`[]`) hâlâ
+  desteklenmiyor.
 
 ### Düzeltildi
 - `noxc` artık proje kökü DIŞINDAN (ör. sistem geneli bir kurulumdan)

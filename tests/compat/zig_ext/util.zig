@@ -63,18 +63,22 @@ export fn nox_test_dict_lookup(rt: ?*anyopaque, d: ?*anyopaque, key: ?[*:0]const
 /// Stdlib fazı §F: `list[str]` DÖNÜŞ tipi FFI-güvenli sayılmasının (bkz.
 /// `checker.zig`'in `isFfiSafeListReturnType`ı) doğrulama testi — `n`
 /// elemanlı ("item_0".."item_{n-1}") ARC'lı bir `list[str]` payload'ını
-/// EL İLE, `genListLit`in QBE ÇIKTISIYLA AYNI bayt düzeninde (8 bayt
-/// uzunluk başlığı + `n` adet 8 baytlık `str` işaretçisi, `nox_rc_alloc`
-/// üzerinden) inşa edip döner — Nox tarafının bunu (özellikle `len`/
-/// indeksleme/ARC serbest bırakma) DOĞRU işleyebildiğini kanıtlar.
+/// EL İLE, `genListLit`in QBE ÇIKTISIYLA AYNI bayt düzeninde (Faz U.1'den
+/// beri: 8 bayt uzunluk + 8 bayt kapasite başlığı + `n` adet 8 baytlık
+/// `str` işaretçisi, `nox_rc_alloc` üzerinden — bkz. codegen_qbe/codegen.zig
+/// `LIST_HEADER_SIZE`in belge notu) inşa edip döner — Nox tarafının bunu
+/// (özellikle `len`/indeksleme/ARC serbest bırakma) DOĞRU işleyebildiğini
+/// kanıtlar. Kapasite HER ZAMAN uzunluğa eşittir (tam-oturan).
 export fn nox_test_make_list(rt: ?*anyopaque, n: i64) callconv(.c) ?*anyopaque {
     if (n < 0) return null;
     const count: usize = @intCast(n);
     const elem_size: usize = 8;
-    const payload_size = 8 + elem_size * count;
+    const header_size: usize = 16;
+    const payload_size = header_size + elem_size * count;
     const raw = nox_rc_alloc(rt, payload_size) orelse return null;
     const bytes: [*]u8 = @ptrCast(raw);
     @as(*align(1) i64, @ptrCast(bytes)).* = @intCast(count);
+    @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(count);
 
     var i: usize = 0;
     while (i < count) : (i += 1) {
@@ -84,7 +88,7 @@ export fn nox_test_make_list(rt: ?*anyopaque, n: i64) callconv(.c) ?*anyopaque {
         const item_bytes: [*]u8 = @ptrCast(item_raw);
         @memcpy(item_bytes[0..s.len], s);
         item_bytes[s.len] = 0;
-        const slot_addr = bytes + 8 + elem_size * i;
+        const slot_addr = bytes + header_size + elem_size * i;
         @as(*align(1) i64, @ptrCast(slot_addr)).* = @intCast(@intFromPtr(item_bytes));
     }
     return @ptrCast(bytes);

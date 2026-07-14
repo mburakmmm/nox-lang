@@ -162,6 +162,28 @@ fn refcountOf(ptr: *anyopaque) *i64 {
     return @ptrCast(@alignCast(base));
 }
 
+/// Faz U.1: `list[T].append()`in "büyütme" yolunun tek çalışma zamanı
+/// primitifi — YENİ (refcount 1'le başlayan, `new_payload_size` baytlık) bir
+/// blok tahsis eder, `old_ptr`den `copy_bytes` baytı (KENDİ başlığı DAHİL —
+/// bkz. `codegen_qbe/codegen.zig`nin `list[T]` başlık düzeni notu, `{len@0,
+/// cap@8, elemanlar@16...}`) KOPYALAR, YENİ işaretçiyi döner. `old_ptr`nin
+/// KENDİSİNE HİÇ DOKUNMAZ (ne serbest bırakır ne refcount'unu değiştirir) —
+/// bu, ÇAĞIRANIN (codegen'in ürettiği `.append()` kodu) sorumluluğundadır
+/// (eski bloğun refcount'unu `nox_rc_predecrement` ile azaltıp, sıfıra
+/// düşerse `nox_rc_free_payload` ile serbest bırakması GEREKİR — elemanların
+/// KENDİSİ bu kopyalamada TAŞINDIĞINDAN [aynı işaretçi değerleri], eski
+/// blok ASLA elemanlarını özyinelemeli olarak release ETMEMELİDİR, yalnızca
+/// KENDİ ham belleği serbest bırakılmalıdır).
+pub export fn nox_list_grow(rt: ?*anyopaque, old_ptr: ?*anyopaque, copy_bytes: usize, new_payload_size: usize) ?*anyopaque {
+    const new_ptr = nox_rc_alloc(rt, new_payload_size) orelse return null;
+    if (old_ptr) |op| {
+        const src: [*]const u8 = @ptrCast(op);
+        const dst: [*]u8 = @ptrCast(new_ptr);
+        @memcpy(dst[0..copy_bytes], src[0..copy_bytes]);
+    }
+    return new_ptr;
+}
+
 test "rc_alloc 1 ile başlar, retain artırır, release azaltır ve sıfırda serbest bırakır" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);

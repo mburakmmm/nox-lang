@@ -413,6 +413,17 @@ const ClassInfo = struct {
 
 const RT_PARAM = "%rt";
 const FIELD_SLOT_SIZE: usize = 8;
+/// Faz U.1: `list[T]` başlığının bayt boyutu — `{ len: i64 @0, cap: i64 @8,
+/// elemanlar @16... }` (ÖNCEDEN yalnızca `{ len: i64 @0, elemanlar @8... }`
+/// — kapasite kavramı YOKTU, uzunluk=kapasite ZORUNLUYDU). `.append()`in
+/// GERÇEK paylaşım semantiği (bkz. `genListMethod`in belge notu — bir
+/// alias, KAPASİTE YETERLİYSE AYNI bloğu gördüğünden, .append() TÜM
+/// alias'larda GÖZÜKÜR) İÇİN kapasite alanı GEREKLİDİR. `runtime/stdlib_
+/// shims/json.zig`nin `buildPtrList`i VE `runtime/stdlib_shims/strings.zig`nin
+/// `nox_strings_split_raw`ı da AYNI düzeni EL İLE ürettiğinden (Zig
+/// tarafında) BU SABİTLE TUTARLI kalmalıdır — bu ikisi DEĞİŞTİRİLİRSE
+/// BURASI da GÜNCELLENMELİDİR (ve tersi).
+const LIST_HEADER_SIZE: usize = 16;
 /// Her sınıf örneğinin (refcount başlığından SONRA) taşıdığı, çalışma
 /// zamanında `except ClassName:` eşleştirmesi için kullanılan tip etiketi.
 const TAG_SIZE: usize = 8;
@@ -1578,7 +1589,7 @@ const Codegen = struct {
         const off = try self.newTemp();
         try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ off, idx_cur, qbeSizeOf(elem_qtype) });
         const off8 = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, 8\n", .{ off8, off });
+        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ off8, off, LIST_HEADER_SIZE });
         const addr_a = try self.newTemp();
         try self.out.writer.print("    {s} =l add %a, {s}\n", .{ addr_a, off8 });
         const addr_b = try self.newTemp();
@@ -1739,17 +1750,22 @@ const Codegen = struct {
         }
     }
 
-    /// Yalnızca `list[T]` için: boyut çalışma zamanında `len` alanından
-    /// hesaplanır (sınıflar için artık `genClassRelease`'in ürettiği
-    /// `$ClassName_release` kullanılır — `total_size` derleme zamanında
-    /// zaten sabittir, bu yol üzerinden hesaplanmaya gerek yoktur).
+    /// Yalnızca `list[T]` için: boyut çalışma zamanında `cap` alanından
+    /// (Faz U.1'den beri `@8` — ÖNCEDEN `len`den, `@0`, hesaplanıyordu,
+    /// AMA `.append()`in GERÇEK büyümesi sonrası GERÇEKTEN TAHSİS EDİLMİŞ
+    /// bayt sayısı `cap`e karşılık gelir, `len`e DEĞİL — bkz. `LIST_HEADER_
+    /// SIZE`in belge notu) hesaplanır (sınıflar için artık `genClassRelease`'in
+    /// ürettiği `$ClassName_release` kullanılır — `total_size` derleme
+    /// zamanında zaten sabittir, bu yol üzerinden hesaplanmaya gerek yoktur).
     fn listPayloadSize(self: *Codegen, ptr: []const u8, elem_qtype: QbeType) CodegenError![]const u8 {
-        const len_t = try self.newTemp();
-        try self.out.writer.print("    {s} =l loadl {s}\n", .{ len_t, ptr });
+        const cap_addr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 8\n", .{ cap_addr, ptr });
+        const cap_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ cap_t, cap_addr });
         const size_t = try self.newTemp();
-        try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ size_t, len_t, qbeSizeOf(elem_qtype) });
+        try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ size_t, cap_t, qbeSizeOf(elem_qtype) });
         const total_t = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, 8\n", .{ total_t, size_t });
+        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ total_t, size_t, LIST_HEADER_SIZE });
         return total_t;
     }
 
@@ -1822,6 +1838,17 @@ const Codegen = struct {
 
         const len_t = try self.newTemp();
         try self.out.writer.print("    {s} =l loadl %p\n", .{len_t});
+        // Faz U.1: gerçek TAHSİS EDİLMİŞ boyut `cap`e (@8) karşılık gelir,
+        // `len`e (@0) DEĞİL — `len`, ELEMAN döngüsünün SINIRI olarak KALIR
+        // (yalnızca GEÇERLİ elemanlar release edilmeli), ama belleği
+        // serbest bırakırken `cap` KULLANILMALIDIR (aksi halde `.append()`in
+        // büyüttüğü bir liste, ONA AYRILAN gerçek bloktan DAHA KÜÇÜK bir
+        // boyutla serbest bırakılır — havuzun serbest-liste sınıf indeksini
+        // BOZAR, bkz. `arc.zig`nin `nox_rc_free_payload` notu).
+        const cap_addr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add %p, 8\n", .{cap_addr});
+        const cap_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ cap_t, cap_addr });
 
         if (info.nested) |n| {
             const callee: ?[]const u8 = if (n.heap == .str) null else try self.releaseFnNameFor(n.*);
@@ -1847,7 +1874,7 @@ const Codegen = struct {
             const off = try self.newTemp();
             try self.out.writer.print("    {s} =l mul {s}, 8\n", .{ off, idx_cur });
             const off8 = try self.newTemp();
-            try self.out.writer.print("    {s} =l add {s}, 8\n", .{ off8, off });
+            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ off8, off, LIST_HEADER_SIZE });
             const addr = try self.newTemp();
             try self.out.writer.print("    {s} =l add %p, {s}\n", .{ addr, off8 });
             const elem = try self.newTemp();
@@ -1870,15 +1897,15 @@ const Codegen = struct {
             try self.out.writer.print("{s}\n", .{loopend_label});
 
             const size_t = try self.newTemp();
-            try self.out.writer.print("    {s} =l mul {s}, 8\n", .{ size_t, len_t });
+            try self.out.writer.print("    {s} =l mul {s}, 8\n", .{ size_t, cap_t });
             const total_t = try self.newTemp();
-            try self.out.writer.print("    {s} =l add {s}, 8\n", .{ total_t, size_t });
+            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ total_t, size_t, LIST_HEADER_SIZE });
             try self.out.writer.print("    call $nox_rc_free_payload(l {s}, l %p, l {s})\n", .{ RT_PARAM, total_t });
         } else {
             const size_t = try self.newTemp();
-            try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ size_t, len_t, qbeSizeOf(info.elem_qtype) });
+            try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ size_t, cap_t, qbeSizeOf(info.elem_qtype) });
             const total_t = try self.newTemp();
-            try self.out.writer.print("    {s} =l add {s}, 8\n", .{ total_t, size_t });
+            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ total_t, size_t, LIST_HEADER_SIZE });
             try self.out.writer.print("    call $nox_rc_free_payload(l {s}, l %p, l {s})\n", .{ RT_PARAM, total_t });
         }
         try self.out.writer.print("    jmp {s}\n", .{done_label});
@@ -2388,12 +2415,89 @@ const Codegen = struct {
                 }
                 return error.Unsupported;
             },
-            // `d[key] = value` — YALNIZCA `dict` için (bkz. checker.zig'in
-            // `checkAssign`indeki AYNI kısıtlama, `list[T]` İÇİN indeksli
-            // atama HENÜZ desteklenmiyor).
-            .index => |idx| try self.genDictAssign(idx, a.value),
+            // `d[key] = value` (dict) / `xs[i] = value` (list, Faz U.1) —
+            // checker.zig'in `checkAssign`i BU İKİSİNİ dışında hiçbir tipi
+            // GEÇİRMEZ, bu yüzden `idx.obj`in ÇÖZÜLEN tipine göre AYIRT
+            // ETMEK için tekrar `genExpr` ÇAĞIRMAK YERİNE (iki kez
+            // değerlendirme YAN ETKİ riski taşırdı) doğrudan alt fonksiyonlara
+            // devredilir — `genListAssign`/`genDictAssign`in İKİSİ de
+            // `obj.heap`i KENDİLERİ kontrol edip UYUŞMAZSA `error.Unsupported`
+            // döner, bu yüzden BURADA sırayla DENEME GÜVENLİDİR: hiçbiri
+            // `idx.obj`i genExpr'DEN önce başka BİR YAN ETKİ üretmez.
+            // `d[key] = value` (dict) / `xs[i] = value` (list, Faz U.1) —
+            // `idx.obj`, `genIndex`in (OKUMA yönü) İLE AYNI GEREKÇEYLE, TEK
+            // SEFER değerlendirilir (`idx.obj` KEYFİ bir ifade OLABİLİR —
+            // ör. `self.items[i] = v`, YALNIZCA çıplak bir isim DEĞİL —
+            // checker ZATEN bunu genelleştirdi) VE sonucun `.heap`ine göre
+            // `genListAssign`/`genDictAssign`e (İKİSİ de ARTIK ham `idx`
+            // yerine ÖNCEDEN değerlendirilmiş `obj`u ALIR) dağıtılır.
+            .index => |idx| {
+                const obj = try self.genExpr(idx.obj.*);
+                if (obj.heap == .list) return self.genListAssign(obj, idx, a.value);
+                return self.genDictAssign(obj, idx, a.value);
+            },
             else => return error.Unsupported,
         }
+    }
+
+    /// `xs[i] = value` — Faz U.1. `genIndex`in list dalıyla AYNI "önce
+    /// doğrula, hata dalında raise et, phi'SİZ ok'e atla" sınır-kontrolü
+    /// desenini (bkz. Faz S.2) YENİDEN kullanır; eski eleman heap-yönetimli
+    /// İSE `genAssign`in `.attribute` kolundaki AYNI "önce ESKİYİ oku, YENİ
+    /// değeri yaz, SONRA eskiyi serbest bırak" sırasını izler. `obj` (ÇAĞIRAN
+    /// TARAFINDAN önceden değerlendirilmiş) her ZAMAN `.heap == .list`
+    /// GARANTİLİDİR (bkz. `genAssign`in `.index` dalı).
+    fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast.Expr) CodegenError!void {
+        if (obj.heap != .list) return error.Unsupported;
+        try self.checkNoLowlevelEscape(obj);
+        const index_v = try self.genExpr(idx.index.*);
+
+        const len_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ len_t, obj.text });
+        const neg_t = try self.newTemp();
+        try self.out.writer.print("    {s} =w csltl {s}, 0\n", .{ neg_t, index_v.text });
+        const oob_hi_t = try self.newTemp();
+        try self.out.writer.print("    {s} =w csgel {s}, {s}\n", .{ oob_hi_t, index_v.text, len_t });
+        const oob_t = try self.newTemp();
+        try self.out.writer.print("    {s} =w or {s}, {s}\n", .{ oob_t, neg_t, oob_hi_t });
+        const err_label = try self.newLabel("list_assign_err");
+        const ok_label = try self.newLabel("list_assign_ok");
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ oob_t, err_label, ok_label });
+        try self.out.writer.print("{s}\n", .{err_label});
+
+        const msg_value = try self.emitStringLiteral("liste indeksi sinirlarin disinda");
+        const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
+        const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value});
+        try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ie_obj.text });
+        try self.emitExceptionCheck();
+        try self.out.writer.print("    jmp {s}\n", .{ok_label});
+
+        try self.out.writer.print("{s}\n", .{ok_label});
+        const value_v0 = try self.genExpr(value_expr);
+        try self.checkNoLowlevelEscape(value_v0);
+        const retained = try self.retainIfAliasing(value_expr, value_v0);
+        const val = try self.convert(retained, obj.elem_qtype);
+
+        const byte_off = try self.newTemp();
+        try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ byte_off, index_v.text, qbeSizeOf(obj.elem_qtype) });
+        const off16 = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ off16, byte_off, LIST_HEADER_SIZE });
+        const addr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ addr, obj.text, off16 });
+
+        if (obj.elem_heap_info != null or obj.elem_is_str) {
+            const old_ptr = try self.newTemp();
+            try self.out.writer.print("    {s} =l loadl {s}\n", .{ old_ptr, addr });
+            try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(obj.elem_qtype), val.text, addr });
+            const elem_heap: HeapKind = if (obj.elem_heap_info) |ehi| ehi.heap else .str;
+            const elem_class_name: ?[]const u8 = if (obj.elem_heap_info) |ehi| ehi.class_name else null;
+            const elem_inner_qtype: QbeType = if (obj.elem_heap_info) |ehi| ehi.elem_qtype else .none;
+            const elem_nested: ?*const ElemHeapInfo = if (obj.elem_heap_info) |ehi| ehi.nested else null;
+            try self.releaseValueIfSet(old_ptr, elem_heap, elem_inner_qtype, elem_class_name, elem_nested);
+        } else {
+            try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(obj.elem_qtype), val.text, addr });
+        }
+        try self.releaseIfTemporary(idx.obj.*, obj);
     }
 
     /// `d[key] = value` — `nox_dict_set`e lowerlanır (bkz. `genDictLit`in
@@ -2402,8 +2506,10 @@ const Codegen = struct {
     /// (`retainIfAliasing`) — `nox_dict_set`in KENDİSİ (runtime tarafında)
     /// yalnızca bir anahtar ZATEN VARSA eski değeri (VE `str` ise eski
     /// değeri/anahtarı) serbest bırakır (bkz. `runtime/collections/dict.zig`).
-    fn genDictAssign(self: *Codegen, idx: ast.Index, value_expr: ast.Expr) CodegenError!void {
-        const obj = try self.genExpr(idx.obj.*);
+    /// `obj` (ÇAĞIRAN TARAFINDAN önceden değerlendirilmiş) `.heap != .dict`
+    /// İSE (Faz U.1'den beri — `genAssign`in `.index` dalı ARTIK `list`i
+    /// de yönlendirebildiğinden) `error.Unsupported` döner.
+    fn genDictAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast.Expr) CodegenError!void {
         if (obj.heap != .dict) return error.Unsupported;
         try self.checkNoLowlevelEscape(obj);
         const dinfo = obj.dict_info.?;
@@ -2583,7 +2689,7 @@ const Codegen = struct {
         const byte_off = try self.newTemp();
         try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ byte_off, idx_cur, qbeSizeOf(loop_var.qtype) });
         const off8 = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, 8\n", .{ off8, byte_off });
+        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ off8, byte_off, LIST_HEADER_SIZE });
         const elem_addr = try self.newTemp();
         try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ elem_addr, list_ptr, off8 });
         const elem_val = try self.newTemp();
@@ -2795,7 +2901,7 @@ const Codegen = struct {
         const byte_off = try self.newTemp();
         try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ byte_off, index_v.text, qbeSizeOf(obj.elem_qtype) });
         const off8 = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, 8\n", .{ off8, byte_off });
+        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ off8, byte_off, LIST_HEADER_SIZE });
         const addr = try self.newTemp();
         try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ addr, obj.text, off8 });
         const result = try self.newTemp();
@@ -2887,7 +2993,7 @@ const Codegen = struct {
         }
         const elem_is_str = first.heap == .str;
         const elem_size = qbeSizeOf(elem_qtype);
-        const payload_size = 8 + elem_size * elems.len;
+        const payload_size = LIST_HEADER_SIZE + elem_size * elems.len;
 
         const t = try self.newTemp();
         const arena = self.currentArena();
@@ -2897,8 +3003,14 @@ const Codegen = struct {
             try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ t, RT_PARAM, payload_size });
         }
         try self.out.writer.print("    storel {d}, {s}\n", .{ elems.len, t });
+        // Faz U.1: kapasite (@8) — bir literalden inşa edilen bir liste HER
+        // ZAMAN tam-oturan başlar (kapasite=uzunluk, büyüme SLACK'i YOK) —
+        // yalnızca `.append()` GEREKTİĞİNDE gerçek büyüme uygular.
+        const cap_addr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 8\n", .{ cap_addr, t });
+        try self.out.writer.print("    storel {d}, {s}\n", .{ elems.len, cap_addr });
         for (values, 0..) |v, i| {
-            const off = 8 + elem_size * i;
+            const off = LIST_HEADER_SIZE + elem_size * i;
             const addr = try self.newTemp();
             try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, t, off });
             try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(elem_qtype), v.text, addr });
@@ -3322,7 +3434,7 @@ const Codegen = struct {
         const off = try self.newTemp();
         try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ off, idx_cur, qbeSizeOf(v.elem_qtype) });
         const off8 = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, 8\n", .{ off8, off });
+        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ off8, off, LIST_HEADER_SIZE });
         const addr = try self.newTemp();
         try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ addr, v.text, off8 });
         const elem = try self.newTemp();
@@ -3939,6 +4051,7 @@ const Codegen = struct {
     fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
         const obj = try self.genExpr(a.obj.*);
         if (obj.heap == .dict) return self.genDictMethod(obj, a, args);
+        if (obj.heap == .list) return self.genListAppend(obj, a, args);
         if (obj.heap != .class) return error.Unsupported;
         try self.checkNoLowlevelEscape(obj);
         const cinfo = self.classes.get(obj.class_name.?).?;
@@ -3995,6 +4108,165 @@ const Codegen = struct {
             return .{ .text = result, .qtype = .l };
         }
         return error.Unsupported;
+    }
+
+    /// `xs.append(v)` — Faz U.1, GERÇEK paylaşım semantikli büyüme (bkz.
+    /// nox-teknik-spesifikasyon.md §3.20'nin AYRINTILI notu — kullanıcıyla
+    /// netleşen karar). İKİ yol:
+    ///   - **Hızlı yol** (`len < cap`): YENİ eleman `obj.text`in KENDİ
+    ///     bloğuna, YERİNDE yazılır, `len` ARTIRILIR — bloğun ADRESİ HİÇ
+    ///     DEĞİŞMEZ, bu yüzden AYNI listeye başka bir isimden (`ys = xs`)
+    ///     bakan HERHANGİ bir alias bu değişikliği ANINDA GÖRÜR (gerçek
+    ///     paylaşım).
+    ///   - **Büyüme yolu** (`len == cap`): `nox_list_grow` (bkz. `arc.zig`)
+    ///     YENİ (kapasitesi ikiye katlanmış — `cap == 0` İSE `1`) bir blok
+    ///     ayırıp ESKİ içeriği KOPYALAR; YENİ eleman ORAYA yazılır; ESKİ
+    ///     blok (elemanları TAŞINDIĞINDAN — AYNI işaretçi DEĞERLERİ, refcount
+    ///     DEĞİŞMEDEN — özyinelemeli release EDİLMEDEN, yalnızca KENDİ ham
+    ///     belleği) `nox_rc_predecrement`+`nox_rc_free_payload` ile serbest
+    ///     bırakılır; YENİ işaretçi ALICININ KENDİ SLOTUNA geri yazılır.
+    ///     **Bilinçli v1 sınırlaması (KABUL EDİLDİ):** bu ANDA listenin
+    ///     BAŞKA bir alias'ı (`ys = xs`) VARSA, O alias ESKİ (artık daha
+    ///     KISA/serbest bırakılmış) bloğu GÖRMEYE devam eder — `xs`in KENDİ
+    ///     slotu güncellenir ama `ys`in DEĞİL (Nox'un işaretçi-DEĞERİ-
+    ///     tutan, TEK dolaylama SEVİYELİ ARC temsilinin doğal bir sonucu —
+    ///     TAM düzeltme bir "handle" [çift dolaylama] yeniden tasarımı
+    ///     gerektirir, v1 kapsamı DIŞINDA).
+    ///
+    /// **Bilinçli v1 sınırlaması — alıcı BİR PARAMETRE OLAMAZ:** bir
+    /// parametre ÖDÜNÇ alınmıştır (refcount'u ETKİLENMEDEN geçirilir, bkz.
+    /// modül üstü not) — büyüme yolu ESKİ bloğu predecrement/free ETTİĞİNDEN,
+    /// bu, callee'nin SAHİP OLMADIĞI bir referansı YANLIŞLIKLA serbest
+    /// bırakmasına (ÇAĞIRANIN hâlâ geçerli saydığı belleği bozmasına) yol
+    /// AÇARDI — checker BUNU AYIRT EDEMEDİĞİNDEN (parametre/yerel ayrımı
+    /// tip düzeyinde YOK), codegen `var_info.is_param` İSE `error.Unsupported`
+    /// döner (`checkNoLowlevelEscape`in "geniş kural, codegen seviyesinde
+    /// uygulanır" ÖNCEDEN kabul edilmiş desenle AYNI).
+    fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
+        if (args.len != 1) return error.Unsupported;
+        if (obj.arena) return error.Unsupported; // arena listeleri büyütülemez (v1 sınırlaması)
+        // checker `a.obj.*`in bir `.identifier` OLMASINI ZORUNLU kıldı
+        // (bkz. checker.zig'in `.list` dalı) — codegen bu ŞEKLE GÜVENİR.
+        const recv_name = a.obj.identifier;
+        const var_info = self.vars.get(recv_name) orelse return error.Unsupported;
+        if (var_info.is_param) return error.Unsupported;
+
+        const v0 = try self.genExpr(args[0]);
+        try self.checkNoLowlevelEscape(v0);
+        const retained = try self.retainIfAliasing(args[0], v0);
+        const val = try self.convert(retained, obj.elem_qtype);
+        const elem_size = qbeSizeOf(obj.elem_qtype);
+
+        const len_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ len_t, obj.text });
+        const cap_addr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 8\n", .{ cap_addr, obj.text });
+        const cap_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ cap_t, cap_addr });
+        const has_room = try self.newTemp();
+        try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ has_room, len_t, cap_t });
+        const grow_label = try self.newLabel("append_grow");
+        const write_label = try self.newLabel("append_write");
+        const done_label = try self.newLabel("append_done");
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ has_room, write_label, grow_label });
+
+        // Büyüme yolu: new_cap = (cap == 0) ? 1 : cap * 2 (phi'siz, alloc8
+        // tabanlı bir slot ile — bu projenin TÜM merge noktalarında
+        // kullandığı AYNI desen, bkz. `genListElemRelease`nin idx_slot'u).
+        try self.out.writer.print("{s}\n", .{grow_label});
+        const cap_is_zero = try self.newTemp();
+        try self.out.writer.print("    {s} =w ceql {s}, 0\n", .{ cap_is_zero, cap_t });
+        const doubled = try self.newTemp();
+        try self.out.writer.print("    {s} =l mul {s}, 2\n", .{ doubled, cap_t });
+        const new_cap_slot = try self.newTemp();
+        try self.out.writer.print("    {s} =l alloc8 8\n", .{new_cap_slot});
+        const capzero_label = try self.newLabel("append_capzero");
+        const capnz_label = try self.newLabel("append_capnz");
+        const capdone_label = try self.newLabel("append_capdone");
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cap_is_zero, capzero_label, capnz_label });
+        try self.out.writer.print("{s}\n", .{capzero_label});
+        try self.out.writer.print("    storel 1, {s}\n", .{new_cap_slot});
+        try self.out.writer.print("    jmp {s}\n", .{capdone_label});
+        try self.out.writer.print("{s}\n", .{capnz_label});
+        try self.out.writer.print("    storel {s}, {s}\n", .{ doubled, new_cap_slot });
+        try self.out.writer.print("    jmp {s}\n", .{capdone_label});
+        try self.out.writer.print("{s}\n", .{capdone_label});
+        const new_cap = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ new_cap, new_cap_slot });
+
+        const new_payload_size = try self.newTemp();
+        {
+            const sz = try self.newTemp();
+            try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ sz, new_cap, elem_size });
+            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ new_payload_size, sz, LIST_HEADER_SIZE });
+        }
+        const copy_bytes = try self.newTemp();
+        {
+            const sz = try self.newTemp();
+            try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ sz, len_t, elem_size });
+            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ copy_bytes, sz, LIST_HEADER_SIZE });
+        }
+        const new_ptr = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_list_grow(l {s}, l {s}, l {s}, l {s})\n", .{ new_ptr, RT_PARAM, obj.text, copy_bytes, new_payload_size });
+
+        // YENİ elemanı YENİ bloğa yaz, başlığı (len/cap) GÜNCELLE.
+        {
+            const byte_off = try self.newTemp();
+            try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ byte_off, len_t, elem_size });
+            const off16 = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ off16, byte_off, LIST_HEADER_SIZE });
+            const addr = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ addr, new_ptr, off16 });
+            try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(obj.elem_qtype), val.text, addr });
+        }
+        const new_len = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 1\n", .{ new_len, len_t });
+        try self.out.writer.print("    storel {s}, {s}\n", .{ new_len, new_ptr });
+        const new_cap_addr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 8\n", .{ new_cap_addr, new_ptr });
+        try self.out.writer.print("    storel {s}, {s}\n", .{ new_cap, new_cap_addr });
+
+        // ESKİ bloğu (yalnızca KENDİ ham belleğini — elemanlar TAŞINDI,
+        // özyinelemeli release EDİLMEZ) refcount'u sıfıra düşerse serbest
+        // bırak (bkz. bu fonksiyonun belge notu, "büyüme yolu").
+        const should_free = try self.emitInlinePredecrement(obj.text);
+        const free_label = try self.newLabel("append_free_old");
+        const skip_free_label = try self.newLabel("append_skip_free");
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ should_free, free_label, skip_free_label });
+        try self.out.writer.print("{s}\n", .{free_label});
+        const old_size = try self.newTemp();
+        {
+            const sz = try self.newTemp();
+            try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ sz, cap_t, elem_size });
+            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ old_size, sz, LIST_HEADER_SIZE });
+        }
+        try self.out.writer.print("    call $nox_rc_free_payload(l {s}, l {s}, l {s})\n", .{ RT_PARAM, obj.text, old_size });
+        try self.out.writer.print("    jmp {s}\n", .{skip_free_label});
+        try self.out.writer.print("{s}\n", .{skip_free_label});
+
+        // Alıcının KENDİ slotuna YENİ işaretçiyi geri yaz — TEK yerde
+        // (hızlı yol bloğun adresini HİÇ değiştirmediğinden gerekmez).
+        try self.out.writer.print("    storel {s}, {s}\n", .{ new_ptr, var_info.slot });
+        try self.out.writer.print("    jmp {s}\n", .{done_label});
+
+        // Hızlı yol: KENDİ bloğuna yerinde yaz.
+        try self.out.writer.print("{s}\n", .{write_label});
+        {
+            const byte_off = try self.newTemp();
+            try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ byte_off, len_t, elem_size });
+            const off16 = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ off16, byte_off, LIST_HEADER_SIZE });
+            const addr = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ addr, obj.text, off16 });
+            try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(obj.elem_qtype), val.text, addr });
+        }
+        const fast_new_len = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 1\n", .{ fast_new_len, len_t });
+        try self.out.writer.print("    storel {s}, {s}\n", .{ fast_new_len, obj.text });
+        try self.out.writer.print("    jmp {s}\n", .{done_label});
+
+        try self.out.writer.print("{s}\n", .{done_label});
+        return .{ .text = "0", .qtype = .w };
     }
 
     /// `spawn <hedef_fn>(args...)` — checker ZATEN operandın `.call` olup

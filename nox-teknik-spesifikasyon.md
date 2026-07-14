@@ -5454,6 +5454,137 @@ dosyası formatlanır (bkz. modül üstü not, "çok-dosyalı" sınırlaması).
 
 ---
 
+## 3.20 Faz U.1 — `list[T].append()` / Dinamik Büyüme + İndeksli Atama
+
+**Kapsam kararı — kullanıcıyla netleşti (AskUserQuestion):** `list[T]` ÖNCEDEN
+sabit boyutlu, TEK seferlik bir ARC bloğuydu (`{len: i64 @0, elemanlar @8...}`
+— kapasite kavramı YOKTU, uzunluk=kapasite HER ZAMAN). `.append()` eklemenin
+ÜÇ olası yolu (her append'te yeniden ayır/kopyala; `list[T]`i `dict[K,V]`
+İLE AYNI opak-Zig-destekli TEK-sahiplilik modeline TAŞI; GERÇEK bir kapasite
+alanı ekleyip yeterli KAPASİTEDE YERİNDE büyüme yap) GERÇEK bir DİL-SEMANTİĞİ
+farkı yaratıyordu (`ys = xs; xs.append(v)` — `ys` bunu GÖRMELİ Mİ?), YALNIZCA
+bir implementasyon detayı DEĞİL — kullanıcı **GERÇEK paylaşım** (kapasite
+alanı) seçeneğini SEÇTİ: Python listeleri gibi, kapasite YETERLİYSE `.append()`
+YERİNDE yazar (TÜM alias'lar GÖRÜR), kapasite DOLUNCA YENİ bir blok ayrılır.
+
+**Yeni başlık düzeni — `{len: i64 @0, cap: i64 @8, elemanlar @16...}`:**
+(`compiler/codegen_qbe/codegen.zig`'in YENİ `LIST_HEADER_SIZE = 16` sabiti).
+Bu, `list[T]`in kodgen'de DOKUNDUĞU HER YERİ (91 grep isabeti taranarak
+BULUNDU) etkileyen GENİŞ bir değişiklikti:
+1. `genListLit` — literal-inşa edilen bir liste HER ZAMAN tam-oturan başlar
+   (`cap = len`, büyüme SLACK'i YOK — yalnızca `.append()` GEREKTİĞİNDE
+   büyütür).
+2. `genIndex`in list dalı (okuma) VE YENİ `genListAssign` (yazma,
+   `xs[i] = v`) — eleman OFSETİ `8`→`16`e KAYDI, sınır kontrolü (Faz S.2'nin
+   AYNI err/ok-etiket deseni) `len`e (DEĞİŞMEDEN) BAKAR.
+3. `listPayloadSize` — GERÇEK tahsis edilmiş boyut ARTIK `cap`e (`@8`)
+   karşılık gelir, `len`e (`@0`) DEĞİL — bu AYRIM KRİTİK: `.append()`in
+   büyüttüğü bir liste, `len` ile serbest bırakılırsa havuzun serbest-liste
+   sınıf indeksini BOZAR (bkz. `arc.zig`'in `nox_rc_free_payload` notu).
+4. `genListElemRelease` (üretilen `$List_<...>_release`) — element DÖNGÜSÜ
+   `len`e (yalnızca GEÇERLİ elemanlar release edilir) BAKMAYA DEVAM eder,
+   AMA belleği serbest bırakırken `cap` KULLANILIR (İKİ dalda da — nested VE
+   primitive-eleman durumları).
+5. `genListEq`/`genForList`/`genPrintList` — yalnızca eleman OFSET kaymasını
+   (`8`→`16`) gerektirdi (`len` HER ZAMAN doğru döngü SINIRIYDI).
+6. **Zig-taraflı EL İLE list-inşa eden İKİ site** (`runtime/stdlib_shims/
+   json.zig`nin `buildPtrList`ı VE `runtime/stdlib_shims/strings.zig`nin
+   `nox_strings_split_raw`ı, ikisi de Alt-Faz L/H'den beri `genListLit`in
+   bayt düzenini EL İLE TAKLİT EDİYORDU) — İKİSİ de YENİ düzene (16 baytlık
+   başlık, `cap = len`) GÜNCELLENDİ; AKSİ HALDE `nox.json`/`nox.strings.split`
+   ÇIKTILARI genListElemRelease/genIndex İLE UYUMSUZ (bozuk) olurdu. AYNI
+   nedenle `tests/compat/zig_ext/util.zig`nin (Alt-Faz F'nin `list[str]`
+   dönüşü test fixture'ı) `nox_test_make_list`ı da GÜNCELLENDİ.
+
+**YENİ `nox_list_grow` (runtime/alloc/arc.zig):** `.append()`in büyüme
+yolunun TEK çalışma zamanı primitifi — YENİ (2× kapasiteli, `cap==0` İSE
+`1`) bir blok ayırıp ESKİ içeriği (`@memcpy`) KOPYALAR, YENİ işaretçiyi
+döner. `old_ptr`e HİÇ DOKUNMAZ (ne serbest bırakır ne refcount DEĞİŞTİRİR) —
+ÇAĞIRAN (`genListAppend`) sorumludur (bkz. aşağı).
+
+**`checker.zig`:**
+1. `checkAssign`'ın `.index` kolu `list`i (dict'in YANINDA) TANIR —
+   `xs[i] = v` (int indeks + eleman-tipi ATANABİLİRLİK kontrolü).
+2. `checkCall`'ın `.attribute` dispatch'i `list.append(v)`i (Channel/dict'in
+   AYNI "yerleşik, kullanıcı sınıfı DEĞİL" deseninde) tanır — **bilinçli v1
+   kısıtı:** alıcı (`a.obj.*`) SADECE çıplak bir isim OLABİLİR (`spawn`in
+   çağrı-hedefi kısıtıyla AYNI gerekçe) — `getList().append(v)`/`obj.field.
+   append(v)` REDDEDİLİR (`TypeMismatch`), çünkü codegen'in BÜYÜME durumunda
+   ALICININ KENDİ SLOTUNA geri yazması GEREKİR — bu yalnızca bir DEĞİŞKENİN
+   slotu İÇİN anlamlıdır.
+
+**`codegen.zig` — `genListAssign`/`genListAppend`:**
+- `genListAssign` (`xs[i] = v`): `genIndex`in AYNI bounds-check'i + `genAssign`in
+  `.attribute` kolundaki AYNI "ÖNCE eskiyi oku, YENİ değeri yaz, SONRA
+  eskiyi serbest bırak" sırası (heap-yönetimli elemanlar İÇİN).
+- `genListAppend` (`xs.append(v)`): İKİ yol, phi'SİZ (bu projenin TÜM merge
+  noktalarında kullandığı `alloc8`+`store`/`load` deseniyle):
+  - **Hızlı yol** (`len < cap`): YENİ eleman `obj.text`in KENDİ bloğuna
+    YERİNDE yazılır, `len` ARTIRILIR — blok ADRESİ HİÇ DEĞİŞMEZ, HERHANGİ
+    bir alias (`ys = xs`) bunu ANINDA GÖRÜR.
+  - **Büyüme yolu** (`len == cap`): `nox_list_grow` YENİ bir blok ayırıp
+    ESKİ içeriği kopyalar; YENİ eleman ORAYA yazılır; ESKİ blok (elemanları
+    TAŞINDIĞINDAN — AYNI işaretçi DEĞERLERİ, refcount DEĞİŞMEDEN —
+    özyinelemeli release EDİLMEDEN, yalnızca KENDİ ham belleği)
+    `nox_rc_predecrement`+`nox_rc_free_payload` ile serbest bırakılır; YENİ
+    işaretçi ALICININ KENDİ SLOTUNA (`var_info.slot`) geri yazılır.
+
+**Bilinçli v1 sınırlamaları (KABUL EDİLDİ):**
+1. **Büyüme ANINDA VAR OLAN bir alias YENİ elemanı GÖRMEZ:** `ys = xs`
+   OLUŞTURULDUKTAN SONRA `xs.append(v)` bir BÜYÜME tetiklerse, `ys` ESKİ
+   (artık daha KISA) bloğu GÖRMEYE devam eder — `xs`in KENDİ slotu
+   güncellenir ama `ys`in DEĞİL. Bu, Nox'un işaretçi-DEĞERİ-tutan, TEK
+   dolaylama SEVİYELİ ARC temsilinin DOĞAL bir sonucudur — TAM düzeltme bir
+   "handle" (ÇİFT dolaylama) yeniden tasarımı gerektirir, v1 kapsamı
+   DIŞINDA. **GÜVENLİK NOTU (GERÇEKTEN doğrulandı):** bu durum SESSİZCE
+   YANLIŞ veri OKUMAZ/belleği BOZMAZ — `ys` KENDİ (kısa) `len`iyle bağlı
+   kaldığından, `ys[len(eski)]` gibi bir erişim TEMİZ bir `IndexError`
+   fırlatır (bkz. doğrulama, "İlk deneme").
+2. **Alıcı BİR PARAMETRE OLAMAZ:** bir parametre ÖDÜNÇ alınmıştır (refcount'u
+   ETKİLENMEDEN geçirilir) — büyüme yolu ESKİ bloğu predecrement/free
+   ETTİĞİNDEN, bu ÇAĞIRANIN hâlâ geçerli saydığı belleği BOZARDI. Checker
+   parametre/yerel ayrımını TİP DÜZEYİNDE yapmadığından, bu kısıt CODEGEN
+   SEVİYESİNDE (`var_info.is_param` İSE `error.Unsupported`) uygulanır
+   (`checkNoLowlevelEscape`in "geniş kural, codegen seviyesinde uygulanır"
+   ÖNCEDEN kabul edilmiş desenle AYNI).
+3. **Arena listeleri büyütülemez** — `.append()` `obj.arena` İSE
+   `error.Unsupported` döner (arena semantiği toplu-yıkım varsayar,
+   `nox_rc_alloc`/`nox_rc_free_payload` tabanlı büyüme yoluyla UYUŞMAZ).
+4. **Boş liste literali (`xs: list[int] = []`) HÂLÂ desteklenmiyor** — bu,
+   U.1'in KAPSAMI DIŞINDA bırakıldı (dict'İN KENDİSİ de `{}`yi
+   desteklemiyor, "dict ZATEN destekliyor — TUTARLILIK" gerekçesi BURAYA
+   UYGULANMAZ) — `.append()` KULLANMAK İÇİN liste EN AZ bir eleman ile
+   BAŞLATILMALIDIR.
+
+**Doğrulama (üç katman):**
+1. **Manuel uçtan-uca (bu makine, `noxc build`):** 4 elemanlı bir listeye 5
+   kez `.append()` (3 büyüme sınırını AŞARAK) → TÜM 8 eleman DOĞRU
+   sırada; indeksli atama (`xs[0] = 100`) → DOĞRU okuma; **paylaşım
+   testi** — `ys = xs` (kapasitede SLACK VARKEN) → `xs.append(v)` (hızlı
+   yol) → `ys` YENİ elemanı DOĞRU gördü; **sınır testi** — `ys = xs`
+   (SLACK YOKKEN, İLK deneme) → `xs.append(v)` (BÜYÜME) → `ys[len]`
+   TEMİZ bir `IndexError` fırlattı (ÇÖKME/BOZULMA DEĞİL); `list[str]`
+   (heap-yönetimli elemanlar) İLE 4 `.append()` → sızıntı YOK (stderr
+   boş, DebugAllocator'ın leak-check'i TEMİZ); sınır dışı indeksli atama
+   (`xs[10] = 5`) → TEMİZ `IndexError`.
+2. **Golden testler** (`tests/golden/codegen_cases/`, 3 YENİ dosya) —
+   `list_append_grows_and_shares.nox` (büyüme + paylaşım, YUKARIDAKİ
+   manuel senaryonun AYNISI), `list_append_str_elements.nox` (heap-
+   yönetimli elemanlarla büyüme, sızıntı YOK), `list_index_assign_basic.nox`
+   (indeksli atama + sınır dışı `IndexError`); `tests/golden/typecheck_cases/
+   err_list_append_non_identifier_receiver.nox` (alıcı kısıtının ÇALIŞTIĞINI
+   kanıtlar).
+3. **Kasıtlı boz→kırmızı→düzelt (paylaşım özelliği):** `genListAppend`nin
+   `has_room` karşılaştırması (`csltl` → `csgtl`, hızlı yolun ASLA
+   tetiklenmemesini SAĞLAYARAK) GEÇİCİ olarak BOZULDU → `list_append_grows_
+   and_shares` testi GERÇEKTEN kırmızıya döndü (`ys`in DAHA ÖNCE GÖRDÜĞÜ bir
+   elemente artık eriş(ilem)iyordu, "yakalanmamış istisna") → geri
+   getirildi, YEŞİLE döndüğü doğrulandı.
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

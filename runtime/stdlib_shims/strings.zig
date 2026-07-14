@@ -17,8 +17,11 @@ const http_client = @import("http_client.zig");
 const dupeToNoxStr = http_client.dupeToNoxStr;
 
 /// Stdlib fazı §F'nin `list[str]` DÖNÜŞ desteğinin GERÇEK ihtiyaç sahibi —
-/// `genListLit`in ÜRETTİĞİ AYNI bayt düzeninde (8 bayt uzunluk başlığı +
-/// `str` işaretçileri) bir payload'ı EL İLE inşa eder. `sep` BOŞSA (v1
+/// `genListLit`in ÜRETTİĞİ AYNI bayt düzeninde (Faz U.1'den beri: 8 bayt
+/// uzunluk + 8 bayt kapasite başlığı + `str` işaretçileri, bkz. codegen_qbe/
+/// codegen.zig'in `list[T]` başlık düzeni notu) bir payload'ı EL İLE inşa
+/// eder — kapasite BURADA HER ZAMAN uzunluğa EŞİTTİR (tam-oturan, büyüme
+/// SLACK'i YOK — `.append()` GEREKTİĞİNDE KENDİSİ büyütür). `sep` BOŞSA (v1
 /// bilinçli basitleştirmesi — `std.mem.splitSequence`in boş bir ayraçla
 /// TANIMSIZ/kullanışsız davranışına GÜVENMEK YERİNE), TÜM `s`i TEK elemanlı
 /// bir liste olarak döner.
@@ -27,11 +30,12 @@ export fn nox_strings_split_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]c
     const sep_slice = std.mem.span(sep orelse return null);
 
     if (sep_slice.len == 0) {
-        const raw = arc.nox_rc_alloc(rt, 8 + 8) orelse return null;
+        const raw = arc.nox_rc_alloc(rt, 16 + 8) orelse return null;
         const bytes: [*]u8 = @ptrCast(raw);
         @as(*align(1) i64, @ptrCast(bytes)).* = 1;
+        @as(*align(1) i64, @ptrCast(bytes + 8)).* = 1;
         const dup = dupeToNoxStr(rt, s_slice) orelse return null;
-        @as(*align(1) i64, @ptrCast(bytes + 8)).* = @bitCast(@as(isize, @intCast(@intFromPtr(dup))));
+        @as(*align(1) i64, @ptrCast(bytes + 16)).* = @bitCast(@as(isize, @intCast(@intFromPtr(dup))));
         return @ptrCast(bytes);
     }
 
@@ -41,15 +45,16 @@ export fn nox_strings_split_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]c
         while (it.next()) |_| count += 1;
     }
 
-    const raw = arc.nox_rc_alloc(rt, 8 + 8 * count) orelse return null;
+    const raw = arc.nox_rc_alloc(rt, 16 + 8 * count) orelse return null;
     const bytes: [*]u8 = @ptrCast(raw);
     @as(*align(1) i64, @ptrCast(bytes)).* = @intCast(count);
+    @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(count);
 
     var it = std.mem.splitSequence(u8, s_slice, sep_slice);
     var i: usize = 0;
     while (it.next()) |part| {
         const dup = dupeToNoxStr(rt, part) orelse return null;
-        const slot = bytes + 8 + 8 * i;
+        const slot = bytes + 16 + 8 * i;
         @as(*align(1) i64, @ptrCast(slot)).* = @bitCast(@as(isize, @intCast(@intFromPtr(dup))));
         i += 1;
     }
@@ -110,13 +115,13 @@ test "nox_strings_split_raw temel bolme" {
 
     var i: usize = 0;
     while (i < 3) : (i += 1) {
-        const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(bytes + 8 + 8 * i)).*);
+        const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(bytes + 16 + 8 * i)).*);
         const p: [*:0]u8 = @ptrFromInt(addr);
         defer str.nox_str_release(rt, p);
         if (i == 0) try std.testing.expectEqualStrings("a", std.mem.sliceTo(p, 0));
         if (i == 2) try std.testing.expectEqualStrings("c", std.mem.sliceTo(p, 0));
     }
-    arc.nox_rc_release(rt, list_ptr, 8 + 8 * 3);
+    arc.nox_rc_release(rt, list_ptr, 16 + 8 * 3);
 }
 
 test "nox_strings_trim/upper/lower/replace_raw dogru calisir" {

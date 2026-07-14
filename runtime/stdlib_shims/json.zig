@@ -143,15 +143,18 @@ fn callMakeJsonValue(
     return result;
 }
 
-/// `genListLit`in ürettiği AYNI bayt düzeni (8 bayt uzunluk başlığı + N adet
-/// 8 baytlık işaretçi) — hem `list[JsonValue]` (`arr`/`vals`) hem `list[str]`
-/// (`keys`) için AYNI (ikisi de düz 8 baytlık işaretçi dizisi).
+/// `genListLit`in ürettiği AYNI bayt düzeni (Faz U.1'den beri: 8 bayt
+/// uzunluk + 8 bayt kapasite başlığı + N adet 8 baytlık işaretçi) — hem
+/// `list[JsonValue]` (`arr`/`vals`) hem `list[str]` (`keys`) için AYNI
+/// (ikisi de düz 8 baytlık işaretçi dizisi). Kapasite HER ZAMAN uzunluğa
+/// eşittir (tam-oturan — bkz. `nox_strings_split_raw`daki AYNI gerekçe).
 fn buildPtrList(rt: ?*anyopaque, items: []const ?*anyopaque) ?*anyopaque {
-    const raw = arc.nox_rc_alloc(rt, 8 + 8 * items.len) orelse return null;
+    const raw = arc.nox_rc_alloc(rt, 16 + 8 * items.len) orelse return null;
     const bytes: [*]u8 = @ptrCast(raw);
     @as(*align(1) i64, @ptrCast(bytes)).* = @intCast(items.len);
+    @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(items.len);
     for (items, 0..) |it, i| {
-        const slot = bytes + 8 + 8 * i;
+        const slot = bytes + 16 + 8 * i;
         @as(*align(1) i64, @ptrCast(slot)).* = @bitCast(@as(isize, @intCast(@intFromPtr(it))));
     }
     return @ptrCast(bytes);
