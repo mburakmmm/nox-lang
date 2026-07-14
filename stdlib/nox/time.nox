@@ -20,3 +20,36 @@ def now_ms() -> int:
 
 def sleep_ms(ms: int) -> None:
     nox_time_sleep_ms_raw(ms)
+
+# Stdlib fazı V.4 — `DateTime`: bir epoch-ms değerinin takvim bileşenlerine
+# (`std.time.epoch` ile, bkz. `runtime/stdlib_shims/time.zig`nin belge
+# notu) AYRIŞTIRILMIŞ hâli. Bilinçli v1 sınırlaması: yalnızca AYRIŞTIRMA
+# (epoch-ms -> DateTime) — ters yön (DateTime -> epoch-ms) YOK.
+class DateTime:
+    def __init__(self: DateTime, year: int, month: int, day: int, hour: int, minute: int, second: int) -> None:
+        self.year = year
+        self.month = month
+        self.day = day
+        self.hour = hour
+        self.minute = minute
+        self.second = second
+
+extern def nox_time_year_raw(ms: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_time_month_raw(ms: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_time_day_raw(ms: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_time_hour_raw(ms: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_time_minute_raw(ms: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_time_second_raw(ms: int) -> int from "zig-out/lib/noxrt.o"
+
+def from_epoch_ms(ms: int) -> DateTime:
+    return DateTime(
+        nox_time_year_raw(ms),
+        nox_time_month_raw(ms),
+        nox_time_day_raw(ms),
+        nox_time_hour_raw(ms),
+        nox_time_minute_raw(ms),
+        nox_time_second_raw(ms)
+    )
+
+def now() -> DateTime:
+    return from_epoch_ms(now_ms())

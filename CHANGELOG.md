@@ -174,6 +174,11 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   karakterlik küçük harf hex özet). Zig'in kendi `std.crypto.hash.sha2.
   Sha256`si sarılır (sıfırdan bir hash algoritması yazılmadı). FIPS 180-4
   test vektörleriyle doğrulandı.
+- `nox.time` genişletildi (Faz V.4) — `DateTime` sınıfı (yıl/ay/gün/saat/
+  dakika/saniye) + `from_epoch_ms(ms) -> DateTime` / `now() -> DateTime`.
+  Zig'in kendi `std.time.epoch`u sarılır (sıfırdan takvim aritmetiği
+  yazılmadı). Bilinçli v1 sınırı: yalnızca ayrıştırma (epoch-ms →
+  DateTime), ters yön yok; yalnızca 1970 ve sonrası.
 
 ### Düzeltildi
 - **Önemli test-altyapısı düzeltmesi:** `compiler/*.zig` dosyalarına gömülü

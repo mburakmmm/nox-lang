@@ -31,6 +31,59 @@ export fn nox_time_sleep_ms_raw(ms: i64) callconv(.c) void {
     _ = std.c.nanosleep(&ts, null);
 }
 
+/// Stdlib fazı V.4 — `nox.time.DateTime`: bir epoch-ms değerini takvim
+/// bileşenlerine (yıl/ay/gün/saat/dakika/saniye) AYIRIR. Zig'in KENDİ
+/// `std.time.epoch`u (`nox.crypto`nun `std.crypto`yu KULLANMA kararıyla
+/// AYNI ilke — sıfırdan takvim ARİTMETİĞİ YAZILMAZ) kullanılır. Her
+/// bileşen AYRI bir `extern def`e (Nox'un `extern def`i TEK bir skaler
+/// DÖNDÜREBİLDİĞİNDEN, struct/tuple YOK) karşılık gelir — HER çağrı AYNI
+/// ayrıştırmayı yeniden YAPAR (v1 için BİLİNÇLİ basitleştirme, altı ayrı
+/// alan İÇİN altı ayrı `extern def` çağrısı — bir "tek çağrıda TÜM alanları
+/// hesapla" optimizasyonu YOK).
+///
+/// **Bilinçli v1 sınırlaması:** yalnızca AYRIŞTIRMA (epoch-ms -> bileşenler)
+/// desteklenir — TERS yön (bileşenler -> epoch-ms, ör. `to_epoch_ms(...)`)
+/// `std.time.epoch`un SAĞLAMADIĞI bir "civil-den-epoch-güne" dönüşüm
+/// algoritması (ör. Howard Hinnant'ın `days_from_civil`i) GEREKTİRİRDİ —
+/// v1 kapsamı DIŞINDA bırakıldı (birincil kullanım durumu, `nox.time.now()`
+/// İLE ŞU ANKİ tarihi/saati GÖRÜNTÜLEMEK, yalnızca AYRIŞTIRMA gerektirir).
+/// Yalnızca 1970 VE SONRASI (negatif OLMAYAN epoch-ms) desteklenir —
+/// `std.time.epoch.EpochSeconds`in KENDİSİ `u64` alır.
+fn breakdownSeconds(ms: i64) std.time.epoch.EpochSeconds {
+    const secs: u64 = @intCast(@divFloor(ms, std.time.ms_per_s));
+    return .{ .secs = secs };
+}
+
+export fn nox_time_year_raw(ms: i64) callconv(.c) i64 {
+    const yd = breakdownSeconds(ms).getEpochDay().calculateYearDay();
+    return @intCast(yd.year);
+}
+
+export fn nox_time_month_raw(ms: i64) callconv(.c) i64 {
+    const yd = breakdownSeconds(ms).getEpochDay().calculateYearDay();
+    return @intCast(yd.calculateMonthDay().month.numeric());
+}
+
+export fn nox_time_day_raw(ms: i64) callconv(.c) i64 {
+    const yd = breakdownSeconds(ms).getEpochDay().calculateYearDay();
+    // `day_index` 0-TABANLIDIR (0-30) — kullanıcı yüzeyinde 1-TABANLI
+    // (Python'un `datetime.day`siyle TUTARLI) bir gün numarası VERMEK
+    // İÇİN +1.
+    return @as(i64, yd.calculateMonthDay().day_index) + 1;
+}
+
+export fn nox_time_hour_raw(ms: i64) callconv(.c) i64 {
+    return breakdownSeconds(ms).getDaySeconds().getHoursIntoDay();
+}
+
+export fn nox_time_minute_raw(ms: i64) callconv(.c) i64 {
+    return breakdownSeconds(ms).getDaySeconds().getMinutesIntoHour();
+}
+
+export fn nox_time_second_raw(ms: i64) callconv(.c) i64 {
+    return breakdownSeconds(ms).getDaySeconds().getSecondsIntoMinute();
+}
+
 test "nox_time_now_ms_raw pozitif ve makul bir epoch değeri döner" {
     const now = nox_time_now_ms_raw();
     try std.testing.expect(now > 0);

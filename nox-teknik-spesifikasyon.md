@@ -6617,6 +6617,65 @@ ARASINDA PAYLAŞILAN AYNI yardımcı) DOĞRUDAN kullanılır.
 
 ---
 
+## 3.32 Faz V.4 — `nox.time` Genişletmesi (`DateTime`)
+
+**Kapsam:** bir epoch-ms değerini takvim bileşenlerine (yıl/ay/gün/saat/
+dakika/saniye) ayrıştıran bir `DateTime` sınıfı + `from_epoch_ms(ms) ->
+DateTime` / `now() -> DateTime`. `nox.crypto`nun `std.crypto` KULLANMA
+kararıyla AYNI ilke — Zig'in KENDİ `std.time.epoch`u (sıfırdan takvim
+aritmetiği YAZILMADAN) SARILIR (`runtime/stdlib_shims/time.zig`ye eklendi,
+YENİ bir dosya AÇILMADI — AYNI modülün DEVAMI).
+
+**Mimari — HER bileşen AYRI bir `extern def`:** Nox'un `extern def`i TEK
+bir SKALER döndürebildiğinden (struct/tuple YOK), ALTI ayrı `extern def`
+(`nox_time_year_raw`/`_month_raw`/`_day_raw`/`_hour_raw`/`_minute_raw`/
+`_second_raw`) TANIMLANDI — HER biri AYNI `breakdownSeconds(ms)` yardımcı
+fonksiyonunu (Zig-düzeyinde, `export` DEĞİL) ÇAĞIRIP KENDİ bileşenini
+ÇIKARIR. Bu, AYNI epoch-gün/saniye HESABININ ALTI KEZ TEKRARLANMASI
+anlamına gelir (bilinçli v1 basitleştirmesi — "TEK çağrıda TÜM alanları
+hesapla" optimizasyonu YOK, `nox.random`ın "basitlik ÖNCE" ilkesiyle
+TUTARLI). Nox tarafı, bu altı sonucu bir ARAYA getirip `DateTime` sınıf
+örneğini İNŞA EDER (`from_epoch_ms`).
+
+**Bilinçli v1 sınırlamaları:**
+- Yalnızca AYRIŞTIRMA (epoch-ms → `DateTime`) — TERS yön (`DateTime` →
+  epoch-ms) YOK. `std.time.epoch` yalnızca DECOMPOSE sağlar; ENCODE
+  (civil-den-epoch-güne dönüşüm) Howard Hinnant'ın `days_from_civil`i GİBİ
+  AYRI bir algoritma GEREKTİRİRDİ — birincil kullanım durumu (`nox.time.
+  now()` İLE ŞU ANKİ tarihi/saati GÖRÜNTÜLEMEK) yalnızca AYRIŞTIRMA
+  gerektirdiğinden v1 kapsamı DIŞINDA bırakıldı.
+- Yalnızca 1970 VE SONRASI (`std.time.epoch.EpochSeconds` `u64` alır,
+  negatif epoch-ms DESTEKLENMEZ).
+- **PRE-EXISTING, stdlib-genelinde bir sınırlamanın YENİ bir örneği:**
+  `nox.http.HttpResponse`/`nox.json.JsonValue` GİBİ, `DateTime` de TİP
+  ANNOTASYONU olarak KULLANILDIĞINDA `nox.time.DateTime` DEĞİL, MANGLED
+  adıyla (`nox_time_DateTime`) yazılmalıdır (Alt-Faz O'nun bilinçli
+  kapsam DIŞI notu — "Tek bir proje İÇİNDE birden fazla İLK-TARAF `.nox`
+  dosyasının BİRBİRİNİ import etmesi... bu planda TASARLANMADI" İLE AYNI
+  KATEGORİDEKİ, `import` sisteminin NOKTALI TİP ANNOTASYONU sözdizimini
+  HENÜZ DESTEKLEMEMESİ gerçeği) — `nox.time.from_epoch_ms(...)`in
+  DÖNÜŞ DEĞERİNİ bir DEĞİŞKENE bağlamak İSTEYEN bir kullanıcı `dt:
+  nox_time_DateTime = nox.time.from_epoch_ms(...)` yazmalıdır. Bu, V.4'ün
+  KENDİSİNİN GETİRDİĞİ bir kısıt DEĞİL — TÜM stdlib sınıflarının ORTAK,
+  ÖNCEDEN VAR OLAN bir kısıtıdır (BURADA yalnızca YENİ bir somut örnekle
+  KARŞILAŞILDI).
+
+**Doğrulama:**
+1. **1 uçtan-uca golden test** (`time_datetime_from_epoch_ms.nox`): bilinen
+   bir epoch-ms değerinin (`1700000000000`) DOĞRU takvim bileşenlerine
+   ayrıştığını (`2023-11-14 22:13:20`, Python'un `datetime.utcfromtimestamp`ı
+   İLE ÇAPRAZ doğrulandı) VE `now()`in makul (`year >= 2024`) bir sonuç
+   ürettiğini kanıtlar.
+2. **Kasıtlı boz→kırmızı→düzelt:** `nox_time_day_raw`nin 0-tabandan
+   1-tabana çeviren `+1` GEÇİCİ olarak KALDIRILDI → `zig build test` "91
+   pass, 1 fail (92 total)" / "339/340 tests passed" GÖSTERDİ (gün "14"
+   yerine "13" BASILDI — KLASİK bir off-by-one) — geri getirildi, 340/340
+   YEŞİLE döndü (Debug VE ReleaseFast).
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

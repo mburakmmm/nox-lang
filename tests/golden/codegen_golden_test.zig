@@ -762,6 +762,13 @@ test "codegen(çalıştır): nox.crypto.sha256 — bilinen test vektörleri (\"\
     );
 }
 
+test "codegen(çalıştır): nox.time.DateTime — bilinen epoch-ms'in doğru takvim bileşenlerine ayrıştırılması" {
+    try expectGolden(
+        @embedFile("codegen_cases/time_datetime_from_epoch_ms.nox"),
+        @embedFile("codegen_cases/time_datetime_from_epoch_ms.expected"),
+    );
+}
+
 test "codegen(çalıştır): nox.test.assert_eq_*/assert_true (başarılı yol)" {
     try expectGolden(
         @embedFile("codegen_cases/test_assert_eq_pass.nox"),
