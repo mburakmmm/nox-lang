@@ -508,8 +508,8 @@ fn appendExternLinkArgs(allocator: std.mem.Allocator, argv: *std.ArrayListUnmana
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     try seen.put(allocator, "zig-out/lib/noxrt.o", {});
     for (module.body) |stmt| {
-        if (stmt != .extern_def) continue;
-        const from_lib = stmt.extern_def.from_lib;
+        if (stmt.kind != .extern_def) continue;
+        const from_lib = stmt.kind.extern_def.from_lib;
         if (seen.contains(from_lib)) continue;
         try seen.put(allocator, from_lib, {});
 

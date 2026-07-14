@@ -189,7 +189,19 @@ pub const ImportStmt = struct {
     segments: []const []const u8,
 };
 
-pub const Stmt = union(enum) {
+/// Faz T.1: kaynak pozisyonu — bilinçli olarak yalnızca DEYİM (statement)
+/// GRANÜLERLİĞİNDE (ifade/`Expr` düzeyinde DEĞİL). `checker.zig`/`codegen.zig`nin
+/// `ast.Expr`i eşleştirdiği DÜZİNELERCE yer (her `checkExpr`/`genExpr`
+/// özyinelemesi) varken, `ast.Stmt`i eşleştiren yer sayısı ÇOK daha azdır
+/// (yalnızca `checkStmt`/`genStmts`in kendi dağıtım noktaları + birkaç modül-
+/// düzeyi filtre) — bu, DEYİM düzeyinde pozisyon eklemeyi GÜVENLE, `Expr`in
+/// TÜM kod tabanına yayılmış temsilini DEĞİŞTİRMEDEN yapılabilir kılar.
+/// Bir DEYİM içindeki bir ALT ifadede oluşan bir hata, o DEYİMİN satırını
+/// raporlar (Python'un KENDİ hata raporlamasıyla BENZER granülerlik) —
+/// tam sütun/ifade-düzeyi hassasiyeti BİLİNÇLİ olarak v1 kapsamı DIŞINDA
+/// bırakılmıştır (gelecekteki bir faz İÇİN not, bkz. nox-teknik-
+/// spesifikasyon.md §3.15).
+pub const StmtKind = union(enum) {
     expr_stmt: Expr,
     var_decl: VarDecl,
     assign: Assign,
@@ -206,6 +218,18 @@ pub const Stmt = union(enum) {
     lowlevel_stmt: LowLevelStmt,
     import_stmt: ImportStmt,
     pass_stmt,
+};
+
+/// `parser.zig`nin `parseStmt`i (TÜM deyim ayrıştırmasının TEK dağıtım
+/// noktası) her deyimi SARIP `line`i (1-tabanlı kaynak satırı, bkz.
+/// `lexer/token.zig`nin `Token.line`i) EKLER — bkz. `StmtKind`in belge
+/// notu. `.kind` alanına erişim, ÖNCEDEN `ast.Stmt` DOĞRUDAN birleşimin
+/// kendisiyken şimdi bir SARMALAYICI struct İÇİNDE olduğundan, TÜM mevcut
+/// `stmt == .xxx`/`switch (stmt)` yerleri `stmt.kind == .xxx`/`switch
+/// (stmt.kind)`e güncellendi (bkz. checker.zig/codegen_qbe/codegen.zig).
+pub const Stmt = struct {
+    kind: StmtKind,
+    line: u32 = 0,
 };
 
 pub const Module = struct {

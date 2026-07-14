@@ -100,6 +100,15 @@ pub const Checker = struct {
     functions: std.StringHashMapUnmanaged(FuncSig) = .{},
     classes: std.StringHashMapUnmanaged(ClassInfo) = .{},
     diagnostic: ?[]const u8 = null,
+    /// Faz T.1: `fail`in tanılama mesajına EKLEDİĞİ "şu an hangi DEYİMİ
+    /// işliyoruz" satır numarası (1-tabanlı, bkz. `ast.Stmt.line`) — DEYİM
+    /// granülerliğinde (bkz. `ast.Stmt`in belge notu), bir DEYİM İÇİNDEKİ
+    /// bir ALT ifadede oluşan hata O DEYİMİN satırını raporlar.
+    /// `checkStmt`in HER çağrısında güncellenir (TEK dağıtım noktası); ayrıca
+    /// `checkStmt`e HİÇ girmeyen üst-düzey geçişlerin (`collectClassNames`/
+    /// `registerSignatures`/`collectProtocols`) KENDİ döngülerinde de
+    /// AYRICA güncellenir.
+    current_line: u32 = 0,
     /// Generic (`type_params.len > 0`) serbest fonksiyonlar — ham AST'leri,
     /// somut bir çağrı sitesiyle karşılaşılana kadar burada beklerler (bkz.
     /// Faz 10, `instantiateGeneric`). Gövdeleri normal geçişte DENETLENMEZ.
@@ -136,8 +145,12 @@ pub const Checker = struct {
     }
 
     fn fail(self: *Checker, err: TypeError, comptime fmt: []const u8, args: anytype) TypeError {
-        self.diagnostic = std.fmt.allocPrint(self.allocator, fmt, args) catch
+        const msg = std.fmt.allocPrint(self.allocator, fmt, args) catch
             "(tanılama mesajı oluşturulamadı: bellek yetersiz)";
+        self.diagnostic = if (self.current_line > 0)
+            std.fmt.allocPrint(self.allocator, "satır {d}: {s}", .{ self.current_line, msg }) catch msg
+        else
+            msg;
         return err;
     }
 
@@ -203,8 +216,9 @@ pub const Checker = struct {
 
     fn collectClassNames(self: *Checker, module: ast.Module) TypeError!void {
         for (module.body) |stmt| {
-            if (stmt == .class_def) {
-                const name = stmt.class_def.name;
+            self.current_line = stmt.line;
+            if (stmt.kind == .class_def) {
+                const name = stmt.kind.class_def.name;
                 if (self.classes.contains(name)) {
                     return self.fail(error.DuplicateDefinition, "sınıf zaten tanımlı: {s}", .{name});
                 }
@@ -217,7 +231,8 @@ pub const Checker = struct {
 
     fn registerSignatures(self: *Checker, module: ast.Module) TypeError!void {
         for (module.body) |stmt| {
-            switch (stmt) {
+            self.current_line = stmt.line;
+            switch (stmt.kind) {
                 .func_def => |fd| try self.registerFunc(fd),
                 .class_def => |cd| try self.registerClassSignatures(cd),
                 .extern_def => |ed| try self.registerExternFunc(ed),
@@ -570,7 +585,8 @@ pub const Checker = struct {
         // codegen.zig, `moduleUsesAsync`).
         var top_ctx: FnCtx = .{ .scope = &top_scope, .expected_return = null, .in_async = true };
         for (module.body) |stmt| {
-            switch (stmt) {
+            self.current_line = stmt.line;
+            switch (stmt.kind) {
                 // Generic fonksiyonların (açık `[T]` VEYA örtük protokol
                 // parametresi yoluyla) gövdesi burada denetlenmez — tip
                 // parametreleri somut değildir. `fd.type_params.len == 0`
@@ -616,8 +632,9 @@ pub const Checker = struct {
     /// hiç tanımaması sayesinde kendiliğinden `UnknownType` ile reddedilir.
     fn collectProtocols(self: *Checker, module: ast.Module) TypeError!void {
         for (module.body) |stmt| {
-            if (stmt != .protocol_def) continue;
-            const pd = stmt.protocol_def;
+            self.current_line = stmt.line;
+            if (stmt.kind != .protocol_def) continue;
+            const pd = stmt.kind.protocol_def;
             if (self.protocols.contains(pd.name)) {
                 return self.fail(error.DuplicateDefinition, "protokol zaten tanımlı: {s}", .{pd.name});
             }
@@ -634,7 +651,7 @@ pub const Checker = struct {
                 if (!self_type_ok) {
                     return self.fail(error.TypeMismatch, "protokol metodu '{s}.{s}' içinde 'self' tipi '{s}' olmalıdır", .{ pd.name, m.name, pd.name });
                 }
-                if (m.body.len != 1 or m.body[0] != .pass_stmt) {
+                if (m.body.len != 1 or m.body[0].kind != .pass_stmt) {
                     return self.fail(error.TypeMismatch, "protokol metodu '{s}.{s}' yalnızca 'pass' gövdesine sahip olabilir (yalnızca imza)", .{ pd.name, m.name });
                 }
                 const params = try self.allocator.alloc(Type, m.params.len - 1);
@@ -689,7 +706,7 @@ pub const Checker = struct {
     /// `while`/`for` gövdeleri en az bir kez çalışacağı varsayılmaz).
     fn alwaysReturns(stmts: []const ast.Stmt) bool {
         if (stmts.len == 0) return false;
-        return switch (stmts[stmts.len - 1]) {
+        return switch (stmts[stmts.len - 1].kind) {
             .return_stmt, .raise_stmt => true,
             .if_stmt => |f| blk: {
                 if (f.else_body == null) break :blk false;
@@ -715,7 +732,12 @@ pub const Checker = struct {
     }
 
     fn checkStmt(self: *Checker, ctx: *FnCtx, stmt: ast.Stmt) TypeError!void {
-        switch (stmt) {
+        // Faz T.1: `fail`in okuduğu "şu an neredeyiz" konumu — bkz.
+        // `ast.Stmt`in belge notu (DEYİM granülerliği). Bu, `checkStmt`in
+        // TEK, özyinelemeli dağıtım noktası olması SAYESİNDE HER iç içe
+        // deyim (if/while/for gövdeleri DAHİL) İÇİN otomatik doğru çalışır.
+        self.current_line = stmt.line;
+        switch (stmt.kind) {
             .expr_stmt => |e| _ = try self.checkExpr(ctx, e),
             .var_decl => |v| {
                 const declared = try self.typeExprToType(v.type_expr);
@@ -1466,7 +1488,11 @@ pub const Checker = struct {
     }
 
     fn substituteStmt(self: *Checker, s: ast.Stmt, bindings: *const std.StringHashMapUnmanaged(Type)) TypeError!ast.Stmt {
-        return switch (s) {
+        // Faz T.1: `s`nin ORİJİNAL satırı (bkz. `ast.Stmt`in belge notu)
+        // yeni sentezlenen deyime AYNEN taşınır — bu, generic örneklemesinin
+        // (Faz 10) ÜRETTİĞİ deyimlerin de doğru bir kaynak konumu taşımasını
+        // sağlar (`s` DEĞİŞMEDEN döndürüldüğü `else` dalı zaten otomatik).
+        const kind: ast.StmtKind = switch (s.kind) {
             .var_decl => |v| .{ .var_decl = .{
                 .name = v.name,
                 .type_expr = try self.substituteTypeExpr(v.type_expr, bindings),
@@ -1501,8 +1527,9 @@ pub const Checker = struct {
             // expr_stmt/assign/return_stmt/raise_stmt/pass_stmt hiç TypeExpr
             // içermez; func_def/class_def bir fonksiyon gövdesi içinde zaten
             // reddedilir (bkz. checkStmt) — bu yüzden buraya hiç ulaşmazlar.
-            else => s,
+            else => return s,
         };
+        return .{ .kind = kind, .line = s.line };
     }
 
     fn mangleName(self: *Checker, base: []const u8, bound_types: []const Type) TypeError![]const u8 {

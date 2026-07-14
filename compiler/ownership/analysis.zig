@@ -64,7 +64,7 @@ pub const Analyzer = struct {
         var loose: std.ArrayListUnmanaged(ast.Stmt) = .empty;
         defer loose.deinit(self.allocator);
         for (module.body) |stmt| {
-            switch (stmt) {
+            switch (stmt.kind) {
                 .func_def, .class_def, .protocol_def, .extern_def => {},
                 else => try loose.append(self.allocator, stmt),
             }
@@ -72,7 +72,7 @@ pub const Analyzer = struct {
         try report.scopes.append(self.allocator, try self.analyzeScope("modül", &.{}, loose.items));
 
         for (module.body) |stmt| {
-            switch (stmt) {
+            switch (stmt.kind) {
                 // Generic (Faz 10/11: açık `[T]` VEYA protokol parametresi
                 // yoluyla örtük) fonksiyon ŞABLONLARI burada atlanır: tip
                 // parametreleri/protokol adları somut değildir, anlamlı bir
@@ -132,7 +132,7 @@ pub const Analyzer = struct {
 
     fn collectVarDecls(self: *Analyzer, scope: *ScopeReport, index_of: *BindingMap, stmts: []const ast.Stmt) !void {
         for (stmts) |stmt| {
-            switch (stmt) {
+            switch (stmt.kind) {
                 .var_decl => |v| {
                     if (!isHeapTypeExpr(v.type_expr)) continue;
                     if (index_of.get(v.name)) |idx| {
@@ -196,7 +196,7 @@ pub const Analyzer = struct {
 
     fn scanStmts(self: *Analyzer, scope: *ScopeReport, index_of: *BindingMap, stmts: []const ast.Stmt) !void {
         for (stmts) |stmt| {
-            switch (stmt) {
+            switch (stmt.kind) {
                 .var_decl => |v| {
                     // `ys: T = xs` gibi bir takma ad (alias) durumu, `xs`'in ömrünü
                     // `ys` ile dolaştırır; bu da başlı başına bir kaçıştır (İlke #8:

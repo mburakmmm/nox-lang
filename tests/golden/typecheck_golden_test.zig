@@ -51,6 +51,13 @@ test "golden(typecheck): var_decl tip uyuşmazlığı" {
     );
 }
 
+test "golden(typecheck): Faz T.1 — pozisyon takibi ÖNCEKİ deyimlerde TAKILI KALMAZ, hatalı SONRAKİ deyimin satırını raporlar" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_position_tracks_later_statement.nox"),
+        @embedFile("typecheck_cases/err_position_tracks_later_statement.expected"),
+    );
+}
+
 test "golden(typecheck): tanımsız değişken" {
     try expectGolden(
         @embedFile("typecheck_cases/err_undefined_variable.nox"),

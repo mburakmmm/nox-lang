@@ -5034,6 +5034,85 @@ kısa ömürlü programları/testleri KAÇIRMAMAK için) SON bir kez çağırır
 
 ---
 
+## 3.15 Faz T.1 — AST'ye Kaynak Pozisyonu (Satır) Ekleme
+
+**Kapsam kararı — DEYİM (statement) GRANÜLERLİĞİ, İFADE (expression) DEĞİL:**
+"AST'ye pozisyon ekle" görevi, EN GENİŞ yorumuyla `ast.Expr`in TÜM alt
+türlerine de (her `Binary`/`Call`/`Attribute` DÜĞÜMÜNE) satır/sütun eklemeyi
+gerektirebilirdi — ama `ast.Expr`, `checker.zig` VE `codegen_qbe/codegen.zig`
+genelinde (`checkExpr`/`genExpr`in HER özyinelemesinde) DÜZİNELERCE yerde
+eşleştirilen bir birleşim (union) OLDUĞUNDAN, ONU bir `{ kind, line }`
+sarmalayıcısına ÇEVİRMEK bu İKİ dosyanın (sırasıyla ~1600/~4300 satır)
+NEREDEYSE TAMAMINI mekanik ama YÜKSEK RİSKLİ bir şekilde yeniden yazmayı
+gerektirirdi. **Ölçülen karşılaştırma:** `ast.Stmt`i eşleştiren yer sayısı
+(`switch (stmt)`/`stmt == .xxx`), TÜM kod tabanında yalnızca ~25 idi (SALT
+`checkStmt`/`genStmts`in KENDİ dağıtım noktaları + birkaç modül-düzeyi
+filtre) — bu, DEYİM granülerliğinde pozisyon eklemeyi GÜVENLE, `ast.Expr`e
+HİÇ DOKUNMADAN yapılabilir kıldı. Bir DEYİM içindeki bir ALT ifadede oluşan
+bir hata, o DEYİMİN satırını raporlar (Python'un KENDİ hata raporlamasıyla
+BENZER bir granülerlik — CPython da genellikle "satır N" der, SÜTUN
+numarası her zaman vermez).
+
+**Uygulama:**
+1. **`compiler/parser/ast.zig`:** eski `pub const Stmt = union(enum) {...}`
+   `StmtKind`e yeniden adlandırıldı; YENİ `pub const Stmt = struct { kind:
+   StmtKind, line: u32 = 0 }` bunu SARAR. `Module.body`/`IfStmt.then_body`
+   gibi TÜM `[]Stmt` alanları DEĞİŞMEDEN kalır (yalnızca elemanların KENDİSİ
+   artık `.kind` erişimi GEREKTİRİR).
+2. **`compiler/parser/parser.zig`:** `parseStmt` (TÜM deyim ayrıştırmasının
+   TEK dağıtım noktası) satırı (`self.cur().line`, lexer'ın ZATEN topladığı
+   `Token.line`) DAĞITIMDAN ÖNCE yakalar, alt-ayrıştırıcıların (`parseIf`
+   vb., DÖNÜŞ TİPLERİ `ast.Stmt`TEN `ast.StmtKind`e DEĞİŞTİRİLDİ — GÖVDELERİ
+   hiç değişmedi, Zig'in `.{ .if_stmt = ... }` sözdizimi hedef TİPTEN
+   çıkarım yaptığından) SONUCUNU `.{ .kind = kind, .line = line }` ile SARAR
+   — bu, KAYNAK satırının her deyim İÇİN tutarlı yakalanmasını, ayrıştırıcının
+   HİÇBİR alt fonksiyonuna AYRICA dokunmadan sağlar.
+3. **`compiler/typecheck/checker.zig`:** yeni `Checker.current_line: u32`
+   alanı; `checkStmt` (TÜM deyim denetiminin TEK, ÖZYİNELEMELİ dağıtım
+   noktası — if/while/for/try gövdeleri DAHİL) HER çağrıda `self.current_line
+   = stmt.line` günceller; `fail()` mesaja `"satır {d}: "` ÖN EKİ ekler
+   (`current_line > 0` İSE). `checkStmt`e HİÇ girmeyen üst-düzey geçişler
+   (`collectClassNames`/`registerSignatures`/`collectProtocols`/`checkModule`nin
+   KENDİ üst-düzey switch'i) KENDİ döngülerinde AYRICA günceller.
+4. **`compiler/codegen_qbe/codegen.zig`/`compiler/ownership/analysis.zig`/
+   `compiler/module_loader.zig`:** TÜM `switch (stmt)`/`stmt == .xxx`
+   yerleri (~20 site) `switch (stmt.kind)`/`stmt.kind == .xxx`e güncellendi
+   — HİÇBİR DAVRANIŞ DEĞİŞMEDİ, yalnızca ERİŞİM YOLU. Generic örnekleme
+   (`checker.zig`nin `substituteStmt`i) VE stdlib mangling'i (`module_loader.
+   zig`nin `renameStmt`i) — bunlar YENİ `Stmt` değerleri SENTEZLER — ORİJİNAL
+   `s.line`i yeni deyime AYNEN TAŞIR.
+
+**Yan bulgu — 22 mevcut typecheck golden testinin `.expected` dosyası
+GÜNCELLENDİ:** `HATA <kod>: <mesaj>` biçimindeki TÜM hata mesajları artık
+`"satır N: "` ÖN EKİ taşıyor — bu KASITLI, BEKLENEN bir DAVRANIŞ DEĞİŞİKLİĞİ
+(golden test biçiminin KENDİSİ, tanılama iyileştirmesinin BİR PARÇASI olarak
+güncellendi), bir REGRESYON DEĞİL. Her satır numarası, İLGİLİ `.nox`
+fixture'ının KAYNAĞIYLA elle ÇAPRAZLANDI (ör. `err_undefined_attribute.nox`
+İÇİN "satır 6" — DOĞRU, `return self.z` TAM O SATIRDA).
+
+**Doğrulama:** yeni golden test (`err_position_tracks_later_statement.nox`)
+— BİLEREK NESTED bir yapı (bir fonksiyon gövdesi İÇİNDE bir `if` bloğu,
+hatalı deyim `if`in KENDİ satırından FARKLI, DAHA SONRAKİ bir satırda) —
+bu, `checkStmt`in ÖZYİNELEMELİ güncellemesini (üst-düzey döngülerin KENDİ,
+BAĞIMSIZ güncellemesinden AYRI olarak) İZOLE EDEREK doğrular. Kasıtlı boz
+(`checkStmt`in `self.current_line = stmt.line;` satırı GEÇİCİ yorum satırı
+yapıldı) → 7 mevcut test + YENİ test GERÇEKTEN kırmızıya döndü (nested
+statement'ların YANLIŞ/ESKİ satır raporladığı doğrulandı) → SONRA geri
+getirildi. `zig build test` (Debug + ReleaseFast) 274/274 yeşil, `zig fmt`
+temiz.
+
+**Bilinçli v1 sınırlaması:** sütun (column) numarası HENÜZ raporlanmıyor
+(yalnızca satır) — `Token.line`/`Token.col` HER İKİSİ de lexer'da ZATEN
+mevcut, `parseStmt`in `line`i `self.cur().col`ü de AYNI ŞEKİLDE
+yakalayabilirdi, ama DEYİM granülerliğinde bir sütun numarası ("deyimin
+BAŞLADIĞI sütun") tek başına ÇOK az ek değer katardı (deyim İÇİNDEKİ HANGİ
+alt-ifadenin hatalı olduğunu YİNE göstermez) — bu yüzden BİLİNÇLİ olarak
+ERTELENDİ. İFADE granülerliği (T.2'nin ÇOKLU-tanılama/hata kurtarma görevi
+İLE BİRLİKTE ele alınabilecek, `ast.Expr`e dokunmayı GEREKTİREN daha büyük
+bir faz) de AYNI şekilde ERTELENDİ.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

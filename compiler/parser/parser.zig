@@ -88,30 +88,38 @@ pub const Parser = struct {
         return stmts.toOwnedSlice(self.allocator);
     }
 
+    /// Faz T.1: TÜM deyim ayrıştırmasının TEK dağıtım noktası — `ast.Stmt`in
+    /// belge notundaki SARMALAMA (`kind` + `line`) TAM OLARAK BURADA, bir
+    /// KEZ yapılır (alt-ayrıştırıcıların (`parseIf` vb.) HİÇBİRİ kendi
+    /// başına bir `line` eklemez, hepsi `ast.StmtKind` döner) — bu, kaynak
+    /// satırının HER deyim İÇİN doğru/tutarlı biçimde, ayrıştırıcının
+    /// HERHANGİ bir alt fonksiyonuna dokunmadan yakalanmasını sağlar.
     fn parseStmt(self: *Parser) ParseError!ast.Stmt {
-        return switch (self.curKind()) {
-            .kw_if => self.parseIf(),
-            .kw_while => self.parseWhile(),
-            .kw_for => self.parseFor(),
+        const line = self.cur().line;
+        const kind: ast.StmtKind = switch (self.curKind()) {
+            .kw_if => try self.parseIf(),
+            .kw_while => try self.parseWhile(),
+            .kw_for => try self.parseFor(),
             .kw_def, .kw_async => .{ .func_def = try self.parseFuncDef() },
-            .kw_extern => self.parseExternDef(),
-            .kw_class => self.parseClassDef(),
-            .kw_protocol => self.parseProtocolDef(),
-            .kw_return => self.parseReturn(),
-            .kw_raise => self.parseRaise(),
-            .kw_try => self.parseTry(),
-            .kw_lowlevel => self.parseLowLevel(),
-            .kw_import => self.parseImport(),
+            .kw_extern => try self.parseExternDef(),
+            .kw_class => try self.parseClassDef(),
+            .kw_protocol => try self.parseProtocolDef(),
+            .kw_return => try self.parseReturn(),
+            .kw_raise => try self.parseRaise(),
+            .kw_try => try self.parseTry(),
+            .kw_lowlevel => try self.parseLowLevel(),
+            .kw_import => try self.parseImport(),
             .kw_pass => blk: {
                 _ = self.advance();
                 _ = try self.expect(.newline);
                 break :blk .pass_stmt;
             },
-            else => self.parseSimpleStmt(),
+            else => try self.parseSimpleStmt(),
         };
+        return .{ .kind = kind, .line = line };
     }
 
-    fn parseSimpleStmt(self: *Parser) ParseError!ast.Stmt {
+    fn parseSimpleStmt(self: *Parser) ParseError!ast.StmtKind {
         if (self.check(.identifier) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .colon) {
             const name = self.advance().lexeme;
             _ = try self.expect(.colon);
@@ -150,7 +158,7 @@ pub const Parser = struct {
         return .{ .simple = name };
     }
 
-    fn parseIf(self: *Parser) ParseError!ast.Stmt {
+    fn parseIf(self: *Parser) ParseError!ast.StmtKind {
         _ = try self.expect(.kw_if);
         const cond = try self.parseExpr();
         _ = try self.expect(.colon);
@@ -179,7 +187,7 @@ pub const Parser = struct {
         } };
     }
 
-    fn parseWhile(self: *Parser) ParseError!ast.Stmt {
+    fn parseWhile(self: *Parser) ParseError!ast.StmtKind {
         _ = try self.expect(.kw_while);
         const cond = try self.parseExpr();
         _ = try self.expect(.colon);
@@ -187,7 +195,7 @@ pub const Parser = struct {
         return .{ .while_stmt = .{ .cond = cond, .body = body } };
     }
 
-    fn parseFor(self: *Parser) ParseError!ast.Stmt {
+    fn parseFor(self: *Parser) ParseError!ast.StmtKind {
         _ = try self.expect(.kw_for);
         const name = (try self.expect(.identifier)).lexeme;
         _ = try self.expect(.kw_in);
@@ -238,7 +246,7 @@ pub const Parser = struct {
 
     /// `extern def name(params) -> ReturnType from "lib"` — gövde/blok YOK
     /// (bkz. `ast.ExternDef`in belge notu); tek satırlık bir bildirim.
-    fn parseExternDef(self: *Parser) ParseError!ast.Stmt {
+    fn parseExternDef(self: *Parser) ParseError!ast.StmtKind {
         _ = try self.expect(.kw_extern);
         _ = try self.expect(.kw_def);
         const name = (try self.expect(.identifier)).lexeme;
@@ -278,7 +286,7 @@ pub const Parser = struct {
         return .{ .name = name, .type_expr = type_expr };
     }
 
-    fn parseClassDef(self: *Parser) ParseError!ast.Stmt {
+    fn parseClassDef(self: *Parser) ParseError!ast.StmtKind {
         _ = try self.expect(.kw_class);
         const name = (try self.expect(.identifier)).lexeme;
         _ = try self.expect(.colon);
@@ -294,7 +302,7 @@ pub const Parser = struct {
         return .{ .class_def = .{ .name = name, .methods = try methods.toOwnedSlice(self.allocator) } };
     }
 
-    fn parseProtocolDef(self: *Parser) ParseError!ast.Stmt {
+    fn parseProtocolDef(self: *Parser) ParseError!ast.StmtKind {
         _ = try self.expect(.kw_protocol);
         const name = (try self.expect(.identifier)).lexeme;
         _ = try self.expect(.colon);
@@ -310,7 +318,7 @@ pub const Parser = struct {
         return .{ .protocol_def = .{ .name = name, .methods = try methods.toOwnedSlice(self.allocator) } };
     }
 
-    fn parseReturn(self: *Parser) ParseError!ast.Stmt {
+    fn parseReturn(self: *Parser) ParseError!ast.StmtKind {
         _ = try self.expect(.kw_return);
         if (self.match(.newline)) {
             return .{ .return_stmt = null };
@@ -320,14 +328,14 @@ pub const Parser = struct {
         return .{ .return_stmt = value };
     }
 
-    fn parseRaise(self: *Parser) ParseError!ast.Stmt {
+    fn parseRaise(self: *Parser) ParseError!ast.StmtKind {
         _ = try self.expect(.kw_raise);
         const value = try self.parseExpr();
         _ = try self.expect(.newline);
         return .{ .raise_stmt = value };
     }
 
-    fn parseTry(self: *Parser) ParseError!ast.Stmt {
+    fn parseTry(self: *Parser) ParseError!ast.StmtKind {
         _ = try self.expect(.kw_try);
         _ = try self.expect(.colon);
         const try_body = try self.parseBlock();
@@ -358,7 +366,7 @@ pub const Parser = struct {
         } };
     }
 
-    fn parseLowLevel(self: *Parser) ParseError!ast.Stmt {
+    fn parseLowLevel(self: *Parser) ParseError!ast.StmtKind {
         _ = try self.expect(.kw_lowlevel);
         _ = try self.expect(.colon);
         const body = try self.parseBlock();
@@ -368,7 +376,7 @@ pub const Parser = struct {
     /// `import nox.http` — bir ya da daha fazla nokta-ayrılmış tanımlayıcı
     /// (bkz. `ast.ImportStmt`in belge notu). `as`/`from ... import` v1
     /// kapsamı DIŞI.
-    fn parseImport(self: *Parser) ParseError!ast.Stmt {
+    fn parseImport(self: *Parser) ParseError!ast.StmtKind {
         _ = try self.expect(.kw_import);
         var segments = std.ArrayList([]const u8).empty;
         try segments.append(self.allocator, (try self.expect(.identifier)).lexeme);

@@ -119,8 +119,8 @@ fn loadImportsRecursive(
     stdlib_root: []const u8,
 ) LoadError!void {
     for (stmts) |stmt| {
-        if (stmt != .import_stmt) continue;
-        const imp = stmt.import_stmt;
+        if (stmt.kind != .import_stmt) continue;
+        const imp = stmt.kind.import_stmt;
 
         const joined_dot = try joinWith(a, imp.segments, '.');
         if (loaded.contains(joined_dot)) continue;
@@ -171,7 +171,7 @@ fn loadImportsRecursive(
         // Bu modülün KENDİ üst-düzey `func_def`/`class_def` adlarını topla.
         var rename_map: std.StringHashMapUnmanaged([]const u8) = .empty;
         for (stdlib_module.body) |s| {
-            switch (s) {
+            switch (s.kind) {
                 .func_def => |fd| try rename_map.put(a, fd.name, try mangleWith(a, imp.segments, fd.name)),
                 .class_def => |cd| try rename_map.put(a, cd.name, try mangleWith(a, imp.segments, cd.name)),
                 else => {},
@@ -304,7 +304,7 @@ fn renameTopLevelFuncDef(a: std.mem.Allocator, fd: ast.FuncDef, map: *const Rena
 }
 
 fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.Allocator.Error!ast.Stmt {
-    return switch (s) {
+    const kind: ast.StmtKind = switch (s.kind) {
         .expr_stmt => |e| .{ .expr_stmt = try renameExpr(a, e, map) },
         .var_decl => |v| .{ .var_decl = .{ .name = v.name, .type_expr = try renameTypeExpr(a, v.type_expr, map), .value = try renameExpr(a, v.value, map) } },
         .assign => |asg| .{ .assign = .{ .target = try renameExpr(a, asg.target, map), .value = try renameExpr(a, asg.value, map) } },
@@ -333,7 +333,7 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
         },
         // Bilinçli DEĞİŞMEZ — bkz. modül üstü not ("extern def YENİDEN
         // ADLANDIRILMAZ").
-        .extern_def => s,
+        .extern_def => return s,
         .return_stmt => |r| .{ .return_stmt = if (r) |e| try renameExpr(a, e, map) else null },
         .raise_stmt => |e| .{ .raise_stmt = try renameExpr(a, e, map) },
         .try_stmt => |t| blk: {
@@ -353,7 +353,8 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
         // Bir stdlib modülünün KENDİ `import`u — segmentler stdlib DOSYA
         // YOLUdur, Nox bildirim adı DEĞİLDİR; yeniden adlandırmaya gerek yok.
         // (Zaten `loadImportsRecursive` tarafından AYRICA işlenir.)
-        .import_stmt => s,
-        .pass_stmt => s,
+        .import_stmt => return s,
+        .pass_stmt => return s,
     };
+    return .{ .kind = kind, .line = s.line };
 }

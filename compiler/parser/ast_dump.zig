@@ -19,10 +19,10 @@ fn dumpStmt(writer: *std.Io.Writer, stmt: ast.Stmt, depth: usize) std.Io.Writer.
     // dumpFuncDef kendi ilk satır girintisini kendisi basar (class_def içindeki
     // metodlar için de aynı fonksiyon çağrıldığından, çifte girintiyi önlemek adına
     // burada erken dönülür).
-    if (stmt == .func_def) return dumpFuncDef(writer, stmt.func_def, depth);
+    if (stmt.kind == .func_def) return dumpFuncDef(writer, stmt.kind.func_def, depth);
 
     try indent(writer, depth);
-    switch (stmt) {
+    switch (stmt.kind) {
         .expr_stmt => |e| {
             try writer.writeAll("(expr_stmt ");
             try dumpExpr(writer, e);

@@ -35,6 +35,13 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   yalnızca SINIF örnekleri (`list[T]`/`dict[K,V]` elemanları dahil değil).
   Tetikleme: tahsis-baskısı eşiği (varsayılan 700) + program çıkışında son
   bir tarama.
+- Tip denetleyici hataları artık kaynak SATIR numarası taşıyor (Faz T.1) —
+  `HATA <kod>: satır N: <mesaj>` biçimi. Kapsam bilinçli olarak DEYİM
+  (statement) granülerliğinde (ifade/`Expr` düzeyinde değil — bu, `checker.
+  zig`/`codegen.zig` genelinde `ast.Expr`i eşleştiren düzinelerce yere HİÇ
+  dokunmadan, yalnızca `ast.Stmt`i saran bir `{ kind, line }` yapısıyla
+  güvenle uygulanabildi). 22 mevcut typecheck golden testinin `.expected`
+  dosyası bu yeni önekle güncellendi.
 
 ### Düzeltildi
 - `noxc` artık proje kökü DIŞINDAN (ör. sistem geneli bir kurulumdan)

@@ -517,7 +517,7 @@ fn moduleUsesAsync(module: ast.Module, extra_functions: []const ast.FuncDef) boo
 }
 
 fn stmtUsesAsync(stmt: ast.Stmt) bool {
-    return switch (stmt) {
+    return switch (stmt.kind) {
         .expr_stmt => |e| exprUsesAsync(e),
         .var_decl => |v| exprUsesAsync(v.value),
         .assign => |a| exprUsesAsync(a.target) or exprUsesAsync(a.value),
@@ -817,8 +817,8 @@ const Codegen = struct {
         var info: ClassInfo = .{};
         if (init_fd) |init| {
             for (init.body) |stmt| {
-                if (stmt != .assign) continue;
-                const a = stmt.assign;
+                if (stmt.kind != .assign) continue;
+                const a = stmt.kind.assign;
                 if (a.target != .attribute) continue;
                 const attr = a.target.attribute;
                 if (attr.obj.* != .identifier or !std.mem.eql(u8, attr.obj.identifier, "self")) continue;
@@ -932,7 +932,7 @@ const Codegen = struct {
 
     fn collectLocals(self: *Codegen, locals: *std.ArrayListUnmanaged(LocalDecl), stmts: []const ast.Stmt, in_lowlevel: bool) CodegenError!void {
         for (stmts) |stmt| {
-            switch (stmt) {
+            switch (stmt.kind) {
                 .var_decl => |v| {
                     const info = try self.resolveType(v.type_expr);
                     try locals.append(self.allocator, .{ .name = v.name, .info = info, .arena = in_lowlevel });
@@ -2065,7 +2065,7 @@ const Codegen = struct {
 
     fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) CodegenError!void {
         for (stmts) |stmt| {
-            switch (stmt) {
+            switch (stmt.kind) {
                 .return_stmt => |r| {
                     if (r) |e| {
                         const v0 = try self.genExpr(e);
@@ -3323,7 +3323,7 @@ const Codegen = struct {
     }
 
     fn collectRaiseInfoStmt(self: *Codegen, stmt: ast.Stmt, info: *FuncSafetyInfo) CodegenError!void {
-        switch (stmt) {
+        switch (stmt.kind) {
             .expr_stmt => |e| try self.collectRaiseInfoExpr(e, info),
             .var_decl => |v| try self.collectRaiseInfoExpr(v.value, info),
             .assign => |a| {
@@ -3451,7 +3451,7 @@ const Codegen = struct {
         var info_map: std.StringHashMapUnmanaged(FuncSafetyInfo) = .empty;
 
         for (module.body) |stmt| {
-            switch (stmt) {
+            switch (stmt.kind) {
                 .func_def => |fd| {
                     if (fd.is_async) continue; // async fonksiyonlar yalnızca `spawn` ile başlatılır, bu optimizasyonun çağrı sitelerinde hiç görünmezler.
                     var info: FuncSafetyInfo = .{};
@@ -4334,13 +4334,13 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     // bakmaz), asıl `registerClass` çağrısı SONRA gerçek `ClassInfo`yla
     // ÜZERİNE YAZAR.
     for (module.body) |stmt| {
-        if (stmt == .class_def) try gen.classes.put(gen.allocator, stmt.class_def.name, .{});
+        if (stmt.kind == .class_def) try gen.classes.put(gen.allocator, stmt.kind.class_def.name, .{});
     }
     for (module.body) |stmt| {
-        if (stmt == .class_def) try gen.registerClass(stmt.class_def);
+        if (stmt.kind == .class_def) try gen.registerClass(stmt.kind.class_def);
     }
     for (module.body) |stmt| {
-        if (stmt == .extern_def) try gen.registerExternFunc(stmt.extern_def);
+        if (stmt.kind == .extern_def) try gen.registerExternFunc(stmt.kind.extern_def);
     }
     // Faz 10/11: `module.body`'deki generic fonksiyon ŞABLONLARI (açık
     // `[T]` VEYA protokol parametresi yoluyla örtük) hiçbir zaman doğrudan
@@ -4348,8 +4348,8 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     // isimlerdir) — yalnızca checker'ın ürettiği somut örneklemeler
     // (`extra_functions`) derlenir.
     for (module.body) |stmt| {
-        if (stmt == .func_def and stmt.func_def.type_params.len == 0 and !containsName(generic_template_names, stmt.func_def.name)) {
-            try gen.registerFunc(stmt.func_def);
+        if (stmt.kind == .func_def and stmt.kind.func_def.type_params.len == 0 and !containsName(generic_template_names, stmt.kind.func_def.name)) {
+            try gen.registerFunc(stmt.kind.func_def);
         }
     }
     for (extra_functions) |fd| try gen.registerFunc(fd);
@@ -4369,8 +4369,8 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     var class_ids: std.ArrayListUnmanaged(ClassIdEntry) = .empty;
     defer class_ids.deinit(allocator);
     for (module.body) |stmt| {
-        if (stmt == .class_def) {
-            const cd = stmt.class_def;
+        if (stmt.kind == .class_def) {
+            const cd = stmt.kind.class_def;
             for (cd.methods) |m| try gen.genMethod(cd.name, m);
             const cinfo = gen.classes.get(cd.name).?;
             try gen.genClassRelease(cd.name, cinfo);
@@ -4385,8 +4385,8 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
         try gen.genGcFreeDispatch(class_ids.items);
     }
     for (module.body) |stmt| {
-        if (stmt == .func_def and stmt.func_def.type_params.len == 0 and !containsName(generic_template_names, stmt.func_def.name)) {
-            try gen.genFunction(stmt.func_def);
+        if (stmt.kind == .func_def and stmt.kind.func_def.type_params.len == 0 and !containsName(generic_template_names, stmt.kind.func_def.name)) {
+            try gen.genFunction(stmt.kind.func_def);
         }
     }
     for (extra_functions) |fd| try gen.genFunction(fd);
@@ -4394,7 +4394,7 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     var loose: std.ArrayListUnmanaged(ast.Stmt) = .empty;
     defer loose.deinit(allocator);
     for (module.body) |stmt| {
-        switch (stmt) {
+        switch (stmt.kind) {
             .func_def, .class_def, .protocol_def, .extern_def, .import_stmt => {},
             else => try loose.append(allocator, stmt),
         }
