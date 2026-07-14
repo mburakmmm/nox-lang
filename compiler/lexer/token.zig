@@ -81,6 +81,29 @@ pub const Token = struct {
     col: u32,
 };
 
+/// Faz T.4a: normal token akışının ATTIĞI (bkz. `lexer.zig`nin `tokenize`i)
+/// yorum/boş-satır bilgisini KORUYAN ayrı bir "trivia" akışı — gelecekteki
+/// bir formatlayıcının (Faz T.4b) yorumları/boş satırları en yakın `ast.Stmt`
+/// (bkz. `ast.Stmt.line`, Faz T.1) ile hizalayarak YENİDEN yerleştirebilmesi
+/// İÇİNDİR. `lexer.tokenize` (ÇOĞU tüketici — parser/checker/codegen/testler)
+/// BUNU HİÇ ÜRETMEZ (davranış/performans DEĞİŞMEZ); yalnızca YENİ
+/// `lexer.tokenizeWithTrivia` doldurur.
+pub const TriviaKind = enum { comment, blank_line };
+
+pub const Trivia = struct {
+    kind: TriviaKind,
+    /// 1-tabanlı kaynak satırı (bkz. `Token.line`/`ast.Stmt.line` İLE AYNI ölçek).
+    line: u32,
+    /// yalnızca `.comment` İÇİN: `#` DAHİL, satır sonuna kadar ham metin
+    /// (baştaki girinti/boşluk DAHİL DEĞİL — formatlayıcı girintiyi KENDİSİ
+    /// yeniden hesaplar, bkz. modül üstü not).
+    text: []const u8 = "",
+    /// `.comment` İÇİN: `true` İSE bu yorumdan ÖNCE AYNI satırda kod
+    /// VARDI ("trailing" — ör. `x = 1  # açıklama`); `false` İSE satır
+    /// TAMAMEN yorumdan oluşuyordu ("standalone").
+    trailing: bool = false,
+};
+
 const keyword_table = .{
     .{ "def", TokenKind.kw_def },
     .{ "class", TokenKind.kw_class },

@@ -5,6 +5,8 @@ const std = @import("std");
 const token_mod = @import("token.zig");
 pub const Token = token_mod.Token;
 pub const TokenKind = token_mod.TokenKind;
+pub const Trivia = token_mod.Trivia;
+pub const TriviaKind = token_mod.TriviaKind;
 
 pub const LexError = error{
     UnexpectedCharacter,
@@ -16,6 +18,21 @@ pub const LexError = error{
 
 /// `source`'u token dizisine çevirir. Allocator her zaman açık parametredir (İlke #6).
 pub fn tokenize(allocator: std.mem.Allocator, source: []const u8) LexError![]Token {
+    return tokenizeImpl(allocator, source, null);
+}
+
+/// Faz T.4a: `tokenize` İLE AYNI token akışını üretir, AMA AYRICA yorum/
+/// boş-satır konumlarını (`Trivia`, bkz. `token.zig`nin belge notu) YAKALAR
+/// — gelecekteki formatlayıcı (Faz T.4b) DIŞINDA HİÇBİR tüketici bunu
+/// KULLANMAZ (`tokenize`nin KENDİSİ DEĞİŞMEDİ, davranışı/performansı AYNI).
+pub fn tokenizeWithTrivia(allocator: std.mem.Allocator, source: []const u8) LexError!struct { tokens: []Token, trivia: []Trivia } {
+    var trivia: std.ArrayList(Trivia) = .empty;
+    errdefer trivia.deinit(allocator);
+    const tokens = try tokenizeImpl(allocator, source, &trivia);
+    return .{ .tokens = tokens, .trivia = try trivia.toOwnedSlice(allocator) };
+}
+
+fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*std.ArrayList(Trivia)) LexError![]Token {
     var tokens = std.ArrayList(Token).empty;
     errdefer tokens.deinit(allocator);
 
@@ -39,7 +56,17 @@ pub fn tokenize(allocator: std.mem.Allocator, source: []const u8) LexError![]Tok
             }
             if (i >= source.len or source[i] == '\n' or source[i] == '#') {
                 // Boş satır veya yalnızca yorum: INDENT/DEDENT/NEWLINE üretilmez.
-                while (i < source.len and source[i] != '\n') : (i += 1) {}
+                if (trivia_out) |t| {
+                    if (i < source.len and source[i] == '#') {
+                        const comment_start = i;
+                        while (i < source.len and source[i] != '\n') : (i += 1) {}
+                        try t.append(allocator, .{ .kind = .comment, .line = line, .text = try allocator.dupe(u8, source[comment_start..i]), .trailing = false });
+                    } else {
+                        try t.append(allocator, .{ .kind = .blank_line, .line = line });
+                    }
+                } else {
+                    while (i < source.len and source[i] != '\n') : (i += 1) {}
+                }
                 if (i < source.len) {
                     i += 1;
                     line += 1;
@@ -72,7 +99,13 @@ pub fn tokenize(allocator: std.mem.Allocator, source: []const u8) LexError![]Tok
         }
 
         if (c == '#') {
-            while (i < source.len and source[i] != '\n') : (i += 1) {}
+            if (trivia_out) |t| {
+                const comment_start = i;
+                while (i < source.len and source[i] != '\n') : (i += 1) {}
+                try t.append(allocator, .{ .kind = .comment, .line = line, .text = try allocator.dupe(u8, source[comment_start..i]), .trailing = true });
+            } else {
+                while (i < source.len and source[i] != '\n') : (i += 1) {}
+            }
             continue;
         }
 

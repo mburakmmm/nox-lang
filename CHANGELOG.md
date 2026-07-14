@@ -62,6 +62,13 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   yanlış atfedilebilir (satır numarası doğru, dosya yanlış), macOS'ta
   BAĞLI (linked) ikili DWARF taşımaz (Apple'ın STABS/debug-map mekanizması
   ayrı bir mühendislik sorunu — ara `.o` GERÇEK DWARF taşır, doğrulandı).
+- Lexer'a yorum/boş-satır konumu yakalama eklendi (Faz T.4a) — YENİ, opsiyonel
+  `lexer.tokenizeWithTrivia` (mevcut `tokenize` DEĞİŞMEDEN, ~50+ çağrı sitesi
+  ETKİLENMEDEN) `Trivia` (yorum METNİ + satır + trailing/standalone bayrağı,
+  ya da boş-satır işareti) akışı üretir — GELECEKTEKİ gerçek `noxc fmt`
+  formatlayıcısının (T.4b) yorumları SESSİZCE SİLMEDEN yeniden yerleştirebilmesi
+  İÇİN ön koşul (kullanıcıyla netleşti: yorum-koruma OLMADAN bir formatlayıcı
+  gerçek kullanıcı kodunda veri kaybına yol açardı).
 
 ### Düzeltildi
 - `noxc` artık proje kökü DIŞINDAN (ör. sistem geneli bir kurulumdan)

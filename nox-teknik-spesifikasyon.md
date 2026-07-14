@@ -5291,6 +5291,68 @@ kısıtı" hassasiyetiyle AYNI ruhla) — v1 kapsamı DIŞINDA.
 
 ---
 
+## 3.18 Faz T.4a — Lexer'a Yorum/Boş-Satır Konumu Yakalama
+
+**Kapsam kararı — kullanıcıyla netleşti (AskUserQuestion):** T.4 ("noxc fmt
+gerçek implementasyonu") ikiye bölündü. Gerekçe: mevcut lexer (`compiler/
+lexer/lexer.zig`) yorumları (`# ...`) VE boş satırları TAMAMEN ATIYORDU —
+token akışında HİÇ yer almıyorlardı (bkz. `tokenize`nin `at_line_start`
+bloğu VE `c == '#'` dalı, İKİSİ de sadece satır sonuna kadar atlayıp
+DEVAM ediyordu). Gerçek bir formatlayıcı (T.4b) bunları KORUMADAN çalışırsa
+`noxc fmt` kullanıcının GERÇEK dosyalarındaki TÜM yorumları SESSİZCE SİLERDİ
+— bu, "hata ayıklama bilgisi eksik" (T.3'ün sınırlamaları GİBİ) türünden
+ZARARSIZ bir sınırlama DEĞİL, GERÇEK VERİ KAYBI riski taşıyan bir davranış
+olurdu. Kullanıcı ÖNCE lexer'a yorum-yakalama eklenmesini (T.4a), formatlayıcının
+KENDİSİNİN (T.4b) bunun ÜZERİNE kurulmasını TERCİH ETTİ.
+
+**Uygulama — GERİYE DÖNÜK UYUMLU, ek/opsiyonel (main.zig/parser/checker/
+codegen'İN TÜMÜ dahil ~50+ `tokenize` çağrı sitesi HİÇ ETKİLENMEZ):**
+1. **`compiler/lexer/token.zig`:** yeni `TriviaKind = enum { comment,
+   blank_line }` VE `Trivia = struct { kind, line: u32, text: []const u8 =
+   "", trailing: bool = false }` — `text` yalnızca `.comment` İÇİN (`#`
+   DAHİL, baştaki girinti HARİÇ — formatlayıcı girintiyi KENDİSİ yeniden
+   hesaplayacağından ham metne GEREK YOK), `trailing` bir yorumun AYNI
+   satırda KODDAN SONRA mı (`x = 1  # açıklama`) yoksa TEK BAŞINA bir
+   satırda mı (`# açıklama`) olduğunu ayırt eder.
+2. **`compiler/lexer/lexer.zig`:** `tokenize`in GÖVDESİ `tokenizeImpl(allocator,
+   source, trivia_out: ?*std.ArrayList(Trivia))`e taşındı; `pub fn tokenize`
+   ARTIK yalnızca `tokenizeImpl(a, s, null)`i çağıran İNCE bir sarmalayıcı
+   (davranış/performans BİREBİR AYNI — `trivia_out == null` dallarının HİÇBİRİ
+   ÇALIŞMAZ). YENİ `pub fn tokenizeWithTrivia(allocator, source) LexError!
+   struct { tokens: []Token, trivia: []Trivia }` AYNI `tokenizeImpl`i BU
+   SEFER GERÇEK bir toplayıcıyla çağırır. İki yakalama noktası: (a)
+   `at_line_start` bloğunun "boş satır VEYA yalnızca-yorum" dalı (`source[i]
+   == '#'` İSE `.comment(trailing=false)`, AKSİ HALDE `.blank_line`), (b)
+   normal tarama sırasındaki `c == '#'` dalı (HER ZAMAN `.comment(trailing=
+   true)` — bu noktaya ulaşıldıysa satırda ZATEN gerçek bir token/kod
+   üretilmiştir, bkz. `line_has_content` bayrağı).
+
+**Bilinçli v1 sınırlaması:** parantez İÇİNDEKİ (`paren_depth > 0`) çok
+satırlı ifadelerdeki (ör. çok satırlı bir fonksiyon çağrısı argüman listesi)
+boş satırlar YAKALANMAZ — bu durumda `at_line_start` bloğu HİÇ ÇALIŞMAZ
+(`if (at_line_start and paren_depth == 0)` koşulu), boş satır sadece normal
+boşluk/yeni-satır işlenmesinden GEÇER. Bu, GERÇEKTE NADİR bir desen (çok
+satırlı çağrı argümanları ARASINA bilinçli boş satır koymak) olduğundan
+T.4b'ye (formatlayıcı bu durumda basitçe "boş satır YOKMUŞ gibi" davranır,
+YANLIŞ DEĞİL yalnızca EKSİK bir davranıştır) BIRAKILDI.
+
+**Doğrulama** (`tests/unit/lexer_test.zig`, İKİ YENİ test): (1)
+`tokenize()`in KENDİSİNİN yorum/boş-satır İÇEREN VE İÇERMEYEN eşdeğer
+kaynaklarda BİREBİR AYNI token türü dizisini ürettiğini (opt-in doğrulaması
+— trivia yakalama AÇIK OLMADIĞINDA sıfır davranış değişikliği) kanıtlar; (2)
+`tokenizeWithTrivia`in trailing/standalone yorum + boş satırı DOĞRU satır/
+metin/bayrakla yakaladığını VE token akışının `tokenize()` İLE AYNI
+kaldığını kanıtlar. Kasıtlı boz (trailing-yorum dalındaki `.trailing = true`
+GEÇİCİ olarak `false`e değiştirildi) → İKİNCİ test GERÇEKTEN kırmızıya döndü
+(`result.trivia[0].trailing` `false` bulundu) → geri getirildi. `zig build
+test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+**Not:** T.4b (`noxc fmt`in GERÇEK formatlayıcı gövdesi — girinti/boşluk
+normalleştirme + `Trivia`nin en yakın `ast.Stmt.line`e göre YENİDEN
+yerleştirilmesi) AYRI bir görev olarak takip edilmektedir.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
