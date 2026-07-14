@@ -389,13 +389,13 @@ fn resolveImportsForBuild(
         try project.saveLockfile(a, io, root, .{ .packages = new_packages.items });
     }
 
-    return module_loader.resolveProjectImports(a, io, user_module, roots, resource_dirs.stdlib_dir) catch |e| switch (e) {
+    return module_loader.resolveProjectImports(a, io, user_module, roots, resource_dirs.stdlib_dir, root) catch |e| switch (e) {
         error.ModuleNotFound => {
             std.debug.print("import: modül bulunamadı (ne 'stdlib/' altında ne bir bağımlılık dizininde)\n", .{});
             std.process.exit(1);
         },
         error.UnknownImportAlias => {
-            std.debug.print("import: bilinmeyen alias (nox.json'daki 'requires' listesine bakın: {s}/nox.json)\n", .{root});
+            std.debug.print("import: bilinmeyen alias veya proje-içi dosya bulunamadı ({s}/nox.json'daki 'requires' listesine bakın ya da '{s}' altında ilgili .nox dosyasının var olduğundan emin olun)\n", .{ root, root });
             std.process.exit(1);
         },
         else => |err| return err,

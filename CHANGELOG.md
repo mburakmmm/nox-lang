@@ -88,6 +88,16 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   `IndexError`e yol açar, bellek bozulması DEĞİL); alıcı bir parametre
   OLAMAZ; arena listeleri büyütülemez; boş liste literali (`[]`) hâlâ
   desteklenmiyor.
+- Proje-içi çoklu-dosya birinci-taraf import desteği eklendi (Faz U.2) —
+  `nox.json` içeren bir projede artık `import helpers` (doğrudan) ve
+  `import utils.mathy` (iç içe yol, `<proje_kökü>/utils/mathy.nox`e
+  çözümlenir) gibi hiçbir `requires[]` kaydı gerektirmeyen proje-yerel
+  importlar çalışıyor. Çözümleme önceliği: `nox.*` (stdlib) → `requires[]`
+  alias'ı (üçüncü-taraf) → proje-köküne göreli dosya (YENİ) → bilinmeyen
+  alias hatası. `nox.json` OLMADAN (manifestsiz) tek-dosya kullanım eski
+  ("yalnızca stdlib") davranışını aynen koruyor — birinci-taraf importlar
+  bilinçli olarak bir manifest gerektiriyor (Go'nun `go.mod`u/Cargo'nun
+  `Cargo.toml`ı ile tutarlı).
 
 ### Düzeltildi
 - `noxc` artık proje kökü DIŞINDAN (ör. sistem geneli bir kurulumdan)

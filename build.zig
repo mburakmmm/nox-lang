@@ -230,6 +230,7 @@ pub fn build(b: *std.Build) void {
         "tests/unit/fetch_test.zig",
         "tests/cli/subcommand_test.zig",
         "tests/cli/package_resolution_test.zig",
+        "tests/cli/local_import_test.zig",
         "tests/golden/golden_test.zig",
         "tests/golden/typecheck_golden_test.zig",
         "tests/golden/ownership_golden_test.zig",

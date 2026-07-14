@@ -5585,6 +5585,102 @@ döner. `old_ptr`e HİÇ DOKUNMAZ (ne serbest bırakır ne refcount DEĞİŞTİR
 
 ---
 
+## 3.21 Faz U.2 — Proje-İçi Çoklu-Dosya Birinci-Taraf Import
+
+**Problem:** Faz A'nın (bkz. §3.6) `import` mekanizması yalnızca İKİ kökü
+tanıyordu — `nox.*` (stdlib, KOŞULSUZ) ve Faz O'nun (`P.6`) `requires[]`
+alias'ları (ÜÇÜNCÜ-TARAF, `nox.json`'a KAYITLI GitHub bağımlılıkları).
+Kullanıcının KENDİ projesi İÇİNDE, TEK dosyayı (`main.nox`) AŞAN, birden çok
+`.nox` dosyasının BİRBİRİNİ import edebilmesi (`import helpers` gibi, hiçbir
+`requires[]` kaydı OLMADAN) DESTEKLENMİYORDU — Faz O'nun planı bunu AÇIKÇA
+"kendi başına AYRI bir takip fazı" olarak İŞARETLEMİŞTİ (bkz. plan dosyası,
+"Açık Sorular / Bilinçli Kapsam Dışı").
+
+**Tasarım — ÜÇÜNCÜ bir çözümleme katmanı, ÖNCELİK SIRASIYLA:**
+1. İlk segment `"nox"` → stdlib (HER ZAMAN, KOŞULSUZ — DEĞİŞMEDİ).
+2. `alias_roots` (nox.json'ın `requires[]`i) EŞLEŞMESİ → üçüncü-taraf
+   (DEĞİŞMEDİ — "açık ÖRTÜKTEN ÜSTÜNDÜR" felsefesiyle alias eşleşmesi HER
+   ZAMAN ÖNCE denenir).
+3. **YENİ:** alias eşleşmezse VE `project_root` VERİLMİŞSE (`nox.json`'ın
+   VARLIĞIYLA, `project.findProjectRoot` İLE AYNI mekanizmayla keşfedilir)
+   → `<project_root>/{noktalı-yol-segmentleri-birleştirilmiş}.nox` YOLU
+   `fileExistsAbsolute` (YENİ, `std.Io.Dir.accessAbsolute` sarmalayıcısı)
+   İLE PROBE edilir; VARSA bu dosya kullanılır.
+4. HİÇBİRİ eşleşmezse `error.UnknownImportAlias` (DEĞİŞMEDEN — hem "bilinmeyen
+   alias" hem "proje-içi dosya YOK" durumunu KAPSAYACAK ŞEKİLDE main.zig'in
+   hata mesajı GENİŞLETİLDİ, bkz. aşağı).
+
+**KRİTİK kısıt — birinci-taraf importlar `nox.json` GEREKTİRİR:** yeni
+`project_root` katmanı YALNIZCA `resolveProjectImports`e (Faz O'nun `nox.json`
+BULUNDUĞUNDA çağrılan yola) EKLENDİ — `resolveImports`/`resolveImportsFrom`
+(dört ayrı çağrı sitesinden DOĞRUDAN kullanılan, DEĞİŞTİRİLEMEZ İKİ "donmuş"
+sarmalayıcı) HER ZAMAN `project_root = null` geçirir, bu YÜZDEN YENİ dal
+KISA-DEVRE olur. Yani `nox.json`sız (manifestsiz) TEK-dosya kullanım ESKİ
+("yalnızca stdlib") davranışını AYNEN korur — Go'nun `go.mod`u/Cargo'nun
+`Cargo.toml`ı İLE AYNI "çok-dosyalı modül yapısı bir manifest GEREKTİRİR"
+öncülüyle TUTARLI.
+
+**Neden HİÇBİR checker/codegen değişikliği GEREKMEDİ (araştırmayla
+doğrulandı):** mangling şeması ZATEN TAMAMEN genelleştirilmişti
+(`mangleWith(a, segments, name) = join(segments, "_") + "_" + name`) VE
+`checker.zig`'in `tryResolveQualifiedCall`ı ZATEN `imp.segments` üzerinden
+TAMAMEN GENERIC (SIFIR `"nox"`-özel hardcode). Yani `import helpers` →
+`helpers.my_func(...)` çağrıları → `helpers_my_func` mangled ismine
+çözümleme, ÜÇÜNCÜ-TARAF paket importlarının (Faz O) checker'da SIFIR
+değişiklik gerektirmesiyle BİREBİR AYNI mekanizmayı MİRAS aldı.
+
+**Uygulama (`compiler/module_loader.zig`):**
+1. `resolveProjectImports` YENİ bir `project_root: ?[]const u8` parametresi
+   ALDI (son parametre — mevcut 5 pozisyonel argümanla çağrılan HİÇBİR
+   çağrı sitesi yoktu, tek çağıran `main.zig`'in `resolveImportsForBuild`ı
+   idi, bu yüzden imza değişikliği GÜVENLİYDİ).
+2. `resolveImportsImpl`/`loadImportsRecursive` ZİNCİRİ boyunca AYNI parametre
+   İLERİ TAŞINDI (`resolveImports`/`resolveImportsFrom`in çağrıları `null`
+   geçirir — DEĞİŞMEZLİK GARANTİSİ).
+3. YENİ `fileExistsAbsolute(io, path) bool` yardımcısı — `project.zig`'in
+   ÖNBELLEK-dizini-yeniden-kullanımı için ZATEN kullandığı `std.Io.Dir.
+   accessAbsolute` deseniyle AYNI.
+4. `loadImportsRecursive`'in path-çözümleme `blk:` ifadesi YUKARIDAKİ
+   3 adımlı ÖNCELİK sırasını uygular; ÖZYİNELEMELİ self-çağrı (yüklenen
+   bir stdlib/proje modülünün KENDİ transitif importları İÇİN) `project_root`u
+   DOĞRU şekilde İLERİ TAŞIR (bir stdlib modülünün BAŞKA bir stdlib modülünü
+   import etmesi GİBİ, bir proje-içi modülün BAŞKA bir proje-içi modülü
+   import etmesi de DOĞAL olarak ÇALIŞIR — ÖZEL bir kod yolu GEREKMEDİ).
+
+**`compiler/main.zig`:** `resolveImportsForBuild`in `resolveProjectImports`
+çağrısına, fonksiyonun BAŞINDA `project.findProjectRoot` İLE ZATEN çözülmüş
+`root` (proje kökünün MUTLAK yolu) altıncı argüman olarak EKLENDİ.
+`error.UnknownImportAlias` durumundaki Türkçe mesaj GENİŞLETİLDİ ("bilinmeyen
+alias" → "bilinmeyen alias VEYA proje-içi dosya bulunamadı", HEM `requires[]`
+listesine HEM `<root>` altında ilgili `.nox` dosyasının VARLIĞINA bakılmasını
+ÖNERİR) — çünkü bu hata KODU artık İKİ FARKLI kök nedeni KAPSIYOR.
+
+**Doğrulama:**
+1. **Manuel uçtan-uca** (`/tmp` altında geçici bir proje, `noxc build`):
+   `nox.json` + `helpers.nox` (doğrudan) + `utils/mathy.nox` (İÇ İÇE yol) +
+   bunları import eden `main.nox` → DOĞRU derlendi/çalıştı (`10`/`15` çıktı,
+   sonra `helpers.double(5)=10`/`utils.mathy.triple(5)=15` senaryosu);
+   var olmayan bir modülün importu → AÇIK hata mesajıyla çıkış kodu 1.
+2. **Golden testler** (YENİ `tests/cli/local_import_test.zig`, `package_
+   resolution_test.zig`İLE AYNI izole-`$NOX_HOME`+subprocess deseni): (a)
+   doğrudan proje-içi import, (b) İÇ İÇE yol (`import utils.mathy`), (c)
+   GERÇEKTEN var olmayan proje-içi modül → açık hata + çıkış kodu 1, (d)
+   `nox.json` OLMADAN (manifestsiz) proje-içi import → ESKİ "stdlib modülü
+   bulunamadı" davranışı KORUNDU (regresyon-koruma, YENİ katmanın DEVREYE
+   GİRMEDİĞİNİ kanıtlar).
+3. **Kasıtlı boz→kırmızı→düzelt:** `loadImportsRecursive`'in `project_root`
+   fallback dalı GEÇİCİ olarak devre dışı bırakıldı (yalnızca `error.
+   UnknownImportAlias`e düşecek şekilde) → (a) ve (b) testleri GERÇEKTEN
+   kırmızıya döndü (build başarısız, "bilinmeyen alias..." hatası), (c) ve
+   (d) testleri (bu katmana BAĞIMLI OLMADIKLARI İÇİN) YEŞİL kaldı — bu,
+   testlerin GERÇEKTEN iddia ettikleri özelliği EGZERSİZ ettiğini kanıtlar
+   (bkz. T.4b'nin `y` değişkeni dersinin AYNI disiplinle TEKRARI). Geri
+   getirildi, tüm 4 test YEŞİLE döndü.
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
