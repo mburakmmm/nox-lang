@@ -34,6 +34,14 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
 - `build.zig`ye Linux hedefleri İÇİN `link_libc = true` eklendi (`runtime/`
   genelinde kullanılan `std.c.*` çağrıları Linux'ta AÇIK libc bağlama
   gerektirir — macOS'ta bu her zaman örtüktü).
+- `qbe`nin `-t <target>`i artık AÇIKÇA geçiliyor (Faz R.3) — önceden
+  `qbe`nin KENDİ build-time varsayılanına güveniliyordu, bu da AYNI
+  derleyicinin platform/derleme-ortamına göre SESSİZCE farklı bir ABI
+  üretmesine yol açabiliyordu (Linux'ta GERÇEKTEN yakalanan bir hata).
+- `build.zig`deki `install_stdlib`, `test_step`e HİÇ bağlı DEĞİLDİ —
+  `zig build test`, `zig-out/lib/nox/stdlib/`nin ÖNCEKİ bir `zig build`
+  çalışmasından KALMA olmasına sessizce güveniyordu (temiz bir `zig-out`
+  üzerinde GERÇEKTEN başarısız olduğu doğrulandı, şimdi düzeltildi).
 
 ### Güvenlik
 - `nox.http.serve`e iki DoS sertleştirmesi eklendi (Faz Q.5): bir isteğin

@@ -168,6 +168,15 @@ pub fn build(b: *std.Build) void {
     // codegen golden testleri, üretilen binary'leri `zig-out/lib/noxrt.o`'ya
     // karşı linklemek için bu adımın önceden tamamlanmış olmasına ihtiyaç duyar.
     test_step.dependOn(&install_noxrt.step);
+    // Faz R.3 (bkz. docs/uretim-hazirlik-analizi.md): `install_stdlib`
+    // ÖNCEDEN yalnızca `b.getInstallStep()`e (varsayılan `zig build` hedefi)
+    // bağlıydı, `test_step`e DEĞİL — `zig build test`, `zig-out/lib/nox/
+    // stdlib/`nin `zig-out`u TAMAMEN silmeden ÖNCEKİ bir `zig build`
+    // çalışmasından KALMA olmasına SESSİZCE güveniyordu (GERÇEK bir hata,
+    // temiz bir `zig-out` üzerinde `zig build test` doğrudan çalıştırıldığında
+    // `stdlib/nox/core.nox: FileNotFound` ile ORTAYA ÇIKAR — Faz R.3'ün
+    // Docker doğrulaması SIRASINDA GERÇEKTEN yakalandı).
+    test_step.dependOn(&install_stdlib.step);
     // Faz O §P.2: `tests/cli/subcommand_test.zig`, kurulu `zig-out/bin/noxc`yi
     // BİR ALT SÜREÇ olarak çalıştırıyor — `test_step`in bu adıma da bağımlı
     // olması GEREKİR, aksi halde `zig build test` `noxc`yi YENİDEN KURMADAN

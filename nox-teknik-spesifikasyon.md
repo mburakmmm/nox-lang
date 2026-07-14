@@ -4702,6 +4702,43 @@ DIŞINDA, `zig cc -target ...`e geçiş Faz R.3'ün İŞİDİR.
 
 ---
 
+## 3.10 Faz R.3 — CI Linux Matrisi + Çapraz-Derleme Doğrulaması
+
+R.1/R.2'nin Docker doğrulaması yalnızca `runtime/async_rt`i (fiber/scheduler/
+channel/io/io_reactor) İZOLE OLARAK test etmişti. R.3, TÜM `zig build test`i
+GERÇEK bir Linux ortamında (Docker, Ubuntu 24.04 aarch64 — native, emülasyon
+YOK; ayrıca x86-64 İÇİN Rosetta çevirisi) ÇALIŞTIRARAK doğrulamayı hedefler
+— bu, projenin İLK KEZ tam paket olarak Linux'ta çalıştırılma girişimidir.
+
+**Süreç İÇİNDE BULUNAN VE düzeltilen İKİ GERÇEK, ÖNCEDEN GİZLİ hata (her
+ikisi de macOS'u DA etkiliyordu, yalnızca Linux'a ÖZGÜ DEĞİLDİ):**
+
+1. **`qbe`nin `-t <target>`i ŞİMDİYE KADAR HİÇ geçilmiyordu** —
+   `qbe`nin KENDİ BUILD-TIME varsayılan hedefine (`config.h`, `Deftgt`)
+   GÜVENİLİYORDU. Homebrew'un macOS İÇİN derlediği `qbe` `arm64_apple`ı
+   varsayılan yapar; KAYNAKTAN Linux'ta derlenen bir `qbe` SESSİZCE
+   `arm64`e (Linux/genel AAPCS64, Apple'ın SysV'den FARKLI ABI'sinden
+   AYRI) düşer. `compiler/main.zig`ye YENİ bir `qbeTargetName()` eklendi
+   — `builtin.os.tag`/`builtin.cpu.arch`a göre `-t`yi HER ZAMAN AÇIKÇA
+   geçer (macOS: `arm64_apple`/`amd64_apple`; Linux/diğer: `arm64`/
+   `amd64_sysv`/`rv64`; Windows: `amd64_win`).
+2. **`install_stdlib` (Faz O §P.1) `test_step`e HİÇ BAĞLI DEĞİLDİ** —
+   yalnızca `b.getInstallStep()`e (varsayılan `zig build` hedefi)
+   bağlıydı. `zig build test`, `zig-out/lib/nox/stdlib/`nin ÖNCEKİ bir
+   `zig build` çalışmasından KALMA olmasına SESSİZCE güveniyordu — bu
+   proje boyunca `zig-out` HİÇ TAMAMEN silinmediğinden fark edilmedi.
+   Gerçek doğrulama SIRASINDA (`zig-out`/global Zig önbelleği TAMAMEN
+   temizlenip `zig build test` doğrudan çalıştırıldığında) `stdlib/nox/
+   core.nox: FileNotFound` İLE AÇIĞA ÇIKTI — `test_step.dependOn(&install_
+   stdlib.step)` eklenerek düzeltildi.
+
+**Doğrulama:** `zig-out`/global Zig önbelleği (`~/.cache/zig`) TAMAMEN
+silinip `zig build test` (Debug+ReleaseFast) SIFIRDAN çalıştırıldı — İKİ
+düzeltme OLMADAN başarısız olduğu, İKİSİYLE de yeşile döndüğü DOĞRUDAN
+gözlemlendi.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

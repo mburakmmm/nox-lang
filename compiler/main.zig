@@ -15,6 +15,7 @@
 //! yoluna DÜŞÜLÜR.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const lexer = @import("lexer/lexer.zig");
 const parser = @import("parser/parser.zig");
 const ast = @import("parser/ast.zig");
@@ -436,7 +437,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ssa_path, .data = ir });
 
     const qbe_result = try std.process.run(gpa, io, .{
-        .argv = &.{ "qbe", "-o", asm_path, ssa_path },
+        .argv = &.{ "qbe", "-t", qbeTargetName(), "-o", asm_path, ssa_path },
     });
     defer gpa.free(qbe_result.stdout);
     defer gpa.free(qbe_result.stderr);
@@ -468,6 +469,34 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
 fn stemOf(path: []const u8) []const u8 {
     if (std.mem.endsWith(u8, path, ".nox")) return path[0 .. path.len - 4];
     return path;
+}
+
+/// Faz R.3 (bkz. docs/uretim-hazirlik-analizi.md): `qbe`nin `-t <target>`i
+/// ŞİMDİYE KADAR HİÇ geçilmiyordu — `qbe`nin KENDİ BUILD-TIME varsayılan
+/// hedefine (bkz. `config.h`, `Deftgt`) GÜVENİLİYORDU. Bu, GERÇEK bir
+/// PORTABİLİTE hatasıydı: Homebrew'un macOS İÇİN derlediği `qbe` `arm64_
+/// apple`ı varsayılan yapar (Apple'ın SysV'den FARKLI ABI'si), ama KAYNAKTAN
+/// (`make`, `config.h`: `Deftgt T_arm64`) Linux'ta derlenen bir `qbe`
+/// SESSİZCE `arm64`e (Linux/genel AAPCS64) düşer — AYNI derleyicinin İKİ
+/// FARKLI makinede SESSİZCE FARKLI ABI'ler ÜRETMESİ demektir (Faz R.1/R.2'nin
+/// Docker doğrulaması SIRASINDA GERÇEKTEN bulunan ve birden fazla codegen
+/// golden testinin Linux'ta BAŞARISIZ olmasına yol açan somut hata). Çözüm:
+/// `noxc`nin KENDİ çalıştığı platforma göre `-t`yi HER ZAMAN AÇIKÇA geçmek.
+fn qbeTargetName() []const u8 {
+    return switch (builtin.os.tag) {
+        .macos => switch (builtin.cpu.arch) {
+            .aarch64 => "arm64_apple",
+            .x86_64 => "amd64_apple",
+            else => @compileError("qbe: desteklenmeyen macOS mimarisi"),
+        },
+        .windows => "amd64_win",
+        else => switch (builtin.cpu.arch) {
+            .aarch64 => "arm64",
+            .x86_64 => "amd64_sysv",
+            .riscv64 => "rv64",
+            else => @compileError("qbe: desteklenmeyen mimari"),
+        },
+    };
 }
 
 /// Modüldeki her `extern def ... from "X"` için son `cc` bağlama komutuna
