@@ -311,10 +311,10 @@ test "golden(typecheck): Faz U.4.1 — (int, int) -> int fonksiyon tipi imzada k
     );
 }
 
-test "golden(typecheck): Faz U.4.1 — func tipi bir parametrenin ÇAĞRILMASI henüz desteklenmiyor (açık hata)" {
+test "golden(typecheck): Faz U.4.4 — func tipi bir parametrenin DOLAYLI çağrısı kabul edilir" {
     try expectGolden(
-        @embedFile("typecheck_cases/err_func_type_call_not_yet_supported.nox"),
-        @embedFile("typecheck_cases/err_func_type_call_not_yet_supported.expected"),
+        @embedFile("typecheck_cases/ok_func_type_param_indirect_call.nox"),
+        @embedFile("typecheck_cases/ok_func_type_param_indirect_call.expected"),
     );
 }
 

@@ -307,19 +307,18 @@ test "codegen(çalıştır): Faz U.4.3 — iç içe def bir str'i (heap-yönetim
     );
 }
 
-test "codegen: Faz U.4.3 — func-tipi bir DEĞİŞKENE atanan closure'ın release'i (SOMUT class_name bilinmiyor) GÜVENLİ reddedilir (Unsupported, ÇÖKME DEĞİL)" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    const source = @embedFile("codegen_cases/rejected_closure_return_type.nox");
+test "codegen(çalıştır): Faz U.4.4 — döndürülen bir closure func-tipli değişkene atanır, DOLAYLI çağrılır (birden çok kez, birden çok somut closure)" {
+    try expectGolden(
+        @embedFile("codegen_cases/closure_returned_and_called_indirectly.nox"),
+        @embedFile("codegen_cases/closure_returned_and_called_indirectly.expected"),
+    );
+}
 
-    const tokens = try nox.lexer.tokenize(allocator, source);
-    const module = try nox.parser.parseModule(allocator, tokens);
-    switch (nox.checker.check(allocator, module)) {
-        .ok => {},
-        .err => return error.FixtureNotWellTyped,
-    }
-    try std.testing.expectError(error.Unsupported, nox.codegen.generateModule(allocator, module, &.{}, &.{}, null, .empty));
+test "codegen(çalıştır): Faz U.4.4 — closure func-tipli bir PARAMETRE olarak geçirilir, çağrılanın İÇİNDE dolaylı çağrılır" {
+    try expectGolden(
+        @embedFile("codegen_cases/closure_passed_as_param_called_indirectly.nox"),
+        @embedFile("codegen_cases/closure_passed_as_param_called_indirectly.expected"),
+    );
 }
 
 test "codegen: Faz T.3 — debug_source_path VERİLMEDEN dbgfile/dbgloc HİÇ üretilmez (opt-in, sıfır davranış değişikliği)" {

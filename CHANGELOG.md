@@ -137,6 +137,19 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   olarak geçirme henüz yok (U.4.4'e ertelendi — bir closure'ı çıplak bir
   func-tipli değişkene atamak/döndürmek şimdilik güvenli bir "henüz
   desteklenmiyor" hatasına düşer, çökme değil).
+- Closure değerleri üzerinden dolaylı çağrı + parametre/dönüş olarak
+  geçirme eklendi (Faz U.4.4) — **Faz U.4 (birinci-sınıf fonksiyon
+  değerleri/closure) TAMAMEN BİTTİ.** Bir closure artık func-tipli bir
+  değişkene/parametreye atanabilir ve o değişken/parametre üzerinden
+  dolaylı olarak çağrılabilir (`f(x)`) — hangi somut closure çağrıldığı
+  derleme zamanında bilinmese de argüman/dönüş tipleri statik imzadan
+  (`(int) -> int` gibi) doğru şekilde çözülür. Closure bellek düzenine
+  ikinci bir işaretçi (`release_fn_ptr`, offset 8) eklendi — release artık
+  tamamen dolaylı/polimorfik, U.4.3'ün `class_name` bilinmediğinde
+  "henüz desteklenmiyor" hatasına düşen geçici kısıtlaması tamamen
+  kaldırıldı. Bilinçli v1 sınırı: yalnızca bir iç içe `def`den inşa edilen
+  closure'lar func-tipli olabilir — üst-düzey bir `def`e çıplak referans
+  (`f: (int) -> int = add`) henüz desteklenmiyor.
 
 ### Düzeltildi
 - **Önemli test-altyapısı düzeltmesi:** `compiler/*.zig` dosyalarına gömülü

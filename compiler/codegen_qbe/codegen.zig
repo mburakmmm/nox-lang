@@ -222,15 +222,30 @@ const QbeType = enum { l, d, w, none };
 /// yaşar, ARC başlığı/retain-on-alias YOK, tek sahiplilik) — kapsam-sonu
 /// temizliği DOĞRUDAN bir `nox_dict_destroy` çağrısıdır (bkz.
 /// `releaseAllLocalsExcept`).
-/// Faz U.4.3: `closure` — bir iç içe `def`in ARC'lı çalışma zamanı temsili.
-/// `class` İLE YAPISAL OLARAK AYNIDIR (ARC pointer, `nox_rc_alloc`/
+/// Faz U.4.3/U.4.4: `closure` — bir iç içe `def`in ARC'lı çalışma zamanı
+/// temsili. `class` İLE YAPISAL OLARAK AYNIDIR (ARC pointer, `nox_rc_alloc`/
 /// `nox_rc_predecrement`/`nox_rc_free_payload` AYNI havuzu kullanır) —
-/// TEK FARK İÇ DÜZENİ: `{fn_ptr: l @0, yakalanan_değerler... @8+}` (sınıfın
-/// isimli ALANLARI yerine, checker'ın capture SIRASINA göre). `Value`/
-/// `VarInfo`nin (sınıflarla PAYLAŞILAN) `class_name` alanı BU DURUMDA
-/// closure'ın ÜRETİLEN release fonksiyonunun mangled adını taşır (bkz.
-/// `genNestedFuncDef`/`genClosureRelease`).
+/// TEK FARK İÇ DÜZENİ: `{fn_ptr: l @0, release_fn_ptr: l @8, yakalanan_
+/// değerler... @16+}` (sınıfın isimli ALANLARI yerine, checker'ın capture
+/// SIRASINA göre; bkz. `CLOSURE_HEADER_SIZE`). Faz U.4.4'ün eklediği
+/// `release_fn_ptr`, closure'ın SOMUT release fonksiyonunu bir DEĞİŞKENİN/
+/// DÖNÜŞÜN çıplak tip ANNOTASYONUNDAN (`Type.func` yapısal/POLİMORFİK
+/// olduğundan, bkz. `resolveType`in `.func_type` dalı) STATİK olarak
+/// bilinemediği durumlarda BİLE (bkz. `releaseValueIfSet`in `.closure`
+/// dalı) DOĞRU release fonksiyonuna DOLAYLI olarak dispatch edebilmek
+/// içindir — bu, `class`ın (HER ZAMAN somut/nominal bir tip olduğundan
+/// `class_name` üzerinden İSİM-tabanlı dispatch YETERLİ olan) AKSİNE,
+/// closure'ın polimorfik doğasının GEREKTİRDİĞİ bir "küçük vtable"dır.
+/// `fn_ptr` (offset 0) AYRICA dolaylı ÇAĞRI İÇİN de kullanılır (bkz.
+/// `genCall`in `.closure` dalı) — bir closure DEĞERİNİN KENDİSİ, hem
+/// "nasıl çağrılır" hem "nasıl serbest bırakılır" bilgisini TAŞIYAN, kendi
+/// kendine yeten TEK bir işaretçidir.
 const HeapKind = enum { none, str, list, class, task, channel, dict, closure };
+
+/// Faz U.4.4: bir closure heap bloğunun başlık boyutu (bkz. `HeapKind.closure`in
+/// belge notu) — `fn_ptr` + `release_fn_ptr`, HER İKİSİ de `l` (8 bayt).
+/// Yakalanan değerler bu OFSETTEN itibaren sırayla YERLEŞTİRİLİR.
+const CLOSURE_HEADER_SIZE: usize = 16;
 
 /// `list[T]`nin elemanları KENDİLERİ heap-yönetimliyse (sınıf ya da iç içe
 /// `list[T']`) bunu ÖZYİNELEMELİ olarak betimler (bkz. modül üstü not, "Faz 21
@@ -275,6 +290,18 @@ const DictInfo = struct {
     value_is_str: bool,
 };
 
+/// Faz U.4.4: bir `(params) -> ret` tip ifadesinin (`ast.TypeExpr.func_type`)
+/// ÇÖZÜLMÜŞ imzası — hangi SOMUT closure çağrılacağı derleme zamanında
+/// bilinmese de (bkz. `HeapKind.closure`in belge notu, tip POLİMORFİKTİR),
+/// STATİK imza (parametre SAYISI/QBE tipleri + dönüş tipi) HER ZAMAN
+/// bilinir — değişkenin/parametrenin/dönüşün KENDİ tip ifadesinden.
+/// Dolaylı çağrının (`genCall`in `.closure` dalı) argümanları doğru tipe
+/// çevirebilmesi/sonucu doğru betimleyiciyle DÖNDÜREBİLMESİ İÇİN gerekir.
+const FuncSigInfo = struct {
+    params: []const TypeInfo,
+    ret: TypeInfo,
+};
+
 const TypeInfo = struct {
     qtype: QbeType,
     heap: HeapKind = .none,
@@ -292,6 +319,9 @@ const TypeInfo = struct {
     /// `heap == .dict` ise anahtar/değer "şekli" (bkz. `DictInfo`in belge
     /// notu) — aksi halde `null`.
     dict_info: ?*const DictInfo = null,
+    /// `heap == .closure` ise ÇÖZÜLMÜŞ statik imza (bkz. `FuncSigInfo`in
+    /// belge notu) — aksi halde `null`.
+    func_sig: ?*const FuncSigInfo = null,
 };
 
 const Value = struct {
@@ -397,6 +427,7 @@ const VarInfo = struct {
     elem_heap_info: ?*const ElemHeapInfo = null,
     elem_is_str: bool = false,
     dict_info: ?*const DictInfo = null,
+    func_sig: ?*const FuncSigInfo = null,
     is_param: bool = false,
     arena: bool = false,
 };
@@ -935,8 +966,19 @@ const Codegen = struct {
             // TİP İFADESİNDEN hangi SOMUT closure kastedildiği bilinemez)
             // gerçek bir SOMUT closure DEĞERİNİN (bir iç içe `def` deyiminin
             // KENDİSİ tarafından, bkz. `genNestedFuncDef`) `VarInfo`sinde
-            // doldurulur. Dolaylı çağrı (U.4.4) HENÜZ desteklenmiyor.
-            .func_type => return .{ .qtype = .l, .heap = .closure },
+            // doldurulur. Faz U.4.4: STATİK imza (`func_sig`, bkz.
+            // `FuncSigInfo`in belge notu) BURADA, tip ifadesinin KENDİSİNDEN
+            // her zaman TAM olarak çözülür — dolaylı çağrının (`genCall`in
+            // `.closure` dalı) argüman/dönüş tiplerini bilebilmesi İÇİN
+            // yeterlidir, SOMUT closure'ın kimliği GEREKMEZ.
+            .func_type => |ft| {
+                const params = try self.allocator.alloc(TypeInfo, ft.params.len);
+                for (ft.params, 0..) |pt, i| params[i] = try self.resolveType(pt);
+                const ret = try self.resolveType(ft.return_type.*);
+                const sig = try self.allocator.create(FuncSigInfo);
+                sig.* = .{ .params = params, .ret = ret };
+                return .{ .qtype = .l, .heap = .closure, .func_sig = sig };
+            },
         }
     }
 
@@ -1167,6 +1209,7 @@ const Codegen = struct {
             .elem_heap_info = info.elem_heap_info,
             .elem_is_str = info.elem_is_str,
             .dict_info = info.dict_info,
+            .func_sig = info.func_sig,
             .is_param = is_param,
             .arena = arena,
         });
@@ -1272,10 +1315,12 @@ const Codegen = struct {
         try self.out.writer.writeAll("}\n");
     }
 
-    /// Faz U.4.3: bir iç içe `def` DEYİMİNİN (`genStmts`in `.func_def` dalı)
-    /// codegen'i — DIŞ (kapsayan) fonksiyonun BAĞLAMINDA çalışır (`self.vars`
-    /// HÂLÂ dış fonksiyonun yerellerini İÇERİR). İKİ İŞ yapar:
-    /// 1. Closure HEAP BLOĞUNU İNŞA eder (`{fn_ptr: l @0, yakalananlar... @8+}`)
+    /// Faz U.4.3/U.4.4: bir iç içe `def` DEYİMİNİN (`genStmts`in `.func_def`
+    /// dalı) codegen'i — DIŞ (kapsayan) fonksiyonun BAĞLAMINDA çalışır
+    /// (`self.vars` HÂLÂ dış fonksiyonun yerellerini İÇERİR). İKİ İŞ yapar:
+    /// 1. Closure HEAP BLOĞUNU İNŞA eder (`{fn_ptr: l @0, release_fn_ptr: l
+    ///    @8, yakalananlar... @16+}` — bkz. `HeapKind.closure`in belge notu,
+    ///    Faz U.4.4'ün offset-8'e release fonksiyon işaretçisi EKLEMESİ)
     ///    — `genConstructFromValues`in AYNI `nox_rc_alloc` + alan-doldurma
     ///    deseni, ama ALAN İSİMLERİ yerine checker'ın capture SIRASI kullanılır.
     ///    Her yakalanan DEĞER, DIŞ fonksiyonun O ANKİ slotundan yüklenir;
@@ -1312,12 +1357,17 @@ const Codegen = struct {
             } };
         }
 
-        const total_size = 8 + 8 * captures.len;
+        const total_size = CLOSURE_HEADER_SIZE + 8 * captures.len;
         const block = try self.newTemp();
         try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ block, RT_PARAM, total_size });
         try self.out.writer.print("    storel ${s}, {s}\n", .{ mangled, block });
+        {
+            const rel_addr = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, 8\n", .{ rel_addr, block });
+            try self.out.writer.print("    storel ${s}_release, {s}\n", .{ mangled, rel_addr });
+        }
         for (captures, 0..) |c, i| {
-            const offset = 8 + 8 * i;
+            const offset = CLOSURE_HEADER_SIZE + 8 * i;
             const addr = try self.newTemp();
             try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, block, offset });
             const src_slot = self.vars.get(c.name).?;
@@ -1341,8 +1391,8 @@ const Codegen = struct {
     /// GİBİ (`is_param = true` — kapsam-sonu release'i ATLAR, bkz.
     /// `LocalDecl`in belge notu, "ödünç alınmış referans" deseni) KENDİ
     /// slotuna sahip olur, AMA değeri bir QBE `%p_<isim>` argüman
-    /// REGISTER'INDAN DEĞİL, `%env`nin `8 + 8*i` OFSETİNDEN YÜKLENEREK
-    /// doldurulur. Bu İKİ FARK dışında gövde (`genStmts`) TAMAMEN NORMAL
+    /// REGISTER'INDAN DEĞİL, `%env`nin `CLOSURE_HEADER_SIZE + 8*i` OFSETİNDEN
+    /// YÜKLENEREK doldurulur. Bu İKİ FARK dışında gövde (`genStmts`) TAMAMEN NORMAL
     /// çalışır — capture'lar "sıradan, ÖNCEDEN doldurulmuş yereller" gibi
     /// GÖRÜNÜR.
     fn genClosureFunc(self: *Codegen, spec: ClosureFuncSpec) CodegenError!void {
@@ -1380,7 +1430,7 @@ const Codegen = struct {
 
         for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
         for (spec.captures, 0..) |c, i| {
-            const offset = 8 + 8 * i;
+            const offset = CLOSURE_HEADER_SIZE + 8 * i;
             const info = self.vars.get(c.name).?;
             const addr = try self.newTemp();
             try self.out.writer.print("    {s} =l add %env, {d}\n", .{ addr, offset });
@@ -1423,7 +1473,7 @@ const Codegen = struct {
         try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ should_free, free_label, done_label });
         try self.out.writer.print("{s}\n", .{free_label});
         for (captures, 0..) |c, i| {
-            const offset = 8 + 8 * i;
+            const offset = CLOSURE_HEADER_SIZE + 8 * i;
             if (isHeapManaged(c.info.heap)) {
                 const addr = try self.newTemp();
                 try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, offset });
@@ -1438,7 +1488,7 @@ const Codegen = struct {
                 try self.destroyNonArcValue(fv, c.info.heap, c.info.dict_info);
             }
         }
-        const total_size = 8 + 8 * captures.len;
+        const total_size = CLOSURE_HEADER_SIZE + 8 * captures.len;
         try self.out.writer.print("    call $nox_rc_free_payload(l {s}, l %p, l {d})\n", .{ RT_PARAM, total_size });
         try self.out.writer.print("    jmp {s}\n", .{done_label});
         try self.out.writer.print("{s}\n", .{done_label});
@@ -2193,21 +2243,25 @@ const Codegen = struct {
         const done_label = try self.newLabel("release_done");
         try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ is_null, skip_label, release_label });
         try self.out.writer.print("{s}\n", .{release_label});
-        if (heap == .class or heap == .closure) {
-            // Faz U.4.3: bir `.closure` değerinin `class_name`i (HANGİ
-            // SOMUT closure'ın release fonksiyonu çağrılacağı) YALNIZCA
-            // bir iç içe `def` DEYİMİNİN KENDİSİ tarafından (bkz.
-            // `genNestedFuncDef`) KESİN olarak bilinir — bir func-tipi
-            // DEĞİŞKEN/DÖNÜŞ TİPİ ANNOTASYONUNDAN (bkz. `resolveType`in
-            // `.func_type` dalı) `class_name` HER ZAMAN `null`dır (HANGİ
-            // SOMUT closure olduğu, YAPISAL tipten ÇIKARILAMAZ — `class`
-            // tipinin AKSİNE, `func` tipi tipi POLİMORFİKTİR). Bu durumda
-            // (henüz DESTEKLENMEYEN bir kullanım — closure'ı bir DEĞİŞKENE
-            // atayıp/döndürüp bir SONRAKİ noktada release ETMEK, U.4.4'ün
-            // dolaylı çağrı desteğiyle BİRLİKTE ele alınacak) PANİK YERİNE
-            // GÜVENLİ bir `error.Unsupported` döndürülür.
-            const cn = class_name orelse return error.Unsupported;
+        if (heap == .class) {
+            const cn = class_name.?;
             try self.out.writer.print("    call ${s}_release(l {s}, l {s})\n", .{ cn, RT_PARAM, ptr });
+        } else if (heap == .closure) {
+            // Faz U.4.4: bir `.closure` değerinin SOMUT release fonksiyonu
+            // ARTIK `class_name` (statik/isim-tabanlı dispatch) ÜZERİNDEN
+            // DEĞİL, bloğun KENDİSİNİN offset 8'inde TAŞIDIĞI `release_fn_ptr`
+            // ÜZERİNDEN DOLAYLI olarak çağrılır (bkz. `HeapKind.closure`in
+            // belge notu, "küçük vtable") — bu, bir func-tipli DEĞİŞKENİN/
+            // DÖNÜŞÜN çıplak tip ANNOTASYONUNDAN (`class_name` HER ZAMAN
+            // `null`dır, çünkü `Type.func` YAPISAL/polimorfiktir) SOMUT
+            // closure'ın kimliği ÇIKARILAMASA BİLE (`class`ın AKSİNE) DOĞRU
+            // release fonksiyonuna ulaşılabilmesini sağlar — U.4.3'ün
+            // panik-yerine-güvenli-hata geçici çözümünü GEREKSİZ kılar.
+            const rel_addr = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, 8\n", .{ rel_addr, ptr });
+            const rel_fn = try self.newTemp();
+            try self.out.writer.print("    {s} =l loadl {s}\n", .{ rel_fn, rel_addr });
+            try self.out.writer.print("    call {s}(l {s}, l {s})\n", .{ rel_fn, RT_PARAM, ptr });
         } else if (heap == .str) {
             // `str`nin boyutu (`list[T]`nin AKSİNE) başlıkta SAKLANMAZ (bkz.
             // `runtime/str.zig`in modül üstü notu) — `nox_str_release`
@@ -4141,6 +4195,58 @@ const Codegen = struct {
                     // `self.classes.get(obj.class_name.?)`de ÇÖKERDİ.
                     if (result_temp) |rt| return .{ .text = rt, .qtype = esig.ret.qtype, .heap = esig.ret.heap, .class_name = esig.ret.class_name, .elem_qtype = esig.ret.elem_qtype, .elem_heap_info = esig.ret.elem_heap_info, .elem_is_str = esig.ret.elem_is_str };
                     return .{ .text = "0", .qtype = .w };
+                }
+
+                // Faz U.4.4: `name` bir SIRADAN fonksiyon/sınıf/extern def
+                // DEĞİL, çıplak bir İSİMDEN bağlanan (yerel değişken/
+                // parametre — bkz. `checker.zig`nin AYNI dala karşılık gelen
+                // `checkCall`in `.identifier` dalı) func-tipli bir DEĞER İSE
+                // bu DOLAYLI çağrıdır: hedef fonksiyon işaretçisi (`fn_ptr`,
+                // offset 0) STATİK olarak bilinmez, closure DEĞERİNİN
+                // KENDİSİNDEN çalışma zamanında YÜKLENİR (bkz. `HeapKind.
+                // closure`in belge notu, "kendi kendine yeten TEK işaretçi").
+                // Argüman/dönüş tipleri İSE STATİK olarak bilinir —
+                // `resolveType`in `.func_type` dalının önceden hesapladığı
+                // `func_sig`den (bkz. `FuncSigInfo`in belge notu).
+                if (self.vars.get(name)) |info| {
+                    if (info.heap == .closure) {
+                        const fsig = info.func_sig orelse return error.Unsupported;
+                        if (fsig.params.len != c.args.len) return error.Unsupported;
+
+                        const closure_ptr = try self.newTemp();
+                        try self.out.writer.print("    {s} =l loadl {s}\n", .{ closure_ptr, info.slot });
+                        const fn_ptr = try self.newTemp();
+                        try self.out.writer.print("    {s} =l loadl {s}\n", .{ fn_ptr, closure_ptr });
+
+                        const arg_values = try self.allocator.alloc(Value, c.args.len);
+                        for (c.args, 0..) |a, i| {
+                            const v0 = try self.genExpr(a);
+                            try self.checkNoLowlevelEscape(v0);
+                            arg_values[i] = try self.convert(v0, fsig.params[i].qtype);
+                        }
+
+                        const ret_qtype = fsig.ret.qtype;
+                        const result_temp: ?[]const u8 = if (ret_qtype == .none) null else try self.newTemp();
+                        if (result_temp) |rt| {
+                            try self.out.writer.print("    {s} ={s} call {s}(l {s}, l {s}", .{ rt, qbeTypeName(ret_qtype), fn_ptr, RT_PARAM, closure_ptr });
+                        } else {
+                            try self.out.writer.print("    call {s}(l {s}, l {s}", .{ fn_ptr, RT_PARAM, closure_ptr });
+                        }
+                        for (arg_values) |v| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(v.qtype), v.text });
+                        try self.out.writer.writeAll(")\n");
+                        // Dolaylı çağrının HEDEFİ (çağrılan SOMUT closure)
+                        // derleme zamanında bilinmediğinden `must_not_raise`
+                        // eleme optimizasyonu (bkz. normal fonksiyon çağrısı
+                        // dalı) burada UYGULANAMAZ — İSTİSNA kontrolü HER
+                        // ZAMAN yapılır (güvenli varsayılan).
+                        try self.emitExceptionCheck();
+                        try self.releaseTemporaryArgs(c.args, arg_values);
+
+                        if (result_temp) |rt| {
+                            return .{ .text = rt, .qtype = ret_qtype, .heap = fsig.ret.heap, .elem_qtype = fsig.ret.elem_qtype, .class_name = fsig.ret.class_name, .elem_heap_info = fsig.ret.elem_heap_info, .elem_is_str = fsig.ret.elem_is_str };
+                        }
+                        return .{ .text = "0", .qtype = .w };
+                    }
                 }
 
                 const sig = self.functions.get(name) orelse return error.Unsupported;

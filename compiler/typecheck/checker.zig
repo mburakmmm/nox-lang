@@ -1486,6 +1486,23 @@ pub const Checker = struct {
                     try self.checkArgs(ctx, init_sig.params, c.args, name);
                     return .{ .class = name };
                 }
+                // Faz U.4.4: `name` yerel bir değişken/parametre OLUP
+                // (bkz. `ctx.scope`, Faz U.4.2'nin capture-farkında `Scope`u)
+                // func-tipli bir DEĞER taşıyorsa (bir iç içe `def`den gelen
+                // closure, bkz. Faz U.4.3) bu bir DOLAYLI çağrıdır — hangi
+                // SOMUT closure çağrıldığı derleme zamanında bilinmez, ama
+                // STATİK imza (`Type.func.params`/`return_type`) argüman
+                // denetimi için YETERLİDİR (`checkArgs`, normal fonksiyon
+                // çağrılarıyla PAYLAŞILAN AYNI mekanizma). Yerel bir isim
+                // HER ZAMAN from-import çözümlemesinden ÖNCELİKLİDİR (bkz.
+                // aşağıdaki `from_imports` dalının belge notu, AYNI ilke).
+                if (try ctx.scope.lookup(self.allocator, name)) |vt| {
+                    if (vt == .func) {
+                        try self.checkArgs(ctx, vt.func.params, c.args, name);
+                        return vt.func.return_type.*;
+                    }
+                    return self.fail(error.TypeMismatch, "'{s}' bir fonksiyon değildir, çağrılamaz", .{name});
+                }
                 // Faz U.3: `from X.Y import foo[as bar]` ile bağlanan ÇIPLAK
                 // bir çağrı (`bar(...)`) — yerel bir fonksiyon/sınıf tanımı
                 // (YUKARIDAKİ dallar) HER ZAMAN ÖNCELİKLİDİR, bu dal yalnızca

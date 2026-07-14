@@ -6222,6 +6222,140 @@ checker.check` OK/ERR sarmalayıcısını KULLANDIĞINDAN).
 
 ---
 
+## 3.27 Faz U.4.4 — Closure Değerleri Üzerinden Dolaylı Çağrı + Parametre/Dönüş Olarak Geçirme
+
+**Kapsam:** U.4'ün DÖRDÜNCÜ ve SON alt-fazı — bir closure DEĞERİNİN (bir iç
+içe `def`den, bkz. §3.25/§3.26) bir func-tipli DEĞİŞKENE/PARAMETREYE
+atanabilmesi VE o değişken/parametre ÜZERİNDEN DOLAYLI olarak (`f(x)`,
+`f`nin HANGİ SOMUT closure'ı tuttuğu derleme zamanında BİLİNMESE de)
+çağrılabilmesi. Bu, U.4.1-U.4.3'ün kurduğu tüm altyapının (fonksiyon tip
+sistemi, capture analizi, ARC'lı çalışma zamanı temsili) NİHAİ tüketicisi —
+Nox artık gerçek, sınırlı ama İŞLEVSEL bir birinci-sınıf fonksiyon değeri
+desteğine sahip.
+
+**Mimari anahtar karar — closure bloğuna İKİNCİ bir işaretçi eklenerek
+"küçük bir vtable" haline getirilmesi:** U.4.3'ün bellek düzeni
+`{fn_ptr: l @0, yakalananlar... @8+}` idi; release fonksiyonu SOMUT
+`class_name` üzerinden İSİM-tabanlı çağrılıyordu — ama bir closure DEĞERİ
+çıplak bir func-tipi ANNOTASYONUNA (`Type.func`, YAPISAL/polimorfik bir
+tip, `Type.class`in AKSİNE HİÇBİR ZAMAN TEK bir somut tipi adlandırmaz)
+aktığında bu isim KAYBOLUYORDU (U.4.3'ün "panik yerine güvenli hata"
+geçici çözümü TAM BURADAN kaynaklanıyordu). **Çözüm:** bellek düzeni
+`{fn_ptr: l @0, release_fn_ptr: l @8, yakalananlar... @16+}`e genişletildi
+(`CLOSURE_HEADER_SIZE = 16`) — closure'ın KENDİ release fonksiyonuna bir
+işaretçi, İNŞA ANINDA (`genNestedFuncDef`, `$<mangled>_release`) bloğun
+KENDİSİNE gömülür. Bu, `releaseValueIfSet`in `.closure` dalını TAMAMEN
+DOLAYLI/POLİMORFİK hale getirir: `class_name` ARTIK HİÇ GEREKMEZ, offset
+8'den release fonksiyon işaretçisi YÜKLENİP DOĞRUDAN çağrılır (`call
+{fn_ptr_temp}(l rt, l ptr)`, QBE'nin bir TEMP üzerinden dolaylı çağrıyı
+desteklediği — bkz. §3.26'nın `/tmp/fnptr_test.ssa` deneyi — GERÇEĞİNE
+dayanır). **U.4.3'ün `error.Unsupported` geçici çözümü ARTIK TAMAMEN
+ORTADAN KALKTI** — bir closure, kökeni SOMUT olarak bilinmeyen bir
+değişkenden BİLE HER ZAMAN doğru şekilde release edilir.
+
+**Dolaylı ÇAĞRI mekanizması — `fn_ptr` (offset 0) hem inşa ANINDA (normal,
+DOĞRUDAN çağrı, bkz. §3.26) hem SONRADAN (dolaylı çağrı) AYNI ROLÜ
+oynar:** bir closure DEĞERİNİN KENDİSİ (`{fn_ptr, release_fn_ptr,
+captures...}`e işaret eden TEK bir `l` pointer) hem "nasıl çağrılır" hem
+"nasıl serbest bırakılır" bilgisini TAŞIYAN, KENDİ KENDİNE YETEN bir
+birimdir. Dolaylı çağrı `genCall`in `.identifier` dalına eklenen YENİ bir
+dala dayanır: `name`, SIRADAN bir fonksiyon/sınıf/extern def DEĞİLSE (bkz.
+mevcut dal SIRASI) ama `self.vars.get(name)` `heap == .closure` bir yerel
+DÖNDÜRÜYORSA (bir DEĞİŞKEN YA DA PARAMETRE — İKİSİ de AYNI `self.vars`
+mekanizmasından geçtiğinden BURADA hiçbir AYRIM gerekmez), closure
+POINTER'ı slotundan YÜKLENİR, offset 0'dan `fn_ptr` YÜKLENİR, argümanlar
+NORMAL şekilde hesaplanıp `func_sig`in (aşağı bkz.) beklediği QBE tipine
+`convert` edilir, SONRA `call {fn_ptr}(l rt, l closure_ptr, <argümanlar>)`
+(GİZLİ `%env` argümanı — bkz. §3.26'nın `genClosureFunc`i — burada closure
+POINTER'ININ KENDİSİDİR) emisyona verilir. Dolaylı çağrının HEDEFİ derleme
+zamanında bilinmediğinden `must_not_raise` eleme optimizasyonu (bkz.
+performans fazı) UYGULANAMAZ — istisna kontrolü HER ZAMAN yapılır (güvenli
+varsayılan, normal fonksiyon çağrılarının aksine).
+
+**`FuncSigInfo` — argüman/dönüş tiplerini STATİK olarak taşıyan YENİ bir
+betimleyici:** dolaylı çağrının SOMUT hedefi bilinmese de, çağrının STATİK
+İMZASI (kaç argüman, hangi QBE tipleri, dönüş tipi/heap betimleyicisi) HER
+ZAMAN bilinir — değişkenin/parametrenin/dönüşün KENDİ tip ifadesinden
+(`(int, int) -> int` gibi). `resolveType`in `.func_type` dalı ARTIK her
+parametreyi VE dönüş tipini ÖZYİNELEMELİ olarak `resolveType` ile çözüp
+bir `FuncSigInfo{ params: []TypeInfo, ret: TypeInfo }` üretir; bu,
+`TypeInfo`/`VarInfo`nin YENİ `func_sig: ?*const FuncSigInfo` alanında
+TAŞINIR (`allocSlot` ile diğer alanlarla AYNI şekilde kopyalanır). Dolaylı
+çağrı `func_sig.params`i argüman SAYISI/`convert` hedefi İÇİN, `func_sig.ret`i
+SONUÇ `Value`sinin `qtype`/`heap`/`elem_*`/`dict_info` alanlarını DOĞRU
+DOLDURMAK İÇİN kullanır — böylece bir closure'ın DÖNDÜRDÜĞÜ heap-yönetimli
+bir değer (ör. `str`) bile doğru etiketlenmiş olarak akmaya devam eder.
+
+**Checker tarafı — `checkCall`in `.identifier` dalına YENİ bir dal:**
+`name` SIRADAN bir fonksiyon/sınıf DEĞİLSE ama `ctx.scope.lookup(name)`
+bir `Type.func` DÖNDÜRÜYORSA, bu bir DOLAYLI çağrıdır — `checkArgs`
+(NORMAL fonksiyon çağrılarıyla PAYLAŞILAN AYNI mekanizma) `Type.func.params`e
+KARŞI argümanları denetler, `Type.func.return_type.*` döner. `name` yerel
+bir değişken/parametre OLUP func-tipli DEĞİLSE (ör. bir `int` değişkeni
+çağrılmaya ÇALIŞILIYORSA) AÇIK bir `TypeMismatch` ("bir fonksiyon değildir,
+çağrılamaz") verilir — genel "tanımsız fonksiyon" hatasından DAHA
+İSABETLİ. Bu dal, from-import çözümlemesinden ÖNCE denenir (yerel bir isim
+HER ZAMAN ÖNCELİKLİDİR — U.3'ün from-import önceliğiyle AYNI ilke).
+
+**Kapsam (bilinçli v1 sınırı, DEĞİŞMEDİ):** yalnızca bir iç içe `def`DEN
+İNŞA EDİLEN closure değerleri func-tipli olabilir — üst-düzey bir `def`in
+KENDİSİNE (bare fonksiyon referansı, ör. `f: (int) -> int = add`) HENÜZ
+izin YOK (Nox'ta bu, `spawn`/`nox.http.serve`in "çıplak isim" kısıtıyla AYNI
+gerekçeyle, first-class fonksiyon REFERANSI kavramının KENDİSİ HENÜZ
+tasarlanmadığından kapsam DIŞI bırakıldı — GELECEKTE ayrı bir faz).
+
+**U.4.1'in eski "henüz desteklenmiyor" testinin GÜNCELLENMESİ:** U.4.1
+sırasında yazılan `err_func_type_call_not_yet_supported` (bir func-tipli
+PARAMETRENİN çağrılmasının `UndefinedFunction` ile REDDEDİLDİĞİNİ kanıtlayan
+typecheck golden testi) artık YANLIŞ bir iddia taşıyordu — U.4.4 TAM OLARAK
+bu senaryoyu DESTEKLİYOR. `ok_func_type_param_indirect_call` olarak
+YENİDEN ADLANDIRILDI (AYNI kaynak, `.expected` `OK`e ÇEVRİLDİ). BENZER
+şekilde U.4.3'ün `rejected_closure_return_type` testi (bir closure'ın
+func-tipli bir değişkene atanmasının `error.Unsupported` verdiğini kanıtlayan
+codegen testi) SİLİNDİ — YERİNE gerçek uçtan-uca ÇALIŞAN İKİ golden test
+eklendi (aşağı bkz.). Bu, U.4.3'ün spec'inin AÇIKÇA öngördüğü bir "geçici
+kısıtlamanın kaldırılması" adımıdır.
+
+**Doğrulama:**
+1. **2 YENİ uçtan-uca golden test** (`tests/golden/codegen_cases/`):
+   `closure_returned_and_called_indirectly.nox` (`make_adder(n)` bir iç içe
+   `def`i DÖNDÜRÜR; İKİ farklı SOMUT closure — `add5`/`add10` — func-tipli
+   değişkenlere atanır, HER BİRİ birden çok kez DOLAYLI çağrılır — doğru
+   SOMUT closure'a DOĞRU dispatch edildiğini VE her çağrının doğru sonucu
+   ürettiğini kanıtlar, beklenen çıktı `"6\n7\n11\n"`); `closure_passed_as_
+   param_called_indirectly.nox` (`apply(f, x)` bir func-tipli PARAMETRE
+   alır, İÇİNDE `f(x)` dolaylı çağırır; `make_doubler()`in döndürdüğü bir
+   closure `apply`e ARGÜMAN olarak GEÇİRİLİR — func-tipli bir PARAMETRENİN
+   hem doğru şekilde ARGÜMAN olarak alınabildiğini hem İÇERİDE çağrılabildiğini
+   kanıtlar, beklenen çıktı `"42\n"`).
+2. **1 GÜNCELLENMİŞ typecheck golden testi**: `ok_func_type_param_indirect_call`
+   (yukarı bkz.).
+3. **Manuel uçtan-uca doğrulama** (`noxc build` + çalıştırma, `/tmp` scratch
+   dosyaları): her iki yeni golden test senaryosu manuel olarak da
+   çalıştırılıp DOĞRU çıktı VE (stderr'de "bellek sızıntısı tespit edildi"
+   mesajının YOKLUĞUYLA, bkz. `runtime/alloc/asap.zig`nin `nox_runtime_
+   deinit`i) sızıntısız olduğu doğrulandı.
+4. **Kasıtlı boz→kırmızı→düzelt (İKİ AYRI KRİTİK özellik İÇİN, sırayla):**
+   (a) `genNestedFuncDef`in `release_fn_ptr` YAZMA satırı GEÇİCİ olarak
+   yorum satırına ALINDI → `zig build test` "79 pass, 4 fail (83 total)"
+   / "323/327" GÖSTERDİ — BAŞARISIZ olan TAM OLARAK closure-ilişkili DÖRT
+   test (U.4.3'ün İKİ eski testi DAHİL, çünkü ONLAR da ARTIK genel release
+   mekanizmasını kullanıyor) — geri getirildi, 327/327 YEŞİLE döndü.
+   (b) Dolaylı çağrının `fn_ptr` YÜKLEME ofseti GEÇİCİ olarak 0 YERİNE 8
+   (release_fn_ptr'ın KENDİ ofseti) yapıldı → `zig build test` "81 pass,
+   2 fail (83 total)" / "325/327" GÖSTERDİ — BAŞARISIZ olan TAM OLARAK YENİ
+   İKİ dolaylı-çağrı testi (DİĞER closure testleri ETKİLENMEDİ, çünkü
+   ONLAR dolaylı çağrı KULLANMIYOR) — geri getirildi, 327/327 YEŞİLE döndü.
+   Her iki durumda da Debug VE ReleaseFast'ta doğrulandı.
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz. **Faz U.4
+(U.4.1-U.4.4) TAMAMEN BİTTİ** — Nox artık iç içe fonksiyonlar, serbest
+değişken yakalama, ARC'lı closure çalışma zamanı temsili VE dolaylı
+çağrı/parametre/dönüş desteğiyle sınırlı ama gerçek bir birinci-sınıf
+fonksiyon değeri modeline sahip.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
