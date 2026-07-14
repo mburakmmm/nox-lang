@@ -6589,6 +6589,34 @@ SONEKİ dersiyle AYNI KATEGORİDE ama FARKLI bir çakışma türüdür — o İS
 
 ---
 
+## 3.31 Faz V.3 — `nox.crypto` Modülü (SHA-256 Asgari Kapsam)
+
+**Kapsam:** yalnızca `sha256(data: str) -> str` (64 karakterlik küçük harf
+hex özet). `nox.json`nin `std.json.parseFromSlice`i KULLANMA kararıyla AYNI
+İLKE: sıfırdan bir hash algoritması YAZILMAZ, Zig'in KENDİ, savaş-test
+edilmiş `std.crypto.hash.sha2.Sha256`si SARILIR (`runtime/stdlib_shims/
+crypto.zig`). ARC-str ÜRETTİĞİNDEN `with_rt` (bkz. D.1'in Keşif 3'ü)
+GEREKİR — `http_client.zig`nin `dupeToNoxStr`ı (nox.log/nox.crypto
+ARASINDA PAYLAŞILAN AYNI yardımcı) DOĞRUDAN kullanılır.
+
+**Doğrulama:**
+1. **1 uçtan-uca golden test** (`crypto_sha256_known_vectors.nox`):
+   `sha256("")`/`sha256("abc")`in FIPS 180-4'ün KENDİ YAYIMLANAN test
+   vektörleriyle (`e3b0c44...`/`ba7816bf...`) BİREBİR eşleştiğini kanıtlar
+   — `shasum -a 256` İLE BAĞIMSIZ olarak da ÇAPRAZ doğrulandı.
+2. **Kasıtlı boz→kırmızı→düzelt:** hex-kodlama döngüsündeki nibble SIRASI
+   GEÇİCİ olarak TERS ÇEVRİLDİ (`byte & 0xF` önce, `byte >> 4` sonra) →
+   `zig build test` "90 pass, 1 fail (91 total)" / "338/339 tests passed"
+   GÖSTERDİ (çıktı `3e0b4c24...`/`ab8761fb...` gibi HER bayt-çiftinin
+   İÇİNDE nibble'ları TERS DÖNMÜŞ ama YAPISAL olarak "makul görünen" YANLIŞ
+   bir hex dizesi ÜRETTİ — TAM OLARAK exact-match golden testin YAKALAMASI
+   GEREKEN türden bir sessiz veri bozulması senaryosu) — geri getirildi,
+   339/339 YEŞİLE döndü (Debug VE ReleaseFast).
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

@@ -170,6 +170,10 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   (`runtime/stdlib_shims/random.zig`); PRNG durumu, `nox.os`nin argc/argv'si
   ile aynı "süreç ömrü boyunca yaşayan statik değişken" deseninde tutulur.
   `seed` hiç çağrılmadıysa ilk kullanımda otomatik tohumlanır.
+- `nox.crypto` modülü eklendi (Faz V.3) — `sha256(data: str) -> str` (64
+  karakterlik küçük harf hex özet). Zig'in kendi `std.crypto.hash.sha2.
+  Sha256`si sarılır (sıfırdan bir hash algoritması yazılmadı). FIPS 180-4
+  test vektörleriyle doğrulandı.
 
 ### Düzeltildi
 - **Önemli test-altyapısı düzeltmesi:** `compiler/*.zig` dosyalarına gömülü

@@ -755,6 +755,13 @@ test "codegen(çalıştır): nox.random.seed/randint/random — aralık sınırl
     );
 }
 
+test "codegen(çalıştır): nox.crypto.sha256 — bilinen test vektörleri (\"\"/\"abc\")" {
+    try expectGolden(
+        @embedFile("codegen_cases/crypto_sha256_known_vectors.nox"),
+        @embedFile("codegen_cases/crypto_sha256_known_vectors.expected"),
+    );
+}
+
 test "codegen(çalıştır): nox.test.assert_eq_*/assert_true (başarılı yol)" {
     try expectGolden(
         @embedFile("codegen_cases/test_assert_eq_pass.nox"),
