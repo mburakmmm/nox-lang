@@ -49,7 +49,7 @@ fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.
     try tmp.dir.writeFile(io, .{ .sub_path = "prog.ssa", .data = ir });
 
     const qbe_result = try std.process.run(allocator, io, .{
-        .argv = &.{ "qbe", "-o", asm_path, ssa_path },
+        .argv = &.{ "qbe", "-t", nox.qbe_target.name(), "-o", asm_path, ssa_path },
     });
     if (qbe_result.term != .exited or qbe_result.term.exited != 0) {
         std.debug.print("qbe basarisiz: {s}\n", .{qbe_result.stderr});
@@ -60,13 +60,17 @@ fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.
     // main.zig`nin `appendExternLinkArgs`ı (AYNI mantık, bu testte ayrıca
     // tekrarlanıyor çünkü main.zig'in kendisini değil, codegen+qbe+cc'yi
     // doğrudan çağırıyoruz).
+    // Faz R.3: `-rdynamic` — `codegen_golden_test.zig`nin AYNI gerekçeli
+    // notu (`nox.json`nin `dlsym` deseni GEREKTİRİYOR, bkz. `compiler/
+    // main.zig`) — bu test `nox.json` KULLANMASA BİLE, AYNI `noxrt.o`ya
+    // bağlandığından tutarlılık İÇİN eklendi.
     const cc_result = try std.process.run(allocator, io, .{
         .argv = &.{
-            "cc",                          "-o",
-            bin_path,                      asm_path,
-            "zig-out/lib/noxrt.o",         "-lm",
-            build_options.mathutil_o_path, build_options.util_o_path,
-            build_options.counter_o_path,
+            "cc",                      "-rdynamic",
+            "-o",                      bin_path,
+            asm_path,                  "zig-out/lib/noxrt.o",
+            "-lm",                     build_options.mathutil_o_path,
+            build_options.util_o_path, build_options.counter_o_path,
         },
     });
     if (cc_result.term != .exited or cc_result.term.exited != 0) {

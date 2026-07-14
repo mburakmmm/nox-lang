@@ -14,3 +14,4 @@ pub const module_loader = @import("module_loader.zig");
 pub const project = @import("project.zig");
 pub const test_runner = @import("pkg/test_runner.zig");
 pub const fetch = @import("pkg/fetch.zig");
+pub const qbe_target = @import("qbe_target.zig");

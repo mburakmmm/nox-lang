@@ -420,6 +420,10 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("tests/compat/http_stdlib_golden_test.zig"),
         .target = target,
         .optimize = optimize,
+        // Faz R.3: bu dosya `std.c.socket` (serbest port arama) DOĞRUDAN
+        // ÇAĞIRIR — Linux'ta AÇIKÇA `link_libc` GEREKİR (bkz. `noxrt_mod`in
+        // AYNI gerekçeli notu).
+        .link_libc = true,
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
         },
@@ -438,6 +442,9 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("tests/compat/http_serve_golden_test.zig"),
         .target = target,
         .optimize = optimize,
+        // Faz R.3: `std.c.socket` (serbest port arama) DOĞRUDAN ÇAĞRILIR —
+        // bkz. `http_stdlib_test_mod`in AYNI gerekçeli notu.
+        .link_libc = true,
         .imports = &.{
             .{ .name = "nox", .module = nox_mod },
         },

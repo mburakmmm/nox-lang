@@ -1,10 +1,18 @@
 name: CI
 
 # Faz Q.2 (bkz. docs/uretim-hazirlik-analizi.md): her push/PR'da `zig build
-# test`i HEM Debug HEM ReleaseFast modunda çalıştırır. `runtime/async_rt`
-# şu an yalnızca aarch64'ü desteklediği için (bkz. Faz R.2, henüz
-# tamamlanmadı) `macos-14` (Apple Silicon) runner'ı kullanılıyor — Linux
-# runner'ı R.3 ile birlikte eklenecek.
+# test`i HEM Debug HEM ReleaseFast modunda çalıştırır.
+#
+# Faz R.1/R.2/R.3: `runtime/async_rt` artık aarch64 VE x86-64'ü, macOS VE
+# Linux'u destekliyor (bkz. spec §3.8-§3.10) — matris ÜÇ GERÇEK kombinasyonu
+# kapsıyor: macOS/aarch64 (Apple Silicon), Linux/x86-64 (GitHub'ın standart
+# `ubuntu-latest` runner'ı — bu, Faz R.2'nin x86-64 fiber kodunun yalnızca
+# YEREL Rosetta çevirisiyle DEĞİL GERÇEK donanımda da doğrulanmasını sağlar),
+# Linux/aarch64 (`ubuntu-24.04-arm`). Linux'ta `qbe` Homebrew'de OLMADIĞINDAN
+# KAYNAKTAN derlenir (bkz. `qbe-source` adımı — Faz R.3'ün Docker doğrulaması
+# SIRASINDA GERÇEKTEN keşfedilen bir hata: kaynaktan derlenen bir `qbe`nin
+# BUILD-TIME varsayılan hedefi macOS'un Homebrew paketinden FARKLIDIR, bu
+# YÜZDEN `compiler/qbe_target.zig` `-t`yi HER ZAMAN AÇIKÇA geçer).
 
 on:
   push:
@@ -13,7 +21,18 @@ on:
 
 jobs:
   test:
-    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            name: macOS (aarch64)
+          - os: ubuntu-latest
+            name: Linux (x86-64)
+          - os: ubuntu-24.04-arm
+            name: Linux (aarch64)
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -22,8 +41,17 @@ jobs:
         with:
           version: "0.16.0"
 
-      - name: qbe kur
+      - name: qbe kur (macOS)
+        if: runner.os == 'macOS'
         run: brew install qbe
+
+      - name: qbe kur (Linux — kaynaktan derle)
+        if: runner.os == 'Linux'
+        run: |
+          curl -sSL -o /tmp/qbe.tar.xz https://c9x.me/compile/release/qbe-1.3.tar.xz
+          tar xf /tmp/qbe.tar.xz -C /tmp
+          make -C /tmp/qbe-1.3 -j"$(nproc)"
+          sudo cp /tmp/qbe-1.3/qbe /usr/local/bin/qbe
 
       - name: zig build test (Debug)
         run: zig build test

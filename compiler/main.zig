@@ -15,7 +15,6 @@
 //! yoluna DÜŞÜLÜR.
 
 const std = @import("std");
-const builtin = @import("builtin");
 const lexer = @import("lexer/lexer.zig");
 const parser = @import("parser/parser.zig");
 const ast = @import("parser/ast.zig");
@@ -25,6 +24,7 @@ const ownership = @import("ownership/analysis.zig");
 const codegen = @import("codegen_qbe/codegen.zig");
 const module_loader = @import("module_loader.zig");
 const project = @import("project.zig");
+const qbe_target = @import("qbe_target.zig");
 const test_runner = @import("pkg/test_runner.zig");
 const fetch = @import("pkg/fetch.zig");
 
@@ -437,7 +437,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ssa_path, .data = ir });
 
     const qbe_result = try std.process.run(gpa, io, .{
-        .argv = &.{ "qbe", "-t", qbeTargetName(), "-o", asm_path, ssa_path },
+        .argv = &.{ "qbe", "-t", qbe_target.name(), "-o", asm_path, ssa_path },
     });
     defer gpa.free(qbe_result.stdout);
     defer gpa.free(qbe_result.stderr);
@@ -449,8 +449,21 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // Faz Q.3: runtime nesne dosyasının yolu artık `resource_dirs.noxrt_path`
     // (bkz. `project.resolveResourceDirs`) — `noxc`nin KENDİ çalıştırılabilir
     // dosya konumuna göre çözülür, CWD'ye (proje köküne) BAĞIMLI DEĞİLDİR.
+    //
+    // Faz R.3 (KRİTİK, Linux'ta GERÇEK bir çökme/sızıntıya yol açan bir
+    // hatanın KÖK NEDENİ): `-rdynamic` ZORUNLUDUR. `runtime/stdlib_shims/
+    // json.zig`nin `dlopen(null, ...)` + `dlsym(..., "nox_json_make_json_
+    // value")` deseni (bkz. o dosyanın belge notu — Zig kodu, QBE'nin
+    // SONRADAN derleyeceği bir Nox sembolünü ÇALIŞMA ZAMANINDA arar), ana
+    // programın KENDİ sembollerini `dlsym` İLE bulunabilir kılmak İÇİN
+    // dinamik sembol tablosuna AÇIKÇA EXPORT edilmelerini gerektirir.
+    // macOS'ta (Mach-O) bu ÖRTÜK olarak ÇALIŞIR — Linux'ta (ELF) İSE
+    // `-rdynamic` OLMADAN `dlsym` SESSİZCE `null` döner (Docker'da GERÇEKTEN
+    // yakalandı: `nox.json.decode` HER çağrıda `null` dönüyor, bu da hem
+    // ÇÖKMEYE hem daha önce `nox_rc_alloc` İLE tahsis edilmiş, artık HİÇBİR
+    // ŞEYE bağlanamayan parçaların SIZMASINA yol açıyordu).
     var cc_argv: std.ArrayListUnmanaged([]const u8) = .empty;
-    try cc_argv.appendSlice(a, &.{ "cc", "-o", stem, asm_path, resource_dirs.noxrt_path, "-lm" });
+    try cc_argv.appendSlice(a, &.{ "cc", "-rdynamic", "-o", stem, asm_path, resource_dirs.noxrt_path, "-lm" });
     try appendExternLinkArgs(a, &cc_argv, module);
 
     const cc_result = try std.process.run(gpa, io, .{
@@ -469,34 +482,6 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
 fn stemOf(path: []const u8) []const u8 {
     if (std.mem.endsWith(u8, path, ".nox")) return path[0 .. path.len - 4];
     return path;
-}
-
-/// Faz R.3 (bkz. docs/uretim-hazirlik-analizi.md): `qbe`nin `-t <target>`i
-/// ŞİMDİYE KADAR HİÇ geçilmiyordu — `qbe`nin KENDİ BUILD-TIME varsayılan
-/// hedefine (bkz. `config.h`, `Deftgt`) GÜVENİLİYORDU. Bu, GERÇEK bir
-/// PORTABİLİTE hatasıydı: Homebrew'un macOS İÇİN derlediği `qbe` `arm64_
-/// apple`ı varsayılan yapar (Apple'ın SysV'den FARKLI ABI'si), ama KAYNAKTAN
-/// (`make`, `config.h`: `Deftgt T_arm64`) Linux'ta derlenen bir `qbe`
-/// SESSİZCE `arm64`e (Linux/genel AAPCS64) düşer — AYNI derleyicinin İKİ
-/// FARKLI makinede SESSİZCE FARKLI ABI'ler ÜRETMESİ demektir (Faz R.1/R.2'nin
-/// Docker doğrulaması SIRASINDA GERÇEKTEN bulunan ve birden fazla codegen
-/// golden testinin Linux'ta BAŞARISIZ olmasına yol açan somut hata). Çözüm:
-/// `noxc`nin KENDİ çalıştığı platforma göre `-t`yi HER ZAMAN AÇIKÇA geçmek.
-fn qbeTargetName() []const u8 {
-    return switch (builtin.os.tag) {
-        .macos => switch (builtin.cpu.arch) {
-            .aarch64 => "arm64_apple",
-            .x86_64 => "amd64_apple",
-            else => @compileError("qbe: desteklenmeyen macOS mimarisi"),
-        },
-        .windows => "amd64_win",
-        else => switch (builtin.cpu.arch) {
-            .aarch64 => "arm64",
-            .x86_64 => "amd64_sysv",
-            .riscv64 => "rv64",
-            else => @compileError("qbe: desteklenmeyen mimari"),
-        },
-    };
 }
 
 /// Modüldeki her `extern def ... from "X"` için son `cc` bağlama komutuna

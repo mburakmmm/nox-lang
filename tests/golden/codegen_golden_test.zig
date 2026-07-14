@@ -51,15 +51,20 @@ fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.
     try tmp.dir.writeFile(io, .{ .sub_path = "prog.ssa", .data = ir });
 
     const qbe_result = try std.process.run(allocator, io, .{
-        .argv = &.{ "qbe", "-o", asm_path, ssa_path },
+        .argv = &.{ "qbe", "-t", nox.qbe_target.name(), "-o", asm_path, ssa_path },
     });
     if (qbe_result.term != .exited or qbe_result.term.exited != 0) {
         std.debug.print("qbe basarisiz: {s}\n", .{qbe_result.stderr});
         return error.QbeFailed;
     }
 
+    // Faz R.3: `-rdynamic` ZORUNLUDUR — `runtime/stdlib_shims/json.zig`nin
+    // `dlsym`i ana programın KENDİ (QBE'nin ürettiği) sembollerini bulmak
+    // İÇİN dinamik sembol tablosuna EXPORT edilmelerini gerektirir (bkz.
+    // `compiler/main.zig`nin AYNI satırındaki TAM belge notu — Linux'ta
+    // BUNUN OLMADAN GERÇEK bir çökme/sızıntı yaşandı).
     const cc_result = try std.process.run(allocator, io, .{
-        .argv = &.{ "cc", "-o", bin_path, asm_path, "zig-out/lib/noxrt.o", "-lm" },
+        .argv = &.{ "cc", "-rdynamic", "-o", bin_path, asm_path, "zig-out/lib/noxrt.o", "-lm" },
     });
     if (cc_result.term != .exited or cc_result.term.exited != 0) {
         std.debug.print("cc basarisiz: {s}\n", .{cc_result.stderr});

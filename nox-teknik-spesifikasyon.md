@@ -4710,8 +4710,9 @@ GERÇEK bir Linux ortamında (Docker, Ubuntu 24.04 aarch64 — native, emülasyo
 YOK; ayrıca x86-64 İÇİN Rosetta çevirisi) ÇALIŞTIRARAK doğrulamayı hedefler
 — bu, projenin İLK KEZ tam paket olarak Linux'ta çalıştırılma girişimidir.
 
-**Süreç İÇİNDE BULUNAN VE düzeltilen İKİ GERÇEK, ÖNCEDEN GİZLİ hata (her
-ikisi de macOS'u DA etkiliyordu, yalnızca Linux'a ÖZGÜ DEĞİLDİ):**
+**Süreç İÇİNDE BULUNAN VE düzeltilen ÜÇ GERÇEK, ÖNCEDEN GİZLİ hata (HEPSİ
+macOS'u DA etkiliyordu — LATENT olmaları, macOS'un aynı davranışı ÖRTÜK
+olarak sağlaması YÜZÜNDENDİ, Linux'a ÖZGÜ bir hata SINIFI DEĞİLLER):**
 
 1. **`qbe`nin `-t <target>`i ŞİMDİYE KADAR HİÇ geçilmiyordu** —
    `qbe`nin KENDİ BUILD-TIME varsayılan hedefine (`config.h`, `Deftgt`)
@@ -4731,11 +4732,51 @@ ikisi de macOS'u DA etkiliyordu, yalnızca Linux'a ÖZGÜ DEĞİLDİ):**
    temizlenip `zig build test` doğrudan çalıştırıldığında) `stdlib/nox/
    core.nox: FileNotFound` İLE AÇIĞA ÇIKTI — `test_step.dependOn(&install_
    stdlib.step)` eklenerek düzeltildi.
+3. **`cc`nin link satırında `-rdynamic` EKSİKTİ (EN DERİN bulgu — GERÇEK bir
+   çökme/bellek sızıntısına yol açan KÖK NEDEN):** `runtime/stdlib_shims/
+   json.zig`nin `nox.json` şeması (bkz. §L'nin belge notu, "Zig KAYNAK
+   kodunun QBE'nin SONRADAN derleyeceği bir Nox sembolünü ÇAĞIRDIĞI İLK
+   yer") `dlopen(null, ...)` + `dlsym(handle, "nox_json_make_json_value")`
+   İLE ana programın KENDİ (QBE'nin ürettiği) sembolünü ÇALIŞMA ZAMANINDA
+   arar. macOS'ta (Mach-O) bu ÖRTÜK çalışır — Linux'ta (ELF) İSE `-rdynamic`
+   (`--export-dynamic`) OLMADAN ana programın sembolleri dinamik sembol
+   tablosuna EXPORT edilmez, `dlsym` SESSİZCE `null` döner. Docker'da
+   GERÇEKTEN gözlemlenen sonuç: `nox_json_make_json_value` HER ÇAĞRIDA
+   `null` dönüyordu — GEÇERLİ JSON İÇİN bu bir `JsonValue` alan okumasında
+   ÇÖKMEYE (`v.kind` null işaretçi), BOZUK JSON İÇİN İSE (hata sentinel'i
+   İÇİN ÖNCEDEN `nox_rc_alloc` İLE ayrılmış `dup`/`empty_arr`/`empty_keys`/
+   `empty_vals` parçaları, "onları saracak" `make_json_value` çağrısı
+   BAŞARISIZ OLDUĞUNDAN hiçbir şeye BAĞLANAMADAN) GERÇEK bir bellek
+   sızıntısına yol açıyordu. **`compiler/main.zig` VE `qbe`yi bağımsız
+   çağıran TÜM test dosyalarının (6 çağrı sitesi) `cc` argümanlarına
+   `-rdynamic` eklendi** — macOS'ta ZARARSIZ (ZATEN örtük davranışla AYNI
+   sonucu verir), Linux'ta ZORUNLU.
+
+**Ortak altyapı — `compiler/qbe_target.zig` (YENİ, `compiler/lib.zig`
+üzerinden dışa açılır):** `qbe -t` seçim mantığı TEK bir yerde YAŞAR —
+`compiler/main.zig` VE `qbe`yi bağımsız çağıran 5 test dosyası (`tests/
+compat/hpy_call_golden_test.zig`, `http_stdlib_golden_test.zig`,
+`http_serve_golden_test.zig`, `extern_ffi_test.zig`, `tests/golden/
+codegen_golden_test.zig`) AYNI `nox.qbe_target.name()`i KULLANIR — kod
+TEKRARI ÖNLENİR, gelecekteki bir platform eklemesi TEK bir yerde yapılır.
 
 **Doğrulama:** `zig-out`/global Zig önbelleği (`~/.cache/zig`) TAMAMEN
-silinip `zig build test` (Debug+ReleaseFast) SIFIRDAN çalıştırıldı — İKİ
-düzeltme OLMADAN başarısız olduğu, İKİSİYLE de yeşile döndüğü DOĞRUDAN
-gözlemlendi.
+silinip `zig build test` (Debug+ReleaseFast) SIFIRDAN çalıştırıldı — ÜÇ
+düzeltme OLMADAN başarısız olduğu, ÜÇÜYLE de yeşile döndüğü DOĞRUDAN
+gözlemlendi; Linux'ta (Docker, aarch64, native) SIFIRDAN checkout'tan
+İKİ ARDIŞIK TAM `zig build test` (Debug+ReleaseFast) çalışması yeşil.
+
+**CI matrisi genişletildi (`.github/workflows/ci.yml`):** macOS/aarch64
+(`macos-14`) + Linux/x86-64 (`ubuntu-latest` — Faz R.2'nin x86-64 fiber
+kodunu GERÇEK donanımda, yerel Rosetta çevirisinin AKSİNE, doğrular) +
+Linux/aarch64 (`ubuntu-24.04-arm`) — Linux'ta `qbe` KAYNAKTAN derlenir
+(Homebrew'de YOK). **Bilinçli sınırlama (Faz R.3'ün KENDİ kapsamı DIŞINDA
+bırakıldı, ayrı bir gelecekteki iş):** `compile_swap_asm` (build.zig)
+HÂLÂ HOST derleyicisini (`cc`) kullanıyor — GERÇEK çapraz derleme
+(`-Dtarget` ile HOST'tan FARKLI bir mimari İÇİN tek bir makineden üretim)
+`zig cc -target ...`e geçiş GEREKTİRİR, bu CI matrisinin HER platformu
+KENDİ native runner'ında derlediği İÇİN bu turun kapsamında ZORUNLU
+DEĞİLDİ.
 
 ---
 

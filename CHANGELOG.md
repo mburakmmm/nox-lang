@@ -19,6 +19,9 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   artık aarch64 yanında x86-64'ü (SysV ABI) de destekliyor. Docker'daki bir
   x86-64 Linux konteynerinde (Rosetta ikili çevirisi üzerinden — gerçek
   donanım kadar kesin DEĞİL, dürüstçe belirtilir) doğrulandı.
+- CI matrisi genişletildi (Faz R.3): macOS/aarch64 + Linux/x86-64
+  (`ubuntu-latest`, R.2'nin x86-64 kodunu GERÇEK donanımda doğrular) +
+  Linux/aarch64 (`ubuntu-24.04-arm`) — Linux'ta `qbe` kaynaktan derlenir.
 
 ### Düzeltildi
 - `noxc` artık proje kökü DIŞINDAN (ör. sistem geneli bir kurulumdan)
@@ -42,6 +45,13 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   `zig build test`, `zig-out/lib/nox/stdlib/`nin ÖNCEKİ bir `zig build`
   çalışmasından KALMA olmasına sessizce güveniyordu (temiz bir `zig-out`
   üzerinde GERÇEKTEN başarısız olduğu doğrulandı, şimdi düzeltildi).
+- `cc`nin link satırına `-rdynamic` eklendi (Faz R.3, EN DERİN bulgu) —
+  `nox.json`nin `dlsym(dlopen(null,...), ...)` deseni ana programın KENDİ
+  (QBE'nin ürettiği) sembollerini bulmak İÇİN bunu Linux'ta ZORUNLU kılıyor
+  (macOS'ta örtük). Eksikliği Linux'ta GERÇEK bir çökmeye (geçerli JSON'da)
+  VE bellek sızıntısına (bozuk JSON'un hata yolunda) yol açıyordu. `qbe -t`
+  seçim mantığı da tekrarı önlemek İÇİN yeni `compiler/qbe_target.zig`ye
+  taşındı.
 
 ### Güvenlik
 - `nox.http.serve`e iki DoS sertleştirmesi eklendi (Faz Q.5): bir isteğin
