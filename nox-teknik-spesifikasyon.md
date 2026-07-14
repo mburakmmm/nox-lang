@@ -5191,6 +5191,106 @@ döndüğü doğrulandı. `zig build test` (Debug + ReleaseFast) 275/275 yeşil,
 
 ---
 
+## 3.17 Faz T.3 — DWARF/-g Debug Bilgisi Emisyonu
+
+**Ön araştırma — QBE'nin GERÇEK yeteneği:** `qbe -h` yalnızca `-d <flags>`
+(QBE'nin KENDİ derleyici-içi hata ayıklama dökümü, DWARF İLE İLGİSİZ)
+gösteriyor olsa da, `strings qbe` ikili taraması İKİ belgelenmemiş IL
+anahtar kelimesi ORTAYA ÇIKARDI: `dbgfile "<yol>"` (modül seviyesinde,
+"BUNDAN SONRAKİ fonksiyonlar BU kaynak dosyaya ait" — birden çok kez
+kullanılabilir, HER kullanım BİR SONRAKİ fonksiyona kadar aktif kalır) ve
+`dbgloc <satır>[, <sütun>]` (bir deyimden ÖNCE). Elle yazılmış `.ssa`
+dosyalarıyla DENEYSEL olarak DOĞRULANDI (bkz. aşağı): bunlar hedef
+assembler'ın `.file`/`.loc` sözde-yönergelerine BİREBİR eşleniyor — **QBE
+KENDİSİ DWARF ÜRETMEZ**, yalnızca assembler'a (`as`/`clang`) "üret" TALİMATI
+verir; GERÇEK `.debug_line` bölümünü assembler İNŞA EDER.
+
+**Uygulama:**
+1. **`compiler/codegen_qbe/codegen.zig`:** `Codegen`e `debug_info: bool =
+   false` alanı; `generateModule`e YENİ bir `debug_source_path: ?[]const u8`
+   parametresi (7 çağrı sitesinin HEPSİ güncellendi — `main.zig` + 6 test
+   dosyası, TÜM testler `null` GEÇİRİR, davranış DEĞİŞMEZ) — `null`
+   DIŞINDAYSA modülün EN BAŞINDA `dbgfile "<escaped path>"` yayınlanır
+   (`escapeForQbeString`, ZATEN var olan string-literal kaçış yardımcısı,
+   YENİDEN kullanıldı) VE `gen.debug_info = true` olur. `genStmts` (TÜM
+   deyim kodgen'inin TEK, özyinelemeli dağıtım noktası — T.1'in `checkStmt`
+   deseniyle BİREBİR AYNI, if/while/for/try gövdeleri DAHİL otomatik
+   kapsanır) HER deyimden ÖNCE `dbgloc <stmt.line>` (T.1'in ZATEN var olan
+   `ast.Stmt.line`i, YENİDEN kullanıldı) yayınlar.
+2. **`compiler/main.zig`:** `BuildOpts`e `-g` bayrağı (`debug_info: bool`),
+   `noxc build`/`run`/`test`in HEPSİ (`buildOne`nin TEK ortak yolundan
+   geçtiklerinden) destekler. Varsayılan `false` (M.2'nin "sessiz varsayılan"
+   ilkesiyle TUTARLI — opt-in, çıktı boyutu/derleme süresi ETKİLENMEZ).
+
+**Bilinçli v1 sınırlaması 1 — TEK dosya, çoklu-dosya YANLIŞ atıf:** `module_
+loader`in TÜM stdlib + kullanıcı kodunu TEK bir düz `ast.Module.body`de
+BİRLEŞTİRMESİ (Alt-Faz A) VE `ast.Stmt`in YALNIZCA `.line` taşıyıp HANGİ
+KAYNAK DOSYADAN geldiğini İZLEMEMESİ (Faz T.1) YÜZÜNDEN, TEK bir `dbgfile`
+(kullanıcının ANA dosyası) TÜM modül İÇİN kullanılır — `nox.strings`/`nox.
+json` gibi stdlib fonksiyonlarına ADIM ATILDIĞINDA debugger DOĞRU satır
+numarasını AMA YANLIŞ dosya bağlamında gösterir (GERÇEKTEN gözlemlendi, bkz.
+aşağıdaki doğrulama — `core.nox`nin İÇ satırları 9/13/34-40/44 kullanıcının
+dosyasına ait GİBİ raporlanıyor). KULLANICININ KENDİ kodunda (stdlib'e
+girmeden) satır bilgisi HER ZAMAN doğrudur. TAM çözüm HER üst-düzey `func_
+def`/`class_def`in KENDİ dosyasını izleyen bir `ast.Stmt.origin_file` alanı
+gerektirir (T.1 ÖLÇEĞİNDE AYRI bir faz) — v1 kapsamı DIŞINDA bırakıldı.
+
+**Bilinçli v1 sınırlaması 2 — yalnızca SATIR TABLOSU, DEĞİŞKEN bilgisi YOK:**
+QBE'nin IL'i `dbgfile`/`dbgloc` DIŞINDA HİÇBİR debug yönergesi TANIMIYOR —
+değişken konum listeleri (`DW_TAG_variable`/`DW_AT_location`), tip bilgisi
+VEYA parametre isimleri İÇİN HİÇBİR mekanizma YOK. Bu, gdb'de `break
+dosya:satır` + `run` + `continue`in (satır-tabanlı adımlama/kesme noktaları)
+TAM ÇALIŞTIĞI ama `print <değişken_adı>`in ÇALIŞMADIĞI ("No symbol ... in
+current context") anlamına gelir — GERÇEKTEN test edildi (bkz. aşağı). Bu,
+QBE'nin KENDİSİNİN bir SINIRIDIR (Nox'un tasarım kararı DEĞİL) — DEĞİŞKEN
+düzeyinde inceleme İSTENİRSE QBE'nin DWARF desteğini GENİŞLETMEK (upstream'e
+katkı) YA DA AYRI bir debug-info emisyon katmanı (Nox'un KENDİ `.debug_info`
+üretimi, QBE'yi BYPASS ederek) gerekir — v1 kapsamı DIŞINDA.
+
+**Bilinçli v1 sınırlaması 3 — macOS'ta bağlı (linked) ikili DWARF TAŞIMAZ:**
+bkz. `codegen_qbe/codegen.zig`nin modül üstü notu (TAM gerekçe orada) —
+Apple'ın `ld`si, `clang -g`nin normalde ürettiği Mach-O'ya ÖZGÜ STABS
+sembolleri (`N_OSO`/`N_FUN`, "debug map") OLMADAN DWARF'ı bağlı ikiliye
+KOPYALAMAZ; QBE'nin çıktısı bu sembolleri İÇERMEZ. **GERÇEKTEN test edildi**
+(bu makinede, macOS/aarch64): ara `.o` dosyası (`cc -c prog.s -o prog.o`)
+`dwarfdump --debug-line`de DOĞRU bir DWARF5 satır tablosu GÖSTERİYOR (satır
+5/6 doğru), AMA bağlı ikilide (`cc prog.o -o prog`) `dwarfdump --debug-line`
+BOŞ, `dsymutil prog` "no debug symbols in executable" diyor, `nm -a` HİÇBİR
+STABS sembolü GÖSTERMİYOR. Bu, Mach-O'ya ÖZGÜ AYRI bir mühendislik sorunudur
+(R.2/R.3'ün "gerçek donanımda doğrulanan Linux, dürüstçe belgelenen macOS
+kısıtı" hassasiyetiyle AYNI ruhla) — v1 kapsamı DIŞINDA.
+
+**Doğrulama (üç katman):**
+1. **Birim testleri** (`tests/golden/codegen_golden_test.zig`, YENİ İKİ
+   test): `debug_source_path = null` → üretilen IR metninde `"dbgfile"`/
+   `"dbgloc"` HİÇ GEÇMEZ (opt-in doğrulaması); `debug_source_path =
+   "fibonacci.nox"` → `dbgfile "fibonacci.nox"` VE `dbgloc` YAYINLANIR.
+   Kasıtlı boz (`genStmts`teki `dbgloc` yayın koşulu GEÇİCİ olarak `if
+   (false and ...)`e değiştirildi) → İKİNCİ test GERÇEKTEN kırmızıya döndü
+   → geri getirildi.
+2. **macOS/aarch64 manuel doğrulama** (bu makine): `noxc build -g -o prog
+   prog.nox` sonrası `prog.ssa`/`prog.s` (main.zig BUNLARI temizlemiyor,
+   çıktının YANINDA bırakıyor) İÇİNDE `dbgfile "prog.nox"` + kullanıcı
+   deyimlerinin (2/3/5/6) DOĞRU satırlarına karşılık gelen `dbgloc`
+   satırları GÖZLEMLENDİ; ara `.o`de GERÇEK DWARF (`dwarfdump`) DOĞRULANDI;
+   bağlı ikilide macOS sınırlaması (yukarı, sınırlama 3) GÖZLEMLENDİ.
+3. **GERÇEK Linux/aarch64 (Docker, `debian:bookworm`, kaynaktan derlenmiş
+   QBE 1.3 + sistem `gcc`/`gdb`, R.1-R.3'ün DOĞRULAMA desenİYLE AYNI) —
+   `noxc`nin KENDİSİ konteynerde DERLENDİ, `noxc build -g` GERÇEKTEN
+   çalıştırıldı:** `readelf --debug-dump=decodedline` bağlı ikilide (HİÇBİR
+   ek adım — dsymutil YOK — GEREKMEDEN) DOĞRU satır tablosunu gösterdi;
+   **`gdb -batch -ex 'break dbgtest.nox:6' -ex run`** GERÇEK bir kesme
+   noktası KOYDU, programı ÇALIŞTIRDI, `Breakpoint 1, main () at
+   /tmp/dbgtest.nox:6` İLE DURDU VE kaynak satırını (`6	print(y)`) YAZDIRDI
+   — bu, sınırlama 2'nin ("değişken bilgisi YOK") VE sınırlama 1'in ("stdlib
+   satırları yanlış dosyaya atfedilir", `readelf` çıktısında `core.nox`nin
+   9/13/34-40/44 satırları `dbgtest.nox`a ait GİBİ göründü) SOMUT KANITIDIR
+   — Linux'ta SATIR-DÜZEYİ adımlama/kesme noktaları TAM ÇALIŞIR durumdadır.
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

@@ -152,6 +152,52 @@
 //! senaryo pratikte oluşamaz — ara-yordamsal analiz gerektiren tek durum, bir
 //! `lowlevel` bloğunun DIŞINDAN çağrılamayacağı için bu tasarımda ortaya
 //! çıkmaz. Belgelenmiş, kasıtlı bir tasarım kararıdır.
+//!
+//! **Faz T.3 — DWARF/-g debug bilgisi emisyonu:** QBE 1.3 IL'i iki debug
+//! yönergesi TANIR: `dbgfile "<yol>"` (modül seviyesinde, "şu andan itibaren
+//! üretilen kod BU kaynak dosyaya ait" der — GEREKTİĞİNDE birden çok kez
+//! kullanılabilir, HER `dbgfile` bir SONRAKİ fonksiyona kadar aktif kalır) ve
+//! `dbgloc <satır>[, <sütun>]` (bir deyimden ÖNCE, "şu andan itibaren üretilen
+//! makine kodu KAYNAKTA bu satıra karşılık gelir" der). Bunlar, hedef
+//! assembler'ın (`as`/`clang`) `.file`/`.loc` sözde-yönergelerine BİREBİR
+//! eşlenir — QBE'NİN KENDİSİ DWARF ÜRETMEZ, YALNIZCA assembler'a "üret" der
+//! (assembler GERÇEK `.debug_line` bölümünü inşa eder). `generateModule`e
+//! `debug_source_path: ?[]const u8` VERİLİRSE (`noxc build -g`, bkz.
+//! `main.zig`) `gen.debug_info = true` olur VE `genStmts` (TÜM deyim
+//! kodgen'inin TEK dağıtım noktası — T.1'in `checkStmt`iyle AYNI desen) HER
+//! deyimden ÖNCE `dbgloc <stmt.line>` yayınlar.
+//!
+//! **Bilinçli v1 sınırlaması — TEK dosya, ÇOKLU-DOSYA YANLIŞ ATIF:** TEK BİR
+//! `dbgfile` (kullanıcının ANA giriş dosyası) modülün BAŞINDA yayınlanır —
+//! `module_loader.resolveImportsImpl`in TÜM stdlib'i + kullanıcı kodunu TEK
+//! bir düz `ast.Module.body`de BİRLEŞTİRMESİ (bkz. Alt-Faz A) YÜZÜNDEN, `ast.
+//! Stmt` HENÜZ HANGİ KAYNAK DOSYADAN geldiğini İZLEMİYOR (yalnızca `.line`,
+//! bkz. Faz T.1) — bu YÜZDEN `nox.strings`/`nox.json` gibi stdlib
+//! fonksiyonlarına ADIM ATILDIĞINDA (step into) debugger YANLIŞ dosyada
+//! (kullanıcının dosyasında) YANLIŞ bir satır gösterebilir (DOĞRU satır
+//! NUMARASI ama YANLIŞ DOSYA bağlamında). KULLANICININ KENDİ fonksiyonlarında
+//! (arada stdlib'e girmeden) satır bilgisi HER ZAMAN DOĞRUDUR. TAM çok-dosya
+//! doğruluğu, HER üst-düzey `func_def`/`class_def`in KENDİ kaynak dosyasını
+//! izleyen bir `ast.Stmt.origin_file` alanı (T.1'in `.line` alanıyla AYNI
+//! ölçekte bir genişleme) GEREKTİRİR — v1 kapsamı DIŞINDA BIRAKILDI (bkz.
+//! nox-teknik-spesifikasyon.md §3.17).
+//!
+//! **Bilinçli v1 sınırlaması — macOS'ta bağlı (linked) ikili TAM DWARF
+//! TAŞIMAZ:** Linux'ta (ELF) `.loc`/`.file` yönergeleriyle üretilen DWARF,
+//! DOĞRUDAN bağlı (linked) çalıştırılabilir dosyaya GÖMÜLÜR (ek bir adım
+//! GEREKMEZ, `gdb`/`objdump --dwarf=decodedline` DOĞRUDAN çalışır — GERÇEK
+//! bir Linux/x86-64 Docker konteynerinde DOĞRULANDI, bkz. §3.17). macOS'ta
+//! (Mach-O) İSE ara `.o` dosyası GERÇEK DWARF taşısa BİLE (dwarfdump ile
+//! DOĞRULANABİLİR), Apple'ın `ld`si son çalıştırılabilir dosyaya DWARF'ı
+//! KOPYALAMAZ — bunun yerine derleyicinin (`clang -g`) ayrıca ürettiği,
+//! elle yazılmış assembly'de BULUNMAYAN STABS sembolleriyle (`N_OSO`/`N_FUN`)
+//! kurulan bir "debug map" ÜZERİNDEN `dsymutil`in ayrı bir `.dSYM` paketi
+//! inşa etmesine GÜVENİR. QBE'nin çıktısı bu STABS sembollerini İÇERMEDİĞİNDEN
+//! `dsymutil` "no debug symbols in executable" der VE macOS'ta `lldb`
+//! kaynak-satırı adımlama ÇALIŞMAZ (GERÇEKTEN denenip DOĞRULANDI). Bu, Mach-O'ya
+//! ÖZGÜ, AYRI bir mühendislik sorunudur (R.2/R.3'ün "gerçek donanıkta
+//! doğrulanan Linux, dürüstçe belgelenen macOS kısıtı" hassasiyetiyle AYNI
+//! ruhla) — v1 kapsamı DIŞINDA BIRAKILDI.
 
 const std = @import("std");
 const ast = @import("../parser/ast.zig");
@@ -634,6 +680,13 @@ fn forListIdxName(allocator: std.mem.Allocator, var_name: []const u8) ![]const u
 const Codegen = struct {
     allocator: std.mem.Allocator,
     out: std.Io.Writer.Allocating,
+    /// Faz T.3: `generateModule`e bir `debug_source_path` VERİLDİYSE `true` —
+    /// `genStmts` (TÜM deyim kodgen'inin TEK dağıtım noktası, bkz. `checkStmt`
+    /// İLE AYNI T.1 deseni) HER deyimden ÖNCE bir `dbgloc <satır>` (QBE IL,
+    /// `.loc <dosya> <satır>` derleyici direktifine düşer — bkz. modül üstü
+    /// not) yayınlar. `false` İKEN sıfır ek maliyet/çıktı (v1'de OPT-IN,
+    /// `-g` bayrağı OLMADAN varsayılan çıktı DEĞİŞMEZ).
+    debug_info: bool = false,
     functions: std.StringHashMapUnmanaged(FuncSig) = .empty,
     /// `extern def` bildirimleri — AYRI bir tablo (normal `functions`dan
     /// bağımsız): çağrı sitesi kodgen'i temelde farklıdır (bkz. `genCall`) —
@@ -2065,6 +2118,14 @@ const Codegen = struct {
 
     fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) CodegenError!void {
         for (stmts) |stmt| {
+            // Faz T.3: bkz. modül üstü not — `genStmts` TÜM deyim kodgen'inin
+            // TEK, özyinelemeli dağıtım noktası olduğundan (if/while/for/try
+            // gövdeleri DAHİL), burada TEK bir `dbgloc` yayını HER deyimi
+            // (iç içe olanlar DAHİL) otomatik kapsar (T.1'in `checkStmt`
+            // deseniyle AYNI).
+            if (self.debug_info and stmt.line > 0) {
+                try self.out.writer.print("    dbgloc {d}\n", .{stmt.line});
+            }
             switch (stmt.kind) {
                 .return_stmt => |r| {
                     if (r) |e| {
@@ -4295,8 +4356,17 @@ const Codegen = struct {
 /// örtük olarak generic olabilir — bu durumda ORİJİNAL AST düğümünün
 /// `type_params` alanı BOŞ kalır (kullanıcı hiç `[T]` yazmadı), bu yüzden
 /// yalnızca `type_params.len > 0` kontrolü YETERSİZDİR.
-pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8) CodegenError![]u8 {
+/// `debug_source_path`: Faz T.3, `null` DIŞINDA VERİLİRSE (bkz. modül üstü
+/// not) `dbgfile`/`dbgloc` yönergeleri yayınlanır — `null` İKEN çıktı
+/// ÖNCEKİYLE BİREBİR AYNI kalır (opt-in, sıfır davranış değişikliği).
+pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, debug_source_path: ?[]const u8) CodegenError![]u8 {
     var gen: Codegen = .{ .allocator = allocator, .out = .init(allocator) };
+
+    if (debug_source_path) |path| {
+        gen.debug_info = true;
+        const escaped = try escapeForQbeString(allocator, path);
+        try gen.out.writer.print("dbgfile \"{s}\"\n", .{escaped});
+    }
 
     try gen.out.writer.writeAll(
         \\data $fmt_int = { b "%lld\n", b 0 }

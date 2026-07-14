@@ -44,7 +44,7 @@ fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.
     var generic_it = checker_state.generic_functions.keyIterator();
     while (generic_it.next()) |k| try generic_names.append(allocator, k.*);
 
-    const ir = try nox.codegen.generateModule(allocator, module, checker_state.instantiations.items, generic_names.items);
+    const ir = try nox.codegen.generateModule(allocator, module, checker_state.instantiations.items, generic_names.items, null);
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -260,7 +260,41 @@ test "codegen: lowlevel arenasından bir değeri bloktan return etmek reddedilir
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    try std.testing.expectError(error.Unsupported, nox.codegen.generateModule(allocator, module, &.{}, &.{}));
+    try std.testing.expectError(error.Unsupported, nox.codegen.generateModule(allocator, module, &.{}, &.{}, null));
+}
+
+test "codegen: Faz T.3 — debug_source_path VERİLMEDEN dbgfile/dbgloc HİÇ üretilmez (opt-in, sıfır davranış değişikliği)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/fibonacci.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, null);
+    try std.testing.expect(std.mem.indexOf(u8, ir, "dbgfile") == null);
+    try std.testing.expect(std.mem.indexOf(u8, ir, "dbgloc") == null);
+}
+
+test "codegen: Faz T.3 — debug_source_path VERİLİRSE dbgfile + doğru satır numaralı dbgloc üretilir" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/fibonacci.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, "fibonacci.nox");
+    try std.testing.expect(std.mem.indexOf(u8, ir, "dbgfile \"fibonacci.nox\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ir, "dbgloc") != null);
 }
 
 test "codegen(çalıştır): except X as e bir döngü içinde yeniden kullanılır — eski istisna sızmaz" {

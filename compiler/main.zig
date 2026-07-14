@@ -96,6 +96,11 @@ const BuildOpts = struct {
     path: ?[]const u8 = null,
     verbose: bool = false,
     output: ?[]const u8 = null,
+    /// Faz T.3: `-g` — QBE IR'a `dbgfile`/`dbgloc` yönergeleri (bkz.
+    /// `codegen_qbe/codegen.zig`nin modül üstü notu) yayınlanmasını
+    /// TETİKLER. Varsayılan `false` — M.2'nin "sessiz varsayılan" ilkesiyle
+    /// TUTARLI (opt-in, çıktı boyutunu/derleme süresini gereksiz büyütmez).
+    debug_info: bool = false,
 };
 
 fn parseBuildOpts(args: []const []const u8) BuildOpts {
@@ -105,6 +110,8 @@ fn parseBuildOpts(args: []const []const u8) BuildOpts {
         const arg = args[i];
         if (std.mem.eql(u8, arg, "--dump") or std.mem.eql(u8, arg, "-v")) {
             opts.verbose = true;
+        } else if (std.mem.eql(u8, arg, "-g")) {
+            opts.debug_info = true;
         } else if (std.mem.eql(u8, arg, "-o")) {
             i += 1;
             if (i < args.len) opts.output = args[i];
@@ -132,7 +139,7 @@ fn cmdBuild(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
         std.debug.print("{s}", .{usage});
         std.process.exit(1);
     };
-    const out = try buildOne(gpa, io, a, path_arg, opts.verbose, opts.output, nox_home, resource_dirs);
+    const out = try buildOne(gpa, io, a, path_arg, opts.verbose, opts.output, nox_home, resource_dirs, opts.debug_info);
     std.debug.print("derlendi: {s}\n", .{out});
 }
 
@@ -152,7 +159,7 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
     };
 
     const cache_bin_path = try cacheBinPath(io, a, path_arg);
-    const bin_path = try buildOne(gpa, io, a, path_arg, opts.verbose, cache_bin_path, nox_home, resource_dirs);
+    const bin_path = try buildOne(gpa, io, a, path_arg, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info);
 
     const code = try runAndWait(io, a, bin_path, split.after);
     std.process.exit(code);
@@ -197,7 +204,7 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
     if (opts.path) |t| {
         if (std.mem.endsWith(u8, t, ".nox")) {
             const cache_bin_path = try cacheBinPath(io, a, t);
-            const bin_path = try buildOne(gpa, io, a, t, opts.verbose, cache_bin_path, nox_home, resource_dirs);
+            const bin_path = try buildOne(gpa, io, a, t, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info);
             const code = try runAndWait(io, a, bin_path, &.{});
             std.process.exit(code);
         }
@@ -223,7 +230,7 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
         const fa = file_arena.allocator();
 
         const cache_bin_path = try cacheBinPath(io, fa, file);
-        const bin_path = try buildOne(gpa, io, fa, file, opts.verbose, cache_bin_path, nox_home, resource_dirs);
+        const bin_path = try buildOne(gpa, io, fa, file, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info);
         const code = runAndWait(io, fa, bin_path, &.{}) catch 1;
         if (code == 0) {
             std.debug.print("GECTI: {s}\n", .{file});
@@ -366,7 +373,7 @@ fn resolveImportsForBuild(
 /// yolunu döner. Hata durumlarında (mevcut davranışla BİREBİR aynı mesaj/
 /// çıkış kodu) doğrudan `std.process.exit(1)` çağırır — `cmdBuild`/`cmdRun`
 /// bu davranışı DEĞİŞTİRMEDEN miras alır.
-fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: []const u8, verbose: bool, output_override: ?[]const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs) ![]const u8 {
+fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: []const u8, verbose: bool, output_override: ?[]const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, debug_info: bool) ![]const u8 {
     const source = try std.Io.Dir.cwd().readFileAlloc(io, path_arg, gpa, .limited(1024 * 1024));
     defer gpa.free(source);
 
@@ -425,7 +432,11 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         try stdout_writer.interface.flush();
     }
 
-    const ir = codegen.generateModule(a, module, instantiations, generic_names.items) catch |err| switch (err) {
+    // Faz T.3: `-g` VERİLDİYSE `path_arg` `dbgfile` olarak gömülür — bkz.
+    // codegen.zig'in modül üstü notu (TEK dosya, stdlib-merge yanlış-atıf
+    // sınırlaması bilinçli olarak KABUL EDİLDİ).
+    const debug_source_path: ?[]const u8 = if (debug_info) path_arg else null;
+    const ir = codegen.generateModule(a, module, instantiations, generic_names.items, debug_source_path) catch |err| switch (err) {
         error.Unsupported => {
             std.debug.print(
                 "codegen: bu program şu an desteklenmeyen bir yapı içeriyor " ++

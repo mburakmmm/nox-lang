@@ -51,6 +51,17 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   kullanan 5 test dosyası TÜM kurtarılmış tanılamaları kontrol edip
   yazdıracak şekilde güncellendi (aksi halde bir hata sessizce codegen'e
   sızardı).
+- `noxc build/run/test`e `-g` bayrağı eklendi (Faz T.3) — QBE IL'in
+  belgelenmemiş `dbgfile`/`dbgloc` yönergeleri (assembler'ın `.file`/`.loc`
+  sözde-yönergelerine BİREBİR eşlenir) üzerinden GERÇEK DWARF satır tablosu
+  üretir. Linux'ta (GERÇEK bir Docker aarch64 konteynerinde `noxc build -g`
+  ile uçtan uca doğrulandı) `gdb`de dosya:satır kesme noktaları/adımlama
+  TAM ÇALIŞIYOR. Bilinen v1 sınırlamaları (dürüstçe belgelendi, bkz. spec
+  §3.17): yalnızca SATIR bilgisi (değişken inceleme YOK — QBE'nin KENDİ
+  sınırı), stdlib'e (import edilen modüllere) adım atıldığında dosya
+  yanlış atfedilebilir (satır numarası doğru, dosya yanlış), macOS'ta
+  BAĞLI (linked) ikili DWARF taşımaz (Apple'ın STABS/debug-map mekanizması
+  ayrı bir mühendislik sorunu — ara `.o` GERÇEK DWARF taşır, doğrulandı).
 
 ### Düzeltildi
 - `noxc` artık proje kökü DIŞINDAN (ör. sistem geneli bir kurulumdan)
