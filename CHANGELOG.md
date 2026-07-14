@@ -98,6 +98,16 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   ("yalnızca stdlib") davranışını aynen koruyor — birinci-taraf importlar
   bilinçli olarak bir manifest gerektiriyor (Go'nun `go.mod`u/Cargo'nun
   `Cargo.toml`ı ile tutarlı).
+- `import X as Y` ve `from X import Y [as Z]` sözdizimi eklendi (Faz U.3) —
+  `import nox.http as h` ile `h.get(...)` `nox.http.get(...)`e eşdeğer olur;
+  `from nox.http import get` ile `get(...)` modül niteliği olmadan doğrudan
+  çağrılabilir (`from nox.http import get as g` ile yerel takma ad da
+  verilebilir). Bir `from`la içe aktarılan isim kullanıcının kendi yerel bir
+  tanımıyla çakışırsa yerel tanım her zaman önceliklidir. Bilinen v1
+  sınırlaması: `nox.http.serve` özel yerleşiği `import ... as`la tam
+  desteklenir ama `from nox.http import serve` ile çıplak çağrı henüz özel
+  olarak tanınmıyor (güvenli bir "tanımsız değişken" hatasına düşer, sessiz
+  yanlış davranış değil).
 
 ### Düzeltildi
 - `noxc` artık proje kökü DIŞINDAN (ör. sistem geneli bir kurulumdan)

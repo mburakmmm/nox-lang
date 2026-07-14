@@ -610,7 +610,7 @@ fn stmtUsesAsync(stmt: ast.Stmt) bool {
             }
             break :blk false;
         },
-        .protocol_def, .extern_def, .pass_stmt, .import_stmt => false,
+        .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt => false,
         .return_stmt => |r| if (r) |e| exprUsesAsync(e) else false,
         .raise_stmt => |e| exprUsesAsync(e),
         .try_stmt => |t| blk: {
@@ -2220,7 +2220,7 @@ const Codegen = struct {
                 .try_stmt => |t| try self.genTry(t, ret_qtype),
                 .lowlevel_stmt => |ll| try self.genLowLevel(ll, ret_qtype),
                 .pass_stmt => {},
-                .func_def, .class_def, .protocol_def, .extern_def, .import_stmt => return error.Unsupported,
+                .func_def, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => return error.Unsupported,
             }
         }
     }
@@ -3520,7 +3520,7 @@ const Codegen = struct {
                 try self.collectRaiseInfoExpr(f.iterable, info);
                 try self.collectRaiseInfoStmts(f.body, info);
             },
-            .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .import_stmt => {},
+            .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt => {},
             .return_stmt => |r| if (r) |e| try self.collectRaiseInfoExpr(e, info),
             .raise_stmt => |e| {
                 info.direct_unsafe = true;
@@ -4737,7 +4737,7 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     defer loose.deinit(allocator);
     for (module.body) |stmt| {
         switch (stmt.kind) {
-            .func_def, .class_def, .protocol_def, .extern_def, .import_stmt => {},
+            .func_def, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
             else => try loose.append(allocator, stmt),
         }
     }

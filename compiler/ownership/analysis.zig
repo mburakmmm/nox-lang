@@ -258,7 +258,7 @@ pub const Analyzer = struct {
                 // tahsis stratejisi (arena) tarafından yönetiliyorlar ve bu
                 // modülün ASAP/ARC karar alanının bir parçası değiller (bkz.
                 // nox-teknik-spesifikasyon.md §3.8).
-                .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .lowlevel_stmt, .import_stmt => {},
+                .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .lowlevel_stmt, .import_stmt, .from_import_stmt => {},
             }
         }
     }

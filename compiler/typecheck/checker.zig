@@ -164,6 +164,20 @@ pub const Checker = struct {
     /// düzleştirip bu kümeyle eşleştirir — bkz. `tryResolveQualifiedCall`in
     /// belge notu.
     imported_modules: std.StringHashMapUnmanaged(void) = .{},
+    /// Faz U.3: `import X.Y as Z` — takma ad (`"Z"`) → TAM modül yolunun
+    /// segmentleri (`["X","Y"]`). `substituteAlias` bir çağrı sitesindeki
+    /// düzleştirilmiş noktalı zincirin İLK segmentini bu haritada ararsa,
+    /// onu HEDEF segmentlerle DEĞİŞTİRİR (ör. `Z.foo` → `["X","Y","foo"]`)
+    /// — geri kalan çözümleme (`tryResolveQualifiedCall`) DEĞİŞMEDEN devam
+    /// eder.
+    module_aliases: std.StringHashMapUnmanaged([]const []const u8) = .{},
+    /// Faz U.3: `from X.Y import foo[as bar]` — yerel ÇIPLAK isim (`"bar"`
+    /// ya da `"foo"`) → mangled TAM sembol adı (`"X_Y_foo"`). `checkCall`in
+    /// `.identifier` dalı, NORMAL çözümleme (yerel fonksiyon/sınıf) BAŞARISIZ
+    /// olduğunda bu haritaya bakar — böylece `from`la içe aktarılan bir isim
+    /// yerel bir tanımla ÇAKIŞTIĞINDA yerel tanım HER ZAMAN ÖNCELİKLİDİR
+    /// (Python'un gölgeleme davranışına BENZER, ama statik/tek-geçişli).
+    from_imports: std.StringHashMapUnmanaged([]const u8) = .{},
     /// Faz T.2: `checkModule`nin üst-düzey döngüsünde (fonksiyon/sınıf/gevşek
     /// deyim SINIRINDA) VE `checkClassBody`nin metod döngüsünde YAKALANIP
     /// KURTARILAN tanılamalar — bkz. modül üstü not. `recordDiagnostic`
@@ -485,27 +499,28 @@ pub const Checker = struct {
         }
     }
 
-    /// `c`nin callee'sinin `import` edilmiş bir stdlib modülüne noktalı
-    /// nitelikli bir erişim (ör. `nox.http.get(url)`) olup OLMADIĞINI dener.
-    /// Öyleyse: tüm segmentler `"_"` ile birleştirilip (`"nox_http_get"`)
-    /// karşılık gelen fonksiyon/kurucu `self.functions`/`self.classes`de
-    /// (main.zig'in stdlib birleştirmesi tarafından ZATEN bu mangled adla
-    /// kaydedilmiş olmalı — bkz. modül üstü not) aranır; bulunursa normal
-    /// argüman denetimi yapılır VE **çağrının callee'si YERİNDE mangled
-    /// isme yeniden yazılır** (Faz 10'un `instantiateGeneric`iyle AYNI
-    /// desen) — böylece codegen'in HİÇBİR ek işlem yapmasına gerek kalmaz.
-    /// Zincir bir import'a karşılık GELMİYORSA (ör. sıradan `p.scale(2)`
-    /// bir yerel değişken üzerinde) `null` döner — çağıran MEVCUT metod-
-    /// çağrısı çözümlemesine devam eder.
-    fn tryResolveQualifiedCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!?Type {
-        var segments: std.ArrayListUnmanaged([]const u8) = .empty;
-        if (!(try self.flattenDottedPath(c.callee.*, &segments))) return null;
-        if (segments.items.len < 2) return null;
+    /// Faz U.3: `segments[0]` bilinen bir modül TAKMA ADI (`self.module_aliases`)
+    /// İSE, onu HEDEF modülün TAM segment dizisiyle DEĞİŞTİRİR (ör.
+    /// `import nox.http as h` sonrası `["h","get"]` → `["nox","http","get"]`)
+    /// — geri kalan çözümleme (module_path/mangled hesaplaması) bu genişletilmiş
+    /// listeyle DEĞİŞMEDEN çalışır. Takma ad EŞLEŞMİYORSA `segments` OLDUĞU
+    /// GİBİ döner (kopyasız — yaygın durum İÇİN sıfır ek tahsis).
+    fn substituteAlias(self: *Checker, segments: []const []const u8) TypeError![]const []const u8 {
+        if (segments.len == 0) return segments;
+        const target = self.module_aliases.get(segments[0]) orelse return segments;
+        var out: std.ArrayListUnmanaged([]const u8) = .empty;
+        try out.appendSlice(self.allocator, target);
+        try out.appendSlice(self.allocator, segments[1..]);
+        return out.toOwnedSlice(self.allocator);
+    }
 
-        const module_path = try self.joinSegments(segments.items[0 .. segments.items.len - 1], '.');
-        if (!self.imported_modules.contains(module_path)) return null;
-
-        const mangled = try self.joinSegments(segments.items, '_');
+    /// Faz U.3: `tryResolveQualifiedCall`in `mangled` sembolü BULUNDUKTAN
+    /// SONRAKİ ORTAK gövdesi (fonksiyon/kurucu ara + argüman denetimi +
+    /// callee'yi YERİNDE yeniden yaz) — hem noktalı nitelikli çağrılar
+    /// (`X.Y.foo(...)`) hem `from X.Y import foo` İLE bağlanan ÇIPLAK
+    /// çağrılar (`foo(...)`) TARAFINDAN paylaşılır (bkz. `checkCall`in
+    /// `.identifier` dalındaki `self.from_imports` kullanımı).
+    fn resolveMangledCall(self: *Checker, ctx: *FnCtx, c: ast.Call, mangled: []const u8, not_found_msg: []const u8) TypeError!Type {
         if (self.functions.get(mangled)) |sig| {
             if (self.async_functions.contains(mangled)) {
                 return self.fail(error.TypeMismatch, "'{s}' bir 'async def' fonksiyonudur, yalnızca 'spawn' ile başlatılabilir", .{mangled});
@@ -521,7 +536,33 @@ pub const Checker = struct {
             c.callee.* = .{ .identifier = mangled };
             return Type{ .class = mangled };
         }
-        return self.fail(error.UndefinedFunction, "'{s}' modülünün '{s}' adlı bir üyesi yok", .{ module_path, segments.items[segments.items.len - 1] });
+        return self.fail(error.UndefinedFunction, "{s}", .{not_found_msg});
+    }
+
+    /// `c`nin callee'sinin `import` edilmiş bir stdlib modülüne noktalı
+    /// nitelikli bir erişim (ör. `nox.http.get(url)`) olup OLMADIĞINI dener.
+    /// Öyleyse: tüm segmentler `"_"` ile birleştirilip (`"nox_http_get"`)
+    /// karşılık gelen fonksiyon/kurucu `self.functions`/`self.classes`de
+    /// (main.zig'in stdlib birleştirmesi tarafından ZATEN bu mangled adla
+    /// kaydedilmiş olmalı — bkz. modül üstü not) aranır; bulunursa normal
+    /// argüman denetimi yapılır VE **çağrının callee'si YERİNDE mangled
+    /// isme yeniden yazılır** (Faz 10'un `instantiateGeneric`iyle AYNI
+    /// desen) — böylece codegen'in HİÇBİR ek işlem yapmasına gerek kalmaz.
+    /// Zincir bir import'a karşılık GELMİYORSA (ör. sıradan `p.scale(2)`
+    /// bir yerel değişken üzerinde) `null` döner — çağıran MEVCUT metod-
+    /// çağrısı çözümlemesine devam eder.
+    fn tryResolveQualifiedCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!?Type {
+        var raw_segments: std.ArrayListUnmanaged([]const u8) = .empty;
+        if (!(try self.flattenDottedPath(c.callee.*, &raw_segments))) return null;
+        if (raw_segments.items.len < 2) return null;
+        const segments = try self.substituteAlias(raw_segments.items);
+
+        const module_path = try self.joinSegments(segments[0 .. segments.len - 1], '.');
+        if (!self.imported_modules.contains(module_path)) return null;
+
+        const mangled = try self.joinSegments(segments, '_');
+        const not_found_msg = try std.fmt.allocPrint(self.allocator, "'{s}' modülünün '{s}' adlı bir üyesi yok", .{ module_path, segments[segments.len - 1] });
+        return try self.resolveMangledCall(ctx, c, mangled, not_found_msg);
     }
 
     /// `nox.http.serve(port, handle[, max_connections])` — stdlib fazı
@@ -538,12 +579,14 @@ pub const Checker = struct {
     /// `tryResolveQualifiedCall`a (`nox.http`in DİĞER üyeleri İÇİN,
     /// DEĞİŞMEMİŞ) devam eder.
     fn tryResolveHttpServeCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!?Type {
-        var segments: std.ArrayListUnmanaged([]const u8) = .empty;
-        if (!(try self.flattenDottedPath(c.callee.*, &segments))) return null;
-        if (segments.items.len != 3) return null;
-        if (!std.mem.eql(u8, segments.items[0], "nox")) return null;
-        if (!std.mem.eql(u8, segments.items[1], "http")) return null;
-        if (!std.mem.eql(u8, segments.items[2], "serve")) return null;
+        var raw_segments: std.ArrayListUnmanaged([]const u8) = .empty;
+        if (!(try self.flattenDottedPath(c.callee.*, &raw_segments))) return null;
+        if (raw_segments.items.len < 2) return null;
+        const segments = try self.substituteAlias(raw_segments.items);
+        if (segments.len != 3) return null;
+        if (!std.mem.eql(u8, segments[0], "nox")) return null;
+        if (!std.mem.eql(u8, segments[1], "http")) return null;
+        if (!std.mem.eql(u8, segments[2], "serve")) return null;
         if (!self.imported_modules.contains("nox.http")) return null;
 
         if (c.args.len != 2 and c.args.len != 3) {
@@ -666,6 +709,32 @@ pub const Checker = struct {
                 .import_stmt => |imp| {
                     const joined = try self.joinSegments(imp.segments, '.');
                     try self.imported_modules.put(self.allocator, joined, {});
+                    // Faz U.3: `import X.Y as Z` — `Z`, `imp.segments`in
+                    // (TAM yol) TAKMA ADI olarak kaydedilir; `tryResolveQualifiedCall`/
+                    // `tryResolveHttpServeCall` bir çağrı sitesinde `Z.foo`
+                    // gördüğünde `Z`yi `imp.segments`e SPLICE eder (bkz.
+                    // `substituteAlias`in belge notu).
+                    if (imp.alias) |alias| {
+                        try self.module_aliases.put(self.allocator, alias, imp.segments);
+                    }
+                },
+                // Faz U.3: `from X.Y import foo[as bar]` — HER üye, MODÜL
+                // niteliği OLMADAN doğrudan çağrılabilecek ÇIPLAK bir yerel
+                // isme (`bar` VERİLDİYSE `bar`, aksi halde `foo`) mangled
+                // sembol adını (`X_Y_foo`) eşler (bkz. `self.from_imports`in
+                // belge notu, `checkCall`in `.identifier` dalındaki
+                // kullanımı).
+                .from_import_stmt => |fi| {
+                    const joined = try self.joinSegments(fi.segments, '.');
+                    try self.imported_modules.put(self.allocator, joined, {});
+                    for (fi.names) |nm| {
+                        var mangled_segments: std.ArrayListUnmanaged([]const u8) = .empty;
+                        try mangled_segments.appendSlice(self.allocator, fi.segments);
+                        try mangled_segments.append(self.allocator, nm.name);
+                        const mangled = try self.joinSegments(mangled_segments.items, '_');
+                        const local_name = nm.alias orelse nm.name;
+                        try self.from_imports.put(self.allocator, local_name, mangled);
+                    }
                 },
                 else => self.checkStmt(&top_ctx, stmt) catch |e| try self.recordDiagnostic(e),
             }
@@ -826,6 +895,7 @@ pub const Checker = struct {
             .protocol_def => return self.fail(error.TypeMismatch, "protokol tanımı yalnızca modül seviyesinde olabilir", .{}),
             .extern_def => return self.fail(error.TypeMismatch, "'extern def' yalnızca modül seviyesinde olabilir", .{}),
             .import_stmt => return self.fail(error.TypeMismatch, "'import' yalnızca modül seviyesinde olabilir", .{}),
+            .from_import_stmt => return self.fail(error.TypeMismatch, "'from ... import' yalnızca modül seviyesinde olabilir", .{}),
             .return_stmt => |r| {
                 const expected = ctx.expected_return orelse
                     return self.fail(error.TypeMismatch, "'return' yalnızca fonksiyon/metod içinde kullanılabilir", .{});
@@ -1279,6 +1349,14 @@ pub const Checker = struct {
                     const init_sig = info.init_sig orelse FuncSig{ .params = &.{}, .return_type = .none };
                     try self.checkArgs(ctx, init_sig.params, c.args, name);
                     return .{ .class = name };
+                }
+                // Faz U.3: `from X.Y import foo[as bar]` ile bağlanan ÇIPLAK
+                // bir çağrı (`bar(...)`) — yerel bir fonksiyon/sınıf tanımı
+                // (YUKARIDAKİ dallar) HER ZAMAN ÖNCELİKLİDİR, bu dal yalnızca
+                // NORMAL çözümleme başarısız olduğunda denenir.
+                if (self.from_imports.get(name)) |mangled| {
+                    const not_found_msg = try std.fmt.allocPrint(self.allocator, "'{s}' içe aktarılamadı (kaynak modülde '{s}' adlı bir üye yok)", .{ name, mangled });
+                    return try self.resolveMangledCall(ctx, c, mangled, not_found_msg);
                 }
                 return self.fail(error.UndefinedFunction, "tanımsız fonksiyon veya sınıf: {s}", .{name});
             },

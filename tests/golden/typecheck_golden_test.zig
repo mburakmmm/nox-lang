@@ -296,3 +296,10 @@ test "golden(typecheck): Faz U.1 — 'list.append()' alıcısı çıplak bir isi
         @embedFile("typecheck_cases/err_list_append_non_identifier_receiver.expected"),
     );
 }
+
+test "golden(typecheck): Faz U.3 — 'from X import Y' — Y kaynak modülde YOKSA açık hata" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_from_import_unknown_member.nox"),
+        @embedFile("typecheck_cases/err_from_import_unknown_member.expected"),
+    );
+}

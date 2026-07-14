@@ -312,6 +312,22 @@ const Printer = struct {
                     if (idx > 0) try self.writer.writeAll(".");
                     try self.writer.writeAll(seg);
                 }
+                if (imp.alias) |alias| try self.writer.print(" as {s}", .{alias});
+                try self.line(stmt.line);
+            },
+            .from_import_stmt => |fi| {
+                try self.indentTo(depth);
+                try self.writer.writeAll("from ");
+                for (fi.segments, 0..) |seg, idx| {
+                    if (idx > 0) try self.writer.writeAll(".");
+                    try self.writer.writeAll(seg);
+                }
+                try self.writer.writeAll(" import ");
+                for (fi.names, 0..) |nm, idx| {
+                    if (idx > 0) try self.writer.writeAll(", ");
+                    try self.writer.writeAll(nm.name);
+                    if (nm.alias) |alias| try self.writer.print(" as {s}", .{alias});
+                }
                 try self.line(stmt.line);
             },
             .pass_stmt => {

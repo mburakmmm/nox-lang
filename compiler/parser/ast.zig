@@ -184,9 +184,27 @@ pub const LowLevelStmt = struct {
 /// yerel kapsama `segments[0]` (ör. `"nox"`) adı girer, çağrı sitelerinde
 /// TAM noktalı yol (`nox.http.get(...)`) kullanılır (bkz. nox-teknik-
 /// spesifikasyon.md, stdlib fazı §A). Yalnızca modül seviyesinde geçerlidir.
-/// `as`/`from ... import` v1 kapsamı DIŞI (basitlik için ertelendi).
+/// Faz U.3: `import nox.http as h` — `alias` VERİLDİĞİNDE, `h` YERİNE TAM
+/// yolun (`nox.http`) KENDİSİNE bağlanır (Python'un `import a.b as x`
+/// semantiğiyle AYNI) — `h.get(...)` `nox.http.get(...)` İLE EŞDEĞERDİR.
 pub const ImportStmt = struct {
     segments: []const []const u8,
+    alias: ?[]const u8 = null,
+};
+
+/// Faz U.3: `from nox.http import get` / `from nox.http import get as g` —
+/// `names` içindeki HER üye, MODÜL niteliği OLMADAN doğrudan yerel kapsama
+/// bağlanır (`alias` VERİLMEDİYSE `name`in KENDİSİYLE, VERİLDİYSE `alias`
+/// ile). Bkz. `ast.ImportStmt`in belge notu — dosya çözümlemesi (`segments`)
+/// AYNI mekanizmayı kullanır, yalnızca yerel isimlendirme FARKLIDIR.
+pub const FromImportName = struct {
+    name: []const u8,
+    alias: ?[]const u8 = null,
+};
+
+pub const FromImportStmt = struct {
+    segments: []const []const u8,
+    names: []const FromImportName,
 };
 
 /// Faz T.1: kaynak pozisyonu — bilinçli olarak yalnızca DEYİM (statement)
@@ -217,6 +235,7 @@ pub const StmtKind = union(enum) {
     try_stmt: TryStmt,
     lowlevel_stmt: LowLevelStmt,
     import_stmt: ImportStmt,
+    from_import_stmt: FromImportStmt,
     pass_stmt,
 };
 

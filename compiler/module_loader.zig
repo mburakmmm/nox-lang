@@ -141,10 +141,17 @@ fn loadImportsRecursive(
     project_root: ?[]const u8,
 ) LoadError!void {
     for (stmts) |stmt| {
-        if (stmt.kind != .import_stmt) continue;
-        const imp = stmt.kind.import_stmt;
+        // Faz U.3: `from X.Y import foo` DA `import X.Y`İLE AYNI dosya
+        // çözümlemesini tetikler — YALNIZCA `segments` (modül YOLU) İLGİLİDİR,
+        // `.from_import_stmt`in `names`i (YEREL takma adlar) checker'ın
+        // ilgisidir, bu dosyanın DEĞİL.
+        const segments: []const []const u8 = switch (stmt.kind) {
+            .import_stmt => |imp| imp.segments,
+            .from_import_stmt => |fi| fi.segments,
+            else => continue,
+        };
 
-        const joined_dot = try joinWith(a, imp.segments, '.');
+        const joined_dot = try joinWith(a, segments, '.');
         if (loaded.contains(joined_dot)) continue;
         try loaded.put(a, joined_dot, {});
 
@@ -157,23 +164,23 @@ fn loadImportsRecursive(
         // (yalnızca `resolveProjectImports`) VE ilk segment `"nox"`
         // DEĞİLSE, ÖNCE alias haritasına, SONRA (Faz U.2) `project_root`a
         // bakılır — bkz. `resolveProjectImports`in belge notu.
-        const is_nox_stdlib = imp.segments.len == 0 or std.mem.eql(u8, imp.segments[0], "nox");
+        const is_nox_stdlib = segments.len == 0 or std.mem.eql(u8, segments[0], "nox");
         const file_path = blk: {
             if (alias_roots) |roots| {
                 if (!is_nox_stdlib) {
-                    if (roots.get(imp.segments[0])) |root| {
-                        const rest = try joinWith(a, imp.segments[1..], '/');
+                    if (roots.get(segments[0])) |root| {
+                        const rest = try joinWith(a, segments[1..], '/');
                         break :blk try std.fmt.allocPrint(a, "{s}/{s}.nox", .{ root, rest });
                     }
                     if (project_root) |proot| {
-                        const rel_path = try joinWith(a, imp.segments, '/');
+                        const rel_path = try joinWith(a, segments, '/');
                         const candidate = try std.fmt.allocPrint(a, "{s}/{s}.nox", .{ proot, rel_path });
                         if (fileExistsAbsolute(io, candidate)) break :blk candidate;
                     }
                     return error.UnknownImportAlias;
                 }
             }
-            const rel_path = try joinWith(a, imp.segments, '/');
+            const rel_path = try joinWith(a, segments, '/');
             break :blk try std.fmt.allocPrint(a, "{s}/{s}.nox", .{ stdlib_root, rel_path });
         };
 
@@ -202,8 +209,8 @@ fn loadImportsRecursive(
         var rename_map: std.StringHashMapUnmanaged([]const u8) = .empty;
         for (stdlib_module.body) |s| {
             switch (s.kind) {
-                .func_def => |fd| try rename_map.put(a, fd.name, try mangleWith(a, imp.segments, fd.name)),
-                .class_def => |cd| try rename_map.put(a, cd.name, try mangleWith(a, imp.segments, cd.name)),
+                .func_def => |fd| try rename_map.put(a, fd.name, try mangleWith(a, segments, fd.name)),
+                .class_def => |cd| try rename_map.put(a, cd.name, try mangleWith(a, segments, cd.name)),
                 else => {},
             }
         }
@@ -384,6 +391,11 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
         // YOLUdur, Nox bildirim adı DEĞİLDİR; yeniden adlandırmaya gerek yok.
         // (Zaten `loadImportsRecursive` tarafından AYRICA işlenir.)
         .import_stmt => return s,
+        // Faz U.3: `.import_stmt` İLE AYNI gerekçe — `from ... import`ın
+        // `segments`i de bir DOSYA YOLUdur, `names`teki üye adları YEREL
+        // takma adlardır (Nox bildirim adları DEĞİL) — yeniden adlandırmaya
+        // gerek yok.
+        .from_import_stmt => return s,
         .pass_stmt => return s,
     };
     return .{ .kind = kind, .line = s.line };

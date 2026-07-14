@@ -501,6 +501,27 @@ test "codegen(çalıştır): import nox.testmod — kullanıcının aynı adlı 
     );
 }
 
+test "codegen(çalıştır): Faz U.3 — import nox.testmod as tm (takma ad üzerinden nitelikli çağrı)" {
+    try expectGolden(
+        @embedFile("codegen_cases/import_as_alias.nox"),
+        @embedFile("codegen_cases/import_as_alias.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz U.3 — from nox.testmod import double/quadruple as quad (çıplak çağrı)" {
+    try expectGolden(
+        @embedFile("codegen_cases/from_import_basic.nox"),
+        @embedFile("codegen_cases/from_import_basic.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz U.3 — from import ile gelen isim, KULLANICININ yerel tanımıyla GÖLGELENİR" {
+    try expectGolden(
+        @embedFile("codegen_cases/from_import_shadowed_by_local.nox"),
+        @embedFile("codegen_cases/from_import_shadowed_by_local.expected"),
+    );
+}
+
 test "codegen(çalıştır): str + str birleştirme (zincirleme) + len(), sızıntı yok" {
     try expectGolden(
         @embedFile("codegen_cases/str_concat_basic.nox"),

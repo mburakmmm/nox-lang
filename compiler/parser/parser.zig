@@ -109,6 +109,7 @@ pub const Parser = struct {
             .kw_try => try self.parseTry(),
             .kw_lowlevel => try self.parseLowLevel(),
             .kw_import => try self.parseImport(),
+            .kw_from => try self.parseFromImport(),
             .kw_pass => blk: {
                 _ = self.advance();
                 _ = try self.expect(.newline);
@@ -374,8 +375,9 @@ pub const Parser = struct {
     }
 
     /// `import nox.http` — bir ya da daha fazla nokta-ayrılmış tanımlayıcı
-    /// (bkz. `ast.ImportStmt`in belge notu). `as`/`from ... import` v1
-    /// kapsamı DIŞI.
+    /// (bkz. `ast.ImportStmt`in belge notu). Faz U.3: isteğe bağlı `as
+    /// <isim>` sonek — VERİLİRSE `<isim>` TAM yolun (`nox.http`) yerel
+    /// takma adı olur.
     fn parseImport(self: *Parser) ParseError!ast.StmtKind {
         _ = try self.expect(.kw_import);
         var segments = std.ArrayList([]const u8).empty;
@@ -383,8 +385,40 @@ pub const Parser = struct {
         while (self.match(.dot)) {
             try segments.append(self.allocator, (try self.expect(.identifier)).lexeme);
         }
+        var alias: ?[]const u8 = null;
+        if (self.match(.kw_as)) {
+            alias = (try self.expect(.identifier)).lexeme;
+        }
         _ = try self.expect(.newline);
-        return .{ .import_stmt = .{ .segments = try segments.toOwnedSlice(self.allocator) } };
+        return .{ .import_stmt = .{ .segments = try segments.toOwnedSlice(self.allocator), .alias = alias } };
+    }
+
+    /// `from nox.http import get` / `from nox.http import get as g, post` —
+    /// (bkz. `ast.FromImportStmt`in belge notu). Virgülle ayrılmış bir ya da
+    /// daha fazla üye, HER biri isteğe bağlı KENDİ `as <isim>` sonekiyle.
+    fn parseFromImport(self: *Parser) ParseError!ast.StmtKind {
+        _ = try self.expect(.kw_from);
+        var segments = std.ArrayList([]const u8).empty;
+        try segments.append(self.allocator, (try self.expect(.identifier)).lexeme);
+        while (self.match(.dot)) {
+            try segments.append(self.allocator, (try self.expect(.identifier)).lexeme);
+        }
+        _ = try self.expect(.kw_import);
+        var names = std.ArrayList(ast.FromImportName).empty;
+        while (true) {
+            const name = (try self.expect(.identifier)).lexeme;
+            var name_alias: ?[]const u8 = null;
+            if (self.match(.kw_as)) {
+                name_alias = (try self.expect(.identifier)).lexeme;
+            }
+            try names.append(self.allocator, .{ .name = name, .alias = name_alias });
+            if (!self.match(.comma)) break;
+        }
+        _ = try self.expect(.newline);
+        return .{ .from_import_stmt = .{
+            .segments = try segments.toOwnedSlice(self.allocator),
+            .names = try names.toOwnedSlice(self.allocator),
+        } };
     }
 
     // ---- İfadeler: öncelik tırmanışı (precedence climbing) ----
