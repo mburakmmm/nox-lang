@@ -63,6 +63,12 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   BIRAKMIYOR (bu, fiber SONRADAN tamamlanınca serbest bırakılmış belleğe
   yazan bir use-after-free olurdu) — yeni `Task.detached` bayrağı gerçek
   serbest bırakmayı görev KENDİ KENDİNE tamamlanana kadar erteliyor.
+- `list[T]` indekslemesi (`xs[i]`) artık sınır kontrolü yapıyor (Faz S.2) —
+  önceden `xs[999]` gibi bir erişim sınır kontrolü OLMADAN doğrudan geçersiz
+  belleğe erişirdi (tanımsız davranış). `s[i]`nin ZATEN kullandığı AYNI
+  desenle artık aralık dışı bir erişimde `IndexError` `raise` ediliyor.
+  Yan bulgu: `tests/compat/extern_ffi_test.zig` `core.nox`u (dolayısıyla
+  `IndexError`/`ValueError`i) hiç birleştirmiyordu — düzeltildi.
 
 ### Güvenlik
 - `nox.http.serve`e iki DoS sertleştirmesi eklendi (Faz Q.5): bir isteğin

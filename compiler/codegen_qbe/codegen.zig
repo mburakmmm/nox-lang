@@ -2528,6 +2528,33 @@ const Codegen = struct {
         if (obj.heap == .str) return self.genStrIndex(obj, idx);
         if (obj.heap != .list) return error.Unsupported;
         const index_v = try self.genExpr(idx.index.*);
+
+        // Faz S.2: sınır kontrolü — `genStrIndex`in AYNI "önce doğrula, hata
+        // dalında raise et, phi'SİZ ok'e atla" deseni (bkz. onun belge notu).
+        // `list[T]`nin uzunluğu payload'ın İLK 8 baytıdır (bkz. `genListLit`),
+        // bu yüzden AYRI bir betimleyiciye gerek yok — doğrudan `obj.text`ten
+        // okunur.
+        const len_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ len_t, obj.text });
+        const neg_t = try self.newTemp();
+        try self.out.writer.print("    {s} =w csltl {s}, 0\n", .{ neg_t, index_v.text });
+        const oob_hi_t = try self.newTemp();
+        try self.out.writer.print("    {s} =w csgel {s}, {s}\n", .{ oob_hi_t, index_v.text, len_t });
+        const oob_t = try self.newTemp();
+        try self.out.writer.print("    {s} =w or {s}, {s}\n", .{ oob_t, neg_t, oob_hi_t });
+        const err_label = try self.newLabel("list_idx_err");
+        const ok_label = try self.newLabel("list_idx_ok");
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ oob_t, err_label, ok_label });
+        try self.out.writer.print("{s}\n", .{err_label});
+
+        const msg_value = try self.emitStringLiteral("liste indeksi sinirlarin disinda");
+        const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
+        const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value});
+        try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ie_obj.text });
+        try self.emitExceptionCheck();
+        try self.out.writer.print("    jmp {s}\n", .{ok_label});
+
+        try self.out.writer.print("{s}\n", .{ok_label});
         const byte_off = try self.newTemp();
         try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ byte_off, index_v.text, qbeSizeOf(obj.elem_qtype) });
         const off8 = try self.newTemp();

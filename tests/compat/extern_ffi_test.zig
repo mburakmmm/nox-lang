@@ -18,8 +18,17 @@ const nox = @import("nox");
 const build_options = @import("build_options");
 
 fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.RunResult {
+    const io = std.testing.io;
+
     const tokens = try nox.lexer.tokenize(allocator, source);
-    const module = try nox.parser.parseModule(allocator, tokens);
+    const user_module = try nox.parser.parseModule(allocator, tokens);
+    // `codegen_golden_test.zig`nin AYNI çağrısı — `core.nox`u (ör.
+    // `IndexError`/`ValueError`) BİRLEŞTİRİR. Faz S.2 SIRASINDA keşfedilen
+    // GERÇEK, ÖNCEDEN VAR OLAN bir eksiklik: bu dosya DAHA ÖNCE bu çağrıyı
+    // HİÇ yapmıyordu (yalnızca `list[str]` extern def testinin `[0]`
+    // indekslemesi, YENİ liste sınır kontrolü İLE `IndexError`i KOŞULSUZ
+    // gerektirene KADAR hiçbir testte bu eksiklik SESSİZCE gizli kalmıştı).
+    const module = try nox.module_loader.resolveImports(allocator, io, user_module);
 
     var checker_state = nox.checker.Checker.init(allocator);
     checker_state.checkModule(module) catch |e| {
@@ -32,8 +41,6 @@ fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.
     while (generic_it.next()) |k| try generic_names.append(allocator, k.*);
 
     const ir = try nox.codegen.generateModule(allocator, module, checker_state.instantiations.items, generic_names.items);
-
-    const io = std.testing.io;
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

@@ -4884,6 +4884,43 @@ ReleaseFast) 269/269 yeşil, `zig fmt --check` temiz.
 
 ---
 
+## 3.13 Faz S.2 — list[T] İndeksleme Sınır Kontrolü
+
+**Bulunan hata:** `genIndex` (`compiler/codegen_qbe/codegen.zig`) `list[T]`
+İÇİN sınır kontrolü OLMADAN DOĞRUDAN pointer aritmetiği yapıyordu —
+`xs[999]` gibi bir erişim tanımsız davranışa (geçersiz bellek okuma/segfault)
+yol açardı. `s[i]` (stdlib fazı §G) ZATEN bir sınır kontrolü/`IndexError`
+deseni kullanıyordu (`genStrIndex`); `list[T]` bu deseni HİÇ paylaşmıyordu.
+
+**Çözüm:** `genIndex`in `list` dalına `genStrIndex` İLE AYNI "önce doğrula
+(negatif VEYA `>= len`), hata dalında `IndexError` `raise` et, phi'SİZ `ok`e
+atla" deseni eklendi. Liste uzunluğu AYRI bir betimleyiciye GEREK
+DUYULMADAN doğrudan payload'ın İLK 8 baytından (`obj.text`ten `loadl`)
+okunur (bkz. `genListLit`nin düzeni). `checker.zig`de HİÇBİR değişiklik
+gerekmedi (tip kontrolü zaten doğruydu, yalnızca ÇALIŞMA ZAMANI davranışı
+eksikti).
+
+**Yan bulgu — `tests/compat/extern_ffi_test.zig`nin `compileAndRun`ı `core.
+nox`u (dolayısıyla `IndexError`/`ValueError`i) HİÇ birleştirmiyordu:**
+`codegen_golden_test.zig`/`http_*_golden_test.zig` gibi diğer test
+dosyalarının AKSİNE, bu dosya `module_loader.resolveImports`ı ÇAĞIRMIYORDU
+— `nox.parser.parseModule`in çıktısını DOĞRUDAN checker'a veriyordu. Bu,
+YENİ liste sınır kontrolü `list[str]` döndüren bir `extern def`in `[0]`
+indekslemesini derlerken `IndexError` sınıfını `self.classes`de BULAMAYIP
+`error.Unsupported` dönene KADAR SESSİZCE gizli kalmış, ÖNCEDEN VAR OLAN bir
+eksiklikti (bu dosya DAHA ÖNCE hiçbir testte `str`/`list` indekslemesi
+kullanmamıştı). **Düzeltildi:** `compileAndRun` artık `codegen_golden_test.
+zig` İLE AYNI şekilde `resolveImports`ı çağırıyor.
+
+**Doğrulama:** yeni golden test (`list_index_out_of_bounds_raises.nox` —
+`genStrIndex`in KENDİ testiyle AYNI desen, pozitif VE negatif sınır dışı
+erişim, `try/except IndexError` ile yakalanıp mesaj basılır). Kasıtlı
+boz (sınır-kontrol dalı KOŞULSUZ `err_label`e atlayacak şekilde) →
+kırmızıyı doğrula → düzelt ritüeli uygulandı. `zig build test`
+(Debug + ReleaseFast) 270/270 yeşil, `zig fmt` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

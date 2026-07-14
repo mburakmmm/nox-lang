@@ -155,6 +155,13 @@ test "codegen(çalıştır): list[int] oluşturma, indeksleme, iterasyon" {
     );
 }
 
+test "codegen(çalıştır): Faz S.2 — list[T] indeksleme sınır dışı erişimde IndexError raise eder" {
+    try expectGolden(
+        @embedFile("codegen_cases/list_index_out_of_bounds_raises.nox"),
+        @embedFile("codegen_cases/list_index_out_of_bounds_raises.expected"),
+    );
+}
+
 test "codegen(çalıştır): liste yeniden ataması eskisini serbest bırakır (çift serbest bırakma yok)" {
     try expectGolden(
         @embedFile("codegen_cases/list_reassignment_frees_old.nox"),
