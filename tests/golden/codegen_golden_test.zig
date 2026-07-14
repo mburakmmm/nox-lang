@@ -741,6 +741,13 @@ test "codegen(çalıştır): nox.time.now_ms/sleep_ms (monoton artış)" {
     );
 }
 
+test "codegen(çalıştır): nox.log.format — seviye etiketi + zaman damgası + mesaj yapısı (nox.strings ile deterministik doğrulama)" {
+    try expectGolden(
+        @embedFile("codegen_cases/log_format_structure.nox"),
+        @embedFile("codegen_cases/log_format_structure.expected"),
+    );
+}
+
 test "codegen(çalıştır): nox.test.assert_eq_*/assert_true (başarılı yol)" {
     try expectGolden(
         @embedFile("codegen_cases/test_assert_eq_pass.nox"),

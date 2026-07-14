@@ -1,0 +1,35 @@
+# Stdlib fazı V.1 — nox.log: basit, seviyeli konsol günlükleme. TAMAMEN
+# saf Nox (nox.time.now_ms + str() + print() üzerine) — hiç Zig/extern def
+# GEREKMEZ.
+#
+# BİLİNÇLİ v1 SINIRLAMASI: çalışma zamanında yapılandırılabilir bir
+# minimum-seviye FİLTRESİ YOK (Nox'ta fonksiyonlar arası PAYLAŞILAN
+# mutable modül-düzeyi durum yok — her "loose" üst-düzey deyim yalnızca
+# `main`de bir kez çalışır) — HER çağrı KOŞULSUZ basılır. Çıktı HER ZAMAN
+# stdout'a gider (Nox'ta ayrı bir stderr yazma ilkeli HENÜZ YOK).
+#
+# `format`, satırı BASMADAN döndürür — hem `debug`/`info`/`warn`/`error`nin
+# KENDİ ortak çekirdeği, hem de kullanıcının KENDİ (ör. bir dosyaya yazan)
+# sarmalayıcısını yazmak istemesi durumunda YENİDEN KULLANILABİLİR. AYRICA
+# bu ayrım, `nox.time.now_ms()`in gömdüğü GERÇEK ZAMAN DAMGASI yüzünden
+# `debug`/`info`/`warn`/`error`nin ÇIKTISI golden testlerin GEREKTİRDİĞİ
+# tam-eşleşme İLE doğrudan test EDİLEMEDİĞİNDEN — `format`in KENDİSİ
+# (zaman damgasını İÇEREN ama BASMAYAN) `nox.strings` İLE İNCELENEBİLİR,
+# deterministik bir doğrulama sağlar.
+import nox.time
+
+def format(level: str, message: str) -> str:
+    ts: int = nox.time.now_ms()
+    return "[" + level + "] [" + str(ts) + "] " + message
+
+def debug(message: str) -> None:
+    print(format("DEBUG", message))
+
+def info(message: str) -> None:
+    print(format("INFO", message))
+
+def warn(message: str) -> None:
+    print(format("WARN", message))
+
+def error(message: str) -> None:
+    print(format("ERROR", message))

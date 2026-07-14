@@ -158,6 +158,12 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   bir istisnayı bastıramaz, birden çok bağlam yöneticisi tek bir `with`de
   virgülle birleştirilemez (her biri ayrı bir `with` olarak iç içe
   yazılmalıdır).
+- `nox.log` modülü eklendi (Faz V.1) — basit, seviyeli konsol günlükleme
+  (`debug`/`info`/`warn`/`error` + `format`). Tamamen saf Nox
+  (`nox.time.now_ms` + `str()` + `print()` üzerine), hiç Zig/`extern def`
+  gerekmedi. Bilinçli v1 sınırı: çalışma zamanında yapılandırılabilir bir
+  minimum-seviye filtresi yok (Nox'ta paylaşılan mutable modül-düzeyi
+  durum yok), çıktı her zaman stdout'a gider.
 
 ### Düzeltildi
 - **Önemli test-altyapısı düzeltmesi:** `compiler/*.zig` dosyalarına gömülü

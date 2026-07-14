@@ -6472,6 +6472,65 @@ FARK ETMEZ).
 
 ---
 
+## 3.29 Faz V.1 — `nox.log` Modülü
+
+**Kapsam:** basit, seviyeli konsol günlükleme (`debug`/`info`/`warn`/`error`).
+TAMAMEN saf Nox (`stdlib/nox/log.nox`) — `nox.time.now_ms()` + `str()` +
+`print()` üzerine yazıldı, hiç Zig/`extern def` GEREKMEDİ (nox.test/
+nox.math'ın "saf Nox yeter" ÖNCÜLÜYLE TUTARLI).
+
+**Tasarım — `format` BASMADAN döndürür, `debug`/`info`/`warn`/`error` onu
+SARIP basar:**
+```nox
+def format(level: str, message: str) -> str:
+    ts: int = nox.time.now_ms()
+    return "[" + level + "] [" + str(ts) + "] " + message
+
+def debug(message: str) -> None:
+    print(format("DEBUG", message))
+# info/warn/error AYNI desen
+```
+Bu ayrım İKİ gerekçeyle YAPILDI: (1) kullanıcının KENDİ (ör. bir dosyaya
+yazan) sarmalayıcısını yazabilmesi İÇİN `format`ın YENİDEN KULLANILABİLİR
+olması; (2) — DAHA KRİTİK OLANI — `debug`/`info`/`warn`/`error`nin ÇIKTISI
+`nox.time.now_ms()`in gömdüğü GERÇEK (deterministik OLMAYAN) zaman damgası
+YÜZÜNDEN golden testlerin GEREKTİRDİĞİ TAM-EŞLEŞME İLE HİÇ TEST EDİLEMEZ
+— `format`ın KENDİSİ (zaman damgasını İÇEREN ama BASMAYAN, bir `str`
+DÖNDÜREN saf fonksiyon) İSE `nox.strings.starts_with`/`contains` İLE
+İNCELENEBİLİR, TAM olarak deterministik bir doğrulama sağlar (bkz. Faz
+K'nın `nox.time` testinin "ham zaman damgasını YAZDIRMA, ondan türetilen
+bir BOOLEAN'ı yazdır" İLE AYNI dersi).
+
+**Bilinçli v1 sınırlaması — çalışma zamanında yapılandırılabilir bir
+minimum-seviye FİLTRESİ YOK:** Nox'ta fonksiyonlar arası PAYLAŞILAN mutable
+modül-düzeyi durum YOK (HER "loose" üst-düzey deyim yalnızca `main`de BİR
+KEZ çalışır, bkz. §3.1) — bu yüzden `nox.log.set_level(...)` GİBİ bir
+API'nin GERÇEK bir global durumu OLAMAZ (bir sınıf örneği İÇİNDE TUTMAK
+mümkün olurdu ama bu, KULLANICININ KENDİ Logger nesnesini AÇIKÇA
+DOLAŞTIRMASINI gerektirirdi — v1 kapsamı DIŞINDA bırakıldı, basit serbest
+fonksiyonlar TERCİH EDİLDİ). Çıktı HER ZAMAN stdout'a gider (Nox'ta ayrı
+bir stderr yazma ilkeli HENÜZ YOK).
+
+**Doğrulama:**
+1. **1 uçtan-uca golden test** (`log_format_structure.nox`): `format`ın
+   DÖRT seviye (`DEBUG`/`INFO`/`WARN`/`ERROR`) İÇİN doğru `"[SEVIYE] ["`
+   ÖNEKİNİ VE mesajı doğru gömdüğünü, `nox.strings.starts_with`/`contains`
+   İLE (ham zaman damgasını YAZDIRMADAN, SEKİZ deterministik `True` çıktısı
+   olarak) kanıtlar.
+2. **Manuel uçtan-uca doğrulama** (`noxc build` + çalıştırma, `/tmp` scratch
+   dosyaları): `debug`/`info`/`warn`/`error`nin GERÇEKTEN doğru biçimlenmiş
+   satırlar BASTIĞI (`[DEBUG] [1784067419736] starting up` gibi), sızıntı
+   OLMADAN doğrulandı.
+3. **Kasıtlı boz→kırmızı→düzelt:** `format`in ÖNEK karakteri GEÇİCİ olarak
+   `"["` yerine `"("` YAPILDI → `zig build test` "88 pass, 1 fail (89
+   total)" / "336/337 tests passed" GÖSTERDİ — BAŞARISIZ olan TAM OLARAK
+   YENİ `nox.log` testiydi (`starts_with` kontrolleri `False` DÖNDÜ) — geri
+   getirildi, 337/337 YEŞİLE döndü (Debug VE ReleaseFast).
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
