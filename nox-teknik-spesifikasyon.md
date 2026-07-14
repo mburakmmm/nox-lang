@@ -4780,6 +4780,32 @@ DEĞİLDİ.
 
 ---
 
+## 3.11 Faz R.4 — Zig Araç Zinciri Sürüm Pinlemesi
+
+`build.zig.zon`nin `minimum_zig_version`i Zig'in KENDİ araç zincirinin
+uyguladığı bir TABANDIR (daha ESKİ bir derleyiciyi REDDEDER) — ama DAHA
+YENİ bir derleyiciyi ASLA reddetmez. Zig HENÜZ 1.0 ÖNCESİ olduğundan (sık
+KIRICI değişiklikler), "en az bu sürüm" TEK BAŞINA yeterli bir
+tekrarlanabilirlik garantisi DEĞİLDİR.
+
+**Çözüm:** `build.zig`ye `EXPECTED_ZIG_VERSION` sabiti (şu an `0.16.0` —
+`.github/workflows/ci.yml`nin `mlugg/setup-zig@v1` PİNİYLE AYNI) VE
+`build()`in EN BAŞINDA `builtin.zig_version`le KARŞILAŞTIRAN bir denetim
+eklendi. Eşleşmezse (daha ESKİ YA DA daha YENİ FARK ETMEZ) net bir UYARI
+basılır — **KOŞULSUZ bir `@compileError` DEĞİL**, bilinçli bir seçim:
+yama sürümleri (ör. 0.16.1) genellikle GERİYE UYUMLUDUR, bu yüzden
+geliştiriciyi TAMAMEN ENGELLEMEK yerine SADECE bir sonraki Zig sürümüne
+GEÇİŞ sırasında bu sabitin de GÜNCELLENMESİ GEREKTİĞİNİ HATIRLATAN bir
+uyarı yeterlidir.
+
+**Doğrulama:** kasıtlı boz→doğrula→düzelt — `EXPECTED_ZIG_VERSION`
+GEÇİCİ olarak yanlış bir sürüme (`0.16.99`) değiştirilip `zig build
+--help`in GERÇEKTEN UYARI bastığı doğrulandı, SONRA geri getirilip
+uyarının KAYBOLDUĞU (sessiz, `zig build test` Debug+ReleaseFast yeşil)
+doğrulandı.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

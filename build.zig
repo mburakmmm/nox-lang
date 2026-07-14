@@ -1,6 +1,33 @@
 const std = @import("std");
+const builtin = @import("builtin");
+
+/// Faz R.4 (bkz. docs/uretim-hazirlik-analizi.md): `build.zig.zon`nin
+/// `minimum_zig_version`i Zig'in KENDİ araç zincirinin uyguladığı bir
+/// TABANDIR (daha ESKİ bir derleyiciyi REDDEDER) — ama DAHA YENİ bir
+/// derleyiciyi ASLA reddetmez. Zig HENÜZ 1.0 ÖNCESİ olduğundan (sık sık
+/// KIRICI değişiklikler), "en az bu sürüm" TEK BAŞINA yeterli bir
+/// tekrarlanabilirlik garantisi DEĞİLDİR — bu proje TAM OLARAK bu sürümle
+/// geliştirilip doğrulanmıştır (bkz. `.github/workflows/ci.yml`nin AYNI
+/// `version: "0.16.0"` PİNİ). Bu sabit, GERÇEK derleyici sürümüyle
+/// (`builtin.zig_version`) AŞAĞIDA KARŞILAŞTIRILIR — EŞLEŞMEZSE (daha ESKİ
+/// YA DA daha YENİ FARK ETMEZ) net bir UYARI basılır (KOŞULSUZ bir
+/// `@compileError` DEĞİL — bir sonraki Zig sürümüne GEÇİŞ SIRASINDA
+/// projenin build.zig.zon'daki `minimum_zig_version`i GÜNCELLEMEDEN bu
+/// sabiti de GÜNCELLEMESİ gerektiğini HATIRLATAN, ama geliştiriciyi
+/// TAMAMEN ENGELLEMEYEN bir denetim — sert bir hata DEĞİL, ÇÜNKÜ yama
+/// sürümleri (ör. 0.16.1) çoğunlukla GERİYE UYUMLUDUR).
+const EXPECTED_ZIG_VERSION = std.SemanticVersion{ .major = 0, .minor = 16, .patch = 0 };
 
 pub fn build(b: *std.Build) void {
+    if (builtin.zig_version.order(EXPECTED_ZIG_VERSION) != .eq) {
+        std.debug.print(
+            "UYARI: bu proje Zig {f} ile geliştirilip doğrulandı, ama şu an Zig {f} ile derleniyorsunuz. " ++
+                "Zig henüz 1.0 öncesi olduğundan sürüm farkları beklenmeyen derleme/çalışma zamanı hatalarına yol açabilir " ++
+                "(bkz. nox-teknik-spesifikasyon.md §3.11, Faz R.4). Devam ediliyor...\n",
+            .{ EXPECTED_ZIG_VERSION, builtin.zig_version },
+        );
+    }
+
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 

@@ -22,6 +22,9 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
 - CI matrisi genişletildi (Faz R.3): macOS/aarch64 + Linux/x86-64
   (`ubuntu-latest`, R.2'nin x86-64 kodunu GERÇEK donanımda doğrular) +
   Linux/aarch64 (`ubuntu-24.04-arm`) — Linux'ta `qbe` kaynaktan derlenir.
+- `build.zig`e Zig araç zinciri sürüm denetimi eklendi (Faz R.4) — çalışan
+  derleyici sürümü CI'nin pinlediği sürümden (`0.16.0`) farklıysa net bir
+  uyarı basılır (sert bir hata değil — yama sürümleri genelde uyumludur).
 
 ### Düzeltildi
 - `noxc` artık proje kökü DIŞINDAN (ör. sistem geneli bir kurulumdan)
