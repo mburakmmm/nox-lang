@@ -25,6 +25,16 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
 - `build.zig`e Zig araç zinciri sürüm denetimi eklendi (Faz R.4) — çalışan
   derleyici sürümü CI'nin pinlediği sürümden (`0.16.0`) farklıysa net bir
   uyarı basılır (sert bir hata değil — yama sürümleri genelde uyumludur).
+- **Katman 3 (döngü çözücü) uygulandı (Faz S.3)** — `runtime/alloc/
+  cycle_detector.zig`, Bacon & Rajan'ın senkron trial-deletion algoritmasıyla
+  (Nim'in ORC modelinin/CPython'ın döngü GC'sinin akrabası). Bunun İÇİN
+  ÖNCE sınıfların KENDİ KENDİSİNE (`self.next = self`) atanabilmesi
+  gerekiyordu (`codegen.zig`nin `inferFieldType`i genişletildi) — bu, GERÇEK
+  bir A↔B referans döngüsü kurmanın (sonradan `a.next = b; b.next = a;`
+  ile) tek bootstrap yoludur (`None`/opsiyonel tip HENÜZ yok). v1 kapsamı
+  yalnızca SINIF örnekleri (`list[T]`/`dict[K,V]` elemanları dahil değil).
+  Tetikleme: tahsis-baskısı eşiği (varsayılan 700) + program çıkışında son
+  bir tarama.
 
 ### Düzeltildi
 - `noxc` artık proje kökü DIŞINDAN (ör. sistem geneli bir kurulumdan)

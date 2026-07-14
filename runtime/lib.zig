@@ -5,6 +5,7 @@
 pub const asap = @import("alloc/asap.zig");
 pub const arc = @import("alloc/arc.zig");
 pub const lowlevel = @import("alloc/lowlevel.zig");
+pub const cycle_detector = @import("alloc/cycle_detector.zig");
 pub const errors = @import("errors/handle.zig");
 pub const foreign_bridge = @import("foreign_bridge.zig");
 pub const async_bridge = @import("async_rt/bridge.zig");
@@ -27,6 +28,7 @@ comptime {
     _ = asap;
     _ = arc;
     _ = lowlevel;
+    _ = cycle_detector;
     _ = errors;
     _ = foreign_bridge;
     _ = async_bridge;

@@ -4921,6 +4921,119 @@ kırmızıyı doğrula → düzelt ritüeli uygulandı. `zig build test`
 
 ---
 
+## 3.14 Faz S.3 — Katman 3 Döngü Çözücü: Tasarım + İlk İmplementasyon
+
+**Kapsam kararı (kullanıcıyla netleşti):** görev başlangıçta "yalnızca döngü
+çözücü yaz" gibi görünüyordu, ama araştırma İKİ ayrı, büyük parçaya ayrıldığını
+ortaya çıkardı — bkz. aşağıdaki "Beklenmeyen ön koşul" — kullanıcı İKİSİNİN
+DE (öz-referans desteği + gerçek döngü çözücü) TEK bir turda yapılmasını
+seçti.
+
+**Beklenmeyen ön koşul — döngüler BUGÜN dilde HİÇ kurulamıyordu:**
+`codegen.zig`nin `registerClass`ı sınıfları DOSYA SIRASIYLA işliyordu ve bir
+sınıfın alan tipleri yalnızca DAHA ÖNCE `self.classes`a eklenmiş bir sınıfa
+referans verebiliyordu — bu, öz-referansı (`class Node: next: Node`) VE
+ileri-referanslı karşılıklı döngüleri (`class A: b: B` / `class B: a: A`)
+derleme zamanında YAPISAL olarak İMKANSIZ kılıyordu (`uretim-hazirlik-
+analizi.md`nin ZATEN doğru teşhis ettiği gibi). **Keşif:** stdlib fazı §L
+(`nox.json`) SIRASINDA `generateModule`e ZATEN TÜM sınıf adlarını (alanları
+çözülmeden ÖNCE) boş bir yer tutucuyla `self.classes`a önceden ekleyen bir
+DÜZELTME eklenmişti (`list[JsonValue]`yi desteklemek için) — bu, `resolveType`in
+`.simple` (DOĞRUDAN sınıf tipi) dalını da YAN ETKİ olarak zaten düzeltmişti,
+AMA `inferFieldType` (alan TİPİNİ `__init__` gövdesinden ÇIKARAN, AYRI bir
+fonksiyon) hâlâ yalnızca `__init__` PARAMETRELERİNİ/literalleri destekliyordu
+— `self.next = self` (bir nesnenin KENDİSİNE atanması) desteklenMİYORDU.
+**Çözüm:** `inferFieldType`e `class_name` parametresi eklendi, `.identifier`
+dalına `name == "self"` özel durumu eklendi (kendi sınıf tipini döner) — bu,
+`self.next = self` İLE bir nesnenin KENDİ KENDİSİNE işaret eden bir "öz-döngü"
+olarak İNŞA EDİLMESİNİ sağlar (`None`/opsiyonel tip GEREKMEDEN — dil bunu
+HENÜZ desteklemiyor); SONRA `a.next = b; b.next = a;` gibi bir yeniden atamayla
+(ZATEN var olan `obj.attr = value` mekanizması) GERÇEK bir A↔B döngüsüne
+dönüştürülebilir. Bu, `docs/uretim-hazirlik-analizi.md`nin AÇIKÇA riski
+olarak işaretlediği "`list[T]` sınıf alanı/ileri-referans genişletildiği AN
+döngüler sessizce sızmaya başlar" senaryosunun TAM OLARAK KENDİSİ — ARTIK
+gerçek, GEÇERLİ bir Nox programı YAZILABİLİR durumda.
+
+**Algoritma seçimi:** Bacon & Rajan'ın senkron "trial deletion" (deneme-
+yanılma silme) döngü toplayıcısı — Nim'in ORC modelinin ve CPython'ın kendi
+döngü GC'sinin de akrabası olan, İYİ bilinen, üç geçişli (MarkRoots/MarkGray
+→ ScanRoots/Scan/ScanBlack → CollectRoots/CollectWhite) bir algoritma —
+tercih edildi ("hafif arka plan taraması" hedefine UYGUN, tam bir kapsamlı
+mark-sweep'TEN çok daha AZ iş yapar: yalnızca "olası kök" olarak işaretlenen
+nesnelerin alt-grafiğini tarar, TÜM heap'i DEĞİL).
+
+**v1 kapsamı (bilinçli dar, AGENTS.md §8 İLE UYUMLU):** yalnızca SINIF
+örnekleri arasındaki döngüler — `list[T]`/`dict[K,V]` elemanları/`str` bu
+taramaya DAHİL DEĞİL (bugün onlar HİÇBİR ŞEKİLDE bir döngü kuramaz, bu yüzden
+gereksiz).
+
+**Uygulama — iki katman:**
+1. **`runtime/alloc/cycle_detector.zig`** (YENİ dosya): Bacon-Rajan'ın
+   TAMAMI — renk/buffered durumu nesnelerin KENDİ 8 baytlık ARC başlığında
+   DEĞİL (bu formatı DEĞİŞTİRMEMEK, `arc.zig`nin/inline retain-predecrement
+   emisyonunun HİÇBİR çağrı sitesini ETKİLEMEMEK için), AYRI bir yan tabloda
+   (`CycleGc.meta`, işaretçiden meta'ya `AutoHashMap`) tutulur. Çocukları
+   keşfetme (`traceChildren`), derleyicinin ürettiği `$nox_trace_dispatch`
+   sembolünü `dlsym` İLE ÇALIŞMA ZAMANINDA arar (`nox_json_make_json_value`nin
+   AYNI gerekçesi — sembol yalnızca SINIF İÇEREN programlarda üretilir,
+   sabit bir `extern fn` sınıfsız programlarda/`noxrt_test`te bağlama
+   adımını ÇÖKERTİRDİ).
+2. **`compiler/codegen_qbe/codegen.zig`:** HER sınıf İÇİN iki YENİ fonksiyon
+   — `$ClassName_trace(rt, p) -> l` (sınıf-tipli alanların değerlerini bir
+   `nox_alloc`'lu arabelleğe yazar, `list[T]`nin AYNI 8-bayt-uzunluk+N-
+   işaretçi düzeni) ve `$ClassName_gc_free(rt, p)` (sınıf-tipli OLMAYAN
+   alanları NORMAL serbest bırakır, sınıf-tipli alanlara HİÇ DOKUNMAZ —
+   onlar `collectWhite`in KENDİ özyinelemeli gezinmesiyle AYRICA ele alınır,
+   ÇİFT serbest bırakmayı ÖNLEMEK için — SONRA nesnenin belleğini KOŞULSUZ
+   serbest bırakır). İKİ dağıtım fonksiyonu (`$nox_trace_dispatch`/
+   `$nox_gc_free_dispatch`, sınıf `tag`ine göre if-zinciri — QBE'de `switch`
+   YOK) TÜM sınıfları kapsar. `genClassRelease`nin predecrement SIFIRA
+   DÜŞMEDİĞİ dalı — YALNIZCA en az bir sınıf-tipli alanı OLAN sınıflar İÇİN
+   (performans: sıradan sınıflar sıfır ek maliyet öder) —
+   `nox_cycle_possible_root`e; SIFIRA DÜŞTÜĞÜ (gerçekten serbest bırakıldığı)
+   dal `nox_cycle_forget`e (adres yeniden kullanımına karşı GÜVENLİK, bkz.
+   onun belge notu) yönlendirilir.
+
+**Tetikleme:** `nox_cycle_possible_root`, tahsis-baskısı sayaç eşiğini
+(varsayılan 700, CPython'ın gen0 eşiğine yakın) AŞTIĞINDA OTOMATİK
+`nox_cycle_collect` çağırır (AGENTS.md §8: "varsayılan: tahsis baskısı
+eşiği"); AYRICA `nox_runtime_deinit` PROGRAM SONUNDA (eşiğe HİÇ ulaşmamış
+kısa ömürlü programları/testleri KAÇIRMAMAK için) SON bir kez çağırır.
+
+**Doğrulama — DÖRT kasıtlı boz→kırmızıyı doğrula→düzelt turu:**
+1. `runtime/alloc/cycle_detector.zig`ye İKİ Zig birim testi eklendi:
+   gerçek `nox_rc_alloc`'lu, GERÇEK bir A↔B döngüsü (`dlsym` yerine `g_trace_
+   dispatch_fn`/`g_gc_free_dispatch_fn`e SAHTE bir uygulama enjekte edilerek,
+   QBE'siz saf Zig'de) — `std.heap.DebugAllocator`ın KENDİ sızıntı/çift-
+   serbest-bırakma denetimiyle DOĞRULANDI; ve "döngü İÇİNDEKİ bir nesne
+   dışarıdan da canlıysa (surviving retain) YANLIŞLIKLA toplanmaz" (over-
+   collection'a KARŞI, mark/scan tersine çevirmesinin GERÇEKTEN çalıştığını
+   kanıtlar).
+2. `markGray`nin çocuk refcount azaltma satırı GEÇİCİ olarak devre dışı
+   bırakılıp HEM iki Zig birim testinin HEM AŞAĞIDAKİ golden testin GERÇEKTEN
+   kırmızıya döndüğü doğrulandı — SONRA geri getirildi.
+3. `nox_runtime_deinit`nin SON `nox_cycle_collect` çağrısı GEÇİCİ olarak
+   devre dışı bırakılıp golden testin GERÇEKTEN kırmızıya (sızıntı) döndüğü
+   doğrulandı — SONRA geri getirildi.
+4. Yeni golden test (`class_reference_cycle_collected.nox`) — `Node.__init__`
+   `self.next = self` ile başlar (öz-döngü bootstrap), SONRA `a.next = b;
+   b.next = a;` ile GERÇEK bir A↔B döngüsü kurulur; hem DOĞRU çıktı (`1\n2\n1\n`,
+   döngünün GERÇEKTEN doğru bağlandığını kanıtlar) hem STDERR'İN BOŞ olması
+   (sızıntı YOK) doğrulanır.
+
+`zig build test` (Debug + ReleaseFast) 273/273 yeşil, `zig fmt` temiz.
+
+**Bilinçli v1 sınırlamaları (gelecekteki bir faz İÇİN not edilir):**
+- `list[T]`/`dict[K,V]` elemanları taramaya DAHİL DEĞİL (bugün gereksiz,
+  onlar döngü kuramaz — bu genişlerse AYRI bir faz gerekir).
+- Tarama SENKRON (stop-the-world, ama YALNIZCA olası-kök alt-grafiği kadar
+  küçük) — Bacon-Rajan'ın "concurrent" varyantı (arka plan iş parçacığında)
+  UYGULANMADI (v0.1'in tek-OS-iş-parçacığı fiber modeliyle ZATEN tutarlı).
+- Eşik (700) SABİT bir varsayılan — çalışma zamanında ayarlanabilir bir API
+  (ör. `nox.gc.set_threshold`) YOK.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
@@ -4933,6 +5046,7 @@ kırmızıyı doğrula → düzelt ritüeli uygulandı. `zig build test`
 
 ### Katman 3: Döngü Çözücü
 - ARC modundaki nesneler arasında oluşabilecek referans döngülerini (A↔B) tespit eden hafif bir arka plan taraması (Nim'in ORC modeline benzer). Yalnızca ARC'ye terfi etmiş nesneleri tarar.
+- **Durum: UYGULANDI (Faz S.3, bkz. §3.14)** — `runtime/alloc/cycle_detector.zig`, Bacon & Rajan'ın senkron trial-deletion algoritmasıyla. v1 kapsamı bilinçli dar: yalnızca SINIF örnekleri arasındaki döngüler (`list[T]`/`dict[K,V]` elemanları kapsam dışı — bugün onlar zaten döngü kuramaz). Tetikleyici: tahsis-baskısı eşiği (varsayılan 700) + program çıkışında son bir tarama.
 
 ### Katman 4: `lowlevel` Bloğu (Maksimum Kontrol)
 - Rust'ın `unsafe` bloğuna benzer şekilde, geliştiriciye Zig'in Arena/Custom Pool tahsis edicilerine doğrudan erişim ve tamamen manuel bellek yönetimi izni verir.

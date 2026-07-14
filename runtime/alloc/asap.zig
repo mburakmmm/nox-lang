@@ -33,6 +33,20 @@ const builtin = @import("builtin");
 
 const use_debug_allocator = builtin.mode == .Debug;
 
+/// Faz S.3: `runtime/alloc/cycle_detector.zig`de TANIMLI/`export`lu —
+/// `asap.zig`nin O dosyayı IMPORT ETMEDEN (döngüsel bağımlılık kurmadan)
+/// çağırabilmesi İÇİN düz bir `extern fn` bildirimi (bkz. `cycle_gc`in
+/// belge notu). Her ikisi de `runtime/lib.zig` aracılığıyla AYNI `noxrt`
+/// nesnesine derlendiğinden, LİNKER bu referansı normal şekilde çözer.
+extern fn nox_cycle_deinit(rt: ?*anyopaque) callconv(.c) void;
+/// AYNI gerekçe — `nox_runtime_deinit`, PROGRAM SONUNDA HENÜZ tahsis-baskısı
+/// eşiğini AŞMAMIŞ (bkz. `nox_cycle_possible_root`in belge notu) "olası
+/// kök" durumundaki döngüleri KAÇIRMAMAK için `nox_cycle_deinit`DEN ÖNCE
+/// SON bir kez `nox_cycle_collect` çağırır — aksi halde KÜÇÜK, kısa ömürlü
+/// programlardaki (ör. testler) döngüler eşiğe HİÇ ULAŞMADAN sessizce
+/// sızardı.
+extern fn nox_cycle_collect(rt: ?*anyopaque) callconv(.c) void;
+
 /// ARC nesneleri (bkz. `runtime/alloc/arc.zig`) için sabit büyüklük-sınıflı
 /// serbest liste havuzunun sınıf sayısı — performans fazında (benchmark
 /// darboğaz denetimi, `oop_arc_churn`in profillenmesiyle bulundu: örneklerin
@@ -59,6 +73,14 @@ pub const RuntimeState = struct {
     /// arasında DAİRESEL import GEREKMEZ, tıpkı `PoolNode`nin arc.zig
     /// tarafından KULLANILMASI gibi).
     arena_pool: ?*anyopaque = null,
+    /// Faz S.3 (Katman 3, döngü çözücü) — `runtime/alloc/cycle_detector.zig`nin
+    /// KENDİ `CycleGc` durumuna opak bir işaretçi (tembel/lazy oluşturulur,
+    /// bkz. onun `getGc`si). `arena_pool` İLE AYNI gerekçeyle opak: `asap.zig`
+    /// `cycle_detector.zig`yi IMPORT ETMEDEN (döngüsel bağımlılık kurmadan)
+    /// bu alanı taşıyabilir — gerçek serbest bırakma `nox_cycle_deinit`e
+    /// (aşağıdaki `extern fn` bildirimi, DÜZ bağlama — bkz. `runtime/lib.zig`nin
+    /// İKİSİNİ de AYNI `noxrt` nesnesine derlediği) DELEGE edilir.
+    cycle_gc: ?*anyopaque = null,
 
     pub fn allocator(self: *RuntimeState) std.mem.Allocator {
         if (use_debug_allocator) return self.debug_gpa.allocator();
@@ -80,6 +102,14 @@ pub export fn nox_runtime_init() ?*anyopaque {
 /// Release modlarında (bkz. modül üstü not) sızıntı tespiti yapılmaz.
 pub export fn nox_runtime_deinit(rt: ?*anyopaque) void {
     const state: *RuntimeState = @ptrCast(@alignCast(rt orelse return));
+    // Faz S.3: SON bir kez döngü topla (bkz. `nox_cycle_collect`in belge
+    // notu, eşiğe ulaşmamış kısa ömürlü programlar İÇİN), SONRA döngü
+    // çözücünün KENDİ yan tablosunu (bkz. `cycle_gc`in belge notu) yok et —
+    // o da AYNI `state.allocator()`ı kullanır, `debug_gpa.deinit()`DEN
+    // ÖNCE yapılmalı (aksi halde deinit SONRASI bir kullanım-sonrası-
+    // serbest-bırakma yazımı olurdu).
+    nox_cycle_collect(rt);
+    nox_cycle_deinit(rt);
     if (use_debug_allocator) {
         if (state.debug_gpa.deinit() == .leak) {
             std.debug.print("nox runtime: bellek sızıntısı tespit edildi\n", .{});

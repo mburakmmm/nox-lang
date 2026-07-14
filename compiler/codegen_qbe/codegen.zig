@@ -342,6 +342,10 @@ const ClassField = struct {
     offset: usize,
 };
 
+/// Faz S.3: `genTraceDispatch`/`genGcFreeDispatch`in dal açacağı (isim,
+/// `class_id`) çiftleri — `generateModule`de toplanır.
+const ClassIdEntry = struct { name: []const u8, id: usize };
+
 const ClassInfo = struct {
     fields: std.ArrayListUnmanaged(ClassField) = .empty,
     total_size: usize = 0,
@@ -826,7 +830,7 @@ const Codegen = struct {
                     }
                 }
                 if (exists) continue;
-                const ftype = try self.inferFieldType(init.params[1..], a.value);
+                const ftype = try self.inferFieldType(cd.name, init.params[1..], a.value);
                 try info.fields.append(self.allocator, .{
                     .name = attr.attr,
                     .info = ftype,
@@ -861,12 +865,29 @@ const Codegen = struct {
     }
 
     /// Bir sınıf alanının tipini yalnızca gerçekçi/yaygın örüntülerden çıkarır:
-    /// doğrudan bir `__init__` parametresi ya da bir literal. Daha karmaşık
-    /// ifadeler (checker'ın tam tip çıkarımını burada yeniden uygulamamak
-    /// için) bilinçli olarak desteklenmiyor.
-    fn inferFieldType(self: *Codegen, init_params: []const ast.Param, expr: ast.Expr) CodegenError!TypeInfo {
+    /// doğrudan bir `__init__` parametresi, `self` (bkz. aşağı), ya da bir
+    /// literal. Daha karmaşık ifadeler (checker'ın tam tip çıkarımını burada
+    /// yeniden uygulamamak için) bilinçli olarak desteklenmiyor.
+    fn inferFieldType(self: *Codegen, class_name: []const u8, init_params: []const ast.Param, expr: ast.Expr) CodegenError!TypeInfo {
         switch (expr) {
             .identifier => |name| {
+                // Faz S.3: `self.next = self` — bir nesnenin KENDİ türünden
+                // bir alana KENDİSİNE atanması (öz-referans). `generateModule`nin
+                // TÜM sınıf adlarını (alanları çözülmeden ÖNCE) boş bir yer
+                // tutucuyla `self.classes`a ÖNCEDEN eklemesi SAYESİNDE
+                // (stdlib fazı §L'nin `list[JsonValue]` düzeltmesi, bkz. onun
+                // belge notu) `class_name`in KENDİSİ bu noktada ZATEN
+                // kayıtlıdır — bu, GERÇEK bir A↔B referans döngüsü kurmanın
+                // bootstrap adımıdır (bkz. Faz S.3, `runtime/alloc/
+                // cycle_detector.zig`): bir nesne `__init__` İÇİNDE KENDİSİNE
+                // (geçerli, KISMİ ama tahsis edilmiş bir `self` işaretçisine)
+                // işaret ederek başlar (1-döngülük bir öz-döngü), SONRADAN
+                // `a.next = b; b.next = a;` gibi bir yeniden atamayla GERÇEK
+                // bir A↔B döngüsüne dönüştürülebilir — `None`/opsiyonel tipler
+                // OLMADAN kullanılabilecek EN BASİT bootstrap deseni.
+                if (std.mem.eql(u8, name, "self")) {
+                    return .{ .qtype = .l, .heap = .class, .class_name = class_name };
+                }
                 for (init_params) |p| {
                     if (std.mem.eql(u8, p.name, name)) {
                         // `list[T]` alanlar (bkz. görev "Sınıf alanı list[T]
@@ -875,11 +896,13 @@ const Codegen = struct {
                         // betimleyicisini üretir; `genClassRelease` bunu
                         // `releaseValueIfSet` üzerinden özyinelemeli release
                         // için kullanır (bkz. `genClassRelease`in belge
-                        // notu). Sınıf tipli alanlar `resolveType`'ın kendisi
-                        // yüzünden yalnızca DAHA ÖNCE kaydedilmiş bir sınıfa
-                        // referans verebilir (bkz. `registerClass` sırası) —
-                        // bu da öz-referansı ve ileri-referanslı döngüleri
-                        // derleme zamanında doğal olarak imkansız kılar.
+                        // notu). Sınıf tipli alanlar (öz-referans DAHİL —
+                        // bkz. yukarıdaki `self` dalı VE stdlib fazı §L'nin
+                        // `list[JsonValue]` düzeltmesi) `resolveType`'ın
+                        // `self.classes.contains` kontrolü SAYESİNDE artık
+                        // ileri-referanslı sınıflara da (aynı modüldeki HER
+                        // sınıf ÖNCEDEN yer tutucuyla kaydedildiğinden)
+                        // referans verebilir.
                         return try self.resolveType(p.type_expr);
                     }
                 }
@@ -1115,12 +1138,42 @@ const Codegen = struct {
         self.temp_counter = 0;
         self.label_counter = 0;
 
+        // Faz S.3: BU sınıf en az bir SINIF-TİPLİ alan taşıyorsa (yalnızca
+        // BÖYLE sınıflar bir referans DÖNGÜSÜNÜN "kaynağı" olabilir — bkz.
+        // `runtime/alloc/cycle_detector.zig`nin modül üstü notu) predecrement
+        // SIFIRA düşmediğinde (nesne hâlâ canlı, AMA belki bir döngünün
+        // parçası) `nox_cycle_possible_root`e KAYDEDİLİR; sıfıra düştüğünde
+        // (GERÇEKTEN serbest bırakılıyor) `nox_cycle_forget` ile yan
+        // tablodaki olası bir kalıntı TEMİZLENİR (adres yeniden kullanımına
+        // karşı, bkz. onun belge notu). Sınıf-tipli alanı OLMAYAN sınıflar
+        // İÇİN bu iki çağrı da GEREKSİZ (asla bir döngünün kaynağı OLAMAZLAR)
+        // — performans İÇİN atlanır (ÇOĞUNLUK vakada, sıradan bir sınıfta,
+        // sıfır ek maliyet).
+        var has_class_field = false;
+        for (cinfo.fields.items) |f| {
+            if (f.info.heap == .class) {
+                has_class_field = true;
+                break;
+            }
+        }
+
         try self.out.writer.print("export function ${s}_release(l {s}, l %p) {{\n@start\n", .{ class_name, RT_PARAM });
         const should_free = try self.emitInlinePredecrement("%p");
         const free_label = try self.newLabel("release_free");
         const done_label = try self.newLabel("release_done");
-        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ should_free, free_label, done_label });
+        if (has_class_field) {
+            const root_label = try self.newLabel("release_possible_root");
+            try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ should_free, free_label, root_label });
+            try self.out.writer.print("{s}\n", .{root_label});
+            try self.out.writer.print("    call $nox_cycle_possible_root(l {s}, l %p)\n", .{RT_PARAM});
+            try self.out.writer.print("    jmp {s}\n", .{done_label});
+        } else {
+            try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ should_free, free_label, done_label });
+        }
         try self.out.writer.print("{s}\n", .{free_label});
+        if (has_class_field) {
+            try self.out.writer.print("    call $nox_cycle_forget(l {s}, l %p)\n", .{RT_PARAM});
+        }
         for (cinfo.fields.items) |f| {
             if (isHeapManaged(f.info.heap)) {
                 const addr = try self.newTemp();
@@ -1146,6 +1199,129 @@ const Codegen = struct {
         try self.out.writer.print("    call $nox_rc_free_payload(l {s}, l %p, l {d})\n", .{ RT_PARAM, cinfo.total_size });
         try self.out.writer.print("    jmp {s}\n", .{done_label});
         try self.out.writer.print("{s}\n", .{done_label});
+        try self.out.writer.writeAll("    ret\n}\n");
+    }
+
+    /// Faz S.3: HER sınıf İÇİN `$ClassName_trace(rt, p) -> l` üretir —
+    /// `p`nin SINIF-TİPLİ alanlarının DEĞERLERİNİ küçük, `nox_alloc`'lu bir
+    /// arabelleğe (8 baytlık `l` uzunluk BAŞLIĞI + N adet `l` çocuk
+    /// işaretçisi — `genListLit`in AYNI bayt düzeni) yazıp döner;
+    /// `runtime/alloc/cycle_detector.zig`nin `traceChildren`i OKUDUKTAN
+    /// SONRA bu arabelleği `nox_free`lemekle YÜKÜMLÜDÜR. HER sınıf İÇİN
+    /// (sınıf-tipli alanı OLMASA BİLE, `genClassRelease`/`genClassEq` İLE
+    /// TUTARLI biçimde KOŞULSUZ) üretilir — bir sınıf ÖRNEĞİ, KENDİSİ HİÇ
+    /// döngü KAYNAĞI olamasa BİLE, BAŞKA bir sınıfın alanı olarak döngü
+    /// çözücü tarafından KEŞFEDİLİP `nox_gc_free_dispatch`e (bkz.
+    /// `genClassGcFree`) YÖNLENDİRİLEBİLİR — dağıtım fonksiyonlarının HER
+    /// sınıf İÇİN bir DALI olması GEREKİR (bkz. `genTraceDispatch`).
+    fn genClassTrace(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) CodegenError!void {
+        self.temp_counter = 0;
+        self.label_counter = 0;
+
+        var class_fields: std.ArrayListUnmanaged(ClassField) = .empty;
+        defer class_fields.deinit(self.allocator);
+        for (cinfo.fields.items) |f| {
+            if (f.info.heap == .class) try class_fields.append(self.allocator, f);
+        }
+
+        try self.out.writer.print("export function l ${s}_trace(l {s}, l %p) {{\n@start\n", .{ class_name, RT_PARAM });
+        const buf = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_alloc(l {s}, l {d})\n", .{ buf, RT_PARAM, 8 + class_fields.items.len * 8 });
+        try self.out.writer.print("    storel {d}, {s}\n", .{ class_fields.items.len, buf });
+        for (class_fields.items, 0..) |f, i| {
+            const addr = try self.newTemp();
+            try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, f.offset });
+            const fv = try self.newTemp();
+            try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
+            const slot = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ slot, buf, 8 + i * 8 });
+            try self.out.writer.print("    storel {s}, {s}\n", .{ fv, slot });
+        }
+        try self.out.writer.print("    ret {s}\n}}\n", .{buf});
+    }
+
+    /// Faz S.3: HER sınıf İÇİN `$ClassName_gc_free(rt, p)` üretir —
+    /// `collectWhite`in (bkz. `cycle_detector.zig`) ÇAĞIRDIĞI, `$ClassName_
+    /// release`DEN KASITLI olarak FARKLI bir temizlik yolu: SINIF-TİPLİ
+    /// OLMAYAN alanları (str/list/Task/Channel/dict) NORMAL şekilde serbest
+    /// bırakır, ama SINIF-TİPLİ alanlara HİÇ DOKUNMAZ (ne release ne
+    /// predecrement) — onlar `collectWhite`in KENDİ özyinelemeli çağrısıyla
+    /// AYRICA (VE YALNIZCA bir kez) ele alınır; burada da dokunulsaydı ÇİFT
+    /// serbest bırakma OLURDU. Nesnenin KENDİ belleği SONRA KOŞULSUZ (bkz.
+    /// `nox_rc_free_payload` — predecrement OLMADAN, çünkü çöp olduğu
+    /// döngü çözücü TARAFINDAN ZATEN KANITLANMIŞTIR) serbest bırakılır.
+    fn genClassGcFree(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) CodegenError!void {
+        self.temp_counter = 0;
+        self.label_counter = 0;
+
+        try self.out.writer.print("export function ${s}_gc_free(l {s}, l %p) {{\n@start\n", .{ class_name, RT_PARAM });
+        for (cinfo.fields.items) |f| {
+            if (f.info.heap == .class) continue; // bkz. yukarıdaki belge notu
+            if (isHeapManaged(f.info.heap)) {
+                const addr = try self.newTemp();
+                try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, f.offset });
+                const fv = try self.newTemp();
+                try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
+                try self.releaseValueIfSet(fv, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info);
+            } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .dict) {
+                const addr = try self.newTemp();
+                try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, f.offset });
+                const fv = try self.newTemp();
+                try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
+                try self.destroyNonArcValue(fv, f.info.heap, f.info.dict_info);
+            }
+        }
+        try self.out.writer.print("    call $nox_rc_free_payload(l {s}, l %p, l {d})\n", .{ RT_PARAM, cinfo.total_size });
+        try self.out.writer.writeAll("    ret\n}\n");
+    }
+
+    /// Faz S.3: `$nox_trace_dispatch(rt, tag, p) -> l` — `runtime/alloc/
+    /// cycle_detector.zig`nin ÇALIŞMA ZAMANI sınıf ETİKETİNE (`tag`, bkz.
+    /// `TAG_SIZE`) göre doğru `$ClassName_trace`ye dal açan bir if-zinciri
+    /// (QBE'de `switch` YOK). Eşleşen bir dal BULUNAMAZSA (savunmacı — HER
+    /// GERÇEK sınıf örneğinin tag'i BİLİNEN bir `class_id`dir, bu dal ASLA
+    /// tetiklenMEMELİDİR) boş (uzunluk=0) bir arabellek döner.
+    fn genTraceDispatch(self: *Codegen, classes: []const ClassIdEntry) CodegenError!void {
+        self.temp_counter = 0;
+        self.label_counter = 0;
+
+        try self.out.writer.print("export function l $nox_trace_dispatch(l {s}, l %tag, l %p) {{\n@start\n", .{RT_PARAM});
+        for (classes) |c| {
+            const eq = try self.newTemp();
+            try self.out.writer.print("    {s} =w ceql %tag, {d}\n", .{ eq, c.id });
+            const case_label = try self.newLabel("trace_case");
+            const next_label = try self.newLabel("trace_next");
+            try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ eq, case_label, next_label });
+            try self.out.writer.print("{s}\n", .{case_label});
+            const r = try self.newTemp();
+            try self.out.writer.print("    {s} =l call ${s}_trace(l {s}, l %p)\n", .{ r, c.name, RT_PARAM });
+            try self.out.writer.print("    ret {s}\n", .{r});
+            try self.out.writer.print("{s}\n", .{next_label});
+        }
+        const empty = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_alloc(l {s}, l 8)\n", .{ empty, RT_PARAM });
+        try self.out.writer.print("    storel 0, {s}\n", .{empty});
+        try self.out.writer.print("    ret {s}\n}}\n", .{empty});
+    }
+
+    /// `genTraceDispatch` İLE AYNI desen, `$ClassName_gc_free`ye dağıtan
+    /// `$nox_gc_free_dispatch(rt, tag, p)` (dönüş değeri YOK).
+    fn genGcFreeDispatch(self: *Codegen, classes: []const ClassIdEntry) CodegenError!void {
+        self.temp_counter = 0;
+        self.label_counter = 0;
+
+        try self.out.writer.print("export function $nox_gc_free_dispatch(l {s}, l %tag, l %p) {{\n@start\n", .{RT_PARAM});
+        for (classes) |c| {
+            const eq = try self.newTemp();
+            try self.out.writer.print("    {s} =w ceql %tag, {d}\n", .{ eq, c.id });
+            const case_label = try self.newLabel("gc_free_case");
+            const next_label = try self.newLabel("gc_free_next");
+            try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ eq, case_label, next_label });
+            try self.out.writer.print("{s}\n", .{case_label});
+            try self.out.writer.print("    call ${s}_gc_free(l {s}, l %p)\n", .{ c.name, RT_PARAM });
+            try self.out.writer.writeAll("    ret\n");
+            try self.out.writer.print("{s}\n", .{next_label});
+        }
         try self.out.writer.writeAll("    ret\n}\n");
     }
 
@@ -4185,13 +4361,28 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     // `self.functions` (yukarıdaki register* döngüleri) DOLU olmalı.
     try gen.computeMustNotRaise(module, extra_functions);
 
+    // Faz S.3: `$nox_trace_dispatch`/`$nox_gc_free_dispatch`in (bkz.
+    // `genTraceDispatch`) hangi (`class_id`, isim) çiftlerine dal açacağını
+    // bilmesi İÇİN — sınıf İÇEREN HER programda üretilir (bkz. onların
+    // belge notu, `runtime/alloc/cycle_detector.zig`nin `dlsym` gerekçesiyle
+    // TUTARLI: sınıfSIZ bir programda BU semboller HİÇ üretilmez).
+    var class_ids: std.ArrayListUnmanaged(ClassIdEntry) = .empty;
+    defer class_ids.deinit(allocator);
     for (module.body) |stmt| {
         if (stmt == .class_def) {
             const cd = stmt.class_def;
             for (cd.methods) |m| try gen.genMethod(cd.name, m);
-            try gen.genClassRelease(cd.name, gen.classes.get(cd.name).?);
-            try gen.genClassEq(cd.name, gen.classes.get(cd.name).?);
+            const cinfo = gen.classes.get(cd.name).?;
+            try gen.genClassRelease(cd.name, cinfo);
+            try gen.genClassEq(cd.name, cinfo);
+            try gen.genClassTrace(cd.name, cinfo);
+            try gen.genClassGcFree(cd.name, cinfo);
+            try class_ids.append(allocator, .{ .name = cd.name, .id = cinfo.class_id });
         }
+    }
+    if (class_ids.items.len > 0) {
+        try gen.genTraceDispatch(class_ids.items);
+        try gen.genGcFreeDispatch(class_ids.items);
     }
     for (module.body) |stmt| {
         if (stmt == .func_def and stmt.func_def.type_params.len == 0 and !containsName(generic_template_names, stmt.func_def.name)) {

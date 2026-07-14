@@ -388,6 +388,13 @@ test "codegen(çalıştır): __init__ içermeyen sınıf (alansız, yalnızca me
     );
 }
 
+test "codegen(çalıştır): Faz S.3 — gerçek A<->B sınıf referans döngüsü, Katman 3 sızmadan toplar" {
+    try expectGolden(
+        @embedFile("codegen_cases/class_reference_cycle_collected.nox"),
+        @embedFile("codegen_cases/class_reference_cycle_collected.expected"),
+    );
+}
+
 test "codegen(çalıştır): 'obj.attr = değer' ataması self dışından — değer tipli VE sınıf tipli alan, sızıntı yok" {
     try expectGolden(
         @embedFile("codegen_cases/attr_assign_external.nox"),
