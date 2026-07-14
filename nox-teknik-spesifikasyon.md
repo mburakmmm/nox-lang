@@ -5810,6 +5810,169 @@ kullanıcılar `serve`i `from`la DEĞİL, ya `nox.http.serve` ya `h.serve`
 
 ---
 
+## 3.23 Faz U.4 — Planlama: Birinci-Sınıf Fonksiyon Değerleri / Closure
+
+**Kullanıcıyla netleşen kapsam (AskUserQuestion):** yalnızca çıplak fonksiyon
+referansları DEĞİL, **TAM closure** (dış kapsamdaki değişkenleri YAKALAMA) —
+bu, D.1'in `nox.http` planlaması KADAR büyük bir mühendislik yüzeyi
+GEREKTİRİYOR, bu YÜZDEN D.1 İLE AYNI disiplinle ÖNCE bu planlama bölümü
+yazıldı, SONRA sıralı, KENDİ doğrulamasıyla biten alt-fazlara (U.4.1-U.4.4)
+bölündü.
+
+**Sözdizimi kararı — lambda YOK, yalnızca iç içe `def`:** Python'ın nested-
+function closure deseniyle AYNI (`def outer(): def inner(): ...; return
+inner`). Ayrı bir `lambda` ifade sözdizimi v1 kapsamı DIŞI (basitlik İÇİN
+ERTELENDİ, gelecekte AYRI bir faz İLE eklenebilir).
+
+**Yakalama semantiği kararı (BİLİNÇLİ v1 sınırlaması):** yakalanan
+değişkenler closure OLUŞTURULDUĞU ANDA DEĞER olarak "anlık görüntülenir"
+(snapshot, C++ `[=]` varsayılan yakalamasına/Swift'in değer-tipi
+yakalamasına BENZER) — Python'un GERÇEK closure semantiği (dış değişkene
+SONRADAN yapılan bir atamanın closure İÇİNDEN de GÖRÜLMESİ, "cell"/kutulama
+tabanlı) v1 kapsamı DIŞI bırakıldı (mutasyon-görünürlüğü İÇİN değişken
+kutulama/`nonlocal` izleme gerektirirdi — AYRI, gelecekteki bir faz).
+Heap-yönetimli (str/list/sınıf/vb.) yakalanan değerler RETAIN edilir
+(closure kendi kopyasını/referansını TUTAR) — bu, listenin/sınıfın KENDİ
+İÇERİĞİNİN closure OLUŞTURULDUKTAN SONRA dışarıdan MUTASYONA uğraması
+durumunda BİLE closure'ın GÖRDÜĞÜ ile TUTARLI kalır (referans PAYLAŞIMI,
+yalnızca DEĞİŞKENİN KENDİSİNE yeniden atama GÖRÜNMEZ — `list[T]`in Faz
+U.1'deki "alias büyüme sonrası görünmez" sınırlamasıyla AYNI KATEGORİDE bir
+v1 kesintisi).
+
+**Tip sistemi kararı:** YENİ `Type.func: FuncType` (`FuncType = struct {
+params: []const Type, return_type: *const Type }`). Sözdizimi: `(int, int)
+-> int` — `parseTypeExpr`in `l_paren` İLE BAŞLAYAN YENİ bir dalı (ŞU ANA
+KADAR bir tip ifadesi HER ZAMAN `.identifier`/`kw_none` İLE başlıyordu,
+`(` HİÇ kullanılmıyordu — YENİ sözdizimi HİÇBİR ÇAKIŞMA yaratmaz).
+
+**Çalışma zamanı temsili kararı — closure'lar YAPISAL olarak `class`
+örnekleriyle AYNI (ARC pointer), İÇ DÜZENİ farklı:** YENİ `HeapKind.closure`
+— `{fn_ptr: i64 @0, yakalanan_değerler... @8+}` (class'ın alan düzenine
+BENZER, ama alan İSİMLERİ YERİNE capture SIRASI kullanılır). Parametre
+geçirme/dönüş/atama/retain/release AÇISINDAN `class` İLE TAMAMEN AYNI ABI
+(QBE `l` tipi, pointer) — YALNIZCA "ÇAĞIRMA" işlemi farklıdır (dolaylı
+çağrı, `fn_ptr`i BLOKTAN yükleyip `calli` İLE çağırma + env pointer'ı GİZLİ
+bir argüman olarak geçirme).
+
+**Alt-fazlar (U.4.1-U.4.4, AGENTS.md İlke #7 ritüeliyle, sırayla):**
+- **U.4.1** — Tip sistemi (`Type.func`, `(params)->ret` sözdizimi,
+  `typeExprToType`/`format`/`eql`). Runtime/codegen DEĞİŞİKLİĞİ YOK.
+- **U.4.2** — İç içe `def` + serbest değişken (capture) analizi (checker).
+  `def`in KENDİ adı dış kapsamda `.func` tipinde bir yerel değişken olarak
+  bağlanır.
+- **U.4.3** — Closure çalışma zamanı temsili + codegen (heap bloğu inşası,
+  ARC retain/release, env-parametreli iç fonksiyon derlemesi).
+- **U.4.4** — Closure değerleri üzerinden DOLAYLI çağrı + parametre/dönüş
+  olarak geçirme.
+
+**Bilinçli v1 sınırlamaları (BAŞTAN kabul edildi):** lambda YOK; mutasyon-
+görünür closure YOK (yalnızca DEĞER-yakalama anlık görüntüsü); closure'lar
+SINIF ALANI olamaz (yalnızca parametre/yerel değişken/dönüş tipi, v1); genel
+(generic)/async iç içe `def` DESTEKLENMEZ (v1).
+
+## 3.24 Faz U.4.1 — Fonksiyon Tip Sistemi (`Type.func` + `(params) -> ret`)
+
+**Kapsam:** U.4'ün İLK alt-fazı — YALNIZCA tip sistemi (types.zig'in
+`Type.func`ı, `ast.zig`nin `FuncTypeExpr`i, `(int, int) -> int` sözdizimi,
+`checker.zig`nin `typeExprToType`si). Çalışma zamanı temsili/çağrı
+mekanizması (closure inşası, dolaylı çağrı) BİLİNÇLİ OLARAK bu fazın
+DIŞINDA — U.4.3/U.4.4'te gelecek.
+
+**Sözdizimi:** `(ParamTipi, ...) -> DönüşTipi` — `parseTypeExpr`nin `l_paren`
+İLE BAŞLAYAN YENİ dalı. Bir tip ifadesi ŞİMDİYE KADAR HER ZAMAN `.identifier`/
+`kw_none` İLE başladığından bu sözdizimi HİÇBİR ÇAKIŞMA yaratmaz. Parametresiz
+`() -> None` de geçerlidir.
+
+**Tip sistemi:** `Type.func: FuncType = struct { params: []const Type,
+return_type: *const Type }`. `eql`/`format` genişletildi (`format` → `"(p1,
+p2) -> ret"`). `ast.TypeExpr`e `func_type: FuncTypeExpr` eklendi
+(`FuncTypeExpr = struct { params: []TypeExpr, return_type: *TypeExpr }`).
+
+**Çalışma zamanı temsili kararı (U.4.3/U.4.4 İÇİN önceden belgelenen,
+ŞİMDİDEN sabitlenen):** closure'lar `class` örnekleriyle AYNI ARC pointer
+temsiline sahip OLACAK (bkz. §3.23) — bu yüzden `ownership/analysis.zig`nin
+`isHeapTypeExpr`i `.func_type`i ŞİMDİDEN heap-yönetimli SAYAR (gelecekteki
+codegen desteğiyle TUTARLI kalması İÇİN).
+
+**Bilinçli v1.1 kesintisi (BU alt-fazda, sonraki alt-fazlara ERTELENDİ):**
+generic fonksiyonlarda func-tipi PARAMETRELER desteklenmiyor (`unifyTypeExpr`
+AÇIK bir hata verir); `codegen.zig`nin `resolveType`si `.func_type` İÇİN
+`error.Unsupported` döner (henüz codegen YOK); bir func-tipi PARAMETRENİN
+gövde İÇİNDE ÇAĞRILMASI henüz desteklenmiyor (`checkCall`in `.identifier`
+dalı `self.from_imports`e KADAR düşer, bulamaz, AÇIK "tanımsız fonksiyon"
+hatası verir — GÜVENLİ bir başarısızlık, SESSİZ yanlış davranış DEĞİL).
+
+**Değişen dosyalar (exhaustive switch GEREKSİNİMİ, derleyici-yönlendirmeli):**
+`types.zig` (`Type.func`), `ast.zig` (`TypeExpr.func_type`), `parser.zig`
+(sözdizimi), `checker.zig` (`typeExprToType`, `isFfiSafeType`,
+`isSpawnParamSafeType`, `collectProtocolNames`, `unifyTypeExpr`,
+`typeToTypeExpr`, `substituteTypeExpr`, `appendMangledType` — SEKİZ AYRI
+exhaustive switch, HER biri derleyici hatasıyla TEK TEK bulunup düzeltildi),
+`codegen.zig`nin `resolveType`si, `module_loader.zig`nin `renameTypeExpr`i,
+`ownership/analysis.zig`nin `isHeapTypeExpr`/`typeExprName`si, `ast_dump.zig`/
+`fmt/formatter.zig`nin tip yazdırma yolları.
+
+**ÖNEMLİ YAN KEŞİF — gömülü unit testlerin SESSİZCE hiç çalışmadığı
+bulgusu:** U.4.1'in `Type.func` `eql`i İÇİN kasıtlı boz→kırmızı→düzelt
+ritüeli uygulanırken (`eql`in dönüş-tipi karşılaştırmasını GEÇİCİ olarak
+`break :blk true`ya BOZARAK), `zig build test`in YEŞİL KALDIĞI (kırmızıya
+DÖNMEDİĞİ) fark edildi — bu, DOĞRUDAN AGENTS.md İlke #7'nin İHLALİ anlamına
+gelirdi. Kök neden araştırıldı: `build.zig`nin `lib_test = b.addTest(.{
+.root_module = nox_mod })`i (`nox_mod`nin kökü `compiler/lib.zig`, YALNIZCA
+`pub const X = @import(...)` şeklinde YENİDEN-DIŞA-AKTARAN bir "barrel"
+dosyası) HİÇBİR `test`/`refAllDecls` çağrısı İÇERMEDİĞİNDEN, Zig'in TEMBEL
+(lazy) semantik analiz modeli GEREĞİ `compiler/lexer/lexer.zig`,
+`compiler/parser/parser.zig`, `compiler/typecheck/types.zig` (VE muhtemelen
+DİĞER TÜM `compiler/*.zig` dosyaları) İÇİNE GÖMÜLÜ `test "..."` bloklarının
+HİÇBİRİ bu test ikilisi TARAFINDAN keşfedilmiyordu — yalnızca `tests/unit/`/
+`tests/golden/` gibi `nox`ı DIŞARIDAN (public API üzerinden) kullanan AYRI
+test dosyaları ÇALIŞIYORDU. Bu, `zig test compiler/lib.zig` (bağımsız,
+build.zig'in DIŞINDA) VE `compiler/lexer/lexer.zig`ye kasıtlı bir
+`unreachable` EKLENEREK deneysel olarak DOĞRULANDI — `zig build test` HER
+İKİ durumda da (gerçek bug VE kasıtlı `unreachable`) YEŞİL kaldı,
+`zig test compiler/typecheck/types.zig` (DOĞRUDAN, dosya-BAZLI) İSE
+KIRMIZIYA döndü. **Düzeltme:** `compiler/lib.zig`ye Zig 0.16'da `std.testing.
+refAllDeclsRecursive` HENÜZ VAR OLMADIĞINDAN EL İLE yazılmış özyinelemeli bir
+`refAllDeclsRecursive` yardımcı fonksiyonu + `test { refAllDeclsRecursive(@This()); }`
+bloğu eklendi — bu, TÜM yeniden-dışa-aktarılan modülleri (VE onların KENDİ
+struct/enum/union tipi iç içe bildirimlerini) Sema'ya zorlayarak İÇLERİNDEKİ
+`test` bloklarının GERÇEKTEN keşfedilmesini SAĞLAR. **Bu düzeltme, projenin
+`compiler/parser/parser.zig`sindeki DÖRT gömülü testin Faz T.1'den (AST'ye
+`ast.Stmt { kind, line }` sarmalayıcısının EKLENDİĞİ faz) BERİ SESSİZCE
+DERLENEMEZ (`module.body[0].var_decl` gibi ESKİ, artık GEÇERSİZ alan
+erişimleri KULLANIYORLARDI, olması gereken `module.body[0].kind.var_decl`)
+durumda olduğunu ORTAYA ÇIKARDI** — bu dört test sitesi `.kind` erişimcisi
+eklenerek DÜZELTİLDİ. Düzeltmeden SONRA test SAYISI 300'den **318'e**
+çıktı (18 YENİ, önceden HİÇ ÇALIŞMAMIŞ test keşfedildi), TÜMÜ (bu düzeltme
+DAHİL) YEŞİL. **Bu bulgu, projenin BUGÜNE KADARKİ "zig build test yeşil"
+iddialarının bir KISMININ (compiler/*.zig İÇİNE gömülü testler İÇİN) GERÇEKTE
+DOĞRULANMAMIŞ olduğunu gösterir** — ŞANSA, hiçbir gömülü test GERÇEKTEN
+bozuk DEĞİLDİ (T.1'in stale field-access'i HARİÇ, o da yalnızca bir derleme
+hatasıydı, ÇALIŞMA ZAMANI davranış regresyonu DEĞİL) — ama bu KOŞUL artık
+KALICI olarak DÜZELTİLDİ, gelecekteki HİÇBİR gömülü test SESSİZCE
+atlanmayacak.
+
+**Doğrulama:**
+1. `types.zig`ye 3 YENİ birim testi (`format`in `"(int, int) -> int"` çıktısı,
+   `eql`in aynı/farklı imzaları AYIRT ETMESİ, farklı parametre SAYISINI
+   AYIRT ETMESİ).
+2. `tests/unit/parser_test.zig`ye 2 YENİ test (`(int, int) -> int` VE
+   parametresiz `() -> None` sözdiziminin doğru AST'e ayrıştığını kanıtlar).
+3. `tests/golden/typecheck_cases/`e 2 YENİ golden test: `ok_func_type_
+   signature.nox` (func-tipi bir PARAMETRENİN imzada kabul edildiğini, HİÇ
+   çağrılmadan, kanıtlar) VE `err_func_type_call_not_yet_supported.nox`
+   (func-tipi bir parametrenin ÇAĞRILMASININ, bilinçli v1.1 kesintisi
+   GEREĞİ, AÇIK bir `UndefinedFunction` hatasıyla BAŞARISIZ olduğunu
+   kanıtlar).
+4. **Kasıtlı boz→kırmızı→düzelt** (YUKARIDAKİ yan keşifle İÇ İÇE geçmiş):
+   `eql`in `.func` dalı dönüş-tipi karşılaştırmasını ATLAYACAK şekilde
+   BOZULDU → (refAllDecls düzeltmesinden SONRA) `zig build test` GERÇEKTEN
+   kırmızıya döndü (317/318) → geri getirildi, 318/318 YEŞİLE döndü.
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

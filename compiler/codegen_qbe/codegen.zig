@@ -867,6 +867,10 @@ const Codegen = struct {
                     .elem_is_str = elem.heap == .str,
                 };
             },
+            // Faz U.4.1: fonksiyon/closure tipi henüz codegen'de DESTEKLENMİYOR
+            // (çalışma zamanı temsili/çağrı mekanizması U.4.3/U.4.4'te
+            // eklenecek) — şimdilik yalnızca tip sistemi seviyesinde var.
+            .func_type => return error.Unsupported,
         }
     }
 

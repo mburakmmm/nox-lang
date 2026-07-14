@@ -264,6 +264,15 @@ pub const Checker = struct {
                 }
                 return self.fail(error.UnknownType, "bilinmeyen generic tip: {s}", .{g.name});
             },
+            // Faz U.4: `(int, int) -> int` — birinci-sınıf fonksiyon/closure
+            // tip ifadesi (bkz. nox-teknik-spesifikasyon.md §3.23).
+            .func_type => |ft| {
+                const params = try self.allocator.alloc(Type, ft.params.len);
+                for (ft.params, 0..) |p, i| params[i] = try self.typeExprToType(p);
+                const ret = try self.allocator.create(Type);
+                ret.* = try self.typeExprToType(ft.return_type.*);
+                return .{ .func = .{ .params = params, .return_type = ret } };
+            },
         }
     }
 
@@ -378,7 +387,7 @@ pub const Checker = struct {
             // BİLİNÇLİ OLARAK kapsam dışı bırakıldı — v1 yalnızca header
             // gibi dict[str,str] kullanım örneğini hedefliyor.
             .dict => |d| d.key.* == .str and d.value.* == .str,
-            .list, .class, .task, .channel => false,
+            .list, .class, .task, .channel, .func => false,
         };
     }
 
@@ -392,7 +401,7 @@ pub const Checker = struct {
     fn isSpawnParamSafeType(t: Type) bool {
         return switch (t) {
             .int, .float, .boolean, .str, .none, .task, .channel, .ptr => true,
-            .list, .class, .dict => false,
+            .list, .class, .dict, .func => false,
         };
     }
 
@@ -456,6 +465,10 @@ pub const Checker = struct {
                 }
             },
             .generic => |g| for (g.args) |a| try self.collectProtocolNames(a, names),
+            .func_type => |ft| {
+                for (ft.params) |p| try self.collectProtocolNames(p, names);
+                try self.collectProtocolNames(ft.return_type.*, names);
+            },
         }
     }
 
@@ -1539,6 +1552,10 @@ pub const Checker = struct {
                     else => return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{fn_name}),
                 }
             },
+            // Faz U.4.1: generic fonksiyonlarda fonksiyon-tipi parametreler
+            // v1 kapsamı DIŞI (closure'lar generics'in monomorphization
+            // makinesiyle henüz entegre edilmedi).
+            .func_type => return self.fail(error.UnknownType, "'{s}' çağrısında fonksiyon tipi parametreler generic fonksiyonlarda henüz desteklenmiyor", .{fn_name}),
         }
     }
 
@@ -1623,6 +1640,19 @@ pub const Checker = struct {
                 args[1] = try self.typeToTypeExpr(d.value.*);
                 break :blk .{ .generic = .{ .name = "dict", .args = args } };
             },
+            // Faz U.4.1: generics'in bu ters-çevirme yolu (somut örnekleme
+            // sentezi) closure'lar İÇİN henüz kullanılmıyor (bkz.
+            // `unifyTypeExpr`in AYNI kısıtı) — yine de HİÇBİR generic
+            // fonksiyon func-tipi bir tip parametresine BAĞLANAMAYACAĞINDAN
+            // (yukarısı), bu dal PRATİKTE HİÇ tetiklenmez; yalnızca
+            // exhaustive switch GEREKSİNİMİNİ karşılamak için var.
+            .func => |f| blk: {
+                const params = try self.allocator.alloc(ast.TypeExpr, f.params.len);
+                for (f.params, 0..) |p, i| params[i] = try self.typeToTypeExpr(p);
+                const ret = try self.allocator.create(ast.TypeExpr);
+                ret.* = try self.typeToTypeExpr(f.return_type.*);
+                break :blk .{ .func_type = .{ .params = params, .return_type = ret } };
+            },
         };
     }
 
@@ -1633,6 +1663,13 @@ pub const Checker = struct {
                 const args = try self.allocator.alloc(ast.TypeExpr, g.args.len);
                 for (g.args, 0..) |a, i| args[i] = try self.substituteTypeExpr(a, bindings);
                 break :blk .{ .generic = .{ .name = g.name, .args = args } };
+            },
+            .func_type => |ft| blk: {
+                const params = try self.allocator.alloc(ast.TypeExpr, ft.params.len);
+                for (ft.params, 0..) |p, i| params[i] = try self.substituteTypeExpr(p, bindings);
+                const ret = try self.allocator.create(ast.TypeExpr);
+                ret.* = try self.substituteTypeExpr(ft.return_type.*, bindings);
+                break :blk .{ .func_type = .{ .params = params, .return_type = ret } };
             },
         };
     }
@@ -1730,6 +1767,18 @@ pub const Checker = struct {
                 try self.appendMangledType(buf, d.key.*);
                 try buf.appendSlice(self.allocator, "_");
                 try self.appendMangledType(buf, d.value.*);
+            },
+            // Faz U.4.1: `unifyTypeExpr`in AYNI kısıtı gereği bir generic
+            // fonksiyon HİÇBİR ZAMAN func-tipi bir tip parametresine
+            // BAĞLANAMAZ — bu dal PRATİKTE tetiklenmez, yalnızca exhaustive
+            // switch GEREKSİNİMİNİ karşılar.
+            .func => |f| {
+                try buf.appendSlice(self.allocator, "func_");
+                for (f.params) |p| {
+                    try self.appendMangledType(buf, p);
+                    try buf.appendSlice(self.allocator, "_");
+                }
+                try self.appendMangledType(buf, f.return_type.*);
             },
         }
     }

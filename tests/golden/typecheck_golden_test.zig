@@ -303,3 +303,17 @@ test "golden(typecheck): Faz U.3 — 'from X import Y' — Y kaynak modülde YOK
         @embedFile("typecheck_cases/err_from_import_unknown_member.expected"),
     );
 }
+
+test "golden(typecheck): Faz U.4.1 — (int, int) -> int fonksiyon tipi imzada kabul edilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_func_type_signature.nox"),
+        @embedFile("typecheck_cases/ok_func_type_signature.expected"),
+    );
+}
+
+test "golden(typecheck): Faz U.4.1 — func tipi bir parametrenin ÇAĞRILMASI henüz desteklenmiyor (açık hata)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_func_type_call_not_yet_supported.nox"),
+        @embedFile("typecheck_cases/err_func_type_call_not_yet_supported.expected"),
+    );
+}

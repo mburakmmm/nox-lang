@@ -33,9 +33,16 @@ pub const Type = union(enum) {
     /// olabilir (sınıf anahtar/değer ERTELENDİ — bkz. checker.zig'in
     /// `typeExprToType`indeki `"dict"` dalı).
     dict: Dict,
+    /// `(ParamTipi, ...) -> DönüşTipi` — Faz U.4 (bkz. nox-teknik-
+    /// spesifikasyon.md §3.23): birinci-sınıf bir fonksiyon/closure DEĞERİNİN
+    /// tipi. Çalışma zamanı temsili `class` örnekleriyle AYNI (ARC pointer,
+    /// bkz. codegen.zig'in `HeapKind.closure`su) — yalnızca İÇ DÜZENİ VE
+    /// "çağırma" işlemi FARKLIDIR.
+    func: FuncType,
 };
 
 pub const Dict = struct { key: *const Type, value: *const Type };
+pub const FuncType = struct { params: []const Type, return_type: *const Type };
 
 pub fn eql(a: Type, b: Type) bool {
     if (@as(std.meta.Tag(Type), a) != @as(std.meta.Tag(Type), b)) return false;
@@ -46,6 +53,14 @@ pub fn eql(a: Type, b: Type) bool {
         .task => |elem_a| eql(elem_a.*, b.task.*),
         .channel => |elem_a| eql(elem_a.*, b.channel.*),
         .dict => |d_a| eql(d_a.key.*, b.dict.key.*) and eql(d_a.value.*, b.dict.value.*),
+        .func => |f_a| blk: {
+            const f_b = b.func;
+            if (f_a.params.len != f_b.params.len) break :blk false;
+            for (f_a.params, f_b.params) |pa, pb| {
+                if (!eql(pa, pb)) break :blk false;
+            }
+            break :blk eql(f_a.return_type.*, f_b.return_type.*);
+        },
     };
 }
 
@@ -84,6 +99,15 @@ pub fn format(t: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             try format(d.value.*, writer);
             try writer.writeAll("]");
         },
+        .func => |f| {
+            try writer.writeAll("(");
+            for (f.params, 0..) |p, i| {
+                if (i != 0) try writer.writeAll(", ");
+                try format(p, writer);
+            }
+            try writer.writeAll(") -> ");
+            try format(f.return_type.*, writer);
+        },
     }
 }
 
@@ -103,4 +127,33 @@ test "eql aynı iç içe list tiplerini eşit sayar" {
 
 test "eql farklı sınıf adlarını eşit saymaz" {
     try std.testing.expect(!eql(.{ .class = "Point" }, .{ .class = "Vector" }));
+}
+
+test "Faz U.4.1: func tipi format (int, int) -> int biçiminde yazdırılır" {
+    var ret: Type = .int;
+    const params = [_]Type{ .int, .int };
+    const f: Type = .{ .func = .{ .params = &params, .return_type = &ret } };
+    const s = try toAlloc(std.testing.allocator, f);
+    defer std.testing.allocator.free(s);
+    try std.testing.expectEqualStrings("(int, int) -> int", s);
+}
+
+test "Faz U.4.1: func tipi eql aynı imzayı eşit, farklı dönüş tipini FARKLI sayar" {
+    var ret_int: Type = .int;
+    var ret_float: Type = .float;
+    const params = [_]Type{.int};
+    const a: Type = .{ .func = .{ .params = &params, .return_type = &ret_int } };
+    const b: Type = .{ .func = .{ .params = &params, .return_type = &ret_int } };
+    const c: Type = .{ .func = .{ .params = &params, .return_type = &ret_float } };
+    try std.testing.expect(eql(a, b));
+    try std.testing.expect(!eql(a, c));
+}
+
+test "Faz U.4.1: func tipi eql farklı parametre SAYISINI farklı sayar" {
+    var ret: Type = .int;
+    const one_param = [_]Type{.int};
+    const two_params = [_]Type{ .int, .int };
+    const a: Type = .{ .func = .{ .params = &one_param, .return_type = &ret } };
+    const b: Type = .{ .func = .{ .params = &two_params, .return_type = &ret } };
+    try std.testing.expect(!eql(a, b));
 }

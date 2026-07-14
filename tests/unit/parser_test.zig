@@ -63,3 +63,35 @@ test "zincirlenmiş obj.attr çağrısı ve indeksleme ayrıştırılır" {
     try std.testing.expect(value.call.callee.* == .attribute);
     try std.testing.expect(value.call.callee.attribute.obj.* == .index);
 }
+
+test "Faz U.4.1: (int, int) -> int fonksiyon tip ifadesi ayrıştırılır" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const module = try parse(arena.allocator(),
+        \\def apply(f: (int, int) -> int, x: int, y: int) -> int:
+        \\    return x + y
+        \\
+    );
+    const fd = module.body[0].kind.func_def;
+    const f_type = fd.params[0].type_expr;
+    try std.testing.expect(f_type == .func_type);
+    try std.testing.expectEqual(@as(usize, 2), f_type.func_type.params.len);
+    try std.testing.expectEqualStrings("int", f_type.func_type.params[0].simple);
+    try std.testing.expectEqualStrings("int", f_type.func_type.params[1].simple);
+    try std.testing.expectEqualStrings("int", f_type.func_type.return_type.simple);
+}
+
+test "Faz U.4.1: parametresiz () -> None fonksiyon tip ifadesi ayrıştırılır" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const module = try parse(arena.allocator(),
+        \\def run(callback: () -> None) -> None:
+        \\    pass
+        \\
+    );
+    const fd = module.body[0].kind.func_def;
+    const cb_type = fd.params[0].type_expr;
+    try std.testing.expect(cb_type == .func_type);
+    try std.testing.expectEqual(@as(usize, 0), cb_type.func_type.params.len);
+    try std.testing.expectEqualStrings("None", cb_type.func_type.return_type.simple);
+}

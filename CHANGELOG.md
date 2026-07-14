@@ -108,8 +108,25 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   desteklenir ama `from nox.http import serve` ile çıplak çağrı henüz özel
   olarak tanınmıyor (güvenli bir "tanımsız değişken" hatasına düşer, sessiz
   yanlış davranış değil).
+- Birinci-sınıf fonksiyon değerleri (closure) için tip sistemi temeli
+  eklendi (Faz U.4.1) — yeni `(int, int) -> int` tip ifadesi sözdizimi ve
+  `Type.func` semantik tipi. Bu ilk alt-faz yalnızca tip sistemini kapsıyor;
+  çalışma zamanı temsili/dolaylı çağrı desteği sonraki alt-fazlarda (U.4.2-
+  U.4.4) geliyor. Kullanıcıyla netleşen karar: tam closure semantiği (dış
+  kapsam değişkenlerini yakalama), yalnızca çıplak fonksiyon referansları
+  değil.
 
 ### Düzeltildi
+- **Önemli test-altyapısı düzeltmesi:** `compiler/*.zig` dosyalarına gömülü
+  onlarca birim testi (`compiler/lexer/lexer.zig`, `compiler/parser/
+  parser.zig`, `compiler/typecheck/types.zig` vb.) `zig build test`
+  tarafından SESSİZCE hiç çalıştırılmıyordu — `lib.zig`nin (`nox` modülünün
+  kökü) hiçbir `refAllDecls` çağrısı içermemesi nedeniyle Zig'in tembel
+  analiz modeli bu dosyaların içindeki `test` bloklarını hiç keşfetmiyordu.
+  `lib.zig`ye özyinelemeli bir `refAllDeclsRecursive` yardımcısı eklendi;
+  bu, `compiler/parser/parser.zig`deki DÖRT testin Faz T.1'den (AST'ye
+  `{kind, line}` sarmalayıcısı eklenmesi) beri sessizce DERLENEMEZ durumda
+  olduğunu ortaya çıkardı (düzeltildi). Test sayısı 300'den 318'e çıktı.
 - `noxc` artık proje kökü DIŞINDAN (ör. sistem geneli bir kurulumdan)
   çalıştırılabiliyor — `main.zig`, kendi stdlib/runtime kaynak dizinlerini
   artık CWD-göreli sabit `"stdlib"`/`"zig-out/lib/noxrt.o"` yolları yerine

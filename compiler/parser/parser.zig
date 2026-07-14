@@ -146,6 +146,24 @@ pub const Parser = struct {
             _ = self.advance();
             return .{ .simple = "None" };
         }
+        // Faz U.4: `(int, int) -> int` — birinci-sınıf fonksiyon/closure tip
+        // ifadesi (bkz. `ast.FuncTypeExpr`in belge notu). Bir tip ifadesi
+        // ŞİMDİYE KADAR HİÇ `(` İLE BAŞLAMADIĞINDAN bu YENİ dal HİÇBİR
+        // ÇAKIŞMA yaratmaz.
+        if (self.match(.l_paren)) {
+            var params = std.ArrayList(ast.TypeExpr).empty;
+            if (!self.check(.r_paren)) {
+                try params.append(self.allocator, try self.parseTypeExpr());
+                while (self.match(.comma)) {
+                    try params.append(self.allocator, try self.parseTypeExpr());
+                }
+            }
+            _ = try self.expect(.r_paren);
+            _ = try self.expect(.arrow);
+            const ret = try self.allocator.create(ast.TypeExpr);
+            ret.* = try self.parseTypeExpr();
+            return .{ .func_type = .{ .params = try params.toOwnedSlice(self.allocator), .return_type = ret } };
+        }
         const name = (try self.expect(.identifier)).lexeme;
         if (self.match(.l_bracket)) {
             var args = std.ArrayList(ast.TypeExpr).empty;
@@ -716,7 +734,7 @@ test "değişken tanımı ve aritmetik ifade ayrıştırılır" {
     defer arena.deinit();
     const module = try parseSource(arena.allocator(), "x: int = 1 + 2 * 3\n");
     try std.testing.expectEqual(@as(usize, 1), module.body.len);
-    const decl = module.body[0].var_decl;
+    const decl = module.body[0].kind.var_decl;
     try std.testing.expectEqualStrings("x", decl.name);
     try std.testing.expectEqualStrings("int", decl.type_expr.simple);
     try std.testing.expectEqual(ast.BinaryOp.add, decl.value.binary.op);
@@ -731,7 +749,7 @@ test "fonksiyon tanımı parametre ve dönüş tipiyle ayrıştırılır" {
         \\
     );
     try std.testing.expectEqual(@as(usize, 1), module.body.len);
-    const fd = module.body[0].func_def;
+    const fd = module.body[0].kind.func_def;
     try std.testing.expectEqualStrings("add", fd.name);
     try std.testing.expectEqual(@as(usize, 2), fd.params.len);
     try std.testing.expectEqualStrings("int", fd.return_type.simple);
@@ -749,7 +767,7 @@ test "if/elif/else zinciri doğru şekilde iç içe ayrıştırılır" {
         \\    y = 3
         \\
     );
-    const ifs = module.body[0].if_stmt;
+    const ifs = module.body[0].kind.if_stmt;
     try std.testing.expectEqual(@as(usize, 1), ifs.elif_clauses.len);
     try std.testing.expect(ifs.else_body != null);
 }
@@ -758,7 +776,7 @@ test "list[int] tipi ve liste literali ayrıştırılır" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const module = try parseSource(arena.allocator(), "xs: list[int] = [1, 2, 3]\n");
-    const decl = module.body[0].var_decl;
+    const decl = module.body[0].kind.var_decl;
     try std.testing.expectEqualStrings("list", decl.type_expr.generic.name);
     try std.testing.expectEqual(@as(usize, 3), decl.value.list_lit.len);
 }

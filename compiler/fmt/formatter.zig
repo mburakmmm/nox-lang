@@ -396,6 +396,15 @@ const Printer = struct {
                 }
                 try self.writer.writeAll("]");
             },
+            .func_type => |ft| {
+                try self.writer.writeAll("(");
+                for (ft.params, 0..) |p, idx| {
+                    if (idx > 0) try self.writer.writeAll(", ");
+                    try self.printType(p);
+                }
+                try self.writer.writeAll(") -> ");
+                try self.printType(ft.return_type.*);
+            },
         }
     }
 

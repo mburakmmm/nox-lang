@@ -335,6 +335,11 @@ fn isHeapTypeExpr(te: ast.TypeExpr) bool {
         .simple => |name| !(std.mem.eql(u8, name, "int") or std.mem.eql(u8, name, "float") or
             std.mem.eql(u8, name, "bool") or std.mem.eql(u8, name, "None")),
         .generic => true,
+        // Faz U.4: bir closure değeri, `class` örnekleriyle AYNI ARC
+        // pointer temsiline sahiptir (bkz. types.zig'in `Type.func`
+        // belge notu) — bu yüzden `list`/`dict`/vb. İLE AYNI şekilde
+        // heap-yönetimli sayılır.
+        .func_type => true,
     };
 }
 
@@ -346,6 +351,7 @@ fn typeExprName(allocator: std.mem.Allocator, te: ast.TypeExpr) ![]const u8 {
             const inner = try typeExprName(allocator, g.args[0]);
             break :blk try std.fmt.allocPrint(allocator, "{s}[{s}]", .{ g.name, inner });
         },
+        .func_type => try allocator.dupe(u8, "func"),
     };
 }
 

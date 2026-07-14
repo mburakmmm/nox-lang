@@ -213,6 +213,15 @@ fn dumpType(writer: *std.Io.Writer, t: ast.TypeExpr) std.Io.Writer.Error!void {
             }
             try writer.writeAll("]");
         },
+        .func_type => |ft| {
+            try writer.writeAll("(");
+            for (ft.params, 0..) |p, idx| {
+                if (idx != 0) try writer.writeAll(", ");
+                try dumpType(writer, p);
+            }
+            try writer.writeAll(") -> ");
+            try dumpType(writer, ft.return_type.*);
+        },
     }
 }
 

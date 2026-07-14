@@ -254,6 +254,17 @@ fn renameTypeExpr(a: std.mem.Allocator, te: ast.TypeExpr, map: *const RenameMap)
             for (g.args, 0..) |arg, i| args[i] = try renameTypeExpr(a, arg, map);
             break :blk .{ .generic = .{ .name = g.name, .args = args } };
         },
+        // Faz U.4: içindeki tip ifadelerinde (parametreler/dönüş) sınıf adı
+        // yeniden adlandırması GEREKEBİLİR (`.simple`/`.generic` İLE AYNI
+        // gerekçe) — bir stdlib modülünün fonksiyon tipi imzasında KENDİ
+        // sınıflarından birine başvurması olası bir senaryodur.
+        .func_type => |ft| blk: {
+            const params = try a.alloc(ast.TypeExpr, ft.params.len);
+            for (ft.params, 0..) |p, i| params[i] = try renameTypeExpr(a, p, map);
+            const ret = try a.create(ast.TypeExpr);
+            ret.* = try renameTypeExpr(a, ft.return_type.*, map);
+            break :blk .{ .func_type = .{ .params = params, .return_type = ret } };
+        },
     };
 }
 

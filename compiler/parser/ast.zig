@@ -5,11 +5,22 @@
 pub const TypeExpr = union(enum) {
     simple: []const u8, // int, float, bool, str, None, ya da bir sınıf adı
     generic: Generic,
+    /// `(int, int) -> int` — Faz U.4 (bkz. nox-teknik-spesifikasyon.md
+    /// §3.23): birinci-sınıf bir fonksiyon/closure DEĞERİNİN tip ifadesi.
+    /// `parseTypeExpr`in `l_paren` İLE BAŞLAYAN dalı — ŞU ANA KADAR bir tip
+    /// ifadesi HER ZAMAN `.identifier`/`kw_none` İLE başladığından bu YENİ
+    /// sözdizimi HİÇBİR ÇAKIŞMA yaratmaz.
+    func_type: FuncTypeExpr,
 };
 
 pub const Generic = struct {
     name: []const u8, // ör. "list"
     args: []TypeExpr,
+};
+
+pub const FuncTypeExpr = struct {
+    params: []TypeExpr,
+    return_type: *TypeExpr,
 };
 
 pub const Param = struct {
