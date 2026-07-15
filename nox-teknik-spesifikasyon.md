@@ -7467,6 +7467,89 @@ doğru çıktı verdi.
 
 ---
 
+## 3.42 Faz Y.2 — Örnek Üçüncü-Taraf Paketler Yayımlama (Ekosistem Kanıtı)
+
+**Kaynak — `docs/uretim-hazirlik-analizi.md` (satır 163):** "En az 3-5
+gerçek örnek üçüncü-taraf paket YAYIMLA (ekosistemin GERÇEKTEN çalıştığını
+KANITLAMAK için)."
+
+**Tasarım kararı — GERÇEK genel GitHub repoları, test fixture'ları
+DEĞİL:** Faz P.5/P.6'nın kendi testleri (bkz. `tests/pkg/fetch_test.zig`
+ve benzerleri) BİLEREK yerel `file://` fixture repoları kullanıyordu
+(gerçek ağa dokunmamak için) — bu Y.2'nin AMACI DEĞİLDİR. Kullanıcıyla
+netleşen karar (bkz. AskUserQuestion onayı): beş paket `mburakmmm`
+GitHub hesabında GERÇEKTEN yayımlandı, HER biri MIT lisanslı, `v1.0.0`
+etiketli, genel (public) repo:
+
+| Repo | Alias | Modül dosyası | Gösterdiği özellik |
+|---|---|---|---|
+| [nox-pkg-greet](https://github.com/mburakmmm/nox-pkg-greet) | `greet` | `greet.nox` | düz fonksiyonlar |
+| [nox-pkg-mathx](https://github.com/mburakmmm/nox-pkg-mathx) | `mathx` | `mathx.nox` | `nox.math` üzerine saf-Nox yardımcılar |
+| [nox-pkg-stack](https://github.com/mburakmmm/nox-pkg-stack) | `stack` | `stack.nox` | sınıf + `list[T].append()` |
+| [nox-pkg-strfmt](https://github.com/mburakmmm/nox-pkg-strfmt) | `strfmt` | `strfmt.nox` | `nox.strings` + tekil karakter indeksleme |
+| [nox-pkg-collections](https://github.com/mburakmmm/nox-pkg-collections) | `collections` | `queue.nox` | `list[int]` yardımcı fonksiyonları |
+
+**Doğrulama süreci — önce yerel `file://` prova, SONRA gerçek ağ:** Her
+paket ÖNCE `/tmp` altında yerel bir git deposu olarak inşa edilip
+(`git init`+commit+`v1.0.0` etiketi) yerel bir tüketici projesiyle
+(`file://` repo yolu kullanan bir `nox.json`) `noxc build` İLE
+DERLENEREK/ÇALIŞTIRILARAK doğrulandı — bu, GERÇEK GitHub'a bozuk kod
+push ETMEMEK için bilinçli bir ön-adımdı (aynı disiplinin `git commit`
+öncesi yerel test etme ilkesinin BİR UZANTISI). Yalnızca yerel prova
+TAMAMEN yeşil olduktan SONRA `gh repo create --push` ile her paket
+GERÇEKTEN yayımlandı, `v1.0.0` etiketleri push edildi.
+
+**Bu ön-provalama sürecinde İKİ GERÇEK, önceden BİLİNMEYEN codegen
+sınırlaması keşfedildi (bkz. `compiler/codegen_qbe/codegen.zig`):**
+
+1. **`self.attr = len(x)` (veya `__init__` içinde ÖNCEDEN bildirilen
+   bir yerel değişkenin `self.attr`e atanması) `__init__` metodunun
+   İÇİNDE codegen'in genel "desteklenmeyen yapı" hata yoluna düşüyor —
+   AYNI kod AYNI sınıfın BAŞKA (init-olmayan) bir metodunda SORUNSUZ
+   çalışıyor.** Yalıtılmış tekrar üretim: `self.count = len(s)` (`s` bir
+   `str` PARAMETRESİ) `__init__` İÇİNDE BAŞARISIZ, `set_from` gibi
+   sıradan bir metotta BAŞARILI. Yalnızca ÇIPLAK bir parametrenin
+   doğrudan bir `self.attr`e atanması (`list_class_field.nox` golden
+   testinin deseni) `__init__` içinde güvenlidir.
+2. **`self.attr = [literal]` (yeni bir liste literalinin doğrudan bir
+   `self.attr`e atanması) `__init__` içinde AYNI şekilde başarısız
+   oluyor** — güvenli desen, listeyi HAZIR bir parametre olarak almak
+   (`self.items = items`).
+
+Bu iki bulgu **`compiler/pkg/index.zig`nin/`fetch.zig`nin bir kusuru
+DEĞİL** — genel çekirdek codegen'in `__init__`e özgü, henüz kök nedeni
+araştırılmamış bir sınırlamasıdır. Kapsamlı bir kök-neden analizi ve
+düzeltmesi Y.2'nin (paket YAYIMLAMA) kapsamı DIŞINDA bırakılıp AYRI bir
+takip görevi olarak işaretlendi (`spawn_task`, "Fix self.attr = expr()
+in __init__ codegen bug") — `nox-pkg-stack` bunun yerine kurucusunu
+YALNIZCA çıplak parametrelerini doğrudan alanlara atayacak şekilde
+TASARLADI (`IntStack(items: list[int], count: int)`), sorunu turlamak
+yerine KANITLANMIŞ güvenli deseni KULLANARAK.
+
+**Ayrıca keşfedilen, AYRI bir sınırlama (belgelenip paket tasarımıyla
+ÇÖZÜLDÜ, kod DEĞİŞTİRİLMEDİ):** `checker.zig`nin `tryResolveQualifiedCall`/
+`resolveMangledCall`ı YALNIZCA `self.functions`/`self.classes`e bakıyor,
+`self.generic_functions`a DEĞİL — bu YÜZDEN `import`la içe aktarılan
+GENERİK (`[T]`) bir fonksiyon NE nitelikli (`pkg.mod.fn(...)`) NE DE
+`from`la (`from pkg.mod import fn`) çağrılabiliyor (yalnızca TAMAMEN
+mangled ÇIPLAK adıyla, ör. `pkg_mod_fn(...)`, çağrılabiliyor — kullanışsız
+bir "gizli" API). `nox-pkg-collections` bu YÜZDEN generic `[T]` YERİNE
+somut `list[int]` imzaları KULLANIR (paketin kendi README'sinde AÇIKÇA
+belgelendi).
+
+**Uçtan uca gerçek ağ doğrulaması (`examples/thirdparty_demo/`):**
+`nox.json`, beş paketin TAMAMINI GERÇEK `github.com` adreslerinden
+(yerel/`file://` DEĞİL) çeker; `noxc build examples/thirdparty_demo/
+main.nox` ÇALIŞTIRILDI — `git clone` ile GERÇEK ağ üzerinden beş paket
+de getirilip `nox.lock`a çözülen SHA'lar YAZILDI, program BAŞARIYLA
+derlenip beklenen çıktıyı (yerel prova ile BİREBİR AYNI) ÜRETTİ.
+`package_index.json` da (Faz Y.1'in `noxc search`iyle) bu beş GERÇEK
+paketi listeleyen somut bir örnek İNDEKSTİR — `noxc search
+examples/thirdparty_demo/package_index.json [sorgu]` doğrulandı.
+
+`zig build test` (Debug + ReleaseFast) etkilenmedi/yeşil kaldı (bu faz
+derleyici KODUNU DEĞİŞTİRMEDİ, yalnızca paket İÇERİĞİ + örnek yayımladı).
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

@@ -1,0 +1,48 @@
+# Faz Y.2: gerçek, yayımlanmış üçüncü-taraf paketleri GERÇEK bir GitHub
+# ağı üzerinden getirip tüketen uçtan uca örnek (bkz. nox.json'daki
+# `requires[]` — beş paket de github.com/mburakmmm altında GERÇEKTEN
+# yayımlanmış, MIT lisanslı, v1.0.0 etiketli genel repolardır).
+#
+# Çalıştırmak için (proje kökünden):
+#   noxc run examples/thirdparty_demo/main.nox
+# (İlk çalıştırma `git clone` ile GERÇEK ağa dokunur; `nox.lock` çözülen
+# SHA'ları pinler, sonraki çalıştırmalar tamamen önbellekten/offline
+# çalışır.)
+
+import greet.greet
+import mathx.mathx
+import stack.stack
+import strfmt.strfmt
+import collections.queue
+
+print(greet.greet.hello("Nox"))
+print(greet.greet.hello_formal("Ada", "Dr."))
+
+print(mathx.mathx.clamp(12.0, 0.0, 10.0))
+print(mathx.mathx.lerp(0.0, 10.0, 0.5))
+print(mathx.mathx.is_prime(17))
+print(mathx.mathx.is_prime(18))
+print(mathx.mathx.gcd(48, 18))
+print(mathx.mathx.hypot(3.0, 4.0))
+
+s: stack_stack_IntStack = stack.stack.IntStack([1], 1)
+s.push(2)
+s.push(3)
+print(s.size())
+print(s.pop())
+print(s.pop())
+print(s.is_empty())
+
+print(strfmt.strfmt.pad_left("7", 3, "0"))
+print(strfmt.strfmt.pad_right("7", 3, "0"))
+print(strfmt.strfmt.repeat("ab", 3))
+print(strfmt.strfmt.title_case("merhaba dunya"))
+
+xs: list[int] = [10, 20, 30, 40]
+print(collections.queue.contains(xs, 30))
+print(collections.queue.index_of(xs, 40))
+print(collections.queue.count_of(xs, 99))
+print(collections.queue.last(xs))
+ys: list[int] = collections.queue.reversed_copy(xs)
+print(ys[0])
+print(ys[3])

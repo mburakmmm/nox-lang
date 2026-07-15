@@ -246,6 +246,13 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   DEĞİL, `docs/uretim-hazirlik-analizi.md`nin talimatına uygun). Yeni,
   tam işlevsel `noxc search <indeks-dosyasi.json> [sorgu]` alt komutu
   (hâlâ iskelet olan `fetch`/`update`den farklı olarak).
+- Beş gerçek üçüncü-taraf Nox paketi yayımlandı (Faz Y.2) —
+  `github.com/mburakmmm/nox-pkg-{greet,mathx,stack,strfmt,collections}`,
+  hepsi MIT lisanslı ve `v1.0.0` etiketli genel GitHub repoları — Nox'un
+  merkeziyetsiz (Git tabanlı) paket ekosisteminin GERÇEKTEN çalıştığını
+  kanıtlamak için. `examples/thirdparty_demo/`, bu beş paketi GERÇEK ağ
+  üzerinden getirip tüketen uçtan uca bir örnek + `noxc search` için
+  örnek bir paket dizini içerir.
 
 ### Düzeltildi
 - **Bellek sızıntısı (Faz X.2, `tests/fuzz/wasm_parser_fuzz.zig`nin yeni
