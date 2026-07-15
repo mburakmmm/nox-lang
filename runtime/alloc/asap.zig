@@ -33,6 +33,13 @@ const builtin = @import("builtin");
 
 const use_debug_allocator = builtin.mode == .Debug;
 
+/// Faz X.3 (bkz. docs/uretim-hazirlik-analizi.md — "ARC atomikliği/cross-
+/// thread invariant'ını YA gerçek atomiklerle YA DA derleme-zamanı bir
+/// assertion'la RESMİLEŞTİR"). `builtin.mode == .Debug`de AKTİF —
+/// `use_debug_allocator`/`arc.zig`nin `use_pool`u İLE AYNI "Debug =
+/// TAM güvenlik ağı, Release = TAM hız" ilkesi.
+const debug_thread_check = builtin.mode == .Debug;
+
 /// Faz S.3: `runtime/alloc/cycle_detector.zig`de TANIMLI/`export`lu —
 /// `asap.zig`nin O dosyayı IMPORT ETMEDEN (döngüsel bağımlılık kurmadan)
 /// çağırabilmesi İÇİN düz bir `extern fn` bildirimi (bkz. `cycle_gc`in
@@ -81,12 +88,56 @@ pub const RuntimeState = struct {
     /// (aşağıdaki `extern fn` bildirimi, DÜZ bağlama — bkz. `runtime/lib.zig`nin
     /// İKİSİNİ de AYNI `noxrt` nesnesine derlediği) DELEGE edilir.
     cycle_gc: ?*anyopaque = null,
+    /// Faz X.3: bu `rt`nin ARC (Katman 2, bkz. `runtime/alloc/arc.zig`)
+    /// işlemlerine İLK dokunan OS iş parçacığının kimliği — `nox_rc_alloc`/
+    /// `nox_rc_free_payload` (aşağıdaki `arcOwnerThreadOk`ya bkz.) HER
+    /// çağrıda BUNU doğrular. **Nox'un çalışma zamanı ARC refcount'unu
+    /// (`arc.zig`nin `i64` başlığı) ASLA atomik OLARAK artırıp AZALTMAZ**
+    /// (bkz. `arc.zig`nin `nox_rc_retain`/`nox_rc_predecrement`i, VE
+    /// performans fazında BUNLARIN QBE'ye INLINE EDİLMİŞ HALİ, `codegen_qbe/
+    /// codegen.zig`nin `emitInlineRetain`/`emitInlinePredecrement`i) — bu
+    /// GÜVENLİDİR ÇÜNKÜ Nox'un eşzamanlılık modeli (Faz 21, `runtime/
+    /// async_rt/`) TEK bir OS iş parçacığı üzerinde KOOPERATİF fiber
+    /// zamanlamasıdır (`scheduler.zig`nin KENDİ modül üstü notu) — ARC
+    /// nesneleri ASLA GERÇEKTEN paralel erişime MARUZ KALMAZ. **TEK bilinen
+    /// istisna** (`nox.http` istemcisinin arka plan `std.Thread.spawn`
+    /// işçisi, bkz. `runtime/stdlib_shims/http_client.zig`) DOĞRULANDI:
+    /// işçi iş parçacığı YALNIZCA ham/allocator-tabanlı (ARC-DIŞI) tampon
+    /// kopyaları üretir, ARC tahsisi/serbest bırakması İSE TAMAMEN ana
+    /// (çağıran) iş parçacığında, işçi TAMAMLANDIKTAN SONRA (pipe İLE
+    /// senkronize) GERÇEKLEŞİR — bkz. `dupeToNoxStr`nin çağrı SİTELERİ.
+    /// Bu alan, bu İNCE-AMA-KIRILGAN invariant'ı (gelecekteki bir kod
+    /// değişikliği YANLIŞLIKLA İHLAL ederse) Debug modunda KESİN olarak
+    /// yakalamak İÇİNDİR — GERÇEK atomik refcount'lara geçmek YERİNE
+    /// (ÖLÇÜLMEMİŞ bir performans MALİYETİ, bkz. M.5'in "ölçülmeden mimari
+    /// EKLEME" reddi İLE AYNI gerekçe) BU invariant'ı DOĞRULANABİLİR/
+    /// yakalanabilir hale GETİRMEK tercih edildi.
+    arc_owner_tid: if (debug_thread_check) ?std.Thread.Id else void =
+        if (debug_thread_check) null else {},
 
     pub fn allocator(self: *RuntimeState) std.mem.Allocator {
         if (use_debug_allocator) return self.debug_gpa.allocator();
         return std.heap.smp_allocator;
     }
 };
+
+/// Faz X.3: `state.arc_owner_tid`i (bkz. onun belge notu) doğrular/
+/// başlatır. **Yalnızca `debug_thread_check` AKTİFKEN GERÇEK bir kontrol
+/// yapar** — Release modlarında HER ZAMAN `true` döner (hiçbir maliyet
+/// EKLEMEZ, `std.Thread.getCurrentId()` bile ÇAĞRILMAZ). İLK çağrıda
+/// (`arc_owner_tid == null`) çağıran iş parçacığını SAHİP OLARAK
+/// KAYDEDER ve `true` döner; SONRAKİ HER çağrıda o KAYITLI sahiple
+/// KARŞILAŞTIRIR. `pub fn` OLARAK (export DEĞİL) dışa açılır ki bu
+/// FONKSİYONUN KENDİSİ (bir `std.debug.assert`e SARILMADAN) DOĞRUDAN
+/// test edilebilsin — bkz. aşağıdaki "gerçek bir iş parçacığı ihlali
+/// YAKALANIR" testi.
+pub fn arcOwnerThreadOk(state: *RuntimeState) bool {
+    if (!debug_thread_check) return true;
+    const current = std.Thread.getCurrentId();
+    if (state.arc_owner_tid) |owner| return owner == current;
+    state.arc_owner_tid = current;
+    return true;
+}
 
 /// Yeni bir çalışma zamanı bağlamı oluşturur. Başarısızlıkta `null` döner.
 pub export fn nox_runtime_init() ?*anyopaque {
@@ -149,4 +200,43 @@ test "nox_free(null) güvenli bir hiçbir şey yapmama işlemidir" {
     const rt = nox_runtime_init() orelse return error.InitFailed;
     defer nox_runtime_deinit(rt);
     nox_free(rt, null, 0);
+}
+
+test "arcOwnerThreadOk: aynı iş parçacığından tekrarlanan çağrılar hep true döner" {
+    if (!debug_thread_check) return;
+    var state: RuntimeState = .{ .debug_gpa = if (use_debug_allocator) .init else {} };
+    defer if (use_debug_allocator) {
+        _ = state.debug_gpa.deinit();
+    };
+    try std.testing.expect(arcOwnerThreadOk(&state));
+    try std.testing.expect(arcOwnerThreadOk(&state));
+    try std.testing.expect(arcOwnerThreadOk(&state));
+}
+
+test "arcOwnerThreadOk: Faz X.3 — gerçek bir farklı-iş-parçacığı ihlali YAKALANIR" {
+    // Bu, X.3'ün TÜM amacının SOMUT kanıtıdır: `state.arc_owner_tid` ANA
+    // iş parçacığında SABİTLENDİKTEN SONRA, GERÇEKTEN SPAWN edilmiş AYRI
+    // bir OS iş parçacığından (`std.Thread.spawn` — sahte/simüle EDİLMEMİŞ)
+    // AYNI `state`e yapılan bir çağrı `false` DÖNMELİDİR — `nox_rc_alloc`/
+    // `nox_rc_free_payload`nin `std.debug.assert`i tam da BUNU YAKALAR.
+    if (!debug_thread_check) return;
+    var state: RuntimeState = .{ .debug_gpa = if (use_debug_allocator) .init else {} };
+    defer if (use_debug_allocator) {
+        _ = state.debug_gpa.deinit();
+    };
+
+    try std.testing.expect(arcOwnerThreadOk(&state)); // ana iş parçacığı SAHİP olur
+
+    const Ctx = struct {
+        state: *RuntimeState,
+        result: bool = undefined,
+        fn run(self: *@This()) void {
+            self.result = arcOwnerThreadOk(self.state);
+        }
+    };
+    var ctx = Ctx{ .state = &state };
+    const t = try std.Thread.spawn(.{}, Ctx.run, .{&ctx});
+    t.join();
+
+    try std.testing.expect(!ctx.result); // FARKLI iş parçacığı — İHLAL doğru YAKALANDI
 }

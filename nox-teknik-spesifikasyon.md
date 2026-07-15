@@ -7292,6 +7292,89 @@ YOK" garantisini TAM olarak KAPATMAK İÇİN eklendi.
 
 ---
 
+## 3.40 Faz X.3 — ARC Atomikliği/Cross-Thread Invariant'ının Resmileştirilmesi
+
+**Kaynak — `docs/uretim-hazirlik-analizi.md`:** "X.3 — ARC atomikliği/
+cross-thread invariant'ını YA gerçek atomiklerle YA DA derleme-zamanı bir
+assertion'la RESMİLEŞTİR."
+
+**Araştırma — invariant BUGÜN gerçekten DOĞRU (ama TAMAMEN İMPLİCİT/
+belgesiz):** `runtime/alloc/arc.zig`nin refcount'u (`i64`, görünmez 8
+baytlık başlık) HİÇBİR ZAMAN atomik DEĞİLDİR — `nox_rc_retain`/
+`nox_rc_predecrement` düz `+= 1`/`-= 1`dir, VE performans fazında (Faz
+74/M.1-M.8) BUNLAR QBE'ye INLINE EDİLDİ (`codegen_qbe/codegen.zig`nin
+`emitInlineRetain`/`emitInlinePredecrement`i — SAF aritmetik, Zig
+fonksiyonuna bir ÇAĞRI bile YOK). Bu, YALNIZCA Nox'un eşzamanlılık modeli
+GERÇEKTEN tek-OS-iş-parçacıklı OLDUĞU SÜRECE güvenlidir. Doğrulandı: (1)
+`runtime/async_rt/scheduler.zig`nin KENDİ modül üstü notu fiber'ların
+KOOPERATİF TEK bir OS iş parçacığında ÇALIŞTIĞINI AÇIKÇA belirtir (M:N
+DEĞİL, YALNIZCA M:1 — bkz. §3.21); (2) TEK bilinen istisna, `nox.http`
+istemcisinin arka plan `std.Thread.spawn` işçisidir (`runtime/
+stdlib_shims/http_client.zig`) — İNCELENDİ ve İŞÇİ iş parçacığının
+YALNIZCA ham/allocator-tabanlı (ARC-DIŞI) tampon kopyaları ÜRETTİĞİ, ARC
+tahsisinin/serbest bırakılmasının İSE TAMAMEN ana iş parçacığında, İŞÇİ
+TAMAMLANDIKTAN SONRA (bir self-pipe İLE senkronize, GERÇEK bir happens-
+before ilişkisi kuran) GERÇEKLEŞTİĞİ DOĞRULANDI — `dupeToNoxStr` (ARC
+tahsisi yapan TEK fonksiyon) YALNIZCA ana iş parçacığında ÇAĞRILIYOR.
+
+**Karar — GERÇEK atomiklere GEÇMEK YERİNE, invariant'ı Debug modunda
+DOĞRULANABİLİR/yakalanabilir hale GETİRMEK:** refcount'u atomik yapmak
+(`@atomicRmw`), M/N performans fazının (bkz. §3.24/§3.25, ARC-ağırlıklı
+kod için ÖLÇÜLEN darboğazlar) DOĞRUDAN TERSİNE ÇEVİRİLMESİ anlamına
+gelirdi — ÖLÇÜLMEMİŞ, BUGÜN karşılığı OLMAYAN bir performans MALİYETİ
+(M.5'in "ölçülmeden mimari EKLEME REDDİ" İLE AYNI gerekçe). Bunun YERİNE:
+`asap.RuntimeState`e (İlke #6'yla TUTARLI — GİZLİ bir global DEĞİL, HER
+ARC çağrısına ZATEN AÇIKÇA taşınan `rt` bağlamının bir PARÇASI) yeni bir
+`arc_owner_tid: if (debug_thread_check) ?std.Thread.Id else void` alanı
+eklendi; `arcOwnerThreadOk(state)` (İLK çağrıda çağıran iş parçacığını
+SAHİP olarak KAYDEDER, SONRAKİ HER çağrıda o KAYITLI sahiple KARŞILAŞTIRIR)
+`nox_rc_alloc`/`nox_rc_free_payload`nin (HER ikisi de HÂLÂ GERÇEK Zig
+fonksiyon ÇAĞRILARI — `malloc`/`free`e ihtiyaç duyduklarından İNLİNE
+EDİLEMEZLER, bkz. `emitInlineRetain`nin KENDİ notu) BAŞINDA `std.debug.
+assert`e SARILARAK ÇAĞRILIR. `debug_thread_check = builtin.mode ==
+.Debug` — `use_debug_allocator`/`arc.zig`nin `use_pool`u İLE AYNI "Debug
+= TAM güvenlik ağı, Release = SIFIR maliyet" ilkesi (Release modunda
+`std.Thread.getCurrentId()` bile ÇAĞRILMAZ).
+
+**Bilinçli sınırlama — YALNIZCA `alloc`/`free_payload` KAPSANIR, INLINE
+EDİLMİŞ retain/predecrement DEĞİL:** bu, invariant'ın TAM/MÜKEMMEL bir
+kanıtı DEĞİLDİR — inline edilen ARTIRMA/AZALTMA aritmetiğinin KENDİSİ
+(gerçek bir yarış durumunda İKİ iş parçacığının AYNI ANDA `+=1` yapması)
+BU kontrolden GEÇMEZ. AMA en TEHLİKELİ SONUÇ (çift-serbest-bırakma —
+İKİ iş parçacığının AYNI nesneyi sıfıra düşürüp İKİSİNİN de `nox_rc_
+free_payload`yi ÇAĞIRMASI, VEYA yeni bir nesnenin FARKLI bir iş
+parçacığında tahsis EDİLMESİ) HER ZAMAN `nox_rc_alloc`/`nox_rc_
+free_payload`den GEÇER — bu YÜZDEN bu İKİ çağrı SİTESİ, PRATİKTE en
+YÜKSEK sinyal/maliyet oranına sahip yakalama NOKTALARIDIR. TAM kapsama
+İSTENİRSE inline retain/predecrement'in KENDİSİNE de (QBE IR seviyesinde)
+bir hata-ayıklama modu EKLENMESİ gerekirdi — bu, M.8 İLE AYNI kategoride
+("ölçülmeden/somut bir İHTİYAÇ OLMADAN büyük bir mimari GENİŞLEME") v1
+kapsamı DIŞINDA bırakıldı.
+
+**Doğrulama:**
+1. **İki yeni birim testi** (`runtime/alloc/asap.zig`): (a) AYNI iş
+   parçacığından TEKRARLANAN çağrıların HEP `true` döndüğü (normal
+   kullanım, YANLIŞ-POZİTİF YOK); (b) **GERÇEKTEN `std.Thread.spawn` İLE
+   BAŞLATILAN AYRI bir OS iş parçacığından** (simüle EDİLMEMİŞ) AYNI
+   `state`e yapılan bir çağrının `false` DÖNDÜĞÜ — `arcOwnerThreadOk`nin
+   `pub fn` (export DEĞİL) OLARAK açılması, bu TESTİN gerçek bir `std.
+   debug.assert`/panik TETİKLEMEDEN, SAF mantığı DOĞRUDAN sınamasını
+   SAĞLAR.
+2. **Kasıtlı boz→kırmızı→düzelt:** `arcOwnerThreadOk` GEÇİCİ olarak HER
+   ZAMAN `true` DÖNECEK şekilde BOZULDU → `zig build test`: **368/369 —
+   TAM OLARAK "farklı-iş-parçacığı İHLALİ YAKALANIR" testi BAŞARISIZ
+   oldu**, BAŞKA HİÇBİR test ETKİLENMEDİ. Düzeltme GERİ getirildi, TÜM
+   testler (Debug + ReleaseFast) YEŞİLE döndü.
+3. **Manuel uçtan-uca doğrulama:** sınıf örnekleri (`Point`), takma
+   adlama (`q: Point = p`, GERÇEK bir `nox_rc_retain` TETİKLER) VE
+   `list[int]` İÇEREN GERÇEK bir Nox programı, TAZE bir Debug-modu
+   `noxrt.o`ya karşı DERLENİP çalıştırıldı — yeni assertion HİÇBİR YANLIŞ-
+   POZİTİF ÜRETMEDEN, doğru çıktıyla (çıkış kodu 0) tamamlandı.
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

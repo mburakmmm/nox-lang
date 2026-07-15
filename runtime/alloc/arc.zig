@@ -79,6 +79,11 @@ fn poolClassSize(idx: usize) usize {
 /// (istenenden fazla olabilir — bu blok daha sonra AYNI sınıfa geri
 /// dönecektir) bir blok alır.
 pub export fn nox_rc_alloc(rt: ?*anyopaque, payload_size: usize) ?*anyopaque {
+    // Faz X.3 (bkz. `asap.RuntimeState.arc_owner_tid`nin belge notu):
+    // Debug modunda BU rt'nin ARC işlemlerine dokunan iş parçacığının
+    // HER ZAMAN AYNI olduğunu doğrular — ihlal EDİLİRSE burada, gerçek
+    // bir data-race'e İLERLEMEDEN, KESİN bir panikle DURUR.
+    if (rt) |r| std.debug.assert(asap.arcOwnerThreadOk(@ptrCast(@alignCast(r))));
     const total = payload_size + HEADER_SIZE;
     if (use_pool) {
         if (poolClassIndex(total)) |idx| {
@@ -141,6 +146,8 @@ pub export fn nox_rc_predecrement(ptr: ?*anyopaque) i32 {
 /// dönüştürülür.
 pub export fn nox_rc_free_payload(rt: ?*anyopaque, ptr: ?*anyopaque, payload_size: usize) void {
     const p = ptr orelse return;
+    // Faz X.3 — bkz. `nox_rc_alloc`nin AYNI notu.
+    if (rt) |r| std.debug.assert(asap.arcOwnerThreadOk(@ptrCast(@alignCast(r))));
     const bytes: [*]u8 = @ptrCast(p);
     const base = bytes - HEADER_SIZE;
     const total = payload_size + HEADER_SIZE;

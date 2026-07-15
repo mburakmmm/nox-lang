@@ -231,6 +231,15 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   uyuşmazlığı yüzünden) derlenemediği keşfedildi — bu yüzden her iki
   dosyaya da `std.testing.fuzz`e bağımlı olmayan, her `zig build test`te
   koşulsuz çalışan elle yazılmış regresyon testleri eklendi.
+- ARC atomikliği/cross-thread invariant'ı resmileştirildi (Faz X.3) —
+  `runtime/alloc/arc.zig`nin refcount'u kasıtlı olarak atomik değil (ölçülen
+  performans fazı gerekçesiyle) ve Nox'un eşzamanlılık modeli tek-OS-iş-
+  parçacıklı fiber zamanlaması; bu invariant araştırıldı, `nox.http`
+  istemcisinin tek istisnası (arka plan iş parçacığı) doğrulandı ve artık
+  Debug modunda `asap.RuntimeState.arc_owner_tid` ile aktif olarak
+  denetleniyor (Release'de sıfır maliyet). Gerçek bir `std.Thread.spawn`
+  ile başlatılan ayrı iş parçacığından yapılan ihlalin doğru yakalandığı
+  yeni bir birim testiyle doğrulandı.
 
 ### Düzeltildi
 - **Bellek sızıntısı (Faz X.2, `tests/fuzz/wasm_parser_fuzz.zig`nin yeni
