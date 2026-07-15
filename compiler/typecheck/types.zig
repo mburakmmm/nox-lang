@@ -19,6 +19,12 @@ pub const Type = union(enum) {
     /// capacity)` ile inşa edilir; `.send(v)`/`.recv()` (her ikisi de
     /// `await` ile sarmalanmalıdır) `T` üzerinde çalışır.
     channel: *const Type,
+    /// `ThreadHandle[T]` — Faz BB.3 (bkz. nox-teknik-spesifikasyon.md
+    /// §3.49): `nox.thread.spawn(entry, arg)`den gelen tutamaç. `Task[T]`
+    /// İLE AYNI "sihirli generic isim" deseni (GERÇEK bir sınıf DEĞİL) —
+    /// ama AYRI bir tiptir, ÇÜNKÜ `Task`ın AKSİNE GERÇEK bir OS iş
+    /// parçacığına bağlıdır (`await` DEĞİL, `.join()` ile çözülür).
+    thread_handle: *const Type,
     /// `ptr` — Faz 20'nin ikinci artımı (bkz. nox-teknik-spesifikasyon.md
     /// §3.20): handle-tabanlı C API'leri (`FILE*`/`sqlite3*` gibi) açan,
     /// ARC-İZLENMEYEN OPAK bir işaretçi. Nox bunun İÇİNDEKİ veriyi HİÇ
@@ -52,6 +58,7 @@ pub fn eql(a: Type, b: Type) bool {
         .class => |name_a| std.mem.eql(u8, name_a, b.class),
         .task => |elem_a| eql(elem_a.*, b.task.*),
         .channel => |elem_a| eql(elem_a.*, b.channel.*),
+        .thread_handle => |elem_a| eql(elem_a.*, b.thread_handle.*),
         .dict => |d_a| eql(d_a.key.*, b.dict.key.*) and eql(d_a.value.*, b.dict.value.*),
         .func => |f_a| blk: {
             const f_b = b.func;
@@ -88,6 +95,11 @@ pub fn format(t: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         },
         .channel => |elem| {
             try writer.writeAll("Channel[");
+            try format(elem.*, writer);
+            try writer.writeAll("]");
+        },
+        .thread_handle => |elem| {
+            try writer.writeAll("ThreadHandle[");
             try format(elem.*, writer);
             try writer.writeAll("]");
         },

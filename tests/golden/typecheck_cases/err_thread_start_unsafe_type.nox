@@ -1,0 +1,8 @@
+import nox.thread
+
+async def worker(ch: Channel[int]) -> int:
+    return await ch.recv()
+
+async def main() -> None:
+    c: Channel[int] = Channel[int](1)
+    h: ThreadHandle[int] = nox.thread.start(worker, c)

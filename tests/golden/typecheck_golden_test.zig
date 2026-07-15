@@ -380,3 +380,52 @@ test "golden(typecheck): Faz U.5 — sınıf örneği OLMAYAN bir ifadeyle 'with
         @embedFile("typecheck_cases/err_with_not_a_class.expected"),
     );
 }
+
+test "golden(typecheck): Faz BB.3 — nox.thread.start + ThreadHandle[T].join() kabul edilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_thread_start_join.nox"),
+        @embedFile("typecheck_cases/ok_thread_start_join.expected"),
+    );
+}
+
+test "golden(typecheck): Faz BB.3 — nox.thread.start yanlış argüman sayısını reddeder" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_thread_start_arg_count.nox"),
+        @embedFile("typecheck_cases/err_thread_start_arg_count.expected"),
+    );
+}
+
+test "golden(typecheck): Faz BB.3 — nox.thread.start'ın 'entry'i çıplak bir tanımlayıcı OLMALI" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_thread_start_entry_not_identifier.nox"),
+        @embedFile("typecheck_cases/err_thread_start_entry_not_identifier.expected"),
+    );
+}
+
+test "golden(typecheck): Faz BB.3 — nox.thread.start'ın 'entry'i 'async def' OLMALI" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_thread_start_entry_not_async.nox"),
+        @embedFile("typecheck_cases/err_thread_start_entry_not_async.expected"),
+    );
+}
+
+test "golden(typecheck): Faz BB.3 — nox.thread.start'ın 'entry'i tam olarak bir parametre almalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_thread_start_param_count.nox"),
+        @embedFile("typecheck_cases/err_thread_start_param_count.expected"),
+    );
+}
+
+test "golden(typecheck): Faz BB.3 — nox.thread.start güvenli olmayan (list[int]) bir parametre tipini reddeder" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_thread_start_unsafe_type.nox"),
+        @embedFile("typecheck_cases/err_thread_start_unsafe_type.expected"),
+    );
+}
+
+test "golden(typecheck): Faz BB.3 — nox.thread.start tanımsız 'entry' fonksiyonunu reddeder" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_thread_start_undefined_entry.nox"),
+        @embedFile("typecheck_cases/err_thread_start_undefined_entry.expected"),
+    );
+}

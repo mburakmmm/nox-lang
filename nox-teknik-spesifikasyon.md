@@ -7960,6 +7960,90 @@ GERİ YÜKLENDİ, Debug + ReleaseFast YENİDEN yeşile döndü.
 `runtime/lib.zig`ye `thread_bridge` eklendi (`noxrt_test`in KEŞFETMESİ
 İÇİN, `async_bridge` İLE AYNI desen).
 
+## 3.49 Faz BB.3 — `nox.thread.start`/`ThreadHandle[T]`/`.join()`: Checker
+
+**Kaynak:** Faz BB.2'nin (§3.48) saf-Zig çekirdeği ÜZERİNE, dil yüzeyinin
+İLK yarısı — checker. `compiler/typecheck/types.zig`ye `thread_handle:
+*const Type` eklendi (`Type` union'unun TÜM exhaustive switch'lerine
+— `eql`/`format`/`typeToTypeExpr`/`appendMangledType`/`isFfiSafeType`/
+`isSpawnParamSafeType` — karşılık gelen kollar eklenerek).
+
+**KRİTİK, uygulama SIRASINDA keşfedilen bir isimlendirme ÇAKIŞMASI —
+`nox.thread.spawn` DEĞİL, `nox.thread.start`:** `spawn` ZATEN `kw_spawn`
+olarak lexer'a KAYITLI, dilin KENDİ fiber-spawn sözdiziminin (`spawn
+<fn>(...)`) anahtar kelimesidir. `nox.thread.spawn(...)` YAZILDIĞINDA,
+`.` SONRASI `spawn` bir `.identifier` DEĞİL bir `kw_spawn` token'ı olarak
+GELİR — `parsePostfix`in nokta-erişim çözümlemesi bunu REDDEDER
+(`error.UnexpectedToken`). Bu, GERÇEKTEN derlenip test EDİLEREK
+keşfedildi (planlama turunda ATLANMIŞ bir detay) — çözüm: fonksiyon adı
+`start` OLARAK DEĞİŞTİRİLDİ (`nox.thread.start(entry, arg) ->
+ThreadHandle[T]`). Bu, İKİ AYRI kavramı ("fiber başlat" vs. "OS iş
+parçacığı başlat") KULLANICI İÇİN de sözdizimsel olarak AYIRT ETTİĞİNDEN
+bilinçli olarak KORUNDU (parser'ı `spawn`ı bağlam-duyarlı bir tanımlayıcı-
+YA-DA-anahtar-kelime yapmak YERİNE) — `runtime/async_rt/thread_bridge.
+zig`nin KENDİ Zig-seviyesi `nox_thread_spawn`/`nox_thread_join`/
+`nox_thread_destroy` isimleri (İÇ, Nox kaynağından DOĞRUDAN görünmez)
+DEĞİŞTİRİLMEDİ — `nox_async_spawn`in KENDİSİNİN de Nox'un `spawn`
+anahtar kelimesiyle BİREBİR AYNI ADI TAŞIMAMASIYLA TUTARLI bir ayrım.
+
+**`tryResolveThreadSpawnCall` — `tryResolveHttpServeCall`in AYNI deseni,
+TERS bir kısıtla:** `nox.http.serve`nin `handle`ı ZATEN çalışan bir
+zamanlayıcının fiber'ında senkron çalıştığından `async def` OLAMAZKEN,
+`nox.thread.start`ın `entry`i **`async def` OLMAK ZORUNDADIR** — KENDİ
+TAZE, bağımsız zamanlayıcısının TEK üst-düzey görevi olarak çalışır
+(`$main_body`nin AYNI "üst-düzey/in_async" muamelesi). Doğrulama sırası
+BİLİNÇLİ: ÖNCE "`entry` TANIMLI mı" (`self.functions.get`, net bir
+`UndefinedFunction` hatası İÇİN), SONRA "`entry` ASYNC mı" — TERS sıra
+DENENSEYDİ, tanımsız bir isim YANLIŞLIKLA "async def olmalı" hatasına
+DÜŞERDİ (`async_functions.contains` tanımsız bir isim İÇİN de sessizce
+`false` döner — bu, geliştirme SIRASINDA yazılan bir test fixture'ıyla
+YAKALANIP DÜZELTİLDİ).
+
+**`isThreadTransferSafeType` — `isSpawnParamSafeType`den DAHA SIKI bir alt
+küme:** `int/float/bool/str/none/ptr` — `isSpawnParamSafeType`nin AKSİNE
+`task`/`channel` DE HARİÇ TUTULUR (`class`/`list`/`dict`/`thread_handle`
+zaten HER İKİSİNDE de yasaktı). Gerekçe: bir `Task`/`Channel`, KENDİ
+zamanlayıcısına bağlı bir `scheduler: *Scheduler` alanı TAŞIR
+(`scheduler.zig`/`channel.zig`) — BAŞKA bir OS iş parçacığına taşınması,
+o tutamacın YANLIŞ bir zamanlayıcıya İŞARET ETMESİNE (kullanım anında
+çökme/tanımsız davranışa) yol AÇARDI. Argüman/dönüş tipi (`entry`in
+imzasından) VE geçirilen `arg` ifadesinin KENDİ tipi (normal `assignable`
+kontrolüyle) bu KÜMEDEN geçmelidir.
+
+**`ThreadHandle[T].join()` — `Channel.send`/`.recv` İLE AYNI `await`
+gereksinimi:** `.await_expr`in `is_channel_op` doğrulaması genişletildi —
+`ThreadHandle.join()` de (bkz. `nox_thread_join`ın reaktör-tabanlı askıya
+alma mekanizması, §3.48) `Channel.recv` İLE AYNI "açıkça bir askıya alma
+noktası" ilkesine TABİDİR, `await` İLE SARILMALIDIR.
+
+**Doğrulama:** 7 YENİ checker golden testi (`tests/golden/typecheck_cases/`)
+— `nox.http.serve`nin KENDİ test şablonunun AYNISI: geçerli çağrı
+(`ok_thread_start_join`), yanlış argüman sayısı, `entry` ÇIPLAK bir
+tanımlayıcı DEĞİL, `entry` `async def` DEĞİL, yanlış parametre sayısı,
+güvenli KÜMEDE OLMAYAN parametre tipi (`Channel[int]` — İLK denemede
+`list[int]` KULLANILMIŞTI, AMA bu, ASYNC DEF'LERİN KENDİ ÖNCEDEN VAR OLAN
+parametre-tipi KISITINA (yalnızca int/float/bool/str/None/Task[T]/
+Channel[T]) TAKILDIĞI İÇİN — GERÇEKTEN test EDİLİP GÖZLEMLENEREK —
+`Channel[int]`e DEĞİŞTİRİLDİ, çünkü O tip async-def-parametresi olarak
+GEÇERLİDİR AMA `isThreadTransferSafeType`in KENDİ, DAHA SIKI kümesinden
+HARİÇTİR), tanımsız `entry`.
+
+**Kasıtlı boz→kırmızı→düzelt:** `isThreadTransferSafeType(sig.params[0])`
+kontrolü GEÇİCİ olarak DEVRE DIŞI BIRAKILDI — TAM OLARAK BEKLENEN test
+(`Channel[int]` parametreli `unsafe_type` testi) KIRMIZI oldu (392/393),
+BAŞKA HİÇBİR test ETKİLENMEDİ. Değişiklik GERİ YÜKLENDİ, Debug +
+ReleaseFast YENİDEN yeşile döndü.
+
+`zig build test` (Debug + ReleaseFast) 393/393 yeşil, `zig fmt` temiz.
+Codegen (Faz BB.4) BU faz TARAFINDAN KAPSANMADI — `checkModule`
+`nox.thread.start` çağrılarını DOĞRU tipler, AMA `stdlib/nox/thread.nox`
+HENÜZ VAR OLMADIĞINDAN GERÇEK derleme (`import nox.thread`in tam
+çözümlenmesi) HENÜZ ÇALIŞMAZ; testler BİLİNÇLİ olarak `module_loader`
+ATLANARAK, DOĞRUDAN `nox.checker.check`in `imported_modules`i `import_stmt`
+AST düğümünün KENDİSİNDEN (dosya varlığından BAĞIMSIZ) doldurmasına
+DAYANIR (`tests/golden/typecheck_golden_test.zig`nin MEVCUT desenle
+TUTARLI).
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

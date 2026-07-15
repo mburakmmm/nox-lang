@@ -285,7 +285,7 @@ pub const Checker = struct {
                 return self.fail(error.UnknownType, "bilinmeyen tip: {s}", .{name});
             },
             .generic => |g| {
-                if (std.mem.eql(u8, g.name, "list") or std.mem.eql(u8, g.name, "Task") or std.mem.eql(u8, g.name, "Channel")) {
+                if (std.mem.eql(u8, g.name, "list") or std.mem.eql(u8, g.name, "Task") or std.mem.eql(u8, g.name, "Channel") or std.mem.eql(u8, g.name, "ThreadHandle")) {
                     if (g.args.len != 1) {
                         return self.fail(error.UnknownType, "'{s}' tam olarak bir tip argümanı alır", .{g.name});
                     }
@@ -294,7 +294,8 @@ pub const Checker = struct {
                     boxed.* = elem;
                     if (std.mem.eql(u8, g.name, "list")) return .{ .list = boxed };
                     if (std.mem.eql(u8, g.name, "Task")) return .{ .task = boxed };
-                    return .{ .channel = boxed };
+                    if (std.mem.eql(u8, g.name, "Channel")) return .{ .channel = boxed };
+                    return .{ .thread_handle = boxed };
                 }
                 // `dict[K, V]` — stdlib fazı §C. v1 kapsamı bilinçli olarak
                 // dar: `K` yalnızca `int`/`bool`/`str` (hashlenebilir, basit
@@ -444,7 +445,7 @@ pub const Checker = struct {
             // BİLİNÇLİ OLARAK kapsam dışı bırakıldı — v1 yalnızca header
             // gibi dict[str,str] kullanım örneğini hedefliyor.
             .dict => |d| d.key.* == .str and d.value.* == .str,
-            .list, .class, .task, .channel, .func => false,
+            .list, .class, .task, .channel, .thread_handle, .func => false,
         };
     }
 
@@ -458,7 +459,25 @@ pub const Checker = struct {
     fn isSpawnParamSafeType(t: Type) bool {
         return switch (t) {
             .int, .float, .boolean, .str, .none, .task, .channel, .ptr => true,
-            .list, .class, .dict, .func => false,
+            .list, .class, .dict, .thread_handle, .func => false,
+        };
+    }
+
+    /// Faz BB.3 (bkz. nox-teknik-spesifikasyon.md §3.49): `nox.thread.
+    /// spawn`ın argüman/dönüş tipi kısıtı — `isSpawnParamSafeType`in AYNI
+    /// GÜVENLİ temel kümesi (`int/float/bool/str/none/ptr`), AMA `task`/
+    /// `channel`/`thread_handle` BİLİNÇLİ olarak HARİÇ TUTULUR: bunlar
+    /// KENDİ zamanlayıcılarına/OS iş parçacıklarına BAĞLIDIR (`Task.
+    /// scheduler`/`Channel.scheduler` alanları, bkz. `scheduler.zig`/
+    /// `channel.zig`) — BAŞKA bir OS iş parçacığına TAŞINMALARI, o
+    /// tutamacın YANLIŞ bir zamanlayıcıya İŞARET ETMESİNE (kullanım
+    /// anında ÇÖKME/tanımsız davranışa) yol AÇARDI. `class`/`list`/`dict`
+    /// AYNI gerekçeyle (genel özyinelemeli derin-klonlama mekanizması
+    /// HENÜZ YOK, bkz. `nox.thread`in modül üstü planı) kapsam DIŞI.
+    fn isThreadTransferSafeType(t: Type) bool {
+        return switch (t) {
+            .int, .float, .boolean, .str, .none, .ptr => true,
+            .list, .class, .dict, .task, .channel, .thread_handle, .func => false,
         };
     }
 
@@ -697,6 +716,78 @@ pub const Checker = struct {
             return self.fail(error.TypeMismatch, "'nox.http.serve': 'handle' bir 'HttpResponse' döndürmeli", .{});
         }
         return .none;
+    }
+
+    /// `nox.thread.start(entry, arg) -> ThreadHandle[T]` — Faz BB.3 (bkz.
+    /// nox-teknik-spesifikasyon.md §3.49). **İSİM NEDEN "start", "spawn"
+    /// DEĞİL:** `spawn` ZATEN `kw_spawn` olarak lexer'a KAYITLI, dilin
+    /// KENDİ fiber-spawn sözdiziminin (`spawn <fn>(...)`) anahtar
+    /// kelimesidir — `nox.thread.spawn` YAZILSAYDI, `.` SONRASI `spawn`
+    /// bir `.identifier` DEĞİL bir `kw_spawn` token'ı olarak GELİRDİ,
+    /// `parsePostfix`in nokta-erişim çözümlemesi (`self.expect(.identifier)`)
+    /// bunu REDDEDERDİ (GERÇEKTEN denenip `error.UnexpectedToken`la
+    /// KEŞFEDİLDİ). `start` HİÇBİR anahtar kelimeyle ÇAKIŞMIYOR — AYRICA
+    /// iki AYRI kavramı ("fiber başlat" vs. "OS iş parçacığı başlat")
+    /// KULLANICI İÇİN de sözdizimsel olarak AYIRT EDİYOR, bu YÜZDEN
+    /// bilinçli olarak KORUNDU (parser'ı `spawn`ı bağlam-duyarlı bir
+    /// tanımlayıcı-YA-DA-anahtar-kelime yapmak YERİNE).
+    ///
+    /// `tryResolveHttpServeCall`in AYNI deseni (`entry` birinci sınıf bir
+    /// DEĞER olarak GEÇİRİLEMEZ, ÇIPLAK bir fonksiyon ADI olarak
+    /// doğrulanır), AMA `nox.http.serve`nin TERSİ bir kısıtla: `entry`
+    /// **`async def` OLMAK ZORUNDADIR** (`nox.http.serve`nin `handle`ı
+    /// ZATEN çalışan bir zamanlayıcının fiber'ında senkron çalıştığından
+    /// async OLAMAZKEN, `entry` KENDİ TAZE, bağımsız zamanlayıcısının TEK
+    /// üst-düzey görevi olarak çalışır — `$main_body` İLE AYNI "üst-düzey/
+    /// in_async" muamelesi, bkz. `runtime/async_rt/thread_bridge.zig`nin
+    /// modül üstü notu). Argüman/dönüş tipi `isThreadTransferSafeType`den
+    /// GEÇMELİDİR (paylaşımsız modelin GÜVENLE taşıyabileceği küme —
+    /// `class`/`list`/`dict`/`Task`/`Channel`/`ThreadHandle` HARİÇ).
+    fn tryResolveThreadSpawnCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!?Type {
+        var raw_segments: std.ArrayListUnmanaged([]const u8) = .empty;
+        if (!(try self.flattenDottedPath(c.callee.*, &raw_segments))) return null;
+        if (raw_segments.items.len < 2) return null;
+        const segments = try self.substituteAlias(raw_segments.items);
+        if (segments.len != 3) return null;
+        if (!std.mem.eql(u8, segments[0], "nox")) return null;
+        if (!std.mem.eql(u8, segments[1], "thread")) return null;
+        if (!std.mem.eql(u8, segments[2], "start")) return null;
+        if (!self.imported_modules.contains("nox.thread")) return null;
+
+        if (c.args.len != 2) {
+            return self.fail(error.ArgumentCountMismatch, "'nox.thread.start' tam olarak 2 argüman alır: (entry, arg)", .{});
+        }
+        const entry_name = switch (c.args[0]) {
+            .identifier => |n| n,
+            else => return self.fail(error.NotCallable, "'nox.thread.start': 'entry' doğrudan bir fonksiyon adı olmalı (metod/lambda henüz desteklenmiyor)", .{}),
+        };
+        // ÖNCE "tanımlı mı" (net bir UndefinedFunction hatası İÇİN), SONRA
+        // "async mı" — aksi TAKDİRDE tanımsız bir isim YANLIŞLIKLA "async
+        // def olmalı" hatasına DÜŞERDİ (`async_functions.contains` tanımsız
+        // bir isim İÇİN de sessizce `false` döner).
+        const sig = self.functions.get(entry_name) orelse
+            return self.fail(error.UndefinedFunction, "tanımsız fonksiyon: {s}", .{entry_name});
+        if (!self.async_functions.contains(entry_name)) {
+            return self.fail(error.TypeMismatch, "'nox.thread.start': 'entry' ('{s}') bir 'async def' OLMALI (kendi bağımsız iş parçacığının tek üst-düzey görevi olarak çalışır)", .{entry_name});
+        }
+        if (sig.params.len != 1) {
+            return self.fail(error.TypeMismatch, "'nox.thread.start': 'entry' TAM OLARAK bir parametre almalı", .{});
+        }
+        if (!isThreadTransferSafeType(sig.params[0])) {
+            return self.fail(error.TypeMismatch, "'nox.thread.start': 'entry'in parametre tipi iş parçacıkları arası güvenli değil (yalnızca int/float/bool/str/None/ptr)", .{});
+        }
+        if (!isThreadTransferSafeType(sig.return_type)) {
+            return self.fail(error.TypeMismatch, "'nox.thread.start': 'entry'in dönüş tipi iş parçacıkları arası güvenli değil (yalnızca int/float/bool/str/None/ptr)", .{});
+        }
+
+        const arg_t = try self.checkExpr(ctx, c.args[1]);
+        if (!assignable(sig.params[0], arg_t)) {
+            return self.fail(error.TypeMismatch, "'nox.thread.start': 'arg' tipi 'entry'in parametre tipiyle uyuşmuyor", .{});
+        }
+
+        const boxed = try self.allocator.create(Type);
+        boxed.* = sig.return_type;
+        return .{ .thread_handle = boxed };
     }
 
     fn registerClassSignatures(self: *Checker, cd: ast.ClassDef) TypeError!void {
@@ -1306,20 +1397,29 @@ pub const Checker = struct {
                 const operand = operand_ptr.*;
                 const t = try self.checkExpr(ctx, operand);
                 if (t == .task) break :blk t.task.*;
-                // Task DEĞİLSE, yalnızca bir Channel.send/recv çağrısı olabilir
-                // — bu çağrılar (bkz. `checkCall`in `.channel` dalı) `T`yi
-                // (ya da `send` için `None`u) ZATEN DOĞRUDAN döndürür; burada
+                // Task DEĞİLSE, yalnızca bir Channel.send/recv YA DA (Faz
+                // BB.3) bir ThreadHandle.join() çağrısı olabilir — bu
+                // çağrılar (bkz. `checkCall`in `.channel` dalı/
+                // `tryResolveThreadSpawnCall`ın DÖNÜŞ tipi) `T`yi (ya da
+                // `send` için `None`u) ZATEN DOĞRUDAN döndürür; burada
                 // yalnızca "açıkça bir askıya alma noktası" sözdizimsel ŞEKLİ
-                // doğrulanır.
+                // doğrulanır — `ThreadHandle.join()` de (bkz. `runtime/
+                // async_rt/thread_bridge.zig`nin `nox_thread_join`ı)
+                // `Channel.recv` İLE AYNI reaktör-tabanlı askıya alma
+                // mekanizmasını KULLANDIĞINDAN AYNI kurala TABİDİR.
                 const is_channel_op = switch (operand) {
                     .call => |c| switch (c.callee.*) {
-                        .attribute => |a| (std.mem.eql(u8, a.attr, "send") or std.mem.eql(u8, a.attr, "recv")) and
-                            (self.checkExpr(ctx, a.obj.*) catch return self.fail(error.TypeMismatch, "'await' ifadesinin alıcısı çözümlenemedi", .{})) == .channel,
+                        .attribute => |a| blk2: {
+                            const recv_t = self.checkExpr(ctx, a.obj.*) catch return self.fail(error.TypeMismatch, "'await' ifadesinin alıcısı çözümlenemedi", .{});
+                            if ((std.mem.eql(u8, a.attr, "send") or std.mem.eql(u8, a.attr, "recv")) and recv_t == .channel) break :blk2 true;
+                            if (std.mem.eql(u8, a.attr, "join") and recv_t == .thread_handle) break :blk2 true;
+                            break :blk2 false;
+                        },
                         else => false,
                     },
                     else => false,
                 };
-                if (!is_channel_op) return self.fail(error.TypeMismatch, "'await' yalnızca bir Task değeri ya da bir Channel.send/recv çağrısı üzerinde kullanılabilir", .{});
+                if (!is_channel_op) return self.fail(error.TypeMismatch, "'await' yalnızca bir Task değeri, bir Channel.send/recv ya da bir ThreadHandle.join() çağrısı üzerinde kullanılabilir", .{});
                 break :blk t;
             },
             .spawn_expr => |operand_ptr| blk: {
@@ -1557,6 +1657,10 @@ pub const Checker = struct {
                 // (`checkArgs`/`checkExpr`) GEÇİRİLEMEZ — fonksiyonlar Nox'ta
                 // birinci sınıf DEĞER DEĞİLDİR.
                 if (try self.tryResolveHttpServeCall(ctx, c)) |t| return t;
+                // `nox.thread.start(entry, arg)` — Faz BB.3'ün AYNI
+                // gerekçesi (`entry` ÇIPLAK bir fonksiyon adı, birinci
+                // sınıf DEĞER OLARAK GEÇİRİLEMEZ).
+                if (try self.tryResolveThreadSpawnCall(ctx, c)) |t| return t;
                 // `nox.http.get(url)` gibi bir stdlib modülüne nitelikli
                 // erişimi dener (bkz. `tryResolveQualifiedCall`in belge
                 // notu) — bu, ASAĞIDAKİ `checkExpr(ctx, a.obj.*)`DEN ÖNCE
@@ -1585,6 +1689,17 @@ pub const Checker = struct {
                         return elem_t;
                     }
                     return self.fail(error.UndefinedMethod, "Channel'ın '{s}' metodu yok (yalnızca send/recv)", .{a.attr});
+                }
+                // `ThreadHandle[T]`in yerleşik `join`i — Faz BB.3, `Channel`
+                // İLE AYNI desen (bir kullanıcı sınıfı DEĞİL, burada özel
+                // işlenir). `await` İLE sarmalanmalıdır — bu kısıt burada
+                // DEĞİL, `.await_expr` dalında denetlenir.
+                if (obj_t == .thread_handle) {
+                    if (std.mem.eql(u8, a.attr, "join")) {
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'join' hiç argüman almaz", .{});
+                        return obj_t.thread_handle.*;
+                    }
+                    return self.fail(error.UndefinedMethod, "ThreadHandle'ın '{s}' metodu yok (yalnızca join)", .{a.attr});
                 }
                 // `dict[K, V]`in yerleşik `contains`/`len`i — `Channel`le AYNI
                 // desen: bir kullanıcı sınıfı DEĞİL, burada özel işlenir
@@ -1809,6 +1924,11 @@ pub const Checker = struct {
                 args[0] = try self.typeToTypeExpr(elem.*);
                 break :blk .{ .generic = .{ .name = "Channel", .args = args } };
             },
+            .thread_handle => |elem| blk: {
+                const args = try self.allocator.alloc(ast.TypeExpr, 1);
+                args[0] = try self.typeToTypeExpr(elem.*);
+                break :blk .{ .generic = .{ .name = "ThreadHandle", .args = args } };
+            },
             .dict => |d| blk: {
                 const args = try self.allocator.alloc(ast.TypeExpr, 2);
                 args[0] = try self.typeToTypeExpr(d.key.*);
@@ -1940,6 +2060,10 @@ pub const Checker = struct {
             },
             .channel => |elem| {
                 try buf.appendSlice(self.allocator, "Channel_");
+                try self.appendMangledType(buf, elem.*);
+            },
+            .thread_handle => |elem| {
+                try buf.appendSlice(self.allocator, "ThreadHandle_");
                 try self.appendMangledType(buf, elem.*);
             },
             .dict => |d| {

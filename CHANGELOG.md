@@ -45,6 +45,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   ritüelinde, str-hazırlık kopyalama adımının atlanması test sürecinin
   askıda kalmasına yol açtı — çapraz-iş-parçacığı bellek bozulmasının
   somut kanıtı.
+- `nox.thread.start`/`ThreadHandle[T]`/`.join()` — checker desteği (Faz
+  BB.3, henüz codegen yok). **İsim düzeltmesi:** plan `nox.thread.spawn`
+  öngörüyordu, ama `spawn` zaten dilin kendi fiber-spawn anahtar kelimesi
+  olduğundan (`kw_spawn`) bu parse hatasına yol açtı — gerçekten derlenip
+  keşfedildi, isim `start`a değiştirildi. `entry`in (nox.http.serve'in
+  tersine) `async def` olması zorunlu kılındı; argüman/dönüş tipi
+  `isThreadTransferSafeType`den geçmeli (int/float/bool/str/None/ptr —
+  Task/Channel/class/list/dict hariç, çünkü bunlar kendi zamanlayıcısına
+  bağlıdır). `nox-teknik-spesifikasyon.md` §3.49. 7 yeni checker golden
+  testi + kasıtlı boz→kırmızı ritüeli.
 
 ## [1.0.0]
 
