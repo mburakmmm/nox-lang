@@ -77,6 +77,15 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // `noxc --version`/`noxc version` (bkz. `compiler/main.zig`nin `cmdVersion`ı)
+    // İÇİN — `build.zig.zon`nin `version` alanı TEK doğruluk kaynağıdır,
+    // BURADA yinelenmez (Zig'in build.zig'in KENDİ `build.zig.zon`sunu
+    // comptime struct olarak `@import` edebilme desteği kullanılır).
+    const build_zig_zon = @import("build.zig.zon");
+    const version_options = b.addOptions();
+    version_options.addOption([]const u8, "version", build_zig_zon.version);
+    noxc_mod.addOptions("build_options", version_options);
+
     const noxc = b.addExecutable(.{
         .name = "noxc",
         .root_module = noxc_mod,

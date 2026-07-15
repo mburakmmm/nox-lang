@@ -30,6 +30,7 @@ const test_runner = @import("pkg/test_runner.zig");
 const fetch = @import("pkg/fetch.zig");
 const pkg_index = @import("pkg/index.zig");
 const formatter = @import("fmt/formatter.zig");
+const build_options = @import("build_options");
 
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
@@ -69,7 +70,7 @@ pub fn main(init: std.process.Init) !void {
     const resource_dir_override = if (init.environ_map.get("NOX_RESOURCE_DIR")) |h| try a.dupe(u8, h) else null;
     const resource_dirs = try project.resolveResourceDirs(a, io, resource_dir_override);
 
-    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, legacy };
+    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, version, legacy };
     const sub: Subcommand = blk: {
         if (all_args.items.len == 0) break :blk .legacy;
         const first = all_args.items[0];
@@ -80,6 +81,11 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.eql(u8, first, "fetch")) break :blk .fetch;
         if (std.mem.eql(u8, first, "update")) break :blk .update;
         if (std.mem.eql(u8, first, "search")) break :blk .search;
+        // `-v`/`--dump` ZATEN `build`in AYRINTILI-döküm bayrağı olduğundan
+        // (bkz. modül üstü not), sürüm İÇİN `-V` (büyük harf, `-v` İLE
+        // ÇAKIŞMAZ) VE `--version`/`version` KULLANILIR — `rustc`/`go`/`node`
+        // İLE TUTARLI bir dizi eşanlamlı.
+        if (std.mem.eql(u8, first, "version") or std.mem.eql(u8, first, "--version") or std.mem.eql(u8, first, "-V")) break :blk .version;
         break :blk .legacy;
     };
     const rest: []const []const u8 = if (sub == .legacy) all_args.items else all_args.items[1..];
@@ -91,6 +97,7 @@ pub fn main(init: std.process.Init) !void {
         .test_cmd => try cmdTest(gpa, io, a, rest, nox_home, resource_dirs),
         .fmt => try cmdFmt(gpa, io, a, rest),
         .search => try cmdSearch(io, a, rest),
+        .version => std.debug.print("noxc {s}\n", .{build_options.version}),
         .fetch, .update => {
             std.debug.print("noxc {s}: henuz uygulanmadi (bkz. plan dosyasi, Faz O)\n", .{@tagName(sub)});
             std.process.exit(1);

@@ -57,8 +57,26 @@ Mimari/tasarım kararlarının tam dökümü için
 
 ## Kurulum
 
-Gereksinimler: [Zig 0.16](https://ziglang.org/download/) ve [QBE](https://c9x.me/compile/)
-(`brew install qbe` / kaynaktan derleme).
+### Önceden derlenmiş (önerilen)
+
+macOS (Apple Silicon) ve Linux (x86-64/aarch64) için tek satırlık kurulum
+— `noxc`/`noxlsp` + çalışma zamanı + `nox.*` stdlib + gömülü `qbe` içerir
+(yalnızca bir C derleyicisi — `cc` — sistemde bulunmalıdır, linkleme
+için):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mburakmmm/nox-lang/main/install.sh | sh
+```
+
+Belirli bir sürümü kurmak/kurulum kökünü değiştirmek için `NOX_VERSION`/
+`NOX_INSTALL_DIR` ortam değişkenlerine bakın (bkz. [`install.sh`](install.sh)).
+Doğrulama: `noxc --version`.
+
+### Kaynaktan derleme
+
+Katkıda bulunanlar ya da desteklenmeyen bir platformdaki (ör. Intel Mac)
+kullanıcılar için. Gereksinimler: [Zig 0.16](https://ziglang.org/download/)
+ve [QBE](https://c9x.me/compile/) (`brew install qbe` / kaynaktan derleme).
 
 ```sh
 git clone https://github.com/mburakmmm/nox-lang.git

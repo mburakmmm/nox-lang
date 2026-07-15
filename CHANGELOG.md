@@ -103,6 +103,19 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   fonksiyonuna çıkarılarak düzeltildi. 3 yeni uçtan uca codegen golden
   testi + kasıtlı boz→kırmızı ritüeli (yanlış runtime fonksiyonuna
   yönlendirme, gerçek bir tip-karışıklığı çökmesi olarak yakalandı).
+- Profesyonel kurulum: GitHub Releases + `install.sh` + `noxc --version`
+  (Faz CC.1) — `curl -fsSL .../install.sh | sh` artık macOS (Apple
+  Silicon) ve Linux (x86-64/aarch64) için önceden derlenmiş bir paket
+  kurar (`noxc`/`noxlsp` + çalışma zamanı + stdlib + gömülü `qbe` —
+  yalnızca sistem `cc`si dışarıda bırakılır, çünkü `noxc` gerçek bir
+  tek statik ikili değildir). YENİ `.github/workflows/release.yml`,
+  `v*` etiketlerinde 3 platform için (`ci.yml` ile aynı matris) tarball
+  üretip yayımlar. YENİ `noxc --version`/`version`/`-V` — sürüm metni
+  `build.zig.zon`den tek doğruluk kaynağı olarak türetilir. `nox-teknik-
+  spesifikasyon.md` §3.53. Kullanıcı onayıyla (AskUserQuestion) kapsam
+  netleştirildi: Homebrew tap yerine Releases+install.sh, ve qbe
+  tarball'a gömülür. 1 yeni CLI golden testi + kasıtlı boz→kırmızı
+  ritüeli.
 
 ## [1.0.0]
 

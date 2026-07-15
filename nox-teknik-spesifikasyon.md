@@ -8385,6 +8385,86 @@ bir Zig struct düzeni BEKLEYEN) geçirilmesinin GERÇEK bir tip-karışıklığ
 1: `start`/`ThreadHandle[T]`/`.join()`; Katman 2: `ThreadChannel[T]`)
 1.0 sürümüne HAZIR.
 
+## 3.53 Faz CC.1 — Profesyonel Kurulum: GitHub Releases + `install.sh` + `noxc --version`
+
+**Kaynak:** kullanıcının doğrudan talebi ("kurulum kötü ya zig build
+falan kullanıyoruz diğer diller gibi daha profesyonel bir kurulum
+yöntemi olamaz mı?") — Faz BB.6'nın (§3.52) TAMAMLANMASI VE GitHub
+deposunun (github.com/mburakmmm/nox-lang) canlıya alınmasının HEMEN
+ARDINDAN. Roadmap'in (Faz Q-Z, AA, BB) ORİJİNAL kapsamı DIŞINDA, kullanıcı
+onayıyla (AskUserQuestion) kapsam NETLEŞTİRİLEREK yapıldı.
+
+**Temel kısıt (kararı ŞEKİLLENDİREN):** `noxc` GERÇEK bir TEK statik
+ikili DEĞİLDİR — çalışma zamanında `qbe` VE sistem `cc`sini ÇIPLAK bir
+PATH aramasıyla ÇAĞIRIR (bkz. `compiler/main.zig`nin `"qbe"`/`"cc"`
+argv'leri) — bu yüzden Go/Rust tarzı "TEK ikiliyi indir, HERŞEY biter"
+deneyimi MÜMKÜN DEĞİLDİR. Kullanıcıyla (AskUserQuestion) İKİ karar
+NETLEŞTİRİLDİ: (1) kapsam **GitHub Releases + `install.sh`** (Homebrew
+tap YERİNE — ayrı bir depo GEREKTİRMEDİĞİNDEN daha düşük bakım
+yüküyle daha yüksek etki), (2) **`qbe` tarball'a GÖMÜLÜR** (çok küçük
+olduğundan, kullanıcı ayrıca `brew install qbe` YAPMAK ZORUNDA
+KALMASIN) — yalnızca `cc` (bir C derleyicisi, macOS/Linux geliştirme
+makinelerinde ZATEN neredeyse HER ZAMAN mevcuttur) sistem bağımlılığı
+olarak KALIR.
+
+**`.github/workflows/release.yml` (YENİ):** `v*` etiketi push
+edildiğinde `ci.yml`nin AYNI 3 platform matrisini (macOS/aarch64,
+Linux/x86-64, Linux/aarch64) KULLANARAK `zig build -Doptimize=ReleaseFast`
+çalıştırır, `zig-out/{bin,lib}`i (`noxc`/`noxlsp` + `noxrt.o` + `nox.*`
+stdlib) `bin/qbe` (`brew`den/kaynaktan derlenmiş, `ci.yml`nin AYNI adımı)
+İLE BİRLİKTE bir `nox-lang-<surum>-<platform>.tar.gz`e paketler,
+`softprops/action-gh-release`İLE GitHub Releases'e yükler (+ bir
+`.sha256` doğrulama dosyası).
+
+**Paket düzeni, `zig-out/`ün KENDİSİYLE BİREBİR AYNIDIR — TESADÜF
+DEĞİL:** `compiler/project.zig`nin `resolveResourceDirs`ı `<exe_dir>/
+../lib/noxrt.o` + `<exe_dir>/../lib/nox/stdlib`i BEKLER; `bin/qbe`nin
+`bin/noxc` İLE AYNI dizine KONULMASI YETERLİDİR — `install.sh` `bin/`i
+PATH'e EKLEDİĞİNDE, `noxc`nin `"qbe"` PATH araması OTOMATİK olarak
+gömülü kopyayı BULUR (HİÇBİR kaynak kodu değişikliği GEREKMEDİ).
+
+**`install.sh` (repo kökünde, YENİ):** `curl -fsSL .../install.sh | sh`
+— `uname -s`/`uname -m` İLE platform TESPİT EDER (desteklenmeyenler İÇİN
+— ör. Intel Mac, Windows — net bir hata VE kaynaktan derleme
+YÖNLENDİRMESİ basar), `NOX_VERSION` VERİLMEZSE GitHub API'sinden
+(`releases/latest`) en son etiketi ÇÖZER, doğru tarball'ı `$NOX_INSTALL_DIR`
+(varsayılan `~/.nox-lang`) altına AÇAR, `cc` EKSİKSE bir UYARI basar
+(platforma göre öneri: `xcode-select --install` / `apt install
+build-essential`), shell rc dosyasına (`~/.zshrc`/`~/.bashrc`, TESPİT
+EDİLEBİLİRSE) `PATH` satırını EKLER (zaten YOKSA).
+
+**`noxc --version`/`version`/`-V` (YENİ alt komut/bayrak):**
+`install.sh`nin doğrulama adımının GÜVENDİĞİ, daha önce HİÇ VAR
+OLMAYAN bir özellik — `rustc`/`go`/`node` İLE TUTARLI. `-v` (küçük
+harf) ZATEN `build`in AYRINTILI-döküm bayrağı OLDUĞUNDAN (bkz.
+`cmdBuild`), ÇAKIŞMAYI ÖNLEMEK İÇİN BİLEREK `-V` (büyük harf)
+KULLANILDI. Sürüm METNİ `build.zig.zon`nin `version` alanından TEK
+doğruluk kaynağı olarak (Zig'in `build.zig`in KENDİ `build.zig.zon`sunu
+comptime struct olarak `@import` edebilme desteği ÜZERİNDEN, `b.
+addOptions()` İLE `build_options` modülüne AKTARILARAK) TÜRETİLİR —
+İKİNCİ bir yerde YİNELENMEZ.
+
+**Doğrulama:** `tests/cli/subcommand_test.zig`ye YENİ bir golden test
+— `version`/`--version`/`-V` ÜÇÜNÜN de AYNI `"noxc <sürüm>\n"` satırını
+(bu dosyanın İLK testindeki AYNI notla TUTARLI olarak `std.debug.print`
+KULLANDIĞINDAN stdout DEĞİL **stderr**e) bastığını doğrular.
+
+**Kasıtlı boz→kırmızı→düzelt:** `cmdVersion`in çıktısından `"noxc "`
+öneki GEÇİCİ olarak KALDIRILDI — YENİ test (`startsWith(u8, stderr,
+"noxc ")`) TAM OLARAK BEKLENEN şekilde KIRMIZI oldu (403/404), BAŞKA
+HİÇBİR test ETKİLENMEDİ. Değişiklik `diff` İLE bayt-bayt ÖZDEŞLİĞİ
+doğrulanarak GERİ YÜKLENDİ, Debug + ReleaseFast YENİDEN yeşile döndü.
+
+**Bilinçli v1 sınırlaması:** `.github/workflows/release.yml`/`install.sh`
+BİZZAT `zig build test` KAPSAMINA GİRMEZ (CI/betik kodudur, birim test
+YOKTUR) — doğrulama şu ana kadar (1) YAML/shell sözdizim denetimi
+(`python3 -c "import yaml..."`/`bash -n`), (2) `noxc --version`in
+GERÇEK derlenip ÇALIŞTIRILARAK test EDİLMESİYLE sınırlıdır; GERÇEK bir
+uçtan uca `install.sh` çalıştırması (GERÇEK bir GitHub Release'e karşı)
+İLK `v1.0.0` etiketi/sürümü YAYIMLANANA kadar MÜMKÜN DEĞİLDİR.
+
+`zig build test` (Debug + ReleaseFast) 404/404 yeşil, `zig fmt` temiz.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

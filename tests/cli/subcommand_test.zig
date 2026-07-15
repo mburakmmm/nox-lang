@@ -274,3 +274,29 @@ test "fmt: gercek formatlayici dosyayi yerinde yeniden yazar, IDEMPOTENTTIR" {
     const twice = try tmp.dir.readFileAlloc(io, "messy.nox", a, .limited(4096));
     try std.testing.expectEqualStrings(once, twice);
 }
+
+// Kurulum betiğinin (`install.sh`) doğrulama adımının GÜVENDİĞİ komut —
+// `noxc version`/`--version`/`-V` ÜÇÜ de `noxc <build.zig.zon'daki
+// version>\n`i basar (bkz. build.zig'in `build_options.version`ı, `main.
+// zig`nin `cmdVersion` dalı) — `std.debug.print` KULLANDIĞINDAN (bu
+// dosyanın İLK testindeki AYNI not gibi) stderr'e yazılır, stdout'a DEĞİL.
+// `-v` (küçük harf) `build`in AYRINTILI-döküm bayrağıyla ÇAKIŞTIĞINDAN
+// BİLEREK `-V` (büyük harf) kullanılır.
+test "version: version/--version/-V ÜÇÜ de AYNI 'noxc <surum>' satırını basar" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const noxc = try noxcPath(a);
+
+    inline for (.{ "version", "--version", "-V" }) |flag| {
+        const result = try std.process.run(std.testing.allocator, io, .{
+            .argv = &.{ noxc, flag },
+        });
+        defer std.testing.allocator.free(result.stdout);
+        defer std.testing.allocator.free(result.stderr);
+        try std.testing.expect(result.term == .exited and result.term.exited == 0);
+        try std.testing.expect(std.mem.startsWith(u8, result.stderr, "noxc "));
+        try std.testing.expect(result.stderr.len > "noxc \n".len);
+    }
+}
