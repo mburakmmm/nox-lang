@@ -13,6 +13,13 @@ name: Release
 # dizinine eklenmesi YETERLİDİR, `noxc`nin `qbe`yi ÇIPLAK bir PATH araması
 # İLE çağırdığından (bkz. `compiler/main.zig`), `install.sh`nin `bin/`i
 # PATH'e eklemesi `qbe`yi de OTOMATİK olarak bulunur kılar.
+#
+# **Zig kurulumu — `mlugg/setup-zig@v1` KULLANILMAZ:** bkz. `ci.yml`nin
+# AYNI belge notu — o eylem GERÇEK/etiketli sürümler İÇİN yanlış bir
+# "official" yedek URL (`ziglang.org/builds/...`) kurup 404/503 İLE
+# başarısız oluyordu (bu tag'in İLK denemesinde GERÇEKTEN GÖZLEMLENDİ,
+# tüm platformlar `Zig kur` adımında ~1 dakikada çöktü). Düzeltme: doğru
+# `ziglang.org/download/<sürüm>/...` URL'sinden DOĞRUDAN indirmek.
 
 on:
   push:
@@ -30,19 +37,24 @@ jobs:
         include:
           - os: macos-14
             asset: macos-arm64
+            zig_arch: aarch64-macos
           - os: ubuntu-latest
             asset: linux-x64
+            zig_arch: x86_64-linux
           - os: ubuntu-24.04-arm
             asset: linux-arm64
+            zig_arch: aarch64-linux
     name: ${{ matrix.asset }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Zig kur
-        uses: mlugg/setup-zig@v1
-        with:
-          version: "0.16.0"
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-${{ matrix.zig_arch }}-0.16.0.tar.xz"
+          tar xf /tmp/zig.tar.xz -C /tmp
+          echo "/tmp/zig-${{ matrix.zig_arch }}-0.16.0" >>"$GITHUB_PATH"
 
       - name: qbe kur (macOS)
         if: runner.os == 'macOS'

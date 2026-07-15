@@ -13,6 +13,17 @@ name: CI
 # SIRASINDA GERÇEKTEN keşfedilen bir hata: kaynaktan derlenen bir `qbe`nin
 # BUILD-TIME varsayılan hedefi macOS'un Homebrew paketinden FARKLIDIR, bu
 # YÜZDEN `compiler/qbe_target.zig` `-t`yi HER ZAMAN AÇIKÇA geçer).
+#
+# **Zig kurulumu — `mlugg/setup-zig@v1` KULLANILMAZ (Faz CC.1'in ARDINDAN
+# GERÇEKTEN keşfedilen bir hata):** o eylem, GERÇEK/etiketli bir sürüm
+# (`"0.16.0"`, dev-snapshot DEĞİL) İÇİN "official" yedek URL'sini HER ZAMAN
+# `ziglang.org/builds/...` OLARAK KURAR — bu yol SADECE `master` dev-
+# snapshot'ları İÇİN doğrudur, GERÇEK etiketli sürümler `ziglang.org/
+# download/<sürüm>/...` altındadır (ziglang.org'un KENDİ `download/index.
+# json`ıyla DOĞRULANDI). Sonuç: TÜM mirror'lar + "official" 404/503 İLE
+# başarısız oluyordu (`Zig 0.16.0 fetch` adımı, ~1 dakikada ÇÖKÜYORDU) —
+# bu bir Zig/ağ kesintisi DEĞİLDİ. Düzeltme: doğru URL'den DOĞRUDAN indirip
+# `$GITHUB_PATH`a eklemek.
 
 on:
   push:
@@ -27,19 +38,24 @@ jobs:
         include:
           - os: macos-14
             name: macOS (aarch64)
+            zig_arch: aarch64-macos
           - os: ubuntu-latest
             name: Linux (x86-64)
+            zig_arch: x86_64-linux
           - os: ubuntu-24.04-arm
             name: Linux (aarch64)
+            zig_arch: aarch64-linux
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Zig kur
-        uses: mlugg/setup-zig@v1
-        with:
-          version: "0.16.0"
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-${{ matrix.zig_arch }}-0.16.0.tar.xz"
+          tar xf /tmp/zig.tar.xz -C /tmp
+          echo "/tmp/zig-${{ matrix.zig_arch }}-0.16.0" >>"$GITHUB_PATH"
 
       - name: qbe kur (macOS)
         if: runner.os == 'macOS'

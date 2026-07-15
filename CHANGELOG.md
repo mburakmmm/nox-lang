@@ -117,6 +117,17 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   tarball'a gömülür. 1 yeni CLI golden testi + kasıtlı boz→kırmızı
   ritüeli.
 
+### Düzeltildi
+- CI/Release: `mlugg/setup-zig@v1` eylemi, `v1.0.0` etiketinin İLK
+  denemesinde `ci.yml`/`release.yml`nin İKİSİNDE de Zig kurulum adımını
+  ~1 dakikada çökertti. Kök neden ağ kesintisi DEĞİLDİ — o eylemin
+  "official" yedek URL'si etiketli sürümler İÇİN yanlış bir yol
+  (`ziglang.org/builds/...`, SADECE dev-snapshot'lar İÇİN doğru)
+  KULLANIYORDU. Düzeltme: her iki workflow'da da Zig, `qbe`nin ZATEN
+  kullandığı AYNI "doğrudan `curl`+`tar`" deseniyle DOĞRU
+  (`ziglang.org/download/<sürüm>/...`) URL'den kuruluyor artık.
+  `nox-teknik-spesifikasyon.md` §3.53 (addendum).
+
 ## [1.0.0]
 
 ### Eklendi

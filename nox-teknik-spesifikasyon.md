@@ -8465,6 +8465,31 @@ uçtan uca `install.sh` çalıştırması (GERÇEK bir GitHub Release'e karşı)
 
 `zig build test` (Debug + ReleaseFast) 404/404 yeşil, `zig fmt` temiz.
 
+**SONRADAN bulunan GERÇEK bir CI/Release hatası (bu bölüm YAYIMLANDIKTAN
+HEMEN SONRA, `v1.0.0` etiketinin İLK denemesinde GERÇEKTEN gözlemlendi —
+kod DEĞİL, ALTYAPI hatası):** `mlugg/setup-zig@v1` eylemi, `ci.yml`/
+`release.yml`nin İKİSİNDE de Zig kurulum adımını ~1 dakikada `404`/`503`
+İLE ÇÖKERTTİ — İLK bakışta bir ağ kesintisi GİBİ göründü, ama
+`ziglang.org/download/index.json` DOĞRUDAN sorgulanarak KANITLANDI:
+`0.16.0` GERÇEKTEN VAR VE ERİŞİLEBİLİR (`https://ziglang.org/download/
+0.16.0/zig-<mimari>-0.16.0.tar.xz`, `200`), AMA `mlugg/setup-zig@v1`nin
+"official" YEDEK URL'si (mirror'lar TÜKENDİĞİNDE denenen SON adım)
+KOŞULSUZ olarak `ziglang.org/builds/...`yi DENİYOR — bu yol SADECE
+`master` dev-snapshot'ları İÇİN doğrudur (`0.16.0-dev.XXX+hash` GİBİ),
+GERÇEK/etiketli bir sürüm (`"0.16.0"`) İÇİN her zaman `404` DÖNER. TÜM
+topluluk mirror'ları O SIRADA AYRICA `404`/`503` verdiğinden (muhtemelen
+GERÇEK bir geçici kesinti), İLK denemede kök neden GİZLENDİ — ama
+`ziglang.org/builds/` yolunun HİÇBİR ZAMAN etiketli sürümler İÇİN doğru
+OLMADIĞI kanıtlandığından, BU ASLA güvenilir OLMAYACAKTI (mirror'lar
+GERİ gelse BİLE "official" son-çare yolu HER ZAMAN yanlış kalacaktı).
+**Düzeltme:** `mlugg/setup-zig@v1` bağımlılığı HER İKİ workflow'dan da
+ÇIKARILDI — `qbe`nin ZATEN KULLANDIĞI AYNI "doğrudan `curl`+`tar`" deseni
+Zig İÇİN de uygulandı (matrise `zig_arch` alanı eklenerek, `ziglang.org`ın
+KENDİ `index.json`ında doğrulanan dosya adı kalıbıyla), `$GITHUB_PATH`a
+eklenerek. Üçüncü-taraf eylem YERİNE resmi kaynağa DOĞRUDAN, sabit bir
+URL şablonuyla bağlanmak — `qbe`nin kaynaktan derleme adımıyla TUTARLI
+bir mimari karar.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
