@@ -8044,6 +8044,109 @@ AST düğümünün KENDİSİNDEN (dosya varlığından BAĞIMSIZ) doldurmasına
 DAYANIR (`tests/golden/typecheck_golden_test.zig`nin MEVCUT desenle
 TUTARLI).
 
+## 3.50 Faz BB.4 — `nox.thread.start`/`ThreadHandle[T]`/`.join()`: Codegen + `stdlib/nox/thread.nox`
+
+**Kaynak:** Faz BB.3'ün (§3.49) checker desteği ÜZERİNE, dil yüzeyinin
+İKİNCİ (son) yarısı — codegen. `HeapKind`e `.thread_handle` eklendi
+(`Task`/`Channel` İLE AYNI — ARC-yönetimli DEĞİL, `isHeapManaged` →
+`false`, kapsam-sonu KOŞULSUZ TEK seferlik `nox_thread_destroy` çağrısıyla
+temizlenir — `destroyNonArcValue` VE `heap == .task or .channel or .dict`
+şeklindeki TÜM 6 ayrım noktasına eklendi).
+
+**`stdlib/nox/thread.nox`:** `nox.http.serve`nin `serve`i GİBİ — GERÇEK
+bir `func_def`/`class_def` DEĞİL, TAMAMEN checker (`tryResolveThreadSpawnCall`)
+VE codegen (`genThreadStartExpr`/`genThreadStartWrapper`/
+`genThreadHandleJoin`) sihridir; dosya SADECE `import nox.thread`in
+ÇÖZÜLEBİLMESİ İÇİN belge notlarıyla var.
+
+**`genThreadStartWrapper` — `genSpawnWrapper`DEN İKİ noktada FARKLI:**
+(1) argüman SAYISI HER ZAMAN TAM OLARAK 1'dir (Tier 1'in kısıtı);
+(2) kapanış (`ThreadEntryClosure`) native-qtype'lı DEĞİL, HER ZAMAN `l`
+(i64) genişliğinde bir `payload` alanı TAŞIR (bkz. `thread_bridge.zig`nin
+Zig struct TANIMI, §3.48) — argüman `loadl` İLE okunup `fromPayload` İLE
+hedef tipe ÇEVRİLİR. Kapanışın KENDİSİ (`ThreadEntryClosure`) SAF Zig'de
+(`childThreadMain`) tahsis edilip serbest BIRAKILIR — BURADA `nox_free`
+ÇAĞRILMAZ (`genSpawnWrapper`nin kapanışının AKSİNE).
+
+**KRİTİK, uçtan uca derleme SIRASINDA keşfedilen İKİ AYRI hata (İKİSİ de
+GERÇEKTEN derlenip/çalıştırılıp GÖZLEMLENEREK bulundu):**
+
+1. **`codegen: bu program şu an desteklenmeyen bir yapı içeriyor`
+   (`error.Unsupported`):** codegen'in checker'dan TAMAMEN AYRI, KENDİ
+   `resolveType` fonksiyonu `"ThreadHandle"`i sihirli bir generic isim
+   olarak TANIMIYORDU (`is_list or is_task or is_channel` — `is_thread_handle`
+   EKSİKTİ). `ThreadHandle[int]` tipi ÇÖZÜLEMEDİĞİNDEN başarısız oluyordu.
+   Düzeltme: `resolveType`e `is_thread_handle` eklendi (hem koruma
+   koşuluna hem de `.heap` seçen üçlü zincire).
+
+2. **Görünüşte ÇİFT `$main` sembolü (`cc` bağlantı hatası: `symbol
+   '_main' is already defined`) — YANLIŞ ALARM, GERÇEK bir codegen hatası
+   DEĞİL:** ÜRETİLEN `.ssa`da GERÇEKTEN İKİ `export function ... $main`
+   bloğu VARDI. Ham IR OKUNARAK (grep + tam bağlam) kök neden BULUNDU:
+   test dosyasının KENDİSİ hatalıydı — `async def main() -> None: ...`
+   ŞEKLİNDE bir fonksiyon TANIMLIYORDU. Nox'ta ÜST DÜZEY `async` kod bir
+   `def main()` SÖZLEŞMESİ İLE İFADE EDİLMEZ (bkz. `genMainAsync`nin
+   ÖNCEDEN VAR OLAN belge notu, §2.21 aşama 4) — modülün ÇIPLAK üst-düzey
+   deyimleri DOĞRUDAN `$main_body` olarak derlenir. `main` ADLI bir
+   fonksiyon TANIMLAMAK, O fonksiyonun KENDİ `genFuncDef` yolundan
+   `$main` sembolüyle derlenmesine (rezerve edilmiş C-ABI giriş adıyla
+   ÇAKIŞMASINA) yol AÇAR — bu, ThreadHandle/BB.4'e ÖZGÜ bir kodgen kusuru
+   DEĞİL, ÖNCEDEN VAR OLAN, alakasız bir isimlendirme tuzağıydı (test
+   dosyasının kendisi `async_spawn_await.nox`/`async_channel.nox`nin
+   KURULU deseninden — ÇIPLAK üst-düzey deyimler — SAPMIŞTI). Düzeltme:
+   test fixture'ları `async def main()` SARMALAYICISI OLMADAN, ÇIPLAK
+   üst-düzey `Task[None] = spawn ...` deyimleriyle YENİDEN YAZILDI.
+
+**ÜÇÜNCÜ, break→kırmızı→düzelt RİTÜELİ SIRASINDA (aşağıda) BULUNAN GERÇEK
+bir sızıntı:** `genThreadStartWrapper`, `spec.target_fn`i çağırdıktan
+SONRA `str` tipli argümanı SERBEST BIRAKMIYORDU. Sözleşme (bkz.
+`collectLocals`/`allocSlot`in `is_param` notu — parametreler ÇAĞRILAN
+TARAFINDAN HER ZAMAN ÖDÜNÇ ALINIR, kapsam-sonu otomatik release'i ATLAR)
+gereği, bir değerin sahipliği ÇAĞRI SİTESİNDE (`releaseTemporaryArgs`/
+`releaseIfTemporary`in normal `genCall` İÇİN yaptığı GİBİ) ELDE TUTULUR.
+`genThreadStartWrapper`nin `arg_val`ı — `childThreadMain`in `dupeToNoxStr`
+İLE TAZE, TEK SAHİPLİ bir ARC `str` olarak klonladığı — ÇAĞRI SİTESİNİN
+KENDİSİ (wrapper) TARAFINDAN serbest BIRAKILMALIYDI, AMA BIRAKILMIYORDU.
+Uçtan uca `str` golden testi BUNU GERÇEKTEN yakaladı (`DebugAllocator`nin
+sızıntı raporu, yığın izinde `dupeToNoxStr <- childThreadMain` AÇIKÇA
+GÖRÜLEBİLİYORDU). Düzeltme: `genThreadStartWrapper`, `spec.target_fn`
+çağrısı DÖNDÜKTEN SONRA, parametre `str` İSE `releaseValueIfSet` ÇAĞIRIR.
+(Not: `genSpawnWrapper`nin — normal fiber `spawn`ın — KENDİSİ de
+str argümanlar İÇİN AYNI release'i YAPMIYOR; ANCAK bugüne kadar bunu
+sınayan HİÇBİR golden test OLMADIĞINDAN bu potansiyel sızıntı
+DOĞRULANMADI/kapsam DIŞINDA bırakıldı — ayrı bir görev olarak
+işaretlendi, BU faz `nox.thread.start`ın KENDİ, YENİ kod yolunu
+kapsar.)
+
+**Bilinçli v1 sınırlaması (AÇIKÇA belgelendi):** `entry` içinde
+YAKALANMAMIŞ bir istisna, `spawn`/`nox.http.serve`nin AYNI MEVCUT v1
+davranışıyla TUTARLI olarak SÜRECİ TAMAMEN SONLANDIRIR (HANGİ iş
+parçacığında OLURSA OLSUN) — `join()`e ZARİFÇE bir hata OLARAK
+YAYILMAZ.
+
+**Doğrulama:** 4 YENİ uçtan uca codegen golden testi (`tests/golden/
+codegen_cases/`, GERÇEK `qbe`+`cc` İLE derlenip ÇALIŞTIRILARAK) —
+`thread_spawn_join_int` (`int` payload, spawn+join, `21*2=42`),
+`thread_spawn_join_str` (çapraz-iş-parçacığı `str` transferi, HEM arg
+HEM dönüş, sızıntı yok), `thread_spawn_ordering` (`ThreadHandle.join()`
+GERÇEKTEN fiber-farkında askıya alır — çocuğun 50ms `sleep_ms`i SIRASINDA
+ebeveynin AYRI bir fiber'ı (`fast_task`) İLERLEMEYE DEVAM EDER, "fast"
+"joined"DAN ÖNCE yazdırılır, `join()`in GİZLİCE BLOKLAYAN bir
+`std.Thread.join()` OLMADIĞINI kanıtlar), `thread_spawn_detached_leak`
+(`.join()` HİÇ ÇAĞRILMADAN scope'tan çıkan bir `ThreadHandle` —
+`nox_thread_destroy`nin atomik `owners` sayacı İLE fire-and-forget
+temizliği, sızıntı/UAF OLMADAN doğrulanır).
+
+**Kasıtlı boz→kırmızı→düzelt:** `genThreadStartWrapper`deki YENİ `str`
+release çağrısı GEÇİCİ olarak DEVRE DIŞI BIRAKILDI (`if (false and ...)`)
+— TAM OLARAK BEKLENEN test (`thread_spawn_join_str`) `DebugAllocator`
+sızıntı raporuyla KIRMIZI oldu (397 test İÇİNDEN 1'i, `dupeToNoxStr <-
+childThreadMain` yığın izi AÇIKÇA GÖRÜLDÜ), BAŞKA HİÇBİR test
+ETKİLENMEDİ. Değişiklik GERİ YÜKLENDİ (`diff` İLE bayt-bayt ÖZDEŞLİĞİ
+doğrulandı), Debug + ReleaseFast YENİDEN yeşile döndü.
+
+`zig build test` (Debug + ReleaseFast) 397/397 yeşil, `zig fmt` temiz.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

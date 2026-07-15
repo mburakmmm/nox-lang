@@ -496,6 +496,34 @@ test "codegen(çalıştır): async — Channel[T] (rendezvous) iki görev arası
     );
 }
 
+test "codegen(çalıştır): Faz BB.4 — nox.thread.start/ThreadHandle[int]/.join(), gerçek OS iş parçacığı, sızıntı yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/thread_spawn_join_int.nox"),
+        @embedFile("codegen_cases/thread_spawn_join_int.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz BB.4 — nox.thread.start/ThreadHandle[str]/.join(), çapraz-iş-parçacığı str transferi, sızıntı yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/thread_spawn_join_str.nox"),
+        @embedFile("codegen_cases/thread_spawn_join_str.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz BB.4 — ThreadHandle.join() fiber-farkında askıya alır, ebeveynin DİĞER fiber'ı ilerlemeye devam eder" {
+    try expectGolden(
+        @embedFile("codegen_cases/thread_spawn_ordering.nox"),
+        @embedFile("codegen_cases/thread_spawn_ordering.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz BB.4 — join edilmeden scope'tan çıkan ThreadHandle (fire-and-forget), sızıntı/UAF yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/thread_spawn_detached_leak.nox"),
+        @embedFile("codegen_cases/thread_spawn_detached_leak.expected"),
+    );
+}
+
 test "codegen(çalıştır): Faz S.1 — Task[T] yeniden ataması, ilk görev await edilmeden önce, sızıntı/UAF yok" {
     try expectGolden(
         @embedFile("codegen_cases/task_reassignment_frees_old.nox"),

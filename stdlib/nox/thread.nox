@@ -1,0 +1,25 @@
+# nox.thread — Faz BB (bkz. nox-teknik-spesifikasyon.md §3.47-§3.50):
+# paylaşımsız (shared-nothing) gerçek M:N (çok çekirdekli) iş parçacığı
+# desteği. `nox.http.serve`nin `serve`i GİBİ, `start`/`ThreadHandle[T].
+# join()` GERÇEK bir `func_def`/`class_def` DEĞİLDİR — TAMAMEN checker
+# (`tryResolveThreadSpawnCall`) VE codegen (`genThreadStartExpr`/
+# `genThreadStartWrapper`/`genThreadHandleJoin`) sihridir. Bu dosya
+# SADECE `import nox.thread`in ÇÖZÜLEBİLMESİ İÇİN VAR.
+#
+# Kullanım:
+#   import nox.thread
+#
+#   async def worker(x: int) -> int:
+#       return x * 2
+#
+#   async def main() -> None:
+#       h: ThreadHandle[int] = nox.thread.start(worker, 21)
+#       result: int = await h.join()
+#
+# `start`ın `entry`i (`worker`) `async def` OLMAK ZORUNDADIR — KENDİ
+# TAZE, bağımsız bir OS iş parçacığında, KENDİ bağımsız zamanlayıcısının
+# TEK üst-düzey görevi olarak çalışır (dolayısıyla `entry`in KENDİSİ de
+# `spawn`/`await`/`Channel[T]` KULLANABİLİR). Argüman/dönüş tipi
+# `int/float/bool/str/None/ptr` İLE SINIRLIDIR (class/list/dict/Task/
+# Channel/ThreadHandle KAPSAM DIŞI — bkz. checker.zig'in
+# `isThreadTransferSafeType`i).

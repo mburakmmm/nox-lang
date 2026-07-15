@@ -55,6 +55,21 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   Task/Channel/class/list/dict hariç, çünkü bunlar kendi zamanlayıcısına
   bağlıdır). `nox-teknik-spesifikasyon.md` §3.49. 7 yeni checker golden
   testi + kasıtlı boz→kırmızı ritüeli.
+- `nox.thread.start`/`ThreadHandle[T]`/`.join()` — codegen + `stdlib/
+  nox/thread.nox` (Faz BB.4). Gerçek `nox.thread.start(entry, arg)` artık
+  yeni bir OS iş parçacığında GERÇEKTEN çalışır, `ThreadHandle.join()`
+  fiber-farkında askıya alır (ebeveynin diğer fiber'ları çocuk çalışırken
+  ilerlemeye devam eder), `int`/`str` payload'lar (arg VE dönüş) sızıntısız
+  taşınır, join edilmeden scope'tan çıkan bir `ThreadHandle` sızmadan
+  temizlenir (atomik referans sayımı). `nox-teknik-spesifikasyon.md`
+  §3.50 — codegen'in checker'dan ayrı `resolveType`inin `ThreadHandle`i
+  tanımaması (Unsupported hatası) ve `genThreadStartWrapper`nin `str`
+  argümanı hedef fonksiyon çağrısından sonra serbest bırakmaması (gerçek
+  bir sızıntı — uçtan uca golden testle yakalandı) dahil, gerçekten
+  derlenip çalıştırılarak bulunan hatalar ve düzeltmeleri belgeler. 4 yeni
+  uçtan uca codegen golden testi (int/str spawn+join, fiber-farkındalık
+  sıralama kanıtı, detached/fire-and-forget sızıntı testi) + kasıtlı
+  boz→kırmızı ritüeli.
 
 ## [1.0.0]
 

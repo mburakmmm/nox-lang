@@ -1,0 +1,20 @@
+import nox.thread
+import nox.time
+
+async def worker(ms: int) -> int:
+    nox.time.sleep_ms(ms)
+    return ms
+
+async def fast_task() -> None:
+    print("fast")
+
+async def main_task() -> None:
+    h: ThreadHandle[int] = nox.thread.start(worker, 50)
+    t: Task[None] = spawn fast_task()
+    r: int = await h.join()
+    print("joined")
+    print(r)
+    await t
+
+t2: Task[None] = spawn main_task()
+await t2

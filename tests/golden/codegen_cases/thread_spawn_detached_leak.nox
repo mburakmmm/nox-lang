@@ -1,0 +1,19 @@
+import nox.thread
+import nox.time
+
+async def worker(ms: int) -> int:
+    nox.time.sleep_ms(ms)
+    return ms
+
+async def spawn_detached() -> None:
+    h: ThreadHandle[int] = nox.thread.start(worker, 30)
+    print("spawned")
+
+async def main_task() -> None:
+    t1: Task[None] = spawn spawn_detached()
+    await t1
+    nox.time.sleep_ms(100)
+    print("done")
+
+t: Task[None] = spawn main_task()
+await t

@@ -240,7 +240,7 @@ const QbeType = enum { l, d, w, none };
 /// `genCall`in `.closure` dalı) — bir closure DEĞERİNİN KENDİSİ, hem
 /// "nasıl çağrılır" hem "nasıl serbest bırakılır" bilgisini TAŞIYAN, kendi
 /// kendine yeten TEK bir işaretçidir.
-const HeapKind = enum { none, str, list, class, task, channel, dict, closure };
+const HeapKind = enum { none, str, list, class, task, channel, dict, closure, thread_handle };
 
 /// Faz U.4.4: bir closure heap bloğunun başlık boyutu (bkz. `HeapKind.closure`in
 /// belge notu) — `fn_ptr` + `release_fn_ptr`, HER İKİSİ de `l` (8 bayt).
@@ -390,6 +390,23 @@ const HttpServeWrapperSpec = struct {
 };
 
 const SpawnWrapperSpec = struct {
+    name: []const u8,
+    target_fn: []const u8,
+    sig: FuncSig,
+};
+
+/// Faz BB.4 (bkz. nox-teknik-spesifikasyon.md §3.50): `nox.thread.start
+/// (entry, arg)` çağrı sitesi başına TEMBEL kaydedilen, `generateModule`nin
+/// sonunda üretilen bir sarmalayıcının tarifi — `SpawnWrapperSpec` İLE AYNI
+/// "tembel iş kuyruğu" deseni, AMA `genSpawnWrapper`DEN İKİ noktada FARKLI
+/// (bkz. `genThreadStartWrapper`nin belge notu): (1) kapanış TEK bir
+/// argüman TAŞIR (Tier 1'in `isThreadTransferSafeType` kısıtı GEREĞİ,
+/// `sig.params.len` HER ZAMAN 1'dir), (2) kapanış `runtime/async_rt/
+/// thread_bridge.zig`nin SAF Zig `ThreadEntryClosure` struct'ıdır (QBE'nin
+/// KENDİ ürettiği bir yapı DEĞİL) — bu YÜZDEN argüman HER ZAMAN `toPayload`/
+/// `fromPayload` İLE (i64) OKUNUR/YAZILIR, `genSpawnWrapper`nin native-
+/// qtype'lı doğrudan `load`/`store`sinin AKSİNE.
+const ThreadWrapperSpec = struct {
     name: []const u8,
     target_fn: []const u8,
     sig: FuncSig,
@@ -727,6 +744,21 @@ fn isHttpServeCallee(callee: ast.Expr) bool {
     return std.mem.eql(u8, http_attr.obj.identifier, "nox");
 }
 
+/// Faz BB.4 — `isHttpServeCallee` İLE AYNI yapısal eşleştirme, `nox.thread.
+/// start(entry, arg)` İÇİN (bkz. `checker.zig`nin `tryResolveThreadSpawnCall`ı
+/// — checker'ın "start" ismini TERCİH ETMESİNİN gerekçesi İÇİN bkz. onun
+/// belge notu, `spawn`ın ZATEN bir anahtar kelime OLMASI).
+fn isThreadStartCallee(callee: ast.Expr) bool {
+    if (callee != .attribute) return false;
+    const start_attr = callee.attribute;
+    if (!std.mem.eql(u8, start_attr.attr, "start")) return false;
+    if (start_attr.obj.* != .attribute) return false;
+    const thread_attr = start_attr.obj.attribute;
+    if (!std.mem.eql(u8, thread_attr.attr, "thread")) return false;
+    if (thread_attr.obj.* != .identifier) return false;
+    return std.mem.eql(u8, thread_attr.obj.identifier, "nox");
+}
+
 fn exprUsesAsync(expr: ast.Expr) bool {
     return switch (expr) {
         .await_expr, .spawn_expr, .generic_construct => true,
@@ -741,6 +773,7 @@ fn exprUsesAsync(expr: ast.Expr) bool {
             // zinciri) buradaki DİĞER dallardan HİÇBİRİNİ TETİKLEMEZ, bu
             // yüzden ŞEKLİ AÇIKÇA tanımak GEREKİR (bkz. `isHttpServeCallee`).
             if (isHttpServeCallee(c.callee.*)) break :blk true;
+            if (isThreadStartCallee(c.callee.*)) break :blk true;
             if (exprUsesAsync(c.callee.*)) break :blk true;
             for (c.args) |a| if (exprUsesAsync(a)) break :blk true;
             break :blk false;
@@ -825,6 +858,11 @@ const Codegen = struct {
     /// AYNI desen, `nox.http.serve` çağrı siteleri İÇİN.
     http_serve_wrapper_counter: usize = 0,
     http_serve_wrappers: std.ArrayListUnmanaged(HttpServeWrapperSpec) = .empty,
+    /// Faz BB.4 — `spawn_wrapper_counter`/`spawn_wrappers` İLE AYNI desen,
+    /// `nox.thread.start` çağrı siteleri İÇİN (bkz. `ThreadWrapperSpec`in
+    /// belge notu).
+    thread_wrapper_counter: usize = 0,
+    thread_wrappers: std.ArrayListUnmanaged(ThreadWrapperSpec) = .empty,
     /// Faz U.4.3: checker'ın hesapladığı closure yakalama (capture) listeleri
     /// — anahtar `"<dış_yol>.<iç_isim>"` (bkz. `checker.zig`nin `ClosureInfo`si,
     /// `Checker.closure_infos`), DEĞER yalnızca yakalanan İSİMLER (tipleri
@@ -932,7 +970,8 @@ const Codegen = struct {
                 const is_list = std.mem.eql(u8, g.name, "list");
                 const is_task = std.mem.eql(u8, g.name, "Task");
                 const is_channel = std.mem.eql(u8, g.name, "Channel");
-                if (!(is_list or is_task or is_channel) or g.args.len != 1) return error.Unsupported;
+                const is_thread_handle = std.mem.eql(u8, g.name, "ThreadHandle");
+                if (!(is_list or is_task or is_channel or is_thread_handle) or g.args.len != 1) return error.Unsupported;
                 const elem = try self.resolveType(g.args[0]);
                 var elem_heap_info: ?*const ElemHeapInfo = null;
                 // `str` DAHİL — bkz. `ElemHeapInfo.nested`in belge notu:
@@ -959,7 +998,7 @@ const Codegen = struct {
                 // üretebilmesi için (bkz. `genAwaitExpr`, `genChannelOp`).
                 return .{
                     .qtype = .l,
-                    .heap = if (is_list) .list else if (is_task) .task else .channel,
+                    .heap = if (is_list) .list else if (is_task) .task else if (is_channel) .channel else .thread_handle,
                     .elem_qtype = elem.qtype,
                     .elem_heap_info = elem_heap_info,
                     .elem_is_str = elem.heap == .str,
@@ -1533,7 +1572,7 @@ const Codegen = struct {
                 const fv = try self.newTemp();
                 try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
                 try self.releaseValueIfSet(fv, c.info.heap, c.info.elem_qtype, c.info.class_name, c.info.elem_heap_info);
-            } else if (c.info.heap == .task or c.info.heap == .channel or c.info.heap == .dict) {
+            } else if (c.info.heap == .task or c.info.heap == .channel or c.info.heap == .dict or c.info.heap == .thread_handle) {
                 const addr = try self.newTemp();
                 try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, offset });
                 const fv = try self.newTemp();
@@ -1607,7 +1646,7 @@ const Codegen = struct {
                 const fv = try self.newTemp();
                 try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
                 try self.releaseValueIfSet(fv, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info);
-            } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .dict) {
+            } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .dict or f.info.heap == .thread_handle) {
                 // `Task[T]`/`Channel[T]`/`dict[K,V]` sınıf alanı (ör.
                 // `HttpResponse.headers`) — ARC-yönetimli DEĞİLDİR
                 // (`isHeapManaged` bunu KAPSAMAZ), bu yüzden AYRI bir dal:
@@ -1689,7 +1728,7 @@ const Codegen = struct {
                 const fv = try self.newTemp();
                 try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
                 try self.releaseValueIfSet(fv, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info);
-            } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .dict) {
+            } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .dict or f.info.heap == .thread_handle) {
                 const addr = try self.newTemp();
                 try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, f.offset });
                 const fv = try self.newTemp();
@@ -1870,7 +1909,7 @@ const Codegen = struct {
             // DESTEKLEMİYOR (checker bu dala HİÇ düşürmemeli) — savunmacı
             // olarak `dict`/`Task`/`Channel` İLE AYNI tutamaç-kimliği
             // (pointer) karşılaştırmasına düşülür.
-            .dict, .task, .channel, .closure => blk: {
+            .dict, .task, .channel, .closure, .thread_handle => blk: {
                 const t = try self.newTemp();
                 try self.out.writer.print("    {s} =w ceql {s}, {s}\n", .{ t, va, vb });
                 break :blk t;
@@ -2104,7 +2143,7 @@ const Codegen = struct {
             if (entry.value_ptr.is_param or entry.value_ptr.arena) continue;
             if (isHeapManaged(entry.value_ptr.heap)) {
                 try self.releaseSlotIfSet(entry.value_ptr.*);
-            } else if (entry.value_ptr.heap == .task or entry.value_ptr.heap == .channel or entry.value_ptr.heap == .dict) {
+            } else if (entry.value_ptr.heap == .task or entry.value_ptr.heap == .channel or entry.value_ptr.heap == .dict or entry.value_ptr.heap == .thread_handle) {
                 // `Task[T]`/`Channel[T]`/`dict[K,V]` ARC-yönetimli DEĞİLDİR
                 // (bkz. `HeapKind`in belge notu) — `destroyNonArcSlotIfSet`
                 // (bkz. onun belge notu) DOĞRUDAN bir kez yıkar. Faz S.1'den
@@ -2360,8 +2399,13 @@ const Codegen = struct {
     /// fiber kendi sonucunu SERBEST BIRAKILMIŞ belleğe yazardı.
     fn destroyNonArcValue(self: *Codegen, ptr: []const u8, heap: HeapKind, dict_info: ?*const DictInfo) CodegenError!void {
         switch (heap) {
-            .task, .channel => {
-                const fn_name = if (heap == .task) "nox_async_destroy_task" else "nox_channel_destroy";
+            .task, .channel, .thread_handle => {
+                const fn_name = switch (heap) {
+                    .task => "nox_async_destroy_task",
+                    .channel => "nox_channel_destroy",
+                    .thread_handle => "nox_thread_destroy",
+                    else => unreachable,
+                };
                 try self.out.writer.print("    call ${s}(l {s}, l {s})\n", .{ fn_name, RT_PARAM, ptr });
             },
             .dict => {
@@ -2843,7 +2887,7 @@ const Codegen = struct {
                 // serbest bırakmaya çalışır.
                 if (isHeapManaged(info.heap) and !info.is_param and !info.arena) {
                     try self.releaseSlotIfSet(info);
-                } else if ((info.heap == .task or info.heap == .channel or info.heap == .dict) and !info.is_param and !info.arena) {
+                } else if ((info.heap == .task or info.heap == .channel or info.heap == .dict or info.heap == .thread_handle) and !info.is_param and !info.arena) {
                     // Faz S.1: `Task[T]`/`Channel[T]`/`dict[K,V]` yeniden
                     // atamada ESKİ değer artık sızmaz — `destroyNonArcSlotIfSet`
                     // (bkz. onun belge notu, `Task` İÇİN `nox_async_destroy_task`nin
@@ -2886,7 +2930,7 @@ const Codegen = struct {
                         try self.out.writer.print("    {s} =l loadl {s}\n", .{ old_ptr, addr });
                         try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(f.info.qtype), val.text, addr });
                         try self.releaseValueIfSet(old_ptr, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info);
-                    } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .dict) {
+                    } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .dict or f.info.heap == .thread_handle) {
                         // Faz S.1: `isHeapManaged`in DIŞINDaki üç tür İÇİN de
                         // (yukarıdaki dalla AYNI "önce oku, SONRA üzerine yaz,
                         // SONRA eskiyi yok et" sırası) — bkz. `destroyNonArcValue`.
@@ -4450,6 +4494,10 @@ const Codegen = struct {
                 // metod-çağrısı çözümlemesinden (`genMethodCall`) ÖNCE ŞEKLİ
                 // tanımak GEREKİR.
                 if (isHttpServeCallee(c.callee.*)) return self.genHttpServe(c);
+                // Faz BB.4: `nox.thread.start(entry, arg)`nin callee'si de
+                // (checker BUNU YENİDEN yazmadığı için — bkz. `tryResolveThreadSpawnCall`)
+                // burada AYNI şekilde tanınmalı.
+                if (isThreadStartCallee(c.callee.*)) return self.genThreadStartExpr(c);
                 return self.genMethodCall(a, c.args);
             },
             else => return error.Unsupported,
@@ -4922,6 +4970,132 @@ const Codegen = struct {
         try self.out.writer.print("    ret {s}\n}}\n", .{payload.text});
     }
 
+    /// `nox.thread.start(entry, arg)` çağrı sitesi codegen'i — Faz BB.4
+    /// (bkz. nox-teknik-spesifikasyon.md §3.50). Checker ZATEN `entry`in
+    /// ÇIPLAK bir `async def` ismi OLDUĞUNU, `arg`ın tipinin `entry`in TEK
+    /// parametresiyle UYUŞTUĞUNU VE HER İKİSİNİN de `isThreadTransferSafeType`den
+    /// GEÇTİĞİNİ doğruladı (bkz. checker.zig'in `tryResolveThreadSpawnCall`ı).
+    ///
+    /// `genSpawnExpr`DEN FARKLI: `arg`ın (str İSE) hazırlık-arabelleğine
+    /// KOPYALANMASI VE ÇOCUK iş parçacığının KENDİ `RuntimeState`i ÜZERİNDEN
+    /// taze bir ARC `str` İNŞA ETMESİ TAMAMEN `runtime/async_rt/thread_bridge.
+    /// zig`nin `nox_thread_spawn`ının/`childThreadMain`inin İÇİNDE olur —
+    /// BURADA (çağrı SİTESİNDE) `arg`ın kendisi SADECE `toPayload`a çevrilip
+    /// `nox_thread_spawn`a AKTARILIR, `arg_is_str`/`result_is_str` (statik
+    /// olarak `entry`in İMZASINDAN türetilir) O tarafın HANGİ protokolü
+    /// (düz payload mı, str-klonlama mı) İZLEYECEĞİNİ SÖYLER. `arg` İÇİN
+    /// (Faz BB.2'nin belge notunda AÇIKLANDIĞI GİBİ) HİÇBİR ÖZEL retain
+    /// GEREKMEZ — `nox_thread_spawn` orijinal işaretçiyi ASLA SAKLAMAZ,
+    /// yalnızca SENKRON olarak baytlarını OKUR/KOPYALAR (normal bir
+    /// fonksiyon argümanı GİBİ davranır, `spawn`ın kapanış-paketlemesinin
+    /// AKSİNE).
+    fn genThreadStartExpr(self: *Codegen, c: ast.Call) CodegenError!Value {
+        if (c.args.len != 2) return error.Unsupported;
+        const fn_name = switch (c.args[0]) {
+            .identifier => |n| n,
+            else => return error.Unsupported,
+        };
+        const sig = self.functions.get(fn_name) orelse return error.Unsupported;
+        if (sig.params.len != 1) return error.Unsupported;
+
+        const arg_v0 = try self.genExpr(c.args[1]);
+        const arg_v = try self.convert(arg_v0, sig.params[0].qtype);
+        const arg_payload = try self.toPayload(arg_v);
+
+        const arg_is_str: []const u8 = if (sig.params[0].heap == .str) "1" else "0";
+        const result_is_str: []const u8 = if (sig.ret.heap == .str) "1" else "0";
+
+        const wrapper_name = try std.fmt.allocPrint(self.allocator, "thread_wrap_{d}", .{self.thread_wrapper_counter});
+        self.thread_wrapper_counter += 1;
+        try self.thread_wrappers.append(self.allocator, .{ .name = wrapper_name, .target_fn = fn_name, .sig = sig });
+
+        const handle_ptr = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_thread_spawn(l {s}, l ${s}, l {s}, w {s}, w {s})\n", .{ handle_ptr, RT_PARAM, wrapper_name, arg_payload.text, arg_is_str, result_is_str });
+
+        var elem_heap_info: ?*const ElemHeapInfo = null;
+        if (sig.ret.heap == .class or sig.ret.heap == .list) {
+            const info = try self.allocator.create(ElemHeapInfo);
+            info.* = .{ .heap = sig.ret.heap, .class_name = sig.ret.class_name, .elem_qtype = sig.ret.elem_qtype, .nested = sig.ret.elem_heap_info, .elem_is_str = sig.ret.elem_is_str };
+            elem_heap_info = info;
+        }
+        // `ThreadHandle[T]`in KENDİSİ (bkz. `HeapKind`in belge notu) ARC-
+        // yönetimli DEĞİLDİR — `heap = .thread_handle` yalnızca kapsam-sonu
+        // `nox_thread_destroy` çağrısını TETİKLEMEK içindir; `elem_*` alanları
+        // T'yi (payload tipini) taşır.
+        return .{
+            .text = handle_ptr,
+            .qtype = .l,
+            .heap = .thread_handle,
+            .elem_qtype = sig.ret.qtype,
+            .elem_heap_info = elem_heap_info,
+            .elem_is_str = sig.ret.heap == .str,
+        };
+    }
+
+    /// `nox_thread_spawn`ın çağırdığı, `nox.thread.start` çağrı sitesi
+    /// başına üretilen bir ÇOCUK İŞ PARÇACIĞI girişi — bkz. `ThreadWrapperSpec`in
+    /// belge notu. `genSpawnWrapper`DEN İKİ noktada FARKLI: (1) argüman
+    /// SAYISI HER ZAMAN TAM OLARAK 1'dir (Tier 1'in kısıtı); (2) kapanış
+    /// (`ThreadEntryClosure`) native-qtype'lı DEĞİL, HER ZAMAN `l` (i64)
+    /// genişliğinde bir `payload` alanı TAŞIR (bkz. `thread_bridge.zig`nin
+    /// Zig struct TANIMI) — bu yüzden argüman `loadl` İLE okunup `fromPayload`
+    /// İLE hedef tipe ÇEVRİLİR (`genSpawnWrapper`nin native `load{qtype}`inin
+    /// AKSİNE). Kapanışın KENDİSİ (`ThreadEntryClosure`) `runtime/async_rt/
+    /// thread_bridge.zig`nin `childThreadMain`i TARAFINDAN (SAF Zig'de)
+    /// tahsis edilip serbest BIRAKILIR — BURADA `nox_free` ÇAĞRILMAZ
+    /// (`genSpawnWrapper`nin kapanışının AKSİNE, bkz. `ThreadWrapperSpec`in
+    /// belge notu).
+    fn genThreadStartWrapper(self: *Codegen, spec: ThreadWrapperSpec) CodegenError!void {
+        self.temp_counter = 0;
+        self.label_counter = 0;
+
+        try self.out.writer.print("export function l ${s}(l %argp) {{\n@start\n", .{spec.name});
+        try self.out.writer.print("    {s} =l loadl %argp\n", .{RT_PARAM});
+
+        const payload_addr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add %argp, 8\n", .{payload_addr});
+        const payload_val = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ payload_val, payload_addr });
+        const arg_val = try self.fromPayload(.{ .text = payload_val, .qtype = .l }, spec.sig.params[0].qtype);
+
+        const result_payload = blk: {
+            if (spec.sig.ret.qtype == .none) {
+                try self.out.writer.print("    call ${s}(l {s}, {s} {s})\n", .{ spec.target_fn, RT_PARAM, qbeTypeName(arg_val.qtype), arg_val.text });
+                break :blk Value{ .text = "0", .qtype = .l };
+            }
+            const result_t = try self.newTemp();
+            try self.out.writer.print("    {s} ={s} call ${s}(l {s}, {s} {s})\n", .{ result_t, qbeTypeName(spec.sig.ret.qtype), spec.target_fn, RT_PARAM, qbeTypeName(arg_val.qtype), arg_val.text });
+            break :blk try self.toPayload(.{ .text = result_t, .qtype = spec.sig.ret.qtype });
+        };
+
+        // Parametreler `spec.target_fn` TARAFINDAN ÖDÜNÇ ALINIR (bkz.
+        // `collectLocals`/`allocSlot`in `is_param` notu — kapsam-sonu
+        // otomatik release'i HER ZAMAN ATLAR) — çağrı SİTESİ (BURASI)
+        // sahipliği ELİNDE TUTAR (normal `genCall`nin `releaseTemporaryArgs`
+        // İLE AYNI sözleşme). `arg_val` BURADA `childThreadMain`in TAZE
+        // klonladığı, TEK sahipli bir ARC `str`tir (Tier 1 SADECE `str`i
+        // heap-yönetimli tip olarak KABUL EDER) — çağrı DÖNDÜKTEN SONRA
+        // BURADA serbest bırakılMAZSA sızar (bu, `dupeToNoxStr`in Faz BB.4
+        // uçtan uca golden testinde YAKALANAN GERÇEK bir sızıntıydı).
+        if (spec.sig.params[0].heap == .str) {
+            try self.releaseValueIfSet(arg_val.text, .str, .none, null, null);
+        }
+
+        try self.out.writer.print("    ret {s}\n}}\n", .{result_payload.text});
+    }
+
+    /// `handle.join()` — YALNIZCA `await` üzerinden (bkz. `genAwaitExpr`)
+    /// çağrılır, `genCall`in normal metod-çağrısı yolundan GEÇMEZ
+    /// (`ThreadHandle` `self.classes`de yok, yerleşik bir tiptir) —
+    /// `genChannelOp`in `recv` dalıyla AYNI desen.
+    fn genThreadHandleJoin(self: *Codegen, a: ast.Attribute) CodegenError!Value {
+        const handle_val = try self.genExpr(a.obj.*);
+        const payload_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_thread_join(l {s}, l {s})\n", .{ payload_t, RT_PARAM, handle_val.text });
+        const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, handle_val.elem_qtype);
+        return valueFromElemDescriptor(converted.text, converted.qtype, handle_val.elem_heap_info, handle_val.elem_is_str);
+    }
+
     /// `nox.http.serve(port, handle[, max_connections])` çağrı sitesi
     /// codegen'i — checker ZATEN `handle`in bir `(HttpRequest) -> HttpResponse`
     /// imzalı, `async def` OLMAYAN çıplak bir isim olduğunu doğruladı (bkz.
@@ -5064,6 +5238,12 @@ const Codegen = struct {
                 const a = c.callee.attribute;
                 if (std.mem.eql(u8, a.attr, "send") or std.mem.eql(u8, a.attr, "recv")) {
                     return self.genChannelOp(a, c.args);
+                }
+                // Faz BB.4: `ThreadHandle[T].join()` — `Channel.send`/`.recv`
+                // İLE AYNI "yalnızca await üzerinden" desen (bkz.
+                // `genThreadHandleJoin`in belge notu).
+                if (std.mem.eql(u8, a.attr, "join")) {
+                    return self.genThreadHandleJoin(a);
                 }
             }
         }
@@ -5335,6 +5515,13 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     // belge notu) — AYNI "sonda tüket" deseni.
     while (gen.http_serve_wrappers.pop()) |spec| {
         try gen.genHttpServeWrapper(spec);
+    }
+
+    // Faz BB.4: her `nox.thread.start` çağrı sitesi için TEMBEL kaydedilen
+    // sarmalayıcı fonksiyonlar (bkz. `ThreadWrapperSpec`in belge notu) —
+    // AYNI "sonda tüket" deseni.
+    while (gen.thread_wrappers.pop()) |spec| {
+        try gen.genThreadStartWrapper(spec);
     }
 
     for (gen.string_data.items) |sd| {

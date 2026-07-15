@@ -1,0 +1,9 @@
+import nox.thread
+
+async def greet(name: str) -> str:
+    return "merhaba " + name
+
+h: ThreadHandle[str] = nox.thread.start(greet, "nox")
+result: str = await h.join()
+print(result)
+print(len(result))
