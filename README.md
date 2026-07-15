@@ -6,9 +6,12 @@ derlenen** bir dildir. Yorumlayıcı yok, GC duraklaması yok — [QBE](https://
 tabanlı bir derleyici arka ucu ve Zig ile yazılmış hafif bir çalışma zamanı
 kullanılır.
 
-> **Durum: v0.1 (taslak).** Nox aktif geliştirme aşamasında, henüz üretime
-> hazır değil — bkz. [`docs/uretim-hazirlik-analizi.md`](docs/uretim-hazirlik-analizi.md)
-> (kritik boşluklar + yol haritası) ve [Katkıda Bulunma](CONTRIBUTING.md).
+> **Sürüm: v1.0.0.** `docs/uretim-hazirlik-analizi.md`nin üretim-hazırlığı
+> yol haritasındaki TÜM fazlar (Q–Z) tamamlandı — bkz.
+> [`nox-teknik-spesifikasyon.md` §3.43](nox-teknik-spesifikasyon.md)
+> (somut "hazır" tanımı) ve [`VERSIONING.md`](VERSIONING.md) (semver
+> politikası + stabilite garantisi). Katkı için bkz.
+> [Katkıda Bulunma](CONTRIBUTING.md).
 
 ```nox
 class Counter:

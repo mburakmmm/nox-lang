@@ -1,11 +1,16 @@
 # Değişiklik Günlüğü (Changelog)
 
-Bu proje henüz **v0.1 (taslak)** aşamasındadır — semver garantisi henüz YOK
-(bkz. `docs/uretim-hazirlik-analizi.md`, Faz Z). Bu dosya, Faz Q'dan
-(temel sağlamlaştırma) itibaren yapılan değişiklikleri özetler; öncesi
-için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
+Bu proje [Semantic Versioning](https://semver.org/lang/tr/)yi izler —
+semver politikası/stabilite garantisi İÇİN bkz. `VERSIONING.md`.
+`v1.0.0`dan ÖNCEKİ değişiklikler (Faz Q'dan itibaren, temel
+sağlamlaştırmadan paket ekosistemi olgunlaşmasına kadar TÜM üretim-
+hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
+`[1.0.0]` girişi altında toplanmıştır; öncesi için
+`nox-teknik-spesifikasyon.md`nin tam geliştirme geçmişine bakın.
 
 ## [Yayımlanmamış]
+
+## [1.0.0]
 
 ### Eklendi
 - İlk git commit'i — proje artık gerçek sürüm kontrolü altında (Faz Q.1).
@@ -268,6 +273,11 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   (ikili/ABI uyumluluğu, hata mesajı metni, `--dump`/`-v` çıktısı,
   üçüncü-taraf paket API'leri) yazılı hale getirildi. `README.md`ye
   bağlantı eklendi.
+- `v0.1 (taslak)` etiketi kaldırıldı, gerçek sürüm numaralandırmasına
+  geçildi (Faz Z.3) — `build.zig.zon`nin `.version`i `1.0.0`e
+  güncellendi, `README.md`nin durum banner'ı buna göre yeniden yazıldı,
+  bu dosyanın Faz Q'dan beri biriken tüm girdileri tek bir `[1.0.0]`
+  başlığı altında toplandı.
 
 ### Düzeltildi
 - **Bellek sızıntısı (Faz X.2, `tests/fuzz/wasm_parser_fuzz.zig`nin yeni

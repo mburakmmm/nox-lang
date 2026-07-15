@@ -7670,6 +7670,41 @@ biri KENDİ konusuna adanmış ayrı üst-düzey dosya" desenini İZLER
 (377/377 yeşil, Faz Y.2/Z.1'in doğrulamasıyla AYNI — yalnızca YENİ
 `VERSIONING.md` + `README.md`ye bir bağlantı EKLENDİ).
 
+## 3.45 Faz Z.3 — `v0.1/Taslak` Etiketini Kaldırma, Gerçek Sürüm Numaralandırmasına Geçiş
+
+**Kaynak — `docs/uretim-hazirlik-analizi.md` (satır 171):** "`v0.1/taslak`
+etiketini KALDIR, gerçek bir sürüm numaralandırmasına GEÇ."
+
+**Yapılan değişiklikler:**
+1. `build.zig.zon`nin `.version` alanı `"0.1.0"` → `"1.0.0"` GÜNCELLENDİ —
+   projenin TEK, resmi sürüm kaydı BURADADIR (`zig build`in KENDİSİ bu
+   alanı DOĞRULAR, bu yüzden GEÇERSİZ bir semver string'i derlemeyi
+   BOZARDI — `zig build` ÇALIŞTIRILARAK bu DOĞRULANDI).
+2. `README.md`nin ÜST banner'ı `"Durum: v0.1 (taslak)... henüz üretime
+   hazır değil"`den `"Sürüm: v1.0.0"`ya GÜNCELLENDİ, Faz Z.1'in kontrol
+   listesine (§3.43) ve `VERSIONING.md`ye BAĞLANTI eklendi.
+3. `CHANGELOG.md`nin ÜST açıklaması semver'e ATIFLA (VERSIONING.md'ye
+   bağlantı) yeniden yazıldı; Faz Q'dan BERİ biriken TÜM `### Eklendi`/
+   `### Düzeltildi`/`### Güvenlik` girdileri TEK bir `## [1.0.0]`
+   başlığı ALTINA toplandı; ÜZERİNE gelecekteki değişiklikler İÇİN BOŞ
+   bir `## [Yayımlanmamış]` başlığı EKLENDİ (Keep a Changelog
+   konvansiyonuyla TUTARLI — bkz. https://keepachangelog.com).
+
+**Bilinçli olarak BU turda YAPILMAYAN (kullanıcıyla NETLEŞTİRİLDİ):**
+GERÇEK `git tag v1.0.0` komutu bu turda ÇALIŞTIRILMADI — kullanıcı
+(`AskUserQuestion` ile) belgelerin/manifest'in `1.0.0`e HAZIRLANMASINI
+ama etiketin KENDİSİNİN AYRI, SONRAKİ bir onayla ATILMASINI TERCİH etti.
+Bu, standart bir "sürüm HAZIRLAMA commit'i, SONRA etiketleme" akışıdır
+(çoğu sürüm mühendisliği iş akışının kendisi de bu İKİ adımı AYIRIR) —
+BU commit'ten SONRA yapılacak TEK şey `git tag v1.0.0` (VE isteniyorsa
+bir uzak depoya push) olacaktır, `CHANGELOG.md`/`build.zig.zon`/`README.md`
+zaten NİHAİ hallerindedir.
+
+`zig build` (manifest doğrulaması DAHİL) ve `zig build test` (Debug +
+ReleaseFast) BU faz TARAFINDAN ETKİLENMEDİ/yeşil kaldı — bu faz
+derleyici KODUNU/davranışını DEĞİŞTİRMEDİ, yalnızca sürüm METADATA'sını
+GÜNCELLEDİ.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
