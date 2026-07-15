@@ -204,8 +204,25 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   — derleyicinin kendi golden-test süitinden bağımsız bir ikinci doğrulama
   katmanı. Bu, ana derleyici/runtime'a hiçbir değişiklik getirmez (ayrı bir
   JS/C alt-projedir, `zig build test`i etkilemez).
+- `noxlsp` eklendi (Faz W.2, `compiler/lsp_main.zig`, yeni `zig build`
+  hedefi) — Nox için minimal bir Language Server Protocol sunucusu.
+  `textDocument/didOpen`/`didChange`/`didClose` üzerinde derleyicinin
+  gerçek lexer→parser→checker boru hattını doğrudan kütüphane olarak
+  çağırıp sonucu `textDocument/publishDiagnostics`e çevirir (`hover`/
+  `completion`/`definition` gibi diğer yetenekler bilinçli olarak v1
+  kapsamı dışı). `tests/cli/lsp_test.zig` ile uçtan uca (spawn edilen
+  gerçek `noxlsp` alt sürecine stdio üzerinden LSP çerçeveleriyle
+  konuşularak) doğrulandı.
 
 ### Düzeltildi
+- `noxlsp`nin LSP çerçeveleme okuyucusunda (`readMessage`), `std.Io.Reader.
+  takeDelimiterExclusive`in delimiter'ı (`\n`) TÜKETMEDİĞİ (yalnızca ONA
+  KADAR ilerlediği) fark edilmeden `takeDelimiterExclusive` kullanılmıştı —
+  bu, her başlık satırından sonra `\n`nin buferde kalıp bir sonraki okumanın
+  yanlış konumdan başlamasına, dolayısıyla mesaj gövdesinin kaydırılmasına
+  yol açıyordu. `zig build test`in tamamının askıda kalmasıyla (SIGKILL ile
+  sonlandırma gerekti) keşfedildi; `takeDelimiterInclusive`e geçilerek
+  düzeltildi.
 - **Önemli test-altyapısı düzeltmesi:** `compiler/*.zig` dosyalarına gömülü
   onlarca birim testi (`compiler/lexer/lexer.zig`, `compiler/parser/
   parser.zig`, `compiler/typecheck/types.zig` vb.) `zig build test`

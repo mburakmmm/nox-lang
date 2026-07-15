@@ -6900,6 +6900,125 @@ bu fazdan HİÇ ETKİLENMEDİĞİ doğrulandı) yeşil.
 
 ---
 
+## 3.36 Faz W.2 — Minimal LSP Sunucusu (`noxlsp`, `compiler/lsp_main.zig`)
+
+**Kapsam ve konum — Faz W.1'in AYNI ilkesi:** `editors/tree-sitter-nox`
+(JS/C, derleyiciden BAĞIMSIZ) İLE TEZAT OLARAK, `noxlsp` **Zig'de, `noxc`
+İLE AYNI derleme birimi İÇİNDE** yaşar (`compiler/lsp_main.zig`, yeni bir
+`b.addExecutable` hedefi) — çünkü W.1'in AKSİNE, burada gerçek AMAÇ
+derleyicinin KENDİSİNİ (lexer→parser→checker) **YENİDEN UYGULAMAK DEĞİL,
+DOĞRUDAN KÜTÜPHANE OLARAK ÇAĞIRMAK**. Bu, "editör aracı derleyiciyi asla
+yeniden uygulamaz" ilkesinin W.1'den DAHA GÜÇLÜ bir versiyonu — W.1 KANITLANMIŞ
+bir ÜÇÜNCÜ TARAF algoritmasını (tree-sitter-python'ın tarayıcısı) UYARLAMAK
+ZORUNDAYDI (Zig'den JS/C'ye taşınamaz), ama `noxlsp` HİÇBİR ŞEYİ yeniden
+YAZMAZ — `compiler/lib.zig`nin ZATEN dışa açtığı `lexer`/`parser`/`checker`/
+`module_loader`/`project` modüllerini OLDUĞU GİBİ ÇAĞIRIR.
+
+**Bilinçli v1 kapsamı — YALNIZCA `textDocument/publishDiagnostics`:**
+`initialize`/`initialized`/`shutdown`/`exit` + `textDocument/didOpen`/
+`didChange`/`didClose`. `hover`/`completion`/`definition`/`rename`/`format`
+gibi TÜM diğer LSP yetenekleri BİLİNÇLİ olarak DIŞARIDA bırakıldı — görev
+adının ("Minimal LSP") TAM OLARAK ifade ettiği gibi. `textDocumentSync`
+YALNIZCA `Full` (1) modunu destekler — artımlı (range-tabanlı) senkronizasyon
+YOK, HER `didChange` TÜM belge metnini taşır (basitlik, `didOpen` İLE AYNI
+`storeDocument` yoluna GİRER).
+
+**Mimari:**
+1. **Aktarım:** LSP'nin standart `Content-Length: N\r\n\r\n<N bayt>` stdio
+   çerçevelemesi. `std.json.Value` (dinamik ağaç) İLE ayrıştırma, `std.json.
+   Stringify.value` İLE yazma — düzinelerce tipli LSP struct şeması YAZILMAZ,
+   yalnızca GERÇEKTEN işlenen alanlar (`method`/`id`/`params.textDocument.
+   uri`/`.text`/`params.contentChanges[].text`) okunur.
+2. **Belge deposu:** `Server.documents: std.StringHashMapUnmanaged([]const
+   u8)` (URI → metin, HER ikisi de `gpa` üzerinde sahiplenilir) — `nox.http`
+   sunucusunun bağlantı durumu YÖNETİMİYLE AYNI "her isteğin/bildirimin
+   KENDİ ARENA'sı, uzun ömürlü durum AYRI bir kalıcı allocator'da" deseni.
+3. **Tanılama hesaplama** (`computeDiagnostics`): `lexer.tokenize` →
+   `parser.parseModule` → (VARSA `project.resolveResourceDirs`in çözdüğü
+   `stdlib_dir` ÜZERİNDEN) `module_loader.resolveImportsFrom` → `checker.
+   Checker.init`/`checkModule`. Lex/parse BAŞARISIZ olursa TEK bir (konumsuz)
+   tanılamayla ERKEN DÖNER; checker'ın (Faz T.2) `diagnostics` LİSTESİNİN
+   TAMAMI (birden fazla FONKSİYON/SINIF/METOD sınırındaki hata, bkz.
+   checker.zig'in KENDİ "çoklu-tanılama" notu) LSP tanılamalarına ÇEVRİLİR.
+4. **`resolveImportsFrom` ASLA `process.exit` ÇAĞIRMAZ** (bu, `noxc`nin
+   KENDİ CLI sarmalayıcısı `resolveImportsForBuild`in DAVRANIŞIDIR, `module_
+   loader.zig`nin KENDİSİ DEĞİL) — bu YÜZDEN `noxlsp`nin UZUN ÖMÜRLÜ süreci
+   İÇİN GÜVENLE DOĞRUDAN çağrılabilir; `LoadError` HER ZAMAN yakalanıp HAM
+   (birleştirilmemiş) modüle DÜŞÜLÜR.
+
+**Bilinen sınırlamalar (BİLİNÇLİ, dokümante edilmiş — v1 kapsamı):**
+- **Sütun bilgisi YOK:** `ast.Stmt.line`/`checker.Diagnostic.line` (Faz T.1/
+  T.2) YALNIZCA SATIR taşır — HER tanılamanın `range`i SATIRIN TAMAMINI
+  (sütun 0'dan keyfi büyük bir sütuna kadar) kapsar. Lex/parse hataları HİÇ
+  konum TAŞIMADIĞINDAN (bkz. `LexError`/`ParseError`nin KENDİSİ bir Zig
+  hata KÜMESİ, payload YOK) 1. satıra SABİTLENİR.
+- **Proje-farkında `requires[]`/proje-içi çoklu-dosya import ÇÖZÜLMEZ:**
+  yalnızca `nox.*` stdlib importları çözülür — `nox.json`nin `requires[]`i
+  (Faz O §P.6) VEYA proje-içi çoklu-dosya importu (Faz U.2) GEREKTİREN
+  dosyalar İÇİN "tanımsız fonksiyon" TÜRÜNDE YANLIŞ-POZİTİF tanılamalar
+  OLUŞABİLİR — sunucu ÇÖKMEZ, yalnızca EKSİK bağlamla çalışır.
+- Tek belge İÇİN çalışır — çapraz-dosya (bir dosyadaki değişikliğin
+  BAŞKA bir dosyanın tanılamalarını NASIL etkilediği) analiz YOK.
+
+**Bulunan/düzeltilen gerçek hata (implementasyon sırasında, COMMIT
+edilmeden ÖNCE yakalandı) — `std.Io.Reader.takeDelimiterExclusive` delimiter'ı
+TÜKETMEZ:** `readMessage`in başlık-ayrıştırma döngüsü İLK yazımda `r.
+takeDelimiterExclusive('\n')` kullanıyordu — bu fonksiyonun KENDİ belge notu
+AÇIKÇA "advancing the seek position up to (but **not past**) the delimiter"
+der (Python'ın `str.split`iyle SEZGİSEL olarak ÇELİŞEN bir davranış: "exclusive"
+sıfatı yalnızca DÖNEN DİLİMİN delimiter'ı İÇERMEDİĞİ anlamına gelir, OKUMA
+KONUMUNUN da delimiter'ı ATLAYACAĞI anlamına GELMEZ). Sonuç: HER başlık
+satırından SONRA `\n` karakteri BUFERDE KALDI — İKİNCİ (boş) başlık satırı
+okunduğunda AYRIŞTIRICI hâlâ İLK satırın `\n`sinin HEMEN ÖNÜNDE duruyordu,
+`trimmed.len == 0` YANLIŞLIKLA doğru oldu (0 bayt EN'de bir eşleşme), döngü
+BİR satır ERKEN kapandı — `readAlloc(len)` bu YÜZDEN gövdeyi YANLIŞ konumdan
+(gerçek JSON'dan 3 bayt ÖNCE, `\n\r\n` artıklarıyla) okudu ve TAM OLARAK
+`content_length` kadar bayt tükettiğinden gövdenin SON 3 baytı ("`{}}`")
+OKUNMADAN kaldı — `std.json.parseFromSlice` bu YÜZDEN `error.
+UnexpectedEndOfInput` verdi, VE artık bayt SONRAKİ mesajın başlığı gibi
+YANLIŞ yorumlandı (tam bir "kaydırma" hatası). **Keşif yöntemi:** `tests/
+cli/lsp_test.zig` (bkz. aşağı) İLK çalıştırmada `zig build test`in TAMAMINI
+askıya ALDI (SIGKILL İLE sonlandırılması GEREKTİ) — kök neden, `noxlsp`
+BİNARİSİNİN çıplak stdio'suna elle hazırlanmış bir `printf` çerçevesi
+BESLENEREK (`xxd` İLE bayt-bayt DOĞRULANARAK) İZOLE edildi, GEÇİCİ `std.
+debug.print` satırlarıyla (başlık satırı BAŞINA, gövde İÇERİĞİ) TAM olarak
+hangi baytların KAYIP OLDUĞU GÖRÜLDÜ. **Düzeltme:** `takeDelimiterInclusive`
+(delimiter'ı HEM DÖNEN dilime DAHİL EDER HEM DE OKUMA KONUMUNU ONUN ÖTESİNE
+İLERLETİR) + `trimEnd(line, "\r\n")` (hem `\r` HEM `\n`i temizler, `takeDelimiterExclusive`
+kullanan ESKİ kodun yalnızca `\r`yi temizlemesi GEREKİYORDU, `\n` zaten
+dilimde YOKTU — `Inclusive`e geçince `\n` ARTIK dilimin SON baytı, o da
+temizlenmeli).
+
+**Doğrulama:**
+1. **`tests/cli/lsp_test.zig`** — `subcommand_test.zig` İLE AYNI "kurulu
+   `zig-out/bin/noxlsp`yi GERÇEK bir alt süreç olarak çalıştır" felsefesi,
+   AMA `std.process.run` (tek-atışlık, TAM çıktı yakalayan) YERİNE `std.
+   process.spawn` (pipe'lı stdin/stdout, UZUN ömürlü/çift-yönlü protokol
+   İÇİN) kullanır. Uçtan uca senaryo: `initialize` (yanıt doğrulanır) →
+   `initialized` → tanımsız bir değişken İÇEREN kaynak `didOpen` İLE
+   gönderilir → DÖNEN `publishDiagnostics`in checker'ın GERÇEK "tanımsız
+   değişken: y" mesajını TAŞIDIĞI doğrulanır → AYNI URI GEÇERLİ bir kaynağa
+   `didChange` İLE GÜNCELLENİR → tanılamaların BOŞALDIĞI doğrulanır →
+   `shutdown`/`exit` İLE TEMİZ kapanış (çıkış kodu 0) doğrulanır. Bu test
+   dosyasının KENDİ `readMessage`i, `lsp_main.zig`ninkiyle KASITLI olarak
+   AYNI (ama BAĞIMSIZ kopya) çerçeveleme mantığını kullanır — GERÇEK bir
+   istemcinin TELDE ne GÖRECEĞİNİ test eder, sunucunun İÇ fonksiyonunu
+   DOĞRUDAN ÇAĞIRMAZ.
+2. **Kasıtlı boz→kırmızı→düzelt:** yukarıdaki hatanın DÜZELTMESİ (`Inclusive`
+   değişikliği) GERİ ALINIP (`takeDelimiterExclusive`e döndürülerek) `zig
+   build test` çalıştırıldı → **350/351 test geçti, YALNIZCA `lsp_test.zig`
+   BAŞARISIZ oldu** (`JSON ayristirma hatasi: UnexpectedEndOfInput` —
+   TAM OLARAK beklenen/tanı konan hata), BAŞKA HİÇBİR test ETKİLENMEDİ →
+   düzeltme GERİ getirildi, TÜM testler (Debug + ReleaseFast) YEŞİLE döndü.
+3. `build.zig`nin `test_step`i `install_noxlsp`e bağımlıdır (`install_noxc`
+   İLE AYNI, ÖNCEDEN keşfedilmiş "test ALT SÜREÇ olarak ÇALIŞTIRMADAN ÖNCE
+   binary YENİDEN KURULMALI" gerekçesiyle) — `noxlsp` HER `zig build test`te
+   GERÇEKTEN derlendiği/kurulduğu GARANTİ edilir.
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

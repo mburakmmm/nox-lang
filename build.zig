@@ -84,6 +84,22 @@ pub fn build(b: *std.Build) void {
     const install_noxc = b.addInstallArtifact(noxc, .{});
     b.getInstallStep().dependOn(&install_noxc.step);
 
+    // Faz W.2: `noxlsp` — minimal LSP sunucusu (bkz. compiler/lsp_main.zig'in
+    // modül üstü notu). `noxc_mod` İLE AYNI desen (kendi kök dosyası, relative
+    // import'lar — `nox_mod`a İHTİYAÇ YOK, `main.zig` GİBİ `compiler/`
+    // İÇİNDEN doğrudan lexer/parser/checker/module_loader/project'i import eder).
+    const noxlsp_mod = b.createModule(.{
+        .root_source_file = b.path("compiler/lsp_main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const noxlsp = b.addExecutable(.{
+        .name = "noxlsp",
+        .root_module = noxlsp_mod,
+    });
+    const install_noxlsp = b.addInstallArtifact(noxlsp, .{});
+    b.getInstallStep().dependOn(&install_noxlsp.step);
+
     // Faz 12/13'ün köprüleri (Faz 14'ten beri `noxrt_mod`ün BİR PARÇASI —
     // bkz. runtime/foreign_bridge.zig, `nox_hpy_call`/`nox_wasm_call`); bu
     // yüzden `noxrt_mod`dan ÖNCE tanımlanmalılar ki ona named import olarak
@@ -211,6 +227,12 @@ pub fn build(b: *std.Build) void {
     // regresyonu SESSİZCE KAÇIRABİLİR (bu eksiklik, tam da bu senaryoyu
     // sınayan bir kasıtlı-boz-restore ile keşfedildi).
     test_step.dependOn(&install_noxc.step);
+    // Faz W.2: `noxlsp`nin KENDİSİ İÇİN AYRI bir golden/entegrasyon test
+    // hedefi YOK (bkz. `tests/cli/lsp_test.zig`nin belge notu — protokol
+    // seviyesinde stdio üzerinden ALT SÜREÇ olarak çalıştırılıp doğrulanır),
+    // ama BU adım en azından `noxlsp`nin HER `zig build test`te GERÇEKTEN
+    // DERLENDİĞİNİ garanti eder (`install_noxc`in YUKARIDAKİ AYNI gerekçesi).
+    test_step.dependOn(&install_noxlsp.step);
 
     // "nox" modülünün kendi içindeki (lexer/parser dosyalarına gömülü) testler.
     const lib_test = b.addTest(.{ .root_module = nox_mod });
@@ -231,6 +253,7 @@ pub fn build(b: *std.Build) void {
         "tests/cli/subcommand_test.zig",
         "tests/cli/package_resolution_test.zig",
         "tests/cli/local_import_test.zig",
+        "tests/cli/lsp_test.zig",
         "tests/golden/golden_test.zig",
         "tests/golden/typecheck_golden_test.zig",
         "tests/golden/ownership_golden_test.zig",
