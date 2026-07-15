@@ -213,6 +213,16 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   kapsamı dışı). `tests/cli/lsp_test.zig` ile uçtan uca (spawn edilen
   gerçek `noxlsp` alt sürecine stdio üzerinden LSP çerçeveleriyle
   konuşularak) doğrulandı.
+- DAP/debugger entegrasyonu eklendi (Faz W.3, `editors/vscode-nox/`) —
+  yeni bir DAP sunucusu yazılmadı: `noxc build -g`nin (Faz T.3) ürettiği
+  gerçek DWARF hat tablosu, var olan `lldb-dap`/CodeLLDB gibi standart
+  debug adaptörleriyle doğrudan uyumlu. VS Code için `launch.json`/
+  `tasks.json` şablonları + kurulum ve bilinen sınırlamaları (yalnızca
+  satır-düzeyi, macOS'ta bağlı ikili DWARF taşımıyor) belgeleyen bir
+  README eklendi. Bu makinede kurulu `lldb-dap`e ham DAP protokolüyle
+  doğrudan konuşularak (initialize/launch/setBreakpoints/
+  configurationDone) doğrulandı — macOS sınırlaması artık DAP protokolü
+  seviyesinde de teyit edildi.
 
 ### Düzeltildi
 - `noxlsp`nin LSP çerçeveleme okuyucusunda (`readMessage`), `std.Io.Reader.

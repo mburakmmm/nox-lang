@@ -7019,6 +7019,82 @@ temizlenmeli).
 
 ---
 
+## 3.37 Faz W.3 — DAP/Debugger Entegrasyonu (`editors/vscode-nox`)
+
+**Karar — YENİ bir DAP sunucusu YAZILMADI, bilinçli ve gerekçeli:**
+[Debug Adapter Protocol](https://microsoft.github.io/debug-adapter-protocol/)
+TAMAMEN dilden BAĞIMSIZDIR — bir DAP istemcisi kaynak dosya/satır bilgisini
+İKİLİNİN DWARF hat tablosundan ÇÖZER, hata ayıklanan dilin (Nox) SÖZDİZİMİNİ/
+SEMANTİĞİNİ HİÇ BİLMESİ GEREKMEZ. Faz T.3 (bkz. §3.17) `noxc build -g` İLE
+GERÇEK bir DWARF hat tablosu (`dbgfile`/`dbgloc` → assembler `.file`/`.loc`
+→ `.debug_line`) ÜRETTİĞİNDEN, Nox binary'leri **HALİHAZIRDA** olgun, VAR
+OLAN DAP sunucularıyla (Apple/LLVM'in resmi `lldb-dap`si, GDB tabanlı
+köprüler) UYUMLUDUR — Nox'un KENDİ DAP sunucusunu yazması, W.1'in tree-
+sitter-python'ı UYARLAMASI/`nox.regex`nin Kernighan'ın algoritmasını
+UYARLAMASI İLKESİNİN DAHA GÜÇLÜ bir versiyonuyla REDDEDİLDİ: burada
+UYARLAMAYA bile GEREK YOK — sıfırdan (ya da uyarlanarak) yazılacak bir DAP
+sunucusu (kesme noktası yönetimi, süreç kontrolü, çerçeve/scope/değişken
+sorguları, adım-atlama semantiği) `noxlsp`den (W.2, YALNIZCA tanılama) ÇOK
+DAHA BÜYÜK bir mühendislik yüzeyi olurdu VE `lldb`/`gdb`nin KENDİ SÜREÇ
+KONTROLÜ/sembol çözümlemesi mantığını KUSURLU bir şekilde YENİDEN İCAT
+etmek anlamına gelirdi.
+
+**Teslim edilen — `editors/vscode-nox/`:**
+1. `.vscode/launch.json.example` — [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb)
+   uzantısını (`"type": "lldb"`, DWARF-tabanlı HERHANGİ bir dili
+   destekleyen, Nox'a ÖZGÜ OLMAYAN bir VS Code eklentisi) `noxc build -g`
+   İLE üretilen ikiliye BAĞLAYAN bir başlatma yapılandırması şablonu.
+2. `.vscode/tasks.json.example` — `preLaunchTask` olarak `noxc build -g
+   ${file}` çalıştıran görev tanımı.
+3. `README.md` — kurulum + T.3'ten DEVRALINAN (YENİ bir kısıt DEĞİL)
+   sınırlamaların (yalnızca satır-düzeyi/değişken YOK, macOS bağlı ikili
+   DWARF taşımıyor, çoklu-dosya yanlış atıf) AÇIKÇA belgelenmesi.
+
+**Doğrulama — ham DAP protokolü üzerinden, GERÇEK `lldb-dap`e karşı:**
+Bu makinede (macOS/aarch64) HALİHAZIRDA kurulu olan (Xcode Command Line
+Tools'un bir PARÇASI, HERHANGİ bir şey İNDİRİLMEDİ/KLONLANMADI) `lldb-dap`
+ikilisine, LSP'nin (W.2) AYNI temel `Content-Length` çerçevelemesini
+kullanan geçici bir Python betiğiyle DOĞRUDAN konuşuldu: `initialize` →
+`launch` (`dbgtest.nox`dan `noxc build -g` İLE üretilen GERÇEK bir ikili)
+→ `setBreakpoints` (`dbgtest.nox:2`) → `configurationDone` — **DÖRDÜ de
+`"success": true` İLE yanıtlandı**, süreç GERÇEKTEN başlatılıp normal
+çalışıp ÇIKTI, AMA kesme noktası `"verified": false` OLARAK KALDI ve HİÇ
+tetiklenmedi (`stopped` olayı GELMEDİ, program tamamlanana kadar ÇALIŞTI) —
+bu, T.3'ün `lldb -b -o "break dbgtest.nox:2" -o run`la (BU FAZDA AYRICA
+TEKRAR doğrulandı: `"Breakpoint 1: no locations (pending)"` + `"WARNING:
+Unable to resolve breakpoint"`) ZATEN belgelediği macOS sınırlamasıyla
+(bkz. T.3 sınırlama 3, Apple `ld`sinin STABS/`N_OSO` GEREKSİNİMİ) TAM
+TUTARLI — ŞİMDİ hem KOMUT SATIRI hem DAP PROTOKOLÜ seviyesinde doğrulanmış
+oldu. **Linux'ta TAM ÇALIŞTIĞI** (satır-düzeyi kesme noktaları) T.3'ün
+KENDİ Docker/gdb doğrulamasıyla ZATEN kanıtlanmıştı; bu FAZ, Linux'un
+Debian bookworm `lldb-14` paketinin de bir `lldb-vscode-14` (yani
+`lldb-dap`nin ESKİ adı) İÇERDİĞİNİ (`apt-cache policy`/`dpkg -L` İLE)
+DOĞRULADI — AMA bu spesifik ikilinin (`lldb-dap` + Linux, gdb'nin AKSİNE)
+GERÇEKTEN kesme noktası tetiklediği bu OTURUMDA AYRICA test EDİLMEDİ
+(kaynağı harici bir git deposundan derlemeyi/çalıştırmayı gerektiren bir
+adım, KULLANICI TARAFINDAN AÇIKÇA yetkilendirilmeden yapılmadı — bkz.
+aşağıdaki not) — dürüstçe "beklenen ama AYRICA doğrulanmamış" olarak
+işaretlenir.
+
+**Not — kapsam dışı bırakılan bir doğrulama adımı:** Linux/Docker'da SIFIRDAN
+QBE derleyip `noxc`yi İNŞA ederek `lldb-dap`in GERÇEK bir kesme noktasını
+TETİKLEDİĞİNİ göstermek PLANLANDI (T.3'ün KENDİ Linux/gdb doğrulamasıyla
+BİREBİR AYNI derinlikte), AMA bu, HARİCİ bir git deposunu (QBE kaynak kodu)
+KLONLAYIP DERLEMEYİ/ÇALIŞTIRMAYI gerektirdiğinden VE kullanıcı BUNU bu
+OTURUMDA açıkça YETKİLENDİRMEDİĞİNDEN (güvenlik sınıflandırıcısı TARAFINDAN
+ENGELLENDİ) bu adım ATLANDI — yukarıdaki "beklenen ama ayrıca doğrulanmamış"
+notu BUNUN İÇİNDİR. T.3'ün KENDİ (ÖNCEKİ bir oturumda, AÇIKÇA yetkilendirilmiş
+şekilde yapılan) gdb/Docker doğrulaması HÂLÂ geçerli/yeterli KANIT olarak
+kabul edilir — Linux'ta satır-düzeyi hata ayıklamanın ÇALIŞTIĞI ZATEN
+KANITLANMIŞTIR, burada YALNIZCA "AYNI DWARF verisini OKUYAN farklı bir DAP
+İSTEMCİSİ (`lldb-dap` vs `gdb`)nin de ÇALIŞMASI BEKLENİR" YARGISI EKLENMİŞTİR.
+
+Bu faz `compiler/`/`runtime/`e HİÇBİR değişiklik GETİRMEZ (T.3'ün ZATEN
+sağladığı DWARF emisyonu YETERLİDİR) — `zig build test` (Debug + ReleaseFast)
+BU FAZDAN ETKİLENMEDİ, DEĞİŞMEDEN yeşil.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

@@ -1,0 +1,33 @@
+{
+  // Faz W.3 (bkz. nox-teknik-spesifikasyon.md) — Nox programlarını GERÇEK
+  // bir native debugger'la (DWARF hat tablosu üzerinden) hata ayıklamak
+  // İÇİN VS Code başlatma yapılandırması ŞABLONU.
+  //
+  // Bu dosyanın adı KASITLI olarak ".example" son ekiyle biter — projenizin
+  // KÖK dizinine `.vscode/launch.json` olarak KOPYALAYIP `program`/`preLaunchTask`
+  // alanlarını KENDİ dosyanıza göre düzenleyin (bkz. README.md, "Kurulum").
+  //
+  // Gereksinim: CodeLLDB uzantısı (vadimcn.vscode-lldb) — Nox KENDİ debug
+  // adaptörünü SAĞLAMAZ (bkz. README.md'nin "Neden özel bir DAP sunucusu
+  // YOK" bölümü); `noxc build -g`nin ürettiği DWARF hat tablosunu OKUYAN
+  // HERHANGİ bir DAP istemcisi (CodeLLDB, native `lldb-dap`, GDB tabanlı
+  // C/C++ uzantıları) ÇALIŞIR — burada CodeLLDB seçildi çünkü macOS/Linux/
+  // Windows'ta AYNI şekilde kurulur ve KENDİ lldb'sini gömer (sistem lldb'sine
+  // bağımlı DEĞİL).
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Nox: mevcut dosyayı derle ve hata ayıkla",
+      "type": "lldb",
+      "request": "launch",
+      // `-g` ZORUNLU — bkz. Faz T.3, `dbgfile`/`dbgloc` üretimi bu bayrağa
+      // BAĞLIDIR (varsayılan KAPALI, M.2'nin "sessiz varsayılan" ilkesiyle
+      // TUTARLI).
+      "program": "${workspaceFolder}/${fileBasenameNoExtension}",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "noxc: -g ile derle",
+      "sourceLanguages": ["nox"]
+    }
+  ]
+}
