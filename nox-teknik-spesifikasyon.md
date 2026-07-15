@@ -6786,6 +6786,120 @@ backtracking).
 
 ---
 
+## 3.35 Faz W.1 — Tree-sitter Grameri (`editors/tree-sitter-nox`)
+
+**Kapsam ve konum:** Faz V (V.1-V.6, `nox.log`/`nox.random`/`nox.crypto`/
+`nox.time` genişlemesi/`nox.test` genişlemesi/`nox.regex`) TAMAMLANDIKTAN
+sonra dil olgunluğu açısından NİTELİKSEL bir eşiğe ULAŞILDI — bir sonraki
+adım (Faz W, "editör/araç desteği") derleyicinin/runtime'ın KENDİSİNE
+DOKUNMAZ, `editors/tree-sitter-nox/` altında TAMAMEN AYRI, bağımsız bir
+alt-proje olarak yaşar (JavaScript/C — Zig derleyici koduyla HİÇBİR
+BAĞIMLILIĞI YOK, `zig build test`i ETKİLEMEZ). Amaç: sözdizimi vurgulama +
+gelecekteki minimal LSP'nin (W.2) ayrıştırma temeli.
+
+**Neden HARİCİ bir C tarayıcısı (`src/scanner.c`) GEREKTİ:** Nox'un girinti
+modeli (bkz. `compiler/lexer/lexer.zig`) Python'un INDENT/DEDENT/NEWLINE
+tokenizasyonuyla AYNI — bu, bağlamsız (context-free) bir gramerle İFADE
+EDİLEMEZ (girinti derinliği bir YIĞIN gerektirir). `src/scanner.c`,
+[tree-sitter-python](https://github.com/tree-sitter/tree-sitter-python)nun
+(MIT lisanslı) KANITLANMIŞ NEWLINE/INDENT/DEDENT algoritmasından
+UYARLANMIŞTIR (`nox.regex`nin Kernighan algoritmasını uyarlaması İLE AYNI
+"sıfırdan İCAT ETME yerine KANITLANMIŞ bir algoritmayı UYARLA" ilkesi) —
+Nox'un DAHA BASİT olduğu yerler (üçlü-tırnak/f-string/ham/bytes string YOK,
+Python'ın `except*`/soft-keyword karmaşıklığı YOK) BİLİNÇLİ olarak
+BUDANMIŞTIR. Kapanış parantezlerinin (`)`/`]`/`}`) `externals`e (ama HİÇBİR
+ZAMAN doğrudan üretilmeden) dahil edilmesi, tarayıcının `within_brackets`
+sinyalini (ayrıştırıcı durumunun bir kapanış parantezi BEKLEYİP
+beklemediği) okuyup parantez İÇİNDE YANLIŞLIKLA bir DEDENT üretmesini
+ENGELLEMESİNİ sağlar — python'ın gramerinden BİREBİR aynı mekanizma
+(anlamsız satır sonları `\n`nin `extras`e DAHİL edilmesiyle BİRLİKTE
+çalışır: parantez içindeyken ayrıştırıcı durumu `_newline`i GEÇERLİ
+saymadığından tarayıcı sessizce `false` döner, dahili sözlüksel çözümleyici
+`\n`i sıradan boşluk olarak yutar).
+
+**Gramer kapsamı — GERÇEK derleyici sözdiziminin NEREDEYSE TAMAMI:**
+girinti-duyarlı bloklar, `def`/`class`/`protocol`/`extern def ... with_rt`/
+`lowlevel`, `if/elif/else`, `while`/`for`, `try/except/finally`, `with`,
+`raise`, `import`/`from...import`, generic tip parametreleri
+(`def f[T](...)`), fonksiyon tip ifadeleri (`(int) -> int`, bkz. Faz
+U.4.1), `async`/`await`/`spawn`, `list[T]`/`dict[K,V]` literalleri.
+Operatör öncelik sırası (`or < and < not < karşılaştırma < +/- < */÷ <
+tekli < üs < postfix`) `compiler/parser/parser.zig`nin precedence-climbing
+zinciriyle BİREBİR AYNI sırayla `PREC` tablosuna kodlanmıştır.
+
+**Bilinçli sadeleştirmeler (v1 kapsamı DIŞI — bir editör aracı İÇİN
+gereksiz ayrıntı, gerçek derleyicinin DOĞRULUĞUNU HİÇBİR ŞEKİLDE
+ETKİLEMEZ, bkz. `editors/tree-sitter-nox/README.md`nin AYNI notu):**
+`Channel[T](capacity)`nin dilde YALNIZCA `Channel` için ayrılmış açık tip
+argümanlı kurucu sözdizimi (bkz. `parser.zig`nin `isGenericConstructName`i)
+AYRI bir düğüm türü olarak modellenmez — sıradan iç içe `index`+`call`
+olarak ayrıştırılır (semantik olarak YANLIŞ değil, yalnızca DAHA AZ
+ÖZGÜL); string literalleri tek satırla SINIRLANDIRILMIŞTIR (gerçek lexer
+teknik olarak çok satırlı bir string'i REDDETMEZ ama pratikte HİÇ
+KULLANILMAZ); TAB girintisi 8 sütunluk BOŞLUK gibi SAYILIR (gerçek
+derleyici TAB'ı TAMAMEN REDDEDER — `TabsNotAllowed`).
+
+**Doğrulama — golden-test disiplininin bu ARAÇ İÇİN eşdeğeri:**
+1. `test/corpus/basics.txt` — deyimlerin/ifadelerin/tiplerin TAMAMINI
+   (değişken bildirimi, fonksiyon/sınıf/protokol tanımı, TÜM kontrol akışı
+   yapıları, `with`/`lowlevel`/`async`/`spawn`/`await`, `extern def ...
+   with_rt`, `import`/`from...import`, liste/sözlük literalleri, generic
+   fonksiyon) TEK bir kaynak dosyasında kapsayan bir `tree-sitter test`
+   regresyon testi — `npm test` İLE YEŞİL.
+2. **Repodaki HER GERÇEK `.nox` dosyasına karşı sıfır-hata ayrıştırma** —
+   `stdlib/` (18 dosya), `benchmarks/` (23 dosya, `compare/` HARİÇ), VE
+   `tests/golden/**/*.nox` (160 dosya) — TOPLAM **201 dosya**, HİÇBİRİNDE
+   `ERROR` düğümü OLUŞMADI (`tree-sitter parse` çıktısı programatik olarak
+   tarandı). Bu, derleyicinin KENDİ golden-test SÜİTİNİN (`zig build test`)
+   BAĞIMSIZ bir "ikinci gözlemci" DOĞRULAMASI olarak İŞLEV görür — gerçek
+   Nox kaynak kodunun (elle yazılmış TEST senaryoları DAHİL) grameri
+   HİÇBİR ŞEKİLDE ŞAŞIRTMADIĞINI kanıtlar.
+3. `queries/highlights.scm` — standart tree-sitter yakalama adlarını
+   (`@keyword`/`@function`/`@type`/`@string`/... bkz. Neovim/Helix/Zed'in
+   VARSAYILAN tema eşlemesi) kullanan bir sözdizimi vurgulama sorgusu,
+   `tree-sitter query` İLE derleme-zamanı DOĞRULANDI (2 gerçek hata
+   BULUNUP DÜZELTİLDİ — bkz. aşağı).
+4. Node.js NATIVE eklentisi (`binding.gyp`/`bindings/node/binding.cc`)
+   `node-gyp-build` İLE BAŞARIYLA DERLENDİ (gerçek editör entegrasyonlarının
+   — Neovim/Zed/Helix — kullandığı YOL bu DEĞİL, onlar `.so`/WASM'ı DOĞRUDAN
+   yükler, ama npm paket dağıtımı İÇİN standart yol budur).
+   **Bilinen sınırlama:** bu OTURUMDA kullanılan `tree-sitter` npm ÇALIŞMA
+   ZAMANI paketinin (0.22.x/0.25.x) native eklentisi bu ortamdaki Node.js
+   v26 İLE UYUMSUZ çıktı (0.25.x derleme HATASI verdi, 0.22.x derlendi
+   ama `Parser.setLanguage`in KENDİ dahili native köprüsü ABI 15 gramerini
+   TANIMADI) — bu, **grameri DEĞİL, üçüncü-taraf `tree-sitter` npm
+   paketinin bu ortamdaki Node sürümüyle UYUMLULUĞUNU** etkileyen, bilinen/
+   dokümante EDİLMİŞ bir SINIRLAMADIR (gerçek editörler bu npm paketini
+   KULLANMAZ). Grameri doğrulayan ASIL mekanizma (madde 1-3) BU
+   sınırlamadan TAMAMEN BAĞIMSIZDIR.
+
+**Bulunan/düzeltilen gerçek hatalar (implementasyon sırasında, COMMIT
+edilmeden ÖNCE yakalandı):**
+- `binary_expression` kuralının `.map(([op, prec]) => ...)` yardımcı
+  fonksiyonunda döngü değişkeni `prec` adı, MODÜL seviyesindeki `prec()`
+  fonksiyonunu (tree-sitter DSL'in KENDİSİ) GÖLGELEDİ — `pass_statement`
+  İLE AYNI KATEGORİDE bir isim çakışması, `tree-sitter generate` ÇALIŞMA
+  ZAMANI hatasıyla (`prec.left is not a function` benzeri) YAKALANDI,
+  değişken `p` olarak yeniden ADLANDIRILDI.
+- `highlights.scm`de `"pass" @keyword` — `pass_statement: $ => 'pass'`
+  kuralı TREE-SITTER tarafından "tek-çocuklu" bir üretim olarak
+  OPTİMİZE EDİLDİĞİNDEN, anonim `"pass"` düğümü node-types.json'da HİÇ
+  YER ALMAZ (yalnızca `pass_statement` ADLI düğüm VARDIR) — `tree-sitter
+  query` derleme HATASIYLA ("Invalid node type 'pass'") YAKALANDI,
+  `(pass_statement) @keyword`e DÜZELTİLDİ. AYNI kategoriden İKİNCİ bir
+  hata: `(_type_expression (identifier) @type)` — `_type_expression`
+  ALT ÇİZGİYLE BAŞLADIĞINDAN (gizli/inline kural) hiçbir zaman GERÇEK bir
+  düğüm olarak var OLMAZ, doğrudan çocuğuna İNDİRGENİR — AYNI hata
+  mesajıyla yakalanıp alanlara-özgü (`parameter type:`/`var_declaration
+  type:`/`function_definition return_type:` vb.) somut eşleşmelerle
+  DEĞİŞTİRİLDİ.
+
+`npx tree-sitter test` yeşil (1/1), tüm 201 gerçek `.nox` dosyası sıfır-hata
+ile ayrıştırılıyor, `zig build test` (Debug + ReleaseFast, ANA derleyici —
+bu fazdan HİÇ ETKİLENMEDİĞİ doğrulandı) yeşil.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

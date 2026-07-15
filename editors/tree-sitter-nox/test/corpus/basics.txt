@@ -1,0 +1,311 @@
+================================================================================
+Kapsamlı sözdizimi kapsama testi (deyimler + ifadeler + tipler)
+================================================================================
+x: int = 1 + 2 * 3
+y: str = "hello"
+y = "world"
+
+def add(a: int, b: int) -> int:
+    return a + b
+
+class Point:
+    def __init__(self: Point, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+
+if x < 0:
+    y = 1
+elif x == 0:
+    y = 2
+else:
+    y = 3
+
+for i in range(10):
+    print(i)
+
+while x < 10:
+    x = x + 1
+
+try:
+    raise ValueError("bad")
+except ValueError as e:
+    print(e.message)
+finally:
+    print("done")
+
+with open("f.txt") as f:
+    print(f)
+
+lowlevel:
+    x = 1
+
+async def fetch(url: str) -> int:
+    v: int = await get(url)
+    return v
+
+t: Task[int] = spawn fetch("url")
+
+extern def nox_len_raw(s: str) -> int from "zig-out/lib/noxrt.o" with_rt
+
+import nox.http
+from nox.strings import split, join as j
+
+xs: list[int] = [1, 2, 3]
+d: dict[str, int] = {"a": 1, "b": 2}
+
+protocol Shape:
+    def area(self: Shape) -> float:
+        return 0.0
+
+def apply[T](f: (T) -> T, x: T) -> T:
+    return f(x)
+
+--------------------------------------------------------------------------------
+
+(module
+  (var_declaration
+    name: (identifier)
+    type: (identifier)
+    value: (binary_expression
+      left: (integer)
+      right: (binary_expression
+        left: (integer)
+        right: (integer))))
+  (var_declaration
+    name: (identifier)
+    type: (identifier)
+    value: (string))
+  (assignment
+    target: (identifier)
+    value: (string))
+  (function_definition
+    name: (identifier)
+    parameters: (parameters
+      (parameter
+        name: (identifier)
+        type: (identifier))
+      (parameter
+        name: (identifier)
+        type: (identifier)))
+    return_type: (identifier)
+    body: (block
+      (return_statement
+        value: (binary_expression
+          left: (identifier)
+          right: (identifier)))))
+  (class_definition
+    name: (identifier)
+    body: (class_body
+      (function_definition
+        name: (identifier)
+        parameters: (parameters
+          (parameter
+            name: (identifier)
+            type: (identifier))
+          (parameter
+            name: (identifier)
+            type: (identifier))
+          (parameter
+            name: (identifier)
+            type: (identifier)))
+        return_type: (none_type)
+        body: (block
+          (assignment
+            target: (attribute
+              object: (identifier)
+              attribute: (identifier))
+            value: (identifier))
+          (assignment
+            target: (attribute
+              object: (identifier)
+              attribute: (identifier))
+            value: (identifier))))))
+  (if_statement
+    condition: (binary_expression
+      left: (identifier)
+      right: (integer))
+    body: (block
+      (assignment
+        target: (identifier)
+        value: (integer)))
+    (elif_clause
+      condition: (binary_expression
+        left: (identifier)
+        right: (integer))
+      body: (block
+        (assignment
+          target: (identifier)
+          value: (integer))))
+    (else_clause
+      body: (block
+        (assignment
+          target: (identifier)
+          value: (integer)))))
+  (for_statement
+    name: (identifier)
+    iterable: (call
+      function: (identifier)
+      arguments: (argument_list
+        (integer)))
+    body: (block
+      (expression_statement
+        (call
+          function: (identifier)
+          arguments: (argument_list
+            (identifier))))))
+  (while_statement
+    condition: (binary_expression
+      left: (identifier)
+      right: (integer))
+    body: (block
+      (assignment
+        target: (identifier)
+        value: (binary_expression
+          left: (identifier)
+          right: (integer)))))
+  (try_statement
+    body: (block
+      (raise_statement
+        value: (call
+          function: (identifier)
+          arguments: (argument_list
+            (string)))))
+    (except_clause
+      type: (identifier)
+      name: (identifier)
+      body: (block
+        (expression_statement
+          (call
+            function: (identifier)
+            arguments: (argument_list
+              (attribute
+                object: (identifier)
+                attribute: (identifier)))))))
+    (finally_clause
+      body: (block
+        (expression_statement
+          (call
+            function: (identifier)
+            arguments: (argument_list
+              (string)))))))
+  (with_statement
+    value: (call
+      function: (identifier)
+      arguments: (argument_list
+        (string)))
+    name: (identifier)
+    body: (block
+      (expression_statement
+        (call
+          function: (identifier)
+          arguments: (argument_list
+            (identifier))))))
+  (lowlevel_statement
+    body: (block
+      (assignment
+        target: (identifier)
+        value: (integer))))
+  (function_definition
+    name: (identifier)
+    parameters: (parameters
+      (parameter
+        name: (identifier)
+        type: (identifier)))
+    return_type: (identifier)
+    body: (block
+      (var_declaration
+        name: (identifier)
+        type: (identifier)
+        value: (await_expression
+          operand: (call
+            function: (identifier)
+            arguments: (argument_list
+              (identifier)))))
+      (return_statement
+        value: (identifier))))
+  (var_declaration
+    name: (identifier)
+    type: (generic_type
+      name: (identifier)
+      (identifier))
+    value: (spawn_expression
+      operand: (call
+        function: (identifier)
+        arguments: (argument_list
+          (string)))))
+  (extern_function_definition
+    name: (identifier)
+    parameters: (parameters
+      (parameter
+        name: (identifier)
+        type: (identifier)))
+    return_type: (identifier)
+    library: (string))
+  (import_statement
+    name: (dotted_name
+      (identifier)
+      (identifier)))
+  (from_import_statement
+    module: (dotted_name
+      (identifier)
+      (identifier))
+    (import_name
+      name: (identifier))
+    (import_name
+      name: (identifier)
+      alias: (identifier)))
+  (var_declaration
+    name: (identifier)
+    type: (generic_type
+      name: (identifier)
+      (identifier))
+    value: (list
+      (integer)
+      (integer)
+      (integer)))
+  (var_declaration
+    name: (identifier)
+    type: (generic_type
+      name: (identifier)
+      (identifier)
+      (identifier))
+    value: (dict
+      (pair
+        key: (string)
+        value: (integer))
+      (pair
+        key: (string)
+        value: (integer))))
+  (protocol_definition
+    name: (identifier)
+    body: (class_body
+      (function_definition
+        name: (identifier)
+        parameters: (parameters
+          (parameter
+            name: (identifier)
+            type: (identifier)))
+        return_type: (identifier)
+        body: (block
+          (return_statement
+            value: (float))))))
+  (function_definition
+    name: (identifier)
+    type_parameters: (type_parameters
+      (identifier))
+    parameters: (parameters
+      (parameter
+        name: (identifier)
+        type: (function_type
+          (identifier)
+          (identifier)))
+      (parameter
+        name: (identifier)
+        type: (identifier)))
+    return_type: (identifier)
+    body: (block
+      (return_statement
+        value: (call
+          function: (identifier)
+          arguments: (argument_list
+            (identifier)))))))

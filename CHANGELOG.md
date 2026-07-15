@@ -192,6 +192,18 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   literal karakterler, `.`, `*`/`+`/`?`, `^`/`$`, `[abc]`/`[a-z]`/`[^abc]`.
   Bilinçli v1 kapsam dışı: gruplama, alternasyon, geri-referanslar,
   `{m,n}`, escape dizileri (`\d` vb.).
+- Tree-sitter grameri eklendi (Faz W.1, `editors/tree-sitter-nox/`) — dilin
+  neredeyse tamamını (girinti-duyarlı bloklar, tüm kontrol akışı, `with`/
+  `lowlevel`, generics, fonksiyon tipleri, `async`/`await`/`spawn`,
+  `extern def ... with_rt`, `import`/`from...import`, `list`/`dict`
+  literalleri) kapsar. Girinti (NEWLINE/INDENT/DEDENT) üretimi, tree-sitter-
+  python'ın kanıtlanmış algoritmasından uyarlanmış bir harici C tarayıcısıyla
+  (`src/scanner.c`) yapılır. `queries/highlights.scm` ile sözdizimi
+  vurgulama sorgusu dahil. Repodaki 201 gerçek `.nox` dosyasının TAMAMI
+  (stdlib + benchmarks + tests/golden) sıfır ayrıştırma hatasıyla doğrulandı
+  — derleyicinin kendi golden-test süitinden bağımsız bir ikinci doğrulama
+  katmanı. Bu, ana derleyici/runtime'a hiçbir değişiklik getirmez (ayrı bir
+  JS/C alt-projedir, `zig build test`i etkilemez).
 
 ### Düzeltildi
 - **Önemli test-altyapısı düzeltmesi:** `compiler/*.zig` dosyalarına gömülü
