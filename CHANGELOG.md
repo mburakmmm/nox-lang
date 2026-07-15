@@ -240,6 +240,12 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   denetleniyor (Release'de sıfır maliyet). Gerçek bir `std.Thread.spawn`
   ile başlatılan ayrı iş parçacığından yapılan ihlalin doğru yakalandığı
   yeni bir birim testiyle doğrulandı.
+- Hafif paket dizini eklendi (Faz Y.1) — `compiler/pkg/index.zig`, üçüncü-
+  taraf Nox paketlerini keşfetmek için statik bir JSON indeksini
+  ayrıştırıp arayan salt-okunur bir katalog (gerçek bir sunucu/registry
+  DEĞİL, `docs/uretim-hazirlik-analizi.md`nin talimatına uygun). Yeni,
+  tam işlevsel `noxc search <indeks-dosyasi.json> [sorgu]` alt komutu
+  (hâlâ iskelet olan `fetch`/`update`den farklı olarak).
 
 ### Düzeltildi
 - **Bellek sızıntısı (Faz X.2, `tests/fuzz/wasm_parser_fuzz.zig`nin yeni

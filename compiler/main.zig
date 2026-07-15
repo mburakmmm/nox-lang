@@ -28,6 +28,7 @@ const project = @import("project.zig");
 const qbe_target = @import("qbe_target.zig");
 const test_runner = @import("pkg/test_runner.zig");
 const fetch = @import("pkg/fetch.zig");
+const pkg_index = @import("pkg/index.zig");
 const formatter = @import("fmt/formatter.zig");
 
 pub fn main(init: std.process.Init) !void {
@@ -68,7 +69,7 @@ pub fn main(init: std.process.Init) !void {
     const resource_dir_override = if (init.environ_map.get("NOX_RESOURCE_DIR")) |h| try a.dupe(u8, h) else null;
     const resource_dirs = try project.resolveResourceDirs(a, io, resource_dir_override);
 
-    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, legacy };
+    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, legacy };
     const sub: Subcommand = blk: {
         if (all_args.items.len == 0) break :blk .legacy;
         const first = all_args.items[0];
@@ -78,6 +79,7 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.eql(u8, first, "fmt")) break :blk .fmt;
         if (std.mem.eql(u8, first, "fetch")) break :blk .fetch;
         if (std.mem.eql(u8, first, "update")) break :blk .update;
+        if (std.mem.eql(u8, first, "search")) break :blk .search;
         break :blk .legacy;
     };
     const rest: []const []const u8 = if (sub == .legacy) all_args.items else all_args.items[1..];
@@ -88,11 +90,53 @@ pub fn main(init: std.process.Init) !void {
         .run => try cmdRun(gpa, io, a, rest, nox_home, resource_dirs),
         .test_cmd => try cmdTest(gpa, io, a, rest, nox_home, resource_dirs),
         .fmt => try cmdFmt(gpa, io, a, rest),
+        .search => try cmdSearch(io, a, rest),
         .fetch, .update => {
             std.debug.print("noxc {s}: henuz uygulanmadi (bkz. plan dosyasi, Faz O)\n", .{@tagName(sub)});
             std.process.exit(1);
         },
     }
+}
+
+/// Faz Y.1: `noxc search <indeks-dosyasi.json> [sorgu]` — hafif, statik
+/// paket dizinini (bkz. `pkg/index.zig`nin modül üstü notu) sorgular.
+/// `sorgu` VERİLMEZSE TÜM katalog LİSTELENİR. Bu KOMUT, `fetch`/`update`in
+/// AKSİNE (henüz REZERVE), TAM olarak ÇALIŞIR — herhangi bir AĞ erişimi
+/// GEREKMEZ (yalnızca YEREL bir JSON dosyası okur, bkz. modül üstü not
+/// "gelecekte eklenebilir" tasarım kararı).
+fn cmdSearch(io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
+    const index_path = if (args.len > 0) args[0] else {
+        std.debug.print("kullanim: noxc search <indeks-dosyasi.json> [sorgu]\n", .{});
+        std.process.exit(1);
+    };
+    const query = if (args.len > 1) args[1] else "";
+
+    const idx = pkg_index.loadIndexFromFile(a, io, index_path) catch |e| {
+        std.debug.print("search: indeks okunamadi/ayristirilamadi ({t}): {s}\n", .{ e, index_path });
+        std.process.exit(1);
+    };
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
+    const w = &stdout_writer.interface;
+
+    var found: usize = 0;
+    for (idx.packages) |pkg| {
+        if (!pkg_index.matches(pkg, query)) continue;
+        found += 1;
+        try w.print("{s} — {s}\n", .{ pkg.name, pkg.repo });
+        if (pkg.description.len > 0) try w.print("    {s}\n", .{pkg.description});
+        if (pkg.tags.len > 0) {
+            try w.writeAll("    etiketler: ");
+            for (pkg.tags, 0..) |t, i| {
+                if (i > 0) try w.writeAll(", ");
+                try w.writeAll(t);
+            }
+            try w.writeAll("\n");
+        }
+    }
+    if (found == 0) try w.writeAll("eslesen paket bulunamadi\n");
+    try w.flush();
 }
 
 const BuildOpts = struct {

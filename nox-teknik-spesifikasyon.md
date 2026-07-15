@@ -7375,6 +7375,98 @@ kapsamı DIŞINDA bırakıldı.
 
 ---
 
+## 3.41 Faz Y.1 — Hafif Paket Dizini (Statik JSON İndeks)
+
+**Kaynak — `docs/uretim-hazirlik-analizi.md` (satır 162):** "Hafif bir
+'paket dizini' [yalnızca statik bir JSON indeksi — gerçek bir sunucu/
+registry DEĞİL]."
+
+**Tasarım kararı — GERÇEK bir sunucu/API DEĞİL:** Faz O'nun kendi
+planlama turu (bkz. §3.6, "Açık Sorular / Bilinçli Kapsam Dışı") merkezi
+bir registry/proxy'yi (Go'nun `GOPROXY`si benzeri) KASITLI olarak kapsam
+DIŞI bıraktı — `compiler/pkg/fetch.zig`nin TEK bir dispatch noktası
+(`resolveCloneUrl`) olması, GELECEKTEKİ bir fazın bir "mirror'dan HTTP
+üzerinden tarball getir" dalı EKLEMESİNİ manifest/lockfile şemasına
+DOKUNMADAN sağlar. Y.1 AYNI ilkeyi izler: `compiler/pkg/index.zig` bir
+JSON metnini AYRIŞTIRIR/ARAR — nereden GELDİĞİ (yerel dosya, `noxc
+search`e verilen bir yol) TAMAMEN ÇAĞIRANIN sorumluluğundadır. Gelecekte
+bir HTTP indirme adımı EKLENİRSE (statik bir dosya sunucusundan/GitHub
+Pages'ten), bu YALNIZCA `loadIndexFromFile`nin YANINA yeni bir
+`loadIndexFromUrl` EKLEMEK anlamına gelir — `parseIndexJson`/`matches`
+DEĞİŞMEDEN kalır.
+
+**Şema:**
+```json
+{
+  "packages": [
+    {
+      "name": "noxhttp-extras",
+      "repo": "github.com/example/noxhttp-extras",
+      "description": "nox.http icin yardimci fonksiyonlar",
+      "tags": ["http", "web"]
+    }
+  ]
+}
+```
+`repo`, `Requirement`in (bkz. `compiler/project.zig`, Faz P.4) `repo`
+alanIYLA AYNI kavram/format (`"github.com/user/repo"`) — bilinçli olarak
+`ref` TAŞIMAZ: paket dizini bir KEŞİF katalogudur, sürüm PİNLEME
+`nox.json`nin `requires[]`inin işidir (kullanıcı bulduğu paketi KENDİ
+`ref`iyle manifestine EKLER). `description`/`tags` opsiyoneldir, eksikse
+sırasıyla boş dizge/boş dizi varsayılanına düşer.
+
+**API (`compiler/pkg/index.zig`):**
+- `PackageEntry{name, repo, description="", tags=&.{}}`, `Index{packages=&.{}}`.
+- `IndexError = error{InvalidIndex} || std.Io.Dir.ReadFileAllocError || Allocator.Error`.
+- `parseIndexJson(a, source) IndexError!Index` — `project.parseLockfile`
+  İLE AYNI desen (`std.json.parseFromSlice(..., .{.ignore_unknown_fields=true})`,
+  bozuk JSON İÇİN genel `error.InvalidIndex`).
+- `loadIndexFromFile(a, io, path) IndexError!Index` — dosyadan okuyup
+  ayrıştırır (`noxc search`in gerçek kullanım yolu).
+- `matches(entry, query) bool` — BOŞ sorgu HER ZAMAN eşleşir (tüm
+  katalogu listelemek için); doğrulukla İSE ad/açıklama İÇİNDE alt-dizge
+  eşleşmesi VEYA bir etiketle TAM eşleşme (alt-dizge DEĞİL — `"we"`
+  `"web"` etiketiyle EŞLEŞMEZ, bilinçli bir tasarım seçimi).
+
+**v1 kapsamı — YALNIZCA yerel dosya (HTTP fetch YOK):** `loadIndexFromUrl`
+şu an YOK; bu, mimarinin `loadIndexFromFile`nin YANINA trivial şekilde
+GENİŞLETİLEBİLECEK şekilde tasarlandığı, ama ŞİMDİ YAZILMADIĞI anlamına
+gelir — Faz O'nun registry/proxy ERTELEMESİYLE AYNI "gelecekte-genişletilebilir,
+ŞİMDİ-inşa-edilmeyen" ilkesi.
+
+**Yeni CLI alt komutu — `noxc search <indeks-dosyasi.json> [sorgu]`:**
+(`compiler/main.zig`, `cmdSearch`) TAM İŞLEVSELDİR (hâlâ iskelet olan
+`fetch`/`update`nin AKSİNE) — indeksi okur, `matches`le filtreler, HER
+eşleşen paket İÇİN `ad — repo` + varsa açıklama/etiket satırları basar;
+hiçbir şey eşleşmezse `"eslesen paket bulunamadi"` basar; indeks
+okunamaz/ayrıştırılamazsa net bir Türkçe hata mesajıyla çıkış kodu 1
+DÖNER.
+
+**Golden/birim testler:**
+1. `compiler/pkg/index.zig` İÇİNE gömülü 4 test: geçerli bir indeksin
+   doğru ayrıştırılması (eksik alanların varsayılanlara düştüğü DAHİL),
+   bozuk JSON'un `error.InvalidIndex` döndürmesi, boş `{}`nin geçerli
+   (sıfır paket) sayılması, `matches`in ad/açıklama/etiket davranışı
+   (TAM etiket eşleşmesi vs. alt-dizge AYRIMI DAHİL).
+2. `tests/cli/search_test.zig` — `subcommand_test.zig` İLE AYNI desende,
+   kurulu `zig-out/bin/noxc`yi GERÇEK bir alt süreç olarak çalıştıran 4
+   golden test: sorgusuz tam katalog listesi, sorguyla TEK paket
+   eşleşmesi, eşleşme YOKKEN açık mesaj, bozuk indeks dosyasıyla çıkış
+   kodu 1.
+
+**Doğrulama:** `zig build test` Debug'da 377/377 yeşil, ReleaseFast'ta
+AYNI şekilde yeşil. Kasıtlı boz→kırmızı→düzelt: `matches()` GEÇİCİ
+olarak KOŞULSUZ `true` DÖNECEK şekilde bozuldu → **TAM OLARAK**
+`pkg.index.test "matches: ad/aciklama/etiket uzerinden dogru eslesir"`
+testi KIRMIZI oldu, başka HİÇBİR test ETKİLENMEDİ; düzeltme GERİ
+getirildi, Debug + ReleaseFast YENİDEN yeşile döndü. `zig fmt` temiz
+(`compiler/pkg/index.zig`, `compiler/lib.zig`, `compiler/main.zig`,
+`tests/cli/search_test.zig`, `build.zig`). Manuel CLI doğrulaması
+(`./zig-out/bin/noxc search <fixture>.json [sorgu]`) izole çağrılarda
+doğru çıktı verdi.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

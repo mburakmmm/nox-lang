@@ -254,6 +254,7 @@ pub fn build(b: *std.Build) void {
         "tests/cli/package_resolution_test.zig",
         "tests/cli/local_import_test.zig",
         "tests/cli/lsp_test.zig",
+        "tests/cli/search_test.zig",
         "tests/fuzz/lexer_parser_checker_fuzz.zig",
         "tests/golden/golden_test.zig",
         "tests/golden/typecheck_golden_test.zig",
