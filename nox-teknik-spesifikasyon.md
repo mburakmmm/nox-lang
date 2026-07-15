@@ -8147,6 +8147,98 @@ doğrulandı), Debug + ReleaseFast YENİDEN yeşile döndü.
 
 `zig build test` (Debug + ReleaseFast) 397/397 yeşil, `zig fmt` temiz.
 
+## 3.51 Faz BB.5 — `ThreadChannel[T]`: Katman 2'nin Saf-Zig Çekirdeği (Simetrik Çift-Pipe)
+
+**Kaynak:** Faz BB.4'ün (§3.50) TAMAMLANMIŞ Katman 1'i ÜZERİNE, Katman
+2 — iş parçacıkları ARASINDA GERÇEK, sürekli, çift-yönlü iletişim.
+YENİ `runtime/async_rt/thread_channel.zig`: `nox_threadchannel_new`/
+`_send_val`/`_send_str`/`_recv_val`/`_recv_str`/`_destroy`. Mevcut,
+sıfır-maliyetli, AYNI-iş-parçacığı `Channel[T]`e (`channel.zig`) HİÇ
+DOKUNULMADI — `ThreadChannel`, `Scheduler.suspendCurrent`/`markReady`i
+KULLANAMAZ (o ilkeller TEK bir zamanlayıcının KENDİ, kilitsiz/iş-
+parçacığı-YEREL hazır kuyruğuna doğrudan erişir); BUNUN yerine
+`nox_thread_join`ın (§3.48) KENDİSİNİN KULLANDIĞI `Scheduler.
+suspendForIo`/`io.nonBlockingRead` İKİLİSİ yeniden kullanıldı — HER iş
+parçacığı YALNIZCA KENDİ reaktörüne KAYDOLUR VE YALNIZCA KENDİ
+`markReady`sini KENDİ iş parçacığından ÇAĞIRIR; DİĞER iş parçacığı
+YALNIZCA bir OS pipe'ına BAYT YAZAR (`write()`, `PIPE_BUF` altı boyutlar
+İÇİN POSIX'te atomiktir, kilitsiz güvenlidir) — bu, dosyanın TEK gerçek
+"zamanlayıcılar arası" temas noktasıdır.
+
+**Simetrik ÇİFT pipe — kullanıcının AskUserQuestion yanıtıyla SEÇİLEN
+geri basınç modeli:** `recv_wakeup_*` (gönderen→alıcı: "veri var"),
+`send_wakeup_*` (alıcı→gönderen: "yer açıldı", tampon DOLUYKEN bloklanmış
+bir göndericiyi UYANDIRMAK İÇİN). Her İKİ yönde de "reaktör UYANDIRIR,
+KOŞULU YENİDEN KONTROL ET" deseni (bkz. `io_reactor.zig`nin AYNI belge
+notu) KULLANILDI — bir pipe'a ERKEN/FAZLADAN yazılan bir bayt ASLA kayıp
+bir uyandırmaya yol AÇMAZ (kernel'in KENDİ arabelleğinde bekler, bir
+SONRAKİ `read()` onu hemen yakalar), yalnızca zararsız bir ekstra döngü
+yinelemesine.
+
+**`str` transferi:** `nox_thread_spawn`ın AYNI "düz baytlarla kopyala,
+ARC'a hiç dokunma" protokolü — `send_str`, gönderenin ARC `str`ini
+SENKRON olarak DÜZ (`page_allocator`) bir NUL-sonlandırılmış arabelleğe
+kopyalar (göndericinin KENDİ referansı çağrı DÖNER DÖNMEZ serbest
+bırakılabilir), tampon İÇİNDE bu düz işaretçi taşınır; `recv_str`,
+ALICININ KENDİ `rt`si üzerinden bu baytlardan TAZE bir ARC `str` inşa
+eder (`http_client.zig`nin `dupeToNoxStr`ı, `thread_bridge.zig` İLE AYNI
+yeniden kullanım). `int/float/bool/none/ptr` payload'ları (`_val`
+varyantları) doğrudan, dönüşümsüz taşınır — `T`nin `str` OLUP OLMADIĞI
+çağrı sitesinde statik olarak bilindiğinden, çalışma-zamanı
+etiketinden kaçınıldı.
+
+**KRİTİK, bu Zig sürümünde KEŞFEDİLEN bir API farkı:** `std.Thread.Mutex`
+BU Zig geliştirme sürümünde ARTIK YOK (`std.Io.Mutex` var, AMA kilit
+alma İÇİN bir `Io` arayüzü İSTER — genel amaçlı, senkron bir OS-iş-
+parçacığı kilidi DEĞİL). Çözüm: `http_client.zig`nin `g_client_io_state`i
+İÇİN ZATEN KULLANDIĞI AYNI CAS-tabanlı spin-kilit deseni (`std.atomic.
+Value(u8)` + `cmpxchgWeak` + `std.Thread.yield()`) yeniden kullanıldı —
+YENİ bir birincil ilkel İCAT EDİLMEDİ.
+
+**Ömür — `ThreadHandle` İLE AYNI atomik referans SAYIMI:** `ThreadChannel`
+TİPİK KULLANIMDA (bir yaratıcı iş parçacığı + `nox.thread.start`ın
+`arg`ı olarak GEÇİRİLDİĞİ TEK bir çocuk iş parçacığı) TAM OLARAK İKİ
+tarafça PAYLAŞILIR — `owners` 2'den başlayan GERÇEK bir atomik sayaçtır,
+`nox_threadchannel_destroy` HER İKİ taraftan da ÇAĞRILIR (kapsam-sonu
+KOŞULSUZ çağrı), sayaç 0'a düştüğünde struct GERÇEKTEN serbest bırakılır.
+
+**Bilinçli v1 sınırlamaları (AÇIKÇA belgelendi):**
+1. **3+ tarafça paylaşım** (AYNI kanalın BİRDEN FAZLA `nox.thread.start`
+   çağrısına GEÇİRİLMESİ) checker TARAFINDAN ENGELLENMEZ, AMA `owners`
+   sayacı SADECE 2 İÇİN doğru davranır — `ThreadHandle`nin AYNI sabit-2
+   varsayımının doğal devamı.
+2. **`capacity == 0` (el-ele TESLİM/rendezvous) DESTEKLENMEZ** —
+   AYNI-iş-parçacığı `Channel[T]`nin AKSİNE, `ThreadChannel[T](capacity)`
+   `capacity >= 1` GEREKTİRECEK (checker TARAFINDAN ZORUNLU KILINACAK,
+   Faz BB.6). Gerekçe: çapraz-iş-parçacığı bağlamda "alıcı TAM O ANDA
+   BEKLİYOR" bilgisini üçüncü bir sinyal OLMADAN GÜVENLE bilmenin bir
+   yolu YOKTUR — `capacity >= 1` basit, kanıtlanabilir doğru bir
+   tampon+çift-pipe modeliyle TAM ihtiyacı KARŞILAR, GERÇEK rendezvous
+   BU turun kapsamı DIŞINDA bırakıldı.
+
+**Doğrulama:** 3 YENİ saf-Zig testi (`thread_channel.zig`nin İÇİNDE) —
+İKİ GERÇEK `std.Thread` ARASINDA 100 `i64` değerin sırayla gönderilip
+alındığı (tamponlu, kapasite 4); kapasite-SINIRLI bir varyant (kapasite
+2, 10 öğe) — göndericinin GERÇEKTEN dolu tamponda BLOKLANDIĞI (200ms
+polling ile "henüz TÜMÜNÜ gönderemedi" doğrulanarak), alıcı BOŞALTINCA
+UYANDIĞI kanıtlanır; İKİ BAĞIMSIZ `RuntimeState` ARASINDA `str` payload
+turu (`send_str`/`recv_str`, `DebugAllocator`nin sızıntı DEDEKTÖRÜYLE).
+
+**Kasıtlı boz→kırmızı→düzelt:** `sendPayload`deki kilit alma/bırakma
+GEÇİCİ olarak KALDIRILDI. İLK denemede (100 değerlik standart test,
+15 tekrar, `-Doptimize=ReleaseFast`) BEKLENEN bozulma GÖZLEMLENMEDİ —
+küçük öğe sayısında yarış PENCERESİ görünür bir hataya yol AÇACAK kadar
+GENİŞ değildi. Test hacmi GEÇİCİ olarak 2.000.000 öğeye ÇIKARILDI, TEK
+bir `ReleaseFast` çalıştırmasında BEKLENEN KESİN kırmızı elde EDİLDİ:
+`expected 44602, found 44601` — kilitsiz `append`in alıcının kilitli
+`orderedRemove`iyle YARIŞTIĞININ SOMUT kanıtı (kayıp/bozuk bir değer).
+Değişiklik (kilit + test hacmi) `diff` İLE bayt-bayt ÖZDEŞLİĞİ
+doğrulanarak GERİ YÜKLENDİ, Debug + ReleaseFast YENİDEN yeşile döndü.
+
+`zig build test` (Debug + ReleaseFast, TEKRARLANAN çalıştırmalarla)
+400/400 yeşil, `zig fmt` temiz. Dil yüzeyi (checker/codegen) BU faz
+TARAFINDAN KAPSANMADI — Faz BB.6.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

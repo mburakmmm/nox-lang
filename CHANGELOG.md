@@ -70,6 +70,20 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   uçtan uca codegen golden testi (int/str spawn+join, fiber-farkındalık
   sıralama kanıtı, detached/fire-and-forget sızıntı testi) + kasıtlı
   boz→kırmızı ritüeli.
+- `ThreadChannel[T]` Katman 2'nin saf-Zig çekirdeği (Faz BB.5, henüz dil
+  yüzeyi yok) — YENİ `runtime/async_rt/thread_channel.zig`:
+  `nox_threadchannel_new`/`_send_val`/`_send_str`/`_recv_val`/`_recv_str`/
+  `_destroy`. İş parçacıkları arasında gerçek, sürekli, çift-yönlü
+  iletişim — simetrik çift-pipe geri basınç modeli (kullanıcının
+  AskUserQuestion yanıtıyla seçilen tasarım), `nox_thread_join`ın aynı
+  `Scheduler.suspendForIo`/`nonBlockingRead` ikilisini yeniden kullanır.
+  `str` transferi `ThreadHandle` ile aynı "düz baytlarla kopyala"
+  protokolünü izler. `nox-teknik-spesifikasyon.md` §3.51 — bu Zig
+  sürümünde `std.Thread.Mutex`in artık olmadığının keşfini (CAS-tabanlı
+  spin-kilide geçiş) belgeler. Kasıtlı boz→kırmızı ritüelinde, kilidin
+  kaldırılması küçük hacimde gözlenmedi; hacim 2 milyon öğeye
+  çıkarılınca kesin bir veri bozulması (`expected 44602, found 44601`)
+  yakalandı.
 
 ## [1.0.0]
 
