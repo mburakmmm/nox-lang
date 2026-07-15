@@ -253,6 +253,14 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   kanıtlamak için. `examples/thirdparty_demo/`, bu beş paketi GERÇEK ağ
   üzerinden getirip tüketen uçtan uca bir örnek + `noxc search` için
   örnek bir paket dizini içerir.
+- 1.0 için somut bir "hazır" tanımı belgelendi (Faz Z.1) —
+  `nox-teknik-spesifikasyon.md` §3.43: Faz Q–Y'nin (temel sağlamlaştırma,
+  platform genişletme, bellek güvenliği, derleyici DX, dil
+  tamamlanmışlığı, stdlib, araç ekosistemi, güvenlik sertleştirme, paket
+  ekosistemi) TAMAMININ TAMAMLANDIĞINI doğrulayan bir kontrol listesi;
+  gerçek M:N fiber zamanlayıcı değerlendirmesinin (AA.1) 1.0'ın kapsamı
+  DIŞINDA, 1.0-sonrası açık bir araştırma öğesi olarak kaldığı AÇIKÇA
+  belirtildi.
 
 ### Düzeltildi
 - **Bellek sızıntısı (Faz X.2, `tests/fuzz/wasm_parser_fuzz.zig`nin yeni

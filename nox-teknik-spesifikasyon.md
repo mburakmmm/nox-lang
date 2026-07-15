@@ -7550,6 +7550,75 @@ examples/thirdparty_demo/package_index.json [sorgu]` doğrulandı.
 `zig build test` (Debug + ReleaseFast) etkilenmedi/yeşil kaldı (bu faz
 derleyici KODUNU DEĞİŞTİRMEDİ, yalnızca paket İÇERİĞİ + örnek yayımladı).
 
+## 3.43 Faz Z.1 — 1.0 İçin Somut "Hazır" Tanımı
+
+**Kaynak — `docs/uretim-hazirlik-analizi.md` (satır 169):** "1.0 için
+somut bir 'hazır' tanımı (hangi Faz'lar TAMAMLANMALI) belirle."
+
+**Tanım — 1.0 SÜRÜMÜ, AŞAĞIDAKİ DOKUZ FAZ GRUBUNUN (Q–Y) TAMAMI
+TAMAMLANMADAN kesilemez:**
+
+| Faz | Konu | Durum |
+|---|---|---|
+| Q | Temel sağlamlaştırma (git/CI/lisans/DoS sertleştirme/güven sınırı dokümantasyonu) | ✅ TAMAMLANDI (Q.1–Q.6) |
+| R | Platform genişletme (Linux epoll, x86-64, CI matrisi, araç zinciri pinleme) | ✅ TAMAMLANDI (R.1–R.4) |
+| S | Bellek güvenliği tamamlama (yeniden atama sızıntıları, sınır kontrolü, döngü çözücü) | ✅ TAMAMLANDI (S.1–S.3) |
+| T | Derleyici DX (kaynak pozisyonu, çoklu-tanılama, DWARF, `noxc fmt`) | ✅ TAMAMLANDI (T.1–T.4b) |
+| U | Dil tamamlanmışlığı (`list.append`, çoklu-dosya import, `as`/`from`, closure, `with`) | ✅ TAMAMLANDI (U.1–U.5, U.4.1–U.4.4) |
+| V | Stdlib genişletme (`nox.log`/`random`/`crypto`/`time`/`test`/regex) | ✅ TAMAMLANDI (V.1–V.6) |
+| W | Araç ekosistemi (Tree-sitter, LSP, DAP) | ✅ TAMAMLANDI (W.1–W.3) |
+| X | Güvenlik sertleştirme + fuzzing (WASM taşma sınırı, fuzz altyapısı, ARC invariant) | ✅ TAMAMLANDI (X.1–X.3) |
+| Y | Paket ekosistemi olgunlaşması (paket dizini, gerçek örnek paketler) | ✅ TAMAMLANDI (Y.1–Y.2) |
+
+**Bu belgenin yazıldığı tarih İTİBARİYLE dokuz grup da TAMAMLANMIŞ
+durumda** — yani 1.0 için TEK kalan mekanik adım Faz Z'nin kendisidir
+(Z.2: semver/stabilite politikasını YAZILI hale getirmek, Z.3: `v0.1/
+taslak` etiketini KALDIRIP gerçek bir sürüm numaralandırmasına GEÇMEK).
+
+**"Tamamlandı" kriterinin KENDİSİ — her Faz İÇİN neyin doğrulandığı:**
+bir Faz'ın "✅ TAMAMLANDI" sayılması İÇİN, o Faz'ın HER alt-fazının
+AGENTS.md İlke #7 ritüelinin TAMAMINDAN geçmiş olması GEREKİR: `zig build
+test` (Debug + ReleaseFast) yeşil, yeni/değişen davranış İÇİN kasıtlı
+boz→kırmızıyı doğrula→düzelt ritüeli tamamlanmış, `zig fmt` temiz,
+`nox-teknik-spesifikasyon.md`de numaralı bir alt bölüm VE `CHANGELOG.md`de
+bir giriş mevcut. Bu belgenin §3.1–§3.42 bölümleri (ve öncesindeki Faz
+0–21/A–P bölümleri) bu kriterin HER Faz İÇİN sağlandığının somut
+kayıtlarıdır — Z.1'in "tamamlandı" iddiası bu kayıtlara doğrudan
+DAYANIR, ayrı bir yeniden-doğrulama turu GEREKTİRMEZ (zaten HER faz
+KENDİ doğrulamasıyla bitmişti).
+
+**Bilinçli olarak 1.0'ın KAPSAMI/ÖN KOŞULU SAYILMAYAN:**
+- **AA.1 (gerçek M:N/çok çekirdekli fiber zamanlayıcı değerlendirmesi)**
+  — bu, Q–Y'nin TAMAMLANMASINDAN SONRA ayrı bir görüş turunda ortaya
+  çıkan, KENDİSİ BİLE henüz bir "faz" değil yalnızca bir ARAŞTIRMA/
+  DEĞERLENDİRME talebidir; üstelik kullanıcıdan "sadece araştırma değil,
+  daha fazla kapsam belirleme" gerektiği AÇIKÇA not edilmişti (yani
+  implementasyona bile GİRİLMEDEN önce KULLANICIYLA bir netleştirme turu
+  gerekir). Nox'un BUGÜNKÜ tek-OS-iş-parçacıklı (M:1) kooperatif fiber
+  modeli (bkz. §3.21, §3.40) zaten İÇ TUTARLI ve doğrulanmış bir
+  tasarımdır — M:N'e geçiş bir DÜZELTME değil, YENİ bir mimari
+  YETENEKTİR (Cranelift değerlendirmesinin REDDİ İLE AYNI kategoride,
+  bkz. §3.6.1: "ölçülmeden/somut bir İHTİYAÇ OLMADAN büyük bir mimari
+  GENİŞLEME" 1.0'ı BEKLETMEMELİDİR). **AA.1, 1.0 SONRASI (2.0 veya daha
+  sonraki bir minor) İÇİN AÇIK bir araştırma öğesi olarak KALIR.**
+- **`noxc fmt`ın KENDİSİNİN mükemmelliği/`nox.json` merkezi bir registry
+  sunucusu/gerçek M:N zamanlayıcı gibi Faz O/P/AA'nın KENDİ metinlerinde
+  ZATEN "bilinçli kapsam dışı" olarak işaretlenmiş kalemler** — bunlar
+  1.0'ın TANIMI GEREĞİ zaten dışarıda bırakılmıştı, Z.1 bu kararları
+  YENİDEN AÇMAZ, yalnızca TEYİT eder.
+
+**Sonuç — Z.1'in ÇIKTISI:** yukarıdaki tablo VE hariç-tutma listesi, 1.0
+sürümünün "hazır" olup OLMADIĞINI gelecekte tek bakışta cevaplayan somut
+bir kontrol listesidir. Bu tanıma göre proje ŞU AN Z.2/Z.3 ATILMADAN
+1.0 OLARAK etiketlenemez (Z.1 TEK BAŞINA yeterli değildir — sürüm
+POLİTİKASI YAZILI olmadan VE `v0.1/taslak` etiketi kaldırılmadan "1.0"
+iddiası ANLAMSIZ kalır) ama TÜM MÜHENDİSLİK ön koşulları (Q–Y) ZATEN
+karşılanmış durumdadır — kalan iş TAMAMEN Z.2/Z.3'ün SÜRÜM/POLİTİKA
+işidir, YENİ bir MÜHENDİSLİK fazı DEĞİLDİR.
+
+Bu faz KOD DEĞİŞİKLİĞİ İÇERMEDİĞİNDEN `zig build test` etkilenmedi
+(377/377 yeşil, Debug + ReleaseFast, Faz Y.2'nin doğrulamasıyla AYNI).
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
