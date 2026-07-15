@@ -43,6 +43,11 @@ print(c.value)
   (kütüphane olarak import etmek için).
 - **Go tarzı fiber/kooperatif async çalışma zamanı** (`spawn`/`await`,
   `Task`/`Channel`) + gerçek eşzamanlı G/Ç (kqueue tabanlı reaktör).
+- **Gerçek M:N (çok çekirdekli) iş parçacığı desteği** (`nox.thread`) —
+  paylaşımsız (shared-nothing) bağımsız OS iş parçacıkları
+  (`ThreadHandle[T]`/`.join()`) ve aralarında sürekli, çift-yönlü
+  iletişim (`ThreadChannel[T]`), tek bir OS çekirdeğiyle sınırlı
+  KALMADAN gerçek paralellik sağlar.
 - Büyüyen bir standart kütüphane (`nox.http`, `nox.json`, `nox.strings`,
   `nox.math`, `nox.os`/`nox.fs`, `nox.time`, `nox.test`) ve Go tarzı
   merkeziyetsiz (GitHub URL'si üzerinden) bir paket sistemi.
@@ -56,7 +61,7 @@ Gereksinimler: [Zig 0.16](https://ziglang.org/download/) ve [QBE](https://c9x.me
 (`brew install qbe` / kaynaktan derleme).
 
 ```sh
-git clone <bu depo>
+git clone https://github.com/mburakmmm/nox-lang.git
 cd nox-lang
 zig build            # zig-out/bin/noxc + zig-out/lib/{noxrt.o,nox/stdlib/} kurulur
 zig build test        # tüm test paketini çalıştırır (unit + golden + uçtan uca)

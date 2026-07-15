@@ -1,13 +1,13 @@
 # Nox'a Katkıda Bulunma
 
-Nox aktif geliştirme aşamasında (v0.1, taslak) bir dil projesidir. Bu
-belge, bir değişiklik göndermeden önce bilmeniz gereken kuralları ve
-disiplini özetler.
+Nox aktif geliştirme aşamasında bir dil projesidir. Bu belge, bir
+değişiklik göndermeden önce bilmeniz gereken kuralları ve disiplini
+özetler.
 
 ## Başlarken
 
 ```sh
-git clone <bu depo>
+git clone https://github.com/mburakmmm/nox-lang.git
 cd nox-lang
 zig build test    # her şey yeşil başlamalı
 ```

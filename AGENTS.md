@@ -1,6 +1,6 @@
 # AGENTS.md — Nox Programlama Dili
 
-Bu dosya, Nox derleyicisi ve çalışma zamanı üzerinde çalışan tüm AI kodlama ajanları (Claude Code, Cursor, Fable 5 vb.) için bağlayıcı referanstır. Bir ajan bu depoda herhangi bir değişiklik yapmadan önce bu dosyayı ve `docs/nox-teknik-spesifikasyon.md`'yi okumuş olmalıdır. Çelişki durumunda **bu dosyadaki değişmez ilkeler her zaman kazanır.**
+Bu dosya, Nox derleyicisi ve çalışma zamanı üzerinde çalışan tüm AI kodlama ajanları (Claude Code, Cursor, Fable 5 vb.) için bağlayıcı referanstır. Bir ajan bu depoda herhangi bir değişiklik yapmadan önce bu dosyayı ve `nox-teknik-spesifikasyon.md`'yi (repo kökünde) okumuş olmalıdır. Çelişki durumunda **bu dosyadaki değişmez ilkeler her zaman kazanır.**
 
 ---
 
@@ -51,11 +51,11 @@ QBE → native assembly (amd64 / arm64 / riscv64 / amd64_win)
 Zig runtime'a statik bağlama (allocator, ARC, döngü çözücü, HPy köprüsü, WASM köprüsü)
 ```
 
-Detaylı gerekçeler için: `docs/nox-teknik-spesifikasyon.md`.
+Detaylı gerekçeler için: `nox-teknik-spesifikasyon.md` (repo kökünde).
 
 ---
 
-## 4. Önerilen Repo Yapısı
+## 4. Repo Yapısı
 
 ```
 /compiler
@@ -66,19 +66,25 @@ Detaylı gerekçeler için: `docs/nox-teknik-spesifikasyon.md`.
   /codegen_qbe       # AST/tiplenmiş IR → QBE IR
 /runtime             # Zig
   /alloc             # ASAP, ARC, cycle detector (bkz. §8)
+  /async_rt          # fiber zamanlayıcı, Task/Channel, nox.thread (M:N)
   /errors            # error-union temsili, exception handle (bkz. §9)
   /hpy_bridge         # opaque handle sistemi (bkz. §10)
   /cpython_compat     # CPython C-API emülasyon katmanı (bkz. §10)
   /wasm_bridge        # gömülü WASM runtime entegrasyonu (bkz. §11)
+  /stdlib_shims       # nox.* stdlib modüllerinin Zig tarafı
 /stdlib              # .nox ile yazılan standart kütüphane
 /tests
   /unit
-  /golden            # .nox → beklenen QBE IR
-  /compat            # gerçek C eklentileriyle entegrasyon testleri
+  /golden            # .nox → beklenen QBE IR / çalışma zamanı çıktısı
+  /compat            # gerçek C/WASM/HPy eklentileriyle entegrasyon testleri
   /fuzz
+/benchmarks          # Nox/Python/C karşılaştırmalı performans paketi
+/examples            # örnek Nox projeleri
+/editors             # tree-sitter grameri, VS Code eklentisi
 /docs
-  nox-teknik-spesifikasyon.md
-  AGENTS.md
+  uretim-hazirlik-analizi.md   # üretim-hazırlığı yol haritası (Faz Q-Z)
+nox-teknik-spesifikasyon.md    # repo kökünde — dilin tam tasarım geçmişi
+AGENTS.md                      # repo kökünde — bu dosya
 ```
 
 Bir ajan bu yapıdan saparsa, sapma gerekçesini PR açıklamasında belirtmelidir.
