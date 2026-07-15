@@ -7178,6 +7178,120 @@ birleşik testi) DOĞRU şekilde KIRMIZIYA DÖNDÜ, geri getirildi.
 
 ---
 
+## 3.39 Faz X.2 — `tests/fuzz/` Doldurma (Fuzzing Altyapısı)
+
+**Kaynak — `docs/uretim-hazirlik-analizi.md`:** "X.2 — `tests/fuzz/`i
+DOLDUR: lexer/parser/checker + WASM ayrıştırıcısı İÇİN libFuzzer/AFL
+tabanlı fuzz hedefleri."
+
+**Karar — libFuzzer/AFL YERİNE Zig'in KENDİ YERLEŞİK fuzzer'ı SEÇİLDİ:**
+Zig 0.16, `std.testing.fuzz` + `std.testing.Smith` İLE kapsam-güdümlü
+(coverage-guided), STDLIB'e GÖMÜLÜ bir fuzzing altyapısı SUNUYOR (`zig
+build test --fuzz`) — Zig'in KENDİ derleyicisi (`std/zig/tokenizer.zig`nin
+`test "fuzzable properties upheld"`si) BUNU KENDİ tokenizer'ını fuzzlamak
+İÇİN KULLANIYOR. HARİCİ bir libFuzzer/AFL kurulumu (`-fsanitize=fuzzer`
+C araç zinciri köprüsü, AYRI bir derleme hedefi/CI adımı) GEREKMEZ — bu,
+projenin GENEL "battle-tested/YERLEŞİK aracı SEÇ, YENİDEN İCAT ETME"
+ilkesiyle (bkz. `nox.json`nin `std.json` seçimi, W.1'in tree-sitter-python
+tarayıcısını UYARLAMASI) TUTARLIDIR. `tests/fuzz/lexer_parser_checker_fuzz.
+zig`nin `testOne`i, Zig'in KENDİ `tokenizer.zig` fuzz hedefinden (ağırlıklı
+bayt örnekleme deseni DAHİL) DOĞRUDAN UYARLANMIŞTIR.
+
+**İki fuzz hedefi:**
+1. `tests/fuzz/lexer_parser_checker_fuzz.zig` — `nox.lexer.tokenize` →
+   `nox.parser.parseModule` → `nox.checker.Checker.checkModule` zincirini
+   ÇALIŞTIRIR. Doğrulanan ÖZELLİK: GEÇERSİZ bir girdinin bir HATA İLE
+   reddedilmesi normal/beklenendir (`catch return`) — YALNIZCA bir PANİK/
+   sonsuz döngü BAŞARISIZLIK sayılır.
+2. `tests/fuzz/wasm_parser_fuzz.zig` — `wasm_bridge.module.parse`yi
+   ÇALIŞTIRIR (AGENTS.md §9.5'in "güven sınırı" mantığıyla EN YÜKSEK
+   öncelikli hedef — GÜVENMEYEN kaynaktan ham bayt AYRIŞTIRAN TEK modül).
+
+**ÖNEMLİ bulgu 1 — bu araç zincirinde `--fuzz`in KENDİSİ DERLENEMİYOR:**
+`zig build test --fuzz=<N>` (Zig'in KENDİ sürekli fuzzing modu)
+denendiğinde, Zig'in KENDİ gömülü `compiler/test_runner.zig`si
+`-ffuzz` bayrağıyla derlenirken bir HATA VERDİ: `std.debug.
+writeStackTrace`e `*const debug.StackTrace` BEKLENİRKEN `*builtin.
+StackTrace` GEÇİLİYORDU (tip uyuşmazlığı). Bu, **BU PROJENİN koduyla
+HİÇBİR İLGİSİ OLMAYAN**, Zig'in KENDİ dağıtımının bir HATASIDIR — proje
+DIŞINDA, TEK BAŞINA minimal bir dosyayla (`zig test t.zig -ffuzz`)
+BAĞIMSIZ olarak TEKRAR ÜRETİLDİ (bkz. aşağıdaki test dosyalarının KENDİ
+belge notu). Bu, `docs/uretim-hazirlik-analizi.md`nin TALEP ettiği
+"libFuzzer/AFL yerine YERLEŞİK aracı kullan" kararının PRATİKTE beklenmedik
+bir MALİYETİ ortaya ÇIKARDI — R.4'ün "pin ŞİMDİKİ sürüme, GELECEKTE
+BİLİNÇLİ geçiş" felsefesiyle TUTARLI olarak, bu HATANIN gelecekteki bir
+Zig sürümünde DÜZELMESİ BEKLENİR, ŞİMDİ bir İŞ AROUND (workaround)
+YAZILMAYACAK (Zig'in KENDİ derleyicisindeki bir hatayı bu projenin
+`build.zig`sinden YAMALAMAK KAPSAM DIŞI).
+
+**Sonuç — İKİ katmanlı test tasarımı:** `--fuzz`in KENDİSİ ÇALIŞMADIĞINDAN,
+HER iki dosyaya da `std.testing.fuzz`e BAĞIMLI OLMAYAN, ELLE yazılmış
+regresyon testleri EKLENDİ (`wasm_parser_fuzz.zig`de 4, `lexer_parser_
+checker_fuzz.zig`de 3) — bunlar HER `zig build test`te KOŞULSUZ çalışıp
+GERÇEK koruma sağlar; dormant `std.testing.fuzz` blokları İSE `--fuzz`
+GELECEKTE ÇALIŞTIĞINDA KULLANILACAK ALTYAPI olarak KALIR (birbirini
+DIŞLAMAZLAR — normal `zig build test` HER İKİSİNİ de TEK bir (varsayılan)
+girdiyle ÇALIŞTIRIR, CI'yi YAVAŞLATMAZ).
+
+**ÖNEMLİ bulgu 2 — elle yazılan regresyon testlerinin İLKİ GERÇEK, ÖNCEDEN
+BİLİNMEYEN bir bellek sızıntısı BULDU:** "büyük-ama-sahte vektör sayısı"
+testi (bir Type bölümünün 1 milyonluk bir tip SAYISI bildirip ARDINDAN
+HİÇBİR veri TAŞIMAMASI), `wasm_bridge.module.parse`nin `types.
+ensureTotalCapacity(allocator, count)` çağrısının ARDINDAN gelen HERHANGİ
+bir `try` BAŞARISIZ olduğunda (bu ÖRNEKTE bir SONRAKİ `r.byte()`nin
+`error.UnexpectedEof` DÖNMESİ), o ana kadar tahsis edilmiş `types`
+listesinin (VE — fonksiyonun GERİ KALANINDA — `func_type_indices`/
+`bodies`/`exports` listelerinin, İÇLERİNDEKİ `params`/`results`/`name`/
+`locals` alt-dilimleri DAHİL) **HİÇBİR ZAMAN serbest BIRAKILMADIĞINI**
+ortaya ÇIKARDI — bu, Faz 13'ten (WASM köprüsünün İLK yazıldığı faz) BERİ
+VAR OLAN, `Module.deinit()`in YALNIZCA BAŞARILI bir `parse()` DÖNÜŞÜNDE
+çağrılabildiği (kısmi/hatalı bir `Module` DEĞERİ HİÇ dönMEDİĞİNDEN)
+SİSTEMİK bir tasarım BOŞLUĞUYDU — GÜVENMEYEN kaynaktan (bir `.wasm`
+dosyası) HER TEKRARLANAN BOZUK girdi TALEBİ bir SIZINTIYA yol AÇAR (çökme
+DEĞİL, ama tekrarlanan istekler ALTINDA bellek TÜKENMESİ — bir DoS
+varyantı, AGENTS.md §9.5'in "güven sınırı" endişesinin TAM da ÖNGÖRDÜĞÜ
+sınıf).
+
+**Düzeltme — `parse()`nin HER ARA listesine/alt-tahsisine KENDİ
+`errdefer`i:** `types`/`func_type_indices`/`bodies`/`exports`
+ArrayList'lerinin HER BİRİ, KENDİ bildirimlerinin HEMEN ARDINDAN bir
+`errdefer` ALIR (liste-düzeyinde: o ana kadar BAŞARIYLA eklenmiş TÜM
+öğelerin alt-dilimlerini + listenin KENDİ arka-plan belleğini serbest
+bırakır); AYRICA `params`/`results`/`name`/`locals`in HER BİRİ, KENDİ
+`allocator.alloc`/`dupe` ÇAĞRISININ HEMEN ARDINDAN AYRI bir `errdefer`
+ALIR (o ANKİ döngü YİNELEMESİNDE, HENÜZ listeye EKLENMEMİŞ durumdayken
+BAŞARISIZ olursa, YİNE de serbest bırakılsın DİYE — liste-düzeyi errdefer
+YALNIZCA ZATEN eklenmiş öğeleri KAPSADIĞINDAN, bu İKİ katman BİRBİRİNİ
+TAMAMLAR, ÇAKIŞMAZ/ÇİFT-SERBEST-BIRAKMAZ). Fonksiyonun EN SONUNDAKİ DÖRT
+`toOwnedSlice` çağrısı da AYRICA KENDİ `errdefer`lerini ALIR — bir SONRAKİ
+`toOwnedSlice` BAŞARISIZ olursa (yalnızca OOM İLE, aşırı NADİR), ÖNCEKİ
+BAŞARILI `toOwnedSlice`lerin SAHİPLİĞİNİ ÇIKARDIĞI dilimlerin de (ARTIK
+kaynak `ArrayList`in KENDİ errdefer'i TARAFINDAN GÖRÜNMEZ OLDUĞUNDAN,
+`items.len==0`) doğru şekilde serbest BIRAKILMASINI sağlar — bu, GERÇEKTE
+tetiklenmesi SON DERECE ZOR (art arda İKİ küçük tahsis ARASINDA TAM
+OOM GEREKTİRİR) bir kenar durum OLSA da, "kısmi hata yolunda HİÇ sızıntı
+YOK" garantisini TAM olarak KAPATMAK İÇİN eklendi.
+
+**Doğrulama:**
+1. **7 yeni elle-yazılmış regresyon testi** (`wasm_parser_fuzz.zig`de 4:
+   tamamen çöp bayt dizisi, kısaltılmış bölüm başlığı, X.1'in AYNI varint-
+   taşması senaryosunun TAM bir modül İÇİNDE tekrarı, büyük-ama-sahte
+   vektör sayısı; `lexer_parser_checker_fuzz.zig`de 3: 500 seviye DERİN
+   girinti, sonlandırılmamış string + ham ikili çöp, 2000 terimli TEK
+   satırlık ifade).
+2. **Kasıtlı boz→kırmızı→düzelt:** `types`nin YENİ EKLENEN `errdefer`i
+   GEÇİCİ olarak KALDIRILDI → `zig build test`: **"1 leaks" — TAM OLARAK
+   `wasm_parser_fuzz.zig`nin "büyük-ama-sahte vektör sayısı" testi
+   BAŞARISIZ oldu**, sızıntının KENDİSİ (`DebugAllocator` çıktısı) `module.
+   zig:220`deki `types.ensureTotalCapacity` çağrısını GÖSTERDİ — TAM OLARAK
+   beklenen/tanı konan hata; BAŞKA HİÇBİR test ETKİLENMEDİ (367/367 →
+   366/367). Düzeltme GERİ getirildi, TÜM testler (Debug + ReleaseFast)
+   YEŞİLE döndü.
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

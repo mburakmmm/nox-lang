@@ -254,6 +254,7 @@ pub fn build(b: *std.Build) void {
         "tests/cli/package_resolution_test.zig",
         "tests/cli/local_import_test.zig",
         "tests/cli/lsp_test.zig",
+        "tests/fuzz/lexer_parser_checker_fuzz.zig",
         "tests/golden/golden_test.zig",
         "tests/golden/typecheck_golden_test.zig",
         "tests/golden/ownership_golden_test.zig",
@@ -376,6 +377,23 @@ pub fn build(b: *std.Build) void {
     // `.wasm` ikilisidir — WABT/wasmtime gibi ek bir araç GEREKMEZ.
     const wasm_bridge_test = b.addTest(.{ .root_module = wasm_bridge_mod });
     test_step.dependOn(&b.addRunArtifact(wasm_bridge_test).step);
+
+    // Faz X.2: `wasm_bridge.module.parse`nin fuzz hedefi (bkz. tests/fuzz/
+    // wasm_parser_fuzz.zig'in modül üstü notu) — `wasm_bridge_mod`ü
+    // DOĞRUDAN İTHAL EDEN, `wasm_bridge_test`ten AYRI bir hedef (`module.
+    // zig`nin KENDİ gömülü testlerinden AYRI tutulur, çünkü BU dosya
+    // `tests/fuzz/`nin KENDİSİNDE yaşamalıdır — görev tanımının AÇIKÇA
+    // istediği KONUM).
+    const wasm_fuzz_mod = b.createModule(.{
+        .root_source_file = b.path("tests/fuzz/wasm_parser_fuzz.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "wasm_bridge", .module = wasm_bridge_mod },
+        },
+    });
+    const wasm_fuzz_test = b.addTest(.{ .root_module = wasm_fuzz_mod });
+    test_step.dependOn(&b.addRunArtifact(wasm_fuzz_test).step);
 
     const wasm_out_path = "tests/compat/wasm_ext/addone.wasm";
     const compile_wasm = b.addSystemCommand(&.{

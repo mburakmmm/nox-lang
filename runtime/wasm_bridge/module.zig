@@ -172,6 +172,20 @@ fn exportKindFromByte(b: u8) !ExportKind {
     };
 }
 
+/// **Faz X.2 (bkz. `tests/fuzz/wasm_parser_fuzz.zig`nin "büyük-ama-sahte
+/// vektör sayısı" regresyon testi TARAFINDAN BULUNAN GERÇEK bir hata):**
+/// bu fonksiyonun ONLARCA `try` çağrısının HER BİRİ, o ANA KADAR
+/// biriktirilmiş `types`/`func_type_indices`/`bodies`/`exports`
+/// listelerini (VE İÇLERİNDEKİ `params`/`results`/`name`/`locals` gibi
+/// AYRICA tahsis edilmiş alt-dilimleri) SERBEST BIRAKMADAN erken
+/// DÖNEBİLİYORDU — bozuk/kısaltılmış bir `.wasm` girdisi (GÜVENMEYEN
+/// kaynak, bkz. AGENTS.md §9.5) HER ZAMAN bir SIZINTIYA yol AÇARDI (çökme
+/// DEĞİL, ama TEKRARLANAN çağrılarda bellek TÜKENMESİ — bir DoS
+/// varyantı). Düzeltme: HER liste/alt-tahsis, KENDİ `errdefer`ini alır —
+/// başarı yolunda HİÇBİR ŞEY DEĞİŞMEZ (`errdefer` SADECE bir HATAYLA
+/// dönüşte tetiklenir), hata yolunda İSE o ana kadar biriktirilen HER ŞEY
+/// (KISMEN doldurulmuş TEK bir `params`/`results`/`locals` dilimi DAHİL)
+/// doğru şekilde serbest BIRAKILIR.
 pub fn parse(allocator: std.mem.Allocator, bytes: []const u8) !Module {
     var r: Reader = .{ .bytes = bytes };
 
@@ -182,9 +196,25 @@ pub fn parse(allocator: std.mem.Allocator, bytes: []const u8) !Module {
     if (!std.mem.eql(u8, version, "\x01\x00\x00\x00")) return error.UnsupportedVersion;
 
     var types: std.ArrayListUnmanaged(FuncType) = .empty;
+    errdefer {
+        for (types.items) |t| {
+            allocator.free(t.params);
+            allocator.free(t.results);
+        }
+        types.deinit(allocator);
+    }
     var func_type_indices: std.ArrayListUnmanaged(u32) = .empty;
+    errdefer func_type_indices.deinit(allocator);
     var bodies: std.ArrayListUnmanaged(FuncBody) = .empty;
+    errdefer {
+        for (bodies.items) |b| allocator.free(b.locals);
+        bodies.deinit(allocator);
+    }
     var exports: std.ArrayListUnmanaged(WasmExport) = .empty;
+    errdefer {
+        for (exports.items) |e| allocator.free(e.name);
+        exports.deinit(allocator);
+    }
 
     while (r.pos < bytes.len) {
         const section_id = try r.byte();
@@ -201,9 +231,11 @@ pub fn parse(allocator: std.mem.Allocator, bytes: []const u8) !Module {
                     if (form != 0x60) return error.UnsupportedTypeForm;
                     const nparams = try r.readVarU32();
                     const params = try allocator.alloc(ValType, nparams);
+                    errdefer allocator.free(params);
                     for (params) |*p| p.* = try r.readValType();
                     const nresults = try r.readVarU32();
                     const results = try allocator.alloc(ValType, nresults);
+                    errdefer allocator.free(results);
                     for (results) |*res| res.* = try r.readValType();
                     try types.append(allocator, .{ .params = params, .results = results });
                 }
@@ -223,6 +255,7 @@ pub fn parse(allocator: std.mem.Allocator, bytes: []const u8) !Module {
                 while (i < count) : (i += 1) {
                     const name_len = try r.readVarU32();
                     const name = try allocator.dupe(u8, try r.slice(name_len));
+                    errdefer allocator.free(name);
                     const kind = try exportKindFromByte(try r.byte());
                     const index = try r.readVarU32();
                     try exports.append(allocator, .{ .name = name, .kind = kind, .index = index });
@@ -237,6 +270,7 @@ pub fn parse(allocator: std.mem.Allocator, bytes: []const u8) !Module {
                     const body_end = r.pos + body_size;
                     const local_decl_count = try r.readVarU32();
                     var locals: std.ArrayListUnmanaged(ValType) = .empty;
+                    errdefer locals.deinit(allocator);
                     var j: u32 = 0;
                     while (j < local_decl_count) : (j += 1) {
                         const n = try r.readVarU32();
@@ -252,12 +286,38 @@ pub fn parse(allocator: std.mem.Allocator, bytes: []const u8) !Module {
         r.pos = section_end;
     }
 
+    // `toOwnedSlice` çağrılarının HER BİRİ (nadiren, yalnızca OOM ile)
+    // BAŞARISIZ olabilir — önceki çağrıların ZATEN çıkardığı dilimler bu
+    // NOKTADAN SONRA ARTIK `types`/`bodies`/`exports` listelerinin KENDİ
+    // (yukarıdaki) `errdefer`leri TARAFINDAN görünmez OLUR (`items.len==0`,
+    // sahiplik ÇIKARILDI) — bu YÜZDEN HER dilim KENDİ `errdefer`ini ALIR.
+    const types_slice = try types.toOwnedSlice(allocator);
+    errdefer {
+        for (types_slice) |t| {
+            allocator.free(t.params);
+            allocator.free(t.results);
+        }
+        allocator.free(types_slice);
+    }
+    const func_type_indices_slice = try func_type_indices.toOwnedSlice(allocator);
+    errdefer allocator.free(func_type_indices_slice);
+    const bodies_slice = try bodies.toOwnedSlice(allocator);
+    errdefer {
+        for (bodies_slice) |b| allocator.free(b.locals);
+        allocator.free(bodies_slice);
+    }
+    const exports_slice = try exports.toOwnedSlice(allocator);
+    errdefer {
+        for (exports_slice) |e| allocator.free(e.name);
+        allocator.free(exports_slice);
+    }
+
     return .{
         .allocator = allocator,
-        .types = try types.toOwnedSlice(allocator),
-        .func_type_indices = try func_type_indices.toOwnedSlice(allocator),
-        .bodies = try bodies.toOwnedSlice(allocator),
-        .exports = try exports.toOwnedSlice(allocator),
+        .types = types_slice,
+        .func_type_indices = func_type_indices_slice,
+        .bodies = bodies_slice,
+        .exports = exports_slice,
     };
 }
 

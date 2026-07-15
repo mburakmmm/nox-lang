@@ -223,8 +223,25 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   doğrudan konuşularak (initialize/launch/setBreakpoints/
   configurationDone) doğrulandı — macOS sınırlaması artık DAP protokolü
   seviyesinde de teyit edildi.
+- `tests/fuzz/` dolduruldu (Faz X.2) — Zig'in kendi yerleşik, kapsam-güdümlü
+  fuzzer'ı (`std.testing.fuzz`/`Smith`, `zig build test --fuzz`) kullanan
+  iki hedef: lexer→parser→checker zinciri ve WASM ikili ayrıştırıcısı.
+  Ayrıca, bu pinlenmiş Zig 0.16.0 araç zincirinde `--fuzz`in kendisinin
+  (Zig'in kendi `compiler/test_runner.zig`sindeki bağımsız bir tip
+  uyuşmazlığı yüzünden) derlenemediği keşfedildi — bu yüzden her iki
+  dosyaya da `std.testing.fuzz`e bağımlı olmayan, her `zig build test`te
+  koşulsuz çalışan elle yazılmış regresyon testleri eklendi.
 
 ### Düzeltildi
+- **Bellek sızıntısı (Faz X.2, `tests/fuzz/wasm_parser_fuzz.zig`nin yeni
+  regresyon testi tarafından bulundu):** `runtime/wasm_bridge/module.zig`nin
+  `parse` fonksiyonu, onlarca hata yolunun hiçbirinde o ana kadar
+  biriktirilmiş `types`/`func_type_indices`/`bodies`/`exports`
+  listelerini (ve içlerindeki `params`/`results`/`name`/`locals`
+  alt-dilimlerini) serbest bırakmıyordu — bozuk/kısaltılmış bir `.wasm`
+  girdisi her zaman bir sızıntıya yol açardı (Faz 13'ten beri var olan,
+  sistemik bir tasarım boşluğu). Her ara listeye/alt-tahsise kendi
+  `errdefer`i eklenerek düzeltildi.
 - **Güvenlik (Faz X.1, `docs/uretim-hazirlik-analizi.md` P1 bulgusu #12):**
   WASM köprüsünün DÖRT LEB128 varint okuyucusu (`runtime/wasm_bridge/
   module.zig`nin `readVarU32`/`readVarI32`si + `runtime/wasm_bridge/
