@@ -7619,6 +7619,57 @@ işidir, YENİ bir MÜHENDİSLİK fazı DEĞİLDİR.
 Bu faz KOD DEĞİŞİKLİĞİ İÇERMEDİĞİNDEN `zig build test` etkilenmedi
 (377/377 yeşil, Debug + ReleaseFast, Faz Y.2'nin doğrulamasıyla AYNI).
 
+## 3.44 Faz Z.2 — Semver Politikası + Dil/ABI Stabilite Garantisi
+
+**Kaynak — `docs/uretim-hazirlik-analizi.md` (satır 170):** "Semver
+politikası + dil/ABI stabilite garantisi YAZILI hale getir."
+
+**Tasarım kararı — kullanıcı-yüzü politika ayrı bir üst-düzey dosyada,
+KARAR GEREKÇESİ bu spec'te:** `README.md`/`CONTRIBUTING.md`/`LICENSE`
+İLE AYNI düzeyde yeni bir **`VERSIONING.md`** eklendi — Faz Q.4'ün "her
+biri KENDİ konusuna adanmış ayrı üst-düzey dosya" desenini İZLER
+(politika METNİNİN KENDİSİ kullanıcıya YÖNELİKTİR, bu spec dosyasının
+"geliştirme geçmişi" tonundan FARKLI bir REGISTER gerektirir).
+
+**Politikanın ÖZETİ (tam metin İÇİN bkz. `VERSIONING.md`):**
+1. **Standart SemVer** (`MAJOR.MINOR.PATCH`), `v1.0.0`dan İTİBAREN
+   geçerli — `v0.1 (taslak)` bu politikanın KAPSAMI DIŞINDA (Faz Z.1'in
+   kendi "hazır" tanımıyla TUTARLI: garanti YALNIZCA Z.3'ün etiket
+   değişiminden SONRA bağlayıcı olur).
+2. **Kaynak uyumluluğu garantisi** (AYNI MAJOR İÇİNDE): geçerli bir
+   `vX.0.0` `.nox` programı `vX.Y.Z`nin HERHANGİ birinde AYNI şekilde
+   derlenip AYNI davranışı üretir — dil sözdizimi/semantiği, stdlib
+   imzaları, `nox.json`/`nox.lock` şeması, `noxc` alt komut davranışı
+   DAHİL.
+3. **BİLİNÇLİ olarak KAPSAM DIŞI bırakılan dört alan** (HER biri ayrı
+   bir gerekçeyle):
+   - **İkili (ABI) uyumluluğu YOK** — Nox'ta stabil bir ikili dağıtım
+     formatı henüz YOK (`noxrt.o`/`extern def` C ABI'si/HPy-WASM köprü
+     düzenleri İÇ implementasyon detayı), bu YÜZDEN HER sürüm
+     KAYNAKTAN yeniden derleme GEREKTİRİR — Rust'ın `cargo` ÖNCESİ
+     dönemine/Zig'in KENDİ mevcut politikasına BENZER, dürüst bir
+     kısıtlama (icat edilmiş bir vaat DEĞİL).
+   - **Hata mesajı METNİ sabit DEĞİL** (yalnızca hata TÜRÜ/çıkış kodu) —
+     Faz T.2'nin çoklu-tanılama biçiminin PATCH sürümlerinde bile
+     İYİLEŞTİRİLEBİLMESİ İÇİN kasıtlı bir esneklik alanı.
+   - **`--dump`/`-v` çıktısı** hata ayıklama ARACIDIR, programatik
+     tüketim İÇİN TASARLANMAMIŞTIR (M.2'nin "varsayılan sessiz" kararıyla
+     TUTARLI).
+   - **Üçüncü-taraf paket API'leri** Nox'un KENDİ garantisinin DIŞINDA
+     — HER paketin KENDİ semver'i KENDİ yazarının sorumluluğu (Go
+     modüllerinin felsefesiyle AYNI), ama `nox.lock`ın SHA-pinlemesi
+     (Faz P.5) HER durumda TEKRARLANABİLİR derlemeyi zaten GARANTİ
+     EDİYOR — bir paketin geriye dönük UYUMSUZ bir değişikliği bile
+     ZATEN kilitlenmiş projeleri ETKİLEMEZ.
+4. **Kullanımdan kaldırma (deprecation) kuralı:** bir özellik KALDIRILMADAN
+   ÖNCE EN AZ bir MINOR sürüm "kullanımdan kaldırıldı" İŞARETİYLE
+   (CHANGELOG'da) YAŞAMALIDIR, GERÇEK kaldırma yalnızca bir SONRAKİ
+   MAJOR'da olur.
+
+**Bu faz KOD DEĞİŞİKLİĞİ İÇERMEDİĞİNDEN** `zig build test` etkilenmedi
+(377/377 yeşil, Faz Y.2/Z.1'in doğrulamasıyla AYNI — yalnızca YENİ
+`VERSIONING.md` + `README.md`ye bir bağlantı EKLENDİ).
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

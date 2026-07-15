@@ -261,6 +261,13 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   gerçek M:N fiber zamanlayıcı değerlendirmesinin (AA.1) 1.0'ın kapsamı
   DIŞINDA, 1.0-sonrası açık bir araştırma öğesi olarak kaldığı AÇIKÇA
   belirtildi.
+- `VERSIONING.md` eklendi (Faz Z.2) — `v1.0.0`dan itibaren geçerli
+  olacak semver politikası (MAJOR/MINOR/PATCH tanımları, kaynak
+  uyumluluğu garantisi, kullanımdan kaldırma kuralı) ve dil/ABI
+  stabilite garantisinin bilinçli kapsam dışı bıraktığı dört alan
+  (ikili/ABI uyumluluğu, hata mesajı metni, `--dump`/`-v` çıktısı,
+  üçüncü-taraf paket API'leri) yazılı hale getirildi. `README.md`ye
+  bağlantı eklendi.
 
 ### Düzeltildi
 - **Bellek sızıntısı (Faz X.2, `tests/fuzz/wasm_parser_fuzz.zig`nin yeni

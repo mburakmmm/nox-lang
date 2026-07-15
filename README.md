@@ -130,6 +130,11 @@ Ayrıntılar için [AGENTS.md §9.5](AGENTS.md#95-güven-sınırı-trust-boundar
 
 Bkz. [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Sürümleme
+
+`v1.0.0`dan itibaren geçerli olacak semver politikası + dil/ABI
+stabilite garantisi İÇİN bkz. [VERSIONING.md](VERSIONING.md).
+
 ## Lisans
 
 [MIT](LICENSE).
