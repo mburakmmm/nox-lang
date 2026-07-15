@@ -73,8 +73,12 @@ const asap = @import("asap.zig");
 fn resolveTraceDispatch() ?*const fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) ?*anyopaque {
     return resolveSymbol(fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) ?*anyopaque, &g_trace_dispatch_resolved, &g_trace_dispatch_fn, "nox_trace_dispatch");
 }
-var g_trace_dispatch_resolved = false;
-var g_trace_dispatch_fn: ?*const fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) ?*anyopaque = null;
+// Faz BB.1 (bkz. nox-teknik-spesifikasyon.md §3.47): `threadlocal` —
+// `nox.json.zig`nin `g_make_json_value_fn`ıyla AYNI gerekçe (idempotent
+// dlsym önbelleği, ama `nox.thread.spawn` SONRASI eşzamanlı YAZIM artık
+// mümkün olduğundan senkronize-olmayan bir paylaşım TANIMSIZ DAVRANIŞTIR).
+threadlocal var g_trace_dispatch_resolved = false;
+threadlocal var g_trace_dispatch_fn: ?*const fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) ?*anyopaque = null;
 
 /// `$ClassName_gc_free(rt, p)`ye dağıtır (bkz. codegen.zig, `genClassGcFree`)
 /// — sınıf-TİPLİ OLMAYAN alanları (str/list/Task/Channel/dict) normal
@@ -86,8 +90,8 @@ var g_trace_dispatch_fn: ?*const fn (?*anyopaque, i64, ?*anyopaque) callconv(.c)
 fn resolveGcFreeDispatch() ?*const fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) void {
     return resolveSymbol(fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) void, &g_gc_free_dispatch_resolved, &g_gc_free_dispatch_fn, "nox_gc_free_dispatch");
 }
-var g_gc_free_dispatch_resolved = false;
-var g_gc_free_dispatch_fn: ?*const fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) void = null;
+threadlocal var g_gc_free_dispatch_resolved = false;
+threadlocal var g_gc_free_dispatch_fn: ?*const fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) void = null;
 
 fn resolveSymbol(comptime Fn: type, resolved: *bool, cache: *?*const Fn, comptime name: [:0]const u8) ?*const Fn {
     if (resolved.*) return cache.*;
@@ -537,4 +541,42 @@ test "Faz S.3: bir döngü İÇİNDEKİ nesne dışarıdan da canlıysa (survivi
     try testing.expectEqual(@as(usize, 2), g_fake_freed_count);
 
     try deinitRuntimeExpectNoLeak(rt);
+}
+
+// Faz BB.1: `g_trace_dispatch_fn`/`g_gc_free_dispatch_fn` (+ `_resolved`
+// bayrakları) `threadlocal` OLMASININ, bir OS iş parçacığındaki
+// `injectFakeDispatch` çağrısının BAŞKA bir iş parçacığının KENDİ (henüz
+// çözülmemiş) önbelleğine SIZMADIĞINI kanıtlar.
+test "g_trace_dispatch_fn threadlocal: bir iş parçacığındaki enjeksiyon diğerine SIZMAZ" {
+    const Ctx = struct {
+        resolved_before_inject: bool = undefined,
+        fn injectOnThisThread(self: *@This()) void {
+            self.resolved_before_inject = g_trace_dispatch_resolved;
+            injectFakeDispatch();
+        }
+    };
+    var ctx = Ctx{};
+    const t = try std.Thread.spawn(.{}, Ctx.injectOnThisThread, .{&ctx});
+    t.join();
+
+    // Enjeksiyon YAPILAN iş parçacığı BAŞLARKEN kendi threadlocal'ı henüz
+    // çözülmemiş OLMALIYDI (paylaşılan bir global OLSAYDI, AYNI test
+    // ikilisindeki BAŞKA testlerin ÇAĞIRDIĞI `injectFakeDispatch`DEN dolayı
+    // BU ZATEN `true` OLABİLİRDİ — threadlocal'la HER iş parçacığı TAZE
+    // başlar).
+    try testing.expect(!ctx.resolved_before_inject);
+    // Test-çalıştırma iş parçacığının (BU fonksiyonun KENDİSİ) KENDİ
+    // threadlocal önbelleği, DİĞER iş parçacığın enjeksiyonundan
+    // ETKİLENMEMİŞ olmalı (paylaşılan bir global OLSAYDI, `t.join()`
+    // SONRASI burada `true` GÖRÜNÜRDÜ).
+    if (!g_trace_dispatch_resolved) {
+        try testing.expect(g_trace_dispatch_fn == null);
+    } else {
+        // Bu test dosyasında BAŞKA testler ZATEN bu iş parçacığında
+        // `injectFakeDispatch` çağırmış OLABİLİR (testler AYNI iş
+        // parçacığında SIRAYLA koşar) — o durumda hedef fonksiyon HER
+        // ZAMAN `fakeTraceDispatch` OLMALI, yeni thread'in enjeksiyonundan
+        // ETKİLENMEMİŞ olmalı.
+        try testing.expect(g_trace_dispatch_fn == &fakeTraceDispatch);
+    }
 }

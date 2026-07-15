@@ -9,12 +9,19 @@
 //! gerçek tip dönüşümü (int/float/bool/str/sınıf/liste) codegen tarafında
 //! (bkz. `codegen_qbe/codegen.zig`, `toPayload`/`fromPayload`) yapılır.
 //!
-//! **Programın TEK zamanlayıcısı — modül-seviyesi global durum:** v0.1
-//! yalnızca TEK bir OS iş parçacığı varsayıyor (bkz. spec, "M:1 zamanlama"),
-//! bu yüzden derlenen HER Nox programının (async kullanıyorsa) TEK bir
-//! `Scheduler`i olur — `rt` bağlamına (İlke #6) EKLENMEDİ çünkü
-//! `RuntimeState` (Katman 1, `asap.zig`) async'ten TAMAMEN BAĞIMSIZ
-//! kalmalı (katmanlar arası gereksiz bir bağımlılık İSTENMEDİ).
+//! **Her OS iş parçacığının KENDİ zamanlayıcısı — `threadlocal` durum
+//! (Faz BB.1, bkz. nox-teknik-spesifikasyon.md §3.47):** Faz AA.1'in
+//! araştırmasının (§3.46) tespit ettiği TEK gerçek "süreç geneli tek
+//! zamanlayıcı" varsayımı BUYDU — `Scheduler.init`/`IoReactor.init`
+//! ZATEN allocator-only/sıfır-argümanlı, tamamen örnek-tabanlıydı, TEK
+//! engel bu `var`ın modül-seviyesi (süreç geneli) OLMASIYDI.
+//! `threadlocal`a çevrilerek `nox.thread.spawn`in (Faz BB.2+)
+//! paylaşımsız (shared-nothing) modeli MÜMKÜN oldu: her OS iş parçacığı
+//! KENDİ `nox_async_init`ini ÇAĞIRIR, KENDİ bağımsız `Scheduler`/
+//! `IoReactor`ünü (KENDİ kqueue/epoll fd'si) kurar — `rt` bağlamına
+//! (İlke #6) BİLİNÇLİ olarak EKLENMEDİ (RuntimeState katmanı async'ten
+//! BAĞIMSIZ kalmalı), YERİNE Zig'in KENDİ `threadlocal` ilkeli
+//! desteği KULLANILDI — HİÇBİR ek senkronizasyon/kilit GEREKMEDİ.
 //!
 //! **Deadlock:** `nox_async_run_to_completion`, zamanlayıcı `error.Deadlock`
 //! döndürürse süreci `nox_unhandled_exception` ile AYNI desende
@@ -31,7 +38,7 @@ const channel_mod = @import("channel.zig");
 const TaskI64 = scheduler_mod.Task(i64);
 const ChannelI64 = channel_mod.Channel(i64);
 
-var g_scheduler: ?scheduler_mod.Scheduler = null;
+threadlocal var g_scheduler: ?scheduler_mod.Scheduler = null;
 
 /// Stdlib fazı §D.1.3 (bkz. nox-teknik-spesifikasyon.md) — `nox.http`in
 /// Zig kabuğu (giden istekler İÇİN arka plan iş parçacığı + tamamlanma
@@ -211,4 +218,45 @@ test "nox_channel_new/send/recv, i64 payload uçtan uca" {
     allocatorFromRt(rt).destroy(c);
     g_scheduler.?.deinit();
     g_scheduler = null;
+}
+
+// Faz BB.1: `g_scheduler`nin `threadlocal`a çevrilmesinin GERÇEKTEN iki
+// bağımsız OS iş parçacığının KENDİ bağımsız zamanlayıcısını GÜVENLE
+// çalıştırabildiğini kanıtlar — `asap.zig`nin `arcOwnerThreadOk` testinin
+// AYNI deseni (GERÇEK `std.Thread.spawn`, simüle EDİLMEMİŞ). Her iş
+// parçacığı KENDİ `RuntimeState`ini/`Scheduler`ini kurup FARKLI bir görev
+// çalıştırır — sonuçların birbirini ETKİLEMEDİĞİ (çapraz-iş-parçacığı
+// veri yarışı OLMADIĞI) doğrulanır.
+test "g_scheduler threadlocal: iki gerçek OS iş parçacığı bağımsız çalışır" {
+    const Worker = struct {
+        fn run(multiplier: i64, out: *i64) void {
+            const rt = asap.nox_runtime_init() orelse @panic("init failed");
+            defer asap.nox_runtime_deinit(rt);
+            nox_async_init(rt);
+            defer nox_async_deinit(rt);
+
+            const Fn = struct {
+                fn mul(arg: *anyopaque) callconv(.c) i64 {
+                    const m: *i64 = @ptrCast(@alignCast(arg));
+                    return 10 * m.*;
+                }
+            };
+            var m_copy: i64 = multiplier;
+            const task = nox_async_spawn(rt, Fn.mul, &m_copy).?;
+            _ = nox_async_run_to_completion(rt);
+            out.* = nox_async_await(rt, task);
+            const t: *TaskI64 = @ptrCast(@alignCast(task));
+            allocatorFromRt(rt).destroy(t);
+        }
+    };
+
+    var result_a: i64 = 0;
+    var result_b: i64 = 0;
+    const thread_a = try std.Thread.spawn(.{}, Worker.run, .{ 2, &result_a });
+    const thread_b = try std.Thread.spawn(.{}, Worker.run, .{ 3, &result_b });
+    thread_a.join();
+    thread_b.join();
+
+    try std.testing.expectEqual(@as(i64, 20), result_a);
+    try std.testing.expectEqual(@as(i64, 30), result_b);
 }

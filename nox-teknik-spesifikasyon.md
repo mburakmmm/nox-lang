@@ -7786,6 +7786,88 @@ BULGULARI belgele, kararı ERTELE" disiplinidir.
 Bu tur KOD DEĞİŞİKLİĞİ İÇERMEDİĞİNDEN `zig build test` ETKİLENMEDİ
 (377/377 yeşil, Faz Z.3'ün doğrulamasıyla AYNI).
 
+## 3.47 Faz BB.1 — `nox.thread`e Doğru: Beş "Tehlikeli" Global'in `threadlocal` Yapılması
+
+**Kaynak:** kullanıcı, Nox'un 1.0 sürümü için gerçek bir M:N (çok
+çekirdekli) fiber zamanlayıcısı/yeşil iş parçacığı desteğinin ZORUNLU
+olduğunu belirtti — bu, Faz Z.1'in (§3.43) BU konuyu 1.0'ın kapsamı
+DIŞINDA bırakan kararını AÇIKÇA GERİ ALIR ve AA.1'in araştırma
+bulgularının (§3.46) ÜZERİNE gerçek bir implementasyon turu İNŞA EDER.
+Kullanıcıyla (AskUserQuestion) üç mimari seçenek arasından
+**"paylaşımsız (shared-nothing) N zamanlayıcı"** modeli seçildi: her OS
+iş parçacığı KENDİ bağımsız fiber zamanlayıcısını/KENDİ bağımsız
+`RuntimeState`/ARC heap'ini çalıştırır; HİÇBİR fiber iş parçacıkları
+ARASINDA GEÇMEZ, HİÇBİR ARC nesnesi REFERANS OLARAK paylaşılmaz — bu,
+Faz X.3'ün "gerçek atomiklere GEÇME" kararına HİÇ DOKUNMADAN gerçek
+paralellik sağlar (bkz. §3.46'nın tam gerekçesi).
+
+**Bu fazın kapsamı — SAF çalışma zamanı hazırlığı, dil yüzeyi YOK:**
+AA.1'in araştırması, mevcut M:1 modelin TEK gerçek "süreç geneli tek
+zamanlayıcı" varsayımının `runtime/async_rt/bridge.zig`deki TEK bir
+`var g_scheduler` global'i OLDUĞUNU tespit etmişti — `Scheduler.init`/
+`IoReactor.init` ZATEN allocator-only/sıfır-argümanlı, tamamen örnek-
+tabanlıydı. Bu global (VE onunla AYNI kategoride olan dört BAŞKA
+stdlib-kabuğu global'i) `threadlocal var`a çevrilerek, HİÇBİR yeni
+senkronizasyon/kilit MEKANİZMASI EKLENMEDEN, `nox.thread.spawn`in
+(Faz BB.2+) paylaşımsız modeli MÜMKÜN kılındı.
+
+**`threadlocal` YAPILAN beş yer:**
+1. `runtime/async_rt/bridge.zig`: `g_scheduler` — programın TEK
+   zamanlayıcı varsayımının KENDİSİ.
+2. `runtime/stdlib_shims/random.zig`: `g_prng`/`g_seeded` — **EN YÜKSEK
+   riskli**, çünkü İDEMPOTENT bir önbellek DEĞİLDİR, HER çağrıda
+   GERÇEKTEN mutasyona UĞRAR (PRNG durumunu İLERLETİR); paylaşılan bir
+   `var` OLSAYDI iki iş parçacığının EŞZAMANLI `nox.random.*` çağrıları
+   SESSİZCE veri bozulmasına (data race) yol AÇARDI.
+3. `runtime/stdlib_shims/fs.zig`: `g_last_ok` — KENDİ ESKİ belge notu
+   AÇIKÇA "M:1 OLDUĞU İÇİN güvenli" DİYORDU; bu ÖNCÜL artık GEÇERSİZDİR.
+4. `runtime/stdlib_shims/json.zig`: `g_last_op_ok`, `g_make_json_value_fn`/
+   `_resolved` — İKİNCİSİ İDEMPOTENT bir `dlsym` önbelleği (HER zaman
+   AYNI sembole çözülür) olsa da, senkronize OLMAYAN eşzamanlı YAZIM
+   teknik olarak TANIMSIZ DAVRANIŞTIR.
+5. `runtime/alloc/cycle_detector.zig`: `g_trace_dispatch_fn`/
+   `g_gc_free_dispatch_fn` + `_resolved` çiftleri — AYNI idempotent-
+   dlsym-önbellek gerekçesi.
+
+**BİLİNÇLİ olarak DOKUNULMAYAN, GERÇEKTEN paylaşılması GEREKEN iki
+global (aksi halde YANLIŞ olurdu):**
+- `runtime/stdlib_shims/os.zig`nin `g_argc`/`g_argv` — `$main`in
+  `nox_os_init`i TARAFINDAN TEK SEFER (HER ZAMAN TEK bir iş parçacığında
+  — programın GERÇEK başlangıcında) yazılır, SONRASI yalnızca OKUNUR;
+  çocuk iş parçacıkları (Faz BB.2+) `nox_os_init`i TEKRAR ÇAĞIRMAZ,
+  mevcut değerleri MİRAS ALIR — süreç GENELİ olması DOĞRU davranıştır.
+- `runtime/stdlib_shims/http_client.zig`nin `g_client_io_state`/
+  `g_client_io_storage` — KASITLI olarak SÜREÇ GENELİ PAYLAŞILIR, ZATEN
+  gerçek bir atomik CAS + spin-wait ile KORUNUYOR (`std.Io.Threaded`nin
+  SÜREÇ GENELİ `SIGIO` sinyal işleyicisi kurması YÜZÜNDEN İKİ örnek
+  OLUŞTURULAMAZ) — bu dosyaya DOKUNULMADI.
+
+**Doğrulama:** her dokunulan dosyaya, `asap.zig`nin `arcOwnerThreadOk`
+testinin AYNI deseninde (GERÇEK `std.Thread.spawn`, simüle EDİLMEMİŞ)
+bir izolasyon testi eklendi — `bridge.zig`de iki iş parçacığının
+BAĞIMSIZ bir görev spawn edip DOĞRU sonucu aldığı; `random.zig`de iki
+iş parçacığının FARKLI tohumlarla ÜRETTİĞİ dizinin, AYNI tohumun
+SIRALI (tek-iş-parçacıklı) üretimiyle BİREBİR eşleştiği (paylaşılan bir
+PRNG OLSAYDI bu İMKANSIZ olurdu); `fs.zig`/`json.zig`de biri SÜREKLİ
+BAŞARISIZ, diğeri SÜREKLİ BAŞARILI işlem yapan iki iş parçacığının
+KENDİ bayraklarını DOĞRU gördüğü; `cycle_detector.zig`de bir iş
+parçacığındaki `dlsym` önbellek enjeksiyonunun DİĞERİNE SIZMADIĞI.
+
+**Kasıtlı boz→kırmızı→düzelt (`random.zig`, EN yüksek riskli değişiklik
+üzerinde):** `threadlocal` GEÇİCİ olarak düz `var`a GERİ ÇEVRİLDİ,
+YENİ izolasyon testi `-Doptimize=ReleaseFast` altında ART ARDA
+ÇALIŞTIRILDI — **2. denemede testi BAŞARISIZ oldu** (paylaşılan PRNG
+durumunun İKİ iş parçacığının İÇ İÇE geçmiş çağrılarıyla BOZULDUĞUNU
+somut olarak KANITLADI — bir veri yarışının doğası GEREĞİ ARALIKLI/
+DETERMİNİSTİK-OLMAYAN başarısızlığı, testin GERÇEKTEN bu sınıf hatayı
+YAKALAYABİLDİĞİNİ kanıtlar). Değişiklik GERİ YÜKLENDİ, Debug + ReleaseFast
+YENİDEN yeşile döndü.
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz. BU faz
+DİL sözdizimine/checker'a/codegen'e HİÇ DOKUNMADI — TAMAMEN çalışma
+zamanı hazırlığıdır, Faz BB.2'nin (`nox.thread.spawn`in saf-Zig
+çekirdeği) ÖN KOŞULUDUR.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

@@ -21,6 +21,19 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   kullanıcıyla bir kapsam-netleştirme görüşmesi olmadan hiçbir tasarım/
   implementasyon turuna girişilmeyecek.
 
+### Eklendi
+- `nox.thread` (Faz BB.1 — çalışma zamanı hazırlığı, henüz dil yüzeyi
+  yok) — kullanıcının 1.0 için zorunlu kıldığı gerçek M:N (çok
+  çekirdekli) fiber/yeşil iş parçacığı desteğinin ilk adımı. Beş
+  "tehlikeli" global (`bridge.zig`nin `g_scheduler`, `random.zig`nin
+  `g_prng`/`g_seeded`, `fs.zig`nin `g_last_ok`, `json.zig`nin
+  `g_last_op_ok`/`g_make_json_value_fn`, `cycle_detector.zig`nin
+  `g_trace_dispatch_fn`/`g_gc_free_dispatch_fn`) `threadlocal` yapıldı —
+  `nox-teknik-spesifikasyon.md` §3.47. Gerçek `std.Thread.spawn`
+  kullanan izolasyon testleri eklendi; `random.zig`nin testi, kasıtlı
+  boz→kırmızı ritüelinde bir paylaşılan-PRNG veri yarışını gerçekten
+  yakaladı.
+
 ## [1.0.0]
 
 ### Eklendi

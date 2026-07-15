@@ -11,17 +11,23 @@
 //! SON çağrının başarılı olup olmadığını AYRICA bildirir (`nox.http`in
 //! `nox_http_response_ok` deseniyle AYNI) — `stdlib/nox/fs.nox`nin KENDİSİ
 //! sıradan `if`/`raise` İLE `FsError` fırlatır (HİÇBİR yeni checker/codegen
-//! özel-durumu GEREKMEZ). Tek bir statik bayrak KULLANILMASI GÜVENLİDİR:
-//! Nox'un M:1 fiber modelinde AYNI ANDA yalnızca TEK bir fiber ÇALIŞIR,
-//! bu yüzden bir çağrı SONRASI hemen okunan bu bayrakta YARIŞ DURUMU
-//! OLUŞMAZ.
+//! özel-durumu GEREKMEZ).
+//!
+//! **`threadlocal` (Faz BB.1, bkz. nox-teknik-spesifikasyon.md §3.47):**
+//! Bu bayrak ESKİDEN düz bir `var`dı, GEREKÇESİ AÇIKÇA "Nox'un M:1 fiber
+//! modelinde AYNI ANDA yalnızca TEK bir fiber ÇALIŞIR, bu yüzden bir çağrı
+//! SONRASI hemen okunan bu bayrakta YARIŞ DURUMU OLUŞMAZ" İDİ — BU ÖNCÜL,
+//! `nox.thread.spawn`in paylaşımsız (shared-nothing) modeliyle ARTIK
+//! GEÇERSİZDİR (İKİ GERÇEK OS iş parçacığı AYNI ANDA `nox.fs.*`
+//! ÇAĞIRABİLİR). `threadlocal`, HER iş parçacığına KENDİ BAĞIMSIZ bayrağını
+//! VERİR — SIFIR ek senkronizasyon MALİYETİYLE ÖNCÜLÜ YENİDEN GEÇERLİ KILAR.
 
 const std = @import("std");
 const http_client = @import("http_client.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
 
-var g_last_ok: bool = true;
+threadlocal var g_last_ok: bool = true;
 
 export fn nox_fs_last_op_ok() callconv(.c) i32 {
     return if (g_last_ok) 1 else 0;
@@ -90,4 +96,46 @@ export fn nox_fs_write_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8, content
         off += @intCast(n);
     }
     g_last_ok = true;
+}
+
+// Faz BB.1: `g_last_ok`nin `threadlocal` OLMASININ, İKİ GERÇEK OS iş
+// parçacığının AYNI ANDA `nox.fs` ÇAĞIRDIĞINDA birbirinin bayrağını
+// EZMEDİĞİNİ kanıtlar — biri BAŞARISIZ (var olmayan yol), diğeri BAŞARILI
+// (gerçek yazma+okuma) işlemi TEKRAR TEKRAR, AYNI ANDA yapar; HER iş
+// parçacığı KENDİ `nox_fs_last_op_ok()` sonucunu GÖZLEMLER — paylaşılan bir
+// bayrak OLSAYDI bu SONUÇLAR ARA SIRA birbirini EZERDİ.
+test "g_last_ok threadlocal: iki gerçek OS iş parçacığı bağımsız bayrak görür" {
+    // Bu dosya ZATEN "ham libc çağrıları" katmanında (bkz. modül üstü not) —
+    // `std.testing.tmpDir`/`std.Io.Dir` KARMAŞIKLIĞINDAN kaçınmak İÇİN
+    // `/tmp` altında PID'e göre BENZERSİZ bir yol DOĞRUDAN inşa edilir.
+    var full_buf: [64]u8 = undefined;
+    const full_path = try std.fmt.bufPrintZ(&full_buf, "/tmp/nox_bb1_fs_test_{d}.txt", .{std.c.getpid()});
+    defer _ = std.c.unlink(full_path.ptr);
+
+    const Worker = struct {
+        fn failing(iterations: usize, all_false: *bool) void {
+            var i: usize = 0;
+            while (i < iterations) : (i += 1) {
+                _ = nox_fs_read_to_string_raw(null, "/definitely/does/not/exist/nox_bb1_test");
+                if (nox_fs_last_op_ok() != 0) all_false.* = false;
+            }
+        }
+        fn succeeding(iterations: usize, path: [*:0]const u8, all_true: *bool) void {
+            var i: usize = 0;
+            while (i < iterations) : (i += 1) {
+                nox_fs_write_string_raw(null, path, "hi");
+                if (nox_fs_last_op_ok() == 0) all_true.* = false;
+            }
+        }
+    };
+
+    var all_false = true;
+    var all_true = true;
+    const thread_a = try std.Thread.spawn(.{}, Worker.failing, .{ 2000, &all_false });
+    const thread_b = try std.Thread.spawn(.{}, Worker.succeeding, .{ 2000, full_path.ptr, &all_true });
+    thread_a.join();
+    thread_b.join();
+
+    try std.testing.expect(all_false);
+    try std.testing.expect(all_true);
 }

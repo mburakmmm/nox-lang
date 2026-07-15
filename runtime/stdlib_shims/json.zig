@@ -71,8 +71,14 @@ const MakeJsonValueFn = fn (
     vals: ?*anyopaque,
 ) callconv(.c) ?*anyopaque;
 
-var g_make_json_value_fn: ?*const MakeJsonValueFn = null;
-var g_make_json_value_resolved = false;
+// Faz BB.1 (bkz. nox-teknik-spesifikasyon.md §3.47): `threadlocal` —
+// `resolveMakeJsonValue`nin `dlsym` önbelleği İDEMPOTENT olsa da (HER
+// zaman AYNI sembole çözülür), `nox.thread.spawn`in paylaşımsız modeliyle
+// İKİ GERÇEK OS iş parçacığı AYNI ANDA BU önbelleğe YAZABİLİR — bu TEKNİK
+// olarak TANIMSIZ DAVRANIŞ (senkronize olmayan eşzamanlı yazım) OLDUĞUNDAN,
+// `g_last_op_ok`la AYNI gerekçeyle SIFIR maliyetle DÜZELTİLİR.
+threadlocal var g_make_json_value_fn: ?*const MakeJsonValueFn = null;
+threadlocal var g_make_json_value_resolved = false;
 
 fn resolveMakeJsonValue() ?*const MakeJsonValueFn {
     if (g_make_json_value_resolved) return g_make_json_value_fn;
@@ -97,7 +103,8 @@ fn nox_json_make_json_value(
     return f(rt, kind, b, n, s, arr, keys, vals);
 }
 
-var g_last_op_ok: bool = true;
+// Faz BB.1: `nox.fs`nin `g_last_ok`ıyla AYNI gerekçeyle `threadlocal`.
+threadlocal var g_last_op_ok: bool = true;
 
 export fn nox_json_last_op_ok() callconv(.c) i32 {
     return if (g_last_op_ok) 1 else 0;
@@ -233,4 +240,36 @@ export fn nox_json_decode_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?
     };
     g_last_op_ok = true;
     return root orelse makeLeaf(rt, 0, false, 0.0, "");
+}
+
+// Faz BB.1: `g_last_op_ok`nin `threadlocal` OLMASININ, İKİ GERÇEK OS iş
+// parçacığının AYNI ANDA `nox.json.decode` ÇAĞIRDIĞINDA (biri BOZUK, diğeri
+// GEÇERLİ JSON İLE) birbirinin bayrağını EZMEDİĞİNİ kanıtlar.
+test "g_last_op_ok threadlocal: iki gerçek OS iş parçacığı bağımsız bayrak görür" {
+    const Worker = struct {
+        fn malformed(iterations: usize, all_false: *bool) void {
+            var i: usize = 0;
+            while (i < iterations) : (i += 1) {
+                _ = nox_json_decode_raw(null, "{ bozuk");
+                if (nox_json_last_op_ok() != 0) all_false.* = false;
+            }
+        }
+        fn valid(iterations: usize, all_true: *bool) void {
+            var i: usize = 0;
+            while (i < iterations) : (i += 1) {
+                _ = nox_json_decode_raw(null, "{\"a\": 1}");
+                if (nox_json_last_op_ok() == 0) all_true.* = false;
+            }
+        }
+    };
+
+    var all_false = true;
+    var all_true = true;
+    const thread_a = try std.Thread.spawn(.{}, Worker.malformed, .{ 2000, &all_false });
+    const thread_b = try std.Thread.spawn(.{}, Worker.valid, .{ 2000, &all_true });
+    thread_a.join();
+    thread_b.join();
+
+    try std.testing.expect(all_false);
+    try std.testing.expect(all_true);
 }
