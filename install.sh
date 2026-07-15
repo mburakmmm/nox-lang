@@ -59,9 +59,18 @@ resolve_version() {
         echo "$NOX_VERSION"
         return
     fi
-    local tag
-    tag="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
-    [ -n "$tag" ] || die "en son sürüm etiketi çözülemedi (GitHub API erişilemez olabilir) — NOX_VERSION ile elle belirtin."
+    # `set -e`/`pipefail` AKTİFKEN `curl | grep | sed` ZİNCİRİ, `grep`
+    # HİÇBİR ŞEY BULAMAZSA (ör. henüz hiç Release YOKSA, YA DA API'ye
+    # erişilemiyorsa) betiği AŞAĞIDAKİ `die` ÇAĞRISINA HİÇ ULAŞMADAN,
+    # SESSİZCE/anlaşılmaz bir hatayla SONLANDIRIR — GERÇEK bir kurulum
+    # denemesinde BULUNDU (kullanıcı raporu). Düzeltme: yanıtı ÖNCE
+    # AYRI bir değişkene AL (`|| true` İLE pipefail'İ ETKİSİZLEŞTİR),
+    # SONRA ayrıştır — böylece boş/bulunamayan sonuç HER ZAMAN
+    # `die`in AÇIK/YARDIMCI mesajına ULAŞIR.
+    local response tag
+    response="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null || true)"
+    tag="$(printf '%s' "$response" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/' || true)"
+    [ -n "$tag" ] || die "en son sürüm etiketi çözülemedi — henüz bir GitHub Release yayımlanmamış olabilir ya da GitHub API'sine erişilemiyor. Belirli bir sürümü elle kurmak için: NOX_VERSION=v1.0.0 sh install.sh (ya da curl çıktısını NOX_VERSION=... ile pipe'layın)."
     echo "$tag"
 }
 

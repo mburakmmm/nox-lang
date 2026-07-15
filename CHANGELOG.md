@@ -127,6 +127,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   kullandığı AYNI "doğrudan `curl`+`tar`" deseniyle DOĞRU
   (`ziglang.org/download/<sürüm>/...`) URL'den kuruluyor artık.
   `nox-teknik-spesifikasyon.md` §3.53 (addendum).
+- `install.sh`: `resolve_version`in `curl | grep | sed` zinciri, `set -e`/
+  `pipefail` aktifken `grep` hiçbir şey bulamadığında (henüz Release
+  yokken ya da API'ye erişilemediğinde) betiği yardımcı `die` mesajına
+  hiç ulaşmadan sessizce sonlandırıyordu (kullanıcı raporu: "otomatik
+  kurulum scripti de çalışmıyor"). Düzeltme: yanıt önce ayrı bir
+  değişkene (`|| true` ile) alınıp sonra ayrıştırılıyor, böylece boş
+  sonuç her zaman açık hata mesajına ulaşıyor. Gerçek bir uçtan uca
+  doğrulamayla (yayımlanan v1.0.0 varlığı indirilip açılıp `noxc
+  --version` + gerçek bir .nox derlemesi çalıştırılarak) paketin tam
+  işlevsel olduğu kanıtlandı.
 
 ## [1.0.0]
 

@@ -8488,7 +8488,37 @@ Zig İÇİN de uygulandı (matrise `zig_arch` alanı eklenerek, `ziglang.org`ın
 KENDİ `index.json`ında doğrulanan dosya adı kalıbıyla), `$GITHUB_PATH`a
 eklenerek. Üçüncü-taraf eylem YERİNE resmi kaynağa DOĞRUDAN, sabit bir
 URL şablonuyla bağlanmak — `qbe`nin kaynaktan derleme adımıyla TUTARLI
-bir mimari karar.
+bir mimari karar. `v1.0.0` etiketi (henüz HİÇBİR YERE yayımlanmamış
+OLDUĞUNDAN, dış bir tüketicisi OLMADAN) düzeltilmiş commit'e TAŞINDI
+(kullanıcı onayıyla — uzak bir etiketi silmek Claude Code'un otomatik
+sınıflandırıcısı TARAFINDAN AÇIKÇA onay GEREKTİREN bir işlem olarak
+İŞARETLENDİ, doğru bir güvenlik DAVRANIŞI), `release.yml` BAŞARIYLA
+çalışıp 3 platform İÇİN 6 varlık (`.tar.gz` + `.sha256`) yayımladı.
+
+**İKİNCİ, `install.sh`nin KENDİSİNDE bulunan GERÇEK bir hata (kullanıcı
+raporu — "otomatik kurulum scripti de çalışmıyor"):** `resolve_version`
+İÇİNDEKİ `curl | grep | sed` ZİNCİRİ, `set -euo pipefail` AKTİFKEN,
+`grep` HİÇBİR ŞEY BULAMADIĞINDA (henüz Release YOKKEN — TAM OLARAK BU
+oturumda GERÇEKLEŞEN durum — YA DA API'ye erişilemediğinde) betiği
+BİR SONRAKİ satırdaki `[ -n "$tag" ] || die "..."` KONTROLÜNE HİÇ
+ULAŞMADAN, `pipefail`in KENDİSİ YÜZÜNDEN SESSİZCE/anlaşılmaz bir hatayla
+SONLANDIRIYORDU — özenle yazılmış YARDIMCI hata mesajı ASLA
+GÖRÜNMÜYORDU. **Düzeltme:** `curl` yanıtı ÖNCE AYRI bir değişkene
+(`|| true` İLE `pipefail`i o adımda ETKİSİZLEŞTİREREK) alınır, SONRA
+`grep`/`sed` (AYNI ŞEKİLDE `|| true` İLE) ayrıştırılır — böylece boş/
+bulunamayan SONUÇ HER ZAMAN `die`in AÇIK mesajına ULAŞIR. **Genel ders
+(TÜM gelecekteki kabuk betikleri İÇİN geçerli):** `set -e`/`pipefail`
+AKTİFKEN bir `curl | grep | ...` ZİNCİRİNİN SONUCUNU KENDİ `if`/`[ ]`
+kontrolünüzle DEĞERLENDİRMEK İSTİYORSANIZ, ZİNCİRİN HER ADIMINI (özellikle
+"hiçbir eşleşme YOK" durumu SIFIRDAN FARKLI çıkış kodu ÜRETEN `grep`i)
+`|| true` İLE KORUMANIZ GEREKİR — AKSİ HALDE KONTROLÜNÜZ HİÇBİR ZAMAN
+ÇALIŞTIRILMAZ, kabuk SESSİZCE (`set -e`in KENDİSİ TARAFINDAN) SONLANIR.
+Gerçek bir uçtan uca doğrulamayla (yayımlanmış `v1.0.0` varlığı
+İNDİRİLİP `tar` İLE açılıp `noxc --version`/GERÇEK bir `.nox` dosyası
+DERLENİP ÇALIŞTIRILARAK) `install.sh`nin ARTIK doğru sürümü ÇÖZDÜĞÜ VE
+paketin TAM olarak İŞLEVSEL olduğu KANITLANDI (`install.sh`nin KENDİSİ,
+`~/.nox-lang`i/shell rc'yi DOKUNMAMAK İÇİN, DOĞRUDAN ÇALIŞTIRILMADI —
+paket AYRI, izole bir dizine elle açılıp DOĞRULANDI).
 
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
