@@ -285,7 +285,7 @@ pub const Checker = struct {
                 return self.fail(error.UnknownType, "bilinmeyen tip: {s}", .{name});
             },
             .generic => |g| {
-                if (std.mem.eql(u8, g.name, "list") or std.mem.eql(u8, g.name, "Task") or std.mem.eql(u8, g.name, "Channel") or std.mem.eql(u8, g.name, "ThreadHandle")) {
+                if (std.mem.eql(u8, g.name, "list") or std.mem.eql(u8, g.name, "Task") or std.mem.eql(u8, g.name, "Channel") or std.mem.eql(u8, g.name, "ThreadHandle") or std.mem.eql(u8, g.name, "ThreadChannel")) {
                     if (g.args.len != 1) {
                         return self.fail(error.UnknownType, "'{s}' tam olarak bir tip argümanı alır", .{g.name});
                     }
@@ -295,7 +295,8 @@ pub const Checker = struct {
                     if (std.mem.eql(u8, g.name, "list")) return .{ .list = boxed };
                     if (std.mem.eql(u8, g.name, "Task")) return .{ .task = boxed };
                     if (std.mem.eql(u8, g.name, "Channel")) return .{ .channel = boxed };
-                    return .{ .thread_handle = boxed };
+                    if (std.mem.eql(u8, g.name, "ThreadHandle")) return .{ .thread_handle = boxed };
+                    return .{ .thread_channel = boxed };
                 }
                 // `dict[K, V]` — stdlib fazı §C. v1 kapsamı bilinçli olarak
                 // dar: `K` yalnızca `int`/`bool`/`str` (hashlenebilir, basit
@@ -445,7 +446,7 @@ pub const Checker = struct {
             // BİLİNÇLİ OLARAK kapsam dışı bırakıldı — v1 yalnızca header
             // gibi dict[str,str] kullanım örneğini hedefliyor.
             .dict => |d| d.key.* == .str and d.value.* == .str,
-            .list, .class, .task, .channel, .thread_handle, .func => false,
+            .list, .class, .task, .channel, .thread_handle, .thread_channel, .func => false,
         };
     }
 
@@ -456,9 +457,20 @@ pub const Checker = struct {
     /// yalnızca bir işaretçi kopyalamak yeterlidir) paketleyebilir. Sınıf/
     /// `list[T]` parametreleri (paketleme ÖNCESİ retain, çağrı SONRASI
     /// release gerektirirdi) v0.1 kapsamı DIŞI bırakıldı.
+    ///
+    /// **BU FONKSİYON, `registerFunc` ÜZERİNDEN, HER `async def`in KENDİ
+    /// PARAMETRE TİPLERİNİ tanım ANINDA (nasıl kullanılacağından
+    /// BAĞIMSIZ olarak — `spawn` İLE de, `nox.thread.start` İLE de
+    /// başlatılabilir) denetler.** Faz BB.6: `thread_channel` BU YÜZDEN
+    /// BURADA DA `true` OLMALIDIR (`Task`/`Channel` İLE AYNI gerekçeyle —
+    /// bir `*Scheduler` alanı TAŞIMADIĞINDAN, bkz. `isThreadTransferSafeType`in
+    /// AYNI notu) — AKSİ HALDE `nox.thread.start`ın `entry`i BİR
+    /// `ThreadChannel[T]` parametresi ASLA ALAMAZDI, ki Katman 2'nin
+    /// TÜM AMACI TAM OLARAK BUDUR (bir kanalın `nox.thread.start`ın `arg`ı
+    /// olarak çocuk iş parçacığına GEÇİRİLMESİ).
     fn isSpawnParamSafeType(t: Type) bool {
         return switch (t) {
-            .int, .float, .boolean, .str, .none, .task, .channel, .ptr => true,
+            .int, .float, .boolean, .str, .none, .task, .channel, .ptr, .thread_channel => true,
             .list, .class, .dict, .thread_handle, .func => false,
         };
     }
@@ -474,9 +486,19 @@ pub const Checker = struct {
     /// anında ÇÖKME/tanımsız davranışa) yol AÇARDI. `class`/`list`/`dict`
     /// AYNI gerekçeyle (genel özyinelemeli derin-klonlama mekanizması
     /// HENÜZ YOK, bkz. `nox.thread`in modül üstü planı) kapsam DIŞI.
+    ///
+    /// **`thread_channel` BİLİNÇLİ bir İSTİSNA — BİLE İSİLE DAHİL EDİLİR
+    /// (Faz BB.6, bkz. nox-teknik-spesifikasyon.md §3.52):** `Task`/
+    /// `Channel`/`ThreadHandle`nin AKSİNE, `ThreadChannel` bir
+    /// `*Scheduler` alanı TAŞIMAZ (`thread_channel.zig`nin modül üstü
+    /// notu — SAF `page_allocator` + OS pipe'ları + spin-kilit) — BAŞKA
+    /// bir OS iş parçacığına GÜVENLE taşınabilir, ZATEN TASARIM AMACI
+    /// BUDUR (Katman 2'nin İKİ iş parçacığı ARASINDA gerçek iletişim
+    /// sağlaması İÇİN `nox.thread.start`ın `arg`ı olarak GEÇİRİLEBİLMESİ
+    /// GEREKİR).
     fn isThreadTransferSafeType(t: Type) bool {
         return switch (t) {
-            .int, .float, .boolean, .str, .none, .ptr => true,
+            .int, .float, .boolean, .str, .none, .ptr, .thread_channel => true,
             .list, .class, .dict, .task, .channel, .thread_handle, .func => false,
         };
     }
@@ -511,7 +533,7 @@ pub const Checker = struct {
             // maliyetli bir taşımadır, ekstra paketleme gerekmez).
             for (fd.params, 0..) |p, i| {
                 if (!isSpawnParamSafeType(params[i])) {
-                    return self.fail(error.TypeMismatch, "'async def {s}': parametre '{s}' desteklenmeyen bir tipte (v0.1'de spawn kapanışı yalnızca int/float/bool/str/None/Task[T]/Channel[T] parametreleri paketleyebilir)", .{ fd.name, p.name });
+                    return self.fail(error.TypeMismatch, "'async def {s}': parametre '{s}' desteklenmeyen bir tipte (v0.1'de spawn kapanışı yalnızca int/float/bool/str/None/Task[T]/Channel[T]/ThreadChannel[T] parametreleri paketleyebilir)", .{ fd.name, p.name });
                 }
             }
         }
@@ -1411,7 +1433,7 @@ pub const Checker = struct {
                     .call => |c| switch (c.callee.*) {
                         .attribute => |a| blk2: {
                             const recv_t = self.checkExpr(ctx, a.obj.*) catch return self.fail(error.TypeMismatch, "'await' ifadesinin alıcısı çözümlenemedi", .{});
-                            if ((std.mem.eql(u8, a.attr, "send") or std.mem.eql(u8, a.attr, "recv")) and recv_t == .channel) break :blk2 true;
+                            if ((std.mem.eql(u8, a.attr, "send") or std.mem.eql(u8, a.attr, "recv")) and (recv_t == .channel or recv_t == .thread_channel)) break :blk2 true;
                             if (std.mem.eql(u8, a.attr, "join") and recv_t == .thread_handle) break :blk2 true;
                             break :blk2 false;
                         },
@@ -1419,7 +1441,7 @@ pub const Checker = struct {
                     },
                     else => false,
                 };
-                if (!is_channel_op) return self.fail(error.TypeMismatch, "'await' yalnızca bir Task değeri, bir Channel.send/recv ya da bir ThreadHandle.join() çağrısı üzerinde kullanılabilir", .{});
+                if (!is_channel_op) return self.fail(error.TypeMismatch, "'await' yalnızca bir Task değeri, bir Channel.send/recv, bir ThreadChannel.send/recv ya da bir ThreadHandle.join() çağrısı üzerinde kullanılabilir", .{});
                 break :blk t;
             },
             .spawn_expr => |operand_ptr| blk: {
@@ -1441,27 +1463,70 @@ pub const Checker = struct {
                 boxed.* = sig.return_type;
                 break :blk .{ .task = boxed };
             },
-            .generic_construct => |g| blk: {
-                // v0.1'de tek tanınan yerleşik generic kurucu: `Channel[T](
-                // capacity)` (bkz. `parser.zig`, `isGenericConstructName`).
-                if (!std.mem.eql(u8, g.name, "Channel")) {
-                    return self.fail(error.UnknownType, "bilinmeyen generic kurucu: {s}", .{g.name});
-                }
-                if (g.type_args.len != 1) {
-                    return self.fail(error.UnknownType, "'Channel' tam olarak bir tip argümanı alır", .{});
-                }
-                const elem_t = try self.typeExprToType(g.type_args[0]);
-                if (g.args.len != 1) {
-                    return self.fail(error.ArgumentCountMismatch, "'Channel' kurucusu tam olarak 1 argüman (capacity: int) alır", .{});
-                }
-                if (try self.checkExpr(ctx, g.args[0]) != .int) {
-                    return self.fail(error.TypeMismatch, "'Channel' kurucusunun argümanı (capacity) int olmalıdır", .{});
-                }
-                const boxed = try self.allocator.create(Type);
-                boxed.* = elem_t;
-                break :blk .{ .channel = boxed };
-            },
+            .generic_construct => |g| try self.checkGenericConstruct(ctx, g),
         };
+    }
+
+    /// `checkExpr`in `.generic_construct` dalından (bkz. Faz U.4.1'in
+    /// AYNI çıkarımı) BİLİNÇLİ olarak AYRI bir fonksiyona ÇIKARILDI —
+    /// `checkExpr`/`checkBinary` çok DERİN özyinelemeli bir çift OLDUĞUNDAN
+    /// (bkz. `tests/fuzz/lexer_parser_checker_fuzz.zig`nin "çok uzun tek
+    /// satırlık ifade çökmeden işlenir" regresyon testi, 2000 seviye
+    /// derinlik), `checkExpr`in KENDİ switch gövdesine DOĞRUDAN eklenen
+    /// HER yeni yerel değişken/dal (Faz BB.6'nın `ThreadChannel` kurucu
+    /// mantığı GİBİ) `checkExpr`in TEK bir çağrısının yığın çerçevesini
+    /// BÜYÜTÜR — VE bu, HER özyinelemeli seviyede TEKRARLANDIĞINDAN
+    /// (2000 kez), küçük bir büyüme BİLE önceden marjinal olan yığın
+    /// bütçesini AŞABİLİR (GERÇEKTEN GÖZLEMLENDİ: bu mantık `checkExpr`in
+    /// KENDİ switch'İNE eklendiğinde YUKARIDAKİ regresyon testi
+    /// `Segmentation fault`la ÇÖKTÜ, `checkCall`/`tryResolveThreadSpawnCall`
+    /// GİBİ AYRI bir fonksiyona TAŞININCA sorun ORTADAN KALKTI — `.binary`/
+    /// `.int_lit` zincirleri BU kodu HİÇ ÇALIŞTIRMASA BİLE, Debug modunda
+    /// bir switch'in TÜM dallarının yerel değişkenleri AYNI çerçevede
+    /// REZERVE EDİLİR).
+    fn checkGenericConstruct(self: *Checker, ctx: *FnCtx, g: ast.GenericConstruct) TypeError!Type {
+        // `ThreadChannel[T](capacity)` — Faz BB.6 (bkz. nox-teknik-
+        // spesifikasyon.md §3.52): `Channel[T](capacity)` İLE AYNI
+        // sözdizimi/kurucu şekli, AMA eleman tipi
+        // `isThreadTransferSafeType`den GEÇMELİDİR (iş parçacıkları
+        // ARASINDA taşınacağından — `Channel[T]`in AKSİNE, ki O AYNI-
+        // iş-parçacığı olduğundan HERHANGİ bir `T`yi kabul eder).
+        if (std.mem.eql(u8, g.name, "ThreadChannel")) {
+            if (g.type_args.len != 1) {
+                return self.fail(error.UnknownType, "'ThreadChannel' tam olarak bir tip argümanı alır", .{});
+            }
+            const elem_t = try self.typeExprToType(g.type_args[0]);
+            if (!isThreadTransferSafeType(elem_t)) {
+                return self.fail(error.TypeMismatch, "'ThreadChannel' eleman tipi yalnızca int/float/bool/str/None/ptr olabilir", .{});
+            }
+            if (g.args.len != 1) {
+                return self.fail(error.ArgumentCountMismatch, "'ThreadChannel' kurucusu tam olarak 1 argüman (capacity: int) alır", .{});
+            }
+            if (try self.checkExpr(ctx, g.args[0]) != .int) {
+                return self.fail(error.TypeMismatch, "'ThreadChannel' kurucusunun argümanı (capacity) int olmalıdır", .{});
+            }
+            const boxed = try self.allocator.create(Type);
+            boxed.* = elem_t;
+            return .{ .thread_channel = boxed };
+        }
+        // v0.1'de diğer tanınan yerleşik generic kurucu: `Channel[T](
+        // capacity)` (bkz. `parser.zig`, `isGenericConstructName`).
+        if (!std.mem.eql(u8, g.name, "Channel")) {
+            return self.fail(error.UnknownType, "bilinmeyen generic kurucu: {s}", .{g.name});
+        }
+        if (g.type_args.len != 1) {
+            return self.fail(error.UnknownType, "'Channel' tam olarak bir tip argümanı alır", .{});
+        }
+        const elem_t = try self.typeExprToType(g.type_args[0]);
+        if (g.args.len != 1) {
+            return self.fail(error.ArgumentCountMismatch, "'Channel' kurucusu tam olarak 1 argüman (capacity: int) alır", .{});
+        }
+        if (try self.checkExpr(ctx, g.args[0]) != .int) {
+            return self.fail(error.TypeMismatch, "'Channel' kurucusunun argümanı (capacity) int olmalıdır", .{});
+        }
+        const boxed = try self.allocator.create(Type);
+        boxed.* = elem_t;
+        return .{ .channel = boxed };
     }
 
     fn checkBinary(self: *Checker, ctx: *FnCtx, b: ast.Binary) TypeError!Type {
@@ -1701,6 +1766,28 @@ pub const Checker = struct {
                     }
                     return self.fail(error.UndefinedMethod, "ThreadHandle'ın '{s}' metodu yok (yalnızca join)", .{a.attr});
                 }
+                // `ThreadChannel[T]`in yerleşik `send`/`recv`i — Faz BB.6,
+                // `Channel` İLE BİREBİR AYNI desen/sözleşme (İKİSİ de
+                // `await` İLE sarmalanmalıdır — bu kısıt burada DEĞİL,
+                // `.await_expr` dalında denetlenir). `Channel`den AYRI bir
+                // dal olmasının nedeni SADECE `obj_t.channel` yerine
+                // `obj_t.thread_channel`in okunması gerekmesi — element tipi
+                // KISITI ZATEN `generic_construct`ta (`isThreadTransferSafeType`)
+                // uygulandığından burada TEKRAR denetlenmez.
+                if (obj_t == .thread_channel) {
+                    const elem_t = obj_t.thread_channel.*;
+                    if (std.mem.eql(u8, a.attr, "send")) {
+                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'send' tam olarak 1 argüman alır", .{});
+                        const at = try self.checkExpr(ctx, c.args[0]);
+                        if (!assignable(elem_t, at)) return self.fail(error.TypeMismatch, "'send' argümanı kanalın eleman tipiyle uyuşmuyor", .{});
+                        return .none;
+                    }
+                    if (std.mem.eql(u8, a.attr, "recv")) {
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'recv' hiç argüman almaz", .{});
+                        return elem_t;
+                    }
+                    return self.fail(error.UndefinedMethod, "ThreadChannel'ın '{s}' metodu yok (yalnızca send/recv)", .{a.attr});
+                }
                 // `dict[K, V]`in yerleşik `contains`/`len`i — `Channel`le AYNI
                 // desen: bir kullanıcı sınıfı DEĞİL, burada özel işlenir
                 // (bkz. nox-teknik-spesifikasyon.md §3.28).
@@ -1929,6 +2016,11 @@ pub const Checker = struct {
                 args[0] = try self.typeToTypeExpr(elem.*);
                 break :blk .{ .generic = .{ .name = "ThreadHandle", .args = args } };
             },
+            .thread_channel => |elem| blk: {
+                const args = try self.allocator.alloc(ast.TypeExpr, 1);
+                args[0] = try self.typeToTypeExpr(elem.*);
+                break :blk .{ .generic = .{ .name = "ThreadChannel", .args = args } };
+            },
             .dict => |d| blk: {
                 const args = try self.allocator.alloc(ast.TypeExpr, 2);
                 args[0] = try self.typeToTypeExpr(d.key.*);
@@ -2064,6 +2156,10 @@ pub const Checker = struct {
             },
             .thread_handle => |elem| {
                 try buf.appendSlice(self.allocator, "ThreadHandle_");
+                try self.appendMangledType(buf, elem.*);
+            },
+            .thread_channel => |elem| {
+                try buf.appendSlice(self.allocator, "ThreadChannel_");
                 try self.appendMangledType(buf, elem.*);
             },
             .dict => |d| {

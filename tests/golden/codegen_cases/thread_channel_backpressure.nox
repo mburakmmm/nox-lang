@@ -1,0 +1,18 @@
+import nox.thread
+import nox.time
+
+async def worker(tc: ThreadChannel[int]) -> None:
+    i: int = 0
+    while i < 20:
+        await tc.send(i)
+        i = i + 1
+
+tc: ThreadChannel[int] = ThreadChannel[int](1)
+h: ThreadHandle[None] = nox.thread.start(worker, tc)
+i: int = 0
+while i < 20:
+    nox.time.sleep_ms(1)
+    v: int = await tc.recv()
+    print(v)
+    i = i + 1
+await h.join()

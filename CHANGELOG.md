@@ -84,6 +84,25 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   kaldırılması küçük hacimde gözlenmedi; hacim 2 milyon öğeye
   çıkarılınca kesin bir veri bozulması (`expected 44602, found 44601`)
   yakalandı.
+- `ThreadChannel[T]` — checker + codegen (Faz BB.6), `nox.thread` faz
+  serisinin (BB.1-BB.6) tamamlanışı. `ThreadChannel[T](capacity)` artık
+  uçtan uca çalışıyor: iki gerçek OS iş parçacığı arasında sürekli,
+  çift-yönlü iletişim, `int`/`str` payload'lar sızıntısız, kapasite
+  geri basıncı (dual-pipe) tam boru hattından doğrulandı. `ThreadChannel`
+  (Task/Channel/ThreadHandle'ın aksine) `*Scheduler` alanı taşımadığından
+  `nox.thread.start`ın `arg`ı olarak geçirilebilir — bu, `isThreadTransferSafeType`e
+  bilinçli bir istisna olarak eklendi. `nox-teknik-spesifikasyon.md`
+  §3.52 — gerçekten çalıştırılıp bulunan iki hata belgelenir: (1)
+  `registerFunc`in `isSpawnParamSafeType`i `ThreadChannel` parametreli
+  `async def`leri reddediyordu (`isThreadTransferSafeType`den bağımsız,
+  ayrı bir kapı); (2) `ThreadChannel` kurucu mantığının `checkExpr`in
+  kendi switch'ine doğrudan eklenmesi, önceden var olan "çok uzun ifade
+  çökmeden işlenir" fuzz regresyon testinde gerçek bir stack overflow'a
+  yol açtı (Debug modunda bir fonksiyonun yığın çerçevesi tüm switch
+  dallarının birleşimine göre boyutlanır) — ayrı bir `checkGenericConstruct`
+  fonksiyonuna çıkarılarak düzeltildi. 3 yeni uçtan uca codegen golden
+  testi + kasıtlı boz→kırmızı ritüeli (yanlış runtime fonksiyonuna
+  yönlendirme, gerçek bir tip-karışıklığı çökmesi olarak yakalandı).
 
 ## [1.0.0]
 

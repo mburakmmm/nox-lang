@@ -1,0 +1,15 @@
+import nox.thread
+
+async def worker(tc: ThreadChannel[str]) -> None:
+    await tc.send("bir")
+    await tc.send("iki")
+    await tc.send("uc")
+
+tc: ThreadChannel[str] = ThreadChannel[str](2)
+h: ThreadHandle[None] = nox.thread.start(worker, tc)
+i: int = 0
+while i < 3:
+    v: str = await tc.recv()
+    print(v)
+    i = i + 1
+await h.join()

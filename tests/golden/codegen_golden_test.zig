@@ -524,6 +524,27 @@ test "codegen(çalıştır): Faz BB.4 — join edilmeden scope'tan çıkan Threa
     );
 }
 
+test "codegen(çalıştır): Faz BB.6 — ThreadChannel[int], iki gerçek OS iş parçacığı arasında, tamponlu (kapasite 2)" {
+    try expectGolden(
+        @embedFile("codegen_cases/thread_channel_int.nox"),
+        @embedFile("codegen_cases/thread_channel_int.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz BB.6 — ThreadChannel[str], çapraz-iş-parçacığı str transferi, sızıntı yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/thread_channel_str.nox"),
+        @embedFile("codegen_cases/thread_channel_str.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz BB.6 — ThreadChannel[int] geri basınç (kapasite 1, 20 değer), tam boru hattından, sıra/kayıp yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/thread_channel_backpressure.nox"),
+        @embedFile("codegen_cases/thread_channel_backpressure.expected"),
+    );
+}
+
 test "codegen(çalıştır): Faz S.1 — Task[T] yeniden ataması, ilk görev await edilmeden önce, sızıntı/UAF yok" {
     try expectGolden(
         @embedFile("codegen_cases/task_reassignment_frees_old.nox"),

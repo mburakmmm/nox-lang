@@ -1,12 +1,13 @@
-# nox.thread — Faz BB (bkz. nox-teknik-spesifikasyon.md §3.47-§3.50):
+# nox.thread — Faz BB (bkz. nox-teknik-spesifikasyon.md §3.47-§3.52):
 # paylaşımsız (shared-nothing) gerçek M:N (çok çekirdekli) iş parçacığı
 # desteği. `nox.http.serve`nin `serve`i GİBİ, `start`/`ThreadHandle[T].
-# join()` GERÇEK bir `func_def`/`class_def` DEĞİLDİR — TAMAMEN checker
-# (`tryResolveThreadSpawnCall`) VE codegen (`genThreadStartExpr`/
-# `genThreadStartWrapper`/`genThreadHandleJoin`) sihridir. Bu dosya
-# SADECE `import nox.thread`in ÇÖZÜLEBİLMESİ İÇİN VAR.
+# join()`/`ThreadChannel[T](capacity)` GERÇEK bir `func_def`/`class_def`
+# DEĞİLDİR — TAMAMEN checker (`tryResolveThreadSpawnCall`/
+# `checkGenericConstruct`) VE codegen (`genThreadStartExpr`/
+# `genThreadStartWrapper`/`genThreadHandleJoin`/`genThreadChannelOp`)
+# sihridir. Bu dosya SADECE `import nox.thread`in ÇÖZÜLEBİLMESİ İÇİN VAR.
 #
-# Kullanım:
+# Katman 1 — tek seferlik spawn+join:
 #   import nox.thread
 #
 #   async def worker(x: int) -> int:
@@ -20,6 +21,36 @@
 # TAZE, bağımsız bir OS iş parçacığında, KENDİ bağımsız zamanlayıcısının
 # TEK üst-düzey görevi olarak çalışır (dolayısıyla `entry`in KENDİSİ de
 # `spawn`/`await`/`Channel[T]` KULLANABİLİR). Argüman/dönüş tipi
-# `int/float/bool/str/None/ptr` İLE SINIRLIDIR (class/list/dict/Task/
-# Channel/ThreadHandle KAPSAM DIŞI — bkz. checker.zig'in
-# `isThreadTransferSafeType`i).
+# `int/float/bool/str/None/ptr/ThreadChannel[T]` İLE SINIRLIDIR
+# (class/list/dict/Task/Channel/ThreadHandle KAPSAM DIŞI — bkz.
+# checker.zig'in `isThreadTransferSafeType`i).
+#
+# Katman 2 — iş parçacıkları arasında sürekli, çift-yönlü iletişim
+# (bkz. §3.51-§3.52):
+#   import nox.thread
+#
+#   async def producer(tc: ThreadChannel[int]) -> None:
+#       i: int = 0
+#       while i < 5:
+#           await tc.send(i)
+#           i = i + 1
+#
+#   async def main() -> None:
+#       tc: ThreadChannel[int] = ThreadChannel[int](2)
+#       h: ThreadHandle[None] = nox.thread.start(producer, tc)
+#       i: int = 0
+#       while i < 5:
+#           v: int = await tc.recv()
+#           print(v)
+#           i = i + 1
+#       await h.join()
+#
+# `ThreadChannel[T](capacity)`, `Channel[T](capacity)` İLE AYNI
+# sözdizimini/`.send`/`.recv`(HER İKİSİ de `await` İLE) sözleşmesini
+# KULLANIR, AMA `capacity >= 1` GEREKTİRİR (el-ele teslim/rendezvous,
+# `capacity == 0`, çapraz-iş-parçacığı bağlamda v1 kapsamı DIŞI). `T`
+# `isThreadTransferSafeType`den geçmelidir. `ThreadChannel`nin KENDİSİ
+# (Task/Channel/ThreadHandle'ın AKSİNE) `nox.thread.start`ın `arg`ı
+# olarak GEÇİRİLEBİLİR — bir `*Scheduler` alanı TAŞIMADIĞINDAN (saf
+# page_allocator + OS pipe'ları + spin-kilit), paylaşımı iş parçacığı-
+# GÜVENLİDİR.

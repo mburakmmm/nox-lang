@@ -25,6 +25,17 @@ pub const Type = union(enum) {
     /// ama AYRI bir tiptir, ÇÜNKÜ `Task`ın AKSİNE GERÇEK bir OS iş
     /// parçacığına bağlıdır (`await` DEĞİL, `.join()` ile çözülür).
     thread_handle: *const Type,
+    /// `ThreadChannel[T]` — Faz BB.5/BB.6 (bkz. nox-teknik-spesifikasyon.md
+    /// §3.51-§3.52): `ThreadChannel[T](capacity)` ile inşa edilir, iş
+    /// parçacıkları ARASINDA GERÇEK, sürekli, çift-yönlü iletişim sağlar.
+    /// `Channel[T]`den (AYNI-iş-parçacığı) BİLİNÇLİ olarak AYRI bir tiptir
+    /// — ÇÜNKÜ `ThreadHandle`nin AKSİNE (`isThreadTransferSafeType`den
+    /// HARİÇ TUTULUR) `ThreadChannel`in KENDİSİ `nox.thread.start`ın
+    /// `arg`ı olarak GEÇİRİLEBİLİR (bir `*Scheduler` alanı TAŞIMADIĞINDAN
+    /// — saf `page_allocator`+OS pipe'ları+spin-kilit — paylaşımı iş
+    /// parçacığı-GÜVENLİDİR, bkz. `thread_channel.zig`nin modül üstü
+    /// notu).
+    thread_channel: *const Type,
     /// `ptr` — Faz 20'nin ikinci artımı (bkz. nox-teknik-spesifikasyon.md
     /// §3.20): handle-tabanlı C API'leri (`FILE*`/`sqlite3*` gibi) açan,
     /// ARC-İZLENMEYEN OPAK bir işaretçi. Nox bunun İÇİNDEKİ veriyi HİÇ
@@ -59,6 +70,7 @@ pub fn eql(a: Type, b: Type) bool {
         .task => |elem_a| eql(elem_a.*, b.task.*),
         .channel => |elem_a| eql(elem_a.*, b.channel.*),
         .thread_handle => |elem_a| eql(elem_a.*, b.thread_handle.*),
+        .thread_channel => |elem_a| eql(elem_a.*, b.thread_channel.*),
         .dict => |d_a| eql(d_a.key.*, b.dict.key.*) and eql(d_a.value.*, b.dict.value.*),
         .func => |f_a| blk: {
             const f_b = b.func;
@@ -100,6 +112,11 @@ pub fn format(t: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         },
         .thread_handle => |elem| {
             try writer.writeAll("ThreadHandle[");
+            try format(elem.*, writer);
+            try writer.writeAll("]");
+        },
+        .thread_channel => |elem| {
+            try writer.writeAll("ThreadChannel[");
             try format(elem.*, writer);
             try writer.writeAll("]");
         },

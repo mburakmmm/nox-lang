@@ -19,7 +19,10 @@ pub const ParseError = error{
 /// bu listede YOK, çünkü bir `Task[T]` asla doğrudan inşa edilmez (yalnızca
 /// `spawn` ile üretilir).
 fn isGenericConstructName(name: []const u8) bool {
-    return std.mem.eql(u8, name, "Channel");
+    // `ThreadChannel` — Faz BB.6 (bkz. nox-teknik-spesifikasyon.md §3.52):
+    // `ThreadChannel[T](capacity)`, `Channel[T](capacity)` İLE BİREBİR
+    // AYNI sözdizimini KULLANIR — sıfır yeni ayrıştırıcı işi.
+    return std.mem.eql(u8, name, "Channel") or std.mem.eql(u8, name, "ThreadChannel");
 }
 
 pub const Parser = struct {

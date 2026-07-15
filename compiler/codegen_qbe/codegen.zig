@@ -240,7 +240,7 @@ const QbeType = enum { l, d, w, none };
 /// `genCall`in `.closure` dalı) — bir closure DEĞERİNİN KENDİSİ, hem
 /// "nasıl çağrılır" hem "nasıl serbest bırakılır" bilgisini TAŞIYAN, kendi
 /// kendine yeten TEK bir işaretçidir.
-const HeapKind = enum { none, str, list, class, task, channel, dict, closure, thread_handle };
+const HeapKind = enum { none, str, list, class, task, channel, dict, closure, thread_handle, thread_channel };
 
 /// Faz U.4.4: bir closure heap bloğunun başlık boyutu (bkz. `HeapKind.closure`in
 /// belge notu) — `fn_ptr` + `release_fn_ptr`, HER İKİSİ de `l` (8 bayt).
@@ -971,7 +971,8 @@ const Codegen = struct {
                 const is_task = std.mem.eql(u8, g.name, "Task");
                 const is_channel = std.mem.eql(u8, g.name, "Channel");
                 const is_thread_handle = std.mem.eql(u8, g.name, "ThreadHandle");
-                if (!(is_list or is_task or is_channel or is_thread_handle) or g.args.len != 1) return error.Unsupported;
+                const is_thread_channel = std.mem.eql(u8, g.name, "ThreadChannel");
+                if (!(is_list or is_task or is_channel or is_thread_handle or is_thread_channel) or g.args.len != 1) return error.Unsupported;
                 const elem = try self.resolveType(g.args[0]);
                 var elem_heap_info: ?*const ElemHeapInfo = null;
                 // `str` DAHİL — bkz. `ElemHeapInfo.nested`in belge notu:
@@ -998,7 +999,7 @@ const Codegen = struct {
                 // üretebilmesi için (bkz. `genAwaitExpr`, `genChannelOp`).
                 return .{
                     .qtype = .l,
-                    .heap = if (is_list) .list else if (is_task) .task else if (is_channel) .channel else .thread_handle,
+                    .heap = if (is_list) .list else if (is_task) .task else if (is_channel) .channel else if (is_thread_handle) .thread_handle else .thread_channel,
                     .elem_qtype = elem.qtype,
                     .elem_heap_info = elem_heap_info,
                     .elem_is_str = elem.heap == .str,
@@ -1572,7 +1573,7 @@ const Codegen = struct {
                 const fv = try self.newTemp();
                 try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
                 try self.releaseValueIfSet(fv, c.info.heap, c.info.elem_qtype, c.info.class_name, c.info.elem_heap_info);
-            } else if (c.info.heap == .task or c.info.heap == .channel or c.info.heap == .dict or c.info.heap == .thread_handle) {
+            } else if (c.info.heap == .task or c.info.heap == .channel or c.info.heap == .dict or c.info.heap == .thread_handle or c.info.heap == .thread_channel) {
                 const addr = try self.newTemp();
                 try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, offset });
                 const fv = try self.newTemp();
@@ -1646,7 +1647,7 @@ const Codegen = struct {
                 const fv = try self.newTemp();
                 try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
                 try self.releaseValueIfSet(fv, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info);
-            } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .dict or f.info.heap == .thread_handle) {
+            } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .dict or f.info.heap == .thread_handle or f.info.heap == .thread_channel) {
                 // `Task[T]`/`Channel[T]`/`dict[K,V]` sınıf alanı (ör.
                 // `HttpResponse.headers`) — ARC-yönetimli DEĞİLDİR
                 // (`isHeapManaged` bunu KAPSAMAZ), bu yüzden AYRI bir dal:
@@ -1728,7 +1729,7 @@ const Codegen = struct {
                 const fv = try self.newTemp();
                 try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
                 try self.releaseValueIfSet(fv, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info);
-            } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .dict or f.info.heap == .thread_handle) {
+            } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .dict or f.info.heap == .thread_handle or f.info.heap == .thread_channel) {
                 const addr = try self.newTemp();
                 try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, f.offset });
                 const fv = try self.newTemp();
@@ -1909,7 +1910,7 @@ const Codegen = struct {
             // DESTEKLEMİYOR (checker bu dala HİÇ düşürmemeli) — savunmacı
             // olarak `dict`/`Task`/`Channel` İLE AYNI tutamaç-kimliği
             // (pointer) karşılaştırmasına düşülür.
-            .dict, .task, .channel, .closure, .thread_handle => blk: {
+            .dict, .task, .channel, .closure, .thread_handle, .thread_channel => blk: {
                 const t = try self.newTemp();
                 try self.out.writer.print("    {s} =w ceql {s}, {s}\n", .{ t, va, vb });
                 break :blk t;
@@ -2143,7 +2144,7 @@ const Codegen = struct {
             if (entry.value_ptr.is_param or entry.value_ptr.arena) continue;
             if (isHeapManaged(entry.value_ptr.heap)) {
                 try self.releaseSlotIfSet(entry.value_ptr.*);
-            } else if (entry.value_ptr.heap == .task or entry.value_ptr.heap == .channel or entry.value_ptr.heap == .dict or entry.value_ptr.heap == .thread_handle) {
+            } else if (entry.value_ptr.heap == .task or entry.value_ptr.heap == .channel or entry.value_ptr.heap == .dict or entry.value_ptr.heap == .thread_handle or entry.value_ptr.heap == .thread_channel) {
                 // `Task[T]`/`Channel[T]`/`dict[K,V]` ARC-yönetimli DEĞİLDİR
                 // (bkz. `HeapKind`in belge notu) — `destroyNonArcSlotIfSet`
                 // (bkz. onun belge notu) DOĞRUDAN bir kez yıkar. Faz S.1'den
@@ -2399,11 +2400,12 @@ const Codegen = struct {
     /// fiber kendi sonucunu SERBEST BIRAKILMIŞ belleğe yazardı.
     fn destroyNonArcValue(self: *Codegen, ptr: []const u8, heap: HeapKind, dict_info: ?*const DictInfo) CodegenError!void {
         switch (heap) {
-            .task, .channel, .thread_handle => {
+            .task, .channel, .thread_handle, .thread_channel => {
                 const fn_name = switch (heap) {
                     .task => "nox_async_destroy_task",
                     .channel => "nox_channel_destroy",
                     .thread_handle => "nox_thread_destroy",
+                    .thread_channel => "nox_threadchannel_destroy",
                     else => unreachable,
                 };
                 try self.out.writer.print("    call ${s}(l {s}, l {s})\n", .{ fn_name, RT_PARAM, ptr });
@@ -2887,7 +2889,7 @@ const Codegen = struct {
                 // serbest bırakmaya çalışır.
                 if (isHeapManaged(info.heap) and !info.is_param and !info.arena) {
                     try self.releaseSlotIfSet(info);
-                } else if ((info.heap == .task or info.heap == .channel or info.heap == .dict or info.heap == .thread_handle) and !info.is_param and !info.arena) {
+                } else if ((info.heap == .task or info.heap == .channel or info.heap == .dict or info.heap == .thread_handle or info.heap == .thread_channel) and !info.is_param and !info.arena) {
                     // Faz S.1: `Task[T]`/`Channel[T]`/`dict[K,V]` yeniden
                     // atamada ESKİ değer artık sızmaz — `destroyNonArcSlotIfSet`
                     // (bkz. onun belge notu, `Task` İÇİN `nox_async_destroy_task`nin
@@ -2930,7 +2932,7 @@ const Codegen = struct {
                         try self.out.writer.print("    {s} =l loadl {s}\n", .{ old_ptr, addr });
                         try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(f.info.qtype), val.text, addr });
                         try self.releaseValueIfSet(old_ptr, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info);
-                    } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .dict or f.info.heap == .thread_handle) {
+                    } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .dict or f.info.heap == .thread_handle or f.info.heap == .thread_channel) {
                         // Faz S.1: `isHeapManaged`in DIŞINDaki üç tür İÇİN de
                         // (yukarıdaki dalla AYNI "önce oku, SONRA üzerine yaz,
                         // SONRA eskiyi yok et" sırası) — bkz. `destroyNonArcValue`.
@@ -5237,7 +5239,14 @@ const Codegen = struct {
             if (c.callee.* == .attribute) {
                 const a = c.callee.attribute;
                 if (std.mem.eql(u8, a.attr, "send") or std.mem.eql(u8, a.attr, "recv")) {
-                    return self.genChannelOp(a, c.args);
+                    // Alıcının statik tipi (`Channel[T]` mi `ThreadChannel[T]`
+                    // mi) BİR KEZ değerlendirilir — Faz BB.6: `ThreadChannel`
+                    // AYRI bir çalışma-zamanı protokolü (`nox_threadchannel_*`,
+                    // dual-pipe) kullandığından `genChannelOp`DAN AYRI bir
+                    // fonksiyona (`genThreadChannelOp`) dispatch edilir.
+                    const recv_val = try self.genExpr(a.obj.*);
+                    if (recv_val.heap == .thread_channel) return self.genThreadChannelOp(a, c.args, recv_val);
+                    return self.genChannelOp(a, c.args, recv_val);
                 }
                 // Faz BB.4: `ThreadHandle[T].join()` — `Channel.send`/`.recv`
                 // İLE AYNI "yalnızca await üzerinden" desen (bkz.
@@ -5256,9 +5265,12 @@ const Codegen = struct {
 
     /// `ch.send(v)`/`ch.recv()` — YALNIZCA `await` üzerinden (bkz.
     /// `genAwaitExpr`) çağrılır, `genCall`in normal metod-çağrısı yolundan
-    /// GEÇMEZ (`Channel` `self.classes`de yok, yerleşik bir tiptir).
-    fn genChannelOp(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
-        const ch_val = try self.genExpr(a.obj.*);
+    /// GEÇMEZ (`Channel` `self.classes`de yok, yerleşik bir tiptir). `ch_val`
+    /// `genAwaitExpr` TARAFINDAN ZATEN değerlendirilmiştir (Faz BB.6: alıcı
+    /// tipinin `Channel` mi `ThreadChannel` mi OLDUĞUNU görmek İÇİN zaten
+    /// BİR KEZ değerlendirilmesi GEREKTİĞİNDEN, burada TEKRAR değerlendirip
+    /// yan etkileri İKİ KEZ tetiklemek yerine parametre olarak alınır).
+    fn genChannelOp(self: *Codegen, a: ast.Attribute, args: []const ast.Expr, ch_val: Value) CodegenError!Value {
         if (std.mem.eql(u8, a.attr, "send")) {
             if (args.len != 1) return error.Unsupported;
             const v = try self.genExpr(args[0]);
@@ -5277,15 +5289,45 @@ const Codegen = struct {
         return error.Unsupported;
     }
 
-    /// `Channel[T](capacity)` — dilde başka HİÇBİR yerde olmayan, AÇIK tip
-    /// argümanlı bir kurucu çağrısı (bkz. `ast.GenericConstruct`in ve
-    /// `parser.zig`, `isGenericConstructName`in belge notu).
+    /// `tc.send(v)`/`tc.recv()` — Faz BB.6 (bkz. nox-teknik-spesifikasyon.md
+    /// §3.52): `genChannelOp`in AYNI deseni, AMA `nox_channel_*` yerine
+    /// `nox_threadchannel_*`e ÇAĞRI YAPAR VE `T`nin `str` OLUP OLMADIĞINA
+    /// (statik olarak `ch_val.elem_is_str`den BİLİNİR — `thread_channel.zig`nin
+    /// `_val`/`_str` ikili API'sinin GEREĞİ) GÖRE `_val`/`_str` varyantı
+    /// SEÇER.
+    fn genThreadChannelOp(self: *Codegen, a: ast.Attribute, args: []const ast.Expr, ch_val: Value) CodegenError!Value {
+        if (std.mem.eql(u8, a.attr, "send")) {
+            if (args.len != 1) return error.Unsupported;
+            const v = try self.genExpr(args[0]);
+            const converted = try self.convert(v, ch_val.elem_qtype);
+            const payload = try self.toPayload(converted);
+            const fn_name = if (ch_val.elem_is_str) "nox_threadchannel_send_str" else "nox_threadchannel_send_val";
+            try self.out.writer.print("    call ${s}(l {s}, l {s}, l {s})\n", .{ fn_name, RT_PARAM, ch_val.text, payload.text });
+            return .{ .text = "0", .qtype = .none };
+        }
+        if (std.mem.eql(u8, a.attr, "recv")) {
+            if (args.len != 0) return error.Unsupported;
+            const fn_name = if (ch_val.elem_is_str) "nox_threadchannel_recv_str" else "nox_threadchannel_recv_val";
+            const payload_t = try self.newTemp();
+            try self.out.writer.print("    {s} =l call ${s}(l {s}, l {s})\n", .{ payload_t, fn_name, RT_PARAM, ch_val.text });
+            const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, ch_val.elem_qtype);
+            return valueFromElemDescriptor(converted.text, converted.qtype, ch_val.elem_heap_info, ch_val.elem_is_str);
+        }
+        return error.Unsupported;
+    }
+
+    /// `Channel[T](capacity)`/`ThreadChannel[T](capacity)` — dilde başka
+    /// HİÇBİR yerde olmayan, AÇIK tip argümanlı bir kurucu çağrısı (bkz.
+    /// `ast.GenericConstruct`in ve `parser.zig`, `isGenericConstructName`in
+    /// belge notu).
     fn genGenericConstruct(self: *Codegen, g: ast.GenericConstruct) CodegenError!Value {
-        if (!std.mem.eql(u8, g.name, "Channel") or g.type_args.len != 1 or g.args.len != 1) return error.Unsupported;
+        const is_thread_channel = std.mem.eql(u8, g.name, "ThreadChannel");
+        if (!(is_thread_channel or std.mem.eql(u8, g.name, "Channel")) or g.type_args.len != 1 or g.args.len != 1) return error.Unsupported;
         const elem = try self.resolveType(g.type_args[0]);
         const cap_val = try self.genExpr(g.args[0]);
         const ch_t = try self.newTemp();
-        try self.out.writer.print("    {s} =l call $nox_channel_new(l {s}, l {s})\n", .{ ch_t, RT_PARAM, cap_val.text });
+        const new_fn_name = if (is_thread_channel) "nox_threadchannel_new" else "nox_channel_new";
+        try self.out.writer.print("    {s} =l call ${s}(l {s}, l {s})\n", .{ ch_t, new_fn_name, RT_PARAM, cap_val.text });
 
         var elem_heap_info: ?*const ElemHeapInfo = null;
         if (elem.heap == .class or elem.heap == .list) {
@@ -5296,7 +5338,7 @@ const Codegen = struct {
         return .{
             .text = ch_t,
             .qtype = .l,
-            .heap = .channel,
+            .heap = if (is_thread_channel) .thread_channel else .channel,
             .elem_qtype = elem.qtype,
             .elem_heap_info = elem_heap_info,
             .elem_is_str = elem.heap == .str,

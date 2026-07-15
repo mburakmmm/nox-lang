@@ -8239,6 +8239,152 @@ doğrulanarak GERİ YÜKLENDİ, Debug + ReleaseFast YENİDEN yeşile döndü.
 400/400 yeşil, `zig fmt` temiz. Dil yüzeyi (checker/codegen) BU faz
 TARAFINDAN KAPSANMADI — Faz BB.6.
 
+## 3.52 Faz BB.6 — `ThreadChannel[T]`: Checker + Codegen + Sertleştirme Turu
+
+**Kaynak:** Faz BB.5'in (§3.51) TAMAMLANMIŞ saf-Zig çekirdeği ÜZERİNE,
+dil yüzeyi — Katman 2'nin SON parçası, `nox.thread` faz serisinin
+(BB.1-BB.6) TAMAMLANMASI.
+
+**`compiler/parser/parser.zig`:** `isGenericConstructName`e
+`"ThreadChannel"` eklendi — `ThreadChannel[T](capacity)`,
+`Channel[T](capacity)`in AYNI `GenericConstruct` AST yolunu kullanır,
+SIFIR yeni ayrıştırıcı işi.
+
+**`compiler/typecheck/types.zig`:** `Type` union'una `thread_channel:
+*const Type` eklendi (`.thread_handle` İLE AYNI desen, `eql`/`format`
+kolları DAHİL).
+
+**`compiler/typecheck/checker.zig`:**
+- `typeExprToType`nin `.generic` dalına `"ThreadChannel"` eklendi.
+- `isFfiSafeType` → `.thread_channel` HARİÇ (`.thread_handle` İLE AYNI).
+- **`isThreadTransferSafeType`e BİLİNÇLİ bir ASİMETRİ eklendi:**
+  `Task`/`Channel`/`ThreadHandle`nin AKSİNE, `.thread_channel` BU
+  fonksiyonda `true`dur — ÇÜNKÜ `ThreadChannel` (BB.5'in `thread_channel.
+  zig`sinin modül üstü notu) bir `*Scheduler` alanı TAŞIMAZ (saf
+  `page_allocator` + OS pipe'ları + spin-kilit), BAŞKA bir OS iş
+  parçacığına GÜVENLE taşınabilir — ZATEN Katman 2'nin TÜM AMACI
+  budur (`nox.thread.start`ın `arg`ı olarak GEÇİRİLEBİLMESİ).
+- **`isSpawnParamSafeType`e de AYNI İSTİSNA gerekti — GERÇEKTEN derlenip
+  test EDİLEREK keşfedilen bir bağımlılık:** `registerFunc`, HER `async
+  def`in parametre tiplerini TANIM ANINDA (nasıl başlatılacağından
+  BAĞIMSIZ — `spawn` İLE de `nox.thread.start` İLE de) `isSpawnParamSafeType`
+  İLE denetler. `ThreadChannel[T]` parametresi taşıyan bir `entry`
+  (`async def worker(tc: ThreadChannel[int])`) YAZILIP `nox.thread.start`a
+  GEÇİRİLMEYE ÇALIŞILDIĞINDA, `isThreadTransferSafeType` `.thread_channel`i
+  KABUL ETSE BİLE `registerFunc`in `isSpawnParamSafeType` kontrolü (ki
+  o `entry`in KENDİ TANIMI ANINDA, ÇAĞRI sitesinden BAĞIMSIZ çalışır)
+  BAŞARISIZ oluyordu — `.thread_channel` İLK yazımda YANLIŞLIKLA bu
+  fonksiyonun `false` kümesine EKLENMİŞTİ. Uçtan uca bir `.nox` dosyası
+  DERLENEREK yakalandı, `true` kümesine TAŞINARAK düzeltildi.
+- Yeni `checkGenericConstruct` yardımcı fonksiyonu — `Channel[T](capacity)`
+  VE `ThreadChannel[T](capacity)`in İKİSİNİ de işler (`ThreadChannel`
+  eleman tipi `isThreadTransferSafeType`den GEÇMELİDİR).
+- `.attribute` dalına `ThreadChannel.send`/`.recv` — `Channel`in AYNI
+  deseni (`obj_t == .thread_channel`).
+- `.await_expr`in `is_channel_op` kontrolü `ThreadChannel.send`/`.recv`yi
+  de kapsayacak GENİŞLETİLDİ.
+- `typeToTypeExpr`/`appendMangledType`e `.thread_channel` kolları eklendi.
+
+**KRİTİK, gerçekten çalıştırılıp GÖZLEMLENEREK bulunan bir performans/
+kararlılık regresyonu — `checkGenericConstruct`in ÇIKARILMASI:** BB.6'nın
+İLK yazımında `ThreadChannel` kurucu mantığı `checkExpr`in KENDİ
+`.generic_construct` switch dalına DOĞRUDAN eklenmişti. `zig build test`
+çalıştırıldığında, ÖNCEDEN VAR OLAN `tests/fuzz/lexer_parser_checker_fuzz.
+zig`nin "çok uzun tek satırlık ifade çökmeden işlenir" regresyon testi
+(2000 seviye derinlikte iç içe `1 + 1 + ...` — `checkExpr`↔`checkBinary`
+özyinelemesi) `Segmentation fault`la ÇÖKMEYE BAŞLADI. `git stash` İLE
+temel (BB.6 ÖNCESİ) davranışın YEŞİL olduğu doğrulandı — BU GERÇEK bir
+regresyondu, ortam kaynaklı bir gürültü DEĞİL (3/3 tekrarda DETERMİNİSTİK).
+Kök neden: Debug modunda bir fonksiyonun yığın çerçevesi TÜM switch
+dallarının yerel değişkenlerinin BİRLEŞİMİNE göre boyutlanır — `checkExpr`in
+KENDİ switch'ine eklenen HER yeni yerel değişken (bir `.binary`/`.int_lit`
+zinciri o dalı HİÇ ÇALIŞTIRMASA BİLE) `checkExpr`in TEK bir çağrısının
+çerçevesini BÜYÜTÜR, VE bu büyüme 2000 özyinelemeli seviyede TEKRARLANIR.
+Düzeltme: `ThreadChannel`/`Channel` kurucu mantığı `checkGenericConstruct`
+adlı AYRI bir fonksiyona TAŞINDI (`tryResolveThreadSpawnCall`/`checkCall`
+İLE AYNI "ayrı fonksiyon" deseni) — bu, sorunu TAMAMEN ÇÖZDÜ (yerel
+değişkenler ARTIK `checkExpr`in KENDİ çerçevesinde DEĞİL, YALNIZCA
+GERÇEKTEN bir `generic_construct` düğümü işlenirken tahsis edilen AYRI
+bir çerçevede yaşıyor).
+
+**`compiler/codegen_qbe/codegen.zig`:**
+- `HeapKind`e `.thread_channel` eklendi (ARC-yönetimli DEĞİL —
+  `Task`/`Channel`/`ThreadHandle` İLE AYNI).
+- `resolveType`e `is_thread_channel` — `"ThreadChannel"` sihirli generic
+  ismi tanınır.
+- `destroyNonArcValue`e `.thread_channel → nox_threadchannel_destroy`
+  kolu; TÜM `heap == .task or .channel or .dict or .thread_handle`
+  şeklindeki ayrım noktalarına (kapanış-yakalama serbest bırakma, derin
+  eşitlik) `.thread_channel` DA eklendi.
+- Yeni `genThreadChannelOp` (`genChannelOp`in DESENİ) — `nox_channel_*`
+  yerine `nox_threadchannel_*`e çağrı yapar, `T`nin `str` OLUP OLMADIĞINA
+  (statik, `elem_is_str`) göre `_val`/`_str` varyantı SEÇER.
+- `genAwaitExpr`, `.send`/`.recv` çağrılarında ARTIK alıcıyı BİR KEZ
+  değerlendirip (`recv_val`) `.heap`ine (`.channel` mi `.thread_channel`
+  mi) göre `genChannelOp`/`genThreadChannelOp`a dispatch eder —
+  `genChannelOp`in kendi imzası BU YÜZDEN `ch_val: Value` parametresi
+  ALACAK şekilde DEĞİŞTİRİLDİ (alıcı ifadesinin İKİ KEZ değerlendirilip
+  yan etkilerin TEKRARLANMAMASI İÇİN).
+- `genGenericConstruct`, `Channel`/`ThreadChannel`in İKİSİNİ de işler
+  (`nox_channel_new`/`nox_threadchannel_new` arasında STATİK seçim).
+
+**`stdlib/nox/thread.nox`:** Katman 2 kullanım örneği eklendi (doc-only,
+gerçek kod DEĞİL — bkz. §3.50'nin AYNI notu).
+
+**Doğrulama:** 3 YENİ uçtan uca codegen golden testi — `thread_channel_int`
+(İKİ GERÇEK OS iş parçacığı arasında, kapasite 2, 5 `int` değer, sıralı);
+`thread_channel_str` (çapraz-iş-parçacığı `str` transferi, sızıntı yok);
+`thread_channel_backpressure` (kapasite 1, 20 değer, TAM boru hattından
+derlenerek — alıcı HER `recv`den ÖNCE 1ms uyuduğundan gönderici fiber
+NEREDEYSE HER yinelemede GERÇEKTEN geri basınca TAKILIR, yine de sıra/kayıp
+OLMADAN TAMAMLANIR).
+
+**Kasıtlı boz→kırmızı→düzelt:** `genAwaitExpr`in `.thread_channel`
+dispatch dalı GEÇİCİ olarak DEVRE DIŞI BIRAKILDI (`if (false and ...)`)
+— TÜM `send`/`recv` çağrıları YANLIŞLIKLA `genChannelOp`a (AYNI-iş-
+parçacığı `Channel` çalışma zamanına) yönlendirildi. TAM OLARAK BEKLENEN
+3 test (`thread_channel_int`/`_str`/`_backpressure`) `error.ProgramFailed`
+İLE KIRMIZI oldu (100/101 → 98/101), BAŞKA HİÇBİR test ETKİLENMEDİ —
+`ThreadChannel` işaretçisinin `nox_channel_send`/`_recv`e (TAMAMEN FARKLI
+bir Zig struct düzeni BEKLEYEN) geçirilmesinin GERÇEK bir tip-karışıklığı
+ÇÖKMESİNE yol AÇTIĞININ SOMUT kanıtı. Değişiklik `diff` İLE bayt-bayt
+ÖZDEŞLİĞİ doğrulanarak GERİ YÜKLENDİ, Debug + ReleaseFast (TEKRARLANAN
+çalıştırmalarla) YENİDEN yeşile döndü.
+
+**Bilinçli v1 sınırlamaları (nox.thread'in TÜMÜ İÇİN, AÇIKÇA belgelenir):**
+1. **Çapraz-iş-parçacığı DEADLOCK TESPİTİ YAPILMAZ** — TEK bir
+   zamanlayıcının YEREL görüşü BAŞKA bir iş parçacığındaki bir
+   kilitlenmeyi TESPİT EDEMEZ; `ThreadHandle.join()`/`ThreadChannel.
+   send`/`.recv` (karşı taraf ASLA gelmezse) SONSUZA DEK asılı KALABİLİR
+   (`Scheduler.run`ın AYNI-iş-parçacığı `error.Deadlock` tespiti BU
+   duruma UYGULANMAZ — `waiting_on_io` durumu, GERÇEKTEN ilerleme
+   OLUP OLMADIĞINI BİLEMEZ).
+2. **`class`/`list`/`dict` çapraz-iş-parçacığı transferi DESTEKLENMEZ**
+   (`isThreadTransferSafeType`/`isSpawnParamSafeType`) — genel
+   özyinelemeli derin-klonlama mekanizması HİÇBİR YERDE YOK; `int/
+   float/bool/str/none/ptr/ThreadChannel[T]` İLE SINIRLI.
+3. **`ThreadChannel[T](0)` (el-ele teslim/rendezvous) DESTEKLENMEZ** —
+   yalnızca `capacity >= 1`; Zig çekirdeği (`nox_threadchannel_new`)
+   `capacity < 1` İÇİN `null` DÖNER, bu durumda SONRAKİ `.send`/`.recv`
+   çağrıları (Nox'un GENEL "runtime null-pointer hataları İÇİN ZARİF
+   bir istisna YOK" v1 sınırlamasıyla TUTARLI) TANIMSIZ/çökme davranışına
+   yol AÇAR — checker BUNU BUGÜN statik olarak ENGELLEMEZ (`capacity`
+   GENELDE derleme-zamanı sabiti DEĞİLDİR).
+4. **`ThreadChannel`/`ThreadHandle`, TAM OLARAK İKİ tarafça (atomik
+   `owners` sayacı 2'den BAŞLAR) paylaşılmak ÜZERE TASARLANDI** — AYNI
+   kanalın/tutamacın 3+ farklı kapsama/`nox.thread.start` çağrısına
+   GEÇİRİLMESİ checker TARAFINDAN ENGELLENMEZ, AMA SAYAÇ SADECE 2 İÇİN
+   doğru davranır (erken serbest bırakma/UAF riski).
+5. **`entry_fn`/`worker` içindeki YAKALANMAMIŞ bir istisna SÜRECİ
+   TAMAMEN SONLANDIRIR** (`spawn`ın AYNI MEVCUT v1 davranışı) — `join()`e
+   ZARİFÇE bir hata OLARAK YAYILMAZ.
+
+`zig build test` (Debug + ReleaseFast, TEKRARLANAN çalıştırmalarla)
+403/403 yeşil, `zig fmt` temiz. `nox.thread` (Faz BB.1-BB.6) TAMAMLANDI
+— paylaşımsız (shared-nothing) gerçek M:N iş parçacığı desteği (Katman
+1: `start`/`ThreadHandle[T]`/`.join()`; Katman 2: `ThreadChannel[T]`)
+1.0 sürümüne HAZIR.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
