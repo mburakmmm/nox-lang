@@ -225,6 +225,18 @@ için `nox-teknik-spesifikasyon.md`'nin tam geliştirme geçmişine bakın.
   seviyesinde de teyit edildi.
 
 ### Düzeltildi
+- **Güvenlik (Faz X.1, `docs/uretim-hazirlik-analizi.md` P1 bulgusu #12):**
+  WASM köprüsünün DÖRT LEB128 varint okuyucusu (`runtime/wasm_bridge/
+  module.zig`nin `readVarU32`/`readVarI32`si + `runtime/wasm_bridge/
+  interp.zig`nin `readVarU32At`/`readVarI32At`si), bozuk/kötü niyetli bir
+  `.wasm` dosyası 6+ ardışık devam baytı (`0x80`) sağladığında `shift: u5`
+  taşmasına (28+7=35 > 31) yol açıyordu — güvenli derlemelerde panik
+  (DoS), güvensiz derlemelerde tanımsız davranış. Bayt sayısı 5 ile
+  sınırlandı, birikim `u64`/`i64`e taşındı, sonuç hedef genişliğe (u32/
+  i32) sığma açısından doğrulandı (kanonik olmayan kodlamalar artık
+  sessizce kırpılmıyor, reddediliyor). Kasıtlı boz→kırmızı→düzelt
+  ritüeli sırasında test vektörünün kendisinde de gerçek bir hata
+  bulundu (bkz. nox-teknik-spesifikasyon.md §3.38) ve düzeltildi.
 - `noxlsp`nin LSP çerçeveleme okuyucusunda (`readMessage`), `std.Io.Reader.
   takeDelimiterExclusive`in delimiter'ı (`\n`) TÜKETMEDİĞİ (yalnızca ONA
   KADAR ilerlediği) fark edilmeden `takeDelimiterExclusive` kullanılmıştı —

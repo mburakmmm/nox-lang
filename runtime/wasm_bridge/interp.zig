@@ -38,36 +38,51 @@ pub const InterpError = error{
     TooManyArgs,
 };
 
+/// Faz X.1 (bkz. `module.zig`nin `readVarU32`sinin AYNI belge notu, bkz.
+/// docs/uretim-hazirlik-analizi.md P1 bulgusu #12): bayt-kod akışındaki
+/// (`call`/`local.*` indeksleri) LEB128 okuyucu, AYNI "5 baytla SINIRLA +
+/// u64 biriktir + u32 aralığına SIĞMA doğrula" düzeltmesini taşır — ESKİ
+/// `shift: u5` tasarımı, 6+ devam baytlı bozuk bayt kodunda TAŞMA
+/// PANİĞİNE (DoS) yol açardı. `error.Trap`, WASM'ın KENDİ "çalışma zamanı
+/// hatası" terminolojisiyle TUTARLI (bkz. `InterpError`'ın MEVCUT üyesi).
 fn readVarU32At(code: []const u8, pos: *usize) !u32 {
-    var result: u32 = 0;
-    var shift: u5 = 0;
+    var result: u64 = 0;
+    var shift: u6 = 0;
+    var nbytes: u8 = 0;
     while (true) {
+        if (nbytes >= 5) return error.Trap;
         if (pos.* >= code.len) return error.UnexpectedEof;
         const b = code[pos.*];
         pos.* += 1;
-        result |= @as(u32, b & 0x7f) << shift;
+        nbytes += 1;
+        result |= @as(u64, b & 0x7f) << shift;
         if (b & 0x80 == 0) break;
         shift += 7;
     }
-    return result;
+    if (result > std.math.maxInt(u32)) return error.Trap;
+    return @intCast(result);
 }
 
 fn readVarI32At(code: []const u8, pos: *usize) !i32 {
-    var result: i32 = 0;
-    var shift: u5 = 0;
+    var result: i64 = 0;
+    var shift: u6 = 0;
+    var nbytes: u8 = 0;
     var b: u8 = 0;
     while (true) {
+        if (nbytes >= 5) return error.Trap;
         if (pos.* >= code.len) return error.UnexpectedEof;
         b = code[pos.*];
         pos.* += 1;
-        result |= @as(i32, b & 0x7f) << shift;
+        nbytes += 1;
+        result |= @as(i64, b & 0x7f) << shift;
         shift += 7;
         if (b & 0x80 == 0) break;
     }
-    if (shift < 32 and (b & 0x40) != 0) {
-        result |= @as(i32, -1) << shift;
+    if (shift < 64 and (b & 0x40) != 0) {
+        result |= @as(i64, -1) << shift;
     }
-    return result;
+    if (result < std.math.minInt(i32) or result > std.math.maxInt(i32)) return error.Trap;
+    return @intCast(result);
 }
 
 /// `func_index`i, verilen `args` (yalnızca `i32`) ile çalıştırır. Fonksiyon
@@ -209,4 +224,26 @@ test "callExport: HPy handle sistemi üzerinden çağrı" {
     defer ctx.ctx_Close.?(ctx, result);
 
     try std.testing.expectEqual(@as(i64, 42), ctx.ctx_Long_AsInt64_t.?(ctx, result));
+}
+
+test "readVarU32At/readVarI32At: kanonik değerler doğru çözülür" {
+    var pos: usize = 0;
+    const bytes1 = &[_]u8{ 0xac, 0x02 };
+    try std.testing.expectEqual(@as(u32, 300), try readVarU32At(bytes1, &pos));
+
+    pos = 0;
+    const bytes2 = &[_]u8{ 0x80, 0x7f };
+    try std.testing.expectEqual(@as(i32, -128), try readVarI32At(bytes2, &pos));
+}
+
+test "readVarU32At/readVarI32At: Faz X.1 — 6+ devam baytı taşma sınırına takılır" {
+    // `module.zig`nin `readVarU32`sinin AYNI Faz X.1 hatası — burada bayt-
+    // kod akışında (call/local.* indeksleri, i32.const) YÜRÜTME sırasında
+    // ortaya çıkan hali (bkz. modül üstü not, `error.Trap`).
+    var pos1: usize = 0;
+    const bytes1 = &[_]u8{ 0x80, 0x80, 0x80, 0x80, 0x80, 0x00 };
+    try std.testing.expectError(error.Trap, readVarU32At(bytes1, &pos1));
+
+    var pos2: usize = 0;
+    try std.testing.expectError(error.Trap, readVarI32At(bytes1, &pos2));
 }

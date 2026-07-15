@@ -102,34 +102,58 @@ const Reader = struct {
 
     /// WASM'ın LEB128 imzasız değişken uzunluklu tamsayı kodlaması
     /// (bölüm/vektör boyutları, indeksler için kullanılır).
+    ///
+    /// **Faz X.1 (bkz. docs/uretim-hazirlik-analizi.md, P1 bulgusu #12):**
+    /// bir `u32` LEB128 kodlaması EN FAZLA 5 baytla temsil edilir (5*7=35 ≥
+    /// 32 bit). Bozuk/kötü niyetli bir `.wasm`, ART ARDA devam biti (0x80)
+    /// TAŞIYAN 6+ bayt sağlarsa, ESKİ kod (`shift: u5`) `shift += 7`i 5.
+    /// bayttan SONRA da çalıştırıp `u5`in TAŞIMASINA (28+7=35 > 31) — bu,
+    /// güvenli derlemelerde bir PANİK (DoS), güvensiz derlemelerde
+    /// TANIMSIZ DAVRANIŞ demekti. Düzeltme: (1) bayt sayısı 5 İLE
+    /// SINIRLANIR (6. devam biti GÖRÜLÜRSE `error.InvalidModule`), (2) HİÇBİR
+    /// taşma tuzağı TETİKLEMEMESİ İÇİN birikim `u64`de yapılır (`shift`
+    /// yalnızca 0/7/14/21/28 değerlerini ALIR, `u64` İÇİN AÇIKÇA güvenli),
+    /// (3) SONUÇ `u32`nin sınırlarını AŞARSA (kanonik-OLMAYAN bir kodlama —
+    /// son baytın FAZLADAN yüksek bitleri sıfır DEĞİLSE) `error.InvalidModule`
+    /// döner — sessizce KIRPILMAZ.
     fn readVarU32(self: *Reader) !u32 {
-        var result: u32 = 0;
-        var shift: u5 = 0;
+        var result: u64 = 0;
+        var shift: u6 = 0;
+        var nbytes: u8 = 0;
         while (true) {
+            if (nbytes >= 5) return error.InvalidModule;
             const b = try self.byte();
-            result |= @as(u32, b & 0x7f) << shift;
+            nbytes += 1;
+            result |= @as(u64, b & 0x7f) << shift;
             if (b & 0x80 == 0) break;
             shift += 7;
         }
-        return result;
+        if (result > std.math.maxInt(u32)) return error.InvalidModule;
+        return @intCast(result);
     }
 
     /// LEB128 işaretli değişken uzunluklu tamsayı kodlaması (`i32.const`
-    /// gibi sabit değerler için kullanılır).
+    /// gibi sabit değerler için kullanılır). Bkz. `readVarU32`nin AYNI
+    /// Faz X.1 belge notu — burada `i64` birikim + 5 baytlık ÜST SINIR +
+    /// SONUÇ `i32` aralığına SIĞMA doğrulaması UYGULANIR.
     fn readVarI32(self: *Reader) !i32 {
-        var result: i32 = 0;
-        var shift: u5 = 0;
+        var result: i64 = 0;
+        var shift: u6 = 0;
+        var nbytes: u8 = 0;
         var b: u8 = 0;
         while (true) {
+            if (nbytes >= 5) return error.InvalidModule;
             b = try self.byte();
-            result |= @as(i32, b & 0x7f) << shift;
+            nbytes += 1;
+            result |= @as(i64, b & 0x7f) << shift;
             shift += 7;
             if (b & 0x80 == 0) break;
         }
-        if (shift < 32 and (b & 0x40) != 0) {
-            result |= @as(i32, -1) << shift;
+        if (shift < 64 and (b & 0x40) != 0) {
+            result |= @as(i64, -1) << shift;
         }
-        return result;
+        if (result < std.math.minInt(i32) or result > std.math.maxInt(i32)) return error.InvalidModule;
+        return @intCast(result);
     }
 
     fn readValType(self: *Reader) !ValType {
@@ -254,4 +278,52 @@ test "parse: gerçek zig-derlenmiş bir add_one modülünü ayrıştırır" {
     try std.testing.expectEqual(@as(u32, 0), idx);
     try std.testing.expectEqual(@as(usize, 1), mod.bodies.len);
     try std.testing.expectEqualSlices(u8, "\x20\x00\x41\x01\x6a\x0b", mod.bodies[0].code);
+}
+
+test "readVarU32: kanonik değerler doğru çözülür" {
+    var r1 = Reader{ .bytes = &.{0x00} };
+    try std.testing.expectEqual(@as(u32, 0), try r1.readVarU32());
+    var r2 = Reader{ .bytes = &.{0x7f} };
+    try std.testing.expectEqual(@as(u32, 127), try r2.readVarU32());
+    var r3 = Reader{ .bytes = &.{ 0x80, 0x01 } };
+    try std.testing.expectEqual(@as(u32, 128), try r3.readVarU32());
+    var r4 = Reader{ .bytes = &.{ 0xac, 0x02 } };
+    try std.testing.expectEqual(@as(u32, 300), try r4.readVarU32());
+    // maxInt(u32) — tam olarak 5 bayt kullanan, geçerli/kanonik en büyük kodlama.
+    var r5 = Reader{ .bytes = &.{ 0xff, 0xff, 0xff, 0xff, 0x0f } };
+    try std.testing.expectEqual(@as(u32, std.math.maxInt(u32)), try r5.readVarU32());
+}
+
+test "readVarU32: Faz X.1 — 6+ devam baytı taşma sınırına takılır" {
+    // İlk 5 bayt HEPSİ devam bitini (0x80) taşıyor — geçerli bir u32
+    // LEB128 kodlaması EN FAZLA 5 bayt sürdüğünden, bu 6. bayta ULAŞMADAN
+    // `error.InvalidModule` İLE reddedilmeli (ESKİ kodda `shift: u5`nin
+    // TAŞMASINA/panik'e yol açardı — bkz. modül üstü not).
+    var r = Reader{ .bytes = &.{ 0x80, 0x80, 0x80, 0x80, 0x80, 0x00 } };
+    try std.testing.expectError(error.InvalidModule, r.readVarU32());
+}
+
+test "readVarU32: Faz X.1 — kanonik olmayan (u32 sınırını aşan) son bayt reddedilir" {
+    // maxInt(u32)'nin geçerli kodlamasıyla (yukarı) AYNI 5 baytlık uzunluk,
+    // AMA son bayt FAZLADAN bir bit taşıyor (0x1f yerine 0x0f OLMALIYDI) —
+    // bu, 32 bitin ÖTESİNDE anlamlı bit taşıyan (kanonik-olmayan) bir
+    // kodlamadır, SESSİZCE kırpılmak YERİNE reddedilmelidir.
+    var r = Reader{ .bytes = &.{ 0xff, 0xff, 0xff, 0xff, 0x1f } };
+    try std.testing.expectError(error.InvalidModule, r.readVarU32());
+}
+
+test "readVarI32: kanonik değerler doğru çözülür" {
+    var r1 = Reader{ .bytes = &.{0x00} };
+    try std.testing.expectEqual(@as(i32, 0), try r1.readVarI32());
+    var r2 = Reader{ .bytes = &.{0x7f} };
+    try std.testing.expectEqual(@as(i32, -1), try r2.readVarI32());
+    var r3 = Reader{ .bytes = &.{ 0xff, 0x00 } };
+    try std.testing.expectEqual(@as(i32, 127), try r3.readVarI32());
+    var r4 = Reader{ .bytes = &.{ 0x80, 0x7f } };
+    try std.testing.expectEqual(@as(i32, -128), try r4.readVarI32());
+}
+
+test "readVarI32: Faz X.1 — 6+ devam baytı taşma sınırına takılır" {
+    var r = Reader{ .bytes = &.{ 0x80, 0x80, 0x80, 0x80, 0x80, 0x00 } };
+    try std.testing.expectError(error.InvalidModule, r.readVarI32());
 }

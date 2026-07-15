@@ -7095,6 +7095,89 @@ BU FAZDAN ETKİLENMEDİ, DEĞİŞMEDEN yeşil.
 
 ---
 
+## 3.38 Faz X.1 — WASM Ayrıştırıcısının LEB128 Varint Okuyucularına Taşma Sınırı
+
+**Kaynak — `docs/uretim-hazirlik-analizi.md` P1 bulgusu #12:** "WASM
+ayrıştırıcısında varint taşması — `module.zig`/`interp.zig`'in LEB128
+okuyucuları taşma (overflow) SINIRI KONTROL ETMİYOR... bozuk/kötü niyetli
+bir `.wasm` dosyası panik/UB tetikleyebilir." Bu, `nox-teknik-spesifikasyon.
+md`nin KENDİSİNDE (Faz 13 bölümü) HİÇ belgelenMEMİŞ, YALNIZCA üretim-
+hazırlık analiz raporunda kayıtlı bir bulgudur — AGENTS.md §9.5'in AYNI
+kaynağı (P0 bulgusu #10, güven sınırı) referans alma DESENİYLE TUTARLI.
+
+**Kök neden — DÖRT bağımsız LEB128 okuyucu, HEPSİ AYNI kusuru
+TAŞIYOR:** `runtime/wasm_bridge/module.zig`nin `Reader.readVarU32`/
+`readVarI32`si (ikili modül AYRIŞTIRMA — bölüm/vektör boyutları,
+indeksler) VE `runtime/wasm_bridge/interp.zig`nin `readVarU32At`/
+`readVarI32At`si (bayt kodu YÜRÜTME — `call`/`local.*` indeksleri,
+`i32.const` değeri) — HEPSİ `shift: u5` (`u32` genişliğine göre "yeterli"
+varsayılan bir tip) İLE bir döngüde `shift += 7` YAPIYORDU, bayt SAYISINA
+HİÇBİR ÜST SINIR KOYMADAN. Bir `u32`nin GEÇERLİ LEB128 kodlaması EN FAZLA
+5 bayt sürer (5×7=35 ≥ 32 bit) — AMA bozuk/kötü niyetli bir `.wasm`, ART
+ARDA devam biti (`0x80`) TAŞIYAN 6+ bayt SAĞLARSA, 5. bayttan SONRAKİ
+`shift += 7` çağrısı `shift`i 28'den 35'e TAŞIR — `u5`in maksimum değeri
+31 OLDUĞUNDAN bu bir TAMSAYI TAŞMASIDIR: güvenli derlemelerde (Debug/
+ReleaseSafe) **panik** (DoS — bozuk bir `.wasm` dosyası okuyan HERHANGİ
+bir Nox programını ÇÖKERTİR), güvensiz derlemelerde (ReleaseFast/
+ReleaseSmall) **TANIMSIZ DAVRANIŞ**.
+
+**Düzeltme — ÜÇ katmanlı, `docs/uretim-hazirlik-analizi.md`nin İSTEDİĞİ
+"taşma SINIRI" tam olarak karşılanacak şekilde:**
+1. **Bayt SAYISI 5 İLE SINIRLANIR:** yeni bir `nbytes: u8` sayaç, döngünün
+   HER turunda `if (nbytes >= 5) return error.InvalidModule` (`module.zig`)
+   / `error.Trap` (`interp.zig`, `InterpError`nin MEVCUT bir üyesi, WASM'ın
+   KENDİ "çalışma zamanı hatası" terminolojisiyle TUTARLI) — 6. devam
+   baytına ULAŞMADAN reddeder.
+2. **Birikim `u64`/`i64`de yapılır (`shift: u5` → `u6`):** `shift`in
+   KENDİSİ bir daha ASLA taşmaz (5 bayt İÇİN maksimum `shift=28`, döngü
+   İÇİNDEKİ SON artırım `35`e ULAŞSA BİLE `u6` (maks 63) bunu RAHATÇA
+   TAŞIR) — `<<` işleci de ARTIK `u32`/`i32`nin dar sınırlarına ÇARPMAZ.
+3. **SONUÇ hedef genişliğe SIĞMA doğrulaması:** döngü BİTTİKTEN SONRA
+   (`u32` İÇİN `result > maxInt(u32)`, `i32` İÇİN `result` `[minInt(i32),
+   maxInt(i32)]` DIŞINDAYSA) `error.InvalidModule`/`error.Trap` döner —
+   bu, KANONİK-OLMAYAN bir kodlamayı (son baytın hedef genişliğin ÖTESİNDE
+   ANLAMLI bit TAŞIDIĞI durumu, ör. `[0xff,0xff,0xff,0xff,0x1f]`, YALNIZCA
+   BİR bit fazla — `0x0f` OLMALIYDI) SESSİZCE KIRPMAK YERİNE REDDEDER.
+   **Katman 1 VE 3 BİRBİRİNİ TAMAMLAR, BİRİ DİĞERİNİN YERİNE GEÇMEZ:**
+   TÜM sıfır-payload'lu (ör. `[0x80]×5 + [0x00]`) 6+ baytlık bir kodlama
+   `result=0` üretir — bu KESİNLİKLE `maxInt(u32)`yi AŞMADIĞINDAN, YALNIZCA
+   Katman 3'ün (sığma kontrolü) VARLIĞI BU DURUMU YAKALAYAMAZ, Katman 1'in
+   (bayt-sayısı sınırı) AYRICA GEREKLİ olduğunu KANITLAR (bkz. aşağıdaki
+   test tasarımı notu).
+
+**Test tasarımı NOTU (İKİNCİ bir gerçek hata, implementasyon SIRASINDA
+yakalandı):** İLK yazılan "6+ devam baytı taşma sınırına takılır" testi
+`[0x80,0x80,0x80,0x80,0x80,0x01]` kullanıyordu — bu vektör YANLIŞLIKLA
+Katman 3'ü (sığma kontrolü) DE tetikliyordu (6. bayt `0x01`, `1<<35`i
+KATkıyor, bu da `maxInt(u32)`yi ZATEN AŞIYOR) — bu YÜZDEN bayt-sayısı
+sınırı (Katman 1) KASITLI olarak DEVRE DIŞI BIRAKILDIĞINDA (`if (false)
+return error...`) test HÂLÂ YEŞİL KALIYORDU (Katman 3 BAĞIMSIZ olarak
+YAKALADIĞI İÇİN) — bu, `break→kırmızı→düzelt` RİTÜELİ SIRASINDA (bkz.
+AGENTS.md İlke #7) KEŞFEDİLDİ VE test vektörü `[0x80,0x80,0x80,0x80,0x80,
+0x00]` (TÜM payload SIFIR, `result=0` üretir — YALNIZCA Katman 1'in
+YAKALAYABİLECEĞİ bir durum) OLARAK DÜZELTİLDİ — bu düzeltmeden SONRA
+kasıtlı boz TEKRARLANDI, ÜÇ test (module.zig'in ikisi + interp.zig'in
+birleşik testi) DOĞRU şekilde KIRMIZIYA DÖNDÜ, geri getirildi.
+
+**Doğrulama:**
+1. **8 yeni birim testi** (`module.zig`de 6, `interp.zig`de 2): kanonik
+   değerlerin (0/127/128/300/`maxInt(u32)`, imzalı İÇİN 0/-1/127/-128)
+   DOĞRU çözüldüğü + 6+ bayt taşma sınırının + kanonik-olmayan (aşırı
+   büyük son bayt) kodlamanın REDDEDİLDİĞİ.
+2. **Kasıtlı boz→kırmızı→düzelt** (İKİ turda, yukarıdaki test-tasarımı
+   notuna bkz.): bayt-sayısı sınırı (`if (nbytes >= 5) return error...`)
+   HER İKİ dosyada da (`module.zig`nin İKİ fonksiyonu + `interp.zig`nin
+   İKİ fonksiyonu) `if (false) return error...`e ÇEVRİLDİ → `zig build
+   test`: **355/358 test geçti, TAM OLARAK 3 test BAŞARISIZ oldu**
+   (`readVarU32`/`readVarI32`nin `module.zig` testleri + `interp.zig`nin
+   birleşik testi) — `"expected error.InvalidModule/Trap, found 0"`,
+   TAM OLARAK beklenen hata; BAŞKA HİÇBİR test ETKİLENMEDİ. Düzeltme
+   GERİ getirildi, TÜM testler (Debug + ReleaseFast) YEŞİLE döndü.
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+---
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
