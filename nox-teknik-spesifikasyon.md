@@ -8520,6 +8520,120 @@ paketin TAM olarak İŞLEVSEL olduğu KANITLANDI (`install.sh`nin KENDİSİ,
 `~/.nox-lang`i/shell rc'yi DOKUNMAMAK İÇİN, DOĞRUDAN ÇALIŞTIRILMADI —
 paket AYRI, izole bir dizine elle açılıp DOĞRULANDI).
 
+## 3.54 Faz CC.2.1 — `noxc fetch`/`noxc update`: Gerçek İmplementasyon
+
+**Kaynak:** kullanıcının "sonraki aşama geliştirmeler" listesinin #1
+maddesi ("NOXC CLI tool geliştirmeleri") — Faz O §P.5'ten beri REZERVE
+bırakılan (yalnızca "henuz uygulanmadi" basıp exit 1 dönen) `fetch`/
+`update` alt komutları için ilk somut adım.
+
+**`resolveDependencies` — YENİ, PAYLAŞILAN bir çekirdek:**
+`resolveImportsForBuild`in (bkz. §3.6.7) `requires[]` çözme döngüsüyle
+AYNI mantığı taşır, ama **BİLİNÇLİ olarak O fonksiyona DOKUNULMADI** —
+zaten test edilmiş/load-bearing bir yolu riske ATMAMAK için AYRI bir
+fonksiyon yazıldı (`nox.thread`/`ThreadChannel` fazlarının AYNI "mevcut
+load-bearing koda dokunmadan yanına ekle" disiplini). `force_refetch`
+parametresi İKİ modu ayırt eder:
+- `false` (`fetch`): ZATEN kilitli+önbellekte mevcut bir bağımlılığa HİÇ
+  dokunulmaz (`.cached` sonucu).
+- `true` (`update`): HER bağımlılık `req.ref`den KOŞULSUZ yeniden
+  çözülür (Go'nun `go get -u`suyla AYNI kavram) — `git` HER durumda
+  ÇAĞRILIR, ama SONUÇ AYNI SHA'ya çözülürse (`ref` ZATEN bir SHA'ysa ya
+  da dal HİÇ ilerlemediyse) `.unchanged` olarak işaretlenir (`.updated`
+  DEĞİL — doğru bir özet basılabilsin diye).
+
+**`noxc fetch`:** proje kökündeki (CWD'den yukarı yürüyerek bulunan)
+`nox.json`daki `requires[]`i önbelleğe DOLDURUR — bir `.nox` dosyası
+DERLEMEDEN. Her bağımlılık için `getirildi: <alias> (<repo>@<kısa-sha>)`
+ya da `zaten guncel: <alias> (<kısa-sha>)` basar, bir özetle biter.
+
+**`noxc update`:** `fetch`in AKSİNE HER bağımlılığı YENİDEN çözer,
+`nox.lock`taki kilitli SHA'ları GÜNCELLER. `guncellendi: <alias> <eski-
+sha> -> <yeni-sha>` / `degismedi: <alias> (<sha>)` basar.
+
+**GERÇEKTEN test edilip bulunan İKİ hata (ikisi de kendi yazdığım YENİ
+testlerde, ürün kodunda DEĞİL):**
+1. `tests/cli/package_resolution_test.zig`ye eklenen `addFixtureCommit`
+   yardımcısı `std.Io.Dir.openAbsolute`yi ÇAĞIRIYORDU — bu API BU Zig
+   sürümünde YOK. Düzeltme: `project.zig`nin `saveLockfile`i GİBİ,
+   `Dir.cwd()`e MUTLAK bir `sub_path` geçmek (bu API'nin ZATEN SAYDAM
+   olarak desteklediği, kanıtlanmış desen).
+2. **DAHA ÖNEMLİ, `.cwd` KULLANAN HER GELECEKTEKİ test İÇİN geçerli bir
+   ders:** YENİ `fetch`/`update` testleri, alt süreci fixture proje
+   KÖKÜNDE çalıştırmak İÇİN `std.process.run`a `.cwd = .{ .path =
+   proj_path }` geçiyordu — AMA `noxc`nin argv[0]'ı `noxcPath()`nin
+   döndürdüğü GÖRELİ `"zig-out/bin/noxc"` idi. GÖRELİ bir argv[0], test
+   SÜRECİNİN DEĞİL `.cwd` İLE VERİLEN YENİ çalışma dizinine göre
+   çözülür — bu yüzden `<proj_path>/zig-out/bin/noxc` (YOK) ÇALIŞTIRILMAYA
+   ÇALIŞILIYORDU, `processSpawnPosix` İLE (ENOENT-benzeri) ÇÖKÜYORDU.
+   Düzeltme: YENİ bir `noxcAbsPath(io, a)` yardımcısı (`std.process.
+   currentPathAlloc` + `std.fs.path.join`) — **`.cwd` KULLANAN HER çağrı
+   sitesi BUNDAN SONRA mutlak yol KULLANMALIDIR**, bu genel bir kural
+   olarak belgelendi.
+
+**Doğrulama:** `tests/cli/package_resolution_test.zig`ye 2 YENİ uçtan uca
+test — `noxc fetch` (bağımlılığı getirip `nox.lock` yazması, İKİNCİ
+çalıştırmanın fixture repo'nun `.git`i SİLİNDİKTEN SONRA BİLE önbellekten
+[offline] geçmesi) ve `noxc update` (fixture repo'ya İKİNCİ bir commit
+eklenip `nox.lock`taki kilitli SHA'nın YENİ commit'e güncellendiğinin
+doğrulanması — eski SHA'nın ARTIK lock'ta GÖRÜNMEDİĞİ dahil).
+`tests/cli/subcommand_test.zig`deki ESKİ "henuz uygulanmadi" testi,
+ARTIK geçerli olmayan davranışı sınadığından, "nox.json bulunamayan bir
+dizinden çalıştırılırsa net hatayla başarısız olur" testine DÖNÜŞTÜRÜLDÜ.
+
+**Kasıtlı boz→kırmızı→düzelt:** `resolveDependencies`in `force_refetch`
+KONTROLÜ GEÇİCİ olarak DEVRE DIŞI BIRAKILDI (`if (false and
+!force_refetch)`) — `fetch`in "ikinci çalıştırma önbellekten (offline)
+geçer" testi TAM OLARAK BEKLENDİĞİ ŞEKİLDE KIRMIZI oldu (405/406, silinen
+`.git`e karşı YENİDEN `git` çağırmaya ÇALIŞTIĞINDAN), BAŞKA HİÇBİR test
+ETKİLENMEDİ. Değişiklik `diff` İLE bayt-bayt ÖZDEŞLİĞİ doğrulanarak GERİ
+YÜKLENDİ, Debug + ReleaseFast (TEKRARLANAN soğuk-önbellek çalıştırmalarıyla,
+bkz. §3.55) YENİDEN yeşile döndü.
+
+## 3.55 Faz CC.2.1 (addendum) — CI'de GERÇEK, Tekrarlanabilir Bir Soğuk-Önbellek Yarış Durumu
+
+**Kaynak:** kullanıcının GERÇEK bir CI çalıştırmasında GÖZLEMLEDİĞİ
+"test buildler takılıyor" raporu — `noxc fetch`/`update` çalışmasının
+GERÇEK CI ortamında doğrulanması SIRASINDA keşfedildi.
+
+**Bulgu — %100 yerel olarak TEKRARLANABİLİR:** `rm -rf .zig-cache zig-out
+&& zig build test` (TEK bir komut, TAMAMEN temiz bir önbellekten) `noxc`/
+`noxlsp`yi bir ALT SÜREÇ olarak ÇAĞIRAN test dosyalarında (`tests/cli/
+*.zig` — `noxc fetch`/`update`e ÖZGÜ DEĞİL, ÖNCEDEN VAR OLAN `lsp_test.
+zig` BİLE etkilendi) `processSpawnPosix`/`child_err` İLE ÇÖKÜYORDU.
+`test_step.dependOn(&install_noxc.step)`/`&install_noxrt.step` GİBİ
+Step-seviyesi bağımlılıklar (bkz. build.zig) DOĞRU KURULU olsa BİLE —
+bu, `zig build test`in KENDİ İÇ `install_noxc`/`install_noxrt`
+adımlarının TAMAMLANMASI İLE test ikililerinin bu KURULU ikiliyi
+ÇAĞIRMASI ARASINDA GERÇEK bir yarış durumudur (muhtemelen: `zig build
+test`in TEK bir çağrısı İÇİNDE, `install_*` adımları İLE test-artifact
+çalıştırma adımları arasında Zig'in build-graph zamanlamasının, HENÜZ
+TAM olarak anlaşılmamış bir nedenle, "step tamamlandı" VE "dosya
+sistemine GERÇEKTEN YAZILDI/GÖRÜNÜR" ARASINDAKİ farkı garanti ETMEMESİ).
+
+**Düzeltme — İKİ AYRI komut (TEK `zig build test` çağrısı DEĞİL):** HER
+mod (Debug/ReleaseFast) İÇİN önce SALT `zig build` (o `-Doptimize` İLE,
+TÜM `install_*` adımlarını TAMAMEN BİTİRİR), SONRA (AYRI bir komut
+olarak) `zig build test` (AYNI mod). İkinci komut çalıştığında `install_
+noxc`/`install_noxrt` ZATEN TAMAMLANMIŞ/önbelleklenmiş (no-op)
+OLDUĞUNDAN, yarış PENCERESİ TAMAMEN KAPANIR — bu, `ci.yml`de UYGULANDI
+VE yerel olarak `rm -rf .zig-cache zig-out && zig build && zig build
+test` (Debug + ReleaseFast, İKİŞER kez TEKRARLANARAK) İLE DOĞRULANDI:
+sıfır çökme, 406/406 yeşil, HER seferinde.
+
+**Bilinçli v1 gözlemi (AÇIKÇA belgelenir):** bu, `zig build test`in
+KENDİ iç zamanlamasının TAM kök nedeni (Zig'in build sistemi İÇİNDE)
+DERİNLEMESİNE araştırılmadı — pragmatik, GERÇEKTEN doğrulanmış bir
+mimari İŞ-AROUND (iki AYRI komut) uygulandı. Bu, `docs/uretim-hazirlik-
+analizi.md`nin/geçmiş faz notlarının (Faz O §P.2/§P.3) "noxc TAZE
+derlendikten SONRAKİ İLK zig build test bazen bir CLİ testini başarısız
+gösteriyor" ŞEKLİNDE daha önce de GÖZLEMLENMİŞ (ama YEREL geliştirmede
+ILIK önbellek YÜZÜNDEN NADİR görülen) AYNI kök sorunun, HER ZAMAN soğuk
+başlayan CI'de ARTIK NORM haline geldiğinin KANITIDIR.
+
+`zig build test` (Debug + ReleaseFast, soğuk önbellekten TEKRARLANAN
+çalıştırmalarla) 406/406 yeşil, `zig fmt` temiz.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

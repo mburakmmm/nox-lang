@@ -216,21 +216,41 @@ test "test: bos dizin -> 0 test dosyasi, cikis kodu 0" {
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "0 test dosyasi bulundu") != null);
 }
 
-test "fetch/update: henuz uygulanmadi mesaji, cikis kodu 1" {
+// Faz CC.2 (bkz. nox-teknik-spesifikasyon.md §3.54): `fetch`/`update`
+// ARTIK GERÇEK bir implementasyona SAHİP (ÖNCEDEN "henuz uygulanmadi"
+// basıp exit 1 dönen bir REZERVASYONDU) — buradaki test, HERHANGİ bir
+// `nox.json` BULUNAMAYAN bir dizinden çalıştırıldıklarında net bir hata
+// İLE (exit 1) BAŞARISIZ OLDUKLARINI doğrular. GERÇEK bir PROJE üzerinde
+// getirme/güncelleme davranışı `tests/cli/package_resolution_test.zig`de
+// (izole `$NOX_HOME` + yerel git fixture repo'larıyla) doğrulanır.
+test "fetch/update: nox.json bulunamayan bir dizinden calistirilirsa net hatayla basarisiz olur" {
     const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const noxc = try noxcPath(a);
+    // `.cwd` KULLANILDIĞINDAN `noxc`nin MUTLAK yolu GEREKİR — GÖRELİ
+    // `"zig-out/bin/noxc"`, test SÜRECİNİN DEĞİL, `.cwd` İLE VERİLEN YENİ
+    // çalışma dizinine göre çözülürdü (GERÇEK bir denemede `processSpawnPosix`
+    // çökmesiyle KEŞFEDİLDİ — bkz. `package_resolution_test.zig`nin
+    // `noxcAbsPath`ının AYNI belge notu).
+    const cwd = try std.process.currentPathAlloc(io, a);
+    const noxc = try std.fs.path.join(a, &.{ cwd, try noxcPath(a) });
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &path_buf);
+    const dir_path = path_buf[0..len];
 
     inline for (.{ "fetch", "update" }) |sub| {
         const result = try std.process.run(std.testing.allocator, io, .{
             .argv = &.{ noxc, sub },
+            .cwd = .{ .path = dir_path },
         });
         defer std.testing.allocator.free(result.stdout);
         defer std.testing.allocator.free(result.stderr);
         try std.testing.expect(result.term == .exited and result.term.exited == 1);
-        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "henuz uygulanmadi") != null);
+        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "nox.json bulunamadi") != null);
     }
 }
 

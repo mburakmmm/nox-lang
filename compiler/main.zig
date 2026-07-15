@@ -5,15 +5,16 @@
 //!
 //! **Faz O §P.2/§P.3 (bkz. plan dosyası "Faz O" bölümü, nox-teknik-
 //! spesifikasyon.md §3.6):** `noxc` artık Cargo/Go tarzı alt komutlar
-//! tanır — `build`/`run`/`test`/`fmt` (+ henüz REZERVE edilmiş `fetch`/
-//! `update`, bkz. P.5). Çıplak `noxc <dosya.nox>` (alt komut
-//! OLMADAN) **geriye dönük uyumluluk İÇİN `build`in bir takma adı olarak
-//! KORUNUR** — çıktı/mesaj/çıkış kodu BİREBİR aynı (bkz. `cmdBuild`'e
-//! geçirilen `usage` argümanının legacy/yeni-CLI için AYRI tutulması).
-//! İlk bayrak-olmayan argüman bilinen bir alt komut anahtar kelimesiyle
-//! EŞLEŞMİYORSA (ör. bir `.nox` yolu ya da `--dump`) eski tekil-dosya
-//! yoluna DÜŞÜLÜR. `fmt`in GERÇEK implementasyonu Faz T.4a/T.4b'dir
-//! (bkz. `cmdFmt`/`fmt/formatter.zig`).
+//! tanır — `build`/`run`/`test`/`fmt`/`fetch`/`update` (bkz. Faz CC.2,
+//! §3.54 — `fetch`/`update` ARTIK GERÇEK implementasyona SAHİP, REZERVE
+//! DEĞİL). Çıplak `noxc <dosya.nox>` (alt komut OLMADAN) **geriye dönük
+//! uyumluluk İÇİN `build`in bir takma adı olarak KORUNUR** — çıktı/mesaj/
+//! çıkış kodu BİREBİR aynı (bkz. `cmdBuild`'e geçirilen `usage`
+//! argümanının legacy/yeni-CLI için AYRI tutulması). İlk bayrak-olmayan
+//! argüman bilinen bir alt komut anahtar kelimesiyle EŞLEŞMİYORSA (ör.
+//! bir `.nox` yolu ya da `--dump`) eski tekil-dosya yoluna DÜŞÜLÜR.
+//! `fmt`in GERÇEK implementasyonu Faz T.4a/T.4b'dir (bkz. `cmdFmt`/
+//! `fmt/formatter.zig`).
 
 const std = @import("std");
 const lexer = @import("lexer/lexer.zig");
@@ -98,10 +99,8 @@ pub fn main(init: std.process.Init) !void {
         .fmt => try cmdFmt(gpa, io, a, rest),
         .search => try cmdSearch(io, a, rest),
         .version => std.debug.print("noxc {s}\n", .{build_options.version}),
-        .fetch, .update => {
-            std.debug.print("noxc {s}: henuz uygulanmadi (bkz. plan dosyasi, Faz O)\n", .{@tagName(sub)});
-            std.process.exit(1);
-        },
+        .fetch => try cmdFetch(io, a, rest, nox_home),
+        .update => try cmdUpdate(io, a, rest, nox_home),
     }
 }
 
@@ -451,6 +450,191 @@ fn resolveImportsForBuild(
         },
         else => |err| return err,
     };
+}
+
+/// CWD'den yukarı doğru `nox.json`ı arar — bulamazsa `cmd_name`e özgü bir
+/// hata basıp `exit(1)` çağırır (bir `.nox` dosyası argümanı ALMAYAN
+/// `fetch`/`update` İÇİN — `resolveImportsForBuild`in aksine, bir dosya
+/// yolunun dizininden DEĞİL, doğrudan CWD'den arar).
+fn findProjectRootOrExit(io: std.Io, a: std.mem.Allocator, cmd_name: []const u8) ![]const u8 {
+    const cwd_abs = try std.process.currentPathAlloc(io, a);
+    return (try project.findProjectRoot(a, io, cwd_abs)) orelse {
+        std.debug.print("{s}: nox.json bulunamadi (proje kokunde ya da bir alt dizininde olmalisiniz)\n", .{cmd_name});
+        std.process.exit(1);
+    };
+}
+
+fn loadManifestOrExit(a: std.mem.Allocator, io: std.Io, root: []const u8) project.Manifest {
+    return project.loadManifest(a, io, root) catch |e| {
+        std.debug.print("nox.json okunamadi/gecersiz ({s}): {t}\n", .{ root, e });
+        std.process.exit(1);
+    };
+}
+
+fn loadLockfileOrExit(a: std.mem.Allocator, io: std.Io, root: []const u8) project.Lockfile {
+    return project.loadLockfile(a, io, root) catch |e| {
+        std.debug.print("nox.lock okunamadi/gecersiz ({s}): {t}\n", .{ root, e });
+        std.process.exit(1);
+    };
+}
+
+/// `resolveDependencies`in bir bağımlılık İÇİN ürettiği SONUÇ — `fetch`/
+/// `update`in KENDİ özet çıktısını basmak İÇİN kullanılır.
+const DepAction = enum { cached, fetched, updated, unchanged };
+const DepOutcome = struct {
+    alias: []const u8,
+    repo: []const u8,
+    action: DepAction,
+    resolved: []const u8,
+    previous_resolved: ?[]const u8,
+};
+
+/// `manifest.requires[]`in HER birini çözer — `resolveImportsForBuild`in
+/// AYNI iç döngüsünün (bkz. onun belge notu) `fetch`/`update` İLE
+/// PAYLAŞILAN bağımsız bir çekirdeğidir. **BİLİNÇLİ olarak
+/// `resolveImportsForBuild`a DOKUNULMADI** — o ZATEN test edilmiş/load-
+/// bearing bir yol, bu YENİ, AYRI bir fonksiyondur (riski AZALTMAK İçin,
+/// `nox.thread`/`ThreadChannel` fazlarının AYNI "mevcut load-bearing
+/// koda dokunmadan yanına ekle" disiplinini SÜRDÜRÜR).
+///
+/// `force_refetch` `false` İSE (`fetch`in davranışı) ZATEN kilitli+
+/// önbellekte mevcut bir bağımlılığa HİÇ DOKUNULMAZ (`.cached` sonucu).
+/// `true` İSE (`update`) HER bağımlılık `req.ref`den YENİDEN çözülür (bir
+/// dal/tag'in İLERLEMİŞ OLABİLECEĞİ varsayımıyla, Go'nun `go get -u`suyla
+/// AYNI kavram) — `git` HER durumda ÇAĞRILIR, ama SONUÇ AYNI SHA'ya
+/// çözülürse (`ref` ZATEN bir SHA'ysa ya da dal HİÇ ilerlemediyse)
+/// `.unchanged` olarak işaretlenir (`.updated` DEĞİL — çağıranın "kaç
+/// tanesi GERÇEKTEN değişti" özetini DOĞRU basabilmesi İÇİN).
+fn resolveDependencies(
+    a: std.mem.Allocator,
+    io: std.Io,
+    nox_home: []const u8,
+    manifest: project.Manifest,
+    lock: project.Lockfile,
+    force_refetch: bool,
+) !struct { packages: []project.LockedPackage, outcomes: []DepOutcome, changed: bool } {
+    var new_packages: std.ArrayListUnmanaged(project.LockedPackage) = .empty;
+    try new_packages.appendSlice(a, lock.packages);
+    var outcomes: std.ArrayListUnmanaged(DepOutcome) = .empty;
+    var changed = false;
+
+    for (manifest.requires) |req| {
+        if (!force_refetch) {
+            if (project.findLocked(lock, req.alias)) |locked| {
+                const cache_dir = try fetch.cachedDirFor(a, nox_home, locked.repo, locked.resolved);
+                if (std.Io.Dir.accessAbsolute(io, cache_dir, .{})) |_| {
+                    try outcomes.append(a, .{ .alias = req.alias, .repo = req.repo, .action = .cached, .resolved = locked.resolved, .previous_resolved = null });
+                    continue;
+                } else |_| {}
+            }
+        }
+
+        const previous = if (project.findLocked(lock, req.alias)) |locked| locked.resolved else null;
+        const result = fetch.fetchToCache(a, io, nox_home, req.repo, req.ref) catch |e| {
+            std.debug.print("paket getirilemedi (alias={s}, repo={s}): {t}\n", .{ req.alias, req.repo, e });
+            std.process.exit(1);
+        };
+
+        var found_idx: ?usize = null;
+        for (new_packages.items, 0..) |p, i| {
+            if (std.mem.eql(u8, p.alias, req.alias)) {
+                found_idx = i;
+                break;
+            }
+        }
+        const new_entry: project.LockedPackage = .{ .alias = req.alias, .repo = req.repo, .ref = req.ref, .resolved = result.resolved_sha };
+        if (found_idx) |i| new_packages.items[i] = new_entry else try new_packages.append(a, new_entry);
+
+        const same_as_before = if (previous) |p| std.mem.eql(u8, p, result.resolved_sha) else false;
+        if (!same_as_before) changed = true;
+
+        const action: DepAction = if (previous == null) .fetched else if (same_as_before) .unchanged else .updated;
+        try outcomes.append(a, .{ .alias = req.alias, .repo = req.repo, .action = action, .resolved = result.resolved_sha, .previous_resolved = previous });
+    }
+
+    return .{ .packages = new_packages.items, .outcomes = outcomes.items, .changed = changed };
+}
+
+fn shortSha(sha: []const u8) []const u8 {
+    return if (sha.len > 7) sha[0..7] else sha;
+}
+
+/// `noxc fetch` — Faz CC.2 (bkz. nox-teknik-spesifikasyon.md §3.54):
+/// mevcut projenin `nox.json`daki `requires[]`ini, `build`/`run`/`test`in
+/// ZATEN uyguladığı "otomatik, gerektiğinde getir" akışının AYNISIYLA —
+/// ama BİR `.nox` dosyası derlemeden — önbelleğe DOLDURUR. ZATEN kilitli+
+/// önbellekte olan bağımlılıklara DOKUNULMAZ.
+fn cmdFetch(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8) !void {
+    _ = args;
+    const root = try findProjectRootOrExit(io, a, "fetch");
+    const manifest = loadManifestOrExit(a, io, root);
+    const lock = loadLockfileOrExit(a, io, root);
+
+    if (manifest.requires.len == 0) {
+        std.debug.print("fetch: nox.json'da hic bagimlilik yok ('requires' bos)\n", .{});
+        return;
+    }
+
+    const result = try resolveDependencies(a, io, nox_home, manifest, lock, false);
+    if (result.changed) {
+        try project.saveLockfile(a, io, root, .{ .packages = result.packages });
+    }
+
+    var fetched: usize = 0;
+    var cached: usize = 0;
+    for (result.outcomes) |o| {
+        switch (o.action) {
+            .fetched => {
+                fetched += 1;
+                std.debug.print("getirildi: {s} ({s}@{s})\n", .{ o.alias, o.repo, shortSha(o.resolved) });
+            },
+            .cached => {
+                cached += 1;
+                std.debug.print("zaten guncel: {s} ({s})\n", .{ o.alias, shortSha(o.resolved) });
+            },
+            .updated, .unchanged => unreachable, // force_refetch=false bunlari asla uretmez
+        }
+    }
+    std.debug.print("fetch tamamlandi: {d} getirildi, {d} zaten guncel\n", .{ fetched, cached });
+}
+
+/// `noxc update` — `fetch`in AKSİNE, HER bağımlılığı `req.ref`den
+/// KOŞULSUZ yeniden çözer (bkz. `resolveDependencies`in
+/// `force_refetch=true`ı) — `nox.lock`taki kilitli SHA'ları GÜNCELLER.
+fn cmdUpdate(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8) !void {
+    _ = args;
+    const root = try findProjectRootOrExit(io, a, "update");
+    const manifest = loadManifestOrExit(a, io, root);
+    const lock = loadLockfileOrExit(a, io, root);
+
+    if (manifest.requires.len == 0) {
+        std.debug.print("update: nox.json'da hic bagimlilik yok ('requires' bos)\n", .{});
+        return;
+    }
+
+    const result = try resolveDependencies(a, io, nox_home, manifest, lock, true);
+    try project.saveLockfile(a, io, root, .{ .packages = result.packages });
+
+    var updated: usize = 0;
+    var unchanged: usize = 0;
+    for (result.outcomes) |o| {
+        switch (o.action) {
+            .updated => {
+                updated += 1;
+                std.debug.print("guncellendi: {s} {s} -> {s}\n", .{ o.alias, shortSha(o.previous_resolved.?), shortSha(o.resolved) });
+            },
+            .unchanged => {
+                unchanged += 1;
+                std.debug.print("degismedi: {s} ({s})\n", .{ o.alias, shortSha(o.resolved) });
+            },
+            .fetched => {
+                updated += 1;
+                std.debug.print("yeni kilitlendi: {s} ({s}@{s})\n", .{ o.alias, o.repo, shortSha(o.resolved) });
+            },
+            .cached => unreachable, // force_refetch=true asla .cached uretmez
+        }
+    }
+    std.debug.print("update tamamlandi: {d} guncellendi, {d} degismedi\n", .{ updated, unchanged });
 }
 
 /// Tek bir `.nox` dosyasını uçtan uca derler (lex→parse→import çözümü→tip

@@ -137,6 +137,28 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   doğrulamayla (yayımlanan v1.0.0 varlığı indirilip açılıp `noxc
   --version` + gerçek bir .nox derlemesi çalıştırılarak) paketin tam
   işlevsel olduğu kanıtlandı.
+- CI: gerçek, %100 yerel olarak tekrarlanabilir bir soğuk-önbellek yarış
+  durumu (`rm -rf .zig-cache zig-out && zig build test` tek komutu,
+  `noxc`/`noxlsp`yi alt süreç olarak çağıran test dosyalarını —
+  `lsp_test.zig` dahil, `fetch`/`update`e özgü değil — `processSpawnPosix`
+  ile çökertiyordu; kullanıcının gerçek CI çalıştırmasında gözlemlediği
+  "test buildler takılıyor" raporuyla keşfedildi). Düzeltme: `ci.yml`de
+  her mod için önce salt `zig build` (tüm install_* adımlarını bitirir),
+  sonra ayrı bir komut olarak `zig build test`. `nox-teknik-spesifikasyon.md`
+  §3.55.
+
+### Eklendi
+- `noxc fetch`/`noxc update` — gerçek implementasyon (Faz CC.2.1, Faz
+  O §P.5'ten beri rezerve bırakılmıştı). `fetch`, proje kökündeki
+  `nox.json`'daki `requires[]`i (bir .nox dosyası derlemeden) önbelleğe
+  doldurur; `update`, her bağımlılığı ref'ten koşulsuz yeniden çözüp
+  `nox.lock`taki kilitli SHA'ları günceller. `nox-teknik-spesifikasyon.md`
+  §3.54 — gerçekten test edilip bulunan iki hata (kendi yazdığım yeni
+  testlerde, ürün kodunda değil) belgelenir: `std.Io.Dir.openAbsolute`
+  bu Zig sürümünde yok; `.cwd` kullanan bir alt süreç çağrısına göreli
+  bir argv[0] geçmek, çalıştırılabilir dosyanın YENİ çalışma dizinine
+  göre yanlış çözülmesine yol açar (genel bir kural olarak belgelendi).
+  2 yeni uçtan uca CLI testi + kasıtlı boz→kırmızı ritüeli.
 
 ## [1.0.0]
 

@@ -24,6 +24,25 @@ name: CI
 # başarısız oluyordu (`Zig 0.16.0 fetch` adımı, ~1 dakikada ÇÖKÜYORDU) —
 # bu bir Zig/ağ kesintisi DEĞİLDİ. Düzeltme: doğru URL'den DOĞRUDAN indirip
 # `$GITHUB_PATH`a eklemek.
+#
+# **`zig build test`den ÖNCE AYRI, TAM bir `zig build` adımı — GERÇEK,
+# TEKRARLANABİLİR bir "soğuk önbellek" yarış durumu KEŞFEDİLDİ:** `.zig-
+# cache`/`zig-out` TAMAMEN TEMİZ (`rm -rf`) bir durumdan `zig build test`
+# DOĞRUDAN çalıştırıldığında, `noxc`/`noxlsp`yi bir ALT SÜREÇ olarak
+# ÇAĞIRAN test dosyaları (`tests/cli/*.zig`) ARA SIRA `processSpawnPosix`
+# İLE ÇÖKÜYORDU — `noxc`nin KENDİSİ HENÜZ tam olarak kurulmamışken (`zig
+# build test`in KENDİ iç `install_noxc`/`install_noxrt` adımlarının
+# TAMAMLANMASI İLE test ikililerinin bu kurulu ikiliyi ÇAĞIRMASI ARASINDA
+# bir yarış — `test_step.dependOn(&install_noxc.step)` GİBİ Step-seviyesi
+# bağımlılıklar DOĞRU KURULU olsa BİLE). Yerel olarak `rm -rf .zig-cache
+# zig-out && zig build test` İLE %100 TEKRARLANABİLİR şekilde DOĞRULANDI
+# (hatta `noxc`/`noxlsp`ye HİÇ dokunmayan `lsp_test.zig` BİLE etkilendi).
+# **Düzeltme (yerel olarak `zig build` (TAM kurulum) SONRA `zig build
+# test` İKİ AYRI komut olarak çalıştırılınca sorunun TAMAMEN ORTADAN
+# KALKTIĞI doğrulandı):** her mod (Debug/ReleaseFast) İÇİN önce SALT
+# `zig build` (o `-Doptimize` İLE), SONRA `zig build test` (AYNI mod) —
+# ikinci komut çalıştığında `install_noxc`/`install_noxrt` ZATEN
+# TAMAMLANMIŞ/önbelleklenmiş OLDUĞUNDAN yarış PENCERESİ tamamen KAPANIR.
 
 on:
   push:
@@ -69,8 +88,14 @@ jobs:
           make -C /tmp/qbe-1.3 -j"$(nproc)"
           sudo cp /tmp/qbe-1.3/qbe /usr/local/bin/qbe
 
+      - name: zig build (Debug)
+        run: zig build
+
       - name: zig build test (Debug)
         run: zig build test
+
+      - name: zig build (ReleaseFast)
+        run: zig build -Doptimize=ReleaseFast
 
       - name: zig build test (ReleaseFast)
         run: zig build test -Doptimize=ReleaseFast
