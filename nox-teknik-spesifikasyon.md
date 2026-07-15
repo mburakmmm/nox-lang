@@ -7705,6 +7705,87 @@ ReleaseFast) BU faz TARAFINDAN ETKİLENMEDİ/yeşil kaldı — bu faz
 derleyici KODUNU/davranışını DEĞİŞTİRMEDİ, yalnızca sürüm METADATA'sını
 GÜNCELLEDİ.
 
+## 3.46 Faz AA.1 — Gerçek M:N (Çok Çekirdekli) Fiber Zamanlayıcı Değerlendirmesi: Araştırma Bulguları
+
+**Kaynak:** 1.0 sürümü (Faz Q–Z) tamamlandıktan SONRA ortaya çıkan, Faz
+Z.1'in (§3.43) KENDİSİNİN 1.0'ın kapsamı DIŞINDA bıraktığı açık bir
+araştırma öğesi. Kullanıcıyla netleşen kapsam: BU tur YALNIZCA ARAŞTIRMA/
+DEĞERLENDİRMEDİR — hiçbir kod DEĞİŞTİRİLMEDİ, bir implementasyon KARARI
+VERİLMEDİ. Amaç, mevcut M:1 (tek OS iş parçacığı) kooperatif fiber
+modelinden GERÇEK bir M:N (çok çekirdekli) modele geçişin somut mimari
+ENGELLERİNİ kod okunarak TESPİT ETMEKTİR.
+
+**Sonuç — M:N'e geçiş bir DÜZELTME değil, gerçek bir mimari GENİŞLEMEDİR
+ve TEK bir engel yok, BİRDEN FAZLA bağımsız engel var:**
+
+1. **Zamanlayıcı BUGÜN gerçek bir süreç-geneli tekil (singleton).**
+   `runtime/async_rt/bridge.zig:34`deki `g_scheduler` modül-seviyesi
+   TEK bir global değişkendir, `$main`e gömülen TEK bir `nox_async_init`
+   çağrısıyla kurulur. `Scheduler`in hazır kuyruğu/yığın havuzu/sayaçları
+   (`scheduler.zig`) düz, SENKRONİZE OLMAYAN `ArrayListUnmanaged`/`usize`
+   alanlarıdır — hiçbir kilit/atomik YOK. Deadlock tespiti (bkz. §3.21)
+   AÇIKÇA "TEK OS iş parçacığı OLDUĞU İÇİN hazır kuyruk boş + live_count≠0
+   HER ZAMAN gözlemlenebilir bir global durumdur" varsayımına DAYANIR —
+   bu varsayım M:N'de GEÇERSİZ olur, dağıtık bir boşta-kalma tespiti
+   protokolü GEREKİR.
+
+2. **ARC refcount'unun atomik OLMAMASI BİLİNÇLİ bir karardı (Faz X.3,
+   §3.40) ve BU karar M:N'in EN BÜYÜK engeli.** `nox_rc_retain`/
+   `predecrement` düz `+=1`/`-=1`dir VE derleyici bu aritmetiği DOĞRUDAN
+   QBE IR'a INLINE EDER (`emitInlineRetain`/`emitInlinePredecrement`,
+   `codegen.zig`) — Zig çalışma zamanı fonksiyonlarını bile ATLAYARAK.
+   Faz X.3 TAM OLARAK bu soruyu inceleyip GERÇEK atomiklere geçmeyi
+   (ölçülen performans maliyeti GEREKÇESİYLE) REDDETTİ, YERİNE yalnızca
+   Debug modunda bir "iş parçacığı sahibi" assertion'ı EKLEDİ — VE bu
+   assertion BİLE inline edilen aritmetiğin KENDİSİNİ KAPSAMAZ (yalnızca
+   `nox_rc_alloc`/`nox_rc_free_payload`nin GERÇEK fonksiyon çağrısı KALAN
+   iki noktasını).
+3. **Havuzlanmış (pooled) ARC ayırıcının serbest listeleri düz,
+   SENKRONİZE OLMAYAN bağlı listelerdir** (paylaşılan TEK `RuntimeState`
+   içinde) — gerçek senkronizasyon YA DA iş-parçacığı-başına önbellek
+   yeniden tasarımı GEREKİR.
+4. **Döngü çözücü (Katman 3, Bacon-Rajan) TÜM yığının örtük tek-iş-
+   parçacıklı bir "anlık görüntüsünü" VARSAYAR** — çok geçişli
+   yürüyüşü SIRASINDA refcount'ları MUTASYONA UĞRATIR; BAŞKA iş
+   parçacıklarındaki eşzamanlı mutator'larla YARIŞIRDI. Ya GERÇEK bir
+   "tüm iş parçacıklarını DURDUR" mekanizması (BUGÜN HİÇBİR YERDE YOK)
+   YA DA bariyer'li TAM bir eşzamanlı-GC yeniden tasarımı GEREKİR.
+5. **Birkaç stdlib global'i, KENDİ doğruluğunun TAM OLARAK M:1 garantisi
+   OLDUĞUNU AÇIKÇA belgeliyor** — en çarpıcısı `runtime/stdlib_shims/
+   fs.zig`nin KENDİ yorumu: "Nox'un M:1 fiber modelinde AYNI ANDA
+   yalnızca TEK bir fiber ÇALIŞIR, bu YÜZDEN bu bayrakta YARIŞ DURUMU
+   OLUŞMAZ." `nox.random`nin PRNG'si VE `nox.json`nin son-işlem-durumu
+   bayrağı da AYNI kırılganlığı taşıyor.
+6. **Mevcut TEK gerçek çoklu-iş-parçacığı emsali** (`nox.http`
+   istemcisinin `std.Thread.spawn` işçisi, bkz. §3.40) YALNIZCA o işçi
+   iş parçacığının ARC-yönetimli belleğe HİÇ DOKUNMAYACAK şekilde
+   DENETLENDİĞİ İÇİN çalışıyor — GERÇEK bir M:N zamanlayıcı, TANIM
+   GEREĞİ ARC'a dokunan kodun BİRDEN FAZLA iş parçacığında EŞZAMANLI
+   ÇALIŞTIĞI, TAMAMEN DENETLENMEMİŞ bir durumdur.
+7. **kqueue/epoll reaktörü PAYLAŞILABİLİR görünüyor** (çekirdek KENDİ
+   kilitlemesini yapıyor) — BULGULARIN EN AZ ENDİŞE VERİCİ olanı; her
+   OS iş parçacığı KENDİ reaktör örneğini çalıştırabilir, çapraz-iş-
+   parçacığı UYANDIRMA gerekmez.
+
+**Spec'te ZATEN belgelenen, bu araştırmanın TEKRAR AÇMADIĞI kararlar:**
+§3.21 (Faz 21, M:1'in KENDİSİ, "v0.1'in amacı doğruluk, SONRA hız"),
+§3.24/§3.25 (performans fazının inline retain/havuzlama/yığın havuzu
+ÖLÇÜMLERİ — M:N'in TAM OLARAK RİSKE ATACAĞI optimizasyonlar), §3.40
+(Faz X.3'ün atomik-REDDİ kararı), §3.43 (Faz Z.1'in AA.1'i 1.0 kapsamı
+DIŞINDA bırakan kararı).
+
+**Sonraki adım — BU turun ÇIKTISI değil, gelecekteki bir kapsam-
+netleştirme görüşmesinin GİRDİSİ:** kullanıcıyla, hangi ÖDÜNLERİN kabul
+edilebilir olduğu (ör. ÖLÇÜLEN bir performans maliyeti karşılığında
+GERÇEK atomikler? "ARC nesneleri iş parçacıkları ARASINDA GEÇEMEZ" gibi
+YENİ bir dil kuralı/tip sistemi kısıtı? iş-parçacığı-başına İZOLE
+heap'ler?) netleşmeden HİÇBİR tasarım/implementasyon turuna
+GİRİŞİLMEYECEK — bu, M.8/Faz P'nin (Cranelift) İZLEDİĞİ AYNI "araştır,
+BULGULARI belgele, kararı ERTELE" disiplinidir.
+
+Bu tur KOD DEĞİŞİKLİĞİ İÇERMEDİĞİNDEN `zig build test` ETKİLENMEDİ
+(377/377 yeşil, Faz Z.3'ün doğrulamasıyla AYNI).
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

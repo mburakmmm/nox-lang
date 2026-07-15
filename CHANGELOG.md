@@ -10,6 +10,17 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 
 ## [Yayımlanmamış]
 
+### Değerlendirildi
+- Gerçek M:N (çok çekirdekli) fiber zamanlayıcısı (Faz AA.1) — yalnızca
+  araştırma, KOD DEĞİŞİKLİĞİ YOK. `nox-teknik-spesifikasyon.md` §3.46:
+  mevcut M:1 modelden M:N'e geçişin somut mimari engelleri (zamanlayıcının
+  süreç-geneli tekil oluşu, ARC refcount'unun bilinçli olarak atomik
+  olmaması + QBE'ye inline edilmiş olması, havuzlanmış ayırıcının/döngü
+  çözücünün senkronize olmayışı, birkaç stdlib globalinin M:1 garantisine
+  açıkça dayanması) kod okunarak tespit edildi. Karar ERTELENDİ —
+  kullanıcıyla bir kapsam-netleştirme görüşmesi olmadan hiçbir tasarım/
+  implementasyon turuna girişilmeyecek.
+
 ## [1.0.0]
 
 ### Eklendi
