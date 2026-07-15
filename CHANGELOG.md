@@ -33,6 +33,18 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   kullanan izolasyon testleri eklendi; `random.zig`nin testi, kasıtlı
   boz→kırmızı ritüelinde bir paylaşılan-PRNG veri yarışını gerçekten
   yakaladı.
+- `nox.thread` Katman 1'in saf-Zig çekirdeği (Faz BB.2, henüz dil yüzeyi
+  yok) — YENİ `runtime/async_rt/thread_bridge.zig`: `nox_thread_spawn`/
+  `nox_thread_join`/`nox_thread_destroy`. Gerçek bir YENİ OS iş
+  parçacığı başlatır, o iş parçacığında TAMAMEN BAĞIMSIZ bir
+  `RuntimeState`/`Scheduler` kurar (`$main`in kendi önyükleme dizisinin
+  bir kopyası) — çocuk KENDİ `spawn`/`await`/`Channel[T]`ini
+  kullanabilir. `str` argüman/sonuçlar `http_client.zig`nin audit
+  edilmiş "düz baytlarla kopyala, ARC'a hiç dokunma" protokolüyle
+  taşınır. `nox-teknik-spesifikasyon.md` §3.48. Kasıtlı boz→kırmızı
+  ritüelinde, str-hazırlık kopyalama adımının atlanması test sürecinin
+  askıda kalmasına yol açtı — çapraz-iş-parçacığı bellek bozulmasının
+  somut kanıtı.
 
 ## [1.0.0]
 

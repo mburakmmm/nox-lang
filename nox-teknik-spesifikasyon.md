@@ -7868,6 +7868,98 @@ DİL sözdizimine/checker'a/codegen'e HİÇ DOKUNMADI — TAMAMEN çalışma
 zamanı hazırlığıdır, Faz BB.2'nin (`nox.thread.spawn`in saf-Zig
 çekirdeği) ÖN KOŞULUDUR.
 
+## 3.48 Faz BB.2 — `nox.thread` Katman 1'in Saf-Zig Çekirdeği
+
+**Kaynak:** Faz BB.1'in (§3.47) hazırladığı `threadlocal` zemin üzerine,
+Katman 1'in (`nox.thread.spawn`/`ThreadHandle[T]`/`.join()`) GERÇEK
+implementasyonu — YENİ dosya `runtime/async_rt/thread_bridge.zig`. BU
+faz TAMAMEN saf Zig'dir — HİÇBİR Nox dil sözdizimi/checker/codegen
+değişikliği İÇERMEZ (bkz. Faz BB.3/BB.4).
+
+**Mimari — çocuk iş parçacığı `$main`in KENDİ önyüklemesinin bir
+KOPYASI:** `nox_thread_spawn`, `std.Thread.spawn`i çağırır; çocuk iş
+parçacığının GÖVDESİ (`childThreadMain`) `compiler/codegen_qbe/
+codegen.zig`nin `genMainAsync`ının ürettiği DİZİYLE (`nox_runtime_init→
+nox_async_init→spawn(entry)→run_to_completion→yıkım`) BİREBİR AYNIDIR —
+TEK fark `nox_os_init`in TEKRAR ÇAĞRILMAMASI (argv süreç geneli, `$main`
+TARAFINDAN ZATEN BİR KEZ yazılmış, bkz. §3.47'nin `g_argc`/`g_argv`
+notu). Bu, `entry`nin KENDİSİNİN de `spawn`/`await`/`Channel[T]`
+KULLANABİLMESİNİ sağlar — çocuk TAM İŞLEVSEL, BAĞIMSIZ bir fiber çalışma
+zamanı ALIR, salt tek bir fonksiyon çağrısı DEĞİL.
+
+**Paylaşımsız (shared-nothing) argüman/sonuç protokolü — `http_client.
+zig`nin ZATEN AUDIT EDİLMİŞ desenine BİREBİR uyar:** `int/float/bool/
+none/ptr` payload'ları DOĞRUDAN (8 baytlık bit-örtüşmesi) taşınır. `str`
+İSE: ebeveyn `nox_thread_spawn`da SENKRON olarak (çocuk iş parçacığı
+DAHİ BAŞLAMADAN ÖNCE, `std.Thread.spawn` ÇAĞRILMADAN ÖNCE) baytları DÜZ
+(ARC-dışı, `std.heap.page_allocator`) bir hazırlık arabelleğine KOPYALAR
+— bu, ebeveynin ORİJİNAL `str` referansının `nox_thread_spawn` DÖNER
+DÖNMEZ serbest bırakılabilmesini GÜVENLİ kılar, ÇÜNKÜ çocuk ASLA
+ebeveynin ARC belleğine DOKUNMAZ (yalnızca DÜZ baytları okur). Çocuk,
+KENDİ `RuntimeState`i kurulduktan SONRA bu düz baytlardan TAZE bir ARC
+`str` inşa eder (`http_client.zig`nin `dupeToNoxStr`ı DOĞRUDAN yeniden
+KULLANILIR). SONUÇ İÇİN (str dönerse) TAM SİMETRİK protokol: çocuk KENDİ
+ARC `str`ini düz baytlara KOPYALAR, KENDİ referansını serbest bırakır,
+**TÜM `RuntimeState`ini tamamlanma sinyalinden ÖNCE YIKAR** — ebeveyn
+`nox_thread_join`da bu düz baytlardan KENDİ ARC `str`ini inşa eder. Bu
+noktadan SONRA hiçbir çapraz-iş-parçacığı ARC erişimi MÜMKÜN DEĞİLDİR.
+
+**`nox_thread_join`in bekleme mekanizması — `http_client.zig`nin
+`doRequest`ıyla BİREBİR AYNI iki-modlu desen:** bir Nox FİBER İÇİNDEYSEK
+(`bridge.currentFiberScheduler()`), D.0'ın reaktörü ÜZERİNDEN askıya
+alınır (BAŞKA fiber'lar bu SIRADA GERÇEKTEN ilerleyebilir); fiber
+DIŞINDAYSAK sıradan bloklayan bir `read()` YETERLİDİR. **GERÇEK bir
+`std.Thread.join()` KULLANILMAZ** — o TÜM ebeveyn OS iş parçacığını
+(o zamanlayıcıdaki TÜM DİĞER fiber'ları DA) bloklardı, `async_rt`nin
+"zamanlayıcıyı ASLA bloklama" ilkesini İHLAL ederdi.
+
+**`ThreadHandle`nin ömrü — `Task.detached`den BİLİNÇLİ olarak FARKLI,
+GERÇEK bir atomik referans SAYIMI:** `Task.detached` (bkz. `scheduler.
+zig`) TEK bir OS iş parçacığında KOOPERATİF çalıştığından güvenlidir
+(gerçek bir veri yarışı YOK). `ThreadHandle` İSE GERÇEKTEN İKİ bağımsız
+OS iş parçacığı arasında PAYLAŞILIR — ebeveyn (`nox_thread_destroy`) VE
+çocuk (işini bitirince) HER İKİSİ de `handle`e "sahip"tir, HANGİSİNİN
+SIRAYLA biteceği BELİRSİZDİR. `owners: std.atomic.Value(u32)` (2'den
+başlar) — her taraf işini bitirince BİR azaltır (`fetchSub(1, .acq_rel)`),
+0'a düşüren taraf (hangisi OLURSA olsun) struct'ı GERÇEKTEN serbest
+bırakır. **`ThreadHandle`nin KENDİSİ (VE `ChildCtx`/hazırlık
+arabellekleri) BİLİNÇLİ olarak `std.heap.page_allocator` üzerinden
+tahsis edilir, `rt`nin ARC ayırıcısı DEĞİL:** `rt`nin ayırıcısı BİR iş
+parçacığına AİT olma VARSAYIMINI taşır (Faz X.3'ün `arc_owner_tid`ı) —
+`page_allocator` (Zig'in DOĞRUDAN OS `mmap` sarmalayıcısı) doğası GEREĞİ
+iş-parçacığı-BAĞIMSIZDIR; bu, `ThreadHandle`nin İKİ taraftan da GÜVENLE
+serbest bırakılabilmesi İÇİN mimari olarak DOĞRU seçimdir (`rt`nin
+Debug-modu `DebugAllocator`ı VARSAYILAN olarak `thread_safe = true` olsa
+BİLE — bu dosya BİLİNÇLİ olarak `rt`nin ayırıcısına GÜVENMEZ, ÇÜNKÜ
+paylaşımsız model bir `RuntimeState`in TEK bir iş parçacığına AİT OLMA
+prensibini MİMARİ düzeyde, salt bellek-güvenliği düzeyinde DEĞİL,
+korumalıdır).
+
+**Doğrulama:** dört saf-Zig birim testi (`entry`ye Nox sözdizimi
+GEREKMEZ, doğrudan Zig fonksiyonları `entry` olarak geçirilir) —
+`int` payload uçtan uca; `str` payload (ebeveynin ORİJİNAL referansının
+`nox_thread_spawn` DÖNER DÖNMEZ serbest bırakılabildiği, `DebugAllocator`ın
+sızıntı DEDEKTÖRÜYLE kanıtlanır); `entry`nin KENDİ `nox_async_spawn`ını
+KULLANDIĞI (çocuğun GERÇEKTEN TAM işlevsel bağımsız bir zamanlayıcı
+ALDIĞINI kanıtlar); `nox_thread_destroy`nin çocuk HENÜZ bitmeden
+ÇAĞRILDIĞINDA sızmadan/UAF'siz kendi kendini temizlediği (atomik
+`owners` sayacının doğruluğu).
+
+**Kasıtlı boz→kırmızı→düzelt (str-hazırlık protokolü ÜZERİNDE):**
+ebeveynin baytları KOPYALAMA adımı GEÇİCİ olarak ATLANDI (çocuğa
+DOĞRUDAN ebeveynin ham işaretçisi GEÇİRİLDİ) — `str` testi ÇALIŞTIRILDI:
+test **ASILI KALDI** (5 dakikalık zaman aşımına ULAŞTI) — bu, TEK
+BAŞINA, kopyalama ADIMININ atlanmasının GERÇEKTEN yıkıcı bir çapraz-
+iş-parçacığı bellek bozulmasına (bir OS iş parçacığının BAŞKA bir
+`RuntimeState`e ait belleği serbest bırakmaya ÇALIŞMASI) yol AÇTIĞININ
+somut kanıtıdır (temiz bir test BAŞARISIZLIĞINDAN BİLE daha güçlü bir
+sinyal — sürecin KENDİSİ kurtarılamaz bir duruma DÜŞTÜ). Değişiklik
+GERİ YÜKLENDİ, Debug + ReleaseFast YENİDEN yeşile döndü.
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+`runtime/lib.zig`ye `thread_bridge` eklendi (`noxrt_test`in KEŞFETMESİ
+İÇİN, `async_bridge` İLE AYNI desen).
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

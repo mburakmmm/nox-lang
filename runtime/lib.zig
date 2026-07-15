@@ -9,6 +9,7 @@ pub const cycle_detector = @import("alloc/cycle_detector.zig");
 pub const errors = @import("errors/handle.zig");
 pub const foreign_bridge = @import("foreign_bridge.zig");
 pub const async_bridge = @import("async_rt/bridge.zig");
+pub const thread_bridge = @import("async_rt/thread_bridge.zig");
 pub const str = @import("str.zig");
 pub const dict = @import("collections/dict.zig");
 pub const http_client = @import("stdlib_shims/http_client.zig");
@@ -35,6 +36,7 @@ comptime {
     _ = errors;
     _ = foreign_bridge;
     _ = async_bridge;
+    _ = thread_bridge;
     _ = str;
     _ = dict;
     _ = http_client;
