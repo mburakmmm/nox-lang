@@ -282,6 +282,20 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   Derleyici kaynak dosyalarının modül-üstü yorumlarındaki ("Nox v0.1
   lexer" gibi) ARTIK ANLAMSIZ kalmış `v0.1` etiketleri (9 dosya)
   KALDIRILDI.
+- "Gerçek M:N" terminolojisi (Faz FF.2 — harici incelemenin AYNI turda
+  bulduğu bir bulgu). `README.md`/`stdlib/nox/thread.nox`/`nox-teknik-
+  spesifikasyon.md`nin `nox.thread`in (Faz BB.1-BB.6) TESLİM EDİLEN
+  mimarisini tarif eden yerlerinde "gerçek M:N (çok çekirdekli)" ifadesi
+  YANILTICIYDI — GERÇEKTE teslim edilen, işlerin OS iş parçacıkları
+  ARASINDA çalıntı/göçle (work-stealing) dağıtıldığı TEK bir PAYLAŞILAN
+  zamanlayıcı DEĞİL, "paylaşımsız (shared-nothing), N BAĞIMSIZ M:1 fiber
+  çalışma zamanının OS iş parçacıkları üzerinde paralel çalışması"dır
+  (Faz AA.1'in, §3.46, somut mimari engeller nedeniyle ERTELEDİĞİ MODEL
+  BUDUR — ERTELENMİŞ KALIYOR). Yalnızca dokümantasyon/yorum düzeltmesi,
+  KOD DAVRANIŞI DEĞİŞMEDİ. AA.1'in KENDİ değerlendirme metnindeki
+  (§3.46, kullanıcının ORİJİNAL isteğinin/araştırmanın tarihsel kaydı)
+  "gerçek M:N" ifadeleri BİLEREK DEĞİŞTİRİLMEDİ — onlar geçmişte
+  DEĞERLENDİRİLEN (VE ERTELENEN) kavramı doğru tarif ediyor.
 
 ## [1.0.0]
 

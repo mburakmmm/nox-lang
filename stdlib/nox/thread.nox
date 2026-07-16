@@ -1,6 +1,15 @@
 # nox.thread — Faz BB (bkz. nox-teknik-spesifikasyon.md §3.47-§3.52):
-# paylaşımsız (shared-nothing) gerçek M:N (çok çekirdekli) iş parçacığı
-# desteği. `nox.http.serve`nin `serve`i GİBİ, `start`/`ThreadHandle[T].
+# paylaşımsız (shared-nothing), çok çekirdekli iş parçacığı desteği — N
+# BAĞIMSIZ M:1 fiber çalışma zamanının (HER BİRİ KENDİ Scheduler'ı, KENDİ
+# ARC yığınıyla) OS iş parçacıkları üzerinde PARALEL çalışması (Faz DD.1'in
+# `nox.http.serve_multicore`si de AYNI modeli KULLANIR — bkz. §3.60).
+# **Bilinçli terminoloji netliği:** BU, işlerin OS iş parçacıkları
+# ARASINDA çalıntı/göçle (work-stealing/task migration) DAĞITILDIĞI TEK
+# bir PAYLAŞILAN M:N zamanlayıcı DEĞİLDİR — Faz AA.1 (§3.46) BUNU somut
+# mimari engeller (zamanlayıcı tekil-örneği, atomik OLMAYAN ARC) nedeniyle
+# AYRI bir araştırma turunda ERTELEMİŞTİ VE ERTELENMİŞ KALIYOR.
+#
+# `nox.http.serve`nin `serve`i GİBİ, `start`/`ThreadHandle[T].
 # join()`/`ThreadChannel[T](capacity)` GERÇEK bir `func_def`/`class_def`
 # DEĞİLDİR — TAMAMEN checker (`tryResolveThreadSpawnCall`/
 # `checkGenericConstruct`) VE codegen (`genThreadStartExpr`/

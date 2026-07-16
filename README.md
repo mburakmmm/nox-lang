@@ -46,11 +46,11 @@ print(c.value)
   (kütüphane olarak import etmek için).
 - **Go tarzı fiber/kooperatif async çalışma zamanı** (`spawn`/`await`,
   `Task`/`Channel`) + gerçek eşzamanlı G/Ç (kqueue tabanlı reaktör).
-- **Gerçek M:N (çok çekirdekli) iş parçacığı desteği** (`nox.thread`) —
-  paylaşımsız (shared-nothing) bağımsız OS iş parçacıkları
-  (`ThreadHandle[T]`/`.join()`) ve aralarında sürekli, çift-yönlü
-  iletişim (`ThreadChannel[T]`), tek bir OS çekirdeğiyle sınırlı
-  KALMADAN gerçek paralellik sağlar.
+- **Paylaşımsız (shared-nothing), çok çekirdekli iş parçacığı desteği**
+  (`nox.thread`) — her biri KENDİ bağımsız fiber çalışma zamanına sahip
+  gerçek OS iş parçacıkları (`ThreadHandle[T]`/`.join()`) ve aralarında
+  sürekli, çift-yönlü iletişim (`ThreadChannel[T]`), tek bir OS
+  çekirdeğiyle sınırlı KALMADAN gerçek paralellik sağlar.
 - Büyüyen bir standart kütüphane (`nox.http`, `nox.json`, `nox.strings`,
   `nox.math`, `nox.os`/`nox.fs`, `nox.time`, `nox.test`) ve Go tarzı
   merkeziyetsiz (GitHub URL'si üzerinden) bir paket sistemi.

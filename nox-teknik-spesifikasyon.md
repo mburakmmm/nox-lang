@@ -8384,9 +8384,12 @@ bir Zig struct düzeni BEKLEYEN) geçirilmesinin GERÇEK bir tip-karışıklığ
 
 `zig build test` (Debug + ReleaseFast, TEKRARLANAN çalıştırmalarla)
 403/403 yeşil, `zig fmt` temiz. `nox.thread` (Faz BB.1-BB.6) TAMAMLANDI
-— paylaşımsız (shared-nothing) gerçek M:N iş parçacığı desteği (Katman
-1: `start`/`ThreadHandle[T]`/`.join()`; Katman 2: `ThreadChannel[T]`)
-1.0 sürümüne HAZIR.
+— paylaşımsız (shared-nothing), çok çekirdekli iş parçacığı desteği
+(N bağımsız M:1 fiber çalışma zamanının OS iş parçacıkları üzerinde
+paralel çalışması — Faz AA.1'in (§3.46) ERTELEDİĞİ, TEK bir PAYLAŞILAN
+M:N zamanlayıcıdan FARKLI bir model, bkz. `stdlib/nox/thread.nox`nin
+AYNI netlik notu; Katman 1: `start`/`ThreadHandle[T]`/`.join()`; Katman
+2: `ThreadChannel[T]`) 1.0 sürümüne HAZIR.
 
 ## 3.53 Faz CC.1 — Profesyonel Kurulum: GitHub Releases + `install.sh` + `noxc --version`
 
