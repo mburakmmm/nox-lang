@@ -469,6 +469,17 @@ pub fn build(b: *std.Build) void {
         "build-obj",
         "tests/compat/zig_ext/util.zig",
         b.fmt("-femit-bin={s}", .{zig_ext_o_path}),
+        // `cc -c` (yukarıdaki `compile_c_ext`/`compile_counter_ext`) HOST
+        // dağıtımının PIE-varsayılan davranışını KENDİLİĞİNDEN
+        // devralır (Linux'ta modern GCC/Clang'ın SİSTEM ÖNTANIMLI
+        // yapılandırması) — AMA `zig build-obj` AYRI bir araç zincirdir,
+        // BUNU otomatik yapmaz. Linux/x86-64 CI'de GERÇEKTEN gözlemlenen
+        // bir link hatası (`relocation R_X86_64_32S ... recompile with
+        // -fPIE`) `util.o`nun PIC-UYUMSUZ relokasyonlarla derlendiğini
+        // (sonra PIE-varsayılan bir `cc`ye BAĞLANMAYA ÇALIŞILDIĞINI)
+        // KANITLADI — `-fPIC` BUNU çözer (macOS/aarch64'te ZATEN ZARARSIZ
+        // bir no-op, o platformlarda kod ZATEN PIC).
+        "-fPIC",
     });
 
     const ffi_build_options = b.addOptions();

@@ -168,6 +168,24 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   spesifikasyon.md` §3.56. 3 yeni uçtan uca CLI testi (üretilen projenin
   gerçekten derlenip çalıştığı dahil) + kasıtlı boz→kırmızı ritüeli.
 
+### Düzeltildi
+- Linux/x86-64 CI'de gerçekten gözlemlenen, önceden var olan üç hata
+  (`noxc fetch`/`update`/`init`/`check` ile ilgisiz — soğuk-önbellek
+  yarış düzeltmesi CI'yi bu kadar ileri götürene kadar hiç görünür
+  değillerdi): (1) `runtime/stdlib_shims/http_client.zig`'in
+  `workerThreadFn`'i, tamamlanma sinyalini yazdıktan SONRA `ctx.write_fd`yi
+  `defer` bloğunda okumaya devam ediyordu — sinyal yazılır yazılmaz
+  çağıran `ctx`yi serbest bırakabildiğinden gerçek bir kullanım-sonrası-
+  serbest yarışıydı (bir bağlantı testinde segfault, iki `nox.http.get`
+  altın testinde `ProgramFailed` olarak gözlemlendi — aynı kök neden).
+  `write_fd` artık fonksiyon girişinde yerel bir değişkene kopyalanıyor.
+  (2) `tests/compat/zig_ext/util.o`, `zig build-obj` ile `-fPIC` olmadan
+  derleniyordu — dağıtımın PIE-varsayılan `cc`sine bağlanırken link
+  hatası veriyordu; `-fPIC` eklendi. `nox-teknik-spesifikasyon.md` §3.57
+  — bu yarış yerel olarak (macOS/aarch64'te) hiç tekrarlanamadığından
+  doğrulama kod incelemesi + gerçek Linux/x86-64 CI'de yeniden
+  çalıştırmaya dayanıyor.
+
 ## [1.0.0]
 
 ### Eklendi

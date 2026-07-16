@@ -97,10 +97,21 @@ const RequestCtx = struct {
 };
 
 fn workerThreadFn(ctx: *RequestCtx) void {
+    // `write_fd` BURADA (fonksiyon GİRİŞİNDE) YEREL bir değişkene
+    // KOPYALANIR — GERÇEK bir yarış durumu (Linux/x86-64 CI'de bir
+    // segfault olarak GÖZLEMLENDİ) `ctx.write_fd`nin AŞAĞIDAKİ `defer`
+    // İÇİNDE DOĞRUDAN okunmasından kaynaklanıyordu: `write()` TAMAMLANIR
+    // TAMAMLANMAZ ÇAĞIRAN taraf (`doRequest`, pipe'ı OKUYAN) UYANIR ve
+    // `ctx`yi (`gpa.destroy(ctx)` İLE, `rt` yıkıldığında) SERBEST
+    // BIRAKABİLİR — TAM O SIRADA BU `defer` HÂLÂ `close(ctx.write_fd)`
+    // İÇİN `ctx`yi DEREFERANS ETMEYE ÇALIŞIYORSA, ARTIK SERBEST BIRAKILMIŞ
+    // belleği OKUR (KULLANIM-SONRASI-SERBEST). Yerel kopya, sinyal
+    // YAZILDIKTAN SONRA `ctx`ye HİÇ dokunulmamasını GARANTİ eder.
+    const write_fd = ctx.write_fd;
     defer {
         var signal_byte = [_]u8{1};
-        _ = std.c.write(ctx.write_fd, &signal_byte, 1);
-        _ = std.c.close(ctx.write_fd);
+        _ = std.c.write(write_fd, &signal_byte, 1);
+        _ = std.c.close(write_fd);
     }
 
     const io = sharedClientIo();

@@ -8678,6 +8678,66 @@ YENİDEN yeşile döndü.
 
 `zig build test` (Debug + ReleaseFast) 409/409 yeşil, `zig fmt` temiz.
 
+## 3.57 Linux/x86-64'e Özgü CI Hataları — Gerçek Bir Yarış Durumu + PIE Link Hatası
+
+**Kaynak:** kullanıcının "üçünü de şimdi çöz" kararı — Faz CC.2.1'in
+(§3.55) soğuk-önbellek yarış düzeltmesi GERÇEK CI'de doğrulanırken,
+YALNIZCA Linux/x86-64 platformunda (macOS/aarch64 VE Linux/aarch64
+ETKİLENMEDİ) üç ayrı hata GÖZLEMLENDİ.
+
+**1. GERÇEK bir yarış durumu — `runtime/stdlib_shims/http_client.zig`nin
+`workerThreadFn`i (KÖK NEDEN, İKİ AYRI gözlemlenen belirtiyi AÇIKLAR):**
+`nox_http_serve_raw`ın "eşzamanlı iki bağlantı" testinde bir SEGFAULT
+(`std.c.close(ctx.write_fd)`de, `workerThreadFn`in `defer` bloğunda) VE
+`http_stdlib_golden_test.zig`nin İKİ `nox.http.get` testi (`ProgramFailed`)
+GÖZLEMLENDİ — İKİSİ de AYNI kök nedene İNDİRGENDİ. `workerThreadFn`in
+`defer` bloğu İKİ işlem yapıyordu: (a) `write(ctx.write_fd, ...)`
+(ÇAĞIRANA — `doRequest`nin pipe'ı OKUYAN tarafına — TAMAMLANMA sinyali
+GÖNDERİR), (b) `close(ctx.write_fd)`. **`write()` TAMAMLANDIĞI ANDA
+ÇAĞIRAN UYANIR** ve `ctx`yi (`gpa.destroy(ctx)` İLE, `rt` yıkıldığında)
+serbest BIRAKABİLİR — TAM O SIRADA AYNI `defer` bloğu HÂLÂ `close(ctx.
+write_fd)` İÇİN `ctx`yi DEREFERANS ETMEYE çalışıyorsa, ARTIK SERBEST
+BIRAKILMIŞ belleği OKUR (kullanım-sonrası-serbest, KLASİK "sinyal-SONRA-
+paylaşılan-duruma-dokun" yarışı). Bu, macOS/aarch64de HİÇ (bu OTURUM
+BOYUNCA) GÖZLEMLENMEDİ — Linux/x86-64nin FARKLI iş parçacığı zamanlama
+DAVRANIŞI yarış PENCERESİNİ GÜVENİLİR şekilde AÇTI. **Düzeltme:**
+`write_fd`, fonksiyon GİRİŞİNDE YEREL bir değişkene KOPYALANIR, `defer`
+bloğu `ctx.write_fd` YERİNE bu YEREL kopyayı KULLANIR — sinyal
+YAZILDIKTAN SONRA `ctx`ye HİÇ dokunulmaz, yarış PENCERESİ TAMAMEN kapanır.
+**Dürüst doğrulama notu:** bu yarış BU OTURUM BOYUNCA yerel olarak (macOS/
+aarch64'te) HİÇ TEKRARLANAMADIĞINDAN, standart kasıtlı-boz→kırmızı→düzelt
+ritüeli BURADA ANLAMLI bir sinyal VERMEZDİ (yerel bir "kırmızı" ZATEN
+GÖSTERİLEMEZ) — düzeltmenin doğruluğu KOD İNCELEMESİYLE (yarış
+PENCERESİNİN yapısal olarak KAPATILDIĞI) VE GERÇEK Linux/x86-64 CI'de
+YENİDEN ÇALIŞTIRMAYLA doğrulanır.
+
+**2. PIE link hatası — `tests/compat/zig_ext/util.o`:**
+`relocation R_X86_64_32S against \`__anon_1490' can not be used when
+making a PIE object; recompile with -fPIE`. `build.zig`nin `cc -c` İLE
+derlediği C uzantıları (`mathutil.o`/`counter.o`) dağıtımın PIE-varsayılan
+`cc` yapılandırmasını KENDİLİĞİNDEN devralır — AMA `util.o`, `zig
+build-obj` İLE (AYRI bir araç zinciri, SİSTEM `cc`nin varsayılanlarına
+BAĞLI DEĞİL) derleniyordu, `-fPIC` OLMADAN. Sonuç: PIC-UYUMSUZ
+relokasyonlar, SONRA PIE-varsayılan bir `cc`ye BAĞLANMAYA ÇALIŞILINCA
+link HATASI. **Düzeltme:** `compile_zig_ext`in argv'sine `-fPIC` eklendi
+(macOS/aarch64'te ZARARSIZ bir no-op — kod ZATEN PIC).
+
+**3. `nox.http.get` altın (golden) testleri — AYRI bir hata DEĞİL:**
+madde 1'in (`workerThreadFn` yarışı) DOĞRUDAN sonucu olduğu
+DEĞERLENDİRİLDİ — HER İKİ başarısız test de `nox.http.get`i (TAM OLARAK
+düzeltilen `doRequest`/`workerThreadFn` yolunu) KULLANIYORDU. AYRI bir
+kod değişikliği GEREKMEDİ, madde 1'in düzeltmesiyle KAPSANIYOR.
+
+**Bilinçli v1 gözlemi:** bu üç hata, `noxc fetch`/`update`/`init`/`check`
+İLE (Faz CC.2.1/CC.2.2) HİÇBİR İLGİSİ OLMAYAN, TAMAMEN ÖNCEDEN VAR OLAN
+kusurlardı — Linux/x86-64 CI'nin bu turdan ÖNCE HİÇBİR ZAMAN bu kadar
+İLERİ (gerçek test yürütmesine kadar) ULAŞAMADIĞI (önceki iki blokaj —
+`mlugg/setup-zig` VE soğuk-önbellek yarışı, bkz. §3.53/§3.55 — DAHA
+ERKEN bir NOKTADA HER ZAMAN durduruyordu) İÇİN daha ÖNCE HİÇ GÖRÜNÜR
+OLMAMIŞLARDI. Bu, Linux/x86-64 CI legi GERÇEKTEN GÖRÜNÜR bir yeşil
+duruma ULAŞTIĞINDA ortaya ÇIKAN ilk gerçek platform-özgü sağlamlaştırma
+turudur.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
