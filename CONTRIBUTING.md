@@ -1,5 +1,7 @@
 # Nox'a Katkıda Bulunma
 
+*Türkçe | [English](CONTRIBUTING.en.md)*
+
 Nox aktif geliştirme aşamasında bir dil projesidir. Bu belge, bir
 değişiklik göndermeden önce bilmeniz gereken kuralları ve disiplini
 özetler.

@@ -1,5 +1,7 @@
 # Nox
 
+*Türkçe | [English](README.en.md)*
+
 Nox, Python'un sözdizimsel tanıdıklığını sistem programlama dillerinin
 performansı ve determinizmiyle birleştiren, tamamen **AOT (Ahead-of-Time)
 derlenen** bir dildir. Yorumlayıcı yok, GC duraklaması yok — [QBE](https://c9x.me/compile/)
@@ -18,10 +20,10 @@ kullanılır.
 
 ```nox
 class Counter:
-    def __init__(self: Counter, start: int) -> None:
+    def __init__(self, start: int) -> None:
         self.value = start
 
-    def increment(self: Counter) -> None:
+    def increment(self) -> None:
         self.value = self.value + 1
 
 c: Counter = Counter(0)
@@ -133,10 +135,95 @@ tamamen offline çalışır.
 
 ## Benchmark'lar
 
-`zig build bench -Doptimize=ReleaseFast` — güncel sonuçlar İÇİN
-[`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)'ye bakın (Python'a karşı
-7x-122x hızlı; C'ye karşı genelde 1x-4x yavaş, bazı senaryolarda C İLE
-BAŞA BAŞ ya da daha hızlı).
+`zig build bench -Doptimize=ReleaseFast` — TAM, ham çıktı İÇİN
+[`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)'ye bakın. Üç kategori
+(aşağıdaki katlanır bölümlerde özetlenir): **dil temelleri**
+(Python/C'ye karşı), **stdlib** (JSON/strings/math/fs/time/dict), ve
+**HTTP verimi** (Nox/Go/Zig/FastAPI).
+
+<details>
+<summary><strong>Dil temelleri — Python/C'ye karşı (10 senaryo, aynı algoritma)</strong></summary>
+
+| Benchmark | Nox | Python | C | Nox / Python | Nox / C |
+|---|---|---|---|---|---|
+| numeric_recursion | 15.3ms | 377.2ms | 14.0ms | **24.7x hızlı** | 1.10x yavaş |
+| tight_loop_arithmetic | 14.4ms | 1759.6ms | 4.8ms | **122.4x hızlı** | 2.97x yavaş |
+| list_traversal | 63.3ms | 1289.4ms | 3.1ms | **20.4x hızlı** | 20.09x yavaş |
+| oop_arc_churn | 36.0ms | 475.4ms | 44.8ms | **13.2x hızlı** | 0.80x (Nox C'den hızlı) |
+| generics_protocols | 61.2ms | 1573.8ms | 26.0ms | **25.7x hızlı** | 2.35x yavaş |
+| exceptions_control_flow | 21.0ms | 673.0ms | 5.9ms | **32.0x hızlı** | 3.57x yavaş |
+| lowlevel_arena | 63.3ms | 1323.1ms | 5.0ms | **20.9x hızlı** | 12.65x yavaş |
+| string_passing | 72.9ms | 1241.2ms | 8.9ms | **17.0x hızlı** | 8.17x yavaş |
+| deep_equality | 7.1ms | 51.7ms | 3.3ms | **7.3x hızlı** | 2.19x yavaş |
+| list_class_field | 6.1ms | 49.5ms | 4.3ms | **8.2x hızlı** | 1.43x yavaş |
+
+**Özet:** Python'a karşı her senaryoda **7x–122x daha hızlı**; C'ye karşı
+genelde **1x–4x yavaş** (aritmetik/OOP'de C'ye çok yakın, `oop_arc_churn`'de
+C'den bile hızlı — liste/dizi gezme gibi bellek-erişim-ağırlıklı
+senaryolarda fark daha büyük, 12x-20x). Metodoloji + `C`/Python kaynak
+dosyaları İçin [`benchmarks/compare/`](benchmarks/compare/)ye bakın.
+</details>
+
+<details>
+<summary><strong>Stdlib — JSON/strings/math/fs/time/dict (yalnızca Nox, büyük N — regresyon/stres testi)</strong></summary>
+
+| Benchmark | Süre (min) |
+|---|---|
+| json_bench | 17.8ms |
+| strings_bench | 5.6ms |
+| math_bench | 4.0ms |
+| os_fs_bench | 2.9ms |
+| time_bench | 5.9ms |
+| dict_bench | 2.8ms |
+| strings_perf_bench (`byte_at` + O(n) `join`, Faz EE.1) | 200.0ms |
+
+`strings_perf_bench`, Faz EE.1'in İKİ optimizasyonunu (alloc-sız `byte_at`
+tabanlı karşılaştırma + Zig'de tek-geçiş O(n) `join`) BİRLİKTE ölçer —
+optimizasyonlar GEÇİCİ olarak ESKİ davranışa (`s[i]` alloc'lu karşılaştırma
++ saf-Nox O(n²) `join`) geri alınıp yeniden ölçüldüğünde: **6040ms →
+200ms, ~30x hızlanma** (çıktı değerleri İKİ durumda da BİREBİR AYNI).
+Ayrıca Faz M.8 (provably-safe metod çağrılarında istisna-kontrolü
+eleme): **480ms → 270ms, ~%44 hızlanma** (300M metod çağrısı). Tam
+metodoloji İçin [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)'ye
+bakın.
+</details>
+
+<details>
+<summary><strong>HTTP verimi — Nox / Go / Zig / FastAPI (<code>wrk</code> ile)</strong></summary>
+
+Dört sunucu (`benchmarks/http_compare/`), AYNI yanıtı üretir (durum 200,
+`x: x` başlığı, `"ok"` gövdesi), 10 iş parçacığı/işlem kullanır, `wrk`
+İLE ölçülür (Apple M4, 10 çekirdek — tekrarlanabilirlik İçin
+`benchmarks/http_compare/run_compare.sh`'a bakın).
+
+**Orta eşzamanlılık** (`wrk -t4 -c30 -d10s` — hiçbir sunucu GERÇEKTEN
+doyurulmuyor, sayılar büyük ölçüde istemci/loopback maliyetini yansıtır):
+
+| Sunucu | İstek/sn | p99 gecikme |
+|---|---|---|
+| Nox (`serve_multicore`, N=10) | **24,325** | 3.05ms |
+| Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 21,580 | 4.08ms |
+| Go (`net/http`, varsayılan keep-alive) | 20,882 | 3.05ms |
+| FastAPI (`uvicorn --workers 10`) | 19,374 | 4.75ms |
+
+**Yüksek eşzamanlılık** (`wrk -t8 -c100 -d15s`) — Go/FastAPI'nin
+keep-alive'ı (Nox HENÜZ desteklemiyor — HER istek YENİDEN el sıkışıyor)
+farkı BÜYÜTÜYOR, AYRICA `nox.http.serve_multicore`nin bu yükte çıplak
+Zig soket tabanına göre de GERİLEDİĞİ (daha fazla soket hatası/daha
+düşük verim) GÖZLEMLENDİ — bilinen bir sınırlama, gelecekteki bir
+performans/sağlamlaştırma fazının adayı:
+
+| Sunucu | İstek/sn | Soket hatası (connect/read/write) |
+|---|---|---|
+| Nox (`serve_multicore`, N=10) | 2,687 | 96 / 69488 / 47928 |
+| Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 4,757 | 96 / 0 / 0 |
+| Go (`net/http`, varsayılan keep-alive) | **197,178** | yok |
+| FastAPI (`uvicorn --workers 10`) | 23,302 | yok |
+
+Tam metodoloji notu (keep-alive asimetrisinin SONUÇLARI NASIL etkilediği
+DAHİL) İçin [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)'nin
+"Bölüm 3"üne bakın.
+</details>
 
 ## Güvenlik
 
@@ -156,8 +243,8 @@ Ayrıntılar için [AGENTS.md §9.5](AGENTS.md#95-güven-sınırı-trust-boundar
 | `runtime/` | Zig ile yazılmış çalışma zamanı (ARC, async fiber, HPy/WASM köprüleri, stdlib shim'leri) |
 | `stdlib/` | Nox'un KENDİSİYLE yazılmış standart kütüphane (`nox.*`) |
 | `tests/` | Unit + golden + uçtan uca (CLI alt süreç) testleri |
-| `benchmarks/` | Nox/Python/C karşılaştırmalı benchmark paketi |
-| `docs/` | Üretim-hazırlığı analizi ve yol haritası |
+| `benchmarks/` | Nox/Python/C/Go/Zig/FastAPI karşılaştırmalı benchmark paketi |
+| `docs/` | Üretim-hazırlığı analizi, yol haritası ve İngilizce dil referansı |
 
 ## Katkıda Bulunma
 

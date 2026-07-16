@@ -92,3 +92,90 @@ Her satır üç dilde **aynı algoritmayı** çalıştırır (Python/C, o dilin 
 
 - **Python'a karşı:** Nox her senaryoda **7x–122x daha hızlı**.
 - **C'ye karşı:** Nox genelde **1x–4x** arasında yavaş (aritmetik/OOP ağırlıklı kodda C'ye çok yakın, `oop_arc_churn`'de C'den bile hızlı); liste/dizi gezme ve `lowlevel` arena gibi bellek-erişim-ağırlıklı senaryolarda fark daha büyük (12x–20x) — codegen'deki gelecekteki optimizasyon fırsatlarını işaret ediyor.
+
+## Bölüm 3 — HTTP verim (throughput) karşılaştırması: Nox / Go / Zig / FastAPI
+
+**Kaynak/tekrarlanabilirlik:** `benchmarks/http_compare/run_compare.sh` —
+DÖRT sunucu (`nox_server.nox`, `go_server.go`, `zig_server.zig`,
+`fastapi_server.py`), HEPSİ AYNI yanıtı üretir (durum 200, `x: x`
+başlığı, `"ok"` gövdesi — 2 bayt), `wrk` İLE ölçülür. Makine: Apple M4
+(10 çekirdek), macOS, `go1.26.4`/`zig 0.16.0`/`Python 3.14.6`
+(`fastapi 0.136.3`/`uvicorn 0.49.0`)/`wrk 4.2.0`. TÜM sunucular 10
+iş parçacığı/işlem KULLANACAK şekilde YAPILANDIRILDI (Nox:
+`serve_multicore(port, handle, 10, 4096)`; Zig: 10 `accept()` iş
+parçacığı AYNI dinleme soketini PAYLAŞIR; Go: `net/http`nin
+VARSAYILANI, GOMAXPROCS ÜZERİNDEN TÜM çekirdekleri otomatik kullanır;
+FastAPI: `uvicorn --workers 10`).
+
+**Metodolojik BİLİNÇLİ bir asimetri (SONUÇLARI okurken KRİTİK):**
+`nox.http.serve`/`serve_multicore` BUGÜN yalnızca bağlantı-başına-TEK-
+istek modelindedir (istek işlenip yanıt yazıldıktan SONRA bağlantı HER
+ZAMAN kapatılır, HTTP keep-alive YOK — bkz. `runtime/stdlib_shims/
+http_server.zig`nin `connectionEntry`si). `zig_server.zig` (bu
+karşılaştırmanın "çıplak Zig tabanı") BİLEREK AYNI modele UYDURULDU
+(`Connection: close`, DOĞRUDAN `std.c` soketleri) — bu SAYEDE Nox'a-
+karşı-Zig YARISI, BAĞLANTI YENİDEN KULLANIM POLİTİKASI DEĞİL, Nox'un
+ARC/fiber/QBE-codegen soyutlamasının ÇIPLAK soketler ÜZERİNE kattığı
+GERÇEK EK YÜKÜ izole eder. Go (`net/http`) VE FastAPI/uvicorn İSE
+VARSAYILAN (keep-alive AÇIK) modlarında bırakıldı — KENDİ doğal/
+gerçek-dünya YAPILANDIRMALARINDA test edilmeleri, Nox'a-karşı-Go/
+FastAPI YARISINI daha ANLAMLI/dürüst kılar, ama bu YARININ BÜYÜK
+KISMININ "keep-alive VAR mı YOK mu" farkını YANSITTIĞI (SALT istek-
+işleme hızını DEĞİL) AÇIKÇA belirtilmelidir.
+
+### Orta eşzamanlılık (`wrk -t4 -c30 -d10s`) — TÜM DÖRT sunucu AYNI ayarlarla
+
+Bu seviyede (30 bağlantı, yerel makine/loopback) HİÇBİR sunucu GERÇEKTEN
+DOYURULMUYOR — sayılar birbirine YAKIN, farkı büyük ölçüde İSTEMCİ/
+loopback maliyeti BELİRLİYOR:
+
+| Sunucu | İstek/sn | p50 gecikme | p99 gecikme | Soket hatası |
+|---|---|---|---|---|
+| Nox (`serve_multicore`, N=10) | **24,325** | 1.39ms | 3.05ms | yok |
+| Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 21,580 | 1.21ms | 4.08ms | yok |
+| Go (`net/http`, varsayılan keep-alive) | 20,882 | 1.39ms | 3.05ms | yok |
+| FastAPI (`uvicorn --workers 10`, varsayılan keep-alive) | 19,374 | 1.24ms | 4.75ms | yok |
+
+Bu seviyede Nox, ÇIPLAK Zig soket tabanını (VE Go/FastAPI'yi) bile
+GEÇİYOR — makul eşzamanlılıkta `nox.http.serve_multicore`nin GERÇEK
+ek yükü ÖLÇÜLEMEYECEK kadar KÜÇÜK.
+
+### Yüksek eşzamanlılık (`wrk -t8 -c100 -d15s`) — keep-alive farkı DOMİNANT hale gelir
+
+| Sunucu | İstek/sn | p50 gecikme | p99 gecikme | Soket hatası (connect/read/write) |
+|---|---|---|---|---|
+| Nox (`serve_multicore`, N=10) | 2,687 | 1.16ms | 2.49ms | **96 / 69488 / 47928** |
+| Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 4,757 | 0.95ms | 2.30ms | 96 / 0 / 0 |
+| Go (`net/http`, varsayılan keep-alive) | **197,178** | 0.28ms | 3.52ms | yok |
+| FastAPI (`uvicorn --workers 10`, varsayılan keep-alive) | 23,302 | 2.18ms | 32.38ms | yok |
+
+**İKİ AYRI, DÜRÜSTÇE ayrıştırılması GEREKEN bulgu:**
+1. **Go/FastAPI'nin BÜYÜK sıçraması** (Nox/Zig'e göre 8x-70x) BÜYÜK
+   ÖLÇÜDE keep-alive'ın TCP el sıkışma/bağlantı KURMA maliyetini
+   ORTADAN KALDIRMASINDANDIR — `wrk`nin 100 bağlantısı BİNLERCE isteği
+   AYNI soket ÜZERİNDEN tekrar KULLANIR; Nox/Zig İSE HER istek İçin
+   YENİDEN el sıkışır. Bu, SALT istek-işleme HIZI farkı DEĞİLDİR —
+   `nox.http.serve`nin BUGÜN keep-alive DESTEKLEMEMESİNİN GERÇEK,
+   ölçülebilir maliyetidir (gelecekteki bir faz İçin AÇIK bir aday).
+2. **Nox'un ÇIPLAK Zig tabanına GÖRE de GERİDE kalması VE YÜKSEK soket
+   hata SAYISI** (`read 69488`/`write 47928` — BAŞARILI 40388 isteğin
+   KENDİSİNDEN bile FAZLA) BAĞIMSIZ, GERÇEK bir bulgudur: 100 eşzamanlı
+   bağlantıda `nox.http.serve_multicore`, AYNI "10 iş parçacığı TEK
+   dinleme soketini PAYLAŞIR" mimarisine sahip ÇIPLAK Zig tabanından
+   BELİRGİN ŞEKİLDE DAHA FAZLA hata VERİYOR VE DAHA YAVAŞ — bu, Orta
+   eşzamanlılık testinde GÖRÜLMEYEN, YÜKSEK eşzamanlı bağlantı ÇÖKÜŞÜ
+   ALTINDA (fiber zamanlayıcı/`accept()` geri-basınç mantığında olası
+   bir darboğaz) ortaya çıkan, KAYDA GEÇMEYE DEĞER bir gelecek-fazı
+   ADAYI/bilinen sınırlamadır — bu belgenin KENDİSİ bunu ÇÖZMEYİ
+   hedeflemez, yalnızca DÜRÜSTÇE raporlar.
+
+### Özet
+
+- **Orta eşzamanlılıkta** (gerçekçi bir küçük-orta ölçekli servis yükü)
+  Nox, Go/Zig/FastAPI İLE **AYNI SINIFTA/rekabetçi**.
+- **Yüksek eşzamanlılıkta** Go/FastAPI'nin keep-alive AVANTAJI VE Nox'un
+  bağlantı-başına-yeniden-el-sıkışma mimarisi, farkı BÜYÜTÜYOR; AYRICA
+  `nox.http.serve_multicore`nin YÜKSEK eşzamanlı bağlantı SAYISI ALTINDA
+  ÇIPLAK Zig tabanına göre de GERİLEDİĞİ GÖZLEMLENDİ — bu, keep-alive
+  desteğiyle BİRLİKTE gelecekteki bir performans/sağlamlaştırma fazının
+  DOĞAL adayıdır.
