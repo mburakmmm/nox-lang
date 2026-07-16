@@ -136,7 +136,21 @@ pub const Scheduler = struct {
                 }
                 return error.Deadlock;
             }
-            const fiber = self.ready.orderedRemove(0);
+            // `swapRemove(0)` — bkz. HTTP yüksek-eşzamanlılık araştırması
+            // (benchmarks/RESULTS.md "Bölüm 3"): `orderedRemove(0)` HER
+            // fiber devralımında hazır kuyruğun TÜM KALAN elemanlarını BİR
+            // konum KAYDIRIR (O(n)) — `reactor.poll` TEK bir çağrıda EN
+            // FAZLA 64 fiber'ı BİRDEN hazır kuyruğa EKLEYEBİLDİĞİNDEN (bkz.
+            // `io_reactor.zig`nin `events: [64]` arabelleği), yoğun G/Ç
+            // altında BU PARTİYİ boşaltmak O(n²) TOPLAM kaydırmaya
+            // dönüşürdü. Zamanlayıcının hazır kuyruğu YALNIZCA ADALET
+            // (her fiber ER YA DA GEÇ çalışır) GARANTİ eder — SIRALAMA
+            // (FIFO) davranışsal olarak GEREKMEZ (bkz. `io.zig`nin "reader
+            // ÖNCE spawn edilir" testi — 2 elemanlı bir kuyrukta
+            // `swapRemove(0)`, `orderedRemove(0)` İLE AYNI sonucu verir,
+            // bu yüzden O test DEĞİŞMEDEN geçer); `swapRemove`, kaldırılan
+            // elemanın YERİNE kuyruğun SON elemanını taşıyarak O(1) yapar.
+            const fiber = self.ready.swapRemove(0);
             self.current = fiber;
             fiber.resume_(&self.root_ctx);
             self.current = null;

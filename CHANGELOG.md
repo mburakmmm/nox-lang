@@ -374,6 +374,33 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   mekanizma (parser/checker/codegen) İçin AYRI AYRI boz→kırmızı→düzelt
   ritüeli.
 
+### Düzeltildi
+- **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`
+  "Bölüm 3") YAYIMLANAN İLK sonuçları YANLIŞTI, DÜZELTİLDİ.** İlk sürüm,
+  `nox.http.serve_multicore`nin yüksek eşzamanlılıkta (c=100) çıplak Zig
+  soket tabanına göre 30x+ GERİLEDİĞİNİ raporlamıştı — bu, İKİ AYRI
+  benchmark-metodolojisi HATASINDAN kaynaklanıyordu, Nox'un KENDİSİNDE
+  böyle bir sorun YOK: (1) `noxc build`, o an `zig-out/lib/noxrt.o`da NE
+  VARSA ONU KOŞULSUZ kullanır — en son çalıştırılan `zig build` (ReleaseFast
+  BAYRAĞI OLMADAN) runtime'ı YANLIŞLIKLA Debug modunda kurmuştu (TEK/
+  kilitli `DebugAllocator` — ReleaseFast'ın kilitsiz `smp_allocator`ı
+  YERİNE), bu da çok iş parçacıklı yükte ORANTISIZ kilit çekişmesine yol
+  açtı; (2) benchmark sunucusunun `max_connections` parametresi YANLIŞLIKLA
+  `4096`ya (SINIRSIZ yerine) AYARLANMIŞTI, bu da GERÇEK bir yük testinin
+  ORTASINDA sunucunun SESSİZCE durup çıkmasına yol açıyordu. Düzeltmeler
+  UYGULANIP (ReleaseFast runtime + `max_connections=0`) benchmark YENİDEN
+  çalıştırıldığında Nox, HER İKİ eşzamanlılık seviyesinde de çıplak Zig
+  tabanını GEÇTİ — kayda değer bir gerileme/kararsızlık YOK.
+- **`runtime/async_rt/scheduler.zig`nin `run()`unda GERÇEK, BAĞIMSIZ bir
+  O(n)→O(n²) verimsizlik bulundu ve düzeltildi** (yukarıdaki araştırma
+  sırasında — dominant neden DEĞİLDİ, ama gerçek bir iyileştirme):
+  hazır kuyruğun `orderedRemove(0)`ı HER kaldırmada TÜM kalan elemanları
+  kaydırıyordu (O(n)) — `reactor.poll` TEK çağrıda 64'e kadar fiber'ı
+  BİRDEN hazır kuyruğa ekleyebildiğinden, yoğun G/Ç altında bu PARTİYİ
+  boşaltmak O(n²) olurdu. Zamanlayıcının hazır kuyruğu SIRALAMA (FIFO)
+  DEĞİL yalnızca ADALET gerektirdiğinden `swapRemove(0)` (O(1)) GÜVENLE
+  kullanılabilir — mevcut TÜM testler DEĞİŞMEDEN yeşil kaldı.
+
 ## [1.0.0]
 
 ### Eklendi

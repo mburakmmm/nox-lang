@@ -18,6 +18,18 @@ Gereksinimler: [Zig 0.16](https://ziglang.org/download/) (bkz.
 `build.zig.zon`'daki `minimum_zig_version`) ve
 [QBE](https://c9x.me/compile/) (`brew install qbe`).
 
+> **⚠️ Performans ölçerken dikkat:** `noxc build`/`run`, o an
+> `zig-out/lib/noxrt.o`da NE VARSA ONU (Debug YA DA ReleaseFast) KOŞULSUZ
+> kullanır — hangisinin kurulu olduğuna dair HİÇBİR uyarı YOKTUR. Debug
+> modunda runtime, TEK/kilitli bir `DebugAllocator` kullanır (ReleaseFast'ta
+> İSE kilitsiz `smp_allocator`) — çok iş parçacıklı/eşzamanlı bir
+> senaryoda (ör. `nox.http.serve_multicore`) bu, YANLIŞLIKLA `zig build`
+> (ReleaseFast BAYRAĞI OLMADAN) çalıştırıldıktan SONRA manuel bir
+> benchmark koşulduğunda 10x-30x'e VARAN, YANILTICI YAVAŞLAMA/kararsızlık
+> gösterir (GERÇEKTEN yaşandı, bkz. `benchmarks/RESULTS.md`nin "Bölüm
+> 3"ü). Manuel performans ölçümünden ÖNCE HER ZAMAN `zig build
+> -Doptimize=ReleaseFast` çalıştırıldığından EMİN OLUN.
+
 ## Zorunlu Okuma
 
 Herhangi bir değişikliğe başlamadan önce:

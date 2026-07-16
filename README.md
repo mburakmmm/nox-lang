@@ -196,33 +196,21 @@ Dört sunucu (`benchmarks/http_compare/`), AYNI yanıtı üretir (durum 200,
 İLE ölçülür (Apple M4, 10 çekirdek — tekrarlanabilirlik İçin
 `benchmarks/http_compare/run_compare.sh`'a bakın).
 
-**Orta eşzamanlılık** (`wrk -t4 -c30 -d10s` — hiçbir sunucu GERÇEKTEN
-doyurulmuyor, sayılar büyük ölçüde istemci/loopback maliyetini yansıtır):
-
-| Sunucu | İstek/sn | p99 gecikme |
+| Sunucu | Orta eşzamanlılık (c=30) | Yüksek eşzamanlılık (c=100) |
 |---|---|---|
-| Nox (`serve_multicore`, N=10) | **24,325** | 3.05ms |
-| Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 21,580 | 4.08ms |
-| Go (`net/http`, varsayılan keep-alive) | 20,882 | 3.05ms |
-| FastAPI (`uvicorn --workers 10`) | 19,374 | 4.75ms |
+| Nox (`serve_multicore`, N=10) | **20,562** İstek/sn | 12,859 İstek/sn |
+| Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 14,743 İstek/sn | 10,866 İstek/sn |
+| Go (`net/http`, varsayılan keep-alive) | 191,244 İstek/sn | **195,110** İstek/sn |
+| FastAPI (`uvicorn --workers 10`, varsayılan keep-alive) | 22,142 İstek/sn | 23,994 İstek/sn |
 
-**Yüksek eşzamanlılık** (`wrk -t8 -c100 -d15s`) — Go/FastAPI'nin
-keep-alive'ı (Nox HENÜZ desteklemiyor — HER istek YENİDEN el sıkışıyor)
-farkı BÜYÜTÜYOR, AYRICA `nox.http.serve_multicore`nin bu yükte çıplak
-Zig soket tabanına göre de GERİLEDİĞİ (daha fazla soket hatası/daha
-düşük verim) GÖZLEMLENDİ — bilinen bir sınırlama, gelecekteki bir
-performans/sağlamlaştırma fazının adayı:
-
-| Sunucu | İstek/sn | Soket hatası (connect/read/write) |
-|---|---|---|
-| Nox (`serve_multicore`, N=10) | 2,687 | 96 / 69488 / 47928 |
-| Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 4,757 | 96 / 0 / 0 |
-| Go (`net/http`, varsayılan keep-alive) | **197,178** | yok |
-| FastAPI (`uvicorn --workers 10`) | 23,302 | yok |
-
-Tam metodoloji notu (keep-alive asimetrisinin SONUÇLARI NASIL etkilediği
-DAHİL) İçin [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)'nin
-"Bölüm 3"üne bakın.
+Nox, HER İKİ seviyede de çıplak Zig soket tabanını GEÇİYOR. Go'nun AÇIK
+ARA önde olması, keep-alive'ın (Nox/Zig'in `Connection: close`
+mimarisinin AKSİNE) TCP el sıkışma maliyetini ORTADAN KALDIRMASINDANDIR
+— `nox.http.serve`nin keep-alive desteklememesinin GERÇEK maliyeti,
+ham istek-işleme HIZI farkı DEĞİL. Tam metodoloji + bu bölümün İLK
+(YANLIŞ — Debug-modu runtime linklenmesi VE hatalı bir `max_connections`
+ayarı yüzünden) sürümünün NASIL düzeltildiğinin ayrıntısı İçin
+[`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)'nin "Bölüm 3"üne bakın.
 </details>
 
 ## Güvenlik

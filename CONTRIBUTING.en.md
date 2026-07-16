@@ -17,6 +17,19 @@ Requirements: [Zig 0.16](https://ziglang.org/download/) (see
 `minimum_zig_version` in `build.zig.zon`) and
 [QBE](https://c9x.me/compile/) (`brew install qbe`).
 
+> **⚠️ A footgun when measuring performance:** `noxc build`/`run`
+> unconditionally use whatever is currently sitting in
+> `zig-out/lib/noxrt.o` (Debug or ReleaseFast) — there is no warning
+> about which one is installed. In Debug mode, the runtime uses a
+> single, lock-protected `DebugAllocator` (ReleaseFast uses the
+> lock-free `smp_allocator`) — under a multi-threaded/concurrent
+> workload (e.g. `nox.http.serve_multicore`), this produces a misleading
+> 10x-30x slowdown/instability if you run a manual benchmark right after
+> accidentally building with plain `zig build` (no ReleaseFast flag) —
+> this actually happened, see "Bölüm 3" in `benchmarks/RESULTS.md`.
+> Always make sure you've run `zig build -Doptimize=ReleaseFast` before
+> measuring performance manually.
+
 ## Required Reading
 
 Before starting any change:

@@ -206,33 +206,22 @@ response (status 200, header `x: x`, body `"ok"`), each using 10
 threads/processes, measured with `wrk` (Apple M4, 10 cores — see
 `benchmarks/http_compare/run_compare.sh` for reproducibility).
 
-**Moderate concurrency** (`wrk -t4 -c30 -d10s` — no server is actually
-saturated here, the numbers largely reflect client/loopback overhead):
-
-| Server | Req/s | p99 latency |
+| Server | Moderate concurrency (c=30) | High concurrency (c=100) |
 |---|---|---|
-| Nox (`serve_multicore`, N=10) | **24,325** | 3.05ms |
-| Zig (raw `std.c` sockets, N=10 threads) | 21,580 | 4.08ms |
-| Go (`net/http`, default keep-alive) | 20,882 | 3.05ms |
-| FastAPI (`uvicorn --workers 10`) | 19,374 | 4.75ms |
+| Nox (`serve_multicore`, N=10) | **20,562** req/s | 12,859 req/s |
+| Zig (raw `std.c` sockets, N=10 threads) | 14,743 req/s | 10,866 req/s |
+| Go (`net/http`, default keep-alive) | 191,244 req/s | **195,110** req/s |
+| FastAPI (`uvicorn --workers 10`) | 22,142 req/s | 23,994 req/s |
 
-**High concurrency** (`wrk -t8 -c100 -d15s`) — Go/FastAPI's keep-alive
-(Nox does not support it yet — every request re-handshakes) widens the
-gap, and `nox.http.serve_multicore` was also observed to fall behind the
-raw Zig socket baseline at this load (more socket errors, lower
-throughput) — a known limitation and a candidate for a future
-performance/hardening phase:
-
-| Server | Req/s | Socket errors (connect/read/write) |
-|---|---|---|
-| Nox (`serve_multicore`, N=10) | 2,687 | 96 / 69488 / 47928 |
-| Zig (raw `std.c` sockets, N=10 threads) | 4,757 | 96 / 0 / 0 |
-| Go (`net/http`, default keep-alive) | **197,178** | none |
-| FastAPI (`uvicorn --workers 10`) | 23,302 | none |
-
-See "Bölüm 3" in [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)
-(Turkish) for the full methodology note, including exactly how the
-keep-alive asymmetry affects these numbers.
+Nox beats the raw Zig socket baseline at both levels. Go's large lead is
+because keep-alive (unlike Nox/Zig's `Connection: close` design)
+eliminates TCP handshake cost per request — this reflects the real,
+measurable cost of `nox.http.serve` not yet supporting keep-alive, not a
+difference in raw request-processing speed. See "Bölüm 3" in
+[`benchmarks/RESULTS.md`](benchmarks/RESULTS.md) (Turkish) for the full
+methodology, including how this section's *first* published version was
+wrong (a Debug-mode runtime link + a misconfigured `max_connections`
+setting in the benchmark itself) and how it was corrected.
 </details>
 
 ## Security

@@ -102,80 +102,108 @@ başlığı, `"ok"` gövdesi — 2 bayt), `wrk` İLE ölçülür. Makine: Apple 
 (10 çekirdek), macOS, `go1.26.4`/`zig 0.16.0`/`Python 3.14.6`
 (`fastapi 0.136.3`/`uvicorn 0.49.0`)/`wrk 4.2.0`. TÜM sunucular 10
 iş parçacığı/işlem KULLANACAK şekilde YAPILANDIRILDI (Nox:
-`serve_multicore(port, handle, 10, 4096)`; Zig: 10 `accept()` iş
-parçacığı AYNI dinleme soketini PAYLAŞIR; Go: `net/http`nin
-VARSAYILANI, GOMAXPROCS ÜZERİNDEN TÜM çekirdekleri otomatik kullanır;
-FastAPI: `uvicorn --workers 10`).
+`serve_multicore(port, handle, 10, 0)` — `0` = SINIRSIZ bağlantı, bkz.
+aşağıdaki DÜZELTME notu; Zig: 10 `accept()` iş parçacığı AYNI dinleme
+soketini PAYLAŞIR; Go: `net/http`nin VARSAYILANI, GOMAXPROCS ÜZERİNDEN
+TÜM çekirdekleri otomatik kullanır; FastAPI: `uvicorn --workers 10`).
 
-**Metodolojik BİLİNÇLİ bir asimetri (SONUÇLARI okurken KRİTİK):**
-`nox.http.serve`/`serve_multicore` BUGÜN yalnızca bağlantı-başına-TEK-
-istek modelindedir (istek işlenip yanıt yazıldıktan SONRA bağlantı HER
-ZAMAN kapatılır, HTTP keep-alive YOK — bkz. `runtime/stdlib_shims/
-http_server.zig`nin `connectionEntry`si). `zig_server.zig` (bu
-karşılaştırmanın "çıplak Zig tabanı") BİLEREK AYNI modele UYDURULDU
-(`Connection: close`, DOĞRUDAN `std.c` soketleri) — bu SAYEDE Nox'a-
-karşı-Zig YARISI, BAĞLANTI YENİDEN KULLANIM POLİTİKASI DEĞİL, Nox'un
-ARC/fiber/QBE-codegen soyutlamasının ÇIPLAK soketler ÜZERİNE kattığı
-GERÇEK EK YÜKÜ izole eder. Go (`net/http`) VE FastAPI/uvicorn İSE
-VARSAYILAN (keep-alive AÇIK) modlarında bırakıldı — KENDİ doğal/
-gerçek-dünya YAPILANDIRMALARINDA test edilmeleri, Nox'a-karşı-Go/
-FastAPI YARISINI daha ANLAMLI/dürüst kılar, ama bu YARININ BÜYÜK
-KISMININ "keep-alive VAR mı YOK mu" farkını YANSITTIĞI (SALT istek-
-işleme hızını DEĞİL) AÇIKÇA belirtilmelidir.
+**⚠️ DÜZELTME (bu bölümün İLK sürümü YANLIŞTI — bkz. aşağıda GEREKÇESİ):**
+Bu bölümün YAYIMLANAN İLK sürümü, Nox'un yüksek eşzamanlılıkta (c=100)
+çıplak Zig soket tabanına göre 30x+ GERİLEDİĞİNİ VE çok sayıda soket
+hatası VERDİĞİNİ raporlamıştı. Bu SONRADAN AYRINTILI bir araştırmayla
+(bkz. proje geçmişi) **TAMAMEN yanlış olduğu, İKİ AYRI benchmark-
+metodolojisi HATASINDAN kaynaklandığı** kanıtlandı — Nox'un KENDİSİNDE
+BÖYLE bir gerileme/kararsızlık YOKTUR:
+
+1. **`noxrt.o` YANLIŞLIKLA Debug modunda linklenmişti.** `nox_server.nox`,
+   o an `zig-out/lib/noxrt.o`da NE VARSA ONU kullanılarak derlenmişti —
+   VE en son çalıştırılan `zig build` komutu (ReleaseFast BAYRAĞI
+   OLMADAN) runtime'ı Debug modunda YENİDEN kurmuştu. Debug modunda
+   `runtime/alloc/asap.zig`nin `RuntimeState.allocator()`ı `std.heap.
+   DebugAllocator`a (TEK, KİLİTLİ/senkronize bir ayırıcı) gider —
+   ReleaseFast'ta İSE `std.heap.smp_allocator`a (kilitsiz, iş parçacığı-
+   duyarlı). 10 iş parçacığının HEPSİ AYNI kilitli DebugAllocator'ı
+   PAYLAŞTIĞINDA, eşzamanlı istek sayısı arttıkça KİLİT ÇEKİŞMESİ
+   ORANTISIZ büyür — TAM DA "orta eşzamanlılıkta İYİ, yüksek
+   eşzamanlılıkta ÇÖKÜYOR" deseni bu şekilde üretilir. `zig build
+   -Doptimize=ReleaseFast` İLE runtime YENİDEN kurulup `nox_server.nox`
+   YENİDEN derlenince, c=100'de verim TEK BAŞINA **~10x-30x arttı** VE
+   soket hataları KAYBOLDU.
+2. **`nox_server.nox`nin `max_connections` parametresi (4. argüman)
+   `4096` olarak AYARLANMIŞTI** — bu parametrenin AslIn'da "TOPLAM bu
+   kadar bağlantı kabul edip SONRA sunucuyu KENDİLİĞİNDEN durdur"
+   anlamına geldiği (deterministik golden testler İÇİN tasarlanmış bir
+   özellik, bkz. `runtime/stdlib_shims/http_server.zig`nin `serveImpl`si)
+   FARK EDİLMEMİŞTİ — GERÇEK bir verim benchmark'ı KOLAYCA on binlerce
+   istek gönderir, bu da sunucunun (ya da 10 iş parçacığından BİRİNİN)
+   testin ORTASINDA SESSİZCE durup ÇIKMASINA yol açtı ("connection
+   refused" hataları VE görünüşte AÇIKLANAMAYAN çökmeler OLARAK
+   gözlemlendi). `0` (sınırsız) OLARAK düzeltildi.
+
+Bu İKİ düzeltmeden SONRA (aşağıdaki DOĞRU sonuçlar) Nox, çıplak Zig
+soket tabanını HER İKİ eşzamanlılık seviyesinde de GEÇİYOR — kayda değer
+bir kararsızlık/gerileme YOK. **Ayrıca bu araştırma sırasında, zamanlayıcının
+hazır kuyruğunda BAĞIMSIZ, GERÇEK bir O(n)→O(n²) verimsizlik BULUNUP
+düzeltildi** (bkz. `runtime/async_rt/scheduler.zig`nin `run()`u,
+`orderedRemove(0)` → `swapRemove(0)`) — YÜKSEK eşzamanlılıkta BİR
+`reactor.poll()` çağrısı TEK seferde 64'e kadar fiber'ı hazır kuyruğa
+ekleyebildiğinden (`io_reactor.zig`nin `events: [64]` arabelleği),
+`orderedRemove(0)`nin HER kaldırmada kuyruğun TÜMÜNÜ kaydırması bu
+PARTİYİ boşaltmayı O(n²) yapardı; sıralama (FIFO) zamanlayıcı İçin
+davranışsal olarak GEREKMEDİĞİNDEN (yalnızca ADALET gerekir)
+`swapRemove` GÜVENLE O(1) yapar. Bu, DOMİNANT neden DEĞİLDİ (yukarıdaki
+İKİ metodoloji hatası dominanttı) ama GERÇEK, bağımsız bir iyileştirmedir.
+
+**Ayrı, BENİGN bir gözlem (araştırma sırasında BULUNDU, KAYDA DEĞER ama
+ÇÖZÜLMESİ GEREKMEYEN):** `wrk`, Nox'un sunucusuna karşı (Zig/Go/FastAPI'ye
+KARŞI DEĞİL) her zaman bir miktar "read"/"write" "soket hatası" raporlar
+— ama bu GERÇEK istek KAYBINI YANSITMAZ: hem `ab` (Apache Bench, 5000/5000
+istek BAŞARILI, %0 hata) HEM sıralı `curl` döngüsü (50/50 BAŞARILI) AYNI
+sunucuya karşı SIFIR hata gösterdi. Bu, `wrk`nin KENDİ bağlantı-yeniden-
+kullanım mantığının Nox'un TAM OLARAK `keep_alive=false` İLE kapattığı
+bir bağlantıyı ÇOK KISA bir pencerede YENİDEN kullanmaya ÇALIŞMASINDAN
+kaynaklanan, ZARARSIZ bir `wrk`-özgü tuhaflık gibi GÖRÜNÜYOR — GERÇEK
+bir Nox hatası DEĞİL, ayrıca araştırılmadı (kapsam dışı bırakıldı).
 
 ### Orta eşzamanlılık (`wrk -t4 -c30 -d10s`) — TÜM DÖRT sunucu AYNI ayarlarla
 
 Bu seviyede (30 bağlantı, yerel makine/loopback) HİÇBİR sunucu GERÇEKTEN
-DOYURULMUYOR — sayılar birbirine YAKIN, farkı büyük ölçüde İSTEMCİ/
-loopback maliyeti BELİRLİYOR:
+DOYURULMUYOR:
 
-| Sunucu | İstek/sn | p50 gecikme | p99 gecikme | Soket hatası |
-|---|---|---|---|---|
-| Nox (`serve_multicore`, N=10) | **24,325** | 1.39ms | 3.05ms | yok |
-| Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 21,580 | 1.21ms | 4.08ms | yok |
-| Go (`net/http`, varsayılan keep-alive) | 20,882 | 1.39ms | 3.05ms | yok |
-| FastAPI (`uvicorn --workers 10`, varsayılan keep-alive) | 19,374 | 1.24ms | 4.75ms | yok |
+| Sunucu | İstek/sn |
+|---|---|
+| Nox (`serve_multicore`, N=10) | **20,562** |
+| Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 14,743 |
+| Go (`net/http`, varsayılan keep-alive) | 191,244 |
+| FastAPI (`uvicorn --workers 10`, varsayılan keep-alive) | 22,142 |
 
-Bu seviyede Nox, ÇIPLAK Zig soket tabanını (VE Go/FastAPI'yi) bile
-GEÇİYOR — makul eşzamanlılıkta `nox.http.serve_multicore`nin GERÇEK
-ek yükü ÖLÇÜLEMEYECEK kadar KÜÇÜK.
+### Yüksek eşzamanlılık (`wrk -t8 -c100 -d15s`)
 
-### Yüksek eşzamanlılık (`wrk -t8 -c100 -d15s`) — keep-alive farkı DOMİNANT hale gelir
-
-| Sunucu | İstek/sn | p50 gecikme | p99 gecikme | Soket hatası (connect/read/write) |
-|---|---|---|---|---|
-| Nox (`serve_multicore`, N=10) | 2,687 | 1.16ms | 2.49ms | **96 / 69488 / 47928** |
-| Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 4,757 | 0.95ms | 2.30ms | 96 / 0 / 0 |
-| Go (`net/http`, varsayılan keep-alive) | **197,178** | 0.28ms | 3.52ms | yok |
-| FastAPI (`uvicorn --workers 10`, varsayılan keep-alive) | 23,302 | 2.18ms | 32.38ms | yok |
-
-**İKİ AYRI, DÜRÜSTÇE ayrıştırılması GEREKEN bulgu:**
-1. **Go/FastAPI'nin BÜYÜK sıçraması** (Nox/Zig'e göre 8x-70x) BÜYÜK
-   ÖLÇÜDE keep-alive'ın TCP el sıkışma/bağlantı KURMA maliyetini
-   ORTADAN KALDIRMASINDANDIR — `wrk`nin 100 bağlantısı BİNLERCE isteği
-   AYNI soket ÜZERİNDEN tekrar KULLANIR; Nox/Zig İSE HER istek İçin
-   YENİDEN el sıkışır. Bu, SALT istek-işleme HIZI farkı DEĞİLDİR —
-   `nox.http.serve`nin BUGÜN keep-alive DESTEKLEMEMESİNİN GERÇEK,
-   ölçülebilir maliyetidir (gelecekteki bir faz İçin AÇIK bir aday).
-2. **Nox'un ÇIPLAK Zig tabanına GÖRE de GERİDE kalması VE YÜKSEK soket
-   hata SAYISI** (`read 69488`/`write 47928` — BAŞARILI 40388 isteğin
-   KENDİSİNDEN bile FAZLA) BAĞIMSIZ, GERÇEK bir bulgudur: 100 eşzamanlı
-   bağlantıda `nox.http.serve_multicore`, AYNI "10 iş parçacığı TEK
-   dinleme soketini PAYLAŞIR" mimarisine sahip ÇIPLAK Zig tabanından
-   BELİRGİN ŞEKİLDE DAHA FAZLA hata VERİYOR VE DAHA YAVAŞ — bu, Orta
-   eşzamanlılık testinde GÖRÜLMEYEN, YÜKSEK eşzamanlı bağlantı ÇÖKÜŞÜ
-   ALTINDA (fiber zamanlayıcı/`accept()` geri-basınç mantığında olası
-   bir darboğaz) ortaya çıkan, KAYDA GEÇMEYE DEĞER bir gelecek-fazı
-   ADAYI/bilinen sınırlamadır — bu belgenin KENDİSİ bunu ÇÖZMEYİ
-   hedeflemez, yalnızca DÜRÜSTÇE raporlar.
+| Sunucu | İstek/sn |
+|---|---|
+| Nox (`serve_multicore`, N=10) | 12,859 |
+| Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 10,866 |
+| Go (`net/http`, varsayılan keep-alive) | **195,110** |
+| FastAPI (`uvicorn --workers 10`, varsayılan keep-alive) | 23,994 |
 
 ### Özet
 
-- **Orta eşzamanlılıkta** (gerçekçi bir küçük-orta ölçekli servis yükü)
-  Nox, Go/Zig/FastAPI İLE **AYNI SINIFTA/rekabetçi**.
-- **Yüksek eşzamanlılıkta** Go/FastAPI'nin keep-alive AVANTAJI VE Nox'un
-  bağlantı-başına-yeniden-el-sıkışma mimarisi, farkı BÜYÜTÜYOR; AYRICA
-  `nox.http.serve_multicore`nin YÜKSEK eşzamanlı bağlantı SAYISI ALTINDA
-  ÇIPLAK Zig tabanına göre de GERİLEDİĞİ GÖZLEMLENDİ — bu, keep-alive
-  desteğiyle BİRLİKTE gelecekteki bir performans/sağlamlaştırma fazının
-  DOĞAL adayıdır.
+- Nox, HER İKİ eşzamanlılık seviyesinde de çıplak Zig soket tabanını
+  (aynı "N iş parçacığı, tek dinleme soketi, bağlantı başına tek istek"
+  mimarisiyle) GEÇİYOR — `nox.http.serve_multicore`nin ARC/fiber/QBE-
+  codegen soyutlamasının GERÇEK ek yükü, doğru (ReleaseFast) bir runtime
+  İLE ÖLÇÜLEMEYECEK kadar KÜÇÜK.
+- Go, keep-alive'ın (Nox/Zig'in `Connection: close` mimarisinin AKSİNE,
+  TCP el sıkışma maliyetini ORTADAN KALDIRAN) DOĞAL avantajıyla AÇIK ARA
+  önde — bu, `nox.http.serve`nin keep-alive DESTEKLEMEMESİNİN GERÇEK,
+  ölçülebilir maliyetidir (gelecekteki bir faz İçin AÇIK bir aday),
+  Nox'un ham istek-işleme HIZIYLA İLGİLİ bir sınırlama DEĞİLDİR.
+- FastAPI/uvicorn, keep-alive AÇIK olmasına RAĞMEN Nox İLE AYNI
+  MERTEBEDE — Python/ASGI katmanının KENDİ ek yükü, keep-alive
+  avantajını BÜYÜK ÖLÇÜDE dengeliyor.
+- **Ders (gelecekteki benchmark çalışmaları İçin):** `noxc build`/`run`,
+  o an `zig-out/lib/noxrt.o`da NE VARSA ONU (Debug YA DA ReleaseFast)
+  KOŞULSUZ kullanır — hangisinin kurulu olduğuna dair HİÇBİR uyarı
+  YOKTUR. Manuel performans ölçümünden ÖNCE HER ZAMAN `zig build
+  -Doptimize=ReleaseFast` çalıştırıldığından EMİN OLUNMALIDIR (bkz.
+  CONTRIBUTING.md).
