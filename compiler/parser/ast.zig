@@ -1,4 +1,4 @@
-//! Nox v0.1 AST düğüm tanımları. Düğümler bir arena allocator üzerinde
+//! Nox AST düğüm tanımları. Düğümler bir arena allocator üzerinde
 //! tahsis edilir (bkz. parser.zig); bu yalnızca derleyicinin kendi
 //! implementasyon detayıdır, Nox dilinin sahiplik modeliyle ilgisi yoktur.
 

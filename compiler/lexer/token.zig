@@ -1,4 +1,4 @@
-//! Nox v0.1 token tanımları.
+//! Nox token tanımları.
 
 pub const TokenKind = enum {
     // literals

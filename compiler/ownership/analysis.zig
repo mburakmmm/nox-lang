@@ -1,4 +1,4 @@
-//! Nox v0.1 sahiplik analizi (AGENTS.md §8, §7 adım 3).
+//! Nox sahiplik analizi (AGENTS.md §8, §7 adım 3).
 //!
 //! Önkoşul: girdi modülü Faz 2 tip denetleyicisinden (checker.zig) başarıyla
 //! geçmiş olmalıdır (iyi tiplenmiş). Bu geçiş yalnızca heap tipli bağlamaları

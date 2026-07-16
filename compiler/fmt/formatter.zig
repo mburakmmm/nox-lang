@@ -1,4 +1,4 @@
-//! Nox v0.1 kaynak-kodu formatlayıcısı (Faz T.4b) — AST'yi kanonik bir
+//! Nox kaynak-kodu formatlayıcısı (Faz T.4b) — AST'yi kanonik bir
 //! stile (4 boşluk girinti, operatörler etrafında tek boşluk, çift tırnaklı
 //! string'ler) göre YENİDEN Nox söz dizimine yazar. T.4a'nın yakaladığı
 //! `Trivia`yi (yorumlar + boş satırlar) en yakın deyime göre orijinal

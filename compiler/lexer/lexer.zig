@@ -1,4 +1,4 @@
-//! Nox v0.1 indent-farkında lexer. Kaynak metni tek seferde token dizisine çevirir.
+//! Nox indent-farkında lexer. Kaynak metni tek seferde token dizisine çevirir.
 //! Python tokenizer'ındaki INDENT/DEDENT modeli referans alınmıştır.
 
 const std = @import("std");

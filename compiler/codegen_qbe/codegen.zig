@@ -1,4 +1,4 @@
-//! Nox v0.1 QBE IR codegen — AGENTS.md §7 adım 4.
+//! Nox QBE IR codegen — AGENTS.md §7 adım 4.
 //!
 //! **Kapsam (bu geçiş):** değer tipleri (`int`/`float`/`bool`/`None`) + iki
 //! heap tipi (`str`, `list[T]`, yalnızca `T` bir değer tipiyken) + sınıflar.

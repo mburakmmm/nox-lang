@@ -1,9 +1,12 @@
 # Nox Programlama Dili — Teknik Spesifikasyon
 
-**Versiyon:** 0.1 (Taslak)
-**Tarih:** 9 Temmuz 2026
+**Versiyon:** 1.1.0-dev (bkz. `CHANGELOG.md` — `v1.0.0` yayımlandı VE
+etiketlendi; bu belge main dalındaki, HENÜZ yayımlanmamış devam eden
+geliştirmeyi de İÇEREN en güncel durumu yansıtır — bkz. `VERSIONING.md`)
+**Tarih:** 16 Temmuz 2026 (son önemli güncelleme)
 **Dosya Uzantısı:** `.nox`
-**Durum:** Mimari tasarım aşaması
+**Durum:** `v1.0.0` üretim sürümü YAYIMLANDI — aktif geliştirme devam
+ediyor (bkz. `CHANGELOG.md`nin `[Yayımlanmamış]` bölümü)
 
 ---
 

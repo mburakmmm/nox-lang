@@ -1,4 +1,4 @@
-//! Nox v0.1 recursive-descent / precedence-climbing parser.
+//! Nox recursive-descent / precedence-climbing parser.
 //! AST düğümleri çağıranın verdiği allocator üzerinde tahsis edilir
 //! (tipik kullanım: bir ArenaAllocator — bkz. testler).
 

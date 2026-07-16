@@ -1,4 +1,4 @@
-//! Nox v0.1 semantik tip temsili. Sözdizimsel tip ifadeleri (`ast.TypeExpr`)
+//! Nox semantik tip temsili. Sözdizimsel tip ifadeleri (`ast.TypeExpr`)
 //! `checker.zig` tarafından bu tiplere çözümlenir.
 
 const std = @import("std");

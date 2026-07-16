@@ -1,4 +1,4 @@
-//! Nox v0.1 zorunlu statik tip denetleyicisi (AGENTS.md §5, §7 adım 2).
+//! Nox zorunlu statik tip denetleyicisi (AGENTS.md §5, §7 adım 2).
 //!
 //! İki geçişli çalışır: (1) modül düzeyindeki tüm fonksiyon/sınıf imzaları
 //! ileri-referansları destekleyecek şekilde önceden kaydedilir, (2) gövdeler

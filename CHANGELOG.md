@@ -269,6 +269,20 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   aynı). Yeni Zig birim testleri + 3 yeni uçtan uca golden test + 2
   kalem için kasıtlı boz→kırmızı ritüeli.
 
+### Düzeltildi
+- Sürüm tutarsızlığı (Faz FF.1 — harici bir teknik incelemede bulunan
+  gerçek bir bulgu). `build.zig.zon` (dolayısıyla `noxc --version`)
+  `1.0.0` DÖNDÜRÜYORDU, ama main dalı ZATEN `v1.0.0`dan SONRAKİ (Faz
+  M.8/DD.1/EE.1) özellikleri İÇERİYORDU — kullanıcı `noxc --version`a
+  GÜVENİP yanlış bir imaj edinebilirdi. `1.1.0-dev`e (Zig'in KENDİ
+  `-dev` ön-sürüm sözleşmesiyle AYNI) güncellendi. `nox-teknik-
+  spesifikasyon.md`nin başlığı da ("Versiyon: 0.1 (Taslak)", "Durum:
+  Mimari tasarım aşaması" — GERÇEKTEN `v1.0.0` yayımlandıktan SONRA bile
+  DEĞİŞTİRİLMEMİŞTİ) VE `README.md`nin sürüm rozeti güncellendi.
+  Derleyici kaynak dosyalarının modül-üstü yorumlarındaki ("Nox v0.1
+  lexer" gibi) ARTIK ANLAMSIZ kalmış `v0.1` etiketleri (9 dosya)
+  KALDIRILDI.
+
 ## [1.0.0]
 
 ### Eklendi
