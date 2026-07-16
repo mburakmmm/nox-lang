@@ -2698,19 +2698,22 @@ const Codegen = struct {
     ///
     /// **Düzeltilen kritik hata (Faz U.5'in doğrulaması SIRASINDA bulundu):**
     /// bu SARMALAMA OLMADAN, `fb` `finally_stack`deYKEN doğrudan `genStmts(fb)`
-    /// İLE çalıştırılırsa VE `fb` bir METOD ÇAĞRISI İÇERİYORSA (metod
-    /// çağrıları HER ZAMAN `emitExceptionCheck` üretir, `must_not_raise`
-    /// elemesi onlar İÇİN UYGULANMAZ — bkz. M.8'in ertelenmiş notu),
-    /// `current_catch_label` bu noktada ZATEN eski değerine (genellikle
-    /// `null`) DÖNMÜŞ OLDUĞUNDAN `emitExceptionCheck` `drainFinally`yi
-    /// ÇAĞIRIR — bu da `finally_stack`de HÂLÂ DURAN `fb`yi TEKRAR çalıştırır,
-    /// bu da AYNI metod çağrısını TEKRAR üretir... SONSUZ DERLEME-ZAMANI
-    /// özyinelemesi (noxc'nin KENDİSİNİN yığın taşmasıyla ÇÖKMESİ). Bu,
-    /// Faz U.5'in `with` desteğini genTry'ye DEVREDEN `genWith`i doğrularken
-    /// KEŞFEDİLDİ — `__exit__()` HER ZAMAN bir metod çağrısı OLDUĞUNDAN, İÇİNDE
-    /// bir METOD ÇAĞRISI OLAN HER `finally`/`with` bloğu bunu tetikler
-    /// (yalnızca `with`e özgü DEĞİL — sıradan `try/finally` İÇİN de GEÇERLİ
-    /// bir düzeltmedir, `with` bunu YALNIZCA İLK KEZ ORTAYA ÇIKARDI).
+    /// İLE çalıştırılırsa VE `fb` bir `emitExceptionCheck` ÜRETEN çağrı
+    /// İÇERİYORSA (Faz M.8 (yeniden ele alındı) ÖNCESİNDE HER metod çağrısı
+    /// KOŞULSUZ böyleydi; ARTIK yalnızca `must_not_raise`e GİRMEYEN çağrılar
+    /// böyle — ama bu SARMALAMA her iki durumda da GENEL/SAVUNMACI olarak
+    /// GEREKLİDİR, çünkü `fb`nin GERÇEKTEN bir kontrol üretip üretmediği
+    /// burada STATİK olarak varsayılamaz), `current_catch_label` bu noktada
+    /// ZATEN eski değerine (genellikle `null`) DÖNMÜŞ OLDUĞUNDAN
+    /// `emitExceptionCheck` `drainFinally`yi ÇAĞIRIR — bu da `finally_stack`de
+    /// HÂLÂ DURAN `fb`yi TEKRAR çalıştırır, bu da AYNI çağrıyı TEKRAR
+    /// üretir... SONSUZ DERLEME-ZAMANI özyinelemesi (noxc'nin KENDİSİNİN
+    /// yığın taşmasıyla ÇÖKMESİ). Bu, Faz U.5'in `with` desteğini genTry'ye
+    /// DEVREDEN `genWith`i doğrularken KEŞFEDİLDİ — `__exit__()` HER ZAMAN
+    /// bir metod çağrısı OLDUĞUNDAN, İÇİNDE bir METOD ÇAĞRISI OLAN HER
+    /// `finally`/`with` bloğu bunu tetikler (yalnızca `with`e özgü DEĞİL —
+    /// sıradan `try/finally` İÇİN de GEÇERLİ bir düzeltmedir, `with` bunu
+    /// YALNIZCA İLK KEZ ORTAYA ÇIKARDI).
     fn runDetachedFinally(self: *Codegen, fb: []const ast.Stmt, ret_qtype: QbeType) CodegenError!void {
         _ = self.finally_stack.pop();
         try self.genStmts(fb, ret_qtype);
@@ -2733,12 +2736,11 @@ const Codegen = struct {
         // nokta hiç erişilmez (üstteki `genStmts` zaten bir `ret` üretti ve
         // `drainFinally` orada devreye girdi) — o durumda burası ölü koddur.
         // `runDetachedFinally` (bkz. onun belge notu) kullanılır — `fb`nin
-        // KENDİSİ `finally_stack`de İKEN çalıştırılırsa, İÇİNDE bir metod
-        // çağrısı (HER ZAMAN `emitExceptionCheck` üretir) varsa `current_
-        // catch_label` ZATEN eski değerine döndüğünden `drainFinally`
-        // `fb`yi TEKRAR çalıştırıp SONSUZ derleme-zamanı özyinelemesine
-        // yol açardı (bkz. Faz U.5'in doğrulaması, bunu İLK KEZ ortaya
-        // çıkaran senaryo).
+        // KENDİSİ `finally_stack`de İKEN çalıştırılırsa, İÇİNDE bir
+        // `emitExceptionCheck` üreten çağrı varsa `current_catch_label`
+        // ZATEN eski değerine döndüğünden `drainFinally` `fb`yi TEKRAR
+        // çalıştırıp SONSUZ derleme-zamanı özyinelemesine yol açardı
+        // (bkz. Faz U.5'in doğrulaması, bunu İLK KEZ ortaya çıkaran senaryo).
         if (t.finally_body) |fb| try self.runDetachedFinally(fb, ret_qtype);
         try self.out.writer.print("    jmp {s}\n", .{after_label});
 
@@ -4020,64 +4022,104 @@ const Codegen = struct {
         callees: std.ArrayListUnmanaged([]const u8) = .empty,
     };
 
+    /// `class_ctx`/`var_types`/`poisoned` — Faz M.8 (yeniden ele alındı, bkz.
+    /// nox-teknik-spesifikasyon.md §3.59): `obj.method()` çağrılarını (basit,
+    /// çözülebilir alıcılar için) `direct_unsafe` yerine gerçek bir `callees`
+    /// bağımlılığına çevirebilmek için TÜM gövde boyunca taşınan, DÜZ (blok-
+    /// kapsamsız — `collectLocals`in AYNI Python-tarzı fonksiyon-seviyesi
+    /// kapsam varsayımı, bkz. onun belge notu) durum: `class_ctx` metodun AİT
+    /// OLDUĞU sınıfın adı (`self.diğer_metod()` çözümü için, serbest
+    /// fonksiyonlarda `null`), `var_types` yerel isim → sınıf adı haritası
+    /// (parametrelerden ÖN-DOLDURULUR, `var_decl` deyimleriyle METİN
+    /// SIRASINDA güncellenir), `poisoned` ise bir isim BİRDEN FAZLA kez
+    /// bildirilirse (`if`/`else` dallarında FARKLI sınıflara — `checker.zig`nin
+    /// `Scope.declare`si YİNELENEN isim kontrolü YAPMAZ, satır ~97-111)
+    /// KALICI olarak "çözülemez" işaretlenen isimlerin kümesidir — bir isim
+    /// ASLA `poisoned`dan çıkmaz, bu da `genMethodCall`in GERÇEKTE çağırdığı
+    /// sembolle bu analizin çözdüğü sembolün HER ZAMAN aynı kalmasını garanti
+    /// eder (aksi halde YANLIŞ bir sınıfın metodu "güvenli" sayılabilir —
+    /// SESSİZ-YUTMA riski).
+    fn declareVarType(self: *Codegen, name: []const u8, class_name: ?[]const u8, var_types: *std.StringHashMapUnmanaged([]const u8), poisoned: *std.StringHashMapUnmanaged(void)) CodegenError!void {
+        if (poisoned.contains(name)) return;
+        if (var_types.contains(name)) {
+            _ = var_types.remove(name);
+            try poisoned.put(self.allocator, name, {});
+            return;
+        }
+        if (class_name) |cn| try var_types.put(self.allocator, name, cn);
+    }
+
     /// `stmts`i özyinelemeli olarak gezip `info`yi doldurur — `moduleUsesAsync`/
     /// `stmtUsesAsync`in AYNI ağaç gezinme deseni (bkz. onların belge notu),
     /// ama "async kullanımı var mı" yerine "raise/metod-çağrısı/await-spawn
     /// var mı VE hangi serbest fonksiyon/kurucular çağrılıyor" topluyor.
-    fn collectRaiseInfoStmts(self: *Codegen, stmts: []const ast.Stmt, info: *FuncSafetyInfo) CodegenError!void {
-        for (stmts) |stmt| try self.collectRaiseInfoStmt(stmt, info);
+    fn collectRaiseInfoStmts(self: *Codegen, stmts: []const ast.Stmt, info: *FuncSafetyInfo, class_ctx: ?[]const u8, var_types: *std.StringHashMapUnmanaged([]const u8), poisoned: *std.StringHashMapUnmanaged(void)) CodegenError!void {
+        for (stmts) |stmt| try self.collectRaiseInfoStmt(stmt, info, class_ctx, var_types, poisoned);
     }
 
-    fn collectRaiseInfoStmt(self: *Codegen, stmt: ast.Stmt, info: *FuncSafetyInfo) CodegenError!void {
+    fn collectRaiseInfoStmt(self: *Codegen, stmt: ast.Stmt, info: *FuncSafetyInfo, class_ctx: ?[]const u8, var_types: *std.StringHashMapUnmanaged([]const u8), poisoned: *std.StringHashMapUnmanaged(void)) CodegenError!void {
         switch (stmt.kind) {
-            .expr_stmt => |e| try self.collectRaiseInfoExpr(e, info),
-            .var_decl => |v| try self.collectRaiseInfoExpr(v.value, info),
+            .expr_stmt => |e| try self.collectRaiseInfoExpr(e, info, class_ctx, var_types, poisoned),
+            .var_decl => |v| {
+                try self.collectRaiseInfoExpr(v.value, info, class_ctx, var_types, poisoned);
+                const cn: ?[]const u8 = if (v.type_expr == .simple and self.classes.contains(v.type_expr.simple)) v.type_expr.simple else null;
+                try self.declareVarType(v.name, cn, var_types, poisoned);
+            },
             .assign => |a| {
-                try self.collectRaiseInfoExpr(a.target, info);
-                try self.collectRaiseInfoExpr(a.value, info);
+                try self.collectRaiseInfoExpr(a.target, info, class_ctx, var_types, poisoned);
+                try self.collectRaiseInfoExpr(a.value, info, class_ctx, var_types, poisoned);
             },
             .if_stmt => |f| {
-                try self.collectRaiseInfoExpr(f.cond, info);
-                try self.collectRaiseInfoStmts(f.then_body, info);
+                try self.collectRaiseInfoExpr(f.cond, info, class_ctx, var_types, poisoned);
+                try self.collectRaiseInfoStmts(f.then_body, info, class_ctx, var_types, poisoned);
                 for (f.elif_clauses) |ec| {
-                    try self.collectRaiseInfoExpr(ec.cond, info);
-                    try self.collectRaiseInfoStmts(ec.body, info);
+                    try self.collectRaiseInfoExpr(ec.cond, info, class_ctx, var_types, poisoned);
+                    try self.collectRaiseInfoStmts(ec.body, info, class_ctx, var_types, poisoned);
                 }
-                if (f.else_body) |eb| try self.collectRaiseInfoStmts(eb, info);
+                if (f.else_body) |eb| try self.collectRaiseInfoStmts(eb, info, class_ctx, var_types, poisoned);
             },
             .while_stmt => |w| {
-                try self.collectRaiseInfoExpr(w.cond, info);
-                try self.collectRaiseInfoStmts(w.body, info);
+                try self.collectRaiseInfoExpr(w.cond, info, class_ctx, var_types, poisoned);
+                try self.collectRaiseInfoStmts(w.body, info, class_ctx, var_types, poisoned);
             },
             .for_stmt => |f| {
-                try self.collectRaiseInfoExpr(f.iterable, info);
-                try self.collectRaiseInfoStmts(f.body, info);
+                try self.collectRaiseInfoExpr(f.iterable, info, class_ctx, var_types, poisoned);
+                // Döngü değişkeni her turda YENİDEN bağlanır; tipi burada
+                // BİLİNMEZ (bkz. `ast.ForStmt`, bir `type_expr` taşımaz) —
+                // ASLA `var_types`e eklenmez, ama DIŞARIDAN aynı isimde bir
+                // sınıf-tipli değişken GELİYORSA (gölgeleme) o artık YANLIŞ
+                // olur, bu yüzden `declareVarType(null)` İLE zehirlenir
+                // (aynı "yeniden bildirme" güvenlik kuralı, bkz. üstteki
+                // belge notu).
+                try self.declareVarType(f.var_name, null, var_types, poisoned);
+                try self.collectRaiseInfoStmts(f.body, info, class_ctx, var_types, poisoned);
             },
             .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt => {},
-            .return_stmt => |r| if (r) |e| try self.collectRaiseInfoExpr(e, info),
+            .return_stmt => |r| if (r) |e| try self.collectRaiseInfoExpr(e, info, class_ctx, var_types, poisoned),
             .raise_stmt => |e| {
                 info.direct_unsafe = true;
-                try self.collectRaiseInfoExpr(e, info);
+                try self.collectRaiseInfoExpr(e, info, class_ctx, var_types, poisoned);
             },
             .try_stmt => |t| {
-                try self.collectRaiseInfoStmts(t.try_body, info);
-                for (t.except_clauses) |ec| try self.collectRaiseInfoStmts(ec.body, info);
-                if (t.finally_body) |fb| try self.collectRaiseInfoStmts(fb, info);
+                try self.collectRaiseInfoStmts(t.try_body, info, class_ctx, var_types, poisoned);
+                for (t.except_clauses) |ec| try self.collectRaiseInfoStmts(ec.body, info, class_ctx, var_types, poisoned);
+                if (t.finally_body) |fb| try self.collectRaiseInfoStmts(fb, info, class_ctx, var_types, poisoned);
             },
-            .lowlevel_stmt => |ll| try self.collectRaiseInfoStmts(ll.body, info),
+            .lowlevel_stmt => |ll| try self.collectRaiseInfoStmts(ll.body, info, class_ctx, var_types, poisoned),
             // Faz U.5: bir `with` deyimi HER ZAMAN örtük `__enter__`/
-            // `__exit__` METOD ÇAĞRILARI içerir — metod çağrılarının
-            // muhafazakâr olarak HER ZAMAN "güvensiz" sayılmasıyla (bkz.
-            // yukarıdaki belge notu) TUTARLI.
+            // `__exit__` METOD ÇAĞRILARI içerir — bunlar da (diğer tüm metod
+            // çağrıları gibi) `collectRaiseInfoExpr`in `.attribute` dalından
+            // GEÇMEZ (yalnızca `w.ctx_expr`in KENDİSİ, çağrının hedefi değil,
+            // gezilir), bu yüzden burası KOŞULSUZ güvensiz kalmaya devam eder.
             .with_stmt => |w| {
                 info.direct_unsafe = true;
-                try self.collectRaiseInfoExpr(w.ctx_expr, info);
-                try self.collectRaiseInfoStmts(w.body, info);
+                try self.collectRaiseInfoExpr(w.ctx_expr, info, class_ctx, var_types, poisoned);
+                try self.collectRaiseInfoStmts(w.body, info, class_ctx, var_types, poisoned);
             },
         }
     }
 
-    fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInfo) CodegenError!void {
+    fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInfo, class_ctx: ?[]const u8, var_types: *std.StringHashMapUnmanaged([]const u8), poisoned: *std.StringHashMapUnmanaged(void)) CodegenError!void {
         switch (expr) {
             // `await`/`spawn`: async istisna yayılımı ZATEN bilinçli olarak
             // eksik/ele alınmamış bir alan (bkz. nox-teknik-spesifikasyon.md
@@ -4087,10 +4129,10 @@ const Codegen = struct {
             // KULLANMAZ), bu yüzden güvenlidir.
             .await_expr, .spawn_expr => info.direct_unsafe = true,
             .generic_construct => {},
-            .unary => |u| try self.collectRaiseInfoExpr(u.operand.*, info),
+            .unary => |u| try self.collectRaiseInfoExpr(u.operand.*, info, class_ctx, var_types, poisoned),
             .binary => |b| {
-                try self.collectRaiseInfoExpr(b.left.*, info);
-                try self.collectRaiseInfoExpr(b.right.*, info);
+                try self.collectRaiseInfoExpr(b.left.*, info, class_ctx, var_types, poisoned);
+                try self.collectRaiseInfoExpr(b.right.*, info, class_ctx, var_types, poisoned);
             },
             .call => |c| {
                 switch (c.callee.*) {
@@ -4106,31 +4148,76 @@ const Codegen = struct {
                             // bağımlılık eklemeye gerek yok.
                         } else if (self.functions.contains(name)) {
                             try info.callees.append(self.allocator, name);
+                        } else if (self.extern_functions.contains(name)) {
+                            // `extern def`: Nox'un istisna mekanizmasına HİÇ
+                            // katılmaz (bkz. `genCall`in extern dalı) — güvenli.
+                        } else if (std.mem.eql(u8, name, "print") or std.mem.eql(u8, name, "len") or
+                            std.mem.eql(u8, name, "str") or std.mem.eql(u8, name, "hpy_call") or
+                            std.mem.eql(u8, name, "wasm_call"))
+                        {
+                            // `genCall`in KENDİ özel dispatch'iyle (satır ~4258
+                            // civarı) TUTARLI, AÇIKÇA belgelenmiş "asla raise
+                            // etmez" yerleşikler — `int`/`float` BİLEREK BU
+                            // listede DEĞİL (`genParseOrRaise` ile GERÇEKTEN
+                            // `ValueError` raise EDEBİLİRLER, bkz. checker.zig'in
+                            // eşdeğer notu) — o ikisi AŞAĞIDAKİ `else` dalına
+                            // düşüp MUHAFAZAKAR şekilde güvensiz sayılır.
+                        } else {
+                            // Faz M.8 (yeniden ele alındı, bkz. nox-teknik-
+                            // spesifikasyon.md §3.59): BURASI ÖNCEDEN (bu
+                            // `else` dalı hiç YOKTU) SESSİZCE hiçbir şey
+                            // YAPMIYORDU — isim ne `self.classes` ne `self.
+                            // functions`se (ör. bir iç içe closure'ı TUTAN
+                            // yerel bir değişken/parametre) GÜVENLİ SAYILIYORDU,
+                            // bu da GERÇEK bir istisnanın SESSİZCE YUTULMASINA
+                            // yol açabilen, GERÇEKTEN doğrulanmış bir hataydı
+                            // (bkz. `closure_raise_not_swallowed.nox` golden
+                            // testi — düzeltmeden ÖNCE KIRMIZIYDI). BİLİNMEYEN
+                            // bir çağrı hedefi HER ZAMAN güvensiz sayılır.
+                            info.direct_unsafe = true;
                         }
-                        // `extern`/`print`/`hpy_call`/`wasm_call`: Nox'un istisna
-                        // mekanizmasına HİÇ katılmazlar (bkz. modül üstü notlar) —
-                        // güvenli, bağımlılık eklenmez.
                     },
-                    // Metod çağrısı (`obj.method()`) — hedefin STATİK sınıfını
-                    // bilmek tam bir tip çıkarımı gerektirirdi (bu, checker'ın
-                    // İŞİDİR, burada YENİDEN UYGULANMAZ); bu yüzden MUHAFAZAKÂR
-                    // davranılır: HERHANGİ bir metod çağrısı, İÇİNDE BULUNDUĞU
-                    // fonksiyonu/kurucuyu KOŞULSUZ güvensiz sayar. Metod çağrısının
-                    // KENDİSİ de HER ZAMAN kendi `emitExceptionCheck`ini alır
-                    // (bkz. `genMethodCall` — bu optimizasyondan HİÇ etkilenmez).
+                    // Metod çağrısı (`obj.method()`) — Faz M.8 (yeniden ele
+                    // alındı, bkz. nox-teknik-spesifikasyon.md §3.59): alıcı
+                    // ÇIPLAK bir yerel isimse VE o ismin sınıfı `var_types`
+                    // ÜZERİNDEN BİLİNİYORSA (ve isim `poisoned` DEĞİLSE),
+                    // hedef metod GERÇEK bir `callees` bağımlılığı olarak
+                    // eklenir (serbest fonksiyon çağrılarıyla AYNI muamele).
+                    // AKSİ HALDE (zincirleme çağrı, attribute-of-attribute,
+                    // index, ÇÖZÜLEMEYEN/poisoned isim, `self.classes`de
+                    // OLMAYAN bir tip — protokol/generic parametre gibi)
+                    // MUHAFAZAKÂR `direct_unsafe = true` davranışı KORUNUR.
+                    .attribute => |att| {
+                        var resolved = false;
+                        if (att.obj.* == .identifier) {
+                            const recv_name = att.obj.identifier;
+                            if (!poisoned.contains(recv_name)) {
+                                if (var_types.get(recv_name)) |class_name| {
+                                    if (self.classes.get(class_name)) |cinfo| {
+                                        if (cinfo.methods.contains(att.attr)) {
+                                            const sym = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ class_name, att.attr });
+                                            try info.callees.append(self.allocator, sym);
+                                            resolved = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (!resolved) info.direct_unsafe = true;
+                    },
                     else => info.direct_unsafe = true,
                 }
-                for (c.args) |a| try self.collectRaiseInfoExpr(a, info);
+                for (c.args) |a| try self.collectRaiseInfoExpr(a, info, class_ctx, var_types, poisoned);
             },
-            .attribute => |a| try self.collectRaiseInfoExpr(a.obj.*, info),
+            .attribute => |a| try self.collectRaiseInfoExpr(a.obj.*, info, class_ctx, var_types, poisoned),
             .index => |idx| {
-                try self.collectRaiseInfoExpr(idx.obj.*, info);
-                try self.collectRaiseInfoExpr(idx.index.*, info);
+                try self.collectRaiseInfoExpr(idx.obj.*, info, class_ctx, var_types, poisoned);
+                try self.collectRaiseInfoExpr(idx.index.*, info, class_ctx, var_types, poisoned);
             },
-            .list_lit => |elems| for (elems) |el| try self.collectRaiseInfoExpr(el, info),
+            .list_lit => |elems| for (elems) |el| try self.collectRaiseInfoExpr(el, info, class_ctx, var_types, poisoned),
             .dict_lit => |pairs| for (pairs) |p| {
-                try self.collectRaiseInfoExpr(p.key, info);
-                try self.collectRaiseInfoExpr(p.value, info);
+                try self.collectRaiseInfoExpr(p.key, info, class_ctx, var_types, poisoned);
+                try self.collectRaiseInfoExpr(p.value, info, class_ctx, var_types, poisoned);
             },
             .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
         }
@@ -4146,10 +4233,12 @@ const Codegen = struct {
     ///
     /// **Bilinçli olarak MUHAFAZAKÂR (yanlış negatifte İSTİSNA ASLA
     /// YUTULMAZ, yalnızca gereksiz bir kontrol FAZLADAN kalabilir):**
-    ///   - Metod çağrıları (`obj.method()`) hiçbir zaman bu kümeye giren bir
-    ///     fonksiyonu "güvenli" kılmaz — İÇİNDE bulundukları fonksiyon/kurucu
-    ///     KOŞULSUZ güvensiz sayılır (STATİK tip çıkarımı olmadan hedef metodu
-    ///     belirlemek mümkün değildir — bkz. `collectRaiseInfoExpr`).
+    ///   - Metod çağrıları (`obj.method()`) YALNIZCA alıcının sınıfı basit bir
+    ///     yerel isim üzerinden `var_types` ile KANITLANABİLİYORSA (bkz. Faz
+    ///     M.8, `collectRaiseInfoExpr`in `.attribute` dalı) gerçek bir
+    ///     bağımlılığa çevrilir; ÇÖZÜLEMEYEN her alıcı (zincirleme çağrı,
+    ///     tam tip çıkarımı gerektiren durumlar, `poisoned` bir isim) İÇİNDE
+    ///     bulunduğu fonksiyonu/kurucuyu KOŞULSUZ güvensiz sayar.
     ///   - `await`/`spawn` içeren HERHANGİ bir gövde KOŞULSUZ güvensiz sayılır
     ///     (async istisna yayılımı zaten bilinçli olarak eksik bir alan).
     ///   - Sabit nokta (fixpoint) hesabı: `direct_unsafe` bulunanlarla
@@ -4162,6 +4251,28 @@ const Codegen = struct {
     ///     güvensiz kümede DEĞİLSE, bu öz-çağrı fixpoint'i ASLA tetiklemez —
     ///     `fib` güvenli kalır (doğru sonuç, çünkü `fib` GERÇEKTEN hiçbir
     ///     zaman raise etmez).
+    ///
+    /// **Faz M.8 (yeniden ele alındı):** metodlar ARTIK `__init__` ile
+    /// SINIRLI değil — `cd.methods`deki HER metod analiz edilir, sembol
+    /// formatı TÜM metodlar için `"{class_name}_{method_name}"` (`genMethod`/
+    /// `genMethodCall`in KENDİ ÇAĞRI/TANIM sembolüyle BİREBİR aynı formül,
+    /// `__init__` özel durumu `"{s}___init__"` İLE ZATEN AYNI ŞEYDİR).
+    /// `obj.method()` çağrıları hâlâ VARSAYILAN olarak güvensizdir — YALNIZCA
+    /// alıcının sınıfı `var_types` ÜZERİNDEN kanıtlanabilir bir yerel isimse
+    /// (bkz. `collectRaiseInfoExpr`in `.attribute` dalı) gerçek bir `callees`
+    /// bağımlılığına çevrilir.
+    fn buildParamVarTypes(self: *Codegen, params: []const ast.Param, class_ctx: ?[]const u8) CodegenError!std.StringHashMapUnmanaged([]const u8) {
+        var var_types: std.StringHashMapUnmanaged([]const u8) = .empty;
+        for (params) |p| {
+            if (std.mem.eql(u8, p.name, "self")) {
+                if (class_ctx) |cc| try var_types.put(self.allocator, p.name, cc);
+            } else if (p.type_expr == .simple and self.classes.contains(p.type_expr.simple)) {
+                try var_types.put(self.allocator, p.name, p.type_expr.simple);
+            }
+        }
+        return var_types;
+    }
+
     fn computeMustNotRaise(self: *Codegen, module: ast.Module, extra_functions: []const ast.FuncDef) CodegenError!void {
         var info_map: std.StringHashMapUnmanaged(FuncSafetyInfo) = .empty;
 
@@ -4170,15 +4281,18 @@ const Codegen = struct {
                 .func_def => |fd| {
                     if (fd.is_async) continue; // async fonksiyonlar yalnızca `spawn` ile başlatılır, bu optimizasyonun çağrı sitelerinde hiç görünmezler.
                     var info: FuncSafetyInfo = .{};
-                    try self.collectRaiseInfoStmts(fd.body, &info);
+                    var var_types = try self.buildParamVarTypes(fd.params, null);
+                    var poisoned: std.StringHashMapUnmanaged(void) = .empty;
+                    try self.collectRaiseInfoStmts(fd.body, &info, null, &var_types, &poisoned);
                     try info_map.put(self.allocator, fd.name, info);
                 },
                 .class_def => |cd| {
                     for (cd.methods) |m| {
-                        if (!std.mem.eql(u8, m.name, "__init__")) continue;
                         var info: FuncSafetyInfo = .{};
-                        try self.collectRaiseInfoStmts(m.body, &info);
-                        const sym = try std.fmt.allocPrint(self.allocator, "{s}___init__", .{cd.name});
+                        var var_types = try self.buildParamVarTypes(m.params, cd.name);
+                        var poisoned: std.StringHashMapUnmanaged(void) = .empty;
+                        try self.collectRaiseInfoStmts(m.body, &info, cd.name, &var_types, &poisoned);
+                        const sym = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ cd.name, m.name });
                         try info_map.put(self.allocator, sym, info);
                     }
                 },
@@ -4188,7 +4302,9 @@ const Codegen = struct {
         for (extra_functions) |fd| {
             if (fd.is_async) continue;
             var info: FuncSafetyInfo = .{};
-            try self.collectRaiseInfoStmts(fd.body, &info);
+            var var_types = try self.buildParamVarTypes(fd.params, null);
+            var poisoned: std.StringHashMapUnmanaged(void) = .empty;
+            try self.collectRaiseInfoStmts(fd.body, &info, null, &var_types, &poisoned);
             try info_map.put(self.allocator, fd.name, info);
         }
 
@@ -4671,7 +4787,13 @@ const Codegen = struct {
         }
         for (arg_values) |v| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(v.qtype), v.text });
         try self.out.writer.writeAll(")\n");
-        try self.emitExceptionCheck();
+        // Faz M.8 (yeniden ele alındı, bkz. nox-teknik-spesifikasyon.md
+        // §3.59): `computeMustNotRaise` ARTIK TÜM metodları (yalnızca
+        // `__init__` değil) analiz ediyor — hedef metod bu kümedeyse
+        // (sembol formatı `genCall`in serbest-fonksiyon dalıyla TUTARLI,
+        // bkz. `computeMustNotRaise`in belge notu) kontrol atlanabilir.
+        const method_sym = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ obj.class_name.?, a.attr });
+        if (!self.must_not_raise.contains(method_sym)) try self.emitExceptionCheck();
         try self.releaseIfTemporary(a.obj.*, obj);
         try self.releaseTemporaryArgs(args, arg_values);
 

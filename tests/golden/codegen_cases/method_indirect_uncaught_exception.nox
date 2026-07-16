@@ -1,0 +1,21 @@
+class MyError:
+    def __init__(self: MyError, code: int) -> None:
+        self.code = code
+
+class Chain:
+    def __init__(self: Chain, code: int) -> None:
+        self.code = code
+
+    def level3(self: Chain) -> None:
+        raise MyError(self.code)
+
+    def level2(self: Chain) -> None:
+        self.level3()
+
+    def level1(self: Chain) -> None:
+        self.level2()
+
+print(1)
+c: Chain = Chain(7)
+c.level1()
+print(2)

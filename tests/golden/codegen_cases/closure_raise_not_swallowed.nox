@@ -1,0 +1,27 @@
+class MyError:
+    def __init__(self: MyError, code: int) -> None:
+        self.code = code
+
+def make_checker(x: int) -> () -> int:
+    def check() -> int:
+        if x < 0:
+            raise MyError(x)
+        return x * 2
+    return check
+
+def outer(x: int) -> int:
+    f: () -> int = make_checker(x)
+    return f()
+
+def compute(n: int) -> int:
+    total: int = 0
+    i: int = 0
+    while i < n:
+        try:
+            total = total + outer(i - 5)
+        except MyError as e:
+            total = total + e.code
+        i = i + 1
+    return total
+
+print(compute(10))

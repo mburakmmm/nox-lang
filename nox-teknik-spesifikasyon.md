@@ -8813,6 +8813,134 @@ doğrulama YÖNTEMİ genel bir ders olarak NOT edilir).
 
 `zig build test` (Debug + ReleaseFast) 410/410 yeşil, `zig fmt` temiz.
 
+## 3.59 Faz M.8 (Yeniden Ele Alınıyor) — Metod Çağrıları İçin İstisna-Kontrolü Eleme
+
+**Kaynak:** kullanıcının "sonraki aşama geliştirmeler" listesinin #2
+maddesi ("Dil Performans artışı"). Dil stabilizasyonu fazının (§3.30
+civarı, M serisi) M.8'i DAHA ÖNCE "hiçbir ölçüm bunun GERÇEKTEN darboğaz
+OLDUĞUNU göstermedi" gerekçesiyle ERTELEMİŞTİ. Bu turda, kullanıcının AÇIK
+isteğiyle İZOLE bir mikro-benchmark yazılıp GERÇEKTEN ölçüldü (`genMethodCall`
+deki `emitExceptionCheck` çağrısı GEÇİCİ olarak KALDIRILIP GERİ KONULDU,
+kod deposunda kalıcı bir değişiklik YAPILMADI): metod çağrısı, kontrol İLE
+300M çağrıda ~1.28ns/çağrı; kontrol DENEYSEL olarak KALDIRILINCA
+~0.75ns/çağrı — **~%41'lik GERÇEK, ÖLÇÜLMÜŞ bir kazanç**. M.8'in ERTELENME
+gerekçesi ARTIK GEÇERLİ DEĞİL.
+
+**Kritik kısıt (M.1'İN AYNI ilkesi):** yanlış negatifte istisna ASLA
+YUTULMAZ, yalnızca gereksiz bir kontrol FAZLADAN kalabilir. Her belirsiz
+durumda MUHAFAZAKÂR davranış (kontrolü KORUMAK) tercih edilir.
+
+**Araştırma sırasında bulunan, ÖNCEDEN VAR OLAN GERÇEK bir açık (Plan
+agent doğrulamasıyla KEŞFEDİLDİ, AYNI turda düzeltildi):**
+`collectRaiseInfoExpr`'in `.call => .identifier` dalı, isim ne
+`self.classes` ne `self.functions` (ne örtük print/len/str/hpy_call/
+wasm_call/extern) ile eşleşmezse (ör. İÇ İÇE bir closure/`def inner(): ...`)
+SESSİZCE hiçbir şey YAPMIYORDU — ne `direct_unsafe` işaretliyor NE
+`callees`e ekliyordu. Bu, İÇİNDE SADECE raise EDEN bir closure çağrısı
+olan bir fonksiyonun YANLIŞLIKLA "güvenli" sayılmasına yol açabilen,
+GERÇEKTEN doğrulanmış bir hataydı (`tests/golden/codegen_cases/
+closure_raise_not_swallowed.nox` — düzeltmeden ÖNCE KIRMIZI). Düzeltme:
+AÇIK bir izin listesi (`genCall`in KENDİ özel dispatch'iyle BİREBİR AYNI
+küme) DIŞINDA kalan HER isim `direct_unsafe = true` yapar (`bilinmeyen =
+güvenli` YERİNE `bilinmeyen = güvensiz`).
+
+**Uygulama:**
+
+1. **`computeMustNotRaise` TÜM metodları analiz eder** (yalnızca
+   `__init__` DEĞİL) — `cd.methods`deki HER metod, sembol formatı TÜM
+   metodlar İçin `"{class_name}_{method_name}"` (`__init__`in ESKİ
+   `"{s}___init__"` formatı ZATEN AYNI formülün özel durumuydu —
+   `"_"+"__init__"` = `"___init__"`, `genMethod`/`genMethodCall`in KENDİ
+   ÇAĞRI/TANIM sembolüyle BİREBİR eşleşir).
+
+2. **`var_types` izleme** — `collectRaiseInfoStmts`/`collectRaiseInfoStmt`/
+   `collectRaiseInfoExpr`e İKİ yeni parametre eklendi: `class_ctx:
+   ?[]const u8` (metodun AİT OLDUĞU sınıf, `self` parametresinin
+   ÖN-DOLDURULMASI İÇİN) ve `var_types: *std.StringHashMapUnmanaged
+   ([]const u8)` (yerel isim → sınıf adı, `collectLocals`in AYNI DÜZ/
+   blok-kapsamsız — Python tarzı fonksiyon-seviyesi kapsam — yürüyüşüyle
+   doldurulur). `self`, `genMethod`in KENDİ ele alışıyla TUTARLI olarak
+   DOĞRUDAN `class_ctx`e bağlanır (KENDİ `type_expr`ine GÜVENMEZ). Basit
+   `Param{type_expr: .simple}` VE `VarDecl{type_expr: .simple}`
+   deyimleri (`self.classes.contains(...)` İLE doğrulanarak) `var_types`i
+   GÜNCELLER.
+
+3. **Yeniden-bildirim (poisoning) güvenlik kuralı** — `checker.zig`'in
+   `Scope.declare`si YİNELENEN isim kontrolü YAPMAZ, bu yüzden `if`/`else`
+   dallarında AYNI isim FARKLI sınıflara "yeniden bildirilebilir". Bir isim
+   `var_types`e (parametre OLARAK ya da ÖNCEKİ bir `var_decl`dan) ZATEN
+   VARSA VE YENİ bir `var_decl` (HANGİ TİPLE OLURSA olsun) AYNI ismi tekrar
+   bildirirse, o isim `var_types`den ÇIKARILIR VE bir `poisoned` kümesine
+   KALICI olarak eklenir (bir DAHA ASLA `var_types`e girmez). `for`
+   döngüsünün KENDİ değişkeni de (tipi BİLİNMEDİĞİNDEN) AYNI kuralla
+   zehirlenir — DIŞARIDAN gelen aynı isimli bir sınıf-tipli değişkeni
+   gölgeliyor OLABİLİR. Bu, `genMethodCall`in GERÇEKTE çağırdığı sembolle
+   bu analizin ÇÖZDÜĞÜ sembolün HER ZAMAN AYNI olmasını garanti eder.
+
+4. **`obj.method()` çözümlemesi** — `collectRaiseInfoExpr`in `.call`
+   dalında, callee `.attribute` İSE VE `obj` ÇIPLAK bir `.identifier` İSE
+   VE o isim `var_types`de (VE `poisoned` DEĞİLSE) VARSA: sınıf adı
+   çözülür, `self.classes.get(class_name).?.methods.contains(method_name)`
+   İLE (savunmacı) doğrulanır, `"{class_name}_{method_name}"` `info.
+   callees`e EKLENİR (`direct_unsafe` YERİNE — serbest fonksiyon
+   çağrılarıyla AYNI muamele). AKSİ HALDE (zincirleme çağrı, attribute-
+   of-attribute, index, poisoned/çözülemeyen isim, `self.classes`de
+   OLMAYAN bir tip — protokol/generic) MEVCUT `direct_unsafe = true`
+   KORUNUR.
+
+5. **`genMethodCall`**, `genCall`in `must_not_raise` kontrolüyle AYNI
+   deseni izler: `if (!self.must_not_raise.contains(method_sym)) try
+   self.emitExceptionCheck();` — `method_sym` çağrı SİTESİNDE `"{obj.
+   class_name.?}_{a.attr}"` OLARAK biçimlendirilir (adım 1'İN sembol
+   formülüyle BİREBİR aynı).
+
+**`runDetachedFinally`/`genTry`'ye ETKİSİ:** Faz U.5'in doğrulaması
+SIRASINDA bulunan kritik hata (bir `finally`/`with` bloğu, KENDİSİ
+`finally_stack`deYKEN doğrudan çalıştırılırsa VE İÇİNDE bir kontrol
+üreten çağrı VARSA `drainFinally`nin SONSUZ derleme-zamanı özyinelemesine
+yol açması) İÇİN uygulanan düzeltme (`fb`yi ÖNCE `finally_stack`den
+POP'layıp SONRA çalıştırmak) GENEL/SAVUNMACIDIR — `fb`nin GERÇEKTEN bir
+kontrol üretip üretmediği STATİK olarak varsayılmaz, bu yüzden M.8'in
+metod çağrılarını ARTIK KOŞULSUZ güvensiz SAYMAMASI bu düzeltmeyi
+GEREKSİZ KILMAZ, dokunulmadı (yalnızca İLGİLİ belge notları GÜNCEL
+tutuldu).
+
+**Doğrulama:**
+
+- `tests/golden/codegen_cases/method_indirect_raise_propagation.nox`
+  (+`.expected`): EN KRİTİK test — 3 katmanlı bir metod zinciri
+  (`self.level2()`→`self.level3()`, VE `compute`nin `c.level1(...)`u
+  YEREL bir değişken üzerinden çağırması, HER İKİ çözümleme yolu TEK
+  testte), `level3` GERÇEKTEN raise eder, `try/except` İLE doğru
+  yakalanır (525 — 5×99 [yakalanan] + Σ(x*2+2), x=0..4 [yakalanmayan]).
+- `method_indirect_uncaught_exception.nox`: AYNI zincir, `try/except`
+  OLMADAN — net (sıfırdan farklı çıkış koduyla) sonlanır.
+- `method_redeclared_var_poisoning.nox`: `obj` ÖNCE `A` SONRA (yalnızca
+  `if` dalında) `B` olarak yeniden bildirilir — `poisoned` kuralı
+  tetiklenir, davranış (doğru sınıfın metodunun çağrılması) DEĞİŞMEZ.
+- `method_call_elision_positive.nox`: `Adder`in HİÇBİR metodu raise
+  ETMEZ — `self.` VE yerel değişken üzerinden çağrılar davranış
+  değişmeden çalışır.
+- **IR-metni doğrulaması** (`codegen_golden_test.zig`, `generateModule`i
+  DOĞRUDAN çağıran desen — bkz. Faz T.3'ün dbgfile/dbgloc testlerinin
+  AYNI öncülü): `method_call_elision_positive.nox`nin ÜRETTİĞİ IR'da
+  `nox_exception_pending`e TEK bir çağrı bile OLMADIĞI DOĞRUDAN
+  doğrulanır (elenmenin GERÇEKTEN gerçekleştiğinin kanıtı, yalnızca
+  davranışın DEĞİŞMEDİĞİNİN değil) — bu test, çözümleme mantığı GEÇİCİ
+  olarak DEVRE DIŞI bırakılarak KIRMIZI olduğu doğrulanıp SONRA GERİ
+  YÜKLENEREK (`diff` İLE bayt-bayt ÖZDEŞLİK doğrulanarak) doğru testin
+  YAZILDIĞI kanıtlandı — diğer TÜM davranış testleri (elenmeme HÂLİNDE
+  YALNIZCA FAZLADAN kontrol kalır, ASLA yanlış davranış) bu devre-dışı-
+  bırakma SIRASINDA doğru şekilde YEŞİL KALDI, beklenen (ve M.1/M.8'in
+  "yanlış negatifte istisna ASLA yutulmaz" ilkesini SOMUTLAŞTIRAN) sonuç.
+- **Performans doğrulaması:** `benchmarks/method_call_elision.nox` (300M
+  provably-safe metod çağrısı) — kontrol HER ZAMAN üretilen ESKİ davranışa
+  GEÇİCİ dönülerek ölçüldü: 480ms → 270ms, **~%44 hızlanma** (izole
+  mikro-benchmarkın ~%41'lik ölçümüyle TUTARLI). Bkz. `benchmarks/
+  RESULTS.md`.
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

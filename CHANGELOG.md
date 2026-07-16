@@ -204,6 +204,29 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   sızmadığını doğrulayan yeni bir otomatik test + kasıtlı boz→kırmızı
   ritüeli.
 
+### Değiştirildi
+- Metod çağrıları için istisna-kontrolü eleme (Faz M.8, yeniden ele
+  alındı — kullanıcının "sonraki aşama geliştirmeler" listesinin #2
+  maddesi, "Dil Performans artışı"). Daha önce (dil stabilizasyonu fazı)
+  "ölçülmeden kanıtlanmadı" gerekçesiyle ertelenmişti; izole bir mikro-
+  benchmarkla ~%41'lik gerçek bir kazanç ölçülünce yeniden ele alındı.
+  `computeMustNotRaise` artık TÜM sınıf metodlarını (yalnızca `__init__`
+  değil) analiz ediyor; basit `obj.method()` çağrıları (alıcının sınıfı
+  `self.`/bir yerel değişken üzerinden statik olarak bilinen durumlarda)
+  artık `nox_exception_pending` kontrolünü, o metodun transitif olarak
+  ASLA raise etmediği kanıtlanabildiğinde atlayabiliyor — belirsiz her
+  durumda (zincirleme çağrı, yeniden bildirilmiş/"zehirlenmiş" bir
+  değişken, vb.) kontrol MUHAFAZAKÂR olarak korunuyor, istisna hiçbir
+  zaman sessizce yutulmuyor. `nox-teknik-spesifikasyon.md` §3.59. Aynı
+  turda, araştırma sırasında bulunan önceden var olan gerçek bir hata da
+  düzeltildi: `collectRaiseInfoExpr`, bilinmeyen bir çağrı hedefini (ör.
+  iç içe bir closure) sessizce "güvenli" sayıyordu — artık koşulsuz
+  güvensiz sayılıyor. 6 yeni golden test (3 katmanlı metod-zinciri raise
+  yayılımı hem `self.` hem yerel değişken üzerinden, yeniden bildirme/
+  zehirlenme güvenlik testi, pozitif eleme testi + IR-metni doğrulaması)
+  + `benchmarks/method_call_elision.nox` (300M çağrı, ~480ms → ~270ms,
+  ~%44 hızlanma) + kasıtlı boz→kırmızı ritüeli.
+
 ## [1.0.0]
 
 ### Eklendi

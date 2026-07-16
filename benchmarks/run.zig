@@ -77,6 +77,14 @@ const stress_benchmarks = [_]Benchmark{
     .{ .name = "math_bench", .path = "benchmarks/math_bench.nox", .expected = "1.49791e+10\n" },
     .{ .name = "os_fs_bench", .path = "benchmarks/os_fs_bench.nox", .expected = "30000\n" },
     .{ .name = "time_bench", .path = "benchmarks/time_bench.nox", .expected = "200000\n" },
+    // Faz M.8 (yeniden ele alındı, bkz. nox-teknik-spesifikasyon.md §3.59):
+    // `Counter.increment`in `self.value`ye yaptığı basit aritmetik ATAMA
+    // DIŞINDA HİÇBİR şey yapmaz (raise/başka bir metod/serbest fonksiyon
+    // çağrısı YOK) — bu yüzden PROVABLY-SAFE'dir, `nox_exception_pending`
+    // kontrolü her çağrı sitesinde ELENİR. 300M çağrı, izole mikro-
+    // benchmark'ın (bu fazı tetikleyen ölçüm, bkz. RESULTS.md) AYNI
+    // ölçeği — hem doğruluk (basit toplama) hem regresyon takibi içindir.
+    .{ .name = "method_call_elision", .path = "benchmarks/method_call_elision.nox", .expected = "300000000\n" },
 };
 
 /// **C karşılaştırması (kullanıcı isteği):** Python'un yanına, AYNI on
