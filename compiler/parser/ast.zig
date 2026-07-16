@@ -26,6 +26,15 @@ pub const FuncTypeExpr = struct {
 pub const Param = struct {
     name: []const u8,
     type_expr: TypeExpr,
+    /// Faz FF.4 (bkz. nox-teknik-spesifikasyon.md §3.63): `true` İSE bu,
+    /// bir sınıf/protokol metodunun `self` parametresidir VE kullanıcı
+    /// TİPİNİ YAZMADI — `type_expr` yine de HER ZAMAN dolu (parser,
+    /// kapsayan sınıf/protokol adını `.simple` olarak DOĞRUDAN doldurur,
+    /// `self: ClassName` AÇIKÇA yazılmış GİBİ) — checker/codegen/ownership
+    /// analizinin BU bayrağa HİÇ ihtiyacı YOK, yalnızca `formatter.zig`nin
+    /// `printParams`ı (kullanıcının YAZDIĞI yüzey sözdizimini SADIK biçimde
+    /// yeniden üretmek İçin) okur.
+    self_inferred: bool = false,
 };
 
 pub const UnaryOp = enum { neg, not_ };

@@ -815,6 +815,18 @@ test "codegen(çalıştır): Faz FF.3 — dict[K,V] İKİ AYRI sınıf örneğin
     );
 }
 
+// Faz FF.4 (bkz. nox-teknik-spesifikasyon.md §3.63): çıplak `self`li bir
+// metodun (`bump`) bir ALANI GERÇEKTEN okuyup/YAZDIĞI uçtan uca kanıt —
+// codegen'in çıplak self İÇİN GERÇEKTEN sıfır değişiklik gerektirdiğinin
+// (self'in tipi ZATEN `class_name`den BAĞIMSIZ türetiliyor) DOĞRULANMASI,
+// yalnızca DERLENDİĞİNİN DEĞİL.
+test "codegen(çalıştır): Faz FF.4 — çıplak self'li metod bir alanı GERÇEKTEN okur/yazar" {
+    try expectGolden(
+        @embedFile("codegen_cases/bare_self_method_field_mutation.nox"),
+        @embedFile("codegen_cases/bare_self_method_field_mutation.expected"),
+    );
+}
+
 test "codegen(çalıştır): str(int)/int(str) roundtrip" {
     try expectGolden(
         @embedFile("codegen_cases/str_int_roundtrip.nox"),

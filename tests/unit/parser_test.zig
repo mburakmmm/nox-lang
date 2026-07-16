@@ -37,7 +37,7 @@ test "while gövdesi ve dönüş değeri olmayan return ayrıştırılır" {
     try std.testing.expectEqual(@as(?ast.Expr, null), while_stmt.body[0].kind.return_stmt);
 }
 
-test "sınıf tanımı yalnızca metodlardan oluşur ve self açıkça tiplenir" {
+test "sınıf tanımı yalnızca metodlardan oluşur, açıkça tiplenmiş self çalışır" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const module = try parse(arena.allocator(),
@@ -52,6 +52,48 @@ test "sınıf tanımı yalnızca metodlardan oluşur ve self açıkça tiplenir"
     const init_method = class_def.methods[0];
     try std.testing.expectEqualStrings("self", init_method.params[0].name);
     try std.testing.expectEqualStrings("Point", init_method.params[0].type_expr.simple);
+    try std.testing.expectEqual(false, init_method.params[0].self_inferred);
+}
+
+// Faz FF.4 (bkz. nox-teknik-spesifikasyon.md §3.63): çıplak `self`
+// (anotasyonsuz) bir metodun İLK parametresi olarak KABUL edilir — tipi
+// kapsayan sınıfın adı olarak (`self: Point` AÇIKÇA yazılmış GİBİ)
+// DOĞRUDAN sentezlenir, `self_inferred` bayrağı bunu İŞARETLER.
+test "Faz FF.4: çıplak self kapsayan sınıfa çözülür ve self_inferred işaretlenir" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const module = try parse(arena.allocator(),
+        \\class Point:
+        \\    def __init__(self, x: int) -> None:
+        \\        self.x = x
+        \\
+        \\    def bump(self) -> None:
+        \\        self.x = self.x + 1
+        \\
+    );
+    const class_def = module.body[0].kind.class_def;
+    try std.testing.expectEqual(@as(usize, 2), class_def.methods.len);
+    for (class_def.methods) |m| {
+        try std.testing.expectEqualStrings("self", m.params[0].name);
+        try std.testing.expectEqualStrings("Point", m.params[0].type_expr.simple);
+        try std.testing.expectEqual(true, m.params[0].self_inferred);
+    }
+    // `bump`in sonraki parametresi (varsa) VE her metodun DIŞINDAKİ (ör.
+    // üst-düzey) bir `self` adlı parametrenin ETKİLENMEDİĞİ ayrı bir testte
+    // (aşağıda) doğrulanır.
+}
+
+// `self`in ÖZEL anlamı YALNIZCA bir sınıf/protokol gövdesi İÇİNDEDİR —
+// üst-düzey bir fonksiyonun `self` adlı bir parametresi HÂLÂ (DEĞİŞMEDEN)
+// açık tip anotasyonu GEREKTİRİR.
+test "Faz FF.4: üst-düzey fonksiyonda self adlı parametre hâlâ açık tip gerektirir" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    try std.testing.expectError(error.UnexpectedToken, parse(arena.allocator(),
+        \\def foo(self) -> None:
+        \\    pass
+        \\
+    ));
 }
 
 test "zincirlenmiş obj.attr çağrısı ve indeksleme ayrıştırılır" {

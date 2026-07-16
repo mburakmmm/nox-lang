@@ -317,6 +317,33 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   + YENİ Zig birim testi (retain + iki release) + kasıtlı boz→kırmızı→
   düzelt ritüeli üç kez uygulandı (pre-existing hata, `retainIfAliasing`
   break'i, `nox_dict_release` predecrement break'i).
+- `nox-teknik-spesifikasyon.md`de Faz FF.3'ün §3.62 eklenmesi sırasında
+  kazayla SİLİNMİŞ olan `## 4. Bellek Yönetimi — "Sahiplik Piramidi"`
+  başlık satırı YENİDEN EKLENDİ (yalnızca dokümantasyon, `git show
+  HEAD~1:nox-teknik-spesifikasyon.md` İLE KANITLANDI — Katman 1-4'ün
+  İÇERİĞİ ETKİLENMEMİŞTİ, yalnızca üst-düzey başlık eksikti).
+
+### Eklendi
+- **`self` parametresi İçin tip çıkarımı** (Faz FF.4, bkz. nox-teknik-
+  spesifikasyon.md §3.63). Bir sınıf/protokol metodunun `def m(self: Foo,
+  ...)` şeklinde `self`i AÇIKÇA tiplemesi ARTIK ZORUNLU DEĞİL — `def m(self,
+  ...)` de GEÇERLİ, tipi kapsayan sınıf/protokol adına OTOMATİK çözülür;
+  `self: Foo` açıkça yazmak da HÂLÂ geçerli, `nox fmt` kullanıcının
+  YAZDIĞINI SADIK biçimde KORUR (normalize ETMEZ). **AGENTS.md §5**in "tüm
+  parametre tipleri zorunlu, istisnasız" ilkesine, bu KENDİSİ AGENTS.md
+  §16'nın "mimariyi etkileyen kararlar İçin önce sor" prosedürüyle
+  kullanıcıya AÇIKÇA sunulup ONAYLANDIKTAN SONRA, `self` İçin belgelenmiş
+  bir istisna eklendi (spec §3.1 bunu ÖNCEDEN bilerek REDDETMİŞ VE ileride
+  gündeme gelirse §16 prosedürünün UYGULANMASI gerektiğini NOT ETMİŞTİ).
+  Uygulama, `checker.zig`/`codegen.zig`/`ownership/analysis.zig`e SIFIR
+  değişiklik gerektirdi (parser, self'in tipini HER ZAMAN dolu bırakır,
+  yalnızca `formatter.zig`nin okuduğu YENİ bir `self_inferred` bayrağı
+  eklendi) — bu, YENİ ownership/codegen golden testleriyle regresyon-
+  korumalı biçimde DOĞRULANDI. Ayrıca, bu alana dokunulurken, AÇIKÇA
+  YANLIŞ bir `self: WrongClass` tipinin reddedildiğini test eden HİÇBİR
+  mevcut fixture OLMADIĞI fark edildi — YENİ `err_class_self_wrong_type`/
+  `err_protocol_self_wrong_type` golden testleriyle KAPATILDI (kasıtlı
+  boz→kırmızı→düzelt ritüeliyle doğrulandı).
 
 ## [1.0.0]
 

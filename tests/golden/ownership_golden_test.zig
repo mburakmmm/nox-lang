@@ -70,6 +70,19 @@ test "golden(ownership): metod alıcısı ve parametreler -> ARC" {
     );
 }
 
+// Faz FF.4 (bkz. nox-teknik-spesifikasyon.md §3.63): `arc_method_receiver_
+// and_param.nox` İLE YAPISAL OLARAK BİREBİR AYNI, yalnızca `self: Point`
+// YERİNE çıplak `self` — rapor BİREBİR AYNI kalmalı (`self`in her zaman
+// `.class` heap-tipli OLMASI, hangi FİZİKSEL alanları taşıdığından
+// BAĞIMSIZ olduğundan) — `ownership/analysis.zig`nin GERÇEKTEN sıfır
+// değişiklik gerektirdiğinin regresyon-korumalı kanıtı.
+test "golden(ownership): Faz FF.4 — çıplak self'li metod alıcısı, açık self İLE AYNI ARC izini üretir" {
+    try expectGolden(
+        @embedFile("ownership_cases/arc_bare_self_method_receiver.nox"),
+        @embedFile("ownership_cases/arc_bare_self_method_receiver.expected"),
+    );
+}
+
 test "golden(ownership): başka bir değişkene atanan (takma ad) kaynak -> ARC" {
     try expectGolden(
         @embedFile("ownership_cases/arc_alias_escape.nox"),

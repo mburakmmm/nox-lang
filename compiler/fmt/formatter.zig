@@ -389,6 +389,15 @@ const Printer = struct {
     fn printParams(self: *Printer, params: []const ast.Param) FormatError!void {
         for (params, 0..) |p, idx| {
             if (idx > 0) try self.writer.writeAll(", ");
+            // Faz FF.4 (bkz. nox-teknik-spesifikasyon.md §3.63): kullanıcı
+            // çıplak `self` YAZDIYSA (`self_inferred`), formatlayıcı bunu
+            // `self: ClassName`e "GENİŞLETMEZ" — `type_expr` parser
+            // tarafından ZATEN doldurulmuş olsa da (checker/codegen İçin),
+            // YÜZEY sözdizimi SADIK biçimde yeniden üretilir.
+            if (p.self_inferred) {
+                try self.writer.print("{s}", .{p.name});
+                continue;
+            }
             try self.writer.print("{s}: ", .{p.name});
             try self.printType(p.type_expr);
         }

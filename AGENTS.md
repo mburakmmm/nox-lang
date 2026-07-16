@@ -94,7 +94,7 @@ Bir ajan bu yapıdan saparsa, sapma gerekçesini PR açıklamasında belirtmelid
 ## 5. Sözdizimi Kuralları
 
 - Python 3.x gramerine sözdizimsel olarak sadık kalınır (girinti, `def`, `class`, `for/while/if`, f-string, comprehension'lar).
-- **Tüm parametre, değişken ve dönüş tipleri zorunludur.** Tip anotasyonu eksikse derleme hatası — asla `Any`'ye veya dinamik tipe örtük düşüş yoktur.
+- **Tüm parametre, değişken ve dönüş tipleri zorunludur.** Tip anotasyonu eksikse derleme hatası — asla `Any`'ye veya dinamik tipe örtük düşüş yoktur. **Tek istisna (Faz FF.4, bkz. nox-teknik-spesifikasyon.md §3.63):** bir sınıf/protokol metodunun `self` parametresi anotasyonsuz bırakılabilir (`def m(self) -> None:`) — tipi HER ZAMAN statik olarak kapsayan sınıf/protokol adına çözülür (dinamik tipleme kaçışı DEĞİL, salt yüzey-düzeyinde bir kısayol); `self: ClassName` açıkça yazmak da hâlâ geçerlidir.
 - Python'ın tam dinamik özellikleri (rastgele `setattr`, `exec`, çalışma zamanında sınıf üretme) **desteklenmez.** Bir ajan bu tür bir Python idiomunu Nox'a taşımak isterse, önce statik olarak ifade edilebilir bir eşdeğer bulmalı, bulamazsa özelliği kapsam dışı bırakmalıdır.
 
 ---

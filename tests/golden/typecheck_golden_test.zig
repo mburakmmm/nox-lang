@@ -429,3 +429,34 @@ test "golden(typecheck): Faz BB.3 — nox.thread.start tanımsız 'entry' fonksi
         @embedFile("typecheck_cases/err_thread_start_undefined_entry.expected"),
     );
 }
+
+test "golden(typecheck): Faz FF.4 — çıplak self, sınıf metotlarında açık self ile AYNI şekilde tip-denetiminden geçer" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_bare_self_method.nox"),
+        @embedFile("typecheck_cases/ok_bare_self_method.expected"),
+    );
+}
+
+test "golden(typecheck): Faz FF.4 — çıplak self, protokol metot imzalarında da GEÇERLİ (dispatch çalışır)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_bare_self_protocol.nox"),
+        @embedFile("typecheck_cases/ok_bare_self_protocol.expected"),
+    );
+}
+
+// Faz FF.4: çıplak self EKLENİRKEN kapatılan bir boşluk — bu davranışı
+// (AÇIKÇA YANLIŞ bir `self: X` tipinin reddedildiğini) test eden HİÇBİR
+// mevcut fixture YOKTU.
+test "golden(typecheck): Faz FF.4 — AÇIKÇA yanlış self tipi (sınıf) HÂLÂ reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_class_self_wrong_type.nox"),
+        @embedFile("typecheck_cases/err_class_self_wrong_type.expected"),
+    );
+}
+
+test "golden(typecheck): Faz FF.4 — AÇIKÇA yanlış self tipi (protokol) HÂLÂ reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_protocol_self_wrong_type.nox"),
+        @embedFile("typecheck_cases/err_protocol_self_wrong_type.expected"),
+    );
+}

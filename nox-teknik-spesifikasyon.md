@@ -60,12 +60,18 @@ spesifikasyondan sapıyorsa güncelle") eklenmiştir.
 - Deyimler: `if/elif/else`, `while`, `for x in <iterable>:`, `def` (tüm parametre/dönüş tipleri zorunlu), `return`, `pass`, `class` (yalnızca metodlar — **kalıtım ve metaclass yok**)
 - Operatör önceliği Python'a sadıktır; özellikle `-2 ** 2 == -(2 ** 2)` (unary eksi, üs almadan daha düşük önceliklidir, ama üssün sağındaki `-` işareti serbesttir: `2 ** -2` geçerlidir)
 
-**Tasarım kararı — `self` parametresi:** AGENTS.md §5 tüm parametre tiplerinin zorunlu
-olmasını şart koştuğu için, Python'ın aksine `self` de açıkça anotasyonlanır ve tipi
-her zaman kapsayan sınıfın adıdır: `def __init__(self: Point, x: int) -> None:`.
-Bu, İlke #1/§5 ile tutarlı kalmak için bilinçli bir sapmadır; ileride `Self` tipi
-gibi bir kısayol eklenmek istenirse bu, mimariyi etkileyen bir karar olacağından
-AGENTS.md §16 prosedürüne göre ayrıca ele alınmalıdır.
+**Tasarım kararı — `self` parametresi (Faz FF.4'te GENİŞLETİLDİ, bkz. §3.63):**
+`self`in tipi her zaman kapsayan sınıfın/protokolün adıdır — bu, `def __init__(self:
+Point, x: int) -> None:` AÇIKÇA yazılarak İFADE EDİLEBİLİR, YA DA (Faz FF.4'ten
+beri) `def __init__(self, x: int) -> None:` ÇIPLAK bırakılarak DERLEYİCİYE
+ÇIKARTILABİLİR — İKİSİ de TAM OLARAK AYNI anlama gelir (checker/codegen/ownership
+analizi arasında HİÇBİR fark YOKTUR, yalnızca `nox fmt` kullanıcının hangisini
+YAZDIĞINI SADIK biçimde KORUR). Bu ÖNCEDEN (Faz 1'de) AGENTS.md §5'in "tüm
+parametre tipleri zorunlu, asla örtük düşüş yok" ilkesiyle tutarlı kalmak İçin
+BİLİNÇLİ bir sapma olarak self İçin İSTİSNASIZ AÇIK anotasyon ZORUNLU kılınmıştı;
+bu, AGENTS.md §16 prosedürüne göre (mimariyi etkileyen bir karar olarak)
+kullanıcıya AÇIKÇA sunulup ONAYLANDIKTAN SONRA Faz FF.4'te GEVŞETİLDİ — bkz. §3.63
+BUNUN gerekçesini VE AGENTS.md §5'in GÜNCEL metnini.
 
 **Faz 1'de bilerek dışarıda bırakılanlar** (sonraki fazlara ertelendi): f-string,
 augmented assignment (`+=` vb.), kalıtım, exception sözdizimi (`try/except/raise`),
@@ -9326,7 +9332,107 @@ paylaşabilir).
 - MEVCUT TÜM `dict`-ilgili golden/birim testleri DEĞİŞMEDEN YEŞİL kaldı.
 - `zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
 
+## 3.63 Faz FF.4 — `self` Parametresi İçin Tip Çıkarımı
 
+**Kaynak:** ChatGPT incelemesinin "dil yüzeyinde değiştireceğim noktalar"
+listesindeki bir madde — her metodun `def m(self: Counter, ...)` şeklinde
+`self`i AÇIKÇA tiplemesi gereksiz tekrar; `def m(self, ...)` da GEÇERLİ
+olmalı, tipi otomatik kapsayan sınıfa/protokole çözülmeli. Faz FF listesinin
+DÖRDÜNCÜ maddesi (FF.1-FF.3 TAMAMLANDI).
+
+**AGENTS.md §16 gerilimi (BİLEREK belgelenmiştir):** bu, SIRADAN bir madde
+DEĞİLDİR — `self`in HER ZAMAN AÇIKÇA tiplenmesi, Faz 1'de AGENTS.md §5'in
+("tüm parametre tipleri zorunlu, asla örtük düşüş yok") RUHUNA sadık
+kalmak İçin BİLİNÇLİ bir tercihti (bkz. §3.1'in ESKİ metni), VE o metin
+AÇIKÇA şunu ÖNGÖRMÜŞTÜ: "ileride `Self` tipi gibi bir kısayol eklenmek
+istenirse bu, mimariyi etkileyen bir karar olacağından AGENTS.md §16
+prosedürüne göre AYRICA ele alınmalıdır." Bu gerilim kullanıcıya
+AskUserQuestion İLE AÇIKÇA sunuldu (3 seçenek: planlandığı gibi devam et/
+FF.4'ü ertele/yalnızca sınıflarla sınırla) — kullanıcı **"Proceed as
+planned"** seçti. Çıkarılan tip TAMAMEN statik/sağlam olduğundan (dinamik
+tipleme kaçışı DEĞİL) bu §5'in RUHUNU İHLAL ETMEZ, yalnızca LAFZINA
+("self DAHİL, İSTİSNASIZ") KASITLI VE ONAYLANMIŞ bir istisna ekler — bkz.
+AGENTS.md §5'in GÜNCEL metni.
+
+### Tasarım — `Param.type_expr` HER ZAMAN dolu kalır, yalnızca YENİ bir
+`self_inferred: bool` bayrağı eklenir
+
+`Param.type_expr`in checker.zig (2 yer), codegen.zig (self İçin ZATEN
+`class_name`den BAĞIMSIZ türetiliyor), ownership/analysis.zig (1 yer),
+module_loader.zig (3 yer), ast_dump.zig (1 yer), formatter.zig (1 yer)
+OLMAK ÜZERE 6+ yerde okunduğu doğrulandı — `type_expr`i `?TypeExpr`e
+çevirmek HEPSİNE null-güvenlik eklemeyi GEREKTİRİRDİ. Bunun YERİNE:
+parser, `self`in tipini HER ZAMAN (kullanıcı yazsa da yazmasa da)
+`.simple = <kapsayan sınıf/protokol adı>` olarak DOLU bırakır — yalnızca
+`self_inferred: bool = false` (varsayılanlı) bayrağı eklenir. Bu sayede:
+
+- **checker.zig SIFIR değişiklik:** `registerClassSignatures`/
+  `collectProtocols`in `self_type_ok` kontrolü ZATEN `m.params[0].
+  type_expr.simple == cd.name`e bakıyor — çıkarılan self İçin bu HER
+  ZAMAN doğru (parser AYNI adı kopyaladı); AÇIKÇA YANLIŞ bir `self:
+  WrongClass` HÂLÂ reddedilir (DEĞİŞMEYEN davranış).
+- **codegen.zig SIFIR değişiklik:** self'in tipini ZATEN `class_name`den
+  BAĞIMSIZ türetiyor, `type_expr`e HİÇ bakmıyor.
+- **ownership/analysis.zig SIFIR değişiklik:** `type_expr` HER ZAMAN dolu.
+- **TEK fonksiyonel tüketici — `formatter.zig`:** `nox fmt`, kullanıcının
+  BİLEREK çıplak `self` yazdığını `self_inferred`den okur, `self:
+  Counter`e "genişletmez" (aksi halde özelliğin AMACI boşa çıkardı).
+
+**Tespit mantığı (BİLEREK dar):** `parseFuncDef`in İLK parametresi
+İçin — `enclosing_name` (sınıf/protokol adı, üst-düzey/iç-içe `def`ler
+İçin `null`) MEVCUTSA VE geçerli token TAM OLARAK `self` lexeme'li bir
+`.identifier` İSE VE bir SONRAKİ token `.colon` DEĞİLSE, `self`
+TÜKETİLİR VE `Param{.name="self", .type_expr=.{.simple=enclosing_name},
+.self_inferred=true}` SENTEZLENİR. `self` DIŞINDA bir isimle çıplak İLK
+parametreye İZİN VERİLMEZ (`def foo(this):` hâlâ bir parse hatası verir)
+— gramerin dar/öngörülebilir kalması BİLİNÇLİ bir tercihtir.
+
+**Kapsam:** hem `class` metodları HEM `protocol` metod İMZALARI — İKİSİ
+de `parseFuncDef`i AYNI şekilde çağırır, checker'daki self-doğrulama
+İKİSİNDE de YAPISAL OLARAK AYNIDIR.
+
+### Uygulama
+
+- `compiler/parser/ast.zig`: `Param`a `self_inferred: bool = false`.
+- `compiler/parser/parser.zig`: `parseFuncDef` YENİ `enclosing_name: ?
+  []const u8` parametresi alır; YENİ `parseFirstParam` yukarıdaki dar
+  tespiti uygular; `parseClassDef`/`parseProtocolDef` KENDİ adlarını
+  geçirir, üst-düzey/iç-içe `def`ler `null` geçirir (DEĞİŞMEZ davranış).
+- `compiler/module_loader.zig`: `renameMethodDef`, `.self_inferred`i
+  yeniden inşa ettiği `Param`a KOPYALAR (AST hijyeni — `nox fmt` ASLA
+  yeniden-adlandırılmış bir modülü formatlamadığından bugün FONKSİYONEL
+  olarak etkisiz).
+- `compiler/fmt/formatter.zig`: `printParams`, `self_inferred` İSE
+  yalnızca çıplak ismi basar.
+
+### Doğrulama
+
+- `tests/unit/parser_test.zig`: çıplak self'in `self_inferred==true` VE
+  `type_expr.simple==<sınıf adı>` ürettiğini doğrulayan YENİ test.
+- `tests/golden/typecheck_cases/ok_bare_self_method.nox` (sınıf) +
+  `ok_bare_self_protocol.nox` (protokol) — çıplak self açık self İLE AYNI
+  şekilde tip-denetiminden GEÇER.
+- `tests/golden/typecheck_cases/err_class_self_wrong_type.nox` +
+  `err_protocol_self_wrong_type.nox` — YENİ: AÇIKÇA yanlış `self: X` HÂLÂ
+  reddedilir (mevcut testler TARANDI, bu davranışı test eden HİÇBİR
+  fixture YOKTU — bu alana dokunurken KAPATILAN gerçek bir boşluk).
+  **Boz→kırmızı→düzelt:** `self_type_ok` kontrolü GEÇİCİ devre dışı
+  bırakılıp bu testin KIRMIZI olduğu doğrulanıp GERİ ALINDI.
+- `tests/golden/codegen_cases/`: çıplak self'li bir metodun bir ALANI
+  GERÇEKTEN okuyup/yazdığı uçtan uca fixture — çalışma zamanı davranışı
+  açık self İLE BİREBİR AYNI.
+- `tests/golden/ownership_cases/`: heap-tipli (`dict`/`list`) bir sınıf
+  alanına sahip, çıplak self kullanan fixture — ARC/serbest-bırakma İZİ
+  açık self İLE AYNI (codegen'in GERÇEKTEN sıfır değişiklik gerektirdiğinin
+  regresyon-korumalı kanıtı).
+- `tests/golden/fmt_golden_test.zig`: çıplak self girdisi formatlandığında
+  çıktıda `"self: "` YOK VE bare `self` VAR (normalize-ETMEME'nin AÇIK
+  kanıtı — salt idempotentlik YETERSİZ, HER ZAMAN `self: X`e "genişleten"
+  bozuk bir formatlayıcı da idempotent olurdu); açık `self: Counter`nin
+  de DEĞİŞMEDEN kaldığı AYRI bir assertion.
+- `zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.

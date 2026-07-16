@@ -143,3 +143,35 @@ test "fmt: standalone/trailing yorumlar VE sınıf/metod gövdeleri korunur" {
     try std.testing.expect(std.mem.indexOf(u8, formatted, "class MyError:") != null);
     try std.testing.expect(std.mem.indexOf(u8, formatted, "except MyError as e:") != null);
 }
+
+// Faz FF.4 (bkz. nox-teknik-spesifikasyon.md §3.63): `nox fmt`in çıplak
+// `self`i `self: ClassName`e "GENİŞLETMEDİĞİNİN" (normalize-ETMEME'nin)
+// AÇIK kanıtı — salt idempotentlik YETERSİZDİR, HER ZAMAN `self: X`e
+// "genişleten" bozuk bir formatlayıcı da idempotent OLURDU. Açık
+// `self: Counter`nin de DEĞİŞMEDEN kaldığı AYRI bir örnekle (aynı tabloda)
+// İKİ yüzey biçiminin de KENDİ SABİT NOKTASI olduğu (birbirine
+// "normalize" OLMADIĞI) kanıtlanır.
+test "fmt: çıplak self normalize EDİLMEZ, açık self: Tip de DEĞİŞMEDEN kalır" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const cases = [_]struct { in: []const u8, out: []const u8 }{
+        .{
+            .in = "class Counter:\n    def bump(self) -> None:\n        pass\n",
+            .out = "class Counter:\n    def bump(self) -> None:\n        pass\n",
+        },
+        .{
+            .in = "class Counter:\n    def bump(self: Counter) -> None:\n        pass\n",
+            .out = "class Counter:\n    def bump(self: Counter) -> None:\n        pass\n",
+        },
+        .{
+            .in = "protocol Shape:\n    def area(self) -> float:\n        pass\n",
+            .out = "protocol Shape:\n    def area(self) -> float:\n        pass\n",
+        },
+    };
+    for (cases) |c| {
+        const got = try formatSource(allocator, c.in);
+        try std.testing.expectEqualStrings(c.out, got);
+    }
+}

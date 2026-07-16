@@ -324,7 +324,7 @@ fn renameStmts(a: std.mem.Allocator, stmts: []const ast.Stmt, map: *const Rename
 /// tip ifadeleri VE gövde YENİDEN adlandırılır (bkz. modül üstü not).
 fn renameMethodDef(a: std.mem.Allocator, m: ast.FuncDef, map: *const RenameMap) std.mem.Allocator.Error!ast.FuncDef {
     const params = try a.alloc(ast.Param, m.params.len);
-    for (m.params, 0..) |p, i| params[i] = .{ .name = p.name, .type_expr = try renameTypeExpr(a, p.type_expr, map) };
+    for (m.params, 0..) |p, i| params[i] = .{ .name = p.name, .type_expr = try renameTypeExpr(a, p.type_expr, map), .self_inferred = p.self_inferred };
     return .{
         .name = m.name,
         .type_params = m.type_params,

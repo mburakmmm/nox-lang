@@ -103,7 +103,7 @@ pub const Parser = struct {
             .kw_if => try self.parseIf(),
             .kw_while => try self.parseWhile(),
             .kw_for => try self.parseFor(),
-            .kw_def, .kw_async => .{ .func_def = try self.parseFuncDef() },
+            .kw_def, .kw_async => .{ .func_def = try self.parseFuncDef(null) },
             .kw_extern => try self.parseExternDef(),
             .kw_class => try self.parseClassDef(),
             .kw_protocol => try self.parseProtocolDef(),
@@ -228,7 +228,12 @@ pub const Parser = struct {
         return .{ .for_stmt = .{ .var_name = name, .iterable = iterable, .body = body } };
     }
 
-    fn parseFuncDef(self: *Parser) ParseError!ast.FuncDef {
+    /// `enclosing_name`: `parseClassDef`/`parseProtocolDef`in KENDİ adını
+    /// geçirdiği (üst-düzey/iç-içe `def`ler İÇİN `null` — bkz. `parseStmt`in
+    /// `.kw_def`/`.kw_async` dalı) bağlam — YALNIZCA İLK parametrenin çıplak
+    /// `self` OLUP OLAMAYACAĞINI belirlemek İçin kullanılır (bkz.
+    /// `parseFirstParam`, Faz FF.4, nox-teknik-spesifikasyon.md §3.63).
+    fn parseFuncDef(self: *Parser, enclosing_name: ?[]const u8) ParseError!ast.FuncDef {
         const is_async = self.match(.kw_async);
         _ = try self.expect(.kw_def);
         const name = (try self.expect(.identifier)).lexeme;
@@ -246,7 +251,7 @@ pub const Parser = struct {
 
         var params = std.ArrayList(ast.Param).empty;
         if (!self.check(.r_paren)) {
-            try params.append(self.allocator, try self.parseParam());
+            try params.append(self.allocator, try self.parseFirstParam(enclosing_name));
             while (self.match(.comma)) {
                 try params.append(self.allocator, try self.parseParam());
             }
@@ -309,6 +314,29 @@ pub const Parser = struct {
         return .{ .name = name, .type_expr = type_expr };
     }
 
+    /// Faz FF.4 (bkz. nox-teknik-spesifikasyon.md §3.63): bir metodun İLK
+    /// parametresi İÇİN — `enclosing_name` MEVCUTSA (bir sınıf/protokol
+    /// gövdesi İÇİNDEYİZ) VE geçerli token TAM OLARAK `self` lexeme'li bir
+    /// `.identifier` İSE VE bir SONRAKİ token `.colon` DEĞİLSE, `self:
+    /// <Tip>` YAZMAK YERİNE çıplak `self` KABUL EDİLİR — tipi kapsayan
+    /// sınıf/protokol adı olarak (`self: <enclosing_name>` AÇIKÇA
+    /// YAZILMIŞ GİBİ) DOĞRUDAN sentezlenir. BİLEREK DAR: `self` DIŞINDA
+    /// bir isimle çıplak İLK parametreye İZİN VERİLMEZ (ör. `def foo(this):`
+    /// hâlâ bir parse hatası verir, checker'ın "self almalı" mesajına
+    /// DÜŞMEZ) — gramerin dar/öngörülebilir kalması BİLİNÇLİ bir tercihtir.
+    /// Her İKİ koşul da SAĞLANMAZSA (üst-düzey/iç-içe `def`, ya da AÇIKÇA
+    /// tiplenmiş `self: X`, ya da `self` DIŞINDA bir isim) mevcut
+    /// `parseParam()`e (kolon + tip ZORUNLU) DÜŞÜLÜR — DEĞİŞMEYEN yol.
+    fn parseFirstParam(self: *Parser, enclosing_name: ?[]const u8) ParseError!ast.Param {
+        if (enclosing_name) |en| {
+            if (self.check(.identifier) and std.mem.eql(u8, self.cur().lexeme, "self") and self.tokens[self.pos + 1].kind != .colon) {
+                _ = self.advance();
+                return .{ .name = "self", .type_expr = .{ .simple = en }, .self_inferred = true };
+            }
+        }
+        return self.parseParam();
+    }
+
     fn parseClassDef(self: *Parser) ParseError!ast.StmtKind {
         _ = try self.expect(.kw_class);
         const name = (try self.expect(.identifier)).lexeme;
@@ -318,7 +346,7 @@ pub const Parser = struct {
 
         var methods = std.ArrayList(ast.FuncDef).empty;
         while (!self.check(.dedent)) {
-            try methods.append(self.allocator, try self.parseFuncDef());
+            try methods.append(self.allocator, try self.parseFuncDef(name));
         }
         _ = try self.expect(.dedent);
 
@@ -334,7 +362,7 @@ pub const Parser = struct {
 
         var methods = std.ArrayList(ast.FuncDef).empty;
         while (!self.check(.dedent)) {
-            try methods.append(self.allocator, try self.parseFuncDef());
+            try methods.append(self.allocator, try self.parseFuncDef(name));
         }
         _ = try self.expect(.dedent);
 
