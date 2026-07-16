@@ -33,9 +33,47 @@ const pkg_index = @import("pkg/index.zig");
 const formatter = @import("fmt/formatter.zig");
 const build_options = @import("build_options");
 
+// Faz CC.2.3 (bkz. nox-teknik-spesifikasyon.md §3.58): renkli/daha
+// okunabilir CLI çıktısı. `main()`de BİR KEZ hesaplanır (`NO_COLOR`
+// ortam değişkeni SAYGI görür — bkz. no-color.org; İSATTY DEĞİLSE, ör.
+// çıktı bir dosyaya/pipe'a YÖNLENDİRİLMİŞSE, KOŞULSUZ devre dışı kalır)
+// — TÜM `printErr`/`printOk` çağrıları BU tek, süreç-geneli bayrağı
+// okur. `std.debug.print`in KENDİSİ HER ZAMAN stderr'e yazdığından (bkz.
+// modül üstü not, "TÜM mesajlar HER ZAMAN stderr'e") tespit de stderr
+// ÜZERİNDEN yapılır.
+var g_use_color: bool = false;
+
+fn detectUseColor(io: std.Io, environ_map: *const std.process.Environ.Map) bool {
+    if (environ_map.get("NO_COLOR")) |v| {
+        if (v.len > 0) return false;
+    }
+    return std.Io.File.stderr().supportsAnsiEscapeCodes(io) catch false;
+}
+
+/// `std.debug.print`in AYNISI, `g_use_color` İSE `fmt`i KIRMIZI ANSI
+/// kaçış dizileriyle SARAR — GERÇEK bir hata/başarısızlık durumu İÇİN.
+fn printErr(comptime fmt: []const u8, args: anytype) void {
+    if (g_use_color) {
+        std.debug.print("\x1b[31m" ++ fmt ++ "\x1b[0m", args);
+    } else {
+        std.debug.print(fmt, args);
+    }
+}
+
+/// `printErr` İLE AYNI, YEŞİL — bir BAŞARI/tamamlanma durumu İÇİN.
+fn printOk(comptime fmt: []const u8, args: anytype) void {
+    if (g_use_color) {
+        std.debug.print("\x1b[32m" ++ fmt ++ "\x1b[0m", args);
+    } else {
+        std.debug.print(fmt, args);
+    }
+}
+
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
+
+    g_use_color = detectUseColor(io, init.environ_map);
 
     var all_args: std.ArrayListUnmanaged([]const u8) = .empty;
     var arg_it = init.minimal.args.iterate();
@@ -122,7 +160,7 @@ fn cmdSearch(io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
     const query = if (args.len > 1) args[1] else "";
 
     const idx = pkg_index.loadIndexFromFile(a, io, index_path) catch |e| {
-        std.debug.print("search: indeks okunamadi/ayristirilamadi ({t}): {s}\n", .{ e, index_path });
+        printErr("search: indeks okunamadi/ayristirilamadi ({t}): {s}\n", .{ e, index_path });
         std.process.exit(1);
     };
 
@@ -197,7 +235,7 @@ fn cmdBuild(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
         std.process.exit(1);
     };
     const out = try buildOne(gpa, io, a, path_arg, opts.verbose, opts.output, nox_home, resource_dirs, opts.debug_info);
-    std.debug.print("derlendi: {s}\n", .{out});
+    printOk("derlendi: {s}\n", .{out});
 }
 
 /// `noxc run`/`noxc test` (Faz O §P.2 — `test`in GERÇEK `*_test.nox` keşif/
@@ -290,16 +328,19 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
         const bin_path = try buildOne(gpa, io, fa, file, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info);
         const code = runAndWait(io, fa, bin_path, &.{}) catch 1;
         if (code == 0) {
-            std.debug.print("GECTI: {s}\n", .{file});
+            printOk("GECTI: {s}\n", .{file});
             pass_count += 1;
         } else {
-            std.debug.print("BASARISIZ: {s}\n", .{file});
+            printErr("BASARISIZ: {s}\n", .{file});
             fail_count += 1;
         }
     }
 
-    std.debug.print("\n{d} gecti, {d} basarisiz ({d} toplam)\n", .{ pass_count, fail_count, files.len });
-    if (fail_count > 0) std.process.exit(1);
+    if (fail_count > 0) {
+        printErr("\n{d} gecti, {d} basarisiz ({d} toplam)\n", .{ pass_count, fail_count, files.len });
+        std.process.exit(1);
+    }
+    printOk("\n{d} gecti, {d} basarisiz ({d} toplam)\n", .{ pass_count, fail_count, files.len });
 }
 
 /// Faz T.4b: `noxc fmt <dosya.nox>` — kaynağı `lexer.tokenizeWithTrivia` +
@@ -321,11 +362,11 @@ fn cmdFmt(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
     defer gpa.free(source);
 
     const result = lexer.tokenizeWithTrivia(a, source) catch |e| {
-        std.debug.print("fmt: lex hatasi ({t})\n", .{e});
+        printErr("fmt: lex hatasi ({t})\n", .{e});
         std.process.exit(1);
     };
     const module = parser.parseModule(a, result.tokens) catch |e| {
-        std.debug.print("fmt: ayristirma hatasi ({t})\n", .{e});
+        printErr("fmt: ayristirma hatasi ({t})\n", .{e});
         std.process.exit(1);
     };
     const formatted = try formatter.formatModule(a, module, result.trivia);
@@ -386,7 +427,7 @@ fn resolveImportsForBuild(
     const root = (try project.findProjectRoot(a, io, start_dir)) orelse {
         return module_loader.resolveImportsFrom(a, io, user_module, resource_dirs.stdlib_dir) catch |e| switch (e) {
             error.ModuleNotFound => {
-                std.debug.print("import: stdlib modülü bulunamadı ({s} altında aranır)\n", .{resource_dirs.stdlib_dir});
+                printErr("import: stdlib modülü bulunamadı ({s} altında aranır)\n", .{resource_dirs.stdlib_dir});
                 std.process.exit(1);
             },
             else => |err| return err,
@@ -394,11 +435,11 @@ fn resolveImportsForBuild(
     };
 
     const manifest = project.loadManifest(a, io, root) catch |e| {
-        std.debug.print("nox.json okunamadi/gecersiz ({s}): {t}\n", .{ root, e });
+        printErr("nox.json okunamadi/gecersiz ({s}): {t}\n", .{ root, e });
         std.process.exit(1);
     };
     const lock = project.loadLockfile(a, io, root) catch |e| {
-        std.debug.print("nox.lock okunamadi/gecersiz ({s}): {t}\n", .{ root, e });
+        printErr("nox.lock okunamadi/gecersiz ({s}): {t}\n", .{ root, e });
         std.process.exit(1);
     };
 
@@ -421,7 +462,7 @@ fn resolveImportsForBuild(
             // `git`i HER ZAMAN çağırır, "zaten kilitliyse hiç dokunma"
             // kısayolu TAM OLARAK BURADA, bu bloğun ÜZERİNDE uygulanır).
             const result = fetch.fetchToCache(a, io, nox_home, req.repo, req.ref) catch |e| {
-                std.debug.print("paket getirilemedi (alias={s}, repo={s}): {t}\n", .{ req.alias, req.repo, e });
+                printErr("paket getirilemedi (alias={s}, repo={s}): {t}\n", .{ req.alias, req.repo, e });
                 std.process.exit(1);
             };
             try roots.put(a, req.alias, result.cache_dir);
@@ -445,11 +486,11 @@ fn resolveImportsForBuild(
 
     return module_loader.resolveProjectImports(a, io, user_module, roots, resource_dirs.stdlib_dir, root) catch |e| switch (e) {
         error.ModuleNotFound => {
-            std.debug.print("import: modül bulunamadı (ne 'stdlib/' altında ne bir bağımlılık dizininde)\n", .{});
+            printErr("import: modül bulunamadı (ne 'stdlib/' altında ne bir bağımlılık dizininde)\n", .{});
             std.process.exit(1);
         },
         error.UnknownImportAlias => {
-            std.debug.print("import: bilinmeyen alias veya proje-içi dosya bulunamadı ({s}/nox.json'daki 'requires' listesine bakın ya da '{s}' altında ilgili .nox dosyasının var olduğundan emin olun)\n", .{ root, root });
+            printErr("import: bilinmeyen alias veya proje-içi dosya bulunamadı ({s}/nox.json'daki 'requires' listesine bakın ya da '{s}' altında ilgili .nox dosyasının var olduğundan emin olun)\n", .{ root, root });
             std.process.exit(1);
         },
         else => |err| return err,
@@ -463,21 +504,21 @@ fn resolveImportsForBuild(
 fn findProjectRootOrExit(io: std.Io, a: std.mem.Allocator, cmd_name: []const u8) ![]const u8 {
     const cwd_abs = try std.process.currentPathAlloc(io, a);
     return (try project.findProjectRoot(a, io, cwd_abs)) orelse {
-        std.debug.print("{s}: nox.json bulunamadi (proje kokunde ya da bir alt dizininde olmalisiniz)\n", .{cmd_name});
+        printErr("{s}: nox.json bulunamadi (proje kokunde ya da bir alt dizininde olmalisiniz)\n", .{cmd_name});
         std.process.exit(1);
     };
 }
 
 fn loadManifestOrExit(a: std.mem.Allocator, io: std.Io, root: []const u8) project.Manifest {
     return project.loadManifest(a, io, root) catch |e| {
-        std.debug.print("nox.json okunamadi/gecersiz ({s}): {t}\n", .{ root, e });
+        printErr("nox.json okunamadi/gecersiz ({s}): {t}\n", .{ root, e });
         std.process.exit(1);
     };
 }
 
 fn loadLockfileOrExit(a: std.mem.Allocator, io: std.Io, root: []const u8) project.Lockfile {
     return project.loadLockfile(a, io, root) catch |e| {
-        std.debug.print("nox.lock okunamadi/gecersiz ({s}): {t}\n", .{ root, e });
+        printErr("nox.lock okunamadi/gecersiz ({s}): {t}\n", .{ root, e });
         std.process.exit(1);
     };
 }
@@ -535,7 +576,7 @@ fn resolveDependencies(
 
         const previous = if (project.findLocked(lock, req.alias)) |locked| locked.resolved else null;
         const result = fetch.fetchToCache(a, io, nox_home, req.repo, req.ref) catch |e| {
-            std.debug.print("paket getirilemedi (alias={s}, repo={s}): {t}\n", .{ req.alias, req.repo, e });
+            printErr("paket getirilemedi (alias={s}, repo={s}): {t}\n", .{ req.alias, req.repo, e });
             std.process.exit(1);
         };
 
@@ -666,14 +707,14 @@ fn cmdInit(io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
 
     if (has_name_arg) {
         std.Io.Dir.cwd().createDirPath(io, target_dir) catch |e| {
-            std.debug.print("init: dizin olusturulamadi ({s}): {t}\n", .{ target_dir, e });
+            printErr("init: dizin olusturulamadi ({s}): {t}\n", .{ target_dir, e });
             std.process.exit(1);
         };
     }
 
     const manifest_path = try joinIfNeeded(a, target_dir, "nox.json");
     if (std.Io.Dir.cwd().access(io, manifest_path, .{})) |_| {
-        std.debug.print("init: '{s}' zaten var, uzerine yazilmiyor\n", .{manifest_path});
+        printErr("init: '{s}' zaten var, uzerine yazilmiyor\n", .{manifest_path});
         std.process.exit(1);
     } else |_| {}
 
@@ -702,7 +743,7 @@ fn cmdInit(io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = gitignore_path, .data = ".nox/\nmain\n" });
     }
 
-    std.debug.print("olusturuldu: {s}, {s}\n", .{ manifest_path, main_path });
+    printOk("olusturuldu: {s}, {s}\n", .{ manifest_path, main_path });
 }
 
 /// `noxc check <dosya.nox>` — Faz CC.2.2: SADECE lex→parse→import
@@ -729,17 +770,17 @@ fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
 
     var checker_state = checker.Checker.init(a);
     checker_state.checkModule(module) catch |e| {
-        std.debug.print("tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
+        printErr("tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
         std.process.exit(1);
     };
     if (checker_state.diagnostics.items.len > 0) {
         for (checker_state.diagnostics.items) |d| {
-            std.debug.print("tip hatasi ({t}): {s}\n", .{ d.code, d.message });
+            printErr("tip hatasi ({t}): {s}\n", .{ d.code, d.message });
         }
         std.process.exit(1);
     }
 
-    std.debug.print("tip hatasi yok: {s}\n", .{path_arg});
+    printOk("tip hatasi yok: {s}\n", .{path_arg});
 }
 
 /// Tek bir `.nox` dosyasını uçtan uca derler (lex→parse→import çözümü→tip
@@ -768,7 +809,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // iletmek için gereklidir (bkz. checker.zig, "Faz 10: generics" notu).
     var checker_state = checker.Checker.init(a);
     checker_state.checkModule(module) catch |e| {
-        std.debug.print("tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
+        printErr("tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
         std.process.exit(1);
     };
     // Faz T.2: `checkModule` artık fonksiyon/sınıf/metod/gevşek-deyim
@@ -777,7 +818,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // dönüş TEK BAŞINA "tip hatasız" anlamına GELMEZ, AYRICA kontrol edilir.
     if (checker_state.diagnostics.items.len > 0) {
         for (checker_state.diagnostics.items) |d| {
-            std.debug.print("tip hatasi ({t}): {s}\n", .{ d.code, d.message });
+            printErr("tip hatasi ({t}): {s}\n", .{ d.code, d.message });
         }
         std.process.exit(1);
     }
@@ -851,7 +892,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     defer gpa.free(qbe_result.stdout);
     defer gpa.free(qbe_result.stderr);
     if (qbe_result.term != .exited or qbe_result.term.exited != 0) {
-        std.debug.print("qbe basarisiz:\n{s}\n", .{qbe_result.stderr});
+        printErr("qbe basarisiz:\n{s}\n", .{qbe_result.stderr});
         std.process.exit(1);
     }
 
@@ -881,7 +922,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     defer gpa.free(cc_result.stdout);
     defer gpa.free(cc_result.stderr);
     if (cc_result.term != .exited or cc_result.term.exited != 0) {
-        std.debug.print("cc basarisiz:\n{s}\n", .{cc_result.stderr});
+        printErr("cc basarisiz:\n{s}\n", .{cc_result.stderr});
         std.process.exit(1);
     }
 

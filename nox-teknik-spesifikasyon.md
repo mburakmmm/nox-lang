@@ -8765,6 +8765,54 @@ askıya almanın GERÇEKTEN GERÇEKLEŞMESİNİ) GARANTİ eder. Yerel olarak
 (bu da yerel olarak tekrarlanamayan bir zamanlama BAĞIMLILIĞI
 OLDUĞUNDAN) GERÇEK Linux/x86-64 CI'de.
 
+## 3.58 Faz CC.2.3 — Renkli/Daha Okunabilir CLI Çıktısı
+
+**Kaynak:** kullanıcının "sonraki aşama geliştirmeler" listesinin #1
+maddesi ("NOXC CLI tool geliştirmeleri") — Faz CC.2.1/CC.2.2'nin (§3.54/
+§3.56) ARDINDAN, AYNI AskUserQuestion yanıtında SEÇİLEN SON madde.
+
+**Tasarım:** `main()`de BİR KEZ hesaplanan süreç-geneli bir `g_use_color`
+bayrağı — iki KOŞUL: (1) `NO_COLOR` ortam değişkeni AYARLI DEĞİLSE (bkz.
+no-color.org, geniş çapta SAYGI görülen bir standart), (2) `std.Io.File.
+stderr().supportsAnsiEscapeCodes(io)` `true` dönerse (GERÇEK bir terminale
+BAĞLIYSA — ör. bir dosyaya/pipe'a YÖNLENDİRİLMİŞSE OTOMATİK OLARAK devre
+DIŞI kalır, script/CI tüketicileri HER ZAMAN ham metin GÖRÜR). `printErr`/
+`printOk` — `std.debug.print`in İKİ İNCE sarmalayıcısı, `g_use_color`
+İSE `fmt`i KIRMIZI/YEŞİL ANSI kaçış dizileriyle SARAR — TÜM mesajlar HER
+ZAMAN stderr'e yazıldığından (bkz. modül üstü not) tespit de stderr
+ÜZERİNDEN yapılır.
+
+**Kapsam:** checker tip hataları (`tip hatasi`, EN sık GÖRÜLEN mesaj) VE
+"tip hatasi yok" (KIRMIZI/YEŞİL), `derlendi`/`olusturuldu` (YEŞİL),
+`qbe`/`cc` başarısızlıkları, TÜM "bulunamadı"/"okunamadi"/"gecersiz"/
+"getirilemedi" hata yolları (KIRMIZI), `noxc test`in `GECTI`/`BASARISIZ`
+satırları VE ÖZET satırı (BAŞARISIZ SAYISINA göre KOŞULLU KIRMIZI/YEŞİL).
+Kullanım (`kullanim: ...`)/sürüm/GENEL BİLGİ mesajları BİLİNÇLİ olarak
+renklendirilMEDİ (gerçek hata/başarıyla GÖRSEL olarak REKABET etmesinler
+diye).
+
+**Doğrulama:** manuel olarak `script(1)` (GERÇEK bir sanal TTY tahsis
+ederek) İLE hem KIRMIZI/YEŞİL ANSI kodlarının GERÇEKTEN yayıldığı HEM
+`NO_COLOR=1`in bunu GÜVENİLİR şekilde BASTIRDIĞI doğrulandı. YENİ bir
+OTOMATİK test (`tests/cli/subcommand_test.zig`) — `std.process.run`ın
+YAKALADIĞI stdout/stderr HER ZAMAN bir BORU HATTIDIR (gerçek bir TTY
+DEĞİL) — bu GÜVENLİ VARSAYILAN davranışın (renklendirme OTOMATİK devre
+dışı, script/CI tüketicileri ham metin GÖRÜR) `\x1b` (ESC) baytı hiç
+SIZMADIĞINI AÇIKÇA doğrular.
+
+**Kasıtlı boz→kırmızı→düzelt:** `detectUseColor`, GEÇİCİ olarak
+KOŞULSUZ `true` DÖNECEK ŞEKİLDE bozuldu (TTY/`NO_COLOR` kontrolünün
+İKİSİ de ATLANARAK) — YENİ test TAM OLARAK BEKLENEN ŞEKİLDE KIRMIZI
+oldu (409/410, `result.stderr`de bir `\x1b` baytı GERÇEKTEN BULUNDU),
+BAŞKA HİÇBİR test ETKİLENMEDİ. Değişiklik `diff` İLE bayt-bayt ÖZDEŞLİĞİ
+doğrulanarak GERİ YÜKLENDİ, Debug + ReleaseFast YENİDEN yeşile döndü
+(TEK, doğrudan `zig build test` çalıştırmasıyla — `| tail` ile boru
+hattına ALINMIŞ bir komutun ÇIKIŞ KODUNUN, `tail`in KENDİ çıkış koduyla
+MASKELENEBİLECEĞİ, GERÇEKTEN gözlemlenen bir doğrulama tuzağı — bu
+doğrulama YÖNTEMİ genel bir ders olarak NOT edilir).
+
+`zig build test` (Debug + ReleaseFast) 410/410 yeşil, `zig fmt` temiz.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

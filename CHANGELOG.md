@@ -192,6 +192,18 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   (150ms gecikme) aynı deseni sunucu tarafına da uygulandı
   (`testServeOnceDelayed`).
 
+### Eklendi
+- Renkli/daha okunabilir `noxc` çıktısı (Faz CC.2.3). Checker tip
+  hataları, `qbe`/`cc` başarısızlıkları ve tüm "bulunamadı"/"okunamadi"
+  hata yolları artık kırmızı; `derlendi`/`olusturuldu`/"tip hatasi yok"
+  yeşil. Gerçek bir terminale bağlı değilken (dosyaya/pipe'a
+  yönlendirilmiş) veya `NO_COLOR` ayarlıyken otomatik devre dışı kalır
+  — script/CI tüketicileri her zaman ham metin görür. `nox-teknik-
+  spesifikasyon.md` §3.58. `script(1)` ile gerçek bir sanal TTY üzerinde
+  manuel doğrulama + boru hattında (TTY olmayan) hiç ANSI kaçış dizisi
+  sızmadığını doğrulayan yeni bir otomatik test + kasıtlı boz→kırmızı
+  ritüeli.
+
 ## [1.0.0]
 
 ### Eklendi

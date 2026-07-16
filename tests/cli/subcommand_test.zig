@@ -456,3 +456,35 @@ test "check: gecerli dosyada codegen'e HIC girmeden basarili, hatali dosyada net
     try std.testing.expect(bad_result.term == .exited and bad_result.term.exited == 1);
     try std.testing.expect(std.mem.indexOf(u8, bad_result.stderr, "tip hatasi") != null);
 }
+
+// Faz CC.2.3 (bkz. nox-teknik-spesifikasyon.md §3.58): `noxc` çıktısı
+// artık `printErr`/`printOk` İLE (TTY VE `NO_COLOR` tespitine göre) ANSI
+// renk kodlarıyla SARILABİLİR — AMA `std.process.run`ın YAKALADIĞI stdout/
+// stderr HER ZAMAN bir BORU HATTIDIR (GERÇEK bir TTY DEĞİL), bu yüzden
+// GÜVENLİ VARSAYILAN davranış (renklendirme OTOMATİK devre dışı kalır,
+// script/CI TÜKETİCİLERİ ham metni GÖRÜR) BURADA AÇIKÇA doğrulanır —
+// HİÇBİR `\x1b` (ESC) baytı stderr'e SIZMAMALI.
+test "renklendirme: TTY olmayan (boru hatti) ciktida HICBIR ANSI kacis dizisi sizmaz" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const noxc = try noxcPath(a);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "bad.nox", .data = "x: int = \"yanlis tip\"\n" });
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &path_buf);
+    const dir_path = path_buf[0..len];
+    const bad_path = try std.fmt.allocPrint(a, "{s}/bad.nox", .{dir_path});
+
+    const result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxc, "check", bad_path },
+    });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try std.testing.expect(result.term == .exited and result.term.exited == 1);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "tip hatasi") != null);
+    try std.testing.expect(std.mem.indexOfScalar(u8, result.stderr, 0x1b) == null);
+}
