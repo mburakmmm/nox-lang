@@ -27,6 +27,23 @@ extern def nox_http_response_body(h: ptr) -> str from "zig-out/lib/noxrt.o" with
 extern def nox_http_response_headers(h: ptr) -> dict[str, str] from "zig-out/lib/noxrt.o" with_rt
 extern def nox_http_response_free(h: ptr) -> None from "zig-out/lib/noxrt.o"
 
+# Faz DD.1 (bkz. nox-teknik-spesifikasyon.md §3.60) — çok-çekirdekli
+# sunumun temel taşı: `socket()`/`bind()`/`listen()` yapıp ham dosya
+# tanımlayıcısını (`fd`) saf bir `int` olarak döner. Bu `int`, `nox.
+# thread`in ZATEN desteklediği iş-parçacıkları-arası aktarım
+# tiplerinden biridir — TEK bir `listen`den dönen `fd`, `nox.thread.
+# start` ile N bağımsız iş parçacığına dağıtılıp her biri kendi
+# `nox.http.serve_fd(fd, handle)`ini çağırabilir (ya da tek satırlık
+# `nox.http.serve_multicore(port, handle, num_threads)` kolaylığı
+# kullanılabilir).
+extern def nox_http_listen_fd(port: int) -> int from "zig-out/lib/noxrt.o" with_rt
+
+def listen(port: int) -> int:
+    fd: int = nox_http_listen_fd(port)
+    if fd < 0:
+        raise HttpError("dinleme basarisiz: port " + str(port))
+    return fd
+
 def get(url: str, headers: dict[str, str]) -> HttpResponse:
     h: ptr = nox_http_get_raw(url, headers)
     if nox_http_response_ok(h) == 0:

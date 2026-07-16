@@ -412,6 +412,23 @@ const ThreadWrapperSpec = struct {
     sig: FuncSig,
 };
 
+/// Faz DD.1 (bkz. nox-teknik-spesifikasyon.md §3.60) — `nox.http.
+/// serve_multicore` çağrı sitesi başına TEMBEL kaydedilen, `generateModule`
+/// nin sonunda üretilen bir "iş parçacığı girişi" worker fonksiyonunun
+/// tarifi. `ThreadWrapperSpec`den FARKLI: bu worker'ın ARKASINDA GERÇEK
+/// bir Nox `entry` fonksiyonu YOKTUR (`target_fn`/`sig` yok) — TAMAMEN
+/// sentezlenir (`genHttpServeWrapper`nin `HandlerFn` sarmalayıcısını
+/// sentezlemesiyle AYNI teknik): gövdesi `wrapper_name`i (ZATEN kayıtlı
+/// bir `HttpServeWrapperSpec`) `nox_http_server_from_fd`+`nox_http_
+/// serve_raw` ile ÇAĞIRIR. `max_conn_text`, checker'ın `.int_lit`
+/// ZORUNLULUĞU SAYESİNDE derleme-zamanı bir metin sabitidir (bkz.
+/// `tryResolveHttpServeMulticoreCall`in belge notu).
+const HttpServeMulticoreWorkerSpec = struct {
+    name: []const u8,
+    wrapper_name: []const u8,
+    max_conn_text: []const u8,
+};
+
 /// Faz U.4.3: bir closure'ın TEK bir yakalanan (capture) değeri — `name`
 /// dış (kapsayan) fonksiyondaki KAYNAK isim, `info` o ismin DIŞ fonksiyondaki
 /// TAM `TypeInfo`si (qtype/heap/class_name/vb. — `genNestedFuncDef`in
@@ -723,25 +740,39 @@ fn stmtUsesAsync(stmt: ast.Stmt) bool {
     };
 }
 
-/// `nox.http.serve(port, handle[, max_connections])` çağrı sitesinin
-/// callee'sinin TAM OLARAK `nox.http.serve` şeklinde (üç seviyeli
-/// `Attribute`/`Attribute`/`identifier` zinciri) ayrıştırılıp
-/// ayrıştırılMADIĞINI belirler — hem `exprUsesAsync`in `.call` dalı hem de
-/// `Codegen.genCall`in `.attribute` dalı bu ŞEKLİ tanıyıp özel işlemeye
-/// yönlendirmek için kullanır (bkz. checker.zig'in `tryResolveHttpServeCall`ı
+/// `nox.http.<name>(...)` çağrı sitesinin callee'sinin TAM OLARAK bu
+/// şekilde (üç seviyeli `Attribute`/`Attribute`/`identifier` zinciri)
+/// ayrıştırılıp ayrıştırılMADIĞINI belirler — hem `exprUsesAsync`in `.call`
+/// dalı hem de `Codegen.genCall`in `.attribute` dalı bu ŞEKLİ tanıyıp özel
+/// işlemeye yönlendirmek için kullanır (bkz. checker.zig'in `matchesNoxHttpCall`
 /// İLE AYNI desen — o da AYNI şekli tanır, ama BU noktada çağrının callee'si
-/// `tryResolveQualifiedCall`in AKSİNE mangled bir isme YENİDEN YAZILMAZ,
-/// bkz. `tryResolveHttpServeCall`in belge notu — bu yüzden codegen KENDİSİ
-/// şekli TANIMAK ZORUNDADIR).
-fn isHttpServeCallee(callee: ast.Expr) bool {
+/// `tryResolveQualifiedCall`in AKSİNE mangled bir isme YENİDEN YAZILMAZ, bu
+/// yüzden codegen KENDİSİ şekli TANIMAK ZORUNDADIR). Faz DD.1'de `nox.http.
+/// serve_fd`/`serve_multicore`İ de tanıyacak şekilde genelleştirildi (bkz.
+/// `isHttpServeCallee`/`isHttpServeFdCallee`/`isHttpServeMulticoreCallee`).
+fn matchesNoxHttpAttr(callee: ast.Expr, name: []const u8) bool {
     if (callee != .attribute) return false;
-    const serve_attr = callee.attribute;
-    if (!std.mem.eql(u8, serve_attr.attr, "serve")) return false;
-    if (serve_attr.obj.* != .attribute) return false;
-    const http_attr = serve_attr.obj.attribute;
+    const attr = callee.attribute;
+    if (!std.mem.eql(u8, attr.attr, name)) return false;
+    if (attr.obj.* != .attribute) return false;
+    const http_attr = attr.obj.attribute;
     if (!std.mem.eql(u8, http_attr.attr, "http")) return false;
     if (http_attr.obj.* != .identifier) return false;
     return std.mem.eql(u8, http_attr.obj.identifier, "nox");
+}
+
+fn isHttpServeCallee(callee: ast.Expr) bool {
+    return matchesNoxHttpAttr(callee, "serve");
+}
+
+/// Faz DD.1 (bkz. nox-teknik-spesifikasyon.md §3.60).
+fn isHttpServeFdCallee(callee: ast.Expr) bool {
+    return matchesNoxHttpAttr(callee, "serve_fd");
+}
+
+/// Faz DD.1 (bkz. nox-teknik-spesifikasyon.md §3.60).
+fn isHttpServeMulticoreCallee(callee: ast.Expr) bool {
+    return matchesNoxHttpAttr(callee, "serve_multicore");
 }
 
 /// Faz BB.4 — `isHttpServeCallee` İLE AYNI yapısal eşleştirme, `nox.thread.
@@ -773,6 +804,11 @@ fn exprUsesAsync(expr: ast.Expr) bool {
             // zinciri) buradaki DİĞER dallardan HİÇBİRİNİ TETİKLEMEZ, bu
             // yüzden ŞEKLİ AÇIKÇA tanımak GEREKİR (bkz. `isHttpServeCallee`).
             if (isHttpServeCallee(c.callee.*)) break :blk true;
+            // Faz DD.1: `serve_fd`/`serve_multicore` da AYNI gerekçeyle
+            // (KENDİLERİ `nox_http_serve_raw`/`nox_thread_spawn` çağırır)
+            // "async kullanır" sayılmalı.
+            if (isHttpServeFdCallee(c.callee.*)) break :blk true;
+            if (isHttpServeMulticoreCallee(c.callee.*)) break :blk true;
             if (isThreadStartCallee(c.callee.*)) break :blk true;
             if (exprUsesAsync(c.callee.*)) break :blk true;
             for (c.args) |a| if (exprUsesAsync(a)) break :blk true;
@@ -863,6 +899,11 @@ const Codegen = struct {
     /// belge notu).
     thread_wrapper_counter: usize = 0,
     thread_wrappers: std.ArrayListUnmanaged(ThreadWrapperSpec) = .empty,
+    /// Faz DD.1 — `thread_wrapper_counter`/`thread_wrappers` İLE AYNI
+    /// desen, `nox.http.serve_multicore` çağrı siteleri İÇİN (bkz.
+    /// `HttpServeMulticoreWorkerSpec`in belge notu).
+    http_serve_multicore_worker_counter: usize = 0,
+    http_serve_multicore_workers: std.ArrayListUnmanaged(HttpServeMulticoreWorkerSpec) = .empty,
     /// Faz U.4.3: checker'ın hesapladığı closure yakalama (capture) listeleri
     /// — anahtar `"<dış_yol>.<iç_isim>"` (bkz. `checker.zig`nin `ClosureInfo`si,
     /// `Checker.closure_infos`), DEĞER yalnızca yakalanan İSİMLER (tipleri
@@ -4612,6 +4653,10 @@ const Codegen = struct {
                 // metod-çağrısı çözümlemesinden (`genMethodCall`) ÖNCE ŞEKLİ
                 // tanımak GEREKİR.
                 if (isHttpServeCallee(c.callee.*)) return self.genHttpServe(c);
+                // Faz DD.1: `serve_fd`/`serve_multicore` — AYNI gerekçe,
+                // `isHttpServeCallee`in HEMEN yanına eklendi.
+                if (isHttpServeFdCallee(c.callee.*)) return self.genHttpServeFd(c);
+                if (isHttpServeMulticoreCallee(c.callee.*)) return self.genHttpServeMulticore(c);
                 // Faz BB.4: `nox.thread.start(entry, arg)`nin callee'si de
                 // (checker BUNU YENİDEN yazmadığı için — bkz. `tryResolveThreadSpawnCall`)
                 // burada AYNI şekilde tanınmalı.
@@ -5270,6 +5315,184 @@ const Codegen = struct {
         return .{ .text = "0", .qtype = .none };
     }
 
+    /// Faz DD.1 (bkz. nox-teknik-spesifikasyon.md §3.60) — `nox_http_
+    /// server_from_fd`+`nox_http_serve_raw`+`nox_http_server_close` ÜÇ-
+    /// satırlık diziyi yayınlar. `genHttpServeFd`nin kuyruğu VE
+    /// `genHttpServeMulticoreWorker`nin SENTEZLENMİŞ gövdesi TARAFINDAN
+    /// paylaşılır (kod TEKRARI önlenir) — HER İKİSİ de MEVCUT `RT_PARAM`
+    /// (`"%rt"`) ismini KENDİ fonksiyon gövdelerinde ÖNCEDEN TANIMLAMIŞ
+    /// olmalıdır (`genThreadStartWrapper`nin `%argp`den `RT_PARAM`
+    /// YÜKLEMESİYLE AYNI sözleşme).
+    fn emitFdServeTail(self: *Codegen, fd_text: []const u8, wrapper_name: []const u8, max_conn_text: []const u8) CodegenError!void {
+        const server = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_http_server_from_fd(l {s}, l {s})\n", .{ server, RT_PARAM, fd_text });
+        try self.out.writer.print("    call $nox_http_serve_raw(l {s}, l {s}, l ${s}, l {s}, l {s})\n", .{ RT_PARAM, server, wrapper_name, RT_PARAM, max_conn_text });
+        try self.out.writer.print("    call $nox_http_server_close(l {s}, l {s})\n", .{ RT_PARAM, server });
+    }
+
+    /// `nox.http.serve_fd(fd, handle[, max_connections])` çağrı sitesi
+    /// codegen'i — Faz DD.1 (bkz. nox-teknik-spesifikasyon.md §3.60).
+    /// `genHttpServe` İLE NEREDEYSE ÖZDEŞ, TEK fark: `nox_http_server_
+    /// listen(rt, port)` (YENİ bir soket YARATIR) YERİNE `nox_http_server_
+    /// from_fd(rt, fd)` (ZATEN dinlemede olan PAYLAŞILAN bir fd'yi SARAR) —
+    /// `HttpServeWrapperSpec`/`genHttpServeWrapper` DEĞİŞTİRİLMEDEN
+    /// yeniden kullanılır.
+    fn genHttpServeFd(self: *Codegen, c: ast.Call) CodegenError!Value {
+        if (c.args.len != 2 and c.args.len != 3) return error.Unsupported;
+
+        const fd_v0 = try self.genExpr(c.args[0]);
+        try self.checkNoLowlevelEscape(fd_v0);
+        const fd_v = try self.convert(fd_v0, .l);
+        try self.releaseIfTemporary(c.args[0], fd_v0);
+
+        const handle_name = switch (c.args[1]) {
+            .identifier => |n| n,
+            else => return error.Unsupported,
+        };
+        const sig = self.functions.get(handle_name) orelse return error.Unsupported;
+        if (sig.params.len != 1) return error.Unsupported;
+        if (sig.params[0].heap != .class or sig.params[0].class_name == null) return error.Unsupported;
+        if (sig.ret.heap != .class or sig.ret.class_name == null) return error.Unsupported;
+        const req_class = sig.params[0].class_name.?;
+        const resp_class = sig.ret.class_name.?;
+
+        var max_conn_text: []const u8 = "0";
+        if (c.args.len == 3) {
+            const mc_v0 = try self.genExpr(c.args[2]);
+            try self.checkNoLowlevelEscape(mc_v0);
+            const mc_v = try self.convert(mc_v0, .l);
+            try self.releaseIfTemporary(c.args[2], mc_v0);
+            max_conn_text = mc_v.text;
+        }
+
+        const wrapper_name = try std.fmt.allocPrint(self.allocator, "http_serve_wrap_{d}", .{self.http_serve_wrapper_counter});
+        self.http_serve_wrapper_counter += 1;
+        try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class });
+
+        try self.emitFdServeTail(fd_v.text, wrapper_name, max_conn_text);
+        return .{ .text = "0", .qtype = .none };
+    }
+
+    /// `nox.http.serve_multicore(port, handle, num_threads[,
+    /// max_connections])` çağrı sitesi codegen'i — Faz DD.1 (bkz. nox-
+    /// teknik-spesifikasyon.md §3.60). `port` BİR KEZ `nox_http_listen_fd`
+    /// İLE dinlemeye alınır (ham bir `int` fd, `ServerHandle` YOK),
+    /// `num_threads - 1` ek `nox.thread` worker'ı (bkz. `genHttpServeMulticoreWorker`)
+    /// AYNI paylaşılan fd üzerinde `nox_thread_spawn` İLE başlatılır —
+    /// `genForRange`nin AYNI sayaçlı-döngü şekli (bkz. onun belge notu),
+    /// TEK fark: döngü değişkeni bir Nox kullanıcı değişkeni DEĞİL, `self.
+    /// vars`e HİÇ kaydedilmeyen sentetik bir yığın yuvasıdır. ÇAĞIRAN iş
+    /// parçacığının KENDİSİ Nninci worker OLUR (`emitFdServeTail` İLE,
+    /// `genHttpServeFd`nin kuyruğuyla AYNI) — bugünkü `nox.http.serve`nin
+    /// "çağrı sonsuza kadar bloke olur" sözleşmesiyle TUTARLI.
+    ///
+    /// **Bilinçli "fire-and-forget":** spawn edilen `ThreadHandle`lar ASLA
+    /// `.join()` edilmez/serbest bırakılmaz — sunucu ZATEN sonsuza kadar
+    /// çalışır (worker'lar hiç DÖNMEZ), `num_threads` sunucu ÖMRÜ boyunca
+    /// BİR KEZ harcanan, küçük/sınırlı bir sayıdır — bağlantı fiber'larının
+    /// HİÇBİR ZAMAN `await` edilmemesiyle AYNI, ZATEN VAR OLAN proje
+    /// ilkesiyle TUTARLI (bkz. bu dosyanın `nox_http_serve_raw`ının modül-
+    /// üstü notu).
+    fn genHttpServeMulticore(self: *Codegen, c: ast.Call) CodegenError!Value {
+        if (c.args.len != 3 and c.args.len != 4) return error.Unsupported;
+
+        const port_v0 = try self.genExpr(c.args[0]);
+        try self.checkNoLowlevelEscape(port_v0);
+        const port_v = try self.convert(port_v0, .l);
+        try self.releaseIfTemporary(c.args[0], port_v0);
+
+        const handle_name = switch (c.args[1]) {
+            .identifier => |n| n,
+            else => return error.Unsupported,
+        };
+        const sig = self.functions.get(handle_name) orelse return error.Unsupported;
+        if (sig.params.len != 1) return error.Unsupported;
+        if (sig.params[0].heap != .class or sig.params[0].class_name == null) return error.Unsupported;
+        if (sig.ret.heap != .class or sig.ret.class_name == null) return error.Unsupported;
+        const req_class = sig.params[0].class_name.?;
+        const resp_class = sig.ret.class_name.?;
+
+        const num_threads_v0 = try self.genExpr(c.args[2]);
+        try self.checkNoLowlevelEscape(num_threads_v0);
+        const num_threads_v = try self.convert(num_threads_v0, .l);
+        try self.releaseIfTemporary(c.args[2], num_threads_v0);
+
+        // Checker ZATEN `.int_lit` olduğunu garanti etti (bkz.
+        // `tryResolveHttpServeMulticoreCall`in belge notu) — DERLEME-
+        // ZAMANI bir metin sabiti olarak HEM aşağıdaki `emitFdServeTail`
+        // çağrısına HEM `genHttpServeMulticoreWorker`in sentezlediği
+        // worker gövdesine gömülür.
+        var max_conn_text: []const u8 = "0";
+        if (c.args.len == 4) {
+            max_conn_text = try std.fmt.allocPrint(self.allocator, "{d}", .{c.args[3].int_lit});
+        }
+
+        const fd = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_http_listen_fd(l {s}, l {s})\n", .{ fd, RT_PARAM, port_v.text });
+
+        const wrapper_name = try std.fmt.allocPrint(self.allocator, "http_serve_wrap_{d}", .{self.http_serve_wrapper_counter});
+        self.http_serve_wrapper_counter += 1;
+        try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class });
+
+        const worker_name = try std.fmt.allocPrint(self.allocator, "http_serve_mc_worker_{d}", .{self.http_serve_multicore_worker_counter});
+        self.http_serve_multicore_worker_counter += 1;
+        try self.http_serve_multicore_workers.append(self.allocator, .{ .name = worker_name, .wrapper_name = wrapper_name, .max_conn_text = max_conn_text });
+
+        const i_slot = try self.newTemp();
+        try self.out.writer.print("    {s} =l alloc8 8\n", .{i_slot});
+        try self.out.writer.print("    storel 1, {s}\n", .{i_slot});
+
+        const cond_label = try self.newLabel("mc_spawn_cond");
+        const body_label = try self.newLabel("mc_spawn_body");
+        const end_label = try self.newLabel("mc_spawn_end");
+
+        try self.out.writer.print("    jmp {s}\n", .{cond_label});
+        try self.out.writer.print("{s}\n", .{cond_label});
+        const cur = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ cur, i_slot });
+        const cmp = try self.newTemp();
+        try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ cmp, cur, num_threads_v.text });
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cmp, body_label, end_label });
+        try self.out.writer.print("{s}\n", .{body_label});
+        const handle_ptr = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_thread_spawn(l {s}, l ${s}, l {s}, w 0, w 0)\n", .{ handle_ptr, RT_PARAM, worker_name, fd });
+        const cur2 = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ cur2, i_slot });
+        const next = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 1\n", .{ next, cur2 });
+        try self.out.writer.print("    storel {s}, {s}\n", .{ next, i_slot });
+        try self.out.writer.print("    jmp {s}\n", .{cond_label});
+        try self.out.writer.print("{s}\n", .{end_label});
+
+        try self.emitFdServeTail(fd, wrapper_name, max_conn_text);
+        return .{ .text = "0", .qtype = .none };
+    }
+
+    /// `nox_thread_spawn`ın ÇAĞIRDIĞI, `nox.http.serve_multicore` çağrı
+    /// sitesi başına üretilen bir ÇOCUK İŞ PARÇACIĞI girişi — Faz DD.1
+    /// (bkz. nox-teknik-spesifikasyon.md §3.60). `genThreadStartWrapper`nin
+    /// KANITLANMIŞ düşük-seviye şekliyle (`%argp`den `RT_PARAM` + payload
+    /// YÜKLEMESİ) BİREBİR AYNI iskelet, AMA gövde gerçek bir Nox fonksiyonu
+    /// ÇAĞIRMAK yerine `emitFdServeTail`i çağırır — bu worker'ın ARKASINDA
+    /// yazılmış bir Nox `entry` fonksiyonu YOKTUR, TAMAMEN sentezlenir
+    /// (`genHttpServeWrapper`nin `HandlerFn` sarmalayıcısını
+    /// sentezlemesiyle AYNI teknik).
+    fn genHttpServeMulticoreWorker(self: *Codegen, spec: HttpServeMulticoreWorkerSpec) CodegenError!void {
+        self.temp_counter = 0;
+        self.label_counter = 0;
+
+        try self.out.writer.print("export function l ${s}(l %argp) {{\n@start\n", .{spec.name});
+        try self.out.writer.print("    {s} =l loadl %argp\n", .{RT_PARAM});
+        const payload_addr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add %argp, 8\n", .{payload_addr});
+        const fd = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ fd, payload_addr });
+
+        try self.emitFdServeTail(fd, spec.wrapper_name, spec.max_conn_text);
+
+        try self.out.writer.writeAll("    ret 0\n}\n");
+    }
+
     /// `nox_http_serve_raw`nin (bkz. runtime/stdlib_shims/http_server.zig'in
     /// `HandlerFn`i, `fn(?*anyopaque, ?*anyopaque) callconv(.c) ?*anyopaque`)
     /// bağlantı başına ÇAĞIRDIĞI, `nox.http.serve` çağrı sitesi başına
@@ -5686,6 +5909,13 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     // AYNI "sonda tüket" deseni.
     while (gen.thread_wrappers.pop()) |spec| {
         try gen.genThreadStartWrapper(spec);
+    }
+
+    // Faz DD.1: her `nox.http.serve_multicore` çağrı sitesi için TEMBEL
+    // kaydedilen worker fonksiyonları (bkz. `HttpServeMulticoreWorkerSpec`in
+    // belge notu) — AYNI "sonda tüket" deseni.
+    while (gen.http_serve_multicore_workers.pop()) |spec| {
+        try gen.genHttpServeMulticoreWorker(spec);
     }
 
     for (gen.string_data.items) |sd| {

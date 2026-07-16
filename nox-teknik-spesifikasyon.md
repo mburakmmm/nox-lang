@@ -8941,6 +8941,133 @@ tutuldu).
 
 `zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
 
+## 3.60 Faz DD.1 — Çok Çekirdekli `nox.http.serve`
+
+**Kaynak:** kullanıcının "sonraki aşama geliştirmeler" listesinin #3
+maddesi ("HTTP kütüphane async m:n entegrasyonu ve performans artışı"),
+daha önce "Sunucu tarafı: çok-çekirdekli `nox.http.serve`" olarak kapsam
+netleştirildi. #1 (CLI, §3.53-§3.58) ve #2 (Faz M.8, §3.59) TAMAMLANDIKTAN
+SONRA sıradaki madde.
+
+**Mimari — NEDEN `SO_REUSEPORT`/paylaşılan-kabul-dağıtım YERİNE fd-
+paylaşımı:** `nox.http.serve` bugüne kadar TAMAMEN M:1'di (tek OS iş
+parçacığı, tek fiber zamanlayıcı, bağlantı başına bare bir fiber — bkz.
+`runtime/stdlib_shims/http_server.zig`in modül-üstü notu). GERÇEK bir
+*paylaşılan* M:N zamanlayıcıya geçiş (zamanlayıcı tekil-örneği, atomik
+olmayan ARC, senkron olmayan havuzlanmış ayırıcı) Faz AA.1'de (§3.46)
+somut mimari engeller nedeniyle ERTELENMİŞTİ VE ERTELENMİŞ KALIYOR — bu
+faz O YOLU izlemez. Bunun yerine Faz BB.1-BB.6 (`nox.thread`, §3.47-§3.52)
+zaten "N BAĞIMSIZ M:1 dünyası, her biri KENDİ OS iş parçacığında" modelini
+KANITLANMIŞ şekilde sağlıyor — her `nox.thread.start` çağrısı KENDİ
+`RuntimeState`+`Scheduler`+`IoReactor`ını (kendi kqueue/epoll fd'si)
+yaratır, HİÇBİR global/singleton paylaşılmaz (5 tehlikeli global ZATEN
+threadlocal, §3.47). **Anahtar gözlem:** bir dinleme soketinin ham dosya
+tanımlayıcısı (`fd`) SADECE bir `int`tir — VE `int`, `nox.thread`in ZATEN
+desteklediği iş-parçacıkları-arası aktarım tiplerinden biridir. Bir `fd`
+üzerinde `accept()` çağıran birden fazla BAĞIMSIZ kqueue/epoll örneği,
+işletim sistemi düzeyinde standart, güvenli bir davranıştır (nginx
+worker'larının KENDİ epoll'larıyla PAYLAŞILAN bir dinleme soketini
+izlemesiyle AYNI desen) — kodun okunmasıyla doğrulandı: `io.zig`nin
+`nonBlockingAccept`i ZATEN ÇAĞIRANIN KENDİ zamanlayıcı/reaktörü üzerinden
+kayıt yapıyor, `serveImpl`nin `active_connections` sayacı ZATEN çağrı-
+başına (dolayısıyla iş-parçacığı-başına) bir YEREL değişken — Nox
+tarafında YENİ hiçbir senkronizasyon ilkeli GEREKMEDİ. **Bilinçli KAPSAM
+DIŞI ödünleşim:** "thundering herd" (bir bağlantı geldiğinde TÜM bekleyen
+kqueue/epoll örneklerinin uyandırılması, yalnızca BİRİNİN `accept()`i
+kazanması) — `nox.time.sleep_ms`in bloklayıcı olması/okuma-zaman-aşımı
+eksikliği gibi (§D.1.4) DÜRÜSTÇE belgelenen, GELECEKTEKİ bir faza
+bırakılan bir sınırlama (Linux'ta `EPOLLEXCLUSIVE` İLE azaltılabilir,
+bu fazın kapsamı DIŞINDA).
+
+**Uygulama — üç katman:**
+
+1. **Çalışma zamanı** (`runtime/stdlib_shims/http_server.zig`): `Server
+   Handle`e bir `owns_fd: bool` alanı eklendi — `nox_http_server_close`
+   YALNIZCA `owns_fd` İSE `close()` çağırır (paylaşılan bir fd'yi KOŞULSUZ
+   kapatmak, HENÜZ o fd üzerinde `accept()` bekleyen DİĞER iş parçacıklarını
+   keserdi). `nox_http_server_listen`in socket/bind/listen mantığı bir
+   `bindAndListen` yardımcısına ÇIKARILDI; YENİ `nox_http_listen_fd(rt,
+   port) -> int` bunu çağırıp ham fd'yi (`ServerHandle` YOK) saf bir `int`
+   olarak döner; YENİ `nox_http_server_from_fd(rt, fd) -> ServerHandle`
+   (ZATEN dinlemede olan PAYLAŞILAN bir fd'yi `owns_fd = false` İLE sarar,
+   yeniden bağlamaz/dinlemez).
+2. **Stdlib** (`stdlib/nox/http.nox`): `nox.http.listen(port) -> int` —
+   `get`/`post`nin "extern ham değeri döndürür, .nox sarmalayıcı hata
+   sentinelini kontrol edip raise eder" deseniyle BİREBİR AYNI. Bu, HİÇBİR
+   yeni checker/codegen kodu GEREKTİRMEDEN (sıradan bir `extern def` +
+   sıradan bir `def`, mevcut FFI mekanizması) UÇTAN UCA çalıştı.
+3. **Checker + codegen** — kullanıcı, AskUserQuestion'da HEM düşük
+   seviyeli birleştirilebilir ilkelleri HEM ergonomik bir kolaylık
+   sarmalayıcısını istedi ("Primitives + convenience wrapper"):
+   - `nox.http.serve_fd(fd, handle[, max_connections])` — `nox.http.
+     serve`nin `handle`-doğrulama mantığı ORTAK bir `validateHttpHandler`
+     yardımcısına ÇIKARILIP üç form arasında PAYLAŞILDI (kod tekrarı
+     önlendi). Codegen'de `genHttpServeFd`, `genHttpServe`yle NEREDEYSE
+     ÖZDEŞ (`nox_http_server_listen` YERİNE `nox_http_server_from_fd`) —
+     `HttpServeWrapperSpec`/`genHttpServeWrapper` DEĞİŞTİRİLMEDEN
+     yeniden kullanılır. Paylaşılan bir `emitFdServeTail` yardımcısı
+     (`nox_http_server_from_fd`+`nox_http_serve_raw`+`nox_http_server_
+     close`) hem `genHttpServeFd`nin kuyruğu hem AŞAĞIDAKİ sentezlenmiş
+     worker TARAFINDAN kullanılır.
+   - `nox.http.serve_multicore(port, handle, num_threads[,
+     max_connections])` — `port` bir kez dinlemeye alınır, `num_threads -
+     1` ek `nox.thread` worker'ı (SENTEZLENMİŞ bir "iş parçacığı girişi"
+     fonksiyonu ÜZERİNDEN — `genThreadStartWrapper`nin KANITLANMIŞ düşük-
+     seviye şekliyle BİREBİR AYNI iskelet, AMA ARKASINDA gerçek bir Nox
+     `entry` fonksiyonu YOK, `genHttpServeWrapper`nin `HandlerFn`
+     sarmalayıcısını sentezlemesiyle AYNI teknik) AYNI paylaşılan fd
+     üzerinde sunum yapar, ÇAĞIRAN iş parçacığının KENDİSİ Nninci worker
+     OLUR (bugünkü `nox.http.serve`nin "çağrı sonsuza kadar bloke olur"
+     sözleşmesiyle TUTARLI). Ham, sayaçlı bir QBE döngüsü (`genForRange`nin
+     AYNI şekli, sentetik bir yığın yuvasıyla) `nox_thread_spawn`ı
+     `num_threads - 1` kez çağırır, dönen `ThreadHandle`ları BİLEREK
+     ATAR ("fire-and-forget" — sunucu ZATEN sonsuza kadar çalışır,
+     bağlantı fiber'larının HİÇBİR ZAMAN `await` edilmemesiyle AYNI, ZATEN
+     VAR OLAN ilkeyle TUTARLI).
+   - **`max_connections`in `serve_multicore` İÇİN KESİNLİKLE bir tamsayı
+     LİTERALİ olması ZORUNLUDUR** (checker `c.args[3] != .int_lit`i
+     REDDEDER) — `serve`/`serve_fd`nin daha gevşek "herhangi bir int
+     ifadesi" kuralından KASITLI bir sapma: bu değer codegen TARAFINDAN
+     HEM çağıran iş parçacığının HEM sentezlenen worker'ın gövdesine
+     DERLEME-ZAMANI bir metin sabiti olarak GÖMÜLÜR — `nox_thread_spawn`ın
+     TEK-argümanlı sözleşmesi ZATEN `fd`yi taşıdığından, bir ÇALIŞMA-
+     ZAMANI ifadesi olsaydı worker başına AYRI bir aktarım kanalı
+     gerekirdi.
+
+**Doğrulama:**
+- Zig birim testi (`http_server.zig`): İKİ GERÇEK `std.Thread.spawn` iş
+  parçacığı, HER BİRİ KENDİ `Scheduler`ı/`ServerHandle`ı ÜZERİNDEN
+  PAYLAŞILAN bir `listen_fd`de `accept()` çağırır — İKİSİ de GERÇEKTEN
+  kendi bağlantısını alır.
+- AYRI, DETERMİNİSTİK bir Zig birim testi `owns_fd`in KENDİSİNİ
+  (`fcntl(fd, F_GETFD)` İLE fd'nin hâlâ geçerli/kapatılmış olduğunu
+  doğrulayarak) zamanlamadan BAĞIMSIZ kanıtlar.
+- `tests/compat/http_serve_multicore_golden_test.zig` — GERÇEK bir `.nox`
+  programını (`module_loader`+`checker`+`codegen`+`qbe`+`cc`) derleyip
+  ARKA PLANDA çalıştırıp GERÇEK istemci soketleriyle sınayan 3 uçtan uca
+  test: (1) `serve_multicore` — N=2 iş parçacığı, iş-parçacığı-başına
+  `max_connections=1`, İKİ EŞZAMANLI istemcinin İKİSİNİN DE "200 OK"
+  ALDIĞI doğrulanır (mekanizma bozuksa test bir yanıt alınamadan TIKANIR,
+  sessizce yanlış-pozitif VERMEZ); (2) `nox.http.listen`+`nox.thread.
+  start`+`nox.http.serve_fd`nin DOĞRUDAN (sarmalayıcı OLMADAN) kullanımı
+  — birleştirilebilir yolun BAĞIMSIZ çalıştığını kanıtlar; (3)
+  `num_threads=1` kenar durumu — sıradan tek-iş-parçacıklı sunuma
+  DEĞİŞTİRİLMEDEN indirgenir.
+- **Kasıtlı boz→kırmızı→düzelt (`owns_fd`):** `nox_http_server_close`
+  GEÇİCİ olarak `owns_fd`i YOK SAYIP HER ZAMAN kapatacak şekilde bozuldu
+  — bu, BEKLENENDEN DE GÜÇLÜ bir kanıt üretti: `owns_fd`in KENDİSİNİ
+  hedefleyen deterministik testin ASSERTION FAILURE İLE kırmızı olmasının
+  YANINDA, `http_serve_multicore_golden_test.zig`nin `serve_multicore`
+  testi de bir iş parçacığının paylaşılan fd'yi ERKEN kapatıp DİĞER iş
+  parçacığının `accept()`ini SONSUZA DEK ASKIDA bırakmasıyla TAM bir
+  ÇALIŞMA-ZAMANI TIKANMASINA (hang) yol açtı (manuel olarak gözlemlenip
+  durduruldu) — `owns_fd` fix'inin YALNIZCA bir "temiz" hata mesajını
+  DEĞİL, GERÇEK bir kilitlenme SINIFINI önlediğinin somut kanıtı. Düzeltme
+  GERİ YÜKLENDİ (`diff` İLE bayt-bayt ÖZDEŞLİK doğrulanarak), Debug +
+  ReleaseFast YENİDEN yeşile (VE HIZLICA, tıkanma OLMADAN) döndü.
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

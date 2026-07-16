@@ -227,6 +227,31 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   + `benchmarks/method_call_elision.nox` (300M çağrı, ~480ms → ~270ms,
   ~%44 hızlanma) + kasıtlı boz→kırmızı ritüeli.
 
+### Eklendi
+- Çok çekirdekli `nox.http.serve` (Faz DD.1 — kullanıcının "sonraki
+  aşama geliştirmeler" listesinin #3 maddesi, "HTTP kütüphane async m:n
+  entegrasyonu ve performans artışı"). Gerçek bir *paylaşılan* M:N
+  zamanlayıcı YERİNE (Faz AA.1'de somut mimari engeller nedeniyle
+  ERTELENMİŞ, ERTELENMİŞ kalıyor), `nox.thread`in (Faz BB.1-BB.6) ZATEN
+  sağladığı "N bağımsız M:1 dünyası" modeli üzerine inşa edildi: bir
+  dinleme soketinin ham `fd`si (`nox.thread`in ZATEN desteklediği bir
+  aktarım tipi olan düz bir `int`) N bağımsız iş parçacığına dağıtılıp
+  her biri KENDİ kqueue/epoll'ıyla AYNI soketi izleyebiliyor — hiçbir
+  yeni senkronizasyon ilkeli gerekmedi. Üç yeni parça: `nox.http.
+  listen(port) -> int` (birleştirilebilir ilkel, mevcut FFI mekanizmasıyla
+  sıfır yeni derleyici kodu), `nox.http.serve_fd(fd, handle[,
+  max_connections])` (`nox.http.serve`nin kardeşi, `nox.thread.start`ile
+  birleştirilebilir), `nox.http.serve_multicore(port, handle,
+  num_threads[, max_connections])` (tek satırlık kolaylık sarmalayıcısı —
+  thread-spawn döngüsünü derleyici üretir). `nox-teknik-spesifikasyon.md`
+  §3.60. 5 yeni test (2 Zig birim testi — paylaşılan fd'de gerçek çift
+  iş parçacığı kabulü + `owns_fd`in deterministik doğrulaması — + 3 uçtan
+  uca golden test) + kasıtlı boz→kırmızı ritüeli (`owns_fd`i geçici
+  olarak bozmak yalnızca bir birim testini KIRMIZI yapmakla kalmadı,
+  gerçek bir çalışma-zamanı tıkanmasına — paylaşılan fd'nin erken
+  kapanıp diğer iş parçacığının `accept()`ini sonsuza dek askıda
+  bırakması — da yol açtı, düzeltmenin gerekliliğinin somut kanıtı).
+
 ## [1.0.0]
 
 ### Eklendi

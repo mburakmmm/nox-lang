@@ -138,12 +138,22 @@ const FiberWriter = struct {
     }
 };
 
-const ServerHandle = struct { listen_fd: posix.fd_t };
+/// Faz DD.1 (bkz. nox-teknik-spesifikasyon.md §3.60) — `owns_fd`:
+/// `nox_http_server_close`in `listen_fd`yi GERÇEKTEN `close()`LAYIP
+/// LAMAYACAĞINI belirler. Çok-çekirdekli sunum, TEK bir `listen_fd`yi
+/// BİRDEN FAZLA bağımsız iş parçacığı/`ServerHandle` arasında PAYLAŞIR
+/// (bkz. `nox_http_server_from_fd`) — paylaşılan bir fd'yi KOŞULSUZ
+/// kapatmak, HENÜZ o fd üzerinde `accept()` bekleyen DİĞER iş
+/// parçacıklarını "bad file descriptor" ile keserdi. `true` YALNIZCA
+/// `nox_http_server_listen`in KENDİSİ fd'yi `socket()`/`bind()`/`listen()`
+/// İLE YARATTIĞINDA (fd'nin GERÇEK sahibi OLDUĞUNDA).
+const ServerHandle = struct { listen_fd: posix.fd_t, owns_fd: bool };
 
-/// `127.0.0.1:port`e bağlanıp dinlemeye başlar. `port = 0` İSE OS boş bir
-/// port ATAR — gerçek portu `nox_http_server_port`la öğren.
-export fn nox_http_server_listen(rt: ?*anyopaque, port: i64) callconv(.c) ?*anyopaque {
-    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+/// `nox_http_server_listen`in socket/bind/listen mantığı — Faz DD.1'de
+/// `nox_http_listen_fd`in de (ham fd'yi `ServerHandle` SARMADAN, saf bir
+/// `int` olarak dönmesi için) kullanabilmesi için ÇIKARILDI. `port = 0`
+/// İSE OS boş bir port ATAR.
+fn bindAndListen(port: i64) ?posix.fd_t {
     const fd = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
     if (fd < 0) return null;
     var reuse: c_int = 1;
@@ -161,12 +171,52 @@ export fn nox_http_server_listen(rt: ?*anyopaque, port: i64) callconv(.c) ?*anyo
         _ = std.c.close(fd);
         return null;
     }
+    return fd;
+}
+
+/// `127.0.0.1:port`e bağlanıp dinlemeye başlar. `port = 0` İSE OS boş bir
+/// port ATAR — gerçek portu `nox_http_server_port`la öğren.
+export fn nox_http_server_listen(rt: ?*anyopaque, port: i64) callconv(.c) ?*anyopaque {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    const fd = bindAndListen(port) orelse return null;
 
     const handle = state.allocator().create(ServerHandle) catch {
         _ = std.c.close(fd);
         return null;
     };
-    handle.* = .{ .listen_fd = fd };
+    handle.* = .{ .listen_fd = fd, .owns_fd = true };
+    return handle;
+}
+
+/// Faz DD.1 — `bindAndListen`i çağırıp ham fd'yi (ya da hatada `-1`)
+/// DOĞRUDAN döner, hiçbir `ServerHandle` YARATMAZ. Bu ham `int`, `nox.
+/// thread`in ZATEN desteklediği iş-parçacıkları-arası aktarım
+/// tiplerinden biridir (bkz. `thread_bridge.zig`) — çok-çekirdekli
+/// sunumun TEMEL taşı: TEK bir dinleme soketi, `nox_http_server_from_fd`
+/// İLE N bağımsız iş parçacığına DAĞITILABİLİR (her biri KENDİ kqueue/
+/// epoll'ıyla AYNI fd üzerinde `accept()` çağırır — işletim sistemi
+/// düzeyinde standart, güvenli bir davranış, nginx worker'larının
+/// PAYLAŞILAN bir dinleme soketini KENDİ epoll'larıyla izlemesiyle AYNI
+/// desen; bkz. `nonBlockingAccept`in ÇAĞIRANIN KENDİ zamanlayıcısı
+/// üzerinden kayıt yaptığı `io.zig`).
+export fn nox_http_listen_fd(rt: ?*anyopaque, port: i64) callconv(.c) i64 {
+    _ = rt;
+    const fd = bindAndListen(port) orelse return -1;
+    return @intCast(fd);
+}
+
+/// Faz DD.1 — `nox_http_listen_fd`İLE elde edilmiş, ZATEN dinlemede olan
+/// PAYLAŞILAN bir fd'yi ÇAĞIRAN iş parçacığının KENDİ (`state.
+/// allocator()`) taze bir `ServerHandle`ına SARAR — YENİDEN bağlamaz/
+/// dinlemez. `owns_fd = false`: bu `ServerHandle` ÜZERİNDE `nox_http_
+/// server_close` çağrılırsa YALNIZCA bu KÜÇÜK struct serbest bırakılır,
+/// PAYLAŞILAN fd'nin KENDİSİ kapatılmaz (bkz. `ServerHandle`in belge
+/// notu).
+export fn nox_http_server_from_fd(rt: ?*anyopaque, fd: i64) callconv(.c) ?*anyopaque {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    if (fd < 0) return null;
+    const handle = state.allocator().create(ServerHandle) catch return null;
+    handle.* = .{ .listen_fd = @intCast(fd), .owns_fd = false };
     return handle;
 }
 
@@ -181,7 +231,7 @@ export fn nox_http_server_port(server: ?*anyopaque) callconv(.c) i64 {
 export fn nox_http_server_close(rt: ?*anyopaque, server: ?*anyopaque) callconv(.c) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const h: *ServerHandle = @ptrCast(@alignCast(server orelse return));
-    _ = std.c.close(h.listen_fd);
+    if (h.owns_fd) _ = std.c.close(h.listen_fd);
     state.allocator().destroy(h);
 }
 
@@ -674,6 +724,122 @@ test "nox_http_serve_raw: bir fiber İÇİNDEN çalıştırıldığında eşzama
     try std.testing.expectEqual(@as(usize, 2), TestHandlerLog.log.items.len);
     try std.testing.expectEqualStrings("fast tamamlandi", TestHandlerLog.log.items[0]);
     try std.testing.expectEqualStrings("slow tamamlandi", TestHandlerLog.log.items[1]);
+}
+
+/// Faz DD.1 (bkz. nox-teknik-spesifikasyon.md §3.60) — çok-çekirdekli
+/// sunumun ÇEKİRDEK varsayımını, derleyiciden TAMAMEN İZOLE doğrular:
+/// TEK bir paylaşılan `listen_fd` üzerinde İKİ BAĞIMSIZ OS iş parçacığı
+/// (HER BİRİ KENDİ `RuntimeState`i VE KENDİ `ServerHandle`ı — `nox_http_
+/// server_from_fd` İLE, `owns_fd = false`) senkron (bloklayıcı,
+/// `serveImpl`nin `scheduler == null` dalı) `accept()` çağırdığında,
+/// GERÇEKTEN ikisi de kendi bağlantısını ALIR — çökme/veri bozulması
+/// OLMADAN. `nox_http_server_close`in HİÇBİRİ paylaşılan fd'yi kapatmaz
+/// (`owns_fd = false`), bu yüzden HER İKİ İŞ PARÇACIĞI da SORUNSUZ
+/// tamamlanabilir.
+const ThreadSafeCounter = struct {
+    var served: std.atomic.Value(u32) = .init(0);
+
+    // `ctx`, `serveImpl`nin `handler_ctx` olarak GEÇİRDİĞİ, ÇAĞIRAN iş
+    // parçacığının KENDİ `rt`sidir (bkz. `sharedFdServeEntry`) — İKİ
+    // BAĞIMSIZ iş parçacığı ARASINDA PAYLAŞILAN TEK bir `rt_ptr`
+    // KULLANILMASI (ÖNCEKİ, HATALI tasarım) bir iş parçacığının YANIT
+    // nesnesini DİĞERİNİN allocator'ıyla oluşturmasına, dolayısıyla
+    // `destroyResponse`nin YANLIŞ (çapraz-iş-parçacığı) bir allocator ile
+    // serbest bırakmaya ÇALIŞMASINA yol açan GERÇEK bir hataydı
+    // (DebugAllocator'ın "bucket eşleşmiyor" doğrulamasıyla YAKALANDI).
+    fn handle(ctx: ?*anyopaque, req: ?*anyopaque) callconv(.c) ?*anyopaque {
+        _ = req;
+        _ = served.fetchAdd(1, .monotonic);
+        return nox_http_response_new(ctx, 200, "ok", null);
+    }
+};
+
+fn sharedFdServeEntry(args: *ServeArgs) void {
+    serveImpl(args.rt, args.server, ThreadSafeCounter.handle, args.rt, args.max_connections, args.max_concurrent, args.max_body_bytes);
+}
+
+// Faz DD.1 — `owns_fd`in KENDİSİNİ (bkz. `ServerHandle`in belge notu),
+// zamanlama/yarışa BAĞIMLI OLMAYAN, DETERMİNİSTİK bir şekilde doğrular:
+// `nox_http_server_from_fd` İLE SARILAN bir `ServerHandle` (`owns_fd =
+// false`) üzerinde `nox_http_server_close` çağrıldıktan SONRA, ALTTAKİ
+// paylaşılan fd HÂLÂ GEÇERLİ olmalıdır (`fcntl(fd, F_GETFD)` başarılı) —
+// `nox_http_server_listen` İLE YARATILAN (`owns_fd = true`) bir handle
+// İSE AKSİNE fd'yi GERÇEKTEN kapatmalıdır.
+test "Faz DD.1: nox_http_server_close — owns_fd=false PAYLAŞILAN fd'yi KAPATMAZ, owns_fd=true KENDİ fd'sini kapatır" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const shared_fd = bindAndListen(0) orelse return error.ListenFailed;
+    defer _ = std.c.close(shared_fd);
+
+    const wrapped = nox_http_server_from_fd(rt, @intCast(shared_fd)) orelse return error.WrapFailed;
+    nox_http_server_close(rt, wrapped);
+    // `owns_fd = false`: `shared_fd` HÂLÂ geçerli bir dosya tanımlayıcısı
+    // OLMALI — `fcntl(F_GETFD)` yalnızca fd AÇIKKEN başarılı döner.
+    try std.testing.expect(std.c.fcntl(shared_fd, std.c.F.GETFD) >= 0);
+
+    const owned = nox_http_server_listen(rt, 0) orelse return error.ListenFailed;
+    const owned_h: *ServerHandle = @ptrCast(@alignCast(owned));
+    const owned_fd = owned_h.listen_fd;
+    nox_http_server_close(rt, owned);
+    // `owns_fd = true`: `owned_fd` GERÇEKTEN kapatılmış OLMALI —
+    // `fcntl(F_GETFD)` `EBADF` İLE başarısız olur.
+    try std.testing.expect(std.c.fcntl(owned_fd, std.c.F.GETFD) < 0);
+}
+
+test "Faz DD.1: PAYLAŞILAN bir listen_fd üzerinde İKİ BAĞIMSIZ iş parçacığı/ServerHandle GERÇEKTEN kendi bağlantısını kabul eder" {
+    const fd = bindAndListen(0) orelse return error.ListenFailed;
+    defer _ = std.c.close(fd);
+    var addr: std.c.sockaddr.in = undefined;
+    var len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
+    _ = std.c.getsockname(fd, @ptrCast(&addr), &len);
+    const port: u16 = std.mem.bigToNative(u16, addr.port);
+
+    const rt1 = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt1);
+    const rt2 = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt2);
+
+    // `owns_fd = false` — HİÇBİRİ paylaşılan `fd`yi kapatmaz (bkz.
+    // `nox_http_server_close`in belge notu); `defer`ler bu yüzden HER
+    // ZAMAN güvenlidir, sıraları ÖNEMSİZDİR.
+    const server1 = nox_http_server_from_fd(rt1, @intCast(fd)) orelse return error.WrapFailed;
+    defer nox_http_server_close(rt1, server1);
+    const server2 = nox_http_server_from_fd(rt2, @intCast(fd)) orelse return error.WrapFailed;
+    defer nox_http_server_close(rt2, server2);
+
+    ThreadSafeCounter.served.store(0, .monotonic);
+
+    var args1: ServeArgs = .{ .rt = rt1, .server = server1, .max_connections = 1 };
+    var args2: ServeArgs = .{ .rt = rt2, .server = server2, .max_connections = 1 };
+    const server_thread1 = try std.Thread.spawn(.{}, sharedFdServeEntry, .{&args1});
+    const server_thread2 = try std.Thread.spawn(.{}, sharedFdServeEntry, .{&args2});
+
+    const client_thread1 = try std.Thread.spawn(.{}, struct {
+        fn run(p: u16) void {
+            const fd_c = testConnect(p) catch return;
+            defer _ = std.c.close(fd_c);
+            testSendGet(fd_c, "/a");
+            testReadAll(fd_c);
+        }
+    }.run, .{port});
+    const client_thread2 = try std.Thread.spawn(.{}, struct {
+        fn run(p: u16) void {
+            const fd_c = testConnect(p) catch return;
+            defer _ = std.c.close(fd_c);
+            testSendGet(fd_c, "/b");
+            testReadAll(fd_c);
+        }
+    }.run, .{port});
+
+    client_thread1.join();
+    client_thread2.join();
+    server_thread1.join();
+    server_thread2.join();
+
+    // İKİ bağlantı da GERÇEKTEN sunuldu — paylaşılan fd'nin İKİ bağımsız
+    // kqueue/epoll örneği tarafından SORUNSUZ izlenebildiğinin KANITI.
+    try std.testing.expectEqual(@as(u32, 2), ThreadSafeCounter.served.load(.monotonic));
 }
 
 test "Faz Q.5: govde boyutu siniri asilirsa 413 Payload Too Large doner, handler HIC CAGRILMAZ" {

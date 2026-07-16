@@ -676,29 +676,56 @@ pub const Checker = struct {
         return try self.resolveMangledCall(ctx, c, mangled, not_found_msg);
     }
 
+    /// `nox.http.serve`/`serve_fd`/`serve_multicore`nin ÜÇÜNÜN de paylaştığı
+    /// `handle` doğrulaması — Faz DD.1 (bkz. nox-teknik-spesifikasyon.md
+    /// §3.60) İçin `tryResolveHttpServeCall`in (stdlib fazı §D.1.6, §3.34)
+    /// ORİJİNAL gövdesinden ÇIKARILDI, kod TEKRARINI önlemek İçin. `spawn`ın
+    /// "çıplak isim" çözümüyle (bkz. `.spawn_expr` dalı) AYNI gerekçeyle:
+    /// `handle` birinci sınıf bir DEĞER olarak GEÇİRİLEMEZ (Nox'ta
+    /// fonksiyonlar değer DEĞİLDİR), bu yüzden normal argüman tipi
+    /// denetiminden (`checkArgs`/`checkExpr`) GEÇMEDEN doğrudan bir
+    /// fonksiyon ADI olarak doğrulanır. `fn_label`, hata mesajlarında
+    /// hangi çağrı formunun (`'nox.http.serve'`/`'nox.http.serve_fd'`/
+    /// `'nox.http.serve_multicore'`) başarısız olduğunu BELİRTMEK İçindir.
+    fn validateHttpHandler(self: *Checker, fn_label: []const u8, handle_expr: ast.Expr) TypeError!void {
+        const handle_name = switch (handle_expr) {
+            .identifier => |n| n,
+            else => return self.fail(error.NotCallable, "'{s}': 'handle' doğrudan bir fonksiyon adı olmalı (metod/lambda henüz desteklenmiyor)", .{fn_label}),
+        };
+        if (self.async_functions.contains(handle_name)) {
+            return self.fail(error.TypeMismatch, "'{s}': 'handle' ('{s}') bir 'async def' OLAMAZ (bağlantı işleyicisi zaten kendi fiber'ında senkron çalışır)", .{ fn_label, handle_name });
+        }
+        const sig = self.functions.get(handle_name) orelse
+            return self.fail(error.UndefinedFunction, "tanımsız fonksiyon: {s}", .{handle_name});
+        if (sig.params.len != 1) {
+            return self.fail(error.TypeMismatch, "'{s}': 'handle' TAM OLARAK bir parametre almalı (bir HttpRequest)", .{fn_label});
+        }
+        const req_class = switch (sig.params[0]) {
+            .class => |n| n,
+            else => return self.fail(error.TypeMismatch, "'{s}': 'handle'in parametresi 'HttpRequest' olmalı", .{fn_label}),
+        };
+        if (!std.mem.eql(u8, req_class, "nox_http_HttpRequest")) {
+            return self.fail(error.TypeMismatch, "'{s}': 'handle'in parametresi 'HttpRequest' olmalı", .{fn_label});
+        }
+        const resp_class = switch (sig.return_type) {
+            .class => |n| n,
+            else => return self.fail(error.TypeMismatch, "'{s}': 'handle' bir 'HttpResponse' döndürmeli", .{fn_label}),
+        };
+        if (!std.mem.eql(u8, resp_class, "nox_http_HttpResponse")) {
+            return self.fail(error.TypeMismatch, "'{s}': 'handle' bir 'HttpResponse' döndürmeli", .{fn_label});
+        }
+    }
+
     /// `nox.http.serve(port, handle[, max_connections])` — stdlib fazı
     /// §D.1.6'nın özel yerleşiği (bkz. nox-teknik-spesifikasyon.md §3.34).
-    /// `spawn`ın "çıplak isim" çözümüyle (bkz. `.spawn_expr` dalı) AYNI
-    /// gerekçeyle: `handle` birinci sınıf bir DEĞER olarak GEÇİRİLEMEZ
-    /// (Nox'ta fonksiyonlar değer DEĞİLDİR), bu yüzden normal argüman tipi
-    /// denetiminden (`checkArgs`/`checkExpr`) GEÇMEDEN doğrudan bir
-    /// fonksiyon ADI olarak doğrulanır — `tryResolveQualifiedCall`DAN ÖNCE
-    /// çağrılmalıdır (o, `handle`i SIRADAN bir argüman gibi `checkArgs`a
-    /// göndermeye çalışırdı, "tanımsız değişken" hatasıyla BAŞARISIZ olurdu).
-    /// Callee TAM OLARAK `nox.http.serve` DEĞİLSE (ya da `nox.http` HİÇ
-    /// `import` edilmemişse) `null` döner — çağıran MEVCUT
-    /// `tryResolveQualifiedCall`a (`nox.http`in DİĞER üyeleri İÇİN,
-    /// DEĞİŞMEMİŞ) devam eder.
+    /// `tryResolveQualifiedCall`DAN ÖNCE çağrılmalıdır (o, `handle`i
+    /// SIRADAN bir argüman gibi `checkArgs`a göndermeye çalışırdı,
+    /// "tanımsız değişken" hatasıyla BAŞARISIZ olurdu). Callee TAM OLARAK
+    /// `nox.http.serve` DEĞİLSE (ya da `nox.http` HİÇ `import` edilmemişse)
+    /// `null` döner — çağıran MEVCUT `tryResolveQualifiedCall`a (`nox.
+    /// http`in DİĞER üyeleri İÇİN, DEĞİŞMEMİŞ) devam eder.
     fn tryResolveHttpServeCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!?Type {
-        var raw_segments: std.ArrayListUnmanaged([]const u8) = .empty;
-        if (!(try self.flattenDottedPath(c.callee.*, &raw_segments))) return null;
-        if (raw_segments.items.len < 2) return null;
-        const segments = try self.substituteAlias(raw_segments.items);
-        if (segments.len != 3) return null;
-        if (!std.mem.eql(u8, segments[0], "nox")) return null;
-        if (!std.mem.eql(u8, segments[1], "http")) return null;
-        if (!std.mem.eql(u8, segments[2], "serve")) return null;
-        if (!self.imported_modules.contains("nox.http")) return null;
+        if (!(try self.matchesNoxHttpCall(c, "serve"))) return null;
 
         if (c.args.len != 2 and c.args.len != 3) {
             return self.fail(error.ArgumentCountMismatch, "'nox.http.serve' 2 ya da 3 argüman alır: (port, handle[, max_connections])", .{});
@@ -711,33 +738,88 @@ pub const Checker = struct {
                 return self.fail(error.TypeMismatch, "'nox.http.serve': 'max_connections' bir 'int' olmalı", .{});
             }
         }
-        const handle_name = switch (c.args[1]) {
-            .identifier => |n| n,
-            else => return self.fail(error.NotCallable, "'nox.http.serve': 'handle' doğrudan bir fonksiyon adı olmalı (metod/lambda henüz desteklenmiyor)", .{}),
-        };
-        if (self.async_functions.contains(handle_name)) {
-            return self.fail(error.TypeMismatch, "'nox.http.serve': 'handle' ('{s}') bir 'async def' OLAMAZ (bağlantı işleyicisi zaten kendi fiber'ında senkron çalışır)", .{handle_name});
-        }
-        const sig = self.functions.get(handle_name) orelse
-            return self.fail(error.UndefinedFunction, "tanımsız fonksiyon: {s}", .{handle_name});
-        if (sig.params.len != 1) {
-            return self.fail(error.TypeMismatch, "'nox.http.serve': 'handle' TAM OLARAK bir parametre almalı (bir HttpRequest)", .{});
-        }
-        const req_class = switch (sig.params[0]) {
-            .class => |n| n,
-            else => return self.fail(error.TypeMismatch, "'nox.http.serve': 'handle'in parametresi 'HttpRequest' olmalı", .{}),
-        };
-        if (!std.mem.eql(u8, req_class, "nox_http_HttpRequest")) {
-            return self.fail(error.TypeMismatch, "'nox.http.serve': 'handle'in parametresi 'HttpRequest' olmalı", .{});
-        }
-        const resp_class = switch (sig.return_type) {
-            .class => |n| n,
-            else => return self.fail(error.TypeMismatch, "'nox.http.serve': 'handle' bir 'HttpResponse' döndürmeli", .{}),
-        };
-        if (!std.mem.eql(u8, resp_class, "nox_http_HttpResponse")) {
-            return self.fail(error.TypeMismatch, "'nox.http.serve': 'handle' bir 'HttpResponse' döndürmeli", .{});
-        }
+        try self.validateHttpHandler("nox.http.serve", c.args[1]);
         return .none;
+    }
+
+    /// Faz DD.1 (bkz. nox-teknik-spesifikasyon.md §3.60) — `nox.http.
+    /// serve_fd(fd: int, handle[, max_connections])`: `nox.http.serve`nin
+    /// AYNI şekli, `port` YERİNE ZATEN dinlemede olan (`nox.http.listen`
+    /// İLE elde edilmiş) ham bir dosya tanımlayıcısı alır — çok-çekirdekli
+    /// sunumun BİRLEŞTİRİLEBİLİR ilkellerinden biri (`nox.thread.start`
+    /// İLE birleştirilerek TEK bir dinleme soketi N bağımsız iş
+    /// parçacığına dağıtılabilir).
+    fn tryResolveHttpServeFdCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!?Type {
+        if (!(try self.matchesNoxHttpCall(c, "serve_fd"))) return null;
+
+        if (c.args.len != 2 and c.args.len != 3) {
+            return self.fail(error.ArgumentCountMismatch, "'nox.http.serve_fd' 2 ya da 3 argüman alır: (fd, handle[, max_connections])", .{});
+        }
+        if (try self.checkExpr(ctx, c.args[0]) != .int) {
+            return self.fail(error.TypeMismatch, "'nox.http.serve_fd': 'fd' bir 'int' olmalı", .{});
+        }
+        if (c.args.len == 3) {
+            if (try self.checkExpr(ctx, c.args[2]) != .int) {
+                return self.fail(error.TypeMismatch, "'nox.http.serve_fd': 'max_connections' bir 'int' olmalı", .{});
+            }
+        }
+        try self.validateHttpHandler("nox.http.serve_fd", c.args[1]);
+        return .none;
+    }
+
+    /// Faz DD.1 (bkz. nox-teknik-spesifikasyon.md §3.60) — `nox.http.
+    /// serve_multicore(port: int, handle, num_threads: int[,
+    /// max_connections])`: `nox.http.listen`+`nox.thread.start`+`nox.
+    /// http.serve_fd`nin (yukarıdaki) el ile birleştirilmesinin
+    /// derleyici tarafından ÜRETİLEN kolaylık sarmalayıcısı — `port` bir
+    /// kez dinlemeye alınır, `num_threads - 1` ek `nox.thread` worker'ı
+    /// AYNI paylaşılan fd üzerinde sunum yapar, ÇAĞIRAN iş parçacığının
+    /// KENDİSİ Nninci worker OLUR (bugünkü `nox.http.serve`nin "çağrı
+    /// sonsuza kadar bloke olur" sözleşmesiyle TUTARLI).
+    ///
+    /// **`max_connections`in KESİNLİKLE bir tamsayı LİTERALİ olması
+    /// gerekir** (`serve`/`serve_fd`nin daha gevşek "herhangi bir int
+    /// ifadesi" kuralından KASITLI bir sapma): bu değer, codegen
+    /// TARAFINDAN HEM çağıran iş parçacığının HEM SENTEZLENEN worker
+    /// fonksiyonunun gövdesine DERLEME-ZAMANI bir metin sabiti olarak
+    /// GÖMÜLÜR (bkz. `codegen.zig`nin `genHttpServeMulticore`si) — bir
+    /// ÇALIŞMA-ZAMANI ifadesi olsaydı, worker başına AYRI bir aktarım
+    /// kanalı gerekirdi (`nox_thread_spawn`ın TEK-argümanlı sözleşmesi
+    /// ZATEN `fd`yi taşıyor).
+    fn tryResolveHttpServeMulticoreCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!?Type {
+        if (!(try self.matchesNoxHttpCall(c, "serve_multicore"))) return null;
+
+        if (c.args.len != 3 and c.args.len != 4) {
+            return self.fail(error.ArgumentCountMismatch, "'nox.http.serve_multicore' 3 ya da 4 argüman alır: (port, handle, num_threads[, max_connections])", .{});
+        }
+        if (try self.checkExpr(ctx, c.args[0]) != .int) {
+            return self.fail(error.TypeMismatch, "'nox.http.serve_multicore': 'port' bir 'int' olmalı", .{});
+        }
+        if (try self.checkExpr(ctx, c.args[2]) != .int) {
+            return self.fail(error.TypeMismatch, "'nox.http.serve_multicore': 'num_threads' bir 'int' olmalı", .{});
+        }
+        if (c.args.len == 4) {
+            if (c.args[3] != .int_lit) {
+                return self.fail(error.TypeMismatch, "'nox.http.serve_multicore': 'max_connections' sabit bir tamsayı olmalı (bir DEĞİŞKEN/ifade değil — derleme zamanında TÜM worker fonksiyonlarına gömülür)", .{});
+            }
+        }
+        try self.validateHttpHandler("nox.http.serve_multicore", c.args[1]);
+        return .none;
+    }
+
+    /// `isHttpServeCallee`nin (codegen.zig) çekirdek çözümleme mantığı —
+    /// callee TAM OLARAK `nox.http.<name>` şeklinde (üç segmentli, `nox`/
+    /// `http`/`name`) VE `nox.http` İTHAL edilmişse `true`.
+    fn matchesNoxHttpCall(self: *Checker, c: ast.Call, name: []const u8) TypeError!bool {
+        var raw_segments: std.ArrayListUnmanaged([]const u8) = .empty;
+        if (!(try self.flattenDottedPath(c.callee.*, &raw_segments))) return false;
+        if (raw_segments.items.len < 2) return false;
+        const segments = try self.substituteAlias(raw_segments.items);
+        if (segments.len != 3) return false;
+        if (!std.mem.eql(u8, segments[0], "nox")) return false;
+        if (!std.mem.eql(u8, segments[1], "http")) return false;
+        if (!std.mem.eql(u8, segments[2], name)) return false;
+        return self.imported_modules.contains("nox.http");
     }
 
     /// `nox.thread.start(entry, arg) -> ThreadHandle[T]` — Faz BB.3 (bkz.
@@ -1722,6 +1804,12 @@ pub const Checker = struct {
                 // (`checkArgs`/`checkExpr`) GEÇİRİLEMEZ — fonksiyonlar Nox'ta
                 // birinci sınıf DEĞER DEĞİLDİR.
                 if (try self.tryResolveHttpServeCall(ctx, c)) |t| return t;
+                // Faz DD.1: `nox.http.serve_fd`/`nox.http.serve_multicore`
+                // — `serve`nin AYNI "handle çıplak bir isim" kısıtına
+                // sahip iki KARDEŞ formu (bkz. `tryResolveHttpServeCall`in
+                // belge notu, AYNI gerekçe).
+                if (try self.tryResolveHttpServeFdCall(ctx, c)) |t| return t;
+                if (try self.tryResolveHttpServeMulticoreCall(ctx, c)) |t| return t;
                 // `nox.thread.start(entry, arg)` — Faz BB.3'ün AYNI
                 // gerekçesi (`entry` ÇIPLAK bir fonksiyon adı, birinci
                 // sınıf DEĞER OLARAK GEÇİRİLEMEZ).
