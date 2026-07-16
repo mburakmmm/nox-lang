@@ -9200,7 +9200,133 @@ dizin DEĞİL" olarak TANIMLANIR (sembolik link/özel dosya AYRIMI yapılmaz —
 
 `zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
 
-## 4. Bellek Yönetimi — "Sahiplik Piramidi"
+## 3.62 Faz FF.3 — `dict[K,V]` Sallanan-İşaretçi Güvenlik Açığının Kapatılması
+
+**Kaynak:** kullanıcının, harici bir ChatGPT incelemesinin bulgularını
+"düşük öncelikli görülenler DAHİL, sırayla HEPSİNİ düzelt" talimatıyla
+(gerekçe: "projenin başındayız çözelim sonra çok başımız ağrır")
+başlattığı Faz FF listesinin ÜÇÜNCÜ maddesi — incelemenin TEK "kritik"
+olarak işaretlediği bulgu.
+
+### Bulgu
+
+`dict[K,V]`, `runtime/collections/dict.zig`de ARC-yönetimli DEĞİLDİ —
+`Task[T]`/`Channel[T]`/`ThreadHandle[T]`/`ThreadChannel[T]` İLE AYNI "tek
+sahiplilik, kapsam sonunda KOŞULSUZ yıkım" modelindeydi (`nox_dict_new`
+düz bir `allocator().create(Dict)` yapıyordu — refcount başlığı YOK;
+`nox_dict_destroy` KOŞULSUZ yıkıyordu). Bu, DİĞER dört tür İçin GÜVENLİDİR
+(zamanlayıcı-sahipli tutamaçlar, PAYLAŞILMALARI hiç BEKLENMEZ) — ama
+`dict` GERÇEKTEN inşa edilip UZUN ÖMÜRLÜ yapılara (sınıf alanları)
+DEVREDİLİYOR, bu da TAM OLARAK bu modelin KIRILDIĞI senaryodur:
+
+```nox
+class Box:
+    def __init__(self: Box, data: dict[str, str]) -> None:
+        self.data = data
+
+def make_box() -> Box:
+    d: dict[str, str] = {"key": "value"}
+    b: Box = Box(d)
+    return b
+```
+
+`self.data = data` (`genAssign`nin `.attribute` dalı) ham işaretçiyi
+TAKMA AD olarak saklar (retain YOK, `isHeapManaged` ÖNCEDEN `dict`i
+KAPSAMADIĞINDAN) — `d`nin kapsam-sonu temizliği dict'i KOŞULSUZ yok eder,
+`b.data` SALLANAN bir işaretçi kalır. **Manuel olarak GERÇEK bir SIGSEGV
+(exit code 139) İLE doğrulandı** — teorik değil, GERÇEK bir bellek-
+güvenliği hatası (bkz. `tests/golden/codegen_cases/dict_field_outlives_
+local_no_dangling.nox`, önce KIRMIZI olduğu manuel çalıştırmayla VE
+`zig build test` harness'ıyla İKİ AYRI şekilde kanıtlandı — İlke #7'nin
+"önce kırmızı" ritüeli).
+
+`stdlib/nox/http.nox`nin `get`/`post`u BUNU, `nox_http_response_headers(h)`
+sonucunu HİÇBİR ZAMAN adlandırılmış bir yerele BAĞLAMADAN doğrudan
+constructor'a geçirerek ELLE AŞIYORDU — DERLEYİCİ TARAFINDAN ZORLANMAYAN,
+SIFIR korumalı bir disiplin; dokümante edilmeyen bu tuzağı bilmeyen
+kullanıcı kodu aynı deseni yazarsa sessizce kırılırdı.
+
+### Tasarım — `dict`i TAM ARC modeline taşı (checker-seviyeli
+red/deep-copy YERİNE)
+
+`emitInlineRetain`/`emitInlinePredecrement` (bkz. `codegen.zig`) TAMAMEN
+TÜR-BAĞIMSIZDIR — SADECE `ptr-8`deki gizli refcount kelimesini okur/
+yazar, `str`/`list`/`class`in ZATEN kullandığı AYNI mekanizma.
+`retainIfAliasing`/`releaseTemporaryArgs`in her ikisi de ZATEN
+`isHeapManaged(heap)` İLE geçilir — `isHeapManaged`e `.dict` EKLENMESİ,
+bu ÇAĞRI SİTELERİNE HİÇ yeni kod EKLEMEDEN otomatik doğru çalışmasını
+sağlar. Bu, dilin KENDİ kanıtlanmış ARC modelini `dict`e genişletir — hem
+GÜVENLİ hem ERGONOMİK (kullanıcı ARTIK bir dict'i bir yerele bağlayıp
+paylaşabilir).
+
+### Uygulama
+
+1. **`runtime/collections/dict.zig`:** `nox_dict_new` ARTIK `nox_rc_alloc`
+   İLE (gizli refcount başlığı ALTINDA) tahsis eder — `Dict`in TÜM alanları
+   (`entries`/`index`/`key_is_str`) pointer/usize/bool boyutlu olduğundan
+   hizalama SORUNSUZDUR. `nox_dict_destroy` → `nox_dict_release` OLARAK
+   YENİDEN ADLANDIRILDI, `nox_rc_predecrement`e göre KOŞULLU hale getirildi
+   — `runtime/str.zig`nin `nox_str_release`iyle BİREBİR AYNI desen.
+
+2. **`compiler/codegen_qbe/codegen.zig`:** `isHeapManaged`e `.dict`
+   eklendi. `releaseValueIfSet`e YENİ bir `dict_info: ?*const DictInfo`
+   parametresi + `.dict` dalı (`nox_dict_release` çağırır) eklendi — TÜM
+   çağrı siteleri (`genClassRelease`, `genClassGcFree`, `releaseSlotIfSet`,
+   `genAssign`nin `.attribute` dalı, `releaseTemporaryArgs`/
+   `releaseIfTemporary`, `genHttpServeWrapper`) o BAĞLAMDA ZATEN MEVCUT
+   `dict_info` alanıyla güncellendi. `destroyNonArcValue`in `.dict` dalı
+   SİLİNDİ (artık ERİŞİLEMEZ) — DÖRT `.task or .channel or .dict or
+   .thread_handle or .thread_channel` koşulundan `.dict` ÇIKARILDI (4'e
+   indi: task/channel/thread_handle/thread_channel).
+
+   **İKİNCİ, BAĞIMSIZ bir eksiklik (Zig derleyicisinin flag'lediği 9
+   çağrı sitesini düzeltirken KEŞFEDİLDİ, `zig build test` bir SIGABRT İLE
+   yakaladı):** `extern def` dönüş tiplerinin `Value`ye ÇEVRİLDİĞİ TEK
+   ortak nokta (`genCall`nin extern dalı, satır ~4584) `dict_info`yi
+   KOPYALAMIYORDU (`elem_qtype`/`elem_heap_info`/`class_name`in stdlib
+   fazı §F/§L'de BULUNAN AYNI KATEGORİDE eksikliklerinin ÜÇÜNCÜSÜ) — `dict`
+   ÖNCEDEN `isHeapManaged`in DIŞINDA OLDUĞUNDAN bu eksiklik MASKELENİYORDU.
+
+   **ÜÇÜNCÜ, BAĞIMSIZ bir eksiklik (`zig build test` bir GERÇEK sızıntı İLE
+   yakaladı, `http_serve_golden_test.zig`):** `isTemporaryExpr`
+   (`releaseTemporaryArgs`in bir argümanın "taze" olup olmadığına karar
+   verdiği AST-tabanlı sezgi) `.dict_lit`i HİÇ TANIMIYORDU (`.call`/
+   `.list_lit`/`.binary` listeleniyordu, dict literalleri YOKTU) — `dict`
+   ÖNCEDEN `isHeapManaged`in DIŞINDA OLDUĞUNDAN (`releaseTemporaryArgs`in
+   KENDİSİ `isHeapManaged`e göre gated) bu eksiklik de MASKELENİYORDU.
+   `HttpResponse(200, "ok", {"x": "x"})` gibi adlandırılmamış bir dict
+   literalinin KURUCUYA geçirilmesi (`__init__`in `self.headers = data`sı
+   `data`yı bir PARAMETRE olarak retain EDER, refcount 1→2) artık BİR
+   DENGELEYİCİ release GEREKTİRİYORDU — `isTemporaryExpr` bunu TANIMADAN
+   `releaseTemporaryArgs` HİÇ tetiklenmiyor, refcount ASLA 2→1'e İNMİYORDU
+   (GERÇEK bir sızıntı). `.dict_lit` `isTemporaryExpr`e (`.list_lit`nin
+   YANINA) EKLENEREK düzeltildi.
+
+3. **`stdlib/nox/http.nox`:** `get`/`post`teki "headers'ı ASLA bir yerele
+   bağlama" UYARI YORUMU (artık GEÇERSİZ) GÜNCELLENDİ — davranış GÜVENLİ
+   hale geldiğinden bu disiplin ARTIK GEREKMİYOR (kod DEĞİŞMEDİ, sadece
+   yorum).
+
+### Doğrulama
+
+- **"Önce kırmızı" ritüeli:** `dict_field_outlives_local_no_dangling.nox`
+  düzeltmeden ÖNCE HEM manuel çalıştırmayla (GERÇEK SIGSEGV, exit 139)
+  HEM `zig build test` harness'ıyla (`error.ProgramFailed`) KIRMIZI
+  olduğu KANITLANDI, düzeltmeden SONRA YEŞİLE döndü.
+- **YENİ pozitif golden test** (`dict_shared_across_two_class_instances.nox`):
+  AYNI dict KENDİ adlandırılmış yereli HÂLÂ kapsam İÇİNDEYKEN İKİ AYRI
+  sınıf örneğine PAYLAŞTIRILIYOR — retain/release SAYACININ dengede
+  olduğunun pozitif kanıtı. `retainIfAliasing`in `.dict`i ATLAMASI
+  (deliberate break) İLE bu test KIRMIZI olduğu doğrulanıp GERİ ALINDI.
+- **YENİ Zig birim testi** (`runtime/collections/dict.zig`): `nox_rc_retain`
+  + İKİ `nox_dict_release` — birincinin dict'i HÂLÂ CANLI bıraktığı,
+  ikincinin GERÇEKTEN serbest bıraktığı doğrulanır. `nox_dict_release`nin
+  predecrement KAPISININ devre dışı bırakılması (deliberate break) İLE bu
+  test KIRMIZI (SIGSEGV) olduğu doğrulanıp GERİ ALINDI.
+- MEVCUT TÜM `dict`-ilgili golden/birim testleri DEĞİŞMEDEN YEŞİL kaldı.
+- `zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.

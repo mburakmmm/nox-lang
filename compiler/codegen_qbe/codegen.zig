@@ -216,12 +216,16 @@ const QbeType = enum { l, d, w, none };
 /// `nox_channel_destroy` ile (predecrement/retain OLMADAN, doğrudan bir
 /// kez) serbest bırakabilmesi için GEREKLİDİR — aksi halde her `spawn`/
 /// `Channel[T](...)` sızardı (bkz. spec, bulunan gerçek hata).
-/// `dict`: stdlib fazı §C (bkz. nox-teknik-spesifikasyon.md). `task`/
-/// `channel` İLE AYNI gerekçeyle BİLEREK `isHeapManaged`in DIŞINDA tutulur
-/// (opak bir `ptr` — gerçek hash tablosu `runtime/collections/dict.zig`de
-/// yaşar, ARC başlığı/retain-on-alias YOK, tek sahiplilik) — kapsam-sonu
-/// temizliği DOĞRUDAN bir `nox_dict_destroy` çağrısıdır (bkz.
-/// `releaseAllLocalsExcept`).
+/// `dict`: stdlib fazı §C (bkz. nox-teknik-spesifikasyon.md). Faz FF.3'e
+/// (bkz. §3.62) KADAR `task`/`channel` İLE AYNI gerekçeyle BİLEREK
+/// `isHeapManaged`in DIŞINDA tutuluyordu — bu, bir `dict`in bir sınıf
+/// alanına DEVREDİLİP kaynak yerelinin kapsam-sonunda YIKILMASI durumunda
+/// GERÇEK bir sallanan-işaretçi/çift-serbest-bırakma açığıydı (bkz.
+/// `runtime/collections/dict.zig`nin modül-üstü notu). ARTIK `str`/`list`/
+/// `class` İLE AYNI TAM ARC modelindedir (`isHeapManaged`in İÇİNDEdir) —
+/// `nox_dict_new` `nox_rc_alloc` ile tahsis eder, kapsam-sonu temizliği
+/// `nox_dict_release` (predecrement'e göre koşullu) ÜZERİNDEN GEÇER (bkz.
+/// `releaseValueIfSet`in `.dict` dalı).
 /// Faz U.4.3/U.4.4: `closure` — bir iç içe `def`in ARC'lı çalışma zamanı
 /// temsili. `class` İLE YAPISAL OLARAK AYNIDIR (ARC pointer, `nox_rc_alloc`/
 /// `nox_rc_predecrement`/`nox_rc_free_payload` AYNI havuzu kullanır) —
@@ -615,8 +619,14 @@ fn escapeForQbeString(allocator: std.mem.Allocator, s: []const u8) CodegenError!
     return out.toOwnedSlice(allocator);
 }
 
+/// Faz FF.3 (bkz. nox-teknik-spesifikasyon.md §3.62): `.dict` ARTIK
+/// `.list`/`.class`/`.str`/`.closure` İLE AYNI TAM ARC modelindedir —
+/// ÖNCEDEN `Task`/`Channel`/`ThreadHandle`/`ThreadChannel` İLE AYNI "tek
+/// sahiplilik, koşulsuz yıkım" grubundaydı (GERÇEK bir sallanan-işaretçi
+/// açığıydı, bkz. `dict.zig`nin modül-üstü notu) — o GRUP artık DÖRT
+/// TÜRE indi (bkz. `destroyNonArcValue`).
 fn isHeapManaged(h: HeapKind) bool {
-    return h == .list or h == .class or h == .str or h == .closure;
+    return h == .list or h == .class or h == .str or h == .closure or h == .dict;
 }
 
 /// `expr` değerlendirildiğinde TAZE (henüz hiçbir isme/alana/elemana
@@ -633,7 +643,21 @@ fn isHeapManaged(h: HeapKind) bool {
 /// `releaseTemporaryArgs`/`releaseIfTemporary`.
 fn isTemporaryExpr(expr: ast.Expr) bool {
     return switch (expr) {
-        .call, .list_lit, .binary => true,
+        // Faz FF.3 (bkz. nox-teknik-spesifikasyon.md §3.62): `.dict_lit`
+        // ÖNCEDEN buradan EKSİKTİ — `dict`in `isHeapManaged`in DIŞINDA
+        // olduğu ESKİ modelde bu EKSİKLİK etkisizdi (`releaseTemporaryArgs`/
+        // `retainIfAliasing` ZATEN `isHeapManaged(v.heap)`e göre gated'di,
+        // `dict` İÇİN her ikisi de HİÇ ÇALIŞMAZDI). `dict` ARTIK TAM ARC'lı
+        // OLDUĞUNDAN bu eksiklik GERÇEK bir sızıntıya dönüştü: `HttpResponse(
+        // 200, "ok", {"x": "x"})` gibi adlandırılmamış bir dict LİTERALİ
+        // argüman olarak geçilince, `__init__`in `self.headers = data`sı
+        // (`retainIfAliasing`, `data` bir PARAMETRE — `isAliasingExpr`
+        // `.identifier`i HER ZAMAN aliasing SAYAR) refcount'u 1→2 retain
+        // ediyordu, ama `isTemporaryExpr({"x":"x"}) == false` (bu satır
+        // OLMADAN) `releaseTemporaryArgs`in dengeleyici release'ini HİÇ
+        // TETİKLEMİYORDU — refcount ASLA 2→1'e inmiyordu (kanıtlandı, bkz.
+        // `http_serve_golden_test.zig`nin bu YOLU KANITLAYAN sızıntı testi).
+        .call, .list_lit, .dict_lit, .binary => true,
         // Bir alan zincirinin (ör. `make_car(i).engine`) TABANI temporary
         // ise, `genFieldRead` heap tipli alanı taban serbest bırakılmadan
         // ÖNCE retain eder (bkz. genFieldRead) — bu da okunan alanı, tıpkı
@@ -1613,13 +1637,13 @@ const Codegen = struct {
                 try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, offset });
                 const fv = try self.newTemp();
                 try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
-                try self.releaseValueIfSet(fv, c.info.heap, c.info.elem_qtype, c.info.class_name, c.info.elem_heap_info);
-            } else if (c.info.heap == .task or c.info.heap == .channel or c.info.heap == .dict or c.info.heap == .thread_handle or c.info.heap == .thread_channel) {
+                try self.releaseValueIfSet(fv, c.info.heap, c.info.elem_qtype, c.info.class_name, c.info.elem_heap_info, c.info.dict_info);
+            } else if (c.info.heap == .task or c.info.heap == .channel or c.info.heap == .thread_handle or c.info.heap == .thread_channel) {
                 const addr = try self.newTemp();
                 try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, offset });
                 const fv = try self.newTemp();
                 try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
-                try self.destroyNonArcValue(fv, c.info.heap, c.info.dict_info);
+                try self.destroyNonArcValue(fv, c.info.heap);
             }
         }
         const total_size = CLOSURE_HEADER_SIZE + 8 * captures.len;
@@ -1687,20 +1711,20 @@ const Codegen = struct {
                 try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, f.offset });
                 const fv = try self.newTemp();
                 try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
-                try self.releaseValueIfSet(fv, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info);
-            } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .dict or f.info.heap == .thread_handle or f.info.heap == .thread_channel) {
-                // `Task[T]`/`Channel[T]`/`dict[K,V]` sınıf alanı (ör.
-                // `HttpResponse.headers`) — ARC-yönetimli DEĞİLDİR
-                // (`isHeapManaged` bunu KAPSAMAZ), bu yüzden AYRI bir dal:
-                // `destroyNonArcValue` ile DOĞRUDAN bir kez yıkılır (bkz.
-                // `releaseAllLocalsExcept`in AYNI deseni — yalnızca YEREL
-                // değil, sınıf ALANI için, Faz S.1'den beri `Task`/`Channel`
-                // İÇİN de doğru).
+                try self.releaseValueIfSet(fv, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info, f.info.dict_info);
+            } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .thread_handle or f.info.heap == .thread_channel) {
+                // `Task[T]`/`Channel[T]`/`ThreadHandle[T]`/`ThreadChannel[T]`
+                // sınıf alanı — ARC-yönetimli DEĞİLDİR (`isHeapManaged` bunu
+                // KAPSAMAZ, `dict[K,V]`in AKSİNE — bkz. Faz FF.3), bu yüzden
+                // AYRI bir dal: `destroyNonArcValue` ile DOĞRUDAN bir kez
+                // yıkılır (bkz. `releaseAllLocalsExcept`in AYNI deseni —
+                // yalnızca YEREL değil, sınıf ALANI için, Faz S.1'den beri
+                // doğru).
                 const addr = try self.newTemp();
                 try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, f.offset });
                 const fv = try self.newTemp();
                 try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
-                try self.destroyNonArcValue(fv, f.info.heap, f.info.dict_info);
+                try self.destroyNonArcValue(fv, f.info.heap);
             }
         }
         try self.out.writer.print("    call $nox_rc_free_payload(l {s}, l %p, l {d})\n", .{ RT_PARAM, cinfo.total_size });
@@ -1769,13 +1793,13 @@ const Codegen = struct {
                 try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, f.offset });
                 const fv = try self.newTemp();
                 try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
-                try self.releaseValueIfSet(fv, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info);
-            } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .dict or f.info.heap == .thread_handle or f.info.heap == .thread_channel) {
+                try self.releaseValueIfSet(fv, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info, f.info.dict_info);
+            } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .thread_handle or f.info.heap == .thread_channel) {
                 const addr = try self.newTemp();
                 try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, f.offset });
                 const fv = try self.newTemp();
                 try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
-                try self.destroyNonArcValue(fv, f.info.heap, f.info.dict_info);
+                try self.destroyNonArcValue(fv, f.info.heap);
             }
         }
         try self.out.writer.print("    call $nox_rc_free_payload(l {s}, l %p, l {d})\n", .{ RT_PARAM, cinfo.total_size });
@@ -2185,9 +2209,10 @@ const Codegen = struct {
             if (entry.value_ptr.is_param or entry.value_ptr.arena) continue;
             if (isHeapManaged(entry.value_ptr.heap)) {
                 try self.releaseSlotIfSet(entry.value_ptr.*);
-            } else if (entry.value_ptr.heap == .task or entry.value_ptr.heap == .channel or entry.value_ptr.heap == .dict or entry.value_ptr.heap == .thread_handle or entry.value_ptr.heap == .thread_channel) {
-                // `Task[T]`/`Channel[T]`/`dict[K,V]` ARC-yönetimli DEĞİLDİR
-                // (bkz. `HeapKind`in belge notu) — `destroyNonArcSlotIfSet`
+            } else if (entry.value_ptr.heap == .task or entry.value_ptr.heap == .channel or entry.value_ptr.heap == .thread_handle or entry.value_ptr.heap == .thread_channel) {
+                // `Task[T]`/`Channel[T]`/`ThreadHandle[T]`/`ThreadChannel[T]`
+                // ARC-yönetimli DEĞİLDİR (bkz. `HeapKind`in belge notu,
+                // `dict[K,V]`in AKSİNE — bkz. Faz FF.3) — `destroyNonArcSlotIfSet`
                 // (bkz. onun belge notu) DOĞRUDAN bir kez yıkar. Faz S.1'den
                 // beri BU AYNI yol yeniden atamada da (`genAssign`) kullanılır
                 // — artık ne kapsam sonunda ne de yeniden atamada eski değer
@@ -2365,11 +2390,14 @@ const Codegen = struct {
     /// serbest bırakır), primitif elemanlı `list[T]` genel `nox_rc_release`'e,
     /// heap-yönetimli elemanlı `list[T]` (`elem_heap_info != null`) ise
     /// üretilmiş `$List_<...>_release`'e (elemanları ÖNCE özyinelemeli olarak
-    /// serbest bırakır — bkz. `genListElemRelease`) gider. Hem yerel değişken
-    /// kapsam-sonu temizliğinde (`releaseSlotIfSet`) hem de bir sınıf
-    /// alanının üzerine yazılırken eski değeri serbest bırakmak için
-    /// (`genAssign`, `.attribute` durumu) kullanılan tek ortak yoldur.
-    fn releaseValueIfSet(self: *Codegen, ptr: []const u8, heap: HeapKind, elem_qtype: QbeType, class_name: ?[]const u8, elem_heap_info: ?*const ElemHeapInfo) CodegenError!void {
+    /// serbest bırakır — bkz. `genListElemRelease`) gider. `dict` (Faz FF.3,
+    /// bkz. nox-teknik-spesifikasyon.md §3.62) `nox_dict_release`e gider —
+    /// `dict_info` (`.dict` DIŞINDAKİ tüm türler İçin `null` GEÇİRİLEBİLİR)
+    /// bu YOLUN İhtiyacı olan `key_is_str`/`value_is_str` bayraklarını taşır.
+    /// Hem yerel değişken kapsam-sonu temizliğinde (`releaseSlotIfSet`) hem
+    /// de bir sınıf alanının üzerine yazılırken eski değeri serbest bırakmak
+    /// için (`genAssign`, `.attribute` durumu) kullanılan tek ortak yoldur.
+    fn releaseValueIfSet(self: *Codegen, ptr: []const u8, heap: HeapKind, elem_qtype: QbeType, class_name: ?[]const u8, elem_heap_info: ?*const ElemHeapInfo, dict_info: ?*const DictInfo) CodegenError!void {
         const is_null = try self.newTemp();
         try self.out.writer.print("    {s} =w ceql {s}, 0\n", .{ is_null, ptr });
         const release_label = try self.newLabel("release");
@@ -2403,6 +2431,15 @@ const Codegen = struct {
             // (bir `l`nin İLK 8 baytını "uzunluk" sanan) YOLUNA ASLA
             // düşülmemelidir.
             try self.out.writer.print("    call $nox_str_release(l {s}, l {s})\n", .{ RT_PARAM, ptr });
+        } else if (heap == .dict) {
+            // Faz FF.3 (bkz. nox-teknik-spesifikasyon.md §3.62): `dict`
+            // ARTIK `str` İLE AYNI "predecrement'e göre koşullu release"
+            // desenini izler — `nox_dict_release`nin KENDİSİ `nox_rc_
+            // predecrement` çağırır (bkz. `dict.zig`).
+            const dinfo = dict_info.?;
+            const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
+            const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
+            try self.out.writer.print("    call $nox_dict_release(l {s}, l {s}, w {s}, w {s})\n", .{ RT_PARAM, ptr, key_is_str_lit, value_is_str_lit });
         } else if (elem_heap_info) |info| {
             // `ptr`nin KENDİSİ bir listedir; `info` bu listenin İÇİNDEKİ
             // elemanları betimler — `releaseFnNameFor` ise "release edilecek
@@ -2425,12 +2462,13 @@ const Codegen = struct {
     fn releaseSlotIfSet(self: *Codegen, info: VarInfo) CodegenError!void {
         const ptr = try self.newTemp();
         try self.out.writer.print("    {s} =l loadl {s}\n", .{ ptr, info.slot });
-        try self.releaseValueIfSet(ptr, info.heap, info.elem_qtype, info.class_name, info.elem_heap_info);
+        try self.releaseValueIfSet(ptr, info.heap, info.elem_qtype, info.class_name, info.elem_heap_info, info.dict_info);
     }
 
-    /// `Task[T]`/`Channel[T]`/`dict[K,V]` (bkz. `HeapKind`in belge notu —
-    /// bunlar ARC-yönetimli DEĞİLDİR, `isHeapManaged`in DIŞINDadır) TEK bir
-    /// DEĞERİ yok eder — `releaseValueIfSet`in bu üç tür İÇİNDEKİ karşılığı
+    /// `Task[T]`/`Channel[T]`/`ThreadHandle[T]`/`ThreadChannel[T]` (bkz.
+    /// `HeapKind`in belge notu — bunlar ARC-yönetimli DEĞİLDİR, `isHeapManaged`in
+    /// DIŞINDadır, `dict[K,V]`in AKSİNE — bkz. Faz FF.3) TEK bir DEĞERİ yok
+    /// eder — `releaseValueIfSet`in bu dört tür İÇİNDEKİ karşılığı
     /// (null-kontrolü/predecrement YOK, DOĞRUDAN bir kez yıkım). Hem kapsam-
     /// sonu temizliğinde (`releaseAllLocalsExcept`) hem de Faz S.1'den beri
     /// yeniden atamada eski değeri serbest bırakmak için (`genAssign`nin
@@ -2439,7 +2477,7 @@ const Codegen = struct {
     /// görev HENÜZ tamamlanmamışsa struct'ı HEMEN serbest BIRAKMAZ (bkz.
     /// `runtime/async_rt/scheduler.zig`nin `Task.detached`i) — aksi halde
     /// fiber kendi sonucunu SERBEST BIRAKILMIŞ belleğe yazardı.
-    fn destroyNonArcValue(self: *Codegen, ptr: []const u8, heap: HeapKind, dict_info: ?*const DictInfo) CodegenError!void {
+    fn destroyNonArcValue(self: *Codegen, ptr: []const u8, heap: HeapKind) CodegenError!void {
         switch (heap) {
             .task, .channel, .thread_handle, .thread_channel => {
                 const fn_name = switch (heap) {
@@ -2451,23 +2489,18 @@ const Codegen = struct {
                 };
                 try self.out.writer.print("    call ${s}(l {s}, l {s})\n", .{ fn_name, RT_PARAM, ptr });
             },
-            .dict => {
-                const dinfo = dict_info.?;
-                const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
-                const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
-                try self.out.writer.print("    call $nox_dict_destroy(l {s}, l {s}, w {s}, w {s})\n", .{ RT_PARAM, ptr, key_is_str_lit, value_is_str_lit });
-            },
             else => unreachable,
         }
     }
 
     /// `destroyNonArcValue` ile AYNI, yalnızca bir yerel değişkenin (henüz
     /// ÜZERİNE yazılmamış) MEVCUT slot değerini önce yükleyip sonra yok eder
-    /// — `releaseSlotIfSet`in `Task`/`Channel`/`dict` karşılığı.
+    /// — `releaseSlotIfSet`in `Task`/`Channel`/`ThreadHandle`/`ThreadChannel`
+    /// karşılığı.
     fn destroyNonArcSlotIfSet(self: *Codegen, info: VarInfo) CodegenError!void {
         const ptr = try self.newTemp();
         try self.out.writer.print("    {s} =l loadl {s}\n", .{ ptr, info.slot });
-        try self.destroyNonArcValue(ptr, info.heap, info.dict_info);
+        try self.destroyNonArcValue(ptr, info.heap);
     }
 
     fn emitDefaultReturn(self: *Codegen, ret_qtype: QbeType) CodegenError!void {
@@ -2932,9 +2965,10 @@ const Codegen = struct {
                 // serbest bırakmaya çalışır.
                 if (isHeapManaged(info.heap) and !info.is_param and !info.arena) {
                     try self.releaseSlotIfSet(info);
-                } else if ((info.heap == .task or info.heap == .channel or info.heap == .dict or info.heap == .thread_handle or info.heap == .thread_channel) and !info.is_param and !info.arena) {
-                    // Faz S.1: `Task[T]`/`Channel[T]`/`dict[K,V]` yeniden
-                    // atamada ESKİ değer artık sızmaz — `destroyNonArcSlotIfSet`
+                } else if ((info.heap == .task or info.heap == .channel or info.heap == .thread_handle or info.heap == .thread_channel) and !info.is_param and !info.arena) {
+                    // Faz S.1: `Task[T]`/`Channel[T]`/`ThreadHandle[T]`/
+                    // `ThreadChannel[T]` yeniden atamada ESKİ değer artık
+                    // sızmaz — `destroyNonArcSlotIfSet`
                     // (bkz. onun belge notu, `Task` İÇİN `nox_async_destroy_task`nin
                     // GÜVENLİ ertelenmiş yıkım semantiği) mevcut slot değerini
                     // YENİ değer BURAYA yazılmadan ÖNCE yok eder.
@@ -2974,15 +3008,15 @@ const Codegen = struct {
                         const old_ptr = try self.newTemp();
                         try self.out.writer.print("    {s} =l loadl {s}\n", .{ old_ptr, addr });
                         try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(f.info.qtype), val.text, addr });
-                        try self.releaseValueIfSet(old_ptr, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info);
-                    } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .dict or f.info.heap == .thread_handle or f.info.heap == .thread_channel) {
-                        // Faz S.1: `isHeapManaged`in DIŞINDaki üç tür İÇİN de
+                        try self.releaseValueIfSet(old_ptr, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info, f.info.dict_info);
+                    } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .thread_handle or f.info.heap == .thread_channel) {
+                        // Faz S.1: `isHeapManaged`in DIŞINDaki DÖRT tür İÇİN de
                         // (yukarıdaki dalla AYNI "önce oku, SONRA üzerine yaz,
                         // SONRA eskiyi yok et" sırası) — bkz. `destroyNonArcValue`.
                         const old_ptr = try self.newTemp();
                         try self.out.writer.print("    {s} =l loadl {s}\n", .{ old_ptr, addr });
                         try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(f.info.qtype), val.text, addr });
-                        try self.destroyNonArcValue(old_ptr, f.info.heap, f.info.dict_info);
+                        try self.destroyNonArcValue(old_ptr, f.info.heap);
                     } else {
                         try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(f.info.qtype), val.text, addr });
                     }
@@ -3069,7 +3103,7 @@ const Codegen = struct {
             const elem_class_name: ?[]const u8 = if (obj.elem_heap_info) |ehi| ehi.class_name else null;
             const elem_inner_qtype: QbeType = if (obj.elem_heap_info) |ehi| ehi.elem_qtype else .none;
             const elem_nested: ?*const ElemHeapInfo = if (obj.elem_heap_info) |ehi| ehi.nested else null;
-            try self.releaseValueIfSet(old_ptr, elem_heap, elem_inner_qtype, elem_class_name, elem_nested);
+            try self.releaseValueIfSet(old_ptr, elem_heap, elem_inner_qtype, elem_class_name, elem_nested, null);
         } else {
             try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(obj.elem_qtype), val.text, addr });
         }
@@ -4561,7 +4595,16 @@ const Codegen = struct {
                     // bu eksiklik fark edilmemişti — `class_name` OLMADAN
                     // sonraki `.attribute` okumaları/`genClassRelease`
                     // `self.classes.get(obj.class_name.?)`de ÇÖKERDİ.
-                    if (result_temp) |rt| return .{ .text = rt, .qtype = esig.ret.qtype, .heap = esig.ret.heap, .class_name = esig.ret.class_name, .elem_qtype = esig.ret.elem_qtype, .elem_heap_info = esig.ret.elem_heap_info, .elem_is_str = esig.ret.elem_is_str };
+                    // Faz FF.3: AYNI KATEGORİDE bir ÜÇÜNCÜ eksiklik — `dict_info`
+                    // — `dict[K,V]` DÖNEN bir extern def'in SONUCU BURADAN
+                    // GEÇTİĞİNDE (ör. `nox_http_response_headers`) EKSİKTİ;
+                    // `dict`in Faz FF.3'ten ÖNCE `isHeapManaged`in DIŞINDA
+                    // olması (release YOLU HİÇ TETİKLENMEMESİ) bunu
+                    // MASKELİYORDU — `dict` ARTIK TAM ARC'lı OLDUĞUNDAN
+                    // `dict_info` OLMADAN `releaseValueIfSet`in `.dict` dalı
+                    // `dict_info.?` üzerinde ÇÖKER (bkz. `http_serve_golden_
+                    // test.zig`nin bu YOLU KANITLAYAN çökme testi).
+                    if (result_temp) |rt| return .{ .text = rt, .qtype = esig.ret.qtype, .heap = esig.ret.heap, .class_name = esig.ret.class_name, .elem_qtype = esig.ret.elem_qtype, .elem_heap_info = esig.ret.elem_heap_info, .elem_is_str = esig.ret.elem_is_str, .dict_info = esig.ret.dict_info };
                     return .{ .text = "0", .qtype = .w };
                 }
 
@@ -4728,7 +4771,7 @@ const Codegen = struct {
             // `s[i]` HER ZAMAN serbest bırakılmalıdır — AST-tabanlı
             // `isTemporaryExpr` sezgisi burada GEÇERSİZDİR.
             if (isHeapManaged(v.heap) and (v.always_fresh or isTemporaryExpr(e))) {
-                try self.releaseValueIfSet(v.text, v.heap, v.elem_qtype, v.class_name, v.elem_heap_info);
+                try self.releaseValueIfSet(v.text, v.heap, v.elem_qtype, v.class_name, v.elem_heap_info, v.dict_info);
             }
         }
     }
@@ -4740,7 +4783,7 @@ const Codegen = struct {
     fn releaseIfTemporary(self: *Codegen, e: ast.Expr, v: Value) CodegenError!void {
         // Bkz. `releaseTemporaryArgs`in AYNI notu (`v.always_fresh`).
         if (isHeapManaged(v.heap) and (v.always_fresh or isTemporaryExpr(e))) {
-            try self.releaseValueIfSet(v.text, v.heap, v.elem_qtype, v.class_name, v.elem_heap_info);
+            try self.releaseValueIfSet(v.text, v.heap, v.elem_qtype, v.class_name, v.elem_heap_info, v.dict_info);
         }
     }
 
@@ -5288,7 +5331,7 @@ const Codegen = struct {
         // BURADA serbest bırakılMAZSA sızar (bu, `dupeToNoxStr`in Faz BB.4
         // uçtan uca golden testinde YAKALANAN GERÇEK bir sızıntıydı).
         if (spec.sig.params[0].heap == .str) {
-            try self.releaseValueIfSet(arg_val.text, .str, .none, null, null);
+            try self.releaseValueIfSet(arg_val.text, .str, .none, null, null, null);
         }
 
         try self.out.writer.print("    ret {s}\n}}\n", .{result_payload.text});
@@ -5584,17 +5627,14 @@ const Codegen = struct {
         // `req_values` — `releaseTemporaryArgs`in gerekçesiyle AYNI (bkz.
         // onun belge notu): her biri TAZE bir `nox_http_request_*` çağrısının
         // SONUCUdur (KENDİ releaser'ı yok). `__init__`in `self.x = x` alan
-        // ataması heap-yönetimli (str) olanları ZATEN retain ETTİĞİNDEN
-        // (bkz. `genAssign`in `.attribute` dalı), burada BİR KEZ daha
-        // serbest bırakmak DENGELER (aksi halde sızarlar) — `dict` (headers)
-        // İSE `isHeapManaged`e GİRMEDİĞİNDEN (bkz. `HeapKind`in belge notu)
-        // `__init__` onu HİÇ retain ETMEZ, ownership doğrudan alana
-        // GEÇER; bu yüzden BURADA release EDİLMEMELİDİR (çifte serbest
-        // bırakma olurdu) — `isHeapManaged` kontrolü bunu doğal olarak
-        // ELER.
+        // ataması heap-yönetimli olanları (str VE Faz FF.3'ten beri dict)
+        // ZATEN retain ETTİĞİNDEN (bkz. `genAssign`in `.attribute` dalı),
+        // burada BİR KEZ daha serbest bırakmak DENGELER (aksi halde
+        // sızarlar) — `isHeapManaged` kontrolü, retain EDİLMEYEN (heap-
+        // yönetimli OLMAYAN) alanları burada doğal olarak ELER.
         for (req_values) |v| {
             if (isHeapManaged(v.heap)) {
-                try self.releaseValueIfSet(v.text, v.heap, v.elem_qtype, v.class_name, v.elem_heap_info);
+                try self.releaseValueIfSet(v.text, v.heap, v.elem_qtype, v.class_name, v.elem_heap_info, v.dict_info);
             }
         }
 
@@ -5602,7 +5642,7 @@ const Codegen = struct {
         try self.out.writer.print("    {s} =l call ${s}(l {s}, l {s})\n", .{ resp_obj_text, spec.handler_fn, RT_PARAM, req_obj.text });
         const resp_obj: Value = .{ .text = resp_obj_text, .qtype = .l, .heap = .class, .class_name = spec.resp_class };
 
-        try self.releaseValueIfSet(req_obj.text, req_obj.heap, req_obj.elem_qtype, req_obj.class_name, req_obj.elem_heap_info);
+        try self.releaseValueIfSet(req_obj.text, req_obj.heap, req_obj.elem_qtype, req_obj.class_name, req_obj.elem_heap_info, req_obj.dict_info);
 
         const status = try self.genFieldReadFromValue(resp_obj, "status");
         const body = try self.genFieldReadFromValue(resp_obj, "body");
@@ -5611,7 +5651,7 @@ const Codegen = struct {
         const raw_resp = try self.newTemp();
         try self.out.writer.print("    {s} =l call $nox_http_response_new(l {s}, l {s}, l {s}, l {s})\n", .{ raw_resp, RT_PARAM, status.text, body.text, headers.text });
 
-        try self.releaseValueIfSet(resp_obj.text, resp_obj.heap, resp_obj.elem_qtype, resp_obj.class_name, resp_obj.elem_heap_info);
+        try self.releaseValueIfSet(resp_obj.text, resp_obj.heap, resp_obj.elem_qtype, resp_obj.class_name, resp_obj.elem_heap_info, resp_obj.dict_info);
 
         try self.out.writer.print("    ret {s}\n}}\n", .{raw_resp});
     }

@@ -51,15 +51,12 @@ def get(url: str, headers: dict[str, str]) -> HttpResponse:
         raise HttpError("istek basarisiz: " + url)
     status: int = nox_http_response_status(h)
     body: str = nox_http_response_body(h)
-    # `nox_http_response_headers(h)` DOĞRUDAN kurucu argümanı olarak
-    # geçirilir — adlandırılmış bir YERELE BAĞLANMAZ (bkz. `dict[K,V]`nin
-    # ARC-yönetimli OLMADIĞI, kapsam sonunda KOŞULSUZ yıkıldığı tasarımı):
-    # bu değer adlandırılmış bir yerelde TUTULSAYDI, bu fonksiyonun kapsam
-    # sonu temizliği onu YOK EDERDİ — dönen `HttpResponse` örneği HÂLÂ ona
-    # işaret ederken (sallanan işaretçi). Geçici bir DEĞER olarak (bir
-    # çağrının argümanı) hiçbir yerel DEĞİŞKENE bağlanmadığından, kapsam
-    # sonu temizliği ona hiç DOKUNMAZ — sahiplik TAMAMEN `HttpResponse.headers`e
-    # GEÇER, sınıf örneği yok edildiğinde `genClassRelease` onu serbest bırakır.
+    # Faz FF.3 (bkz. nox-teknik-spesifikasyon.md §3.62): `dict[K,V]` ARTIK
+    # `str`/`list`/`class` İLE AYNI TAM ARC modelindedir — `nox_http_
+    # response_headers(h)`nin SONUCU İSTER doğrudan burada (adlandırılmamış
+    # bir geçici olarak) İSTER adlandırılmış bir yerele BAĞLANARAK
+    # kullanılsın, HER İKİ durumda da GÜVENLİDİR (bkz. `dict.zig`nin
+    # modül-üstü notu — ESKİDEN burada BAĞLAMA YASAĞI vardı, ARTIK YOK).
     resp: HttpResponse = HttpResponse(status, body, nox_http_response_headers(h))
     nox_http_response_free(h)
     return resp
@@ -71,7 +68,7 @@ def post(url: str, body: str, headers: dict[str, str]) -> HttpResponse:
         raise HttpError("istek basarisiz: " + url)
     status: int = nox_http_response_status(h)
     resp_body: str = nox_http_response_body(h)
-    # Bkz. `get`in AYNI notu.
+    # Bkz. `get`in AYNI notu (Faz FF.3).
     resp: HttpResponse = HttpResponse(status, resp_body, nox_http_response_headers(h))
     nox_http_response_free(h)
     return resp

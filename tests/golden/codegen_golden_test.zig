@@ -781,6 +781,40 @@ test "codegen(çalıştır): Faz S.1 — dict[K,V] DEĞİŞKENİNİN yeniden ata
     );
 }
 
+// Faz FF.3 (bkz. nox-teknik-spesifikasyon.md §3.62) — GERÇEK, ÖNCEDEN
+// VAR OLAN bir bellek-güvenliği hatasını KANITLAR: `dict[K,V]` ARC-
+// yönetimli DEĞİLDİ (`Task`/`Channel` İLE AYNI "tek sahiplilik, koşulsuz
+// yıkım" modeli) — bir dict adlandırılmış bir yerele bağlanıp SONRA bir
+// sınıf alanına GEÇİRİLİRSE, yerelin kapsam-sonu temizliği dict'i
+// KOŞULSUZ yok ederdi, sınıf alanı SALLANAN bir işaretçi bırakırdı.
+// `stdlib/nox/http.nox`nin `get`/`post`u BUNU "headers'ı ASLA bir yerele
+// bağlama" disipliniyle ELLE AŞIYORDU — bu test, O disiplin OLMADAN
+// (bilerek `d`yi adlandırılmış bir yerele bağlayarak) AYNI deseni
+// sergiler. Düzeltmeden ÖNCE bu test KIRMIZI olmalı (GERÇEKTEN
+// SIGSEGV/exit 139 İLE doğrulandı, manuel çalıştırmayla) — `dict`in
+// `str`/`list`/`class` İLE AYNI ARC modeline taşınmasıyla YEŞİLE döner.
+test "codegen(çalıştır): Faz FF.3 — dict[K,V] sınıf alanı, kaynak yerelden UZUN YAŞAR (sallanan işaretçi YOK)" {
+    try expectGolden(
+        @embedFile("codegen_cases/dict_field_outlives_local_no_dangling.nox"),
+        @embedFile("codegen_cases/dict_field_outlives_local_no_dangling.expected"),
+    );
+}
+
+// Faz FF.3'ün POZİTİF kanıtı: AYNI `dict` KENDİ adlandırılmış yereli
+// (`shared`) HÂLÂ kapsam İÇİNDEYKEN İKİ AYRI sınıf örneğine (`a.data`/
+// `b.data`) PAYLAŞTIRILIYor — HER ÜÇ sahibin de (yerel + iki alan)
+// BİRBİRİNDEN BAĞIMSIZ, doğru DEĞERİ okuyabildiğini VE (Zig testlerindeki
+// DebugAllocator'ın hiçbir sızıntı/çift-serbest-bırakma raporlamadığı,
+// bkz. `zig build test`) retain/release SAYACININ tam DENGEDE olduğunu
+// kanıtlar — `dict`in ARTIK `str`/`list`/`class` İLE AYNI, PAYLAŞIM-
+// GÜVENLİ ARC modelinde OLDUĞUNUN pozitif göstergesi.
+test "codegen(çalıştır): Faz FF.3 — dict[K,V] İKİ AYRI sınıf örneğine + kaynak yerele PAYLAŞILIR (retain/release dengede)" {
+    try expectGolden(
+        @embedFile("codegen_cases/dict_shared_across_two_class_instances.nox"),
+        @embedFile("codegen_cases/dict_shared_across_two_class_instances.expected"),
+    );
+}
+
 test "codegen(çalıştır): str(int)/int(str) roundtrip" {
     try expectGolden(
         @embedFile("codegen_cases/str_int_roundtrip.nox"),

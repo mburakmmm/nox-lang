@@ -463,7 +463,7 @@ test "nox_http_get_raw: gerçek yerel HTTP sunucusuna GET isteği — status/bod
     try std.testing.expectEqualStrings("hello", std.mem.sliceTo(body, 0));
 
     const headers = nox_http_response_headers(rt, resp) orelse return error.NoHeaders;
-    defer dict_mod.nox_dict_destroy(rt, headers, 1, 1);
+    defer dict_mod.nox_dict_release(rt, headers, 1, 1);
     const key = try std.testing.allocator.dupeZ(u8, "X-Nox-Test");
     defer std.testing.allocator.free(key);
     const value_payload = dict_mod.nox_dict_get(rt, headers, 1, @bitCast(@intFromPtr(key.ptr)));

@@ -296,6 +296,27 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   (§3.46, kullanıcının ORİJİNAL isteğinin/araştırmanın tarihsel kaydı)
   "gerçek M:N" ifadeleri BİLEREK DEĞİŞTİRİLMEDİ — onlar geçmişte
   DEĞERLENDİRİLEN (VE ERTELENEN) kavramı doğru tarif ediyor.
+- **`dict[K,V]` sallanan-işaretçi/çift-serbest-bırakma güvenlik açığı**
+  (Faz FF.3, bkz. nox-teknik-spesifikasyon.md §3.62 — harici incelemenin
+  TEK "kritik" bulgusu, GERÇEK bir SIGSEGV İLE doğrulandı). `dict[K,V]`
+  ÖNCEDEN ARC-yönetimli DEĞİLDİ (`Task`/`Channel` İLE AYNI "tek sahiplilik,
+  kapsam sonunda KOŞULSUZ yıkım" modeli) — bir dict adlandırılmış bir
+  yerele bağlanıp SONRA bir sınıf alanına GEÇİRİLİRSE, yerelin kapsam-sonu
+  temizliği dict'i KOŞULSUZ yok ediyor, sınıf alanı SALLANAN bir işaretçi
+  kalıyordu. `dict` ARTIK `str`/`list`/`class` İLE AYNI TAM ARC modelinde
+  (`nox_dict_new` `nox_rc_alloc` İLE tahsis eder, `nox_dict_release`
+  — ESKİ `nox_dict_destroy` — predecrement'e göre KOŞULLUDUR). Düzeltme
+  sırasında İKİ BAĞIMSIZ, İLGİLİ eksiklik daha bulundu ve giderildi: (1)
+  `extern def` dönüş tiplerinin `dict_info`yi KOPYALAMAMASI (SIGABRT İLE
+  yakalandı), (2) `isTemporaryExpr`in `.dict_lit`i TANIMAMASI (`HttpResponse(
+  200, "ok", {"x": "x"})` gibi adlandırılmamış dict literallerinin GERÇEK
+  bir sızıntıya yol açması, `zig build test`in DebugAllocator'ı İLE
+  yakalandı). `stdlib/nox/http.nox`nin ARTIK GEÇERSİZ "headers'ı ASLA bir
+  yerele bağlama" uyarı yorumu güncellendi (davranış DEĞİŞMEDİ). YENİ
+  pozitif golden test (iki sınıf örneğine + kaynak yerele PAYLAŞILAN dict)
+  + YENİ Zig birim testi (retain + iki release) + kasıtlı boz→kırmızı→
+  düzelt ritüeli üç kez uygulandı (pre-existing hata, `retainIfAliasing`
+  break'i, `nox_dict_release` predecrement break'i).
 
 ## [1.0.0]
 
