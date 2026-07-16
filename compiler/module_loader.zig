@@ -371,6 +371,20 @@ fn renameNestedFuncDef(a: std.mem.Allocator, fd: ast.FuncDef, map: *const Rename
     };
 }
 
+/// Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): `renameMethodDef`nin
+/// AYNI "tip ifadesi DAHİL yeniden adlandır" deseni — AÇIKÇA bildirilen bir
+/// sınıf alanının tipi BAŞKA (`import`la GELEN, mangled) bir sınıfa
+/// başvurabilir, bu yüzden `renameTypeExpr` BURADA da ÇAĞRILMALIDIR.
+/// GÜNCELLENMEZSE (bkz. modül üstü not, "self: ClassName DAHİL... YENİDEN
+/// adlandırılır"), `import nox.X` üzerinden GELEN alan bildirimleri
+/// SESSİZCE DÜŞERDİ (dosya HÂLÂ derlenirdi — yalnızca o alan çıkarım-only
+/// semantiğe geri dönerdi).
+fn renameFieldDecls(a: std.mem.Allocator, fields: []const ast.FieldDecl, map: *const RenameMap) std.mem.Allocator.Error![]ast.FieldDecl {
+    const out = try a.alloc(ast.FieldDecl, fields.len);
+    for (fields, 0..) |fd, i| out[i] = .{ .name = fd.name, .type_expr = try renameTypeExpr(a, fd.type_expr, map) };
+    return out;
+}
+
 fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.Allocator.Error!ast.Stmt {
     const kind: ast.StmtKind = switch (s.kind) {
         .expr_stmt => |e| .{ .expr_stmt = try renameExpr(a, e, map) },
@@ -399,7 +413,8 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
         .class_def => |cd| blk: {
             const methods = try a.alloc(ast.FuncDef, cd.methods.len);
             for (cd.methods, 0..) |m, i| methods[i] = try renameMethodDef(a, m, map);
-            break :blk .{ .class_def = .{ .name = map.get(cd.name).?, .methods = methods } };
+            const fields = try renameFieldDecls(a, cd.fields, map);
+            break :blk .{ .class_def = .{ .name = map.get(cd.name).?, .methods = methods, .fields = fields } };
         },
         .protocol_def => |pd| blk: {
             const methods = try a.alloc(ast.FuncDef, pd.methods.len);

@@ -231,8 +231,42 @@ const Printer = struct {
                 try self.indentTo(depth);
                 try self.writer.print("class {s}:", .{c.name});
                 try self.line(stmt.line);
+                // Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): AÇIKÇA
+                // bildirilen alanlar (varsa) metodlardan ÖNCE, her biri
+                // KENDİ satırında `ad: Tip` olarak basılır — BURADA
+                // BASILMAZLARSA `nox fmt`in KENDİSİ kullanıcının alan
+                // bildirimlerini SESSİZCE SİLERDİ (dosya HÂLÂ parse OLURDU,
+                // yalnızca çıkarım-only semantiğe SESSİZCE geri dönerdi) —
+                // bu yüzden bu dal BLOCKING'dir, isteğe bağlı DEĞİL.
+                for (c.fields) |fd| {
+                    try self.emitLeadingTrivia(depth + 1, fd.line);
+                    try self.indentTo(depth + 1);
+                    try self.writer.print("{s}: ", .{fd.name});
+                    try self.printType(fd.type_expr);
+                    try self.line(fd.line);
+                }
+                // Alanlar VARSA VE en az bir metod TAKİP EDİYORSA: alan/metod
+                // GEÇİŞ bölgesindeki (kaynakta orada OLABİLECEK boş satır/
+                // yorum) tüketilmemiş trivia'yı, AŞAĞIDAKİ döngünün ZATEN
+                // KOŞULSUZ eklediği TEK ayırıcı boş satırla ÇAKIŞMAMASI İçin
+                // SESSİZCE (basmadan) İLERİ SARAR — metodlar ARASI boşluğun
+                // (bkz. aşağıdaki `idx > 0` dalı) KENDİSİ de trivia'ya HİÇ
+                // bakmadan HER ZAMAN TEK bir boş satır ZORLADIĞINDAN, bu
+                // TUTARLI bir davranıştır (bkz. `printStmts`in AKSİNE, metod
+                // listesi ZATEN trivia-duyarlı DEĞİLDİR). `fd.line`in
+                // `ast.Stmt`ten BAĞIMSIZ, SENTETİK bir alan olması nedeniyle
+                // (bkz. `ast.FieldDecl`nin belge notu) BU BURADA GEREKİR —
+                // aksi halde bu trivia, `__init__`in gövdesindeki İLK
+                // deyimin KENDİ `emitLeadingTrivia`sına SIZAR (GERÇEKTEN
+                // gözlemlenen bir biçimlendirme hatasıydı).
+                if (c.fields.len > 0 and c.methods.len > 0 and c.methods[0].body.len > 0) {
+                    const next_line = c.methods[0].body[0].line;
+                    while (self.trivia_idx < self.trivia.len and self.trivia[self.trivia_idx].line < next_line) {
+                        self.trivia_idx += 1;
+                    }
+                }
                 for (c.methods, 0..) |m, idx| {
-                    if (idx > 0) {
+                    if (idx > 0 or c.fields.len > 0) {
                         try self.writer.writeAll("\n");
                         self.last_was_blank = true;
                     }

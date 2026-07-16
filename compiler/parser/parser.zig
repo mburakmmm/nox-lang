@@ -345,12 +345,37 @@ pub const Parser = struct {
         _ = try self.expect(.indent);
 
         var methods = std.ArrayList(ast.FuncDef).empty;
+        var fields = std.ArrayList(ast.FieldDecl).empty;
+        // Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): sınıf gövdesi
+        // ARTIK deyim-BAŞINA dispatch eder — `parseSimpleStmt`in AYNI
+        // ileriye-bakma deseni (`.identifier` + bir SONRAKİ token `.colon`)
+        // bir alan bildirimini (initializer YOK, `parseSimpleStmt`nin
+        // `var_decl`ından FARKLI olarak) TANIR; AKSİ HALDE mevcut
+        // `parseFuncDef(name)` yoluna (metodlar) DÜŞÜLÜR. Bildirimler/
+        // metodlar HERHANGİ bir SIRADA karışabilir (Python'da OLDUĞU GİBİ).
         while (!self.check(.dedent)) {
-            try methods.append(self.allocator, try self.parseFuncDef(name));
+            if (self.check(.identifier) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .colon) {
+                try fields.append(self.allocator, try self.parseClassFieldDecl());
+            } else {
+                try methods.append(self.allocator, try self.parseFuncDef(name));
+            }
         }
         _ = try self.expect(.dedent);
 
-        return .{ .class_def = .{ .name = name, .methods = try methods.toOwnedSlice(self.allocator) } };
+        return .{ .class_def = .{ .name = name, .methods = try methods.toOwnedSlice(self.allocator), .fields = try fields.toOwnedSlice(self.allocator) } };
+    }
+
+    /// Faz FF.5: bir sınıf gövdesinde çıplak `<ad>: <tip>` — `parseSimpleStmt`
+    /// İLE AYNI ileriye-bakma deseninden ÇAĞRILIR (bkz. `parseClassDef`),
+    /// ama `parseSimpleStmt`nin AKSİNE `=`/initializer BEKLEMEZ (bkz.
+    /// `ast.FieldDecl`nin belge notu — atama HÂLÂ `__init__`de yapılır).
+    fn parseClassFieldDecl(self: *Parser) ParseError!ast.FieldDecl {
+        const line = self.cur().line;
+        const name = self.advance().lexeme;
+        _ = try self.expect(.colon);
+        const type_expr = try self.parseTypeExpr();
+        _ = try self.expect(.newline);
+        return .{ .name = name, .type_expr = type_expr, .line = line };
     }
 
     fn parseProtocolDef(self: *Parser) ParseError!ast.StmtKind {

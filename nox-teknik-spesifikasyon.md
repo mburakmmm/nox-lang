@@ -97,12 +97,18 @@ karışık kullanımda `float`'a yükseltme (promotion) uygulanır; `/` (gerçek
 bölme) her zaman `float` döner, `//` (tam bölme) yükseltme kuralına tabidir.
 Atamalarda tek örtük dönüşüm `int → float`'tır; başka hiçbir örtük dönüşüm yok.
 
-**Sınıf alanları:** Bir sınıfın alanları, sözdiziminde ayrıca bildirilmez;
-yalnızca `__init__` içindeki ilk `self.<ad> = <ifade>` ataması alanın tipini
-örtük olarak belirler (`__init__` diğer metodlardan önce denetlenir ki alan
-tipleri bilinsin). `__init__` dışında yeni alan tanımlanamaz. Bu, AGENTS.md
-İlke #1'in yasakladığı bir *ownership* sözdizimi değildir — yalnızca tip
-çıkarımı içindir.
+**Sınıf alanları:** Bir sınıfın alanları İKİ şekilde belirlenebilir —
+(1) ÖRTÜK ÇIKARIM: yalnızca `__init__` içindeki İLK `self.<ad> = <ifade>`
+ataması alanın tipini belirler (`__init__` diğer metodlardan önce
+denetlenir ki alan tipleri bilinsin), YA DA (2) Faz FF.5'ten beri (bkz.
+§3.64) AÇIK BİLDİRİM: sınıf gövdesinde çıplak `<ad>: <tip>` (PEP 526
+tarzı, initializer YOK) yazılabilir — bu durumda atama HÂLÂ `__init__`de
+yapılır (checker, bildirilen HER alanın `__init__` SONUNDA GERÇEKTEN
+atandığını doğrular), ama TİP çıkarım YERİNE bildirimden ALINIR. İKİ
+mekanizma AYNI sınıfta BİRLİKTE kullanılabilir. `__init__` dışında (ve
+bildirim OLMADAN) yeni alan tanımlanamaz. Bu, AGENTS.md İlke #1'in
+yasakladığı bir *ownership* sözdizimi değildir — yalnızca tip
+çıkarımı/bildirimi içindir.
 
 **Bilinçli kapsam sınırlamaları (v0.1):**
 - Kaynak konumu (satır/sütun) izlenmez; `ast.zig` düğümleri henüz pozisyon
@@ -329,14 +335,20 @@ dönüşü, argümanı, takma adı) artık **güvenle destekleniyor** — hiçbi
 retain'i) yeterli.
 
 **Sınıflar:** Bir sınıf örneği refcount başlıklı düz bir alan bloğudur.
-Alanlar **yalnızca `__init__` gövdesindeki `self.<ad> = <ifade>` atamalarından**
-çıkarılır ve yalnızca doğrudan bir `__init__` parametresi ya da bir literal
-olabilir (`inferFieldType`) — checker'ın (Faz 2) tam ifade tipi çıkarımını
-codegen'de yeniden uygulamamak için bilinçli, gerçekçi/yaygın deseni
-(`self.x = x`) hedefleyen bir kapsam sınırlaması. Alan tipleri yalnızca değer
-tipleri ya da `str` olabilir — **başka bir sınıf ya da `list[T]` alanı
-desteklenmiyor** (iç içe heap, döngüsel/özyinelemeli yıkım karmaşıklığı
-gerektirir, ertelendi). Kurucu çağrısı (`ClassName(...)`) `nox_rc_alloc` +
+Alanlar VARSAYILAN olarak **`__init__` gövdesindeki `self.<ad> = <ifade>`
+atamalarından** çıkarılır (`inferFieldType`) — DOĞRUDAN bir `__init__`
+parametresi, bir literal, `self` (öz-referans) ya da (SONRAKİ fazlarda
+genişletildi — bkz. stdlib fazı §L, Faz U.4.3) BAŞKA bir sınıf/`list[T]`
+tipinde bir alan OLABİLİR; yalnızca `__init__`in ÜST-DÜZEY (if/while/try
+İÇİNE İÇ İÇE OLMAYAN) atamalarını TARAR — checker'ın (Faz 2) tam ifade
+tipi çıkarımını/TAM gövde özyinelemesini codegen'de YENİDEN uygulamamak
+için bilinçli bir kapsam sınırlaması. **Faz FF.5'ten beri (bkz. §3.64):**
+bir alan AÇIKÇA bildirilmişse (`<ad>: <tip>`), codegen bu tipi `resolveType`
+İLE DOĞRUDAN kullanır — `inferFieldType`nin YUKARIDAKİ sınırlamasını
+(ör. bir `if` İÇİNDE atanan bir alan) O ALAN İçin TAMAMEN AŞAR. Bildirilen
+alanlar `__init__` taramasından ÖNCE (bildirim SIRASIYLA) bayt ofseti
+alır — bu SIRA HİÇBİR DIŞA açık garanti TAŞIMAZ (sınıf örnekleri C ABI
+sınırını hiç GEÇMEZ). Kurucu çağrısı (`ClassName(...)`) `nox_rc_alloc` +
 üretilen `$ClassName___init__` fonksiyonunu çağırır; metod çağrıları
 `$ClassName_metodadı(rt, self_ptr, ...)` olarak QBE fonksiyonlarına lowerlanır;
 alan okuma/yazma sabit bayt ofsetleriyle yapılır (her alan basitlik için 8
@@ -9430,6 +9442,117 @@ de `parseFuncDef`i AYNI şekilde çağırır, checker'daki self-doğrulama
   kanıtı — salt idempotentlik YETERSİZ, HER ZAMAN `self: X`e "genişleten"
   bozuk bir formatlayıcı da idempotent olurdu); açık `self: Counter`nin
   de DEĞİŞMEDEN kaldığı AYRI bir assertion.
+- `zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+## 3.64 Faz FF.5 — Açık Sınıf Alan Bildirimleri
+
+**Kaynak:** ChatGPT incelemesinin "dil yüzeyinde değiştireceğim noktalar"
+listesindeki bir madde — bir sınıfın alan tipleri TAMAMEN `__init__`den
+ÇIKARILIYORDU, sözdiziminde AYRICA bildirilemiyordu. Faz FF listesinin
+BEŞİNCİ maddesi (FF.1-FF.4 TAMAMLANDI). FF.4'ün (§3.63) AKSİNE, burada
+AGENTS.md/spec'te ÖNCEDEN BİLEREK REDDEDİLMİŞ bir karar YOKTU — bu
+GENUİNELY açık bir özellik eklemesiydi.
+
+**Sözdizimi:** bir sınıf gövdesinde, bir metoddan ÖNCE/SONRA/ARASINDA
+(SIRA ÖNEMSİZ) çıplak `<ad>: <tip>` (initializer YOK — atama HÂLÂ
+`__init__`de yapılır):
+
+```nox
+class Point:
+    x: int
+    y: int
+
+    def __init__(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+```
+
+Gerçek Python ZATEN bir sınıf gövdesinde çıplak `name: type` (PEP 526)
+ifadesini destekler — bu YENİ sözdizimi İCAT ETMEK DEĞİL, AGENTS.md §5'in
+"Python 3.x gramerine sözdizimsel sadakat" ilkesiyle TUTARLI, MEVCUT bir
+Python yapısını benimsemektir. Kapsam DIŞI, BİLİNÇLİ: protokoller
+(alan-erişim semantiği YOK) VE varsayılan değerler (`x: int = 0` — çok
+daha büyük bir özellik olurdu, istenen ergonomi kazanımı İçin
+GEREKMİYOR).
+
+### Tasarım
+
+FF.4'ten (self tip çıkarımı) FARKLI, ÖNEMLİ bir nokta: bu özellik
+codegen'e DE dokunmayı GEREKTİRDİ — codegen KENDİ AYRI, DAHA ZAYIF bir
+alan-tipi çıkarım mekanizmasına (`inferFieldType`) sahip, checker'ın TAM
+ifade tipi çıkarımını YENİDEN uygulamaz. Açıkça bildirilen alanlar İçin
+codegen KENDİ `resolveType`ini (metod parametreleri/dönüşleri İçin ZATEN
+kullandığı AYNI genel çözücü) DOĞRUDAN kullanır.
+
+**Güvenlik gereksinimi:** açıkça bildirilen bir alanın `__init__`de HİÇ
+atanmaması (ya da alan bildirimi OLAN bir sınıfın HİÇ `__init__`i
+OLMAMASI) bir CHECKER HATASIDIR (`UnassignedField`) — codegen ZATEN TÜM
+sınıf alanlarının ham belleğini `__init__` çalışmadan ÖNCE SIFIRLADIĞINDAN
+(bkz. `genConstructFromValues`), bildirilen ama HİÇ atanmayan bir alan
+(heap-tipli İSE) SALLANAN/null bir işaretçi OLARAK kalırdı — Faz FF.3'ün
+(§3.62) kapattığı sallanan-işaretçi açığıyla AYNI RUHTA, ÖNLENEN bir
+tehlike.
+
+**BİLİNÇLİ, kabul edilen kapsam sınırlaması:** bu denetim AKIŞ-DUYARLI
+DEĞİLDİR — yalnızca "`__init__` SONUNDA atanmış mı" kontrol edilir,
+"OKUNMADAN ÖNCE atanmış mı" DEĞİL (`print(self.x); self.x = x` type-check
+GEÇER — ÖNCEDEN, çıkarım-ONLY modelde, bu `UndefinedAttribute` İLE
+KAZAEN yakalanırdı). TAM bir akış-duyarlı kesin-atama analizi (Katman
+1'in ASAP'ından TAMAMEN AYRI, çok daha büyük bir özellik) OLMADAN
+kapatılamayan, BİLİNÇLİ kabul edilen bir artık boşluktur.
+
+### Uygulama
+
+- `compiler/parser/ast.zig`: YENİ `FieldDecl { name, type_expr, line }`
+  (`VarDecl`nin AKSİNE `value` ZORUNLU DEĞİL — AYRI bir düğüm). `ClassDef`e
+  `fields: []FieldDecl = &.{}`.
+- `compiler/parser/parser.zig`: `parseClassDef`in döngüsü ARTIK deyim-
+  BAŞINA dispatch eder (`.identifier` + SONRAKİ token `.colon` İSE YENİ
+  `parseClassFieldDecl`, AKSİ HALDE mevcut `parseFuncDef`).
+- `compiler/typecheck/checker.zig`: YENİ `TypeError.UnassignedField`;
+  `ClassInfo.declared_unassigned`; `registerClassSignatures` bildirilen
+  alanları (yinelenen-bildirim `DuplicateDefinition` İLE reddedilerek)
+  ÖN-KAYDEDER; `checkAssign`in MEVCUT "bilinen tip İLE assignable" dalına
+  TEK satırlık bir `declared_unassigned.remove()` eklenir; `checkClassBody`,
+  `__init__` denetiminden HEMEN SONRA kalan `declared_unassigned`i
+  `UnassignedField` İLE reddeder.
+- `compiler/codegen_qbe/codegen.zig`: `registerClass`nin alan döngüsü
+  ÖNCE `cd.fields`i (bildirim SIRASIYLA, `resolveType` İLE) işler, SONRA
+  mevcut `inferFieldType`-taramasına (DEĞİŞMEDEN, yalnızca ZATEN VAR OLAN
+  alanları ATLAYARAK) düşer.
+- **Silme/hijyen riskleri (araştırmayla BULUNAN, BLOCKING):**
+  `compiler/fmt/formatter.zig`nin `.class_def` dalı GÜNCELLENMEZSE, `nox
+  fmt` kullanıcının alan bildirimlerini SESSİZCE SİLERDİ (dosya HÂLÂ
+  parse OLURDU) — `c.fields`i basacak şekilde GÜNCELLENDİ; ayrıca alan
+  bildirimlerinin `ast.Stmt`ten BAĞIMSIZ (satırsız) olması, `nox fmt`nin
+  trivia (boş satır/yorum) akışını GERÇEKTEN BOZDU (bir SONRAKİ deyimin
+  KENDİ trivia'sına SIZAN, GÖZLEMLENEN bir biçimlendirme hatası) — `FieldDecl`e
+  `line` eklenip `emitLeadingTrivia`/`self.line()` DOĞRU kullanılarak
+  düzeltildi. `compiler/module_loader.zig`nin `renameStmt`nin `.class_def`
+  dalı GÜNCELLENMEZSE, `import nox.X` üzerinden gelen stdlib sınıflarının
+  alan bildirimleri SESSİZCE düşerdi — YENİ `renameFieldDecls` (`renameMethodDef`nin
+  AYNI "tip ifadesi DAHİL yeniden adlandır" deseniyle) eklendi.
+
+### Doğrulama
+
+- `tests/golden/typecheck_cases/`: `ok_class_declared_fields` (tüm alanlar
+  bildirilmiş+atanmış), `ok_class_declared_and_inferred_mixed` (İKİ
+  mekanizma BİRLİKTE), `err_class_declared_field_unassigned`,
+  `err_class_declared_field_no_init`, `err_class_declared_field_type_conflict`,
+  `err_class_duplicate_field_decl` — SONUNCUSU İKİSİ, bu alana dokunurken
+  KAPATILAN gerçek boşluklardı (daha ÖNCE test EDİLMEMİŞTİ).
+- `tests/golden/codegen_cases/`: `class_declared_field_point` (mevcut
+  `class_point.nox` İLE davranışsal BİREBİR AYNI), `class_declared_field_beyond_inference`
+  (`inferFieldType`nin BUGÜN HİÇ ele ALAMADIĞI, bir `if` İÇİNDE atanan bir
+  alan — codegen bypass'ının GERÇEKTEN çalıştığının, ÖZELLİĞİN ASIL DEĞER
+  ÖNERİSİNİN kanıtı).
+- `tests/golden/fmt_golden_test.zig`: bildirilen alanların `nox fmt`den
+  SONRA HÂLÂ MEVCUT olduğu VE İKİNCİ formatlamanın AYNI sonucu ürettiği
+  (idempotentlik) doğrulanır.
+- **Boz→kırmızı→düzelt (ÜÇ BAĞIMSIZ mekanizma):** parser dispatch'i,
+  checker'ın `declared_unassigned.remove()` çağrısı, codegen'in
+  `inferFieldType` bypass'ı — ÜÇÜ de AYRI AYRI KIRILIP İLGİLİ fixture'ların
+  KIRMIZI olduğu doğrulanıp GERİ ALINDI.
 - `zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
 
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"

@@ -58,6 +58,11 @@ pub const TypeError = error{
     UnknownType,
     DuplicateDefinition,
     MissingReturn,
+    /// Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): AÇIKÇA bildirilen
+    /// bir sınıf alanı, `__init__` gövdesinde HİÇ `self.<ad> = ...` İLE
+    /// atanmadı — `TypeMismatch`/`UndefinedAttribute`e AŞIRI YÜKLEMEK
+    /// YERİNE ayrı, grep-lenebilir bir tanı kodu.
+    UnassignedField,
     OutOfMemory,
 };
 
@@ -80,6 +85,15 @@ const ClassInfo = struct {
     fields: std.StringHashMapUnmanaged(Type) = .{},
     methods: std.StringHashMapUnmanaged(FuncSig) = .{},
     init_sig: ?FuncSig = null,
+    /// Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): AÇIKÇA bildirilen
+    /// (`ast.FieldDecl`) ama HENÜZ `__init__` içinde `self.<ad> = ...` İLE
+    /// ATANMAMIŞ alan adları — `registerClassSignatures` `cd.fields`den
+    /// doldurur, `checkAssign`in `.attribute` dalı HER atamada İLGİLİ adı
+    /// SİLER (bkz. onun belge notu); `checkClassBody`, `__init__`
+    /// denetiminden HEMEN SONRA burada KALAN varsa `UnassignedField` İLE
+    /// reddeder — bildirilen bir alanın HİÇ atanmadan (ör. heap-tipli İSE
+    /// sallanan/null bir işaretçi OLARAK) kalmasını ÖNLER.
+    declared_unassigned: std.StringHashMapUnmanaged(void) = .{},
 };
 
 /// Bir yapısal protokolün (Faz 11) gerektirdiği tek bir metod imzası —
@@ -911,6 +925,21 @@ pub const Checker = struct {
 
     fn registerClassSignatures(self: *Checker, cd: ast.ClassDef) TypeError!void {
         const info = self.classes.getPtr(cd.name).?; // collectClassNames'de eklendi
+        // Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): AÇIKÇA
+        // bildirilen alanlar, metod imza döngüsünden ÖNCE `info.fields`e
+        // yerleştirilir — bu SAYEDE `__init__`deki `self.<ad> = ...`
+        // atamaları AŞAĞIDAKİ `checkAssign`in ZATEN VAR OLAN "bilinen tip
+        // İLE assignable" dalından GEÇER (yeni bir alan YARATMAZ). Aynı
+        // alan İKİ KEZ bildirilirse `DuplicateDefinition` (`collectClassNames`nin
+        // sınıf-adı yinelemesiyle AYNI hata kodu).
+        for (cd.fields) |fd| {
+            if (info.fields.contains(fd.name)) {
+                return self.fail(error.DuplicateDefinition, "sınıf '{s}'in '{s}' alanı zaten bildirilmiş", .{ cd.name, fd.name });
+            }
+            const ft = try self.typeExprToType(fd.type_expr);
+            try info.fields.put(self.allocator, fd.name, ft);
+            try info.declared_unassigned.put(self.allocator, fd.name, {});
+        }
         for (cd.methods) |m| {
             if (m.type_params.len > 0) {
                 return self.fail(error.TypeMismatch, "metodlar generic olamaz: {s}.{s} (Faz 10 yalnızca serbest fonksiyonları destekler)", .{ cd.name, m.name });
@@ -1077,9 +1106,27 @@ pub const Checker = struct {
     }
 
     fn checkClassBody(self: *Checker, cd: ast.ClassDef) TypeError!void {
+        const diagnostics_before_init = self.diagnostics.items.len;
         for (cd.methods) |m| {
             if (std.mem.eql(u8, m.name, "__init__"))
                 self.checkMethodBody(cd.name, m, true) catch |e| try self.recordDiagnostic(e);
+        }
+        // Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): `__init__`
+        // denetiminden HEMEN SONRA, DİĞER metodların döngüsünden ÖNCE —
+        // bu SIRALAMA, bir alanın YALNIZCA `__init__` DIŞINDA bir metodda
+        // atanmasının HÂLÂ "atanmadı" SAYILMASINI sağlar (o metod HENÜZ
+        // denetlenmedi). `diagnostics_before_init`e göre KOŞULLU: `__init__`
+        // BAŞKA bir nedenle ZATEN BAŞARISIZ olduysa (o hata ZATEN
+        // kaydedildiyse), `declared_unassigned` YARIM kalmış (kontrol İLK
+        // hatada DURDUĞUNDAN) OLABİLİR — bu durumda İKİNCİ, YANILTICI bir
+        // "atanmadı" tanısı EKLEMEK YERİNE atlanır (bkz. modül üstü not,
+        // "AYNI birim İÇİNDE İKİNCİ hata raporlanMAZ" kuralıyla TUTARLI).
+        if (self.diagnostics.items.len == diagnostics_before_init) {
+            const info = self.classes.getPtr(cd.name).?;
+            var it = info.declared_unassigned.keyIterator();
+            while (it.next()) |name| {
+                try self.recordDiagnostic(self.fail(error.UnassignedField, "sınıf '{s}'in bildirilen '{s}' alanı __init__ içinde hiç atanmıyor", .{ cd.name, name.* }));
+            }
         }
         for (cd.methods) |m| {
             if (!std.mem.eql(u8, m.name, "__init__"))
@@ -1368,6 +1415,11 @@ pub const Checker = struct {
                     if (!assignable(existing_t, value_t)) {
                         return self.fail(error.TypeMismatch, "'{s}.{s}' için tip uyuşmazlığı", .{ class_name, attr.attr });
                     }
+                    // Faz FF.5: AÇIKÇA bildirilen bir alan (`registerClassSignatures`
+                    // tarafından ÖNCEDEN `info.fields`e YERLEŞTİRİLMİŞ) BURADA
+                    // GERÇEKTEN atanıyor — `declared_unassigned`den DÜŞÜLÜR
+                    // (bildirilMEMİŞ/çıkarım-only alanlar İÇİN ZARARSIZ no-op).
+                    _ = info.declared_unassigned.remove(attr.attr);
                 } else {
                     if (!(is_self and ctx.is_init)) {
                         return self.fail(error.UndefinedAttribute, "'{s}' sınıfının '{s}' alanı yalnızca __init__ içinde 'self.{s} = ...' ile tanımlanabilir", .{ class_name, attr.attr, attr.attr });

@@ -89,6 +89,12 @@ fn dumpStmt(writer: *std.Io.Writer, stmt: ast.Stmt, depth: usize) std.Io.Writer.
         .func_def => unreachable, // yukarıda erken döndürüldü
         .class_def => |c| {
             try writer.print("(class {s}\n", .{c.name});
+            for (c.fields) |fd| {
+                try indent(writer, depth + 1);
+                try writer.print("(field {s}:", .{fd.name});
+                try dumpType(writer, fd.type_expr);
+                try writer.writeAll(")\n");
+            }
             for (c.methods) |m| try dumpFuncDef(writer, m, depth + 1);
             try indent(writer, depth);
             try writer.writeAll(")\n");

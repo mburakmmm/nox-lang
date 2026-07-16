@@ -344,6 +344,35 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   mevcut fixture OLMADIĞI fark edildi — YENİ `err_class_self_wrong_type`/
   `err_protocol_self_wrong_type` golden testleriyle KAPATILDI (kasıtlı
   boz→kırmızı→düzelt ritüeliyle doğrulandı).
+- **Açık sınıf alan bildirimleri** (Faz FF.5, bkz. nox-teknik-
+  spesifikasyon.md §3.64). Bir sınıfın alan tipleri ARTIK `__init__`den
+  ÇIKARILMANIN YANI SIRA sınıf gövdesinde çıplak `<ad>: <tip>` (PEP 526
+  tarzı, gerçek Python'da ZATEN var olan bir yapı) İLE de AÇIKÇA
+  bildirilebilir — İKİ mekanizma AYNI sınıfta BİRLİKTE kullanılabilir.
+  FF.4'ün AKSİNE bu, checker'IN YANI SIRA codegen'e de DOKUNMAYI
+  GEREKTİRDİ — codegen'in KENDİ, DAHA ZAYIF `inferFieldType`si (yalnızca
+  `__init__` parametresi/literal/üst-düzey atama tanır) açıkça bildirilen
+  alanlar İçin TAMAMEN ATLANIR, tip `resolveType` İLE DOĞRUDAN çözülür —
+  bu, `inferFieldType`nin BUGÜNE KADAR ele ALAMADIĞI alan örüntülerini
+  (ör. bir `if` İÇİNDE atanan bir alan) da MÜMKÜN kılar. Güvenlik
+  gereksinimi: AÇIKÇA bildirilen bir alanın `__init__`de HİÇ atanmaması
+  YENİ bir checker hatasıdır (`UnassignedField`) — codegen TÜM alanları
+  `__init__`den ÖNCE sıfırladığından, atanmayan bir alan (heap-tipli İSE)
+  SALLANAN/null bir işaretçi OLARAK kalırdı (Faz FF.3'ün kapattığı açıkla
+  AYNI RUHTA, ÖNLENEN bir tehlike). Düzeltme sırasında İKİ BLOCKING hijyen
+  açığı bulundu ve giderildi: `nox fmt`in bildirilen alanları SESSİZCE
+  SİLMESİ (formatlayıcının `.class_def` dalı GÜNCELLENMEMİŞTİ) ve `import
+  nox.X` üzerinden gelen sınıfların alan bildirimlerinin `module_loader.zig`de
+  SESSİZCE düşmesi. Ayrıca alan bildirimlerinin (`ast.Stmt`ten BAĞIMSIZ
+  olmaları nedeniyle) `nox fmt`in trivia (boş satır/yorum) akışını
+  GERÇEKTEN BOZDUĞU GÖZLEMLENDİ (bir sonraki deyimin gövdesine SIZAN
+  sahte bir boş satır) — `FieldDecl`e satır numarası eklenerek düzeltildi.
+  YENİ golden testler (bildirilen+çıkarılan alanların BİRLİKTE çalıştığı,
+  atanmayan/çakışan/yinelenen bildirim hata durumları, `inferFieldType`nin
+  ele ALAMADIĞI bir örüntüde codegen bypass'ının çalıştığını KANITLAYAN
+  uçtan uca bir test, `nox fmt` round-trip testi) + üç BAĞIMSIZ
+  mekanizma (parser/checker/codegen) İçin AYRI AYRI boz→kırmızı→düzelt
+  ritüeli.
 
 ## [1.0.0]
 

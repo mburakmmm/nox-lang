@@ -1101,6 +1101,22 @@ const Codegen = struct {
         }
 
         var info: ClassInfo = .{};
+        // Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): AÇIKÇA
+        // bildirilen alanlar, `__init__` gövdesi taranmadan ÖNCE (bildirim
+        // SIRASIYLA) `info.fields`e eklenir — tipleri `resolveType` İLE
+        // DOĞRUDAN çözülür (metod parametreleri/dönüşleri İçin ZATEN
+        // kullanılan AYNI genel çözücü), `inferFieldType`nin dar
+        // YETENEĞİNİ (yalnızca `self`/`__init__` parametresi/literal)
+        // TAMAMEN ATLAR. Aşağıdaki `__init__`-tarama döngüsünün MEVCUT
+        // "zaten var mı" kontrolü (`exists`), bu ÖNCEDEN eklenmiş alanları
+        // OTOMATİK olarak ATLAR — `inferFieldType`e HİÇ uğramazlar.
+        for (cd.fields) |fd| {
+            try info.fields.append(self.allocator, .{
+                .name = fd.name,
+                .info = try self.resolveType(fd.type_expr),
+                .offset = TAG_SIZE + info.fields.items.len * FIELD_SLOT_SIZE,
+            });
+        }
         if (init_fd) |init| {
             for (init.body) |stmt| {
                 if (stmt.kind != .assign) continue;
@@ -1130,11 +1146,17 @@ const Codegen = struct {
             info.init_params = iparams;
         } else {
             // `__init__`i olmayan sınıf (bkz. `ClassInfo.has_init`in belge
-            // notu): alan yok, kurucu 0 argüman alır — checker zaten bu
-            // durumda çağrı sitesinde 0 argüman şart koşar (bkz. checker.zig,
+            // notu): kurucu 0 argüman alır — checker zaten bu durumda
+            // çağrı sitesinde 0 argüman şart koşar (bkz. checker.zig,
             // `checkCall`in `.identifier` dalı, `init_sig orelse` varsayılanı).
+            // Faz FF.5: bildirilen alanlar (varsa) YİNE de `info.fields`de
+            // KALIR (yukarıda eklendi) — ama checker BU durumu (bildirilen
+            // bir alanın `__init__` OLMADIĞI İçin HİÇ atanamaması) ZATEN
+            // `UnassignedField` İLE REDDETTİĞİNDEN (bkz. `checkClassBody`),
+            // bu yol PRATİKTE codegen'e HİÇ ULAŞMAZ — yalnızca savunmacı
+            // tutarlılık İçin `total_size` yine de alanları HESABA katar.
             info.has_init = false;
-            info.total_size = TAG_SIZE;
+            info.total_size = TAG_SIZE + info.fields.items.len * FIELD_SLOT_SIZE;
         }
         info.class_id = self.next_class_id;
         self.next_class_id += 1;

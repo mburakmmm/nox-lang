@@ -175,3 +175,25 @@ test "fmt: çıplak self normalize EDİLMEZ, açık self: Tip de DEĞİŞMEDEN k
         try std.testing.expectEqualStrings(c.out, got);
     }
 }
+
+// Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): AÇIKÇA bildirilen
+// sınıf alanları `nox fmt`den SONRA HÂLÂ MEVCUT olmalı — formatlayıcının
+// `.class_def` dalı GÜNCELLENMEDEN, bu alanlar SESSİZCE SİLİNİRDİ (dosya
+// HÂLÂ parse OLURDU, yalnızca çıkarım-only semantiğe geri dönerdi) —
+// bu test O regresyonun DOĞRUDAN kanıtıdır. İKİNCİ bir formatlamanın
+// (`formatSource` İKİ KEZ çağrılarak) AYNI sonucu üretmesi (idempotentlik)
+// de doğrulanır.
+test "fmt: bildirilen sınıf alanları SİLİNMEZ, idempotenttir" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "class Point:\n    x: int\n    y: int\n\n    def __init__(self, x: int, y: int) -> None:\n        self.x = x\n        self.y = y\n";
+    const formatted_once = try formatSource(allocator, source);
+    try std.testing.expect(std.mem.indexOf(u8, formatted_once, "x: int") != null);
+    try std.testing.expect(std.mem.indexOf(u8, formatted_once, "y: int") != null);
+    try std.testing.expectEqualStrings(source, formatted_once);
+
+    const formatted_twice = try formatSource(allocator, formatted_once);
+    try std.testing.expectEqualStrings(formatted_once, formatted_twice);
+}

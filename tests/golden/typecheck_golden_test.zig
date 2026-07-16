@@ -460,3 +460,45 @@ test "golden(typecheck): Faz FF.4 — AÇIKÇA yanlış self tipi (protokol) HÂ
         @embedFile("typecheck_cases/err_protocol_self_wrong_type.expected"),
     );
 }
+
+test "golden(typecheck): Faz FF.5 — açıkça bildirilen sınıf alanları, __init__de TAM atanınca GEÇERLİ" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_class_declared_fields.nox"),
+        @embedFile("typecheck_cases/ok_class_declared_fields.expected"),
+    );
+}
+
+test "golden(typecheck): Faz FF.5 — bildirilen VE çıkarılan alanlar AYNI sınıfta BİRLİKTE çalışır" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_class_declared_and_inferred_mixed.nox"),
+        @embedFile("typecheck_cases/ok_class_declared_and_inferred_mixed.expected"),
+    );
+}
+
+test "golden(typecheck): Faz FF.5 — bildirilen bir alan __init__de HİÇ atanmazsa reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_class_declared_field_unassigned.nox"),
+        @embedFile("typecheck_cases/err_class_declared_field_unassigned.expected"),
+    );
+}
+
+test "golden(typecheck): Faz FF.5 — bildirilen alanı OLAN ama __init__i OLMAYAN sınıf reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_class_declared_field_no_init.nox"),
+        @embedFile("typecheck_cases/err_class_declared_field_no_init.expected"),
+    );
+}
+
+test "golden(typecheck): Faz FF.5 — bildirilen tip İLE __init__deki atama ÇATIŞIRSA reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_class_declared_field_type_conflict.nox"),
+        @embedFile("typecheck_cases/err_class_declared_field_type_conflict.expected"),
+    );
+}
+
+test "golden(typecheck): Faz FF.5 — AYNI alan İKİ kez bildirilirse reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_class_duplicate_field_decl.nox"),
+        @embedFile("typecheck_cases/err_class_duplicate_field_decl.expected"),
+    );
+}

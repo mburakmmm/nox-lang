@@ -134,9 +134,35 @@ pub const FuncDef = struct {
     is_async: bool = false,
 };
 
+/// Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): bir sınıf gövdesinde
+/// çıplak `<ad>: <tip>` (PEP 526 tarzı, initializer YOK) — `VarDecl`nin
+/// AKSİNE `value: Expr` ZORUNLU DEĞİL, bu yüzden AYRI bir düğüm (`VarDecl`ı
+/// opsiyonel-value'ya çevirmek TÜM mevcut tüketicilerine null-güvenlik
+/// eklemeyi GEREKTİRİRDİ). Yalnızca alanın TİPİNİ bildirir — ATAMA HÂLÂ
+/// `__init__` gövdesinde `self.<ad> = <ifade>` İLE yapılır (checker, bu
+/// atamanın GERÇEKTEN gerçekleştiğini doğrular, bkz. `Checker.
+/// declared_unassigned`).
+pub const FieldDecl = struct {
+    name: []const u8,
+    type_expr: TypeExpr,
+    /// `ast.Stmt.line`in AYNISI — `formatter.zig`nin `emitLeadingTrivia`si
+    /// bunu KULLANIR (bkz. onun belge notu): bir alan bildirimi, GERÇEK bir
+    /// `ast.Stmt` OLMAMASINA RAĞMEN, kaynak konumunu bilmeden trivia
+    /// (boş satır/yorum) akışı BOZULUR — bir sonraki gerçek deyim, BU
+    /// alanın kendi satırına ait TÜKETİLMEMİŞ trivia'yı YANLIŞ YERDE
+    /// (kendi gövdesinin İÇİNDE) basardı (GERÇEKTEN gözlemlenen bir
+    /// biçimlendirme hatasıydı, bkz. `fmt_golden_test.zig`).
+    line: u32 = 0,
+};
+
 pub const ClassDef = struct {
     name: []const u8,
     methods: []FuncDef,
+    /// Faz FF.5: KATMANLI/opsiyonel — boş bırakılırsa (varsayılan) sınıfın
+    /// TÜM alanları ÖNCEDEN OLDUĞU GİBİ `__init__`den ÇIKARILIR; burada
+    /// listelenen adlar İçin ÇIKARIM ATLANIR, tip DOĞRUDAN bu bildirimden
+    /// alınır.
+    fields: []FieldDecl = &.{},
 };
 
 /// Yapısal (structural) bir protokol — Python'ın `typing.Protocol`'üne
