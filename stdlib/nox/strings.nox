@@ -1,15 +1,23 @@
 # Stdlib fazı §H — bkz. nox-teknik-spesifikasyon.md. `split`/`trim`/`upper`/
-# `lower`/`replace`, değişken uzunluklu sonuç üretir/byte-seviyeli tarama
-# gerektirdiğinden Zig kabuğuna (`runtime/stdlib_shims/strings.zig`) sarar.
-# `join`/`contains`/`starts_with`/`ends_with`/`index_of` İSE TAMAMEN saf
-# Nox'ta — `for x in list:` + `+` birleştirme + Alt-Faz G'nin `s[i]`siyle,
-# hiç Zig/extern def GEREKMEDEN.
+# `lower`/`replace`/`join`, değişken uzunluklu sonuç üretir/byte-seviyeli
+# tarama gerektirdiğinden Zig kabuğuna (`runtime/stdlib_shims/strings.zig`)
+# sarar (Faz EE.1'den ÖNCE `join` İSTİSNAYDI — saf Nox'ta O(n²) bir
+# `+`-birleştirme döngüsüydü, bkz. §3.61). `contains`/`starts_with`/
+# `ends_with`/`index_of` TAMAMEN saf Nox'ta kalır — ama ARTIK `s[i]`
+# (HER ÇAĞRIDA yeni bir 1-karakterlik `str` tahsis eden Alt-Faz G'nin
+# indekslemesi) YERİNE alloc-sız `byte_at`i kullanır (bkz. §3.61).
 
 extern def nox_strings_split_raw(s: str, sep: str) -> list[str] from "zig-out/lib/noxrt.o" with_rt
 extern def nox_strings_trim_raw(s: str) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_strings_upper_raw(s: str) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_strings_lower_raw(s: str) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_strings_replace_raw(s: str, old: str, new: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_strings_join_raw(parts: list[str], sep: str) -> str from "zig-out/lib/noxrt.o" with_rt
+# Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) — `nox_str_char_at`nin
+# (`s[i]`, HER ÇAĞRIDA yeni bir 1-karakterlik `str` tahsis eder) AKSİNE,
+# ham bayt değerini tahsissiz döner — bayt-bayt TARAMA/KARŞILAŞTIRMA İçin
+# (bkz. `starts_with`/`ends_with`/`index_of`).
+extern def nox_str_byte_at(s: str, idx: int) -> int from "zig-out/lib/noxrt.o"
 
 def split(s: str, sep: str) -> list[str]:
     return nox_strings_split_raw(s, sep)
@@ -26,23 +34,23 @@ def lower(s: str) -> str:
 def replace(s: str, old: str, new: str) -> str:
     return nox_strings_replace_raw(s, old, new)
 
+# Faz EE.1 — `s[i]`nin (bir `str` döner, HER ÇAĞRIDA tahsis eder) alloc-sız
+# eşdeğeri: ham bayt DEĞERİNİ (`int`) döner. Kullanıcı kodu, performans-
+# duyarlı bayt-bayt tarama/karşılaştırma İçin `s[i]` YERİNE bunu tercih
+# edebilir — bu modülün KENDİ `starts_with`/`ends_with`/`index_of`si de
+# ARTIK bunu kullanıyor (bkz. aşağı).
+def byte_at(s: str, idx: int) -> int:
+    return nox_str_byte_at(s, idx)
+
 def join(parts: list[str], sep: str) -> str:
-    result: str = ""
-    first: bool = True
-    for p in parts:
-        if first:
-            result = p
-            first = False
-        else:
-            result = result + sep + p
-    return result
+    return nox_strings_join_raw(parts, sep)
 
 def starts_with(s: str, prefix: str) -> bool:
     if len(prefix) > len(s):
         return False
     i: int = 0
     while i < len(prefix):
-        if s[i] != prefix[i]:
+        if nox_str_byte_at(s, i) != nox_str_byte_at(prefix, i):
             return False
         i = i + 1
     return True
@@ -53,7 +61,7 @@ def ends_with(s: str, suffix: str) -> bool:
     offset: int = len(s) - len(suffix)
     i: int = 0
     while i < len(suffix):
-        if s[offset + i] != suffix[i]:
+        if nox_str_byte_at(s, offset + i) != nox_str_byte_at(suffix, i):
             return False
         i = i + 1
     return True
@@ -68,7 +76,7 @@ def index_of(s: str, needle: str) -> int:
         j: int = 0
         matched: bool = True
         while j < n:
-            if s[i + j] != needle[j]:
+            if nox_str_byte_at(s, i + j) != nox_str_byte_at(needle, j):
                 matched = False
                 j = n
             j = j + 1

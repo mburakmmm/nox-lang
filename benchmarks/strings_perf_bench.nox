@@ -1,0 +1,41 @@
+import nox.strings
+
+def build_haystack(n: int) -> str:
+    parts: list[str] = ["x"]
+    i: int = 1
+    while i < n:
+        parts.append("x")
+        i = i + 1
+    return nox.strings.join(parts, "")
+
+def scan_bench(haystack: str, iterations: int) -> int:
+    count: int = 0
+    i: int = 0
+    while i < iterations:
+        if nox.strings.contains(haystack, "needle"):
+            count = count + 1
+        i = i + 1
+    return count
+
+def build_parts(n: int) -> list[str]:
+    parts: list[str] = ["word"]
+    i: int = 1
+    while i < n:
+        parts.append("word")
+        i = i + 1
+    return parts
+
+def join_bench(parts: list[str], iterations: int) -> int:
+    total: int = 0
+    i: int = 0
+    while i < iterations:
+        joined: str = nox.strings.join(parts, ",")
+        total = total + len(joined)
+        i = i + 1
+    return total
+
+haystack: str = build_haystack(2000) + "needle"
+print(scan_bench(haystack, 50000))
+
+parts: list[str] = build_parts(3000)
+print(join_bench(parts, 500))

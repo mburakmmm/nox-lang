@@ -251,6 +251,23 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   gerçek bir çalışma-zamanı tıkanmasına — paylaşılan fd'nin erken
   kapanıp diğer iş parçacığının `accept()`ini sonsuza dek askıda
   bırakması — da yol açtı, düzeltmenin gerekliliğinin somut kanıtı).
+- Stdlib geliştirme ve performans (Faz EE.1 — kullanıcının "sonraki aşama
+  geliştirmeler" listesinin #4 maddesi). Beş kalem: (1) `nox.strings.
+  byte_at(s, idx) -> int` — `s[i]`nin (her çağrıda tahsis eden) alloc-sız
+  eşdeğeri; `starts_with`/`ends_with`/`index_of`/`contains` artık bunu
+  kullanıyor, ÖNCEDEN hiç bayraklanmamış bir O(n·m) heap-tahsis darboğazını
+  giderdi. (2) `nox.strings.join` artık Zig'de tek-geçiş O(n) (ÖNCEDEN saf
+  Nox'ta `+`-birleştirme döngüsüyle O(n²)idi — `split`/`trim`/vb.'nin
+  ZATEN izlediği "Zig'e sar" örüntüsüne UYMUYORDU). (3) YENİ `list[T].
+  sort()` — `int`/`float`/`str` elemanlar, `.append`den FARKLI olarak
+  alıcı çıplak bir isimle SINIRLI DEĞİL. (4) YENİ `nox.path` modülü —
+  `join`/`basename`/`dirname`/`extension`/`is_absolute`, saf string
+  manipülasyonu, I/O yok. (5) `nox.fs.exists`/`is_file`/`is_dir` — var
+  OLMAMA durumunda `read_to_string`in AKSİNE ASLA `raise` etmez.
+  `nox-teknik-spesifikasyon.md` §3.61. `strings_perf_bench.nox`
+  ölçümü: 6040ms → 200ms (**~30x hızlanma**, çıktı değerleri birebir
+  aynı). Yeni Zig birim testleri + 3 yeni uçtan uca golden test + 2
+  kalem için kasıtlı boz→kırmızı ritüeli.
 
 ## [1.0.0]
 

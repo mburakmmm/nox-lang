@@ -85,6 +85,13 @@ const stress_benchmarks = [_]Benchmark{
     // benchmark'ın (bu fazı tetikleyen ölçüm, bkz. RESULTS.md) AYNI
     // ölçeği — hem doğruluk (basit toplama) hem regresyon takibi içindir.
     .{ .name = "method_call_elision", .path = "benchmarks/method_call_elision.nox", .expected = "300000000\n" },
+    // Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) — `nox.strings.
+    // contains`/`index_of`/`starts_with`/`ends_with`nin (`s[i]` YERİNE
+    // alloc-sız `byte_at` kullanan) VE `nox.strings.join`in (saf Nox O(n²)
+    // döngü YERİNE Zig'de tek-geçiş O(n)) İKİ AYRI EE.1 optimizasyonunu
+    // BİRLİKTE ölçer — 50000 `contains` taraması + 500 `join` çağrısı
+    // (3000 elemanlı bir liste üzerinde).
+    .{ .name = "strings_perf_bench", .path = "benchmarks/strings_perf_bench.nox", .expected = "50000\n7499500\n" },
 };
 
 /// **C karşılaştırması (kullanıcı isteği):** Python'un yanına, AYNI on

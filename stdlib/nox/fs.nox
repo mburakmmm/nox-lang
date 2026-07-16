@@ -18,6 +18,12 @@ class FsError:
 extern def nox_fs_read_to_string_raw(path: str) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_fs_write_string_raw(path: str, content: str) -> None from "zig-out/lib/noxrt.o" with_rt
 extern def nox_fs_last_op_ok() -> int from "zig-out/lib/noxrt.o"
+# Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) — `read_to_string`/
+# `write_string`nin AKSİNE bunlar ASLA `raise` ETMEZ: var OLMAMA burada
+# GEÇERLİ, beklenen bir sonuçtur.
+extern def nox_fs_exists_raw(path: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_fs_is_file_raw(path: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_fs_is_dir_raw(path: str) -> int from "zig-out/lib/noxrt.o"
 
 def read_to_string(path: str) -> str:
     content: str = nox_fs_read_to_string_raw(path)
@@ -29,3 +35,12 @@ def write_string(path: str, content: str) -> None:
     nox_fs_write_string_raw(path, content)
     if nox_fs_last_op_ok() == 0:
         raise FsError("dosya yazilamadi: " + path)
+
+def exists(path: str) -> bool:
+    return nox_fs_exists_raw(path) != 0
+
+def is_file(path: str) -> bool:
+    return nox_fs_is_file_raw(path) != 0
+
+def is_dir(path: str) -> bool:
+    return nox_fs_is_dir_raw(path) != 0

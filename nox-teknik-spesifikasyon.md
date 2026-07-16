@@ -9068,6 +9068,132 @@ bu fazın kapsamı DIŞINDA).
 
 `zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
 
+## 3.61 Faz EE.1 — Stdlib Geliştirme ve Performans
+
+**Kaynak:** kullanıcının "sonraki aşama geliştirmeler" listesinin #4
+maddesi ("stdlib geliştirme ve performans artışı"). #1 (CLI), #2 (Faz
+M.8), #3 (Faz DD.1) TAMAMLANDIKTAN SONRA sıradaki madde. Kullanıcı
+AskUserQuestion'da ÜÇÜNÜ BİRDEN seçti: (1) dilin ihtiyaç duyduğu ama
+stdlib'de eksik olan içeriği tamamla, (2) darboğaz ölç/gider, (3) mevcut
+modüllerdeki yarım kalan davranışları tamamla. Bir Explore araştırması
+TÜM `stdlib/nox/*.nox`u envanterleyip belgelenen "kapsam dışı" notlarını
+taradı — bulgular ışığında EN YÜKSEK-DEĞERLİ/EN DÜŞÜK-RİSKLİ 5 kalemle
+sınırlandırıldı (subprocess spawning, `tuple`/`set`, CLI argüman
+ayrıştırıcı, trig/sabitler/base64 gibi DAHA BÜYÜK/DAHA DÜŞÜK-ÖNCELİKLİ
+kalemler BİLİNÇLİ olarak gelecekteki bir faza bırakıldı).
+
+### 1. `nox.strings`: alloc-sız byte karşılaştırması
+
+`runtime/str.zig`nin `nox_str_char_at`i (`s[i]`, Python-tarzı "indeksleme
+bir `str` döner" semantiği) HER ÇAĞRIDA yeni bir 2 baytlık ARC nesnesi
+tahsis eder — bu, `s[i]`nin KENDİSİ İçin DOĞRU/DEĞİŞTİRİLMEYECEK bir
+tasarımdır. Ama `stdlib/nox/strings.nox`nin `starts_with`/`ends_with`/
+`index_of` (dolayısıyla `contains`) fonksiyonları KARŞILAŞTIRMA amaçlı
+`s[i] != needle[j]` KULLANIYORDU — bu, O(n·m) HEAP TAHSİSİNE yol açıyordu
+(yalnızca O(n·m) karşılaştırmaya DEĞİL), ÖNCEDEN hiç bayraklanmamış GERÇEK
+bir darboğaz. YENİ `nox_str_byte_at(s, idx) -> int` (`runtime/str.zig`,
+TAHSİS YOK) + `nox.strings.byte_at` (genel kullanıma açık, kullanıcı kodu
+da AYNI kazanımı elde edebilir) — üç tarama fonksiyonu İÇ karşılaştırmaları
+BUNA çevrildi, davranış AYNI kaldı.
+
+### 2. `nox.strings.join`: O(n²) → O(n)
+
+`join`, saf Nox'ta `result = result + sep + p` döngüsüyle yazılmıştı —
+`nox_str_concat`in (`runtime/str.zig`) HER ÇAĞRIDA TAM kopya yapması
+nedeniyle O(n²). `split`/`trim`/`upper`/`lower`/`replace` ZATEN (AYNI
+gerekçeyle: "değişken uzunluklu sonuç → Zig'e sar") Zig kabuğuna
+SARIYORDU — `join` bu ÖRÜNTÜYE UYMUYORDU, muhtemelen basit görünüp gözden
+kaçmıştı. YENİ `nox_strings_join_raw` (`runtime/stdlib_shims/strings.zig`)
+TEK geçişte toplam uzunluğu hesaplar, TEK `nox_rc_alloc` yapar, TÜM
+parçaları/ayırıcıları KOPYALAR — O(n). `join` bu extern'e delege eder.
+
+**İsimlendirme tuzağı (GERÇEKTEN yaşandı, düzeltmeden ÖNCE `nox.path`
+İçin AYRICA tekrarlandı — bkz. §4):** extern fonksiyonun İLK adı
+(`nox_path_join`, `_raw` soneki OLMADAN) `nox.path`nin KENDİ `join`
+fonksiyonunun otomatik-mangled adıyla (`nox_path_join`) ÇAKIŞTI —
+`DuplicateDefinition` hatasıyla YAKALANDI. `_raw` soneki TAM OLARAK bu
+çakışmayı ÖNLEMEK İçin var (`nox_fs_read_to_string_raw` vb. ZATEN
+kullanıyordu) — genel bir DERS olarak NOT edilir: bir extern def, AYNI
+modüldeki bir public fonksiyonla AYNI isme sahipse, o public fonksiyonun
+mangled adıyla ÇAKIŞMAMASI İçin `_raw` (ya da benzeri) bir sonek ZORUNLUDUR.
+
+**`extern def` PARAMETRE tipi genişletmesi:** `nox_strings_join_raw`nin
+`list[str]` PARAMETRESİ ALMASI GEREKTİĞİNDEN, `checker.zig`nin
+`isFfiSafeListType`i (ÖNCEDEN `isFfiSafeListReturnType`, "yalnızca DÖNÜŞ,
+PARAMETRE değil" — gerekçesi "henüz bir kullanım örneği YOK") YENİDEN
+ADLANDIRILIP PARAMETRE yönünde de AÇILDI — ALTTAKİ temsil gerekçesi
+(`list[str]`in çalışma zamanı temsili ZATEN ARC'lı bir payload, Zig
+DOĞRUDAN OKUYABİLİR) parametre yönünde de AYNEN GEÇERLİDİR. `isFfiSafeClassReturnType`
+İSE (sınıf tipleri İçin) HÂLÂ "yalnızca DÖNÜŞ" kalır — `class_id`nin
+derleme sırasına bağlı olması nedeniyle Zig'in bir sınıfın ham baytlarını
+DOĞRUDAN OKUMASI GÜVENLİ DEĞİLDİR.
+
+### 3. `list[T].sort()` — `int`/`float`/`str` elemanlar
+
+YENİ `runtime/collections/list_sort.zig`: `nox_list_sort_int`/`_float`/
+`_str` (`std.mem.sort`/`std.sort.asc` İLE, `str` İçin işaretçileri
+DEREFERANS eden bir karşılaştırıcı). `checker.zig`nin `.list` dalı `sort`u
+TANIR — 0 argüman, eleman tipi `int`/`float`/`str` OLMALI (Nox'ta
+kullanıcı-tanımlı karşılaştırıcı YOK, sınıf/`list`/`dict` elemanları İçin
+"nasıl sıralanır" TANIMSIZ). `codegen.zig`nin `genListSort`ı `.append`den
+FARKLI olarak alıcının SLOTUNA geri yazma/`nox_list_grow` GEREKTİRMEZ
+(sıralama MEVCUT arabelleği YERİNDE değiştirir, `len`/`cap` DEĞİŞMEZ) — bu
+yüzden `.append`nin "alıcı çıplak isim/yerel OLMALI" kısıtı BURADA
+UYGULANMAZ, `getList().sort()` de GEÇERLİDİR (`genDictMethod`nin
+`contains`/`len`iyle AYNI `releaseIfTemporary` deseni).
+
+### 4. YENİ `nox.path` modülü (saf string manipülasyonu, I/O YOK)
+
+`runtime/stdlib_shims/path.zig` + `stdlib/nox/path.nox`: `join`/
+`basename`/`dirname`/`extension`/`is_absolute` — `std.fs.path.*`i sarar.
+HİÇBİRİ `raise` ETMEZ (saf fonksiyonlar, HER ZAMAN başarılı). `dirname`
+bir üst dizin YOKSA (`std.fs.path.dirname` `null` döner) boş dize (`""`)
+döndürür — Nox `str`ın nullable bir karşılığı OLMADIĞINDAN belgelenen,
+kasıtlı bir varsayılan. `is_absolute`, `-> bool` DÖNÜŞÜ (bu projede DAHA
+ÖNCE test edilmiş bir yol DEĞİL) YERİNE `nox_fs_last_op_ok`nin AYNI
+KANITLANMIŞ "int (0/1) dön, `.nox` `!= 0` İLE `bool`a çevirir" desenini
+izler.
+
+### 5. `nox.fs`e varlık sorguları eklenir
+
+`exists(path) -> bool`, `is_file(path) -> bool`, `is_dir(path) -> bool` —
+`read_to_string`/`write_string`nin AKSİNE ASLA `raise` ETMEZ (var OLMAMA
+burada GEÇERLİ, beklenen bir sonuçtur). **`std.c.stat` DEĞİL:** bu Zig
+sürümünün `std.c.stat` cross-platform sarmalayıcısı aarch64-macOS İÇİN
+BAĞLI DEĞİL (`private.stat` sembolü YOK — GERÇEKTEN derleme HATASI vererek
+keşfedildi, ilk denemenin başarısız olması). Bunun yerine `std.c.access`
+(varlık İçin) + `std.c.open(O_DIRECTORY)` (dizin mi sorusu İçin —
+YALNIZCA hedef GERÇEKTEN bir dizinse başarılı olur, `ENOTDIR` İLE
+başarısız olur AKSİ HALDE) kullanıldı — HER platformda DOĞRUDAN bağlı,
+TAM bir `stat` yapısına gerek OLMADAN yeterli. "Dosya" burada "var VE
+dizin DEĞİL" olarak TANIMLANIR (sembolik link/özel dosya AYRIMI yapılmaz —
+`nox.fs`in ZATEN belgelenen v1 basitleştirmeleriyle TUTARLI).
+
+**Doğrulama:**
+- HER kalem İçin YENİ Zig birim testleri (`nox_str_byte_at`, `nox_strings_
+  join_raw` — boş/dolu liste, `nox_list_sort_int`/`_float`/`_str`,
+  `nox_path_*`, `nox_fs_exists/is_file/is_dir_raw`).
+- 3 YENİ uçtan uca golden test (`list_sort.nox`, `path_manipulation.nox`,
+  `fs_exists_queries.nox`) + `join`/`starts_with`/`ends_with`/`contains`/
+  `index_of`i ZATEN kapsayan 2 MEVCUT golden test (`strings_split_join.nox`,
+  `strings_search.nox` — İKİSİ de DEĞİŞMEDEN geçti, davranış korunduğunun
+  KANITI).
+- **Kasıtlı boz→kırmızı→düzelt:** `genListSort`nin eleman-tipi dispatch'i
+  GEÇİCİ olarak KOŞULSUZ `nox_list_sort_int`e sabitlendi — `list_sort.nox`
+  golden testi KIRMIZI oldu (str sıralaması BOZULDU, int/float TESADÜFEN
+  hâlâ doğruydu). `nox_strings_join_raw`nin ayırıcı-kopyalama adımı GEÇİCİ
+  olarak DEVRE DIŞI bırakıldı — HEM YENİ birim testi HEM MEVCUT
+  `strings_split_join` golden testi KIRMIZI oldu. İKİSİ de GERİ YÜKLENDİ
+  (`diff` İLE bayt-bayt ÖZDEŞLİK doğrulanarak), YENİDEN yeşile döndü.
+- **Performans doğrulaması:** `benchmarks/strings_perf_bench.nox` (50000
+  `contains` taraması + 3000 elemanlı bir listede 500 `join` çağrısı) —
+  HER İKİ optimizasyon da GEÇİCİ olarak ESKİ davranışa (`s[i]` + O(n²)
+  `join`) geri alınıp yeniden ölçüldü: 6040ms → 200ms, **~30x hızlanma**
+  (çıktı DEĞERLERİ İKİ durumda da BİREBİR AYNI). Bkz. `benchmarks/
+  RESULTS.md`.
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

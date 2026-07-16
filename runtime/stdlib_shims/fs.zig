@@ -98,6 +98,61 @@ export fn nox_fs_write_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8, content
     g_last_ok = true;
 }
 
+/// Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) — `read_to_string`/
+/// `write_string`nin AKSİNE bunlar `g_last_ok`ı HİÇ DOKUNMAZ/OKUMAZ: var
+/// OLMAMA burada GEÇERLİ, BEKLENEN bir sonuçtur (kullanıcı `read_to_string`i
+/// deneyip `FsError` yakalamak YERİNE ÖNCE sorabilir) — `.nox` sarmalayıcısı
+/// (bkz. `stdlib/nox/fs.nox`) ASLA `raise` ETMEZ.
+///
+/// **`std.c.stat` DEĞİL, `access`/`open(O_DIRECTORY)`:** bu Zig sürümünün
+/// `std.c.stat` cross-platform sarmalayıcısı aarch64-macOS İÇİN bağlı
+/// DEĞİL (`private.stat` sembolü YOK — GERÇEKTEN derleme HATASI vererek
+/// keşfedildi). `access`/`open` İSE HER platformda DOĞRUDAN bağlı,
+/// TAM bir `stat` yapısına gerek OLMADAN "var mı"/"dizin mi" sorularını
+/// yanıtlamaya YETERLİ.
+export fn nox_fs_exists_raw(path: ?[*:0]const u8) callconv(.c) i32 {
+    const p = path orelse return 0;
+    return if (std.c.access(p, std.c.F_OK) == 0) 1 else 0;
+}
+
+/// `O_DIRECTORY` İLE açmak YALNIZCA hedef GERÇEKTEN bir dizinse başarılı
+/// olur (`ENOTDIR` İLE başarısız olur AKSİ HALDE) — TAM bir `stat`
+/// olmadan "dizin mi" sorusunu GÜVENİLİR şekilde yanıtlar.
+export fn nox_fs_is_dir_raw(path: ?[*:0]const u8) callconv(.c) i32 {
+    const p = path orelse return 0;
+    const o_dir: std.c.O = .{ .ACCMODE = .RDONLY, .DIRECTORY = true };
+    const fd = std.c.open(p, o_dir, @as(c_uint, 0));
+    if (fd < 0) return 0;
+    _ = std.c.close(fd);
+    return 1;
+}
+
+/// "Dosya" burada "var VE dizin DEĞİL" olarak TANIMLANIR (sembolik
+/// link/özel dosya AYRIMI yapılmaz — `nox.fs`in ZATEN belgelenen v1
+/// basitleştirmeleriyle TUTARLI, bkz. bu dosyanın modül-üstü notu).
+export fn nox_fs_is_file_raw(path: ?[*:0]const u8) callconv(.c) i32 {
+    const p = path orelse return 0;
+    if (std.c.access(p, std.c.F_OK) != 0) return 0;
+    return if (nox_fs_is_dir_raw(p) == 0) 1 else 0;
+}
+
+test "nox_fs_exists/is_file/is_dir_raw dogru sonuc doner" {
+    var full_buf: [64]u8 = undefined;
+    const full_path = try std.fmt.bufPrintZ(&full_buf, "/tmp/nox_ee1_fs_test_{d}.txt", .{std.c.getpid()});
+    defer _ = std.c.unlink(full_path.ptr);
+
+    try std.testing.expectEqual(@as(i32, 0), nox_fs_exists_raw("/definitely/does/not/exist/nox_ee1_test"));
+
+    nox_fs_write_string_raw(null, full_path.ptr, "hi");
+    try std.testing.expectEqual(@as(i32, 1), nox_fs_exists_raw(full_path.ptr));
+    try std.testing.expectEqual(@as(i32, 1), nox_fs_is_file_raw(full_path.ptr));
+    try std.testing.expectEqual(@as(i32, 0), nox_fs_is_dir_raw(full_path.ptr));
+
+    try std.testing.expectEqual(@as(i32, 1), nox_fs_exists_raw("/tmp"));
+    try std.testing.expectEqual(@as(i32, 1), nox_fs_is_dir_raw("/tmp"));
+    try std.testing.expectEqual(@as(i32, 0), nox_fs_is_file_raw("/tmp"));
+}
+
 // Faz BB.1: `g_last_ok`nin `threadlocal` OLMASININ, İKİ GERÇEK OS iş
 // parçacığının AYNI ANDA `nox.fs` ÇAĞIRDIĞINDA birbirinin bayrağını
 // EZMEDİĞİNİ kanıtlar — biri BAŞARISIZ (var olmayan yol), diğeri BAŞARILI

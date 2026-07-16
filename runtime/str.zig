@@ -147,6 +147,25 @@ test "nox_str_char_at gecerli indekste dogru karakteri doner" {
     try std.testing.expectEqualStrings("o", std.mem.sliceTo(c4, 0));
 }
 
+/// Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) — `nox_str_char_at`
+/// İLE AYNI "çağıran ÖNCEDEN sınırı doğruladı" sözleşmesi, ama HİÇBİR
+/// TAHSİS YAPMAZ: ham bayt değerini doğrudan bir `int` olarak döner.
+/// `s[i]`nin KENDİSİ (Python-tarzı "indeksleme bir `str` döner" semantiği,
+/// `nox_str_char_at`) BİLEREK DEĞİŞTİRİLMEDİ — bu, YALNIZCA bayt-bayt
+/// KARŞILAŞTIRMA amaçlı (ör. `nox.strings.starts_with`/`index_of`in İÇ
+/// döngüleri) EK, alloc-sız bir ilkeldir; `nox.strings.byte_at` olarak
+/// genel kullanıma da açılır (bkz. `stdlib/nox/strings.nox`).
+pub export fn nox_str_byte_at(s: ?[*:0]const u8, idx: i64) i64 {
+    const p = s orelse return 0;
+    if (idx < 0) return 0;
+    return p[@intCast(idx)];
+}
+
+test "nox_str_byte_at gecerli indekste dogru bayti tahsissiz doner" {
+    try std.testing.expectEqual(@as(i64, 'h'), nox_str_byte_at("hello", 0));
+    try std.testing.expectEqual(@as(i64, 'o'), nox_str_byte_at("hello", 4));
+}
+
 test "nox_int_to_str/nox_float_to_str dogru bicimlendirir" {
     const asap = @import("alloc/asap.zig");
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;

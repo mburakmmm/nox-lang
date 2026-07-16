@@ -1,0 +1,24 @@
+# Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) — SAF yol string
+# manipülasyonu. `nox.fs`in AKSİNE hiçbir I/O yapmaz, hiçbir fonksiyon
+# `raise` ETMEZ (saf fonksiyonlar, her zaman başarılı).
+
+extern def nox_path_join_raw(a: str, b: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_path_basename_raw(p: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_path_dirname_raw(p: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_path_extension_raw(p: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_path_is_absolute_raw(p: str) -> int from "zig-out/lib/noxrt.o"
+
+def join(a: str, b: str) -> str:
+    return nox_path_join_raw(a, b)
+
+def basename(p: str) -> str:
+    return nox_path_basename_raw(p)
+
+def dirname(p: str) -> str:
+    return nox_path_dirname_raw(p)
+
+def extension(p: str) -> str:
+    return nox_path_extension_raw(p)
+
+def is_absolute(p: str) -> bool:
+    return nox_path_is_absolute_raw(p) != 0

@@ -837,6 +837,17 @@ test "codegen(çalıştır): nox.strings.starts_with/ends_with/contains/index_of
     );
 }
 
+// Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61): `list[int]`/`list[str]`/
+// `list[float]`in HER ÜÇÜ İçin `nox_list_sort_int`/`_str`/`_float`
+// dispatch'inin (`elem_qtype`/`elem_is_str`e göre) doğru fonksiyona
+// yönlendirdiğini kanıtlar.
+test "codegen(çalıştır): list[T].sort() — int/str/float elemanlar" {
+    try expectGolden(
+        @embedFile("codegen_cases/list_sort.nox"),
+        @embedFile("codegen_cases/list_sort.expected"),
+    );
+}
+
 test "codegen(çalıştır): nox.math — sqrt/pow/floor/ceil (çıplak) + min/max/abs (nitelikli)" {
     try expectGolden(
         @embedFile("codegen_cases/math_basic.nox"),
@@ -869,6 +880,26 @@ test "codegen(çalıştır): nox.fs.read_to_string eksik dosya FsError raise ede
     try expectGolden(
         @embedFile("codegen_cases/fs_read_missing_raises.nox"),
         @embedFile("codegen_cases/fs_read_missing_raises.expected"),
+    );
+}
+
+// Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61): `exists`/`is_file`/
+// `is_dir` HİÇBİR ZAMAN `raise` ETMEZ (`read_to_string`in AKSİNE) — var
+// olan/olmayan bir dosya VE bir dizin ÜZERİNDE ÜÇÜNÜN de doğru sonuç
+// döndürdüğünü kanıtlar.
+test "codegen(çalıştır): nox.fs.exists/is_file/is_dir — raise ETMEDEN sorgu" {
+    try expectGolden(
+        @embedFile("codegen_cases/fs_exists_queries.nox"),
+        @embedFile("codegen_cases/fs_exists_queries.expected"),
+    );
+}
+
+// Faz EE.1: YENİ `nox.path` modülü — saf string manipülasyonu, hiçbir I/O
+// yok, hiçbir fonksiyon raise etmez.
+test "codegen(çalıştır): nox.path.join/basename/dirname/extension/is_absolute" {
+    try expectGolden(
+        @embedFile("codegen_cases/path_manipulation.nox"),
+        @embedFile("codegen_cases/path_manipulation.expected"),
     );
 }
 

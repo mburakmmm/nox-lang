@@ -384,39 +384,51 @@ pub const Checker = struct {
         const params = try self.allocator.alloc(Type, ed.params.len);
         for (ed.params, 0..) |p, i| {
             const pt = try self.typeExprToType(p.type_expr);
-            if (!isFfiSafeType(pt)) {
-                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': parametre '{s}' desteklenmeyen bir tipte (yalnızca int/float/bool/str/None v0.1'de C ABI sınırında geçirilebilir)", .{ ed.name, p.name });
+            // Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61): `list[str]`
+            // ARTIK parametre olarak da kabul edilir — `isFfiSafeListType`in
+            // "yalnızca DÖNÜŞ, PARAMETRE değil" kısıtının gerekçesi ("bir Zig
+            // fonksiyonunun ZATEN VAR OLAN bir list[str]i TÜKETMESİ İÇİN henüz
+            // bir kullanım örneği YOK") ARTIK GEÇERLİ DEĞİL —
+            // `nox_strings_join_raw`nin GERÇEK bir ihtiyacı VAR. Aynı akıl
+            // yürütme (çalışma zamanı temsili ZATEN ARC'lı bir payload — 8
+            // bayt uzunluk başlığı + `str` işaretçileri, Zig tarafı bunu
+            // DOĞRUDAN OKUYABİLİR, İNŞA ETMEK ZORUNDA DEĞİL) PARAMETRE
+            // yönünde de AYNEN geçerlidir.
+            if (!isFfiSafeType(pt) and !isFfiSafeListType(pt)) {
+                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': parametre '{s}' desteklenmeyen bir tipte (yalnızca int/float/bool/str/None/list[str] v0.1'de C ABI sınırında geçirilebilir)", .{ ed.name, p.name });
             }
             params[i] = pt;
         }
         const ret = try self.typeExprToType(ed.return_type);
-        if (!isFfiSafeType(ret) and !isFfiSafeListReturnType(ret) and !isFfiSafeClassReturnType(ret)) {
+        if (!isFfiSafeType(ret) and !isFfiSafeListType(ret) and !isFfiSafeClassReturnType(ret)) {
             return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': dönüş tipi desteklenmeyen bir tipte (yalnızca int/float/bool/str/None/list[str]/sınıf v0.1'de C ABI sınırında geçirilebilir)", .{ed.name});
         }
         try self.functions.put(self.allocator, ed.name, .{ .params = params, .return_type = ret });
     }
 
-    /// Stdlib fazı §F: `extern def`in DÖNÜŞ tipi olarak (yalnızca dönüş —
-    /// PARAMETRE olarak DEĞİL, bkz. yukarıdaki `registerExternFunc`in
-    /// parametre döngüsü — o hâlâ SALT `isFfiSafeType` kullanır) `list[str]`
-    /// (v1 kapsamı yalnızca bu somut örnekleme) kabul edilir — `dict[str,
+    /// Stdlib fazı §F: `extern def`in DÖNÜŞ TİPİ olarak `list[str]` (v1
+    /// kapsamı yalnızca bu somut örnekleme) kabul edilir — `dict[str,
     /// str]`in D.1'de aldığı MUAMELENİN AYNISI (bkz. `isFfiSafeType`'ın
     /// `.dict` dalı): çalışma zamanı temsili ZATEN ARC'lı bir `list[T]`
     /// payload'ıdır (8 bayt uzunluk başlığı + `str` işaretçileri, bkz.
     /// `codegen.zig`'in `genListLit`ı) — Zig tarafı bunu `nox_rc_alloc` +
-    /// el ile yazılmış AYNI uzunluk başlığıyla DOĞRUDAN inşa edebilir.
-    /// PARAMETRE OLARAK izin VERİLMEMESİNİN nedeni: bir Zig fonksiyonunun
-    /// ZATEN VAR OLAN bir `list[str]`i TÜKETMESİ İÇİN henüz bir kullanım
-    /// örneği/ihtiyaç YOK — v1 kapsamı bilinçli olarak dar tutuldu.
-    fn isFfiSafeListReturnType(t: Type) bool {
+    /// el ile yazılmış AYNI uzunluk başlığıyla DOĞRUDAN inşa edebilir (dönüş
+    /// yönü) YA DA (Faz EE.1'den beri, bkz. nox-teknik-spesifikasyon.md
+    /// §3.61) DOĞRUDAN OKUYABİLİR (PARAMETRE yönü — `nox_strings_join_raw`
+    /// bunun ilk GERÇEK ihtiyaç sahibi; ÖNCEDEN "henüz bir kullanım örneği
+    /// yok" gerekçesiyle YALNIZCA dönüş tipi olarak izin veriliyordu, AYNI
+    /// alttaki temsil GEREKÇESİ parametre yönünde de GEÇERLİ olduğundan bu
+    /// kısıt KALDIRILDI).
+    fn isFfiSafeListType(t: Type) bool {
         return switch (t) {
             .list => |elem| elem.* == .str,
             else => false,
         };
     }
 
-    /// Stdlib fazı §L: `isFfiSafeListReturnType` İLE AYNI "yalnızca DÖNÜŞ,
-    /// PARAMETRE değil" ilkesi — bir sınıf tipi (ör. `JsonValue`) `with_rt
+    /// Stdlib fazı §L: `isFfiSafeListType`den FARKLI olarak (Faz EE.1'de
+    /// PARAMETRE yönü de açıldı, bkz. onun belge notu) BU hâlâ "yalnızca
+    /// DÖNÜŞ, PARAMETRE değil" — bir sınıf tipi (ör. `JsonValue`) `with_rt
     /// extern def`in DÖNÜŞ tipi olarak kabul edilir. Bu GÜVENLİDİR çünkü Zig
     /// tarafı sınıfın HAM baytlarını KENDİSİ inşa ETMEZ (`class_id` derleme
     /// sırasına bağlı olduğundan Zig'den TAHMİN EDİLEMEZ) — bunun yerine
@@ -425,7 +437,10 @@ pub const Checker = struct {
     /// ÇAĞIRIR; dönen değer ZATEN doğru `class_id`/ARC muhasebesiyle
     /// (normal `__init__` yoluyla) inşa edilmiş, sıradan bir işaretçidir —
     /// `extern def`in KENDİSİ yalnızca bu işaretçiyi OLDUĞU GİBİ yukarı
-    /// taşır.
+    /// taşır. PARAMETRE yönü BURADA HÂLÂ desteklenmez — `list[str]`den
+    /// FARKLI olarak bir sınıfın ham baytlarını Zig'in DOĞRUDAN OKUMASI,
+    /// `class_id`nin derleme sırasına bağlı olması nedeniyle GÜVENLİ
+    /// DEĞİLDİR.
     fn isFfiSafeClassReturnType(t: Type) bool {
         return t == .class;
     }
@@ -1912,7 +1927,26 @@ pub const Checker = struct {
                         if (!assignable(obj_t.list.*, vt)) return self.fail(error.TypeMismatch, "'append' argümanı listenin eleman tipiyle uyuşmuyor", .{});
                         return .none;
                     }
-                    return self.fail(error.UndefinedMethod, "list'in '{s}' metodu yok (yalnızca append)", .{a.attr});
+                    // Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) —
+                    // `list[T].sort()`: `.append`nin AKSİNE alıcı çıplak bir
+                    // isim OLMAK ZORUNDA DEĞİLDİR (`getList().sort()`/`obj.
+                    // field.sort()` da GEÇERLİDİR) — sıralama MEVCUT arabelleği
+                    // YERİNDE değiştirir, `len`/`cap` DEĞİŞMEZ, bu yüzden
+                    // `append`nin "büyüme durumunda alıcının KENDİ SLOTUNA
+                    // geri yazma" kısıtı BURADA GEÇERLİ DEĞİLDİR (bkz.
+                    // `codegen.zig`nin `genListSort`ı). Eleman tipi `int`/
+                    // `float`/`str` OLMALIDIR — Nox'ta kullanıcı-tanımlı
+                    // `__lt__`/karşılaştırıcı YOK, bu yüzden sınıf/`list`/
+                    // `dict` elemanları İÇİN "nasıl sıralanır" TANIMSIZDIR.
+                    if (std.mem.eql(u8, a.attr, "sort")) {
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'sort' hiç argüman almaz", .{});
+                        switch (obj_t.list.*) {
+                            .int, .float, .str => {},
+                            else => return self.fail(error.TypeMismatch, "'sort' yalnızca list[int]/list[float]/list[str] üzerinde çağrılabilir", .{}),
+                        }
+                        return .none;
+                    }
+                    return self.fail(error.UndefinedMethod, "list'in '{s}' metodu yok (yalnızca append/sort)", .{a.attr});
                 }
                 const class_name = switch (obj_t) {
                     .class => |n| n,

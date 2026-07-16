@@ -4810,7 +4810,16 @@ const Codegen = struct {
     fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
         const obj = try self.genExpr(a.obj.*);
         if (obj.heap == .dict) return self.genDictMethod(obj, a, args);
-        if (obj.heap == .list) return self.genListAppend(obj, a, args);
+        if (obj.heap == .list) {
+            // Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61): checker
+            // ZATEN `a.attr`in `append`/`sort`den biri OLDUĞUNU doğruladı
+            // (bkz. checker.zig'in `.list` dalı) — codegen İSİM üzerinden
+            // dispatch eder (`genListAppend`nin KENDİSİ isim KONTROLÜ
+            // YAPMAZ, `args.len`e göre AYRIM yapardı — `sort`nin 0 argümanı
+            // `append`nin "tam olarak 1 argüman" KONTROLÜNE takılırdı).
+            if (std.mem.eql(u8, a.attr, "sort")) return self.genListSort(obj, a, args);
+            return self.genListAppend(obj, a, args);
+        }
         if (obj.heap != .class) return error.Unsupported;
         try self.checkNoLowlevelEscape(obj);
         const cinfo = self.classes.get(obj.class_name.?).?;
@@ -5032,6 +5041,38 @@ const Codegen = struct {
 
         try self.out.writer.print("{s}\n", .{done_label});
         return .{ .text = "0", .qtype = .w };
+    }
+
+    /// `xs.sort()` — Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61).
+    /// `.append`nin AKSİNE alıcının SLOTUNA geri yazma/`nox_list_grow`
+    /// GEREKMEZ — sıralama MEVCUT arabelleği YERİNDE değiştirir (`len`/
+    /// `cap` DEĞİŞMEZ), bu yüzden `genListAppend`nin "alıcı çıplak isim/
+    /// yerel OLMALI" kısıtı burada UYGULANMAZ (checker de UYGULAMAZ, bkz.
+    /// onun `.list` dalı). Eleman tipine göre (`elem_qtype`/`elem_is_str`)
+    /// `nox_list_sort_int`/`_float`/`_str`den (bkz. `runtime/collections/
+    /// list_sort.zig`) DOĞRU olanı, listenin BAŞLIKTAN (16 bayt) SONRAKİ
+    /// ham eleman adresi + `len`i geçirerek çağırır.
+    fn genListSort(self: *Codegen, obj: Value, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
+        if (args.len != 0) return error.Unsupported;
+
+        const len_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ len_t, obj.text });
+        const data_addr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ data_addr, obj.text, LIST_HEADER_SIZE });
+
+        const fn_name = if (obj.elem_qtype == .d)
+            "nox_list_sort_float"
+        else if (obj.elem_is_str)
+            "nox_list_sort_str"
+        else
+            "nox_list_sort_int";
+        try self.out.writer.print("    call ${s}(l {s}, l {s})\n", .{ fn_name, data_addr, len_t });
+        // `.append`nin AKSİNE alıcı çıplak bir isimle SINIRLI DEĞİLDİR
+        // (bkz. bu fonksiyonun belge notu) — `a.obj.*` bir GEÇİCİ (ör.
+        // `getList().sort()`) OLABİLİR, `genDictMethod`nin `contains`/`len`
+        // dallarıyla AYNI şekilde serbest bırakılmalıdır.
+        try self.releaseIfTemporary(a.obj.*, obj);
+        return .{ .text = "0", .qtype = .none };
     }
 
     /// `spawn <hedef_fn>(args...)` — checker ZATEN operandın `.call` olup

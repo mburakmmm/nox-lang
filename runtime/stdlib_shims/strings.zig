@@ -102,6 +102,50 @@ export fn nox_strings_replace_raw(rt: ?*anyopaque, s: ?[*:0]const u8, old: ?[*:0
     return @ptrCast(bytes);
 }
 
+/// Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) — `join`nin ÖNCEKİ
+/// saf-Nox uygulaması `result = result + sep + p` döngüsüydü: `nox_str_
+/// concat` (bkz. `str.zig`) HER ÇAĞRIDA TAM bir kopya yaptığından bu O(n²)
+/// idi (`split`/`trim`/vb.'nin ZATEN izlediği "değişken uzunluklu sonuç →
+/// Zig'e sar" gerekçesiyle AYNI, ama `join` bu düzene UYMUYORDU). Burada
+/// TEK geçişte toplam uzunluk hesaplanır, TEK `nox_rc_alloc` yapılır, TÜM
+/// parçalar/ayırıcılar KOPYALANIR — O(n). `parts`in ham bayt düzeni
+/// `nox_strings_split_raw`nin ÜRETTİĞİYLE (8 bayt uzunluk + 8 bayt
+/// kapasite + `str` işaretçileri) AYNIDIR — bkz. onun belge notu.
+export fn nox_strings_join_raw(rt: ?*anyopaque, parts: ?*anyopaque, sep: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    const bytes: [*]u8 = @ptrCast(parts orelse return null);
+    const sep_slice = std.mem.span(sep orelse return null);
+    const count: usize = @intCast(@as(*align(1) i64, @ptrCast(bytes)).*);
+
+    if (count == 0) return dupeToNoxStr(rt, "");
+
+    var total_len: usize = 0;
+    var i: usize = 0;
+    while (i < count) : (i += 1) {
+        const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(bytes + 16 + 8 * i)).*);
+        const p: [*:0]const u8 = @ptrFromInt(addr);
+        total_len += std.mem.len(p);
+        if (i + 1 < count) total_len += sep_slice.len;
+    }
+
+    const raw = arc.nox_rc_alloc(rt, total_len + 1) orelse return null;
+    const out: [*]u8 = @ptrCast(raw);
+    var off: usize = 0;
+    i = 0;
+    while (i < count) : (i += 1) {
+        const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(bytes + 16 + 8 * i)).*);
+        const p: [*:0]const u8 = @ptrFromInt(addr);
+        const slice = std.mem.span(p);
+        @memcpy(out[off..][0..slice.len], slice);
+        off += slice.len;
+        if (i + 1 < count) {
+            @memcpy(out[off..][0..sep_slice.len], sep_slice);
+            off += sep_slice.len;
+        }
+    }
+    out[total_len] = 0;
+    return @ptrCast(out);
+}
+
 test "nox_strings_split_raw temel bolme" {
     const asap = @import("../alloc/asap.zig");
     const str = @import("../str.zig");
@@ -145,4 +189,60 @@ test "nox_strings_trim/upper/lower/replace_raw dogru calisir" {
     const r = nox_strings_replace_raw(rt, "foo bar foo", "foo", "x") orelse return error.Failed;
     defer str.nox_str_release(rt, r);
     try std.testing.expectEqualStrings("x bar x", std.mem.sliceTo(r, 0));
+}
+
+/// `nox_strings_split_raw`nin TERSİ: bir Zig `[]const []const u8`ten
+/// `nox_strings_join_raw`nin BEKLEDİĞİ ham `list[str]` payload'ını EL İLE
+/// inşa eder — `nox_strings_split_raw`nin KENDİSİNİN inşa mantığıyla AYNI
+/// (bkz. onun belge notu).
+fn buildStrList(rt: ?*anyopaque, parts: []const []const u8) ?*anyopaque {
+    const raw = arc.nox_rc_alloc(rt, 16 + 8 * parts.len) orelse return null;
+    const bytes: [*]u8 = @ptrCast(raw);
+    @as(*align(1) i64, @ptrCast(bytes)).* = @intCast(parts.len);
+    @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(parts.len);
+    for (parts, 0..) |part, i| {
+        const dup = dupeToNoxStr(rt, part) orelse return null;
+        const slot = bytes + 16 + 8 * i;
+        @as(*align(1) i64, @ptrCast(slot)).* = @bitCast(@as(isize, @intCast(@intFromPtr(dup))));
+    }
+    return @ptrCast(bytes);
+}
+
+test "nox_strings_join_raw parcalari ayiraçla dogru birlestirir (tek gecis, O(n))" {
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const parts = buildStrList(rt, &.{ "a", "bb", "ccc" }) orelse return error.BuildFailed;
+    const parts_bytes: [*]u8 = @ptrCast(parts);
+    defer {
+        // `nox_rc_release` (bkz. `nox_strings_split_raw`nin AYNI notu) yalnızca
+        // liste kabının KENDİ belleğini serbest bırakır — ELEMANLARIN kendi
+        // refcount'larını AYRI AYRI (`str.nox_str_release`) düşürmek gerekir.
+        var i: usize = 0;
+        while (i < 3) : (i += 1) {
+            const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(parts_bytes + 16 + 8 * i)).*);
+            str.nox_str_release(rt, @ptrFromInt(addr));
+        }
+        arc.nox_rc_release(rt, parts, 16 + 8 * 3);
+    }
+
+    const joined = nox_strings_join_raw(rt, parts, ", ") orelse return error.JoinFailed;
+    defer str.nox_str_release(rt, joined);
+    try std.testing.expectEqualStrings("a, bb, ccc", std.mem.sliceTo(joined, 0));
+}
+
+test "nox_strings_join_raw bos liste bos dize doner" {
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const parts = buildStrList(rt, &.{}) orelse return error.BuildFailed;
+    defer arc.nox_rc_release(rt, parts, 16);
+
+    const joined = nox_strings_join_raw(rt, parts, ", ") orelse return error.JoinFailed;
+    defer str.nox_str_release(rt, joined);
+    try std.testing.expectEqualStrings("", std.mem.sliceTo(joined, 0));
 }
