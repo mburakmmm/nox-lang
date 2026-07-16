@@ -8738,6 +8738,33 @@ OLMAMIŞLARDI. Bu, Linux/x86-64 CI legi GERÇEKTEN GÖRÜNÜR bir yeşil
 duruma ULAŞTIĞINDA ortaya ÇIKAN ilk gerçek platform-özgü sağlamlaştırma
 turudur.
 
+**Addendum — DÖRDÜNCÜ bir hata, madde 1/2'nin düzeltmesinden HEMEN SONRA
+GERÇEK CI'de GÖZLEMLENDİ (macOS/aarch64 VE Linux/aarch64 BU SEFER
+TAMAMEN yeşildi, YALNIZCA Linux/x86-64 TEK bir test kırmızıydı):**
+`nox_http_get_raw: bir fiber İÇİNDEN çağrıldığında zamanlayıcı BLOKE
+OLMAZ` testi "diger fiber calisti" (askıya alma GERÇEKLEŞTİĞİNİN kanıtı)
+YERİNE "istek tamamlandi"yi İLK sırada BULDU. **Kök neden:** testin
+YEREL (loopback) sunucusu (`testServeOnce`) YANITI HİÇBİR gecikme
+OLMADAN ANINDA yazıyordu — Linux/x86-64 CI'de bazen TÜM istek/yanıt
+DÖNGÜSÜ, zamanlayıcının `nonBlockingRead`in İLK denemesini yapıp `EAGAIN`
+GÖZLEMLEMESİNDEN (dolayısıyla fiber'ın GERÇEKTEN `suspendForIo`ya
+düşmesinden) DAHA HIZLI tamamlanabiliyordu — bu durumda istek fiber'ı
+HİÇ askıya ALINMADAN (BAŞKA fiber'a GEÇİŞ OLMADAN) TEK SEFERDE
+tamamlanıyordu. **Bu, `http_server.zig`nin "yavaş istemci" testinin (150ms `nanosleep`,
+İSTEMCİ tarafında — bkz. bu bölümün 1. maddesindeki segfault tartışması,
+AYNI test) ZATEN ÇÖZDÜĞÜ AYNI kategori sorunun, sunucu TARAFINDA hiç
+UYGULANMAMIŞ HALİYDİ.**
+**Düzeltme:** `testServeOnce`, YENİ bir `testServeOnceDelayed(listen_fd,
+delay_ms)`in `delay_ms=0` sarmalayıcısına DÖNÜŞTÜRÜLDÜ (DİĞER, ETKİLENMEYEN
+çağıranın davranışı DEĞİŞMEDİ); başarısız test, `http_server.zig`nin
+KENDİ testiyle AYNI `150` ms değeriyle `testServeOnceDelayed`i KULLANACAK
+ŞEKİLDE güncellendi — yanıt YAZILMADAN ÖNCE KASITLI bir gecikme, İLK
+`nonBlockingRead` denemesinin GERÇEKTEN `EAGAIN` GÖZLEMLEMESİNİ (dolayısıyla
+askıya almanın GERÇEKTEN GERÇEKLEŞMESİNİ) GARANTİ eder. Yerel olarak
+(ardışık ÜÇ tekrarla) Debug + ReleaseFast'ta doğrulandı; NİHAİ doğrulama
+(bu da yerel olarak tekrarlanamayan bir zamanlama BAĞIMLILIĞI
+OLDUĞUNDAN) GERÇEK Linux/x86-64 CI'de.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

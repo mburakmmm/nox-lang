@@ -392,6 +392,22 @@ fn testListenerOn127001(port_out: *u16) !posix.fd_t {
 /// bir HTTP/1.1 yanıtı (durum 200, `X-Nox-Test: merhaba` başlığı, `"hello"`
 /// gövdesi) yazar, bağlantıyı kapatır.
 fn testServeOnce(listen_fd: posix.fd_t) void {
+    testServeOnceDelayed(listen_fd, 0);
+}
+
+/// `testServeOnce` İLE AYNI, `delay_ms > 0` İSE yanıtı YAZMADAN ÖNCE
+/// KASITLI olarak bekler — `http_server.zig`nin "yavaş istemci" testinin
+/// (150ms `nanosleep`, bkz. onun belge notu) AYNI "EAGAIN'i ZORLA" deseni,
+/// burada SUNUCU tarafına uygulanır. **Neden gerekli (Linux/x86-64 CI'de
+/// GERÇEKTEN gözlemlenen bir flake):** gecikme OLMADAN, loopback'teki TÜM
+/// istek/yanıt döngüsü BAZEN zamanlayıcının `nonBlockingRead`in İLK
+/// deneme'sini yapıp `EAGAIN` GÖZLEMLEMESİNDEN (dolayısıyla fiber'ın
+/// GERÇEKTEN askıya ALINIP `suspendForIo`ya DÜŞMESİNDEN) DAHA HIZLI
+/// tamamlanabiliyordu — bu durumda istek fiber'ı HİÇ askıya ALINMADAN
+/// (BAŞKA fiber'a GEÇİŞ OLMADAN) tek seferde TAMAMLANIYORDU, "sıra kanıtı"
+/// testinin (bkz. aşağıdaki test) BEKLEDİĞİ "diger fiber calisti" ÖNCE
+/// gelir garantisini BOZUYORDU.
+fn testServeOnceDelayed(listen_fd: posix.fd_t, delay_ms: i64) void {
     const conn = std.c.accept(listen_fd, null, null);
     if (conn < 0) return;
     defer _ = std.c.close(conn);
@@ -403,6 +419,14 @@ fn testServeOnce(listen_fd: posix.fd_t) void {
         if (n <= 0) break;
         total += @intCast(n);
         if (std.mem.indexOf(u8, req_buf[0..total], "\r\n\r\n") != null) break;
+    }
+
+    if (delay_ms > 0) {
+        const ts: posix.timespec = .{
+            .sec = @divTrunc(delay_ms, std.time.ms_per_s),
+            .nsec = @mod(delay_ms, std.time.ms_per_s) * std.time.ns_per_ms,
+        };
+        _ = std.c.nanosleep(&ts, null);
     }
 
     const response = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nX-Nox-Test: merhaba\r\nConnection: close\r\n\r\nhello";
@@ -458,7 +482,11 @@ test "nox_http_get_raw: bir fiber İÇİNDEN çağrıldığında zamanlayıcı B
     const listen_fd = try testListenerOn127001(&port);
     defer _ = std.c.close(listen_fd);
 
-    const server_thread = try std.Thread.spawn(.{}, testServeOnce, .{listen_fd});
+    // `150` — `http_server.zig`nin "yavaş istemci" testiyle AYNI değer
+    // (bkz. `testServeOnceDelayed`in belge notu) — EAGAIN'in GERÇEKTEN
+    // gözlemlenmesini (dolayısıyla fiber'ın GERÇEKTEN askıya alınmasını)
+    // ZORLAR.
+    const server_thread = try std.Thread.spawn(.{}, testServeOnceDelayed, .{ listen_fd, 150 });
     defer server_thread.join();
 
     const url = try std.fmt.allocPrintSentinel(std.testing.allocator, "http://127.0.0.1:{d}/hello", .{port}, 0);

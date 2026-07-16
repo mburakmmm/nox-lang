@@ -184,7 +184,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   hatası veriyordu; `-fPIC` eklendi. `nox-teknik-spesifikasyon.md` §3.57
   — bu yarış yerel olarak (macOS/aarch64'te) hiç tekrarlanamadığından
   doğrulama kod incelemesi + gerçek Linux/x86-64 CI'de yeniden
-  çalıştırmaya dayanıyor.
+  çalıştırmaya dayanıyor. (3) Yukarıdaki iki düzeltme sonrası GERÇEK
+  CI'de ortaya çıkan dördüncü, ayrı bir zamanlama hatası: fiber-sırası
+  kanıtlayan bir `nox.http.get` testi, yerel test sunucusu yanıtı
+  gecikmesiz yazdığından bazen Linux/x86-64'te hiç askıya alınmadan tek
+  seferde tamamlanıyordu. `http_server.zig`'in "yavaş istemci" testinin
+  (150ms gecikme) aynı deseni sunucu tarafına da uygulandı
+  (`testServeOnceDelayed`).
 
 ## [1.0.0]
 
