@@ -159,6 +159,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   bir argv[0] geçmek, çalıştırılabilir dosyanın YENİ çalışma dizinine
   göre yanlış çözülmesine yol açar (genel bir kural olarak belgelendi).
   2 yeni uçtan uca CLI testi + kasıtlı boz→kırmızı ritüeli.
+- `noxc init [proje-adi]`/`noxc check <dosya.nox>` (Faz CC.2.2). `init`,
+  Cargo/Go tarzı proje iskeleti oluşturur (`nox.json`+`main.nox`+
+  `.gitignore`; argümansız CWD'de, isimli yeni bir alt dizinde — var olan
+  bir projenin üzerine asla yazmaz). `check`, codegen/`qbe`/`cc`
+  tetiklemeden sadece lex→parse→import çözümü→tip denetimi çalıştırır —
+  editör entegrasyonu/hızlı geri bildirim için. `nox-teknik-
+  spesifikasyon.md` §3.56. 3 yeni uçtan uca CLI testi (üretilen projenin
+  gerçekten derlenip çalıştığı dahil) + kasıtlı boz→kırmızı ritüeli.
 
 ## [1.0.0]
 

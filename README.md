@@ -95,9 +95,13 @@ override edebilirsiniz (üçüncü-taraf paket önbelleğinin kökü olan
 ## Kullanım
 
 ```sh
+noxc init myproject         # yeni bir proje iskeleti oluşturur (nox.json + main.nox)
+noxc check main.nox         # sadece tip denetimi — codegen/qbe/cc yok, hızlı geri bildirim
 noxc build main.nox         # main.nox'u derler, "main" ikilisini üretir
 noxc run main.nox -- a b c  # derler + çalıştırır, argv'yi iletir
 noxc test                   # CWD altındaki tüm *_test.nox dosyalarını keşfedip çalıştırır
+noxc fetch                  # nox.json'daki bağımlılıkları önbelleğe doldurur
+noxc update                 # bağımlılıkları en son ref'lerine yeniden çözer, nox.lock'u günceller
 ```
 
 Bir proje birden fazla üçüncü-taraf bağımlılık gerektiriyorsa proje

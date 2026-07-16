@@ -18,6 +18,17 @@ fn noxcPath(a: std.mem.Allocator) ![]const u8 {
     return "zig-out/bin/noxc";
 }
 
+/// `noxcPath`in MUTLAK sürümü — `.cwd` İLE farklı bir çalışma dizininde
+/// çalıştırılan alt süreçler İÇİN GEREKLİDİR: GÖRELİ bir argv[0]
+/// (`"zig-out/bin/noxc"`), test SÜRECİNİN DEĞİL, `.cwd` İLE VERİLEN YENİ
+/// çalışma dizinine göre çözülür (GERÇEK bir denemede `processSpawnPosix`
+/// çökmesiyle KEŞFEDİLDİ — bkz. `package_resolution_test.zig`nin AYNI
+/// belge notu).
+fn noxcAbsPath(io: std.Io, a: std.mem.Allocator) ![]const u8 {
+    const cwd = try std.process.currentPathAlloc(io, a);
+    return std.fs.path.join(a, &.{ cwd, try noxcPath(a) });
+}
+
 test "legacy cıplak-dosya formu: build ile birebir aynı davranış" {
     const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -228,13 +239,7 @@ test "fetch/update: nox.json bulunamayan bir dizinden calistirilirsa net hatayla
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    // `.cwd` KULLANILDIĞINDAN `noxc`nin MUTLAK yolu GEREKİR — GÖRELİ
-    // `"zig-out/bin/noxc"`, test SÜRECİNİN DEĞİL, `.cwd` İLE VERİLEN YENİ
-    // çalışma dizinine göre çözülürdü (GERÇEK bir denemede `processSpawnPosix`
-    // çökmesiyle KEŞFEDİLDİ — bkz. `package_resolution_test.zig`nin
-    // `noxcAbsPath`ının AYNI belge notu).
-    const cwd = try std.process.currentPathAlloc(io, a);
-    const noxc = try std.fs.path.join(a, &.{ cwd, try noxcPath(a) });
+    const noxc = try noxcAbsPath(io, a);
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -319,4 +324,135 @@ test "version: version/--version/-V ÜÇÜ de AYNI 'noxc <surum>' satırını ba
         try std.testing.expect(std.mem.startsWith(u8, result.stderr, "noxc "));
         try std.testing.expect(result.stderr.len > "noxc \n".len);
     }
+}
+
+// Faz CC.2.2 (bkz. nox-teknik-spesifikasyon.md §3.56): `noxc init`
+// (argümansız) CWD'nin KENDİSİNDE bir `nox.json`/`main.nox`/`.gitignore`
+// oluşturur — üretilen proje GERÇEKTEN `noxc build` + çalıştırılabilir
+// olmalı (yalnızca dosyaların VAR OLMASI değil, İÇERİKLERİNİN de GEÇERLİ
+// olduğu kanıtlanır). İKİNCİ bir `init` ÇAĞRISI (var olan bir projeyi
+// YANLIŞLIKLA silmemek İçin) net bir hatayla (exit 1) BAŞARISIZ OLMALI.
+test "init: argumansiz CWD'de proje iskeleti olusturur, uretilen proje GERCEKTEN calisir, ikinci init reddeder" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const noxc = try noxcAbsPath(io, a);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &path_buf);
+    const dir_path = path_buf[0..len];
+
+    const init1 = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxc, "init" },
+        .cwd = .{ .path = dir_path },
+    });
+    defer std.testing.allocator.free(init1.stdout);
+    defer std.testing.allocator.free(init1.stderr);
+    if (init1.term != .exited or init1.term.exited != 0) {
+        std.debug.print("init basarisiz, stderr: {s}\n", .{init1.stderr});
+    }
+    try std.testing.expect(init1.term == .exited and init1.term.exited == 0);
+    try tmp.dir.access(io, "nox.json", .{});
+    try tmp.dir.access(io, "main.nox", .{});
+    try tmp.dir.access(io, ".gitignore", .{});
+
+    // Uretilen main.nox GERCEKTEN derlenip calisir olmali.
+    const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{dir_path});
+    const bin_path = try std.fmt.allocPrint(a, "{s}/main", .{dir_path});
+    const build_result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxc, "build", main_path },
+    });
+    defer std.testing.allocator.free(build_result.stdout);
+    defer std.testing.allocator.free(build_result.stderr);
+    if (build_result.term != .exited or build_result.term.exited != 0) {
+        std.debug.print("build basarisiz, stderr: {s}\n", .{build_result.stderr});
+    }
+    try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
+
+    const run_result = try std.process.run(std.testing.allocator, io, .{ .argv = &.{bin_path} });
+    defer std.testing.allocator.free(run_result.stdout);
+    defer std.testing.allocator.free(run_result.stderr);
+    try std.testing.expectEqualStrings("merhaba, nox!\n", run_result.stdout);
+
+    // Ikinci init AYNI dizinde -- var olan projeyi SILMEMELI, net hatayla basarisiz olmali.
+    const init2 = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxc, "init" },
+        .cwd = .{ .path = dir_path },
+    });
+    defer std.testing.allocator.free(init2.stdout);
+    defer std.testing.allocator.free(init2.stderr);
+    try std.testing.expect(init2.term == .exited and init2.term.exited == 1);
+    try std.testing.expect(std.mem.indexOf(u8, init2.stderr, "zaten var") != null);
+}
+
+test "init: isimli cagri YENI bir alt dizin olusturup icinde baslatir" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const noxc = try noxcAbsPath(io, a);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &path_buf);
+    const dir_path = path_buf[0..len];
+
+    const result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxc, "init", "myproj" },
+        .cwd = .{ .path = dir_path },
+    });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try std.testing.expect(result.term == .exited and result.term.exited == 0);
+
+    const manifest = try tmp.dir.readFileAlloc(io, "myproj/nox.json", a, .limited(4096));
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "\"myproj\"") != null);
+}
+
+// Faz CC.2.2: `noxc check`, `build`in AKSİNE codegen/`qbe`/`cc`
+// TETİKLEMEMELİ — GEÇERLİ bir dosyada exit 0 + "tip hatasi yok" basmalı,
+// HİÇBİR `.ssa`/`.s`/ikili ARTIFACT ÜRETMEMELİ; tip hatalı bir dosyada
+// exit 1 + "tip hatasi" içeren bir mesaj basmalı.
+test "check: gecerli dosyada codegen'e HIC girmeden basarili, hatali dosyada net tip hatasi" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const noxc = try noxcAbsPath(io, a);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "ok.nox", .data = "print(\"merhaba\")\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "bad.nox", .data = "x: int = \"yanlis tip\"\n" });
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &path_buf);
+    const dir_path = path_buf[0..len];
+
+    const ok_path = try std.fmt.allocPrint(a, "{s}/ok.nox", .{dir_path});
+    const ok_result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxc, "check", ok_path },
+    });
+    defer std.testing.allocator.free(ok_result.stdout);
+    defer std.testing.allocator.free(ok_result.stderr);
+    if (ok_result.term != .exited or ok_result.term.exited != 0) {
+        std.debug.print("check basarisiz, stderr: {s}\n", .{ok_result.stderr});
+    }
+    try std.testing.expect(ok_result.term == .exited and ok_result.term.exited == 0);
+    try std.testing.expect(std.mem.indexOf(u8, ok_result.stderr, "tip hatasi yok") != null);
+    // `check` codegen/`qbe`/`cc`e HIC GIRMEMELI -- hicbir artifact YOK.
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, "ok.ssa", .{}));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, "ok", .{}));
+
+    const bad_path = try std.fmt.allocPrint(a, "{s}/bad.nox", .{dir_path});
+    const bad_result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxc, "check", bad_path },
+    });
+    defer std.testing.allocator.free(bad_result.stdout);
+    defer std.testing.allocator.free(bad_result.stderr);
+    try std.testing.expect(bad_result.term == .exited and bad_result.term.exited == 1);
+    try std.testing.expect(std.mem.indexOf(u8, bad_result.stderr, "tip hatasi") != null);
 }

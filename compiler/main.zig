@@ -71,7 +71,7 @@ pub fn main(init: std.process.Init) !void {
     const resource_dir_override = if (init.environ_map.get("NOX_RESOURCE_DIR")) |h| try a.dupe(u8, h) else null;
     const resource_dirs = try project.resolveResourceDirs(a, io, resource_dir_override);
 
-    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, version, legacy };
+    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, init, check, version, legacy };
     const sub: Subcommand = blk: {
         if (all_args.items.len == 0) break :blk .legacy;
         const first = all_args.items[0];
@@ -82,6 +82,8 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.eql(u8, first, "fetch")) break :blk .fetch;
         if (std.mem.eql(u8, first, "update")) break :blk .update;
         if (std.mem.eql(u8, first, "search")) break :blk .search;
+        if (std.mem.eql(u8, first, "init")) break :blk .init;
+        if (std.mem.eql(u8, first, "check")) break :blk .check;
         // `-v`/`--dump` ZATEN `build`in AYRINTILI-döküm bayrağı olduğundan
         // (bkz. modül üstü not), sürüm İÇİN `-V` (büyük harf, `-v` İLE
         // ÇAKIŞMAZ) VE `--version`/`version` KULLANILIR — `rustc`/`go`/`node`
@@ -101,6 +103,8 @@ pub fn main(init: std.process.Init) !void {
         .version => std.debug.print("noxc {s}\n", .{build_options.version}),
         .fetch => try cmdFetch(io, a, rest, nox_home),
         .update => try cmdUpdate(io, a, rest, nox_home),
+        .init => try cmdInit(io, a, rest),
+        .check => try cmdCheck(gpa, io, a, rest, nox_home, resource_dirs),
     }
 }
 
@@ -635,6 +639,107 @@ fn cmdUpdate(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_hom
         }
     }
     std.debug.print("update tamamlandi: {d} guncellendi, {d} degismedi\n", .{ updated, unchanged });
+}
+
+/// `dir`/`name`i birleştirir — `dir == "."` İSE (varsayılan, `noxc init`in
+/// argümansız çağrısı) YALIN `name`i döner (kullanıcıya "./nox.json"
+/// yerine "nox.json" GİBİ temiz mesajlar/yollar basmak İÇİN).
+fn joinIfNeeded(a: std.mem.Allocator, dir: []const u8, name: []const u8) ![]const u8 {
+    if (std.mem.eql(u8, dir, ".")) return name;
+    return std.fmt.allocPrint(a, "{s}/{s}", .{ dir, name });
+}
+
+/// `noxc init [proje-adi]` — Faz CC.2.2 (bkz. nox-teknik-spesifikasyon.md
+/// §3.56): Cargo/Go tarzı proje iskeleti oluşturucu. Argüman VERİLMEZSE
+/// (`cargo init` deseni) CWD'nin KENDİSİNDE, CWD'nin taban adını proje
+/// adı olarak KULLANARAK; VERİLİRSE (`cargo new` deseni) O adla YENİ bir
+/// alt dizin OLUŞTURUP İÇİNDE başlatır. `nox.json`/`main.nox` ZATEN
+/// VARSA ÜZERİNE YAZILMAZ (net bir hatayla exit 1) — var olan bir
+/// projeyi YANLIŞLIKLA silmemek İçin.
+fn cmdInit(io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
+    const has_name_arg = args.len > 0 and args[0].len > 0;
+    const target_dir: []const u8 = if (has_name_arg) args[0] else ".";
+    const project_name: []const u8 = if (has_name_arg) args[0] else blk: {
+        const cwd = try std.process.currentPathAlloc(io, a);
+        break :blk std.fs.path.basename(cwd);
+    };
+
+    if (has_name_arg) {
+        std.Io.Dir.cwd().createDirPath(io, target_dir) catch |e| {
+            std.debug.print("init: dizin olusturulamadi ({s}): {t}\n", .{ target_dir, e });
+            std.process.exit(1);
+        };
+    }
+
+    const manifest_path = try joinIfNeeded(a, target_dir, "nox.json");
+    if (std.Io.Dir.cwd().access(io, manifest_path, .{})) |_| {
+        std.debug.print("init: '{s}' zaten var, uzerine yazilmiyor\n", .{manifest_path});
+        std.process.exit(1);
+    } else |_| {}
+
+    const manifest_json = try std.fmt.allocPrint(a,
+        \\{{
+        \\  "name": "{s}",
+        \\  "entry": "main.nox"
+        \\}}
+        \\
+    , .{project_name});
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = manifest_path, .data = manifest_json });
+
+    const main_path = try joinIfNeeded(a, target_dir, "main.nox");
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = main_path, .data = "print(\"merhaba, nox!\")\n" });
+
+    // `.gitignore` ZATEN VARSA (ör. `noxc init`, GİT DEPOSU olan bir
+    // dizinde çalıştırıldığında) DOKUNULMAZ — SADECE YENİ bir proje İÇİN
+    // makul bir varsayılan sağlanır.
+    const gitignore_path = try joinIfNeeded(a, target_dir, ".gitignore");
+    if (std.Io.Dir.cwd().access(io, gitignore_path, .{})) |_| {} else |_| {
+        // `.nox/` — üçüncü-taraf paket önbelleği/derlenmiş-ikili önbelleği
+        // (bkz. `compiler/main.zig`nin `.nox/cache/bin` notu); `main` —
+        // `noxc build`in varsayılan `entry`den (`main.nox`) ürettiği
+        // ikilinin adı. `nox.lock` KASITLI olarak İGNORE EDİLMEZ (VCS'e
+        // commit EDİLMESİ GEREKİR — bkz. `project.zig`nin belge notu).
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = gitignore_path, .data = ".nox/\nmain\n" });
+    }
+
+    std.debug.print("olusturuldu: {s}, {s}\n", .{ manifest_path, main_path });
+}
+
+/// `noxc check <dosya.nox>` — Faz CC.2.2: SADECE lex→parse→import
+/// çözümü→tip denetimi çalıştırır — ownership analizi/codegen/`qbe`/`cc`
+/// (`buildOne`in AKSİNE) HİÇ TETİKLENMEZ. Editör entegrasyonu/hızlı geri
+/// bildirim İÇİN — `noxc build`in TAM derleme MALİYETİNE (bir native
+/// binary ÜRETMEK) katlanmadan "bu dosya GEÇERLİ mi?" sorusunu YANITLAR.
+/// `buildOne`in AYNI ÖN EKİNİ (lex/parse/import-çözümü/checker) BİLİNÇLİ
+/// olarak YİNELER (AYRI bir fonksiyon — `buildOne`a `codegen'e kadar mı
+/// gidilsin` bayrağı EKLEMEK yerine, o ZATEN karmaşık fonksiyonu daha da
+/// dallandırmamak İçin).
+fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs) !void {
+    const path_arg = if (args.len > 0) args[0] else {
+        std.debug.print("kullanim: noxc check <dosya.nox>\n", .{});
+        std.process.exit(1);
+    };
+
+    const source = try std.Io.Dir.cwd().readFileAlloc(io, path_arg, gpa, .limited(1024 * 1024));
+    defer gpa.free(source);
+
+    const tokens = try lexer.tokenize(a, source);
+    const user_module = try parser.parseModule(a, tokens);
+    const module = try resolveImportsForBuild(io, a, user_module, path_arg, nox_home, resource_dirs);
+
+    var checker_state = checker.Checker.init(a);
+    checker_state.checkModule(module) catch |e| {
+        std.debug.print("tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
+        std.process.exit(1);
+    };
+    if (checker_state.diagnostics.items.len > 0) {
+        for (checker_state.diagnostics.items) |d| {
+            std.debug.print("tip hatasi ({t}): {s}\n", .{ d.code, d.message });
+        }
+        std.process.exit(1);
+    }
+
+    std.debug.print("tip hatasi yok: {s}\n", .{path_arg});
 }
 
 /// Tek bir `.nox` dosyasını uçtan uca derler (lex→parse→import çözümü→tip

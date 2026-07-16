@@ -8634,6 +8634,50 @@ başlayan CI'de ARTIK NORM haline geldiğinin KANITIDIR.
 `zig build test` (Debug + ReleaseFast, soğuk önbellekten TEKRARLANAN
 çalıştırmalarla) 406/406 yeşil, `zig fmt` temiz.
 
+## 3.56 Faz CC.2.2 — `noxc init`/`noxc check`
+
+**Kaynak:** kullanıcının "sonraki aşama geliştirmeler" listesinin #1
+maddesi ("NOXC CLI tool geliştirmeleri") — Faz CC.2.1'in (§3.54) HEMEN
+ardından, AYNI AskUserQuestion yanıtında SEÇİLEN kalan iki madde.
+
+**`noxc init [proje-adi]`:** Cargo/Go tarzı proje iskeleti oluşturucu.
+Argüman VERİLMEZSE (`cargo init` deseni) CWD'nin KENDİSİNDE, CWD'nin
+taban adını proje adı olarak KULLANARAK; VERİLİRSE (`cargo new` deseni)
+O adla YENİ bir alt dizin OLUŞTURUP İÇİNDE başlatır. Üretir: `nox.json`
+(`{"name": "...", "entry": "main.nox"}`), `main.nox` (`print("merhaba,
+nox!")`), `.gitignore` (`.nox/` + `main` — `nox.lock` KASITLI olarak
+İGNORE EDİLMEZ, bkz. `project.zig`nin "VCS'e commit edilir" notu).
+`nox.json` ZATEN VARSA ÜZERİNE YAZILMAZ (net bir hatayla exit 1) — var
+olan bir projeyi YANLIŞLIKLA silmemek İçin. `.gitignore` ZATEN VARSA
+(ör. GİT deposu olan bir dizinde) DOKUNULMAZ.
+
+**`noxc check <dosya.nox>`:** SADECE lex→parse→import çözümü→tip
+denetimi çalıştırır — ownership analizi/codegen/`qbe`/`cc` (`buildOne`in
+AKSİNE) HİÇ TETİKLENMEZ. Editör entegrasyonu/hızlı geri bildirim İÇİN —
+`noxc build`in TAM derleme MALİYETİNE (bir native binary ÜRETMEK)
+katlanmadan "bu dosya GEÇERLİ mi?" sorusunu YANITLAR. `buildOne`in AYNI
+ÖN EKİNİ (lex/parse/import-çözümü/checker) BİLİNÇLİ olarak YİNELER (AYRI
+bir fonksiyon — `buildOne`a "codegen'e kadar mı gidilsin" bayrağı
+EKLEMEK yerine, o ZATEN karmaşık fonksiyonu daha da dallandırmamak İçin
+— M.5/M.8'in "gereksiz karmaşıklık eklenmez" disipliniyle TUTARLI).
+
+**Doğrulama:** `tests/cli/subcommand_test.zig`ye 3 YENİ uçtan uca test —
+`init` (argümansız, üretilen projenin GERÇEKTEN `noxc build` +
+ÇALIŞTIRILABİLİR olduğu — yalnızca dosyaların VARLIĞI değil, İÇERİKLERİNİN
+de GEÇERLİ olduğu kanıtlanır — VE ikinci `init` çağrısının reddedildiği),
+`init` (isimli, YENİ bir alt dizinde doğru `name` alanıyla), `check`
+(GEÇERLİ dosyada `.ssa`/ikili HİÇBİR ARTIFACT ÜRETMEDEN başarılı, tip
+hatalı dosyada net bir hatayla BAŞARISIZ).
+
+**Kasıtlı boz→kırmızı→düzelt:** `cmdInit`in "nox.json ZATEN VAR" kontrolü
+GEÇİCİ olarak DEVRE DIŞI BIRAKILDI (`if (false) { ... }`) — İKİNCİ `init`
+çağrısının REDDEDİLMESİNİ sınayan test TAM OLARAK BEKLENEN ŞEKİLDE
+KIRMIZI oldu (408/409), BAŞKA HİÇBİR test ETKİLENMEDİ. Değişiklik `diff`
+İLE bayt-bayt ÖZDEŞLİĞİ doğrulanarak GERİ YÜKLENDİ, Debug + ReleaseFast
+YENİDEN yeşile döndü.
+
+`zig build test` (Debug + ReleaseFast) 409/409 yeşil, `zig fmt` temiz.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
