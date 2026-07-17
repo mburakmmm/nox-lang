@@ -524,6 +524,20 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   olduğu kanıtlandı. Ölçüm: `list_release_overhead` (50M döngü) 171.2ms
   → 157.9ms, **~%8 hızlanma** (GG.1'in ~%23'ünden küçük — `nox_rc_alloc`ın
   KENDİSİ hâlâ dominant maliyet).
+- **Değerlendirildi, REDDEDİLDİ: runtime'a dokunmayan saf fonksiyonlar
+  için RT_PARAM'ı elemek** (Faz GG.8 — bkz. nox-teknik-spesifikasyon.md
+  §3.66'nın "DEĞERLENDİRİLDİ, REDDEDİLDİ" notu). Kod YAZILMADAN ÖNCE
+  ölçüldü (GG.4/GG.6'nın dersi UYGULANARAK): `numeric_recursion`
+  (`fib(35)`, ~30M özyinelemeli çağrı, `rt`ye HİÇ dokunmaz) fonksiyonunun
+  ÜRETTİĞİ `.ssa` ELLE `rt` parametresi ÇIKARILARAK yamanıp AYRI derlendi
+  — `rt`li VE `rt`siz arasında ÖLÇÜLEBİLİR fark BULUNAMADI (5 ölçümün
+  TÜMÜ, ~0.02-0.03s). ARM64 çağrı kuralı İLK 8 tamsayı argümanı KAYITLARDA
+  geçirdiğinden BİR argüman EKLEMEK/ÇIKARMAK (sınırın ÇOK altındayken)
+  Apple Silicon'da ÖLÇÜLEBİLİR bir maliyet DEĞİŞTİRMEZ — GG.6 İLE AYNI
+  kategoride bir sonuç. **Hiçbir kod yazılmadı** (GERÇEK uygulama, YENİ
+  bir whole-program "saflık" analizi + HER çağrı sitesinin GG.2'nin
+  inlining'iyle ETKİLEŞİMİ DAHİL güncellenmesini GEREKTİRİRDİ — SIFIR
+  ölçülmüş kazanım İçin orantısız bir mimari karmaşıklık).
 
 ### Düzeltildi
 - **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`

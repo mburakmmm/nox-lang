@@ -10157,6 +10157,38 @@ gerçek bir allocator çağrısı) hâlâ dominant maliyet, bkz. GG.2'nin AYNI
 
 `zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
 
+### GG.8 (DEĞERLENDİRİLDİ, REDDEDİLDİ) — Runtime'a dokunmayan saf fonksiyonlar için RT_PARAM'ı elemek
+
+**Kaynak:** GG listesinin sıradaki maddesi — HER Nox fonksiyonu (`genFunction`,
+bkz. `export function ... ${s}(l {RT_PARAM}` satırı) KOŞULSUZ olarak İLK
+parametre olarak `%rt`yi alır — `fib(n: int) -> int` GİBİ tahsis/istisna/
+ARC'a HİÇ dokunmayan SAF fonksiyonlar İçin BİLE. GG.8'in fikri: BÖYLE
+fonksiyonların imzasından `rt`yi ELEYİP çağrı sitelerinden de KALDIRMAK.
+
+**Ölçüm (KOD YAZILMADAN ÖNCE, GG.4/GG.6'nın dersi UYGULANARAK):**
+`numeric_recursion` benchmark'ının (`fib(35)`, ~30M özyinelemeli çağrı,
+`fib`in KENDİSİ `rt`ye HİÇ dokunmaz) ÜRETTİĞİ `.ssa` ELLE kopyalanıp
+`fib`in imzasından VE HER ÜÇ çağrı sitesinden (2 özyinelemeli + 1 `main`den)
+`%rt` parametresi ÇIKARILIP AYRI derlendi:
+
+| Durum | Süre (5 ölçüm, `fib(35)`) |
+|---|---|
+| `rt` parametreli (mevcut) | ~0.02-0.03s (5 ölçümün TÜMÜ) |
+| `rt`SİZ (elle yama) | ~0.02s (5 ölçümün TÜMÜ) |
+
+**ÖLÇÜLEBİLİR FARK YOK** — GG.6'nın `mul`/`shl` bulgusuyla AYNI kategoride
+bir sonuç: ARM64 çağrı kuralı İLK 8 tamsayı argümanı KAYITLARDA (x0-x7)
+geçirir, bu yüzden BİR argüman EKLEMEK/ÇIKARMAK (fonksiyon HÂLÂ bu
+sınırın ÇOK altındayken) Apple Silicon'ın geniş, sıra-dışı çekirdeğinde
+ÖLÇÜLEBİLİR bir maliyet EKLEMEZ/kaldırmaz. **Hiçbir kod YAZILMADI** —
+AYRICA (ölçülmüş sıfır faydanın ÖTESİNDE) GERÇEK uygulama, GG.1'in
+`computeMustNotRaise`sine BENZER YENİ bir whole-program "hiçbir zaman
+rt'ye dokunmaz" saflık analizi + HER çağrı sitesinin (GG.2'nin seçici
+inlining'iyle ETKİLEŞİMİ DAHİL) koşullu güncellenmesini GEREKTİRİRDİ —
+SIFIR ölçülmüş kazanım İçin ORANTISIZ bir mimari karmaşıklık maliyeti
+(AGENTS.md'nin "measure, don't assume" disiplini, GG.4/GG.6/M.5/M.8 İLE
+AYNI kategoride bir red).
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
