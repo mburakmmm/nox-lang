@@ -509,6 +509,22 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   ÖLÇÜLEBİLİR fark BULUNAMADI (140-143ms, HER İKİSİ de). Apple Silicon'ın
   tamsayı çarpma birimi KÜÇÜK sabitlerle çarpmada `shl` İLE PRATİKTE AYNI
   hızda — **hiçbir kod yazılmadı**.
+- **En küçük/en sık ARC yardımcılarını çağrı yerine inline etme** (Faz
+  GG.7, bkz. nox-teknik-spesifikasyon.md §3.66). GG.1'in `.str` dalına
+  uyguladığı `emitInlinePredecrement` deseni, `releaseValueIfSet`in KALAN
+  İKİ dalına — ilkel-elemanlı `list[T]` (ÇOK SIK, HER liste release'i) VE
+  `boxed_scalar` (Optional-kutulanmış ilkel) — HÂLÂ UYGULANMAMIŞTI; İKİSİ
+  de GERÇEK bir `call $nox_rc_release` üretiyordu. `nox_rc_release`in
+  KENDİSİ ZATEN TAM OLARAK `nox_rc_predecrement(ptr) != 0 ?
+  nox_rc_free_payload(...) : ()` OLDUĞUNDAN, davranış BİREBİR KORUNARAK
+  İKİ dal da AYNI splice desenine geçirildi. Break→red→fix: HER İKİ
+  dalın `jnz`i GEÇİCİ olarak KOŞULSUZ `jmp` (HER ZAMAN serbest bırak)
+  İLE değiştirilince TAM OLARAK 4 test KIRMIZI oldu (paylaşılan liste/
+  kutu referanslarının erken serbest bırakılması) — kontrolün load-bearing
+  olduğu kanıtlandı. Ölçüm: `list_release_overhead` (50M döngü) 171.2ms
+  → 157.9ms, **~%8 hızlanma** (GG.1'in ~%23'ünden küçük — `nox_rc_alloc`ın
+  KENDİSİ hâlâ dominant maliyet).
+
 ### Düzeltildi
 - **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`
   "Bölüm 3") YAYIMLANAN İLK sonuçları YANLIŞTI, DÜZELTİLDİ.** İlk sürüm,

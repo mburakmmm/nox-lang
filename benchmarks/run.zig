@@ -109,6 +109,13 @@ const stress_benchmarks = [_]Benchmark{
     // `s` döngü İçinde HİÇ yeniden atanmadığından TAM olarak GG.5'in hedef
     // aldığı desen.
     .{ .name = "str_index_loop_licm", .path = "benchmarks/str_index_loop_licm.nox", .expected = "20000000\n" },
+    // Faz GG.7 (bkz. nox-teknik-spesifikasyon.md §3.66): `make_list`
+    // (GG.2'nin seçici inlining'iyle `run`nin İÇİNE spliced) HER yinelemede
+    // TAZE bir `list[int]` inşa edip HEMEN tüketiyor — ilkel-elemanlı
+    // `list[T]` release'inin (GG.7'nin `nox_rc_release` çağrısını inline
+    // `emitInlinePredecrement`e taşıdığı yol) SAF etkisini (50M döngü)
+    // izole ölçer.
+    .{ .name = "list_release_overhead", .path = "benchmarks/list_release_overhead.nox", .expected = "50000000\n" },
     // Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) — `nox.strings.
     // contains`/`index_of`/`starts_with`/`ends_with`nin (`s[i]` YERİNE
     // alloc-sız `byte_at` kullanan) VE `nox.strings.join`in (saf Nox O(n²)

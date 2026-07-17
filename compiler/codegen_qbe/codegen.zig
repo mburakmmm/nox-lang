@@ -2653,7 +2653,22 @@ const Codegen = struct {
             // ERKEN serbest bırakılır, bu da SONRAKİ (GERÇEK) sahibinin
             // scope-sonu temizliğinde ÇİFTE-SERBEST-BIRAKMAYA (segfault,
             // GERÇEKTEN gözlemlendi — bkz. break→red→fix ritüeli) yol açar.
-            try self.out.writer.print("    call $nox_rc_release(l {s}, l {s}, l 8)\n", .{ RT_PARAM, ptr });
+            // Faz GG.7: GG.1'in `.str` dalıyla AYNI desen — `nox_rc_release`
+            // (predecrement + koşullu `nox_rc_free_payload`) doğrudan bir
+            // ÇAĞRI OLARAK DEĞİL, predecrement'i `emitInlinePredecrement`
+            // İLE inline edip YALNIZCA GERÇEKTEN sıfıra/altına düştüğünde
+            // (NADİR yol) `nox_rc_free_payload`ya düşerek.
+            const should_free = try self.emitInlinePredecrement(ptr);
+            const free_label = try self.newLabel("boxed_free");
+            const skip_free_label = try self.newLabel("boxed_free_skip");
+            const free_done_label = try self.newLabel("boxed_free_done");
+            try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ should_free, free_label, skip_free_label });
+            try self.out.writer.print("{s}\n", .{free_label});
+            try self.out.writer.print("    call $nox_rc_free_payload(l {s}, l {s}, l 8)\n", .{ RT_PARAM, ptr });
+            try self.out.writer.print("    jmp {s}\n", .{free_done_label});
+            try self.out.writer.print("{s}\n", .{skip_free_label});
+            try self.out.writer.print("    jmp {s}\n", .{free_done_label});
+            try self.out.writer.print("{s}\n", .{free_done_label});
         } else if (elem_heap_info) |info| {
             // `ptr`nin KENDİSİ bir listedir; `info` bu listenin İÇİNDEKİ
             // elemanları betimler — `releaseFnNameFor` ise "release edilecek
@@ -2664,8 +2679,21 @@ const Codegen = struct {
             const fn_name = try self.releaseFnNameFor(self_info);
             try self.out.writer.print("    call ${s}_release(l {s}, l {s})\n", .{ fn_name, RT_PARAM, ptr });
         } else {
+            // Faz GG.7: yukarıdaki `.boxed_scalar` dalıyla AYNI gerekçe —
+            // ilkel-elemanlı `list[T]` release'i (ÇOK SIK bir yol) inline
+            // predecrement'e taşınır.
             const size = try self.listPayloadSize(ptr, elem_qtype);
-            try self.out.writer.print("    call $nox_rc_release(l {s}, l {s}, l {s})\n", .{ RT_PARAM, ptr, size });
+            const should_free = try self.emitInlinePredecrement(ptr);
+            const free_label = try self.newLabel("list_free");
+            const skip_free_label = try self.newLabel("list_free_skip");
+            const free_done_label = try self.newLabel("list_free_done");
+            try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ should_free, free_label, skip_free_label });
+            try self.out.writer.print("{s}\n", .{free_label});
+            try self.out.writer.print("    call $nox_rc_free_payload(l {s}, l {s}, l {s})\n", .{ RT_PARAM, ptr, size });
+            try self.out.writer.print("    jmp {s}\n", .{free_done_label});
+            try self.out.writer.print("{s}\n", .{skip_free_label});
+            try self.out.writer.print("    jmp {s}\n", .{free_done_label});
+            try self.out.writer.print("{s}\n", .{free_done_label});
         }
         try self.out.writer.print("    jmp {s}\n", .{done_label});
         try self.out.writer.print("{s}\n", .{skip_label});

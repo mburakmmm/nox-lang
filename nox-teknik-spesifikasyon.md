@@ -10115,6 +10115,48 @@ reduction EKLEMEK, SIFIR ölçülmüş fayda İçin YALNIZCA derleyici
 karmaşıklığı EKLERDİ (AGENTS.md'nin "measure, don't assume" disiplini,
 GG.4/M.5/M.8 İLE AYNI kategoride bir red).
 
+### GG.7 (TAMAMLANDI) — En küçük/en sık ARC yardımcılarını çağrı yerine inline etme
+
+**Kaynak:** GG.1'in `.str` dalına uyguladığı `emitInlinePredecrement`
+deseninin (predecrement DOĞRUDAN QBE IR'ına inline edilir, YALNIZCA
+GERÇEKTEN sıfıra/altına düştüğünde gerçek serbest bırakma çağrısına
+düşülür) `releaseValueIfSet`in KALAN İKİ dalına — ilkel-elemanlı
+`list[T]` (ÇOK SIK — HER liste release'i) VE `boxed_scalar` (Optional-
+kutulanmış ilkel, FF.6.4) — HÂLÂ UYGULANMAMIŞ olduğu bulundu; İKİSİ de
+GERÇEK bir `call $nox_rc_release` üretiyordu.
+
+**Düzeltme (`compiler/codegen_qbe/codegen.zig`, `releaseValueIfSet`):**
+İKİ dal da GG.1'in `.str` dalıyla BİREBİR AYNI splice desenine (`should_free
+= emitInlinePredecrement(ptr)`, `jnz` İLE `free_label`/`skip_free_label`,
+`free_label`de YALNIZCA `nox_rc_free_payload` çağrılır) geçirildi —
+`nox_rc_release`in KENDİSİ ZATEN TAM OLARAK `nox_rc_predecrement(ptr) !=
+0 ? nox_rc_free_payload(...) : ()` OLDUĞUNDAN (bkz. `runtime/alloc/
+arc.zig`), bu davranış BİREBİR KORUNUR.
+
+**Doğrulama:** `zig build test` (Debug + ReleaseFast) yeşil (467/468,
+kalan tek başarısızlık ÖNCEDEN belgelenmiş İLGİSİZ HTTP flake'i, rerun
+İLE onaylandı) — MEVCUT golden test suite (Optional/list release'i
+zaten kapsayan onlarca test) SIFIR davranış değişikliğini KANITLAR.
+**Boz→kırmızı→düzelt:** HER İKİ dalın `jnz {s}, {free_label}, {skip_
+free_label}`i GEÇİCİ olarak KOŞULSUZ `jmp {free_label}`e (HER ZAMAN
+serbest bırak, refcount'tan BAĞIMSIZ) değiştirilince TAM OLARAK 4 test
+KIRMIZI oldu (paylaşılan liste/kutu referanslarının BAŞKA bir sahibi
+VARKEN erken serbest bırakılması — `.boxed_scalar` dalının KENDİ belge
+notunun UYARDIĞI TAM O çifte-serbest-bırakma senaryosu) — kontrolün
+GERÇEKTEN load-bearing olduğu KANITLANDI. GERİ ALINIP yeniden yeşil
+doğrulandı.
+
+**Ölçüm:** YENİ `benchmarks/list_release_overhead.nox` (`make_list`,
+GG.2'nin seçici inlining'iyle `run`nin İÇİNE spliced, HER yinelemede
+TAZE bir `list[int]` inşa edip HEMEN tüketir — 50M yineleme) — İKİ dal
+GEÇİCİ olarak ESKİ (gerçek `call`) davranışına döndürülüp yeniden
+ölçüldü: **171.2ms → 157.9ms, ~%8 hızlanma**. GG.1'in `.str` kazanımından
+(~%23) KÜÇÜK — burada `nox_rc_alloc`ın KENDİSİ (GG.2'nin ELEYEMEDİĞİ,
+gerçek bir allocator çağrısı) hâlâ dominant maliyet, bkz. GG.2'nin AYNI
+`list_traversal` notu — ama GERÇEK, ölçülmüş bir kazanım.
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
