@@ -101,6 +101,14 @@ const stress_benchmarks = [_]Benchmark{
     // etmesinin SAF etkisini (300M çağrı, hiçbiri GERÇEKTEN raise ETMEZ)
     // izole ölçer.
     .{ .name = "exception_check_overhead", .path = "benchmarks/exception_check_overhead.nox", .expected = "600000000\n" },
+    // Faz GG.5 (bkz. nox-teknik-spesifikasyon.md §3.66): `for i in range(len(s)):
+    // ... s[i] ...` YERİNE burada bir `while` İLE AYNI desen — `s[i]`nin
+    // sınır kontrolü İçin GEREKEN `strlen(s)`, GG.5 ÖNCESİ döngünün HER
+    // yinelemesinde YENİDEN hesaplanırdı (O(uzunluk) İşin O(yineleme sayısı)
+    // KATI = O(n²)). 5000 baytlık bir dizeyi 4000 kez TARAR (20M erişim) —
+    // `s` döngü İçinde HİÇ yeniden atanmadığından TAM olarak GG.5'in hedef
+    // aldığı desen.
+    .{ .name = "str_index_loop_licm", .path = "benchmarks/str_index_loop_licm.nox", .expected = "20000000\n" },
     // Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) — `nox.strings.
     // contains`/`index_of`/`starts_with`/`ends_with`nin (`s[i]` YERİNE
     // alloc-sız `byte_at` kullanan) VE `nox.strings.join`in (saf Nox O(n²)

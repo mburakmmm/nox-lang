@@ -10008,6 +10008,84 @@ YÜZDEN reddedildi (AGENTS.md'nin "measure, don't assume" disiplini).
 `zig build test` (Debug + ReleaseFast) yeşil (geri alma SONRASI), `zig fmt`
 temiz.
 
+### GG.5 (TAMAMLANDI) — Döngü içindeki `s[i]`nin tekrar eden `strlen`i (manuel LICM)
+
+**Kaynak:** GG.1'in araştırma notunda ERTELENEN bulgu — `s[i]`nin sınır
+kontrolü İçin GEREKEN `strlen(s)`, `genStrIndex`in HER ÇAĞRISINDA YENİDEN
+hesaplanıyordu; bir döngü İÇİNDE tekrar eden `s[i]` erişimi (ör. bir
+dizeyi karakter karakter tarayan bir tokenize edici/ayrıştırıcı — ÇOK
+YAYGIN bir idiom) bu yüzden O(dizi uzunluğu × erişim sayısı) — GERÇEK bir
+O(n²) hazır, AYNI kök neden sınıfı (QBE'nin LICM YAPMAMASI) GG.1'in
+`nox_str_release`i ile PAYLAŞILAN.
+
+**Uygulama (`compiler/codegen_qbe/codegen.zig`, tamamı codegen SEVİYESİNDE
+— checker/ownership analizine dokunulmadan):** YENİ bir `str_len_cache:
+StringHashMapUnmanaged([]const u8)` (isim → önceden hesaplanmış QBE
+temp'i) alanı, `genWhile`/`genForRange`/`genForList`in ÜÇÜNÜN de döngüye
+GİRMEDEN HEMEN ÖNCE çağırdığı `enterStrLenCacheScope`/döngü BİTTİKTEN
+SONRA çağırdığı `exitStrLenCacheScope` ÇİFTİYLE doldurulup boşaltılır.
+`enterStrLenCacheScope`, döngü GÖVDESİNİ (iç içe if/while/for/try/with/
+lowlevel DAHİL) tarayan YENİ bir `collectIndexStrBasesStmts`/
+`collectIndexStrBasesExpr` çifti İLE `str`-tipli, `s[i]` deseninde
+kullanılan TÜM aday isimleri toplar; AYRI bir `collectReassignedNames`
+AYNI gövdede (`assign`/`var_decl` gölgelemesi/`for` döngü değişkeni/
+`except ... as`/`with ... as` DAHİL) yeniden atanan İSİMLERİ toplar —
+YALNIZCA candidates − reassigned KÜMESİ GERÇEKTEN önbelleğe alınır.
+`bodyHasNestedFuncDef`, gövdede HERHANGİ bir iç içe closure (`func_def`)
+VARSA TÜM önbelleklemeyi BİLİNÇLİ olarak (closure'ın yakalanan bir ismi
+NASIL ele aldığı bu turun kapsamı DIŞINDA analiz EDİLMEDİĞİNDEN)
+MUHAFAZAKÂR biçimde atlar. `genStrIndex`, `idx.obj` bir kimlikse VE
+`str_len_cache`de MEVCUTSA `$strlen` ÇAĞRISI YERİNE önceden hesaplanmış
+temp'i KULLANIR — QBE temp'leri fonksiyon BOYUNCA geçerli OLDUĞUNDAN (GG.2/
+GG.4'ün AYNI önculü) tek bir hoisted çağrı, İÇ İÇE döngüler DAHİL, TÜM
+sonraki `s[i]` erişimlerinde GÜVENLE yeniden kullanılabilir (dış döngünün
+ÖNCEDEN eklediği bir girişi iç döngü TEKRAR eklemez/SİLMEZ).
+
+**Doğrulama:**
+
+- `tests/golden/codegen_cases/str_index_loop_licm_positive.nox`: `count_two`
+  (AYNI `s`ye İKİ AYRI `s[i]` erişimi, `while`) VE `count_via_for` (`for i in
+  range(len(s)): ... s[i] ...`) — davranış (doğru sayım) DEĞİŞMEDİ.
+- **IR-metni doğrulaması:** AYNI fixture'ın ÜRETTİĞİ IR'da `call $strlen`
+  TAM OLARAK 3 KEZ geçer (`count_two`nun İKİ statik `s[i]` konumu TEK bir
+  hoisted çağrıya DÜŞTÜ + `count_via_for`nin `len()` builtin'i [1] + KENDİ
+  hoisted çağrısı [1]) — GG.5 ÖNCESİ bu SAYI 4 OLURDU.
+- `str_index_loop_reassign_safety.nox`: `s` döngü İÇİNDE (`if` dalında)
+  yeniden atanıyor — `collectReassignedNames` bunu YAKALAYIP `s`yi
+  ADAYLARDAN ÇIKARDIĞINDAN, İKİNCİ yinelemede `s[1]` YENİ atanan dizenin
+  KENDİ karakterini (`'y'`, ESKİ dizenin `'b'`si DEĞİL) DOĞRU döndürür.
+- `str_index_loop_reassign_stale_len.nox`: DAHA İNCE bir güvenlik senaryosu
+  — `s` KISA başlayıp döngü İÇİNDE DAHA UZUN bir dizeye atanıyor; BAYAT
+  (kısa) bir önbellek KULLANILSAYDI GEÇERLİ bir erişimi YANLIŞLIKLA
+  `IndexError` OLARAK reddederdi. `try/except` GEREKTİRDİĞİNDEN (bkz.
+  aşağıdaki yan bulgu) `expectGolden` YERİNE yalnızca çıkış kodu/stdout'u
+  doğrulayan ÖZEL bir test kullanır.
+- **Boz→kırmızı→düzelt:** `collectLoopInvariantStrBases`in `if (!reassigned.
+  contains(k.*))` KOŞULU GEÇİCİ olarak `if (true or ...)`e (yeniden-atama
+  KORUMASINI YOK SAYARAK) değiştirilince, `str_index_loop_reassign_stale_
+  len.nox` TAM OLARAK BEKLENDİĞİ gibi YANLIŞ sonuç (200 yerine 101) verdi
+  — bayat uzunluk korumasının GERÇEKTEN load-bearing olduğu KANITLANDI.
+  GERİ ALINIP `zig build test` (Debug + ReleaseFast) yeniden yeşil
+  doğrulandı (467/468 — kalan tek başarısızlık ÖNCEDEN belgelenmiş, İLGİSİZ
+  bir HTTP eşzamanlılık zamanlama flake'i, İKİNCİ bir rerun İLE onaylandı).
+- **Performans doğrulaması:** `benchmarks/str_index_loop_licm.nox` (5000
+  baytlık bir dizeyi 4000 kez TARAR, 20M erişim) — önbellekleme GEÇİCİ
+  olarak devre dışı bırakılıp (`genStrIndex`nin önbellek kontrolü `if
+  (false and ...)`e sabitlenerek) yeniden ölçüldü: **1919.3ms → 82.3ms,
+  ~%96 hızlanma (~23,3×)** — GG serisinin EN BÜYÜK ölçülmüş kazanımı.
+
+**Yan bulgu (GG.5'TEN BAĞIMSIZ, AYRI bir takip görevine bırakıldı):**
+break→red→fix ritüeli SIRASINDA, bir `str` yerelinin bir döngü İçinde
+yeniden atanmasının, AYNI döngüdeki bir `try/except` bloğuyla (o dizeyi
+`s[i]` İLE indeksleyen) BİRLEŞTİĞİNDE ÖNCEDEN VAR OLAN (`git stash` İLE
+pre-GG.5 codegen'de de AYNEN yeniden üretilen — GG.5'in KENDİSİYLE HİÇ
+İLGİSİ YOK) bir bellek sızıntısı VE (AYRI olarak) yakalanmamış bir
+istisnanın bir `while` döngüsü İÇİNDEN GEÇERKEN (uncaught exception
+propagation through a loop) doğru şekilde process'i sonlandırmadığı
+KEŞFEDİLDİ. Her ikisi de bu turun kapsamı DIŞINDA bırakıldı.
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

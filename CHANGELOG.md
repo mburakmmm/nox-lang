@@ -477,6 +477,30 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   **Kod TAMAMEN geri alındı** (`git checkout` + `runtime_state.zig`
   silindi) — yalnızca bu benchmark KALICI bir regresyon-koruma olarak
   eklendi.
+- **Döngü içindeki `s[i]`nin tekrar eden `strlen`i (manuel LICM)** (Faz
+  GG.5, bkz. nox-teknik-spesifikasyon.md §3.66). `genStrIndex`in sınır
+  kontrolü İçin gereken `strlen(s)` HER TEK `s[i]` erişiminde YENİDEN
+  hesaplanıyordu — bir döngü İçinde tekrar eden erişim (dizeyi karakter
+  karakter tarayan bir ayrıştırıcı GİBİ ÇOK YAYGIN bir idiom) bu yüzden
+  O(dizi uzunluğu × erişim sayısı) GERÇEK bir O(n²) hazırdı (GG.1'in
+  araştırma notunda ERTELENEN bulgu). YENİ `str_len_cache` haritası,
+  `genWhile`/`genForRange`/`genForList`in ÜÇÜNÜN de döngüye GİRMEDEN
+  ÖNCE çağırdığı `enterStrLenCacheScope` İLE doldurulur: `str`-tipli,
+  gövde İÇİNDE (iç içe döngüler DAHİL) HİÇ yeniden atanmayan İsimler
+  İçin `strlen` TEK SEFERLİK önceden hesaplanıp önbelleklenir (`genStrIndex`
+  bu önbelleği KONTROL EDİP varsa GERÇEK bir `$strlen` çağrısı ÜRETMEZ);
+  gövdede bir iç içe closure VARSA TÜM önbellekleme BİLİNÇLİ olarak
+  atlanır. Break→red→fix: yeniden-atama KORUMASI GEÇİCİ olarak devre
+  dışı bırakılınca `str_index_loop_reassign_stale_len.nox` TAM OLARAK
+  beklendiği gibi YANLIŞ sonuç (200 yerine 101) verdi — bayat-uzunluk
+  korumasının load-bearing olduğu KANITLANDI. Ölçüm: `str_index_loop_licm`
+  (20M erişim) 1919.3ms → 82.3ms, **~%96 hızlanma (~23,3×)** — GG serisinin
+  EN BÜYÜK ölçülmüş kazanımı. **Yan bulgu (AYRI bir takip görevine
+  bırakıldı):** bir `str` yerelinin bir döngü İçinde yeniden atanmasının,
+  AYNI döngüdeki bir `try/except` bloğuyla BİRLEŞTİĞİNDE ÖNCEDEN VAR OLAN
+  (GG.5'TEN TAMAMEN BAĞIMSIZ, `git stash` İLE pre-GG.5 codegen'de de AYNEN
+  yeniden üretilen) bir bellek sızıntısı VE yakalanmamış bir istisnanın
+  bir `while` İÇİNDEN GEÇERKEN process'i doğru sonlandırmadığı KEŞFEDİLDİ.
 
 ### Düzeltildi
 - **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`

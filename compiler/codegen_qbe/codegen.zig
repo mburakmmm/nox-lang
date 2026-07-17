@@ -898,6 +898,18 @@ const Codegen = struct {
     /// ham değer), bu yüzden codegen'in KENDİSİNİN de "şu an neredeyiz"i
     /// bilmesi GEREKİR.
     narrowed_unbox: std.StringHashMapUnmanaged(void) = .empty,
+    /// Faz GG.5 (manuel LICM — bkz. nox-teknik-spesifikasyon.md §3.66):
+    /// `str`-tipli, bir döngü gövdesi İÇİNDE HİÇ yeniden atanmayan bir
+    /// isim `s[i]` İLE indekslendiğinde, `genStrIndex`in sınır kontrolü
+    /// İçin GEREKTİRDİĞİ `strlen(s)` HER erişimde YENİDEN çağrılmak
+    /// YERİNE döngüye girmeden HEMEN ÖNCE BİR KEZ hesaplanıp burada
+    /// (isim → önceden hesaplanmış QBE temp'i) SAKLANIR. `genWhile`/
+    /// `genForRange`/`genForList` `enterStrLenCacheScope`/
+    /// `exitStrLenCacheScope` ÇİFTİYLE bu haritayı KENDİ gövdeleri
+    /// SÜRESİNCE doldurup TEMİZLER (iç içe döngüler, dış döngünün
+    /// ÖNCEDEN eklediği bir GİRİŞİ TEKRAR eklemez/silmez — bkz.
+    /// `enterStrLenCacheScope`in belge notu).
+    str_len_cache: std.StringHashMapUnmanaged([]const u8) = .empty,
     temp_counter: usize = 0,
     label_counter: usize = 0,
     string_counter: usize = 0,
@@ -3501,11 +3513,219 @@ const Codegen = struct {
         try self.out.writer.print("{s}\n", .{end_label});
     }
 
+    /// Faz GG.5: iç içe geçmiş İFADE ağacının HER YERİNDE (`if`/`while`/`for`/
+    /// `try`/`with`/`lowlevel` gövdeleri DAHİL) `s[i]` desenini arar, `s`nin
+    /// `str`-tipli BİR KİMLİK (identifier) OLDUĞU durumlarda `s`yi aday
+    /// kümesine ekler. `func_def`in (iç içe closure) İÇİNE İNMEZ — bu tarama
+    /// KENDİSİ `bodyHasNestedFuncDef` tarafından TAMAMEN elenir (bkz. onun
+    /// belge notu), bu yüzden burada AYRICA bir `func_def` dalı GEREKMEZ.
+    fn collectIndexStrBasesExpr(self: *Codegen, e: ast.Expr, candidates: *std.StringHashMapUnmanaged(void)) CodegenError!void {
+        switch (e) {
+            .index => |idx| {
+                if (idx.obj.* == .identifier) {
+                    if (self.vars.get(idx.obj.identifier)) |vi| {
+                        if (vi.heap == .str) try candidates.put(self.allocator, idx.obj.identifier, {});
+                    }
+                }
+                try self.collectIndexStrBasesExpr(idx.obj.*, candidates);
+                try self.collectIndexStrBasesExpr(idx.index.*, candidates);
+            },
+            .unary => |u| try self.collectIndexStrBasesExpr(u.operand.*, candidates),
+            .binary => |b| {
+                try self.collectIndexStrBasesExpr(b.left.*, candidates);
+                try self.collectIndexStrBasesExpr(b.right.*, candidates);
+            },
+            .call => |c| {
+                try self.collectIndexStrBasesExpr(c.callee.*, candidates);
+                for (c.args) |a| try self.collectIndexStrBasesExpr(a, candidates);
+            },
+            .attribute => |a| try self.collectIndexStrBasesExpr(a.obj.*, candidates),
+            .list_lit => |items| for (items) |it| try self.collectIndexStrBasesExpr(it, candidates),
+            .dict_lit => |pairs| for (pairs) |p| {
+                try self.collectIndexStrBasesExpr(p.key, candidates);
+                try self.collectIndexStrBasesExpr(p.value, candidates);
+            },
+            .await_expr => |inner| try self.collectIndexStrBasesExpr(inner.*, candidates),
+            .spawn_expr => |inner| try self.collectIndexStrBasesExpr(inner.*, candidates),
+            .generic_construct => |g| for (g.args) |a| try self.collectIndexStrBasesExpr(a, candidates),
+            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+        }
+    }
+
+    fn collectIndexStrBasesStmts(self: *Codegen, body: []const ast.Stmt, candidates: *std.StringHashMapUnmanaged(void)) CodegenError!void {
+        for (body) |stmt| {
+            switch (stmt.kind) {
+                .expr_stmt => |e| try self.collectIndexStrBasesExpr(e, candidates),
+                .var_decl => |v| try self.collectIndexStrBasesExpr(v.value, candidates),
+                .assign => |a| {
+                    try self.collectIndexStrBasesExpr(a.target, candidates);
+                    try self.collectIndexStrBasesExpr(a.value, candidates);
+                },
+                .if_stmt => |s| {
+                    try self.collectIndexStrBasesExpr(s.cond, candidates);
+                    try self.collectIndexStrBasesStmts(s.then_body, candidates);
+                    for (s.elif_clauses) |ec| {
+                        try self.collectIndexStrBasesExpr(ec.cond, candidates);
+                        try self.collectIndexStrBasesStmts(ec.body, candidates);
+                    }
+                    if (s.else_body) |eb| try self.collectIndexStrBasesStmts(eb, candidates);
+                },
+                .while_stmt => |s| {
+                    try self.collectIndexStrBasesExpr(s.cond, candidates);
+                    try self.collectIndexStrBasesStmts(s.body, candidates);
+                },
+                .for_stmt => |s| {
+                    try self.collectIndexStrBasesExpr(s.iterable, candidates);
+                    try self.collectIndexStrBasesStmts(s.body, candidates);
+                },
+                .return_stmt => |e| if (e) |ex| try self.collectIndexStrBasesExpr(ex, candidates),
+                .raise_stmt => |e| try self.collectIndexStrBasesExpr(e, candidates),
+                .try_stmt => |s| {
+                    try self.collectIndexStrBasesStmts(s.try_body, candidates);
+                    for (s.except_clauses) |ec| try self.collectIndexStrBasesStmts(ec.body, candidates);
+                    if (s.finally_body) |fb| try self.collectIndexStrBasesStmts(fb, candidates);
+                },
+                .lowlevel_stmt => |s| try self.collectIndexStrBasesStmts(s.body, candidates),
+                .with_stmt => |s| {
+                    try self.collectIndexStrBasesExpr(s.ctx_expr, candidates);
+                    try self.collectIndexStrBasesStmts(s.body, candidates);
+                },
+                .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt => {},
+            }
+        }
+    }
+
+    /// Faz GG.5: bir isim BU gövde İÇİNDE YENİDEN atanıyorsa (doğrudan
+    /// `assign`/`var_decl` gölgelemesi/`for` döngü değişkeni/`except ... as
+    /// name`/`with ... as name` İLE) `strlen` önbelleğine ADAY OLAMAZ —
+    /// aksi halde önbelleklenen uzunluk BAYATLAR (`s = s2` SONRASI `s[i]`
+    /// hâlâ ESKİ `s`nin uzunluğunu kullanırdı). Bilinçli MUHAFAZAKÂR:
+    /// SADECE BU gövdedeki (iç içe döngüler DAHİL, ama bu gövdenin DIŞINDA
+    /// DEĞİL) atamalara bakar — `enterStrLenCacheScope`in HER döngü
+    /// GİRİŞİNDE bu taramayı TAZE çalıştırması, iç içe bir döngünün KENDİ
+    /// (dıştaki gövdede reddedilen bir ismi, o ad İÇ döngüde YENİDEN
+    /// atanmıyorsa) BAĞIMSIZ olarak önbelleklemesine olanak tanır.
+    fn collectReassignedNames(body: []const ast.Stmt, reassigned: *std.StringHashMapUnmanaged(void), allocator: std.mem.Allocator) CodegenError!void {
+        for (body) |stmt| {
+            switch (stmt.kind) {
+                .assign => |a| if (a.target == .identifier) try reassigned.put(allocator, a.target.identifier, {}),
+                .var_decl => |v| try reassigned.put(allocator, v.name, {}),
+                .if_stmt => |s| {
+                    try collectReassignedNames(s.then_body, reassigned, allocator);
+                    for (s.elif_clauses) |ec| try collectReassignedNames(ec.body, reassigned, allocator);
+                    if (s.else_body) |eb| try collectReassignedNames(eb, reassigned, allocator);
+                },
+                .while_stmt => |s| try collectReassignedNames(s.body, reassigned, allocator),
+                .for_stmt => |s| {
+                    try reassigned.put(allocator, s.var_name, {});
+                    try collectReassignedNames(s.body, reassigned, allocator);
+                },
+                .try_stmt => |s| {
+                    try collectReassignedNames(s.try_body, reassigned, allocator);
+                    for (s.except_clauses) |ec| {
+                        if (ec.bind_name) |bn| try reassigned.put(allocator, bn, {});
+                        try collectReassignedNames(ec.body, reassigned, allocator);
+                    }
+                    if (s.finally_body) |fb| try collectReassignedNames(fb, reassigned, allocator);
+                },
+                .lowlevel_stmt => |s| try collectReassignedNames(s.body, reassigned, allocator),
+                .with_stmt => |s| {
+                    if (s.binding) |b| try reassigned.put(allocator, b, {});
+                    try collectReassignedNames(s.body, reassigned, allocator);
+                },
+                .expr_stmt, .return_stmt, .raise_stmt, .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt => {},
+            }
+        }
+    }
+
+    /// Faz GG.5: gövdede (herhangi bir derinlikte) bir `func_def` (iç içe
+    /// closure) VARSA `true` döner — BU durumda `enterStrLenCacheScope`
+    /// TÜM önbellekleme fırsatını (closure'ın YAKALANAN bir ismi kapanış
+    /// SIRASINDA/SONRASINDA nasıl ele aldığı bu turun kapsamı DIŞINDA
+    /// AYRICA analiz EDİLMEDİĞİNDEN) BİLİNÇLİ VE MUHAFAZAKÂR biçimde
+    /// TAMAMEN atlar.
+    fn bodyHasNestedFuncDef(body: []const ast.Stmt) bool {
+        for (body) |stmt| {
+            switch (stmt.kind) {
+                .func_def => return true,
+                .if_stmt => |s| {
+                    if (bodyHasNestedFuncDef(s.then_body)) return true;
+                    for (s.elif_clauses) |ec| if (bodyHasNestedFuncDef(ec.body)) return true;
+                    if (s.else_body) |eb| if (bodyHasNestedFuncDef(eb)) return true;
+                },
+                .while_stmt => |s| if (bodyHasNestedFuncDef(s.body)) return true,
+                .for_stmt => |s| if (bodyHasNestedFuncDef(s.body)) return true,
+                .try_stmt => |s| {
+                    if (bodyHasNestedFuncDef(s.try_body)) return true;
+                    for (s.except_clauses) |ec| if (bodyHasNestedFuncDef(ec.body)) return true;
+                    if (s.finally_body) |fb| if (bodyHasNestedFuncDef(fb)) return true;
+                },
+                .lowlevel_stmt => |s| if (bodyHasNestedFuncDef(s.body)) return true,
+                .with_stmt => |s| if (bodyHasNestedFuncDef(s.body)) return true,
+                else => {},
+            }
+        }
+        return false;
+    }
+
+    fn collectLoopInvariantStrBases(self: *Codegen, body: []const ast.Stmt) CodegenError!std.StringHashMapUnmanaged(void) {
+        var result: std.StringHashMapUnmanaged(void) = .empty;
+        if (bodyHasNestedFuncDef(body)) return result;
+        var candidates: std.StringHashMapUnmanaged(void) = .empty;
+        try self.collectIndexStrBasesStmts(body, &candidates);
+        var reassigned: std.StringHashMapUnmanaged(void) = .empty;
+        try collectReassignedNames(body, &reassigned, self.allocator);
+        var it = candidates.keyIterator();
+        while (it.next()) |k| {
+            if (!reassigned.contains(k.*)) try result.put(self.allocator, k.*, {});
+        }
+        return result;
+    }
+
+    const StrLenCacheScope = struct {
+        added_names: []const []const u8,
+    };
+
+    /// Faz GG.5: döngüye girmeden HEMEN ÖNCE (döngü gövdesi ÜRETİLMEDEN
+    /// ÖNCE) çağrılır — `collectLoopInvariantStrBases`in bulduğu HER isim
+    /// İçin `strlen`i TEK SEFERLİK ÖNCEDEN hesaplayıp `self.str_len_cache`e
+    /// KAYDEDER. Bir isim ZATEN (dıştaki bir döngüden) önbellekteyse
+    /// ATLANIR — iç içe döngüler dıştaki döngünün ÖNCEDEN hesapladığı
+    /// AYNI QBE temp'ini YENİDEN KULLANIR (QBE temp'leri fonksiyon
+    /// BOYUNCA GEÇERLİDİR — bkz. `emitInlineRetain`in AYNI önculü), İKİNCİ
+    /// bir `strlen` çağrısı ÜRETİLMEZ; bu YÜZDEN yalnızca BU çağrının
+    /// GERÇEKTEN eklediği isimler `added_names`e kaydedilir (`exitStrLen
+    /// CacheScope`in yalnızca KENDİ eklediklerini silmesi İÇİN — dıştaki
+    /// döngünün girişini YANLIŞLIKLA SİLMEMEK KRİTİKTİR).
+    fn enterStrLenCacheScope(self: *Codegen, body: []const ast.Stmt) CodegenError!StrLenCacheScope {
+        var invariants = try self.collectLoopInvariantStrBases(body);
+        defer invariants.deinit(self.allocator);
+        var added: std.ArrayListUnmanaged([]const u8) = .empty;
+        var it = invariants.keyIterator();
+        while (it.next()) |k| {
+            const name = k.*;
+            if (self.str_len_cache.contains(name)) continue;
+            const v = try self.genExpr(.{ .identifier = name });
+            const len_t = try self.newTemp();
+            try self.out.writer.print("    {s} =l call $strlen(l {s})\n", .{ len_t, v.text });
+            try self.str_len_cache.put(self.allocator, name, len_t);
+            try added.append(self.allocator, name);
+        }
+        return .{ .added_names = try added.toOwnedSlice(self.allocator) };
+    }
+
+    fn exitStrLenCacheScope(self: *Codegen, scope: StrLenCacheScope) void {
+        for (scope.added_names) |name| {
+            _ = self.str_len_cache.remove(name);
+        }
+    }
+
     fn genWhile(self: *Codegen, w: ast.WhileStmt, ret_qtype: QbeType) CodegenError!void {
         const cond_label = try self.newLabel("while_cond");
         const body_label = try self.newLabel("while_body");
         const end_label = try self.newLabel("while_end");
 
+        const str_len_scope = try self.enterStrLenCacheScope(w.body);
         try self.out.writer.print("    jmp {s}\n", .{cond_label});
         try self.out.writer.print("{s}\n", .{cond_label});
         const cond_v = try self.genExpr(w.cond);
@@ -3525,6 +3745,7 @@ const Codegen = struct {
         }
         try self.out.writer.print("    jmp {s}\n", .{cond_label});
         try self.out.writer.print("{s}\n", .{end_label});
+        self.exitStrLenCacheScope(str_len_scope);
     }
 
     fn isRangeCall(e: ast.Expr) bool {
@@ -3556,6 +3777,7 @@ const Codegen = struct {
         const body_label = try self.newLabel("for_body");
         const end_label = try self.newLabel("for_end");
 
+        const str_len_scope = try self.enterStrLenCacheScope(f.body);
         try self.out.writer.print("    jmp {s}\n", .{cond_label});
         try self.out.writer.print("{s}\n", .{cond_label});
         const cur = try self.newTemp();
@@ -3572,6 +3794,7 @@ const Codegen = struct {
         try self.out.writer.print("    storel {s}, {s}\n", .{ next, var_info.slot });
         try self.out.writer.print("    jmp {s}\n", .{cond_label});
         try self.out.writer.print("{s}\n", .{end_label});
+        self.exitStrLenCacheScope(str_len_scope);
     }
 
     fn genForList(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenError!void {
@@ -3596,6 +3819,7 @@ const Codegen = struct {
         const body_label = try self.newLabel("forlist_body");
         const end_label = try self.newLabel("forlist_end");
 
+        const str_len_scope = try self.enterStrLenCacheScope(f.body);
         try self.out.writer.print("    jmp {s}\n", .{cond_label});
         try self.out.writer.print("{s}\n", .{cond_label});
         const idx_cur = try self.newTemp();
@@ -3624,6 +3848,7 @@ const Codegen = struct {
         try self.out.writer.print("    storel {s}, {s}\n", .{ idx_next, idx_slot });
         try self.out.writer.print("    jmp {s}\n", .{cond_label});
         try self.out.writer.print("{s}\n", .{end_label});
+        self.exitStrLenCacheScope(str_len_scope);
     }
 
     /// Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `.none_lit`in
@@ -3932,8 +4157,18 @@ const Codegen = struct {
     /// `releaseIfTemporary` ile tabanı serbest bırakmak yeterlidir.
     fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Value {
         const index_v = try self.genExpr(idx.index.*);
-        const len_t = try self.newTemp();
-        try self.out.writer.print("    {s} =l call $strlen(l {s})\n", .{ len_t, obj.text });
+        // Faz GG.5: `idx.obj` döngü-değişmez, `str`-tipli bir kimlikse VE
+        // enclosing döngü GİRİŞİ bunun İçin ÖNCEDEN bir `strlen` hesaplayıp
+        // önbelleğe ALDIYSA (bkz. `enterStrLenCacheScope`), o TEK SEFERLİK
+        // hesaplanmış değer YENİDEN KULLANILIR — YENİ bir `$strlen` çağrısı
+        // ÜRETİLMEZ.
+        const len_t = if (idx.obj.* == .identifier and self.str_len_cache.get(idx.obj.identifier) != null)
+            self.str_len_cache.get(idx.obj.identifier).?
+        else blk: {
+            const t = try self.newTemp();
+            try self.out.writer.print("    {s} =l call $strlen(l {s})\n", .{ t, obj.text });
+            break :blk t;
+        };
         const neg_t = try self.newTemp();
         try self.out.writer.print("    {s} =w csltl {s}, 0\n", .{ neg_t, index_v.text });
         const oob_hi_t = try self.newTemp();
