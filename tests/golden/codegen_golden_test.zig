@@ -513,6 +513,75 @@ test "codegen(çalıştır): Faz GG.5 — bayat önbelleklenmiş uzunluk YANLIŞ
     try std.testing.expectEqualStrings("101\n", run_result.stdout);
 }
 
+// Faz GG.9 (kanıtlanabilir sınır-içi erişimlerde bounds-check elemesi):
+// `for i in range(len(xs)): ... xs[i] ...` deseninde `i`nin `[0, len(xs))`
+// ARALIĞINDA olduğu döngünün KENDİ sınırından ZATEN KANITLANMIŞTIR —
+// `sum_list` (`list[int]`) VE `count_char` (`str`) İKİSİ de bu deseni
+// kullanır, davranış (doğru toplam/sayım) DEĞİŞMEDEN çalışır.
+test "codegen(çalıştır): Faz GG.9 — for i in range(len(x)): x[i], davranış değişmedi" {
+    try expectGolden(
+        @embedFile("codegen_cases/bounds_check_elision_positive.nox"),
+        @embedFile("codegen_cases/bounds_check_elision_positive.expected"),
+    );
+}
+
+test "codegen: Faz GG.9 — kanıtlanabilir sınır-içi erişimde IndexError dalı GERÇEKTEN ÜRETİLMEZ" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/bounds_check_elision_positive.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const user_module = try nox.parser.parseModule(allocator, tokens);
+    // `IndexError`ın (bir `nox.core` yerleşiği) çözümlenmesi İçin — bkz.
+    // GG.5'in AYNI IR-metni testindeki `resolveImports` notu.
+    const module = try nox.module_loader.resolveImports(allocator, std.testing.io, user_module);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, null, .empty);
+    // `sum_list`in `xs[i]`si VE `count_char`in `s[i]`si İKİSİ de TAM OLARAK
+    // GG.9'un hedeflediği desendedir — bu programın ÜRETTİĞİ IR'da NE
+    // `list_idx_err` NE DE `str_idx_err` (sınır-DIŞI dalının etiket
+    // ÖNEKLERİ) TEK bir kez bile GÖRÜNMEMELİDİR (elenmenin GERÇEKTEN
+    // gerçekleştiğinin doğrudan kanıtı).
+    try std.testing.expect(std.mem.indexOf(u8, ir, "list_idx_err") == null);
+    try std.testing.expect(std.mem.indexOf(u8, ir, "str_idx_err") == null);
+}
+
+// Faz GG.9 — KRİTİK güvenlik testi: `xs` döngü GÖVDESİ İÇİNDE (bir `if`
+// dalında) yeniden atanıyor — `collectReassignedNames` bunu YAKALAYIP
+// `bounds_elide_ctx`i BU döngü İçin HİÇ KURMAMALIDIR (aksi halde `xs[i]`
+// YENİ listenin GERÇEK sınırları İçin KONTROL EDİLMEDEN sınır-DIŞI
+// okurdu). **Bu fixture BİLİNÇLİ olarak ÇALIŞTIRILMAZ** (yalnızca IR-metni
+// DÜZEYİNDE doğrulanır) — `xs`nin yeniden atanmasıyla BİRLEŞTİĞİNDE
+// GG.9'DAN TAMAMEN BAĞIMSIZ, ÖNCEDEN VAR OLAN bir bellek sızıntısı
+// (GG.5'in `str` İçin bulduğu AYNI hatanın `list` KARŞILIĞI — `git stash`
+// İLE pre-GG.9 codegen'de de AYNEN yeniden üretildi) KEŞFEDİLDİ; bu
+// programı GERÇEKTEN çalıştırmak o AYRI hatayı tetiklerdi. Statik kontrol
+// GG.9'un GÜVENLİK özelliğini (yeniden atanan bir listenin ASLA
+// elenmemesi) TAM olarak izole doğrular, İLGİSİZ hatadan ETKİLENMEZ.
+test "codegen: Faz GG.9 — döngü içinde yeniden atanan liste İçin IndexError dalı KORUNUR (elenmez)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/bounds_check_elision_reassign_safety.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const user_module = try nox.parser.parseModule(allocator, tokens);
+    const module = try nox.module_loader.resolveImports(allocator, std.testing.io, user_module);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, null, .empty);
+    // `xs` döngü İÇİNDE yeniden atandığından `bounds_elide_ctx` BU döngü
+    // İçin HİÇ KURULMAMALIDIR — `list_idx_err` dalı NORMAL şekilde
+    // ÜRETİLMELİDİR (elenmenin GERÇEKLEŞMEDİĞİNİN doğrudan kanıtı).
+    try std.testing.expect(std.mem.indexOf(u8, ir, "list_idx_err") != null);
+}
+
 test "codegen(çalıştır): lowlevel — arena üzerinden sınıf + liste, alan okuma, sızıntı yok" {
     try expectGolden(
         @embedFile("codegen_cases/lowlevel_basic.nox"),

@@ -538,6 +538,28 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   bir whole-program "saflık" analizi + HER çağrı sitesinin GG.2'nin
   inlining'iyle ETKİLEŞİMİ DAHİL güncellenmesini GEREKTİRİRDİ — SIFIR
   ölçülmüş kazanım İçin orantısız bir mimari karmaşıklık).
+- **Kanıtlanabilir sınır-içi erişimlerde bounds-check elemesi** (Faz
+  GG.9, bkz. nox-teknik-spesifikasyon.md §3.66). `for i in range(len(xs)):
+  ... xs[i] ...` deseninde `i`nin `[0, len(xs))` ARALIĞINDA olduğu
+  döngünün KENDİ sınırından ZATEN KANITLANMIŞTIR, ama `genIndex`/
+  `genStrIndex` HER erişimde AYRICA bir sınır kontrolü üretiyordu. Kod
+  YAZILMADAN ÖNCE ölçüldü (GG.4/GG.6/GG.8'in dersi UYGULANARAK): bu KEZ
+  (GG.4/GG.6/GG.8'in AKSİNE) GERÇEK bir fark BULUNDU (~76-77ms →
+  ~46-47ms, elle .ssa yaması) — İKİ karşılaştırma + OR + koşullu dal
+  zinciri, TEK bir `mul`/argüman farkının AKSİNE, Apple Silicon'da BİLE
+  ölçülebilir bir maliyet taşıyor. YENİ `bounds_elide_ctx`, `genForRange`nin
+  TESPİT ETTİĞİ desende (GG.5'in `str_len_cache`iyle AYNI `collectReassignedNames`/
+  `bodyHasNestedFuncDef` güvenlik disiplini) doldurulur; `genIndex`/
+  `genStrIndex` sınır kontrolünü (VE `genStrIndex`de `strlen`in KENDİSİNİ)
+  TAMAMEN atlar. Break→red→fix: yeniden-atama koruması GEÇİCİ kaldırılınca
+  TAM OLARAK beklenen tek test kırmızı oldu, kontrolün load-bearing olduğu
+  kanıtlandı. Ölçüm: `bounds_check_elision` (100M erişim) 67.6ms → 38.7ms,
+  **~%43 hızlanma (~1,75×)** — GG.5'ten (~23,3×) SONRA GG serisinin EN
+  BÜYÜK ikinci kazanımı. **Yan bulgu:** `list` yerelinin bir `for`-range
+  döngüsünde yeniden atanmasının `try/except` İLE BİRLEŞTİĞİNDE ÖNCEDEN
+  VAR OLAN (GG.5'in `str` bulgusunun `list` KARŞILIĞI) bir bellek sızıntısı
+  KEŞFEDİLDİ — güvenlik testi bu YÜZDEN yalnızca STATİK (IR-metni) olarak
+  doğrulandı, ÇALIŞTIRILMADI.
 
 ### Düzeltildi
 - **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`

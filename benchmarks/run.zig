@@ -116,6 +116,13 @@ const stress_benchmarks = [_]Benchmark{
     // `emitInlinePredecrement`e taşıdığı yol) SAF etkisini (50M döngü)
     // izole ölçer.
     .{ .name = "list_release_overhead", .path = "benchmarks/list_release_overhead.nox", .expected = "50000000\n" },
+    // Faz GG.9 (bkz. nox-teknik-spesifikasyon.md §3.66): `for i in range(len(xs)):
+    // ... xs[i] ...` — `i`nin `[0, len(xs))` ARALIĞINDA olduğu döngünün
+    // KENDİ sınırından ZATEN KANITLANMIŞTIR, `xs[i]`nin AYRICA ürettiği
+    // sınır kontrolü (karşılaştırma + `IndexError` dalı) GG.9'un elediği
+    // GEREKSİZ maliyettir. 20 elemanlı bir listeyi 5M kez (100M erişim)
+    // tarar.
+    .{ .name = "bounds_check_elision", .path = "benchmarks/bounds_check_elision.nox", .expected = "485000000\n" },
     // Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) — `nox.strings.
     // contains`/`index_of`/`starts_with`/`ends_with`nin (`s[i]` YERİNE
     // alloc-sız `byte_at` kullanan) VE `nox.strings.join`in (saf Nox O(n²)

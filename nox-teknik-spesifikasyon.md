@@ -10189,6 +10189,82 @@ SIFIR ölçülmüş kazanım İçin ORANTISIZ bir mimari karmaşıklık maliyeti
 (AGENTS.md'nin "measure, don't assume" disiplini, GG.4/GG.6/M.5/M.8 İLE
 AYNI kategoride bir red).
 
+### GG.9 (TAMAMLANDI) — Kanıtlanabilir sınır-içi erişimlerde bounds-check elemesi
+
+**Kaynak:** GG listesinin sıradaki maddesi — `for i in range(len(xs)):
+... xs[i] ...` deseninde `i`nin `[0, len(xs))` ARALIĞINDA olduğu döngünün
+KENDİ `range(len(xs))` sınırından ZATEN KANITLANMIŞTIR, ama `genIndex`/
+`genStrIndex` HER `xs[i]`de AYRICA bir sınır kontrolü (2 karşılaştırma +
+bir OR + bir koşullu `IndexError` dalı) üretir.
+
+**Ölçüm (KOD YAZILMADAN ÖNCE, GG.4/GG.6/GG.8'in dersi UYGULANARAK):**
+`for i in range(len(xs)): total + xs[i]` İçeren 100M erişimlik bir
+döngünün ÜRETTİĞİ `.ssa` ELLE sınır kontrolü ÇIKARILARAK yamanıp AYRI
+derlendi:
+
+| Durum | Süre |
+|---|---|
+| Sınır kontrolü VAR (mevcut) | ~76-77ms |
+| Sınır kontrolü ELLE ÇIKARILMIŞ | ~46-47ms |
+
+**GG.4/GG.6/GG.8'in AKSİNE, BU SEFER GERÇEK, ÖLÇÜLEBİLİR bir fark VAR**
+(~%39-40) — İKİ karşılaştırma + OR + koşullu dal ZİNCİRİ (TEK bir `mul`/
+argüman farkının AKSİNE), muhtemelen elemanın YÜKLENMESİNDEN ÖNCE
+TAMAMLANMASI GEREKEN VERİ-BAĞIMLI bir gecikme zinciri OLUŞTURDUĞUNDAN,
+Apple Silicon'da BİLE ÖLÇÜLEBİLİR bir maliyet TAŞIR. Bu, GG serisinin İLK
+kez "ölç, KOD YAZ" kararına (GG.5'ten SONRA) yol açan İKİNCİ bulgusudur.
+
+**Uygulama (`compiler/codegen_qbe/codegen.zig`, tamamı codegen SEVİYESİNDE):**
+YENİ bir `bounds_elide_ctx: ?BoundsElideCtx` (isim ÇİFTİ: `{list_name,
+idx_var}`) alanı, `genForRange`nin YENİ `detectBoundsElideCtx`sinin
+TESPİT ETTİĞİ `for i in range(len(xs)): ...` deseninde doldurulur —
+GG.5'in `str_len_cache`iyle AYNI güvenlik disiplini: `xs`/`i` gövde
+İÇİNDE (iç içe döngüler DAHİL) HİÇ yeniden atanmıyor (`collectReassignedNames`
+YENİDEN KULLANILIR) VE hiçbir iç içe closure YOK (`bodyHasNestedFuncDef`
+YENİDEN KULLANILIR). `genIndex`/`genStrIndex`, YENİ `boundsElideApplies`
+İLE (`idx.obj`/`idx.index` İKİSİ de BASİT birer kimlik VE bağlamla İSİM
+BAZINDA EŞLEŞİYORSA) sınır kontrolünü TAMAMEN ATLAR — `genStrIndex`de BU
+AYRICA `strlen`in KENDİSİNİN (GG.5'in önbelleği DAHİL) HİÇ HESAPLANMAMASI
+anlamına gelir (yalnızca sınır kontrolü İçin GEREKTİĞİNDEN). TEK bir
+bağlam Hem `list[T]` Hem `str` indekslemesini KAPSAR (heap türü ZATEN o
+dalda BİLİNİYOR).
+
+**Doğrulama:**
+
+- `bounds_check_elision_positive.nox`: `sum_list` (`list[int]`) VE
+  `count_char` (`str`) İKİSİ de deseni kullanır — davranış (doğru toplam/
+  sayım) DEĞİŞMEDİ.
+- **IR-metni doğrulaması:** AYNI fixture'ın ÜRETTİĞİ IR'da NE
+  `list_idx_err` NE `str_idx_err` (sınır-DIŞI dalının etiket ÖNEKLERİ)
+  TEK bir kez bile GÖRÜNMEZ.
+- `bounds_check_elision_reassign_safety.nox`: `xs` döngü İÇİNDE (bir `if`
+  dalında) yeniden atanıyor — **BİLİNÇLİ olarak ÇALIŞTIRILMAZ** (bkz.
+  aşağıdaki yan bulgu), yalnızca IR-metni DÜZEYİNDE `list_idx_err`in HÂLÂ
+  ÜRETİLDİĞİ (elenmediği) doğrulanır.
+- **Boz→kırmızı→düzelt:** `detectBoundsElideCtx`in yeniden-atama
+  KORUMASI (`reassigned.contains(...)` kontrolleri) GEÇİCİ olarak YOK
+  SAYILINCA TAM OLARAK beklenen tek test (reassignment-safety IR kontrolü)
+  KIRMIZI oldu (129/130) — kontrolün GERÇEKTEN load-bearing olduğu
+  KANITLANDI. GERİ ALINIP `zig build test` (Debug + ReleaseFast) yeniden
+  yeşil doğrulandı.
+- **Performans doğrulaması:** `benchmarks/bounds_check_elision.nox` (20
+  elemanlı bir listeyi 5M kez, 100M erişim, tarar) — `boundsElideApplies`
+  GEÇİCİ olarak KOŞULSUZ `false` DÖNECEK şekilde değiştirilip yeniden
+  ölçüldü: **67.6ms → 38.7ms, ~%43 hızlanma (~1,75×)** — GG.5'ten (~23,3×)
+  SONRA GG serisinin EN BÜYÜK ikinci ölçülmüş kazanımı.
+
+**Yan bulgu (GG.9'DAN BAĞIMSIZ, AYRI bir takip görevine bırakıldı):**
+break→red→fix ritüeli SIRASINDA, `bounds_check_elision_reassign_safety.nox`nin
+DAVRANIŞ testini (`expectGolden`) ÇALIŞTIRMAYA ÇALIŞIRKEN, bir `list`
+yerelinin bir `for`-range döngüsü İçinde yeniden atanmasının, AYNI
+döngüdeki bir `try/except` bloğuyla BİRLEŞTİĞİNDE ÖNCEDEN VAR OLAN
+(GG.5'in `str` İçin bulduğu AYNI hatanın `list` KARŞILIĞI — `git stash`
+İLE pre-GG.9 codegen'de de AYNEN yeniden üretildi) bir bellek sızıntısı
+KEŞFEDİLDİ. Bu YÜZDEN o fixture yalnızca STATİK (IR-metni) doğrulama
+İçin kullanıldı, GERÇEKTEN ÇALIŞTIRILMADI.
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

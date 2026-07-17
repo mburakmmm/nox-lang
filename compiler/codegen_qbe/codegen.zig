@@ -910,6 +910,21 @@ const Codegen = struct {
     /// ÖNCEDEN eklediği bir GİRİŞİ TEKRAR eklemez/silmez — bkz.
     /// `enterStrLenCacheScope`in belge notu).
     str_len_cache: std.StringHashMapUnmanaged([]const u8) = .empty,
+    /// Faz GG.9 (kanıtlanabilir sınır-içi erişimlerde bounds-check elemesi
+    /// — bkz. nox-teknik-spesifikasyon.md §3.66): `for i in range(len(xs)):
+    /// ... xs[i] ...` deseninde `i`nin `[0, len(xs))` ARALIĞINDA olduğu
+    /// döngünün KENDİ `range(len(xs))` sınırından ZATEN KANITLANMIŞTIR —
+    /// `genIndex`/`genStrIndex`nin AYRICA ürettiği sınır kontrolü (karşılaştırma
+    /// + `IndexError` dalı) GEREKSİZDİR. `genForRange`, TAM OLARAK bu deseni
+    /// (`f.iterable == range(len(<isim>))`, `<isim>` VE döngü değişkeninin
+    /// gövde İÇİNDE HİÇ yeniden atanmadığı, hiçbir iç içe closure OLMADIĞI —
+    /// `str_len_cache`in AYNI güvenlik disipliniyle) TESPİT EDİLDİĞİNDE bu
+    /// alanı doldurup döngü BİTTİĞİNDE ESKİ değere geri YÜKLER (iç içe
+    /// döngüler, tıpkı `str_len_cache` gibi, DOĞRU şekilde gölgelenir/
+    /// geri yüklenir). Hem `list[T]` (`genIndex`) hem `str` (`genStrIndex`)
+    /// indekslemesi TARAFINDAN kontrol edilir — heap türünden BAĞIMSIZ TEK
+    /// bir bağlam yeterlidir (`obj.heap` ZATEN o dalda BİLİNİYOR).
+    bounds_elide_ctx: ?BoundsElideCtx = null,
     temp_counter: usize = 0,
     label_counter: usize = 0,
     string_counter: usize = 0,
@@ -3714,6 +3729,9 @@ const Codegen = struct {
         added_names: []const []const u8,
     };
 
+    /// Faz GG.9: bkz. `bounds_elide_ctx`in belge notu.
+    const BoundsElideCtx = struct { list_name: []const u8, idx_var: []const u8 };
+
     /// Faz GG.5: döngüye girmeden HEMEN ÖNCE (döngü gövdesi ÜRETİLMEDEN
     /// ÖNCE) çağrılır — `collectLoopInvariantStrBases`in bulduğu HER isim
     /// İçin `strlen`i TEK SEFERLİK ÖNCEDEN hesaplayıp `self.str_len_cache`e
@@ -3796,6 +3814,33 @@ const Codegen = struct {
         return error.Unsupported;
     }
 
+    /// Faz GG.9: `f`nin `for i in range(len(xs)): ...` TAM OLARAK bu desene
+    /// UYUYORSA (`xs` BASİT bir kimlik, `list`/`str`-tipli, VE `xs`/`i`
+    /// gövde İÇİNDE HİÇ yeniden atanmıyor, hiçbir iç içe closure YOK —
+    /// `str_len_cache`in AYNI `collectReassignedNames`/`bodyHasNestedFuncDef`
+    /// güvenlik disiplini) `(xs, i)` çiftini döner — AKSİ TAKDİRDE `null`
+    /// (GÜVENLİ, MUHAFAZAKÂR geri düşüş: sınır kontrolü NORMAL şekilde
+    /// üretilir).
+    fn detectBoundsElideCtx(self: *Codegen, f: ast.ForStmt) CodegenError!?BoundsElideCtx {
+        if (!isRangeCall(f.iterable)) return null;
+        const limit_expr = f.iterable.call.args[0];
+        if (limit_expr != .call) return null;
+        if (limit_expr.call.callee.* != .identifier) return null;
+        if (!std.mem.eql(u8, limit_expr.call.callee.identifier, "len")) return null;
+        if (limit_expr.call.args.len != 1) return null;
+        const list_arg = limit_expr.call.args[0];
+        if (list_arg != .identifier) return null;
+        const list_name = list_arg.identifier;
+        const vi = self.vars.get(list_name) orelse return null;
+        if (vi.heap != .list and vi.heap != .str) return null;
+        if (bodyHasNestedFuncDef(f.body)) return null;
+        var reassigned: std.StringHashMapUnmanaged(void) = .empty;
+        try collectReassignedNames(f.body, &reassigned, self.allocator);
+        if (reassigned.contains(list_name)) return null;
+        if (reassigned.contains(f.var_name)) return null;
+        return .{ .list_name = list_name, .idx_var = f.var_name };
+    }
+
     fn genForRange(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenError!void {
         const limit = try self.genExpr(f.iterable.call.args[0]);
         const var_info = self.vars.get(f.var_name).?;
@@ -3806,6 +3851,8 @@ const Codegen = struct {
         const end_label = try self.newLabel("for_end");
 
         const str_len_scope = try self.enterStrLenCacheScope(f.body);
+        const saved_bounds_ctx = self.bounds_elide_ctx;
+        self.bounds_elide_ctx = try self.detectBoundsElideCtx(f);
         try self.out.writer.print("    jmp {s}\n", .{cond_label});
         try self.out.writer.print("{s}\n", .{cond_label});
         const cur = try self.newTemp();
@@ -3822,6 +3869,7 @@ const Codegen = struct {
         try self.out.writer.print("    storel {s}, {s}\n", .{ next, var_info.slot });
         try self.out.writer.print("    jmp {s}\n", .{cond_label});
         try self.out.writer.print("{s}\n", .{end_label});
+        self.bounds_elide_ctx = saved_bounds_ctx;
         self.exitStrLenCacheScope(str_len_scope);
     }
 
@@ -4113,6 +4161,16 @@ const Codegen = struct {
         return error.Unsupported;
     }
 
+    /// Faz GG.9: `idx`nin `genForRange`nin TESPİT ETTİĞİ (`bounds_elide_ctx`)
+    /// `for i in range(len(xs)): ... xs[i] ...` deseninin TAM İÇİNDE OLUP
+    /// OLMADIĞINI (isim BAZINDA, `idx.obj`/`idx.index` İKİSİ de BASİT birer
+    /// kimlik OLMALI) doğrular.
+    fn boundsElideApplies(self: *Codegen, idx: ast.Index) bool {
+        if (idx.obj.* != .identifier or idx.index.* != .identifier) return false;
+        const ctx = self.bounds_elide_ctx orelse return false;
+        return std.mem.eql(u8, ctx.list_name, idx.obj.identifier) and std.mem.eql(u8, ctx.idx_var, idx.index.identifier);
+    }
+
     fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
         const obj = try self.genExpr(idx.obj.*);
         if (obj.heap == .dict) return self.genDictGet(obj, idx.index.*);
@@ -4124,28 +4182,33 @@ const Codegen = struct {
         // dalında raise et, phi'SİZ ok'e atla" deseni (bkz. onun belge notu).
         // `list[T]`nin uzunluğu payload'ın İLK 8 baytıdır (bkz. `genListLit`),
         // bu yüzden AYRI bir betimleyiciye gerek yok — doğrudan `obj.text`ten
-        // okunur.
-        const len_t = try self.newTemp();
-        try self.out.writer.print("    {s} =l loadl {s}\n", .{ len_t, obj.text });
-        const neg_t = try self.newTemp();
-        try self.out.writer.print("    {s} =w csltl {s}, 0\n", .{ neg_t, index_v.text });
-        const oob_hi_t = try self.newTemp();
-        try self.out.writer.print("    {s} =w csgel {s}, {s}\n", .{ oob_hi_t, index_v.text, len_t });
-        const oob_t = try self.newTemp();
-        try self.out.writer.print("    {s} =w or {s}, {s}\n", .{ oob_t, neg_t, oob_hi_t });
-        const err_label = try self.newLabel("list_idx_err");
-        const ok_label = try self.newLabel("list_idx_ok");
-        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ oob_t, err_label, ok_label });
-        try self.out.writer.print("{s}\n", .{err_label});
+        // okunur. Faz GG.9: `xs[i]`, `genForRange`nin TESPİT ETTİĞİ `for i in
+        // range(len(xs)): ...` deseninin TAM İÇİNDEYSE (bkz. `bounds_elide_ctx`)
+        // bu kontrol TAMAMEN ATLANIR — `i`nin `[0, len(xs))` ARALIĞINDA
+        // olduğu döngünün KENDİ sınırından ZATEN KANITLANMIŞTIR.
+        if (!self.boundsElideApplies(idx)) {
+            const len_t = try self.newTemp();
+            try self.out.writer.print("    {s} =l loadl {s}\n", .{ len_t, obj.text });
+            const neg_t = try self.newTemp();
+            try self.out.writer.print("    {s} =w csltl {s}, 0\n", .{ neg_t, index_v.text });
+            const oob_hi_t = try self.newTemp();
+            try self.out.writer.print("    {s} =w csgel {s}, {s}\n", .{ oob_hi_t, index_v.text, len_t });
+            const oob_t = try self.newTemp();
+            try self.out.writer.print("    {s} =w or {s}, {s}\n", .{ oob_t, neg_t, oob_hi_t });
+            const err_label = try self.newLabel("list_idx_err");
+            const ok_label = try self.newLabel("list_idx_ok");
+            try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ oob_t, err_label, ok_label });
+            try self.out.writer.print("{s}\n", .{err_label});
 
-        const msg_value = try self.emitStringLiteral("liste indeksi sinirlarin disinda");
-        const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
-        const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value});
-        try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ie_obj.text });
-        try self.emitExceptionCheck();
-        try self.out.writer.print("    jmp {s}\n", .{ok_label});
+            const msg_value = try self.emitStringLiteral("liste indeksi sinirlarin disinda");
+            const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
+            const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value});
+            try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ie_obj.text });
+            try self.emitExceptionCheck();
+            try self.out.writer.print("    jmp {s}\n", .{ok_label});
 
-        try self.out.writer.print("{s}\n", .{ok_label});
+            try self.out.writer.print("{s}\n", .{ok_label});
+        }
         const byte_off = try self.newTemp();
         try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ byte_off, index_v.text, qbeSizeOf(obj.elem_qtype) });
         const off8 = try self.newTemp();
@@ -4185,37 +4248,44 @@ const Codegen = struct {
     /// `releaseIfTemporary` ile tabanı serbest bırakmak yeterlidir.
     fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Value {
         const index_v = try self.genExpr(idx.index.*);
-        // Faz GG.5: `idx.obj` döngü-değişmez, `str`-tipli bir kimlikse VE
-        // enclosing döngü GİRİŞİ bunun İçin ÖNCEDEN bir `strlen` hesaplayıp
-        // önbelleğe ALDIYSA (bkz. `enterStrLenCacheScope`), o TEK SEFERLİK
-        // hesaplanmış değer YENİDEN KULLANILIR — YENİ bir `$strlen` çağrısı
-        // ÜRETİLMEZ.
-        const len_t = if (idx.obj.* == .identifier and self.str_len_cache.get(idx.obj.identifier) != null)
-            self.str_len_cache.get(idx.obj.identifier).?
-        else blk: {
-            const t = try self.newTemp();
-            try self.out.writer.print("    {s} =l call $strlen(l {s})\n", .{ t, obj.text });
-            break :blk t;
-        };
-        const neg_t = try self.newTemp();
-        try self.out.writer.print("    {s} =w csltl {s}, 0\n", .{ neg_t, index_v.text });
-        const oob_hi_t = try self.newTemp();
-        try self.out.writer.print("    {s} =w csgel {s}, {s}\n", .{ oob_hi_t, index_v.text, len_t });
-        const oob_t = try self.newTemp();
-        try self.out.writer.print("    {s} =w or {s}, {s}\n", .{ oob_t, neg_t, oob_hi_t });
-        const err_label = try self.newLabel("str_idx_err");
-        const ok_label = try self.newLabel("str_idx_ok");
-        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ oob_t, err_label, ok_label });
-        try self.out.writer.print("{s}\n", .{err_label});
+        // Faz GG.9: `genForRange`nin TESPİT ETTİĞİ `for i in range(len(s)):
+        // ... s[i] ...` deseninin TAM İÇİNDEYSE (bkz. `bounds_elide_ctx`)
+        // sınır kontrolü TAMAMEN ATLANIR — `strlen`in KENDİSİ de (`len_t`
+        // YALNIZCA bu kontrol İÇİN GEREKTİĞİNDEN, GG.5'in önbelleği DAHİL)
+        // HİÇ HESAPLANMAZ.
+        if (!self.boundsElideApplies(idx)) {
+            // Faz GG.5: `idx.obj` döngü-değişmez, `str`-tipli bir kimlikse VE
+            // enclosing döngü GİRİŞİ bunun İçin ÖNCEDEN bir `strlen` hesaplayıp
+            // önbelleğe ALDIYSA (bkz. `enterStrLenCacheScope`), o TEK SEFERLİK
+            // hesaplanmış değer YENİDEN KULLANILIR — YENİ bir `$strlen` çağrısı
+            // ÜRETİLMEZ.
+            const len_t = if (idx.obj.* == .identifier and self.str_len_cache.get(idx.obj.identifier) != null)
+                self.str_len_cache.get(idx.obj.identifier).?
+            else blk: {
+                const t = try self.newTemp();
+                try self.out.writer.print("    {s} =l call $strlen(l {s})\n", .{ t, obj.text });
+                break :blk t;
+            };
+            const neg_t = try self.newTemp();
+            try self.out.writer.print("    {s} =w csltl {s}, 0\n", .{ neg_t, index_v.text });
+            const oob_hi_t = try self.newTemp();
+            try self.out.writer.print("    {s} =w csgel {s}, {s}\n", .{ oob_hi_t, index_v.text, len_t });
+            const oob_t = try self.newTemp();
+            try self.out.writer.print("    {s} =w or {s}, {s}\n", .{ oob_t, neg_t, oob_hi_t });
+            const err_label = try self.newLabel("str_idx_err");
+            const ok_label = try self.newLabel("str_idx_ok");
+            try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ oob_t, err_label, ok_label });
+            try self.out.writer.print("{s}\n", .{err_label});
 
-        const msg_value = try self.emitStringLiteral("str indeksi sinirlarin disinda");
-        const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
-        const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value});
-        try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ie_obj.text });
-        try self.emitExceptionCheck();
-        try self.out.writer.print("    jmp {s}\n", .{ok_label});
+            const msg_value = try self.emitStringLiteral("str indeksi sinirlarin disinda");
+            const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
+            const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value});
+            try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ie_obj.text });
+            try self.emitExceptionCheck();
+            try self.out.writer.print("    jmp {s}\n", .{ok_label});
 
-        try self.out.writer.print("{s}\n", .{ok_label});
+            try self.out.writer.print("{s}\n", .{ok_label});
+        }
         const result_t = try self.newTemp();
         try self.out.writer.print("    {s} =l call $nox_str_char_at(l {s}, l {s}, l {s})\n", .{ result_t, RT_PARAM, obj.text, index_v.text });
         try self.releaseIfTemporary(idx.obj.*, obj);
