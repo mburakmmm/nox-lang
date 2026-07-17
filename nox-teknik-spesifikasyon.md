@@ -9936,6 +9936,78 @@ ZATEN yaptığı AYNI çözümleme burada TEKRARLANDI.
 
 `zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
 
+### GG.4 (DEĞERLENDİRİLDİ, REDDEDİLDİ) — `nox_exception_pending`i inline etme
+
+**Kaynak:** GG listesinin sıradaki maddesi — `emitExceptionCheck`in ürettiği
+`call $nox_exception_pending(l %rt)`in (tek bir işaretçi karşılaştırmasından
+İBARET bir fonksiyon) GG.1/GG.2'nin `emitInlinePredecrement`/seçici
+inlining'iyle AYNI desenle DOĞRUDAN QBE'ye inline edilmesi.
+
+**Uygulama (TAM olarak yapıldı, SONRA GERİ ALINDI):** `RuntimeState.
+pending_exception`in bayt offset'i `@offsetOf` İLE derleme zamanında
+öğrenilip `emitExceptionCheck`in `loadl {addr}` + `cnel ..., 0` + `jnz`
+ÜRETMESİ sağlandı. **Zig 0.16'nın modül sınırı kuralı** ("import of file
+outside module path") YÜZÜNDEN `runtime/alloc/asap.zig` `codegen.zig`den
+DOĞRUDAN göreli yolla import EDİLEMEDİ — `asap.zig`nin `export fn`larını
+(`nox_alloc`/`nox_runtime_init`/vb.) `noxc`nin KENDİ ikilisine ÇEKMEDEN
+(bu, `nox_cycle_deinit`/`nox_cycle_collect` gibi `noxrt.o`ya ÖZGÜ
+sembollere ÇÖZÜMLENEMEYEN referanslar YÜZÜNDEN LİNK HATASI verirdi)
+YALNIZCA TİP/OFFSET bilgisi taşıyan, `export fn` İÇERMEYEN AYRI bir
+`runtime/alloc/runtime_state.zig` dosyası çıkarılıp (`RuntimeState`in TEK
+doğruluk kaynağı BURASI, `asap.zig` YENİDEN İHRAÇ eder) `build.zig`e YENİ
+bir `rt_layout` modülü (`nox_mod`/`noxc_mod`a SIFIR bağlama/linkleme
+etkisiyle, YALNIZCA comptime `@offsetOf` İçin) eklendi.
+
+**Doğrulama (TAM):** `zig build test` (Debug + ReleaseFast) 467/468 yeşil
+(kalan 1, `http_serve_multicore` testinin ÖNCEDEN belgelenmiş, İLGİSİZ
+zamanlama flake'i — ayrı bir rerun İLE doğrulandı). Break→red→fix:
+`pending`in hesaplanması GEÇİCİ olarak `=w copy 0`e (HER ZAMAN "istisna
+yok") sabitlenince TAM OLARAK 20 test (istisna-yayılım/çıkış-kodu/sızıntı
+testleri) KIRMIZI oldu — kontrolün GERÇEKTEN load-bearing olduğu KANITLANDI.
+IR-metni testleri (`method_call_elision_positive`/`for_loop_method_call_
+elision_positive`in "elenmiş" kanıtı) `"nox_exception_pending"` yerine
+`"exc_propagate"` etiketini ARAMAK üzere GÜNCELLENDİ (`emitExceptionCheck`
+ARTIK bu ismi HİÇ ÜRETMEDİĞİNDEN, ESKİ marker HER programda vacuously
+doğru olurdu — bu da AYRICA doğru bir düzeltme, bkz. aşağıdaki geri alma
+notu).
+
+**Ölçüm — BEKLENENİN TERSİ, TEKRARLANABİLİR bir REGRESYON:** yeni
+`benchmarks/exception_check_overhead.nox` (gövdesinde bir `raise` OLAN,
+bu yüzden `must_not_raise`e ASLA giremeyen — kontrolün HER ZAMAN
+üretildiği TEK kalan durum — bir fonksiyona 300M çağrı, hiçbiri GERÇEKTEN
+raise ETMEZ) 3'er tekrarla İKİ YÖNDE ölçüldü:
+
+| Durum | Süre (min, 300M çağrı) |
+|---|---|
+| ÖNCESİ (`call $nox_exception_pending`) | 453.5-454.3ms (3 ölçüm) |
+| SONRASI (inline `loadl`+`cnel`) | 532.5-533.4ms (3 ölçüm) |
+
+**~%17 YAVAŞLAMA**, gürültü DEĞİL — her iki yönde de 3 tekrar ~1ms
+varyansla TUTARLIYDI. Kök neden PROFİLLENMEDİ (bu turun kapsamı DIŞINDA),
+ama en olası açıklama: QBE'nin KENDİ (bu fazın giriş araştırmasında ÖNCEDEN
+doğrulanmış — bkz. §3.66'nın giriş notu) linear-scan (graph-coloring
+DEĞİL) register ayırıcısı — bir `call` sınırı doğal bir "canlı aralık"
+kesim noktası sağlarken, `loadl`/`cnel`i AYNI temel bloğa gömmek kayıt
+baskısını ARTIRIP `maybe_raise`in KENDİ gövdesindeki değişkenler İçin
+DAHA KÖTÜ spill kararlarına yol AÇMIŞ olabilir.
+
+**Sonuç — TAMAMEN GERİ ALINDI:** `compiler/codegen_qbe/codegen.zig`,
+`build.zig`, `runtime/alloc/asap.zig` `git checkout` İLE ÖNCEKİ (GG.3
+SONRASI, `call $nox_exception_pending` HÂLÂ GERÇEK bir çağrı) durumuna
+döndürüldü; `runtime/alloc/runtime_state.zig` SİLİNDİ. `tests/golden/
+codegen_golden_test.zig`deki IR-metni testleri de (`"exc_propagate"`
+DEĞİŞİKLİĞİ dahil) GERİ ALINDI — orijinal `"nox_exception_pending"`
+marker'ı yeniden DOĞRU (çağrı hâlâ GERÇEK olduğundan). `exception_check_
+overhead.nox` benchmark'ı VE `benchmarks/run.zig`deki kaydı KALICI olarak
+TUTULDU — hem bu ÖLÇÜLMÜŞ bulguyu belgeler HEM DE gelecekte AYNI fikrin
+(ölçülmeden) yeniden denenmesine karşı bir regresyon-koruma görevi görür.
+Bu, M.5/M.8'in "ölçülmeden mimari EKLEME" reddiyle AYNI kategoride bir
+sonuçtur — ama BURADA mimari GERÇEKTEN uygulanıp ÖLÇÜLDÜ ve TAM OLARAK BU
+YÜZDEN reddedildi (AGENTS.md'nin "measure, don't assume" disiplini).
+
+`zig build test` (Debug + ReleaseFast) yeşil (geri alma SONRASI), `zig fmt`
+temiz.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

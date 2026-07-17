@@ -464,6 +464,19 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   259.6ms, **~%5 hızlanma** (M.8'in doğrudan çağrılardaki ~%44'ünden
   küçük — yalnızca istisna kontrolü elenir, metod çağrısının KENDİSİ
   GG.2'nin kapsamı DIŞINDA kalır).
+- **`benchmarks/exception_check_overhead.nox`** (Faz GG.4 — bkz.
+  nox-teknik-spesifikasyon.md §3.66'nın "DEĞERLENDİRİLDİ, REDDEDİLDİ"
+  notu). `nox_exception_pending`i (GG.1/GG.2'nin `emitInlinePredecrement`/
+  seçici inlining'iyle AYNI desenle) inline etme fikri TAM olarak
+  uygulanıp (yeni `runtime/alloc/runtime_state.zig` + `build.zig`'in
+  `rt_layout` modülü İLE `@offsetOf` tabanlı doğrudan `loadl`) doğrulandı
+  (467/468 yeşil, 20 testi kırmızıya çeviren break→red→fix), AMA
+  ölçüldüğünde BEKLENENİN TERSİ, TEKRARLANABİLİR bir sonuç çıktı: 453.5ms
+  → 532.5ms (**~%17 YAVAŞLAMA**, muhtemelen QBE'nin linear-scan register
+  ayırıcısının `call` sınırının doğal canlı-aralık kesimini kaybetmesi).
+  **Kod TAMAMEN geri alındı** (`git checkout` + `runtime_state.zig`
+  silindi) — yalnızca bu benchmark KALICI bir regresyon-koruma olarak
+  eklendi.
 
 ### Düzeltildi
 - **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`

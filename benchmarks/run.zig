@@ -93,6 +93,14 @@ const stress_benchmarks = [_]Benchmark{
     // elision`ın ÖLÇEĞİYLE TUTARLI, ama for-loop üzerinden (GG.3'ün
     // ELEDİĞİ GERÇEK boşluk).
     .{ .name = "for_loop_method_elision", .path = "benchmarks/for_loop_method_elision.nox", .expected = "1080000000\n" },
+    // Faz GG.4 (bkz. nox-teknik-spesifikasyon.md §3.66): `maybe_raise`
+    // GÖVDESİNDE bir `raise` OLDUĞUNDAN `must_not_raise`e ASLA GİRMEZ —
+    // her çağrı sitesinde istisna kontrolü HER ZAMAN ÜRETİLİR (elenmez).
+    // Bu, M.8/GG.2/GG.3'ün ELEMEDİĞİ (elemenin YAPISAL olarak İMKANSIZ
+    // olduğu) TEK kalan durumu — GG.4'ün `nox_exception_pending`i inline
+    // etmesinin SAF etkisini (300M çağrı, hiçbiri GERÇEKTEN raise ETMEZ)
+    // izole ölçer.
+    .{ .name = "exception_check_overhead", .path = "benchmarks/exception_check_overhead.nox", .expected = "600000000\n" },
     // Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) — `nox.strings.
     // contains`/`index_of`/`starts_with`/`ends_with`nin (`s[i]` YERİNE
     // alloc-sız `byte_at` kullanan) VE `nox.strings.join`in (saf Nox O(n²)
