@@ -403,6 +403,22 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   None: return ...` SONRASI takip eden kodun otomatik daraltılması)
   desteklenmiyor; `Task`/`Channel`/`ThreadHandle`/`ThreadChannel | None`
   desteklenmiyor (ARC-dışı, null-güvenlikleri ayrıca doğrulanmadı).
+- **`str` release'inin inline edilmesi** (Faz GG.1, bkz. nox-teknik-
+  spesifikasyon.md §3.66 — performans fazının ilk adımı, kullanıcının
+  "Go/Rust arası konumlandırma" hedefiyle açıldı). `releaseValueIfSet`in
+  `.str` dalı ARTIK `nox_str_release`i HER release'de TAM bir fonksiyon
+  ÇAĞRISI olarak çağırmıyor — `class`/`list`in KENDİ `_release`larının
+  ZATEN kullandığı `emitInlinePredecrement` deseniyle predecrement
+  DOĞRUDAN QBE IR'ına inline edilir, YALNIZCA refcount GERÇEKTEN sıfıra
+  düştüğünde (pinned/literal dizeler İçin ASLA) YENİ, hafif bir
+  `nox_str_free_now`ya (predecrement'siz) düşülür. Bu, GERÇEK Nox/Go/Rust/
+  C/Python ölçümlerinde bulunan EN BÜYÜK açığı (`string_passing`de Nox
+  Go/Rust/C'nin 7-11 katı yavaştı) hedef aldı — ölçüm: `string_passing`
+  (n=15M, ReleaseFast) ~65ms → ~50ms, diğer 18 benchmark'ta regresyon YOK.
+  Break→red→fix: `should_free` geçici olarak koşulsuz `"1"`e sabitlenince
+  DebugAllocator'ın "Invalid free" panik'i (pinned string'in statik
+  belleğini geçerli heap işaretçisi sanma) ANINDA tetiklendi, kontrolün
+  load-bearing olduğu kanıtlandı.
 
 ### Düzeltildi
 - **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`

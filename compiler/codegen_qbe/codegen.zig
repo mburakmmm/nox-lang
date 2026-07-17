@@ -2520,12 +2520,31 @@ const Codegen = struct {
             try self.out.writer.print("    {s} =l loadl {s}\n", .{ rel_fn, rel_addr });
             try self.out.writer.print("    call {s}(l {s}, l {s})\n", .{ rel_fn, RT_PARAM, ptr });
         } else if (heap == .str) {
+            // Faz GG.1 (bkz. nox-teknik-spesifikasyon.md — performans fazı):
+            // predecrement adımı `emitInlinePredecrement` İLE (class/list
+            // release fonksiyonlarının ZATEN yaptığı AYNI desen) DOĞRUDAN
+            // QBE IR'ına inline edilir — `nox_str_release`in TAMAMINI HER
+            // release'de ÇAĞIRMAK YERİNE (ki bu, HER PINNED/literal dizenin
+            // BİLE — asla gerçekten serbest bırakılmasalar da — tam bir
+            // fonksiyon çağrısı+prologue/epilogue ödemesi anlamına
+            // geliyordu — `string_passing` benchmark'ında ÖLÇÜLEN Go/Rust'a
+            // 7-11x kayıp bulgusunun BİRİNCİL kaynağı, bkz. GG.1 notu).
             // `str`nin boyutu (`list[T]`nin AKSİNE) başlıkta SAKLANMAZ (bkz.
-            // `runtime/str.zig`in modül üstü notu) — `nox_str_release`
-            // `strlen` ile kendisi hesaplar, bu yüzden `listPayloadSize`
-            // (bir `l`nin İLK 8 baytını "uzunluk" sanan) YOLUNA ASLA
-            // düşülmemelidir.
-            try self.out.writer.print("    call $nox_str_release(l {s}, l {s})\n", .{ RT_PARAM, ptr });
+            // `runtime/str.zig`in modül üstü notu) — bu yüzden yalnızca
+            // GERÇEKTEN sıfıra/altına düştüğünde (NADİR yol) `strlen`+gerçek
+            // serbest bırakma İçin `nox_str_free_now`ya (predecrement'siz
+            // hafif sürüm) düşülür.
+            const should_free = try self.emitInlinePredecrement(ptr);
+            const free_label = try self.newLabel("str_free");
+            const skip_free_label = try self.newLabel("str_free_skip");
+            const free_done_label = try self.newLabel("str_free_done");
+            try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ should_free, free_label, skip_free_label });
+            try self.out.writer.print("{s}\n", .{free_label});
+            try self.out.writer.print("    call $nox_str_free_now(l {s}, l {s})\n", .{ RT_PARAM, ptr });
+            try self.out.writer.print("    jmp {s}\n", .{free_done_label});
+            try self.out.writer.print("{s}\n", .{skip_free_label});
+            try self.out.writer.print("    jmp {s}\n", .{free_done_label});
+            try self.out.writer.print("{s}\n", .{free_done_label});
         } else if (heap == .dict) {
             // Faz FF.3 (bkz. nox-teknik-spesifikasyon.md §3.62): `dict`
             // ARTIK `str` İLE AYNI "predecrement'e göre koşullu release"

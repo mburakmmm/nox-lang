@@ -9724,6 +9724,69 @@ karşılaştırmasına düşer — hiçbir golden fixture bunu EGZERSİZ ETMEZ);
 `nox.path.dirname`'in `str | None` dönecek şekilde GÜNCELLENMESİ (GERİYE
 DÖNÜK UYUMSUZ bir imza değişikliği, AYRI bir karar gerektirir).
 
+## 3.66 Faz GG — Performans: Go/Rust Arası Konumlandırma
+
+**Kaynak:** kullanıcının AÇIK talebi — Nox'un hızını "Go ve Rust arasında
+bir yere" oturtmak. Üç paralel araştırma agent'ı (QBE'nin kendi optimizasyon
+tavanı, derleyici/runtime kod taraması, GERÇEK Nox/Go/Rust/C/Python
+ölçümleri — Go 1.26/Rust nightly 1.94 bu makinede kurulu, GERÇEK karşılaştırma
+yapıldı) çalıştırılıp bulgular ÖNCELİK sırasına göre 10 alt-göreve (GG.1-GG.10)
+bölündü. **Kritik bulgu:** Nox bugün iki senaryoda ZATEN Go/Rust seviyesinde
+(`numeric_recursion`: Go'yu geçiyor, Rust'a %18 geride; `oop_arc_churn`:
+Rust'ı VE C'yi geçiyor) — ama `string_passing`de Go/Rust/C'nin (kendi
+aralarında 6-9ms bandında sıkışıkken) **7-11 katı yavaş** ölçüldü, bu yüzden
+GG.1 string performansıyla başladı.
+
+### GG.1 (TAMAMLANDI) — `str` release'inin inline edilmesi
+
+**Araştırma sırasında düzeltilen varsayım:** GG.1 başlangıçta "O(n²) string
+birleştirme + `s[i]`nin her erişimde `strlen` tekrarlaması" olarak
+çerçevelenmişti — ama `string_passing` benchmark'ının GERÇEK IR'ı incelenince
+(`.ssa` dökümü) bu benchmark'ın birleştirme İLE HİÇ İLGİSİ OLMADIĞI, yalnızca
+literal string'leri iki katmanlı fonksiyon çağrısı zincirinden GEÇİRDİĞİ
+(`pass_through(pass_through(pick(i)))`, 15M kez) görüldü — istisna-kontrolü
+ZATEN elenmiş (M.1/M.8'in kazanımı doğrulandı, IR'da `nox_exception_pending`
+HİÇ yok), retain ZATEN inline (`emitInlineRetain`) — ama **release DEĞİL**:
+`releaseValueIfSet`in `.str` dalı HER release'de (PINNED/literal dizeler
+DAHİL — ki bunlar HİÇBİR ZAMAN gerçekten serbest bırakılmaz, `refcount =
+1<<30`) tam bir `nox_str_release` fonksiyon ÇAĞRISI yapıyordu (`strlen`i
+KENDİ hesaplaması İçin — `str`ın uzunluk başlığı OLMADIĞINDAN, bkz.
+`runtime/str.zig`nin `PINNED_REFCOUNT` tasarım notu).
+
+**Düzeltme:** `class`/`list`in KENDİ `_release`ıklarının ZATEN kullandığı
+`emitInlinePredecrement` deseni `.str` dalına da uygulandı — predecrement
+(sub/load/sub/store/karşılaştır) DOĞRUDAN QBE IR'ına inline edilir,
+YALNIZCA refcount GERÇEKTEN sıfıra/altına düştüğünde (NADİR yol, pinned
+string'ler İçin ASLA) YENİ, hafif bir `nox_str_free_now` (predecrement'siz,
+yalnızca `strlen`+gerçek serbest bırakma) çağrılır. `nox_str_release`in
+KENDİSİ (Zig tarafındaki ÇOK sayıda çağrı sitesi İçin — `thread_bridge`/
+`thread_channel`/`path`/`http_client`/`strings`/`dict`) DEĞİŞMEDEN kaldı.
+
+**Boz→kırmızı→düzelt:** `emitInlinePredecrement`in dönüşü GEÇİCİ olarak
+YOK SAYILIP `should_free` HER ZAMAN `"1"`e sabitlendi (koşulsuz serbest
+bırakma) — `string_passing`i ÇALIŞTIRMAK DebugAllocator'ın "Invalid free"
+panik'iyle ANINDA KIRMIZI oldu (pinned string'in `.data` bölümündeki
+statik belleği geçerli bir heap işaretçisi SANIP serbest bırakmaya
+ÇALIŞTI) — bu, `should_free` kontrolünün GERÇEKTEN load-bearing OLDUĞUNU
+KANITLADI. GERİ ALINIP `zig build test` (Debug + ReleaseFast) yeniden
+yeşil doğrulandı.
+
+**Ölçüm (Apple M4, `string_passing.nox`, n=15M, ReleaseFast, 5 koşunun
+minimumu):** **~65ms → ~50ms** (`zig build bench`'in KENDİ metodolojisiyle
+de tutarlı: 59.8ms). `zig build bench`in TÜM diğer 18 senaryosunda (stres +
+karşılaştırma) regresyon GÖZLEMLENMEDİ. Diğer benchmark'larda (ör.
+`oop_arc_churn`, sınıf alanları str İÇERDİĞİNDE) da AYNI mekanizma
+tetiklendiğinden benzer, daha küçük kazanımlar BEKLENİR (ayrıca
+ölçülmedi — dominant maliyet ORADA ARC/tahsis, str release DEĞİL).
+
+**Kapsam DIŞI bırakılan (araştırmayla netleşen, GEREKSİZ bulunan):**
+O(n²) birleştirme İÇİN ZATEN bir çözüm VAR — `nox.strings.join()` (Faz
+EE.1.2, tek-geçişli Zig kabuğu) `list[str]` + `.append()` (amortize O(1)
+büyüme) İLE birleştirilirse O(n) çalışır; YENİ bir `StringBuilder` tipi
+GEREKMEDİ. `s[i]`nin her erişimde `strlen` tekrarlaması AYRI bir sorun
+(GG.5'in döngü-değişmezi taşıma kapsamına TAŞINDI — AYNI kök neden sınıfı:
+QBE'nin LICM yapmaması).
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

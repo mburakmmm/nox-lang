@@ -47,6 +47,21 @@ pub export fn nox_str_release(rt: ?*anyopaque, ptr: ?[*:0]u8) void {
     }
 }
 
+/// Faz GG.1 (bkz. nox-teknik-spesifikasyon.md — performans fazı): `nox_str_release`in
+/// AYNISI, ama predecrement adımı ÇIKARILMIŞ — `codegen.zig`nin `releaseValueIfSet`i
+/// ARTIK predecrement'i (`emitInlinePredecrement` İLE AYNI desen) DOĞRUDAN QBE IR'ına
+/// inline ediyor (`nox_rc_retain`/`predecrement`in class/list İçin ZATEN yaptığı GİBİ) —
+/// bu, HER `str` release'inde (pinned/literal dizeler DAHİL, ki HİÇBİR ZAMAN
+/// gerçekten serbest bırakılmazlar) tam bir fonksiyon çağrısı maliyetini ORTADAN
+/// KALDIRIR; yalnızca refcount GERÇEKTEN sıfıra/altına düştüğünde (NADİR yol) BU
+/// fonksiyon çağrılır — `strlen` + gerçek serbest bırakma İÇİN. `ptr`nin KENDİSİ
+/// null OLAMAZ (çağıran taraf, `releaseValueIfSet`in KENDİ null-kontrolü ZATEN
+/// GEÇTİKTEN SONRA buraya gelir).
+pub export fn nox_str_free_now(rt: ?*anyopaque, ptr: [*:0]u8) void {
+    const len = std.mem.len(ptr);
+    arc.nox_rc_free_payload(rt, ptr, len + 1);
+}
+
 test "nox_str_concat iki dizeyi doğru birleştirir, sıfırla sonlanır" {
     const asap = @import("alloc/asap.zig");
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
