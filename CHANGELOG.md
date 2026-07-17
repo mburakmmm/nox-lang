@@ -560,6 +560,21 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   VAR OLAN (GG.5'in `str` bulgusunun `list` KARŞILIĞI) bir bellek sızıntısı
   KEŞFEDİLDİ — güvenlik testi bu YÜZDEN yalnızca STATİK (IR-metni) olarak
   doğrulandı, ÇALIŞTIRILMADI.
+- **Değerlendirildi, KAPATILDI: fiber'ların iş parçacıkları arası
+  taşınamaması** (Faz GG.10 — bkz. nox-teknik-spesifikasyon.md §3.66'nın
+  "DEĞERLENDİRİLDİ, KAPATILDI" notu; GG serisinin SON maddesi). Bu soru
+  ZATEN §3.46 (Faz AA.1, gerçek M:N zamanlayıcı araştırması, 7 mimari
+  engel buldu) VE §3.47 (Faz BB.1, kullanıcının shared-nothing modeli
+  SEÇTİĞİ karar) İLE soruldu VE cevaplandı — BUGÜN ÇALIŞAN mimari BUDUR.
+  `nox.http.serve_multicore` İçin (bu sınırlamanın önemli OLABİLECEĞİ TEK
+  senaryo) gerçek bir yük dengesizliği HİÇ ölçülmedi. YENİ bulgu: QBE'nin
+  atomic instruction'ı OLMADIĞI DOĞRULANDI (`qbe -h`) — atomic refcount
+  `emitInlineRetain`/`emitInlinePredecrement`in (GG.1/GG.7'nin ÖLÇÜLMÜŞ
+  ~%23/~%8 kazançlarına sahip inline aritmetiği) YERİNE HER TEK retain/
+  release İçin GERÇEK bir fonksiyon çağrısı GEREKTİRİRDİ — GG serisinin
+  kazandığı performansın ÖNEMLİ bir kısmını SIFIRLARDI, ÖLÇÜLMÜŞ HİÇBİR
+  fayda OLMADAN. **Hiçbir kod yazılmadı.** Faz GG (GG.1-GG.10) BURADA
+  TAMAMEN KAPANIR.
 
 ### Düzeltildi
 - **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`

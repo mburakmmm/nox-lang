@@ -10265,6 +10265,71 @@ KEŞFEDİLDİ. Bu YÜZDEN o fixture yalnızca STATİK (IR-metni) doğrulama
 
 `zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
 
+### GG.10 (DEĞERLENDİRİLDİ, KAPATILDI) — Fiber'ların iş parçacıkları arası taşınamaması: yapısal değerlendirme
+
+**Kaynak:** GG serisinin (GG.1-GG.10) SON maddesi — Nox'un fiber'larının
+spawn edildikleri OS iş parçacığına SABİT kalması (asla başka bir iş
+parçacığına "çalınamaması"/work-stealing YAPILAMAMASI), `nox.http.
+serve_multicore` GİBİ çok-çekirdekli senaryolarda POTANSİYEL bir yük
+dengesizliği kaynağı olarak İŞARETLENMİŞTİ. Kullanıcı ÖNCE tam bir mimari
+tasarım turu İSTEDİ; araştırma SUNULUNCA "AA.1/BB.1 + yeni bulguyla
+KAPAT"ı SEÇTİ.
+
+**1. Bu soru ZATEN soruldu ve cevaplandı.** §3.46 (Faz AA.1) gerçek bir
+M:N/work-stealing zamanlayıcıyı ARAŞTIRDI, 7 somut mimari engel buldu —
+EN BÜYÜĞÜ ARC refcount'unun BİLİNÇLİ olarak atomic OLMAMASI (Faz X.3,
+ÖLÇÜLMÜŞ bir performans kaygısıyla REDDEDİLMİŞTİ). §3.47 (Faz BB.1)
+kullanıcının BUNA YANIT olarak verdiği AÇIK karar: **shared-nothing
+model** — her OS iş parçacığı KENDİ bağımsız M:1 fiber zamanlayıcısını
+VE KENDİ bağımsız `RuntimeState`/ARC yığınını çalıştırır, hiçbir fiber/
+ARC nesnesi ASLA iş parçacıkları arası GEÇMEZ. BU, BUGÜN ÇALIŞAN
+mimaridir (`runtime/async_rt/bridge.zig`nin `threadlocal var g_scheduler`ı,
+`nox.thread`/`ThreadChannel`nin kopya-tabanlı mesajlaşması,
+`nox.http.serve_multicore`nin N bağımsız `RuntimeState`+`Scheduler`
+çifti, ortak olan TEK şey ham dinleme soket fd'si).
+
+**2. Gerçek bir sorun ÖLÇÜLMEDİ.** `nox.http.serve_multicore` (bu
+sınırlamanın PRATİKTE önemli OLABİLECEĞİ TEK gerçek senaryo) İçin
+ÖNCEKİ "yüksek eşzamanlılıkta gerileme" araştırması (§3.60'ın belge
+notu, `benchmarks/RESULTS.md` "Bölüm 3") kök nedeni BAŞKA yerde buldu
+(Debug modunda linklenen `noxrt.o` + yanlış `max_connections`
+yapılandırması) — worker'lar arası yük dengesizliği HİÇ ölçülmedi/
+gözlemlenmedi. Mevcut toplam verim ZATEN çıplak Zig N-iş-parçacıklı
+tabanını GEÇİYOR. Belgelenmiş TEK gerçek (ama KÜÇÜK kapsamlı, ARC/
+fiber'a HİÇ dokunmayan) sınırlama: `SO_REUSEPORT`/`EPOLLEXCLUSIVE`
+KULLANILMIYOR, bağlantı dağıtımı "thundering herd" `accept()`
+yarışına dayanıyor (`runtime/stdlib_shims/http_server.zig`) — spec
+içinde ZATEN bilinçli, ayrı bir gelecek fazına bırakılmış KAPSAM DIŞI
+not olarak kayıtlı (§3.60).
+
+**3. YENİ bulgu (bu turda kanıtlandı): QBE'nin atomic instruction'ı
+YOK.** `qbe -h` çıktısı VE QBE'nin IL komut kümesi (yalnızca `add`/
+`sub`/`load`/`store`/karşılaştırma/çağrı/phi/jump — RMW/CAS/fence YOK)
+DOĞRULANDI. Bu, atomic refcount'un maliyetini X.3/AA.1'in
+ÖNGÖRDÜĞÜNDEN DE BÜYÜK yapar: `emitInlineRetain`/`emitInlinePredecrement`
+(GG.1/GG.2/GG.7'nin İNCE AYARLADIĞI, ÇOK sayıda benchmark'ta ÖLÇÜLMÜŞ
+kazanç sağlayan inline düz aritmetik) atomic bir işlem İçin QBE'ye
+GÖMÜLEMEZ — HER TEK retain/release (yalnızca taşınabilir fiber'lara ait
+DEĞİL, PROGRAMDAKİ HER ARC nesnesi İçin, statik olarak "bu nesne asla
+taşınmayacak" KANITLANAMADIĞINDAN) GERÇEK bir Zig-taraflı fonksiyon
+çağrısına DÖNMEK ZORUNDA kalırdı. Bu turda ZATEN DOĞRUDAN ÖLÇÜLEN,
+doğrudan İLGİLİ veriler — GG.1'in (`.str` release'ini inline ETMENİN
+kazancı) ~%23'ü (65ms→50ms) ve GG.7'nin (`list`/`boxed_scalar`
+release'ini inline ETMENİN kazancı) ~%8'i (171.2ms→157.9ms) —
+**inline'dan real-call'a GERİ DÖNMENİN** yaklaşık maliyetini (yönü
+TERS ama BÜYÜKLÜK AYNI) temsil eder: GG serisinin kazandığı toplam
+performansın ÖNEMLİ bir kısmını SIFIRLAR, atomic işlemin KENDİSİNİN
+(call overhead'inin ÜSTÜNE) EK maliyeti HENÜZ SAYILMADAN.
+
+**Sonuç:** AGENTS.md'nin bu FAZ boyunca defalarca (GG.4, GG.6, GG.8)
+UYGULANAN "measure, don't assume" disiplini burada TERS yönde de
+geçerli: KANITLANMIŞ, BÜYÜK bir performans maliyetini, ÖLÇÜLMÜŞ HİÇBİR
+fayda OLMADAN kabul etmek YANLIŞ olur. GG.10 DEĞERLENDİRİLDİ, KAPATILDI
+— mevcut mimari (AA.1/BB.1) BİLGİLİ VE HÂLÂ GEÇERLİ bir karardır, KOD
+DEĞİŞİKLİĞİ YAPILMADI.
+
+**Faz GG (GG.1-GG.10) BURADA TAMAMEN KAPANIR.**
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
