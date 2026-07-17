@@ -56,6 +56,11 @@ pub const Type = union(enum) {
     /// bkz. codegen.zig'in `HeapKind.closure`su) — yalnızca İÇ DÜZENİ VE
     /// "çağırma" işlemi FARKLIDIR.
     func: FuncType,
+    /// `T | None` — Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65):
+    /// Optional bir değer. `T` (payload) hiçbir zaman `.none` ya da
+    /// `.optional`in kendisi OLAMAZ (checker'ın `typeExprToType`si bunu
+    /// zorunlu kılar) — iç içe/anlamsız Optional'lar üretilemez.
+    optional: *const Type,
 };
 
 pub const Dict = struct { key: *const Type, value: *const Type };
@@ -71,6 +76,7 @@ pub fn eql(a: Type, b: Type) bool {
         .channel => |elem_a| eql(elem_a.*, b.channel.*),
         .thread_handle => |elem_a| eql(elem_a.*, b.thread_handle.*),
         .thread_channel => |elem_a| eql(elem_a.*, b.thread_channel.*),
+        .optional => |elem_a| eql(elem_a.*, b.optional.*),
         .dict => |d_a| eql(d_a.key.*, b.dict.key.*) and eql(d_a.value.*, b.dict.value.*),
         .func => |f_a| blk: {
             const f_b = b.func;
@@ -119,6 +125,10 @@ pub fn format(t: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             try writer.writeAll("ThreadChannel[");
             try format(elem.*, writer);
             try writer.writeAll("]");
+        },
+        .optional => |elem| {
+            try format(elem.*, writer);
+            try writer.writeAll(" | None");
         },
         .ptr => try writer.writeAll("ptr"),
         .dict => |d| {

@@ -63,6 +63,12 @@ pub const TypeError = error{
     /// atanmadı — `TypeMismatch`/`UndefinedAttribute`e AŞIRI YÜKLEMEK
     /// YERİNE ayrı, grep-lenebilir bir tanı kodu.
     UnassignedField,
+    /// Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): daraltılmamış
+    /// (`if x != None:` gibi TANINAN bir örüntüyle henüz elenmemiş) bir
+    /// `T | None` değerine alan/metod/index erişimi — `TypeMismatch`e
+    /// AŞIRI YÜKLEMEK yerine ayrı, grep-lenebilir bir tanı kodu (FF.5'in
+    /// `UnassignedField`iyle AYNI gerekçe).
+    OptionalNotNarrowed,
     OutOfMemory,
 };
 
@@ -184,6 +190,21 @@ const FnCtx = struct {
     /// `"<dış_yol>.<iç_isim>"`) — `Checker.closure_infos`ın anahtarı olarak
     /// kullanılır (bkz. `checkNestedFuncDef`).
     path: []const u8 = "",
+    /// Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `checkStmt`in
+    /// `.if_stmt`/`.while_stmt` dallarının `detectNarrowing` İLE açtığı
+    /// GEÇİCİ "bu isim şu an daraltılmış" örtüsü — `ctx.scope.vars`ı
+    /// DOĞRUDAN MUTATE ETMEK YERİNE (bu, o ismin GERÇEK/bildirilen tipini
+    /// KAYBEDERDİ — `checkAssign`in "yeni değer eski bildirilen tiple
+    /// UYUŞUYOR MU" kontrolü İÇİN o GERÇEK tipe İHTİYACI VARDIR, ör. `cur
+    /// = cur.next` — `cur` GÖVDE İÇİNDE `Node`e daraltılmışken BİLE bu
+    /// atamanın SAĞ TARAFI `Node | None`dir VE bu GEÇERLİ bir atamadır)
+    /// AYRI bir örtü katmanıdır: `checkExpr`in `.identifier` dalı ÖNCE
+    /// buraya, SONRA `ctx.scope`a bakar; `checkAssign`in `.identifier`
+    /// dalı BAŞARILI bir atamadan SONRA ismi buradan SİLER (yeniden atanan
+    /// bir değişkenin daraltma DURUMU artık GEÇERSİZDİR — GÜVENLİ/tutucu
+    /// tercih, TypeScript'in "reassignment invalidates narrowing"ıyla
+    /// AYNI gerekçe).
+    narrowed: std.StringHashMapUnmanaged(Type) = .{},
 };
 
 pub const Checker = struct {
@@ -346,13 +367,45 @@ pub const Checker = struct {
                 ret.* = try self.typeExprToType(ft.return_type.*);
                 return .{ .func = .{ .params = params, .return_type = ret } };
             },
+            // Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `T | None`.
+            // İç tipin KENDİSİ `.none`/`.optional` İSE reddedilir — `None |
+            // None` ya da iç içe Optional anlamsızdır (parser bunu zaten
+            // ÜRETEMEZ, bu SAVUNMACI bir kontrol).
+            .optional => |inner_te| {
+                const inner = try self.typeExprToType(inner_te.*);
+                if (inner == .none or inner == .optional) {
+                    return self.fail(error.UnknownType, "'None | None' ya da iç içe Optional geçersizdir", .{});
+                }
+                const boxed = try self.allocator.create(Type);
+                boxed.* = inner;
+                return .{ .optional = boxed };
+            },
         }
     }
 
     fn assignable(declared: Type, value: Type) bool {
         if (types.eql(declared, value)) return true;
         if (declared == .float and value == .int) return true;
+        // Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `T | None`e
+        // hem `None` HEM DE çıplak `T` (Python'daki "auto-wrap" gibi,
+        // `x: int | None = 5` GEÇERLİDİR) atanabilir.
+        if (declared == .optional) {
+            if (value == .none) return true;
+            return assignable(declared.optional.*, value);
+        }
         return false;
+    }
+
+    /// Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): bir alan/metod/
+    /// index erişiminin ALICISI (`a.obj`) `T | None` İSE — daraltılmamış
+    /// bir Optional üzerinde HERHANGİ bir erişim çağrı sitesinin TEK,
+    /// paylaşılan kapısı. `detectNarrowing`in DAR desen tanıması DIŞINDA
+    /// (ör. `if x:` gibi truthy-kontrol, ya da bambaşka bir koşul) bir
+    /// Optional ASLA "otomatik" daraltılmaz.
+    fn requireNotOptional(self: *Checker, t: Type, what: []const u8) TypeError!void {
+        if (t == .optional) {
+            return self.fail(error.OptionalNotNarrowed, "'{s}' için Optional (T | None) bir değer kullanılamaz — önce 'if ... != None:' ile daraltın", .{what});
+        }
     }
 
     // ---- Geçiş 1: sınıf adlarını topla (ileri referansları desteklemek için) ----
@@ -475,7 +528,13 @@ pub const Checker = struct {
             // BİLİNÇLİ OLARAK kapsam dışı bırakıldı — v1 yalnızca header
             // gibi dict[str,str] kullanım örneğini hedefliyor.
             .dict => |d| d.key.* == .str and d.value.* == .str,
-            .list, .class, .task, .channel, .thread_handle, .thread_channel, .func => false,
+            // Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): bilinçli
+            // v1 sınırlaması — `Optional[T]` (heap İÇİN etiket-only, ilkel
+            // İÇİN KUTULANMIŞ/ARC-yönetimli) bir `extern def` sınırından
+            // GEÇEMEZ. `ptr`in AKSİNE hiçbir Optional temsili ARC-DIŞI
+            // DEĞİLDİR (heap tarafı BİLE checker seviyesinde "bu bir null
+            // olabilir" anlamı taşır, C tarafı bunu YORUMLAYAMAZ).
+            .list, .class, .task, .channel, .thread_handle, .thread_channel, .func, .optional => false,
         };
     }
 
@@ -500,7 +559,10 @@ pub const Checker = struct {
     fn isSpawnParamSafeType(t: Type) bool {
         return switch (t) {
             .int, .float, .boolean, .str, .none, .task, .channel, .ptr, .thread_channel => true,
-            .list, .class, .dict, .thread_handle, .func => false,
+            // Faz FF.6: bilinçli v1 sınırlaması — `isFfiSafeType`in AYNI
+            // gerekçesiyle, `Optional[T]` `spawn`ın kapanış paketlemesinden
+            // GEÇEMEZ.
+            .list, .class, .dict, .thread_handle, .func, .optional => false,
         };
     }
 
@@ -528,7 +590,10 @@ pub const Checker = struct {
     fn isThreadTransferSafeType(t: Type) bool {
         return switch (t) {
             .int, .float, .boolean, .str, .none, .ptr, .thread_channel => true,
-            .list, .class, .dict, .task, .channel, .thread_handle, .func => false,
+            // Faz FF.6: bilinçli v1 sınırlaması — `isFfiSafeType`in AYNI
+            // gerekçesiyle, `Optional[T]` `nox.thread.start`ın sınırından
+            // GEÇEMEZ.
+            .list, .class, .dict, .task, .channel, .thread_handle, .func, .optional => false,
         };
     }
 
@@ -596,6 +661,7 @@ pub const Checker = struct {
                 for (ft.params) |p| try self.collectProtocolNames(p, names);
                 try self.collectProtocolNames(ft.return_type.*, names);
             },
+            .optional => |inner| try self.collectProtocolNames(inner.*, names),
         }
     }
 
@@ -1200,6 +1266,40 @@ pub const Checker = struct {
             .if_stmt => |f| {
                 const ct = try self.checkExpr(ctx, f.cond);
                 if (ct != .boolean) return self.fail(error.TypeMismatch, "'if' koşulu bool olmalıdır", .{});
+                // Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): DAR,
+                // örüntü-tabanlı daraltma — yalnızca `if x != None:`/`if x
+                // == None:` (KENDİ scope'unun DOĞRUDAN bir YERELİ olan `x`
+                // için) TANINIR. Genel bir kontrol-akışı analizi DEĞİLDİR;
+                // `elif` dalları HİÇ daraltılmaz (bkz. `detectNarrowing`in
+                // belge notu) — bu, ÖZELLİKLE dar tutulan, BİLİNÇLİ bir v1
+                // kapsamıdır.
+                if (detectNarrowing(f.cond, ctx.scope)) |n| {
+                    const prior = ctx.narrowed.get(n.name);
+                    if (n.narrows_then) {
+                        try ctx.narrowed.put(self.allocator, n.name, n.base);
+                        for (f.then_body) |s| try self.checkStmt(ctx, s);
+                        if (prior) |p| try ctx.narrowed.put(self.allocator, n.name, p) else _ = ctx.narrowed.remove(n.name);
+                        for (f.elif_clauses) |ec| {
+                            const ect = try self.checkExpr(ctx, ec.cond);
+                            if (ect != .boolean) return self.fail(error.TypeMismatch, "'elif' koşulu bool olmalıdır", .{});
+                            for (ec.body) |s| try self.checkStmt(ctx, s);
+                        }
+                        if (f.else_body) |eb| for (eb) |s| try self.checkStmt(ctx, s);
+                    } else {
+                        for (f.then_body) |s| try self.checkStmt(ctx, s);
+                        for (f.elif_clauses) |ec| {
+                            const ect = try self.checkExpr(ctx, ec.cond);
+                            if (ect != .boolean) return self.fail(error.TypeMismatch, "'elif' koşulu bool olmalıdır", .{});
+                            for (ec.body) |s| try self.checkStmt(ctx, s);
+                        }
+                        if (f.else_body) |eb| {
+                            try ctx.narrowed.put(self.allocator, n.name, n.base);
+                            for (eb) |s| try self.checkStmt(ctx, s);
+                            if (prior) |p| try ctx.narrowed.put(self.allocator, n.name, p) else _ = ctx.narrowed.remove(n.name);
+                        }
+                    }
+                    return;
+                }
                 for (f.then_body) |s| try self.checkStmt(ctx, s);
                 for (f.elif_clauses) |ec| {
                     const ect = try self.checkExpr(ctx, ec.cond);
@@ -1211,6 +1311,25 @@ pub const Checker = struct {
             .while_stmt => |w| {
                 const ct = try self.checkExpr(ctx, w.cond);
                 if (ct != .boolean) return self.fail(error.TypeMismatch, "'while' koşulu bool olmalıdır", .{});
+                // Faz FF.6: `while x != None:` — `if`in AYNI DAR
+                // `detectNarrowing` örüntüsü, bağlı liste/ağaç TRAVERSAL'ı
+                // (bu özelliğin asıl motive edici kullanım örneği) İÇİN
+                // GEREKLİ. `while x == None:` (narrows_then=false) İSE gövde
+                // İÇİNDE daraltma YAPILMAZ (gövde YALNIZCA x HÂLÂ None İKEN
+                // çalışır) — bu yüzden yalnızca `narrows_then` durumu ele
+                // alınır. Döngü SONRASI `x` HER ZAMAN Optional'a GERİ DÖNER
+                // (bir `break` gövde İÇİNDE x HÂLÂ Optional İKEN çıkabilir,
+                // bu yüzden döngü SONRASI daraltılmış SAYILAMAZ — güvenli/
+                // tutucu tercih).
+                if (detectNarrowing(w.cond, ctx.scope)) |n| {
+                    if (n.narrows_then) {
+                        const prior = ctx.narrowed.get(n.name);
+                        try ctx.narrowed.put(self.allocator, n.name, n.base);
+                        for (w.body) |s| try self.checkStmt(ctx, s);
+                        if (prior) |p| try ctx.narrowed.put(self.allocator, n.name, p) else _ = ctx.narrowed.remove(n.name);
+                        return;
+                    }
+                }
                 for (w.body) |s| try self.checkStmt(ctx, s);
             },
             .for_stmt => |f| {
@@ -1393,6 +1512,12 @@ pub const Checker = struct {
                 if (!assignable(existing, value_t)) {
                     return self.fail(error.TypeMismatch, "'{s}' için tip uyuşmazlığı", .{name});
                 }
+                // Faz FF.6: yeniden atama, daraltma DURUMUNU geçersiz kılar
+                // (bkz. `FnCtx.narrowed`in belge notu) — İÇİNDE bulunulan
+                // if/while gövdesi çıkışta ESKİ değeri KENDİSİ geri
+                // yükleyeceğinden (bkz. `checkStmt`), burada YALNIZCA
+                // GÖVDENİN GERİ KALANI İÇİN geçersiz kılmak yeterlidir.
+                _ = ctx.narrowed.remove(name);
             },
             .attribute => |attr| {
                 // Genel durum: `<ifade>.<alan> = <değer>` — `<ifade>` HERHANGİ
@@ -1404,6 +1529,7 @@ pub const Checker = struct {
                 // bir sınıfın alan kümesi çağrı sitesine göre değişken olurdu
                 // (AGENTS.md §5'in yasakladığı dinamik alan ekleme).
                 const obj_t = try self.checkExpr(ctx, attr.obj.*);
+                try self.requireNotOptional(obj_t, attr.attr);
                 const class_name = switch (obj_t) {
                     .class => |n| n,
                     else => return self.fail(error.TypeMismatch, "'.{s}' yalnızca sınıf örneklerinde kullanılabilir", .{attr.attr}),
@@ -1432,6 +1558,7 @@ pub const Checker = struct {
             // §3.20 — TUTARLILIK GEREKÇESİYLE, dict ZATEN destekliyordu).
             .index => |idx| {
                 const obj_t = try self.checkExpr(ctx, idx.obj.*);
+                try self.requireNotOptional(obj_t, "[]");
                 if (obj_t == .list) {
                     const key_t = try self.checkExpr(ctx, idx.index.*);
                     if (key_t != .int) {
@@ -1483,7 +1610,9 @@ pub const Checker = struct {
             .bool_lit => .boolean,
             .string_lit => .str,
             .none_lit => .none,
-            .identifier => |name| (try ctx.scope.lookup(self.allocator, name)) orelse
+            // Faz FF.6: daraltma örtüsü (bkz. `FnCtx.narrowed`in belge notu)
+            // GERÇEK scope aramasından ÖNCE denetlenir.
+            .identifier => |name| ctx.narrowed.get(name) orelse (try ctx.scope.lookup(self.allocator, name)) orelse
                 return self.fail(error.UndefinedVariable, "tanımsız değişken: {s}", .{name}),
             .unary => |u| blk: {
                 const t = try self.checkExpr(ctx, u.operand.*);
@@ -1503,6 +1632,7 @@ pub const Checker = struct {
             .attribute => |a| try self.checkAttribute(ctx, a),
             .index => |idx| blk: {
                 const obj_t = try self.checkExpr(ctx, idx.obj.*);
+                try self.requireNotOptional(obj_t, "[]");
                 if (obj_t == .dict) {
                     const idx_t = try self.checkExpr(ctx, idx.index.*);
                     if (!types.eql(idx_t, obj_t.dict.key.*)) {
@@ -1700,6 +1830,11 @@ pub const Checker = struct {
             .eq, .ne => blk: {
                 if (types.isNumeric(l) and types.isNumeric(r)) break :blk .boolean;
                 if (types.eql(l, r)) break :blk .boolean;
+                // Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `x !=
+                // None` / `x == None` — bir Optional'ı `None` ile
+                // karşılaştırmak (daraltmanın ÖN KOŞULU, bkz. `detectNarrowing`)
+                // HER ZAMAN geçerlidir.
+                if ((l == .optional and r == .none) or (l == .none and r == .optional)) break :blk .boolean;
                 return self.fail(error.TypeMismatch, "karşılaştırılan tipler uyuşmuyor", .{});
             },
             .lt, .le, .gt, .ge => blk: {
@@ -1717,6 +1852,43 @@ pub const Checker = struct {
         };
     }
 
+    /// Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `checkStmt`in
+    /// `.if_stmt` dalının kullandığı DAR daraltma-örüntüsü tespiti.
+    const Narrow = struct {
+        name: []const u8,
+        /// Daraltılmış (Optional OLMAYAN) taban tip — `then`/`else`
+        /// dalında `name`in GEÇİCİ olarak YENİDEN bağlanacağı tip.
+        base: Type,
+        /// `true`: `x != None` (THEN dalı daraltılır). `false`: `x ==
+        /// None` (ELSE dalı daraltılır — `then` dalı Optional OLARAK KALIR).
+        narrows_then: bool,
+    };
+
+    /// Yalnızca TAM OLARAK `<isim> != None` / `<isim> == None` (VE
+    /// yansımaları, `None != <isim>` gibi) biçimindeki bir koşulu tanır —
+    /// `<isim>` GEÇERLİ scope'un DOĞRUDAN bir YERELİ (parent zincirinden
+    /// YAKALANMIŞ bir değişken DEĞİL — bkz. `lookupLocal`, kasıtlı dar
+    /// kapsam: bir capture'ı geçici olarak daraltıp SONRA eski haline
+    /// GERİ YÜKLEMEK dış fonksiyonun KENDİ denetimini etkilemez ama
+    /// GEREKSİZ karmaşıklık katardı) VE `T | None` tipinde OLMALIDIR.
+    /// Başka HİÇBİR koşul biçimi (ör. `if x:`, `if x.field != None:`,
+    /// birleşik `and`/`or` koşulları) TANINMAZ — genel bir kontrol-akışı
+    /// analizi DEĞİL, BİLİNÇLİ dar bir v1 kapsamıdır.
+    fn detectNarrowing(cond: ast.Expr, scope: *Scope) ?Narrow {
+        if (cond != .binary) return null;
+        const b = cond.binary;
+        if (b.op != .eq and b.op != .ne) return null;
+        const name: []const u8 = if (b.left.* == .identifier and b.right.* == .none_lit)
+            b.left.identifier
+        else if (b.right.* == .identifier and b.left.* == .none_lit)
+            b.right.identifier
+        else
+            return null;
+        const t = scope.lookupLocal(name) orelse return null;
+        if (t != .optional) return null;
+        return .{ .name = name, .base = t.optional.*, .narrows_then = (b.op == .ne) };
+    }
+
     fn numericPromote(self: *Checker, l: Type, r: Type) TypeError!Type {
         if (!types.isNumeric(l) or !types.isNumeric(r)) {
             return self.fail(error.TypeMismatch, "aritmetik işlem yalnızca sayısal tiplerde çalışır", .{});
@@ -1727,6 +1899,7 @@ pub const Checker = struct {
 
     fn checkAttribute(self: *Checker, ctx: *FnCtx, a: ast.Attribute) TypeError!Type {
         const obj_t = try self.checkExpr(ctx, a.obj.*);
+        try self.requireNotOptional(obj_t, a.attr);
         const class_name = switch (obj_t) {
             .class => |n| n,
             else => return self.fail(error.TypeMismatch, "'.{s}' yalnızca sınıf örneklerinde kullanılabilir", .{a.attr}),
@@ -1891,6 +2064,7 @@ pub const Checker = struct {
                 if (try self.tryResolveQualifiedCall(ctx, c)) |t| return t;
 
                 const obj_t = try self.checkExpr(ctx, a.obj.*);
+                try self.requireNotOptional(obj_t, a.attr);
                 // `Channel[T]`in yerleşik `send`/`recv`i — bir kullanıcı
                 // sınıfı DEĞİL, bu yüzden `self.classes` yerine burada özel
                 // olarak işlenir (bkz. nox-teknik-spesifikasyon.md §3.21).
@@ -2107,6 +2281,17 @@ pub const Checker = struct {
             // v1 kapsamı DIŞI (closure'lar generics'in monomorphization
             // makinesiyle henüz entegre edilmedi).
             .func_type => return self.fail(error.UnknownType, "'{s}' çağrısında fonksiyon tipi parametreler generic fonksiyonlarda henüz desteklenmiyor", .{fn_name}),
+            // Faz FF.6: `T | None`li bir parametre generic bir fonksiyona
+            // geçirilirse, `actual`ın da bir Optional olması VE payload'ların
+            // özyinelemeli olarak birleşmesi gerekir (v1 kapsamı — Optional
+            // İÇİNDEKİ tip parametrelerinin bağlanmasını destekler, örn.
+            // `def f[T](x: T | None) -> T`).
+            .optional => |inner_te| {
+                switch (actual) {
+                    .optional => |elem| try self.unifyTypeExpr(inner_te.*, elem.*, type_params, bindings, fn_name),
+                    else => return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{fn_name}),
+                }
+            },
         }
     }
 
@@ -2214,6 +2399,11 @@ pub const Checker = struct {
                 ret.* = try self.typeToTypeExpr(f.return_type.*);
                 break :blk .{ .func_type = .{ .params = params, .return_type = ret } };
             },
+            .optional => |elem| blk: {
+                const boxed = try self.allocator.create(ast.TypeExpr);
+                boxed.* = try self.typeToTypeExpr(elem.*);
+                break :blk .{ .optional = boxed };
+            },
         };
     }
 
@@ -2231,6 +2421,11 @@ pub const Checker = struct {
                 const ret = try self.allocator.create(ast.TypeExpr);
                 ret.* = try self.substituteTypeExpr(ft.return_type.*, bindings);
                 break :blk .{ .func_type = .{ .params = params, .return_type = ret } };
+            },
+            .optional => |inner| blk: {
+                const boxed = try self.allocator.create(ast.TypeExpr);
+                boxed.* = try self.substituteTypeExpr(inner.*, bindings);
+                break :blk .{ .optional = boxed };
             },
         };
     }
@@ -2353,6 +2548,10 @@ pub const Checker = struct {
                     try buf.appendSlice(self.allocator, "_");
                 }
                 try self.appendMangledType(buf, f.return_type.*);
+            },
+            .optional => |elem| {
+                try buf.appendSlice(self.allocator, "Optional_");
+                try self.appendMangledType(buf, elem.*);
             },
         }
     }

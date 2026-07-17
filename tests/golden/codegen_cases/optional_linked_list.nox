@@ -1,0 +1,42 @@
+class Node:
+    value: int
+    next: Node | None
+
+    def __init__(self, value: int, next: Node | None) -> None:
+        self.value = value
+        self.next = next
+
+def sum_list(head: Node | None) -> int:
+    total: int = 0
+    cur: Node | None = head
+    while cur != None:
+        total = total + cur.value
+        cur = cur.next
+    return total
+
+def find(head: Node | None, target: int) -> Node | None:
+    cur: Node | None = head
+    while cur != None:
+        if cur.value == target:
+            return cur
+        cur = cur.next
+    return None
+
+n3: Node = Node(3, None)
+n2: Node = Node(2, n3)
+n1: Node = Node(1, n2)
+
+print(sum_list(n1))
+print(sum_list(None))
+
+found: Node | None = find(n1, 2)
+if found != None:
+    print(found.value)
+else:
+    print(-1)
+
+missing: Node | None = find(n1, 99)
+if missing != None:
+    print(missing.value)
+else:
+    print(-1)

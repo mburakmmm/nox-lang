@@ -51,6 +51,11 @@ pub const TokenKind = enum {
     l_brace,
     r_brace,
     arrow, // ->
+    /// Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `T | None`
+    /// (Optional) tip ifadesinin ayracı. `|` dilde BAŞKA HİÇBİR yerde
+    /// (ne değer ne tip pozisyonunda) kullanılmadığından bu YENİ token
+    /// SIFIR çakışma riski taşır.
+    pipe, // |
 
     // operators
     plus,

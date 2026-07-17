@@ -1055,3 +1055,17 @@ test "codegen(çalıştır): nox.json.decode bozuk JSON JsonError raise eder" {
         @embedFile("codegen_cases/json_decode_malformed_raises.expected"),
     );
 }
+
+test "codegen(çalıştır): Faz FF.6 — Node.next: Node | None ile bağlı liste inşası + traversal + find" {
+    try expectGolden(
+        @embedFile("codegen_cases/optional_linked_list.nox"),
+        @embedFile("codegen_cases/optional_linked_list.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz FF.6 — kutulanmış int | None: None dönüşü + auto-wrap + narrowing round-trip" {
+    try expectGolden(
+        @embedFile("codegen_cases/optional_primitive_box.nox"),
+        @embedFile("codegen_cases/optional_primitive_box.expected"),
+    );
+}

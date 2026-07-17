@@ -265,6 +265,13 @@ fn renameTypeExpr(a: std.mem.Allocator, te: ast.TypeExpr, map: *const RenameMap)
             ret.* = try renameTypeExpr(a, ft.return_type.*, map);
             break :blk .{ .func_type = .{ .params = params, .return_type = ret } };
         },
+        // Faz FF.6: `T | None` — içindeki taban tipte de sınıf adı
+        // yeniden adlandırması GEREKEBİLİR (`.func_type` İLE AYNI gerekçe).
+        .optional => |inner| blk: {
+            const boxed = try a.create(ast.TypeExpr);
+            boxed.* = try renameTypeExpr(a, inner.*, map);
+            break :blk .{ .optional = boxed };
+        },
     };
 }
 

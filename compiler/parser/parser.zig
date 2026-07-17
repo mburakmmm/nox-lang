@@ -146,6 +146,22 @@ pub const Parser = struct {
     }
 
     fn parseTypeExpr(self: *Parser) ParseError!ast.TypeExpr {
+        const base = try self.parseBaseTypeExpr();
+        // Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `T | None`.
+        // Yalnızca TEK bir `| None` soneki kabul edilir (döngü YOK) —
+        // `T | None | None` bu yüzden bir sonraki token'ın `pipe` OLMAMASI
+        // beklendiğinden parse hatası verir (`parseParam`/`parseTypeExpr`in
+        // ÇAĞIRANI `newline`/`,`/`)` bekler, `pipe` DEĞİL).
+        if (self.match(.pipe)) {
+            _ = try self.expect(.kw_none);
+            const boxed = try self.allocator.create(ast.TypeExpr);
+            boxed.* = base;
+            return .{ .optional = boxed };
+        }
+        return base;
+    }
+
+    fn parseBaseTypeExpr(self: *Parser) ParseError!ast.TypeExpr {
         if (self.check(.kw_none)) {
             _ = self.advance();
             return .{ .simple = "None" };

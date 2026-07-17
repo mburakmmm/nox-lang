@@ -457,6 +457,11 @@ const Printer = struct {
                 try self.writer.writeAll(") -> ");
                 try self.printType(ft.return_type.*);
             },
+            // Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `T | None`.
+            .optional => |inner| {
+                try self.printType(inner.*);
+                try self.writer.writeAll(" | None");
+            },
         }
     }
 

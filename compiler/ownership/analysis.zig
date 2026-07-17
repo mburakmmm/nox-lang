@@ -345,6 +345,13 @@ fn isHeapTypeExpr(te: ast.TypeExpr) bool {
         // belge notu) — bu yüzden `list`/`dict`/vb. İLE AYNI şekilde
         // heap-yönetimli sayılır.
         .func_type => true,
+        // Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `T | None` —
+        // heap taraflı Optional'lar zaten kendi `T`sinin (heap) pointer
+        // temsilini paylaşır; kutulanmış İLKEL Optional'lar (int/float/
+        // bool | None) İSE KENDİLERİ YENİ bir ARC nesnesidir (bkz.
+        // `HeapKind.boxed_scalar`) — HER İKİ durumda da Optional'ın
+        // KENDİSİ heap-yönetimlidir, taban tip ne olursa olsun.
+        .optional => true,
     };
 }
 
@@ -357,6 +364,10 @@ fn typeExprName(allocator: std.mem.Allocator, te: ast.TypeExpr) ![]const u8 {
             break :blk try std.fmt.allocPrint(allocator, "{s}[{s}]", .{ g.name, inner });
         },
         .func_type => try allocator.dupe(u8, "func"),
+        .optional => |inner| blk: {
+            const inner_name = try typeExprName(allocator, inner.*);
+            break :blk try std.fmt.allocPrint(allocator, "{s}|None", .{inner_name});
+        },
     };
 }
 

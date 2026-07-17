@@ -582,7 +582,12 @@ tüketilirse, tüketimin sonunda serbest bırakılır. Bu, tam bir ara-yordamsal
 - `list[T]` tipli sınıf alanları desteklenmiyor.
 - Öz-referanslı ve ileri-referanslı (karşılıklı) sınıf alanları derleme
   zamanında reddedilir (yukarıya bakın) — bu, kullanışlı bağlı liste/ağaç
-  yapılarını `None`/nullable tip desteği gelene kadar zaten engeller.
+  yapılarını `None`/nullable tip desteği gelene kadar engelliyordu.
+  **GÜNCELLEME (Faz FF.6, bkz. §3.65):** `T | None` desteğiyle birlikte
+  ARTIK MÜMKÜN — `next: Node | None` gibi bir AÇIKÇA bildirilen (Faz FF.5)
+  Optional alan, `__init__`de `None` ile başlatılıp SONRADAN gerçek bir
+  `Node` ile yeniden atanabilir (bkz. `tests/golden/codegen_cases/
+  optional_linked_list.nox`).
 - Genel "geçici değer ömrü" düzeltmesi yalnızca ŞU AN keşfedilen dört somut
   yola uygulandı (madde 1-4); grameri genişleten gelecekteki fazlar (ör.
   generics, ek ifade biçimleri) benzer yeni "bağlanmamış geçici" yolları
@@ -4967,8 +4972,11 @@ fonksiyon) hâlâ yalnızca `__init__` PARAMETRELERİNİ/literalleri destekliyor
 **Çözüm:** `inferFieldType`e `class_name` parametresi eklendi, `.identifier`
 dalına `name == "self"` özel durumu eklendi (kendi sınıf tipini döner) — bu,
 `self.next = self` İLE bir nesnenin KENDİ KENDİSİNE işaret eden bir "öz-döngü"
-olarak İNŞA EDİLMESİNİ sağlar (`None`/opsiyonel tip GEREKMEDEN — dil bunu
-HENÜZ desteklemiyor); SONRA `a.next = b; b.next = a;` gibi bir yeniden atamayla
+olarak İNŞA EDİLMESİNİ sağlar (`None`/opsiyonel tip GEREKMEDEN — dil bunu O
+ZAMAN HENÜZ desteklemiyordu; Faz FF.6'dan (§3.65) SONRA `next: Node | None`
+İLE `self.next = None` DOĞRUDAN da yazılabilir, bu öz-döngü hilesi ARTIK
+YALNIZCA bir GEÇMİŞ dönem çözümüdür, gerekli DEĞİLDİR); SONRA `a.next = b;
+b.next = a;` gibi bir yeniden atamayla
 (ZATEN var olan `obj.attr = value` mekanizması) GERÇEK bir A↔B döngüsüne
 dönüştürülebilir. Bu, `docs/uretim-hazirlik-analizi.md`nin AÇIKÇA riski
 olarak işaretlediği "`list[T]` sınıf alanı/ileri-referans genişletildiği AN
@@ -9172,8 +9180,14 @@ UYGULANMAZ, `getList().sort()` de GEÇERLİDİR (`genDictMethod`nin
 `basename`/`dirname`/`extension`/`is_absolute` — `std.fs.path.*`i sarar.
 HİÇBİRİ `raise` ETMEZ (saf fonksiyonlar, HER ZAMAN başarılı). `dirname`
 bir üst dizin YOKSA (`std.fs.path.dirname` `null` döner) boş dize (`""`)
-döndürür — Nox `str`ın nullable bir karşılığı OLMADIĞINDAN belgelenen,
-kasıtlı bir varsayılan. `is_absolute`, `-> bool` DÖNÜŞÜ (bu projede DAHA
+döndürür — O DÖNEMDE Nox `str`ın nullable bir karşılığı OLMADIĞINDAN
+belgelenen, kasıtlı bir varsayılandı. **NOT (Faz FF.6, bkz. §3.65):**
+`str | None` ARTIK MÜMKÜN — `dirname`in imzasını `-> str | None`e
+çevirip gerçek `None` döndürmesi TEKNİK olarak yapılabilir hâle geldi,
+ama bu GERİYE DÖNÜK UYUMSUZ bir imza değişikliği olacağından (mevcut
+`""` sözleşmesine dayanan çağıranları BOZAR) bu FF.6 turunun kapsamı
+DIŞINDA bırakıldı — AYRI bir karar/faz gerektirir. `is_absolute`, `->
+bool` DÖNÜŞÜ (bu projede DAHA
 ÖNCE test edilmiş bir yol DEĞİL) YERİNE `nox_fs_last_op_ok`nin AYNI
 KANITLANMIŞ "int (0/1) dön, `.nox` `!= 0` İLE `bool`a çevirir" desenini
 izler.
@@ -9554,6 +9568,161 @@ kapatılamayan, BİLİNÇLİ kabul edilen bir artık boşluktur.
   `inferFieldType` bypass'ı — ÜÇÜ de AYRI AYRI KIRILIP İLGİLİ fixture'ların
   KIRMIZI olduğu doğrulanıp GERİ ALINDI.
 - `zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
+## 3.65 Faz FF.6 — `T | None` (Optional) Tip Desteği
+
+**Kaynak:** ChatGPT incelemesinin Faz FF listesinin ALTINCI VE EN BÜYÜK
+maddesi — dilde GERÇEK bir nullable/Optional DEĞER kavramı YOKTU (`None`
+yalnızca "değer yok", yani void dönüş tipi anlamına geliyordu). Bu boşluk,
+spec'in KENDİSİNİN birden fazla yerde AÇIKÇA itiraf ettiği bir eksikti
+(bkz. §4'ün "Bilinçli kapsam sınırlamaları" notu, ~§3.14'ün `self.next =
+self` öz-döngü GEÇİCİ ÇÖZÜMÜ, `nox.path.dirname`'in `""`-varsayılan notu
+— HEPSİ bu bölüme çapraz-referans VERECEK şekilde güncellendi).
+
+### Sözdizimi ve kapsam kararları
+
+Kullanıcı üç kilit kararı ÖNCEDEN verdi: **(1)** sözdizimi `T | None`
+(Python 3.10+ idiomu, `Optional[T]` DEĞİL) — yalnızca `<taban-tip> | None`
+(soldan sağa) KABUL EDİLİR, `None | T` VE zincirleme (`T | None | None`)
+parser SEVİYESİNDE reddedilir (TEK bir kanonik yüzey biçimi, FF.4'ün
+`self` istisnasıyla AYNI "dar gramer" gerekçesi). **(2)** kapsam TAM —
+hem HEAP tipler (class/str/list/dict) HEM DE İLKEL tipler (int/float/bool)
+`| None` destekler. **(3)** daraltma (narrowing) yalnızca DAR, örüntü-
+tabanlı: `if`/`while` KOŞULUNUN TAM OLARAK `<isim> != None`/`<isim> ==
+None` biçiminde olması gerekir — genel bir akış-duyarlı analiz DEĞİLDİR.
+
+### Tasarım — üç katman
+
+**1. Gramer:** YENİ `pipe` token'ı (`|`, dilde daha önce HİÇ kullanılmayan
+bir karakter — sıfır çakışma riski). `ast.TypeExpr.optional: *TypeExpr` VE
+`types.Type.optional: *const Type` — HER İKİSİ de `union(enum)` OLDUĞUNDAN
+(`else` dalı OLMAYAN kapsayıcı switch'ler), Zig derleyicisinin KENDİSİ HER
+tüketim sitesini (checker/codegen/formatter/module_loader/ast_dump/
+ownership) güncellemeye ZORLADI — FF.5'in `ClassDef.fields` (yeni bir
+STRUCT alanı, sessizce atlanabilir) riskinin AKSİNE, burada "sessiz
+düşme" derleme hatası olmadan MÜMKÜN DEĞİLDİR (bu FAZIN kendi güvenlik
+ağı).
+
+**2. Değer temsili — HEAP tipler (neredeyse ücretsiz):** `Optional[HeapType]`nin
+çalışma zamanı temsili TABAN TİPLE TAMAMEN AYNIDIR (null pointer = None,
+dolu pointer = Some(x)) — `codegen.zig`nin `resolveType`i `.optional`i
+HEAP bir taban tip İçin DOĞRUDAN o tabanın `TypeInfo`sini döner (ayrı bir
+codegen temsili YOK). ARC release/retain/eşitlik/trace/gc-free kodunun
+BÜYÜK ÇOĞUNLUĞU DEĞİŞMEDİ (zaten null-güvenliydi) — TEK istisna:
+`emitInlineRetain` (retain'in KENDİSİ) ÖNCEDEN null-KONTROLSÜZDÜ (heap-
+yönetimli bir slot Optional'dan ÖNCE ASLA null bir DEĞER TUTAMAZDI, bu
+yüzden hiç gerekmemişti) — `self.next = next` (`next: Node | None`) gibi
+bir atama bunu artık MÜMKÜN KILDIĞINDAN, `releaseValueIfSet`in ZATEN
+sahip olduğu AYNI null-güvenliği retain YÖNÜNDE de eklendi (bir GERÇEK
+segfault bulunup DÜZELTİLDİ — bkz. aşağıdaki "Bulunan hatalar").
+`.none_lit`in KENDİSİ (bugün de `error.Unsupported` — hiçbir zaman
+"değer olarak None" için genel bir codegen yolu YOKTU) `genExprForTarget`
+adlı YENİ bir bağlam-duyarlı yardımcı ÜZERİNDEN, hedefin (değişken/alan/
+parametre/dönüş yuvasının) ZATEN bilinen `TypeInfo`sini kullanarak ÇÖZÜLÜR
+(`var_decl`/`assign`/`genConstruct`/`genMethodCall`/`return_stmt` çağrı
+siteleri `genExpr` yerine BUNU çağırır) — FF.5'in `registerClass`ının
+`inferFieldType`i BYPASS ETMESİYLE AYNI "çağıran taraf bilir" deseni.
+`genBinary`e de `x != None`/`x == None` İçin ÖZEL bir dal eklendi (diğer
+tarafı ÜRETİP DOĞRUDAN `0`a karşı `ceql`/`cnel` — `_eq`/`strcmp`
+GEREKTİRMEYEN basit bir işaretçi karşılaştırması).
+
+**Bilinçli, v1 DIŞI bırakılanlar:** `Task`/`Channel`/`ThreadHandle`/
+`ThreadChannel` (ARC-DIŞI, KENDİ ayrı yıkım mekanizmaları var — bkz.
+`destroyNonArcValue`, null-güvenlikleri AYRICA doğrulanmadı) `| None`
+DESTEKLENMİYOR (`resolveType` `error.Unsupported` döner) — `isHeapManaged`
+ile sınırlı, dar bir "hangi heap tipler ücretsiz Optional olabilir" kümesi.
+
+**3. Değer temsili — İLKEL tipler (kutulama):** int/float/bool'un QBE'de
+"boş" temsil edecek yedek biti OLMADIĞINDAN, TEK, GENEL bir ARC-yönetimli
+kutu (`HeapKind.boxed_scalar` — `nox_rc_alloc(rt, 8)`den gelen DÜZ 8
+baytlık bir skaler payload, class'ın tag'ı/list'in len-cap başlığı YOK)
+kullanılır. `elem_qtype` (list[T]'in AYNI alanı) kutunun İÇİNDEKİ GERÇEK
+QBE tipini taşır. Kutulama, `genExprForTarget`de hedef `boxed_scalar` VE
+kaynak HENÜZ kutulanmamış bir ÇIPLAK skalerse tetiklenir (`boxScalar` —
+`always_fresh = true` İLE İŞARETLENİR, aksi halde `retainIfAliasing`in
+AST-tabanlı sezgisi TAZE kutuyu SPÜRİYÖZ retain edip KALICI SIZINTIYA yol
+açardı, bkz. aşağıdaki "Bulunan hatalar"). **Kritik mimari zorunluluk:**
+daraltılmış bir kutulanmış Optional'ın OKUNMASI (`if x != None: y = x +
+1`) kutunun İÇİNDEKİ değeri (unboxed) DÖNMELİDİR, kutunun KENDİSİNİ
+(pointer) DEĞİL — bu, checker'ın `FnCtx.narrowed` daraltma mantığının
+CODEGEN'DE DE (`genIf`/`genWhile`'ın `detectNarrowedBoxedName`i, YENİ
+`Codegen.narrowed_unbox` örtüsü) MEKANİK olarak YANSITILMASINI gerektirdi
+— HEAP tiplerin AKSİNE (temsil AYNI, hiçbir codegen-seviyesi narrowing
+GEREKMEDİ), kutulanmış bir skalerin temsili `T`den TAMAMEN FARKLI OLDUĞU
+İÇİN bu KAÇINILMAZDI (boxing yerine inline `{flag,payload}` temsili
+DEĞERLENDİRİLDİ ama Nox'un HER YERDE "her slot TEK 8-baytlık kelime"
+varsayan mevcut mimarisine [class alan ofsetleri, fonksiyon çağrı ABI'si]
+ÇOK DAHA İSTİLACI bir değişiklik olacağından ELENDİ — kutulama, VAR OLAN
+ARC makinesini AYNEN yeniden kullandığından BU kod tabanı İÇİN daha az
+riskli).
+
+### Checker — daraltma (narrowing)
+
+`checkStmt`'in `.if_stmt`/`.while_stmt` dalları, `Checker.detectNarrowing`
+(YALNIZCA `<isim> != None`/`<isim> == None`, `<isim>` GEÇERLİ scope'un
+DOĞRUDAN bir YERELİ VE `.optional` tipinde OLMALI) eşleşirse, `FnCtx.narrowed`
+adlı YENİ bir ÖRTÜ katmanına (`ctx.scope.vars`ı DOĞRUDAN mutate ETMEK
+YERİNE) geçici olarak daraltılmış tipi yazar — bu AYRIM KRİTİKTİR: bir
+narrowed değişkenin YENİDEN ATANMASI (`cur = cur.next`, bağlı liste
+traversal'inin TAM OLARAK KENDİSİ) sağ tarafın ASIL (Optional) bildirilen
+tiple KARŞILAŞTIRILMASINI GEREKTİRİR, narrowed tiple DEĞİL — `checkAssign`
+ATAMADAN SONRA örtüden SİLEREK narrowing'i geçersiz kılar (TypeScript'in
+"reassignment invalidates narrowing"ıyla AYNI gerekçe). `while x != None:`
+DESTEĞİ (plan'ın YALNIZCA `if` öngören ilk tasarımının ÖTESİNDE, GERÇEK
+kullanım sırasında GEREKLİ olduğu ANLAŞILAN bir genişletme) AYNI DAR
+örüntüyü kullanır, döngü SONRASI daraltma HER ZAMAN geri alınır (bir
+`break` gövde İÇİNDE Optional durumda çıkabilir).
+
+**Bilinçli, dar v1 sınırlaması:** "erken dönüş" narrowing'i (`if x ==
+None: return ...` SONRASINDA takip eden kodun OTOMATİK daraltılması)
+DESTEKLENMEZ — yalnızca `if`/`while`'ın KENDİ then/else gövdeleri İÇİNDE
+narrowing GEÇERLİDİR. Kullanıcı bunun YERİNE açık bir `if x != None: ...
+else: ...` yazmalıdır (bkz. golden fixture'lar). Genel akış-duyarlı analiz,
+BÜYÜK ÖLÇÜDE daha karmaşık bir özellik olurdu, BİLİNÇLİ olarak v1 kapsamı
+DIŞINDA bırakıldı.
+
+Daraltılmamış bir Optional'a alan/metod/index erişimi YENİ `TypeError.
+OptionalNotNarrowed` İLE reddedilir (`requireNotOptional`, checker'ın
+`checkAttribute`/`.index`/method-call dispatch'inin TEK, paylaşılan
+kapısı).
+
+### Bulunan hatalar (break→red→fix ritüeliyle doğrulandı)
+
+Manuel uçtan-uca testler (bağlı liste traversal'ı) SIRASINDA İKİ GERÇEK,
+segfault'a yol açan hata bulundu VE düzeltildi — İKİSİ de ÖNCEDEN hiçbir
+Nox programının heap-yönetimli bir slota GERÇEKTEN null yazamamasından
+kaynaklanan, ÖNCEDEN test EDİLMEMİŞ kod yollarıydı:
+1. `emitInlineRetain` null-KONTROLSÜZDÜ — `self.next = next` (`next` `None`
+   İKEN) `null - 8`i OKUMAYA ÇALIŞIYORDU (segfault). Düzeltme:
+   `releaseValueIfSet`in AYNI null-güvenlik desenini retain'e de ekle.
+2. Kutulanmış skaler release'i YANLIŞLIKLA `nox_rc_free_payload`
+   (refcount'u KENDİSİ AZALTMADAN belleği KOŞULSUZ serbest bırakan DÜŞÜK
+   SEVİYE bir ilkel) kullanıyordu — `nox_rc_release` (refcount azalt, SIFIRA
+   düşerse SERBEST bırak) GEREKİRDİ. Bu, PAYLAŞILAN bir kutunun (`w: int |
+   None = y`) HÂLÂ başka bir sahibi VARKEN ERKEN serbest bırakılmasına, SONRA
+   GERÇEK sahibinin release'inde ÇİFTE-SERBEST-BIRAKMAYA yol açıyordu.
+
+Her ikisi de deliberate break→red→fix ritüeliyle doğrulandı (geçici
+olarak KIRILIP fixture'ların KIRMIZI olduğu onaylanıp GERİ ALINDI).
+
+### Doğrulama
+
+`tests/golden/typecheck_cases/`: `ok_optional_heap_field.nox` (öz-referanslı
+`Node.next: Node | None` + `while`-narrowing traversal), `ok_optional_primitive.nox`
+(auto-wrap atama + `if`-narrowing), `err_optional_unnarrowed_access.nox`
+(YENİ `OptionalNotNarrowed`), `err_optional_type_mismatch.nox`.
+`tests/golden/codegen_cases/`: `optional_linked_list.nox` (GERÇEK bağlı
+liste inşası + `sum_list`/`find` traversal, gözlemlenebilir stdout),
+`optional_primitive_box.nox` (kutulanmış int None-dönüşü + auto-wrap +
+narrowing + ALIAS round-trip). `zig build test` (Debug + ReleaseFast)
+yeşil, `zig fmt` temiz.
+
+**Kapsam DIŞI, gelecekteki bir faza bırakılan:** `list[int | None]` gibi
+kutulanmış-Optional ELEMANLI koleksiyonların DEĞER eşitliği (`genListEq`nin
+`.boxed_scalar` dalı, GÜVENLİ ama YÜZEYSEL bir tutamaç-kimliği/pointer
+karşılaştırmasına düşer — hiçbir golden fixture bunu EGZERSİZ ETMEZ);
+`nox.path.dirname`'in `str | None` dönecek şekilde GÜNCELLENMESİ (GERİYE
+DÖNÜK UYUMSUZ bir imza değişikliği, AYRI bir karar gerektirir).
 
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 

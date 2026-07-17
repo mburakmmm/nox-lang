@@ -237,6 +237,10 @@ fn dumpType(writer: *std.Io.Writer, t: ast.TypeExpr) std.Io.Writer.Error!void {
             try writer.writeAll(") -> ");
             try dumpType(writer, ft.return_type.*);
         },
+        .optional => |inner| {
+            try dumpType(writer, inner.*);
+            try writer.writeAll(" | None");
+        },
     }
 }
 

@@ -256,6 +256,10 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
                 try tokens.append(allocator, .{ .kind = .percent, .lexeme = "%", .line = line, .col = col });
                 i += 1;
             },
+            '|' => {
+                try tokens.append(allocator, .{ .kind = .pipe, .lexeme = "|", .line = line, .col = col });
+                i += 1;
+            },
             '=' => {
                 if (peek(source, i + 1) == '=') {
                     try tokens.append(allocator, .{ .kind = .eq_eq, .lexeme = "==", .line = line, .col = col });

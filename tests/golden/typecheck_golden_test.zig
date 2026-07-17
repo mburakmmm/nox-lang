@@ -502,3 +502,31 @@ test "golden(typecheck): Faz FF.5 — AYNI alan İKİ kez bildirilirse reddedili
         @embedFile("typecheck_cases/err_class_duplicate_field_decl.expected"),
     );
 }
+
+test "golden(typecheck): Faz FF.6 — öz-referanslı Node.next: Node | None + while-narrowing traversal" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_optional_heap_field.nox"),
+        @embedFile("typecheck_cases/ok_optional_heap_field.expected"),
+    );
+}
+
+test "golden(typecheck): Faz FF.6 — int | None (auto-wrap atama + if-narrowing)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_optional_primitive.nox"),
+        @embedFile("typecheck_cases/ok_optional_primitive.expected"),
+    );
+}
+
+test "golden(typecheck): Faz FF.6 — daraltılmamış Optional'a alan erişimi OptionalNotNarrowed İLE reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_optional_unnarrowed_access.nox"),
+        @embedFile("typecheck_cases/err_optional_unnarrowed_access.expected"),
+    );
+}
+
+test "golden(typecheck): Faz FF.6 — Optional'a uyumsuz tip atanması reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_optional_type_mismatch.nox"),
+        @embedFile("typecheck_cases/err_optional_type_mismatch.expected"),
+    );
+}

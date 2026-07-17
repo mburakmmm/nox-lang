@@ -373,6 +373,36 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   uçtan uca bir test, `nox fmt` round-trip testi) + üç BAĞIMSIZ
   mekanizma (parser/checker/codegen) İçin AYRI AYRI boz→kırmızı→düzelt
   ritüeli.
+- **`T | None` (Optional) tip desteği** (Faz FF.6, bkz. nox-teknik-
+  spesifikasyon.md §3.65 — Faz FF listesinin EN BÜYÜK maddesi). YENİ `|`
+  token'ı + `T | None` sözdizimi (yalnızca soldan-sağa, tek seviye — `None
+  | T`/zincirleme REDDEDİLİR). Kapsam TAM: hem HEAP tipler (class/str/
+  list/dict — çalışma zamanı temsili taban tiple AYNI, null=None, NEREDEYSE
+  ücretsiz) HEM DE İLKEL tipler (int/float/bool — TEK, GENEL bir ARC-
+  yönetimli kutuya, `HeapKind.boxed_scalar`, sarılır). Daraltma (narrowing)
+  DAR ve örüntü-tabanlı: yalnızca `if`/`while`'ın KOŞULUNUN TAM OLARAK
+  `<isim> != None`/`<isim> == None` olması durumunda GEÇERLİDİR (genel
+  akış-duyarlı analiz DEĞİLDİR) — bir bağlı liste/ağaç traversal'ının
+  (`next: Node | None`, spec'in ÖNCEDEN engellediği ÖZ-REFERANSLI alan
+  örneği) ARTIK GERÇEKTEN YAZILABİLDİĞİ uçtan uca bir golden testle
+  KANITLANDI. Daraltılmamış bir Optional'a alan/metod/index erişimi YENİ
+  bir checker hatasıdır (`OptionalNotNarrowed`). Kutulanmış İLKEL
+  Optional'lar İçin codegen'in KENDİSİ de checker'ın narrowing mantığını
+  (`genIf`/`genWhile`'ın `narrowed_unbox` örtüsü) YANSITMAK ZORUNDA kaldı
+  — HEAP tiplerin AKSİNE (temsil AYNI, codegen değişikliği GEREKMEDİ)
+  kutulanmış bir skalerin temsili `T`den TAMAMEN FARKLI olduğundan bu
+  KAÇINILMAZDI. Uygulama sırasında İKİ GERÇEK, segfault'a yol açan hata
+  bulunup break→red→fix ritüeliyle DÜZELTİLDİ: (1) `emitInlineRetain`
+  (ARC retain'in KENDİSİ) null-KONTROLSÜZDÜ — Optional'dan ÖNCE heap-
+  yönetimli bir slot ASLA null bir DEĞER TUTAMAYACAĞINDAN bu hiç GEREKLİ
+  OLMAMIŞTI; (2) kutulanmış skaler release'i YANLIŞLIKLA refcount-farkında
+  OLMAYAN `nox_rc_free_payload`i (`nox_rc_release` YERİNE) kullanıyordu,
+  bu da PAYLAŞILAN bir kutunun (ör. `w: int | None = y`) ERKEN serbest
+  bırakılıp SONRA ÇİFTE-SERBEST-BIRAKMAYA yol açmasına neden oluyordu.
+  Bilinçli, dar v1 sınırlamaları: "erken dönüş" narrowing'i (`if x ==
+  None: return ...` SONRASI takip eden kodun otomatik daraltılması)
+  desteklenmiyor; `Task`/`Channel`/`ThreadHandle`/`ThreadChannel | None`
+  desteklenmiyor (ARC-dışı, null-güvenlikleri ayrıca doğrulanmadı).
 
 ### Düzeltildi
 - **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`

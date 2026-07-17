@@ -244,7 +244,7 @@ const QbeType = enum { l, d, w, none };
 /// `genCall`in `.closure` dalı) — bir closure DEĞERİNİN KENDİSİ, hem
 /// "nasıl çağrılır" hem "nasıl serbest bırakılır" bilgisini TAŞIYAN, kendi
 /// kendine yeten TEK bir işaretçidir.
-const HeapKind = enum { none, str, list, class, task, channel, dict, closure, thread_handle, thread_channel };
+const HeapKind = enum { none, str, list, class, task, channel, dict, closure, thread_handle, thread_channel, boxed_scalar };
 
 /// Faz U.4.4: bir closure heap bloğunun başlık boyutu (bkz. `HeapKind.closure`in
 /// belge notu) — `fn_ptr` + `release_fn_ptr`, HER İKİSİ de `l` (8 bayt).
@@ -626,7 +626,13 @@ fn escapeForQbeString(allocator: std.mem.Allocator, s: []const u8) CodegenError!
 /// açığıydı, bkz. `dict.zig`nin modül-üstü notu) — o GRUP artık DÖRT
 /// TÜRE indi (bkz. `destroyNonArcValue`).
 fn isHeapManaged(h: HeapKind) bool {
-    return h == .list or h == .class or h == .str or h == .closure or h == .dict;
+    // Faz FF.6.4: `boxed_scalar` (kutulanmış `int | None`/`float | None`/
+    // `bool | None`) TAM ARC yoluna (retain/release, `emitInlineRetain`in
+    // ARTIK null-güvenli KOPYASI DAHİL) diğer heap tipleriyle AYNI şekilde
+    // girer — İÇİNDE nested bir heap referansı OLMADIĞINDAN (ham bir skaler)
+    // `releaseValueIfSet`in `.boxed_scalar` dalı ÖZYİNELEMESİZ, basit bir
+    // `nox_rc_free_payload`dır.
+    return h == .list or h == .class or h == .str or h == .closure or h == .dict or h == .boxed_scalar;
 }
 
 /// `expr` değerlendirildiğinde TAZE (henüz hiçbir isme/alana/elemana
@@ -880,6 +886,18 @@ const Codegen = struct {
     extern_functions: std.StringHashMapUnmanaged(FuncSig) = .empty,
     classes: std.StringHashMapUnmanaged(ClassInfo) = .empty,
     vars: std.StringHashMapUnmanaged(VarInfo) = .empty,
+    /// Faz FF.6.4 (bkz. nox-teknik-spesifikasyon.md §3.65): `genIf`/`genWhile`nin
+    /// `checker.zig`'in `FnCtx.narrowed`iyle AYNI DAR örüntüyü (yalnızca
+    /// `if x != None:`/`if x == None:`) MEKANİK olarak YANSITAN örtüsü —
+    /// kutulanmış bir Optional-ilkel (`HeapKind.boxed_scalar`) İÇİN,
+    /// checker'ın statik tipi `T`ye DARALTTIĞI bir gövde İÇİNDE, `genExpr`in
+    /// `.identifier` dalı BURADA ADI OLAN bir değişkeni kutunun KENDİSİ
+    /// (pointer) YERİNE İÇİNDEKİ ham skaleri (unboxed) DÖNDÜRMELİDİR — HEAP
+    /// tiplerin AKSİNE (temsil AYNI, hiçbir codegen değişikliği GEREKMEDİ)
+    /// kutulanmış bir skalerin temsili `T`den TAMAMEN FARKLIDIR (pointer vs.
+    /// ham değer), bu yüzden codegen'in KENDİSİNİN de "şu an neredeyiz"i
+    /// bilmesi GEREKİR.
+    narrowed_unbox: std.StringHashMapUnmanaged(void) = .empty,
     temp_counter: usize = 0,
     label_counter: usize = 0,
     string_counter: usize = 0,
@@ -961,6 +979,11 @@ const Codegen = struct {
     /// bekleyen bir istisna varsa ve yakalayan bir `try` yoksa, bu tipte
     /// varsayılan bir değerle erken çıkmak için gerekli (bkz. `emitExceptionCheck`).
     current_ret_qtype: QbeType = .none,
+    /// Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `current_ret_qtype`in
+    /// TAM `TypeInfo` hâli — `return None` gibi bağlam-duyarlı `.none_lit`
+    /// üretiminde (bkz. `genExprForTarget`) hedefin `heap`/`class_name`/vb.
+    /// bilgisine ihtiyaç var, salt QBE skaler tipi YETMEZ.
+    current_ret_info: TypeInfo = .{ .qtype = .none },
     /// İçinde bulunulan en yakın `try` bloğunun sevk (dispatch) etiketi;
     /// `null` ise (try dışındaysak) bir istisna doğrudan fonksiyon dışına
     /// yayılır (bkz. `emitExceptionCheck`).
@@ -1088,6 +1111,40 @@ const Codegen = struct {
                 const sig = try self.allocator.create(FuncSigInfo);
                 sig.* = .{ .params = params, .ret = ret };
                 return .{ .qtype = .l, .heap = .closure, .func_sig = sig };
+            },
+            // Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `T | None`.
+            // TAM ARC-yönetimli heap tipler (`class`/`str`/`list`/`dict`/
+            // `closure` — bkz. `isHeapManaged`) VE `ptr` İÇİN Optional'ın
+            // çalışma zamanı temsili taban tiple TAMAMEN AYNIDIR (null
+            // pointer = None, dolu pointer = Some(x)) — ARC release/eşitlik/
+            // trace/gc-free KODUNUN HİÇBİRİ DEĞİŞMEZ (zaten null-güvenli,
+            // bkz. `releaseValueIfSet`); retain'e de AYRICA bir null-güvenlik
+            // eklendi (bkz. `emitInlineRetain`in belge notu). Bu yüzden
+            // burada YALNIZCA taban tipin `TypeInfo`si AYNEN döndürülür —
+            // codegen SEVİYESİNDE ayrı bir "Optional" temsili YOKTUR
+            // (yalnızca checker'ın daraltma denetimi bu ayrımı bilir).
+            // BİLİNÇLİ v1 DIŞI bırakılanlar: `Task`/`Channel`/`ThreadHandle`/
+            // `ThreadChannel` (ARC-DIŞI, KENDİ ayrı yıkım mekanizmaları var —
+            // bkz. `destroyNonArcValue`, null-güvenlikleri AYRICA
+            // doğrulanmadı).
+            .optional => |inner_te| {
+                const inner = try self.resolveType(inner_te.*);
+                const is_ptr = switch (inner_te.*) {
+                    .simple => |n| std.mem.eql(u8, n, "ptr"),
+                    else => false,
+                };
+                if (isHeapManaged(inner.heap) or is_ptr) return inner;
+                // Faz FF.6.4: `int | None`/`float | None`/`bool | None` —
+                // İLKELLERİN QBE'de "boş" temsil edecek yedek biti
+                // OLMADIĞINDAN (bkz. spec §3.65), tek-alanlı, ARC-yönetimli
+                // BASİT bir kutu (`HeapKind.boxed_scalar`) İÇİNE sarılır.
+                // `elem_qtype` KUTUNUN İÇİNDEKİ GERÇEK skaler QBE tipini
+                // taşır (`list[T]`in `elem_qtype`iyle AYNI deseni yeniden
+                // kullanır) — kutunun KENDİSİ HER ZAMAN `.l` (pointer).
+                if (inner.heap == .none and (inner.qtype == .l or inner.qtype == .d or inner.qtype == .w)) {
+                    return .{ .qtype = .l, .heap = .boxed_scalar, .elem_qtype = inner.qtype };
+                }
+                return error.Unsupported;
             },
         }
     }
@@ -1397,12 +1454,14 @@ const Codegen = struct {
 
     fn genFunction(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
         self.vars.clearRetainingCapacity();
+        self.narrowed_unbox.clearRetainingCapacity();
         self.temp_counter = 0;
         self.label_counter = 0;
         self.current_path = fd.name;
 
         const ret_info = try self.resolveType(fd.return_type);
         self.current_ret_qtype = ret_info.qtype;
+        self.current_ret_info = ret_info;
         self.current_catch_label = null;
         self.in_main = false;
 
@@ -1442,12 +1501,14 @@ const Codegen = struct {
 
     fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) CodegenError!void {
         self.vars.clearRetainingCapacity();
+        self.narrowed_unbox.clearRetainingCapacity();
         self.temp_counter = 0;
         self.label_counter = 0;
         self.current_path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ class_name, m.name });
 
         const ret_info = try self.resolveType(m.return_type);
         self.current_ret_qtype = ret_info.qtype;
+        self.current_ret_info = ret_info;
         self.current_catch_label = null;
         self.in_main = false;
 
@@ -1577,12 +1638,14 @@ const Codegen = struct {
     /// GÖRÜNÜR.
     fn genClosureFunc(self: *Codegen, spec: ClosureFuncSpec) CodegenError!void {
         self.vars.clearRetainingCapacity();
+        self.narrowed_unbox.clearRetainingCapacity();
         self.temp_counter = 0;
         self.label_counter = 0;
         self.current_path = spec.path;
 
         const ret_info = try self.resolveType(spec.fd.return_type);
         self.current_ret_qtype = ret_info.qtype;
+        self.current_ret_info = ret_info;
         self.current_catch_label = null;
         self.in_main = false;
 
@@ -1997,7 +2060,15 @@ const Codegen = struct {
             // DESTEKLEMİYOR (checker bu dala HİÇ düşürmemeli) — savunmacı
             // olarak `dict`/`Task`/`Channel` İLE AYNI tutamaç-kimliği
             // (pointer) karşılaştırmasına düşülür.
-            .dict, .task, .channel, .closure, .thread_handle, .thread_channel => blk: {
+            // Faz FF.6.4: `list[int | None]` gibi bir kutulanmış-Optional
+            // ELEMANLI liste (v1'de HİÇBİR golden fixture'ın EGZERSİZ
+            // ETMEDİĞİ, ama exhaustive switch GEREKSİNİMİYLE buraya düşen
+            // bir kombinasyon) — GÜVENLİ/tutucu bir varsayılan olarak
+            // `dict`/`Task`/`Channel` İLE AYNI tutamaç-kimliği (pointer)
+            // karşılaştırmasına düşülür (DEĞER eşitliği DEĞİL) — İKİ AYRI
+            // kutunun AYNI değeri TAŞISA BİLE eşit SAYILMAYACAĞI, bilinçli
+            // bir v1 sınırlamasıdır.
+            .dict, .task, .channel, .closure, .thread_handle, .thread_channel, .boxed_scalar => blk: {
                 const t = try self.newTemp();
                 try self.out.writer.print("    {s} =w ceql {s}, {s}\n", .{ t, va, vb });
                 break :blk t;
@@ -2108,6 +2179,7 @@ const Codegen = struct {
         if (use_async) return self.genMainAsync(stmts);
 
         self.vars.clearRetainingCapacity();
+        self.narrowed_unbox.clearRetainingCapacity();
         self.temp_counter = 0;
         self.label_counter = 0;
         self.current_ret_qtype = .w;
@@ -2154,6 +2226,7 @@ const Codegen = struct {
     /// §3.21, aşama 4).
     fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt) CodegenError!void {
         self.vars.clearRetainingCapacity();
+        self.narrowed_unbox.clearRetainingCapacity();
         self.temp_counter = 0;
         self.label_counter = 0;
         self.current_ret_qtype = .l;
@@ -2462,6 +2535,24 @@ const Codegen = struct {
             const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
             const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
             try self.out.writer.print("    call $nox_dict_release(l {s}, l {s}, w {s}, w {s})\n", .{ RT_PARAM, ptr, key_is_str_lit, value_is_str_lit });
+        } else if (heap == .boxed_scalar) {
+            // Faz FF.6.4 (bkz. nox-teknik-spesifikasyon.md §3.65): kutu,
+            // `nox_rc_alloc(rt, 8)`den gelen DÜZ 8 baytlık bir skaler
+            // payload'dır — `list`in len/cap BAŞLIĞI, `class`ın tag'ı YOK,
+            // İÇİNDE nested bir heap referansı ASLA yok (ham int/float/bool)
+            // — bu yüzden `listPayloadSize`in list-başlığı VARSAYAN genel
+            // dalına (aşağı) DEĞİL, doğrudan sabit boyutlu bir `nox_rc_
+            // release`e gider. **KRİTİK:** `nox_rc_free_payload` DEĞİL —
+            // O, refcount'u KENDİSİ AZALTMADAN belleği KOŞULSUZ serbest
+            // bırakan DÜŞÜK SEVİYE bir ilkeldir (yalnızca `nox_rc_
+            // predecrement`in "sıfıra düştü" dönüşünden SONRA çağrılması
+            // GEREKİR, bkz. `nox_rc_release`in KENDİSİ) — BU YANLIŞLIKLA
+            // KULLANILDIĞINDA (İLK sürümde OLDUĞU GİBİ) paylaşılan bir
+            // kutu (ör. `w: int | None = y`) HÂLÂ BAŞKA BİR sahibi VARKEN
+            // ERKEN serbest bırakılır, bu da SONRAKİ (GERÇEK) sahibinin
+            // scope-sonu temizliğinde ÇİFTE-SERBEST-BIRAKMAYA (segfault,
+            // GERÇEKTEN gözlemlendi — bkz. break→red→fix ritüeli) yol açar.
+            try self.out.writer.print("    call $nox_rc_release(l {s}, l {s}, l 8)\n", .{ RT_PARAM, ptr });
         } else if (elem_heap_info) |info| {
             // `ptr`nin KENDİSİ bir listedir; `info` bu listenin İÇİNDEKİ
             // elemanları betimler — `releaseFnNameFor` ise "release edilecek
@@ -2556,7 +2647,26 @@ const Codegen = struct {
     /// çerçevesi maliyetiyle) bir fonksiyon çağrısı GEREKTİRMEZ. `nox_rc_alloc`/
     /// `nox_rc_free_payload` (gerçek `malloc`/`free`e ihtiyaç duyar) İSE inline
     /// EDİLEMEZ — yalnızca bu saf aritmetik işlem inline edilir.
+    /// Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `ptr` `null`
+    /// OLABİLİR — bir `T | None` (heap) değeri (bkz. `resolveType`in
+    /// `.optional` dalı, "null = None" temsili). ÖNCEDEN bu fonksiyon
+    /// KOŞULSUZDU (`sub`/`load`/`add`/`store` DOĞRUDAN), ÇÜNKÜ heap-
+    /// yönetimli bir slot Optional'dan ÖNCE ASLA null bir Nox DEĞERİ
+    /// TUTAMAZDI (null yalnızca `__init__`-öncesi/dahili bir sentinel'DI,
+    /// hiçbir kullanıcı kodu yolunun onu `retainIfAliasing`e GEÇİREBİLECEĞİ
+    /// bir durum yoktu) — `self.next = next` (`next: Node | None`) gibi bir
+    /// atama BUNU artık MÜMKÜN KILDIĞINDAN, `releaseValueIfSet`in ZATEN
+    /// sahip olduğu AYNI null-güvenliği retain YÖNÜNDE de eklemek GEREKTİ
+    /// (aksi halde `null - 8` adresinden okuma DENEMESİ çöker — bu, GERÇEK
+    /// bir segfault olarak GÖZLEMLENDİ, bkz. break→red→fix ritüeli).
     fn emitInlineRetain(self: *Codegen, ptr: []const u8) CodegenError!void {
+        const is_null = try self.newTemp();
+        try self.out.writer.print("    {s} =w ceql {s}, 0\n", .{ is_null, ptr });
+        const retain_label = try self.newLabel("retain");
+        const skip_label = try self.newLabel("retain_skip");
+        const done_label = try self.newLabel("retain_done");
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ is_null, skip_label, retain_label });
+        try self.out.writer.print("{s}\n", .{retain_label});
         const hdr = try self.newTemp();
         try self.out.writer.print("    {s} =l sub {s}, 8\n", .{ hdr, ptr });
         const rc = try self.newTemp();
@@ -2564,6 +2674,10 @@ const Codegen = struct {
         const rc2 = try self.newTemp();
         try self.out.writer.print("    {s} =l add {s}, 1\n", .{ rc2, rc });
         try self.out.writer.print("    storel {s}, {s}\n", .{ rc2, hdr });
+        try self.out.writer.print("    jmp {s}\n", .{done_label});
+        try self.out.writer.print("{s}\n", .{skip_label});
+        try self.out.writer.print("    jmp {s}\n", .{done_label});
+        try self.out.writer.print("{s}\n", .{done_label});
     }
 
     /// `nox_rc_predecrement`in gömülü (inline) karşılığı — `emitInlineRetain`
@@ -2681,7 +2795,7 @@ const Codegen = struct {
             switch (stmt.kind) {
                 .return_stmt => |r| {
                     if (r) |e| {
-                        const v0 = try self.genExpr(e);
+                        const v0 = try self.genExprForTarget(e, self.current_ret_info);
                         try self.checkNoLowlevelEscape(v0);
                         // Bir parametreyi ya da bir alan okumasını OLDUĞU
                         // GİBİ döndürmek, BAŞKA BİR YERDE ZATEN sahibi olan
@@ -2717,7 +2831,7 @@ const Codegen = struct {
                 },
                 .var_decl => |v| {
                     const info = self.vars.get(v.name).?;
-                    const v0 = try self.genExpr(v.value);
+                    const v0 = try self.genExprForTarget(v.value, info);
                     const retained = try self.retainIfAliasing(v.value, v0);
                     const val = try self.convert(retained, info.qtype);
                     // `.arena` bir yerelse (bir `lowlevel` bloğu içindeyse),
@@ -2977,7 +3091,7 @@ const Codegen = struct {
         switch (a.target) {
             .identifier => |name| {
                 const info = self.vars.get(name) orelse return error.Unsupported;
-                const v0 = try self.genExpr(a.value);
+                const v0 = try self.genExprForTarget(a.value, info);
                 const retained = try self.retainIfAliasing(a.value, v0);
                 const val = try self.convert(retained, info.qtype);
                 // Bkz. `var_decl` kolundaki aynı gerekçe: arena yerelleri asla
@@ -3012,7 +3126,7 @@ const Codegen = struct {
                 const cinfo = self.classes.get(obj.class_name.?).?;
                 for (cinfo.fields.items) |f| {
                     if (!std.mem.eql(u8, f.name, attr.attr)) continue;
-                    const v0 = try self.genExpr(a.value);
+                    const v0 = try self.genExprForTarget(a.value, f.info);
                     // Bir sınıf alanına atamak, bir isme atamakla (`y = x`)
                     // aynı anlamı taşır: nesne artık bu değeri KALICI olarak
                     // paylaşıyor — bu yüzden aynı takma ad/kaçış kuralları
@@ -3182,6 +3296,27 @@ const Codegen = struct {
         return .{ .text = converted.text, .qtype = converted.qtype, .heap = if (dinfo.value_is_str) .str else .none };
     }
 
+    /// Faz FF.6.4 (bkz. `narrowed_unbox`ın belge notu): `checker.zig`'in
+    /// `Checker.detectNarrowing`iyle AYNI DAR AST örüntüsü — yalnızca
+    /// `<isim> != None`/`<isim> == None` (VE yansımaları) — ama BURADA
+    /// yalnızca `name`in KENDİSİNİN `boxed_scalar` OLUP OLMADIĞI ÖNEMLİDİR
+    /// (checker ZATEN tüm STATİK doğruluğu kanıtladı — bu, YALNIZCA "kutuyu
+    /// AÇMALI MIYIM" kararı İÇİN gereken minimal bilgidir).
+    fn detectNarrowedBoxedName(self: *Codegen, cond: ast.Expr) ?struct { name: []const u8, narrows_then: bool } {
+        if (cond != .binary) return null;
+        const b = cond.binary;
+        if (b.op != .eq and b.op != .ne) return null;
+        const name: []const u8 = if (b.left.* == .identifier and b.right.* == .none_lit)
+            b.left.identifier
+        else if (b.right.* == .identifier and b.left.* == .none_lit)
+            b.right.identifier
+        else
+            return null;
+        const info = self.vars.get(name) orelse return null;
+        if (info.heap != .boxed_scalar) return null;
+        return .{ .name = name, .narrows_then = (b.op == .ne) };
+    }
+
     fn genIf(self: *Codegen, f: ast.IfStmt, ret_qtype: QbeType) CodegenError!void {
         const end_label = try self.newLabel("if_end");
 
@@ -3195,7 +3330,18 @@ const Codegen = struct {
             end_label;
         try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cond0.text, then_label, next_label });
         try self.out.writer.print("{s}\n", .{then_label});
-        try self.genStmts(f.then_body, ret_qtype);
+        if (self.detectNarrowedBoxedName(f.cond)) |n| {
+            const was_present = self.narrowed_unbox.contains(n.name);
+            if (n.narrows_then) {
+                try self.narrowed_unbox.put(self.allocator, n.name, {});
+                try self.genStmts(f.then_body, ret_qtype);
+                if (!was_present) _ = self.narrowed_unbox.remove(n.name);
+            } else {
+                try self.genStmts(f.then_body, ret_qtype);
+            }
+        } else {
+            try self.genStmts(f.then_body, ret_qtype);
+        }
         try self.out.writer.print("    jmp {s}\n", .{end_label});
 
         for (f.elif_clauses, 0..) |ec, i| {
@@ -3218,7 +3364,18 @@ const Codegen = struct {
 
         if (f.else_body) |eb| {
             try self.out.writer.print("{s}\n", .{next_label});
-            try self.genStmts(eb, ret_qtype);
+            if (self.detectNarrowedBoxedName(f.cond)) |n| {
+                const was_present = self.narrowed_unbox.contains(n.name);
+                if (!n.narrows_then) {
+                    try self.narrowed_unbox.put(self.allocator, n.name, {});
+                    try self.genStmts(eb, ret_qtype);
+                    if (!was_present) _ = self.narrowed_unbox.remove(n.name);
+                } else {
+                    try self.genStmts(eb, ret_qtype);
+                }
+            } else {
+                try self.genStmts(eb, ret_qtype);
+            }
             try self.out.writer.print("    jmp {s}\n", .{end_label});
         }
 
@@ -3235,7 +3392,18 @@ const Codegen = struct {
         const cond_v = try self.genExpr(w.cond);
         try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cond_v.text, body_label, end_label });
         try self.out.writer.print("{s}\n", .{body_label});
-        try self.genStmts(w.body, ret_qtype);
+        if (self.detectNarrowedBoxedName(w.cond)) |n| {
+            if (n.narrows_then) {
+                const was_present = self.narrowed_unbox.contains(n.name);
+                try self.narrowed_unbox.put(self.allocator, n.name, {});
+                try self.genStmts(w.body, ret_qtype);
+                if (!was_present) _ = self.narrowed_unbox.remove(n.name);
+            } else {
+                try self.genStmts(w.body, ret_qtype);
+            }
+        } else {
+            try self.genStmts(w.body, ret_qtype);
+        }
         try self.out.writer.print("    jmp {s}\n", .{cond_label});
         try self.out.writer.print("{s}\n", .{end_label});
     }
@@ -3339,6 +3507,74 @@ const Codegen = struct {
         try self.out.writer.print("{s}\n", .{end_label});
     }
 
+    /// Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `.none_lit`in
+    /// bağlam-duyarlı üretimi — `genExpr`in KENDİSİ (bkz. onun `.none_lit`
+    /// dalı) hâlâ koşulsuz `error.Unsupported` döner (HİÇBİR bağlam
+    /// bilgisi ALMAZ), ÇÜNKÜ Nox'un GENEL ifade üretim mimarisi aşağıdan-
+    /// yukarıya (bottom-up, hedef tipten BAĞIMSIZ) çalışır — `genExpr`in
+    /// imzasına bir "beklenen tip" parametresi EKLEMEK tüm özyinelemeli
+    /// çağrı grafiğini (`genExpr`in KENDİSİNİ çağıran ONLARCA site)
+    /// etkileyen, bu görevin kapsamını AŞAN bir DEĞİŞİKLİK olurdu. Bunun
+    /// YERİNE, HEDEFİN (bir değişken/alan/parametre/dönüş yuvasının)
+    /// ÇÖZÜLMÜŞ `TypeInfo`sini ZATEN elinde bulunduran ÇAĞRI SİTELERİ
+    /// (`var_decl`/`assign`/`genConstruct`/`genMethodCall`/`return_stmt`)
+    /// `genExpr` yerine BUNU çağırır — FF.5'in `registerClass`ının
+    /// `inferFieldType`i BYPASS ETMESİYLE AYNI "çağıran taraf bilir"
+    /// deseni. Yalnızca HEAP-yönetimli (ya da `ptr`) bir hedef İçin
+    /// anlamlıdır — `resolveType`in `.optional` dalı ZATEN İLKEL Optional'ları
+    /// (kutulama HENÜZ yok, Faz FF.6.4) `error.Unsupported` İLE eledi, bu
+    /// yüzden `target.heap == .none` burada YALNIZCA "gerçekten Optional
+    /// OLMAYAN bir hedefe `None` YAZILMAYA ÇALIŞILDI" anlamına gelir —
+    /// checker BUNU zaten reddetmiş olmalı, savunmacı olarak `genExpr`in
+    /// KENDİ hatasına düşülür.
+    fn genExprForTarget(self: *Codegen, expr: ast.Expr, target: anytype) CodegenError!Value {
+        if (expr == .none_lit and target.heap != .none) {
+            return .{
+                .text = "0",
+                .qtype = target.qtype,
+                .heap = target.heap,
+                .elem_qtype = target.elem_qtype,
+                .class_name = target.class_name,
+                .elem_heap_info = target.elem_heap_info,
+                .elem_is_str = target.elem_is_str,
+                .dict_info = target.dict_info,
+            };
+        }
+        const v0 = try self.genExpr(expr);
+        // Faz FF.6.4 (bkz. nox-teknik-spesifikasyon.md §3.65): hedef
+        // kutulanmış bir Optional-ilkel (`boxed_scalar`) İSE VE `v0`
+        // KENDİSİ HENÜZ kutulanmamış bir ÇIPLAK skalerse (ör. `x: int |
+        // None = 5`, ya da daraltılmış/kutu OLMAYAN bir ifadeden gelen
+        // değer) — YENİ bir kutu tahsis edilip değer İÇİNE yazılır. `v0`
+        // ZATEN kutulanmışsa (ör. `y: int | None = x`, `x` KENDİSİ `int |
+        // None`) OLDUĞU GİBİ geçirilir (retain, ÇAĞIRAN TARAFTA — bkz.
+        // `retainIfAliasing` — normal aliasing yoluyla ZATEN ele alınır).
+        if (target.heap == .boxed_scalar and v0.heap != .boxed_scalar) {
+            return self.boxScalar(v0, target.elem_qtype);
+        }
+        return v0;
+    }
+
+    /// Faz FF.6.4: `v` (ham bir `.l`/`.d`/`.w` skaleri) TEK-ALANLI, ARC-
+    /// yönetimli bir kutu İÇİNE sarar — `nox_rc_alloc(rt, 8)`, döndürülen
+    /// pointer'ın KENDİSİNİN (list/class'ın AKSİNE, tag/başlık YOK) offset
+    /// 0'ına DOĞRUDAN değeri yazar. `releaseValueIfSet`in `.boxed_scalar`
+    /// dalı BU DÜZ 8-baytlık payload'ı VARSAYAR — İKİSİ TUTARLI kalmalıdır.
+    fn boxScalar(self: *Codegen, v: Value, elem_qtype: QbeType) CodegenError!Value {
+        const box = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l 8)\n", .{ box, RT_PARAM });
+        try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(elem_qtype), v.text, box });
+        // `always_fresh = true` (bkz. `Value`nin belge notu, stdlib fazı §G
+        // — `emitStringLiteral`in AYNI deseni): bu kutu HER ZAMAN TAZE bir
+        // tahsistir (kaynak ifade bir `.identifier` OLSA BİLE — ör. `y: int
+        // | None = some_bare_int` — kutunun KENDİSİ o değişkenin bir
+        // ALIAS'I DEĞİLDİR) — `retainIfAliasing`in AST-tabanlı sezgisinin
+        // (çıplak bir isim HER ZAMAN aliasing sayılır) burada YANLIŞ
+        // POZİTİF üretip TAZE kutuyu SPÜRİYÖZ retain etmesini (kalıcı sızıntı)
+        // ÖNLER.
+        return .{ .text = box, .qtype = .l, .heap = .boxed_scalar, .elem_qtype = elem_qtype, .always_fresh = true };
+    }
+
     fn convert(self: *Codegen, v: Value, target: QbeType) CodegenError!Value {
         if (v.qtype == target) return v;
         if (v.qtype == .l and target == .d) {
@@ -3426,6 +3662,14 @@ const Codegen = struct {
                 const info = self.vars.get(name) orelse return error.Unsupported;
                 const t = try self.newTemp();
                 try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ t, qbeTypeName(info.qtype), qbeTypeName(info.qtype), info.slot });
+                // Faz FF.6.4: bkz. `narrowed_unbox`'ın belge notu — bu isim
+                // ŞU AN daraltılmış bir kutulanmış Optional-ilkel İSE, kutu
+                // POINTER'ı DEĞİL İÇİNDEKİ ham değer döndürülür.
+                if (info.heap == .boxed_scalar and self.narrowed_unbox.contains(name)) {
+                    const payload = try self.newTemp();
+                    try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ payload, qbeTypeName(info.elem_qtype), qbeTypeName(info.elem_qtype), t });
+                    break :blk .{ .text = payload, .qtype = info.elem_qtype };
+                }
                 break :blk .{ .text = t, .qtype = info.qtype, .heap = info.heap, .elem_qtype = info.elem_qtype, .class_name = info.class_name, .elem_heap_info = info.elem_heap_info, .elem_is_str = info.elem_is_str, .dict_info = info.dict_info, .arena = info.arena };
             },
             .unary => |u| try self.genUnary(u),
@@ -3751,6 +3995,25 @@ const Codegen = struct {
             const r = try self.genExpr(b.right.*);
             const mnemonic: []const u8 = if (b.op == .and_) "and" else "or";
             return self.emitBin(mnemonic, l, r, .w);
+        }
+
+        // Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `x != None` /
+        // `x == None` — checker'ın narrowing'in ÖN KOŞULU olarak KABUL
+        // ETTİĞİ TEK örüntü (bkz. `checkBinary`in `.eq, .ne` dalı VE
+        // `Checker.detectNarrowing`). `.none_lit`in KENDİSİ `genExpr`den
+        // GEÇİRİLMEZ (o hâlâ koşulsuz `error.Unsupported` döner) — DİĞER
+        // taraf ÜRETİLİR VE doğrudan `0` (null pointer sentinel) İLE
+        // karşılaştırılır; Optional'ın çalışma zamanı temsili taban HEAP
+        // tiple AYNI OLDUĞUNDAN (bkz. `resolveType`in `.optional` dalı) bu
+        // `_eq`/`strcmp` GEREKTİRMEYEN, basit bir işaretçi karşılaştırmasıdır.
+        if ((b.op == .eq or b.op == .ne) and (b.left.* == .none_lit or b.right.* == .none_lit)) {
+            const other_expr: ast.Expr = if (b.left.* == .none_lit) b.right.* else b.left.*;
+            const other = try self.genExpr(other_expr);
+            const cmp_t = try self.newTemp();
+            const mnemonic: []const u8 = if (b.op == .eq) "ceql" else "cnel";
+            try self.out.writer.print("    {s} =w {s} {s}, 0\n", .{ cmp_t, mnemonic, other.text });
+            try self.releaseIfTemporary(other_expr, other);
+            return .{ .text = cmp_t, .qtype = .w };
         }
 
         const l0 = try self.genExpr(b.left.*);
@@ -4653,7 +4916,7 @@ const Codegen = struct {
 
                         const arg_values = try self.allocator.alloc(Value, c.args.len);
                         for (c.args, 0..) |a, i| {
-                            const v0 = try self.genExpr(a);
+                            const v0 = try self.genExprForTarget(a, fsig.params[i]);
                             try self.checkNoLowlevelEscape(v0);
                             arg_values[i] = try self.convert(v0, fsig.params[i].qtype);
                         }
@@ -4687,7 +4950,7 @@ const Codegen = struct {
 
                 const arg_values = try self.allocator.alloc(Value, c.args.len);
                 for (c.args, 0..) |a, i| {
-                    const v0 = try self.genExpr(a);
+                    const v0 = try self.genExprForTarget(a, sig.params[i]);
                     try self.checkNoLowlevelEscape(v0);
                     arg_values[i] = try self.convert(v0, sig.params[i].qtype);
                 }
@@ -4819,7 +5082,7 @@ const Codegen = struct {
         if (cinfo.init_params.len != args.len) return error.Unsupported;
         const arg_values = try self.allocator.alloc(Value, args.len);
         for (args, 0..) |a, i| {
-            const v0 = try self.genExpr(a);
+            const v0 = try self.genExprForTarget(a, cinfo.init_params[i]);
             try self.checkNoLowlevelEscape(v0);
             arg_values[i] = try self.convert(v0, cinfo.init_params[i].qtype);
         }
@@ -4893,7 +5156,7 @@ const Codegen = struct {
 
         const arg_values = try self.allocator.alloc(Value, args.len);
         for (args, 0..) |arg, i| {
-            const v0 = try self.genExpr(arg);
+            const v0 = try self.genExprForTarget(arg, msig.params[i]);
             try self.checkNoLowlevelEscape(v0);
             arg_values[i] = try self.convert(v0, msig.params[i].qtype);
         }

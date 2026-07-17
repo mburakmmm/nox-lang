@@ -11,6 +11,14 @@ pub const TypeExpr = union(enum) {
     /// ifadesi HER ZAMAN `.identifier`/`kw_none` İLE başladığından bu YENİ
     /// sözdizimi HİÇBİR ÇAKIŞMA yaratmaz.
     func_type: FuncTypeExpr,
+    /// `T | None` — Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65):
+    /// Optional tip ifadesi. Yalnızca `<taban-tip> | None` (soldan sağa)
+    /// KABUL EDİLİR — `None | T` VE zincirleme (`T | None | None`)
+    /// parser SEVİYESİNDE reddedilir (bkz. `parseTypeExpr`in `pipe`
+    /// dalı) — dilin TEK bir kanonik Optional yüzey biçimi sunması
+    /// BİLİNÇLİ bir tercihtir (FF.4'ün `self` istisnasıyla AYNI
+    /// gerekçe: dar/öngörülebilir gramer).
+    optional: *TypeExpr,
 };
 
 pub const Generic = struct {
