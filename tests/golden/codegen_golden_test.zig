@@ -360,6 +360,45 @@ test "codegen: Faz M.8 — provably-safe metod çağrılarının ÜRETTİĞİ IR
     try std.testing.expect(std.mem.indexOf(u8, ir, "nox_exception_pending") == null);
 }
 
+// Faz GG.3: `for b in boxes: ... b.get() ...` deseni — `boxes` parametresi
+// `list[Box]` tipinde OLDUĞUNDAN döngü değişkeni `b`nin sınıfı ARTIK
+// `list_elem_types` ÜZERİNDEN çözümlenir (GG.3 ÖNCESİ her zaman `null`
+// olurdu, `b.get()` DAİMA `direct_unsafe` sayılıp TÜM `sum_boxes`
+// fonksiyonunu zehirlerdi). `Box`in ne `__init__`i ne `get`i HİÇBİR ZAMAN
+// raise ETMEZ — davranış (doğru toplamın hesaplanması) GG.3'TEN
+// ETKİLENMEMELİDİR, yalnızca kontrol elenmelidir (bkz. aşağıdaki AYRI
+// "IR'da nox_exception_pending YOK" testi).
+test "codegen(çalıştır): Faz GG.3 — for-loop metod çağrısı (b.get()), davranış değişmedi" {
+    try expectGolden(
+        @embedFile("codegen_cases/for_loop_method_call_elision_positive.nox"),
+        @embedFile("codegen_cases/for_loop_method_call_elision_positive.expected"),
+    );
+}
+
+test "codegen: Faz GG.3 — for-loop içindeki provably-safe metod çağrısının ÜRETTİĞİ IR'da nox_exception_pending GERÇEKTEN YOK" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/for_loop_method_call_elision_positive.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, null, .empty);
+    // GG.3 ÖNCESİ: `for_stmt` HER ZAMAN döngü değişkeninin sınıfını `null`
+    // olarak bildirirdi, bu yüzden `b.get()` ÇÖZÜMLENEMEZ sayılıp
+    // `sum_boxes`u zehirlerdi VE bu IR'da `nox_exception_pending` çağrısı
+    // görünürdü. GG.3 SONRASI: `boxes: list[Box]` parametresinden `b`nin
+    // `Box` olduğu çözümlenir, `Box.get` çağrı-grafiğine GERÇEK bir kenar
+    // olarak eklenir, `Box.__init__`/`Box.get` İKİSİ DE raise ETMEDİĞİNDEN
+    // `sum_boxes` `must_not_raise` kümesine girer — TEK bir
+    // `nox_exception_pending` çağrısı bile OLMAMALIDIR.
+    try std.testing.expect(std.mem.indexOf(u8, ir, "nox_exception_pending") == null);
+}
+
 test "codegen(çalıştır): lowlevel — arena üzerinden sınıf + liste, alan okuma, sızıntı yok" {
     try expectGolden(
         @embedFile("codegen_cases/lowlevel_basic.nox"),

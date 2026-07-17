@@ -85,6 +85,14 @@ const stress_benchmarks = [_]Benchmark{
     // benchmark'ın (bu fazı tetikleyen ölçüm, bkz. RESULTS.md) AYNI
     // ölçeği — hem doğruluk (basit toplama) hem regresyon takibi içindir.
     .{ .name = "method_call_elision", .path = "benchmarks/method_call_elision.nox", .expected = "300000000\n" },
+    // Faz GG.3 (bkz. nox-teknik-spesifikasyon.md §3.68): `for b in boxes:
+    // ... b.get() ...` deseni — `boxes` parametresi `list[Box]` OLDUĞUNDAN
+    // döngü değişkeninin sınıfı ARTIK çözümlenir, `sum_boxes` PROVABLY-SAFE
+    // sayılır (`Box.__init__`/`Box.get` HİÇBİRİ raise ETMEZ). 30M dış
+    // yineleme × 8 elemanlı liste = 240M metod çağrısı — `method_call_
+    // elision`ın ÖLÇEĞİYLE TUTARLI, ama for-loop üzerinden (GG.3'ün
+    // ELEDİĞİ GERÇEK boşluk).
+    .{ .name = "for_loop_method_elision", .path = "benchmarks/for_loop_method_elision.nox", .expected = "1080000000\n" },
     // Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) — `nox.strings.
     // contains`/`index_of`/`starts_with`/`ends_with`nin (`s[i]` YERİNE
     // alloc-sız `byte_at` kullanan) VE `nox.strings.join`in (saf Nox O(n²)

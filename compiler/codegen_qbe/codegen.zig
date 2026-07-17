@@ -4568,17 +4568,32 @@ const Codegen = struct {
     /// `stmtUsesAsync`in AYNI ağaç gezinme deseni (bkz. onların belge notu),
     /// ama "async kullanımı var mı" yerine "raise/metod-çağrısı/await-spawn
     /// var mı VE hangi serbest fonksiyon/kurucular çağrılıyor" topluyor.
-    fn collectRaiseInfoStmts(self: *Codegen, stmts: []const ast.Stmt, info: *FuncSafetyInfo, class_ctx: ?[]const u8, var_types: *std.StringHashMapUnmanaged([]const u8), poisoned: *std.StringHashMapUnmanaged(void)) CodegenError!void {
-        for (stmts) |stmt| try self.collectRaiseInfoStmt(stmt, info, class_ctx, var_types, poisoned);
+    fn collectRaiseInfoStmts(self: *Codegen, stmts: []const ast.Stmt, info: *FuncSafetyInfo, class_ctx: ?[]const u8, var_types: *std.StringHashMapUnmanaged([]const u8), poisoned: *std.StringHashMapUnmanaged(void), list_elem_types: *std.StringHashMapUnmanaged([]const u8)) CodegenError!void {
+        for (stmts) |stmt| try self.collectRaiseInfoStmt(stmt, info, class_ctx, var_types, poisoned, list_elem_types);
     }
 
-    fn collectRaiseInfoStmt(self: *Codegen, stmt: ast.Stmt, info: *FuncSafetyInfo, class_ctx: ?[]const u8, var_types: *std.StringHashMapUnmanaged([]const u8), poisoned: *std.StringHashMapUnmanaged(void)) CodegenError!void {
+    fn collectRaiseInfoStmt(self: *Codegen, stmt: ast.Stmt, info: *FuncSafetyInfo, class_ctx: ?[]const u8, var_types: *std.StringHashMapUnmanaged([]const u8), poisoned: *std.StringHashMapUnmanaged(void), list_elem_types: *std.StringHashMapUnmanaged([]const u8)) CodegenError!void {
         switch (stmt.kind) {
             .expr_stmt => |e| try self.collectRaiseInfoExpr(e, info, class_ctx, var_types, poisoned),
             .var_decl => |v| {
                 try self.collectRaiseInfoExpr(v.value, info, class_ctx, var_types, poisoned);
                 const cn: ?[]const u8 = if (v.type_expr == .simple and self.classes.contains(v.type_expr.simple)) v.type_expr.simple else null;
                 try self.declareVarType(v.name, cn, var_types, poisoned);
+                // Faz GG.3 (bkz. nox-teknik-spesifikasyon.md §3.68): `xs:
+                // list[ClassName] = ...` İSE, `list_elem_types`e de
+                // KAYDEDİLİR — `.for_stmt`in AŞAĞIDAKİ dalı `for v in xs:`
+                // İÇİNDEKİ `v`nin sınıfını BURADAN çözer. AYNI `poisoned`
+                // kümesi (bkz. `declareVarType`) hem `var_types` hem
+                // `list_elem_types` İçin PAYLAŞILIR — bir isim HER İKİ
+                // anlamda da YENİDEN bildirilirse GÜVENLİ tarafta kalınır.
+                const elem_cn: ?[]const u8 = blk: {
+                    if (v.type_expr != .generic) break :blk null;
+                    const g = v.type_expr.generic;
+                    if (!std.mem.eql(u8, g.name, "list") or g.args.len != 1) break :blk null;
+                    if (g.args[0] != .simple or !self.classes.contains(g.args[0].simple)) break :blk null;
+                    break :blk g.args[0].simple;
+                };
+                try self.declareVarType(v.name, elem_cn, list_elem_types, poisoned);
             },
             .assign => |a| {
                 try self.collectRaiseInfoExpr(a.target, info, class_ctx, var_types, poisoned);
@@ -4586,28 +4601,37 @@ const Codegen = struct {
             },
             .if_stmt => |f| {
                 try self.collectRaiseInfoExpr(f.cond, info, class_ctx, var_types, poisoned);
-                try self.collectRaiseInfoStmts(f.then_body, info, class_ctx, var_types, poisoned);
+                try self.collectRaiseInfoStmts(f.then_body, info, class_ctx, var_types, poisoned, list_elem_types);
                 for (f.elif_clauses) |ec| {
                     try self.collectRaiseInfoExpr(ec.cond, info, class_ctx, var_types, poisoned);
-                    try self.collectRaiseInfoStmts(ec.body, info, class_ctx, var_types, poisoned);
+                    try self.collectRaiseInfoStmts(ec.body, info, class_ctx, var_types, poisoned, list_elem_types);
                 }
-                if (f.else_body) |eb| try self.collectRaiseInfoStmts(eb, info, class_ctx, var_types, poisoned);
+                if (f.else_body) |eb| try self.collectRaiseInfoStmts(eb, info, class_ctx, var_types, poisoned, list_elem_types);
             },
             .while_stmt => |w| {
                 try self.collectRaiseInfoExpr(w.cond, info, class_ctx, var_types, poisoned);
-                try self.collectRaiseInfoStmts(w.body, info, class_ctx, var_types, poisoned);
+                try self.collectRaiseInfoStmts(w.body, info, class_ctx, var_types, poisoned, list_elem_types);
             },
             .for_stmt => |f| {
                 try self.collectRaiseInfoExpr(f.iterable, info, class_ctx, var_types, poisoned);
-                // Döngü değişkeni her turda YENİDEN bağlanır; tipi burada
-                // BİLİNMEZ (bkz. `ast.ForStmt`, bir `type_expr` taşımaz) —
-                // ASLA `var_types`e eklenmez, ama DIŞARIDAN aynı isimde bir
-                // sınıf-tipli değişken GELİYORSA (gölgeleme) o artık YANLIŞ
-                // olur, bu yüzden `declareVarType(null)` İLE zehirlenir
-                // (aynı "yeniden bildirme" güvenlik kuralı, bkz. üstteki
-                // belge notu).
-                try self.declareVarType(f.var_name, null, var_types, poisoned);
-                try self.collectRaiseInfoStmts(f.body, info, class_ctx, var_types, poisoned);
+                // Faz GG.3 (yeniden ele alındı, bkz. nox-teknik-spesifikasyon.md
+                // §3.68): ÖNCEDEN döngü değişkeni HER ZAMAN `null` İLE
+                // zehirlenirdi (sınıfı "bilinmiyor" sayılırdı) — bu, `for x
+                // in xs: x.method()` kalıbının OLDUĞU HER fonksiyonu
+                // KOŞULSUZ güvensiz işaretleyip Faz M.8'in kazanımını
+                // SIFIRLIYORDU (GERÇEKTEN bulunan bir boşluk). ARTIK
+                // `f.iterable` ÇIPLAK bir isimse VE o isim `list_elem_types`de
+                // (bir `list[ClassName]` yerel/parametresi olarak) BİLİNİYORSA,
+                // döngü değişkeni O sınıfla `var_types`e KAYDEDİLİR — `genForList`nin
+                // GERÇEK codegen'İNİN (bkz. `collectLocals`in `.for_stmt` dalı)
+                // ZATEN yaptığı AYNI çözümleme, burada TEKRARLANIR.
+                const elem_cn: ?[]const u8 = blk: {
+                    if (f.iterable != .identifier) break :blk null;
+                    if (poisoned.contains(f.iterable.identifier)) break :blk null;
+                    break :blk list_elem_types.get(f.iterable.identifier);
+                };
+                try self.declareVarType(f.var_name, elem_cn, var_types, poisoned);
+                try self.collectRaiseInfoStmts(f.body, info, class_ctx, var_types, poisoned, list_elem_types);
             },
             .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt => {},
             .return_stmt => |r| if (r) |e| try self.collectRaiseInfoExpr(e, info, class_ctx, var_types, poisoned),
@@ -4616,11 +4640,11 @@ const Codegen = struct {
                 try self.collectRaiseInfoExpr(e, info, class_ctx, var_types, poisoned);
             },
             .try_stmt => |t| {
-                try self.collectRaiseInfoStmts(t.try_body, info, class_ctx, var_types, poisoned);
-                for (t.except_clauses) |ec| try self.collectRaiseInfoStmts(ec.body, info, class_ctx, var_types, poisoned);
-                if (t.finally_body) |fb| try self.collectRaiseInfoStmts(fb, info, class_ctx, var_types, poisoned);
+                try self.collectRaiseInfoStmts(t.try_body, info, class_ctx, var_types, poisoned, list_elem_types);
+                for (t.except_clauses) |ec| try self.collectRaiseInfoStmts(ec.body, info, class_ctx, var_types, poisoned, list_elem_types);
+                if (t.finally_body) |fb| try self.collectRaiseInfoStmts(fb, info, class_ctx, var_types, poisoned, list_elem_types);
             },
-            .lowlevel_stmt => |ll| try self.collectRaiseInfoStmts(ll.body, info, class_ctx, var_types, poisoned),
+            .lowlevel_stmt => |ll| try self.collectRaiseInfoStmts(ll.body, info, class_ctx, var_types, poisoned, list_elem_types),
             // Faz U.5: bir `with` deyimi HER ZAMAN örtük `__enter__`/
             // `__exit__` METOD ÇAĞRILARI içerir — bunlar da (diğer tüm metod
             // çağrıları gibi) `collectRaiseInfoExpr`in `.attribute` dalından
@@ -4629,7 +4653,7 @@ const Codegen = struct {
             .with_stmt => |w| {
                 info.direct_unsafe = true;
                 try self.collectRaiseInfoExpr(w.ctx_expr, info, class_ctx, var_types, poisoned);
-                try self.collectRaiseInfoStmts(w.body, info, class_ctx, var_types, poisoned);
+                try self.collectRaiseInfoStmts(w.body, info, class_ctx, var_types, poisoned, list_elem_types);
             },
         }
     }
@@ -4788,6 +4812,23 @@ const Codegen = struct {
         return var_types;
     }
 
+    /// Faz GG.3 (bkz. nox-teknik-spesifikasyon.md §3.68): `buildParamVarTypes`in
+    /// AYNI deseni, ama `list[ClassName]` tipli parametreler İçin — `for x
+    /// in some_list_param:` kalıbının ZATEN M.8'in `.identifier` çözümlemesinden
+    /// FAYDALANABİLMESİ İçin GEREKİR (bkz. `collectRaiseInfoStmt`in
+    /// `.for_stmt` dalı).
+    fn buildParamListElemTypes(self: *Codegen, params: []const ast.Param) CodegenError!std.StringHashMapUnmanaged([]const u8) {
+        var list_elem_types: std.StringHashMapUnmanaged([]const u8) = .empty;
+        for (params) |p| {
+            if (p.type_expr != .generic) continue;
+            const g = p.type_expr.generic;
+            if (!std.mem.eql(u8, g.name, "list") or g.args.len != 1) continue;
+            if (g.args[0] != .simple or !self.classes.contains(g.args[0].simple)) continue;
+            try list_elem_types.put(self.allocator, p.name, g.args[0].simple);
+        }
+        return list_elem_types;
+    }
+
     /// Faz GG.2 (bkz. nox-teknik-spesifikasyon.md §3.67): `computeMustNotRaise`
     /// VE `computeInlinableFunctions`in İKİSİNİN de İHTİYAÇ DUYDUĞU whole-
     /// program `FuncSafetyInfo` haritasını inşa eden ORTAK çekirdek —
@@ -4805,7 +4846,8 @@ const Codegen = struct {
                     var info: FuncSafetyInfo = .{};
                     var var_types = try self.buildParamVarTypes(fd.params, null);
                     var poisoned: std.StringHashMapUnmanaged(void) = .empty;
-                    try self.collectRaiseInfoStmts(fd.body, &info, null, &var_types, &poisoned);
+                    var list_elem_types = try self.buildParamListElemTypes(fd.params);
+                    try self.collectRaiseInfoStmts(fd.body, &info, null, &var_types, &poisoned, &list_elem_types);
                     try info_map.put(self.allocator, fd.name, info);
                 },
                 .class_def => |cd| {
@@ -4813,7 +4855,8 @@ const Codegen = struct {
                         var info: FuncSafetyInfo = .{};
                         var var_types = try self.buildParamVarTypes(m.params, cd.name);
                         var poisoned: std.StringHashMapUnmanaged(void) = .empty;
-                        try self.collectRaiseInfoStmts(m.body, &info, cd.name, &var_types, &poisoned);
+                        var list_elem_types = try self.buildParamListElemTypes(m.params);
+                        try self.collectRaiseInfoStmts(m.body, &info, cd.name, &var_types, &poisoned, &list_elem_types);
                         const sym = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ cd.name, m.name });
                         try info_map.put(self.allocator, sym, info);
                     }
@@ -4826,7 +4869,8 @@ const Codegen = struct {
             var info: FuncSafetyInfo = .{};
             var var_types = try self.buildParamVarTypes(fd.params, null);
             var poisoned: std.StringHashMapUnmanaged(void) = .empty;
-            try self.collectRaiseInfoStmts(fd.body, &info, null, &var_types, &poisoned);
+            var list_elem_types = try self.buildParamListElemTypes(fd.params);
+            try self.collectRaiseInfoStmts(fd.body, &info, null, &var_types, &poisoned, &list_elem_types);
             try info_map.put(self.allocator, fd.name, info);
         }
         return info_map;

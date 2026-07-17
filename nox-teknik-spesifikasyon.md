@@ -9885,6 +9885,57 @@ kurucu DEĞİL); `nox_rc_alloc`'un KENDİSİNİ ELEMEK bu turun konusu DEĞİL
 (ABI-seviyesi opsiyonel arena parametresi gibi AYRI, gelecekteki bir tur
 gerektirir — kullanıcıya SUNULMUŞTU, ŞİMDİLİK ERTELENDİ).
 
+### GG.3 (TAMAMLANDI) — for-loop metod çağrısı istisna-kontrolü elemesi boşluğu
+
+**Kaynak:** codegen/runtime kod taraması agent'ının bulgusu — `for item in
+items: item.method()` deseni, `computeMustNotRaise`in (Faz M.8) `.for_stmt`
+dalının döngü değişkeninin sınıfını HER ZAMAN `null` olarak bildirmesi
+YÜZÜNDEN, `item.method()` çağrısını ÇÖZÜMLENEMEZ (`direct_unsafe`) sayıp
+İÇİNDE bulunduğu TÜM fonksiyonu KOŞULSUZ zehirliyordu — çok YAYGIN bir OOP
+idiomunda M.8'in kazanımını TAMAMEN sıfırlayan, GERÇEK bir boşluk.
+
+**Düzeltme (`compiler/codegen_qbe/codegen.zig`, tamamı `collectRaiseInfoStmts`/
+`collectRaiseInfoStmt` akışı içinde):** YENİ bir `list_elem_types:
+*std.StringHashMapUnmanaged([]const u8)` parametresi (fonksiyon boyunca hangi
+yerel/parametre adının `list[SomeClass]` tipinde OLDUĞUNU VE hangi sınıfa ait
+OLDUĞUNU izler) tüm akışa (if/elif/else, while, for, try/except/finally,
+lowlevel, with) thread edildi. `.var_decl`, `list[SomeClass]` tipinde bir
+bildirim GÖRDÜĞÜNDE bu haritayı DOLDURUR; YENİ `buildParamListElemTypes`
+(mevcut `buildParamVarTypes`in AYNASI) fonksiyon PARAMETRELERİ İçin AYNI işi
+yapar. `.for_stmt` ARTIK döngü değişkeninin sınıfını `list_elem_types.
+get(f.iterable.identifier)` İLE (önce `poisoned` kontrolüyle) ÇÖZÜMLÜYOR —
+`genForList`nin GERÇEK codegen'İNİN (`collectLocals`in `.for_stmt` dalı)
+ZATEN yaptığı AYNI çözümleme burada TEKRARLANDI.
+
+**Doğrulama:**
+
+- `tests/golden/codegen_cases/for_loop_method_call_elision_positive.nox`
+  (+`.expected`): `boxes: list[Box]` parametresi ÜZERİNDE `for b in boxes:
+  ... b.get() ...` — `Box`in ne `__init__`i ne `get`i raise ETMEZ, davranış
+  (toplam = 6) doğrulandı.
+- **IR-metni doğrulaması** (M.8'in `method_call_elision_positive` testinin
+  AYNI önculü): AYNI fixture'ın ÜRETTİĞİ IR'da `nox_exception_pending`e TEK
+  bir çağrı bile OLMADIĞI DOĞRUDAN doğrulandı.
+- **Boz→kırmızı→düzelt:** `.for_stmt`in `elem_cn` çözümlemesi GEÇİCİ olarak
+  YOK SAYILIP döngü değişkeni HER ZAMAN `null` ile bildirilecek şekilde
+  değiştirildi — `zig build test` TAM OLARAK BEKLENEN TEK testi (yukarıdaki
+  IR-metni doğrulaması) KIRMIZI verdi (467/468 geçti), AYNI fixture'ın
+  DAVRANIŞ testi (M.8'in "yalnızca FAZLADAN kontrol kalır, YANLIŞ davranış
+  ASLA" ilkesiyle TUTARLI biçimde) YEŞİL KALDI — elenmenin GERÇEKTEN
+  yalnızca bir kontrol-elemesi optimizasyonu OLDUĞUNUN, davranışı hiçbir
+  koşulda DEĞİŞTİRMEDİĞİNİN kanıtı. GERİ ALINIP `zig build test` (Debug +
+  ReleaseFast) yeniden yeşil doğrulandı.
+- **Performans doğrulaması:** `benchmarks/for_loop_method_elision.nox`
+  (240M metod çağrısı, 30M dış yineleme × 8 elemanlı `list[Box]`) — kontrol
+  HER ZAMAN üretilen ESKİ davranışa GEÇİCİ dönülerek ölçüldü: 273.0ms →
+  259.6ms, **~%5 hızlanma** (M.8'in doğrudan `self.`/yerel-değişken metod
+  çağrılarındaki ~%44'ten KÜÇÜK — burada yalnızca `nox_exception_pending`
+  kontrolü elenir, metodun KENDİSİ hâlâ GERÇEK bir çağrıdır; GG.2'nin
+  inlining'i SERBEST fonksiyonları kapsar, metodları DEĞİL). Bkz.
+  `benchmarks/RESULTS.md`.
+
+`zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

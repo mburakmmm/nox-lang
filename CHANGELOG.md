@@ -445,6 +445,25 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   KISMİ bir kazanım — `nox_rc_alloc`ın KENDİSİ hâlâ çalışıyor), YAN kazanım
   olarak `string_passing` GG.1'in ~50ms'sinden ~44.8ms'ye düştü. 4 YENİ
   golden test + boz-kırmızı-düzelt ritüeli.
+- **for-loop metod çağrısı istisna-kontrolü elemesi boşluğu** (Faz GG.3,
+  bkz. nox-teknik-spesifikasyon.md §3.66). `for item in items:
+  item.method()` deseni, `computeMustNotRaise`in (Faz M.8) `.for_stmt`
+  dalının döngü değişkeninin sınıfını HER ZAMAN `null` bildirmesi YÜZÜNDEN
+  `item.method()` çağrısını ÇÖZÜMLENEMEZ sayıp İÇİNDE bulunduğu TÜM
+  fonksiyonu KOŞULSUZ zehirliyordu — çok YAYGIN bir OOP idiomunda M.8'in
+  kazanımını sıfırlayan GERÇEK bir boşluktu. YENİ bir `list_elem_types`
+  haritası (hangi yerel/parametrenin `list[SomeClass]` tipinde olduğunu
+  izler) `collectRaiseInfoStmts` akışına eklendi; `.for_stmt` ARTIK döngü
+  değişkeninin sınıfını bu haritadan ÇÖZÜMLÜYOR (`genForList`nin GERÇEK
+  codegen'inin ZATEN yaptığı AYNI çözümleme). IR-metni doğrulaması: aynı
+  fixture'ın ürettiği IR'da `nox_exception_pending`e TEK çağrı bile YOK.
+  Break→red→fix: `elem_cn` çözümlemesi GEÇİCİ olarak yok sayılınca TAM
+  OLARAK beklenen tek test (IR doğrulaması) kırmızı oldu, davranış testi
+  yeşil kaldı — elemenin YALNIZCA bir kontrol-optimizasyonu olduğunun
+  kanıtı. Ölçüm: `for_loop_method_elision` (240M metod çağrısı) 273.0ms →
+  259.6ms, **~%5 hızlanma** (M.8'in doğrudan çağrılardaki ~%44'ünden
+  küçük — yalnızca istisna kontrolü elenir, metod çağrısının KENDİSİ
+  GG.2'nin kapsamı DIŞINDA kalır).
 
 ### Düzeltildi
 - **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`
