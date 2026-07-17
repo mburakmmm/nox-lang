@@ -419,6 +419,32 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   DebugAllocator'ın "Invalid free" panik'i (pinned string'in statik
   belleğini geçerli heap işaretçisi sanma) ANINDA tetiklendi, kontrolün
   load-bearing olduğu kanıtlandı.
+- **Seçici serbest-fonksiyon inlining'i** (Faz GG.2, bkz. nox-teknik-
+  spesifikasyon.md §3.67). `list_traversal` benchmark'ının Go'ya karşı
+  %85 kaybının kök nedeni araştırılınca, QBE'nin fonksiyonlar-arası
+  inlining HİÇ yapmadığı (Go'nun aksine) bulundu — kullanıcı üç seçenekten
+  (seçici inlining / ABI-seviyesi opsiyonel arena parametresi / erteleme)
+  **seçici inlining'i** seçti. Küçük (≤8 üst-düzey/≤20 toplam deyim),
+  döngüsüz, `try`/`with`/`raise`/`lowlevel` İÇERMEYEN, özyinelemesiz VE
+  transitif olarak ASLA istisna fırlatamayacağı KANITLANMIŞ (`must_not_raise`)
+  serbest fonksiyonlar ARTIK çağrı sitesine QBE-metni olarak SPLICE
+  edilebiliyor — GERÇEK bir `call` YERİNE. Standalone fonksiyon HER ZAMAN
+  AYRICA üretilir (saf EKLEMELİ bir optimizasyon, davranış DEĞİŞMEZ).
+  Uygulama sırasında İKİ GERÇEK hata bulunup düzeltildi: (1) `genInlinedCall`in
+  İLK sürümü TAZE argümanları (ör. `show(safe_div(...))`) splice SONRASI
+  serbest BIRAKMIYORDU (10 test KIRMIZIYDI, `releaseTemporaryArgs`in AYNI
+  dengelemesi eklendi); (2) "iç içe inlining yok" kuralı YANLIŞ
+  uygulanmıştı — `quadruple(x) -> double(double(x))` gibi bir fonksiyon
+  KENDİSİ BAŞKA bir sitede inline edilince, İÇİNDEKİ `double` çağrılarının
+  ÖNCEDEN KAYDEDİLMİŞ slotları ARTIK GEÇERSİZ bir QBE fonksiyonuna AİTTİ
+  (segfault) — `self.inline_sites` ARTIK HER üst-düzey gövde-üretiminde
+  TEMİZLENİYOR. Break→red→fix: `must_not_raise` şartı GEÇİCİ olarak
+  kaldırılınca 3 BAĞIMSIZ mevcut test (2 M.8 istisna-yutma testi + BİR
+  gerçek sızıntı) KIRMIZI oldu, kontrolün load-bearing olduğu kanıtlandı.
+  Ölçüm: `list_traversal` ~62.5ms → ~60.3ms (dürüstçe tahmin edildiği gibi
+  KISMİ bir kazanım — `nox_rc_alloc`ın KENDİSİ hâlâ çalışıyor), YAN kazanım
+  olarak `string_passing` GG.1'in ~50ms'sinden ~44.8ms'ye düştü. 4 YENİ
+  golden test + boz-kırmızı-düzelt ritüeli.
 
 ### Düzeltildi
 - **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`

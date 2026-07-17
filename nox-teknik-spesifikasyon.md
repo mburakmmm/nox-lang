@@ -9787,6 +9787,104 @@ GEREKMEDİ. `s[i]`nin her erişimde `strlen` tekrarlaması AYRI bir sorun
 (GG.5'in döngü-değişmezi taşıma kapsamına TAŞINDI — AYNI kök neden sınıfı:
 QBE'nin LICM yapmaması).
 
+### GG.2 (TAMAMLANDI) — Seçici serbest-fonksiyon inlining'i
+
+**Kaynak:** `list_traversal` benchmark'ında Nox'un Go'ya %85 kaybettiği
+bulundu — kök neden araştırması, `make_data()` gibi küçük bir fonksiyonun
+TAZE bir `list[int]` inşa edip HEMEN `sum_list(make_data())` İLE
+tüketildiğini, VE **QBE'nin hiçbir zaman fonksiyonlar-arası inlining
+YAPMADIĞINI** (Go'nun aksine — Go muhtemelen bu ufak fonksiyonları inline
+edip escape analysis İLE tahsisi TAMAMEN ELİYOR) gösterdi. Kullanıcıya
+ÜÇ yol sunuldu (seçici inlining / ABI-seviyesi opsiyonel arena parametresi /
+ertele) — kullanıcı **seçici inlining'i** seçti.
+
+**Tasarım (tam plan, `compiler/codegen_qbe/codegen.zig` içinde, AST/
+checker/ownership analizine HİÇ dokunulmadan):**
+
+1. **Uygunluk kriterleri:** `!is_async`, generic DEĞİL, gövde YALNIZCA
+   `var_decl`/`assign`/`expr_stmt`/`if_stmt`/`return_stmt`/`pass_stmt`
+   İÇERİR (özyinelemeli, if/elif/else İÇİNE de — `while`/`for`/`try`/
+   `with`/`raise`/`lowlevel`/iç içe `func_def`/`class_def` DİSKALİFİYE
+   eder: döngü YOK kuralı QBE'nin alloc-döngü-İÇİ tehlikesini VE `return`
+   yeniden-yazma karmaşıklığını BAŞTAN eler), üst-düzey ≤8/toplam ≤20
+   deyim, (transitif) özyinelemesiz (YENİ bir DFS, `computeMustNotRaise`in
+   ZATEN inşa ettiği çağrı-grafiğini YENİDEN kullanır), VE **`self.
+   must_not_raise.contains(fd.name)`** — bu SONUNCUSU, orijinal tasarımın
+   ÖTESİNDE (bkz. aşağıdaki "Bulunan hatalar"), splice SIRASINDA bir
+   istisna kontrolünün caller'ın erken-çıkış yoluna girip gölgelenmiş bir
+   yerelin görünmez kalarak SIZMASINI YAPISAL olarak İMKANSIZ kılmak İçin
+   ZORUNLU.
+2. **Hijyen — yeniden adlandırma GEREKMİYOR:** QBE-seviyesi SSA geçicileri
+   (`%tN`) ZATEN fonksiyon boyunca benzersiz — TEK hijyen adımı, callee'nin
+   parametre/yerel isimlerini `self.vars`a GEÇİCİ olarak GÖLGELEMEK (eski
+   değeri kaydedip splice SONRASI geri yüklemek).
+3. **Splice mekanizması:** `prepareInlineSites` (caller'ın `collectLocals`+
+   `allocSlot` döngüsünün HEMEN SONRASI, `genStmts` ÇAĞRILMADAN ÖNCE —
+   `genFunction`/`genMethod`/`genMain`/`genMainAsync`/`genClosureFunc`nin
+   BEŞİ İÇİN de) caller gövdesini tarayıp (caller'ın KENDİSİ KISITSIZ,
+   yalnızca CALLEE kısıtlı) `self.inlinable_funcs`teki çağrıları bulur,
+   callee'nin slotlarını `collectLocals(callee.body)` İLE (İÇ İÇE inlining
+   YOK) caller'ın giriş bloğunda ÖN-TAHSİS eder. `genInlinedCall` (`genCall`'ın
+   serbest-fonksiyon dalına TEK satırlık bir kancayla bağlanır) argümanları
+   değerlendirip slotlara yazar, isimleri gölgeler, `genStmts(callee.body,
+   ...)`i DEĞİŞTİRMEDEN çağırır (`.return_stmt`e TEK, cerrahi bir dal
+   eklenir: gerçek `ret` YERİNE sonuç slotuna yazıp `jmp`), SONRA HER ŞEYİ
+   geri yükler.
+
+**Bulunan hatalar (break→red→fix ritüeliyle doğrulandı) — bu turun EN
+DEĞERLİ kısmı:**
+
+1. **`releaseTemporaryArgs` UNUTULMUŞTU** — GERÇEK (inline OLMAYAN) çağrı
+   yolu, TAZE bir argümanı (ör. `show(safe_div(...))`) çağrı SONRASI
+   `releaseTemporaryArgs` İLE dengeler; `genInlinedCall`in İLK sürümü BUNU
+   YAPMIYORDU — HER inline edilen çağrının TAZE argümanı KALICI olarak
+   SIZIYORDU (10 test KIRMIZIYDI, `nox_rc_alloc` çağıran her yerde
+   sızıntı raporlandı). Düzeltme: argümanların HAM (`convert`DEN ÖNCEKİ)
+   değerlerini SAKLAYIP splice SONRASI `releaseTemporaryArgs(c.args,
+   arg_v0s)` çağırmak.
+2. **KRİTİK, İKİNCİ bir hata — "iç içe inlining yok" kuralı YANLIŞ
+   uygulanmıştı:** `quadruple(x) -> double(double(x))` gibi bir fonksiyon
+   HEM kendi standalone `$quadruple`sinde `double`yi inline EDİYORDU (o
+   slotlar `$quadruple`nin KENDİ QBE metnine `alloc8`'lendi) HEM DE
+   `quadruple`nin KENDİSİ BAŞKA bir çağrı sitesinde (`main` İÇİNDE) inline
+   edilebiliyordu — İKİNCİ durumda, `quadruple.body` `main`in İÇİNE SPLICE
+   edilirken, İÇİNDEKİ `double(double(x))` çağrıları `self.inline_sites`de
+   BULUNUYORDU ama slotları ARTIK GEÇERSİZ bir QBE fonksiyonuna
+   (`$quadruple`ye) AİTTİ — segfault (`from_import_basic.nox` testiyle
+   YAKALANDI). Düzeltme: `self.inline_sites` HER üst-düzey gövde-üretim
+   çağrısı BAŞINDA (`prepareInlineSites`in KENDİSİNDE) TEMİZLENİR — bu,
+   "iç içe inlining yok" kuralını DOĞRU biçimde ZORUNLU kılar (bir splice
+   İÇİNDEKİ iç içe çağrılar ARTIK `self.inline_sites`de HİÇ BULUNAMAZ,
+   GÜVENLE GERÇEK bir `call`e düşerler).
+3. **Boz→kırmızı→düzelt (`must_not_raise` şartı):** GEÇİCİ olarak
+   `false and ...` İLE devre dışı bırakılınca 3 BAĞIMSIZ mevcut test
+   KIRMIZI oldu (2 M.8 istisna-yutma testi + `nox.test.TestSuite`nin
+   JUnit XML testinde GERÇEK bir `nox_str_concat` sızıntısı) — TAM OLARAK
+   §0(A)'nın öngördüğü hata sınıfı, kontrolün GERÇEKTEN load-bearing
+   olduğunu KANITLADI. GERİ ALINDI, `zig build test` (Debug + ReleaseFast)
+   yeniden yeşil.
+
+**Ölçüm (Apple M4, `list_traversal.nox`, n=5M, ReleaseFast, `zig build
+bench`):** ~62.5ms → ~60.3ms — **dürüstçe ÖNCEDEN tahmin edildiği GİBİ
+gerçek ama KISMİ bir kazanım** (`make_data`nın çağrı overhead'i
+[RT_PARAM+prologue/epilogue] ORTADAN KALKTI, ama `nox_rc_alloc`'un
+KENDİSİ HÂLÂ her iterasyonda çalışıyor — `sum_list` bir `for` döngüsü
+İÇERDİĞİNDEN inline EDİLEMİYOR). `.ssa` dökümüyle doğrulandı: `call
+$make_data` SIFIR (gövde `$compute`nin İÇİNE spliced). YAN kazanım:
+`string_passing` benchmark'ı da GG.1'in ~50ms'sinden **~44.8ms**e düştü
+(`pick`/`pass_through` de KÜÇÜK/uygun fonksiyonlar OLDUĞUNDAN AYRICA
+inline edildi). TÜM 19/19 stres + 10/10 karşılaştırma benchmark'ında
+regresyon YOK. 4 YENİ golden test (`inline_small_free_function`,
+`inline_same_function_both_paths` — standalone fonksiyonun "salt eklemeli"
+kaldığını KANITLAR, `inline_name_collision_hygiene`, `inline_ineligible_fallback`
+— döngülü/özyinelemeli gövdelerin DOĞRU şekilde inline EDİLMEDEN
+çalıştığını kanıtlar).
+
+**Kapsam DIŞI (v1, bilinçli):** yalnızca SERBEST fonksiyonlar (metod/
+kurucu DEĞİL); `nox_rc_alloc`'un KENDİSİNİ ELEMEK bu turun konusu DEĞİL
+(ABI-seviyesi opsiyonel arena parametresi gibi AYRI, gelecekteki bir tur
+gerektirir — kullanıcıya SUNULMUŞTU, ŞİMDİLİK ERTELENDİ).
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

@@ -1069,3 +1069,31 @@ test "codegen(çalıştır): Faz FF.6 — kutulanmış int | None: None dönüş
         @embedFile("codegen_cases/optional_primitive_box.expected"),
     );
 }
+
+test "codegen(çalıştır): Faz GG.2 — küçük serbest fonksiyonlar çağrı sitesine inline edilir" {
+    try expectGolden(
+        @embedFile("codegen_cases/inline_small_free_function.nox"),
+        @embedFile("codegen_cases/inline_small_free_function.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz GG.2 — aynı fonksiyon HEM inline-uygun HEM değişkene atanarak çağrılır" {
+    try expectGolden(
+        @embedFile("codegen_cases/inline_same_function_both_paths.nox"),
+        @embedFile("codegen_cases/inline_same_function_both_paths.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz GG.2 — caller/callee isim çakışması gölgeleme/geri-yükleme ile doğru ele alınır" {
+    try expectGolden(
+        @embedFile("codegen_cases/inline_name_collision_hygiene.nox"),
+        @embedFile("codegen_cases/inline_name_collision_hygiene.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz GG.2 — döngülü/özyinelemeli gövdeler inline edilmeden doğru derlenip çalışır" {
+    try expectGolden(
+        @embedFile("codegen_cases/inline_ineligible_fallback.nox"),
+        @embedFile("codegen_cases/inline_ineligible_fallback.expected"),
+    );
+}

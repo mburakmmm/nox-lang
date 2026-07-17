@@ -975,6 +975,30 @@ const Codegen = struct {
     /// notu) — her zaman kontrol edilirler, bu yüzden bu alan yalnızca
     /// serbest fonksiyon/kurucu sembolleri içerir.
     must_not_raise: std.StringHashMapUnmanaged(void) = .empty,
+    /// Faz GG.2 (bkz. nox-teknik-spesifikasyon.md §3.67): "inline edilebilir"
+    /// KANITLANMIŞ serbest fonksiyonların (isim → AST gövdesi) haritası —
+    /// `computeInlinableFunctions` tarafından doldurulur, `prepareInlineSites`
+    /// tarafından OKUNUR (bir çağrı sitesinin `.identifier`i BU haritada
+    /// VARSA, o site inline-adayı olarak KAYDEDİLİR).
+    inlinable_funcs: std.StringHashMapUnmanaged(ast.FuncDef) = .empty,
+    /// Faz GG.2: (transitif olarak) KENDİ KENDİSİNİ çağıran serbest
+    /// fonksiyon/metod sembollerinin kümesi — `markRecursiveFuncs`
+    /// tarafından doldurulur, `computeInlinableFunctions` bu kümedeki
+    /// HİÇBİR fonksiyonu inline-edilebilir SAYMAZ (bkz. onun belge notu,
+    /// "kendi içine inline etmenin dejenere durumu").
+    recursive_funcs: std.StringHashMapUnmanaged(void) = .empty,
+    /// Faz GG.2: BİR çağrı sitesinin (`ast.Call.callee` POINTER'ı,
+    /// `@intFromPtr` İLE anahtarlanır — parser arena'sından HER site İçin
+    /// BENZERSİZ) inline edileceğine dair `prepareInlineSites`in ÖNCEDEN
+    /// verdiği KARARI VE bu splice İçin ÖN-TAHSİS EDİLMİŞ slotları taşır.
+    /// `genCall`'ın `.identifier` dalı BU haritaya BAKARAK normal `call`
+    /// yerine `genInlinedCall`e DÜŞER.
+    inline_sites: std.AutoHashMapUnmanaged(usize, InlineSiteInfo) = .empty,
+    /// Faz GG.2: `genInlinedCall` bir splice ÜRETİRKEN AYARLANIR (splice
+    /// SONRASI eski değerine GERİ YÜKLENİR) — `genStmts`in `.return_stmt`
+    /// dalı bu DOLUYSA gerçek bir `ret` YERİNE sonuç slotuna YAZIP `jmp`
+    /// eder (bkz. `InlineReturnTarget`in belge notu).
+    inline_return_target: ?InlineReturnTarget = null,
     /// İşlenmekte olan fonksiyon/metodun dönüş tipi — bir çağrıdan sonra
     /// bekleyen bir istisna varsa ve yakalayan bir `try` yoksa, bu tipte
     /// varsayılan bir değerle erken çıkmak için gerekli (bkz. `emitExceptionCheck`).
@@ -1452,6 +1476,24 @@ const Codegen = struct {
         });
     }
 
+    /// Faz GG.2 (bkz. nox-teknik-spesifikasyon.md §3.67): `allocSlot`in AYNISI
+    /// (slotu QBE giriş bloğunda tahsis eder, heap-yönetimliyse sıfırla
+    /// doldurur) AMA `self.vars`a HİÇ YAZMAZ — YALNIZCA bir `NamedSlot`
+    /// döner. Bir inline-splice sitesinin ÖN-TAHSİS EDİLMİŞ slotları BURADAN
+    /// geçer, ÇÜNKÜ `self.vars`a KALICI olarak yazmak (normal `allocSlot`
+    /// gibi) caller'IN AYNI isimli KENDİ yerelini (varsa) KALICI olarak
+    /// EZERDİ — `genInlinedCall` bunun yerine BU slotu YALNIZCA splice
+    /// SÜRESİNCE `self.vars`a GEÇİCİ olarak GÖLGELER (bkz. onun belge notu).
+    fn allocInlineSlot(self: *Codegen, orig_name: []const u8, info: TypeInfo, is_param: bool) CodegenError!NamedSlot {
+        const slot = try self.newTemp();
+        const size: usize = if (info.qtype == .w) 4 else 8;
+        try self.out.writer.print("    {s} =l alloc{d} {d}\n", .{ slot, size, size });
+        if (isHeapManaged(info.heap) and !is_param) {
+            try self.out.writer.print("    storel 0, {s}\n", .{slot});
+        }
+        return .{ .orig_name = orig_name, .slot = slot, .info = info };
+    }
+
     fn genFunction(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
         self.vars.clearRetainingCapacity();
         self.narrowed_unbox.clearRetainingCapacity();
@@ -1485,6 +1527,7 @@ const Codegen = struct {
         try self.out.writer.writeAll(") {\n@start\n");
 
         for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
+        try self.prepareInlineSites(fd.body);
         for (fd.params) |p| {
             const info = self.vars.get(p.name).?;
             try self.out.writer.print("    store{s} %p_{s}, {s}\n", .{ qbeTypeName(info.qtype), p.name, info.slot });
@@ -1538,6 +1581,7 @@ const Codegen = struct {
         try self.out.writer.writeAll(") {\n@start\n");
 
         for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
+        try self.prepareInlineSites(m.body);
         {
             const info = self.vars.get("self").?;
             try self.out.writer.print("    storel %p_self, {s}\n", .{info.slot});
@@ -1672,6 +1716,7 @@ const Codegen = struct {
         try self.out.writer.writeAll(") {\n@start\n");
 
         for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
+        try self.prepareInlineSites(spec.fd.body);
         for (spec.captures, 0..) |c, i| {
             const offset = CLOSURE_HEADER_SIZE + 8 * i;
             const info = self.vars.get(c.name).?;
@@ -2207,6 +2252,7 @@ const Codegen = struct {
         // (eskiden olduğu gibi sabit `false`) kapsam-sonu otomatik release'i
         // yanlışlıkla tetikleyip listenin sahipliğini bozardı.
         for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
+        try self.prepareInlineSites(stmts);
         try self.genStmts(stmts, .w);
         try self.releaseAllLocals();
         try self.out.writer.print("    call $nox_runtime_deinit(l {s})\n", .{RT_PARAM});
@@ -2240,6 +2286,7 @@ const Codegen = struct {
         try self.out.writer.writeAll("export function l $main_body(l %argp) {\n@start\n");
         try self.out.writer.print("    {s} =l loadl %argp\n", .{RT_PARAM});
         for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
+        try self.prepareInlineSites(stmts);
         try self.genStmts(stmts, .l);
         try self.releaseAllLocals();
         try self.out.writer.print("    call $nox_free(l {s}, l %argp, l 8)\n", .{RT_PARAM});
@@ -2298,22 +2345,45 @@ const Codegen = struct {
             if (except_name) |name| {
                 if (std.mem.eql(u8, entry.key_ptr.*, name)) continue;
             }
-            // Arena tipli bağlamalar hiçbir zaman bireysel release edilmez —
-            // refcount başlıkları yoktur, yaşam süreleri yalnızca kendi
-            // `lowlevel` bloğunun `nox_arena_destroy`'una bağlıdır.
-            if (entry.value_ptr.is_param or entry.value_ptr.arena) continue;
-            if (isHeapManaged(entry.value_ptr.heap)) {
-                try self.releaseSlotIfSet(entry.value_ptr.*);
-            } else if (entry.value_ptr.heap == .task or entry.value_ptr.heap == .channel or entry.value_ptr.heap == .thread_handle or entry.value_ptr.heap == .thread_channel) {
-                // `Task[T]`/`Channel[T]`/`ThreadHandle[T]`/`ThreadChannel[T]`
-                // ARC-yönetimli DEĞİLDİR (bkz. `HeapKind`in belge notu,
-                // `dict[K,V]`in AKSİNE — bkz. Faz FF.3) — `destroyNonArcSlotIfSet`
-                // (bkz. onun belge notu) DOĞRUDAN bir kez yıkar. Faz S.1'den
-                // beri BU AYNI yol yeniden atamada da (`genAssign`) kullanılır
-                // — artık ne kapsam sonunda ne de yeniden atamada eski değer
-                // sızmaz.
-                try self.destroyNonArcSlotIfSet(entry.value_ptr.*);
+            try self.releaseOneLocalIfManaged(entry.value_ptr.*);
+        }
+    }
+
+    /// `releaseAllLocalsExcept`in TEK bir `VarInfo` GİRİŞİ İçin çalıştırdığı
+    /// çekirdek — Faz GG.2 (bkz. nox-teknik-spesifikasyon.md §3.67) İçin
+    /// `releaseNamedLocalsExcept`nin de YENİDEN KULLANABİLMESİ İçin
+    /// ÇIKARILDI (basit kod-taşıma, davranış DEĞİŞMEDİ).
+    fn releaseOneLocalIfManaged(self: *Codegen, entry: VarInfo) CodegenError!void {
+        // Arena tipli bağlamalar hiçbir zaman bireysel release edilmez —
+        // refcount başlıkları yoktur, yaşam süreleri yalnızca kendi
+        // `lowlevel` bloğunun `nox_arena_destroy`'una bağlıdır.
+        if (entry.is_param or entry.arena) return;
+        if (isHeapManaged(entry.heap)) {
+            try self.releaseSlotIfSet(entry);
+        } else if (entry.heap == .task or entry.heap == .channel or entry.heap == .thread_handle or entry.heap == .thread_channel) {
+            // `Task[T]`/`Channel[T]`/`ThreadHandle[T]`/`ThreadChannel[T]`
+            // ARC-yönetimli DEĞİLDİR (bkz. `HeapKind`in belge notu,
+            // `dict[K,V]`in AKSİNE — bkz. Faz FF.3) — `destroyNonArcSlotIfSet`
+            // (bkz. onun belge notu) DOĞRUDAN bir kez yıkar. Faz S.1'den
+            // beri BU AYNI yol yeniden atamada da (`genAssign`) kullanılır
+            // — artık ne kapsam sonunda ne de yeniden atamada eski değer
+            // sızmaz.
+            try self.destroyNonArcSlotIfSet(entry);
+        }
+    }
+
+    /// Faz GG.2: `releaseAllLocalsExcept`in AYNISI, ama TÜM `self.vars`
+    /// YERİNE yalnızca `names`teki (BİR inline-splice sitesinin KENDİ
+    /// parametre+yerelleri) isimler İçin — inline edilen bir `return_stmt`
+    /// (bkz. `genStmts`in `.return_stmt` dalı) caller'ın DİĞER yerellerine
+    /// ASLA dokunmamalıdır, yalnızca callee'nin KENDİ kapsamını KAPATIR.
+    fn releaseNamedLocalsExcept(self: *Codegen, names: []const []const u8, except_name: ?[]const u8) CodegenError!void {
+        for (names) |name| {
+            if (except_name) |en| {
+                if (std.mem.eql(u8, name, en)) continue;
             }
+            const entry = self.vars.get(name) orelse continue;
+            try self.releaseOneLocalIfManaged(entry);
         }
     }
 
@@ -2813,6 +2883,36 @@ const Codegen = struct {
             }
             switch (stmt.kind) {
                 .return_stmt => |r| {
+                    // Faz GG.2 (bkz. nox-teknik-spesifikasyon.md §3.67): bir
+                    // inline-splice SIRASINDAYIZ (`genInlinedCall` tarafından
+                    // ayarlanmış) — gerçek bir `ret` YERİNE sonuç slotuna
+                    // yazıp `jmp` ile "bitti" etiketine gidilir; `drainFinally`/
+                    // `drainArenas` ATLANIR (uygunluk kuralı §1.2 bunları
+                    // GEREKSİZ kılar — inline edilebilir bir gövde ASLA `try`/
+                    // `with`/`lowlevel` İÇEREMEZ) VE yalnızca callee'nin KENDİ
+                    // isimleri (`t.owned_names`) serbest bırakılır, caller'ın
+                    // DİĞER yerellerine DOKUNULMAZ.
+                    if (self.inline_return_target) |t| {
+                        if (r) |e| {
+                            const v0 = try self.genExprForTarget(e, self.current_ret_info);
+                            try self.checkNoLowlevelEscape(v0);
+                            if (isHeapManaged(v0.heap) and self.returnNeedsRetain(e)) {
+                                try self.emitInlineRetain(v0.text);
+                            }
+                            const v = try self.convert(v0, ret_qtype);
+                            const except_name: ?[]const u8 = if (e == .identifier) e.identifier else null;
+                            try self.releaseNamedLocalsExcept(t.owned_names, except_name);
+                            if (t.result_slot) |rs| {
+                                try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(ret_qtype), v.text, rs });
+                            }
+                        } else {
+                            try self.releaseNamedLocalsExcept(t.owned_names, null);
+                        }
+                        try self.out.writer.print("    jmp {s}\n", .{t.done_label});
+                        const label = try self.newLabel("after_inline_return");
+                        try self.out.writer.print("{s}\n", .{label});
+                        return;
+                    }
                     if (r) |e| {
                         const v0 = try self.genExprForTarget(e, self.current_ret_info);
                         try self.checkNoLowlevelEscape(v0);
@@ -4401,6 +4501,42 @@ const Codegen = struct {
         callees: std.ArrayListUnmanaged([]const u8) = .empty,
     };
 
+    /// Faz GG.2 (bkz. nox-teknik-spesifikasyon.md §3.67): inline edilen bir
+    /// callee'nin TEK bir parametresi/yerel değişkeni İçİN, caller'ın giriş
+    /// bloğunda ÖNCEDEN tahsis edilmiş (bkz. `registerInlineSite`) slot —
+    /// `orig_name` callee'nin KAYNAK isim, `slot` VE `info` `allocSlot`in
+    /// ÜRETTİĞİ AYNI temsil (bkz. `VarInfo`).
+    const NamedSlot = struct {
+        orig_name: []const u8,
+        slot: []const u8,
+        info: TypeInfo,
+    };
+
+    /// Faz GG.2: TEK bir inline-splice sitesi İçin ÖN-TAHSİS EDİLMİŞ TÜM
+    /// slotlar — `prepareInlineSites` TARAFINDAN doldurulur, `genInlinedCall`
+    /// TARAFINDAN tüketilir.
+    const InlineSiteInfo = struct {
+        callee: ast.FuncDef,
+        params: []const NamedSlot,
+        locals: []const NamedSlot,
+        /// `null` İSE callee'nin dönüş tipi `None` (sonuç YOK).
+        result: ?NamedSlot,
+    };
+
+    /// Faz GG.2: `genStmts`in `.return_stmt` dalının, İÇİNDE bulunulan
+    /// splice'ın "gerçek bir fonksiyon çıkışı DEĞİL, bir `jmp`e dönüşmesi
+    /// gerektiğini" bilmesini sağlayan GEÇİCİ bağlam — `genInlinedCall`
+    /// TARAFINDAN AYARLANIR/GERİ YÜKLENİR (iç içe inline YOK olduğundan
+    /// ASLA yığınlanmaz, TEK bir aktif hedef yeterlidir).
+    const InlineReturnTarget = struct {
+        result_slot: ?[]const u8,
+        done_label: []const u8,
+        /// Yalnızca BU isimler (callee'nin KENDİ parametre+yerelleri)
+        /// `return_stmt`in İÇİNDE serbest bırakılır — caller'ın DİĞER
+        /// yerellerine ASLA dokunulmaz.
+        owned_names: []const []const u8,
+    };
+
     /// `class_ctx`/`var_types`/`poisoned` — Faz M.8 (yeniden ele alındı, bkz.
     /// nox-teknik-spesifikasyon.md §3.59): `obj.method()` çağrılarını (basit,
     /// çözülebilir alıcılar için) `direct_unsafe` yerine gerçek bir `callees`
@@ -4652,7 +4788,14 @@ const Codegen = struct {
         return var_types;
     }
 
-    fn computeMustNotRaise(self: *Codegen, module: ast.Module, extra_functions: []const ast.FuncDef) CodegenError!void {
+    /// Faz GG.2 (bkz. nox-teknik-spesifikasyon.md §3.67): `computeMustNotRaise`
+    /// VE `computeInlinableFunctions`in İKİSİNİN de İHTİYAÇ DUYDUĞU whole-
+    /// program `FuncSafetyInfo` haritasını inşa eden ORTAK çekirdek —
+    /// ÖNCEDEN yalnızca `computeMustNotRaise`in İÇİNDEYDİ, GG.2'nin KENDİ
+    /// özyineleme-tespiti (`markRecursiveFuncs`) İçin AYNI çağrı-grafiği
+    /// bilgisine (`callees` listeleri) İHTİYACI olduğundan buraya
+    /// ÇIKARILDI (basit kod-taşıma, davranış DEĞİŞMEDİ).
+    fn buildFuncSafetyInfoMap(self: *Codegen, module: ast.Module, extra_functions: []const ast.FuncDef) CodegenError!std.StringHashMapUnmanaged(FuncSafetyInfo) {
         var info_map: std.StringHashMapUnmanaged(FuncSafetyInfo) = .empty;
 
         for (module.body) |stmt| {
@@ -4686,6 +4829,11 @@ const Codegen = struct {
             try self.collectRaiseInfoStmts(fd.body, &info, null, &var_types, &poisoned);
             try info_map.put(self.allocator, fd.name, info);
         }
+        return info_map;
+    }
+
+    fn computeMustNotRaise(self: *Codegen, module: ast.Module, extra_functions: []const ast.FuncDef) CodegenError!void {
+        var info_map = try self.buildFuncSafetyInfoMap(module, extra_functions);
 
         // Dil stabilizasyonu fazı §M.1: ÖNCEDEN burada naif bir
         // `while (changed)` sabit-nokta döngüsü vardı — HER turda TÜM
@@ -4748,6 +4896,419 @@ const Codegen = struct {
             const sym = try std.fmt.allocPrint(self.allocator, "{s}___init__", .{entry.key_ptr.*});
             if (self.must_not_raise.contains(sym)) entry.value_ptr.init_is_safe = true;
         }
+    }
+
+    // ---- Faz GG.2: seçici serbest-fonksiyon inlining'i (bkz. nox-teknik-
+    // spesifikasyon.md §3.67) ----
+
+    /// Bir DFS yığınında (`stack`) hâlâ AKTİF olan bir isme geri-kenar (back-
+    /// edge) bulunursa, yığının O NOKTADAN SONRAKİ TÜMÜ (döngüdeki HER düğüm,
+    /// yalnızca doğrudan hedef DEĞİL) `self.recursive_funcs`e eklenir — bu,
+    /// A→B→C→A gibi ÇOK-düğümlü döngülerde B'nin de (yalnızca A/C değil)
+    /// doğru işaretlenmesini SAĞLAR. Derleme-zamanı-YALNIZCA bir geçiş
+    /// (çalışma zamanı maliyeti YOK) olduğundan, `callers_of`in O(F+E)
+    /// hassasiyeti BURADA GEREKMEZ — basit/okunabilir bir yığın-taraması
+    /// tercih edildi.
+    fn dfsMarkRecursive(self: *Codegen, name: []const u8, info_map: *const std.StringHashMapUnmanaged(FuncSafetyInfo), visited: *std.StringHashMapUnmanaged(void), stack: *std.ArrayListUnmanaged([]const u8)) CodegenError!void {
+        try visited.put(self.allocator, name, {});
+        try stack.append(self.allocator, name);
+        if (info_map.get(name)) |info| {
+            for (info.callees.items) |callee| {
+                var cycle_start: ?usize = null;
+                for (stack.items, 0..) |s, i| {
+                    if (std.mem.eql(u8, s, callee)) {
+                        cycle_start = i;
+                        break;
+                    }
+                }
+                if (cycle_start) |start| {
+                    for (stack.items[start..]) |cyc_name| {
+                        try self.recursive_funcs.put(self.allocator, cyc_name, {});
+                    }
+                    continue;
+                }
+                if (!visited.contains(callee)) {
+                    try self.dfsMarkRecursive(callee, info_map, visited, stack);
+                }
+            }
+        }
+        _ = stack.pop();
+    }
+
+    /// `self.recursive_funcs`i doldurur — `computeInlinableFunctions`
+    /// TARAFINDAN, `buildFuncSafetyInfoMap`in (transitif çağrı grafiği İçin,
+    /// `computeMustNotRaise`in ZATEN inşa ettiğiyle AYNI YAPI) İKİNCİ, BAĞIMSIZ
+    /// bir çağrısıyla BİRLİKTE kullanılır.
+    fn markRecursiveFuncs(self: *Codegen, info_map: *const std.StringHashMapUnmanaged(FuncSafetyInfo)) CodegenError!void {
+        var visited: std.StringHashMapUnmanaged(void) = .empty;
+        var it = info_map.iterator();
+        while (it.next()) |entry| {
+            if (!visited.contains(entry.key_ptr.*)) {
+                var stack: std.ArrayListUnmanaged([]const u8) = .empty;
+                try self.dfsMarkRecursive(entry.key_ptr.*, info_map, &visited, &stack);
+            }
+        }
+    }
+
+    const MAX_INLINE_TOP_STMTS: usize = 8;
+    const MAX_INLINE_TOTAL_STMTS: usize = 20;
+
+    /// Bir inline-adayı gövdenin (özyinelemeli, `if`/`elif`/`else` İÇİNE de
+    /// uygulanır) YALNIZCA `var_decl`/`assign`/`expr_stmt`/`if_stmt`/
+    /// `return_stmt`/`pass_stmt` İÇERDİĞİNİ doğrular VE TOPLAM deyim sayısını
+    /// döner — `while`/`for`/`try`/`with`/`raise`/`lowlevel`/iç içe `func_def`/
+    /// `class_def` VARSA `null` (diskalifiye) döner. `while`/`for`in DIŞLANMASI
+    /// İKİ ayrı riski BAŞTAN eler: QBE'nin döngü-İÇİ `alloc4`/`alloc8`
+    /// tehlikesi (bkz. `adjustModSign`in belge notu) VE `return`i "değeri
+    /// slota yaz + `jmp`" biçimine çevirmenin KARMAŞIKLAŞMASI (TEK bir
+    /// doğrusal/dallı gövdede HER `return` ZATEN AYNI `done_label`e gider).
+    fn inlineBodyStmtCount(stmts: []const ast.Stmt) ?usize {
+        var total: usize = 0;
+        for (stmts) |stmt| {
+            switch (stmt.kind) {
+                .var_decl, .assign, .expr_stmt, .return_stmt, .pass_stmt => total += 1,
+                .if_stmt => |f| {
+                    total += 1;
+                    total += inlineBodyStmtCount(f.then_body) orelse return null;
+                    for (f.elif_clauses) |ec| total += inlineBodyStmtCount(ec.body) orelse return null;
+                    if (f.else_body) |eb| total += inlineBodyStmtCount(eb) orelse return null;
+                },
+                else => return null,
+            }
+        }
+        return total;
+    }
+
+    /// Bir serbest fonksiyonun (`fd`) Faz GG.2 KAPSAMINDA "inline edilebilir"
+    /// SAYILIP SAYILMADIĞINI belirler — bkz. nox-teknik-spesifikasyon.md
+    /// §3.67'nin TAM uygunluk listesi. `self.must_not_raise`in ZATEN
+    /// dolu OLMASI GEREKİR (bkz. `computeInlinableFunctions`in çağrı SIRASI
+    /// notu) — bu şart, splice SIRASINDA bir istisna kontrolünün caller'ın
+    /// ERKEN-çıkış yoluna girip GÖLGELENMİŞ bir yerelin GÖRÜNMEZ kalarak
+    /// SIZMASINI YAPISAL olarak İMKANSIZ kılar (bkz. `genInlinedCall`in
+    /// belge notu).
+    fn isFuncInlineEligible(self: *Codegen, fd: ast.FuncDef, generic_template_names: []const []const u8) bool {
+        if (fd.is_async) return false;
+        if (fd.type_params.len != 0) return false;
+        for (generic_template_names) |n| {
+            if (std.mem.eql(u8, n, fd.name)) return false;
+        }
+        if (self.recursive_funcs.contains(fd.name)) return false;
+        if (!self.must_not_raise.contains(fd.name)) return false;
+        if (fd.body.len > MAX_INLINE_TOP_STMTS) return false;
+        const total = inlineBodyStmtCount(fd.body) orelse return false;
+        if (total > MAX_INLINE_TOTAL_STMTS) return false;
+        return true;
+    }
+
+    /// Faz GG.2'nin whole-program ÖN-geçişi — `computeMustNotRaise`DEN SONRA
+    /// (bağımlılık, bkz. `isFuncInlineEligible`) VE herhangi bir gövde
+    /// codegen'İNDEN ÖNCE (`prepareInlineSites`in `self.inlinable_funcs`e
+    /// İHTİYACI VAR) çağrılmalıdır — `generateModule`de TEK bir çağrı sitesi.
+    fn computeInlinableFunctions(self: *Codegen, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8) CodegenError!void {
+        var info_map = try self.buildFuncSafetyInfoMap(module, extra_functions);
+        try self.markRecursiveFuncs(&info_map);
+
+        for (module.body) |stmt| {
+            switch (stmt.kind) {
+                .func_def => |fd| {
+                    if (self.isFuncInlineEligible(fd, generic_template_names)) {
+                        try self.inlinable_funcs.put(self.allocator, fd.name, fd);
+                    }
+                },
+                else => {},
+            }
+        }
+        for (extra_functions) |fd| {
+            if (self.isFuncInlineEligible(fd, generic_template_names)) {
+                try self.inlinable_funcs.put(self.allocator, fd.name, fd);
+            }
+        }
+    }
+
+    /// Faz GG.2: TEK bir keşfedilen inline-splice sitesi İçin caller'ın
+    /// GİRİŞ BLOĞUNDA (QBE'nin "alloc yalnızca fonksiyon girişinde" kısıtına
+    /// UYGUN — bkz. `collectLocals`in belge notu) callee'nin parametre+yerel+
+    /// sonuç slotlarını `allocInlineSlot` İLE ÖN-TAHSİS eder VE `self.
+    /// inline_sites`e (çağrı sitesi POINTER kimliğiyle) KAYDEDER. İÇ İÇE
+    /// inlining YOK — `callee.body`, YENİDEN `collectInlineSitesStmts`DEN
+    /// DEĞİL, DÜZ `collectLocals`DAN geçirilir (bu, işi SINIRLI/sonlu tutar).
+    fn registerInlineSite(self: *Codegen, call_ptr: usize, callee: ast.FuncDef) CodegenError!void {
+        if (self.inline_sites.contains(call_ptr)) return;
+
+        var params: std.ArrayListUnmanaged(NamedSlot) = .empty;
+        for (callee.params) |p| {
+            const info = try self.resolveType(p.type_expr);
+            try params.append(self.allocator, try self.allocInlineSlot(p.name, info, true));
+        }
+
+        var callee_locals: std.ArrayListUnmanaged(LocalDecl) = .empty;
+        try self.collectLocals(&callee_locals, callee.body, false);
+        var locals: std.ArrayListUnmanaged(NamedSlot) = .empty;
+        for (callee_locals.items) |l| {
+            try locals.append(self.allocator, try self.allocInlineSlot(l.name, l.info, l.is_param));
+        }
+
+        const ret_info = try self.resolveType(callee.return_type);
+        const result: ?NamedSlot = if (ret_info.qtype == .none) null else try self.allocInlineSlot("__inline_result", ret_info, false);
+
+        try self.inline_sites.put(self.allocator, call_ptr, .{
+            .callee = callee,
+            .params = try params.toOwnedSlice(self.allocator),
+            .locals = try locals.toOwnedSlice(self.allocator),
+            .result = result,
+        });
+    }
+
+    /// Faz GG.2: caller gövdesini (KISITSIZ — `while`/`for`/`try`/vb.
+    /// İÇEREBİLİR, YALNIZCA CALLEE kısıtlıdır) TARAYIP `.call` bulan
+    /// özyinelemeli gezinti — `collectRaiseInfoStmt`in AYNI ağaç-gezinme
+    /// deseni (bkz. onun belge notu), ama raise-izleme YERİNE inline-site
+    /// KEŞFİ İçin. `.func_def` (iç içe closure) KASITLI olarak
+    /// ATLANIR/özyinelenmez — o gövde KENDİ `genClosureFunc`i TARAFINDAN
+    /// AYRICA taranır (bkz. `prepareInlineSites`in 5 çağrı sitesi).
+    fn collectInlineSitesStmts(self: *Codegen, stmts: []const ast.Stmt) CodegenError!void {
+        for (stmts) |stmt| try self.collectInlineSitesStmt(stmt);
+    }
+
+    fn collectInlineSitesStmt(self: *Codegen, stmt: ast.Stmt) CodegenError!void {
+        switch (stmt.kind) {
+            .expr_stmt => |e| try self.collectInlineSitesExpr(e),
+            .var_decl => |v| try self.collectInlineSitesExpr(v.value),
+            .assign => |a| {
+                try self.collectInlineSitesExpr(a.target);
+                try self.collectInlineSitesExpr(a.value);
+            },
+            .if_stmt => |f| {
+                try self.collectInlineSitesExpr(f.cond);
+                try self.collectInlineSitesStmts(f.then_body);
+                for (f.elif_clauses) |ec| {
+                    try self.collectInlineSitesExpr(ec.cond);
+                    try self.collectInlineSitesStmts(ec.body);
+                }
+                if (f.else_body) |eb| try self.collectInlineSitesStmts(eb);
+            },
+            .while_stmt => |w| {
+                try self.collectInlineSitesExpr(w.cond);
+                try self.collectInlineSitesStmts(w.body);
+            },
+            .for_stmt => |f| {
+                try self.collectInlineSitesExpr(f.iterable);
+                try self.collectInlineSitesStmts(f.body);
+            },
+            .return_stmt => |r| if (r) |e| try self.collectInlineSitesExpr(e),
+            .raise_stmt => |e| try self.collectInlineSitesExpr(e),
+            .try_stmt => |t| {
+                try self.collectInlineSitesStmts(t.try_body);
+                for (t.except_clauses) |ec| try self.collectInlineSitesStmts(ec.body);
+                if (t.finally_body) |fb| try self.collectInlineSitesStmts(fb);
+            },
+            .lowlevel_stmt => |ll| try self.collectInlineSitesStmts(ll.body),
+            .with_stmt => |w| {
+                try self.collectInlineSitesExpr(w.ctx_expr);
+                try self.collectInlineSitesStmts(w.body);
+            },
+            .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt => {},
+        }
+    }
+
+    fn collectInlineSitesExpr(self: *Codegen, expr: ast.Expr) CodegenError!void {
+        switch (expr) {
+            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+            .unary => |u| try self.collectInlineSitesExpr(u.operand.*),
+            .binary => |b| {
+                try self.collectInlineSitesExpr(b.left.*);
+                try self.collectInlineSitesExpr(b.right.*);
+            },
+            .call => |c| {
+                for (c.args) |a| try self.collectInlineSitesExpr(a);
+                switch (c.callee.*) {
+                    // Faz GG.2: `name` `self.vars`da (herhangi bir yerel/
+                    // parametre/closure) VARSA bu çağrı ASLA inline
+                    // edilemez — bu, `genCall`in KENDİ, DEĞİŞMEMİŞ closure-
+                    // ÖNCELİK sırasıyla (bkz. onun `.identifier` dalı)
+                    // ÇELİŞMEMEYİ garanti eden TEK, yeterli kontroldür.
+                    .identifier => |name| {
+                        if (!self.vars.contains(name)) {
+                            if (self.inlinable_funcs.get(name)) |callee_fd| {
+                                try self.registerInlineSite(@intFromPtr(c.callee), callee_fd);
+                            }
+                        }
+                    },
+                    .attribute => |att| try self.collectInlineSitesExpr(att.obj.*),
+                    else => {},
+                }
+            },
+            .attribute => |a| try self.collectInlineSitesExpr(a.obj.*),
+            .index => |idx| {
+                try self.collectInlineSitesExpr(idx.obj.*);
+                try self.collectInlineSitesExpr(idx.index.*);
+            },
+            .list_lit => |elems| for (elems) |el| try self.collectInlineSitesExpr(el),
+            .dict_lit => |pairs| for (pairs) |p| {
+                try self.collectInlineSitesExpr(p.key);
+                try self.collectInlineSitesExpr(p.value);
+            },
+            .await_expr => |op| try self.collectInlineSitesExpr(op.*),
+            .spawn_expr => |op| try self.collectInlineSitesExpr(op.*),
+            .generic_construct => |g| for (g.args) |a| try self.collectInlineSitesExpr(a),
+        }
+    }
+
+    /// Faz GG.2: `genFunction`/`genMethod`/`genMain`/`genMainAsync`/
+    /// `genClosureFunc`nin BEŞİNİN de KENDİ `allocSlot` döngüsünden HEMEN
+    /// SONRA, `genStmts` ÇAĞRILMADAN ÖNCE çağırdığı TEK giriş noktası.
+    fn prepareInlineSites(self: *Codegen, stmts: []const ast.Stmt) CodegenError!void {
+        // **KRİTİK:** `self.inline_sites` HER üst-düzey gövde-üretim çağrısı
+        // (bkz. bu fonksiyonun 5 çağrı sitesi) BAŞINDA TEMİZLENİR — GERÇEK
+        // bir çöküşle KANITLANMIŞ bir hatanın düzeltmesi (bkz. break→red→fix
+        // ritüeli): bir callee'nin (ör. `quadruple`) KENDİ gövdesi
+        // İÇİNDEKİ çağrılar (ör. `double(double(x))`), `quadruple`nin
+        // KENDİ `genFunction`ı SIRASINDA KAYDEDİLİP `$quadruple`nin
+        // KENDİ QBE metnine `alloc8`'lenmiş slotlarla EŞLEŞTİRİLİR — bu
+        // KAYITLAR SİLİNMEZSE VE `quadruple`nin KENDİSİ SONRADAN BAŞKA bir
+        // çağrı sitesinde inline edilirse (bkz. `genInlinedCall`), o
+        // splice'ın İÇİNDEKİ AYNI çağrı AST düğümleri `self.inline_sites`de
+        // BULUNUR ama slotları ARTIK GEÇERSİZ bir QBE fonksiyonuna (`
+        // $quadruple`ye) AİTTİR — `main`in İÇİNE splice edilirken BU
+        // GEÇERSİZ slotlara `store`/`load` YAPILMASI tanımsız davranışa
+        // (GERÇEKTEN gözlemlenen bir segfault) yol açar. Temizleme, "İÇ İÇE
+        // inlining YOK" kuralını (bkz. `registerInlineSite`in belge notu)
+        // DOĞRU biçimde ZORUNLU kılar: bir splice İÇİNDEKİ iç içe çağrılar
+        // ARTIK `self.inline_sites`de HİÇ BULUNAMAZ (bu üst-düzey çağrının
+        // KENDİ, TAZE kaydından), bu yüzden GÜVENLE GERÇEK bir `call`e
+        // düşerler.
+        self.inline_sites.clearRetainingCapacity();
+        try self.collectInlineSitesStmts(stmts);
+    }
+
+    /// Faz GG.2: `prepareInlineSites`in ÖNCEDEN KAYDETTİĞİ bir splice
+    /// sitesini ÜRETİR — GERÇEK bir `call` YERİNE `site.callee.body`yi
+    /// caller'ın KENDİ QBE akışına SPLICE eder. QBE-seviyesi SSA geçicileri
+    /// (`%tN`) zaten fonksiyon BOYUNCA benzersiz OLDUĞUNDAN (bkz.
+    /// `self.temp_counter`) YENİDEN ADLANDIRMA GEREKMEZ — TEK hijyen adımı,
+    /// callee'nin KAYNAK isimlerini `self.vars`a GEÇİCİ olarak GÖLGELEMEK
+    /// (eski değeri KAYDEDİP splice SONRASI GERİ YÜKLEMEK). `isFuncInlineEligible`
+    /// (`must_not_raise` şartı) bu splice SIRASINDA `emitExceptionCheck`in
+    /// ASLA tetiklenemeyeceğini (dolayısıyla caller'ın ERKEN-çıkış yolunun,
+    /// o an GÖLGELENMİŞ bir yerelin GÖRÜNMEZ kalıp SIZMASININ) YAPISAL
+    /// olarak İMKANSIZ olmasını GARANTİ eder.
+    fn genInlinedCall(self: *Codegen, c: ast.Call, site: InlineSiteInfo) CodegenError!Value {
+        // 1) Argümanları NORMAL yoldakiyle AYNI şekilde değerlendirip
+        // ÖN-TAHSİS EDİLMİŞ parametre slotlarına yaz. `arg_v0s` (dönüşümden
+        // ÖNCEKİ, HAM `genExprForTarget` sonuçları) AŞAĞIDA `releaseTemporaryArgs`e
+        // geçirilir — GERÇEK (inline OLMAYAN) çağrı yolunun `genCall`de
+        // YAPTIĞI AYNI "ödünç alınan parametre slotuna yaz, splice
+        // SONRASI TAZE argümanı ÇAĞIRAN serbest bırakır" dengesi BURADA da
+        // KORUNMALIDIR — bu adım UNUTULURSA (İLK sürümde OLDUĞU GİBİ) HER
+        // taze argüman (ör. `show(safe_div(...))`) KALICI olarak SIZAR
+        // (GERÇEKTEN gözlemlendi, break→red→fix ritüeliyle doğrulanacak).
+        const arg_v0s = try self.allocator.alloc(Value, site.params.len);
+        for (site.params, 0..) |p, i| {
+            const v0 = try self.genExprForTarget(c.args[i], p.info);
+            try self.checkNoLowlevelEscape(v0);
+            arg_v0s[i] = v0;
+            const v = try self.convert(v0, p.info.qtype);
+            try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(p.info.qtype), v.text, p.slot });
+        }
+
+        // 2) callee'nin parametre+yerellerini `self.vars`a GÖLGELE (eski
+        // değeri SAKLA).
+        const owned_count = site.params.len + site.locals.len;
+        const owned_names = try self.allocator.alloc([]const u8, owned_count);
+        const saved = try self.allocator.alloc(?VarInfo, owned_count);
+        var idx: usize = 0;
+        for (site.params) |p| {
+            owned_names[idx] = p.orig_name;
+            saved[idx] = self.vars.get(p.orig_name);
+            try self.vars.put(self.allocator, p.orig_name, .{
+                .slot = p.slot,
+                .qtype = p.info.qtype,
+                .heap = p.info.heap,
+                .elem_qtype = p.info.elem_qtype,
+                .class_name = p.info.class_name,
+                .elem_heap_info = p.info.elem_heap_info,
+                .elem_is_str = p.info.elem_is_str,
+                .dict_info = p.info.dict_info,
+                .func_sig = p.info.func_sig,
+                .is_param = true,
+                .arena = false,
+            });
+            idx += 1;
+        }
+        for (site.locals) |l| {
+            owned_names[idx] = l.orig_name;
+            saved[idx] = self.vars.get(l.orig_name);
+            try self.vars.put(self.allocator, l.orig_name, .{
+                .slot = l.slot,
+                .qtype = l.info.qtype,
+                .heap = l.info.heap,
+                .elem_qtype = l.info.elem_qtype,
+                .class_name = l.info.class_name,
+                .elem_heap_info = l.info.elem_heap_info,
+                .elem_is_str = l.info.elem_is_str,
+                .dict_info = l.info.dict_info,
+                .func_sig = l.info.func_sig,
+                .is_param = false,
+                .arena = false,
+            });
+            idx += 1;
+        }
+
+        // 3) Dönüş bağlamını (`current_ret_info`) VE `inline_return_target`i
+        // AYARLA (eski değerleri SAKLA).
+        const saved_ret_info = self.current_ret_info;
+        const saved_inline_target = self.inline_return_target;
+        const callee_ret_info = try self.resolveType(site.callee.return_type);
+        self.current_ret_info = callee_ret_info;
+        const done_label = try self.newLabel("inline_done");
+        self.inline_return_target = .{
+            .result_slot = if (site.result) |r| r.slot else null,
+            .done_label = done_label,
+            .owned_names = owned_names,
+        };
+
+        // 4) Gövdeyi DEĞİŞTİRİLMEDEN üret — `.return_stmt` dalı `inline_
+        // return_target`i GÖRÜP gerçek `ret` YERİNE `jmp done_label` üretir.
+        try self.genStmts(site.callee.body, callee_ret_info.qtype);
+        try self.out.writer.print("    jmp {s}\n", .{done_label});
+        try self.out.writer.print("{s}\n", .{done_label});
+
+        // 5) HER ŞEYİ geri yükle.
+        self.current_ret_info = saved_ret_info;
+        self.inline_return_target = saved_inline_target;
+        for (owned_names, 0..) |name, i| {
+            if (saved[i]) |old| {
+                try self.vars.put(self.allocator, name, old);
+            } else {
+                _ = self.vars.remove(name);
+            }
+        }
+
+        // 6) GERÇEK (inline OLMAYAN) çağrı yolunun `genCall`de YAPTIĞI AYNI
+        // dengeleme: TAZE argümanlar (bkz. `isTemporaryExpr`/`always_fresh`)
+        // splice BOYUNCA yalnızca ÖDÜNÇ ALINMIŞ bir parametre slotu OLARAK
+        // ele alındığından (`is_param = true`, `.return_stmt`in `releaseNamedLocalsExcept`si
+        // ASLA dokunmaz), sahiplikleri HÂLÂ ÇAĞIRANDADIR — BURADA serbest
+        // bırakılır.
+        try self.releaseTemporaryArgs(c.args, arg_v0s);
+
+        // 7) Sonucu üret.
+        if (site.result) |r| {
+            const t = try self.newTemp();
+            try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ t, qbeTypeName(r.info.qtype), qbeTypeName(r.info.qtype), r.slot });
+            return .{
+                .text = t,
+                .qtype = r.info.qtype,
+                .heap = r.info.heap,
+                .elem_qtype = r.info.elem_qtype,
+                .class_name = r.info.class_name,
+                .elem_heap_info = r.info.elem_heap_info,
+                .elem_is_str = r.info.elem_is_str,
+                .dict_info = r.info.dict_info,
+            };
+        }
+        return .{ .text = "0", .qtype = .w };
     }
 
     fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
@@ -4962,6 +5523,15 @@ const Codegen = struct {
                         }
                         return .{ .text = "0", .qtype = .w };
                     }
+                }
+
+                // Faz GG.2 (bkz. nox-teknik-spesifikasyon.md §3.67): bu ÇAĞRI
+                // SİTESİ (`prepareInlineSites` TARAFINDAN ÖNCEDEN, `ast.Call.
+                // callee` POINTER kimliğiyle) inline-edilebilir bulunduysa,
+                // GERÇEK bir `call`in YERİNE callee'nin gövdesi BURAYA splice
+                // edilir — bkz. `genInlinedCall`in belge notu.
+                if (self.inline_sites.get(@intFromPtr(c.callee))) |site| {
+                    return self.genInlinedCall(c, site);
                 }
 
                 const sig = self.functions.get(name) orelse return error.Unsupported;
@@ -6202,6 +6772,12 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     // için — bkz. `computeMustNotRaise`in belge notu. `self.classes`/
     // `self.functions` (yukarıdaki register* döngüleri) DOLU olmalı.
     try gen.computeMustNotRaise(module, extra_functions);
+
+    // Faz GG.2 (bkz. nox-teknik-spesifikasyon.md §3.67): `computeMustNotRaise`DEN
+    // SONRA (bağımlılık — bkz. `isFuncInlineEligible`) VE HERHANGİ bir gövde
+    // codegen'İNDEN ÖNCE (`genMethod`/`genFunction`/`genMain`/`genMainAsync`
+    // İçin AŞAĞIDAKİ döngüler `self.inlinable_funcs`e İHTİYAÇ DUYAR).
+    try gen.computeInlinableFunctions(module, extra_functions, generic_template_names);
 
     // Faz S.3: `$nox_trace_dispatch`/`$nox_gc_free_dispatch`in (bkz.
     // `genTraceDispatch`) hangi (`class_id`, isim) çiftlerine dal açacağını
