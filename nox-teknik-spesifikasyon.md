@@ -10086,6 +10086,35 @@ KEŞFEDİLDİ. Her ikisi de bu turun kapsamı DIŞINDA bırakıldı.
 
 `zig build test` (Debug + ReleaseFast) yeşil, `zig fmt` temiz.
 
+### GG.6 (DEĞERLENDİRİLDİ, REDDEDİLDİ) — 2'nin kuvveti sabit çarpımlarını shift'e çevirme
+
+**Kaynak:** GG listesinin sıradaki maddesi — `i * 8` gibi 2'nin kuvveti bir
+SABİTLE çarpmanın, QBE'nin `mul` ÜRETTİĞİ (GG'nin giriş araştırmasında
+ÖNCEDEN doğrulanan "QBE strength reduction YAPMAZ" bulgusu — `.ssa`
+dökümüyle DOĞRULANDI: `qbe -t arm64_apple` GERÇEKTEN `mul x3, x2, x3`
+üretiyor, `shl`/`lsl` DEĞİL) YERİNE codegen'in `genBinary`sinde `shl`e
+lowerlanması.
+
+**Ölçüm (KOD YAZILMADAN ÖNCE, GG.4'ün "önce ölç" dersini UYGULAYARAK):**
+`i * 8` İçeren bir sıcak döngünün (500M yineleme) ÜRETTİĞİ `.ssa` ELLE
+kopyalanıp `mul %t, 8` satırları `sed` İLE `shl %t, 3`e DÖNÜŞTÜRÜLDÜ,
+`qbe`+`cc` İLE AYRI AYRI derlenip 3'er tekrarla ölçüldü:
+
+| Durum | Süre (min, 500M çarpım) |
+|---|---|
+| `mul` (mevcut) | 140-143ms (3 ölçüm) |
+| `shl` (elle yama) | 140-143ms (3 ölçüm) |
+
+**ÖLÇÜLEBİLİR FARK YOK** — Apple Silicon'ın (M4, bu makine) tamsayı çarpma
+birimi KÜÇÜK sabitlerle çarpmada `shl` İLE PRATİKTE AYNI hızda (modern
+geniş, sıra-dışı [out-of-order] çekirdeklerde tamsayı çarpma NADİREN
+darboğazdır — GG.4'ün `nox_exception_pending` bulgusuyla AYNI kategoride
+bir sonuç: "bariz" bir mikro-optimizasyon, GERÇEK donanımda ÖLÇÜLDÜĞÜNDE
+sıfır kazanım verdi). **Hiçbir kod YAZILMADI** — `genBinary`ye strength
+reduction EKLEMEK, SIFIR ölçülmüş fayda İçin YALNIZCA derleyici
+karmaşıklığı EKLERDİ (AGENTS.md'nin "measure, don't assume" disiplini,
+GG.4/M.5/M.8 İLE AYNI kategoride bir red).
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

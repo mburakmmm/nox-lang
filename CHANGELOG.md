@@ -501,7 +501,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   (GG.5'TEN TAMAMEN BAĞIMSIZ, `git stash` İLE pre-GG.5 codegen'de de AYNEN
   yeniden üretilen) bir bellek sızıntısı VE yakalanmamış bir istisnanın
   bir `while` İÇİNDEN GEÇERKEN process'i doğru sonlandırmadığı KEŞFEDİLDİ.
-
+- **Değerlendirildi, REDDEDİLDİ: 2'nin kuvveti sabit çarpımlarını shift'e
+  çevirme** (Faz GG.6 — bkz. nox-teknik-spesifikasyon.md §3.66'nın
+  "DEĞERLENDİRİLDİ, REDDEDİLDİ" notu). Kod YAZILMADAN ÖNCE ölçüldü (GG.4'ün
+  dersi UYGULANARAK): `i * 8` İçeren 500M yinelemelik bir döngünün ÜRETTİĞİ
+  `.ssa` ELLE `shl`e YAMANIP AYRI derlendi — `mul` VE `shl` arasında
+  ÖLÇÜLEBİLİR fark BULUNAMADI (140-143ms, HER İKİSİ de). Apple Silicon'ın
+  tamsayı çarpma birimi KÜÇÜK sabitlerle çarpmada `shl` İLE PRATİKTE AYNI
+  hızda — **hiçbir kod yazılmadı**.
 ### Düzeltildi
 - **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`
   "Bölüm 3") YAYIMLANAN İLK sonuçları YANLIŞTI, DÜZELTİLDİ.** İlk sürüm,
