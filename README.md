@@ -146,22 +146,24 @@ tamamen offline çalışır.
 
 | Benchmark | Nox | Python | C | Nox / Python | Nox / C |
 |---|---|---|---|---|---|
-| numeric_recursion | 15.3ms | 377.2ms | 14.0ms | **24.7x hızlı** | 1.10x yavaş |
-| tight_loop_arithmetic | 14.4ms | 1759.6ms | 4.8ms | **122.4x hızlı** | 2.97x yavaş |
-| list_traversal | 63.3ms | 1289.4ms | 3.1ms | **20.4x hızlı** | 20.09x yavaş |
-| oop_arc_churn | 36.0ms | 475.4ms | 44.8ms | **13.2x hızlı** | 0.80x (Nox C'den hızlı) |
-| generics_protocols | 61.2ms | 1573.8ms | 26.0ms | **25.7x hızlı** | 2.35x yavaş |
-| exceptions_control_flow | 21.0ms | 673.0ms | 5.9ms | **32.0x hızlı** | 3.57x yavaş |
-| lowlevel_arena | 63.3ms | 1323.1ms | 5.0ms | **20.9x hızlı** | 12.65x yavaş |
-| string_passing | 72.9ms | 1241.2ms | 8.9ms | **17.0x hızlı** | 8.17x yavaş |
-| deep_equality | 7.1ms | 51.7ms | 3.3ms | **7.3x hızlı** | 2.19x yavaş |
-| list_class_field | 6.1ms | 49.5ms | 4.3ms | **8.2x hızlı** | 1.43x yavaş |
+| numeric_recursion | 15.7ms | 377.4ms | 11.0ms | **24.0x hızlı** | 1.42x yavaş |
+| tight_loop_arithmetic | 13.7ms | 1742.8ms | 5.0ms | **127.5x hızlı** | 2.72x yavaş |
+| list_traversal | 58.5ms | 1290.0ms | 4.7ms | **22.0x hızlı** | 12.44x yavaş |
+| oop_arc_churn | 35.9ms | 469.0ms | 42.8ms | **13.0x hızlı** | 0.84x (Nox C'den hızlı) |
+| generics_protocols | 35.6ms | 1590.5ms | 24.3ms | **44.7x hızlı** | 1.46x yavaş |
+| exceptions_control_flow | 21.3ms | 677.3ms | 6.1ms | **31.8x hızlı** | 3.49x yavaş |
+| lowlevel_arena | 72.7ms | 1321.7ms | 4.1ms | **18.2x hızlı** | 17.72x yavaş |
+| string_passing | 44.3ms | 1212.1ms | 8.7ms | **27.4x hızlı** | 5.11x yavaş |
+| deep_equality | 7.2ms | 51.5ms | 3.6ms | **7.2x hızlı** | 1.98x yavaş |
+| list_class_field | 5.3ms | 49.1ms | 2.8ms | **9.3x hızlı** | 1.89x yavaş |
 
-**Özet:** Python'a karşı her senaryoda **7x–122x daha hızlı**; C'ye karşı
-genelde **1x–4x yavaş** (aritmetik/OOP'de C'ye çok yakın, `oop_arc_churn`'de
+**Özet:** Python'a karşı her senaryoda **7x–127x daha hızlı**; C'ye karşı
+genelde **1x–5x yavaş** (aritmetik/OOP'de C'ye çok yakın, `oop_arc_churn`'de
 C'den bile hızlı — liste/dizi gezme gibi bellek-erişim-ağırlıklı
-senaryolarda fark daha büyük, 12x-20x). Metodoloji + `C`/Python kaynak
-dosyaları İçin [`benchmarks/compare/`](benchmarks/compare/)ye bakın.
+senaryolarda fark daha büyük, 12x-18x). `generics_protocols`/`string_passing`
+Faz GG (serbest-fonksiyon inlining + string performansı) SONRASI belirgin
+biçimde hızlandı. Metodoloji + `C`/Python kaynak dosyaları İçin
+[`benchmarks/compare/`](benchmarks/compare/)ye bakın.
 </details>
 
 <details>
@@ -169,13 +171,13 @@ dosyaları İçin [`benchmarks/compare/`](benchmarks/compare/)ye bakın.
 
 | Benchmark | Süre (min) |
 |---|---|
-| json_bench | 17.8ms |
-| strings_bench | 5.6ms |
-| math_bench | 4.0ms |
-| os_fs_bench | 2.9ms |
-| time_bench | 5.9ms |
-| dict_bench | 2.8ms |
-| strings_perf_bench (`byte_at` + O(n) `join`, Faz EE.1) | 200.0ms |
+| json_bench | 14.7ms |
+| strings_bench | 4.8ms |
+| math_bench | 3.7ms |
+| os_fs_bench | 2.8ms |
+| time_bench | 6.2ms |
+| dict_bench | 3.7ms |
+| strings_perf_bench (`byte_at` + O(n) `join`, Faz EE.1) | 201.5ms |
 
 `strings_perf_bench`, Faz EE.1'in İKİ optimizasyonunu (alloc-sız `byte_at`
 tabanlı karşılaştırma + Zig'de tek-geçiş O(n) `join`) BİRLİKTE ölçer —
@@ -198,10 +200,10 @@ Dört sunucu (`benchmarks/http_compare/`), AYNI yanıtı üretir (durum 200,
 
 | Sunucu | Orta eşzamanlılık (c=30) | Yüksek eşzamanlılık (c=100) |
 |---|---|---|
-| Nox (`serve_multicore`, N=10) | **20,562** İstek/sn | 12,859 İstek/sn |
-| Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 14,743 İstek/sn | 10,866 İstek/sn |
-| Go (`net/http`, varsayılan keep-alive) | 191,244 İstek/sn | **195,110** İstek/sn |
-| FastAPI (`uvicorn --workers 10`, varsayılan keep-alive) | 22,142 İstek/sn | 23,994 İstek/sn |
+| Nox (`serve_multicore`, N=10) | **17,073** İstek/sn | **12,506** İstek/sn |
+| Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 14,970 İstek/sn | 7,038 İstek/sn |
+| Go (`net/http`, varsayılan keep-alive) | 190,275 İstek/sn | **196,759** İstek/sn |
+| FastAPI (`uvicorn --workers 10`, varsayılan keep-alive) | 21,792 İstek/sn | 24,337 İstek/sn |
 
 Nox, HER İKİ seviyede de çıplak Zig soket tabanını GEÇİYOR. Go'nun AÇIK
 ARA önde olması, keep-alive'ın (Nox/Zig'in `Connection: close`

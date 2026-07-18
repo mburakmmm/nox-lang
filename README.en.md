@@ -155,21 +155,23 @@ sections below: **language fundamentals** (vs. Python/C), **stdlib**
 
 | Benchmark | Nox | Python | C | Nox / Python | Nox / C |
 |---|---|---|---|---|---|
-| numeric_recursion | 15.3ms | 377.2ms | 14.0ms | **24.7x faster** | 1.10x slower |
-| tight_loop_arithmetic | 14.4ms | 1759.6ms | 4.8ms | **122.4x faster** | 2.97x slower |
-| list_traversal | 63.3ms | 1289.4ms | 3.1ms | **20.4x faster** | 20.09x slower |
-| oop_arc_churn | 36.0ms | 475.4ms | 44.8ms | **13.2x faster** | 0.80x (Nox faster than C) |
-| generics_protocols | 61.2ms | 1573.8ms | 26.0ms | **25.7x faster** | 2.35x slower |
-| exceptions_control_flow | 21.0ms | 673.0ms | 5.9ms | **32.0x faster** | 3.57x slower |
-| lowlevel_arena | 63.3ms | 1323.1ms | 5.0ms | **20.9x faster** | 12.65x slower |
-| string_passing | 72.9ms | 1241.2ms | 8.9ms | **17.0x faster** | 8.17x slower |
-| deep_equality | 7.1ms | 51.7ms | 3.3ms | **7.3x faster** | 2.19x slower |
-| list_class_field | 6.1ms | 49.5ms | 4.3ms | **8.2x faster** | 1.43x slower |
+| numeric_recursion | 15.7ms | 377.4ms | 11.0ms | **24.0x faster** | 1.42x slower |
+| tight_loop_arithmetic | 13.7ms | 1742.8ms | 5.0ms | **127.5x faster** | 2.72x slower |
+| list_traversal | 58.5ms | 1290.0ms | 4.7ms | **22.0x faster** | 12.44x slower |
+| oop_arc_churn | 35.9ms | 469.0ms | 42.8ms | **13.0x faster** | 0.84x (Nox faster than C) |
+| generics_protocols | 35.6ms | 1590.5ms | 24.3ms | **44.7x faster** | 1.46x slower |
+| exceptions_control_flow | 21.3ms | 677.3ms | 6.1ms | **31.8x faster** | 3.49x slower |
+| lowlevel_arena | 72.7ms | 1321.7ms | 4.1ms | **18.2x faster** | 17.72x slower |
+| string_passing | 44.3ms | 1212.1ms | 8.7ms | **27.4x faster** | 5.11x slower |
+| deep_equality | 7.2ms | 51.5ms | 3.6ms | **7.2x faster** | 1.98x slower |
+| list_class_field | 5.3ms | 49.1ms | 2.8ms | **9.3x faster** | 1.89x slower |
 
-**Summary:** **7x–122x faster** than Python in every scenario; generally
-**1x–4x slower** than C (very close to C on arithmetic/OOP-heavy code,
+**Summary:** **7x–127x faster** than Python in every scenario; generally
+**1x–5x slower** than C (very close to C on arithmetic/OOP-heavy code,
 even faster than C on `oop_arc_churn` — memory-access-heavy scenarios
-like list traversal show a bigger gap, 12x-20x). See
+like list traversal show a bigger gap, 12x-18x). `generics_protocols`/
+`string_passing` improved markedly after Phase GG (free-function inlining
++ string performance work). See
 [`benchmarks/compare/`](benchmarks/compare/) for the methodology and the
 C/Python source files.
 </details>
@@ -179,13 +181,13 @@ C/Python source files.
 
 | Benchmark | Time (min) |
 |---|---|
-| json_bench | 17.8ms |
-| strings_bench | 5.6ms |
-| math_bench | 4.0ms |
-| os_fs_bench | 2.9ms |
-| time_bench | 5.9ms |
-| dict_bench | 2.8ms |
-| strings_perf_bench (`byte_at` + O(n) `join`, Phase EE.1) | 200.0ms |
+| json_bench | 14.7ms |
+| strings_bench | 4.8ms |
+| math_bench | 3.7ms |
+| os_fs_bench | 2.8ms |
+| time_bench | 6.2ms |
+| dict_bench | 3.7ms |
+| strings_perf_bench (`byte_at` + O(n) `join`, Phase EE.1) | 201.5ms |
 
 `strings_perf_bench` measures two Phase EE.1 optimizations together (an
 alloc-free `byte_at`-based comparison + a single-pass O(n) `join` in
@@ -208,10 +210,10 @@ threads/processes, measured with `wrk` (Apple M4, 10 cores — see
 
 | Server | Moderate concurrency (c=30) | High concurrency (c=100) |
 |---|---|---|
-| Nox (`serve_multicore`, N=10) | **20,562** req/s | 12,859 req/s |
-| Zig (raw `std.c` sockets, N=10 threads) | 14,743 req/s | 10,866 req/s |
-| Go (`net/http`, default keep-alive) | 191,244 req/s | **195,110** req/s |
-| FastAPI (`uvicorn --workers 10`) | 22,142 req/s | 23,994 req/s |
+| Nox (`serve_multicore`, N=10) | **17,073** req/s | **12,506** req/s |
+| Zig (raw `std.c` sockets, N=10 threads) | 14,970 req/s | 7,038 req/s |
+| Go (`net/http`, default keep-alive) | 190,275 req/s | **196,759** req/s |
+| FastAPI (`uvicorn --workers 10`) | 21,792 req/s | 24,337 req/s |
 
 Nox beats the raw Zig socket baseline at both levels. Go's large lead is
 because keep-alive (unlike Nox/Zig's `Connection: close` design)
