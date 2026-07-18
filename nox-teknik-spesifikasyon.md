@@ -10543,6 +10543,56 @@ hem SONRA eklenen anahtarların İKİ modda da doğru okunduğu; HER İKİ
 modda da üzerine-yazmanın doğru çalıştığı) doğrulayan YENİ bir birim
 testi eklendi. Mevcut FF.3 ARC-güvenlik testleri DEĞİŞMEDEN yeşil kaldı.
 
+### HH.6 (TAMAMLANDI) — HTTP keep-alive desteği
+
+**Kaynak:** darboğaz raporunun ALTINCI (VE mimari çaplı) bulgusu —
+`connectionEntry` TEK bir `receiveHead()` çağrısından SONRA HER ZAMAN
+`.keep_alive = false` İLE yanıt verip bağlantıyı kapatıyordu. `std.http.
+Server` (Zig stdlib) İSE "aynı bağlantıda birden çok isteği" desteklemek
+İçin ZATEN tasarlanmıştır (bkz. `Server.zig`nin modül üstü notu) — bu
+YETENEĞİ Nox'un KENDİSİ hiç KULLANMIYORDU. **Çözüm:** `connectionEntry`
+TEK `receiveHead()` çağrısı YERİNE bir `while` döngüsüne alındı; HER
+turun `defer`leri (Zig'in blok-kapsamlı defer semantiği SAYESİNDE) O
+turun SONUNDA ateşlenir. `respond()`e HER ZAMAN `.keep_alive = true`
+GEÇİLİR — EFEKTİF sonuç Zig'in KENDİSİNİN `request.head.keep_alive`yle
+(istemcinin BEYAN ETTİĞİ tercih, HTTP SÜRÜM varsayılanını DA İÇEREN)
+BİRLEŞTİRDİĞİ karardır. **Yeni DoS sınırı (Q.5 ruhuyla TUTARLI):**
+`MAX_REQUESTS_PER_CONNECTION` (1000) — okuma zaman aşımı HH.7'ye kadar
+OLMADIĞINDAN, TEK bir bağlantının SONSUZA dek bir fiber'ı MONOPOLİZE
+etmesini önleyen TAMAMLAYICI bir üst sınır.
+
+**GERÇEK bir hata BULUNUP DÜZELTİLDİ (ilk tasarımda, kod yazıldıktan
+HEMEN SONRA — dürüstçe belgeleniyor):** İLK sürüm, "keep-alive mi
+kapanıyor mu" kararını `server.reader.state != .ready` İLE (reaktörün İÇ
+durumunu GÖZLEMLEYEREK) veriyordu — bu, `zig build test`de GERÇEK bir
+SONSUZ askıda kalmayla (`kevent()`de BLOKE olan sunucu, `read()`te BLOKE
+olan istemci — `sample`in yakaladığı TAM yığın izleriyle TEŞHİS edildi)
+YAKALANDI: `connectionEntry` gövdeyi `respond()`DAN ÖNCE ELLE tükettiğinden
+(`MAX_REQUEST_BODY_BYTES` sınırını PARÇA PARÇA denetlemek İçin GEREKLİ),
+`reader`in İÇ durumu `respond()` ÇAĞRILMADAN ÖNCE ZATEN `.received_head`in
+ÖTESİNE geçmiş olur — Zig std'sinin `discardBody`si "kapanıyor OLARAK
+işaretle" dalını YALNIZCA `.received_head`DEN geçiş yaptığından, GÖVDELİ
+(POST/PUT) istekler İçin bu bayrak HİÇ tetiklenmez, `state` İSTEMCİ
+`Connection: close` GÖNDERMİŞ OLSA BİLE HER ZAMAN `.ready` GÖRÜNÜR.
+Düzeltme: `server.reader.state` YERİNE İSTEMCİNİN KENDİ beyan ettiği
+tercih (`request.head.keep_alive`) DOĞRUDAN kullanılır (`.keep_alive =
+true` HER ZAMAN geçildiğinden, Zig'in `server_keep_alive AND request.
+head.keep_alive` formülü BUNA İNDİRGENİR) — dolaylı durum-gözlemleme
+YERİNE doğrudan, sağlam bir sinyal.
+
+**Break→red→fix ritüeli:** `respond()`e geçilen `.keep_alive` GEÇİCİ
+olarak `false`e döndürülüp, YENİ eklenen keep-alive golden testi (bkz.
+aşağı) çalıştırıldı — test BEKLENDİĞİ gibi (ilk yanıtta `connection:
+close` YAZILMIŞ OLARAK) KIRMIZI oldu, keep-alive'ın GERÇEKTEN test
+edildiği KANITLANDI. `.keep_alive = true` GERİ eklenince temiz geçti.
+
+**Test:** `tests/compat/http_serve_golden_test.zig`e YENİ bir uçtan uca
+golden test eklendi — `max_connections=1` (YALNIZCA TEK bir `accept()`e
+İZİN VERİLİR) OLMASINA RAĞMEN, `Connection: close` GÖNDERMEDEN İKİ
+ARDIŞIK istek AYNI TCP bağlantısı üzerinden gönderildiğinde HER İKİSİNİN
+de sunulduğu (İLK yanıtta `connection: close` YOK, İKİNCİ yanıtta VAR)
+doğrulanır — TEK `accept()`in yeterli OLDUĞUNUN dolaylı ama KESİN kanıtı.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

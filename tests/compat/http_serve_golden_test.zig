@@ -510,3 +510,110 @@ test "nox.http.serve: req HIC referans alinmayan handler'da tembel alan insasi d
     try std.testing.expect(std.mem.indexOf(u8, resp, "x: x") != null);
     try std.testing.expect(std.mem.indexOf(u8, resp, "ok") != null);
 }
+
+// Faz HH.6 (bkz. nox-teknik-spesifikasyon.md §3.68): `nox.http.serve`nin
+// keep-alive DESTEĞİNİ uçtan uca doğrular — `max_connections=1` (yalnızca
+// TEK bir `accept()` İZİN VERİLİR) OLMASINA RAĞMEN, `Connection: close`
+// GÖNDERMEDEN İKİ ARDIŞIK istek AYNI TCP bağlantısı üzerinden GÖNDERİLDİĞİNDE
+// HER İKİSİ de sunulmalıdır (bkz. `connectionEntry`nin `while` döngüsü) —
+// bu, YALNIZCA TEK bir `accept()`in GERÇEKLEŞTİĞİNİN (sunucu `max_
+// connections=1`i AŞMADIĞININ) dolaylı ama KESİN kanıtıdır: sunucu İKİNCİ
+// bir bağlantı KABUL ETMEDEN İKİNCİ isteği yanıtlayabiliyorsa, TEK
+// bağlantı ÜZERİNDEN birden çok istek sunma ÇALIŞIYOR demektir.
+test "nox.http.serve: Connection: close GONDERILMEDEN ayni baglanti uzerinden IKI istek de sunulur (keep-alive)" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const port = try probeFreePort();
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const source = try std.fmt.allocPrint(a,
+        \\import nox.http
+        \\
+        \\def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    print(req.target)
+        \\    return nox_http_HttpResponse(200, "ok:" + req.target, {{"x": "x"}})
+        \\
+        \\nox.http.serve({d}, handle, 1)
+        \\
+    , .{port});
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const bin_path = try compileToBinary(a, &tmp, source);
+
+    var child = try std.process.spawn(io, .{
+        .argv = &.{bin_path},
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+
+    var resp1_buf: [256]u8 = undefined;
+    var resp1_len: usize = 0;
+    var resp2_buf: [256]u8 = undefined;
+    var resp2_len: usize = 0;
+    const client_thread = try std.Thread.spawn(.{}, struct {
+        fn run(p: u16, out1: []u8, out1_len: *usize, out2: []u8, out2_len: *usize) void {
+            const fd = testConnect(p) catch return;
+            defer _ = std.c.close(fd);
+
+            // İLK istek: `Connection: close` YOK — bağlantının AÇIK
+            // KALMASI beklenir.
+            const req1 = "GET /birinci HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+            var off: usize = 0;
+            while (off < req1.len) {
+                const n = std.c.write(fd, req1[off..].ptr, req1.len - off);
+                if (n <= 0) return;
+                off += @intCast(n);
+            }
+            const n1 = std.c.read(fd, out1.ptr, out1.len);
+            if (n1 <= 0) return;
+            out1_len.* = @intCast(n1);
+
+            // AYNI bağlantı üzerinden İKİNCİ istek — bu SEFER `Connection:
+            // close` İLE bağlantı kapanır.
+            const req2 = "GET /ikinci HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+            off = 0;
+            while (off < req2.len) {
+                const n = std.c.write(fd, req2[off..].ptr, req2.len - off);
+                if (n <= 0) return;
+                off += @intCast(n);
+            }
+            var total: usize = 0;
+            while (total < out2.len) {
+                const n = std.c.read(fd, out2[total..].ptr, out2.len - total);
+                if (n <= 0) break;
+                total += @intCast(n);
+            }
+            out2_len.* = total;
+        }
+    }.run, .{ port, &resp1_buf, &resp1_len, &resp2_buf, &resp2_len });
+    client_thread.join();
+
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
+    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stderr_data);
+
+    const term = try child.wait(io);
+    try std.testing.expect(term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), term.exited);
+
+    if (stderr_data.len != 0) {
+        std.debug.print("program stderr'e beklenmeyen bir çıktı yazdı (olası bellek sızıntısı/UAF): {s}\n", .{stderr_data});
+        return error.UnexpectedStderrOutput;
+    }
+
+    // İKİ isteğin de GERÇEKTEN sunulduğunun kanıtı — TEK `accept()` İLE.
+    const resp1 = resp1_buf[0..resp1_len];
+    const resp2 = resp2_buf[0..resp2_len];
+    try std.testing.expect(std.mem.indexOf(u8, resp1, "ok:/birinci") != null);
+    try std.testing.expect(std.mem.indexOf(u8, resp2, "ok:/ikinci") != null);
+    // İLK yanıt keep-alive OLMALI (`connection: close` YAZILMAMALI),
+    // İKİNCİ yanıt İSE İSTEMCİNİN talebine UYGUN olarak kapanmalı.
+    try std.testing.expect(std.mem.indexOf(u8, resp1, "connection: close") == null);
+    try std.testing.expect(std.mem.indexOf(u8, resp2, "connection: close") != null);
+}

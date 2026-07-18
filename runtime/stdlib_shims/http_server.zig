@@ -427,6 +427,13 @@ export fn nox_http_request_headers(rt: ?*anyopaque, req: ?*anyopaque) callconv(.
 /// bir istek alır, `conn.handler`ı (D.1.6'nın Nox sarmalayıcısı YA DA bu
 /// dosyanın kendi testindeki elle yazılmış bir Zig işlevi) çağırıp yanıtı
 /// yazar, bağlantıyı kapatır.
+/// Faz HH.6 (bkz. nox-teknik-spesifikasyon.md §3.68): TEK bir bağlantının
+/// sonsuza dek (okuma zaman aşımı HH.7'ye kadar YOK olduğundan) bir
+/// fiber'ı MONOPOLİZE etmesini önleyen ek bir DoS sınırı — Q.5'in
+/// `MAX_REQUEST_BODY_BYTES`/`DEFAULT_MAX_CONCURRENT_CONNECTIONS`iyle AYNI
+/// ruhta, TAMAMLAYICI bir üst sınır.
+const MAX_REQUESTS_PER_CONNECTION: usize = 1000;
+
 fn connectionEntry(arg: *anyopaque) void {
     const conn: *ConnCtx = @ptrCast(@alignCast(arg));
     const gpa = conn.allocator;
@@ -442,97 +449,132 @@ fn connectionEntry(arg: *anyopaque) void {
     var fiber_reader = FiberReader.init(conn.fd, scheduler, &read_buf);
     var fiber_writer = FiberWriter.init(conn.fd, scheduler, &write_buf);
 
+    // Faz HH.6: `std.http.Server` ZATEN "aynı bağlantıda birden çok
+    // isteği" desteklemek İçin tasarlanmıştır (bkz. `Server.zig`nin modül
+    // üstü notu) — TEK `receiveHead()` çağrısı YERİNE bir döngüye alınır.
+    // HER turun `defer`leri (Zig'in blok-kapsamlı defer semantiği
+    // sayesinde) O TURUN sonunda (bir SONRAKİ `receiveHead`den ÖNCE)
+    // ateşlenir — ÖNCEKİ (tek-istekli) davranışla AYNI temizlik disiplini,
+    // yalnızca TEKRARLANIR.
     var server: std.http.Server = .init(&fiber_reader.interface, &fiber_writer.interface);
-    var request = server.receiveHead() catch return;
+    var requests_served: usize = 0;
+    while (requests_served < MAX_REQUESTS_PER_CONNECTION) : (requests_served += 1) {
+        var request = server.receiveHead() catch break;
 
-    // Faz HH.2: ÖNCEDEN `gpa.dupe` (düz kopya) — `nox_http_request_*`
-    // ÇAĞRILDIĞINDA `dupeToNoxStr` İKİNCİ bir ARC kopyası çıkarırdı. ARTIK
-    // TEK kopya DOĞRUDAN burada, ARC-sahipli olarak inşa edilir;
-    // `connectionEntry`nin KENDİ referansı `defer` İLE HER ZAMAN serbest
-    // bırakılır (erişimciler `retain` eder, bu `defer`i ETKİLEMEZ).
-    const method_str = http_client.dupeToNoxStr(rt, @tagName(request.head.method)) orelse return;
-    defer str_mod.nox_str_release(rt, method_str);
-    const target_str = http_client.dupeToNoxStr(rt, request.head.target) orelse return;
-    defer str_mod.nox_str_release(rt, target_str);
+        // Faz HH.2: ÖNCEDEN `gpa.dupe` (düz kopya) — `nox_http_request_*`
+        // ÇAĞRILDIĞINDA `dupeToNoxStr` İKİNCİ bir ARC kopyası çıkarırdı.
+        // ARTIK TEK kopya DOĞRUDAN burada, ARC-sahipli olarak inşa edilir;
+        // `connectionEntry`nin KENDİ referansı `defer` İLE HER ZAMAN
+        // serbest bırakılır (erişimciler `retain` eder, bu `defer`i
+        // ETKİLEMEZ).
+        const method_str = http_client.dupeToNoxStr(rt, @tagName(request.head.method)) orelse break;
+        defer str_mod.nox_str_release(rt, method_str);
+        const target_str = http_client.dupeToNoxStr(rt, request.head.target) orelse break;
+        defer str_mod.nox_str_release(rt, target_str);
 
-    var headers_list: std.ArrayListUnmanaged(std.http.Header) = .empty;
-    defer {
-        for (headers_list.items) |h| {
-            str_mod.nox_str_release(rt, @ptrCast(@constCast(h.name.ptr)));
-            str_mod.nox_str_release(rt, @ptrCast(@constCast(h.value.ptr)));
+        var headers_list: std.ArrayListUnmanaged(std.http.Header) = .empty;
+        defer {
+            for (headers_list.items) |h| {
+                str_mod.nox_str_release(rt, @ptrCast(@constCast(h.name.ptr)));
+                str_mod.nox_str_release(rt, @ptrCast(@constCast(h.value.ptr)));
+            }
+            headers_list.deinit(gpa);
         }
-        headers_list.deinit(gpa);
-    }
-    var it = request.iterateHeaders();
-    while (it.next()) |h| {
-        const name_copy = http_client.dupeToNoxStr(rt, h.name) orelse continue;
-        const value_copy = http_client.dupeToNoxStr(rt, h.value) orelse {
-            str_mod.nox_str_release(rt, name_copy);
-            continue;
-        };
-        headers_list.append(gpa, .{ .name = std.mem.span(name_copy), .value = std.mem.span(value_copy) }) catch {
-            str_mod.nox_str_release(rt, name_copy);
-            str_mod.nox_str_release(rt, value_copy);
-            continue;
-        };
-    }
-
-    var transfer_buffer: [1024]u8 = undefined;
-    const body_reader = request.readerExpectNone(&transfer_buffer);
-    // Gövde HÂLÂ düz (ARC-DIŞI) bir `Writer.Allocating`e PARÇA PARÇA
-    // okunur — soket okumaları ARC bloklarının aksine artımlı olarak
-    // BÜYÜYEMEDİĞİNDEN bu ADIM KAÇINILMAZDIR. ARC'a geçiş, TÜM gövde
-    // toplandıktan SONRA TEK bir `dupeToNoxStr` çağrısıyla (aşağıda) olur
-    // — `nox_http_request_body`nin ARTIK YENİDEN kopyalamaması İÇİN yeterli
-    // (ikinci kopya BURADA, TEK kopyaya indirgenir).
-    var body_out: std.Io.Writer.Allocating = .init(gpa);
-    defer body_out.deinit();
-    // Faz Q.5: `streamRemaining` (SINIRSIZ) YERİNE `conn.max_body_bytes`e
-    // kadar PARÇA PARÇA okunur — her `stream` çağrısı `FiberReader.stream`
-    // aracılığıyla TEK bir soket okumasına denk geldiğinden (bkz. modül
-    // üstü not), sınır AŞILDIĞI ANDA daha fazla veri OKUNMADAN durulur
-    // (saldırganın gönderdiği KALAN baytlar HİÇ tüketilmez/tahsis edilmez).
-    while (true) {
-        const n = body_reader.stream(&body_out.writer, .unlimited) catch |err| switch (err) {
-            error.EndOfStream => break,
-            else => break,
-        };
-        if (n == 0) break;
-        if (body_out.written().len > conn.max_body_bytes) {
-            request.respond("Payload Too Large", .{
-                .status = .payload_too_large,
-                .keep_alive = false,
-            }) catch {};
-            return;
+        var it = request.iterateHeaders();
+        while (it.next()) |h| {
+            const name_copy = http_client.dupeToNoxStr(rt, h.name) orelse continue;
+            const value_copy = http_client.dupeToNoxStr(rt, h.value) orelse {
+                str_mod.nox_str_release(rt, name_copy);
+                continue;
+            };
+            headers_list.append(gpa, .{ .name = std.mem.span(name_copy), .value = std.mem.span(value_copy) }) catch {
+                str_mod.nox_str_release(rt, name_copy);
+                str_mod.nox_str_release(rt, value_copy);
+                continue;
+            };
         }
-    }
 
-    const body_str = http_client.dupeToNoxStr(rt, body_out.written()) orelse return;
-    defer str_mod.nox_str_release(rt, body_str);
+        var transfer_buffer: [1024]u8 = undefined;
+        const body_reader = request.readerExpectNone(&transfer_buffer);
+        // Gövde HÂLÂ düz (ARC-DIŞI) bir `Writer.Allocating`e PARÇA PARÇA
+        // okunur — soket okumaları ARC bloklarının aksine artımlı olarak
+        // BÜYÜYEMEDİĞİNDEN bu ADIM KAÇINILMAZDIR. ARC'a geçiş, TÜM gövde
+        // toplandıktan SONRA TEK bir `dupeToNoxStr` çağrısıyla (aşağıda)
+        // olur — `nox_http_request_body`nin ARTIK YENİDEN kopyalamaması
+        // İÇİN yeterli (ikinci kopya BURADA, TEK kopyaya indirgenir).
+        var body_out: std.Io.Writer.Allocating = .init(gpa);
+        defer body_out.deinit();
+        // Faz Q.5: `streamRemaining` (SINIRSIZ) YERİNE `conn.max_body_bytes`e
+        // kadar PARÇA PARÇA okunur — her `stream` çağrısı `FiberReader.stream`
+        // aracılığıyla TEK bir soket okumasına denk geldiğinden (bkz. modül
+        // üstü not), sınır AŞILDIĞI ANDA daha fazla veri OKUNMADAN durulur
+        // (saldırganın gönderdiği KALAN baytlar HİÇ tüketilmez/tahsis edilmez).
+        var body_too_large = false;
+        while (true) {
+            const n = body_reader.stream(&body_out.writer, .unlimited) catch |err| switch (err) {
+                error.EndOfStream => break,
+                else => break,
+            };
+            if (n == 0) break;
+            if (body_out.written().len > conn.max_body_bytes) {
+                request.respond("Payload Too Large", .{
+                    .status = .payload_too_large,
+                    .keep_alive = false,
+                }) catch {};
+                body_too_large = true;
+                break;
+            }
+        }
+        if (body_too_large) break;
 
-    var req_handle: ServerRequest = .{
-        .method = method_str,
-        .target = target_str,
-        .body = body_str,
-        .headers = headers_list.items,
-    };
+        const body_str = http_client.dupeToNoxStr(rt, body_out.written()) orelse break;
+        defer str_mod.nox_str_release(rt, body_str);
 
-    const resp_payload = conn.handler(conn.handler_ctx, &req_handle);
-    defer if (resp_payload) |r| destroyResponse(rt, gpa, @ptrCast(@alignCast(r)));
+        var req_handle: ServerRequest = .{
+            .method = method_str,
+            .target = target_str,
+            .body = body_str,
+            .headers = headers_list.items,
+        };
 
-    if (resp_payload) |r| {
-        const resp: *ServerResponse = @ptrCast(@alignCast(r));
-        const body_slice: []const u8 = if (resp.body) |p| std.mem.span(p) else &.{};
-        request.respond(body_slice, .{
-            .status = @enumFromInt(resp.status),
-            .keep_alive = false,
-            .extra_headers = resp.headers,
-        }) catch {};
-    } else {
-        request.respond("Internal Server Error", .{
-            .status = .internal_server_error,
-            .keep_alive = false,
-        }) catch {};
+        const resp_payload = conn.handler(conn.handler_ctx, &req_handle);
+        defer if (resp_payload) |r| destroyResponse(rt, gpa, @ptrCast(@alignCast(r)));
+
+        if (resp_payload) |r| {
+            const resp: *ServerResponse = @ptrCast(@alignCast(r));
+            const body_slice: []const u8 = if (resp.body) |p| std.mem.span(p) else &.{};
+            request.respond(body_slice, .{
+                .status = @enumFromInt(resp.status),
+                .keep_alive = true,
+                .extra_headers = resp.headers,
+            }) catch break;
+        } else {
+            request.respond("Internal Server Error", .{
+                .status = .internal_server_error,
+                .keep_alive = true,
+            }) catch break;
+        }
+
+        // Faz HH.6 — DÜZELTME: ÖNCEDEN `server.reader.state != .ready`
+        // kontrol ediliyordu, ama BU YANLIŞTI: `connectionEntry` gövdeyi
+        // `respond()`DAN ÖNCE ELLE TÜKETTİĞİNDEN (bkz. yukarıdaki `body_
+        // reader.stream` döngüsü — `MAX_REQUEST_BODY_BYTES` sınırını
+        // PARÇA PARÇA denetleyebilmek İÇİN GEREKLİ), `reader`in İÇ durumu
+        // `respond()` ÇAĞRILMADAN ÖNCE ZATEN `.received_head`in ÖTESİNE
+        // (`.ready`e) GEÇMİŞ olur — `discardBody`nin "kapanıyor OLARAK
+        // işaretle" dalı YALNIZCA `.received_head`DEN geçiş yaptığından
+        // (bkz. Zig std'sinin `Server.zig`si), gövdeli (POST/PUT) istekler
+        // İçin bu bayrak HİÇ tetiklenmez — `state` HER ZAMAN `.ready`
+        // GÖRÜNÜR, İSTEMCİ `Connection: close` GÖNDERMİŞ OLSA BİLE (GERÇEK
+        // bir SONSUZ askıda kalma İLE — `zig build test`nin gövdeli-istek
+        // golden testlerinde — YAKALANDI). Bunun yerine İSTEMCİNİN
+        // BEYAN ETTİĞİ tercih (`request.head.keep_alive`) DOĞRUDAN
+        // kullanılır — `respond()`e HER ZAMAN `.keep_alive = true`
+        // GEÇTİĞİMİZDEN, Zig'in KENDİ `server_keep_alive AND request.head.
+        // keep_alive` formülü BUNA (`request.head.keep_alive`in KENDİSİNE)
+        // İNDİRGENİR; bu, HTTP SÜRÜM varsayılanını (HTTP/1.0 vs 1.1) DA
+        // ZATEN İÇERİR (bkz. `Request.Head.parse`).
+        if (!request.head.keep_alive) break;
     }
 }
 

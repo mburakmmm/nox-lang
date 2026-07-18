@@ -664,6 +664,30 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   HER İKİ modda da get/üzerine-yazmanın DOĞRU çalıştığı) doğrulayan yeni
   bir birim testi eklendi; mevcut FF.3 ARC-güvenlik testleri DEĞİŞMEDEN
   yeşil kaldı.
+- **HTTP keep-alive desteği** (Faz HH.6, bkz. nox-teknik-spesifikasyon.md
+  §3.68). `connectionEntry` ARTIK TEK bir `receiveHead()`den SONRA
+  bağlantıyı KOŞULSUZ kapatmıyor — `std.http.Server`nin ZATEN desteklediği
+  "aynı bağlantıda birden çok istek" yeteneği KULLANILARAK bir `while`
+  döngüsüne alındı; `respond()`e HER ZAMAN `.keep_alive = true` geçilip
+  EFEKTİF karar Zig'in KENDİSİNE (istemcinin BEYAN ettiği tercih + HTTP
+  sürüm varsayılanı) bırakılıyor. Yeni bir DoS sınırı: `MAX_REQUESTS_PER_
+  CONNECTION` (1000) — okuma zaman aşımı (HH.7'ye kadar) OLMADIĞINDAN, tek
+  bir bağlantının SONSUZA dek bir fiber'ı MONOPOLİZE etmesini önler.
+  **GERÇEK bir hata bulunup düzeltildi (dürüstçe belgeleniyor):** İLK
+  tasarım "kapanıyor mu" kararını `server.reader.state != .ready` İLE
+  veriyordu — `zig build test`de GERÇEK bir SONSUZ askıda kalmayla
+  (`sample`in TAM yığın izleriyle TEŞHİS edildi: sunucu `kevent()`de,
+  istemci `read()`te BLOKE) YAKALANDI: `connectionEntry` gövdeyi
+  `respond()`DAN ÖNCE ELLE tükettiğinden reader'ın İÇ durumu ZATEN
+  `.received_head`in ÖTESİNE geçmiş oluyordu, Zig std'sinin "kapanıyor
+  OLARAK işaretle" mantığı YALNIZCA O durumdan geçiş yaptığından GÖVDELİ
+  (POST/PUT) istekler İçin HİÇ tetiklenmiyordu. Düzeltme: `server.reader.
+  state` YERİNE İSTEMCİNİN KENDİ beyanı (`request.head.keep_alive`)
+  DOĞRUDAN kullanıldı. Break→red→fix: `.keep_alive` GEÇİCİ `false`e
+  döndürülünce yeni golden test BEKLENDİĞİ gibi kırmızı oldu; geri
+  eklenince temiz geçti. Yeni bir uçtan uca golden test, `max_
+  connections=1` OLMASINA RAĞMEN `Connection: close` göndermeden İKİ
+  ardışık isteğin AYNI bağlantı üzerinden sunulduğunu doğrular.
 
 ### Düzeltildi
 - **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`
