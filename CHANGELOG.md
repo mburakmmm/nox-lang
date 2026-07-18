@@ -713,6 +713,30 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   testi DAHİL) yeşil; macOS'ta değişmeden yeşil.
 
 ### Düzeltildi
+- **`nox.http.serve_multicore`: `max_connections` SONLU olduğunda spawn
+  edilen worker OS iş parçacıkları HENÜZ bitirmeden süreç çıkabiliyordu**
+  (Faz HH.8, bkz. nox-teknik-spesifikasyon.md §3.66 — kullanıcı tarafından
+  bildirilen, `zig build test -Doptimize=ReleaseFast`da %30-70 "failed
+  without output" flake'i olarak gözlemlenen GERÇEK bir süreç-çıkış
+  yarışı). `genHttpServeMulticore`nin "fire-and-forget" (`ThreadHandle`lar
+  ASLA join edilmez) tasarımı `max_connections=0` (sınırsız, ÜRETİM
+  varsayılanı) İÇİN doğruydu ama SONLU değerler İÇİN (testlerde ZATEN
+  geçerli bir kullanım) yanlıştı: çağıranın kendi payı biter bitmez
+  `$main` tamamlanıp süreç çıkabiliyordu — worker'lar KENDİ bağlantılarını
+  henüz kabul/sunmamışken bile. Çözüm: spawn edilen `ThreadHandle`lar
+  çalışma-zamanı boyutlu bir dizide tutulup çağıranın kendi payı bittikten
+  SONRA (sınırsız modda bu satıra hiç ulaşılmaz, davranış değişmez)
+  `nox_thread_join`+`nox_thread_destroy` ile join edilir. Break→red→fix:
+  join döngüsü geçici geri alınınca aynı test binary'si 25 ardışık
+  koşumda %32 (8/25) başarısızlık verdi (bildirilen oranla tutarlı); geri
+  eklenince 40 ardışık koşumda 0 başarısızlık.
+  **Açık bulgu (kapsam dışı bırakıldı, dürüstçe belgeleniyor):** AYNI test
+  dosyasının İKİNCİ testi (`serve_multicore` KULLANMAYAN, çıplak
+  `nox.thread.start`+`serve_fd`+`await t.join()` deseni) HH.8'den BAĞIMSIZ,
+  AYRI bir GERÇEK bellek güvenliği hatası sergiliyor — `nox_thread_join`
+  içinde `ThreadHandle`ye `SIGSEGV` (~%10 oranında, HER İKİ OS iş
+  parçacığı da EŞZAMANLI HTTP sunduğunda ÜRETİLEBİLİYOR) — kök neden BU
+  turda belirlenemedi, AYRI bir takip fazı (HH.9) olarak izleniyor.
 - **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`
   "Bölüm 3") YAYIMLANAN İLK sonuçları YANLIŞTI, DÜZELTİLDİ.** İlk sürüm,
   `nox.http.serve_multicore`nin yüksek eşzamanlılıkta (c=100) çıplak Zig

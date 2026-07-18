@@ -6881,13 +6881,20 @@ const Codegen = struct {
     /// `genHttpServeFd`nin kuyruğuyla AYNI) — bugünkü `nox.http.serve`nin
     /// "çağrı sonsuza kadar bloke olur" sözleşmesiyle TUTARLI.
     ///
-    /// **Bilinçli "fire-and-forget":** spawn edilen `ThreadHandle`lar ASLA
-    /// `.join()` edilmez/serbest bırakılmaz — sunucu ZATEN sonsuza kadar
-    /// çalışır (worker'lar hiç DÖNMEZ), `num_threads` sunucu ÖMRÜ boyunca
-    /// BİR KEZ harcanan, küçük/sınırlı bir sayıdır — bağlantı fiber'larının
-    /// HİÇBİR ZAMAN `await` edilmemesiyle AYNI, ZATEN VAR OLAN proje
-    /// ilkesiyle TUTARLI (bkz. bu dosyanın `nox_http_serve_raw`ının modül-
-    /// üstü notu).
+    /// **`ThreadHandle`lar KENDİ `emitFdServeTail`imizden SONRA join
+    /// edilir (ARTIK "fire-and-forget" DEĞİL — bkz. aşağıdaki GERÇEK hata
+    /// notuyla DÜZELTİLDİ):** `max_connections=0` (sınırsız) OLDUĞUNDA
+    /// ÇAĞIRANIN KENDİ `emitFdServeTail`i ZATEN SONSUZA dek bloke olur, bu
+    /// yüzden aşağıdaki join döngüsüne HİÇ ULAŞILMAZ — davranış ESKİSİYLE
+    /// AYNI kalır. AMA `max_connections` SONLU olduğunda (üretimde nadir,
+    /// AMA testlerde/gelecekteki bir "zarif kapatma" özelliğinde GERÇEK bir
+    /// senaryo), ÇAĞIRANIN KENDİ payı biterse biterse HEMEN `$main`
+    /// tamamlanıp SÜREÇ çıkabilirdi — spawn edilen worker OS iş parçacıkları
+    /// KENDİ bağlantılarını HENÜZ kabul/sunmamışken bile (bkz. `nox_thread_
+    /// join`in fiber-duyarlı, `runtime/async_rt/thread_bridge.zig`deki
+    /// KANITLANMIŞ implementasyonu — SADECE ÇAĞIRAN FIBER'ı askıya alır,
+    /// AYNI OS iş parçacığındaki DİĞER fiber'lar/BAŞKA hiçbir şey BLOKE
+    /// OLMAZ).
     fn genHttpServeMulticore(self: *Codegen, c: ast.Call) CodegenError!Value {
         if (c.args.len != 3 and c.args.len != 4) return error.Unsupported;
 
@@ -6933,6 +6940,17 @@ const Codegen = struct {
         self.http_serve_multicore_worker_counter += 1;
         try self.http_serve_multicore_workers.append(self.allocator, .{ .name = worker_name, .wrapper_name = wrapper_name, .max_conn_text = max_conn_text });
 
+        // Faz HH.8 (bkz. nox-teknik-spesifikasyon.md §3.66): spawn edilen
+        // `ThreadHandle`ları (yalnızca `num_threads - 1` kadarı KULLANILIR,
+        // indeks 0 hiç YAZILMAZ) daha SONRA join edebilmek İçin geçici bir
+        // dizide TUTULUR — `num_threads` derleme-zamanı sabiti OLMAYABİLDİĞİNDEN
+        // (bkz. yukarıdaki `.int` denetimi, `max_connections`in AKSİNE
+        // `.int_lit` ZORUNLU DEĞİL) boyut ÇALIŞMA ZAMANINDA hesaplanır.
+        const handles_bytes = try self.newTemp();
+        try self.out.writer.print("    {s} =l mul {s}, 8\n", .{ handles_bytes, num_threads_v.text });
+        const handles_arr = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_alloc(l {s}, l {s})\n", .{ handles_arr, RT_PARAM, handles_bytes });
+
         const i_slot = try self.newTemp();
         try self.out.writer.print("    {s} =l alloc8 8\n", .{i_slot});
         try self.out.writer.print("    storel 1, {s}\n", .{i_slot});
@@ -6951,6 +6969,11 @@ const Codegen = struct {
         try self.out.writer.print("{s}\n", .{body_label});
         const handle_ptr = try self.newTemp();
         try self.out.writer.print("    {s} =l call $nox_thread_spawn(l {s}, l ${s}, l {s}, w 0, w 0)\n", .{ handle_ptr, RT_PARAM, worker_name, fd });
+        const slot_off = try self.newTemp();
+        try self.out.writer.print("    {s} =l mul {s}, 8\n", .{ slot_off, cur });
+        const slot_ptr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ slot_ptr, handles_arr, slot_off });
+        try self.out.writer.print("    storel {s}, {s}\n", .{ handle_ptr, slot_ptr });
         const cur2 = try self.newTemp();
         try self.out.writer.print("    {s} =l loadl {s}\n", .{ cur2, i_slot });
         const next = try self.newTemp();
@@ -6960,6 +6983,47 @@ const Codegen = struct {
         try self.out.writer.print("{s}\n", .{end_label});
 
         try self.emitFdServeTail(fd, wrapper_name, max_conn_text);
+
+        // Faz HH.8: ÇAĞIRANIN KENDİ payı (yukarıdaki `emitFdServeTail`)
+        // BİTTİKTEN SONRA, spawn edilen HER worker'ı join et — `max_
+        // connections=0` (sınırsız) olduğunda `emitFdServeTail` ZATEN
+        // sonsuza dek döndüğünden buraya HİÇ ULAŞILMAZ (davranış DEĞİŞMEZ);
+        // SONLU olduğundaysa bu, `$main`in worker'lar HENÜZ KENDİ
+        // bağlantılarını kabul ETMEDEN süreç çıkışına izin verdiği GERÇEK
+        // yarış durumunu (bkz. yukarıdaki belge notu) KAPATIR.
+        const j_slot = try self.newTemp();
+        try self.out.writer.print("    {s} =l alloc8 8\n", .{j_slot});
+        try self.out.writer.print("    storel 1, {s}\n", .{j_slot});
+
+        const jcond_label = try self.newLabel("mc_join_cond");
+        const jbody_label = try self.newLabel("mc_join_body");
+        const jend_label = try self.newLabel("mc_join_end");
+
+        try self.out.writer.print("    jmp {s}\n", .{jcond_label});
+        try self.out.writer.print("{s}\n", .{jcond_label});
+        const jcur = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ jcur, j_slot });
+        const jcmp = try self.newTemp();
+        try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ jcmp, jcur, num_threads_v.text });
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ jcmp, jbody_label, jend_label });
+        try self.out.writer.print("{s}\n", .{jbody_label});
+        const jslot_off = try self.newTemp();
+        try self.out.writer.print("    {s} =l mul {s}, 8\n", .{ jslot_off, jcur });
+        const jslot_ptr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ jslot_ptr, handles_arr, jslot_off });
+        const jhandle = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ jhandle, jslot_ptr });
+        try self.out.writer.print("    call $nox_thread_join(l {s}, l {s})\n", .{ RT_PARAM, jhandle });
+        try self.out.writer.print("    call $nox_thread_destroy(l {s}, l {s})\n", .{ RT_PARAM, jhandle });
+        const jcur2 = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ jcur2, j_slot });
+        const jnext = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 1\n", .{ jnext, jcur2 });
+        try self.out.writer.print("    storel {s}, {s}\n", .{ jnext, j_slot });
+        try self.out.writer.print("    jmp {s}\n", .{jcond_label});
+        try self.out.writer.print("{s}\n", .{jend_label});
+        try self.out.writer.print("    call $nox_free(l {s}, l {s}, l {s})\n", .{ RT_PARAM, handles_arr, handles_bytes });
+
         return .{ .text = "0", .qtype = .none };
     }
 

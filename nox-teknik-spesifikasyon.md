@@ -10669,7 +10669,91 @@ kapattığı VE handler'ın HİÇ çağrılmadığı, (b) istemci 40ms geciktiri
 OLMADAN normal işlendiği (regresyon KORUYUCUSU). `io_reactor.zig`ye İKİ
 yeni birim testi eklendi (yukarıdaki Docker doğrulamasında da ÇALIŞTIRILDI).
 
-**Faz HH (HH.1-HH.7) BURADA TAMAMEN KAPANIR.**
+### HH.8 (TAMAMLANDI) — `nox.http.serve_multicore` süreç-çıkış yarışı (kullanıcı tarafından bildirilen sarsıntı)
+
+**Kaynak:** `tests/compat/http_serve_multicore_golden_test.zig`nin İKİ
+uçtan uca testinin `zig build test -Doptimize=ReleaseFast` altında
+YAKLAŞIK %30-70 oranında "failed without output" İLE başarısız olduğu
+(Debug modunda İSE TUTARLI yeşil) — GG/HH serilerinden BAĞIMSIZ, ÖNCEDEN
+VAR OLAN bir hata OLARAK bildirildi.
+
+**Kök neden — GERÇEK bir süreç-çıkış yarışı (zamanlama HASSASİYETİ
+DEĞİL):** `serve_multicore`, `isHttpServeMulticoreCallee` YÜZÜNDEN
+`moduleUsesAsync`ı TETİKLER — üst düzey kod `genMainAsync` YOLUNDAN
+(`$main_body` TEK bir fiber GÖREVİ OLARAK) derlenir. `genHttpServeMulticore`
+`num_threads - 1` ek `nox.thread` worker'ı spawn EDER, SONRA ÇAĞIRANIN
+KENDİSİ `emitFdServeTail` İLE Nninci worker OLUR — AMA spawn edilen
+`ThreadHandle`lar ASLA join EDİLMİYORDU ("bilinçli fire-and-forget",
+gerekçesi: "sunucu ZATEN sonsuza dek çalışır, worker'lar hiç DÖNMEZ").
+Bu gerekçe `max_connections=0` (sınırsız, ÜRETİM varsayılanı) İÇİN
+DOĞRUDUR — AMA `max_connections` SONLU olduğunda (test senaryoları,
+`serveImpl`nin ZATEN desteklediği GEÇERLİ bir kullanım) YANLIŞTIR:
+ÇAĞIRANIN KENDİ `emitFdServeTail`i (max_connections'a ULAŞINCA) HEMEN
+DÖNER, `$main_body` biter, `nox_async_run_to_completion` `live_count==0`a
+ULAŞIR ULAŞMAZ döner, `nox_runtime_deinit` ÇAĞRILIR VE **süreç ÇIKAR** —
+spawn edilen worker OS iş parçacıkları KENDİ bağlantılarını HENÜZ kabul/
+sunmamışken BİLE (`std.Thread.spawn`in gerçek zamanlanması SIFIR gecikme
+GARANTİ ETMEZ). İstemci tarafında bu, o worker'a BAĞLANMAYA çalışan
+`connect()`in `ECONNREFUSED` İLE (dinleme soketi SÜREÇ ÇIKIŞIYLA
+kapandığından) SÜREKLİ başarısız OLMASI olarak GÖZLEMLENİR — bu, `testConnect`in
+KENDİSİNE eklenen geçici bir `errno` izleyicisiyle (araştırma SIRASINDA,
+kalıcı DEĞİL) DOĞRUDAN doğrulandı.
+
+**Çözüm:** `genHttpServeMulticore` ARTIK spawn edilen HER `ThreadHandle`ı
+ÇALIŞMA-ZAMANI boyutlu bir diziye (`num_threads` bir DERLEME-ZAMANI sabiti
+OLMAK ZORUNDA OLMADIĞINDAN, `nox_alloc` İLE) KAYDEDER; ÇAĞIRANIN KENDİ
+`emitFdServeTail`i BİTTİKTEN SONRA (`max_connections=0` İKEN bu satıra
+HİÇ ULAŞILMAZ, davranış DEĞİŞMEZ) HER worker'ı `nox_thread_join`+
+`nox_thread_destroy` İLE join EDER (`nox_thread_join`nin ZATEN fiber-
+duyarlı — `runtime/async_rt/thread_bridge.zig` — implementasyonu SAYESİNDE
+YALNIZCA ÇAĞIRAN FIBER'ı askıya alır, AYNI OS iş parçacığındaki BAŞKA HİÇBİR
+ŞEY BLOKE OLMAZ).
+
+**Break→red→fix ritüeli:** genHttpServeMulticore'un join döngüsü GEÇİCİ
+olarak `git stash` İLE geri alınıp AYNI ikili test binary'si 25 kez ARDIŞIK
+ÇALIŞTIRILDI — %32 (8/25) başarısızlık oranı YENİDEN üretildi (ORİJİNAL
+bildirilen oranla TUTARLI); düzeltme geri getirilince AYNI binary 40
+ARDIŞIK çalıştırmada 0 başarısızlık verdi.
+
+**Test:** mevcut İKİ golden test (`tests/compat/http_serve_multicore_
+golden_test.zig`) DEĞİŞTİRİLMEDİ — düzeltme, TESTLERİN KENDİSİNİ DEĞİL,
+`serve_multicore`nin ÜRETİM koduNU hedefler. `zig build test -Doptimize=
+ReleaseFast` İKİ AYRI 40+ ardışık koşumda TAMAMEN yeşil (yalnızca ÖNCEDEN
+BİLİNEN, BAĞIMSIZ `http_serve_multicore_golden_test.zig`nin EŞZAMANLI-
+istemci testinin ~%nadir "N=2 iş parçacığı" flake'i — bkz. AŞAĞIDAKİ AÇIK
+BULGU — ile KARIŞTIRILMAMALI, O AYRI bir testtir/`serve_multicore` YOLUNU
+KULLANMAZ).
+
+**⚠️ AÇIK BULGU (bu araştırma SIRASINDA keşfedildi, KAPSAM DIŞI bırakıldı
+— dürüstçe belgeleniyor):** `tests/compat/http_serve_multicore_golden_
+test.zig`nin İKİNCİ testi ("`nox.http.listen + nox.thread.start + nox.
+http.serve_fd`: birleştirilebilir ilkeller DOĞRUDAN kullanıldığında da
+çalışır") — `serve_multicore`yi HİÇ KULLANMAYAN, ÇIPLAK `nox.thread.start`+
+`nox.http.serve_fd`+`await t.join()` DESENİ — HH.8'in düzeltmesinden
+BAĞIMSIZ, AYRI bir GERÇEK bellek güvenliği hatası (flake DEĞİL) sergiliyor:
+`zig build -Doptimize=ReleaseFast` İLE derlenmiş bir `noxc build` ikilisi,
+BAĞIMSIZ bir tekrarlayıcıyla (`noxc build`+HAM soket istemcileriyle, `zig
+build test` DIŞINDA) TEKRAR ÜRETİLİP macOS çökme raporlayıcısı İLE
+sembolize EDİLDİĞİNDE, `nox_thread_join` İÇİNDE (`return h.result;`
+SATIRINDA, `ThreadHandle`nin KENDİSİNE `EXC_BAD_ACCESS`/`SIGSEGV`,
+`KERN_INVALID_ADDRESS`) yaklaşık %10 oranında GERÇEKTEN ÇÖKÜYOR — 
+`main_body`nin KENDİ makine kodu KANITLANABİLİR şekilde SIRALI OLDUĞUNDAN
+(`nox_thread_join`in `nox_thread_destroy`DAN ÖNCE, AYNI fiber içinde,
+YIELD OLMADAN çalıştığı durumlarda BİLE) hem "destroy join'den ÖNCE
+çalışıyor" HEM "bağlam değişiminde yazmaç bozulması" (`swap_aarch64.S`
+DOĞRULANDI, TAM VE DOĞRU) hipotezleri KANITLARLA REDDEDİLDİ; çökme,
+YALNIZCA HER İKİ OS iş parçacığı da (ana VE worker) EŞZAMANLI OLARAK
+`nox.http.serve_fd` ÇALIŞTIRDIĞINDA ÜRETİLEBİLİYOR (yalnız `nox.thread.
+start`+`join`, HTTP OLMADAN, 500 ardışık koşumda SIFIR çökme; yalnızca
+TEK bir iş parçacığının HTTP sunduğu bir varyant DA SIFIR çökme) — kesin
+mekanizma (`ThreadHandle`nin `h.result` okunmadan ÖNCE NASIL `munmap`
+edilmiş bir sayfaya İŞARET ETTİĞİ) BU TURDA belirlenemedi. **Bu, HH.8'in
+DOĞRUDAN kapsamı DIŞINDADIR** (`serve_multicore`, `genHttpServeMulticore`
+YOLUNU KULLANMAZ ÇIPLAK `nox.thread.start`/`serve_fd` deseni) — AYRI bir
+takip fazı olarak (ör. Faz HH.9) İZLENMESİ ÖNERİLİR.
+
+**Faz HH (HH.1-HH.8) BURADA KAPANIR — HH.9 (yukarıdaki açık bulgu) AYRI
+bir takip fazı olarak İZLENİYOR.**
 
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
