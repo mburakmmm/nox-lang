@@ -96,10 +96,24 @@ const StrOrIntContext = struct {
 
 const IndexMap = std.HashMapUnmanaged(i64, usize, StrOrIntContext, std.hash_map.default_max_load_percentage);
 
+/// Faz HH.5 (bkz. nox-teknik-spesifikasyon.md §3.68): `entries.items.len`
+/// bu eşiğin ALTINDAYKEN `index` hashmap'i HİÇ İNŞA EDİLMEZ — DOĞRUSAL
+/// tarama (bkz. `findIndex`) küçük N İçin hash'lemekten (`Wyhash` + `str`
+/// anahtarlar İçin `strlen`/karşılaştırma + hashmap ekleme/büyütme
+/// ek yükü) DAHA HIZLIDIR VE `nox_dict_set`in `index.putContext`
+/// çağrısını da TAMAMEN ATLAR. HTTP header/`{"x":"y"}` gibi TREND
+/// dict'lerin BÜYÜK ÇOĞUNLUĞU (1-5 giriş) bu eşiğin HİÇ ÜSTÜNE ÇIKMAZ.
+const SMALL_MAP_THRESHOLD: usize = 8;
+
 pub const Dict = struct {
     entries: std.ArrayListUnmanaged(Entry) = .empty,
     index: IndexMap = .empty,
     key_is_str: bool,
+    /// `true` OLUNCA `index` ARTIK GÜNCEL VE YETKİLİDİR (bkz. `findIndex`/
+    /// `nox_dict_set`) — bir KEZ `true` olduktan SONRA asla `false`'a
+    /// DÖNMEZ (bu dict'te silme YOK, yalnızca ekleme/üzerine yazma —
+    /// eleman sayısı asla AZALMAZ).
+    index_built: bool = false,
 };
 
 fn payloadToStrPtr(v: i64) ?[*:0]u8 {
@@ -107,8 +121,33 @@ fn payloadToStrPtr(v: i64) ?[*:0]u8 {
     return @ptrFromInt(@as(usize, @bitCast(v)));
 }
 
+/// `index_built` DEĞİLKEN `entries`i DOĞRUSAL tarar (bkz. `SMALL_MAP_
+/// THRESHOLD`in belge notu) — `keysEqual`, `StrOrIntContext.eql`in
+/// KULLANDIĞI AYNI İÇERİK-tabanlı karşılaştırmadır.
+fn findIndexLinear(d: *Dict, key: i64) ?usize {
+    for (d.entries.items, 0..) |e, i| {
+        if (keysEqual(d.key_is_str, e.key, key)) return i;
+    }
+    return null;
+}
+
 fn findIndex(d: *Dict, key: i64) ?usize {
+    if (!d.index_built) return findIndexLinear(d, key);
     return d.index.getContext(key, .{ .key_is_str = d.key_is_str });
+}
+
+/// `entries`i (TÜMÜNÜ, MEVCUT haliyle) `index`e AKTARIR VE `index_built`i
+/// `true` yapar — `SMALL_MAP_THRESHOLD` AŞILDIĞINDA (bkz. `nox_dict_set`)
+/// TEK SEFERLİK çağrılır. `putContext` BAŞARISIZ olursa (OOM) `index_built`
+/// `false` KALIR — `findIndex`/`nox_dict_set` bu durumda DOĞRUSAL taramaya
+/// GÜVENLE geri düşmeye DEVAM eder (yalnızca performans kaybı, DOĞRULUK
+/// ETKİLENMEZ).
+fn buildIndex(d: *Dict, allocator: std.mem.Allocator) void {
+    const ctx: StrOrIntContext = .{ .key_is_str = d.key_is_str };
+    for (d.entries.items, 0..) |e, i| {
+        d.index.putContext(allocator, e.key, i, ctx) catch return;
+    }
+    d.index_built = true;
 }
 
 /// Yeni, boş bir dict tahsis eder. `key_is_str`, `d[key]`/`.contains(key)`
@@ -135,16 +174,26 @@ pub export fn nox_dict_set(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, va
         // `index`in KENDİ sakladığı anahtar (ESKİ pointer, İÇERİK olarak
         // AYNI ama pointer FARKLI olabilir) YENİ anahtarla DEĞİŞTİRİLİR
         // (yalnızca DEĞER GÜNCELLENMEZ) — bkz. modül üstü not, "ince tuzak".
-        _ = d.index.removeContext(old.key, ctx);
-        d.index.putContext(state.allocator(), key, i, ctx) catch {};
+        // Faz HH.5: `index_built` DEĞİLSE `index` BOŞTUR — GÜNCELLEMEYE
+        // GEREK YOK (doğrusal tarama `entries`i DOĞRUDAN okur).
+        if (d.index_built) {
+            _ = d.index.removeContext(old.key, ctx);
+            d.index.putContext(state.allocator(), key, i, ctx) catch {};
+        }
         if (key_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(old.key));
         d.entries.items[i] = .{ .key = key, .value = value };
     } else {
-        const new_index = d.entries.items.len;
         d.entries.append(state.allocator(), .{ .key = key, .value = value }) catch return;
-        d.index.putContext(state.allocator(), key, new_index, ctx) catch {
-            _ = d.entries.pop();
-        };
+        if (d.index_built) {
+            const new_index = d.entries.items.len - 1;
+            d.index.putContext(state.allocator(), key, new_index, ctx) catch {
+                _ = d.entries.pop();
+            };
+        } else if (d.entries.items.len > SMALL_MAP_THRESHOLD) {
+            // Faz HH.5: eşik AŞILDI — `index` TEK SEFERLİK inşa edilir,
+            // BUNDAN SONRAKİ TÜM aramalar O(1) hash'e geçer.
+            buildIndex(d, state.allocator());
+        }
     }
 }
 
@@ -266,5 +315,57 @@ test "nox_dict — nox_rc_retain + İKİ nox_dict_release: birinci HÂLÂ canlı
     try std.testing.expectEqual(@as(i64, 1), nox_dict_len(d));
 
     // İkinci release: refcount 1 → 0, GERÇEKTEN serbest bırakılır.
+    nox_dict_release(rt, d, 0, 0);
+}
+
+// Faz HH.5 (bkz. nox-teknik-spesifikasyon.md §3.68): `SMALL_MAP_THRESHOLD`
+// (8) AŞILANA kadar `index_built = false` (DOĞRUSAL tarama) kalmalı,
+// eşik AŞILINCA `index_built = true`e GEÇMELİ VE `index` TÜM mevcut
+// girdileri İÇERMELİDİR — HER İKİ modda da (eşik ÖNCESİ/SONRASI) `get`/
+// `contains`/üzerine-yazma DOĞRU sonuç vermeli.
+test "nox_dict — SMALL_MAP_THRESHOLD asilana kadar dogrusal tarama, sonra index insa edilir" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const d = nox_dict_new(rt, 0) orelse return error.NewFailed;
+    const dict_ptr: *Dict = @ptrCast(@alignCast(d));
+
+    // Eşiğe KADAR (dahil) ekle — index_built HÂLÂ false olmalı.
+    var i: usize = 0;
+    while (i < SMALL_MAP_THRESHOLD) : (i += 1) {
+        const ii: i64 = @intCast(i);
+        nox_dict_set(rt, d, 0, 0, ii, ii * 10);
+    }
+    try std.testing.expectEqual(@as(i64, @intCast(SMALL_MAP_THRESHOLD)), nox_dict_len(d));
+    try std.testing.expect(!dict_ptr.index_built);
+    // Doğrusal tarama yolu HÂLÂ doğru sonuç vermeli.
+    try std.testing.expectEqual(@as(i64, 30), nox_dict_get(rt, d, 0, 3));
+    try std.testing.expectEqual(@as(i32, 1), nox_dict_contains(d, 0, 3));
+    try std.testing.expectEqual(@as(i32, 0), nox_dict_contains(d, 0, 999));
+
+    // Üzerine yazma (HÂLÂ doğrusal modda) — index güncellemesi GEREKMEZ,
+    // yalnızca `entries` içindeki slot değişir.
+    nox_dict_set(rt, d, 0, 0, 3, 3000);
+    try std.testing.expectEqual(@as(i64, 3000), nox_dict_get(rt, d, 0, 3));
+    try std.testing.expectEqual(@as(i64, @intCast(SMALL_MAP_THRESHOLD)), nox_dict_len(d));
+
+    // Eşiği AŞAN (SMALL_MAP_THRESHOLD + 1. eleman) ekleme — index GERÇEKTEN
+    // inşa EDİLMELİ (bkz. `buildIndex`).
+    nox_dict_set(rt, d, 0, 0, 999, 9990);
+    try std.testing.expect(dict_ptr.index_built);
+    try std.testing.expectEqual(@as(i64, @intCast(SMALL_MAP_THRESHOLD + 1)), nox_dict_len(d));
+
+    // İndeks-tabanlı yol da (hem eşikten ÖNCE eklenen hem SONRA eklenen
+    // anahtarlar İçin) doğru sonuç vermeli.
+    try std.testing.expectEqual(@as(i64, 3000), nox_dict_get(rt, d, 0, 3));
+    try std.testing.expectEqual(@as(i64, 9990), nox_dict_get(rt, d, 0, 999));
+    try std.testing.expectEqual(@as(i64, 0), nox_dict_get(rt, d, 0, 500)); // hiç eklenmedi
+
+    // İndeks modunda ÜZERİNE yazma da (removeContext+putContext yolu) doğru
+    // çalışmalı.
+    nox_dict_set(rt, d, 0, 0, 999, 12345);
+    try std.testing.expectEqual(@as(i64, 12345), nox_dict_get(rt, d, 0, 999));
+    try std.testing.expectEqual(@as(i64, @intCast(SMALL_MAP_THRESHOLD + 1)), nox_dict_len(d));
+
     nox_dict_release(rt, d, 0, 0);
 }

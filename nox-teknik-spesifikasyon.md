@@ -10508,6 +10508,41 @@ başlık/gövdeli bir istek gönderilip DOĞRU yanıt geldiği VE sızıntı/UAF
 OLMADIĞI doğrulanır (mevcut testlerin TAMAMI da — `req`in TÜM alanlarını
 kullanan senaryolar DAHİL — DEĞİŞİKLİK OLMADAN yeşil kalmaya DEVAM eder).
 
+### HH.5 (TAMAMLANDI) — `dict[K,V]` küçük-harita optimizasyonu
+
+**Kaynak:** darboğaz analizinin BEŞİNCİ (VE GENEL stdlib'e — YALNIZCA
+HTTP'ye ÖZGÜ OLMAYAN) bulgusu — `runtime/collections/dict.zig`nin
+`Dict`i HER ZAMAN hem `entries` (ArrayList) hem `index` (AYRI bir
+`std.HashMapUnmanaged`) tutuyordu; HER `nox_dict_set` (dict 1 eleman BİLE
+olsa) `index.putContext`i (hash hesabı + hashmap büyütme/ekleme ek yükü)
+ÖDÜYORDU. HTTP header/`{"x":"y"}` dict'lerinin BÜYÜK ÇOĞUNLUĞU 1-5
+girdi — küçük N İçin hash'lemek DOĞRUSAL taramadan DAHA YAVAŞTIR.
+
+**Çözüm:** `Dict`e `index_built: bool = false` eklendi. `entries.items.len`
+`SMALL_MAP_THRESHOLD` (8) eşiğinin ALTINDAYKEN `findIndex` `index`
+YERİNE `findIndexLinear`i (DÜZ döngü + `keysEqual`) kullanır, `nox_dict_set`
+`index.putContext`i TAMAMEN ATLAR. Eşik AŞILDIĞINDA (bir SONRAKİ `set`
+sırasında) `buildIndex` TEK SEFERLİK ÇAĞRILIR — MEVCUT TÜM `entries`i
+`index`e AKTARIR VE `index_built = true` yapar; BUNDAN SONRAKİ TÜM
+`nox_dict_set`/`get`/`contains` çağrıları O(1) hash yoluna geçer. Bir
+KEZ `true` OLAN `index_built` bir daha `false`'a DÖNMEZ (bu dict'te
+silme YOK, yalnızca ekleme/üzerine-yazma — eleman sayısı asla AZALMAZ).
+
+**Break→red→fix ritüeli:** `findIndexLinear` GEÇİCİ olarak KOŞULSUZ
+`null` DÖNECEK şekilde DEĞİŞTİRİLDİ — HEDEF TESTİN KENDİSİ (`expected
+30, found 0`) VE BEKLENMEDİK biçimde İKİ AYRI, İLGİSİZ test dosyası daha
+(`http_client.zig`nin GET testi, `http_serve_golden_test.zig`nin DÖRT-
+alan testi) KIRMIZI oldu — küçük `dict[str,str]`lerin (HTTP header'ları)
+runtime GENELİNDE NE KADAR YAYGIN kullanıldığının somut kanıtı.
+`findIndexLinear` GERİ eklenince TÜMÜ temiz çalıştı.
+
+**Test:** `runtime/collections/dict.zig`e eşik-geçişini (8. eleman
+EKLENENE kadar `index_built = false`, DOĞRUSAL taramanın DOĞRU sonuç
+verdiği; 9. elemanla `index_built = true`e GEÇTİĞİ VE hem eşikten ÖNCE
+hem SONRA eklenen anahtarların İKİ modda da doğru okunduğu; HER İKİ
+modda da üzerine-yazmanın doğru çalıştığı) doğrulayan YENİ bir birim
+testi eklendi. Mevcut FF.3 ARC-güvenlik testleri DEĞİŞMEDEN yeşil kaldı.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

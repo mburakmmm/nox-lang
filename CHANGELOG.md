@@ -647,6 +647,23 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   eklenince doğru geldi. Üç senaryo (hiç kullanmayan/yalnızca `method`
   kullanan/başka bir fonksiyona geçiren) ELLE, ayrıca `req`i HİÇ
   referans almayan bir handler YENİ bir golden testle doğrulandı.
+- **`dict[K,V]` küçük-harita optimizasyonu** (Faz HH.5, bkz. nox-teknik-
+  spesifikasyon.md §3.68 — HTTP'ye ÖZGÜ DEĞİL, TÜM `dict` kullanımına
+  fayda sağlar). `runtime/collections/dict.zig`nin `Dict`i ARTIK
+  `entries.items.len` `SMALL_MAP_THRESHOLD` (8) ALTINDAYKEN `index`
+  hashmap'ini HİÇ İNŞA ETMİYOR — DOĞRUSAL tarama (küçük N İçin
+  hash'lemekten DAHA HIZLI) kullanılıyor, `nox_dict_set`in `index.
+  putContext` çağrısı TAMAMEN ATLANIYOR. Eşik AŞILDIĞINDA `buildIndex`
+  TEK SEFERLİK ÇAĞRILIP MEVCUT TÜM `entries`i `index`e aktarıyor,
+  BUNDAN SONRA O(1) hash yoluna GEÇİLİYOR. Break→red→fix: `findIndexLinear`
+  GEÇİCİ olarak KOŞULSUZ `null` DÖNDÜRECEK şekilde bozulunca, YALNIZCA
+  hedef test DEĞİL, `http_client.zig`nin GET testi VE HH.2'nin dört-alan
+  golden testi de KIRMIZI oldu — küçük `dict[str,str]`lerin (HTTP
+  header'ları) runtime GENELİNDE ne kadar YAYGIN olduğunun somut kanıtı.
+  Eşik-geçişini (8→9 eleman, `index_built`in DOĞRU anda `true`ya geçtiği,
+  HER İKİ modda da get/üzerine-yazmanın DOĞRU çalıştığı) doğrulayan yeni
+  bir birim testi eklendi; mevcut FF.3 ARC-güvenlik testleri DEĞİŞMEDEN
+  yeşil kaldı.
 
 ### Düzeltildi
 - **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`
