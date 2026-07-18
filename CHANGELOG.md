@@ -592,6 +592,25 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   modunda TUTARLI şekilde YAKALANDI). `ConnCtx` küçük bir struct olduğundan
   havuzu `Scheduler`e taşımaya (yeni modüller arası bağımlılık) DEĞMEDİ —
   **kod deposundan geri alındı**, `gpa.create`/`gpa.destroy` korundu.
+- **İstek alanlarının çift kopyalanmasını gider: kopyala → retain** (Faz
+  HH.2, bkz. nox-teknik-spesifikasyon.md §3.68). `connectionEntry`
+  `method`/`target`/header isim-değerlerini ÖNCE `gpa.dupe` İLE düz bir
+  kopya çıkarıyordu, SONRA Nox tarafı `nox_http_request_method/target/
+  body/headers`i çağırdığında `dupeToNoxStr` AYNI veriyi İKİNCİ KEZ
+  ARC-sahipli olarak kopyalıyordu. ARTIK `connectionEntry` bu alanları
+  DOĞRUDAN ARC-sahipli inşa ediyor (TEK kopya), `nox_http_request_*`
+  erişimcileri ARTIK kopyalamaz — YALNIZCA `nox_rc_retain` yapıp AYNI
+  işaretçiyi döner. Break→red→fix: `nox_http_request_method`in `retain`i
+  GEÇİCİ kaldırılınca `req`in TÜM alanlarını okuyan bir handler'a karşı
+  GERÇEK bir istek **SIGSEGV (çıkış kodu 139) İLE ÇÖKTÜ** (çifte serbest
+  bırakma) — `retain` GERİ eklenince temiz çalıştı, kontrolün load-bearing
+  olduğu KANITLANDI. Yeni bir uçtan uca golden test, `HttpRequest`nin
+  DÖRT alanının (method/target/body/headers) TAMAMININ doğru geldiğini VE
+  sızıntı/UAF OLMADIĞINI doğrular. **Yan not (AYRI bir takip görevine
+  bırakıldı):** `tests/compat/http_serve_multicore_golden_test.zig`nin
+  `-Doptimize=ReleaseFast`ta ÖNCEDEN VAR OLAN (`git stash` İLE HH
+  serisinden BAĞIMSIZ olduğu doğrulanan) zamanlama-hassasiyetli bir
+  "flaky" davranışı GÖZLEMLENDİ.
 
 ### Düzeltildi
 - **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`

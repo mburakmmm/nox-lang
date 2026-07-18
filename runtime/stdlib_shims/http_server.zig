@@ -40,12 +40,14 @@
 const std = @import("std");
 const posix = std.posix;
 const asap = @import("../alloc/asap.zig");
+const arc = @import("../alloc/arc.zig");
 const dict_mod = @import("../collections/dict.zig");
 const bridge = @import("../async_rt/bridge.zig");
 const io_mod = @import("../async_rt/io.zig");
 const scheduler_mod = @import("../async_rt/scheduler.zig");
 const fiber_mod = @import("../async_rt/fiber.zig");
 const http_client = @import("http_client.zig");
+const str_mod = @import("../str.zig");
 
 fn rawRead(scheduler: ?*scheduler_mod.Scheduler, fd: posix.fd_t, buf: []u8) !usize {
     if (scheduler) |s| return io_mod.nonBlockingRead(s, fd, buf);
@@ -290,6 +292,11 @@ const DEFAULT_MAX_CONCURRENT_CONNECTIONS: usize = 4096;
 // üstlenmeye DEĞMEDİ — `gpa.create`/`gpa.destroy` KORUNDU.
 const ConnCtx = struct {
     allocator: std.mem.Allocator,
+    // Faz HH.2: `connectionEntry`nin ARC-sahipli istek alanları inşa
+    // edebilmesi (`nox_rc_alloc`/`dupeToNoxStr` `rt` GEREKTİRİR) İÇİN
+    // eklendi — ÖNCEDEN yalnızca `allocator` (`state.allocator()`)
+    // taşınıyordu, HAM `rt` işaretçisinin KENDİSİ YOKTU.
+    rt: ?*anyopaque,
     fd: posix.fd_t,
     handler: HandlerFn,
     handler_ctx: ?*anyopaque,
@@ -297,10 +304,18 @@ const ConnCtx = struct {
     active_connections: *usize,
 };
 
+// Faz HH.2 (bkz. nox-teknik-spesifikasyon.md §3.68): `method`/`target`/
+// `body`/header isim-değerleri ARTIK `connectionEntry` TARAFINDAN
+// DOĞRUDAN ARC-sahipli (`nox_rc_alloc` tabanlı, `http_client.dupeToNoxStr`
+// İLE AYNI temsil) olarak inşa edilir — `nox_http_request_*` erişimcileri
+// ARTIK BİR DAHA kopyalamaz, YALNIZCA `nox_rc_retain` yapar (bkz. onların
+// belge notu). Bu, ÖNCEDEN VAR OLAN "ÖNCE `gpa.dupe` İLE düz bir kopya,
+// SONRA `nox_http_request_*` çağrıldığında `dupeToNoxStr` İLE İKİNCİ bir
+// ARC kopyası" çift-kopya desenini GİDERİR.
 const ServerRequest = struct {
-    method: []u8,
-    target: []u8,
-    body: []u8,
+    method: ?[*:0]u8,
+    target: ?[*:0]u8,
+    body: ?[*:0]u8,
     headers: []const std.http.Header,
 };
 
@@ -334,27 +349,46 @@ export fn nox_http_response_new(rt: ?*anyopaque, status: i64, body: ?[*:0]const 
     return resp;
 }
 
+/// Faz HH.2: `connectionEntry` ZATEN `r.method`i ARC-sahipli olarak inşa
+/// ETTİĞİNDEN, burada YENİDEN kopyalamaya GEREK YOK — yalnızca `retain`
+/// edilip AYNI işaretçi döner (O(1), `memcpy` YOK). `connectionEntry`nin
+/// KENDİ referansı (bkz. onun `defer`i) bu çağrıdan BAĞIMSIZ olarak HER
+/// ZAMAN serbest bırakılır — standart retain/release disiplini, "transfer"
+/// bookkeeping'i GEREKMEZ.
 export fn nox_http_request_method(rt: ?*anyopaque, req: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+    _ = rt;
     const r: *ServerRequest = @ptrCast(@alignCast(req orelse return null));
-    return http_client.dupeToNoxStr(rt, r.method);
+    if (r.method) |p| arc.nox_rc_retain(p);
+    return r.method;
 }
 
 export fn nox_http_request_target(rt: ?*anyopaque, req: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+    _ = rt;
     const r: *ServerRequest = @ptrCast(@alignCast(req orelse return null));
-    return http_client.dupeToNoxStr(rt, r.target);
+    if (r.target) |p| arc.nox_rc_retain(p);
+    return r.target;
 }
 
 export fn nox_http_request_body(rt: ?*anyopaque, req: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+    _ = rt;
     const r: *ServerRequest = @ptrCast(@alignCast(req orelse return null));
-    return http_client.dupeToNoxStr(rt, r.body);
+    if (r.body) |p| arc.nox_rc_retain(p);
+    return r.body;
 }
 
+/// Faz HH.2: `r.headers`nin isim/değerleri ZATEN `connectionEntry`
+/// TARAFINDAN ARC-sahipli olarak inşa edildi — burada YENİDEN `dupeToNoxStr`
+/// İLE kopyalamak YERİNE `retain` edilip dict'e AYNEN eklenir (`nox_dict_set`
+/// KENDİSİ retain YAPMAZ, çağıranın ZATEN retain ETTİĞİNİ VARSAYAR — bkz.
+/// dict.zig'in modül üstü notu).
 export fn nox_http_request_headers(rt: ?*anyopaque, req: ?*anyopaque) callconv(.c) ?*anyopaque {
     const r: *ServerRequest = @ptrCast(@alignCast(req orelse return null));
     const d = dict_mod.nox_dict_new(rt, 1) orelse return null;
     for (r.headers) |h| {
-        const k = http_client.dupeToNoxStr(rt, h.name) orelse continue;
-        const v = http_client.dupeToNoxStr(rt, h.value) orelse continue;
+        const k: [*:0]u8 = @ptrCast(@constCast(h.name.ptr));
+        const v: [*:0]u8 = @ptrCast(@constCast(h.value.ptr));
+        arc.nox_rc_retain(k);
+        arc.nox_rc_retain(v);
         dict_mod.nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(k)), @bitCast(@intFromPtr(v)));
     }
     return d;
@@ -369,6 +403,7 @@ export fn nox_http_request_headers(rt: ?*anyopaque, req: ?*anyopaque) callconv(.
 fn connectionEntry(arg: *anyopaque) void {
     const conn: *ConnCtx = @ptrCast(@alignCast(arg));
     const gpa = conn.allocator;
+    const rt = conn.rt;
     defer gpa.destroy(conn);
     defer _ = std.c.close(conn.fd);
     defer conn.active_connections.* -= 1;
@@ -383,35 +418,46 @@ fn connectionEntry(arg: *anyopaque) void {
     var server: std.http.Server = .init(&fiber_reader.interface, &fiber_writer.interface);
     var request = server.receiveHead() catch return;
 
-    const method_str = gpa.dupe(u8, @tagName(request.head.method)) catch return;
-    defer gpa.free(method_str);
-    const target_str = gpa.dupe(u8, request.head.target) catch return;
-    defer gpa.free(target_str);
+    // Faz HH.2: ÖNCEDEN `gpa.dupe` (düz kopya) — `nox_http_request_*`
+    // ÇAĞRILDIĞINDA `dupeToNoxStr` İKİNCİ bir ARC kopyası çıkarırdı. ARTIK
+    // TEK kopya DOĞRUDAN burada, ARC-sahipli olarak inşa edilir;
+    // `connectionEntry`nin KENDİ referansı `defer` İLE HER ZAMAN serbest
+    // bırakılır (erişimciler `retain` eder, bu `defer`i ETKİLEMEZ).
+    const method_str = http_client.dupeToNoxStr(rt, @tagName(request.head.method)) orelse return;
+    defer str_mod.nox_str_release(rt, method_str);
+    const target_str = http_client.dupeToNoxStr(rt, request.head.target) orelse return;
+    defer str_mod.nox_str_release(rt, target_str);
 
     var headers_list: std.ArrayListUnmanaged(std.http.Header) = .empty;
     defer {
         for (headers_list.items) |h| {
-            gpa.free(h.name);
-            gpa.free(h.value);
+            str_mod.nox_str_release(rt, @ptrCast(@constCast(h.name.ptr)));
+            str_mod.nox_str_release(rt, @ptrCast(@constCast(h.value.ptr)));
         }
         headers_list.deinit(gpa);
     }
     var it = request.iterateHeaders();
     while (it.next()) |h| {
-        const name_copy = gpa.dupe(u8, h.name) catch continue;
-        const value_copy = gpa.dupe(u8, h.value) catch {
-            gpa.free(name_copy);
+        const name_copy = http_client.dupeToNoxStr(rt, h.name) orelse continue;
+        const value_copy = http_client.dupeToNoxStr(rt, h.value) orelse {
+            str_mod.nox_str_release(rt, name_copy);
             continue;
         };
-        headers_list.append(gpa, .{ .name = name_copy, .value = value_copy }) catch {
-            gpa.free(name_copy);
-            gpa.free(value_copy);
+        headers_list.append(gpa, .{ .name = std.mem.span(name_copy), .value = std.mem.span(value_copy) }) catch {
+            str_mod.nox_str_release(rt, name_copy);
+            str_mod.nox_str_release(rt, value_copy);
             continue;
         };
     }
 
     var transfer_buffer: [1024]u8 = undefined;
     const body_reader = request.readerExpectNone(&transfer_buffer);
+    // Gövde HÂLÂ düz (ARC-DIŞI) bir `Writer.Allocating`e PARÇA PARÇA
+    // okunur — soket okumaları ARC bloklarının aksine artımlı olarak
+    // BÜYÜYEMEDİĞİNDEN bu ADIM KAÇINILMAZDIR. ARC'a geçiş, TÜM gövde
+    // toplandıktan SONRA TEK bir `dupeToNoxStr` çağrısıyla (aşağıda) olur
+    // — `nox_http_request_body`nin ARTIK YENİDEN kopyalamaması İÇİN yeterli
+    // (ikinci kopya BURADA, TEK kopyaya indirgenir).
     var body_out: std.Io.Writer.Allocating = .init(gpa);
     defer body_out.deinit();
     // Faz Q.5: `streamRemaining` (SINIRSIZ) YERİNE `conn.max_body_bytes`e
@@ -434,10 +480,13 @@ fn connectionEntry(arg: *anyopaque) void {
         }
     }
 
+    const body_str = http_client.dupeToNoxStr(rt, body_out.written()) orelse return;
+    defer str_mod.nox_str_release(rt, body_str);
+
     var req_handle: ServerRequest = .{
         .method = method_str,
         .target = target_str,
-        .body = body_out.written(),
+        .body = body_str,
         .headers = headers_list.items,
     };
 
@@ -513,6 +562,7 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
         };
         conn.* = .{
             .allocator = gpa,
+            .rt = rt,
             .fd = conn_fd,
             .handler = handler,
             .handler_ctx = handler_ctx,
@@ -618,7 +668,8 @@ const TestHandlerLog = struct {
 
     fn handle(_: ?*anyopaque, req: ?*anyopaque) callconv(.c) ?*anyopaque {
         const r: *ServerRequest = @ptrCast(@alignCast(req.?));
-        log.append(std.heap.page_allocator, if (std.mem.eql(u8, r.target, "/slow")) "slow tamamlandi" else "fast tamamlandi") catch unreachable;
+        const target = std.mem.span(r.target.?);
+        log.append(std.heap.page_allocator, if (std.mem.eql(u8, target, "/slow")) "slow tamamlandi" else "fast tamamlandi") catch unreachable;
         return nox_http_response_new(rt_ptr, 200, "hi", null);
     }
 };

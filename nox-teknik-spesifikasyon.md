@@ -10364,6 +10364,54 @@ disiplininin BİR UZANTISI: bir optimizasyon KENDİ karmaşıklığının/riskin
 KARŞILIĞINI VERMİYORSA (burada: yığın-ömrü güvenliği İÇİN modüller arası
 bağımlılık gerektiriyor, KÜÇÜK bir struct İçin), TERK EDİLİR.
 
+### HH.2 (TAMAMLANDI) — İstek alanlarının çift kopyalanmasını gider (kopyala → retain)
+
+**Kaynak:** darboğaz analizinin İKİNCİ bulgusu — `connectionEntry`
+(`runtime/stdlib_shims/http_server.zig`) `method`/`target`/header isim-
+değerlerini ÖNCE `gpa.dupe` (düz, ARC-DIŞI bir kopya) İLE tahsis ediyordu,
+SONRA Nox tarafı `nox_http_request_method/target/body/headers`i ÇAĞIRDIĞINDA
+`http_client.dupeToNoxStr`/(headers İçin döngüsel `dupeToNoxStr`) AYNI
+veriyi İKİNCİ KEZ, ARC-sahipli olarak kopyalıyordu — trivial bir isteğin
+BİLE `method`/`target`/gövde/HER header İçin İKİ KAT bellek kopyası
+ödediği anlamına geliyordu.
+
+**Çözüm:** `connectionEntry` ARTIK method/target/gövde/header isim-
+değerlerini DOĞRUDAN ARC-sahipli (`http_client.dupeToNoxStr`, `nox_rc_alloc`
+tabanlı) olarak inşa eder — TEK kopya. `connectionEntry`nin KENDİ referansı
+`defer` İLE HER ZAMAN `nox_str_release` edilir (standart retain/release
+disiplini — "transfer sahipliği" bookkeeping'i GEREKMEZ). `nox_http_request_
+method/target/body` ARTIK kopyalamaz, `nox_rc_retain` yapıp AYNI işaretçiyi
+döner (O(1), `memcpy` YOK); `nox_http_request_headers` de AYNI şekilde HER
+header isim/değerini `retain` edip dict'e ekler (`nox_dict_set`nin KENDİSİ
+ZATEN "çağıran retain etti" varsayımıyla çalıştığından — bkz. dict.zig'in
+modül üstü notu — DEĞİŞİKLİK gerekmedi). İstek gövdesi HÂLÂ soket okumaları
+sırasında düz (ARC-DIŞI) bir `Writer.Allocating`e PARÇA PARÇA toplanır
+(artımlı büyüme ARC bloklarıyla MÜMKÜN DEĞİL) — TÜM gövde toplandıktan
+SONRA TEK bir `dupeToNoxStr` çağrısıyla ARC'a geçilir, böylece İKİNCİ kopya
+(handler'ın `nox_http_request_body`yi çağırdığı ANDA olan) YİNE DE elenir.
+
+**Break→red→fix ritüeli:** `nox_http_request_method`deki `nox_rc_retain`
+çağrısı GEÇİCİ olarak KALDIRILIP, `req.method`/`req.target`/`req.body`/
+`req.headers`nin TAMAMINI okuyan bir handler'a karşı GERÇEK bir HTTP isteği
+gönderildi — süreç **SIGSEGV (çıkış kodu 139) İLE ÇÖKTÜ** (çifte serbest
+bırakma/kullanım-sonrası-serbest-bırakma — `genHttpServeWrapper`nin
+`req_values`i `__init__`in KENDİ retain'iyle DENGELEMEK İçin yaptığı
+telafi edici `release`, retain YAPILMAMIŞ bir referansı FAZLADAN düşürüyordu).
+`nox_rc_retain` GERİ eklenince AYNI senaryo temiz (çıkış kodu 0, sızıntı/hata
+YOK) çalıştı — kontrolün GERÇEKTEN load-bearing olduğu KANITLANDI.
+
+**Test:** `tests/compat/http_serve_golden_test.zig`e YENİ bir uçtan uca
+golden test eklendi — `HttpRequest`nin DÖRT alanının TAMAMINI (method/
+target/body/headers) OKUYAN bir handler, GERÇEK bir POST isteğiyle
+egzersiz edilip DEĞERLERİN doğru geldiği VE `stderr`e sızıntı/UAF belirtisi
+YAZILMADIĞI doğrulandı.
+
+**Yan not (bu fazdan BAĞIMSIZ, ayrı bir takip görevine bırakıldı):**
+doğrulama sırasında `tests/compat/http_serve_multicore_golden_test.zig`nin
+`-Doptimize=ReleaseFast`ta ZAMANLAMA-hassasiyetli, ÖNCEDEN VAR OLAN
+(`git stash` İLE HH serisinden BAĞIMSIZ olduğu doğrulanan) bir "flaky"
+davranışı GÖZLEMLENDİ (Debug modunda TUTARLI yeşil).
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
