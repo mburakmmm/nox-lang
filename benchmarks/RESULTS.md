@@ -407,3 +407,39 @@ gösterir.
   YOKTUR. Manuel performans ölçümünden ÖNCE HER ZAMAN `zig build
   -Doptimize=ReleaseFast` çalıştırıldığından EMİN OLUNMALIDIR (bkz.
   CONTRIBUTING.md).
+
+### Faz HH SONRASI yeniden-koşum (2026-07-18) — keep-alive'ın GERÇEK etkisi
+
+Yukarıdaki tablolar Faz HH (bkz. nox-teknik-spesifikasyon.md §3.66'nın
+`### HH.1`–`### HH.7` alt bölümleri) ÖNCESİNE aitti — o zaman `nox.http.
+serve`/`serve_multicore` HER isteği KENDİ TCP bağlantısında karşılıyordu
+(`Connection: close`, HİÇ keep-alive YOK). HH.6 keep-alive'ı EKLEDİKTEN
+(VE HH.1-5/7'nin istek/yanıt çift-kopya elemesi, tembel alan inşası,
+küçük-dict optimizasyonu, okuma zaman aşımı gibi TAMAMLAYICI iyileştirmeler
+SONRASI), AYNI makine/metodoloji (Apple M4, `wrk 4.2.0`, `--latency`,
+ReleaseFast runtime DOĞRULANARAK) İLE yeniden ölçüldü:
+
+| Sunucu | c=30 (ÖNCE → SONRA) | c=100 (ÖNCE → SONRA) |
+|---|---|---|
+| **Nox** (`serve_multicore`, N=10) | 17,073 → **165,278** (**9.7x**) | 12,506 → **177,035–181,658** (**~14.2–14.5x**) |
+| Zig (çıplak `std.c` soket) | 14,970 → 18,819 (değişmedi, run-to-run varyans) | 7,038 → 7,436 (değişmedi) |
+| Go (`net/http`) | 190,275 → 191,091 (değişmedi) | 196,759 → 195,869 (değişmedi) |
+| FastAPI/uvicorn | 21,792 → 21,565 (değişmedi) | 24,337 → 25,180 (değişmedi) |
+
+**Zig/Go/FastAPI sunucularının KODU bu turda HİÇ DEĞİŞMEDİ** — sayılarının
+ÖNCEKİYLE (ölçüm gürültüsü payıyla) AYNI kalması, Nox'un sıçramasının
+GERÇEKTEN Nox tarafındaki değişikliklerden geldiğinin (ölçüm/ortam
+farkından DEĞİL) kontrol grubu KANITIDIR. **Baskın neden HH.6 (keep-alive)
+— Nox artık Zig'in "bağlantı başına tek istek" mimarisinin AKSİNE, Go'nun
+mimarisiyle AYNI rejimde çalışıyor** (TCP el sıkışma/`accept()` maliyeti
+istek başına DEĞİL, bağlantı başına ÖDENİYOR): c=100'de Nox ARTIK çıplak
+Zig soket tabanını 14x'e KADAR GEÇİYOR (ÖNCE yalnızca ~1.8x GEÇİYORDU) VE
+Go'ya (191K-196K) MERTEBE olarak YAKLAŞTI (165K-182K) — kalan farkın
+BÜYÜK kısmı, Go'nun `net/http`sinin OLGUN, sıfır-kopya/pool'lanmış bir
+uygulama olmasına KARŞI Nox'un HÂLÂ genç bir fiber/ARC/QBE-codegen
+yığını olmasıdır. **Sıradaki en büyük aday (bu turun kapsamı DIŞINDA
+BIRAKILDI):** Nox'un KENDİ `noxc build`/`serve_multicore` mimarisinde
+DAHA İNCE-TANELİ bir profil (HH serisinin HANGİ maddesinin bu sıçramanın
+NE KADARINDAN sorumlu olduğunu AYRIŞTIRMAK İçin HH.6'yı TEK BAŞINA test
+eden bir ARA ölçüm) — bu tur, TOPLU etkiyi doğrulamayı hedefledi, katkı
+AYRIŞTIRMASINI DEĞİL.
