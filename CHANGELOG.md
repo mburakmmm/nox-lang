@@ -629,6 +629,24 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   İLE ÖNCE gerçek bir ARC dizesi inşa edecek şekilde güncellendi. Yeni bir
   uçtan uca golden test, DİNAMİK inşa edilmiş bir yanıt gövdesi VE BİRDEN
   FAZLA yanıt başlığının doğru geldiğini doğrular.
+- **`HttpRequest` alanlarının TEMBEL (yalnızca kullanılıyorsa) inşası**
+  (Faz HH.4, bkz. nox-teknik-spesifikasyon.md §3.68). `genHttpServeWrapper`
+  ARTIK `handle`in `req` gövdesini KONSERVATİF bir AST taramasıyla
+  (`computeUsedRequestFields` — TÜM 17 `ast.Expr` VE TÜM `ast.Stmt`
+  varyantı İçin TAM, Zig'in kapsamlı switch zorunluluğu SAYESİNDE
+  `else` KULLANILMADAN) tarayıp HANGİ `method`/`target`/`body`/`headers`
+  alanlarının GERÇEKTEN okunduğunu tespit ediyor — KULLANILMAYAN str
+  alanlar İçin pahalı `nox_http_request_*` çağrısı YERİNE `""` (pinned,
+  bedava) literal'i, `headers` KULLANILMIYORSA `nox_http_request_headers`
+  (O(header sayısı)) YERİNE DOĞRUDAN boş `nox_dict_new` (O(1)) üretiliyor.
+  `req`in KENDİSİ (çıplak tanımlayıcı olarak) BAŞKA bir fonksiyona/iç-içe
+  bir closure'a KAÇARSA TÜM alanlar KONSERVATİF olarak kullanılmış SAYILIR
+  (GG.2/GG.5/GG.9'un AYNI disiplini). Break→red→fix: alan işaretleme
+  GEÇİCİ devre dışı bırakılınca, YALNIZCA `req.method`i okuyan bir
+  handler **YANLIŞ (boş) bir `method` değeri döndü** — analiz GERİ
+  eklenince doğru geldi. Üç senaryo (hiç kullanmayan/yalnızca `method`
+  kullanan/başka bir fonksiyona geçiren) ELLE, ayrıca `req`i HİÇ
+  referans almayan bir handler YENİ bir golden testle doğrulandı.
 
 ### Düzeltildi
 - **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`

@@ -386,11 +386,31 @@ const FuncSig = struct {
 /// KAPANIŞTAN DEĞİL doğrudan `handler_ctx` parametresi olarak taşınır,
 /// bkz. `genHttpServe`nin belge notu — `spawn`ın kapanış paketlemesine
 /// GEREK YOK, çünkü tek "yakalanan" değer zaten `rt`nin KENDİSİ).
+/// Faz HH.4 (bkz. nox-teknik-spesifikasyon.md §3.68): `handle` fonksiyonu
+/// gövdesinin `req` parametresinin HANGİ alanlarına (`method`/`target`/
+/// `body`/`headers`) GERÇEKTEN eriştiğinin KONSERVATİF sonucu — bkz.
+/// `computeUsedRequestFields`in belge notu. TÜM alanlar `false` OLARAK
+/// başlar, TESPİT edilen HER erişim/kaçış İLGİLİ bayrağı (ya da kaçış
+/// durumunda HEPSİNİ) `true` yapar — bu yüzden "emin değilsen `true`"
+/// GÜVENLİ varsayılan yöndür (yanlış `false` bir alanı SESSİZCE boş
+/// bırakırdı, yanlış `true` yalnızca GEREKSİZ bir inşa maliyeti öder).
+const UsedRequestFields = struct {
+    method: bool = false,
+    target: bool = false,
+    body: bool = false,
+    headers: bool = false,
+
+    fn allUsed() UsedRequestFields {
+        return .{ .method = true, .target = true, .body = true, .headers = true };
+    }
+};
+
 const HttpServeWrapperSpec = struct {
     name: []const u8,
     handler_fn: []const u8,
     req_class: []const u8,
     resp_class: []const u8,
+    used_fields: UsedRequestFields,
 };
 
 const SpawnWrapperSpec = struct {
@@ -878,6 +898,14 @@ const Codegen = struct {
     /// `-g` bayrağı OLMADAN varsayılan çıktı DEĞİŞMEZ).
     debug_info: bool = false,
     functions: std.StringHashMapUnmanaged(FuncSig) = .empty,
+    /// Faz HH.4 (bkz. nox-teknik-spesifikasyon.md §3.68): `functions`
+    /// (İMZA-YALNIZCA) İLE AYNI anda, AYNI isimlerle doldurulur — ama TAM
+    /// `ast.FuncDef`i (gövdesi DAHİL) saklar. `genHttpServe`nin `handle`
+    /// fonksiyonunun GÖVDESİNİ (hangi `HttpRequest` alanlarının GERÇEKTEN
+    /// okunduğunu tespit etmek İçin) bulabilmesi İÇİN eklendi — `self.
+    /// inlinable_funcs`in (yalnızca GG.2'nin inline UYGUN BULDUĞU bir ALT
+    /// KÜME) AKSİNE, BURADA TÜM serbest fonksiyonlar saklanır.
+    func_defs: std.StringHashMapUnmanaged(ast.FuncDef) = .empty,
     /// `extern def` bildirimleri — AYRI bir tablo (normal `functions`dan
     /// bağımsız): çağrı sitesi kodgen'i temelde farklıdır (bkz. `genCall`) —
     /// extern fonksiyonlar Nox'un `rt` bağlamını (İlke #6'nın gerektirdiği
@@ -1337,6 +1365,7 @@ const Codegen = struct {
         for (fd.params, 0..) |p, i| params[i] = try self.resolveType(p.type_expr);
         const ret = try self.resolveType(fd.return_type);
         try self.functions.put(self.allocator, fd.name, .{ .params = params, .ret = ret });
+        try self.func_defs.put(self.allocator, fd.name, fd);
     }
 
     fn registerExternFunc(self: *Codegen, ed: ast.ExternDef) CodegenError!void {
@@ -3709,6 +3738,137 @@ const Codegen = struct {
             }
         }
         return false;
+    }
+
+    /// Faz HH.4: `attr` `method`/`target`/`body`/`headers`den biriyse
+    /// İLGİLİ bayrağı işaretler. `HttpRequest`in checker TARAFINDAN ZATEN
+    /// TAM OLARAK bu dört alanla SINIRLANDIĞI (bkz. `stdlib/nox/http.nox`)
+    /// İÇİN, `req.<attr>` biçiminde GEÇERLİ (tip-denetimini GEÇMİŞ) BAŞKA
+    /// bir `attr` OLAMAZ — eşleşmeyen bir isim BURAYA HİÇ ULAŞMAZ.
+    fn markRequestField(used: *UsedRequestFields, attr: []const u8) void {
+        if (std.mem.eql(u8, attr, "method")) used.method = true;
+        if (std.mem.eql(u8, attr, "target")) used.target = true;
+        if (std.mem.eql(u8, attr, "body")) used.body = true;
+        if (std.mem.eql(u8, attr, "headers")) used.headers = true;
+    }
+
+    /// Faz HH.4: `param_name` isimli tanımlayıcının (`handle`in `req`
+    /// parametresi) bir ifade AĞACI İÇİNDE nasıl kullanıldığını TAM OLARAK
+    /// (17 `ast.Expr` varyantının HEPSİNİ ele alarak — `else` KULLANILMAZ,
+    /// Zig'in KAPSAMLI switch zorunluluğu GELECEKTE eklenecek yeni bir
+    /// varyantı BURADA UNUTMAYI derleme-zamanı hatasına ÇEVİRİR) dolaşır.
+    /// **Güvenlik ilkesi:** `req.<field>` biçimindeki DOĞRUDAN erişimler
+    /// İLGİLİ bayrağı işaretler; `req`in KENDİSİ (çıplak bir tanımlayıcı
+    /// olarak) BAŞKA HERHANGİ bir bağlamda (bir çağrıya argüman, bir
+    /// atamanın sağı/solu, bir listeye/dict'e eleman, vb.) GÖRÜNÜRSE bu bir
+    /// "kaçış" SAYILIR ve TÜM alanlar KONSERVATİF olarak kullanılmış
+    /// İŞARETLENİR (GG.2/GG.5/GG.9'un AYNI "kaçış ⇒ muhafazakâr" disiplini).
+    fn visitExprForReqUsage(e: ast.Expr, param_name: []const u8, used: *UsedRequestFields) void {
+        switch (e) {
+            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => {},
+            .identifier => |name| if (std.mem.eql(u8, name, param_name)) {
+                used.* = UsedRequestFields.allUsed();
+            },
+            .unary => |u| visitExprForReqUsage(u.operand.*, param_name, used),
+            .binary => |b| {
+                visitExprForReqUsage(b.left.*, param_name, used);
+                visitExprForReqUsage(b.right.*, param_name, used);
+            },
+            .call => |c| {
+                visitExprForReqUsage(c.callee.*, param_name, used);
+                for (c.args) |arg| visitExprForReqUsage(arg, param_name, used);
+            },
+            .attribute => |a| {
+                if (a.obj.* == .identifier and std.mem.eql(u8, a.obj.identifier, param_name)) {
+                    markRequestField(used, a.attr);
+                } else {
+                    visitExprForReqUsage(a.obj.*, param_name, used);
+                }
+            },
+            .index => |ix| {
+                visitExprForReqUsage(ix.obj.*, param_name, used);
+                visitExprForReqUsage(ix.index.*, param_name, used);
+            },
+            .list_lit => |items| for (items) |it| visitExprForReqUsage(it, param_name, used),
+            .dict_lit => |pairs| for (pairs) |p| {
+                visitExprForReqUsage(p.key, param_name, used);
+                visitExprForReqUsage(p.value, param_name, used);
+            },
+            .await_expr => |op| visitExprForReqUsage(op.*, param_name, used),
+            .spawn_expr => |op| visitExprForReqUsage(op.*, param_name, used),
+            .generic_construct => |gc| for (gc.args) |arg| visitExprForReqUsage(arg, param_name, used),
+        }
+    }
+
+    /// Faz HH.4: `visitExprForReqUsage`in deyim-seviyesi eşleniği — HER
+    /// deyim varyantındaki alt-ifadeleri/iç-içe gövdeleri dolaşır. Bir
+    /// iç-içe `func_def` (closure) `req`i YAKALAYABİLECEĞİNDEN (yakalama
+    /// semantiğini analiz ETMEK yerine, `bodyHasNestedFuncDef`in AYNI
+    /// konservatif kararıyla) TÜM alanlar kullanılmış SAYILIR.
+    fn visitStmtsForReqUsage(stmts: []const ast.Stmt, param_name: []const u8, used: *UsedRequestFields) void {
+        for (stmts) |stmt| {
+            switch (stmt.kind) {
+                .expr_stmt => |e| visitExprForReqUsage(e, param_name, used),
+                .var_decl => |v| visitExprForReqUsage(v.value, param_name, used),
+                .assign => |a| {
+                    visitExprForReqUsage(a.target, param_name, used);
+                    visitExprForReqUsage(a.value, param_name, used);
+                },
+                .if_stmt => |s| {
+                    visitExprForReqUsage(s.cond, param_name, used);
+                    visitStmtsForReqUsage(s.then_body, param_name, used);
+                    for (s.elif_clauses) |ec| {
+                        visitExprForReqUsage(ec.cond, param_name, used);
+                        visitStmtsForReqUsage(ec.body, param_name, used);
+                    }
+                    if (s.else_body) |eb| visitStmtsForReqUsage(eb, param_name, used);
+                },
+                .while_stmt => |s| {
+                    visitExprForReqUsage(s.cond, param_name, used);
+                    visitStmtsForReqUsage(s.body, param_name, used);
+                },
+                .for_stmt => |s| {
+                    visitExprForReqUsage(s.iterable, param_name, used);
+                    visitStmtsForReqUsage(s.body, param_name, used);
+                },
+                .return_stmt => |maybe_e| if (maybe_e) |e| visitExprForReqUsage(e, param_name, used),
+                .raise_stmt => |e| visitExprForReqUsage(e, param_name, used),
+                .try_stmt => |s| {
+                    visitStmtsForReqUsage(s.try_body, param_name, used);
+                    for (s.except_clauses) |ec| visitStmtsForReqUsage(ec.body, param_name, used);
+                    if (s.finally_body) |fb| visitStmtsForReqUsage(fb, param_name, used);
+                },
+                .lowlevel_stmt => |s| visitStmtsForReqUsage(s.body, param_name, used),
+                .with_stmt => |s| {
+                    visitExprForReqUsage(s.ctx_expr, param_name, used);
+                    visitStmtsForReqUsage(s.body, param_name, used);
+                },
+                .func_def => used.* = UsedRequestFields.allUsed(),
+                .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt => {},
+            }
+        }
+    }
+
+    /// Faz HH.4: `fd` (`nox.http.serve`nin `handle` argümanı) İçin HANGİ
+    /// `HttpRequest` alanlarının GERÇEKTEN OKUNDUĞUNU döner — `fd.params[0]`
+    /// checker TARAFINDAN ZATEN `HttpRequest` (ya da eşdeğeri) tipinde
+    /// OLDUĞU doğrulanmış TEK parametredir (bkz. `genHttpServe`nin `sig.
+    /// params.len != 1` kontrolü).
+    fn computeUsedRequestFields(fd: ast.FuncDef) UsedRequestFields {
+        var used: UsedRequestFields = .{};
+        if (fd.params.len != 1) return UsedRequestFields.allUsed();
+        visitStmtsForReqUsage(fd.body, fd.params[0].name, &used);
+        return used;
+    }
+
+    /// Faz HH.4: `genHttpServe`/`genHttpServeFd`/`genHttpServeMulticore`nin
+    /// ÜÇÜNÜN de KULLANDIĞI ortak arama — `handle_name`in gövdesi `self.
+    /// func_defs`de BULUNAMAZSA (BEKLENMEDİK bir durum, `sig`in ZATEN
+    /// `self.functions`de bulunduğu doğrulanmıştır) KONSERVATİF olarak TÜM
+    /// alanlar kullanılmış SAYILIR.
+    fn computeUsedFieldsFor(self: *Codegen, handle_name: []const u8) UsedRequestFields {
+        const hfd = self.func_defs.get(handle_name) orelse return UsedRequestFields.allUsed();
+        return computeUsedRequestFields(hfd);
     }
 
     fn collectLoopInvariantStrBases(self: *Codegen, body: []const ast.Stmt) CodegenError!std.StringHashMapUnmanaged(void) {
@@ -6643,7 +6803,7 @@ const Codegen = struct {
 
         const wrapper_name = try std.fmt.allocPrint(self.allocator, "http_serve_wrap_{d}", .{self.http_serve_wrapper_counter});
         self.http_serve_wrapper_counter += 1;
-        try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class });
+        try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class, .used_fields = self.computeUsedFieldsFor(handle_name) });
 
         try self.out.writer.print("    call $nox_http_serve_raw(l {s}, l {s}, l ${s}, l {s}, l {s})\n", .{ RT_PARAM, server, wrapper_name, RT_PARAM, max_conn_text });
         try self.out.writer.print("    call $nox_http_server_close(l {s}, l {s})\n", .{ RT_PARAM, server });
@@ -6702,7 +6862,7 @@ const Codegen = struct {
 
         const wrapper_name = try std.fmt.allocPrint(self.allocator, "http_serve_wrap_{d}", .{self.http_serve_wrapper_counter});
         self.http_serve_wrapper_counter += 1;
-        try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class });
+        try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class, .used_fields = self.computeUsedFieldsFor(handle_name) });
 
         try self.emitFdServeTail(fd_v.text, wrapper_name, max_conn_text);
         return .{ .text = "0", .qtype = .none };
@@ -6767,7 +6927,7 @@ const Codegen = struct {
 
         const wrapper_name = try std.fmt.allocPrint(self.allocator, "http_serve_wrap_{d}", .{self.http_serve_wrapper_counter});
         self.http_serve_wrapper_counter += 1;
-        try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class });
+        try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class, .used_fields = self.computeUsedFieldsFor(handle_name) });
 
         const worker_name = try std.fmt.allocPrint(self.allocator, "http_serve_mc_worker_{d}", .{self.http_serve_multicore_worker_counter});
         self.http_serve_multicore_worker_counter += 1;
@@ -6857,18 +7017,39 @@ const Codegen = struct {
         const req_cinfo = self.classes.get(spec.req_class) orelse return error.Unsupported;
         const req_values = try self.allocator.alloc(Value, req_cinfo.fields.items.len);
         for (req_cinfo.fields.items, 0..) |f, i| {
-            const t = try self.newTemp();
             if (std.mem.eql(u8, f.name, "method")) {
-                try self.out.writer.print("    {s} =l call $nox_http_request_method(l {s}, l %req)\n", .{ t, RT_PARAM });
-                req_values[i] = .{ .text = t, .qtype = .l, .heap = .str };
+                // Faz HH.4: `handle` bu alanı HİÇ okumuyorsa, pahalı
+                // `nox_http_request_method` (retain — bkz. HH.2) YERİNE
+                // ucuz, PINNED-refcount'lu boş bir literal üretilir.
+                req_values[i] = if (spec.used_fields.method) blk: {
+                    const t = try self.newTemp();
+                    try self.out.writer.print("    {s} =l call $nox_http_request_method(l {s}, l %req)\n", .{ t, RT_PARAM });
+                    break :blk .{ .text = t, .qtype = .l, .heap = .str };
+                } else try self.emitStringLiteral("");
             } else if (std.mem.eql(u8, f.name, "target")) {
-                try self.out.writer.print("    {s} =l call $nox_http_request_target(l {s}, l %req)\n", .{ t, RT_PARAM });
-                req_values[i] = .{ .text = t, .qtype = .l, .heap = .str };
+                req_values[i] = if (spec.used_fields.target) blk: {
+                    const t = try self.newTemp();
+                    try self.out.writer.print("    {s} =l call $nox_http_request_target(l {s}, l %req)\n", .{ t, RT_PARAM });
+                    break :blk .{ .text = t, .qtype = .l, .heap = .str };
+                } else try self.emitStringLiteral("");
             } else if (std.mem.eql(u8, f.name, "body")) {
-                try self.out.writer.print("    {s} =l call $nox_http_request_body(l {s}, l %req)\n", .{ t, RT_PARAM });
-                req_values[i] = .{ .text = t, .qtype = .l, .heap = .str };
+                req_values[i] = if (spec.used_fields.body) blk: {
+                    const t = try self.newTemp();
+                    try self.out.writer.print("    {s} =l call $nox_http_request_body(l {s}, l %req)\n", .{ t, RT_PARAM });
+                    break :blk .{ .text = t, .qtype = .l, .heap = .str };
+                } else try self.emitStringLiteral("");
             } else if (std.mem.eql(u8, f.name, "headers")) {
-                try self.out.writer.print("    {s} =l call $nox_http_request_headers(l {s}, l %req)\n", .{ t, RT_PARAM });
+                // Faz HH.4: `handle` `req.headers`e HİÇ dokunmuyorsa,
+                // header'ları PARSE EDİP HER birini `retain` eden (bkz.
+                // HH.2) `nox_http_request_headers` YERİNE DOĞRUDAN boş bir
+                // `nox_dict_new` çağrısı üretilir — O(header sayısı) işi
+                // TAMAMEN atlanır.
+                const t = try self.newTemp();
+                if (spec.used_fields.headers) {
+                    try self.out.writer.print("    {s} =l call $nox_http_request_headers(l {s}, l %req)\n", .{ t, RT_PARAM });
+                } else {
+                    try self.out.writer.print("    {s} =l call $nox_dict_new(l {s}, w 1)\n", .{ t, RT_PARAM });
+                }
                 req_values[i] = .{ .text = t, .qtype = .l, .heap = .dict, .dict_info = f.info.dict_info };
             } else {
                 return error.Unsupported;

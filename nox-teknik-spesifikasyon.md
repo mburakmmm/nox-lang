@@ -10457,6 +10457,57 @@ golden test eklendi — DİNAMİK (salt literal DEĞİL, str birleştirmeyle
 inşa edilmiş) bir yanıt gövdesi VE BİRDEN FAZLA yanıt başlığının doğru
 geldiğini VE sızıntı/UAF OLMADIĞINI doğrular.
 
+### HH.4 (TAMAMLANDI) — `HttpRequest` alanlarının TEMBEL (yalnızca kullanılıyorsa) inşası
+
+**Kaynak:** darboğaz analizinin DÖRDÜNCÜ bulgusu — `genHttpServeWrapper`
+`handle`in `req` parametresinin HANGİ alanlarına GERÇEKTEN eriştiğine
+BAKMAKSIZIN `method`/`target`/`body`/`headers`in TAMAMINI KOŞULSUZ inşa
+ediyordu. Benchmark'taki `def handle(req): return HttpResponse(200, "ok",
+{"x":"x"})` gibi `req`i HİÇ referans ALMAYAN bir handler bile HH.2/HH.3
+SONRASI bile hâlâ (artık TEK kopya olsa da) `headers` İçin O(gelen header
+sayısı) bir dict inşası ÖDÜYORDU — hiçbiri handler'a hiç ULAŞMADIĞI HALDE.
+
+**Çözüm:** `compiler/codegen_qbe/codegen.zig`ye YENİ, KONSERVATİF bir AST
+taraması eklendi (`computeUsedRequestFields`/`visitStmtsForReqUsage`/
+`visitExprForReqUsage`) — `handle`in gövdesini (Codegen'e YENİ eklenen
+`func_defs: StringHashMapUnmanaged(ast.FuncDef)` TAM-gövde tablosu
+ÜZERİNDEN bulunur) TÜM 17 `ast.Expr` varyantı VE TÜM `ast.Stmt` varyantı
+İÇİN TAM (Zig'in KAPSAMLI switch ZORUNLULUĞU sayesinde `else` KULLANILMADAN
+— gelecekte eklenecek bir varyantı UNUTMAK derleme-zamanı hatası olur)
+dolaşır. **Güvenlik ilkesi (GG.2/GG.5/GG.9'un AYNI "kaçış ⇒ muhafazakâr"
+disiplini):** `req.<alan>` biçimindeki DOĞRUDAN erişimler İLGİLİ bayrağı
+işaretler; `req`in KENDİSİ ÇIPLAK bir tanımlayıcı olarak BAŞKA HERHANGİ bir
+bağlamda (başka bir fonksiyona argüman, bir atama, bir iç-içe `func_def`
+tarafından YAKALANMA, vb.) GÖRÜNÜRSE bu "kaçış" SAYILIR VE TÜM alanlar
+KONSERVATİF olarak kullanılmış İŞARETLENİR.
+
+`genHttpServeWrapper`, KULLANILMAYAN str alanlar (`method`/`target`/`body`)
+İçin pahalı `nox_http_request_*` çağrısı YERİNE `emitStringLiteral("")`
+(pinned-refcount, TAMAMEN BEDAVA) üretir; `headers` KULLANILMIYORSA
+`nox_http_request_headers` (O(header sayısı)) YERİNE DOĞRUDAN boş bir
+`nox_dict_new` çağrısı (O(1)) üretilir.
+
+**Break→red→fix ritüeli:** `markRequestField` (alan işaretleme) GEÇİCİ
+olarak devre dışı bırakılıp, YALNIZCA `req.method`i okuyan bir handler'a
+karşı GERÇEK bir POST isteği gönderildi — yanıt **YANLIŞ (boş) bir
+`method` değeri döndü** ("method-was:POST" BEKLENİRKEN "method-was:"
+geldi) — analiz devre dışı bırakılınca TEMBEL yolun (`emitStringLiteral("")`)
+YANLIŞLIKLA GERÇEKTEN KULLANILAN bir alan İçin de tetiklendiği KANITLANDI.
+`markRequestField` GERİ eklenince doğru değer geldi.
+
+**Doğrulama (ELLE, üç senaryo):** (1) `req`i HİÇ kullanmayan bir handler —
+üretilen `.ssa`da `nox_http_request_*`in HİÇBİRİ ÇAĞRILMIYOR, `headers`
+İçin YALNIZCA boş `nox_dict_new`; (2) yalnızca `req.method` kullanan bir
+handler — SADECE `nox_http_request_method` çağrılıyor; (3) `req`i BAŞKA
+bir fonksiyona geçiren (`describe(req)`) bir handler — TÜM alanlar
+DOĞRU şekilde geliyor (konservatif kaçış yolu). Üçü de sızıntı/UAF YOK.
+
+**Test:** `tests/compat/http_serve_golden_test.zig`e YENİ bir uçtan uca
+golden test eklendi — `req`i HİÇ referans ALMAYAN bir handler'a GERÇEK
+başlık/gövdeli bir istek gönderilip DOĞRU yanıt geldiği VE sızıntı/UAF
+OLMADIĞI doğrulanır (mevcut testlerin TAMAMI da — `req`in TÜM alanlarını
+kullanan senaryolar DAHİL — DEĞİŞİKLİK OLMADAN yeşil kalmaya DEVAM eder).
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
