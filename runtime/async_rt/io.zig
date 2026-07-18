@@ -57,6 +57,34 @@ pub fn nonBlockingRead(scheduler: *Scheduler, fd: posix.fd_t, buf: []u8) !usize 
     }
 }
 
+/// Faz HH.7 (bkz. nox-teknik-spesifikasyon.md §3.68): `nonBlockingRead`
+/// İLE AYNI, ama `fd` OKUNABİLİR olmadan `timeout_ms` GEÇERSE `error.
+/// Timeout` döner — okuma zaman aşımı/slowloris korumasının (bkz.
+/// `http_server.zig`nin `FiberReader.stream`i, HEM başlık HEM gövde
+/// okumasının TEK geçtiği nokta) temel taşı. **DİKKAT (kasıtlı, GÜVENLİ
+/// bir basitleştirme):** eşik `timeout_ms`, TOPLAM bekleme SÜRESİ DEĞİL,
+/// HER TEK `EAGAIN` sonrası YENİDEN başlayan bir penceredir — yani bir
+/// saldırganın veriyi `timeout_ms`DEN biraz KISA aralıklarla, TEK TEK
+/// baytlar halinde göndermesi TEORİK olarak toplam süreyi UZATABİLİR.
+/// Bu, slowloris'in KENDİSİNİN (baytları YAVAŞ AMA sürekli göndermek)
+/// tanımına ZATEN AYKIRI bir çaba GEREKTİRDİĞİNDEN (gerçek slowloris
+/// saldırıları veriyi HİÇ göndermez YA DA çok UZUN aralıklarla gönderir)
+/// v1 kapsamında KABUL EDİLEBİLİR bir sınırlama olarak BİLİNÇLİ bırakıldı
+/// — TOPLAM-süre tabanlı bir mutlak son tarih (deadline), her `EAGAIN`
+/// SONRASI KALAN süreyi YENİDEN hesaplamayı gerektirirdi (ek karmaşıklık,
+/// bu turun kapsamı DIŞINDA).
+pub fn nonBlockingReadWithTimeout(scheduler: *Scheduler, fd: posix.fd_t, buf: []u8, timeout_ms: u32) !usize {
+    setNonBlocking(fd);
+    while (true) {
+        const rc = std.c.read(fd, buf.ptr, buf.len);
+        if (rc >= 0) return @intCast(rc);
+        switch (posix.errno(rc)) {
+            .AGAIN => if (scheduler.suspendForIoOrTimeout(fd, .read, timeout_ms) == .timed_out) return error.Timeout,
+            else => |e| return posix.unexpectedErrno(e),
+        }
+    }
+}
+
 /// `buf`ı `fd`ye yazar — soket YAZILABİLİR olana kadar askıya alıp TEKRAR
 /// dener. Kısmi yazmalar (`rc < buf.len`) OLABİLİR — çağıran (`nox.http`in
 /// D.1'i) kalan baytlar İÇİN tekrar çağırmalıdır (POSIX `write`in normal

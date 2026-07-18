@@ -10593,6 +10593,84 @@ ARDIŞIK istek AYNI TCP bağlantısı üzerinden gönderildiğinde HER İKİSİN
 de sunulduğu (İLK yanıtta `connection: close` YOK, İKİNCİ yanıtta VAR)
 doğrulanır — TEK `accept()`in yeterli OLDUĞUNUN dolaylı ama KESİN kanıtı.
 
+### HH.7 (TAMAMLANDI) — Okuma zaman aşımı / slowloris koruması
+
+**Kaynak:** darboğaz raporunun YEDİNCİ (VE en büyük mimari risk taşıyan)
+bulgusu — HH.6 keep-alive'ı eklediğinden BERİ, bir istemcinin HİÇBİR
+şey göndermeden (ya da tek tek bayt SIZDIRARAK) bir bağlantıyı SONSUZA
+dek açık tutması bir fiber'ı SÜRESİZ olarak MEŞGUL ederdi (klasik
+slowloris DoS deseni) — `MAX_REQUESTS_PER_CONNECTION` (HH.6) yalnızca
+İSTEK SAYISINI sınırlar, TEK bir isteğin okunma SÜRESİNİ DEĞİL.
+
+**Çözüm — kapsam BİLİNÇLİ olarak DAR tutuldu:** `io_reactor.zig`ye
+`WaitCtx`/`WaitResult` tipleri VE `registerWithTimeout`/`cancel` eklendi
+— fd'nin KENDİSİ İLE bir zamanlayıcı AYNI ANDA register edilir, HANGİSİ
+ÖNCE ateşlerse fiber'ı uyandırır, DİĞERİ İPTAL edilir (`resolved` bayrağı
+İKİSİNİN AYNI `poll()` turunda BİRLİKTE ateşlemesi YARIŞINI önler).
+kqueue'da bu `EVFILT_TIMER`in `EVFILT_READ/WRITE` İLE AYNI `kevent()`
+çağrısında BİRLİKTE gönderilmesiyle (native `ev.filter` ayrımıyla)
+çözülür; epoll'da (`ev.data`nın filtre TÜRÜ TAŞIMAMASI YÜZÜNDEN) YENİ
+bir `timerfd_create`/`timerfd_settime` çifti + `WaitCtx` işaretçisinin
+ALT bitini (≥8 bayt hizalama SAYESİNDE HER ZAMAN sıfır) "bu bir zamanlayıcı
+mı" bayrağı OLARAK KULLANAN bir ETİKETLİ-işaretçi şemasıyla (`packCtx`/
+`unpackCtx`) çözülür. `Scheduler`e `suspendForIoOrTimeout` eklendi;
+`io.zig`ye `nonBlockingReadWithTimeout` eklendi (`nonBlockingRead` İLE
+AYNI EAGAIN-tekrar-dene döngüsü, ama `EAGAIN` SONRASI `suspendForIoOrTimeout`
+`.timed_out` dönerse `error.Timeout` fırlatır). `http_server.zig`nin
+`FiberReader.stream`i (HEM başlık HEM gövde okumasının TEK geçtiği nokta)
+YENİ `read_timeout_ms` parametresini KULLANIR — `READ_TIMEOUT_MS` (30000)
+aşılırsa bağlantı HİÇBİR yanıt YAZILMADAN sessizce kapatılır (Q.5'in
+"reddetmenin KENDİSİ ek kaynak tüketmemeli" ilkesiyle TUTARLI).
+
+**Bilinçli, GÜVENLİ bir basitleştirme (v1 kapsamında KABUL EDİLEBİLİR
+olarak BIRAKILDI):** `timeout_ms` eşiği TOPLAM bekleme SÜRESİ DEĞİL, HER
+TEK `EAGAIN` SONRASI YENİDEN başlayan bir penceredir — TOPLAM-süre tabanlı
+bir mutlak son tarih, HER `EAGAIN` SONRASI KALAN süreyi YENİDEN hesaplamayı
+GEREKTİRİRDİ (ek karmaşıklık). Bu, GERÇEK slowloris saldırılarının (veriyi
+HİÇ göndermemek YA DA çok UZUN aralıklarla göndermek) tanımına ZATEN
+AYKIRI bir çaba (baytları `timeout_ms`den KISA aralıklarla TEK TEK
+göndermek) GEREKTİRDİĞİNDEN kabul edilebilir bulundu.
+
+**Break→red→fix ritüeli:** `io.zig`nin `nonBlockingReadWithTimeout`ı
+GEÇİCİ olarak `.timed_out`u YOK SAYACAK şekilde değiştirildi (`error.
+Timeout` ASLA fırlatılmaz oldu) — YENİ eklenen "bağlantı hiçbir şey
+göndermezse zaman aşımıyla kapanır" testi ÇALIŞTIRILDI: `zig build test`
+süreci 25 saniyelik bir dış sınırla (`perl alarm`) SONLANDIRILDIKTAN
+SONRA BİLE ALTINDAKİ test ikili sürecinin (`ps`İLE doğrulandı) HÂLÂ
+ÇALIŞIR durumda KALDIĞI — yani test SÜRESİZ ASILI KALDIĞI — GÖZLEMLENDİ.
+Düzeltme GERİ getirilince `zig build test` (Debug) TEKRAR temiz geçti.
+
+**Çift platform doğrulama (R.1 disiplini İLE AYNI, dürüstçe belgelendi):**
+bu makine macOS/arm64 — `io_reactor.zig`nin epoll/`timerfd` yolu bu
+makinede HİÇ ÇALIŞTIRILAMAZ. `runtime/async_rt/scheduler.zig` VE
+`runtime/async_rt/io.zig` (İKİSİ de `fiber`/`io_reactor`ı TRANSİTİF
+olarak İÇERİR) `aarch64-linux-musl`e (statik, kayan glibc SÜRÜM
+uyumsuzluğu RİSKİNİ ELEYEN bir seçim) ÇAPRAZ derlenip (`zig test -target
+aarch64-linux-musl --test-no-exec`) NATIVE (emülasyonsuz — `uname -m` →
+`aarch64`, host'un KENDİ mimarisiyle AYNI, OrbStack'in Docker VM'i
+ÜZERİNDEN) bir `alpine:3.20`/aarch64 konteynerinde ÇALIŞTIRILDI: TÜM 10/11
+test (fiber/scheduler/io_reactor, İKİ YENİ `registerWithTimeout` testi
+DAHİL — `.timed_out` VE `.ready`+sessiz-iptal senaryolarının İKİSİ de)
+YEŞİL. **Bilinçli sınırlama (R.1'in KENDİ notuyla TUTARLI):** bu doğrulama
+`runtime/async_rt`i İZOLE OLARAK kapsar — `http_server.zig`nin TAM
+`noxrt_mod`u (hpy_bridge/wasm_bridge/json/crypto/regex shim'leriyle
+BİRLİKTE) Linux'ta ÇAPRAZ derleme/çalıştırma bu turun kapsamı DIŞINDA
+bırakıldı (R.3'ün "tam paket" doğrulamasıyla AYNI kapsam sınırı) — ama
+`http_server.zig`nin HH.7 KATKISI (`read_timeout_ms`i reaktöre TAŞIMAK)
+platform-BAĞIMSIZ bir ÇAĞRI-SİTESİdir, ASIL platform-özgü risk (epoll/
+timerfd'nin KENDİSİ) YUKARIDAKİ testlerle ZATEN TAMAMEN kanıtlanmıştır.
+macOS'ta `zig build test` (Debug+ReleaseFast) DEĞİŞMEDEN yeşil.
+
+**Test:** `runtime/stdlib_shims/http_server.zig`e İKİ yeni uçtan uca
+Zig testi eklendi — (a) bir istemci `Connection` HİÇ göndermeden 100ms'lik
+KISA bir zaman aşımıyla beklediğinde sunucunun bağlantıyı sessizce
+kapattığı VE handler'ın HİÇ çağrılmadığı, (b) istemci 40ms geciktirip
+100ms'lik pencere İÇİNDE göndermeyi TAMAMLADIĞINDA isteğin YANLIŞ-POZİTİF
+OLMADAN normal işlendiği (regresyon KORUYUCUSU). `io_reactor.zig`ye İKİ
+yeni birim testi eklendi (yukarıdaki Docker doğrulamasında da ÇALIŞTIRILDI).
+
+**Faz HH (HH.1-HH.7) BURADA TAMAMEN KAPANIR.**
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

@@ -110,10 +110,29 @@ pub const Scheduler = struct {
     /// kqueue yalnızca "hazır" der, işlemin KENDİSİNİ YAPMAZ.
     pub fn suspendForIo(self: *Scheduler, fd: std.posix.fd_t, filter: io_reactor.Filter) void {
         const fiber = self.current.?;
-        self.reactor.register(fd, filter, fiber) catch @panic("kqueue register basarisiz");
+        var ctx: io_reactor.WaitCtx = .{ .fiber = fiber };
+        self.reactor.register(fd, filter, &ctx) catch @panic("kqueue register basarisiz");
         self.waiting_on_io += 1;
         fiber.yield();
         self.waiting_on_io -= 1;
+    }
+
+    /// Faz HH.7 (bkz. nox-teknik-spesifikasyon.md §3.68): `suspendForIo`
+    /// İLE AYNI, ama `fd` `filter` yönünde hazır OLANA KADAR **VEYA**
+    /// `timeout_ms` GEÇENE KADAR (HANGİSİ ÖNCE olursa) bekler — bkz.
+    /// `io_reactor.zig`nin `registerWithTimeout`i. `ctx`, BU fonksiyonun
+    /// KENDİ yığın çerçevesinde (fiber askıya ALINDIĞI SÜRECE CANLI kalan
+    /// bellek) yaşar — `reactor.poll()`, fiber TEKRAR ÇALIŞTIRILMADAN ÖNCE
+    /// `ctx.result`ı yazar, bu yüzden `fiber.yield()`DEN DÖNÜLDÜĞÜNDE
+    /// sonuç ZATEN hazırdır.
+    pub fn suspendForIoOrTimeout(self: *Scheduler, fd: std.posix.fd_t, filter: io_reactor.Filter, timeout_ms: u32) io_reactor.WaitResult {
+        const fiber = self.current.?;
+        var ctx: io_reactor.WaitCtx = .{ .fiber = fiber };
+        self.reactor.registerWithTimeout(fd, filter, timeout_ms, &ctx) catch @panic("kqueue register basarisiz");
+        self.waiting_on_io += 1;
+        fiber.yield();
+        self.waiting_on_io -= 1;
+        return ctx.result;
     }
 
     pub const RunError = error{Deadlock};

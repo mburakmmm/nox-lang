@@ -688,6 +688,29 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   eklenince temiz geçti. Yeni bir uçtan uca golden test, `max_
   connections=1` OLMASINA RAĞMEN `Connection: close` göndermeden İKİ
   ardışık isteğin AYNI bağlantı üzerinden sunulduğunu doğrular.
+- **Okuma zaman aşımı / slowloris koruması** (Faz HH.7, bkz. nox-teknik-
+  spesifikasyon.md §3.68 — Faz HH bu maddeyle TAMAMEN kapanır).
+  `io_reactor.zig`ye `registerWithTimeout`/`cancel` eklendi — bir fd'nin
+  KENDİSİ İLE bir zamanlayıcı AYNI ANDA register edilir, HANGİSİ ÖNCE
+  ateşlerse fiber'ı uyandırır, DİĞERİ iptal edilir (kqueue'da native
+  `EVFILT_TIMER`, epoll'da YENİ `timerfd_create`/`timerfd_settime` + bir
+  ETİKETLİ-işaretçi şeması — `epoll_event`in filtre TÜRÜ TAŞIMAMASI
+  yüzünden). `Scheduler.suspendForIoOrTimeout` VE `io.
+  nonBlockingReadWithTimeout` eklendi; `http_server.zig`nin
+  `FiberReader.stream`i (HEM başlık HEM gövde okumasının TEK geçtiği
+  nokta) 30 saniyelik bir `READ_TIMEOUT_MS` KULLANIR — aşılırsa bağlantı
+  HİÇBİR yanıt yazılmadan sessizce kapatılır. **Bilinçli basitleştirme:**
+  eşik TOPLAM süre DEĞİL, HER `EAGAIN` SONRASI YENİDEN başlayan bir
+  penceredir — GERÇEK slowloris'in (veri hiç/çok seyrek göndermek)
+  tanımına ZATEN aykırı bir çaba gerektirdiğinden v1 İçin kabul edilebilir
+  bulundu. Break→red→fix: zaman aşımı kontrolü GEÇİCİ devre dışı
+  bırakılınca YENİ eklenen "hiçbir şey göndermeyen bağlantı" testi
+  `zig build test`i (25s dış sınırla) SONSUZA dek ASILI bıraktı (`ps` İLE
+  doğrulandı); geri eklenince temiz geçti. **Çift platform doğrulama**
+  (R.1 disiplini): `scheduler.zig`/`io.zig` `aarch64-linux-musl`e ÇAPRAZ
+  derlenip NATIVE (emülasyonsuz, OrbStack) bir aarch64 Docker
+  konteynerinde çalıştırıldı — TÜM testler (İKİ YENİ `registerWithTimeout`
+  testi DAHİL) yeşil; macOS'ta değişmeden yeşil.
 
 ### Düzeltildi
 - **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`

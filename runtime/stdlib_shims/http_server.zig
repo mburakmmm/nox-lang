@@ -49,8 +49,16 @@ const fiber_mod = @import("../async_rt/fiber.zig");
 const http_client = @import("http_client.zig");
 const str_mod = @import("../str.zig");
 
-fn rawRead(scheduler: ?*scheduler_mod.Scheduler, fd: posix.fd_t, buf: []u8) !usize {
-    if (scheduler) |s| return io_mod.nonBlockingRead(s, fd, buf);
+/// Faz HH.7 (bkz. nox-teknik-spesifikasyon.md §3.68): okuma zaman aşımı —
+/// bir bağlantı BAŞLIK/GÖVDE göndermeden bu süreden UZUN askıda kalırsa
+/// (slowloris tarzı) bağlantı SESSİZCE kapatılır (bkz. `rawRead`in `Timeout`
+/// dalı, `FiberReader.stream` üzerinden `receiveHead`/gövde döngüsüne
+/// GENEL bir okuma hatası olarak YAYILIR — Q.5'in "reddetmenin KENDİSİ ek
+/// kaynak tüketmemeli" ilkesiyle TUTARLI, hiçbir HTTP yanıtı YAZILMAZ).
+const READ_TIMEOUT_MS: u32 = 30_000;
+
+fn rawRead(scheduler: ?*scheduler_mod.Scheduler, fd: posix.fd_t, buf: []u8, read_timeout_ms: u32) !usize {
+    if (scheduler) |s| return io_mod.nonBlockingReadWithTimeout(s, fd, buf, read_timeout_ms);
     while (true) {
         const rc = std.c.read(fd, buf.ptr, buf.len);
         if (rc >= 0) return @intCast(rc);
@@ -87,19 +95,21 @@ const FiberReader = struct {
     interface: std.Io.Reader,
     fd: posix.fd_t,
     scheduler: ?*scheduler_mod.Scheduler,
+    read_timeout_ms: u32,
 
-    fn init(fd: posix.fd_t, scheduler: ?*scheduler_mod.Scheduler, buffer: []u8) FiberReader {
+    fn init(fd: posix.fd_t, scheduler: ?*scheduler_mod.Scheduler, buffer: []u8, read_timeout_ms: u32) FiberReader {
         return .{
             .interface = .{ .vtable = &.{ .stream = stream }, .buffer = buffer, .seek = 0, .end = 0 },
             .fd = fd,
             .scheduler = scheduler,
+            .read_timeout_ms = read_timeout_ms,
         };
     }
 
     fn stream(io_r: *std.Io.Reader, io_w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
         const self: *FiberReader = @alignCast(@fieldParentPtr("interface", io_r));
         const dest = limit.slice(try io_w.writableSliceGreedy(1));
-        const n = rawRead(self.scheduler, self.fd, dest) catch return error.ReadFailed;
+        const n = rawRead(self.scheduler, self.fd, dest, self.read_timeout_ms) catch return error.ReadFailed;
         if (n == 0) return error.EndOfStream;
         io_w.advance(n);
         return n;
@@ -302,6 +312,11 @@ const ConnCtx = struct {
     handler_ctx: ?*anyopaque,
     max_body_bytes: usize,
     active_connections: *usize,
+    /// Faz HH.7: bkz. `READ_TIMEOUT_MS`in belge notu — `serveImpl`nin
+    /// `max_body_bytes`/`max_concurrent`İYLE AYNI "gerçekçi varsayılanı
+    /// BEKLEMEDEN testlerin KÜÇÜK/HIZLI değerlerle sınırı EGZERSİZ
+    /// edebilmesi" gerekçesiyle PARAMETRE olarak taşınır.
+    read_timeout_ms: u32,
 };
 
 // Faz HH.2 (bkz. nox-teknik-spesifikasyon.md §3.68): `method`/`target`/
@@ -446,7 +461,7 @@ fn connectionEntry(arg: *anyopaque) void {
 
     var read_buf: [4096]u8 = undefined;
     var write_buf: [4096]u8 = undefined;
-    var fiber_reader = FiberReader.init(conn.fd, scheduler, &read_buf);
+    var fiber_reader = FiberReader.init(conn.fd, scheduler, &read_buf, conn.read_timeout_ms);
     var fiber_writer = FiberWriter.init(conn.fd, scheduler, &write_buf);
 
     // Faz HH.6: `std.http.Server` ZATEN "aynı bağlantıda birden çok
@@ -587,17 +602,17 @@ fn connectionEntry(arg: *anyopaque) void {
 /// pozitifse TAM O SAYIDA bağlantı kabul edilince döner (bu dosyanın KENDİ
 /// testinin deterministik olması İÇİN gerekli).
 export fn nox_http_serve_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, max_connections: i64) callconv(.c) void {
-    serveImpl(rt, server, handler, handler_ctx, max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES);
+    serveImpl(rt, server, handler, handler_ctx, max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS);
 }
 
-/// `nox_http_serve_raw`nin GERÇEK gövdesi — `max_concurrent`/`max_body_bytes`
-/// PARAMETRE olarak ALINIR (dışa açık C ABI'nin İMZASINI DEĞİŞTİRMEDEN,
-/// bkz. `genHttpServe`'in `nox_http_serve_raw`ı SABİT 5-argümanlı imzayla
-/// çağırması) — bu, `MAX_REQUEST_BODY_BYTES`/`DEFAULT_MAX_CONCURRENT_
-/// CONNECTIONS` gibi GERÇEKÇİ (büyük) varsayılanları BEKLEMEDEN, testlerin
-/// KÜÇÜK/HIZLI değerlerle sınırları GERÇEKTEN EGZERSİZ edebilmesi İÇİNDİR
-/// (bkz. aşağıdaki testler).
-fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, max_connections: i64, max_concurrent: usize, max_body_bytes: usize) void {
+/// `nox_http_serve_raw`nin GERÇEK gövdesi — `max_concurrent`/`max_body_bytes`/
+/// `read_timeout_ms` PARAMETRE olarak ALINIR (dışa açık C ABI'nin İMZASINI
+/// DEĞİŞTİRMEDEN, bkz. `genHttpServe`'in `nox_http_serve_raw`ı SABİT
+/// 5-argümanlı imzayla çağırması) — bu, `MAX_REQUEST_BODY_BYTES`/`DEFAULT_
+/// MAX_CONCURRENT_CONNECTIONS`/`READ_TIMEOUT_MS` gibi GERÇEKÇİ (büyük)
+/// varsayılanları BEKLEMEDEN, testlerin KÜÇÜK/HIZLI değerlerle sınırları
+/// GERÇEKTEN EGZERSİZ edebilmesi İÇİNDİR (bkz. aşağıdaki testler).
+fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, max_connections: i64, max_concurrent: usize, max_body_bytes: usize, read_timeout_ms: u32) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const h: *ServerHandle = @ptrCast(@alignCast(server orelse return));
     const gpa = state.allocator();
@@ -638,6 +653,7 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
             .handler_ctx = handler_ctx,
             .max_body_bytes = max_body_bytes,
             .active_connections = &active_connections,
+            .read_timeout_ms = read_timeout_ms,
         };
         // `connectionEntry`nin (fiber İÇİNDE YA DA senkron çağrıldığında
         // AYNI şekilde) `defer conn.active_connections.* -= 1`i bunu HER
@@ -757,11 +773,12 @@ const ServeArgs = struct {
     max_connections: i64,
     max_concurrent: usize = DEFAULT_MAX_CONCURRENT_CONNECTIONS,
     max_body_bytes: usize = MAX_REQUEST_BODY_BYTES,
+    read_timeout_ms: u32 = READ_TIMEOUT_MS,
 };
 
 fn testServeEntry(arg: *anyopaque) callconv(.c) i64 {
     const args: *ServeArgs = @ptrCast(@alignCast(arg));
-    serveImpl(args.rt, args.server, TestHandlerLog.handle, null, args.max_connections, args.max_concurrent, args.max_body_bytes);
+    serveImpl(args.rt, args.server, TestHandlerLog.handle, null, args.max_connections, args.max_concurrent, args.max_body_bytes, args.read_timeout_ms);
     return 0;
 }
 
@@ -906,7 +923,7 @@ const ThreadSafeCounter = struct {
 };
 
 fn sharedFdServeEntry(args: *ServeArgs) void {
-    serveImpl(args.rt, args.server, ThreadSafeCounter.handle, args.rt, args.max_connections, args.max_concurrent, args.max_body_bytes);
+    serveImpl(args.rt, args.server, ThreadSafeCounter.handle, args.rt, args.max_connections, args.max_concurrent, args.max_body_bytes, args.read_timeout_ms);
 }
 
 // Faz DD.1 — `owns_fd`in KENDİSİNİ (bkz. `ServerHandle`in belge notu),
@@ -1019,7 +1036,7 @@ test "Faz Q.5: govde boyutu siniri asilirsa 413 Payload Too Large doner, handler
         }
     }.run, .{ port, &resp_buf, &resp_len });
 
-    serveImpl(rt, server, TestHandlerLog.handle, null, 1, DEFAULT_MAX_CONCURRENT_CONNECTIONS, 16);
+    serveImpl(rt, server, TestHandlerLog.handle, null, 1, DEFAULT_MAX_CONCURRENT_CONNECTIONS, 16, READ_TIMEOUT_MS);
     client_thread.join();
 
     try std.testing.expectEqual(@as(usize, 0), TestHandlerLog.log.items.len);
@@ -1086,4 +1103,89 @@ test "Faz Q.5: esizamanli baglanti siniri asilinca fazla baglanti hicbir HTTP ya
     // `receiveHead`e bile ULAŞAMADAN reddedildi.
     try std.testing.expectEqual(@as(usize, 1), TestHandlerLog.log.items.len);
     try std.testing.expectEqualStrings("slow tamamlandi", TestHandlerLog.log.items[0]);
+}
+
+// Faz HH.7 (bkz. nox-teknik-spesifikasyon.md §3.68): okuma zaman aşımı —
+// GERÇEK (30 saniyelik) varsayılanı BEKLEMEDEN test edebilmek İçin
+// `ServeArgs.read_timeout_ms` (bkz. onun belge notu, `max_body_bytes`
+// testinin AYNI "küçük/hızlı değer" gerekçesi) KISA bir değere (100ms)
+// ayarlanır.
+
+test "Faz HH.7: baglanti HICBIR sey gondermezse okuma zaman asimiyla sessizce kapatilir, handler HIC CAGRILMAZ" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    bridge.nox_async_init(rt);
+    defer bridge.nox_async_deinit(rt);
+
+    const server = nox_http_server_listen(rt, 0) orelse return error.ListenFailed;
+    defer nox_http_server_close(rt, server);
+    const port: u16 = @intCast(nox_http_server_port(server));
+
+    TestHandlerLog.log.clearRetainingCapacity();
+    TestHandlerLog.rt_ptr = rt;
+
+    // İstemci bağlanır, HİÇBİR ŞEY GÖNDERMEZ — sunucunun `receiveHead`i
+    // (dolayısıyla `FiberReader.stream`i) EAGAIN alıp `suspendForIoOrTimeout`a
+    // düşmesini ZORLAR (D.0'ın "sıra kanıtı" testleriyle AYNI teknik) —
+    // KISA zaman aşımı (100ms) GERÇEKTEN ateşlemek ZORUNDADIR.
+    var timed_out: bool = false;
+    const client_thread = try std.Thread.spawn(.{}, struct {
+        fn run(p: u16, out: *bool) void {
+            const fd = testConnect(p) catch return;
+            defer _ = std.c.close(fd);
+            var buf: [16]u8 = undefined;
+            const n = std.c.read(fd, &buf, buf.len);
+            out.* = (n <= 0);
+        }
+    }.run, .{ port, &timed_out });
+
+    var args: ServeArgs = .{ .rt = rt, .server = server, .max_connections = 1, .read_timeout_ms = 100 };
+    const serve_task = bridge.nox_async_spawn(rt, testServeEntry, &args).?;
+    try std.testing.expectEqual(@as(i32, 0), bridge.nox_async_run_to_completion(rt));
+    _ = bridge.nox_async_await(rt, serve_task);
+    bridge.nox_async_destroy_task(rt, serve_task);
+
+    client_thread.join();
+    // Bağlantı HİÇBİR HTTP yanıtı ALMADAN (sıfır bayt okuyarak) kapanmalı
+    // — reddetmenin KENDİSİ ek kaynak tüketmemeli (bkz. Q.5'in AYNI ilkesi).
+    try std.testing.expect(timed_out);
+    try std.testing.expectEqual(@as(usize, 0), TestHandlerLog.log.items.len);
+}
+
+test "Faz HH.7: zaman asimi ICINDE tamamlanan normal bir istek YANLIS-POZITIF olmadan islenir" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    bridge.nox_async_init(rt);
+    defer bridge.nox_async_deinit(rt);
+
+    const server = nox_http_server_listen(rt, 0) orelse return error.ListenFailed;
+    defer nox_http_server_close(rt, server);
+    const port: u16 = @intCast(nox_http_server_port(server));
+
+    TestHandlerLog.log.clearRetainingCapacity();
+    TestHandlerLog.rt_ptr = rt;
+
+    // İstemci bağlanır, KISA bir gecikmeyle (zaman aşımının İÇİNDE, 100ms
+    // sınırın YARISI kadar) isteği gönderir — bu, YANLIŞ-POZİTİF (normal,
+    // biraz gecikmeli trafiğin de zaman aşımına UĞRAMASI) OLMADIĞININ kanıtı.
+    const client_thread = try std.Thread.spawn(.{}, struct {
+        fn run(p: u16) void {
+            const fd = testConnect(p) catch return;
+            defer _ = std.c.close(fd);
+            const ts: posix.timespec = .{ .sec = 0, .nsec = 40 * std.time.ns_per_ms };
+            _ = std.c.nanosleep(&ts, null);
+            testSendGet(fd, "/normal");
+            testReadAll(fd);
+        }
+    }.run, .{port});
+
+    var args: ServeArgs = .{ .rt = rt, .server = server, .max_connections = 1, .read_timeout_ms = 100 };
+    const serve_task = bridge.nox_async_spawn(rt, testServeEntry, &args).?;
+    try std.testing.expectEqual(@as(i32, 0), bridge.nox_async_run_to_completion(rt));
+    _ = bridge.nox_async_await(rt, serve_task);
+    bridge.nox_async_destroy_task(rt, serve_task);
+
+    client_thread.join();
+    try std.testing.expectEqual(@as(usize, 1), TestHandlerLog.log.items.len);
+    try std.testing.expectEqualStrings("fast tamamlandi", TestHandlerLog.log.items[0]);
 }
