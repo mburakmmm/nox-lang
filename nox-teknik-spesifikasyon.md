@@ -10330,6 +10330,40 @@ DEĞİŞİKLİĞİ YAPILMADI.
 
 **Faz GG (GG.1-GG.10) BURADA TAMAMEN KAPANIR.**
 
+### HH.1 (TAMAMLANDI) — Accept backlog artırımı; `ConnCtx` havuzu DENENDİ, GERİ ALINDI
+
+**Kaynak:** `nox.http` darboğaz analizinin (kullanıcı talebiyle yapılan
+uçtan uca inceleme) İLK bulgusu — `runtime/stdlib_shims/http_server.zig`nin
+`bindAndListen`i `std.c.listen(fd, 128)` kullanıyordu, `benchmarks/
+http_compare/zig_server.zig`nin KARŞILAŞTIRMA sunucusu İSE ZATEN `1024`
+kullanıyordu — Nox KENDİSİ dezavantajlı bir backlog İLE ölçülüyordu.
+Backlog `1024`e çıkarıldı.
+
+**`ConnCtx` havuzu DENENDİ, GERÇEK bir kullanım-sonrası-serbest-bırakma
+tuzağı BULUNUP GERİ ALINDI:** `Scheduler.stack_pool`/`acquireStack`/
+`releaseStack`İLE AYNI "geri dönüştür" desenini `ConnCtx` İçin de
+uygulama girişimi, ELLE yazılan bir reprodüksiyonla (bkz. proje geçmişi
+— iki eşzamanlı bağlantılı bir `.nox` sunucusu, Debug modunda çalıştırıldı)
+GERÇEK bir hata ORTAYA ÇIKARDI: `serveImpl` (fiber yolunda) `max_connections`
+bağlantıyı KABUL EDER etmez DÖNER — henüz TAMAMLANMAMIŞ bağlantı fiber'ları
+(ör. GECİKMELİ bir istemci) zamanlayıcı TARAFINDAN `serveImpl`nin KENDİ
+yığın çerçevesi GERİ DÖNDÜKTEN ÇOK SONRA çalıştırılmaya devam eder. Havuz
+`serveImpl`nin yerel bir değişkeni OLARAK tasarlanmıştı — bu, GERİ
+DÖNÜLDÜKTEN SONRA hâlâ çalışan bir fiber'ın temizlik `defer`inin SALLANAN
+(dangling) bir yığın işaretçisine YAZMASINA yol açardı (`zig build test`nin
+İKİ eşzamanlı bağlantılı golden testinde `term == .exited` başarısızlığı
+OLARAK YAKALANDI — Debug modunda TUTARLI, ReleaseFast'ta `smp_allocator`ın
+sessizce TOLERE ETMESİ yüzünden GİZLENEN bir bozulma).
+
+`ConnCtx` KÜÇÜK bir struct (birkaç işaretçi/`usize`) olduğundan, havuzu
+`Scheduler`e taşıyıp (bu, `http_server.zig`nin bugün `scheduler.zig`ye
+BAĞIMLI OLDUĞU yönü TERSİNE çevirip modüller arası YENİ bir bağımlılık
+yaratırdı) bu riski GİDERMEYE DEĞMEDİ — **kod deposundan GERİ ALINDI**,
+`gpa.create`/`gpa.destroy` KORUNDU. AGENTS.md'nin "measure, don't assume"
+disiplininin BİR UZANTISI: bir optimizasyon KENDİ karmaşıklığının/riskinin
+KARŞILIĞINI VERMİYORSA (burada: yığın-ömrü güvenliği İÇİN modüller arası
+bağımlılık gerektiriyor, KÜÇÜK bir struct İçin), TERK EDİLİR.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

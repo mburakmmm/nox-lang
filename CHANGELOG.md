@@ -575,6 +575,23 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   kazandığı performansın ÖNEMLİ bir kısmını SIFIRLARDI, ÖLÇÜLMÜŞ HİÇBİR
   fayda OLMADAN. **Hiçbir kod yazılmadı.** Faz GG (GG.1-GG.10) BURADA
   TAMAMEN KAPANIR.
+- **Accept backlog artırımı (128→1024)** (Faz HH.1, bkz. nox-teknik-
+  spesifikasyon.md §3.68). `nox.http.serve`/`serve_multicore`nin
+  `bindAndListen`i, `benchmarks/http_compare/zig_server.zig`nin
+  karşılaştırma sunucusunun ZATEN kullandığı `1024`e YÜKSELTİLDİ — Nox
+  KENDİSİ dezavantajlı bir backlog İLE ölçülüyordu. **Değerlendirildi,
+  GERİ ALINDI: `ConnCtx` havuzu.** `Scheduler.stack_pool` desenini
+  `ConnCtx`e de uygulama girişimi, ELLE yazılan bir reprodüksiyonla GERÇEK
+  bir kullanım-sonrası-serbest-bırakma tuzağı ORTAYA ÇIKARDI: `serveImpl`
+  (fiber yolunda) `max_connections` bağlantıyı kabul EDER etmez döner —
+  henüz tamamlanmamış bağlantı fiber'ları zamanlayıcı tarafından bu YIĞIN
+  ÇERÇEVESİ geri döndükten ÇOK SONRA çalıştırılabilir; havuz `serveImpl`nin
+  yerel değişkeni OLARAK tasarlanmıştı, bu da geç biten bir fiber'ın
+  temizlik `defer`inin SALLANAN bir işaretçiye yazmasına yol AÇARDI
+  (`zig build test`nin İKİ eşzamanlı bağlantılı golden testinde Debug
+  modunda TUTARLI şekilde YAKALANDI). `ConnCtx` küçük bir struct olduğundan
+  havuzu `Scheduler`e taşımaya (yeni modüller arası bağımlılık) DEĞMEDİ —
+  **kod deposundan geri alındı**, `gpa.create`/`gpa.destroy` korundu.
 
 ### Düzeltildi
 - **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`

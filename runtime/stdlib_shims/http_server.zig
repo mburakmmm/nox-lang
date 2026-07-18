@@ -167,7 +167,14 @@ fn bindAndListen(port: i64) ?posix.fd_t {
         _ = std.c.close(fd);
         return null;
     }
-    if (std.c.listen(fd, 128) != 0) {
+    // Faz HH.1 (bkz. nox-teknik-spesifikasyon.md §3.6X): ÖNCEDEN 128 —
+    // `benchmarks/http_compare/zig_server.zig`nin KARŞILAŞTIRMA sunucusu
+    // ZATEN 1024 kullanıyordu, Nox'un KENDİSİ dezavantajlı bir backlog İLE
+    // ölçülüyordu. Düşük backlog + `serve_multicore`nin N iş parçacığının
+    // AYNI fd üzerinde thundering-herd `accept()`i (bkz. `nox_http_listen_fd`nin
+    // belge notu) BİRLİKTE, yüksek eşzamanlılıkta gözlemlenen bağlantı
+    // reddi/soket hatalarının BİR bileşenidir.
+    if (std.c.listen(fd, 1024) != 0) {
         _ = std.c.close(fd);
         return null;
     }
@@ -270,6 +277,17 @@ pub const HandlerFn = *const fn (?*anyopaque, ?*anyopaque) callconv(.c) ?*anyopa
 const MAX_REQUEST_BODY_BYTES: usize = 10 * 1024 * 1024;
 const DEFAULT_MAX_CONCURRENT_CONNECTIONS: usize = 4096;
 
+// Faz HH.1: bir `ConnCtx` havuzu (Scheduler.stack_pool'un AYNI "geri
+// dönüştür" deseni) DENENDİ, ama GERÇEK bir kullanım-sonrası-serbest-
+// bırakma tuzağı bulundu: `serveImpl` (fiber yolunda) `max_connections`
+// bağlantıyı KABUL EDER etmez DÖNER — henüz TAMAMLANMAMIŞ bağlantı
+// fiber'ları (ör. "yavaş" bir istemci) `serveImpl`nin KENDİ yığın çerçevesi
+// GERİ DÖNDÜKTEN ÇOK SONRA (zamanlayıcı onları HÂLÂ çalıştırırken)
+// tamamlanabilir — havuz `serveImpl`nin yerel bir değişkeni OLSAYDI, o
+// GERİ DÖNDÜKTEN sonra fiber'ın `defer`i SALLANAN bir işaretçiye yazardı.
+// `ConnCtx` KÜÇÜK bir struct (birkaç işaretçi/usize) olduğundan, bu riski
+// (havuzu `Scheduler`e taşıyıp modüller arası bağımlılık YARATMAK yerine)
+// üstlenmeye DEĞMEDİ — `gpa.create`/`gpa.destroy` KORUNDU.
 const ConnCtx = struct {
     allocator: std.mem.Allocator,
     fd: posix.fd_t,
