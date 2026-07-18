@@ -10412,6 +10412,51 @@ doğrulama sırasında `tests/compat/http_serve_multicore_golden_test.zig`nin
 (`git stash` İLE HH serisinden BAĞIMSIZ olduğu doğrulanan) bir "flaky"
 davranışı GÖZLEMLENDİ (Debug modunda TUTARLI yeşil).
 
+### HH.3 (TAMAMLANDI) — Yanıt tarafındaki çift kopyalamayı gider (kopyala → retain)
+
+**Kaynak:** darboğaz analizinin ÜÇÜNCÜ bulgusu — `nox_http_response_new`
+(`runtime/stdlib_shims/http_server.zig`), `HttpResponse.body`/`.headers`
+ZATEN Nox'un ARC-sahipli `str`/`dict`i OLDUĞU HALDE `gpa.dupe`/`http_client.
+copyHeaders` İLE (BAĞIMSIZ bir kopya çıkarmak İçin) YENİDEN kopyalıyordu —
+`{"x":"x"}` gibi trivial bir yanıt bile gövde+HER header İçin fazladan bir
+kopya ödüyordu.
+
+**Çözüm:** `ServerResponse.body` ARTIK `[]u8` (kopya) DEĞİL `?[*:0]u8`
+(ARC-sahipli, `retain` edilen işaretçi); `nox_http_response_new` `body`yi
+`nox_rc_retain` eder, `headers`i İSE YENİ bir `retainHeaders` fonksiyonu
+İLE (HER isim/değeri `retain` edip `[]std.http.Header`e aktarır) işler.
+**`http_client.copyHeaders`in KENDİSİ DEĞİŞTİRİLMEDİ** — o fonksiyon
+İSTEMCİ kabuğunun arka plan iş parçacığına GEÇİŞ İÇİN KASITLI olarak
+BAĞIMSIZ bir kopya çıkarır (ARC işlemleri TEK bir "sahip" iş parçacığına
+KISITLIDIR, bkz. `asap.arcOwnerThreadOk`) — `retainHeaders` İSE YALNIZCA
+sunucu yolunda, fiber'ın ÇALIŞTIĞI AYNI (ARC sahibi) iş parçacığında
+çağrılır, cross-thread bir paylaşım SÖZ KONUSU DEĞİLDİR. `destroyResponse`
+ARTIK `gpa.free` YERİNE `nox_str_release`/dict alanları İçin AYNI deseni
+kullanır.
+
+**Bu dosyanın KENDİ birim testleri** (`nox_http_response_new(rt, 200, "hi",
+null)` gibi DÜZ C literal'leriyle çağıranlar — Zig string literal'leri
+Nox'un "pinned refcount" ARC başlığını TAŞIMAZ, bkz. `emitStringLiteral`nin
+notu) `http_client.dupeToNoxStr` İLE ÖNCE gerçek bir ARC dizesi inşa edip
+işini bitirince KENDİ referansını `nox_str_release` eden bir desene
+güncellendi (`connectionEntry`nin HH.2'de KURDUĞU AYNI "retain-sonra-
+kendi-referansını-serbest-bırak" disiplini).
+
+**Break→red→fix ritüeli:** `nox_http_response_new`deki `body` `retain`i
+GEÇİCİ olarak KALDIRILIP, DİNAMİK olarak inşa edilmiş (`req.body`+literal
+birleştirme) bir yanıt gövdesi döndüren bir handler'a karşı GERÇEK bir
+istek gönderildi — `DebugAllocator` **"Double free detected"**i TAM bir
+yığın izİYLE yakaladı: İLK serbest bırakma `$HttpResponse_release`
+(wrapper'ın, `__init__`in KENDİ retain'ini DENGELEMEK İçin yaptığı
+`nox_str_free_now`), İKİNCİ serbest bırakma `destroyResponse`nin
+`nox_str_release`i — TAM OLARAK öngörülen çifte serbest bırakma senaryosu.
+`retain` GERİ eklenince temiz (sızıntı/hata YOK) çalıştı.
+
+**Test:** `tests/compat/http_serve_golden_test.zig`e YENİ bir uçtan uca
+golden test eklendi — DİNAMİK (salt literal DEĞİL, str birleştirmeyle
+inşa edilmiş) bir yanıt gövdesi VE BİRDEN FAZLA yanıt başlığının doğru
+geldiğini VE sızıntı/UAF OLMADIĞINI doğrular.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

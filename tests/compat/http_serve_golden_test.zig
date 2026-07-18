@@ -331,3 +331,91 @@ test "nox.http.serve: HttpRequest'in DÖRT alanı da (method/target/body/headers
     try std.testing.expectEqualStrings("POST /yol gövde-verisi baslik-degeri\n", stdout_data);
     try std.testing.expect(std.mem.indexOf(u8, resp_buf[0..resp_len], "echo:gövde-verisi") != null);
 }
+
+// Faz HH.3 (bkz. nox-teknik-spesifikasyon.md §3.68): `nox_http_response_
+// new`in ARTIK `body`/`headers`i kopyalamayıp `retain` ETTİĞİ yeni yolu,
+// DİNAMİK olarak inşa edilmiş (str birleştirme İLE, salt literal DEĞİL —
+// pinned-refcount kısayolunu ATLAYAN) bir yanıt gövdesi VE BİRDEN FAZLA
+// yanıt başlığı İLE uçtan uca doğrular.
+test "nox.http.serve: yanit govdesi/basliklari DINAMIK insa edildiginde de dogru gelir, sizinti/UAF yok" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const port = try probeFreePort();
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const source = try std.fmt.allocPrint(a,
+        \\import nox.http
+        \\
+        \\def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    govde: str = "yanki:" + req.body
+        \\    return nox_http_HttpResponse(200, govde, {{"birinci": "1-degeri", "ikinci": "2-degeri"}})
+        \\
+        \\nox.http.serve({d}, handle, 1)
+        \\
+    , .{port});
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const bin_path = try compileToBinary(a, &tmp, source);
+
+    var child = try std.process.spawn(io, .{
+        .argv = &.{bin_path},
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+
+    var resp_buf: [512]u8 = undefined;
+    var resp_len: usize = 0;
+    const client_thread = try std.Thread.spawn(.{}, struct {
+        fn run(p: u16, out: []u8, out_len: *usize) void {
+            const fd = testConnect(p) catch return;
+            defer _ = std.c.close(fd);
+            const body = "canli-veri";
+            var header_buf: [128]u8 = undefined;
+            const header = std.fmt.bufPrint(&header_buf, "POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{body.len}) catch unreachable;
+            var off: usize = 0;
+            while (off < header.len) {
+                const n = std.c.write(fd, header[off..].ptr, header.len - off);
+                if (n <= 0) return;
+                off += @intCast(n);
+            }
+            off = 0;
+            while (off < body.len) {
+                const n = std.c.write(fd, body[off..].ptr, body.len - off);
+                if (n <= 0) return;
+                off += @intCast(n);
+            }
+            var total: usize = 0;
+            while (total < out.len) {
+                const n = std.c.read(fd, out[total..].ptr, out.len - total);
+                if (n <= 0) break;
+                total += @intCast(n);
+            }
+            out_len.* = total;
+        }
+    }.run, .{ port, &resp_buf, &resp_len });
+    client_thread.join();
+
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
+    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stderr_data);
+
+    const term = try child.wait(io);
+    try std.testing.expect(term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), term.exited);
+
+    if (stderr_data.len != 0) {
+        std.debug.print("program stderr'e beklenmeyen bir çıktı yazdı (olası bellek sızıntısı/UAF): {s}\n", .{stderr_data});
+        return error.UnexpectedStderrOutput;
+    }
+
+    const resp = resp_buf[0..resp_len];
+    try std.testing.expect(std.mem.indexOf(u8, resp, "yanki:canli-veri") != null);
+    try std.testing.expect(std.mem.indexOf(u8, resp, "birinci: 1-degeri") != null);
+    try std.testing.expect(std.mem.indexOf(u8, resp, "ikinci: 2-degeri") != null);
+}

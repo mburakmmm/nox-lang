@@ -319,33 +319,60 @@ const ServerRequest = struct {
     headers: []const std.http.Header,
 };
 
+// Faz HH.3 (bkz. nox-teknik-spesifikasyon.md §3.68): `body`/`headers`
+// ARTIK KOPYALANMAZ — `nox_http_response_new`nin TEK gerçek çağrı sitesi
+// (`genHttpServeWrapper`) BUNLARI HER ZAMAN Nox'un KENDİ ARC-sahipli
+// `HttpResponse.body`/`.headers` alanlarından geçirdiğinden, `retain`
+// YETERLİDİR (bkz. `ServerRequest`in AYNI gerekçesi, HH.2).
 const ServerResponse = struct {
     status: u16,
-    body: []u8,
+    body: ?[*:0]u8,
     headers: []const std.http.Header,
 };
 
-fn destroyResponse(gpa: std.mem.Allocator, resp: *ServerResponse) void {
-    gpa.free(resp.body);
+fn destroyResponse(rt: ?*anyopaque, gpa: std.mem.Allocator, resp: *ServerResponse) void {
+    if (resp.body) |p| str_mod.nox_str_release(rt, p);
     for (resp.headers) |h| {
-        gpa.free(h.name);
-        gpa.free(h.value);
+        str_mod.nox_str_release(rt, @ptrCast(@constCast(h.name.ptr)));
+        str_mod.nox_str_release(rt, @ptrCast(@constCast(h.value.ptr)));
     }
     if (resp.headers.len > 0) gpa.free(resp.headers);
     gpa.destroy(resp);
 }
 
-/// Bir `handler`ın DÖNECEĞİ yanıt tutamacını inşa eder — `body`/`headers`
-/// BAĞIMSIZ kopyalanır (çağıranın Nox tarafındaki `str`/`dict`i bundan
-/// SONRA serbest bırakılsa/değişse BİLE güvenlidir, istemci kabuğunun
-/// yanıt tutamacıyla AYNI disiplin).
+/// `headers_dict`in HER isim/değerini `retain` edip (kopyalamadan)
+/// `[]std.http.Header`e AKTARIR — `http_client.copyHeaders`nin (İSTEMCİ
+/// kabuğunun arka plan iş parçacığına GEÇİŞ İÇİN KASITLI olarak BAĞIMSIZ
+/// bir kopya çıkardığı, bkz. onun belge notu) AKSİNE, bu fonksiyon
+/// YALNIZCA sunucu yolunda (`nox_http_response_new`), fiber'ın ÇALIŞTIĞI
+/// AYNI OS iş parçacığında (ARC sahibi) çağrılır — cross-thread bir ARC
+/// paylaşımı SÖZ KONUSU DEĞİLDİR, bu yüzden `copyHeaders`in KENDİSİ
+/// DEĞİŞTİRİLMEDEN (istemci yolunu ETKİLEMEDEN) AYRI bir fonksiyon olarak
+/// eklendi.
+fn retainHeaders(gpa: std.mem.Allocator, headers_dict: ?*anyopaque) ![]std.http.Header {
+    const d: *dict_mod.Dict = @ptrCast(@alignCast(headers_dict orelse return &.{}));
+    if (d.entries.items.len == 0) return &.{};
+    const out = try gpa.alloc(std.http.Header, d.entries.items.len);
+    for (d.entries.items, 0..) |e, i| {
+        const key_ptr: [*:0]u8 = @ptrFromInt(@as(usize, @bitCast(e.key)));
+        const value_ptr: [*:0]u8 = @ptrFromInt(@as(usize, @bitCast(e.value)));
+        arc.nox_rc_retain(key_ptr);
+        arc.nox_rc_retain(value_ptr);
+        out[i] = .{ .name = std.mem.span(key_ptr), .value = std.mem.span(value_ptr) };
+    }
+    return out;
+}
+
+/// Bir `handler`ın DÖNECEĞİ yanıt tutamacını inşa eder — Faz HH.3'ten beri
+/// `body`/`headers` KOPYALANMAZ, `retain` edilir (bkz. modül üstü not).
 export fn nox_http_response_new(rt: ?*anyopaque, status: i64, body: ?[*:0]const u8, headers: ?*anyopaque) callconv(.c) ?*anyopaque {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
     const gpa = state.allocator();
     const resp = gpa.create(ServerResponse) catch return null;
-    const body_bytes: []u8 = if (body) |b| (gpa.dupe(u8, std.mem.span(b)) catch &.{}) else &.{};
-    const hdrs = http_client.copyHeaders(gpa, headers) catch &.{};
-    resp.* = .{ .status = @intCast(status), .body = body_bytes, .headers = hdrs };
+    const body_ptr: ?[*:0]u8 = if (body) |b| @ptrCast(@constCast(b)) else null;
+    if (body_ptr) |p| arc.nox_rc_retain(p);
+    const hdrs = retainHeaders(gpa, headers) catch &.{};
+    resp.* = .{ .status = @intCast(status), .body = body_ptr, .headers = hdrs };
     return resp;
 }
 
@@ -491,11 +518,12 @@ fn connectionEntry(arg: *anyopaque) void {
     };
 
     const resp_payload = conn.handler(conn.handler_ctx, &req_handle);
-    defer if (resp_payload) |r| destroyResponse(gpa, @ptrCast(@alignCast(r)));
+    defer if (resp_payload) |r| destroyResponse(rt, gpa, @ptrCast(@alignCast(r)));
 
     if (resp_payload) |r| {
         const resp: *ServerResponse = @ptrCast(@alignCast(r));
-        request.respond(resp.body, .{
+        const body_slice: []const u8 = if (resp.body) |p| std.mem.span(p) else &.{};
+        request.respond(body_slice, .{
             .status = @enumFromInt(resp.status),
             .keep_alive = false,
             .extra_headers = resp.headers,
@@ -670,7 +698,14 @@ const TestHandlerLog = struct {
         const r: *ServerRequest = @ptrCast(@alignCast(req.?));
         const target = std.mem.span(r.target.?);
         log.append(std.heap.page_allocator, if (std.mem.eql(u8, target, "/slow")) "slow tamamlandi" else "fast tamamlandi") catch unreachable;
-        return nox_http_response_new(rt_ptr, 200, "hi", null);
+        // Faz HH.3: `nox_http_response_new` ARTIK `body`nin GERÇEK bir ARC
+        // `str` (8 baytlık görünmez başlığı OLAN) OLDUĞUNU varsayıp `retain`
+        // eder — düz bir C literal'i DOĞRUDAN geçirmek (`retain`in literal'in
+        // BAŞLIĞI OLMAYAN belleğine YAZMASINA yol AÇARDI) artık GÜVENSİZ;
+        // önce `dupeToNoxStr` İLE gerçek bir ARC dizesi inşa edilir.
+        const body = http_client.dupeToNoxStr(rt_ptr, "hi") orelse return null;
+        defer str_mod.nox_str_release(rt_ptr, body);
+        return nox_http_response_new(rt_ptr, 200, body, null);
     }
 };
 
@@ -819,7 +854,12 @@ const ThreadSafeCounter = struct {
     fn handle(ctx: ?*anyopaque, req: ?*anyopaque) callconv(.c) ?*anyopaque {
         _ = req;
         _ = served.fetchAdd(1, .monotonic);
-        return nox_http_response_new(ctx, 200, "ok", null);
+        // Faz HH.3: bkz. `TestHandlerLog.handle`nin AYNI notu — `ctx`
+        // ÇAĞIRAN iş parçacığının KENDİ `rt`si OLDUĞUNDAN (bkz. modül üstü
+        // not) burada ARC tahsisi yapmak GÜVENLİDİR (aynı iş parçacığı).
+        const body = http_client.dupeToNoxStr(ctx, "ok") orelse return null;
+        defer str_mod.nox_str_release(ctx, body);
+        return nox_http_response_new(ctx, 200, body, null);
     }
 };
 

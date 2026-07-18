@@ -611,6 +611,24 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   `-Doptimize=ReleaseFast`ta ÖNCEDEN VAR OLAN (`git stash` İLE HH
   serisinden BAĞIMSIZ olduğu doğrulanan) zamanlama-hassasiyetli bir
   "flaky" davranışı GÖZLEMLENDİ.
+- **Yanıt tarafındaki çift kopyalamayı gider: kopyala → retain** (Faz
+  HH.3, bkz. nox-teknik-spesifikasyon.md §3.68). `nox_http_response_new`,
+  `HttpResponse.body`/`.headers` ZATEN Nox'un ARC-sahipli `str`/`dict`i
+  OLDUĞU HALDE `gpa.dupe`/`http_client.copyHeaders` İLE YENİDEN
+  kopyalıyordu. ARTIK `body` `nox_rc_retain` edilir, `headers` YENİ bir
+  `retainHeaders` fonksiyonuyla (HER isim/değeri retain eder) işlenir —
+  `http_client.copyHeaders`in KENDİSİ DEĞİŞTİRİLMEDİ (o, İSTEMCİ
+  kabuğunun arka plan iş parçacığına GEÇİŞ İÇİN KASITLI olarak bağımsız
+  bir kopya çıkarır; `retainHeaders` İSE YALNIZCA ARC sahibi İLE AYNI iş
+  parçacığında çalışan sunucu yolunda kullanılır). Break→red→fix: `body`
+  retain'i GEÇİCİ kaldırılınca DebugAllocator **"Double free detected"**i
+  TAM bir yığın izİYLE yakaladı (`$HttpResponse_release`in `nox_str_free_
+  now`ı + `destroyResponse`nin `nox_str_release`i — TAM OLARAK öngörülen
+  çifte serbest bırakma); retain GERİ eklenince temiz çalıştı. Bu dosyanın
+  KENDİ birim testleri (düz C literal'leriyle çağıranlar) `dupeToNoxStr`
+  İLE ÖNCE gerçek bir ARC dizesi inşa edecek şekilde güncellendi. Yeni bir
+  uçtan uca golden test, DİNAMİK inşa edilmiş bir yanıt gövdesi VE BİRDEN
+  FAZLA yanıt başlığının doğru geldiğini doğrular.
 
 ### Düzeltildi
 - **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`
