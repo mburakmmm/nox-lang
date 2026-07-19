@@ -11167,6 +11167,20 @@ v1 basitleştirmesi). `components()` (`list[str]`, `std.fs.path.
 componentIterator` — SAF bir string ayrıştırıcı, I/O GEREKMEZ). 4 yeni
 unit test (break→red→fix İLE doğrulandı) + 1 yeni golden test.
 
+### III.5 (TAMAMLANDI) — `nox.os` ortam değişkeni yazma + cwd
+
+`set_var(name, value)` (`std.c.setenv` — bu Zig sürümünün `std.c`sinde
+BULUNMADIĞI İÇİN, `runtime/foreign_bridge.zig`nin AYNI "std.c'de eksikse
+ham `extern \"c\" fn` bildir" deseniyle DOĞRUDAN bağlandı); `current_dir()`
+(`std.c.getcwd`, `std.c.PATH_MAX` boyutlu yığın arabelleği). Her ikisi de
+DAHA ÖNCE `nox.os`da HİÇ olmayan yeni davranışlar (modül SADECE OKUMA
+yapıyordu — `arg`/`getenv`/`has_env`; artık GERÇEK yan etkili bir yazma
+işlemi VAR). 2 yeni unit test (`set_var` + `getenv` round-trip, ve
+`current_dir`nin boş olmayan mutlak bir yol döndürdüğü — `break→red→fix`
+İLE doğrulandı, sabotajlı `set_var` çağrısı `setenv`i HİÇ çağırmadan
+"başarılı" görünmeye çalıştığında test doğru şekilde KIRMIZI oldu) + 1
+yeni golden test (`os_new_operations`).
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

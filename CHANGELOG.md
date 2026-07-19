@@ -929,6 +929,12 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   (eşleşmezse DEĞİŞMEDEN döner); `components()` (`std.fs.path.
   componentIterator`, SAF string ayrıştırma). 4 yeni unit test
   (break→red→fix İLE doğrulandı) + 1 yeni golden test.
+- **Faz III.5 — `nox.os`ye `set_var`/`current_dir` eklendi** (bkz.
+  nox-teknik-spesifikasyon.md §3.69). `set_var` (`std.c`de OLMAYAN
+  `setenv`, `foreign_bridge.zig`nin desenine UYGUN ham `extern "c" fn`
+  bildirimiyle bağlandı); `current_dir` (`std.c.getcwd`). `nox.os`nin
+  İLK yazma yan-etkili fonksiyonları. 2 yeni unit test (break→red→fix
+  İLE doğrulandı) + 1 yeni golden test.
 
 ## [1.0.0]
 

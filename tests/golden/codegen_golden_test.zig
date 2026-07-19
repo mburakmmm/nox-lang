@@ -1174,6 +1174,13 @@ test "codegen(çalıştır): nox.os.getenv eksik değişken OsError raise eder" 
     );
 }
 
+test "codegen(çalıştır): Faz III.5 — nox.os set_var/current_dir" {
+    try expectGolden(
+        @embedFile("codegen_cases/os_new_operations.nox"),
+        @embedFile("codegen_cases/os_new_operations.expected"),
+    );
+}
+
 test "codegen(çalıştır): nox.fs.write_string/read_to_string round-trip" {
     try expectGolden(
         @embedFile("codegen_cases/fs_read_write_roundtrip.nox"),

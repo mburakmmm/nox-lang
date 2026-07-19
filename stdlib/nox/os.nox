@@ -19,6 +19,10 @@ extern def nox_os_has_env(name: str) -> int from "zig-out/lib/noxrt.o"
 extern def nox_os_getenv_raw(name: str) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_os_exit_raw(code: int) -> None from "zig-out/lib/noxrt.o"
 
+# Faz III.5 (bkz. nox-teknik-spesifikasyon.md §3.69).
+extern def nox_os_set_var_raw(name: str, value: str) -> None from "zig-out/lib/noxrt.o"
+extern def nox_os_current_dir_raw() -> str from "zig-out/lib/noxrt.o" with_rt
+
 def arg_count() -> int:
     return nox_os_arg_count_raw()
 
@@ -32,3 +36,9 @@ def getenv(name: str) -> str:
 
 def exit(code: int) -> None:
     nox_os_exit_raw(code)
+
+def set_var(name: str, value: str) -> None:
+    nox_os_set_var_raw(name, value)
+
+def current_dir() -> str:
+    return nox_os_current_dir_raw()

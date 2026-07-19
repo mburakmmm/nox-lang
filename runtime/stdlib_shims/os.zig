@@ -66,3 +66,50 @@ export fn nox_os_getenv_raw(rt: ?*anyopaque, name: ?[*:0]const u8) callconv(.c) 
 export fn nox_os_exit_raw(code: i64) callconv(.c) noreturn {
     std.process.exit(@intCast(code));
 }
+
+// Faz III.5 (bkz. nox-teknik-spesifikasyon.md §3.69) — `setenv` bu Zig
+// sürümünün `std.c`sinde YOK (`getenv`nin AKSİNE) — `runtime/foreign_
+// bridge.zig`nin AYNI "std.c'de eksikse ham `extern \"c\" fn` bildir"
+// deseniyle DOĞRUDAN bağlanır.
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+
+export fn nox_os_set_var_raw(name: ?[*:0]const u8, value: ?[*:0]const u8) callconv(.c) void {
+    const n = name orelse return;
+    const v = value orelse return;
+    _ = setenv(n, v, 1);
+}
+
+export fn nox_os_current_dir_raw(rt: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+    var buf: [std.c.PATH_MAX]u8 = undefined;
+    const result = std.c.getcwd(&buf, buf.len) orelse return dupeToNoxStr(rt, "");
+    const z: [*:0]u8 = @ptrCast(result);
+    return dupeToNoxStr(rt, std.mem.span(z));
+}
+
+test "Faz III.5: nox_os_set_var_raw ortam degiskenini gercekten ayarlar" {
+    try std.testing.expectEqual(@as(i32, 0), nox_os_has_env("NOX_III5_TEST_VAR"));
+    nox_os_set_var_raw("NOX_III5_TEST_VAR", "merhaba");
+    try std.testing.expectEqual(@as(i32, 1), nox_os_has_env("NOX_III5_TEST_VAR"));
+
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const v = nox_os_getenv_raw(rt, "NOX_III5_TEST_VAR") orelse return error.Failed;
+    defer str.nox_str_release(rt, v);
+    try std.testing.expectEqualStrings("merhaba", std.mem.sliceTo(v, 0));
+}
+
+test "Faz III.5: nox_os_current_dir_raw bos olmayan bir mutlak yol doner" {
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const cwd = nox_os_current_dir_raw(rt) orelse return error.Failed;
+    defer str.nox_str_release(rt, cwd);
+    const slice = std.mem.sliceTo(cwd, 0);
+    try std.testing.expect(slice.len > 0);
+    try std.testing.expect(slice[0] == '/');
+}
