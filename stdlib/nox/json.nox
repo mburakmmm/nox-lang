@@ -165,3 +165,49 @@ def encode_object(v: JsonValue) -> str:
         out = out + encode_string(object_key(v, i)) + ":" + encode(object_value(v, i))
         i = i + 1
     return out + "}"
+
+# Faz III.10 (bkz. nox-teknik-spesifikasyon.md §3.69) — `encode_pretty`:
+# `encode`in girintili varyantı, SAF Nox (HİÇ runtime değişikliği GEREKMEDİ,
+# `nox.strings.repeat` — Faz III.2 — İLE girinti dizeleri üretilir).
+# `indent`, SEVİYE BAŞINA boşluk SAYISIDIR (ör. `2` -> Python'un
+# `json.dumps(v, indent=2)`si İLE AYNI biçim).
+def indent_str(indent: int, level: int) -> str:
+    return nox.strings.repeat(" ", indent * level)
+
+def encode_pretty(v: JsonValue, indent: int) -> str:
+    return encode_pretty_at(v, indent, 0)
+
+def encode_pretty_at(v: JsonValue, indent: int, level: int) -> str:
+    if is_array(v):
+        return encode_pretty_array(v, indent, level)
+    if is_object(v):
+        return encode_pretty_object(v, indent, level)
+    return encode(v)
+
+def encode_pretty_array(v: JsonValue, indent: int, level: int) -> str:
+    n: int = array_len(v)
+    if n == 0:
+        return "[]"
+    inner: str = indent_str(indent, level + 1)
+    out: str = "[\n"
+    i: int = 0
+    while i < n:
+        if i > 0:
+            out = out + ",\n"
+        out = out + inner + encode_pretty_at(array_get(v, i), indent, level + 1)
+        i = i + 1
+    return out + "\n" + indent_str(indent, level) + "]"
+
+def encode_pretty_object(v: JsonValue, indent: int, level: int) -> str:
+    n: int = object_len(v)
+    if n == 0:
+        return "{}"
+    inner: str = indent_str(indent, level + 1)
+    out: str = "{\n"
+    i: int = 0
+    while i < n:
+        if i > 0:
+            out = out + ",\n"
+        out = out + inner + encode_string(object_key(v, i)) + ": " + encode_pretty_at(object_value(v, i), indent, level + 1)
+        i = i + 1
+    return out + "\n" + indent_str(indent, level) + "}"

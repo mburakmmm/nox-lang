@@ -965,6 +965,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   Zig'in KENDİ `std.crypto.hash.Sha1`/`sha2.Sha512`si. Bilinen test
   vektörleriyle (`""`/`"abc"`) doğrulandı. 4 yeni unit test (break→red→fix
   İLE doğrulandı) + 1 yeni golden test.
+- **Faz III.10 — `nox.json`ye `encode_pretty(v, indent)` eklendi** (bkz.
+  nox-teknik-spesifikasyon.md §3.69). SAF Nox, `nox.strings.repeat`
+  (Faz III.2) İLE girinti üretir — Python'un `json.dumps(v, indent=N)`si
+  İLE AYNI biçim/anlam. Zig-tarafı DEĞİŞİKLİK GEREKMEDİ, break→red→fix
+  golden test İLE yapıldı + 1 yeni golden test.
+- **Faz III TAMAMLANDI** — stdlib eksik-fonksiyon tablosunun 10 alt-fazının
+  (III.1-III.10) TÜMÜ uygulandı. 5 madde (+ UTF-8) BİLİNÇLİ olarak AYRI,
+  kendi planlama turlarını gerektiren görevler olarak kapsam DIŞI bırakıldı
+  (bkz. nox-teknik-spesifikasyon.md §3.69'un giriş notu).
 
 ## [1.0.0]
 

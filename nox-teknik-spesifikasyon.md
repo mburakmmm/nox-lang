@@ -11258,6 +11258,26 @@ yeni Zig unit testi (bilinen vektörler + sabit-uzunluk/hex-karakter
 kontrolü, break→red→fix İLE doğrulandı — özetin İLK baytı bozulunca hem
 unit test HEM golden test doğru şekilde KIRMIZI oldu) + 1 yeni golden test.
 
+### III.10 (TAMAMLANDI) — `nox.json` `encode_pretty`
+
+`encode_pretty(v, indent) -> str` — `encode`in girintili varyantı, SAF
+Nox (HİÇ runtime değişikliği GEREKMEDİ), `nox.strings.repeat` (Faz III.2)
+İLE girinti dizeleri üretilir. `indent`, SEVİYE BAŞINA boşluk SAYISIDIR
+(Python'un `json.dumps(v, indent=2)`si İLE AYNI biçim/anlam). Yalnızca
+dizi/nesne düğümleri çok satırlı biçimlendirilir — skaler değerler
+(`null`/`bool`/sayı/dize) VE boş dizi/nesne (`[]`/`{}`) `encode`in
+DEĞİŞMEMİŞ tek-satırlık çıktısını üretir (Python'un AYNI davranışıyla
+TUTARLI). Zig-tarafı DEĞİŞİKLİK OLMADIĞINDAN YENİ bir Zig unit testi
+GEREKMEDİ — break→red→fix DOĞRUDAN golden test İLE yapıldı (girinti
+çarpanı düşürülünce test doğru şekilde KIRMIZI oldu). 1 yeni golden test
+(iç içe dizi/nesne + boş dizi/nesne + skaler DAHİL uçtan uca).
+
+**Faz III TAMAMLANDI** — III.1'den III.10'a KADAR 10 alt-fazın TÜMÜ
+uygulandı, doğrulandı VE ayrı commit'lerle kayıt altına alındı. Kapsam
+DIŞI bırakılan 5 madde (+ UTF-8) İÇİN bkz. bu bölümün BAŞINDAKİ "Kapsam
+DIŞI" notu — bunlar BİLİNÇLİ olarak ERTELENDİ, unutulmadı; her biri
+KENDİ ayrı planlama/tasarım turunu HAK EDEN bağımsız görevlerdir.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

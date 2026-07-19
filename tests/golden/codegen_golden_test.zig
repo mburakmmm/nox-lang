@@ -1334,6 +1334,13 @@ test "codegen(çalıştır): nox.json — decode/encode round-trip" {
     );
 }
 
+test "codegen(çalıştır): Faz III.10 — nox.json.encode_pretty (iç içe/boş dizi-nesne/skaler)" {
+    try expectGolden(
+        @embedFile("codegen_cases/json_encode_pretty.nox"),
+        @embedFile("codegen_cases/json_encode_pretty.expected"),
+    );
+}
+
 test "codegen(çalıştır): nox.json.decode bozuk JSON JsonError raise eder" {
     try expectGolden(
         @embedFile("codegen_cases/json_decode_malformed_raises.nox"),
