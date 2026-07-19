@@ -869,22 +869,27 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   hatası araştırma görevi olarak bildirildi (GG serisinin serbest-
   fonksiyon inlining'iyle İLGİLİ OLABİLECEĞİ düşünülüyor, kesin kök neden
   bulunmadı — HH.9'un araştırma disiplinini gerektiren AYRI bir görev).
-- **YUKARIDAKİ derleyici hatası, kullanıcının AÇIK isteğiyle HH.9'un AYNI
-  disipliniyle DAHA DERİN araştırıldı (bkz. nox-teknik-spesifikasyon.md
-  §3.68).** Aynı ikili, aynı girdiyle 20-30 kez ART ARDA çalıştırılınca
-  ~%20 `SIGSEGV` verdiği DOĞRULANDI (tek iş parçacıklı, deterministik bir
-  programda TEK değişken ASLR olduğundan, bu GERÇEK bir bellek-bozulması
-  Heisenbug'ıdır). Çökme adresinin ARC-tahsis aralığında DEĞİL, STATİK
-  STRING LİTERAL veri aralığında olduğu bulundu — bir listenin taban
-  işaretçisini TUTMASI gereken register'ın, QBE'nin string-literal
-  adresleri hesaplamak İçin kullandığı bir scratch register'la, koşullu-
-  serbest-bırakma-sonra-birleşme kontrol akışında ÇAKIŞTIĞINA işaret
-  ediyor. Üretilen `.ssa` IR metninin KENDİSİNDE hata BULUNAMADI — şüphe
-  `codegen.zig`DEN QBE'NİN KENDİ register tahsis edicisine KAYDI (`qbe`,
-  bu projede vendored/kaynağı bulunan bir araç DEĞİL). Kesin kök neden
-  YİNE KANITLANAMADI (canlı register incelemesi HH.9'da OLDUĞU GİBİ
-  zamanlamayı bozup tekrarlanmayı engelleyebiliyor) ama GÜÇLÜ, kanıta-
-  dayalı bir hipotez bulundu ve BELGELENDİ; kapsam yine bu fazın DIŞINDA.
+- **YUKARIDAKİ derleyici hatası, kullanıcının İKİ AYRI "yapabilirsin"
+  onayıyla HH.9'un AYNI disipliniyle DAHA DA DERİN araştırıldı (bkz.
+  nox-teknik-spesifikasyon.md §3.68).** İLK turun "QBE register çakışması"
+  hipotezi, Nox'u HİÇ karıştırmayan EL YAZIMI bir `.ssa` dosyasıyla test
+  edilip 100+ koşuda DOĞRULANAMADI. İKİNCİ turda `churn`nin `main` HARİÇ
+  TÜMÜ gerçek `noxrt.o`ya karşı DOĞRUDAN, tek bir süreç İçinde tekrar
+  tekrar ÇAĞRILARAK ÇOK daha net bir desen bulundu: **~%20'lik ASLR'ye
+  bağlı Heisenbug İZLENİMİ YANLIŞTI/YANILTICIYDI** — asıl tetikleyici,
+  BİR TEK çağrı İÇİNDEKİ döngünün KAÇINCI yinelemesi. 10 satırlık YENİ bir
+  tekrarlama (`loopcall(n)`: `hexd(1) + hexd(2)`yi `n` kez döngüleyen)
+  **`n=1`de 20/20 TEMİZ, `n=2`de ~20/20 ÇÖKÜYOR** — yani BİRİNCİ yineleme
+  HER ZAMAN güvenli, İKİNCİDEN İTİBAREN döngü SONUNDAKİ liste serbest-
+  bırakma çağrısı GEÇERSİZ bir işaretçiyle çöküyor. İki kontrol testi
+  (döngüsüz tekrar çağrı TEMİZ; döngüsüz aynı-ifadede-iki-çağrı TEMİZ)
+  tetikleyicinin TAM OLARAK "list[str] döndüren fonksiyonun aynı
+  ifadede iki kez çağrılması + 2 yinelemeli bir döngü" BİRLİKTELİĞİ
+  olduğunu KESİN olarak izole etti. Kök mekanizma YİNE kanıtlanamadı
+  (QBE'nin register tahsisi mi, `codegen.zig`nin döngü-gövdesi/GG.2
+  inlining etkileşimi mi belirsiz) ama tekrarlanabilirlik %20'den ~%100'e
+  çıkarıldı ve gelecekteki araştırma İçin çok daha küçük/net bir başlangıç
+  noktası bırakıldı; kapsam yine bu fazın DIŞINDA.
 
 ## [1.0.0]
 

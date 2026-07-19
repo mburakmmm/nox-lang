@@ -10959,89 +10959,121 @@ kullanıcıya AYRI bir derleyici-hatası görevi olarak bildirildi (GG
 serisinin serbest-fonksiyon inlining'iyle İLGİLİ OLABİLECEĞİ düşünülüyor,
 kesin kök neden BULUNMADI — bu fazın kapsamı DIŞINDA).
 
-## 3.68 `list[str]` + döngü + iki kez çağrı: ARC bozulması — muhtemelen QBE'nin KENDİSİNDE bir hata (ARAŞTIRILDI, ÇÖZÜLMEDİ)
+## 3.68 `list[str]` + döngünün İKİNCİ yinelemesi: ARC bozulması (ARAŞTIRILDI, ÇÖZÜLMEDİ — kök neden bulunamadı ama TEKRARLANABİLİRLİK %20'den ~%100'e çıkarıldı)
 
 **Kaynak:** §3.67'de (Faz II devamı) `nox.json.encode_string`nin genel
 `\u00XX` escape yolu denenirken bulunan çökme, kullanıcının AÇIK isteğiyle
-(HH.9'un araştırma disiplinini izleyerek) DAHA DERİN araştırıldı.
+(HH.9'un araştırma disiplinini izleyerek, İKİ AYRI turda: "yapabilirsin"
+onayıyla) DAHA DERİN araştırıldı.
 
-**En küçük tekrarlama:**
+### Bulgu 1 (İLK tur) — QBE register-çakışması hipotezi, İZOLE testle DOĞRULANAMADI
+
+İLK turda, çökmenin `churn`nin İÇİNDE `ldr x2, [x19]` komutunda (listenin
+UZUNLUK alanını, LİSTE İŞARETÇİSİ TUTMASI GEREKEN bir register üzerinden
+okurken) olduğu VE çökme adresinin (ör. `0x104640008`) STATİK STRING
+LİTERAL veri aralığıyla (heap DEĞİL) örtüştüğü bulunmuştu — bu, `x19`in
+(listenin heap işaretçisini TUTMASI gereken register) QBE'nin string-
+literal adresleri hesaplamak İçin kullandığı bir SCRATCH register'la
+ÇAKIŞTIĞI hipotezini doğurmuştu. **BU hipotez, Nox'u HİÇ karıştırmayan,
+EL İLE yazılmış, KÜÇÜLTÜLMÜŞ bir `.ssa` dosyasıyla (AYNI "koşullu
+serbest-bırakma + çağrı + 16-elemanlı liste inşası" şekli, gerçekçi bir
+Zig `alloc`/`release`/`report` üçlüsüyle) DOĞRUDAN `qbe`ye beslenerek
+TEST EDİLDİ — 100+ koşuda HİÇ çökme ÜRETİLEMEDİ.** Bu NEGATİF sonuç,
+hipotezin (EN AZINDAN bu basitlikte) YANLIŞ olduğunu — ya da tetikleyici
+koşulun DAHA İNCE bir detaya bağlı olduğunu — gösterdi.
+
+### Bulgu 2 (İKİNCİ tur) — GERÇEK mekanizma bulundu: sorun DÖNGÜNÜN KENDİSİNDE, ~%20 DEĞİL ~%100 tekrarlanabilir
+
+Gerçek `churn`nin `.s`inden `main` HARİÇ HER ŞEY çıkarılıp (HH.9'un
+"gerçek QBE-derlenmiş fonksiyonları el yazımı test iskeletlerine çıkarma"
+tekniği) `churn`i GERÇEK `noxrt.o`ya karşı DOĞRUDAN, TEKRAR TEKRAR
+(tek bir süreç İÇİNDE, YENİDEN başlatma OLMADAN) çağıran bir Zig test
+iskeleti yazıldı. Bu, ÇOK daha net bir desen ORTAYA ÇIKARDI:
+
+- `churn("ab")` AYNI süreç İçinde ART ARDA çağrıldığında, **BİRİNCİ
+  çağrı HER ZAMAN başarılı, İKİNCİ çağrı HER ZAMAN çöküyor** (3 AYRI
+  koşumda TUTARLI) — İLK turdaki "~%20, ASLR'ye bağlı" gözlemi YANLIŞ
+  DEĞİLDİ ama YANILTICIYDI: asıl tetikleyici SÜREÇ-ÖMRÜ BOYUNCA "kaçıncı
+  çağrı" DEĞİL, **BİR TEK ÇAĞRI İÇİNDEKİ döngünün KAÇINCI YİNELEMESİ**
+  olduğu ortaya çıktı (aşağıya bkz.).
+- Birinci çağrının SONUCUNU BİLEREK serbest BIRAKMAYINCA (sızdırınca)
+  bile İKİNCİ çağrı YİNE çöküyor — yani sorun "önceki SONUCUN serbest
+  bırakılması" DEĞİL.
+- **En küçük, TEMİZ tekrarlama (aşağı) `~%100` oranında çöküyor:**
 ```nox
 def hexd(n: int) -> str:
     digits: list[str] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"]
     return digits[n]
 
-def churn(s: str) -> str:
+def loopcall(n: int) -> str:
     out: str = ""
     i: int = 0
-    while i < len(s):
-        b: int = 1
-        out = out + "x" + hexd(b // 16) + hexd(b % 16)
+    while i < n:
+        out = out + hexd(1) + hexd(2)
         i = i + 1
     return out
 
-print(churn("ab"))
+print(loopcall(2))
 ```
+  - `loopcall(1)` (TEK yineleme): **20/20 koşu TEMİZ** (0/20 çökme).
+  - `loopcall(2)` (İKİ yineleme): **~20/20 koşu ÇÖKÜYOR** (`SIGABRT`
+    "incorrect alignment" panikı VEYA çıplak `SIGSEGV`, hemen HEMEN
+    HER seferinde).
+  - Sonuç: **birinci yineleme HER ZAMAN güvenli, İKİNCİ yineleme HEMEN
+    HEMEN HER ZAMAN döngünün SONUNDAKİ `List_str_release` çağrısını
+    (birinci `hexd` çağrısının `digits` listesini serbest bırakan)
+    "incorrect alignment" panikiyle ÇÖKERTİYOR** — panik izi HER ZAMAN
+    AYNI: `List_str_release` → `nox_str_release` → `nox_rc_predecrement`
+    → `alloc.arc.refcountOf`. Bu, listenin 16 elemanından (HEPSİ statik/
+    "pinned" string literal işaretçisi OLMASI gereken) EN AZ BİRİNİN,
+    İKİNCİ yinelemede release ANINDA ARTIK GEÇERLİ bir işaretçi
+    OLMADIĞINI gösterir.
+- **Kontrol testi — tetikleyici GERÇEKTEN "AYNI döngüde İKİ çağrı" MI,
+  yoksa "list[str] döndüren bir fonksiyonun genel olarak TEKRAR
+  ÇAĞRILMASI" MI?** İki AYRI kontrol testi bunu AYIRT ETTİ:
+  1. `hexd`i DÖNGÜSÜZ, ayrı bir `pick()` sarmalayıcısı üzerinden 10 kez
+     ÇAĞIRAN bir program (`make_digits()` HER ÇAĞRIDA TAZE bir liste
+     kurup döner) — **10/10 çağrı TEMİZ**, hiç çökme YOK.
+  2. `hexd(a) + hexd(b)`yi (AYNI ifadede İKİ çağrı, ama HİÇBİR döngü
+     OLMADAN) 10 kez ÇAĞIRAN bir program — **10/10 çağrı TEMİZ**.
+  - YANİ tetikleyici NE yalnızca "list[str] döndüren fonksiyonun tekrar
+    çağrılması" NE DE yalnızca "aynı ifadede iki çağrı" — **TAM OLARAK
+    İKİSİNİN BİRLİKTELİĞİ, BİR DÖNGÜ İÇİNDE, 2+ yinelemeyle** GEREKİR.
 
-**Doğrulanan bulgular:**
-- AYNI derlenmiş ikili, AYNI girdiyle 20-30 kez ART ARDA çalıştırılınca
-  ~%20 oranında `SIGSEGV` (`EXC_BAD_ACCESS`) veriyor — GERÇEK bir bellek-
-  bozulması Heisenbug'ı, mantık hatası DEĞİL. Program TEK iş parçacıklı
-  VE tamamen deterministik olduğundan, çalışmadan çalışmaya DEĞİŞEN TEK
-  şey ASLR'dir — yani BİR register/bellek konumu GERÇEK çalışma-zamanı
-  ADRESLERİNE bağlı bir değer taşıyor (mantığa DEĞİL).
-- Çökme, `churn`nin İÇİNDE, `ldr x2, [x19]` komutunda (bir listenin
-  UZUNLUK alanını, LİSTE İŞARETÇİSİ TUTMASI GEREKEN bir register
-  üzerinden okurken) — bu, QBE IR'ında BİRİNCİ inline edilmiş `hexd`
-  çağrısının `digits` listesinin (yeni `nox_rc_alloc` edilmiş), bir
-  "eski değer non-null'sa serbest bırak" koşullu kontrolünün HEMEN
-  ARDINDAN geri okunmasına denk gelir (QBE'nin döngü yinelemeleri
-  arasında bir yerel değişkeni YENİDEN ATARKEN ürettiği standart desen).
-- Çökme adresi (ör. `0x104640008`), bu ikilinin STATİK STRING LİTERAL
-  verisiyle (`0x100438000` civarı) AYNI adres aralığında — ARC
-  tahsislerinin YAŞADIĞI heap adres aralığında DEĞİL. Bu, `x19`in (yeni
-  tahsis edilen listenin heap işaretçisini TUTMASI gereken register)
-  BAZEN onun yerine bir STATİK STRİNG LİTERAL adresi TUTTUĞUNU işaret
-  eder — liste taban işaretçisini TUTMASI gereken register'ın, QBE'nin
-  HEMEN yanı başında (`adrp`/`add` ile 16 elemanlı listenin string-
-  literal adreslerini hesaplamak İçin kullandığı) bir SCRATCH register'la
-  ÇAKIŞMASIYLA TUTARLI.
-- `x19`in tahsisten çökme noktasına KADAR HER kullanımı EL İLE izlendi —
-  düz kod akışında AÇIK bir "bozma" (clobber) BULUNAMADI. Bozulma en
-  muhtemel şekilde QBE'nin KENDİ register tahsis edicisinin İÇİNDE, `bl
-  $List_str_release` çağrısı boyunca canlı kalması GEREKEN bir değerin
-  BİR dalda (çağrı yapılan) korunup DİĞERİNDE (çağrı atlanan, `release_
-  skip`) korunmamasından kaynaklanıyor OLABİLİR — ki bu TAM OLARAK GG.2'nin
-  serbest-fonksiyon inlining'inin AYNI "koşullu serbest bırakma" şeklini
-  `churn` İÇİNDE İKİ KEZ (her `hexd` çağrı yeri İçin birer kez) tekrar
-  ETTİĞİ durumda ortaya çıkıyor.
-- ALTERNATİF bir `hexd` uygulaması (`list[str]` YERİNE `str` literali +
-  indeksleme, `digits: str = "0123456789abcdef"; return digits[n]`)
-  ÇÖKMÜYOR ama HER çağrıda GERÇEK bir ARC sızıntısına yol AÇIYOR
-  (`nox_str_char_at`nin tahsisi HİÇ serbest bırakılmıyor, DebugAllocator
-  YAKALIYOR) — YANİ bu ikinci varyant da GÜVENLİ DEĞİL, yalnızca FARKLI
-  bir hata sınıfına (çökme YERİNE sızıntı) sahip.
-
-**Değerlendirme:** üretilen `.ssa` IR METNİNİN KENDİSİNDE bir hata
-BULUNAMADI — retain/release/alloc dizisi HER İKİ inline edilmiş kopya
-İçin de DOĞRU dengeli, AYRI temp'ler (`%t5` VE `%t8`) kullanıyor. Bu,
-şüpheyi AŞAĞI akışa, **QBE'NİN KENDİ SSA'dan assembly'ye lowering'ine**
-İTER — `codegen.zig`nin ÜRETTİĞİ IR'a DEĞİL. `qbe`, bu projede VENDORED/
-kaynağı bulunan bir araç DEĞİL (kurulu, önceden derlenmiş bir üçüncü
-taraf ikili, `~/.nox-lang/bin/qbe`) — bu YÜZDEN patch/düzeltme bu fazın
-kapsamı DIŞINDA bırakıldı.
+**Değerlendirme:** kök MEKANİZMA (QBE'nin register tahsisi mi, yoksa
+`nox_rc_alloc`/DebugAllocator'ın döngü-yinelemeleri-arası bellek YENİDEN
+KULLANIMI ile ETKİLEŞEN başka bir codegen sorunu mu) YİNE KANITLANAMADI —
+ama artık **son derece GÜVENİLİR (yaklaşık %100), 10 SATIRLIK bir
+tekrarlama VAR** ve tetikleyici koşul KESİN olarak İZOLE edildi ("bir
+`list[str]` literali döndüren fonksiyonun AYNI ifadede İKİ KEZ çağrılması,
+2+ yinelemeli bir döngü İÇİNDE — birinci yineleme HER ZAMAN güvenli,
+İKİNCİDEN İTİBAREN HEMEN HEMEN HER ZAMAN döngünün SONUNDAKİ liste
+serbest-bırakma çağrısı GEÇERSİZ bir işaretçiyle ÇÖKÜYOR"). Bu, İLK
+turun "QBE register çakışması" hipotezini ÇÜRÜTMEDİ (hâlâ olası bir
+açıklama) ama onu TEK BAŞINA YETERLİ görmüyor — döngü-yineleme-sayısına
+bu KADAR kesin bağımlılık, MUHTEMELEN `codegen.zig`nin (GG.2'nin serbest-
+fonksiyon inlining'i, `emitWhile`in yineleme-arası yerel değişken
+YENİDEN ATAMA mantığıyla ETKİLEŞEREK) döngü GÖVDESİNİ İKİNCİ (ve SONRAKİ)
+yinelemeler İçin FARKLI/YANLIŞ ürettiği bir SENARYOYU da EŞİT derecede
+olası kılıyor — QBE'nin KENDİSİNİ SUÇLAMAK İçin (ilk turdaki KADAR)
+KESİN DEĞİL.
 
 **Kapatma kararı:** HH.9 İLE AYNI disiplinle — kök mekanizma TAM olarak
 KANITLANAMADI (canlı register durumunu lldb İLE incelemek, HH.9'un ZATEN
-gösterdiği gibi zamanlamayı BOZUP tekrarlanmayı ENGELLEYEBİLİR), ama
-GÜÇLÜ, KANITA-dayalı bir hipotez ELDE EDİLDİ. **Gelecekte BU deseni
-(tekrarlayan "koşullu serbest bırakma + çağrı + birleşme" şekli, AYNI
-fonksiyonda İKİ KEZ) tekrar üretmesi MUHTEMEL herhangi bir codegen
-değişikliği YAPILIRSA bu bölüme bkz.** Kesin doğrulama İçin ÖNERİLEN
-sonraki adım: Nox'u HİÇ karıştırmayan, EL İLE yazılmış, KÜÇÜLTÜLMÜŞ bir
-`.ssa` dosyasıyla (yukarıdaki `.ssa`nın İLGİLİ bloklarını izole ederek)
-DOĞRUDAN `qbe`ye beslemek — bu, sorunun GERÇEKTEN QBE'de mi yoksa Nox'un
-IR üretiminde mi olduğunu KESİN olarak ayırt eder.
+gösterdiği gibi zamanlamayı BOZUP tekrarlanmayı ENGELLEYEBİLİR) ama BU
+turda tekrarlanabilirlik %20'den ~%100'e ÇIKARILDI VE tetikleyici koşul
+KESİN olarak izole edildi — gelecekteki bir araştırma BURADAN (10 satırlık
+`loopcall` tekrarlamasından) DEVAM ETMELİDİR, ilk turun DAHA BÜYÜK/
+karmaşık `churn` tekrarlamasından DEĞİL. **Önerilen sonraki adım:**
+`loopcall`in QBE IR'ını (`.ssa`) birinci VE ikinci yineleme İçin ÜRETİLEN
+assembly bloklarını YAN YANA diff'leyerek (`otool -tV`, HH.9'un yöntemi)
+İKİ yinelemenin GERÇEKTEN aynı kod yolunu mu izlediğini (döngü olduğundan
+TEK bir statik kod bloğu tekrar ÇALIŞTIRILIR, bu YÜZDEN bu adım BEKLENEN
+sonucu doğrulamak İçindir) VE `List_str_release`e geçirilen POINTER'IN
+İKİNCİ yinelemede TAM OLARAK NEREDE bozulduğunu (bir register'ın
+YİNELEMELER ARASI YANLIŞ yeniden kullanımı MI, yoksa `nox_rc_alloc`nin
+İKİNCİ tahsiste FARKLI davranması MI) bir hardware watchpoint'le (HH.9'un
+başarıyla kullandığı teknik) izlemek.
 
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
