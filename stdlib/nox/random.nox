@@ -30,3 +30,43 @@ def randint(lo: int, hi: int) -> int:
 # `[0.0, 1.0)` aralığında (Python'un `random.random`ıyla TUTARLI).
 def random() -> float:
     return nox_random_random_raw()
+
+# Faz III.8 (bkz. nox-teknik-spesifikasyon.md §3.69) — SAF Nox (HİÇ Zig/
+# extern def değişikliği GEREKMEDİ), MEVCUT `random()` + `nox.math.sqrt`/
+# `log`/`cos`/`pi` üzerine kurulu. `nox.math`nin belge notundaki AYNI
+# asimetri BURADA da geçerli: `sqrt`/`log`/`cos` `extern def` OLDUKLARINDAN
+# ÇIPLAK çağrılır (`nox.math.sqrt(...)` DEĞİL); yalnızca `pi()` (sıradan
+# bir `func_def`) NİTELİKLİ çağrılır.
+import nox.math
+
+# Standart normal dağılım (ortalama 0, standart sapma 1) — Box-Muller
+# dönüşümü. `u1 == 0.0` İSE `log(0)` TANIMSIZ (negatif sonsuz) OLACAĞINDAN,
+# `u1` SIFIR olmayana kadar YENİDEN çekilir (pratikte İHMAL edilebilir
+# olasılıklı bir DÖNGÜ, Box-Muller'in standart bir gerekliliği).
+def normal() -> float:
+    u1: float = random()
+    while u1 == 0.0:
+        u1 = random()
+    u2: float = random()
+    return sqrt(-2.0 * log(u1)) * cos(2.0 * nox.math.pi() * u2)
+
+# Üstel dağılım (hız parametresi `rate`, ortalama `1/rate`) — ters-CDF
+# örneklemesi. `u` `[0.0, 1.0)` OLDUĞUNDAN `1.0 - u` HER ZAMAN `(0.0, 1.0]`
+# içindedir — `log(0)` senaryosu HİÇ oluşmaz.
+def exponential(rate: float) -> float:
+    u: float = random()
+    return (0.0 - 1.0) * log(1.0 - u) / rate
+
+# Fisher-Yates karıştırma — `list[T]` ÜZERİNDE YERİNDE (in-place) çalışır,
+# genel-amaçlı `[T]` fonksiyon generic'i (bkz. `tests/golden/codegen_cases/
+# generic_functions.nox`) İLE `list[T]`nin MEVCUT indeksleme/atama desteği
+# (Faz U.1) YETERLİ — YENİ bir runtime/codegen özelliği GEREKMEDİ.
+def shuffle[T](xs: list[T]) -> None:
+    n: int = len(xs)
+    i: int = n - 1
+    while i > 0:
+        j: int = randint(0, i)
+        tmp: T = xs[i]
+        xs[i] = xs[j]
+        xs[j] = tmp
+        i = i - 1

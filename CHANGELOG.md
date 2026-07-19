@@ -952,6 +952,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   `.REALTIME`sinden FARKLI — Rust'ın `Instant::now()`si İLE AYNI ilke)
   üzerine kurulu. 1 yeni unit test (break→red→fix İLE doğrulandı) + 1
   yeni golden test.
+- **Faz III.8 — `nox.random`a `normal()`/`exponential(rate)` + `shuffle[T]`
+  eklendi** (bkz. nox-teknik-spesifikasyon.md §3.69). Dağılımlar SAF Nox
+  (Box-Muller/ters-CDF); `shuffle` Fisher-Yates, `list[T]`nin MEVCUT
+  indeksleme/atamasıyla YERİNDE çalışır. **Yan ürün düzeltme:**
+  `checker.zig`nin `resolveMangledCall`ine `self.generic_functions`
+  kontrolü eklendi — nitelikli çağrılar (`nox.random.shuffle(xs)`) DAHA
+  ÖNCE generic fonksiyonları HİÇ bulamıyordu (yalnızca aynı-modül ÇIPLAK
+  çağrılar çalışıyordu). break→red→fix İLE doğrulandı + 1 yeni golden test.
 
 ## [1.0.0]
 

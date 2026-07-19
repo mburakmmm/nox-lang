@@ -727,6 +727,18 @@ pub const Checker = struct {
     /// çağrılar (`foo(...)`) TARAFINDAN paylaşılır (bkz. `checkCall`in
     /// `.identifier` dalındaki `self.from_imports` kullanımı).
     fn resolveMangledCall(self: *Checker, ctx: *FnCtx, c: ast.Call, mangled: []const u8, not_found_msg: []const u8) TypeError!Type {
+        // Faz III.8 (bkz. nox-teknik-spesifikasyon.md §3.69) — `nox.random.
+        // shuffle(xs)` gibi NİTELİKLİ bir çağrının bir GENERIC fonksiyona
+        // (`shuffle[T]`) İŞARET ETTİĞİ durum: module_loader `fd.name`i ZATEN
+        // mangled hâle (`nox_random_shuffle`) getirdiğinden, `generic_
+        // functions` haritası da BU mangled adla anahtarlanır (bkz. `.identifier`
+        // dalının AYNI, ÇIPLAK-çağrı İÇİN ÇALIŞAN kontrolü) — ama BU fonksiyon
+        // (nitelikli çağrı yolu) ÖNCEDEN yalnızca `self.functions`/`self.
+        // classes`e bakıyordu, generic'leri HİÇ KONTROL ETMİYORDU (GERÇEKTEN
+        // denenip "modülün 'shuffle' adlı üyesi yok" hatasıyla YAKALANDI).
+        if (self.generic_functions.get(mangled)) |gfd| {
+            return try self.instantiateGeneric(ctx, gfd, c);
+        }
         if (self.functions.get(mangled)) |sig| {
             if (self.async_functions.contains(mangled)) {
                 return self.fail(error.TypeMismatch, "'{s}' bir 'async def' fonksiyonudur, yalnızca 'spawn' ile başlatılabilir", .{mangled});

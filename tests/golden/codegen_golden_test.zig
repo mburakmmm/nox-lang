@@ -1257,6 +1257,13 @@ test "codegen(çalıştır): nox.random.seed/randint/random — aralık sınırl
     );
 }
 
+test "codegen(çalıştır): Faz III.8 — nox.random.normal/exponential + shuffle (int/str list[T])" {
+    try expectGolden(
+        @embedFile("codegen_cases/random_normal_exponential_shuffle.nox"),
+        @embedFile("codegen_cases/random_normal_exponential_shuffle.expected"),
+    );
+}
+
 test "codegen(çalıştır): nox.crypto.sha256 — bilinen test vektörleri (\"\"/\"abc\")" {
     try expectGolden(
         @embedFile("codegen_cases/crypto_sha256_known_vectors.nox"),

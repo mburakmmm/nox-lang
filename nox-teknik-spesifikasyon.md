@@ -11226,6 +11226,26 @@ modül fonksiyonu `Instant`i inşa eder. 1 yeni Zig unit testi (break→red→fi
 İLE doğrulandı — sahte HEP-SIFIR bir saat DÖNÜLÜNCE hem bu test HEM DE
 YENİ golden test doğru şekilde KIRMIZI oldu) + 1 yeni golden test.
 
+### III.8 (TAMAMLANDI) — `nox.random` dağılımlar + `shuffle`
+
+`normal()`/`exponential(rate)` — SAF Nox (HİÇ runtime değişikliği
+GEREKMEDİ), MEVCUT `random()` + `nox.math`nin `sqrt`/`log`/`cos`/`pi()`si
+üzerine kurulu (Box-Muller/ters-CDF). `shuffle[T](xs: list[T])` — Fisher-
+Yates, `list[T]`nin MEVCUT indeksleme/atama desteğiyle (Faz U.1) YERİNDE
+çalışır. **Gerçek bir çözülen boşluk:** `nox.random.shuffle(xs)` gibi
+NİTELİKLİ bir çağrı, checker.zig'in `resolveMangledCall`inin (nitelikli-
+çağrı çözüm yolu) `self.generic_functions`i HİÇ KONTROL ETMEDİĞİ İÇİN
+BAŞARISIZ oluyordu ("modülün 'shuffle' adlı üyesi yok" — GERÇEKTEN
+denenip YAKALANDI) — yalnızca ÇIPLAK (aynı modül İÇİNDEN) generic
+çağrılar `checkCall`in `.identifier` dalından çalışıyordu. `resolveMangledCall`e
+`self.generic_functions.get(mangled)` kontrolü + `instantiateGeneric`
+çağrısı eklenerek NİTELİKLİ generic çağrılar da desteklendi (break→red→fix
+İLE doğrulandı — kontrol `if (false)` İLE devre dışı bırakılınca AYNI
+hata mesajı GERİ GELDİ). 1 yeni golden test (`normal`/`exponential` +
+`list[int]`/`list[str]` üzerinde `shuffle` DAHİL uçtan uca; Zig-tarafı
+DEĞİŞİKLİK OLMADIĞINDAN YENİ bir Zig unit testi GEREKMEDİ, break→red→fix
+DOĞRUDAN golden test İLE yapıldı).
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
