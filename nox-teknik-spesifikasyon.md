@@ -10812,6 +10812,68 @@ KAYDEDİLİP kapsam dışı bırakıldı (gelecekte Zig'in KENDİ `DebugAllocato
 kaynağına inmek isteyen biri İçin bkz. yukarıdaki elenen hipotezler
 listesi — TEKRARLANMAMASI İçin).**
 
+## 3.67 Faz II — `nox.*` stdlib / Rust `std` karşılaştırması ve eksik-fonksiyon analizi
+
+**Kaynak:** kullanıcının AÇIK talebi, HH serisinin kapanışının HEMEN
+ardından — "nox stdlib'i Rust stdlib'iyle karşılaştıran bir benchmark
+karşılaştırması VE darboğazlarımızın VE eksik fonksiyonlarımızın tespiti
+VE raporlanması." Faz GG (§3.66) Go/Rust'a karşı DİL-seviyesinde (aritmetik/
+OOP/istisna) bir konumlandırma yapmıştı; bu faz ÖZEL olarak `nox.*` STDLIB
+MODÜLLERİNİ (strings/math/os/fs/time/dict/json/random/regex/crypto/path)
+hedefler. Rust nightly 1.94 (`rustc`/`cargo`) makinede zaten kurulu.
+
+**Yöntem:** zaten var olan 6 `nox.*` stdlib benchmark'ının (Bölüm N/M
+fazından beri `benchmarks/{strings,math,os_fs,time,dict,strings_perf}_
+bench.nox` olarak mevcuttu — bkz. `stress_benchmarks` listesi) BİREBİR AYNI
+algoritmayla yazılmış Rust `std` eşdeğerleri (`benchmarks/*_bench.rs`)
+eklendi; `rustc -O` İLE tek-dosya derlenir (Cargo YOK — `runCOnce`nin
+`cc -O2`siyle AYNI felsefe). `benchmarks/run.zig`ye KALICI bir "Bölüm 4"
+harness'ı (`StdlibComparePair`/`runRustOnce`, mevcut Python/C bloklarıyla
+BİREBİR aynı derle→doğrula→zamanla→oranla yapısı) eklendi. `nox.json`/
+`nox.random`/`nox.regex`/`nox.crypto` BİLİNÇLİ OLARAK zamanlanmadı — Rust'ın
+`std`inde bunların HİÇBİRİ YOK (`serde_json`/`rand`/`regex`/`sha2` harici
+crate'ler, Cargo gerektirir, "tek dosya" derleme deseniyle UYUŞMAZ);
+BUNUN KENDİSİ bir bulgu olarak aşağıda belgeleniyor.
+
+**Sonuçlar (Apple M4, ReleaseFast, tam tablo için bkz. RESULTS.md Bölüm 4):**
+
+| Benchmark | Nox | Rust | yavaşlama |
+|---|---|---|---|
+| strings_bench | 3.5ms | 2.5ms | 1.4x |
+| math_bench | 2.9ms | 1.7ms | 1.7x |
+| os_fs_bench | 2.3ms | 2.7ms | 0.9x |
+| time_bench | 4.6ms | 5.9ms | 0.8x |
+| dict_bench | 2.2ms | 1.7ms | 1.3x |
+| strings_perf_bench | 208.7ms | 12.9ms | **16.2x** |
+
+**6/6 geçti.** İlk beşinin mutlak süreleri (2-6ms) süreç başlatma
+gürültüsünün İÇİNDE — güvenilir bir sinyal DEĞİL (iki koşuda os_fs/time
+hatta TERS yönde ölçüldü). **`strings_perf_bench` İSE TEK BAŞINA, İKİ AYRI
+koşuda (15.8x, 16.2x) TEKRARLANABİLİR GERÇEK bir darboğaz:** kök neden,
+`nox.strings.contains`/`index_of`nin (bkz. `stdlib/nox/strings.nox`) SAF
+Nox'ta, bayt-bayt bir `nox_str_byte_at` FONKSİYON ÇAĞRISI döngüsüyle
+O(n×m) arama yapması — Rust'ın `str::contains`i İSE SIMD-destekli bir
+Two-Way/`memchr` alt-dize arama algoritması kullanıyor. **EE.1 (§3.61)
+`join`i ZATEN AYNI gerekçeyle Zig kabuğuna taşımıştı (saf Nox O(n²) → Zig
+O(n)) — bu bulgu `contains`/`index_of`/`starts_with`/`ends_with`nin de AYNI
+EE.1 tedavisini (bir `extern def`, Zig'in `std.mem.indexOf`sünü SARAN)
+HAK ETTİĞİNİ gösteriyor. Bu fazın kapsamı BUNU YAPMAYI İÇERMİYOR** —
+kullanıcı yalnızca TESPİT/RAPORLAMA istedi, düzeltme İSTEMEDİ; gelecekteki
+bir performans fazı İçin adaydır.
+
+**Eksik-fonksiyon analizi (özet — TAM tablo RESULTS.md Bölüm 4'te):**
+zamanlanmayan 4 modül (`json`/`random`/`regex`/`crypto`) Rust `std`de HİÇ
+KARŞILIĞI OLMADIĞINDAN (harici crate gerektirir) Nox burada "pil dahil"
+avantajlı; zamanlanan modüllerde ise en dikkat çekici boşluklar:
+`nox.strings`nin UTF-8/Unicode FARKINDALIĞI OLMAMASI (bayt-tabanlı `byte_at`/
+`len`, çok baytlı karakterlerde YANLIŞ davranır) VE amortize büyüyen bir
+`String`/`StringBuilder`nin OLMAMASI (`s = s + x` HER seferinde YENİ tahsis);
+`dict[K,V]`de iterasyon (`keys`/`values`/`items`) VE `entry` API'sinin
+OLMAMASI; `nox.fs`de `read_dir`/`metadata`/`copy` OLMAMASI; `nox.time`de
+monotonik süre ölçümü (`Instant`/`Duration`) OLMAMASI. Bu liste EKSİKSİZ
+bir Rust-std-parity TAAHHÜDÜ DEĞİL, gelecekteki stdlib genişletme
+kararlarına ÖNCELİK sırası ÖNERMEK içindir.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

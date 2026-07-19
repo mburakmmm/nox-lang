@@ -777,6 +777,25 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   DEĞİL yalnızca ADALET gerektirdiğinden `swapRemove(0)` (O(1)) GÜVENLE
   kullanılabilir — mevcut TÜM testler DEĞİŞMEDEN yeşil kaldı.
 
+### Eklendi
+- **`nox.*` stdlib / Rust `std` karşılaştırması (Faz II, bkz. nox-teknik-
+  spesifikasyon.md §3.67 — kullanıcı isteği).** Var olan 6 `nox.*` stdlib
+  benchmark'ının (`strings_bench`/`math_bench`/`os_fs_bench`/`time_bench`/
+  `dict_bench`/`strings_perf_bench`) BİREBİR AYNI algoritmalı Rust `std`
+  eşdeğerleri (`benchmarks/*_bench.rs`, `rustc -O`, Cargo YOK) yazılıp
+  `benchmarks/run.zig`ye KALICI bir "Bölüm 4" harness'ı olarak eklendi.
+  `nox.json`/`nox.random`/`nox.regex`/`nox.crypto` BİLİNÇLİ OLARAK
+  zamanlanmadı — Rust'ın `std`inde bunların HİÇBİRİ YOK. **Bulgu:** 5/6
+  benchmark'ın farkı ölçüm gürültüsünün İÇİNDE (2-6ms mutlak süre); ama
+  `strings_perf_bench` İKİ AYRI koşuda TEKRARLANABİLİR biçimde **~16x
+  YAVAŞ** ölçüldü — kök neden, `nox.strings.contains`/`index_of`nin SAF
+  Nox'ta bayt-bayt bir fonksiyon-çağrısı döngüsüyle O(n×m) arama yapması
+  (Rust'ın SIMD-destekli `str::contains`inin AKSİNE); bu, EE.1'in `join`e
+  ZATEN uyguladığı "Zig kabuğuna taşı" tedavisine bir SONRAKİ ADAY olarak
+  belgelendi (bu fazın kapsamı DÜZELTMEYİ İÇERMİYOR, yalnızca TESPİT/
+  RAPORLAMA istendi). TÜM `nox.*` modülleri İçin (zamanlanmayanlar dahil)
+  bir eksik-fonksiyon/yetenek analizi RESULTS.md Bölüm 4'e eklendi.
+
 ## [1.0.0]
 
 ### Eklendi

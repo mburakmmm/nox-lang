@@ -158,6 +158,71 @@ const ComparePair = struct {
     c_expected: []const u8,
 };
 
+/// **Faz II (Rust stdlib karşılaştırması, kullanıcı isteği):** yukarıdaki
+/// `compare_pairs` dil-seviyesinde (aritmetik/OOP/istisna vb.) Python+C'ye
+/// karşı ölçüyor — bu ise `nox.*` STDLIB modüllerini (strings/math/os+fs/
+/// time/dict) hedef alır, `benchmarks/*_bench.nox`nin (Bölüm 1'de zaten
+/// var olan) Rust `std` eşdeğerleriyle (`benchmarks/*_bench.rs`) eşleşir.
+/// `nox.json`/`nox.random`/`nox.regex`/`nox.crypto` BİLİNÇLİ OLARAK DIŞARIDA
+/// BIRAKILDI — Rust'ın `std`inde bunların HİÇBİRİ YOK (`serde_json`/`rand`/
+/// `regex`/`sha2` harici crate'ler, Cargo gerektirir) — bu, `cc -O2`/
+/// `rustc -O` İLE AYNI "tek dosya, harici bağımlılık yok" derleme deseniyle
+/// UYUŞMAZ; bu ASİMETRİNİN KENDİSİ RESULTS.md'nin eksik-fonksiyon
+/// bölümünde bir BULGU olarak belgelenir (Nox bu alanlarda "pil dahil",
+/// Rust'ın std'si DEĞİL).
+const StdlibComparePair = struct {
+    name: []const u8,
+    nox_path: []const u8,
+    nox_expected: []const u8,
+    rust_path: []const u8,
+    rust_expected: []const u8,
+};
+
+const stdlib_compare_pairs = [_]StdlibComparePair{
+    .{
+        .name = "strings_bench",
+        .nox_path = "benchmarks/strings_bench.nox",
+        .nox_expected = "160000\n",
+        .rust_path = "benchmarks/strings_bench.rs",
+        .rust_expected = "160000\n",
+    },
+    .{
+        .name = "math_bench",
+        .nox_path = "benchmarks/math_bench.nox",
+        .nox_expected = "1.49791e+10\n",
+        .rust_path = "benchmarks/math_bench.rs",
+        .rust_expected = "14979067797.026188\n",
+    },
+    .{
+        .name = "os_fs_bench",
+        .nox_path = "benchmarks/os_fs_bench.nox",
+        .nox_expected = "30000\n",
+        .rust_path = "benchmarks/os_fs_bench.rs",
+        .rust_expected = "30000\n",
+    },
+    .{
+        .name = "time_bench",
+        .nox_path = "benchmarks/time_bench.nox",
+        .nox_expected = "200000\n",
+        .rust_path = "benchmarks/time_bench.rs",
+        .rust_expected = "200000\n",
+    },
+    .{
+        .name = "dict_bench",
+        .nox_path = "benchmarks/dict_bench.nox",
+        .nox_expected = "24995000\n",
+        .rust_path = "benchmarks/dict_bench.rs",
+        .rust_expected = "24995000\n",
+    },
+    .{
+        .name = "strings_perf_bench",
+        .nox_path = "benchmarks/strings_perf_bench.nox",
+        .nox_expected = "50000\n7499500\n",
+        .rust_path = "benchmarks/strings_perf_bench.rs",
+        .rust_expected = "50000\n7499500\n",
+    },
+};
+
 const compare_pairs = [_]ComparePair{
     .{
         .name = "numeric_recursion",
@@ -367,13 +432,60 @@ pub fn main(init: std.process.Init) !void {
     }
 
     try out.print("{d}/{d} karşılaştırma çifti başarıyla tamamlandı.\n", .{ compare_pass, compare_pairs.len });
-    try out.print("\nToplam: {d}/{d} stres testi, {d}/{d} karşılaştırma çifti geçti.\n", .{
+    try out.flush();
+
+    try out.writeAll("\n-- Bölüm 4: Rust stdlib karşılaştırması (nox.* modülleri) --\n\n");
+    try out.flush();
+
+    const rustc_available = blk: {
+        const r = std.process.run(gpa, io, .{ .argv = &.{ "rustc", "--version" } }) catch break :blk false;
+        defer gpa.free(r.stdout);
+        defer gpa.free(r.stderr);
+        break :blk r.term == .exited and r.term.exited == 0;
+    };
+
+    var stdlib_pass: usize = 0;
+    if (!rustc_available) {
+        try out.writeAll("not: rustc bulunamadı — Bölüm 4 atlanıyor.\n\n");
+        try out.flush();
+    } else {
+        for (stdlib_compare_pairs) |p| {
+            try out.print("[{s}]\n", .{p.name});
+            try out.flush();
+
+            const nox_ms = (try runNoxOnce(gpa, io, out, "  nox", p.nox_path, p.nox_expected, COMPARE_REPEATS)) orelse {
+                try out.flush();
+                continue;
+            };
+
+            const rust_ms = (try runRustOnce(gpa, io, out, p.rust_path, p.rust_expected, COMPARE_REPEATS)) orelse {
+                try out.flush();
+                continue;
+            };
+
+            try out.flush();
+            // C bloğuyla AYNI yön kararı: Rust'a karşı Nox genelde YAVAŞ
+            // beklenir, bu yüzden "hızlanma" YERİNE "yavaşlama" (nox_ms /
+            // rust_ms) etiketiyle raporlanır — okuyucu yanlışlıkla "Nox
+            // Rust'tan X kat HIZLI" diye OKUMASIN.
+            try out.print("  yavaşlama (nox / rust): {d:.2}x\n", .{nox_ms / rust_ms});
+            try out.writeAll("\n");
+            try out.flush();
+            stdlib_pass += 1;
+        }
+        try out.print("{d}/{d} Rust stdlib karşılaştırma çifti başarıyla tamamlandı.\n", .{ stdlib_pass, stdlib_compare_pairs.len });
+        try out.flush();
+    }
+
+    const stdlib_total: usize = if (rustc_available) stdlib_compare_pairs.len else 0;
+    try out.print("\nToplam: {d}/{d} stres testi, {d}/{d} karşılaştırma çifti, {d}/{d} Rust stdlib çifti geçti.\n", .{
         stress_pass,  stress_benchmarks.len,
         compare_pass, compare_pairs.len,
+        stdlib_pass,  stdlib_total,
     });
     try out.flush();
 
-    if (stress_pass != stress_benchmarks.len or compare_pass != compare_pairs.len) std.process.exit(1);
+    if (stress_pass != stress_benchmarks.len or compare_pass != compare_pairs.len or stdlib_pass != stdlib_total) std.process.exit(1);
 }
 
 /// Bir `.nox` dosyasını derler, BİR KEZ çalıştırıp çıktı/stderr'i doğrular,
@@ -474,6 +586,51 @@ fn runCOnce(
 
     const min_ms = try timeRuns(gpa, io, &.{bin_path}, repeats);
     try out.print("  c       min={d:.1}ms  ({d} koşu)\n", .{ min_ms, repeats });
+    return min_ms;
+}
+
+/// Bir `.rs` dosyasını `rustc -O` ile derler (Cargo YOK — `runCOnce`nin
+/// `cc -O2`siyle AYNI "tek dosya, kendi olağan optimizasyon seviyesi"
+/// felsefesi), BİR KEZ çalıştırıp çıktıyı doğrular, sonra `repeats` kez
+/// daha çalıştırıp en iyi (min) süreyi ms cinsinden döner. Doğrulama
+/// başarısız olursa `null` döner — `runNoxOnce`/`runCOnce` İLE AYNI
+/// sözleşme.
+fn runRustOnce(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    out: *std.Io.Writer,
+    rust_path: []const u8,
+    expected: []const u8,
+    repeats: usize,
+) !?f64 {
+    const bin_path = try std.fmt.allocPrint(gpa, "{s}_rs", .{rust_path[0 .. rust_path.len - 3]});
+    defer gpa.free(bin_path);
+
+    const compile_result = try std.process.run(gpa, io, .{
+        .argv = &.{ "rustc", "-O", "-o", bin_path, rust_path },
+    });
+    defer gpa.free(compile_result.stdout);
+    defer gpa.free(compile_result.stderr);
+    if (compile_result.term != .exited or compile_result.term.exited != 0) {
+        try out.print("  rust  DERLEME BAŞARISIZ:\n{s}\n", .{compile_result.stderr});
+        return null;
+    }
+
+    const check_result = try std.process.run(gpa, io, .{ .argv = &.{bin_path} });
+    defer gpa.free(check_result.stdout);
+    defer gpa.free(check_result.stderr);
+
+    if (check_result.term != .exited or check_result.term.exited != 0) {
+        try out.print("  rust  ÇALIŞTIRMA BAŞARISIZ (çıkış kodu)\n", .{});
+        return null;
+    }
+    if (!std.mem.eql(u8, check_result.stdout, expected)) {
+        try out.print("  rust  BAŞARISIZ: beklenmeyen çıktı: {s} (beklenen: {s})\n", .{ check_result.stdout, expected });
+        return null;
+    }
+
+    const min_ms = try timeRuns(gpa, io, &.{bin_path}, repeats);
+    try out.print("  rust    min={d:.1}ms  ({d} koşu)\n", .{ min_ms, repeats });
     return min_ms;
 }
 

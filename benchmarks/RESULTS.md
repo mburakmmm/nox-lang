@@ -443,3 +443,84 @@ DAHA İNCE-TANELİ bir profil (HH serisinin HANGİ maddesinin bu sıçramanın
 NE KADARINDAN sorumlu olduğunu AYRIŞTIRMAK İçin HH.6'yı TEK BAŞINA test
 eden bir ARA ölçüm) — bu tur, TOPLU etkiyi doğrulamayı hedefledi, katkı
 AYRIŞTIRMASINI DEĞİL.
+
+## Bölüm 4 — Faz II: `nox.*` stdlib / Rust `std` karşılaştırması ve eksik-fonksiyon analizi
+
+**Kaynak:** kullanıcının AÇIK talebi — HH serisinin kapanışının hemen
+ardından, "nox stdlib'i Rust stdlib'iyle karşılaştır, darboğazları VE
+eksik fonksiyonları tespit edip raporla." Faz GG'nin (§3.66) Go/Rust
+karşılaştırması DİL-seviyesindeydi (aritmetik/OOP/istisna); bu faz özel
+olarak `nox.*` STDLIB MODÜLLERİNİ hedefler.
+
+Zaten var olan 6 `nox.*` stdlib benchmark'ının (`benchmarks/{strings,math,
+os_fs,time,dict,strings_perf}_bench.nox` — Bölüm 1'de N/M fazından beri
+mevcuttu) BİREBİR AYNI algoritmayla yazılmış Rust `std` eşdeğerleri
+(`benchmarks/*_bench.rs`, `rustc -O`, Cargo YOK — C karşılaştırmasıyla
+AYNI "tek dosya" felsefesi) eklendi ve `benchmarks/run.zig`nin KALICI
+harness'ına (Bölüm 4) bağlandı. Rust nightly 1.94, Apple M4, ReleaseFast
+runtime.
+
+### Sonuç tablosu
+
+| Benchmark | Nox | Rust | yavaşlama (nox/rust) |
+|---|---|---|---|
+| strings_bench | 3.5ms | 2.5ms | 1.4x |
+| math_bench | 2.9ms | 1.7ms | 1.7x |
+| os_fs_bench | 2.3ms | 2.7ms | 0.9x |
+| time_bench | 4.6ms | 5.9ms | 0.8x |
+| dict_bench | 2.2ms | 1.7ms | 1.3x |
+| strings_perf_bench | 208.7ms | 12.9ms | **16.2x** |
+
+**6/6 geçti.**
+
+### Özet ve darboğaz bulgusu
+
+- `os_fs_bench`/`time_bench`/`dict_bench`/`math_bench`/`strings_bench`nin
+  mutlak süreleri (2-6ms) o kadar KÜÇÜK ki fark, süreç başlatma/derleme
+  ortamı gürültüsünün İÇİNDE kalıyor — bu beşi İÇİN "Nox Rust'tan hızlı/
+  yavaş" diye KESİN bir iddia YAPILAMAZ (iki koşuda os_fs/time hatta
+  TERS yönde: Nox Rust'tan HAFİF hızlı ölçüldü — güvenilir bir sinyal
+  DEĞİL, gürültü).
+- **`strings_perf_bench`, TEK BAŞINA, GERÇEK ve TEKRARLANABİLİR (iki ayrı
+  koşuda 15.8x ve 16.2x) bir darboğazı işaret ediyor.** Kök neden:
+  `nox.strings.contains`/`index_of` (bkz. `stdlib/nox/strings.nox`) SAF
+  Nox'ta yazılmış, bayt-bayt bir `nox_str_byte_at` (HER çağrıda gerçek bir
+  fonksiyon çağrısı/ABI geçişi) döngüsüyle O(n×m) arama yapıyor — Rust'ın
+  `str::contains`i İSE std kütüphanesinde SIMD-destekli bir alt-dize
+  arama algoritması (Two-Way/`memchr` tabanlı) kullanıyor. Bu benchmark'ın
+  ağırlıklı kısmı (50000 × ~2000 baytlık bir dizede `contains` taraması)
+  TAM OLARAK bu yolu sıkı biçimde çalıştırıyor. **EE.1 (§3.61) `join`i
+  ZATEN Zig kabuğuna taşımıştı (saf Nox O(n²) → Zig O(n)) — bu bulgu,
+  `contains`/`index_of`/`starts_with`/`ends_with`nin de AYNI EE.1
+  tedavisini (Zig'in `std.mem.indexOf`/`std.mem.startsWith`ini SARAN bir
+  `extern def`) HAK ETTİĞİNİ gösteriyor; bu fazın kapsamı DIŞINDA
+  BIRAKILDI (yalnızca TESPİT/RAPORLAMA istendi, düzeltme İSTENMEDİ).**
+
+### Eksik fonksiyon / yetenek analizi (TÜM `nox.*` modülleri, Rust `std` ile karşılaştırmalı)
+
+**Zamanlanmayan modüller — Rust `std`de KARŞILIĞI YOK (harici crate
+gerektirir, bu YÜZDEN kapsam dışı bırakıldı, bkz. yukarı):**
+
+| Nox modülü | Rust'ta en yakın eşdeğer | Not |
+|---|---|---|
+| `nox.json` | `serde_json` (harici crate) | Rust'ın `std`i HİÇ JSON sunmuyor — bu yönde Nox'un "pil dahil" avantajı var. |
+| `nox.random` | `rand` (harici crate) | `std::hash` içindeki `RandomState` yalnızca hash-tablosu tohumlaması içindir, genel amaçlı PRNG DEĞİL. |
+| `nox.regex` | `regex` (harici crate) | Aynı şekilde std'de yok. |
+| `nox.crypto` | `sha2`/`ring` (harici crate) | Aynı şekilde std'de yok. |
+
+**Zamanlanan/karşılaştırılabilir modüllerde eksik fonksiyonlar:**
+
+| Nox modülü | Rust std karşılığı | Nox'ta eksik/dar olanlar |
+|---|---|---|
+| `nox.strings` | `str`/`String` metodları | `trim_start`/`trim_end` (yalnızca iki-yönlü `trim` var); `splitn`/`rsplit`; `repeat`; büyük/küçük harf DUYARSIZ karşılaştırma; UTF-8/Unicode farkındalığı YOK (`byte_at`/`len` bayt-tabanlı, çok baytlı karakterlerde YANLIŞ sonuç verir — Rust `char_indices`/`chars` doğru Unicode sınırlarını bilir); amortize büyüyen bir `String`/`StringBuilder` YOK (Nox'ta `s = s + x` HER seferinde YENİ bir tahsis — `strings_perf_bench`nin `contains` darboğazının yanında, büyük ölçekli birleştirmede de potansiyel bir ikinci darboğaz). |
+| `nox.math` | `f64` metodları + `std::f64::consts` | `sin`/`cos`/`tan`/`log`/`ln`/`exp` YOK (yalnızca `sqrt`/`pow`/`floor`/`ceil`/`min`/`max`/`abs`); `PI`/`E` gibi sabitler YOK; tamsayı taşma-güvenli aritmetik (`checked_add` vb.) YOK. |
+| `nox.os` | `std::env` | Ortam değişkeni AYARLAMA (`set_var`) YOK, yalnızca okuma; `current_dir`/`args()` iterator'ü YOK (yalnızca index-tabanlı `arg(i)`); süreç oluşturma (`std::process::Command`) YOK. |
+| `nox.fs` | `std::fs` | `read_dir` (dizin listeleme) YOK; `metadata`/dosya boyutu-zaman damgası YOK; `copy`/`rename`/`remove_file`/`create_dir` YOK; APPEND modu YOK (yalnızca TAM üzerine yazma); ikili (byte) okuma/yazma YOK (yalnızca `str`). |
+| `nox.time` | `std::time` | `Instant`/`Duration` (monotonik süre ölçümü) YOK — yalnızca epoch-ms `now_ms`; `DateTime -> str` biçimlendirme YOK (yalnızca epoch-ms → `DateTime` AYRIŞTIRMA var, ters yön yok); saat dilimi desteği YOK (yalnızca UTC). |
+| `dict[K,V]` (dil yerleşiği) | `std::collections::HashMap` | `entry` API YOK; iterasyon (`keys()`/`values()`/`items()`) YOK; `remove` YOK; `contains_key` dile `in` operatörüyle var ama açık bir metod YOK. |
+| `nox.path` | `std::path::Path`/`PathBuf` | `canonicalize` (sembolik link çözme) YOK; `strip_prefix` YOK; bileşen-bazlı iterasyon (`components()`) YOK; yalnızca düz str birleştirme/ayrıştırma. |
+
+Bu liste TAMAMLANDIYSA ("her şey" değil, en sık kullanılan/eksikliği en
+çok hissedilecek yetenekler) — amaç EKSİKSİZ bir Rust-std-parity taahhüdü
+DEĞİL, gelecekteki stdlib genişletme kararlarına (nox-teknik-
+spesifikasyon.md §3.67'ye bkz.) ÖNCELİK sırası önermek.
