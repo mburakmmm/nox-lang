@@ -11075,7 +11075,32 @@ YİNELEMELER ARASI YANLIŞ yeniden kullanımı MI, yoksa `nox_rc_alloc`nin
 İKİNCİ tahsiste FARKLI davranması MI) bir hardware watchpoint'le (HH.9'un
 başarıyla kullandığı teknik) izlemek.
 
-## 4. Bellek Yönetimi — "Sahiplik Piramidi"
+## 3.69 Faz III — Stdlib genişletmesi: eksik-fonksiyon tablosunun kapatılması
+
+**Kaynak:** kullanıcının AÇIK isteği — Faz II'nin (§3.67) eksik-fonksiyon
+tablosundaki TÜM maddelerin kapatılması. İki araştırma ajanıyla (dict/
+collections+process desteği; fs/time internals+tuple desteği) BOYUTLANDIRILDI:
+listenin 5 maddesi (regex TAM motor, `StringBuilder`, JSON Serialize/
+Deserialize, `dict.remove()`, süreç oluşturma — artı UTF-8 farkındalığı)
+GERÇEKTEN büyük, bağımsız mimari kararlar GEREKTİRDİĞİNDEN BİLİNÇLİ OLARAK
+BU fazın kapsamı DIŞINDA bırakıldı (HERBİRİ AYRI bir görev/planlama turu
+gerektirir — bkz. plan dosyası); KALAN kısım MEVCUT desenlerin (extern
+def + libm/Zig std sarmalayıcı, `DateTime`nin Nox-tarafı sınıf inşası,
+`nox_strings_split_raw`nin el-yapımı `list[T]` inşası) tekrarı olarak
+10 alt-fazda (III.1-III.10) uygulanıyor, HER biri KENDİ commit'iyle.
+
+### III.1 (TAMAMLANDI) — `nox.math` trigonometri/logaritma + sabitler
+
+`sin`/`cos`/`tan`/`log`/`exp`/`atan2` — `sqrt`/`pow`/`floor`/`ceil` İLE
+AYNI çıplak-çağrılan `extern def ... from "m"` deseni. **`ln` YOK** —
+libm'de BÖYLE bir sembol YOK (yalnızca doğal logaritma İçin `log`) — bu
+yüzden `nox.math.ln`, `log`u SARAN, NİTELİKLİ çağrılan sıradan bir
+`func_def`dir (`min`/`max`/`abs` İLE AYNI ilke, `module_loader`in "extern
+def'ler mangle edilmez" asimetrisiyle TUTARLI). `pi()`/`e()` — Nox'ta
+top-level `const` OLMADIĞINDAN sabitler NİTELİKLİ çağrılan fonksiyonlar
+olarak sunulur (`nox.math.pi()`). Yeni golden test:
+`math_trig_log_constants.nox`. Dosya: `stdlib/nox/math.nox` (SAF Nox,
+runtime/codegen değişikliği YOK).
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.

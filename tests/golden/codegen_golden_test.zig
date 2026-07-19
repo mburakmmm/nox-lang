@@ -1146,6 +1146,13 @@ test "codegen(çalıştır): nox.math — sqrt/pow/floor/ceil (çıplak) + min/m
     );
 }
 
+test "codegen(çalıştır): Faz III.1 — nox.math trigonometri/log/exp (çıplak) + pi/e (nitelikli)" {
+    try expectGolden(
+        @embedFile("codegen_cases/math_trig_log_constants.nox"),
+        @embedFile("codegen_cases/math_trig_log_constants.expected"),
+    );
+}
+
 test "codegen(çalıştır): nox.os.arg_count/arg (argc/argv $main'e taşınmış)" {
     try expectGolden(
         @embedFile("codegen_cases/os_args_basic.nox"),

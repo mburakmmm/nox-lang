@@ -891,6 +891,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   çıkarıldı ve gelecekteki araştırma İçin çok daha küçük/net bir başlangıç
   noktası bırakıldı; kapsam yine bu fazın DIŞINDA.
 
+### Eklendi
+- **Faz III.1 — `nox.math`ye trigonometri/logaritma/sabitler eklendi**
+  (bkz. nox-teknik-spesifikasyon.md §3.69). `sin`/`cos`/`tan`/`log`/`exp`/
+  `atan2` — mevcut `sqrt`/`pow`/`floor`/`ceil` İLE AYNI çıplak-çağrılan
+  `extern def ... from "m"` deseni. `ln` (libm'de BÖYLE bir sembol
+  OLMADIĞINDAN `log`u SARAN nitelikli bir `func_def`) VE `pi()`/`e()`
+  (Nox'ta top-level `const` OLMADIĞINDAN nitelikli çağrılan sabit-
+  fonksiyonlar) eklendi. Yeni golden test. SAF Nox, runtime/codegen
+  değişikliği YOK.
+
 ## [1.0.0]
 
 ### Eklendi

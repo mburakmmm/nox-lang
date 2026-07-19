@@ -25,6 +25,30 @@ extern def pow(x: float, y: float) -> float from "m"
 extern def floor(x: float) -> float from "m"
 extern def ceil(x: float) -> float from "m"
 
+# Faz III.1 (bkz. nox-teknik-spesifikasyon.md §3.69) — `sqrt`/`pow`/`floor`/
+# `ceil` İLE AYNI çıplak-çağrı `extern def ... from "m"` deseni. `ln` YOK
+# (libm'de BÖYLE bir sembol YOK, yalnızca `log` — doğal logaritma) — bu
+# yüzden `ln` AŞAĞIDA `log`u SARAN, NİTELİKLİ çağrılan (`nox.math.ln`) sıradan
+# bir `func_def`dir (`min`/`max`/`abs` İLE AYNI ilke).
+extern def sin(x: float) -> float from "m"
+extern def cos(x: float) -> float from "m"
+extern def tan(x: float) -> float from "m"
+extern def log(x: float) -> float from "m"
+extern def exp(x: float) -> float from "m"
+extern def atan2(y: float, x: float) -> float from "m"
+
+def ln(x: float) -> float:
+    return log(x)
+
+# Nox'ta top-level `const` YOK — sabitler, sıradan (mangle edilen,
+# nitelikli çağrılan) fonksiyonlar olarak sunulur: `nox.math.pi()`/
+# `nox.math.e()`.
+def pi() -> float:
+    return 3.14159265358979323846
+
+def e() -> float:
+    return 2.71828182845904523536
+
 def min(a: float, b: float) -> float:
     if a < b:
         return a
