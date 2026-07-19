@@ -1181,6 +1181,13 @@ test "codegen(çalıştır): nox.fs.write_string/read_to_string round-trip" {
     );
 }
 
+test "codegen(çalıştır): Faz III.3 — nox.fs append/metadata/read_dir/copy/rename/remove_file/create_dir" {
+    try expectGolden(
+        @embedFile("codegen_cases/fs_new_operations.nox"),
+        @embedFile("codegen_cases/fs_new_operations.expected"),
+    );
+}
+
 test "codegen(çalıştır): nox.fs.read_to_string eksik dosya FsError raise eder" {
     try expectGolden(
         @embedFile("codegen_cases/fs_read_missing_raises.nox"),

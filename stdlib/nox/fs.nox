@@ -24,6 +24,16 @@ extern def nox_fs_last_op_ok() -> int from "zig-out/lib/noxrt.o"
 extern def nox_fs_exists_raw(path: str) -> int from "zig-out/lib/noxrt.o"
 extern def nox_fs_is_file_raw(path: str) -> int from "zig-out/lib/noxrt.o"
 extern def nox_fs_is_dir_raw(path: str) -> int from "zig-out/lib/noxrt.o"
+# Faz III.3 (bkz. nox-teknik-spesifikasyon.md §3.69).
+extern def nox_fs_append_string_raw(path: str, content: str) -> None from "zig-out/lib/noxrt.o" with_rt
+extern def nox_fs_stat_raw(path: str) -> None from "zig-out/lib/noxrt.o"
+extern def nox_fs_stat_size_raw() -> int from "zig-out/lib/noxrt.o"
+extern def nox_fs_stat_mtime_ms_raw() -> int from "zig-out/lib/noxrt.o"
+extern def nox_fs_read_dir_raw(path: str) -> list[str] from "zig-out/lib/noxrt.o" with_rt
+extern def nox_fs_copy_raw(src: str, dst: str) -> None from "zig-out/lib/noxrt.o"
+extern def nox_fs_rename_raw(old: str, new: str) -> None from "zig-out/lib/noxrt.o"
+extern def nox_fs_remove_file_raw(path: str) -> None from "zig-out/lib/noxrt.o"
+extern def nox_fs_create_dir_raw(path: str) -> None from "zig-out/lib/noxrt.o"
 
 def read_to_string(path: str) -> str:
     content: str = nox_fs_read_to_string_raw(path)
@@ -36,6 +46,13 @@ def write_string(path: str, content: str) -> None:
     if nox_fs_last_op_ok() == 0:
         raise FsError("dosya yazilamadi: " + path)
 
+# Faz III.3 — `write_string`nin AKSİNE dosyayı KISALTMAZ, `content`i
+# SONUNA ekler.
+def append_string(path: str, content: str) -> None:
+    nox_fs_append_string_raw(path, content)
+    if nox_fs_last_op_ok() == 0:
+        raise FsError("dosyaya eklenemedi: " + path)
+
 def exists(path: str) -> bool:
     return nox_fs_exists_raw(path) != 0
 
@@ -44,3 +61,46 @@ def is_file(path: str) -> bool:
 
 def is_dir(path: str) -> bool:
     return nox_fs_is_dir_raw(path) != 0
+
+# Faz III.3 — `DateTime`nin (bkz. `stdlib/nox/time.nox`) AYNI Nox-tarafı
+# sınıf inşa deseni: Zig SKALER int'ler döner (`nox_fs_stat_raw` TEK bir
+# `open`+`fstat`+`close` yapıp sonucu ÖNBELLEKLER), Nox SIRAYLA okuyup
+# sınıfı kurar.
+class FileMetadata:
+    def __init__(self: FileMetadata, size: int, modified_ms: int) -> None:
+        self.size = size
+        self.modified_ms = modified_ms
+
+def metadata(path: str) -> FileMetadata:
+    nox_fs_stat_raw(path)
+    if nox_fs_last_op_ok() == 0:
+        raise FsError("meta veri okunamadi: " + path)
+    return FileMetadata(nox_fs_stat_size_raw(), nox_fs_stat_mtime_ms_raw())
+
+# `.`/`..` HARİÇ dizin girdi ADLARI (tam yol DEĞİL — Python'un
+# `os.listdir`/Rust'ın `read_dir`iyle TUTARLI).
+def read_dir(path: str) -> list[str]:
+    entries: list[str] = nox_fs_read_dir_raw(path)
+    if nox_fs_last_op_ok() == 0:
+        raise FsError("dizin okunamadi: " + path)
+    return entries
+
+def copy(src: str, dst: str) -> None:
+    nox_fs_copy_raw(src, dst)
+    if nox_fs_last_op_ok() == 0:
+        raise FsError("kopyalanamadi: " + src + " -> " + dst)
+
+def rename(old: str, new: str) -> None:
+    nox_fs_rename_raw(old, new)
+    if nox_fs_last_op_ok() == 0:
+        raise FsError("yeniden adlandirilamadi: " + old + " -> " + new)
+
+def remove_file(path: str) -> None:
+    nox_fs_remove_file_raw(path)
+    if nox_fs_last_op_ok() == 0:
+        raise FsError("silinemedi: " + path)
+
+def create_dir(path: str) -> None:
+    nox_fs_create_dir_raw(path)
+    if nox_fs_last_op_ok() == 0:
+        raise FsError("dizin olusturulamadi: " + path)

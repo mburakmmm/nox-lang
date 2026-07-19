@@ -11114,6 +11114,45 @@ strings.zig`ye (7 yeni unit test, break→red→fix İLE doğrulandı) +
 `stdlib/nox/strings.nox`ye ince sarmalayıcılar olarak eklendi. Yeni
 golden test: `strings_new_helpers.nox`.
 
+### III.3 (TAMAMLANDI) — `nox.fs` genişletmesi + `page_allocator` düzeltmesi
+
+**Yeni fonksiyonlar:** `append_string` (`write_string`nin AKSİNE
+KISALTMAZ, `O.APPEND`); `metadata()` (`DateTime`nin AYNI Nox-tarafı sınıf
+inşa deseni — Zig `nox_fs_stat_raw` TEK bir `open`+`fstat`+`close` yapıp
+`threadlocal` statiklere ÖNBELLEKLER, iki AYRI accessor Nox'ta
+`FileMetadata`yı kurar); `read_dir()` (`list[str]`, HAM libc `opendir`/
+`readdir`/`closedir` — bu Zig sürümünde `std.fs.Dir`/`std.Io.Dir` bir
+`Io` bağlamı GEREKTİRDİĞİNDEN, `.`/`..` ATLANIR); `copy` (TAŞINABİLİR —
+macOS'a-özgü `copyfile()` KULLANILMAZ, oku+yaz); `rename`/`remove_file`/
+`create_dir` (`std.c.rename`/`unlink`/`mkdir`). **Önemli düzeltilmiş
+varsayım:** dosyanın ÜST-modül belge notu `std.c.stat`in aarch64-macOS'ta
+BAĞLI OLMADIĞINI iddia ediyordu — bu, YALNIZCA YOL-tabanlı `stat`i
+etkiliyor, **FD-tabanlı `std.c.fstat` GERÇEKTEN test EDİLİP ÇALIŞTIĞI
+DOĞRULANDI**, `metadata()` bunun ÜZERİNE kuruldu.
+
+**Fırsatçı düzeltme:** `nox_fs_read_to_string_raw` HÂLÂ `path.zig`nin
+EE.1-SONRASI düzeltmesinden ÖNCEKİ `page_allocator` çift-tahsis desenini
+kullanıyordu — bu dosyaya ZATEN dokunulduğundan `fstat` İLE dosya
+boyutunu ÖNCEDEN alıp TEK bir `arc.nox_rc_alloc`a DOĞRUDAN okuyan
+stratejiye geçirildi. **Yeni `fs_bench` (2000 baytlık dosyayı 20000 kez
+okur) İLE ÖNCE/SONRA ÖLÇÜLDÜ: ~170-180ms → ~130-138ms (~1.25-1.3x)** —
+`path_bench`nin ~9.9x'inden ÇOK daha MÜTEVAZİ (GERÇEK disk G/Ç süresi
+BURADA TOPLAM sürenin BÜYÜK kısmı, tahsis stratejisinin payı KÜÇÜK) ama
+GERÇEK bir kazanç. `fs_bench`, `benchmarks/rust_crates`nin DIŞINDA,
+Faz II'nin AYNI `path_bench`/Rust karşılaştırma desenine (Bölüm 4)
+eklendi.
+
+**14 yeni unit test (break→red→fix İLE doğrulandı, GERÇEK bir "eksik
+`.`/`..` filtresi" bozulmasında BEKLENEN ARC sızıntıları bile
+YAKALANDI) + 1 yeni golden test** (`fs_new_operations.nox` — idempotent
+olması İçin `create_dir`den ÖNCE `exists` kontrolü İÇERİR, tekrar tekrar
+koşulabilir).
+
+**Bilinçli v1 sınırlaması (kapsam DIŞI, gelecekteki bir görev):** ikili
+(byte) okuma/yazma — Nox `str`leri NULL-sonlandırılmış OLDUĞUNDAN gömülü
+NUL bayt İÇEREN veriyi GÜVENLE taşıyamaz, GERÇEK bir "bytes" tipi
+gerektirir (`StringBuilder` İLE AYNI "yeni tip" kararı).
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

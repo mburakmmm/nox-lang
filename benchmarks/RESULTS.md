@@ -471,10 +471,28 @@ runtime.
 | dict_bench | 2.7ms | 3.0ms | 0.9x |
 | strings_perf_bench | 13.8ms | 12.9ms | **1.1x** |
 | path_bench | 8.0ms | 16.2ms | **0.5x (Nox HIZLI)** |
+| fs_bench | 138.5ms | 146.3ms | **0.95x (Nox HAFİF hızlı)** |
 
-**7/7 geçti** (`path_bench`, kullanıcının "diğer stdlib alanları da
+**8/8 geçti** (`path_bench`, kullanıcının "diğer stdlib alanları da
 benchmarklandı mı" sorusu ÜZERİNE Faz II'ye SONRADAN eklendi — bkz.
-aşağıdaki "Düzeltme 3").
+aşağıdaki "Düzeltme 3"; `fs_bench` Faz III.3'te EKLENDİ — bkz. "Düzeltme 4").
+
+### Düzeltme 4 (Faz III.3 — `nox.fs.read_to_string`nin `page_allocator` çift-tahsis düzeltmesi)
+
+`nox_fs_read_to_string_raw` HÂLÂ `path.zig`nin EE.1-SONRASI düzeltmesinden
+ÖNCEKİ deseni (`std.heap.page_allocator`la BÜYÜYEN bir tampon + SONRA
+`dupeToNoxStr` İLE İKİNCİ bir ARC kopyası) kullanıyordu — Faz III.3'te
+YENİ fonksiyonlar eklenirken bu dosyaya ZATEN dokunulduğundan, `fstat`
+İLE GERÇEK dosya boyutu ÖNCEDEN alınıp TEK bir `arc.nox_rc_alloc` yapılan,
+DOĞRUDAN o tampona okuyan stratejiye geçirildi (`path_bench`teki AYNI
+fikir). **Yeni `fs_bench` (2000 baytlık bir dosyayı 20000 kez okur)
+İLE ÖNCE/SONRA GERÇEKTEN ölçüldü:** ESKİ (`page_allocator`) desen ~170-
+180ms, YENİ (`arc.nox_rc_alloc`) desen ~130-138ms — **~1.25-1.3x
+hızlanma**. `path_bench`nin ~9.9x kazanımından ÇOK daha MÜTEVAZİ, çünkü
+BURADA GERÇEK disk G/Ç (syscall) süresi TOPLAM sürenin BÜYÜK kısmını
+oluşturuyor — SAF string manipülasyonu olan `path.join`in AKSİNE, tahsis
+stratejisinin payı ORANTILI olarak KÜÇÜK. Yine de GERÇEK, ÖLÇÜLEBİLİR bir
+kazanç.
 
 **7/7 geçti.**
 
@@ -669,7 +687,7 @@ karşılaştırması hâlâ ayrıca geçerlidir:**
 | `nox.strings` | `str`/`String` metodları | `trim_start`/`trim_end` (yalnızca iki-yönlü `trim` var); `splitn`/`rsplit`; `repeat`; büyük/küçük harf DUYARSIZ karşılaştırma; UTF-8/Unicode farkındalığı YOK (`byte_at`/`len` bayt-tabanlı, çok baytlı karakterlerde YANLIŞ sonuç verir — Rust `char_indices`/`chars` doğru Unicode sınırlarını bilir); amortize büyüyen bir `String`/`StringBuilder` YOK (Nox'ta `s = s + x` HER seferinde YENİ bir tahsis) — **DOĞRULANDI: bu, `strings_perf_bench`nin darboğazının kaynağı DEĞİLDİ** (bkz. yukarıdaki "Düzeltme 2" — kalan fark `join`de değil, `contains`/`index_of`nin KENDİSİNDEYDİ), ama BAĞIMSIZ bir gerçek boşluk olarak KALIR. |
 | `nox.math` | `f64` metodları + `std::f64::consts` | `sin`/`cos`/`tan`/`log`/`ln`/`exp` YOK (yalnızca `sqrt`/`pow`/`floor`/`ceil`/`min`/`max`/`abs`); `PI`/`E` gibi sabitler YOK; tamsayı taşma-güvenli aritmetik (`checked_add` vb.) YOK. |
 | `nox.os` | `std::env` | Ortam değişkeni AYARLAMA (`set_var`) YOK, yalnızca okuma; `current_dir`/`args()` iterator'ü YOK (yalnızca index-tabanlı `arg(i)`); süreç oluşturma (`std::process::Command`) YOK. |
-| `nox.fs` | `std::fs` | `read_dir` (dizin listeleme) YOK; `metadata`/dosya boyutu-zaman damgası YOK; `copy`/`rename`/`remove_file`/`create_dir` YOK; APPEND modu YOK (yalnızca TAM üzerine yazma); ikili (byte) okuma/yazma YOK (yalnızca `str`). |
+| `nox.fs` | `std::fs` | **DÜZELTİLDİ (Faz III.3):** `read_dir`/`metadata`/`copy`/`rename`/`remove_file`/`create_dir`/APPEND modu ARTIK VAR. **HÂLÂ AÇIK:** ikili (byte) okuma/yazma YOK (yalnızca `str` — Nox `str`leri NULL-sonlandırılmış OLDUĞUNDAN gömülü NUL bayt İÇEREN veriyi taşıyamaz, GERÇEK bir "bytes" tipi gerektirir, `StringBuilder` İLE AYNI "yeni tip" kararı, BİLİNÇLİ kapsam DIŞI). |
 | `nox.time` | `std::time` | `Instant`/`Duration` (monotonik süre ölçümü) YOK — yalnızca epoch-ms `now_ms`; `DateTime -> str` biçimlendirme YOK (yalnızca epoch-ms → `DateTime` AYRIŞTIRMA var, ters yön yok); saat dilimi desteği YOK (yalnızca UTC). |
 | `dict[K,V]` (dil yerleşiği) | `std::collections::HashMap` | `entry` API YOK; iterasyon (`keys()`/`values()`/`items()`) YOK; `remove` YOK; `contains_key` dile `in` operatörüyle var ama açık bir metod YOK. |
 | `nox.path` | `std::path::Path`/`PathBuf` | `canonicalize` (sembolik link çözme) YOK; `strip_prefix` YOK; bileşen-bazlı iterasyon (`components()`) YOK; yalnızca düz str birleştirme/ayrıştırma. |

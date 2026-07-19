@@ -906,6 +906,21 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   `rsplit(s,sep)` (AYNI parçalar, TERS sıra), `repeat(s,n)` (EE.1'in
   `join`iyle AYNI TEK-tahsis stratejisi), `eq_ignore_case(a,b)`. 7 yeni
   unit test (break→red→fix İLE doğrulandı) + 1 yeni golden test.
+- **Faz III.3 — `nox.fs`ye `append_string`/`metadata`/`read_dir`/`copy`/
+  `rename`/`remove_file`/`create_dir` eklendi + `read_to_string`nin
+  `page_allocator` çift-tahsis deseni düzeltildi** (bkz. nox-teknik-
+  spesifikasyon.md §3.69). `metadata()` `DateTime`nin AYNI Nox-tarafı
+  sınıf inşa deseniyle (`std.c.fstat`, FD-tabanlı — YOL-tabanlı `std.c.
+  stat`in aksine BU Zig sürümünde GERÇEKTEN ÇALIŞTIĞI doğrulandı);
+  `read_dir()` HAM libc `opendir`/`readdir`/`closedir` İLE (`.`/`..`
+  atlanır); `copy` TAŞINABİLİR (macOS'a-özgü `copyfile()` KULLANILMAZ).
+  **Fırsatçı düzeltme:** `read_to_string_raw`, `path.zig`nin EE.1-SONRASI
+  düzeltmesinden ÖNCEKİ `page_allocator` desenini kullanıyordu — `fstat`
+  İLE dosya boyutu ÖNCEDEN alınıp TEK bir `arc.nox_rc_alloc`a geçirildi.
+  Yeni `fs_bench` İLE ÖNCE/SONRA ÖLÇÜLDÜ: **~170-180ms → ~130-138ms
+  (~1.25-1.3x)** — `path_bench`nin ~9.9x'inden MÜTEVAZİ (disk G/Ç süresi
+  BASKIN) ama GERÇEK. 14 yeni unit test (break→red→fix İLE doğrulandı) +
+  1 yeni golden test (idempotent, tekrar tekrar koşulabilir).
 
 ## [1.0.0]
 

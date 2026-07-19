@@ -148,6 +148,12 @@ const stress_benchmarks = [_]Benchmark{
     .{ .name = "random_bench", .path = "benchmarks/random_bench.nox", .expected = "500177905\n" },
     .{ .name = "regex_bench", .path = "benchmarks/regex_bench.nox", .expected = "150000\n" },
     .{ .name = "crypto_bench", .path = "benchmarks/crypto_bench.nox", .expected = "640000\n" },
+    // Faz III.3 (bkz. nox-teknik-spesifikasyon.md §3.69) — `nox_fs_read_
+    // to_string_raw`nin `page_allocator` çift-tahsis deseninden `arc.
+    // nox_rc_alloc` tek-tahsisine geçişini doğrulamak İçin: 2000 baytlık
+    // bir dosyayı 20000 kez okur (`os_fs_bench`in AKSİNE `read_to_string`i
+    // İZOLE eder — `os_fs_bench` `arg_count()` döngüsüyle BASKILANIR).
+    .{ .name = "fs_bench", .path = "benchmarks/fs_bench.nox", .expected = "40000000\n" },
 };
 
 /// **C karşılaştırması (kullanıcı isteği):** Python'un yanına, AYNI on
@@ -248,6 +254,13 @@ const stdlib_compare_pairs = [_]StdlibComparePair{
         .nox_expected = "3900000\n",
         .rust_path = "benchmarks/path_bench.rs",
         .rust_expected = "3900000\n",
+    },
+    .{
+        .name = "fs_bench",
+        .nox_path = "benchmarks/fs_bench.nox",
+        .nox_expected = "40000000\n",
+        .rust_path = "benchmarks/fs_bench.rs",
+        .rust_expected = "40000000\n",
     },
 };
 

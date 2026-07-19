@@ -1,0 +1,26 @@
+import nox.fs
+
+nox.fs.write_string("/tmp/nox_golden_fs_iii3_probe.txt", "hello")
+nox.fs.append_string("/tmp/nox_golden_fs_iii3_probe.txt", " world")
+print(nox.fs.read_to_string("/tmp/nox_golden_fs_iii3_probe.txt"))
+
+meta: nox_fs_FileMetadata = nox.fs.metadata("/tmp/nox_golden_fs_iii3_probe.txt")
+print(meta.size)
+print(meta.modified_ms > 0)
+
+if nox.fs.exists("/tmp/nox_golden_fs_iii3_dir") == False:
+    nox.fs.create_dir("/tmp/nox_golden_fs_iii3_dir")
+nox.fs.write_string("/tmp/nox_golden_fs_iii3_dir/a.txt", "x")
+nox.fs.write_string("/tmp/nox_golden_fs_iii3_dir/b.txt", "y")
+entries: list[str] = nox.fs.read_dir("/tmp/nox_golden_fs_iii3_dir")
+print(len(entries))
+
+nox.fs.copy("/tmp/nox_golden_fs_iii3_probe.txt", "/tmp/nox_golden_fs_iii3_copy.txt")
+print(nox.fs.read_to_string("/tmp/nox_golden_fs_iii3_copy.txt"))
+
+nox.fs.rename("/tmp/nox_golden_fs_iii3_copy.txt", "/tmp/nox_golden_fs_iii3_renamed.txt")
+print(nox.fs.exists("/tmp/nox_golden_fs_iii3_copy.txt"))
+print(nox.fs.exists("/tmp/nox_golden_fs_iii3_renamed.txt"))
+
+nox.fs.remove_file("/tmp/nox_golden_fs_iii3_renamed.txt")
+print(nox.fs.exists("/tmp/nox_golden_fs_iii3_renamed.txt"))

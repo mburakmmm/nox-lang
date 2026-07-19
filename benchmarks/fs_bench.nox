@@ -1,0 +1,15 @@
+import nox.fs
+import nox.strings
+
+def churn(n: int) -> int:
+    payload: str = nox.strings.repeat("0123456789", 200)
+    nox.fs.write_string("/tmp/nox_bench_fs_scratch2.txt", payload)
+    total: int = 0
+    i: int = 0
+    while i < n:
+        content: str = nox.fs.read_to_string("/tmp/nox_bench_fs_scratch2.txt")
+        total = total + len(content)
+        i = i + 1
+    return total
+
+print(churn(20000))
