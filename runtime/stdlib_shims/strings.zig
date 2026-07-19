@@ -1,9 +1,15 @@
 //! `nox.strings` Zig kabuğu — stdlib fazı §H (bkz. nox-teknik-spesifikasyon.md).
 //! `split`/`trim`/`upper`/`lower`/`replace` DEĞİŞKEN uzunluklu sonuç
-//! üretir/byte-seviyeli tarama gerektirir, bu yüzden Zig'de yazılır (`join`/
-//! `contains`/`starts_with`/`ends_with`/`index_of` İSE TAMAMEN saf Nox'ta,
-//! `stdlib/nox/strings.nox`da — bkz. onun belge notu). `split`, Alt-Faz
-//! F'nin `list[str]` DÖNÜŞ tipi FFI-güvenliğinin GERÇEK ihtiyaç sahibidir.
+//! üretir/byte-seviyeli tarama gerektirir, bu yüzden Zig'de yazılır. `join`
+//! (EE.1, §3.61) VE `index_of`/`starts_with`/`ends_with` (Faz II, §3.67)
+//! AYNI gerekçeyle SONRADAN Zig'e taşındı — saf Nox'un `nox_str_byte_at`
+//! (HER bayt İçin fonksiyon çağrısı) tabanlı O(n×m) taramasının Rust'ın
+//! SIMD-destekli `std.mem.indexOf`ine göre GERÇEK ölçümle (bkz.
+//! `benchmarks/strings_perf_bench`) ~16x yavaş olduğu tespit edilmesi
+//! ÜZERİNE. `contains` İSE HÂLÂ saf Nox'ta (`index_of(s,needle)>=0`,
+//! `stdlib/nox/strings.nox`) — Zig'e taşınan `index_of`nin hızı ONA da
+//! otomatik yansır, ayrı bir extern GEREKMEZ. `split`, Alt-Faz F'nin
+//! `list[str]` DÖNÜŞ tipi FFI-güvenliğinin GERÇEK ihtiyaç sahibidir.
 //!
 //! ASCII v1 kapsamı (bilinçli) — Unicode/UTF-8 büyük/küçük harf dönüşümü
 //! ERTELENDİ (`std.ascii.toUpper`/`toLower` yalnızca ASCII baytları etkiler,
@@ -144,6 +150,52 @@ export fn nox_strings_join_raw(rt: ?*anyopaque, parts: ?*anyopaque, sep: ?[*:0]c
     }
     out[total_len] = 0;
     return @ptrCast(out);
+}
+
+/// Faz II (bkz. nox-teknik-spesifikasyon.md §3.67) — `index_of`nin ÖNCEKİ
+/// saf-Nox uygulaması (`stdlib/nox/strings.nox`) `nox_str_byte_at` (HER
+/// bayt İçin bir FONKSİYON ÇAĞRISI) İLE bayt-bayt bir O(n×m) döngüydü;
+/// bir Rust `std` karşılaştırması (`benchmarks/strings_perf_bench`) bunun
+/// Rust'ın SIMD-destekli `str::contains`ine göre ~16x YAVAŞ olduğunu
+/// GERÇEK ölçümle ORTAYA ÇIKARDI. Burada `join`in EE.1'de aldığı AYNI
+/// tedavi uygulanır: değişken-uzunluklu SONUÇ üretmediğinden (`int` döner)
+/// `rt`/`with_rt` GEREKMEZ — `nox_str_byte_at` İLE AYNI "alloc-sız ilkel"
+/// sözleşmesi. Boş `needle` (v1 sözleşmesi, `strings_search.expected`
+/// golden testiyle SABİTLENMİŞ) `0` döner — ÖNCEKİ saf-Nox davranışıyla
+/// BİREBİR AYNI.
+export fn nox_strings_index_of_raw(s: ?[*:0]const u8, needle: ?[*:0]const u8) callconv(.c) i64 {
+    const s_slice = std.mem.span(s orelse return -1);
+    const needle_slice = std.mem.span(needle orelse return -1);
+    if (needle_slice.len == 0) return 0;
+    const idx = std.mem.indexOf(u8, s_slice, needle_slice) orelse return -1;
+    return @intCast(idx);
+}
+
+/// Faz II — `starts_with`/`ends_with`nin AYNI gerekçeyle (bkz. yukarısı)
+/// Zig'e taşınan eşdeğerleri. `int` (0/1) döner — `nox_fs_exists_raw`
+/// gibi mevcut "ham bool" extern'lerle AYNI sözleşme, Nox tarafı `!= 0`
+/// ile `bool`a çevirir.
+export fn nox_strings_starts_with_raw(s: ?[*:0]const u8, prefix: ?[*:0]const u8) callconv(.c) i64 {
+    const s_slice = std.mem.span(s orelse return 0);
+    const prefix_slice = std.mem.span(prefix orelse return 0);
+    return if (std.mem.startsWith(u8, s_slice, prefix_slice)) 1 else 0;
+}
+
+export fn nox_strings_ends_with_raw(s: ?[*:0]const u8, suffix: ?[*:0]const u8) callconv(.c) i64 {
+    const s_slice = std.mem.span(s orelse return 0);
+    const suffix_slice = std.mem.span(suffix orelse return 0);
+    return if (std.mem.endsWith(u8, s_slice, suffix_slice)) 1 else 0;
+}
+
+test "nox_strings_index_of_raw/starts_with_raw/ends_with_raw dogru calisir" {
+    try std.testing.expectEqual(@as(i64, 2), nox_strings_index_of_raw("hello", "l"));
+    try std.testing.expectEqual(@as(i64, -1), nox_strings_index_of_raw("hello", "z"));
+    try std.testing.expectEqual(@as(i64, 0), nox_strings_index_of_raw("hello", ""));
+
+    try std.testing.expectEqual(@as(i64, 1), nox_strings_starts_with_raw("hello", "he"));
+    try std.testing.expectEqual(@as(i64, 0), nox_strings_starts_with_raw("hello", "lo"));
+    try std.testing.expectEqual(@as(i64, 1), nox_strings_ends_with_raw("hello", "lo"));
+    try std.testing.expectEqual(@as(i64, 0), nox_strings_ends_with_raw("hello", "he"));
 }
 
 test "nox_strings_split_raw temel bolme" {

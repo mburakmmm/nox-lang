@@ -2,10 +2,12 @@
 # `lower`/`replace`/`join`, değişken uzunluklu sonuç üretir/byte-seviyeli
 # tarama gerektirdiğinden Zig kabuğuna (`runtime/stdlib_shims/strings.zig`)
 # sarar (Faz EE.1'den ÖNCE `join` İSTİSNAYDI — saf Nox'ta O(n²) bir
-# `+`-birleştirme döngüsüydü, bkz. §3.61). `contains`/`starts_with`/
-# `ends_with`/`index_of` TAMAMEN saf Nox'ta kalır — ama ARTIK `s[i]`
-# (HER ÇAĞRIDA yeni bir 1-karakterlik `str` tahsis eden Alt-Faz G'nin
-# indekslemesi) YERİNE alloc-sız `byte_at`i kullanır (bkz. §3.61).
+# `+`-birleştirme döngüsüydü, bkz. §3.61). Faz II (§3.67) — bir Rust `std`
+# karşılaştırması `index_of`/`starts_with`/`ends_with`nin saf-Nox `byte_at`
+# döngüsünün Rust'ın SIMD-destekli aramasına göre ~16x YAVAŞ olduğunu
+# GERÇEK ölçümle ortaya çıkardı; ÜÇÜ de ARTIK AYNI EE.1 tedavisiyle Zig'e
+# taşındı. `contains` İSE HÂLÂ saf Nox'ta kalır (`index_of`e devreder,
+# Zig'e taşınan hızı OTOMATİK devralır).
 
 extern def nox_strings_split_raw(s: str, sep: str) -> list[str] from "zig-out/lib/noxrt.o" with_rt
 extern def nox_strings_trim_raw(s: str) -> str from "zig-out/lib/noxrt.o" with_rt
@@ -13,10 +15,14 @@ extern def nox_strings_upper_raw(s: str) -> str from "zig-out/lib/noxrt.o" with_
 extern def nox_strings_lower_raw(s: str) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_strings_replace_raw(s: str, old: str, new: str) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_strings_join_raw(parts: list[str], sep: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_strings_index_of_raw(s: str, needle: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_strings_starts_with_raw(s: str, prefix: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_strings_ends_with_raw(s: str, suffix: str) -> int from "zig-out/lib/noxrt.o"
 # Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) — `nox_str_char_at`nin
 # (`s[i]`, HER ÇAĞRIDA yeni bir 1-karakterlik `str` tahsis eder) AKSİNE,
-# ham bayt değerini tahsissiz döner — bayt-bayt TARAMA/KARŞILAŞTIRMA İçin
-# (bkz. `starts_with`/`ends_with`/`index_of`).
+# ham bayt değerini tahsissiz döner. Faz II SONRASI yalnızca genel
+# kullanıma açık `byte_at` İçin kullanılır (`starts_with`/`ends_with`/
+# `index_of` ARTIK Zig'de, bkz. yukarısı).
 extern def nox_str_byte_at(s: str, idx: int) -> int from "zig-out/lib/noxrt.o"
 
 def split(s: str, sep: str) -> list[str]:
@@ -37,8 +43,9 @@ def replace(s: str, old: str, new: str) -> str:
 # Faz EE.1 — `s[i]`nin (bir `str` döner, HER ÇAĞRIDA tahsis eder) alloc-sız
 # eşdeğeri: ham bayt DEĞERİNİ (`int`) döner. Kullanıcı kodu, performans-
 # duyarlı bayt-bayt tarama/karşılaştırma İçin `s[i]` YERİNE bunu tercih
-# edebilir — bu modülün KENDİ `starts_with`/`ends_with`/`index_of`si de
-# ARTIK bunu kullanıyor (bkz. aşağı).
+# edebilir. Faz II'DEN BERİ bu modülün KENDİ `starts_with`/`ends_with`/
+# `index_of`si ARTIK bunu KULLANMIYOR (Zig'e taşındı, bkz. yukarısı) —
+# `byte_at` yalnızca genel/dış kullanım İçin AÇIK kalır.
 def byte_at(s: str, idx: int) -> int:
     return nox_str_byte_at(s, idx)
 
@@ -46,44 +53,13 @@ def join(parts: list[str], sep: str) -> str:
     return nox_strings_join_raw(parts, sep)
 
 def starts_with(s: str, prefix: str) -> bool:
-    if len(prefix) > len(s):
-        return False
-    i: int = 0
-    while i < len(prefix):
-        if nox_str_byte_at(s, i) != nox_str_byte_at(prefix, i):
-            return False
-        i = i + 1
-    return True
+    return nox_strings_starts_with_raw(s, prefix) != 0
 
 def ends_with(s: str, suffix: str) -> bool:
-    if len(suffix) > len(s):
-        return False
-    offset: int = len(s) - len(suffix)
-    i: int = 0
-    while i < len(suffix):
-        if nox_str_byte_at(s, offset + i) != nox_str_byte_at(suffix, i):
-            return False
-        i = i + 1
-    return True
+    return nox_strings_ends_with_raw(s, suffix) != 0
 
 def index_of(s: str, needle: str) -> int:
-    n: int = len(needle)
-    if n == 0:
-        return 0
-    total: int = len(s)
-    i: int = 0
-    while i + n <= total:
-        j: int = 0
-        matched: bool = True
-        while j < n:
-            if nox_str_byte_at(s, i + j) != nox_str_byte_at(needle, j):
-                matched = False
-                j = n
-            j = j + 1
-        if matched:
-            return i
-        i = i + 1
-    return -1
+    return nox_strings_index_of_raw(s, needle)
 
 def contains(s: str, needle: str) -> bool:
     return index_of(s, needle) >= 0

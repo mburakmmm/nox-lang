@@ -460,41 +460,55 @@ AYNI "tek dosya" felsefesi) eklendi ve `benchmarks/run.zig`nin KALICI
 harness'ına (Bölüm 4) bağlandı. Rust nightly 1.94, Apple M4, ReleaseFast
 runtime.
 
-### Sonuç tablosu
+### Sonuç tablosu (düzeltme SONRASI — bkz. aşağıdaki "düzeltme" bölümü)
 
 | Benchmark | Nox | Rust | yavaşlama (nox/rust) |
 |---|---|---|---|
-| strings_bench | 3.5ms | 2.5ms | 1.4x |
-| math_bench | 2.9ms | 1.7ms | 1.7x |
-| os_fs_bench | 2.3ms | 2.7ms | 0.9x |
-| time_bench | 4.6ms | 5.9ms | 0.8x |
-| dict_bench | 2.2ms | 1.7ms | 1.3x |
-| strings_perf_bench | 208.7ms | 12.9ms | **16.2x** |
+| strings_bench | 4.8ms | 4.0ms | 1.2x |
+| math_bench | 3.5ms | 2.4ms | 1.4x |
+| os_fs_bench | 3.1ms | 4.3ms | 0.7x |
+| time_bench | 6.3ms | 7.8ms | 0.8x |
+| dict_bench | 2.7ms | 3.0ms | 0.9x |
+| strings_perf_bench | 47.2ms | 12.9ms | **3.6x** |
 
 **6/6 geçti.**
 
-### Özet ve darboğaz bulgusu
+### Özet ve darboğaz bulgusu (İLK ölçüm, düzeltme ÖNCESİ)
 
 - `os_fs_bench`/`time_bench`/`dict_bench`/`math_bench`/`strings_bench`nin
   mutlak süreleri (2-6ms) o kadar KÜÇÜK ki fark, süreç başlatma/derleme
   ortamı gürültüsünün İÇİNDE kalıyor — bu beşi İÇİN "Nox Rust'tan hızlı/
-  yavaş" diye KESİN bir iddia YAPILAMAZ (iki koşuda os_fs/time hatta
-  TERS yönde: Nox Rust'tan HAFİF hızlı ölçüldü — güvenilir bir sinyal
-  DEĞİL, gürültü).
-- **`strings_perf_bench`, TEK BAŞINA, GERÇEK ve TEKRARLANABİLİR (iki ayrı
-  koşuda 15.8x ve 16.2x) bir darboğazı işaret ediyor.** Kök neden:
-  `nox.strings.contains`/`index_of` (bkz. `stdlib/nox/strings.nox`) SAF
-  Nox'ta yazılmış, bayt-bayt bir `nox_str_byte_at` (HER çağrıda gerçek bir
-  fonksiyon çağrısı/ABI geçişi) döngüsüyle O(n×m) arama yapıyor — Rust'ın
-  `str::contains`i İSE std kütüphanesinde SIMD-destekli bir alt-dize
-  arama algoritması (Two-Way/`memchr` tabanlı) kullanıyor. Bu benchmark'ın
-  ağırlıklı kısmı (50000 × ~2000 baytlık bir dizede `contains` taraması)
-  TAM OLARAK bu yolu sıkı biçimde çalıştırıyor. **EE.1 (§3.61) `join`i
-  ZATEN Zig kabuğuna taşımıştı (saf Nox O(n²) → Zig O(n)) — bu bulgu,
-  `contains`/`index_of`/`starts_with`/`ends_with`nin de AYNI EE.1
-  tedavisini (Zig'in `std.mem.indexOf`/`std.mem.startsWith`ini SARAN bir
-  `extern def`) HAK ETTİĞİNİ gösteriyor; bu fazın kapsamı DIŞINDA
-  BIRAKILDI (yalnızca TESPİT/RAPORLAMA istendi, düzeltme İSTENMEDİ).**
+  yavaş" diye KESİN bir iddia YAPILAMAZ (birden çok koşuda os_fs/time
+  hatta TERS yönde: Nox Rust'tan HAFİF hızlı ölçüldü — güvenilir bir
+  sinyal DEĞİL, gürültü).
+- **`strings_perf_bench`, İLK ölçümde TEK BAŞINA, GERÇEK ve TEKRARLANABİLİR
+  (iki ayrı koşuda 15.8x ve 16.2x) bir darboğazı işaret ETMİŞTİ.** Kök
+  neden: `nox.strings.contains`/`index_of` (bkz. `stdlib/nox/strings.nox`)
+  SAF Nox'ta yazılmış, bayt-bayt bir `nox_str_byte_at` (HER çağrıda
+  gerçek bir fonksiyon çağrısı/ABI geçişi) döngüsüyle O(n×m) arama
+  yapıyordu — Rust'ın `str::contains`i İSE std kütüphanesinde SIMD-
+  destekli bir alt-dize arama algoritması (Two-Way/`memchr` tabanlı)
+  kullanıyor. Bu benchmark'ın ağırlıklı kısmı (50000 × ~2000 baytlık bir
+  dizede `contains` taraması) TAM OLARAK bu yolu sıkı biçimde
+  çalıştırıyordu.
+
+### Düzeltme (AYNI oturumda, kullanıcı isteğiyle — "devam edelim")
+
+EE.1 (§3.61) `join`i ZATEN AYNI gerekçeyle Zig kabuğuna taşımıştı (saf
+Nox O(n²) → Zig O(n)) — bu bulgu ÜZERİNE `index_of`/`starts_with`/
+`ends_with` de AYNI EE.1 tedavisine (`nox_strings_index_of_raw`/
+`starts_with_raw`/`ends_with_raw`, Zig'in `std.mem.indexOf`/`startsWith`/
+`endsWith`ini SARAN yeni `extern def`ler, bkz. `runtime/stdlib_shims/
+strings.zig`) TABİ TUTULDU; `contains` HÂLÂ saf Nox'ta kalır (`index_of`e
+devreder, Zig'e taşınan hızı OTOMATİK devralır). Break→red→fix ritüeli:
+`nox_strings_index_of_raw` geçici olarak HER ZAMAN `-1` dönecek şekilde
+bozulunca `zig build test` 4 testi (3 golden + 1 unit) BAŞARISIZ verdi;
+geri eklenince TAMAMEN yeşil. **Sonuç: `strings_perf_bench`nin yavaşlaması
+16.2x'ten 3.6x'e DÜŞTÜ** (208.7ms → 47.2ms, Rust'ın 12.9ms'i DEĞİŞMEDİ) —
+kalan 3.6x fark muhtemelen `join_bench` alt-ölçümünün (500 × 3000 elemanlı
+liste birleştirme) hâlâ Rust'ın `Vec<String>::join`inin ön-hesaplanmış
+kapasiteli TEK ayırma stratejisine göre bir miktar geride olmasından
+kaynaklanıyor — bu fazın kapsamı DIŞINDA, gelecekteki bir alt-görev adayı.
 
 ### Eksik fonksiyon / yetenek analizi (TÜM `nox.*` modülleri, Rust `std` ile karşılaştırmalı)
 
@@ -512,7 +526,7 @@ gerektirir, bu YÜZDEN kapsam dışı bırakıldı, bkz. yukarı):**
 
 | Nox modülü | Rust std karşılığı | Nox'ta eksik/dar olanlar |
 |---|---|---|
-| `nox.strings` | `str`/`String` metodları | `trim_start`/`trim_end` (yalnızca iki-yönlü `trim` var); `splitn`/`rsplit`; `repeat`; büyük/küçük harf DUYARSIZ karşılaştırma; UTF-8/Unicode farkındalığı YOK (`byte_at`/`len` bayt-tabanlı, çok baytlı karakterlerde YANLIŞ sonuç verir — Rust `char_indices`/`chars` doğru Unicode sınırlarını bilir); amortize büyüyen bir `String`/`StringBuilder` YOK (Nox'ta `s = s + x` HER seferinde YENİ bir tahsis — `strings_perf_bench`nin `contains` darboğazının yanında, büyük ölçekli birleştirmede de potansiyel bir ikinci darboğaz). |
+| `nox.strings` | `str`/`String` metodları | `trim_start`/`trim_end` (yalnızca iki-yönlü `trim` var); `splitn`/`rsplit`; `repeat`; büyük/küçük harf DUYARSIZ karşılaştırma; UTF-8/Unicode farkındalığı YOK (`byte_at`/`len` bayt-tabanlı, çok baytlı karakterlerde YANLIŞ sonuç verir — Rust `char_indices`/`chars` doğru Unicode sınırlarını bilir); amortize büyüyen bir `String`/`StringBuilder` YOK (Nox'ta `s = s + x` HER seferinde YENİ bir tahsis — `contains`/`index_of` DÜZELTİLDİKTEN (yukarı bkz.) SONRA `strings_perf_bench`nin KALAN 3.6x farkının bir kısmının kaynağı olabilir, potansiyel bir SONRAKİ darboğaz). |
 | `nox.math` | `f64` metodları + `std::f64::consts` | `sin`/`cos`/`tan`/`log`/`ln`/`exp` YOK (yalnızca `sqrt`/`pow`/`floor`/`ceil`/`min`/`max`/`abs`); `PI`/`E` gibi sabitler YOK; tamsayı taşma-güvenli aritmetik (`checked_add` vb.) YOK. |
 | `nox.os` | `std::env` | Ortam değişkeni AYARLAMA (`set_var`) YOK, yalnızca okuma; `current_dir`/`args()` iterator'ü YOK (yalnızca index-tabanlı `arg(i)`); süreç oluşturma (`std::process::Command`) YOK. |
 | `nox.fs` | `std::fs` | `read_dir` (dizin listeleme) YOK; `metadata`/dosya boyutu-zaman damgası YOK; `copy`/`rename`/`remove_file`/`create_dir` YOK; APPEND modu YOK (yalnızca TAM üzerine yazma); ikili (byte) okuma/yazma YOK (yalnızca `str`). |

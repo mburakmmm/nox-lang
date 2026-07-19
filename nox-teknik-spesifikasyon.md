@@ -10835,7 +10835,7 @@ BİREBİR aynı derle→doğrula→zamanla→oranla yapısı) eklendi. `nox.json
 crate'ler, Cargo gerektirir, "tek dosya" derleme deseniyle UYUŞMAZ);
 BUNUN KENDİSİ bir bulgu olarak aşağıda belgeleniyor.
 
-**Sonuçlar (Apple M4, ReleaseFast, tam tablo için bkz. RESULTS.md Bölüm 4):**
+**İlk sonuçlar (Apple M4, ReleaseFast, düzeltme ÖNCESİ):**
 
 | Benchmark | Nox | Rust | yavaşlama |
 |---|---|---|---|
@@ -10853,13 +10853,26 @@ koşuda (15.8x, 16.2x) TEKRARLANABİLİR GERÇEK bir darboğaz:** kök neden,
 `nox.strings.contains`/`index_of`nin (bkz. `stdlib/nox/strings.nox`) SAF
 Nox'ta, bayt-bayt bir `nox_str_byte_at` FONKSİYON ÇAĞRISI döngüsüyle
 O(n×m) arama yapması — Rust'ın `str::contains`i İSE SIMD-destekli bir
-Two-Way/`memchr` alt-dize arama algoritması kullanıyor. **EE.1 (§3.61)
-`join`i ZATEN AYNI gerekçeyle Zig kabuğuna taşımıştı (saf Nox O(n²) → Zig
-O(n)) — bu bulgu `contains`/`index_of`/`starts_with`/`ends_with`nin de AYNI
-EE.1 tedavisini (bir `extern def`, Zig'in `std.mem.indexOf`sünü SARAN)
-HAK ETTİĞİNİ gösteriyor. Bu fazın kapsamı BUNU YAPMAYI İÇERMİYOR** —
-kullanıcı yalnızca TESPİT/RAPORLAMA istedi, düzeltme İSTEMEDİ; gelecekteki
-bir performans fazı İçin adaydır.
+Two-Way/`memchr` alt-dize arama algoritması kullanıyor.
+
+**Düzeltme (kullanıcının "devam edelim" talimatıyla, AYNI faz İÇİNDE):**
+EE.1 (§3.61) `join`i ZATEN AYNI gerekçeyle Zig kabuğuna taşımıştı (saf
+Nox O(n²) → Zig O(n)) — bu bulgu ÜZERİNE `index_of`/`starts_with`/
+`ends_with` de AYNI EE.1 tedavisine tabi tutuldu: `runtime/stdlib_shims/
+strings.zig`ye `nox_strings_index_of_raw`/`starts_with_raw`/`ends_with_
+raw` (Zig'in `std.mem.indexOf`/`startsWith`/`endsWith`ini SARAN, `rt`/
+`with_rt` GEREKMEYEN alloc-sız ilkeller — `nox_str_byte_at` İLE AYNI
+sözleşme) eklendi; `stdlib/nox/strings.nox`daki SAF-Nox O(n×m) döngüleri
+bunları çağıran ince sarmalayıcılarla DEĞİŞTİRİLDİ. `contains` HÂLÂ saf
+Nox'ta kalır (`index_of`e devreder, hızı OTOMATİK devralır). Break→red→
+fix: `nox_strings_index_of_raw` geçici HER ZAMAN `-1` dönecek şekilde
+bozulunca `zig build test` 4 test (3 golden + 1 unit) BAŞARISIZ verdi;
+geri eklenince (Debug/ReleaseSafe/ReleaseFast ÜÇÜ de) TAMAMEN yeşil.
+**Sonuç: `strings_perf_bench` 208.7ms → 47.2ms'e düştü, yavaşlama 16.2x'ten
+3.6x'e GERİLEDİ** (Rust'ın 12.9ms'i DEĞİŞMEDİ, kontrol grubu). Kalan 3.6x
+farkın büyük kısmı muhtemelen `join_bench` alt-ölçümünden (Rust'ın
+`Vec<String>::join`inin ön-hesaplanmış kapasiteli tek-ayırma stratejisi) —
+bu, gelecekteki bir alt-görevin adayı, bu fazın kapsamı DIŞINDA.
 
 **Eksik-fonksiyon analizi (özet — TAM tablo RESULTS.md Bölüm 4'te):**
 zamanlanmayan 4 modül (`json`/`random`/`regex`/`crypto`) Rust `std`de HİÇ
@@ -10867,7 +10880,8 @@ KARŞILIĞI OLMADIĞINDAN (harici crate gerektirir) Nox burada "pil dahil"
 avantajlı; zamanlanan modüllerde ise en dikkat çekici boşluklar:
 `nox.strings`nin UTF-8/Unicode FARKINDALIĞI OLMAMASI (bayt-tabanlı `byte_at`/
 `len`, çok baytlı karakterlerde YANLIŞ davranır) VE amortize büyüyen bir
-`String`/`StringBuilder`nin OLMAMASI (`s = s + x` HER seferinde YENİ tahsis);
+`String`/`StringBuilder`nin OLMAMASI (`s = s + x` HER seferinde YENİ tahsis
+— `contains`/`index_of` yukarıda DÜZELTİLDİ, bu İKİNCİ nokta HÂLÂ AÇIK);
 `dict[K,V]`de iterasyon (`keys`/`values`/`items`) VE `entry` API'sinin
 OLMAMASI; `nox.fs`de `read_dir`/`metadata`/`copy` OLMAMASI; `nox.time`de
 monotonik süre ölçümü (`Instant`/`Duration`) OLMAMASI. Bu liste EKSİKSİZ

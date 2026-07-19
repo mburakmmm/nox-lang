@@ -790,11 +790,19 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   `strings_perf_bench` İKİ AYRI koşuda TEKRARLANABİLİR biçimde **~16x
   YAVAŞ** ölçüldü — kök neden, `nox.strings.contains`/`index_of`nin SAF
   Nox'ta bayt-bayt bir fonksiyon-çağrısı döngüsüyle O(n×m) arama yapması
-  (Rust'ın SIMD-destekli `str::contains`inin AKSİNE); bu, EE.1'in `join`e
-  ZATEN uyguladığı "Zig kabuğuna taşı" tedavisine bir SONRAKİ ADAY olarak
-  belgelendi (bu fazın kapsamı DÜZELTMEYİ İÇERMİYOR, yalnızca TESPİT/
-  RAPORLAMA istendi). TÜM `nox.*` modülleri İçin (zamanlanmayanlar dahil)
-  bir eksik-fonksiyon/yetenek analizi RESULTS.md Bölüm 4'e eklendi.
+  (Rust'ın SIMD-destekli `str::contains`inin AKSİNE). TÜM `nox.*` modülleri
+  İçin (zamanlanmayanlar dahil) bir eksik-fonksiyon/yetenek analizi
+  RESULTS.md Bölüm 4'e eklendi.
+- **`index_of`/`starts_with`/`ends_with` Zig kabuğuna taşındı (AYNI faz
+  İçinde, kullanıcının "devam edelim" talimatıyla).** Yukarıdaki bulgu
+  ÜZERİNE, EE.1'in `join`e uyguladığı AYNI tedavi (`stdlib/nox/strings.nox`
+  → `runtime/stdlib_shims/strings.zig`, `std.mem.indexOf`/`startsWith`/
+  `endsWith`i SARAN 3 yeni `extern def`) uygulandı; `contains` HÂLÂ saf
+  Nox'ta kalır (`index_of`e devreder, hızı OTOMATİK devralır). Break→red→
+  fix: `nox_strings_index_of_raw` geçici bozulunca `zig build test` 4 test
+  BAŞARISIZ verdi, geri eklenince Debug/ReleaseSafe/ReleaseFast ÜÇÜ de
+  yeşil. **Sonuç: `strings_perf_bench`nin yavaşlaması 16.2x'ten 3.6x'e
+  DÜŞTÜ** (208.7ms → 47.2ms, Rust'ın 12.9ms'i sabit kaldı).
 
 ## [1.0.0]
 
