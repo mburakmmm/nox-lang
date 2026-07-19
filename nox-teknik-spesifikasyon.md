@@ -10959,7 +10959,7 @@ kullanıcıya AYRI bir derleyici-hatası görevi olarak bildirildi (GG
 serisinin serbest-fonksiyon inlining'iyle İLGİLİ OLABİLECEĞİ düşünülüyor,
 kesin kök neden BULUNMADI — bu fazın kapsamı DIŞINDA).
 
-## 3.68 `list[str]` + döngünün İKİNCİ yinelemesi: ARC bozulması (ARAŞTIRILDI, ÇÖZÜLMEDİ — kök neden bulunamadı ama TEKRARLANABİLİRLİK %20'den ~%100'e çıkarıldı)
+## 3.68 `list[str]` + döngünün İKİNCİ yinelemesi: ARC bozulması (Faz JJ'de ÇÖZÜLDÜ — bkz. bu bölümün SONUNDAKİ "Bulgu 3/Çözüm" altbölümü)
 
 **Kaynak:** §3.67'de (Faz II devamı) `nox.json.encode_string`nin genel
 `\u00XX` escape yolu denenirken bulunan çökme, kullanıcının AÇIK isteğiyle
@@ -11074,6 +11074,74 @@ sonucu doğrulamak İçindir) VE `List_str_release`e geçirilen POINTER'IN
 YİNELEMELER ARASI YANLIŞ yeniden kullanımı MI, yoksa `nox_rc_alloc`nin
 İKİNCİ tahsiste FARKLI davranması MI) bir hardware watchpoint'le (HH.9'un
 başarıyla kullandığı teknik) izlemek.
+
+### Bulgu 3 (Faz JJ) — KÖK NEDEN BULUNDU VE DÜZELTİLDİ: `releaseSlotIfSet` serbest bıraktıktan SONRA slotu sıfırlamıyordu
+
+Kullanıcının AÇIK isteğiyle ("şu daha önce bulduğun hatayı da düzeltelim")
+YENİDEN ele alındı. Önerilen sonraki adımdan (yukarı bkz.) BAŞLANMADI —
+bunun yerine `lldb` İLE DOĞRUDAN `List_str_release`e (ve `nox_str_release`e)
+geçirilen POINTER değerleri her çağrıda LOGLANDI (`breakpoint command add` +
+`memory read`), `loopcall(2)`nin GERÇEK çalışması İZLENEREK:
+
+- Döngünün 1. yinelemesindeki HER İKİ `List_str_release` çağrısı (hexd(1)
+  VE hexd(2) İçin) TAMAMEN DOĞRU veriyle (`len=16, cap=16`, 16 GEÇERLİ
+  string-literal adresi) çalıştı.
+- 2. yinelemedeki `List_str_release` çağrısı, **1. yinelemedeki İLK
+  çağrıyla TAM OLARAK AYNI POINTER'I** kullandı (`0x100520008` — Zig'in
+  DebugAllocator'ı, serbest bırakılan bir bloğu HEMEN yeniden kullanmıştır,
+  bu KENDİSİ NORMAL bir allocator davranışıdır) — AMA bu SEFER bellek
+  İÇERİĞİ ÇÖPTÜ: `len=0xaaaa`, `cap=1`, `eleman[0]=0x3231` (SEKİZ bayta
+  hizalı OLMAYAN, tamamen geçersiz bir "işaretçi"). `refcountOf`nün
+  `@alignCast`i BUNU YAKALAYIP "incorrect alignment" panik verdi.
+
+**Kök neden zinciri:** `hexd`in `digits` yerel değişkeni `loopcall`nin
+döngü GÖVDESİNDE (Faz GG.2'nin serbest-fonksiyon inlining'iyle) İKİ ayrı
+ÇAĞRI SİTESİNE inline EDİLİR — her site İçin `digits`in slotu (`alloc8`)
+DÖNGÜNÜN DIŞINDA, YALNIZCA BİR KEZ ayrılır (bkz. `genInlinedCall`/
+`allocInlineSlot`) VE döngünün HER yinelemesinde YENİDEN KULLANILIR.
+`hexd`in inline edilmiş "dönüşü" (`genStmts`nin `.return_stmt` dalının
+`inline_return_target` koluna bkz.), callee'nin KENDİ yerellerini (`digits`
+DAHİL) `releaseNamedLocalsExcept` İLE "kapsam sonu" temizliği YAPARAK
+serbest bırakır — HER yinelemenin SONUNDA BİR KEZ. Bu temizlik,
+`releaseOneLocalIfManaged` ÜZERİNDEN `releaseSlotIfSet`e gider — VE
+`releaseSlotIfSet`, slotu OKUYUP serbest bıraktıktan SONRA **slotu
+SIFIRLAMIYORDU**. Bir GERÇEK (inline OLMAYAN) fonksiyon çağrısı İçin bu
+ZARARSIZDIR (slot, fonksiyonun KENDİ yığın çerçevesi yıkıldığında zaten
+YOK OLUR) — ama inline edilmiş, döngü İçindeki BİR yerel İçin, slot
+YİNELEMELER ARASI KALICIDIR. Böylece: 1. yinelemenin SONUNDA `digits`
+serbest bırakılır AMA slotu ESKİ (artık serbest bırakılmış) POINTER'I
+TAŞIMAYA DEVAM EDER; 2. yinelemenin BAŞINDA `digits` YENİDEN "bildirilirken"
+(`var_decl`nin KENDİ "üzerine yazmadan ÖNCE eskiyi serbest bırak" mantığı,
+bkz. `genListLit`in ÖNCESİNDEKİ `release_skip11`/`release10` bloğu) BU
+ESKİ, ZATEN SERBEST BIRAKILMIŞ POINTER'I HÂLÂ "canlı" SANIP TEKRAR serbest
+bırakmaya ÇALIŞIR — GERÇEK bir çift-serbest-bırakma/kullanım-sonrası-
+serbest-bırakma. Bellek o ANA KADAR (DebugAllocator'ın KENDİ iç
+bookkeeping'i tarafından) YENİDEN KULLANILDIĞINDAN, okunan "eski değer"
+ÇÖP veridir — `refcountOf`nün hizalama denetimi bunu YAKALAR (Debug/
+ReleaseSafe modlarında; ReleaseFast'te `@alignCast` bir NO-OP olduğundan
+SESSİZCE BOZUK bellek okunurdu, kanıtlandığı GİBİ bu fazın repro'su
+ReleaseFast noxc'ta HİÇ ÇÖKMEDİ — yalnızca Debug'da).
+
+**Düzeltme:** `releaseSlotIfSet` VE onun ARC-dışı (`Task`/`Channel`/
+`ThreadHandle`/`ThreadChannel`) karşılığı `destroyNonArcSlotIfSet`,
+serbest bırakma/yıkımdan HEMEN SONRA slotu `storel 0, <slot>` İLE
+SIFIRLAR. Bu, GERÇEK fonksiyon çağrıları İçin TAMAMEN zararsızdır (slot
+ZATEN atılacaktı) — inline edilmiş, döngü İçindeki yerel değişkenler İçin
+İSE TAM OLARAK gereken "kapsam sonunda BOŞALTILMIŞ" değişmezini SAĞLAR.
+Düzeltme, `compiler/codegen_qbe/codegen.zig`nin YALNIZCA BU İKİ fonksiyonuna
+(`releaseSlotIfSet`/`destroyNonArcSlotIfSet`) BİRER satır (`storel 0, ...`)
+EKLEYEREK yapıldı — başka HİÇBİR yer DEĞİŞTİRİLMEDİ.
+
+**Doğrulama:** `loopcall(2)`/`loopcall(5)`/`loopcall(1)`/`loopcall(0)`
+(1-10 arası tekrarlanan koşumlar DAHİL) düzeltmeden SONRA %100 TEMİZ —
+ÖNCEDEN ~%100 çöken repro artık HİÇ çökmüyor. `zig build test`
+(Debug/ReleaseSafe/ReleaseFast) TAMAMI yeşil (534/535 — tek istisna,
+Faz HH.9'un ÖNCEDEN belgelenmiş, İLGİSİZ, bilinen bir flaky testi). Break→
+red→fix: düzeltme (`storel 0, ...`) GERİ ALININCA, GOLDEN test AYNI
+"incorrect alignment" panikiyle (AYNI yığın izi) doğru şekilde KIRMIZI
+oldu — bu, testin GERÇEKTEN bu SINIFTAKİ bir regresyonu YAKALAYACAĞINI
+kanıtlar. Yeni golden test:
+`tests/golden/codegen_cases/inline_loop_list_str_local_double_call.nox`.
 
 ## 3.69 Faz III — Stdlib genişletmesi: eksik-fonksiyon tablosunun kapatılması
 

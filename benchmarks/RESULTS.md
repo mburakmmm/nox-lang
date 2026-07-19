@@ -658,14 +658,20 @@ KESİN bir profil YAPILMADI, yalnızca GÖZLEM olarak not düşülüyor.
   alınır) — CR bu yüzden `nox.strings.byte_at` İLE bayt-DEĞERİ (13)
   karşılaştırılarak yakalandı, string LİTERALİYLE DEĞİL.
 - **Genel `\u00XX` escape'i (kalan C0 kontrol karakterleri İçin) DENERKEN
-  GERÇEK, CİDDİ bir DERLEYİCİ hatası bulundu ve KASITLI OLARAK
+  GERÇEK, CİDDİ bir DERLEYİCİ hatası bulundu ve o SIRADA KASITLI OLARAK
   UYGULANMADI:** bir `list[str]` DÖNEN yardımcı fonksiyon (hex-basamak
   arama tablosu) bir DÖNGÜ İÇİNDEKİ AYNI ifadede İKİ KEZ çağrıldığında ARC
-  muhasebesi BOZULUYOR — Debug modunda `nox_rc_predecrement`da "incorrect
-  alignment" panikı, ReleaseFast'ta SESSİZ bir SIGSEGV. Bu, kullanıcıya
-  AYRI bir derleyici-hatası görevi olarak bildirildi (bkz. spawn edilen
-  görev) — bu fazın kapsamı DIŞINDA, GG serisinin serbest-fonksiyon
-  inlining'iyle İLGİLİ olabileceği düşünülüyor.
+  muhasebesi BOZULUYORDU — Debug modunda `nox_rc_predecrement`da "incorrect
+  alignment" panikı, ReleaseFast'ta SESSİZ bir SIGSEGV. **SONRADAN (Faz JJ,
+  bkz. nox-teknik-spesifikasyon.md §3.68'in "Bulgu 3" altbölümü) KÖK NEDEN
+  BULUNDU VE ÇÖZÜLDÜ:** `releaseSlotIfSet`, bir yerel değişkeni serbest
+  bıraktıktan SONRA slotu sıfırlamıyordu — GG.2'nin inline ettiği bir
+  fonksiyonun yerel değişkeni bir döngü İçinde YENİDEN KULLANILAN TEK bir
+  slotta yaşadığından, bu EKSİKLİK bir SONRAKİ yinelemenin ZATEN serbest
+  bırakılmış bir POINTER'ı "canlı" sanıp TEKRAR serbest bırakmasına
+  (çift-serbest-bırakma) yol açıyordu. Artık DÜZELTİLDİ — bu YÜZDEN genel
+  `\u00XX` escape yolunun KENDİSİ İSTENİRSE ARTIK GÜVENLE tekrar denenebilir
+  (bu fazın kapsamı DIŞINDA bırakıldı, AYRI bir görev).
 
 ### Eksik fonksiyon / yetenek analizi (TÜM `nox.*` modülleri, Rust `std` ile karşılaştırmalı)
 

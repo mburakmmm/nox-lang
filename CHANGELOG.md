@@ -975,6 +975,25 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   kendi planlama turlarını gerektiren görevler olarak kapsam DIŞI bırakıldı
   (bkz. nox-teknik-spesifikasyon.md §3.69'un giriş notu).
 
+### Düzeltildi
+- **Faz JJ — §3.68'de belgelenen, daha önce ÇÖZÜLEMEYEN `list[str]` +
+  döngü ARC bozulması hatası ÇÖZÜLDÜ** (bkz. nox-teknik-spesifikasyon.md
+  §3.68'in "Bulgu 3" altbölümü). `lldb` İLE kök neden bulundu: bir
+  `list[str]` yerel değişkeni İÇEREN küçük bir fonksiyon 2+ yinelemeli bir
+  döngü İçinde AYNI ifadede İKİ KEZ inline çağrıldığında, `releaseSlotIfSet`
+  (bir yerel değişkeni serbest bırakan çekirdek fonksiyon) slotu serbest
+  bıraktıktan SONRA sıfırlamıyordu — inline edilmiş bir çağrı sitesinin
+  slotu (GERÇEK bir fonksiyonun aksine) döngü yinelemeleri ARASI YENİDEN
+  KULLANILDIĞINDAN, bir SONRAKİ yinelemenin "üzerine yazmadan önce eskiyi
+  serbest bırak" mantığı ZATEN serbest bırakılmış (VE genellikle YENİDEN
+  KULLANILMIŞ) bir POINTER'I "canlı" sanıp TEKRAR serbest bırakıyordu —
+  gerçek bir çift-serbest-bırakma/kullanım-sonrası-serbest-bırakma
+  (`"incorrect alignment"` paniği/SIGSEGV). Düzeltme: `releaseSlotIfSet`
+  VE `destroyNonArcSlotIfSet`ye (`Task`/`Channel`/`ThreadHandle`/
+  `ThreadChannel` karşılığı) serbest bırakma/yıkımdan HEMEN SONRA slotu
+  sıfırlayan birer satır eklendi. Break→red→fix İLE doğrulandı (düzeltme
+  geri alınınca AYNI panik/yığın izi GERİ GELDİ) + 1 yeni golden test.
+
 ## [1.0.0]
 
 ### Eklendi

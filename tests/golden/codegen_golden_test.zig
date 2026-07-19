@@ -1410,3 +1410,22 @@ test "codegen(çalıştır): Faz GG.2 — döngülü/özyinelemeli gövdeler inl
         @embedFile("codegen_cases/inline_ineligible_fallback.expected"),
     );
 }
+
+// Faz JJ (bkz. nox-teknik-spesifikasyon.md §3.68'in devamı) — daha önce
+// ÇÖZÜLEMEYEN, ~%100 tekrarlanabilir bir çift-serbest-bırakma/kullanım-
+// sonrası-serbest-bırakma (SIGSEGV/"incorrect alignment" paniği): bir
+// `list[str]` yerel değişkeni İÇEREN küçük bir fonksiyon (`hexd`), 2+
+// yinelemeli bir döngü İÇİNDE AYNI ifadede İKİ KEZ inline edilerek
+// çağrıldığında, İKİNCİ (ve sonraki) yinelemelerde ÇÖKÜYORDU — kök neden
+// `releaseSlotIfSet`nin bir yerel değişkeni serbest bıraktıktan SONRA
+// slotu SIFIRLAMAMASIYDI (inline edilmiş bir çağrı sitesinin slotu, GERÇEK
+// bir fonksiyonun aksine, döngü yinelemeleri ARASI YENİDEN KULLANILIR).
+// lldb İLE doğrulandı: düzeltmeden ÖNCE üçüncü `List_str_release` çağrısı
+// BİRİNCİYLE AYNI (zaten serbest bırakılmış) adresi kullanıyor VE içeriği
+// çöp veri (`len=0xaaaa` gibi) OLARAK okunuyordu.
+test "codegen(çalıştır): Faz JJ — list[str] yerelli küçük fonksiyon, 2+ yinelemeli döngüde İKİ KEZ inline çağrılır (ÖNCEDEN SIGSEGV)" {
+    try expectGolden(
+        @embedFile("codegen_cases/inline_loop_list_str_local_double_call.nox"),
+        @embedFile("codegen_cases/inline_loop_list_str_local_double_call.expected"),
+    );
+}

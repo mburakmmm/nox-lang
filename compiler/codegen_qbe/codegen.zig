@@ -2750,10 +2750,37 @@ const Codegen = struct {
         try self.out.writer.print("{s}\n", .{done_label});
     }
 
+    /// **Faz JJ (bkz. nox-teknik-spesifikasyon.md §3.68'in devamı) — GERÇEK
+    /// çift-serbest-bırakma/kullanım-sonrası-serbest-bırakma KÖK NEDENİ
+    /// BULUNDU VE DÜZELTİLDİ:** bu fonksiyon `info.slot`u serbest bıraktıktan
+    /// SONRA slotu SIFIRLAMIYORDU. Bir GERÇEK (inline OLMAYAN) fonksiyon
+    /// çağrısı İçin bu ZARARSIZDIR (slot, fonksiyonun KENDİ yığın çerçevesi
+    /// YIKILDIĞINDA zaten YOK OLUR) — ama `genInlinedCall`in inline ettiği
+    /// bir yerel (ör. bir `list[str]` yerel değişkeni, bkz. §3.68'in
+    /// `loopcall` tekrarlaması), ÇAĞRI SİTESİ başına TEK bir `alloc8` İLE
+    /// (döngünün DIŞINDA, YALNIZCA BİR KEZ) temsil edilir — bu slot,
+    /// döngünün HER yinelemesinde YENİDEN KULLANILIR. `releaseNamedLocalsExcept`
+    /// (inline edilmiş `return_stmt`nin simüle ettiği "kapsam sonu"
+    /// temizliği) HER yinelemenin SONUNDA bu yerel değişkeni serbest
+    /// BIRAKIYORDU AMA slotu sıfırlamıyordu — bu yüzden BİR SONRAKİ
+    /// yinelemede, yerel değişkenin KENDİ "üzerine yazmadan ÖNCE eskiyi
+    /// serbest bırak" mantığı (bkz. `var_decl`nin kodgen'i), ÖNCEKİ
+    /// yinelemede ZATEN serbest bırakılmış (ve genellikle ARTIK BAŞKA bir
+    /// tahsis tarafından YENİDEN KULLANILMIŞ) o AYNI işaretçiyi HÂLÂ "canlı"
+    /// SANIP TEKRAR serbest bırakıyordu — GERÇEK bir çift-serbest-bırakma
+    /// (`List_str_release` → `nox_str_release` → `nox_rc_predecrement` →
+    /// `alloc.arc.refcountOf`de "incorrect alignment" panikiyle KANITLANDI,
+    /// lldb İLE: üçüncü `List_str_release` çağrısı BİRİNCİYLE AYNI adresi
+    /// KULLANDI VE içeriği zaten ÇÖPTÜ). Düzeltme: serbest bırakmadan HEMEN
+    /// SONRA slotu `0`a sıfırlamak — GERÇEK fonksiyon çağrıları İçin
+    /// TAMAMEN zararsız (slot ZATEN atılacaktı), inline edilmiş döngü-içi
+    /// yerel değişkenler İçin İSE bu tam olarak GEREKEN "kapsam sonunda
+    /// boşaltılmış" değişmezini SAĞLAR.
     fn releaseSlotIfSet(self: *Codegen, info: VarInfo) CodegenError!void {
         const ptr = try self.newTemp();
         try self.out.writer.print("    {s} =l loadl {s}\n", .{ ptr, info.slot });
         try self.releaseValueIfSet(ptr, info.heap, info.elem_qtype, info.class_name, info.elem_heap_info, info.dict_info);
+        try self.out.writer.print("    storel 0, {s}\n", .{info.slot});
     }
 
     /// `Task[T]`/`Channel[T]`/`ThreadHandle[T]`/`ThreadChannel[T]` (bkz.
@@ -2788,10 +2815,17 @@ const Codegen = struct {
     /// ÜZERİNE yazılmamış) MEVCUT slot değerini önce yükleyip sonra yok eder
     /// — `releaseSlotIfSet`in `Task`/`Channel`/`ThreadHandle`/`ThreadChannel`
     /// karşılığı.
+    /// `releaseSlotIfSet`nin AYNI düzeltmesi (bkz. onun belge notu, Faz JJ) —
+    /// `Task[T]`/`Channel[T]`/`ThreadHandle[T]`/`ThreadChannel[T]` tipli bir
+    /// yerel İÇİN de, inline edilmiş bir çağrı sitesinde döngü-yinelemeleri
+    /// ARASI slot yeniden KULLANIMI AYNI riski taşır — yıkımdan SONRA slot
+    /// sıfırlanmazsa bir SONRAKİ yinelemenin "üzerine yazmadan önce eskiyi
+    /// yok et" mantığı ZATEN yıkılmış bir değeri TEKRAR yıkmaya çalışabilir.
     fn destroyNonArcSlotIfSet(self: *Codegen, info: VarInfo) CodegenError!void {
         const ptr = try self.newTemp();
         try self.out.writer.print("    {s} =l loadl {s}\n", .{ ptr, info.slot });
         try self.destroyNonArcValue(ptr, info.heap);
+        try self.out.writer.print("    storel 0, {s}\n", .{info.slot});
     }
 
     fn emitDefaultReturn(self: *Codegen, ret_qtype: QbeType) CodegenError!void {
