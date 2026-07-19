@@ -190,3 +190,29 @@ test "nox_regex_find_raw ilk eşleşmenin indeksini döner" {
     try std.testing.expectEqual(@as(i64, -1), nox_regex_find_raw("xyz", "hello world"));
     try std.testing.expectEqual(@as(i64, 0), nox_regex_find_raw("^hello", "hello world"));
 }
+
+// Faz II devamı (test kapsamı genişletmesi, bkz. nox-teknik-spesifikasyon.md
+// §3.67) — YUKARIDAKİ testler İÇ yardımcıyı (`matchFrom`) test ediyordu,
+// DIŞA açılan `nox_regex_is_match_raw`/`nox_regex_find_raw` sarmalayıcıları
+// DOĞRUDAN hiç test edilmemişti; ayrıca negatif karakter sınıfı + nicelik
+// işaretçisi KOMBİNASYONU ve boş desen/metin kenar durumları da eksikti.
+test "nox_regex_is_match_raw sarmalayicisi dogrudan calisir" {
+    try std.testing.expectEqual(@as(i32, 1), nox_regex_is_match_raw("[0-9]+", "abc123"));
+    try std.testing.expectEqual(@as(i32, 0), nox_regex_is_match_raw("^[0-9]+$", "abc123"));
+}
+
+test "negatif karakter sinifi + nicelik isaretcisi kombinasyonu" {
+    try std.testing.expect(matchFrom("^[^0-9]+$", "hello"));
+    try std.testing.expect(!matchFrom("^[^0-9]+$", "hell0"));
+    try std.testing.expectEqual(@as(i64, 3), nox_regex_find_raw("[^a-z]+", "abc123def"));
+}
+
+test "bos desen/metin kenar durumlari" {
+    // Bos desen HER metinde (bos metin DAHIL) index 0'da eslesir.
+    try std.testing.expectEqual(@as(i32, 1), nox_regex_is_match_raw("", "anything"));
+    try std.testing.expectEqual(@as(i64, 0), nox_regex_find_raw("", ""));
+    // Bos metinde bos-olmayan bir desen (nicelik isaretcisi olmadan) eslesmez.
+    try std.testing.expectEqual(@as(i32, 0), nox_regex_is_match_raw("a", ""));
+    // Ama `a*` (sifir-veya-fazla) bos metinde de eslesir.
+    try std.testing.expectEqual(@as(i32, 1), nox_regex_is_match_raw("a*", ""));
+}

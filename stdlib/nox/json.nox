@@ -20,6 +20,8 @@
 # ne kendine-başvuran bir literal ne de bir `MAX_CHILDREN` sınırı GEREKİR
 # (GERÇEKTEN "tam" — keyfi derinlik).
 
+import nox.strings
+
 class JsonError:
     def __init__(self: JsonError, message: str) -> None:
         self.message = message
@@ -75,6 +77,38 @@ def object_key(v: JsonValue, i: int) -> str:
 def object_value(v: JsonValue, i: int) -> JsonValue:
     return v.vals[i]
 
+# Faz II devamı (bkz. nox-teknik-spesifikasyon.md §3.67, test kapsamı
+# genişletmesi sırasında BULUNAN, GERÇEK bir düzeltme) — ÖNCEKİ sürüm
+# yalnızca `"`/`\`/`\n`i escape ediyordu; bir `\t` (VEYA CR baytı) İÇEREN
+# bir dizeyi `encode` ETTİĞİNDE ham (escape'siz) kontrol karakterini
+# ÇIKTIYA yazıyordu — bu GEÇERSİZ JSON'dur (JSON spesifikasyonu bir dize
+# İÇİNDEKİ HER kontrol karakterinin escape EDİLMESİNİ ZORUNLU kılar) ve
+# `nox.json.decode(nox.json.encode(v))` (round-trip) bir `\t` İÇEREN
+# GERÇEK bir girdide YAKALANMAMIŞ bir istisnayla ÇÖKÜYORDU (Zig'in
+# `std.json`ı ham kontrol karakterini REDDEDİYOR). `\t`, `\n` İLE AYNI
+# (basit literal karşılaştırma) YOLLA eklendi. **CR (bayt 13, `\r`) İSE
+# BİR STRİNG LİTERALİ OLARAK YAZILAMAZ** — GERÇEKTEN denenip KEŞFEDİLDİ:
+# Nox'un lexer'ı `\r`yi TANIMAZ (SESSİZCE `\` düşürülüp `r` DÜZ karakter
+# olarak alınır, `\x`/hex escape'lerin AKSİNE — bkz. `\t`/`\n` gibi GERÇEK
+# escape'lerle KARIŞTIRILMAMASI İçin buraya not düşüldü); bu YÜZDEN CR
+# `nox.strings.byte_at` İLE bayt-DEĞERİ (13) karşılaştırılarak yakalanır.
+#
+# **BİLİNÇLİ v1 SINIRLAMASI (kalan, DÜZELTİLMEYEN boşluk):** `\t`/CR/`\n`
+# DIŞINDAKİ diğer C0 kontrol karakterleri (bayt 0-8, 11, 12, 14-31) HÂLÂ
+# escape EDİLMEZ — JSON'un genel `\u00XX` escape'ini EL İLE üretmeyi
+# (hex-basamak arama tablosu + iki fonksiyon çağrısı, TEK bir string
+# birleştirme ifadesinde) DENERKEN GERÇEK, TEKRARLANABİLİR bir DERLEYİCİ
+# hatası bulundu: `list[str]` DÖNEN bir fonksiyon (hex basamak tablosu)
+# bir DÖNGÜ İÇİNDEKİ AYNI ifadede İKİ KEZ çağrıldığında ARC muhasebesi
+# BOZULUYOR (`nox_rc_predecrement`da "incorrect alignment" panikı/SIGSEGV
+# — GG serisinin serbest-fonksiyon inlining'iyle İLGİLİ, muhtemelen
+# `digits` yerel değişkeninin İKİ inline edilmiş kopyası AYNI yığın
+# yuvasını YANLIŞLIKLA PAYLAŞIYOR). Bir `str`-tabanlı arama (`s[i]`)
+# alternatifi ÇÖKMÜYOR ama HER çağrıda bir ARC sızıntısına yol AÇIYOR
+# (DebugAllocator'ın YAKALADIĞI, GERÇEK bir bellek sızıntısı). Bu YÜZDEN
+# genel `\u00XX` yolu BURADA UYGULANMADI — kullanıcıya (görülen çökme
+# GERÇEK VE CİDDİ olduğundan) AYRI bir derleyici-hatası görevi olarak
+# bildirildi, bu fazın kapsamı DIŞINDA bırakıldı.
 def encode_string(s: str) -> str:
     out: str = "\""
     i: int = 0
@@ -86,6 +120,10 @@ def encode_string(s: str) -> str:
             out = out + "\\\\"
         elif c == "\n":
             out = out + "\\n"
+        elif c == "\t":
+            out = out + "\\t"
+        elif nox.strings.byte_at(s, i) == 13:
+            out = out + "\\r"
         else:
             out = out + c
         i = i + 1

@@ -1278,6 +1278,27 @@ test "codegen(çalıştır): nox.json.decode bozuk JSON JsonError raise eder" {
     );
 }
 
+test "codegen(çalıştır): Faz II devamı — nox.json string encode'da \\t/CR escape (GERÇEK düzeltilen boşluk)" {
+    try expectGolden(
+        @embedFile("codegen_cases/json_string_control_char_escaping.nox"),
+        @embedFile("codegen_cases/json_string_control_char_escaping.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz II devamı — nox.json boş obje/dizi decode+encode" {
+    try expectGolden(
+        @embedFile("codegen_cases/json_empty_containers.nox"),
+        @embedFile("codegen_cases/json_empty_containers.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz II devamı — nox.json negatif/iç içe sayılar" {
+    try expectGolden(
+        @embedFile("codegen_cases/json_negative_and_nested_numbers.nox"),
+        @embedFile("codegen_cases/json_negative_and_nested_numbers.expected"),
+    );
+}
+
 test "codegen(çalıştır): Faz FF.6 — Node.next: Node | None ile bağlı liste inşası + traversal + find" {
     try expectGolden(
         @embedFile("codegen_cases/optional_linked_list.nox"),

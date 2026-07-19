@@ -139,6 +139,15 @@ const stress_benchmarks = [_]Benchmark{
     // `is_absolute`nin HEPSİNİ (SAF string manipülasyonu, HİÇ I/O yok)
     // 100000 kez çalıştırır.
     .{ .name = "path_bench", .path = "benchmarks/path_bench.nox", .expected = "3900000\n" },
+    // Faz II devamı — `nox.json`/`random`/`regex`/`crypto`nin Rust `std`de
+    // KARŞILIĞI YOK ama Rust ekosisteminde fiili standart bir crate'leri
+    // VAR (`serde_json`/`rand`/`regex`/`sha2`) — bkz. `crate_compare_pairs`
+    // (Bölüm 5). Bu üçü (`json_bench` ZATEN yukarıda vardı) STRES bölümüne
+    // de eklenir (regresyon takibi İçin, `cargo` KURULU olmasa bile
+    // çalışır).
+    .{ .name = "random_bench", .path = "benchmarks/random_bench.nox", .expected = "500177905\n" },
+    .{ .name = "regex_bench", .path = "benchmarks/regex_bench.nox", .expected = "150000\n" },
+    .{ .name = "crypto_bench", .path = "benchmarks/crypto_bench.nox", .expected = "640000\n" },
 };
 
 /// **C karşılaştırması (kullanıcı isteği):** Python'un yanına, AYNI on
@@ -239,6 +248,63 @@ const stdlib_compare_pairs = [_]StdlibComparePair{
         .nox_expected = "3900000\n",
         .rust_path = "benchmarks/path_bench.rs",
         .rust_expected = "3900000\n",
+    },
+};
+
+/// **Faz II devamı (kullanıcının açık isteği):** `nox.json`/`nox.random`/
+/// `nox.regex`/`nox.crypto`nin Rust `std`de HİÇ karşılığı YOK — ama her
+/// birinin Rust ekosisteminde FİİLİ standart bir crate'i VAR (`serde_json`/
+/// `rand`/`regex`/`sha2`). `stdlib_compare_pairs`in AKSİNE, bunlar `rustc
+/// -O tek-dosya` deseniyle DERLENEMEZ (harici crate = Cargo bağımlılık
+/// çözümü GEREKİR) — bu yüzden AYRI bir Cargo projesi (`benchmarks/
+/// rust_crates/`, `cargo build --release`, TEK seferde 4 ikili BİRLİKTE
+/// derlenir) kullanılır. Rastgelelik (`random_bench`) İKİ dilde FARKLI
+/// PRNG algoritmaları kullandığından (Nox: Xoshiro256, Rust: ChaCha
+/// tabanlı `StdRng`) AYNI tohumla bile FARKLI sayılar üretir — bu
+/// BEKLENEN VE KABUL EDİLEN bir durumdur (`tight_loop_arithmetic`'in
+/// Python'a karşı FARKLI taşma semantiğiyle FARKLI sonuç vermesiyle AYNI
+/// ilke): performans ölçülüyor, SAYISAL eşitlik DEĞİL. `regex_bench` İSE
+/// BİLİNÇLİ bir ASİMETRİ taşır: Nox'un `nox.regex.is_match`/`find`si
+/// pattern'i HER ÇAĞRIDA yeniden yorumlar (ayrı bir "derleme" adımı YOK),
+/// Rust tarafı İSE KENDİ deyimiyle (regex'i BİR KEZ derleyip tekrar
+/// kullanma) yazıldı — `compare/`deki C örneklerinin "o dilin kendi doğal
+/// deyimi" ilkesiyle AYNI.
+const CrateComparePair = struct {
+    name: []const u8,
+    nox_path: []const u8,
+    nox_expected: []const u8,
+    rust_bin: []const u8,
+    rust_expected: []const u8,
+};
+
+const crate_compare_pairs = [_]CrateComparePair{
+    .{
+        .name = "json_bench",
+        .nox_path = "benchmarks/json_bench.nox",
+        .nox_expected = "384550\n",
+        .rust_bin = "benchmarks/rust_crates/target/release/json_crate_bench",
+        .rust_expected = "384550\n",
+    },
+    .{
+        .name = "random_bench",
+        .nox_path = "benchmarks/random_bench.nox",
+        .nox_expected = "500177905\n",
+        .rust_bin = "benchmarks/rust_crates/target/release/random_crate_bench",
+        .rust_expected = "499767921\n",
+    },
+    .{
+        .name = "regex_bench",
+        .nox_path = "benchmarks/regex_bench.nox",
+        .nox_expected = "150000\n",
+        .rust_bin = "benchmarks/rust_crates/target/release/regex_crate_bench",
+        .rust_expected = "150000\n",
+    },
+    .{
+        .name = "crypto_bench",
+        .nox_path = "benchmarks/crypto_bench.nox",
+        .nox_expected = "640000\n",
+        .rust_bin = "benchmarks/rust_crates/target/release/crypto_crate_bench",
+        .rust_expected = "640000\n",
     },
 };
 
@@ -497,14 +563,71 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const stdlib_total: usize = if (rustc_available) stdlib_compare_pairs.len else 0;
-    try out.print("\nToplam: {d}/{d} stres testi, {d}/{d} karşılaştırma çifti, {d}/{d} Rust stdlib çifti geçti.\n", .{
+
+    try out.writeAll("\n-- Bölüm 5: Rust crate karşılaştırması (json/random/regex/crypto) --\n\n");
+    try out.flush();
+
+    const cargo_available = blk: {
+        const r = std.process.run(gpa, io, .{ .argv = &.{ "cargo", "--version" } }) catch break :blk false;
+        defer gpa.free(r.stdout);
+        defer gpa.free(r.stderr);
+        break :blk r.term == .exited and r.term.exited == 0;
+    };
+
+    var crate_pass: usize = 0;
+    var crate_total: usize = 0;
+    if (!cargo_available) {
+        try out.writeAll("not: cargo bulunamadı — Bölüm 5 atlanıyor.\n\n");
+        try out.flush();
+    } else {
+        try out.writeAll("[cargo build --release] benchmarks/rust_crates deniyor...\n");
+        try out.flush();
+
+        const cargo_build = try std.process.run(gpa, io, .{
+            .argv = &.{ "cargo", "build", "--release", "--manifest-path", "benchmarks/rust_crates/Cargo.toml" },
+        });
+        defer gpa.free(cargo_build.stdout);
+        defer gpa.free(cargo_build.stderr);
+
+        if (cargo_build.term != .exited or cargo_build.term.exited != 0) {
+            try out.print("  cargo build BAŞARISIZ:\n{s}\n", .{cargo_build.stderr});
+            try out.flush();
+        } else {
+            crate_total = crate_compare_pairs.len;
+            for (crate_compare_pairs) |p| {
+                try out.print("[{s}]\n", .{p.name});
+                try out.flush();
+
+                const nox_ms = (try runNoxOnce(gpa, io, out, "  nox", p.nox_path, p.nox_expected, COMPARE_REPEATS)) orelse {
+                    try out.flush();
+                    continue;
+                };
+
+                const rust_ms = (try runPrebuiltRustOnce(gpa, io, out, p.rust_bin, p.rust_expected, COMPARE_REPEATS)) orelse {
+                    try out.flush();
+                    continue;
+                };
+
+                try out.flush();
+                try out.print("  yavaşlama (nox / rust): {d:.2}x\n", .{nox_ms / rust_ms});
+                try out.writeAll("\n");
+                try out.flush();
+                crate_pass += 1;
+            }
+            try out.print("{d}/{d} Rust crate karşılaştırma çifti başarıyla tamamlandı.\n", .{ crate_pass, crate_total });
+            try out.flush();
+        }
+    }
+
+    try out.print("\nToplam: {d}/{d} stres testi, {d}/{d} karşılaştırma çifti, {d}/{d} Rust stdlib çifti, {d}/{d} Rust crate çifti geçti.\n", .{
         stress_pass,  stress_benchmarks.len,
         compare_pass, compare_pairs.len,
         stdlib_pass,  stdlib_total,
+        crate_pass,   crate_total,
     });
     try out.flush();
 
-    if (stress_pass != stress_benchmarks.len or compare_pass != compare_pairs.len or stdlib_pass != stdlib_total) std.process.exit(1);
+    if (stress_pass != stress_benchmarks.len or compare_pass != compare_pairs.len or stdlib_pass != stdlib_total or crate_pass != crate_total) std.process.exit(1);
 }
 
 /// Bir `.nox` dosyasını derler, BİR KEZ çalıştırıp çıktı/stderr'i doğrular,
@@ -635,6 +758,38 @@ fn runRustOnce(
         return null;
     }
 
+    const check_result = try std.process.run(gpa, io, .{ .argv = &.{bin_path} });
+    defer gpa.free(check_result.stdout);
+    defer gpa.free(check_result.stderr);
+
+    if (check_result.term != .exited or check_result.term.exited != 0) {
+        try out.print("  rust  ÇALIŞTIRMA BAŞARISIZ (çıkış kodu)\n", .{});
+        return null;
+    }
+    if (!std.mem.eql(u8, check_result.stdout, expected)) {
+        try out.print("  rust  BAŞARISIZ: beklenmeyen çıktı: {s} (beklenen: {s})\n", .{ check_result.stdout, expected });
+        return null;
+    }
+
+    const min_ms = try timeRuns(gpa, io, &.{bin_path}, repeats);
+    try out.print("  rust    min={d:.1}ms  ({d} koşu)\n", .{ min_ms, repeats });
+    return min_ms;
+}
+
+/// `runRustOnce`nin AKSİNE burada bir DERLEME adımı YOK — `bin_path`
+/// `cargo build --release`in (bkz. `main`'in Bölüm 5 bloğu, TÜM
+/// `crate_compare_pairs`in ORTAK Cargo projesi İçin TEK SEFERDE önceden
+/// derlendiği yer) ürettiği ikiliye DOĞRUDAN işaret eder — harici crate
+/// bağımlılıkları OLDUĞUNDAN (`rustc -O tek-dosya` deseniyle UYUŞMAZ)
+/// `runRustOnce`nin `rustc -O` çağrısı burada KULLANILAMAZ.
+fn runPrebuiltRustOnce(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    out: *std.Io.Writer,
+    bin_path: []const u8,
+    expected: []const u8,
+    repeats: usize,
+) !?f64 {
     const check_result = try std.process.run(gpa, io, .{ .argv = &.{bin_path} });
     defer gpa.free(check_result.stdout);
     defer gpa.free(check_result.stderr);

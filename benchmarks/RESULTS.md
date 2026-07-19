@@ -569,10 +569,91 @@ geri eklenince Debug/ReleaseSafe/ReleaseFast ÜÇÜ de TAMAMEN yeşil.
 **Sonuç: `path_bench` 147ms'ten ~8ms'e düştü, yavaşlama 9.4x-9.9x'ten
 0.5x-0.6x'e (Nox artık Rust'tan HIZLI) DÖNÜŞTÜ.**
 
+## Bölüm 5 — Faz II devamı: Rust CRATE karşılaştırması (json/random/regex/crypto)
+
+Kullanıcının açık isteği ("kalan 4 için de testlerimize ve eksikliklere
+devam edelim... gerçek crate'lere karşı benchmarkla"). `nox.json`/
+`random`/`regex`/`crypto`nin Rust `std`de karşılığı YOK ama HER birinin
+Rust ekosisteminde fiili standart bir crate'i VAR (`serde_json`/`rand`/
+`regex`/`sha2`). `benchmarks/rust_crates/` (GERÇEK bir Cargo projesi,
+`Cargo.lock` commit edilir) eklendi; `benchmarks/run.zig`nin "Bölüm 5"
+harness'ı `cargo build --release`i TEK SEFERDE çalıştırıp 4 ikiliyi
+BİRLİKTE derler, sonra HER birini `nox_bench`in AYNI benchmark'ıyla
+eşleştirip zamanlar.
+
+**Bilinçli asimetriler (belgelenir, HATA değil):**
+- `random_bench`: Nox (Xoshiro256) VE Rust (`StdRng`, ChaCha-tabanlı) AYNI
+  tohumla (42) bile FARKLI sayılar üretir — SAYISAL eşitlik hiç
+  beklenmedi, yalnızca performans ölçülüyor.
+- `regex_bench`: Nox'un `is_match`/`find`si pattern'i HER ÇAĞRIDA yeniden
+  yorumlar (ayrı bir "derleme" adımı YOK); Rust tarafı KENDİ deyimiyle
+  (regex'i BİR KEZ derleyip tekrar kullanma) yazıldı — `compare/`deki C
+  örneklerinin "o dilin kendi doğal deyimi" ilkesiyle AYNI.
+
+### Sonuç tablosu
+
+| Benchmark | Nox | Rust (crate) | yavaşlama (nox/rust) |
+|---|---|---|---|
+| json_bench (`serde_json`) | 16.7ms | 6.3ms | **2.7x** |
+| random_bench (`rand`) | 7.3ms | 9.4ms | 0.8x (Nox hızlı) |
+| regex_bench (`regex`) | 5.9ms | 6.9ms | 0.9x (Nox hızlı) |
+| crypto_bench (`sha2`) | 3.4ms | 14.3ms | **0.24x (Nox 4x hızlı)** |
+
+**4/4 geçti** (üç ayrı koşuda tutarlı yön/mertebe).
+
+**`json_bench`, TEK BAŞINA, ~2.5-2.7x TEKRARLANABİLİR YAVAŞ:** kök neden
+BULUNMADI/DÜZELTİLMEDİ (bu fazın kapsamı DIŞINDA) ama MİMARİ olarak
+AÇIKLANABİLİR — `nox_json_decode_raw` (bkz. `runtime/stdlib_shims/
+json.zig`), Zig'in `std.json` ayrıştırdığı ağacı ÖZYİNELEMELİ gezip HER
+düğüm İçin `nox_json_make_json_value`yi (QBE'nin DERLEDİĞİ bir Nox
+sembolü) ÇAĞIRIR (bkz. nox-teknik-spesifikasyon.md §3.67'nin "STRATEJİ 1"
+notu) — HER JSON düğümü İçin bir Zig→Nox ÇAPRAZ-DİL çağrısı, serde_json'ın
+TEK dil İçinde kalan ayrıştırma+AST inşasına göre YAPISAL bir maliyettir;
+"hızlı bir düzeltme" DEĞİL, JSON decode mimarisinin YENİDEN tasarımını
+gerektirir. `random`/`regex`/`crypto`nin Nox'ta Rust'tan HIZLI (hatta
+`crypto`da 4x) ölçülmesi — bunlar `nox.*`nin KENDİ, dar/basit
+implementasyonları (Xoshiro256 PRNG, Kernighan-tabanlı minimal regex,
+Zig'in `std.crypto.hash.sha2`si) OLDUĞUNDAN, Rust'ın crate'lerinin GENEL
+AMAÇLI/GÜVENLİK-ODAKLI ek soyutlama katmanlarını (ör. `sha2` crate'inin
+generic/portable-first tasarımı) TAŞIMAMASINDAN kaynaklanıyor OLABİLİR —
+KESİN bir profil YAPILMADI, yalnızca GÖZLEM olarak not düşülüyor.
+
+### Test kapsamı genişletmesi (kullanıcının AYNI isteğinin ikinci yarısı)
+
+- **`runtime/stdlib_shims/crypto.zig`nin DAHA ÖNCE SIFIR Zig-seviyeli unit
+  testi VARDI** (yalnızca 1 golden test, 2 bilinen vektör) — 3 yeni test
+  eklendi (bilinen vektörler DOĞRUDAN, hep-64-karakter-küçük-hex
+  sözleşmesi, determinizm + farklı-girdi-farklı-hash).
+- `runtime/stdlib_shims/random.zig`nin TEK testi (threadlocal izolasyonu)
+  TEMEL sözleşmeyi (sınırlar, `hi<=lo` kenar durumu) DOLAYLI kanıtlıyordu
+  — 2 yeni DOĞRUDAN test eklendi.
+- `runtime/stdlib_shims/regex.zig`ye (8 mevcut testin YANINA) dışa açılan
+  sarmalayıcıların DOĞRUDAN testi + negatif karakter sınıfı/nicelik
+  işaretçisi kombinasyonu + boş desen/metin kenar durumları eklendi.
+- **`nox.json.encode`de GERÇEK bir düzeltilen boşluk bulundu:**
+  `encode_string` yalnızca `"`/`\`/`\n`i escape ediyordu — bir `\t`
+  İÇEREN GERÇEK bir girdide `encode` GEÇERSİZ JSON üretiyor, SONRAKİ
+  `decode` YAKALANMAMIŞ bir istisnayla ÇÖKÜYORDU (round-trip başarısızlığı,
+  3 yeni golden testle DOĞRULANDI/DÜZELTİLDİ). Düzeltme sırasında CR
+  (`\r`) İçin BEKLENMEDİK bir engelle karşılaşıldı: **Nox'un lexer'ı `\r`yi
+  bir escape olarak TANIMAZ** (sessizce `\` düşürülüp düz `r` harfi
+  alınır) — CR bu yüzden `nox.strings.byte_at` İLE bayt-DEĞERİ (13)
+  karşılaştırılarak yakalandı, string LİTERALİYLE DEĞİL.
+- **Genel `\u00XX` escape'i (kalan C0 kontrol karakterleri İçin) DENERKEN
+  GERÇEK, CİDDİ bir DERLEYİCİ hatası bulundu ve KASITLI OLARAK
+  UYGULANMADI:** bir `list[str]` DÖNEN yardımcı fonksiyon (hex-basamak
+  arama tablosu) bir DÖNGÜ İÇİNDEKİ AYNI ifadede İKİ KEZ çağrıldığında ARC
+  muhasebesi BOZULUYOR — Debug modunda `nox_rc_predecrement`da "incorrect
+  alignment" panikı, ReleaseFast'ta SESSİZ bir SIGSEGV. Bu, kullanıcıya
+  AYRI bir derleyici-hatası görevi olarak bildirildi (bkz. spawn edilen
+  görev) — bu fazın kapsamı DIŞINDA, GG serisinin serbest-fonksiyon
+  inlining'iyle İLGİLİ olabileceği düşünülüyor.
+
 ### Eksik fonksiyon / yetenek analizi (TÜM `nox.*` modülleri, Rust `std` ile karşılaştırmalı)
 
-**Zamanlanmayan modüller — Rust `std`de KARŞILIĞI YOK (harici crate
-gerektirir, bu YÜZDEN kapsam dışı bırakıldı, bkz. yukarı):**
+**Zamanlanmayan modüller (Rust `std`de karşılığı YOK) — ARTIK Bölüm 5'te
+GERÇEK crate'lerine karşı zamanlandı, bkz. yukarı; API-yüzeyi
+karşılaştırması hâlâ ayrıca geçerlidir:**
 
 | Nox modülü | Rust'ta en yakın eşdeğer | Not |
 |---|---|---|
@@ -592,6 +673,10 @@ gerektirir, bu YÜZDEN kapsam dışı bırakıldı, bkz. yukarı):**
 | `nox.time` | `std::time` | `Instant`/`Duration` (monotonik süre ölçümü) YOK — yalnızca epoch-ms `now_ms`; `DateTime -> str` biçimlendirme YOK (yalnızca epoch-ms → `DateTime` AYRIŞTIRMA var, ters yön yok); saat dilimi desteği YOK (yalnızca UTC). |
 | `dict[K,V]` (dil yerleşiği) | `std::collections::HashMap` | `entry` API YOK; iterasyon (`keys()`/`values()`/`items()`) YOK; `remove` YOK; `contains_key` dile `in` operatörüyle var ama açık bir metod YOK. |
 | `nox.path` | `std::path::Path`/`PathBuf` | `canonicalize` (sembolik link çözme) YOK; `strip_prefix` YOK; bileşen-bazlı iterasyon (`components()`) YOK; yalnızca düz str birleştirme/ayrıştırma. |
+| `nox.json` | `serde_json::Value` | Pretty-print (girintili) çıktı YOK (yalnızca kompakt); `Serialize`/`Deserialize` (struct ⟷ JSON OTOMATİK dönüşüm) YOK, yalnızca dinamik `JsonValue` ağacı; hata mesajı YALNIZCA "geçersiz JSON" (konum/satır/sütun/sebep YOK); **`encode`nin `\t`/`\n` DIŞINDAKİ C0 kontrol karakterlerini escape ETMEMESİ** (bkz. yukarıdaki "Test kapsamı genişletmesi" — kısmen düzeltildi, kalan boşluk BİLİNÇLİ). |
+| `nox.random` | `rand::Rng` + dağılımlar | Yalnızca DÜZGÜN (uniform) int/float dağılımı — normal/üstel/vb. dağılımlar YOK; `shuffle`/`choose` (listeden rastgele seçim) YOK; kriptografik güvenlik İDDİASI YOK (belgeli, bilinçli). |
+| `nox.regex` | `regex::Regex` | Gruplama `(...)`/yakalama grupları YOK; alternasyon `a|b` YOK; geri-referanslar YOK; `{m,n}` sayısal tekrar YOK; escape dizileri (`\d`/`\w`/`\s`) YOK — TAMAMI belgeli, bilinçli v1 kapsam dışı (bkz. `regex.zig`nin belge notu). |
+| `nox.crypto` | `sha2`/`sha1`/`md5`/`hmac` (crate'ler) | Yalnızca SHA-256 — SHA-1/SHA-512/MD5/HMAC/AEAD YOK; `data`nın KENDİSİ (ham bayt) DEĞİL yalnızca `str` alır (ikili veri hash'lenemez). |
 
 Bu liste TAMAMLANDIYSA ("her şey" değil, en sık kullanılan/eksikliği en
 çok hissedilecek yetenekler) — amaç EKSİKSİZ bir Rust-std-parity taahhüdü

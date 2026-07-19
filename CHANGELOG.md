@@ -836,6 +836,40 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   **Sonuç: `path_bench` 147ms'ten ~8ms'e düştü, yavaşlama 9.4x-9.9x'ten
   0.5x-0.6x'e (Nox ARTIK Rust'tan HIZLI) döndü.**
 
+### Eklendi
+- **`json`/`random`/`regex`/`crypto` GERÇEK Rust crate'lerine karşı
+  benchmarklandı + test kapsamı genişletildi (Faz II devamı, kullanıcı
+  isteği).** `benchmarks/rust_crates/` (GERÇEK Cargo projesi, `serde_json`/
+  `rand`/`regex`/`sha2`, `Cargo.lock` commit edilir) eklenip `run.zig`nin
+  "Bölüm 5" harness'ına bağlandı. **Sonuçlar:** `json_bench` ~2.7x YAVAŞ
+  (kök neden MİMARİ — HER JSON düğümü İçin bir Zig→Nox çapraz-dil çağrısı,
+  DÜZELTİLMEDİ, ayrı bir yeniden-tasarım gerektirir); `random`/`regex`/
+  `crypto` İSE Nox'ta Rust'tan HIZLI ölçüldü (crypto'da ~4x). `crypto.zig`
+  (DAHA ÖNCE SIFIR unit testi) + `random.zig` + `regex.zig` test kapsamı
+  genişletildi.
+
+### Düzeltildi
+- **`nox.json.encode`, `\t`/CR İÇEREN dizelerde GEÇERSİZ JSON üretiyordu
+  (round-trip decode YAKALANMAMIŞ istisnayla ÇÖKÜYORDU) — DÜZELTİLDİ**
+  (test kapsamı genişletmesi sırasında bulundu). `encode_string`e `\t`/CR
+  escape'i eklendi (3 yeni golden testle DOĞRULANDI). **Beklenmedik bulgu:
+  Nox'un lexer'ı `\r`yi escape olarak TANIMAZ** (sessizce `\` düşürülüp düz
+  `r` harfi alınır) — CR bu yüzden `nox.strings.byte_at` İLE bayt-değeri
+  (13) karşılaştırılarak yakalandı, string literaliyle DEĞİL.
+
+### Değerlendirildi (kapsam dışı bırakıldı, GERÇEK bir derleyici hatası)
+- **Kalan C0 kontrol karakterleri İçin genel `\u00XX` JSON escape'i
+  eklenmeye ÇALIŞILIRKEN GERÇEK, CİDDİ bir derleyici hatası bulundu.**
+  `list[str]` DÖNEN bir yardımcı fonksiyon (hex-basamak arama tablosu)
+  bir DÖNGÜ İÇİNDEKİ AYNI ifadede İKİ KEZ çağrıldığında ARC muhasebesi
+  BOZULUYOR — Debug modunda `nox_rc_predecrement`da "incorrect alignment"
+  panikı, ReleaseFast'ta SESSİZ bir SIGSEGV. Bir `str`-tabanlı alternatif
+  ÇÖKMÜYOR ama HER çağrıda GERÇEK bir bellek sızıntısına yol AÇIYOR. Genel
+  escape yolu bu YÜZDEN UYGULANMADI; kullanıcıya AYRI, ÖZEL bir derleyici-
+  hatası araştırma görevi olarak bildirildi (GG serisinin serbest-
+  fonksiyon inlining'iyle İLGİLİ OLABİLECEĞİ düşünülüyor, kesin kök neden
+  bulunmadı — HH.9'un araştırma disiplinini gerektiren AYRI bir görev).
+
 ## [1.0.0]
 
 ### Eklendi

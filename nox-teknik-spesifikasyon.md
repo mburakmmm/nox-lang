@@ -10929,6 +10929,36 @@ monotonik süre ölçümü (`Instant`/`Duration`) OLMAMASI. Bu liste EKSİKSİZ
 bir Rust-std-parity TAAHHÜDÜ DEĞİL, gelecekteki stdlib genişletme
 kararlarına ÖNCELİK sırası ÖNERMEK içindir.
 
+**Bölüm 5 (kullanıcının "kalan 4 için de testlerimize ve eksikliklere
+devam edelim... gerçek crate'lere karşı benchmarkla" talebiyle):**
+`json`/`random`/`regex`/`crypto`nin Rust `std`de karşılığı OLMASA da
+HER birinin fiili standart bir crate'i VAR (`serde_json`/`rand`/`regex`/
+`sha2`) — `benchmarks/rust_crates/` (GERÇEK Cargo projesi, `Cargo.lock`
+commit edilir) eklenip `run.zig`nin "Bölüm 5" harness'ına bağlandı.
+**Sonuçlar:** `json_bench` ~2.7x YAVAŞ (kök neden MİMARİ — `nox_json_
+decode_raw`nin HER JSON düğümü İçin bir Zig→Nox ÇAPRAZ-DİL çağrısı
+yapması, serde_json'ın TEK-dil ayrıştırmasına göre YAPISAL bir maliyet,
+DÜZELTİLMEDİ); `random`/`regex`/`crypto` İSE Nox'ta Rust'tan HIZLI ölçüldü
+(crypto'da ~4x) — kesin profil YAPILMADI, muhtemelen Rust crate'lerinin
+genel-amaçlı soyutlama katmanlarından kaynaklanıyor.
+
+**Test kapsamı genişletmesi (AYNI istekten):** `crypto.zig` (DAHA ÖNCE
+SIFIR unit testi) + `random.zig` (yalnızca DOLAYLI kapsam) + `regex.zig`
+(sarmalayıcı-seviyesi + kenar durumları) genişletildi. **`nox.json.
+encode`de GERÇEK bir boşluk BULUNDU VE DÜZELTİLDİ:** `\t` İÇEREN bir
+dizeyi encode etmek GEÇERSİZ JSON üretiyor, round-trip decode YAKALANMAMIŞ
+istisnayla ÇÖKÜYORDU — `\t`/CR eklendi (CR İçin BEKLENMEDİK bir bulgu:
+**Nox'un lexer'ı `\r`yi escape olarak TANIMAZ**, bu yüzden `nox.strings.
+byte_at` İLE bayt-değeri 13 karşılaştırılarak yakalandı). Kalan C0 kontrol
+karakterleri İçin genel `\u00XX` escape'ini denerken **GERÇEK, CİDDİ bir
+derleyici hatası bulundu:** `list[str]` DÖNEN bir yardımcı fonksiyon bir
+DÖNGÜ İÇİNDEKİ AYNI ifadede İKİ KEZ çağrıldığında ARC muhasebesi BOZULUYOR
+(Debug'da `nox_rc_predecrement`da "incorrect alignment" panikı,
+ReleaseFast'ta SESSİZ SIGSEGV) — bu YÜZDEN genel escape UYGULANMADI,
+kullanıcıya AYRI bir derleyici-hatası görevi olarak bildirildi (GG
+serisinin serbest-fonksiyon inlining'iyle İLGİLİ OLABİLECEĞİ düşünülüyor,
+kesin kök neden BULUNMADI — bu fazın kapsamı DIŞINDA).
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

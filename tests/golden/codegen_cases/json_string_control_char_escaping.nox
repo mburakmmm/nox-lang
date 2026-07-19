@@ -1,0 +1,16 @@
+import nox.json
+
+# Faz II devamı (bkz. nox-teknik-spesifikasyon.md SS3.67) -- ONCEDEN
+# encode_string yalnizca "/\\/\n escape ediyordu; bir \t/\r ICEREN bir
+# dizeyi encode ETTIGINDE ham (escape'siz) kontrol karakteri YAZIYORDU --
+# bu GECERSIZ JSON idi ve round-trip decode COKUYORDU. Bu test \t/\r'nin
+# artik dogru escape edildigini VE round-trip'in basarili oldugunu
+# dogrular.
+v: JsonValue = nox.json.decode("\"a\\tb\\rc\"")
+print(nox.json.as_string(v))
+
+out: str = nox.json.encode(v)
+print(out)
+
+v2: JsonValue = nox.json.decode(out)
+print(nox.json.as_string(v2) == nox.json.as_string(v))

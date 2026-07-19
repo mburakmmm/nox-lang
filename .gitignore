@@ -54,6 +54,22 @@ benchmarks/http_compare/*
 !benchmarks/http_compare/*.py
 !benchmarks/http_compare/*.sh
 benchmarks/http_compare/__pycache__/
+# Faz II devamı — json/random/regex/crypto'nun Rust CRATE karşılaştırması
+# (bkz. `run.zig`'in `crate_compare_pairs` belge notu) — harici crate
+# bağımlılıkları gerektiğinden GERÇEK bir Cargo projesi (AYNI "üst joker
+# dizini dışlar, alt dizin AYRICA un-ignore edilmeli" deseni). `Cargo.lock`
+# commit edilir (tekrarlanabilir derlemeler için, `nox.lock` İLE AYNI
+# gerekçe) — `target/` (derlenmiş ikililer + ~100MB bağımlılık build
+# önbelleği) EDİLMEZ.
+!benchmarks/rust_crates/
+benchmarks/rust_crates/*
+!benchmarks/rust_crates/Cargo.toml
+!benchmarks/rust_crates/Cargo.lock
+!benchmarks/rust_crates/src/
+benchmarks/rust_crates/src/*
+!benchmarks/rust_crates/src/bin/
+benchmarks/rust_crates/src/bin/*
+!benchmarks/rust_crates/src/bin/*.rs
 # `noxc`, golden test kaynaklarını (`tests/golden/**/*.nox`) elle derlerken
 # (ör. manuel doğrulama/profilleme sırasında) aynı dizine `.ssa`/`.s`/uzantısız
 # ikili bırakır — bunlar da build artifact'idir, commit edilmemeli.

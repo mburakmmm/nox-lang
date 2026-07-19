@@ -64,6 +64,42 @@ export fn nox_random_random_raw() callconv(.c) f64 {
 // üretimiyle BİREBİR AYNI verir — paylaşılan bir PRNG durumu OLSAYDI bu
 // İMKANSIZ olurdu (iki iş parçacığının İÇ İÇE geçmiş çağrıları diziyi
 // BOZARDI).
+// Faz II devamı (test kapsamı genişletmesi, bkz. nox-teknik-spesifikasyon.md
+// §3.67) — bu dosyanın ÖNCEDEN tek testi (aşağıdaki threadlocal izolasyon
+// testi) TEMEL doğruluğu (sınırlar, `hi<=lo` kenar durumu) DOĞRUDAN
+// KANITLAMIYORDU (yalnızca DOLAYLI olarak, iki iş parçacığının AYNI diziyi
+// üretmesi üzerinden). Burada temel sözleşme AÇIKÇA test edilir.
+test "nox_random_randint_raw sinirlar ve hi<=lo kenar durumu" {
+    nox_random_seed_raw(1);
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const v = nox_random_randint_raw(5, 10);
+        try std.testing.expect(v >= 5 and v <= 10);
+    }
+
+    // Bilinçli basitleştirme (bkz. `nox_random_randint_raw`nin belge notu):
+    // `hi <= lo` sessizce `lo` doner.
+    try std.testing.expectEqual(@as(i64, 7), nox_random_randint_raw(7, 7));
+    try std.testing.expectEqual(@as(i64, 7), nox_random_randint_raw(7, 3));
+
+    // Negatif araliklar da desteklenir (yalnizca int araligi, ozel bir
+    // durum degil).
+    i = 0;
+    while (i < 50) : (i += 1) {
+        const v = nox_random_randint_raw(-10, -5);
+        try std.testing.expect(v >= -10 and v <= -5);
+    }
+}
+
+test "nox_random_random_raw [0.0, 1.0) araliginda kalir" {
+    nox_random_seed_raw(2);
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        const f = nox_random_random_raw();
+        try std.testing.expect(f >= 0.0 and f < 1.0);
+    }
+}
+
 test "g_prng threadlocal: iki gerçek OS iş parçacığı bağımsız/tekrarlanabilir diziler üretir" {
     const N = 50;
 

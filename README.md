@@ -210,12 +210,34 @@ Karşılaştırmada İKİ GERÇEK darboğaz bulunup düzeltildi: `nox.strings.
 contains`/`index_of` (SAF Nox O(n×m) taraması → Zig'in SIMD-vektörleştirilmiş
 `indexOfScalarPos`i, **16.2x → 1.1x**) ve `nox.path.join` (`std.heap.
 page_allocator` üzerinden çift-tahsis → tek `arc.nox_rc_alloc`, **9.9x →
-0.5x, Nox artık Rust'tan hızlı**). `nox.json`/`nox.random`/`nox.regex`/
-`nox.crypto` Rust `std`de HİÇ karşılığı olmadığından (harici crate
-gerektirir — `serde_json`/`rand`/`regex`/`sha2`) zamanlanmadı, yalnızca
-niteliksel eksik-fonksiyon analizine dahil edildi. Tam metodoloji + eksik-
-fonksiyon tablosu İçin [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)
-"Bölüm 4"e bakın.
+0.5x, Nox artık Rust'tan hızlı**). Tam metodoloji İçin
+[`benchmarks/RESULTS.md`](benchmarks/RESULTS.md) "Bölüm 4"e bakın.
+</details>
+
+<details>
+<summary><strong>Stdlib — Rust CRATE karşılaştırması: json/random/regex/crypto (Faz II devamı)</strong></summary>
+
+`nox.json`/`nox.random`/`nox.regex`/`nox.crypto` Rust `std`de HİÇ
+karşılığı olmadığından (harici crate gerektirir), GERÇEK bir Cargo
+projesi (`benchmarks/rust_crates/`) İLE fiili standart crate'lerine
+(`serde_json`/`rand`/`regex`/`sha2`) karşı AYRICA ölçüldü:
+
+| Benchmark | Nox | Rust (crate) | yavaşlama (nox/rust) |
+|---|---|---|---|
+| json_bench (`serde_json`) | 16.7ms | 6.3ms | **2.7x** |
+| random_bench (`rand`) | 7.3ms | 9.4ms | 0.8x (Nox hızlı) |
+| regex_bench (`regex`) | 5.9ms | 6.9ms | 0.9x (Nox hızlı) |
+| crypto_bench (`sha2`) | 3.4ms | 14.3ms | **0.24x (Nox 4x hızlı)** |
+
+`json_bench`nin ~2.7x farkı MİMARİ (HER JSON düğümü İçin bir Zig→Nox
+çapraz-dil çağrısı) — düzeltilmedi, ayrı bir yeniden-tasarım gerektirir.
+Test kapsamı genişletmesi sırasında `nox.json.encode`de GERÇEK bir
+düzeltilen boşluk (`\t`/CR escape eksikliği, round-trip çökmesine yol
+açıyordu) VE GERÇEK, CİDDİ bir derleyici hatası (`list[str]` dönen bir
+fonksiyonun bir döngü içinde iki kez çağrılması ARC'ı bozuyor, SIGSEGV'e
+yol açıyor — ayrı bir görev olarak bildirildi) bulundu. Tam metodoloji +
+eksik-fonksiyon tablosu İçin
+[`benchmarks/RESULTS.md`](benchmarks/RESULTS.md) "Bölüm 5"e bakın.
 </details>
 
 <details>

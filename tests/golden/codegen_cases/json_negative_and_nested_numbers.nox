@@ -1,0 +1,16 @@
+import nox.json
+
+v1: JsonValue = nox.json.decode("-42")
+print(nox.json.as_number(v1))
+
+v2: JsonValue = nox.json.decode("-3.5")
+print(nox.json.as_number(v2))
+
+v3: JsonValue = nox.json.decode("[[1,2],[-3,-4]]")
+print(nox.json.array_len(v3))
+inner0: JsonValue = nox.json.array_get(v3, 0)
+inner1: JsonValue = nox.json.array_get(v3, 1)
+print(nox.json.as_number(nox.json.array_get(inner0, 0)))
+print(nox.json.as_number(nox.json.array_get(inner1, 0)))
+print(nox.json.as_number(nox.json.array_get(inner1, 1)))
+print(nox.json.encode(v3))

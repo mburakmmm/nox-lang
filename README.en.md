@@ -221,12 +221,35 @@ The comparison surfaced and fixed two real bottlenecks: `nox.strings.
 contains`/`index_of` (pure-Nox O(n×m) scan → Zig's SIMD-vectorized
 `indexOfScalarPos`, **16.2x → 1.1x**) and `nox.path.join` (double
 allocation via `std.heap.page_allocator` → a single `arc.nox_rc_alloc`,
-**9.9x → 0.5x, Nox now faster than Rust**). `nox.json`/`nox.random`/
-`nox.regex`/`nox.crypto` have no Rust `std` equivalent at all (they'd
-need external crates — `serde_json`/`rand`/`regex`/`sha2`), so they
-weren't timed, only covered in the qualitative gap analysis. See "Bölüm
-4" in [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md) (Turkish) for the
-full methodology and the missing-function table.
+**9.9x → 0.5x, Nox now faster than Rust**). See "Bölüm 4" in
+[`benchmarks/RESULTS.md`](benchmarks/RESULTS.md) (Turkish) for the full
+methodology.
+</details>
+
+<details>
+<summary><strong>Stdlib — Rust CRATE comparison: json/random/regex/crypto (Phase II continued)</strong></summary>
+
+`nox.json`/`nox.random`/`nox.regex`/`nox.crypto` have no Rust `std`
+equivalent at all, so they were separately measured against a real
+Cargo project (`benchmarks/rust_crates/`) using their de-facto standard
+crates (`serde_json`/`rand`/`regex`/`sha2`):
+
+| Benchmark | Nox | Rust (crate) | slowdown (nox/rust) |
+|---|---|---|---|
+| json_bench (`serde_json`) | 16.7ms | 6.3ms | **2.7x** |
+| random_bench (`rand`) | 7.3ms | 9.4ms | 0.8x (Nox faster) |
+| regex_bench (`regex`) | 5.9ms | 6.9ms | 0.9x (Nox faster) |
+| crypto_bench (`sha2`) | 3.4ms | 14.3ms | **0.24x (Nox 4x faster)** |
+
+`json_bench`'s ~2.7x gap is architectural (a Zig→Nox cross-language call
+per JSON node) — not fixed, would need a redesign. While expanding test
+coverage, a real bug was found and fixed in `nox.json.encode` (missing
+`\t`/CR escaping caused round-trip crashes) and a real, serious compiler
+bug was found (calling a `list[str]`-returning function twice inside a
+loop corrupts ARC accounting, causing a SIGSEGV) — reported as a separate
+follow-up task, not fixed here. See "Bölüm 5" in
+[`benchmarks/RESULTS.md`](benchmarks/RESULTS.md) (Turkish) for the full
+methodology and the missing-function table.
 </details>
 
 <details>
