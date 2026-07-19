@@ -11246,6 +11246,18 @@ hata mesajı GERİ GELDİ). 1 yeni golden test (`normal`/`exponential` +
 DEĞİŞİKLİK OLMADIĞINDAN YENİ bir Zig unit testi GEREKMEDİ, break→red→fix
 DOĞRUDAN golden test İLE yapıldı).
 
+### III.9 (TAMAMLANDI) — `nox.crypto` ek hash algoritmaları: `sha1`/`sha512`
+
+`sha256` İLE BİREBİR AYNI desen (`with_rt`, ARC'lı küçük-harf hex `str`
+sonucu) — Zig'in KENDİ `std.crypto.hash.Sha1`i (20 baytlık özet, 40
+karakterlik hex) VE `std.crypto.hash.sha2.Sha512`si (64 baytlık özet, 128
+karakterlik hex) kullanılır, sıfırdan bir hash algoritması YAZILMAZ.
+Bilinen test vektörleri (`""`/`"abc"`, NIST/RFC referans değerleriyle
+KARŞILAŞTIRILDI) HEM Zig unit testinde HEM golden testte doğrulandı. 4
+yeni Zig unit testi (bilinen vektörler + sabit-uzunluk/hex-karakter
+kontrolü, break→red→fix İLE doğrulandı — özetin İLK baytı bozulunca hem
+unit test HEM golden test doğru şekilde KIRMIZI oldu) + 1 yeni golden test.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

@@ -960,6 +960,11 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   kontrolü eklendi — nitelikli çağrılar (`nox.random.shuffle(xs)`) DAHA
   ÖNCE generic fonksiyonları HİÇ bulamıyordu (yalnızca aynı-modül ÇIPLAK
   çağrılar çalışıyordu). break→red→fix İLE doğrulandı + 1 yeni golden test.
+- **Faz III.9 — `nox.crypto`ye `sha1`/`sha512` eklendi** (bkz.
+  nox-teknik-spesifikasyon.md §3.69). `sha256` İLE BİREBİR AYNI desen —
+  Zig'in KENDİ `std.crypto.hash.Sha1`/`sha2.Sha512`si. Bilinen test
+  vektörleriyle (`""`/`"abc"`) doğrulandı. 4 yeni unit test (break→red→fix
+  İLE doğrulandı) + 1 yeni golden test.
 
 ## [1.0.0]
 

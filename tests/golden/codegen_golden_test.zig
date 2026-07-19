@@ -1271,6 +1271,13 @@ test "codegen(çalıştır): nox.crypto.sha256 — bilinen test vektörleri (\"\
     );
 }
 
+test "codegen(çalıştır): Faz III.9 — nox.crypto.sha1/sha512 bilinen test vektörleri (\"\"/\"abc\")" {
+    try expectGolden(
+        @embedFile("codegen_cases/crypto_sha1_sha512_known_vectors.nox"),
+        @embedFile("codegen_cases/crypto_sha1_sha512_known_vectors.expected"),
+    );
+}
+
 test "codegen(çalıştır): nox.time.DateTime — bilinen epoch-ms'in doğru takvim bileşenlerine ayrıştırılması" {
     try expectGolden(
         @embedFile("codegen_cases/time_datetime_from_epoch_ms.nox"),

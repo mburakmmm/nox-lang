@@ -6,3 +6,14 @@ extern def nox_crypto_sha256_hex_raw(data: str) -> str from "zig-out/lib/noxrt.o
 
 def sha256(data: str) -> str:
     return nox_crypto_sha256_hex_raw(data)
+
+# Faz III.9 (bkz. nox-teknik-spesifikasyon.md §3.69) — `sha256` İLE AYNI
+# desen: Zig'in KENDİ `std.crypto.hash.Sha1`/`sha2.Sha512`si.
+extern def nox_crypto_sha1_hex_raw(data: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_crypto_sha512_hex_raw(data: str) -> str from "zig-out/lib/noxrt.o" with_rt
+
+def sha1(data: str) -> str:
+    return nox_crypto_sha1_hex_raw(data)
+
+def sha512(data: str) -> str:
+    return nox_crypto_sha512_hex_raw(data)
