@@ -869,6 +869,22 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   hatası araştırma görevi olarak bildirildi (GG serisinin serbest-
   fonksiyon inlining'iyle İLGİLİ OLABİLECEĞİ düşünülüyor, kesin kök neden
   bulunmadı — HH.9'un araştırma disiplinini gerektiren AYRI bir görev).
+- **YUKARIDAKİ derleyici hatası, kullanıcının AÇIK isteğiyle HH.9'un AYNI
+  disipliniyle DAHA DERİN araştırıldı (bkz. nox-teknik-spesifikasyon.md
+  §3.68).** Aynı ikili, aynı girdiyle 20-30 kez ART ARDA çalıştırılınca
+  ~%20 `SIGSEGV` verdiği DOĞRULANDI (tek iş parçacıklı, deterministik bir
+  programda TEK değişken ASLR olduğundan, bu GERÇEK bir bellek-bozulması
+  Heisenbug'ıdır). Çökme adresinin ARC-tahsis aralığında DEĞİL, STATİK
+  STRING LİTERAL veri aralığında olduğu bulundu — bir listenin taban
+  işaretçisini TUTMASI gereken register'ın, QBE'nin string-literal
+  adresleri hesaplamak İçin kullandığı bir scratch register'la, koşullu-
+  serbest-bırakma-sonra-birleşme kontrol akışında ÇAKIŞTIĞINA işaret
+  ediyor. Üretilen `.ssa` IR metninin KENDİSİNDE hata BULUNAMADI — şüphe
+  `codegen.zig`DEN QBE'NİN KENDİ register tahsis edicisine KAYDI (`qbe`,
+  bu projede vendored/kaynağı bulunan bir araç DEĞİL). Kesin kök neden
+  YİNE KANITLANAMADI (canlı register incelemesi HH.9'da OLDUĞU GİBİ
+  zamanlamayı bozup tekrarlanmayı engelleyebiliyor) ama GÜÇLÜ, kanıta-
+  dayalı bir hipotez bulundu ve BELGELENDİ; kapsam yine bu fazın DIŞINDA.
 
 ## [1.0.0]
 
