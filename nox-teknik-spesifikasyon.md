@@ -11102,6 +11102,20 @@ olarak sunulur (`nox.math.pi()`). Yeni golden test:
 `math_trig_log_constants.nox`. Dosya: `stdlib/nox/math.nox` (SAF Nox,
 runtime/codegen değişikliği YOK).
 
+### III.2 (TAMAMLANDI) — `nox.strings` eksik yardımcıları
+
+`trim_start`/`trim_end` (`std.mem.trimStart`/`trimEnd`), `splitn(s,sep,n)`
+(EN FAZLA `n` parça, SONUNCUSU KALANIN TAMAMI — Rust'ın `str::splitn`iyle
+TUTARLI), `rsplit(s,sep)` (`split`in AYNI parçaları, TERS sırada),
+`repeat(s,n)` (EE.1'in `join`iyle AYNI TEK-tahsis stratejisi — saf Nox
+O(n²) döngüsünden KAÇINMAK İçin), `eq_ignore_case(a,b)` (`std.ascii.
+eqlIgnoreCase`, ASCII v1 kapsamı). HEPSİ `runtime/stdlib_shims/
+strings.zig`ye (7 yeni unit test, break→red→fix İLE doğrulandı) +
+`stdlib/nox/strings.nox`ye ince sarmalayıcılar olarak eklendi. Yeni
+golden test: `strings_new_helpers.nox`.
+
+## 4. Bellek Yönetimi — "Sahiplik Piramidi"
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

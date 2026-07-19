@@ -1128,6 +1128,13 @@ test "codegen(çalıştır): nox.strings.starts_with/ends_with/contains/index_of
     );
 }
 
+test "codegen(çalıştır): Faz III.2 — nox.strings trim_start/trim_end/splitn/rsplit/repeat/eq_ignore_case" {
+    try expectGolden(
+        @embedFile("codegen_cases/strings_new_helpers.nox"),
+        @embedFile("codegen_cases/strings_new_helpers.expected"),
+    );
+}
+
 // Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61): `list[int]`/`list[str]`/
 // `list[float]`in HER ÜÇÜ İçin `nox_list_sort_int`/`_str`/`_float`
 // dispatch'inin (`elem_qtype`/`elem_is_str`e göre) doğru fonksiyona

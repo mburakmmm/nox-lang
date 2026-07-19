@@ -900,6 +900,12 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   (Nox'ta top-level `const` OLMADIĞINDAN nitelikli çağrılan sabit-
   fonksiyonlar) eklendi. Yeni golden test. SAF Nox, runtime/codegen
   değişikliği YOK.
+- **Faz III.2 — `nox.strings`ye eksik yardımcılar eklendi** (bkz.
+  nox-teknik-spesifikasyon.md §3.69). `trim_start`/`trim_end`,
+  `splitn(s,sep,n)` (EN FAZLA `n` parça, SONUNCUSU KALANIN TAMAMI),
+  `rsplit(s,sep)` (AYNI parçalar, TERS sıra), `repeat(s,n)` (EE.1'in
+  `join`iyle AYNI TEK-tahsis stratejisi), `eq_ignore_case(a,b)`. 7 yeni
+  unit test (break→red→fix İLE doğrulandı) + 1 yeni golden test.
 
 ## [1.0.0]
 

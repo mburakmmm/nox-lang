@@ -24,12 +24,25 @@ extern def nox_strings_ends_with_raw(s: str, suffix: str) -> int from "zig-out/l
 # kullanıma açık `byte_at` İçin kullanılır (`starts_with`/`ends_with`/
 # `index_of` ARTIK Zig'de, bkz. yukarısı).
 extern def nox_str_byte_at(s: str, idx: int) -> int from "zig-out/lib/noxrt.o"
+# Faz III.2 (bkz. nox-teknik-spesifikasyon.md §3.69).
+extern def nox_strings_trim_start_raw(s: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_strings_trim_end_raw(s: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_strings_splitn_raw(s: str, sep: str, n: int) -> list[str] from "zig-out/lib/noxrt.o" with_rt
+extern def nox_strings_rsplit_raw(s: str, sep: str) -> list[str] from "zig-out/lib/noxrt.o" with_rt
+extern def nox_strings_repeat_raw(s: str, n: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_strings_eq_ignore_case_raw(a: str, b: str) -> int from "zig-out/lib/noxrt.o"
 
 def split(s: str, sep: str) -> list[str]:
     return nox_strings_split_raw(s, sep)
 
 def trim(s: str) -> str:
     return nox_strings_trim_raw(s)
+
+def trim_start(s: str) -> str:
+    return nox_strings_trim_start_raw(s)
+
+def trim_end(s: str) -> str:
+    return nox_strings_trim_end_raw(s)
 
 def upper(s: str) -> str:
     return nox_strings_upper_raw(s)
@@ -63,3 +76,19 @@ def index_of(s: str, needle: str) -> int:
 
 def contains(s: str, needle: str) -> bool:
     return index_of(s, needle) >= 0
+
+# Faz III.2 — `split`in AKSİNE EN FAZLA `n` parça (SONUNCU parça KALANIN
+# TAMAMI — Rust'ın `str::splitn`iyle TUTARLI).
+def splitn(s: str, sep: str, n: int) -> list[str]:
+    return nox_strings_splitn_raw(s, sep, n)
+
+# `split`in AYNI parçaları, SONDAN başlayarak (Rust'ın `str::rsplit`iyle
+# TUTARLI — AYNI eleman kümesi, TERS sıra).
+def rsplit(s: str, sep: str) -> list[str]:
+    return nox_strings_rsplit_raw(s, sep)
+
+def repeat(s: str, n: int) -> str:
+    return nox_strings_repeat_raw(s, n)
+
+def eq_ignore_case(a: str, b: str) -> bool:
+    return nox_strings_eq_ignore_case_raw(a, b) != 0

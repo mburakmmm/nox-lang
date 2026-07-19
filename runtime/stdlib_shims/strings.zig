@@ -73,6 +73,100 @@ export fn nox_strings_trim_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) 
     return dupeToNoxStr(rt, trimmed);
 }
 
+// Faz III.2 (bkz. nox-teknik-spesifikasyon.md §3.69) — `trim`in TEK
+// yönlü varyantları, AYNI boşluk kümesiyle.
+export fn nox_strings_trim_start_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    const slice = std.mem.span(s orelse return null);
+    const trimmed = std.mem.trimStart(u8, slice, " \t\r\n");
+    return dupeToNoxStr(rt, trimmed);
+}
+
+export fn nox_strings_trim_end_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    const slice = std.mem.span(s orelse return null);
+    const trimmed = std.mem.trimEnd(u8, slice, " \t\r\n");
+    return dupeToNoxStr(rt, trimmed);
+}
+
+/// Faz III.2 — `split`in AKSİNE EN FAZLA `n` parça üretir (SONUNCU parça
+/// KALANIN TAMAMIdır — Rust'ın `str::splitn`iyle TUTARLI). `n<=1` VEYA
+/// boş `sep` (`split`in KENDİ v1 basitleştirmesiyle AYNI ilke) TÜM `s`i
+/// TEK elemanlı bir liste olarak döner. `buildStrList` (aşağıda TANIMLI,
+/// `nox_strings_join_raw`nin test yardımcısıyla PAYLAŞILAN) İLE inşa
+/// edilir.
+export fn nox_strings_splitn_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]const u8, n: i64) callconv(.c) ?*anyopaque {
+    const s_slice = std.mem.span(s orelse return null);
+    const sep_slice = std.mem.span(sep orelse return null);
+
+    if (n <= 1 or sep_slice.len == 0) {
+        return buildStrList(rt, &.{s_slice});
+    }
+
+    var parts: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer parts.deinit(std.heap.page_allocator);
+
+    var rest = s_slice;
+    var count: i64 = 1;
+    while (count < n) : (count += 1) {
+        const idx = std.mem.indexOf(u8, rest, sep_slice) orelse break;
+        parts.append(std.heap.page_allocator, rest[0..idx]) catch return null;
+        rest = rest[idx + sep_slice.len ..];
+    }
+    parts.append(std.heap.page_allocator, rest) catch return null;
+
+    return buildStrList(rt, parts.items);
+}
+
+/// Faz III.2 — `split`in AYNI parçalarını, SONDAN başlayarak (Rust'ın
+/// `str::rsplit`iyle TUTARLI — AYNI eleman kümesi, TERS sıra) döner.
+export fn nox_strings_rsplit_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]const u8) callconv(.c) ?*anyopaque {
+    const s_slice = std.mem.span(s orelse return null);
+    const sep_slice = std.mem.span(sep orelse return null);
+
+    if (sep_slice.len == 0) {
+        return buildStrList(rt, &.{s_slice});
+    }
+
+    var parts: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer parts.deinit(std.heap.page_allocator);
+
+    var it = std.mem.splitSequence(u8, s_slice, sep_slice);
+    while (it.next()) |part| {
+        parts.append(std.heap.page_allocator, part) catch return null;
+    }
+    std.mem.reverse([]const u8, parts.items);
+
+    return buildStrList(rt, parts.items);
+}
+
+/// Faz III.2 — `s`i `n` kez ART ARDA birleştirir, TEK geçişte (EE.1'in
+/// `join`iyle AYNI "toplam uzunluğu hesapla, TEK tahsis yap" stratejisi
+/// — saf Nox `out = out + s` döngüsünün O(n²) maliyetinden KAÇINMAK
+/// İçin). `n<=0` BOŞ dize döner.
+export fn nox_strings_repeat_raw(rt: ?*anyopaque, s: ?[*:0]const u8, n: i64) callconv(.c) ?[*:0]u8 {
+    const s_slice = std.mem.span(s orelse return null);
+    if (n <= 0) return dupeToNoxStr(rt, "");
+
+    const count: usize = @intCast(n);
+    const total_len = s_slice.len * count;
+    const raw = arc.nox_rc_alloc(rt, total_len + 1) orelse return null;
+    const out: [*]u8 = @ptrCast(raw);
+    var i: usize = 0;
+    while (i < count) : (i += 1) {
+        @memcpy(out[i * s_slice.len ..][0..s_slice.len], s_slice);
+    }
+    out[total_len] = 0;
+    return @ptrCast(out);
+}
+
+/// Faz III.2 — ASCII büyük/küçük harf DUYARSIZ karşılaştırma (ASCII v1
+/// kapsamı, bkz. dosya başındaki belge notu — çok baytlı UTF-8 aynen
+/// karşılaştırılır).
+export fn nox_strings_eq_ignore_case_raw(a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) i32 {
+    const a_slice = std.mem.span(a orelse return 0);
+    const b_slice = std.mem.span(b orelse return 0);
+    return if (std.ascii.eqlIgnoreCase(a_slice, b_slice)) 1 else 0;
+}
+
 export fn nox_strings_upper_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const slice = std.mem.span(s orelse return null);
     const raw = arc.nox_rc_alloc(rt, slice.len + 1) orelse return null;
@@ -275,6 +369,77 @@ test "nox_strings_trim/upper/lower/replace_raw dogru calisir" {
     const r = nox_strings_replace_raw(rt, "foo bar foo", "foo", "x") orelse return error.Failed;
     defer str.nox_str_release(rt, r);
     try std.testing.expectEqualStrings("x bar x", std.mem.sliceTo(r, 0));
+}
+
+test "Faz III.2: nox_strings_trim_start_raw/trim_end_raw dogru calisir" {
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const ts = nox_strings_trim_start_raw(rt, "  hi  ") orelse return error.Failed;
+    defer str.nox_str_release(rt, ts);
+    try std.testing.expectEqualStrings("hi  ", std.mem.sliceTo(ts, 0));
+
+    const te = nox_strings_trim_end_raw(rt, "  hi  ") orelse return error.Failed;
+    defer str.nox_str_release(rt, te);
+    try std.testing.expectEqualStrings("  hi", std.mem.sliceTo(te, 0));
+}
+
+test "Faz III.2: nox_strings_repeat_raw dogru calisir" {
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const r0 = nox_strings_repeat_raw(rt, "ab", 0) orelse return error.Failed;
+    defer str.nox_str_release(rt, r0);
+    try std.testing.expectEqualStrings("", std.mem.sliceTo(r0, 0));
+
+    const r3 = nox_strings_repeat_raw(rt, "ab", 3) orelse return error.Failed;
+    defer str.nox_str_release(rt, r3);
+    try std.testing.expectEqualStrings("ababab", std.mem.sliceTo(r3, 0));
+}
+
+test "Faz III.2: nox_strings_eq_ignore_case_raw dogru calisir" {
+    try std.testing.expectEqual(@as(i32, 1), nox_strings_eq_ignore_case_raw("Hello", "hello"));
+    try std.testing.expectEqual(@as(i32, 0), nox_strings_eq_ignore_case_raw("Hello", "world"));
+}
+
+/// `nox_strings_split_raw temel bolme` testindeki (bkz. yukarısı) AYNI
+/// "sayacı oku, HER elemanı release'e KAYDEDEREK doğrula, SONRA listenin
+/// KENDİSİNİ serbest bırak" desenini paylaşan yardımcı.
+fn expectStrListAndRelease(rt: ?*anyopaque, list_ptr: *anyopaque, expected: []const []const u8) !void {
+    const str = @import("../str.zig");
+    const bytes: [*]u8 = @ptrCast(list_ptr);
+    const count: usize = @intCast(@as(*align(1) i64, @ptrCast(bytes)).*);
+    try std.testing.expectEqual(expected.len, count);
+    var i: usize = 0;
+    while (i < count) : (i += 1) {
+        const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(bytes + 16 + 8 * i)).*);
+        const p: [*:0]u8 = @ptrFromInt(addr);
+        defer str.nox_str_release(rt, p);
+        try std.testing.expectEqualStrings(expected[i], std.mem.sliceTo(p, 0));
+    }
+    arc.nox_rc_release(rt, list_ptr, 16 + 8 * count);
+}
+
+test "Faz III.2: nox_strings_splitn_raw en fazla n parca uretir, sonuncu kalanin tamami" {
+    const asap = @import("../alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const list_ptr = nox_strings_splitn_raw(rt, "a,b,c,d", ",", 2) orelse return error.Failed;
+    try expectStrListAndRelease(rt, list_ptr, &.{ "a", "b,c,d" });
+}
+
+test "Faz III.2: nox_strings_rsplit_raw AYNI parcalari TERS sirada doner" {
+    const asap = @import("../alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const list_ptr = nox_strings_rsplit_raw(rt, "a,b,c", ",") orelse return error.Failed;
+    try expectStrListAndRelease(rt, list_ptr, &.{ "c", "b", "a" });
 }
 
 /// `nox_strings_split_raw`nin TERSİ: bir Zig `[]const []const u8`ten
