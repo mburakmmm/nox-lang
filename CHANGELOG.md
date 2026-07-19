@@ -921,6 +921,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   (~1.25-1.3x)** — `path_bench`nin ~9.9x'inden MÜTEVAZİ (disk G/Ç süresi
   BASKIN) ama GERÇEK. 14 yeni unit test (break→red→fix İLE doğrulandı) +
   1 yeni golden test (idempotent, tekrar tekrar koşulabilir).
+- **Faz III.4 — `nox.path`ye `canonicalize`/`strip_prefix`/`components`
+  eklendi** (bkz. nox-teknik-spesifikasyon.md §3.69). `canonicalize`
+  (`std.c.realpath` — modülün "hiç I/O yok" ilkesine BİLİNÇLİ istisna,
+  YENİ `PathError`; GERÇEK bir test macOS'ta `/tmp`nin KENDİSİNİN
+  `/private/tmp`ye sembolik link OLDUĞUNU ORTAYA ÇIKARDI); `strip_prefix`
+  (eşleşmezse DEĞİŞMEDEN döner); `components()` (`std.fs.path.
+  componentIterator`, SAF string ayrıştırma). 4 yeni unit test
+  (break→red→fix İLE doğrulandı) + 1 yeni golden test.
 
 ## [1.0.0]
 

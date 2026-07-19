@@ -1215,6 +1215,13 @@ test "codegen(çalıştır): nox.path.join/basename/dirname/extension/is_absolut
     );
 }
 
+test "codegen(çalıştır): Faz III.4 — nox.path canonicalize/strip_prefix/components" {
+    try expectGolden(
+        @embedFile("codegen_cases/path_new_operations.nox"),
+        @embedFile("codegen_cases/path_new_operations.expected"),
+    );
+}
+
 test "codegen(çalıştır): nox.time.now_ms/sleep_ms (monoton artış)" {
     try expectGolden(
         @embedFile("codegen_cases/time_now_monotonic_increases.nox"),

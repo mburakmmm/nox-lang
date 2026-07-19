@@ -1,12 +1,24 @@
 # Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) — SAF yol string
 # manipülasyonu. `nox.fs`in AKSİNE hiçbir I/O yapmaz, hiçbir fonksiyon
-# `raise` ETMEZ (saf fonksiyonlar, her zaman başarılı).
+# `raise` ETMEZ (saf fonksiyonlar, her zaman başarılı). **Faz III.3
+# İSTİSNASI:** `canonicalize`, sembolik linkleri ÇÖZMEK İçin GERÇEKTEN
+# I/O yapar VE `raise` EDEBİLİR (`PathError`) — bu modülde bu İLKEYE
+# tek istisnadır, bkz. `runtime/stdlib_shims/path.zig`nin belge notu.
+
+class PathError:
+    def __init__(self: PathError, message: str) -> None:
+        self.message = message
 
 extern def nox_path_join_raw(a: str, b: str) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_path_basename_raw(p: str) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_path_dirname_raw(p: str) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_path_extension_raw(p: str) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_path_is_absolute_raw(p: str) -> int from "zig-out/lib/noxrt.o"
+# Faz III.4 (bkz. nox-teknik-spesifikasyon.md §3.69).
+extern def nox_path_last_op_ok() -> int from "zig-out/lib/noxrt.o"
+extern def nox_path_canonicalize_raw(p: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_path_strip_prefix_raw(p: str, prefix: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_path_components_raw(p: str) -> list[str] from "zig-out/lib/noxrt.o" with_rt
 
 def join(a: str, b: str) -> str:
     return nox_path_join_raw(a, b)
@@ -22,3 +34,15 @@ def extension(p: str) -> str:
 
 def is_absolute(p: str) -> bool:
     return nox_path_is_absolute_raw(p) != 0
+
+def canonicalize(p: str) -> str:
+    result: str = nox_path_canonicalize_raw(p)
+    if nox_path_last_op_ok() == 0:
+        raise PathError("yol cozulemedi: " + p)
+    return result
+
+def strip_prefix(p: str, prefix: str) -> str:
+    return nox_path_strip_prefix_raw(p, prefix)
+
+def components(p: str) -> list[str]:
+    return nox_path_components_raw(p)

@@ -11153,6 +11153,20 @@ koşulabilir).
 NUL bayt İÇEREN veriyi GÜVENLE taşıyamaz, GERÇEK bir "bytes" tipi
 gerektirir (`StringBuilder` İLE AYNI "yeni tip" kararı).
 
+### III.4 (TAMAMLANDI) — `nox.path` kalan fonksiyonlar
+
+`canonicalize` (`std.c.realpath` — bu modülün "hiç I/O yok" ilkesine
+BİLİNÇLİ, TEK istisna; sembolik linkleri ÇÖZMEK İçin dosyanın VAR OLMASI
+GEREKİR, bu YÜZDEN `nox.fs` İLE AYNI "ham çağrı + `PathError`" desenine
+ihtiyaç duyan TEK fonksiyon — YENİ eklenen `PathError` sınıfı); GERÇEK
+bir test (`/tmp/../tmp`) macOS'ta `/tmp`nin KENDİSİNİN `/private/tmp`ye
+bir sembolik link OLDUĞUNU (`canonicalize`nin bunu da DOĞRU çözdüğünü)
+ORTAYA ÇIKARDI. `strip_prefix` (SAF string, eşleşmezse yol DEĞİŞMEDEN
+döner — Rust'ın `Result` dönen `Path::strip_prefix`inden farklı, bilinçli
+v1 basitleştirmesi). `components()` (`list[str]`, `std.fs.path.
+componentIterator` — SAF bir string ayrıştırıcı, I/O GEREKMEZ). 4 yeni
+unit test (break→red→fix İLE doğrulandı) + 1 yeni golden test.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
