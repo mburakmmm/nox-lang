@@ -11211,6 +11211,21 @@ senaryoları, break→red→fix İLE doğrulandı) + 1 yeni golden test
 (`dict_keys_values` — `dict[str,int]`/`dict[int,bool]`/`dict[int,int]`
 uçtan uca).
 
+### III.7 (TAMAMLANDI) — `nox.time` `DateTime.to_str()` + `Instant`/`Duration`
+
+`DateTime.to_str()` — SAF Nox (HİÇ runtime değişikliği GEREKMEDİ):
+`"YYYY-AA-GG SS:DD:ss"` (ISO 8601'e yakın, sabit genişlik) — Nox'ta
+`%02d` gibi bir biçimlendirme ilkeli OLMADIĞINDAN, YENİ bir modül-düzeyi
+`pad2(n)` yardımcısı (`n < 10` İSE `"0" + str(n)`) İLE elle sıfır-doldurma
+yapılır. `Instant`/`Duration` — Rust'ın `Instant::now()`/`.elapsed()`
+İLE AYNI ilke: `now_ms`nin duvar-saati (`.REALTIME`, sistem saati
+DEĞİŞTİRİLİRSE GERİYE sıçrayabilir) YERİNE YENİ bir `nox_time_monotonic_
+ms_raw` (`.MONOTONIC`) kullanılır. `Instant(ms)` + `elapsed_ms() -> int`/
+`elapsed() -> Duration`; `Duration(ms)` + `as_ms() -> int`. `instant_now()`
+modül fonksiyonu `Instant`i inşa eder. 1 yeni Zig unit testi (break→red→fix
+İLE doğrulandı — sahte HEP-SIFIR bir saat DÖNÜLÜNCE hem bu test HEM DE
+YENİ golden test doğru şekilde KIRMIZI oldu) + 1 yeni golden test.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

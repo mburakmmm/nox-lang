@@ -21,6 +21,14 @@ def now_ms() -> int:
 def sleep_ms(ms: int) -> None:
     nox_time_sleep_ms_raw(ms)
 
+# Faz III.7 (bkz. nox-teknik-spesifikasyon.md §3.69) — `to_str`in
+# gerektirdiği 2-haneli sıfır-doldurma (Nox'ta `%02d` gibi bir biçimlendirme
+# ilkeli YOK, bu yüzden SAF string birleştirmeyle elle yapılır).
+def pad2(n: int) -> str:
+    if n < 10:
+        return "0" + str(n)
+    return str(n)
+
 # Stdlib fazı V.4 — `DateTime`: bir epoch-ms değerinin takvim bileşenlerine
 # (`std.time.epoch` ile, bkz. `runtime/stdlib_shims/time.zig`nin belge
 # notu) AYRIŞTIRILMIŞ hâli. Bilinçli v1 sınırlaması: yalnızca AYRIŞTIRMA
@@ -33,6 +41,10 @@ class DateTime:
         self.hour = hour
         self.minute = minute
         self.second = second
+
+    # Faz III.7 — "YYYY-AA-GG SS:DD:ss" (ISO 8601'e yakın, sabit genişlik).
+    def to_str(self: DateTime) -> str:
+        return str(self.year) + "-" + pad2(self.month) + "-" + pad2(self.day) + " " + pad2(self.hour) + ":" + pad2(self.minute) + ":" + pad2(self.second)
 
 extern def nox_time_year_raw(ms: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_time_month_raw(ms: int) -> int from "zig-out/lib/noxrt.o"
@@ -53,3 +65,30 @@ def from_epoch_ms(ms: int) -> DateTime:
 
 def now() -> DateTime:
     return from_epoch_ms(now_ms())
+
+# Faz III.7 — `Instant`/`Duration`: `now_ms`nin duvar-saati (`.REALTIME`,
+# sistem saati DEĞİŞTİRİLİRSE GERİYE sıçrayabilir) yerine `nox_time_
+# monotonic_ms_raw`nin (`.MONOTONIC`) kullanıldığı, YALNIZCA ARALIK
+# ÖLÇÜMÜ için tasarlanmış bir çift — Rust'ın `Instant::now()`/`.elapsed()`
+# İLE AYNI ilke.
+extern def nox_time_monotonic_ms_raw() -> int from "zig-out/lib/noxrt.o"
+
+class Duration:
+    def __init__(self: Duration, ms: int) -> None:
+        self.ms = ms
+
+    def as_ms(self: Duration) -> int:
+        return self.ms
+
+class Instant:
+    def __init__(self: Instant, ms: int) -> None:
+        self.ms = ms
+
+    def elapsed_ms(self: Instant) -> int:
+        return nox_time_monotonic_ms_raw() - self.ms
+
+    def elapsed(self: Instant) -> Duration:
+        return Duration(self.elapsed_ms())
+
+def instant_now() -> Instant:
+    return Instant(nox_time_monotonic_ms_raw())

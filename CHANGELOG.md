@@ -945,6 +945,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   BAĞIMSIZ sahip olur). 4 yeni unit test (break→red→fix İLE doğrulandı,
   retain kaldırılınca GERÇEK bir kullanım-sonrası-serbest-bırakma/sızıntı
   yakalandı) + 1 yeni golden test.
+- **Faz III.7 — `nox.time`ye `DateTime.to_str()` + `Instant`/`Duration`
+  eklendi** (bkz. nox-teknik-spesifikasyon.md §3.69). `to_str()` SAF Nox
+  (YENİ `pad2` yardımcısıyla elle sıfır-doldurma); `Instant`/`Duration`
+  YENİ `nox_time_monotonic_ms_raw` (`.MONOTONIC`, `now_ms`nin duvar-saati
+  `.REALTIME`sinden FARKLI — Rust'ın `Instant::now()`si İLE AYNI ilke)
+  üzerine kurulu. 1 yeni unit test (break→red→fix İLE doğrulandı) + 1
+  yeni golden test.
 
 ## [1.0.0]
 

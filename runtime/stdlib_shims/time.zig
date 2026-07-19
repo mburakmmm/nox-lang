@@ -22,6 +22,16 @@ export fn nox_time_now_ms_raw() callconv(.c) i64 {
     return @as(i64, ts.sec) * std.time.ms_per_s + @divTrunc(@as(i64, ts.nsec), std.time.ns_per_ms);
 }
 
+/// Faz III.7 (bkz. nox-teknik-spesifikasyon.md §3.69) — `nox_time_now_ms_
+/// raw`in AYNI deseni, YALNIZCA `.REALTIME` YERİNE `.MONOTONIC` (sistem
+/// saati GERİYE/İLERİYE ayarlansa BİLE ASLA geri sıçramaz — `Instant.
+/// elapsed_ms`in DOĞRULUĞU İÇİN ZORUNLU, `now_ms`nin duvar-saati AKSİNE).
+export fn nox_time_monotonic_ms_raw() callconv(.c) i64 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i64, ts.sec) * std.time.ms_per_s + @divTrunc(@as(i64, ts.nsec), std.time.ns_per_ms);
+}
+
 export fn nox_time_sleep_ms_raw(ms: i64) callconv(.c) void {
     if (ms <= 0) return;
     const ts: std.c.timespec = .{
@@ -93,5 +103,13 @@ test "nox_time_sleep_ms_raw en az istenen süre kadar bekler" {
     const before = nox_time_now_ms_raw();
     nox_time_sleep_ms_raw(20);
     const after = nox_time_now_ms_raw();
+    try std.testing.expect(after - before >= 15);
+}
+
+test "Faz III.7: nox_time_monotonic_ms_raw pozitif, monoton artan bir değer döner" {
+    const before = nox_time_monotonic_ms_raw();
+    try std.testing.expect(before > 0);
+    nox_time_sleep_ms_raw(20);
+    const after = nox_time_monotonic_ms_raw();
     try std.testing.expect(after - before >= 15);
 }

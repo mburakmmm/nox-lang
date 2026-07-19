@@ -1271,6 +1271,13 @@ test "codegen(çalıştır): nox.time.DateTime — bilinen epoch-ms'in doğru ta
     );
 }
 
+test "codegen(çalıştır): Faz III.7 — DateTime.to_str() + Instant/Duration" {
+    try expectGolden(
+        @embedFile("codegen_cases/time_datetime_to_str_and_instant.nox"),
+        @embedFile("codegen_cases/time_datetime_to_str_and_instant.expected"),
+    );
+}
+
 test "codegen(çalıştır): nox.test.TestSuite — check_* HİÇ raise ETMEZ (setup/teardown HER ZAMAN çalışır) + JUnit XML raporu" {
     try expectGolden(
         @embedFile("codegen_cases/test_suite_setup_teardown_junit.nox"),
