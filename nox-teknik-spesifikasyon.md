@@ -11181,6 +11181,36 @@ işlemi VAR). 2 yeni unit test (`set_var` + `getenv` round-trip, ve
 "başarılı" görünmeye çalıştığında test doğru şekilde KIRMIZI oldu) + 1
 yeni golden test (`os_new_operations`).
 
+### III.6 (TAMAMLANDI) — `dict[K,V]` salt-okunur iterasyon: `keys()`/`values()`
+
+`d.keys() -> list[K]`/`d.values() -> list[V]` — `contains`/`len` İLE AYNI
+"yerleşik metod, kullanıcı sınıfı DEĞİL" deseniyle checker.zig'e (`Type{
+.list = obj_t.dict.key }`/`.value`) VE codegen_qbe/codegen.zig'in
+`genDictMethod`ine eklendi. `runtime/collections/dict.zig`ye YENİ, ORTAK
+bir `buildEntryList` yardımcısı (+ `nox_dict_keys`/`nox_dict_values`)
+eklendi — `entries`i (`index_built`/silme değişmezine HİÇ DOKUNMADAN,
+SALT OKUNUR) `list[T]`nin ham bayt düzenine (`nox_fs_read_dir_raw`nin
+AYNI el-yapımı 16-bayt başlık + N eleman deseni) kopyalar. **Gerçek bir
+tasarım incelemesi:** `Entry.key`/`.value` HER ZAMAN 8 baytlık bir
+"payload" olarak saklanır (`codegen.zig`nin `toPayload`sı `bool`u DAHİ
+`w`->`l` `extuw` İLE 8 bayta genişletir) — ama `list[bool]` GERÇEKTE
+4 baytlık (`w`) elemanlardan oluşur (bkz. `genListLit`nin `elem_qtype =
+first.qtype`si). Bu UYUMSUZLUĞU çözmek İÇİN `DictInfo`ye (ÖNCEDEN yalnızca
+`value_qtype` VARDI, simetrik bir `key_qtype` YOKTU) YENİ bir `key_qtype`
+alanı eklendi — `keys()`/`values()` çağrı sitesi, hedef eleman boyutunu
+(`qbeSizeOf(key_qtype/value_qtype)`) runtime'a AÇIKÇA geçirir, `buildEntryList`
+bool İÇİN düşük 32 biti alır (`extuw`nin sıfır-genişletmesi SAYESİNDE
+KAYIPSIZ round-trip). `str` anahtar/değerler İÇİN her eleman `nox_rc_
+retain` İLE PAYLAŞILIR (dict KENDİ referansını korur, dönen liste BAĞIMSIZ
+bir ikinci sahip olur — break→red→fix'in KENDİSİ, retain KALDIRILINCA
+DebugAllocator'ın GERÇEK bir kullanım-sonrası-serbest-bırakma/sızıntı
+raporladığını doğruladı). `remove()`/`items()` (çift/`DictEntry` tipi
+gerektirir) BİLİNÇLİ olarak kapsam DIŞI bırakıldı (bkz. planın "Kapsam
+DIŞI" bölümü). 4 yeni Zig unit testi (int/bool/str anahtar-değer
+senaryoları, break→red→fix İLE doğrulandı) + 1 yeni golden test
+(`dict_keys_values` — `dict[str,int]`/`dict[int,bool]`/`dict[int,int]`
+uçtan uca).
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

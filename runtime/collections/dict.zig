@@ -220,6 +220,52 @@ pub export fn nox_dict_len(dp: ?*anyopaque) i64 {
     return @intCast(d.entries.items.len);
 }
 
+/// Faz III.6 (bkz. nox-teknik-spesifikasyon.md §3.69) — `keys()`/`values()`
+/// ORTAK yardımcısı: `entries`i (SIRALI, `nox_dict_len`in saydığı AYNI
+/// eleman sayısınca) `list[T]`nin ham bayt düzenine (`nox_fs_read_dir_raw`
+/// İLE AYNI el-yapımı desen: 8 bayt uzunluk + 8 bayt kapasite + N eleman)
+/// KOPYALAR. `elem_size` (4: `bool`/`w`, 8: `int`/`str`/`float`/`l`/`d`)
+/// codegen'in `DictInfo.key_qtype`/`value_qtype`sinden ÖNCEDEN bilinir —
+/// `Entry.key`/`.value` HER ZAMAN 8 baytlık bir "payload" (bkz. `codegen.
+/// zig`nin `toPayload`sı, `bool` DAHİL HER tip `nox_dict_set`e ÖNCE 8
+/// bayta genişletilerek geçirilir) OLDUĞUNDAN, 4 baytlık `list[bool]`
+/// İÇİN düşük 32 bit ALINIR (`toPayload`nin `extuw`si SIFIR-genişlettiğinden
+/// KAYIPSIZ round-trip). `is_str` İSE HER elemanın refcount'u BİR ARTIRILIR
+/// (`nox_rc_retain`) — dict KENDİ referansını KORUR, YENİ liste BAĞIMSIZ
+/// bir İKİNCİ sahip olur (`nox_dict_release`/liste'nin KENDİ release'i
+/// birbirinden bağımsız, İKİSİ de kendi payını serbest bırakır).
+fn buildEntryList(rt: ?*anyopaque, d: *Dict, is_str: bool, elem_size: i64, want_key: bool) ?*anyopaque {
+    const n = d.entries.items.len;
+    const esz: usize = @intCast(elem_size);
+    const raw = arc.nox_rc_alloc(rt, 16 + esz * n) orelse return null;
+    const bytes: [*]u8 = @ptrCast(raw);
+    @as(*align(1) i64, @ptrCast(bytes)).* = @intCast(n);
+    @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(n);
+    for (d.entries.items, 0..) |e, i| {
+        const payload = if (want_key) e.key else e.value;
+        if (is_str and payload != 0) arc.nox_rc_retain(payloadToStrPtr(payload).?);
+        const slot = bytes + 16 + esz * i;
+        if (esz == 4) {
+            @as(*align(1) i32, @ptrCast(slot)).* = @truncate(payload);
+        } else {
+            @as(*align(1) i64, @ptrCast(slot)).* = payload;
+        }
+    }
+    return @ptrCast(bytes);
+}
+
+/// `d.keys() -> list[K]` — bkz. `buildEntryList`in belge notu.
+pub export fn nox_dict_keys(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key_elem_size: i64) ?*anyopaque {
+    const d: *Dict = @ptrCast(@alignCast(dp orelse return null));
+    return buildEntryList(rt, d, key_is_str != 0, key_elem_size, true);
+}
+
+/// `d.values() -> list[V]` — bkz. `buildEntryList`in belge notu.
+pub export fn nox_dict_values(rt: ?*anyopaque, dp: ?*anyopaque, value_is_str: i32, value_elem_size: i64) ?*anyopaque {
+    const d: *Dict = @ptrCast(@alignCast(dp orelse return null));
+    return buildEntryList(rt, d, value_is_str != 0, value_elem_size, false);
+}
+
 /// Faz FF.3 — `dict`in refcount'unu bir azaltır; sıfıra/altına düşerse
 /// KENDİSİNİ (ve İÇİNDEKİ TÜM `str` anahtar/değerleri, varsa) GERÇEKTEN
 /// yıkar — `runtime/str.zig`nin `nox_str_release`iyle (`nox_rc_
@@ -368,4 +414,80 @@ test "nox_dict — SMALL_MAP_THRESHOLD asilana kadar dogrusal tarama, sonra inde
     try std.testing.expectEqual(@as(i64, @intCast(SMALL_MAP_THRESHOLD + 1)), nox_dict_len(d));
 
     nox_dict_release(rt, d, 0, 0);
+}
+
+test "Faz III.6: nox_dict_keys/nox_dict_values int anahtar/deger icin dogru list olusturur (8 baytlik eleman)" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const d = nox_dict_new(rt, 0) orelse return error.NewFailed;
+    nox_dict_set(rt, d, 0, 0, 1, 100);
+    nox_dict_set(rt, d, 0, 0, 2, 200);
+
+    const keys_list = nox_dict_keys(rt, d, 0, 8) orelse return error.Failed;
+    const kbytes: [*]u8 = @ptrCast(keys_list);
+    try std.testing.expectEqual(@as(i64, 2), @as(*align(1) i64, @ptrCast(kbytes)).*);
+    try std.testing.expectEqual(@as(i64, 2), @as(*align(1) i64, @ptrCast(kbytes + 8)).*);
+    try std.testing.expectEqual(@as(i64, 1), @as(*align(1) i64, @ptrCast(kbytes + 16)).*);
+    try std.testing.expectEqual(@as(i64, 2), @as(*align(1) i64, @ptrCast(kbytes + 24)).*);
+    _ = arc.nox_rc_predecrement(keys_list);
+    arc.nox_rc_free_payload(rt, keys_list, 16 + 8 * 2);
+
+    const values_list = nox_dict_values(rt, d, 0, 8) orelse return error.Failed;
+    const vbytes: [*]u8 = @ptrCast(values_list);
+    try std.testing.expectEqual(@as(i64, 100), @as(*align(1) i64, @ptrCast(vbytes + 16)).*);
+    try std.testing.expectEqual(@as(i64, 200), @as(*align(1) i64, @ptrCast(vbytes + 24)).*);
+    _ = arc.nox_rc_predecrement(values_list);
+    arc.nox_rc_free_payload(rt, values_list, 16 + 8 * 2);
+
+    nox_dict_release(rt, d, 0, 0);
+}
+
+test "Faz III.6: nox_dict_values bool degerler icin 4 baytlik eleman round-trip yapar (dogru truncate/extend)" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const d = nox_dict_new(rt, 0) orelse return error.NewFailed;
+    // `toPayload`in `w`->`l` `extuw` deseni (bkz. codegen.zig) TAKLİT
+    // edilir: bool `true`/`false` ÖNCE 8 bayta sifir-genisletilerek saklanir.
+    nox_dict_set(rt, d, 0, 0, 1, 1); // true
+    nox_dict_set(rt, d, 0, 0, 2, 0); // false
+
+    const values_list = nox_dict_values(rt, d, 0, 4) orelse return error.Failed;
+    const vbytes: [*]u8 = @ptrCast(values_list);
+    try std.testing.expectEqual(@as(i64, 2), @as(*align(1) i64, @ptrCast(vbytes)).*);
+    try std.testing.expectEqual(@as(i32, 1), @as(*align(1) i32, @ptrCast(vbytes + 16)).*);
+    try std.testing.expectEqual(@as(i32, 0), @as(*align(1) i32, @ptrCast(vbytes + 20)).*);
+    _ = arc.nox_rc_predecrement(values_list);
+    arc.nox_rc_free_payload(rt, values_list, 16 + 4 * 2);
+
+    nox_dict_release(rt, d, 0, 0);
+}
+
+test "Faz III.6: nox_dict_keys str anahtarlari retain eder — dict VE list bagimsiz serbest birakilabilir" {
+    const str_lib = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const d = nox_dict_new(rt, 1) orelse return error.NewFailed;
+    const k1 = str_lib.nox_str_concat(rt, "anah", "tar1") orelse return error.ConcatFailed;
+    const v1 = str_lib.nox_str_concat(rt, "deg", "er1") orelse return error.ConcatFailed;
+    nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(k1)), @bitCast(@intFromPtr(v1)));
+
+    const keys_list = nox_dict_keys(rt, d, 1, 8) orelse return error.Failed;
+    const kbytes: [*]u8 = @ptrCast(keys_list);
+    const kptr_val = @as(*align(1) i64, @ptrCast(kbytes + 16)).*;
+    const kptr: [*:0]u8 = @ptrFromInt(@as(usize, @bitCast(kptr_val)));
+    try std.testing.expectEqualStrings("anahtar1", std.mem.sliceTo(kptr, 0));
+
+    // Dict ÖNCE serbest bırakılır (KENDİ anahtar/değer referansını
+    // serbest bırakır) — list'in KENDİ retain'i sayesinde `kptr` HÂLÂ
+    // GEÇERLİ olmalı (DebugAllocator, dict'in serbest bıraktığı belleğe
+    // list'in HÂLÂ eriştiğini fark ederse çökerdi).
+    nox_dict_release(rt, d, 1, 1);
+    try std.testing.expectEqualStrings("anahtar1", std.mem.sliceTo(kptr, 0));
+
+    str_lib.nox_str_release(rt, kptr);
+    _ = arc.nox_rc_predecrement(keys_list);
+    arc.nox_rc_free_payload(rt, keys_list, 16 + 8 * 1);
 }

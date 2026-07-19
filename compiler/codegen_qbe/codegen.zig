@@ -290,6 +290,11 @@ const ElemHeapInfo = struct {
 /// özyineli alanlara GEREK YOK (list[T]'nin AKSİNE).
 const DictInfo = struct {
     key_is_str: bool,
+    /// Faz III.6 (bkz. nox-teknik-spesifikasyon.md §3.69) — `keys()`in
+    /// döndürdüğü `list[K]`nin doğru eleman boyutunu/tipini (`bool` İSE 4
+    /// bayt/`w`, `int`/`str` İSE 8 bayt/`l`) kurabilmesi İÇİN gerekir;
+    /// `value_qtype`nin AYNI amaçla ÖNCEDEN var olan simetriği.
+    key_qtype: QbeType,
     value_qtype: QbeType,
     value_is_str: bool,
 };
@@ -1131,7 +1136,7 @@ const Codegen = struct {
                     if (key.heap != .none and key.heap != .str) return error.Unsupported;
                     if (value.heap != .none and value.heap != .str) return error.Unsupported;
                     const dinfo = try self.allocator.create(DictInfo);
-                    dinfo.* = .{ .key_is_str = key.heap == .str, .value_qtype = value.qtype, .value_is_str = value.heap == .str };
+                    dinfo.* = .{ .key_is_str = key.heap == .str, .key_qtype = key.qtype, .value_qtype = value.qtype, .value_is_str = value.heap == .str };
                     return .{ .qtype = .l, .heap = .dict, .dict_info = dinfo };
                 }
                 const is_list = std.mem.eql(u8, g.name, "list");
@@ -4529,10 +4534,11 @@ const Codegen = struct {
         }
         const key_is_str = key_values[0].heap == .str;
         const value_is_str = value_values[0].heap == .str;
+        const key_qtype = key_values[0].qtype;
         const value_qtype = value_values[0].qtype;
 
         const dinfo = try self.allocator.create(DictInfo);
-        dinfo.* = .{ .key_is_str = key_is_str, .value_qtype = value_qtype, .value_is_str = value_is_str };
+        dinfo.* = .{ .key_is_str = key_is_str, .key_qtype = key_qtype, .value_qtype = value_qtype, .value_is_str = value_is_str };
 
         const key_is_str_lit: []const u8 = if (key_is_str) "1" else "0";
         const value_is_str_lit: []const u8 = if (value_is_str) "1" else "0";
@@ -6334,6 +6340,45 @@ const Codegen = struct {
             try self.out.writer.print("    {s} =l call $nox_dict_len(l {s})\n", .{ result, obj.text });
             try self.releaseIfTemporary(a.obj.*, obj);
             return .{ .text = result, .qtype = .l };
+        }
+        // Faz III.6 (bkz. nox-teknik-spesifikasyon.md §3.69) —
+        // `keys()`/`values()`: `runtime/collections/dict.zig`nin
+        // `nox_dict_keys`/`nox_dict_values`ine (bir `list[T]`nin ham bayt
+        // düzenini `entries`den KOPYALAYAN, `str` İSE her elemanı `nox_rc_
+        // retain` ile PAYLAŞAN yardımcılar) lowerlanır. Eleman boyutu
+        // (`bool` İSE 4/`w`, aksi hâlde 8/`l`-`d`) `dinfo.key_qtype`/
+        // `value_qtype`den (bkz. `DictInfo`nun belge notu) `qbeSizeOf` İLE
+        // türetilir. Dönen `list[T]`nin `elem_heap_info`si `str` İSE
+        // `genListLit`nin AYNI desenini İZLER (özyinelemeli release İçin).
+        if (std.mem.eql(u8, a.attr, "keys")) {
+            if (args.len != 0) return error.Unsupported;
+            const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
+            const elem_size = qbeSizeOf(dinfo.key_qtype);
+            const result = try self.newTemp();
+            try self.out.writer.print("    {s} =l call $nox_dict_keys(l {s}, l {s}, w {s}, l {d})\n", .{ result, RT_PARAM, obj.text, key_is_str_lit, elem_size });
+            try self.releaseIfTemporary(a.obj.*, obj);
+            var elem_heap_info: ?*const ElemHeapInfo = null;
+            if (dinfo.key_is_str) {
+                const info = try self.allocator.create(ElemHeapInfo);
+                info.* = .{ .heap = .str };
+                elem_heap_info = info;
+            }
+            return .{ .text = result, .qtype = .l, .heap = .list, .elem_qtype = dinfo.key_qtype, .elem_heap_info = elem_heap_info, .elem_is_str = dinfo.key_is_str };
+        }
+        if (std.mem.eql(u8, a.attr, "values")) {
+            if (args.len != 0) return error.Unsupported;
+            const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
+            const elem_size = qbeSizeOf(dinfo.value_qtype);
+            const result = try self.newTemp();
+            try self.out.writer.print("    {s} =l call $nox_dict_values(l {s}, l {s}, w {s}, l {d})\n", .{ result, RT_PARAM, obj.text, value_is_str_lit, elem_size });
+            try self.releaseIfTemporary(a.obj.*, obj);
+            var elem_heap_info: ?*const ElemHeapInfo = null;
+            if (dinfo.value_is_str) {
+                const info = try self.allocator.create(ElemHeapInfo);
+                info.* = .{ .heap = .str };
+                elem_heap_info = info;
+            }
+            return .{ .text = result, .qtype = .l, .heap = .list, .elem_qtype = dinfo.value_qtype, .elem_heap_info = elem_heap_info, .elem_is_str = dinfo.value_is_str };
         }
         return error.Unsupported;
     }

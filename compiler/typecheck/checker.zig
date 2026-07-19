@@ -2131,7 +2131,19 @@ pub const Checker = struct {
                         if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'len' hiç argüman almaz", .{});
                         return .int;
                     }
-                    return self.fail(error.UndefinedMethod, "dict'in '{s}' metodu yok (yalnızca contains/len)", .{a.attr});
+                    // Faz III.6 (bkz. nox-teknik-spesifikasyon.md §3.69) —
+                    // salt-okunur iterasyon: `keys()`/`values()`. `remove()`/
+                    // `items()` (çift/`DictEntry` tipi gerektirir) BİLİNÇLİ
+                    // olarak KAPSAM DIŞI (bkz. planın "Kapsam DIŞI" bölümü).
+                    if (std.mem.eql(u8, a.attr, "keys")) {
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'keys' hiç argüman almaz", .{});
+                        return Type{ .list = obj_t.dict.key };
+                    }
+                    if (std.mem.eql(u8, a.attr, "values")) {
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'values' hiç argüman almaz", .{});
+                        return Type{ .list = obj_t.dict.value };
+                    }
+                    return self.fail(error.UndefinedMethod, "dict'in '{s}' metodu yok (yalnızca contains/len/keys/values)", .{a.attr});
                 }
                 // `list[T]`in yerleşik `append`i — Faz U.1, `dict`in AYNI
                 // deseni. **Bilinçli v1 sınırlaması:** alıcı (`a.obj.*`)

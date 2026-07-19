@@ -935,6 +935,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   bildirimiyle bağlandı); `current_dir` (`std.c.getcwd`). `nox.os`nin
   İLK yazma yan-etkili fonksiyonları. 2 yeni unit test (break→red→fix
   İLE doğrulandı) + 1 yeni golden test.
+- **Faz III.6 — `dict[K,V]`ye `keys()`/`values()` eklendi** (bkz.
+  nox-teknik-spesifikasyon.md §3.69). `contains`/`len` İLE AYNI yerleşik-
+  metod deseni; `runtime/collections/dict.zig`ye YENİ `nox_dict_keys`/
+  `nox_dict_values` (+ ortak `buildEntryList`). `DictInfo`ye YENİ bir
+  simetrik `key_qtype` alanı eklendi (`bool` anahtar/değerlerin doğru
+  4 baytlık `list[bool]` eleman boyutuyla round-trip yapması İÇİN). `str`
+  anahtar/değerler `nox_rc_retain` İLE PAYLAŞILIR (dict VE dönen liste
+  BAĞIMSIZ sahip olur). 4 yeni unit test (break→red→fix İLE doğrulandı,
+  retain kaldırılınca GERÇEK bir kullanım-sonrası-serbest-bırakma/sızıntı
+  yakalandı) + 1 yeni golden test.
 
 ## [1.0.0]
 

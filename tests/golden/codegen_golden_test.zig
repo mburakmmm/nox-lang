@@ -1037,6 +1037,13 @@ test "codegen(çalıştır): Faz FF.3 — dict[K,V] İKİ AYRI sınıf örneğin
     );
 }
 
+test "codegen(çalıştır): Faz III.6 — dict[K,V].keys()/.values() (str/int/bool eleman tipleri)" {
+    try expectGolden(
+        @embedFile("codegen_cases/dict_keys_values.nox"),
+        @embedFile("codegen_cases/dict_keys_values.expected"),
+    );
+}
+
 // Faz FF.4 (bkz. nox-teknik-spesifikasyon.md §3.63): çıplak `self`li bir
 // metodun (`bump`) bir ALANI GERÇEKTEN okuyup/YAZDIĞI uçtan uca kanıt —
 // codegen'in çıplak self İÇİN GERÇEKTEN sıfır değişiklik gerektirdiğinin
