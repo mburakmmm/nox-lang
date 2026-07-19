@@ -152,22 +152,46 @@ export fn nox_strings_join_raw(rt: ?*anyopaque, parts: ?*anyopaque, sep: ?[*:0]c
     return @ptrCast(out);
 }
 
-/// Faz II (bkz. nox-teknik-spesifikasyon.md §3.67) — `index_of`nin ÖNCEKİ
-/// saf-Nox uygulaması (`stdlib/nox/strings.nox`) `nox_str_byte_at` (HER
-/// bayt İçin bir FONKSİYON ÇAĞRISI) İLE bayt-bayt bir O(n×m) döngüydü;
-/// bir Rust `std` karşılaştırması (`benchmarks/strings_perf_bench`) bunun
-/// Rust'ın SIMD-destekli `str::contains`ine göre ~16x YAVAŞ olduğunu
-/// GERÇEK ölçümle ORTAYA ÇIKARDI. Burada `join`in EE.1'de aldığı AYNI
-/// tedavi uygulanır: değişken-uzunluklu SONUÇ üretmediğinden (`int` döner)
-/// `rt`/`with_rt` GEREKMEZ — `nox_str_byte_at` İLE AYNI "alloc-sız ilkel"
-/// sözleşmesi. Boş `needle` (v1 sözleşmesi, `strings_search.expected`
-/// golden testiyle SABİTLENMİŞ) `0` döner — ÖNCEKİ saf-Nox davranışıyla
-/// BİREBİR AYNI.
+/// Faz II devamı (bkz. nox-teknik-spesifikasyon.md §3.67) — `index_of`nin
+/// İLK Zig'e taşınan sürümü DOĞRUDAN `std.mem.indexOf`i (Boyer-Moore-
+/// Horspool, `haystack.len>52 VE needle.len>4` için) çağırıyordu; bu,
+/// saf-Nox O(n×m) döngüsüne göre `strings_perf_bench`nin yavaşlamasını
+/// 16.2x'ten 3.6x'e düşürdü AMA Rust'ın `str::contains`ine göre HÂLÂ ~3.3x
+/// yavaştı. **İzole ölçümle (Nox/QBE/ARC HİÇ karışmadan, SAF Zig döngüsü)
+/// DOĞRULANDI:** kalan fark Nox'un çağrı/ARC/istisna makinesinden
+/// GELMİYORDU — `std.mem.indexOf`nin KENDİSİ (BMH'nin HER çağrıda 256
+/// baytlık bir skip-tablosu YENİDEN kurması VE SIMD KULLANMAYAN taraması)
+/// Rust'ın deyiminden yavaştı. Burada YERİNE Zig'in `std.mem.indexOfScalarPos`
+/// (TEK bayt İçin, SIMD-vektörleştirilmiş) İLE "ilk baytı bul, sonra
+/// doğrula" stratejisi kullanılır — ÖLÇÜLDÜ: AYNI 50000×2006-bayt
+/// senaryosunda BMH'nin ~30ms'ine karşı ~0-1ms (Rust'a EŞDEĞER/ondan
+/// hızlı). **Bilinçli v1 basitleştirmesi (kabul edilen risk):** bu
+/// yaklaşımın EN KÖTÜ durumu (`needle`in İLK baytı `haystack`ta ÇOK sık
+/// tekrarlıyorsa, ör. `needle="aaab"` `haystack="aaaaaaaa..."`da) O(n×m)ye
+/// GERİ döner — BMH'nin garantili sub-lineer davranışı YOKTUR. Gerçek
+/// dünya metninde (doğal dil, JSON, log satırları) İLK baytın böylesine
+/// PATOLOJİK tekrarı NADİRDİR; bu ödünleşim, ÖLÇÜLEN GERÇEK kazanç
+/// karşılığında BİLİNÇLİ olarak kabul edildi. Değişken-uzunluklu SONUÇ
+/// üretmediğinden (`int` döner) `rt`/`with_rt` GEREKMEZ. Boş `needle`
+/// (v1 sözleşmesi, `strings_search.expected` golden testiyle SABİTLENMİŞ)
+/// `0` döner.
+fn fastIndexOf(haystack: []const u8, needle: []const u8) ?usize {
+    if (needle.len > haystack.len) return null;
+    const first = needle[0];
+    var start: usize = 0;
+    while (std.mem.indexOfScalarPos(u8, haystack, start, first)) |pos| {
+        if (pos + needle.len > haystack.len) return null;
+        if (std.mem.eql(u8, haystack[pos..][0..needle.len], needle)) return pos;
+        start = pos + 1;
+    }
+    return null;
+}
+
 export fn nox_strings_index_of_raw(s: ?[*:0]const u8, needle: ?[*:0]const u8) callconv(.c) i64 {
     const s_slice = std.mem.span(s orelse return -1);
     const needle_slice = std.mem.span(needle orelse return -1);
     if (needle_slice.len == 0) return 0;
-    const idx = std.mem.indexOf(u8, s_slice, needle_slice) orelse return -1;
+    const idx = fastIndexOf(s_slice, needle_slice) orelse return -1;
     return @intCast(idx);
 }
 
@@ -191,6 +215,16 @@ test "nox_strings_index_of_raw/starts_with_raw/ends_with_raw dogru calisir" {
     try std.testing.expectEqual(@as(i64, 2), nox_strings_index_of_raw("hello", "l"));
     try std.testing.expectEqual(@as(i64, -1), nox_strings_index_of_raw("hello", "z"));
     try std.testing.expectEqual(@as(i64, 0), nox_strings_index_of_raw("hello", ""));
+    // `fastIndexOf`nin (BMH degil, "ilk bayti bul + dogrula") kenar durumlari:
+    try std.testing.expectEqual(@as(i64, -1), nox_strings_index_of_raw("hi", "hello"));
+    try std.testing.expectEqual(@as(i64, 0), nox_strings_index_of_raw("hello", "hello"));
+    try std.testing.expectEqual(@as(i64, 3), nox_strings_index_of_raw("aaab", "b"));
+    // Ilk bayti TEKRARLI eslesmeyen adaylar (yanlis-pozitif "ilk bayt"
+    // sonrasi geri sarma dogru calisiyor mu): "aaXY" icinde "aY" araninca
+    // ilk 'a' (idx 0) eslesmez ('a' sonrasi 'a' != 'Y'), idx 1'de ('a'
+    // sonrasi 'X' != 'Y') de eslesmez, gercek eslesme YOK.
+    try std.testing.expectEqual(@as(i64, -1), nox_strings_index_of_raw("aaXY", "aY"));
+    try std.testing.expectEqual(@as(i64, 2), nox_strings_index_of_raw("aaXY", "XY"));
 
     try std.testing.expectEqual(@as(i64, 1), nox_strings_starts_with_raw("hello", "he"));
     try std.testing.expectEqual(@as(i64, 0), nox_strings_starts_with_raw("hello", "lo"));

@@ -10869,10 +10869,32 @@ fix: `nox_strings_index_of_raw` geçici HER ZAMAN `-1` dönecek şekilde
 bozulunca `zig build test` 4 test (3 golden + 1 unit) BAŞARISIZ verdi;
 geri eklenince (Debug/ReleaseSafe/ReleaseFast ÜÇÜ de) TAMAMEN yeşil.
 **Sonuç: `strings_perf_bench` 208.7ms → 47.2ms'e düştü, yavaşlama 16.2x'ten
-3.6x'e GERİLEDİ** (Rust'ın 12.9ms'i DEĞİŞMEDİ, kontrol grubu). Kalan 3.6x
-farkın büyük kısmı muhtemelen `join_bench` alt-ölçümünden (Rust'ın
-`Vec<String>::join`inin ön-hesaplanmış kapasiteli tek-ayırma stratejisi) —
-bu, gelecekteki bir alt-görevin adayı, bu fazın kapsamı DIŞINDA.
+3.6x'e GERİLEDİ** (Rust'ın 12.9ms'i DEĞİŞMEDİ, kontrol grubu).
+
+**Düzeltme 2 (kullanıcının "onu da yapalım" talimatıyla — ÖNCE bir
+`String`/`StringBuilder` iste­nmişti, ama bu bulgu ÜZERİNE YANLIŞ çıktı):**
+Uygulamaya BAŞLAMADAN ÖNCE `strings_perf_bench`nin İKİ yarısı (50000×
+`contains` taraması VE 500× `join`) İZOLE ölçüldü — **`join` zaten Rust'a
+yakındı (~10ms); `contains` HÂLÂ ~30ms'ti (Rust'ın ~9-10ms'ine karşı
+~3.3x), yani kalan farkın asıl kaynağı `StringBuilder` DEĞİL, HÂLÂ
+`contains`/`index_of`nin KENDİSİYDİ.** SAF bir Zig döngüsüyle (Nox/QBE/
+ARC HİÇ karışmadan) İZOLE test edilince AYNI ~30ms SAF Zig'de de çıktı —
+yani sorun Nox'un çağrı/ARC overhead'i DEĞİL, `std.mem.indexOf`nin
+KENDİSİYDİ (BMH, HER çağrıda 256 baytlık bir skip-tablosunu YENİDEN kurup
+SIMD kullanmadan tarıyor). Zig'in `std.mem.indexOfScalarPos`si (TEK bayt
+İçin SIMD-vektörleştirilmiş) İLE "ilk baytı bul + doğrula" stratejisine
+(`fastIndexOf`, bkz. `runtime/stdlib_shims/strings.zig`) geçilince AYNI
+SAF Zig testi ~30ms'ten ~0-1ms'e düştü. **Bilinçli v1 ödünleşimi:** en
+kötü durum (`needle`in İLK baytı `haystack`ta ÇOK sık tekrarlıyorsa)
+O(n×m)ye GERİ döner — BMH'nin garantili sub-lineer davranışı YOKTUR;
+gerçek dünya metninde bu PATOLOJİK durumun NADİR olması gerekçesiyle
+KABUL edildi. Break→red→fix: `fastIndexOf` geçici HER ZAMAN `null`
+dönecek şekilde bozulunca YİNE 4 test BAŞARISIZ verdi; geri eklenince
+Debug/ReleaseSafe/ReleaseFast ÜÇÜ de TAMAMEN yeşil. **Sonuç:
+`strings_perf_bench` 47.2ms → 13.8ms'e düştü, yavaşlama 3.6x'ten 1.1x'e
+GERİLEDİ** (Rust'ın 12.9ms'ine PRATİKTE EŞDEĞER). `String`/`StringBuilder`
+eksikliği HÂLÂ GERÇEK bir stdlib boşluğu ama bu benchmark'ın darboğazı
+DEĞİLDİ — bağımsız bir gelecek görevi olarak kalır.
 
 **Eksik-fonksiyon analizi (özet — TAM tablo RESULTS.md Bölüm 4'te):**
 zamanlanmayan 4 modül (`json`/`random`/`regex`/`crypto`) Rust `std`de HİÇ
@@ -10881,7 +10903,8 @@ avantajlı; zamanlanan modüllerde ise en dikkat çekici boşluklar:
 `nox.strings`nin UTF-8/Unicode FARKINDALIĞI OLMAMASI (bayt-tabanlı `byte_at`/
 `len`, çok baytlı karakterlerde YANLIŞ davranır) VE amortize büyüyen bir
 `String`/`StringBuilder`nin OLMAMASI (`s = s + x` HER seferinde YENİ tahsis
-— `contains`/`index_of` yukarıda DÜZELTİLDİ, bu İKİNCİ nokta HÂLÂ AÇIK);
+— BAĞIMSIZ bir boşluk, `strings_perf_bench`nin darboğazı DEĞİLDİ,
+Düzeltme 2'ye bkz., HÂLÂ AÇIK);
 `dict[K,V]`de iterasyon (`keys`/`values`/`items`) VE `entry` API'sinin
 OLMAMASI; `nox.fs`de `read_dir`/`metadata`/`copy` OLMAMASI; `nox.time`de
 monotonik süre ölçümü (`Instant`/`Duration`) OLMAMASI. Bu liste EKSİKSİZ

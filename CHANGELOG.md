@@ -803,6 +803,23 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   BAŞARISIZ verdi, geri eklenince Debug/ReleaseSafe/ReleaseFast ÜÇÜ de
   yeşil. **Sonuç: `strings_perf_bench`nin yavaşlaması 16.2x'ten 3.6x'e
   DÜŞTÜ** (208.7ms → 47.2ms, Rust'ın 12.9ms'i sabit kaldı).
+- **`index_of`nin arama algoritması değiştirildi (AYNI faz, kullanıcının
+  "onu da yapalım" talimatıyla — başta bir `String`/`StringBuilder`
+  istendi, ama izole ölçüm bunun YANLIŞ hedef olduğunu gösterdi).**
+  `strings_perf_bench`nin İKİ yarısı (contains-tarama VE join) ayrı ayrı
+  ölçülünce kalan farkın `join`de DEĞİL, HÂLÂ `contains`/`index_of`de
+  olduğu görüldü; SAF bir Zig testiyle (Nox'un çağrı/ARC makinesi HİÇ
+  karışmadan) izole edilince sorunun Nox'ta DEĞİL, `std.mem.indexOf`nin
+  KENDİSİNDE (Boyer-Moore-Horspool, HER çağrıda 256 baytlık skip-tablosu
+  YENİDEN kurup SIMD kullanmıyor) olduğu doğrulandı.
+  `nox_strings_index_of_raw`, Zig'in SIMD-vektörleştirilmiş
+  `std.mem.indexOfScalarPos`sini KULLANAN bir "ilk baytı bul + doğrula"
+  yardımcısına (`fastIndexOf`) geçirildi — bilinçli v1 ödünleşimi: en
+  kötü durumda (needle'ın ilk baytı haystack'ta çok sık tekrarlıyorsa)
+  O(n×m)ye geri döner, gerçek metinde NADİR kabul edildi. Break→red→fix
+  YİNE 4 test BAŞARISIZ/yeşil döngüsüyle doğrulandı. **Sonuç:
+  `strings_perf_bench`nin yavaşlaması 3.6x'ten 1.1x'e DÜŞTÜ** (47.2ms →
+  13.8ms, Rust'ın 12.9ms'ine pratikte eşdeğer).
 
 ## [1.0.0]
 

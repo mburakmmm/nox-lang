@@ -460,7 +460,7 @@ AYNI "tek dosya" felsefesi) eklendi ve `benchmarks/run.zig`nin KALICI
 harness'ına (Bölüm 4) bağlandı. Rust nightly 1.94, Apple M4, ReleaseFast
 runtime.
 
-### Sonuç tablosu (düzeltme SONRASI — bkz. aşağıdaki "düzeltme" bölümü)
+### Sonuç tablosu (İKİ düzeltme SONRASI — bkz. aşağıdaki "düzeltme" bölümleri)
 
 | Benchmark | Nox | Rust | yavaşlama (nox/rust) |
 |---|---|---|---|
@@ -469,7 +469,7 @@ runtime.
 | os_fs_bench | 3.1ms | 4.3ms | 0.7x |
 | time_bench | 6.3ms | 7.8ms | 0.8x |
 | dict_bench | 2.7ms | 3.0ms | 0.9x |
-| strings_perf_bench | 47.2ms | 12.9ms | **3.6x** |
+| strings_perf_bench | 13.8ms | 12.9ms | **1.1x** |
 
 **6/6 geçti.**
 
@@ -492,7 +492,7 @@ runtime.
   dizede `contains` taraması) TAM OLARAK bu yolu sıkı biçimde
   çalıştırıyordu.
 
-### Düzeltme (AYNI oturumda, kullanıcı isteğiyle — "devam edelim")
+### Düzeltme 1 (AYNI oturumda, kullanıcı isteğiyle — "devam edelim")
 
 EE.1 (§3.61) `join`i ZATEN AYNI gerekçeyle Zig kabuğuna taşımıştı (saf
 Nox O(n²) → Zig O(n)) — bu bulgu ÜZERİNE `index_of`/`starts_with`/
@@ -504,11 +504,38 @@ devreder, Zig'e taşınan hızı OTOMATİK devralır). Break→red→fix ritüel
 `nox_strings_index_of_raw` geçici olarak HER ZAMAN `-1` dönecek şekilde
 bozulunca `zig build test` 4 testi (3 golden + 1 unit) BAŞARISIZ verdi;
 geri eklenince TAMAMEN yeşil. **Sonuç: `strings_perf_bench`nin yavaşlaması
-16.2x'ten 3.6x'e DÜŞTÜ** (208.7ms → 47.2ms, Rust'ın 12.9ms'i DEĞİŞMEDİ) —
-kalan 3.6x fark muhtemelen `join_bench` alt-ölçümünün (500 × 3000 elemanlı
-liste birleştirme) hâlâ Rust'ın `Vec<String>::join`inin ön-hesaplanmış
-kapasiteli TEK ayırma stratejisine göre bir miktar geride olmasından
-kaynaklanıyor — bu fazın kapsamı DIŞINDA, gelecekteki bir alt-görev adayı.
+16.2x'ten 3.6x'e DÜŞTÜ** (208.7ms → 47.2ms, Rust'ın 12.9ms'i DEĞİŞMEDİ).
+
+### Düzeltme 2 (kullanıcının "onu da yapalım" talimatıyla — StringBuilder DEĞİL, doğru kök neden)
+
+Kullanıcı kalan 3.6x farkı kapatmak İçin bir `String`/`StringBuilder`
+eklenmesini istedi — bu, önceki bölümde YUKARIDA yazılan (ama YANLIŞ
+çıkan) bir spekülasyona dayanıyordu. Uygulamaya BAŞLAMADAN ÖNCE
+`strings_perf_bench`nin İKİ yarısı (50000× `contains` taraması VE 500×
+`join`) İZOLE edilip AYRI AYRI ölçüldü: **`join` zaten ~10ms (Rust'a
+YAKIN), `contains` HÂLÂ ~30ms (Rust'ın ~9-10ms'ine karşı ~3.3x YAVAŞ) —
+yani kalan farkın asıl kaynağı `join`/`StringBuilder` DEĞİL, HÂLÂ
+`contains`/`index_of`nin KENDİSİYDİ.** Nox'un çağrı/ARC makinesinden mi
+yoksa `std.mem.indexOf`nin KENDİSİNDEN mi geldiğini ayırmak İçin SAF bir
+Zig döngüsüyle (Nox/QBE/ARC HİÇ karışmadan) İZOLE test edildi: AYNI ~30ms
+SAF Zig'de de ÇIKTI — yani sorun Nox'un ÇAĞRI overhead'i DEĞİL,
+`std.mem.indexOf`nin KENDİSİYDİ (Boyer-Moore-Horspool, HER çağrıda 256
+baytlık bir skip-tablosunu YENİDEN kurup SIMD KULLANMADAN tarıyor).
+Zig'in `std.mem.indexOfScalarPos`si (TEK bayt İçin, SIMD-vektörleştirilmiş)
+İLE "ilk baytı bul + doğrula" stratejisine geçilince AYNI SAF Zig testi
+~30ms'ten ~0-1ms'e düştü. Bu, `nox_strings_index_of_raw`ya (`fastIndexOf`
+yardımcı fonksiyonu, bkz. `runtime/stdlib_shims/strings.zig`) uygulandı.
+**Bilinçli v1 ödünleşimi:** bu yaklaşımın en kötü durumu (`needle`in İLK
+baytı `haystack`ta ÇOK sık tekrarlıyorsa) O(n×m)ye GERİ döner — BMH'nin
+garantili sub-lineer davranışı YOKTUR; gerçek dünya metninde bu PATOLOJİK
+durumun NADİR olması gerekçesiyle KABUL edildi. Break→red→fix ritüeli:
+`fastIndexOf` geçici olarak HER ZAMAN `null` dönecek şekilde bozulunca
+`zig build test` YİNE 4 test BAŞARISIZ verdi; geri eklenince Debug/
+ReleaseSafe/ReleaseFast ÜÇÜ de TAMAMEN yeşil. **Sonuç: `strings_perf_
+bench`nin yavaşlaması 3.6x'ten 1.1x'e DÜŞTÜ** (47.2ms → 13.8ms, Rust'ın
+12.9ms'ine PRATİKTE EŞDEĞER). `String`/`StringBuilder` eksikliği HÂLÂ
+GERÇEK bir stdlib boşluğu (bkz. aşağıdaki tablo) ama bu benchmark'ın
+darboğazı DEĞİLDİ — ayrı, bağımsız bir gelecek görevi olarak kalır.
 
 ### Eksik fonksiyon / yetenek analizi (TÜM `nox.*` modülleri, Rust `std` ile karşılaştırmalı)
 
@@ -526,7 +553,7 @@ gerektirir, bu YÜZDEN kapsam dışı bırakıldı, bkz. yukarı):**
 
 | Nox modülü | Rust std karşılığı | Nox'ta eksik/dar olanlar |
 |---|---|---|
-| `nox.strings` | `str`/`String` metodları | `trim_start`/`trim_end` (yalnızca iki-yönlü `trim` var); `splitn`/`rsplit`; `repeat`; büyük/küçük harf DUYARSIZ karşılaştırma; UTF-8/Unicode farkındalığı YOK (`byte_at`/`len` bayt-tabanlı, çok baytlı karakterlerde YANLIŞ sonuç verir — Rust `char_indices`/`chars` doğru Unicode sınırlarını bilir); amortize büyüyen bir `String`/`StringBuilder` YOK (Nox'ta `s = s + x` HER seferinde YENİ bir tahsis — `contains`/`index_of` DÜZELTİLDİKTEN (yukarı bkz.) SONRA `strings_perf_bench`nin KALAN 3.6x farkının bir kısmının kaynağı olabilir, potansiyel bir SONRAKİ darboğaz). |
+| `nox.strings` | `str`/`String` metodları | `trim_start`/`trim_end` (yalnızca iki-yönlü `trim` var); `splitn`/`rsplit`; `repeat`; büyük/küçük harf DUYARSIZ karşılaştırma; UTF-8/Unicode farkındalığı YOK (`byte_at`/`len` bayt-tabanlı, çok baytlı karakterlerde YANLIŞ sonuç verir — Rust `char_indices`/`chars` doğru Unicode sınırlarını bilir); amortize büyüyen bir `String`/`StringBuilder` YOK (Nox'ta `s = s + x` HER seferinde YENİ bir tahsis) — **DOĞRULANDI: bu, `strings_perf_bench`nin darboğazının kaynağı DEĞİLDİ** (bkz. yukarıdaki "Düzeltme 2" — kalan fark `join`de değil, `contains`/`index_of`nin KENDİSİNDEYDİ), ama BAĞIMSIZ bir gerçek boşluk olarak KALIR. |
 | `nox.math` | `f64` metodları + `std::f64::consts` | `sin`/`cos`/`tan`/`log`/`ln`/`exp` YOK (yalnızca `sqrt`/`pow`/`floor`/`ceil`/`min`/`max`/`abs`); `PI`/`E` gibi sabitler YOK; tamsayı taşma-güvenli aritmetik (`checked_add` vb.) YOK. |
 | `nox.os` | `std::env` | Ortam değişkeni AYARLAMA (`set_var`) YOK, yalnızca okuma; `current_dir`/`args()` iterator'ü YOK (yalnızca index-tabanlı `arg(i)`); süreç oluşturma (`std::process::Command`) YOK. |
 | `nox.fs` | `std::fs` | `read_dir` (dizin listeleme) YOK; `metadata`/dosya boyutu-zaman damgası YOK; `copy`/`rename`/`remove_file`/`create_dir` YOK; APPEND modu YOK (yalnızca TAM üzerine yazma); ikili (byte) okuma/yazma YOK (yalnızca `str`). |
