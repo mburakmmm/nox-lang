@@ -820,6 +820,21 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   YİNE 4 test BAŞARISIZ/yeşil döngüsüyle doğrulandı. **Sonuç:
   `strings_perf_bench`nin yavaşlaması 3.6x'ten 1.1x'e DÜŞTÜ** (47.2ms →
   13.8ms, Rust'ın 12.9ms'ine pratikte eşdeğer).
+- **`nox.path` Rust karşılaştırmasına eklendi + `join`deki gerçek
+  darboğaz düzeltildi (AYNI faz, kullanıcının "diğer stdlib alanları da
+  benchmarklandı mı" sorusuyla).** `nox.path` (Rust'ın `std::path::Path`
+  iyle ADİL karşılaştırılabilir olduğu HALDE) Faz II'nin İLK turunda
+  atlanmıştı — sıfırdan `benchmarks/path_bench.{nox,rs}` yazılıp harness'a
+  eklendi. **İLK ölçüm 9.4x-9.9x YAVAŞ çıktı** (147ms'e karşı Rust'ın
+  ~15-16ms'i). Kök neden: `nox_path_join_raw`nin eski uygulaması
+  `std.fs.path.join`i `std.heap.page_allocator` (YAVAŞ, sayfa-granülerlikli)
+  İLE çağırıp SONRA İKİNCİ bir ARC kopyası çıkarıyordu — çağrı başına 2
+  tahsis. `nox_strings_join_raw`nin (EE.1) AYNI stratejisiyle (2-yol İçin
+  basitleşmiş ayraç-mantığı EL İLE, `arc.nox_rc_alloc`a TEK tahsis)
+  düzeltildi. Break→red→fix (GERÇEK bir "Invalid free" çökmesi bile
+  YAKALANDI) İLE doğrulandı, Debug/ReleaseSafe/ReleaseFast ÜÇÜ de yeşil.
+  **Sonuç: `path_bench` 147ms'ten ~8ms'e düştü, yavaşlama 9.4x-9.9x'ten
+  0.5x-0.6x'e (Nox ARTIK Rust'tan HIZLI) döndü.**
 
 ## [1.0.0]
 

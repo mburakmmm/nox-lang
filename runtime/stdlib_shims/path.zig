@@ -5,16 +5,55 @@
 //! (saf string işlemleri), bu yüzden `.nox` tarafında `raise` YOLU YOKTUR.
 
 const std = @import("std");
+const arc = @import("../alloc/arc.zig");
 const http_client = @import("http_client.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
 
+/// Faz II devamı (bkz. nox-teknik-spesifikasyon.md §3.67) — `join`nin
+/// ÖNCEKİ uygulaması `std.fs.path.join`i `std.heap.page_allocator` İLE
+/// çağırıp SONRA `dupeToNoxStr` İLE İKİNCİ bir kopya çıkarıyordu (ÇAĞRI
+/// başına 2 tahsis, biri SAYFA-granülerlikli bir "genel amaçlı" ayırıcı
+/// üzerinden). Bir Rust `std::path::Path` karşılaştırması (`benchmarks/
+/// path_bench`) bunun ~9.4-9.9x YAVAŞ olduğunu ORTAYA ÇIKARDI; İZOLE bir
+/// Zig testiyle (Nox/ARC/QBE HİÇ karışmadan, YALNIZCA `std.fs.path.join`+
+/// `page_allocator` döngüsü) DOĞRULANDI: 100000 çağrı TEK BAŞINA ~130ms
+/// (path_bench'in TOPLAM ~147ms'inin BÜYÜK kısmı) — `page_allocator`nin
+/// KENDİSİ (genel bir bump/pool ayırıcı DEĞİL, OS SAYFASI granülerlikli)
+/// darboğazdı. Burada `nox_strings_join_raw`nin (EE.1) AYNI stratejisi
+/// uygulanır: `std.fs.path.join`in KENDİ (yalnızca 2 yol İçin basitleşmiş)
+/// uzunluk-hesabı + tek-geçiş kopyalama mantığı EL İLE, DOĞRUDAN
+/// `arc.nox_rc_alloc`a (TEK tahsis, ARA tampon YOK) yazılarak tekrarlanır.
+/// Ayırıcı-arasındaki ayraç ÇAKIŞMASI/EKSİKLİĞİ kuralı (`a` SONU VE `b`
+/// BAŞI ikisi de ayraçsa TEKİ ATLA, ikisi de DEĞİLSE BİR ayraç EKLE)
+/// `std.fs.path.joinSepMaybeZ` İLE BİREBİR AYNIDIR (bkz. Zig std kaynağı) —
+/// yalnızca `..`/`.` NORMALİZASYONU YAPILMAZ, ki ZATEN ESKİ `std.fs.path.
+/// join` de YAPMIYORDU (davranış DEĞİŞMEDİ, yalnızca tahsis stratejisi).
 export fn nox_path_join_raw(rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const a_slice = std.mem.span(a orelse return null);
     const b_slice = std.mem.span(b orelse return null);
-    const joined = std.fs.path.join(std.heap.page_allocator, &.{ a_slice, b_slice }) catch return null;
-    defer std.heap.page_allocator.free(joined);
-    return dupeToNoxStr(rt, joined);
+
+    if (a_slice.len == 0) return dupeToNoxStr(rt, b_slice);
+    if (b_slice.len == 0) return dupeToNoxStr(rt, a_slice);
+
+    const a_ends_sep = std.fs.path.isSep(a_slice[a_slice.len - 1]);
+    const b_starts_sep = std.fs.path.isSep(b_slice[0]);
+    const need_sep = !a_ends_sep and !b_starts_sep;
+    const b_adjusted = if (a_ends_sep and b_starts_sep) b_slice[1..] else b_slice;
+
+    const total_len = a_slice.len + @as(usize, if (need_sep) 1 else 0) + b_adjusted.len;
+    const raw = arc.nox_rc_alloc(rt, total_len + 1) orelse return null;
+    const out: [*]u8 = @ptrCast(raw);
+    @memcpy(out[0..a_slice.len], a_slice);
+    var off: usize = a_slice.len;
+    if (need_sep) {
+        out[off] = std.fs.path.sep;
+        off += 1;
+    }
+    @memcpy(out[off..][0..b_adjusted.len], b_adjusted);
+    off += b_adjusted.len;
+    out[off] = 0;
+    return @ptrCast(out);
 }
 
 export fn nox_path_basename_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
@@ -54,6 +93,21 @@ test "nox_path_join_raw iki parcayi dogru birlestirir" {
     const j = nox_path_join_raw(rt, "a/b", "c.txt") orelse return error.Failed;
     defer str.nox_str_release(rt, j);
     try std.testing.expectEqualStrings("a/b/c.txt", std.mem.sliceTo(j, 0));
+
+    // Faz II devamı — `join`in EL İLE yazılan uzunluk-hesabının/ayraç-
+    // çakışması mantığının `std.fs.path.joinSepMaybeZ` İLE AYNI davrandığını
+    // doğrulayan kenar durumları.
+    const j2 = nox_path_join_raw(rt, "a/", "/b") orelse return error.Failed;
+    defer str.nox_str_release(rt, j2);
+    try std.testing.expectEqualStrings("a/b", std.mem.sliceTo(j2, 0));
+
+    const j3 = nox_path_join_raw(rt, "", "b") orelse return error.Failed;
+    defer str.nox_str_release(rt, j3);
+    try std.testing.expectEqualStrings("b", std.mem.sliceTo(j3, 0));
+
+    const j4 = nox_path_join_raw(rt, "a", "") orelse return error.Failed;
+    defer str.nox_str_release(rt, j4);
+    try std.testing.expectEqualStrings("a", std.mem.sliceTo(j4, 0));
 }
 
 test "nox_path_basename_raw/dirname/extension dogru calisir" {

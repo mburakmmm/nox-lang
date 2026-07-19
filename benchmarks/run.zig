@@ -130,6 +130,15 @@ const stress_benchmarks = [_]Benchmark{
     // BİRLİKTE ölçer — 50000 `contains` taraması + 500 `join` çağrısı
     // (3000 elemanlı bir liste üzerinde).
     .{ .name = "strings_perf_bench", .path = "benchmarks/strings_perf_bench.nox", .expected = "50000\n7499500\n" },
+    // Faz II devamı (bkz. nox-teknik-spesifikasyon.md §3.67) — kullanıcının
+    // "diğer stdlib alanları da benchmarklandı mı" sorusu ÜZERİNE fark
+    // edildi: `nox.path` Rust'ın `std::path::Path`iyle ADİL biçimde
+    // karşılaştırılabilirdi (`nox.json`/`random`/`regex`/`crypto`nin
+    // AKSİNE, Rust std'sinde GERÇEK bir karşılığı VAR) ama hiç bir Nox
+    // benchmark'ı YOKTU. `join`/`basename`/`dirname`/`extension`/
+    // `is_absolute`nin HEPSİNİ (SAF string manipülasyonu, HİÇ I/O yok)
+    // 100000 kez çalıştırır.
+    .{ .name = "path_bench", .path = "benchmarks/path_bench.nox", .expected = "3900000\n" },
 };
 
 /// **C karşılaştırması (kullanıcı isteği):** Python'un yanına, AYNI on
@@ -161,8 +170,11 @@ const ComparePair = struct {
 /// **Faz II (Rust stdlib karşılaştırması, kullanıcı isteği):** yukarıdaki
 /// `compare_pairs` dil-seviyesinde (aritmetik/OOP/istisna vb.) Python+C'ye
 /// karşı ölçüyor — bu ise `nox.*` STDLIB modüllerini (strings/math/os+fs/
-/// time/dict) hedef alır, `benchmarks/*_bench.nox`nin (Bölüm 1'de zaten
-/// var olan) Rust `std` eşdeğerleriyle (`benchmarks/*_bench.rs`) eşleşir.
+/// time/dict/path) hedef alır, `benchmarks/*_bench.nox`nin Rust `std`
+/// eşdeğerleriyle (`benchmarks/*_bench.rs`) eşleşir. `path_bench` (Faz II
+/// devamı) — Rust'ın `std::path::Path`i GERÇEK bir karşılık OLDUĞUNDAN
+/// (json/random/regex/crypto'nun AKSİNE) SONRADAN eklendi, önceden hiçbir
+/// Nox `path` benchmark'ı YOKTU.
 /// `nox.json`/`nox.random`/`nox.regex`/`nox.crypto` BİLİNÇLİ OLARAK DIŞARIDA
 /// BIRAKILDI — Rust'ın `std`inde bunların HİÇBİRİ YOK (`serde_json`/`rand`/
 /// `regex`/`sha2` harici crate'ler, Cargo gerektirir) — bu, `cc -O2`/
@@ -220,6 +232,13 @@ const stdlib_compare_pairs = [_]StdlibComparePair{
         .nox_expected = "50000\n7499500\n",
         .rust_path = "benchmarks/strings_perf_bench.rs",
         .rust_expected = "50000\n7499500\n",
+    },
+    .{
+        .name = "path_bench",
+        .nox_path = "benchmarks/path_bench.nox",
+        .nox_expected = "3900000\n",
+        .rust_path = "benchmarks/path_bench.rs",
+        .rust_expected = "3900000\n",
     },
 };
 

@@ -10896,6 +10896,24 @@ GERİLEDİ** (Rust'ın 12.9ms'ine PRATİKTE EŞDEĞER). `String`/`StringBuilder`
 eksikliği HÂLÂ GERÇEK bir stdlib boşluğu ama bu benchmark'ın darboğazı
 DEĞİLDİ — bağımsız bir gelecek görevi olarak kalır.
 
+**Düzeltme 3 (kullanıcının "diğer stdlib alanları da benchmarklandı mı"
+sorusu ÜZERİNE):** gözden geçirmede `nox.path`in (Rust'ın `std::path::
+Path`iyle ADİL karşılaştırılabilir olduğu HALDE) hiç zamanlanmadığı fark
+edildi — Faz II yalnızca ÖNCEDEN VAR OLAN 6 benchmark'ı taşımıştı,
+`nox.path` İçin hiç Nox benchmark'ı YOKTU. Sıfırdan yazılan `path_bench`
+(100000× `join`+`basename`+`dirname`+`extension`+`is_absolute`) **İLK
+ölçümde 9.4x-9.9x YAVAŞ çıktı** (147ms'e karşı Rust'ın ~15-16ms'i). Kök
+neden İZOLE bir Zig testiyle bulundu: `nox_path_join_raw`nin eski
+uygulaması `std.fs.path.join`i `std.heap.page_allocator` (OS SAYFASI
+granülerlikli, YAVAŞ) İLE çağırıp SONRA `dupeToNoxStr` İLE İKİNCİ bir ARC
+kopyası çıkarıyordu — ÇAĞRI başına 2 tahsis. `nox_strings_join_raw`nin
+(EE.1) AYNI stratejisiyle (2-yol İçin basitleşmiş ayraç-mantığı EL İLE,
+DOĞRUDAN `arc.nox_rc_alloc`a, TEK tahsis) düzeltildi (`runtime/
+stdlib_shims/path.zig`). Break→red→fix (GERÇEK bir "Invalid free" bellek-
+güvenliği çökmesi bile YAKALANDI) İLE doğrulandı, Debug/ReleaseSafe/
+ReleaseFast ÜÇÜ de yeşil. **Sonuç: `path_bench` 147ms → ~8ms'e düştü,
+yavaşlama 9.4x-9.9x'ten 0.5x-0.6x'e (Nox ARTIK Rust'tan HIZLI) DÖNÜŞTÜ.**
+
 **Eksik-fonksiyon analizi (özet — TAM tablo RESULTS.md Bölüm 4'te):**
 zamanlanmayan 4 modül (`json`/`random`/`regex`/`crypto`) Rust `std`de HİÇ
 KARŞILIĞI OLMADIĞINDAN (harici crate gerektirir) Nox burada "pil dahil"
