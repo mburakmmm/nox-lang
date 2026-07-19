@@ -136,10 +136,11 @@ tamamen offline çalışır.
 ## Benchmark'lar
 
 `zig build bench -Doptimize=ReleaseFast` — TAM, ham çıktı İÇİN
-[`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)'ye bakın. Üç kategori
+[`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)'ye bakın. Dört kategori
 (aşağıdaki katlanır bölümlerde özetlenir): **dil temelleri**
-(Python/C'ye karşı), **stdlib** (JSON/strings/math/fs/time/dict), ve
-**HTTP verimi** (Nox/Go/Zig/FastAPI).
+(Python/C'ye karşı), **stdlib** (JSON/strings/math/os/fs/time/dict/path,
+Nox-içi stres testleri), **stdlib — Rust `std` karşılaştırması** (Faz II),
+ve **HTTP verimi** (Nox/Go/Zig/FastAPI).
 
 <details>
 <summary><strong>Dil temelleri — Python/C'ye karşı (10 senaryo, aynı algoritma)</strong></summary>
@@ -167,27 +168,54 @@ biçimde hızlandı. Metodoloji + `C`/Python kaynak dosyaları İçin
 </details>
 
 <details>
-<summary><strong>Stdlib — JSON/strings/math/fs/time/dict (yalnızca Nox, büyük N — regresyon/stres testi)</strong></summary>
+<summary><strong>Stdlib — JSON/strings/math/os/fs/time/dict/path (yalnızca Nox, büyük N — regresyon/stres testi)</strong></summary>
 
 | Benchmark | Süre (min) |
 |---|---|
 | json_bench | 14.7ms |
 | strings_bench | 4.8ms |
-| math_bench | 3.7ms |
-| os_fs_bench | 2.8ms |
-| time_bench | 6.2ms |
-| dict_bench | 3.7ms |
-| strings_perf_bench (`byte_at` + O(n) `join`, Faz EE.1) | 201.5ms |
+| math_bench | 3.5ms |
+| os_fs_bench | 3.1ms |
+| time_bench | 6.3ms |
+| dict_bench | 2.7ms |
+| path_bench | 8.0ms |
+| strings_perf_bench (`contains`/`index_of` + `join`, Faz EE.1 + Faz II) | 13.8ms |
 
 `strings_perf_bench`, Faz EE.1'in İKİ optimizasyonunu (alloc-sız `byte_at`
 tabanlı karşılaştırma + Zig'de tek-geçiş O(n) `join`) BİRLİKTE ölçer —
 optimizasyonlar GEÇİCİ olarak ESKİ davranışa (`s[i]` alloc'lu karşılaştırma
 + saf-Nox O(n²) `join`) geri alınıp yeniden ölçüldüğünde: **6040ms →
-200ms, ~30x hızlanma** (çıktı değerleri İKİ durumda da BİREBİR AYNI).
-Ayrıca Faz M.8 (provably-safe metod çağrılarında istisna-kontrolü
-eleme): **480ms → 270ms, ~%44 hızlanma** (300M metod çağrısı). Tam
-metodoloji İçin [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)'ye
-bakın.
+200ms, ~30x hızlanma** (çıktı değerleri İKİ durumda da BİREBİR AYNI). Faz
+II'nin Rust karşılaştırması (aşağıya bkz.) BUNUN ÜZERİNE `contains`/
+`index_of`i DAHA da hızlandırdı: 200ms → **13.8ms**. Ayrıca Faz M.8
+(provably-safe metod çağrılarında istisna-kontrolü eleme): **480ms →
+270ms, ~%44 hızlanma** (300M metod çağrısı). Tam metodoloji İçin
+[`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)'ye bakın.
+</details>
+
+<details>
+<summary><strong>Stdlib — Rust <code>std</code> karşılaştırması (Faz II, aynı algoritma, 7 senaryo)</strong></summary>
+
+| Benchmark | Nox | Rust | yavaşlama (nox/rust) |
+|---|---|---|---|
+| strings_bench | 4.8ms | 4.0ms | 1.2x |
+| math_bench | 3.5ms | 2.4ms | 1.4x |
+| os_fs_bench | 3.1ms | 4.3ms | 0.7x |
+| time_bench | 6.3ms | 7.8ms | 0.8x |
+| dict_bench | 2.7ms | 3.0ms | 0.9x |
+| strings_perf_bench | 13.8ms | 12.9ms | 1.1x |
+| path_bench | 8.0ms | 16.2ms | **0.5x (Nox hızlı)** |
+
+Karşılaştırmada İKİ GERÇEK darboğaz bulunup düzeltildi: `nox.strings.
+contains`/`index_of` (SAF Nox O(n×m) taraması → Zig'in SIMD-vektörleştirilmiş
+`indexOfScalarPos`i, **16.2x → 1.1x**) ve `nox.path.join` (`std.heap.
+page_allocator` üzerinden çift-tahsis → tek `arc.nox_rc_alloc`, **9.9x →
+0.5x, Nox artık Rust'tan hızlı**). `nox.json`/`nox.random`/`nox.regex`/
+`nox.crypto` Rust `std`de HİÇ karşılığı olmadığından (harici crate
+gerektirir — `serde_json`/`rand`/`regex`/`sha2`) zamanlanmadı, yalnızca
+niteliksel eksik-fonksiyon analizine dahil edildi. Tam metodoloji + eksik-
+fonksiyon tablosu İçin [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)
+"Bölüm 4"e bakın.
 </details>
 
 <details>
@@ -233,7 +261,7 @@ Ayrıntılar için [AGENTS.md §9.5](AGENTS.md#95-güven-sınırı-trust-boundar
 | `runtime/` | Zig ile yazılmış çalışma zamanı (ARC, async fiber, HPy/WASM köprüleri, stdlib shim'leri) |
 | `stdlib/` | Nox'un KENDİSİYLE yazılmış standart kütüphane (`nox.*`) |
 | `tests/` | Unit + golden + uçtan uca (CLI alt süreç) testleri |
-| `benchmarks/` | Nox/Python/C/Go/Zig/FastAPI karşılaştırmalı benchmark paketi |
+| `benchmarks/` | Nox/Python/C/Rust/Go/Zig/FastAPI karşılaştırmalı benchmark paketi |
 | `docs/` | Üretim-hazırlığı analizi, yol haritası ve İngilizce dil referansı |
 
 ## Katkıda Bulunma

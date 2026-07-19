@@ -145,9 +145,10 @@ fully offline after the first resolution.
 
 `zig build bench -Doptimize=ReleaseFast` — see
 [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md) for the full, raw
-output (Turkish). Three categories, summarized in the collapsible
+output (Turkish). Four categories, summarized in the collapsible
 sections below: **language fundamentals** (vs. Python/C), **stdlib**
-(JSON/strings/math/fs/time/dict), and **HTTP throughput**
+(JSON/strings/math/os/fs/time/dict/path, Nox-only stress tests),
+**stdlib — Rust `std` comparison** (Phase II), and **HTTP throughput**
 (Nox/Go/Zig/FastAPI).
 
 <details>
@@ -177,27 +178,55 @@ C/Python source files.
 </details>
 
 <details>
-<summary><strong>Stdlib — JSON/strings/math/fs/time/dict (Nox only, large N — regression/stress test)</strong></summary>
+<summary><strong>Stdlib — JSON/strings/math/os/fs/time/dict/path (Nox only, large N — regression/stress test)</strong></summary>
 
 | Benchmark | Time (min) |
 |---|---|
 | json_bench | 14.7ms |
 | strings_bench | 4.8ms |
-| math_bench | 3.7ms |
-| os_fs_bench | 2.8ms |
-| time_bench | 6.2ms |
-| dict_bench | 3.7ms |
-| strings_perf_bench (`byte_at` + O(n) `join`, Phase EE.1) | 201.5ms |
+| math_bench | 3.5ms |
+| os_fs_bench | 3.1ms |
+| time_bench | 6.3ms |
+| dict_bench | 2.7ms |
+| path_bench | 8.0ms |
+| strings_perf_bench (`contains`/`index_of` + `join`, Phase EE.1 + Phase II) | 13.8ms |
 
 `strings_perf_bench` measures two Phase EE.1 optimizations together (an
 alloc-free `byte_at`-based comparison + a single-pass O(n) `join` in
 Zig) — when temporarily reverted to the old behavior (`s[i]`-based
 allocating comparison + a pure-Nox O(n²) `join`) and re-measured:
 **6040ms → 200ms, a ~30x speedup** (output values byte-for-byte
-identical in both cases). Also Phase M.8 (exception-check elision for
-provably-safe method calls): **480ms → 270ms, a ~44% speedup** (300M
-method calls). See [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md) for
-the full methodology.
+identical in both cases). Phase II's Rust comparison (below) then sped
+up `contains`/`index_of` further: 200ms → **13.8ms**. Also Phase M.8
+(exception-check elision for provably-safe method calls): **480ms →
+270ms, a ~44% speedup** (300M method calls). See
+[`benchmarks/RESULTS.md`](benchmarks/RESULTS.md) for the full
+methodology.
+</details>
+
+<details>
+<summary><strong>Stdlib — Rust <code>std</code> comparison (Phase II, identical algorithm, 7 scenarios)</strong></summary>
+
+| Benchmark | Nox | Rust | slowdown (nox/rust) |
+|---|---|---|---|
+| strings_bench | 4.8ms | 4.0ms | 1.2x |
+| math_bench | 3.5ms | 2.4ms | 1.4x |
+| os_fs_bench | 3.1ms | 4.3ms | 0.7x |
+| time_bench | 6.3ms | 7.8ms | 0.8x |
+| dict_bench | 2.7ms | 3.0ms | 0.9x |
+| strings_perf_bench | 13.8ms | 12.9ms | 1.1x |
+| path_bench | 8.0ms | 16.2ms | **0.5x (Nox faster)** |
+
+The comparison surfaced and fixed two real bottlenecks: `nox.strings.
+contains`/`index_of` (pure-Nox O(n×m) scan → Zig's SIMD-vectorized
+`indexOfScalarPos`, **16.2x → 1.1x**) and `nox.path.join` (double
+allocation via `std.heap.page_allocator` → a single `arc.nox_rc_alloc`,
+**9.9x → 0.5x, Nox now faster than Rust**). `nox.json`/`nox.random`/
+`nox.regex`/`nox.crypto` have no Rust `std` equivalent at all (they'd
+need external crates — `serde_json`/`rand`/`regex`/`sha2`), so they
+weren't timed, only covered in the qualitative gap analysis. See "Bölüm
+4" in [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md) (Turkish) for the
+full methodology and the missing-function table.
 </details>
 
 <details>
@@ -245,7 +274,7 @@ for details (Turkish).
 | `runtime/` | Runtime written in Zig (ARC, async fibers, HPy/WASM bridges, stdlib shims) |
 | `stdlib/` | The standard library, written in Nox itself (`nox.*`) |
 | `tests/` | Unit + golden + end-to-end (CLI subprocess) tests |
-| `benchmarks/` | Nox/Python/C/Go/Zig/FastAPI comparative benchmark suite |
+| `benchmarks/` | Nox/Python/C/Rust/Go/Zig/FastAPI comparative benchmark suite |
 | `docs/` | Production-readiness analysis, roadmap, and the English language reference |
 
 ## Contributing
