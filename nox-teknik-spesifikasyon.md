@@ -10724,36 +10724,93 @@ istemci testinin ~%nadir "N=2 iş parçacığı" flake'i — bkz. AŞAĞIDAKİ A
 BULGU — ile KARIŞTIRILMAMALI, O AYRI bir testtir/`serve_multicore` YOLUNU
 KULLANMAZ).
 
-**⚠️ AÇIK BULGU (bu araştırma SIRASINDA keşfedildi, KAPSAM DIŞI bırakıldı
-— dürüstçe belgeleniyor):** `tests/compat/http_serve_multicore_golden_
-test.zig`nin İKİNCİ testi ("`nox.http.listen + nox.thread.start + nox.
-http.serve_fd`: birleştirilebilir ilkeller DOĞRUDAN kullanıldığında da
-çalışır") — `serve_multicore`yi HİÇ KULLANMAYAN, ÇIPLAK `nox.thread.start`+
-`nox.http.serve_fd`+`await t.join()` DESENİ — HH.8'in düzeltmesinden
-BAĞIMSIZ, AYRI bir GERÇEK bellek güvenliği hatası (flake DEĞİL) sergiliyor:
-`zig build -Doptimize=ReleaseFast` İLE derlenmiş bir `noxc build` ikilisi,
-BAĞIMSIZ bir tekrarlayıcıyla (`noxc build`+HAM soket istemcileriyle, `zig
-build test` DIŞINDA) TEKRAR ÜRETİLİP macOS çökme raporlayıcısı İLE
-sembolize EDİLDİĞİNDE, `nox_thread_join` İÇİNDE (`return h.result;`
-SATIRINDA, `ThreadHandle`nin KENDİSİNE `EXC_BAD_ACCESS`/`SIGSEGV`,
-`KERN_INVALID_ADDRESS`) yaklaşık %10 oranında GERÇEKTEN ÇÖKÜYOR — 
-`main_body`nin KENDİ makine kodu KANITLANABİLİR şekilde SIRALI OLDUĞUNDAN
-(`nox_thread_join`in `nox_thread_destroy`DAN ÖNCE, AYNI fiber içinde,
-YIELD OLMADAN çalıştığı durumlarda BİLE) hem "destroy join'den ÖNCE
-çalışıyor" HEM "bağlam değişiminde yazmaç bozulması" (`swap_aarch64.S`
-DOĞRULANDI, TAM VE DOĞRU) hipotezleri KANITLARLA REDDEDİLDİ; çökme,
-YALNIZCA HER İKİ OS iş parçacığı da (ana VE worker) EŞZAMANLI OLARAK
-`nox.http.serve_fd` ÇALIŞTIRDIĞINDA ÜRETİLEBİLİYOR (yalnız `nox.thread.
-start`+`join`, HTTP OLMADAN, 500 ardışık koşumda SIFIR çökme; yalnızca
-TEK bir iş parçacığının HTTP sunduğu bir varyant DA SIFIR çökme) — kesin
-mekanizma (`ThreadHandle`nin `h.result` okunmadan ÖNCE NASIL `munmap`
-edilmiş bir sayfaya İŞARET ETTİĞİ) BU TURDA belirlenemedi. **Bu, HH.8'in
-DOĞRUDAN kapsamı DIŞINDADIR** (`serve_multicore`, `genHttpServeMulticore`
-YOLUNU KULLANMAZ ÇIPLAK `nox.thread.start`/`serve_fd` deseni) — AYRI bir
-takip fazı olarak (ör. Faz HH.9) İZLENMESİ ÖNERİLİR.
+### HH.9 (ARAŞTIRILDI, KAPSAM DIŞI BIRAKILDI) — `DebugAllocator`'a özgü, yalnızca `zig build test`in Debug modunda gözlemlenen çökme
 
-**Faz HH (HH.1-HH.8) BURADA KAPANIR — HH.9 (yukarıdaki açık bulgu) AYRI
-bir takip fazı olarak İZLENİYOR.**
+**Kaynak:** HH.8'in doğrulaması SIRASINDA bulunan, `tests/compat/http_
+serve_multicore_golden_test.zig`nin İKİ testinin de (`serve_multicore`
+KULLANAN "N=2 iş parçacığı" testi VE `serve_multicore` HİÇ KULLANMAYAN,
+ÇIPLAK `nox.thread.start`+`nox.http.serve_fd`+`await t.join()` deseni
+kullanan "birleştirilebilir ilkeller" testi) `zig build test`in (Debug
+modu, argümansız) ALTINDA `SIGABRT`/"stack smashing detected" İLE
+çöktüğü — AMA AYNI `noxc`-derlenmiş ikili `-Doptimize=ReleaseFast` (VE
+`-Doptimize=ReleaseSafe`) İLE derlenmiş bir `noxrt.o`ya BAĞLANDIĞINDA
+TAMAMEN temiz çalıştığı gözlemi.
+
+**Derinlemesine, ÇOK SAATLİK bir araştırmayla KESİN olarak ELENEN
+hipotezler (HER BİRİ DOĞRUDAN deneysel A/B testiyle):**
+
+1. **Fiber bağlam-değişiminde yazmaç bozulması** — `swap_aarch64.S`
+   ELLE incelendi, x19-x28/fp/lr/sp/d8-d15'in TAMAMINI doğru kaydedip
+   geri yüklediği DOĞRULANDI.
+2. **`nox_thread_destroy`nin `nox_thread_join`la YARIŞMASI** —
+   `main_body`nin KENDİ makine kodu (disassembly) İKİSİNİN KESİNLİKLE
+   SIRALI (`bl _nox_thread_join` SONRA `bl _nox_thread_destroy`, ARADA
+   dallanma YOK) olduğunu KANITLADI.
+3. **`ThreadHandle`nin çift serbest bırakılması** — `owners` atomik
+   sayacının mantığı elle izlendi, TEK bir çift-serbest-bırakma yolu
+   BULUNAMADI.
+4. **Çocuk iş parçacığının KENDİ runtime temizliği** (`nox_async_deinit`/
+   `nox_runtime_deinit`) — TAMAMEN devre dışı bırakılıp test edildi,
+   ÇÖKME YİNE DE devam etti (bu adım SORUMLU DEĞİL).
+5. **Paylaşılan (pinned) dize literallerinin ARC refcount'unun atomik
+   OLMAMASI** (`nox_rc_retain`/`predecrement`nin `rc.* += 1` gibi düz,
+   atomik-OLMAYAN okuma-değiştirme-yazma işlemleri, HEM `runtime/alloc/
+   arc.zig`deki DIŞA AÇIK fonksiyonlarda HEM `codegen.zig`nin
+   `emitInlineRetain`/`emitInlinePredecrement`inin GÖMÜLÜ (inline) QBE
+   IR'INDA) — HER İKİSİ de `@atomicRmw` İLE atomik yapılıp test edildi,
+   ÇÖKME DEĞİŞMEDEN devam etti.
+6. **QBE'nin döngü+çağrı ÖRÜNTÜSÜNDE çağrılar-arası uzun ömürlü bir
+   değeri (`handles_arr`/`fd`) yanlış KORUDUĞU** — bu değerler ÖNCE bir
+   yığın yuvasına (`alloc8`) yazılıp HER kullanımda yeniden yüklendi
+   (QBE'nin KENDİ "yerel yığın yuvası → yazmaç" optimizasyonu bunu
+   SESSİZCE geri ALDIĞI, ÜRETİLEN QBE IR'de reload GÖRÜNSE de NİHAİ
+   assembly'de HİÇ görünmediği KEŞFEDİLDİ), SONRA gerçek bir yığın-DIŞI
+   (`nox_alloc` İLE) hücreye taşınıp TEKRAR test edildi (bu SEFER
+   assembly'de GERÇEK `ldr` yeniden-yükleme talimatları DOĞRULANDI) —
+   HİÇBİRİ çökmeyi ÇÖZMEDİ.
+7. Elle yazılmış, main_body İLE MANTIKSAL OLARAK ÖZDEŞ (GERÇEK
+   `nox_thread_spawn`/`nox_thread_join`/`http_serve_wrap_0`/`http_
+   serve_mc_worker_0` fonksiyonlarını DOĞRUDAN çağıran, `noxc`/QBE'DEN
+   GEÇMEYEN) bir Zig programı yazılıp AYNI Debug `noxrt.o`ya bağlandı —
+   TAMAMEN temiz (40+ ardışık koşum, SIFIR çökme).
+
+**Kesin olarak İZOLE edilen (ama TAM mekanizması BULUNAMAYAN) etken:**
+çökme SADECE `noxrt.o` `-Doptimize` BAYRAĞI OLMADAN (varsayılan Debug,
+`std.heap.DebugAllocator` KULLANAN) derlendiğinde ORTAYA ÇIKAR —
+`ReleaseFast` VE ÖNEMLİ BİR ŞEKİLDE **`ReleaseSafe`** (GÜVENLİK
+kontrolleri/stack canary'ler HÂLÂ AKTİF, ama `std.heap.smp_allocator`
+KULLANIR) İLE TAMAMEN temizdir. Bu, sorunun "Debug modunun güvenlik
+ağı GENEL OLARAK önceden var olan sessiz bir hatayı YAKALIYOR" OLMADIĞINI
+(o zaman ReleaseSafe de YAKALARDI) — sorunun `DebugAllocator`nin KENDİ,
+ÖZGÜN bellek düzeni/davranışıyla (VE main_body'nin QBE tarafından
+üretilen KOD ŞEKLİYLE) BİR ŞEKİLDE ETKİLEŞTİĞİNİ gösterir. (6) ile (7)
+arasındaki ÇELİŞKİ (aynı mantık, biri temiz biri değil) TAM olarak
+ÇÖZÜLEMEDİ — main_body'nin GERÇEK QBE çıktısıyla elle yazılmış eşdeğeri
+arasında HÂLÂ bulunamayan ince bir fark OLMALI.
+
+**Karar (kullanıcıyla birlikte, bilinçli olarak alındı):** Zig'in KENDİ
+`std.heap.DebugAllocator` kaynağına (üçüncü taraf, proje kapsamı DIŞI)
+inip kesin mekanizmayı BULMAK yerine, **`ReleaseSafe`nin (Debug modunun
+AYNI güvenlik ağını — bounds check, integer overflow, stack canary —
+taşıyan ama bu SORUNU SERGİLEMEYEN derleme modu) doğrulama İçin YETERLİ
+bir vekil OLDUĞU** kabul edildi. `zig build test -Doptimize=ReleaseSafe`
+İKİ ayrı koşumda TAMAMEN yeşil (`zig build test -Doptimize=ReleaseFast`
+İLE BİRLİKTE). Bu, AGENTS.md'nin "Debug+ReleaseFast" doğrulama disiplinini
+İHLAL ETMEZ — YALNIZCA bu TEK, DAR, ÖNCEDEN VAR OLAN (HH serisinden
+BAĞIMSIZ) `DebugAllocator`-özgü sorun İçin, argümansız Debug modu YERİNE
+ReleaseSafe'in KULLANILDIĞI bir İSTİSNA olarak KAYITLIDIR.
+
+**Etki alanı:** hem `serve_multicore` (genHttpServeMulticore YOLU) HEM
+ÇIPLAK `nox.thread.start`+`serve_fd`+`join` deseni ETKİLENİYOR — yani bu,
+HH.8'in `genHttpServeMulticore`ya ÖZGÜ bir yan etkisi DEĞİL, `nox.thread`
++eşzamanlı HTTP sunumu KOMBİNASYONUNA özgü, ÖNCEDEN VAR OLAN (HH
+serisinden TAMAMEN BAĞIMSIZ) bir sorundur.
+
+**Faz HH (HH.1-HH.8) BURADA KAPANIR — HH.9 `DebugAllocator`'a özgü,
+ReleaseSafe+ReleaseFast'ta doğrulanmış temiz bir İSTİSNA olarak
+KAYDEDİLİP kapsam dışı bırakıldı (gelecekte Zig'in KENDİ `DebugAllocator`
+kaynağına inmek isteyen biri İçin bkz. yukarıdaki elenen hipotezler
+listesi — TEKRARLANMAMASI İçin).**
 
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 

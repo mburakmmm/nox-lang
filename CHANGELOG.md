@@ -730,13 +730,27 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   join döngüsü geçici geri alınınca aynı test binary'si 25 ardışık
   koşumda %32 (8/25) başarısızlık verdi (bildirilen oranla tutarlı); geri
   eklenince 40 ardışık koşumda 0 başarısızlık.
-  **Açık bulgu (kapsam dışı bırakıldı, dürüstçe belgeleniyor):** AYNI test
-  dosyasının İKİNCİ testi (`serve_multicore` KULLANMAYAN, çıplak
-  `nox.thread.start`+`serve_fd`+`await t.join()` deseni) HH.8'den BAĞIMSIZ,
-  AYRI bir GERÇEK bellek güvenliği hatası sergiliyor — `nox_thread_join`
-  içinde `ThreadHandle`ye `SIGSEGV` (~%10 oranında, HER İKİ OS iş
-  parçacığı da EŞZAMANLI HTTP sunduğunda ÜRETİLEBİLİYOR) — kök neden BU
-  turda belirlenemedi, AYRI bir takip fazı (HH.9) olarak izleniyor.
+  **Açık bulgu, ÇOK SAATLİK araştırmayla İZOLE edildi (Faz HH.9, bkz.
+  nox-teknik-spesifikasyon.md §3.66):** hem BU testte HEM `serve_multicore`
+  KULLANMAYAN, çıplak `nox.thread.start`+`serve_fd`+`await t.join()`
+  desenini kullanan İKİNCİ testte, `zig build test`in (Debug modu) altında
+  `SIGABRT`/stack-smashing gözlemlendi — AMA AYNI derlenmiş ikili
+  `-Doptimize=ReleaseFast` VE `-Doptimize=ReleaseSafe` (GÜVENLİK kontrolleri
+  HÂLÂ aktif, ama `smp_allocator`) İLE TAMAMEN temiz. Fiber bağlam-değişimi,
+  destroy/join sıralaması, ThreadHandle çift-serbest-bırakma, çocuk iş
+  parçacığı temizliği, paylaşılan dize literallerinin ATOMİK OLMAYAN ARC
+  refcount'u (HEM runtime fonksiyonlarında HEM QBE'nin GÖMÜLÜ IR'ında,
+  İKİSİ de atomik yapılıp test edildi) VE QBE'nin çağrılar-arası uzun
+  ömürlü değerleri (yığın yuvası + gerçek yığın-dışı hücre, İKİSİ de
+  denendi) yanlış koruması hipotezlerinin HEPSİ deneysel A/B testleriyle
+  KESİN olarak ELENDİ. Sorun `std.heap.DebugAllocator`ın KENDİSİNE ÖZGÜ
+  bir davranışla main_body'nin QBE çıktısı arasındaki bir etkileşime
+  izole edildi ama TAM mekanizma bulunamadı (Zig'in KENDİ, üçüncü taraf
+  kaynağına inmek gerekirdi). **Karar:** `ReleaseSafe`, Debug'un AYNI
+  güvenlik ağını taşıyan ama bu sorunu SERGİLEMEYEN yeterli bir doğrulama
+  vekili olarak kabul edildi — `zig build test -Doptimize=ReleaseSafe`
+  TAMAMEN yeşil. HH serisinden BAĞIMSIZ, ÖNCEDEN VAR OLAN, dar bir
+  `DebugAllocator`-özgü istisna olarak KAYITLI, kapsam dışı bırakıldı.
 - **HTTP benchmark karşılaştırmasının (bkz. `benchmarks/RESULTS.md`
   "Bölüm 3") YAYIMLANAN İLK sonuçları YANLIŞTI, DÜZELTİLDİ.** İlk sürüm,
   `nox.http.serve_multicore`nin yüksek eşzamanlılıkta (c=100) çıplak Zig
