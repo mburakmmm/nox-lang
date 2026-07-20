@@ -11556,6 +11556,47 @@ doğrulandı.
 **Faz KK'nin orta-öncelikli bulguları (M-1/M-3) TAMAMLANDI.** Kalan
 orta bulgular (M-4 ilâ M-8) İçin ayrı alt-fazlar DEVAM EDECEK.
 
+### KK.6 (TAMAMLANDI) — M-4/M-5/M-6: `nox.crypto`ya HMAC + zaman-sabit karşılaştırma + güvenli rastgelelik eklendi, `sha1`e uyarı düşüldü
+
+**Önceki durum:** stdlib'de (a) mesaj bütünlüğü/DOĞRULAMASI İçin bir HMAC
+ilkeli, (b) belirteç/parola-özeti KARŞILAŞTIRMASI İçin zaman-sabit bir
+alternatif, (c) GÜVENLİ (kriptografik) bir rastgelelik kaynağı YOKTU —
+BUNLARA ihtiyaç duyan bir kullanıcı ya `==`/`nox.random`ı YANLIŞ bağlamda
+kullanıyordu (zamanlama yan-kanalı riski/tahmin edilebilir tohum) ya da
+KENDİ (muhtemelen hatalı) çözümünü yazıyordu. AYRICA `nox.crypto.sha1`
+(çakışma-KIRIK, SHAttered 2017) hiçbir zayıflık UYARISI OLMADAN, `sha256`/
+`sha512` İLE TAMAMEN eş düzeyde "sıradan" bir seçenek olarak sunuluyordu.
+
+**Düzeltme:** ÜÇÜ de Zig'in KENDİ, savaş-test edilmiş ilkelidir —
+sıfırdan YAZILMAZ (`sha256`nin AYNI ilkesi):
+- **`hmac_sha256(key, data) -> str`** — `std.crypto.auth.hmac.sha2.
+  HmacSha256`. `sha256`nin AKSİNE paylaşılan bir GİZLİ anahtar gerektirir
+  (saldırgan anahtarı BİLMEDEN geçerli bir MAC üretemez), bu YÜZDEN mesaj
+  bütünlüğü/kimlik DOĞRULAMASI İçin GÜVENLİDİR.
+- **`constant_time_eq(a, b) -> bool`** — Python'un `hmac.compare_digest`i/
+  Django'nun `constant_time_compare`ıyla AYNI standart teknik (uzunluk
+  farklıysa HEMEN `false`, aksi halde TÜM baytlar erken-çıkış OLMADAN
+  XOR'lanıp BİRİKTİRİLİR) — bir belirteç/HMAC/parola-özeti karşılaştırması
+  yaparken `==`in (bkz. M-6, `strcmp`-tabanlı ilk-fark-DUR) zamanlama
+  yan-kanalını ÖNLER.
+- **`secure_random_hex(n_bytes) -> str`** — `nox.dict`nin hash tohumuyla
+  (bkz. M-3) AYNI `std.c.arc4random_buf` (macOS'un OS-düzeyi GÜVENLİ
+  rastgelelik kaynağı, `std.crypto.random` BU Zig sürümünde YOK). Oturum
+  belirteci/CSRF token/API anahtarı gibi GÜVENLİK-İLGİLİ rastgelelik İçin
+  `nox.random`nin (BİLİNÇLİ OLARAK kriptografik iddiası TAŞIMAYAN) YERİNE
+  KULLANILMALIDIR. `n_bytes` 256'yı AŞARSA sessizce KIRPILIR (v1
+  basitleştirmesi, GERÇEKÇİ HERHANGİ bir token büyüklüğünün ÇOK ÜSTÜNDE).
+- **`sha1`in belge notuna** (`stdlib/nox/crypto.nox`) AÇIK bir GÜVENLİK
+  UYARISI eklendi: bütünlük/imza DOĞRULAMASI İçin KULLANILMAMALI,
+  `sha256`/`sha512`/`hmac_sha256` TERCİH EDİLMELİ.
+
+5 yeni Zig unit testi (`hmac_sha256` — RFC 4231/2202'nin bilinen "Jefe"
+vektörü + farklı anahtarın farklı MAC üretmesi; `constant_time_eq` —
+eşit/farklı/farklı-uzunluk; `secure_random_hex` — doğru uzunluk +
+deterministik OLMAMA + `n=0` kenar durumu) + break→red→fix İLE
+doğrulandı (ÜÇÜ de AYRI AYRI sabotajlanıp doğru şekilde KIRMIZI olduğu
+GÖRÜLDÜ) + 1 yeni golden test.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

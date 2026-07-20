@@ -1315,6 +1315,16 @@ test "codegen(çalıştır): Faz III.9 — nox.crypto.sha1/sha512 bilinen test v
     );
 }
 
+// Güvenlik bulguları M-4/M-5/M-6 (bkz. güvenlik raporu, 20 Temmuz 2026) —
+// DÜZELTİLDİ: `hmac_sha256`/`constant_time_eq`/`secure_random_hex` YENİ
+// eklendi. RFC 4231/2202'nin bilinen "Jefe" test vektörüyle doğrulanır.
+test "codegen(çalıştır): Güvenlik M-4/M-6 — nox.crypto.hmac_sha256/constant_time_eq/secure_random_hex" {
+    try expectGolden(
+        @embedFile("codegen_cases/crypto_hmac_and_secure_random.nox"),
+        @embedFile("codegen_cases/crypto_hmac_and_secure_random.expected"),
+    );
+}
+
 test "codegen(çalıştır): nox.time.DateTime — bilinen epoch-ms'in doğru takvim bileşenlerine ayrıştırılması" {
     try expectGolden(
         @embedFile("codegen_cases/time_datetime_from_epoch_ms.nox"),

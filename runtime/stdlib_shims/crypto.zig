@@ -62,6 +62,85 @@ export fn nox_crypto_sha512_hex_raw(rt: ?*anyopaque, data: ?[*:0]const u8) callc
     return dupeToNoxStr(rt, &hex_buf);
 }
 
+// Güvenlik bulguları M-4/M-5/M-6 (bkz. güvenlik raporu, 20 Temmuz 2026) —
+// DÜZELTİLDİ: stdlib DAHA ÖNCE (a) mesaj DOĞRULAMASI İçin bir HMAC ilkeli,
+// (b) belirteç/parola-özeti KARŞILAŞTIRMASI İçin zaman-sabit bir alternatif,
+// (c) GÜVENLİ (kriptografik) bir rastgelelik kaynağı SUNMUYORDU — bir
+// kullanıcı bunlara İHTİYAÇ duyarsa ya `==`/`nox.random`ı YANLIŞ bağlamda
+// kullanıyordu (zamanlama yan-kanalı/tahmin edilebilir tohum riski) ya da
+// KENDİ (muhtemelen hatalı) çözümünü yazıyordu. ÜÇÜ de Zig'in KENDİ,
+// savaş-test edilmiş ilkelidir — sıfırdan YAZILMAZ (`sha256`nin AYNI ilkesi).
+
+/// `hmac_sha256(key, data)` — mesaj bütünlüğü/DOĞRULAMASI İçin (`sha256`nin
+/// AKSİNE, paylaşılan bir GİZLİ anahtar GEREKTİRİR — saldırgan anahtarı
+/// BİLMEDEN geçerli bir MAC ÜRETEMEZ, bu YÜZDEN sıradan bir hash'in
+/// AKSİNE kimlik doğrulama/bütünlük İçin GÜVENLİDİR).
+export fn nox_crypto_hmac_sha256_hex_raw(rt: ?*anyopaque, key: ?[*:0]const u8, data: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    const k = key orelse return dupeToNoxStr(rt, "");
+    const d = data orelse return dupeToNoxStr(rt, "");
+    const key_span = std.mem.span(k);
+    const data_span = std.mem.span(d);
+
+    const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
+    var digest: [HmacSha256.mac_length]u8 = undefined;
+    HmacSha256.create(&digest, data_span, key_span);
+
+    var hex_buf: [digest.len * 2]u8 = undefined;
+    for (digest, 0..) |byte, i| {
+        hex_buf[i * 2] = hex_chars[byte >> 4];
+        hex_buf[i * 2 + 1] = hex_chars[byte & 0xF];
+    }
+    return dupeToNoxStr(rt, &hex_buf);
+}
+
+/// `constant_time_eq(a, b)` — bir belirteç/parola-özeti KARŞILAŞTIRIRKEN
+/// `==`in (ilk FARKLI bayta rastlayınca DURAN `strcmp`-tabanlı, bkz.
+/// `compiler/codegen_qbe/codegen.zig`nin `str` eşitlik kodgen'i) yol AÇTIĞI
+/// zamanlama yan-kanalını (bir saldırganın yanıt SÜRESİNDEN DEĞERİ bayt-
+/// bayt SIZDIRABİLMESİ) ÖNLER. Python'un `hmac.compare_digest`i/Django'nun
+/// `constant_time_compare`ıyla AYNI, standart teknik: uzunluk FARKLIYSA
+/// HEMEN `false` (uzunluk genellikle GİZLİ SAYILMAZ — bkz. o kütüphanelerin
+/// KENDİ gerekçesi); AYNI uzunluktaysa TÜM baytlar HER ZAMAN (erken çıkış
+/// OLMADAN) XOR'lanıp BİRİKTİRİLİR.
+export fn nox_crypto_constant_time_eq_raw(a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) i32 {
+    const av = a orelse return 0;
+    const bv = b orelse return 0;
+    const a_span = std.mem.span(av);
+    const b_span = std.mem.span(bv);
+    if (a_span.len != b_span.len) return 0;
+    var diff: u8 = 0;
+    for (a_span, 0..) |byte, i| {
+        diff |= byte ^ b_span[i];
+    }
+    return if (diff == 0) 1 else 0;
+}
+
+/// `secure_random_hex(n_bytes)` — `nox.random`nin (BİLİNÇLİ OLARAK
+/// kriptografik güvenlik iddiası TAŞIMAYAN, tahmin edilebilir zaman-
+/// tabanlı OTOMATİK tohumlu Xoshiro256) YERİNE, oturum belirteci/CSRF
+/// token/API anahtarı gibi GÜVENLİK-İLGİLİ rastgelelik İçin `nox.dict`nin
+/// hash tohumuyla (bkz. §3.70'in M-3'ü) AYNI `std.c.arc4random_buf`
+/// (macOS'un OS-düzeyi GÜVENLİ rastgelelik kaynağı) kullanılır. `n_bytes`,
+/// makul bir üst sınırla (256 bayt — GERÇEKÇİ HERHANGİ bir token/anahtar
+/// büyüklüğünün ÇOK ÜSTÜNDE) KIRPILIR — sabit boyutlu bir yığın arabelleği
+/// KULLANMAK İçin bilinçli bir v1 basitleştirmesi (yeni bir hata türü/
+/// `raise` yolu GEREKTİRMEZ).
+export fn nox_crypto_secure_random_hex_raw(rt: ?*anyopaque, n_bytes: i64) callconv(.c) ?[*:0]u8 {
+    if (n_bytes <= 0) return dupeToNoxStr(rt, "");
+    const max_bytes = 256;
+    const n: usize = @min(@as(usize, @intCast(n_bytes)), max_bytes);
+
+    var buf: [max_bytes]u8 = undefined;
+    std.c.arc4random_buf(&buf, n);
+
+    var hex_buf: [max_bytes * 2]u8 = undefined;
+    for (buf[0..n], 0..) |byte, i| {
+        hex_buf[i * 2] = hex_chars[byte >> 4];
+        hex_buf[i * 2 + 1] = hex_chars[byte & 0xF];
+    }
+    return dupeToNoxStr(rt, hex_buf[0 .. n * 2]);
+}
+
 // Faz II devamı (test kapsamı genişletmesi, bkz. nox-teknik-spesifikasyon.md
 // §3.67) — bu dosyanın DAHA ÖNCE HİÇ Zig-seviyeli unit testi YOKTU (yalnızca
 // `tests/golden/codegen_cases/crypto_sha256_known_vectors.nox`, TAM Nox
@@ -189,4 +268,64 @@ test "Faz III.9: nox_crypto_sha1_hex_raw/sha512_hex_raw hep dogru sabit uzunlukt
         try std.testing.expectEqual(@as(usize, 128), s5.len);
         for (s5) |c| try std.testing.expect(std.ascii.isDigit(c) or (c >= 'a' and c <= 'f'));
     }
+}
+
+// Güvenlik bulguları M-4/M-5/M-6 (bkz. güvenlik raporu, 20 Temmuz 2026).
+
+test "Faz KK.6: nox_crypto_hmac_sha256_hex_raw bilinen test vektörü (RFC 4231/2202 'Jefe')" {
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const mac = nox_crypto_hmac_sha256_hex_raw(rt, "Jefe", "what do ya want for nothing?") orelse return error.Failed;
+    defer str.nox_str_release(rt, mac);
+    try std.testing.expectEqualStrings(
+        "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
+        std.mem.sliceTo(mac, 0),
+    );
+}
+
+test "Faz KK.6: nox_crypto_hmac_sha256_hex_raw farklı anahtar farklı MAC üretir (mesaj AYNI kalsa BİLE)" {
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const mac1 = nox_crypto_hmac_sha256_hex_raw(rt, "anahtar1", "ayni mesaj") orelse return error.Failed;
+    defer str.nox_str_release(rt, mac1);
+    const mac2 = nox_crypto_hmac_sha256_hex_raw(rt, "anahtar2", "ayni mesaj") orelse return error.Failed;
+    defer str.nox_str_release(rt, mac2);
+    try std.testing.expect(!std.mem.eql(u8, std.mem.sliceTo(mac1, 0), std.mem.sliceTo(mac2, 0)));
+}
+
+test "Faz KK.6: nox_crypto_constant_time_eq_raw eşit/farklı/farklı-uzunluk dizeleri doğru ayırt eder" {
+    try std.testing.expectEqual(@as(i32, 1), nox_crypto_constant_time_eq_raw("gizli-belirtec", "gizli-belirtec"));
+    try std.testing.expectEqual(@as(i32, 0), nox_crypto_constant_time_eq_raw("gizli-belirtec", "gizli-belirteC"));
+    try std.testing.expectEqual(@as(i32, 0), nox_crypto_constant_time_eq_raw("kisa", "cokdahauzunbirdize"));
+    try std.testing.expectEqual(@as(i32, 1), nox_crypto_constant_time_eq_raw("", ""));
+}
+
+test "Faz KK.6: nox_crypto_secure_random_hex_raw doğru uzunlukta hex döner VE deterministik DEĞİLDİR" {
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const t1 = nox_crypto_secure_random_hex_raw(rt, 16) orelse return error.Failed;
+    defer str.nox_str_release(rt, t1);
+    const s1 = std.mem.sliceTo(t1, 0);
+    try std.testing.expectEqual(@as(usize, 32), s1.len);
+    for (s1) |c| try std.testing.expect(std.ascii.isDigit(c) or (c >= 'a' and c <= 'f'));
+
+    const t2 = nox_crypto_secure_random_hex_raw(rt, 16) orelse return error.Failed;
+    defer str.nox_str_release(rt, t2);
+    // ~2^-128 olasilikla yanlis-pozitif — pratikte GUVENILIR bir "farkli"
+    // kontrolu (GERCEK rastgeleligin, sabit bir SIFIR tohumun DEGIL,
+    // KULLANILDIGININ kaniti).
+    try std.testing.expect(!std.mem.eql(u8, s1, std.mem.sliceTo(t2, 0)));
+
+    const empty = nox_crypto_secure_random_hex_raw(rt, 0) orelse return error.Failed;
+    defer str.nox_str_release(rt, empty);
+    try std.testing.expectEqual(@as(usize, 0), std.mem.sliceTo(empty, 0).len);
 }

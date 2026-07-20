@@ -12,8 +12,44 @@ def sha256(data: str) -> str:
 extern def nox_crypto_sha1_hex_raw(data: str) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_crypto_sha512_hex_raw(data: str) -> str from "zig-out/lib/noxrt.o" with_rt
 
+# GÜVENLİK UYARISI (bulgu M-4, bkz. güvenlik raporu, 20 Temmuz 2026):
+# SHA-1, 2017'den beri (SHAttered) PRATİK çakışma saldırılarına AÇIKTIR —
+# bütünlük/imza DOĞRULAMASI İçin KULLANILMAMALIDIR (yalnızca ESKİ-sistem
+# UYUMLULUĞU/çakışma-DIRENCİ GEREKMEYEN senaryolarda kullanın). GÜVENLİK-
+# İLGİLİ hash İhtiyaçları İçin `sha256`/`sha512` (çakışma-dirençli) YA DA
+# mesaj DOĞRULAMASI İçin `hmac_sha256` (aşağı bkz.) TERCİH EDİN.
 def sha1(data: str) -> str:
     return nox_crypto_sha1_hex_raw(data)
 
 def sha512(data: str) -> str:
     return nox_crypto_sha512_hex_raw(data)
+
+# Güvenlik bulguları M-4/M-5/M-6 (bkz. güvenlik raporu) — DÜZELTİLDİ:
+# stdlib'de HMAC/zaman-sabit-karşılaştırma/güvenli-rastgelelik
+# ilkelleri YOKTU.
+extern def nox_crypto_hmac_sha256_hex_raw(key: str, data: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_crypto_constant_time_eq_raw(a: str, b: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_crypto_secure_random_hex_raw(n_bytes: int) -> str from "zig-out/lib/noxrt.o" with_rt
+
+# `key` İLE `data`nın HMAC-SHA256'sı (küçük harf hex, 64 karakter) —
+# `sha256`nin AKSİNE bir paylaşılan GİZLİ anahtar gerektirir, bu YÜZDEN
+# mesaj bütünlüğü/kimlik DOĞRULAMASI İçin GÜVENLİDİR (saldırgan anahtarı
+# BİLMEDEN geçerli bir MAC üretemez).
+def hmac_sha256(key: str, data: str) -> str:
+    return nox_crypto_hmac_sha256_hex_raw(key, data)
+
+# İKİ dizeyi ZAMAN-SABİT (constant-time) karşılaştırır — bir belirteç/
+# parola-özeti/HMAC doğrulaması yaparken `==` YERİNE BUNU kullanın: `==`
+# ilk FARKLI bayta rastlayınca DURDUĞUNDAN, bir saldırgan yanıt SÜRESİNDEN
+# doğru değeri bayt-bayt SIZDIRABİLİR (zamanlama yan-kanalı saldırısı).
+def constant_time_eq(a: str, b: str) -> bool:
+    return nox_crypto_constant_time_eq_raw(a, b) != 0
+
+# `n_bytes` bayt GÜVENLİ (kriptografik, OS-düzeyi) rastgelelik üretip
+# küçük harf hex (`n_bytes * 2` karakter) olarak döner — oturum belirteci/
+# CSRF token/API anahtarı gibi GÜVENLİK-İLGİLİ rastgelelik İçin `nox.
+# random`nin (BİLİNÇLİ OLARAK kriptografik güvenlik iddiası TAŞIMAYAN)
+# YERİNE KULLANILMALIDIR. `n_bytes` 256'yı AŞARSA sessizce 256'ya kırpılır
+# (GERÇEKÇİ HERHANGİ bir token/anahtar büyüklüğünün ÇOK ÜSTÜNDE).
+def secure_random_hex(n_bytes: int) -> str:
+    return nox_crypto_secure_random_hex_raw(n_bytes)

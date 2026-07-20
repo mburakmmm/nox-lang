@@ -1049,6 +1049,18 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   parçacığına aittir) rastgele tohumunu `std.c.arc4random_buf` İLE BİR
   KEZ üretip yeniden kullanır. Break→red→fix İLE doğrulandı + 2 yeni
   unit test.
+- **Faz KK.6 — Güvenlik bulguları M-4/M-5/M-6: `nox.crypto`ya HMAC +
+  zaman-sabit karşılaştırma + güvenli rastgelelik eklendi, `sha1`e
+  uyarı düşüldü** (bkz. nox-teknik-spesifikasyon.md §3.70). Stdlib'de
+  mesaj bütünlüğü İçin HMAC, belirteç karşılaştırması İçin zaman-sabit
+  bir alternatif, GÜVENLİ rastgelelik İçin bir CSPRNG YOKTU. Eklenenler:
+  `hmac_sha256(key, data)` (`std.crypto.auth.hmac.sha2.HmacSha256`),
+  `constant_time_eq(a, b)` (`==`in zamanlama yan-kanalına AÇIK `strcmp`
+  tabanlı karşılaştırmasının GÜVENLİ alternatifi), `secure_random_hex(n)`
+  (`std.c.arc4random_buf`, `nox.random`nin BİLİNÇLİ OLARAK kriptografik
+  olmayan PRNG'sinin YERİNE). `sha1`in belge notuna SHAttered çakışma
+  zayıflığı uyarısı eklendi. Break→red→fix İLE doğrulandı + 5 yeni unit
+  test + 1 yeni golden test.
 
 ## [1.0.0]
 
