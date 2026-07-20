@@ -1133,6 +1133,17 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   koşullu beklenen değere geçirildi (sembolik-link kanıtı KORUNDU);
   golden test HİÇBİR platformda sembolik link olmayan `/usr/../usr`ya
   geçirildi.
+- **`compiler/lexer/lexer.zig` artık `\r\n` (Windows) satır sonlarına
+  tolerans gösteriyor** (bkz. nox-teknik-spesifikasyon.md §3.71 —
+  LL.1'in "bilinçli açık bırakılan" takip sorusunun kapatılması).
+  `.gitattributes` düzeltmesi yalnızca BU REPO'nun checkout'unu
+  kapsıyordu — gerçek bir Windows kullanıcısının KENDİ editörüyle
+  yazdığı `.nox` dosyası HÂLÂ `UnexpectedCharacter`a çarpardı, çünkü
+  lexer HİÇBİR `\r` işleme İÇERMİYORDU. Üç noktada düzeltildi: boş-satır
+  tespiti, ana döngüde `\r`nin (tek başına ya da `\n`den önce) sessizce
+  atlanması, ters-eğik-çizgi satır-devamının `\r\n` varyantı. 3 yeni
+  birim testi (if/indent, yorum/boş-satır, satır-devamı — üçü de AÇIKÇA
+  `\r\n` baytlı) + kasıtlı boz→kırmızı ritüeliyle doğrulandı.
 
 ## [1.0.0]
 

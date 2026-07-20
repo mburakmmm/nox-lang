@@ -11804,6 +11804,31 @@ davranışı KAPSAMI DEĞİŞMEDİ, yalnızca sembolik-link-özel iddia BU
 golden testten ÇIKARILDI — o iddia ZATEN Zig biriminde AYRICA
 kanıtlanıyor). GERÇEK CI'de doğrulandı.
 
+**Lexer'ın KENDİSİNİN `\r\n`ye tolerans göstermesi** (kullanıcı
+talebiyle, LL.1'in "bilinçli AÇIK bırakılan takip sorusu" notunun
+kapatılması): `.gitattributes` düzeltmesi yalnızca BU REPO'nun KENDİ
+dosyalarının checkout'unu kapsar — GERÇEK bir Windows kullanıcısının
+KENDİ editörüyle (Not Defteri/VS Code'un Windows varsayılanı) yazdığı
+bir `.nox` dosyası HÂLÂ native CRLF taşır. `compiler/lexer/lexer.zig`
+HİÇBİR `\r` işleme İÇERMİYORDU — ana döngüde `\r`, hiçbir dala
+UYMADIĞINDAN dosdoğru `error.UnexpectedCharacter`e düşüyordu. Üç ayrı
+noktada düzeltildi: (1) girinti-tarama bloğunun "boş satır" kontrolü
+`\r`yi de `\n`/`#` İLE AYNI şekilde TANIR; (2) ana döngüye `\r`yi HER
+ZAMAN (tek başına YA DA `\n`den ÖNCE) sessizce ATLAYAN bir dal eklendi
+— `\n`in KENDİSİ (satır sayacı/NEWLINE token'ı) HİÇ DEĞİŞMEDEN MEVCUT
+yolu izler; (3) ters-eğik-çizgi satır-devamı kontrolüne `\r\n` varyantı
+eklendi. Üçü de `lexer.zig`ye 3 YENİ birim testiyle (if/indent bloğu,
+yorum/boş-satır, satır-devamı — ÜÇÜ de AÇIKÇA `\r\n` baytlı dize
+birleştirmesiyle inşa edilmiş, Zig'in çok-satırlı `\\` string
+sözdiziminin yalnızca LF ekleyebilmesi YÜZÜNDEN) doğrulandı — kasıtlı
+boz→kırmızı ritüeliyle (yeni `\r`-atlama dalı geçici olarak `if (false
+and ...)` yapıldı) ÜÇÜNÜN de BEKLENEN `UnexpectedCharacter`la
+BAŞARISIZ olduğu, ardından byte-birebir restore SONRASI TEKRAR yeşile
+döndüğü doğrulandı. Yerel olarak (macOS) Debug/ReleaseSafe/ReleaseFast'te
+TAM paket doğrulandı — bu değişiklik ZATEN platform-nötr Zig mantığı
+OLDUĞUNDAN (hiçbir `std.c`/`builtin.os.tag` dallanması YOK), Windows
+CI'de AYRICA doğrulanmasına GEREK yoktu.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

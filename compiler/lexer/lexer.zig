@@ -54,7 +54,7 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
                 if (source[i] == '\t') return error.TabsNotAllowed;
                 indent += 1;
             }
-            if (i >= source.len or source[i] == '\n' or source[i] == '#') {
+            if (i >= source.len or source[i] == '\n' or source[i] == '\r' or source[i] == '#') {
                 // Boş satır veya yalnızca yorum: INDENT/DEDENT/NEWLINE üretilmez.
                 if (trivia_out) |t| {
                     if (i < source.len and source[i] == '#') {
@@ -98,6 +98,19 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
             continue;
         }
 
+        // Faz LL.1 devamı (bkz. nox-teknik-spesifikasyon.md §3.71): GERÇEK
+        // Windows'ta yazılmış (native CRLF) bir `.nox` dosyası, `\r`yi
+        // BAŞKA hiçbir dalın tanımadığı bir bayt olarak `UnexpectedCharacter`e
+        // yol açardı (checkout-seviyesi `.gitattributes` düzeltmesi yalnızca
+        // BU REPO'nun KENDİ dosyalarını kapsar, kullanıcının KENDİ editörüyle
+        // yazdığı dosyaları DEĞİL). `\r`, HER ZAMAN (tek başına YA DA `\n`den
+        // ÖNCE) sessizce ATLANIR — `\n`in KENDİSİ (satır SAYACI/NEWLINE
+        // token'ı) HİÇ DEĞİŞMEDEN aşağıdaki mevcut yolu izler.
+        if (c == '\r') {
+            i += 1;
+            continue;
+        }
+
         if (c == '#') {
             if (trivia_out) |t| {
                 const comment_start = i;
@@ -126,6 +139,14 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
         if (c == '\\' and i + 1 < source.len and source[i + 1] == '\n') {
             // Ters eğik çizgi ile açık satır devamı.
             i += 2;
+            line += 1;
+            line_start = i;
+            continue;
+        }
+
+        if (c == '\\' and i + 2 < source.len and source[i + 1] == '\r' and source[i + 2] == '\n') {
+            // AYNI devam, CRLF satır sonu İLE.
+            i += 3;
             line += 1;
             line_start = i;
             continue;
@@ -387,6 +408,32 @@ test "string literal kaçış karakteriyle doğru tokenlenir" {
         \\s = "a\"b"
         \\
     , &.{ .identifier, .assign, .string_lit, .newline, .eof });
+}
+
+test "CRLF (Windows) satır sonları LF ile BİREBİR AYNI token akışını üretir" {
+    // Faz LL.1 devamı: gerçek Windows editörleriyle yazılmış dosyalar İçin
+    // — Zig'in çok satırlı `\\` string sözdizimi yalnızca LF ekleyebildiğinden
+    // burada AÇIKÇA `\r\n` baytları İÇEREN düz bir dize birleştirmesi kullanılır.
+    try tokenizeExpectKinds("if x:\r\n    y = 1\r\nz = 2\r\n", &.{
+        .kw_if,   .identifier, .colon,      .newline,
+        .indent,  .identifier, .assign,     .int_lit,
+        .newline, .dedent,     .identifier, .assign,
+        .int_lit, .newline,    .eof,
+    });
+}
+
+test "CRLF: bos satirlar VE yorumlar LF ile AYNI sekilde token uretmez" {
+    try tokenizeExpectKinds("x = 1\r\n# yorum\r\n\r\ny = 2\r\n", &.{
+        .identifier, .assign, .int_lit, .newline,
+        .identifier, .assign, .int_lit, .newline,
+        .eof,
+    });
+}
+
+test "CRLF: ters egik cizgi ile satir devami CRLF ile de calisir" {
+    try tokenizeExpectKinds("x = 1 + \\\r\n    2\r\n", &.{
+        .identifier, .assign, .int_lit, .plus, .int_lit, .newline, .eof,
+    });
 }
 
 test "tutarsız girinti hata üretir" {
