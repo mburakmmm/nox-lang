@@ -11402,6 +11402,36 @@ riskiyle AYNI, ÖNCEDEN var olan kategori.
 İLE devre dışı bırakılınca test doğru şekilde KIRMIZI oldu, "anahtar
 bulunamadi" YERİNE "ulasilmamali" okundu).
 
+### KK.2 (TAMAMLANDI) — H-1: `hpy_call`ın yol/uzantı/fonksiyon adı artık derleme-zamanı string literali olmak ZORUNDA
+
+**Önceki durum:** `hpy_call(yol, uzantı_adı, fonksiyon_adı, argüman)`ın
+İLK ÜÇ argümanı checker'da yalnızca TİPÇE `str` olmak zorundaydı — DEĞER
+olarak keyfi ÇALIŞMA ZAMANI ifadeleri (bir config dosyasından/ortam
+değişkeninden/ağ yanıtından okunan bir `str`) OLABİLİYORDU.
+`runtime/hpy_bridge/loader.zig`nin `std.DynLib.open`ı BU yolu HİÇBİR
+doğrulama/sandbox OLMADAN açıp eşleşen `HPyInit_*` sembolünü fonksiyon
+işaretçisi olarak ÇAĞIRDIĞINDAN, bu SIRADAN Nox kaynağından ulaşılabilen,
+doğrulamasız bir "keyfi native kütüphane yükle ve çalıştır" ilkeliydi —
+yol saldırgan etkisindeyse doğrudan uzaktan kod yürütmeye dönüşür.
+
+**Düzeltme:** checker, `hpy_call`ın İLK ÜÇ argümanının (`yol`/`uzantı_adı`/
+`fonksiyon_adı`) `.string_lit` AST düğümü (derleme-zamanı SABİTİ) OLMASINI
+ZORUNLU kılıyor — `extern def ... from "<lib>"`nin ZATEN dilbilgisi
+SEVİYESİNDE yalnızca bir string TOKEN'I kabul etmesiyle AYNI ilke: hangi
+native kodun yükleneceği KAYNAK KODUNDA AÇIKÇA yazılmalı, ÇALIŞMA
+ZAMANINDA hesaplanıp GİZLENEMEZ. Dördüncü argüman (`argüman: int`)
+BİLİNÇLİ olarak İSTİSNA — dinamik kalması GEREKİR (fonksiyona geçirilen
+GERÇEK veri). `wasm_call` (WASM köprüsü) BU kapsam DIŞINDA bırakıldı —
+güvenlik raporunun G-2 bulgusu, WASM yorumlayıcısının import bölümünü HİÇ
+DESTEKLEMEDİĞİNİ (host çağrısına kaçış YOK) doğruladığından, AYNI risk
+sınıfı ORADA YOK.
+
+1 yeni Zig unit testi (checker'ın `nox.checker.check`ini DOĞRUDAN çağırıp
+`TypeMismatch` VE mesajın "string LİTERALİ" İÇERDİĞİNİ doğrular — mevcut
+`hpy_call_golden_test.zig`nin AKSİNE, `.hpy-venv` KURULU OLMASINI
+GEREKTİRMEZ, standart takımda HER ZAMAN çalışır) + break→red→fix İLE
+doğrulandı.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

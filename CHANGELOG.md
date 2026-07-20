@@ -1004,6 +1004,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   yoksa YENİ `KeyError` sınıfını (`IndexError`/`ValueError` İLE AYNI
   statüde) raise ediyor. Break→red→fix İLE doğrulandı + 1 yeni golden
   test.
+- **Faz KK.2 — Güvenlik bulgusu H-1: `hpy_call`ın yol/uzantı/fonksiyon
+  adı artık derleme-zamanı string literali olmak ZORUNDA** (bkz.
+  nox-teknik-spesifikasyon.md §3.70). ÖNCEDEN bu üç argüman yalnızca
+  TİPÇE `str` olmak zorundaydı — DEĞER olarak çalışma-zamanı hesaplı
+  keyfi bir ifade OLABİLİYORDU, `hpy_bridge`nin doğrulamasız `dlopen`ı
+  İLE birleşince SIRADAN Nox kodundan ulaşılabilen bir "keyfi native
+  kütüphane yükle" ilkeli oluşturuyordu. Checker artık üçünü de `.string_
+  lit` (derleme-zamanı sabiti) OLMAYA zorluyor. Break→red→fix İLE
+  doğrulandı + 1 yeni unit test.
 
 ## [1.0.0]
 

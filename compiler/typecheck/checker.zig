@@ -1989,6 +1989,32 @@ pub const Checker = struct {
                     if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "'hpy_call' argümanı 2 (uzantı adı) str olmalıdır", .{});
                     if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "'hpy_call' argümanı 3 (fonksiyon adı) str olmalıdır", .{});
                     if (try self.checkExpr(ctx, c.args[3]) != .int) return self.fail(error.TypeMismatch, "'hpy_call' argümanı 4 (argüman) int olmalıdır", .{});
+                    // Güvenlik bulgusu H-1 (bkz. güvenlik raporu) —
+                    // DÜZELTİLDİ: `yol`/`uzantı_adı`/`fonksiyon_adı` ÖNCEDEN
+                    // yalnızca TİPÇE `str` olmak zorundaydı, DEĞER olarak
+                    // keyfi çalışma-zamanı ifadeleri (bir config dosyasından/
+                    // ortam değişkeninden/ağ yanıtından okunan bir `str`)
+                    // OLABİLİYORDU — `runtime/hpy_bridge/loader.zig`nin
+                    // `std.DynLib.open`ı BU yolu doğrulamasız, sandbox'sız
+                    // AÇIP eşleşen `HPyInit_*` sembolünü fonksiyon işaretçisi
+                    // olarak ÇAĞIRDIĞINDAN, bu SIRADAN Nox kodundan
+                    // ulaşılabilen, doğrulamasız bir "keyfi native kütüphane
+                    // yükle ve çalıştır" ilkeliydi. ÜÇÜ de ARTIK derleme-
+                    // zamanı SABİTİ (`.string_lit`) OLMAK ZORUNDA — bir
+                    // Nox programı hangi native kodu yükleyeceğini KAYNAK
+                    // KODUNDA AÇIKÇA yazmalıdır, ÇALIŞMA ZAMANINDA hesaplayıp
+                    // GİZLEYEMEZ (`extern def ... from "<lib>"`nin ZATEN
+                    // dilbilgisi SEVİYESİNDE yalnızca bir string TOKEN'I
+                    // kabul etmesiyle AYNI ilke).
+                    if (c.args[0] != .string_lit) {
+                        return self.fail(error.TypeMismatch, "'hpy_call' argümanı 1 (yol) yalnızca bir string LİTERALİ olabilir (güvenlik: çalışma-zamanı hesaplı bir yoldan keyfi native kütüphane yüklenmesi önlenir)", .{});
+                    }
+                    if (c.args[1] != .string_lit) {
+                        return self.fail(error.TypeMismatch, "'hpy_call' argümanı 2 (uzantı adı) yalnızca bir string LİTERALİ olabilir", .{});
+                    }
+                    if (c.args[2] != .string_lit) {
+                        return self.fail(error.TypeMismatch, "'hpy_call' argümanı 3 (fonksiyon adı) yalnızca bir string LİTERALİ olabilir", .{});
+                    }
                     return .int;
                 }
                 if (std.mem.eql(u8, name, "wasm_call")) {

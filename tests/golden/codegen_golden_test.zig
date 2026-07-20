@@ -1057,6 +1057,30 @@ test "codegen(çalıştır): Güvenlik H-2 — dict[K,V] eksik anahtar KeyError 
     );
 }
 
+// Güvenlik bulgusu H-1 (bkz. güvenlik raporu, 20 Temmuz 2026) — DÜZELTİLDİ:
+// `hpy_call`ın `yol`/`uzantı_adı`/`fonksiyon_adı` argümanları ÖNCEDEN
+// yalnızca TİPÇE `str` olmak zorundaydı, DEĞER olarak ÇALIŞMA ZAMANI
+// hesaplı keyfi bir ifade OLABİLİYORDU — `runtime/hpy_bridge/loader.zig`nin
+// doğrulamasız `std.DynLib.open`ı ile birleşince bu, SIRADAN Nox kodundan
+// ulaşılabilen bir "keyfi native kütüphane yükle" ilkeliydi. Checker artık
+// bu üçünün DERLEME-ZAMANI string LİTERALİ olmasını ZORUNLU kılıyor.
+test "codegen: Güvenlik H-1 — hpy_call'ın yol argümanı çalışma-zamanı değişkeniyse REDDEDİLİR (yalnızca string literali)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/hpy_call_nonliteral_path_rejected.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => return error.ExpectedTypeErrorButGotOk,
+        .err => |e| {
+            try std.testing.expectEqual(error.TypeMismatch, e.code);
+            try std.testing.expect(std.mem.indexOf(u8, e.message, "string LİTERALİ") != null);
+        },
+    }
+}
+
 // Faz FF.4 (bkz. nox-teknik-spesifikasyon.md §3.63): çıplak `self`li bir
 // metodun (`bump`) bir ALANI GERÇEKTEN okuyup/YAZDIĞI uçtan uca kanıt —
 // codegen'in çıplak self İÇİN GERÇEKTEN sıfır değişiklik gerektirdiğinin
