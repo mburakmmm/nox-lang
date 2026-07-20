@@ -146,3 +146,27 @@ jobs:
           Set-Content -Path smoke.nox -Value "print(1)" -NoNewline
           & ".\zig-out\bin\noxc.exe" check smoke.nox
           if ($LASTEXITCODE -ne 0) { throw "noxc check basarisiz (exit $LASTEXITCODE)" }
+
+      # Faz LL.2+ öncesi araç-zinciri KEŞFİ (bkz. nox-teknik-spesifikasyon.md
+      # §3.71): `windows-latest` çalıştırıcısında bir C derleyicisi/assembler
+      # (`cc`/`gcc`, `build.zig`nin `compile_swap_asm` adımının GEREKTİRDİĞİ —
+      # QBE'nin ürettiği AT&T assembly'yi MinGW'in assembler'ının derlemesi
+      # GEREKTİĞİNDEN) VARSAYILAN olarak PATH'te bulunup bulunmadığı HENÜZ
+      # BİLİNMİYOR — GERÇEK sonuç görülmeden hiçbir runtime/fiber-assembly
+      # işine BAŞLANMAYACAK (bkz. LL.1'in "riskli platform kodu gerçek CI
+      # olmadan yazılmaz" ilkesi). Bu adım YALNIZCA bilgi amaçlı, HİÇBİR
+      # şeyi başarısız KILMAZ (`continue-on-error`).
+      - name: Araç-zinciri keşfi — cc/gcc PATH'te var mı?
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          Write-Host "--- cc ---"
+          cc --version 2>&1 | Out-String | Write-Host
+          Write-Host "--- gcc ---"
+          gcc --version 2>&1 | Out-String | Write-Host
+          Write-Host "--- where cc ---"
+          where.exe cc 2>&1 | Out-String | Write-Host
+          Write-Host "--- where gcc ---"
+          where.exe gcc 2>&1 | Out-String | Write-Host
+          Write-Host "--- PATH ---"
+          $env:PATH -split ';' | Write-Host
