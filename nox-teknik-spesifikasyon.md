@@ -11786,6 +11786,24 @@ derleme varsayımıyla İKİ KEZ yanılabileceği" somut bir hatırlatma
 (bkz. LL.1'in "gerçek CI olmadan riskli platform kodu YAZILMAZ" ilkesi
 — TAM OLARAK bu YÜZDEN vardı).
 
+`fstatCompat` düzeltmesi noxrt.o'yu Linux'ta DERLENEBİLİR kıldıktan
+SONRA, GERÇEK CI'de İKİ AYRI, ÖNCEDEN VAR OLAN (Windows'la VE
+`fstatCompat`la İLGİSİZ) test hatası daha ORTAYA ÇIKTI: `runtime/
+stdlib_shims/path.zig`nin Faz III.4 testi VE `tests/golden/
+codegen_cases/path_new_operations`, `nox.path.canonicalize("/tmp/../
+tmp")`nin macOS'a ÖZGÜ `/tmp → /private/tmp` sembolik-link çözümünü
+SABİT bir beklenti olarak taşıyordu — Linux'ta `/tmp` GERÇEK bir
+dizin OLDUĞUNDAN (sembolik link DEĞİL) beklenen `/private/tmp`
+YERİNE GERÇEK `/tmp` dönüyordu. Zig birim testi `builtin.os.tag`e
+göre platform-koşullu beklenen değere geçirilerek (sembolik-link-
+çözme kanıtı KORUNARAK) düzeltildi; golden test İSE (statik bir
+`.expected` dosyasıyla karşılaştırdığından platform-koşullu OLAMAZ)
+`/tmp/../tmp` yerine HİÇBİR platformda sembolik link OLMAYAN
+`/usr/../usr`ya geçirildi (`.`/`..` çözme + var-olmayan-yol hata
+davranışı KAPSAMI DEĞİŞMEDİ, yalnızca sembolik-link-özel iddia BU
+golden testten ÇIKARILDI — o iddia ZATEN Zig biriminde AYRICA
+kanıtlanıyor). GERÇEK CI'de doğrulandı.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

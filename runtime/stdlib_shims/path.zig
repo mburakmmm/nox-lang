@@ -5,6 +5,7 @@
 //! (saf string işlemleri), bu yüzden `.nox` tarafında `raise` YOLU YOKTUR.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
 const http_client = @import("http_client.zig");
 
@@ -213,10 +214,14 @@ test "Faz III.4: nox_path_canonicalize_raw sembolik link/./.. cozer, olmayan yol
     // Not: macOS'ta `/tmp` KENDİSİ `/private/tmp`ye bir sembolik LİNKTİR —
     // bu YÜZDEN `/tmp/../tmp`nin TAM çözümü `/tmp` DEĞİL `/private/tmp`dir
     // (GERÇEKTEN çalıştırılıp DOĞRULANDI — `canonicalize`nin sembolik
-    // linkleri de ÇÖZDÜĞÜNÜN kanıtı, hata DEĞİL).
+    // linkleri de ÇÖZDÜĞÜNÜN kanıtı, hata DEĞİL). Linux'ta `/tmp` GERÇEK
+    // bir dizindir (sembolik link DEĞİL) — bu YÜZDEN beklenen değer
+    // GERÇEK CI'de bulunan bir platform farkıyla (bkz. nox-teknik-
+    // spesifikasyon.md §3.71) platform-koşullu hale getirildi.
+    const expected_tmp = if (builtin.os.tag == .macos) "/private/tmp" else "/tmp";
     const c = nox_path_canonicalize_raw(rt, "/tmp/../tmp") orelse return error.Failed;
     defer str.nox_str_release(rt, c);
-    try std.testing.expectEqualStrings("/private/tmp", std.mem.sliceTo(c, 0));
+    try std.testing.expectEqualStrings(expected_tmp, std.mem.sliceTo(c, 0));
     try std.testing.expect(g_last_ok);
 
     const missing = nox_path_canonicalize_raw(rt, "/definitely/does/not/exist/nox_iii4_test") orelse return error.Failed;

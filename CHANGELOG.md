@@ -1124,6 +1124,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   çağırıp AYNI `FileInfo`ye çevirir. Yerel olarak (macOS, etkilenmeyen
   dal) Debug/ReleaseSafe/ReleaseFast'te doğrulandı; Linux'taki GERÇEK
   doğrulama iki CI denemesinde yapıldı.
+- **İki pre-existing Linux test hatası daha düzeltildi** (`fstatCompat`
+  sonrası GERÇEK CI'de ortaya çıktı, Windows/`fstatCompat`la İLGİSİZ):
+  `path.zig`nin Faz III.4 testi VE `path_new_operations` golden testi,
+  `canonicalize("/tmp/../tmp")`nin macOS'a ÖZGÜ `/tmp → /private/tmp`
+  sembolik-link çözümünü SABİT beklenti sayıyordu — Linux'ta `/tmp`
+  sembolik link OLMADIĞINDAN başarısız oluyordu. Birim testi platform-
+  koşullu beklenen değere geçirildi (sembolik-link kanıtı KORUNDU);
+  golden test HİÇBİR platformda sembolik link olmayan `/usr/../usr`ya
+  geçirildi.
 
 ## [1.0.0]
 
