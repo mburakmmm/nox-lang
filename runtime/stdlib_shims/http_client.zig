@@ -196,10 +196,31 @@ fn workerThreadFn(ctx: *RequestCtx) void {
     ctx.response_body = body_out.toOwnedSlice() catch &.{};
 }
 
+/// Güvenlik bulgusu M-1 (bkz. güvenlik raporu) — `std.http`nin KENDİ
+/// başlık adı/değeri doğrulaması yalnızca `assert`/`std.debug.runtime_
+/// safety` İLE yapılıyordu, bu da `ReleaseFast`/`ReleaseSmall`
+/// derlemelerinde TAMAMEN devre dışı kalıyordu — kullanıcı verisini bir
+/// başlık değeri olarak yansıtan bir Nox programı (ör. `nox.http.get(url,
+/// {"X-Debug": kullanici_girdisi})`), ÜRETİM derlemesinde SESSİZCE CRLF
+/// enjekte edip başlık/yanıt bölme (header/response splitting)
+/// yapabiliyordu; Debug/ReleaseSafe'de İSE AYNI girdi bu SEFER bir
+/// panikle SÜREÇ ÇÖKMESİNE (DoS) yol açıyordu — İKİ modda da güvenli
+/// DEĞİLDİ. Bu fonksiyon HER build modunda ÇALIŞAN, GERÇEK bir `if`
+/// kontrolüyle CR/LF baytlarını reddeder.
+fn containsCrOrLf(s: []const u8) bool {
+    return std.mem.indexOfScalar(u8, s, '\r') != null or std.mem.indexOfScalar(u8, s, '\n') != null;
+}
+
 /// Bir `dict[str, str]` handle'ından (ya da `null`) arka plan iş
 /// parçacığına GÜVENLE devredilebilecek, BAĞIMSIZ (kopyalanmış) bir
 /// `std.http.Header` dizisi inşa eder (bkz. `RequestCtx.request_headers`in
-/// belge notu).
+/// belge notu). Bir başlık adı/değeri CR/LF İÇERİYORSA `error.
+/// InvalidHeaderValue` döner — ÇAĞIRAN (bkz. `doRequest`) bunu, DİĞER
+/// TÜM istek-inşası hatalarıyla (URL/govde kopyalama başarısızlığı gibi)
+/// AYNI şekilde, İSTEĞİN TAMAMEN REDDİ olarak ele alır (yalnızca
+/// bozuk başlığı SESSİZCE ATLAMAZ — bu, kullanıcının GÖNDERDİĞİNİ
+/// SANDIĞI GÜVENLİK-İLGİLİ bir başlığın [ör. `Authorization`]
+/// FARK ETTİRMEDEN kaybolmasını ÖNLER).
 pub fn copyHeaders(allocator: std.mem.Allocator, headers_dict: ?*anyopaque) ![]std.http.Header {
     const d: *dict_mod.Dict = @ptrCast(@alignCast(headers_dict orelse return &.{}));
     if (d.entries.items.len == 0) return &.{};
@@ -213,9 +234,12 @@ pub fn copyHeaders(allocator: std.mem.Allocator, headers_dict: ?*anyopaque) ![]s
     for (d.entries.items) |e| {
         const key_ptr: [*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(e.key)));
         const value_ptr: [*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(e.value)));
+        const key = std.mem.span(key_ptr);
+        const value = std.mem.span(value_ptr);
+        if (containsCrOrLf(key) or containsCrOrLf(value)) return error.InvalidHeaderValue;
         out[filled] = .{
-            .name = try allocator.dupe(u8, std.mem.span(key_ptr)),
-            .value = try allocator.dupe(u8, std.mem.span(value_ptr)),
+            .name = try allocator.dupe(u8, key),
+            .value = try allocator.dupe(u8, value),
         };
         filled += 1;
     }
@@ -251,7 +275,14 @@ fn doRequest(
         return null;
     };
     const body_copy: ?[]const u8 = if (body) |b| (gpa.dupe(u8, std.mem.span(b)) catch null) else null;
-    const headers_copy = copyHeaders(gpa, headers_dict) catch &.{};
+    // Güvenlik M-1: `copyHeaders`in `error.InvalidHeaderValue`si (bkz. onun
+    // belge notu) İSTEĞİN TAMAMI reddedilerek ele alınır — `url_copy`
+    // başarısızlığıyla AYNI "temizle, `null` dön" deseni.
+    const headers_copy = copyHeaders(gpa, headers_dict) catch {
+        _ = std.c.close(fds[0]);
+        _ = std.c.close(fds[1]);
+        return null;
+    };
 
     ctx.* = .{
         .allocator = gpa,
@@ -557,4 +588,57 @@ test "nox_http_get_raw: bir fiber İÇİNDEN çağrıldığında zamanlayıcı B
     try std.testing.expectEqual(@as(usize, 2), Fn.log.items.len);
     try std.testing.expectEqualStrings("diger fiber calisti", Fn.log.items[0]);
     try std.testing.expectEqualStrings("istek tamamlandi", Fn.log.items[1]);
+}
+
+// Güvenlik bulgusu M-1 (bkz. güvenlik raporu, 20 Temmuz 2026) — DÜZELTİLDİ:
+// `copyHeaders` ÖNCEDEN CR/LF baytlarını HİÇ DENETLEMİYORDU — bu testler
+// `assert`e DEĞİL GERÇEK bir `if` kontrolüne dayandığından, HER build
+// modunda (`ReleaseFast` DAHİL) geçerlidir.
+test "Güvenlik M-1: copyHeaders CR/LF İÇEREN bir başlık DEĞERİNDE InvalidHeaderValue döner" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const d = dict_mod.nox_dict_new(rt, 1) orelse return error.NewFailed;
+    defer dict_mod.nox_dict_release(rt, d, 1, 1);
+    const key = str_mod.nox_str_concat(rt, "X-Ec", "ho") orelse return error.ConcatFailed;
+    const value = str_mod.nox_str_concat(rt, "zararli\r\nSet-Cookie: pwned=", "1") orelse return error.ConcatFailed;
+    dict_mod.nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(key)), @bitCast(@intFromPtr(value)));
+
+    try std.testing.expectError(error.InvalidHeaderValue, copyHeaders(std.testing.allocator, d));
+}
+
+test "Güvenlik M-1: copyHeaders CR/LF İÇEREN bir başlık ADINDA da InvalidHeaderValue döner" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const d = dict_mod.nox_dict_new(rt, 1) orelse return error.NewFailed;
+    defer dict_mod.nox_dict_release(rt, d, 1, 1);
+    const key = str_mod.nox_str_concat(rt, "X-Bad\r\nSet-Cookie", ": pwned=1") orelse return error.ConcatFailed;
+    const value = str_mod.nox_str_concat(rt, "zararsiz", "") orelse return error.ConcatFailed;
+    dict_mod.nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(key)), @bitCast(@intFromPtr(value)));
+
+    try std.testing.expectError(error.InvalidHeaderValue, copyHeaders(std.testing.allocator, d));
+}
+
+test "Güvenlik M-1: copyHeaders normal (CR/LF'siz) başlıklarda HÂLÂ doğru çalışır (yanlış-pozitif YOK)" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const d = dict_mod.nox_dict_new(rt, 1) orelse return error.NewFailed;
+    defer dict_mod.nox_dict_release(rt, d, 1, 1);
+    const key = str_mod.nox_str_concat(rt, "X-Norm", "al") orelse return error.ConcatFailed;
+    const value = str_mod.nox_str_concat(rt, "deger", "1") orelse return error.ConcatFailed;
+    dict_mod.nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(key)), @bitCast(@intFromPtr(value)));
+
+    const headers = try copyHeaders(std.testing.allocator, d);
+    defer {
+        for (headers) |h| {
+            std.testing.allocator.free(h.name);
+            std.testing.allocator.free(h.value);
+        }
+        std.testing.allocator.free(headers);
+    }
+    try std.testing.expectEqual(@as(usize, 1), headers.len);
+    try std.testing.expectEqualStrings("X-Normal", headers[0].name);
+    try std.testing.expectEqualStrings("deger1", headers[0].value);
 }

@@ -11474,6 +11474,51 @@ doğrulandı (`MAX_EXPR_DEPTH` pratikte devre dışı bırakılınca AYNI sını
 öncelikli bulgusunun TÜMÜ düzeltildi. Orta öncelikli bulgular İçin
 ayrı alt-fazlar (KK.4+) DEVAM EDECEK.
 
+### KK.4 (TAMAMLANDI) — M-1: HTTP başlık CR/LF doğrulaması artık HER build modunda çalışıyor
+
+**Önceki durum:** `std.http`nin KENDİ başlık adı/değeri doğrulaması
+yalnızca `assert`/`std.debug.runtime_safety` İLE yapılıyordu — bu,
+`ReleaseFast`/`ReleaseSmall` derlemelerinde TAMAMEN devre dışıydı.
+`http_client.copyHeaders`/`http_server.retainHeaders`, Nox `dict[str,
+str]`den gelen başlık adı/değerini HİÇ KENDİ doğrulaması OLMADAN
+`std.http.Header`e AKTARIYORDU. Kullanıcı verisini bir isteğe/yanıta
+başlık olarak yansıtan bir Nox programı (ör. `nox.http.get(url,
+{"X-Debug": kullanici_girdisi})`), ÜRETİM (ReleaseFast) derlemesinde
+SESSİZCE CRLF enjekte edip başlık/yanıt bölme (header/response
+splitting) yapabiliyordu; Debug/ReleaseSafe'de İSE AYNI girdi bu SEFER
+bir panikle SÜREÇ ÇÖKMESİNE (DoS) yol açıyordu — İKİ modda da güvenli
+DEĞİLDİ.
+
+**Düzeltme:** İKİ AYRI dosyaya (`http_client.zig`nin `copyHeaders`ı,
+`http_server.zig`nin `retainHeaders`ı) BAĞIMSIZ birer `containsCrOrLf`
+denetimi eklendi — HER build modunda ÇALIŞAN GERÇEK bir `if` kontrolü
+(assert DEĞİL). Bir başlık CR/LF İÇERİYORSA `error.InvalidHeaderValue`
+döner:
+- **İstemci yolu (`doRequest`):** İSTEĞİN TAMAMI reddedilir (`null`
+  döner) — `url_copy`/gövde kopyalama başarısızlığıyla AYNI "temizle,
+  `null` dön" deseni.
+- **Sunucu yolu (`nox_http_response_new`):** YANIT TAMAMI reddedilir
+  (`null` döner) — `connectionEntry` BUNU ZATEN, `gpa.create` OOM'uyla
+  AYNI, GÜVENLE ele alınan "handler null döndürdü" yoluyla (temiz bir
+  500 Internal Server Error'a düşerek) karşılar. `retainHeaders`, HATA
+  ANINDA daha ÖNCE `retain` edilmiş başlıkları (bkz. `errdefer`) DOĞRU
+  şekilde `nox_str_release` İLE geri alır — aksi hâlde kalıcı bir
+  refcount sızıntısı olurdu.
+
+**Bilinçli tasarım kararı:** bozuk başlık SESSİZCE ATLANMAZ (yalnızca O
+başlığı düşürüp devam etmek yerine) — İSTEĞİN/YANITIN TAMAMI reddedilir.
+Bu, kullanıcının GÖNDERDİĞİNİ SANDIĞI güvenlik-ilgili bir başlığın (ör.
+`Authorization`) fark ettirmeden sessizce kaybolmasını ÖNLER.
+
+6 yeni Zig unit testi (3 istemci + 3 sunucu — CRLF'li DEĞER, CRLF'li
+AD, VE normal başlıklarda yanlış-pozitif OLMADIĞININ doğrulanması) +
+break→red→fix İLE doğrulandı (`containsCrOrLf` devre dışı bırakılınca
+HER İKİ TARAFTA da test doğru şekilde KIRMIZI oldu — istemci tarafında
+`InvalidHeaderValue` BEKLENİRKEN ham CRLF baytları GERİ GELDİ, sunucu
+tarafında `null` BEKLENİRKEN GERÇEK bir yanıt tutamacı GERİ GELDİ).
+`ReleaseFast`te de AYRICA doğrulandı (ÖNCEKİ `assert`in TAM OLARAK
+BURADA devre dışı KALDIĞI mod) — TÜM 6 test ORADA da geçti.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

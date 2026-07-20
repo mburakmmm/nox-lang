@@ -1026,6 +1026,17 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   eksi zincirlerinin ÜÇÜ de yakalanıyor).
 - **Faz KK (H-1/H-2/H-3) TAMAMLANDI** — güvenlik raporunun ÜÇ yüksek
   öncelikli bulgusunun TÜMÜ düzeltildi.
+- **Faz KK.4 — Güvenlik bulgusu M-1: HTTP başlık CR/LF doğrulaması artık
+  HER build modunda çalışıyor** (bkz. nox-teknik-spesifikasyon.md
+  §3.70). `std.http`nin KENDİ doğrulaması yalnızca `assert`le
+  yapıldığından `ReleaseFast`te TAMAMEN devre dışıydı — kullanıcı
+  verisini bir başlığa yansıtan bir Nox programı ÜRETİMDE SESSİZCE CRLF
+  enjekte edebiliyordu (başlık/yanıt bölme), Debug/ReleaseSafe'de İSE
+  AYNI girdi panikle ÇÖKMEYE yol açıyordu. `http_client.copyHeaders`/
+  `http_server.retainHeaders`e HER modda ÇALIŞAN GERÇEK birer `if`
+  kontrolü eklendi — bozuk başlık SESSİZCE ATLANMAZ, İSTEĞİN/YANITIN
+  TAMAMI reddedilir. Break→red→fix İLE doğrulandı (`ReleaseFast` DAHİL)
+  + 6 yeni unit test.
 
 ## [1.0.0]
 

@@ -364,16 +364,42 @@ fn destroyResponse(rt: ?*anyopaque, gpa: std.mem.Allocator, resp: *ServerRespons
 /// paylaşımı SÖZ KONUSU DEĞİLDİR, bu yüzden `copyHeaders`in KENDİSİ
 /// DEĞİŞTİRİLMEDEN (istemci yolunu ETKİLEMEDEN) AYRI bir fonksiyon olarak
 /// eklendi.
-fn retainHeaders(gpa: std.mem.Allocator, headers_dict: ?*anyopaque) ![]std.http.Header {
+/// Güvenlik bulgusu M-1 (bkz. güvenlik raporu) — `http_client.
+/// containsCrOrLf`nin AYNISI: `std.http`nin KENDİ başlık doğrulaması
+/// yalnızca `assert`/`runtime_safety` İLE yapıldığından `ReleaseFast`te
+/// TAMAMEN devre dışıydı — bir Nox `handle`in kullanıcı girdisini bir
+/// yanıt başlığına yansıtması (ör. `HttpResponse(200, body, {"X-Echo":
+/// query_param})`), ÜRETİM derlemesinde SESSİZCE CRLF enjekte edip yanıt
+/// bölmesine (response splitting) yol açabiliyordu.
+fn containsCrOrLf(s: []const u8) bool {
+    return std.mem.indexOfScalar(u8, s, '\r') != null or std.mem.indexOfScalar(u8, s, '\n') != null;
+}
+
+fn retainHeaders(rt: ?*anyopaque, gpa: std.mem.Allocator, headers_dict: ?*anyopaque) ![]std.http.Header {
     const d: *dict_mod.Dict = @ptrCast(@alignCast(headers_dict orelse return &.{}));
     if (d.entries.items.len == 0) return &.{};
     const out = try gpa.alloc(std.http.Header, d.entries.items.len);
-    for (d.entries.items, 0..) |e, i| {
+    errdefer gpa.free(out);
+    var filled: usize = 0;
+    // Bir başlık CR/LF İÇERDİĞİNDEN dolayı REDDEDİLİRSE, o ANA KADAR ZATEN
+    // `retain` edilmiş elemanların (bkz. `arc.nox_rc_retain`) refcount'unu
+    // BURADA geri almak GEREKİR — aksi halde `out` `errdefer` İLE serbest
+    // bırakılsa BİLE, İÇİNDEKİ str'lerin fazladan retain'i ASLA dengelenmez
+    // (kalıcı bir sızıntı olurdu).
+    errdefer for (out[0..filled]) |h| {
+        str_mod.nox_str_release(rt, @ptrCast(@constCast(h.name.ptr)));
+        str_mod.nox_str_release(rt, @ptrCast(@constCast(h.value.ptr)));
+    };
+    for (d.entries.items) |e| {
         const key_ptr: [*:0]u8 = @ptrFromInt(@as(usize, @bitCast(e.key)));
         const value_ptr: [*:0]u8 = @ptrFromInt(@as(usize, @bitCast(e.value)));
+        const key = std.mem.span(key_ptr);
+        const value = std.mem.span(value_ptr);
+        if (containsCrOrLf(key) or containsCrOrLf(value)) return error.InvalidHeaderValue;
         arc.nox_rc_retain(key_ptr);
         arc.nox_rc_retain(value_ptr);
-        out[i] = .{ .name = std.mem.span(key_ptr), .value = std.mem.span(value_ptr) };
+        out[filled] = .{ .name = key, .value = value };
+        filled += 1;
     }
     return out;
 }
@@ -386,7 +412,17 @@ export fn nox_http_response_new(rt: ?*anyopaque, status: i64, body: ?[*:0]const 
     const resp = gpa.create(ServerResponse) catch return null;
     const body_ptr: ?[*:0]u8 = if (body) |b| @ptrCast(@constCast(b)) else null;
     if (body_ptr) |p| arc.nox_rc_retain(p);
-    const hdrs = retainHeaders(gpa, headers) catch &.{};
+    // Güvenlik M-1: bir başlık CR/LF İÇERİYORSA (bkz. `retainHeaders`in
+    // belge notu) TÜM yanıt REDDEDİLİR (`null` döner) — `connectionEntry`
+    // BUNU ZATEN, `gpa.create` OOM'uyla AYNI, GÜVENLE ele alınan "handler
+    // null döndürdü" yoluyla (temiz bir 500 Internal Server Error'a
+    // düşerek) karşılar (bkz. onun `if (resp_payload) |r| ... else ...`i)
+    // — bozuk başlığı SESSİZCE ATLAMAK YERİNE.
+    const hdrs = retainHeaders(rt, gpa, headers) catch {
+        if (body_ptr) |p| str_mod.nox_str_release(rt, p);
+        gpa.destroy(resp);
+        return null;
+    };
     resp.* = .{ .status = @intCast(status), .body = body_ptr, .headers = hdrs };
     return resp;
 }
@@ -1188,4 +1224,41 @@ test "Faz HH.7: zaman asimi ICINDE tamamlanan normal bir istek YANLIS-POZITIF ol
     client_thread.join();
     try std.testing.expectEqual(@as(usize, 1), TestHandlerLog.log.items.len);
     try std.testing.expectEqualStrings("fast tamamlandi", TestHandlerLog.log.items[0]);
+}
+
+// Güvenlik bulgusu M-1 (bkz. güvenlik raporu, 20 Temmuz 2026) — DÜZELTİLDİ:
+// `retainHeaders`/`nox_http_response_new` ÖNCEDEN CR/LF baytlarını HİÇ
+// DENETLEMİYORDU. Bu testler `assert`e DEĞİL GERÇEK bir `if` kontrolüne
+// dayandığından HER build modunda (`ReleaseFast` DAHİL) geçerlidir.
+test "Güvenlik M-1: nox_http_response_new CR/LF İÇEREN bir başlık DEĞERİNDE null döner (500'e düşer)" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const d = dict_mod.nox_dict_new(rt, 1) orelse return error.NewFailed;
+    defer dict_mod.nox_dict_release(rt, d, 1, 1);
+    const key = str_mod.nox_str_concat(rt, "X-Ec", "ho") orelse return error.ConcatFailed;
+    const value = str_mod.nox_str_concat(rt, "zararli\r\nSet-Cookie: pwned=", "1") orelse return error.ConcatFailed;
+    dict_mod.nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(key)), @bitCast(@intFromPtr(value)));
+
+    const resp = nox_http_response_new(rt, 200, null, d);
+    try std.testing.expect(resp == null);
+}
+
+test "Güvenlik M-1: nox_http_response_new normal (CR/LF'siz) başlıklarda HÂLÂ doğru çalışır (yanlış-pozitif YOK)" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const d = dict_mod.nox_dict_new(rt, 1) orelse return error.NewFailed;
+    defer dict_mod.nox_dict_release(rt, d, 1, 1);
+    const key = str_mod.nox_str_concat(rt, "X-Norm", "al") orelse return error.ConcatFailed;
+    const value = str_mod.nox_str_concat(rt, "deger", "1") orelse return error.ConcatFailed;
+    dict_mod.nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(key)), @bitCast(@intFromPtr(value)));
+
+    const resp = nox_http_response_new(rt, 200, null, d) orelse return error.UnexpectedNull;
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
+    defer destroyResponse(rt, state.allocator(), @ptrCast(@alignCast(resp)));
+    const r: *ServerResponse = @ptrCast(@alignCast(resp));
+    try std.testing.expectEqual(@as(usize, 1), r.headers.len);
+    try std.testing.expectEqualStrings("X-Normal", r.headers[0].name);
+    try std.testing.expectEqualStrings("deger1", r.headers[0].value);
 }
