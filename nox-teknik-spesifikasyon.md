@@ -11630,9 +11630,11 @@ düzeltmenin ORTADAN KALDIRDIĞI kırılgan güvenlik ağı).
 
 **Faz KK (H-1/H-2/H-3/M-1/M-3/M-4/M-5/M-6/M-8) TAMAMLANDI** — güvenlik
 raporunun ÜÇ yüksek VE ALTI orta öncelikli bulgusunun TÜMÜ düzeltildi.
-Kalan M-2 (gerçek bir `bytes` tipi) BİLİNÇLİ olarak UZUN VADEYE
+Kalan M-2 (gerçek bir `bytes` tipi) VE M-7 (parola saklama için yavaş/
+bellek-zor bir KDF — argon2/scrypt/bcrypt) BİLİNÇLİ olarak UZUN VADEYE
 bırakıldı — Faz III planının kapsam-dışı 5 maddesiyle AYNI büyüklükte,
-kendi tasarım turunu gerektiren bir iş (bkz. §3.69'un giriş notu).
+kendi tasarım turunu (kütüphane seçimi, API yüzeyi) gerektiren birer iş
+(bkz. §3.69'un giriş notu).
 
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
