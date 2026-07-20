@@ -1113,14 +1113,17 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   derlenememesine yol açıyor — kullanıcıya raporlanıp ayrı bir takip
   adımında DÜZELTİLDİ.
 - **Linux CI regresyonu düzeltmesi: `fs.zig`ye `fstatCompat`** (bkz.
-  nox-teknik-spesifikasyon.md §3.71). `std.c.fstatat`, AYNI switch'in
-  `.linux` dalı ÖZEL OLARAK ele ALINMADIĞINDAN GERÇEK bir libc sembolüne
-  bağlı KALDI — YENİ `fstatCompat`, Linux'ta `fstatat(fd, "", &st,
-  AT.EMPTY_PATH)`i (bir fd'yi stat'lamanın standart Linux deyimi)
-  kullanır, diğer platformlarda `std.c.fstat`i (zaten ÇALIŞTIĞINDAN)
-  dokunulmadan çağırır. Yerel olarak (macOS, etkilenmeyen dal)
-  Debug/ReleaseSafe/ReleaseFast'te doğrulandı; Linux'taki GERÇEK
-  doğrulama bir sonraki CI çalıştırmasında yapıldı.
+  nox-teknik-spesifikasyon.md §3.71). İLK deneme `std.c.fstatat`e
+  geçmekti, AMA GERÇEK CI'de bu DA `.linux => {}` çıktı (`fstat` İLE
+  AYNI "boş" desen) — canlı bir CI çalıştırmasıyla yakalandı. Kalıcı
+  düzeltme: `std.c.statx` (switch'e HİÇ girmeyen, KOŞULSUZ bir extern
+  bildirimi, bu YÜZDEN GERÇEK bir glibc sembolüne HER ZAMAN bağlı).
+  YENİ `fstatCompat`, Linux'ta `statx(fd, "", AT.EMPTY_PATH,
+  {SIZE,MTIME}, &buf)` çağırıp platform-nötr bir `FileInfo`ye çevirir;
+  diğer platformlarda `std.c.fstat`i (zaten ÇALIŞTIĞINDAN) dokunulmadan
+  çağırıp AYNI `FileInfo`ye çevirir. Yerel olarak (macOS, etkilenmeyen
+  dal) Debug/ReleaseSafe/ReleaseFast'te doğrulandı; Linux'taki GERÇEK
+  doğrulama iki CI denemesinde yapıldı.
 
 ## [1.0.0]
 

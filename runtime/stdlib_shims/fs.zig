@@ -32,20 +32,30 @@ const dupeToNoxStr = http_client.dupeToNoxStr;
 /// Faz LL.1 takibi (bkz. nox-teknik-spesifikasyon.md §3.71 — GERÇEK bir
 /// `windows-latest` CI çalıştırması SIRASINDA, Windows'la İLGİSİZ olarak
 /// keşfedilen bir Linux regresyonu): kullanılan Zig 0.16.0 derlemesinde
-/// `std.c.fstat`, `.linux => {}` İLE (GERÇEK bir libc sembolüne
-/// BAĞLANMADAN, `void` olarak) tanımlı — bu YÜZDEN Linux'ta `noxrt.o`nun
-/// HİÇ DERLENEMEMESİNE yol açıyordu. `std.c.fstatat` İSE (aynı dosyada,
-/// AYNI switch'in `.linux` dalı ÖZEL OLARAK ele ALINMADIĞINDAN) GERÇEK bir
-/// libc sembolüne bağlı KALDI — `AT.EMPTY_PATH` bayrağıyla BOŞ bir göreli
-/// yolla çağrılması, bir fd'yi stat'lamanın standart Linux deyimidir
-/// (`fstat`in KENDİSİYLE TAMAMEN eşdeğer). macOS'ta (VE `AT.EMPTY_PATH`
-/// TANIMLAMAYAN diğer platformlarda) İSE `std.c.fstat` zaten ÇALIŞIYOR,
-/// bu yüzden ORADA DOKUNULMADAN kullanılmaya devam eder.
-fn fstatCompat(fd: c_int, st: *std.c.Stat) c_int {
+/// `std.c.fstat` VE `std.c.fstatat`nin İKİSİ DE `.linux => {}` İLE
+/// (GERÇEK bir libc sembolüne BAĞLANMADAN, `void` olarak) tanımlı — İKİ
+/// AYRI GERÇEK Linux CI çalıştırmasıyla (biri her ikisi de dene
+/// nirken) doğrulandı. `std.c.statx` İSE (`extern "c" fn statx(...)`,
+/// switch'e HİÇ girmeyen, KOŞULSUZ bir extern bildirimi) GERÇEK bir
+/// glibc sembolüne bağlı KALIR — bir fd'yi (`AT.EMPTY_PATH` bayrağıyla
+/// BOŞ göreli yol) stat'lamak İçin bu kullanılır. macOS'ta (VE
+/// `std.c.fstat`in zaten ÇALIŞTIĞI diğer platformlarda) fstat'a
+/// DOKUNULMADAN devam edilir — İKİ dal FARKLI struct döndürdüğünden
+/// (`Stat` vs `Statx`), ORTAK bir `FileInfo` küçük değerine ÇEVRİLİR.
+const FileInfo = struct { size: u64, mtime_sec: i64, mtime_nsec: i64 };
+
+fn fstatCompat(fd: c_int) ?FileInfo {
     if (builtin.os.tag == .linux) {
-        return std.c.fstatat(fd, "", st, std.os.linux.AT.EMPTY_PATH);
+        var buf: std.os.linux.Statx = undefined;
+        const mask: std.os.linux.STATX = .{ .SIZE = true, .MTIME = true };
+        const rc = std.c.statx(fd, "", std.os.linux.AT.EMPTY_PATH, mask, &buf);
+        if (rc != 0) return null;
+        return .{ .size = buf.size, .mtime_sec = buf.mtime.sec, .mtime_nsec = buf.mtime.nsec };
     }
-    return std.c.fstat(fd, st);
+    var st: std.c.Stat = undefined;
+    if (std.c.fstat(fd, &st) != 0) return null;
+    const mt = st.mtime();
+    return .{ .size = @intCast(st.size), .mtime_sec = mt.sec, .mtime_nsec = mt.nsec };
 }
 
 threadlocal var g_last_ok: bool = true;
@@ -78,12 +88,11 @@ export fn nox_fs_read_to_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callc
     }
     defer _ = std.c.close(fd);
 
-    var st: std.c.Stat = undefined;
-    if (fstatCompat(fd, &st) != 0) {
+    const info = fstatCompat(fd) orelse {
         g_last_ok = false;
         return dupeToNoxStr(rt, "");
-    }
-    const size: usize = @intCast(st.size);
+    };
+    const size: usize = @intCast(info.size);
 
     const raw = arc.nox_rc_alloc(rt, size + 1) orelse {
         g_last_ok = false;
@@ -216,14 +225,12 @@ export fn nox_fs_stat_raw(path: ?[*:0]const u8) callconv(.c) void {
     }
     defer _ = std.c.close(fd);
 
-    var st: std.c.Stat = undefined;
-    if (fstatCompat(fd, &st) != 0) {
+    const info = fstatCompat(fd) orelse {
         g_last_ok = false;
         return;
-    }
-    g_last_size = @intCast(st.size);
-    const mt = st.mtime();
-    g_last_mtime_ms = @as(i64, mt.sec) * 1000 + @divTrunc(mt.nsec, 1_000_000);
+    };
+    g_last_size = @intCast(info.size);
+    g_last_mtime_ms = info.mtime_sec * 1000 + @divTrunc(@as(i64, @intCast(info.mtime_nsec)), 1_000_000);
     g_last_ok = true;
 }
 

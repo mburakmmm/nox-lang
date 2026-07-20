@@ -11764,18 +11764,27 @@ VAR OLAN bir Linux CI regresyonu keşfedildi** (bkz. iki ayrı CI
 `runtime/stdlib_shims/fs.zig`nin (Faz III.3) `std.c.fstat` KULLANIMI bu
 YÜZDEN Linux'ta (x86-64 VE aarch64) `noxrt.o`nun HİÇ DERLENEMEMESİNE yol
 açıyor; macOS'ta ETKİLENMİYOR (gerçek bir INODE64 sembolü VAR).
-**DÜZELTİLDİ** (kullanıcı talebiyle, ayrı bir takip adımı olarak):
-AYNI dosyada, AYNI switch'in `.linux` dalı ÖZEL OLARAK ELE ALINMADIĞINDAN
-`std.c.fstatat` GERÇEK bir libc sembolüne bağlı KALDI — YENİ bir
-`fstatCompat` sarmalayıcısı, Linux'ta `fstatat(fd, "", &st,
-AT.EMPTY_PATH)`i (bir fd'yi stat'lamanın standart Linux deyimi, `fstat`
-İLE TAMAMEN eşdeğer) kullanır, DİĞER platformlarda (`std.c.fstat` zaten
-ÇALIŞTIĞINDAN) dokunulmadan `std.c.fstat`i çağırır. `runtime/
-stdlib_shims/fs.zig`nin İKİ çağrı-yeri de bu sarmalayıcıya geçirildi.
-Yerel olarak (macOS, ETKİLENMEYEN dal) Debug/ReleaseSafe/ReleaseFast'te
-doğrulandı; Linux'taki GERÇEK doğrulama bir sonraki CI çalıştırmasında
-(bu ortamda GERÇEK bir Linux makinesi/cross-assembler OLMADIĞINDAN,
-Windows LL.1 İLE AYNI "push + gerçek CI'yi izle" yöntemiyle) yapıldı.
+**DÜZELTİLDİ** (kullanıcı talebiyle, ayrı bir takip adımı olarak) —
+**iki denemede:** İLK deneme `std.c.fstatat`e geçmekti (`.linux` dalının
+BU switch'te ÖZEL ele alınmadığı varsayımıyla) — AMA GERÇEK CI'de bu DA
+`.linux => {}` OLARAK tanımlı çıktı (AYNI "boş" desen `fstatat` İçin de
+tekrarlanmış — canlı bir CI çalıştırmasıyla SOMUT olarak yakalandı, ilk
+varsayım YANLIŞ çıktı). Kalıcı düzeltme: `std.c.statx` — AYNI dosyada
+switch'e HİÇ GİRMEYEN, KOŞULSUZ bir `extern "c" fn statx(...)` bildirimi
+— bu YÜZDEN GERÇEK bir glibc sembolüne HER ZAMAN bağlı. YENİ
+`fstatCompat`, Linux'ta `statx(fd, "", AT.EMPTY_PATH, {SIZE,MTIME}, &buf)`
+çağırıp sonucu platform-nötr bir `FileInfo{size, mtime_sec, mtime_nsec}`e
+çevirir; diğer platformlarda (`std.c.fstat` zaten ÇALIŞTIĞINDAN)
+dokunulmadan `std.c.fstat`i çağırıp AYNI `FileInfo`ye çevirir — İKİ
+çağrı-yeri de (`nox_fs_read_to_string_raw`/`nox_fs_stat_raw`) bu ORTAK
+arayüze taşındı. Yerel olarak (macOS, etkilenmeyen dal)
+Debug/ReleaseSafe/ReleaseFast'te doğrulandı; Linux'taki GERÇEK doğrulama
+(bu ortamda GERÇEK bir Linux makinesi OLMADIĞINDAN, Windows LL.1 İLE
+AYNI "push + gerçek CI'yi izle" yöntemiyle, İKİ denemede) yapıldı — bu,
+"yerel olarak doğrulanamayan platform-özgü kodun BİREBİR AYNI çapraz-
+derleme varsayımıyla İKİ KEZ yanılabileceği" somut bir hatırlatma
+(bkz. LL.1'in "gerçek CI olmadan riskli platform kodu YAZILMAZ" ilkesi
+— TAM OLARAK bu YÜZDEN vardı).
 
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
