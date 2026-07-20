@@ -62,8 +62,9 @@ print(c.value)
   (`ThreadChannel[T]`), delivering real parallelism beyond a single OS
   core.
 - A growing standard library (`nox.http`, `nox.json`, `nox.strings`,
-  `nox.math`, `nox.os`/`nox.fs`, `nox.time`, `nox.test`) and a Go-style
-  decentralized (GitHub-URL-based) package system.
+  `nox.math`, `nox.os`/`nox.fs`/`nox.path`, `nox.time`, `nox.random`,
+  `nox.crypto`, `nox.regex`, `nox.test`) and a Go-style decentralized
+  (GitHub-URL-based) package system.
 
 For the full record of architectural/design decisions, see
 [`nox-teknik-spesifikasyon.md`](nox-teknik-spesifikasyon.md) (Turkish).
@@ -104,6 +105,17 @@ your `PATH` and run it from outside the project root as well. If you use
 a different install layout, you can override this root with the
 `NOX_RESOURCE_DIR` environment variable (a **separate** setting from
 `NOX_HOME`, which is the root of the third-party package cache).
+
+### Windows
+
+Native Windows support is not finished yet — the async I/O reactor
+(`runtime/async_rt/io_reactor.zig`) currently only implements kqueue
+(macOS) and epoll (Linux), so `noxc` itself does not compile on Windows
+(`spawn`/`await`/`Task`/`Channel`/`nox.http` all depend on this
+reactor). This is under active development — see the `[Unreleased]`
+section of `CHANGELOG.md` for progress. Until then, Windows users can
+use [WSL](https://learn.microsoft.com/windows/wsl/) (Ubuntu) with the
+standard Linux install (`install.sh` or building from source).
 
 ## Usage
 

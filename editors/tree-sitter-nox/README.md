@@ -1,6 +1,6 @@
 # tree-sitter-nox
 
-[Nox](https://github.com/nox-lang/nox) programlama dili için bir
+[Nox](https://github.com/mburakmmm/nox-lang) programlama dili için bir
 [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) grameri. Editör
 sözdizimi vurgulama (syntax highlighting), kod katlama, yapısal seçim ve
 gelecekteki LSP/DAP entegrasyonları (bkz. `nox-teknik-spesifikasyon.md`

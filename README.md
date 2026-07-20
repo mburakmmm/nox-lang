@@ -54,8 +54,9 @@ print(c.value)
   sürekli, çift-yönlü iletişim (`ThreadChannel[T]`), tek bir OS
   çekirdeğiyle sınırlı KALMADAN gerçek paralellik sağlar.
 - Büyüyen bir standart kütüphane (`nox.http`, `nox.json`, `nox.strings`,
-  `nox.math`, `nox.os`/`nox.fs`, `nox.time`, `nox.test`) ve Go tarzı
-  merkeziyetsiz (GitHub URL'si üzerinden) bir paket sistemi.
+  `nox.math`, `nox.os`/`nox.fs`/`nox.path`, `nox.time`, `nox.random`,
+  `nox.crypto`, `nox.regex`, `nox.test`) ve Go tarzı merkeziyetsiz
+  (GitHub URL'si üzerinden) bir paket sistemi.
 
 Mimari/tasarım kararlarının tam dökümü için
 [`nox-teknik-spesifikasyon.md`](nox-teknik-spesifikasyon.md)'ye bakın.
@@ -96,6 +97,17 @@ ekleyip proje kökü dışından da çalıştırabilirsiniz. Farklı bir kurulum
 düzeni kullanıyorsanız `NOX_RESOURCE_DIR` ortam değişkeniyle bu kökü
 override edebilirsiniz (üçüncü-taraf paket önbelleğinin kökü olan
 `NOX_HOME`'dan **ayrı** bir ayardır).
+
+### Windows
+
+Native Windows desteği henüz TAMAMLANMADI — async G/Ç reaktörü
+(`runtime/async_rt/io_reactor.zig`) şu an yalnızca kqueue (macOS) ve
+epoll (Linux) uyguluyor, bu yüzden `noxc` KENDİSİ Windows'ta derlenemiyor
+(`spawn`/`await`/`Task`/`Channel`/`nox.http` bu reaktöre bağlı). Bu
+aktif olarak geliştiriliyor — ilerleme için `CHANGELOG.md`nin
+`[Yayımlanmamış]` bölümüne bakın. O zamana kadar Windows kullanıcıları
+[WSL](https://learn.microsoft.com/windows/wsl/) (Ubuntu) içinde standart
+Linux kurulumunu (`install.sh` ya da kaynaktan derleme) kullanabilir.
 
 ## Kullanım
 
