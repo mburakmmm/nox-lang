@@ -11346,6 +11346,62 @@ DIŞI bırakılan 5 madde (+ UTF-8) İÇİN bkz. bu bölümün BAŞINDAKİ "Kaps
 DIŞI" notu — bunlar BİLİNÇLİ olarak ERTELENDİ, unutulmadı; her biri
 KENDİ ayrı planlama/tasarım turunu HAK EDEN bağımsız görevlerdir.
 
+## 3.70 Faz KK — Güvenlik analizi bulgularının düzeltilmesi
+
+**Kaynak:** kullanıcının AÇIK isteğiyle yapılan, üç paralel odaklı kod
+incelemesiyle (nox.http; FFI/HPy/WASM güven sınırları; ARC/bellek
+güvenliği desenleri) TOPLANAN bir güvenlik zaafiyet raporu — 3 yüksek,
+8 orta, 5 düşük öncelikli bulgu VE 8 doğrulanmış güçlü yön. Kullanıcı
+"yüksek ve ortaları hemen yapmaya başlayalım sırayla" dedi — bu bölüm,
+raporun ÖNCELİK sırasına göre uygulanan düzeltmeleri KAYIT ALTINA alır.
+
+### KK.1 (TAMAMLANDI) — H-2: `dict[K,V]` eksik anahtar erişimi artık `KeyError` raise ediyor
+
+**Önceki durum (GERÇEK bir null-pointer çökmesi, kanıtlandı):**
+`nox_dict_get`, anahtar bulunamazsa (bilinçli "Python'ın `KeyError`ı
+yok" v1 kararıyla) sessizce `0` (null) dönüyordu — ama `genDictGet` bu
+değeri normal, opsiyonel-olmayan bir `str`/`list`/`class` gibi ileri
+taşıyordu. `d: dict[str,str] = {"a":"1"}; x: str = d["missing"];
+print(len(x))` derlenip ÇALIŞTIRILDIĞINDA `SIGSEGV` (exit 139) İLE
+çöktüğü DOĞRUDAN doğrulandı. AYRICA bağımsız bir DOĞRULUK hatası VARDI:
+`dict[str,int]` gibi sayısal değer tiplerinde saklı GERÇEK bir `0`
+DEĞERİ İLE "anahtar YOK" durumu AYIRT EDİLEMİYORDU.
+
+**Düzeltme:** `genDictGet`, `genIndex`in `list[T]` sınır kontrolüyle
+AYNI "önce doğrula, hata dalında raise et, phi'siz ok'e atla" desenini
+İZLER — `nox_dict_get`den ÖNCE `nox_dict_contains` İLE anahtarın VAR
+OLUP OLMADIĞI kontrol edilir, yoksa YENİ eklenen `KeyError` sınıfı
+(`stdlib/nox/core.nox`, `IndexError`/`ValueError` İLE AYNI "her programa
+otomatik dahil, mangle EDİLMEZ" statüsünde) `raise` edilir. Bu, ARTIK
+`int`/`float`/`bool` değer tipleri İÇİN DE doğru çalışır — `nox_dict_
+contains`in KENDİSİ değere BAKMAZ, yalnızca anahtarın varlığına.
+
+**Bir yan-etki (TEST HARNESS'ında BULUNAN, ÖNCEDEN VAR OLAN bir
+boşluk):** `tests/golden/fmt_golden_test.zig`nin `compileAndRun`ı
+`module_loader.resolveImports`i HİÇ ÇAĞIRMIYORDU (yalnızca
+`codegen_golden_test.zig`ninki çağırıyordu) — bu YÜZDEN `core.nox`nin
+sınıfları (`IndexError`/`ValueError`/YENİ `KeyError`) BU test yolunda
+HİÇ birleştirilmiyordu. `kitchen_sink.nox`nin `headers["a"]` dict-
+okuması, HER `d[key]` ifadesinin (çalışma zamanında tetiklenmese BİLE)
+codegen'in `self.classes.get("KeyError")`ına artık İHTİYAÇ duymasıyla
+bu boşluğu İLK KEZ AÇIĞA ÇIKARDI (`error.Unsupported`). `fmt_golden_
+test.zig`ye `codegen_golden_test.zig` İLE AYNI `resolveImports` çağrısı
+eklenerek düzeltildi — GERÇEK bir test-altyapısı hatasıydı, benim
+değişikliğimin YOL AÇTIĞI bir REGRESYON değil.
+
+Ayrıca `tests/golden/codegen_cases/try_except_finally.nox`nin KENDİ,
+İLGİSİZ bir demo istisnası İÇİN kullandığı `class KeyError` (farklı bir
+alan şekliyle, `key: int`) YENİ çekirdek sınıfla ADI ÇAKIŞTIĞINDAN
+`ZeroValueError` olarak yeniden adlandırıldı — `IndexError`/
+`ValueError`nin ZATEN taşıdığı, kullanıcı sınıflarıyla isim çakışması
+riskiyle AYNI, ÖNCEDEN var olan kategori.
+
+1 yeni golden test (`dict_missing_key_raises` — `dict[str,str]` VE
+`dict[int,int]`, KEY bulunan/bulunmayan HER İKİ durum, `try`/`except`
+İLE yakalama DAHİL) + break→red→fix İLE doğrulandı (kontrol `if (false)`
+İLE devre dışı bırakılınca test doğru şekilde KIRMIZI oldu, "anahtar
+bulunamadi" YERİNE "ulasilmamali" okundu).
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

@@ -3524,12 +3524,43 @@ const Codegen = struct {
     /// KORUR, dönen değer retain EDİLMEZ). `key_expr` TAZE bir heap değerse
     /// (ör. `d["a" + "b"]`), arama SONRASI serbest bırakılır (`nox_dict_get`
     /// anahtarı SAKLAMAZ, yalnızca hash/eşitlik için ÖDÜNÇ kullanır).
+    ///
+    /// **Güvenlik bulgusu H-2 (bkz. güvenlik raporu) — DÜZELTİLDİ:** eksik
+    /// bir anahtarda `nox_dict_get` SESSİZCE `0` (null) dönüyordu VE bu
+    /// değer normal, opsiyonel-olmayan bir `str`/`list`/`class` gibi ileri
+    /// taşınıyordu — `len()`/indeksleme/birleştirme gibi HERHANGİ bir
+    /// sonraki kullanım null-pointer çökmesine (`d: dict[str,str] =
+    /// {"a":"1"}; print(len(d["missing"]))` → SIGSEGV) yol açıyordu.
+    /// `genIndex`in `list[T]` sınır kontrolüyle AYNI "önce doğrula, hata
+    /// dalında raise et, phi'siz ok'e atla" deseni İZLENİR: `nox_dict_
+    /// contains` İLE ÖNCE VARLIK kontrol edilir, yoksa `KeyError` raise
+    /// edilir — `int`/`float`/`bool` değer TİPLERİ İçin BİLE (ör.
+    /// `dict[str,int]`de saklı bir `0` DEĞERİYLE "anahtar YOK" durumunu
+    /// AYIRT ETMEK GEREKTİĞİNDEN, `nox_dict_get`in KENDİ dönüş değerine
+    /// GÜVENMEK ASLA YETERLİ DEĞİLDİ — bu AYRICA bağımsız bir doğruluk
+    /// hatasıydı, yalnızca bellek güvenliği DEĞİL).
     fn genDictGet(self: *Codegen, obj: Value, key_expr: ast.Expr) CodegenError!Value {
         const dinfo = obj.dict_info.?;
         const key_v0 = try self.genExpr(key_expr);
         try self.checkNoLowlevelEscape(key_v0);
         const key_payload = try self.toPayload(key_v0);
         const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
+
+        const contains_t = try self.newTemp();
+        try self.out.writer.print("    {s} =w call $nox_dict_contains(l {s}, w {s}, l {s})\n", .{ contains_t, obj.text, key_is_str_lit, key_payload.text });
+        const err_label = try self.newLabel("dict_get_err");
+        const ok_label = try self.newLabel("dict_get_ok");
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ contains_t, ok_label, err_label });
+        try self.out.writer.print("{s}\n", .{err_label});
+
+        const msg_value = try self.emitStringLiteral("anahtar bulunamadi");
+        const ke_cinfo = self.classes.get("KeyError") orelse return error.Unsupported;
+        const ke_obj = try self.genConstructFromValues("KeyError", ke_cinfo, &.{msg_value});
+        try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ke_obj.text });
+        try self.emitExceptionCheck();
+        try self.out.writer.print("    jmp {s}\n", .{ok_label});
+
+        try self.out.writer.print("{s}\n", .{ok_label});
 
         const payload_t = try self.newTemp();
         try self.out.writer.print("    {s} =l call $nox_dict_get(l {s}, l {s}, w {s}, l {s})\n", .{ payload_t, RT_PARAM, obj.text, key_is_str_lit, key_payload.text });

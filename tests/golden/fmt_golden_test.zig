@@ -47,7 +47,17 @@ fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.
     const io = std.testing.io;
 
     const tokens = try nox.lexer.tokenize(allocator, source);
-    const module = try nox.parser.parseModule(allocator, tokens);
+    const user_module = try nox.parser.parseModule(allocator, tokens);
+    // `codegen_golden_test.zig`nin `compileAndRun`ıyla AYNI düzeltme
+    // (güvenlik bulgusu H-2'nin `genDictGet`e eklediği `KeyError` raise
+    // yolu, HER `d[key]` ifadesinde — çalışma zamanında tetiklenmese
+    // BİLE — `core.nox`nin `KeyError` sınıfının codegen'in `self.classes`
+    // kaydında BULUNMASINI gerektirir; core.nox HİÇ birleştirilmeden
+    // ÇALIŞAN bu test harness'ı, `kitchen_sink.nox`nin `headers["a"]`
+    // dict-okuması İLE bu boşluğu İLK KEZ AÇIĞA ÇIKARDI — `module_loader.
+    // resolveImports` EKSİKTİ, `codegen_golden_test.zig` ZATEN doğru
+    // yapıyordu).
+    const module = try nox.module_loader.resolveImports(allocator, io, user_module);
 
     var checker_state = nox.checker.Checker.init(allocator);
     checker_state.checkModule(module) catch |e| {

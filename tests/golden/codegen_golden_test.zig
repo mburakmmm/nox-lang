@@ -1044,6 +1044,19 @@ test "codegen(çalıştır): Faz III.6 — dict[K,V].keys()/.values() (str/int/b
     );
 }
 
+// Güvenlik bulgusu H-2 (bkz. güvenlik raporu, 20 Temmuz 2026) — DÜZELTİLDİ:
+// `d[key]` eksik bir anahtarda SESSİZCE null döndürüp sonraki HER kullanımda
+// (`len()` gibi) null-pointer çökmesine (SIGSEGV) yol açıyordu; `dict[str,
+// int]`de saklı bir `0` DEĞERİYLE "anahtar YOK" durumu da AYRICA ayırt
+// edilemiyordu (bağımsız bir doğruluk hatası). `genDictGet` artık `nox_dict_
+// contains` İLE ÖNCE varlığı kontrol edip yoksa `KeyError` raise ediyor.
+test "codegen(çalıştır): Güvenlik H-2 — dict[K,V] eksik anahtar KeyError raise eder (null-pointer çökmesi YERİNE)" {
+    try expectGolden(
+        @embedFile("codegen_cases/dict_missing_key_raises.nox"),
+        @embedFile("codegen_cases/dict_missing_key_raises.expected"),
+    );
+}
+
 // Faz FF.4 (bkz. nox-teknik-spesifikasyon.md §3.63): çıplak `self`li bir
 // metodun (`bump`) bir ALANI GERÇEKTEN okuyup/YAZDIĞI uçtan uca kanıt —
 // codegen'in çıplak self İÇİN GERÇEKTEN sıfır değişiklik gerektirdiğinin

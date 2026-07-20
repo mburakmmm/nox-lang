@@ -12,6 +12,17 @@ class IndexError:
     def __init__(self: IndexError, message: str) -> None:
         self.message = message
 
+# Güvenlik bulgusu H-2 (bkz. güvenlik raporu) — `d[key]`nin eksik bir
+# anahtarda SESSİZCE `0`/null DÖNDÜRDÜĞÜ (Python'un `KeyError`ı YOK
+# denen v1 kararı) GERÇEKTE bir null-pointer çökmesiydi: dönen değer
+# normal, opsiyonel-olmayan bir `str`/`list`/`class` gibi ileri
+# taşınıyordu, `len()`/indeksleme gibi HERHANGİ bir sonraki kullanım
+# çöküyordu. `IndexError` İLE AYNI desen İZLENİR — `genDictGet` artık
+# `contains` KONTROLÜNDEN SONRA raise eder (bkz. onun belge notu).
+class KeyError:
+    def __init__(self: KeyError, message: str) -> None:
+        self.message = message
+
 # Stdlib fazı §L (`nox.json`, bkz. nox-teknik-spesifikasyon.md) — `JsonValue`
 # ve onun fabrika fonksiyonu BİLİNÇLİ OLARAK burada, `stdlib/nox/json.nox`
 # YERİNE, ÇEKİRDEKTE tanımlanır: `runtime/stdlib_shims/json.zig`nin

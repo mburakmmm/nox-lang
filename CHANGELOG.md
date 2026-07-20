@@ -993,6 +993,17 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   `ThreadChannel` karşılığı) serbest bırakma/yıkımdan HEMEN SONRA slotu
   sıfırlayan birer satır eklendi. Break→red→fix İLE doğrulandı (düzeltme
   geri alınınca AYNI panik/yığın izi GERİ GELDİ) + 1 yeni golden test.
+- **Faz KK.1 — Güvenlik bulgusu H-2: `dict[K,V]` eksik anahtar erişimi
+  artık `KeyError` raise ediyor** (bkz. nox-teknik-spesifikasyon.md
+  §3.70). ÖNCEDEN eksik anahtarda sessizce null dönen `d[key]`, sonraki
+  HER kullanımda (`len()` gibi) GERÇEK bir null-pointer çökmesine
+  (SIGSEGV, doğrudan doğrulandı) yol açıyordu — AYRICA `dict[str,int]`
+  gibi sayısal değer tiplerinde saklı GERÇEK bir `0` DEĞERİYLE "anahtar
+  YOK" durumu AYIRT EDİLEMİYORDU (bağımsız bir doğruluk hatası).
+  `genDictGet` artık `nox_dict_contains` İLE ÖNCE varlığı kontrol edip
+  yoksa YENİ `KeyError` sınıfını (`IndexError`/`ValueError` İLE AYNI
+  statüde) raise ediyor. Break→red→fix İLE doğrulandı + 1 yeni golden
+  test.
 
 ## [1.0.0]
 
