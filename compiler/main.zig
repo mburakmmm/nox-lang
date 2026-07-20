@@ -76,7 +76,15 @@ pub fn main(init: std.process.Init) !void {
     g_use_color = detectUseColor(io, init.environ_map);
 
     var all_args: std.ArrayListUnmanaged([]const u8) = .empty;
-    var arg_it = init.minimal.args.iterate();
+    // Faz LL.1 (bkz. nox-teknik-spesifikasyon.md §3.71): `.iterate()`
+    // Windows'ta `@compileError` veriyor ("use initAllocator instead") —
+    // `iterateAllocator` macOS/Linux'ta (Zig std'nin KENDİ `Args.zig`sının
+    // `Posix` dalı) TAMAMEN AYNI, allocation'sız iç yolu izler (davranış
+    // DEĞİŞMEZ), Windows'ta İSE GEREKEN allocator-tabanlı yolu kullanır —
+    // GERÇEK bir `windows-latest` CI çalıştırmasında BULUNDU (bkz. §3.71
+    // LL.1'in belge notu).
+    var arg_it = try init.minimal.args.iterateAllocator(gpa);
+    defer arg_it.deinit();
     _ = arg_it.next(); // program adı
     while (arg_it.next()) |arg| try all_args.append(gpa, arg);
     defer all_args.deinit(gpa);
