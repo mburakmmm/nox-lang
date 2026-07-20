@@ -43,6 +43,12 @@ name: CI
 # `zig build` (o `-Doptimize` İLE), SONRA `zig build test` (AYNI mod) —
 # ikinci komut çalıştığında `install_noxc`/`install_noxrt` ZATEN
 # TAMAMLANMIŞ/önbelleklenmiş OLDUĞUNDAN yarış PENCERESİ tamamen KAPANIR.
+#
+# Faz LL.1 (bkz. nox-teknik-spesifikasyon.md §3.71): YUKARIDAKİ 3-platform
+# matrisinin YANINDA (İÇİNDE DEĞİL) AYRI bir `windows-frontend` işi VAR —
+# yalnızca `noxc`/`noxlsp`nin (runtime'a HİÇ bağımlı olmayan derleyici
+# ön-ucunun) native Windows'ta derlenip ÇALIŞTIĞINI doğrular. GERÇEK
+# Windows desteği (runtime/`nox build`/`nox test`) HENÜZ YOK.
 
 on:
   push:
@@ -99,3 +105,44 @@ jobs:
 
       - name: zig build test (ReleaseFast)
         run: zig build test -Doptimize=ReleaseFast
+
+  # Faz LL.1 (bkz. nox-teknik-spesifikasyon.md §3.71): GERÇEK Windows
+  # desteği YOK — `runtime/async_rt/io_reactor.zig` şu an yalnızca macOS
+  # (kqueue) VE Linux (epoll) uyguluyor (dosya-seviyesi bir `comptime`
+  # `@compileError`, bkz. LL.2+). AMA `noxc`/`noxlsp` (derleyicinin
+  # KENDİSİ) HİÇBİR POSIX-özgü çağrı (`std.posix.*`/`std.c.*`)
+  # İÇERMEDİĞİNDEN, `build.zig`nin `noxc` adımı (runtime'a/`noxrt`e HİÇ
+  # BAĞIMLI DEĞİL — bkz. o adımın belge notu) VE `compiler/lib.zig`nin
+  # (lexer/parser/checker/module_loader) testleri (`frontend-test` adımı)
+  # native Windows'ta İLKE OLARAK çalışabilir olmalı. Bu iş TAM OLARAK bu
+  # iddiayı GERÇEK bir `windows-latest` çalıştırıcısında doğrular — ana
+  # 3-platform matrisinin YANINDA, İÇİNDE DEĞİL (o matrisin TAMAMI —
+  # `qbe`/`cc` gerektiren `build`/`test` adımları dahil — Windows'ta HENÜZ
+  # ÇALIŞMAZ, bkz. LL.2-LL.7 yol haritası).
+  windows-frontend:
+    name: Windows (yalnızca derleyici ön-ucu — Faz LL.1)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Zig kur
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest -Uri "https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip" -OutFile "$env:RUNNER_TEMP\zig.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\zig.zip" -DestinationPath "$env:RUNNER_TEMP"
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\zig-x86_64-windows-0.16.0"
+
+      - name: zig build noxc (yalnızca derleyici ön-ucu + stdlib)
+        run: zig build noxc
+
+      - name: zig build frontend-test (yalnızca lexer/parser/checker testleri)
+        run: zig build frontend-test
+
+      - name: Duman testi — noxc.exe check
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-Content -Path smoke.nox -Value "x: int = 1`nprint(x)"
+          & ".\zig-out\bin\noxc.exe" check smoke.nox
+          if ($LASTEXITCODE -ne 0) { throw "noxc check basarisiz (exit $LASTEXITCODE)" }

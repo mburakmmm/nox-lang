@@ -11636,6 +11636,95 @@ bırakıldı — Faz III planının kapsam-dışı 5 maddesiyle AYNI büyüklük
 kendi tasarım turunu (kütüphane seçimi, API yüzeyi) gerektiren birer iş
 (bkz. §3.69'un giriş notu).
 
+## 3.71 Faz LL — Windows desteği
+
+Kullanıcı README güncellemesi sırasında Windows İçin de bir kurulum
+betiği istedi. Araştırma SIRASINDA `runtime/async_rt/io_reactor.zig`nin
+dosya-seviyesi bir `comptime { if (... != .macos and ... != .linux)
+@compileError(...) }` bloğu (io_reactor.zig:69-73) TAŞIDIĞI bulundu —
+yani Windows'ta ne `noxc` İLE derlenen Nox PROGRAMLARI (`noxrt.o`
+üzerinden) ne de `nox.thread`/`spawn`/`await`/`nox.http` ÇALIŞABİLİYOR.
+Kullanıcıya bu mimari engel açıklanıp kapsam SORULDU (AskUserQuestion) —
+kullanıcı **GERÇEK Windows desteğinin ŞİMDİ başlatılmasını** seçti,
+yalnızca bir kurulum betiği DEĞİL.
+
+### Mimari bulgular (3 paralel Explore ajanı + bir web araştırmasıyla)
+
+- **QBE 1.3 GERÇEKTEN `amd64_win` hedefini destekliyor** (upstream,
+  Scott Graham katkısı, TLS HARİÇ TAM ABI/C-interop) —
+  `compiler/qbe_target.zig:29`deki `"amd64_win"` aspirasyonel DEĞİL,
+  gerçek. QBE'nin ürettiği AT&T sözdizimli assembly'yi **MinGW'in
+  assembler'ı** en iyi derliyor — yani Windows'ta `cc` olarak
+  **MinGW-w64 GCC** hedeflenmeli, MSVC (`cl.exe`/`link.exe`) DEĞİL. Bu,
+  `compiler/main.zig`nin MEVCUT GCC-tarzı `cc` çağrısını (`-o`, `-lm`,
+  `-rdynamic`, `.o`/`.a` uzantıları) neredeyse DEĞİŞTİRMEDEN kullanılabilir
+  kılıyor.
+- **`noxc`/`noxlsp` (derleyicinin KENDİSİ) HİÇBİR POSIX-özgü çağrı
+  İÇERMİYOR** — `compiler/` ağacında `std.posix.*`/`std.c.*` KULLANIMI
+  SIFIR (doğrulandı: `grep -rln` boş döndü). TÜM Windows engeli
+  `runtime/` (yani `noxrt.o`) İÇİNDE: `io_reactor.zig` (kqueue/epoll),
+  `fiber.zig` (x86-64 bağlam değişimi SysV ABI'sine göre yazılmış el-
+  yazması assembly, Windows x64'ün FARKLI çağrı kuralı İçin AYRI bir
+  `.S` varyantı gerekir), `stdlib_shims/{os,fs,time,path}.zig` +
+  `dict.zig`/`crypto.zig` (POSIX `setenv`/`getcwd`/`stat`/`opendir`/
+  `clock_gettime`/`arc4random_buf`/`realpath`), VE soket katmanı
+  (`io.zig`/`http_server.zig`/`http_client.zig`/`thread_bridge.zig`/
+  `thread_channel.zig` — ham `socket`/`accept`/`pipe`, Winsock'a
+  taşınmalı).
+- Bu ortamda GERÇEK bir Windows/Wine makinesi YOK — bu yüzden riskli
+  runtime portu (IOCP reaktörü, Windows fiber assembly'si, Winsock
+  katmanı) yazılmadan ÖNCE GERÇEK bir `windows-latest` GitHub Actions
+  çalıştırıcısı KURULDU (LL.1) — sonraki TÜM alt-fazlara GERÇEK,
+  yalnızca çapraz-derlenen DEĞİL, ÇALIŞTIRILAN bir geri bildirim döngüsü
+  sağlaması İçin.
+
+### Yol haritası
+
+LL.1 (TAMAMLANDI, aşağıya bkz.), LL.2 (`io_reactor.zig`ye GERÇEK IOCP
+backend'i), LL.3 (`fiber.zig` İçin Windows x64 `.S` varyantı), LL.4
+(`stdlib_shims`nin POSIX çağrılarının Windows karşılıklarına portu),
+LL.5 (soket katmanı — Winsock + self-pipe'ın loopback-soket
+emülasyonu), LL.6 (araç zinciri — MinGW-w64 doğrulaması + CI'de QBE'nin
+onunla derlenmesi), LL.7 (`release.yml` + `install.ps1`), LL.8
+(README/AGENTS.md'nin GÜNCELLENMESİ). LL.2-LL.8 kendi başlarına BÜYÜK,
+çok-commit'li alt-fazlar — HER biri GERÇEK Windows CI sonucuyla
+doğrulanmadan bir SONRAKİne geçilmeyecek.
+
+### LL.1 (TAMAMLANDI) — Derleyici ön-ucu + Windows CI iskeleti
+
+`build.zig`ye, `noxrt_mod`/`compile_swap_asm`dan (dolayısıyla
+`io_reactor.zig`nin `@compileError`ından) TAMAMEN BAĞIMSIZ iki YENİ
+adım eklendi:
+- `zig build noxc` — yalnızca `noxc`/`noxlsp`yi VE (`noxc check`in
+  `core.nox`u module_loader üzerinden ÇÖZMESİ İçin GEREKEN) `stdlib/`i
+  kurar.
+- `zig build frontend-test` — yalnızca `compiler/lib.zig`nin (lexer/
+  parser/checker/module_loader) MEVCUT `lib_test`ini çalıştırır.
+
+Mevcut `install`/`test`/`run`/`bench` adımları VE bunların `noxrt`e
+bağımlılıkları HİÇ DEĞİŞMEDİ — yalnızca İZOLE, EK adımlar eklendi (yerel
+olarak `zig build noxc` + `zig build frontend-test` + TAM `zig build
+test` paketinin (Debug/ReleaseSafe/ReleaseFast) HÂLÂ yeşil olduğu
+doğrulandı — sıfır regresyon).
+
+`.github/workflows/ci.yml`ye, mevcut 3-platform matrisinin YANINA (İÇİNE
+DEĞİL) AYRI bir `windows-frontend` işi eklendi: `windows-latest`
+çalıştırıcısında Zig 0.16.0'ı PowerShell İLE kurar (`zig-x86_64-
+windows-0.16.0.zip`, `ziglang.org/download/...`den — mevcut Linux/macOS
+işlerinin AYNI "mlugg/setup-zig KULLANILMAZ" gerekçesiyle), `zig build
+noxc` + `zig build frontend-test`i çalıştırır, VE bir duman testiyle
+(`noxc.exe check` gerçek bir `.nox` dosyasına karşı) derleyicinin
+GERÇEKTEN native Windows'ta ÇALIŞTIĞINI doğrular. `qbe`/`cc` bu işte
+KURULMAZ — runtime-bağımlı `build`/`test` adımları BU FAZIN kapsamı
+DIŞINDA.
+
+**Önemli sınırlama:** bu, GENEL Windows desteği DEĞİL — yalnızca
+derleyici ÖN-UCUNUN (tip denetim/parse) native Windows'ta çalıştığını
+kanıtlar. `noxc build`/`run` (runtime'a bağlanma GEREKTİRDİĞİNDEN) VE
+HER TÜRLÜ Nox PROGRAMI HÂLÂ Windows'ta ÇALIŞMAZ. README'nin "Windows
+henüz desteklenmiyor" notu BU YÜZDEN BU FAZDA DEĞİŞTİRİLMEDİ — LL.7/LL.8
+tamamlanana kadar doğru kalmaya devam ediyor.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

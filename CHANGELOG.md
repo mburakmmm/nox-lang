@@ -1072,8 +1072,29 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   `git`/`ssh`/`file` ÖNEKLERİ (`startsWith`) kabul ediliyor, aksi halde
   `error.UnsupportedRepoScheme`. **Faz KK'nin TÜM yüksek+orta öncelikli
   bulguları (H-1/H-2/H-3/M-1/M-3/M-4/M-5/M-6/M-8) TAMAMLANDI** — yalnızca
-  M-2 (gerçek bir `bytes` tipi) BİLİNÇLİ olarak UZUN VADEYE bırakıldı.
-  Break→red→fix İLE doğrulandı + 2 yeni unit test.
+  M-2 (gerçek bir `bytes` tipi) VE M-7 (parola KDF'i) BİLİNÇLİ olarak
+  UZUN VADEYE bırakıldı. Break→red→fix İLE doğrulandı + 2 yeni unit test.
+- **Faz LL.1 — Windows desteği: derleyici ön-ucu + Windows CI iskeleti**
+  (bkz. nox-teknik-spesifikasyon.md §3.71). Araştırma, `runtime/
+  async_rt/io_reactor.zig`nin dosya-seviyesi bir `comptime`
+  `@compileError`sinin Windows'ta HEM `noxrt.o`yu HEM `nox.thread`/
+  `spawn`/`await`/`nox.http`i ENGELLEDİĞİNİ, AMA `noxc`/`noxlsp`nin
+  (derleyicinin KENDİSİ) HİÇBİR POSIX-özgü çağrı İÇERMEDİĞİNİ ortaya
+  çıkardı — TÜM Windows engeli `runtime/` İÇİNDE, derleyici ön-ucunda
+  DEĞİL. `build.zig`ye `noxrt`den TAMAMEN BAĞIMSIZ iki YENİ adım eklendi:
+  `zig build noxc` (yalnızca `noxc`/`noxlsp`/`stdlib`) VE `zig build
+  frontend-test` (yalnızca `compiler/lib.zig`nin lexer/parser/checker
+  testleri). `.github/workflows/ci.yml`ye mevcut 3-platform matrisinin
+  YANINA AYRI bir `windows-frontend` işi eklendi — GERÇEK bir
+  `windows-latest` çalıştırıcısında Zig kurup bu iki adımı VE bir
+  `noxc.exe check` duman testini çalıştırır. Mevcut `install`/`test`/
+  `run`/`bench` adımları VE 3-platform matrisi DEĞİŞMEDİ (sıfır
+  regresyon, TAM test paketi Debug/ReleaseSafe/ReleaseFast'te
+  doğrulandı). **Bu, GENEL Windows desteği DEĞİL** — yalnızca derleyici
+  ön-ucunun native Windows'ta çalıştığını kanıtlar; `noxc build`/`run`
+  VE HER Nox PROGRAMI HÂLÂ Windows'ta çalışmıyor (runtime portu LL.2-
+  LL.7'nin kapsamı, henüz yapılmadı — README'nin "Windows henüz
+  desteklenmiyor" notu BU YÜZDEN DEĞİŞTİRİLMEDİ).
 
 ## [1.0.0]
 

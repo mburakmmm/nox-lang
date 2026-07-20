@@ -109,6 +109,22 @@ pub fn build(b: *std.Build) void {
     const install_noxlsp = b.addInstallArtifact(noxlsp, .{});
     b.getInstallStep().dependOn(&install_noxlsp.step);
 
+    // Faz LL.1 (bkz. nox-teknik-spesifikasyon.md §3.71): `noxc`/`noxlsp`
+    // HİÇBİR POSIX-özgü çağrı (`std.posix.*`/`std.c.*`) İÇERMEZ — runtime'ın
+    // (`noxrt_mod`/`compile_swap_asm`, aşağıda) AKSİNE, Windows'ta İLKE
+    // OLARAK derlenip çalışabilirler. Bu adım `noxrt`e (VE onun İÇİNDEN
+    // `io_reactor.zig`nin şu anki macOS/Linux-only `@compileError`ına) HİÇ
+    // DOKUNMADAN yalnızca derleyici ÖN-UCUNU (+ ÇALIŞMASI İÇİN gereken
+    // `stdlib/`i — `noxc check`in KENDİSİ `core.nox`u module_loader
+    // üzerinden ÇÖZER, bu YÜZDEN `install_stdlib`e de bağımlı; DAHA AŞAĞIDA
+    // tanımlandığından burada YALNIZCA referans TUTULUR, bağımlılık asıl
+    // `install_stdlib` tanımlandıktan SONRA eklenir) kurar — `.github/
+    // workflows/ci.yml`nin `windows-frontend` işinin `zig build noxc` İLE
+    // çağırdığı TAM OLARAK budur.
+    const noxc_only_step = b.step("noxc", "Yalnızca noxc + noxlsp'yi (+ stdlib'i) derler (runtime'a bağımlı DEĞİL)");
+    noxc_only_step.dependOn(&install_noxc.step);
+    noxc_only_step.dependOn(&install_noxlsp.step);
+
     // Faz 12/13'ün köprüleri (Faz 14'ten beri `noxrt_mod`ün BİR PARÇASI —
     // bkz. runtime/foreign_bridge.zig, `nox_hpy_call`/`nox_wasm_call`); bu
     // yüzden `noxrt_mod`dan ÖNCE tanımlanmalılar ki ona named import olarak
@@ -171,6 +187,8 @@ pub fn build(b: *std.Build) void {
         .install_subdir = "nox/stdlib",
     });
     b.getInstallStep().dependOn(&install_stdlib.step);
+    // Faz LL.1: bkz. `noxc_only_step`in yukarıdaki belge notu.
+    noxc_only_step.dependOn(&install_stdlib.step);
 
     const run_noxc = b.addRunArtifact(noxc);
     run_noxc.step.dependOn(b.getInstallStep());
@@ -246,6 +264,13 @@ pub fn build(b: *std.Build) void {
     // "nox" modülünün kendi içindeki (lexer/parser dosyalarına gömülü) testler.
     const lib_test = b.addTest(.{ .root_module = nox_mod });
     test_step.dependOn(&b.addRunArtifact(lib_test).step);
+
+    // Faz LL.1: `lib_test` (yukarıda) `compiler/lib.zig`nin (lexer/parser/
+    // checker/module_loader) testleridir — bunlar da (noxc/noxlsp gibi)
+    // runtime'a bağımlı DEĞİL, Windows'ta İLKE OLARAK çalışabilir. `ci.yml`nin
+    // `windows-frontend` işinin `zig build frontend-test` İLE çağırdığı budur.
+    const frontend_test_step = b.step("frontend-test", "Yalnızca derleyici ön-ucu (lexer/parser/checker) testlerini çalıştırır — runtime'a bağımlı DEĞİL");
+    frontend_test_step.dependOn(&b.addRunArtifact(lib_test).step);
 
     // Zig runtime'ının kendi içindeki testler (bkz. runtime/alloc/asap.zig).
     const noxrt_test = b.addTest(.{ .root_module = noxrt_mod });
