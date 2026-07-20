@@ -73,6 +73,40 @@ fn keysEqual(key_is_str: bool, a: i64, b: i64) bool {
     return std.mem.orderZ(u8, pa, pb) == .eq;
 }
 
+/// Güvenlik bulgusu M-3 (bkz. güvenlik raporu) — DÜZELTİLDİ: `StrOrIntContext.
+/// hash` ÖNCEDEN `std.hash.Wyhash`i HER ZAMAN SABİT `seed=0` İLE
+/// çağırıyordu. `nox.http`nin `HttpRequest.headers` alanı TAM OLARAK
+/// `dict[str,str]` OLDUĞUNDAN (bkz. `SMALL_MAP_THRESHOLD`in belge notu —
+/// 8'den fazla başlık `index` hash-tabanlı yola geçer), bu SABİT/BİLİNEN
+/// tohum, saldırganın Wyhash algoritmasını VE tohumu BİLEREK ÖNCEDEN
+/// çakışan anahtarlar (ör. çok sayıda başlık adı) İNŞA ETMESİNE — bir Nox
+/// HTTP sunucusunun dict işlemlerini O(1) ortalamadan O(n) en-kötü-duruma
+/// düşürmesine (klasik hash-flooding/algoritmik-karmaşıklık DoS'u) —
+/// OLANAK TANIYORDU. Python/Rust'ın hashmap tohumunu SÜREÇ (BURADA: iş
+/// parçacığı) başına RASTGELELEŞTİRMESİYLE AYNI ilkeyle DÜZELTİLDİ: HER
+/// iş parçacığının kendi `threadlocal` (bkz. `nox.random`nin `g_prng`si
+/// İLE AYNI "gerçek OS iş parçacıkları bir dict'i PAYLAŞMAZ" gerekçesi —
+/// bir `Dict`, `arc_owner_tid`nin ZATEN zorladığı gibi HER ZAMAN TEK bir
+/// iş parçacığına aittir) RASTGELE tohumu, İLK dict-hash işleminde BİR
+/// KEZ üretilir VE o iş parçacığının TÜM sonraki dict işlemleri İçin
+/// YENİDEN KULLANILIR. `std.crypto.random` BU Zig sürümünde YOK —
+/// `nox.os`nin `setenv` deneyiminde OLDUĞU GİBİ (bkz. `runtime/stdlib_
+/// shims/os.zig`nin belge notu), macOS'un libc'sinin ZATEN GÜVENLE
+/// bağladığı ham `std.c.arc4random_buf`ı (OS'un GÜVENLİ rastgelelik
+/// kaynağına dayanır) DOĞRUDAN kullanılır.
+threadlocal var g_hash_seed: u64 = 0;
+threadlocal var g_hash_seed_init: bool = false;
+
+fn hashSeed() u64 {
+    if (!g_hash_seed_init) {
+        var buf: [8]u8 = undefined;
+        std.c.arc4random_buf(&buf, buf.len);
+        g_hash_seed = std.mem.readInt(u64, &buf, .little);
+        g_hash_seed_init = true;
+    }
+    return g_hash_seed;
+}
+
 /// `index`in hash tablosu Context'i — `key_is_str` ÇALIŞMA ZAMANINDA
 /// (Dict'in KENDİSİNE göre) belirlendiğinden comptime-sabit bir Context
 /// KULLANILAMAZ, bu yüzden HER çağrıda (`getContext`/`putContext`/
@@ -83,10 +117,10 @@ const StrOrIntContext = struct {
     key_is_str: bool,
 
     pub fn hash(self: @This(), key: i64) u64 {
-        if (!self.key_is_str) return std.hash.Wyhash.hash(0, std.mem.asBytes(&key));
+        if (!self.key_is_str) return std.hash.Wyhash.hash(hashSeed(), std.mem.asBytes(&key));
         if (key == 0) return 0;
         const p: [*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(key)));
-        return std.hash.Wyhash.hash(0, std.mem.sliceTo(p, 0));
+        return std.hash.Wyhash.hash(hashSeed(), std.mem.sliceTo(p, 0));
     }
 
     pub fn eql(self: @This(), a: i64, b: i64) bool {
@@ -490,4 +524,48 @@ test "Faz III.6: nox_dict_keys str anahtarlari retain eder — dict VE list bagi
     str_lib.nox_str_release(rt, kptr);
     _ = arc.nox_rc_predecrement(keys_list);
     arc.nox_rc_free_payload(rt, keys_list, 16 + 8 * 1);
+}
+
+// Güvenlik bulgusu M-3 (bkz. güvenlik raporu, 20 Temmuz 2026) — DÜZELTİLDİ:
+// `hashSeed`in artık SABİT `0` DÖNMEDİĞİNİ (eski, hash-flooding'e AÇIK
+// davranış) VE AYNI iş parçacığı İçinde TUTARLI (memoized) OLDUĞUNU
+// doğrular. `std.c.arc4random_buf`nin GERÇEK entropi KALİTESİ bu testin
+// KAPSAMI DIŞINDA (OS'un KENDİ sorumluluğu) — yalnızca "artık sabit
+// SIFIR/bilinen bir değer DEĞİL" doğrulanır.
+test "Güvenlik M-3: hashSeed sabit 0 DEĞİL VE aynı iş parçacığı içinde TUTARLI (memoized)" {
+    const s1 = hashSeed();
+    const s2 = hashSeed();
+    try std.testing.expectEqual(s1, s2);
+    try std.testing.expect(s1 != 0);
+}
+
+// SMALL_MAP_THRESHOLD'u AŞAN (hash-tabanlı `index` yoluna GEÇEN) bir dict,
+// RASTGELELEŞTİRİLMİŞ tohuma RAĞMEN doğru çalışmaya DEVAM ETMELİDİR —
+// yalnızca ARAMA MEKANİZMASI değişti, DOĞRULUK DEĞİŞMEDİ.
+test "Güvenlik M-3: rastgeleleştirilmiş hash tohumuyla SMALL_MAP_THRESHOLD üstü bir dict HÂLÂ doğru arama yapar" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const d = nox_dict_new(rt, 1) orelse return error.NewFailed;
+    const dict_ptr: *Dict = @ptrCast(@alignCast(d));
+
+    var i: usize = 0;
+    while (i < SMALL_MAP_THRESHOLD + 5) : (i += 1) {
+        const key = std.fmt.allocPrintSentinel(std.testing.allocator, "anahtar{d}", .{i}, 0) catch return error.OutOfMemory;
+        defer std.testing.allocator.free(key);
+        const key_str = str_mod.nox_str_concat(rt, key.ptr, "") orelse return error.ConcatFailed;
+        nox_dict_set(rt, d, 1, 0, @bitCast(@intFromPtr(key_str)), @intCast(i * 10));
+    }
+    try std.testing.expect(dict_ptr.index_built);
+
+    i = 0;
+    while (i < SMALL_MAP_THRESHOLD + 5) : (i += 1) {
+        const key = std.fmt.allocPrintSentinel(std.testing.allocator, "anahtar{d}", .{i}, 0) catch return error.OutOfMemory;
+        defer std.testing.allocator.free(key);
+        const key_str = str_mod.nox_str_concat(rt, key.ptr, "") orelse return error.ConcatFailed;
+        defer str_mod.nox_str_release(rt, key_str);
+        try std.testing.expectEqual(@as(i64, @intCast(i * 10)), nox_dict_get(rt, d, 1, @bitCast(@intFromPtr(key_str))));
+    }
+
+    nox_dict_release(rt, d, 1, 0);
 }

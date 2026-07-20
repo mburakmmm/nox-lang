@@ -1037,6 +1037,18 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   kontrolü eklendi — bozuk başlık SESSİZCE ATLANMAZ, İSTEĞİN/YANITIN
   TAMAMI reddedilir. Break→red→fix İLE doğrulandı (`ReleaseFast` DAHİL)
   + 6 yeni unit test.
+- **Faz KK.5 — Güvenlik bulgusu M-3: `dict[K,V]`nin hash tohumu artık
+  rastgeleleştirilmiş (hash-flooding'e karşı)** (bkz. nox-teknik-
+  spesifikasyon.md §3.70). `dict.zig`nin `str`-anahtar hash'i (`Wyhash`)
+  HER ZAMAN SABİT `seed=0` İLE çalışıyordu — `nox.http`nin `HttpRequest.
+  headers`ı TAM OLARAK `dict[str,str]` OLDUĞUNDAN, 8'den fazla başlık
+  gönderen bir saldırgan ÖNCEDEN bilinen sabit tohumla çakışan anahtarlar
+  üretip bir Nox HTTP sunucusunu O(1) ortalamadan O(n) en-kötü-duruma
+  düşürebiliyordu (klasik hash-flooding DoS'u). YENİ `hashSeed()`, HER
+  iş parçacığının kendi `threadlocal` (bir `Dict` HER ZAMAN TEK bir iş
+  parçacığına aittir) rastgele tohumunu `std.c.arc4random_buf` İLE BİR
+  KEZ üretip yeniden kullanır. Break→red→fix İLE doğrulandı + 2 yeni
+  unit test.
 
 ## [1.0.0]
 

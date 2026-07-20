@@ -11519,6 +11519,43 @@ tarafında `null` BEKLENİRKEN GERÇEK bir yanıt tutamacı GERİ GELDİ).
 `ReleaseFast`te de AYRICA doğrulandı (ÖNCEKİ `assert`in TAM OLARAK
 BURADA devre dışı KALDIĞI mod) — TÜM 6 test ORADA da geçti.
 
+### KK.5 (TAMAMLANDI) — M-3: `dict[K,V]`nin hash tohumu artık rastgeleleştirilmiş (hash-flooding'e karşı)
+
+**Önceki durum:** `runtime/collections/dict.zig`nin `StrOrIntContext.hash`i
+`std.hash.Wyhash`i HER ZAMAN SABİT `seed=0` İLE çağırıyordu.
+`SMALL_MAP_THRESHOLD` (8) AŞILDIĞINDA `str` anahtarlı bir dict doğrusal
+taramadan hash-tabanlı `index` yoluna GEÇİYOR — VE `nox.http`nin
+`HttpRequest.headers` alanı TAM OLARAK `dict[str,str]`. Bu SABİT/BİLİNEN
+tohum, Wyhash algoritmasını VE tohumu BİLEN bir saldırganın 8'den fazla
+başlık göndererek ÖNCEDEN çakışan anahtar kümeleri İNŞA ETMESİNE — bir
+Nox HTTP sunucusunun dict işlemlerini O(1) ortalamadan O(n) en-kötü-
+duruma düşürmesine (klasik hash-flooding/algoritmik-karmaşıklık DoS'u,
+Python/Rust'ın hashmap tohumunu SÜREÇ başına rastgeleleştirmesinin TAM
+OLARAK önlediği saldırı sınıfı) — OLANAK TANIYORDU.
+
+**Düzeltme:** `hashSeed()` YENİ bir yardımcı — `nox.random`nin `g_prng`si
+İLE AYNI "gerçek OS iş parçacıkları PAYLAŞMAZ" gerekçesiyle (bir `Dict`,
+`arc_owner_tid`nin ZATEN zorladığı gibi HER ZAMAN TEK bir iş parçacığına
+aittir) `threadlocal` bir tohumu, İLK dict-hash işleminde BİR KEZ üretip
+o iş parçacığının TÜM sonraki dict işlemleri İçin YENİDEN KULLANIR.
+`std.crypto.random` BU Zig sürümünde OLMADIĞINDAN, `nox.os`nin `setenv`
+deneyimindeki AYNI desenle (bkz. §3.69'un III.5'i), macOS'un libc'sinin
+ZATEN GÜVENLE bağladığı ham `std.c.arc4random_buf`ı DOĞRUDAN kullanılır.
+
+**Kapsam DIŞI (bilinçli):** entropi KALİTESİNİN (OS'un `arc4random_buf`
+uygulamasının KENDİSİ) doğruluğu bu düzeltmenin sorumluluğu DEĞİLDİR —
+yalnızca ÖNCEKİ sabit/bilinen tohumun YERİNE ÇALIŞMA-ZAMANINDA
+öngörülemez bir tohum konması hedeflenmiştir.
+
+2 yeni Zig unit testi (`hashSeed`in sabit `0` DÖNMEDİĞİ VE AYNI iş
+parçacığı İçinde TUTARLI/memoized OLDUĞU; rastgeleleştirilmiş tohumla
+`SMALL_MAP_THRESHOLD` ÜSTÜ bir dict'in HÂLÂ doğru arama yaptığı —
+yalnızca MEKANİZMA değişti, DOĞRULUK DEĞİŞMEDİ) + break→red→fix İLE
+doğrulandı.
+
+**Faz KK'nin orta-öncelikli bulguları (M-1/M-3) TAMAMLANDI.** Kalan
+orta bulgular (M-4 ilâ M-8) İçin ayrı alt-fazlar DEVAM EDECEK.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
