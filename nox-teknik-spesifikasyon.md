@@ -11764,11 +11764,18 @@ VAR OLAN bir Linux CI regresyonu keşfedildi** (bkz. iki ayrı CI
 `runtime/stdlib_shims/fs.zig`nin (Faz III.3) `std.c.fstat` KULLANIMI bu
 YÜZDEN Linux'ta (x86-64 VE aarch64) `noxrt.o`nun HİÇ DERLENEMEMESİNE yol
 açıyor; macOS'ta ETKİLENMİYOR (gerçek bir INODE64 sembolü VAR).
-**BİLİNÇLİ olarak BU FAZDA düzeltilmedi** — Windows kapsamının DIŞINDA,
-kendi kök-neden araştırmasını (Zig'in KENDİ `std.c.zig`sindeki bu
-"boş" tanımın bir üst-akış hatası mı, kasıtlı bir sınırlama mı olduğunun
-netleştirilmesi) VE Linux CI'de GERÇEK doğrulamayı gerektiren AYRI bir
-iş — kullanıcıya AYRICA raporlandı.
+**DÜZELTİLDİ** (kullanıcı talebiyle, ayrı bir takip adımı olarak):
+AYNI dosyada, AYNI switch'in `.linux` dalı ÖZEL OLARAK ELE ALINMADIĞINDAN
+`std.c.fstatat` GERÇEK bir libc sembolüne bağlı KALDI — YENİ bir
+`fstatCompat` sarmalayıcısı, Linux'ta `fstatat(fd, "", &st,
+AT.EMPTY_PATH)`i (bir fd'yi stat'lamanın standart Linux deyimi, `fstat`
+İLE TAMAMEN eşdeğer) kullanır, DİĞER platformlarda (`std.c.fstat` zaten
+ÇALIŞTIĞINDAN) dokunulmadan `std.c.fstat`i çağırır. `runtime/
+stdlib_shims/fs.zig`nin İKİ çağrı-yeri de bu sarmalayıcıya geçirildi.
+Yerel olarak (macOS, ETKİLENMEYEN dal) Debug/ReleaseSafe/ReleaseFast'te
+doğrulandı; Linux'taki GERÇEK doğrulama bir sonraki CI çalıştırmasında
+(bu ortamda GERÇEK bir Linux makinesi/cross-assembler OLMADIĞINDAN,
+Windows LL.1 İLE AYNI "push + gerçek CI'yi izle" yöntemiyle) yapıldı.
 
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 

@@ -23,10 +23,30 @@
 //! VERİR — SIFIR ek senkronizasyon MALİYETİYLE ÖNCÜLÜ YENİDEN GEÇERLİ KILAR.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
 const http_client = @import("http_client.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
+
+/// Faz LL.1 takibi (bkz. nox-teknik-spesifikasyon.md §3.71 — GERÇEK bir
+/// `windows-latest` CI çalıştırması SIRASINDA, Windows'la İLGİSİZ olarak
+/// keşfedilen bir Linux regresyonu): kullanılan Zig 0.16.0 derlemesinde
+/// `std.c.fstat`, `.linux => {}` İLE (GERÇEK bir libc sembolüne
+/// BAĞLANMADAN, `void` olarak) tanımlı — bu YÜZDEN Linux'ta `noxrt.o`nun
+/// HİÇ DERLENEMEMESİNE yol açıyordu. `std.c.fstatat` İSE (aynı dosyada,
+/// AYNI switch'in `.linux` dalı ÖZEL OLARAK ele ALINMADIĞINDAN) GERÇEK bir
+/// libc sembolüne bağlı KALDI — `AT.EMPTY_PATH` bayrağıyla BOŞ bir göreli
+/// yolla çağrılması, bir fd'yi stat'lamanın standart Linux deyimidir
+/// (`fstat`in KENDİSİYLE TAMAMEN eşdeğer). macOS'ta (VE `AT.EMPTY_PATH`
+/// TANIMLAMAYAN diğer platformlarda) İSE `std.c.fstat` zaten ÇALIŞIYOR,
+/// bu yüzden ORADA DOKUNULMADAN kullanılmaya devam eder.
+fn fstatCompat(fd: c_int, st: *std.c.Stat) c_int {
+    if (builtin.os.tag == .linux) {
+        return std.c.fstatat(fd, "", st, std.os.linux.AT.EMPTY_PATH);
+    }
+    return std.c.fstat(fd, st);
+}
 
 threadlocal var g_last_ok: bool = true;
 
@@ -59,7 +79,7 @@ export fn nox_fs_read_to_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callc
     defer _ = std.c.close(fd);
 
     var st: std.c.Stat = undefined;
-    if (std.c.fstat(fd, &st) != 0) {
+    if (fstatCompat(fd, &st) != 0) {
         g_last_ok = false;
         return dupeToNoxStr(rt, "");
     }
@@ -197,7 +217,7 @@ export fn nox_fs_stat_raw(path: ?[*:0]const u8) callconv(.c) void {
     defer _ = std.c.close(fd);
 
     var st: std.c.Stat = undefined;
-    if (std.c.fstat(fd, &st) != 0) {
+    if (fstatCompat(fd, &st) != 0) {
         g_last_ok = false;
         return;
     }

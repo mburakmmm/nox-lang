@@ -1110,8 +1110,17 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   aynı hatayla doğrulandı): bu Zig 0.16.0 derlemesinde `std.c.fstat`
   Linux'ta `void` olarak tanımlı, `runtime/stdlib_shims/fs.zig`nin
   (Faz III.3) kullanımı `noxrt.o`nun Linux'ta (x86-64 VE aarch64) HİÇ
-  derlenememesine yol açıyor — BU FAZIN kapsamı DIŞINDA BİLİNÇLİ
-  olarak düzeltilmedi, kullanıcıya AYRICA raporlandı.
+  derlenememesine yol açıyor — kullanıcıya raporlanıp ayrı bir takip
+  adımında DÜZELTİLDİ.
+- **Linux CI regresyonu düzeltmesi: `fs.zig`ye `fstatCompat`** (bkz.
+  nox-teknik-spesifikasyon.md §3.71). `std.c.fstatat`, AYNI switch'in
+  `.linux` dalı ÖZEL OLARAK ele ALINMADIĞINDAN GERÇEK bir libc sembolüne
+  bağlı KALDI — YENİ `fstatCompat`, Linux'ta `fstatat(fd, "", &st,
+  AT.EMPTY_PATH)`i (bir fd'yi stat'lamanın standart Linux deyimi)
+  kullanır, diğer platformlarda `std.c.fstat`i (zaten ÇALIŞTIĞINDAN)
+  dokunulmadan çağırır. Yerel olarak (macOS, etkilenmeyen dal)
+  Debug/ReleaseSafe/ReleaseFast'te doğrulandı; Linux'taki GERÇEK
+  doğrulama bir sonraki CI çalıştırmasında yapıldı.
 
 ## [1.0.0]
 
