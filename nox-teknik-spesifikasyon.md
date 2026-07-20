@@ -11725,6 +11725,51 @@ HER TÜRLÜ Nox PROGRAMI HÂLÂ Windows'ta ÇALIŞMAZ. README'nin "Windows
 henüz desteklenmiyor" notu BU YÜZDEN BU FAZDA DEĞİŞTİRİLMEDİ — LL.7/LL.8
 tamamlanana kadar doğru kalmaya devam ediyor.
 
+**GERÇEK `windows-latest` CI çalıştırmasıyla BULUNAN VE düzeltilen 3
+gerçek hata** (kanıt: bu ortamda Windows/Wine makinesi olmadığından bu
+üçü SADECE gerçek CI ile bulunabilirdi, yerel çapraz-derleme yeterli
+DEĞİLDİ):
+1. `compiler/main.zig`nin argüman ayrıştırması `Args.Iterator.iterate()`
+   kullanıyordu — Zig std'de bu Windows'ta `@compileError` veriyor
+   ("use initAllocator instead"). `iterateAllocator`e geçirildi;
+   macOS/Linux'ta (Zig std'nin KENDİ `Posix` dalı) DAVRANIŞ BİREBİR AYNI
+   kaldığı doğrulandı.
+2. `.gitattributes` HİÇ YOKTU — `windows-latest`nin `core.autocrlf=true`
+   VARSAYILANI, checkout SIRASINDA HER `.nox`/`.zig` dosyasını SESSİZCE
+   CRLF'ye çeviriyordu; Nox'un lexer'ı (`compiler/lexer/lexer.zig`) `\r`
+   baytını HİÇ TANIMADIĞINDAN, `stdlib/nox/core.nox` (HER programa
+   otomatik birleştirilir) DAHİL her dosya `UnexpectedCharacter` İLE
+   patlıyordu. Kök dizine `* text=auto eol=lf` İÇEREN bir
+   `.gitattributes` eklenerek düzeltildi — derleyiciye/lexer'a HİÇ
+   dokunulmadı, saf bir repo-checkout tutarlılığı düzeltmesi.
+   **Bilinçli olarak AÇIK bırakılan takip sorusu:** bu, checkout
+   SIRASINDAKİ CRLF'yi önler, ama GERÇEK bir Windows kullanıcısının
+   KENDİ editörüyle (Not Defteri/VS Code Windows varsayılanı) native
+   CRLF İLE yazdığı bir `.nox` dosyası HÂLÂ aynı `UnexpectedCharacter`a
+   çarpar — lexer'ın KENDİSİNİN `\r`ye tolerans göstermesi (`\r\n`yi
+   `\n` gibi ele alması) AYRI, kendi test turunu gerektiren bir iş
+   (LL.4'ün stdlib-shim portu İLE AYNI pasoda mı ele alınacağı, yoksa
+   AYRI bir "LL.1b" mi olacağı HENÜZ kararlaştırılmadı).
+3. Windows CI'sinin PowerShell duman testinde `` `n `` kaçış dizisi
+   beklenmedik davrandı (Set-Content'in İÇ kodlama/kaçış etkileşimi) —
+   tek satırlık, satır sonu GEREKTİRMEYEN bir `.nox` içeriğine
+   (`"print(1)"`, `-NoNewline`) geçilerek belirsizlik TAMAMEN ortadan
+   kaldırıldı.
+
+**Ayrıca, BU fazın araştırması SIRASINDA, Windows'la İLGİSİZ, ÖNCEDEN
+VAR OLAN bir Linux CI regresyonu keşfedildi** (bkz. iki ayrı CI
+çalıştırmasında BİREBİR aynı hatayla doğrulandı, benim değişikliklerimle
+İLGİSİZ): bu Zig 0.16.0 derlemesinde `std.c.fstat`, `.linux => {}` İLE
+(gerçek bir libc sembolüne BAĞLANMADAN, `void` olarak) tanımlı —
+`runtime/stdlib_shims/fs.zig`nin (Faz III.3) `std.c.fstat` KULLANIMI bu
+YÜZDEN Linux'ta (x86-64 VE aarch64) `noxrt.o`nun HİÇ DERLENEMEMESİNE yol
+açıyor; macOS'ta ETKİLENMİYOR (gerçek bir INODE64 sembolü VAR).
+**BİLİNÇLİ olarak BU FAZDA düzeltilmedi** — Windows kapsamının DIŞINDA,
+kendi kök-neden araştırmasını (Zig'in KENDİ `std.c.zig`sindeki bu
+"boş" tanımın bir üst-akış hatası mı, kasıtlı bir sınırlama mı olduğunun
+netleştirilmesi) VE Linux CI'de GERÇEK doğrulamayı gerektiren AYRI bir
+iş — kullanıcıya AYRICA raporlandı.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

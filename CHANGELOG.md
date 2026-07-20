@@ -1094,7 +1094,24 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   ön-ucunun native Windows'ta çalıştığını kanıtlar; `noxc build`/`run`
   VE HER Nox PROGRAMI HÂLÂ Windows'ta çalışmıyor (runtime portu LL.2-
   LL.7'nin kapsamı, henüz yapılmadı — README'nin "Windows henüz
-  desteklenmiyor" notu BU YÜZDEN DEĞİŞTİRİLMEDİ).
+  desteklenmiyor" notu BU YÜZDEN DEĞİŞTİRİLMEDİ). GERÇEK
+  `windows-latest` CI çalıştırmalarıyla 3 gerçek hata bulunup düzeltildi:
+  `main.zig`nin argüman ayrıştırması (`iterate()` → `iterateAllocator`,
+  macOS/Linux'ta davranış AYNI kaldı), eksik bir `.gitattributes`
+  (`core.autocrlf=true` VARSAYILANI `.nox`/`.zig` dosyalarını checkout'ta
+  SESSİZCE CRLF'ye çeviriyordu, lexer `\r`yi TANIMADIĞINDAN `core.nox`
+  DAHİL her dosya patlıyordu — `* text=auto eol=lf` eklendi), VE CI'nin
+  KENDİ PowerShell duman testindeki bir kaçış-dizisi belirsizliği.
+  **Bilinçli AÇIK bırakıldı:** lexer'ın KENDİSİNİN `\r\n`ye tolerans
+  göstermesi (gerçek Windows kullanıcılarının KENDİ editörleriyle
+  yazdığı dosyalar İçin) — bu, checkout-seviyesi düzeltmenin ÇÖZMEDİĞİ,
+  ayrı bir takip sorusu. **Ayrıca, Windows'la İLGİSİZ, ÖNCEDEN VAR OLAN
+  bir Linux CI regresyonu keşfedildi** (iki ayrı çalıştırmada BİREBİR
+  aynı hatayla doğrulandı): bu Zig 0.16.0 derlemesinde `std.c.fstat`
+  Linux'ta `void` olarak tanımlı, `runtime/stdlib_shims/fs.zig`nin
+  (Faz III.3) kullanımı `noxrt.o`nun Linux'ta (x86-64 VE aarch64) HİÇ
+  derlenememesine yol açıyor — BU FAZIN kapsamı DIŞINDA BİLİNÇLİ
+  olarak düzeltilmedi, kullanıcıya AYRICA raporlandı.
 
 ## [1.0.0]
 
