@@ -11597,6 +11597,43 @@ deterministik OLMAMA + `n=0` kenar durumu) + break→red→fix İLE
 doğrulandı (ÜÇÜ de AYRI AYRI sabotajlanıp doğru şekilde KIRMIZI olduğu
 GÖRÜLDÜ) + 1 yeni golden test.
 
+### KK.7 (TAMAMLANDI) — M-8: Paket yöneticisinin repo URL şema doğrulaması artık AÇIK bir izin listesi kullanıyor
+
+**Önceki durum:** `compiler/pkg/fetch.zig`nin `resolveCloneUrl`ı, `"://"`
+alt dizesini İÇEREN HERHANGİ bir `repo` değerini (yalnızca ÖNEK olarak
+DEĞİL, `std.mem.indexOf` İLE — dizenin HERHANGİ bir YERİNDE) "zaten
+şemalı bir URL" sayıp `git clone`a OLDUĞU GİBİ geçiriyordu. `nox.json`nin
+`requires[].repo` alanı (paylaşılan/üçüncü-taraf bir manifest üzerinden)
+saldırgan etkisindeyse, ör. `"ext::sh -c 'kötücül komut' #://"` gibi bir
+değer "://" İÇERDİĞİNDEN (sondaki YORUM-benzeri son ek İÇİNDE)
+DOKUNULMADAN `git clone`a geçirilirdi — git'in `ext::` transport
+yardımcısı (ETKİNLEŞTİRİLMİŞSE) KEYFİ komut YÜRÜTEBİLİRDİ. Git'in KENDİ
+`protocol.ext.allow` varsayılanı bunu BUGÜN azaltıyor (Nox'un KENDİ
+güvencesi DEĞİL, dış/güvenilemez bir şans).
+
+**Düzeltme:** `resolveCloneUrl`, `"://"` İÇEREN bir `repo`yu ARTIK
+yalnızca AÇIK bir İZİN LİSTESİNDEKİ (`https://`/`http://`/`git://`/
+`ssh://`/`file://` — SONUNCUSU, testlerin/yerel geliştirmenin YEREL
+fixture repo'ları İÇİN BİLİNÇLİ olarak KORUNDU) bir ÖNEKLE (`startsWith`,
+`indexOf` DEĞİL) BAŞLIYORSA kabul ediyor — aksi halde `error.
+UnsupportedRepoScheme` döner, `git`e HİÇ ULAŞMADAN. `ext::` DAHİL başka
+HİÇBİR transport artık KABUL EDİLMEZ.
+
+2 yeni Zig unit testi (`tests/unit/fetch_test.zig` — gizlenmiş bir
+`ext::` şemasının REDDEDİLDİĞİ VE (bir işaretçi dosyanın GERÇEKTEN
+OLUŞMADIĞI doğrulanarak) `git`in HİÇ ÇALIŞTIRILMADIĞI; izin listesindeki
+BEŞ şemanın (`file://` DAHİL) DOKUNULMADAN kabul edildiği VE GERÇEKTEN
+getirebilidiği) + break→red→fix İLE doğrulandı (izin listesi kaldırılınca
+sabotajlı `ext::` değeri `git clone`a ULAŞTI — `error.GitCommandFailed`
+İLE, yalnızca git'in KENDİ varsayılan reddiyle BAŞARISIZ oldu, TAM OLARAK
+düzeltmenin ORTADAN KALDIRDIĞI kırılgan güvenlik ağı).
+
+**Faz KK (H-1/H-2/H-3/M-1/M-3/M-4/M-5/M-6/M-8) TAMAMLANDI** — güvenlik
+raporunun ÜÇ yüksek VE ALTI orta öncelikli bulgusunun TÜMÜ düzeltildi.
+Kalan M-2 (gerçek bir `bytes` tipi) BİLİNÇLİ olarak UZUN VADEYE
+bırakıldı — Faz III planının kapsam-dışı 5 maddesiyle AYNI büyüklükte,
+kendi tasarım turunu gerektiren bir iş (bkz. §3.69'un giriş notu).
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

@@ -84,11 +84,37 @@ pub fn fetchToCache(a: Allocator, io: Io, nox_home: []const u8, repo: []const u8
     return .{ .resolved_sha = resolved_sha, .cache_dir = cache_dir };
 }
 
-/// `repo` zaten bir şema (`"://"`) İÇERİYORSA ya da mutlak bir yerel yol
-/// İSE DOKUNULMADAN döner (testlerin yerel fixture repo'ları İÇİN);
-/// aksi halde (ör. `"github.com/user/repo"`) `https://` öneki eklenir.
+/// Güvenlik bulgusu M-8 (bkz. güvenlik raporu, 20 Temmuz 2026) — bkz.
+/// `resolveCloneUrl`nin ARTIK güncellenmiş belge notu.
+const allowed_repo_schemes = [_][]const u8{ "https://", "http://", "git://", "ssh://", "file://" };
+
+/// `repo` zaten BİR ÖNEK olarak (bkz. `allowed_repo_schemes`) bilinen/
+/// güvenli bir şemayla BAŞLIYORSA DOKUNULMADAN döner (testlerin yerel
+/// `file://` fixture repo'ları DAHİL); mutlak bir yerel yol İSE de
+/// DOKUNULMADAN döner; aksi halde (ör. `"github.com/user/repo"`)
+/// `https://` öneki eklenir.
+///
+/// **Güvenlik bulgusu M-8 (bkz. güvenlik raporu) — DÜZELTİLDİ:** ÖNCEKİ
+/// sürüm `"://"` alt dizesini İÇEREN HERHANGİ bir `repo` değerini (yalnızca
+/// `startsWith` DEĞİL, `indexOf` İLE — dizenin HERHANGİ bir YERİNDE)
+/// "zaten şemalı" sayıp `git clone`a OLDUĞU GİBİ geçiriyordu. Bir manifest
+/// alanı (`nox.json`nin `requires[].repo`si) saldırgan etkisindeyse, ör.
+/// `"ext::sh -c 'kötücül komut' #://"` gibi bir değer "://" İÇERDİĞİNDEN
+/// (sondaki YORUM-benzeri son ek İÇİNDE) DOKUNULMADAN `git clone`a
+/// geçirilir, git'in `ext::` transport yardımcısı (ETKİNLEŞTİRİLMİŞSE —
+/// bugün varsayılan DEĞİL ama `protocol.ext.allow` İLE değişebilir/eski
+/// git sürümlerinde farklı olabilir) KEYFİ komut YÜRÜTEBİLİRDİ. Şimdi
+/// yalnızca AÇIK bir İZİN LİSTESİNDEKİ (`https`/`http`/`git`/`ssh`/`file`)
+/// şema ÖNEKLERİ kabul edilir — `ext::` DAHİL başka HİÇBİR transport
+/// KABUL EDİLMEZ, git'in KENDİ (dış, güvenilemez) varsayılanlarına
+/// GÜVENİLMEZ.
 fn resolveCloneUrl(a: Allocator, repo: []const u8) ![]const u8 {
-    if (std.mem.indexOf(u8, repo, "://") != null) return a.dupe(u8, repo);
+    if (std.mem.indexOf(u8, repo, "://") != null) {
+        for (allowed_repo_schemes) |scheme| {
+            if (std.mem.startsWith(u8, repo, scheme)) return a.dupe(u8, repo);
+        }
+        return error.UnsupportedRepoScheme;
+    }
     if (std.fs.path.isAbsolute(repo)) return a.dupe(u8, repo);
     return std.fmt.allocPrint(a, "https://{s}", .{repo});
 }

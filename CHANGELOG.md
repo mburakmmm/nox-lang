@@ -1061,6 +1061,19 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   olmayan PRNG'sinin YERİNE). `sha1`in belge notuna SHAttered çakışma
   zayıflığı uyarısı eklendi. Break→red→fix İLE doğrulandı + 5 yeni unit
   test + 1 yeni golden test.
+- **Faz KK.7 — Güvenlik bulgusu M-8: paket yöneticisinin repo URL şema
+  doğrulaması artık AÇIK bir izin listesi kullanıyor** (bkz. nox-teknik-
+  spesifikasyon.md §3.70). `resolveCloneUrl`, `"://"` İÇEREN HERHANGİ bir
+  `repo` değerini (dizenin HERHANGİ bir YERİNDE, yalnızca ÖNEK olarak
+  DEĞİL) "zaten şemalı" sayıp `git clone`a OLDUĞU GİBİ geçiriyordu —
+  saldırgan etkisindeki bir manifest, gizlenmiş bir `ext::` transportuyla
+  KEYFİ komut yürütmeyi DENEYEBİLİRDİ (git'in KENDİ varsayılan reddi
+  DIŞINDA hiçbir Nox-tarafı korumadan). Artık yalnızca `https`/`http`/
+  `git`/`ssh`/`file` ÖNEKLERİ (`startsWith`) kabul ediliyor, aksi halde
+  `error.UnsupportedRepoScheme`. **Faz KK'nin TÜM yüksek+orta öncelikli
+  bulguları (H-1/H-2/H-3/M-1/M-3/M-4/M-5/M-6/M-8) TAMAMLANDI** — yalnızca
+  M-2 (gerçek bir `bytes` tipi) BİLİNÇLİ olarak UZUN VADEYE bırakıldı.
+  Break→red→fix İLE doğrulandı + 2 yeni unit test.
 
 ## [1.0.0]
 

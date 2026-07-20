@@ -74,6 +74,61 @@ test "fetchToCache: yerel fixture repo getirilir, resolved sha bagimsiz git rev-
     try std.Io.Dir.cwd().access(io, try std.fmt.allocPrint(a, "{s}/lib.nox", .{result.cache_dir}), .{});
 }
 
+// Güvenlik bulgusu M-8 (bkz. güvenlik raporu, 20 Temmuz 2026) — DÜZELTİLDİ:
+// `resolveCloneUrl` ÖNCEDEN `"://"` alt dizesini İÇEREN HERHANGİ bir
+// `repo` değerini "zaten şemalı" sayıp `git clone`a OLDUĞU GİBİ
+// geçiriyordu — `ext::` gibi bir transport'un İÇİNE, sondaki "://" bir
+// yorum/son ek OLARAK GİZLENEBİLİRDİ. Artık yalnızca AÇIK bir izin
+// listesindeki (`https`/`http`/`git`/`ssh`/`file`) şema ÖNEKLERİ kabul
+// edilir.
+test "fetchToCache: izin listesi DIŞINDAKİ bir şema (ör. gizlenmiş 'ext::') reddedilir, git ÇAĞRILMAZ" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const home_path = try absPath(io, home.dir, &home_buf);
+
+    const malicious_repo = "ext::sh -c 'echo pwned > /tmp/nox_security_test_pwned' #://";
+    try std.testing.expectError(
+        error.UnsupportedRepoScheme,
+        nox.fetch.fetchToCache(a, io, home_path, malicious_repo, "main"),
+    );
+
+    // İşaretçi dosyanın GERÇEKTEN oluşmadığını doğrula — `git`in `ext::`
+    // yardımcısına ULAŞMADIĞININ (ret sadece yüzeysel bir hata kodu
+    // DEĞİL, GERÇEKTEN hiç çalıştırılmadığının) somut kanıtı.
+    try std.testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(io, "/tmp/nox_security_test_pwned", .{}));
+}
+
+test "fetchToCache: izin verilen şemalar (https/http/git/ssh/file) DOKUNULMADAN kabul edilir" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var src = std.testing.tmpDir(.{});
+    defer src.cleanup();
+    try src.dir.writeFile(io, .{ .sub_path = "lib.nox", .data = "print(\"merhaba paket\")\n" });
+    var src_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const src_path = try absPath(io, src.dir, &src_buf);
+    try initFixtureRepo(io, std.testing.allocator, src_path);
+
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const home_path = try absPath(io, home.dir, &home_buf);
+
+    // `file://` şemasıyla AÇIKÇA (yalnızca mutlak yol İLE DEĞİL) da
+    // GERÇEKTEN getirebildiğini doğrula.
+    const file_url = try std.fmt.allocPrint(a, "file://{s}", .{src_path});
+    const result = try nox.fetch.fetchToCache(a, io, home_path, file_url, "main");
+    try std.testing.expect(result.resolved_sha.len > 0);
+}
+
 test "fetchToCache: ayni repo+ref icin iki kez cagirmak ayni sonucu uretir (idempotent)" {
     const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
