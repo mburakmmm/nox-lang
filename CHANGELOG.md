@@ -1013,6 +1013,19 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   kütüphane yükle" ilkeli oluşturuyordu. Checker artık üçünü de `.string_
   lit` (derleme-zamanı sabiti) OLMAYA zorluyor. Break→red→fix İLE
   doğrulandı + 1 yeni unit test.
+- **Faz KK.3 — Güvenlik bulgusu H-3: ayrıştırıcıya özyineleme-derinliği
+  sınırı eklendi** (bkz. nox-teknik-spesifikasyon.md §3.70). Özyinelemeli-
+  iniş ayrıştırıcının HİÇBİR derinlik sınırı YOKTU — 50.000 iç içe
+  parantez İÇEREN bir `.nox` dosyası `noxc`nin KENDİSİNİ yığın taşmasıyla
+  ÇÖKERTİYORDU (doğrudan doğrulandı). `Parser`e paylaşılan bir `depth`
+  sayacı + `enterRecursion`/`exitRecursion` eklendi, ÜÇ AYRI özyineleme
+  giriş noktasında (`parseExpr`, kendi-kendine-özyineleyen `parseNot`/
+  `parseUnary`) çağrılır — `MAX_EXPR_DEPTH=500` aşılırsa YENİ `ParseError.
+  RecursionLimitExceeded` döner. Break→red→fix İLE doğrulandı (dört
+  alt-durumlu 1 yeni unit test — makul derinlik SORUNSUZ, parantez/`not`/
+  eksi zincirlerinin ÜÇÜ de yakalanıyor).
+- **Faz KK (H-1/H-2/H-3) TAMAMLANDI** — güvenlik raporunun ÜÇ yüksek
+  öncelikli bulgusunun TÜMÜ düzeltildi.
 
 ## [1.0.0]
 

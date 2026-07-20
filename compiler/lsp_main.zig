@@ -307,6 +307,7 @@ fn parseErrorMessage(e: parser.ParseError) []const u8 {
         error.UnexpectedToken => "sozdizimi hatasi: beklenmeyen token",
         error.InvalidNumberLiteral => "sozdizimi hatasi: gecersiz sayi literali",
         error.OutOfMemory => "noxlsp: bellek yetersiz",
+        error.RecursionLimitExceeded => "sozdizimi hatasi: ifade cok derin ic ice (guvenlik siniri asildi)",
     };
 }
 

@@ -137,3 +137,58 @@ test "Faz U.4.1: parametresiz () -> None fonksiyon tip ifadesi ayrıştırılır
     try std.testing.expectEqual(@as(usize, 0), cb_type.func_type.params.len);
     try std.testing.expectEqualStrings("None", cb_type.func_type.return_type.simple);
 }
+
+// Güvenlik bulgusu H-3 (bkz. güvenlik raporu, 20 Temmuz 2026) — DÜZELTİLDİ:
+// özyinelemeli-iniş ayrıştırıcının HİÇBİR derinlik sınırı YOKTU, bu YÜZDEN
+// aşırı iç içe bir ifade `noxc`nin KENDİSİNİ yığın taşmasıyla ÇÖKERTİYORDU
+// (50.000 iç içe parantezle DOĞRUDAN doğrulandı). Üç ayrı özyineleme
+// vektörünün (parantez/`not`/tekli eksi) HEPSİNİN AYNI paylaşılan sayaçla
+// yakalandığını doğrular — makul (500'ün ALTINDA) derinliklerin HÂLÂ
+// SORUNSUZ ayrıştığını da (yanlış-pozitif OLMADIĞINI) kanıtlar.
+test "güvenlik H-3: aşırı iç içe ifadeler noxc'un kendisini çökertmek yerine RecursionLimitExceeded döner" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Makul derinlik (500'ün ALTINDA) — HÂLÂ TEMİZ ayrıştırılmalı.
+    {
+        var source: std.ArrayListUnmanaged(u8) = .empty;
+        try source.appendSlice(allocator, "x: int = ");
+        try source.appendNTimes(allocator, '(', 50);
+        try source.append(allocator, '1');
+        try source.appendNTimes(allocator, ')', 50);
+        try source.append(allocator, '\n');
+        _ = try parse(allocator, source.items);
+    }
+
+    // Parantez iç içeliği (50.000 seviye — GERÇEK repro'nun AYNISI).
+    {
+        var source: std.ArrayListUnmanaged(u8) = .empty;
+        try source.appendSlice(allocator, "x: int = ");
+        try source.appendNTimes(allocator, '(', 50_000);
+        try source.append(allocator, '1');
+        try source.appendNTimes(allocator, ')', 50_000);
+        try source.append(allocator, '\n');
+        try std.testing.expectError(error.RecursionLimitExceeded, parse(allocator, source.items));
+    }
+
+    // `not` zinciri — AYRI bir özyineleme vektörü (parseNot kendi kendini
+    // çağırır, parseExpr'in YENİDEN girişinden GEÇMEZ).
+    {
+        var source: std.ArrayListUnmanaged(u8) = .empty;
+        try source.appendSlice(allocator, "x: bool = ");
+        var i: usize = 0;
+        while (i < 5_000) : (i += 1) try source.appendSlice(allocator, "not ");
+        try source.appendSlice(allocator, "True\n");
+        try std.testing.expectError(error.RecursionLimitExceeded, parse(allocator, source.items));
+    }
+
+    // Tekli eksi zinciri — ÜÇÜNCÜ AYRI özyineleme vektörü (parseUnary).
+    {
+        var source: std.ArrayListUnmanaged(u8) = .empty;
+        try source.appendSlice(allocator, "x: int = ");
+        try source.appendNTimes(allocator, '-', 5_000);
+        try source.appendSlice(allocator, "1\n");
+        try std.testing.expectError(error.RecursionLimitExceeded, parse(allocator, source.items));
+    }
+}

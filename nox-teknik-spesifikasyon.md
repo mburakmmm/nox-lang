@@ -11432,6 +11432,48 @@ sınıfı ORADA YOK.
 GEREKTİRMEZ, standart takımda HER ZAMAN çalışır) + break→red→fix İLE
 doğrulandı.
 
+### KK.3 (TAMAMLANDI) — H-3: Ayrıştırıcıya özyineleme-derinliği sınırı eklendi
+
+**Önceki durum (GERÇEK, kendim doğruladığım bir derleyici-DoS'u):**
+Özyinelemeli-iniş (recursive-descent) ayrıştırıcının HİÇBİR derinlik
+sınırı YOKTU — 50.000 iç içe parantez İÇEREN tek satırlık bir `.nox`
+dosyası, `noxc`nin KENDİSİNİ (derlediği programı DEĞİL) yığın taşmasıyla
+ÇÖKERTİYORDU (segfault, exit 134). Nox kaynağı güvenilmeyen bir yerden
+derleniyorsa (çevrimiçi oyun alanı, CI/derleme hizmeti) trivial bir DoS
+vektörüydü. Projenin kendi kapsam-güdümlü fuzz altyapısı (`tests/fuzz/`)
+BUNU YAKALAMIYORDU — varsayılan korpus 2048 bayt İLE SINIRLI OLDUĞUNDAN
+bu derinliğe hiç ULAŞAMIYORDU.
+
+**Düzeltme:** `Parser`e (bkz. `compiler/parser/parser.zig`) CANLI (şu an
+yığında olan) özyineleme derinliğini SAYAN paylaşılan bir `depth` alanı
++ `enterRecursion`/`exitRecursion` yardımcı çifti eklendi. Sayaç, ÜÇ AYRI
+özyineleme GİRİŞ noktasının (`parseExpr` — parantezli ifadeler/liste/
+sözlük/çağrı argümanları İçin ORTAK giriş; `parseNot` — KENDİ kendine
+özyineler, `not not not ...`; `parseUnary` — KENDİ kendine özyineler,
+tekli eksi/`await`/`spawn` zincirleri) HEPSİNDE çağrılır — `parseNot`/
+`parseUnary`, `parseExpr`in YENİDEN girişinden GEÇMEDİĞİNDEN (kendi
+kendilerine özyinelerler), BUNLARIN AYRI birer koruma GEREKTİRDİĞİ
+DOĞRULANDI (yalnızca `parseExpr`e bir koruma koymak BU İKİSİNİ
+YAKALAMAZDI — üç ayrı `not`/eksi zinciri repro'suyla KANITLANDI).
+`MAX_EXPR_DEPTH` (500), GERÇEKÇİ HERHANGİ bir Nox programının asla
+yaklaşmayacağı ama macOS'un varsayılan 8MB yığınında BOL PAY bırakan bir
+sınırdır. Aşıldığında YENİ `ParseError.RecursionLimitExceeded` döner —
+`compiler/lsp_main.zig`nin `parseErrorMessage`i (ÖNCEDEN `ParseError`
+üzerinde AYRINTILI bir `switch` yaptığından, YENİ hata VARYANTI onu
+DERLENEMEZ hâle getirdi, bu BEKLENEN VE düzeltilen bir yan etkiydi) de
+GÜNCELLENDİ.
+
+1 yeni Zig unit testi (`tests/unit/parser_test.zig` — DÖRT alt-durum:
+makul derinlik 50, GERÇEK repro'nun AYNISI 50.000 parantez, 5.000 `not`
+zinciri, 5.000 tekli-eksi zinciri; İLK durum SORUNSUZ ayrıştığını, DİĞER
+ÜÇÜ `RecursionLimitExceeded` döndüğünü doğrular) + break→red→fix İLE
+doğrulandı (`MAX_EXPR_DEPTH` pratikte devre dışı bırakılınca AYNI sınıf
+çökme — bu SEFER `parseNot` zincirinden — GERİ GELDİ).
+
+**Faz KK (H-1/H-2/H-3) TAMAMLANDI** — güvenlik raporunun ÜÇ yüksek
+öncelikli bulgusunun TÜMÜ düzeltildi. Orta öncelikli bulgular İçin
+ayrı alt-fazlar (KK.4+) DEVAM EDECEK.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

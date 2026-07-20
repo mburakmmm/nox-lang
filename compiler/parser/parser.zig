@@ -12,6 +12,7 @@ pub const ParseError = error{
     UnexpectedToken,
     InvalidNumberLiteral,
     OutOfMemory,
+    RecursionLimitExceeded,
 };
 
 /// `İsim[TipArgs](args)` sözdizimi yalnızca bu AYRILMIŞ, yerleşik generic
@@ -29,9 +30,40 @@ pub const Parser = struct {
     allocator: std.mem.Allocator,
     tokens: []const Token,
     pos: usize,
+    /// Güvenlik bulgusu H-3 (bkz. güvenlik raporu) — canlı özyineleme
+    /// derinliği (bkz. `enterRecursion`in belge notu). `init`in anonim
+    /// struct literali BUNU BELİRTMEZ, alan varsayılanı (`= 0`) OTOMATİK
+    /// doldurur.
+    depth: usize = 0,
 
     pub fn init(allocator: std.mem.Allocator, tokens: []const Token) Parser {
         return .{ .allocator = allocator, .tokens = tokens, .pos = 0 };
+    }
+
+    /// Güvenlik bulgusu H-3 (bkz. güvenlik raporu) — DÜZELTİLDİ: özyinelemeli-
+    /// iniş (recursive-descent) ayrıştırıcının HİÇBİR derinlik sınırı YOKTU,
+    /// bu YÜZDEN aşırı iç içe bir ifade (ör. 50.000 iç içe parantez, KENDİM
+    /// doğruladım) `noxc`nin KENDİSİNİ (derlediği programı DEĞİL) yığın
+    /// taşmasıyla ÇÖKERTİYORDU — Nox kaynağı güvenilmeyen bir yerden
+    /// derleniyorsa (çevrimiçi oyun alanı, CI) trivial bir DoS vektörü.
+    /// `parseExpr`/`parseNot`/`parseUnary`nin HER İKİSİ de KENDİ (ya da
+    /// birbirlerinin) İÇİNE özyineleyen AYRI giriş noktaları OLDUĞUNDAN
+    /// (`(...)`, `not not ...`, `- - ...`, `await await ...`, `spawn spawn
+    /// ...`), TEK bir PAYLAŞILAN sayaç bunların ÜÇÜNÜN de GİRİŞİNDE
+    /// çağrılır — sayaç yalnızca CANLI (şu an yığında olan) derinliği
+    /// ölçer, SIRALI (kardeş) çağrılar arasında SIFIRLANIR (`defer` İLE).
+    /// `MAX_EXPR_DEPTH` (500), GERÇEKÇİ HERHANGİ bir Nox programının asla
+    /// yaklaşmayacağı ama macOS'un varsayılan 8MB yığınında GÜVENLE BOL
+    /// PAY bırakan bir sınırdır.
+    const MAX_EXPR_DEPTH: usize = 500;
+
+    fn enterRecursion(self: *Parser) ParseError!void {
+        self.depth += 1;
+        if (self.depth > MAX_EXPR_DEPTH) return error.RecursionLimitExceeded;
+    }
+
+    fn exitRecursion(self: *Parser) void {
+        self.depth -= 1;
     }
 
     fn cur(self: *const Parser) Token {
@@ -530,6 +562,8 @@ pub const Parser = struct {
     // ---- İfadeler: öncelik tırmanışı (precedence climbing) ----
 
     fn parseExpr(self: *Parser) ParseError!ast.Expr {
+        try self.enterRecursion();
+        defer self.exitRecursion();
         return self.parseOr();
     }
 
@@ -555,6 +589,8 @@ pub const Parser = struct {
 
     fn parseNot(self: *Parser) ParseError!ast.Expr {
         if (self.match(.kw_not)) {
+            try self.enterRecursion();
+            defer self.exitRecursion();
             const operand = try self.parseNot();
             return .{ .unary = .{ .op = .not_, .operand = try self.box(operand) } };
         }
@@ -617,14 +653,20 @@ pub const Parser = struct {
 
     fn parseUnary(self: *Parser) ParseError!ast.Expr {
         if (self.match(.minus)) {
+            try self.enterRecursion();
+            defer self.exitRecursion();
             const operand = try self.parseUnary();
             return .{ .unary = .{ .op = .neg, .operand = try self.box(operand) } };
         }
         if (self.match(.kw_await)) {
+            try self.enterRecursion();
+            defer self.exitRecursion();
             const operand = try self.parseUnary();
             return .{ .await_expr = try self.box(operand) };
         }
         if (self.match(.kw_spawn)) {
+            try self.enterRecursion();
+            defer self.exitRecursion();
             const operand = try self.parseUnary();
             return .{ .spawn_expr = try self.box(operand) };
         }
