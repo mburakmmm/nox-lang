@@ -171,23 +171,29 @@ pub fn build(b: *std.Build) void {
     // bir runtime için doğrudan nesne dosyası üretmek daha güvenilir.
     //
     // Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71, GERÇEK Windows CI'de
-    // bulunan bir hata): Zig'in ÖZ-BARINDIRILAN (self-hosted, LLVM DIŞI)
-    // x86_64 arka ucu — Debug modunda VARSAYILAN olarak KULLANILIR (hızlı
-    // derleme İçin) — Windows COFF nesne çıktısı İçin EKSİK/HATALI: `noxrt.o`
-    // yalnızca 515 bayta (TEK sembol, `swap_asm`den elle EKLENEN `nox_swap_
-    // context`) DÜŞÜYORDU — `runtime/lib.zig`nin TÜM `export fn`leri (ki
-    // `comptime { _ = ...; }` İLE ZORLA analiz ettiriliyorlar, bkz. o
-    // dosyanın belge notu) SESSİZCE (derleme HATASI VERMEDEN) düşüyordu.
-    // macOS/Linux'ta (ELF/Mach-O) AYNI öz-barındırılan arka uç DOĞRU
-    // çalıştığından (proje BOYUNCA binlerce kez doğrulandı) bu SORUN yalnızca
-    // Windows'a (COFF) ÖZGÜ — bu YÜZDEN LLVM'i YALNIZCA bu hedefte ZORUNLU
-    // KILMAK (macOS/Linux'un HIZLI öz-barındırılan Debug derlemesini
-    // KORUYARAK) doğru düzeltme.
+    // bulunan bir hata): `noxrt.o` Windows'ta yalnızca 515 bayta (TEK sembol,
+    // `swap_asm`den elle EKLENEN `nox_swap_context`) DÜŞÜYORDU —
+    // `runtime/lib.zig`nin TÜM `export fn`leri (ki `comptime { _ = ...; }`
+    // İLE ZORLA analiz ettiriliyorlar, bkz. o dosyanın belge notu) SESSİZCE
+    // (derleme HATASI VERMEDEN) düşüyordu. İLK denemede `use_llvm = true`
+    // (Zig'in Debug modda VARSAYILAN öz-barındırılan/self-hosted arka
+    // ucunun COFF çıktısı EKSİK/HATALI OLABİLECEĞİ varsayımıyla) HİÇBİR
+    // ŞEYİ DEĞİŞTİRMEDİ — `--verbose` çıktısı `-fllvm`nin GERÇEKTEN
+    // geçtiğini kanıtladı, yani sorun ARKA UÇ SEÇİMİNDE DEĞİL. GERÇEK
+    // kök neden: Zig'in COFF (Windows nesne biçimi) hedefi İçin bağlayıcı
+    // aşamasında VARSAYILAN olarak `gc-sections` (kullanılmayan bölümleri
+    // BUDAMA) DAVRANIŞI UYGULUYOR — ELF/Mach-O'da (`export fn`ler HER ZAMAN
+    // kök sayıldığından, proje BOYUNCA binlerce kez doğrulandığı gibi) BU
+    // SORUN YOK, ama COFF'ta `export fn`ler (dllexport DEKORASYONU
+    // OLMADAN, çünkü bu bir DLL DEĞİL düz bir nesne dosyası) bağlayıcı
+    // GÖZÜNDE "hiçbir yerden REFERANS edilmeyen" bölümler olarak GÖRÜLÜP
+    // BUDANIYOR. Çözüm: `link_gc_sections = false` (yalnızca Windows'ta —
+    // macOS/Linux'un mevcut, doğrulanmış davranışına DOKUNULMAZ).
     const noxrt = b.addObject(.{
         .name = "noxrt",
         .root_module = noxrt_mod,
-        .use_llvm = if (target.result.os.tag == .windows) true else null,
     });
+    if (target.result.os.tag == .windows) noxrt.link_gc_sections = false;
     noxrt.step.dependOn(&compile_swap_asm.step);
     const install_noxrt = b.addInstallFile(noxrt.getEmittedBin(), "lib/noxrt.o");
     b.getInstallStep().dependOn(&install_noxrt.step);
