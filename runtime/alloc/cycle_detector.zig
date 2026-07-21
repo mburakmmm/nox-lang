@@ -93,9 +93,30 @@ fn resolveGcFreeDispatch() ?*const fn (?*anyopaque, i64, ?*anyopaque) callconv(.
 threadlocal var g_gc_free_dispatch_resolved = false;
 threadlocal var g_gc_free_dispatch_fn: ?*const fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) void = null;
 
+/// Faz LL.5 (bkz. nox-teknik-spesifikasyon.md §3.71): `std.c.dlopen`nin
+/// `RTLD` parametre tipi Windows İçin `void`dir (`json.zig`nin AYNI
+/// bulgusu) — `dlopen(null, ...)`in "ÇALIŞAN sürecin KENDİ sembollerini
+/// ara" anlamının Windows karşılığı `GetModuleHandleA(null)` (ana .exe
+/// modülünün TUTAMACI) + `GetProcAddress`tir. **Bilinmesi gereken:**
+/// bu, sembolün GERÇEKTEN bulunacağını GARANTİ ETMEZ — MinGW'in
+/// varsayılan bağlayıcı davranışı POSIX'in `dlopen(NULL)`ı GİBİ TÜM
+/// GENEL sembolleri OTOMATİK dışa açmaz; bu, LL.6'nın bağlayıcı
+/// bayrakları (ör. `-Wl,--export-all-symbols`) İÇİN bir KOŞULDUR —
+/// GERÇEK Windows çalıştırılabilirinde doğrulanacak.
+const WinSelf = if (builtin.os.tag == .windows) struct {
+    extern "kernel32" fn GetModuleHandleA(name: ?[*:0]const u8) callconv(.c) ?*anyopaque;
+    extern "kernel32" fn GetProcAddress(module: *anyopaque, name: [*:0]const u8) callconv(.c) ?*anyopaque;
+} else struct {};
+
 fn resolveSymbol(comptime Fn: type, resolved: *bool, cache: *?*const Fn, comptime name: [:0]const u8) ?*const Fn {
     if (resolved.*) return cache.*;
     resolved.* = true;
+    if (builtin.os.tag == .windows) {
+        const module = WinSelf.GetModuleHandleA(null) orelse return null;
+        const sym = WinSelf.GetProcAddress(module, name) orelse return null;
+        cache.* = @ptrCast(@alignCast(sym));
+        return cache.*;
+    }
     const handle = std.c.dlopen(null, .{ .NOW = true }) orelse return null;
     const sym = std.c.dlsym(handle, name) orelse return null;
     cache.* = @ptrCast(@alignCast(sym));

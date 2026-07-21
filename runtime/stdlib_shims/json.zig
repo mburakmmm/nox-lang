@@ -49,6 +49,7 @@
 //! yolunda bir null-pointer çökmesini de ÖNLER.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
 const http_client = @import("http_client.zig");
 
@@ -80,9 +81,24 @@ const MakeJsonValueFn = fn (
 threadlocal var g_make_json_value_fn: ?*const MakeJsonValueFn = null;
 threadlocal var g_make_json_value_resolved = false;
 
+/// Faz LL.5 (bkz. nox-teknik-spesifikasyon.md §3.71): `std.c.dlopen`nin
+/// `RTLD` parametre tipi Windows İçin `void`dir — `cycle_detector.zig`nin
+/// `WinSelf`iYLE AYNI `GetModuleHandleA(null)`+`GetProcAddress` deseni
+/// (o dosyanın belge notundaki "bağlayıcı bayrağı KOŞULU" AYNEN geçerli).
+const WinSelf = if (builtin.os.tag == .windows) struct {
+    extern "kernel32" fn GetModuleHandleA(name: ?[*:0]const u8) callconv(.c) ?*anyopaque;
+    extern "kernel32" fn GetProcAddress(module: *anyopaque, name: [*:0]const u8) callconv(.c) ?*anyopaque;
+} else struct {};
+
 fn resolveMakeJsonValue() ?*const MakeJsonValueFn {
     if (g_make_json_value_resolved) return g_make_json_value_fn;
     g_make_json_value_resolved = true;
+    if (builtin.os.tag == .windows) {
+        const module = WinSelf.GetModuleHandleA(null) orelse return null;
+        const sym = WinSelf.GetProcAddress(module, "nox_json_make_json_value") orelse return null;
+        g_make_json_value_fn = @ptrCast(@alignCast(sym));
+        return g_make_json_value_fn;
+    }
     const handle = std.c.dlopen(null, .{ .NOW = true }) orelse return null;
     const sym = std.c.dlsym(handle, "nox_json_make_json_value") orelse return null;
     g_make_json_value_fn = @ptrCast(@alignCast(sym));

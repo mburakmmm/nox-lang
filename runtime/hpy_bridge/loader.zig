@@ -22,9 +22,57 @@
 //! gerçek derleyici çıktısıyla bire bir karşılaştırıldı.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const context = @import("context.zig");
 pub const HPyContext = context.HPyContext;
 pub const HPy = context.HPy;
+
+/// Faz LL.5 (bkz. nox-teknik-spesifikasyon.md §3.71): bu Zig sürümünde
+/// `std.DynLib` Windows İçin TAMAMEN desteksiz (`InnerType`nin `switch`i
+/// `.windows`i HİÇ case'lemez, `else => @compileError("unsupported
+/// platform")`) — `fstat`/`clockid_t` GİBİ "unutulmuş case" DEĞİL,
+/// BİLİNÇLİ bir kapsam-dışı bırakma. `NoxDynLib`, `std.DynLib`nin
+/// `open`/`lookup`/`close` arayüzünü Windows'ta `LoadLibraryA`/
+/// `GetProcAddress`/`FreeLibrary` (kernel32) ÜZERİNDEN, diğer platformlarda
+/// İSE DOĞRUDAN `std.DynLib`ye DELEGE ederek yeniden UYGULAR — HPy köprüsü
+/// bu SAYEDE Windows'ta da (gerçek .dll uzantılı bir HPy eklentisi
+/// verildiğinde) ÇALIŞIR, "v1'de Windows'ta HPy desteklenmiyor" gibi bir
+/// ERTELEMEYE GEREK KALMAZ.
+const NoxDynLib = struct {
+    const WinLib = if (builtin.os.tag == .windows) struct {
+        extern "kernel32" fn LoadLibraryA(name: [*:0]const u8) callconv(.c) ?*anyopaque;
+        extern "kernel32" fn GetProcAddress(module: *anyopaque, name: [*:0]const u8) callconv(.c) ?*anyopaque;
+        extern "kernel32" fn FreeLibrary(module: *anyopaque) callconv(.c) c_int;
+    } else struct {};
+
+    impl: if (builtin.os.tag == .windows) *anyopaque else std.DynLib,
+
+    fn open(path: []const u8) !NoxDynLib {
+        if (builtin.os.tag == .windows) {
+            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            const path_z = std.fmt.bufPrintZ(&buf, "{s}", .{path}) catch return error.NameTooLong;
+            const h = WinLib.LoadLibraryA(path_z) orelse return error.FileNotFound;
+            return .{ .impl = h };
+        }
+        return .{ .impl = try std.DynLib.open(path) };
+    }
+
+    fn lookup(self: *NoxDynLib, comptime T: type, name: [:0]const u8) ?T {
+        if (builtin.os.tag == .windows) {
+            const sym = WinLib.GetProcAddress(self.impl, name) orelse return null;
+            return @ptrCast(@alignCast(sym));
+        }
+        return self.impl.lookup(T, name);
+    }
+
+    fn close(self: *NoxDynLib) void {
+        if (builtin.os.tag == .windows) {
+            _ = WinLib.FreeLibrary(self.impl);
+        } else {
+            self.impl.close();
+        }
+    }
+};
 
 pub const HPyMeth = extern struct {
     name: ?[*:0]const u8 = null,
@@ -71,7 +119,7 @@ const InitFn = *const fn () callconv(.c) ?*const HPyModuleDef;
 const MethO = *const fn (ctx: *HPyContext, self: HPy, arg: HPy) callconv(.c) HPy;
 
 pub const LoadedModule = struct {
-    lib: std.DynLib,
+    lib: NoxDynLib,
     def: *const HPyModuleDef,
 
     pub fn deinit(self: *LoadedModule) void {
@@ -99,7 +147,7 @@ pub const LoadedModule = struct {
 /// giriş noktasını çağırır. Döndürülen `LoadedModule.deinit()` ile
 /// kapatılmalıdır.
 pub fn load(so_path: []const u8, ext_name: []const u8) !LoadedModule {
-    var lib = try std.DynLib.open(so_path);
+    var lib = try NoxDynLib.open(so_path);
     errdefer lib.close();
 
     var symbol_buf: [256]u8 = undefined;

@@ -1204,8 +1204,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   zig` (`fdToI64`/`i64ToFd` köprüsüyle `posix.fd_t`(HANDLE)↔SOCKET
   tutarsızlığı çözüldü) ve `http_client.zig` (`std.c.pipe`nin Windows'ta
   KARŞILIĞI OLMADIĞINDAN self-pipe'ı bağlanmış bir UDP-loopback çiftine
-  çevrildi). `std.DynLib`/`std.c.dlopen`in Windows desteksizliği (HPy
-  köprüsü + `json.zig`) HENÜZ ÇÖZÜLMEDİ.
+  çevrildi). `std.DynLib`/`std.c.dlopen`in Windows desteksizliği
+  çözüldü: `hpy_bridge/loader.zig`ye `LoadLibraryA`/`GetProcAddress`/
+  `FreeLibrary` tabanlı bir `NoxDynLib` sarmalayıcısı, `json.zig`/
+  `cycle_detector.zig`nin `dlopen(null, ...)` self-lookup desenine
+  `GetModuleHandleA`+`GetProcAddress`. `random.zig`nin PRNG tohumlaması
+  da (AYNI `clockid_t`-void sorunu, keşifte gözden kaçmıştı)
+  `QueryPerformanceCounter`e geçirildi. Tam `zig build`in Windows
+  keşif adımı artık 0 hata BEKLENİYOR — bir sonraki push'ta CI'de
+  doğrulanacak.
 
 ## [1.0.0]
 

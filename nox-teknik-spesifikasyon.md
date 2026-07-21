@@ -12005,14 +12005,36 @@ LL.5'TEN İZOLE test etmeyi İMKANSIZ kıldığından. Bu adım TEK seferde
   eklendi (küçük platform yardımcılarının dosya-başına TEKRARLANMASI
   `crypto.zig`/`dict.zig`nin `secureRandomBuf`ıyla TUTARLI, YERLEŞİK bir
   proje kuralı).
-- **ÇÖZÜLMEDİ (LL.5'in geri kalanı):** `std.DynLib` bu Zig sürümünde
-  Windows İçin TAMAMEN desteksiz (`error: unsupported platform` —
-  muhtemelen HPy köprüsü yükleyicisini ETKİLİYOR, henüz bulunup
-  okunmadı) VE `json.zig`nin `std.c.dlopen(null, RTLD_NOW)` deseni
-  (`RTLD`nin Windows İçin `void` olması yüzünden) — İKİSİ DE
-  `LoadLibraryW`/`GetProcAddress`/`FreeLibrary` tabanlı elle yazılmış
-  bir Windows yükleyicisi (ya da BİLİNÇLİ bir v1 ertelemesi) GEREKTİRİYOR,
-  SONRAKİ bir adımda ele alınacak.
+- **`std.DynLib` (HPy köprüsü yükleyicisi, `hpy_bridge/loader.zig`):**
+  bu Zig sürümünde Windows İçin TAMAMEN desteksiz (`InnerType`nin
+  switch'i `.windows`i HİÇ case'lemez, doğrudan `@compileError`) —
+  `fstat`/`clockid_t` GİBİ "unutulmuş case" DEĞİL, BİLİNÇLİ bir kapsam
+  dışı bırakma. Çözüm: `std.DynLib`nin `open`/`lookup`/`close`
+  arayüzünü Windows'ta `LoadLibraryA`/`GetProcAddress`/`FreeLibrary`
+  (kernel32) ÜZERİNDEN yeniden uygulayan bir `NoxDynLib` sarmalayıcısı
+  (diğer platformlarda DOĞRUDAN `std.DynLib`ye delege eder) —
+  `LoadedModule.lib`in tipi BUNA geçirildi.
+- **`std.c.dlopen(null, RTLD_NOW)` deseni (`json.zig`nin `resolveMake
+  JsonValue`ı VE `cycle_detector.zig`nin PAYLAŞILAN `resolveSymbol`ı —
+  ikisi de "ÇALIŞAN SÜRECİN KENDİ sembollerini ara" amaçlı):** `RTLD`
+  Windows İçin `void`. Çözüm: `GetModuleHandleA(null)` (ana `.exe`
+  modülünün tutamacı, POSIX'in `dlopen(NULL)`ıYLA AYNI anlam) +
+  `GetProcAddress`. **Bilinmesi gereken kısıtlama:** bu, sembolün
+  GERÇEKTEN bulunacağını GARANTİ ETMEZ — POSIX'in `dlopen(NULL)`ı TÜM
+  genel sembolleri OTOMATİK dışa açarken, MinGW'in varsayılan bağlayıcı
+  davranışı AYNI ŞEYİ yapmaz; LL.6'da bağlayıcıya `-Wl,--export-all-
+  symbols` (ya da benzeri) bayrağı EKLENMESİ GEREKEBİLİR — GERÇEK
+  Windows çalıştırılabilirinde doğrulanacak.
+- **`random.zig`nin `std.c.clock_gettime(.REALTIME, ...)` İLE PRNG
+  tohumlaması:** `time.zig`nin AYNI `clockid_t`-void bulgusuyla
+  ETKİLENİYORDU (bu dosya `time.zig`nin İLK Windows portu SIRASINDA
+  GÖZDEN KAÇMIŞTI — kendi keşif adımı ONU da yakaladı). Çözüm:
+  `QueryPerformanceCounter`in HAM sayacı (saat DOĞRULUĞU ÖNEMLİ DEĞİL,
+  yalnızca DEĞİŞKEN bir tohum değeri yeterli).
+
+Bu SEFERKİ değişikliklerle `zig build`in TAM (runtime dahil) Windows
+CI keşif adımı 15 hatadan 0'a İNMESİ BEKLENİYOR — bir SONRAKİ push'ta
+GERÇEK CI'de doğrulanacak.
 
 Yerel olarak (macOS, Debug/ReleaseSafe/ReleaseFast) TÜM değişiklikler
 doğrulandı — Windows dalları (`builtin.os.tag == .windows` altında)

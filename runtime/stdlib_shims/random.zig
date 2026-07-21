@@ -20,12 +20,29 @@
 //! (data race) olurdu — `threadlocal` HER iş parçacığına KENDİ BAĞIMSIZ
 //! PRNG durumunu VERİR, SIFIR ek senkronizasyon MALİYETİYLE.
 const std = @import("std");
+const builtin = @import("builtin");
+
+/// Faz LL.5 (bkz. nox-teknik-spesifikasyon.md §3.71): `std.c.clock_gettime`nin
+/// `clockid_t` parametre tipi Windows İçin `void` — `time.zig`nin
+/// `WinTime.monotonicMs`iYLE AYNI `QueryPerformanceCounter` deseni (burada
+/// yalnızca BİR KEZLİK bir tohum DEĞERİ üretmek İçin, saat DOĞRULUĞU
+/// ÖNEMLİ DEĞİL — herhangi bir değişken sayı yeterli).
+const WinSeed = if (builtin.os.tag == .windows) struct {
+    extern "kernel32" fn QueryPerformanceCounter(count: *i64) callconv(.c) i32;
+} else struct {};
 
 threadlocal var g_prng: std.Random.DefaultPrng = std.Random.DefaultPrng.init(0);
 threadlocal var g_seeded: bool = false;
 
 fn ensureSeeded() void {
     if (!g_seeded) {
+        if (builtin.os.tag == .windows) {
+            var counter: i64 = 0;
+            _ = WinSeed.QueryPerformanceCounter(&counter);
+            g_prng = std.Random.DefaultPrng.init(@bitCast(counter));
+            g_seeded = true;
+            return;
+        }
         // `nox.time`in AYNI `clock_gettime` deseni (bkz. `time.zig`'in
         // `nox_time_now_ms_raw`ı) — bu Zig sürümünde `std.time.milliTimestamp`
         // KULLANILAMADIĞINDAN (kaldırılmış/taşınmış).
