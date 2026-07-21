@@ -231,6 +231,28 @@ static HPy get_attr_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
     return HPy_GetAttr_s(ctx, arg, "label");
 }
 
+/* ctx_CallMethod (Faz OO) test amaçlı: eklentinin KENDİ C kodunun
+ * GERÇEK `HPy_CallMethod` makrosunu (ham `ctx_CallMethod` ABI yuvasına
+ * TRAMPOLİNE eden) ÇAĞIRMASI — `get_attr_via_c`nin `HPy_GetAttr_s`
+ * KULLANMASIYLA AYNI desen. `arg`, `(widget, amount)` şeklinde bir
+ * tuple'dır — `HPyFunc_O` TEK argüman aldığından, ikinci argümanı
+ * (miktar) böyle GEÇİRİYORUZ. Gerçek HPy sözleşmesi: `args[0]` ALICI
+ * (receiver/self), `args[1..nargs)` GERÇEK metod argümanlarıdır. */
+HPyDef_METH(call_add_value_via_c, "call_add_value_via_c", HPyFunc_O)
+static HPy call_add_value_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    HPy widget = HPy_GetItem_i(ctx, arg, 0);
+    HPy amount = HPy_GetItem_i(ctx, arg, 1);
+    HPy name = HPyUnicode_FromString(ctx, "add_value");
+    HPy method_args[2] = { widget, amount };
+    HPy result = HPy_CallMethod(ctx, name, method_args, 2, HPy_NULL);
+    HPy_Close(ctx, name);
+    HPy_Close(ctx, widget);
+    HPy_Close(ctx, amount);
+    return result;
+}
+
 static HPyDef *module_defines[] = {
     &add_one,
     &str_length,
@@ -244,6 +266,7 @@ static HPyDef *module_defines[] = {
     &get_destroy_count,
     &get_widget_type,
     &get_attr_via_c,
+    &call_add_value_via_c,
     NULL
 };
 

@@ -11,9 +11,9 @@
 //! `scripts/gen_hpy_ctx.py`) üretilmiş, bayt-uyumlu bir transkripsiyonunu
 //! GEREKTİRİR — bir eklenti bu struct'a doğrudan (sabit ofsetlerle) erişir,
 //! bu yüzden alan SIRASI ve BOYUTU tam olarak eşleşmelidir. Şu an 180
-//! `ctx_*` alanından **61'i** GERÇEKTEN implemente (aşağıda özel fonksiyon
+//! `ctx_*` alanından **62'si** GERÇEKTEN implemente (aşağıda özel fonksiyon
 //! işaretçisi tipleriyle işaretli — tam liste/tier dökümü İçin bkz.
-//! nox-teknik-spesifikasyon.md §3.12 VE DEVAMI, en son Faz NN) — geri
+//! nox-teknik-spesifikasyon.md §3.12 VE DEVAMI, en son Faz OO) — geri
 //! kalanı `null` (kullanılmazlarsa zararsız; bir eklenti bunlardan birini
 //! çağırırsa çökme/segfault olur, bkz. spesifikasyondaki bilinçli
 //! sınırlamalar).
@@ -964,7 +964,9 @@ fn ctxSetAttrS(ctx: *HPyContext, obj_h: HPy, utf8_name: ?[*:0]const u8, value: H
 // ---- Çağrılabilir nesne protokolü ----
 //
 // `ctx_Callable_Check`/`ctx_Call`/`ctx_CallTupleDict`/`ctx_SetCallFunction`/
-// `ctx_CallRealFunctionFromTrampoline`. Bu dilimin en önemli katkısı:
+// `ctx_CallRealFunctionFromTrampoline`/`ctx_CallMethod` (Faz OO, `ctx_
+// GetAttr` ailesi — Faz NN — hazır olduktan SONRA eklendi, bkz. aşağıda
+// `ctxCallMethod`). Bu dilimin en önemli katkısı:
 // `HPyType_FromSpec` ile oluşturulmuş bir tipi `SomeType(args)` şeklinde
 // GERÇEKTEN inşa edebilmek — CPython'ın `type.__call__`ının (alloc via
 // `tp_new`, ardından `tp_init`) BİREBİR karşılığı. `ctxNew` (yukarıda)
@@ -977,10 +979,8 @@ fn ctxSetAttrS(ctx: *HPyContext, obj_h: HPy, utf8_name: ?[*:0]const u8, value: H
 // BOŞ OLMAYAN bir değer taşıyorsa `TypeError` ile reddedilir — nesne
 // modelinde henüz genel bir dict-tabanlı kwarg açma sözleşmesi yok
 // (`HPyType_FromSpec`in KENDİ taban-sınıf/metaclass/buffer-slot kapsam
-// dışı bırakmasıyla AYNI ilke). `ctx_CallMethod` bu dilimde YOK — gerçek
-// HPy sözleşmesinde `args[0]`in alıcı (receiver) olduğu bir isim/metod
-// ARAMASI gerektirir, ki bu henüz var olmayan `ctx_GetAttr` ailesine
-// bağımlıdır (ayrı bir sonraki dilim).
+// dışı bırakmasıyla AYNI ilke). `ctx_CallMethod` (Faz OO) da AYNI
+// sınırlamaya tabidir.
 fn callDispatch(ctx: *HPyContext, callable: HPy, args: ?[*]const HPy, nargs: usize, kwnames: HPy) HPy {
     if (kwnames._i != 0) {
         ctxErrSetString(ctx, ctx.h_TypeError, "anahtar kelime argümanları henüz desteklenmiyor");
@@ -1096,6 +1096,32 @@ fn ctxCallTupleDict(ctx: *HPyContext, callable: HPy, args_tuple: HPy, kw: HPy) c
     }
     const items = args_obj.tuple_data;
     return callDispatch(ctx, callable, items.ptr, items.len, HPy_NULL);
+}
+
+/// Gerçek HPy sözleşmesi (bkz. `ctx_call.c`nin `PyObject_VectorcallMethod`
+/// TABANLI implementasyonu — GERÇEK CPython dahi bunu bir `GetAttr` +
+/// çağrı olarak uygular): `args[0]` ALICI (self)dır, `args[1..nargs)`
+/// GERÇEK çağrı argümanlarıdır (`nargs` ALICIYI DA SAYAR). `name`,
+/// alıcı üzerinde `attrLookup` (Faz NN) İLE ARANIR — BULUNAN metod
+/// (adi bir örnek/tip DEĞİLSE, TİPİK OLARAK bir `.bound_method_`)
+/// KALAN argümanlarla `callDispatch`e delege edilir. `ctx_GetAttr`in
+/// KENDİSİ ZATEN "böyle bir attribute yok" İçin `AttributeError`
+/// ayarladığından, BURADA AYRICA hata AYARLAMAYA gerek YOK.
+fn ctxCallMethod(ctx: *HPyContext, name_h: HPy, args: ?[*]const HPy, nargs: usize, kwnames: HPy) callconv(.c) HPy {
+    if (kwnames._i != 0) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "anahtar kelime argümanları henüz desteklenmiyor");
+        return HPy_NULL;
+    }
+    if (nargs < 1 or args == null) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "ctx_CallMethod en az bir alıcı (self) argümanı gerektirir");
+        return HPy_NULL;
+    }
+    const receiver = args.?[0];
+    const method = ctxGetAttr(ctx, receiver, name_h);
+    if (method._i == 0) return HPy_NULL; // ctxGetAttr zaten AttributeError ayarladı
+    defer ctxClose(ctx, method);
+    const call_args = args.?[1..nargs];
+    return callDispatch(ctx, method, if (call_args.len > 0) call_args.ptr else null, call_args.len, HPy_NULL);
 }
 
 /// Gerçek HPy sözleşmesi: `h`in bir TİP olmasını gerektirir (`tp_call`ı
@@ -1602,7 +1628,7 @@ pub const HPyContext = extern struct {
     ctx_Slice_Unpack: ?*const anyopaque = null,
     ctx_SetCallFunction: ?*const fn (ctx: *HPyContext, h: HPy, func: ?*HPyCallFunctionLocal) callconv(.c) c_int = null,
     ctx_Call: ?*const fn (ctx: *HPyContext, callable: HPy, args: ?[*]const HPy, nargs: usize, kwnames: HPy) callconv(.c) HPy = null,
-    ctx_CallMethod: ?*const anyopaque = null,
+    ctx_CallMethod: ?*const fn (ctx: *HPyContext, name: HPy, args: ?[*]const HPy, nargs: usize, kwnames: HPy) callconv(.c) HPy = null,
 };
 
 /// Yeni, tam donanımlı (Tier 0 alt kümesi implemente edilmiş) bir
@@ -1742,6 +1768,7 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
         .ctx_CallTupleDict = ctxCallTupleDict,
         .ctx_SetCallFunction = ctxSetCallFunction,
         .ctx_CallRealFunctionFromTrampoline = ctxCallRealFunctionFromTrampoline,
+        .ctx_CallMethod = ctxCallMethod,
     };
     return ctx;
 }

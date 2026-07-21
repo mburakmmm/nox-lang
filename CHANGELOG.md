@@ -1305,6 +1305,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   seviyesi/unbound attribute erişimi yok; `ctx_CallMethod` hâlâ ayrı bir
   sonraki dilim (ön koşulu artık hazır). Kapsam: 180 `ctx_*`
   fonksiyonundan 55→**61**'i implemente.
+- **Faz OO — HPy köprüsü: ctx_CallMethod.** Gerçek HPy sözleşmesiyle
+  (`args[0]` = alıcı/self, `args[1..nargs)` = gerçek çağrı argümanları,
+  `nargs` alıcıyı da sayar) birebir uyumlu: `name`, Faz NN'nin
+  `ctxGetAttr`i ile alıcı üzerinde aranır, bulunan (tipik olarak
+  `.bound_method_`) Faz MM'nin `callDispatch`ine delege edilir.
+  `noxtest.c`ye eklentinin kendi C kodunun gerçek `HPy_CallMethod`
+  makrosunu çağırdığı `call_add_value_via_c` eklendi; `hpy_tier0_test.
+  zig`ye 4 yeni uçtan uca test (doğrudan çağrı, eklenti-tarafı
+  trampoline, kwargs reddi, var olmayan metod → AttributeError). Kapsam:
+  180 `ctx_*` fonksiyonundan 61→**62**'si implemente.
 
 ## [1.0.0]
 

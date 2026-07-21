@@ -1543,6 +1543,49 @@ doğrulandı (bkz. AGENTS.md §10).
 (temel nesne protokolünün geri kalanı), member/getset tanımları, buffer
 protokolü. "%100" hâlâ çok-oturumlu bir hedeftir.
 
+### Faz OO — HPy: ctx_CallMethod
+
+Faz NN'in ön koşulu hazırladığı, doğal sıradaki adım ele alındı:
+`ctx_CallMethod` — gerçek HPy ABI'sinde `HPy (*ctx_CallMethod)(HPyContext
+*ctx, HPy name, const HPy *args, size_t nargs, HPy kwnames)` imzalı TEK
+bir ham ABI yuvası (`_s` varyantı YOK — `HPy_CallMethodTupleDict_s` diye
+bir şey VAR ama o, `hpy.h`nin BAŞLIK-İÇİ (inline) bir kolaylık
+fonksiyonu, ayrı bir ABI yuvası DEĞİL). Gerçek `ctx_call.c`
+implementasyonu (`.hpy-venv`deki vendored kaynaktan okunarak
+doğrulandı) da özünde `PyObject_VectorcallMethod`e (ki O DA bir
+GetAttr+çağrı) dayanıyor — Nox'un implementasyonu bu SEMANTİĞE BİREBİR
+sadık.
+
+**Sözleşme:** `args[0]` ALICIDIR (receiver/self), `args[1..nargs)`
+GERÇEK çağrı argümanlarıdır (`nargs`, ALICIYI DA SAYAR — bir vectorcall
+kuralı). `name`, alıcı üzerinde (Faz NN'nin) `attrLookup`i SARAN
+`ctxGetAttr` İLE ARANIR — bulunamazsa `ctxGetAttr`in KENDİSİ zaten
+`AttributeError` ayarladığından `ctxCallMethod` AYRICA hata AYARLAMAZ,
+yalnızca `HPy_NULL`i PROPAGE eder. Bulunan metod (TİPİK OLARAK bir
+`.bound_method_`, Faz NN) KALAN argümanlarla (Faz MM'nin) `callDispatch`
+İNE delege edilir. `kwnames` boş OLMAYAN bir değer taşıyorsa, Faz MM/NN
+İLE AYNI v1 ilkesiyle `TypeError` İLE reddedilir.
+
+**Doğrulama:** `tests/compat/hpy_ext/noxtest.c`ye YENİ bir modül metodu:
+`call_add_value_via_c` — eklentinin KENDİ C kodunun GERÇEK `HPy_CallMethod`
+makrosunu (ham `ctx_CallMethod` yuvasına trampoline eden) ÇAĞIRMASI,
+`get_attr_via_c`nin `HPy_GetAttr_s` KULLANMASIYLA AYNI desen (argümanlar
+`HPyFunc_O`nun tek-argüman kısıtı YÜZÜNDEN bir `(widget, amount)` tuple'ı
+İÇİNDE geçirilir). `hpy_tier0_test.zig`ye 4 yeni uçtan uca test: (a)
+`ctx_CallMethod`in DOĞRUDAN Zig'den çağrılması (`widget.add_value(3)`,
+`args[0]=alıcı` sözleşmesiyle), (b) `call_add_value_via_c` İLE AYNI
+şeyin eklentinin KENDİ `HPy_CallMethod` çağrısı üzerinden de çalıştığının
+kanıtlanması, (c)/(d) NEGATİF: boş OLMAYAN `kwnames` → `TypeError`, var
+OLMAYAN bir metod adı → `AttributeError` (Faz NN'nin `ctxGetAttr`inden
+PROPAGE edilir). Toplam: 18/18 (bu dosyada) — hızlı/izole `zig test`
+yöntemiyle doğrulandı.
+
+**Dürüst kapsam durumu:** 180 `ctx_*` fonksiyonundan **62'si** implemente
+(bu fazdan ÖNCE 61'di). Doğal sıradaki adımlar: `ctx_Repr`/`ctx_Str`/
+`ctx_Hash`/`ctx_RichCompare` (temel nesne protokolünün geri kalanı),
+member/getset tanımları, buffer protokolü. "%100" hâlâ çok-oturumlu bir
+hedeftir.
+
 ---
 
 ### 3.20 Faz 20 Uygulama Kapsamı — Zig/C ABI FFI (`extern def`)

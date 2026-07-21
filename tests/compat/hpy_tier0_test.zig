@@ -466,3 +466,110 @@ test "gerçek HPy eklentisi: ctx_GetAttr_s/ctx_HasAttr_s — var olmayan attribu
     try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_AttributeError));
     ctx.ctx_Err_Clear.?(ctx);
 }
+
+test "gerçek HPy eklentisi: ctx_CallMethod ile widget.add_value(3) — args[0]=alıcı sözleşmesi (Faz OO)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const get_widget_type = mod.findMethodO("get_widget_type") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.heap.page_allocator);
+    defer hpy.context.destroyContext(std.heap.page_allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+    const widget_type = get_widget_type(ctx, hpy.context.HPy_NULL, dummy);
+
+    const ten = ctx.ctx_Long_FromInt64_t.?(ctx, 10);
+    defer ctx.ctx_Close.?(ctx, ten);
+    var ctor_args = [_]hpy.context.HPy{ten};
+    const widget = ctx.ctx_Call.?(ctx, widget_type, &ctor_args, 1, hpy.context.HPy_NULL);
+    defer ctx.ctx_Close.?(ctx, widget);
+    // tp_new(10) + tp_init(+10) = 20
+
+    const name = ctx.ctx_Unicode_FromString.?(ctx, "add_value");
+    defer ctx.ctx_Close.?(ctx, name);
+    const three = ctx.ctx_Long_FromInt64_t.?(ctx, 3);
+    defer ctx.ctx_Close.?(ctx, three);
+    // args[0] ALICI (self), args[1..] GERÇEK metod argümanları; nargs ALICIYI DA SAYAR.
+    var call_args = [_]hpy.context.HPy{ widget, three };
+    const result = ctx.ctx_CallMethod.?(ctx, name, &call_args, 2, hpy.context.HPy_NULL);
+    defer ctx.ctx_Close.?(ctx, result);
+    try std.testing.expectEqual(@as(i64, 23), ctx.ctx_Long_AsInt64_t.?(ctx, result)); // self.value(20) + 3
+}
+
+test "gerçek HPy eklentisi: call_add_value_via_c — eklentinin KENDİ HPy_CallMethod çağrısı ctx_CallMethod'a doğru trampoline eder (Faz OO)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const get_widget_type = mod.findMethodO("get_widget_type") orelse return error.MethodNotFound;
+    const call_add_value_via_c = mod.findMethodO("call_add_value_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.heap.page_allocator);
+    defer hpy.context.destroyContext(std.heap.page_allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+    const widget_type = get_widget_type(ctx, hpy.context.HPy_NULL, dummy);
+
+    const seven = ctx.ctx_Long_FromInt64_t.?(ctx, 7);
+    defer ctx.ctx_Close.?(ctx, seven);
+    var ctor_args = [_]hpy.context.HPy{seven};
+    const widget = ctx.ctx_Call.?(ctx, widget_type, &ctor_args, 1, hpy.context.HPy_NULL);
+    defer ctx.ctx_Close.?(ctx, widget);
+    // tp_new(7) + tp_init(+7) = 14
+
+    const four = ctx.ctx_Long_FromInt64_t.?(ctx, 4);
+    defer ctx.ctx_Close.?(ctx, four);
+    var pair_items = [_]hpy.context.HPy{ widget, four };
+    const pair = ctx.ctx_Tuple_FromArray.?(ctx, &pair_items, 2);
+    defer ctx.ctx_Close.?(ctx, pair);
+
+    const result = call_add_value_via_c(ctx, hpy.context.HPy_NULL, pair);
+    defer ctx.ctx_Close.?(ctx, result);
+    try std.testing.expectEqual(@as(i64, 18), ctx.ctx_Long_AsInt64_t.?(ctx, result)); // self.value(14) + 4
+}
+
+test "gerçek HPy eklentisi: ctx_CallMethod — negatif testler (kwargs reddi, var olmayan metod, Faz OO)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const get_widget_type = mod.findMethodO("get_widget_type") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.heap.page_allocator);
+    defer hpy.context.destroyContext(std.heap.page_allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+    const widget_type = get_widget_type(ctx, hpy.context.HPy_NULL, dummy);
+
+    const five = ctx.ctx_Long_FromInt64_t.?(ctx, 5);
+    defer ctx.ctx_Close.?(ctx, five);
+    var ctor_args = [_]hpy.context.HPy{five};
+    const widget = ctx.ctx_Call.?(ctx, widget_type, &ctor_args, 1, hpy.context.HPy_NULL);
+    defer ctx.ctx_Close.?(ctx, widget);
+
+    // kwnames HPy_NULL DEĞİLSE (herhangi bir tutamaç) reddedilir (v1 sınırlaması).
+    const name = ctx.ctx_Unicode_FromString.?(ctx, "add_value");
+    defer ctx.ctx_Close.?(ctx, name);
+    var call_args = [_]hpy.context.HPy{widget};
+    try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Err_Occurred.?(ctx));
+    const r1 = ctx.ctx_CallMethod.?(ctx, name, &call_args, 1, dummy);
+    try std.testing.expectEqual(hpy.context.HPy_NULL._i, r1._i);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_TypeError));
+    ctx.ctx_Err_Clear.?(ctx);
+
+    // Var olmayan bir metod adı — AttributeError (ctx_GetAttr'dan ayarlanır).
+    const bad_name = ctx.ctx_Unicode_FromString.?(ctx, "yok_boyle_bir_metod");
+    defer ctx.ctx_Close.?(ctx, bad_name);
+    const r2 = ctx.ctx_CallMethod.?(ctx, bad_name, &call_args, 1, hpy.context.HPy_NULL);
+    try std.testing.expectEqual(hpy.context.HPy_NULL._i, r2._i);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_AttributeError));
+    ctx.ctx_Err_Clear.?(ctx);
+}
