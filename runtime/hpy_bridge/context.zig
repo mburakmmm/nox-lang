@@ -11,9 +11,9 @@
 //! `scripts/gen_hpy_ctx.py`) üretilmiş, bayt-uyumlu bir transkripsiyonunu
 //! GEREKTİRİR — bir eklenti bu struct'a doğrudan (sabit ofsetlerle) erişir,
 //! bu yüzden alan SIRASI ve BOYUTU tam olarak eşleşmelidir. Şu an 180
-//! `ctx_*` alanından **62'si** GERÇEKTEN implemente (aşağıda özel fonksiyon
+//! `ctx_*` alanından **76'sı** GERÇEKTEN implemente (aşağıda özel fonksiyon
 //! işaretçisi tipleriyle işaretli — tam liste/tier dökümü İçin bkz.
-//! nox-teknik-spesifikasyon.md §3.12 VE DEVAMI, en son Faz OO) — geri
+//! nox-teknik-spesifikasyon.md §3.12 VE DEVAMI, en son Faz PP) — geri
 //! kalanı `null` (kullanılmazlarsa zararsız; bir eklenti bunlardan birini
 //! çağırırsa çökme/segfault olur, bkz. spesifikasyondaki bilinçli
 //! sınırlamalar).
@@ -211,6 +211,113 @@ fn ctxLongAsInt64(ctx: *HPyContext, h: HPy) callconv(.c) i64 {
             break :blk -1;
         },
     };
+}
+
+// ---- Long sayısal dönüşüm ailesi (Faz PP) ----
+//
+// Gerçek HPy'nin keyfi hassasiyetli Python `int`inin AKSİNE, Nox'un
+// `.long` etiketi TEK bir `i64` taşır (bkz. `Obj.Payload`) — bu, Tier 0
+// FromInt64_t/AsInt64_t'den BERİ var olan, ZATEN dokümante edilmiş bir
+// v0.1 basitleştirmesidir (bkz. modül üstü not). Bu YÜZDEN: (a) TÜM
+// "From*" varyantları KAYIPSIZ biçimde `i64`e (ya da `u64`ten `i64`e
+// BİT-DÜZENİ KORUNARAK) YAZILIR — `u64` değerleri `i64::max`i AŞARSA
+// (negatif bir `i64` olarak SAKLANIR, ama `AsUInt64_t` GERİ okurken
+// AYNI bit-düzeniyle DOĞRU şekilde `u64`e döner, bilgi KAYBI OLMAZ);
+// (b) TÜM "As*" varyantları DAR tipler İçin (`Int32_t`/`UInt32_t`/
+// `Size_t` vb.) gerçek CPython'ın AYNI davranışını izler: değer sığmazsa
+// `OverflowError`.
+fn ctxLongFromInt32(ctx: *HPyContext, v: i32) callconv(.c) HPy {
+    return ctxLongFromInt64(ctx, v);
+}
+
+fn ctxLongFromUInt32(ctx: *HPyContext, v: u32) callconv(.c) HPy {
+    return ctxLongFromInt64(ctx, v);
+}
+
+fn ctxLongFromUInt64(ctx: *HPyContext, v: u64) callconv(.c) HPy {
+    return ctxLongFromInt64(ctx, @bitCast(v));
+}
+
+fn ctxLongFromSizeT(ctx: *HPyContext, v: usize) callconv(.c) HPy {
+    return ctxLongFromInt64(ctx, @bitCast(v));
+}
+
+fn ctxLongFromSsizeT(ctx: *HPyContext, v: isize) callconv(.c) HPy {
+    return ctxLongFromInt64(ctx, v);
+}
+
+fn ctxLongAsInt32(ctx: *HPyContext, h: HPy) callconv(.c) i32 {
+    const v = ctxLongAsInt64(ctx, h);
+    if (ctxErrOccurred(ctx) != 0) return -1;
+    if (v < std.math.minInt(i32) or v > std.math.maxInt(i32)) {
+        ctxErrSetString(ctx, ctx.h_OverflowError, "Python int'i C int32'ye sığmıyor");
+        return -1;
+    }
+    return @intCast(v);
+}
+
+fn ctxLongAsUInt32(ctx: *HPyContext, h: HPy) callconv(.c) u32 {
+    const v = ctxLongAsInt64(ctx, h);
+    if (ctxErrOccurred(ctx) != 0) return std.math.maxInt(u32);
+    if (v < 0 or v > std.math.maxInt(u32)) {
+        ctxErrSetString(ctx, ctx.h_OverflowError, "Python int'i C uint32'ye sığmıyor");
+        return std.math.maxInt(u32);
+    }
+    return @intCast(v);
+}
+
+fn ctxLongAsUInt32Mask(ctx: *HPyContext, h: HPy) callconv(.c) u32 {
+    const v = ctxLongAsInt64(ctx, h);
+    if (ctxErrOccurred(ctx) != 0) return 0;
+    return @truncate(@as(u64, @bitCast(v)));
+}
+
+fn ctxLongAsUInt64(ctx: *HPyContext, h: HPy) callconv(.c) u64 {
+    const v = ctxLongAsInt64(ctx, h);
+    if (ctxErrOccurred(ctx) != 0) return std.math.maxInt(u64);
+    if (v < 0) {
+        ctxErrSetString(ctx, ctx.h_OverflowError, "negatif Python int'i C uint64'e dönüştürülemez");
+        return std.math.maxInt(u64);
+    }
+    return @intCast(v);
+}
+
+fn ctxLongAsUInt64Mask(ctx: *HPyContext, h: HPy) callconv(.c) u64 {
+    const v = ctxLongAsInt64(ctx, h);
+    if (ctxErrOccurred(ctx) != 0) return 0;
+    return @bitCast(v);
+}
+
+fn ctxLongAsSizeT(ctx: *HPyContext, h: HPy) callconv(.c) usize {
+    const v = ctxLongAsInt64(ctx, h);
+    if (ctxErrOccurred(ctx) != 0) return std.math.maxInt(usize);
+    if (v < 0) {
+        ctxErrSetString(ctx, ctx.h_OverflowError, "negatif Python int'i size_t'ye dönüştürülemez");
+        return std.math.maxInt(usize);
+    }
+    return @intCast(v);
+}
+
+fn ctxLongAsSsizeT(ctx: *HPyContext, h: HPy) callconv(.c) isize {
+    return ctxLongAsInt64(ctx, h);
+}
+
+fn ctxLongAsVoidPtr(ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque {
+    const v = ctxLongAsInt64(ctx, h);
+    if (ctxErrOccurred(ctx) != 0) return null;
+    return @ptrFromInt(@as(usize, @bitCast(v)));
+}
+
+fn ctxLongAsDouble(ctx: *HPyContext, h: HPy) callconv(.c) f64 {
+    const obj = objOf(h) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "int bekleniyor");
+        return -1;
+    };
+    if (obj.tag != .long and obj.tag != .bool_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "int bekleniyor");
+        return -1;
+    }
+    return @floatFromInt(ctxLongAsInt64(ctx, h));
 }
 
 fn ctxFloatFromDouble(ctx: *HPyContext, v: f64) callconv(.c) HPy {
@@ -1445,22 +1552,22 @@ pub const HPyContext = extern struct {
     h_ListType: HPy = HPy_NULL,
     ctx_Dup: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) HPy = null,
     ctx_Close: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) void = null,
-    ctx_Long_FromInt32_t: ?*const anyopaque = null,
-    ctx_Long_FromUInt32_t: ?*const anyopaque = null,
+    ctx_Long_FromInt32_t: ?*const fn (ctx: *HPyContext, value: i32) callconv(.c) HPy = null,
+    ctx_Long_FromUInt32_t: ?*const fn (ctx: *HPyContext, value: u32) callconv(.c) HPy = null,
     ctx_Long_FromInt64_t: ?*const fn (ctx: *HPyContext, v: i64) callconv(.c) HPy = null,
-    ctx_Long_FromUInt64_t: ?*const anyopaque = null,
-    ctx_Long_FromSize_t: ?*const anyopaque = null,
-    ctx_Long_FromSsize_t: ?*const anyopaque = null,
-    ctx_Long_AsInt32_t: ?*const anyopaque = null,
-    ctx_Long_AsUInt32_t: ?*const anyopaque = null,
-    ctx_Long_AsUInt32_tMask: ?*const anyopaque = null,
+    ctx_Long_FromUInt64_t: ?*const fn (ctx: *HPyContext, v: u64) callconv(.c) HPy = null,
+    ctx_Long_FromSize_t: ?*const fn (ctx: *HPyContext, value: usize) callconv(.c) HPy = null,
+    ctx_Long_FromSsize_t: ?*const fn (ctx: *HPyContext, value: isize) callconv(.c) HPy = null,
+    ctx_Long_AsInt32_t: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) i32 = null,
+    ctx_Long_AsUInt32_t: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) u32 = null,
+    ctx_Long_AsUInt32_tMask: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) u32 = null,
     ctx_Long_AsInt64_t: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) i64 = null,
-    ctx_Long_AsUInt64_t: ?*const anyopaque = null,
-    ctx_Long_AsUInt64_tMask: ?*const anyopaque = null,
-    ctx_Long_AsSize_t: ?*const anyopaque = null,
-    ctx_Long_AsSsize_t: ?*const anyopaque = null,
-    ctx_Long_AsVoidPtr: ?*const anyopaque = null,
-    ctx_Long_AsDouble: ?*const anyopaque = null,
+    ctx_Long_AsUInt64_t: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) u64 = null,
+    ctx_Long_AsUInt64_tMask: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) u64 = null,
+    ctx_Long_AsSize_t: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) usize = null,
+    ctx_Long_AsSsize_t: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) isize = null,
+    ctx_Long_AsVoidPtr: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque = null,
+    ctx_Long_AsDouble: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) f64 = null,
     ctx_Float_FromDouble: ?*const fn (ctx: *HPyContext, v: f64) callconv(.c) HPy = null,
     ctx_Float_AsDouble: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) f64 = null,
     ctx_Bool_FromBool: ?*const fn (ctx: *HPyContext, v: bool) callconv(.c) HPy = null,
@@ -1709,8 +1816,22 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
         .h_OSError = h_os_error,
         .ctx_Dup = ctxDup,
         .ctx_Close = ctxClose,
+        .ctx_Long_FromInt32_t = ctxLongFromInt32,
+        .ctx_Long_FromUInt32_t = ctxLongFromUInt32,
         .ctx_Long_FromInt64_t = ctxLongFromInt64,
+        .ctx_Long_FromUInt64_t = ctxLongFromUInt64,
+        .ctx_Long_FromSize_t = ctxLongFromSizeT,
+        .ctx_Long_FromSsize_t = ctxLongFromSsizeT,
+        .ctx_Long_AsInt32_t = ctxLongAsInt32,
+        .ctx_Long_AsUInt32_t = ctxLongAsUInt32,
+        .ctx_Long_AsUInt32_tMask = ctxLongAsUInt32Mask,
         .ctx_Long_AsInt64_t = ctxLongAsInt64,
+        .ctx_Long_AsUInt64_t = ctxLongAsUInt64,
+        .ctx_Long_AsUInt64_tMask = ctxLongAsUInt64Mask,
+        .ctx_Long_AsSize_t = ctxLongAsSizeT,
+        .ctx_Long_AsSsize_t = ctxLongAsSsizeT,
+        .ctx_Long_AsVoidPtr = ctxLongAsVoidPtr,
+        .ctx_Long_AsDouble = ctxLongAsDouble,
         .ctx_Float_FromDouble = ctxFloatFromDouble,
         .ctx_Float_AsDouble = ctxFloatAsDouble,
         .ctx_Bool_FromBool = ctxBoolFromBool,

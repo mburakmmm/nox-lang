@@ -149,6 +149,49 @@ static HPy get_destroy_count_impl(HPyContext *ctx, HPy self, HPy arg)
     return HPyLong_FromLong(ctx, counter_destroy_count);
 }
 
+/* Long sayısal dönüşüm ailesi (Faz PP) test amaçlı: eklentinin KENDİ C
+ * kodunun HPyLong_AsInt32_t/FromInt32_t/AsUInt32_t/FromUInt32_t/
+ * AsUInt64_t/FromUInt64_t/AsSize_t/FromSize_t/AsSsize_t/FromSsize_t
+ * makrolarını (HEPSİ ham `ctx_Long_*` ABI yuvalarına TRAMPOLİNE eden)
+ * ZİNCİRLEME olarak ÇAĞIRMASI — girdi DEĞİŞMEDEN (bilgi KAYBI OLMADAN)
+ * çıkması gerekir (küçük, pozitif bir değer İçin). */
+HPyDef_METH(long_conv_roundtrip, "long_conv_roundtrip", HPyFunc_O)
+static HPy long_conv_roundtrip_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    int32_t i32v = HPyLong_AsInt32_t(ctx, arg);
+    HPy from_i32 = HPyLong_FromInt32_t(ctx, i32v);
+    uint32_t u32v = HPyLong_AsUInt32_t(ctx, from_i32);
+    HPy from_u32 = HPyLong_FromUInt32_t(ctx, u32v);
+    uint64_t u64v = HPyLong_AsUInt64_t(ctx, from_u32);
+    HPy from_u64 = HPyLong_FromUInt64_t(ctx, u64v);
+    size_t szv = HPyLong_AsSize_t(ctx, from_u64);
+    HPy from_sz = HPyLong_FromSize_t(ctx, szv);
+    HPy_ssize_t ssv = HPyLong_AsSsize_t(ctx, from_sz);
+    HPy result = HPyLong_FromSsize_t(ctx, ssv);
+    HPy_Close(ctx, from_i32);
+    HPy_Close(ctx, from_u32);
+    HPy_Close(ctx, from_u64);
+    HPy_Close(ctx, from_sz);
+    return result;
+}
+
+HPyDef_METH(long_as_double_via_c, "long_as_double_via_c", HPyFunc_O)
+static HPy long_as_double_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    double d = HPyLong_AsDouble(ctx, arg);
+    return HPyFloat_FromDouble(ctx, d);
+}
+
+HPyDef_METH(long_as_voidptr_roundtrip, "long_as_voidptr_roundtrip", HPyFunc_O)
+static HPy long_as_voidptr_roundtrip_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    void *p = HPyLong_AsVoidPtr(ctx, arg);
+    return HPyLong_FromSize_t(ctx, (size_t)p);
+}
+
 HPyDef_METH(add_one, "add_one", HPyFunc_O)
 static HPy add_one_impl(HPyContext *ctx, HPy self, HPy arg)
 {
@@ -254,6 +297,9 @@ static HPy call_add_value_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
 }
 
 static HPyDef *module_defines[] = {
+    &long_conv_roundtrip,
+    &long_as_double_via_c,
+    &long_as_voidptr_roundtrip,
     &add_one,
     &str_length,
     &negate,

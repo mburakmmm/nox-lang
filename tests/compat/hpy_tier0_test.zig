@@ -573,3 +573,87 @@ test "gerçek HPy eklentisi: ctx_CallMethod — negatif testler (kwargs reddi, v
     try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_AttributeError));
     ctx.ctx_Err_Clear.?(ctx);
 }
+
+test "gerçek HPy eklentisi: long_conv_roundtrip(42) == 42 — Int32/UInt32/UInt64/Size_t/Ssize_t zinciri (Faz PP)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const long_conv_roundtrip = mod.findMethodO("long_conv_roundtrip") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const arg = ctx.ctx_Long_FromInt64_t.?(ctx, 42);
+    defer ctx.ctx_Close.?(ctx, arg);
+
+    const result = long_conv_roundtrip(ctx, hpy.context.HPy_NULL, arg);
+    defer ctx.ctx_Close.?(ctx, result);
+    try std.testing.expectEqual(@as(i64, 42), ctx.ctx_Long_AsInt64_t.?(ctx, result));
+}
+
+test "gerçek HPy eklentisi: long_as_double_via_c(7) == 7.0 — ctx_Long_AsDouble (Faz PP)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const long_as_double_via_c = mod.findMethodO("long_as_double_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const arg = ctx.ctx_Long_FromInt64_t.?(ctx, 7);
+    defer ctx.ctx_Close.?(ctx, arg);
+
+    const result = long_as_double_via_c(ctx, hpy.context.HPy_NULL, arg);
+    defer ctx.ctx_Close.?(ctx, result);
+    try std.testing.expectApproxEqAbs(@as(f64, 7.0), ctx.ctx_Float_AsDouble.?(ctx, result), 1e-9);
+}
+
+test "gerçek HPy eklentisi: long_as_voidptr_roundtrip(1024) == 1024 — ctx_Long_AsVoidPtr (Faz PP)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const long_as_voidptr_roundtrip = mod.findMethodO("long_as_voidptr_roundtrip") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const arg = ctx.ctx_Long_FromInt64_t.?(ctx, 1024);
+    defer ctx.ctx_Close.?(ctx, arg);
+
+    const result = long_as_voidptr_roundtrip(ctx, hpy.context.HPy_NULL, arg);
+    defer ctx.ctx_Close.?(ctx, result);
+    try std.testing.expectEqual(@as(i64, 1024), ctx.ctx_Long_AsInt64_t.?(ctx, result));
+}
+
+test "gerçek HPy eklentisi: ctx_Long_As*Mask ve overflow davranışları (Faz PP, doğrudan Zig'den)" {
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    // Negatif bir değer İçin AsUInt32_t/AsUInt64_t/AsSize_t OverflowError vermeli.
+    const neg = ctx.ctx_Long_FromInt64_t.?(ctx, -1);
+    defer ctx.ctx_Close.?(ctx, neg);
+    _ = ctx.ctx_Long_AsUInt32_t.?(ctx, neg);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_OverflowError));
+    ctx.ctx_Err_Clear.?(ctx);
+
+    // Mask varyantları HATA VERMEZ — bit düzenini KORUR.
+    const masked = ctx.ctx_Long_AsUInt32_tMask.?(ctx, neg);
+    try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Err_Occurred.?(ctx));
+    try std.testing.expectEqual(@as(u32, 0xFFFFFFFF), masked);
+
+    const masked64 = ctx.ctx_Long_AsUInt64_tMask.?(ctx, neg);
+    try std.testing.expectEqual(@as(u64, 0xFFFFFFFFFFFFFFFF), masked64);
+
+    // i32 sınırının dışında bir değer — AsInt32_t OverflowError vermeli.
+    const big = ctx.ctx_Long_FromInt64_t.?(ctx, 1 << 40);
+    defer ctx.ctx_Close.?(ctx, big);
+    _ = ctx.ctx_Long_AsInt32_t.?(ctx, big);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_OverflowError));
+    ctx.ctx_Err_Clear.?(ctx);
+}

@@ -1315,6 +1315,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   zig`ye 4 yeni uçtan uca test (doğrudan çağrı, eklenti-tarafı
   trampoline, kwargs reddi, var olmayan metod → AttributeError). Kapsam:
   180 `ctx_*` fonksiyonundan 61→**62**'si implemente.
+- **Faz PP — HPy köprüsü: Long sayısal dönüşüm ailesi** (`ctx_Long_
+  FromInt32_t`/`FromUInt32_t`/`FromUInt64_t`/`FromSize_t`/`FromSsize_t`/
+  `AsInt32_t`/`AsUInt32_t`/`AsUInt32_tMask`/`AsUInt64_t`/`AsUInt64_tMask`/
+  `AsSize_t`/`AsSsize_t`/`AsVoidPtr`/`AsDouble`, 14 fonksiyon) — mevcut
+  `.long` (`i64`) etiketinin mekanik uzantıları; dar tipler İçin gerçek
+  `OverflowError` davranışı, "Mask" varyantları hatasız bit-düzeni
+  korur. `noxtest.c`ye zincirleme dönüşüm + `AsDouble`/`AsVoidPtr`
+  çağıran 3 yeni metod, `hpy_tier0_test.zig`ye 4 yeni test. Kapsam: 180
+  `ctx_*` fonksiyonundan 62→**76**'sı implemente.
 
 ## [1.0.0]
 

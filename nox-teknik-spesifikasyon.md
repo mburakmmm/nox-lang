@@ -1586,6 +1586,31 @@ yöntemiyle doğrulandı.
 member/getset tanımları, buffer protokolü. "%100" hâlâ çok-oturumlu bir
 hedeftir.
 
+**2026-07-21: kullanıcı "coverage %100 olana kadar nonstop devam et" dedi**
+— bu andan itibaren aşağıdaki fazlar (PP ve devamı) TEK bir oturumda,
+onay beklenmeden ARDIŞIK olarak uygulandı. Kapsamın geri kalanı (o anda
+119 fonksiyon) mantıksal gruplara ayrıldı; HER grup yine AGENTS.md §10
+kuralına (gerçek C eklentisiyle uçtan uca doğrulama) uydu, ama belgeleme
+—hacim GEREĞİ— ÖNCEKİ fazlardan daha ÖZLÜ tutuldu.
+
+### Faz PP — HPy: Long sayısal dönüşüm ailesi
+
+`ctx_Long_FromInt32_t`/`FromUInt32_t`/`FromUInt64_t`/`FromSize_t`/
+`FromSsize_t` + `ctx_Long_AsInt32_t`/`AsUInt32_t`/`AsUInt32_tMask`/
+`AsUInt64_t`/`AsUInt64_tMask`/`AsSize_t`/`AsSsize_t`/`AsVoidPtr`/
+`AsDouble` (14 fonksiyon) — TÜMÜ mevcut `.long` etiketinin (TEK bir
+`i64`, bkz. Tier 0'ın KENDİ v0.1 basitleştirmesi) mekanik uzantıları.
+"Mask" varyantları HATA VERMEDEN bit-düzenini KORUR (`@truncate`/
+`@bitCast`); dar tipler (`Int32_t`/`UInt32_t`/`UInt64_t`[negatif]/
+`Size_t`[negatif]) sığmayan değerler İçin gerçek CPython'ın AYNI
+`OverflowError` davranışını izler. Doğrulama: `noxtest.c`ye `HPyLong_
+AsInt32_t→FromInt32_t→AsUInt32_t→...→FromSsize_t` ZİNCİRİ (bilgi kaybı
+OLMADAN 42→42 dönmeli), `HPyLong_AsDouble`, `HPyLong_AsVoidPtr`
+çağıran 3 yeni modül metodu + 4 yeni Zig testi (round-trip'ler +
+overflow/mask negatif testleri, DOĞRUDAN `ctx_Long_As*` çağrılarıyla).
+Toplam: 22/22 (bu dosyada). Kapsam: 180 `ctx_*` fonksiyonundan
+62→**76**'sı implemente.
+
 ---
 
 ### 3.20 Faz 20 Uygulama Kapsamı — Zig/C ABI FFI (`extern def`)
