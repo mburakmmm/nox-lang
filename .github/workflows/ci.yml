@@ -147,26 +147,17 @@ jobs:
           & ".\zig-out\bin\noxc.exe" check smoke.nox
           if ($LASTEXITCODE -ne 0) { throw "noxc check basarisiz (exit $LASTEXITCODE)" }
 
-      # Faz LL.2+ öncesi araç-zinciri KEŞFİ (bkz. nox-teknik-spesifikasyon.md
-      # §3.71): `windows-latest` çalıştırıcısında bir C derleyicisi/assembler
-      # (`cc`/`gcc`, `build.zig`nin `compile_swap_asm` adımının GEREKTİRDİĞİ —
-      # QBE'nin ürettiği AT&T assembly'yi MinGW'in assembler'ının derlemesi
-      # GEREKTİĞİNDEN) VARSAYILAN olarak PATH'te bulunup bulunmadığı HENÜZ
-      # BİLİNMİYOR — GERÇEK sonuç görülmeden hiçbir runtime/fiber-assembly
-      # işine BAŞLANMAYACAK (bkz. LL.1'in "riskli platform kodu gerçek CI
-      # olmadan yazılmaz" ilkesi). Bu adım YALNIZCA bilgi amaçlı, HİÇBİR
-      # şeyi başarısız KILMAZ (`continue-on-error`).
-      - name: Araç-zinciri keşfi — cc/gcc PATH'te var mı?
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          Write-Host "--- cc ---"
-          cc --version 2>&1 | Out-String | Write-Host
-          Write-Host "--- gcc ---"
-          gcc --version 2>&1 | Out-String | Write-Host
-          Write-Host "--- where cc ---"
-          where.exe cc 2>&1 | Out-String | Write-Host
-          Write-Host "--- where gcc ---"
-          where.exe gcc 2>&1 | Out-String | Write-Host
-          Write-Host "--- PATH ---"
-          $env:PATH -split ';' | Write-Host
+      # Faz LL.2/LL.3 (bkz. nox-teknik-spesifikasyon.md §3.71): `cc`/`gcc`
+      # (MinGW-w64) `windows-latest`te VARSAYILAN olarak `C:\mingw64\bin`
+      # altında PATH'te BULUNDUĞU (GERÇEK bir keşif adımıyla DOĞRULANDI,
+      # commit geçmişine bkz.) — `build.zig`nin `compile_swap_asm` adımı
+      # (QBE'nin AT&T assembly'sini `cc -c` İLE derleyen) BU YÜZDEN
+      # native windows-latest'te ÇALIŞABİLİR. `async-rt-test` adımı, TÜM
+      # `noxrt`in (dolayısıyla HENÜZ Windows'a taşınmamış TÜM stdlib_shims'in)
+      # BEKLENMESİNE GEREK KALMADAN, YALNIZCA fiber/io_reactor/scheduler/
+      # channel katmanının (Windows x64 fiber assembly'si + `WSAPoll`
+      # tabanlı reaktör DAHİL) GERÇEKTEN native Windows'ta ÇALIŞTIĞINI
+      # doğrular (bkz. o build.zig adımının belge notu, "runtime/
+      # stdlib_shims'e hiç bağımlı değil").
+      - name: zig build async-rt-test (yalnızca fiber/io_reactor/scheduler/channel)
+        run: zig build async-rt-test

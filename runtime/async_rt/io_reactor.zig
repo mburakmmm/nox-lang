@@ -8,22 +8,27 @@
 //! devredilebilmesini sağlayan alt katmandır (bkz. `Scheduler.suspendForIo`/
 //! `waiting_on_io`).
 //!
-//! **v0.1 kapsamı (`fiber.zig`nin CPU-mimarisi kısıtlamasıyla — yalnızca
-//! aarch64 — TUTARLI, ama İŞLETİM SİSTEMİ bazında ARTIK İKİ platform
-//! destekleniyor, bkz. Faz R.1):** macOS (kqueue) VE Linux (epoll). Diğer
-//! POSIX benzeri sistemler (BSD türevleri vb.) bu fazın DIŞINDA.
+//! **Kapsam (Faz LL.2, bkz. nox-teknik-spesifikasyon.md §3.71):** macOS
+//! (kqueue), Linux (epoll) VE Windows (`WSAPoll`). Diğer POSIX benzeri
+//! sistemler (BSD türevleri vb.) HÂLÂ bu fazın DIŞINDA. Windows'un
+//! reaktörü GERÇEK IOCP DEĞİL, `WSAPoll` tabanlıdır (bkz. `WindowsReactor`in
+//! KENDİ belge notu, "Bilinçli tasarım kararı") — kqueue/epoll'un HAZIR-
+//! OLMA-bildirimi modeliyle AYNI sözleşmeyi sağlar, IOCP'nin tamamlama-
+//! tabanlı modeli İSE `http_server.zig`/`http_client.zig`nin TÜM G/Ç
+//! çağrılarının YENİDEN yazılmasını GEREKTİRİRDİ.
 //!
-//! **Faz R.1 mimari notu:** kqueue VE epoll YOLLARI, AYNI genel `IoReactor`
-//! ADI altında, `comptime` ile SEÇİLEN İKİ AYRI struct'tır (`KqueueReactor`/
-//! `EpollReactor`) — HER İKİSİ de AYNI `init`/`deinit`/`register`/`poll`
-//! ARAYÜZÜNÜ sağlar, bu yüzden `scheduler.zig`/`io.zig` HİÇBİR platform
-//! dallanması İÇERMEZ (`IoReactor` TEK bir somut tip gibi KULLANILIR). HER
-//! bir reaktör struct'ı `if (builtin.os.tag == ...) struct {...} else
-//! struct {}` deseniyle SARILIR — bu, YANLIŞ platformda derlenirken OS'e
-//! özgü tiplerin (`posix.Kevent`, `std.os.linux.epoll_event`) HİÇ
-//! semantik analiz EDİLMEMESİNİ garanti eder (Zig'in struct alan/imza
-//! analizinin fonksiyon gövdelerinin AKSİNE "istekli/eager" olabilmesi
-//! nedeniyle KRİTİK bir önlem).
+//! **Faz R.1 mimari notu:** kqueue/epoll/WSAPoll YOLLARI, AYNI genel
+//! `IoReactor` ADI altında, `comptime` ile SEÇİLEN AYRI struct'lardır
+//! (`KqueueReactor`/`EpollReactor`/`WindowsReactor`) — HEPSİ AYNI `init`/
+//! `deinit`/`register`/`poll` ARAYÜZÜNÜ sağlar, bu yüzden `scheduler.zig`/
+//! `io.zig` HİÇBİR platform dallanması İÇERMEZ (`IoReactor` TEK bir somut
+//! tip gibi KULLANILIR). HER bir reaktör struct'ı `if (builtin.os.tag ==
+//! ...) struct {...} else struct {}` deseniyle SARILIR — bu, YANLIŞ
+//! platformda derlenirken OS'e özgü tiplerin (`posix.Kevent`, `std.os.
+//! linux.epoll_event`, Winsock `SOCKET`) HİÇ semantik analiz EDİLMEMESİNİ
+//! garanti eder (Zig'in struct alan/imza analizinin fonksiyon
+//! gövdelerinin AKSİNE "istekli/eager" olabilmesi nedeniyle KRİTİK bir
+//! önlem).
 //!
 //! **`EV_ONESHOT`/`EPOLLONESHOT` kullanımı (kritik):** her `register` çağrısı
 //! bir olayı YALNIZCA BİR KEZ bildirecek şekilde kaydeder. **Kqueue'da**
@@ -67,8 +72,8 @@ const posix = std.posix;
 const Fiber = @import("fiber.zig").Fiber;
 
 comptime {
-    if (builtin.os.tag != .macos and builtin.os.tag != .linux) {
-        @compileError("io_reactor.zig şu an yalnızca macOS (kqueue) ve Linux (epoll) için uygulandı (bkz. modül üstü not, v0.1 sınırlaması)");
+    if (builtin.os.tag != .macos and builtin.os.tag != .linux and builtin.os.tag != .windows) {
+        @compileError("io_reactor.zig şu an yalnızca macOS (kqueue), Linux (epoll) ve Windows (WSAPoll) için uygulandı (bkz. modül üstü not)");
     }
 }
 
@@ -91,12 +96,28 @@ pub const WaitCtx = struct {
     /// önler.
     resolved: bool = false,
     has_timeout: bool = false,
-    target_fd: posix.fd_t = -1,
+    // Not: `undefined` — `posix.fd_t` Windows'ta bir İŞARETÇİ (`HANDLE`)
+    // olduğundan (macOS/Linux'ta bir `c_int`in AKSİNE), TÜM platformlarda
+    // TİP-UYUMLU tek sabit değer `-1` DEĞİL, `undefined`dir — bu alan HER
+    // ZAMAN `register`/`registerWithTimeout` TARAFINDAN OKUNMADAN ÖNCE
+    // AÇIKÇA atanır, bu yüzden başlangıç değeri hiçbir zaman GERÇEKTEN
+    // okunmaz (bkz. Faz LL.2, nox-teknik-spesifikasyon.md §3.71).
+    target_fd: posix.fd_t = undefined,
     target_filter: Filter = .read,
     /// Yalnızca epoll: `registerWithTimeout`in yarattığı `timerfd`— HANGİ
     /// taraf ateşlerse ateşlesin `poll()` TARAFINDAN TAM OLARAK BİR KEZ
     /// `close()`lanır (aksi halde fd SIZARDI).
-    timer_fd: posix.fd_t = -1,
+    timer_fd: posix.fd_t = undefined,
+    /// Faz LL.2 (bkz. nox-teknik-spesifikasyon.md §3.71): yalnızca Windows —
+    /// kqueue'nun `EVFILT_TIMER`ı/epoll'un `timerfd`si GİBİ çekirdek-seviyeli
+    /// bir "bu fd + zamanlayıcıyı BİRLİKTE bekle" ilkeli Windows'ta YOK
+    /// (`WSAPoll`, TEK bir çağrıda TÜM bekleyen fd'ler İçin TEK bir ORTAK
+    /// zaman aşımı alır — HER bekleyişin KENDİ zamanlayıcısı YOK). Bu YÜZDEN
+    /// `WindowsReactor`, HER bekleyişin MUTLAK bitiş zamanını (monotonik
+    /// milisaniye, `QueryPerformanceCounter` tabanlı) burada SAKLAR, `poll()`
+    /// HER turda TÜM bekleyen `WaitCtx`lerin `deadline_ms`si ARASINDAKİ
+    /// EN YAKINI `WSAPoll`a TEK bir zaman aşımı olarak geçirir.
+    deadline_ms: i64 = 0,
 };
 
 /// **Kqueue (macOS).** Yalnızca `builtin.os.tag == .macos` İKEN GERÇEK
@@ -443,10 +464,221 @@ const EpollReactor = if (builtin.os.tag == .linux) struct {
     }
 } else struct {};
 
+/// Faz LL.2 (bkz. nox-teknik-spesifikasyon.md §3.71): Windows'un `WSAPoll`sı
+/// — kqueue/epoll'un AKSİNE — bir "interest listesi" KAYDETMEZ; her çağrıda
+/// TAM bir fd dizisi + TEK bir ortak zaman aşımı alıp o dizideki HANGİ
+/// fd'lerin hazır olduğunu döner (POSIX `poll()`e daha yakın bir model).
+/// `EVFILT_TIMER`/`timerfd` GİBİ çekirdek-seviyeli bir zamanlayıcı ilkeli
+/// OLMADIĞINDAN, `WindowsReactor` BEKLEYEN TÜM `WaitCtx`leri KENDİSİ bir
+/// listede tutar (`pending`), her `poll()` turunda o listeden TAZE bir
+/// `WSAPOLLFD` dizisi kurar, EN YAKIN `deadline_ms`i (varsa) TEK zaman
+/// aşımı olarak geçirir. **Bilinçli tasarım kararı — GERÇEK IOCP DEĞİL:**
+/// IOCP'nin KENDİSİ tamamlama-tabanlıdır (bir okuma/yazmayı BAŞLATIP
+/// BİTTİĞİNDE haber alırsınız), kqueue/epoll'un (VE bu reaktörün TÜM
+/// çağıranlarının, `io.zig`nin `nonBlockingRead/Write` deseninin)
+/// VARSAYDIĞI "hazır-olma bildirimi, OKUMA/YAZMA KENDİN yap" modeliyle
+/// YAPISAL olarak UYUŞMAZ — IOCP'ye GEÇMEK `http_server.zig`/
+/// `http_client.zig`nin TÜM G/Ç çağrılarının OVERLAPPED işlemlere
+/// YENİDEN yazılmasını gerektirirdi (LL.5'in kapsamını KATLARDI).
+/// `WSAPoll` İSE AYNI hazır-olma sözleşmesini sağladığından `scheduler.zig`/
+/// `io.zig` HİÇBİR platform dallanması GEREKTİRMEDEN ÇALIŞMAYA devam eder —
+/// tıpkı kqueue/epoll gibi.
+const WindowsReactor = if (builtin.os.tag == .windows) struct {
+    /// Bu Zig sürümünün `std.os.windows.ws2_32`sı (bkz. modül üstü
+    /// araştırma notu) `WSAStartup`/`WSAPoll`i BAĞLAMIYOR — burada ELLE
+    /// bildirilir. Win32 ABI'si `WSAStartup`tan (Windows 2000'den beri)
+    /// BU YANA DEĞİŞMEDİĞİNDEN düşük risklidir.
+    const SOCKET = usize;
+    const WSAPOLLFD = extern struct {
+        fd: SOCKET,
+        events: i16,
+        revents: i16,
+    };
+    const POLLRDNORM: i16 = 0x0100;
+    const POLLWRNORM: i16 = 0x0010;
+    const POLLERR: i16 = 0x0001;
+    const POLLHUP: i16 = 0x0002;
+    const POLLNVAL: i16 = 0x0004;
+
+    extern "ws2_32" fn WSAStartup(version_requested: u16, data: *[512]u8) callconv(.c) i32;
+    extern "ws2_32" fn WSAPoll(fds: [*]WSAPOLLFD, nfds: u32, timeout_ms: i32) callconv(.c) i32;
+    extern "kernel32" fn QueryPerformanceCounter(count: *i64) callconv(.c) i32;
+    extern "kernel32" fn QueryPerformanceFrequency(freq: *i64) callconv(.c) i32;
+
+    /// `QueryPerformanceCounter`/`Frequency`den türetilmiş monotonik
+    /// milisaniye — `deadline_ms` hesaplarında kullanılır. Frekans süreç
+    /// ömrü boyunca DEĞİŞMEDİĞİNDEN bir kez sorgulanıp önbelleklenir.
+    var g_qpc_freq: i64 = 0;
+    fn monotonicMs() i64 {
+        if (g_qpc_freq == 0) {
+            var freq: i64 = 0;
+            _ = QueryPerformanceFrequency(&freq);
+            g_qpc_freq = freq;
+        }
+        var counter: i64 = 0;
+        _ = QueryPerformanceCounter(&counter);
+        return @divTrunc(counter * 1000, g_qpc_freq);
+    }
+
+    pending: std.ArrayListUnmanaged(*WaitCtx) = .empty,
+    gpa: std.mem.Allocator,
+
+    pub fn init() !@This() {
+        var wsa_data: [512]u8 = undefined;
+        _ = WSAStartup(0x0202, &wsa_data);
+        return .{ .gpa = std.heap.page_allocator };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.pending.deinit(self.gpa);
+    }
+
+    fn pollBits(filter: Filter) i16 {
+        return switch (filter) {
+            .read => POLLRDNORM,
+            .write => POLLWRNORM,
+        };
+    }
+
+    pub fn register(self: *@This(), fd: posix.fd_t, filter: Filter, ctx: *WaitCtx) !void {
+        ctx.target_fd = fd;
+        ctx.target_filter = filter;
+        try self.pending.append(self.gpa, ctx);
+    }
+
+    /// Faz HH.7 eşdeğeri (bkz. modül üstü not — Windows'ta bunun İçin
+    /// AYRI bir çekirdek-nesnesi YOK, `deadline_ms` BURADA hesaplanıp
+    /// `poll()`ün KENDİ zaman aşımı hesaplamasına BIRAKILIR).
+    pub fn registerWithTimeout(self: *@This(), fd: posix.fd_t, filter: Filter, timeout_ms: u32, ctx: *WaitCtx) !void {
+        ctx.has_timeout = true;
+        ctx.deadline_ms = monotonicMs() + @as(i64, timeout_ms);
+        try self.register(fd, filter, ctx);
+    }
+
+    /// En az bir bekleyiş çözülene (hazır OLANA ya da zaman aşımına
+    /// UĞRAYANA) kadar BLOKE olur — `KqueueReactor`/`EpollReactor.poll` İLE
+    /// AYNI kullanım sözleşmesi. HER turda `pending`den TAZE bir
+    /// `WSAPOLLFD` dizisi kurar; TÜM zaman-aşımsız bekleyişler arasındaki
+    /// EN YAKIN `deadline_ms`i TEK ortak zaman aşımı olarak geçirir (HİÇBİRİ
+    /// zaman-aşımlı DEĞİLSE sonsuz bekler, `timeout_ms = -1`).
+    pub fn poll(self: *@This(), scheduler: anytype) !usize {
+        if (self.pending.items.len == 0) return 0;
+
+        var pollfds = try self.gpa.alloc(WSAPOLLFD, self.pending.items.len);
+        defer self.gpa.free(pollfds);
+        for (self.pending.items, 0..) |ctx, i| {
+            pollfds[i] = .{
+                .fd = @intFromPtr(ctx.target_fd),
+                .events = pollBits(ctx.target_filter),
+                .revents = 0,
+            };
+        }
+
+        const now_before = monotonicMs();
+        var timeout_ms: i32 = -1;
+        for (self.pending.items) |ctx| {
+            if (!ctx.has_timeout) continue;
+            const remaining: i64 = @max(0, ctx.deadline_ms - now_before);
+            const remaining_i32: i32 = @intCast(@min(remaining, std.math.maxInt(i32)));
+            if (timeout_ms == -1 or remaining_i32 < timeout_ms) timeout_ms = remaining_i32;
+        }
+
+        const rc = WSAPoll(pollfds.ptr, @intCast(pollfds.len), timeout_ms);
+        if (rc < 0) return error.Unexpected;
+
+        const now_after = monotonicMs();
+        var still_pending: std.ArrayListUnmanaged(*WaitCtx) = .empty;
+        var n: usize = 0;
+        for (self.pending.items, 0..) |ctx, i| {
+            const revents = pollfds[i].revents;
+            const matched = (revents & (pollBits(ctx.target_filter) | POLLERR | POLLHUP | POLLNVAL)) != 0;
+            if (matched) {
+                ctx.result = .ready;
+                scheduler.markReady(ctx.fiber);
+                n += 1;
+            } else if (ctx.has_timeout and now_after >= ctx.deadline_ms) {
+                ctx.result = .timed_out;
+                scheduler.markReady(ctx.fiber);
+                n += 1;
+            } else {
+                try still_pending.append(self.gpa, ctx);
+            }
+        }
+        self.pending.deinit(self.gpa);
+        self.pending = still_pending;
+        return n;
+    }
+
+    // ---- Yalnızca test yardımcıları (bkz. dosyanın altındaki testler) ----
+    //
+    // Windows'ta `std.c.socketpair`/`AF.UNIX` YOK (bkz. Zig std'nin KENDİ
+    // belge notu, "AF_UNIX comes to Windows ama socketpair() YOK") — bu
+    // YÜZDEN testler İçin BAĞLANMIŞ (connected) bir UDP-loopback ÇİFTİ
+    // kurulur (TCP'nin listen/accept'ine GEREK KALMADAN, socketpair'in
+    // "iki uçlu, karşılıklı okunabilir/yazılabilir" DAVRANIŞINI taklit
+    // eder). `std.c.read`/`write`/`close` DEĞİL, `recv`/`send`/`closesocket`
+    // KULLANILMASI GEREKİR (bkz. modül üstü not — CRT'nin `read`/`write`/
+    // `close`si CRT fd-tablosu İÇİNDİR, ham Winsock `SOCKET`leri İÇİN
+    // GEÇERSİZDİR).
+    const ws2_32 = std.os.windows.ws2_32;
+    extern "ws2_32" fn socket(af: i32, socket_type: i32, protocol: i32) callconv(.c) SOCKET;
+    extern "ws2_32" fn bind(s: SOCKET, addr: *const ws2_32.sockaddr.in, namelen: i32) callconv(.c) i32;
+    extern "ws2_32" fn connect(s: SOCKET, addr: *const ws2_32.sockaddr.in, namelen: i32) callconv(.c) i32;
+    extern "ws2_32" fn getsockname(s: SOCKET, addr: *ws2_32.sockaddr.in, namelen: *i32) callconv(.c) i32;
+    extern "ws2_32" fn send(s: SOCKET, buf: [*]const u8, len: i32, flags: i32) callconv(.c) i32;
+    extern "ws2_32" fn recv(s: SOCKET, buf: [*]u8, len: i32, flags: i32) callconv(.c) i32;
+    extern "ws2_32" fn closesocket(s: SOCKET) callconv(.c) i32;
+
+    const INVALID_SOCKET: SOCKET = ~@as(SOCKET, 0);
+
+    fn bindLoopback(s: SOCKET) !ws2_32.sockaddr.in {
+        var addr: ws2_32.sockaddr.in = .{
+            .port = 0,
+            .addr = std.mem.nativeToBig(u32, 0x7F000001), // 127.0.0.1
+        };
+        if (bind(s, &addr, @sizeOf(ws2_32.sockaddr.in)) != 0) return error.BindFailed;
+        var len: i32 = @sizeOf(ws2_32.sockaddr.in);
+        if (getsockname(s, &addr, &len) != 0) return error.GetSockNameFailed;
+        return addr;
+    }
+
+    /// `std.c.socketpair`in YERİNE — bkz. yukarıdaki belge notu.
+    pub fn makeLoopbackPair() ![2]posix.fd_t {
+        _ = try init(); // WSAStartup çağrısını GARANTİLER (testler reactor.init()'i AYRICA çağırabilir, bu ZARARSIZ tekrar bir WSAStartup'tır).
+        const a = socket(ws2_32.AF.INET, ws2_32.SOCK.DGRAM, 0);
+        if (a == INVALID_SOCKET) return error.SocketFailed;
+        errdefer _ = closesocket(a);
+        const b = socket(ws2_32.AF.INET, ws2_32.SOCK.DGRAM, 0);
+        if (b == INVALID_SOCKET) return error.SocketFailed;
+        errdefer _ = closesocket(b);
+
+        const addr_a = try bindLoopback(a);
+        const addr_b = try bindLoopback(b);
+        if (connect(a, &addr_b, @sizeOf(ws2_32.sockaddr.in)) != 0) return error.ConnectFailed;
+        if (connect(b, &addr_a, @sizeOf(ws2_32.sockaddr.in)) != 0) return error.ConnectFailed;
+
+        return .{ @ptrFromInt(a), @ptrFromInt(b) };
+    }
+
+    pub fn testWrite(fd: posix.fd_t, bytes: []const u8) i32 {
+        return send(@intFromPtr(fd), bytes.ptr, @intCast(bytes.len), 0);
+    }
+
+    pub fn testRead(fd: posix.fd_t, buf: []u8) i32 {
+        return recv(@intFromPtr(fd), buf.ptr, @intCast(buf.len), 0);
+    }
+
+    pub fn testClose(fd: posix.fd_t) void {
+        _ = closesocket(@intFromPtr(fd));
+    }
+} else struct {};
+
 pub const IoReactor = if (builtin.os.tag == .macos)
     KqueueReactor
 else if (builtin.os.tag == .linux)
     EpollReactor
+else if (builtin.os.tag == .windows)
+    WindowsReactor
 else
     @compileError("desteklenmeyen platform (bkz. modül üstü comptime denetimi)");
 
@@ -457,11 +689,42 @@ const MarkReadySpy = struct {
     }
 };
 
-test "IoReactor: bir soket çiftinde yazma tarafı, okuma tarafını hazır bildirir" {
+// Faz LL.2 (bkz. nox-teknik-spesifikasyon.md §3.71): testlerin platform-nötr
+// yardımcıları — POSIX'te `std.c.socketpair(AF.UNIX,...)`/`write`/`read`/
+// `close`, Windows'ta `WindowsReactor`nin UDP-loopback ÇİFTİ/`send`/`recv`/
+// `closesocket`si. `builtin.os.tag` KOŞULU comptime-BİLİNEN OLDUĞUNDAN Zig
+// alınmayan dalı ELER (bkz. `fiber.zig`nin AYNI teknikle yazılmış x86_64
+// dalı) — bu YÜZDEN Windows-özgü `WindowsReactor.makeLoopbackPair` gibi
+// çağrılar, YALNIZCA Windows'ta GERÇEKTEN semantik analiz edilir.
+fn testSocketPair() ![2]posix.fd_t {
+    if (builtin.os.tag == .windows) return WindowsReactor.makeLoopbackPair();
     var fds: [2]posix.fd_t = undefined;
     if (std.c.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &fds) != 0) return error.SocketPairFailed;
-    defer _ = std.c.close(fds[0]);
-    defer _ = std.c.close(fds[1]);
+    return fds;
+}
+
+fn testWrite(fd: posix.fd_t, bytes: []const u8) isize {
+    if (builtin.os.tag == .windows) return @intCast(WindowsReactor.testWrite(fd, bytes));
+    return std.c.write(fd, bytes.ptr, bytes.len);
+}
+
+fn testRead(fd: posix.fd_t, buf: []u8) isize {
+    if (builtin.os.tag == .windows) return @intCast(WindowsReactor.testRead(fd, buf));
+    return std.c.read(fd, buf.ptr, buf.len);
+}
+
+fn testCloseFd(fd: posix.fd_t) void {
+    if (builtin.os.tag == .windows) {
+        WindowsReactor.testClose(fd);
+    } else {
+        _ = std.c.close(fd);
+    }
+}
+
+test "IoReactor: bir soket çiftinde yazma tarafı, okuma tarafını hazır bildirir" {
+    const fds = try testSocketPair();
+    defer testCloseFd(fds[0]);
+    defer testCloseFd(fds[1]);
 
     var reactor = try IoReactor.init();
     defer reactor.deinit();
@@ -476,7 +739,7 @@ test "IoReactor: bir soket çiftinde yazma tarafı, okuma tarafını hazır bild
 
     try reactor.register(fds[0], .read, &ctx);
 
-    const written = std.c.write(fds[1], "merhaba", 7);
+    const written = testWrite(fds[1], "merhaba");
     try std.testing.expectEqual(@as(isize, 7), written);
 
     var spy = MarkReadySpy{};
@@ -496,10 +759,9 @@ test "IoReactor: AYNI fd birden çok kez register edilebilir (EAGAIN-tekrar-dene
     // ile BAŞARISIZ olurdu — bu test TAM OLARAK bu ikinci-kez-register
     // senaryosunu (kqueue'da zaten trivial-doğru, epoll'da GERÇEK bir
     // mantık gerektiren) egzersiz eder.
-    var fds: [2]posix.fd_t = undefined;
-    if (std.c.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &fds) != 0) return error.SocketPairFailed;
-    defer _ = std.c.close(fds[0]);
-    defer _ = std.c.close(fds[1]);
+    const fds = try testSocketPair();
+    defer testCloseFd(fds[0]);
+    defer testCloseFd(fds[1]);
 
     var reactor = try IoReactor.init();
     defer reactor.deinit();
@@ -510,18 +772,18 @@ test "IoReactor: AYNI fd birden çok kez register edilebilir (EAGAIN-tekrar-dene
     // İLK tur: register + ateşle + tüket.
     var ctx1: WaitCtx = .{ .fiber = fake_fiber };
     try reactor.register(fds[0], .read, &ctx1);
-    _ = std.c.write(fds[1], "a", 1);
+    _ = testWrite(fds[1], "a");
     var spy1 = MarkReadySpy{};
     _ = try reactor.poll(&spy1);
     try std.testing.expectEqual(@as(?*Fiber, fake_fiber), spy1.marked);
     var drain_buf: [1]u8 = undefined;
-    _ = std.c.read(fds[0], &drain_buf, 1);
+    _ = testRead(fds[0], &drain_buf);
 
     // İKİNCİ tur: AYNI fd (fds[0]) TEKRAR register edilir — epoll'da bu,
     // ADD→EEXIST→MOD yoluna GİRMEK ZORUNDADIR (fd hâlâ interest listesinde).
     var ctx2: WaitCtx = .{ .fiber = fake_fiber };
     try reactor.register(fds[0], .read, &ctx2);
-    _ = std.c.write(fds[1], "b", 1);
+    _ = testWrite(fds[1], "b");
     var spy2 = MarkReadySpy{};
     const n2 = try reactor.poll(&spy2);
     try std.testing.expectEqual(@as(usize, 1), n2);
@@ -534,10 +796,9 @@ test "IoReactor: AYNI fd birden çok kez register edilebilir (EAGAIN-tekrar-dene
 // KENDİ testleriyle AYNI "sahte fiber + spy" deseni) doğrular.
 
 test "IoReactor.registerWithTimeout: fd HIC hazir OLMAZSA zaman asimina UGRAR" {
-    var fds: [2]posix.fd_t = undefined;
-    if (std.c.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &fds) != 0) return error.SocketPairFailed;
-    defer _ = std.c.close(fds[0]);
-    defer _ = std.c.close(fds[1]);
+    const fds = try testSocketPair();
+    defer testCloseFd(fds[0]);
+    defer testCloseFd(fds[1]);
 
     var reactor = try IoReactor.init();
     defer reactor.deinit();
@@ -558,10 +819,9 @@ test "IoReactor.registerWithTimeout: fd HIC hazir OLMAZSA zaman asimina UGRAR" {
 }
 
 test "IoReactor.registerWithTimeout: fd ZAMANINDA hazir olursa .ready doner, zamanlayici SESSIZCE iptal edilir" {
-    var fds: [2]posix.fd_t = undefined;
-    if (std.c.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &fds) != 0) return error.SocketPairFailed;
-    defer _ = std.c.close(fds[0]);
-    defer _ = std.c.close(fds[1]);
+    const fds = try testSocketPair();
+    defer testCloseFd(fds[0]);
+    defer testCloseFd(fds[1]);
 
     var reactor = try IoReactor.init();
     defer reactor.deinit();
@@ -576,7 +836,7 @@ test "IoReactor.registerWithTimeout: fd ZAMANINDA hazir olursa .ready doner, zam
     // GEREKTİĞİNİN dolaylı kanıtı — `poll()` GERÇEKTEN 30s BLOKE OLSAYDI
     // bu test ZATEN pratikte asılı kalırdı).
     try reactor.registerWithTimeout(fds[0], .read, 30_000, &ctx);
-    _ = std.c.write(fds[1], "merhaba", 7);
+    _ = testWrite(fds[1], "merhaba");
 
     var spy = MarkReadySpy{};
     const n = try reactor.poll(&spy);

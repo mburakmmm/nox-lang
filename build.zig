@@ -643,4 +643,19 @@ pub fn build(b: *std.Build) void {
     const io_test = b.addTest(.{ .root_module = io_test_mod });
     io_test.step.dependOn(&compile_swap_asm.step);
     test_step.dependOn(&b.addRunArtifact(io_test).step);
+
+    // Faz LL.2/LL.3 (bkz. nox-teknik-spesifikasyon.md §3.71): `fiber_test`/
+    // `scheduler_test`/`channel_test`/`io_test` (yukarıda) `runtime/
+    // stdlib_shims`e (os/fs/http gibi HENÜZ Windows'a taşınmamış dosyalara)
+    // HİÇ BAĞIMLI DEĞİL — yalnızca `swap_asm_o_path`e (bu derlemenin
+    // `.S` dosyasına) VE birbirlerine bağımlılar. Bu YÜZDEN `noxrt`in
+    // TAMAMI (dolayısıyla TÜM stdlib_shims'in Windows'a taşınmasını)
+    // BEKLEMEDEN, YALNIZCA fiber/reaktör/zamanlayıcı katmanının Windows'ta
+    // GERÇEKTEN çalıştığını doğrulayan İZOLE bir adım — `windows-frontend`
+    // CI işinin `zig build async-rt-test` İLE çağırdığı TAM OLARAK budur.
+    const async_rt_test_step = b.step("async-rt-test", "Yalnızca runtime/async_rt testlerini çalıştırır (stdlib_shims'e bağımlı DEĞİL)");
+    async_rt_test_step.dependOn(&b.addRunArtifact(fiber_test).step);
+    async_rt_test_step.dependOn(&b.addRunArtifact(scheduler_test).step);
+    async_rt_test_step.dependOn(&b.addRunArtifact(channel_test).step);
+    async_rt_test_step.dependOn(&b.addRunArtifact(io_test).step);
 }

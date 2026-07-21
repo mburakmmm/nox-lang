@@ -123,22 +123,48 @@ pub const Fiber = struct {
                 self.ctx.x19 = @intFromPtr(self);
             },
             .x86_64 => {
-                // Faz R.2: `swap_x86_64.S`nin `pop` dizisinin (r15, r14,
-                // r13, r12, rbx, rbp — BU SIRAYLA) ve ARDINDAN `ret`in
-                // BEKLEDİĞİ SAHTE çerçeveyi fiber'ın KENDİ yığınına ELLE
-                // yazıyoruz (bkz. o dosyanın belge notu, "sahte ilk çerçeve
-                // hizalaması"). `self`i rbx'e ("kaçak" olarak — çağrı-
-                // korumalı, `trampoline` OKUYACAK) yerleştiriyoruz.
-                const frame_base = stack_top_aligned - 64;
-                const frame: *[7]usize = @ptrFromInt(frame_base);
-                frame[0] = 0; // r15 (kullanılmıyor)
-                frame[1] = 0; // r14 (kullanılmıyor)
-                frame[2] = 0; // r13 (kullanılmıyor)
-                frame[3] = 0; // r12 (kullanılmıyor)
-                frame[4] = @intFromPtr(self); // rbx — "kaçak" self işaretçisi
-                frame[5] = 0; // rbp (kullanılmıyor)
-                frame[6] = @intFromPtr(&trampoline); // dönüş adresi (ret hedefi)
-                self.ctx.sp = frame_base;
+                if (builtin.os.tag == .windows) {
+                    // Faz LL.3 (bkz. nox-teknik-spesifikasyon.md §3.71):
+                    // Win64 ABI'nin `swap_x86_64.S`nin Windows dalının
+                    // BEKLEDİĞİ SAHTE çerçeve — 160 bayt xmm6-15 (SIFIRLANMIŞ,
+                    // İLK açılışta ANLAMLI bir önceki değer YOK) + 8 GPR (r15,
+                    // r14, r13, r12, rsi, rdi, rbx, rbp — BU SIRAYLA) + dönüş
+                    // adresi (232 bayt TOPLAM). `self`i rbx'e ("kaçak" olarak
+                    // — SysV dalıyla AYNI hile, `trampoline` platform-bağımsız
+                    // OLARAK rbx okur) yerleştiriyoruz.
+                    const frame_base = stack_top_aligned - 232;
+                    const xmm_area: *[160]u8 = @ptrFromInt(frame_base);
+                    @memset(xmm_area, 0);
+                    const gpr: *[8]usize = @ptrFromInt(frame_base + 160);
+                    gpr[0] = 0; // r15 (kullanılmıyor)
+                    gpr[1] = 0; // r14 (kullanılmıyor)
+                    gpr[2] = 0; // r13 (kullanılmıyor)
+                    gpr[3] = 0; // r12 (kullanılmıyor)
+                    gpr[4] = 0; // rsi (kullanılmıyor)
+                    gpr[5] = 0; // rdi (kullanılmıyor)
+                    gpr[6] = @intFromPtr(self); // rbx — "kaçak" self işaretçisi
+                    gpr[7] = 0; // rbp (kullanılmıyor)
+                    const ret_slot: *usize = @ptrFromInt(frame_base + 224);
+                    ret_slot.* = @intFromPtr(&trampoline);
+                    self.ctx.sp = frame_base;
+                } else {
+                    // Faz R.2: `swap_x86_64.S`nin SysV dalının `pop` dizisinin
+                    // (r15, r14, r13, r12, rbx, rbp — BU SIRAYLA) ve ARDINDAN
+                    // `ret`in BEKLEDİĞİ SAHTE çerçeveyi fiber'ın KENDİ yığınına
+                    // ELLE yazıyoruz (bkz. o dosyanın belge notu, "sahte ilk
+                    // çerçeve hizalaması"). `self`i rbx'e ("kaçak" olarak —
+                    // çağrı-korumalı, `trampoline` OKUYACAK) yerleştiriyoruz.
+                    const frame_base = stack_top_aligned - 64;
+                    const frame: *[7]usize = @ptrFromInt(frame_base);
+                    frame[0] = 0; // r15 (kullanılmıyor)
+                    frame[1] = 0; // r14 (kullanılmıyor)
+                    frame[2] = 0; // r13 (kullanılmıyor)
+                    frame[3] = 0; // r12 (kullanılmıyor)
+                    frame[4] = @intFromPtr(self); // rbx — "kaçak" self işaretçisi
+                    frame[5] = 0; // rbp (kullanılmıyor)
+                    frame[6] = @intFromPtr(&trampoline); // dönüş adresi (ret hedefi)
+                    self.ctx.sp = frame_base;
+                }
             },
             else => comptime unreachable,
         }

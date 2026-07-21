@@ -11680,15 +11680,17 @@ yalnızca bir kurulum betiği DEĞİL.
 
 ### Yol haritası
 
-LL.1 (TAMAMLANDI, aşağıya bkz.), LL.2 (`io_reactor.zig`ye GERÇEK IOCP
-backend'i), LL.3 (`fiber.zig` İçin Windows x64 `.S` varyantı), LL.4
-(`stdlib_shims`nin POSIX çağrılarının Windows karşılıklarına portu),
-LL.5 (soket katmanı — Winsock + self-pipe'ın loopback-soket
-emülasyonu), LL.6 (araç zinciri — MinGW-w64 doğrulaması + CI'de QBE'nin
-onunla derlenmesi), LL.7 (`release.yml` + `install.ps1`), LL.8
-(README/AGENTS.md'nin GÜNCELLENMESİ). LL.2-LL.8 kendi başlarına BÜYÜK,
-çok-commit'li alt-fazlar — HER biri GERÇEK Windows CI sonucuyla
-doğrulanmadan bir SONRAKİne geçilmeyecek.
+LL.1 (TAMAMLANDI, aşağıya bkz.), LL.2 (`io_reactor.zig`ye GERÇEK bir
+Windows backend'i — planın ADI "IOCP" idi, AMA LL.2'nin KENDİSİ SIRASINDA
+bilinçli olarak `WSAPoll`a GEÇİLDİ, bkz. aşağıdaki gerekçe), LL.3
+(`fiber.zig` İçin Windows x64 `.S` varyantı — LL.2 İLE AYNI pasoda
+yapıldı, bkz. gerekçe), LL.4 (`stdlib_shims`nin POSIX çağrılarının
+Windows karşılıklarına portu), LL.5 (soket katmanı — Winsock + self-
+pipe'ın loopback-soket emülasyonu), LL.6 (araç zinciri — MinGW-w64
+doğrulaması + CI'de QBE'nin onunla derlenmesi), LL.7 (`release.yml` +
+`install.ps1`), LL.8 (README/AGENTS.md'nin GÜNCELLENMESİ). LL.4-LL.8
+kendi başlarına BÜYÜK, çok-commit'li alt-fazlar — HER biri GERÇEK
+Windows CI sonucuyla doğrulanmadan bir SONRAKİne geçilmeyecek.
 
 ### LL.1 (TAMAMLANDI) — Derleyici ön-ucu + Windows CI iskeleti
 
@@ -11828,6 +11830,78 @@ döndüğü doğrulandı. Yerel olarak (macOS) Debug/ReleaseSafe/ReleaseFast'te
 TAM paket doğrulandı — bu değişiklik ZATEN platform-nötr Zig mantığı
 OLDUĞUNDAN (hiçbir `std.c`/`builtin.os.tag` dallanması YOK), Windows
 CI'de AYRICA doğrulanmasına GEREK yoktu.
+
+### LL.2/LL.3 (TAMAMLANDI) — `io_reactor.zig` Windows backend'i + fiber assembly'si (BİRLİKTE yapıldı)
+
+**Neden BİRLİKTE:** Zig'in test toplama modeli, `io_reactor.zig`yi test
+ederken `fiber.zig`yi (`@import` yoluyla) transitively İÇERİR — `fiber.
+zig`nin KENDİ testleri (`nox_swap_context` linki GEREKTİRİR) bu YÜZDEN
+io_reactor'ı İZOLE test etmeyi bile İMKANSIZ kılar. İkisi AYRI
+doğrulanamadığından, AYRI yazılmaları da ANLAMSIZDI — TEK pasoda
+yazılıp TEK CI turunda doğrulandı.
+
+**Bilinçli tasarım kararı — GERÇEK IOCP DEĞİL, `WSAPoll`:** planın ADI
+"IOCP backend'i" idi, ama IOCP'nin KENDİSİ tamamlama-tabanlıdır (bir
+okuma/yazmayı BAŞLATIP BİTTİĞİNDE haber alırsınız) — kqueue/epoll'un
+(VE bu reaktörün TÜM çağıranlarının, `io.zig`nin `nonBlockingRead/
+Write` deseninin) VARSAYDIĞI "hazır-olma bildirimi, okuma/yazmayı KENDİN
+yap" modeliyle YAPISAL olarak UYUŞMAZ — IOCP'ye GEÇMEK `http_server.
+zig`/`http_client.zig`nin TÜM G/Ç çağrılarının OVERLAPPED işlemlere
+YENİDEN yazılmasını gerektirirdi (LL.5'in kapsamını KATLARDI). `WSAPoll`
+İSE (POSIX `poll()`e daha yakın, Windows Vista'dan beri VAR) AYNI hazır-
+olma sözleşmesini sağladığından `scheduler.zig`/`io.zig` HİÇBİR platform
+dallanması GEREKTİRMEDEN çalışmaya devam eder.
+
+**`WindowsReactor` mimarisi:** kqueue/epoll'un AKSİNE `WSAPoll` bir
+"interest listesi" TUTMAZ — HER çağrıda TAM bir fd dizisi + TEK ortak
+zaman aşımı alır. `WindowsReactor` bu YÜZDEN bekleyen TÜM `WaitCtx`leri
+KENDİSİ bir listede (`pending`) tutar, her `poll()` turunda TAZE bir
+`WSAPOLLFD` dizisi kurar, TÜM zaman-aşımlı bekleyişler arasındaki EN
+YAKIN mutlak bitiş zamanını (`WaitCtx`e YENİ eklenen `deadline_ms`,
+`QueryPerformanceCounter` tabanlı monotonik ms) TEK zaman aşımı olarak
+geçirir. Zig'in bu sürümünün `std.os.windows.ws2_32`si `WSAStartup`/
+`WSAPoll`i BAĞLAMADIĞINDAN (yalnızca birkaç struct/sabit VAR), bunlar
++ `QueryPerformanceCounter/Frequency` ELLE (`extern "ws2_32"`/`extern
+"kernel32"`) bildirildi — Win32 ABI'si bu fonksiyonlar İçin Windows
+2000'den beri DEĞİŞMEDİĞİNDEN düşük riskli. `WaitCtx.target_fd`/
+`timer_fd`nin varsayılan değeri `-1`den `undefined`e çevrildi — `posix.
+fd_t` Windows'ta bir İŞARETÇİ (`HANDLE`) olduğundan `-1` TÜM platformlarda
+tip-uyumlu TEK bir sabit DEĞİLDİ (bu alanlar HER ZAMAN okunmadan ÖNCE
+açıkça atandığından davranış DEĞİŞMEDİ).
+
+**Fiber assembly'si (`swap_x86_64.S`):** Win64 çağrı kuralı SysV'den İKİ
+yönden FARKLI — (1) callee-saved GPR kümesi FARKLI (Win64'te rdi/rsi DE
+çağrı-korumalı, SysV'de İKİSİ de çağıran-korumalı), (2) Win64'te XMM6-15
+ÇAĞRI-KORUMALIDIR (SysV'nin TÜM XMM'i çağıran-korumalı saydığı ve BU
+YÜZDEN hiç KAYDETMEDİĞİ varsayımının AKSİNE) — bu YÜZDEN Windows dalı
+XMM6-15'i (160 bayt, `movdqu`) DE kaydeder, aksi halde bir fiber-değişimi
+SIRASINDA canlı bir kayan-noktalı değer SESSİZCE bozulabilirdi. AYNI
+`.S` dosyasına `#if defined(_WIN32)` İLE eklendi (build.zig'in dosya-
+seçme mantığı DEĞİŞMEDİ — `cc` zaten HANGİ platformda çalışıyorsa O
+platformun ABI'sini varsayılan olarak üretir, `_WIN32` MinGW cc
+TARAFINDAN otomatik tanımlanır). `fiber.zig`nin `createWithStack`ı,
+Windows İçin 232 baytlık (160 xmm + 8×8 gpr + 8 dönüş adresi) SAHTE
+İLK çerçeveyi ELLE yazan AYRI bir dal kazandı — `rbx`, SysV dalıyla
+AYNI "kaçak self işaretçisi" hilesini taşır (`trampoline` platform-
+bağımsız, yalnızca rbx okur, değişmedi).
+
+**Doğrulama — İZOLE bir CI hedefi ile:** `fiber_test`/`scheduler_test`/
+`channel_test`/`io_test` (build.zig'de ZATEN VAR olan, `runtime/
+stdlib_shims`e (os/fs/http gibi HENÜZ Windows'a taşınmamış dosyalara)
+HİÇ bağımlı OLMAYAN, yalnızca `swap_asm_o_path`e bağımlı standalone
+test hedefleri) YENİ bir `zig build async-rt-test` adımına toplandı —
+bu, TÜM `noxrt`in (dolayısıyla TÜM stdlib_shims portunun) BEKLENMESİNE
+GEREK KALMADAN, YALNIZCA fiber/reaktör/zamanlayıcı katmanının GERÇEKTEN
+native Windows'ta çalıştığını doğrular. `windows-frontend` CI işine
+eklendi (`cc`/`gcc`nin `windows-latest`te VARSAYILAN olarak `C:\
+mingw64\bin` altında PATH'te BULUNDUĞU AYRI bir keşif adımıyla ÖNCEDEN
+doğrulanmıştı). Test yardımcıları da platform-nötr hale getirildi:
+`std.c.socketpair(AF.UNIX,...)` Windows'ta YOK (`.windows => {}`) — YENİ
+bir UDP-loopback ÇİFTİ (`WindowsReactor.makeLoopbackPair`) VE `send`/
+`recv`/`closesocket` sarmalayıcıları (CRT'nin `read`/`write`/`close`si
+ham Winsock `SOCKET`leri İÇİN GEÇERSİZDİR) eklendi. Yerel olarak (macOS,
+etkilenmeyen dal) Debug/ReleaseSafe/ReleaseFast'te doğrulandı; Windows'un
+KENDİSİ GERÇEK CI'de doğrulandı.
 
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 

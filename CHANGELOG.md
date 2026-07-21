@@ -1144,6 +1144,36 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   atlanması, ters-eğik-çizgi satır-devamının `\r\n` varyantı. 3 yeni
   birim testi (if/indent, yorum/boş-satır, satır-devamı — üçü de AÇIKÇA
   `\r\n` baytlı) + kasıtlı boz→kırmızı ritüeliyle doğrulandı.
+- **Faz LL.2/LL.3 — `io_reactor.zig`nin Windows backend'i + Windows x64
+  fiber assembly'si (BİRLİKTE yapıldı)** (bkz. nox-teknik-spesifikasyon.md
+  §3.71). Zig'in test toplama modeli io_reactor.zig'i test ederken
+  fiber.zig'i (dolayısıyla `nox_swap_context` linkini) TRANSİTİF olarak
+  çektiğinden ikisi AYRI doğrulanamıyordu — TEK pasoda yazılıp TEK CI
+  turunda doğrulandı. **Bilinçli tasarım kararı:** plan "IOCP backend'i"
+  diyordu, ama IOCP tamamlama-tabanlıdır, kqueue/epoll'un (ve `io.zig`nin)
+  VARSAYDIĞI hazır-olma-bildirimi modeliyle YAPISAL olarak uyuşmaz —
+  bunun yerine `WSAPoll` kullanıldı (aynı hazır-olma sözleşmesi, `http_
+  server.zig`/`http_client.zig`nin OVERLAPPED işlemlere yeniden yazılması
+  gerekmedi). `WindowsReactor`, kqueue/epoll'un aksine bir interest listesi
+  tutmayan `WSAPoll`ın gerektirdiği şekilde bekleyen `WaitCtx`leri kendisi
+  bir listede tutar, her `poll()`da taze bir `WSAPOLLFD` dizisi kurup en
+  yakın zaman aşımını (yeni `WaitCtx.deadline_ms`, `QueryPerformanceCounter`
+  tabanlı) hesaplar. `WSAStartup`/`WSAPoll`/`QueryPerformanceCounter`
+  elle (`extern "ws2_32"`/`"kernel32"`) bildirildi — Zig'in bu sürümünün
+  ws2_32 bağlaması bunları içermiyor. Fiber assembly'si Win64'ün SysV'den
+  farklı callee-saved GPR kümesini VE (SysV'nin aksine) callee-saved
+  XMM6-15'i (160 bayt) `swap_x86_64.S`ye `#if defined(_WIN32)` ile eklenen
+  ayrı bir dalda kaydediyor; `fiber.zig`nin `createWithStack`ı Windows
+  için 232 baytlık sahte ilk çerçeveyi elle yazan ayrı bir dal kazandı.
+  Doğrulama için `fiber_test`/`scheduler_test`/`channel_test`/`io_test`
+  (runtime/stdlib_shims'e hiç bağımlı olmayan mevcut standalone hedefler)
+  yeni bir `zig build async-rt-test` adımında toplanıp `windows-frontend`
+  CI işine eklendi — `noxrt`in tamamının Windows'a taşınmasını beklemeden
+  yalnızca fiber/reaktör katmanını doğrular. Test yardımcıları da
+  platform-nötr hale getirildi (Windows'ta `socketpair(AF_UNIX,...)` yok
+  — UDP-loopback çift + `send`/`recv`/`closesocket`). Yerel olarak
+  (macOS, etkilenmeyen dal) Debug/ReleaseSafe/ReleaseFast'te doğrulandı;
+  Windows'un kendisi gerçek CI'de doğrulandı.
 
 ## [1.0.0]
 
