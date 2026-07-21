@@ -12247,17 +12247,28 @@ TEKRAR EKLEMEZ). Yalnızca x86-64/AMD64 desteklenir (`$env:
 PROCESSOR_ARCHITECTURE` KONTROLÜ) — ARM64 Windows İçin (henüz paketi
 YOK) AÇIK bir hata mesajıyla kaynaktan derlemeye YÖNLENDİRİLİR.
 
-**Doğrulama sınırı:** `install.ps1`/`release.yml`nin GERÇEK bir
-`v*` etiketi push edilerek (ya da `workflow_dispatch` İLE) TETİKLENMESİ
-BU oturumda YAPILMADI (GERÇEK, KAMUYA AÇIK bir GitHub Release
-YARATMAK — kullanıcının AYRI onayı GEREKTİREN bir eylem). `install.ps1`
-elle, dikkatlice GÖZDEN GEÇİRİLDİ (PowerShell'in `+` operatörünün
-parantez OLMADAN fonksiyon çağrılarında AYRI pozisyonel argümanlara
-BÖLÜNMESİ gibi İNCE hatalar İçin), `release.yml`nin YAML sözdizimi
-doğrulandı — ama GERÇEK bir Windows makinesinde UÇTAN UCA (indirme→
-kurulum→PATH→`noxc --version`) HENÜZ ÇALIŞTIRILMADI. Kullanıcı hazır
-olduğunda `workflow_dispatch` İLE (bir git tag'İ GEREKTİRMEDEN) test
-edilebilir.
+**GERÇEK CI'de doğrulandı (kullanıcının onayıyla `workflow_dispatch`
+İLE tetiklendi):** `windows-x64` İŞİNİN Zig kurulumu/`qbe` derlemesi
+(ABI yamasıyla)/`-Doptimize=ReleaseFast` derlemesi/`noxc.exe run` duman
+testi/paketleme adımlarının TAMAMI GERÇEKTEN BAŞARILI oldu — YALNIZCA
+SON adım (`softprops/action-gh-release`in GitHub'a YÜKLEME'si)
+`"GitHub Releases requires a tag"` İLE başarısız oldu. Bu, Windows'a
+ÖZGÜ bir sorun DEĞİL — AYNI hata linux-x64/linux-arm64/macos-arm64
+işlerinde de GÖZLEMLENDİ (dördü de AYNI adımda, AYNI nedenle
+başarısız): `release.yml`nin `workflow_dispatch` tetikleyicisi HİÇBİR
+ZAMAN bir `tag_name` GİRDİSİYLE bağlanmamıştı — GERÇEK yayınlar HER
+ZAMAN `v*` etiketi PUSH edilerek yapılıyor (bu yolda `GITHUB_REF_NAME`
+GERÇEK bir etiket İÇERİR, sorun OLUŞMAZ); `workflow_dispatch` yalnızca
+BİR DALDA (`main`) manuel test İçin kullanıldığında bu boşluk ortaya
+ÇIKAR. Kullanıcıya SORULDU — **BİLİNÇLİ olarak DÜZELTİLMEDİ** ("gerçek
+release'ler zaten v* tag push İLE çalışıyor, workflow_dispatch yalnızca
+build+paketleme adımlarını test etmek İçin kullanışlı, publish
+adımının başarısız olması BEKLENEN/ZARARSIZ bir durum" — kullanıcının
+KENDİ gerekçesi). **Sonuç:** Windows release BUILD hattı (asıl
+doğrulanmak İSTENEN şey) TAMAMEN ÇALIŞIYOR; `install.ps1`nin GERÇEK bir
+Windows makinesinde indirme→kurulum→PATH doğrulaması İSE bir SONRAKİ
+GERÇEK `v*` etiket yayınında (ki O ZAMAN publish adımı da BAŞARILI
+olacaktır) doğal olarak GERÇEKLEŞECEKTİR.
 
 ### LL.8 (TAMAMLANDI) — README/README.en Windows bölümlerinin güncellenmesi
 
