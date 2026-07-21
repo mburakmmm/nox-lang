@@ -18,6 +18,7 @@
 //! KENDİSİ, sıradan `if`/`raise` İLE) istisna fırlatır.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const http_client = @import("http_client.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
@@ -72,11 +73,21 @@ export fn nox_os_exit_raw(code: i64) callconv(.c) noreturn {
 // bridge.zig`nin AYNI "std.c'de eksikse ham `extern \"c\" fn` bildir"
 // deseniyle DOĞRUDAN bağlanır.
 extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+/// Faz LL.4 (bkz. nox-teknik-spesifikasyon.md §3.71): Windows'un MinGW
+/// CRT'si `setenv`i (POSIX) DEĞİL, `_putenv_s`i (ISO C uyumlu isimlendirme)
+/// sağlar — imzası da farklıdır (`overwrite` bayrağı YOK, HER ZAMAN
+/// üzerine yazar, `nox_os_set_var_raw`nin zaten VARSAYDIĞI davranışla
+/// AYNI).
+extern "c" fn _putenv_s(name: [*:0]const u8, value: [*:0]const u8) c_int;
 
 export fn nox_os_set_var_raw(name: ?[*:0]const u8, value: ?[*:0]const u8) callconv(.c) void {
     const n = name orelse return;
     const v = value orelse return;
-    _ = setenv(n, v, 1);
+    if (builtin.os.tag == .windows) {
+        _ = _putenv_s(n, v);
+    } else {
+        _ = setenv(n, v, 1);
+    }
 }
 
 export fn nox_os_current_dir_raw(rt: ?*anyopaque) callconv(.c) ?[*:0]u8 {
@@ -111,5 +122,11 @@ test "Faz III.5: nox_os_current_dir_raw bos olmayan bir mutlak yol doner" {
     defer str.nox_str_release(rt, cwd);
     const slice = std.mem.sliceTo(cwd, 0);
     try std.testing.expect(slice.len > 0);
-    try std.testing.expect(slice[0] == '/');
+    // Faz LL.4 (bkz. nox-teknik-spesifikasyon.md §3.71): Windows'ta mutlak
+    // yollar `/` İLE DEĞİL bir sürücü harfiyle (`C:\...`) BAŞLAR.
+    if (builtin.os.tag == .windows) {
+        try std.testing.expect(slice.len >= 2 and slice[1] == ':');
+    } else {
+        try std.testing.expect(slice[0] == '/');
+    }
 }

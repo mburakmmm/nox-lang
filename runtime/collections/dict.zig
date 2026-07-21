@@ -52,6 +52,7 @@
 //! serbest bırak, yeniyi yaz" deseniyle AYNI disiplin).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const asap = @import("../alloc/asap.zig");
 const str_mod = @import("../str.zig");
 const arc = @import("../alloc/arc.zig");
@@ -97,10 +98,24 @@ fn keysEqual(key_is_str: bool, a: i64, b: i64) bool {
 threadlocal var g_hash_seed: u64 = 0;
 threadlocal var g_hash_seed_init: bool = false;
 
+/// Faz LL.4 (bkz. nox-teknik-spesifikasyon.md §3.71): `std.c.arc4random_buf`
+/// Windows'ta `.windows => {}` İLE (`.linux`nin `fstat`i GİBİ) void'dir —
+/// `advapi32.dll`nin `RtlGenRandom`i (dışa açık ismi `SystemFunction036`,
+/// Windows 2000'den beri STABİL, GÜVENİLİR bir OS-seviyesi CSPRNG) YERİNE
+/// kullanılır.
+fn secureRandomBuf(buf: []u8) void {
+    if (builtin.os.tag == .windows) {
+        _ = SystemFunction036(buf.ptr, @intCast(buf.len));
+    } else {
+        std.c.arc4random_buf(buf.ptr, buf.len);
+    }
+}
+extern "advapi32" fn SystemFunction036(buf: [*]u8, len: u32) callconv(.c) u8;
+
 fn hashSeed() u64 {
     if (!g_hash_seed_init) {
         var buf: [8]u8 = undefined;
-        std.c.arc4random_buf(&buf, buf.len);
+        secureRandomBuf(&buf);
         g_hash_seed = std.mem.readInt(u64, &buf, .little);
         g_hash_seed_init = true;
     }

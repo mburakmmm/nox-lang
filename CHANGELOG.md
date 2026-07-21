@@ -1179,6 +1179,21 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   scheduler/channel testleri segfault veriyordu) ve `io.zig`nin (LL.5'in
   kapsamındaki soket katmanını egzersiz eden, ayrı) kendi testinin
   atlanmamış olması. İKİNCİ CI çalıştırmasında tamamen yeşil.
+- **Faz LL.4 — `stdlib_shims`nin POSIX çağrılarının Windows karşılıklarına
+  portu** (bkz. nox-teknik-spesifikasyon.md §3.71). `dict.zig`/`crypto.
+  zig`nin `arc4random_buf`ı (Windows'ta void) `RtlGenRandom`e
+  (`SystemFunction036`) geçirildi; `os.zig`nin `setenv`i `_putenv_s`e.
+  **En büyük parça `fs.zig`:** bu Zig sürümünde `std.c.O`/`Stat` İKİSİ DE
+  Windows'ta `void`, `readdir` DE `.windows => {}` — dosya G/Ç'si TAMAMEN
+  AYRI, ham Win32/MinGW-CRT ilkelleriyle (`_open`/`_read`/`_write`/
+  `_close` + `_O_BINARY`, `_filelengthi64`, `_get_osfhandle`+
+  `GetFileTime`, `FindFirstFileA`/`FindNextFileA`/`FindClose`,
+  `GetFileAttributesA`) yeniden yazıldı. `access`/`rename`/`unlink`/
+  `mkdir`/`rmdir`/`getcwd`/`realpath`/`clock_gettime`/`timespec` İSE
+  (Zig'in KENDİ switch'lerinde GERÇEK windows-case'leri/koşulsuz
+  externleri OLDUĞU doğrulandığından) DOKUNULMADAN bırakıldı. Testlerin
+  sabit `/tmp` varsayımı `%TEMP%` okuyan bir yardımcıya geçirildi. Yerel
+  olarak (macOS) doğrulandı; Windows'un kendisi gerçek CI'de doğrulanacak.
 
 ## [1.0.0]
 

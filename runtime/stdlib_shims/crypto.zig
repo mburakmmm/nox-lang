@@ -7,10 +7,24 @@
 //! ÇEVRİLİP döner — `with_rt` GEREKİR (bkz. `http_client.zig`nin
 //! `dupeToNoxStr`ı, AYNI ARC-str üretim deseni).
 const std = @import("std");
+const builtin = @import("builtin");
 const http_client = @import("http_client.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
 const hex_chars = "0123456789abcdef";
+
+/// Faz LL.4 (bkz. nox-teknik-spesifikasyon.md §3.71): `std.c.arc4random_buf`
+/// Windows'ta void'dir (bkz. `runtime/collections/dict.zig`nin AYNI
+/// düzeltmesi) — `advapi32.dll`nin `RtlGenRandom`i (`SystemFunction036`)
+/// YERİNE kullanılır.
+fn secureRandomBuf(buf: []u8) void {
+    if (builtin.os.tag == .windows) {
+        _ = SystemFunction036(buf.ptr, @intCast(buf.len));
+    } else {
+        std.c.arc4random_buf(buf.ptr, buf.len);
+    }
+}
+extern "advapi32" fn SystemFunction036(buf: [*]u8, len: u32) callconv(.c) u8;
 
 export fn nox_crypto_sha256_hex_raw(rt: ?*anyopaque, data: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const d = data orelse return dupeToNoxStr(rt, "");
@@ -131,7 +145,7 @@ export fn nox_crypto_secure_random_hex_raw(rt: ?*anyopaque, n_bytes: i64) callco
     const n: usize = @min(@as(usize, @intCast(n_bytes)), max_bytes);
 
     var buf: [max_bytes]u8 = undefined;
-    std.c.arc4random_buf(&buf, n);
+    secureRandomBuf(buf[0..n]);
 
     var hex_buf: [max_bytes * 2]u8 = undefined;
     for (buf[0..n], 0..) |byte, i| {

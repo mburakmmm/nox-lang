@@ -11922,6 +11922,39 @@ denemede TÜMÜ yeşil:**
 İKİNCİ CI çalıştırmasında `zig build async-rt-test` TAMAMEN yeşil geçti
 — fiber/reaktör/zamanlayıcı katmanı Windows'ta GERÇEKTEN doğrulandı.
 
+### LL.4 (TAMAMLANDI) — `stdlib_shims`nin POSIX çağrılarının Windows karşılıklarına portu
+
+`dict.zig`/`crypto.zig`nin `std.c.arc4random_buf`ı (Linux'un `fstat`i
+GİBİ `.windows` İçin de tanımsız/void — `else => {}`) `advapi32.dll`nin
+`RtlGenRandom`ine (dışa açık ismi `SystemFunction036`, Windows 2000'den
+beri STABİL bir OS-seviyesi CSPRNG) geçirildi. `os.zig`nin `setenv`i
+(POSIX) Windows'ta `_putenv_s`e (MinGW CRT'nin ISO-C-uyumlu ismi)
+geçirildi; `nox_os_current_dir_raw`nin testi platform-koşullu hale
+getirildi (Windows mutlak yolları `/` DEĞİL bir sürücü harfiyle başlar).
+
+**`fs.zig` — en büyük parça:** bu Zig sürümünde `std.c.O` (open bayrak
+struct'ı) VE `std.c.Stat` İKİSİ DE Windows İçin `void`dir (`.windows`
+dalı HİÇ case'lenmemiş), `std.c.readdir` İSE (`fstat` GİBİ) `.windows =>
+{}`. Bu YÜZDEN Windows'ta dosya G/Ç'si TAMAMEN AYRI, ham Win32/MinGW-CRT
+ilkelleriyle yeniden yazıldı: `_open`/`_read`/`_write`/`_close` (`_O_
+BINARY` HER ZAMAN geçilir — aksi halde VARSAYILAN metin modu `\r\n`↔`\n`
+çevirisi YAPIP Nox `str`lerini SESSİZCE bozardı), boyut İçin
+`_filelengthi64`, mtime İçin `_get_osfhandle`+`GetFileTime`, dizin
+listeleme İçin `FindFirstFileA`/`FindNextFileA`/`FindClose`, "dizin mi"
+sorusu İçin (`O_DIRECTORY` Windows'ta OLMADIĞINDAN) `GetFileAttributesA`.
+`access`/`rename`/`unlink`/`mkdir`/`rmdir`/`getcwd`/`getpid`/`realpath`/
+`clock_gettime`/`nanosleep`/`timespec` İSE (Zig'in KENDİ switch'lerinde
+KOŞULSUZ extern'ler/GERÇEK windows-case'leri OLDUĞU doğrulandığından)
+DOKUNULMADAN bırakıldı — MinGW-w64'ün KENDİ POSIX-uyumluluk katmanının
+(`libwinpthread`) bu sembolleri GERÇEKTEN sağladığı varsayımıyla (`time.
+zig`/`path.zig`nin `realpath`i bu YÜZDEN HİÇ değişmedi). TÜM testlerin
+SABİT `/tmp` yol varsayımı (Windows'ta `/tmp` YOKTUR) `%TEMP%` ortam
+değişkenini okuyan platform-koşullu bir `testTmpPrefix()` yardımcısına
+geçirildi. Yerel olarak (macOS, etkilenmeyen dal) Debug/ReleaseSafe/
+ReleaseFast'te doğrulandı; Windows'un KENDİSİ (`_O_BINARY`/`FindFirstFileA`/
+`GetFileTime` gibi HİÇ yerel test edilemeyen yeni Win32 çağrıları
+İÇERDİĞİNDEN) GERÇEK CI'de doğrulanacak.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

@@ -44,7 +44,75 @@ const dupeToNoxStr = http_client.dupeToNoxStr;
 /// (`Stat` vs `Statx`), ORTAK bir `FileInfo` küçük değerine ÇEVRİLİR.
 const FileInfo = struct { size: u64, mtime_sec: i64, mtime_nsec: i64 };
 
+/// Faz LL.4 (bkz. nox-teknik-spesifikasyon.md §3.71): bu Zig sürümünde
+/// `std.c.O` (bu dosyanın `open` çağrılarının HER YERDE kullandığı bayrak
+/// struct'ı) VE `std.c.Stat` İKİSİ DE Windows İçin `void`dir (`.windows`
+/// dalı HİÇ CASE'lenmemiş, `else => void`e düşüyor) — `std.c.readdir`
+/// (`.linux`nin `fstat`i GİBİ `.windows => {}`) DE aynı şekilde bozuk.
+/// Bu YÜZDEN Windows'ta dosya G/Ç'si TAMAMEN AYRI, ham Win32/MinGW-CRT
+/// ilkelleriyle yapılır: `_open`/`_read`/`_write`/`_close` (MSVCRT/UCRT'nin
+/// alt-seviye G/Ç ailesi — `_O_BINARY` HER ZAMAN geçilir, aksi halde
+/// VARSAYILAN metin modu `\r\n`↔`\n` çevirisi YAPARDI, Nox `str`lerini
+/// SESSİZCE bozardı), boyut İçin `_filelengthi64`, mtime İçin
+/// `_get_osfhandle` + `GetFileTime` (CRT fd'sinin ALTINDAKİ GERÇEK Win32
+/// `HANDLE`'ı ALIR), dizin listeleme İçin `FindFirstFileA`/`FindNextFileA`/
+/// `FindClose`, "dizin mi" sorusu İçin `GetFileAttributesA`.
+const WinFile = if (builtin.os.tag == .windows) struct {
+    const O_RDONLY: c_int = 0x0000;
+    const O_WRONLY: c_int = 0x0001;
+    const O_APPEND: c_int = 0x0008;
+    const O_CREAT: c_int = 0x0100;
+    const O_TRUNC: c_int = 0x0200;
+    const O_BINARY: c_int = 0x8000;
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+    const INVALID_FILE_ATTRIBUTES: u32 = 0xFFFFFFFF;
+    const INVALID_HANDLE_VALUE: isize = -1;
+
+    const WIN32_FIND_DATAA = extern struct {
+        dwFileAttributes: u32,
+        ftCreationTime: std.os.windows.FILETIME,
+        ftLastAccessTime: std.os.windows.FILETIME,
+        ftLastWriteTime: std.os.windows.FILETIME,
+        nFileSizeHigh: u32,
+        nFileSizeLow: u32,
+        dwReserved0: u32,
+        dwReserved1: u32,
+        cFileName: [260]u8,
+        cAlternateFileName: [14]u8,
+    };
+
+    extern "c" fn _open(path: [*:0]const u8, flags: c_int, mode: c_int) callconv(.c) c_int;
+    extern "c" fn _read(fd: c_int, buf: [*]u8, count: c_uint) callconv(.c) c_int;
+    extern "c" fn _write(fd: c_int, buf: [*]const u8, count: c_uint) callconv(.c) c_int;
+    extern "c" fn _close(fd: c_int) callconv(.c) c_int;
+    extern "c" fn _filelengthi64(fd: c_int) callconv(.c) i64;
+    extern "c" fn _get_osfhandle(fd: c_int) callconv(.c) isize;
+    extern "kernel32" fn GetFileTime(h: isize, creation: ?*std.os.windows.FILETIME, access: ?*std.os.windows.FILETIME, write: ?*std.os.windows.FILETIME) callconv(.c) i32;
+    extern "kernel32" fn GetFileAttributesA(path: [*:0]const u8) callconv(.c) u32;
+    extern "kernel32" fn FindFirstFileA(path: [*:0]const u8, data: *WIN32_FIND_DATAA) callconv(.c) isize;
+    extern "kernel32" fn FindNextFileA(h: isize, data: *WIN32_FIND_DATAA) callconv(.c) i32;
+    extern "kernel32" fn FindClose(h: isize) callconv(.c) i32;
+} else struct {};
+
+/// `windows-1601-epoch` FILETIME'ı (100ns birimler) Unix epoch saniye/
+/// nanosaniyeye çevirir — 1601-1970 ARASI fark (100ns birimler cinsinden)
+/// SABİTTİR: 116444736000000000.
+fn filetimeToUnix(ft: std.os.windows.FILETIME) struct { sec: i64, nsec: i64 } {
+    const ticks: u64 = (@as(u64, ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+    const unix_100ns: i64 = @as(i64, @intCast(ticks)) - 116444736000000000;
+    return .{ .sec = @divFloor(unix_100ns, 10_000_000), .nsec = @mod(unix_100ns, 10_000_000) * 100 };
+}
+
 fn fstatCompat(fd: c_int) ?FileInfo {
+    if (builtin.os.tag == .windows) {
+        const size = WinFile._filelengthi64(fd);
+        if (size < 0) return null;
+        const handle = WinFile._get_osfhandle(fd);
+        var write_time: std.os.windows.FILETIME = undefined;
+        if (WinFile.GetFileTime(handle, null, null, &write_time) == 0) return null;
+        const t = filetimeToUnix(write_time);
+        return .{ .size = @intCast(size), .mtime_sec = t.sec, .mtime_nsec = t.nsec };
+    }
     if (builtin.os.tag == .linux) {
         var buf: std.os.linux.Statx = undefined;
         const mask: std.os.linux.STATX = .{ .SIZE = true, .MTIME = true };
@@ -56,6 +124,52 @@ fn fstatCompat(fd: c_int) ?FileInfo {
     if (std.c.fstat(fd, &st) != 0) return null;
     const mt = st.mtime();
     return .{ .size = @intCast(st.size), .mtime_sec = mt.sec, .mtime_nsec = mt.nsec };
+}
+
+/// `nox_fs_read_to_string_raw`/`writeAllToFile`/`nox_fs_copy_raw`nin ORTAK
+/// aç/oku/yaz/kapat katmanı — Windows'ta `WinFile`nin ham `_open`/`_read`/
+/// `_write`/`_close`sini, diğer platformlarda DOKUNULMADAN `std.c.open`/
+/// `read`/`write`/`close`i çağırır.
+fn openFileRead(path: [*:0]const u8) c_int {
+    if (builtin.os.tag == .windows) return WinFile._open(path, WinFile.O_RDONLY | WinFile.O_BINARY, 0);
+    const o: std.c.O = .{ .ACCMODE = .RDONLY };
+    return std.c.open(path, o, @as(c_uint, 0));
+}
+
+fn openFileWrite(path: [*:0]const u8, append: bool) c_int {
+    if (builtin.os.tag == .windows) {
+        const flags = WinFile.O_WRONLY | WinFile.O_CREAT | WinFile.O_BINARY | (if (append) WinFile.O_APPEND else WinFile.O_TRUNC);
+        return WinFile._open(path, flags, 0o644);
+    }
+    const o: std.c.O = if (append)
+        .{ .ACCMODE = .WRONLY, .CREAT = true, .APPEND = true }
+    else
+        .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true };
+    return std.c.open(path, o, @as(c_uint, 0o644));
+}
+
+fn readFd(fd: c_int, buf: []u8) isize {
+    if (builtin.os.tag == .windows) {
+        const n = WinFile._read(fd, buf.ptr, @intCast(@min(buf.len, std.math.maxInt(c_uint))));
+        return @intCast(n);
+    }
+    return std.c.read(fd, buf.ptr, buf.len);
+}
+
+fn writeFd(fd: c_int, buf: []const u8) isize {
+    if (builtin.os.tag == .windows) {
+        const n = WinFile._write(fd, buf.ptr, @intCast(@min(buf.len, std.math.maxInt(c_uint))));
+        return @intCast(n);
+    }
+    return std.c.write(fd, buf.ptr, buf.len);
+}
+
+fn closeFd(fd: c_int) void {
+    if (builtin.os.tag == .windows) {
+        _ = WinFile._close(fd);
+    } else {
+        _ = std.c.close(fd);
+    }
 }
 
 threadlocal var g_last_ok: bool = true;
@@ -80,13 +194,12 @@ export fn nox_fs_read_to_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callc
         return dupeToNoxStr(rt, "");
     };
 
-    const o_read: std.c.O = .{ .ACCMODE = .RDONLY };
-    const fd = std.c.open(p, o_read, @as(c_uint, 0));
+    const fd = openFileRead(p);
     if (fd < 0) {
         g_last_ok = false;
         return dupeToNoxStr(rt, "");
     }
-    defer _ = std.c.close(fd);
+    defer closeFd(fd);
 
     const info = fstatCompat(fd) orelse {
         g_last_ok = false;
@@ -101,7 +214,7 @@ export fn nox_fs_read_to_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callc
     const out: [*]u8 = @ptrCast(raw);
     var total_read: usize = 0;
     while (total_read < size) {
-        const n = std.c.read(fd, out + total_read, size - total_read);
+        const n = readFd(fd, out[total_read..size]);
         if (n <= 0) break;
         total_read += @intCast(n);
     }
@@ -110,18 +223,18 @@ export fn nox_fs_read_to_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callc
     return @ptrCast(out);
 }
 
-fn writeAllToFile(o_write: std.c.O, path: [*:0]const u8, content: [*:0]const u8) void {
-    const fd = std.c.open(path, o_write, @as(c_uint, 0o644));
+fn writeAllToFile(append: bool, path: [*:0]const u8, content: [*:0]const u8) void {
+    const fd = openFileWrite(path, append);
     if (fd < 0) {
         g_last_ok = false;
         return;
     }
-    defer _ = std.c.close(fd);
+    defer closeFd(fd);
 
     const bytes = std.mem.span(content);
     var off: usize = 0;
     while (off < bytes.len) {
-        const n = std.c.write(fd, bytes[off..].ptr, bytes.len - off);
+        const n = writeFd(fd, bytes[off..]);
         if (n <= 0) {
             g_last_ok = false;
             return;
@@ -141,7 +254,7 @@ export fn nox_fs_write_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8, content
         g_last_ok = false;
         return;
     };
-    writeAllToFile(.{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, p, c);
+    writeAllToFile(false, p, c);
 }
 
 /// Faz III.3 (bkz. nox-teknik-spesifikasyon.md §3.69) — `write_string`nin
@@ -158,7 +271,7 @@ export fn nox_fs_append_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8, conten
         g_last_ok = false;
         return;
     };
-    writeAllToFile(.{ .ACCMODE = .WRONLY, .CREAT = true, .APPEND = true }, p, c);
+    writeAllToFile(true, p, c);
 }
 
 /// Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) — `read_to_string`/
@@ -181,8 +294,17 @@ export fn nox_fs_exists_raw(path: ?[*:0]const u8) callconv(.c) i32 {
 /// `O_DIRECTORY` İLE açmak YALNIZCA hedef GERÇEKTEN bir dizinse başarılı
 /// olur (`ENOTDIR` İLE başarısız olur AKSİ HALDE) — TAM bir `stat`
 /// olmadan "dizin mi" sorusunu GÜVENİLİR şekilde yanıtlar.
+/// **Windows'ta `O_DIRECTORY` YOK** (Linux/BSD'ye özgü bir uzantı,
+/// `std.c.O` zaten Windows'ta `void` — bkz. `WinFile`nin belge notu) —
+/// `GetFileAttributesA` (TEK bir Win32 çağrısı, `FILE_ATTRIBUTE_DIRECTORY`
+/// bitini KONTROL eder) KULLANILIR.
 export fn nox_fs_is_dir_raw(path: ?[*:0]const u8) callconv(.c) i32 {
     const p = path orelse return 0;
+    if (builtin.os.tag == .windows) {
+        const attrs = WinFile.GetFileAttributesA(p);
+        if (attrs == WinFile.INVALID_FILE_ATTRIBUTES) return 0;
+        return if ((attrs & WinFile.FILE_ATTRIBUTE_DIRECTORY) != 0) 1 else 0;
+    }
     const o_dir: std.c.O = .{ .ACCMODE = .RDONLY, .DIRECTORY = true };
     const fd = std.c.open(p, o_dir, @as(c_uint, 0));
     if (fd < 0) return 0;
@@ -217,13 +339,12 @@ export fn nox_fs_stat_raw(path: ?[*:0]const u8) callconv(.c) void {
         g_last_ok = false;
         return;
     };
-    const o_read: std.c.O = .{ .ACCMODE = .RDONLY };
-    const fd = std.c.open(p, o_read, @as(c_uint, 0));
+    const fd = openFileRead(p);
     if (fd < 0) {
         g_last_ok = false;
         return;
     }
-    defer _ = std.c.close(fd);
+    defer closeFd(fd);
 
     const info = fstatCompat(fd) orelse {
         g_last_ok = false;
@@ -248,36 +369,53 @@ export fn nox_fs_stat_mtime_ms_raw() callconv(.c) i64 {
 /// `.`/`..` GİRDİLERİ ATLANIR (Python'un `os.listdir`/Rust'ın `read_dir`
 /// İLE TUTARLI). Bu Zig sürümünde `std.fs.Dir`/`std.Io.Dir` bir `Io`
 /// bağlamı GEREKTİRDİĞİNDEN (bu dosyanın modül-üstü notu — burada YOK),
-/// HAM libc `opendir`/`readdir`/`closedir` KULLANILIR.
+/// HAM libc `opendir`/`readdir`/`closedir` KULLANILIR — Windows'ta İSE
+/// (`readdir` `void`dir, bkz. `WinFile`nin belge notu) `FindFirstFileA`/
+/// `FindNextFileA`/`FindClose` kullanılır (Win32'nin KENDİ dizin-listeleme
+/// API'si, `path\*` joker deseni GEREKTİRİR).
+fn collectDirNames(path: [*:0]const u8, names: *std.ArrayListUnmanaged([]const u8)) !void {
+    if (builtin.os.tag == .windows) {
+        var pattern_buf: [std.c.PATH_MAX + 4]u8 = undefined;
+        const pattern = std.fmt.bufPrintZ(&pattern_buf, "{s}/*", .{std.mem.span(path)}) catch return error.PathTooLong;
+        var data: WinFile.WIN32_FIND_DATAA = undefined;
+        const h = WinFile.FindFirstFileA(pattern.ptr, &data);
+        if (h == WinFile.INVALID_HANDLE_VALUE) return error.OpenDirFailed;
+        defer _ = WinFile.FindClose(h);
+        while (true) {
+            const name = std.mem.sliceTo(&data.cFileName, 0);
+            if (!std.mem.eql(u8, name, ".") and !std.mem.eql(u8, name, "..")) {
+                const owned = try std.heap.page_allocator.dupe(u8, name);
+                try names.append(std.heap.page_allocator, owned);
+            }
+            if (WinFile.FindNextFileA(h, &data) == 0) break;
+        }
+        return;
+    }
+    const dir = std.c.opendir(path) orelse return error.OpenDirFailed;
+    defer _ = std.c.closedir(dir);
+    while (std.c.readdir(dir)) |entry| {
+        const name = std.mem.sliceTo(&entry.name, 0);
+        if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
+        const owned = try std.heap.page_allocator.dupe(u8, name);
+        try names.append(std.heap.page_allocator, owned);
+    }
+}
+
 export fn nox_fs_read_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) ?*anyopaque {
     const p = path orelse {
         g_last_ok = false;
         return null;
     };
-    const dir = std.c.opendir(p) orelse {
-        g_last_ok = false;
-        return null;
-    };
-    defer _ = std.c.closedir(dir);
 
     var names: std.ArrayListUnmanaged([]const u8) = .empty;
     defer {
         for (names.items) |n| std.heap.page_allocator.free(n);
         names.deinit(std.heap.page_allocator);
     }
-
-    while (std.c.readdir(dir)) |entry| {
-        const name = std.mem.sliceTo(&entry.name, 0);
-        if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
-        const owned = std.heap.page_allocator.dupe(u8, name) catch {
-            g_last_ok = false;
-            return null;
-        };
-        names.append(std.heap.page_allocator, owned) catch {
-            g_last_ok = false;
-            return null;
-        };
-    }
+    collectDirNames(p, &names) catch {
+        g_last_ok = false;
+        return null;
+    };
 
     const raw = arc.nox_rc_alloc(rt, 16 + 8 * names.items.len) orelse {
         g_last_ok = false;
@@ -311,25 +449,23 @@ export fn nox_fs_copy_raw(src: ?[*:0]const u8, dst: ?[*:0]const u8) callconv(.c)
         return;
     };
 
-    const o_read: std.c.O = .{ .ACCMODE = .RDONLY };
-    const src_fd = std.c.open(s, o_read, @as(c_uint, 0));
+    const src_fd = openFileRead(s);
     if (src_fd < 0) {
         g_last_ok = false;
         return;
     }
-    defer _ = std.c.close(src_fd);
+    defer closeFd(src_fd);
 
-    const o_write: std.c.O = .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true };
-    const dst_fd = std.c.open(d, o_write, @as(c_uint, 0o644));
+    const dst_fd = openFileWrite(d, false);
     if (dst_fd < 0) {
         g_last_ok = false;
         return;
     }
-    defer _ = std.c.close(dst_fd);
+    defer closeFd(dst_fd);
 
     var chunk: [4096]u8 = undefined;
     while (true) {
-        const n = std.c.read(src_fd, &chunk, chunk.len);
+        const n = readFd(src_fd, &chunk);
         if (n < 0) {
             g_last_ok = false;
             return;
@@ -338,7 +474,7 @@ export fn nox_fs_copy_raw(src: ?[*:0]const u8, dst: ?[*:0]const u8) callconv(.c)
         var off: usize = 0;
         const want: usize = @intCast(n);
         while (off < want) {
-            const w = std.c.write(dst_fd, chunk[off..].ptr, want - off);
+            const w = writeFd(dst_fd, chunk[off..want]);
             if (w <= 0) {
                 g_last_ok = false;
                 return;
@@ -377,9 +513,22 @@ export fn nox_fs_create_dir_raw(path: ?[*:0]const u8) callconv(.c) void {
     g_last_ok = std.c.mkdir(p, 0o755) == 0;
 }
 
+/// Faz LL.4 (bkz. nox-teknik-spesifikasyon.md §3.71): testler `/tmp`i
+/// SABİT bir yol olarak varsayıyordu — Windows'ta `/tmp` YOKTUR, GERÇEK
+/// yazılabilir geçici dizin `%TEMP%` ortam değişkenidir (Windows'un
+/// KENDİSİ HER ZAMAN AYARLAR). Diğer platformlarda DOKUNULMADAN `/tmp`
+/// döner.
+fn testTmpPrefix() []const u8 {
+    if (builtin.os.tag == .windows) {
+        if (std.c.getenv("TEMP")) |t| return std.mem.span(t);
+        return "C:/Windows/Temp";
+    }
+    return "/tmp";
+}
+
 test "nox_fs_exists/is_file/is_dir_raw dogru sonuc doner" {
-    var full_buf: [64]u8 = undefined;
-    const full_path = try std.fmt.bufPrintZ(&full_buf, "/tmp/nox_ee1_fs_test_{d}.txt", .{std.c.getpid()});
+    var full_buf: [128]u8 = undefined;
+    const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_ee1_fs_test_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
     defer _ = std.c.unlink(full_path.ptr);
 
     try std.testing.expectEqual(@as(i32, 0), nox_fs_exists_raw("/definitely/does/not/exist/nox_ee1_test"));
@@ -389,9 +538,11 @@ test "nox_fs_exists/is_file/is_dir_raw dogru sonuc doner" {
     try std.testing.expectEqual(@as(i32, 1), nox_fs_is_file_raw(full_path.ptr));
     try std.testing.expectEqual(@as(i32, 0), nox_fs_is_dir_raw(full_path.ptr));
 
-    try std.testing.expectEqual(@as(i32, 1), nox_fs_exists_raw("/tmp"));
-    try std.testing.expectEqual(@as(i32, 1), nox_fs_is_dir_raw("/tmp"));
-    try std.testing.expectEqual(@as(i32, 0), nox_fs_is_file_raw("/tmp"));
+    const tmp_z = try std.fmt.allocPrintSentinel(std.heap.page_allocator, "{s}", .{testTmpPrefix()}, 0);
+    defer std.heap.page_allocator.free(tmp_z);
+    try std.testing.expectEqual(@as(i32, 1), nox_fs_exists_raw(tmp_z.ptr));
+    try std.testing.expectEqual(@as(i32, 1), nox_fs_is_dir_raw(tmp_z.ptr));
+    try std.testing.expectEqual(@as(i32, 0), nox_fs_is_file_raw(tmp_z.ptr));
 }
 
 test "Faz III.3: nox_fs_read_to_string_raw (fstat-tabanli tek-tahsis) dogru calisir" {
@@ -400,7 +551,7 @@ test "Faz III.3: nox_fs_read_to_string_raw (fstat-tabanli tek-tahsis) dogru cali
     defer asap.nox_runtime_deinit(rt);
 
     var full_buf: [64]u8 = undefined;
-    const full_path = try std.fmt.bufPrintZ(&full_buf, "/tmp/nox_iii3_read_test_{d}.txt", .{std.c.getpid()});
+    const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_iii3_read_test_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
     defer _ = std.c.unlink(full_path.ptr);
 
     nox_fs_write_string_raw(rt, full_path.ptr, "hello world");
@@ -419,7 +570,7 @@ test "Faz III.3: nox_fs_append_string_raw dosyayi KISALTMAZ, SONUNA ekler" {
     defer asap.nox_runtime_deinit(rt);
 
     var full_buf: [64]u8 = undefined;
-    const full_path = try std.fmt.bufPrintZ(&full_buf, "/tmp/nox_iii3_append_test_{d}.txt", .{std.c.getpid()});
+    const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_iii3_append_test_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
     defer _ = std.c.unlink(full_path.ptr);
 
     nox_fs_write_string_raw(rt, full_path.ptr, "abc");
@@ -434,7 +585,7 @@ test "Faz III.3: nox_fs_append_string_raw dosyayi KISALTMAZ, SONUNA ekler" {
 
 test "Faz III.3: nox_fs_stat_raw boyut/mtime dogru doner" {
     var full_buf: [64]u8 = undefined;
-    const full_path = try std.fmt.bufPrintZ(&full_buf, "/tmp/nox_iii3_stat_test_{d}.txt", .{std.c.getpid()});
+    const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_iii3_stat_test_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
     defer _ = std.c.unlink(full_path.ptr);
 
     nox_fs_write_string_raw(null, full_path.ptr, "12345");
@@ -454,17 +605,17 @@ test "Faz III.3: nox_fs_read_dir_raw dizin girdilerini dogru doner (./.. haric)"
     defer asap.nox_runtime_deinit(rt);
 
     var dir_buf: [64]u8 = undefined;
-    const dir_path = try std.fmt.bufPrintZ(&dir_buf, "/tmp/nox_iii3_readdir_{d}", .{std.c.getpid()});
+    const dir_path = try std.fmt.bufPrintZ(&dir_buf, "{s}/nox_iii3_readdir_{d}", .{ testTmpPrefix(), std.c.getpid() });
     _ = std.c.mkdir(dir_path.ptr, 0o755);
     defer _ = std.c.rmdir(dir_path.ptr);
 
     var f1_buf: [80]u8 = undefined;
-    const f1_path = try std.fmt.bufPrintZ(&f1_buf, "/tmp/nox_iii3_readdir_{d}/a.txt", .{std.c.getpid()});
+    const f1_path = try std.fmt.bufPrintZ(&f1_buf, "{s}/nox_iii3_readdir_{d}/a.txt", .{ testTmpPrefix(), std.c.getpid() });
     defer _ = std.c.unlink(f1_path.ptr);
     nox_fs_write_string_raw(null, f1_path.ptr, "x");
 
     var f2_buf: [80]u8 = undefined;
-    const f2_path = try std.fmt.bufPrintZ(&f2_buf, "/tmp/nox_iii3_readdir_{d}/b.txt", .{std.c.getpid()});
+    const f2_path = try std.fmt.bufPrintZ(&f2_buf, "{s}/nox_iii3_readdir_{d}/b.txt", .{ testTmpPrefix(), std.c.getpid() });
     defer _ = std.c.unlink(f2_path.ptr);
     nox_fs_write_string_raw(null, f2_path.ptr, "y");
 
@@ -496,11 +647,11 @@ test "Faz III.3: nox_fs_copy_raw/rename_raw/remove_file_raw/create_dir_raw dogru
 
     const str = @import("../str.zig");
     var src_buf: [64]u8 = undefined;
-    const src_path = try std.fmt.bufPrintZ(&src_buf, "/tmp/nox_iii3_copy_src_{d}.txt", .{std.c.getpid()});
+    const src_path = try std.fmt.bufPrintZ(&src_buf, "{s}/nox_iii3_copy_src_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
     var dst_buf: [64]u8 = undefined;
-    const dst_path = try std.fmt.bufPrintZ(&dst_buf, "/tmp/nox_iii3_copy_dst_{d}.txt", .{std.c.getpid()});
+    const dst_path = try std.fmt.bufPrintZ(&dst_buf, "{s}/nox_iii3_copy_dst_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
     var ren_buf: [64]u8 = undefined;
-    const ren_path = try std.fmt.bufPrintZ(&ren_buf, "/tmp/nox_iii3_copy_ren_{d}.txt", .{std.c.getpid()});
+    const ren_path = try std.fmt.bufPrintZ(&ren_buf, "{s}/nox_iii3_copy_ren_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
     defer _ = std.c.unlink(src_path.ptr);
     defer _ = std.c.unlink(dst_path.ptr);
     defer _ = std.c.unlink(ren_path.ptr);
@@ -525,7 +676,7 @@ test "Faz III.3: nox_fs_copy_raw/rename_raw/remove_file_raw/create_dir_raw dogru
     try std.testing.expectEqual(@as(i32, 0), nox_fs_exists_raw(src_path.ptr));
 
     var dir_buf: [64]u8 = undefined;
-    const dir_path = try std.fmt.bufPrintZ(&dir_buf, "/tmp/nox_iii3_mkdir_{d}", .{std.c.getpid()});
+    const dir_path = try std.fmt.bufPrintZ(&dir_buf, "{s}/nox_iii3_mkdir_{d}", .{ testTmpPrefix(), std.c.getpid() });
     defer _ = std.c.rmdir(dir_path.ptr);
     nox_fs_create_dir_raw(dir_path.ptr);
     try std.testing.expect(g_last_ok);
@@ -543,7 +694,7 @@ test "g_last_ok threadlocal: iki gerçek OS iş parçacığı bağımsız bayrak
     // `std.testing.tmpDir`/`std.Io.Dir` KARMAŞIKLIĞINDAN kaçınmak İÇİN
     // `/tmp` altında PID'e göre BENZERSİZ bir yol DOĞRUDAN inşa edilir.
     var full_buf: [64]u8 = undefined;
-    const full_path = try std.fmt.bufPrintZ(&full_buf, "/tmp/nox_bb1_fs_test_{d}.txt", .{std.c.getpid()});
+    const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_bb1_fs_test_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
     defer _ = std.c.unlink(full_path.ptr);
 
     const Worker = struct {
