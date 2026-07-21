@@ -13,6 +13,7 @@
 //! → tekrar dene) tam da bunu sağlar.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const posix = std.posix;
 const Scheduler = @import("scheduler.zig").Scheduler;
 
@@ -102,6 +103,16 @@ pub fn nonBlockingWrite(scheduler: *Scheduler, fd: posix.fd_t, buf: []const u8) 
 }
 
 test "nonBlockingRead: bir fiber G/Ç beklerken BAŞKA bir hazır fiber çalışabilir (zamanlayıcı BLOKE OLMAZ)" {
+    // Faz LL.2/LL.3 (bkz. nox-teknik-spesifikasyon.md §3.71): bu test
+    // `nonBlockingRead`/`nonBlockingWrite`in KENDİSİNİ (yukarıda, `std.c.
+    // read`/`write`/`fcntl` KULLANAN — ham CRT çağrıları, Winsock `SOCKET`
+    // handle'ları İÇİN GEÇERSİZ) egzersiz eder — bu, `io_reactor.zig`nin
+    // (LL.2/LL.3'te Windows'a TAŞINAN) reaktör/fiber KATMANI DEĞİL, SOKET
+    // katmanının (LL.5'in kapsamı, HENÜZ Windows'a taşınmadı) bir parçası.
+    // `std.c.socketpair`/`AF.UNIX` de Windows'ta YOK. Bu YÜZDEN BİLİNÇLİ
+    // olarak Windows'ta ATLANIR — LL.5 bu testi de Winsock'a taşıyacak.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
     const spawn = @import("scheduler.zig").spawn;
 
     var fds: [2]posix.fd_t = undefined;

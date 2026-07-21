@@ -129,10 +129,21 @@ pub const Fiber = struct {
                     // BEKLEDİĞİ SAHTE çerçeve — 160 bayt xmm6-15 (SIFIRLANMIŞ,
                     // İLK açılışta ANLAMLI bir önceki değer YOK) + 8 GPR (r15,
                     // r14, r13, r12, rsi, rdi, rbx, rbp — BU SIRAYLA) + dönüş
-                    // adresi (232 bayt TOPLAM). `self`i rbx'e ("kaçak" olarak
-                    // — SysV dalıyla AYNI hile, `trampoline` platform-bağımsız
-                    // OLARAK rbx okur) yerleştiriyoruz.
-                    const frame_base = stack_top_aligned - 232;
+                    // adresi (232 bayt). `self`i rbx'e ("kaçak" olarak — SysV
+                    // dalıyla AYNI hile, `trampoline` platform-bağımsız OLARAK
+                    // rbx okur) yerleştiriyoruz.
+                    //
+                    // **`- 240`, `- 232` DEĞİL (GERÇEK bir hata, GERÇEK Windows
+                    // CI'de segfault OLARAK yakalandı):** SysV dalının KENDİ
+                    // `frame_base = stack_top_aligned - 64`sı (56 baytlık
+                    // çerçeve İçin bile) KASITLI 8 bayt FAZLA ayırır — `ret`
+                    // SONRASI `trampoline`ın gördüğü `rsp`nin `stack_top_
+                    // aligned - 8` (8-mod-16, NORMAL bir `call`/`ret` SONRASI
+                    // BEKLENEN hizalama) OLMASI İçin. `- 232` kullanılsaydı
+                    // `ret` SONRASI rsp TAM `stack_top_aligned` (16-hizalı,
+                    // YANLIŞ) olurdu — `- 240` (232 + AYNI 8 baytlık boşluk)
+                    // `ret` SONRASI rsp'yi `stack_top_aligned - 8`e getirir.
+                    const frame_base = stack_top_aligned - 240;
                     const xmm_area: *[160]u8 = @ptrFromInt(frame_base);
                     @memset(xmm_area, 0);
                     const gpr: *[8]usize = @ptrFromInt(frame_base + 160);
