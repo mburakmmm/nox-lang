@@ -1228,9 +1228,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   uyuşmazlık yaratıyordu — `buildOne` artık ayrı bir `.exe`'li
   `bin_path` hesaplıyor). `ci.yml`ye `qbe`yi kaynaktan (doğrudan `cc
   *.c` ile, Makefile/`sh` PowerShell'de güvenilir değil) derleyip
-  gerçek bir `noxc run` duman testi (`print(21+21)`) eklendi —
-  `-rdynamic`nin MinGW'de doğru çalışıp çalışmadığı dahil, bir sonraki
-  CI turunda doğrulanacak.
+  gerçek bir `noxc run` duman testi (`print(21+21)`) eklendi. Sonraki
+  3 CI turunda sırayla bulunup düzeltilen hatalar: `qbe`nin config.h/
+  alt-dizin derleme sorunları, MinGW'in `-rdynamic`yi tanımaması
+  (`-Wl,--export-all-symbols`a geçirildi) ve **QBE 1.3'ün KENDİSİNDE
+  gerçek bir upstream hatası** (`amd64/winabi.c`nin `amd64_win`
+  backend'i, yığından geçirilen bir `f64` parametreyi yanlışlıkla
+  tamsayı sınıfıyla yüklüyordu — `JsonValue.__init__`in `n` alanı
+  yüzünden HER Nox programında tetikleniyordu; `ci.yml`nin `qbe kur`
+  adımına tek satırlık bir metin-yaması eklendi, upstream değişirse
+  adım sessizce atlamak yerine açıkça hata verir).
 
 ## [1.0.0]
 

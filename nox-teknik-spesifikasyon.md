@@ -12103,6 +12103,51 @@ push edilip GERÇEK Windows CI'de DOĞRULANMADI** — hem QBE'nin `cc
 *.c` İLE derlenip derlenemeyeceği HEM `-rdynamic`nin MinGW'de doğru
 çalışıp çalışmadığı BİLİNMİYOR, bir SONRAKİ CI turunda netleşecek.
 
+**İlk CI turu SONRASI bulunan/düzeltilen 3 GERÇEK hata (sırayla):**
+
+1. **`qbe` derlemesi:** `main.o: config.h: No such file or directory`
+   — Makefile'ın `config.h` kuralı yalnızca TEK bir `#define Deftgt
+   ...` satırı üretiyor (derleme-zamanı VARSAYILAN hedef —
+   `compiler/qbe_target.zig` zaten `-t`yi HER ZAMAN AÇIKÇA geçtiğinden
+   DEĞERİ ÖNEMLİ DEĞİL, dosyanın SADECE VAR OLMASI yeterli). AYRICA
+   kaynaklar TEK bir dizinde DEĞİL — `amd64/`/`arm64/`/`rv64/` alt
+   dizinlerindeki backend dosyaları da (Makefile'ın `AMD64OBJ`/
+   `ARM64OBJ`/`RV64OBJ` listeleri) derlenmeli, yalnızca üst dizindeki
+   `*.c` YETERSİZ. Çözüm: `config.h`yi elle TEK satır olarak yazıp
+   `*.c amd64/*.c arm64/*.c rv64/*.c`nin TAMAMINI TEK `cc` çağrısına
+   vermek.
+2. **`cc` bağlama:** `unrecognized command-line option '-rdynamic'`
+   — MinGW'in PE bağlayıcısı GNU/ELF'e özgü bu bayrağı TANIMIYOR.
+   Çözüm: `compiler/main.zig`de `builtin.os.tag == .windows` İSE
+   `-Wl,--export-all-symbols` (json.zig'in `dlopen` self-lookup
+   deseninin — bkz. LL.5 — GEREKTİRDİĞİ "tüm sembolleri dışa aç"ın
+   MinGW karşılığı) kullanılır.
+3. **GERÇEK bir QBE 1.3 upstream hatası (`amd64/winabi.c`,
+   `amd64_win` backend'i):** `cc: ... run_smoke.s:641: Error: operand
+   type mismatch for 'movsd'`. Kök neden: `lower_func_parameters`ın
+   YIĞINDAN geçirilen (stack'e "spill" edilmiş) skaler bir parametreyi
+   yükleyen dalı (`APS_InlineOnStack`, struct OLMAYAN kol), sınıfı HER
+   ZAMAN `Kl` (64-bit TAMSAYI) olarak SABİTLİYOR (`emit(Ocopy, Kl,
+   instr->to, SLOT(-slot_offset), R);`) — parametre GERÇEKTE bir `f64`
+   İSE (`JsonValue.__init__`in `n` alanı gibi — HER Nox programı
+   `stdlib/nox/core.nox`u KOŞULSUZ merge ettiğinden bu, `print(1)`
+   KADAR basit bir programda BİLE tetiklenir), değer bir TAMSAYI
+   yazmacına (`%r10`) yüklenip SONRA `movsd`ye (yalnızca XMM
+   yazmaçlarını KABUL EDEN bir SSE komutu) verilince assembler HATASI
+   verir. **Doğrulama yöntemi (GERÇEK Windows olmadan):** yerel olarak
+   (macOS) `qbe`nin KENDİSİ `amd64_win` HEDEFİYLE derlenip (host OS'a
+   BAKILMAKSIZIN — QBE'nin `-t` bayrağı ÇAPRAZ-assembly ÜRETİR, sadece
+   ÇALIŞTIRAMAZ) AYNI test programının `.s` çıktısı üretilip `movsd`
+   satırları elle İNCELENDİ — yama ÖNCESİ `movsd %r10, 24(%rdi)`
+   (geçersiz), yama SONRASI `movsd %xmm0, 24(%rdi)` (geçerli). Düzeltme
+   TEK satır: `Kl` yerine `instr->cls` (parametrenin GERÇEK sınıfı —
+   AYNI fonksiyonun `APS_Register` dalının ZATEN doğru yaptığı gibi).
+   Bu yama, `ci.yml`nin `qbe kur` adımına (QBE'nin KENDİSİ bu projenin
+   kaynağı OLMADIĞINDAN, `runtime/`/`compiler/`e DEĞİL, CI'nin
+   indirdiği kaynağa PowerShell metin-değiştirme İLE) uygulanır —
+   beklenen satır BULUNAMAZSA (upstream DEĞİŞİRSE) adım AÇIKÇA hata
+   verir (sessizce atlanmaz).
+
 Yerel olarak (macOS, Debug/ReleaseSafe/ReleaseFast) TÜM değişiklikler
 doğrulandı — Windows dalları (`builtin.os.tag == .windows` altında)
 Zig'in TİP KONTROLÜNDEN geçti (çalışma-zamanı dalı ÖLÜ olsa BİLE her iki
