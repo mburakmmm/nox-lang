@@ -73,18 +73,26 @@ For the full record of architectural/design decisions, see
 
 ### Prebuilt (recommended)
 
-A one-line install for macOS (Apple Silicon) and Linux (x86-64/aarch64)
-— includes `noxc`/`noxlsp`, the runtime, the `nox.*` stdlib, and an
-embedded `qbe` (only a C compiler — `cc` — needs to be present on the
-system, for linking):
+A one-line install for macOS (Apple Silicon), Linux (x86-64/aarch64),
+and Windows (x86-64) — includes `noxc`/`noxlsp`, the runtime, the
+`nox.*` stdlib, and an embedded `qbe` (only a C compiler needs to be
+present on the system, for linking — `cc` on macOS/Linux, MinGW-w64
+on Windows):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/mburakmmm/nox-lang/main/install.sh | sh
 ```
 
+On Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/mburakmmm/nox-lang/main/install.ps1 | iex
+```
+
 See the `NOX_VERSION`/`NOX_INSTALL_DIR` environment variables to install
 a specific version or change the install root (see
-[`install.sh`](install.sh)). Verify with `noxc --version`.
+[`install.sh`](install.sh)/[`install.ps1`](install.ps1)). Verify with
+`noxc --version`.
 
 ### Building from source
 
@@ -108,14 +116,17 @@ a different install layout, you can override this root with the
 
 ### Windows
 
-Native Windows support is not finished yet — the async I/O reactor
-(`runtime/async_rt/io_reactor.zig`) currently only implements kqueue
-(macOS) and epoll (Linux), so `noxc` itself does not compile on Windows
-(`spawn`/`await`/`Task`/`Channel`/`nox.http` all depend on this
-reactor). This is under active development — see the `[Unreleased]`
-section of `CHANGELOG.md` for progress. Until then, Windows users can
-use [WSL](https://learn.microsoft.com/windows/wsl/) (Ubuntu) with the
-standard Linux install (`install.sh` or building from source).
+Native Windows (x86-64) support exists — the full async runtime (fiber
+context switching + a `WSAPoll`-based I/O reactor), `nox.thread`/
+`nox.channel`/`nox.http` (Winsock socket layer) included, all work on
+Windows (see `nox-teknik-spesifikasyon.md` §3.71, Faz LL). Install with
+`install.ps1` above and use `noxc` normally — the only extra requirement
+is a MinGW-w64 C compiler for linking (via [MSYS2](https://www.msys2.org/)'s
+`pacman -S mingw-w64-x86_64-gcc`, or [w64devkit](https://github.com/skeeto/w64devkit)).
+**Known v1 limitation:** `nox.path.canonicalize` does not resolve
+symbolic links on Windows (it only normalizes `.`/`..` into an absolute
+path — symlinks are rare on Windows and require administrator
+privileges anyway).
 
 ## Usage
 

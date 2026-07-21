@@ -12219,6 +12219,57 @@ değişiklikler AYRICA doğrulandı — `builtin.os.tag == .windows`/
 `target.result.os.tag != .windows` dallarının HİÇBİRİ macOS/Linux'un
 mevcut davranışını DEĞİŞTİRMEDİĞİNDEN SIFIR regresyon.
 
+### LL.7 (TAMAMLANDI) — `release.yml`nin `windows-x64` hedefi + `install.ps1`
+
+`.github/workflows/release.yml`ye YENİ, AYRI bir `windows-x64` işi
+eklendi (`ci.yml`nin `windows-frontend`iyle AYNI gerekçeyle — bash
+`run:` adımları PowerShell'e PAYLAŞILAMADIĞINDAN, macOS/Linux'un
+MATRİS işine EKLENMEDİ, AYRI bir iş): `ci.yml`nin Faz LL.1-LL.6'da
+GERÇEK Windows CI'de doğrulanan AYNI adımları (Zig kurulumu, `qbe`nin
+kaynaktan + `amd64_win` ABI yamasıyla derlenmesi) `-Doptimize=
+ReleaseFast` İLE tekrarlar, bir `noxc.exe run` duman testiyle
+DOĞRULAR, SONRA paketler: `.tar.gz` YERİNE `.zip` (`Compress-Archive`),
+AYNI `bin/`+`lib/` düzeni, TEK ek dosya `lib/swap_asm.o` (Faz LL.6'nın
+`zig build-obj`/COFF bulgusu YÜZÜNDEN `noxrt.o`dan AYRI kurulan fiber
+assembly'si).
+
+`install.ps1` (repo kökü) `install.sh`nin BİREBİR PowerShell karşılığı:
+`NOX_INSTALL_DIR`/`NOX_VERSION` AYNI ortam değişkenleri, GitHub
+Releases API'sinden en son sürüm ÇÖZÜMÜ (AYNI "boş/erişilemez yanıtı
+AÇIK bir hatayla ele al" dersi — bkz. `install.sh`nin `resolve_version`
+belge notu), `.zip`i `Expand-Archive` İLE açıp `$env:NOX_INSTALL_DIR`
+(varsayılan `$env:USERPROFILE\.nox-lang`) altına kurar, `cc`/`gcc`
+(MinGW-w64) EKSİKSE UYARIR (kurulumu MinGW'in KENDİSİ YAPMAZ — `install.
+sh`nin macOS/Linux'ta Xcode CLT/`build-essential`e GÜVENDİĞİ AYNI ilke),
+`bin/`i KALICI bir kullanıcı ortam değişkeni olarak PATH'e EKLER
+(`[Environment]::SetEnvironmentVariable(..., "User")`, ZATEN EKLİYSE
+TEKRAR EKLEMEZ). Yalnızca x86-64/AMD64 desteklenir (`$env:
+PROCESSOR_ARCHITECTURE` KONTROLÜ) — ARM64 Windows İçin (henüz paketi
+YOK) AÇIK bir hata mesajıyla kaynaktan derlemeye YÖNLENDİRİLİR.
+
+**Doğrulama sınırı:** `install.ps1`/`release.yml`nin GERÇEK bir
+`v*` etiketi push edilerek (ya da `workflow_dispatch` İLE) TETİKLENMESİ
+BU oturumda YAPILMADI (GERÇEK, KAMUYA AÇIK bir GitHub Release
+YARATMAK — kullanıcının AYRI onayı GEREKTİREN bir eylem). `install.ps1`
+elle, dikkatlice GÖZDEN GEÇİRİLDİ (PowerShell'in `+` operatörünün
+parantez OLMADAN fonksiyon çağrılarında AYRI pozisyonel argümanlara
+BÖLÜNMESİ gibi İNCE hatalar İçin), `release.yml`nin YAML sözdizimi
+doğrulandı — ama GERÇEK bir Windows makinesinde UÇTAN UCA (indirme→
+kurulum→PATH→`noxc --version`) HENÜZ ÇALIŞTIRILMADI. Kullanıcı hazır
+olduğunda `workflow_dispatch` İLE (bir git tag'İ GEREKTİRMEDEN) test
+edilebilir.
+
+### LL.8 (TAMAMLANDI) — README/README.en Windows bölümlerinin güncellenmesi
+
+`README.md`/`README.en.md`nin "Windows henüz desteklenmiyor, WSL
+kullanın" notu (LL.1'den BERİ BİLİNÇLİ olarak KORUNMUŞTU — bkz. LL.1'in
+KENDİ belge notu, "GERÇEK Windows çalıştırma ÇALIŞANA KADAR
+değiştirilmeyecek") ARTIK GERÇEĞİ YANSITMIYORDU — GÜNCELLENDİ: `install.
+ps1` kurulum talimatı eklendi, Windows bölümü "desteklenmiyor" YERİNE
+MEVCUT desteği (fiber/WSAPoll/Winsock/nox.http DAHİL TAMAMI çalışıyor)
+VE tek gerçek sınırlamayı (`nox.path.canonicalize`nin sembolik link
+ÇÖZMEMESİ) açıklayacak şekilde YENİDEN YAZILDI.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

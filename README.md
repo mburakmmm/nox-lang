@@ -65,18 +65,24 @@ Mimari/tasarım kararlarının tam dökümü için
 
 ### Önceden derlenmiş (önerilen)
 
-macOS (Apple Silicon) ve Linux (x86-64/aarch64) için tek satırlık kurulum
-— `noxc`/`noxlsp` + çalışma zamanı + `nox.*` stdlib + gömülü `qbe` içerir
-(yalnızca bir C derleyicisi — `cc` — sistemde bulunmalıdır, linkleme
-için):
+macOS (Apple Silicon), Linux (x86-64/aarch64) ve Windows (x86-64) için
+tek satırlık kurulum — `noxc`/`noxlsp` + çalışma zamanı + `nox.*` stdlib +
+gömülü `qbe` içerir (yalnızca bir C derleyicisi sistemde bulunmalıdır,
+linkleme için — macOS/Linux'ta `cc`, Windows'ta MinGW-w64):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/mburakmmm/nox-lang/main/install.sh | sh
 ```
 
+Windows'ta (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/mburakmmm/nox-lang/main/install.ps1 | iex
+```
+
 Belirli bir sürümü kurmak/kurulum kökünü değiştirmek için `NOX_VERSION`/
-`NOX_INSTALL_DIR` ortam değişkenlerine bakın (bkz. [`install.sh`](install.sh)).
-Doğrulama: `noxc --version`.
+`NOX_INSTALL_DIR` ortam değişkenlerine bakın (bkz. [`install.sh`](install.sh)/
+[`install.ps1`](install.ps1)). Doğrulama: `noxc --version`.
 
 ### Kaynaktan derleme
 
@@ -100,14 +106,18 @@ override edebilirsiniz (üçüncü-taraf paket önbelleğinin kökü olan
 
 ### Windows
 
-Native Windows desteği henüz TAMAMLANMADI — async G/Ç reaktörü
-(`runtime/async_rt/io_reactor.zig`) şu an yalnızca kqueue (macOS) ve
-epoll (Linux) uyguluyor, bu yüzden `noxc` KENDİSİ Windows'ta derlenemiyor
-(`spawn`/`await`/`Task`/`Channel`/`nox.http` bu reaktöre bağlı). Bu
-aktif olarak geliştiriliyor — ilerleme için `CHANGELOG.md`nin
-`[Yayımlanmamış]` bölümüne bakın. O zamana kadar Windows kullanıcıları
-[WSL](https://learn.microsoft.com/windows/wsl/) (Ubuntu) içinde standart
-Linux kurulumunu (`install.sh` ya da kaynaktan derleme) kullanabilir.
+Native Windows (x86-64) desteği VAR — `async` çalışma zamanı (fiber
+bağlam değişimi + `WSAPoll` tabanlı G/Ç reaktörü), `nox.thread`/
+`nox.channel`/`nox.http` (Winsock soket katmanı) DAHİL tüm çalışma zamanı
+Windows'ta ÇALIŞIR (bkz. `nox-teknik-spesifikasyon.md` §3.71, Faz LL).
+Yukarıdaki `install.ps1` İLE kurup `noxc`yi normal şekilde kullanın —
+tek fark, linkleme İçin bir MinGW-w64 C derleyicisi ([MSYS2](https://www.msys2.org/)
+üzerinden `pacman -S mingw-w64-x86_64-gcc` ya da
+[w64devkit](https://github.com/skeeto/w64devkit)) gerekir. **Bilinçli v1
+sınırlaması:** `nox.path.canonicalize`, Windows'ta sembolik linkleri
+ÇÖZMEZ (yalnızca `.`/`..`yi normalize edip mutlak yola çevirir —
+Windows'ta sembolik link kullanımı zaten nadir ve yönetici izni
+gerektirir).
 
 ## Kullanım
 

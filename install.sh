@@ -49,7 +49,7 @@ detect_asset() {
             esac
             ;;
         *)
-            die "Desteklenmeyen işletim sistemi: $os (Windows için kaynaktan derleyin: bkz. CONTRIBUTING.md)."
+            die "Desteklenmeyen işletim sistemi: $os (Windows için install.ps1 kullanın: irm https://raw.githubusercontent.com/${REPO}/main/install.ps1 | iex)."
             ;;
     esac
 }

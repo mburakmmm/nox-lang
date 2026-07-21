@@ -94,3 +94,95 @@ jobs:
             nox-lang-*.tar.gz.sha256
           draft: false
           generate_release_notes: true
+
+  # Faz LL.7 (bkz. nox-teknik-spesifikasyon.md §3.71): Windows paketi —
+  # YUKARIDAKİ `build` işinin matrisine EKLENMEDİ (bash `run:` adımları
+  # PowerShell'e ÇEVRİLEMEZ/paylaşılamaz — `ci.yml`nin `windows-frontend`
+  # işiyle AYNI, kanıtlanmış "AYRI iş" deseni). Adımlar `ci.yml`nin Faz
+  # LL.1-LL.6'da GERÇEK Windows CI'de doğrulanan AYNI adımlarıdır (Zig
+  # kurulumu, `qbe`nin kaynaktan + `amd64_win` ABI yamasıyla derlenmesi),
+  # TEK farkla: `-Doptimize=ReleaseFast` VE paket `.tar.gz` YERİNE `.zip`
+  # (Windows'un doğal arşiv biçimi, `Compress-Archive` İLE — `tar`in
+  # KENDİSİ Windows'ta MEVCUT olsa da `.zip`, `install.ps1`nin `Expand-
+  # Archive`ıyla DAHA DOĞAL EŞLEŞİR). Paket düzeni AYNI (`bin/`+`lib/`),
+  # TEK ek dosya: `lib/swap_asm.o` (Faz LL.6'nın `zig build-obj`/COFF
+  # bulgusu YÜZÜNDEN `noxrt.o`dan AYRI kurulan fiber assembly'si — bkz.
+  # `compiler/project.zig`nin `ResourceDirs.swap_asm_path`ının belge
+  # notu). `noxc`nin ÇALIŞMA ZAMANINDA bir `cc` (MinGW-w64) bulması
+  # GEREKİR — `install.sh`nin macOS/Linux'ta Xcode CLT/`build-essential`e
+  # GÜVENDİĞİ AYNI ilkeyle, bu paket MinGW'i GETİRMEZ (kullanıcının KENDİ
+  # kurması gerekir — `install.ps1` bunu KONTROL EDİP UYARIR).
+  windows-x64:
+    name: windows-x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Zig kur
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest -Uri "https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip" -OutFile "$env:RUNNER_TEMP\zig.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\zig.zip" -DestinationPath "$env:RUNNER_TEMP"
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\zig-x86_64-windows-0.16.0"
+
+      # Faz LL.6'nın `ci.yml`deki AYNI "qbe kur" adımı (bkz. o dosyanın
+      # belge notu — `config.h` + alt-dizin derlemesi + GERÇEK bir
+      # upstream `amd64_win` ABI hatasının metin-yaması).
+      - name: qbe kur (Windows — kaynaktan, dogrudan cc ile derle)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest -Uri "https://c9x.me/compile/release/qbe-1.3.tar.xz" -OutFile "$env:RUNNER_TEMP\qbe.tar.xz"
+          tar xf "$env:RUNNER_TEMP\qbe.tar.xz" -C "$env:RUNNER_TEMP"
+          Push-Location "$env:RUNNER_TEMP\qbe-1.3"
+          Set-Content -Path config.h -Value "#define Deftgt T_amd64_win"
+          $winabi = Get-Content -Path "amd64\winabi.c" -Raw
+          $needle = "emit(Ocopy, Kl, instr->to, SLOT(-slot_offset), R);"
+          if (-not $winabi.Contains($needle)) { throw "qbe amd64_win yamasi: beklenen satir bulunamadi (upstream degismis olabilir)" }
+          $winabi = $winabi.Replace($needle, "emit(Ocopy, instr->cls, instr->to, SLOT(-slot_offset), R);")
+          Set-Content -Path "amd64\winabi.c" -Value $winabi -NoNewline
+          cc -O2 -std=c99 -o qbe.exe *.c amd64/*.c arm64/*.c rv64/*.c
+          if ($LASTEXITCODE -ne 0) { throw "qbe derlemesi basarisiz (exit $LASTEXITCODE)" }
+          Pop-Location
+          Copy-Item "$env:RUNNER_TEMP\qbe-1.3\qbe.exe" "$env:RUNNER_TEMP\qbe.exe"
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP"
+
+      - name: zig build (ReleaseFast)
+        run: zig build -Doptimize=ReleaseFast
+
+      - name: Duman testi — noxc.exe run
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-Content -Path release_smoke.nox -Value "print(21 + 21)" -NoNewline
+          $output = & ".\zig-out\bin\noxc.exe" run release_smoke.nox
+          if ($LASTEXITCODE -ne 0) { throw "noxc run basarisiz (exit $LASTEXITCODE): $output" }
+          if ($output -ne "42") { throw "noxc run yanlis cikti: '$output' (beklenen '42')" }
+
+      - name: Paketle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "dev" }
+          $stage = "nox-lang-$version-windows-x64"
+          New-Item -ItemType Directory -Force -Path "$stage\bin", "$stage\lib" | Out-Null
+          Copy-Item "zig-out\bin\noxc.exe" "$stage\bin\"
+          Copy-Item "zig-out\bin\noxlsp.exe" "$stage\bin\"
+          Copy-Item "$env:RUNNER_TEMP\qbe.exe" "$stage\bin\"
+          Copy-Item "zig-out\lib\noxrt.o" "$stage\lib\"
+          Copy-Item "zig-out\lib\swap_asm.o" "$stage\lib\"
+          Copy-Item -Recurse "zig-out\lib\nox" "$stage\lib\"
+          Copy-Item README.md, LICENSE, CHANGELOG.md "$stage\"
+          Compress-Archive -Path $stage -DestinationPath "$stage.zip"
+          $hash = (Get-FileHash "$stage.zip" -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "$stage.zip.sha256" -Value "$hash  $stage.zip" -NoNewline
+
+      - name: Yükle
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            nox-lang-*.zip
+            nox-lang-*.zip.sha256
+          draft: false
+          generate_release_notes: true

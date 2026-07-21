@@ -1261,6 +1261,22 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   geçirildi — sembolik linkleri ÇÖZMEZ, yalnızca normalize eder).
   Toplamda 7 gerçek hata sırayla bulunup düzeltildi (2'si bu projenin
   kendi kodunda, 1'i upstream QBE'de, 4'ü Zig/MinGW'in kendisinde).
+- **Faz LL.7 — `release.yml`ye `windows-x64` hedefi + `install.ps1`.**
+  `release.yml`ye Faz LL.1-LL.6'da doğrulanan aynı adımları
+  (`-Doptimize=ReleaseFast` ile) tekrarlayan, `.zip` paketleyen ayrı bir
+  Windows işi eklendi (`lib/swap_asm.o` dahil — bkz. LL.6). `install.ps1`
+  (repo kökü), `install.sh`nin birebir PowerShell karşılığı: aynı
+  `NOX_INSTALL_DIR`/`NOX_VERSION` ortam değişkenleri, GitHub Releases
+  API'sinden sürüm çözümü, `cc`/`gcc` (MinGW-w64) eksikse uyarı, PATH'e
+  kalıcı ekleme. Gerçek bir Windows makinesinde uçtan uca (yalnızca elle
+  gözden geçirilip YAML/PowerShell sözdizimi doğrulandı) henüz
+  çalıştırılmadı — kullanıcı hazır olduğunda `workflow_dispatch` ile
+  (bir git tag'i gerektirmeden) test edilebilir.
+- **Faz LL.8 — README/README.en'in Windows bölümleri güncellendi.**
+  "Windows henüz desteklenmiyor, WSL kullanın" notu, mevcut gerçek
+  desteği (fiber/WSAPoll/Winsock/`nox.http` dahil tüm çalışma zamanı
+  çalışıyor) ve tek bilinen sınırlamayı (`nox.path.canonicalize`
+  Windows'ta sembolik link çözmüyor) yansıtacak şekilde yeniden yazıldı.
 
 ## [1.0.0]
 
