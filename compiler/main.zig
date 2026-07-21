@@ -943,6 +943,15 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // AYRI bir girdi olarak eklenmesi GEREKİR.
     if (builtin.os.tag == .windows) try cc_argv.append(a, resource_dirs.swap_asm_path);
     try cc_argv.append(a, "-lm");
+    // Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71): Zig'in KENDİ std
+    // kütüphanesi (Windows dosya/iş parçacığı/zamanlayıcı ilkelleri İçin
+    // `ntdll.dll`nin `Nt*`/`Rtl*`/`Ldr*` sembollerini, `runtime/async_rt/
+    // io.zig`nin `WinSock`u İSE `ws2_32.dll`nin `WSAGetLastError`/`accept`/...
+    // sembollerini KULLANIR) MinGW'in VARSAYILAN bağlama kütüphaneleri
+    // ARASINDA DEĞİLDİR — AÇIKÇA eklenmesi GEREKİR (GERÇEK Windows CI'de
+    // `undefined reference to 'WSAGetLastError'`/`'NtCreateFile'`/... İLE
+    // doğrulandı).
+    if (builtin.os.tag == .windows) try cc_argv.appendSlice(a, &.{ "-lntdll", "-lws2_32" });
     try appendExternLinkArgs(a, &cc_argv, module);
 
     const cc_result = try std.process.run(gpa, io, .{
