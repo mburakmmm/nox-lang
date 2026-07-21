@@ -161,3 +161,16 @@ jobs:
       # stdlib_shims'e hiç bağımlı değil").
       - name: zig build async-rt-test (yalnızca fiber/io_reactor/scheduler/channel)
         run: zig build async-rt-test
+
+      # Faz LL.4 SONRASI keşif (bkz. nox-teknik-spesifikasyon.md §3.71):
+      # `fs.zig` (LL.4'te taşındı) `http_client.zig`yi (dupeToNoxStr İçin,
+      # LL.5'in KENDİ kapsamı, HENÜZ taşınmadı) İÇE AKTARDIĞINDAN,
+      # `fs.zig`nin GERÇEKTEN derlendiğini İZOLE olarak doğrulamanın YOLU
+      # YOK — bu YÜZDEN TAM `noxrt.o`yu (dolayısıyla TÜM stdlib_shims'i)
+      # derlemeyi DENEYİP GERÇEKTEN NE KADARININ ZATEN çalıştığını (birçok
+      # soket fonksiyonu/tipi Zig'in KENDİ switch'lerinde Windows İçin
+      # ZATEN case'li — `continue-on-error` İLE, henüz TAM yeşil
+      # BEKLENMİYOR, yalnızca GERÇEK hata yüzeyini GÖRMEK İçin).
+      - name: zig build (TAM — LL.5 öncesi keşif, henüz yeşil beklenmiyor)
+        continue-on-error: true
+        run: zig build
