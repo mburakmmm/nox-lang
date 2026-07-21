@@ -11,9 +11,9 @@
 //! `scripts/gen_hpy_ctx.py`) üretilmiş, bayt-uyumlu bir transkripsiyonunu
 //! GEREKTİRİR — bir eklenti bu struct'a doğrudan (sabit ofsetlerle) erişir,
 //! bu yüzden alan SIRASI ve BOYUTU tam olarak eşleşmelidir. Şu an 180
-//! `ctx_*` alanından **76'sı** GERÇEKTEN implemente (aşağıda özel fonksiyon
+//! `ctx_*` alanından **104'ü** GERÇEKTEN implemente (aşağıda özel fonksiyon
 //! işaretçisi tipleriyle işaretli — tam liste/tier dökümü İçin bkz.
-//! nox-teknik-spesifikasyon.md §3.12 VE DEVAMI, en son Faz PP) — geri
+//! nox-teknik-spesifikasyon.md §3.12 VE DEVAMI, en son Faz QQ) — geri
 //! kalanı `null` (kullanılmazlarsa zararsız; bir eklenti bunlardan birini
 //! çağırırsa çökme/segfault olur, bkz. spesifikasyondaki bilinçli
 //! sınırlamalar).
@@ -1402,6 +1402,217 @@ fn ctxAbsolute(ctx: *HPyContext, h1: HPy) callconv(.c) HPy {
     return ctxLongFromInt64(ctx, @intCast(@abs(numAsI64(o1))));
 }
 
+// ---- Sayı protokolünün geri kalanı (Faz QQ) ----
+//
+// `ctx_Number_Check`/`ctx_MatrixMultiply`/`ctx_Divmod`/`ctx_Power`/
+// `ctx_Positive`/`ctx_Invert`/`ctx_Lshift`/`ctx_Rshift`/`ctx_And`/
+// `ctx_Xor`/`ctx_Or`/`ctx_Index`/`ctx_Long`/`ctx_Float` + 13 `InPlace*`
+// varyantı. **Bilinçli v1 sınırlaması:** Nox'un nesne modelinde
+// KULLANICI-TANIMLI sayısal tipler (özel `__iadd__` vb.) yok — TÜM
+// `InPlace*` varyantları bu YÜZDEN doğrudan KENDİ normal (non-inplace)
+// karşılıklarına delege eder; bu, gerçek CPython'ın DEĞİŞMEZ (`int`/
+// `float`) tipler İçin ZATEN yaptığı ŞEYLE birebir AYNIDIR (`x += 1`,
+// `int`in KENDİSİ `__iadd__` TANIMLAMADIĞINDAN, sessizce `__add__`e
+// düşer). `ctx_MatrixMultiply`/`ctx_InPlaceMatrixMultiply`: Nox'ta
+// matris/`__matmul__` KAVRAMI yok — gerçek CPython'ın `@` desteklemeyen
+// tipler İçin verdiği `TypeError`in AYNISI.
+fn ctxNumberCheck(ctx: *HPyContext, h: HPy) callconv(.c) c_int {
+    _ = ctx;
+    const obj = objOf(h) orelse return 0;
+    return @intFromBool(isNumericTag(obj.tag));
+}
+
+fn ctxMatrixMultiply(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
+    _ = h1;
+    _ = h2;
+    ctxErrSetString(ctx, ctx.h_TypeError, "@ (matris çarpımı) desteklenmiyor");
+    return HPy_NULL;
+}
+
+fn ctxDivmod(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
+    const q = numericBinOp(ctx, h1, h2, .floordiv);
+    if (q._i == 0) return HPy_NULL;
+    const r = numericBinOp(ctx, h1, h2, .mod);
+    if (r._i == 0) {
+        ctxClose(ctx, q);
+        return HPy_NULL;
+    }
+    var items = [_]HPy{ q, r };
+    const result = ctxTupleFromArray(ctx, &items, 2);
+    ctxClose(ctx, q);
+    ctxClose(ctx, r);
+    return result;
+}
+
+fn ctxPower(ctx: *HPyContext, h1: HPy, h2: HPy, h3: HPy) callconv(.c) HPy {
+    const o1 = objOf(h1) orelse return HPy_NULL;
+    const o2 = objOf(h2) orelse return HPy_NULL;
+    if (!isNumericTag(o1.tag) or !isNumericTag(o2.tag)) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "desteklenmeyen işlenen tipi (yalnızca int/float/bool)");
+        return HPy_NULL;
+    }
+    const use_float = o1.tag == .float_ or o2.tag == .float_ or numAsF64(o2) < 0;
+    if (use_float) {
+        const r = std.math.pow(f64, numAsF64(o1), numAsF64(o2));
+        if (h3._i != 0) {
+            ctxErrSetString(ctx, ctx.h_TypeError, "üç argümanlı pow yalnızca int taban/üs için desteklenir");
+            return HPy_NULL;
+        }
+        return ctxFloatFromDouble(ctx, r);
+    }
+    const base = numAsI64(o1);
+    const exp = numAsI64(o2);
+    var result: i64 = 1;
+    var e = exp;
+    while (e > 0) : (e -= 1) result *%= base;
+    if (h3._i != 0) {
+        const mod_obj = objOf(h3) orelse return HPy_NULL;
+        if (!isNumericTag(mod_obj.tag)) {
+            ctxErrSetString(ctx, ctx.h_TypeError, "modulus int olmalı");
+            return HPy_NULL;
+        }
+        const m = numAsI64(mod_obj);
+        if (m == 0) {
+            ctxErrSetString(ctx, ctx.h_ValueError, "pow() 3. argüman sıfır olamaz");
+            return HPy_NULL;
+        }
+        return ctxLongFromInt64(ctx, @mod(result, m));
+    }
+    return ctxLongFromInt64(ctx, result);
+}
+
+fn ctxPositive(ctx: *HPyContext, h1: HPy) callconv(.c) HPy {
+    const o1 = objOf(h1) orelse return HPy_NULL;
+    if (!isNumericTag(o1.tag)) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "desteklenmeyen işlenen tipi");
+        return HPy_NULL;
+    }
+    if (o1.tag == .float_) return ctxFloatFromDouble(ctx, numAsF64(o1));
+    return ctxLongFromInt64(ctx, numAsI64(o1));
+}
+
+fn ctxInvert(ctx: *HPyContext, h1: HPy) callconv(.c) HPy {
+    const o1 = objOf(h1) orelse return HPy_NULL;
+    if (o1.tag != .long and o1.tag != .bool_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "~ yalnızca int/bool için desteklenir");
+        return HPy_NULL;
+    }
+    return ctxLongFromInt64(ctx, ~numAsI64(o1));
+}
+
+const BitOp = enum { lshift, rshift, and_, xor, or_ };
+
+fn bitwiseBinOp(ctx: *HPyContext, h1: HPy, h2: HPy, op: BitOp) HPy {
+    const o1 = objOf(h1) orelse return HPy_NULL;
+    const o2 = objOf(h2) orelse return HPy_NULL;
+    if ((o1.tag != .long and o1.tag != .bool_) or (o2.tag != .long and o2.tag != .bool_)) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "bit işlemleri yalnızca int/bool için desteklenir");
+        return HPy_NULL;
+    }
+    const a = numAsI64(o1);
+    const b = numAsI64(o2);
+    if ((op == .lshift or op == .rshift) and (b < 0 or b >= 64)) {
+        ctxErrSetString(ctx, ctx.h_ValueError, "negatif kaydırma sayısı ya da taşma");
+        return HPy_NULL;
+    }
+    const r: i64 = switch (op) {
+        .lshift => a << @intCast(b),
+        .rshift => a >> @intCast(b),
+        .and_ => a & b,
+        .xor => a ^ b,
+        .or_ => a | b,
+    };
+    return ctxLongFromInt64(ctx, r);
+}
+
+fn ctxLshift(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
+    return bitwiseBinOp(ctx, h1, h2, .lshift);
+}
+fn ctxRshift(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
+    return bitwiseBinOp(ctx, h1, h2, .rshift);
+}
+fn ctxAnd(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
+    return bitwiseBinOp(ctx, h1, h2, .and_);
+}
+fn ctxXor(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
+    return bitwiseBinOp(ctx, h1, h2, .xor);
+}
+fn ctxOr(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
+    return bitwiseBinOp(ctx, h1, h2, .or_);
+}
+
+/// Gerçek `__index__` sözleşmesi: yalnızca "tam sayı gibi davranan"
+/// tipler (bizde `long`/`bool_`) İçin GERÇEK bir `.long` döner —
+/// `float_` DAHİL DEĞİL (Python'da `float`in `__index__`i yoktur).
+fn ctxIndex(ctx: *HPyContext, h1: HPy) callconv(.c) HPy {
+    const o1 = objOf(h1) orelse return HPy_NULL;
+    if (o1.tag != .long and o1.tag != .bool_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "__index__ yalnızca int/bool için desteklenir");
+        return HPy_NULL;
+    }
+    return ctxLongFromInt64(ctx, numAsI64(o1));
+}
+
+/// `int(x)` sözleşmesi: `long`/`bool_`/`float_` (kesme yoluyla) → `.long`.
+fn ctxLong(ctx: *HPyContext, h1: HPy) callconv(.c) HPy {
+    const o1 = objOf(h1) orelse return HPy_NULL;
+    if (!isNumericTag(o1.tag)) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "int()'e dönüştürülemez");
+        return HPy_NULL;
+    }
+    return ctxLongFromInt64(ctx, numAsI64(o1));
+}
+
+/// `float(x)` sözleşmesi: `long`/`bool_`/`float_` → `.float_`.
+fn ctxFloat(ctx: *HPyContext, h1: HPy) callconv(.c) HPy {
+    const o1 = objOf(h1) orelse return HPy_NULL;
+    if (!isNumericTag(o1.tag)) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "float()'a dönüştürülemez");
+        return HPy_NULL;
+    }
+    return ctxFloatFromDouble(ctx, numAsF64(o1));
+}
+
+fn ctxInPlaceAdd(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
+    return ctxAdd(ctx, h1, h2);
+}
+fn ctxInPlaceSubtract(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
+    return ctxSubtract(ctx, h1, h2);
+}
+fn ctxInPlaceMultiply(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
+    return ctxMultiply(ctx, h1, h2);
+}
+fn ctxInPlaceMatrixMultiply(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
+    return ctxMatrixMultiply(ctx, h1, h2);
+}
+fn ctxInPlaceFloorDivide(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
+    return ctxFloorDivide(ctx, h1, h2);
+}
+fn ctxInPlaceTrueDivide(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
+    return ctxTrueDivide(ctx, h1, h2);
+}
+fn ctxInPlaceRemainder(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
+    return ctxRemainder(ctx, h1, h2);
+}
+fn ctxInPlacePower(ctx: *HPyContext, h1: HPy, h2: HPy, h3: HPy) callconv(.c) HPy {
+    return ctxPower(ctx, h1, h2, h3);
+}
+fn ctxInPlaceLshift(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
+    return ctxLshift(ctx, h1, h2);
+}
+fn ctxInPlaceRshift(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
+    return ctxRshift(ctx, h1, h2);
+}
+fn ctxInPlaceAnd(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
+    return ctxAnd(ctx, h1, h2);
+}
+fn ctxInPlaceXor(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
+    return ctxXor(ctx, h1, h2);
+}
+fn ctxInPlaceOr(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
+    return ctxOr(ctx, h1, h2);
+}
+
 // ---- Tier 0 tamamlama: hata yönetimi ----
 //
 // Gerçek CPython/HPy'de bekleyen istisna interpreter'ın thread-state'inde
@@ -1572,41 +1783,41 @@ pub const HPyContext = extern struct {
     ctx_Float_AsDouble: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) f64 = null,
     ctx_Bool_FromBool: ?*const fn (ctx: *HPyContext, v: bool) callconv(.c) HPy = null,
     ctx_Length: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) isize = null,
-    ctx_Number_Check: ?*const anyopaque = null,
+    ctx_Number_Check: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) c_int = null,
     ctx_Add: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
     ctx_Subtract: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
     ctx_Multiply: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
-    ctx_MatrixMultiply: ?*const anyopaque = null,
+    ctx_MatrixMultiply: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
     ctx_FloorDivide: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
     ctx_TrueDivide: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
     ctx_Remainder: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
-    ctx_Divmod: ?*const anyopaque = null,
-    ctx_Power: ?*const anyopaque = null,
+    ctx_Divmod: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
+    ctx_Power: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy, h3: HPy) callconv(.c) HPy = null,
     ctx_Negative: ?*const fn (ctx: *HPyContext, h1: HPy) callconv(.c) HPy = null,
-    ctx_Positive: ?*const anyopaque = null,
+    ctx_Positive: ?*const fn (ctx: *HPyContext, h1: HPy) callconv(.c) HPy = null,
     ctx_Absolute: ?*const fn (ctx: *HPyContext, h1: HPy) callconv(.c) HPy = null,
-    ctx_Invert: ?*const anyopaque = null,
-    ctx_Lshift: ?*const anyopaque = null,
-    ctx_Rshift: ?*const anyopaque = null,
-    ctx_And: ?*const anyopaque = null,
-    ctx_Xor: ?*const anyopaque = null,
-    ctx_Or: ?*const anyopaque = null,
-    ctx_Index: ?*const anyopaque = null,
-    ctx_Long: ?*const anyopaque = null,
-    ctx_Float: ?*const anyopaque = null,
-    ctx_InPlaceAdd: ?*const anyopaque = null,
-    ctx_InPlaceSubtract: ?*const anyopaque = null,
-    ctx_InPlaceMultiply: ?*const anyopaque = null,
-    ctx_InPlaceMatrixMultiply: ?*const anyopaque = null,
-    ctx_InPlaceFloorDivide: ?*const anyopaque = null,
-    ctx_InPlaceTrueDivide: ?*const anyopaque = null,
-    ctx_InPlaceRemainder: ?*const anyopaque = null,
-    ctx_InPlacePower: ?*const anyopaque = null,
-    ctx_InPlaceLshift: ?*const anyopaque = null,
-    ctx_InPlaceRshift: ?*const anyopaque = null,
-    ctx_InPlaceAnd: ?*const anyopaque = null,
-    ctx_InPlaceXor: ?*const anyopaque = null,
-    ctx_InPlaceOr: ?*const anyopaque = null,
+    ctx_Invert: ?*const fn (ctx: *HPyContext, h1: HPy) callconv(.c) HPy = null,
+    ctx_Lshift: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
+    ctx_Rshift: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
+    ctx_And: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
+    ctx_Xor: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
+    ctx_Or: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
+    ctx_Index: ?*const fn (ctx: *HPyContext, h1: HPy) callconv(.c) HPy = null,
+    ctx_Long: ?*const fn (ctx: *HPyContext, h1: HPy) callconv(.c) HPy = null,
+    ctx_Float: ?*const fn (ctx: *HPyContext, h1: HPy) callconv(.c) HPy = null,
+    ctx_InPlaceAdd: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
+    ctx_InPlaceSubtract: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
+    ctx_InPlaceMultiply: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
+    ctx_InPlaceMatrixMultiply: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
+    ctx_InPlaceFloorDivide: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
+    ctx_InPlaceTrueDivide: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
+    ctx_InPlaceRemainder: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
+    ctx_InPlacePower: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy, h3: HPy) callconv(.c) HPy = null,
+    ctx_InPlaceLshift: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
+    ctx_InPlaceRshift: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
+    ctx_InPlaceAnd: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
+    ctx_InPlaceXor: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
+    ctx_InPlaceOr: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
     ctx_Callable_Check: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) c_int = null,
     ctx_CallTupleDict: ?*const fn (ctx: *HPyContext, callable: HPy, args: HPy, kw: HPy) callconv(.c) HPy = null,
     ctx_FatalError: ?*const anyopaque = null,
@@ -1849,6 +2060,33 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
         .ctx_Remainder = ctxRemainder,
         .ctx_Negative = ctxNegative,
         .ctx_Absolute = ctxAbsolute,
+        .ctx_Number_Check = ctxNumberCheck,
+        .ctx_MatrixMultiply = ctxMatrixMultiply,
+        .ctx_Divmod = ctxDivmod,
+        .ctx_Power = ctxPower,
+        .ctx_Positive = ctxPositive,
+        .ctx_Invert = ctxInvert,
+        .ctx_Lshift = ctxLshift,
+        .ctx_Rshift = ctxRshift,
+        .ctx_And = ctxAnd,
+        .ctx_Xor = ctxXor,
+        .ctx_Or = ctxOr,
+        .ctx_Index = ctxIndex,
+        .ctx_Long = ctxLong,
+        .ctx_Float = ctxFloat,
+        .ctx_InPlaceAdd = ctxInPlaceAdd,
+        .ctx_InPlaceSubtract = ctxInPlaceSubtract,
+        .ctx_InPlaceMultiply = ctxInPlaceMultiply,
+        .ctx_InPlaceMatrixMultiply = ctxInPlaceMatrixMultiply,
+        .ctx_InPlaceFloorDivide = ctxInPlaceFloorDivide,
+        .ctx_InPlaceTrueDivide = ctxInPlaceTrueDivide,
+        .ctx_InPlaceRemainder = ctxInPlaceRemainder,
+        .ctx_InPlacePower = ctxInPlacePower,
+        .ctx_InPlaceLshift = ctxInPlaceLshift,
+        .ctx_InPlaceRshift = ctxInPlaceRshift,
+        .ctx_InPlaceAnd = ctxInPlaceAnd,
+        .ctx_InPlaceXor = ctxInPlaceXor,
+        .ctx_InPlaceOr = ctxInPlaceOr,
         .ctx_Err_SetString = ctxErrSetString,
         .ctx_Err_Occurred = ctxErrOccurred,
         .ctx_Err_Clear = ctxErrClear,

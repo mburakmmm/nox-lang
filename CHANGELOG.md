@@ -1324,6 +1324,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   korur. `noxtest.c`ye zincirleme dönüşüm + `AsDouble`/`AsVoidPtr`
   çağıran 3 yeni metod, `hpy_tier0_test.zig`ye 4 yeni test. Kapsam: 180
   `ctx_*` fonksiyonundan 62→**76**'sı implemente.
+- **Faz QQ — HPy köprüsü: sayı protokolünün geri kalanı** (`ctx_Number_
+  Check`/`ctx_MatrixMultiply`/`ctx_Divmod`/`ctx_Power`/`ctx_Positive`/
+  `ctx_Invert`/`ctx_Lshift`/`ctx_Rshift`/`ctx_And`/`ctx_Xor`/`ctx_Or`/
+  `ctx_Index`/`ctx_Long`/`ctx_Float` + 13 `InPlace*` varyantı, 28
+  fonksiyon). Tüm `InPlace*` varyantları normal karşılıklarına delege
+  eder (Nox'ta kullanıcı-tanımlı `__iadd__` yok — CPython'ın değişmez
+  int/float için yaptığıyla aynı); `MatrixMultiply` her zaman
+  `TypeError` (Nox'ta `__matmul__` yok). `noxtest.c`ye 4 yeni modül
+  metodu, `hpy_tier0_test.zig`ye 4 yeni test — 26/26 yeşil. Kapsam: 180
+  `ctx_*` fonksiyonundan 76→**104**'ü implemente.
 
 ## [1.0.0]
 

@@ -192,6 +192,80 @@ static HPy long_as_voidptr_roundtrip_impl(HPyContext *ctx, HPy self, HPy arg)
     return HPyLong_FromSize_t(ctx, (size_t)p);
 }
 
+/* Sayı protokolünün geri kalanı (Faz QQ) test amaçlı: eklentinin KENDİ
+ * C kodunun HPyNumber_Check/HPy_Divmod/HPy_Power/HPy_Positive/
+ * HPy_Invert/HPy_Lshift/HPy_Rshift/HPy_And/HPy_Xor/HPy_Or/HPy_Index/
+ * HPy_InPlaceAdd makrolarını (HEPSİ ham `ctx_*` yuvalarına TRAMPOLİNE
+ * eden) ÇAĞIRMASI. `arg`, `(a, b)` şeklinde bir tuple'dır. */
+HPyDef_METH(number_ops_via_c, "number_ops_via_c", HPyFunc_O)
+static HPy number_ops_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    HPy a = HPy_GetItem_i(ctx, arg, 0);
+    HPy b = HPy_GetItem_i(ctx, arg, 1);
+
+    HPy results[12];
+    results[0] = HPyBool_FromBool(ctx, (bool)HPyNumber_Check(ctx, a));
+    results[1] = HPy_Divmod(ctx, a, b);
+    results[2] = HPy_Power(ctx, a, b, HPy_NULL);
+    results[3] = HPy_Positive(ctx, a);
+    results[4] = HPy_Invert(ctx, a);
+    results[5] = HPy_Lshift(ctx, a, b);
+    results[6] = HPy_Rshift(ctx, a, b);
+    results[7] = HPy_And(ctx, a, b);
+    results[8] = HPy_Xor(ctx, a, b);
+    results[9] = HPy_Or(ctx, a, b);
+    results[10] = HPy_Index(ctx, a);
+    results[11] = HPy_InPlaceAdd(ctx, a, b);
+
+    HPy result_tuple = HPyTuple_FromArray(ctx, results, 12);
+    for (int i = 0; i < 12; i++) {
+        HPy_Close(ctx, results[i]);
+    }
+    HPy_Close(ctx, a);
+    HPy_Close(ctx, b);
+    return result_tuple;
+}
+
+HPyDef_METH(matmul_via_c, "matmul_via_c", HPyFunc_O)
+static HPy matmul_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    HPy a = HPy_GetItem_i(ctx, arg, 0);
+    HPy b = HPy_GetItem_i(ctx, arg, 1);
+    HPy result = HPy_MatrixMultiply(ctx, a, b);
+    HPy_Close(ctx, a);
+    HPy_Close(ctx, b);
+    return result;
+}
+
+HPyDef_METH(pow_mod_via_c, "pow_mod_via_c", HPyFunc_O)
+static HPy pow_mod_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    HPy a = HPy_GetItem_i(ctx, arg, 0);
+    HPy b = HPy_GetItem_i(ctx, arg, 1);
+    HPy m = HPy_GetItem_i(ctx, arg, 2);
+    HPy result = HPy_Power(ctx, a, b, m);
+    HPy_Close(ctx, a);
+    HPy_Close(ctx, b);
+    HPy_Close(ctx, m);
+    return result;
+}
+
+HPyDef_METH(long_float_via_c, "long_float_via_c", HPyFunc_O)
+static HPy long_float_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    HPy as_long = HPy_Long(ctx, arg);
+    HPy as_float = HPy_Float(ctx, arg);
+    HPy items[2] = { as_long, as_float };
+    HPy result = HPyTuple_FromArray(ctx, items, 2);
+    HPy_Close(ctx, as_long);
+    HPy_Close(ctx, as_float);
+    return result;
+}
+
 HPyDef_METH(add_one, "add_one", HPyFunc_O)
 static HPy add_one_impl(HPyContext *ctx, HPy self, HPy arg)
 {
@@ -300,6 +374,10 @@ static HPyDef *module_defines[] = {
     &long_conv_roundtrip,
     &long_as_double_via_c,
     &long_as_voidptr_roundtrip,
+    &number_ops_via_c,
+    &matmul_via_c,
+    &pow_mod_via_c,
+    &long_float_via_c,
     &add_one,
     &str_length,
     &negate,

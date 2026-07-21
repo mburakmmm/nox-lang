@@ -657,3 +657,125 @@ test "gerçek HPy eklentisi: ctx_Long_As*Mask ve overflow davranışları (Faz P
     try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_OverflowError));
     ctx.ctx_Err_Clear.?(ctx);
 }
+
+test "gerçek HPy eklentisi: number_ops_via_c(13, 4) — sayı protokolünün geri kalanı (Faz QQ)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const number_ops_via_c = mod.findMethodO("number_ops_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const a = ctx.ctx_Long_FromInt64_t.?(ctx, 13);
+    defer ctx.ctx_Close.?(ctx, a);
+    const b = ctx.ctx_Long_FromInt64_t.?(ctx, 4);
+    defer ctx.ctx_Close.?(ctx, b);
+    var pair_items = [_]hpy.context.HPy{ a, b };
+    const pair = ctx.ctx_Tuple_FromArray.?(ctx, &pair_items, 2);
+    defer ctx.ctx_Close.?(ctx, pair);
+
+    const result = number_ops_via_c(ctx, hpy.context.HPy_NULL, pair);
+    defer ctx.ctx_Close.?(ctx, result);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Tuple_Check.?(ctx, result));
+    try std.testing.expectEqual(@as(isize, 12), ctx.ctx_Length.?(ctx, result));
+
+    const number_check = ctx.ctx_GetItem_i.?(ctx, result, 0);
+    defer ctx.ctx_Close.?(ctx, number_check);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_IsTrue.?(ctx, number_check));
+
+    const divmod = ctx.ctx_GetItem_i.?(ctx, result, 1);
+    defer ctx.ctx_Close.?(ctx, divmod);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Tuple_Check.?(ctx, divmod));
+    const q = ctx.ctx_GetItem_i.?(ctx, divmod, 0);
+    defer ctx.ctx_Close.?(ctx, q);
+    const r = ctx.ctx_GetItem_i.?(ctx, divmod, 1);
+    defer ctx.ctx_Close.?(ctx, r);
+    try std.testing.expectEqual(@as(i64, 3), ctx.ctx_Long_AsInt64_t.?(ctx, q));
+    try std.testing.expectEqual(@as(i64, 1), ctx.ctx_Long_AsInt64_t.?(ctx, r));
+
+    const expected = [_]i64{ 28561, 13, -14, 208, 0, 4, 9, 13, 13, 17 };
+    for (expected, 2..) |exp, i| {
+        const item = ctx.ctx_GetItem_i.?(ctx, result, @intCast(i));
+        defer ctx.ctx_Close.?(ctx, item);
+        try std.testing.expectEqual(exp, ctx.ctx_Long_AsInt64_t.?(ctx, item));
+    }
+}
+
+test "gerçek HPy eklentisi: matmul_via_c — @ (matris çarpımı) desteklenmiyor → TypeError (Faz QQ)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const matmul_via_c = mod.findMethodO("matmul_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const a = ctx.ctx_Long_FromInt64_t.?(ctx, 2);
+    defer ctx.ctx_Close.?(ctx, a);
+    const b = ctx.ctx_Long_FromInt64_t.?(ctx, 3);
+    defer ctx.ctx_Close.?(ctx, b);
+    var pair_items = [_]hpy.context.HPy{ a, b };
+    const pair = ctx.ctx_Tuple_FromArray.?(ctx, &pair_items, 2);
+    defer ctx.ctx_Close.?(ctx, pair);
+
+    try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Err_Occurred.?(ctx));
+    const result = matmul_via_c(ctx, hpy.context.HPy_NULL, pair);
+    try std.testing.expectEqual(hpy.context.HPy_NULL._i, result._i);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_TypeError));
+    ctx.ctx_Err_Clear.?(ctx);
+}
+
+test "gerçek HPy eklentisi: pow_mod_via_c(7, 3, 5) == 3 — üç argümanlı ctx_Power (Faz QQ)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const pow_mod_via_c = mod.findMethodO("pow_mod_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const seven = ctx.ctx_Long_FromInt64_t.?(ctx, 7);
+    defer ctx.ctx_Close.?(ctx, seven);
+    const three = ctx.ctx_Long_FromInt64_t.?(ctx, 3);
+    defer ctx.ctx_Close.?(ctx, three);
+    const five = ctx.ctx_Long_FromInt64_t.?(ctx, 5);
+    defer ctx.ctx_Close.?(ctx, five);
+    var items = [_]hpy.context.HPy{ seven, three, five };
+    const triple = ctx.ctx_Tuple_FromArray.?(ctx, &items, 3);
+    defer ctx.ctx_Close.?(ctx, triple);
+
+    const result = pow_mod_via_c(ctx, hpy.context.HPy_NULL, triple);
+    defer ctx.ctx_Close.?(ctx, result);
+    try std.testing.expectEqual(@as(i64, 3), ctx.ctx_Long_AsInt64_t.?(ctx, result));
+}
+
+test "gerçek HPy eklentisi: long_float_via_c(9) == (9, 9.0) — ctx_Long/ctx_Float (Faz QQ)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const long_float_via_c = mod.findMethodO("long_float_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const nine = ctx.ctx_Long_FromInt64_t.?(ctx, 9);
+    defer ctx.ctx_Close.?(ctx, nine);
+
+    const result = long_float_via_c(ctx, hpy.context.HPy_NULL, nine);
+    defer ctx.ctx_Close.?(ctx, result);
+    const as_long = ctx.ctx_GetItem_i.?(ctx, result, 0);
+    defer ctx.ctx_Close.?(ctx, as_long);
+    const as_float = ctx.ctx_GetItem_i.?(ctx, result, 1);
+    defer ctx.ctx_Close.?(ctx, as_float);
+    try std.testing.expectEqual(@as(i64, 9), ctx.ctx_Long_AsInt64_t.?(ctx, as_long));
+    try std.testing.expectApproxEqAbs(@as(f64, 9.0), ctx.ctx_Float_AsDouble.?(ctx, as_float), 1e-9);
+}

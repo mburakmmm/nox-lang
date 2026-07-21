@@ -1611,6 +1611,25 @@ overflow/mask negatif testleri, DOĞRUDAN `ctx_Long_As*` çağrılarıyla).
 Toplam: 22/22 (bu dosyada). Kapsam: 180 `ctx_*` fonksiyonundan
 62→**76**'sı implemente.
 
+### Faz QQ — HPy: Sayı protokolünün geri kalanı
+
+`ctx_Number_Check`/`ctx_MatrixMultiply`/`ctx_Divmod`/`ctx_Power`/
+`ctx_Positive`/`ctx_Invert`/`ctx_Lshift`/`ctx_Rshift`/`ctx_And`/
+`ctx_Xor`/`ctx_Or`/`ctx_Index`/`ctx_Long`/`ctx_Float` + 13 `InPlace*`
+varyantı (28 fonksiyon). Bit işlemleri (`Invert`/`Lshift`/`Rshift`/
+`And`/`Xor`/`Or`) YALNIZCA `int`/`bool` İçin (Python'la TUTARLI —
+`float`in bit işlemi YOK). **Bilinçli v1 sınırlaması:** TÜM `InPlace*`
+varyantları KENDİ normal (non-inplace) karşılıklarına delege eder —
+Nox'ta KULLANICI-TANIMLI `__iadd__` vb. YOK, bu CPython'ın DEĞİŞMEZ
+`int`/`float` İçin ZATEN yaptığıyla BİREBİR AYNI. `ctx_MatrixMultiply`/
+`ctx_InPlaceMatrixMultiply`: Nox'ta `__matmul__` KAVRAMI yok — HER ZAMAN
+`TypeError` (gerçek CPython'ın `@` desteklemeyen tipler İçin verdiğiyle
+AYNI). Doğrulama: `noxtest.c`ye 4 yeni modül metodu (`number_ops_via_c`
+— 10 farklı işlemi TEK bir `(a,b)` tuple'ı üzerinden zincirleyen kapsamlı
+bir test, `matmul_via_c`, `pow_mod_via_c` [3 argümanlı `pow`], `long_
+float_via_c`) + `hpy_tier0_test.zig`ye 4 yeni test. Toplam: 26/26 (bu
+dosyada). Kapsam: 180 `ctx_*` fonksiyonundan 76→**104**'ü implemente.
+
 ---
 
 ### 3.20 Faz 20 Uygulama Kapsamı — Zig/C ABI FFI (`extern def`)
