@@ -12147,12 +12147,46 @@ push edilip GERÇEK Windows CI'de DOĞRULANMADI** — hem QBE'nin `cc
    indirdiği kaynağa PowerShell metin-değiştirme İLE) uygulanır —
    beklenen satır BULUNAMAZSA (upstream DEĞİŞİRSE) adım AÇIKÇA hata
    verir (sessizce atlanmaz).
+4. **GERÇEK bir Zig derleyici hatası (`zig build-obj`, COFF hedefi):**
+   QBE hatası düzeltildikten SONRA bağlama `undefined reference to
+   'nox_alloc'/'nox_runtime_init'/...` İLE başarısız oldu. Tanılama
+   (`nm`/`objdump`/hex dökümü) `noxrt.o`nun yalnızca 515 bayta (TEK
+   sembol: `swap_asm`den elle EKLENEN `nox_swap_context`) düştüğünü
+   gösterdi — `runtime/lib.zig`nin TÜM `export fn`leri KAYIPTI. İKİ
+   YANLIŞ teori SIRAYLA elendi (`--verbose` çıktısıyla KANITLANARAK):
+   `use_llvm = true` (backend seçimi SORUN DEĞİLDİ, `-fllvm`nin
+   GERÇEKTEN geçtiği doğrulandı) VE `link_gc_sections = false`
+   (`--no-gc-sections`in GERÇEKTEN geçtiği doğrulandı) — İKİSİ DE
+   BAYT-BAYT AYNI 515-bayt çıktıyı ÜRETMEYE DEVAM ETTİ. GERÇEK kök
+   neden, macOS'ta `zig build-obj -target x86_64-windows-gnu` DOĞRUDAN
+   çağrılıp YALITILARAK bulundu: **`build-obj`, COFF hedefinde,
+   `addObjectFile` İLE eklenmiş HAM bir nesne dosyası (`swap_x86_64.o`)
+   VARKEN, Zig'in KENDİ derlediği TÜM modül içeriğini SESSİZCE (hata
+   VERMEDEN) ATIP yalnızca O HAM dosyayı ÇIKTI olarak veriyor** — küçük
+   bir tekrar-üretim testiyle (tek satırlık bir `export fn` içeren
+   sahte bir `.o` + `runtime/lib.zig` BİRLİKTE `build-obj`a verildiğinde,
+   çıktı TAM OLARAK sahte `.o`nun boyutuna/sembol sayısına EŞİT çıktı)
+   doğrulandı. `fiber_test`/`scheduler_test`/`channel_test`/`io_test`
+   (AYNI `addObjectFile` desenini KULLANAN `addTest` hedefleri) Windows
+   CI'de ZATEN ÇALIŞIYOR olması, bu hatanın YALNIZCA `build-obj`/
+   `.kind == .obj`e ÖZGÜ OLDUĞUNU (yürütülebilir ÜRETEN hedefleri
+   ETKİLEMEDİĞİNİ) doğrular. **Çözüm (mimari, ELF/Mach-O'ya
+   DOKUNMADAN):** `build.zig`, Windows'ta `swap_asm.o`yu ARTIK
+   `noxrt_mod.addObjectFile(...)` İLE `noxrt.o`nun İÇİNE GÖMMEZ —
+   `swap_asm.o`, `noxrt.o`dan AYRI, KENDİ dosyası olarak kurulur
+   (`zig-out/lib/swap_asm.o`); `compiler/project.zig`nin `ResourceDirs`i
+   YENİ bir `swap_asm_path` alanı KAZANIR; `compiler/main.zig`nin `cc_
+   argv`ı Windows'ta bunu NİHAİ bağlamaya AYRI bir girdi olarak EKLER
+   (sıradan, çok-nesne-dosyalı bir statik bağlama — `noxrt.o` İLE AYNI
+   muamele). macOS/Linux'ta DAVRANIŞ TAMAMEN DEĞİŞMEDEN kalır
+   (`addObjectFile` YOLU, proje BOYUNCA binlerce kez doğrulandığı gibi,
+   KORUNUR).
 
 Yerel olarak (macOS, Debug/ReleaseSafe/ReleaseFast) TÜM değişiklikler
-doğrulandı — Windows dalları (`builtin.os.tag == .windows` altında)
-Zig'in TİP KONTROLÜNDEN geçti (çalışma-zamanı dalı ÖLÜ olsa BİLE her iki
-dal DA derleme-zamanında tip denetlenir) ama GERÇEK yürütme HENÜZ
-`windows-latest` CI'de doğrulanmadı.
+doğrulandı (Windows dalları `builtin.os.tag == .windows` altında Zig'in
+TİP KONTROLÜNDEN geçti; `build.zig`nin `target.result.os.tag != .windows`
+dalı macOS/Linux'ta DEĞİŞMEDEN kaldığından SIFIR regresyon). **GERÇEK
+Windows CI'de doğrulanacak SONRAKİ push.**
 
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 

@@ -165,36 +165,18 @@ jobs:
       - name: zig build async-rt-test (yalnızca fiber/io_reactor/scheduler/channel)
         run: zig build async-rt-test
 
-      # Faz LL.4 SONRASI keşif (bkz. nox-teknik-spesifikasyon.md §3.71):
-      # `fs.zig` (LL.4'te taşındı) `http_client.zig`yi (dupeToNoxStr İçin,
-      # LL.5'in KENDİ kapsamı, HENÜZ taşınmadı) İÇE AKTARDIĞINDAN,
-      # `fs.zig`nin GERÇEKTEN derlendiğini İZOLE olarak doğrulamanın YOLU
-      # YOK — bu YÜZDEN TAM `noxrt.o`yu (dolayısıyla TÜM stdlib_shims'i)
-      # derlemeyi DENEYİP GERÇEKTEN NE KADARININ ZATEN çalıştığını (birçok
-      # soket fonksiyonu/tipi Zig'in KENDİ switch'lerinde Windows İçin
-      # ZATEN case'li — `continue-on-error` İLE, henüz TAM yeşil
-      # BEKLENMİYOR, yalnızca GERÇEK hata yüzeyini GÖRMEK İçin).
-      # Faz LL.5 SONRASI (bkz. nox-teknik-spesifikasyon.md §3.71): artık
-      # TAM olarak yeşil BEKLENİYOR (`continue-on-error` KALDIRILDI) —
-      # runtime'ın TAMAMI (HPy köprüsü DAHİL) GERÇEK Windows CI'de bir
-      # KEZ zaten sıfır hatayla doğrulandı.
-      # Faz LL.6 keşif: `use_llvm = true` eklendikten SONRA BİLE `noxrt.o`
-      # BAYT-BAYT AYNI (515 bayt, aynı hex) çıktı — bu, GERÇEK bir yeniden
-      # derleme yerine Zig'in KENDİ `.zig-cache`sinin (bu işteki ÖNCEKİ
-      # `zig build noxc`/`frontend-test`/`async-rt-test` çağrılarıyla
-      # PAYLAŞILAN) STALE bir sonucu YENİDEN KULLANMIŞ olabileceğinden
-      # ŞÜPHELENDİRİYOR — `.zig-cache`/`zig-out` BU adımdan HEMEN ÖNCE
-      # TAMAMEN silinip `--verbose` İLE (GERÇEK `zig build-obj` alt
-      # çağrısının argümanlarında `-fllvm` GEÇİP GEÇMEDİĞİ GÖRÜLEREK)
-      # doğrulanıyor.
+      # Faz LL.4/LL.5 SONRASI (bkz. nox-teknik-spesifikasyon.md §3.71):
+      # runtime'ın TAMAMI (HPy köprüsü DAHİL) GERÇEK Windows CI'de sıfır
+      # hatayla derleniyor. Faz LL.6: `noxrt.o` bir ARA (GERÇEK bir Zig
+      # derleyici hatası yüzünden — bkz. `build.zig`nin `swap_asm_o_path`
+      # belge notu, "zig build-obj, COFF hedefinde addObjectFile ile
+      # eklenen HAM bir nesne dosyası VARKEN Zig'in KENDİ derlediği TÜM
+      # içeriği SESSİZCE atıyor") yalnızca 515 bayta düşüyordu — `build.
+      # zig`de fiber assembly'si Windows'ta `noxrt.o`nun DIŞINDA AYRI
+      # kurulup nihai `cc` bağlamasına AYRI bir girdi olarak eklenerek
+      # (bkz. `compiler/main.zig`nin `cc_argv`ı) ÇÖZÜLDÜ.
       - name: zig build (TAM — noxrt.o dahil runtime)
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          Remove-Item -Recurse -Force .zig-cache, zig-out -ErrorAction SilentlyContinue
-          zig build --verbose 2>&1 | Tee-Object -Variable buildOutput
-          if ($LASTEXITCODE -ne 0) { throw "zig build basarisiz (exit $LASTEXITCODE)" }
-          $buildOutput | Select-String "noxrt" | Select-Object -First 10
+        run: zig build
 
       # Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71): `qbe`nin Windows
       # İçin ÖNCEDEN derlenmiş bir paketi YOK (macOS'un Homebrew'ü/Linux'un
@@ -251,24 +233,6 @@ jobs:
       # BEKLENEN metni İÇERMESİ ayrı ayrı kontrol edilir (Nox programının
       # KENDİSİ `process.exit` ÇAĞIRMADIĞI SÜRECE çıkış kodu HER ZAMAN 0'dır
       # — `print`in bastığı değer ASLA çıkış koduna YANSIMAZ).
-      # Faz LL.6 keşif: `noxrt.o`nun GERÇEKTEN var/doğru boyutta OLDUĞUNU VE
-      # beklenen sembolleri İÇERDİĞİNİ (MinGW'in KENDİ `nm`ı ile) doğrudan
-      # doğrular — bir SONRAKİ "undefined reference" hatasının KÖK NEDENİNİ
-      # (dosya eksik mi, sembol GERÇEKTEN yok mu, yoksa başka bir şey mi)
-      # TAHMİN ETMEDEN GÖRMEK İçin.
-      - name: Keşif — noxrt.o var mi, beklenen semboller var mi
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          $ErrorActionPreference = "Stop"
-          Get-Item "zig-out\lib\noxrt.o" | Format-List Name, Length, LastWriteTime
-          Write-Host "--- nm (TAM sembol listesi) ---"
-          nm "zig-out\lib\noxrt.o"
-          Write-Host "--- objdump -h (bolum basliklari) ---"
-          objdump -h "zig-out\lib\noxrt.o"
-          Write-Host "--- ilk 64 bayt (hex) ---"
-          Format-Hex -Path "zig-out\lib\noxrt.o" -Count 64
-
       - name: Duman testi — noxc.exe run (gercek qbe+cc baglama)
         shell: pwsh
         run: |

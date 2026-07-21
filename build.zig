@@ -163,40 +163,49 @@ pub fn build(b: *std.Build) void {
     // Faz 21: `runtime/async_rt/bridge.zig` (Faz 21 aşama 4, `runtime/lib.zig`
     // üzerinden `noxrt_mod`a bağlı), `fiber.zig` aracılığıyla AYNI
     // `nox_swap_context` sembolüne ihtiyaç duyar.
-    noxrt_mod.addObjectFile(b.path(swap_asm_o_path));
+    //
+    // Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71) — **GERÇEK bir Zig
+    // derleyici hatası, elle YALITILMIŞ ve DOĞRULANMIŞ (macOS'ta, `zig
+    // build-obj -target x86_64-windows-gnu` DOĞRUDAN çağrılarak):** `zig
+    // build-obj`, COFF (Windows) hedefi İçİN, `addObjectFile` İLE eklenmiş
+    // HAM bir nesne dosyası VARKEN, Zig'in KENDİ derlediği TÜM içeriği
+    // SESSİZCE (hata VERMEDEN) atıp yalnızca O HAM dosyayı ÇIKTI olarak
+    // veriyor (`noxrt.o` bu YÜZDEN 515 bayta — TEK `nox_swap_context`
+    // sembolüne — düşüyordu; `use_llvm=true`/`link_gc_sections=false`
+    // denemeleri BU YÜZDEN HİÇBİR ŞEYİ DEĞİŞTİRMEDİ, GERÇEK neden ne
+    // ARKA UÇ ne de GC-sections'dı). **ELF/Mach-O'da bu hata YOK**
+    // (macOS/Linux'ta `addObjectFile` + `build-obj` proje BOYUNCA binlerce
+    // kez doğrulandı) — bu YÜZDEN çözüm YALNIZCA Windows'ta FARKLI bir yol
+    // izlemek: `swap_asm.o`yu `noxrt.o`nun İÇİNE GÖMMEK YERİNE AYRI bir
+    // dosya olarak kurup (`install_swap_asm`, aşağıda) NİHAİ `cc` bağlama
+    // adımına (`compiler/main.zig`nin `cc_argv`ı) AYRI bir girdi olarak
+    // vermek — tıpkı `noxrt.o`nun KENDİSİ gibi, sıradan bir statik bağlama.
+    // (`fiber_test`/`scheduler_test`/`channel_test`/`io_test` — AŞAĞIDA,
+    // KENDİ `addObjectFile` çağrılarıyla — Windows'ta ZATEN ÇALIŞIYOR
+    // olması bu hatanın `build-obj`/`.kind == .obj`e ÖZGÜ olduğunu, `addTest`
+    // gibi yürütülebilir ÜRETEN hedefleri ETKİLEMEDİĞİNİ DOĞRULAR.)
+    if (target.result.os.tag != .windows) noxrt_mod.addObjectFile(b.path(swap_asm_o_path));
 
     // Not: b.addLibrary(.static) burada bir .a arşivi üretiyor ama macOS'ta
     // bazı Zig sürümlerinde ar üyesi hizalama hatası veriyor (bkz. ld hatası:
     // "64-bit mach-o member not 8-byte aligned"). Tek bir çeviri birimi olan
     // bir runtime için doğrudan nesne dosyası üretmek daha güvenilir.
-    //
-    // Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71, GERÇEK Windows CI'de
-    // bulunan bir hata): `noxrt.o` Windows'ta yalnızca 515 bayta (TEK sembol,
-    // `swap_asm`den elle EKLENEN `nox_swap_context`) DÜŞÜYORDU —
-    // `runtime/lib.zig`nin TÜM `export fn`leri (ki `comptime { _ = ...; }`
-    // İLE ZORLA analiz ettiriliyorlar, bkz. o dosyanın belge notu) SESSİZCE
-    // (derleme HATASI VERMEDEN) düşüyordu. İLK denemede `use_llvm = true`
-    // (Zig'in Debug modda VARSAYILAN öz-barındırılan/self-hosted arka
-    // ucunun COFF çıktısı EKSİK/HATALI OLABİLECEĞİ varsayımıyla) HİÇBİR
-    // ŞEYİ DEĞİŞTİRMEDİ — `--verbose` çıktısı `-fllvm`nin GERÇEKTEN
-    // geçtiğini kanıtladı, yani sorun ARKA UÇ SEÇİMİNDE DEĞİL. GERÇEK
-    // kök neden: Zig'in COFF (Windows nesne biçimi) hedefi İçin bağlayıcı
-    // aşamasında VARSAYILAN olarak `gc-sections` (kullanılmayan bölümleri
-    // BUDAMA) DAVRANIŞI UYGULUYOR — ELF/Mach-O'da (`export fn`ler HER ZAMAN
-    // kök sayıldığından, proje BOYUNCA binlerce kez doğrulandığı gibi) BU
-    // SORUN YOK, ama COFF'ta `export fn`ler (dllexport DEKORASYONU
-    // OLMADAN, çünkü bu bir DLL DEĞİL düz bir nesne dosyası) bağlayıcı
-    // GÖZÜNDE "hiçbir yerden REFERANS edilmeyen" bölümler olarak GÖRÜLÜP
-    // BUDANIYOR. Çözüm: `link_gc_sections = false` (yalnızca Windows'ta —
-    // macOS/Linux'un mevcut, doğrulanmış davranışına DOKUNULMAZ).
     const noxrt = b.addObject(.{
         .name = "noxrt",
         .root_module = noxrt_mod,
     });
-    if (target.result.os.tag == .windows) noxrt.link_gc_sections = false;
     noxrt.step.dependOn(&compile_swap_asm.step);
     const install_noxrt = b.addInstallFile(noxrt.getEmittedBin(), "lib/noxrt.o");
     b.getInstallStep().dependOn(&install_noxrt.step);
+
+    // Faz LL.6: `swap_asm.o`nun Windows'taki AYRI kurulumu — bkz. yukarıdaki
+    // belge notu. `compiler/project.zig`nin `ResourceDirs.swap_asm_path`ıyla
+    // EŞLEŞİR.
+    if (target.result.os.tag == .windows) {
+        const install_swap_asm = b.addInstallFile(b.path(swap_asm_o_path), "lib/swap_asm.o");
+        install_swap_asm.step.dependOn(&compile_swap_asm.step);
+        b.getInstallStep().dependOn(&install_swap_asm.step);
+    }
 
     // Faz O §P.1: `noxc`nin proje kökü DIŞINDAN çalıştırılabilmesi İÇİN
     // `stdlib/` ağacı da (`noxrt.o` İLE AYNI kurulum kökü altına,

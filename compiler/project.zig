@@ -14,6 +14,7 @@
 //! (bkz. main.zig'in `main()`i, `resource_dirs` değişkeni).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
@@ -96,6 +97,16 @@ pub fn findProjectRoot(a: Allocator, io: Io, start_dir: []const u8) Allocator.Er
 pub const ResourceDirs = struct {
     stdlib_dir: []const u8,
     noxrt_path: []const u8,
+    /// Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71): YALNIZCA Windows'ta
+    /// ANLAMLI — `build.zig`nin AYRI kurduğu `swap_asm.o` (fiber bağlam
+    /// değişimi assembly'si), `zig build-obj`in COFF'ta `addObjectFile` İLE
+    /// birleştirilen HAM nesne dosyalarını SESSİZCE Zig'in KENDİ derlediği
+    /// içeriğin YERİNE geçirdiği bir hatadan (GERÇEK, yalıtılıp doğrulanmış)
+    /// KAÇINMAK İçin `noxrt.o`nun DIŞINDA, AYRI kurulur — `main.zig`nin `cc_
+    /// argv`ı BU YÜZDEN Windows'ta bunu AYRI bir bağlama girdisi olarak
+    /// ekler (macOS/Linux'ta `noxrt.o` fiber assembly'sini ZATEN İÇERİR,
+    /// bu alan KULLANILMAZ).
+    swap_asm_path: []const u8,
 };
 
 /// `resource_dir_override` VERİLMİŞSE (`main.zig`de `NOX_RESOURCE_DIR`
@@ -116,6 +127,7 @@ pub fn resolveResourceDirs(a: Allocator, io: Io, resource_dir_override: ?[]const
     return .{
         .stdlib_dir = try std.fmt.allocPrint(a, "{s}/lib/nox/stdlib", .{base}),
         .noxrt_path = try std.fmt.allocPrint(a, "{s}/lib/noxrt.o", .{base}),
+        .swap_asm_path = try std.fmt.allocPrint(a, "{s}/lib/swap_asm.o", .{base}),
     };
 }
 

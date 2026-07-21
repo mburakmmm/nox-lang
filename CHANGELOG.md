@@ -1237,7 +1237,20 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   tamsayı sınıfıyla yüklüyordu — `JsonValue.__init__`in `n` alanı
   yüzünden HER Nox programında tetikleniyordu; `ci.yml`nin `qbe kur`
   adımına tek satırlık bir metin-yaması eklendi, upstream değişirse
-  adım sessizce atlamak yerine açıkça hata verir).
+  adım sessizce atlamak yerine açıkça hata verir). Son olarak
+  **`zig build-obj`nin KENDİSİNDE gerçek bir Zig derleyici hatası**
+  bulundu: COFF (Windows) hedefinde, `addObjectFile` ile eklenen ham
+  bir nesne dosyası (fiber bağlam değişimi assembly'si) varken Zig
+  kendi derlediği tüm modül içeriğini sessizce atıp yalnızca o ham
+  dosyayı çıktı olarak veriyordu (`noxrt.o` bu yüzden 515 bayta —
+  runtime'ın TAMAMI kayıp — düşüyordu; `use_llvm`/`link_gc_sections`
+  denemeleri BU YÜZDEN etkisizdi, gerçek neden ne backend ne de
+  gc-sections'dı). macOS'ta `zig build-obj -target x86_64-windows-gnu`
+  doğrudan çağrılıp yalıtılarak doğrulandı. Çözüm: `build.zig` artık
+  Windows'ta fiber assembly'sini `noxrt.o`nun içine gömmek yerine ayrı
+  kurup (`swap_asm.o`), `compiler/main.zig`nin nihai `cc` bağlamasına
+  ayrı bir girdi olarak ekliyor — macOS/Linux'un mevcut, doğrulanmış
+  davranışı değişmedi.
 
 ## [1.0.0]
 

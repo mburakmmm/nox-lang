@@ -936,7 +936,13 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // "TÜM genel sembolleri dışa aç" karşılığı `-Wl,--export-all-symbols`dir.
     const dynamic_export_flag = if (builtin.os.tag == .windows) "-Wl,--export-all-symbols" else "-rdynamic";
     var cc_argv: std.ArrayListUnmanaged([]const u8) = .empty;
-    try cc_argv.appendSlice(a, &.{ "cc", dynamic_export_flag, "-o", bin_path, asm_path, resource_dirs.noxrt_path, "-lm" });
+    try cc_argv.appendSlice(a, &.{ "cc", dynamic_export_flag, "-o", bin_path, asm_path, resource_dirs.noxrt_path });
+    // Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71): Windows'ta fiber
+    // bağlam değişimi assembly'si `noxrt.o`nun DIŞINDA, AYRI kurulur (bkz.
+    // `ResourceDirs.swap_asm_path`ın belge notu) — bu YÜZDEN NİHAİ bağlamaya
+    // AYRI bir girdi olarak eklenmesi GEREKİR.
+    if (builtin.os.tag == .windows) try cc_argv.append(a, resource_dirs.swap_asm_path);
+    try cc_argv.append(a, "-lm");
     try appendExternLinkArgs(a, &cc_argv, module);
 
     const cc_result = try std.process.run(gpa, io, .{
