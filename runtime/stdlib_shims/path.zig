@@ -97,11 +97,34 @@ export fn nox_path_last_op_ok() callconv(.c) i32 {
     return if (g_last_ok) 1 else 0;
 }
 
+/// Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71): `std.c.realpath`
+/// MinGW'de (GERÇEK Windows CI'de doğrulanan bir `undefined reference`
+/// hatasıyla) BAĞLAYICI SEVİYESİNDE MEVCUT DEĞİL — `O`/`Stat`/`readdir`/
+/// `clockid_t`/`F`/`RTLD` GİBİ "unutulmuş case" DEĞİL, tam bir sembol
+/// eksikliği. Windows karşılığı `GetFullPathNameA` (Win32) — **bilinçli
+/// v1 farkı:** `realpath(3)`in AKSİNE sembolik LİNKLERİ ÇÖZMEZ, yalnızca
+/// `.`/`..`yi normalize edip MUTLAK yola çevirir (Windows'ta sembolik
+/// link kullanımı ZATEN NADİR VE ek yönetici izni GEREKTİRİR — bu proje
+/// İçin YETERLİ bir yaklaşım).
+const WinPath = if (builtin.os.tag == .windows) struct {
+    extern "kernel32" fn GetFullPathNameA(lpFileName: [*:0]const u8, nBufferLength: u32, lpBuffer: [*]u8, lpFilePart: ?*?[*:0]u8) callconv(.c) u32;
+} else struct {};
+
 export fn nox_path_canonicalize_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const path = p orelse {
         g_last_ok = false;
         return dupeToNoxStr(rt, "");
     };
+    if (builtin.os.tag == .windows) {
+        var buf: [std.c.PATH_MAX]u8 = undefined;
+        const len = WinPath.GetFullPathNameA(path, buf.len, &buf, null);
+        if (len == 0 or len >= buf.len) {
+            g_last_ok = false;
+            return dupeToNoxStr(rt, "");
+        }
+        g_last_ok = true;
+        return dupeToNoxStr(rt, buf[0..len]);
+    }
     var buf: [std.c.PATH_MAX]u8 = undefined;
     const resolved = std.c.realpath(path, &buf) orelse {
         g_last_ok = false;
