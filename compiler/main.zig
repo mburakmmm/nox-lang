@@ -930,8 +930,13 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // yakalandı: `nox.json.decode` HER çağrıda `null` dönüyor, bu da hem
     // ÇÖKMEYE hem daha önce `nox_rc_alloc` İLE tahsis edilmiş, artık HİÇBİR
     // ŞEYE bağlanamayan parçaların SIZMASINA yol açıyordu).
+    // Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71): MinGW'in `cc`si
+    // `-rdynamic`yi TANIMAZ (`cc: error: unrecognized command-line option
+    // '-rdynamic'` — GERÇEK Windows CI'de doğrulandı) — PE bağlayıcısının
+    // "TÜM genel sembolleri dışa aç" karşılığı `-Wl,--export-all-symbols`dir.
+    const dynamic_export_flag = if (builtin.os.tag == .windows) "-Wl,--export-all-symbols" else "-rdynamic";
     var cc_argv: std.ArrayListUnmanaged([]const u8) = .empty;
-    try cc_argv.appendSlice(a, &.{ "cc", "-rdynamic", "-o", bin_path, asm_path, resource_dirs.noxrt_path, "-lm" });
+    try cc_argv.appendSlice(a, &.{ "cc", dynamic_export_flag, "-o", bin_path, asm_path, resource_dirs.noxrt_path, "-lm" });
     try appendExternLinkArgs(a, &cc_argv, module);
 
     const cc_result = try std.process.run(gpa, io, .{
