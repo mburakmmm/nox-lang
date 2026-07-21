@@ -1360,6 +1360,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   özel `tp_repr`/`tp_hash` slotları eklendi; `noxtest.c`ye 9 yeni modül
   metodu, `hpy_tier0_test.zig`ye 8 yeni test — 41/41 yeşil. Kapsam: 180
   `ctx_*` fonksiyonundan 109→**124**'ü implemente.
+- **Faz UU — HPy köprüsü: Unicode ailesinin geri kalanı** (12 fonksiyon:
+  `AsASCIIString`/`AsLatin1String`/`AsUTF8String`/`FromWideChar`/`Decode
+  FSDefault(AndSize)`/`EncodeFSDefault`/`ReadChar`/`DecodeASCII`/`Decode
+  Latin1`/`FromEncodedObject`/`Substring`). `FromWideChar`, `wchar_t`nin
+  platforma göre değişen genişliğini (Windows UTF-16/macOS-Linux UTF-32)
+  koşullu bir tip takma adıyla ele alır; `ReadChar`/`Substring` kod
+  noktası (bayt değil) indeksleriyle çalışır. `errors` parametresi yok
+  sayılır (her zaman "strict"). `noxtest.c`ye 9 yeni modül metodu,
+  `hpy_tier0_test.zig`ye 7 yeni test — 48/48 yeşil. Kapsam: 180 `ctx_*`
+  fonksiyonundan 124→**136**'sı implemente.
 
 ## [1.0.0]
 

@@ -461,6 +461,113 @@ static HPy bytes_roundtrip_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
     return HPyBool_FromBool(ctx, (bool)matches);
 }
 
+/* Unicode ailesinin geri kalanı (Faz UU) test amaçlı: eklentinin KENDİ
+ * C kodunun HPyUnicode_AsASCIIString/AsLatin1String/AsUTF8String/
+ * FromWideChar/DecodeFSDefault(AndSize)/EncodeFSDefault/ReadChar/
+ * DecodeASCII/DecodeLatin1/FromEncodedObject/Substring makrolarını
+ * (HEPSİ ham `ctx_Unicode_*` yuvalarına TRAMPOLİNE eden) ÇAĞIRMASI. */
+HPyDef_METH(unicode_as_utf8_bytes_via_c, "unicode_as_utf8_bytes_via_c", HPyFunc_O)
+static HPy unicode_as_utf8_bytes_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    return HPyUnicode_AsUTF8String(ctx, arg);
+}
+
+HPyDef_METH(unicode_as_ascii_bytes_via_c, "unicode_as_ascii_bytes_via_c", HPyFunc_O)
+static HPy unicode_as_ascii_bytes_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    return HPyUnicode_AsASCIIString(ctx, arg);
+}
+
+HPyDef_METH(unicode_as_latin1_bytes_via_c, "unicode_as_latin1_bytes_via_c", HPyFunc_O)
+static HPy unicode_as_latin1_bytes_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    return HPyUnicode_AsLatin1String(ctx, arg);
+}
+
+HPyDef_METH(unicode_from_wide_char_via_c, "unicode_from_wide_char_via_c", HPyFunc_O)
+static HPy unicode_from_wide_char_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    (void)arg;
+    static const wchar_t wide[] = { L'h', L'i', L'!' };
+    return HPyUnicode_FromWideChar(ctx, wide, 3);
+}
+
+HPyDef_METH(unicode_fsdefault_via_c, "unicode_fsdefault_via_c", HPyFunc_O)
+static HPy unicode_fsdefault_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    (void)arg;
+    HPy s1 = HPyUnicode_DecodeFSDefault(ctx, "dosya.txt");
+    HPy s2 = HPyUnicode_DecodeFSDefaultAndSize(ctx, "dosya.txt", 5); /* yalnızca "dosya" */
+    HPy b = HPyUnicode_EncodeFSDefault(ctx, s1);
+    HPy items[3] = { s1, s2, b };
+    HPy result = HPyTuple_FromArray(ctx, items, 3);
+    HPy_Close(ctx, s1);
+    HPy_Close(ctx, s2);
+    HPy_Close(ctx, b);
+    return result;
+}
+
+HPyDef_METH(unicode_read_char_via_c, "unicode_read_char_via_c", HPyFunc_O)
+static HPy unicode_read_char_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    HPy s = HPy_GetItem_i(ctx, arg, 0);
+    HPy idx_h = HPy_GetItem_i(ctx, arg, 1);
+    long idx = HPyLong_AsLong(ctx, idx_h);
+    HPy_UCS4 c = HPyUnicode_ReadChar(ctx, s, idx);
+    HPy_Close(ctx, s);
+    HPy_Close(ctx, idx_h);
+    (void)self;
+    if (c == (HPy_UCS4)-1 && HPyErr_Occurred(ctx)) {
+        return HPy_NULL;
+    }
+    return HPyLong_FromUnsignedLong(ctx, (unsigned long)c);
+}
+
+HPyDef_METH(unicode_decode_ascii_via_c, "unicode_decode_ascii_via_c", HPyFunc_O)
+static HPy unicode_decode_ascii_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    (void)arg;
+    return HPyUnicode_DecodeASCII(ctx, "hello", 5, "strict");
+}
+
+HPyDef_METH(unicode_decode_latin1_via_c, "unicode_decode_latin1_via_c", HPyFunc_O)
+static HPy unicode_decode_latin1_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    (void)arg;
+    static const char latin1[2] = { 'a', (char)0xe9 }; /* 'a', 'é' (Latin-1: U+00E9) */
+    return HPyUnicode_DecodeLatin1(ctx, latin1, 2, "strict");
+}
+
+HPyDef_METH(unicode_from_encoded_object_via_c, "unicode_from_encoded_object_via_c", HPyFunc_O)
+static HPy unicode_from_encoded_object_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    return HPyUnicode_FromEncodedObject(ctx, arg, "utf-8", NULL);
+}
+
+HPyDef_METH(unicode_substring_via_c, "unicode_substring_via_c", HPyFunc_O)
+static HPy unicode_substring_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    HPy s = HPy_GetItem_i(ctx, arg, 0);
+    HPy start_h = HPy_GetItem_i(ctx, arg, 1);
+    HPy end_h = HPy_GetItem_i(ctx, arg, 2);
+    long start = HPyLong_AsLong(ctx, start_h);
+    long end = HPyLong_AsLong(ctx, end_h);
+    HPy result = HPyUnicode_Substring(ctx, s, start, end);
+    HPy_Close(ctx, s);
+    HPy_Close(ctx, start_h);
+    HPy_Close(ctx, end_h);
+    (void)self;
+    return result;
+}
+
 HPyDef_METH(add_one, "add_one", HPyFunc_O)
 static HPy add_one_impl(HPyContext *ctx, HPy self, HPy arg)
 {
@@ -588,6 +695,16 @@ static HPyDef *module_defines[] = {
     &richcomparebool_via_c,
     &generic_new_via_c,
     &bytes_roundtrip_via_c,
+    &unicode_as_utf8_bytes_via_c,
+    &unicode_as_ascii_bytes_via_c,
+    &unicode_as_latin1_bytes_via_c,
+    &unicode_from_wide_char_via_c,
+    &unicode_fsdefault_via_c,
+    &unicode_read_char_via_c,
+    &unicode_decode_ascii_via_c,
+    &unicode_decode_latin1_via_c,
+    &unicode_from_encoded_object_via_c,
+    &unicode_substring_via_c,
     &add_one,
     &str_length,
     &negate,

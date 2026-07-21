@@ -11,12 +11,12 @@
 //! `scripts/gen_hpy_ctx.py`) üretilmiş, bayt-uyumlu bir transkripsiyonunu
 //! GEREKTİRİR — bir eklenti bu struct'a doğrudan (sabit ofsetlerle) erişir,
 //! bu yüzden alan SIRASI ve BOYUTU tam olarak eşleşmelidir. Şu an 180
-//! `ctx_*` alanından **124'ü** GERÇEKTEN implemente (aşağıda özel fonksiyon
+//! `ctx_*` alanından **136'sı** GERÇEKTEN implemente (aşağıda özel fonksiyon
 //! işaretçisi tipleriyle işaretli — TAM/DOĞRU sayı HER ZAMAN şu komutla
 //! doğrulanabilir: `awk '/pub const HPyContext = extern struct \{/,/^\};/'
 //! runtime/hpy_bridge/context.zig | grep "ctx_" | grep -c "anyopaque = null,"`
 //! — SONUCU 180'den ÇIKARIN; tam liste/tier dökümü İçin bkz. nox-teknik-
-//! spesifikasyon.md §3.12 VE DEVAMI, en son Faz SS/TT) — geri
+//! spesifikasyon.md §3.12 VE DEVAMI, en son Faz UU) — geri
 //! kalanı `null` (kullanılmazlarsa zararsız; bir eklenti bunlardan birini
 //! çağırırsa çökme/segfault olur, bkz. spesifikasyondaki bilinçli
 //! sınırlamalar).
@@ -456,6 +456,285 @@ fn ctxBytesAsString(ctx: *HPyContext, h: HPy) callconv(.c) ?[*:0]const u8 {
         return null;
     }
     return obj.bytes_data.ptr;
+}
+
+// ---- Unicode ailesinin geri kalanı (Faz UU) ----
+//
+// `ctx_Unicode_AsASCIIString`/`AsLatin1String`/`AsUTF8String`/
+// `FromWideChar`/`DecodeFSDefault(AndSize)`/`EncodeFSDefault`/
+// `ReadChar`/`DecodeASCII`/`DecodeLatin1`/`FromEncodedObject`/
+// `Substring`. **Bilinçli v1 sınırlaması:** `DecodeASCII`/`DecodeLatin1`/
+// `FromEncodedObject`in `errors` parametresi YOK SAYILIR — HER ZAMAN
+// "strict" (hatalı bayt/kod noktası İçin İSTİSNA) davranışı sergilenir;
+// gerçek CPython'ın `"ignore"`/`"replace"`/vb. hata İŞLEYİCİLERİ
+// desteklenmiyor. `DecodeFSDefault(AndSize)`/`EncodeFSDefault`: gerçek
+// işletim sistemi dosya sistemi kodlamasının (ve `surrogateescape` hata
+// işleyicisinin) BASİTLEŞTİRİLMİŞ bir karşılığı — SADECE UTF-8 KABUL/
+// ÜRETİLİR (Nox'un TEK desteklediği metin kodlaması zaten budur).
+
+fn ctxUnicodeAsUTF8String(ctx: *HPyContext, h: HPy) callconv(.c) HPy {
+    const obj = objOf(h) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "str bekleniyor");
+        return HPy_NULL;
+    };
+    if (obj.tag != .str_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "str bekleniyor");
+        return HPy_NULL;
+    }
+    return ctxBytesFromStringAndSize(ctx, obj.str_data.ptr, @intCast(obj.str_data.len));
+}
+
+fn ctxUnicodeAsASCIIString(ctx: *HPyContext, h: HPy) callconv(.c) HPy {
+    const obj = objOf(h) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "str bekleniyor");
+        return HPy_NULL;
+    };
+    if (obj.tag != .str_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "str bekleniyor");
+        return HPy_NULL;
+    }
+    for (obj.str_data) |b| {
+        if (b >= 0x80) {
+            ctxErrSetString(ctx, ctx.h_UnicodeEncodeError, "ASCII aralığı dışında karakter");
+            return HPy_NULL;
+        }
+    }
+    return ctxBytesFromStringAndSize(ctx, obj.str_data.ptr, @intCast(obj.str_data.len));
+}
+
+fn ctxUnicodeAsLatin1String(ctx: *HPyContext, h: HPy) callconv(.c) HPy {
+    const obj = objOf(h) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "str bekleniyor");
+        return HPy_NULL;
+    };
+    if (obj.tag != .str_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "str bekleniyor");
+        return HPy_NULL;
+    }
+    const view = std.unicode.Utf8View.init(obj.str_data) catch {
+        ctxErrSetString(ctx, ctx.h_UnicodeDecodeError, "geçersiz UTF-8");
+        return HPy_NULL;
+    };
+    const allocator = contextAllocator(ctx);
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer buf.deinit(allocator);
+    var it = view.iterator();
+    while (it.nextCodepoint()) |cp| {
+        if (cp > 0xff) {
+            ctxErrSetString(ctx, ctx.h_UnicodeEncodeError, "Latin-1 aralığı dışında karakter");
+            return HPy_NULL;
+        }
+        buf.append(allocator, @intCast(cp)) catch {
+            ctxErrNoMemory(ctx);
+            return HPy_NULL;
+        };
+    }
+    return ctxBytesFromStringAndSize(ctx, buf.items.ptr, @intCast(buf.items.len));
+}
+
+const HPyWCharT = if (builtin.os.tag == .windows) u16 else u32;
+
+/// `wchar_t`nin GENİŞLİĞİ platforma göre DEĞİŞİR (Windows: UTF-16, 2 bayt;
+/// macOS/Linux: UTF-32, 4 bayt) — `runtime/collections/dict.zig`nin
+/// `secureRandomBuf`i GİBİ, platform FARKINI KOŞULLU bir tip takma adıyla
+/// (`HPyWCharT`) ele alır.
+fn ctxUnicodeFromWideChar(ctx: *HPyContext, w: ?[*]const HPyWCharT, size: isize) callconv(.c) HPy {
+    if (w == null or size < 0) {
+        ctxErrSetString(ctx, ctx.h_ValueError, "geçersiz genişletilmiş karakter dizisi");
+        return HPy_NULL;
+    }
+    const units = w.?[0..@intCast(size)];
+    const allocator = contextAllocator(ctx);
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer buf.deinit(allocator);
+    var i: usize = 0;
+    while (i < units.len) {
+        var cp: u21 = undefined;
+        if (HPyWCharT == u16) {
+            const c0 = units[i];
+            if (std.unicode.utf16IsHighSurrogate(c0) and i + 1 < units.len and std.unicode.utf16IsLowSurrogate(units[i + 1])) {
+                cp = std.unicode.utf16DecodeSurrogatePair(units[i .. i + 2]) catch {
+                    ctxErrSetString(ctx, ctx.h_UnicodeDecodeError, "geçersiz UTF-16 vekil çifti");
+                    return HPy_NULL;
+                };
+                i += 2;
+            } else {
+                cp = @intCast(c0);
+                i += 1;
+            }
+        } else {
+            cp = @intCast(units[i]);
+            i += 1;
+        }
+        var tmp: [4]u8 = undefined;
+        const n = std.unicode.utf8Encode(cp, &tmp) catch {
+            ctxErrSetString(ctx, ctx.h_UnicodeDecodeError, "geçersiz kod noktası");
+            return HPy_NULL;
+        };
+        buf.appendSlice(allocator, tmp[0..n]) catch {
+            ctxErrNoMemory(ctx);
+            return HPy_NULL;
+        };
+    }
+    return makeStrFromSlice(ctx, buf.items);
+}
+
+fn ctxUnicodeDecodeFSDefault(ctx: *HPyContext, v: ?[*:0]const u8) callconv(.c) HPy {
+    return ctxUnicodeFromString(ctx, v);
+}
+
+fn ctxUnicodeDecodeFSDefaultAndSize(ctx: *HPyContext, v: ?[*]const u8, size: isize) callconv(.c) HPy {
+    if (size < 0) {
+        ctxErrSetString(ctx, ctx.h_ValueError, "negatif uzunluk");
+        return HPy_NULL;
+    }
+    const src: []const u8 = if (v) |p| p[0..@intCast(size)] else &.{};
+    return makeStrFromSlice(ctx, src);
+}
+
+fn ctxUnicodeEncodeFSDefault(ctx: *HPyContext, h: HPy) callconv(.c) HPy {
+    return ctxUnicodeAsUTF8String(ctx, h);
+}
+
+/// Gerçek sözleşme: hata durumunda `(HPy_UCS4)-1` (`maxInt(u32)`) döner —
+/// `index`, BAYT DEĞİL, KARAKTER (kod noktası) indeksidir.
+fn ctxUnicodeReadChar(ctx: *HPyContext, h: HPy, index: isize) callconv(.c) u32 {
+    const obj = objOf(h) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "str bekleniyor");
+        return std.math.maxInt(u32);
+    };
+    if (obj.tag != .str_ or index < 0) {
+        ctxErrSetString(ctx, ctx.h_IndexError, "dizin aralık dışında");
+        return std.math.maxInt(u32);
+    }
+    const view = std.unicode.Utf8View.init(obj.str_data) catch {
+        ctxErrSetString(ctx, ctx.h_UnicodeDecodeError, "geçersiz UTF-8");
+        return std.math.maxInt(u32);
+    };
+    var it = view.iterator();
+    var i: isize = 0;
+    while (it.nextCodepoint()) |cp| {
+        if (i == index) return cp;
+        i += 1;
+    }
+    ctxErrSetString(ctx, ctx.h_IndexError, "dizin aralık dışında");
+    return std.math.maxInt(u32);
+}
+
+fn ctxUnicodeDecodeASCII(ctx: *HPyContext, ascii: ?[*]const u8, size: isize, errors: ?[*:0]const u8) callconv(.c) HPy {
+    _ = errors;
+    if (size < 0) {
+        ctxErrSetString(ctx, ctx.h_ValueError, "negatif uzunluk");
+        return HPy_NULL;
+    }
+    const src: []const u8 = if (ascii) |p| p[0..@intCast(size)] else &.{};
+    for (src) |b| {
+        if (b >= 0x80) {
+            ctxErrSetString(ctx, ctx.h_UnicodeDecodeError, "ASCII aralığı dışında bayt");
+            return HPy_NULL;
+        }
+    }
+    return makeStrFromSlice(ctx, src);
+}
+
+fn ctxUnicodeDecodeLatin1(ctx: *HPyContext, latin1: ?[*]const u8, size: isize, errors: ?[*:0]const u8) callconv(.c) HPy {
+    _ = errors;
+    if (size < 0) {
+        ctxErrSetString(ctx, ctx.h_ValueError, "negatif uzunluk");
+        return HPy_NULL;
+    }
+    const src: []const u8 = if (latin1) |p| p[0..@intCast(size)] else &.{};
+    const allocator = contextAllocator(ctx);
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer buf.deinit(allocator);
+    for (src) |b| {
+        var tmp: [2]u8 = undefined;
+        const n = std.unicode.utf8Encode(@intCast(b), &tmp) catch unreachable;
+        buf.appendSlice(allocator, tmp[0..n]) catch {
+            ctxErrNoMemory(ctx);
+            return HPy_NULL;
+        };
+    }
+    return makeStrFromSlice(ctx, buf.items);
+}
+
+/// Gerçek sözleşme: `obj` bytes-benzeri OLMALIDIR; `encoding` (`NULL`
+/// İSE `"utf-8"`) İLE ÇÖZÜLÜR. **v1 basitleştirmesi:** yalnızca `utf-8`/
+/// `ascii`/`latin-1` (BÜYÜK/küçük harf DUYARSIZ) desteklenir; DİĞERLERİ
+/// `LookupError`. `obj` ZATEN bir `str` İSE (gerçek CPython'ın hızlı
+/// yoluyla AYNI) `encoding` `NULL` OLDUĞU sürece OLDUĞU GİBİ dup edilir.
+fn ctxUnicodeFromEncodedObject(ctx: *HPyContext, obj_h: HPy, encoding: ?[*:0]const u8, errors: ?[*:0]const u8) callconv(.c) HPy {
+    _ = errors;
+    const obj = objOf(obj_h) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "geçersiz nesne");
+        return HPy_NULL;
+    };
+    if (obj.tag == .str_) {
+        if (encoding == null) return ctxDup(ctx, obj_h);
+        ctxErrSetString(ctx, ctx.h_TypeError, "kodlama belirtilmiş bir str nesnesi zaten decode edilmiş");
+        return HPy_NULL;
+    }
+    if (obj.tag != .bytes_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "bytes-benzeri bir nesne bekleniyor");
+        return HPy_NULL;
+    }
+    const enc = std.mem.sliceTo(encoding orelse "utf-8", 0);
+    if (std.ascii.eqlIgnoreCase(enc, "utf-8") or std.ascii.eqlIgnoreCase(enc, "utf8")) {
+        return makeStrFromSlice(ctx, obj.bytes_data);
+    }
+    if (std.ascii.eqlIgnoreCase(enc, "ascii")) {
+        return ctxUnicodeDecodeASCII(ctx, obj.bytes_data.ptr, @intCast(obj.bytes_data.len), null);
+    }
+    if (std.ascii.eqlIgnoreCase(enc, "latin-1") or std.ascii.eqlIgnoreCase(enc, "latin1") or std.ascii.eqlIgnoreCase(enc, "iso-8859-1")) {
+        return ctxUnicodeDecodeLatin1(ctx, obj.bytes_data.ptr, @intCast(obj.bytes_data.len), null);
+    }
+    ctxErrSetString(ctx, ctx.h_LookupError, "bilinmeyen kodlama (yalnızca utf-8/ascii/latin-1 destekleniyor)");
+    return HPy_NULL;
+}
+
+/// `start`/`end`, BAYT DEĞİL, KARAKTER (kod noktası) indeksleridir —
+/// Python'ın dilimleme KURALLARIYLA (negatif indeks, aralık dışı KIRPMA)
+/// TUTARLI.
+fn ctxUnicodeSubstring(ctx: *HPyContext, str: HPy, start: isize, end: isize) callconv(.c) HPy {
+    const obj = objOf(str) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "str bekleniyor");
+        return HPy_NULL;
+    };
+    if (obj.tag != .str_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "str bekleniyor");
+        return HPy_NULL;
+    }
+    const view = std.unicode.Utf8View.init(obj.str_data) catch {
+        ctxErrSetString(ctx, ctx.h_UnicodeDecodeError, "geçersiz UTF-8");
+        return HPy_NULL;
+    };
+    const allocator = contextAllocator(ctx);
+    var offsets: std.ArrayListUnmanaged(usize) = .empty;
+    defer offsets.deinit(allocator);
+    offsets.append(allocator, 0) catch {
+        ctxErrNoMemory(ctx);
+        return HPy_NULL;
+    };
+    var it = view.iterator();
+    var pos: usize = 0;
+    while (it.nextCodepointSlice()) |slice| {
+        pos += slice.len;
+        offsets.append(allocator, pos) catch {
+            ctxErrNoMemory(ctx);
+            return HPy_NULL;
+        };
+    }
+    const char_count: isize = @intCast(offsets.items.len - 1);
+    var s = start;
+    var e = end;
+    if (s < 0) s = @max(0, char_count + s);
+    if (e < 0) e = @max(0, char_count + e);
+    s = std.math.clamp(s, 0, char_count);
+    e = std.math.clamp(e, 0, char_count);
+    if (e < s) e = s;
+    const byte_start = offsets.items[@intCast(s)];
+    const byte_end = offsets.items[@intCast(e)];
+    return makeStrFromSlice(ctx, obj.str_data[byte_start..byte_end]);
 }
 
 // ---- Tier 0 tamamlama: temel nesne protokolü ----
@@ -2574,17 +2853,17 @@ pub const HPyContext = extern struct {
     ctx_Bytes_FromStringAndSize: ?*const fn (ctx: *HPyContext, bytes: ?[*]const u8, len: isize) callconv(.c) HPy = null,
     ctx_Unicode_FromString: ?*const fn (ctx: *HPyContext, utf8: ?[*:0]const u8) callconv(.c) HPy = null,
     ctx_Unicode_Check: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) c_int = null,
-    ctx_Unicode_AsASCIIString: ?*const anyopaque = null,
-    ctx_Unicode_AsLatin1String: ?*const anyopaque = null,
-    ctx_Unicode_AsUTF8String: ?*const anyopaque = null,
+    ctx_Unicode_AsASCIIString: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) HPy = null,
+    ctx_Unicode_AsLatin1String: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) HPy = null,
+    ctx_Unicode_AsUTF8String: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) HPy = null,
     ctx_Unicode_AsUTF8AndSize: ?*const fn (ctx: *HPyContext, h: HPy, size: ?*isize) callconv(.c) ?[*:0]const u8 = null,
-    ctx_Unicode_FromWideChar: ?*const anyopaque = null,
-    ctx_Unicode_DecodeFSDefault: ?*const anyopaque = null,
-    ctx_Unicode_DecodeFSDefaultAndSize: ?*const anyopaque = null,
-    ctx_Unicode_EncodeFSDefault: ?*const anyopaque = null,
-    ctx_Unicode_ReadChar: ?*const anyopaque = null,
-    ctx_Unicode_DecodeASCII: ?*const anyopaque = null,
-    ctx_Unicode_DecodeLatin1: ?*const anyopaque = null,
+    ctx_Unicode_FromWideChar: ?*const fn (ctx: *HPyContext, w: ?[*]const HPyWCharT, size: isize) callconv(.c) HPy = null,
+    ctx_Unicode_DecodeFSDefault: ?*const fn (ctx: *HPyContext, v: ?[*:0]const u8) callconv(.c) HPy = null,
+    ctx_Unicode_DecodeFSDefaultAndSize: ?*const fn (ctx: *HPyContext, v: ?[*]const u8, size: isize) callconv(.c) HPy = null,
+    ctx_Unicode_EncodeFSDefault: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) HPy = null,
+    ctx_Unicode_ReadChar: ?*const fn (ctx: *HPyContext, h: HPy, index: isize) callconv(.c) u32 = null,
+    ctx_Unicode_DecodeASCII: ?*const fn (ctx: *HPyContext, ascii: ?[*]const u8, size: isize, errors: ?[*:0]const u8) callconv(.c) HPy = null,
+    ctx_Unicode_DecodeLatin1: ?*const fn (ctx: *HPyContext, latin1: ?[*]const u8, size: isize, errors: ?[*:0]const u8) callconv(.c) HPy = null,
     ctx_List_Check: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) c_int = null,
     ctx_List_New: ?*const fn (ctx: *HPyContext, len: isize) callconv(.c) HPy = null,
     ctx_List_Append: ?*const fn (ctx: *HPyContext, h_list: HPy, h_item: HPy) callconv(.c) c_int = null,
@@ -2642,8 +2921,8 @@ pub const HPyContext = extern struct {
     ctx_ContextVar_Set: ?*const anyopaque = null,
     ctx_Type_GetName: ?*const anyopaque = null,
     ctx_Type_IsSubtype: ?*const anyopaque = null,
-    ctx_Unicode_FromEncodedObject: ?*const anyopaque = null,
-    ctx_Unicode_Substring: ?*const anyopaque = null,
+    ctx_Unicode_FromEncodedObject: ?*const fn (ctx: *HPyContext, obj: HPy, encoding: ?[*:0]const u8, errors: ?[*:0]const u8) callconv(.c) HPy = null,
+    ctx_Unicode_Substring: ?*const fn (ctx: *HPyContext, str: HPy, start: isize, end: isize) callconv(.c) HPy = null,
     ctx_Dict_Keys: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) HPy = null,
     ctx_Dict_Copy: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) HPy = null,
     ctx_Slice_Unpack: ?*const anyopaque = null,
@@ -2752,6 +3031,18 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
         .ctx_Unicode_FromString = ctxUnicodeFromString,
         .ctx_Unicode_Check = ctxUnicodeCheck,
         .ctx_Unicode_AsUTF8AndSize = ctxUnicodeAsUTF8AndSize,
+        .ctx_Unicode_AsASCIIString = ctxUnicodeAsASCIIString,
+        .ctx_Unicode_AsLatin1String = ctxUnicodeAsLatin1String,
+        .ctx_Unicode_AsUTF8String = ctxUnicodeAsUTF8String,
+        .ctx_Unicode_FromWideChar = ctxUnicodeFromWideChar,
+        .ctx_Unicode_DecodeFSDefault = ctxUnicodeDecodeFSDefault,
+        .ctx_Unicode_DecodeFSDefaultAndSize = ctxUnicodeDecodeFSDefaultAndSize,
+        .ctx_Unicode_EncodeFSDefault = ctxUnicodeEncodeFSDefault,
+        .ctx_Unicode_ReadChar = ctxUnicodeReadChar,
+        .ctx_Unicode_DecodeASCII = ctxUnicodeDecodeASCII,
+        .ctx_Unicode_DecodeLatin1 = ctxUnicodeDecodeLatin1,
+        .ctx_Unicode_FromEncodedObject = ctxUnicodeFromEncodedObject,
+        .ctx_Unicode_Substring = ctxUnicodeSubstring,
         .ctx_Length = ctxLength,
         .ctx_IsTrue = ctxIsTrue,
         .ctx_Is = ctxIs,

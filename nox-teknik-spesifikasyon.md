@@ -1733,6 +1733,37 @@ slotları). Toplam: 41/41 (bu dosyada). Kapsam: 180 `ctx_*` fonksiyonundan
 
 ---
 
+### Faz UU — HPy: Unicode ailesinin geri kalanı
+
+`ctx_Unicode_AsASCIIString`/`AsLatin1String`/`AsUTF8String`/`FromWideChar`/
+`DecodeFSDefault`/`DecodeFSDefaultAndSize`/`EncodeFSDefault`/`ReadChar`/
+`DecodeASCII`/`DecodeLatin1`/`FromEncodedObject`/`Substring` (12
+fonksiyon). **Bilinçli v1 sınırlaması:** `DecodeASCII`/`DecodeLatin1`/
+`FromEncodedObject`in `errors` parametresi YOK SAYILIR — HER ZAMAN
+"strict" (hatalı bayt/kod noktası İçin İSTİSNA) davranışı; CPython'ın
+`"ignore"`/`"replace"`/vb. hata İŞLEYİCİLERİ desteklenmiyor. `DecodeFS
+Default(AndSize)`/`EncodeFSDefault`: gerçek işletim sistemi dosya
+sistemi kodlamasının/`surrogateescape`in BASİTLEŞTİRİLMİŞ karşılığı —
+SADECE UTF-8. `FromWideChar`: `wchar_t`nin platforma göre DEĞİŞEN
+GENİŞLİĞİ (Windows: UTF-16 2 bayt; macOS/Linux: UTF-32 4 bayt) KOŞULLU
+bir `HPyWCharT` takma adıyla (`runtime/collections/dict.zig`nin
+`secureRandomBuf`iyle AYNI desen) ele alınır — UTF-16 vekil ÇİFTLERİ
+DAHİL DOĞRU kod noktası çözme. `ReadChar`/`Substring`: `index`/`start`/
+`end` BAYT DEĞİL, KOD NOKTASI indeksleridir — UTF-8'in KENDİSİ `std.
+unicode.Utf8View` İLE codepoint-farkında biçimde GEZİLİR (BAYT değil).
+`FromEncodedObject`: yalnızca `utf-8`/`ascii`/`latin-1` (BÜYÜK/küçük
+harf duyarsız) desteklenir, DİĞERLERİ `LookupError`.
+
+**Doğrulama:** `noxtest.c`ye 9 yeni modül metodu (UTF-8/ASCII/Latin-1
+kodlama, geniş karakter dizisinden çözme, dosya sistemi kodlaması
+round-trip, kod noktası okuma [BAŞARILI+`IndexError`], ASCII/Latin-1
+çözme, bytes'tan encoded-object çözme, kod noktası indeksli dilimleme).
+`hpy_tier0_test.zig`ye 7 yeni test (`"café"` gibi ASCII-dışı girdilerle
+UTF-8/Latin-1/ASCII sınır davranışları DAHİL). Toplam: 48/48 (bu
+dosyada). Kapsam: 180 `ctx_*` fonksiyonundan 124→**136**'sı implemente.
+
+---
+
 ### 3.20 Faz 20 Uygulama Kapsamı — Zig/C ABI FFI (`extern def`)
 
 **Durum: UYGULANDI.** Kullanıcının isteği: Nox'un HPy/WASM

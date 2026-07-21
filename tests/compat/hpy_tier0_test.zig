@@ -1240,3 +1240,205 @@ test "gerçek HPy eklentisi: Widget'ın özel tp_repr/tp_hash slotları — jene
     defer ctx.ctx_Close.?(ctx, h);
     try std.testing.expectEqual(@as(i64, 14), ctx.ctx_Long_AsInt64_t.?(ctx, h));
 }
+
+fn bytesEqualsRaw(ctx: *hpy.context.HPyContext, h: hpy.context.HPy, expected: []const u8) !void {
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Bytes_Check.?(ctx, h));
+    try std.testing.expectEqual(@as(isize, @intCast(expected.len)), ctx.ctx_Bytes_Size.?(ctx, h));
+    const ptr = ctx.ctx_Bytes_AsString.?(ctx, h) orelse return error.NullBytes;
+    try std.testing.expectEqualSlices(u8, expected, ptr[0..expected.len]);
+}
+
+test "gerçek HPy eklentisi: unicode_as_utf8/ascii/latin1_bytes_via_c (Faz UU)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const utf8_fn = mod.findMethodO("unicode_as_utf8_bytes_via_c") orelse return error.MethodNotFound;
+    const ascii_fn = mod.findMethodO("unicode_as_ascii_bytes_via_c") orelse return error.MethodNotFound;
+    const latin1_fn = mod.findMethodO("unicode_as_latin1_bytes_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    {
+        const s = ctx.ctx_Unicode_FromString.?(ctx, "hi");
+        defer ctx.ctx_Close.?(ctx, s);
+        const b = utf8_fn(ctx, hpy.context.HPy_NULL, s);
+        defer ctx.ctx_Close.?(ctx, b);
+        try bytesEqualsRaw(ctx, b, "hi");
+
+        const b2 = ascii_fn(ctx, hpy.context.HPy_NULL, s);
+        defer ctx.ctx_Close.?(ctx, b2);
+        try bytesEqualsRaw(ctx, b2, "hi");
+    }
+    // "café" (é = U+00E9, UTF-8: 0xC3 0xA9) — ASCII kodlaması BAŞARISIZ olmalı.
+    {
+        const s = ctx.ctx_Unicode_FromString.?(ctx, "caf\xc3\xa9");
+        defer ctx.ctx_Close.?(ctx, s);
+        try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Err_Occurred.?(ctx));
+        const r = ascii_fn(ctx, hpy.context.HPy_NULL, s);
+        try std.testing.expectEqual(hpy.context.HPy_NULL._i, r._i);
+        try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_UnicodeEncodeError));
+        ctx.ctx_Err_Clear.?(ctx);
+
+        // Latin-1: 'é' U+00E9 <= 0xff İçin BAŞARILI olmalı — tek bayt 0xe9.
+        const b = latin1_fn(ctx, hpy.context.HPy_NULL, s);
+        defer ctx.ctx_Close.?(ctx, b);
+        try bytesEqualsRaw(ctx, b, "caf\xe9");
+    }
+}
+
+test "gerçek HPy eklentisi: unicode_from_wide_char_via_c == \"hi!\" (Faz UU)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const f = mod.findMethodO("unicode_from_wide_char_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+    const r = f(ctx, hpy.context.HPy_NULL, dummy);
+    defer ctx.ctx_Close.?(ctx, r);
+    try strEqualsUtf8(ctx, r, "hi!");
+}
+
+test "gerçek HPy eklentisi: unicode_fsdefault_via_c — DecodeFSDefault(AndSize)/EncodeFSDefault (Faz UU)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const f = mod.findMethodO("unicode_fsdefault_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+    const r = f(ctx, hpy.context.HPy_NULL, dummy);
+    defer ctx.ctx_Close.?(ctx, r);
+    try std.testing.expectEqual(@as(isize, 3), ctx.ctx_Length.?(ctx, r));
+
+    const s1 = ctx.ctx_GetItem_i.?(ctx, r, 0);
+    defer ctx.ctx_Close.?(ctx, s1);
+    try strEqualsUtf8(ctx, s1, "dosya.txt");
+
+    const s2 = ctx.ctx_GetItem_i.?(ctx, r, 1);
+    defer ctx.ctx_Close.?(ctx, s2);
+    try strEqualsUtf8(ctx, s2, "dosya");
+
+    const b = ctx.ctx_GetItem_i.?(ctx, r, 2);
+    defer ctx.ctx_Close.?(ctx, b);
+    try bytesEqualsRaw(ctx, b, "dosya.txt");
+}
+
+test "gerçek HPy eklentisi: unicode_read_char_via_c — kod noktası indeksi (Faz UU)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const f = mod.findMethodO("unicode_read_char_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const s = ctx.ctx_Unicode_FromString.?(ctx, "caf\xc3\xa9"); // "café"
+    defer ctx.ctx_Close.?(ctx, s);
+
+    {
+        const idx = ctx.ctx_Long_FromInt64_t.?(ctx, 3);
+        defer ctx.ctx_Close.?(ctx, idx);
+        var pair = [_]hpy.context.HPy{ s, idx };
+        const tup = ctx.ctx_Tuple_FromArray.?(ctx, &pair, 2);
+        defer ctx.ctx_Close.?(ctx, tup);
+        const r = f(ctx, hpy.context.HPy_NULL, tup);
+        defer ctx.ctx_Close.?(ctx, r);
+        try std.testing.expectEqual(@as(i64, 0xe9), ctx.ctx_Long_AsInt64_t.?(ctx, r));
+    }
+    {
+        const idx = ctx.ctx_Long_FromInt64_t.?(ctx, 99);
+        defer ctx.ctx_Close.?(ctx, idx);
+        var pair = [_]hpy.context.HPy{ s, idx };
+        const tup = ctx.ctx_Tuple_FromArray.?(ctx, &pair, 2);
+        defer ctx.ctx_Close.?(ctx, tup);
+        try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Err_Occurred.?(ctx));
+        const r = f(ctx, hpy.context.HPy_NULL, tup);
+        try std.testing.expectEqual(hpy.context.HPy_NULL._i, r._i);
+        try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_IndexError));
+        ctx.ctx_Err_Clear.?(ctx);
+    }
+}
+
+test "gerçek HPy eklentisi: unicode_decode_ascii_via_c/unicode_decode_latin1_via_c (Faz UU)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const ascii_fn = mod.findMethodO("unicode_decode_ascii_via_c") orelse return error.MethodNotFound;
+    const latin1_fn = mod.findMethodO("unicode_decode_latin1_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+
+    const r1 = ascii_fn(ctx, hpy.context.HPy_NULL, dummy);
+    defer ctx.ctx_Close.?(ctx, r1);
+    try strEqualsUtf8(ctx, r1, "hello");
+
+    const r2 = latin1_fn(ctx, hpy.context.HPy_NULL, dummy);
+    defer ctx.ctx_Close.?(ctx, r2);
+    try strEqualsUtf8(ctx, r2, "a\xc3\xa9"); // "aé" UTF-8 kodlanmış
+}
+
+test "gerçek HPy eklentisi: unicode_from_encoded_object_via_c — bytes'tan str'e utf-8 çözme (Faz UU)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const f = mod.findMethodO("unicode_from_encoded_object_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const b = ctx.ctx_Bytes_FromStringAndSize.?(ctx, "hi", 2);
+    defer ctx.ctx_Close.?(ctx, b);
+    const r = f(ctx, hpy.context.HPy_NULL, b);
+    defer ctx.ctx_Close.?(ctx, r);
+    try strEqualsUtf8(ctx, r, "hi");
+}
+
+test "gerçek HPy eklentisi: unicode_substring_via_c — kod noktası indeksli dilimleme (Faz UU)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const f = mod.findMethodO("unicode_substring_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const s = ctx.ctx_Unicode_FromString.?(ctx, "caf\xc3\xa9"); // "café"
+    defer ctx.ctx_Close.?(ctx, s);
+    const start = ctx.ctx_Long_FromInt64_t.?(ctx, 1);
+    defer ctx.ctx_Close.?(ctx, start);
+    const end = ctx.ctx_Long_FromInt64_t.?(ctx, 3);
+    defer ctx.ctx_Close.?(ctx, end);
+    var items = [_]hpy.context.HPy{ s, start, end };
+    const tup = ctx.ctx_Tuple_FromArray.?(ctx, &items, 3);
+    defer ctx.ctx_Close.?(ctx, tup);
+
+    const r = f(ctx, hpy.context.HPy_NULL, tup);
+    defer ctx.ctx_Close.?(ctx, r);
+    try strEqualsUtf8(ctx, r, "af"); // "café"[1:3] == "af"
+}
