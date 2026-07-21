@@ -216,3 +216,112 @@ test "gerçek HPy eklentisi: HPyType_FromSpec ile tanımlanmış Counter tipi �
     defer ctx.ctx_Close.?(ctx, after);
     try std.testing.expectEqual(before_n + 1, ctx.ctx_Long_AsInt64_t.?(ctx, after));
 }
+
+test "gerçek HPy eklentisi: ctx_Call ile Widget(5)(3) == 13 — tp_new+tp_init+tp_call (çağrılabilir nesne protokolü)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const get_widget_type = mod.findMethodO("get_widget_type") orelse return error.MethodNotFound;
+
+    // Aynı gerekçe: Widget_type de noxtest.c'de tembel/statik önbelleklenir
+    // (bkz. Counter testinin AYNI belge notu) — page_allocator kullanılır.
+    const ctx = try hpy.context.createContext(std.heap.page_allocator);
+    defer hpy.context.destroyContext(std.heap.page_allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+    const widget_type = get_widget_type(ctx, hpy.context.HPy_NULL, dummy);
+
+    // --- ctx_Call: tp_new(5) + tp_init(+5) = 10 ---
+    const five = ctx.ctx_Long_FromInt64_t.?(ctx, 5);
+    defer ctx.ctx_Close.?(ctx, five);
+    var ctor_args = [_]hpy.context.HPy{five};
+    const widget = ctx.ctx_Call.?(ctx, widget_type, &ctor_args, 1, hpy.context.HPy_NULL);
+    defer ctx.ctx_Close.?(ctx, widget);
+    try std.testing.expect(widget._i != 0);
+
+    // --- ctx_Call örnek üzerinde: tp_call — 10 + 3 = 13 ---
+    const three = ctx.ctx_Long_FromInt64_t.?(ctx, 3);
+    defer ctx.ctx_Close.?(ctx, three);
+    var call_args = [_]hpy.context.HPy{three};
+    const result = ctx.ctx_Call.?(ctx, widget, &call_args, 1, hpy.context.HPy_NULL);
+    defer ctx.ctx_Close.?(ctx, result);
+    try std.testing.expectEqual(@as(i64, 13), ctx.ctx_Long_AsInt64_t.?(ctx, result));
+
+    // --- ctx_CallTupleDict: aynı inşa, tuple üzerinden ---
+    const args_tuple = ctx.ctx_Tuple_FromArray.?(ctx, &ctor_args, 1);
+    defer ctx.ctx_Close.?(ctx, args_tuple);
+    const widget2 = ctx.ctx_CallTupleDict.?(ctx, widget_type, args_tuple, hpy.context.HPy_NULL);
+    defer ctx.ctx_Close.?(ctx, widget2);
+    try std.testing.expect(widget2._i != 0);
+
+    // --- ctx_Callable_Check ---
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Callable_Check.?(ctx, widget_type));
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Callable_Check.?(ctx, widget));
+    try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Callable_Check.?(ctx, five)); // düz long çağrılabilir değil
+}
+
+test "gerçek HPy eklentisi: ctx_Call — tp_new'i olmayan bir tipte TypeError (çağrılabilir nesne protokolü)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const make_counter = mod.findMethodO("make_counter") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.heap.page_allocator);
+    defer hpy.context.destroyContext(std.heap.page_allocator, ctx);
+
+    // `Counter` yalnızca `tp_destroy` kaydeder — `Counter_type`i elde etmek
+    // İçin `make_counter`ı BİR KEZ çağırıp (bu, tipi TEMBEL ilklendirir),
+    // döndürdüğü örneğin KENDİ tipini `ctx_Type` İLE oku.
+    const seed = ctx.ctx_Long_FromInt64_t.?(ctx, 1);
+    defer ctx.ctx_Close.?(ctx, seed);
+    const counter_instance = make_counter(ctx, hpy.context.HPy_NULL, seed);
+    defer ctx.ctx_Close.?(ctx, counter_instance);
+    const counter_type = ctx.ctx_Type.?(ctx, counter_instance);
+    defer ctx.ctx_Close.?(ctx, counter_type);
+
+    try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Err_Occurred.?(ctx));
+    const result = ctx.ctx_Call.?(ctx, counter_type, null, 0, hpy.context.HPy_NULL);
+    try std.testing.expectEqual(hpy.context.HPy_NULL._i, result._i);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_Occurred.?(ctx));
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_TypeError));
+    ctx.ctx_Err_Clear.?(ctx);
+}
+
+test "gerçek HPy eklentisi: ctx_Call/ctx_CallTupleDict — boş olmayan kwargs TypeError verir (v1 sınırlaması)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const get_widget_type = mod.findMethodO("get_widget_type") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.heap.page_allocator);
+    defer hpy.context.destroyContext(std.heap.page_allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+    const widget_type = get_widget_type(ctx, hpy.context.HPy_NULL, dummy);
+
+    // ctx_Call: kwnames HPy_NULL DEĞİLSE (herhangi bir tutamaç) reddedilir.
+    try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Err_Occurred.?(ctx));
+    const r1 = ctx.ctx_Call.?(ctx, widget_type, null, 0, dummy);
+    try std.testing.expectEqual(hpy.context.HPy_NULL._i, r1._i);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_TypeError));
+    ctx.ctx_Err_Clear.?(ctx);
+
+    // ctx_CallTupleDict: kw boş OLMAYAN bir dict İSE reddedilir.
+    const empty_tuple = ctx.ctx_Tuple_FromArray.?(ctx, null, 0);
+    defer ctx.ctx_Close.?(ctx, empty_tuple);
+    const kw = ctx.ctx_Dict_New.?(ctx);
+    defer ctx.ctx_Close.?(ctx, kw);
+    try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_SetItem_s.?(ctx, kw, "x", dummy));
+    const r2 = ctx.ctx_CallTupleDict.?(ctx, widget_type, empty_tuple, kw);
+    try std.testing.expectEqual(hpy.context.HPy_NULL._i, r2._i);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_TypeError));
+    ctx.ctx_Err_Clear.?(ctx);
+}

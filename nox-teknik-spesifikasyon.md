@@ -1390,6 +1390,81 @@ birlikte), member/getset tanımları, buffer protokolü (artık `HPyType_FromSpe
 duraklatıldı — öncelik aşağıdaki §3.20'ye (Zig/C ABI FFI) kaydırıldı. Devam
 edilecekse yukarıdaki "sıradaki adımlar" listesinden başlanmalı.
 
+### Faz MM — HPy: Çağrılabilir Nesne Protokolü (ctx_Call ailesi)
+
+Windows desteği (Faz LL) bittikten SONRA kullanıcının 2026-07-16 tarihli
+5 maddelik yol haritasının SON kalan maddesine ("hpy tam coverage",
+"gerçekten 180/180 ctx_*") dönüldü. Yukarıdaki "doğal sıradaki adımlar"
+listesinin İLK maddesi ele alındı: `ctx_Callable_Check`, `ctx_Call`,
+`ctx_CallTupleDict`, `ctx_SetCallFunction`, `ctx_CallRealFunctionFrom
+Trampoline`. (Küçük bir belge/kod DRIFT'i düzeltmesi: Faz 19'un "49
+implemente" notu, o zamanki koddan BİR EKSİK sayılmıştı — GERÇEK sayı
+zaten **50** idi; bu faz 50'den başlar.)
+
+**En önemli katkı:** `HPyType_FromSpec` ile oluşturulan bir tipin
+`SomeType(args)` şeklinde GERÇEKTEN inşa edilebilmesi — CPython'ın
+`type.__call__`ının (`tp_new` + ardından `tp_init`, SIRAYLA) BİREBİR
+karşılığı. `ctx_New` (Faz 19) bunu YAPMAZ (`tp_new`/`tp_init`i hiç
+çağırmaz) — bu faz TAM OLARAK bu boşluğu kapatıyor; AYRICA genel "bir
+HPy nesnesini çağırma" (`tp_call`) protokolünü ekliyor.
+
+**Nesne modeli:** `Obj`in `type_` alanına 3 yeni fonksiyon işaretçisi
+(`type_tp_new`/`type_tp_init`/`type_tp_call`) — `type_tp_destroy`in AYNI
+deseniyle, `ctxTypeFromSpec`in `HPy_tp_new=65`/`HPy_tp_init=60`/
+`HPy_tp_call=50` slotlarını (`autogen_hpyslot.h`e karşı doğrulandı)
+tanıyan KARDEŞ `else if` dalları ile doldurulur.
+
+**Çekirdek dağıtım — `callDispatch`/`constructInstance`:** `ctx_Call` VE
+`ctx_CallTupleDict` İKİSİ DE TEK bir paylaşılan iç fonksiyona
+(`callDispatch`) varır: `callable` bir `.type_` İSE `constructInstance`e
+(CPython'ın `type.__call__`ı — `tp_new` YOKSA TypeError, VARSA çağrılır,
+SONRA `tp_init` VARSA çağrılır, `< 0` dönerse [henüz bir istisna
+ayarlanmadıysa GENEL bir `RuntimeError` ayarlanıp] örnek `ctxClose` ile
+serbest bırakılır) delege edilir; `.instance_` İSE kendi tipinin
+`type_tp_call`ı (VARSA) DOĞRUDAN çağrılır. `ctx_Callable_Check`, gerçek
+`PyCallable_Check` semantiğiyle TUTARLI: bir TİP `tp_new` eksik OLSA
+BİLE HER ZAMAN "çağrılabilir" sayılır (hata yalnızca GERÇEK çağrı
+ANINDA yüzeye çıkar).
+
+**Bilinçli v1 sınırlamaları:**
+- Anahtar kelime argümanları (`kwnames`/boş OLMAYAN bir `kw` dict)
+  `TypeError` ile reddedilir — nesne modelinde henüz genel bir dict-
+  tabanlı kwarg açma sözleşmesi YOK (`HPyType_FromSpec`in KENDİ taban-
+  sınıf/buffer-slot kapsam dışı bırakmasıyla AYNI ilke).
+- `ctx_CallMethod` bu fazda YOK — gerçek sözleşmesi `args[0]`in alıcı
+  olduğu bir İSİM/METOD ARAMASI gerektirir, ki bu henüz var olmayan
+  `ctx_GetAttr` ailesine bağımlıdır (doğal bir SONRAKİ dilim).
+- `ctx_CallRealFunctionFromTrampoline`: Nox eklentilere DOĞRUDAN çağrı
+  yaptığından (`cpy_trampoline` alanı HİÇBİR YERDE okunmaz/tetiklenmez,
+  grep İLE doğrulandı) bu fonksiyona Nox mimarisinde GERÇEK bir çağrı
+  yolu YOKTUR. Gerçek HPy'nin arg-blob'ları `cpy_PyObject*` şeklinde
+  olduğundan Nox'un `HPy` tutamaçlarıyla ANLAMLI eşleştirilemez — "sahte
+  ama gerçek görünen" bir switch-and-cast gövdesi hem YAZILAMAZ hem test
+  EDİLEMEZ olurdu. Bilinçli olarak dokümante edilmiş bir `@panic` İLE
+  bırakıldı (ABI yuvası DOĞRU/non-null bağlanır, ama sahte bir gövde
+  YAZILMADI).
+
+**Doğrulama:** `tests/compat/hpy_ext/noxtest.c`ye (gerçek HPy 0.9.0
+header'larına karşı derlenmiş) `HPy_tp_new`/`HPy_tp_init`/`HPy_tp_call`
+slotlarını `Counter`in AYNI `HPyDef_SLOT` deseniyle kaydeden YENİ,
+minimal bir `Widget` tipi eklendi (`tp_init`in `value`yi ÜZERİNE
+YAZMAK yerine EKLEMESİ — tp_new'in AYRICA çalıştığını dıştan
+kanıtlamak İçin bilinçli tasarım). `hpy_tier0_test.zig`ye (yeni bir
+dosya AÇILMADI — Faz 18/19 de AYNI dosyaya eklenerek doğrulanmıştı)
+4 yeni uçtan uca test: (a) `ctx_Call`/`ctx_CallTupleDict` İLE
+`Widget(5)` inşası + `tp_call` (`widget(3) == 13`, tp_new+tp_init+
+tp_call'ın HEPSİNİN çalıştığını KANITLAR), (b) `ctx_Callable_Check`,
+(c) `tp_new`SIZ bir tipte (`Counter`) `ctx_Call` → `TypeError`, (d)
+boş OLMAYAN kwargs → `TypeError` (HEM `ctx_Call` HEM `ctx_CallTupleDict`
+İçin). Toplam: 165/165 test yeşil (Debug + ReleaseSafe + ReleaseFast).
+
+**Dürüst kapsam durumu:** 180 `ctx_*` fonksiyonundan **55'i** implemente
+(bu fazdan ÖNCE 50'ydi). Doğal sıradaki adımlar: attribute erişimi
+(`ctx_GetAttr`/`ctx_SetAttr`/`ctx_HasAttr` ailesi — `ctx_CallMethod`in
+de ÖN KOŞULU), `ctx_Repr`/`ctx_Str`/`ctx_Hash`/`ctx_RichCompare` (temel
+nesne protokolünün geri kalanı), member/getset tanımları, buffer
+protokolü. "%100" hâlâ çok-oturumlu bir hedeftir.
+
 ---
 
 ### 3.20 Faz 20 Uygulama Kapsamı — Zig/C ABI FFI (`extern def`)

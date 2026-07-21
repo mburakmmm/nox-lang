@@ -10,13 +10,13 @@
 //! `autogen_ctx.h`sinden ALAN ALANA (mekanik bir script ile, bkz.
 //! `scripts/gen_hpy_ctx.py`) üretilmiş, bayt-uyumlu bir transkripsiyonunu
 //! GEREKTİRİR — bir eklenti bu struct'a doğrudan (sabit ofsetlerle) erişir,
-//! bu yüzden alan SIRASI ve BOYUTU tam olarak eşleşmelidir. Şu an
-//! GERÇEKTEN implemente edilen alanlar (aşağıda özel fonksiyon işaretçisi
-//! tipleriyle işaretli): `ctx_Dup`, `ctx_Close`, `ctx_Long_FromInt64_t`,
-//! `ctx_Long_AsInt64_t`, `ctx_Float_FromDouble`, `ctx_Float_AsDouble`,
-//! `ctx_Bool_FromBool` — geri kalan yüzlerce alan `null` (kullanılmazlarsa
-//! zararsız; bir eklenti bunlardan birini çağırırsa çökme/segfault olur,
-//! bkz. nox-teknik-spesifikasyon.md §3.12'deki bilinçli sınırlamalar).
+//! bu yüzden alan SIRASI ve BOYUTU tam olarak eşleşmelidir. Şu an 180
+//! `ctx_*` alanından **55'i** GERÇEKTEN implemente (aşağıda özel fonksiyon
+//! işaretçisi tipleriyle işaretli — tam liste/tier dökümü İçin bkz.
+//! nox-teknik-spesifikasyon.md §3.12 VE DEVAMI, en son Faz MM) — geri
+//! kalanı `null` (kullanılmazlarsa zararsız; bir eklenti bunlardan birini
+//! çağırırsa çökme/segfault olur, bkz. spesifikasyondaki bilinçli
+//! sınırlamalar).
 //!
 //! **Nesne modeli:** `HPy._i`, Nox'un kendi refcount'lu `Obj` yapısına
 //! işaret eden bir işaretçidir (`@intFromPtr`/`@ptrFromInt` ile dönüştürülür)
@@ -82,6 +82,16 @@ pub const Obj = struct {
     /// getset/member/buffer slotları HENÜZ desteklenmiyor (bkz. spec).
     type_basicsize: usize = 0,
     type_tp_destroy: ?*const fn (data: *anyopaque) callconv(.c) void = null,
+    /// Çağrılabilir nesne protokolü (bkz. §3.12'nin AYNI adlı bölümü) —
+    /// `HPy_tp_new`/`HPy_tp_init`/`HPy_tp_call` slotları. `type_tp_new`/
+    /// `type_tp_init`, gerçek HPy'nin `HPyFunc_NEWFUNC`/`INITPROC`
+    /// imzalarıyla (`HPy_ssize_t nargs`, yani `isize`) BİREBİR eşleşir;
+    /// `type_tp_call` İSE `HPyFunc_KEYWORDS`in `size_t nargs`siyle
+    /// (`usize`) — bu ikisi KASITLI olarak BİRLEŞTİRİLMEDİ, gerçek HPy
+    /// header'ındaki gibi AYRI tutuldu.
+    type_tp_new: ?*const fn (ctx: *HPyContext, h_type: HPy, args: ?[*]const HPy, nargs: isize, kw: HPy) callconv(.c) HPy = null,
+    type_tp_init: ?*const fn (ctx: *HPyContext, self: HPy, args: ?[*]const HPy, nargs: isize, kw: HPy) callconv(.c) c_int = null,
+    type_tp_call: ?*const fn (ctx: *HPyContext, self: HPy, args: ?[*]const HPy, nargs: usize, kwnames: HPy) callconv(.c) HPy = null,
     type_methods: std.ArrayListUnmanaged(TypeMethod) = .empty,
     /// Yalnızca `tag == .instance_` — `ctx_New` ile inşa edilmiş bir
     /// `type_` örneği: kendi tipine (retained) bir referans + ham,
@@ -701,6 +711,11 @@ const HPY_DEF_KIND_SLOT: c_int = 1;
 const HPY_DEF_KIND_METH: c_int = 2;
 const HPY_FUNC_SIG_O: c_int = 4;
 const HPY_SLOT_TP_DESTROY: c_int = 1000; // bkz. autogen_hpyslot.h
+// Çağrılabilir nesne protokolü (bkz. `Obj.type_tp_call`ın belge notu) —
+// `autogen_hpyslot.h`e karşı doğrulandı.
+const HPY_SLOT_TP_CALL: c_int = 50; // HPyFunc_KEYWORDS imzalı
+const HPY_SLOT_TP_INIT: c_int = 60; // HPyFunc_INITPROC imzalı
+const HPY_SLOT_TP_NEW: c_int = 65; // HPyFunc_NEWFUNC imzalı
 
 fn ctxTypeFromSpec(ctx: *HPyContext, spec: ?*HPyType_Spec, params: ?*HPyType_SpecParam) callconv(.c) HPy {
     // Taban sınıf/metaclass parametreleri şu an yok sayılıyor (bkz. modül
@@ -723,6 +738,12 @@ fn ctxTypeFromSpec(ctx: *HPyContext, spec: ?*HPyType_Spec, params: ?*HPyType_Spe
                 const sl = slotOfLocal(d);
                 if (sl.slot == HPY_SLOT_TP_DESTROY) {
                     if (sl.impl) |impl| obj.type_tp_destroy = @ptrCast(@alignCast(impl));
+                } else if (sl.slot == HPY_SLOT_TP_NEW) {
+                    if (sl.impl) |impl| obj.type_tp_new = @ptrCast(@alignCast(impl));
+                } else if (sl.slot == HPY_SLOT_TP_INIT) {
+                    if (sl.impl) |impl| obj.type_tp_init = @ptrCast(@alignCast(impl));
+                } else if (sl.slot == HPY_SLOT_TP_CALL) {
+                    if (sl.impl) |impl| obj.type_tp_call = @ptrCast(@alignCast(impl));
                 }
             } else if (d.kind == HPY_DEF_KIND_METH) {
                 if (d.meth.signature == HPY_FUNC_SIG_O) {
@@ -793,6 +814,169 @@ fn ctxTypeCheck(ctx: *HPyContext, obj_h: HPy, type_h: HPy) callconv(.c) c_int {
     const obj = objOf(obj_h) orelse return 0;
     if (obj.tag != .instance_) return 0;
     return @intFromBool(obj.instance_type._i == type_h._i);
+}
+
+// ---- Çağrılabilir nesne protokolü ----
+//
+// `ctx_Callable_Check`/`ctx_Call`/`ctx_CallTupleDict`/`ctx_SetCallFunction`/
+// `ctx_CallRealFunctionFromTrampoline`. Bu dilimin en önemli katkısı:
+// `HPyType_FromSpec` ile oluşturulmuş bir tipi `SomeType(args)` şeklinde
+// GERÇEKTEN inşa edebilmek — CPython'ın `type.__call__`ının (alloc via
+// `tp_new`, ardından `tp_init`) BİREBİR karşılığı. `ctxNew` (yukarıda)
+// bunu YAPMAZ — `tp_new` KENDİSİ eklentinin C kodudur ve `HPy_New`
+// (yani `ctxNew`) makrosunu KENDİSİ çağırır; bu fonksiyonlar `ctxNew`i
+// TEKRAR ÇAĞIRMAZ, yalnızca eklentinin kayıtlı `tp_new`/`tp_init`ını
+// invoke eder.
+//
+// **Bilinçli v1 sınırlaması:** `kwnames`/`kw` (anahtar kelime argümanları)
+// BOŞ OLMAYAN bir değer taşıyorsa `TypeError` ile reddedilir — nesne
+// modelinde henüz genel bir dict-tabanlı kwarg açma sözleşmesi yok
+// (`HPyType_FromSpec`in KENDİ taban-sınıf/metaclass/buffer-slot kapsam
+// dışı bırakmasıyla AYNI ilke). `ctx_CallMethod` bu dilimde YOK — gerçek
+// HPy sözleşmesinde `args[0]`in alıcı (receiver) olduğu bir isim/metod
+// ARAMASI gerektirir, ki bu henüz var olmayan `ctx_GetAttr` ailesine
+// bağımlıdır (ayrı bir sonraki dilim).
+fn callDispatch(ctx: *HPyContext, callable: HPy, args: ?[*]const HPy, nargs: usize, kwnames: HPy) HPy {
+    if (kwnames._i != 0) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "anahtar kelime argümanları henüz desteklenmiyor");
+        return HPy_NULL;
+    }
+    const obj = objOf(callable) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "çağrılabilir değil");
+        return HPy_NULL;
+    };
+    switch (obj.tag) {
+        .type_ => return constructInstance(ctx, callable, obj, args, nargs),
+        .instance_ => {
+            const type_obj = objOf(obj.instance_type) orelse {
+                ctxErrSetString(ctx, ctx.h_TypeError, "çağrılabilir değil");
+                return HPy_NULL;
+            };
+            const call_fn = type_obj.type_tp_call orelse {
+                ctxErrSetString(ctx, ctx.h_TypeError, "çağrılabilir değil");
+                return HPy_NULL;
+            };
+            return call_fn(ctx, callable, args, nargs, HPy_NULL);
+        },
+        else => {
+            ctxErrSetString(ctx, ctx.h_TypeError, "çağrılabilir değil");
+            return HPy_NULL;
+        },
+    }
+}
+
+/// CPython'ın `type.__call__`ının karşılığı: `tp_new` (varsa) ile inşa
+/// eder, ARDINDAN `tp_init` (varsa) ile ilklendirir — İKİSİ DE eklentinin
+/// KENDİ C kodu (bkz. modül üstü not, bu fonksiyon `ctxNew`i ÇAĞIRMAZ).
+fn constructInstance(ctx: *HPyContext, type_h: HPy, type_obj: *Obj, args: ?[*]const HPy, nargs: usize) HPy {
+    const new_fn = type_obj.type_tp_new orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "tip inşa edilemiyor: tp_new yok");
+        return HPy_NULL;
+    };
+    const instance = new_fn(ctx, type_h, args, @intCast(nargs), HPy_NULL);
+    if (instance._i == 0) return HPy_NULL; // tp_new zaten hata ayarladı (ya da NULL döndü)
+
+    if (type_obj.type_tp_init) |init_fn| {
+        const rc = init_fn(ctx, instance, args, @intCast(nargs), HPy_NULL);
+        if (rc < 0) {
+            // CPython'ın `type.__call__`ının AYNI savunma desenine
+            // paralel: tp_init `-1` dönüp KENDİ istisnasını AYARLAMADIYSA
+            // (kötü davranan bir eklenti), sessizce boş bir hata bırakmak
+            // yerine GENEL bir tane ayarla.
+            if (ctxErrOccurred(ctx) == 0) {
+                ctxErrSetString(ctx, ctx.h_RuntimeError, "tp_init başarısız oldu ama istisna ayarlamadı");
+            }
+            ctxClose(ctx, instance);
+            return HPy_NULL;
+        }
+    }
+    return instance;
+}
+
+fn ctxCall(ctx: *HPyContext, callable: HPy, args: ?[*]const HPy, nargs: usize, kwnames: HPy) callconv(.c) HPy {
+    return callDispatch(ctx, callable, args, nargs, kwnames);
+}
+
+/// Gerçek `PyCallable_Check` semantiğiyle TUTARLI: bir TİP her zaman
+/// "çağrılabilir" sayılır (`tp_new` eksik OLSA BİLE — hata yalnızca
+/// GERÇEK çağrı ANINDA, `constructInstance`de yüzeye çıkar). Bir ÖRNEK
+/// İSE yalnızca kendi tipi `tp_call` KAYDETTİYSE çağrılabilir.
+fn ctxCallableCheck(ctx: *HPyContext, h: HPy) callconv(.c) c_int {
+    _ = ctx;
+    const obj = objOf(h) orelse return 0;
+    return switch (obj.tag) {
+        .type_ => 1,
+        .instance_ => blk: {
+            const type_obj = objOf(obj.instance_type) orelse break :blk 0;
+            break :blk @intFromBool(type_obj.type_tp_call != null);
+        },
+        else => 0,
+    };
+}
+
+/// Gerçek imza: `args`/`kw` HAM bir işaretçi+sayı DEĞİL, bir tuple/dict
+/// TUTAMACIDIR — `args_tuple`in `.tuple_` OLDUĞU doğrulanır, `tuple_data`
+/// (zaten sahiplenilen `[]HPy`) KOPYASIZ olarak `callDispatch`e verilir.
+fn ctxCallTupleDict(ctx: *HPyContext, callable: HPy, args_tuple: HPy, kw: HPy) callconv(.c) HPy {
+    if (kw._i != 0) {
+        if (objOf(kw)) |kw_obj| {
+            if (kw_obj.tag == .dict_ and kw_obj.dict_data.items.len > 0) {
+                ctxErrSetString(ctx, ctx.h_TypeError, "anahtar kelime argümanları henüz desteklenmiyor");
+                return HPy_NULL;
+            }
+        }
+    }
+    const args_obj = objOf(args_tuple) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "args tuple bekleniyor");
+        return HPy_NULL;
+    };
+    if (args_obj.tag != .tuple_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "args tuple bekleniyor");
+        return HPy_NULL;
+    }
+    const items = args_obj.tuple_data;
+    return callDispatch(ctx, callable, items.ptr, items.len, HPy_NULL);
+}
+
+/// Gerçek HPy sözleşmesi: `h`in bir TİP olmasını gerektirir (`tp_call`ı
+/// `HPyType_FromSpec`in `HPy_tp_call` slotu DIŞINDA, sonradan kaydetmenin
+/// bir yolu — ör. kapatma/partial nesneleri İçin). `func.impl`, `type_
+/// tp_call`a AYNI alana yazılır (slot-tabanlı KAYIT İLE aynı alan,
+/// çünkü ikisi de "bu tipin örnekleri nasıl çağrılır" sorusuna cevaptır).
+const HPyCallFunctionLocal = extern struct {
+    cpy_trampoline: ?*const anyopaque = null,
+    impl: ?*const anyopaque = null,
+};
+
+fn ctxSetCallFunction(ctx: *HPyContext, h: HPy, func: ?*HPyCallFunctionLocal) callconv(.c) c_int {
+    const obj = objOf(h) orelse return -1;
+    if (obj.tag != .type_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "tip bekleniyor");
+        return -1;
+    }
+    const f = func orelse return -1;
+    if (f.impl) |impl| obj.type_tp_call = @ptrCast(@alignCast(impl));
+    return 0;
+}
+
+/// Gerçek HPy'de bu fonksiyon, CPython'ın ÜRETTİĞİ vectorcall
+/// trampolinlerinden (`cpy_trampoline`) çağrılır — Nox eklentilere
+/// DOĞRUDAN çağrı yaptığından (bkz. `loader.zig`nin modül üstü notu,
+/// `cpy_trampoline` alanı HİÇBİR YERDE okunmaz/tetiklenmez, yalnızca
+/// bayt-düzeni İçin saklanır) bu fonksiyona GERÇEK bir çağrı yolu
+/// YOKTUR. "Sahte ama gerçek görünen" bir switch-and-cast gövdesi
+/// (gerçek HPy'nin arg-blob'ları `cpy_PyObject*` şeklinde olduğundan,
+/// Nox'un `HPy` tutamaçlarıyla ANLAMLI şekilde eşleştirilemez) hem
+/// YAZILAMAZ hem test EDİLEMEZ olurdu — bu yüzden bilinçli olarak
+/// dokümante edilmiş bir `@panic` ile bırakılır (ABI yuvası doğru/
+/// non-null bağlanır, ama gövdesi hiçbir gerçek çağrı yolundan
+/// ULAŞILAMAYACAĞI İçin sahte bir implementasyon yazılmaz).
+fn ctxCallRealFunctionFromTrampoline(ctx: *HPyContext, sig: c_int, func: ?*const anyopaque, args: ?*anyopaque) callconv(.c) void {
+    _ = ctx;
+    _ = sig;
+    _ = func;
+    _ = args;
+    @panic("ctx_CallRealFunctionFromTrampoline: Nox mimarisinde gerçek bir çağrı yolu yok (bkz. modül üstü not)");
 }
 
 /// Nox-özel (HPy ABI'sinin bir parçası DEĞİL) bir yardımcı: bir `type_`
@@ -1130,8 +1314,8 @@ pub const HPyContext = extern struct {
     ctx_InPlaceAnd: ?*const anyopaque = null,
     ctx_InPlaceXor: ?*const anyopaque = null,
     ctx_InPlaceOr: ?*const anyopaque = null,
-    ctx_Callable_Check: ?*const anyopaque = null,
-    ctx_CallTupleDict: ?*const anyopaque = null,
+    ctx_Callable_Check: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) c_int = null,
+    ctx_CallTupleDict: ?*const fn (ctx: *HPyContext, callable: HPy, args: HPy, kw: HPy) callconv(.c) HPy = null,
     ctx_FatalError: ?*const anyopaque = null,
     ctx_Err_SetString: ?*const fn (ctx: *HPyContext, h_type: HPy, utf8_message: ?[*:0]const u8) callconv(.c) void = null,
     ctx_Err_SetObject: ?*const anyopaque = null,
@@ -1204,7 +1388,7 @@ pub const HPyContext = extern struct {
     ctx_Import_ImportModule: ?*const anyopaque = null,
     ctx_FromPyObject: ?*const anyopaque = null,
     ctx_AsPyObject: ?*const anyopaque = null,
-    ctx_CallRealFunctionFromTrampoline: ?*const anyopaque = null,
+    ctx_CallRealFunctionFromTrampoline: ?*const fn (ctx: *HPyContext, sig: c_int, func: ?*const anyopaque, args: ?*anyopaque) callconv(.c) void = null,
     ctx_ListBuilder_New: ?*const anyopaque = null,
     ctx_ListBuilder_Set: ?*const anyopaque = null,
     ctx_ListBuilder_Build: ?*const anyopaque = null,
@@ -1256,8 +1440,8 @@ pub const HPyContext = extern struct {
     ctx_Dict_Keys: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) HPy = null,
     ctx_Dict_Copy: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) HPy = null,
     ctx_Slice_Unpack: ?*const anyopaque = null,
-    ctx_SetCallFunction: ?*const anyopaque = null,
-    ctx_Call: ?*const anyopaque = null,
+    ctx_SetCallFunction: ?*const fn (ctx: *HPyContext, h: HPy, func: ?*HPyCallFunctionLocal) callconv(.c) c_int = null,
+    ctx_Call: ?*const fn (ctx: *HPyContext, callable: HPy, args: ?[*]const HPy, nargs: usize, kwnames: HPy) callconv(.c) HPy = null,
     ctx_CallMethod: ?*const anyopaque = null,
 };
 
@@ -1387,6 +1571,11 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
         .ctx_AsStruct_Object = ctxAsStructObject,
         .ctx_Type = ctxType,
         .ctx_TypeCheck = ctxTypeCheck,
+        .ctx_Callable_Check = ctxCallableCheck,
+        .ctx_Call = ctxCall,
+        .ctx_CallTupleDict = ctxCallTupleDict,
+        .ctx_SetCallFunction = ctxSetCallFunction,
+        .ctx_CallRealFunctionFromTrampoline = ctxCallRealFunctionFromTrampoline,
     };
     return ctx;
 }

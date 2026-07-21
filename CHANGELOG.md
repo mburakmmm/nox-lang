@@ -1277,6 +1277,18 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   desteği (fiber/WSAPoll/Winsock/`nox.http` dahil tüm çalışma zamanı
   çalışıyor) ve tek bilinen sınırlamayı (`nox.path.canonicalize`
   Windows'ta sembolik link çözmüyor) yansıtacak şekilde yeniden yazıldı.
+- **Faz MM — HPy köprüsü: çağrılabilir nesne protokolü** (`ctx_Callable_
+  Check`/`ctx_Call`/`ctx_CallTupleDict`/`ctx_SetCallFunction`/`ctx_Call
+  RealFunctionFromTrampoline`). En önemli katkı: `HPyType_FromSpec` ile
+  oluşturulan bir tipin `SomeType(args)` şeklinde GERÇEKTEN inşa
+  edilebilmesi — CPython'ın `type.__call__`ının (`tp_new`+`tp_init`,
+  sırasıyla) birebir karşılığı; `ctx_New` (Faz 19) bunu yapmıyordu.
+  `tests/compat/hpy_ext/noxtest.c`ye yeni bir `Widget` tipi (tp_new/
+  tp_init/tp_call slotlarıyla) + `hpy_tier0_test.zig`ye 4 yeni uçtan uca
+  test eklendi. Bilinçli v1 sınırlamaları: anahtar kelime argümanları
+  reddedilir (TypeError), `ctx_CallMethod` ertelendi (henüz olmayan
+  `ctx_GetAttr` ailesine bağımlı). Kapsam: 180 `ctx_*` fonksiyonundan
+  50→**55**'i implemente.
 
 ## [1.0.0]
 

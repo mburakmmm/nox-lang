@@ -17,8 +17,64 @@
  *   - make_counter(x) -> Counter örneği          (Tier 1: HPyType_FromSpec
  *   - get_counter_x(c) -> c.x                     + ctx_New + AsStruct +
  *   - get_destroy_count(_) -> yıkılan sayısı       tp_destroy)
+ *   - get_widget_type(_) -> Widget tipi         (çağrılabilir nesne
+ *                                                 protokolü: tp_new/
+ *                                                 tp_init/tp_call —
+ *                                                 bkz. Widget_* aşağıda)
  */
 #include "hpy.h"
+
+/* Çağrılabilir nesne protokolü (ctx_Call/ctx_CallTupleDict/ctx_Callable_
+ * Check) test amaçlı minimal bir tip: `Widget(5)` -> value=5 (tp_new)
+ * + value += 5 (tp_init) = 10 — tp_new'in AYRICA çalıştığını dıştan
+ * kanıtlamak için tp_init KASITLI olarak ÜZERİNE YAZMAK yerine EKLER.
+ * `Widget(5)(3)` -> tp_call: value + 3 = 13. */
+typedef struct {
+    long value;
+} WidgetObject;
+
+HPyDef_SLOT(Widget_new, HPy_tp_new)
+static HPy Widget_new_impl(HPyContext *ctx, HPy type, const HPy *args, HPy_ssize_t nargs, HPy kw)
+{
+    (void)kw;
+    WidgetObject *data;
+    HPy h = HPy_New(ctx, type, (void **)&data);
+    data->value = (nargs > 0) ? HPyLong_AsLong(ctx, args[0]) : 0;
+    return h;
+}
+
+HPyDef_SLOT(Widget_init, HPy_tp_init)
+static int Widget_init_impl(HPyContext *ctx, HPy self, const HPy *args, HPy_ssize_t nargs, HPy kw)
+{
+    (void)kw;
+    WidgetObject *data = (WidgetObject *)_HPy_AsStruct_Object(ctx, self);
+    if (nargs > 0) {
+        data->value += HPyLong_AsLong(ctx, args[0]);
+    }
+    return 0;
+}
+
+HPyDef_SLOT(Widget_call, HPy_tp_call)
+static HPy Widget_call_impl(HPyContext *ctx, HPy self, const HPy *args, size_t nargs, HPy kwnames)
+{
+    (void)kwnames;
+    WidgetObject *data = (WidgetObject *)_HPy_AsStruct_Object(ctx, self);
+    long extra = (nargs > 0) ? HPyLong_AsLong(ctx, args[0]) : 0;
+    return HPyLong_FromLong(ctx, data->value + extra);
+}
+
+static HPyDef *Widget_defines[] = {
+    &Widget_new,
+    &Widget_init,
+    &Widget_call,
+    NULL
+};
+
+static HPyType_Spec Widget_spec = {
+    .name = "noxtest.Widget",
+    .basicsize = sizeof(WidgetObject),
+    .defines = Widget_defines,
+};
 
 typedef struct {
     long x;
@@ -130,6 +186,22 @@ static HPy dict_get_x_impl(HPyContext *ctx, HPy self, HPy arg)
     return HPy_GetItem_s(ctx, arg, "x");
 }
 
+/* `Counter_type`in AYNI tembel/statik önbellekleme deseni. Modül
+ * metodları yalnızca `HPy` döndürebildiğinden, tip TUTAMACINI Zig test
+ * tarafına geçirmenin tek yolu budur (bkz. Widget_* yukarıda). */
+static HPy Widget_type = { 0 };
+
+HPyDef_METH(get_widget_type, "get_widget_type", HPyFunc_O)
+static HPy get_widget_type_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    (void)arg;
+    if (Widget_type._i == 0) {
+        Widget_type = HPyType_FromSpec(ctx, &Widget_spec, NULL);
+    }
+    return Widget_type;
+}
+
 static HPyDef *module_defines[] = {
     &add_one,
     &str_length,
@@ -141,6 +213,7 @@ static HPyDef *module_defines[] = {
     &make_counter,
     &get_counter_x,
     &get_destroy_count,
+    &get_widget_type,
     NULL
 };
 
