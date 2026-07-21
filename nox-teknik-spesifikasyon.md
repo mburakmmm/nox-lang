@@ -11900,8 +11900,27 @@ doğrulanmıştı). Test yardımcıları da platform-nötr hale getirildi:
 bir UDP-loopback ÇİFTİ (`WindowsReactor.makeLoopbackPair`) VE `send`/
 `recv`/`closesocket` sarmalayıcıları (CRT'nin `read`/`write`/`close`si
 ham Winsock `SOCKET`leri İÇİN GEÇERSİZDİR) eklendi. Yerel olarak (macOS,
-etkilenmeyen dal) Debug/ReleaseSafe/ReleaseFast'te doğrulandı; Windows'un
-KENDİSİ GERÇEK CI'de doğrulandı.
+etkilenmeyen dal) Debug/ReleaseSafe/ReleaseFast'te doğrulandı.
+
+**GERÇEK Windows CI'de İLK denemede 2 gerçek hata bulundu, İKİNCİ
+denemede TÜMÜ yeşil:**
+1. Sahte çerçeve boyutu 232 bayttı — AMA SysV dalının KENDİSİ (56 baytlık
+   çerçeve İçin bile `frame_base = stack_top_aligned - 64`, yani 8 bayt
+   FAZLA) kasıtlı bir boşluk bırakıyordu, `ret` SONRASI `trampoline`ın
+   gördüğü `rsp`nin `stack_top_aligned - 8` (8-mod-16, normal bir
+   `call`/`ret` SONRASI beklenen hizalama) OLMASI İçin. `232` kullanınca
+   `ret` SONRASI rsp TAM `stack_top_aligned` (16-hizalı, YANLIŞ) oluyordu
+   — `fiber`/`scheduler`/`channel` testleri GERÇEK CI'de segfault
+   veriyordu. `240`a (232 + AYNI 8 baytlık boşluk) düzeltildi.
+2. `io_reactor.zig`nin testleri platform-nötr yapılmıştı, ama `io.zig`nin
+   KENDİ testi (`nonBlockingRead`/`Write`i egzersiz eden, `std.c.
+   socketpair`/`AF.UNIX` kullanan) atlanmış kalmıştı — bu, LL.5'in
+   kapsamındaki soket katmanını (Winsock `recv`/`send`) egzersiz ediyor,
+   LL.2/LL.3'ün DEĞİL. `error.SkipZigTest` ile Windows'ta bilinçli
+   atlandı.
+
+İKİNCİ CI çalıştırmasında `zig build async-rt-test` TAMAMEN yeşil geçti
+— fiber/reaktör/zamanlayıcı katmanı Windows'ta GERÇEKTEN doğrulandı.
 
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 

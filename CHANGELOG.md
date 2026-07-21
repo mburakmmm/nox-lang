@@ -1172,8 +1172,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   yalnızca fiber/reaktör katmanını doğrular. Test yardımcıları da
   platform-nötr hale getirildi (Windows'ta `socketpair(AF_UNIX,...)` yok
   — UDP-loopback çift + `send`/`recv`/`closesocket`). Yerel olarak
-  (macOS, etkilenmeyen dal) Debug/ReleaseSafe/ReleaseFast'te doğrulandı;
-  Windows'un kendisi gerçek CI'de doğrulandı.
+  (macOS, etkilenmeyen dal) Debug/ReleaseSafe/ReleaseFast'te doğrulandı.
+  **GERÇEK Windows CI'de İLK denemede 2 hata bulundu:** sahte çerçeve
+  boyutu (232→240 bayt — SysV dalının KENDİSİ de 8 bayt fazla ayırıyor,
+  `ret` sonrası hizalamanın 8-mod-16 olması için; 232 kullanınca fiber/
+  scheduler/channel testleri segfault veriyordu) ve `io.zig`nin (LL.5'in
+  kapsamındaki soket katmanını egzersiz eden, ayrı) kendi testinin
+  atlanmamış olması. İKİNCİ CI çalıştırmasında tamamen yeşil.
 
 ## [1.0.0]
 
