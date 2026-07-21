@@ -1289,6 +1289,22 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   reddedilir (TypeError), `ctx_CallMethod` ertelendi (henüz olmayan
   `ctx_GetAttr` ailesine bağımlı). Kapsam: 180 `ctx_*` fonksiyonundan
   50→**55**'i implemente.
+- **Faz NN — HPy köprüsü: attribute erişimi** (`ctx_GetAttr`/`ctx_GetAttr_
+  s`/`ctx_HasAttr`/`ctx_HasAttr_s`/`ctx_SetAttr`/`ctx_SetAttr_s`). Her
+  `.instance_`e Nox'un EKLEDİĞİ attribute'ları tutan bir `instance_dict`
+  yedek deposu (Python'ın per-instance `__dict__`ine karşılık) + YENİ
+  `ObjTag.bound_method_` (`type_methods`teki bir örnek metodunu bir
+  örnek üzerinden erişildiğinde `self`i BAĞLI tutan gerçek bir "bağlı
+  metod" nesnesine saran mekanizma — Faz MM'nin `callDispatch`/`ctx_
+  Callable_Check`i bunu ÇAĞIRABİLECEK/tanıyabilecek şekilde genişletildi).
+  `tests/compat/hpy_ext/noxtest.c`ye `get_attr_via_c` modül metodu +
+  `Widget`in KENDİ `_defines[]`ine gerçek bir `add_value` örnek metodu
+  eklendi; `hpy_tier0_test.zig`ye 4 yeni uçtan uca test (round-trip,
+  eklenti-tarafı görünürlük, bağlı-metod çağrısı, var olmayan attribute
+  negatif testleri). Bilinçli v1 sınırlaması: `.type_` üzerinden sınıf-
+  seviyesi/unbound attribute erişimi yok; `ctx_CallMethod` hâlâ ayrı bir
+  sonraki dilim (ön koşulu artık hazır). Kapsam: 180 `ctx_*`
+  fonksiyonundan 55→**61**'i implemente.
 
 ## [1.0.0]
 

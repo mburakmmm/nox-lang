@@ -1465,6 +1465,84 @@ de ÖN KOŞULU), `ctx_Repr`/`ctx_Str`/`ctx_Hash`/`ctx_RichCompare` (temel
 nesne protokolünün geri kalanı), member/getset tanımları, buffer
 protokolü. "%100" hâlâ çok-oturumlu bir hedeftir.
 
+### Faz NN — HPy: Attribute Erişimi (ctx_GetAttr ailesi)
+
+Faz MM'nin "doğal sıradaki adımlar" listesinin İLK maddesi ele alındı:
+`ctx_GetAttr`/`ctx_GetAttr_s`/`ctx_HasAttr`/`ctx_HasAttr_s`/`ctx_SetAttr`/
+`ctx_SetAttr_s`. Hem kendi başına önemli HEM `ctx_CallMethod`in ön koşulu
+olan bir dilim.
+
+**Mimari bulgu:** Nox'un nesne modelinde `.instance_` nesneleri İçin
+HİÇBİR attribute DEPOLAMA mekanizması YOKTU — yalnızca `instance_type` +
+eklentinin OPAK `instance_data: []u8` ham struct'ı (Python'ın genel
+`__dict__`ine KARŞILIK gelen bir şey YOK). Ayrıca `type_methods` (mevcut,
+`HPyFunc_O` imzalı örnek metodları TUTAN liste) HİÇBİR `ctx_*` yolundan
+İSME göre ARANMIYORDU. Bu YÜZDEN bu dilim İKİ yeni parça ekledi:
+
+1. Her `.instance_`e KENDİ (Nox'un EKLEDİĞİ) attribute'larını tutan bir
+   yedek depo — `instance_dict: std.ArrayListUnmanaged(Obj.DictEntry)`
+   (MEVCUT `.dict_`in AYNI `DictEntry{key, value}` struct'ını YENİDEN
+   KULLANIR) — Python'ın per-instance `__dict__`inin bir KARŞILIĞI.
+2. `type_methods`teki bir metodu bir ÖRNEK üzerinden eriştiğinde GERÇEK
+   bir "bağlı metod" (bound method) nesnesine SARAN bir mekanizma — YENİ
+   `ObjTag.bound_method_` (alanlar: `bound_method_self: HPy` [retained],
+   `bound_method_impl` — `TypeMethod.impl` İLE AYNI `HPyFunc_O` imzası).
+   Aksi halde metod, `self`i KAYBEDEREK dönerdi.
+
+**Çekirdek dağıtım — `attrLookup`:** `ctxGetAttr` VE `ctxHasAttr` İKİSİ DE
+hata AYARLAMAYAN paylaşılan bir iç yardımcıya (`attrLookup`) varır —
+Python'ın `hasattr`in `AttributeError`ı YUTMASI semantiğiyle TUTARLI.
+Sıra: (a) `instance_dict`te İÇERİK-EŞİT bir `.str_` anahtar ARA, (b)
+yoksa `instance_type`in `type_methods`inde ARA (BULUNURSA YENİ bir
+`.bound_method_` nesnesine SARIP DÖN), (c) yoksa `null`. `ctxSetAttr`
+(YALNIZCA `.instance_` İçin — `.type_` üzerinden sınıf-seviyesi/unbound
+attribute atama BU dilimde DESTEKLENMİYOR, kapsam BİLİNÇLİ dar tutuldu)
+`instance_dict`te GÜNCELLER (VARSA eski değeri `ctxClose`, yeniyi
+`ctxDup`) YA DA YENİ bir giriş EKLER (`ctxSetItem`in dict-güncelleme
+deseniyle AYNI). `_s` sarmalayıcıları (`ctxGetAttrS`/`ctxHasAttrS`/
+`ctxSetAttrS`) MEVCUT `ctxGetItemS`/`ctxSetItemS` deseninin BİREBİR
+aynısı — geçici bir `.str_` Obj İNŞA edip `defer ctxClose` İLE serbest
+bırakır.
+
+**`callDispatch`/`ctxCallableCheck` genişlemesi (Faz MM'nin ÜZERİNE):**
+`.bound_method_` İçin YENİ bir dal — TAM OLARAK `nargs == 1` şartıyla
+`bound_method_impl(ctx, bound_method_self, args[0])` çağrılır (aksi
+halde TypeError); `ctxCallableCheck` `.bound_method_`i HER ZAMAN
+çağrılabilir (`1`) sayar.
+
+**Bilinçli v1 sınırlamaları:**
+- `.type_` tutamaçları ÜZERİNDEN DOĞRUDAN attribute erişimi (sınıf-
+  seviyesi/unbound erişim) YOK — gerçek kullanım örüntülerinde ÖRNEK
+  erişimi ÇOK daha yaygın, kapsam BİLİNÇLİ dar tutuldu.
+- `ctx_CallMethod` HÂLÂ bu fazda YOK — ön koşulu (attribute erişimi)
+  ARTIK var, ama kendisi henüz AYRI bir dilim olarak UYGULANMADI.
+
+**Doğrulama:** `tests/compat/hpy_ext/noxtest.c`ye İKİ yeni parça: (1)
+`get_attr_via_c` modül metodu (`HPy_GetAttr_s(ctx, arg, "label")`
+ÇAĞIRARAK, eklentinin KENDİ C kodunun Nox'un `instance_dict`ine GERÇEK
+bir HPy çağrısı üzerinden erişebildiğini kanıtlar), (2) `Widget`in KENDİ
+`_defines[]`ine GERÇEK bir örnek metodu (`add_value`, `HPyFunc_O`) —
+`Counter`in/`Widget`in ÖNCEKİ modül-seviyesi metodlarının (`get_counter_x`
+gibi) `type_methods`e KAYITLI OLMADIĞI (yalnızca `module_defines[]`e)
+fark edilmesi ÜZERİNE eklendi, bound-method testini GERÇEK bir
+`type_methods` girişine karşı çalıştırabilmek İçin. `hpy_tier0_test.zig`ye
+(yeni dosya AÇILMADI) 4 yeni uçtan uca test: (a) `ctx_SetAttr_s`/
+`ctx_GetAttr_s`/`ctx_HasAttr_s` — `Widget` örneğinin `"label"`
+attribute'unda round-trip + güncelleme yolu, (b) `get_attr_via_c` İLE
+AYNI attribute'un eklentinin KENDİ C kodundan da okunabildiğinin
+doğrulanması, (c) `ctx_GetAttr_s(widget, "add_value")` → `.bound_method_`
+→ `ctx_Call` (TEK argümanla) → `self`in DOĞRU BAĞLANDIĞININ kanıtlanması
+(`widget.value + arg`), (d) NEGATİF: var OLMAYAN bir attribute İçin
+`ctx_GetAttr_s` → `HPy_NULL` + `AttributeError`, `ctx_HasAttr_s` → `0`
+(hatasız). Toplam: 15/15 (bu dosyada) — hızlı/izole `zig test` yöntemiyle
+doğrulandı (bkz. AGENTS.md §10).
+
+**Dürüst kapsam durumu:** 180 `ctx_*` fonksiyonundan **61'i** implemente
+(bu fazdan ÖNCE 55'ti). Doğal sıradaki adımlar: `ctx_CallMethod` (artık
+ön koşulu HAZIR), `ctx_Repr`/`ctx_Str`/`ctx_Hash`/`ctx_RichCompare`
+(temel nesne protokolünün geri kalanı), member/getset tanımları, buffer
+protokolü. "%100" hâlâ çok-oturumlu bir hedeftir.
+
 ---
 
 ### 3.20 Faz 20 Uygulama Kapsamı — Zig/C ABI FFI (`extern def`)

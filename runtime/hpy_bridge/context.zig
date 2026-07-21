@@ -11,9 +11,9 @@
 //! `scripts/gen_hpy_ctx.py`) üretilmiş, bayt-uyumlu bir transkripsiyonunu
 //! GEREKTİRİR — bir eklenti bu struct'a doğrudan (sabit ofsetlerle) erişir,
 //! bu yüzden alan SIRASI ve BOYUTU tam olarak eşleşmelidir. Şu an 180
-//! `ctx_*` alanından **55'i** GERÇEKTEN implemente (aşağıda özel fonksiyon
+//! `ctx_*` alanından **61'i** GERÇEKTEN implemente (aşağıda özel fonksiyon
 //! işaretçisi tipleriyle işaretli — tam liste/tier dökümü İçin bkz.
-//! nox-teknik-spesifikasyon.md §3.12 VE DEVAMI, en son Faz MM) — geri
+//! nox-teknik-spesifikasyon.md §3.12 VE DEVAMI, en son Faz NN) — geri
 //! kalanı `null` (kullanılmazlarsa zararsız; bir eklenti bunlardan birini
 //! çağırırsa çökme/segfault olur, bkz. spesifikasyondaki bilinçli
 //! sınırlamalar).
@@ -39,7 +39,7 @@ pub const HPy_NULL: HPy = .{ ._i = 0 };
 /// korunur (bkz. `PINNED_REFCOUNT`) — bu, gerçek CPython'ın `Py_None`/
 /// `Py_True`/`Py_False` tekillerinin de asla serbest bırakılmamasıyla aynı
 /// ruhta bir basitleştirmedir.
-pub const ObjTag = enum(u8) { none, bool_, long, float_, str_, exc_type, list_, tuple_, dict_, type_, instance_ };
+pub const ObjTag = enum(u8) { none, bool_, long, float_, str_, exc_type, list_, tuple_, dict_, type_, instance_, bound_method_ };
 
 /// `HPyType_FromSpec`in bir `type_` nesnesine kaydettiği tek bir örnek
 /// metodu (`HPyDef_Kind_Meth` + `HPyFunc_O` — Tier 0'ın modül metodu
@@ -100,6 +100,22 @@ pub const Obj = struct {
     /// struct'ına cast eder).
     instance_type: HPy = HPy_NULL,
     instance_data: []u8 = &.{},
+    /// Yalnızca `tag == .instance_` — attribute erişimi (bkz. §3.12'nin
+    /// AYNI adlı bölümü). Python'ın per-instance `__dict__`inin bir
+    /// KARŞILIĞI: eklentinin OPAK `instance_data` ham struct'ına HİÇ
+    /// DOKUNMADAN, Nox'un (`ctx_SetAttr`/`_s` İLE) SONRADAN EKLEDİĞİ
+    /// attribute'ları tutar — `.dict_`in AYNI `DictEntry` yapısını
+    /// YENİDEN kullanır.
+    instance_dict: std.ArrayListUnmanaged(DictEntry) = .empty,
+    /// Yalnızca `tag == .bound_method_` — `ctx_GetAttr`in bir örnek
+    /// ÜZERİNDEN `type_methods`teki bir metodu BULDUĞUNDA sardığı nesne
+    /// (Python'ın `instance.method`inin `self`i TAŞIYAN bağlı metoduyla
+    /// AYNI fikir). `bound_method_self` RETAINED (bkz. `ctxDup`),
+    /// `bound_method_impl` `TypeMethod.impl` İLE AYNI `HPyFunc_O` imzalı
+    /// — `callDispatch` (çağrılabilir nesne protokolü) BUNU tek argümanlı
+    /// bir çağrıya DAĞITIR.
+    bound_method_self: HPy = HPy_NULL,
+    bound_method_impl: ?*const fn (ctx: *HPyContext, self: HPy, arg: HPy) callconv(.c) HPy = null,
 
     pub const Payload = extern union {
         b: bool,
@@ -165,7 +181,15 @@ fn ctxClose(ctx: *HPyContext, h: HPy) callconv(.c) void {
                 }
                 ctxClose(ctx, obj.instance_type);
                 allocator.free(obj.instance_data);
+                // `.dict_`in AYNI deseni — attribute erişimi (bkz. `Obj.
+                // instance_dict`in belge notu).
+                for (obj.instance_dict.items) |entry| {
+                    ctxClose(ctx, entry.key);
+                    ctxClose(ctx, entry.value);
+                }
+                obj.instance_dict.deinit(allocator);
             },
+            .bound_method_ => ctxClose(ctx, obj.bound_method_self),
             .none, .bool_, .long, .float_, .exc_type => {},
         }
         allocator.destroy(obj);
@@ -182,7 +206,7 @@ fn ctxLongAsInt64(ctx: *HPyContext, h: HPy) callconv(.c) i64 {
         .long => obj.payload.l,
         .bool_ => if (obj.payload.b) 1 else 0,
         .float_ => @intFromFloat(obj.payload.f),
-        .none, .str_, .exc_type, .list_, .tuple_, .dict_, .type_, .instance_ => blk: {
+        .none, .str_, .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_ => blk: {
             ctxErrSetString(ctx, ctx.h_TypeError, "int'e dönüştürülemez");
             break :blk -1;
         },
@@ -199,7 +223,7 @@ fn ctxFloatAsDouble(ctx: *HPyContext, h: HPy) callconv(.c) f64 {
         .float_ => obj.payload.f,
         .long => @floatFromInt(obj.payload.l),
         .bool_ => if (obj.payload.b) 1 else 0,
-        .none, .str_, .exc_type, .list_, .tuple_, .dict_, .type_, .instance_ => blk: {
+        .none, .str_, .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_ => blk: {
             ctxErrSetString(ctx, ctx.h_TypeError, "float'a dönüştürülemez");
             break :blk 0;
         },
@@ -251,7 +275,7 @@ fn ctxLength(ctx: *HPyContext, h: HPy) callconv(.c) isize {
         .list_ => @intCast(obj.list_data.items.len),
         .tuple_ => @intCast(obj.tuple_data.len),
         .dict_ => @intCast(obj.dict_data.items.len),
-        .none, .bool_, .long, .float_, .exc_type, .type_, .instance_ => blk: {
+        .none, .bool_, .long, .float_, .exc_type, .type_, .instance_, .bound_method_ => blk: {
             ctxErrSetString(ctx, ctx.h_TypeError, "bu tipin bir uzunluğu yok");
             break :blk -1;
         },
@@ -270,7 +294,7 @@ fn ctxIsTrue(ctx: *HPyContext, h: HPy) callconv(.c) c_int {
         .list_ => @intFromBool(obj.list_data.items.len != 0),
         .tuple_ => @intFromBool(obj.tuple_data.len != 0),
         .dict_ => @intFromBool(obj.dict_data.items.len != 0),
-        .exc_type, .type_, .instance_ => 1,
+        .exc_type, .type_, .instance_, .bound_method_ => 1,
     };
 }
 
@@ -287,7 +311,7 @@ fn objEquals(a: *Obj, b: *Obj) bool {
         .none => true,
         .str_ => std.mem.eql(u8, a.str_data, b.str_data),
         .bool_, .long, .float_ => unreachable, // isNumericTag zaten yakaladı
-        .exc_type, .list_, .tuple_, .dict_, .type_, .instance_ => a == b,
+        .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_ => a == b,
     };
 }
 
@@ -816,6 +840,127 @@ fn ctxTypeCheck(ctx: *HPyContext, obj_h: HPy, type_h: HPy) callconv(.c) c_int {
     return @intFromBool(obj.instance_type._i == type_h._i);
 }
 
+// ---- Attribute erişimi ----
+//
+// `ctx_GetAttr`/`ctx_GetAttr_s`/`ctx_HasAttr`/`ctx_HasAttr_s`/`ctx_SetAttr`/
+// `ctx_SetAttr_s`. Python'ın varsayılan `tp_getattro`sunun (`_PyObject_
+// GenericGetAttr`) BASİTLEŞTİRİLMİŞ bir karşılığı — SIRA: (a) örneğin
+// KENDİ `instance_dict`i (Nox'un `ctx_SetAttr`/`_s` İLE EKLEDİĞİ
+// attribute'lar), (b) tipin `type_methods`i (BULUNURSA bir `.bound_
+// method_` nesnesine SARILIR — Python'ın `instance.method`inin `self`i
+// TAŞIYAN bağlı metoduyla AYNI fikir).
+//
+// **Bilinçli v1 sınırlaması:** `.type_` tutamaçları ÜZERİNDEN DOĞRUDAN
+// attribute erişimi (sınıf-seviyesi/unbound erişim, ör. `SomeType.attr`)
+// desteklenmiyor — gerçek kullanım örüntülerinde ÖRNEK erişimi ÇOK daha
+// yaygın, kapsam bilinçli olarak dar tutuldu.
+fn findDictEntryStr(list: *std.ArrayListUnmanaged(Obj.DictEntry), name: []const u8) ?usize {
+    for (list.items, 0..) |entry, i| {
+        const key = objOf(entry.key) orelse continue;
+        if (key.tag == .str_ and std.mem.eql(u8, key.str_data, name)) return i;
+    }
+    return null;
+}
+
+/// Hata AYARLAMAYAN iç yardımcı — HEM `ctxGetAttr` HEM `ctxHasAttr` bunu
+/// PAYLAŞIR (`hasattr`in Python'da AttributeError'ı YUTMASı semantiğiyle
+/// TUTARLI, bkz. çağıranların KENDİ hata ayarlama sorumluluğu). `obj_h`,
+/// bulunan bir `type_methods` girişini bir `.bound_method_` nesnesine
+/// SARARKEN `self` OLARAK retain etmek İçin GEREKİR.
+fn attrLookup(ctx: *HPyContext, obj_h: HPy, obj: *Obj, name: []const u8) ?HPy {
+    if (obj.tag != .instance_) return null;
+    if (findDictEntryStr(&obj.instance_dict, name)) |i| {
+        return ctxDup(ctx, obj.instance_dict.items[i].value);
+    }
+    if (findTypeMethodO(obj.instance_type, name)) |method| {
+        const allocator = contextAllocator(ctx);
+        const bm = allocator.create(Obj) catch return null;
+        bm.* = .{
+            .refcount = 1,
+            .tag = .bound_method_,
+            .payload = .{ .l = 0 },
+            .bound_method_self = ctxDup(ctx, obj_h),
+            .bound_method_impl = method.impl,
+        };
+        return .{ ._i = @intCast(@intFromPtr(bm)) };
+    }
+    return null;
+}
+
+fn ctxGetAttr(ctx: *HPyContext, obj_h: HPy, name_h: HPy) callconv(.c) HPy {
+    const obj = objOf(obj_h) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "geçersiz nesne");
+        return HPy_NULL;
+    };
+    const name_obj = objOf(name_h) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "attribute adı str olmalı");
+        return HPy_NULL;
+    };
+    if (name_obj.tag != .str_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "attribute adı str olmalı");
+        return HPy_NULL;
+    }
+    return attrLookup(ctx, obj_h, obj, name_obj.str_data) orelse {
+        ctxErrSetString(ctx, ctx.h_AttributeError, "böyle bir attribute yok");
+        return HPy_NULL;
+    };
+}
+
+fn ctxGetAttrS(ctx: *HPyContext, obj_h: HPy, utf8_name: ?[*:0]const u8) callconv(.c) HPy {
+    const name_h = ctxUnicodeFromString(ctx, utf8_name);
+    defer ctxClose(ctx, name_h);
+    return ctxGetAttr(ctx, obj_h, name_h);
+}
+
+fn ctxHasAttr(ctx: *HPyContext, obj_h: HPy, name_h: HPy) callconv(.c) c_int {
+    const obj = objOf(obj_h) orelse return 0;
+    const name_obj = objOf(name_h) orelse return 0;
+    if (name_obj.tag != .str_) return 0;
+    const found = attrLookup(ctx, obj_h, obj, name_obj.str_data) orelse return 0;
+    ctxClose(ctx, found);
+    return 1;
+}
+
+fn ctxHasAttrS(ctx: *HPyContext, obj_h: HPy, utf8_name: ?[*:0]const u8) callconv(.c) c_int {
+    const name_h = ctxUnicodeFromString(ctx, utf8_name);
+    defer ctxClose(ctx, name_h);
+    return ctxHasAttr(ctx, obj_h, name_h);
+}
+
+/// Yalnızca `.instance_` üzerinde çalışır — Nox'un `instance_dict`ine
+/// (bkz. `Obj.instance_dict`in belge notu) EKLE/GÜNCELLE. `ctxSetItem`in
+/// dict-güncelleme dalıyla AYNI sahiplik deseni: anahtar VE değer İKİSİ
+/// DE `ctxDup` ile SAKLANIR (çağıranın kendi tutamacından BAĞIMSIZ).
+fn ctxSetAttr(ctx: *HPyContext, obj_h: HPy, name_h: HPy, value: HPy) callconv(.c) c_int {
+    const obj = objOf(obj_h) orelse return -1;
+    if (obj.tag != .instance_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "bu tip attribute atamasını desteklemiyor");
+        return -1;
+    }
+    const name_obj = objOf(name_h) orelse return -1;
+    if (name_obj.tag != .str_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "attribute adı str olmalı");
+        return -1;
+    }
+    if (findDictEntryStr(&obj.instance_dict, name_obj.str_data)) |i| {
+        const old_value = obj.instance_dict.items[i].value;
+        obj.instance_dict.items[i].value = ctxDup(ctx, value);
+        ctxClose(ctx, old_value);
+        return 0;
+    }
+    obj.instance_dict.append(contextAllocator(ctx), .{ .key = ctxDup(ctx, name_h), .value = ctxDup(ctx, value) }) catch {
+        ctxErrNoMemory(ctx);
+        return -1;
+    };
+    return 0;
+}
+
+fn ctxSetAttrS(ctx: *HPyContext, obj_h: HPy, utf8_name: ?[*:0]const u8, value: HPy) callconv(.c) c_int {
+    const name_h = ctxUnicodeFromString(ctx, utf8_name);
+    defer ctxClose(ctx, name_h);
+    return ctxSetAttr(ctx, obj_h, name_h, value);
+}
+
 // ---- Çağrılabilir nesne protokolü ----
 //
 // `ctx_Callable_Check`/`ctx_Call`/`ctx_CallTupleDict`/`ctx_SetCallFunction`/
@@ -857,6 +1002,20 @@ fn callDispatch(ctx: *HPyContext, callable: HPy, args: ?[*]const HPy, nargs: usi
                 return HPy_NULL;
             };
             return call_fn(ctx, callable, args, nargs, HPy_NULL);
+        },
+        .bound_method_ => {
+            // `attrLookup`in sardığı metodlar HER ZAMAN `HPyFunc_O`
+            // imzalı (bkz. `TypeMethod`in belge notu) — tam olarak BİR
+            // argüman gerektirir.
+            if (nargs != 1 or args == null) {
+                ctxErrSetString(ctx, ctx.h_TypeError, "bu yöntem tam olarak bir argüman alır");
+                return HPy_NULL;
+            }
+            const impl = obj.bound_method_impl orelse {
+                ctxErrSetString(ctx, ctx.h_TypeError, "çağrılabilir değil");
+                return HPy_NULL;
+            };
+            return impl(ctx, obj.bound_method_self, args.?[0]);
         },
         else => {
             ctxErrSetString(ctx, ctx.h_TypeError, "çağrılabilir değil");
@@ -910,6 +1069,7 @@ fn ctxCallableCheck(ctx: *HPyContext, h: HPy) callconv(.c) c_int {
             const type_obj = objOf(obj.instance_type) orelse break :blk 0;
             break :blk @intFromBool(type_obj.type_tp_call != null);
         },
+        .bound_method_ => 1,
         else => 0,
     };
 }
@@ -1332,12 +1492,12 @@ pub const HPyContext = extern struct {
     ctx_IsTrue: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) c_int = null,
     ctx_Type_FromSpec: ?*const fn (ctx: *HPyContext, spec: ?*HPyType_Spec, params: ?*HPyType_SpecParam) callconv(.c) HPy = null,
     ctx_Type_GenericNew: ?*const anyopaque = null,
-    ctx_GetAttr: ?*const anyopaque = null,
-    ctx_GetAttr_s: ?*const anyopaque = null,
-    ctx_HasAttr: ?*const anyopaque = null,
-    ctx_HasAttr_s: ?*const anyopaque = null,
-    ctx_SetAttr: ?*const anyopaque = null,
-    ctx_SetAttr_s: ?*const anyopaque = null,
+    ctx_GetAttr: ?*const fn (ctx: *HPyContext, obj: HPy, name: HPy) callconv(.c) HPy = null,
+    ctx_GetAttr_s: ?*const fn (ctx: *HPyContext, obj: HPy, utf8_name: ?[*:0]const u8) callconv(.c) HPy = null,
+    ctx_HasAttr: ?*const fn (ctx: *HPyContext, obj: HPy, name: HPy) callconv(.c) c_int = null,
+    ctx_HasAttr_s: ?*const fn (ctx: *HPyContext, obj: HPy, utf8_name: ?[*:0]const u8) callconv(.c) c_int = null,
+    ctx_SetAttr: ?*const fn (ctx: *HPyContext, obj: HPy, name: HPy, value: HPy) callconv(.c) c_int = null,
+    ctx_SetAttr_s: ?*const fn (ctx: *HPyContext, obj: HPy, utf8_name: ?[*:0]const u8, value: HPy) callconv(.c) c_int = null,
     ctx_GetItem: ?*const fn (ctx: *HPyContext, obj: HPy, key: HPy) callconv(.c) HPy = null,
     ctx_GetItem_i: ?*const fn (ctx: *HPyContext, obj: HPy, idx: isize) callconv(.c) HPy = null,
     ctx_GetItem_s: ?*const fn (ctx: *HPyContext, obj: HPy, utf8_key: ?[*:0]const u8) callconv(.c) HPy = null,
@@ -1571,6 +1731,12 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
         .ctx_AsStruct_Object = ctxAsStructObject,
         .ctx_Type = ctxType,
         .ctx_TypeCheck = ctxTypeCheck,
+        .ctx_GetAttr = ctxGetAttr,
+        .ctx_GetAttr_s = ctxGetAttrS,
+        .ctx_HasAttr = ctxHasAttr,
+        .ctx_HasAttr_s = ctxHasAttrS,
+        .ctx_SetAttr = ctxSetAttr,
+        .ctx_SetAttr_s = ctxSetAttrS,
         .ctx_Callable_Check = ctxCallableCheck,
         .ctx_Call = ctxCall,
         .ctx_CallTupleDict = ctxCallTupleDict,

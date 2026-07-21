@@ -63,10 +63,26 @@ static HPy Widget_call_impl(HPyContext *ctx, HPy self, const HPy *args, size_t n
     return HPyLong_FromLong(ctx, data->value + extra);
 }
 
+/* Attribute erişimi (ctx_GetAttr ailesi) test amaçlı GERÇEK bir örnek
+ * metodu — `Counter`in `get_counter_x`i GİBİ MODÜL-seviyesi bir
+ * fonksiyon DEĞİL, Widget'ın KENDİ `_defines[]`ine kayıtlı (bkz.
+ * `HPyType_FromSpec`in `HPyFunc_O` imzalı örnek metodları toplama
+ * mekanizması, Faz 19) — `widget.add_value(3)` şeklinde `self`i GERÇEKTEN
+ * BAĞLI bir metod olarak erişilebilmesi (`ctx_GetAttr_s` + `ctx_Call`)
+ * İÇİN vardır.
+ */
+HPyDef_METH(Widget_add_value, "add_value", HPyFunc_O)
+static HPy Widget_add_value_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    WidgetObject *data = (WidgetObject *)_HPy_AsStruct_Object(ctx, self);
+    return HPyLong_FromLong(ctx, data->value + HPyLong_AsLong(ctx, arg));
+}
+
 static HPyDef *Widget_defines[] = {
     &Widget_new,
     &Widget_init,
     &Widget_call,
+    &Widget_add_value,
     NULL
 };
 
@@ -202,6 +218,19 @@ static HPy get_widget_type_impl(HPyContext *ctx, HPy self, HPy arg)
     return Widget_type;
 }
 
+/* Attribute erişimi (ctx_GetAttr ailesi) test amaçlı: eklentinin KENDİ
+ * C kodunun `HPy_GetAttr_s`'i ÇAĞIRMASI (`dict_get_x`in `HPy_GetItem_s`
+ * KULLANMASIYLA AYNI desen) — Nox'un `instance_dict`ine (Zig testinin
+ * `HPy_SetAttr_s` ile EKLEDİĞİ, eklentinin C struct'ında HİÇ VAR
+ * OLMAYAN) bir attribute'un, GERÇEK bir HPy çağrısı üzerinden C KODUNA
+ * da GÖRÜNÜR olduğunu doğrular. */
+HPyDef_METH(get_attr_via_c, "get_attr_via_c", HPyFunc_O)
+static HPy get_attr_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    return HPy_GetAttr_s(ctx, arg, "label");
+}
+
 static HPyDef *module_defines[] = {
     &add_one,
     &str_length,
@@ -214,6 +243,7 @@ static HPyDef *module_defines[] = {
     &get_counter_x,
     &get_destroy_count,
     &get_widget_type,
+    &get_attr_via_c,
     NULL
 };
 
