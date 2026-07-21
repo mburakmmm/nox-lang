@@ -12033,8 +12033,39 @@ LL.5'TEN İZOLE test etmeyi İMKANSIZ kıldığından. Bu adım TEK seferde
   yalnızca DEĞİŞKEN bir tohum değeri yeterli).
 
 Bu SEFERKİ değişikliklerle `zig build`in TAM (runtime dahil) Windows
-CI keşif adımı 15 hatadan 0'a İNMESİ BEKLENİYOR — bir SONRAKİ push'ta
-GERÇEK CI'de doğrulanacak.
+CI keşif adımı 15 hatadan 0'a İNDİ — **GERÇEK Windows CI'de DOĞRULANDI**
+(`windows-latest`, `zig build` adımı temiz geçti).
+
+### LL.5 (TAMAMLANDI) — `nox.thread`/`nox.channel`nin self-pipe deseni
+
+Yukarıdaki keşif turunda `zig build`in error listesi `thread_bridge.zig`/
+`thread_channel.zig`e HENÜZ ULAŞMAMIŞTI (önceki dosyalardaki hatalar
+Zig'in analiz SIRASINI ENGELLİYORDU) — ama bu İKİ dosya `nox.thread.
+start`/`ThreadChannel[T]`in TEMEL taşı olan AYNI `std.c.pipe`
+self-pipe desenini (http_client.zig'in `workerThreadFn` tamamlanma
+sinyaliyle BİREBİR AYNI) kullanıyordu; proaktif bir `grep` TARAMASIYLA
+(CI turunu BEKLEMEDEN) bulundu. Çözüm: `http_client.zig`nin `makeSelfPipe`/
+`closeFd`/`signalSelfPipe`/`readSelfPipe` yardımcıları `pub` yapılıp
+(zaten HER İKİ dosya da `dupeToNoxStr` İçin `http_client.zig`yi
+İTHAL EDİYORDU) DOĞRUDAN yeniden KULLANILDI — YENİ bir kopya
+YAZILMADI (`WinSock`in io.zig'de paylaşılmasıyla AYNI ilke). `sleepMs`
+(thread_bridge.zig'in test yardımcısı) DOKUNULMADAN bırakıldı —
+`nanosleep`/`timespec` Windows'ta GERÇEK, koşulsuz externler/case'ler
+OLDUĞU (fs.zig'in LL.4 bulgusu) İçin zaten ÇALIŞIYOR.
+
+Bu FİX de dahil (aynı pushta), GERÇEK Windows CI'de `zig build`in TAM
+(runtime + HPy köprüsü + tüm stdlib_shims) derlemesi **SIFIR hatayla
+DOĞRULANDI** — Faz LL'nin EN büyük teknik riski (runtime'ın Windows'ta
+DERLENMESİ) BÖYLECE TAMAMEN aşıldı. Kalan: LL.6 (MinGW-w64 bağlayıcı
+ayarları — özellikle `GetModuleHandleA`+`GetProcAddress`in GERÇEKTEN
+sembol BULABİLMESİ İçin export bayrakları), LL.7 (release.yml/
+install.ps1), LL.8 (dokümantasyon). **Henüz doğrulanmayan:** derlenen
+`noxrt.o` + QBE çıktısının GERÇEK bir Windows İKİLİSİNE bağlanıp
+ÇALIŞTIRILMASI (bugüne kadar yalnızca `zig build`/`zig build test`
+DOĞRULANDI — bu, Zig KAYNAK kodunun Windows'ta derlendiğini/testlerinin
+GEÇTİĞİNİ KANITLAR, ama QBE'nin ürettiği assembly'nin `cc`/MinGW
+İLE bağlanıp GERÇEK bir Nox PROGRAMI çalıştırabildiğini HENÜZ
+KANITLAMAZ — bu, LL.6'nın asıl konusu).
 
 Yerel olarak (macOS, Debug/ReleaseSafe/ReleaseFast) TÜM değişiklikler
 doğrulandı — Windows dalları (`builtin.os.tag == .windows` altında)

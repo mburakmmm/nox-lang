@@ -38,7 +38,7 @@ const str_mod = @import("../str.zig");
 /// AYNI teknik) — bir tarafa `send` edilen TEK bayt, diğer taraftan
 /// `recv` edilerek OKUNUR, `nonBlockingRead`in (D.0'ın reaktörü) BEKLEDİĞİ
 /// "hazır-olma bildirimi alınabilen bir fd" sözleşmesini AYNEN karşılar.
-fn makeSelfPipe() ?[2]posix.fd_t {
+pub fn makeSelfPipe() ?[2]posix.fd_t {
     if (builtin.os.tag == .windows) {
         const ws = io_mod.WinSock;
         const a = ws.socket(ws.AF_INET, 2, 17); // SOCK_DGRAM=2, IPPROTO_UDP=17
@@ -77,7 +77,7 @@ fn makeSelfPipe() ?[2]posix.fd_t {
     return fds;
 }
 
-fn closeFd(fd: posix.fd_t) void {
+pub fn closeFd(fd: posix.fd_t) void {
     if (builtin.os.tag == .windows) {
         _ = io_mod.WinSock.closesocket(@intFromPtr(fd));
     } else {
@@ -85,7 +85,7 @@ fn closeFd(fd: posix.fd_t) void {
     }
 }
 
-fn signalSelfPipe(fd: posix.fd_t) void {
+pub fn signalSelfPipe(fd: posix.fd_t) void {
     if (builtin.os.tag == .windows) {
         var b: [1]u8 = .{1};
         _ = io_mod.WinSock.send(@intFromPtr(fd), &b, 1, 0);
@@ -95,7 +95,7 @@ fn signalSelfPipe(fd: posix.fd_t) void {
     }
 }
 
-fn readSelfPipe(fd: posix.fd_t, buf: []u8) void {
+pub fn readSelfPipe(fd: posix.fd_t, buf: []u8) void {
     if (builtin.os.tag == .windows) {
         _ = io_mod.WinSock.recv(@intFromPtr(fd), buf.ptr, @intCast(buf.len), 0);
     } else {

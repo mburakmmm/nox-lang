@@ -106,10 +106,10 @@ pub const ThreadChannel = struct {
 
     fn release(self: *ThreadChannel) void {
         if (self.owners.fetchSub(1, .acq_rel) == 1) {
-            _ = std.c.close(self.recv_wakeup_read_fd);
-            _ = std.c.close(self.recv_wakeup_write_fd);
-            _ = std.c.close(self.send_wakeup_read_fd);
-            _ = std.c.close(self.send_wakeup_write_fd);
+            http_client.closeFd(self.recv_wakeup_read_fd);
+            http_client.closeFd(self.recv_wakeup_write_fd);
+            http_client.closeFd(self.send_wakeup_read_fd);
+            http_client.closeFd(self.send_wakeup_write_fd);
             self.buffer.deinit(std.heap.page_allocator);
             std.heap.page_allocator.destroy(self);
         }
@@ -126,13 +126,12 @@ fn waitForByte(fd: posix.fd_t) void {
     if (bridge.currentFiberScheduler()) |scheduler| {
         _ = io_mod.nonBlockingRead(scheduler, fd, &buf) catch {};
     } else {
-        _ = std.c.read(fd, &buf, 1);
+        http_client.readSelfPipe(fd, &buf);
     }
 }
 
 fn signalByte(fd: posix.fd_t) void {
-    var b = [_]u8{1};
-    _ = std.c.write(fd, &b, 1);
+    http_client.signalSelfPipe(fd);
 }
 
 fn ptrToPayload(ptr: anytype) i64 {
@@ -199,20 +198,18 @@ export fn nox_threadchannel_new(rt: ?*anyopaque, capacity: i64) callconv(.c) ?*a
     _ = rt;
     if (capacity < 1) return null;
 
-    var recv_fds: [2]posix.fd_t = undefined;
-    if (std.c.pipe(&recv_fds) != 0) return null;
-    var send_fds: [2]posix.fd_t = undefined;
-    if (std.c.pipe(&send_fds) != 0) {
-        _ = std.c.close(recv_fds[0]);
-        _ = std.c.close(recv_fds[1]);
+    const recv_fds = http_client.makeSelfPipe() orelse return null;
+    const send_fds = http_client.makeSelfPipe() orelse {
+        http_client.closeFd(recv_fds[0]);
+        http_client.closeFd(recv_fds[1]);
         return null;
-    }
+    };
 
     const tc = std.heap.page_allocator.create(ThreadChannel) catch {
-        _ = std.c.close(recv_fds[0]);
-        _ = std.c.close(recv_fds[1]);
-        _ = std.c.close(send_fds[0]);
-        _ = std.c.close(send_fds[1]);
+        http_client.closeFd(recv_fds[0]);
+        http_client.closeFd(recv_fds[1]);
+        http_client.closeFd(send_fds[0]);
+        http_client.closeFd(send_fds[1]);
         return null;
     };
     tc.* = .{

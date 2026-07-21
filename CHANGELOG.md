@@ -1210,9 +1210,17 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   `cycle_detector.zig`nin `dlopen(null, ...)` self-lookup desenine
   `GetModuleHandleA`+`GetProcAddress`. `random.zig`nin PRNG tohumlaması
   da (AYNI `clockid_t`-void sorunu, keşifte gözden kaçmıştı)
-  `QueryPerformanceCounter`e geçirildi. Tam `zig build`in Windows
-  keşif adımı artık 0 hata BEKLENİYOR — bir sonraki push'ta CI'de
-  doğrulanacak.
+  `QueryPerformanceCounter`e geçirildi. **Tam `zig build`in Windows
+  keşif adımı GERÇEK CI'de SIFIR hatayla doğrulandı.**
+- **Faz LL.5 tamamlandı — `nox.thread`/`ThreadChannel`nin self-pipe
+  portu.** `thread_bridge.zig`/`thread_channel.zig` de (CI'nin henüz
+  ulaşamadığı, proaktif taramayla bulunan) AYNI `std.c.pipe` desenini
+  kullanıyordu — `http_client.zig`nin `makeSelfPipe`/`closeFd`/
+  `signalSelfPipe`/`readSelfPipe`ı `pub` yapılıp yeniden kullanıldı
+  (kopya YOK). Bununla runtime'ın TAMAMI (HPy köprüsü + tüm
+  `stdlib_shims`) GERÇEK Windows CI'de sıfır hatayla derleniyor —
+  Faz LL'nin en büyük riski aşıldı. Kalan: gerçek bağlama/çalıştırma
+  (LL.6), release/install betiği (LL.7), dokümantasyon (LL.8).
 
 ## [1.0.0]
 

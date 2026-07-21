@@ -98,7 +98,7 @@ pub const ThreadHandle = struct {
 
     fn release(self: *ThreadHandle) void {
         if (self.owners.fetchSub(1, .acq_rel) == 1) {
-            if (!self.read_fd_closed) _ = std.c.close(self.done_read_fd);
+            if (!self.read_fd_closed) http_client.closeFd(self.done_read_fd);
             if (self.result_is_str_bytes) |bytes| std.heap.page_allocator.free(bytes);
             std.heap.page_allocator.destroy(self);
         }
@@ -162,9 +162,8 @@ fn childThreadMain(ctx: *ChildCtx) void {
     bridge.nox_async_deinit(child_rt);
     asap.nox_runtime_deinit(child_rt);
 
-    var signal_byte = [_]u8{1};
-    _ = std.c.write(ctx.handle.done_write_fd, &signal_byte, 1);
-    _ = std.c.close(ctx.handle.done_write_fd);
+    http_client.signalSelfPipe(ctx.handle.done_write_fd);
+    http_client.closeFd(ctx.handle.done_write_fd);
 
     ctx.handle.release();
 }
@@ -185,30 +184,29 @@ export fn nox_thread_spawn(
     _ = rt; // Bilinçli olarak KULLANILMAZ — bkz. modül üstü not, `ThreadHandle`
     // `page_allocator` üzerinden tahsis edilir, `rt`ye BAĞIMLI DEĞİLDİR.
 
-    var fds: [2]posix.fd_t = undefined;
-    if (std.c.pipe(&fds) != 0) return null;
+    const fds = http_client.makeSelfPipe() orelse return null;
 
     var arg_bytes: ?[]u8 = null;
     if (arg_is_str != 0) {
         const src = payloadToStrPtr(arg_payload);
         arg_bytes = std.heap.page_allocator.dupe(u8, std.mem.span(src)) catch {
-            _ = std.c.close(fds[0]);
-            _ = std.c.close(fds[1]);
+            http_client.closeFd(fds[0]);
+            http_client.closeFd(fds[1]);
             return null;
         };
     }
 
     const handle = std.heap.page_allocator.create(ThreadHandle) catch {
-        _ = std.c.close(fds[0]);
-        _ = std.c.close(fds[1]);
+        http_client.closeFd(fds[0]);
+        http_client.closeFd(fds[1]);
         return null;
     };
     handle.* = .{ .done_read_fd = fds[0], .done_write_fd = fds[1] };
 
     const ctx = std.heap.page_allocator.create(ChildCtx) catch {
         std.heap.page_allocator.destroy(handle);
-        _ = std.c.close(fds[0]);
-        _ = std.c.close(fds[1]);
+        http_client.closeFd(fds[0]);
+        http_client.closeFd(fds[1]);
         return null;
     };
     ctx.* = .{
@@ -222,8 +220,8 @@ export fn nox_thread_spawn(
     const thread = std.Thread.spawn(.{}, childThreadMain, .{ctx}) catch {
         std.heap.page_allocator.destroy(ctx);
         std.heap.page_allocator.destroy(handle);
-        _ = std.c.close(fds[0]);
-        _ = std.c.close(fds[1]);
+        http_client.closeFd(fds[0]);
+        http_client.closeFd(fds[1]);
         return null;
     };
     thread.detach();
@@ -246,10 +244,10 @@ export fn nox_thread_join(rt: ?*anyopaque, handle: ?*anyopaque) callconv(.c) i64
         _ = io_mod.nonBlockingRead(scheduler, h.done_read_fd, &buf) catch {};
     } else {
         var buf: [1]u8 = undefined;
-        _ = std.c.read(h.done_read_fd, &buf, 1);
+        http_client.readSelfPipe(h.done_read_fd, &buf);
     }
     if (!h.read_fd_closed) {
-        _ = std.c.close(h.done_read_fd);
+        http_client.closeFd(h.done_read_fd);
         h.read_fd_closed = true;
     }
 
