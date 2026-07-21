@@ -1221,7 +1221,10 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   `stdlib_shims`) GERÇEK Windows CI'de sıfır hatayla derleniyor —
   Faz LL'nin en büyük riski aşıldı. Kalan: gerçek bağlama/çalıştırma
   (LL.6), release/install betiği (LL.7), dokümantasyon (LL.8).
-- **Faz LL.6 — ilk girişim (henüz CI'de doğrulanmadı).** `compiler/
+- **Faz LL.6 tamamlandı — GERÇEK Windows CI'de doğrulandı: `noxc.exe
+  run` bir Nox programını uçtan uca (lex→parse→check→codegen→qbe→cc→
+  bağlama→ÇALIŞTIRMA) derleyip çalıştırdı, exit code 0, doğru çıktı.**
+  `compiler/
   main.zig`de bulunan iki potansiyel Windows engeli düzeltildi:
   MinGW'in `cc`sinin çıktı dosyasına her zaman `.exe` eklemesi (`noxc
   run`ın çalıştırmaya çalıştığı yolla diskteki gerçek dosya arasında
@@ -1250,7 +1253,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   Windows'ta fiber assembly'sini `noxrt.o`nun içine gömmek yerine ayrı
   kurup (`swap_asm.o`), `compiler/main.zig`nin nihai `cc` bağlamasına
   ayrı bir girdi olarak ekliyor — macOS/Linux'un mevcut, doğrulanmış
-  davranışı değişmedi.
+  davranışı değişmedi. Son iki düzeltme: eksik sistem kütüphaneleri
+  (`-lntdll -lws2_32 -lcrypt32` — Zig'in KENDİ std'sinin Windows
+  ilkelleri + `std.http.Client`in TLS sertifika mağazası erişimi İçin)
+  ve `std.c.realpath`in MinGW'de HİÇ MEVCUT OLMAMASI (`path.zig`nin
+  `nox_path_canonicalize_raw`ı Windows'ta `GetFullPathNameA`ya
+  geçirildi — sembolik linkleri ÇÖZMEZ, yalnızca normalize eder).
+  Toplamda 7 gerçek hata sırayla bulunup düzeltildi (2'si bu projenin
+  kendi kodunda, 1'i upstream QBE'de, 4'ü Zig/MinGW'in kendisinde).
 
 ## [1.0.0]
 

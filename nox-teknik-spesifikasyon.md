@@ -12067,7 +12067,15 @@ GEÇTİĞİNİ KANITLAR, ama QBE'nin ürettiği assembly'nin `cc`/MinGW
 İLE bağlanıp GERÇEK bir Nox PROGRAMI çalıştırabildiğini HENÜZ
 KANITLAMAZ — bu, LL.6'nın asıl konusu).
 
-### LL.6 (İLK GİRİŞİM — GERÇEK CI'de HENÜZ doğrulanmadı) — MinGW-w64 bağlama + gerçek `noxc run`
+### LL.6 (TAMAMLANDI — GERÇEK Windows CI'de doğrulandı) — MinGW-w64 bağlama + gerçek `noxc run`
+
+**GERÇEK bir Nox programı (`print(21 + 21)`) `windows-latest` CI'de
+UÇTAN UCA derlenip (lex→parse→check→codegen→qbe→cc→bağlama) ÇALIŞTIRILDI
+— exit code 0, stdout `"42"`.** Faz LL'nin (dolayısıyla TÜM Windows
+desteği girişiminin) EN BÜYÜK teknik riski BÖYLECE TAMAMEN aşıldı. Bu
+noktaya varmak İçin sırayla bulunup düzeltilen 7 GERÇEK hata (bir
+KISMI bu projenin KENDİ kodunda, bir KISMI upstream QBE'de, bir KISMI
+Zig'in KENDİSİNDE):
 
 `compiler/main.zig`de İKİ potansiyel Windows engeli BULUNDU (kod
 İNCELEMESİYLE, henüz CI olmadan):
@@ -12098,12 +12106,9 @@ KANITLAMAZ — bu, LL.6'nın asıl konusu).
 Makefile/`sh`/`ar` GÜVENİLMEZ OLDUĞUNDAN); ARDINDAN `continue-on-error`
 KALDIRILAN TAM `zig build` adımının HEMEN SONRASINA GERÇEK bir `noxc
 run` duman testi (basit bir `print(21 + 21)` programı — lex→parse→
-check→codegen→qbe→cc→ÇALIŞTIRMA'nın TAMAMI) eklenir. **Bu, HENÜZ
-push edilip GERÇEK Windows CI'de DOĞRULANMADI** — hem QBE'nin `cc
-*.c` İLE derlenip derlenemeyeceği HEM `-rdynamic`nin MinGW'de doğru
-çalışıp çalışmadığı BİLİNMİYOR, bir SONRAKİ CI turunda netleşecek.
+check→codegen→qbe→cc→ÇALIŞTIRMA'nın TAMAMI) eklenir.
 
-**İlk CI turu SONRASI bulunan/düzeltilen 3 GERÇEK hata (sırayla):**
+**Toplam 7 CI turunda sırayla bulunup düzeltilen GERÇEK hatalar:**
 
 1. **`qbe` derlemesi:** `main.o: config.h: No such file or directory`
    — Makefile'ın `config.h` kuralı yalnızca TEK bir `#define Deftgt
@@ -12181,12 +12186,38 @@ push edilip GERÇEK Windows CI'de DOĞRULANMADI** — hem QBE'nin `cc
    muamele). macOS/Linux'ta DAVRANIŞ TAMAMEN DEĞİŞMEDEN kalır
    (`addObjectFile` YOLU, proje BOYUNCA binlerce kez doğrulandığı gibi,
    KORUNUR).
+5. **Eksik sistem kütüphaneleri (`ntdll`/`ws2_32`):** #4 düzeltilince
+   `noxrt.o` GERÇEKTEN TAM boyuta ulaştı (Zig'in KENDİ std kütüphanesinin
+   Windows dosya/iş parçacığı/zamanlayıcı ilkelleri İçin kullandığı
+   `ntdll.dll`nin `Nt*`/`Rtl*`/`Ldr*` sembolleri + `runtime/async_rt/
+   io.zig`nin `WinSock`unun `ws2_32.dll`nin `WSAGetLastError`/`accept`/...
+   sembolleri DAHİL) — ama bunlar MinGW'in VARSAYILAN bağlama
+   kütüphaneleri ARASINDA DEĞİL. Çözüm: `compiler/main.zig`nin `cc_argv`ı
+   Windows'ta `-lntdll -lws2_32` EKLER.
+6. **`std.c.realpath` MinGW'de MEVCUT DEĞİL:** `undefined reference to
+   'realpath'` — `O`/`Stat`/`readdir`/`clockid_t`/`F`/`RTLD` GİBİ
+   "switch'te unutulmuş case" DEĞİL, tam bir BAĞLAYICI SEVİYESİ sembol
+   eksikliği (Faz LL.4'ün "Zig'in KENDİ switch'lerinde koşulsuz externler
+   OLDUĞU doğrulandığından dokunulmadı" varsayımı BU sembol İçin
+   YANLIŞ çıktı). Çözüm: `path.zig`nin `nox_path_canonicalize_raw`ı
+   Windows'ta `GetFullPathNameA`ya (Win32) geçirildi — **bilinçli v1
+   farkı:** sembolik linkleri ÇÖZMEZ, yalnızca `.`/`..`yi normalize edip
+   MUTLAK yola çevirir (Windows'ta sembolik link kullanımı ZATEN NADİR
+   VE yönetici izni gerektirir).
+7. **`-lcrypt32` eksik:** `undefined reference to 'CertOpenSystemStoreW'`/
+   `'CertGetCertificateChain'`/... — Zig'in KENDİ `std.http.Client`ı
+   (`http_client.zig`nin doğal olarak SARDIĞI) TLS sertifika
+   doğrulaması İçin Windows'un SİSTEM sertifika mağazasına (`crypt32.dll`)
+   erişir, ama MinGW bunu VARSAYILAN olarak bağlamaz. Çözüm: `cc_argv`a
+   `-lcrypt32` eklendi.
 
-Yerel olarak (macOS, Debug/ReleaseSafe/ReleaseFast) TÜM değişiklikler
-doğrulandı (Windows dalları `builtin.os.tag == .windows` altında Zig'in
-TİP KONTROLÜNDEN geçti; `build.zig`nin `target.result.os.tag != .windows`
-dalı macOS/Linux'ta DEĞİŞMEDEN kaldığından SIFIR regresyon). **GERÇEK
-Windows CI'de doğrulanacak SONRAKİ push.**
+**SONUÇ — GERÇEK Windows CI'de doğrulandı:** yukarıdaki 7 düzeltmenin
+TAMAMI push edildikten SONRA `windows-frontend` işi TAMAMEN yeşil geçti
+— `noxc.exe run run_smoke.nox` (`print(21 + 21)`) exit code `0` İLE
+`"42"` YAZDIRDI. Yerel olarak (macOS, Debug/ReleaseSafe/ReleaseFast) TÜM
+değişiklikler AYRICA doğrulandı — `builtin.os.tag == .windows`/
+`target.result.os.tag != .windows` dallarının HİÇBİRİ macOS/Linux'un
+mevcut davranışını DEĞİŞTİRMEDİĞİNDEN SIFIR regresyon.
 
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
