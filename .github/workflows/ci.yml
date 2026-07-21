@@ -184,12 +184,17 @@ jobs:
       # Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71): `qbe`nin Windows
       # İçin ÖNCEDEN derlenmiş bir paketi YOK (macOS'un Homebrew'ü/Linux'un
       # paket yöneticisi gibi) — Linux CI'nin KENDİ "kaynaktan derle" deseni
-      # (yukarısı) İZLENİR, TEK farkla: `make` yerine DOĞRUDAN `cc *.c`
-      # (MinGW'in `cc`si) — QBE'nin Makefile'ı POSIX `sh`/`ar` araçlarına
-      # GÜVENİR, PowerShell'de GÜVENİLİR ÇALIŞMAZ; QBE'nin KAYNAĞI saf,
-      # taşınabilir C OLDUĞUNDAN (platforma özgü derleme kuralı YOK) tüm
-      # `.c` dosyalarını TEK bir `cc` çağrısıyla derlemek YETERLİ VE DAHA
-      # BASİT.
+      # (yukarısı) İZLENİR, TEK farkla: `make` yerine DOĞRUDAN `cc` (MinGW'in
+      # `cc`si) — QBE'nin Makefile'ı POSIX `sh`/`case`/`uname`e GÜVENİR,
+      # PowerShell'de GÜVENİLİR ÇALIŞMAZ. **İlk girişimde GERÇEK CI'de
+      # bulunan 2 hata:** (1) `main.o: config.h` — Makefile'ın `config.h`
+      # kuralı yalnızca TEK bir `#define Deftgt ...` SATIRI üretiyor (bir
+      # derleme-zamanı VARSAYILAN hedef — `compiler/qbe_target.zig` zaten
+      # `-t`yi HER ZAMAN AÇIKÇA geçtiğinden bu değerin KENDİSİ ÖNEMLİ
+      # DEĞİL, dosyanın SADECE VAR OLMASI yeterli); (2) kaynaklar TEK bir
+      # dizinde DEĞİL — `amd64/`/`arm64/`/`rv64/` alt dizinlerindeki
+      # backend dosyaları da (Makefile'ın `AMD64OBJ`/`ARM64OBJ`/`RV64OBJ`
+      # listeleri) DERLENMELİ, yalnızca üst dizindeki `*.c` YETERSİZ.
       - name: qbe kur (Windows — kaynaktan, dogrudan cc ile derle)
         shell: pwsh
         run: |
@@ -197,7 +202,8 @@ jobs:
           Invoke-WebRequest -Uri "https://c9x.me/compile/release/qbe-1.3.tar.xz" -OutFile "$env:RUNNER_TEMP\qbe.tar.xz"
           tar xf "$env:RUNNER_TEMP\qbe.tar.xz" -C "$env:RUNNER_TEMP"
           Push-Location "$env:RUNNER_TEMP\qbe-1.3"
-          cc -O2 -o qbe.exe *.c
+          Set-Content -Path config.h -Value "#define Deftgt T_amd64_win"
+          cc -O2 -std=c99 -o qbe.exe *.c amd64/*.c arm64/*.c rv64/*.c
           if ($LASTEXITCODE -ne 0) { throw "qbe derlemesi basarisiz (exit $LASTEXITCODE)" }
           Pop-Location
           Copy-Item "$env:RUNNER_TEMP\qbe-1.3\qbe.exe" "$env:RUNNER_TEMP\qbe.exe"
