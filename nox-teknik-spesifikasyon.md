@@ -1661,6 +1661,78 @@ DOĞRUDAN Zig'den doğrulayan). Toplam: 33/33 (bu dosyada). Kapsam: 180
 
 ---
 
+### Faz SS/TT — HPy: Temel nesne protokolünün geri kalanı + Bytes tipi
+
+Faz RR'nin "doğal sıradaki adımlar" listesi ele alındı: `ctx_Repr`/
+`ctx_Str`/`ctx_ASCII`/`ctx_Bytes`(çevirme)/`ctx_RichCompare`/`ctx_
+RichCompareBool`/`ctx_Hash`/`ctx_Type_GenericNew`/`ctx_AsStruct_Legacy`
+(Faz SS, 9 fonksiyon) + `ctx_Bytes_Check`/`Size`/`GET_SIZE`/`AsString`/
+`AS_STRING`/`FromString`/`FromStringAndSize` (Faz TT, 7 fonksiyon) —
+**TEK bir dilimde BİRLEŞTİRİLDİ**: `ctx_Bytes` (çevirme fonksiyonu,
+Python'ın `bytes(x)`i) GERÇEK bir Bytes NESNESİ döndürmesi GEREKTİĞİNDEN,
+Bytes tipinin (YENİ `ObjTag.bytes_`) KENDİSİ ÖNCE var OLMALIYDI.
+
+**Yeni `Obj` alanları:** `bytes_data: [:0]u8` (`str_data`in AYNI deseni —
+`[:0]`, sıfırla-sonlandırılmış — AMA `const` DEĞİL, İÇİNDE GÖMÜLÜ `\0`
+OLABİLİR, gerçek CPython `bytes`iyle AYNI); `type_name: [:0]const u8`
+(`HPyType_Spec.name`in SAHİPLENİLEN bir kopyası — `ctx_Repr`in ÖRNEK/
+tip varsayılan biçimlendirmesinde KULLANILIR); `type_tp_repr`/`type_tp_
+str`/`type_tp_hash`/`type_tp_richcompare` (Faz MM'nin `tp_new`/`tp_init`/
+`tp_call` deseniyle AYNI — `HPy_tp_repr=66`/`HPy_tp_str=70`/`HPy_tp_
+hash=59`/`HPy_tp_richcompare=67` slotları, `autogen_hpyslot.h`e karşı
+doğrulandı).
+
+**`ctx_Repr`/`ctx_Str`:** `.instance_` İçin ÖNCE kayıtlı `tp_repr`/
+`tp_str` slotu (VARSA) ÇAĞRILIR; YOKSA JENERİK bir biçimlendirmeye
+düşülür — `None`/`True`/`False`/tam sayı ondalık/float (`3.0`, HER ZAMAN
+NOKTALI)/`str` (tırnaklı+kaçışlı repr, tırnaksız str)/`list`(`[...]`)/
+`tuple` (`(x,)` tek elemanlı özel durumu DAHİL)/`dict` (`{k: v}`)/`type`
+(`<class 'Ad'>`)/`instance` (`<Ad object at 0xADRES>`). **v1
+basitleştirmesi:** ASCII-dışı UTF-8 baytları HER ZAMAN yazdırılabilir
+SAYILIR (gerçek Python'ın TAM Unicode kategori denetiminin AKSİNE).
+`ctx_ASCII`: `repr()`i HESAPLAR, SONRA UTF-8'i GERÇEK kod noktalarına
+ÇÖZÜP 0x80+ olanları `\xHH`/`\uHHHH`/`\UHHHHHHHH` İLE DOĞRU genişlikte
+kaçışlar. `ctx_Bytes` (çevirme): `bytes_` OLDUĞU GİBİ döner, `str_`
+UTF-8 baytlarına KODLANIR, DİĞER tipler `TypeError` (Nox'ta `__bytes__`
+protokolü YOK).
+
+**`ctx_Hash`:** `.instance_` İçin ÖNCE `tp_hash` (VARSA); YOKSA int/
+bool DEĞERCE, float (tam sayıya EŞDEĞERSE AYNI hash, Python kuralı),
+`str`/`bytes` (SÜREÇ başına RASTGELE tohumlu `Wyhash` — `runtime/
+collections/dict.zig`nin M-3 ÖNLEMİYLE AYNI ilke, hash-flooding DoS'a
+karşı; bu köprü AYRI bir modül olduğundan KENDİ bağımsız tohumunu
+tutar), tuple (eleman hash'lerinin BİRLEŞTİRİLMESİ), tip/örnek/bağlı-
+metod (KİMLİK — işaretçi değeri), `list`/`dict` `TypeError`
+(hashlanamaz, gerçek Python'la AYNI). `-1` HİÇBİR ZAMAN GEÇERLİ bir hash
+olarak DÖNMEZ (CPython'ın "hata sinyali" kuralıyla AYNI — `-1` İSE
+`-2`ye eşlenir).
+
+**`ctx_RichCompare`/`ctx_RichCompareBool`:** `.instance_` İçin ÖNCE
+`tp_richcompare` (VARSA); YOKSA sayısal tipler DEĞERCE, `str`/`bytes`
+SÖZLÜKSEL (`std.mem.order`), DİĞER TÜM tipler yalnızca `EQ`/`NE`
+(`objEquals` İLE) — sıralı karşılaştırma (`LT`/`LE`/`GT`/`GE`)
+İSTENİRSE `TypeError`.
+
+**`ctx_Type_GenericNew`:** `object.__new__`in VARSAYILANI — `ctxNew`in
+(Faz 19) AYNI sıfırlanmış-tampon mantığını, `args`/`kw`i YOK SAYARAK
+çalıştırır (bir tipin KENDİ `tp_new`ı OLMASA BİLE inşa edilebilmesini
+sağlar). **`ctx_AsStruct_Legacy`:** Nox TEK bir ("universal") ABI modu
+desteklediğinden `ctx_AsStruct_Object` İLE ÖZDEŞ.
+
+**Doğrulama:** `Widget`e (Faz MM/NN) YENİ `HPy_tp_repr`/`HPy_tp_hash`
+slotları eklendi (özel slot dispatch'ini KANITLAMAK İçin — jenerik
+varsayılana DÜŞMEDİĞİNİ gösterir). `noxtest.c`ye 9 yeni modül metodu
+(`repr_via_c`/`str_via_c`/`ascii_via_c`/`bytes_via_c`/`hash_via_c`/
+`richcompare_via_c`/`richcomparebool_via_c`/`generic_new_via_c`/`bytes_
+roundtrip_via_c`). `hpy_tier0_test.zig`ye 8 yeni test (jenerik
+biçimlendirme, ASCII kaçışlama, bytes çevirme+`TypeError`, gömülü `\0`
+round-trip, hash kimliği+tutarlılık, sayısal+sözlüksel sıralama,
+`tp_new`siz bir tipte `GenericNew`, Widget'ın özel `tp_repr`/`tp_hash`
+slotları). Toplam: 41/41 (bu dosyada). Kapsam: 180 `ctx_*` fonksiyonundan
+109→**124**'ü implemente.
+
+---
+
 ### 3.20 Faz 20 Uygulama Kapsamı — Zig/C ABI FFI (`extern def`)
 
 **Durum: UYGULANDI.** Kullanıcının isteği: Nox'un HPy/WASM

@@ -23,6 +23,8 @@
  *                                                 bkz. Widget_* aşağıda)
  */
 #include "hpy.h"
+#include <stdio.h>
+#include <string.h>
 
 /* Çağrılabilir nesne protokolü (ctx_Call/ctx_CallTupleDict/ctx_Callable_
  * Check) test amaçlı minimal bir tip: `Widget(5)` -> value=5 (tp_new)
@@ -78,11 +80,35 @@ static HPy Widget_add_value_impl(HPyContext *ctx, HPy self, HPy arg)
     return HPyLong_FromLong(ctx, data->value + HPyLong_AsLong(ctx, arg));
 }
 
+/* Temel nesne protokolü (Faz SS) test amaçlı: Widget'ın KENDİ özel
+ * `HPy_tp_repr`/`HPy_tp_hash` slotları — `ctx_Repr`/`ctx_Hash`in bir
+ * `.instance_` üzerinde jenerik varsayılana DÜŞMEK yerine bu KAYITLI
+ * slotu ÖNCELİKLE ÇAĞIRDIĞINI kanıtlar (bkz. `type_tp_repr`/`type_tp_
+ * hash`in Zig tarafındaki belge notu). */
+HPyDef_SLOT(Widget_repr, HPy_tp_repr)
+static HPy Widget_repr_impl(HPyContext *ctx, HPy self)
+{
+    WidgetObject *data = (WidgetObject *)_HPy_AsStruct_Object(ctx, self);
+    char buf[64];
+    snprintf(buf, sizeof(buf), "Widget(value=%ld)", data->value);
+    return HPyUnicode_FromString(ctx, buf);
+}
+
+HPyDef_SLOT(Widget_hash, HPy_tp_hash)
+static HPy_hash_t Widget_hash_impl(HPyContext *ctx, HPy self)
+{
+    (void)ctx;
+    WidgetObject *data = (WidgetObject *)_HPy_AsStruct_Object(ctx, self);
+    return (HPy_hash_t)data->value;
+}
+
 static HPyDef *Widget_defines[] = {
     &Widget_new,
     &Widget_init,
     &Widget_call,
     &Widget_add_value,
+    &Widget_repr,
+    &Widget_hash,
     NULL
 };
 
@@ -329,6 +355,112 @@ static HPy write_unraisable_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
     return HPyBool_FromBool(ctx, (bool)HPyErr_Occurred(ctx));
 }
 
+/* Temel nesne protokolü (Faz SS) + Bytes tipi (Faz TT) test amaçlı:
+ * eklentinin KENDİ C kodunun HPy_Repr/HPy_Str/HPy_ASCII/HPy_Bytes/
+ * HPy_RichCompare/HPy_Hash/HPyType_GenericNew/HPyBytes_* makrolarını
+ * (HEPSİ ham `ctx_*` yuvalarına TRAMPOLİNE eden) ÇAĞIRMASI. */
+HPyDef_METH(repr_via_c, "repr_via_c", HPyFunc_O)
+static HPy repr_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    return HPy_Repr(ctx, arg);
+}
+
+HPyDef_METH(str_via_c, "str_via_c", HPyFunc_O)
+static HPy str_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    return HPy_Str(ctx, arg);
+}
+
+HPyDef_METH(ascii_via_c, "ascii_via_c", HPyFunc_O)
+static HPy ascii_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    return HPy_ASCII(ctx, arg);
+}
+
+HPyDef_METH(bytes_via_c, "bytes_via_c", HPyFunc_O)
+static HPy bytes_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    return HPy_Bytes(ctx, arg);
+}
+
+HPyDef_METH(hash_via_c, "hash_via_c", HPyFunc_O)
+static HPy hash_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    HPy_hash_t h = HPy_Hash(ctx, arg);
+    if (h == -1 && HPyErr_Occurred(ctx)) {
+        return HPy_NULL;
+    }
+    return HPyLong_FromLongLong(ctx, (long long)h);
+}
+
+HPyDef_METH(richcompare_via_c, "richcompare_via_c", HPyFunc_O)
+static HPy richcompare_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    HPy v = HPy_GetItem_i(ctx, arg, 0);
+    HPy w = HPy_GetItem_i(ctx, arg, 1);
+    HPy op_h = HPy_GetItem_i(ctx, arg, 2);
+    long op = HPyLong_AsLong(ctx, op_h);
+    HPy result = HPy_RichCompare(ctx, v, w, (int)op);
+    HPy_Close(ctx, v);
+    HPy_Close(ctx, w);
+    HPy_Close(ctx, op_h);
+    return result;
+}
+
+HPyDef_METH(richcomparebool_via_c, "richcomparebool_via_c", HPyFunc_O)
+static HPy richcomparebool_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    HPy v = HPy_GetItem_i(ctx, arg, 0);
+    HPy w = HPy_GetItem_i(ctx, arg, 1);
+    HPy op_h = HPy_GetItem_i(ctx, arg, 2);
+    long op = HPyLong_AsLong(ctx, op_h);
+    int result = HPy_RichCompareBool(ctx, v, w, (int)op);
+    HPy_Close(ctx, v);
+    HPy_Close(ctx, w);
+    HPy_Close(ctx, op_h);
+    if (result < 0) {
+        return HPy_NULL;
+    }
+    return HPyBool_FromBool(ctx, (bool)result);
+}
+
+HPyDef_METH(generic_new_via_c, "generic_new_via_c", HPyFunc_O)
+static HPy generic_new_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    /* `arg` (Counter tipi) İçin `tp_new` YOK — `HPyType_GenericNew`in
+     * `object.__new__`in VARSAYILANI GİBİ, TİPİN KENDİ `tp_new`ından
+     * BAĞIMSIZ, DOĞRUDAN sıfırlanmış bir örnek İNŞA edebildiğini kanıtlar. */
+    return HPyType_GenericNew(ctx, arg, NULL, 0, HPy_NULL);
+}
+
+HPyDef_METH(bytes_roundtrip_via_c, "bytes_roundtrip_via_c", HPyFunc_O)
+static HPy bytes_roundtrip_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    (void)arg;
+    /* İçinde GÖMÜLÜ bir `\0` OLAN 5 baytlık bir bytes nesnesi — gerçek
+     * Python `bytes`in `str`ten TEMEL farkı budur. */
+    static const char raw[5] = { 'a', 'b', '\0', 'c', 'd' };
+    HPy b = HPyBytes_FromStringAndSize(ctx, raw, 5);
+    HPy_ssize_t size = HPyBytes_Size(ctx, b);
+    HPy_ssize_t size2 = HPyBytes_GET_SIZE(ctx, b);
+    const char *s1 = HPyBytes_AsString(ctx, b);
+    const char *s2 = HPyBytes_AS_STRING(ctx, b);
+    int is_bytes = HPyBytes_Check(ctx, b);
+    int matches = (size == 5) && (size2 == 5) && (s1 == s2) &&
+                  memcmp(s1, raw, 5) == 0 && is_bytes;
+    HPy_Close(ctx, b);
+    return HPyBool_FromBool(ctx, (bool)matches);
+}
+
 HPyDef_METH(add_one, "add_one", HPyFunc_O)
 static HPy add_one_impl(HPyContext *ctx, HPy self, HPy arg)
 {
@@ -447,6 +579,15 @@ static HPyDef *module_defines[] = {
     &new_exception_via_c,
     &warn_via_c,
     &write_unraisable_via_c,
+    &repr_via_c,
+    &str_via_c,
+    &ascii_via_c,
+    &bytes_via_c,
+    &hash_via_c,
+    &richcompare_via_c,
+    &richcomparebool_via_c,
+    &generic_new_via_c,
+    &bytes_roundtrip_via_c,
     &add_one,
     &str_length,
     &negate,

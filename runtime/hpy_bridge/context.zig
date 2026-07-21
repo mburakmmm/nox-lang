@@ -11,12 +11,12 @@
 //! `scripts/gen_hpy_ctx.py`) üretilmiş, bayt-uyumlu bir transkripsiyonunu
 //! GEREKTİRİR — bir eklenti bu struct'a doğrudan (sabit ofsetlerle) erişir,
 //! bu yüzden alan SIRASI ve BOYUTU tam olarak eşleşmelidir. Şu an 180
-//! `ctx_*` alanından **109'u** GERÇEKTEN implemente (aşağıda özel fonksiyon
+//! `ctx_*` alanından **124'ü** GERÇEKTEN implemente (aşağıda özel fonksiyon
 //! işaretçisi tipleriyle işaretli — TAM/DOĞRU sayı HER ZAMAN şu komutla
 //! doğrulanabilir: `awk '/pub const HPyContext = extern struct \{/,/^\};/'
 //! runtime/hpy_bridge/context.zig | grep "ctx_" | grep -c "anyopaque = null,"`
 //! — SONUCU 180'den ÇIKARIN; tam liste/tier dökümü İçin bkz. nox-teknik-
-//! spesifikasyon.md §3.12 VE DEVAMI, en son Faz RR) — geri
+//! spesifikasyon.md §3.12 VE DEVAMI, en son Faz SS/TT) — geri
 //! kalanı `null` (kullanılmazlarsa zararsız; bir eklenti bunlardan birini
 //! çağırırsa çökme/segfault olur, bkz. spesifikasyondaki bilinçli
 //! sınırlamalar).
@@ -29,6 +29,7 @@
 //! doğrulanıyor — bkz. bilinen sınırlamalar).
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub const HPy = extern struct {
     _i: isize = 0,
@@ -42,7 +43,7 @@ pub const HPy_NULL: HPy = .{ ._i = 0 };
 /// korunur (bkz. `PINNED_REFCOUNT`) — bu, gerçek CPython'ın `Py_None`/
 /// `Py_True`/`Py_False` tekillerinin de asla serbest bırakılmamasıyla aynı
 /// ruhta bir basitleştirmedir.
-pub const ObjTag = enum(u8) { none, bool_, long, float_, str_, exc_type, list_, tuple_, dict_, type_, instance_, bound_method_ };
+pub const ObjTag = enum(u8) { none, bool_, long, float_, str_, exc_type, list_, tuple_, dict_, type_, instance_, bound_method_, bytes_ };
 
 /// `HPyType_FromSpec`in bir `type_` nesnesine kaydettiği tek bir örnek
 /// metodu (`HPyDef_Kind_Meth` + `HPyFunc_O` — Tier 0'ın modül metodu
@@ -64,6 +65,14 @@ pub const Obj = struct {
     /// bir kopya (bkz. `ctxUnicodeAsUTF8AndSize`in gerçek HPy sözleşmesi:
     /// `const char*` döndürür, çağıran tarafından serbest bırakılmaz).
     str_data: [:0]const u8 = "",
+    /// Yalnızca `tag == .bytes_` (Faz SS) — `str_data`in AYNI deseni
+    /// (`[:0]`, sıfırla-sonlandırılmış), AMA `const` DEĞİL: gerçek
+    /// CPython `bytes`inin KENDİSİ de DAHİLİ olarak hep bir fazladan
+    /// `\0` tutar — `ctx_Bytes_AsString`/`_AS_STRING`in İHTİYACI TAM
+    /// OLARAK budur (`dupeZ` KENDİSİ bu sonlandırıcıyı EKLER). İçindeki
+    /// baytların ARASINDA `\0` OLABİLİR (gerçek `bytes`teki gibi) —
+    /// yalnızca `.len` KONUMUNDAKİ (sondaki) bayt GARANTİLİ sıfırdır.
+    bytes_data: [:0]u8 = @constCast(""),
     /// Yalnızca `tag == .list_` — büyüyebilir, SAHİPLENİLEN bir tutamaç
     /// dizisi (her eleman `ctxDup` ile retain edilmiş kendi referansımız,
     /// çağıranın kendi tutamacından BAĞIMSIZ — bkz. `ctxListAppend`).
@@ -84,7 +93,20 @@ pub const Obj = struct {
     /// ve `HPyFunc_O` imzalı örnek metodları. Taban sınıf/metaclass/
     /// getset/member/buffer slotları HENÜZ desteklenmiyor (bkz. spec).
     type_basicsize: usize = 0,
+    /// Yalnızca `tag == .type_` (Faz SS) — `HPyType_Spec.name`in
+    /// SAHİPLENİLEN bir kopyası (`ctx_Repr`/`ctx_Str`in ÖRNEK/tip
+    /// varsayılan biçimlendirmesinde KULLANILIR: `"<ClassName object>"`/
+    /// `"<class 'ClassName'>"`). Boşsa (`""`) jenerik bir isim kullanılır.
+    type_name: [:0]const u8 = "",
     type_tp_destroy: ?*const fn (data: *anyopaque) callconv(.c) void = null,
+    /// Temel nesne protokolü (Faz SS) — `HPy_tp_repr`/`HPy_tp_str`/
+    /// `HPy_tp_hash`/`HPy_tp_richcompare` slotları. Kayıtlı DEĞİLSE
+    /// `ctxRepr`/`ctxStr`/`ctxHash`/`ctxRichCompare` JENERİK bir
+    /// varsayılana düşer (bkz. o fonksiyonların KENDİ belge notları).
+    type_tp_repr: ?*const fn (ctx: *HPyContext, self: HPy) callconv(.c) HPy = null,
+    type_tp_str: ?*const fn (ctx: *HPyContext, self: HPy) callconv(.c) HPy = null,
+    type_tp_hash: ?*const fn (ctx: *HPyContext, self: HPy) callconv(.c) isize = null,
+    type_tp_richcompare: ?*const fn (ctx: *HPyContext, self: HPy, other: HPy, op: c_int) callconv(.c) HPy = null,
     /// Çağrılabilir nesne protokolü (bkz. §3.12'nin AYNI adlı bölümü) —
     /// `HPy_tp_new`/`HPy_tp_init`/`HPy_tp_call` slotları. `type_tp_new`/
     /// `type_tp_init`, gerçek HPy'nin `HPyFunc_NEWFUNC`/`INITPROC`
@@ -174,7 +196,11 @@ fn ctxClose(ctx: *HPyContext, h: HPy) callconv(.c) void {
                 }
                 obj.dict_data.deinit(allocator);
             },
-            .type_ => obj.type_methods.deinit(allocator),
+            .type_ => {
+                obj.type_methods.deinit(allocator);
+                if (obj.type_name.len > 0) allocator.free(obj.type_name);
+            },
+            .bytes_ => allocator.free(obj.bytes_data),
             .instance_ => {
                 // Gerçek HPy sözleşmesi: `tp_destroy`, bellek serbest
                 // bırakılmadan HEMEN ÖNCE ham struct işaretçisiyle çağrılır
@@ -209,7 +235,7 @@ fn ctxLongAsInt64(ctx: *HPyContext, h: HPy) callconv(.c) i64 {
         .long => obj.payload.l,
         .bool_ => if (obj.payload.b) 1 else 0,
         .float_ => @intFromFloat(obj.payload.f),
-        .none, .str_, .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_ => blk: {
+        .none, .str_, .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_, .bytes_ => blk: {
             ctxErrSetString(ctx, ctx.h_TypeError, "int'e dönüştürülemez");
             break :blk -1;
         },
@@ -333,7 +359,7 @@ fn ctxFloatAsDouble(ctx: *HPyContext, h: HPy) callconv(.c) f64 {
         .float_ => obj.payload.f,
         .long => @floatFromInt(obj.payload.l),
         .bool_ => if (obj.payload.b) 1 else 0,
-        .none, .str_, .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_ => blk: {
+        .none, .str_, .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_, .bytes_ => blk: {
             ctxErrSetString(ctx, ctx.h_TypeError, "float'a dönüştürülemez");
             break :blk 0;
         },
@@ -376,12 +402,69 @@ fn ctxUnicodeAsUTF8AndSize(ctx: *HPyContext, h: HPy, size: ?*isize) callconv(.c)
     return obj.str_data.ptr;
 }
 
+// ---- Bytes tipi (Faz SS) ----
+//
+// `ctx_Bytes_Check`/`ctx_Bytes_Size`/`ctx_Bytes_GET_SIZE`/`ctx_Bytes_
+// AsString`/`ctx_Bytes_AS_STRING`/`ctx_Bytes_FromString`/`ctx_Bytes_
+// FromStringAndSize`. `str_`in (Unicode) AYNI deseni — ama İÇERİĞİ
+// KEYFİ baytlar (embedded `\0` DAHİL, gerçek Python `bytes`iyle AYNI),
+// UTF-8 DEĞİL. `_Size`/`_GET_SIZE` gerçek CPython'da FARKLI (biri makro,
+// biri fonksiyon — hata denetimi FARKI) ama Nox'un tek, basit nesne
+// modelinde davranışça AYNI.
+
+fn ctxBytesFromStringAndSize(ctx: *HPyContext, bytes: ?[*]const u8, len: isize) callconv(.c) HPy {
+    if (len < 0) {
+        ctxErrSetString(ctx, ctx.h_ValueError, "negatif uzunluk");
+        return HPy_NULL;
+    }
+    const allocator = contextAllocator(ctx);
+    const src: []const u8 = if (bytes) |b| b[0..@intCast(len)] else &.{};
+    const copy = allocator.dupeZ(u8, src) catch return HPy_NULL;
+    const obj = allocator.create(Obj) catch {
+        allocator.free(copy);
+        return HPy_NULL;
+    };
+    obj.* = .{ .refcount = 1, .tag = .bytes_, .payload = .{ .l = 0 }, .bytes_data = copy };
+    return .{ ._i = @intCast(@intFromPtr(obj)) };
+}
+
+fn ctxBytesFromString(ctx: *HPyContext, bytes: ?[*:0]const u8) callconv(.c) HPy {
+    const s = bytes orelse return ctxBytesFromStringAndSize(ctx, null, 0);
+    const slice = std.mem.sliceTo(s, 0);
+    return ctxBytesFromStringAndSize(ctx, slice.ptr, @intCast(slice.len));
+}
+
+fn ctxBytesCheck(ctx: *HPyContext, h: HPy) callconv(.c) c_int {
+    _ = ctx;
+    const obj = objOf(h) orelse return 0;
+    return @intFromBool(obj.tag == .bytes_);
+}
+
+fn ctxBytesSize(ctx: *HPyContext, h: HPy) callconv(.c) isize {
+    const obj = objOf(h) orelse return -1;
+    if (obj.tag != .bytes_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "bytes bekleniyor");
+        return -1;
+    }
+    return @intCast(obj.bytes_data.len);
+}
+
+fn ctxBytesAsString(ctx: *HPyContext, h: HPy) callconv(.c) ?[*:0]const u8 {
+    const obj = objOf(h) orelse return null;
+    if (obj.tag != .bytes_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "bytes bekleniyor");
+        return null;
+    }
+    return obj.bytes_data.ptr;
+}
+
 // ---- Tier 0 tamamlama: temel nesne protokolü ----
 
 fn ctxLength(ctx: *HPyContext, h: HPy) callconv(.c) isize {
     const obj = objOf(h) orelse return -1;
     return switch (obj.tag) {
         .str_ => @intCast(obj.str_data.len),
+        .bytes_ => @intCast(obj.bytes_data.len),
         .list_ => @intCast(obj.list_data.items.len),
         .tuple_ => @intCast(obj.tuple_data.len),
         .dict_ => @intCast(obj.dict_data.items.len),
@@ -401,6 +484,7 @@ fn ctxIsTrue(ctx: *HPyContext, h: HPy) callconv(.c) c_int {
         .long => @intFromBool(obj.payload.l != 0),
         .float_ => @intFromBool(obj.payload.f != 0),
         .str_ => @intFromBool(obj.str_data.len != 0),
+        .bytes_ => @intFromBool(obj.bytes_data.len != 0),
         .list_ => @intFromBool(obj.list_data.items.len != 0),
         .tuple_ => @intFromBool(obj.tuple_data.len != 0),
         .dict_ => @intFromBool(obj.dict_data.items.len != 0),
@@ -420,6 +504,7 @@ fn objEquals(a: *Obj, b: *Obj) bool {
     return switch (a.tag) {
         .none => true,
         .str_ => std.mem.eql(u8, a.str_data, b.str_data),
+        .bytes_ => std.mem.eql(u8, a.bytes_data, b.bytes_data),
         .bool_, .long, .float_ => unreachable, // isNumericTag zaten yakaladı
         .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_ => a == b,
     };
@@ -430,6 +515,441 @@ fn objEquals(a: *Obj, b: *Obj) bool {
 fn ctxIs(ctx: *HPyContext, obj: HPy, other: HPy) callconv(.c) c_int {
     _ = ctx;
     return @intFromBool(obj._i == other._i);
+}
+
+// ---- Temel nesne protokolünün geri kalanı: Repr/Str/ASCII/Bytes-çevirme/
+// RichCompare/Hash (Faz SS) ----
+//
+// `.instance_` nesneleri İçin ÖNCE kayıtlı `HPy_tp_repr`/`HPy_tp_str`/
+// `HPy_tp_hash`/`HPy_tp_richcompare` slotu (VARSA) ÇAĞRILIR (Faz MM'nin
+// `tp_new`/`tp_init`/`tp_call` deseniyle AYNI); YOKSA jenerik, Python'ın
+// varsayılan `object.__repr__`/`__hash__`/vb.sine BENZER bir davranışa
+// düşülür.
+
+fn makeStrFromSlice(ctx: *HPyContext, s: []const u8) HPy {
+    const allocator = contextAllocator(ctx);
+    const copy = allocator.dupeZ(u8, s) catch {
+        ctxErrNoMemory(ctx);
+        return HPy_NULL;
+    };
+    const obj = allocator.create(Obj) catch {
+        allocator.free(copy);
+        ctxErrNoMemory(ctx);
+        return HPy_NULL;
+    };
+    obj.* = .{ .refcount = 1, .tag = .str_, .payload = .{ .l = 0 }, .str_data = copy };
+    return .{ ._i = @intCast(@intFromPtr(obj)) };
+}
+
+fn appendHexEscape(allocator: std.mem.Allocator, buf: *std.ArrayListUnmanaged(u8), c: u8) !void {
+    var tmp: [4]u8 = undefined;
+    const s = std.fmt.bufPrint(&tmp, "\\x{x:0>2}", .{c}) catch unreachable;
+    try buf.appendSlice(allocator, s);
+}
+
+/// Python `str` repr'ının BASİTLEŞTİRİLMİŞ bir karşılığı: tırnak seçimi
+/// (`'` VARSAYILAN, içerik `'` TAŞIYIP `"` TAŞIMIYORSA `"`), `\\`/tırnak/
+/// `\n`/`\r`/`\t` kaçışı, DİĞER kontrol karakterleri `\xHH`. **v1
+/// basitleştirmesi:** ASCII-DIŞI UTF-8 baytları (gerçek Python'ın TAM
+/// `str.isprintable()` Unicode kategorisi denetiminin AKSİNE) HER ZAMAN
+/// yazdırılabilir SAYILIR ve OLDUĞU GİBİ geçirilir.
+fn appendStrRepr(allocator: std.mem.Allocator, buf: *std.ArrayListUnmanaged(u8), s: []const u8) !void {
+    const has_single = std.mem.indexOfScalar(u8, s, '\'') != null;
+    const has_double = std.mem.indexOfScalar(u8, s, '"') != null;
+    const quote: u8 = if (has_single and !has_double) '"' else '\'';
+    try buf.append(allocator, quote);
+    for (s) |c| {
+        if (c == '\\') {
+            try buf.appendSlice(allocator, "\\\\");
+        } else if (c == quote) {
+            try buf.append(allocator, '\\');
+            try buf.append(allocator, c);
+        } else if (c == '\n') {
+            try buf.appendSlice(allocator, "\\n");
+        } else if (c == '\r') {
+            try buf.appendSlice(allocator, "\\r");
+        } else if (c == '\t') {
+            try buf.appendSlice(allocator, "\\t");
+        } else if (c < 0x20 or c == 0x7f) {
+            try appendHexEscape(allocator, buf, c);
+        } else {
+            try buf.append(allocator, c);
+        }
+    }
+    try buf.append(allocator, quote);
+}
+
+/// Python `bytes` repr'ının AYNI mantığı — TEK FARK: `str`in AKSİNE,
+/// `bytes`in KENDİSİ hiçbir "kodlama" TAŞIMADIĞINDAN 0x20-0x7e ARALIĞI
+/// DIŞINDAKİ HER bayt (0x80+ DAHİL) `\xHH` İLE kaçışlanır — gerçek
+/// CPython `bytes.__repr__`iyle BİREBİR aynı ilke.
+fn appendBytesRepr(allocator: std.mem.Allocator, buf: *std.ArrayListUnmanaged(u8), s: []const u8) !void {
+    const has_single = std.mem.indexOfScalar(u8, s, '\'') != null;
+    const has_double = std.mem.indexOfScalar(u8, s, '"') != null;
+    const quote: u8 = if (has_single and !has_double) '"' else '\'';
+    try buf.append(allocator, 'b');
+    try buf.append(allocator, quote);
+    for (s) |c| {
+        if (c == '\\') {
+            try buf.appendSlice(allocator, "\\\\");
+        } else if (c == quote) {
+            try buf.append(allocator, '\\');
+            try buf.append(allocator, c);
+        } else if (c == '\n') {
+            try buf.appendSlice(allocator, "\\n");
+        } else if (c == '\r') {
+            try buf.appendSlice(allocator, "\\r");
+        } else if (c == '\t') {
+            try buf.appendSlice(allocator, "\\t");
+        } else if (c < 0x20 or c >= 0x7f) {
+            try appendHexEscape(allocator, buf, c);
+        } else {
+            try buf.append(allocator, c);
+        }
+    }
+    try buf.append(allocator, quote);
+}
+
+/// Python `float` repr'inin BASİTLEŞTİRİLMİŞ bir karşılığı: Zig'in `{d}`
+/// biçimlendirmesi (DOĞRU yuvarlanmış ondalık) KULLANILIR, ama Python'ın
+/// "bir float HER ZAMAN bir ondalık NOKTASI TAŞIR" kuralı (`3.0`, `3` DEĞİL)
+/// KORUNUR.
+fn appendFloatRepr(allocator: std.mem.Allocator, buf: *std.ArrayListUnmanaged(u8), f: f64) !void {
+    var tmp: [400]u8 = undefined;
+    const s = std.fmt.bufPrint(&tmp, "{d}", .{f}) catch "0.0";
+    try buf.appendSlice(allocator, s);
+    if (std.mem.indexOfAny(u8, s, ".eEn") == null) {
+        try buf.appendSlice(allocator, ".0");
+    }
+}
+
+fn reprInto(ctx: *HPyContext, allocator: std.mem.Allocator, buf: *std.ArrayListUnmanaged(u8), obj_h: HPy) !void {
+    const obj = objOf(obj_h) orelse {
+        try buf.appendSlice(allocator, "<geçersiz nesne>");
+        return;
+    };
+    switch (obj.tag) {
+        .none => try buf.appendSlice(allocator, "None"),
+        .bool_ => try buf.appendSlice(allocator, if (obj.payload.b) "True" else "False"),
+        .long => {
+            var tmp: [32]u8 = undefined;
+            const s = std.fmt.bufPrint(&tmp, "{d}", .{obj.payload.l}) catch unreachable;
+            try buf.appendSlice(allocator, s);
+        },
+        .float_ => try appendFloatRepr(allocator, buf, obj.payload.f),
+        .str_ => try appendStrRepr(allocator, buf, obj.str_data),
+        .bytes_ => try appendBytesRepr(allocator, buf, obj.bytes_data),
+        .list_ => {
+            try buf.append(allocator, '[');
+            for (obj.list_data.items, 0..) |item, i| {
+                if (i > 0) try buf.appendSlice(allocator, ", ");
+                try reprInto(ctx, allocator, buf, item);
+            }
+            try buf.append(allocator, ']');
+        },
+        .tuple_ => {
+            try buf.append(allocator, '(');
+            for (obj.tuple_data, 0..) |item, i| {
+                if (i > 0) try buf.appendSlice(allocator, ", ");
+                try reprInto(ctx, allocator, buf, item);
+            }
+            if (obj.tuple_data.len == 1) try buf.append(allocator, ',');
+            try buf.append(allocator, ')');
+        },
+        .dict_ => {
+            try buf.append(allocator, '{');
+            for (obj.dict_data.items, 0..) |entry, i| {
+                if (i > 0) try buf.appendSlice(allocator, ", ");
+                try reprInto(ctx, allocator, buf, entry.key);
+                try buf.appendSlice(allocator, ": ");
+                try reprInto(ctx, allocator, buf, entry.value);
+            }
+            try buf.append(allocator, '}');
+        },
+        .type_ => {
+            try buf.appendSlice(allocator, "<class '");
+            try buf.appendSlice(allocator, if (obj.type_name.len > 0) obj.type_name else "object");
+            try buf.appendSlice(allocator, "'>");
+        },
+        .exc_type => try buf.appendSlice(allocator, "<class 'exception'>"),
+        .instance_ => {
+            const name = if (objOf(obj.instance_type)) |t| (if (t.type_name.len > 0) t.type_name else "object") else "object";
+            var tmp: [128]u8 = undefined;
+            const s = std.fmt.bufPrint(&tmp, "<{s} object at 0x{x}>", .{ name, @as(usize, @intCast(obj_h._i)) }) catch "<object>";
+            try buf.appendSlice(allocator, s);
+        },
+        .bound_method_ => try buf.appendSlice(allocator, "<bound method>"),
+    }
+}
+
+fn ctxRepr(ctx: *HPyContext, obj_h: HPy) callconv(.c) HPy {
+    const obj = objOf(obj_h) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "geçersiz nesne");
+        return HPy_NULL;
+    };
+    if (obj.tag == .instance_) {
+        if (objOf(obj.instance_type)) |type_obj| {
+            if (type_obj.type_tp_repr) |repr_fn| return repr_fn(ctx, obj_h);
+        }
+    }
+    const allocator = contextAllocator(ctx);
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer buf.deinit(allocator);
+    reprInto(ctx, allocator, &buf, obj_h) catch {
+        ctxErrNoMemory(ctx);
+        return HPy_NULL;
+    };
+    return makeStrFromSlice(ctx, buf.items);
+}
+
+/// Python'ın `str(x)`i, `repr(x)`ten YALNIZCA `str_` İçin FARKLIDIR
+/// (tırnaksız, kaçışsız — DİĞER TÜM tipler İçin `str()==repr()`, gerçek
+/// Python'daki `object.__str__`in VARSAYILAN OLARAK `__repr__`e DÜŞMESİYLE
+/// AYNI).
+fn ctxStr(ctx: *HPyContext, obj_h: HPy) callconv(.c) HPy {
+    const obj = objOf(obj_h) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "geçersiz nesne");
+        return HPy_NULL;
+    };
+    if (obj.tag == .instance_) {
+        if (objOf(obj.instance_type)) |type_obj| {
+            if (type_obj.type_tp_str) |str_fn| return str_fn(ctx, obj_h);
+            if (type_obj.type_tp_repr) |repr_fn| return repr_fn(ctx, obj_h);
+        }
+    }
+    if (obj.tag == .str_) return ctxDup(ctx, obj_h);
+    return ctxRepr(ctx, obj_h);
+}
+
+/// Python'ın `ascii(x)`i: `repr(x)` HESAPLANIR, SONRA 0x80+ HER bayt
+/// (gerçek Python'ın kodlanmış her Unicode KOD NOKTASI'nı `\xHH`/`\uHHHH`/
+/// `\UHHHHHHHH` YAPMASININ basitleştirmesi — `str_data`nın UTF-8 kodlamasını
+/// GERÇEK kod noktalarına ÇÖZEREK doğru genişlikte kaçışlar) `\xHH`/`\uHHHH`
+/// İLE değiştirilir.
+fn ctxAscii(ctx: *HPyContext, obj_h: HPy) callconv(.c) HPy {
+    const repr = ctxRepr(ctx, obj_h);
+    if (repr._i == 0) return HPy_NULL;
+    defer ctxClose(ctx, repr);
+    const repr_obj = objOf(repr) orelse return HPy_NULL;
+    const s = repr_obj.str_data;
+
+    const allocator = contextAllocator(ctx);
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer buf.deinit(allocator);
+
+    const view = std.unicode.Utf8View.init(s) catch {
+        // Geçersiz UTF-8 (olmamalı, kendi repr'imiz her zaman geçerli UTF-8
+        // üretir) — olduğu gibi geç.
+        return makeStrFromSlice(ctx, s);
+    };
+    var it = view.iterator();
+    while (it.nextCodepoint()) |cp| {
+        if (cp < 0x80) {
+            buf.append(allocator, @intCast(cp)) catch {
+                ctxErrNoMemory(ctx);
+                return HPy_NULL;
+            };
+        } else if (cp <= 0xff) {
+            var tmp: [8]u8 = undefined;
+            const esc = std.fmt.bufPrint(&tmp, "\\x{x:0>2}", .{cp}) catch unreachable;
+            buf.appendSlice(allocator, esc) catch {
+                ctxErrNoMemory(ctx);
+                return HPy_NULL;
+            };
+        } else if (cp <= 0xffff) {
+            var tmp: [8]u8 = undefined;
+            const esc = std.fmt.bufPrint(&tmp, "\\u{x:0>4}", .{cp}) catch unreachable;
+            buf.appendSlice(allocator, esc) catch {
+                ctxErrNoMemory(ctx);
+                return HPy_NULL;
+            };
+        } else {
+            var tmp: [12]u8 = undefined;
+            const esc = std.fmt.bufPrint(&tmp, "\\U{x:0>8}", .{cp}) catch unreachable;
+            buf.appendSlice(allocator, esc) catch {
+                ctxErrNoMemory(ctx);
+                return HPy_NULL;
+            };
+        }
+    }
+    return makeStrFromSlice(ctx, buf.items);
+}
+
+/// Gerçek `PyObject_Bytes`in BASİTLEŞTİRİLMİŞ bir karşılığı: `bytes_`in
+/// KENDİSİ olduğu gibi (retained) döner; `str_` UTF-8 baytlarına
+/// KODLANIR; DİĞER TÜM tipler İçin `TypeError` (Nox'ta `__bytes__`
+/// protokolü/buffer arayüzü HENÜZ yok — bilinçli v1 sınırlaması).
+fn ctxBytesConvert(ctx: *HPyContext, obj_h: HPy) callconv(.c) HPy {
+    const obj = objOf(obj_h) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "geçersiz nesne");
+        return HPy_NULL;
+    };
+    return switch (obj.tag) {
+        .bytes_ => ctxDup(ctx, obj_h),
+        .str_ => ctxBytesFromStringAndSize(ctx, obj.str_data.ptr, @intCast(obj.str_data.len)),
+        else => blk: {
+            ctxErrSetString(ctx, ctx.h_TypeError, "bytes()'e dönüştürülemez");
+            break :blk HPy_NULL;
+        },
+    };
+}
+
+fn normalizeHash(h: isize) isize {
+    return if (h == -1) -2 else h;
+}
+
+fn hashBytes(seed: u64, s: []const u8) isize {
+    const raw = std.hash.Wyhash.hash(seed, s);
+    return normalizeHash(@bitCast(raw));
+}
+
+fn hashFloatValue(f: f64) isize {
+    if (!std.math.isNan(f) and !std.math.isInf(f) and @floor(f) == f and @abs(f) < 9.2e18) {
+        return normalizeHash(@intFromFloat(f));
+    }
+    const bits: u64 = @bitCast(f);
+    return normalizeHash(@bitCast(bits));
+}
+
+/// `str_`/`bytes_` içeriğinin hash'lenmesinde KULLANILAN, oturum başına
+/// RASTGELE bir tohum — gerçek CPython'ın `PYTHONHASHSEED` İLE hash-
+/// flooding DoS saldırılarına karşı KENDİ önlemiyle AYNI ilke (bkz.
+/// `runtime/collections/dict.zig`nin AYNI deseni, M-3 — bu köprü AYRI
+/// bir modül olduğundan KENDİ bağımsız tohumunu tutar).
+threadlocal var g_hpy_hash_seed: u64 = 0;
+threadlocal var g_hpy_hash_seed_init: bool = false;
+
+/// `std.crypto.random` bu Zig sürümünde YOK — `runtime/collections/
+/// dict.zig`nin (M-3) AYNI deseni: macOS/Linux'ta `std.c.arc4random_buf`,
+/// Windows'ta `advapi32`nin `RtlGenRandom`i (`SystemFunction036`).
+fn hpySecureRandomBuf(buf: []u8) void {
+    if (builtin.os.tag == .windows) {
+        _ = SystemFunction036(buf.ptr, @intCast(buf.len));
+    } else {
+        std.c.arc4random_buf(buf.ptr, buf.len);
+    }
+}
+extern "advapi32" fn SystemFunction036(buf: [*]u8, len: u32) callconv(.c) u8;
+
+fn hpyHashSeed() u64 {
+    if (!g_hpy_hash_seed_init) {
+        var buf: [8]u8 = undefined;
+        hpySecureRandomBuf(&buf);
+        g_hpy_hash_seed = std.mem.readInt(u64, &buf, .little);
+        g_hpy_hash_seed_init = true;
+    }
+    return g_hpy_hash_seed;
+}
+
+fn ctxHash(ctx: *HPyContext, obj_h: HPy) callconv(.c) isize {
+    const obj = objOf(obj_h) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "geçersiz nesne");
+        return -1;
+    };
+    if (obj.tag == .instance_) {
+        if (objOf(obj.instance_type)) |type_obj| {
+            if (type_obj.type_tp_hash) |hash_fn| return hash_fn(ctx, obj_h);
+        }
+    }
+    return switch (obj.tag) {
+        .none => normalizeHash(0x1e2d3c4b),
+        .bool_ => if (obj.payload.b) 1 else 0,
+        .long => normalizeHash(obj.payload.l),
+        .float_ => hashFloatValue(obj.payload.f),
+        .str_ => hashBytes(hpyHashSeed(), obj.str_data),
+        .bytes_ => hashBytes(hpyHashSeed(), obj.bytes_data),
+        .tuple_ => blk: {
+            var acc: u64 = 0x345678;
+            for (obj.tuple_data) |item| {
+                const item_hash = ctxHash(ctx, item);
+                if (item_hash == -1 and ctxErrOccurred(ctx) != 0) break :blk -1;
+                acc = (acc ^ @as(u64, @bitCast(@as(i64, item_hash)))) *% 1000003;
+            }
+            break :blk normalizeHash(@bitCast(acc));
+        },
+        .exc_type, .type_, .instance_, .bound_method_ => normalizeHash(@intCast(obj_h._i)),
+        .list_, .dict_ => blk: {
+            ctxErrSetString(ctx, ctx.h_TypeError, "hashlanabilir değil");
+            break :blk -1;
+        },
+    };
+}
+
+fn richCompareOrder(order: std.math.Order, op: c_int) bool {
+    return switch (op) {
+        0 => order == .lt, // HPy_LT
+        1 => order != .gt, // HPy_LE
+        2 => order == .eq, // HPy_EQ
+        3 => order != .eq, // HPy_NE
+        4 => order == .gt, // HPy_GT
+        5 => order != .lt, // HPy_GE
+        else => false,
+    };
+}
+
+fn ctxRichCompare(ctx: *HPyContext, v: HPy, w: HPy, op: c_int) callconv(.c) HPy {
+    const vo = objOf(v) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "geçersiz nesne");
+        return HPy_NULL;
+    };
+    const wo = objOf(w) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "geçersiz nesne");
+        return HPy_NULL;
+    };
+    if (vo.tag == .instance_) {
+        if (objOf(vo.instance_type)) |type_obj| {
+            if (type_obj.type_tp_richcompare) |cmp_fn| return cmp_fn(ctx, v, w, op);
+        }
+    }
+    if (op < 0 or op > 5) {
+        ctxErrSetString(ctx, ctx.h_ValueError, "geçersiz karşılaştırma operatörü");
+        return HPy_NULL;
+    }
+    if (isNumericTag(vo.tag) and isNumericTag(wo.tag)) {
+        const a = numAsF64(vo);
+        const b = numAsF64(wo);
+        const order: std.math.Order = if (a < b) .lt else if (a > b) .gt else .eq;
+        return ctxBoolFromBool(ctx, richCompareOrder(order, op));
+    }
+    if (vo.tag == .str_ and wo.tag == .str_) {
+        return ctxBoolFromBool(ctx, richCompareOrder(std.mem.order(u8, vo.str_data, wo.str_data), op));
+    }
+    if (vo.tag == .bytes_ and wo.tag == .bytes_) {
+        return ctxBoolFromBool(ctx, richCompareOrder(std.mem.order(u8, vo.bytes_data, wo.bytes_data), op));
+    }
+    if (op == 2 or op == 3) {
+        const eq = objEquals(vo, wo);
+        return ctxBoolFromBool(ctx, if (op == 2) eq else !eq);
+    }
+    ctxErrSetString(ctx, ctx.h_TypeError, "bu tipler sıralı karşılaştırmayı desteklemiyor");
+    return HPy_NULL;
+}
+
+fn ctxRichCompareBool(ctx: *HPyContext, v: HPy, w: HPy, op: c_int) callconv(.c) c_int {
+    const result = ctxRichCompare(ctx, v, w, op);
+    if (result._i == 0) return -1;
+    defer ctxClose(ctx, result);
+    return ctxIsTrue(ctx, result);
+}
+
+/// Gerçek `HPyType_GenericNew`in BASİTLEŞTİRİLMİŞ bir karşılığı:
+/// `object.__new__`in VARSAYILANI — `args`/`nargs`/`kw`i YOK SAYAR,
+/// yalnızca `ctxNew`in (Faz 19) AYNI sıfırlanmış-tampon ayırma mantığını
+/// ÇALIŞTIRIR.
+fn ctxTypeGenericNew(ctx: *HPyContext, h_type: HPy, args: ?[*]const HPy, nargs: isize, kw: HPy) callconv(.c) HPy {
+    _ = args;
+    _ = nargs;
+    _ = kw;
+    return ctxNew(ctx, h_type, null);
+}
+
+/// Gerçek HPy'de "legacy" (CPython ABI'siyle KARIŞIK, hibrit) uzantılar
+/// İçin `PyObject*`e ham erişim sağlar. Nox `HPY_ABI_UNIVERSAL`i (SAF,
+/// CPython'SUZ) TEK ana bilgisayar modu olarak desteklediğinden (bkz.
+/// modül üstü not) "legacy"/"universal" struct AYRIMI YOK — `ctxAsStruct
+/// Object`in AYNI, tek struct temsiliyle ÖZDEŞTİR.
+fn ctxAsStructLegacy(ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque {
+    return ctxAsStructObject(ctx, h);
 }
 
 // ---- Tier 1: list/tuple/dict + sequence/mapping protokolü ----
@@ -850,6 +1370,12 @@ const HPY_SLOT_TP_DESTROY: c_int = 1000; // bkz. autogen_hpyslot.h
 const HPY_SLOT_TP_CALL: c_int = 50; // HPyFunc_KEYWORDS imzalı
 const HPY_SLOT_TP_INIT: c_int = 60; // HPyFunc_INITPROC imzalı
 const HPY_SLOT_TP_NEW: c_int = 65; // HPyFunc_NEWFUNC imzalı
+// Temel nesne protokolü (Faz SS, `Obj.type_tp_repr` VB.nin belge notu) —
+// `autogen_hpyslot.h`e karşı doğrulandı.
+const HPY_SLOT_TP_HASH: c_int = 59; // HPyFunc_HASHFUNC imzalı
+const HPY_SLOT_TP_REPR: c_int = 66; // HPyFunc_REPRFUNC imzalı
+const HPY_SLOT_TP_RICHCOMPARE: c_int = 67; // HPyFunc_RICHCMPFUNC imzalı
+const HPY_SLOT_TP_STR: c_int = 70; // HPyFunc_REPRFUNC imzalı
 
 fn ctxTypeFromSpec(ctx: *HPyContext, spec: ?*HPyType_Spec, params: ?*HPyType_SpecParam) callconv(.c) HPy {
     // Taban sınıf/metaclass parametreleri şu an yok sayılıyor (bkz. modül
@@ -864,6 +1390,9 @@ fn ctxTypeFromSpec(ctx: *HPyContext, spec: ?*HPyType_Spec, params: ?*HPyType_Spe
     const obj = allocator.create(Obj) catch return HPy_NULL;
     obj.* = .{ .refcount = 1, .tag = .type_, .payload = .{ .l = 0 } };
     obj.type_basicsize = @intCast(s.basicsize);
+    if (s.name) |n| {
+        obj.type_name = allocator.dupeZ(u8, std.mem.sliceTo(n, 0)) catch "";
+    }
 
     if (s.defines) |defs| {
         var i: usize = 0;
@@ -878,6 +1407,14 @@ fn ctxTypeFromSpec(ctx: *HPyContext, spec: ?*HPyType_Spec, params: ?*HPyType_Spe
                     if (sl.impl) |impl| obj.type_tp_init = @ptrCast(@alignCast(impl));
                 } else if (sl.slot == HPY_SLOT_TP_CALL) {
                     if (sl.impl) |impl| obj.type_tp_call = @ptrCast(@alignCast(impl));
+                } else if (sl.slot == HPY_SLOT_TP_REPR) {
+                    if (sl.impl) |impl| obj.type_tp_repr = @ptrCast(@alignCast(impl));
+                } else if (sl.slot == HPY_SLOT_TP_STR) {
+                    if (sl.impl) |impl| obj.type_tp_str = @ptrCast(@alignCast(impl));
+                } else if (sl.slot == HPY_SLOT_TP_HASH) {
+                    if (sl.impl) |impl| obj.type_tp_hash = @ptrCast(@alignCast(impl));
+                } else if (sl.slot == HPY_SLOT_TP_RICHCOMPARE) {
+                    if (sl.impl) |impl| obj.type_tp_richcompare = @ptrCast(@alignCast(impl));
                 }
             } else if (d.kind == HPY_DEF_KIND_METH) {
                 if (d.meth.signature == HPY_FUNC_SIG_O) {
@@ -2001,7 +2538,7 @@ pub const HPyContext = extern struct {
     ctx_Err_WriteUnraisable: ?*const fn (ctx: *HPyContext, obj: HPy) callconv(.c) void = null,
     ctx_IsTrue: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) c_int = null,
     ctx_Type_FromSpec: ?*const fn (ctx: *HPyContext, spec: ?*HPyType_Spec, params: ?*HPyType_SpecParam) callconv(.c) HPy = null,
-    ctx_Type_GenericNew: ?*const anyopaque = null,
+    ctx_Type_GenericNew: ?*const fn (ctx: *HPyContext, h_type: HPy, args: ?[*]const HPy, nargs: isize, kw: HPy) callconv(.c) HPy = null,
     ctx_GetAttr: ?*const fn (ctx: *HPyContext, obj: HPy, name: HPy) callconv(.c) HPy = null,
     ctx_GetAttr_s: ?*const fn (ctx: *HPyContext, obj: HPy, utf8_name: ?[*:0]const u8) callconv(.c) HPy = null,
     ctx_HasAttr: ?*const fn (ctx: *HPyContext, obj: HPy, name: HPy) callconv(.c) c_int = null,
@@ -2019,22 +2556,22 @@ pub const HPyContext = extern struct {
     ctx_TypeCheck: ?*const fn (ctx: *HPyContext, obj: HPy, type_h: HPy) callconv(.c) c_int = null,
     ctx_Is: ?*const fn (ctx: *HPyContext, obj: HPy, other: HPy) callconv(.c) c_int = null,
     ctx_AsStruct_Object: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque = null,
-    ctx_AsStruct_Legacy: ?*const anyopaque = null,
+    ctx_AsStruct_Legacy: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque = null,
     ctx_New: ?*const fn (ctx: *HPyContext, h_type: HPy, data: ?*?*anyopaque) callconv(.c) HPy = null,
-    ctx_Repr: ?*const anyopaque = null,
-    ctx_Str: ?*const anyopaque = null,
-    ctx_ASCII: ?*const anyopaque = null,
-    ctx_Bytes: ?*const anyopaque = null,
-    ctx_RichCompare: ?*const anyopaque = null,
-    ctx_RichCompareBool: ?*const anyopaque = null,
-    ctx_Hash: ?*const anyopaque = null,
-    ctx_Bytes_Check: ?*const anyopaque = null,
-    ctx_Bytes_Size: ?*const anyopaque = null,
-    ctx_Bytes_GET_SIZE: ?*const anyopaque = null,
-    ctx_Bytes_AsString: ?*const anyopaque = null,
-    ctx_Bytes_AS_STRING: ?*const anyopaque = null,
-    ctx_Bytes_FromString: ?*const anyopaque = null,
-    ctx_Bytes_FromStringAndSize: ?*const anyopaque = null,
+    ctx_Repr: ?*const fn (ctx: *HPyContext, obj: HPy) callconv(.c) HPy = null,
+    ctx_Str: ?*const fn (ctx: *HPyContext, obj: HPy) callconv(.c) HPy = null,
+    ctx_ASCII: ?*const fn (ctx: *HPyContext, obj: HPy) callconv(.c) HPy = null,
+    ctx_Bytes: ?*const fn (ctx: *HPyContext, obj: HPy) callconv(.c) HPy = null,
+    ctx_RichCompare: ?*const fn (ctx: *HPyContext, v: HPy, w: HPy, op: c_int) callconv(.c) HPy = null,
+    ctx_RichCompareBool: ?*const fn (ctx: *HPyContext, v: HPy, w: HPy, op: c_int) callconv(.c) c_int = null,
+    ctx_Hash: ?*const fn (ctx: *HPyContext, obj: HPy) callconv(.c) isize = null,
+    ctx_Bytes_Check: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) c_int = null,
+    ctx_Bytes_Size: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) isize = null,
+    ctx_Bytes_GET_SIZE: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) isize = null,
+    ctx_Bytes_AsString: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) ?[*:0]const u8 = null,
+    ctx_Bytes_AS_STRING: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) ?[*:0]const u8 = null,
+    ctx_Bytes_FromString: ?*const fn (ctx: *HPyContext, bytes: ?[*:0]const u8) callconv(.c) HPy = null,
+    ctx_Bytes_FromStringAndSize: ?*const fn (ctx: *HPyContext, bytes: ?[*]const u8, len: isize) callconv(.c) HPy = null,
     ctx_Unicode_FromString: ?*const fn (ctx: *HPyContext, utf8: ?[*:0]const u8) callconv(.c) HPy = null,
     ctx_Unicode_Check: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) c_int = null,
     ctx_Unicode_AsASCIIString: ?*const anyopaque = null,
@@ -2286,8 +2823,24 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
         .ctx_DelItem_s = ctxDelItemS,
         .ctx_Contains = ctxContains,
         .ctx_Type_FromSpec = ctxTypeFromSpec,
+        .ctx_Type_GenericNew = ctxTypeGenericNew,
         .ctx_New = ctxNew,
         .ctx_AsStruct_Object = ctxAsStructObject,
+        .ctx_AsStruct_Legacy = ctxAsStructLegacy,
+        .ctx_Repr = ctxRepr,
+        .ctx_Str = ctxStr,
+        .ctx_ASCII = ctxAscii,
+        .ctx_Bytes = ctxBytesConvert,
+        .ctx_RichCompare = ctxRichCompare,
+        .ctx_RichCompareBool = ctxRichCompareBool,
+        .ctx_Hash = ctxHash,
+        .ctx_Bytes_Check = ctxBytesCheck,
+        .ctx_Bytes_Size = ctxBytesSize,
+        .ctx_Bytes_GET_SIZE = ctxBytesSize,
+        .ctx_Bytes_AsString = ctxBytesAsString,
+        .ctx_Bytes_AS_STRING = ctxBytesAsString,
+        .ctx_Bytes_FromString = ctxBytesFromString,
+        .ctx_Bytes_FromStringAndSize = ctxBytesFromStringAndSize,
         .ctx_Type = ctxType,
         .ctx_TypeCheck = ctxTypeCheck,
         .ctx_GetAttr = ctxGetAttr,

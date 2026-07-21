@@ -1347,6 +1347,19 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   otomatik testten çağrılamaz, yalnızca wiring doğrulanır. `noxtest.c`ye
   6 yeni modül metodu, `hpy_tier0_test.zig`ye 7 yeni test — 33/33 yeşil.
   Kapsam: 180 `ctx_*` fonksiyonundan 101→**109**'u implemente.
+- **Faz SS/TT — HPy köprüsü: temel nesne protokolünün geri kalanı +
+  Bytes tipi** (16 fonksiyon: `Repr`/`Str`/`ASCII`/`Bytes`(çevirme)/
+  `RichCompare`/`RichCompareBool`/`Hash`/`Type_GenericNew`/`AsStruct_
+  Legacy` + YENİ `ObjTag.bytes_` ile `Bytes_Check`/`Size`/`GET_SIZE`/
+  `AsString`/`AS_STRING`/`FromString`/`FromStringAndSize`). `.instance_`
+  nesneleri kayıtlı `tp_repr`/`tp_str`/`tp_hash`/`tp_richcompare`
+  slotlarını (varsa) kullanır, yoksa jenerik Python-benzeri biçimlendirme
+  (None/True/False/int/float `3.0`/str repr+str/list/tuple/dict/type/
+  instance). `Hash`, süreç başına rastgele tohumlu `Wyhash` kullanır
+  (hash-flooding DoS'a karşı, M-3'ün aynı ilkesi). `Widget`e test amaçlı
+  özel `tp_repr`/`tp_hash` slotları eklendi; `noxtest.c`ye 9 yeni modül
+  metodu, `hpy_tier0_test.zig`ye 8 yeni test — 41/41 yeşil. Kapsam: 180
+  `ctx_*` fonksiyonundan 109→**124**'ü implemente.
 
 ## [1.0.0]
 

@@ -926,3 +926,317 @@ test "gerçek HPy eklentisi: write_unraisable_via_c — ctx_Err_WriteUnraisable 
     try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_IsTrue.?(ctx, result));
     try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Err_Occurred.?(ctx));
 }
+
+fn strEqualsUtf8(ctx: *hpy.context.HPyContext, h: hpy.context.HPy, expected: []const u8) !void {
+    var size: isize = 0;
+    const ptr = ctx.ctx_Unicode_AsUTF8AndSize.?(ctx, h, &size) orelse return error.NullString;
+    try std.testing.expectEqualStrings(expected, ptr[0..@intCast(size)]);
+}
+
+test "gerçek HPy eklentisi: repr_via_c/str_via_c — jenerik biçimlendirme (Faz SS)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const repr_via_c = mod.findMethodO("repr_via_c") orelse return error.MethodNotFound;
+    const str_via_c = mod.findMethodO("str_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    // None / bool / int / float
+    {
+        const r = repr_via_c(ctx, hpy.context.HPy_NULL, ctx.h_None);
+        defer ctx.ctx_Close.?(ctx, r);
+        try strEqualsUtf8(ctx, r, "None");
+    }
+    {
+        const r = repr_via_c(ctx, hpy.context.HPy_NULL, ctx.h_True);
+        defer ctx.ctx_Close.?(ctx, r);
+        try strEqualsUtf8(ctx, r, "True");
+    }
+    {
+        const n = ctx.ctx_Long_FromInt64_t.?(ctx, 42);
+        defer ctx.ctx_Close.?(ctx, n);
+        const r = repr_via_c(ctx, hpy.context.HPy_NULL, n);
+        defer ctx.ctx_Close.?(ctx, r);
+        try strEqualsUtf8(ctx, r, "42");
+        const s = str_via_c(ctx, hpy.context.HPy_NULL, n);
+        defer ctx.ctx_Close.?(ctx, s);
+        try strEqualsUtf8(ctx, s, "42");
+    }
+    {
+        // Python float repr HER ZAMAN bir ondalık nokta taşır: 3.0, 3 DEĞİL.
+        const f = ctx.ctx_Float_FromDouble.?(ctx, 3.0);
+        defer ctx.ctx_Close.?(ctx, f);
+        const r = repr_via_c(ctx, hpy.context.HPy_NULL, f);
+        defer ctx.ctx_Close.?(ctx, r);
+        try strEqualsUtf8(ctx, r, "3.0");
+    }
+    // str: repr tırnaklı+kaçışlı, str tırnaksız
+    {
+        const s1 = ctx.ctx_Unicode_FromString.?(ctx, "he'llo");
+        defer ctx.ctx_Close.?(ctx, s1);
+        const r = repr_via_c(ctx, hpy.context.HPy_NULL, s1);
+        defer ctx.ctx_Close.?(ctx, r);
+        try strEqualsUtf8(ctx, r, "\"he'llo\"");
+        const s = str_via_c(ctx, hpy.context.HPy_NULL, s1);
+        defer ctx.ctx_Close.?(ctx, s);
+        try strEqualsUtf8(ctx, s, "he'llo");
+    }
+    // list/tuple/dict
+    {
+        const one = ctx.ctx_Long_FromInt64_t.?(ctx, 1);
+        defer ctx.ctx_Close.?(ctx, one);
+        const two = ctx.ctx_Long_FromInt64_t.?(ctx, 2);
+        defer ctx.ctx_Close.?(ctx, two);
+        const list = ctx.ctx_List_New.?(ctx, 0);
+        defer ctx.ctx_Close.?(ctx, list);
+        _ = ctx.ctx_List_Append.?(ctx, list, one);
+        _ = ctx.ctx_List_Append.?(ctx, list, two);
+        const r = repr_via_c(ctx, hpy.context.HPy_NULL, list);
+        defer ctx.ctx_Close.?(ctx, r);
+        try strEqualsUtf8(ctx, r, "[1, 2]");
+
+        var one_item = [_]hpy.context.HPy{one};
+        const singleton_tuple = ctx.ctx_Tuple_FromArray.?(ctx, &one_item, 1);
+        defer ctx.ctx_Close.?(ctx, singleton_tuple);
+        const r2 = repr_via_c(ctx, hpy.context.HPy_NULL, singleton_tuple);
+        defer ctx.ctx_Close.?(ctx, r2);
+        try strEqualsUtf8(ctx, r2, "(1,)");
+
+        const d = ctx.ctx_Dict_New.?(ctx);
+        defer ctx.ctx_Close.?(ctx, d);
+        _ = ctx.ctx_SetItem_s.?(ctx, d, "x", one);
+        const r3 = repr_via_c(ctx, hpy.context.HPy_NULL, d);
+        defer ctx.ctx_Close.?(ctx, r3);
+        try strEqualsUtf8(ctx, r3, "{'x': 1}");
+    }
+}
+
+test "gerçek HPy eklentisi: ascii_via_c — ASCII-dışı baytlar \\xHH ile kaçışlanır (Faz SS)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const ascii_via_c = mod.findMethodO("ascii_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    // "café" — 'é' UTF-8'de U+00E9, iki baytlık bir kodlama (0xC3 0xA9).
+    const s = ctx.ctx_Unicode_FromString.?(ctx, "caf\xc3\xa9");
+    defer ctx.ctx_Close.?(ctx, s);
+    const r = ascii_via_c(ctx, hpy.context.HPy_NULL, s);
+    defer ctx.ctx_Close.?(ctx, r);
+    try strEqualsUtf8(ctx, r, "'caf\\xe9'");
+}
+
+test "gerçek HPy eklentisi: bytes_via_c — str/bytes → bytes çevrimi + TypeError (Faz SS)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const bytes_via_c = mod.findMethodO("bytes_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const s = ctx.ctx_Unicode_FromString.?(ctx, "ab");
+    defer ctx.ctx_Close.?(ctx, s);
+    const b = bytes_via_c(ctx, hpy.context.HPy_NULL, s);
+    defer ctx.ctx_Close.?(ctx, b);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Bytes_Check.?(ctx, b));
+    try std.testing.expectEqual(@as(isize, 2), ctx.ctx_Bytes_Size.?(ctx, b));
+    const ptr = ctx.ctx_Bytes_AsString.?(ctx, b) orelse return error.NullBytes;
+    try std.testing.expectEqualStrings("ab", ptr[0..2]);
+
+    // Yeniden dönüştürme — aynı bytes nesnesi (dup) dönmeli.
+    const b2 = bytes_via_c(ctx, hpy.context.HPy_NULL, b);
+    defer ctx.ctx_Close.?(ctx, b2);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Bytes_Check.?(ctx, b2));
+
+    // long -> TypeError
+    const n = ctx.ctx_Long_FromInt64_t.?(ctx, 5);
+    defer ctx.ctx_Close.?(ctx, n);
+    try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Err_Occurred.?(ctx));
+    const r = bytes_via_c(ctx, hpy.context.HPy_NULL, n);
+    try std.testing.expectEqual(hpy.context.HPy_NULL._i, r._i);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_TypeError));
+    ctx.ctx_Err_Clear.?(ctx);
+}
+
+test "gerçek HPy eklentisi: bytes_roundtrip_via_c — gömülü \\0 dahil Bytes_FromStringAndSize/Size/AsString (Faz TT)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const bytes_roundtrip_via_c = mod.findMethodO("bytes_roundtrip_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+    const result = bytes_roundtrip_via_c(ctx, hpy.context.HPy_NULL, dummy);
+    defer ctx.ctx_Close.?(ctx, result);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_IsTrue.?(ctx, result));
+}
+
+test "gerçek HPy eklentisi: hash_via_c — int hash kimliği + tutarlılık (Faz SS)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const hash_via_c = mod.findMethodO("hash_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const forty_two = ctx.ctx_Long_FromInt64_t.?(ctx, 42);
+    defer ctx.ctx_Close.?(ctx, forty_two);
+    const h1 = hash_via_c(ctx, hpy.context.HPy_NULL, forty_two);
+    defer ctx.ctx_Close.?(ctx, h1);
+    try std.testing.expectEqual(@as(i64, 42), ctx.ctx_Long_AsInt64_t.?(ctx, h1));
+
+    // Gerçek CPython sözleşmesi: hash(-1) == -2 (hata SİNYALİ olan -1 İLE
+    // ÇAKIŞMASIN diye).
+    const neg_one = ctx.ctx_Long_FromInt64_t.?(ctx, -1);
+    defer ctx.ctx_Close.?(ctx, neg_one);
+    const h2 = hash_via_c(ctx, hpy.context.HPy_NULL, neg_one);
+    defer ctx.ctx_Close.?(ctx, h2);
+    try std.testing.expectEqual(@as(i64, -2), ctx.ctx_Long_AsInt64_t.?(ctx, h2));
+
+    // Aynı içerikli str — AYNI süreç İÇİNDE (aynı tohum) İKİ kez hash'lenince
+    // TUTARLI bir değer üretmeli ve -1 (hata sinyali) OLMAMALI.
+    const s1 = ctx.ctx_Unicode_FromString.?(ctx, "merhaba");
+    defer ctx.ctx_Close.?(ctx, s1);
+    const s2 = ctx.ctx_Unicode_FromString.?(ctx, "merhaba");
+    defer ctx.ctx_Close.?(ctx, s2);
+    const hs1 = hash_via_c(ctx, hpy.context.HPy_NULL, s1);
+    defer ctx.ctx_Close.?(ctx, hs1);
+    const hs2 = hash_via_c(ctx, hpy.context.HPy_NULL, s2);
+    defer ctx.ctx_Close.?(ctx, hs2);
+    try std.testing.expectEqual(ctx.ctx_Long_AsInt64_t.?(ctx, hs1), ctx.ctx_Long_AsInt64_t.?(ctx, hs2));
+    try std.testing.expect(ctx.ctx_Long_AsInt64_t.?(ctx, hs1) != -1);
+}
+
+test "gerçek HPy eklentisi: richcompare_via_c/richcomparebool_via_c — sayısal + sözlüksel sıralama (Faz SS)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const richcompare_via_c = mod.findMethodO("richcompare_via_c") orelse return error.MethodNotFound;
+    const richcomparebool_via_c = mod.findMethodO("richcomparebool_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const HPy_LT = 0;
+    const HPy_GT = 4;
+
+    const five = ctx.ctx_Long_FromInt64_t.?(ctx, 5);
+    defer ctx.ctx_Close.?(ctx, five);
+    const three = ctx.ctx_Long_FromInt64_t.?(ctx, 3);
+    defer ctx.ctx_Close.?(ctx, three);
+
+    {
+        const lt = ctx.ctx_Long_FromInt64_t.?(ctx, HPy_LT);
+        defer ctx.ctx_Close.?(ctx, lt);
+        var items = [_]hpy.context.HPy{ five, three, lt };
+        const triple = ctx.ctx_Tuple_FromArray.?(ctx, &items, 3);
+        defer ctx.ctx_Close.?(ctx, triple);
+        const r = richcompare_via_c(ctx, hpy.context.HPy_NULL, triple);
+        defer ctx.ctx_Close.?(ctx, r);
+        try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_IsTrue.?(ctx, r)); // 5 < 3 YANLIŞ
+    }
+    {
+        const gt = ctx.ctx_Long_FromInt64_t.?(ctx, HPy_GT);
+        defer ctx.ctx_Close.?(ctx, gt);
+        var items = [_]hpy.context.HPy{ five, three, gt };
+        const triple = ctx.ctx_Tuple_FromArray.?(ctx, &items, 3);
+        defer ctx.ctx_Close.?(ctx, triple);
+        const r = richcomparebool_via_c(ctx, hpy.context.HPy_NULL, triple);
+        defer ctx.ctx_Close.?(ctx, r);
+        try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_IsTrue.?(ctx, r)); // 5 > 3 DOĞRU
+    }
+    {
+        const abc = ctx.ctx_Unicode_FromString.?(ctx, "abc");
+        defer ctx.ctx_Close.?(ctx, abc);
+        const abd = ctx.ctx_Unicode_FromString.?(ctx, "abd");
+        defer ctx.ctx_Close.?(ctx, abd);
+        const lt = ctx.ctx_Long_FromInt64_t.?(ctx, HPy_LT);
+        defer ctx.ctx_Close.?(ctx, lt);
+        var items = [_]hpy.context.HPy{ abc, abd, lt };
+        const triple = ctx.ctx_Tuple_FromArray.?(ctx, &items, 3);
+        defer ctx.ctx_Close.?(ctx, triple);
+        const r = richcompare_via_c(ctx, hpy.context.HPy_NULL, triple);
+        defer ctx.ctx_Close.?(ctx, r);
+        try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_IsTrue.?(ctx, r)); // "abc" < "abd" DOĞRU
+    }
+}
+
+test "gerçek HPy eklentisi: generic_new_via_c — tp_new'i OLMAYAN Counter'da HPyType_GenericNew (Faz SS)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const make_counter = mod.findMethodO("make_counter") orelse return error.MethodNotFound;
+    const generic_new_via_c = mod.findMethodO("generic_new_via_c") orelse return error.MethodNotFound;
+
+    // Counter_type de tembel/statik önbelleklenir (bkz. MEVCUT Counter testi).
+    const ctx = try hpy.context.createContext(std.heap.page_allocator);
+    defer hpy.context.destroyContext(std.heap.page_allocator, ctx);
+
+    const seed = ctx.ctx_Long_FromInt64_t.?(ctx, 1);
+    defer ctx.ctx_Close.?(ctx, seed);
+    const counter_instance = make_counter(ctx, hpy.context.HPy_NULL, seed);
+    defer ctx.ctx_Close.?(ctx, counter_instance);
+    const counter_type = ctx.ctx_Type.?(ctx, counter_instance);
+    defer ctx.ctx_Close.?(ctx, counter_type);
+
+    const new_instance = generic_new_via_c(ctx, hpy.context.HPy_NULL, counter_type);
+    defer ctx.ctx_Close.?(ctx, new_instance);
+    try std.testing.expect(new_instance._i != 0);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_TypeCheck.?(ctx, new_instance, counter_type));
+}
+
+test "gerçek HPy eklentisi: Widget'ın özel tp_repr/tp_hash slotları — jenerik varsayılana DÜŞMEZ (Faz SS)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const get_widget_type = mod.findMethodO("get_widget_type") orelse return error.MethodNotFound;
+    const repr_via_c = mod.findMethodO("repr_via_c") orelse return error.MethodNotFound;
+    const hash_via_c = mod.findMethodO("hash_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.heap.page_allocator);
+    defer hpy.context.destroyContext(std.heap.page_allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+    const widget_type = get_widget_type(ctx, hpy.context.HPy_NULL, dummy);
+
+    const seven = ctx.ctx_Long_FromInt64_t.?(ctx, 7);
+    defer ctx.ctx_Close.?(ctx, seven);
+    var ctor_args = [_]hpy.context.HPy{seven};
+    const widget = ctx.ctx_Call.?(ctx, widget_type, &ctor_args, 1, hpy.context.HPy_NULL);
+    defer ctx.ctx_Close.?(ctx, widget);
+    // tp_new(7) + tp_init(+7) = 14
+
+    const r = repr_via_c(ctx, hpy.context.HPy_NULL, widget);
+    defer ctx.ctx_Close.?(ctx, r);
+    try strEqualsUtf8(ctx, r, "Widget(value=14)");
+
+    const h = hash_via_c(ctx, hpy.context.HPy_NULL, widget);
+    defer ctx.ctx_Close.?(ctx, h);
+    try std.testing.expectEqual(@as(i64, 14), ctx.ctx_Long_AsInt64_t.?(ctx, h));
+}
