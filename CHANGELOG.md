@@ -1333,7 +1333,20 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   int/float için yaptığıyla aynı); `MatrixMultiply` her zaman
   `TypeError` (Nox'ta `__matmul__` yok). `noxtest.c`ye 4 yeni modül
   metodu, `hpy_tier0_test.zig`ye 4 yeni test — 26/26 yeşil. Kapsam: 180
-  `ctx_*` fonksiyonundan 76→**104**'ü implemente.
+  `ctx_*` fonksiyonundan implemente edilen sayı **101**'e çıktı (bundan
+  SONRAKİ sayılar `context.zig`nin doğrulama komutuyla teyit edilmiştir).
+- **Faz RR — HPy köprüsü: hata yönetiminin geri kalanı** (`ctx_FatalError`/
+  `ctx_Err_SetObject`/`ctx_Err_SetFromErrnoWithFilename`/`ctx_Err_
+  SetFromErrnoWithFilenameObjects`/`ctx_Err_NewException`/`ctx_Err_
+  NewExceptionWithDoc`/`ctx_Err_WarnEx`/`ctx_Err_WriteUnraisable`, 8
+  fonksiyon). `PendingError`e bir `value: HPy` alanı eklendi (`Err_
+  SetObject` için); `Err_NewException` yeni, pin'siz bir `.exc_type`
+  kimliği üretir; `Err_SetFromErrnoWithFilename(Objects)` gerçek `errno`yu
+  `strerror`e çevirir; `Err_WarnEx`/`WriteUnraisable` stderr'e yazar.
+  `FatalError` gerçek `Py_FatalError` gibi süreci sonlandırır — bu yüzden
+  otomatik testten çağrılamaz, yalnızca wiring doğrulanır. `noxtest.c`ye
+  6 yeni modül metodu, `hpy_tier0_test.zig`ye 7 yeni test — 33/33 yeşil.
+  Kapsam: 180 `ctx_*` fonksiyonundan 101→**109**'u implemente.
 
 ## [1.0.0]
 

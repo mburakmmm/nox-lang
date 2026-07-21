@@ -266,6 +266,69 @@ static HPy long_float_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
     return result;
 }
 
+/* Hata yönetiminin geri kalanı (Faz RR) test amaçlı: eklentinin KENDİ
+ * C kodunun HPyErr_SetObject/HPyErr_SetFromErrnoWithFilename/
+ * HPyErr_SetFromErrnoWithFilenameObjects/HPyErr_NewException/
+ * HPyErr_NewExceptionWithDoc/HPyErr_WarnEx/HPyErr_WriteUnraisable
+ * makrolarını (HEPSİ ham `ctx_Err_*` yuvalarına TRAMPOLİNE eden)
+ * ÇAĞIRMASI. `ctx_FatalError` HARİÇ (o SÜREÇ SONLANDIRIR, TEST
+ * SÜİTİNDEN GÜVENLE çağrılamaz — bkz. `ctxFatalError`in Zig tarafındaki
+ * belge notu). */
+HPyDef_METH(err_set_object_via_c, "err_set_object_via_c", HPyFunc_O)
+static HPy err_set_object_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    return HPyErr_SetObject(ctx, ctx->h_ValueError, arg);
+}
+
+HPyDef_METH(err_from_errno_via_c, "err_from_errno_via_c", HPyFunc_O)
+static HPy err_from_errno_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    const char *filename = HPyUnicode_AsUTF8AndSize(ctx, arg, NULL);
+    return HPyErr_SetFromErrnoWithFilename(ctx, ctx->h_OSError, filename);
+}
+
+HPyDef_METH(err_from_errno_objects_via_c, "err_from_errno_objects_via_c", HPyFunc_O)
+static HPy err_from_errno_objects_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    HPy f1 = HPy_GetItem_i(ctx, arg, 0);
+    HPy f2 = HPy_GetItem_i(ctx, arg, 1);
+    HPyErr_SetFromErrnoWithFilenameObjects(ctx, ctx->h_OSError, f1, f2);
+    HPy_Close(ctx, f1);
+    HPy_Close(ctx, f2);
+    return HPy_NULL;
+}
+
+HPyDef_METH(new_exception_via_c, "new_exception_via_c", HPyFunc_O)
+static HPy new_exception_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    (void)arg;
+    HPy custom_exc = HPyErr_NewException(ctx, "noxtest.CustomError", HPy_NULL, HPy_NULL);
+    HPyErr_SetString(ctx, custom_exc, "kasıtlı özel istisna");
+    HPy_Close(ctx, custom_exc);
+    return HPy_NULL;
+}
+
+HPyDef_METH(warn_via_c, "warn_via_c", HPyFunc_O)
+static HPy warn_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    (void)arg;
+    int rc = HPyErr_WarnEx(ctx, ctx->h_RuntimeWarning, "noxtest: kasıtlı uyarı", 1);
+    return HPyLong_FromLong(ctx, rc);
+}
+
+HPyDef_METH(write_unraisable_via_c, "write_unraisable_via_c", HPyFunc_O)
+static HPy write_unraisable_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    HPyErr_SetString(ctx, ctx->h_ValueError, "yok sayılacak istisna");
+    HPyErr_WriteUnraisable(ctx, arg);
+    return HPyBool_FromBool(ctx, (bool)HPyErr_Occurred(ctx));
+}
+
 HPyDef_METH(add_one, "add_one", HPyFunc_O)
 static HPy add_one_impl(HPyContext *ctx, HPy self, HPy arg)
 {
@@ -378,6 +441,12 @@ static HPyDef *module_defines[] = {
     &matmul_via_c,
     &pow_mod_via_c,
     &long_float_via_c,
+    &err_set_object_via_c,
+    &err_from_errno_via_c,
+    &err_from_errno_objects_via_c,
+    &new_exception_via_c,
+    &warn_via_c,
+    &write_unraisable_via_c,
     &add_one,
     &str_length,
     &negate,

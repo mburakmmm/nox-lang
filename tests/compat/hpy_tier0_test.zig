@@ -779,3 +779,150 @@ test "gerçek HPy eklentisi: long_float_via_c(9) == (9, 9.0) — ctx_Long/ctx_Fl
     try std.testing.expectEqual(@as(i64, 9), ctx.ctx_Long_AsInt64_t.?(ctx, as_long));
     try std.testing.expectApproxEqAbs(@as(f64, 9.0), ctx.ctx_Float_AsDouble.?(ctx, as_float), 1e-9);
 }
+
+test "gerçek HPy eklentisi: err_set_object_via_c — ctx_Err_SetObject bir DEĞER nesnesi taşır (Faz RR)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const err_set_object_via_c = mod.findMethodO("err_set_object_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const value = ctx.ctx_Long_FromInt64_t.?(ctx, 99);
+    defer ctx.ctx_Close.?(ctx, value);
+
+    try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Err_Occurred.?(ctx));
+    const result = err_set_object_via_c(ctx, hpy.context.HPy_NULL, value);
+    try std.testing.expectEqual(hpy.context.HPy_NULL._i, result._i);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_Occurred.?(ctx));
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_ValueError));
+    ctx.ctx_Err_Clear.?(ctx);
+}
+
+test "gerçek HPy eklentisi: err_from_errno_via_c — ctx_Err_SetFromErrnoWithFilename (Faz RR)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const err_from_errno_via_c = mod.findMethodO("err_from_errno_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const filename = ctx.ctx_Unicode_FromString.?(ctx, "/tmp/olmayan-bir-dosya");
+    defer ctx.ctx_Close.?(ctx, filename);
+
+    const result = err_from_errno_via_c(ctx, hpy.context.HPy_NULL, filename);
+    try std.testing.expectEqual(hpy.context.HPy_NULL._i, result._i);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_Occurred.?(ctx));
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_OSError));
+    ctx.ctx_Err_Clear.?(ctx);
+}
+
+test "gerçek HPy eklentisi: err_from_errno_objects_via_c — ctx_Err_SetFromErrnoWithFilenameObjects (Faz RR)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const err_from_errno_objects_via_c = mod.findMethodO("err_from_errno_objects_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const f1 = ctx.ctx_Unicode_FromString.?(ctx, "kaynak.txt");
+    defer ctx.ctx_Close.?(ctx, f1);
+    const f2 = ctx.ctx_Unicode_FromString.?(ctx, "hedef.txt");
+    defer ctx.ctx_Close.?(ctx, f2);
+    var pair_items = [_]hpy.context.HPy{ f1, f2 };
+    const pair = ctx.ctx_Tuple_FromArray.?(ctx, &pair_items, 2);
+    defer ctx.ctx_Close.?(ctx, pair);
+
+    const result = err_from_errno_objects_via_c(ctx, hpy.context.HPy_NULL, pair);
+    try std.testing.expectEqual(hpy.context.HPy_NULL._i, result._i);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_Occurred.?(ctx));
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_OSError));
+    ctx.ctx_Err_Clear.?(ctx);
+}
+
+test "gerçek HPy eklentisi: ctx_Err_NewException — iki ayrı çağrı İKİ FARKLI kimlik üretir (Faz RR, doğrudan Zig'den)" {
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const exc1 = ctx.ctx_Err_NewException.?(ctx, "noxtest.Error1", hpy.context.HPy_NULL, hpy.context.HPy_NULL);
+    defer ctx.ctx_Close.?(ctx, exc1);
+    const exc2 = ctx.ctx_Err_NewExceptionWithDoc.?(ctx, "noxtest.Error2", "belge", hpy.context.HPy_NULL, hpy.context.HPy_NULL);
+    defer ctx.ctx_Close.?(ctx, exc2);
+    try std.testing.expect(exc1._i != exc2._i);
+
+    ctx.ctx_Err_SetString.?(ctx, exc1, "hata1");
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, exc1));
+    try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Err_ExceptionMatches.?(ctx, exc2));
+    try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_ValueError));
+    ctx.ctx_Err_Clear.?(ctx);
+}
+
+test "gerçek HPy eklentisi: new_exception_via_c — ctx_Err_NewException eklentiden çağrılır, ValueError'la EŞLEŞMEZ (Faz RR)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const new_exception_via_c = mod.findMethodO("new_exception_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+
+    const result = new_exception_via_c(ctx, hpy.context.HPy_NULL, dummy);
+    try std.testing.expectEqual(hpy.context.HPy_NULL._i, result._i);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_Occurred.?(ctx));
+    try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_ValueError));
+    ctx.ctx_Err_Clear.?(ctx);
+}
+
+test "gerçek HPy eklentisi: warn_via_c — ctx_Err_WarnEx 0 döner, istisna YÜKSELTMEZ (Faz RR)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const warn_via_c = mod.findMethodO("warn_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+
+    const result = warn_via_c(ctx, hpy.context.HPy_NULL, dummy);
+    defer ctx.ctx_Close.?(ctx, result);
+    try std.testing.expectEqual(@as(i64, 0), ctx.ctx_Long_AsInt64_t.?(ctx, result));
+    try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Err_Occurred.?(ctx));
+}
+
+test "gerçek HPy eklentisi: write_unraisable_via_c — ctx_Err_WriteUnraisable bekleyen istisnayı TEMİZLER (Faz RR)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const write_unraisable_via_c = mod.findMethodO("write_unraisable_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+
+    const result = write_unraisable_via_c(ctx, hpy.context.HPy_NULL, dummy);
+    defer ctx.ctx_Close.?(ctx, result);
+    try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_IsTrue.?(ctx, result));
+    try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Err_Occurred.?(ctx));
+}

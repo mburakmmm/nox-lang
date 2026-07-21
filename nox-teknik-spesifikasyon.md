@@ -1628,7 +1628,36 @@ AYNI). Doğrulama: `noxtest.c`ye 4 yeni modül metodu (`number_ops_via_c`
 — 10 farklı işlemi TEK bir `(a,b)` tuple'ı üzerinden zincirleyen kapsamlı
 bir test, `matmul_via_c`, `pow_mod_via_c` [3 argümanlı `pow`], `long_
 float_via_c`) + `hpy_tier0_test.zig`ye 4 yeni test. Toplam: 26/26 (bu
-dosyada). Kapsam: 180 `ctx_*` fonksiyonundan 76→**104**'ü implemente.
+dosyada). Kapsam: 180 `ctx_*` fonksiyonundan implemente edilen sayı
+**101**'e çıktı (bu andan itibaren sayılar `context.zig`nin modül üstü
+notundaki DOĞRULAMA komutuyla teyit edilir — önceki birkaç fazın
+metindeki sayıları, GERÇEK implementasyonlar DOĞRU olsa da, elle
+SAYIMDA küçük SAPMALAR içeriyordu; bundan SONRAKİ TÜM sayılar komutla
+DOĞRULANMIŞTIR).
+
+### Faz RR — HPy: Hata yönetiminin geri kalanı
+
+`ctx_FatalError`/`ctx_Err_SetObject`/`ctx_Err_SetFromErrnoWithFilename`/
+`ctx_Err_SetFromErrnoWithFilenameObjects`/`ctx_Err_NewException`/
+`ctx_Err_NewExceptionWithDoc`/`ctx_Err_WarnEx`/`ctx_Err_WriteUnraisable`
+(8 fonksiyon). `PendingError`e (bekleyen istisna durumu) YENİ bir
+`value: HPy` alanı EKLENDİ — `ctx_Err_SetObject`in (METİN DEĞİL, KEYFİ
+bir DEĞER nesnesi taşıyan) sözleşmesini DOĞRU karşılamak İçin.
+`ctx_Err_NewException`/`WithDoc`: Nox'un `.exc_type`i (PINN'siz, normal
+refcount'lu) YENİ bir KİMLİK belirteci üretir — `utf8_name`/`base`/
+`dict` KABUL edilir ama SAKLANMAZ (`.type_`in taban-sınıf kapsam dışı
+bırakmasıyla AYNI v1 ilkesi). `ctx_Err_SetFromErrnoWithFilename(Objects)`:
+gerçek `errno`yu (`std.c._errno`, `link_libc=true`) `strerror`e ÇEVİRİR.
+`ctx_Err_WarnEx`: Nox'ta genel bir uyarı FİLTRESİ YOK — mesaj HER ZAMAN
+stderr'e yazılır, HER ZAMAN `0` döner. `ctx_Err_WriteUnraisable`: tanılama
+mesajı yazar, SONRA bekleyen istisnayı TEMİZLER. **`ctx_FatalError`
+istisnası:** gerçek `Py_FatalError` SÜRECİ SONLANDIRIR (`abort()`) — bu
+YÜZDEN (dürüstçe belirtilir) OTOMATİK test SÜİTİNDEN çağrılamaz, yalnızca
+DERLENDİĞİ/ABI yuvasına DOĞRU bağlandığı doğrulanır. Doğrulama:
+`noxtest.c`ye 6 yeni modül metodu + `hpy_tier0_test.zig`ye 7 yeni test
+(6'sı eklenti ÜZERİNDEN, 1'i `ctx_Err_NewException`in KİMLİK ayrımını
+DOĞRUDAN Zig'den doğrulayan). Toplam: 33/33 (bu dosyada). Kapsam: 180
+`ctx_*` fonksiyonundan 101→**109**'u implemente.
 
 ---
 

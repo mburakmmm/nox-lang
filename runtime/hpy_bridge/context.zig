@@ -11,9 +11,12 @@
 //! `scripts/gen_hpy_ctx.py`) üretilmiş, bayt-uyumlu bir transkripsiyonunu
 //! GEREKTİRİR — bir eklenti bu struct'a doğrudan (sabit ofsetlerle) erişir,
 //! bu yüzden alan SIRASI ve BOYUTU tam olarak eşleşmelidir. Şu an 180
-//! `ctx_*` alanından **104'ü** GERÇEKTEN implemente (aşağıda özel fonksiyon
-//! işaretçisi tipleriyle işaretli — tam liste/tier dökümü İçin bkz.
-//! nox-teknik-spesifikasyon.md §3.12 VE DEVAMI, en son Faz QQ) — geri
+//! `ctx_*` alanından **109'u** GERÇEKTEN implemente (aşağıda özel fonksiyon
+//! işaretçisi tipleriyle işaretli — TAM/DOĞRU sayı HER ZAMAN şu komutla
+//! doğrulanabilir: `awk '/pub const HPyContext = extern struct \{/,/^\};/'
+//! runtime/hpy_bridge/context.zig | grep "ctx_" | grep -c "anyopaque = null,"`
+//! — SONUCU 180'den ÇIKARIN; tam liste/tier dökümü İçin bkz. nox-teknik-
+//! spesifikasyon.md §3.12 VE DEVAMI, en son Faz RR) — geri
 //! kalanı `null` (kullanılmazlarsa zararsız; bir eklenti bunlardan birini
 //! çağırırsa çökme/segfault olur, bkz. spesifikasyondaki bilinçli
 //! sınırlamalar).
@@ -1627,13 +1630,41 @@ fn ctxInPlaceOr(ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy {
 fn ctxErrSetString(ctx: *HPyContext, h_type: HPy, utf8_message: ?[*:0]const u8) callconv(.c) void {
     const state = contextState(ctx);
     const allocator = state.allocator;
-    if (state.pending_error) |pe| allocator.free(pe.message);
+    if (state.pending_error) |pe| {
+        allocator.free(pe.message);
+        if (pe.value._i != 0) ctxClose(ctx, pe.value);
+    }
     const msg = utf8_message orelse "";
     const copy = allocator.dupeZ(u8, std.mem.sliceTo(msg, 0)) catch {
         state.pending_error = null;
         return;
     };
     state.pending_error = .{ .h_type = h_type, .message = copy };
+}
+
+/// `ctx_Err_SetObject` (Faz RR): `ctx_Err_SetString`den FARKLI olarak,
+/// bir METİN DEĞİL, KEYFİ bir `value` NESNESİ taşır (gerçek CPython'da
+/// `raise SomeError(deger)`in İSTİSNA ÖRNEĞİNE karşılık gelir). Nox'un
+/// `pending_error`i ŞU ANA kadar yalnızca bir METİN mesajı taşıyordu —
+/// bu fonksiyon `value`yi (RETAINED, `ctxDup` İLE) AYRICA saklar;
+/// `ctx_Err_Clear`/sonraki bir `SetString`/`SetObject` çağrısı bunu
+/// serbest bırakır.
+fn ctxErrSetObject(ctx: *HPyContext, h_type: HPy, h_value: HPy) callconv(.c) void {
+    const state = contextState(ctx);
+    const allocator = state.allocator;
+    if (state.pending_error) |pe| {
+        allocator.free(pe.message);
+        if (pe.value._i != 0) ctxClose(ctx, pe.value);
+    }
+    const empty = allocator.dupeZ(u8, "") catch {
+        state.pending_error = null;
+        return;
+    };
+    state.pending_error = .{
+        .h_type = h_type,
+        .message = empty,
+        .value = if (h_value._i != 0) ctxDup(ctx, h_value) else HPy_NULL,
+    };
 }
 
 fn ctxErrOccurred(ctx: *HPyContext) callconv(.c) c_int {
@@ -1644,6 +1675,7 @@ fn ctxErrClear(ctx: *HPyContext) callconv(.c) void {
     const state = contextState(ctx);
     if (state.pending_error) |pe| {
         state.allocator.free(pe.message);
+        if (pe.value._i != 0) ctxClose(ctx, pe.value);
         state.pending_error = null;
     }
 }
@@ -1655,6 +1687,137 @@ fn ctxErrExceptionMatches(ctx: *HPyContext, exc: HPy) callconv(.c) c_int {
 
 fn ctxErrNoMemory(ctx: *HPyContext) callconv(.c) void {
     ctxErrSetString(ctx, ctx.h_MemoryError, "bellek yetersiz");
+}
+
+// ---- Hata yönetiminin geri kalanı (Faz RR) ----
+
+extern "c" fn strerror(errnum: c_int) [*:0]const u8;
+
+/// Gerçek `Py_FatalError` sözleşmesi: mesajı stderr'e YAZAR, SONRA
+/// SÜRECİ SONLANDIRIR (`abort()`) — ASLA geri DÖNMEZ. Bu YÜZDEN
+/// (dürüstçe belirtilir) otomatik test SÜİTİNDEN çağrılamaz: test
+/// sürecinin KENDİSİNİ öldürürdü. Wiring/derleme doğrulaması dışında
+/// (fonksiyonun VAR OLDUĞU, ABI yuvasına DOĞRU bağlandığı) çalışma
+/// zamanı davranışı bu YÜZDEN otomatik SÜİTTE DOĞRULANMAZ — gerçek
+/// CPython'ın KENDİSİ de aynı NEDENLE bunu "test edilemez, yalnızca
+/// gözden geçirilebilir" bir API olarak görür.
+fn ctxFatalError(ctx: *HPyContext, message: ?[*:0]const u8) callconv(.c) void {
+    _ = ctx;
+    const msg = message orelse "";
+    std.debug.print("Fatal Python error: {s}\n", .{std.mem.sliceTo(msg, 0)});
+    std.process.abort();
+}
+
+/// Gerçek `errno`yu (`std.c._errno`, libc'nin KENDİSİ — `build.zig`
+/// TÜM hedeflerde `link_libc = true`) okuyup `strerror`e ÇEVİRİR;
+/// `filename_fsencoded` VARSA mesaja EKLENİR. Gerçek HPy sözleşmesi:
+/// HER ZAMAN `HPy_NULL` döner (çağıran `return HPyErr_SetFromErrno...`
+/// deyimiyle KULLANIR).
+fn ctxErrSetFromErrnoWithFilename(ctx: *HPyContext, h_type: HPy, filename_fsencoded: ?[*:0]const u8) callconv(.c) HPy {
+    const err = std.c._errno().*;
+    const msg = std.mem.sliceTo(strerror(@intCast(err)), 0);
+    var buf: [512]u8 = undefined;
+    const formatted: [:0]const u8 = if (filename_fsencoded) |f|
+        (std.fmt.bufPrintZ(&buf, "{s}: '{s}'", .{ msg, std.mem.sliceTo(f, 0) }) catch msg)
+    else
+        msg;
+    ctxErrSetString(ctx, h_type, formatted);
+    return HPy_NULL;
+}
+
+/// `ctx_Err_SetFromErrnoWithFilenameObjects` — İKİ dosya adı NESNESİ
+/// alır (real CPython: `OSError(errno, strerror, filename1, None,
+/// filename2)`). **v1 basitleştirmesi:** yalnızca `.str_` etiketli
+/// olanlar mesaja EKLENİR (Nox'un `filename1`/`filename2`i genel bir
+/// `os.fspath`a ÇEVİRME mekanizması YOK — gerçek CPython'ınki gibi).
+fn ctxErrSetFromErrnoWithFilenameObjects(ctx: *HPyContext, h_type: HPy, filename1: HPy, filename2: HPy) callconv(.c) void {
+    const err = std.c._errno().*;
+    const msg = std.mem.sliceTo(strerror(@intCast(err)), 0);
+    var buf: [512]u8 = undefined;
+    var len: usize = 0;
+    const appendSlice = struct {
+        fn run(b: []u8, l: *usize, s: []const u8) void {
+            const room = b.len - l.*;
+            const n = @min(room, s.len);
+            @memcpy(b[l.* .. l.* + n], s[0..n]);
+            l.* += n;
+        }
+    }.run;
+    appendSlice(&buf, &len, msg);
+    if (objOf(filename1)) |o1| {
+        if (o1.tag == .str_) {
+            appendSlice(&buf, &len, ": '");
+            appendSlice(&buf, &len, o1.str_data);
+            appendSlice(&buf, &len, "'");
+        }
+    }
+    if (objOf(filename2)) |o2| {
+        if (o2.tag == .str_) {
+            appendSlice(&buf, &len, " -> '");
+            appendSlice(&buf, &len, o2.str_data);
+            appendSlice(&buf, &len, "'");
+        }
+    }
+    const formatted = contextAllocator(ctx).dupeZ(u8, buf[0..len]) catch {
+        ctxErrNoMemory(ctx);
+        return;
+    };
+    defer contextAllocator(ctx).free(formatted);
+    ctxErrSetString(ctx, h_type, formatted);
+}
+
+/// Gerçek `HPyErr_NewException` sözleşmesi: dinamik olarak YENİ bir
+/// istisna TİPİ oluşturur. Nox'un `.exc_type`i (bkz. `pinnedExcType`in
+/// belge notu) yalnızca bir KİMLİK belirteci olduğundan (payload boş,
+/// gerçek CPython'daki gibi `__name__`/taban sınıf/`__dict__` TUTMAZ —
+/// `.type_`in KENDİ taban-sınıf/metaclass kapsam dışı bırakmasıyla AYNI
+/// v1 ilkesi), `utf8_name`/`base`/`dict` KABUL edilir ama SAKLANMAZ —
+/// yalnızca YENİ, PIN'siz (normal refcount'lu, `ctxClose` İLE
+/// SERBEST BIRAKILABİLEN) bir `.exc_type` NESNESİ üretilir. Döndürülen
+/// tutamaç, `ctx_Err_SetString`/`ctx_Err_ExceptionMatches`e (KİMLİK
+/// karşılaştırmasıyla) AYNEN yerleşik istisnalar GİBİ verilebilir.
+fn ctxErrNewException(ctx: *HPyContext, utf8_name: ?[*:0]const u8, base: HPy, dict: HPy) callconv(.c) HPy {
+    _ = utf8_name;
+    _ = base;
+    _ = dict;
+    const allocator = contextAllocator(ctx);
+    const obj = allocator.create(Obj) catch {
+        ctxErrNoMemory(ctx);
+        return HPy_NULL;
+    };
+    obj.* = .{ .refcount = 1, .tag = .exc_type, .payload = .{ .l = 0 } };
+    return .{ ._i = @intCast(@intFromPtr(obj)) };
+}
+
+fn ctxErrNewExceptionWithDoc(ctx: *HPyContext, utf8_name: ?[*:0]const u8, utf8_doc: ?[*:0]const u8, base: HPy, dict: HPy) callconv(.c) HPy {
+    _ = utf8_doc;
+    return ctxErrNewException(ctx, utf8_name, base, dict);
+}
+
+/// Gerçek `warnings.warn` sözleşmesinin BASİTLEŞTİRİLMİŞ bir karşılığı:
+/// Nox'ta genel bir UYARI FİLTRESİ altyapısı YOK — mesaj HER ZAMAN
+/// stderr'e YAZILIR (CPython'ın KENDİ VARSAYILAN, FİLTRESİZ davranışıyla
+/// AYNI ruhta) ve HER ZAMAN `0` döner (uyarı hiçbir zaman istisnaya
+/// YÜKSELTİLMEZ — `category`/`stack_level` bu YÜZDEN KULLANILMAZ).
+fn ctxErrWarnEx(ctx: *HPyContext, category: HPy, utf8_message: ?[*:0]const u8, stack_level: isize) callconv(.c) c_int {
+    _ = ctx;
+    _ = category;
+    _ = stack_level;
+    const msg = utf8_message orelse "";
+    std.debug.print("Uyarı: {s}\n", .{std.mem.sliceTo(msg, 0)});
+    return 0;
+}
+
+/// Gerçek `sys.unraisablehook` sözleşmesinin BASİTLEŞTİRİLMİŞ karşılığı:
+/// stderr'e tanılama amaçlı bir mesaj YAZAR, SONRA bekleyen istisnayı
+/// TEMİZLER (`Err_WriteUnraisable`in ANA görevi: bir hatayı "yut" ama
+/// SESSİZCE değil, TEŞHİS edilebilir biçimde). **v1 sınırlaması:**
+/// `obj`in GERÇEK `repr()`i (`ctx_Repr` henüz bu FAZDA yok, bkz. Faz
+/// SS) mesaja DAHİL EDİLMEZ — yalnızca genel bir tanılama notu yazılır.
+fn ctxErrWriteUnraisable(ctx: *HPyContext, obj: HPy) callconv(.c) void {
+    _ = obj;
+    std.debug.print("İşlenemeyen istisna yok sayıldı (Err_WriteUnraisable)\n", .{});
+    ctxErrClear(ctx);
 }
 
 /// `_private`, `contextState`in geri döndürdüğü sabit bilgiye işaret eder —
@@ -1669,6 +1832,9 @@ const PrivateState = struct {
     const PendingError = struct {
         h_type: HPy,
         message: [:0]u8,
+        /// Yalnızca `ctx_Err_SetObject` (Faz RR) TARAFINDAN AYARLANIR —
+        /// `ctx_Err_SetString`in AKSİNE keyfi bir DEĞER nesnesi taşır.
+        value: HPy = HPy_NULL,
     };
 };
 
@@ -1820,19 +1986,19 @@ pub const HPyContext = extern struct {
     ctx_InPlaceOr: ?*const fn (ctx: *HPyContext, h1: HPy, h2: HPy) callconv(.c) HPy = null,
     ctx_Callable_Check: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) c_int = null,
     ctx_CallTupleDict: ?*const fn (ctx: *HPyContext, callable: HPy, args: HPy, kw: HPy) callconv(.c) HPy = null,
-    ctx_FatalError: ?*const anyopaque = null,
+    ctx_FatalError: ?*const fn (ctx: *HPyContext, message: ?[*:0]const u8) callconv(.c) void = null,
     ctx_Err_SetString: ?*const fn (ctx: *HPyContext, h_type: HPy, utf8_message: ?[*:0]const u8) callconv(.c) void = null,
-    ctx_Err_SetObject: ?*const anyopaque = null,
-    ctx_Err_SetFromErrnoWithFilename: ?*const anyopaque = null,
-    ctx_Err_SetFromErrnoWithFilenameObjects: ?*const anyopaque = null,
+    ctx_Err_SetObject: ?*const fn (ctx: *HPyContext, h_type: HPy, h_value: HPy) callconv(.c) void = null,
+    ctx_Err_SetFromErrnoWithFilename: ?*const fn (ctx: *HPyContext, h_type: HPy, filename_fsencoded: ?[*:0]const u8) callconv(.c) HPy = null,
+    ctx_Err_SetFromErrnoWithFilenameObjects: ?*const fn (ctx: *HPyContext, h_type: HPy, filename1: HPy, filename2: HPy) callconv(.c) void = null,
     ctx_Err_Occurred: ?*const fn (ctx: *HPyContext) callconv(.c) c_int = null,
     ctx_Err_ExceptionMatches: ?*const fn (ctx: *HPyContext, exc: HPy) callconv(.c) c_int = null,
     ctx_Err_NoMemory: ?*const fn (ctx: *HPyContext) callconv(.c) void = null,
     ctx_Err_Clear: ?*const fn (ctx: *HPyContext) callconv(.c) void = null,
-    ctx_Err_NewException: ?*const anyopaque = null,
-    ctx_Err_NewExceptionWithDoc: ?*const anyopaque = null,
-    ctx_Err_WarnEx: ?*const anyopaque = null,
-    ctx_Err_WriteUnraisable: ?*const anyopaque = null,
+    ctx_Err_NewException: ?*const fn (ctx: *HPyContext, utf8_name: ?[*:0]const u8, base: HPy, dict: HPy) callconv(.c) HPy = null,
+    ctx_Err_NewExceptionWithDoc: ?*const fn (ctx: *HPyContext, utf8_name: ?[*:0]const u8, utf8_doc: ?[*:0]const u8, base: HPy, dict: HPy) callconv(.c) HPy = null,
+    ctx_Err_WarnEx: ?*const fn (ctx: *HPyContext, category: HPy, utf8_message: ?[*:0]const u8, stack_level: isize) callconv(.c) c_int = null,
+    ctx_Err_WriteUnraisable: ?*const fn (ctx: *HPyContext, obj: HPy) callconv(.c) void = null,
     ctx_IsTrue: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) c_int = null,
     ctx_Type_FromSpec: ?*const fn (ctx: *HPyContext, spec: ?*HPyType_Spec, params: ?*HPyType_SpecParam) callconv(.c) HPy = null,
     ctx_Type_GenericNew: ?*const anyopaque = null,
@@ -2088,10 +2254,18 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
         .ctx_InPlaceXor = ctxInPlaceXor,
         .ctx_InPlaceOr = ctxInPlaceOr,
         .ctx_Err_SetString = ctxErrSetString,
+        .ctx_Err_SetObject = ctxErrSetObject,
         .ctx_Err_Occurred = ctxErrOccurred,
         .ctx_Err_Clear = ctxErrClear,
         .ctx_Err_ExceptionMatches = ctxErrExceptionMatches,
         .ctx_Err_NoMemory = ctxErrNoMemory,
+        .ctx_FatalError = ctxFatalError,
+        .ctx_Err_SetFromErrnoWithFilename = ctxErrSetFromErrnoWithFilename,
+        .ctx_Err_SetFromErrnoWithFilenameObjects = ctxErrSetFromErrnoWithFilenameObjects,
+        .ctx_Err_NewException = ctxErrNewException,
+        .ctx_Err_NewExceptionWithDoc = ctxErrNewExceptionWithDoc,
+        .ctx_Err_WarnEx = ctxErrWarnEx,
+        .ctx_Err_WriteUnraisable = ctxErrWriteUnraisable,
         .ctx_List_Check = ctxListCheck,
         .ctx_List_New = ctxListNew,
         .ctx_List_Append = ctxListAppend,
