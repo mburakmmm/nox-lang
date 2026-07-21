@@ -236,6 +236,19 @@ jobs:
       # BEKLENEN metni İÇERMESİ ayrı ayrı kontrol edilir (Nox programının
       # KENDİSİ `process.exit` ÇAĞIRMADIĞI SÜRECE çıkış kodu HER ZAMAN 0'dır
       # — `print`in bastığı değer ASLA çıkış koduna YANSIMAZ).
+      # Faz LL.6 keşif: `noxrt.o`nun GERÇEKTEN var/doğru boyutta OLDUĞUNU VE
+      # beklenen sembolleri İÇERDİĞİNİ (MinGW'in KENDİ `nm`ı ile) doğrudan
+      # doğrular — bir SONRAKİ "undefined reference" hatasının KÖK NEDENİNİ
+      # (dosya eksik mi, sembol GERÇEKTEN yok mu, yoksa başka bir şey mi)
+      # TAHMİN ETMEDEN GÖRMEK İçin.
+      - name: Keşif — noxrt.o var mi, beklenen semboller var mi
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = "Stop"
+          Get-Item "zig-out\lib\noxrt.o" | Format-List Name, Length
+          nm "zig-out\lib\noxrt.o" | Select-String "nox_alloc|nox_runtime_init|nox_str_free_now" | Select-Object -First 20
+
       - name: Duman testi — noxc.exe run (gercek qbe+cc baglama)
         shell: pwsh
         run: |
