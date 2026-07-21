@@ -17,6 +17,7 @@
 //! `fmt/formatter.zig`).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const lexer = @import("lexer/lexer.zig");
 const parser = @import("parser/parser.zig");
 const ast = @import("parser/ast.zig");
@@ -891,6 +892,15 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     const stem = output_override orelse stemOf(path_arg);
     const ssa_path = try std.fmt.allocPrint(a, "{s}.ssa", .{stem});
     const asm_path = try std.fmt.allocPrint(a, "{s}.s", .{stem});
+    // Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71): MinGW'in `cc`si,
+    // `-o` AÇIKÇA verilmiş olsa BİLE, PE (Windows) çıktı dosyasına HER ZAMAN
+    // `.exe` uzantısı EKLER (`stem` zaten `.exe` İLE BİTMİYORSA) — `noxc`
+    // BUNU BİLMEZSE, diskteki GERÇEK dosya `stem.exe` iken `noxc run`ın
+    // ÇALIŞTIRMAYA ÇALIŞTIĞI yol UZANTISIZ `stem` OLURDU (bulunamaz hatası).
+    const bin_path = if (builtin.os.tag == .windows and !std.mem.endsWith(u8, stem, ".exe"))
+        try std.fmt.allocPrint(a, "{s}.exe", .{stem})
+    else
+        stem;
 
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ssa_path, .data = ir });
 
@@ -921,7 +931,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // ÇÖKMEYE hem daha önce `nox_rc_alloc` İLE tahsis edilmiş, artık HİÇBİR
     // ŞEYE bağlanamayan parçaların SIZMASINA yol açıyordu).
     var cc_argv: std.ArrayListUnmanaged([]const u8) = .empty;
-    try cc_argv.appendSlice(a, &.{ "cc", "-rdynamic", "-o", stem, asm_path, resource_dirs.noxrt_path, "-lm" });
+    try cc_argv.appendSlice(a, &.{ "cc", "-rdynamic", "-o", bin_path, asm_path, resource_dirs.noxrt_path, "-lm" });
     try appendExternLinkArgs(a, &cc_argv, module);
 
     const cc_result = try std.process.run(gpa, io, .{
@@ -934,7 +944,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         std.process.exit(1);
     }
 
-    return stem;
+    return bin_path;
 }
 
 fn stemOf(path: []const u8) []const u8 {

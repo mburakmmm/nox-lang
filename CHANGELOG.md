@@ -1221,6 +1221,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   `stdlib_shims`) GERÇEK Windows CI'de sıfır hatayla derleniyor —
   Faz LL'nin en büyük riski aşıldı. Kalan: gerçek bağlama/çalıştırma
   (LL.6), release/install betiği (LL.7), dokümantasyon (LL.8).
+- **Faz LL.6 — ilk girişim (henüz CI'de doğrulanmadı).** `compiler/
+  main.zig`de bulunan iki potansiyel Windows engeli düzeltildi:
+  MinGW'in `cc`sinin çıktı dosyasına her zaman `.exe` eklemesi (`noxc
+  run`ın çalıştırmaya çalıştığı yolla diskteki gerçek dosya arasında
+  uyuşmazlık yaratıyordu — `buildOne` artık ayrı bir `.exe`'li
+  `bin_path` hesaplıyor). `ci.yml`ye `qbe`yi kaynaktan (doğrudan `cc
+  *.c` ile, Makefile/`sh` PowerShell'de güvenilir değil) derleyip
+  gerçek bir `noxc run` duman testi (`print(21+21)`) eklendi —
+  `-rdynamic`nin MinGW'de doğru çalışıp çalışmadığı dahil, bir sonraki
+  CI turunda doğrulanacak.
 
 ## [1.0.0]
 

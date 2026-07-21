@@ -12067,6 +12067,42 @@ GEÇTİĞİNİ KANITLAR, ama QBE'nin ürettiği assembly'nin `cc`/MinGW
 İLE bağlanıp GERÇEK bir Nox PROGRAMI çalıştırabildiğini HENÜZ
 KANITLAMAZ — bu, LL.6'nın asıl konusu).
 
+### LL.6 (İLK GİRİŞİM — GERÇEK CI'de HENÜZ doğrulanmadı) — MinGW-w64 bağlama + gerçek `noxc run`
+
+`compiler/main.zig`de İKİ potansiyel Windows engeli BULUNDU (kod
+İNCELEMESİYLE, henüz CI olmadan):
+
+- **`.exe` uzantısı:** MinGW'in `cc`si, `-o <isim>` AÇIKÇA verilmiş
+  olsa BİLE, PE çıktı dosyasına `<isim>` ZATEN `.exe` İLE BİTMİYORSA
+  HER ZAMAN `.exe` EKLER — `noxc`nin `stemOf`/`cacheBinPath`i BUNU
+  BİLMİYORDU (`stem` uzantısız DÖNÜYORDU), bu YÜZDEN `noxc run`ın
+  ÇALIŞTIRMAYA ÇALIŞACAĞI yol (`bin_path`, uzantısız) diskteki GERÇEK
+  dosyadan (`bin_path.exe`) FARKLI olur, "bulunamadı" hatasıyla
+  BAŞARISIZ olurdu. Çözüm: `buildOne`de AYRI bir `bin_path` (Windows'ta
+  `stem` ZATEN `.exe` İLE BİTMİYORSA `.exe` EKLENMİŞ hali) hesaplanıp
+  hem `cc -o` hedefi hem de FONKSİYONUN dönüş değeri OLARAK kullanılır
+  — `stem` (uzantısız) yalnızca `.ssa`/`.s` ara dosya isimlendirmesi
+  İÇİN KALIR.
+- **`-rdynamic`:** `json.zig`nin `dlopen`/Windows'un `GetModuleHandleA`
+  self-lookup deseninin (bkz. LL.5) GERÇEKTEN sembol BULABİLMESİ İçin
+  bağlayıcının TÜM genel sembolleri dışa AÇMASI gerekir — MinGW'in
+  `ld`si (PE hedefi) GNU `ld`nin ELF hedefinden FARKLI bir bayrak seti
+  kullanabilir (`-export-dynamic` yerine `--export-all-symbols`); `cc
+  -rdynamic`nin MinGW'de GERÇEKTEN ne yaptığı (yok sayılıyor mu,
+  hata mı veriyor mu, doğru mu çalışıyor) HENÜZ test EDİLMEDİ — bu,
+  GERÇEK CI'nin ortaya çıkaracağı bir SONRAKİ potansiyel sorun.
+
+`ci.yml`ye eklenen `windows-frontend` işi adımları: `qbe`yi KAYNAKTAN
+(Linux'un AYNI `qbe-1.3.tar.xz`si) ama `make` YERİNE DOĞRUDAN `cc *.c`
+İLE derler (QBE'nin taşınabilir C kaynağı İçin YETERLİ, PowerShell'de
+Makefile/`sh`/`ar` GÜVENİLMEZ OLDUĞUNDAN); ARDINDAN `continue-on-error`
+KALDIRILAN TAM `zig build` adımının HEMEN SONRASINA GERÇEK bir `noxc
+run` duman testi (basit bir `print(21 + 21)` programı — lex→parse→
+check→codegen→qbe→cc→ÇALIŞTIRMA'nın TAMAMI) eklenir. **Bu, HENÜZ
+push edilip GERÇEK Windows CI'de DOĞRULANMADI** — hem QBE'nin `cc
+*.c` İLE derlenip derlenemeyeceği HEM `-rdynamic`nin MinGW'de doğru
+çalışıp çalışmadığı BİLİNMİYOR, bir SONRAKİ CI turunda netleşecek.
+
 Yerel olarak (macOS, Debug/ReleaseSafe/ReleaseFast) TÜM değişiklikler
 doğrulandı — Windows dalları (`builtin.os.tag == .windows` altında)
 Zig'in TİP KONTROLÜNDEN geçti (çalışma-zamanı dalı ÖLÜ olsa BİLE her iki

@@ -44,11 +44,14 @@ name: CI
 # ikinci komut çalıştığında `install_noxc`/`install_noxrt` ZATEN
 # TAMAMLANMIŞ/önbelleklenmiş OLDUĞUNDAN yarış PENCERESİ tamamen KAPANIR.
 #
-# Faz LL.1 (bkz. nox-teknik-spesifikasyon.md §3.71): YUKARIDAKİ 3-platform
-# matrisinin YANINDA (İÇİNDE DEĞİL) AYRI bir `windows-frontend` işi VAR —
-# yalnızca `noxc`/`noxlsp`nin (runtime'a HİÇ bağımlı olmayan derleyici
-# ön-ucunun) native Windows'ta derlenip ÇALIŞTIĞINI doğrular. GERÇEK
-# Windows desteği (runtime/`nox build`/`nox test`) HENÜZ YOK.
+# Faz LL (bkz. nox-teknik-spesifikasyon.md §3.71): YUKARIDAKİ 3-platform
+# matrisinin YANINDA (İÇİNDE DEĞİL) AYRI bir `windows-frontend` işi VAR.
+# LL.1 yalnızca derleyici ön-ucunu doğruluyordu; LL.2-LL.5 runtime'ın
+# TAMAMINI (fiber/reaktör/soket/self-pipe) Windows'a taşıdı; LL.6 artık
+# `qbe`yi KAYNAKTAN derleyip GERÇEK bir Nox programını uçtan uca (`noxc
+# run`) ÇALIŞTIRIYOR — bu işin ADI ("yalnızca derleyici ön-ucu — Faz
+# LL.1") artık TARİHSEL, kapsamı bundan ÇOK DAHA GENİŞ (LL.8'de, TÜM
+# roadmap bitince güncellenecek).
 
 on:
   push:
@@ -171,6 +174,46 @@ jobs:
       # soket fonksiyonu/tipi Zig'in KENDİ switch'lerinde Windows İçin
       # ZATEN case'li — `continue-on-error` İLE, henüz TAM yeşil
       # BEKLENMİYOR, yalnızca GERÇEK hata yüzeyini GÖRMEK İçin).
-      - name: zig build (TAM — LL.5 öncesi keşif, henüz yeşil beklenmiyor)
-        continue-on-error: true
+      # Faz LL.5 SONRASI (bkz. nox-teknik-spesifikasyon.md §3.71): artık
+      # TAM olarak yeşil BEKLENİYOR (`continue-on-error` KALDIRILDI) —
+      # runtime'ın TAMAMI (HPy köprüsü DAHİL) GERÇEK Windows CI'de bir
+      # KEZ zaten sıfır hatayla doğrulandı.
+      - name: zig build (TAM — noxrt.o dahil runtime)
         run: zig build
+
+      # Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71): `qbe`nin Windows
+      # İçin ÖNCEDEN derlenmiş bir paketi YOK (macOS'un Homebrew'ü/Linux'un
+      # paket yöneticisi gibi) — Linux CI'nin KENDİ "kaynaktan derle" deseni
+      # (yukarısı) İZLENİR, TEK farkla: `make` yerine DOĞRUDAN `cc *.c`
+      # (MinGW'in `cc`si) — QBE'nin Makefile'ı POSIX `sh`/`ar` araçlarına
+      # GÜVENİR, PowerShell'de GÜVENİLİR ÇALIŞMAZ; QBE'nin KAYNAĞI saf,
+      # taşınabilir C OLDUĞUNDAN (platforma özgü derleme kuralı YOK) tüm
+      # `.c` dosyalarını TEK bir `cc` çağrısıyla derlemek YETERLİ VE DAHA
+      # BASİT.
+      - name: qbe kur (Windows — kaynaktan, dogrudan cc ile derle)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest -Uri "https://c9x.me/compile/release/qbe-1.3.tar.xz" -OutFile "$env:RUNNER_TEMP\qbe.tar.xz"
+          tar xf "$env:RUNNER_TEMP\qbe.tar.xz" -C "$env:RUNNER_TEMP"
+          Push-Location "$env:RUNNER_TEMP\qbe-1.3"
+          cc -O2 -o qbe.exe *.c
+          if ($LASTEXITCODE -ne 0) { throw "qbe derlemesi basarisiz (exit $LASTEXITCODE)" }
+          Pop-Location
+          Copy-Item "$env:RUNNER_TEMP\qbe-1.3\qbe.exe" "$env:RUNNER_TEMP\qbe.exe"
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP"
+
+      # Faz LL.6 — GERÇEK bir Nox programının uçtan uca (lex→parse→check→
+      # codegen→qbe→cc→çalıştır) Windows'ta ÇALIŞTIĞININ İLK doğrulaması.
+      # `subcommand_test.zig`nin AYNI deseni: exit code 0 VE stdout'un
+      # BEKLENEN metni İÇERMESİ ayrı ayrı kontrol edilir (Nox programının
+      # KENDİSİ `process.exit` ÇAĞIRMADIĞI SÜRECE çıkış kodu HER ZAMAN 0'dır
+      # — `print`in bastığı değer ASLA çıkış koduna YANSIMAZ).
+      - name: Duman testi — noxc.exe run (gercek qbe+cc baglama)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-Content -Path run_smoke.nox -Value "print(21 + 21)" -NoNewline
+          $output = & ".\zig-out\bin\noxc.exe" run run_smoke.nox
+          if ($LASTEXITCODE -ne 0) { throw "noxc run basarisiz (exit $LASTEXITCODE): $output" }
+          if ($output -ne "42") { throw "noxc run yanlis cikti: '$output' (beklenen '42')" }
