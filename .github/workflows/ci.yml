@@ -246,8 +246,13 @@ jobs:
         continue-on-error: true
         run: |
           $ErrorActionPreference = "Stop"
-          Get-Item "zig-out\lib\noxrt.o" | Format-List Name, Length
-          nm "zig-out\lib\noxrt.o" | Select-String "nox_alloc|nox_runtime_init|nox_str_free_now" | Select-Object -First 20
+          Get-Item "zig-out\lib\noxrt.o" | Format-List Name, Length, LastWriteTime
+          Write-Host "--- nm (TAM sembol listesi) ---"
+          nm "zig-out\lib\noxrt.o"
+          Write-Host "--- objdump -h (bolum basliklari) ---"
+          objdump -h "zig-out\lib\noxrt.o"
+          Write-Host "--- ilk 64 bayt (hex) ---"
+          Format-Hex -Path "zig-out\lib\noxrt.o" -Count 64
 
       - name: Duman testi — noxc.exe run (gercek qbe+cc baglama)
         shell: pwsh
