@@ -1194,6 +1194,18 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   externleri OLDUĞU doğrulandığından) DOKUNULMADAN bırakıldı. Testlerin
   sabit `/tmp` varsayımı `%TEMP%` okuyan bir yardımcıya geçirildi. Yerel
   olarak (macOS) doğrulandı; Windows'un kendisi gerçek CI'de doğrulanacak.
+- **Faz LL.4 SONRASI keşif + LL.5 (devam ediyor) — Winsock katmanı**
+  (bkz. nox-teknik-spesifikasyon.md §3.71). Tam bir `zig build`in (LL.4'ü
+  LL.5'ten izole edemediği İçin eklenen keşif adımı) ortaya çıkardığı 15
+  hatadan 3 dosyası çözüldü: `time.zig` (`clockid_t`nin void olması
+  yüzünden `GetSystemTimePreciseAsFileTime`/`QueryPerformanceCounter`/
+  `Sleep`e geçirildi), `io.zig` (paylaşılan `pub const WinSock` — `fcntl`
+  yerine `ioctlsocket`, `errno` yerine `WSAGetLastError`), `http_server.
+  zig` (`fdToI64`/`i64ToFd` köprüsüyle `posix.fd_t`(HANDLE)↔SOCKET
+  tutarsızlığı çözüldü) ve `http_client.zig` (`std.c.pipe`nin Windows'ta
+  KARŞILIĞI OLMADIĞINDAN self-pipe'ı bağlanmış bir UDP-loopback çiftine
+  çevrildi). `std.DynLib`/`std.c.dlopen`in Windows desteksizliği (HPy
+  köprüsü + `json.zig`) HENÜZ ÇÖZÜLMEDİ.
 
 ## [1.0.0]
 

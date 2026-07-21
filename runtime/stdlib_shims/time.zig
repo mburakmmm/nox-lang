@@ -15,8 +15,44 @@
 //! deseni.
 
 const std = @import("std");
+const builtin = @import("builtin");
+
+/// Faz LL.4 (bkz. nox-teknik-spesifikasyon.md §3.71): bu Zig sürümünde
+/// `std.c.clockid_t` Windows İçin `void`dir (`.windows` dalı HİÇ
+/// case'lenmemiş, `else => void`) — `clock_gettime`/`nanosleep` BU YÜZDEN
+/// (imzaları BU tipe bağlı olduğundan) Windows'ta KULLANILAMAZ. Yerine:
+/// duvar-saati İçin `GetSystemTimePreciseAsFileTime` (`fs.zig`nin AYNI
+/// FILETIME→Unix çevirisini kullanır), monotonik saat İçin
+/// `QueryPerformanceCounter`/`Frequency` (`io_reactor.zig`nin
+/// `WindowsReactor.monotonicMs`iYLE AYNI desen), uyku İçin `Sleep` (Win32
+/// kernel32, milisaniye çözünürlüklü — `nanosleep`in nanosaniye
+/// çözünürlüğünden daha KABA, ama `nox.time.sleep_ms`in KENDİ arayüzü
+/// zaten milisaniye TABANLI olduğundan KAYIP YOK).
+const WinTime = if (builtin.os.tag == .windows) struct {
+    extern "kernel32" fn GetSystemTimePreciseAsFileTime(t: *std.os.windows.FILETIME) callconv(.c) void;
+    extern "kernel32" fn QueryPerformanceCounter(count: *i64) callconv(.c) i32;
+    extern "kernel32" fn QueryPerformanceFrequency(freq: *i64) callconv(.c) i32;
+    extern "kernel32" fn Sleep(ms: u32) callconv(.c) void;
+
+    fn nowMs() i64 {
+        var ft: std.os.windows.FILETIME = undefined;
+        GetSystemTimePreciseAsFileTime(&ft);
+        const ticks: u64 = (@as(u64, ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+        const unix_100ns: i64 = @as(i64, @intCast(ticks)) - 116444736000000000;
+        return @divFloor(unix_100ns, 10_000);
+    }
+
+    var freq: i64 = 0;
+    fn monotonicMs() i64 {
+        if (freq == 0) _ = QueryPerformanceFrequency(&freq);
+        var counter: i64 = 0;
+        _ = QueryPerformanceCounter(&counter);
+        return @divTrunc(counter * 1000, freq);
+    }
+} else struct {};
 
 export fn nox_time_now_ms_raw() callconv(.c) i64 {
+    if (builtin.os.tag == .windows) return WinTime.nowMs();
     var ts: std.c.timespec = undefined;
     _ = std.c.clock_gettime(.REALTIME, &ts);
     return @as(i64, ts.sec) * std.time.ms_per_s + @divTrunc(@as(i64, ts.nsec), std.time.ns_per_ms);
@@ -27,6 +63,7 @@ export fn nox_time_now_ms_raw() callconv(.c) i64 {
 /// saati GERİYE/İLERİYE ayarlansa BİLE ASLA geri sıçramaz — `Instant.
 /// elapsed_ms`in DOĞRULUĞU İÇİN ZORUNLU, `now_ms`nin duvar-saati AKSİNE).
 export fn nox_time_monotonic_ms_raw() callconv(.c) i64 {
+    if (builtin.os.tag == .windows) return WinTime.monotonicMs();
     var ts: std.c.timespec = undefined;
     _ = std.c.clock_gettime(.MONOTONIC, &ts);
     return @as(i64, ts.sec) * std.time.ms_per_s + @divTrunc(@as(i64, ts.nsec), std.time.ns_per_ms);
@@ -34,6 +71,10 @@ export fn nox_time_monotonic_ms_raw() callconv(.c) i64 {
 
 export fn nox_time_sleep_ms_raw(ms: i64) callconv(.c) void {
     if (ms <= 0) return;
+    if (builtin.os.tag == .windows) {
+        WinTime.Sleep(@intCast(ms));
+        return;
+    }
     const ts: std.c.timespec = .{
         .sec = @divTrunc(ms, std.time.ms_per_s),
         .nsec = @mod(ms, std.time.ms_per_s) * std.time.ns_per_ms,

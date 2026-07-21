@@ -38,6 +38,7 @@
 //! Zig işleviyle egzersiz eder.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const posix = std.posix;
 const asap = @import("../alloc/asap.zig");
 const arc = @import("../alloc/arc.zig");
@@ -57,8 +58,53 @@ const str_mod = @import("../str.zig");
 /// kaynak tüketmemeli" ilkesiyle TUTARLI, hiçbir HTTP yanıtı YAZILMAZ).
 const READ_TIMEOUT_MS: u32 = 30_000;
 
+/// Faz LL.5 (bkz. nox-teknik-spesifikasyon.md §3.71): `std.c.close`
+/// (CRT fd-tablosu İçin) Windows SOCKET'leri İçin GEÇERSİZDİR —
+/// `closesocket` (Winsock) KULLANILIR.
+fn closeSocket(fd: posix.fd_t) void {
+    if (builtin.os.tag == .windows) {
+        _ = io_mod.WinSock.closesocket(@intFromPtr(fd));
+    } else {
+        _ = std.c.close(fd);
+    }
+}
+
+/// Faz LL.5: `posix.fd_t` Windows'ta bir İŞARETÇİ (`HANDLE`), diğer
+/// platformlarda bir `c_int`tir — bu iki yardımcı, ham bir `i64` İLE
+/// (`nox.thread`nin iş-parçacıkları-arası aktarım tipi, bkz.
+/// `nox_http_listen_fd`nin belge notu) ARADA platform-koşulsuz ÇEVİRİ
+/// yapar.
+fn fdToI64(fd: posix.fd_t) i64 {
+    if (builtin.os.tag == .windows) return @intCast(@intFromPtr(fd));
+    return @intCast(fd);
+}
+fn i64ToFd(v: i64) posix.fd_t {
+    if (builtin.os.tag == .windows) return @ptrFromInt(@as(usize, @intCast(v)));
+    return @intCast(v);
+}
+
+/// Testlerin `fcntl(fd, F_GETFD)` İLE yaptığı "hâlâ AÇIK mı" denetiminin
+/// platform-nötr eşdeğeri — `F` Windows'ta `void` OLDUĞUNDAN (bkz.
+/// `io.zig`nin AYNI bulgusu) `getsockname`in BAŞARILI olup OLMADIĞINA
+/// bakılır (kapalı/geçersiz bir SOCKET `WSAENOTSOCK` İLE başarısız olur).
+fn socketIsOpen(fd: posix.fd_t) bool {
+    if (builtin.os.tag == .windows) {
+        var waddr: std.os.windows.ws2_32.sockaddr.in = undefined;
+        var wlen: i32 = @sizeOf(std.os.windows.ws2_32.sockaddr.in);
+        return io_mod.WinSock.getsockname(@intFromPtr(fd), &waddr, &wlen) == 0;
+    }
+    return std.c.fcntl(fd, std.c.F.GETFD) >= 0;
+}
+
 fn rawRead(scheduler: ?*scheduler_mod.Scheduler, fd: posix.fd_t, buf: []u8, read_timeout_ms: u32) !usize {
     if (scheduler) |s| return io_mod.nonBlockingReadWithTimeout(s, fd, buf, read_timeout_ms);
+    if (builtin.os.tag == .windows) {
+        while (true) {
+            const rc = io_mod.WinSock.recv(@intFromPtr(fd), buf.ptr, @intCast(buf.len), 0);
+            if (rc >= 0) return @intCast(rc);
+            return error.Unexpected;
+        }
+    }
     while (true) {
         const rc = std.c.read(fd, buf.ptr, buf.len);
         if (rc >= 0) return @intCast(rc);
@@ -74,7 +120,11 @@ fn rawWriteAll(scheduler: ?*scheduler_mod.Scheduler, fd: posix.fd_t, bytes: []co
     while (off < bytes.len) {
         const n = if (scheduler) |s|
             try io_mod.nonBlockingWrite(s, fd, bytes[off..])
-        else blk: {
+        else if (builtin.os.tag == .windows) blk: {
+            const rc = io_mod.WinSock.send(@intFromPtr(fd), bytes[off..].ptr, @intCast(bytes.len - off), 0);
+            if (rc < 0) return error.Unexpected;
+            break :blk @as(usize, @intCast(rc));
+        } else blk: {
             while (true) {
                 const rc = std.c.write(fd, bytes[off..].ptr, bytes.len - off);
                 if (rc >= 0) break :blk @as(usize, @intCast(rc));
@@ -166,6 +216,28 @@ const ServerHandle = struct { listen_fd: posix.fd_t, owns_fd: bool };
 /// `int` olarak dönmesi için) kullanabilmesi için ÇIKARILDI. `port = 0`
 /// İSE OS boş bir port ATAR.
 fn bindAndListen(port: i64) ?posix.fd_t {
+    if (builtin.os.tag == .windows) {
+        const ws = io_mod.WinSock;
+        const fd = ws.socket(ws.AF_INET, ws.SOCK_STREAM, 0);
+        if (fd == ws.INVALID_SOCKET) return null;
+        var reuse: c_int = 1;
+        _ = ws.setsockopt(fd, ws.SOL_SOCKET, ws.SO_REUSEADDR, &reuse, @sizeOf(c_int));
+
+        var addr: std.os.windows.ws2_32.sockaddr.in = .{
+            .port = std.mem.nativeToBig(u16, @intCast(port)),
+            .addr = std.mem.nativeToBig(u32, 0x7f000001),
+        };
+        if (ws.bind(fd, &addr, @sizeOf(std.os.windows.ws2_32.sockaddr.in)) != 0) {
+            _ = ws.closesocket(fd);
+            return null;
+        }
+        if (ws.listen(fd, 1024) != 0) {
+            _ = ws.closesocket(fd);
+            return null;
+        }
+        return @ptrFromInt(fd);
+    }
+
     const fd = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
     if (fd < 0) return null;
     var reuse: c_int = 1;
@@ -176,7 +248,7 @@ fn bindAndListen(port: i64) ?posix.fd_t {
         .addr = std.mem.nativeToBig(u32, 0x7f000001),
     };
     if (std.c.bind(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in)) != 0) {
-        _ = std.c.close(fd);
+        _ = closeSocket(fd);
         return null;
     }
     // Faz HH.1 (bkz. nox-teknik-spesifikasyon.md §3.6X): ÖNCEDEN 128 —
@@ -187,7 +259,7 @@ fn bindAndListen(port: i64) ?posix.fd_t {
     // belge notu) BİRLİKTE, yüksek eşzamanlılıkta gözlemlenen bağlantı
     // reddi/soket hatalarının BİR bileşenidir.
     if (std.c.listen(fd, 1024) != 0) {
-        _ = std.c.close(fd);
+        _ = closeSocket(fd);
         return null;
     }
     return fd;
@@ -200,7 +272,7 @@ export fn nox_http_server_listen(rt: ?*anyopaque, port: i64) callconv(.c) ?*anyo
     const fd = bindAndListen(port) orelse return null;
 
     const handle = state.allocator().create(ServerHandle) catch {
-        _ = std.c.close(fd);
+        _ = closeSocket(fd);
         return null;
     };
     handle.* = .{ .listen_fd = fd, .owns_fd = true };
@@ -221,7 +293,7 @@ export fn nox_http_server_listen(rt: ?*anyopaque, port: i64) callconv(.c) ?*anyo
 export fn nox_http_listen_fd(rt: ?*anyopaque, port: i64) callconv(.c) i64 {
     _ = rt;
     const fd = bindAndListen(port) orelse return -1;
-    return @intCast(fd);
+    return fdToI64(fd);
 }
 
 /// Faz DD.1 — `nox_http_listen_fd`İLE elde edilmiş, ZATEN dinlemede olan
@@ -235,12 +307,18 @@ export fn nox_http_server_from_fd(rt: ?*anyopaque, fd: i64) callconv(.c) ?*anyop
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
     if (fd < 0) return null;
     const handle = state.allocator().create(ServerHandle) catch return null;
-    handle.* = .{ .listen_fd = @intCast(fd), .owns_fd = false };
+    handle.* = .{ .listen_fd = i64ToFd(fd), .owns_fd = false };
     return handle;
 }
 
 export fn nox_http_server_port(server: ?*anyopaque) callconv(.c) i64 {
     const h: *ServerHandle = @ptrCast(@alignCast(server orelse return 0));
+    if (builtin.os.tag == .windows) {
+        var waddr: std.os.windows.ws2_32.sockaddr.in = undefined;
+        var wlen: i32 = @sizeOf(std.os.windows.ws2_32.sockaddr.in);
+        if (io_mod.WinSock.getsockname(@intFromPtr(h.listen_fd), &waddr, &wlen) != 0) return 0;
+        return std.mem.bigToNative(u16, waddr.port);
+    }
     var addr: std.c.sockaddr.in = undefined;
     var len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
     if (std.c.getsockname(h.listen_fd, @ptrCast(&addr), &len) != 0) return 0;
@@ -250,11 +328,18 @@ export fn nox_http_server_port(server: ?*anyopaque) callconv(.c) i64 {
 export fn nox_http_server_close(rt: ?*anyopaque, server: ?*anyopaque) callconv(.c) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const h: *ServerHandle = @ptrCast(@alignCast(server orelse return));
-    if (h.owns_fd) _ = std.c.close(h.listen_fd);
+    if (h.owns_fd) _ = closeSocket(h.listen_fd);
     state.allocator().destroy(h);
 }
 
 fn blockingAccept(listen_fd: posix.fd_t) !posix.fd_t {
+    if (builtin.os.tag == .windows) {
+        while (true) {
+            const rc = io_mod.WinSock.accept(@intFromPtr(listen_fd), null, null);
+            if (rc != io_mod.WinSock.INVALID_SOCKET) return @ptrFromInt(rc);
+            return error.Unexpected;
+        }
+    }
     while (true) {
         const rc = std.c.accept(listen_fd, null, null);
         if (rc >= 0) return rc;
@@ -490,7 +575,7 @@ fn connectionEntry(arg: *anyopaque) void {
     const gpa = conn.allocator;
     const rt = conn.rt;
     defer gpa.destroy(conn);
-    defer _ = std.c.close(conn.fd);
+    defer _ = closeSocket(conn.fd);
     defer conn.active_connections.* -= 1;
 
     const scheduler = bridge.currentFiberScheduler();
@@ -673,12 +758,12 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
         // (fd sessizce kapatılır, hiçbir HTTP yanıtı YAZILMAZ — reddetmenin
         // KENDİSİNİN ek kaynak tüketmemesi İÇİN en ucuz tepki).
         if (active_connections >= max_concurrent) {
-            _ = std.c.close(conn_fd);
+            _ = closeSocket(conn_fd);
             continue;
         }
 
         const conn = gpa.create(ConnCtx) catch {
-            _ = std.c.close(conn_fd);
+            _ = closeSocket(conn_fd);
             continue;
         };
         conn.* = .{
@@ -714,14 +799,14 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
             const stack = s.acquireStack() catch {
                 active_connections -= 1;
                 gpa.destroy(conn);
-                _ = std.c.close(conn_fd);
+                _ = closeSocket(conn_fd);
                 continue;
             };
             const fiber = fiber_mod.Fiber.createWithStack(gpa, connectionEntry, conn, stack) catch {
                 active_connections -= 1;
                 s.releaseStack(stack);
                 gpa.destroy(conn);
-                _ = std.c.close(conn_fd);
+                _ = closeSocket(conn_fd);
                 continue;
             };
             // `scheduler_mod.spawn`ın KENDİ iç tarifiyle AYNI (bkz. modül
@@ -752,6 +837,20 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
 // bir "asılı kalma"/segfault gözlemlenirse ÖNCE bu notu OKUYUN.
 
 fn testConnect(port: u16) !posix.fd_t {
+    if (builtin.os.tag == .windows) {
+        const ws = io_mod.WinSock;
+        const fd = ws.socket(ws.AF_INET, ws.SOCK_STREAM, 0);
+        if (fd == ws.INVALID_SOCKET) return error.SocketFailed;
+        var waddr: std.os.windows.ws2_32.sockaddr.in = .{
+            .port = std.mem.nativeToBig(u16, port),
+            .addr = std.mem.nativeToBig(u32, 0x7f000001),
+        };
+        if (ws.connect(fd, &waddr, @sizeOf(std.os.windows.ws2_32.sockaddr.in)) != 0) {
+            _ = ws.closesocket(fd);
+            return error.ConnectFailed;
+        }
+        return @ptrFromInt(fd);
+    }
     const fd = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
     if (fd < 0) return error.SocketFailed;
     var addr: std.c.sockaddr.in = .{
@@ -759,7 +858,7 @@ fn testConnect(port: u16) !posix.fd_t {
         .addr = std.mem.nativeToBig(u32, 0x7f000001),
     };
     if (std.c.connect(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in)) != 0) {
-        _ = std.c.close(fd);
+        _ = closeSocket(fd);
         return error.ConnectFailed;
     }
     return fd;
@@ -859,7 +958,7 @@ test "nox_http_serve_raw: GERÇEK bir TCP bağlantısı kabul edip std.http.Serv
     const client_thread = try std.Thread.spawn(.{}, struct {
         fn run(p: u16) void {
             const fd = testConnect(p) catch return;
-            defer _ = std.c.close(fd);
+            defer _ = closeSocket(fd);
             testSendGet(fd, "/hello");
             testReadAll(fd);
         }
@@ -893,7 +992,7 @@ test "nox_http_serve_raw: bir fiber İÇİNDEN çalıştırıldığında eşzama
     const slow_thread = try std.Thread.spawn(.{}, struct {
         fn run(p: u16) void {
             const fd = testConnect(p) catch return;
-            defer _ = std.c.close(fd);
+            defer _ = closeSocket(fd);
             const req_ts: posix.timespec = .{ .sec = 0, .nsec = 150 * std.time.ns_per_ms };
             _ = std.c.nanosleep(&req_ts, null);
             testSendGet(fd, "/slow");
@@ -905,7 +1004,7 @@ test "nox_http_serve_raw: bir fiber İÇİNDEN çalıştırıldığında eşzama
     const fast_thread = try std.Thread.spawn(.{}, struct {
         fn run(p: u16) void {
             const fd = testConnect(p) catch return;
-            defer _ = std.c.close(fd);
+            defer _ = closeSocket(fd);
             testSendGet(fd, "/fast");
             testReadAll(fd);
         }
@@ -974,30 +1073,37 @@ test "Faz DD.1: nox_http_server_close — owns_fd=false PAYLAŞILAN fd'yi KAPATM
     defer asap.nox_runtime_deinit(rt);
 
     const shared_fd = bindAndListen(0) orelse return error.ListenFailed;
-    defer _ = std.c.close(shared_fd);
+    defer _ = closeSocket(shared_fd);
 
-    const wrapped = nox_http_server_from_fd(rt, @intCast(shared_fd)) orelse return error.WrapFailed;
+    const wrapped = nox_http_server_from_fd(rt, fdToI64(shared_fd)) orelse return error.WrapFailed;
     nox_http_server_close(rt, wrapped);
     // `owns_fd = false`: `shared_fd` HÂLÂ geçerli bir dosya tanımlayıcısı
-    // OLMALI — `fcntl(F_GETFD)` yalnızca fd AÇIKKEN başarılı döner.
-    try std.testing.expect(std.c.fcntl(shared_fd, std.c.F.GETFD) >= 0);
+    // OLMALI.
+    try std.testing.expect(socketIsOpen(shared_fd));
 
     const owned = nox_http_server_listen(rt, 0) orelse return error.ListenFailed;
     const owned_h: *ServerHandle = @ptrCast(@alignCast(owned));
     const owned_fd = owned_h.listen_fd;
     nox_http_server_close(rt, owned);
-    // `owns_fd = true`: `owned_fd` GERÇEKTEN kapatılmış OLMALI —
-    // `fcntl(F_GETFD)` `EBADF` İLE başarısız olur.
-    try std.testing.expect(std.c.fcntl(owned_fd, std.c.F.GETFD) < 0);
+    // `owns_fd = true`: `owned_fd` GERÇEKTEN kapatılmış OLMALI.
+    try std.testing.expect(!socketIsOpen(owned_fd));
 }
 
 test "Faz DD.1: PAYLAŞILAN bir listen_fd üzerinde İKİ BAĞIMSIZ iş parçacığı/ServerHandle GERÇEKTEN kendi bağlantısını kabul eder" {
     const fd = bindAndListen(0) orelse return error.ListenFailed;
-    defer _ = std.c.close(fd);
-    var addr: std.c.sockaddr.in = undefined;
-    var len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
-    _ = std.c.getsockname(fd, @ptrCast(&addr), &len);
-    const port: u16 = std.mem.bigToNative(u16, addr.port);
+    defer _ = closeSocket(fd);
+    var port: u16 = undefined;
+    if (builtin.os.tag == .windows) {
+        var waddr: std.os.windows.ws2_32.sockaddr.in = undefined;
+        var wlen: i32 = @sizeOf(std.os.windows.ws2_32.sockaddr.in);
+        _ = io_mod.WinSock.getsockname(@intFromPtr(fd), &waddr, &wlen);
+        port = std.mem.bigToNative(u16, waddr.port);
+    } else {
+        var addr: std.c.sockaddr.in = undefined;
+        var len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
+        _ = std.c.getsockname(fd, @ptrCast(&addr), &len);
+        port = std.mem.bigToNative(u16, addr.port);
+    }
 
     const rt1 = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt1);
@@ -1007,9 +1113,9 @@ test "Faz DD.1: PAYLAŞILAN bir listen_fd üzerinde İKİ BAĞIMSIZ iş parçac�
     // `owns_fd = false` — HİÇBİRİ paylaşılan `fd`yi kapatmaz (bkz.
     // `nox_http_server_close`in belge notu); `defer`ler bu yüzden HER
     // ZAMAN güvenlidir, sıraları ÖNEMSİZDİR.
-    const server1 = nox_http_server_from_fd(rt1, @intCast(fd)) orelse return error.WrapFailed;
+    const server1 = nox_http_server_from_fd(rt1, fdToI64(fd)) orelse return error.WrapFailed;
     defer nox_http_server_close(rt1, server1);
-    const server2 = nox_http_server_from_fd(rt2, @intCast(fd)) orelse return error.WrapFailed;
+    const server2 = nox_http_server_from_fd(rt2, fdToI64(fd)) orelse return error.WrapFailed;
     defer nox_http_server_close(rt2, server2);
 
     ThreadSafeCounter.served.store(0, .monotonic);
@@ -1022,7 +1128,7 @@ test "Faz DD.1: PAYLAŞILAN bir listen_fd üzerinde İKİ BAĞIMSIZ iş parçac�
     const client_thread1 = try std.Thread.spawn(.{}, struct {
         fn run(p: u16) void {
             const fd_c = testConnect(p) catch return;
-            defer _ = std.c.close(fd_c);
+            defer _ = closeSocket(fd_c);
             testSendGet(fd_c, "/a");
             testReadAll(fd_c);
         }
@@ -1030,7 +1136,7 @@ test "Faz DD.1: PAYLAŞILAN bir listen_fd üzerinde İKİ BAĞIMSIZ iş parçac�
     const client_thread2 = try std.Thread.spawn(.{}, struct {
         fn run(p: u16) void {
             const fd_c = testConnect(p) catch return;
-            defer _ = std.c.close(fd_c);
+            defer _ = closeSocket(fd_c);
             testSendGet(fd_c, "/b");
             testReadAll(fd_c);
         }
@@ -1063,7 +1169,7 @@ test "Faz Q.5: govde boyutu siniri asilirsa 413 Payload Too Large doner, handler
     const client_thread = try std.Thread.spawn(.{}, struct {
         fn run(p: u16, out: []u8, out_len: *usize) void {
             const fd = testConnect(p) catch return;
-            defer _ = std.c.close(fd);
+            defer _ = closeSocket(fd);
             // 27 bayt gövde — aşağıdaki KASITLI KÜÇÜK 16 baytlık test
             // sınırının (gerçek varsayılan 10 MiB'ı BEKLEMEDEN testin HIZLI/
             // deterministik olması İÇİN) ÜZERİNDE.
@@ -1098,7 +1204,7 @@ test "Faz Q.5: esizamanli baglanti siniri asilinca fazla baglanti hicbir HTTP ya
     const slow_thread = try std.Thread.spawn(.{}, struct {
         fn run(p: u16) void {
             const fd = testConnect(p) catch return;
-            defer _ = std.c.close(fd);
+            defer _ = closeSocket(fd);
             const ts: posix.timespec = .{ .sec = 0, .nsec = 150 * std.time.ns_per_ms };
             _ = std.c.nanosleep(&ts, null);
             testSendGet(fd, "/slow");
@@ -1119,7 +1225,7 @@ test "Faz Q.5: esizamanli baglanti siniri asilinca fazla baglanti hicbir HTTP ya
     const fast_thread = try std.Thread.spawn(.{}, struct {
         fn run(p: u16, rejected: *bool) void {
             const fd = testConnect(p) catch return;
-            defer _ = std.c.close(fd);
+            defer _ = closeSocket(fd);
             var buf: [16]u8 = undefined;
             const n = std.c.read(fd, &buf, buf.len);
             rejected.* = (n <= 0);
@@ -1168,7 +1274,7 @@ test "Faz HH.7: baglanti HICBIR sey gondermezse okuma zaman asimiyla sessizce ka
     const client_thread = try std.Thread.spawn(.{}, struct {
         fn run(p: u16, out: *bool) void {
             const fd = testConnect(p) catch return;
-            defer _ = std.c.close(fd);
+            defer _ = closeSocket(fd);
             var buf: [16]u8 = undefined;
             const n = std.c.read(fd, &buf, buf.len);
             out.* = (n <= 0);
@@ -1207,7 +1313,7 @@ test "Faz HH.7: zaman asimi ICINDE tamamlanan normal bir istek YANLIS-POZITIF ol
     const client_thread = try std.Thread.spawn(.{}, struct {
         fn run(p: u16) void {
             const fd = testConnect(p) catch return;
-            defer _ = std.c.close(fd);
+            defer _ = closeSocket(fd);
             const ts: posix.timespec = .{ .sec = 0, .nsec = 40 * std.time.ns_per_ms };
             _ = std.c.nanosleep(&ts, null);
             testSendGet(fd, "/normal");

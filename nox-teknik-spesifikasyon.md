@@ -11955,6 +11955,71 @@ ReleaseFast'te doğrulandı; Windows'un KENDİSİ (`_O_BINARY`/`FindFirstFileA`/
 `GetFileTime` gibi HİÇ yerel test edilemeyen yeni Win32 çağrıları
 İÇERDİĞİNDEN) GERÇEK CI'de doğrulanacak.
 
+### LL.4 SONRASI keşif + LL.5 (DEVAM EDİYOR) — tam `zig build`in ortaya çıkardığı kalan hatalar
+
+LL.4 commit'i (fs.zig/os.zig/dict.zig/crypto.zig) GERÇEK Windows CI'ye
+gönderilmeden ÖNCE, `ci.yml`ye `continue-on-error: true` İLE TAM
+(runtime dahil) bir `zig build` adımı eklendi — `fs.zig`nin `http_
+client.zig`e (yalnızca `dupeToNoxStr` İçin) bağımlı OLMASI, LL.4'ü
+LL.5'TEN İZOLE test etmeyi İMKANSIZ kıldığından. Bu adım TEK seferde
+6 dosyada 15 derleme hatası ortaya çıkardı:
+
+- **`time.zig`**: `std.c.clockid_t` Windows İçin `void` (`fstat`in AYNI
+  "switch'te unutulmuş case" deseni) — `clock_gettime`/`nanosleep`
+  imzaları BU tipe bağlı OLDUĞUNDAN TAMAMEN kullanılamaz hale geliyor.
+  Çözüm: `GetSystemTimePreciseAsFileTime` (duvar-saati, `fs.zig`nin AYNI
+  FILETIME→Unix çevirisiyle), `QueryPerformanceCounter`/`Frequency`
+  (monotonik, `io_reactor.zig`nin `WindowsReactor.monotonicMs`iyle AYNI
+  önbellekleme deseni), `Sleep` (kernel32, ms çözünürlüklü).
+- **`io.zig`**: `std.c.fcntl`nin bayrak parametresi tipi (`std.c.F`)
+  Windows İçin `void` → `setNonBlocking` `ioctlsocket(fd, FIONBIO, ...)`e
+  geçirildi. `nonBlockingAccept`/`Read`/`ReadWithTimeout`/`Write` HER
+  BİRİ Winsock'un `WSAGetLastError() == WSAEWOULDBLOCK`ini (POSIX'in
+  `errno == EAGAIN`i YERİNE — Winsock hataları `errno` ÜZERİNDEN ASLA
+  okunamaz) kontrol eden bir Windows dalı KAZANDI. Bu amaçla `io.zig`ye
+  `pub const WinSock` (TÜM extern fn'leri TEK TEK `pub` işaretlenmiş —
+  bir kapsayıcı `const`ın `pub`u İÇ `extern fn`lere OTOMATİK YAYILMAZ,
+  gerçek bir hata olarak yakalandı) eklendi: `ioctlsocket`/`accept`/
+  `recv`/`send`/`socket`/`bind`/`listen`/`connect`/`setsockopt`/
+  `getsockname`/`closesocket` — `http_server.zig`/`http_client.zig`
+  TARAFINDAN PAYLAŞILAN TEK Winsock kaynağı.
+- **`http_server.zig`**: `std.c.setsockopt`/`socket` ailesinin
+  `posix.fd_t`(Windows'ta `HANDLE`, bir işaretçi) İLE GERÇEK Winsock
+  `SOCKET`(ham tamsayı) arasındaki tutarsızlığı (Zig'in KENDİ Windows
+  soket bağlamalarının İÇ tutarsızlığı) ortaya çıkardı. `fdToI64`/
+  `i64ToFd` (`@intFromPtr`/`@ptrFromInt` köprüsü), `closeSocket`
+  (`closesocket` vs `close`), `socketIsOpen` (`F.GETFD`nin Windows'ta
+  `void` olması yüzünden `getsockname` başarısıyla değiştirildi) EKLENDİ;
+  `bindAndListen`/`blockingAccept`/`rawRead`/`rawWriteAll`/`testConnect`
+  VE testler `io_mod.WinSock` ÜZERİNDEN yeniden yazıldı.
+- **`http_client.zig`**: `std.c.pipe`nin Windows'ta HİÇ KARŞILIĞI
+  YOKTUR — `workerThreadFn`nin "tamamlanma sinyali" self-pipe'ı
+  (`makeSelfPipe`), `io_reactor.zig`nin `WindowsReactor.makeLoopbackPair`
+  İLE AYNI teknikle, BAĞLANMIŞ bir UDP-loopback soket ÇİFTİNE çevrildi
+  (`closeFd`/`signalSelfPipe`/`readSelfPipe` yardımcılarıyla). Test-özel
+  HTTP sunucusu yardımcıları (`testListenerOn127001`/
+  `testServeOnceDelayed`) `http_server.zig`nin `bindAndListen`İLE AYNI
+  desenle `io_mod.WinSock`e geçirildi; kasıtlı test gecikmesi İçin
+  (`nanosleep`nin `clockid_t` sorunundan ETKİLENMEMESİ İçin) `time.zig`nin
+  `WinTime.Sleep`iyle AYNI, dosyaya ÖZEL bir `WinSleep.Sleep` KOPYASI
+  eklendi (küçük platform yardımcılarının dosya-başına TEKRARLANMASI
+  `crypto.zig`/`dict.zig`nin `secureRandomBuf`ıyla TUTARLI, YERLEŞİK bir
+  proje kuralı).
+- **ÇÖZÜLMEDİ (LL.5'in geri kalanı):** `std.DynLib` bu Zig sürümünde
+  Windows İçin TAMAMEN desteksiz (`error: unsupported platform` —
+  muhtemelen HPy köprüsü yükleyicisini ETKİLİYOR, henüz bulunup
+  okunmadı) VE `json.zig`nin `std.c.dlopen(null, RTLD_NOW)` deseni
+  (`RTLD`nin Windows İçin `void` olması yüzünden) — İKİSİ DE
+  `LoadLibraryW`/`GetProcAddress`/`FreeLibrary` tabanlı elle yazılmış
+  bir Windows yükleyicisi (ya da BİLİNÇLİ bir v1 ertelemesi) GEREKTİRİYOR,
+  SONRAKİ bir adımda ele alınacak.
+
+Yerel olarak (macOS, Debug/ReleaseSafe/ReleaseFast) TÜM değişiklikler
+doğrulandı — Windows dalları (`builtin.os.tag == .windows` altında)
+Zig'in TİP KONTROLÜNDEN geçti (çalışma-zamanı dalı ÖLÜ olsa BİLE her iki
+dal DA derleme-zamanında tip denetlenir) ama GERÇEK yürütme HENÜZ
+`windows-latest` CI'de doğrulanmadı.
+
 ## 4. Bellek Yönetimi — "Sahiplik Piramidi"
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)

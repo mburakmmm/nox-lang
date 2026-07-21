@@ -17,10 +17,54 @@ const builtin = @import("builtin");
 const posix = std.posix;
 const Scheduler = @import("scheduler.zig").Scheduler;
 
+/// Faz LL.4/LL.5 (bkz. nox-teknik-spesifikasyon.md §3.71): `fcntl`/
+/// `std.c.O` (bu Zig sürümünde Windows İçin `void`, bkz. `fs.zig`nin
+/// `WinFile`nin AYNI belge notu) Windows'ta YOK — Winsock'un KENDİ
+/// non-blocking-yapma ilkeli `ioctlsocket(fd, FIONBIO, &1)`dir. Benzer
+/// şekilde `std.c.accept`/`read`/`write`in Windows SOCKET'leri İÇİN
+/// GEÇERSİZ olması (CRT fd-tablosu İÇİN tasarlanmışlardır — bkz. `fs.
+/// zig`nin AYNI ayrımı) YÜZÜNDEN Winsock'un KENDİ `accept`/`recv`/`send`i
+/// KULLANILIR; hata denetimi İçin `posix.errno` DEĞİL `WSAGetLastError`
+/// (Winsock CRT'nin `errno`SUNU ASLA doldurmaz).
+/// `pub` — `http_server.zig`/`http_client.zig` (LL.5) DA AYNI Winsock
+/// ilkellerine ihtiyaç duyar, `io_mod.WinSock` ÜZERİNDEN yeniden kullanır
+/// (tekrar hand-declare ETMEK yerine).
+pub const WinSock = if (builtin.os.tag == .windows) struct {
+    pub extern "ws2_32" fn ioctlsocket(s: usize, cmd: i32, argp: *u32) callconv(.c) i32;
+    pub extern "ws2_32" fn accept(s: usize, addr: ?*anyopaque, addrlen: ?*i32) callconv(.c) usize;
+    pub extern "ws2_32" fn recv(s: usize, buf: [*]u8, len: i32, flags: i32) callconv(.c) i32;
+    pub extern "ws2_32" fn send(s: usize, buf: [*]const u8, len: i32, flags: i32) callconv(.c) i32;
+    pub extern "ws2_32" fn WSAGetLastError() callconv(.c) i32;
+    /// LL.5: `http_server.zig`/`http_client.zig`nin bağlantı-KURMA
+    /// (`socket`/`bind`/`listen`/`connect`/`setsockopt`/`getsockname`/
+    /// `closesocket`) İçin ek olarak ihtiyaç duyduğu Winsock ilkelleri —
+    /// AYNI "CRT fd-tablosu İçin tasarlanmış std.c.* SOCKET'ler İçin
+    /// GEÇERSİZ" gerekçesiyle.
+    pub extern "ws2_32" fn socket(af: i32, socket_type: i32, protocol: i32) callconv(.c) usize;
+    pub extern "ws2_32" fn bind(s: usize, addr: *const std.os.windows.ws2_32.sockaddr.in, namelen: i32) callconv(.c) i32;
+    pub extern "ws2_32" fn listen(s: usize, backlog: i32) callconv(.c) i32;
+    pub extern "ws2_32" fn connect(s: usize, addr: *const std.os.windows.ws2_32.sockaddr.in, namelen: i32) callconv(.c) i32;
+    pub extern "ws2_32" fn setsockopt(s: usize, level: i32, optname: i32, optval: ?*const anyopaque, optlen: i32) callconv(.c) i32;
+    pub extern "ws2_32" fn getsockname(s: usize, addr: *std.os.windows.ws2_32.sockaddr.in, namelen: *i32) callconv(.c) i32;
+    pub extern "ws2_32" fn closesocket(s: usize) callconv(.c) i32;
+    pub const FIONBIO: i32 = -2147195266; // 0x8004667e (i32 olarak imzalı bit deseni)
+    pub const INVALID_SOCKET: usize = ~@as(usize, 0);
+    pub const WSAEWOULDBLOCK: i32 = 10035;
+    pub const AF_INET: i32 = 2;
+    pub const SOCK_STREAM: i32 = 1;
+    pub const SOL_SOCKET: i32 = 0xffff;
+    pub const SO_REUSEADDR: i32 = 0x0004;
+} else struct {};
+
 /// Bir soketi non-blocking yapar — idempotenttir (zaten non-blocking olan
 /// bir fd üzerinde tekrar çağrılması güvenlidir), bu yüzden HER
 /// `nonBlockingAccept`/`Read`/`Write` çağrısının başında koşulsuz çağrılır.
 fn setNonBlocking(fd: posix.fd_t) void {
+    if (builtin.os.tag == .windows) {
+        var mode: u32 = 1;
+        _ = WinSock.ioctlsocket(@intFromPtr(fd), WinSock.FIONBIO, &mode);
+        return;
+    }
     const current = std.c.fcntl(fd, std.c.F.GETFL);
     var flags: std.c.O = @bitCast(@as(u32, @intCast(current)));
     flags.NONBLOCK = true;
@@ -33,6 +77,15 @@ fn setNonBlocking(fd: posix.fd_t) void {
 pub fn nonBlockingAccept(scheduler: *Scheduler, listen_fd: posix.fd_t) !posix.fd_t {
     setNonBlocking(listen_fd);
     while (true) {
+        if (builtin.os.tag == .windows) {
+            const rc = WinSock.accept(@intFromPtr(listen_fd), null, null);
+            if (rc != WinSock.INVALID_SOCKET) return @ptrFromInt(rc);
+            if (WinSock.WSAGetLastError() == WinSock.WSAEWOULDBLOCK) {
+                scheduler.suspendForIo(listen_fd, .read);
+                continue;
+            }
+            return error.Unexpected;
+        }
         const rc = std.c.accept(listen_fd, null, null);
         if (rc >= 0) return rc;
         switch (posix.errno(rc)) {
@@ -49,6 +102,15 @@ pub fn nonBlockingAccept(scheduler: *Scheduler, listen_fd: posix.fd_t) !posix.fd
 pub fn nonBlockingRead(scheduler: *Scheduler, fd: posix.fd_t, buf: []u8) !usize {
     setNonBlocking(fd);
     while (true) {
+        if (builtin.os.tag == .windows) {
+            const rc = WinSock.recv(@intFromPtr(fd), buf.ptr, @intCast(buf.len), 0);
+            if (rc >= 0) return @intCast(rc);
+            if (WinSock.WSAGetLastError() == WinSock.WSAEWOULDBLOCK) {
+                scheduler.suspendForIo(fd, .read);
+                continue;
+            }
+            return error.Unexpected;
+        }
         const rc = std.c.read(fd, buf.ptr, buf.len);
         if (rc >= 0) return @intCast(rc);
         switch (posix.errno(rc)) {
@@ -77,6 +139,15 @@ pub fn nonBlockingRead(scheduler: *Scheduler, fd: posix.fd_t, buf: []u8) !usize 
 pub fn nonBlockingReadWithTimeout(scheduler: *Scheduler, fd: posix.fd_t, buf: []u8, timeout_ms: u32) !usize {
     setNonBlocking(fd);
     while (true) {
+        if (builtin.os.tag == .windows) {
+            const rc = WinSock.recv(@intFromPtr(fd), buf.ptr, @intCast(buf.len), 0);
+            if (rc >= 0) return @intCast(rc);
+            if (WinSock.WSAGetLastError() == WinSock.WSAEWOULDBLOCK) {
+                if (scheduler.suspendForIoOrTimeout(fd, .read, timeout_ms) == .timed_out) return error.Timeout;
+                continue;
+            }
+            return error.Unexpected;
+        }
         const rc = std.c.read(fd, buf.ptr, buf.len);
         if (rc >= 0) return @intCast(rc);
         switch (posix.errno(rc)) {
@@ -93,6 +164,15 @@ pub fn nonBlockingReadWithTimeout(scheduler: *Scheduler, fd: posix.fd_t, buf: []
 pub fn nonBlockingWrite(scheduler: *Scheduler, fd: posix.fd_t, buf: []const u8) !usize {
     setNonBlocking(fd);
     while (true) {
+        if (builtin.os.tag == .windows) {
+            const rc = WinSock.send(@intFromPtr(fd), buf.ptr, @intCast(buf.len), 0);
+            if (rc >= 0) return @intCast(rc);
+            if (WinSock.WSAGetLastError() == WinSock.WSAEWOULDBLOCK) {
+                scheduler.suspendForIo(fd, .write);
+                continue;
+            }
+            return error.Unexpected;
+        }
         const rc = std.c.write(fd, buf.ptr, buf.len);
         if (rc >= 0) return @intCast(rc);
         switch (posix.errno(rc)) {

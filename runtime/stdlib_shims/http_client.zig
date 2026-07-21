@@ -22,6 +22,7 @@
 //! TAKİP EDİLMEZ), gövde HAM (Content-Encoding'e bakılmaksızın) okunur.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const posix = std.posix;
 const asap = @import("../alloc/asap.zig");
 const arc = @import("../alloc/arc.zig");
@@ -29,6 +30,91 @@ const dict_mod = @import("../collections/dict.zig");
 const bridge = @import("../async_rt/bridge.zig");
 const io_mod = @import("../async_rt/io.zig");
 const str_mod = @import("../str.zig");
+
+/// Faz LL.5 (bkz. nox-teknik-spesifikasyon.md §3.71): `workerThreadFn`nin
+/// "tamamlanma sinyali" self-pipe'ı `std.c.pipe`ye dayanır — Windows'ta
+/// `pipe()` YOKTUR. Yerine, BAĞLANMIŞ (connected) bir UDP-loopback ÇİFTİ
+/// kullanılır (`io_reactor.zig`nin `WindowsReactor.makeLoopbackPair`iYLE
+/// AYNI teknik) — bir tarafa `send` edilen TEK bayt, diğer taraftan
+/// `recv` edilerek OKUNUR, `nonBlockingRead`in (D.0'ın reaktörü) BEKLEDİĞİ
+/// "hazır-olma bildirimi alınabilen bir fd" sözleşmesini AYNEN karşılar.
+fn makeSelfPipe() ?[2]posix.fd_t {
+    if (builtin.os.tag == .windows) {
+        const ws = io_mod.WinSock;
+        const a = ws.socket(ws.AF_INET, 2, 17); // SOCK_DGRAM=2, IPPROTO_UDP=17
+        if (a == ws.INVALID_SOCKET) return null;
+        const b = ws.socket(ws.AF_INET, 2, 17);
+        if (b == ws.INVALID_SOCKET) {
+            _ = ws.closesocket(a);
+            return null;
+        }
+        var addr_a: std.os.windows.ws2_32.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
+        var addr_b: std.os.windows.ws2_32.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
+        if (ws.bind(a, &addr_a, @sizeOf(std.os.windows.ws2_32.sockaddr.in)) != 0 or
+            ws.bind(b, &addr_b, @sizeOf(std.os.windows.ws2_32.sockaddr.in)) != 0)
+        {
+            _ = ws.closesocket(a);
+            _ = ws.closesocket(b);
+            return null;
+        }
+        var len_a: i32 = @sizeOf(std.os.windows.ws2_32.sockaddr.in);
+        var len_b: i32 = @sizeOf(std.os.windows.ws2_32.sockaddr.in);
+        _ = ws.getsockname(a, &addr_a, &len_a);
+        _ = ws.getsockname(b, &addr_b, &len_b);
+        if (ws.connect(a, &addr_b, @sizeOf(std.os.windows.ws2_32.sockaddr.in)) != 0 or
+            ws.connect(b, &addr_a, @sizeOf(std.os.windows.ws2_32.sockaddr.in)) != 0)
+        {
+            _ = ws.closesocket(a);
+            _ = ws.closesocket(b);
+            return null;
+        }
+        // `read_fd` = a (okunur), `write_fd` = b (yazılır) — `pipe()`in
+        // `fds[0]`=oku/`fds[1]`=yaz sözleşmesiyle AYNI.
+        return .{ @ptrFromInt(a), @ptrFromInt(b) };
+    }
+    var fds: [2]posix.fd_t = undefined;
+    if (std.c.pipe(&fds) != 0) return null;
+    return fds;
+}
+
+fn closeFd(fd: posix.fd_t) void {
+    if (builtin.os.tag == .windows) {
+        _ = io_mod.WinSock.closesocket(@intFromPtr(fd));
+    } else {
+        _ = std.c.close(fd);
+    }
+}
+
+fn signalSelfPipe(fd: posix.fd_t) void {
+    if (builtin.os.tag == .windows) {
+        var b: [1]u8 = .{1};
+        _ = io_mod.WinSock.send(@intFromPtr(fd), &b, 1, 0);
+    } else {
+        var signal_byte = [_]u8{1};
+        _ = std.c.write(fd, &signal_byte, 1);
+    }
+}
+
+fn readSelfPipe(fd: posix.fd_t, buf: []u8) void {
+    if (builtin.os.tag == .windows) {
+        _ = io_mod.WinSock.recv(@intFromPtr(fd), buf.ptr, @intCast(buf.len), 0);
+    } else {
+        _ = std.c.read(fd, buf.ptr, buf.len);
+    }
+}
+
+/// `testServeOnceDelayed`nin kasıtlı gecikmesi İçin — `time.zig`nin
+/// `WinTime.Sleep`iYLE AYNI desen (`std.c.clockid_t`nin void OLMASI
+/// yüzünden `nanosleep` Windows'ta kullanılamaz, bkz. o dosyanın belge
+/// notu), KÜÇÜK platform yardımcılarının dosya-başına TEKRARLANMASI
+/// projenin YERLEŞİK kuralıyla (bkz. `crypto.zig`/`dict.zig`nin
+/// `secureRandomBuf`ı) TUTARLI.
+const WinSleep = if (builtin.os.tag == .windows) struct {
+    extern "kernel32" fn Sleep(ms: u32) callconv(.c) void;
+} else struct {};
+fn winSleep(ms: u32) void {
+    if (builtin.os.tag == .windows) WinSleep.Sleep(ms);
+}
 
 /// TÜM istekler ARASINDA PAYLAŞILAN, TEMBEL ilklenen TEK bir `std.Io.Threaded`
 /// — `std.Io.Threaded.init` süreç-GENELİ bir `SIGIO`/`SIGPIPE` sinyal
@@ -109,9 +195,8 @@ fn workerThreadFn(ctx: *RequestCtx) void {
     // YAZILDIKTAN SONRA `ctx`ye HİÇ dokunulmamasını GARANTİ eder.
     const write_fd = ctx.write_fd;
     defer {
-        var signal_byte = [_]u8{1};
-        _ = std.c.write(write_fd, &signal_byte, 1);
-        _ = std.c.close(write_fd);
+        signalSelfPipe(write_fd);
+        closeFd(write_fd);
     }
 
     const io = sharedClientIo();
@@ -266,12 +351,11 @@ fn doRequest(
     const ctx = gpa.create(RequestCtx) catch return null;
     errdefer gpa.destroy(ctx);
 
-    var fds: [2]posix.fd_t = undefined;
-    if (std.c.pipe(&fds) != 0) return null;
+    const fds = makeSelfPipe() orelse return null;
 
     const url_copy = gpa.dupeZ(u8, std.mem.span(u)) catch {
-        _ = std.c.close(fds[0]);
-        _ = std.c.close(fds[1]);
+        closeFd(fds[0]);
+        closeFd(fds[1]);
         return null;
     };
     const body_copy: ?[]const u8 = if (body) |b| (gpa.dupe(u8, std.mem.span(b)) catch null) else null;
@@ -279,8 +363,8 @@ fn doRequest(
     // belge notu) İSTEĞİN TAMAMI reddedilerek ele alınır — `url_copy`
     // başarısızlığıyla AYNI "temizle, `null` dön" deseni.
     const headers_copy = copyHeaders(gpa, headers_dict) catch {
-        _ = std.c.close(fds[0]);
-        _ = std.c.close(fds[1]);
+        closeFd(fds[0]);
+        closeFd(fds[1]);
         return null;
     };
 
@@ -296,8 +380,8 @@ fn doRequest(
     const thread = std.Thread.spawn(.{}, workerThreadFn, .{ctx}) catch {
         ctx.destroyOwned();
         gpa.destroy(ctx);
-        _ = std.c.close(fds[0]);
-        _ = std.c.close(fds[1]);
+        closeFd(fds[0]);
+        closeFd(fds[1]);
         return null;
     };
     thread.detach();
@@ -307,9 +391,9 @@ fn doRequest(
         _ = io_mod.nonBlockingRead(scheduler, fds[0], &buf) catch {};
     } else {
         var buf: [1]u8 = undefined;
-        _ = std.c.read(fds[0], &buf, 1);
+        readSelfPipe(fds[0], &buf);
     }
-    _ = std.c.close(fds[0]);
+    closeFd(fds[0]);
 
     if (ctx.failed) {
         ctx.destroyOwned();
@@ -402,6 +486,23 @@ export fn nox_http_response_free(h: ?*anyopaque) callconv(.c) void {
 // fiber-native sunucu kabuğu AYRI bir dosyada, ayrı bir sonraki adımdır).
 
 fn testListenerOn127001(port_out: *u16) !posix.fd_t {
+    if (builtin.os.tag == .windows) {
+        const ws = io_mod.WinSock;
+        const fd = ws.socket(ws.AF_INET, ws.SOCK_STREAM, 0);
+        if (fd == ws.INVALID_SOCKET) return error.SocketFailed;
+        var reuse: c_int = 1;
+        _ = ws.setsockopt(fd, ws.SOL_SOCKET, ws.SO_REUSEADDR, &reuse, @sizeOf(c_int));
+
+        var addr: std.os.windows.ws2_32.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
+        if (ws.bind(fd, &addr, @sizeOf(std.os.windows.ws2_32.sockaddr.in)) != 0) return error.BindFailed;
+        if (ws.listen(fd, 1) != 0) return error.ListenFailed;
+
+        var got: std.os.windows.ws2_32.sockaddr.in = undefined;
+        var got_len: i32 = @sizeOf(std.os.windows.ws2_32.sockaddr.in);
+        if (ws.getsockname(fd, &got, &got_len) != 0) return error.GetsocknameFailed;
+        port_out.* = std.mem.bigToNative(u16, got.port);
+        return @ptrFromInt(fd);
+    }
     const fd = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
     if (fd < 0) return error.SocketFailed;
     var reuse: c_int = 1;
@@ -439,6 +540,32 @@ fn testServeOnce(listen_fd: posix.fd_t) void {
 /// testinin (bkz. aşağıdaki test) BEKLEDİĞİ "diger fiber calisti" ÖNCE
 /// gelir garantisini BOZUYORDU.
 fn testServeOnceDelayed(listen_fd: posix.fd_t, delay_ms: i64) void {
+    if (builtin.os.tag == .windows) {
+        const ws = io_mod.WinSock;
+        const conn = ws.accept(@intFromPtr(listen_fd), null, null);
+        if (conn == ws.INVALID_SOCKET) return;
+        defer _ = ws.closesocket(conn);
+
+        var req_buf: [4096]u8 = undefined;
+        var total: usize = 0;
+        while (total < req_buf.len) {
+            const n = ws.recv(conn, req_buf[total..].ptr, @intCast(req_buf.len - total), 0);
+            if (n <= 0) break;
+            total += @intCast(n);
+            if (std.mem.indexOf(u8, req_buf[0..total], "\r\n\r\n") != null) break;
+        }
+
+        if (delay_ms > 0) winSleep(@intCast(delay_ms));
+
+        const response = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nX-Nox-Test: merhaba\r\nConnection: close\r\n\r\nhello";
+        var written: usize = 0;
+        while (written < response.len) {
+            const n = ws.send(conn, response[written..].ptr, @intCast(response.len - written), 0);
+            if (n <= 0) break;
+            written += @intCast(n);
+        }
+        return;
+    }
     const conn = std.c.accept(listen_fd, null, null);
     if (conn < 0) return;
     defer _ = std.c.close(conn);
@@ -475,7 +602,7 @@ test "nox_http_get_raw: gerçek yerel HTTP sunucusuna GET isteği — status/bod
 
     var port: u16 = 0;
     const listen_fd = try testListenerOn127001(&port);
-    defer _ = std.c.close(listen_fd);
+    defer closeFd(listen_fd);
 
     const server_thread = try std.Thread.spawn(.{}, testServeOnce, .{listen_fd});
     defer server_thread.join();
@@ -511,7 +638,7 @@ test "nox_http_get_raw: bir fiber İÇİNDEN çağrıldığında zamanlayıcı B
 
     var port: u16 = 0;
     const listen_fd = try testListenerOn127001(&port);
-    defer _ = std.c.close(listen_fd);
+    defer closeFd(listen_fd);
 
     // `150` — `http_server.zig`nin "yavaş istemci" testiyle AYNI değer
     // (bkz. `testServeOnceDelayed`in belge notu) — EAGAIN'in GERÇEKTEN
