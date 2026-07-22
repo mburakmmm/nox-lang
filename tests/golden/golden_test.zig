@@ -86,3 +86,10 @@ test "golden: async def + spawn + await + Channel[T](...) inşası + .send" {
         @embedFile("cases/async_spawn_await_channel.ast.expected"),
     );
 }
+
+test "golden: defer CALL (Go-tarzı defer anahtar kelimesi)" {
+    try expectGolden(
+        @embedFile("cases/defer_stmt.nox"),
+        @embedFile("cases/defer_stmt.ast.expected"),
+    );
+}

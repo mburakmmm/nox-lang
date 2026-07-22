@@ -530,3 +530,10 @@ test "golden(typecheck): Faz FF.6 — Optional'a uyumsuz tip atanması reddedili
         @embedFile("typecheck_cases/err_optional_type_mismatch.expected"),
     );
 }
+
+test "golden(typecheck): Faz GG.3 — 'defer' modül seviyesinde (fonksiyon/metod dışında) reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_defer_outside_function.nox"),
+        @embedFile("typecheck_cases/err_defer_outside_function.expected"),
+    );
+}

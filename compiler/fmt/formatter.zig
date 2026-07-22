@@ -378,6 +378,12 @@ const Printer = struct {
                 try self.line(stmt.line);
                 try self.printStmts(w.body, depth + 1);
             },
+            .defer_stmt => |d| {
+                try self.indentTo(depth);
+                try self.writer.writeAll("defer ");
+                try self.printExpr(.{ .call = d.call });
+                try self.line(stmt.line);
+            },
         }
     }
 

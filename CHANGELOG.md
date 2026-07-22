@@ -1443,6 +1443,38 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   (50/180) Faz ZZ'ye (180/180) kadar tek bir oturumda (2026-07-22) 130
   fonksiyon eklendi, her biri gerçek bir HPy 0.9.0 C uzantısıyla uçtan
   uca doğrulandı.
+- **Python builtin genişletmesi: `input`/`abs`/`min`/`max`/`round`/`sum`.**
+  `input()` YENİ `runtime/stdlib_shims/io.zig` ile stdin'den satır okur
+  (v1: argümansız, gerçek EOF'ta `EOFError` fırlatmaz). `abs`/`min`/`max`/
+  `round`/`sum`/`sum_float` `stdlib/nox/core.nox`e saf Nox generic
+  fonksiyonları olarak eklendi — hiçbir checker.zig/codegen.zig
+  değişikliği gerekmedi. Yan-keşif: `round()`nin `int(x + 0.5)` ihtiyacı,
+  `int()` builtin'inin önceden yalnızca `str` kabul ettiğini ortaya
+  çıkardı — `float` argümanı da (QBE'nin `dtosi`si üzerinden, Python'ın
+  `int(3.9) == 3`iyle aynı sıfıra-doğru kırpma) kabul edecek şekilde
+  genişletildi. `nox-teknik-spesifikasyon.md` §3.72.
+- **Go-tarzı `defer` anahtar kelimesi — tam Go semantiği (bir döngü
+  içindeki `defer` dahil).** `defer CALL`, `CALL`i fonksiyonun dönüş
+  anında (normal düşme/`return`/yakalanmamış bir istisna dahil) LIFO
+  sırasıyla çalıştırır. YENİ `runtime/alloc/defer_stack.zig`: bekleyen
+  çağrı sayısı çalışma zamanında değişebildiğinden (bir döngü içindeki
+  `defer`), derleyicinin kendi statik `finally_stack`i yerine gerçekten
+  çalışma zamanında büyüyen bir yığın kullanır. Checker, her `defer`i
+  sentetik bir iç içe `def` gibi ele alıp mevcut closure yakalama-analizini
+  aynen yeniden kullanır — yeni bir capture mekanizması yazılmadı.
+  `nox-teknik-spesifikasyon.md` §3.72.
+  **Yan-bulgu: bağımsız bir bellek-sızıntısı hatası bulundu ve
+  düzeltildi.** `defer`i doğrulayan ilk testler, `defer` içermeyen
+  (`input()`i iki kez çağıran) bir fonksiyonun bile tutarlı şekilde
+  sızdırdığını ortaya çıkardı — kök sebep, fonksiyon-inlining
+  optimizasyonunun (Faz GG.2), gövdesi hiç `return` içermeyen (örtük
+  `None` dönüşü) inline edilen bir callee'nin kendi heap-yönetimli
+  yerellerini hiç serbest bırakmamasıydı. `nox.os.current_dir()` gibi
+  mevcut bir zero-arg wrapper'ı iki kez çağırmak da aynı şekilde
+  sızıyordu — `defer`e özgü değil, ondan önce fark edilmemiş bir hataydı.
+  5 yeni uçtan-uca golden test (tek `defer`, LIFO sıra, bir döngü
+  içinde `defer`, `try`/`finally` etkileşimi, istisna yayılımı) +
+  1 tip-hatası testi (modül seviyesinde `defer` reddi).
 
 ## [1.0.0]
 

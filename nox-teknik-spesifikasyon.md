@@ -3,7 +3,7 @@
 **Versiyon:** 1.1.0-dev (bkz. `CHANGELOG.md` — `v1.0.0` yayımlandı VE
 etiketlendi; bu belge main dalındaki, HENÜZ yayımlanmamış devam eden
 geliştirmeyi de İÇEREN en güncel durumu yansıtır — bkz. `VERSIONING.md`)
-**Tarih:** 16 Temmuz 2026 (son önemli güncelleme)
+**Tarih:** 22 Temmuz 2026 (son önemli güncelleme)
 **Dosya Uzantısı:** `.nox`
 **Durum:** `v1.0.0` üretim sürümü YAYIMLANDI — aktif geliştirme devam
 ediyor (bkz. `CHANGELOG.md`nin `[Yayımlanmamış]` bölümü)
@@ -12872,7 +12872,147 @@ MEVCUT desteği (fiber/WSAPoll/Winsock/nox.http DAHİL TAMAMI çalışıyor)
 VE tek gerçek sınırlamayı (`nox.path.canonicalize`nin sembolik link
 ÇÖZMEMESİ) açıklayacak şekilde YENİDEN YAZILDI.
 
-## 4. Bellek Yönetimi — "Sahiplik Piramidi"
+## 3.72 Python builtin genişletmesi (`input`/`abs`/`min`/`max`/`sum`/`round`) + Go-tarzı `defer`
+
+Kullanıcı, HPy `ctx_*` kapsamı 180/180'e ulaştıktan SONRA dilin KENDİSİNDEKİ
+iki eksikliği sordu: (1) Python'ın builtin fonksiyonlarından ne kadarının
+Nox'ta olduğu (ve `input()` benzeri bir girdi alma özelliğinin YOKLUĞU),
+(2) Go'daki `defer` anahtar kelimesinin Nox'a eklenmesi. "İkisini de
+yapalım" denildi; AskUserQuestion İLE İKİ karar netleştirildi: `defer`
+TAM Go semantiğiyle (döngü İÇİNDE `defer` DAHİL) uygulanacak,
+`isinstance()`/`type()` ŞİMDİLİK kapsam DIŞI bırakılacak.
+
+### Bölüm 1 — Yeni builtin'ler
+
+- **`input()`** — YENİ `runtime/stdlib_shims/io.zig`: `nox_stdin_read_line_
+  raw(rt) -> str` stdin'den `\n`/EOF'a kadar okur (satır SONU `\n`/`\r`
+  KIRPILIR — Python'ın `input()`iyle AYNI). `nox.fs`in AKSİNE stdin
+  `fstat`lanamadığından (boyutu ÖNCEDEN bilinmez) `std.heap.page_
+  allocator` ÜZERİNDE 256 baytlık PARÇALAR halinde okuyan, `threadlocal`
+  bir "leftover" tamponuyla FAZLA okunan baytları BİR SONRAKİ `input()`
+  çağrısı İçin SAKLAYAN bir tasarım kullanır (birden fazla `input()`
+  çağrısının BAYT ÇALMADAN doğru çalışması İçin GEREKLİ). `stdlib/nox/
+  core.nox`e `extern def nox_stdin_read_line_raw() -> str ... with_rt` +
+  `def input() -> str: return nox_stdin_read_line_raw()`. v1 kapsamı:
+  argümansız (Python'ın `input(prompt)`i YOK — çağıran `print(prompt)`
+  yazabilir), gerçek EOF'ta `EOFError` FIRLATMAZ (boş `str` döner).
+- **`abs`/`min`/`max`/`round`/`sum`/`sum_float`** — `core.nox`e SAF Nox
+  generic fonksiyonları olarak (`type_params` monomorphization'ı
+  ÜZERİNDEN, HİÇBİR checker.zig/codegen.zig değişikliği GEREKMEDEN).
+  v1 kısıtları: `min`/`max` yalnızca 2 argüman (Nox'ta fonksiyon
+  overload'u YOK); `sum`/`sum_float` AYRI isimlerle (dönüş-tipine göre
+  overload YOK — `total = 0` İLE `total = 0.0` FARKLI somut başlangıç
+  qtype'ları gerektirir); `round` yalnızca `float -> int` (`ndigits`
+  YOK).
+- **Yan-keşif — `int()` builtin'i genişletildi:** `round()`nin `int(x +
+  0.5)` ihtiyacı ORTAYA ÇIKARDI ki `int()` ÖNCEDEN yalnızca `str`
+  argümanı KABUL EDİYORDU (`float` argümanı `'int' yalnızca str
+  üzerinde çalışır` HATASI veriyordu). `checker.zig`/`codegen_qbe/
+  codegen.zig`nin `int()` kolu `float`i de KABUL EDECEK şekilde
+  genişletildi — codegen tarafında QBE'nin `dtosi` (sıfıra-doğru kırpma)
+  komutuna, ZATEN var olan `convert()` yardımcısı ÜZERİNDEN delege
+  eder — Python'ın `int(3.9) == 3` davranışıyla AYNI.
+
+### Bölüm 2 — Go-tarzı `defer`
+
+`defer CALL` — `CALL`, fonksiyonun DÖNÜŞ ANINDA (normal düşme, `return`,
+YAKALANMAMIŞ bir istisna DAHİL, HANGİ yoldan çıkılırsa çıkılsın) çalışır;
+BİRDEN FAZLA `defer` LIFO SIRASIYLA (Go'nun AYNI semantiği) — BİR DÖNGÜ
+İÇİNDEKİ `defer` DAHİL (bekleyen çağrı SAYISI ÇALIŞMA ZAMANINDA değişir).
+
+**Lexer/Parser/AST:** YENİ `.kw_defer` token'ı; `ast.DeferStmt = struct {
+call: Call }` (`WithStmt`nin AYNI basitliği); `parseDefer` ayrıştırılan
+ifadenin bir `.call` OLDUĞUNU DOĞRULAR (Go'nun AYNI kısıtı — `defer x +
+1` ayrıştırma HATASIYLA reddedilir).
+
+**Checker:** `checkDeferStmt`, `ctx.expected_return == null` İSE (yalnızca
+fonksiyon/metod gövdesi İÇİNDE geçerli) reddeder; SONRA `CALL`i sıfır-
+parametreli/`None`-dönüşlü SENTETİK bir `ast.FuncDef`in (`__defer$N`,
+tek gövde deyimi `expr_stmt(CALL)`) TEK gövdesi yapıp `checkNestedFuncDef`e
+verir — GERÇEK bir iç içe `def` GİBİ ele alınır, bu yüzden `CALL`in
+yakaladığı SERBEST değişkenler (çağrılan değer VE argümanlar) MEVCUT
+yakalama-analizi (`Scope.captures`) TARAFINDAN OTOMATİK tespit edilip
+`self.closure_infos`e YAZILIR — YENİ bir capture-analizi YAZILMAZ.
+Üretilen sentetik ad, `d.call.callee`nin (parser TARAFINDAN BİR KEZ
+heap'e ayrılan, HİÇBİR KOPYADA DEĞİŞMEYEN) POINTER KİMLİĞİYLE bir yan-
+tabloya (`Checker.defer_synthetic_names`) KAYDEDİLİR — `ast.Stmt`
+checker'dan codegen'e HER YERDE DEĞER OLARAK (kopyalanarak) aktığından,
+`DeferStmt`in KENDİ İÇİNE bir alan EKLEYİP in-place güncellemek codegen'e
+GÖRÜNMEZ olurdu; bu POINTER-kimliği deseni `registerInlineSite`nin
+`@intFromPtr(c.callee)` deseniyle AYNIDIR (ZATEN kanıtlanmış teknik).
+
+**Runtime (`runtime/alloc/defer_stack.zig`, YENİ dosya):** `finally_
+stack`/`arena_stack` (derleyicinin KENDİ, TAMAMEN statik Zig `ArrayList`
+leri — bir DÖNGÜ İÇİNDEKİ `defer` İçin YETERSİZ, çünkü bekleyen çağrı
+SAYISI çalışma zamanında değişir) İLE AKSİNE, GERÇEKTEN çalışma
+zamanında (ARC-DIŞI, `asap.nox_alloc`/`nox_free` ÜZERİNDEN) BÜYÜYEN bir
+`DeferStack`: `nox_defer_stack_new`/`push`/`run_all`. `run_all` LIFO
+POP ederek HER closure İçin ÖNCE GERÇEK ertelenmiş çağrıyı (`fn_ptr`),
+SONRA closure'ı (VE yakaladığı ARC değerlerini) serbest bırakan
+`release_fn_ptr`i (`genClosureRelease`nin ürettiği `$<mangled>_release`)
+ÇAĞIRIR — QBE'nin ürettiği fonksiyonların standart C ABI'sine UYMASI
+SAYESİNDE bu İKİ alan doğrudan `fn(?*anyopaque, ?*anyopaque) callconv(.c)
+void` OLARAK cast edilip ÇAĞRILABİLİR; drenaj döngüsü TAMAMEN Zig
+runtime'da yazılabilir, YENİ bir QBE indirect-call codegen'i GEREKMEZ.
+
+**Codegen:** `genNestedFuncDef`nin closure-İNŞA çekirdeği ortak bir
+`buildClosureValue(fd) -> block_ptr` yardımcısına ÇIKARILDI (`genNested
+FuncDef` SONUCU KENDİ slotuna yazar, YENİ `genDeferStmt` AYNI yardımcıyı
+ÇAĞIRIP sonucu `nox_defer_stack_push`e GEÇİRİR). `genFunction`/
+`genMethod`/`genClosureFunc`nin ÜÇÜNÜN de girişinde (parametre
+store'larından SONRA) `fnBodyHasDefer` (bu fonksiyonun KENDİ düz-metin
+gövdesini tarar, `if`/`while`/`for`/`try`/`with`/`lowlevel` gövdelerine
+İNER ama İÇ İÇE `func_def`e İNMEZ) `true` DÖNERSE `nox_defer_stack_new`
+çağrılıp `self.current_defer_list`e atanır. TÜM 5 fonksiyon-çıkış
+noktasında (`return_stmt`in İKİ dalı, `emitExceptionCheck`in İKİ dalı,
+VE fonksiyonun ÖRTÜK düşme kuyruğu) MEVCUT `drainFinally`/`drainArenas`
+çağrılarından HEMEN SONRA `drainDeferIfSet` eklendi (İÇ İÇE `try`/`with`
+blokları KENDİ temizliklerini ÖNCE, fonksiyon-seviyesi `defer` SONRA
+çalışır).
+
+**Gerçek, bağımsız bir bellek-sızıntısı hatası bulundu VE düzeltildi
+(inlining mekanizmasında, Faz GG.2'nin ÖNCEKİ bir eksikliği — `defer`e
+ÖZGÜ DEĞİL):** `defer`i doğrulamak İçin yazılan İLK testler (`input()`i
+İKİ KEZ çağıran bir fonksiyon, HİÇBİR `defer` İÇERMEDEN BİLE) TUTARLI bir
+DebugAllocator sızıntısı gösterdi. Kök sebep izole edildi (izole bir QBE
+IR testiyle KANITLANDI — sorun QBE'de DEĞİL): `genInlinedCall` (Faz
+GG.2, trivial "tek `return CALL`" gövdeli fonksiyonları çağrı sitesine
+SPLICE eden inlining optimizasyonu), callee'nin gövdesi HİÇ `return`
+İÇERMİYORSA (örtük `None` dönüşü, ör. yalnızca `var_decl`lerden oluşan
+bir gövde) callee'nin KENDİ heap-yönetimli yerellerini HİÇ serbest
+BIRAKMADAN atlıyordu — `.return_stmt`in `inline_return_target` dalı BU
+durumda HİÇ TETİKLENMEDİĞİNDEN. `genFunction`in KENDİ örtük düşme
+kuyruğunun AKSİNE (`releaseAllLocals()`ı KOŞULSUZ çağırır), `genInlined
+Call`in `genStmts` SONRASI kuyruğu bu temizliği YAPMIYORDU. Düzeltme:
+`genStmts(site.callee.body, ...)` SONRASINA, `jmp done_label`den ÖNCE,
+`releaseNamedLocalsExcept(owned_names, null)` eklendi — `return_stmt`
+yolu ZATEN KENDİ serbest bırakmasını yapıp ORAYA HİÇ uğramadığından
+(Zig fonksiyonu ERKEN `return` eder) çift-serbest-bırakma RİSKİ YOKTUR.
+Bu, çoğu programın küçük yardımcı fonksiyonları TİPİK OLARAK `return`
+İÇERDİĞİNDEN daha ÖNCE FARK EDİLMEMİŞ, dar ama GERÇEK bir hataydı
+(`nox.os.current_dir()` gibi MEVCUT bir zero-arg wrapper'ı İKİ KEZ
+çağırmak da AYNI şekilde sızdırıyordu).
+
+**Bilinçli v1 sınırlamaları:** `defer EXPR`, `EXPR`in bir ÇAĞRI olmasını
+ZORUNLU kılar (parser SEVİYESİNDE); Go'nun isimli-dönüş-değeri mutasyonu
+YOK (Nox'ta ZATEN isimli dönüş değeri YOK — doğal, EK bir kısıt DEĞİL);
+`defer` yalnızca fonksiyon/metod gövdesinde geçerli. **Keşfedilen, ÖNCEDEN
+VAR OLAN bir sınırlama (bu fazın KAPSAMI DIŞINDA, `defer`e ÖZGÜ DEĞİL):**
+bir İÇ İÇE `def`e (closure) bağlı bir YEREL DEĞİŞKENİN doğrudan `inner()`
+biçiminde ÇAĞRILMASI, `defer` KULLANILMASA BİLE, ŞU AN codegen'de
+desteklenmiyor (`error.Unsupported`) — bu YÜZDEN `defer inner()` (bir
+closure-değişkeni HEDEFİYLE) da AYNI nedenle ÇALIŞMAZ; fonksiyon/metod
+hedefli `defer` TAM olarak çalışır.
+
+**Doğrulama:** `tests/golden/codegen_cases/`e 5 YENİ uçtan-uca test (tek
+`defer`; çoklu `defer` LIFO doğrulaması; bir DÖNGÜ İÇİNDE `defer` — asıl
+YENİ yeteneğin KANITI; `try`/`except`/`finally` etkileşimi; yakalanmamış
+bir istisna sızarken `defer`in YİNE DE çalıştığı) + `tests/golden/
+typecheck_cases/`e 1 hata-durumu testi (modül seviyesinde `defer`
+reddi) + `tests/golden/cases/`e 1 AST ayrıştırma testi. `expectGolden`in
+stderr-boş kontrolü (`nox_runtime_deinit`nin sızıntı-tespit çıktısı) HER
+`defer` testini örtülü bir bellek-güvenliği testi de yapar. Tam `zig
+build test` yeşil (609→619 test).
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.

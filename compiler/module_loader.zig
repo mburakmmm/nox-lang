@@ -462,6 +462,10 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
             .binding = w.binding,
             .body = try renameStmts(a, w.body, map),
         } },
+        .defer_stmt => |d| blk: {
+            const renamed = try renameExpr(a, .{ .call = d.call }, map);
+            break :blk .{ .defer_stmt = .{ .call = renamed.call } };
+        },
     };
     return .{ .kind = kind, .line = s.line };
 }

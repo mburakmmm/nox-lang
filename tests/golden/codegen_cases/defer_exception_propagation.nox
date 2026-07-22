@@ -1,0 +1,13 @@
+class MyError:
+    def __init__(self: MyError, message: str) -> None:
+        self.message = message
+
+def cleanup() -> None:
+    print("cleanup ran")
+
+def risky() -> None:
+    defer cleanup()
+    print("before raise")
+    raise MyError("boom")
+
+risky()

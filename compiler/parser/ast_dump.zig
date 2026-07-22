@@ -188,6 +188,11 @@ fn dumpStmt(writer: *std.Io.Writer, stmt: ast.Stmt, depth: usize) std.Io.Writer.
             try indent(writer, depth);
             try writer.writeAll(")\n");
         },
+        .defer_stmt => |d| {
+            try writer.writeAll("(defer ");
+            try dumpExpr(writer, .{ .call = d.call });
+            try writer.writeAll(")\n");
+        },
     }
 }
 

@@ -6,6 +6,7 @@ pub const asap = @import("alloc/asap.zig");
 pub const arc = @import("alloc/arc.zig");
 pub const lowlevel = @import("alloc/lowlevel.zig");
 pub const cycle_detector = @import("alloc/cycle_detector.zig");
+pub const defer_stack = @import("alloc/defer_stack.zig");
 pub const errors = @import("errors/handle.zig");
 pub const foreign_bridge = @import("foreign_bridge.zig");
 pub const async_bridge = @import("async_rt/bridge.zig");
@@ -25,6 +26,7 @@ pub const json_shim = @import("stdlib_shims/json.zig");
 pub const random_shim = @import("stdlib_shims/random.zig");
 pub const crypto_shim = @import("stdlib_shims/crypto.zig");
 pub const regex_shim = @import("stdlib_shims/regex.zig");
+pub const io_shim = @import("stdlib_shims/io.zig");
 
 // Bu modüllerin yalnızca isim üzerinden yeniden dışa aktarılması, Zig'in
 // tembel (lazy) analiz modelinde `export fn` bildirimlerinin nesne çıktısına
@@ -36,6 +38,7 @@ comptime {
     _ = arc;
     _ = lowlevel;
     _ = cycle_detector;
+    _ = defer_stack;
     _ = errors;
     _ = foreign_bridge;
     _ = async_bridge;
@@ -55,4 +58,5 @@ comptime {
     _ = random_shim;
     _ = crypto_shim;
     _ = regex_shim;
+    _ = io_shim;
 }

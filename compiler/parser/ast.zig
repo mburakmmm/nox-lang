@@ -251,6 +251,25 @@ pub const WithStmt = struct {
     body: []Stmt,
 };
 
+/// Go-tarzı `defer CALL` — CALL fonksiyonun DÖNÜŞ ANINDA (hangi yoldan
+/// çıkılırsa çıkılsın: normal düşme, `return`, yakalanmamış bir istisna)
+/// çalıştırılır, BİRDEN FAZLA `defer` LIFO SIRASIYLA (Go'nun AYNI
+/// semantiği). Yalnızca bir ÇAĞRI (fonksiyon/metod/closure-değişkeni)
+/// kabul eder — `parser.parseDefer` bunu ZORUNLU kılar.
+///
+/// Checker'ın `call`i (yakaladığı serbest değişkenleri — çağrılan değer VE
+/// argümanlar — `checkNestedFuncDef`nin AYNI mekanizmasıyla analiz ederek)
+/// ürettiği SENTETİK closure'ın adı BURADA SAKLANMAZ: `ast.Stmt` checker'dan
+/// codegen'e HER YERDE DEĞER OLARAK (kopyalanarak) aktığından, bu düğüm
+/// İÇİNDEKİ bir alanın in-place güncellenmesi codegen'e GÖRÜNMEZ olurdu.
+/// Bunun yerine `call.callee`nin (parser TARAFINDAN BİR KEZ heap'e ayrılan,
+/// HİÇBİR KOPYADA DEĞİŞMEYEN) POINTER KİMLİĞİ `Checker.defer_synthetic_names`/
+/// `Codegen.defer_synthetic_names`nin ORTAK anahtarıdır — `registerInlineSite`nin
+/// `@intFromPtr(c.callee)` deseniyle AYNI, ZATEN kanıtlanmış teknik.
+pub const DeferStmt = struct {
+    call: Call,
+};
+
 /// `import nox.http` — Python'un `import a.b` semantiğiyle BİREBİR aynı:
 /// yerel kapsama `segments[0]` (ör. `"nox"`) adı girer, çağrı sitelerinde
 /// TAM noktalı yol (`nox.http.get(...)`) kullanılır (bkz. nox-teknik-
@@ -309,6 +328,7 @@ pub const StmtKind = union(enum) {
     from_import_stmt: FromImportStmt,
     pass_stmt,
     with_stmt: WithStmt,
+    defer_stmt: DeferStmt,
 };
 
 /// `parser.zig`nin `parseStmt`i (TÜM deyim ayrıştırmasının TEK dağıtım

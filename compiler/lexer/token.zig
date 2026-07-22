@@ -39,6 +39,7 @@ pub const TokenKind = enum {
     kw_import,
     kw_with_rt,
     kw_with,
+    kw_defer,
 
     // punctuation
     colon,
@@ -142,6 +143,7 @@ const keyword_table = .{
     .{ "import", TokenKind.kw_import },
     .{ "with_rt", TokenKind.kw_with_rt },
     .{ "with", TokenKind.kw_with },
+    .{ "defer", TokenKind.kw_defer },
 };
 
 /// Bir tanımlayıcı sözcüğün anahtar kelime olup olmadığını denetler.

@@ -221,6 +221,14 @@ pub const Checker = struct {
     /// `registerSignatures`/`collectProtocols`) KENDİ döngülerinde de
     /// AYRICA güncellenir.
     current_line: u32 = 0,
+    /// `defer` deyimleri İçin BENZERSİZ sentetik closure adları üretmek
+    /// İçin bir sayaç (bkz. `checkDeferStmt`in belge notu).
+    defer_counter: usize = 0,
+    /// `checkDeferStmt`in ÜRETTİĞİ sentetik closure adı — anahtar
+    /// `@intFromPtr(d.call.callee)` (bkz. `ast.DeferStmt`nin belge notu,
+    /// `registerInlineSite`nin AYNI pointer-kimliği deseni). Codegen
+    /// (`genDeferStmt`) AYNI anahtarla BURAYA bakar.
+    defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8) = .{},
     /// Generic (`type_params.len > 0`) serbest fonksiyonlar — ham AST'leri,
     /// somut bir çağrı sitesiyle karşılaşılana kadar burada beklerler (bkz.
     /// Faz 10, `instantiateGeneric`). Gövdeleri normal geçişte DENETLENMEZ.
@@ -1387,6 +1395,7 @@ pub const Checker = struct {
             },
             .try_stmt => |t| try self.checkTry(ctx, t),
             .with_stmt => |w| try self.checkWith(ctx, w),
+            .defer_stmt => |d| try self.checkDeferStmt(ctx, d),
             .lowlevel_stmt => |ll| {
                 // İlke #2: `lowlevel` yalnızca tahsis STRATEJİSİNİ gevşetir;
                 // tip sistemi burada da tam olarak zorunludur — gövde normal
@@ -1464,6 +1473,36 @@ pub const Checker = struct {
             try ctx.scope.declare(self.allocator, bn, enter_sig.return_type);
         }
         for (w.body) |s| try self.checkStmt(ctx, s);
+    }
+
+    /// Go-tarzı `defer CALL` (bkz. `ast.DeferStmt`nin belge notu) — `CALL`i
+    /// SIFIR-parametreli/`None`-dönüşlü SENTETİK bir `ast.FuncDef`nin TEK
+    /// gövde deyimi (`expr_stmt`) yaparak `checkNestedFuncDef`e VERİR —
+    /// GERÇEK bir iç içe `def` GİBİ ele alınır, bu yüzden `call`in yakaladığı
+    /// SERBEST değişkenler (çağrılan değer VE argümanlar) MEVCUT yakalama-
+    /// analizi (`Scope.captures`) TARAFINDAN OTOMATİK tespit edilip
+    /// `self.closure_infos`e YAZILIR — YENİ bir capture-analizi YAZILMAZ.
+    /// Üretilen sentetik ad, `d.call.callee`nin POINTER kimliğiyle
+    /// `self.defer_synthetic_names`e KAYDEDİLİR (bkz. `ast.DeferStmt`nin
+    /// belge notu — codegen'in `genDeferStmt`i AYNI anahtarla okur).
+    fn checkDeferStmt(self: *Checker, ctx: *FnCtx, d: ast.DeferStmt) TypeError!void {
+        if (ctx.expected_return == null) {
+            return self.fail(error.TypeMismatch, "'defer' yalnızca fonksiyon/metod içinde kullanılabilir", .{});
+        }
+        self.defer_counter += 1;
+        const synthetic_name = try std.fmt.allocPrint(self.allocator, "__defer${d}", .{self.defer_counter});
+        const body = try self.allocator.alloc(ast.Stmt, 1);
+        body[0] = .{ .kind = .{ .expr_stmt = ast.Expr{ .call = d.call } }, .line = self.current_line };
+        const synthetic_fd: ast.FuncDef = .{
+            .name = synthetic_name,
+            .type_params = &.{},
+            .params = &.{},
+            .return_type = .{ .simple = "None" },
+            .body = body,
+            .is_async = false,
+        };
+        _ = try self.checkNestedFuncDef(ctx, synthetic_fd);
+        try self.defer_synthetic_names.put(self.allocator, @intFromPtr(d.call.callee), synthetic_name);
     }
 
     /// Faz U.4.2: bir İÇ İÇE `def`in gövdesini, `ctx.scope`u `parent` OLARAK
@@ -1964,8 +2003,13 @@ pub const Checker = struct {
                 }
                 if (std.mem.eql(u8, name, "int")) {
                     if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'int' tam olarak 1 argüman alır", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .str) {
-                        return self.fail(error.TypeMismatch, "'int' yalnızca str üzerinde çalışır", .{});
+                    // `round()` builtin'i (bkz. core.nox) `int(x + 0.5)`
+                    // İLE float->int TRUNCATE ETMEYE ihtiyaç duyar — Python'ın
+                    // `int(3.9) == 3` davranışıyla AYNI, `str` ayrıştırmasına
+                    // EK olarak (onun YERİNE değil).
+                    const t = try self.checkExpr(ctx, c.args[0]);
+                    if (t != .str and t != .float) {
+                        return self.fail(error.TypeMismatch, "'int' yalnızca str/float üzerinde çalışır", .{});
                     }
                     return .int;
                 }

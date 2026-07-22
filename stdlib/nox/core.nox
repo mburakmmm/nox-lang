@@ -53,3 +53,55 @@ class JsonValue:
 def nox_json_make_json_value(kind: int, b: bool, n: float, s: str,
                               arr: list[JsonValue], keys: list[str], vals: list[JsonValue]) -> JsonValue:
     return JsonValue(kind, b, n, s, arr, keys, vals)
+
+# Python builtin genişletmesi (bkz. nox-teknik-spesifikasyon.md yeni Faz
+# bölümü) — `input`/`abs`/`min`/`max`/`sum`/`round`. HİÇBİR checker.zig/
+# codegen.zig değişikliği GEREKTİRMEZ: `input` `runtime/stdlib_shims/
+# io.zig`ye `extern def ... with_rt` İLE sarılır (`nox.fs`in AYNI deseni),
+# geri kalanı `type_params` generic'leriyle SAF Nox kodudur.
+extern def nox_stdin_read_line_raw() -> str from "zig-out/lib/noxrt.o" with_rt
+
+# v1 kapsamı: Python'ın `input(prompt)`inin AKSİNE argümansızdır — bir
+# `prompt` isteyen çağıran taraf ÖNCE `print(prompt)` çağırabilir. Gerçek
+# EOF (stdin'de HİÇ satır kalmadığında) Python'daki gibi `EOFError`
+# FIRLATMAZ, boş bir `str` döner — bilinçli v1 basitleştirmesi.
+def input() -> str:
+    return nox_stdin_read_line_raw()
+
+def abs[T](x: T) -> T:
+    if x < 0:
+        return -x
+    return x
+
+# v1 kapsamı: yalnızca İKİ argüman (Nox'ta fonksiyon overload'u/değişken
+# sayıda argüman YOK, Python'ın iterable-alan `min(xs)` formu desteklenmez).
+def min[T](a: T, b: T) -> T:
+    if a < b:
+        return a
+    return b
+
+def max[T](a: T, b: T) -> T:
+    if a > b:
+        return a
+    return b
+
+# v1 kapsamı: yalnızca `float -> int` (Python'ın `ndigits` parametresi YOK).
+def round(x: float) -> int:
+    if x >= 0.0:
+        return int(x + 0.5)
+    return int(x - 0.5)
+
+# v1 kapsamı: `sum`/`sum_float` AYRI adlarla (Nox'ta dönüş-tipine göre
+# overload YOK — `total = 0` ile `total = 0.0` FARKLI somut başlangıç
+# qtype'ları gerektirdiğinden TEK bir generic `sum[T]` yazılamaz).
+def sum(xs: list[int]) -> int:
+    total: int = 0
+    for x in xs:
+        total = total + x
+    return total
+
+def sum_float(xs: list[float]) -> float:
+    total: float = 0.0
+    for x in xs:
+        total = total + x
+    return total

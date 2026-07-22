@@ -263,6 +263,11 @@ pub const Analyzer = struct {
                     self.scanExprEscapes(scope, index_of, w.ctx_expr);
                     try self.scanStmts(scope, index_of, w.body);
                 },
+                // `defer CALL` — çağrının kendisi (`.call` dalıyla AYNI kural,
+                // argümanlar bir sentetik closure TARAFINDAN YAKALANIP fonksiyon
+                // dönüşüne kadar SAKLANDIĞINDAN GERÇEK bir kaçıştır) normal bir
+                // çağrı GİBİ taranır.
+                .defer_stmt => |d| self.scanExprEscapes(scope, index_of, ast.Expr{ .call = d.call }),
                 .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .lowlevel_stmt, .import_stmt, .from_import_stmt => {},
             }
         }

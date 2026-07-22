@@ -792,6 +792,7 @@ fn stmtUsesAsync(stmt: ast.Stmt) bool {
             for (w.body) |s| if (stmtUsesAsync(s)) break :blk true;
             break :blk false;
         },
+        .defer_stmt => |d| exprUsesAsync(ast.Expr{ .call = d.call }),
     };
 }
 
@@ -1013,6 +1014,16 @@ const Codegen = struct {
     /// bkz. `genNestedFuncDef`in belge notu, checker<->codegen ARASINDA
     /// bir `Type`↔`TypeInfo` dönüştürücüsüne gerek KALMAZ).
     closure_infos: std.StringHashMapUnmanaged([]const []const u8) = .empty,
+    /// `defer CALL` — checker'ın (`checkDeferStmt`) ÜRETTİĞİ sentetik closure
+    /// adı, anahtar `@intFromPtr(d.call.callee)` (bkz. `ast.DeferStmt`nin
+    /// belge notu — `Checker.defer_synthetic_names` İLE AYNI TİP/anahtar,
+    /// DOĞRUDAN `main.zig` TARAFINDAN kopyalanmadan aktarılır).
+    defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8) = .{},
+    /// Şu an derlenen fonksiyonun `defer`-yığını POINTER'ını TUTAN QBE geçici
+    /// değişkenin adı (`fnBodyHasDefer` `true` DÖNDÜĞÜNDE ayarlanır, aksi
+    /// halde `null`) — `current_ret_qtype` İLE AYNI "fonksiyon-başına durum"
+    /// deseni (bkz. `genDeferStmt`/TÜM 5 çıkış noktası).
+    current_defer_list: ?[]const u8 = null,
     /// Şu an derlenen fonksiyonun/metodun/iç içe `def`in "yolu" — checker'ın
     /// `FnCtx.path`i İLE BİREBİR AYNI FORMÜLLE hesaplanır (üst-düzey: kendi
     /// adı; metod: `"Sınıf.metod"`; iç içe: `"<dış_yol>.<iç_isim>"`) —
@@ -1593,8 +1604,10 @@ const Codegen = struct {
             const info = self.vars.get(p.name).?;
             try self.out.writer.print("    store{s} %p_{s}, {s}\n", .{ qbeTypeName(info.qtype), p.name, info.slot });
         }
+        try self.setupDeferListIfNeeded(fd.body);
 
         try self.genStmts(fd.body, ret_info.qtype);
+        try self.drainDeferIfSet();
         try self.releaseAllLocals();
 
         const end_label = try self.newLabel("fn_end");
@@ -1651,8 +1664,10 @@ const Codegen = struct {
             const info = self.vars.get(p.name).?;
             try self.out.writer.print("    store{s} %p_{s}, {s}\n", .{ qbeTypeName(info.qtype), p.name, info.slot });
         }
+        try self.setupDeferListIfNeeded(m.body);
 
         try self.genStmts(m.body, ret_info.qtype);
+        try self.drainDeferIfSet();
         try self.releaseAllLocals();
 
         const end_label = try self.newLabel("fn_end");
@@ -1684,7 +1699,13 @@ const Codegen = struct {
     /// `.var_decl` dalı, AYNI "önce ESKİYİ serbest bırak, SONRA YENİYİ yaz"
     /// sırası — bir DÖNGÜ İÇİNDE tekrar tekrar TANIMLANAN bir iç içe `def`
     /// İÇİN GÜVENLİ olması İÇİN).
-    fn genNestedFuncDef(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
+    /// `genNestedFuncDef`/`genDeferStmt`nin PAYLAŞTIĞI closure-İNŞA çekirdeği
+    /// (bkz. `genNestedFuncDef`nin ÖNCEKİ belge notu, "İKİ İŞ" — BU yalnızca
+    /// 1. işi yapar): `fd`nin closure BLOĞUNU İNŞA edip pointer'ının TEMP
+    /// adını DÖNER (HİÇBİR yere STORE ETMEDEN — çağıran KENDİ hedefine
+    /// yazar/GEÇİRİR) VE `fd`nin gövdesini `self.closure_funcs`e TEMBEL
+    /// kaydeder (`genClosureFunc` bunu SONRADAN üretir).
+    fn buildClosureValue(self: *Codegen, fd: ast.FuncDef) CodegenError![]const u8 {
         const path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ self.current_path, fd.name });
         const mangled = try sanitizePathToSymbol(self.allocator, path);
         const capture_names = self.closure_infos.get(path) orelse &[_][]const u8{};
@@ -1723,11 +1744,97 @@ const Codegen = struct {
             try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(src_slot.qtype), v, addr });
         }
 
+        try self.closure_funcs.append(self.allocator, .{ .mangled_name = mangled, .path = path, .fd = fd, .captures = captures });
+        return block;
+    }
+
+    fn genNestedFuncDef(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
+        const block = try self.buildClosureValue(fd);
         const bound = self.vars.get(fd.name).?;
         try self.releaseSlotIfSet(bound);
         try self.out.writer.print("    storel {s}, {s}\n", .{ block, bound.slot });
+    }
 
-        try self.closure_funcs.append(self.allocator, .{ .mangled_name = mangled, .path = path, .fd = fd, .captures = captures });
+    /// Go-tarzı `defer CALL` (bkz. `ast.DeferStmt`nin belge notu) — checker'ın
+    /// `self.defer_synthetic_names`e (anahtar: `d.call.callee`nin pointer
+    /// kimliği) KAYDETTİĞİ sentetik adı okuyup, checker'IN KENDİSİNİN
+    /// `checkDeferStmt`de İNŞA ETTİĞİ AYNI (tek gövde deyimi `expr_stmt
+    /// (call d.call)` olan) sentetik `ast.FuncDef`i BURADA (codegen
+    /// tarafında) YENİDEN inşa eder — `buildClosureValue`yi (GERÇEK bir
+    /// iç içe `def` İLE AYNI mekanizma) ÇAĞIRIP SONUCU bir yerel değişkene
+    /// STORE ETMEK YERİNE çalışma zamanının `nox_defer_stack_push`ine
+    /// GEÇİRİR (bkz. `fnBodyHasDefer`/`current_defer_list`nin belge notu).
+    fn genDeferStmt(self: *Codegen, d: ast.DeferStmt, line: u32) CodegenError!void {
+        const synthetic_name = self.defer_synthetic_names.get(@intFromPtr(d.call.callee)) orelse return error.Unsupported;
+        const body = try self.allocator.alloc(ast.Stmt, 1);
+        body[0] = .{ .kind = .{ .expr_stmt = ast.Expr{ .call = d.call } }, .line = line };
+        const synthetic_fd: ast.FuncDef = .{
+            .name = synthetic_name,
+            .type_params = &.{},
+            .params = &.{},
+            .return_type = .{ .simple = "None" },
+            .body = body,
+            .is_async = false,
+        };
+        const closure_ptr = try self.buildClosureValue(synthetic_fd);
+        const defer_list = self.current_defer_list orelse return error.Unsupported;
+        try self.out.writer.print("    call $nox_defer_stack_push(l {s}, l {s}, l {s})\n", .{ RT_PARAM, defer_list, closure_ptr });
+    }
+
+    /// `genFunction`/`genMethod`/`genClosureFunc`nin ÜÇÜNÜN de girişinde
+    /// (parametre store'larından SONRA, `genStmts`den ÖNCE) ÇAĞRILAN TEK
+    /// nokta — `body` (bu fonksiyonun KENDİ düz-metin gövdesi, İÇ İÇE
+    /// `func_def` gövdelerine İNMEDEN — bkz. `fnBodyHasDefer`) bir `defer`
+    /// İÇERİYORSA çalışma-zamanı defer-yığınını OLUŞTURUP `self.current_
+    /// defer_list`e ATAR, AKSİ HALDE `null` yapar (bir SONRAKİ fonksiyonun
+    /// KENDİ derlemesine SIZMAMASI İçin HER ZAMAN AÇIKÇA ATANIR).
+    fn setupDeferListIfNeeded(self: *Codegen, body: []const ast.Stmt) CodegenError!void {
+        if (fnBodyHasDefer(body)) {
+            const dl = try self.newTemp();
+            try self.out.writer.print("    {s} =l call $nox_defer_stack_new(l {s})\n", .{ dl, RT_PARAM });
+            self.current_defer_list = dl;
+        } else {
+            self.current_defer_list = null;
+        }
+    }
+
+    /// TÜM 5 fonksiyon-çıkış noktasında (bkz. görev listesi #62'nin belge
+    /// notu) `drainFinally`/`drainArenas`den HEMEN SONRA ÇAĞRILIR — İÇ İÇE
+    /// `try`/`with` blokları KENDİ temizliklerini ÖNCE, fonksiyon-seviyesi
+    /// `defer` SONRA çalışır (doğal İÇTEN-DIŞA sıralama).
+    fn drainDeferIfSet(self: *Codegen) CodegenError!void {
+        if (self.current_defer_list) |dl| {
+            try self.out.writer.print("    call $nox_defer_stack_run_all(l {s}, l {s})\n", .{ RT_PARAM, dl });
+        }
+    }
+
+    /// `body`nin (bu fonksiyonun KENDİ düz-metin gövdesi) HERHANGİ bir
+    /// derinlikte bir `defer_stmt` İÇERİP İÇERMEDİĞİNİ döner — `bodyHasNested
+    /// FuncDef`in AYNI deseni (`if`/`while`/`for`/`try`/`with`/`lowlevel`
+    /// gövdelerine RECURSE eder, ama `func_def` İÇİNE İNMEZ — İÇ İÇE bir
+    /// tanımın KENDİ `defer`leri KENDİ activation'ına AİTTİR).
+    fn fnBodyHasDefer(body: []const ast.Stmt) bool {
+        for (body) |stmt| {
+            switch (stmt.kind) {
+                .defer_stmt => return true,
+                .if_stmt => |f| {
+                    if (fnBodyHasDefer(f.then_body)) return true;
+                    for (f.elif_clauses) |ec| if (fnBodyHasDefer(ec.body)) return true;
+                    if (f.else_body) |eb| if (fnBodyHasDefer(eb)) return true;
+                },
+                .while_stmt => |w| if (fnBodyHasDefer(w.body)) return true,
+                .for_stmt => |f| if (fnBodyHasDefer(f.body)) return true,
+                .try_stmt => |t| {
+                    if (fnBodyHasDefer(t.try_body)) return true;
+                    for (t.except_clauses) |ec| if (fnBodyHasDefer(ec.body)) return true;
+                    if (t.finally_body) |fb| if (fnBodyHasDefer(fb)) return true;
+                },
+                .with_stmt => |w| if (fnBodyHasDefer(w.body)) return true,
+                .lowlevel_stmt => |ll| if (fnBodyHasDefer(ll.body)) return true,
+                else => {},
+            }
+        }
+        return false;
     }
 
     /// Faz U.4.3: `self.closure_funcs`e TEMBEL kaydedilen bir iç içe `def`in
@@ -1791,8 +1898,10 @@ const Codegen = struct {
             const info = self.vars.get(p.name).?;
             try self.out.writer.print("    store{s} %p_{s}, {s}\n", .{ qbeTypeName(info.qtype), p.name, info.slot });
         }
+        try self.setupDeferListIfNeeded(spec.fd.body);
 
         try self.genStmts(spec.fd.body, ret_info.qtype);
+        try self.drainDeferIfSet();
         try self.releaseAllLocals();
 
         const end_label = try self.newLabel("fn_end");
@@ -2290,6 +2399,13 @@ const Codegen = struct {
         self.label_counter = 0;
         self.current_ret_qtype = .w;
         self.current_catch_label = null;
+        // `defer`, modül seviyesinde ASLA geçerli DEĞİLDİR (checker'ın
+        // `checkDeferStmt`i `ctx.expected_return == null`i REDDEDER) — ama
+        // BAŞKA bir fonksiyonun derlemesinden KALAN bayat bir değeri
+        // (`emitExceptionCheck`nin `in_main` dalı ONU KULLANIR) burada
+        // AÇIKÇA sıfırlamak, `current_catch_label` İLE AYNI savunmacı
+        // disiplindir.
+        self.current_defer_list = null;
         self.in_main = true;
 
         var locals: std.ArrayListUnmanaged(LocalDecl) = .empty;
@@ -2338,6 +2454,7 @@ const Codegen = struct {
         self.label_counter = 0;
         self.current_ret_qtype = .l;
         self.current_catch_label = null;
+        self.current_defer_list = null;
         self.in_main = true;
 
         var locals: std.ArrayListUnmanaged(LocalDecl) = .empty;
@@ -3059,12 +3176,14 @@ const Codegen = struct {
                         // serbest-bırakma (use-after-free) olurdu.
                         try self.drainFinally(ret_qtype);
                         try self.drainArenas();
+                        try self.drainDeferIfSet();
                         const except_name: ?[]const u8 = if (e == .identifier) e.identifier else null;
                         try self.releaseAllLocalsExcept(except_name);
                         try self.out.writer.print("    ret {s}\n", .{v.text});
                     } else {
                         try self.drainFinally(ret_qtype);
                         try self.drainArenas();
+                        try self.drainDeferIfSet();
                         try self.releaseAllLocalsExcept(null);
                         try self.out.writer.writeAll("    ret\n");
                     }
@@ -3103,6 +3222,7 @@ const Codegen = struct {
                 .pass_stmt => {},
                 .func_def => |fd| try self.genNestedFuncDef(fd),
                 .with_stmt => |w| try self.genWith(w, stmt.line, ret_qtype),
+                .defer_stmt => |d| try self.genDeferStmt(d, stmt.line),
                 .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => return error.Unsupported,
             }
         }
@@ -3732,6 +3852,7 @@ const Codegen = struct {
                     try self.collectIndexStrBasesExpr(s.ctx_expr, candidates);
                     try self.collectIndexStrBasesStmts(s.body, candidates);
                 },
+                .defer_stmt => |d| try self.collectIndexStrBasesExpr(.{ .call = d.call }, candidates),
                 .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt => {},
             }
         }
@@ -3775,7 +3896,7 @@ const Codegen = struct {
                     if (s.binding) |b| try reassigned.put(allocator, b, {});
                     try collectReassignedNames(s.body, reassigned, allocator);
                 },
-                .expr_stmt, .return_stmt, .raise_stmt, .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt => {},
+                .expr_stmt, .return_stmt, .raise_stmt, .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt, .defer_stmt => {},
             }
         }
     }
@@ -3913,6 +4034,7 @@ const Codegen = struct {
                     visitExprForReqUsage(s.ctx_expr, param_name, used);
                     visitStmtsForReqUsage(s.body, param_name, used);
                 },
+                .defer_stmt => |d| visitExprForReqUsage(.{ .call = d.call }, param_name, used),
                 .func_def => used.* = UsedRequestFields.allUsed(),
                 .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt => {},
             }
@@ -5219,6 +5341,16 @@ const Codegen = struct {
                 try self.collectRaiseInfoExpr(w.ctx_expr, info, class_ctx, var_types, poisoned);
                 try self.collectRaiseInfoStmts(w.body, info, class_ctx, var_types, poisoned, list_elem_types);
             },
+            // `defer` HENÜZ (görev #62'ye kadar) inline-edilebilir fonksiyon
+            // gövdelerinde desteklenmiyor — `with_stmt` İLE AYNI gerekçeyle
+            // `direct_unsafe = true` işaretlenip `isFuncInlineEligible`in
+            // BU fonksiyonu ASLA inline ADAYI SAYMAMASI sağlanır (`defer`in
+            // KENDİ çalışma-zamanı yığını, inlining'in "İÇ İÇE inlining YOK"
+            // kısıtıyla HENÜZ doğrulanmadı).
+            .defer_stmt => |d| {
+                info.direct_unsafe = true;
+                try self.collectRaiseInfoExpr(ast.Expr{ .call = d.call }, info, class_ctx, var_types, poisoned);
+            },
         }
     }
 
@@ -5716,7 +5848,9 @@ const Codegen = struct {
                 try self.collectInlineSitesExpr(w.ctx_expr);
                 try self.collectInlineSitesStmts(w.body);
             },
-            .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt => {},
+            // `defer` codegen'i HENÜZ YOK (görev #62) — İÇİNDEKİ çağrı
+            // inline-site TARAMASINA KASITLI olarak DAHİL EDİLMEZ.
+            .defer_stmt, .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt => {},
         }
     }
 
@@ -5877,8 +6011,24 @@ const Codegen = struct {
         };
 
         // 4) Gövdeyi DEĞİŞTİRİLMEDEN üret — `.return_stmt` dalı `inline_
-        // return_target`i GÖRÜP gerçek `ret` YERİNE `jmp done_label` üretir.
+        // return_target`i GÖRÜP gerçek `ret` YERİNE `jmp done_label` üretir
+        // (VE `owned_names`i KENDİSİ serbest bırakıp BURAYA HİÇ dönmez).
+        //
+        // **Düzeltme (gerçek bir sızıntıyla KANITLANMIŞ — bkz. break→red→fix
+        // ritüeli):** callee'nin gövdesi hiç `return` İÇERMİYORSA (örtük
+        // `None` dönüşü, ör. yalnızca `var_decl`lerden oluşan bir gövde),
+        // `.return_stmt` dalı HİÇ TETİKLENMEZ — bu durumda `genStmts`
+        // BURAYA DÜZ DÜŞEREK döner, callee'nin KENDİ `owned_names`i (ör.
+        // heap-yönetimli yerel değişkenleri) HİÇ serbest BIRAKILMADAN
+        // atlanırdı (`genFunction`in KENDİ örtük düşme kuyruğunun AKSİNE —
+        // o `releaseAllLocals()`ı KOŞULSUZ çağırır). Bu satır AYNI
+        // KOŞULSUZ deseni BURAYA da uygular: `return_stmt` YOLU zaten
+        // KENDİ serbest bırakmasını yapıp `jmp done_label` İLE BURAYA
+        // HİÇ uğramadığından (Zig fonksiyonu erken `return` eder), bu kod
+        // YALNIZCA gerçek bir düz-düşme SIRASINDA çalışır — çift serbest
+        // bırakma RİSKİ YOKTUR.
         try self.genStmts(site.callee.body, callee_ret_info.qtype);
+        try self.releaseNamedLocalsExcept(owned_names, null);
         try self.out.writer.print("    jmp {s}\n", .{done_label});
         try self.out.writer.print("{s}\n", .{done_label});
 
@@ -5977,6 +6127,14 @@ const Codegen = struct {
                 if (std.mem.eql(u8, name, "int")) {
                     if (c.args.len != 1) return error.Unsupported;
                     const v = try self.genExpr(c.args[0]);
+                    // `float` argümanı: `dtosi` İLE sıfıra-doğru KIRP (checker
+                    // ARTIK `str`e EK olarak `float`e de İZİN VERİYOR — bkz.
+                    // `round()` builtin'inin `int(x + 0.5)` ihtiyacı).
+                    if (v.qtype == .d) {
+                        const result = try self.convert(v, .l);
+                        try self.releaseIfTemporary(c.args[0], v);
+                        return result;
+                    }
                     const result = try self.genParseOrRaise(v, "nox_str_is_valid_int", "nox_str_to_int", .l, "int(): gecersiz sayi bicimi");
                     try self.releaseIfTemporary(c.args[0], v);
                     return result;
@@ -7401,6 +7559,7 @@ const Codegen = struct {
             // sonlanmadan ÖNCE çalışmalıdır/yıkılmalıdır.
             try self.drainFinally(self.current_ret_qtype);
             try self.drainArenas();
+            try self.drainDeferIfSet();
             // `nox_unhandled_exception` `noreturn`dur (process.exit çağırır),
             // ama QBE bunu bilmez — bloğun bir sonlandırıcıyla bitmesi için
             // savunmacı (asla çalışmayacak) bir `ret` gerekir.
@@ -7409,6 +7568,7 @@ const Codegen = struct {
         } else {
             try self.drainFinally(self.current_ret_qtype);
             try self.drainArenas();
+            try self.drainDeferIfSet();
             try self.releaseAllLocals();
             try self.emitDefaultReturn(self.current_ret_qtype);
         }
@@ -7433,8 +7593,8 @@ const Codegen = struct {
 /// `debug_source_path`: Faz T.3, `null` DIŞINDA VERİLİRSE (bkz. modül üstü
 /// not) `dbgfile`/`dbgloc` yönergeleri yayınlanır — `null` İKEN çıktı
 /// ÖNCEKİYLE BİREBİR AYNI kalır (opt-in, sıfır davranış değişikliği).
-pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8)) CodegenError![]u8 {
-    var gen: Codegen = .{ .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos };
+pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8)) CodegenError![]u8 {
+    var gen: Codegen = .{ .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos, .defer_synthetic_names = defer_synthetic_names };
 
     if (debug_source_path) |path| {
         gen.debug_info = true;

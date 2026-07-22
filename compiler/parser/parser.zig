@@ -143,6 +143,7 @@ pub const Parser = struct {
             .kw_raise => try self.parseRaise(),
             .kw_try => try self.parseTry(),
             .kw_with => try self.parseWith(),
+            .kw_defer => try self.parseDefer(),
             .kw_lowlevel => try self.parseLowLevel(),
             .kw_import => try self.parseImport(),
             .kw_from => try self.parseFromImport(),
@@ -503,6 +504,18 @@ pub const Parser = struct {
         _ = try self.expect(.colon);
         const body = try self.parseBlock();
         return .{ .with_stmt = .{ .ctx_expr = ctx_expr, .binding = binding, .body = body } };
+    }
+
+    /// `defer CALL` — Go'nun AYNI sözdizimsel KISITI: `CALL` bir fonksiyon/
+    /// metod/closure-değişkeni ÇAĞRISI OLMAK ZORUNDADIR (rastgele bir ifade
+    /// DEĞİL — ör. `defer x + 1` GRAMER SEVİYESİNDE reddedilir). Bkz.
+    /// `ast.DeferStmt`in belge notu.
+    fn parseDefer(self: *Parser) ParseError!ast.StmtKind {
+        _ = try self.expect(.kw_defer);
+        const expr = try self.parseExpr();
+        if (expr != .call) return error.UnexpectedToken;
+        _ = try self.expect(.newline);
+        return .{ .defer_stmt = .{ .call = expr.call } };
     }
 
     fn parseLowLevel(self: *Parser) ParseError!ast.StmtKind {

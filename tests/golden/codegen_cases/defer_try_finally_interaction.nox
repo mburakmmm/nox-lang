@@ -1,0 +1,19 @@
+class MyError:
+    def __init__(self: MyError, message: str) -> None:
+        self.message = message
+
+def cleanup() -> None:
+    print("defer cleanup")
+
+def run_test() -> None:
+    defer cleanup()
+    try:
+        print("try body")
+        raise MyError("caught")
+    except MyError as e:
+        print("except: " + e.message)
+    finally:
+        print("finally")
+    print("after try")
+
+run_test()
