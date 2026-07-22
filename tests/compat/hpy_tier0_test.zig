@@ -1512,3 +1512,102 @@ test "gerçek HPy eklentisi: list_builder_cancel_via_c/tuple_builder_cancel_via_
     // TAMAMLANDIKTAN sonra) doğrular — bkz. `destroyContext`in üstündeki
     // `defer`.
 }
+
+test "gerçek HPy eklentisi: tracker_close_via_c/tracker_forget_via_c — sızıntısız izleme (Faz WW)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const tracker_close = mod.findMethodO("tracker_close_via_c") orelse return error.MethodNotFound;
+    const tracker_forget = mod.findMethodO("tracker_forget_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+
+    const r1 = tracker_close(ctx, hpy.context.HPy_NULL, dummy);
+    defer ctx.ctx_Close.?(ctx, r1);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_IsTrue.?(ctx, r1));
+
+    // ForgetAll SONRASI değerin HÂLÂ geçerli (kapatılmamış) olduğunu kanıtlar.
+    const r2 = tracker_forget(ctx, hpy.context.HPy_NULL, dummy);
+    defer ctx.ctx_Close.?(ctx, r2);
+    try std.testing.expectEqual(@as(i64, 111), ctx.ctx_Long_AsInt64_t.?(ctx, r2));
+}
+
+test "gerçek HPy eklentisi: field_store_via_c/field_load_via_c — HPyField round-trip (Faz WW)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const field_store = mod.findMethodO("field_store_via_c") orelse return error.MethodNotFound;
+    const field_load = mod.findMethodO("field_load_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+
+    const forty_two = ctx.ctx_Long_FromInt64_t.?(ctx, 42);
+    defer ctx.ctx_Close.?(ctx, forty_two);
+    const stored = field_store(ctx, hpy.context.HPy_NULL, forty_two);
+    defer ctx.ctx_Close.?(ctx, stored);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_IsTrue.?(ctx, stored));
+
+    const loaded = field_load(ctx, hpy.context.HPy_NULL, dummy);
+    defer ctx.ctx_Close.?(ctx, loaded);
+    try std.testing.expectEqual(@as(i64, 42), ctx.ctx_Long_AsInt64_t.?(ctx, loaded));
+
+    // Üzerine yazma — eski değer serbest bırakılır, yeni değer yüklenir.
+    const ninety_nine = ctx.ctx_Long_FromInt64_t.?(ctx, 99);
+    defer ctx.ctx_Close.?(ctx, ninety_nine);
+    const stored2 = field_store(ctx, hpy.context.HPy_NULL, ninety_nine);
+    defer ctx.ctx_Close.?(ctx, stored2);
+    const loaded2 = field_load(ctx, hpy.context.HPy_NULL, dummy);
+    defer ctx.ctx_Close.?(ctx, loaded2);
+    try std.testing.expectEqual(@as(i64, 99), ctx.ctx_Long_AsInt64_t.?(ctx, loaded2));
+
+    // Temizlik: `g_test_field`in KENDİSİ eklentinin statik belleğinde
+    // KALICI olduğundan (bu test fonksiyonunun ÖTESİNDE yaşar), `NULL`
+    // SAKLAYARAK son değeri (99) serbest bırakırız — AKSİ HALDE
+    // `std.testing.allocator`in sızıntı denetimi bunu (test SÜİTİNİN
+    // sonuna kadar KAPATILMAMIŞ bir tahsis olarak) YAKALARDI.
+    const cleared = field_store(ctx, hpy.context.HPy_NULL, hpy.context.HPy_NULL);
+    defer ctx.ctx_Close.?(ctx, cleared);
+}
+
+test "gerçek HPy eklentisi: global_store_via_c/global_load_via_c — HPyGlobal round-trip (Faz WW)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const global_store = mod.findMethodO("global_store_via_c") orelse return error.MethodNotFound;
+    const global_load = mod.findMethodO("global_load_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+
+    const seven = ctx.ctx_Long_FromInt64_t.?(ctx, 7);
+    defer ctx.ctx_Close.?(ctx, seven);
+    const stored = global_store(ctx, hpy.context.HPy_NULL, seven);
+    defer ctx.ctx_Close.?(ctx, stored);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_IsTrue.?(ctx, stored));
+
+    const loaded = global_load(ctx, hpy.context.HPy_NULL, dummy);
+    defer ctx.ctx_Close.?(ctx, loaded);
+    try std.testing.expectEqual(@as(i64, 7), ctx.ctx_Long_AsInt64_t.?(ctx, loaded));
+
+    // Temizlik — `field_store_via_c` testindeki AYNI gerekçe (bkz. o
+    // testin belge notu): `g_test_global`i `NULL` İLE TEMİZLE.
+    const cleared = global_store(ctx, hpy.context.HPy_NULL, hpy.context.HPy_NULL);
+    defer ctx.ctx_Close.?(ctx, cleared);
+}

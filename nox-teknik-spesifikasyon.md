@@ -1791,6 +1791,45 @@ dosyada). Kapsam: 180 `ctx_*` fonksiyonundan 136→**144**'ü implemente.
 
 ---
 
+### Faz WW — HPy: Tracker + Field/Global saklama-yükleme
+
+`ctx_Tracker_New`/`Add`/`ForgetAll`/`Close` + `ctx_Field_Store`/`Load` +
+`ctx_Global_Store`/`Load` (8 fonksiyon). `HPyTracker`/`HPyField`/
+`HPyGlobal` (`hpy.h`ye karşı doğrulandı: ÜÇÜ DE `{ intptr_t _i; }` —
+`HPy`nin KENDİSİYLE AYNI biçimde tek bir `isize` taşıyan opak
+tutamaçlar).
+
+**`Tracker`:** bir HPy tutamaç KÜMESİNİ izler — gerçek sözleşme: `Add`
+YENİ bir referans OLUŞTURMAZ (yalnızca HATIRLAR), `Close` TÜM
+izlenenleri `ctx_Close` İLE kapatır ("bir şeyi inşa ederken YARI YOLDA
+başarısız olursam TÜMÜNÜ TOPLU kapatabileyim" deseni), `ForgetAll`
+İSE yalnızca İZLEMEYİ bırakır (KAPATMADAN). Nox `.list_`in KENDİ
+deposunu (`list_data`) YENİDEN kullanır ama `ctxListAppend`in AKSİNE
+`ctxDup` ÇAĞIRMADAN (gerçek "yeni referans oluşturmaz" sözleşmesini
+KORUMAK İçin) — `Close`, ÖNCE izlenenleri kapatıp SONRA listeyi
+BOŞALTARAK (kendi `ctxClose`inin `.list_` dalının AYNI şeyi TEKRAR
+yapıp ÇİFT-KAPATMASINI ÖNLEYEREK) konteynerin KENDİSİNİ serbest bırakır.
+
+**`Field`/`Global`:** gerçek CPython'da GC-farkında (write-barrier'lı,
+TAŞIYAN/nesil-tabanlı bir çöp toplayıcı İçin) yuvalardır; Nox'un BASİT
+refcounting'inde (taşıma/nesil YOK) bu yalnızca "eski değeri kapat,
+yeniyi dup'la, sakla" desenine İNDİRGENİR — `target_object`/`source_
+object` (Field) KULLANILMAZ. `HPyGlobal`in gerçek CPython'daki "her ALT-
+YORUMLAYICININ KENDİ kopyası" amacı Nox'un TEK yorumlayıcı durumu
+OLDUĞUNDAN geçerli DEĞİLDİR — DOĞRUDAN bir değer saklar.
+
+**Doğrulama:** `noxtest.c`ye 6 yeni modül metodu (`tracker_close_via_c`/
+`tracker_forget_via_c`, statik bir `HPyField`/`HPyGlobal` ÜZERİNDEN
+`field_store_via_c`/`field_load_via_c`/`global_store_via_c`/`global_
+load_via_c`). `hpy_tier0_test.zig`ye 3 yeni test — Field/Global testleri
+KENDİ sonunda `HPy_NULL` SAKLAYARAK eklentinin statik alanını TEMİZLER
+(AKSİ HALDE `std.testing.allocator`in sızıntı denetimi bunu yakalardı —
+statik alan test fonksiyonunun ÖTESİNDE yaşadığından). Toplam: 53/53
+(bu dosyada). Kapsam: 180 `ctx_*` fonksiyonundan 144→**152**'si
+implemente.
+
+---
+
 ### 3.20 Faz 20 Uygulama Kapsamı — Zig/C ABI FFI (`extern def`)
 
 **Durum: UYGULANDI.** Kullanıcının isteği: Nox'un HPy/WASM

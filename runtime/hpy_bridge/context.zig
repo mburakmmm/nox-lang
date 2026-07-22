@@ -11,12 +11,12 @@
 //! `scripts/gen_hpy_ctx.py`) üretilmiş, bayt-uyumlu bir transkripsiyonunu
 //! GEREKTİRİR — bir eklenti bu struct'a doğrudan (sabit ofsetlerle) erişir,
 //! bu yüzden alan SIRASI ve BOYUTU tam olarak eşleşmelidir. Şu an 180
-//! `ctx_*` alanından **144'ü** GERÇEKTEN implemente (aşağıda özel fonksiyon
+//! `ctx_*` alanından **152'si** GERÇEKTEN implemente (aşağıda özel fonksiyon
 //! işaretçisi tipleriyle işaretli — TAM/DOĞRU sayı HER ZAMAN şu komutla
 //! doğrulanabilir: `awk '/pub const HPyContext = extern struct \{/,/^\};/'
 //! runtime/hpy_bridge/context.zig | grep "ctx_" | grep -c "anyopaque = null,"`
 //! — SONUCU 180'den ÇIKARIN; tam liste/tier dökümü İçin bkz. nox-teknik-
-//! spesifikasyon.md §3.12 VE DEVAMI, en son Faz VV) — geri
+//! spesifikasyon.md §3.12 VE DEVAMI, en son Faz WW) — geri
 //! kalanı `null` (kullanılmazlarsa zararsız; bir eklenti bunlardan birini
 //! çağırırsa çökme/segfault olur, bkz. spesifikasyondaki bilinçli
 //! sınırlamalar).
@@ -46,6 +46,13 @@ pub const HPy_NULL: HPy = .{ ._i = 0 };
 /// DÖNÜŞTÜRÜR (bkz. `ctxTupleBuilderBuild`).
 pub const HPyListBuilder = extern struct { _lst: isize = 0 };
 pub const HPyTupleBuilder = extern struct { _tup: isize = 0 };
+
+/// Gerçek HPy'nin `HPyTracker`/`HPyField`/`HPyGlobal`i (Faz WW) — ÜÇÜ DE
+/// (`hpy.h`ye karşı doğrulandı) `HPy`nin KENDİSİYLE AYNI biçimde TEK bir
+/// `intptr_t` taşıyan opak tutamaçlardır.
+pub const HPyTracker = extern struct { _i: isize = 0 };
+pub const HPyField = extern struct { _i: isize = 0 };
+pub const HPyGlobal = extern struct { _i: isize = 0 };
 
 /// Nox'un HPy nesnelerini temsil ettiği en küçük ortak biçim. Yalnızca
 /// Tier 0'ın gerektirdiği dört tip: `None` (tekil), `Bool` (iki tekil,
@@ -1353,6 +1360,81 @@ fn ctxTupleBuilderBuild(ctx: *HPyContext, builder: HPyTupleBuilder) callconv(.c)
 
 fn ctxTupleBuilderCancel(ctx: *HPyContext, builder: HPyTupleBuilder) callconv(.c) void {
     ctxClose(ctx, .{ ._i = builder._tup });
+}
+
+// ---- Tracker + Field/Global (Faz WW) ----
+//
+// `ctx_Tracker_*`: bir HPy tutamaç KÜMESİNİ izler (gerçek sözleşme:
+// `Add`, YENİ bir referans OLUŞTURMAZ — yalnızca tutamacı HATIRLAR;
+// `Close`, TÜM izlenenleri `ctx_Close` İLE kapatır — "bir şeyi inşa
+// ederken YARI YOLDA başarısız olursam TÜMÜNÜ TOPLU kapatabileyim"
+// deseni). Nox BUNU `.list_`in KENDİ deposunu (`list_data`) YENİDEN
+// KULLANARAK, ama `ctxListAppend`in AKSİNE `ctxDup` ÇAĞIRMADAN
+// (gerçek "yeni referans OLUŞTURMAZ" sözleşmesini KORUMAK İçin)
+// implemente eder.
+//
+// `ctx_Field_*`/`ctx_Global_*`: gerçek CPython'da GC-farkında (write-
+// barrier'lı, TAŞIYAN/nesil-tabanlı bir çöp toplayıcı İçin) yuvalardır;
+// Nox'un BASİT refcounting'inde (taşıma/nesil YOK) bu yalnızca "eski
+// değeri kapat, yeniyi dup'la, sakla" desenine İNDİRGENİR —
+// `target_object`/`source_object` (Field) bu YÜZDEN KULLANILMAZ.
+// `HPyGlobal`in gerçek CPython'daki "her ALT-YORUMLAYICININ KENDİ
+// kopyası" amacı, Nox'un TEK bir yorumlayıcı durumu OLDUĞUNDAN
+// geçerli değildir — DOĞRUDAN bir değer saklar.
+
+fn ctxTrackerNew(ctx: *HPyContext, size: isize) callconv(.c) HPyTracker {
+    _ = size; // yalnızca bir İPUCU (capacity hint)
+    const h = ctxListNew(ctx, 0);
+    return .{ ._i = h._i };
+}
+
+fn ctxTrackerAdd(ctx: *HPyContext, ht: HPyTracker, h: HPy) callconv(.c) c_int {
+    const obj = objOf(.{ ._i = ht._i }) orelse return -1;
+    if (obj.tag != .list_) return -1;
+    obj.list_data.append(contextAllocator(ctx), h) catch {
+        ctxErrNoMemory(ctx);
+        return -1;
+    };
+    return 0;
+}
+
+fn ctxTrackerForgetAll(ctx: *HPyContext, ht: HPyTracker) callconv(.c) void {
+    _ = ctx;
+    const obj = objOf(.{ ._i = ht._i }) orelse return;
+    if (obj.tag != .list_) return;
+    obj.list_data.clearRetainingCapacity();
+}
+
+fn ctxTrackerClose(ctx: *HPyContext, ht: HPyTracker) callconv(.c) void {
+    const obj = objOf(.{ ._i = ht._i }) orelse return;
+    if (obj.tag != .list_) return;
+    for (obj.list_data.items) |item| ctxClose(ctx, item);
+    obj.list_data.clearRetainingCapacity();
+    ctxClose(ctx, .{ ._i = ht._i });
+}
+
+fn ctxFieldStore(ctx: *HPyContext, target_object: HPy, target_field: ?*HPyField, h: HPy) callconv(.c) void {
+    _ = target_object;
+    const field = target_field orelse return;
+    const old: HPy = .{ ._i = field._i };
+    if (old._i != 0) ctxClose(ctx, old);
+    field.* = .{ ._i = ctxDup(ctx, h)._i };
+}
+
+fn ctxFieldLoad(ctx: *HPyContext, source_object: HPy, source_field: HPyField) callconv(.c) HPy {
+    _ = source_object;
+    return ctxDup(ctx, .{ ._i = source_field._i });
+}
+
+fn ctxGlobalStore(ctx: *HPyContext, global: ?*HPyGlobal, h: HPy) callconv(.c) void {
+    const g = global orelse return;
+    const old: HPy = .{ ._i = g._i };
+    if (old._i != 0) ctxClose(ctx, old);
+    g.* = .{ ._i = ctxDup(ctx, h)._i };
+}
+
+fn ctxGlobalLoad(ctx: *HPyContext, global: HPyGlobal) callconv(.c) HPy {
+    return ctxDup(ctx, .{ ._i = global._i });
 }
 
 fn ctxTupleCheck(ctx: *HPyContext, h: HPy) callconv(.c) c_int {
@@ -2955,16 +3037,16 @@ pub const HPyContext = extern struct {
     ctx_TupleBuilder_Set: ?*const fn (ctx: *HPyContext, builder: HPyTupleBuilder, index: isize, h_item: HPy) callconv(.c) void = null,
     ctx_TupleBuilder_Build: ?*const fn (ctx: *HPyContext, builder: HPyTupleBuilder) callconv(.c) HPy = null,
     ctx_TupleBuilder_Cancel: ?*const fn (ctx: *HPyContext, builder: HPyTupleBuilder) callconv(.c) void = null,
-    ctx_Tracker_New: ?*const anyopaque = null,
-    ctx_Tracker_Add: ?*const anyopaque = null,
-    ctx_Tracker_ForgetAll: ?*const anyopaque = null,
-    ctx_Tracker_Close: ?*const anyopaque = null,
-    ctx_Field_Store: ?*const anyopaque = null,
-    ctx_Field_Load: ?*const anyopaque = null,
+    ctx_Tracker_New: ?*const fn (ctx: *HPyContext, size: isize) callconv(.c) HPyTracker = null,
+    ctx_Tracker_Add: ?*const fn (ctx: *HPyContext, ht: HPyTracker, h: HPy) callconv(.c) c_int = null,
+    ctx_Tracker_ForgetAll: ?*const fn (ctx: *HPyContext, ht: HPyTracker) callconv(.c) void = null,
+    ctx_Tracker_Close: ?*const fn (ctx: *HPyContext, ht: HPyTracker) callconv(.c) void = null,
+    ctx_Field_Store: ?*const fn (ctx: *HPyContext, target_object: HPy, target_field: ?*HPyField, h: HPy) callconv(.c) void = null,
+    ctx_Field_Load: ?*const fn (ctx: *HPyContext, source_object: HPy, source_field: HPyField) callconv(.c) HPy = null,
     ctx_ReenterPythonExecution: ?*const anyopaque = null,
     ctx_LeavePythonExecution: ?*const anyopaque = null,
-    ctx_Global_Store: ?*const anyopaque = null,
-    ctx_Global_Load: ?*const anyopaque = null,
+    ctx_Global_Store: ?*const fn (ctx: *HPyContext, global: ?*HPyGlobal, h: HPy) callconv(.c) void = null,
+    ctx_Global_Load: ?*const fn (ctx: *HPyContext, global: HPyGlobal) callconv(.c) HPy = null,
     ctx_Dump: ?*const anyopaque = null,
     ctx_AsStruct_Type: ?*const anyopaque = null,
     ctx_AsStruct_Long: ?*const anyopaque = null,
@@ -3177,6 +3259,14 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
         .ctx_TupleBuilder_Set = ctxTupleBuilderSet,
         .ctx_TupleBuilder_Build = ctxTupleBuilderBuild,
         .ctx_TupleBuilder_Cancel = ctxTupleBuilderCancel,
+        .ctx_Tracker_New = ctxTrackerNew,
+        .ctx_Tracker_Add = ctxTrackerAdd,
+        .ctx_Tracker_ForgetAll = ctxTrackerForgetAll,
+        .ctx_Tracker_Close = ctxTrackerClose,
+        .ctx_Field_Store = ctxFieldStore,
+        .ctx_Field_Load = ctxFieldLoad,
+        .ctx_Global_Store = ctxGlobalStore,
+        .ctx_Global_Load = ctxGlobalLoad,
         .ctx_Tuple_Check = ctxTupleCheck,
         .ctx_Tuple_FromArray = ctxTupleFromArray,
         .ctx_Dict_Check = ctxDictCheck,

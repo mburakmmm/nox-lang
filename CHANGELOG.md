@@ -1379,6 +1379,17 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   gerçek (değişmez) bir `.tuple_`ye dönüştürür. `noxtest.c`ye 4 yeni
   modül metodu, `hpy_tier0_test.zig`ye 2 yeni test — 50/50 yeşil.
   Kapsam: 180 `ctx_*` fonksiyonundan 136→**144**'ü implemente.
+- **Faz WW — HPy köprüsü: Tracker + Field/Global saklama-yükleme**
+  (8 fonksiyon: `Tracker_New/Add/ForgetAll/Close` + `Field_Store/Load` +
+  `Global_Store/Load`). `HPyTracker`/`HPyField`/`HPyGlobal` (`HPy`nin
+  kendisiyle aynı biçimde tek bir `isize` taşıyan opak tutamaçlar).
+  `Tracker`, `.list_`in deposunu `ctxDup` çağırmadan yeniden kullanır
+  (gerçek "Add yeni referans oluşturmaz" sözleşmesini korumak için);
+  `Field`/`Global`, Nox'un basit refcounting'inde "eski değeri kapat,
+  yeniyi dup'la, sakla" desenine indirgenir (GC write-barrier/alt-
+  yorumlayıcı ayrımı Nox'ta geçerli değil). `noxtest.c`ye 6 yeni modül
+  metodu, `hpy_tier0_test.zig`ye 3 yeni test — 53/53 yeşil. Kapsam: 180
+  `ctx_*` fonksiyonundan 144→**152**'si implemente.
 
 ## [1.0.0]
 

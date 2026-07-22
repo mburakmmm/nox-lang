@@ -633,6 +633,77 @@ static HPy tuple_builder_cancel_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
     return HPyBool_FromBool(ctx, true);
 }
 
+/* Tracker + Field/Global (Faz WW) test amaçlı: eklentinin KENDİ C
+ * kodunun HPyTracker, HPyField ve HPyGlobal makrolarını (HEPSİ ham
+ * ctx_Tracker/ctx_Field/ctx_Global yuvalarına TRAMPOLİNE eden)
+ * ÇAĞIRMASI. */
+HPyDef_METH(tracker_close_via_c, "tracker_close_via_c", HPyFunc_O)
+static HPy tracker_close_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    (void)arg;
+    HPyTracker t = HPyTracker_New(ctx, 2);
+    HPy a = HPyLong_FromLong(ctx, 111);
+    HPy b = HPyLong_FromLong(ctx, 222);
+    HPyTracker_Add(ctx, t, a);
+    HPyTracker_Add(ctx, t, b);
+    /* Tracker_Close, a VE b'yi KENDİSİ kapatır -- AYRICA HPy_Close
+     * çağrılmamalı (gerçek sözleşme: Add YENİ bir referans ALMAZ). */
+    HPyTracker_Close(ctx, t);
+    return HPyBool_FromBool(ctx, true);
+}
+
+HPyDef_METH(tracker_forget_via_c, "tracker_forget_via_c", HPyFunc_O)
+static HPy tracker_forget_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    (void)arg;
+    HPyTracker t = HPyTracker_New(ctx, 1);
+    HPy a = HPyLong_FromLong(ctx, 111);
+    HPyTracker_Add(ctx, t, a);
+    HPyTracker_ForgetAll(ctx, t); /* izlemeyi bırak -- a KAPATILMAZ */
+    HPyTracker_Close(ctx, t);     /* artık boş bir tracker'ı kapatır -- a ETKİLENMEZ */
+    long v = HPyLong_AsLong(ctx, a); /* a HÂLÂ geçerli olmalı */
+    HPy_Close(ctx, a); /* KENDİMİZ kapatıyoruz -- tracker ARTIK sahiplenmiyor */
+    return HPyLong_FromLong(ctx, v);
+}
+
+static HPyField g_test_field = HPyField_NULL;
+
+HPyDef_METH(field_store_via_c, "field_store_via_c", HPyFunc_O)
+static HPy field_store_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    HPyField_Store(ctx, HPy_NULL, &g_test_field, arg);
+    return HPyBool_FromBool(ctx, true);
+}
+
+HPyDef_METH(field_load_via_c, "field_load_via_c", HPyFunc_O)
+static HPy field_load_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    (void)arg;
+    return HPyField_Load(ctx, HPy_NULL, g_test_field);
+}
+
+static HPyGlobal g_test_global = { 0 };
+
+HPyDef_METH(global_store_via_c, "global_store_via_c", HPyFunc_O)
+static HPy global_store_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    HPyGlobal_Store(ctx, &g_test_global, arg);
+    return HPyBool_FromBool(ctx, true);
+}
+
+HPyDef_METH(global_load_via_c, "global_load_via_c", HPyFunc_O)
+static HPy global_load_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    (void)arg;
+    return HPyGlobal_Load(ctx, g_test_global);
+}
+
 HPyDef_METH(add_one, "add_one", HPyFunc_O)
 static HPy add_one_impl(HPyContext *ctx, HPy self, HPy arg)
 {
@@ -774,6 +845,12 @@ static HPyDef *module_defines[] = {
     &list_builder_cancel_via_c,
     &tuple_builder_via_c,
     &tuple_builder_cancel_via_c,
+    &tracker_close_via_c,
+    &tracker_forget_via_c,
+    &field_store_via_c,
+    &field_load_via_c,
+    &global_store_via_c,
+    &global_load_via_c,
     &add_one,
     &str_length,
     &negate,
