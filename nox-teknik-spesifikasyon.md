@@ -1764,6 +1764,33 @@ dosyada). Kapsam: 180 `ctx_*` fonksiyonundan 124→**136**'sı implemente.
 
 ---
 
+### Faz VV — HPy: List/Tuple Builder'ları
+
+`ctx_ListBuilder_New`/`Set`/`Build`/`Cancel` + `ctx_TupleBuilder_New`/
+`Set`/`Build`/`Cancel` (8 fonksiyon). Gerçek HPy'nin `HPyListBuilder`/
+`HPyTupleBuilder`i (`hpy.h`ye karşı doğrulandı: `{ intptr_t _lst/_tup; }`
+— `HPy`nin KENDİSİYLE AYNI BİÇİMDE tek bir `isize` taşıyan opak
+tutamaçlar) CPython'ın DEĞİŞMEZ `PyTuple_New`+`SET_ITEM` desenini host-
+bağımsız kılmak İçin var. Nox'un `.list_`i ZATEN dinamik büyüyebilen bir
+`Obj` OLDUĞUNDAN `ListBuilder` bunu DOĞRUDAN (SARMALAMADAN) kullanır —
+`_lst` alanına bir `.list_`in KENDİ `HPy._i`si SAKLANIR. `TupleBuilder`
+İSE AYNI mekanizmayı GEÇİCİ bir SAHNELEME listesi olarak kullanıp
+`Build`ta `ctx_TupleFromArray` İLE GERÇEK (değişmez) bir `.tuple_`ye
+DÖNÜŞTÜRÜR (SONRA sahneleme listesini `ctxClose` İLE serbest bırakır —
+`ctxTupleFromArray`in HER öğeyi KENDİSİ `ctxDup` İLE retain ETMESİ
+sayesinde refcount DENGELİ kalır). `New`in `size` parametresi `ctxListNew`
+(Faz 19)in AYNI "önceden `None` İLE doldurulmuş" deseniyle karşılanır;
+`Set`, index MEVCUT boyutu AŞARSA listeyi GÜVENLE BÜYÜTÜR (güvenlik ağı).
+
+**Doğrulama:** `noxtest.c`ye 4 yeni modül metodu (`list_builder_via_c`/
+`tuple_builder_via_c` — 3 elemanlı bir kapsayıcı İNŞA edip DOLDURUR;
+`list_builder_cancel_via_c`/`tuple_builder_cancel_via_c` — `Cancel`in
+SIZINTISIZ olduğunu `std.testing.allocator`in KENDİ sızıntı denetimiyle
+DOLAYLI kanıtlar). `hpy_tier0_test.zig`ye 2 yeni test. Toplam: 50/50 (bu
+dosyada). Kapsam: 180 `ctx_*` fonksiyonundan 136→**144**'ü implemente.
+
+---
+
 ### 3.20 Faz 20 Uygulama Kapsamı — Zig/C ABI FFI (`extern def`)
 
 **Durum: UYGULANDI.** Kullanıcının isteği: Nox'un HPy/WASM

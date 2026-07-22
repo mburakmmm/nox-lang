@@ -11,12 +11,12 @@
 //! `scripts/gen_hpy_ctx.py`) üretilmiş, bayt-uyumlu bir transkripsiyonunu
 //! GEREKTİRİR — bir eklenti bu struct'a doğrudan (sabit ofsetlerle) erişir,
 //! bu yüzden alan SIRASI ve BOYUTU tam olarak eşleşmelidir. Şu an 180
-//! `ctx_*` alanından **136'sı** GERÇEKTEN implemente (aşağıda özel fonksiyon
+//! `ctx_*` alanından **144'ü** GERÇEKTEN implemente (aşağıda özel fonksiyon
 //! işaretçisi tipleriyle işaretli — TAM/DOĞRU sayı HER ZAMAN şu komutla
 //! doğrulanabilir: `awk '/pub const HPyContext = extern struct \{/,/^\};/'
 //! runtime/hpy_bridge/context.zig | grep "ctx_" | grep -c "anyopaque = null,"`
 //! — SONUCU 180'den ÇIKARIN; tam liste/tier dökümü İçin bkz. nox-teknik-
-//! spesifikasyon.md §3.12 VE DEVAMI, en son Faz UU) — geri
+//! spesifikasyon.md §3.12 VE DEVAMI, en son Faz VV) — geri
 //! kalanı `null` (kullanılmazlarsa zararsız; bir eklenti bunlardan birini
 //! çağırırsa çökme/segfault olur, bkz. spesifikasyondaki bilinçli
 //! sınırlamalar).
@@ -35,6 +35,17 @@ pub const HPy = extern struct {
     _i: isize = 0,
 };
 pub const HPy_NULL: HPy = .{ ._i = 0 };
+
+/// Gerçek HPy'nin `HPyListBuilder`/`HPyTupleBuilder`i (Faz VV) — `HPy`nin
+/// KENDİSİYLE AYNI biçimde, TEK bir `intptr_t` alanı taşıyan (isim
+/// dışında) opak tutamaçlar (`hpy.h`ye karşı doğrulandı: `{ intptr_t
+/// _lst/_tup; }`). Nox'un implementasyonu bu alana DOĞRUDAN bir `.list_`
+/// nesnesinin `HPy._i`sini SAKLAR — `ListBuilder` bunu OLDUĞU GİBİ
+/// (zaten büyüyebilir) kullanır; `TupleBuilder` GEÇİCİ bir SAHNELEME
+/// listesi olarak kullanıp `Build`ta GERÇEK (değişmez) bir `.tuple_`ye
+/// DÖNÜŞTÜRÜR (bkz. `ctxTupleBuilderBuild`).
+pub const HPyListBuilder = extern struct { _lst: isize = 0 };
+pub const HPyTupleBuilder = extern struct { _tup: isize = 0 };
 
 /// Nox'un HPy nesnelerini temsil ettiği en küçük ortak biçim. Yalnızca
 /// Tier 0'ın gerektirdiği dört tip: `None` (tekil), `Bool` (iki tekil,
@@ -1281,6 +1292,67 @@ fn ctxListAppend(ctx: *HPyContext, h_list: HPy, h_item: HPy) callconv(.c) c_int 
         return -1;
     };
     return 0;
+}
+
+// ---- List/Tuple Builder'ları (Faz VV) ----
+//
+// Gerçek HPy'nin `ListBuilder`/`TupleBuilder`i, CPython'ın DEĞİŞMEZ
+// `PyTuple_New`+`SET_ITEM` desenini host-bağımsız kılmak İçin var —
+// Nox'un `.list_`i ZATEN dinamik büyüyebilen bir `Obj` OLDUĞUNDAN,
+// `ListBuilder` bunu DOĞRUDAN (SARMALAMADAN) kullanır. `TupleBuilder`
+// İSE bir `.list_`i GEÇİCİ SAHNELEME alanı olarak kullanıp `Build`ta
+// GERÇEK bir `.tuple_`ye (değişmez) DÖNÜŞTÜRÜR.
+
+fn ctxListBuilderNew(ctx: *HPyContext, size: isize) callconv(.c) HPyListBuilder {
+    const h = ctxListNew(ctx, size);
+    return .{ ._lst = h._i };
+}
+
+fn listBuilderSetOn(ctx: *HPyContext, staging: HPy, index: isize, h_item: HPy) void {
+    const obj = objOf(staging) orelse return;
+    if (obj.tag != .list_ or index < 0) return;
+    const allocator = contextAllocator(ctx);
+    while (obj.list_data.items.len <= @as(usize, @intCast(index))) {
+        obj.list_data.append(allocator, ctxDup(ctx, ctx.h_None)) catch return;
+    }
+    const old = obj.list_data.items[@intCast(index)];
+    obj.list_data.items[@intCast(index)] = ctxDup(ctx, h_item);
+    ctxClose(ctx, old);
+}
+
+fn ctxListBuilderSet(ctx: *HPyContext, builder: HPyListBuilder, index: isize, h_item: HPy) callconv(.c) void {
+    listBuilderSetOn(ctx, .{ ._i = builder._lst }, index, h_item);
+}
+
+fn ctxListBuilderBuild(ctx: *HPyContext, builder: HPyListBuilder) callconv(.c) HPy {
+    _ = ctx;
+    return .{ ._i = builder._lst };
+}
+
+fn ctxListBuilderCancel(ctx: *HPyContext, builder: HPyListBuilder) callconv(.c) void {
+    ctxClose(ctx, .{ ._i = builder._lst });
+}
+
+fn ctxTupleBuilderNew(ctx: *HPyContext, size: isize) callconv(.c) HPyTupleBuilder {
+    const h = ctxListNew(ctx, size);
+    return .{ ._tup = h._i };
+}
+
+fn ctxTupleBuilderSet(ctx: *HPyContext, builder: HPyTupleBuilder, index: isize, h_item: HPy) callconv(.c) void {
+    listBuilderSetOn(ctx, .{ ._i = builder._tup }, index, h_item);
+}
+
+fn ctxTupleBuilderBuild(ctx: *HPyContext, builder: HPyTupleBuilder) callconv(.c) HPy {
+    const staging: HPy = .{ ._i = builder._tup };
+    const obj = objOf(staging) orelse return HPy_NULL;
+    if (obj.tag != .list_) return HPy_NULL;
+    const result = ctxTupleFromArray(ctx, obj.list_data.items.ptr, @intCast(obj.list_data.items.len));
+    ctxClose(ctx, staging);
+    return result;
+}
+
+fn ctxTupleBuilderCancel(ctx: *HPyContext, builder: HPyTupleBuilder) callconv(.c) void {
+    ctxClose(ctx, .{ ._i = builder._tup });
 }
 
 fn ctxTupleCheck(ctx: *HPyContext, h: HPy) callconv(.c) c_int {
@@ -2875,14 +2947,14 @@ pub const HPyContext = extern struct {
     ctx_FromPyObject: ?*const anyopaque = null,
     ctx_AsPyObject: ?*const anyopaque = null,
     ctx_CallRealFunctionFromTrampoline: ?*const fn (ctx: *HPyContext, sig: c_int, func: ?*const anyopaque, args: ?*anyopaque) callconv(.c) void = null,
-    ctx_ListBuilder_New: ?*const anyopaque = null,
-    ctx_ListBuilder_Set: ?*const anyopaque = null,
-    ctx_ListBuilder_Build: ?*const anyopaque = null,
-    ctx_ListBuilder_Cancel: ?*const anyopaque = null,
-    ctx_TupleBuilder_New: ?*const anyopaque = null,
-    ctx_TupleBuilder_Set: ?*const anyopaque = null,
-    ctx_TupleBuilder_Build: ?*const anyopaque = null,
-    ctx_TupleBuilder_Cancel: ?*const anyopaque = null,
+    ctx_ListBuilder_New: ?*const fn (ctx: *HPyContext, size: isize) callconv(.c) HPyListBuilder = null,
+    ctx_ListBuilder_Set: ?*const fn (ctx: *HPyContext, builder: HPyListBuilder, index: isize, h_item: HPy) callconv(.c) void = null,
+    ctx_ListBuilder_Build: ?*const fn (ctx: *HPyContext, builder: HPyListBuilder) callconv(.c) HPy = null,
+    ctx_ListBuilder_Cancel: ?*const fn (ctx: *HPyContext, builder: HPyListBuilder) callconv(.c) void = null,
+    ctx_TupleBuilder_New: ?*const fn (ctx: *HPyContext, size: isize) callconv(.c) HPyTupleBuilder = null,
+    ctx_TupleBuilder_Set: ?*const fn (ctx: *HPyContext, builder: HPyTupleBuilder, index: isize, h_item: HPy) callconv(.c) void = null,
+    ctx_TupleBuilder_Build: ?*const fn (ctx: *HPyContext, builder: HPyTupleBuilder) callconv(.c) HPy = null,
+    ctx_TupleBuilder_Cancel: ?*const fn (ctx: *HPyContext, builder: HPyTupleBuilder) callconv(.c) void = null,
     ctx_Tracker_New: ?*const anyopaque = null,
     ctx_Tracker_Add: ?*const anyopaque = null,
     ctx_Tracker_ForgetAll: ?*const anyopaque = null,
@@ -3097,6 +3169,14 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
         .ctx_List_Check = ctxListCheck,
         .ctx_List_New = ctxListNew,
         .ctx_List_Append = ctxListAppend,
+        .ctx_ListBuilder_New = ctxListBuilderNew,
+        .ctx_ListBuilder_Set = ctxListBuilderSet,
+        .ctx_ListBuilder_Build = ctxListBuilderBuild,
+        .ctx_ListBuilder_Cancel = ctxListBuilderCancel,
+        .ctx_TupleBuilder_New = ctxTupleBuilderNew,
+        .ctx_TupleBuilder_Set = ctxTupleBuilderSet,
+        .ctx_TupleBuilder_Build = ctxTupleBuilderBuild,
+        .ctx_TupleBuilder_Cancel = ctxTupleBuilderCancel,
         .ctx_Tuple_Check = ctxTupleCheck,
         .ctx_Tuple_FromArray = ctxTupleFromArray,
         .ctx_Dict_Check = ctxDictCheck,

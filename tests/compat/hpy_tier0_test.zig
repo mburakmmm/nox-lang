@@ -1442,3 +1442,73 @@ test "gerçek HPy eklentisi: unicode_substring_via_c — kod noktası indeksli d
     defer ctx.ctx_Close.?(ctx, r);
     try strEqualsUtf8(ctx, r, "af"); // "café"[1:3] == "af"
 }
+
+test "gerçek HPy eklentisi: list_builder_via_c/tuple_builder_via_c (Faz VV)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const list_builder_via_c = mod.findMethodO("list_builder_via_c") orelse return error.MethodNotFound;
+    const tuple_builder_via_c = mod.findMethodO("tuple_builder_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const one = ctx.ctx_Long_FromInt64_t.?(ctx, 1);
+    defer ctx.ctx_Close.?(ctx, one);
+    const two = ctx.ctx_Long_FromInt64_t.?(ctx, 2);
+    defer ctx.ctx_Close.?(ctx, two);
+    const three = ctx.ctx_Long_FromInt64_t.?(ctx, 3);
+    defer ctx.ctx_Close.?(ctx, three);
+    var items = [_]hpy.context.HPy{ one, two, three };
+    const arg_tuple = ctx.ctx_Tuple_FromArray.?(ctx, &items, 3);
+    defer ctx.ctx_Close.?(ctx, arg_tuple);
+
+    const list_result = list_builder_via_c(ctx, hpy.context.HPy_NULL, arg_tuple);
+    defer ctx.ctx_Close.?(ctx, list_result);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_List_Check.?(ctx, list_result));
+    try std.testing.expectEqual(@as(isize, 3), ctx.ctx_Length.?(ctx, list_result));
+    for (0..3) |i| {
+        const item = ctx.ctx_GetItem_i.?(ctx, list_result, @intCast(i));
+        defer ctx.ctx_Close.?(ctx, item);
+        try std.testing.expectEqual(@as(i64, @intCast(i + 1)), ctx.ctx_Long_AsInt64_t.?(ctx, item));
+    }
+
+    const tuple_result = tuple_builder_via_c(ctx, hpy.context.HPy_NULL, arg_tuple);
+    defer ctx.ctx_Close.?(ctx, tuple_result);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Tuple_Check.?(ctx, tuple_result));
+    try std.testing.expectEqual(@as(isize, 3), ctx.ctx_Length.?(ctx, tuple_result));
+    for (0..3) |i| {
+        const item = ctx.ctx_GetItem_i.?(ctx, tuple_result, @intCast(i));
+        defer ctx.ctx_Close.?(ctx, item);
+        try std.testing.expectEqual(@as(i64, @intCast(i + 1)), ctx.ctx_Long_AsInt64_t.?(ctx, item));
+    }
+}
+
+test "gerçek HPy eklentisi: list_builder_cancel_via_c/tuple_builder_cancel_via_c — sızıntısız iptal (Faz VV)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const list_cancel = mod.findMethodO("list_builder_cancel_via_c") orelse return error.MethodNotFound;
+    const tuple_cancel = mod.findMethodO("tuple_builder_cancel_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+
+    const r1 = list_cancel(ctx, hpy.context.HPy_NULL, dummy);
+    defer ctx.ctx_Close.?(ctx, r1);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_IsTrue.?(ctx, r1));
+
+    const r2 = tuple_cancel(ctx, hpy.context.HPy_NULL, dummy);
+    defer ctx.ctx_Close.?(ctx, r2);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_IsTrue.?(ctx, r2));
+    // `std.testing.allocator`in KENDİSİ sızıntı OLMADIĞINI (defer'lar
+    // TAMAMLANDIKTAN sonra) doğrular — bkz. `destroyContext`in üstündeki
+    // `defer`.
+}

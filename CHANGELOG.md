@@ -1370,6 +1370,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   sayılır (her zaman "strict"). `noxtest.c`ye 9 yeni modül metodu,
   `hpy_tier0_test.zig`ye 7 yeni test — 48/48 yeşil. Kapsam: 180 `ctx_*`
   fonksiyonundan 124→**136**'sı implemente.
+- **Faz VV — HPy köprüsü: List/Tuple Builder'ları** (8 fonksiyon:
+  `ListBuilder_New/Set/Build/Cancel` + `TupleBuilder_New/Set/Build/
+  Cancel`). `HPyListBuilder`/`HPyTupleBuilder` (`HPy`nin kendisiyle aynı
+  biçimde tek bir `isize` taşıyan opak tutamaçlar) `.list_`in zaten
+  dinamik büyüyebilen yapısını doğrudan kullanır; `TupleBuilder` aynı
+  mekanizmayı geçici bir sahneleme listesi olarak kullanıp `Build`ta
+  gerçek (değişmez) bir `.tuple_`ye dönüştürür. `noxtest.c`ye 4 yeni
+  modül metodu, `hpy_tier0_test.zig`ye 2 yeni test — 50/50 yeşil.
+  Kapsam: 180 `ctx_*` fonksiyonundan 136→**144**'ü implemente.
 
 ## [1.0.0]
 

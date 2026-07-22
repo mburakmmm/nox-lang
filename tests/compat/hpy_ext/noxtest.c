@@ -568,6 +568,71 @@ static HPy unicode_substring_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
     return result;
 }
 
+/* List/Tuple Builder'ları (Faz VV) test amaçlı: eklentinin KENDİ C
+ * kodunun HPyListBuilder ve HPyTupleBuilder makrolarını (HEPSİ ham
+ * ctx_ListBuilder_/ctx_TupleBuilder_ yuvalarına TRAMPOLİNE eden)
+ * ÇAĞIRMASI — 3 elemanlı bir liste/tuple İNŞA edip (`arg`den okunan)
+ * 3 değerle DOLDURUR. */
+HPyDef_METH(list_builder_via_c, "list_builder_via_c", HPyFunc_O)
+static HPy list_builder_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    HPy a = HPy_GetItem_i(ctx, arg, 0);
+    HPy b = HPy_GetItem_i(ctx, arg, 1);
+    HPy c = HPy_GetItem_i(ctx, arg, 2);
+    HPyListBuilder builder = HPyListBuilder_New(ctx, 3);
+    HPyListBuilder_Set(ctx, builder, 0, a);
+    HPyListBuilder_Set(ctx, builder, 1, b);
+    HPyListBuilder_Set(ctx, builder, 2, c);
+    HPy result = HPyListBuilder_Build(ctx, builder);
+    HPy_Close(ctx, a);
+    HPy_Close(ctx, b);
+    HPy_Close(ctx, c);
+    return result;
+}
+
+HPyDef_METH(list_builder_cancel_via_c, "list_builder_cancel_via_c", HPyFunc_O)
+static HPy list_builder_cancel_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    (void)arg;
+    HPyListBuilder builder = HPyListBuilder_New(ctx, 2);
+    HPyListBuilder_Cancel(ctx, builder);
+    /* İptal EDİLDİKTEN sonra herhangi bir sızıntı/çökme OLMADIĞINI
+     * kanıtlamak İçin yalnızca True döner — GERÇEK doğrulama ASAN/valgrind
+     * benzeri bir bellek denetleyicisi (bkz. `std.testing.allocator`nin
+     * KENDİSİ, sızıntı TESPİT eder) tarafından yapılır. */
+    return HPyBool_FromBool(ctx, true);
+}
+
+HPyDef_METH(tuple_builder_via_c, "tuple_builder_via_c", HPyFunc_O)
+static HPy tuple_builder_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    HPy a = HPy_GetItem_i(ctx, arg, 0);
+    HPy b = HPy_GetItem_i(ctx, arg, 1);
+    HPy c = HPy_GetItem_i(ctx, arg, 2);
+    HPyTupleBuilder builder = HPyTupleBuilder_New(ctx, 3);
+    HPyTupleBuilder_Set(ctx, builder, 0, a);
+    HPyTupleBuilder_Set(ctx, builder, 1, b);
+    HPyTupleBuilder_Set(ctx, builder, 2, c);
+    HPy result = HPyTupleBuilder_Build(ctx, builder);
+    HPy_Close(ctx, a);
+    HPy_Close(ctx, b);
+    HPy_Close(ctx, c);
+    return result;
+}
+
+HPyDef_METH(tuple_builder_cancel_via_c, "tuple_builder_cancel_via_c", HPyFunc_O)
+static HPy tuple_builder_cancel_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    (void)arg;
+    HPyTupleBuilder builder = HPyTupleBuilder_New(ctx, 2);
+    HPyTupleBuilder_Cancel(ctx, builder);
+    return HPyBool_FromBool(ctx, true);
+}
+
 HPyDef_METH(add_one, "add_one", HPyFunc_O)
 static HPy add_one_impl(HPyContext *ctx, HPy self, HPy arg)
 {
@@ -705,6 +770,10 @@ static HPyDef *module_defines[] = {
     &unicode_decode_latin1_via_c,
     &unicode_from_encoded_object_via_c,
     &unicode_substring_via_c,
+    &list_builder_via_c,
+    &list_builder_cancel_via_c,
+    &tuple_builder_via_c,
+    &tuple_builder_cancel_via_c,
     &add_one,
     &str_length,
     &negate,
