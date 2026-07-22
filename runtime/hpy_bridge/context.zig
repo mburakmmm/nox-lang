@@ -10,21 +10,27 @@
 //! `autogen_ctx.h`sinden ALAN ALANA (mekanik bir script ile, bkz.
 //! `scripts/gen_hpy_ctx.py`) üretilmiş, bayt-uyumlu bir transkripsiyonunu
 //! GEREKTİRİR — bir eklenti bu struct'a doğrudan (sabit ofsetlerle) erişir,
-//! bu yüzden alan SIRASI ve BOYUTU tam olarak eşleşmelidir. Şu an 180
-//! `ctx_*` alanından **173'ü** GERÇEKTEN implemente (aşağıda özel fonksiyon
-//! işaretçisi tipleriyle işaretli — TAM/DOĞRU sayı HER ZAMAN şu komutla
-//! doğrulanabilir: `awk '/pub const HPyContext = extern struct \{/,/^\};/'
-//! runtime/hpy_bridge/context.zig | grep -E "^\s*ctx_[A-Za-z0-9_]+: \?\*const
-//! anyopaque = null,$" | wc -l` — SONUCU 180'den ÇIKARIN (DİKKAT: `grep -c
-//! "anyopaque"` gibi GEVŞEK bir desen KULLANMAYIN — `ctx_Long_AsVoidPtr`/
-//! `ctx_AsStruct_*` gibi GERÇEKTEN implemente edilmiş bazı fonksiyonların
-//! dönüş TİPİ de `?*anyopaque` OLDUĞUNDAN, gevşek desen YANLIŞLIKLA
-//! implemente EDİLMİŞ fonksiyonları da SAYAR — bu YÜZDEN yukarıdaki TAM
-//! satır-eşleşmesi ZORUNLUDUR); tam liste/tier dökümü İçin bkz. nox-teknik-
-//! spesifikasyon.md §3.12 VE DEVAMI, en son Faz YY) — geri
-//! kalanı `null` (kullanılmazlarsa zararsız; bir eklenti bunlardan birini
-//! çağırırsa çökme/segfault olur, bkz. spesifikasyondaki bilinçli
-//! sınırlamalar).
+//! bu yüzden alan SIRASI ve BOYUTU tam olarak eşleşmelidir. **180 `ctx_*`
+//! alanının TAMAMI (180/180) ARTIK GERÇEK, TİPLİ fonksiyon işaretçileriyle
+//! BAĞLANMIŞTIR** (Faz PP'den Faz ZZ'ye, 2026-07-22 tarihli TEK bir
+//! oturumda tamamlanan kapsam GENİŞLETMESİ SONRASI — bkz. nox-teknik-
+//! spesifikasyon.md §3.12 VE DEVAMI, Faz MM'den Faz ZZ'ye). BUNUN ÜÇ
+//! (bilinçli, dokümante edilmiş) İSTİSNASI VARDIR — `ctx_CallRealFunction
+//! FromTrampoline`/`ctx_FromPyObject`/`ctx_AsPyObject`: bunlar Nox'un
+//! MİMARİSİNDE (yalnızca `HPY_ABI_UNIVERSAL`, CPython'SUZ) YAPISAL olarak
+//! ANLAMSIZ/ULAŞILAMAZ oldukları İçin GERÇEK bir gövde YERİNE dokümante
+//! edilmiş bir `@panic` İLE bağlanmıştır (bkz. HER birinin KENDİ belge
+//! notu) — "implemente edilmemiş" DEĞİL, "kasıtlı olarak sahte-
+//! implemente EDİLMEMİŞ" (ABI yuvası DOĞRU/non-null, ama çağrılırlarsa
+//! ÇÖKERLER, gerçek bir çağrı yolundan ULAŞILAMAYACAKLARI İçin). Kapsam
+//! sayısını (180'den KAÇININ hâlâ `?*const anyopaque = null` PLACEHOLDER
+//! olduğunu) doğrulamak İçin: `awk '/pub const HPyContext = extern struct
+//! \{/,/^\};/' runtime/hpy_bridge/context.zig | grep -E "^\s*ctx_
+//! [A-Za-z0-9_]+: \?\*const anyopaque = null,$" | wc -l` (ŞU AN: 0) —
+//! DİKKAT: `grep -c "anyopaque"` gibi GEVŞEK bir desen KULLANMAYIN,
+//! `ctx_Long_AsVoidPtr`/`ctx_AsStruct_*` gibi GERÇEKTEN implemente
+//! edilmiş bazı fonksiyonların dönüş TİPİ de `?*anyopaque` OLDUĞUNDAN
+//! bu YANLIŞ sonuç verir — yukarıdaki TAM satır-eşleşmesi ZORUNLUDUR.
 //!
 //! **Nesne modeli:** `HPy._i`, Nox'un kendi refcount'lu `Obj` yapısına
 //! işaret eden bir işaretçidir (`@intFromPtr`/`@ptrFromInt` ile dönüştürülür)
@@ -58,6 +64,13 @@ pub const HPyTupleBuilder = extern struct { _tup: isize = 0 };
 pub const HPyTracker = extern struct { _i: isize = 0 };
 pub const HPyField = extern struct { _i: isize = 0 };
 pub const HPyGlobal = extern struct { _i: isize = 0 };
+
+/// Gerçek HPy'nin `HPyThreadState`i (Faz ZZ, `hpy.h`ye karşı doğrulandı:
+/// `{ intptr_t _i; }`) — `ctx_ReenterPythonExecution`/`ctx_Leave
+/// PythonExecution`in "GIL durumu" tutamacı. Nox'ta GERÇEK bir GIL
+/// olmadığından (bkz. o fonksiyonların KENDİ belge notu) her ZAMAN
+/// sıfırlanmış DEĞERDİR.
+pub const HPyThreadState = extern struct { _i: isize = 0 };
 
 /// Nox'un HPy nesnelerini temsil ettiği en küçük ortak biçim. Yalnızca
 /// Tier 0'ın gerektirdiği dört tip: `None` (tekil), `Bool` (iki tekil,
@@ -2610,6 +2623,95 @@ fn ctxCallRealFunctionFromTrampoline(ctx: *HPyContext, sig: c_int, func: ?*const
     @panic("ctx_CallRealFunctionFromTrampoline: Nox mimarisinde gerçek bir çağrı yolu yok (bkz. modül üstü not)");
 }
 
+// ---- Kapanış: kalan 7 fonksiyon (Faz ZZ, 180/180'e TAMAMLAYAN dilim) ----
+//
+// İKİ FARKLI dürüstlük kategorisi:
+//
+// (a) **Gerçekten UYGULANABİLİR, GERÇEK no-op'lar** (`ctx_Reenter
+// PythonExecution`/`ctx_LeavePythonExecution`): gerçek CPython'da bunlar
+// GIL'i GEÇİCİ olarak BIRAKMAK/YENİDEN ALMAK İçindir (bir C uzantısı
+// UZUN süren bir engelleyici İşlem yaparken DİĞER Python iş
+// parçacıklarının ÇALIŞABİLMESİ İçin). Nox'un KENDİ çalışma zamanının
+// GIL'i YOK (fiber TABANLI, iş parçacığı+GIL DEĞİL) — bu YÜZDEN
+// "bırakılacak" hiçbir KİLİT yok; DÜRÜST bir no-op (SAHTE bir
+// implementasyon DEĞİL, GERÇEKTEN doğru bir davranış: "yapacak bir şey
+// yok").
+//
+// (b) **UYGULANABİLİR (ULAŞILABİLİR çağrı YOLLARI VAR) ama GERÇEK
+// FONKSİYONELLİĞİ Nox'un kapsamı DIŞINDA olan, DÜRÜST bir istisnayla
+// REDDEDİLEN fonksiyonlar** (`ctx_Compile_s`/`ctx_EvalCode`/`ctx_Import_
+// ImportModule`): Nox'un KENDİSİ AYRI bir dildir, GÖMÜLÜ bir Python
+// derleyicisi/bayt kodu SANAL MAKİNESİ/modül İÇE AKTARMA sistemi
+// TAŞIMAZ — ama BU fonksiyonlara GERÇEK, MEŞRU bir çağrı YOLU (herhangi
+// bir HPy uzantısı bunları normal ÇALIŞMA ZAMANINDA çağırabilir)
+// OLDUĞUNDAN, `ctx_CallRealFunctionFromTrampoline`in AKSİNE (hiçbir
+// GERÇEK çağrı yolu YOK) burada `@panic` YERİNE gerçek bir Python-
+// tarzı İSTİSNA (`NotImplementedError`/`ImportError`) AYARLANIP
+// `HPy_NULL` DÖNÜLÜR — bir uzantının BUNU çağırması TÜM gömülü
+// uygulamayı ÇÖKERTMEMELİDİR.
+//
+// (c) **GERÇEKTEN İMKANSIZ/ANLAMSIZ** (`ctx_FromPyObject`/`ctx_
+// AsPyObject`): gerçek HPy'de bunlar HAM bir CPython `PyObject*`
+// (`cpy_PyObject*`) İLE çalışır — Nox `HPY_ABI_UNIVERSAL` modunu (CPython
+// OLMADAN) TEK ana bilgisayar modu olarak desteklediğinden (bkz. modül
+// üstü not), gerçek HPy'nin KENDİSİ `cpy_types.h`de bu tipi `HPY_ABI_
+// UNIVERSAL` altında `FORBIDDEN_cpy_PyObject` OLARAK TANIMLAR — yani
+// GERÇEK bir universal-ABI uzantısının BÖYLE bir işaretçiyi ELİNDE
+// TUTMASININ/OLUŞTURMASININ zaten HİÇBİR MEŞRU yolu YOKTUR. Bu YÜZDEN
+// `ctx_CallRealFunctionFromTrampoline` İLE AYNI gerekçeyle dokümante
+// edilmiş bir `@panic` İLE bırakılır.
+
+fn ctxReenterPythonExecution(ctx: *HPyContext, state: HPyThreadState) callconv(.c) void {
+    _ = ctx;
+    _ = state;
+}
+
+fn ctxLeavePythonExecution(ctx: *HPyContext) callconv(.c) HPyThreadState {
+    _ = ctx;
+    return .{ ._i = 0 };
+}
+
+fn ctxCompileS(ctx: *HPyContext, utf8_source: ?[*:0]const u8, utf8_filename: ?[*:0]const u8, kind: c_int) callconv(.c) HPy {
+    _ = utf8_source;
+    _ = utf8_filename;
+    _ = kind;
+    ctxErrSetString(ctx, ctx.h_NotImplementedError, "Nox HPy köprüsü Python kaynak kodu derlemeyi desteklemiyor (Nox ayrı, kendi başına bir dildir — gömülü bir Python derleyicisi/yorumlayıcısı taşımaz)");
+    return HPy_NULL;
+}
+
+fn ctxEvalCode(ctx: *HPyContext, code: HPy, globals: HPy, locals: HPy) callconv(.c) HPy {
+    _ = code;
+    _ = globals;
+    _ = locals;
+    ctxErrSetString(ctx, ctx.h_NotImplementedError, "Nox HPy köprüsü Python kod nesnesi çalıştırmayı desteklemiyor (gömülü bir Python bayt kodu sanal makinesi yok)");
+    return HPy_NULL;
+}
+
+fn ctxImportImportModule(ctx: *HPyContext, utf8_name: ?[*:0]const u8) callconv(.c) HPy {
+    _ = utf8_name;
+    ctxErrSetString(ctx, ctx.h_ImportError, "Nox HPy köprüsü modül içe aktarmayı desteklemiyor (yalnızca dlopen ile yüklenen tek bir uzantı barındırılır, genel bir modül/sys.modules sistemi yok)");
+    return HPy_NULL;
+}
+
+/// Gerçek HPy'de `cpy_PyObject*` İLE çalışır — Nox'un TEK desteklediği
+/// `HPY_ABI_UNIVERSAL` modunda bu tip `cpy_types.h`de `FORBIDDEN_
+/// cpy_PyObject` OLARAK tanımlanır: GERÇEK bir universal-ABI uzantısının
+/// böyle bir işaretçiyi OLUŞTURMASININ/ELİNDE TUTMASININ hiçbir MEŞRU
+/// yolu YOKTUR. Bu YÜZDEN (dürüstçe) `ctx_CallRealFunctionFromTrampoline`
+/// İLE AYNI gerekçeyle bir `@panic` İLE bırakılır (sahte bir dönüşüm
+/// YAZILMADI).
+fn ctxFromPyObject(ctx: *HPyContext, obj: ?*anyopaque) callconv(.c) HPy {
+    _ = ctx;
+    _ = obj;
+    @panic("ctx_FromPyObject: Nox yalnızca HPY_ABI_UNIVERSAL destekler — gerçek bir cpy_PyObject* asla var olmaz (bkz. modül üstü not)");
+}
+
+fn ctxAsPyObject(ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque {
+    _ = ctx;
+    _ = h;
+    @panic("ctx_AsPyObject: Nox yalnızca HPY_ABI_UNIVERSAL destekler — gerçek bir cpy_PyObject* asla üretilemez (bkz. modül üstü not)");
+}
+
 /// Nox-özel (HPy ABI'sinin bir parçası DEĞİL) bir yardımcı: bir `type_`
 /// nesnesinin `HPyFunc_O` imzalı örnek metodlarından adı `name` olanı
 /// bulur. Gerçek HPy'de bu, genel `GetAttr`/çağrı protokolü (henüz
@@ -3390,9 +3492,9 @@ pub const HPyContext = extern struct {
     ctx_Dict_New: ?*const fn (ctx: *HPyContext) callconv(.c) HPy = null,
     ctx_Tuple_Check: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) c_int = null,
     ctx_Tuple_FromArray: ?*const fn (ctx: *HPyContext, items: ?[*]HPy, n: isize) callconv(.c) HPy = null,
-    ctx_Import_ImportModule: ?*const anyopaque = null,
-    ctx_FromPyObject: ?*const anyopaque = null,
-    ctx_AsPyObject: ?*const anyopaque = null,
+    ctx_Import_ImportModule: ?*const fn (ctx: *HPyContext, utf8_name: ?[*:0]const u8) callconv(.c) HPy = null,
+    ctx_FromPyObject: ?*const fn (ctx: *HPyContext, obj: ?*anyopaque) callconv(.c) HPy = null,
+    ctx_AsPyObject: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque = null,
     ctx_CallRealFunctionFromTrampoline: ?*const fn (ctx: *HPyContext, sig: c_int, func: ?*const anyopaque, args: ?*anyopaque) callconv(.c) void = null,
     ctx_ListBuilder_New: ?*const fn (ctx: *HPyContext, size: isize) callconv(.c) HPyListBuilder = null,
     ctx_ListBuilder_Set: ?*const fn (ctx: *HPyContext, builder: HPyListBuilder, index: isize, h_item: HPy) callconv(.c) void = null,
@@ -3408,8 +3510,8 @@ pub const HPyContext = extern struct {
     ctx_Tracker_Close: ?*const fn (ctx: *HPyContext, ht: HPyTracker) callconv(.c) void = null,
     ctx_Field_Store: ?*const fn (ctx: *HPyContext, target_object: HPy, target_field: ?*HPyField, h: HPy) callconv(.c) void = null,
     ctx_Field_Load: ?*const fn (ctx: *HPyContext, source_object: HPy, source_field: HPyField) callconv(.c) HPy = null,
-    ctx_ReenterPythonExecution: ?*const anyopaque = null,
-    ctx_LeavePythonExecution: ?*const anyopaque = null,
+    ctx_ReenterPythonExecution: ?*const fn (ctx: *HPyContext, state: HPyThreadState) callconv(.c) void = null,
+    ctx_LeavePythonExecution: ?*const fn (ctx: *HPyContext) callconv(.c) HPyThreadState = null,
     ctx_Global_Store: ?*const fn (ctx: *HPyContext, global: ?*HPyGlobal, h: HPy) callconv(.c) void = null,
     ctx_Global_Load: ?*const fn (ctx: *HPyContext, global: HPyGlobal) callconv(.c) HPy = null,
     ctx_Dump: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) void = null,
@@ -3433,8 +3535,8 @@ pub const HPyContext = extern struct {
     ctx_Capsule_Get: ?*const fn (ctx: *HPyContext, capsule: HPy, key: c_int, utf8_name: ?[*:0]const u8) callconv(.c) ?*anyopaque = null,
     ctx_Capsule_IsValid: ?*const fn (ctx: *HPyContext, capsule: HPy, utf8_name: ?[*:0]const u8) callconv(.c) c_int = null,
     ctx_Capsule_Set: ?*const fn (ctx: *HPyContext, capsule: HPy, key: c_int, value: ?*anyopaque) callconv(.c) c_int = null,
-    ctx_Compile_s: ?*const anyopaque = null,
-    ctx_EvalCode: ?*const anyopaque = null,
+    ctx_Compile_s: ?*const fn (ctx: *HPyContext, utf8_source: ?[*:0]const u8, utf8_filename: ?[*:0]const u8, kind: c_int) callconv(.c) HPy = null,
+    ctx_EvalCode: ?*const fn (ctx: *HPyContext, code: HPy, globals: HPy, locals: HPy) callconv(.c) HPy = null,
     ctx_ContextVar_New: ?*const fn (ctx: *HPyContext, name: ?[*:0]const u8, default_value: HPy) callconv(.c) HPy = null,
     ctx_ContextVar_Get: ?*const fn (ctx: *HPyContext, context_var: HPy, default_value: HPy, result: ?*HPy) callconv(.c) i32 = null,
     ctx_ContextVar_Set: ?*const fn (ctx: *HPyContext, context_var: HPy, value: HPy) callconv(.c) HPy = null,
@@ -3693,6 +3795,13 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
         .ctx_ContextVar_New = ctxContextVarNew,
         .ctx_ContextVar_Get = ctxContextVarGet,
         .ctx_ContextVar_Set = ctxContextVarSet,
+        .ctx_ReenterPythonExecution = ctxReenterPythonExecution,
+        .ctx_LeavePythonExecution = ctxLeavePythonExecution,
+        .ctx_Compile_s = ctxCompileS,
+        .ctx_EvalCode = ctxEvalCode,
+        .ctx_Import_ImportModule = ctxImportImportModule,
+        .ctx_FromPyObject = ctxFromPyObject,
+        .ctx_AsPyObject = ctxAsPyObject,
         .ctx_GetAttr = ctxGetAttr,
         .ctx_GetAttr_s = ctxGetAttrS,
         .ctx_HasAttr = ctxHasAttr,

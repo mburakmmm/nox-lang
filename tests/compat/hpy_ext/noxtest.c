@@ -880,6 +880,49 @@ static HPy contextvar_set_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
     return token;
 }
 
+/* Kapanış: kalan 7 fonksiyon (Faz ZZ) test amaçlı — eklentinin KENDİ
+ * C kodunun HPy_ReenterPythonExecution/HPy_LeavePythonExecution/
+ * HPy_Compile_s/HPy_EvalCode/HPyImport_ImportModule makrolarını (HEPSİ
+ * ham ctx_* yuvalarına TRAMPOLİNE eden) ÇAĞIRMASI. `ctx_FromPyObject`/
+ * `ctx_AsPyObject`/`ctx_CallRealFunctionFromTrampoline` BİLİNÇLİ olarak
+ * BURADA test EDİLMEZ — GERÇEKTEN dokümante edilmiş bir `@panic` ile
+ * bırakıldılar (bkz. Zig tarafındaki belge notu), çağrılmaları TÜM test
+ * SÜRECİNİ ÇÖKERTİRDİ; doğrulamaları yalnızca "derleniyor + ABI yuvasına
+ * DOĞRU bağlandı" düzeyindedir (bu dosyanın BAŞARIYLA derlenmesinin
+ * KENDİSİ zaten bunu kanıtlar). */
+HPyDef_METH(python_execution_roundtrip_via_c, "python_execution_roundtrip_via_c", HPyFunc_O)
+static HPy python_execution_roundtrip_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    (void)arg;
+    HPyThreadState state = HPy_LeavePythonExecution(ctx);
+    HPy_ReenterPythonExecution(ctx, state);
+    return HPyBool_FromBool(ctx, true);
+}
+
+HPyDef_METH(compile_via_c, "compile_via_c", HPyFunc_O)
+static HPy compile_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    (void)arg;
+    return HPy_Compile_s(ctx, "1 + 1", "<test>", HPy_SourceKind_Expr);
+}
+
+HPyDef_METH(eval_code_via_c, "eval_code_via_c", HPyFunc_O)
+static HPy eval_code_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    return HPy_EvalCode(ctx, arg, HPy_NULL, HPy_NULL);
+}
+
+HPyDef_METH(import_module_via_c, "import_module_via_c", HPyFunc_O)
+static HPy import_module_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    (void)arg;
+    return HPyImport_ImportModule(ctx, "some_module");
+}
+
 HPyDef_METH(add_one, "add_one", HPyFunc_O)
 static HPy add_one_impl(HPyContext *ctx, HPy self, HPy arg)
 {
@@ -1040,6 +1083,10 @@ static HPyDef *module_defines[] = {
     &contextvar_new_via_c,
     &contextvar_get_via_c,
     &contextvar_set_via_c,
+    &python_execution_roundtrip_via_c,
+    &compile_via_c,
+    &eval_code_via_c,
+    &import_module_via_c,
     &add_one,
     &str_length,
     &negate,

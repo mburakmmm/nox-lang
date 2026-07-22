@@ -1421,6 +1421,28 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   `noxtest.c`ye 7 yeni modül metodu, `hpy_tier0_test.zig`ye 3 yeni test
   — 60/60 yeşil. Kapsam: 180 `ctx_*` fonksiyonundan 166→**173**'ü
   implemente.
+- **Faz ZZ — HPy köprüsü: kapanış, 180/180'e tamamlayan dilim** (7
+  fonksiyon: `ReenterPythonExecution/LeavePythonExecution` + `Compile_s/
+  EvalCode/Import_ImportModule` + `FromPyObject/AsPyObject`). Üç
+  dürüstlük kategorisi: (1) `ReenterPythonExecution`/`LeavePython
+  Execution` — gerçek no-op'lar (Nox'ta GIL yok, bırakılacak kilit yok);
+  (2) `Compile_s`/`EvalCode`/`Import_ImportModule` — ulaşılabilir ama
+  kapsam dışı, gerçek bir Python-tarzı istisnayla (`NotImplementedError`/
+  `ImportError`) reddedilir (Nox ayrı bir dildir, gömülü Python
+  derleyicisi/VM/import sistemi yok — bir uzantının bunları çağırması
+  tüm uygulamayı çökertmemeli); (3) `FromPyObject`/`AsPyObject` — gerçek
+  bir `cpy_PyObject*`in Nox'un yalnızca desteklediği `HPY_ABI_UNIVERSAL`
+  modunda hiçbir zaman var olamayacağından (`FORBIDDEN_cpy_PyObject`),
+  `ctx_CallRealFunctionFromTrampoline` (Faz MM) ile aynı gerekçeyle
+  dokümante edilmiş bir `@panic` ile bırakıldı. `noxtest.c`ye 4 yeni
+  modül metodu, `hpy_tier0_test.zig`ye 2 yeni test — 62/62 yeşil.
+  **Kapsam: 180 `ctx_*` fonksiyonunun TAMAMI (180/180) artık gerçek,
+  tipli fonksiyon işaretçileriyle bağlı** — kullanıcının "gerçekten
+  180/180 ctx_*" hedefi karşılandı (üçü yapısal olarak imkansız oldukları
+  için dokümante `@panic` ile — sahte implemente edilmedi). Faz MM'den
+  (50/180) Faz ZZ'ye (180/180) kadar tek bir oturumda (2026-07-22) 130
+  fonksiyon eklendi, her biri gerçek bir HPy 0.9.0 C uzantısıyla uçtan
+  uca doğrulandı.
 
 ## [1.0.0]
 

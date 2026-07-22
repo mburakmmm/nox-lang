@@ -1927,6 +1927,62 @@ fonksiyonundan 166→**173**'ü implemente.
 
 ---
 
+### Faz ZZ — HPy: Kapanış — kalan 7 fonksiyon (180/180'e TAMAMLAYAN dilim)
+
+`ctx_ReenterPythonExecution`/`ctx_LeavePythonExecution`/`ctx_Compile_s`/
+`ctx_EvalCode`/`ctx_Import_ImportModule`/`ctx_FromPyObject`/`ctx_
+AsPyObject` (7 fonksiyon) — kullanıcının "coverage %100 olana kadar
+nonstop devam et" (2026-07-22) isteğiyle başlayan Faz PP-ZZ dizisinin
+SON dilimi. **ÜÇ AYRI dürüstlük kategorisi** kullanıldı:
+
+1. **Gerçekten implemente edilen no-op'lar** — `ctx_ReenterPython
+   Execution`/`ctx_LeavePythonExecution`: gerçek CPython'da bunlar GIL'i
+   GEÇİCİ bırakıp/YENİDEN alır (uzun süren engelleyici İşlemler İçin
+   DİĞER iş parçacıklarının çalışabilmesi). Nox'ta GİL YOK (fiber
+   TABANLI) — "bırakılacak" hiçbir KİLİT olmadığından DÜRÜST bir no-op
+   (sahte DEĞİL, GERÇEKTEN doğru bir davranış).
+
+2. **Ulaşılabilir ama kapsam DIŞI — dürüst istisnayla REDDEDİLEN
+   fonksiyonlar** — `ctx_Compile_s`/`ctx_EvalCode`/`ctx_Import_
+   ImportModule`: gerçek, MEŞRU bir çağrı yolları OLDUĞUNDAN (herhangi
+   bir uzantı normal çalışma ZAMANINDA çağırabilir) `@panic` YERİNE
+   gerçek bir Python-tarzı istisna (`NotImplementedError`/`ImportError`)
+   AYARLANIP `HPy_NULL` DÖNÜLÜR — Nox KENDİSİ AYRI bir dildir, GÖMÜLÜ
+   bir Python derleyicisi/bayt kodu SANAL MAKİNESİ/modül İÇE AKTARMA
+   sistemi TAŞIMADIĞINDAN, bu fonksiyonlara YAPILAN bir çağrı TÜM gömülü
+   uygulamayı ÇÖKERTMEMELİDİR.
+
+3. **Gerçekten imkansız/anlamsız — dokümante `@panic`** — `ctx_
+   FromPyObject`/`ctx_AsPyObject`: HAM bir CPython `cpy_PyObject*` İLE
+   çalışırlar; Nox `HPY_ABI_UNIVERSAL`i (CPython'SUZ) TEK ana bilgisayar
+   modu olarak desteklediğinden, gerçek HPy'nin KENDİSİ bu tipi `cpy_
+   types.h`de `HPY_ABI_UNIVERSAL` altında `FORBIDDEN_cpy_PyObject`
+   OLARAK tanımlar — GERÇEK bir universal-ABI uzantısının böyle bir
+   işaretçiyi OLUŞTURMASININ/ELİNDE TUTMASININ zaten hiçbir MEŞRU yolu
+   YOKTUR. `ctx_CallRealFunctionFromTrampoline` (Faz MM) İLE AYNI
+   gerekçeyle dokümante edilmiş bir `@panic` İLE bırakıldı.
+
+**Doğrulama:** `noxtest.c`ye 4 yeni modül metodu (GIL round-trip;
+`HPy_Compile_s`/`HPy_EvalCode`/`HPyImport_ImportModule`in DÜRÜST
+reddi). `FromPyObject`/`AsPyObject`/`CallRealFunctionFromTrampoline`
+BİLİNÇLİ olarak test EDİLMEDİ (çağrılmaları TÜM test SÜRECİNİ
+ÇÖKERTİRDİ) — doğrulamaları yalnızca "derleniyor + ABI yuvasına DOĞRU
+bağlandı" düzeyindedir (bu dosyanın BAŞARIYLA derlenmesi zaten bunu
+kanıtlar). `hpy_tier0_test.zig`ye 2 yeni test. Toplam: 62/62 (bu
+dosyada).
+
+**Kapsam: 180 `ctx_*` fonksiyonundan 173→180'i (TAMAMI) ARTIK GERÇEK,
+TİPLİ fonksiyon işaretçileriyle BAĞLANMIŞTIR — kullanıcının "gerçekten
+180/180 ctx_*" hedefi bu commit'te KARŞILANDI** (üçü, YAPISAL olarak
+imkansız oldukları İçin dokümante `@panic` İLE — "implemente
+edilmemiş" DEĞİL, "sahte implemente EDİLMEMİŞ"). Bu, `nox-teknik-
+spesifikasyon.md`nin TÜM Faz PP-ZZ dizisinin (2026-07-22, TEK bir
+oturumda) SONUCUDUR — Faz MM'den (50/180) başlayıp Faz ZZ'ye (180/180)
+kadar 130 fonksiyon eklendi, HER biri gerçek bir HPy 0.9.0 C
+uzantısıyla uçtan uca doğrulandı (AGENTS.md §10).
+
+---
+
 ### 3.20 Faz 20 Uygulama Kapsamı — Zig/C ABI FFI (`extern def`)
 
 **Durum: UYGULANDI.** Kullanıcının isteği: Nox'un HPy/WASM

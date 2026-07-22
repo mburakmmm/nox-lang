@@ -1898,3 +1898,54 @@ test "gerçek HPy eklentisi: ctx_ContextVar_Get — varsayılansız + ayarlanmam
     try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_LookupError));
     ctx.ctx_Err_Clear.?(ctx);
 }
+
+test "gerçek HPy eklentisi: python_execution_roundtrip_via_c — GIL'siz no-op round-trip (Faz ZZ)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const f = mod.findMethodO("python_execution_roundtrip_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+    const result = f(ctx, hpy.context.HPy_NULL, dummy);
+    defer ctx.ctx_Close.?(ctx, result);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_IsTrue.?(ctx, result));
+}
+
+test "gerçek HPy eklentisi: compile_via_c/eval_code_via_c/import_module_via_c — dürüst v1 reddi (Faz ZZ)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const compile_via_c = mod.findMethodO("compile_via_c") orelse return error.MethodNotFound;
+    const eval_code_via_c = mod.findMethodO("eval_code_via_c") orelse return error.MethodNotFound;
+    const import_module_via_c = mod.findMethodO("import_module_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+
+    try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Err_Occurred.?(ctx));
+    const r1 = compile_via_c(ctx, hpy.context.HPy_NULL, dummy);
+    try std.testing.expectEqual(hpy.context.HPy_NULL._i, r1._i);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_NotImplementedError));
+    ctx.ctx_Err_Clear.?(ctx);
+
+    const r2 = eval_code_via_c(ctx, hpy.context.HPy_NULL, dummy);
+    try std.testing.expectEqual(hpy.context.HPy_NULL._i, r2._i);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_NotImplementedError));
+    ctx.ctx_Err_Clear.?(ctx);
+
+    const r3 = import_module_via_c(ctx, hpy.context.HPy_NULL, dummy);
+    try std.testing.expectEqual(hpy.context.HPy_NULL._i, r3._i);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_ImportError));
+    ctx.ctx_Err_Clear.?(ctx);
+}
