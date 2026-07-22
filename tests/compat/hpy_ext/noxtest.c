@@ -704,6 +704,94 @@ static HPy global_load_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
     return HPyGlobal_Load(ctx, g_test_global);
 }
 
+/* Tip içgözlemi + çeşitli (Faz XX) test amaçlı: eklentinin KENDİ C
+ * kodunun HPyType_GetName/IsSubtype/_HPyType_GetBuiltinShape/_HPy_
+ * AsStruct_Type/Long/Float/Unicode/Tuple/List/_HPy_Dump/HPySlice_Unpack
+ * makrolarını (HEPSİ ham ctx_* yuvalarına TRAMPOLİNE eden) ÇAĞIRMASI. */
+HPyDef_METH(type_name_via_c, "type_name_via_c", HPyFunc_O)
+static HPy type_name_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    const char *name = HPyType_GetName(ctx, arg);
+    if (name == NULL) {
+        return HPy_NULL;
+    }
+    return HPyUnicode_FromString(ctx, name);
+}
+
+HPyDef_METH(type_is_subtype_via_c, "type_is_subtype_via_c", HPyFunc_O)
+static HPy type_is_subtype_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    HPy sub = HPy_GetItem_i(ctx, arg, 0);
+    HPy type_h = HPy_GetItem_i(ctx, arg, 1);
+    int result = HPyType_IsSubtype(ctx, sub, type_h);
+    HPy_Close(ctx, sub);
+    HPy_Close(ctx, type_h);
+    return HPyBool_FromBool(ctx, (bool)result);
+}
+
+HPyDef_METH(type_builtin_shape_via_c, "type_builtin_shape_via_c", HPyFunc_O)
+static HPy type_builtin_shape_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    HPyType_BuiltinShape shape = _HPyType_GetBuiltinShape(ctx, arg);
+    return HPyLong_FromLong(ctx, (long)shape);
+}
+
+HPyDef_METH(as_struct_variants_via_c, "as_struct_variants_via_c", HPyFunc_O)
+static HPy as_struct_variants_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    HPy long_h = HPy_GetItem_i(ctx, arg, 0);
+    HPy float_h = HPy_GetItem_i(ctx, arg, 1);
+    HPy str_h = HPy_GetItem_i(ctx, arg, 2);
+    HPy tuple_h = HPy_GetItem_i(ctx, arg, 3);
+
+    long *long_ptr = (long *)_HPy_AsStruct_Long(ctx, long_h);
+    double *float_ptr = (double *)_HPy_AsStruct_Float(ctx, float_h);
+    const char *str_ptr = (const char *)_HPy_AsStruct_Unicode(ctx, str_h);
+    HPy *tuple_ptr = (HPy *)_HPy_AsStruct_Tuple(ctx, tuple_h);
+
+    int ok = (long_ptr != NULL) && (*long_ptr == 42) &&
+             (float_ptr != NULL) && (*float_ptr == 3.5) &&
+             (str_ptr != NULL) && (strncmp(str_ptr, "hi", 2) == 0) &&
+             (tuple_ptr != NULL);
+    HPy_Close(ctx, long_h);
+    HPy_Close(ctx, float_h);
+    HPy_Close(ctx, str_h);
+    HPy_Close(ctx, tuple_h);
+    return HPyBool_FromBool(ctx, (bool)ok);
+}
+
+HPyDef_METH(dump_via_c, "dump_via_c", HPyFunc_O)
+static HPy dump_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    _HPy_Dump(ctx, arg);
+    return HPyBool_FromBool(ctx, true);
+}
+
+HPyDef_METH(slice_unpack_via_c, "slice_unpack_via_c", HPyFunc_O)
+static HPy slice_unpack_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    HPy_ssize_t start, stop, step;
+    if (HPySlice_Unpack(ctx, arg, &start, &stop, &step) < 0) {
+        return HPy_NULL;
+    }
+    HPy items[3] = {
+        HPyLong_FromSsize_t(ctx, start),
+        HPyLong_FromSsize_t(ctx, stop),
+        HPyLong_FromSsize_t(ctx, step),
+    };
+    HPy result = HPyTuple_FromArray(ctx, items, 3);
+    HPy_Close(ctx, items[0]);
+    HPy_Close(ctx, items[1]);
+    HPy_Close(ctx, items[2]);
+    return result;
+}
+
 HPyDef_METH(add_one, "add_one", HPyFunc_O)
 static HPy add_one_impl(HPyContext *ctx, HPy self, HPy arg)
 {
@@ -851,6 +939,12 @@ static HPyDef *module_defines[] = {
     &field_load_via_c,
     &global_store_via_c,
     &global_load_via_c,
+    &type_name_via_c,
+    &type_is_subtype_via_c,
+    &type_builtin_shape_via_c,
+    &as_struct_variants_via_c,
+    &dump_via_c,
+    &slice_unpack_via_c,
     &add_one,
     &str_length,
     &negate,

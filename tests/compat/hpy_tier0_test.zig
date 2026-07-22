@@ -1611,3 +1611,176 @@ test "gerçek HPy eklentisi: global_store_via_c/global_load_via_c — HPyGlobal 
     const cleared = global_store(ctx, hpy.context.HPy_NULL, hpy.context.HPy_NULL);
     defer ctx.ctx_Close.?(ctx, cleared);
 }
+
+test "gerçek HPy eklentisi: type_name_via_c/type_is_subtype_via_c/type_builtin_shape_via_c (Faz XX)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const get_widget_type = mod.findMethodO("get_widget_type") orelse return error.MethodNotFound;
+    const make_counter = mod.findMethodO("make_counter") orelse return error.MethodNotFound;
+    const type_name_via_c = mod.findMethodO("type_name_via_c") orelse return error.MethodNotFound;
+    const type_is_subtype_via_c = mod.findMethodO("type_is_subtype_via_c") orelse return error.MethodNotFound;
+    const type_builtin_shape_via_c = mod.findMethodO("type_builtin_shape_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.heap.page_allocator);
+    defer hpy.context.destroyContext(std.heap.page_allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+    const widget_type = get_widget_type(ctx, hpy.context.HPy_NULL, dummy);
+
+    const name_result = type_name_via_c(ctx, hpy.context.HPy_NULL, widget_type);
+    defer ctx.ctx_Close.?(ctx, name_result);
+    try strEqualsUtf8(ctx, name_result, "noxtest.Widget");
+
+    const shape_result = type_builtin_shape_via_c(ctx, hpy.context.HPy_NULL, widget_type);
+    defer ctx.ctx_Close.?(ctx, shape_result);
+    try std.testing.expectEqual(@as(i64, 0), ctx.ctx_Long_AsInt64_t.?(ctx, shape_result)); // HPyType_BuiltinShape_Object
+
+    const seed = ctx.ctx_Long_FromInt64_t.?(ctx, 1);
+    defer ctx.ctx_Close.?(ctx, seed);
+    const counter_instance = make_counter(ctx, hpy.context.HPy_NULL, seed);
+    defer ctx.ctx_Close.?(ctx, counter_instance);
+    const counter_type = ctx.ctx_Type.?(ctx, counter_instance);
+    defer ctx.ctx_Close.?(ctx, counter_type);
+
+    {
+        var same_items = [_]hpy.context.HPy{ widget_type, widget_type };
+        const pair = ctx.ctx_Tuple_FromArray.?(ctx, &same_items, 2);
+        defer ctx.ctx_Close.?(ctx, pair);
+        const r = type_is_subtype_via_c(ctx, hpy.context.HPy_NULL, pair);
+        defer ctx.ctx_Close.?(ctx, r);
+        try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_IsTrue.?(ctx, r)); // aynı tip -- kimlikçe alt-tip
+    }
+    {
+        var diff_items = [_]hpy.context.HPy{ widget_type, counter_type };
+        const pair = ctx.ctx_Tuple_FromArray.?(ctx, &diff_items, 2);
+        defer ctx.ctx_Close.?(ctx, pair);
+        const r = type_is_subtype_via_c(ctx, hpy.context.HPy_NULL, pair);
+        defer ctx.ctx_Close.?(ctx, r);
+        try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_IsTrue.?(ctx, r)); // farklı tipler -- kalıtım YOK
+    }
+}
+
+test "gerçek HPy eklentisi: as_struct_variants_via_c — Long/Float/Unicode/Tuple AsStruct (Faz XX)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const f = mod.findMethodO("as_struct_variants_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const long_h = ctx.ctx_Long_FromInt64_t.?(ctx, 42);
+    defer ctx.ctx_Close.?(ctx, long_h);
+    const float_h = ctx.ctx_Float_FromDouble.?(ctx, 3.5);
+    defer ctx.ctx_Close.?(ctx, float_h);
+    const str_h = ctx.ctx_Unicode_FromString.?(ctx, "hi");
+    defer ctx.ctx_Close.?(ctx, str_h);
+    const one = ctx.ctx_Long_FromInt64_t.?(ctx, 1);
+    defer ctx.ctx_Close.?(ctx, one);
+    const two = ctx.ctx_Long_FromInt64_t.?(ctx, 2);
+    defer ctx.ctx_Close.?(ctx, two);
+    var pair_items = [_]hpy.context.HPy{ one, two };
+    const tuple_h = ctx.ctx_Tuple_FromArray.?(ctx, &pair_items, 2);
+    defer ctx.ctx_Close.?(ctx, tuple_h);
+
+    var items = [_]hpy.context.HPy{ long_h, float_h, str_h, tuple_h };
+    const arg_tuple = ctx.ctx_Tuple_FromArray.?(ctx, &items, 4);
+    defer ctx.ctx_Close.?(ctx, arg_tuple);
+
+    const result = f(ctx, hpy.context.HPy_NULL, arg_tuple);
+    defer ctx.ctx_Close.?(ctx, result);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_IsTrue.?(ctx, result));
+}
+
+test "gerçek HPy eklentisi: dump_via_c — çökmeden tanılama çıktısı (Faz XX)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const f = mod.findMethodO("dump_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const s = ctx.ctx_Unicode_FromString.?(ctx, "merhaba");
+    defer ctx.ctx_Close.?(ctx, s);
+    const result = f(ctx, hpy.context.HPy_NULL, s);
+    defer ctx.ctx_Close.?(ctx, result);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_IsTrue.?(ctx, result));
+}
+
+test "gerçek HPy eklentisi: slice_unpack_via_c — start/stop/step varsayılanları (Faz XX)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const f = mod.findMethodO("slice_unpack_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    // (2, 10, None) -> step None ise 1'e düşer.
+    {
+        const two = ctx.ctx_Long_FromInt64_t.?(ctx, 2);
+        defer ctx.ctx_Close.?(ctx, two);
+        const ten = ctx.ctx_Long_FromInt64_t.?(ctx, 10);
+        defer ctx.ctx_Close.?(ctx, ten);
+        var items = [_]hpy.context.HPy{ two, ten, ctx.h_None };
+        const triple = ctx.ctx_Tuple_FromArray.?(ctx, &items, 3);
+        defer ctx.ctx_Close.?(ctx, triple);
+
+        const result = f(ctx, hpy.context.HPy_NULL, triple);
+        defer ctx.ctx_Close.?(ctx, result);
+        const start = ctx.ctx_GetItem_i.?(ctx, result, 0);
+        defer ctx.ctx_Close.?(ctx, start);
+        const stop = ctx.ctx_GetItem_i.?(ctx, result, 1);
+        defer ctx.ctx_Close.?(ctx, stop);
+        const step = ctx.ctx_GetItem_i.?(ctx, result, 2);
+        defer ctx.ctx_Close.?(ctx, step);
+        try std.testing.expectEqual(@as(i64, 2), ctx.ctx_Long_AsInt64_t.?(ctx, start));
+        try std.testing.expectEqual(@as(i64, 10), ctx.ctx_Long_AsInt64_t.?(ctx, stop));
+        try std.testing.expectEqual(@as(i64, 1), ctx.ctx_Long_AsInt64_t.?(ctx, step));
+    }
+    // (None, None, -1) -> negatif step: start=SSIZE_MAX, stop=SSIZE_MIN.
+    {
+        const neg_one = ctx.ctx_Long_FromInt64_t.?(ctx, -1);
+        defer ctx.ctx_Close.?(ctx, neg_one);
+        var items = [_]hpy.context.HPy{ ctx.h_None, ctx.h_None, neg_one };
+        const triple = ctx.ctx_Tuple_FromArray.?(ctx, &items, 3);
+        defer ctx.ctx_Close.?(ctx, triple);
+
+        const result = f(ctx, hpy.context.HPy_NULL, triple);
+        defer ctx.ctx_Close.?(ctx, result);
+        const start = ctx.ctx_GetItem_i.?(ctx, result, 0);
+        defer ctx.ctx_Close.?(ctx, start);
+        const stop = ctx.ctx_GetItem_i.?(ctx, result, 1);
+        defer ctx.ctx_Close.?(ctx, stop);
+        const step = ctx.ctx_GetItem_i.?(ctx, result, 2);
+        defer ctx.ctx_Close.?(ctx, step);
+        try std.testing.expectEqual(@as(i64, std.math.maxInt(isize)), ctx.ctx_Long_AsInt64_t.?(ctx, start));
+        try std.testing.expectEqual(@as(i64, std.math.minInt(isize)), ctx.ctx_Long_AsInt64_t.?(ctx, stop));
+        try std.testing.expectEqual(@as(i64, -1), ctx.ctx_Long_AsInt64_t.?(ctx, step));
+    }
+    // step == 0 -> ValueError.
+    {
+        const zero = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+        defer ctx.ctx_Close.?(ctx, zero);
+        var items = [_]hpy.context.HPy{ ctx.h_None, ctx.h_None, zero };
+        const triple = ctx.ctx_Tuple_FromArray.?(ctx, &items, 3);
+        defer ctx.ctx_Close.?(ctx, triple);
+
+        try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Err_Occurred.?(ctx));
+        const result = f(ctx, hpy.context.HPy_NULL, triple);
+        try std.testing.expectEqual(hpy.context.HPy_NULL._i, result._i);
+        try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_ValueError));
+        ctx.ctx_Err_Clear.?(ctx);
+    }
+}

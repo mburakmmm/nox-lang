@@ -1828,6 +1828,53 @@ statik alan test fonksiyonunun ÖTESİNDE yaşadığından). Toplam: 53/53
 (bu dosyada). Kapsam: 180 `ctx_*` fonksiyonundan 144→**152**'si
 implemente.
 
+**2026-07-22 sayım DÜZELTMESİ:** doğrulama komutundaki `grep -c
+"anyopaque"` (GEVŞEK desen) `ctx_Long_AsVoidPtr`/`ctx_AsStruct_Object`/
+`ctx_AsStruct_Legacy` gibi ZATEN implemente edilmiş, ama dönüş TİPİ de
+`?*anyopaque` OLAN fonksiyonları YANLIŞLIKLA "implemente edilmemiş"
+sayıyordu. TAM satır-eşleşmesi (`context.zig`nin modül üstü notundaki
+DÜZELTİLMİŞ komut) İLE yeniden sayıldığında bu commit'teki GERÇEK sayı
+**155**'ti (152 DEĞİL) — kod HER ZAMAN DOĞRUYDU, yalnızca ANLATIDAKİ
+sayım YÖNTEMİ hatalıydı. Faz XX'ten İTİBAREN sayılar bu DÜZELTİLMİŞ
+yöntemle raporlanır.
+
+---
+
+### Faz XX — HPy: Tip içgözlemi + çeşitli
+
+`ctx_Type_GetName`/`ctx_Type_IsSubtype`/`ctx_Type_GetBuiltinShape`/
+`ctx_AsStruct_Type`/`Long`/`Float`/`Unicode`/`Tuple`/`List`/`ctx_Dump`/
+`ctx_Slice_Unpack` (11 fonksiyon). `Obj`e YENİ bir `type_name`
+(`HPyType_Spec.name`in kopyası, `ctx_Repr`in Faz SS'teki KULLANIMIYLA
+PAYLAŞILAN alan) VE `type_builtin_shape` (`HPyType_Spec.builtin_shape`in
+kopyası — `HPyType_BuiltinShape` enum'u `hpytype.h`ye karşı doğrulandı:
+`Legacy=-1, Object=0, Type=1, Long=2, Float=3, Unicode=4, Tuple=5,
+List=6`) alanı EKLENDİ, `ctxTypeFromSpec` bunu YAKALAR.
+
+**Bilinçli v1 sınırlamaları:** `ctx_Type_IsSubtype` yalnızca KİMLİK
+(`sub == type`) döner — Nox'ta KULLANICI-TANIMLI taban sınıf/kalıtım
+YOK (ZATEN dokümante edilmiş "tüm tipler örtük olarak `object`ten
+türer" sınırlamasıyla AYNI). `ctx_AsStruct_Type/Long/Float/Unicode/
+Tuple/List`: gerçek HPy'de bunlar `builtin_shape` TÜRETMESİ (ör.
+`int`ten türeyen özel bir tip) İçin — Nox DESTEKLEMEDİĞİNDEN, yalnızca
+DOĞRUDAN o ETİKETLİ nesneler İçin dahili depolamaya bir işaretçi döner.
+`ctx_Slice_Unpack`: Nox'un nesne modelinde HENÜZ birinci-sınıf bir
+`slice` TİPİ YOK — bu YÜZDEN `slice` parametresi 3 elemanlı bir
+`.tuple_` (`start, stop, step` — her biri `.long`/`.bool_` ya da
+`None`) olarak TEMSİL edilir; varsayılan DEĞERLER gerçek CPython'la
+BİREBİR AYNI (`step` `None` İSE `1`; `step<0` İSE `start=SSIZE_MAX`/
+`stop=SSIZE_MIN`, `step>0` İSE `start=0`/`stop=SSIZE_MAX`).
+`ctx_Dump`: tanılama amaçlı REFCOUNT/ETİKET/`ctx_Repr` çıktısını
+stderr'e YAZAR, HİÇBİR ZAMAN hata VERMEZ.
+
+**Doğrulama:** `noxtest.c`ye 6 yeni modül metodu (tip adı/alt-tip/
+builtin-shape sorguları; Long/Float/Unicode/Tuple `AsStruct` — DÖNEN
+işaretçinin İÇERİĞİ C tarafından `long*`/`double*`/`const char*` olarak
+DOĞRUDAN OKUNARAK doğrulanır; `_HPy_Dump`; `HPySlice_Unpack`).
+`hpy_tier0_test.zig`ye 4 yeni test. Toplam: 57/57 (bu dosyada). Kapsam:
+180 `ctx_*` fonksiyonundan 155→**166**'sı implemente (DÜZELTİLMİŞ,
+kesin sayım yöntemiyle).
+
 ---
 
 ### 3.20 Faz 20 Uygulama Kapsamı — Zig/C ABI FFI (`extern def`)

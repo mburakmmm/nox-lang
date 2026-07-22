@@ -1389,7 +1389,20 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   yeniyi dup'la, sakla" desenine indirgenir (GC write-barrier/alt-
   yorumlayıcı ayrımı Nox'ta geçerli değil). `noxtest.c`ye 6 yeni modül
   metodu, `hpy_tier0_test.zig`ye 3 yeni test — 53/53 yeşil. Kapsam: 180
-  `ctx_*` fonksiyonundan 144→**152**'si implemente.
+  `ctx_*` fonksiyonundan 144→**152**'si implemente (DÜZELTME: doğrulama
+  komutundaki gevşek `grep` deseni bazı zaten-implemente fonksiyonları
+  yanlışlıkla sayıyordu — gerçek sayı **155**'ti; bkz. Faz XX).
+- **Faz XX — HPy köprüsü: tip içgözlemi + çeşitli** (11 fonksiyon:
+  `Type_GetName/IsSubtype/GetBuiltinShape` + `AsStruct_Type/Long/Float/
+  Unicode/Tuple/List` + `Dump` + `Slice_Unpack`). `Obj`e `type_name`/
+  `type_builtin_shape` alanları eklendi. `Type_IsSubtype` yalnızca kimlik
+  döner (Nox'ta kalıtım yok); `AsStruct_*` yalnızca doğrudan o etiketli
+  nesneler için çalışır (builtin-shape türetmesi desteklenmiyor);
+  `Slice_Unpack`, Nox'ta henüz olmayan bir `slice` tipi yerine 3 elemanlı
+  bir `(start, stop, step)` tuple kabul eder, CPython'ın aynı varsayılan
+  kurallarıyla. `noxtest.c`ye 6 yeni modül metodu, `hpy_tier0_test.zig`ye
+  4 yeni test — 57/57 yeşil. Kapsam: 180 `ctx_*` fonksiyonundan
+  155→**166**'sı implemente (düzeltilmiş, kesin sayım yöntemiyle).
 
 ## [1.0.0]
 

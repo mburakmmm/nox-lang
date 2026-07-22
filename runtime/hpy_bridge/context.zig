@@ -11,12 +11,17 @@
 //! `scripts/gen_hpy_ctx.py`) üretilmiş, bayt-uyumlu bir transkripsiyonunu
 //! GEREKTİRİR — bir eklenti bu struct'a doğrudan (sabit ofsetlerle) erişir,
 //! bu yüzden alan SIRASI ve BOYUTU tam olarak eşleşmelidir. Şu an 180
-//! `ctx_*` alanından **152'si** GERÇEKTEN implemente (aşağıda özel fonksiyon
+//! `ctx_*` alanından **166'sı** GERÇEKTEN implemente (aşağıda özel fonksiyon
 //! işaretçisi tipleriyle işaretli — TAM/DOĞRU sayı HER ZAMAN şu komutla
 //! doğrulanabilir: `awk '/pub const HPyContext = extern struct \{/,/^\};/'
-//! runtime/hpy_bridge/context.zig | grep "ctx_" | grep -c "anyopaque = null,"`
-//! — SONUCU 180'den ÇIKARIN; tam liste/tier dökümü İçin bkz. nox-teknik-
-//! spesifikasyon.md §3.12 VE DEVAMI, en son Faz WW) — geri
+//! runtime/hpy_bridge/context.zig | grep -E "^\s*ctx_[A-Za-z0-9_]+: \?\*const
+//! anyopaque = null,$" | wc -l` — SONUCU 180'den ÇIKARIN (DİKKAT: `grep -c
+//! "anyopaque"` gibi GEVŞEK bir desen KULLANMAYIN — `ctx_Long_AsVoidPtr`/
+//! `ctx_AsStruct_*` gibi GERÇEKTEN implemente edilmiş bazı fonksiyonların
+//! dönüş TİPİ de `?*anyopaque` OLDUĞUNDAN, gevşek desen YANLIŞLIKLA
+//! implemente EDİLMİŞ fonksiyonları da SAYAR — bu YÜZDEN yukarıdaki TAM
+//! satır-eşleşmesi ZORUNLUDUR); tam liste/tier dökümü İçin bkz. nox-teknik-
+//! spesifikasyon.md §3.12 VE DEVAMI, en son Faz XX) — geri
 //! kalanı `null` (kullanılmazlarsa zararsız; bir eklenti bunlardan birini
 //! çağırırsa çökme/segfault olur, bkz. spesifikasyondaki bilinçli
 //! sınırlamalar).
@@ -116,6 +121,12 @@ pub const Obj = struct {
     /// varsayılan biçimlendirmesinde KULLANILIR: `"<ClassName object>"`/
     /// `"<class 'ClassName'>"`). Boşsa (`""`) jenerik bir isim kullanılır.
     type_name: [:0]const u8 = "",
+    /// Yalnızca `tag == .type_` (Faz XX) — `HPyType_Spec.builtin_shape`in
+    /// KOPYASI (`ctx_Type_GetBuiltinShape` İçin). Nox bu ŞEKLE karşılık
+    /// gelen TABAN sınıf ZORUNLULUĞUNU (ör. `Long` şekli İçin `ctx.
+    /// h_LongType` taban sınıfı) UYGULAMAZ (mevcut "taban sınıf kapsam
+    /// dışı" v1 sınırlamasıyla AYNI) — yalnızca DEĞERİ SAKLAR/RAPORLAR.
+    type_builtin_shape: c_int = 0,
     type_tp_destroy: ?*const fn (data: *anyopaque) callconv(.c) void = null,
     /// Temel nesne protokolü (Faz SS) — `HPy_tp_repr`/`HPy_tp_str`/
     /// `HPy_tp_hash`/`HPy_tp_richcompare` slotları. Kayıtlı DEĞİLSE
@@ -1823,6 +1834,7 @@ fn ctxTypeFromSpec(ctx: *HPyContext, spec: ?*HPyType_Spec, params: ?*HPyType_Spe
     const obj = allocator.create(Obj) catch return HPy_NULL;
     obj.* = .{ .refcount = 1, .tag = .type_, .payload = .{ .l = 0 } };
     obj.type_basicsize = @intCast(s.basicsize);
+    obj.type_builtin_shape = s.builtin_shape;
     if (s.name) |n| {
         obj.type_name = allocator.dupeZ(u8, std.mem.sliceTo(n, 0)) catch "";
     }
@@ -1918,6 +1930,160 @@ fn ctxTypeCheck(ctx: *HPyContext, obj_h: HPy, type_h: HPy) callconv(.c) c_int {
     const obj = objOf(obj_h) orelse return 0;
     if (obj.tag != .instance_) return 0;
     return @intFromBool(obj.instance_type._i == type_h._i);
+}
+
+// ---- Tip içgözlemi + çeşitli (Faz XX) ----
+//
+// `ctx_Type_GetName`/`ctx_Type_IsSubtype`/`ctx_Type_GetBuiltinShape`/
+// `ctx_AsStruct_Type`/`Long`/`Float`/`Unicode`/`Tuple`/`List`/`ctx_Dump`/
+// `ctx_Slice_Unpack`. **Bilinçli v1 sınırlaması:** `ctx_Type_IsSubtype`
+// yalnızca KİMLİK (`sub == type`) döner — Nox'ta KULLANICI-TANIMLI taban
+// sınıf/kalıtım YOK (ZATEN dokümante edilmiş `.type_`in "tüm tipler
+// örtük olarak `object`ten türer" sınırlaması). `ctx_AsStruct_*` (Type/
+// Long/Float/Unicode/Tuple/List): gerçek HPy'de bunlar `builtin_shape`
+// türetmesi (ör. `int`ten türeyen özel bir tip) İçin — Nox bunu
+// DESTEKLEMEDİĞİNDEN, yalnızca DOĞRUDAN o ETİKETLİ nesneler İçin dahili
+// depolamaya bir işaretçi döner (taban-sınıf türetmesi YOK).
+
+fn ctxTypeGetName(ctx: *HPyContext, type_h: HPy) callconv(.c) ?[*:0]const u8 {
+    const obj = objOf(type_h) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "tip bekleniyor");
+        return null;
+    };
+    if (obj.tag != .type_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "tip bekleniyor");
+        return null;
+    }
+    return if (obj.type_name.len > 0) obj.type_name.ptr else "object";
+}
+
+fn ctxTypeIsSubtype(ctx: *HPyContext, sub: HPy, type_h: HPy) callconv(.c) c_int {
+    _ = ctx;
+    if (objOf(sub) == null or objOf(type_h) == null) return 0;
+    return @intFromBool(sub._i == type_h._i);
+}
+
+fn ctxTypeGetBuiltinShape(ctx: *HPyContext, h_type: HPy) callconv(.c) c_int {
+    const obj = objOf(h_type) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "tip bekleniyor");
+        return -1;
+    };
+    if (obj.tag != .type_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "tip bekleniyor");
+        return -1;
+    }
+    return obj.type_builtin_shape;
+}
+
+fn ctxAsStructType(ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque {
+    _ = ctx;
+    const obj = objOf(h) orelse return null;
+    if (obj.tag != .type_) return null;
+    return @ptrCast(obj);
+}
+
+fn ctxAsStructLong(ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque {
+    _ = ctx;
+    const obj = objOf(h) orelse return null;
+    if (obj.tag != .long) return null;
+    return @ptrCast(&obj.payload.l);
+}
+
+fn ctxAsStructFloat(ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque {
+    _ = ctx;
+    const obj = objOf(h) orelse return null;
+    if (obj.tag != .float_) return null;
+    return @ptrCast(&obj.payload.f);
+}
+
+fn ctxAsStructUnicode(ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque {
+    _ = ctx;
+    const obj = objOf(h) orelse return null;
+    if (obj.tag != .str_) return null;
+    return @constCast(@ptrCast(obj.str_data.ptr));
+}
+
+fn ctxAsStructTuple(ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque {
+    _ = ctx;
+    const obj = objOf(h) orelse return null;
+    if (obj.tag != .tuple_) return null;
+    return @ptrCast(obj.tuple_data.ptr);
+}
+
+fn ctxAsStructList(ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque {
+    _ = ctx;
+    const obj = objOf(h) orelse return null;
+    if (obj.tag != .list_) return null;
+    return @ptrCast(&obj.list_data);
+}
+
+/// Gerçek `_HPy_Dump` sözleşmesinin BASİTLEŞTİRİLMİŞ bir karşılığı:
+/// tanılama amaçlı REFCOUNT/ETİKET/REPR bilgisini stderr'e YAZAR — hiçbir
+/// değer DÖNDÜRMEZ, HİÇBİR ZAMAN hata VERMEZ (tanılama araçlarının
+/// KENDİLERİ genelde BAŞARISIZ OLMAMALIDIR).
+fn ctxDump(ctx: *HPyContext, h: HPy) callconv(.c) void {
+    const obj = objOf(h) orelse {
+        std.debug.print("HPy_Dump: <geçersiz tutamaç>\n", .{});
+        return;
+    };
+    const repr = ctxRepr(ctx, h);
+    defer if (repr._i != 0) ctxClose(ctx, repr);
+    if (repr._i != 0) {
+        if (objOf(repr)) |repr_obj| {
+            std.debug.print("HPy_Dump: tag={s} refcount={d} repr={s}\n", .{ @tagName(obj.tag), obj.refcount, repr_obj.str_data });
+            return;
+        }
+    }
+    std.debug.print("HPy_Dump: tag={s} refcount={d}\n", .{ @tagName(obj.tag), obj.refcount });
+}
+
+/// Gerçek `PySlice_Unpack` sözleşmesi — Nox'un nesne modelinde HENÜZ
+/// birinci-sınıf bir `slice` TİPİ YOK (bilinçli v1 sınırlaması); bu
+/// YÜZDEN `slice` parametresi bir GERÇEK Python `slice`in TAŞIDIĞI
+/// İÇERİĞİN (start, stop, step) KENDİSİYLE — 3 elemanlı bir `.tuple_`
+/// (her eleman ya `.long`/`.bool_` ya da `None`, "belirtilmemiş" İçin)
+/// olarak TEMSİL edilir. Varsayılan DEĞERLER gerçek CPython'la BİREBİR
+/// AYNI: `step` `None` İSE `1`; `step<0` İSE `start` `SSIZE_MAX`/`stop`
+/// `SSIZE_MIN`e, `step>0` İSE `start` `0`/`stop` `SSIZE_MAX`e düşer.
+fn ctxSliceUnpack(ctx: *HPyContext, slice: HPy, start: ?*isize, stop: ?*isize, step: ?*isize) callconv(.c) c_int {
+    const obj = objOf(slice) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "slice (3 elemanlı tuple: start, stop, step) bekleniyor");
+        return -1;
+    };
+    if (obj.tag != .tuple_ or obj.tuple_data.len != 3) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "slice (3 elemanlı tuple: start, stop, step) bekleniyor");
+        return -1;
+    }
+    const start_h = obj.tuple_data[0];
+    const stop_h = obj.tuple_data[1];
+    const step_h = obj.tuple_data[2];
+
+    const step_obj = objOf(step_h);
+    var step_v: isize = 1;
+    if (step_obj) |so| {
+        if (so.tag == .long or so.tag == .bool_) {
+            step_v = @intCast(numAsI64(so));
+            if (step_v == 0) {
+                ctxErrSetString(ctx, ctx.h_ValueError, "slice step sıfır olamaz");
+                return -1;
+            }
+        }
+    }
+
+    var start_v: isize = if (step_v < 0) std.math.maxInt(isize) else 0;
+    if (objOf(start_h)) |so| {
+        if (so.tag == .long or so.tag == .bool_) start_v = @intCast(numAsI64(so));
+    }
+
+    var stop_v: isize = if (step_v < 0) std.math.minInt(isize) else std.math.maxInt(isize);
+    if (objOf(stop_h)) |so| {
+        if (so.tag == .long or so.tag == .bool_) stop_v = @intCast(numAsI64(so));
+    }
+
+    if (start) |s| s.* = start_v;
+    if (stop) |s| s.* = stop_v;
+    if (step) |s| s.* = step_v;
+    return 0;
 }
 
 // ---- Attribute erişimi ----
@@ -3047,14 +3213,14 @@ pub const HPyContext = extern struct {
     ctx_LeavePythonExecution: ?*const anyopaque = null,
     ctx_Global_Store: ?*const fn (ctx: *HPyContext, global: ?*HPyGlobal, h: HPy) callconv(.c) void = null,
     ctx_Global_Load: ?*const fn (ctx: *HPyContext, global: HPyGlobal) callconv(.c) HPy = null,
-    ctx_Dump: ?*const anyopaque = null,
-    ctx_AsStruct_Type: ?*const anyopaque = null,
-    ctx_AsStruct_Long: ?*const anyopaque = null,
-    ctx_AsStruct_Float: ?*const anyopaque = null,
-    ctx_AsStruct_Unicode: ?*const anyopaque = null,
-    ctx_AsStruct_Tuple: ?*const anyopaque = null,
-    ctx_AsStruct_List: ?*const anyopaque = null,
-    ctx_Type_GetBuiltinShape: ?*const anyopaque = null,
+    ctx_Dump: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) void = null,
+    ctx_AsStruct_Type: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque = null,
+    ctx_AsStruct_Long: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque = null,
+    ctx_AsStruct_Float: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque = null,
+    ctx_AsStruct_Unicode: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque = null,
+    ctx_AsStruct_Tuple: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque = null,
+    ctx_AsStruct_List: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque = null,
+    ctx_Type_GetBuiltinShape: ?*const fn (ctx: *HPyContext, h_type: HPy) callconv(.c) c_int = null,
     ctx_DelItem: ?*const fn (ctx: *HPyContext, obj: HPy, key: HPy) callconv(.c) c_int = null,
     ctx_DelItem_i: ?*const fn (ctx: *HPyContext, obj: HPy, idx: isize) callconv(.c) c_int = null,
     ctx_DelItem_s: ?*const fn (ctx: *HPyContext, obj: HPy, utf8_key: ?[*:0]const u8) callconv(.c) c_int = null,
@@ -3073,13 +3239,13 @@ pub const HPyContext = extern struct {
     ctx_ContextVar_New: ?*const anyopaque = null,
     ctx_ContextVar_Get: ?*const anyopaque = null,
     ctx_ContextVar_Set: ?*const anyopaque = null,
-    ctx_Type_GetName: ?*const anyopaque = null,
-    ctx_Type_IsSubtype: ?*const anyopaque = null,
+    ctx_Type_GetName: ?*const fn (ctx: *HPyContext, type_h: HPy) callconv(.c) ?[*:0]const u8 = null,
+    ctx_Type_IsSubtype: ?*const fn (ctx: *HPyContext, sub: HPy, type_h: HPy) callconv(.c) c_int = null,
     ctx_Unicode_FromEncodedObject: ?*const fn (ctx: *HPyContext, obj: HPy, encoding: ?[*:0]const u8, errors: ?[*:0]const u8) callconv(.c) HPy = null,
     ctx_Unicode_Substring: ?*const fn (ctx: *HPyContext, str: HPy, start: isize, end: isize) callconv(.c) HPy = null,
     ctx_Dict_Keys: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) HPy = null,
     ctx_Dict_Copy: ?*const fn (ctx: *HPyContext, h: HPy) callconv(.c) HPy = null,
-    ctx_Slice_Unpack: ?*const anyopaque = null,
+    ctx_Slice_Unpack: ?*const fn (ctx: *HPyContext, slice: HPy, start: ?*isize, stop: ?*isize, step: ?*isize) callconv(.c) c_int = null,
     ctx_SetCallFunction: ?*const fn (ctx: *HPyContext, h: HPy, func: ?*HPyCallFunctionLocal) callconv(.c) c_int = null,
     ctx_Call: ?*const fn (ctx: *HPyContext, callable: HPy, args: ?[*]const HPy, nargs: usize, kwnames: HPy) callconv(.c) HPy = null,
     ctx_CallMethod: ?*const fn (ctx: *HPyContext, name: HPy, args: ?[*]const HPy, nargs: usize, kwnames: HPy) callconv(.c) HPy = null,
@@ -3304,6 +3470,17 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
         .ctx_Bytes_FromStringAndSize = ctxBytesFromStringAndSize,
         .ctx_Type = ctxType,
         .ctx_TypeCheck = ctxTypeCheck,
+        .ctx_Type_GetName = ctxTypeGetName,
+        .ctx_Type_IsSubtype = ctxTypeIsSubtype,
+        .ctx_Type_GetBuiltinShape = ctxTypeGetBuiltinShape,
+        .ctx_AsStruct_Type = ctxAsStructType,
+        .ctx_AsStruct_Long = ctxAsStructLong,
+        .ctx_AsStruct_Float = ctxAsStructFloat,
+        .ctx_AsStruct_Unicode = ctxAsStructUnicode,
+        .ctx_AsStruct_Tuple = ctxAsStructTuple,
+        .ctx_AsStruct_List = ctxAsStructList,
+        .ctx_Dump = ctxDump,
+        .ctx_Slice_Unpack = ctxSliceUnpack,
         .ctx_GetAttr = ctxGetAttr,
         .ctx_GetAttr_s = ctxGetAttrS,
         .ctx_HasAttr = ctxHasAttr,
