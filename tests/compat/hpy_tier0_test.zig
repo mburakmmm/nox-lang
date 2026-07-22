@@ -1784,3 +1784,117 @@ test "gerçek HPy eklentisi: slice_unpack_via_c — start/stop/step varsayılanl
         ctx.ctx_Err_Clear.?(ctx);
     }
 }
+
+test "gerçek HPy eklentisi: capsule_new/get/is_valid_via_c — Capsule_New/Get/IsValid + yıkıcı (Faz YY)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const capsule_new = mod.findMethodO("capsule_new_via_c") orelse return error.MethodNotFound;
+    const capsule_get = mod.findMethodO("capsule_get_via_c") orelse return error.MethodNotFound;
+    const capsule_is_valid = mod.findMethodO("capsule_is_valid_via_c") orelse return error.MethodNotFound;
+    const capsule_destroy_count = mod.findMethodO("capsule_destroy_count_via_c") orelse return error.MethodNotFound;
+
+    // `g_capsule_destroy_count` eklentinin KENDİ statik belleğinde
+    // KALICI olduğundan (bkz. Field/Global testlerinin AYNI gerekçesi),
+    // `page_allocator` kullanılır.
+    const ctx = try hpy.context.createContext(std.heap.page_allocator);
+    defer hpy.context.destroyContext(std.heap.page_allocator, ctx);
+
+    const dummy = ctx.ctx_Long_FromInt64_t.?(ctx, 0);
+    defer ctx.ctx_Close.?(ctx, dummy);
+
+    const before = capsule_destroy_count(ctx, hpy.context.HPy_NULL, dummy);
+    defer ctx.ctx_Close.?(ctx, before);
+    const before_n = ctx.ctx_Long_AsInt64_t.?(ctx, before);
+
+    const capsule = capsule_new(ctx, hpy.context.HPy_NULL, dummy);
+    try std.testing.expect(capsule._i != 0);
+
+    const value = capsule_get(ctx, hpy.context.HPy_NULL, capsule);
+    defer ctx.ctx_Close.?(ctx, value);
+    try std.testing.expectEqual(@as(i64, 42), ctx.ctx_Long_AsInt64_t.?(ctx, value));
+
+    const valid_pair = capsule_is_valid(ctx, hpy.context.HPy_NULL, capsule);
+    defer ctx.ctx_Close.?(ctx, valid_pair);
+    const valid_right = ctx.ctx_GetItem_i.?(ctx, valid_pair, 0);
+    defer ctx.ctx_Close.?(ctx, valid_right);
+    const valid_wrong = ctx.ctx_GetItem_i.?(ctx, valid_pair, 1);
+    defer ctx.ctx_Close.?(ctx, valid_wrong);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_IsTrue.?(ctx, valid_right));
+    try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_IsTrue.?(ctx, valid_wrong));
+
+    // Kapsülü kapat — YIKICI tetiklenmeli.
+    ctx.ctx_Close.?(ctx, capsule);
+
+    const after = capsule_destroy_count(ctx, hpy.context.HPy_NULL, dummy);
+    defer ctx.ctx_Close.?(ctx, after);
+    try std.testing.expectEqual(before_n + 1, ctx.ctx_Long_AsInt64_t.?(ctx, after));
+}
+
+test "gerçek HPy eklentisi: contextvar_new/get/set_via_c — varsayılan + üzerine yazma + önceki-değer tokeni (Faz YY)" {
+    const so_path = @import("build_options").noxtest_so_path;
+
+    var mod = try hpy.loader.load(so_path, "noxtest");
+    defer mod.deinit();
+
+    const contextvar_new = mod.findMethodO("contextvar_new_via_c") orelse return error.MethodNotFound;
+    const contextvar_get = mod.findMethodO("contextvar_get_via_c") orelse return error.MethodNotFound;
+    const contextvar_set = mod.findMethodO("contextvar_set_via_c") orelse return error.MethodNotFound;
+
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const ninety_nine = ctx.ctx_Long_FromInt64_t.?(ctx, 99);
+    defer ctx.ctx_Close.?(ctx, ninety_nine);
+    const cv = contextvar_new(ctx, hpy.context.HPy_NULL, ninety_nine);
+    defer ctx.ctx_Close.?(ctx, cv);
+
+    // Henüz `Set` ÇAĞRILMADI — `Get`, ContextVar'ın KENDİ varsayılanına
+    // (99) düşmeli.
+    const v1 = contextvar_get(ctx, hpy.context.HPy_NULL, cv);
+    defer ctx.ctx_Close.?(ctx, v1);
+    try std.testing.expectEqual(@as(i64, 99), ctx.ctx_Long_AsInt64_t.?(ctx, v1));
+
+    const five = ctx.ctx_Long_FromInt64_t.?(ctx, 5);
+    defer ctx.ctx_Close.?(ctx, five);
+    var pair1 = [_]hpy.context.HPy{ cv, five };
+    const tup1 = ctx.ctx_Tuple_FromArray.?(ctx, &pair1, 2);
+    defer ctx.ctx_Close.?(ctx, tup1);
+    const token1 = contextvar_set(ctx, hpy.context.HPy_NULL, tup1);
+    defer ctx.ctx_Close.?(ctx, token1);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Is.?(ctx, token1, ctx.h_None)); // önceden hiç ayarlanmamıştı
+
+    const v2 = contextvar_get(ctx, hpy.context.HPy_NULL, cv);
+    defer ctx.ctx_Close.?(ctx, v2);
+    try std.testing.expectEqual(@as(i64, 5), ctx.ctx_Long_AsInt64_t.?(ctx, v2));
+
+    const seven = ctx.ctx_Long_FromInt64_t.?(ctx, 7);
+    defer ctx.ctx_Close.?(ctx, seven);
+    var pair2 = [_]hpy.context.HPy{ cv, seven };
+    const tup2 = ctx.ctx_Tuple_FromArray.?(ctx, &pair2, 2);
+    defer ctx.ctx_Close.?(ctx, tup2);
+    const token2 = contextvar_set(ctx, hpy.context.HPy_NULL, tup2);
+    defer ctx.ctx_Close.?(ctx, token2);
+    try std.testing.expectEqual(@as(i64, 5), ctx.ctx_Long_AsInt64_t.?(ctx, token2)); // ÖNCEKİ değer (5) döner
+
+    const v3 = contextvar_get(ctx, hpy.context.HPy_NULL, cv);
+    defer ctx.ctx_Close.?(ctx, v3);
+    try std.testing.expectEqual(@as(i64, 7), ctx.ctx_Long_AsInt64_t.?(ctx, v3));
+}
+
+test "gerçek HPy eklentisi: ctx_ContextVar_Get — varsayılansız + ayarlanmamış ContextVar → LookupError (Faz YY, doğrudan Zig'den)" {
+    const ctx = try hpy.context.createContext(std.testing.allocator);
+    defer hpy.context.destroyContext(std.testing.allocator, ctx);
+
+    const cv = ctx.ctx_ContextVar_New.?(ctx, "no_default_var", hpy.context.HPy_NULL);
+    defer ctx.ctx_Close.?(ctx, cv);
+
+    var result: hpy.context.HPy = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Err_Occurred.?(ctx));
+    const rc = ctx.ctx_ContextVar_Get.?(ctx, cv, hpy.context.HPy_NULL, &result);
+    try std.testing.expect(rc < 0);
+    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_LookupError));
+    ctx.ctx_Err_Clear.?(ctx);
+}

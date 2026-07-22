@@ -1403,6 +1403,24 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   kurallarıyla. `noxtest.c`ye 6 yeni modül metodu, `hpy_tier0_test.zig`ye
   4 yeni test — 57/57 yeşil. Kapsam: 180 `ctx_*` fonksiyonundan
   155→**166**'sı implemente (düzeltilmiş, kesin sayım yöntemiyle).
+- **Faz YY — HPy köprüsü: Capsule + ContextVar** (7 fonksiyon:
+  `Capsule_New/Get/IsValid/Set` + `ContextVar_New/Get/Set`). `Capsule`
+  (YENİ `ObjTag.capsule_`), gerçek `PyCapsule`in CPython'a bağımlı
+  OLMAYAN bir kavram olması sayesinde tam sadakatle implemente edildi —
+  yıkıcı, `Obj` yok edilirken gerçek `PyCapsule_Destructor` zamanlamasıyla
+  çağrılır. `ContextVar` (YENİ `ObjTag.contextvar_`), Nox'ta gerçek
+  bağlam yayılımı olmadığından tek bir global yuva olarak implemente
+  edildi; bu ABI diliminde `Reset`/token fonksiyonu olmadığından `Set`
+  dürüstçe önceki değeri döner.
+  **Yan-etki düzeltmesi:** `h_LookupError`/`h_UnicodeEncodeError`/
+  `h_UnicodeDecodeError` (Faz UU/SS'ten beri kullanılan) şimdiye kadar
+  gerçek bir pinned tekile bağlanmamıştı (`HPy_NULL`'da kalmışlardı) —
+  bu, ilgili `ctx_Err_ExceptionMatches` testlerinin her iki taraf da
+  `._i == 0` olduğundan yanlışlıkla "eşleşiyor" görünmesine yol açıyordu.
+  Üçü de artık diğer 15 yerleşik istisna gibi doğru bağlandı.
+  `noxtest.c`ye 7 yeni modül metodu, `hpy_tier0_test.zig`ye 3 yeni test
+  — 60/60 yeşil. Kapsam: 180 `ctx_*` fonksiyonundan 166→**173**'ü
+  implemente.
 
 ## [1.0.0]
 

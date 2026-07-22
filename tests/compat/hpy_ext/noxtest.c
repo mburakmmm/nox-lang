@@ -792,6 +792,94 @@ static HPy slice_unpack_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
     return result;
 }
 
+/* Capsule + ContextVar (Faz YY) test amaçlı: eklentinin KENDİ C kodunun
+ * HPyCapsule_New/Get/IsValid/Set ve HPyContextVar_New/Get/Set
+ * makrolarını (HEPSİ ham ctx_Capsule ve ctx_ContextVar yuvalarına
+ * TRAMPOLİNE eden) ÇAĞIRMASI. */
+static int g_capsule_payload = 42;
+static long g_capsule_destroy_count = 0;
+
+HPyCapsule_DESTRUCTOR(test_capsule_destructor)
+static void test_capsule_destructor_impl(const char *name, void *pointer, void *context)
+{
+    (void)name;
+    (void)pointer;
+    (void)context;
+    g_capsule_destroy_count++;
+}
+
+HPyDef_METH(capsule_new_via_c, "capsule_new_via_c", HPyFunc_O)
+static HPy capsule_new_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    (void)arg;
+    return HPyCapsule_New(ctx, &g_capsule_payload, "noxtest.capsule", &test_capsule_destructor);
+}
+
+HPyDef_METH(capsule_get_via_c, "capsule_get_via_c", HPyFunc_O)
+static HPy capsule_get_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    void *ptr = HPyCapsule_Get(ctx, arg, HPyCapsule_key_Pointer, "noxtest.capsule");
+    if (ptr == NULL) {
+        return HPy_NULL;
+    }
+    int *ip = (int *)ptr;
+    return HPyLong_FromLong(ctx, *ip);
+}
+
+HPyDef_METH(capsule_is_valid_via_c, "capsule_is_valid_via_c", HPyFunc_O)
+static HPy capsule_is_valid_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    int valid_right = HPyCapsule_IsValid(ctx, arg, "noxtest.capsule");
+    int valid_wrong = HPyCapsule_IsValid(ctx, arg, "wrong.name");
+    HPy items[2] = { HPyBool_FromBool(ctx, (bool)valid_right), HPyBool_FromBool(ctx, (bool)valid_wrong) };
+    HPy result = HPyTuple_FromArray(ctx, items, 2);
+    HPy_Close(ctx, items[0]);
+    HPy_Close(ctx, items[1]);
+    return result;
+}
+
+HPyDef_METH(capsule_destroy_count_via_c, "capsule_destroy_count_via_c", HPyFunc_O)
+static HPy capsule_destroy_count_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    (void)arg;
+    return HPyLong_FromLong(ctx, g_capsule_destroy_count);
+}
+
+HPyDef_METH(contextvar_new_via_c, "contextvar_new_via_c", HPyFunc_O)
+static HPy contextvar_new_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    return HPyContextVar_New(ctx, "noxtest_var", arg);
+}
+
+HPyDef_METH(contextvar_get_via_c, "contextvar_get_via_c", HPyFunc_O)
+static HPy contextvar_get_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    HPy result;
+    int32_t rc = HPyContextVar_Get(ctx, arg, HPy_NULL, &result);
+    if (rc < 0) {
+        return HPy_NULL;
+    }
+    return result;
+}
+
+HPyDef_METH(contextvar_set_via_c, "contextvar_set_via_c", HPyFunc_O)
+static HPy contextvar_set_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    HPy var = HPy_GetItem_i(ctx, arg, 0);
+    HPy value = HPy_GetItem_i(ctx, arg, 1);
+    HPy token = HPyContextVar_Set(ctx, var, value);
+    HPy_Close(ctx, var);
+    HPy_Close(ctx, value);
+    return token;
+}
+
 HPyDef_METH(add_one, "add_one", HPyFunc_O)
 static HPy add_one_impl(HPyContext *ctx, HPy self, HPy arg)
 {
@@ -945,6 +1033,13 @@ static HPyDef *module_defines[] = {
     &as_struct_variants_via_c,
     &dump_via_c,
     &slice_unpack_via_c,
+    &capsule_new_via_c,
+    &capsule_get_via_c,
+    &capsule_is_valid_via_c,
+    &capsule_destroy_count_via_c,
+    &contextvar_new_via_c,
+    &contextvar_get_via_c,
+    &contextvar_set_via_c,
     &add_one,
     &str_length,
     &negate,

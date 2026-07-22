@@ -11,7 +11,7 @@
 //! `scripts/gen_hpy_ctx.py`) üretilmiş, bayt-uyumlu bir transkripsiyonunu
 //! GEREKTİRİR — bir eklenti bu struct'a doğrudan (sabit ofsetlerle) erişir,
 //! bu yüzden alan SIRASI ve BOYUTU tam olarak eşleşmelidir. Şu an 180
-//! `ctx_*` alanından **166'sı** GERÇEKTEN implemente (aşağıda özel fonksiyon
+//! `ctx_*` alanından **173'ü** GERÇEKTEN implemente (aşağıda özel fonksiyon
 //! işaretçisi tipleriyle işaretli — TAM/DOĞRU sayı HER ZAMAN şu komutla
 //! doğrulanabilir: `awk '/pub const HPyContext = extern struct \{/,/^\};/'
 //! runtime/hpy_bridge/context.zig | grep -E "^\s*ctx_[A-Za-z0-9_]+: \?\*const
@@ -21,7 +21,7 @@
 //! dönüş TİPİ de `?*anyopaque` OLDUĞUNDAN, gevşek desen YANLIŞLIKLA
 //! implemente EDİLMİŞ fonksiyonları da SAYAR — bu YÜZDEN yukarıdaki TAM
 //! satır-eşleşmesi ZORUNLUDUR); tam liste/tier dökümü İçin bkz. nox-teknik-
-//! spesifikasyon.md §3.12 VE DEVAMI, en son Faz XX) — geri
+//! spesifikasyon.md §3.12 VE DEVAMI, en son Faz YY) — geri
 //! kalanı `null` (kullanılmazlarsa zararsız; bir eklenti bunlardan birini
 //! çağırırsa çökme/segfault olur, bkz. spesifikasyondaki bilinçli
 //! sınırlamalar).
@@ -66,7 +66,7 @@ pub const HPyGlobal = extern struct { _i: isize = 0 };
 /// korunur (bkz. `PINNED_REFCOUNT`) — bu, gerçek CPython'ın `Py_None`/
 /// `Py_True`/`Py_False` tekillerinin de asla serbest bırakılmamasıyla aynı
 /// ruhta bir basitleştirmedir.
-pub const ObjTag = enum(u8) { none, bool_, long, float_, str_, exc_type, list_, tuple_, dict_, type_, instance_, bound_method_, bytes_ };
+pub const ObjTag = enum(u8) { none, bool_, long, float_, str_, exc_type, list_, tuple_, dict_, type_, instance_, bound_method_, bytes_, capsule_, contextvar_ };
 
 /// `HPyType_FromSpec`in bir `type_` nesnesine kaydettiği tek bir örnek
 /// metodu (`HPyDef_Kind_Meth` + `HPyFunc_O` — Tier 0'ın modül metodu
@@ -170,6 +170,26 @@ pub const Obj = struct {
     /// bir çağrıya DAĞITIR.
     bound_method_self: HPy = HPy_NULL,
     bound_method_impl: ?*const fn (ctx: *HPyContext, self: HPy, arg: HPy) callconv(.c) HPy = null,
+    /// Yalnızca `tag == .capsule_` (Faz YY) — gerçek Python `PyCapsule`in
+    /// BİREBİR karşılığı: opak bir işaretçi + BORÇ ALINMIŞ (kopyalanmayan,
+    /// çağıranın statik/kalıcı bellekte tutması BEKLENEN — gerçek
+    /// CPython'ın AYNI sözleşmesi) bir isim + isteğe bağlı bağlam
+    /// işaretçisi + isteğe bağlı YIKICI. `Obj` yok edilirken (`ctxClose`,
+    /// refcount 0'a İNDİĞİNDE) yıkıcı (VARSA) `(name, pointer, context)`
+    /// İLE çağrılır — gerçek `PyCapsule_Destructor`in AYNI zamanlamasıyla.
+    capsule_pointer: ?*anyopaque = null,
+    capsule_name: ?[*:0]const u8 = null,
+    capsule_context: ?*anyopaque = null,
+    capsule_destructor: ?*const fn (name: ?[*:0]const u8, pointer: ?*anyopaque, context: ?*anyopaque) callconv(.c) void = null,
+    /// Yalnızca `tag == .contextvar_` (Faz YY) — Nox'ta gerçek `asyncio`/
+    /// `contextvars` modülünün TAŞIYICI bağlam YAYILIMI (her fiber/
+    /// coroutine'in KENDİ bağlam KOPYASI) YOK (bilinçli v1
+    /// sınırlaması — `HPyGlobal`in "alt-yorumlayıcı ayrımı Nox'ta
+    /// geçerli değil" NOTUYLA AYNI ruhta); bu YÜZDEN TEK bir, bu
+    /// `HPyContext`e ait GLOBAL yuva olarak İMPLEMENTE edilir.
+    contextvar_name: [:0]const u8 = "",
+    contextvar_default: HPy = HPy_NULL,
+    contextvar_current: HPy = HPy_NULL,
 
     pub const Payload = extern union {
         b: bool,
@@ -230,6 +250,16 @@ fn ctxClose(ctx: *HPyContext, h: HPy) callconv(.c) void {
                 if (obj.type_name.len > 0) allocator.free(obj.type_name);
             },
             .bytes_ => allocator.free(obj.bytes_data),
+            .capsule_ => {
+                if (obj.capsule_destructor) |destroy_fn| {
+                    destroy_fn(obj.capsule_name, obj.capsule_pointer, obj.capsule_context);
+                }
+            },
+            .contextvar_ => {
+                if (obj.contextvar_name.len > 0) allocator.free(obj.contextvar_name);
+                if (obj.contextvar_default._i != 0) ctxClose(ctx, obj.contextvar_default);
+                if (obj.contextvar_current._i != 0) ctxClose(ctx, obj.contextvar_current);
+            },
             .instance_ => {
                 // Gerçek HPy sözleşmesi: `tp_destroy`, bellek serbest
                 // bırakılmadan HEMEN ÖNCE ham struct işaretçisiyle çağrılır
@@ -264,7 +294,7 @@ fn ctxLongAsInt64(ctx: *HPyContext, h: HPy) callconv(.c) i64 {
         .long => obj.payload.l,
         .bool_ => if (obj.payload.b) 1 else 0,
         .float_ => @intFromFloat(obj.payload.f),
-        .none, .str_, .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_, .bytes_ => blk: {
+        .none, .str_, .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_, .bytes_, .capsule_, .contextvar_ => blk: {
             ctxErrSetString(ctx, ctx.h_TypeError, "int'e dönüştürülemez");
             break :blk -1;
         },
@@ -388,7 +418,7 @@ fn ctxFloatAsDouble(ctx: *HPyContext, h: HPy) callconv(.c) f64 {
         .float_ => obj.payload.f,
         .long => @floatFromInt(obj.payload.l),
         .bool_ => if (obj.payload.b) 1 else 0,
-        .none, .str_, .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_, .bytes_ => blk: {
+        .none, .str_, .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_, .bytes_, .capsule_, .contextvar_ => blk: {
             ctxErrSetString(ctx, ctx.h_TypeError, "float'a dönüştürülemez");
             break :blk 0;
         },
@@ -776,7 +806,7 @@ fn ctxLength(ctx: *HPyContext, h: HPy) callconv(.c) isize {
         .list_ => @intCast(obj.list_data.items.len),
         .tuple_ => @intCast(obj.tuple_data.len),
         .dict_ => @intCast(obj.dict_data.items.len),
-        .none, .bool_, .long, .float_, .exc_type, .type_, .instance_, .bound_method_ => blk: {
+        .none, .bool_, .long, .float_, .exc_type, .type_, .instance_, .bound_method_, .capsule_, .contextvar_ => blk: {
             ctxErrSetString(ctx, ctx.h_TypeError, "bu tipin bir uzunluğu yok");
             break :blk -1;
         },
@@ -796,7 +826,7 @@ fn ctxIsTrue(ctx: *HPyContext, h: HPy) callconv(.c) c_int {
         .list_ => @intFromBool(obj.list_data.items.len != 0),
         .tuple_ => @intFromBool(obj.tuple_data.len != 0),
         .dict_ => @intFromBool(obj.dict_data.items.len != 0),
-        .exc_type, .type_, .instance_, .bound_method_ => 1,
+        .exc_type, .type_, .instance_, .bound_method_, .capsule_, .contextvar_ => 1,
     };
 }
 
@@ -814,7 +844,7 @@ fn objEquals(a: *Obj, b: *Obj) bool {
         .str_ => std.mem.eql(u8, a.str_data, b.str_data),
         .bytes_ => std.mem.eql(u8, a.bytes_data, b.bytes_data),
         .bool_, .long, .float_ => unreachable, // isNumericTag zaten yakaladı
-        .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_ => a == b,
+        .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_, .capsule_, .contextvar_ => a == b,
     };
 }
 
@@ -987,6 +1017,17 @@ fn reprInto(ctx: *HPyContext, allocator: std.mem.Allocator, buf: *std.ArrayListU
             try buf.appendSlice(allocator, s);
         },
         .bound_method_ => try buf.appendSlice(allocator, "<bound method>"),
+        .capsule_ => {
+            const name_slice: []const u8 = if (obj.capsule_name) |n| std.mem.sliceTo(n, 0) else "NULL";
+            var tmp: [64]u8 = undefined;
+            const s = std.fmt.bufPrint(&tmp, "<capsule object \"{s}\" at 0x{x}>", .{ name_slice, @as(usize, @intCast(obj_h._i)) }) catch "<capsule object>";
+            try buf.appendSlice(allocator, s);
+        },
+        .contextvar_ => {
+            try buf.appendSlice(allocator, "<ContextVar name='");
+            try buf.appendSlice(allocator, obj.contextvar_name);
+            try buf.appendSlice(allocator, "'>");
+        },
     }
 }
 
@@ -1175,7 +1216,7 @@ fn ctxHash(ctx: *HPyContext, obj_h: HPy) callconv(.c) isize {
             }
             break :blk normalizeHash(@bitCast(acc));
         },
-        .exc_type, .type_, .instance_, .bound_method_ => normalizeHash(@intCast(obj_h._i)),
+        .exc_type, .type_, .instance_, .bound_method_, .capsule_, .contextvar_ => normalizeHash(@intCast(obj_h._i)),
         .list_, .dict_ => blk: {
             ctxErrSetString(ctx, ctx.h_TypeError, "hashlanabilir değil");
             break :blk -1;
@@ -2084,6 +2125,164 @@ fn ctxSliceUnpack(ctx: *HPyContext, slice: HPy, start: ?*isize, stop: ?*isize, s
     if (stop) |s| s.* = stop_v;
     if (step) |s| s.* = step_v;
     return 0;
+}
+
+/// `HPyCapsule_Destructor`in (`hpydef.h`ye karşı doğrulandı: `{
+/// cpy_PyCapsule_Destructor cpy_trampoline; HPyFunc_Capsule_Destructor
+/// impl; }`) yerel, bayt-uyumlu bir yansıması — `HPyCallFunctionLocal`in
+/// AYNI deseni (`cpy_trampoline` yalnızca bayt-düzeni İçin, HİÇ okunmaz).
+const HPyCapsuleDestructorLocal = extern struct {
+    cpy_trampoline: ?*const anyopaque = null,
+    impl: ?*const anyopaque = null,
+};
+
+// ---- Capsule + ContextVar (Faz YY) ----
+//
+// `ctx_Capsule_New`/`Get`/`IsValid`/`Set`: gerçek Python `PyCapsule`in
+// BİREBİR karşılığı — CPython'a BAĞIMLI DEĞİL (SAF bir "opak işaretçi +
+// BORÇ ALINMIŞ isim + bağlam + yıkıcı" kavramı), bu YÜZDEN Nox'un KENDİ
+// nesne modelinde TAM sadakatle implemente EDİLEBİLİR (`.capsule_`,
+// Faz TT'nin `.bytes_`iyle AYNI ruhta YENİ bir birinci-sınıf tip).
+//
+// `ctx_ContextVar_*`: gerçek `contextvars.ContextVar`in TAŞIYICI bağlam
+// YAYILIMI (her fiber/coroutine'in KENDİ bağlam KOPYASI) Nox'ta YOK
+// (bilinçli v1 sınırlaması — `HPyGlobal`in "alt-yorumlayıcı ayrımı
+// geçerli değil" notuyla AYNI ruhta) — bu YÜZDEN TEK, bu `HPyContext`e
+// ait GLOBAL bir yuva olarak implemente edilir.
+
+fn capsuleNameMatches(obj: *Obj, utf8_name: ?[*:0]const u8) bool {
+    const want = utf8_name orelse return obj.capsule_name == null;
+    const have = obj.capsule_name orelse return false;
+    return std.mem.eql(u8, std.mem.sliceTo(want, 0), std.mem.sliceTo(have, 0));
+}
+
+fn ctxCapsuleNew(ctx: *HPyContext, pointer: ?*anyopaque, utf8_name: ?[*:0]const u8, destructor: ?*HPyCapsuleDestructorLocal) callconv(.c) HPy {
+    const allocator = contextAllocator(ctx);
+    const obj = allocator.create(Obj) catch {
+        ctxErrNoMemory(ctx);
+        return HPy_NULL;
+    };
+    obj.* = .{ .refcount = 1, .tag = .capsule_, .payload = .{ .l = 0 } };
+    obj.capsule_pointer = pointer;
+    obj.capsule_name = utf8_name;
+    if (destructor) |d| {
+        if (d.impl) |impl| obj.capsule_destructor = @ptrCast(@alignCast(impl));
+    }
+    return .{ ._i = @intCast(@intFromPtr(obj)) };
+}
+
+const HPY_CAPSULE_KEY_POINTER: c_int = 0;
+const HPY_CAPSULE_KEY_NAME: c_int = 1;
+const HPY_CAPSULE_KEY_CONTEXT: c_int = 2;
+const HPY_CAPSULE_KEY_DESTRUCTOR: c_int = 3;
+
+fn ctxCapsuleGet(ctx: *HPyContext, capsule: HPy, key: c_int, utf8_name: ?[*:0]const u8) callconv(.c) ?*anyopaque {
+    const obj = objOf(capsule) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "capsule bekleniyor");
+        return null;
+    };
+    if (obj.tag != .capsule_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "capsule bekleniyor");
+        return null;
+    }
+    if (!capsuleNameMatches(obj, utf8_name)) {
+        ctxErrSetString(ctx, ctx.h_ValueError, "capsule ismi eşleşmiyor");
+        return null;
+    }
+    return switch (key) {
+        HPY_CAPSULE_KEY_POINTER => obj.capsule_pointer,
+        HPY_CAPSULE_KEY_NAME => @constCast(@ptrCast(obj.capsule_name)),
+        HPY_CAPSULE_KEY_CONTEXT => obj.capsule_context,
+        HPY_CAPSULE_KEY_DESTRUCTOR => @constCast(@ptrCast(obj.capsule_destructor)),
+        else => null,
+    };
+}
+
+fn ctxCapsuleIsValid(ctx: *HPyContext, capsule: HPy, utf8_name: ?[*:0]const u8) callconv(.c) c_int {
+    _ = ctx;
+    const obj = objOf(capsule) orelse return 0;
+    if (obj.tag != .capsule_) return 0;
+    return @intFromBool(capsuleNameMatches(obj, utf8_name));
+}
+
+fn ctxCapsuleSet(ctx: *HPyContext, capsule: HPy, key: c_int, value: ?*anyopaque) callconv(.c) c_int {
+    const obj = objOf(capsule) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "capsule bekleniyor");
+        return -1;
+    };
+    if (obj.tag != .capsule_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "capsule bekleniyor");
+        return -1;
+    }
+    switch (key) {
+        HPY_CAPSULE_KEY_POINTER => obj.capsule_pointer = value,
+        HPY_CAPSULE_KEY_NAME => obj.capsule_name = @ptrCast(@alignCast(value)),
+        HPY_CAPSULE_KEY_CONTEXT => obj.capsule_context = value,
+        HPY_CAPSULE_KEY_DESTRUCTOR => obj.capsule_destructor = @ptrCast(@alignCast(value)),
+        else => {
+            ctxErrSetString(ctx, ctx.h_ValueError, "geçersiz capsule anahtarı");
+            return -1;
+        },
+    }
+    return 0;
+}
+
+fn ctxContextVarNew(ctx: *HPyContext, name: ?[*:0]const u8, default_value: HPy) callconv(.c) HPy {
+    const allocator = contextAllocator(ctx);
+    const obj = allocator.create(Obj) catch {
+        ctxErrNoMemory(ctx);
+        return HPy_NULL;
+    };
+    const name_copy = allocator.dupeZ(u8, std.mem.sliceTo(name orelse "", 0)) catch {
+        allocator.destroy(obj);
+        ctxErrNoMemory(ctx);
+        return HPy_NULL;
+    };
+    obj.* = .{ .refcount = 1, .tag = .contextvar_, .payload = .{ .l = 0 } };
+    obj.contextvar_name = name_copy;
+    obj.contextvar_default = if (default_value._i != 0) ctxDup(ctx, default_value) else HPy_NULL;
+    return .{ ._i = @intCast(@intFromPtr(obj)) };
+}
+
+fn ctxContextVarGet(ctx: *HPyContext, context_var: HPy, default_value: HPy, result: ?*HPy) callconv(.c) i32 {
+    const obj = objOf(context_var) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "ContextVar bekleniyor");
+        return -1;
+    };
+    if (obj.tag != .contextvar_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "ContextVar bekleniyor");
+        return -1;
+    }
+    const value = blk: {
+        if (obj.contextvar_current._i != 0) break :blk ctxDup(ctx, obj.contextvar_current);
+        if (default_value._i != 0) break :blk ctxDup(ctx, default_value);
+        if (obj.contextvar_default._i != 0) break :blk ctxDup(ctx, obj.contextvar_default);
+        ctxErrSetString(ctx, ctx.h_LookupError, "ContextVar için değer yok");
+        return -1;
+    };
+    if (result) |r| r.* = value else ctxClose(ctx, value);
+    return 0;
+}
+
+/// Gerçek HPy'de bu, GERÇEK bir "reset token"e karşılık gelir; Nox'ta bu
+/// ABI dilimi HİÇBİR `Reset` fonksiyonu SUNMADIĞINDAN (gerçek `autogen_
+/// ctx.h`e karşı doğrulandı — YALNIZCA New/Get/Set var), döndürülen
+/// tutamacın PRATİK bir KULLANIMI YOK; ÖNCEKİ değeri (varsa, `ctx.h_None`
+/// AKSİ HALDE) DÖNDÜRÜR — dürüst bir "önceki durum" göstergesi.
+fn ctxContextVarSet(ctx: *HPyContext, context_var: HPy, value: HPy) callconv(.c) HPy {
+    const obj = objOf(context_var) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "ContextVar bekleniyor");
+        return HPy_NULL;
+    };
+    if (obj.tag != .contextvar_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "ContextVar bekleniyor");
+        return HPy_NULL;
+    }
+    const old = obj.contextvar_current;
+    const prev_token = if (old._i != 0) ctxDup(ctx, old) else ctxDup(ctx, ctx.h_None);
+    if (old._i != 0) ctxClose(ctx, old);
+    obj.contextvar_current = ctxDup(ctx, value);
+    return prev_token;
 }
 
 // ---- Attribute erişimi ----
@@ -3230,15 +3429,15 @@ pub const HPyContext = extern struct {
     h_CapsuleType: HPy = HPy_NULL,
     h_SliceType: HPy = HPy_NULL,
     h_Builtins: HPy = HPy_NULL,
-    ctx_Capsule_New: ?*const anyopaque = null,
-    ctx_Capsule_Get: ?*const anyopaque = null,
-    ctx_Capsule_IsValid: ?*const anyopaque = null,
-    ctx_Capsule_Set: ?*const anyopaque = null,
+    ctx_Capsule_New: ?*const fn (ctx: *HPyContext, pointer: ?*anyopaque, utf8_name: ?[*:0]const u8, destructor: ?*HPyCapsuleDestructorLocal) callconv(.c) HPy = null,
+    ctx_Capsule_Get: ?*const fn (ctx: *HPyContext, capsule: HPy, key: c_int, utf8_name: ?[*:0]const u8) callconv(.c) ?*anyopaque = null,
+    ctx_Capsule_IsValid: ?*const fn (ctx: *HPyContext, capsule: HPy, utf8_name: ?[*:0]const u8) callconv(.c) c_int = null,
+    ctx_Capsule_Set: ?*const fn (ctx: *HPyContext, capsule: HPy, key: c_int, value: ?*anyopaque) callconv(.c) c_int = null,
     ctx_Compile_s: ?*const anyopaque = null,
     ctx_EvalCode: ?*const anyopaque = null,
-    ctx_ContextVar_New: ?*const anyopaque = null,
-    ctx_ContextVar_Get: ?*const anyopaque = null,
-    ctx_ContextVar_Set: ?*const anyopaque = null,
+    ctx_ContextVar_New: ?*const fn (ctx: *HPyContext, name: ?[*:0]const u8, default_value: HPy) callconv(.c) HPy = null,
+    ctx_ContextVar_Get: ?*const fn (ctx: *HPyContext, context_var: HPy, default_value: HPy, result: ?*HPy) callconv(.c) i32 = null,
+    ctx_ContextVar_Set: ?*const fn (ctx: *HPyContext, context_var: HPy, value: HPy) callconv(.c) HPy = null,
     ctx_Type_GetName: ?*const fn (ctx: *HPyContext, type_h: HPy) callconv(.c) ?[*:0]const u8 = null,
     ctx_Type_IsSubtype: ?*const fn (ctx: *HPyContext, sub: HPy, type_h: HPy) callconv(.c) c_int = null,
     ctx_Unicode_FromEncodedObject: ?*const fn (ctx: *HPyContext, obj: HPy, encoding: ?[*:0]const u8, errors: ?[*:0]const u8) callconv(.c) HPy = null,
@@ -3302,6 +3501,9 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
     const h_not_implemented_error = try pinnedExcType(allocator);
     const h_import_error = try pinnedExcType(allocator);
     const h_os_error = try pinnedExcType(allocator);
+    const h_lookup_error = try pinnedExcType(allocator);
+    const h_unicode_encode_error = try pinnedExcType(allocator);
+    const h_unicode_decode_error = try pinnedExcType(allocator);
 
     state.* = .{ .allocator = allocator, .h_true_obj = h_true, .h_false_obj = h_false };
 
@@ -3327,6 +3529,9 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
         .h_NotImplementedError = h_not_implemented_error,
         .h_ImportError = h_import_error,
         .h_OSError = h_os_error,
+        .h_LookupError = h_lookup_error,
+        .h_UnicodeEncodeError = h_unicode_encode_error,
+        .h_UnicodeDecodeError = h_unicode_decode_error,
         .ctx_Dup = ctxDup,
         .ctx_Close = ctxClose,
         .ctx_Long_FromInt32_t = ctxLongFromInt32,
@@ -3481,6 +3686,13 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
         .ctx_AsStruct_List = ctxAsStructList,
         .ctx_Dump = ctxDump,
         .ctx_Slice_Unpack = ctxSliceUnpack,
+        .ctx_Capsule_New = ctxCapsuleNew,
+        .ctx_Capsule_Get = ctxCapsuleGet,
+        .ctx_Capsule_IsValid = ctxCapsuleIsValid,
+        .ctx_Capsule_Set = ctxCapsuleSet,
+        .ctx_ContextVar_New = ctxContextVarNew,
+        .ctx_ContextVar_Get = ctxContextVarGet,
+        .ctx_ContextVar_Set = ctxContextVarSet,
         .ctx_GetAttr = ctxGetAttr,
         .ctx_GetAttr_s = ctxGetAttrS,
         .ctx_HasAttr = ctxHasAttr,
@@ -3511,6 +3723,7 @@ pub fn destroyContext(allocator: std.mem.Allocator, ctx: *HPyContext) void {
         ctx.h_KeyError,            ctx.h_AttributeError, ctx.h_OverflowError,
         ctx.h_ZeroDivisionError,   ctx.h_MemoryError,    ctx.h_StopIteration,
         ctx.h_NotImplementedError, ctx.h_ImportError,    ctx.h_OSError,
+        ctx.h_LookupError,         ctx.h_UnicodeEncodeError, ctx.h_UnicodeDecodeError,
     };
     for (singletons) |h| allocator.destroy(objOf(h).?);
 

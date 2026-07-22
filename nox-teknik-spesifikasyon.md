@@ -1877,6 +1877,56 @@ kesin sayım yöntemiyle).
 
 ---
 
+### Faz YY — HPy: Capsule + ContextVar
+
+`ctx_Capsule_New`/`Get`/`IsValid`/`Set` + `ctx_ContextVar_New`/`Get`/
+`Set` (7 fonksiyon). **`Capsule`:** gerçek Python `PyCapsule`in BİREBİR
+karşılığı — CPython'a BAĞIMLI OLMAYAN SAF bir "opak işaretçi + BORÇ
+ALINMIŞ isim + bağlam + yıkıcı" kavramı OLDUĞUNDAN, Nox'un KENDİ nesne
+modelinde (YENİ `ObjTag.capsule_`) TAM sadakatle implemente EDİLDİ
+(Faz TT'nin `.bytes_`iyle AYNI ruhta — `ctx_Long_AsVoidPtr` gibi
+"CPython'suz da anlamlı" bir HPy KAVRAMI). `Obj` yok edilirken (`ctxClose`,
+refcount 0'a İNDİĞİNDE) YIKICI (VARSA) gerçek `PyCapsule_Destructor`in
+AYNI zamanlamasıyla `(name, pointer, context)` İLE çağrılır. `_HPyCapsule_
+key` enum'u (`Pointer=0, Name=1, Context=2, Destructor=3`) `hpy.h`ye karşı
+doğrulandı; `HPyCapsule_Destructor` (`{ cpy_trampoline, impl }`)
+`ctxSetCallFunction`in (Faz MM) AYNI bayt-uyumlu yerel-struct deseniyle
+okunur.
+
+**`ContextVar`:** gerçek `contextvars.ContextVar`in TAŞIYICI bağlam
+YAYILIMI (her fiber/coroutine'in KENDİ bağlam KOPYASI) Nox'ta YOK
+(bilinçli v1 sınırlaması — `HPyGlobal`in "alt-yorumlayıcı ayrımı geçerli
+değil" notuyla AYNI ruhta) — bu YÜZDEN TEK, bu `HPyContext`e ait GLOBAL
+bir yuva (YENİ `ObjTag.contextvar_`) olarak implemente edilir. `Get`
+sırası: KENDİ ayarlanmış değeri → `Get`e VERİLEN `default_value`
+parametresi → `ContextVar`in KENDİ (`New`daki) varsayılanı → hiçbiri
+yoksa `LookupError`. `Set`in DÖNDÜRDÜĞÜ değer: gerçek HPy ABI'sinde bu
+dilimde (`autogen_ctx.h`e karşı doğrulandı) HİÇBİR `Reset`/token
+fonksiyonu YOK — bu YÜZDEN dönen tutamacın PRATİK bir kullanımı yok;
+dürüstçe "ÖNCEKİ değer" (yoksa `None`) olarak implemente edildi.
+
+**Yan-etki DÜZELTMESİ (bu faz sırasında keşfedildi):** `h_LookupError`/
+`h_UnicodeEncodeError`/`h_UnicodeDecodeError` (Faz UU/SS'TEN BERİ
+KULLANILAN) ŞİMDİYE kadar `createContext`te GERÇEK bir pinned tekile
+BAĞLANMAMIŞTI — HPy_NULL'DA KALMIŞLARDI. Bu, `ctx_Err_ExceptionMatches`
+çağrılarının (HER İKİ taraf da `._i == 0` olduğundan) YANLIŞLIKLA
+"eşleşiyor" görünmesine (gerçek bir doğrulama OLMADAN) yol AÇIYORDU —
+Faz UU/SS'in İLGİLİ testleri BU YÜZDEN "yeşildi" ama GERÇEKTEN doğru
+istisna TİPİNİ doğrulamıyordu. Üçü de ARTIK `pinnedExcType` İLE (diğer
+15 yerleşik istisna GİBİ) DOĞRU şekilde bağlandı ve `destroyContext`in
+temizlik listesine EKLENDİ.
+
+**Doğrulama:** `noxtest.c`ye 7 yeni modül metodu (`HPyCapsule_DESTRUCTOR`
+makrosuyla GERÇEK bir yıkıcı KAYDEDEN bir capsule; ContextVar New/Get/
+Set zinciri). `hpy_tier0_test.zig`ye 3 yeni test (capsule yıkıcı
+tetiklenmesi DAHİL; ContextVar varsayılan/üzerine-yazma/önceki-değer
+tokeni/`LookupError`). Toplam: 60/60 (bu dosyada, DÜZELTMEDEN SONRA
+Faz UU/SS'in İLGİLİ testleri de DAHİL — HEPSİ hâlâ yeşil, bu SEFER
+GERÇEKTEN doğru istisna tipini doğrulayarak). Kapsam: 180 `ctx_*`
+fonksiyonundan 166→**173**'ü implemente.
+
+---
+
 ### 3.20 Faz 20 Uygulama Kapsamı — Zig/C ABI FFI (`extern def`)
 
 **Durum: UYGULANDI.** Kullanıcının isteği: Nox'un HPy/WASM
