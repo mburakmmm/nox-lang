@@ -14,6 +14,31 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.2.0]
+
+### Eklendi
+- **Modern bir CLI yardım ekranı** (`noxc --help`/`-h`/`help`, VE artık
+  çıplak `noxc` da) — kullanıcı geri bildirimi: önceden bare `noxc`
+  yalnızca tek satırlık bir "kullanim" mesajı veriyordu, cargo/go/npm
+  gibi araçların KENDİ `--help` çıktılarıyla KIYASLANABİLİR bir ekran
+  YOKTU. Yeni ekran TÜM alt komutları (build/run/test/check/fmt/init/
+  fetch/update/search/version) kısa açıklamalarla + ortak bayraklarla +
+  örneklerle listeler. **Sistem diline göre otomatik yerelleştirilir**
+  (Türkçe/İngilizce): `LC_ALL`/`LC_MESSAGES`/`LANG` (bu ÖNCELİK SIRASIYLA,
+  `gettext`in KENDİ standart çözümleme kuralı) `tr` İLE BAŞLIYORSA Türkçe;
+  Windows'ta bu değişkenler genelde AYARLANMADIĞINDAN, hiçbiri
+  BULUNAMAZSA `GetUserDefaultUILanguage` (kernel32) YEDEK olarak
+  kullanılır.
+- **Bilinmeyen bir alt komut artık ham bir `error: FileNotFound` Zig
+  panik izi YERİNE anlaşılır bir ipucu verir.** `noxc upgrade` gibi
+  mistyped/mevcut olmayan bir alt komut, tanınan hiçbir anahtar
+  kelimeyle eşleşmediğinden eski "tekil-dosya" (`.legacy`) yoluna
+  düşüyor VE o ismi bir DOSYA sanıp açmaya çalışıyordu — `.nox` İLE
+  BİTMEYEN bir yol İçin artık "bilinmeyen komut ya da dosya: '...' —
+  komutlar icin: noxc --help" mesajı (yerelleştirilmiş) verilir; GERÇEK
+  bir eksik `.nox` dosyası İçin de (ham panik izi yerine) sade bir
+  "dosya bulunamadi: ..." mesajı eklendi.
+
 ## [1.1.1]
 
 ### Düzeltildi

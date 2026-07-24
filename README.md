@@ -138,6 +138,7 @@ gerektirir).
 ## Kullanım
 
 ```sh
+noxc --help                 # tüm alt komutları listeleyen bir yardım ekranı (sistem diline göre TR/EN)
 noxc init myproject         # yeni bir proje iskeleti oluşturur (nox.json + main.nox)
 noxc check main.nox         # sadece tip denetimi — codegen/qbe/cc yok, hızlı geri bildirim
 noxc build main.nox         # main.nox'u derler, "main" ikilisini üretir

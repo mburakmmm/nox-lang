@@ -141,6 +141,7 @@ privileges anyway).
 ## Usage
 
 ```sh
+noxc --help                 # a help screen listing all subcommands (localized TR/EN by system language)
 noxc init myproject         # scaffolds a new project (nox.json + main.nox)
 noxc check main.nox         # type-checking only — no codegen/qbe/cc, fast feedback
 noxc build main.nox         # compiles main.nox, produces the "main" binary

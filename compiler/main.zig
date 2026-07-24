@@ -44,11 +44,121 @@ const build_options = @import("build_options");
 // ÜZERİNDEN yapılır.
 var g_use_color: bool = false;
 
+/// `g_use_color` İLE AYNI "main() başında BİR KEZ hesapla, süreç-geneli
+/// oku" deseni — bkz. `detectTurkishLocale`nin belge notu. `buildOne`nin
+/// dosya-bulunamadı İPUCU mesajı (bkz. onun belge notu) GİBİ, sinyali
+/// HER çağıran fonksiyonun imzasına AYRI AYRI eklemek yerine BURADAN okur.
+var g_is_tr: bool = false;
+
 fn detectUseColor(io: std.Io, environ_map: *const std.process.Environ.Map) bool {
     if (environ_map.get("NO_COLOR")) |v| {
         if (v.len > 0) return false;
     }
     return std.Io.File.stderr().supportsAnsiEscapeCodes(io) catch false;
+}
+
+/// Bulundu (kullanıcı geri bildirimi, 2026-07-24): `noxc` çıplak
+/// çalıştırıldığında modern dillerin (cargo/go/npm) CLI'ları gibi bir
+/// yardım ekranı GÖSTERMİYORDU, yalnızca tek satırlık bir "kullanim: noxc
+/// [--dump|-v] <dosya.nox>" mesajı veriyordu — bkz. `printHelp`. Bu, o
+/// yardım ekranının HANGİ dilde (Türkçe/İngilizce) gösterileceğini,
+/// `detectUseColor`in `NO_COLOR`/isatty tespitiyle AYNI "BİR KEZ, main()
+/// başında hesapla" deseniyle belirler. POSIX (`LC_ALL`/`LC_MESSAGES`/
+/// `LANG`, TAM OLARAK bu öncelik SIRASIYLA — `gettext`in KENDİ, standart
+/// çözümleme kuralı) öncelikli KAYNAK; Windows'ta bu değişkenler genelde
+/// AYARLANMADIĞINDAN (PowerShell/cmd varsayılanı), hiçbiri BULUNAMAZSA
+/// `GetUserDefaultUILanguage`in (kernel32) döndürdüğü LANGID'in birincil
+/// dil kodu Türkçe (`0x1F`) İLE karşılaştırılarak YEDEK olarak kullanılır.
+fn detectTurkishLocale(environ_map: *const std.process.Environ.Map) bool {
+    inline for (.{ "LC_ALL", "LC_MESSAGES", "LANG" }) |key| {
+        if (environ_map.get(key)) |v| {
+            if (v.len > 0) return std.ascii.startsWithIgnoreCase(v, "tr");
+        }
+    }
+    if (builtin.os.tag == .windows) {
+        const Win32 = struct {
+            extern "kernel32" fn GetUserDefaultUILanguage() callconv(.c) u16;
+        };
+        const langid = Win32.GetUserDefaultUILanguage();
+        const primary_lang_id = langid & 0x3FF;
+        const lang_turkish = 0x1F;
+        return primary_lang_id == lang_turkish;
+    }
+    return false;
+}
+
+/// Bare `noxc` (alt komutsuz) VE `noxc --help`/`-h`/`help` İÇİN modern,
+/// kategorize edilmiş bir CLI yardım ekranı — cargo/go/npm gibi araçların
+/// KENDİ `--help` çıktılarıyla AYNI ruhta (kısa açıklama + "Kullanım" +
+/// kategorize alt komut listesi + örnekler). Renksiz de OKUNAKLI kalacak
+/// şekilde tasarlandı (`g_use_color` bu ekranda KASITLI olarak
+/// KULLANILMAZ — bir yardım ekranı, bir hata/başarı durumu DEĞİLDİR).
+fn printHelp(is_tr: bool) void {
+    if (is_tr) {
+        std.debug.print(
+            \\noxc {s} — Nox dili derleyicisi ve proje aracı
+            \\
+            \\Kullanım:
+            \\  noxc <dosya.nox>              dosyayı derler + çalıştırır (build'in kısayolu)
+            \\  noxc <alt-komut> [seçenekler]
+            \\
+            \\Alt komutlar:
+            \\  build <dosya.nox>     derler, çalıştırılabilir bir ikili üretir
+            \\  run <dosya.nox>       derler + hemen çalıştırır (-- ile argv iletilir)
+            \\  test                  CWD altındaki tüm *_test.nox dosyalarını keşfedip çalıştırır
+            \\  check <dosya.nox>     yalnızca tip denetimi yapar (codegen/qbe/cc yok, hızlı)
+            \\  fmt <dosya.nox>       dosyayı standart biçimde yeniden yazar
+            \\  init [ad]             yeni bir proje iskeleti oluşturur (nox.json + main.nox)
+            \\  fetch                 nox.json'daki bağımlılıkları önbelleğe doldurur
+            \\  update                bağımlılıkları en son ref'lerine yeniden çözer, nox.lock'u günceller
+            \\  search <indeks> [q]   bir paket indeksini (dosya veya URL) sorgular
+            \\  version               sürüm bilgisini yazdırır (--version/-V ile aynı)
+            \\
+            \\Ortak seçenekler:
+            \\  --dump, -v             ayrıntılı/AST dökümü (build/run/check ile)
+            \\  -o <çıktı>             çıktı ikilisinin adı (yalnızca build ile)
+            \\
+            \\Örnekler:
+            \\  noxc run main.nox -- a b c
+            \\  noxc build -o app main.nox
+            \\  noxc search https://example.com/index.json http
+            \\
+            \\Daha fazla bilgi: https://github.com/mburakmmm/nox-lang
+            \\
+        , .{build_options.version});
+    } else {
+        std.debug.print(
+            \\noxc {s} — the Nox language compiler and project tool
+            \\
+            \\Usage:
+            \\  noxc <file.nox>              compile + run the file (shortcut for build)
+            \\  noxc <subcommand> [options]
+            \\
+            \\Subcommands:
+            \\  build <file.nox>      compile, producing an executable binary
+            \\  run <file.nox>        compile + run immediately (argv after --)
+            \\  test                  discover and run all *_test.nox files under the CWD
+            \\  check <file.nox>      type-check only (no codegen/qbe/cc, fast feedback)
+            \\  fmt <file.nox>        rewrite the file in the standard format
+            \\  init [name]           scaffold a new project (nox.json + main.nox)
+            \\  fetch                 populate the dependency cache from nox.json
+            \\  update                re-resolve dependencies to their latest refs, update nox.lock
+            \\  search <index> [q]    query a package index (file or URL)
+            \\  version               print version info (same as --version/-V)
+            \\
+            \\Common options:
+            \\  --dump, -v             verbose/AST dump (with build/run/check)
+            \\  -o <output>            output binary name (build only)
+            \\
+            \\Examples:
+            \\  noxc run main.nox -- a b c
+            \\  noxc build -o app main.nox
+            \\  noxc search https://example.com/index.json http
+            \\
+            \\More info: https://github.com/mburakmmm/nox-lang
+            \\
+        , .{build_options.version});
+    }
 }
 
 /// `std.debug.print`in AYNISI, `g_use_color` İSE `fmt`i KIRMIZI ANSI
@@ -130,9 +240,18 @@ pub fn main(init: std.process.Init) !void {
         .parent_environ_map = init.environ_map,
     };
 
-    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, init, check, version, legacy };
+    const is_tr = detectTurkishLocale(init.environ_map);
+    g_is_tr = is_tr;
+
+    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, init, check, version, help, legacy };
     const sub: Subcommand = blk: {
-        if (all_args.items.len == 0) break :blk .legacy;
+        // Bulundu (kullanıcı geri bildirimi): çıplak `noxc` ÖNCEDEN `.legacy`ye
+        // düşüp `cmdBuild`i argümansız çağırıyordu — tek satırlık bir
+        // "kullanim" mesajı VERİYORDU ama modern bir yardım ekranı DEĞİLDİ.
+        // Artık `.help`e gider (bkz. `printHelp`) — bu, "argümansız çalıştırma"
+        // hiçbir GEÇERLİ dosya derlemesi ANLAMINA GELMEDİĞİNDEN, `.legacy`nin
+        // "geriye dönük uyumlu tekil-dosya" sözleşmesini BOZMAZ.
+        if (all_args.items.len == 0) break :blk .help;
         const first = all_args.items[0];
         if (std.mem.eql(u8, first, "build")) break :blk .build;
         if (std.mem.eql(u8, first, "run")) break :blk .run;
@@ -148,13 +267,15 @@ pub fn main(init: std.process.Init) !void {
         // ÇAKIŞMAZ) VE `--version`/`version` KULLANILIR — `rustc`/`go`/`node`
         // İLE TUTARLI bir dizi eşanlamlı.
         if (std.mem.eql(u8, first, "version") or std.mem.eql(u8, first, "--version") or std.mem.eql(u8, first, "-V")) break :blk .version;
+        if (std.mem.eql(u8, first, "help") or std.mem.eql(u8, first, "--help") or std.mem.eql(u8, first, "-h")) break :blk .help;
         break :blk .legacy;
     };
-    const rest: []const []const u8 = if (sub == .legacy) all_args.items else all_args.items[1..];
+    const rest: []const []const u8 = if (sub == .legacy or all_args.items.len == 0) all_args.items else all_args.items[1..];
 
     switch (sub) {
         .build => try cmdBuild(gpa, io, a, rest, "kullanim: noxc build [--dump|-v] [-o <cikti>] <dosya.nox>\n", nox_home, resource_dirs, fetch_policy),
-        .legacy => try cmdBuild(gpa, io, a, rest, "kullanim: noxc [--dump|-v] <dosya.nox>\n", nox_home, resource_dirs, fetch_policy),
+        .legacy => try cmdBuild(gpa, io, a, rest, "kullanim: noxc [--dump|-v] <dosya.nox>  (komutlar icin: noxc --help)\n", nox_home, resource_dirs, fetch_policy),
+        .help => printHelp(is_tr),
         .run => try cmdRun(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
         .test_cmd => try cmdTest(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
         .fmt => try cmdFmt(gpa, io, a, rest),
@@ -881,7 +1002,30 @@ fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
 /// çıkış kodu) doğrudan `std.process.exit(1)` çağırır — `cmdBuild`/`cmdRun`
 /// bu davranışı DEĞİŞTİRMEDEN miras alır.
 fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: []const u8, verbose: bool, output_override: ?[]const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, debug_info: bool, fetch_policy: fetch.FetchPolicy) ![]const u8 {
-    const source = try std.Io.Dir.cwd().readFileAlloc(io, path_arg, gpa, .limited(1024 * 1024));
+    // Bulundu (kullanıcı geri bildirimi): `noxc upgrade` gibi mistyped/
+    // bilinmeyen bir alt komut, tanınan HİÇBİR anahtar kelimeyle
+    // eşleşmediğinden `.legacy`ye (bkz. `main`'in belge notu) düşüp
+    // BURAYA "upgrade" isimli bir DOSYA olarak geliyordu — ham "error:
+    // FileNotFound" mesajı KAFA KARIŞTIRICIYDI. `.nox` İLE BİTMEYEN bir
+    // yol İçin (GERÇEK bir `.nox` dosyası YANLIŞLIKLA silinmiş/taşınmış
+    // olma İHTİMALİNİ hâlâ AYRI tutarak) bilinmeyen-komut İPUCU eklenir.
+    const source = std.Io.Dir.cwd().readFileAlloc(io, path_arg, gpa, .limited(1024 * 1024)) catch |err| {
+        if (err == error.FileNotFound) {
+            if (std.mem.endsWith(u8, path_arg, ".nox")) {
+                if (g_is_tr) {
+                    printErr("dosya bulunamadi: {s}\n", .{path_arg});
+                } else {
+                    printErr("file not found: {s}\n", .{path_arg});
+                }
+            } else if (g_is_tr) {
+                printErr("bilinmeyen komut ya da dosya: '{s}' — komutlar icin: noxc --help\n", .{path_arg});
+            } else {
+                printErr("unknown command or file: '{s}' — for commands, run: noxc --help\n", .{path_arg});
+            }
+            std.process.exit(1);
+        }
+        return err;
+    };
     defer gpa.free(source);
 
     const tokens = try lexer.tokenize(a, source);
