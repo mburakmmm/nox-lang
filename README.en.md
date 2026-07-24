@@ -149,6 +149,7 @@ noxc run main.nox -- a b c  # compiles + runs, forwarding argv
 noxc test                   # discovers and runs all *_test.nox files under the CWD
 noxc fetch                  # populates the dependency cache from nox.json
 noxc update                 # re-resolves dependencies to their latest refs, updates nox.lock
+noxc upgrade [--check]      # self-updates noxc itself (binary+runtime+stdlib) to the latest release
 ```
 
 If a project needs one or more third-party dependencies, define a

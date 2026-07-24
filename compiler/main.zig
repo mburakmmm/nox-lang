@@ -31,6 +31,7 @@ const qbe_target = @import("qbe_target.zig");
 const test_runner = @import("pkg/test_runner.zig");
 const fetch = @import("pkg/fetch.zig");
 const pkg_index = @import("pkg/index.zig");
+const upgrade_mod = @import("pkg/upgrade.zig");
 const formatter = @import("fmt/formatter.zig");
 const build_options = @import("build_options");
 
@@ -112,6 +113,7 @@ fn printHelp(is_tr: bool) void {
             \\  fetch                 nox.json'daki bağımlılıkları önbelleğe doldurur
             \\  update                bağımlılıkları en son ref'lerine yeniden çözer, nox.lock'u günceller
             \\  search <indeks> [q]   bir paket indeksini (dosya veya URL) sorgular
+            \\  upgrade [--check] [s] noxc'nin kendisini en son (ya da belirtilen) surume gunceller
             \\  version               sürüm bilgisini yazdırır (--version/-V ile aynı)
             \\
             \\Ortak seçenekler:
@@ -144,6 +146,7 @@ fn printHelp(is_tr: bool) void {
             \\  fetch                 populate the dependency cache from nox.json
             \\  update                re-resolve dependencies to their latest refs, update nox.lock
             \\  search <index> [q]    query a package index (file or URL)
+            \\  upgrade [--check] [v] self-update noxc to the latest (or a given) version
             \\  version               print version info (same as --version/-V)
             \\
             \\Common options:
@@ -243,7 +246,15 @@ pub fn main(init: std.process.Init) !void {
     const is_tr = detectTurkishLocale(init.environ_map);
     g_is_tr = is_tr;
 
-    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, init, check, version, help, legacy };
+    // `noxc upgrade` (bkz. `pkg/upgrade.zig`nin modül üstü notu) — YALNIZCA-
+    // TEST override'ları, `NOX_HOME`/`NOX_RESOURCE_DIR` İLE AYNI "BİR KEZ
+    // oku, açıkça ilet" disiplini (GERÇEK kullanımda İKİSİ de VERİLMEZ,
+    // varsayılan GERÇEK GitHub URL'leri kullanılır).
+    var upgrade_policy: upgrade_mod.UpgradePolicy = .{};
+    if (init.environ_map.get("NOX_UPGRADE_API_BASE")) |v| upgrade_policy.api_base = try a.dupe(u8, v);
+    if (init.environ_map.get("NOX_UPGRADE_DOWNLOAD_BASE")) |v| upgrade_policy.download_base = try a.dupe(u8, v);
+
+    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, init, check, version, help, upgrade, legacy };
     const sub: Subcommand = blk: {
         // Bulundu (kullanıcı geri bildirimi): çıplak `noxc` ÖNCEDEN `.legacy`ye
         // düşüp `cmdBuild`i argümansız çağırıyordu — tek satırlık bir
@@ -268,6 +279,7 @@ pub fn main(init: std.process.Init) !void {
         // İLE TUTARLI bir dizi eşanlamlı.
         if (std.mem.eql(u8, first, "version") or std.mem.eql(u8, first, "--version") or std.mem.eql(u8, first, "-V")) break :blk .version;
         if (std.mem.eql(u8, first, "help") or std.mem.eql(u8, first, "--help") or std.mem.eql(u8, first, "-h")) break :blk .help;
+        if (std.mem.eql(u8, first, "upgrade")) break :blk .upgrade;
         break :blk .legacy;
     };
     const rest: []const []const u8 = if (sub == .legacy or all_args.items.len == 0) all_args.items else all_args.items[1..];
@@ -285,7 +297,80 @@ pub fn main(init: std.process.Init) !void {
         .update => try cmdUpdate(io, a, rest, nox_home, fetch_policy),
         .init => try cmdInit(io, a, rest),
         .check => try cmdCheck(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
+        .upgrade => try cmdUpgrade(a, io, rest, resource_dir_override, upgrade_policy, fetch_policy, is_tr),
     }
+}
+
+/// `noxc upgrade [--check] [<sürüm>]` — bkz. `pkg/upgrade.zig`nin modül
+/// üstü notu (tasarım/güvenlik modeli). `<sürüm>` (ör. `v1.3.0`) VERİLİRSE
+/// ağ çağrısı OLMADAN o sürüme sabitlenir (düşürme DAHİL); VERİLMEZSE
+/// GitHub'ın "latest release"i çözülür. `--check`, kurulum/indirmeyi
+/// ATLAYIP yalnızca mevcut/en-son sürümü KARŞILAŞTIRIP raporlar (script'ler
+/// İçin: güncelse çıkış 0, YENİ bir sürüm VARSA çıkış 1).
+fn cmdUpgrade(a: std.mem.Allocator, io: std.Io, args: []const []const u8, resource_dir_override: ?[]const u8, policy: upgrade_mod.UpgradePolicy, fetch_policy: fetch.FetchPolicy, is_tr: bool) !void {
+    var check_only = false;
+    var explicit_version: ?[]const u8 = null;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--check")) {
+            check_only = true;
+        } else if (explicit_version == null) {
+            explicit_version = arg;
+        }
+    }
+
+    const target_tag = upgrade_mod.resolveTargetVersion(a, io, explicit_version, policy, fetch_policy) catch |err| {
+        if (is_tr) printErr("surum cozulemedi ({t})\n", .{err}) else printErr("failed to resolve version ({t})\n", .{err});
+        std.process.exit(1);
+    };
+
+    const up_to_date = upgrade_mod.isAlreadyUpToDate(a, target_tag) catch false;
+
+    // `--check`: KURULUM/İNDİRME hiç TETİKLENMEZ, yalnızca `target_tag`
+    // (açık sürüm VERİLDİYSE OYSA, aksi halde "latest release") mevcut
+    // sürümle KARŞILAŞTIRILIP raporlanır. Bu, AŞAĞIDAKİ "explicit_version
+    // VERİLMİŞSE zorla yeniden kur" DAVRANIŞINDAN AYRIDIR (bkz. o dalın
+    // belge notu) — `--check` HİÇBİR ZAMAN kurulum YAPMADIĞINDAN, açık bir
+    // sürüm PIN'i BİLE mevcutla EŞİTSE "zaten güncel" (çıkış 0) raporlamak
+    // DOĞRU davranıştır.
+    if (check_only) {
+        const current = upgrade_mod.currentVersionTag(a) catch "?";
+        if (up_to_date) {
+            if (is_tr) printOk("zaten guncel: {s}\n", .{current}) else printOk("already up to date: {s}\n", .{current});
+            std.process.exit(0);
+        }
+        if (is_tr) {
+            std.debug.print("mevcut surum: {s}\nen son surum: {s}\n", .{ current, target_tag });
+        } else {
+            std.debug.print("current version: {s}\nlatest version: {s}\n", .{ current, target_tag });
+        }
+        std.process.exit(1);
+    }
+
+    // Açık bir sürüm VERİLMEDİYSE VE zaten güncelse, kurulum/indirmeye HİÇ
+    // GEREK YOK. Açık bir sürüm VERİLDİYSE (`noxc upgrade v1.2.0`), bu AYNI
+    // sürüme BİLE olsa BİLİNÇLİ bir yeniden-kurulum İSTEĞİ sayılır — devam
+    // edilir (`rustup`/`brew`nin "reinstall" semantiğiyle TUTARLI).
+    if (up_to_date and explicit_version == null) {
+        const current = upgrade_mod.currentVersionTag(a) catch target_tag;
+        if (is_tr) printOk("zaten guncel: {s}\n", .{current}) else printOk("already up to date: {s}\n", .{current});
+        return;
+    }
+
+    const asset = upgrade_mod.currentPlatformAsset() orelse {
+        if (is_tr) {
+            printErr("bu platform icin onceden derlenmis bir surum yok -- kaynaktan derleyin: bkz. CONTRIBUTING.md\n", .{});
+        } else {
+            printErr("no prebuilt release for this platform -- build from source: see CONTRIBUTING.md\n", .{});
+        }
+        std.process.exit(1);
+    };
+
+    const install_root = try project.resolveInstallRoot(a, io, resource_dir_override);
+    upgrade_mod.performUpgrade(a, io, target_tag, asset, install_root, policy, fetch_policy) catch |err| {
+        if (is_tr) printErr("guncelleme basarisiz ({t})\n", .{err}) else printErr("upgrade failed ({t})\n", .{err});
+        std.process.exit(1);
+    };
+    if (is_tr) printOk("guncellendi: {s}\n", .{target_tag}) else printOk("upgraded to: {s}\n", .{target_tag});
 }
 
 /// Faz Y.1: `noxc search <indeks-dosyasi.json> [sorgu]` — hafif, statik

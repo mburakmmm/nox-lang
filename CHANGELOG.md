@@ -14,9 +14,44 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
-## [1.2.0]
+## [1.3.0]
 
 ### Eklendi
+- **`noxc upgrade [--check] [<sürüm>]`** — kurulu bir Nox araç zincirini
+  (binary + `noxrt.o` + `nox.*` stdlib) KENDİ KENDİNE en son (ya da
+  belirtilen — düşürme DAHİL) GitHub Release'e günceller, `install.sh`/
+  `install.ps1`yi yeniden çalıştırmaya GEREK KALMADAN. Plan Mode ile
+  tasarlandı (2 Explore + 1 Plan ajanı) VE GERÇEK GitHub altyapısına
+  karşı (bir `/tmp` kopyasında, GERÇEK kurulu sistem HİÇ dokunulmadan)
+  uçtan uca doğrulandı: `v1.0.0`e düşürüldü, SONRA açık bir sürüm PIN'iyle
+  `v1.2.0`a geri yükseltildi, HER İKİ durumda da sonuç ikilinin KENDİ
+  `--version`i doğrulandı. `--check`, kurulum/indirmeyi ATLAYIP yalnızca
+  mevcut/en-son sürümü karşılaştırıp raporlar (script'ler İçin: güncelse
+  çıkış 0, YENİ bir sürüm VARSA çıkış 1).
+  **Güvenli değiştirme modeli:** indirme+çıkarma TAMAMEN bir `.upgrade-
+  scratch` geçici dizininde yapılır (HERHANGİ bir aşama BAŞARISIZ olursa
+  MEVCUT kurulum HİÇ dokunulmadan kalır — `install.sh`/`ps1`nin YIKICI
+  "önce SİL" modelinden DAHA GÜVENLİ); yalnızca `bin/{noxc,noxlsp,qbe}`
+  Windows'ta ÖNCE yeniden adlandırılıp (ÇALIŞAN bir `.exe` SİLİNEMEZ/
+  ÜZERİNE YAZILAMAZ ama YENİDEN ADLANDIRILABİLİR) SONRA değiştirilir;
+  geri kalan HER ŞEY doğrudan üzerine yazılır (Unix'te `Dir.copyFile`
+  ZATEN rename-tabanlı atomik bir değiştirme yapar). İndirilen arşivin
+  SHA-256'sı (`release.yml`nin HER varlığın YANINA koyduğu `.sha256`
+  dosyasıyla) doğrulanır.
+- **Yeni sürüm otomasyonu politikası (`VERSIONING.md` §4)**:
+  `scripts/bump_version.sh {patch|minor|major}` + `main`e giden HER
+  commit'in KENDİ git tag'i + GERÇEK GitHub Release'i olarak yayımlanması
+  (`.github/workflows/release.yml` ZATEN vardı, YALNIZCA sık sık
+  tag'lenme disiplini YENİ). Eski `X.Y.0-dev` son eki bu YÜZDEN
+  KALDIRILDI. **İlk release (v1.1.0) GERÇEK bir regresyon YAKALADI:**
+  Zig 0.16'nın `std.DynLib`i Windows İçin HİÇBİR implementasyon
+  TAŞIMIYOR (`dynamic_library.zig`nin `switch`i yalnızca Linux/macOS/
+  BSD'yi kapsıyor, `else` dalı BİLİNÇLİ bir `@compileError`dır) —
+  `nox.sqlite`nin Zig kabuğu bu YÜZDEN Windows'ta `noxrt.o`nun (sqlite
+  KULLANMAYAN programlar DAHİL) DERLENMESİNİ bozuyordu; `v1.1.1`de
+  `crypto.zig`nin `advapi32` özel-durumuyla AYNI desende (Windows'ta
+  `std.DynLib` YERİNE `kernel32.LoadLibraryA`/`GetProcAddress`)
+  düzeltildi.
 - **Modern bir CLI yardım ekranı** (`noxc --help`/`-h`/`help`, VE artık
   çıplak `noxc` da) — kullanıcı geri bildirimi: önceden bare `noxc`
   yalnızca tek satırlık bir "kullanim" mesajı veriyordu, cargo/go/npm

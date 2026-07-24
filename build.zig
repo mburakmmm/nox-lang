@@ -109,6 +109,11 @@ pub fn build(b: *std.Build) void {
     const version_options = b.addOptions();
     version_options.addOption([]const u8, "version", build_zig_zon.version);
     noxc_mod.addOptions("build_options", version_options);
+    // `compiler/pkg/upgrade.zig` (bkz. `noxc upgrade`nin belge notu) `nox_mod`
+    // (lib_test'in kökü, bkz. `compiler/lib.zig`) ÜZERİNDEN de erişildiği
+    // İçin (birim testlerinin `currentVersionTag`/`isAlreadyUpToDate`yi
+    // ÇAĞIRABİLMESİ İçin) AYNI `version_options` BURAYA da eklenir.
+    nox_mod.addOptions("build_options", version_options);
 
     const noxc = b.addExecutable(.{
         .name = "noxc",
@@ -619,6 +624,19 @@ pub fn build(b: *std.Build) void {
     });
     const search_test = b.addTest(.{ .root_module = search_test_mod });
     test_step.dependOn(&b.addRunArtifact(search_test).step);
+
+    // `noxc upgrade` (bkz. `compiler/pkg/upgrade.zig`nin modül üstü notu)
+    // uçtan uca testleri — `search_test_mod` İLE AYNI gerekçeyle (`std.c.
+    // socket` DOĞRUDAN çağrısı, birden fazla yolu YÖNLENDİREN bir yerel
+    // sunucu) `link_libc` gerektirir, KENDİ modülü olarak tanımlandı.
+    const upgrade_test_mod = b.createModule(.{
+        .root_source_file = b.path("tests/cli/upgrade_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const upgrade_test = b.addTest(.{ .root_module = upgrade_test_mod });
+    test_step.dependOn(&b.addRunArtifact(upgrade_test).step);
 
     // ---- Stdlib fazı §D.1.6: `nox.http.serve` özel yerleşiğinin uçtan uca
     // golden testi — `http_stdlib_test` İLE AYNI bağımlılık (yalnızca

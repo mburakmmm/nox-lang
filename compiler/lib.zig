@@ -17,6 +17,7 @@ pub const project = @import("project.zig");
 pub const test_runner = @import("pkg/test_runner.zig");
 pub const fetch = @import("pkg/fetch.zig");
 pub const pkg_index = @import("pkg/index.zig");
+pub const upgrade = @import("pkg/upgrade.zig");
 pub const qbe_target = @import("qbe_target.zig");
 
 // `zig build test`in `nox_mod`u (bu dosyayı KÖK olarak KULLANAN `lib_test`

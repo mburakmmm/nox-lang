@@ -54,7 +54,9 @@ test "noxc --help/-h/help: uc esanlami da ayni yardim ekranini gosterir" {
 test "noxc <bilinmeyen-komut>: ham FileNotFound yerine ipucu verir, exit 1" {
     const io = std.testing.io;
     const gpa = std.testing.allocator;
-    const result = try runWithLang(gpa, io, &.{ noxcPath(), "upgrade" }, "en_US.UTF-8");
+    // "upgrade" ARTIK gercek bir alt komut (bkz. pkg/upgrade.zig) -- bu test
+    // GERCEKTEN taninmayan bir kelime kullanir.
+    const result = try runWithLang(gpa, io, &.{ noxcPath(), "totallyunknowncommand" }, "en_US.UTF-8");
     defer gpa.free(result.stdout);
     defer gpa.free(result.stderr);
     try std.testing.expect(result.term == .exited and result.term.exited == 1);

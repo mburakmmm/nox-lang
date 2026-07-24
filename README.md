@@ -146,6 +146,7 @@ noxc run main.nox -- a b c  # derler + çalıştırır, argv'yi iletir
 noxc test                   # CWD altındaki tüm *_test.nox dosyalarını keşfedip çalıştırır
 noxc fetch                  # nox.json'daki bağımlılıkları önbelleğe doldurur
 noxc update                 # bağımlılıkları en son ref'lerine yeniden çözer, nox.lock'u günceller
+noxc upgrade [--check]      # noxc'nin kendisini (binary+runtime+stdlib) en son sürüme günceller
 ```
 
 Bir proje birden fazla üçüncü-taraf bağımlılık gerektiriyorsa proje

@@ -123,16 +123,21 @@ pub const ResourceDirs = struct {
 /// önbelleği kökü olan `NOX_HOME` İLE AYNI ŞEY DEĞİLDİR, bkz. `main.zig`nin
 /// `resource_dirs` hesaplamasının belge notu) doğrudan bu KÖK kullanılır;
 /// VERİLMEMİŞSE çalıştırılabilir dosyanın KENDİ dizininden (`<exe_dir>/..`)
-/// hesaplanır. Kurulum düzeni `build.zig`nin `b.addInstallFile`/
-/// `b.addInstallDirectory` çağrılarıyla EŞLEŞİR: `<kök>/lib/noxrt.o` ve
-/// `<kök>/lib/nox/stdlib/`.
+/// hesaplanır — bu, `install.sh`/`install.ps1`nin OLUŞTURDUĞU kurulum
+/// köküyle BİREBİR AYNIDIR (`bin/`+`lib/` doğrudan altında). `noxc
+/// upgrade`nin (bkz. `pkg/upgrade.zig`) KENDİ değiştirme hedefi İÇİN AYNI
+/// değere İHTİYACI OLDUĞUNDAN bu, `resolveResourceDirs`den AYRI, adlandırılmış
+/// bir yardımcı olarak DIŞA AKTARILIR — TEK gerçek kaynak, iki tüketici.
+pub fn resolveInstallRoot(a: Allocator, io: Io, resource_dir_override: ?[]const u8) ![]const u8 {
+    if (resource_dir_override) |h| return try a.dupe(u8, h);
+    const exe_dir = try std.process.executableDirPathAlloc(io, a);
+    return try std.fmt.allocPrint(a, "{s}/..", .{exe_dir});
+}
+
+/// Kurulum düzeni `build.zig`nin `b.addInstallFile`/`b.addInstallDirectory`
+/// çağrılarıyla EŞLEŞİR: `<kök>/lib/noxrt.o` ve `<kök>/lib/nox/stdlib/`.
 pub fn resolveResourceDirs(a: Allocator, io: Io, resource_dir_override: ?[]const u8) !ResourceDirs {
-    const base = if (resource_dir_override) |h|
-        try a.dupe(u8, h)
-    else blk: {
-        const exe_dir = try std.process.executableDirPathAlloc(io, a);
-        break :blk try std.fmt.allocPrint(a, "{s}/..", .{exe_dir});
-    };
+    const base = try resolveInstallRoot(a, io, resource_dir_override);
     return .{
         .stdlib_dir = try std.fmt.allocPrint(a, "{s}/lib/nox/stdlib", .{base}),
         .noxrt_path = try std.fmt.allocPrint(a, "{s}/lib/noxrt.o", .{base}),
