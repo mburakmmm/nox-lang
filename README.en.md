@@ -78,9 +78,11 @@ print(c.value)
   middleware layer written in pure Nox on top of `nox.http.serve`'s raw
   `handle` callback (made possible by top-level `def` functions now
   being usable as first-class values stored in `list`s/class fields),
-  and `nox.validate` — a schema layer that validates raw JSON text like
+  `nox.validate` — a schema layer that validates raw JSON text like
   an HTTP request body against a simple set of field rules (name/type/
-  required)) and a Go-style decentralized package system (GitHub URL,
+  required), and `nox.template` — a simple `{{ name }}` string-substitution
+  templating engine that is HTML-safe by default (auto-escapes against
+  XSS)) and a Go-style decentralized package system (GitHub URL,
   or a direct package-index URL via `noxc search`).
 
 For the full record of architectural/design decisions, see

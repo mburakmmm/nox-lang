@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.6.0]
+
+### Eklendi
+- **`nox.template`** — saf Nox'ta yazılmış BASİT bir string-değiştirme
+  HTML şablon motoru (bilinçli olarak dar kapsam: yalnızca `{{ isim }}`
+  değişken yer-tutucuları, koşul/döngü YOK — "gerçek" bir Jinja-benzeri
+  motor AYRI, daha büyük bir iş). Varsayılan olarak HTML-güvenli: `render`
+  HER değişkenin değerini HTML özel karakterlerine göre kaçırır (XSS'e
+  karşı temel savunma); zaten güvenli/istenerek HAM HTML İÇEREN bir değer
+  İçin `render_unescaped` kullanılır. Kapatılmamış bir `{{`/tanımsız bir
+  değişken çökmek YERİNE açık bir `TemplateError` fırlatır.
+
 ## [1.5.0]
 
 ### Eklendi

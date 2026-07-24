@@ -75,9 +75,11 @@ print(c.value)
   ham `handle` geri çağrısı üzerine saf Nox'ta yazılmış path parametreli
   yol yönlendirme + before/after ara katman katmanı (üst-düzey `def`
   fonksiyonlarının artık BİRİNCİ-SINIF bir değer olarak `list`lerde/sınıf
-  alanlarında saklanabilmesi SAYESİNDE mümkün oldu), ve `nox.validate` —
+  alanlarında saklanabilmesi SAYESİNDE mümkün oldu), `nox.validate` —
   bir HTTP istek gövdesi gibi ham JSON metnini basit bir alan-kuralları
-  şemasına (isim/tip/zorunlu) karşı doğrulayan bir katman) ve Go tarzı
+  şemasına (isim/tip/zorunlu) karşı doğrulayan bir katman, ve `nox.template`
+  — varsayılan olarak HTML-güvenli (XSS'e karşı otomatik kaçırma) basit
+  bir `{{ isim }}` string-değiştirme şablon motoru) ve Go tarzı
   merkeziyetsiz (GitHub URL'si ya da doğrudan bir indeks URL'si
   üzerinden, `noxc search`) bir paket sistemi.
 

@@ -233,6 +233,13 @@ test "codegen(çalıştır): nox.validate — şema doğrulama (geçerli/eksik a
     );
 }
 
+test "codegen(çalıştır): nox.template — HTML kaçırma (varsayılan), render_unescaped, tanımsız değişken hatası" {
+    try expectGolden(
+        @embedFile("codegen_cases/template_render_and_escaping.nox"),
+        @embedFile("codegen_cases/template_render_and_escaping.expected"),
+    );
+}
+
 test "codegen(çalıştır): Faz U.1 — list[T] indeksli atama (xs[i] = v), sınır dışında IndexError raise eder" {
     try expectGolden(
         @embedFile("codegen_cases/list_index_assign_basic.nox"),

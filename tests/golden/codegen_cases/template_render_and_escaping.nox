@@ -1,0 +1,18 @@
+# nox.template uçtan-uca: `{{ isim }}` yer-tutucuları varsayılan olarak
+# HTML-kaçırılır (XSS koruması), `render_unescaped` ham HTML'i olduğu
+# gibi geçirir, tanımsız bir değişken açık bir `TemplateError` fırlatır.
+import nox.template
+from nox.template import TemplateError
+
+ctx: dict[str, str] = {"name": "<script>alert(1)</script>", "title": "Merhaba"}
+tmpl: str = "<h1>{{ title }}</h1><p>Kullanici: {{name}}</p>"
+print(nox.template.render(tmpl, ctx))
+
+raw_ctx: dict[str, str] = {"body": "<b>kalin</b>"}
+print(nox.template.render_unescaped("<div>{{ body }}</div>", raw_ctx))
+
+try:
+    bad: dict[str, str] = {}
+    print(nox.template.render("{{ eksik }}", bad))
+except TemplateError as e:
+    print("hata: " + e.message)

@@ -1,0 +1,82 @@
+# nox.template — saf Nox'ta yazılmış BASİT bir string-değiştirme HTML
+# şablon motoru (bilinçli olarak dar kapsam: `{{ isim }}` değişken
+# yer-tutucuları, KOŞUL/DÖNGÜ YOK — "gerçek" bir Jinja-benzeri motor
+# AYRI, daha büyük bir iştir). Varsayılan olarak HTML-güvenli: `render`
+# HER değişkenin değerini HTML özel karakterlerine (`&`/`<`/`>`/`"`/`'`)
+# göre kaçırır (XSS'e karşı temel savunma); zaten güvenli/istenerek HAM
+# HTML İÇEREN bir değer İçin `render_unescaped` kullanılır.
+import nox.strings
+
+class TemplateError:
+    def __init__(self: TemplateError, message: str) -> None:
+        self.message = message
+
+def escape_html(s: str) -> str:
+    out: str = ""
+    i: int = 0
+    while i < len(s):
+        c: str = s[i]
+        if c == "&":
+            out = out + "&amp;"
+        elif c == "<":
+            out = out + "&lt;"
+        elif c == ">":
+            out = out + "&gt;"
+        elif c == "\"":
+            out = out + "&quot;"
+        elif c == "'":
+            out = out + "&#39;"
+        else:
+            out = out + c
+        i = i + 1
+    return out
+
+def _substr(s: str, start: int, end: int) -> str:
+    result: str = ""
+    i: int = start
+    while i < end:
+        result = result + s[i]
+        i = i + 1
+    return result
+
+def _substr_from(s: str, start: int) -> str:
+    return _substr(s, start, len(s))
+
+# `escape`: `render`/`render_unescaped`in ortak gövdesi — `{{ isim }}`
+# yer-tutucularını (baştaki/sondaki boşluklar TRIM edilir) `context`teki
+# karşılığıyla değiştirir. Kapatılmamış bir `{{` ya da tanımsız bir
+# değişken, çökmek YERİNE (Zig kabuğu/runtime YOK, saf Nox) açık bir
+# `TemplateError` fırlatır.
+def _render_impl(tmpl: str, context: dict[str, str], escape: bool) -> str:
+    out: str = ""
+    pos: int = 0
+    n: int = len(tmpl)
+    while pos < n:
+        rest: str = _substr_from(tmpl, pos)
+        rel_start: int = nox.strings.index_of(rest, "{{")
+        if rel_start < 0:
+            out = out + rest
+            pos = n
+        else:
+            out = out + _substr(rest, 0, rel_start)
+            after_open: str = _substr_from(rest, rel_start + 2)
+            rel_end: int = nox.strings.index_of(after_open, "}}")
+            if rel_end < 0:
+                raise TemplateError("kapatilmamis '{{': " + rest)
+            raw_key: str = _substr(after_open, 0, rel_end)
+            key: str = nox.strings.trim(raw_key)
+            if not context.contains(key):
+                raise TemplateError("tanimsiz sablon degiskeni: '" + key + "'")
+            value: str = context[key]
+            if escape:
+                out = out + escape_html(value)
+            else:
+                out = out + value
+            pos = pos + rel_start + 2 + rel_end + 2
+    return out
+
+def render(tmpl: str, context: dict[str, str]) -> str:
+    return _render_impl(tmpl, context, True)
+
+def render_unescaped(tmpl: str, context: dict[str, str]) -> str:
+    return _render_impl(tmpl, context, False)
