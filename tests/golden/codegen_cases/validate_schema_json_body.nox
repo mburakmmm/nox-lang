@@ -1,0 +1,27 @@
+# nox.validate uçtan-uca: geçerli bir gövde (0 hata), eksik zorunlu alan
+# + yanlış tip (2 hata), geçersiz JSON (decode hatası tek bir mesaja
+# dönüştürülür, JsonError yakalanmak ZORUNDA değil), ve object-olmayan
+# bir kök değer (dizi).
+import nox.validate
+from nox.validate import Schema
+
+schema: Schema = Schema()
+schema.require("name", "string")
+schema.require("age", "number")
+schema.optional("email", "string")
+
+errors1: list[str] = nox.validate.validate_json_str("{\"name\":\"Ada\",\"age\":30}", schema)
+print(len(errors1))
+
+errors2: list[str] = nox.validate.validate_json_str("{\"age\":\"otuz\"}", schema)
+i: int = 0
+while i < len(errors2):
+    print(errors2[i])
+    i = i + 1
+
+errors3: list[str] = nox.validate.validate_json_str("{bad json", schema)
+print(len(errors3))
+print(errors3[0])
+
+errors4: list[str] = nox.validate.validate_json_str("[1,2,3]", schema)
+print(errors4[0])

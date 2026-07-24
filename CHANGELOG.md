@@ -14,6 +14,21 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.5.0]
+
+### Eklendi
+- **`nox.validate`** — `nox.json` üzerine saf Nox'ta yazılmış basit bir
+  şema doğrulayıcı: bir `Schema`ya alan ADI/beklenen TİP ("string"/
+  "number"/"bool"/"array"/"object"/"null")/zorunlu-mu kuralları eklenir
+  (`require`/`optional`), SONRA bir `JsonValue`ya (`validate`) ya da
+  doğrudan bir HTTP istek gövdesi gibi HAM JSON metnine (`validate_json_str`
+  — geçersiz JSON'u da AYRI bir `try`/`except` GEREKMEDEN tek bir hata
+  mesajına çevirir) karşı çalıştırılır; insan-okunur bir hata mesajı
+  listesi döner (boşsa geçerli). Kapsam BİLİNÇLİ olarak DAR: tam bir
+  JSON-Schema motoru DEĞİL, yalnızca DÜZ (iç içe OLMAYAN) alanlar İçin
+  varlık + tip kontrolü — iç içe doğrulama kullanıcının `validate`i
+  KENDİSİ özyinelemeli ÇAĞIRMASIYLA elde edilir.
+
 ## [1.4.0]
 
 ### Eklendi

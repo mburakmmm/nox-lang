@@ -1,0 +1,93 @@
+# nox.validate — `nox.json` üzerine saf Nox'ta yazılmış basit bir şema
+# doğrulayıcı: bir HTTP istek gövdesi gibi ham JSON metnini/bir
+# `JsonValue`yu bir alan kuralları listesine (isim, beklenen tip,
+# zorunlu mu) karşı doğrular; insan-okunur bir hata mesajı listesi döner
+# (boşsa geçerli). `JsonValue` `nox.json` (dolayısıyla `core.nox`)
+# tarafından ZATEN global olarak sağlandığından burada AYRICA
+# import EDİLMEZ (bkz. `nox.json`nin belge notu).
+#
+# Kapsam BİLİNÇLİ olarak DAR tutuldu (tam bir JSON-Schema motoru DEĞİL):
+# yalnızca DÜZ (iç içe OLMAYAN) bir nesnenin alanları İçin varlık +
+# tip kontrolü. İç içe nesne/dizi eleman doğrulaması, `nox.validate`nin
+# KENDİSİNİ kullanıcının rekürsif ÇAĞIRMASIYLA (`validate(nested, alt_şema)`)
+# ELDE EDİLEBİLİR — ayrı bir "nested schema" API'si GEREKMEZ.
+import nox.json
+from nox.json import JsonError
+
+class FieldRule:
+    def __init__(self: FieldRule, name: str, kind: str, required: bool) -> None:
+        self.name = name
+        self.kind = kind
+        self.required = required
+
+# `require`/`optional`in `kind` parametresi: "string"/"number"/"bool"/
+# "array"/"object"/"null" (bkz. `_matches_kind`).
+class Schema:
+    rules: list[FieldRule]
+    def __init__(self: Schema) -> None:
+        self.rules = []
+    def require(self: Schema, name: str, kind: str) -> None:
+        rules: list[FieldRule] = self.rules
+        rules.append(FieldRule(name, kind, True))
+        self.rules = rules
+    def optional(self: Schema, name: str, kind: str) -> None:
+        rules: list[FieldRule] = self.rules
+        rules.append(FieldRule(name, kind, False))
+        self.rules = rules
+
+def _object_get(v: JsonValue, key: str) -> JsonValue | None:
+    i: int = 0
+    n: int = nox.json.object_len(v)
+    while i < n:
+        if nox.json.object_key(v, i) == key:
+            return nox.json.object_value(v, i)
+        i = i + 1
+    return None
+
+def _matches_kind(v: JsonValue, kind: str) -> bool:
+    if kind == "string":
+        return nox.json.is_string(v)
+    if kind == "number":
+        return nox.json.is_number(v)
+    if kind == "bool":
+        return nox.json.is_bool(v)
+    if kind == "array":
+        return nox.json.is_array(v)
+    if kind == "object":
+        return nox.json.is_object(v)
+    if kind == "null":
+        return nox.json.is_null(v)
+    return False
+
+# `v`, bir JSON NESNESİ (object) OLMALIDIR — değilse tek bir hatayla
+# erken döner (alan kuralları hiç değerlendirilmez).
+def validate(v: JsonValue, schema: Schema) -> list[str]:
+    errors: list[str] = []
+    if not nox.json.is_object(v):
+        errors.append("beklenen bir JSON nesnesi (object)")
+        return errors
+    i: int = 0
+    while i < len(schema.rules):
+        rule: FieldRule = schema.rules[i]
+        field: JsonValue | None = _object_get(v, rule.name)
+        if field == None:
+            if rule.required:
+                errors.append("eksik zorunlu alan: '" + rule.name + "'")
+        else:
+            if not _matches_kind(field, rule.kind):
+                errors.append("alan '" + rule.name + "' icin beklenen tip: " + rule.kind)
+        i = i + 1
+    return errors
+
+# `s` (ör. bir `HttpRequest.body`) GEÇERSİZ JSON İSE, çökmek/istisna
+# fırlatmak YERİNE bunu da AYNI hata-mesajı listesine tek bir girdi
+# olarak ekler — çağıranın `nox.json.decode`nin fırlattığı `JsonError`i
+# AYRICA yakalaması GEREKMEZ.
+def validate_json_str(s: str, schema: Schema) -> list[str]:
+    try:
+        v: JsonValue = nox.json.decode(s)
+        return validate(v, schema)
+    except JsonError as e:
+        errors: list[str] = []
+        errors.append(e.message)
+        return errors

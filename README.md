@@ -71,11 +71,13 @@ print(c.value)
   KENDİ `std.crypto`si, harici bağımlılık YOK), `nox.regex`, `nox.test`,
   `nox.thread`, `nox.sqlite` — `libsqlite3`e çalışma zamanında tembel
   bağlanan, statik bağımlılık KATMAYAN bir SQLite sürücüsü — `nox.uuid`
-  (UUID v4 üretimi/doğrulaması) ve `nox.router` — `nox.http.serve`in
+  (UUID v4 üretimi/doğrulaması), `nox.router` — `nox.http.serve`in
   ham `handle` geri çağrısı üzerine saf Nox'ta yazılmış path parametreli
-  yol yönlendirme + before/after ara katman katmanı, üst-düzey `def`
+  yol yönlendirme + before/after ara katman katmanı (üst-düzey `def`
   fonksiyonlarının artık BİRİNCİ-SINIF bir değer olarak `list`lerde/sınıf
-  alanlarında saklanabilmesi SAYESİNDE mümkün oldu) ve Go tarzı
+  alanlarında saklanabilmesi SAYESİNDE mümkün oldu), ve `nox.validate` —
+  bir HTTP istek gövdesi gibi ham JSON metnini basit bir alan-kuralları
+  şemasına (isim/tip/zorunlu) karşı doğrulayan bir katman) ve Go tarzı
   merkeziyetsiz (GitHub URL'si ya da doğrudan bir indeks URL'si
   üzerinden, `noxc search`) bir paket sistemi.
 

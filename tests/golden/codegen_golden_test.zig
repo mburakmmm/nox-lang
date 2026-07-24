@@ -226,6 +226,13 @@ test "codegen(çalıştır): nox.router — path parametreli rota + before/after
     );
 }
 
+test "codegen(çalıştır): nox.validate — şema doğrulama (geçerli/eksik alan/yanlış tip/geçersiz JSON/object-olmayan kök)" {
+    try expectGolden(
+        @embedFile("codegen_cases/validate_schema_json_body.nox"),
+        @embedFile("codegen_cases/validate_schema_json_body.expected"),
+    );
+}
+
 test "codegen(çalıştır): Faz U.1 — list[T] indeksli atama (xs[i] = v), sınır dışında IndexError raise eder" {
     try expectGolden(
         @embedFile("codegen_cases/list_index_assign_basic.nox"),

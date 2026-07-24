@@ -73,13 +73,15 @@ print(c.value)
   by Zig's own `std.crypto`, no external dependency), `nox.regex`,
   `nox.test`, `nox.thread`, `nox.sqlite` — a SQLite driver that lazily
   dlopen's `libsqlite3` at runtime, adding zero static dependency for
-  programs that don't use it — `nox.uuid` (UUID v4 generation/validation)
-  and `nox.router` — a path-parameterized routing + before/after
+  programs that don't use it — `nox.uuid` (UUID v4 generation/validation),
+  `nox.router` — a path-parameterized routing + before/after
   middleware layer written in pure Nox on top of `nox.http.serve`'s raw
-  `handle` callback, made possible by top-level `def` functions now
-  being usable as first-class values stored in `list`s/class fields)
-  and a Go-style decentralized package system (GitHub URL, or a direct
-  package-index URL via `noxc search`).
+  `handle` callback (made possible by top-level `def` functions now
+  being usable as first-class values stored in `list`s/class fields),
+  and `nox.validate` — a schema layer that validates raw JSON text like
+  an HTTP request body against a simple set of field rules (name/type/
+  required)) and a Go-style decentralized package system (GitHub URL,
+  or a direct package-index URL via `noxc search`).
 
 For the full record of architectural/design decisions, see
 [`nox-teknik-spesifikasyon.md`](nox-teknik-spesifikasyon.md) (Turkish).
