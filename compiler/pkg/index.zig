@@ -28,6 +28,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
+const fetch_mod = @import("fetch.zig");
 
 pub const PackageEntry = struct {
     name: []const u8,
@@ -58,6 +59,62 @@ pub fn parseIndexJson(a: Allocator, source: []const u8) IndexError!Index {
 pub fn loadIndexFromFile(a: Allocator, io: Io, path: []const u8) IndexError!Index {
     const source = try std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1024 * 1024));
     return parseIndexJson(a, source);
+}
+
+/// Bulundu (bkz. proje belleği "f-string + augmented atama" ve "nox.http
+/// gzip düzeltmesi" görevleri): bu modülün belge notu ("gelecekte bir HTTP
+/// indirme adımı EKLENİRSE, bu YALNIZCA loadIndexFromFile'nin YANINA yeni
+/// bir loadIndexFromUrl EKLEMEK anlamına gelir") burada gerçekleşiyor.
+/// `fetch.zig`nin AYNI güvenli-taşıma disiplini: `url` yalnızca `https://`
+/// İLE başlarsa KABUL edilir, `http://` YALNIZCA `policy.allow_insecure_
+/// transport` AÇIKSA (bkz. `fetch.FetchPolicy`, `NOX_ALLOW_INSECURE_
+/// TRANSPORT`). `std.http.Client`ın `Response.readerDecompressing`sini
+/// KULLANIR (DÜZ `Response.reader` DEĞİL) — `runtime/stdlib_shims/
+/// http_client.zig`de GERÇEK bir heap-bozulması çökmesine yol açtığı
+/// KEŞFEDİLEN/DÜZELTİLEN AYNI hatanın burada TEKRARLANMAMASI İçin (GitHub
+/// Pages/raw.githubusercontent.com DAHİL neredeyse HER modern statik dosya
+/// sunucusu gzip sıkıştırır).
+fn validateIndexUrlScheme(url: []const u8, allow_insecure_transport: bool) error{InsecureIndexUrlRejected}!void {
+    if (std.mem.startsWith(u8, url, "https://")) return;
+    if (std.mem.startsWith(u8, url, "http://") and allow_insecure_transport) return;
+    return error.InsecureIndexUrlRejected;
+}
+
+// Bulundu (bkz. `fetch.zig`nin `GitError`sinin AYNI belge notu — elle
+// tüketici bir hata kümesi çıkarmaya karşı argüman): dönüş tipi BİLİNÇLİ
+// olarak ÇIKARIMLI (`!Index`) — `std.http.Client`in tam hata kümesini elle
+// numaralandırmak KIRILGAN (Zig std sürümleri arasında isim DEĞİŞEBİLİR,
+// tam olarak bu YÜZDEN `error.IndexFetchFailed`e KATLANIR).
+pub fn loadIndexFromUrl(a: Allocator, io: Io, url: []const u8, policy: fetch_mod.FetchPolicy) !Index {
+    try validateIndexUrlScheme(url, policy.allow_insecure_transport);
+
+    var client: std.http.Client = .{ .allocator = a, .io = io };
+    defer client.deinit();
+
+    const uri = try std.Uri.parse(url);
+    var req = try client.request(.GET, uri, .{ .redirect_behavior = .unhandled });
+    defer req.deinit();
+    try req.sendBodiless();
+
+    var redirect_buffer: [8 * 1024]u8 = undefined;
+    var response = try req.receiveHead(&redirect_buffer);
+    if (response.head.status != .ok) return error.IndexFetchFailed;
+
+    var transfer_buffer: [1024]u8 = undefined;
+    const decompress_buffer: []u8 = switch (response.head.content_encoding) {
+        .identity => &.{},
+        .deflate, .gzip => a.alloc(u8, std.compress.flate.max_window_len) catch return error.IndexFetchFailed,
+        .zstd, .compress => return error.IndexFetchFailed,
+    };
+    defer if (decompress_buffer.len > 0) a.free(decompress_buffer);
+    var decompress: std.http.Decompress = undefined;
+    const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
+
+    var body_out: std.Io.Writer.Allocating = .init(a);
+    _ = reader.streamRemaining(&body_out.writer) catch return error.IndexFetchFailed;
+    const body = body_out.toOwnedSlice() catch return error.IndexFetchFailed;
+
+    return parseIndexJson(a, body);
 }
 
 /// `entry`, `query`yle EŞLEŞİR mi? Büyük/küçük harfe DUYARLI, düz alt-dizge
@@ -121,4 +178,16 @@ test "matches: ad/aciklama/etiket uzerinden dogru eslesir" {
     try std.testing.expect(matches(entry, "web")); // TAM etiket
     try std.testing.expect(!matches(entry, "hicbiryerde"));
     try std.testing.expect(!matches(entry, "we")); // etiket eslesmesi TAM olmali, alt-dizge DEGIL
+}
+
+test "validateIndexUrlScheme: https her zaman kabul, http yalnizca allow_insecure_transport ile" {
+    try validateIndexUrlScheme("https://example.com/index.json", false);
+    try validateIndexUrlScheme("https://example.com/index.json", true);
+    try std.testing.expectError(error.InsecureIndexUrlRejected, validateIndexUrlScheme("http://example.com/index.json", false));
+    try validateIndexUrlScheme("http://example.com/index.json", true);
+}
+
+test "validateIndexUrlScheme: bilinmeyen/dosya semasi her zaman reddedilir" {
+    try std.testing.expectError(error.InsecureIndexUrlRejected, validateIndexUrlScheme("ftp://example.com/index.json", true));
+    try std.testing.expectError(error.InsecureIndexUrlRejected, validateIndexUrlScheme("/yerel/yol/index.json", true));
 }

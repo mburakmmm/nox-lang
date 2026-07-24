@@ -2,6 +2,9 @@
 //! tahsis edilir (bkz. parser.zig); bu yalnızca derleyicinin kendi
 //! implementasyon detayıdır, Nox dilinin sahiplik modeliyle ilgisi yoktur.
 
+const std = @import("std");
+pub const Span = @import("../span.zig").Span;
+
 pub const TypeExpr = union(enum) {
     simple: []const u8, // int, float, bool, str, None, ya da bir sınıf adı
     generic: Generic,
@@ -94,11 +97,14 @@ pub const Expr = union(enum) {
     /// (gramer düzeyinde kısıtlanmaz — bkz. `isRangeCall` gibi benzer
     /// desenler).
     spawn_expr: *Expr,
-    /// `Channel[T](capacity)` — yerleşik `Channel` tipi için AÇIK tip
-    /// argümanlı kurucu çağrısı (bkz. nox-teknik-spesifikasyon.md §3.21).
-    /// Dilde başka HİÇBİR yerde `İsim[TipArgs](args)` sözdizimi YOKTUR —
-    /// yalnızca ayrılmış `Channel` adı için parser'da özel olarak tanınır
-    /// (bkz. `parser.zig`, `isGenericConstructName`).
+    /// `İsim[TipArgs](args)` — AÇIK tip argümanlı bir kurucu çağrısı (bkz.
+    /// nox-teknik-spesifikasyon.md §3.21). ÖNCEDEN yalnızca ayrılmış
+    /// `Channel`/`ThreadChannel` adları İçin parser'da özel olarak
+    /// tanınırdı; Faz P2.1 İLE (bkz. proje belleği "generic sınıflar"
+    /// planı) parser ARTIK bu sözdizimini HERHANGİ bir tanımlayıcı İçin
+    /// kabul eder — `İsim`in GEÇERLİ bir generic sınıf/yerleşik OLUP
+    /// OLMADIĞI ÇÖZÜMLEMESİ (bkz. `GenericConstruct.resolved_class_name`)
+    /// TAMAMEN checker'ın işidir.
     generic_construct: GenericConstruct,
 };
 
@@ -107,7 +113,24 @@ pub const Binary = struct { op: BinaryOp, left: *Expr, right: *Expr };
 pub const Call = struct { callee: *Expr, args: []Expr };
 pub const Attribute = struct { obj: *Expr, attr: []const u8 };
 pub const Index = struct { obj: *Expr, index: *Expr };
-pub const GenericConstruct = struct { name: []const u8, type_args: []TypeExpr, args: []Expr };
+
+pub const GenericConstruct = struct {
+    name: []const u8,
+    type_args: []TypeExpr,
+    args: []Expr,
+    /// Faz P2.1: YALNIZCA checker'ın kullanıcı-tanımlı generic sınıf dalı
+    /// (bkz. `checker.zig`nin `checkGenericConstruct`ı) TARAFINDAN
+    /// doldurulur — `Channel`/`ThreadChannel` İÇİN SONSUZA KADAR `null`
+    /// KALIR (onlar GERÇEK generic sınıflar DEĞİL, tek bir opak çalışma
+    /// zamanı tipine ÇÖZÜLEN yerleşiklerdir). `*?[]const u8` (ÇIPLAK
+    /// `?[]const u8` DEĞİL) OLMASININ nedeni: `GenericConstruct` çoğu
+    /// kullanım sitesinde (ör. `ast.VarDecl.value: Expr`) DEĞER OLARAK
+    /// (pointer DEĞİL) taşınır — `ast.Call.callee: *Expr`nin AYNI
+    /// gerekçesiyle, İŞARETÇİNİN KENDİSİ kopyalanınca bile İŞARET ETTİĞİ
+    /// hücre AYNI kalır, böylece checker'ın (tip denetiminden SONRA
+    /// çalışan) codegen bu KARARI HER ZAMAN okuyabilir.
+    resolved_class_name: *?[]const u8,
+};
 pub const DictPair = struct { key: Expr, value: Expr };
 
 pub const ElifClause = struct { cond: Expr, body: []Stmt };
@@ -165,6 +188,15 @@ pub const FieldDecl = struct {
 
 pub const ClassDef = struct {
     name: []const u8,
+    /// `class Name[T, U]:` — boşsa (varsayılan) sıradan (generic olmayan)
+    /// bir sınıf. `FuncDef.type_params`in AYNISI (Faz P2.1, bkz. proje
+    /// belleği "generic sınıflar" planı) — checker, niteliksiz `T`
+    /// tanımlayıcılarını (alan/metod tip ifadelerinde `.simple = "T"`
+    /// olarak GEÇEN) bu listeye göre YORUMLAR (bkz. `checker.zig`nin
+    /// `instantiateGenericClass`ı). `T`nin KENDİSİ AYRI bir `TypeExpr`
+    /// varyantı DEĞİLDİR — bir sınıf adıyla AYNI şekilde `.simple` olarak
+    /// ayrıştırılır, tıpkı generic fonksiyonlardaki gibi.
+    type_params: []const []const u8 = &.{},
     methods: []FuncDef,
     /// Faz FF.5: KATMANLI/opsiyonel — boş bırakılırsa (varsayılan) sınıfın
     /// TÜM alanları ÖNCEDEN OLDUĞU GİBİ `__init__`den ÇIKARILIR; burada
@@ -341,8 +373,27 @@ pub const StmtKind = union(enum) {
 pub const Stmt = struct {
     kind: StmtKind,
     line: u32 = 0,
+    /// Gerçek span sistemi (bkz. plan dosyası "Gerçek span sistemi +
+    /// yapılandırılmış tanılamalar") — SAF ekleme: `line`in DAVRANIŞI/
+    /// ANLAMI DEĞİŞMEZ (HÂLÂ AYNI `parseStmt` dispatch noktasında doldurulur,
+    /// TÜM mevcut `.line` okumaları ETKİLENMEZ). Bileşik deyimlerde (if/
+    /// while/for/func/vb.) TÜM iç içe gövdeyi KAPSAR (yalnızca BAŞLIK
+    /// satırını DEĞİL) — bu, YUKARIDAKİ "deyim granülaritesi" kararıyla
+    /// TUTARLIDIR, EK maliyeti YOKTUR.
+    span: Span = .{},
 };
 
+/// Gerçek span sistemi — `Expr` düğümlerinin (bkz. `Expr`in KENDİSİ, HİÇ
+/// SARMALANMADI — 15 varyant, parser/checker/codegen'de 400+ doğrudan
+/// pattern-match sitesi) span'ını, düğümün KENDİSİNE DOKUNMADAN, pointer-
+/// identity İLE anahtarlanan bir YAN TABLODA tutar — `Checker.
+/// defer_synthetic_names`/`Codegen.inline_sites`nin (`std.AutoHashMapUnmanaged
+/// (usize, T)`, `@intFromPtr` İLE anahtarlanan) AYNI, ZATEN bu projede
+/// yerleşik örüntüsü. ŞU AN İÇİN yalnızca SIRADAN çağrı argümanları İçin
+/// doldurulur (bkz. `parser.zig`nin `parsePostfix`i) — argümanın KENDİ
+/// KALICI adresi (`@intFromPtr(&args[i])`, `args` `toOwnedSlice()`
+/// DÖNDÜKTEN SONRA) anahtar olarak kullanılır.
 pub const Module = struct {
     body: []Stmt,
+    expr_spans: std.AutoHashMapUnmanaged(usize, Span) = .empty,
 };

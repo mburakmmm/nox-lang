@@ -156,6 +156,17 @@ test "golden(typecheck): yalnızca dönüş tipinde kullanılan bir generic tip 
     );
 }
 
+// Faz P2.2: BAĞLAM (var_decl/atama/çağrı/return) YOKSA boş liste literalinin
+// tipi HÂLÂ çıkarılamaz — `checkExprExpected`in "TEK choke point" ilkesi
+// (bkz. onun belge notu): `print([])` gibi bir bağlamsız kullanım, ESKİDEN
+// OLDUĞU GİBİ, AYNI hatayı üretmeye devam eder.
+test "golden(typecheck): bağlam yoksa boş liste literalinin tipi HÂLÂ çıkarılamaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_empty_list_lit_no_context.nox"),
+        @embedFile("typecheck_cases/err_empty_list_lit_no_context.expected"),
+    );
+}
+
 test "golden(typecheck): metodlar generic olamaz" {
     try expectGolden(
         @embedFile("typecheck_cases/err_generic_method_rejected.nox"),
@@ -288,6 +299,45 @@ test "golden(typecheck): Faz T.2 — İKİ bağımsız fonksiyondaki hata TEK ç
     try std.testing.expectEqual(@as(usize, 2), err.all.len);
     try std.testing.expect(std.mem.indexOf(u8, err.all[0].message, "satır 2:") != null);
     try std.testing.expect(std.mem.indexOf(u8, err.all[1].message, "satır 5:") != null);
+}
+
+// Gerçek span sistemi (bkz. plan dosyası "Gerçek span sistemi +
+// yapılandırılmış tanılamalar") — Aşama 6 kabul kriteri: `checkArgs`nin
+// argüman-uyuşmazlığı tanılamasının `span`ı, TÜM deyimi (`result: int =
+// foo(1, "yanlış")`) DEĞİL, SPESİFİK yanlış argümanı (`"yanlış"`)
+// İŞARET ETMELİ. `.message`/`.code` (mevcut 70+ fixture'ın DAYANDIĞI
+// alanlar) DEĞİŞMEDİĞİNİ de AYRICA doğrular.
+test "golden(typecheck): darboğaz #P0.3 — argüman tip uyuşmazlığı span'ı TÜM deyim DEĞİL SPESİFİK argümanı işaret eder" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source =
+        \\def foo(a: int, b: int) -> int:
+        \\    return a + b
+        \\
+        \\result: int = foo(1, "yanlis")
+        \\
+    ;
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+
+    const outcome = nox.checker.check(allocator, module);
+    const err = switch (outcome) {
+        .ok => return error.TestUnexpectedResult,
+        .err => |e| e,
+    };
+    try std.testing.expectEqual(nox.checker.TypeError.TypeMismatch, err.code);
+    try std.testing.expect(std.mem.indexOf(u8, err.message, "satır 4:") != null);
+
+    // Deyimin KENDİSİ 4. satırda BAŞLAR, ama "yanlis" (argüman) SÜTUN
+    // 22'de başlar (`result: int = foo(1, "yanlis")`de `"` konumu) —
+    // span'ın deyim BAŞLANGICINDAN (sütun 1) FARKLI, DAHA DAR olması
+    // GEREKİR.
+    try std.testing.expect(!err.all[0].span.isNone());
+    try std.testing.expectEqual(@as(u32, 4), err.all[0].span.start_line);
+    try std.testing.expect(err.all[0].span.start_col > 1);
+    try std.testing.expectEqual(@as(u32, 22), err.all[0].span.start_col);
 }
 
 test "golden(typecheck): Faz U.1 — 'list.append()' alıcısı çıplak bir isim OLMALI (çağrı sonucu üzerinde çağrılamaz)" {

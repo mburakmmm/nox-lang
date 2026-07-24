@@ -65,16 +65,40 @@ pub fn build(b: *std.Build) void {
         "cc", "-c", "-o", swap_asm_o_path, swap_asm_src,
     });
 
+    // Faz P1.2: derleyici (`nox_mod`) VE çalışma zamanı (`noxrt_mod`) İKİ
+    // BAĞIMSIZ Zig modülü olduğundan (aşağıda), ABI/bellek-düzeni
+    // sabitlerinin (`LIST_HEADER_SIZE`/`TAG_SIZE`/`ARC_HEADER_SIZE`/vb.)
+    // TEK doğruluk kaynağı olması İçin ÜÇÜNCÜ, bağımsız bir yaprak modül —
+    // `hpy_bridge_mod`/`wasm_bridge_mod` İLE AYNI desen (aşağıda), HER İKİ
+    // tarafa da named import olarak verilir. Hiçbir şey import ETMEZ (saf
+    // sabitler) — bu yüzden `nox_mod`/`noxrt_mod`dan ÖNCE tanımlanabilir.
+    const abi_layout_mod = b.addModule("abi_layout", .{
+        .root_source_file = b.path("shared/abi_layout.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const nox_mod = b.addModule("nox", .{
         .root_source_file = b.path("compiler/lib.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "abi_layout", .module = abi_layout_mod },
+        },
     });
 
     const noxc_mod = b.createModule(.{
         .root_source_file = b.path("compiler/main.zig"),
         .target = target,
         .optimize = optimize,
+        // Faz P1.2: `noxc_mod`, `nox_mod`dan BAĞIMSIZ bir modül grafiğidir
+        // (relative import'larla `compiler/`i KENDİ İÇİNDE yeniden derler,
+        // bkz. bu dosyanın modül üstü notu) — bu yüzden `codegen_qbe/
+        // types.zig`nin `@import("abi_layout")`sinin BURADA da AYRICA
+        // sağlanması gerekir (`nox_mod`a eklemek YETERLİ DEĞİLDİR).
+        .imports = &.{
+            .{ .name = "abi_layout", .module = abi_layout_mod },
+        },
     });
 
     // `noxc --version`/`noxc version` (bkz. `compiler/main.zig`nin `cmdVersion`ı)
@@ -158,6 +182,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
             .{ .name = "wasm_bridge", .module = wasm_bridge_mod },
+            .{ .name = "abi_layout", .module = abi_layout_mod },
         },
     });
     // Faz 21: `runtime/async_rt/bridge.zig` (Faz 21 aşama 4, `runtime/lib.zig`
@@ -314,11 +339,12 @@ pub fn build(b: *std.Build) void {
         "tests/unit/project_test.zig",
         "tests/unit/test_runner_test.zig",
         "tests/unit/fetch_test.zig",
+        "tests/unit/module_loader_test.zig",
         "tests/cli/subcommand_test.zig",
         "tests/cli/package_resolution_test.zig",
         "tests/cli/local_import_test.zig",
         "tests/cli/lsp_test.zig",
-        "tests/cli/search_test.zig",
+        "tests/cli/sqlite_test.zig",
         "tests/fuzz/lexer_parser_checker_fuzz.zig",
         "tests/golden/golden_test.zig",
         "tests/golden/typecheck_golden_test.zig",
@@ -577,6 +603,21 @@ pub fn build(b: *std.Build) void {
     const http_stdlib_test = b.addTest(.{ .root_module = http_stdlib_test_mod });
     http_stdlib_test.step.dependOn(&install_noxrt.step);
     test_step.dependOn(&b.addRunArtifact(http_stdlib_test).step);
+
+    // Bulundu (bkz. proje belleği "f-string + augmented atama" görevi):
+    // `noxc search`in YENİ `loadIndexFromUrl` yolunu GERÇEK bir yerel HTTP
+    // sunucusuna karşı doğrulayan `search_test.zig`, `http_stdlib_test_mod`la
+    // AYNI gerekçeyle (`std.c.socket` DOĞRUDAN çağrısı) `link_libc`
+    // gerektirir — bu YÜZDEN `external_test_files`in GENEL listesinden
+    // ÇIKARILIP burada KENDİ modülü olarak tanımlandı.
+    const search_test_mod = b.createModule(.{
+        .root_source_file = b.path("tests/cli/search_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const search_test = b.addTest(.{ .root_module = search_test_mod });
+    test_step.dependOn(&b.addRunArtifact(search_test).step);
 
     // ---- Stdlib fazı §D.1.6: `nox.http.serve` özel yerleşiğinin uçtan uca
     // golden testi — `http_stdlib_test` İLE AYNI bağımlılık (yalnızca

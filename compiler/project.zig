@@ -27,6 +27,15 @@ pub const Requirement = struct {
     alias: []const u8,
     repo: []const u8,
     ref: []const u8,
+    /// Faz P2.4 (bkz. proje belleği "P0/P1/P2 inceleme düzeltme listesi"
+    /// planı): `true` İSE, çözülen commit `git verify-commit` İLE
+    /// İMZALANMIŞ OLMALIDIR (bkz. `compiler/pkg/fetch.zig`nin
+    /// `verifyCommitSignature`ı) — AKSİ HALDE getirme başarısız olur.
+    /// Varsayılan `false` (KAPALI) — mevcut manifestler ETKİLENMEZ
+    /// (`.ignore_unknown_fields = true` sayesinde eski/yeni ayrıştırıcılar
+    /// arasında İKİ yönde de UYUMLU). Bu bir POLİTİKADIR, `nox.lock`ta
+    /// SAKLANMAZ — HER GERÇEK getirmede YENİDEN denetlenir.
+    require_signed_commit: bool = false,
 };
 
 /// Proje manifesti (`nox.json`, proje kökünde). `.ignore_unknown_fields`

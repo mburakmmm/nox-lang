@@ -52,6 +52,7 @@
 
 const std = @import("std");
 const asap = @import("asap.zig");
+const abi_layout = @import("abi_layout");
 
 /// Derleyicinin ÜRETTİĞİ, TÜM sınıflar için tek bir dağıtım noktası —
 /// bkz. modül üstü not. `tag`, `p`nin İLK 8 baytından (bkz. codegen.zig,
@@ -133,7 +134,19 @@ fn nox_gc_free_dispatch(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) void {
     f(rt, tag, p);
 }
 
-const HEADER_SIZE: usize = 8;
+// Faz P1.2: ÖNCEDEN buradaki TEK `HEADER_SIZE` sabiti (sayısal olarak
+// hepsi 8, ama üç AYRI ABI gerçeği) İKİ FARKLI amaç İçin kullanılıyordu:
+// (1) `refcountOf`nin ARC refcount başlığı ofseti, (2) `traceChildren`nin
+// trace-buffer uzunluk ön-eki/yuva boyutu. `newFakeObject`/`wireField`/
+// `fakeTraceDispatch` test yardımcıları da AYRICA (3) sınıf tipi
+// ETİKETİNİN (`TAG_SIZE`) boyutunu BU AYNI sabitle temsil ediyordu. Bu ÜÇÜ
+// SESSİZCE ÇAKIŞIYORDU (hepsi 8) — biri diverge ederse DİĞERİ fark
+// etmeden yanlış yorumlanırdı. `abi_layout`den AYRI adlarla re-export
+// edilerek disentangle edilir (bkz. o dosyanın belge notu).
+const ARC_HEADER_SIZE = abi_layout.ARC_HEADER_SIZE;
+const TAG_SIZE = abi_layout.TAG_SIZE;
+const TRACE_BUF_LEN_SIZE = abi_layout.TRACE_BUF_LEN_SIZE;
+const TRACE_BUF_SLOT_SIZE = abi_layout.TRACE_BUF_SLOT_SIZE;
 
 const Color = enum(u2) { black, gray, white, purple };
 const GcMeta = struct {
@@ -170,7 +183,7 @@ fn getGc(state: *asap.RuntimeState) *CycleGc {
 
 fn refcountOf(p: *anyopaque) *i64 {
     const bytes: [*]u8 = @ptrCast(p);
-    return @ptrCast(@alignCast(bytes - HEADER_SIZE));
+    return @ptrCast(@alignCast(bytes - ARC_HEADER_SIZE));
 }
 
 fn readTag(p: *anyopaque) i64 {
@@ -186,8 +199,8 @@ const ChildrenBuf = struct {
         // `raw_len == 0` yalnızca `traceChildren`in ZATEN serbest bıraktığı
         // (boş) durumlarda üretilir (bkz. orada) — bu yüzden burada
         // `items.len > 0` GARANTİDİR, `items.ptr - 1` (bir `?*anyopaque`
-        // GENİŞLİĞİ, TAM OLARAK `HEADER_SIZE`) GÜVENLE arabelleğin BAŞINA
-        // geri döner.
+        // GENİŞLİĞİ, TAM OLARAK `TRACE_BUF_LEN_SIZE`) GÜVENLE arabelleğin
+        // BAŞINA geri döner.
         if (self.raw_len == 0) return;
         const raw_ptr: [*]u8 = @ptrCast(@alignCast(self.items.ptr - 1));
         state.allocator().free(raw_ptr[0..self.raw_len]);
@@ -204,13 +217,14 @@ fn traceChildren(rt: ?*anyopaque, p: *anyopaque) ChildrenBuf {
     const buf = nox_trace_dispatch(rt, tag, p) orelse return .{ .items = &.{}, .raw_len = 0 };
     const len_ptr: *const i64 = @ptrCast(@alignCast(buf));
     const len: usize = @intCast(@max(len_ptr.*, 0));
-    // `len == 0` DAHİL: arabellek HER ZAMAN en az `HEADER_SIZE` bayttır
-    // (yalnızca uzunluk alanı) — `ChildrenBuf.deinit` bunu TEK, ORTAK yoldan
-    // serbest bırakır (bkz. onun belge notu, `items.ptr - 1` aritmetiği
-    // `len == 0` İÇİN de GEÇERLİDİR, çünkü `children_ptr` yine de `buf +
-    // HEADER_SIZE`e işaret eder — hiç DEREFERANS edilmese bile).
-    const children_ptr: [*]?*anyopaque = @ptrFromInt(@intFromPtr(buf) + HEADER_SIZE);
-    return .{ .items = children_ptr[0..len], .raw_len = HEADER_SIZE + len * HEADER_SIZE };
+    // `len == 0` DAHİL: arabellek HER ZAMAN en az `TRACE_BUF_LEN_SIZE`
+    // bayttır (yalnızca uzunluk alanı) — `ChildrenBuf.deinit` bunu TEK,
+    // ORTAK yoldan serbest bırakır (bkz. onun belge notu, `items.ptr - 1`
+    // aritmetiği `len == 0` İÇİN de GEÇERLİDİR, çünkü `children_ptr` yine
+    // de `buf + TRACE_BUF_LEN_SIZE`e işaret eder — hiç DEREFERANS edilmese
+    // bile).
+    const children_ptr: [*]?*anyopaque = @ptrFromInt(@intFromPtr(buf) + TRACE_BUF_LEN_SIZE);
+    return .{ .items = children_ptr[0..len], .raw_len = TRACE_BUF_LEN_SIZE + len * TRACE_BUF_SLOT_SIZE };
 }
 
 /// `runtime/async_rt/scheduler.zig`nin `Task.detached`i İLE AYNI ruhta:
@@ -400,17 +414,21 @@ fn collectWhite(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, ptr: *
 
 const arc = @import("arc.zig");
 const testing = std.testing;
+const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 
-const FAKE_PAYLOAD_SIZE: usize = 16; // TAG_SIZE(8) + 1 alan yuvası(8)
+const FAKE_PAYLOAD_SIZE: usize = TAG_SIZE + FIELD_SLOT_SIZE; // 1 alan yuvası
 
 fn fakeTraceDispatch(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) callconv(.c) ?*anyopaque {
     _ = tag;
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));
-    const field_addr: *const ?*anyopaque = @ptrFromInt(@intFromPtr(p.?) + HEADER_SIZE);
-    const buf = state.allocator().alloc(u8, 2 * HEADER_SIZE) catch return null;
+    // Sahte nesnenin TEK alanı, etiketten (`TAG_SIZE`) HEMEN SONRA oturur —
+    // bu, ARC başlığı/trace-buffer'la SAYISAL olarak ÇAKIŞSA da AYRI bir
+    // ABI gerçeğidir (bkz. `abi_layout.TAG_SIZE`nin belge notu).
+    const field_addr: *const ?*anyopaque = @ptrFromInt(@intFromPtr(p.?) + TAG_SIZE);
+    const buf = state.allocator().alloc(u8, TRACE_BUF_LEN_SIZE + TRACE_BUF_SLOT_SIZE) catch return null;
     const len_ptr: *i64 = @ptrCast(@alignCast(buf.ptr));
     len_ptr.* = 1;
-    const child_ptr: *?*anyopaque = @ptrFromInt(@intFromPtr(buf.ptr) + HEADER_SIZE);
+    const child_ptr: *?*anyopaque = @ptrFromInt(@intFromPtr(buf.ptr) + TRACE_BUF_LEN_SIZE);
     child_ptr.* = field_addr.*;
     return buf.ptr;
 }
@@ -445,7 +463,7 @@ fn injectFakeDispatch() void {
 /// `genAssign`'ın `.attribute` dalı): yazmadan ÖNCE `child`i retain eder.
 fn wireField(p: *anyopaque, child: *anyopaque) void {
     arc.nox_rc_retain(child);
-    const field_addr: *?*anyopaque = @ptrFromInt(@intFromPtr(p) + HEADER_SIZE);
+    const field_addr: *?*anyopaque = @ptrFromInt(@intFromPtr(p) + TAG_SIZE);
     field_addr.* = child;
 }
 
@@ -453,7 +471,7 @@ fn newFakeObject(rt: ?*anyopaque) *anyopaque {
     const p = arc.nox_rc_alloc(rt, FAKE_PAYLOAD_SIZE).?;
     const tag_ptr: *i64 = @ptrCast(@alignCast(p));
     tag_ptr.* = 99; // keyfi, `fakeTraceDispatch` tag'e hiç BAKMIYOR
-    const field_addr: *?*anyopaque = @ptrFromInt(@intFromPtr(p) + HEADER_SIZE);
+    const field_addr: *?*anyopaque = @ptrFromInt(@intFromPtr(p) + TAG_SIZE);
     field_addr.* = null;
     return p;
 }

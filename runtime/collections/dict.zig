@@ -56,6 +56,9 @@ const builtin = @import("builtin");
 const asap = @import("../alloc/asap.zig");
 const str_mod = @import("../str.zig");
 const arc = @import("../alloc/arc.zig");
+const abi_layout = @import("abi_layout");
+const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
+const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 
 /// `pub` — stdlib fazı §D.1 (Keşif 4): `nox.http`in Zig kabuğu, bir
 /// `dict[str, str]`in içeriğini (ör. yanıt başlıklarını inşa ederken)
@@ -286,14 +289,14 @@ pub export fn nox_dict_len(dp: ?*anyopaque) i64 {
 fn buildEntryList(rt: ?*anyopaque, d: *Dict, is_str: bool, elem_size: i64, want_key: bool) ?*anyopaque {
     const n = d.entries.items.len;
     const esz: usize = @intCast(elem_size);
-    const raw = arc.nox_rc_alloc(rt, 16 + esz * n) orelse return null;
+    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + esz * n) orelse return null;
     const bytes: [*]u8 = @ptrCast(raw);
     @as(*align(1) i64, @ptrCast(bytes)).* = @intCast(n);
     @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(n);
     for (d.entries.items, 0..) |e, i| {
         const payload = if (want_key) e.key else e.value;
         if (is_str and payload != 0) arc.nox_rc_retain(payloadToStrPtr(payload).?);
-        const slot = bytes + 16 + esz * i;
+        const slot = bytes + LIST_HEADER_SIZE + esz * i;
         if (esz == 4) {
             @as(*align(1) i32, @ptrCast(slot)).* = @truncate(payload);
         } else {
@@ -477,17 +480,17 @@ test "Faz III.6: nox_dict_keys/nox_dict_values int anahtar/deger icin dogru list
     const kbytes: [*]u8 = @ptrCast(keys_list);
     try std.testing.expectEqual(@as(i64, 2), @as(*align(1) i64, @ptrCast(kbytes)).*);
     try std.testing.expectEqual(@as(i64, 2), @as(*align(1) i64, @ptrCast(kbytes + 8)).*);
-    try std.testing.expectEqual(@as(i64, 1), @as(*align(1) i64, @ptrCast(kbytes + 16)).*);
+    try std.testing.expectEqual(@as(i64, 1), @as(*align(1) i64, @ptrCast(kbytes + LIST_HEADER_SIZE)).*);
     try std.testing.expectEqual(@as(i64, 2), @as(*align(1) i64, @ptrCast(kbytes + 24)).*);
     _ = arc.nox_rc_predecrement(keys_list);
-    arc.nox_rc_free_payload(rt, keys_list, 16 + 8 * 2);
+    arc.nox_rc_free_payload(rt, keys_list, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * 2);
 
     const values_list = nox_dict_values(rt, d, 0, 8) orelse return error.Failed;
     const vbytes: [*]u8 = @ptrCast(values_list);
-    try std.testing.expectEqual(@as(i64, 100), @as(*align(1) i64, @ptrCast(vbytes + 16)).*);
+    try std.testing.expectEqual(@as(i64, 100), @as(*align(1) i64, @ptrCast(vbytes + LIST_HEADER_SIZE)).*);
     try std.testing.expectEqual(@as(i64, 200), @as(*align(1) i64, @ptrCast(vbytes + 24)).*);
     _ = arc.nox_rc_predecrement(values_list);
-    arc.nox_rc_free_payload(rt, values_list, 16 + 8 * 2);
+    arc.nox_rc_free_payload(rt, values_list, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * 2);
 
     nox_dict_release(rt, d, 0, 0);
 }
@@ -505,10 +508,10 @@ test "Faz III.6: nox_dict_values bool degerler icin 4 baytlik eleman round-trip 
     const values_list = nox_dict_values(rt, d, 0, 4) orelse return error.Failed;
     const vbytes: [*]u8 = @ptrCast(values_list);
     try std.testing.expectEqual(@as(i64, 2), @as(*align(1) i64, @ptrCast(vbytes)).*);
-    try std.testing.expectEqual(@as(i32, 1), @as(*align(1) i32, @ptrCast(vbytes + 16)).*);
+    try std.testing.expectEqual(@as(i32, 1), @as(*align(1) i32, @ptrCast(vbytes + LIST_HEADER_SIZE)).*);
     try std.testing.expectEqual(@as(i32, 0), @as(*align(1) i32, @ptrCast(vbytes + 20)).*);
     _ = arc.nox_rc_predecrement(values_list);
-    arc.nox_rc_free_payload(rt, values_list, 16 + 4 * 2);
+    arc.nox_rc_free_payload(rt, values_list, LIST_HEADER_SIZE + 4 * 2);
 
     nox_dict_release(rt, d, 0, 0);
 }
@@ -525,7 +528,7 @@ test "Faz III.6: nox_dict_keys str anahtarlari retain eder — dict VE list bagi
 
     const keys_list = nox_dict_keys(rt, d, 1, 8) orelse return error.Failed;
     const kbytes: [*]u8 = @ptrCast(keys_list);
-    const kptr_val = @as(*align(1) i64, @ptrCast(kbytes + 16)).*;
+    const kptr_val = @as(*align(1) i64, @ptrCast(kbytes + LIST_HEADER_SIZE)).*;
     const kptr: [*:0]u8 = @ptrFromInt(@as(usize, @bitCast(kptr_val)));
     try std.testing.expectEqualStrings("anahtar1", std.mem.sliceTo(kptr, 0));
 
@@ -538,7 +541,7 @@ test "Faz III.6: nox_dict_keys str anahtarlari retain eder — dict VE list bagi
 
     str_lib.nox_str_release(rt, kptr);
     _ = arc.nox_rc_predecrement(keys_list);
-    arc.nox_rc_free_payload(rt, keys_list, 16 + 8 * 1);
+    arc.nox_rc_free_payload(rt, keys_list, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * 1);
 }
 
 // Güvenlik bulgusu M-3 (bkz. güvenlik raporu, 20 Temmuz 2026) — DÜZELTİLDİ:

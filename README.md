@@ -37,7 +37,11 @@ print(c.value)
 ## Neden Nox?
 
 - **Zorunlu statik tip**, Python'a yakın sözdizimi (Mojo'nun kademeli
-  tipleme yaklaşımından farklı olarak).
+  tipleme yaklaşımından farklı olarak) — `f"..."` biçimlendirilmiş dize
+  literalleri, 7 birleşik atama operatörü (`+=`/`-=`/`*=`/`/=`/`//=`/
+  `%=`/`**=`), UTF-8 karakter-farkındalıklı `len()`/`s[i]` (ASCII hızlı
+  yolu ile) ve derleme-zamanı monomorfizasyonlu kullanıcı-tanımlı generic
+  sınıflar (`class Box[T]:`) DAHİL.
 - **QBE üzerinden doğrudan native koda AOT derleme** — LLVM/MLIR bağımlılığı
   yok.
 - **Katmanlı, çoğunlukla görünmez bir bellek modeli** ("Sahiplik Piramidi"):
@@ -45,7 +49,13 @@ print(c.value)
   belirsiz durumlarda ARC'ye (referans sayımı) düşer — kullanıcıya hiçbir
   açık ownership sözdizimi hissettirilmez.
 - **HPy esinli bir C eklenti modeli** ve gömülü bir WASM çalışma zamanı
-  (kütüphane olarak import etmek için).
+  (kütüphane olarak import etmek için). HPy `ctx_*` API yüzeyinin 180/180
+  fonksiyonu gerçek bir HPy 0.9.0 C uzantısıyla uçtan uca doğrulanmış
+  durumda — üçü (`ctx_CallRealFunctionFromTrampoline`, `ctx_FromPyObject`,
+  `ctx_AsPyObject`), Nox'un mimarisinde (yalnızca `HPY_ABI_UNIVERSAL`,
+  gerçek bir CPython çağrı yolu yok) yapısal olarak karşılığı OLMADIĞI
+  İçin sahte bir uygulama YERİNE bilinçli, dokümante edilmiş bir `@panic`
+  ile bırakıldı (bkz. `runtime/hpy_bridge/context.zig`).
 - **Go tarzı fiber/kooperatif async çalışma zamanı** (`spawn`/`await`,
   `Task`/`Channel`) + gerçek eşzamanlı G/Ç (kqueue tabanlı reaktör).
 - **Paylaşımsız (shared-nothing), çok çekirdekli iş parçacığı desteği**
@@ -55,8 +65,11 @@ print(c.value)
   çekirdeğiyle sınırlı KALMADAN gerçek paralellik sağlar.
 - Büyüyen bir standart kütüphane (`nox.http`, `nox.json`, `nox.strings`,
   `nox.math`, `nox.os`/`nox.fs`/`nox.path`, `nox.time`, `nox.random`,
-  `nox.crypto`, `nox.regex`, `nox.test`) ve Go tarzı merkeziyetsiz
-  (GitHub URL'si üzerinden) bir paket sistemi.
+  `nox.crypto`, `nox.regex`, `nox.test`, `nox.thread`, `nox.sqlite` —
+  `libsqlite3`e çalışma zamanında tembel bağlanan, statik bağımlılık
+  KATMAYAN bir SQLite sürücüsü) ve Go tarzı merkeziyetsiz (GitHub URL'si
+  ya da doğrudan bir indeks URL'si üzerinden, `noxc search`) bir paket
+  sistemi.
 
 Mimari/tasarım kararlarının tam dökümü için
 [`nox-teknik-spesifikasyon.md`](nox-teknik-spesifikasyon.md)'ye bakın.

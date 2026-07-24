@@ -123,7 +123,19 @@ fn resolveImportsImpl(
     const combined = try a.alloc(ast.Stmt, extra.items.len + user_module.body.len);
     @memcpy(combined[0..extra.items.len], extra.items);
     @memcpy(combined[extra.items.len..], user_module.body);
-    return .{ .body = combined };
+    // Gerçek span sistemi (bkz. plan dosyası "Gerçek span sistemi +
+    // yapılandırılmış tanılamalar", Bulgu #2 — DOĞRULANMIŞ, GERÇEK bir
+    // hata): bu fonksiyon HER GERÇEK derlemede (boş `import` listesiyle
+    // BİLE — `core.nox` KOŞULSUZ birleştirilir) çalışan TEK choke point'tir
+    // (`noxc build`/`noxc check` VE `noxlsp`nin `resolveImportsFrom`
+    // ÇAĞRISI, HEPSİ buraya YÖNLENİR). `user_module.expr_spans`i BURADA
+    // TAŞIMAMAK, TÜM argüman span verisini SESSİZCE SIFIRLARDI — yalnızca
+    // `Stmt` DİZİSİ (üst-düzey pointer'lar) FİZİKSEL olarak `@memcpy` İLE
+    // taşınır, İÇ İÇE `[]Stmt`/`Call.args`/boxed `*Expr` alanları DEĞER
+    // OLARAK (pointer/len) kopyalanır — bu YÜZDEN `expr_spans`teki anahtarlar
+    // (`@intFromPtr(&arg)`) BU birleştirmeden SONRA da GEÇERLİ kalır,
+    // yeter ki haritanın KENDİSİ de birlikte TAŞINSIN.
+    return .{ .body = combined, .expr_spans = user_module.expr_spans };
 }
 
 fn fileExistsAbsolute(io: std.Io, path: []const u8) bool {
@@ -313,7 +325,24 @@ fn renameExpr(a: std.mem.Allocator, e: ast.Expr, map: *const RenameMap) std.mem.
             for (g.args, 0..) |arg, i| args[i] = try renameExpr(a, arg, map);
             const type_args = try a.alloc(ast.TypeExpr, g.type_args.len);
             for (g.type_args, 0..) |ta, i| type_args[i] = try renameTypeExpr(a, ta, map);
-            break :blk .{ .generic_construct = .{ .name = g.name, .type_args = type_args, .args = args } };
+            // Faz P2.1: `Channel`/`ThreadChannel` (yerleşikler) HİÇBİR ZAMAN
+            // `map`de OLMADIĞINDAN bu ikisi İçin davranış DEĞİŞMEZ — ama
+            // ARTIK bir KULLANICI generic sınıfı da BU sözdizimiyle inşa
+            // edilebildiğinden (bkz. `ast.GenericConstruct`nin belge notu),
+            // `g.name` de `.call`in callee'siyle AYNI şekilde `map` üzerinden
+            // çözülmelidir (aksi halde `from mod import Box` sonrası
+            // `Box[int](5)` YANLIŞ isimle KALIRDI). `resolved_class_name`
+            // İçin TAZE bir işaretçi ayrılır — ESKİ işaretçi modüller arası
+            // PAYLAŞILMAZ (checker'ın bu kopyaya yazacağı karar, orijinal
+            // düğümü ETKİLEMEMELİDİR).
+            const resolved_class_name = try a.create(?[]const u8);
+            resolved_class_name.* = null;
+            break :blk .{ .generic_construct = .{
+                .name = if (map.get(g.name)) |m| m else g.name,
+                .type_args = type_args,
+                .args = args,
+                .resolved_class_name = resolved_class_name,
+            } };
         },
         .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => e,
     };
@@ -421,7 +450,15 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
             const methods = try a.alloc(ast.FuncDef, cd.methods.len);
             for (cd.methods, 0..) |m, i| methods[i] = try renameMethodDef(a, m, map);
             const fields = try renameFieldDecls(a, cd.fields, map);
-            break :blk .{ .class_def = .{ .name = map.get(cd.name).?, .methods = methods, .fields = fields } };
+            // Faz P2.1 (bkz. proje belleği "generic sınıflar" planı):
+            // `cd.type_params` BURADA korunmazsa, `import`la GELEN bir
+            // generic sınıf (`Box[T]`) SESSİZCE "generic OLMAYAN" bir
+            // sınıfa DÖNÜŞÜR (`type_params.len == 0` varsayılan DEĞERİNE
+            // düşer) — checker'ın `collectClassNames`ı onu `self.classes`e
+            // (YANLIŞLIKLA, `T` HÂLÂ çözülmemiş bir alan/metod tipi
+            // OLARAK) doğrudan kaydeder, `error.UnknownType: T` İLE
+            // SONUÇLANIR (GERÇEK bir hata olarak BULUNDU/doğrulandı).
+            break :blk .{ .class_def = .{ .name = map.get(cd.name).?, .type_params = cd.type_params, .methods = methods, .fields = fields } };
         },
         .protocol_def => |pd| blk: {
             const methods = try a.alloc(ast.FuncDef, pd.methods.len);

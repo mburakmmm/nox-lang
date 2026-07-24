@@ -52,8 +52,12 @@ const std = @import("std");
 const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
 const http_client = @import("http_client.zig");
+const abi_layout = @import("abi_layout");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
+/// Faz P1.2: bkz. `strings.zig`nin AYNI re-export notu.
+const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
+const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 
 /// `stdlib/nox/core.nox`nin `nox_json_make_json_value` fonksiyonu — ismi
 /// core.nox'ta SABİT (mangle EDİLMEZ) yazıldığından ("nox_json_make_json_value"),
@@ -172,12 +176,12 @@ fn callMakeJsonValue(
 /// (ikisi de düz 8 baytlık işaretçi dizisi). Kapasite HER ZAMAN uzunluğa
 /// eşittir (tam-oturan — bkz. `nox_strings_split_raw`daki AYNI gerekçe).
 fn buildPtrList(rt: ?*anyopaque, items: []const ?*anyopaque) ?*anyopaque {
-    const raw = arc.nox_rc_alloc(rt, 16 + 8 * items.len) orelse return null;
+    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * items.len) orelse return null;
     const bytes: [*]u8 = @ptrCast(raw);
     @as(*align(1) i64, @ptrCast(bytes)).* = @intCast(items.len);
     @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(items.len);
     for (items, 0..) |it, i| {
-        const slot = bytes + 16 + 8 * i;
+        const slot = bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
         @as(*align(1) i64, @ptrCast(slot)).* = @bitCast(@as(isize, @intCast(@intFromPtr(it))));
     }
     return @ptrCast(bytes);

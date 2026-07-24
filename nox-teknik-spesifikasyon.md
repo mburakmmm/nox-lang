@@ -84,6 +84,58 @@ dönüşü olmayacak şekilde): `setattr`, `exec`, çalışma zamanında sınıf
 Bu fazda yalnızca lexer → parser → AST üretilir; tip denetimi, sahiplik analizi
 ve QBE codegen henüz yoktur (bkz. Nox roadmap, sonraki fazlar).
 
+#### 3.1.1 Netleştirme (P2.3) — Tanımlayıcılar, sayı literalleri, string kapsamı
+
+Bağımsız bir dış inceleme, aşağıdaki üç lexer davranışının hiçbir yerde AÇIKÇA
+belgelenmediğini işaret etti — bu bölüm, `compiler/lexer/lexer.zig`nin GÜNCEL
+(bu yazının tarihi itibarıyla) davranışını, varsayım YERİNE doğrudan koda
+bakılarak doğrulanmış olarak belgeler. Davranışların KENDİSİ DEĞİŞMEDİ, yalnızca
+belgelenmemiş bir gerçek AÇIKÇA yazıya döküldü.
+
+- **Tanımlayıcılar (identifiers) — bilinçli olarak yalnızca ASCII:**
+  `isIdentStart`/`isIdentCont` (lexer.zig) yalnızca `[a-zA-Z_]` (başlangıç) ve
+  `[a-zA-Z0-9_]` (devam) kabul eder — Unicode harfleri (ör. `é`, `ç`, `π`, CJK
+  karakterleri) bir tanımlayıcının PARÇASI OLAMAZ. Böyle bir bayt dizisiyle
+  karşılaşılırsa (hiçbir operatöre/noktalama işaretine denk gelmediğinden)
+  lexer `error.UnexpectedCharacter` fırlatır — SESSİZCE yanlış bir şey ÜRETMEZ,
+  ama hata mesajı "beklenmeyen karakter" der, "Unicode tanımlayıcılar
+  desteklenmiyor" DEMEZ (bu netleştirmenin GEREKÇESİ TAM OLARAK budur). String
+  literallerinin İÇERİĞİ (bkz. aşağı) bu kısıtlamaya TABİ DEĞİLDİR — yalnızca
+  tanımlayıcı ADLARI (değişken/fonksiyon/sınıf adları) ASCII'YE sınırlıdır.
+
+- **Sayı literalleri — yalnızca 10-tabanlı tamsayı/ondalık, EK sözdizimi YOK:**
+  Lexer YALNIZCA `[0-9]+` (tamsayı) ve `[0-9]+.[0-9]+` (ondalık, HER İKİ
+  tarafta da EN AZ bir rakam ZORUNLU — çıplak `5.` ya da `.5` GEÇERSİZDİR)
+  tanır. AŞAĞIDAKİLERİN HİÇBİRİ desteklenmez: onaltılık/sekizlik/ikilik
+  literaller (`0x1F`/`0o17`/`0b101`), bilimsel gösterim (`1e10`, `2.5e-3`),
+  okunabilirlik İçin alt çizgi ayırıcılar (`1_000_000`), karmaşık (complex)
+  sayılar. Negatif sayı literalleri de lexer SEVİYESİNDE YOKTUR — `-5` İKİ
+  ayrı token'dır (`-` tekli eksi operatörü + `5`), parser'ın `parseUnary`ı
+  BUNU birleştirir (bkz. §3.1'in "unary eksi" operatör önceliği notu).
+
+- **String literalleri — tek satırlık ÇAĞRIŞIM YAPAR ama ASLINDA DEĞİLDİR:**
+  `'...'`/`"..."`, temel kaçış dizileriyle (`\n`, `\t`, `\\`, `\'`, `\"` vb.)
+  DESTEKLENİR — ama ÜÇLÜ tırnak (`'''...'''`/`\"\"\"...\"\"\"`), ham (raw, `r"..."`),
+  byte (`b"..."`) ya da biçimlendirilmiş (f-string, `f"..."`) ÖNEKLER/varyantlar
+  YOKTUR (f-string zaten §3.1'in "Faz 1'de bilerek dışarıda bırakılanlar"
+  listesinde, HÂLÂ uygulanmadı). **Belgelenmemiş, muhtemelen ŞAŞIRTICI olan
+  gerçek şu:** lexer'ın string tarayıcısı satır sonunu (`\n`) ÖZEL bir
+  durdurucu OLARAK ele ALMAZ — kaçışSIZ bir GERÇEK yeni-satır karakteri açılış
+  tırnağıyla KAPANIŞ tırnağı ARASINDA görünürse (ör. kullanıcı bir tırnağı
+  kapatmayı UNUTUP bir SONRAKİ satıra geçerse), lexer bunu bir HATA olarak
+  DEĞİL, string'in İÇERİĞİNİN bir PARÇASI olarak tüketmeye DEVAM eder — dosyanın
+  SONUNA ya da bir SONRAKİ eşleşen tırnağa kadar (`error.UnterminatedString`
+  yalnızca dosya SONUNA kadar HİÇ eşleşen tırnak bulunamazsa tetiklenir). Bu,
+  Python'ın (tek satırlık dizeler İçin kaçışsız yeni-satırı HER ZAMAN bir
+  sözdizimi hatası SAYAN) davranışından FARKLIDIR — Nox'ta `x: str = "a\nb"`
+  İLE `x: str = "a<gerçek-yeni-satır>b"` (İKİNCİSİ, İKİ fiziksel kaynak
+  satırına YAYILAN bir string literal) İKİSİ de GEÇERLİDİR ve AYNI değeri
+  üretir. Bu, KASITLI bir tasarım DEĞİL, lexer'ın basit "eşleşen tırnağı ara"
+  döngüsünün bir YAN ETKİSİDİR — ama davranış GERİYE dönük UYUMLULUK İçin
+  KORUNMALIDIR (mevcut testler/stdlib bunu VARSAYMIYOR ama BOZMASI da
+  GEREKMİYOR), bu YÜZDEN burada bir HATA olarak DEĞİL bir belgelenmiş
+  davranış olarak KAYDEDİLİR.
+
 ### 3.2 Faz 2 Uygulama Kapsamı — Zorunlu Statik Tip Denetleyici
 
 `compiler/typecheck/` altında hayata geçirilen tip denetleyicisi, Faz 1'in
@@ -12227,7 +12279,64 @@ bırakıldı — Faz III planının kapsam-dışı 5 maddesiyle AYNI büyüklük
 kendi tasarım turunu (kütüphane seçimi, API yüzeyi) gerektiren birer iş
 (bkz. §3.69'un giriş notu).
 
-## 3.71 Faz LL — Windows desteği
+### KK.8 (TAMAMLANDI) — Faz P2.4: paket getirmenin güvenli taşıma varsayılanı + imza doğrulaması + kilitli-SHA sapması düzeltmesi
+
+P0/P1/P2 inceleme düzeltme listesinin P2.4 maddesi ("package signing/
+provenance + secure transport default policy") — KK.7'nin (M-8) şema
+allowlist'ini TEMEL alarak dört AYRI, ilişkili iyileştirme yapıldı.
+
+**1. GERÇEK, önceden keşfedilmemiş bir hata — kilitli SHA'dan sapma:**
+`nox.lock`ın VAR OLMA amacı ("TEKRARLANABİLİR derlemenin bütün amacı BU",
+bkz. `project.zig`nin `Lockfile`/`LockedPackage` belge notu) — ama
+`resolveImportsForBuild`/`resolveDependencies` (main.zig), ÖNBELLEK dizini
+KAYBOLMUŞSA (silinmiş `~/.nox`, YENİ makine, CI önbellek KAÇIRMASI) `req.ref`i
+(hareketli bir dal/etiket adı) YENİDEN çözüyordu — `nox.lock`taki kilitli
+SHA'YI DEĞİL. Bir dal ref'i kilitlemeden SONRA İLERLEMİŞSE, SADECE önbelleği
+temizlemek `noxc build`ın (`update` DEĞİL) SESSİZCE farklı bir commit'e
+SAPMASINA yol açardı. **Düzeltme:** önbellek dizini kayıp AMA `repo` alanı
+DEĞİŞMEDİYSE, `req.ref` YERİNE kilitli SHA'nın KENDİSİ getirilir —
+`noxc update` (`force_refetch=true`) BU YOLA HİÇ GİRMEZ, HER ZAMAN `req.ref`i
+yeniden çözmeye DEVAM eder (TAM OLARAK "update"in yapması GEREKEN şey). Yeni
+`DepAction.recached` çıktısı (`fetch`in "onbellek yeniden oluşturuldu"
+mesajı) bu durumu `.fetched`/`.updated`dan AYIRT eder.
+
+**2. Güvenli taşıma varsayılanı:** `allowed_repo_schemes` İKİYE bölündü —
+`secure_repo_schemes` (`https://`/`ssh://`/`file://`, HER ZAMAN kabul) VE
+`insecure_repo_schemes` (`http://`/`git://`, düz-metin/MITM'e açık —
+YALNIZCA AÇIK bir opt-in İLE kabul). Yeni `NOX_ALLOW_INSECURE_TRANSPORT`
+ortam değişkeni (`NOX_HOME`/`NOX_RESOURCE_DIR` İLE AYNI desen — `main()`de
+BİR KEZ okunur, `fetch.zig`ye AÇIK bir `FetchPolicy` parametresi olarak
+geçirilir) VERİLMEDİKÇE `http://`/`git://` `error.InsecureRepoSchemeRejected`
+İLE reddedilir.
+
+**3. `GIT_TERMINAL_PROMPT=0`:** git alt-süreçleri ARTIK ebeveyn ortamının
+TAM bir kopyası (`PATH`/`HOME`/`SSH_AUTH_SOCK`/proxy değişkenleri KORUNARAK
+— sıfırdan bir harita bunları SESSİZCE KIRARDI) ÜZERİNE bu değişken
+EKLENEREK çalıştırılır — interaktif bir kimlik doğrulama İSTEMİ ARTIK
+SONSUZA KADAR ASILI KALMAK YERİNE (BUGÜNKÜ, `noxc`nin stdin'i bir
+terminale bağlı OLMADIĞI ÇOĞU GERÇEKÇİ çağrıda ZATEN olan davranış) git'in
+KENDİ AÇIK stderr metniyle HEMEN başarısız olur.
+
+**4. Opt-in commit imza doğrulaması:** `nox.json`nin `requires[]`ine yeni,
+varsayılan `false` bir `require_signed_commit` alanı EKLENDİ —
+`true` İSE, çözülen commit `git verify-commit` İLE (git'in KENDİ, olgun GPG
+altyapısına devredilerek — ÖZEL bir kripto/anahtar-yönetimi/güven-deposu
+İCAT EDİLMEDİ) doğrulanır; başarısızsa (imzasız, güvenilmeyen imzalayan,
+`gpg` bulunamadı) `error.CommitSignatureRejected` İLE, git'in KENDİ tanılama
+metni kullanıcıya GÖSTERİLEREK, önbellek KİRLETİLMEDEN reddedilir. `gpg`nin
+CI ortamında KURULU OLMADIĞI doğrulandı (`.github/workflows/ci.yml`) — bu
+YÜZDEN reddetme yolu testi `gpg`YE HİÇ İHTİYAÇ DUYMAZ (imzasız bir commit'te
+`git verify-commit` `gpg`yi HİÇ ÇAĞIRMADAN başarısız olur), kabul yolu testi
+İSE `gpg` YOKSA/anahtar üretimi başarısız OLURSA `error.SkipZigTest` İLE
+zararsızca ATLANIR (bu test suite'inde "araç eksikse atla" deseninin İLK
+kullanımı).
+
+Yeni testler: `tests/unit/fetch_test.zig` (`resolveCloneUrl`in artık `pub`
+olan şema-politikası saf birim testleri + imza reddetme/kabul testleri) VE
+`tests/cli/package_resolution_test.zig` (kilitli-SHA-sapması regresyon
+testi: bir bağımlılık kilitlenir, fixture deposu İLERLETİLİR, önbellek
+SİLİNİR, `noxc fetch` — `update` DEĞİL — TEKRAR çalıştırılır, `nox.lock`ın
+HÂLÂ eski/kilitli SHA'yı taşıdığı doğrulanır).
 
 Kullanıcı README güncellemesi sırasında Windows İçin de bir kurulum
 betiği istedi. Araştırma SIRASINDA `runtime/async_rt/io_reactor.zig`nin

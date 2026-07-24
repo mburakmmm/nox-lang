@@ -22,7 +22,7 @@ fn expectGolden(comptime source: []const u8, comptime expected: []const u8) !voi
         },
     }
 
-    const report = try nox.ownership.analyze(allocator, module, &.{}, &.{});
+    const report = try nox.ownership.analyze(allocator, module, &.{}, &.{}, &.{}, &.{});
     const dump = try nox.ownership.dumpToAlloc(allocator, report);
 
     try std.testing.expectEqualStrings(expected, dump);

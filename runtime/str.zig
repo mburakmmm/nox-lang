@@ -132,6 +132,18 @@ pub export fn nox_str_to_float(s: ?[*:0]const u8) f64 {
 /// Stdlib fazı §G: `s[i]` string indekslemesinin çalışma zamanı desteği.
 /// Sınır KONTROLÜ BURADA yapılMAZ — codegen'in `genIndex`i (QBE'de
 /// `strlen`+karşılaştırma ile) `idx`nin GEÇERLİ olduğunu ÖNCEDEN doğrular
+/// Bulundu (bkz. proje belleği "UTF-8 farkındalığı" görevi): `s[i]`
+/// ÖNCEDEN HAM bir bayt okuyordu (`p[idx]`) — çok baytlı UTF-8 karakterler
+/// (ör. "café"nin "é"si, 2 bayt) İÇİN YANLIŞ, bir dizinin ORTASINDAN
+/// KESİP geçersiz/çöp bir bayt döndürüyordu (`"café"[3]`). ARTIK `idx`.
+/// CODEPOINT'e (Unicode "karakter") KADAR `std.unicode.Utf8View` İLE
+/// yürür — `runtime/hpy_bridge/context.zig`nin ZATEN kullandığı AYNI
+/// `Utf8View`/iterator deseni. GEÇERSİZ UTF-8 baytlara (ör. `nox.fs`den
+/// gelen Latin-1 dosya İçeriği) karşı GÜVENLİ bir geri düşüş: doğrulama
+/// BAŞARISIZ olursa HAM bayt semantiğine (ÖNCEKİ davranış) düşülür —
+/// `nox_str_char_count`ün AYNI geri düşüşüyle TUTARLI (`0 <= idx < len(s)`
+/// değişmezi HER İKİ modda da geçerli kalır, ASLA çökmez).
+///
 /// (bkz. `genParseOrRaise`in AYNI "önce doğrula, sonra çağır" deseni,
 /// stdlib fazı §E) — bu fonksiyon YALNIZCA GEÇERLİ bir `idx` İÇİN çağrılır.
 /// TEK karakterlik YENİ bir ARC'lı `str` döner (temel dizeden BAĞIMSIZ bir
@@ -141,14 +153,67 @@ pub export fn nox_str_to_float(s: ?[*:0]const u8) f64 {
 pub export fn nox_str_char_at(rt: ?*anyopaque, s: ?[*:0]const u8, idx: i64) ?[*:0]u8 {
     const p = s orelse return null;
     if (idx < 0) return null;
-    const raw = arc.nox_rc_alloc(rt, 2) orelse return null;
-    const bytes: [*]u8 = @ptrCast(raw);
-    bytes[0] = p[@intCast(idx)];
-    bytes[1] = 0;
-    return @ptrCast(bytes);
+    const bytes = std.mem.span(p);
+    if (std.unicode.Utf8View.init(bytes)) |view| {
+        var it = view.iterator();
+        var i: i64 = 0;
+        while (it.nextCodepointSlice()) |slice| {
+            if (i == idx) {
+                const raw = arc.nox_rc_alloc(rt, slice.len + 1) orelse return null;
+                const out: [*]u8 = @ptrCast(raw);
+                @memcpy(out[0..slice.len], slice);
+                out[slice.len] = 0;
+                return @ptrCast(out);
+            }
+            i += 1;
+        }
+        return null;
+    } else |_| {
+        if (@as(usize, @intCast(idx)) >= bytes.len) return null;
+        const raw = arc.nox_rc_alloc(rt, 2) orelse return null;
+        const out: [*]u8 = @ptrCast(raw);
+        out[0] = bytes[@intCast(idx)];
+        out[1] = 0;
+        return @ptrCast(out);
+    }
 }
 
-test "nox_str_char_at gecerli indekste dogru karakteri doner" {
+/// Bulundu (bkz. proje belleği "UTF-8 farkındalığı" görevi): `len(s)`
+/// (bir `str` İçin, bkz. `codegen_qbe/calls.zig`nin `len` dalı) ÖNCEDEN
+/// DOĞRUDAN `strlen`e inlineleniyordu — bayt sayısı, "café" İçin YANLIŞ
+/// (5, BEKLENEN 4). `std.unicode.utf8CountCodepoints` (SIMD ASCII hızlı
+/// yolu DAHİL) codepoint sayar. `rt` PARAMETRESİ YOK (tahsis YAPMAZ) —
+/// `strlen`in TEK-argümanlı imzasıyla BİREBİR eşleşir, codegen'in 3 çağrı
+/// sitesi (bkz. plan dosyası) SADECE fonksiyon adını değiştirir. Geçersiz
+/// UTF-8'e karşı `nox_str_char_at`in AYNI güvenli geri düşüşü: HAM bayt
+/// sayısına düşer, ASLA çökmez.
+pub export fn nox_str_char_count(s: ?[*:0]const u8) i64 {
+    const p = s orelse return 0;
+    const bytes = std.mem.span(p);
+    const count = std.unicode.utf8CountCodepoints(bytes) catch return @intCast(bytes.len);
+    return @intCast(count);
+}
+
+/// Bulundu (bkz. proje belleği "UTF-8 farkındalığı" görevi, GERÇEK ölçüm:
+/// `benchmarks/str_index_loop_licm.nox` ~30 saniyeye çıktı): `nox_str_
+/// char_at`in ARTIK O(i) UTF-8 yürüyüşü olması, TAMAMEN ASCII dizelerde
+/// (GERÇEK dünyada çoğu metin) GEREKSİZ bir yavaşlama — ASCII'de HER bayt
+/// KENDİ codepoint'i olduğundan bayt-ofseti == codepoint-ofseti, O(1) HAM
+/// erişim HÂLÂ DOĞRUDUR. `compiler/codegen_qbe/optimizations.zig`nin
+/// `enterStrLenCacheScope`si BU fonksiyonu döngüye girmeden HEMEN ÖNCE BİR
+/// KEZ çağırıp sonucu önbelleğe alır — `genStrIndex` (expr.zig) HER erişimde
+/// bu önbellekten ÇALIŞMA-ZAMANI dallanır: ASCII İSE ESKİ O(1) yol İNLINE
+/// edilir, DEĞİLSE `nox_str_char_at`e düşülür.
+pub export fn nox_str_is_ascii(s: ?[*:0]const u8) i64 {
+    const p = s orelse return 1;
+    const bytes = std.mem.span(p);
+    for (bytes) |b| {
+        if (b >= 0x80) return 0;
+    }
+    return 1;
+}
+
+test "nox_str_char_at gecerli indekste dogru karakteri doner (ASCII)" {
     const asap = @import("alloc/asap.zig");
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
@@ -160,6 +225,36 @@ test "nox_str_char_at gecerli indekste dogru karakteri doner" {
     const c4 = nox_str_char_at(rt, "hello", 4) orelse return error.ConvFailed;
     defer nox_str_release(rt, c4);
     try std.testing.expectEqualStrings("o", std.mem.sliceTo(c4, 0));
+}
+
+test "nox_str_char_at cok baytli UTF-8 karakteri BOLMEDEN dogru doner" {
+    const asap = @import("alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    // "café" -- 'é' = 2 baytlik UTF-8 (0xC3 0xA9), toplam 5 bayt, 4 codepoint.
+    const c3 = nox_str_char_at(rt, "café", 3) orelse return error.ConvFailed;
+    defer nox_str_release(rt, c3);
+    try std.testing.expectEqualStrings("é", std.mem.sliceTo(c3, 0));
+
+    // "日本語" -- her biri 3 baytlik UTF-8, toplam 9 bayt, 3 codepoint.
+    const c1 = nox_str_char_at(rt, "日本語", 1) orelse return error.ConvFailed;
+    defer nox_str_release(rt, c1);
+    try std.testing.expectEqualStrings("本", std.mem.sliceTo(c1, 0));
+}
+
+test "nox_str_char_count ASCII'de strlen ile ayni, cok baytli UTF-8'de codepoint sayar" {
+    try std.testing.expectEqual(@as(i64, 5), nox_str_char_count("hello"));
+    try std.testing.expectEqual(@as(i64, 4), nox_str_char_count("café"));
+    try std.testing.expectEqual(@as(i64, 3), nox_str_char_count("日本語"));
+    try std.testing.expectEqual(@as(i64, 0), nox_str_char_count(""));
+}
+
+test "nox_str_is_ascii ASCII dizelerde 1, cok baytli UTF-8 iceren dizelerde 0 doner" {
+    try std.testing.expectEqual(@as(i64, 1), nox_str_is_ascii("hello"));
+    try std.testing.expectEqual(@as(i64, 1), nox_str_is_ascii(""));
+    try std.testing.expectEqual(@as(i64, 0), nox_str_is_ascii("café"));
+    try std.testing.expectEqual(@as(i64, 0), nox_str_is_ascii("日本語"));
 }
 
 /// Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) — `nox_str_char_at`

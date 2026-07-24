@@ -5,6 +5,12 @@ pub const TokenKind = enum {
     int_lit,
     float_lit,
     string_lit,
+    /// Bulundu (bkz. proje belleği "f-string + augmented atama" görevi):
+    /// `f"..."`/`F'...'` — HAM metin (öneki/tırnakları/kaçışları/`{...}`
+    /// interpolasyonlarını OLDUĞU GİBİ İÇEREN tek bir token, parser'ın
+    /// KENDİ durum makinesiyle segment'lere bölünüp `str()`+`+` zincirine
+    /// desugar edilir (bkz. plan dosyası — YENİ bir AST türü GEREKMEZ).
+    fstring_lit,
     identifier,
 
     // keywords
@@ -74,6 +80,19 @@ pub const TokenKind = enum {
     gt_eq,
     assign, // =
 
+    // Bulundu (bkz. proje belleği "f-string + augmented atama" görevi):
+    // augmented atama (`+=` vb.) — parser'da `target = target OP value`e
+    // desugar edilir (checker/codegen'de SIFIR yeni kod, bkz. plan
+    // dosyası). `**=`/`//=` İKİ karakterlik temel operatörün (`**`/`//`)
+    // ÜZERİNE bir ÜÇÜNCÜ `=` karakteri gerektirir.
+    plus_eq, // +=
+    minus_eq, // -=
+    star_eq, // *=
+    slash_eq, // /=
+    slash_slash_eq, // //=
+    percent_eq, // %=
+    star_star_eq, // **=
+
     // structure
     newline,
     indent,
@@ -84,8 +103,21 @@ pub const TokenKind = enum {
 pub const Token = struct {
     kind: TokenKind,
     lexeme: []const u8,
+    /// 1-tabanlı BAŞLANGIÇ satırı/sütunu.
     line: u32,
     col: u32,
+    /// Gerçek span sistemi (bkz. plan dosyası "Gerçek span sistemi +
+    /// yapılandırılmış tanılamalar") — SAF ekleme alanları: `line`/`col`nin
+    /// (BAŞLANGIÇ) DAVRANIŞI/ANLAMI DEĞİŞMEZ. HİÇBİR token türü BİRDEN FAZLA
+    /// satıra YAYILMADIĞINDAN (string/identifier/sayı literalleri TEK
+    /// satırda taranır) `end_line`, PRATİKTE HER ZAMAN `line`e EŞİTTİR —
+    /// yine de AÇIKÇA TUTULUR (gelecekte çok-satırlı bir token türü
+    /// EKLENİRSE bu VARSAYIM tek bir yerde — `lexer.zig`nin token inşa
+    /// noktaları — GÜNCELLENİR, `Span` TÜKETİCİLERİ ETKİLENMEZ).
+    start_byte: usize = 0,
+    end_byte: usize = 0,
+    end_line: u32 = 0,
+    end_col: u32 = 0,
 };
 
 /// Faz T.4a: normal token akışının ATTIĞI (bkz. `lexer.zig`nin `tokenize`i)

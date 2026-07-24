@@ -16,9 +16,32 @@
 //!
 //! **Çalıştırma:** normal `zig build test` bu testleri TEK bir (varsayılan/
 //! boş korpus) girdiyle ÇALIŞTIRIR — HIZLI bir regresyon testi GİBİ davranır,
-//! CI'yi YAVAŞLATMAZ/askıya ALMAZ. GERÇEK, UZATILMIŞ fuzzing için:
-//! `zig build test --fuzz` (yerel bir web arayüzü AÇAR, sürekli mutasyonla
-//! arar) — bu, GELİŞTİRİCİNİN elle tetiklediği, AYRI bir iş akışıdır.
+//! CI'yi YAVAŞLATMAZ/askıya ALMAZ. GERÇEK, UZATILMIŞ fuzzing İÇİN TASARLANAN
+//! yol `zig build test --fuzz`dır (yerel bir web arayüzü AÇAR, sürekli
+//! mutasyonla arar).
+//!
+//! **Bilinen, ŞU AN İÇİN AŞILAMAYAN engel (bağımsız bir inceleme SIRASINDA,
+//! 2026-07-22'de DOĞRUDAN doğrulandı — GERÇEK bir Zig 0.16.0 hatası, Nox'un
+//! KENDİ kodunda DEĞİL):** `zig build test --fuzz=<N>` (SINIRLI, CI'ya UYGUN
+//! toplu-iş modu) VE (dolaylı olarak, web arayüzü GERÇEKTEN bir fuzz
+//! ÇALIŞTIRDIĞINDA) sınırsız `--fuzz`in KENDİSİ, Zig 0.16.0'ın KENDİ
+//! `compiler/test_runner.zig`sinde (`std.debug.writeStackTrace(trace,
+//! stderr)`, `*builtin.StackTrace` GEÇERKEN `*const debug.StackTrace`
+//! BEKLEYEN bir tip UYUŞMAZLIĞI — Zig standart kütüphanesinin/derleyicisinin
+//! KENDİ İÇİNDE, `-ffuzz` bayrağı AKTİFKEN TETİKLENEN bir DERLEME HATASI)
+//! bir hata NEDENİYLE DERLENEMİYOR — `zig build test --fuzz=100` (yerelde
+//! DOĞRUDAN denendi) "error: expected type '*const debug.StackTrace', found
+//! '*builtin.StackTrace'" İLE BAŞARISIZ oluyor. Bu, projenin KENDİ
+//! kodundan/yapılandırmasından KAYNAKLANMAYAN, YALNIZCA bir Zig 0.16.0
+//! YAMASI/SONRAKİ sürümüyle ÇÖZÜLEBİLECEK bir engeldir — bu YÜZDEN BİLİNÇLİ
+//! olarak (a) ayrı bir CI iş akışı EKLENMEDİ (Zig'in KENDİ hatası
+//! DÜZELENE KADAR HER çalıştırmada BAŞARISIZ olacak, sürekli KIRMIZI bir
+//! kontrol EKLEMENİN bir DEĞERİ yoktur), (b) yukarıdaki "sınırsız `--fuzz`"
+//! açıklaması TARİHSEL bir NİYETİ yansıtır — GÜNCEL Zig 0.16.0 kurulumunda
+//! GERÇEKTEN bir fuzz ÇALIŞTIRMAK (web arayüzü yalnızca AÇILMAK yerine)
+//! AYNI hataya ÇARPAR. Zig'in bu hatayı düzelttiği bir SÜRÜME geçildiğinde
+//! bu not KALDIRILMALI VE `--fuzz=<N>`e dayanan zamanlı bir CI iş akışı
+//! (`.github/workflows/`) EKLENMELİDİR.
 //!
 //! **Doğrulanan ÖZELLİK — YALNIZCA "ÇÖKMEZ/sonsuz döngüye GİRMEZ":**
 //! lex→parse→typecheck zincirinin HER aşaması KENDİ hata KÜMESİNİ (`LexError`/

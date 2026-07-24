@@ -27,6 +27,7 @@
 //! proje kökünden çalıştırılmalıdır — bkz. build.zig.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 const STRESS_REPEATS = 5;
 const COMPARE_REPEATS = 3;
@@ -414,6 +415,39 @@ const compare_pairs = [_]ComparePair{
     },
 };
 
+/// Faz P2.5 (bkz. proje belleği "P0/P1/P2 inceleme düzeltme listesi"
+/// planı): makine/derleyici-sürümü metadatası — ÖNCEDEN `benchmarks/
+/// RESULTS.md` YALNIZCA sayıları taşırdı, HANGİ makinede/HANGİ Zig/`noxc`
+/// sürümüyle üretildikleri HİÇ kaydedilmezdi (iki farklı makinedeki
+/// sonuçları KARŞILAŞTIRMAK/bir regresyonun GERÇEK mi yoksa donanım
+/// farkı mı OLDUĞUNU ayırt etmek İMKANSIZDI). `noxc --version` GERÇEKTEN
+/// çalıştırılıp yakalanır (yalnızca `build_options.version` DEĞİL —
+/// `zig-out/bin/noxc`nin GERÇEKTEN o an derlenmiş İKİLİ olduğunu
+/// doğrular); ÇALIŞTIRILAMAZSA (henüz `zig build` yapılmamışsa) SESSİZCE
+/// atlanır (bu bilgi olmadan da benchmark'ların KENDİSİ çalışabilir).
+fn printEnvironmentInfo(gpa: std.mem.Allocator, io: std.Io, out: *std.Io.Writer) !void {
+    const cpu_count = std.Thread.getCpuCount() catch 0;
+    try out.print(
+        \\ortam: {t}-{t} ({s}), {d} mantiksal cekirdek
+        \\derleyici: zig {s}
+        \\derleme modu: {t}
+        \\
+    , .{ builtin.os.tag, builtin.cpu.arch, builtin.cpu.model.name, cpu_count, builtin.zig_version_string, builtin.mode });
+
+    // `noxc --version` (main.zig'in `.version` dalı) `std.debug.print` İLE
+    // yazar — bu HER ZAMAN stderr'e gider (stdout'a DEĞİL), bu YÜZDEN
+    // BURADA `v.stderr` okunur.
+    const noxc_version = std.process.run(gpa, io, .{ .argv = &.{ "zig-out/bin/noxc", "--version" } }) catch null;
+    if (noxc_version) |v| {
+        defer gpa.free(v.stdout);
+        defer gpa.free(v.stderr);
+        if (v.term == .exited and v.term.exited == 0) {
+            try out.print("noxc: {s}", .{v.stderr});
+        }
+    }
+    try out.writeAll("\n");
+}
+
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
@@ -424,6 +458,7 @@ pub fn main(init: std.process.Init) !void {
 
     try out.writeAll("nox benchmark suite\n");
     try out.writeAll("====================\n");
+    try printEnvironmentInfo(gpa, io, out);
     try out.writeAll(
         \\not: Debug modunda çalışma zamanı `std.heap.DebugAllocator` kullanır
         \\(sızıntı tespiti açık, ama yüksek hacimli tahsis/serbest bırakma
@@ -504,9 +539,9 @@ pub fn main(init: std.process.Init) !void {
                 try out.print("  python  BAŞARISIZ: beklenmeyen çıktı: {s} (beklenen: {s})\n", .{ py_check.stdout, p.py_expected });
                 pair_ok = false;
             } else {
-                const ms = try timeRuns(gpa, io, &.{ "python3", p.py_path }, COMPARE_REPEATS);
-                try out.print("  python  min={d:.1}ms  ({d} koşu)\n", .{ ms, COMPARE_REPEATS });
-                py_ms = ms;
+                const timing = try timeRuns(gpa, io, &.{ "python3", p.py_path }, COMPARE_REPEATS);
+                try out.print("  python  min={d:.1}ms  max={d:.1}ms  ort={d:.1}ms  ({d} koşu)\n", .{ timing.min_ms, timing.max_ms, timing.mean_ms, COMPARE_REPEATS });
+                py_ms = timing.min_ms;
             }
         }
 
@@ -691,9 +726,9 @@ fn runNoxOnce(
         return null;
     }
 
-    const min_ms = try timeRuns(gpa, io, &.{bin_path}, repeats);
-    try out.print("  OK  min={d:.1}ms  ({d} koşu)\n", .{ min_ms, repeats });
-    return min_ms;
+    const timing = try timeRuns(gpa, io, &.{bin_path}, repeats);
+    try out.print("  OK  min={d:.1}ms  max={d:.1}ms  ort={d:.1}ms  ({d} koşu)\n", .{ timing.min_ms, timing.max_ms, timing.mean_ms, repeats });
+    return timing.min_ms;
 }
 
 /// Bir `.c` dosyasını `cc -O2` ile derler (nox'un KENDİ `cc` çağrısıyla
@@ -739,9 +774,9 @@ fn runCOnce(
         return null;
     }
 
-    const min_ms = try timeRuns(gpa, io, &.{bin_path}, repeats);
-    try out.print("  c       min={d:.1}ms  ({d} koşu)\n", .{ min_ms, repeats });
-    return min_ms;
+    const timing = try timeRuns(gpa, io, &.{bin_path}, repeats);
+    try out.print("  c       min={d:.1}ms  max={d:.1}ms  ort={d:.1}ms  ({d} koşu)\n", .{ timing.min_ms, timing.max_ms, timing.mean_ms, repeats });
+    return timing.min_ms;
 }
 
 /// Bir `.rs` dosyasını `rustc -O` ile derler (Cargo YOK — `runCOnce`nin
@@ -784,9 +819,9 @@ fn runRustOnce(
         return null;
     }
 
-    const min_ms = try timeRuns(gpa, io, &.{bin_path}, repeats);
-    try out.print("  rust    min={d:.1}ms  ({d} koşu)\n", .{ min_ms, repeats });
-    return min_ms;
+    const timing = try timeRuns(gpa, io, &.{bin_path}, repeats);
+    try out.print("  rust    min={d:.1}ms  max={d:.1}ms  ort={d:.1}ms  ({d} koşu)\n", .{ timing.min_ms, timing.max_ms, timing.mean_ms, repeats });
+    return timing.min_ms;
 }
 
 /// `runRustOnce`nin AKSİNE burada bir DERLEME adımı YOK — `bin_path`
@@ -816,15 +851,29 @@ fn runPrebuiltRustOnce(
         return null;
     }
 
-    const min_ms = try timeRuns(gpa, io, &.{bin_path}, repeats);
-    try out.print("  rust    min={d:.1}ms  ({d} koşu)\n", .{ min_ms, repeats });
-    return min_ms;
+    const timing = try timeRuns(gpa, io, &.{bin_path}, repeats);
+    try out.print("  rust    min={d:.1}ms  max={d:.1}ms  ort={d:.1}ms  ({d} koşu)\n", .{ timing.min_ms, timing.max_ms, timing.mean_ms, repeats });
+    return timing.min_ms;
 }
 
-/// `argv`yi `repeats` kez çalıştırır, en iyi (min) süreyi milisaniye
-/// cinsinden döner.
-fn timeRuns(gpa: std.mem.Allocator, io: std.Io, argv: []const []const u8, repeats: usize) !f64 {
-    var best_ns: i96 = std.math.maxInt(i96);
+/// Faz P2.5 (bkz. proje belleği "P0/P1/P2 inceleme düzeltme listesi"
+/// planı): `timeRuns`in döndürdüğü VARYANS bilgisi — ÖNCEDEN yalnızca
+/// `min_ns` (EN İYİ koşu) tutulur, TÜM diğer örnekler ATILIRDI — bir
+/// benchmark'ın GERÇEKTEN istikrarlı mı yoksa GÜRÜLTÜLÜ mü olduğu HİÇ
+/// görünmezdi (ör. `min=5ms` ama BİR koşu 50ms sürmüş OLABİLİRDİ, rapor
+/// bunu HİÇ YANSITMAZDI).
+pub const TimingResult = struct {
+    min_ms: f64,
+    max_ms: f64,
+    mean_ms: f64,
+};
+
+/// `argv`yi `repeats` kez çalıştırır; min/max/ortalama süreyi (milisaniye)
+/// döner (bkz. `TimingResult`in belge notu).
+fn timeRuns(gpa: std.mem.Allocator, io: std.Io, argv: []const []const u8, repeats: usize) !TimingResult {
+    var min_ns: i96 = std.math.maxInt(i96);
+    var max_ns: i96 = 0;
+    var total_ns: i96 = 0;
     for (0..repeats) |_| {
         const start = std.Io.Clock.Timestamp.now(io, .awake);
         const r = try std.process.run(gpa, io, .{ .argv = argv });
@@ -832,9 +881,16 @@ fn timeRuns(gpa: std.mem.Allocator, io: std.Io, argv: []const []const u8, repeat
         gpa.free(r.stdout);
         gpa.free(r.stderr);
         const elapsed = start.durationTo(end).raw.nanoseconds;
-        best_ns = @min(best_ns, elapsed);
+        min_ns = @min(min_ns, elapsed);
+        max_ns = @max(max_ns, elapsed);
+        total_ns += elapsed;
     }
-    return @as(f64, @floatFromInt(best_ns)) / 1_000_000.0;
+    const to_ms = 1_000_000.0;
+    return .{
+        .min_ms = @as(f64, @floatFromInt(min_ns)) / to_ms,
+        .max_ms = @as(f64, @floatFromInt(max_ns)) / to_ms,
+        .mean_ms = @as(f64, @floatFromInt(total_ns)) / @as(f64, @floatFromInt(repeats)) / to_ms,
+    };
 }
 
 fn stemOf(path: []const u8) []const u8 {

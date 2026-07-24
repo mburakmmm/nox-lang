@@ -44,7 +44,11 @@ print(c.value)
 ## Why Nox?
 
 - **Mandatory static typing** with Python-like syntax (unlike Mojo's
-  gradual-typing approach).
+  gradual-typing approach) — including `f"..."` formatted string
+  literals, 7 augmented-assignment operators (`+=`/`-=`/`*=`/`/=`/`//=`/
+  `%=`/`**=`), UTF-8-character-aware `len()`/`s[i]` (with an ASCII fast
+  path), and compile-time-monomorphized user-defined generic classes
+  (`class Box[T]:`).
 - **AOT compilation directly to native code via QBE** — no LLVM/MLIR
   dependency.
 - **A layered, mostly invisible memory model** (the "Ownership Pyramid"):
@@ -63,8 +67,11 @@ print(c.value)
   core.
 - A growing standard library (`nox.http`, `nox.json`, `nox.strings`,
   `nox.math`, `nox.os`/`nox.fs`/`nox.path`, `nox.time`, `nox.random`,
-  `nox.crypto`, `nox.regex`, `nox.test`) and a Go-style decentralized
-  (GitHub-URL-based) package system.
+  `nox.crypto`, `nox.regex`, `nox.test`, `nox.thread`, `nox.sqlite` — a
+  SQLite driver that lazily dlopen's `libsqlite3` at runtime, adding zero
+  static dependency for programs that don't use it) and a Go-style
+  decentralized package system (GitHub URL, or a direct package-index
+  URL via `noxc search`).
 
 For the full record of architectural/design decisions, see
 [`nox-teknik-spesifikasyon.md`](nox-teknik-spesifikasyon.md) (Turkish).

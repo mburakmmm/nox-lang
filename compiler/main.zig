@@ -118,6 +118,18 @@ pub fn main(init: std.process.Init) !void {
     const resource_dir_override = if (init.environ_map.get("NOX_RESOURCE_DIR")) |h| try a.dupe(u8, h) else null;
     const resource_dirs = try project.resolveResourceDirs(a, io, resource_dir_override);
 
+    // Faz P2.4 (bkz. proje belleği "P0/P1/P2 inceleme düzeltme listesi"
+    // planı): `NOX_HOME`/`NOX_RESOURCE_DIR` İLE AYNI desen — BİR KEZ
+    // okunur, `fetch.zig`ye HİÇBİR ZAMAN doğrudan ortam değişkeni
+    // OKUTULMAZ (bkz. `fetch.FetchPolicy`nin belge notu). AÇIKÇA (BOŞ
+    // OLMAYAN bir DEĞERLE) verilmedikçe `false` (düz-metin şemalar
+    // VARSAYILAN olarak REDDEDİLİR).
+    const allow_insecure_transport = if (init.environ_map.get("NOX_ALLOW_INSECURE_TRANSPORT")) |v| v.len > 0 else false;
+    const fetch_policy: fetch.FetchPolicy = .{
+        .allow_insecure_transport = allow_insecure_transport,
+        .parent_environ_map = init.environ_map,
+    };
+
     const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, init, check, version, legacy };
     const sub: Subcommand = blk: {
         if (all_args.items.len == 0) break :blk .legacy;
@@ -141,17 +153,17 @@ pub fn main(init: std.process.Init) !void {
     const rest: []const []const u8 = if (sub == .legacy) all_args.items else all_args.items[1..];
 
     switch (sub) {
-        .build => try cmdBuild(gpa, io, a, rest, "kullanim: noxc build [--dump|-v] [-o <cikti>] <dosya.nox>\n", nox_home, resource_dirs),
-        .legacy => try cmdBuild(gpa, io, a, rest, "kullanim: noxc [--dump|-v] <dosya.nox>\n", nox_home, resource_dirs),
-        .run => try cmdRun(gpa, io, a, rest, nox_home, resource_dirs),
-        .test_cmd => try cmdTest(gpa, io, a, rest, nox_home, resource_dirs),
+        .build => try cmdBuild(gpa, io, a, rest, "kullanim: noxc build [--dump|-v] [-o <cikti>] <dosya.nox>\n", nox_home, resource_dirs, fetch_policy),
+        .legacy => try cmdBuild(gpa, io, a, rest, "kullanim: noxc [--dump|-v] <dosya.nox>\n", nox_home, resource_dirs, fetch_policy),
+        .run => try cmdRun(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
+        .test_cmd => try cmdTest(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
         .fmt => try cmdFmt(gpa, io, a, rest),
-        .search => try cmdSearch(io, a, rest),
+        .search => try cmdSearch(io, a, rest, fetch_policy),
         .version => std.debug.print("noxc {s}\n", .{build_options.version}),
-        .fetch => try cmdFetch(io, a, rest, nox_home),
-        .update => try cmdUpdate(io, a, rest, nox_home),
+        .fetch => try cmdFetch(io, a, rest, nox_home, fetch_policy),
+        .update => try cmdUpdate(io, a, rest, nox_home, fetch_policy),
         .init => try cmdInit(io, a, rest),
-        .check => try cmdCheck(gpa, io, a, rest, nox_home, resource_dirs),
+        .check => try cmdCheck(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
     }
 }
 
@@ -161,17 +173,29 @@ pub fn main(init: std.process.Init) !void {
 /// AKSİNE (henüz REZERVE), TAM olarak ÇALIŞIR — herhangi bir AĞ erişimi
 /// GEREKMEZ (yalnızca YEREL bir JSON dosyası okur, bkz. modül üstü not
 /// "gelecekte eklenebilir" tasarım kararı).
-fn cmdSearch(io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
-    const index_path = if (args.len > 0) args[0] else {
-        std.debug.print("kullanim: noxc search <indeks-dosyasi.json> [sorgu]\n", .{});
+fn cmdSearch(io: std.Io, a: std.mem.Allocator, args: []const []const u8, fetch_policy: fetch.FetchPolicy) !void {
+    const index_arg = if (args.len > 0) args[0] else {
+        std.debug.print("kullanim: noxc search <indeks-dosyasi.json|https://...> [sorgu]\n", .{});
         std.process.exit(1);
     };
     const query = if (args.len > 1) args[1] else "";
 
-    const idx = pkg_index.loadIndexFromFile(a, io, index_path) catch |e| {
-        printErr("search: indeks okunamadi/ayristirilamadi ({t}): {s}\n", .{ e, index_path });
-        std.process.exit(1);
-    };
+    // Bulundu (bkz. proje belleği "f-string + augmented atama" görevi):
+    // `pkg_index.loadIndexFromUrl` (YENİ) — `index.zig`nin KENDİ belge
+    // notunun ÖNGÖRDÜĞÜ uzantı. Bir URL mi yerel yol mu olduğu, düz bir
+    // önek kontrolüyle ayırt edilir (`fetch.zig`nin `resolveCloneUrl`iyle
+    // AYNI basit ayrım).
+    const is_url = std.mem.startsWith(u8, index_arg, "http://") or std.mem.startsWith(u8, index_arg, "https://");
+    const idx = if (is_url)
+        pkg_index.loadIndexFromUrl(a, io, index_arg, fetch_policy) catch |e| {
+            printErr("search: indeks getirilemedi/ayristirilamadi ({t}): {s}\n", .{ e, index_arg });
+            std.process.exit(1);
+        }
+    else
+        pkg_index.loadIndexFromFile(a, io, index_arg) catch |e| {
+            printErr("search: indeks okunamadi/ayristirilamadi ({t}): {s}\n", .{ e, index_arg });
+            std.process.exit(1);
+        };
 
     var stdout_buf: [4096]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
@@ -237,13 +261,13 @@ fn splitOnDoubleDash(args: []const []const u8) struct { before: []const []const 
     return .{ .before = args, .after = &.{} };
 }
 
-fn cmdBuild(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, usage: []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs) !void {
+fn cmdBuild(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, usage: []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy) !void {
     const opts = parseBuildOpts(args);
     const path_arg = opts.path orelse {
         std.debug.print("{s}", .{usage});
         std.process.exit(1);
     };
-    const out = try buildOne(gpa, io, a, path_arg, opts.verbose, opts.output, nox_home, resource_dirs, opts.debug_info);
+    const out = try buildOne(gpa, io, a, path_arg, opts.verbose, opts.output, nox_home, resource_dirs, opts.debug_info, fetch_policy);
     printOk("derlendi: {s}\n", .{out});
 }
 
@@ -254,7 +278,7 @@ fn cmdBuild(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
 /// önbelleğe (`<proje_kökü_veya_dosya_dizini>/.nox/cache/bin/<isim>`,
 /// KAYNAĞIN YANINA DEĞİL) derler, çalıştırılabilir dosyayı stdio'yu
 /// MİRAS ALARAK çalıştırır, çocuğun çıkış kodunu AYNEN yansıtır.
-fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs) !void {
+fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy) !void {
     const split = splitOnDoubleDash(args);
     const opts = parseBuildOpts(split.before);
     const path_arg = opts.path orelse {
@@ -263,7 +287,7 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
     };
 
     const cache_bin_path = try cacheBinPath(io, a, path_arg);
-    const bin_path = try buildOne(gpa, io, a, path_arg, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info);
+    const bin_path = try buildOne(gpa, io, a, path_arg, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, fetch_policy);
 
     const code = try runAndWait(io, a, bin_path, split.after);
     std.process.exit(code);
@@ -302,13 +326,13 @@ fn runAndWait(io: std.Io, a: std.mem.Allocator, bin_path: []const u8, argv_tail:
 /// AYNI kategoride bir davranış — bir test dosyasının derlenmemesi zaten
 /// KENDİ BAŞINA acil düzeltilmesi gereken bir hata, "diğer testlere devam
 /// et" mantığıyla GİZLENMEMELİ.
-fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs) !void {
+fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy) !void {
     const opts = parseBuildOpts(args);
 
     if (opts.path) |t| {
         if (std.mem.endsWith(u8, t, ".nox")) {
             const cache_bin_path = try cacheBinPath(io, a, t);
-            const bin_path = try buildOne(gpa, io, a, t, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info);
+            const bin_path = try buildOne(gpa, io, a, t, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, fetch_policy);
             const code = try runAndWait(io, a, bin_path, &.{});
             std.process.exit(code);
         }
@@ -334,7 +358,7 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
         const fa = file_arena.allocator();
 
         const cache_bin_path = try cacheBinPath(io, fa, file);
-        const bin_path = try buildOne(gpa, io, fa, file, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info);
+        const bin_path = try buildOne(gpa, io, fa, file, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, fetch_policy);
         const code = runAndWait(io, fa, bin_path, &.{}) catch 1;
         if (code == 0) {
             printOk("GECTI: {s}\n", .{file});
@@ -425,6 +449,7 @@ fn resolveImportsForBuild(
     path_arg: []const u8,
     nox_home: []const u8,
     resource_dirs: project.ResourceDirs,
+    fetch_policy: fetch.FetchPolicy,
 ) !ast.Module {
     const cwd_abs = try std.process.currentPathAlloc(io, a);
     const path_dir = std.fs.path.dirname(path_arg) orelse ".";
@@ -459,19 +484,39 @@ fn resolveImportsForBuild(
 
     for (manifest.requires) |req| {
         cached: {
+            var fetch_ref = req.ref;
             if (project.findLocked(lock, req.alias)) |locked| {
                 const cache_dir = try fetch.cachedDirFor(a, nox_home, locked.repo, locked.resolved);
                 if (std.Io.Dir.accessAbsolute(io, cache_dir, .{})) |_| {
                     try roots.put(a, req.alias, cache_dir);
                     break :cached;
                 } else |_| {}
+                // Faz P2.4 (bkz. proje belleği "P0/P1/P2 inceleme düzeltme
+                // listesi" planı — GERÇEK, önceden keşfedilmemiş bir hata):
+                // önbellek dizini KAYBOLMUŞ AMA `nox.lock`ta ZATEN kilitli
+                // bir SHA VARSA, `req.ref`i (bir dal/etiket adı, HAREKETLİ
+                // olabilir) DEĞİL, kilitli SHA'nın KENDİSİNİ getir — AKSİ
+                // HALDE bir dal ref'i kilitlemeden SONRA ilerlemişse, SADECE
+                // önbelleği temizlemek (`~/.nox` silmek, YENİ bir makine,
+                // CI önbellek KAÇIRMASI) `nox.lock`ın VAR OLMA amacını
+                // (`Lockfile`in belge notu: "TEKRARLANABİLİR derlemenin
+                // bütün amacı BU") SESSİZCE BOZARDI. `req.repo != locked.
+                // repo` İSE (manifest'te repo'nun KENDİSİ DEĞİŞTİYSE) eski
+                // SHA BAŞKA bir depoya AİT olduğundan bu YOLA GİRİLMEZ,
+                // `req.ref` (ilk-çözümleme benzeri) KULLANILMAYA DEVAM eder.
+                if (std.mem.eql(u8, locked.repo, req.repo)) fetch_ref = locked.resolved;
             }
             // İlk kez GÖRÜLÜYOR YA DA önbellek dizini KAYBOLMUŞ — GERÇEKTEN
             // getir (bkz. `fetch.fetchToCache`'in belge notu — bu fonksiyon
             // `git`i HER ZAMAN çağırır, "zaten kilitliyse hiç dokunma"
             // kısayolu TAM OLARAK BURADA, bu bloğun ÜZERİNDE uygulanır).
-            const result = fetch.fetchToCache(a, io, nox_home, req.repo, req.ref) catch |e| {
-                printErr("paket getirilemedi (alias={s}, repo={s}): {t}\n", .{ req.alias, req.repo, e });
+            var sig_diag: ?[]const u8 = null;
+            const result = fetch.fetchToCache(a, io, nox_home, req.repo, fetch_ref, req.require_signed_commit, &sig_diag, fetch_policy) catch |e| {
+                if (e == error.CommitSignatureRejected) {
+                    printErr("paket getirilemedi (alias={s}, repo={s}): commit imza dogrulamasi basarisiz:\n{s}\n", .{ req.alias, req.repo, sig_diag orelse "(git aciklama vermedi)" });
+                } else {
+                    printErr("paket getirilemedi (alias={s}, repo={s}): {t}\n", .{ req.alias, req.repo, e });
+                }
                 std.process.exit(1);
             };
             try roots.put(a, req.alias, result.cache_dir);
@@ -534,7 +579,21 @@ fn loadLockfileOrExit(a: std.mem.Allocator, io: std.Io, root: []const u8) projec
 
 /// `resolveDependencies`in bir bağımlılık İÇİN ürettiği SONUÇ — `fetch`/
 /// `update`in KENDİ özet çıktısını basmak İÇİN kullanılır.
-const DepAction = enum { cached, fetched, updated, unchanged };
+const DepAction = enum {
+    cached,
+    fetched,
+    updated,
+    unchanged,
+    /// Faz P2.4 (bkz. proje belleği "P0/P1/P2 inceleme düzeltme listesi"
+    /// planı): önbellek dizini KAYBOLMUŞTU AMA `nox.lock`ta ZATEN kilitli
+    /// bir SHA VARDI — `req.ref` (hareketli olabilir) DEĞİL, O SHA'nın
+    /// KENDİSİ yeniden getirildi (`resolveDependencies`in SHA-kayması
+    /// düzeltmesi). Bu, `force_refetch=false` İKEN de git'in ÇAĞRILDIĞI
+    /// TEK durumdur — `.cached`DEN farklıdır (git ÇAĞRILDI), `.fetched`/
+    /// `.updated`DAN farklıdır (kilitli SHA DEĞİŞMEDİ, sadece YENİDEN
+    /// önbelleklendi).
+    recached,
+};
 const DepOutcome = struct {
     alias: []const u8,
     repo: []const u8,
@@ -566,6 +625,7 @@ fn resolveDependencies(
     manifest: project.Manifest,
     lock: project.Lockfile,
     force_refetch: bool,
+    fetch_policy: fetch.FetchPolicy,
 ) !struct { packages: []project.LockedPackage, outcomes: []DepOutcome, changed: bool } {
     var new_packages: std.ArrayListUnmanaged(project.LockedPackage) = .empty;
     try new_packages.appendSlice(a, lock.packages);
@@ -573,8 +633,9 @@ fn resolveDependencies(
     var changed = false;
 
     for (manifest.requires) |req| {
+        const locked_opt = project.findLocked(lock, req.alias);
         if (!force_refetch) {
-            if (project.findLocked(lock, req.alias)) |locked| {
+            if (locked_opt) |locked| {
                 const cache_dir = try fetch.cachedDirFor(a, nox_home, locked.repo, locked.resolved);
                 if (std.Io.Dir.accessAbsolute(io, cache_dir, .{})) |_| {
                     try outcomes.append(a, .{ .alias = req.alias, .repo = req.repo, .action = .cached, .resolved = locked.resolved, .previous_resolved = null });
@@ -583,9 +644,25 @@ fn resolveDependencies(
             }
         }
 
-        const previous = if (project.findLocked(lock, req.alias)) |locked| locked.resolved else null;
-        const result = fetch.fetchToCache(a, io, nox_home, req.repo, req.ref) catch |e| {
-            printErr("paket getirilemedi (alias={s}, repo={s}): {t}\n", .{ req.alias, req.repo, e });
+        // Faz P2.4 (bkz. proje belleği "P0/P1/P2 inceleme düzeltme listesi"
+        // planı — GERÇEK, önceden keşfedilmemiş bir hata, `resolveImportsForBuild`
+        // İLE AYNI gerekçe): `force_refetch=false` İKEN (yani `fetch`),
+        // önbellek dizini KAYBOLMUŞTU AMA ZATEN kilitli bir SHA VARSA (VE
+        // `repo` DEĞİŞMEDİYSE), `req.ref`i (hareketli olabilir) DEĞİL,
+        // kilitli SHA'nın KENDİSİNİ getir — `force_refetch=true` İKEN
+        // (`update`) BU YOLA HİÇ GİRİLMEZ, `req.ref` HER ZAMAN yeniden
+        // çözülür (bu, "update"in TAM OLARAK YAPMASI GEREKEN şey).
+        const cache_was_missing_for_locked = !force_refetch and locked_opt != null and std.mem.eql(u8, locked_opt.?.repo, req.repo);
+        const fetch_ref = if (cache_was_missing_for_locked) locked_opt.?.resolved else req.ref;
+
+        const previous = if (locked_opt) |locked| locked.resolved else null;
+        var sig_diag: ?[]const u8 = null;
+        const result = fetch.fetchToCache(a, io, nox_home, req.repo, fetch_ref, req.require_signed_commit, &sig_diag, fetch_policy) catch |e| {
+            if (e == error.CommitSignatureRejected) {
+                printErr("paket getirilemedi (alias={s}, repo={s}): commit imza dogrulamasi basarisiz:\n{s}\n", .{ req.alias, req.repo, sig_diag orelse "(git aciklama vermedi)" });
+            } else {
+                printErr("paket getirilemedi (alias={s}, repo={s}): {t}\n", .{ req.alias, req.repo, e });
+            }
             std.process.exit(1);
         };
 
@@ -602,7 +679,7 @@ fn resolveDependencies(
         const same_as_before = if (previous) |p| std.mem.eql(u8, p, result.resolved_sha) else false;
         if (!same_as_before) changed = true;
 
-        const action: DepAction = if (previous == null) .fetched else if (same_as_before) .unchanged else .updated;
+        const action: DepAction = if (cache_was_missing_for_locked) .recached else if (previous == null) .fetched else if (same_as_before) .unchanged else .updated;
         try outcomes.append(a, .{ .alias = req.alias, .repo = req.repo, .action = action, .resolved = result.resolved_sha, .previous_resolved = previous });
     }
 
@@ -618,7 +695,7 @@ fn shortSha(sha: []const u8) []const u8 {
 /// ZATEN uyguladığı "otomatik, gerektiğinde getir" akışının AYNISIYLA —
 /// ama BİR `.nox` dosyası derlemeden — önbelleğe DOLDURUR. ZATEN kilitli+
 /// önbellekte olan bağımlılıklara DOKUNULMAZ.
-fn cmdFetch(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8) !void {
+fn cmdFetch(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, fetch_policy: fetch.FetchPolicy) !void {
     _ = args;
     const root = try findProjectRootOrExit(io, a, "fetch");
     const manifest = loadManifestOrExit(a, io, root);
@@ -629,13 +706,14 @@ fn cmdFetch(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home
         return;
     }
 
-    const result = try resolveDependencies(a, io, nox_home, manifest, lock, false);
+    const result = try resolveDependencies(a, io, nox_home, manifest, lock, false, fetch_policy);
     if (result.changed) {
         try project.saveLockfile(a, io, root, .{ .packages = result.packages });
     }
 
     var fetched: usize = 0;
     var cached: usize = 0;
+    var recached: usize = 0;
     for (result.outcomes) |o| {
         switch (o.action) {
             .fetched => {
@@ -646,16 +724,20 @@ fn cmdFetch(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home
                 cached += 1;
                 std.debug.print("zaten guncel: {s} ({s})\n", .{ o.alias, shortSha(o.resolved) });
             },
+            .recached => {
+                recached += 1;
+                std.debug.print("onbellek yeniden olusturuldu (kilitli SHA'dan): {s} ({s})\n", .{ o.alias, shortSha(o.resolved) });
+            },
             .updated, .unchanged => unreachable, // force_refetch=false bunlari asla uretmez
         }
     }
-    std.debug.print("fetch tamamlandi: {d} getirildi, {d} zaten guncel\n", .{ fetched, cached });
+    std.debug.print("fetch tamamlandi: {d} getirildi, {d} zaten guncel, {d} yeniden onbelleklendi\n", .{ fetched, cached, recached });
 }
 
 /// `noxc update` — `fetch`in AKSİNE, HER bağımlılığı `req.ref`den
 /// KOŞULSUZ yeniden çözer (bkz. `resolveDependencies`in
 /// `force_refetch=true`ı) — `nox.lock`taki kilitli SHA'ları GÜNCELLER.
-fn cmdUpdate(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8) !void {
+fn cmdUpdate(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, fetch_policy: fetch.FetchPolicy) !void {
     _ = args;
     const root = try findProjectRootOrExit(io, a, "update");
     const manifest = loadManifestOrExit(a, io, root);
@@ -666,7 +748,7 @@ fn cmdUpdate(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_hom
         return;
     }
 
-    const result = try resolveDependencies(a, io, nox_home, manifest, lock, true);
+    const result = try resolveDependencies(a, io, nox_home, manifest, lock, true, fetch_policy);
     try project.saveLockfile(a, io, root, .{ .packages = result.packages });
 
     var updated: usize = 0;
@@ -686,6 +768,7 @@ fn cmdUpdate(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_hom
                 std.debug.print("yeni kilitlendi: {s} ({s}@{s})\n", .{ o.alias, o.repo, shortSha(o.resolved) });
             },
             .cached => unreachable, // force_refetch=true asla .cached uretmez
+            .recached => unreachable, // force_refetch=true asla .recached uretmez (bkz. DepAction.recached'in belge notu)
         }
     }
     std.debug.print("update tamamlandi: {d} guncellendi, {d} degismedi\n", .{ updated, unchanged });
@@ -764,7 +847,7 @@ fn cmdInit(io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
 /// olarak YİNELER (AYRI bir fonksiyon — `buildOne`a `codegen'e kadar mı
 /// gidilsin` bayrağı EKLEMEK yerine, o ZATEN karmaşık fonksiyonu daha da
 /// dallandırmamak İçin).
-fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs) !void {
+fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy) !void {
     const path_arg = if (args.len > 0) args[0] else {
         std.debug.print("kullanim: noxc check <dosya.nox>\n", .{});
         std.process.exit(1);
@@ -775,7 +858,7 @@ fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
 
     const tokens = try lexer.tokenize(a, source);
     const user_module = try parser.parseModule(a, tokens);
-    const module = try resolveImportsForBuild(io, a, user_module, path_arg, nox_home, resource_dirs);
+    const module = try resolveImportsForBuild(io, a, user_module, path_arg, nox_home, resource_dirs, fetch_policy);
 
     var checker_state = checker.Checker.init(a);
     checker_state.checkModule(module) catch |e| {
@@ -797,7 +880,7 @@ fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
 /// yolunu döner. Hata durumlarında (mevcut davranışla BİREBİR aynı mesaj/
 /// çıkış kodu) doğrudan `std.process.exit(1)` çağırır — `cmdBuild`/`cmdRun`
 /// bu davranışı DEĞİŞTİRMEDEN miras alır.
-fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: []const u8, verbose: bool, output_override: ?[]const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, debug_info: bool) ![]const u8 {
+fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: []const u8, verbose: bool, output_override: ?[]const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, debug_info: bool, fetch_policy: fetch.FetchPolicy) ![]const u8 {
     const source = try std.Io.Dir.cwd().readFileAlloc(io, path_arg, gpa, .limited(1024 * 1024));
     defer gpa.free(source);
 
@@ -810,7 +893,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // `resolveImportsForBuild`'in belge notu). Her iki yol da (Faz Q.3)
     // `resource_dirs.stdlib_dir`i (CWD-göreli `"stdlib"` DEĞİL, `noxc`nin
     // KENDİ çözülmüş kaynak dizinini) kullanır.
-    const module = try resolveImportsForBuild(io, a, user_module, path_arg, nox_home, resource_dirs);
+    const module = try resolveImportsForBuild(io, a, user_module, path_arg, nox_home, resource_dirs, fetch_policy);
 
     // `checker.check`'in kullanışlı ok/err sarmalayıcısı yerine `Checker`
     // doğrudan kullanılır: Faz 10 generics'i somut örneklemeleri
@@ -840,6 +923,13 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     var generic_it = checker_state.generic_functions.keyIterator();
     while (generic_it.next()) |k| try generic_names.append(a, k.*);
 
+    // Faz P2.1 (bkz. proje belleği "generic sınıflar" planı): `instantiations`/
+    // `generic_names`in AYNISI ama SINIFLAR İçin.
+    const class_instantiations = checker_state.class_instantiations.items;
+    var generic_class_names: std.ArrayListUnmanaged([]const u8) = .empty;
+    var generic_class_it = checker_state.generic_classes.keyIterator();
+    while (generic_class_it.next()) |k| try generic_class_names.append(a, k.*);
+
     // Faz U.4.3: checker'ın closure yakalama (capture) listelerini
     // (`checker.ClosureInfo`, isim + SEMANTIK `Type`) codegen'in beklediği
     // basitleştirilmiş şekle (yol → yalnızca yakalanan İSİMLER) çevirir —
@@ -860,7 +950,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         // parametre olarak ALMAZ) — `verbose` DEĞİLSE `ownership.analyze`
         // çağrısının KENDİSİ de atlanır, yalnızca I/O DEĞİL, hesaplama da
         // tasarruf edilir.
-        const report = try ownership.analyze(a, module, instantiations, generic_names.items);
+        const report = try ownership.analyze(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items);
         var stdout_buf: [4096]u8 = undefined;
         var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
         try stdout_writer.interface.writeAll("--- sahiplik analizi ---\n");
@@ -874,7 +964,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // codegen.zig'in modül üstü notu (TEK dosya, stdlib-merge yanlış-atıf
     // sınırlaması bilinçli olarak KABUL EDİLDİ).
     const debug_source_path: ?[]const u8 = if (debug_info) path_arg else null;
-    const ir = codegen.generateModule(a, module, instantiations, generic_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names) catch |err| switch (err) {
+    const ir = codegen.generateModule(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports) catch |err| switch (err) {
         error.Unsupported => {
             std.debug.print(
                 "codegen: bu program şu an desteklenmeyen bir yapı içeriyor " ++

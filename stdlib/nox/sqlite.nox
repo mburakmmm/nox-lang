@@ -1,0 +1,177 @@
+# nox.sqlite — libsqlite3'e `std.DynLib` (dlopen/dlsym, ÇALIŞMA ZAMANINDA,
+# TEMBEL) İLE bağlanan bir SQLite sürücüsü (bkz. plan dosyası "nox.sqlite —
+# libsqlite3'e extern def ile bağlanan bir SQLite sürücüsü").
+#
+# **Bulundu (GERÇEK bir regresyon, testler SIRASINDA yakalandı) — NEDEN
+# DOĞRUDAN `extern def ... from "sqlite3"` KULLANILMIYOR:** İLK tasarım
+# BAZI sqlite fonksiyonlarını (skaler parametre/dönüş, çıkış-parametresi
+# YOK) doğrudan `from "sqlite3"` İLE bağlıyordu — ama bu, `noxrt.o`nun
+# (Zig kabuğu, BAZI fonksiyonlar İçin ZATEN GEREKLİYDİ — çıkış-parametresi/
+# ARC-string-kopyalama) İÇİNDE çözülmemiş `sqlite3_*` sembolleri BIRAKTI,
+# bu da `libsqlite3` KULLANMAYAN HERHANGİ bir Nox programının (ör. düz
+# `print("merhaba")`) `cc` bağlama aşamasında BAŞARISIZ olmasına yol açtı
+# (GERÇEKTEN gözlemlendi) — planın KENDİ "sqlite kullanmayan hiçbir program
+# yeni bir bağımlılık kazanmaz" ilkesini BOZDU. Çözüm: TÜM sqlite erişimi
+# `runtime/stdlib_shims/sqlite.zig`nin `nox_sqlite_*_raw` sarmalayıcılarından
+# geçer (`std.DynLib` İLE İLK KULLANIMDA yükler) — bu dosyada ARTIK `from
+# "sqlite3"` İÇEREN TEK BİR `extern def` bile YOK, bu YÜZDEN `-lsqlite3`
+# HİÇBİR Nox programının `cc` komutuna EKLENMEZ; `libsqlite3` yalnızca
+# GERÇEKTEN `nox.sqlite.open()` ÇAĞRILDIĞINDA yüklenir — kurulu DEĞİLSE
+# (nadir ama olası) temiz bir `SqliteError` fırlatılır, ÇÖKME YOK.
+#
+# Satır temsili: SQLite'ın KENDİSİ `sqlite3_column_text`i HERHANGİ bir
+# sütun tipinde (int/float DAHİL, otomatik metin-temsiline çevirerek)
+# çağırmaya İZİN VERİR — bu YÜZDEN `Row` her sütunu TEK bir metin
+# değeriyle saklar; `get_int`/`get_float` bunu Nox'un ZATEN VAR OLAN
+# `int(s)`/`float(s)` ayrıştırıcılarıyla dönüştürür.
+
+extern def nox_sqlite_open_raw(path: str) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_sqlite_errmsg_raw(db: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_sqlite_prepare_raw(db: ptr, sql: str) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_sqlite_step_raw(stmt: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_sqlite_finalize_raw(stmt: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_sqlite_close_raw(db: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_sqlite_column_count_raw(stmt: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_sqlite_column_type_raw(stmt: ptr, i: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_sqlite_column_text_raw(stmt: ptr, i: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_sqlite_column_name_raw(stmt: ptr, i: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_sqlite_bind_int_raw(stmt: ptr, idx: int, val: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_sqlite_bind_double_raw(stmt: ptr, idx: int, val: float) -> int from "zig-out/lib/noxrt.o"
+extern def nox_sqlite_bind_text_raw(stmt: ptr, idx: int, value: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_sqlite_bind_null_raw(stmt: ptr, idx: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_sqlite_changes_raw(db: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_sqlite_last_insert_rowid_raw(db: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_sqlite_is_null_ptr(p: ptr) -> int from "zig-out/lib/noxrt.o"
+
+# ---- Sabitler (SQLite'ın kendi başlığından, isimle değil değerle) ----------
+# SQLITE_ROW=100, SQLITE_DONE=101, SQLITE_NULL=5 (sqlite3.h'de sabit,
+# istikrarlı bir C ABI sözleşmesinin parçası).
+
+class SqliteError:
+    def __init__(self: SqliteError, message: str) -> None:
+        self.message = message
+
+class Row:
+    def __init__(self: Row, values: list[str], is_null_flags: list[bool], names: list[str]) -> None:
+        self.values = values
+        self.is_null_flags = is_null_flags
+        self.names = names
+
+    def get_str(self: Row, i: int) -> str:
+        return self.values[i]
+
+    def get_int(self: Row, i: int) -> int:
+        return int(self.values[i])
+
+    def get_float(self: Row, i: int) -> float:
+        return float(self.values[i])
+
+    def is_null(self: Row, i: int) -> bool:
+        return self.is_null_flags[i]
+
+    def column_count(self: Row) -> int:
+        return len(self.values)
+
+    def column_name(self: Row, i: int) -> str:
+        return self.names[i]
+
+# `stmt`in TEK bir satırını (o an `sqlite3_step` ROW döndürdüğünde, stmt
+# HÂLÂ geçerliyken) eager olarak bir `Row`a okur — hem `Connection.query`
+# hem `Statement.query` TARAFINDAN paylaşılır.
+def _read_row(stmt: ptr) -> Row:
+    n: int = nox_sqlite_column_count_raw(stmt)
+    values: list[str] = []
+    is_null_flags: list[bool] = []
+    names: list[str] = []
+    i: int = 0
+    while i < n:
+        col_type: int = nox_sqlite_column_type_raw(stmt, i)
+        is_null: bool = col_type == 5
+        value: str = ""
+        if not is_null:
+            value = nox_sqlite_column_text_raw(stmt, i)
+        values.append(value)
+        is_null_flags.append(is_null)
+        names.append(nox_sqlite_column_name_raw(stmt, i))
+        i = i + 1
+    return Row(values, is_null_flags, names)
+
+class Statement:
+    def __init__(self: Statement, handle: ptr, db: ptr) -> None:
+        self.handle = handle
+        self.db = db
+
+    # Bulundu (GERÇEK bir hata, test sırasında YAKALANDI): SQLite'ın KENDİ
+    # `sqlite3_bind_*` API'si parametreleri 1-TABANLI indeksler (`?`nin
+    # İLKİ indeks 1'dir, 0 DEĞİL) — ama Nox'un GERİ KALANI (list/str
+    # indeksleme) HER YERDE 0-tabanlıdır. Nox kullanıcılarının BEKLEYECEĞİ
+    # 0-tabanlı sözleşmeyi KORUMAK İçin burada +1 uygulanır — aksi halde
+    # `bind_int(0, ...)` SQLite'ın KENDİSİNDE geçersiz bir indekse (0)
+    # denk gelip SESSİZCE hiçbir şeyi BAĞLAMAZ (parametre bağlanmamış
+    # kalır, NULL olarak davranır).
+    def bind_int(self: Statement, idx: int, value: int) -> None:
+        nox_sqlite_bind_int_raw(self.handle, idx + 1, value)
+
+    def bind_float(self: Statement, idx: int, value: float) -> None:
+        nox_sqlite_bind_double_raw(self.handle, idx + 1, value)
+
+    def bind_str(self: Statement, idx: int, value: str) -> None:
+        nox_sqlite_bind_text_raw(self.handle, idx + 1, value)
+
+    def bind_null(self: Statement, idx: int) -> None:
+        nox_sqlite_bind_null_raw(self.handle, idx + 1)
+
+    # Parametreleri bağladıktan SONRA parametresiz bir deyimi (INSERT/
+    # UPDATE/DELETE/DDL) sonuna kadar çalıştırır, ardından finalize eder —
+    # `http.nox`nin "free-before-return" disipliniyle AYNI, `Statement`
+    # TEK KULLANIMLIKTIR.
+    def execute(self: Statement) -> None:
+        rc: int = nox_sqlite_step_raw(self.handle)
+        nox_sqlite_finalize_raw(self.handle)
+        if rc != 101:
+            raise SqliteError("adim basarisiz: " + nox_sqlite_errmsg_raw(self.db))
+
+    def query(self: Statement) -> list[Row]:
+        rows: list[Row] = []
+        rc: int = nox_sqlite_step_raw(self.handle)
+        while rc == 100:
+            rows.append(_read_row(self.handle))
+            rc = nox_sqlite_step_raw(self.handle)
+        nox_sqlite_finalize_raw(self.handle)
+        if rc != 101:
+            raise SqliteError("sorgu basarisiz: " + nox_sqlite_errmsg_raw(self.db))
+        return rows
+
+class Connection:
+    def __init__(self: Connection, handle: ptr) -> None:
+        self.handle = handle
+
+    def prepare(self: Connection, sql: str) -> Statement:
+        stmt: ptr = nox_sqlite_prepare_raw(self.handle, sql)
+        if nox_sqlite_is_null_ptr(stmt) != 0:
+            raise SqliteError("hazirlama basarisiz: " + nox_sqlite_errmsg_raw(self.handle))
+        return Statement(stmt, self.handle)
+
+    def execute(self: Connection, sql: str) -> None:
+        self.prepare(sql).execute()
+
+    def query(self: Connection, sql: str) -> list[Row]:
+        return self.prepare(sql).query()
+
+    def close(self: Connection) -> None:
+        nox_sqlite_close_raw(self.handle)
+
+    def last_insert_rowid(self: Connection) -> int:
+        return nox_sqlite_last_insert_rowid_raw(self.handle)
+
+    def changes(self: Connection) -> int:
+        return nox_sqlite_changes_raw(self.handle)
+
+def open(path: str) -> Connection:
+    handle: ptr = nox_sqlite_open_raw(path)
+    if nox_sqlite_is_null_ptr(handle) != 0:
+        raise SqliteError("veritabani acilamadi: " + path)
+    msg: str = nox_sqlite_errmsg_raw(handle)
+    if msg != "not an error":
+        raise SqliteError("veritabani acilamadi: " + msg)
+    return Connection(handle)

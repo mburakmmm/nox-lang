@@ -1475,6 +1475,147 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   5 yeni uçtan-uca golden test (tek `defer`, LIFO sıra, bir döngü
   içinde `defer`, `try`/`finally` etkileşimi, istisna yayılımı) +
   1 tip-hatası testi (modül seviyesinde `defer` reddi).
+- **Darboğaz analizi (2026-07-22): C'ye karşı en yavaş kalan 5
+  benchmark'ın ürettiği makine kodu okunarak 4 codegen bulgusu tespit
+  edildi, sırayla düzeltildi** (bkz. `benchmarks/RESULTS.md`, ayrıntılı
+  ölçümler için). (1) Bounds-check elision (Faz GG.9), yalnızca `for i
+  in range(len(xs))`u tanıyordu — `detectWhileBoundsElideCtx`, elle
+  yazılmış `while j < len(xs)`/`while j < SABİT` eşdeğerlerini de
+  kapsayacak şekilde genişletildi (`lowlevel_arena`de ~%13.5 iyileşme).
+  (2) Sabit liste literallerinin QBE `blit`le toplu kopyalanması
+  DENENDİ ama bu ARM64 hedefinde QBE'nin KENDİ `blit` lowering'inin
+  kaynak adresini her parça İçin yeniden hesaplaması nedeniyle GERÇEK
+  bir regresyon (~%19) olduğu ÖLÇÜLEREK bulundu — GERİ ALINDI, kod
+  değiştirilmeden bırakıldı (bulgu `genListLit`de belgeli). (3)
+  `i % 3` gibi tekrarlanan saf alt-ifadeler İçin dominance-farkında bir
+  CSE önbelleği (`Codegen.mod_cache`) eklendi — `if`/`elif`/`else`
+  dallarının her biri anlık-görüntü/geri-yükleme İLE korunur, döngüler
+  gövde İçinde yeniden atanan isimleri döngüye GİRERKEN geçersiz kılar,
+  satır-içi (inline) çağrı sınırları SLOT-tabanlı anahtarlama VE bir
+  "argüman takma adı" mekanizmasıyla GÜVENLE aşılabilir hale getirilir.
+  Geliştirme sırasında, `if`/döngü gövdesi bir ismi yeniden ATADIĞINDA
+  ÖNCEKİ (bayat) bir önbellek girdisinin YANLIŞLIKLA geri getirildiği
+  GERÇEK bir SSA-uygunluk (dominance) hatası BULUNDU ve düzeltildi
+  (hedeflenmiş güvenlik testleriyle YAKALANDI — bkz. AGENTS.md İlke #7).
+  (4) `genListEq`nin döngü sayacı İçin gereksiz bir `alloc8`+ölü
+  `str` yerine QBE'nin KENDİ `phi` talimatı kullanıldı — bu SIRADA
+  `genEqCompareOrJump`ye eklenen `success_label` parametresi, GERÇEK
+  bir `qbe` derleme hatasıyla ("predecessors not matched in phi")
+  KEŞFEDİLEN bir öncül-blok belirsizliğini de düzeltti. 11 yeni golden
+  test (davranışsal + IR-metni düzeyinde doğrulama, bkz.
+  `tests/golden/codegen_golden_test.zig`).
+
+### Eklendi (harici inceleme P0-P2 düzeltme listesi, 16 madde — TAMAMLANDI)
+- **P0.1-P0.5**: paket önbelleği path-traversal düzeltmesi, gerçek span
+  sistemi (`compiler/span.zig`), yapılandırılmış parser tanılamaları,
+  README HPy durum düzeltmesi, CI'da fuzzing.
+- **P1.1**: tek-parça `compiler/codegen_qbe/codegen.zig` (8573 satır) 15
+  alt modüle bölündü (`abi`/`layout`/`ownership`/`closures`/`exceptions`/
+  `stmt`/`expr`/`optimizations`/`inlining`/`calls`/`async_thread`/
+  `http_intrinsics`/`registration`/`types`/`codegen`) — sıfır genel API
+  değişikliği, performans regresyonu yok.
+- **P1.2**: derleyici/çalışma-zamanı ABI yerleşim sabitleri İçin tek
+  gerçek kaynak — YENİ `shared/abi_layout.zig`, üç bağımsız Zig modül
+  grafiği (`nox_mod`/`noxc_mod`/`noxrt_mod`) tarafından paylaşılıyor.
+- **P1.3**: `noxc-lsp` artık proje/bağımlılık-farkında (`nox.json` +
+  `nox.lock` çözümlemesi) ama KASITLI olarak salt-okunur — hiçbir zaman
+  ağ çağrısı/`nox.lock` yazımı tetiklemez.
+- **P1.4**: `noxc-lsp`ye `textDocument/completion`/`definition`/`hover`
+  eklendi — YENİ `compiler/lsp_nav.zig`, yalnızca AYNI dosya İçinde statik
+  navigasyon (checker'ın tip-çıkarım motorunu paylaşmaz).
+- **P1.6**: 4 neredeyse-yinelenen `isXCallee` yapısal-eşleştirme
+  fonksiyonu tek parametrik `matchesNoxAttr` + statik `intrinsic_table`
+  kaydına birleştirildi — yeni bir intrinsic eklemek artık tek bir tablo
+  satırı.
+- **P2.1**: gerçek kullanıcı-tanımlı generic sınıflar (derleme-zamanı
+  monomorfizasyon, tip-silme DEĞİL) — `[T](args)` sözdizimi HERHANGİ bir
+  isme genelleştirildi. 3 gerçek hata implementasyon sırasında bulundu ve
+  düzeltildi (modüller-arası kopyada `type_params` düşmesi, from-imports
+  generic sınıf çözümlemesi, `Box[int](9).get()` gibi geçici generic
+  construct'ların bellek sızıntısı).
+- **P2.2**: boş `[]` liste literalleri artık bağlamdan (var_decl/atama/
+  çağrı-argümanı/return) eleman tipini çıkarıyor — önceden yalnızca boş
+  liste HATA veriyordu.
+- **P2.3**: dokümantasyon netleştirmesi — kimlik ASCII-yalnız, sayı
+  literalleri yalnızca 10-tabanlı, string literalleri KAÇIŞSIZ gerçek
+  satır sonu içerebiliyor (gerçek, şaşırtıcı, önceden var olan davranış,
+  şimdi yazıya döküldü).
+- **P2.4**: `nox.lock` SHA-sapma hatası düzeltildi (önbellek silinip
+  yukarı akış dalı ilerlediğinde `noxc build`/`fetch` artık kilitli SHA'yı
+  kullanıyor, dal referansını DEĞİL); güvensiz taşıma (`http`/`git`)
+  artık `NOX_ALLOW_INSECURE_TRANSPORT` olmadan reddediliyor; opsiyonel
+  `require_signed_commit` (`git verify-commit` üzerinden).
+- **P2.5**: benchmark koşucusu artık yalnızca min değil min/max/ortalama
+  gösteriyor + ortam bilgisi (OS/mimari/CPU/çekirdek sayısı/Zig sürümü/
+  gerçek `noxc --version`) yazdırıyor.
+- P1.5 (modül arayüzü + artımlı derleme) kullanıcı kararıyla ATLANDI —
+  Nox'un tek-derleme-birimi tasarımıyla çelişen bir mimari çatallanma.
+
+### Eklendi (nox.http gzip düzeltmesi sonrası dil/stdlib eksik-özellik turu)
+- **`f"..."` biçimlendirilmiş dize literalleri.** Lexer bir `f`/`F`
+  önekini + brace-derinliği ve iç içe tırnak takibiyle TÜM f-string'i
+  tarar (`{{`/`}}` kaçışları, Python-klasik iç içe tırnak kuralı — iç
+  string'in tırnağı dış tırnakla AYNIYSA hata). Parser `{expr}`
+  segmentlerini yeniden tokenize edip ayrıştırır, `str(expr)` çağrılarıyla
+  sarar, tüm segmentleri sol-sağ `+` zinciriyle katlar — YENİ bir AST
+  düğümü GEREKMEDİ, saf bir sözdizimsel şeker.
+- **7 birleşik atama operatörü**: `+=`/`-=`/`*=`/`/=`/`//=`/`%=`/`**=`,
+  yalnızca `.identifier` hedefleri İçin desugar edilir (`x += 1` →
+  `x = x + 1`), `.attribute`/`.index` hedefleri reddedilir.
+  `str()` builtin'i artık `str`/`bool` argümanlarını da kabul ediyor
+  (f-string interpolasyonunun İÇ ÇAĞRISI İçin gerekliydi).
+- **UTF-8 karakter-farkındalıklı `len()`/`s[i]`**: önceden ikisi de HAM
+  bayt tabanlıydı, çok baytlı karakterleri (`café`, `日本語`) BOZUYORDU.
+  YENİ `nox_str_char_count`/yeniden yazılmış `nox_str_char_at`
+  (`std.unicode` üzerinden codepoint yürüyüşü). ASCII hızlı-yol
+  (`str_ascii_cache` + QBE `jnz`/`phi`) eklendi çünkü naif düzeltme
+  ASCII sıralı erişimi O(n²)'ye düşürüyordu (80.4ms → 30sn+) — hızlı
+  yolla nihai maliyet yalnızca ~1.65x (132.9ms, gerçek ReleaseFast
+  ölçümüyle doğrulandı). Çok-baytlı sıralı erişim BİLİNÇLİ olarak hâlâ
+  O(n²) — dokümante edilmiş, ertelenmiş bir sınır.
+- **`noxc search` artık uzak bir paket indeksi URL'sinden çekebiliyor**
+  (`compiler/pkg/index.zig`nin YENİ `loadIndexFromUrl`) — `https` her
+  zaman İZİNLİ, `http` yalnızca `NOX_ALLOW_INSECURE_TRANSPORT=1` İLE;
+  gzip/deflate doğru şekilde `readerDecompressing` İLE çözülüyor (nox.http
+  düzeltmesiyle AYNI ders).
+- **`nox.sqlite` — gerçek bir SQLite sürücüsü.** `libsqlite3`e ASLA
+  statik bağlanmaz — YENİ `runtime/stdlib_shims/sqlite.zig`, `std.DynLib`
+  İLE İLK KULLANIMDA (dlopen/dlsym) çalışma zamanında yükler, bu YÜZDEN
+  sqlite KULLANMAYAN hiçbir Nox programı yeni bir bağımlılık KAZANMAZ.
+  `stdlib/nox/sqlite.nox`: `Connection`/`Statement`/`Row`/`SqliteError`
+  sınıfları + `open()` — parametreli sorgular, tipli sütun erişimi
+  (`get_str`/`get_int`/`get_float`/`is_null`), `last_insert_rowid`/
+  `changes`, `SqliteError` İLE hata yönetimi. İlk tasarım `sqlite3_*`
+  sembollerini DOĞRUDAN `extern def ... from "sqlite3"` İLE bağlıyordu
+  ama bu, `noxrt.o`da (HER Nox programına statik bağlı) çözülmemiş
+  sembol bırakıp sqlite KULLANMAYAN programların bağlanmasını
+  BOZUYORDU (gerçek regresyon, testte yakalandı) — tamamen `std.DynLib`
+  tabanlı tembel yüklemeye geçilerek düzeltildi.
+
+### Düzeltildi (nox.http gzip/deflate ve ilgili küçük hatalar)
+- **`nox.http`nin gzip/deflate gövdeleri hiç ÇÖZMEDİĞİ** GERÇEK bir heap
+  bozulması hatası bulundu ve düzeltildi — ham gzip baytları (gömülü NUL
+  DAHİL) doğrudan NUL-sonlandırılmış bir Nox `str`ine akıyor, sonraki
+  `strlen()` tabanlı serbest-bırakma boyutu hesaplamasını bozuyordu.
+  `response.reader()` yerine `response.readerDecompressing()` kullanılarak
+  düzeltildi; gövdede gömülü NUL bulunursa artık çökme yerine temiz bir
+  `HttpError` fırlatılıyor (savunma katmanı).
+- Başlıkların ayrıştırılmasından SONRAKİ bir başarısızlık yolunda
+  `ctx.response_headers`in SIZDIĞI bulundu — `headers_committed` bayrağı
+  + `defer` İLE düzeltildi.
+- Boş `{}` dict literali (önceden imkansızdı, boş `[]` liste İLE
+  simetrik olarak) parser/checker/codegen'e eklendi.
+- `main` isimli bir kullanıcı fonksiyonu, sentezlenen C giriş sembolüyle
+  ÇAKIŞIYORDU — artık `registerFunc` bunu AÇIKÇA reddediyor (önceden bu
+  hatadan habersizce yararlanan ~10 test fixture'ı `entry` olarak
+  yeniden adlandırıldı).
+- **`except X as e:` sınıf-adı çözümlemesindeki from-imports hatasının 3
+  BAĞIMSIZ örneği** (`checker.zig`nin `checkTry`i, `codegen_qbe/
+  exceptions.zig`nin `genTry`i, VE gerçek arızalı nokta olan
+  `codegen_qbe/registration.zig`nin `collectLocals`i) — üçü de
+  `self.from_imports.get(name)` yedek çözümlemesiyle düzeltildi. Bu,
+  "AST alanı bir kez çözülüp yerinde YENİDEN YAZILMIYOR, HER tüketici
+  kendi başına çözmeli" kalıbının kod tabanında en az 4. tekrarı.
 
 ## [1.0.0]
 

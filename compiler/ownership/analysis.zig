@@ -58,7 +58,7 @@ pub const Analyzer = struct {
         return .{ .allocator = allocator };
     }
 
-    pub fn analyzeModule(self: *Analyzer, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8) !Report {
+    pub fn analyzeModule(self: *Analyzer, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8) !Report {
         var report: Report = .{};
 
         var loose: std.ArrayListUnmanaged(ast.Stmt) = .empty;
@@ -84,7 +84,13 @@ pub const Analyzer = struct {
                     const label = try std.fmt.allocPrint(self.allocator, "fonksiyon {s}", .{fd.name});
                     try report.scopes.append(self.allocator, try self.analyzeScope(label, fd.params, fd.body));
                 },
+                // Faz P2.1 (bkz. proje belleği "generic sınıflar" planı):
+                // `func_def` dalıyla AYNI gerekçe — generic sınıf ŞABLONLARININ
+                // metodları (çözülemeyen `T` tip ifadeleri taşır) burada
+                // atlanır; somut örneklemeleri (`extra_classes`) aşağıda
+                // sıradan sınıflar gibi analiz edilir.
                 .class_def => |cd| {
+                    if (cd.type_params.len > 0 or containsName(generic_class_template_names, cd.name)) continue;
                     for (cd.methods) |m| {
                         const label = try std.fmt.allocPrint(self.allocator, "metod {s}.{s}", .{ cd.name, m.name });
                         try report.scopes.append(self.allocator, try self.analyzeScope(label, m.params, m.body));
@@ -96,6 +102,12 @@ pub const Analyzer = struct {
         for (extra_functions) |fd| {
             const label = try std.fmt.allocPrint(self.allocator, "fonksiyon {s}", .{fd.name});
             try report.scopes.append(self.allocator, try self.analyzeScope(label, fd.params, fd.body));
+        }
+        for (extra_classes) |cd| {
+            for (cd.methods) |m| {
+                const label = try std.fmt.allocPrint(self.allocator, "metod {s}.{s}", .{ cd.name, m.name });
+                try report.scopes.append(self.allocator, try self.analyzeScope(label, m.params, m.body));
+            }
         }
         return report;
     }
@@ -382,9 +394,9 @@ fn typeExprName(allocator: std.mem.Allocator, te: ast.TypeExpr) ![]const u8 {
 /// olabilir — generic kullanılmayan modüllerde `&.{}` verilir).
 /// `generic_template_names`: `checker.Checker.generic_functions`in anahtarları
 /// (generic kullanılmıyorsa `&.{}`) — bkz. `analyzeModule` belge notu.
-pub fn analyze(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8) !Report {
+pub fn analyze(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8) !Report {
     var analyzer = Analyzer.init(allocator);
-    return analyzer.analyzeModule(module, extra_functions, generic_template_names);
+    return analyzer.analyzeModule(module, extra_functions, generic_template_names, extra_classes, generic_class_template_names);
 }
 
 pub fn dumpReport(writer: *std.Io.Writer, report: Report) std.Io.Writer.Error!void {

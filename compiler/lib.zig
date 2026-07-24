@@ -1,6 +1,7 @@
 //! Nox derleyicisinin dış dünyaya (testler, ileride codegen/typecheck) açtığı
 //! tek giriş noktası. `noxc` (main.zig) ile testler aynı sembollere buradan erişir.
 
+pub const span = @import("span.zig");
 pub const token = @import("lexer/token.zig");
 pub const lexer = @import("lexer/lexer.zig");
 pub const ast = @import("parser/ast.zig");

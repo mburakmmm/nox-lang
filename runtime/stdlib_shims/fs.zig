@@ -26,8 +26,12 @@ const std = @import("std");
 const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
 const http_client = @import("http_client.zig");
+const abi_layout = @import("abi_layout");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
+/// Faz P1.2: bkz. `strings.zig`nin AYNI re-export notu.
+const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
+const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 
 /// Faz LL.1 takibi (bkz. nox-teknik-spesifikasyon.md §3.71 — GERÇEK bir
 /// `windows-latest` CI çalıştırması SIRASINDA, Windows'la İLGİSİZ olarak
@@ -417,7 +421,7 @@ export fn nox_fs_read_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c
         return null;
     };
 
-    const raw = arc.nox_rc_alloc(rt, 16 + 8 * names.items.len) orelse {
+    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * names.items.len) orelse {
         g_last_ok = false;
         return null;
     };
@@ -429,7 +433,7 @@ export fn nox_fs_read_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c
             g_last_ok = false;
             return null;
         };
-        const slot = bytes + 16 + 8 * i;
+        const slot = bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
         @as(*align(1) i64, @ptrCast(slot)).* = @bitCast(@as(isize, @intCast(@intFromPtr(dup))));
     }
     g_last_ok = true;
@@ -628,14 +632,14 @@ test "Faz III.3: nox_fs_read_dir_raw dizin girdilerini dogru doner (./.. haric)"
     var saw_b = false;
     var i: usize = 0;
     while (i < count) : (i += 1) {
-        const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(bytes + 16 + 8 * i)).*);
+        const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*);
         const p: [*:0]u8 = @ptrFromInt(addr);
         defer str.nox_str_release(rt, p);
         const name = std.mem.sliceTo(p, 0);
         if (std.mem.eql(u8, name, "a.txt")) saw_a = true;
         if (std.mem.eql(u8, name, "b.txt")) saw_b = true;
     }
-    arc.nox_rc_release(rt, list_ptr, 16 + 8 * count);
+    arc.nox_rc_release(rt, list_ptr, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * count);
     try std.testing.expect(saw_a);
     try std.testing.expect(saw_b);
 }

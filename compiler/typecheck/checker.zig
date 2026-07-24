@@ -44,6 +44,8 @@ const std = @import("std");
 const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
 const Type = types.Type;
+const span_mod = @import("../span.zig");
+const Span = span_mod.Span;
 
 pub const TypeError = error{
     TypeMismatch,
@@ -80,6 +82,14 @@ pub const Diagnostic = struct {
     code: TypeError,
     line: u32,
     message: []const u8,
+    /// Gerçek span sistemi (bkz. plan dosyası "Gerçek span sistemi +
+    /// yapılandırılmış tanılamalar") — SAF ekleme: `line`/`message`nin
+    /// DAVRANIŞI/BİÇİMİ DEĞİŞMEZ (70+ mevcut `tests/golden/typecheck_cases/
+    /// *.expected` fixture'ı bu YÜZDEN DEĞİŞMEDEN geçer). Normalde DEYİM-
+    /// seviyesinde (`current_span`, `stmt.span`dan), ama `checkArgs`nin
+    /// TİP UYUŞMAZLIĞI dalında (bkz. onun belge notu) TEK BİR argümanın
+    /// DAHA DAR span'ına GEÇİCİ olarak daraltılabilir.
+    span: Span = .{},
 };
 
 const FuncSig = struct {
@@ -221,6 +231,14 @@ pub const Checker = struct {
     /// `registerSignatures`/`collectProtocols`) KENDİ döngülerinde de
     /// AYRICA güncellenir.
     current_line: u32 = 0,
+    /// Bkz. `Diagnostic.span`nin belge notu — `current_line` İLE AYNI
+    /// yerlerde, `stmt.span`dan doldurulur.
+    current_span: Span = .{},
+    /// `checkModule` BAŞINDA `module.expr_spans`ten (bkz. `ast.Module`nin
+    /// belge notu) BİR KEZ doldurulur — `checkArgs`nin argüman-uyuşmazlığı
+    /// dalı, TEK bir argümanın DAHA DAR span'ını BURADAN arar (bkz. onun
+    /// belge notu).
+    module_expr_spans: std.AutoHashMapUnmanaged(usize, Span) = .empty,
     /// `defer` deyimleri İçin BENZERSİZ sentetik closure adları üretmek
     /// İçin bir sayaç (bkz. `checkDeferStmt`in belge notu).
     defer_counter: usize = 0,
@@ -243,6 +261,17 @@ pub const Checker = struct {
     /// (`mangleName`) ile önbelleğe alınır: aynı (fonksiyon, somut tip demeti)
     /// çifti için en fazla bir kez sentezlenir.
     instantiations: std.ArrayListUnmanaged(ast.FuncDef) = .empty,
+    /// Faz P2.1 (bkz. proje belleği "generic sınıflar" planı): `generic_
+    /// functions`in AYNISI ama SINIFLAR İçin — generic (`type_params.len >
+    /// 0`) sınıflar, somut bir kullanım (kurucu çağrısı YA DA tip ifadesi,
+    /// bkz. `instantiateGenericClass`) İLE karşılaşılana kadar burada
+    /// beklerler; `self.classes`e ASLA girmez (bare isimleriyle DOĞRUDAN
+    /// inşa/tip OLARAK kullanılamazlar).
+    generic_classes: std.StringHashMapUnmanaged(ast.ClassDef) = .{},
+    /// `instantiateGenericClass` tarafından üretilen, somut (monomorphize
+    /// edilmiş) sınıf tanımları — `instantiations`in AYNISI ama SINIFLAR
+    /// İçin.
+    class_instantiations: std.ArrayListUnmanaged(ast.ClassDef) = .empty,
     /// Yapısal protokoller (Faz 11) — adları modül düzeyinde benzersizdir,
     /// bir sınıfla hiçbir açık ilişki (implements) bildirmezler (bkz.
     /// `collectProtocols`). Bir fonksiyonun bir parametresi/dönüş tipi bir
@@ -312,6 +341,7 @@ pub const Checker = struct {
             .code = err,
             .line = self.current_line,
             .message = self.diagnostic orelse "(mesaj yok)",
+            .span = self.current_span,
         });
     }
 
@@ -325,6 +355,24 @@ pub const Checker = struct {
                 if (std.mem.eql(u8, name, "None")) return .none;
                 if (std.mem.eql(u8, name, "ptr")) return .ptr;
                 if (self.classes.contains(name)) return .{ .class = name };
+                // Bulundu (bkz. proje belleği "from-import class type
+                // annotations" görevi): `checkCall`in `.identifier` dalının
+                // `from_imports` GERİ DÜŞÜŞÜYLE (bkz. ~satır 2236) AYNI
+                // ilke — `from X import Widget` İLE bağlanan ÇIPLAK bir isim
+                // `Widget(...)` OLARAK ÇAĞRILABİLİYORDU ama `w: Widget = ...`
+                // TİP ANNOTASYONU olarak KULLANILAMIYORDU (`typeExprToType`
+                // `from_imports`ı HİÇ danışmıyordu — GERÇEK, önceden
+                // keşfedilmemiş bir hata, PLAIN/generic-olmayan sınıflar
+                // DAHİL). Yerel bir sınıf (YUKARIDAKİ `self.classes.contains`)
+                // HER ZAMAN ÖNCELİKLİDİR (from-import çözümlemesi yalnızca
+                // NORMAL çözümleme başarısız olduğunda denenir, `checkCall`
+                // İLE AYNI ilke). `mangled` bir SINIF DEĞİLSE (ör. `from X
+                // import some_func` bir FONKSİYONA eşleniyorsa) BİLİNÇLİ
+                // olarak reddedilir — bir TİP konumunda bir fonksiyon adı
+                // ANLAMSIZDIR.
+                if (self.from_imports.get(name)) |mangled| {
+                    if (self.classes.contains(mangled)) return .{ .class = mangled };
+                }
                 return self.fail(error.UnknownType, "bilinmeyen tip: {s}", .{name});
             },
             .generic => |g| {
@@ -363,6 +411,15 @@ pub const Checker = struct {
                     const value_boxed = try self.allocator.create(Type);
                     value_boxed.* = value_t;
                     return .{ .dict = .{ .key = key_boxed, .value = value_boxed } };
+                }
+                // Faz P2.1: kullanıcı-tanımlı bir generic sınıf — bir alan/
+                // parametre `Box[int]` OLARAK bildirilirse (bir kurucu
+                // çağrısı HİÇ görülmeden BİLE) buradan çözülür (bkz.
+                // `instantiateGenericClass`in belge notu).
+                if (self.generic_classes.get(g.name)) |gcd| {
+                    const bound = try self.allocator.alloc(Type, g.args.len);
+                    for (g.args, 0..) |a, i| bound[i] = try self.typeExprToType(a);
+                    return try self.instantiateGenericClass(gcd, bound);
                 }
                 return self.fail(error.UnknownType, "bilinmeyen generic tip: {s}", .{g.name});
             },
@@ -416,17 +473,73 @@ pub const Checker = struct {
         }
     }
 
+    // ---- Geçiş 0: import/from-import bildirimlerini topla ----
+
+    /// Bulundu (bkz. proje belleği "from-import class type annotations"
+    /// görevi) — GERÇEK, önceden keşfedilmemiş bir SIRALAMA hatası:
+    /// `.import_stmt`/`.from_import_stmt` ÖNCEDEN yalnızca `checkModule`nin
+    /// ANA (Geçiş 3) döngüsünde işlenirdi — AMA bu döngü `registerSignatures`
+    /// (Geçiş 2, PARAMETRE/dönüş tiplerini `typeExprToType` İLE ÇÖZEN geçiş)
+    /// TAMAMLANDIKTAN SONRA çalışır. Bu YÜZDEN `from X import Widget` İLE
+    /// bağlanan bir sınıf, bir DEĞİŞKEN/atama TİPİ olarak (Geçiş 3'te
+    /// çözülür) ÇALIŞIRDI ama bir FONKSİYON PARAMETRESİ tipi olarak (Geçiş
+    /// 2'de çözülür — `self.from_imports` O ANDA HÂLÂ BOŞTUR) `error.
+    /// UnknownType` İLE BAŞARISIZ olurdu. Düzeltme: import/from-import
+    /// bildirimleri ARTIK `registerSignatures`DEN ÖNCE, AYRI bir erken
+    /// geçişte toplanır — `.import_stmt`/`.from_import_stmt`in KENDİSİ hiçbir
+    /// ŞEYE (Geçiş 1/2'nin ÜRETTİĞİ HİÇBİR duruma) BAĞIMLI OLMADIĞINDAN bu
+    /// TAMAMEN GÜVENLİDİR (yalnızca AST'nin KENDİSİNDEN okur). Ana Geçiş 3
+    /// döngüsü artık bu İKİ deyim türünü NO-OP olarak GEÇER (bkz. AŞAĞIDAKİ
+    /// `checkModule`).
+    fn collectImports(self: *Checker, module: ast.Module) TypeError!void {
+        for (module.body) |stmt| {
+            switch (stmt.kind) {
+                .import_stmt => |imp| {
+                    const joined = try self.joinSegments(imp.segments, '.');
+                    try self.imported_modules.put(self.allocator, joined, {});
+                    if (imp.alias) |alias| {
+                        try self.module_aliases.put(self.allocator, alias, imp.segments);
+                    }
+                },
+                .from_import_stmt => |fi| {
+                    const joined = try self.joinSegments(fi.segments, '.');
+                    try self.imported_modules.put(self.allocator, joined, {});
+                    for (fi.names) |nm| {
+                        var mangled_segments: std.ArrayListUnmanaged([]const u8) = .empty;
+                        try mangled_segments.appendSlice(self.allocator, fi.segments);
+                        try mangled_segments.append(self.allocator, nm.name);
+                        const mangled = try self.joinSegments(mangled_segments.items, '_');
+                        const local_name = nm.alias orelse nm.name;
+                        try self.from_imports.put(self.allocator, local_name, mangled);
+                    }
+                },
+                else => {},
+            }
+        }
+    }
+
     // ---- Geçiş 1: sınıf adlarını topla (ileri referansları desteklemek için) ----
 
     fn collectClassNames(self: *Checker, module: ast.Module) TypeError!void {
         for (module.body) |stmt| {
             self.current_line = stmt.line;
+            self.current_span = stmt.span;
             if (stmt.kind == .class_def) {
-                const name = stmt.kind.class_def.name;
-                if (self.classes.contains(name)) {
-                    return self.fail(error.DuplicateDefinition, "sınıf zaten tanımlı: {s}", .{name});
+                const cd = stmt.kind.class_def;
+                if (self.classes.contains(cd.name) or self.generic_classes.contains(cd.name)) {
+                    return self.fail(error.DuplicateDefinition, "sınıf zaten tanımlı: {s}", .{cd.name});
                 }
-                try self.classes.put(self.allocator, name, .{});
+                // Faz P2.1: generic (`type_params.len > 0`) bir sınıf
+                // `self.classes`e ASLA girmez — `registerFunc`in
+                // `generic_functions` İLE AYNI ayrımı (bkz. `generic_classes`
+                // in belge notu). Somut tip argümanları OLMADAN bare isim
+                // ne DOĞRUDAN inşa EDİLEBİLİR ne de bir tip ifadesinde
+                // KULLANILABİLİR.
+                if (cd.type_params.len > 0) {
+                    try self.generic_classes.put(self.allocator, cd.name, cd);
+                } else {
+                    try self.classes.put(self.allocator, cd.name, .{});
+                }
             }
         }
     }
@@ -436,6 +549,7 @@ pub const Checker = struct {
     fn registerSignatures(self: *Checker, module: ast.Module) TypeError!void {
         for (module.body) |stmt| {
             self.current_line = stmt.line;
+            self.current_span = stmt.span;
             switch (stmt.kind) {
                 .func_def => |fd| try self.registerFunc(fd),
                 .class_def => |cd| try self.registerClassSignatures(cd),
@@ -606,6 +720,23 @@ pub const Checker = struct {
     }
 
     fn registerFunc(self: *Checker, fd: ast.FuncDef) TypeError!void {
+        // Bulundu (bkz. proje belleği "nox.http gzip düzeltmesi + dil
+        // eksikleri" görevi): Nox'ta bir `def main()` sözleşmesi YOK — üst
+        // düzey deyimler ZATEN programın giriş noktasıdır (bkz. nox-teknik-
+        // spesifikasyon.md'nin `async def main()` ÖRNEĞİYLE İLGİLİ AYNI notu,
+        // §3.21 civarı). `codegen.zig`nin
+        // `genFunction`ı ÜST DÜZEY fonksiyon isimlerini OLDUĞU GİBİ (mangling
+        // OLMADAN) bir QBE/asm sembolüne yazar (bkz. `genFunction`in
+        // `export function ... ${s}(...)` satırı) — modülün KENDİSİ de
+        // (üst düzey deyimler) TAM OLARAK `main` sembolüne (C giriş noktası,
+        // `_main`) derlenir (bkz. `in_main`). Kullanıcı AYRICA `def main():`
+        // yazarsa İKİSİ AYNI sembole ÇAKIŞIR — ÖNCEDEN bu, `cc`nin ham
+        // "sembol '_main' zaten tanımlı" hatasına kadar (derleme SONUNA)
+        // fark edilmeden ULAŞIYORDU (GERÇEKTEN gözlemlendi). Burada ERKEN
+        // VE açık bir tanılamayla reddedilir.
+        if (std.mem.eql(u8, fd.name, "main")) {
+            return self.fail(error.DuplicateDefinition, "'main' ayrılmış bir isimdir: Nox'ta 'def main()' sözleşmesi yok, üst düzey deyimler zaten programın giriş noktasıdır — bu fonksiyonu başka bir adla tanımlayın", .{});
+        }
         if (self.functions.contains(fd.name) or self.generic_functions.contains(fd.name)) {
             return self.fail(error.DuplicateDefinition, "fonksiyon zaten tanımlı: {s}", .{fd.name});
         }
@@ -922,9 +1053,9 @@ pub const Checker = struct {
         return .none;
     }
 
-    /// `isHttpServeCallee`nin (codegen.zig) çekirdek çözümleme mantığı —
-    /// callee TAM OLARAK `nox.http.<name>` şeklinde (üç segmentli, `nox`/
-    /// `http`/`name`) VE `nox.http` İTHAL edilmişse `true`.
+    /// `matchIntrinsicKind`in (codegen_qbe/async_thread.zig, Faz P1.6) çekirdek
+    /// çözümleme mantığı — callee TAM OLARAK `nox.http.<name>` şeklinde (üç
+    /// segmentli, `nox`/`http`/`name`) VE `nox.http` İTHAL edilmişse `true`.
     fn matchesNoxHttpCall(self: *Checker, c: ast.Call, name: []const u8) TypeError!bool {
         var raw_segments: std.ArrayListUnmanaged([]const u8) = .empty;
         if (!(try self.flattenDottedPath(c.callee.*, &raw_segments))) return false;
@@ -1010,6 +1141,12 @@ pub const Checker = struct {
     }
 
     fn registerClassSignatures(self: *Checker, cd: ast.ClassDef) TypeError!void {
+        // Faz P2.1: generic bir sınıf ŞABLONUNUN gövdesi BURADA HİÇ İŞLENMEZ
+        // — `T` gibi bir tip parametresi `typeExprToType`e (AŞAĞIDA, HER
+        // alan/metod tipi İçin ÇAĞRILIR) ÇÖZÜLEMEZ türden bir isimdir.
+        // Somut (monomorphize edilmiş, `type_params = &.{}`) bir çağrı BU
+        // erken dönüşten ETKİLENMEZ.
+        if (cd.type_params.len > 0) return;
         const info = self.classes.getPtr(cd.name).?; // collectClassNames'de eklendi
         // Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): AÇIKÇA
         // bildirilen alanlar, metod imza döngüsünden ÖNCE `info.fields`e
@@ -1053,6 +1190,8 @@ pub const Checker = struct {
     // ---- Geçiş 3: gövdeleri denetle ----
 
     pub fn checkModule(self: *Checker, module: ast.Module) TypeError!void {
+        self.module_expr_spans = module.expr_spans;
+        try self.collectImports(module);
         try self.collectClassNames(module);
         try self.collectProtocols(module);
         try self.registerSignatures(module);
@@ -1071,6 +1210,7 @@ pub const Checker = struct {
         var top_ctx: FnCtx = .{ .scope = &top_scope, .expected_return = null, .in_async = true };
         for (module.body) |stmt| {
             self.current_line = stmt.line;
+            self.current_span = stmt.span;
             switch (stmt.kind) {
                 // Generic fonksiyonların (açık `[T]` VEYA örtük protokol
                 // parametresi yoluyla) gövdesi burada denetlenmez — tip
@@ -1084,7 +1224,14 @@ pub const Checker = struct {
                     if (!self.generic_functions.contains(fd.name))
                         self.checkFunctionBody(fd) catch |e| try self.recordDiagnostic(e);
                 },
-                .class_def => |cd| self.checkClassBody(cd) catch |e| try self.recordDiagnostic(e),
+                // Faz P2.1: generic sınıf ŞABLONLARININ (`func_def`in HEMEN
+                // ÜSTÜNDEKİ notla AYNI gerekçe) gövdesi burada denetlenmez —
+                // `T` somut değildir. Denetim, `instantiateGenericClass`
+                // tarafından somut bir örnekleme sentezlendiğinde yapılır.
+                .class_def => |cd| {
+                    if (!self.generic_classes.contains(cd.name))
+                        self.checkClassBody(cd) catch |e| try self.recordDiagnostic(e);
+                },
                 // Protokoller `collectProtocols`te zaten tamamen doğrulandı;
                 // çalışma zamanı kodu üretmezler (yalnızca imza), bu yüzden
                 // burada başka bir işlem gerekmez.
@@ -1101,36 +1248,13 @@ pub const Checker = struct {
                 // `main.zig` tarafından, checker çalışmadan ÖNCE yapılmıştır
                 // (bkz. modül üstü not) — burada yalnızca "bu yol import
                 // edildi" kaydı tutulur.
-                .import_stmt => |imp| {
-                    const joined = try self.joinSegments(imp.segments, '.');
-                    try self.imported_modules.put(self.allocator, joined, {});
-                    // Faz U.3: `import X.Y as Z` — `Z`, `imp.segments`in
-                    // (TAM yol) TAKMA ADI olarak kaydedilir; `tryResolveQualifiedCall`/
-                    // `tryResolveHttpServeCall` bir çağrı sitesinde `Z.foo`
-                    // gördüğünde `Z`yi `imp.segments`e SPLICE eder (bkz.
-                    // `substituteAlias`in belge notu).
-                    if (imp.alias) |alias| {
-                        try self.module_aliases.put(self.allocator, alias, imp.segments);
-                    }
-                },
-                // Faz U.3: `from X.Y import foo[as bar]` — HER üye, MODÜL
-                // niteliği OLMADAN doğrudan çağrılabilecek ÇIPLAK bir yerel
-                // isme (`bar` VERİLDİYSE `bar`, aksi halde `foo`) mangled
-                // sembol adını (`X_Y_foo`) eşler (bkz. `self.from_imports`in
-                // belge notu, `checkCall`in `.identifier` dalındaki
-                // kullanımı).
-                .from_import_stmt => |fi| {
-                    const joined = try self.joinSegments(fi.segments, '.');
-                    try self.imported_modules.put(self.allocator, joined, {});
-                    for (fi.names) |nm| {
-                        var mangled_segments: std.ArrayListUnmanaged([]const u8) = .empty;
-                        try mangled_segments.appendSlice(self.allocator, fi.segments);
-                        try mangled_segments.append(self.allocator, nm.name);
-                        const mangled = try self.joinSegments(mangled_segments.items, '_');
-                        const local_name = nm.alias orelse nm.name;
-                        try self.from_imports.put(self.allocator, local_name, mangled);
-                    }
-                },
+                // Bulundu: `.import_stmt`/`.from_import_stmt` ARTIK BURADA
+                // İŞLENMEZ — `collectImports`e (Geçiş 0, `registerSignatures`DEN
+                // ÖNCE çalışır) TAŞINDI, bkz. onun belge notu (SIRALAMA hatası
+                // düzeltmesi). Burada NO-OP olarak KALMALARININ TEK nedeni bu
+                // İKİ deyim türünün genel `checkStmt` yoluna (HER ZAMAN "yalnızca
+                // modül seviyesinde olabilir" hatası verirdi) DÜŞMESİNİ ÖNLEMEK.
+                .import_stmt, .from_import_stmt => {},
                 else => self.checkStmt(&top_ctx, stmt) catch |e| try self.recordDiagnostic(e),
             }
         }
@@ -1147,6 +1271,7 @@ pub const Checker = struct {
     fn collectProtocols(self: *Checker, module: ast.Module) TypeError!void {
         for (module.body) |stmt| {
             self.current_line = stmt.line;
+            self.current_span = stmt.span;
             if (stmt.kind != .protocol_def) continue;
             const pd = stmt.kind.protocol_def;
             if (self.protocols.contains(pd.name)) {
@@ -1272,11 +1397,12 @@ pub const Checker = struct {
         // TEK, özyinelemeli dağıtım noktası olması SAYESİNDE HER iç içe
         // deyim (if/while/for gövdeleri DAHİL) İÇİN otomatik doğru çalışır.
         self.current_line = stmt.line;
+        self.current_span = stmt.span;
         switch (stmt.kind) {
             .expr_stmt => |e| _ = try self.checkExpr(ctx, e),
             .var_decl => |v| {
                 const declared = try self.typeExprToType(v.type_expr);
-                const value_t = try self.checkExpr(ctx, v.value);
+                const value_t = try self.checkExprExpected(ctx, v.value, declared);
                 if (!assignable(declared, value_t)) {
                     return self.fail(error.TypeMismatch, "'{s}' için tip uyuşmazlığı", .{v.name});
                 }
@@ -1383,7 +1509,7 @@ pub const Checker = struct {
                 const expected = ctx.expected_return orelse
                     return self.fail(error.TypeMismatch, "'return' yalnızca fonksiyon/metod içinde kullanılabilir", .{});
                 if (r) |e| {
-                    const rt = try self.checkExpr(ctx, e);
+                    const rt = try self.checkExprExpected(ctx, e, expected);
                     if (!assignable(expected, rt)) return self.fail(error.TypeMismatch, "dönüş tipi uyuşmuyor", .{});
                 } else if (expected != .none) {
                     return self.fail(error.TypeMismatch, "fonksiyon bir değer döndürmelidir", .{});
@@ -1430,11 +1556,28 @@ pub const Checker = struct {
     fn checkTry(self: *Checker, ctx: *FnCtx, t: ast.TryStmt) TypeError!void {
         for (t.try_body) |s| try self.checkStmt(ctx, s);
         for (t.except_clauses) |ec| {
-            if (!self.classes.contains(ec.class_name)) {
+            // Bulundu (bkz. proje belleği "from-import class type
+            // annotations" görevi, `typeExprToType`in AYNI `from_imports`
+            // geri düşüşüyle AYNI KÖK neden): `except X as e:` ÖNCEDEN
+            // yalnızca ÇIPLAK `self.classes` anahtarını kontrol ediyordu —
+            // `from nox.sqlite import SqliteError` İLE bağlanan bir sınıf
+            // `self.classes`e MANGLED adıyla (`nox_sqlite_SqliteError`)
+            // kayıtlıyken `ec.class_name` YEREL takma addır (`SqliteError`)
+            // — bu YÜZDEN `from`-import EDİLMİŞ HERHANGİ bir istisna
+            // sınıfını yakalamak (`import nox.sqlite` + tam mangled ada
+            // BAŞVURMADAN) HER ZAMAN `bilinmeyen sınıf` hatasıyla
+            // BAŞARISIZ oluyordu (GERÇEKTEN gözlemlendi, bkz. `nox.sqlite`
+            // hata-yolu testi).
+            const resolved_class_name = if (self.classes.contains(ec.class_name))
+                ec.class_name
+            else if (self.from_imports.get(ec.class_name)) |mangled|
+                (if (self.classes.contains(mangled)) mangled else null)
+            else
+                null;
+            const class_name = resolved_class_name orelse
                 return self.fail(error.UndefinedClass, "bilinmeyen sınıf: {s}", .{ec.class_name});
-            }
             if (ec.bind_name) |bn| {
-                try ctx.scope.declare(self.allocator, bn, .{ .class = ec.class_name });
+                try ctx.scope.declare(self.allocator, bn, .{ .class = class_name });
             }
             for (ec.body) |s| try self.checkStmt(ctx, s);
         }
@@ -1559,7 +1702,7 @@ pub const Checker = struct {
                     }
                     return self.fail(error.UndefinedVariable, "tanımsız değişken: {s}", .{name});
                 };
-                const value_t = try self.checkExpr(ctx, a.value);
+                const value_t = try self.checkExprExpected(ctx, a.value, existing);
                 if (!assignable(existing, value_t)) {
                     return self.fail(error.TypeMismatch, "'{s}' için tip uyuşmazlığı", .{name});
                 }
@@ -1586,9 +1729,15 @@ pub const Checker = struct {
                     else => return self.fail(error.TypeMismatch, "'.{s}' yalnızca sınıf örneklerinde kullanılabilir", .{attr.attr}),
                 };
                 const is_self = attr.obj.* == .identifier and std.mem.eql(u8, attr.obj.identifier, "self");
-                const value_t = try self.checkExpr(ctx, a.value);
                 const info = self.classes.getPtr(class_name).?;
-                if (info.fields.get(attr.attr)) |existing_t| {
+                // Faz P2.2: alan ZATEN bildirilmişse (Faz FF.5 — AÇIKÇA
+                // tipli bir `FieldDecl`) kendi tipi, boş bir liste literali
+                // (`self.items = []`) İçin `expected` olarak KULLANILIR
+                // (bkz. `checkExprExpected`in belge notu) — bu YÜZDEN
+                // ÖNCE bakılır, `checkExpr` ÇAĞRILMADAN.
+                const existing_field_t = info.fields.get(attr.attr);
+                const value_t = try self.checkExprExpected(ctx, a.value, existing_field_t);
+                if (existing_field_t) |existing_t| {
                     if (!assignable(existing_t, value_t)) {
                         return self.fail(error.TypeMismatch, "'{s}.{s}' için tip uyuşmazlığı", .{ class_name, attr.attr });
                     }
@@ -1652,6 +1801,37 @@ pub const Checker = struct {
             .list => |elem| elem.*,
             else => self.fail(error.NotIterable, "bu ifade üzerinde 'for' çalıştırılamaz", .{}),
         };
+    }
+
+    /// Faz P2.2 (bkz. proje belleği "P0/P1/P2 inceleme düzeltme listesi"):
+    /// `checkExpr`in AYNISI, ama bir BEKLENEN tip (`expected`) BİLİNİYORSA
+    /// (bir `var_decl`in bildirilen tipi, bir çağrının parametre tipi, bir
+    /// `return`ün fonksiyon dönüş tipi, bir atamanın HEDEFİNİN ZATEN
+    /// bilinen tipi — dört doğal "bağlam" noktası) VE `expr` BOŞ bir liste
+    /// literaliyse (`[]`, `checkExpr`in KENDİSİ TEK BAŞINA tipini asla
+    /// çıkaramaz), `expected` bir `list[T]` İSE elemanın tipini ORADAN alır.
+    /// **Bilinçli v1 kapsamı:** yalnızca BU DÖRT çağrı sitesinde (aşağıya
+    /// bkz.) kullanılır — bir boş listenin/sözlüğün DAHA İÇ İÇE bir bağlamda
+    /// (ör. başka bir liste literalinin elemanı, bir dict değeri) geçmesi
+    /// HÂLÂ desteklenmez (`checkExpr`in KENDİSİ HİÇ DEĞİŞMEDİ, aynı "boş
+    /// liste/dict literalinin tipi çıkarılamaz" hatasını üretmeye devam
+    /// eder — bu yalnızca dört EK yol için bir GERİ DÜŞÜŞ katmanıdır).
+    /// Boş `{}` (dict) de ARTIK BURADA ele alınır — `[]`nin AYNI mantığı
+    /// (parser'ın `.l_brace` dalı ARTIK `{}`ye izin verir, bkz. onun belge
+    /// notu; codegen'in `genExprForTarget`i AYNI şekilde `target.dict_info`den
+    /// tipi alan bir `genEmptyDictLit`e sahiptir).
+    fn checkExprExpected(self: *Checker, ctx: *FnCtx, expr: ast.Expr, expected: ?Type) TypeError!Type {
+        if (expr == .list_lit and expr.list_lit.len == 0) {
+            if (expected) |exp| {
+                if (exp == .list) return exp;
+            }
+        }
+        if (expr == .dict_lit and expr.dict_lit.len == 0) {
+            if (expected) |exp| {
+                if (exp == .dict) return exp;
+            }
+        }
+        return self.checkExpr(ctx, expr);
     }
 
     fn checkExpr(self: *Checker, ctx: *FnCtx, expr: ast.Expr) TypeError!Type {
@@ -1720,9 +1900,11 @@ pub const Checker = struct {
                 break :blk .{ .list = boxed };
             },
             .dict_lit => |pairs| blk: {
-                // Boş `{}` DESTEKLENMEZ — `[]`in AYNI kısıtlaması (bkz.
-                // `ast.zig`'in `dict_lit` belge notu); parser zaten en az
-                // bir çift ZORUNLU kılar, bu kontrol savunmacıdır.
+                // Boş `{}`nin tipi BURADA (bağlamsız `checkExpr`de) HÂLÂ
+                // çıkarılamaz — `[]`in AYNI kısıtlaması. Bir BEKLENEN tip
+                // biliniyorsa `checkExprExpected` (bkz. onun belge notu)
+                // bunu ÖNCEDEN ele alır; buraya YALNIZCA bağlamsız (ör.
+                // başka bir literalin içine gömülü) bir boş `{}` düşer.
                 if (pairs.len == 0) return self.fail(error.UnknownType, "boş dict literalinin tipi çıkarılamaz", .{});
                 const first_key = try self.checkExpr(ctx, pairs[0].key);
                 const first_value = try self.checkExpr(ctx, pairs[0].value);
@@ -1839,8 +2021,31 @@ pub const Checker = struct {
             boxed.* = elem_t;
             return .{ .thread_channel = boxed };
         }
+        // Faz P2.1 (bkz. proje belleği "generic sınıflar" planı):
+        // kullanıcı-tanımlı bir generic sınıf — `Channel`/`ThreadChannel`nin
+        // AKSİNE bu GERÇEKTEN monomorphize edilir (bkz. `instantiateGenericClass`).
+        // Tip argümanları (`Channel[T](capacity)` İLE AYNI şekilde) AÇIKÇA
+        // yazılmalıdır — argümanlardan ÇIKARIM (generic fonksiyonların
+        // `unifyTypeExpr`si GİBİ) YOKTUR. `checkCall`in `.identifier` dalının
+        // `from_imports` GERİ DÜŞÜŞÜYLE (satır ~2198) AYNI ilke: yerel bir
+        // isim `self.generic_classes`de BULUNAMAZSA, `from X import Box`
+        // İLE bağlanan mangled bir isim OLUP OLMADIĞI da denenir.
+        const maybe_gcd = self.generic_classes.get(g.name) orelse blk: {
+            const mangled_base = self.from_imports.get(g.name) orelse break :blk null;
+            break :blk self.generic_classes.get(mangled_base);
+        };
+        if (maybe_gcd) |gcd| {
+            const bound = try self.allocator.alloc(Type, g.type_args.len);
+            for (g.type_args, 0..) |ta, i| bound[i] = try self.typeExprToType(ta);
+            const class_t = try self.instantiateGenericClass(gcd, bound);
+            const info = self.classes.get(class_t.class).?;
+            const init_sig = info.init_sig orelse FuncSig{ .params = &.{}, .return_type = .none };
+            try self.checkArgs(ctx, init_sig.params, g.args, g.name);
+            g.resolved_class_name.* = class_t.class;
+            return class_t;
+        }
         // v0.1'de diğer tanınan yerleşik generic kurucu: `Channel[T](
-        // capacity)` (bkz. `parser.zig`, `isGenericConstructName`).
+        // capacity)`.
         if (!std.mem.eql(u8, g.name, "Channel")) {
             return self.fail(error.UnknownType, "bilinmeyen generic kurucu: {s}", .{g.name});
         }
@@ -1996,8 +2201,16 @@ pub const Checker = struct {
                 if (std.mem.eql(u8, name, "str")) {
                     if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'str' tam olarak 1 argüman alır", .{});
                     const t = try self.checkExpr(ctx, c.args[0]);
-                    if (t != .int and t != .float) {
-                        return self.fail(error.TypeMismatch, "'str' yalnızca int/float üzerinde çalışır", .{});
+                    // Bulundu (bkz. proje belleği "f-string + augmented
+                    // atama" görevi): f-string desugarı (`f"{x}"` →
+                    // `... + str(x) + ...`) MEKANİK olduğundan (parser tip
+                    // bilgisine SAHİP DEĞİLDİR, "zaten str/bool İSE str()
+                    // SARMALAMAYI atla" kararını VEREMEZ) `str()`nin
+                    // KENDİSİ `str`/`bool`i de kabul etmelidir — bu AYRICA
+                    // genel bir iyileştirme (`str("zaten bir str")`/
+                    // `str(True)` artık DOĞRUDAN da çalışır).
+                    if (t != .int and t != .float and t != .str and t != .boolean) {
+                        return self.fail(error.TypeMismatch, "'str' yalnızca int/float/str/bool üzerinde çalışır", .{});
                     }
                     return .str;
                 }
@@ -2287,9 +2500,28 @@ pub const Checker = struct {
         if (params.len != args.len) {
             return self.fail(error.ArgumentCountMismatch, "'{s}' {d} argüman bekler, {d} verildi", .{ name, params.len, args.len });
         }
-        for (params, args) |pt, ae| {
-            const at = try self.checkExpr(ctx, ae);
-            if (!assignable(pt, at)) return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{name});
+        for (params, args, 0..) |pt, ae, i| {
+            const at = try self.checkExprExpected(ctx, ae, pt);
+            if (!assignable(pt, at)) {
+                // Gerçek span sistemi (bkz. plan dosyası "Gerçek span
+                // sistemi + yapılandırılmış tanılamalar"): mümkünse
+                // `recordDiagnostic`nin (BU hata YUKARI doğru YAYILDIKTAN
+                // SONRA, en üst-düzey çağıranda) OKUYACAĞI `current_span`ı
+                // DEYİM-seviyesinden BU SPESİFİK argümana DARALT — BURADA
+                // GERİ YÜKLEME YAPILMAZ (bir `defer` İLE DEĞİL): bu bir
+                // HATA yoludur, işlev BURADAN itibaren SARILMADAN yukarı
+                // doğru YAYILIR, `current_span` bir SONRAKİ deyim/birim
+                // işlenirken (`checkStmt`/`checkModule`nin KENDİ normal
+                // `current_span = stmt.span` atamasıyla) zaten TAZELENİR.
+                // `module_expr_spans` yalnızca SIRADAN çağrı argümanları
+                // İçin doldurulur (bkz. `parser.zig`nin `parsePostfix`i),
+                // bu YÜZDEN BULUNAMAZSA (stdlib yeniden-adlandırma/generic
+                // somutlaştırma SONRASI kopyalanan gövdeler DAHİL — bkz.
+                // `ast.Module.expr_spans`nin belge notu) deyim-seviyesi
+                // span'a ZARARSIZCA GERİ DÜŞÜLÜR.
+                if (self.module_expr_spans.get(@intFromPtr(&args[i]))) |sp| self.current_span = sp;
+                return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{name});
+            }
         }
     }
 
@@ -2655,6 +2887,78 @@ pub const Checker = struct {
     /// `FuncDef` sentezleyip kaydeder/denetler ve çağrı sitesinin `callee`
     /// düğümünü YERİNDE mangled isme yeniden yazar. Döndürülen `Type`, bu
     /// çağrı ifadesinin (`c`) kendi tipidir.
+    /// Faz P2.1 (bkz. proje belleği "generic sınıflar" planı): `instantiateGeneric`
+    /// (FONKSİYONLAR İçin) İLE AYNI iskelet, SINIFLAR İçin — TEK önemli fark:
+    /// tip parametreleri `unifyTypeExpr` İLE ARGÜMAN tiplerinden ÇIKARILMAZ,
+    /// DOĞRUDAN (çağıranın ZATEN çözdüğü) `bound_types`ten ALINIR. Bu, hem
+    /// `checkGenericConstruct`nin (bir `Box[int](5)` kurucu çağrısı, `g.
+    /// type_args`ten) hem `typeExprToType`nin `.generic` dalının (bir kurucu
+    /// çağrısı HİÇ görülmeden — ör. bir alan/parametre tipi olarak `Box[int]`
+    /// — `g.args`ten) ORTAK çağırma noktasıdır. Metodları generic bir
+    /// sınıfın KENDİ tip parametresini (`self.value: T`) kullanabilir — bu
+    /// "generic METODLAR" (`def foo[U](...)`, checker.zig'in AYRI, HÂLÂ
+    /// geçerli "metodlar generic olamaz" reddi) İLE KARIŞTIRILMAMALIDIR:
+    /// burada `T` DIŞARIDAN (sınıf düzeyinde) bağlanan bir isimdir, metodun
+    /// KENDİ `type_params`ı HER ZAMAN boş kalır.
+    ///
+    /// **Bilinen, DEVREDEN sınırlama (`substituteStmt`nin belge notuyla AYNI):**
+    /// yalnızca `var_decl.type_expr` değiştirilir — bir metodun GÖVDESİ
+    /// KENDİ `T`sini kullanan BAŞKA bir generic kurucu (`Channel[T](...)`
+    /// gibi) çağırırsa, o iç `.generic_construct.type_args`i BURADA
+    /// YÜRÜNMEDİĞİNDEN `T` somutlaştırma ANINDA çözülemez ve tip hatası
+    /// verir. Bu, generic FONKSİYONLARDAN miras kalan bir kısıttır (bu
+    /// biletin KAPSAMI DIŞINDA — `substituteStmt`i TÜM ifade-gömülü
+    /// `TypeExpr` sitelerini gezecek şekilde genişletmek çok daha büyük,
+    /// ayrı bir değişiklik olurdu).
+    fn instantiateGenericClass(self: *Checker, gcd: ast.ClassDef, bound_types: []const Type) TypeError!Type {
+        if (bound_types.len != gcd.type_params.len) {
+            return self.fail(error.ArgumentCountMismatch, "'{s}' {d} tip argümanı bekler, {d} verildi", .{ gcd.name, gcd.type_params.len, bound_types.len });
+        }
+
+        const mangled = try self.mangleName(gcd.name, bound_types);
+        if (self.classes.contains(mangled)) return .{ .class = mangled };
+
+        var bindings: std.StringHashMapUnmanaged(Type) = .{};
+        defer bindings.deinit(self.allocator);
+        for (gcd.type_params, bound_types) |tp, t| try bindings.put(self.allocator, tp, t);
+        // Fonksiyonların AKSİNE, sınıfa ÖZGÜ bir adım: sınıfın KENDİ çıplak
+        // adını da somut (mangled) tipe bağlar — `self: Box` (parser'ın HER
+        // metod İçin sentezlediği `self_inferred` parametre) VE öz-başvurulu
+        // alan/dönüş tipleri (`next: Box | None`) AYNI `substituteTypeExpr`
+        // yürüyüşüyle "ücretsiz" doğru çözülsün diye.
+        try bindings.put(self.allocator, gcd.name, .{ .class = mangled });
+
+        const fields = try self.allocator.alloc(ast.FieldDecl, gcd.fields.len);
+        for (gcd.fields, 0..) |f, i| {
+            fields[i] = .{ .name = f.name, .type_expr = try self.substituteTypeExpr(f.type_expr, &bindings), .line = f.line };
+        }
+        const methods = try self.allocator.alloc(ast.FuncDef, gcd.methods.len);
+        for (gcd.methods, 0..) |m, i| {
+            const params = try self.allocator.alloc(ast.Param, m.params.len);
+            for (m.params, 0..) |p, j| {
+                params[j] = .{ .name = p.name, .type_expr = try self.substituteTypeExpr(p.type_expr, &bindings), .self_inferred = p.self_inferred };
+            }
+            methods[i] = .{
+                .name = m.name,
+                .type_params = &.{},
+                .params = params,
+                .return_type = try self.substituteTypeExpr(m.return_type, &bindings),
+                .body = try self.substituteStmts(m.body, &bindings),
+                .is_async = m.is_async,
+            };
+        }
+        const concrete: ast.ClassDef = .{ .name = mangled, .type_params = &.{}, .methods = methods, .fields = fields };
+
+        // Önce yer tutucuyu kaydet (olası öz-başvurulu/özyinelemeli generic
+        // sınıflar AYNI somutlaştırmayı YENİDEN bulsun diye — `instantiateGeneric`in
+        // AYNI yorumuyla TUTARLI), SONRA gövdeyi denetle.
+        try self.classes.put(self.allocator, mangled, .{});
+        try self.registerClassSignatures(concrete);
+        try self.class_instantiations.append(self.allocator, concrete);
+        try self.checkClassBody(concrete);
+        return .{ .class = mangled };
+    }
+
     fn instantiateGeneric(self: *Checker, ctx: *FnCtx, gfd: ast.FuncDef, c: ast.Call) TypeError!Type {
         if (gfd.params.len != c.args.len) {
             return self.fail(error.ArgumentCountMismatch, "'{s}' {d} argüman bekler, {d} verildi", .{ gfd.name, gfd.params.len, c.args.len });

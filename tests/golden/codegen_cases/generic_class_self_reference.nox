@@ -1,0 +1,18 @@
+class Node[T]:
+    value: T
+    def __init__(self: Node, value: T) -> None:
+        self.value = value
+    def describe(self: Node) -> Node:
+        return self
+
+n: Node[int] = Node[int](5)
+print(n.describe().value)
+
+async def use_channel() -> None:
+    ch: Channel[int] = Channel[int](1)
+    await ch.send(42)
+    v: int = await ch.recv()
+    print(v)
+
+t: Task[None] = spawn use_channel()
+await t

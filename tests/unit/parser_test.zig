@@ -37,6 +37,84 @@ test "while gövdesi ve dönüş değeri olmayan return ayrıştırılır" {
     try std.testing.expectEqual(@as(?ast.Expr, null), while_stmt.body[0].kind.return_stmt);
 }
 
+// Gerçek span sistemi (bkz. plan dosyası "Gerçek span sistemi +
+// yapılandırılmış tanılamalar") — Aşama 3 kabul kriteri: `ast.Stmt.span`
+// TEK-SATIR bir deyim İçin BAŞLANGIÇ token'ından SON tükettiği token'a
+// (dahil) kadar doğru hesaplanıyor mu?
+test "Stmt.span: tek-satır bir var_decl deyiminin başlangıç/bitiş konumu doğru" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const module = try parse(arena.allocator(), "x: int = 1\n");
+    const s = module.body[0].span;
+    try std.testing.expect(!s.isNone());
+    try std.testing.expectEqual(@as(u32, 1), s.start_line);
+    try std.testing.expectEqual(@as(u32, 1), s.start_col);
+    try std.testing.expectEqual(@as(u32, 1), s.end_line);
+    // "x: int = 1" 10 karakter, `\n` konumu (0-tabanlı 10) => sütun 11.
+    try std.testing.expectEqual(@as(u32, 11), s.end_col);
+}
+
+// Bileşik (çok-satırlı) bir deyimin span'ı TÜM iç içe gövdeyi (SON
+// `dedent`e kadar) KAPSAMALI — bkz. `ast.Stmt.span`nin belge notu.
+test "Stmt.span: çok-satırlı bir if deyiminin span'ı TÜM iç içe gövdeyi kapsar" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const module = try parse(arena.allocator(),
+        \\def f() -> None:
+        \\    if True:
+        \\        x: int = 1
+        \\
+    );
+    const fd = module.body[0].kind.func_def;
+    const if_span = fd.body[0].span;
+    try std.testing.expect(!if_span.isNone());
+    try std.testing.expectEqual(@as(u32, 2), if_span.start_line);
+    try std.testing.expect(if_span.end_line > if_span.start_line);
+
+    // `f`in KENDİ (func_def) span'ı da if BLOĞUNUN TAMAMINI kapsamalı.
+    const f_span = module.body[0].span;
+    try std.testing.expectEqual(@as(u32, 1), f_span.start_line);
+    try std.testing.expect(f_span.end_line >= if_span.end_line);
+}
+
+// Gerçek span sistemi (bkz. plan dosyası "Gerçek span sistemi +
+// yapılandırılmış tanılamalar") — Aşama 4 kabul kriteri: `ParseError`
+// KÜMESİ DEĞİŞMEDEN (bkz. AŞAĞIDAKİ mevcut `expectError` testleri), ama
+// `Parser.last_diagnostic` GERÇEK `expected`/`found`/`span` bilgisini
+// TAŞIYOR mu?
+test "Parser.last_diagnostic: expect() başarısızlığında beklenen/bulunan/span doğru" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // `x: int` sonrasında `=` BEKLENİR ama `\n` BULUNUR.
+    const tokens = try nox.lexer.tokenize(a, "x: int\n");
+    var p = nox.parser.Parser.init(a, tokens);
+    try std.testing.expectError(error.UnexpectedToken, p.parseModule());
+    const d = p.last_diagnostic.?;
+    try std.testing.expectEqual(nox.token.TokenKind.assign, d.expected.?);
+    try std.testing.expectEqual(nox.token.TokenKind.newline, d.found);
+    try std.testing.expect(!d.span.isNone());
+    try std.testing.expectEqual(@as(u32, 1), d.span.start_line);
+}
+
+test "Parser.last_diagnostic: özyineleme sınırı aşıldığında span dolduruluyor" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var src: std.ArrayList(u8) = .empty;
+    try src.appendSlice(a, "x: int = ");
+    for (0..600) |_| try src.appendSlice(a, "(");
+    try src.appendSlice(a, "1");
+    for (0..600) |_| try src.appendSlice(a, ")");
+    try src.appendSlice(a, "\n");
+
+    const tokens = try nox.lexer.tokenize(a, src.items);
+    var p = nox.parser.Parser.init(a, tokens);
+    try std.testing.expectError(error.RecursionLimitExceeded, p.parseModule());
+    const d = p.last_diagnostic.?;
+    try std.testing.expect(!d.span.isNone());
+}
+
 test "sınıf tanımı yalnızca metodlardan oluşur, açıkça tiplenmiş self çalışır" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -191,4 +269,94 @@ test "güvenlik H-3: aşırı iç içe ifadeler noxc'un kendisini çökertmek ye
         try source.appendSlice(allocator, "1\n");
         try std.testing.expectError(error.RecursionLimitExceeded, parse(allocator, source.items));
     }
+}
+
+// Bulundu (bkz. proje belleği "f-string + augmented atama" görevi):
+// `x += 1` parse-zamanında `x = x + 1`e desugar edilir — AST'nin `.assign`
+// düğümünün `.value`i BİR `.binary{.op=.add}` OLMALI, `.target`/`.binary.
+// left` AYNI ismi TAŞIMALI (sığ kopya, `.identifier` bir dilim olduğundan
+// GÜVENLİ).
+test "augmented atama (+=) parse-zamaninda 'x = x + degeri'e desugar edilir" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const module = try parse(arena.allocator(), "x: int = 0\nx += 5\n");
+    const assign = module.body[1].kind.assign;
+    try std.testing.expect(assign.target == .identifier);
+    try std.testing.expectEqualStrings("x", assign.target.identifier);
+    try std.testing.expect(assign.value == .binary);
+    try std.testing.expectEqual(ast.BinaryOp.add, assign.value.binary.op);
+    try std.testing.expect(assign.value.binary.left.* == .identifier);
+    try std.testing.expectEqualStrings("x", assign.value.binary.left.identifier);
+    try std.testing.expect(assign.value.binary.right.* == .int_lit);
+    try std.testing.expectEqual(@as(i64, 5), assign.value.binary.right.int_lit);
+}
+
+// TÜM 7 augmented-atama operatörünün DOĞRU `BinaryOp`e eşlendiğini doğrular.
+test "augmented atamanin 7 operatoru de dogru BinaryOp'e eslenir" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const cases = [_]struct { src: []const u8, op: ast.BinaryOp }{
+        .{ .src = "x: int = 0\nx += 1\n", .op = .add },
+        .{ .src = "x: int = 0\nx -= 1\n", .op = .sub },
+        .{ .src = "x: int = 0\nx *= 1\n", .op = .mul },
+        .{ .src = "x: int = 0\nx /= 1\n", .op = .div },
+        .{ .src = "x: int = 0\nx //= 1\n", .op = .floordiv },
+        .{ .src = "x: int = 0\nx %= 1\n", .op = .mod },
+        .{ .src = "x: int = 0\nx **= 1\n", .op = .pow },
+    };
+    for (cases) |c| {
+        const module = try parse(arena.allocator(), c.src);
+        try std.testing.expectEqual(c.op, module.body[1].kind.assign.value.binary.op);
+    }
+}
+
+// KRİTİK güvenlik testi (bkz. plan dosyası): `.attribute`/`.index` hedeflerde
+// augmented atama REDDEDİLİR — receiver'ı İKİ KEZ değerlendirmenin (yan-etkili
+// bir receiver İçin GERÇEK bir çiftleme hatası olurdu) ÖNÜNE GEÇER.
+test "augmented atama .attribute/.index hedeflerde REDDEDILIR (receiver cift degerlendirme riski)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    try std.testing.expectError(error.UnexpectedToken, parse(arena.allocator(), "obj.field += 1\n"));
+    try std.testing.expectError(error.UnexpectedToken, parse(arena.allocator(), "arr[0] += 1\n"));
+}
+
+// F-string desugarı: `f"a{x}b"` → `("a" + str(x)) + "b"` (soldan sağa
+// `.binary{.add}` zinciri, ifade segment'leri `str()` çağrısına SARILIR).
+test "f-string interpolasyonlu ifade str()+concat zincirine desugar edilir" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    // 3 segment ("a", x, "b") SOLDAN SAĞA katlanır: ((("a" + str(x)) + "b").
+    const module = try parse(arena.allocator(), "x: int = 1\ny: str = f\"a{x}b\"\n");
+    const value = module.body[1].kind.var_decl.value;
+    try std.testing.expect(value == .binary);
+    try std.testing.expectEqual(ast.BinaryOp.add, value.binary.op);
+    // Dış katmanın sağı: "b".
+    const outer_right = value.binary.right.*;
+    try std.testing.expect(outer_right == .string_lit);
+    try std.testing.expectEqualStrings("b", outer_right.string_lit);
+    // Dış katmanın solu: ("a" + str(x)).
+    const inner = value.binary.left.*;
+    try std.testing.expect(inner == .binary);
+    try std.testing.expectEqual(ast.BinaryOp.add, inner.binary.op);
+    const inner_left = inner.binary.left.*;
+    try std.testing.expect(inner_left == .string_lit);
+    try std.testing.expectEqualStrings("a", inner_left.string_lit);
+    const inner_right = inner.binary.right.*;
+    try std.testing.expect(inner_right == .call);
+    try std.testing.expect(inner_right.call.callee.* == .identifier);
+    try std.testing.expectEqualStrings("str", inner_right.call.callee.identifier);
+    try std.testing.expectEqual(@as(usize, 1), inner_right.call.args.len);
+    try std.testing.expect(inner_right.call.args[0] == .identifier);
+    try std.testing.expectEqualStrings("x", inner_right.call.args[0].identifier);
+}
+
+// İnterpolasyonSUZ bir f-string doğrudan bir `.string_lit` döner —
+// gereksiz birleştirme ÜRETİLMEMELİ.
+test "f-string interpolasyonsuz duz .string_lit dondurur (gereksiz concat YOK)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const module = try parse(arena.allocator(), "y: str = f\"duz metin\"\n");
+    const value = module.body[0].kind.var_decl.value;
+    try std.testing.expect(value == .string_lit);
+    try std.testing.expectEqualStrings("duz metin", value.string_lit);
 }

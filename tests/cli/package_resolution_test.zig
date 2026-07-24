@@ -428,3 +428,89 @@ test "noxc update: dal ilerleyince nox.lock'taki kilitli SHA yeni commit'e gunce
     try std.testing.expect(std.mem.indexOf(u8, lock_after_update, sha2) != null);
     try std.testing.expect(std.mem.indexOf(u8, lock_after_update, sha1) == null);
 }
+
+// Faz P2.4 (bkz. proje belleği "P0/P1/P2 inceleme düzeltme listesi" planı —
+// GERÇEK, önceden keşfedilmemiş bir hata): `nox.lock`ın VAR OLMA amacı
+// ("TEKRARLANABİLİR derlemenin bütün amacı BU", bkz. `project.zig`nin
+// `Lockfile`/`LockedPackage` belge notu) — bir `main` dalı kilitlendikten
+// SONRA İLERLESE BİLE, `noxc fetch` (`update` DEĞİL) HER ZAMAN kilitli
+// SHA'yı kullanmalıdır, ÖNBELLEK dizini SİLİNMİŞ olsa BİLE. Bu test
+// DÜZELTMEDEN ÖNCE KIRMIZI olmalıydı (`nox.lock` yanlışlıkla `sha2`ye
+// güncellenirdi) — DÜZELTMEDEN SONRA `nox.lock` `sha1`de KALIR.
+test "noxc fetch: onbellek silinse bile kilitli SHA'dan sapmaz (dal ilerlemis olsa bile)" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var pkg = std.testing.tmpDir(.{});
+    defer pkg.cleanup();
+    try pkg.dir.writeFile(io, .{ .sub_path = "util.nox", .data = "def double(x: int) -> int:\n    return x * 2\n" });
+    var pkg_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const pkg_path = try absPath(io, pkg.dir, &pkg_buf);
+    try initFixtureRepo(io, std.testing.allocator, pkg_path);
+    const sha1 = try fixtureHeadSha(io, a, pkg_path);
+
+    var proj = std.testing.tmpDir(.{});
+    defer proj.cleanup();
+    var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const proj_path = try absPath(io, proj.dir, &proj_buf);
+    const manifest_json = try std.fmt.allocPrint(a,
+        \\{{"name":"proj","entry":"main.nox","requires":[{{"alias":"mypkg","repo":"{s}","ref":"main"}}]}}
+    , .{pkg_path});
+    try proj.dir.writeFile(io, .{ .sub_path = "nox.json", .data = manifest_json });
+
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const home_path = try absPath(io, home.dir, &home_buf);
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+    try env_map.put("NOX_HOME", home_path);
+
+    const noxc_abs = try noxcAbsPath(io, a);
+
+    // 1) Ilk fetch: sha1'i kilitler.
+    const fetch1 = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxc_abs, "fetch" },
+        .cwd = .{ .path = proj_path },
+        .environ_map = &env_map,
+    });
+    defer std.testing.allocator.free(fetch1.stdout);
+    defer std.testing.allocator.free(fetch1.stderr);
+    try std.testing.expect(fetch1.term == .exited and fetch1.term.exited == 0);
+
+    const lock_after_fetch1 = try proj.dir.readFileAlloc(io, "nox.lock", a, .limited(4096));
+    try std.testing.expect(std.mem.indexOf(u8, lock_after_fetch1, sha1) != null);
+
+    // 2) Fixture deposunun "main" dali ILERLER (sha2) — AMA nox.lock HALA sha1 diyor.
+    try addFixtureCommit(io, std.testing.allocator, pkg_path, "extra.nox", "def triple(x: int) -> int:\n    return x * 3\n");
+    const sha2 = try fixtureHeadSha(io, a, pkg_path);
+    try std.testing.expect(!std.mem.eql(u8, sha1, sha2));
+
+    // 3) Onbellek TAMAMEN silinir (ör. "~/.nox'u temizledim", yeni makine,
+    // CI onbellek kacirmasi) — nox.lock DOKUNULMAZ, hala sha1 diyor.
+    home.dir.deleteTree(io, "pkg") catch {};
+
+    // 4) Ikinci fetch (update DEGIL): onbellek eksik oldugundan git YENIDEN
+    // cagrilir, AMA kilitli SHA'nin (sha1) KENDISI getirilmelidir - "main"
+    // ADI DEGIL (o ARTIK sha2'ye isaret ediyor).
+    const fetch2 = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxc_abs, "fetch" },
+        .cwd = .{ .path = proj_path },
+        .environ_map = &env_map,
+    });
+    defer std.testing.allocator.free(fetch2.stdout);
+    defer std.testing.allocator.free(fetch2.stderr);
+    if (fetch2.term != .exited or fetch2.term.exited != 0) {
+        std.debug.print("ikinci fetch basarisiz, stderr: {s}\n", .{fetch2.stderr});
+    }
+    try std.testing.expect(fetch2.term == .exited and fetch2.term.exited == 0);
+    // Yeni `.recached` DepAction'in KENDI mesaji basilmali (bkz. `DepAction.recached`in belge notu) —
+    // `.fetched`/`.updated` DEGIL (kilitli SHA DEGISMEDI, sadece YENIDEN onbelleklendi).
+    try std.testing.expect(std.mem.indexOf(u8, fetch2.stderr, "onbellek yeniden olusturuldu") != null);
+
+    const lock_after_fetch2 = try proj.dir.readFileAlloc(io, "nox.lock", a, .limited(4096));
+    try std.testing.expect(std.mem.indexOf(u8, lock_after_fetch2, sha1) != null);
+    try std.testing.expect(std.mem.indexOf(u8, lock_after_fetch2, sha2) == null);
+}

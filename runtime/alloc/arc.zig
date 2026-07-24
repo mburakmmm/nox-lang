@@ -48,8 +48,12 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const asap = @import("asap.zig");
+const abi_layout = @import("abi_layout");
 
-const HEADER_SIZE: usize = 8;
+/// Faz P1.2: `../../shared/abi_layout.zig`den RE-EXPORT (derleyiciyle
+/// PAYLAŞILAN TEK doğruluk kaynağı) — yerel alias adı KORUNUR ki bu
+/// dosyanın ~6 kullanım sitesi değişmeden kalsın.
+const HEADER_SIZE = abi_layout.ARC_HEADER_SIZE;
 const use_pool = builtin.mode != .Debug;
 
 /// `total_size` (HEADER_SIZE dahil) için bir havuz sınıfı İNDEKSİ döner —

@@ -8,8 +8,12 @@ const std = @import("std");
 const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
 const http_client = @import("http_client.zig");
+const abi_layout = @import("abi_layout");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
+/// Faz P1.2: bkz. `strings.zig`nin AYNI re-export notu.
+const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
+const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 
 /// Faz II devamı (bkz. nox-teknik-spesifikasyon.md §3.67) — `join`nin
 /// ÖNCEKİ uygulaması `std.fs.path.join`i `std.heap.page_allocator` İLE
@@ -162,13 +166,13 @@ export fn nox_path_components_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.
         names.append(std.heap.page_allocator, comp.name) catch return null;
     }
 
-    const raw = arc.nox_rc_alloc(rt, 16 + 8 * names.items.len) orelse return null;
+    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * names.items.len) orelse return null;
     const bytes: [*]u8 = @ptrCast(raw);
     @as(*align(1) i64, @ptrCast(bytes)).* = @intCast(names.items.len);
     @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(names.items.len);
     for (names.items, 0..) |name, i| {
         const dup = dupeToNoxStr(rt, name) orelse return null;
-        const slot = bytes + 16 + 8 * i;
+        const slot = bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
         @as(*align(1) i64, @ptrCast(slot)).* = @bitCast(@as(isize, @intCast(@intFromPtr(dup))));
     }
     return @ptrCast(bytes);
@@ -281,10 +285,10 @@ test "Faz III.4: nox_path_components_raw yol bilesenlerini dogru sirada doner" {
     const expected = [_][]const u8{ "a", "b", "c.txt" };
     var i: usize = 0;
     while (i < count) : (i += 1) {
-        const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(bytes + 16 + 8 * i)).*);
+        const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*);
         const p: [*:0]u8 = @ptrFromInt(addr);
         defer str.nox_str_release(rt, p);
         try std.testing.expectEqualStrings(expected[i], std.mem.sliceTo(p, 0));
     }
-    arc.nox_rc_release(rt, list_ptr, 16 + 8 * count);
+    arc.nox_rc_release(rt, list_ptr, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * count);
 }

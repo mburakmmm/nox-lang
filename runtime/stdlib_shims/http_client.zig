@@ -16,10 +16,23 @@
 //! sarmalayıcısı YERİNE düşük seviye `client.request`/`receiveHead` API'si
 //! kullanılır (kullanıcının "yanıt başlıkları da dahil edilsin" kararı
 //! İÇİN gerekli — `fetch()`in dönüşü yalnızca `status` taşır, header'lara
-//! ERİŞEMEZ). Bunun bedeli: OTOMATİK yönlendirme (redirect) takibi VE
-//! otomatik sıkıştırma (gzip/deflate) çözme YOK — `redirect_behavior =
-//! .unhandled` (bir 3xx durumu OLDUĞU GİBİ status+body olarak döner,
-//! TAKİP EDİLMEZ), gövde HAM (Content-Encoding'e bakılmaksızın) okunur.
+//! ERİŞEMEZ). Bunun bedeli: OTOMATİK yönlendirme (redirect) takibi YOK —
+//! `redirect_behavior = .unhandled` (bir 3xx durumu OLDUĞU GİBİ status+body
+//! olarak döner, TAKİP EDİLMEZ).
+//!
+//! **gzip/deflate çözme (bkz. `workerThreadFn`):** `std.http.Client`in
+//! VARSAYILAN `accept_encoding`i (bkz. Zig std `Client.Options.default_
+//! accept_encoding`) sunucudan zaten gzip/deflate SIKIŞTIRMA istiyor — bu
+//! yüzden gövde `Response.readerDecompressing` İLE `Content-Encoding`e göre
+//! ÇÖZÜLEREK okunur (düz `Response.reader`, GERÇEK DÜNYADA -- Cloudflare/
+//! GitHub/Google DAHİL -- neredeyse HER sunucuda HAM/sıkıştırılmış bayt
+//! döndürür; bu baytlar bir Nox `str`ine (NUL-sonlandırmalı, bkz. `str.zig`)
+//! kopyalandığında GÖMÜLÜ bir `\0` baytı `len()`i BOZAR ve `nox_str_free_
+//! now`ın `strlen()` tabanlı boyut hesabı `DebugAllocator`in yakaladığı bir
+//! `Invalid free` çökmesine yol açar — GERÇEKTEN gözlemlendi, bkz. plan
+//! dosyası). `containsNul`, DIŞARIDAN gelen HERHANGİ bir gövdenin (ör.
+//! standart-dışı bir sunucunun `identity` kodlamalı ama ikili içerik
+//! döndürmesi) AYNI çökmeyi tetiklememesi İÇİN son bir savunma hattıdır.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -270,15 +283,71 @@ fn workerThreadFn(ctx: *RequestCtx) void {
         };
     }
     ctx.response_headers = headers_list.toOwnedSlice(ctx.allocator) catch &.{};
+    // Düzeltme 1/2 gövde-okuma başarısızlıklarının (decompress tamponu
+    // tahsisi, desteklenmeyen kodlama, `streamRemaining`, gömülü NUL) HEPSİ
+    // BURADAN SONRA, yani `ctx.response_headers` ZATEN doldurulduktan SONRA
+    // gerçekleşir — bu ARTIK BAŞARISIZ olan istekler İÇİN de `response_
+    // headers`ın serbest bırakılmasını GARANTİ eder (`doRequest`nin
+    // başarısızlık yolu, `destroyOwned` ÜZERİNDEN yalnızca `request_
+    // headers`ı serbest bırakır, `response_headers`ı DEĞİL — bu olmadan
+    // gerçek bir bellek sızıntısı olurdu, testle YAKALANDI).
+    var headers_committed = false;
+    defer if (!headers_committed) {
+        for (ctx.response_headers) |header| {
+            ctx.allocator.free(header.name);
+            ctx.allocator.free(header.value);
+        }
+        if (ctx.response_headers.len > 0) ctx.allocator.free(ctx.response_headers);
+    };
 
     var transfer_buffer: [1024]u8 = undefined;
-    const reader = response.reader(&transfer_buffer);
+    // `std.http.Client`in varsayılan `accept_encoding`i (bkz. Zig std
+    // `Client.Options.default_accept_encoding`) sunucudan zaten gzip/deflate
+    // İSTEDİĞİNDEN, düz `Response.reader` GERÇEK DÜNYADA (Cloudflare/GitHub/
+    // Google DAHİL) neredeyse HER zaman HAM/sıkıştırılmış bayt döndürür —
+    // `readerDecompressing` İLE `Content-Encoding`e göre ÇÖZÜLEREK okunur
+    // (bkz. Zig std'nin KENDİ `Client.fetch`i, AYNI desen).
+    const decompress_buffer: []u8 = switch (response.head.content_encoding) {
+        .identity => &.{},
+        .deflate, .gzip => ctx.allocator.alloc(u8, std.compress.flate.max_window_len) catch {
+            ctx.failed = true;
+            return;
+        },
+        // İstemcinin varsayılan `accept_encoding`i yalnızca gzip/deflate/
+        // identity'i talep ettiğinden buraya ULAŞILMASI BEKLENMEZ — sunucu
+        // yine de gönderirse (standart-dışı davranış) güvenle reddedilir.
+        .zstd, .compress => {
+            ctx.failed = true;
+            return;
+        },
+    };
+    defer if (decompress_buffer.len > 0) ctx.allocator.free(decompress_buffer);
+    var decompress: std.http.Decompress = undefined;
+    const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
     var body_out: std.Io.Writer.Allocating = .init(ctx.allocator);
     _ = reader.streamRemaining(&body_out.writer) catch {
         ctx.failed = true;
         return;
     };
-    ctx.response_body = body_out.toOwnedSlice() catch &.{};
+    const body: []u8 = body_out.toOwnedSlice() catch &.{};
+
+    // İkinci savunma hattı (bkz. plan dosyası) — `str` NUL-sonlandırmalı VE
+    // uzunluğunu SAKLAMAZ (bkz. `str.zig`nin modül belge notu); gövdede
+    // GÖMÜLÜ bir `\0` baytı (gzip/deflate çözümünden SONRA bile, standart-dışı
+    // bir sunucunun `identity` kodlamalı ikili içerik döndürmesi GİBİ nadir
+    // durumlarda) `len()`i bozar VE serbest bırakmada boyut/işaretçi
+    // uyuşmazlığına (`Invalid free`) yol açar — burada TEMİZ reddedilir.
+    if (containsNul(body)) {
+        ctx.allocator.free(body);
+        ctx.failed = true;
+        return;
+    }
+    ctx.response_body = body;
+    headers_committed = true;
+}
+
+fn containsNul(s: []const u8) bool {
+    return std.mem.indexOfScalar(u8, s, 0) != null;
 }
 
 /// Güvenlik bulgusu M-1 (bkz. güvenlik raporu) — `std.http`nin KENDİ
