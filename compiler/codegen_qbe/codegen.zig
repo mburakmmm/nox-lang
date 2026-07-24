@@ -289,6 +289,7 @@ pub const Codegen = struct {
     pub const drainDeferIfSet = closures.drainDeferIfSet;
     pub const genClosureFunc = closures.genClosureFunc;
     pub const genClosureRelease = closures.genClosureRelease;
+    pub const genFunctionValueTrampoline = closures.genFunctionValueTrampoline;
 
     pub const genClassRelease = layout.genClassRelease;
     pub const genClassTrace = layout.genClassTrace;
@@ -316,6 +317,8 @@ pub const Codegen = struct {
     pub const checkNoLowlevelEscape = ownership.checkNoLowlevelEscape;
     pub const emitInlineRetain = ownership.emitInlineRetain;
     pub const emitInlinePredecrement = ownership.emitInlinePredecrement;
+    pub const emitListElemRetainLoop = ownership.emitListElemRetainLoop;
+    pub const emitListElemPlainDecrementLoop = ownership.emitListElemPlainDecrementLoop;
     pub const retainIfAliasing = ownership.retainIfAliasing;
     pub const returnNeedsRetain = ownership.returnNeedsRetain;
 
@@ -345,6 +348,7 @@ pub const Codegen = struct {
     pub const genConstruct = calls.genConstruct;
     pub const genConstructFromValues = calls.genConstructFromValues;
     pub const genMethodCall = calls.genMethodCall;
+    pub const genIndirectCallThroughClosurePtr = calls.genIndirectCallThroughClosurePtr;
     pub const genDictMethod = calls.genDictMethod;
     pub const genListAppend = calls.genListAppend;
     pub const genListSort = calls.genListSort;
@@ -361,6 +365,7 @@ pub const Codegen = struct {
     pub const genFieldReadFromValue = expr_mod.genFieldReadFromValue;
     pub const boundsElideApplies = expr_mod.boundsElideApplies;
     pub const genIndex = expr_mod.genIndex;
+    pub const buildFunctionValueForIdentifier = expr_mod.buildFunctionValueForIdentifier;
     pub const genStrIndex = expr_mod.genStrIndex;
     pub const genListLit = expr_mod.genListLit;
     pub const genDictLit = expr_mod.genDictLit;
@@ -769,7 +774,7 @@ pub const Codegen = struct {
 /// `debug_source_path`: Faz T.3, `null` DIŞINDA VERİLİRSE (bkz. modül üstü
 /// not) `dbgfile`/`dbgloc` yönergeleri yayınlanır — `null` İKEN çıktı
 /// ÖNCEKİYLE BİREBİR AYNI kalır (opt-in, sıfır davranış değişikliği).
-pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8)) CodegenError![]u8 {
+pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8) CodegenError![]u8 {
     var gen: Codegen = .{ .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos, .defer_synthetic_names = defer_synthetic_names, .from_imports = from_imports };
 
     if (debug_source_path) |path| {
@@ -844,6 +849,14 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
         }
     }
     for (extra_functions) |fd| try gen.registerFunc(fd);
+
+    // Faz U.4.5 (bkz. `checker.zig`nin `functions_used_as_value`i VE
+    // `genFunctionValueTrampoline`nin belge notu): `self.functions`in
+    // TAMAMEN dolduğu (yukarıdaki `registerFunc` geçişleri) VE HERHANGİ
+    // bir fonksiyon GÖVDESİ üretilmeden ÖNCEKİ TEK nokta — bu YÜZDEN
+    // trampoline'lar BURADA üretilir (`.identifier` codegen'inin, bkz.
+    // `expr.zig`, referans verdiği sembol HER ZAMAN ÖNCEDEN VAR olur).
+    for (functions_used_as_value) |name| try gen.genFunctionValueTrampoline(name);
 
     // Performans fazı: HANGİ serbest fonksiyon/kurucuların (transitif
     // olarak) ASLA istisna fırlatamayacağı kanıtlanabiliyorsa `genCall`/

@@ -1,0 +1,66 @@
+# nox.uuid — RFC 4122 uyumlu rastgele (v4) UUID üretimi. Saf Nox'ta
+# yazıldı (yeni bir runtime ilkeli GEREKMEDİ) — `nox.crypto.
+# secure_random_hex` (kriptografik GÜVENLİ rastgelelik) + `nox.random.
+# randint` (varyant nibble'ı seçmek için) üzerine kurulu.
+#
+# BİLİNÇLİ kapsam: yalnızca v4 (rastgele) desteklenir. v3/v5 (ad-uzamı
+# tabanlı, deterministik — MD5/SHA-1) RFC 4122'nin KENDİSİ ham 16 bayt
+# üzerinde çalışmayı gerektirir; Nox'ta HENÜZ bir hex<->ham-bayt dönüşüm
+# ilkeli olmadığından (`nox.crypto.sha1`nin yalnızca METİN girdisi/hex
+# çıktısı var, ham bayt DEĞİL), doğru bir v5 implementasyonu YENİ bir
+# runtime ilkeli gerektirirdi — "saf Nox'ta kolayca yazılabilir" notu
+# yalnızca v4 İçin geçerlidir, kapsam BİLİNÇLİ olarak buna SINIRLANDI.
+
+import nox.crypto
+import nox.random
+import nox.strings
+
+# `s[start:end]` (Nox'ta dilim sözdizimi YOK) eşdeğeri — yalnızca bu
+# modül İçinde kullanılan küçük, YEREL bir yardımcı.
+def _substr(s: str, start: int, end: int) -> str:
+    result: str = ""
+    i: int = start
+    while i < end:
+        result = result + s[i]
+        i = i + 1
+    return result
+
+# RFC 4122 sürüm 4 (rastgele) UUID — "xxxxxxxx-xxxx-4xxx-yxxx-
+# xxxxxxxxxxxx" biçiminde (y ∈ {8,9,a,b}). Rastgelelik `nox.crypto.
+# secure_random_hex`ten (kriptografik GÜVENLİ, OS-düzeyi) gelir —
+# `nox.random` (BİLİNÇLİ OLARAK güvenlik iddiası TAŞIMAYAN) DEĞİL;
+# yalnızca varyant nibble'ının (4 seçenekten biri) seçimi İçin `nox.
+# random.randint` kullanılır (kriptografik önemi YOK, salt bir seçim).
+def uuid4() -> str:
+    hex: str = nox.crypto.secure_random_hex(16)
+    variant_options: list[str] = ["8", "9", "a", "b"]
+    variant: str = variant_options[nox.random.randint(0, 3)]
+    return (_substr(hex, 0, 8) + "-" + _substr(hex, 8, 12) + "-4" +
+        _substr(hex, 13, 16) + "-" + variant + _substr(hex, 17, 20) +
+        "-" + _substr(hex, 20, 32))
+
+def _is_hex_digit(s: str, idx: int) -> bool:
+    b: int = nox.strings.byte_at(s, idx)
+    is_digit: bool = b >= 48 and b <= 57
+    is_lower: bool = b >= 97 and b <= 102
+    is_upper: bool = b >= 65 and b <= 70
+    return is_digit or is_lower or is_upper
+
+# `s`, GEÇERLİ bir UUID METİN gösterimi mi? (36 karakter, tireler doğru
+# konumlarda, geri kalanı hex — büyük/küçük harf FARK ETMEZ.) Sürüm/
+# varyant nibble'ları AYRICA DOĞRULANMAZ (v1/v3/v5 gibi BAŞKA
+# kaynaklardan gelen UUID'leri de KABUL etmek İçin — yalnızca BİÇİM
+# doğrulanır, `uuid4`nin KENDİ çıktısıyla SINIRLI değildir).
+def is_valid(s: str) -> bool:
+    if len(s) != 36:
+        return False
+    i: int = 0
+    while i < 36:
+        if i == 8 or i == 13 or i == 18 or i == 23:
+            if s[i] != "-":
+                return False
+        else:
+            if not _is_hex_digit(s, i):
+                return False
+        i = i + 1
+    return True

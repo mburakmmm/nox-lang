@@ -135,6 +135,16 @@ pub fn releaseFnNameFor(self: *Codegen, info: ElemHeapInfo) CodegenError![]const
         // (`$str_release` diye bir sembol YOK) — bkz. `genListElemRelease`in
         // `info.nested` dalındaki ÖZEL durum.
         .str => return "str",
+        // Faz U.4.5: `.str` İLE AYNI desen — yalnızca DIŞ `$List_closure_
+        // release` sembolünün adını üretmek İçin bir "etiket". GERÇEK
+        // eleman release'i BURADAN farklı olarak SABİT bir `$<isim>_
+        // release` çağrısı OLAMAZ (AYNI listedeki İKİ closure FARKLI
+        // somut release fonksiyonlarına sahip OLABİLİR, ör. bir trampoline
+        // İLE gerçek bir iç içe `def`) — bu YÜZDEN `genListElemRelease`
+        // `.closure` İçin dinamik dispatch'e (elemanın KENDİ offset-8'i,
+        // `releaseValueIfSet`nin `.closure` dalıYLA AYNI desen) AYRICA
+        // özel durum uygular.
+        .closure => return "closure",
         .list => {
             const inner_tag = if (info.nested) |n|
                 try self.releaseFnNameFor(n.*)
@@ -202,7 +212,13 @@ pub fn genListElemRelease(self: *Codegen, fn_name: []const u8, info: ElemHeapInf
     try self.out.writer.print("    {s} =l loadl {s}\n", .{ cap_t, cap_addr });
 
     if (info.nested) |n| {
-        const callee: ?[]const u8 = if (n.heap == .str) null else try self.releaseFnNameFor(n.*);
+        // Faz U.4.5: `.closure` elemanları HİÇBİR ZAMAN sabit bir `$<isim>_
+        // release` çağrısı ile serbest BIRAKILAMAZ (bkz. `releaseFnNameFor`nin
+        // `.closure` dalının belge notu) — bu YÜZDEN `callee` BURADA
+        // `null` bırakılır (`.str`in KENDİ "özel durum" desenine BENZER),
+        // ama aşağıdaki ÇAĞRI SİTESİ (`if (n.heap == .closure)`) BUNU
+        // `nox_str_release` YERİNE dinamik dispatch'e YÖNLENDİRİR.
+        const callee: ?[]const u8 = if (n.heap == .str or n.heap == .closure) null else try self.releaseFnNameFor(n.*);
         const idx_slot = try self.newTemp();
         try self.out.writer.print("    {s} =l alloc8 8\n", .{idx_slot});
         try self.out.writer.print("    storel 0, {s}\n", .{idx_slot});
@@ -236,6 +252,15 @@ pub fn genListElemRelease(self: *Codegen, fn_name: []const u8, info: ElemHeapInf
         try self.out.writer.print("{s}\n", .{rel_label});
         if (callee) |c| {
             try self.out.writer.print("    call ${s}_release(l {s}, l {s})\n", .{ c, RT_PARAM, elem });
+        } else if (n.heap == .closure) {
+            // Faz U.4.5: `releaseValueIfSet`nin `.closure` dalıYLA AYNI
+            // dinamik dispatch (bkz. onun belge notu) — elemanın KENDİ
+            // offset-8'indeki release fonksiyon işaretçisi ÜZERİNDEN.
+            const rel_addr = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ rel_addr, elem, CLOSURE_RELEASE_FN_PTR_OFFSET });
+            const rel_fn = try self.newTemp();
+            try self.out.writer.print("    {s} =l loadl {s}\n", .{ rel_fn, rel_addr });
+            try self.out.writer.print("    call {s}(l {s}, l {s})\n", .{ rel_fn, RT_PARAM, elem });
         } else {
             try self.out.writer.print("    call $nox_str_release(l {s}, l {s})\n", .{ RT_PARAM, elem });
         }
@@ -562,6 +587,95 @@ pub fn emitInlinePredecrement(self: *Codegen, ptr: []const u8) CodegenError![]co
     const should_free = try self.newTemp();
     try self.out.writer.print("    {s} =w cslel {s}, 0\n", .{ should_free, rc2 });
     return should_free;
+}
+
+/// `genListAppend`nin büyüme yolu İçin: `list_ptr`nin (başlıktan SONRAKİ)
+/// İLK `count` elemanını (null OLMAYANLARI) KOŞULSUZ retain eder (düz
+/// "refcount+1" — `emitInlinePredecrement`in TERSİ, ama HİÇBİR ZAMAN
+/// serbest bırakmaya yol AÇAMAYACAĞINDAN tek bir inline artırım YETERLİDİR,
+/// TİPE özgü özyinelemeli dispatch GEREKMEZ). Bkz. `genListAppend`nin
+/// büyüme-retain notunun TAM gerekçesi: `nox_list_grow`nin ham `@memcpy`i
+/// eleman işaretçilerini retain'SİZ kopyaladığından, bu ÇAĞRI YENİ bloğun
+/// bu elemanlar üzerinde ESKİ bloktan BAĞIMSIZ, GEÇERLİ bir sahiplik payı
+/// KAZANDIĞINI YANSITIR.
+pub fn emitListElemRetainLoop(self: *Codegen, list_ptr: []const u8, count: []const u8) CodegenError!void {
+    const idx_slot = try self.newTemp();
+    try self.out.writer.print("    {s} =l alloc8 8\n", .{idx_slot});
+    try self.out.writer.print("    storel 0, {s}\n", .{idx_slot});
+    const cond_label = try self.newLabel("append_retain_cond");
+    const body_label = try self.newLabel("append_retain_body");
+    const end_label = try self.newLabel("append_retain_end");
+    try self.out.writer.print("    jmp {s}\n", .{cond_label});
+    try self.out.writer.print("{s}\n", .{cond_label});
+    const idx_cur = try self.newTemp();
+    try self.out.writer.print("    {s} =l loadl {s}\n", .{ idx_cur, idx_slot });
+    const cont = try self.newTemp();
+    try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ cont, idx_cur, count });
+    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cont, body_label, end_label });
+    try self.out.writer.print("{s}\n", .{body_label});
+    const off = try self.newTemp();
+    try self.out.writer.print("    {s} =l mul {s}, 8\n", .{ off, idx_cur });
+    const off16 = try self.newTemp();
+    try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ off16, off, LIST_HEADER_SIZE });
+    const addr = try self.newTemp();
+    try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ addr, list_ptr, off16 });
+    const elem = try self.newTemp();
+    try self.out.writer.print("    {s} =l loadl {s}\n", .{ elem, addr });
+    try self.emitInlineRetain(elem);
+    const idx_next = try self.newTemp();
+    try self.out.writer.print("    {s} =l add {s}, 1\n", .{ idx_next, idx_cur });
+    try self.out.writer.print("    storel {s}, {s}\n", .{ idx_next, idx_slot });
+    try self.out.writer.print("    jmp {s}\n", .{cond_label});
+    try self.out.writer.print("{s}\n", .{end_label});
+}
+
+/// `emitListElemRetainLoop`nin dengeleyicisi: `genListAppend`nin büyüme
+/// yolunda ESKİ blok BU ÇAĞRIDA GERÇEKTEN ölüyorsa (`emitInlinePredecrement`
+/// `true` dönerse), retain döngüsünün eklediği fazladan payı GERİ ALMAK
+/// İçin `list_ptr`nin İLK `count` elemanını düz bir decrement İLE azaltır.
+/// **ASLA sıfıra/altına düşüremez** (elemanın KENDİ ÖNCEKİ, geçerli
+/// sahipliği HÂLÂ durur — bu SADECE bu fonksiyonun EKLEDİĞİ +1'i geri
+/// alır) — bu YÜZDEN TAM özyinelemeli `release` (nested serbest bırakma)
+/// GEREKMEZ, TİPE özgü dispatch OLMADAN düz bir "refcount-1" YETERLİDİR.
+pub fn emitListElemPlainDecrementLoop(self: *Codegen, list_ptr: []const u8, count: []const u8) CodegenError!void {
+    const idx_slot = try self.newTemp();
+    try self.out.writer.print("    {s} =l alloc8 8\n", .{idx_slot});
+    try self.out.writer.print("    storel 0, {s}\n", .{idx_slot});
+    const cond_label = try self.newLabel("append_deccomp_cond");
+    const body_label = try self.newLabel("append_deccomp_body");
+    const dec_label = try self.newLabel("append_deccomp_do");
+    const skip_label = try self.newLabel("append_deccomp_skip");
+    const end_label = try self.newLabel("append_deccomp_end");
+    try self.out.writer.print("    jmp {s}\n", .{cond_label});
+    try self.out.writer.print("{s}\n", .{cond_label});
+    const idx_cur = try self.newTemp();
+    try self.out.writer.print("    {s} =l loadl {s}\n", .{ idx_cur, idx_slot });
+    const cont = try self.newTemp();
+    try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ cont, idx_cur, count });
+    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cont, body_label, end_label });
+    try self.out.writer.print("{s}\n", .{body_label});
+    const off = try self.newTemp();
+    try self.out.writer.print("    {s} =l mul {s}, 8\n", .{ off, idx_cur });
+    const off16 = try self.newTemp();
+    try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ off16, off, LIST_HEADER_SIZE });
+    const addr = try self.newTemp();
+    try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ addr, list_ptr, off16 });
+    const elem = try self.newTemp();
+    try self.out.writer.print("    {s} =l loadl {s}\n", .{ elem, addr });
+    const is_null = try self.newTemp();
+    try self.out.writer.print("    {s} =w ceql {s}, 0\n", .{ is_null, elem });
+    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ is_null, skip_label, dec_label });
+    try self.out.writer.print("{s}\n", .{dec_label});
+    // Bu decrement ASLA sıfıra/altına düşemez (bkz. bu fonksiyonun belge
+    // notu) — `should_free` dönüş değeri BİLİNÇLİ olarak yok sayılır.
+    _ = try self.emitInlinePredecrement(elem);
+    try self.out.writer.print("    jmp {s}\n", .{skip_label});
+    try self.out.writer.print("{s}\n", .{skip_label});
+    const idx_next = try self.newTemp();
+    try self.out.writer.print("    {s} =l add {s}, 1\n", .{ idx_next, idx_cur });
+    try self.out.writer.print("    storel {s}, {s}\n", .{ idx_next, idx_slot });
+    try self.out.writer.print("    jmp {s}\n", .{cond_label});
+    try self.out.writer.print("{s}\n", .{end_label});
 }
 
 /// `expr` değerlendirildiğinde BAŞKA BİR YERDE ZATEN sahibi olan, ÖDÜNÇ

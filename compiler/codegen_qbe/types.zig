@@ -56,6 +56,10 @@ pub const ElemHeapInfo = struct {
     elem_qtype: QbeType = .none,
     nested: ?*const ElemHeapInfo = null,
     elem_is_str: bool = false,
+    /// Faz U.4.5: `heap == .closure` OLAN elemanların STATİK çağrı imzası
+    /// — bkz. `Value.func_sig`in belge notu, AYNI amaç, `list[(T)->U]`nin
+    /// ELEMAN tipi İçin taşınır.
+    func_sig: ?*const FuncSigInfo = null,
 };
 
 /// `dict[K, V]`nin anahtar/değer "şeklini" betimler.
@@ -93,6 +97,13 @@ pub const Value = struct {
     elem_heap_info: ?*const ElemHeapInfo = null,
     elem_is_str: bool = false,
     dict_info: ?*const DictInfo = null,
+    /// Faz U.4.5: `heap == .closure` OLAN bir değerin STATİK çağrı imzası
+    /// (`VarInfo.func_sig` İLE AYNI amaç) — `.index`/`.attribute` ÜZERİNDEN
+    /// DOLAYLI çağrı (bkz. `calls.zig`nin `genIndirectCallThroughClosure`ı)
+    /// bunu bir DEĞİŞKEN slot'undan DEĞİL, doğrudan bu `Value`den okur
+    /// (`genIndex`/`genFieldRead`/üst-düzey fonksiyon değer İnşası TARAFINDAN
+    /// doldurulur).
+    func_sig: ?*const FuncSigInfo = null,
     /// `true`: bir `lowlevel` bloğunun arenasından tahsis edildi — refcount
     /// başlığı YOK, `nox_rc_retain`/`nox_rc_release` bu değer üzerinde asla
     /// çağrılamaz.

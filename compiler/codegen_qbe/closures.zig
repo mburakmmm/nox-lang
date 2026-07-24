@@ -319,3 +319,73 @@ pub fn genClosureRelease(self: *Codegen, mangled_name: []const u8, captures: []c
     try self.out.writer.print("{s}\n", .{done_label});
     try self.out.writer.writeAll("    ret\n}\n");
 }
+
+/// Faz U.4.5 (bkz. `checker.zig`nin `checkExpr`'in `.identifier` dalı VE
+/// `functions_used_as_value`in belge notu): üst-düzey (non-generic) bir
+/// `def`, ÇAĞRI DIŞINDA bir DEĞER olarak kullanıldığında (bir değişkene
+/// atama, bir listeye/sınıf alanına KOYMA) BU fonksiyon çağrılır.
+///
+/// **Neden GEREKLİ (basit bir "değeri closure olarak işaretle" DEĞİL):**
+/// üst-düzey bir `def`in KENDİ ABI'si (`registration.zig`nin `genFunction`ı,
+/// `export function ... $<isim>(l rt, ...params)`) HİÇBİR `%env`
+/// parametresi TAŞIMAZ — ama TÜM dolaylı-çağrı kodu (bkz. `calls.zig`nin
+/// `genIndirectCallThroughClosure`ı) HER ZAMAN `fn_ptr(rt, env, ...args)`
+/// çağırır (closure pointer'ının KENDİSİ `%env` OLARAK geçirilir, bkz.
+/// `HeapKind.closure`in belge notu). Bu YÜZDEN `$<isim>`i DOĞRUDAN
+/// `fn_ptr` OLARAK KULLANMAK yanlış argüman SAYISIYLA çağrılmasına yol
+/// açardı — KÜÇÜK bir SARMALAYICI (`$<isim>__fnval`, `%env`i YOK SAYIP
+/// gerçek fonksiyona DÜZ geçen) GEREKİR. `genClosureRelease`in SIFIR-
+/// yakalama yolu (`captures.len == 0`, ZATEN doğru ÇALIŞIYOR — DÖNGÜ
+/// gövdesi yalnızca HİÇ ÇALIŞMAZ) bu sarmalayıcının `$<isim>__fnval_
+/// release`ını BEDAVA verir, YENİ bir "boş serbest bırakma" yolu
+/// YAZILMASINA GEREK KALMAZ.
+///
+/// `generateModule`nin `registerFunc` geçişinden HEMEN SONRA, HERHANGİ
+/// bir fonksiyon GÖVDESİ üretilmeden ÖNCE çağrılır (bkz. onun çağrı
+/// sitesi) — bu YÜZDEN `.identifier` codegen'inin (bkz. `expr.zig`)
+/// üretilen `$<isim>__fnval` sembolüne REFERANS VERDİĞİ NOKTADA sembol
+/// ZATEN VARDIR.
+pub fn genFunctionValueTrampoline(self: *Codegen, name: []const u8) CodegenError!void {
+    const sig = self.functions.get(name) orelse return error.Unsupported;
+    const trampoline_name = try std.fmt.allocPrint(self.allocator, "{s}__fnval", .{name});
+
+    self.temp_counter = 0;
+    self.label_counter = 0;
+    self.mod_cache.deinit(self.allocator);
+    self.mod_cache = .empty;
+
+    if (sig.ret.qtype == .none) {
+        try self.out.writer.print("export function ${s}(l {s}, l %env", .{ trampoline_name, RT_PARAM });
+    } else {
+        try self.out.writer.print("export function {s} ${s}(l {s}, l %env", .{ qbeTypeName(sig.ret.qtype), trampoline_name, RT_PARAM });
+    }
+    for (sig.params, 0..) |p, i| {
+        try self.out.writer.print(", {s} %p{d}", .{ qbeTypeName(p.qtype), i });
+    }
+    try self.out.writer.writeAll(") {\n@start\n");
+
+    const ret_temp: ?[]const u8 = if (sig.ret.qtype == .none) null else try self.newTemp();
+    if (ret_temp) |rv| {
+        try self.out.writer.print("    {s} ={s} call ${s}(l {s}", .{ rv, qbeTypeName(sig.ret.qtype), name, RT_PARAM });
+    } else {
+        try self.out.writer.print("    call ${s}(l {s}", .{ name, RT_PARAM });
+    }
+    for (sig.params, 0..) |p, i| {
+        try self.out.writer.print(", {s} %p{d}", .{ qbeTypeName(p.qtype), i });
+    }
+    try self.out.writer.writeAll(")\n");
+    // Faz U.4.5: burada `emitExceptionCheck` GEREKMEZ — `name`nin ATTIĞI
+    // bir istisna (bu çalışma zamanının paylaşılan/genel istisna
+    // BAYRAĞI mekanizmasıyla) BURADA temizlenmeden geçer, DIŞ dolaylı-
+    // çağrı sitesi (`genIndirectCallThroughClosure`, HER ZAMAN çağrı
+    // SONRASI kontrol eder — hedef derleme-zamanında BİLİNMEDİĞİNDEN
+    // eleme YAPILAMAZ) BUNU zaten YAKALAR; sarmalayıcının ARADA hiçbir
+    // temizlik/ARC işi YOK, erken dönmeye GEREK yok.
+    if (ret_temp) |rv| {
+        try self.out.writer.print("    ret {s}\n}}\n", .{rv});
+    } else {
+        try self.out.writer.writeAll("    ret\n}\n");
+    }
+
+    try self.genClosureRelease(trampoline_name, &.{});
+}

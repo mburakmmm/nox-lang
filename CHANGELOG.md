@@ -14,6 +14,48 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.4.0]
+
+### Eklendi
+- **Üst-düzey (non-generic) `def` fonksiyonları artık BİRİNCİ-SINIF bir
+  DEĞER olarak kullanılabilir** — `f: (int) -> int = benim_fonksiyonum`
+  gibi bir atama, bir `list[(T) -> U]`e eklenip `xs[i](v)` ile dolaylı
+  çağrılabilme, VE bir sınıf ALANINA konulup `obj.alan(v)` ile
+  çağrılabilme artık ÇALIŞIYOR (önceden yalnızca `f(v)` DOĞRUDAN çağrısı
+  desteklenirdi). Checker, üst-düzey her fonksiyon İçin (`(l rt, ...params)`
+  imzalı) sıfır-yakalamalı bir "trampoline" sarmalayıcı (`<isim>__fnval`,
+  `(l rt, l %env, ...params)` imzalı, `%env`i yok sayıp gerçek fonksiyonu
+  çağırır) üretilmesi GEREKENLERİ işaretler; codegen bunları OLAĞAN bir
+  closure değeri gibi (ARC/retain/release DAHİL) üretir. Generic
+  fonksiyonlar bilinçli olarak v1 kapsamı DIŞINDA bırakıldı (açık bir
+  tip hatasıyla reddedilir).
+- **`nox.uuid`** — saf Nox'ta, `nox.crypto`/`nox.random` üzerine yazılmış
+  UUID v4 üretimi (`uuid4()`) ve doğrulaması (`is_valid(s)`).
+- **`nox.router`** — `nox.http.serve`in ham TEK `handle` geri çağrısı
+  üzerine saf Nox'ta yazılmış path-parametreli (`/users/:id`) yol
+  yönlendirme + before/after ara katman (middleware) katmanı. Yukarıdaki
+  birinci-sınıf fonksiyon değerleri OLMADAN (rota işleyicilerini/ara
+  katmanları bir `list`te saklayabilmek GEREKTİĞİNDEN) mümkün değildi.
+
+### Düzeltildi
+- **GERÇEK bir erken-serbest-bırakma/bellek-bozulması hatası** (`nox.router`
+  geliştirilirken bulundu): bir sınıf ALANI OLAN `list[T]`i büyütmenin
+  TEK yolu olan "yerel değişkene oku → `.append()` et → geri yaz" deseninde
+  (`.append`in alıcısı ÇIPLAK bir yerel OLMAK ZORUNDA — bkz. ilgili v1
+  kısıtı), büyüme (`nox_list_grow`) ESKİ bloktaki eleman işaretçilerini
+  YENİ bloğa retain'SİZ kopyalıyordu; `self.attr` HÂLÂ ESKİ bloğu
+  görürken (writeback HENÜZ olmadan) bu ESKİ blok DAHA SONRA TAM
+  özyinelemeli bir release İLE serbest bırakılınca, İÇİNDEKİ elemanlar
+  HÂLÂ YENİ blok tarafından kullanılıyorken erken serbest bırakılıyordu.
+  Artık büyüme sırasında kopyalanan HER heap-yönetimli eleman retain
+  edilir, ESKİ blok BU ÇAĞRIDA gerçekten öldüğünde bu ek pay bir düz
+  decrement İLE dengelenir.
+- HER sınıf İçin otomatik üretilen `$ClassName_eq` (`Optional` daraltması
+  `if x != None:` İçin GEREKİR — kullanıcı `==`/`!=` HİÇ kullanmasa BİLE),
+  `list[(T) -> U]` gibi closure-elemanlı bir liste ALANINA rastladığında
+  `unreachable`e düşüp ÇÖKÜYORDU; artık `dict`/`Task`/`Channel` İLE AYNI
+  tutamaç-kimliği (pointer) karşılaştırmasına düşüyor.
+
 ## [1.3.0]
 
 ### Eklendi

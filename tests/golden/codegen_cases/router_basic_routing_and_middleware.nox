@@ -1,0 +1,38 @@
+# nox.router uçtan-uca: path parametreli bir rota, eşleşmeyen bir istek,
+# bir "before" ara katmanın DELETE isteklerini 403 ile kısa-devre yapması,
+# ve bir "after" ara katmanın yanıta başlık eklemesi.
+from nox.router import Router, Context
+from nox.http import HttpRequest, HttpResponse
+
+def hello(ctx: Context) -> HttpResponse:
+    return HttpResponse(200, "hello " + ctx.param("name"), {})
+
+def not_authorized(ctx: Context) -> HttpResponse | None:
+    if ctx.request.method == "DELETE":
+        return HttpResponse(403, "forbidden", {})
+    return None
+
+def add_header(ctx: Context, resp: HttpResponse) -> HttpResponse:
+    resp.headers["X-Test"] = "1"
+    return resp
+
+r: Router = Router()
+r.get("/hello/:name", hello)
+r.delete("/hello/:name", hello)
+r.use_before(not_authorized)
+r.use_after(add_header)
+
+req: HttpRequest = HttpRequest("GET", "/hello/world", "", {})
+resp: HttpResponse = r.dispatch(req)
+print(resp.status)
+print(resp.body)
+print(resp.headers["X-Test"])
+
+req2: HttpRequest = HttpRequest("GET", "/nope", "", {})
+resp2: HttpResponse = r.dispatch(req2)
+print(resp2.status)
+
+req3: HttpRequest = HttpRequest("DELETE", "/hello/world", "", {})
+resp3: HttpResponse = r.dispatch(req3)
+print(resp3.status)
+print(resp3.body)

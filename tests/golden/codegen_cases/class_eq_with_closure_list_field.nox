@@ -1,0 +1,28 @@
+# Bulundu, GERÇEK bir çökme (bkz. proje belleği "nox.router" fazı): HER
+# sınıf İçin OTOMATİK üretilen `$ClassName_eq` (kullanıcı `==`/`!=` HİÇ
+# kullanmasa BİLE, ör. `Optional` daraltması `if x != None:` İçin
+# GEREKİR), `list[(T) -> U]` gibi bir closure-elemanlı liste ALANINA
+# rastladığında `eqMangleFor`nin (bkz. layout.zig) `.class`/`.str`/
+# `.list` DIŞINDAKİ heap türleri İçin `unreachable`e düşüyordu.
+def inc(x: int) -> int:
+    return x + 1
+
+def dec(x: int) -> int:
+    return x - 1
+
+class Box:
+    fns: list[(int) -> int]
+    def __init__(self: Box) -> None:
+        self.fns = []
+    def add(self: Box, f: (int) -> int) -> None:
+        fns: list[(int) -> int] = self.fns
+        fns.append(f)
+        self.fns = fns
+
+b: Box = Box()
+b.add(inc)
+b.add(dec)
+maybe_b: Box | None = b
+if maybe_b != None:
+    print(maybe_b.fns[0](10))
+    print(maybe_b.fns[1](10))

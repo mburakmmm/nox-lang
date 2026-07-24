@@ -20,6 +20,7 @@ const ClassInfo = types.ClassInfo;
 const ElemHeapInfo = types.ElemHeapInfo;
 const RT_PARAM = types.RT_PARAM;
 const LIST_HEADER_SIZE = types.LIST_HEADER_SIZE;
+const FuncSigInfo = types.FuncSigInfo;
 const CodegenError = abi.CodegenError;
 const qbeTypeName = abi.qbeTypeName;
 const qbeSizeOf = abi.qbeSizeOf;
@@ -27,6 +28,52 @@ const isHeapManaged = abi.isHeapManaged;
 const isTemporaryExpr = abi.isTemporaryExpr;
 const matchIntrinsicKind = async_thread_mod.matchIntrinsicKind;
 const IntrinsicKind = async_thread_mod.IntrinsicKind;
+
+/// Faz U.4.5: `closure_ptr`in (ZATEN yüklenmiş/değerlendirilmiş bir QBE
+/// geçici/işaretçi metni — bir DEĞİŞKEN slotundan (`.identifier` dalı),
+/// bir sınıf alanından (`genMethodCall`nin alan-fallback'ı), YA DA bir
+/// liste elemanından (`.index` dalı) gelebilir) ARDINDAKİ SOMUT closure'ı
+/// çağıran ORTAK çekirdek — Faz U.4.4'ün ESKİ `.identifier`-ÖZEL koduyla
+/// AYNI (bkz. eski sürümün belge notu), yalnızca ARTIK herhangi bir
+/// çağrı ŞEKLİNDEN (identifier/index/attribute) YENİDEN KULLANILABİLİR.
+/// **KRİTİK asimetri (bkz. eski koddaki AYNI davranış, KORUNDU):**
+/// `closure_ptr`ın KENDİSİ ASLA serbest BIRAKILMAZ — yalnızca `arg_values`
+/// (bkz. `releaseTemporaryArgs`) — closure pointer HER ZAMAN "ödünç" bir
+/// okumadır (bir DEĞİŞKEN/alan/liste elemanının KENDİ referansı), bu
+/// çağrı SİTESİ onu SAHİPLENMEZ.
+pub fn genIndirectCallThroughClosurePtr(self: *Codegen, closure_ptr: []const u8, fsig: *const FuncSigInfo, args: []const ast.Expr) CodegenError!Value {
+    if (fsig.params.len != args.len) return error.Unsupported;
+    const fn_ptr = try self.newTemp();
+    try self.out.writer.print("    {s} =l loadl {s}\n", .{ fn_ptr, closure_ptr });
+
+    const arg_values = try self.allocator.alloc(Value, args.len);
+    for (args, 0..) |a, i| {
+        const v0 = try self.genExprForTarget(a, fsig.params[i]);
+        try self.checkNoLowlevelEscape(v0);
+        arg_values[i] = try self.convert(v0, fsig.params[i].qtype);
+    }
+
+    const ret_qtype = fsig.ret.qtype;
+    const result_temp: ?[]const u8 = if (ret_qtype == .none) null else try self.newTemp();
+    if (result_temp) |rt| {
+        try self.out.writer.print("    {s} ={s} call {s}(l {s}, l {s}", .{ rt, qbeTypeName(ret_qtype), fn_ptr, RT_PARAM, closure_ptr });
+    } else {
+        try self.out.writer.print("    call {s}(l {s}, l {s}", .{ fn_ptr, RT_PARAM, closure_ptr });
+    }
+    for (arg_values) |v| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(v.qtype), v.text });
+    try self.out.writer.writeAll(")\n");
+    // Dolaylı çağrının HEDEFİ (çağrılan SOMUT closure) derleme zamanında
+    // bilinmediğinden `must_not_raise` eleme optimizasyonu (bkz. normal
+    // fonksiyon çağrısı dalı) burada UYGULANAMAZ — İSTİSNA kontrolü HER
+    // ZAMAN yapılır (güvenli varsayılan).
+    try self.emitExceptionCheck();
+    try self.releaseTemporaryArgs(args, arg_values);
+
+    if (result_temp) |rt| {
+        return .{ .text = rt, .qtype = ret_qtype, .heap = fsig.ret.heap, .elem_qtype = fsig.ret.elem_qtype, .class_name = fsig.ret.class_name, .elem_heap_info = fsig.ret.elem_heap_info, .elem_is_str = fsig.ret.elem_is_str };
+    }
+    return .{ .text = "0", .qtype = .w };
+}
 
 pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
     switch (c.callee.*) {
@@ -246,41 +293,9 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             if (self.vars.get(name)) |info| {
                 if (info.heap == .closure) {
                     const fsig = info.func_sig orelse return error.Unsupported;
-                    if (fsig.params.len != c.args.len) return error.Unsupported;
-
                     const closure_ptr = try self.newTemp();
                     try self.out.writer.print("    {s} =l loadl {s}\n", .{ closure_ptr, info.slot });
-                    const fn_ptr = try self.newTemp();
-                    try self.out.writer.print("    {s} =l loadl {s}\n", .{ fn_ptr, closure_ptr });
-
-                    const arg_values = try self.allocator.alloc(Value, c.args.len);
-                    for (c.args, 0..) |a, i| {
-                        const v0 = try self.genExprForTarget(a, fsig.params[i]);
-                        try self.checkNoLowlevelEscape(v0);
-                        arg_values[i] = try self.convert(v0, fsig.params[i].qtype);
-                    }
-
-                    const ret_qtype = fsig.ret.qtype;
-                    const result_temp: ?[]const u8 = if (ret_qtype == .none) null else try self.newTemp();
-                    if (result_temp) |rt| {
-                        try self.out.writer.print("    {s} ={s} call {s}(l {s}, l {s}", .{ rt, qbeTypeName(ret_qtype), fn_ptr, RT_PARAM, closure_ptr });
-                    } else {
-                        try self.out.writer.print("    call {s}(l {s}, l {s}", .{ fn_ptr, RT_PARAM, closure_ptr });
-                    }
-                    for (arg_values) |v| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(v.qtype), v.text });
-                    try self.out.writer.writeAll(")\n");
-                    // Dolaylı çağrının HEDEFİ (çağrılan SOMUT closure)
-                    // derleme zamanında bilinmediğinden `must_not_raise`
-                    // eleme optimizasyonu (bkz. normal fonksiyon çağrısı
-                    // dalı) burada UYGULANAMAZ — İSTİSNA kontrolü HER
-                    // ZAMAN yapılır (güvenli varsayılan).
-                    try self.emitExceptionCheck();
-                    try self.releaseTemporaryArgs(c.args, arg_values);
-
-                    if (result_temp) |rt| {
-                        return .{ .text = rt, .qtype = ret_qtype, .heap = fsig.ret.heap, .elem_qtype = fsig.ret.elem_qtype, .class_name = fsig.ret.class_name, .elem_heap_info = fsig.ret.elem_heap_info, .elem_is_str = fsig.ret.elem_is_str };
-                    }
-                    return .{ .text = "0", .qtype = .w };
+                    return self.genIndirectCallThroughClosurePtr(closure_ptr, fsig, c.args);
                 }
             }
 
@@ -338,6 +353,16 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 };
             }
             return self.genMethodCall(a, c.args);
+        },
+        // Faz U.4.5: `xs[i](...)` — `xs`nin ELEMAN tipi func-tipliyse
+        // (checker BUNU ZATEN doğruladı, bkz. `checkCall`nin `.index`
+        // dalı) `genIndex`in DÖNDÜRDÜĞÜ closure pointer'ı `genIndirectCallThroughClosurePtr`e
+        // (bkz. onun belge notu) geçirir.
+        .index => |idx| {
+            const v = try self.genIndex(idx);
+            if (v.heap != .closure) return error.Unsupported;
+            const fsig = v.func_sig orelse return error.Unsupported;
+            return self.genIndirectCallThroughClosurePtr(v.text, fsig, c.args);
         },
         else => return error.Unsupported,
     }
@@ -499,7 +524,25 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
     if (obj.heap != .class) return error.Unsupported;
     try self.checkNoLowlevelEscape(obj);
     const cinfo = self.classes.get(obj.class_name.?).?;
-    const msig = cinfo.methods.get(a.attr) orelse return error.Unsupported;
+    const msig = cinfo.methods.get(a.attr) orelse {
+        // Faz U.4.5: `a.attr` bir METOD DEĞİLSE, func-tipli bir ALAN
+        // OLABİLİR (checker BUNU ZATEN doğruladı, bkz. `checkCall`nin
+        // `.attribute` dalındaki AYNI method-önce/alan-sonra sıralaması)
+        // — alanın KENDİ closure pointer'ı OKUNUP `genIndirectCallThroughClosurePtr`e
+        // (bkz. onun belge notu) geçirilir.
+        for (cinfo.fields.items) |f| {
+            if (!std.mem.eql(u8, f.name, a.attr) or f.info.heap != .closure) continue;
+            const fsig = f.info.func_sig orelse return error.Unsupported;
+            const addr = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, obj.text, f.offset });
+            const closure_ptr = try self.newTemp();
+            try self.out.writer.print("    {s} =l loadl {s}\n", .{ closure_ptr, addr });
+            const result = try self.genIndirectCallThroughClosurePtr(closure_ptr, fsig, args);
+            try self.releaseIfTemporary(a.obj.*, obj);
+            return result;
+        }
+        return error.Unsupported;
+    };
     if (msig.params.len != args.len) return error.Unsupported;
 
     const arg_values = try self.allocator.alloc(Value, args.len);
@@ -698,6 +741,39 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     const new_ptr = try self.newTemp();
     try self.out.writer.print("    {s} =l call $nox_list_grow(l {s}, l {s}, l {s}, l {s})\n", .{ new_ptr, RT_PARAM, obj.text, copy_bytes, new_payload_size });
 
+    // **Bulundu, GERÇEK bir çift-serbest-bırakma/erken-serbest-bırakma
+    // hatası** (`self.attr` alanı `list[T]`i büyüten "yerel değişkene
+    // oku, `.append()` et, geri yaz" desenindeki — `.append`in alıcısının
+    // ÇIPLAK bir yerel OLMASI ZORUNLULUĞU YÜZÜNDEN ZORUNLU olan bir
+    // örüntü, bkz. bu fonksiyonun belge notu) tam olarak bu ANDA (`self.
+    // attr` HÂLÂ ESKİ bloğu görürken, yerel ZATEN YENİ bloğa geçmişken):
+    // `nox_list_grow`nin `@memcpy`i ESKİ bloktaki eleman İŞARETÇİLERİNİ
+    // (heap-yönetimli İSE — sınıf/liste/dize/closure) HİÇBİR retain
+    // OLMADAN YENİ bloğa kopyalar. Eğer ESKİ blok bu ÇAĞRIDA hemen
+    // serbest BIRAKILMAZSA (aşağıdaki `should_free` `false` İSE — ör.
+    // `self.attr` HÂLÂ ona işaret ETTİĞİNDEN), ESKİ blok DAHA SONRA
+    // (`self.attr = yerel` atamasının ESKİ değeri serbest bırakma
+    // adımında) TAM anlamıyla ÖZYİNELEMELİ olarak serbest bırakılır
+    // (`genListElemRelease`) — bu, İÇİNDEKİ HER elemanın refcount'unu
+    // BİR AZALTIR, SANKİ o eleman SADECE eski bloğa AİTMİŞ gibi. Ama YENİ
+    // blok da AYNI (retain edilmemiş) işaretçiyi TAŞIYOR — bu YÜZDEN
+    // eleman GERÇEKTEN hâlâ İKİ blok tarafından paylaşılıyorken tek bir
+    // referansmış gibi SAYILIYOR, refcount'u ERKEN sıfıra düşürüp elemanı
+    // GERÇEKTEN CANLIYKEN serbest BIRAKIYOR (gerçekten gözlemlendi:
+    // `router.nox`nin `Router.add`ı gibi bir sınıf-alanı büyüme
+    // deseninde, İKİNCİ `.append()`den SONRA İLK elemanın alanları
+    // `(null)` okunuyordu). Düzeltme: her KOPYALANMIŞ elemanı (varsa)
+    // burada, YENİ bloktan, KOŞULSUZ retain et — ESKİ blok ARTIK
+    // (kavramsal olarak) O elemanlara AYRI, GEÇERLİ bir sahiplik payı
+    // TAŞIYORMUŞ gibi davranılır; aşağıdaki `should_free` dalı BU
+    // retain'i (ESKİ blok GERÇEKTEN bu ÇAĞRIDA ölüyorsa) düz bir
+    // decrement İLE dengeler — böylece HER İKİ olası kaderde (ESKİ blok
+    // HEMEN ölür / DAHA SONRA bir alias üzerinden ölür) net refcount
+    // DEĞİŞİMİ doğru kalır.
+    if (obj.elem_heap_info != null) {
+        try self.emitListElemRetainLoop(new_ptr, len_t);
+    }
+
     // YENİ elemanı YENİ bloğa yaz, başlığı (len/cap) GÜNCELLE.
     {
         const byte_off = try self.newTemp();
@@ -723,6 +799,15 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     const skip_free_label = try self.newLabel("append_skip_free");
     try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ should_free, free_label, skip_free_label });
     try self.out.writer.print("{s}\n", .{free_label});
+    if (obj.elem_heap_info != null) {
+        // ESKİ blok BU çağrıda gerçekten ölüyor (`self.attr` GİBİ başka
+        // bir alias YOK) — yukarıdaki retain döngüsünün eklediği "fazladan"
+        // payı DÜZ bir decrement İLE dengele (TAM özyinelemeli release
+        // DEĞİL: bu decrement ASLA sıfıra/altına düşemez, çünkü elemanın
+        // ÖNCEKİ, GEÇERLİ sahipliği HÂLÂ duruyor — bkz. `genListAppend`nin
+        // büyüme-retain notunun tam gerekçesi).
+        try self.emitListElemPlainDecrementLoop(obj.text, len_t);
+    }
     const old_size = try self.newTemp();
     {
         const sz = try self.newTemp();

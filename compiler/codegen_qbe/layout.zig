@@ -457,7 +457,29 @@ pub fn eqMangleFor(self: *Codegen, elem_qtype: QbeType, elem_heap_info: ?*const 
                 const inner = try self.eqMangleFor(ehi.elem_qtype, ehi.nested, ehi.elem_is_str);
                 break :blk try std.fmt.allocPrint(self.allocator, "List_{s}", .{inner});
             },
-            else => unreachable,
+            // `dict`/`Task`/`Channel`/`closure`/iş parçacığı tutamaçları/
+            // kutulanmış-Optional — `genEqCompareOrJump`nin AYNI dalıyla
+            // (yukarıdaki `.dict, .task, .channel, .closure, ...` durumu)
+            // TUTARLI: bu türlerin YAPISAL derinlemesine eşitliği YOK,
+            // yalnızca tutamaç-kimliği (pointer) karşılaştırılır — bu
+            // YÜZDEN `$List_<mangled>_eq`nin adı İçin de sadece BİRBİRİNDEN
+            // AYIRT EDİLEBİLİR bir etiket YETERLİDİR (gövdesi zaten
+            // `genEqCompareOrJump` ÜZERİNDEN doğru pointer-eşitliğine
+            // düşer). **Bulundu, GERÇEK bir çökme:** `list[(T)->U]` gibi
+            // bir SINIF ALANI, HER sınıf İçin OTOMATİK üretilen
+            // `$ClassName_eq`de (kullanıcı `==` HİÇ kullanmasa BİLE) BU
+            // dala düşer (`nox.router`nin `Router.before`si — `Router|None`
+            // karşılaştırması İçin DEĞİL, ama `genClassEq`nin TÜM alanları
+            // KOŞULSUZ ziyaret etmesi YÜZÜNDEN) — ÖNCEDEN `unreachable`e
+            // düşüp ÇÖKÜYORDU.
+            .dict => "dict",
+            .task => "task",
+            .channel => "channel",
+            .closure => "closure",
+            .thread_handle => "thread_handle",
+            .thread_channel => "thread_channel",
+            .boxed_scalar => "boxed_scalar",
+            .none => unreachable,
         };
     }
     if (elem_is_str) return "str";

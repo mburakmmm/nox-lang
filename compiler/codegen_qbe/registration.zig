@@ -154,9 +154,17 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
             // elemanlarının özyinelemeli release'e girmesi İÇİN burada da
             // `elem_heap_info` doldurulmalı (`genListElemRelease`in
             // `info.nested`in `.str` özel durumuna bkz.).
-            if (elem.heap == .class or elem.heap == .list or elem.heap == .str) {
+            // Faz U.4.5: `.closure` EKLENDİ — üst-düzey fonksiyonların
+            // birinci-sınıf DEĞER olarak kullanılabilmesiyle (bkz.
+            // `checker.zig`nin `functions_used_as_value`i) `list[(T)->U]`
+            // ARTIK GERÇEK bir kullanım senaryosu (bkz. `stdlib/nox/
+            // router.nox`). DAHA ÖNCE bu dal `.closure`u ATLIYORDU —
+            // `genListElemRelease`in listenin KENDİSİ DÜŞÜRÜLDÜĞÜNDE
+            // eleman closure'larını HİÇ serbest BIRAKMAMASINA (GERÇEK bir
+            // sızıntı) yol AÇARDI.
+            if (elem.heap == .class or elem.heap == .list or elem.heap == .str or elem.heap == .closure) {
                 const info = try self.allocator.create(ElemHeapInfo);
-                info.* = .{ .heap = elem.heap, .class_name = elem.class_name, .elem_qtype = elem.elem_qtype, .nested = elem.elem_heap_info, .elem_is_str = elem.elem_is_str };
+                info.* = .{ .heap = elem.heap, .class_name = elem.class_name, .elem_qtype = elem.elem_qtype, .nested = elem.elem_heap_info, .elem_is_str = elem.elem_is_str, .func_sig = elem.func_sig };
                 elem_heap_info = info;
             } else if (elem.heap != .none) {
                 return error.Unsupported;

@@ -1,0 +1,170 @@
+# nox.router — `nox.http.serve`in ham TEK `handle` geri çağrısının
+# ÜZERİNE saf Nox'ta yazılmış bir yol (path) yönlendirme + ara katman
+# (middleware) katmanı. Yeni bir runtime ilkeli GEREKMEDİ: `nox.http.
+# serve(port, handle)`nin `handle`si HER ZAMAN TEK bir derleme-zamanı
+# fonksiyon adı olmalıdır (bkz. `codegen_qbe/http_intrinsics.zig`nin
+# `genHttpServe`ı — bu bir çalışma-zamanı değeri DEĞİL, bir codegen
+# intrinsiğidir) — bu YÜZDEN yönlendirme MANTIĞI o TEK fonksiyonun
+# İÇİNDE, sıradan Nox kodu olarak çalışır; `Router`nin KENDİSİ HİÇBİR
+# ZAMAN `nox.http.serve`e DOĞRUDAN geçirilmez, kullanıcı KENDİ TEK
+# `handle` fonksiyonundan `router.dispatch(req)`i ÇAĞIRIR.
+#
+# Faz U.4 (bkz. nox-teknik-spesifikasyon.md) İLE eklenen BİRİNCİ-SINIF
+# fonksiyon/closure tipleri (`(T) -> U` sözdizimi) SAYESİNDE rota
+# işleyicileri/ara katmanlar GERÇEK, ÇALIŞMA-ZAMANI değerleri olarak
+# `list`lerde SAKLANABİLİYOR — bu modül OLMADAN ÖNCE bu MÜMKÜN DEĞİLDİ.
+#
+# Ara katman (middleware) BİLİNÇLİ olarak İKİ BASİT kancaya AYRILDI
+# ("before"/"after"), KARMAŞIK bir `next()`-tabanlı zincir KOMPOZİSYONU
+# YERİNE (`next`i saran YENİ bir closure'ı ÇALIŞMA ZAMANINDA bir DÖNGÜ
+# İÇİNDE dinamik olarak İNŞA ETMEK, bu dilde HENÜZ doğrulanmamış bir
+# desendir) — "before" (isteği/bağlamı incele, `None` DIŞINDA bir şey
+# dönersen KISA-DEVRE yap) VE "after" (yanıtı işleyiciden SONRA
+# dönüştür) İKİSİ de GERÇEK middleware kullanımlarının BÜYÜK
+# ÇOĞUNLUĞUNU (günlükleme, kimlik doğrulama koruması, CORS başlıkları)
+# KARMAŞIK bir zincir GEREKMEDEN karşılar.
+
+# Bulundu: nitelikli (dotted) tip ANNOTASYONLARI (`nox.http.HttpRequest`)
+# HENÜZ desteklenmiyor (`typeExprToType`nin `parseBaseTypeExpr`i TEK bir
+# `identifier` token'ı bekler, noktalı bir zincir DEĞİL) — bu YÜZDEN
+# `HttpRequest`/`HttpResponse` `from ... import` İLE ÇIPLAK isimler
+# olarak getirilir (`from_imports` ÇÖZÜMLEMESİ hem TİP konumlarında HEM
+# çağrılarda ÇALIŞIR, bkz. checker.zig'in `typeExprToType`/`checkCall`ı).
+from nox.http import HttpRequest, HttpResponse
+import nox.strings
+
+# `s[1:]` (Nox'ta dilim sözdizimi YOK) eşdeğeri — yalnızca `":isim"`
+# segmentinden baştaki `:`yi ATMAK İçin, bu modül İçinde YEREL.
+def _drop_first_char(s: str) -> str:
+    result: str = ""
+    i: int = 1
+    while i < len(s):
+        result = result + s[i]
+        i = i + 1
+    return result
+
+# Bir rotanın EŞLEŞTİĞİNDE işleyicisine iletilen ZENGİNLEŞTİRİLMİŞ istek
+# bağlamı — ham `nox.http.HttpRequest`in SABİT alan kümesi path parametreleri
+# TAŞIYAMADIĞINDAN (Nox sınıfları ÇALIŞMA ZAMANINDA yeni alan KAZANAMAZ)
+# AYRI bir sarmalayıcı sınıf gerekir.
+class Context:
+    def __init__(self: Context, request: HttpRequest, params: dict[str, str]) -> None:
+        self.request = request
+        self.params = params
+
+    def param(self: Context, name: str) -> str:
+        return self.params[name]
+
+class Route:
+    def __init__(self: Route, method: str, pattern: str, handler: (Context) -> HttpResponse) -> None:
+        self.method = method
+        self.pattern = pattern
+        self.handler = handler
+
+# `pattern`in `:isim` segmentleri (ör. "/users/:id") İLE `target`in
+# GERÇEK segmentlerini KARŞILAŞTIRIR — segment SAYISI FARKLIYSA VEYA
+# SABİT (`:` İLE BAŞLAMAYAN) bir segment EŞLEŞMEZSE `None` döner; AKSİ
+# HALDE `:isim` segmentlerinden ÇIKARILAN değerleri İÇEREN bir `dict`
+# döner (boş olabilir, hiç `:isim` segmenti YOKSA).
+def _match_path(pattern: str, target: str) -> dict[str, str] | None:
+    pattern_parts: list[str] = nox.strings.split(pattern, "/")
+    target_parts: list[str] = nox.strings.split(target, "/")
+    if len(pattern_parts) != len(target_parts):
+        return None
+    params: dict[str, str] = {}
+    i: int = 0
+    while i < len(pattern_parts):
+        p: str = pattern_parts[i]
+        t: str = target_parts[i]
+        if nox.strings.starts_with(p, ":"):
+            name: str = _drop_first_char(p)
+            params[name] = t
+        else:
+            if p != t:
+                return None
+        i = i + 1
+    return params
+
+class Router:
+    routes: list[Route]
+    before: list[(Context) -> HttpResponse | None]
+    after: list[(Context, HttpResponse) -> HttpResponse]
+
+    def __init__(self: Router) -> None:
+        self.routes = []
+        self.before = []
+        self.after = []
+
+    def add(self: Router, method: str, pattern: str, handler: (Context) -> HttpResponse) -> None:
+        routes: list[Route] = self.routes
+        routes.append(Route(method, pattern, handler))
+        self.routes = routes
+
+    def get(self: Router, pattern: str, handler: (Context) -> HttpResponse) -> None:
+        self.add("GET", pattern, handler)
+
+    def post(self: Router, pattern: str, handler: (Context) -> HttpResponse) -> None:
+        self.add("POST", pattern, handler)
+
+    def put(self: Router, pattern: str, handler: (Context) -> HttpResponse) -> None:
+        self.add("PUT", pattern, handler)
+
+    def delete(self: Router, pattern: str, handler: (Context) -> HttpResponse) -> None:
+        self.add("DELETE", pattern, handler)
+
+    # TÜM rotalardan ÖNCE, HER isteklerde çalışır — `None` DIŞINDA bir
+    # şey dönerse o yanıt DOĞRUDAN kullanılır (rota İŞLEYİCİSİ/sonraki
+    # "before" ara katmanları HİÇ ÇAĞRILMAZ).
+    def use_before(self: Router, middleware: (Context) -> HttpResponse | None) -> None:
+        before: list[(Context) -> HttpResponse | None] = self.before
+        before.append(middleware)
+        self.before = before
+
+    # İşleyici ÇALIŞTIKTAN SONRA, yanıtı SIRAYLA dönüştürür (ör. TÜM
+    # yanıtlara bir CORS başlığı EKLEMEK İçin).
+    def use_after(self: Router, middleware: (Context, HttpResponse) -> HttpResponse) -> None:
+        after: list[(Context, HttpResponse) -> HttpResponse] = self.after
+        after.append(middleware)
+        self.after = after
+
+    # Kullanıcının TEK `nox.http.serve`/`serve_fd`/`serve_multicore`
+    # `handle`sinden ÇAĞRILMASI GEREKEN TEK giriş noktası.
+    def dispatch(self: Router, req: HttpRequest) -> HttpResponse:
+        matched_route: Route | None = None
+        matched_params: dict[str, str] = {}
+        found: bool = False
+        i: int = 0
+        while i < len(self.routes) and not found:
+            route: Route = self.routes[i]
+            if route.method == req.method:
+                m: dict[str, str] | None = _match_path(route.pattern, req.target)
+                if m != None:
+                    matched_route = route
+                    matched_params = m
+                    found = True
+            i = i + 1
+
+        if matched_route != None:
+            ctx: Context = Context(req, matched_params)
+
+            j: int = 0
+            early_resp: HttpResponse | None = None
+            while j < len(self.before) and early_resp == None:
+                early: HttpResponse | None = self.before[j](ctx)
+                if early != None:
+                    early_resp = early
+                j = j + 1
+
+            if early_resp != None:
+                return early_resp
+
+            resp: HttpResponse = matched_route.handler(ctx)
+
+            k: int = 0
+            while k < len(self.after):
+                resp = self.after[k](ctx, resp)
+                k = k + 1
+            return resp
+
+        not_found: HttpResponse = HttpResponse(404, "not found", {})
+        return not_found

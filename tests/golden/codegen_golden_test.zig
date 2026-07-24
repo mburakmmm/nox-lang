@@ -59,7 +59,12 @@ fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.
         try closure_infos.put(allocator, entry.key_ptr.*, names);
     }
 
-    const ir = try nox.codegen.generateModule(allocator, module, checker_state.instantiations.items, generic_names.items, checker_state.class_instantiations.items, generic_class_names.items, null, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports);
+    // Faz U.4.5: bkz. compiler/main.zig'in AYNI dönüştürme notu.
+    var functions_used_as_value: std.ArrayListUnmanaged([]const u8) = .empty;
+    var fn_value_it = checker_state.functions_used_as_value.keyIterator();
+    while (fn_value_it.next()) |k| try functions_used_as_value.append(allocator, k.*);
+
+    const ir = try nox.codegen.generateModule(allocator, module, checker_state.instantiations.items, generic_names.items, checker_state.class_instantiations.items, generic_class_names.items, null, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items);
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -197,6 +202,27 @@ test "codegen(çalıştır): Faz U.1 — list[str].append() heap-yönetimli elem
     try expectGolden(
         @embedFile("codegen_cases/list_append_str_elements.nox"),
         @embedFile("codegen_cases/list_append_str_elements.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.router fazı — sınıf alanı list[T].append() büyürken alan HÂLÂ eski bloğu görüyor (erken serbest bırakma regresyonu)" {
+    try expectGolden(
+        @embedFile("codegen_cases/list_append_growth_while_field_aliased.nox"),
+        @embedFile("codegen_cases/list_append_growth_while_field_aliased.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.router fazı — closure-elemanlı list[T] sınıf alanı, otomatik üretilen ClassName_eq'de çökmez" {
+    try expectGolden(
+        @embedFile("codegen_cases/class_eq_with_closure_list_field.nox"),
+        @embedFile("codegen_cases/class_eq_with_closure_list_field.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.router — path parametreli rota + before/after middleware uçtan-uca" {
+    try expectGolden(
+        @embedFile("codegen_cases/router_basic_routing_and_middleware.nox"),
+        @embedFile("codegen_cases/router_basic_routing_and_middleware.expected"),
     );
 }
 
@@ -357,7 +383,7 @@ test "codegen: Faz M.8 — provably-safe metod çağrılarının ÜRETTİĞİ IR
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{});
     // `Adder`in ne `__init__`i ne `inc`i ne `double_inc`i HİÇBİR ZAMAN raise
     // ETMEZ (kod içinde tek bir `raise` bile YOK) — bu yüzden bu programın
     // ÜRETTİĞİ IR'da `nox_exception_pending`e TEK bir çağrı bile
@@ -393,7 +419,7 @@ test "codegen: Faz GG.3 — for-loop içindeki provably-safe metod çağrısın�
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{});
     // GG.3 ÖNCESİ: `for_stmt` HER ZAMAN döngü değişkeninin sınıfını `null`
     // olarak bildirirdi, bu yüzden `b.get()` ÇÖZÜMLENEMEZ sayılıp
     // `sum_boxes`u zehirlerdi VE bu IR'da `nox_exception_pending` çağrısı
@@ -437,7 +463,7 @@ test "codegen: Faz GG.5 — döngü içinde AYNI str için TEK bir strlen çağr
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{});
     // `count_two`nun gövdesinde `s[i]` İKİ AYRI ifade konumunda GÖRÜNÜR
     // (`== "a"` VE `== "n"` karşılaştırmaları) — GG.5 ÖNCESİ bu İKİ AYRI
     // `call $strlen` ÜRETİRDİ (döngünün HER yinelemesinde İKİ KEZ
@@ -550,7 +576,7 @@ test "codegen: Faz GG.9 — kanıtlanabilir sınır-içi erişimde IndexError da
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{});
     // `sum_list`in `xs[i]`si VE `count_char`in `s[i]`si İKİSİ de TAM OLARAK
     // GG.9'un hedeflediği desendedir — bu programın ÜRETTİĞİ IR'da NE
     // `list_idx_err` NE DE `str_idx_err` (sınır-DIŞI dalının etiket
@@ -585,7 +611,7 @@ test "codegen: Faz GG.9 — döngü içinde yeniden atanan liste İçin IndexErr
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{});
     // `xs` döngü İÇİNDE yeniden atandığından `bounds_elide_ctx` BU döngü
     // İçin HİÇ KURULMAMALIDIR — `list_idx_err` dalı NORMAL şekilde
     // ÜRETİLMELİDİR (elenmenin GERÇEKLEŞMEDİĞİNİN doğrudan kanıtı).
@@ -645,7 +671,7 @@ test "codegen: Faz GG.9 (while genellemesi) — while j < len(xs): xs[j] IR'ınd
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{});
     try std.testing.expect(std.mem.indexOf(u8, ir, "list_idx_err") == null);
 }
 
@@ -674,7 +700,7 @@ test "codegen: Faz GG.9 (while genellemesi) — while j < SABİT: xs[j] IR'ında
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{});
     try std.testing.expect(std.mem.indexOf(u8, ir, "list_idx_err") == null);
 }
 
@@ -696,7 +722,7 @@ test "codegen: Faz GG.9 (while genellemesi) — döngü içinde yeniden atanan l
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{});
     try std.testing.expect(std.mem.indexOf(u8, ir, "list_idx_err") != null);
 }
 
@@ -727,7 +753,7 @@ test "codegen: darboğaz #3 — `tally` IR'ında `i % 3` TEK bir `rem` talimatı
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{});
     // `$classify` (bağımsız/standalone sürüm, HER ZAMAN üretilir) KENDİ
     // TEK `rem`ini tutar — bu YÜZDEN modül GENELİNDE tam olarak 2 `rem`
     // BEKLENİR (1 standalone `$classify` + 1 `$tally`nin İÇİNDE, ÜÇ
@@ -804,7 +830,7 @@ test "codegen: lowlevel arenasından bir değeri bloktan return etmek reddedilir
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    try std.testing.expectError(error.Unsupported, nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty));
+    try std.testing.expectError(error.Unsupported, nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}));
 }
 
 test "codegen(çalıştır): Faz U.4.3 — iç içe def bir int'i yakalar (capture), inşa+release döngüsü sızıntısız" {
@@ -882,7 +908,7 @@ test "codegen: Faz T.3 — debug_source_path VERİLMEDEN dbgfile/dbgloc HİÇ ü
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{});
     try std.testing.expect(std.mem.indexOf(u8, ir, "dbgfile") == null);
     try std.testing.expect(std.mem.indexOf(u8, ir, "dbgloc") == null);
 }
@@ -899,7 +925,7 @@ test "codegen: Faz T.3 — debug_source_path VERİLİRSE dbgfile + doğru satır
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, "fibonacci.nox", .empty, .empty, .empty);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, "fibonacci.nox", .empty, .empty, .empty, &.{});
     try std.testing.expect(std.mem.indexOf(u8, ir, "dbgfile \"fibonacci.nox\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, ir, "dbgloc") != null);
 }
@@ -1181,7 +1207,7 @@ test "codegen: darboğaz #4 — `List_priml_eq`nin gövdesinde ARTIK `alloc8` (�
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{});
     const fn_start = std.mem.indexOf(u8, ir, "export function w $List_priml_eq(") orelse return error.FunctionNotFound;
     const after_start = ir[fn_start..];
     const fn_end = std.mem.indexOf(u8, after_start, "\nexport function") orelse after_start.len;
@@ -1612,6 +1638,18 @@ test "codegen(çalıştır): nox.crypto.argon2_hash/bcrypt_hash/scrypt_hash + ve
     try expectGolden(
         @embedFile("codegen_cases/crypto_password_hashing.nox"),
         @embedFile("codegen_cases/crypto_password_hashing.expected"),
+    );
+}
+
+// `nox.uuid.uuid4` — "eksik kütüphaneler" listesinin İLK maddesi, saf Nox
+// (yeni bir runtime ilkeli GEREKMEDİ, bkz. `stdlib/nox/uuid.nox`nin belge
+// notu). Hash'ler GİBİ rastgele OLDUĞUNDAN, `crypto_password_hashing`YLA
+// AYNI desen: ham UUID METNİ YAZDIRILMAZ, yalnızca uzunluk/biçim/farklılık
+// doğrulanır.
+test "codegen(çalıştır): nox.uuid.uuid4 + is_valid" {
+    try expectGolden(
+        @embedFile("codegen_cases/uuid_v4.nox"),
+        @embedFile("codegen_cases/uuid_v4.expected"),
     );
 }
 

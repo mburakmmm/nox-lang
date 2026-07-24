@@ -58,6 +58,7 @@ pub fn valueFromElemDescriptor(text: []const u8, qtype: QbeType, container_elem_
         .class_name = if (container_elem_heap_info) |ehi| ehi.class_name else null,
         .elem_qtype = if (container_elem_heap_info) |ehi| ehi.elem_qtype else .none,
         .elem_heap_info = if (container_elem_heap_info) |ehi| ehi.nested else null,
+        .func_sig = if (container_elem_heap_info) |ehi| ehi.func_sig else null,
     };
 }
 

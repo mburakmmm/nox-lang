@@ -255,6 +255,15 @@ pub const Checker = struct {
     /// bunlar `spawn` ile başlatılabilir (bkz. `checkExpr`in `.spawn_expr`
     /// dalı, nox-teknik-spesifikasyon.md §3.21).
     async_functions: std.StringHashMapUnmanaged(void) = .{},
+    /// Faz U.4.5 (bkz. `checkExpr`nin `.identifier` dalı): üst-düzey
+    /// (non-generic) bir `def`in BARE adı, ÇAĞRI DIŞINDA bir bağlamda
+    /// (bir değişkene atama, bir listeye/alana KOYMA) kullanıldığında bu
+    /// kümeye EKLENİR — codegen'in (bkz. `genFunctionValueTrampoline`)
+    /// HANGİ fonksiyonlar İçin bir `%env`-yok-sayan sarmalayıcı üretmesi
+    /// GEREKTİĞİNİ BİLMESİ İçin (üst-düzey fonksiyonların KENDİ ABI'si
+    /// `%env` TAŞIMAZ — bkz. `closures.zig`nin `genFunctionValueTrampoline`
+    /// belge notu).
+    functions_used_as_value: std.StringHashMapUnmanaged(void) = .{},
     /// `instantiateGeneric` tarafından üretilen, somut (monomorphize edilmiş)
     /// fonksiyon tanımları — `main.zig`/codegen bunları modülün geri kalanı
     /// gibi normal, generic olmayan fonksiyonlar olarak derler. Adları
@@ -1834,6 +1843,45 @@ pub const Checker = struct {
         return self.checkExpr(ctx, expr);
     }
 
+    /// Faz U.4.5: `checkExpr`nin `.identifier` dalının, YEREL kapsamda
+    /// (parametre/değişken/yakalanan) BULUNAMAYAN bir isim İçin YEDEK
+    /// çözümlemesi — ÜST-DÜZEY (non-generic) bir `def`in BARE adı bir
+    /// DEĞER olarak kullanılıyor OLABİLİR (bkz. `checkCall`nin `.identifier`
+    /// dalıyla — satır ~2289 — AYNI `self.functions` kontrolü, ama BURADA
+    /// çağrı OLMADIĞINDAN `functions_used_as_value`e KAYDEDİLİR — bkz.
+    /// onun belge notu, codegen'in trampoline ÜRETMESİ İçin). Generic
+    /// fonksiyonlar BİLİNÇLİ olarak v1'de DIŞLANIR: somut örnekleme
+    /// YALNIZCA bir ÇAĞRI SİTESİNDE (argüman tiplerinden) çözülebilir,
+    /// "bare" bir kullanımda HANGİ örneklemenin kastedildiği BELİRSİZDİR.
+    ///
+    /// **BİLİNÇLİ OLARAK `noinline` VE `checkExpr`den AYRI bir fonksiyon:**
+    /// bir fuzz-regresyon testi (2000 seviyeli iç içe `1 + 1 + ...`) BUNU
+    /// `checkExpr`nin GÖVDESİNE DOĞRUDAN yazınca GERÇEK bir yığın-taşması
+    /// (stack overflow) İLE ÇÖKTÜ — Zig `switch` KOLLARININ hepsi AYNI
+    /// çağrı çerçevesini (stack frame) PAYLAŞTIĞINDAN, `.identifier`
+    /// dalına eklenen YENİ yerel değişkenler `checkExpr`nin (2000 kat
+    /// ÖZYİNELEMELİ ÇAĞRILAN) HER çağrısının çerçeve BOYUTUNU büyütüyordu
+    /// — `.binary` dalı HİÇ `.identifier`e uğramasa BİLE. AYRI bir
+    /// fonksiyona ÇIKARMAK bu ek yerelleri yalnızca GERÇEKTEN bu yedek
+    /// yola girildiğinde açılan KENDİ çerçevesine TAŞIR, `checkExpr`nin
+    /// KENDİ çerçevesi (VE onun tekrarlı özyinelemesinin GÜVENLİ derinliği)
+    /// DEĞİŞMEZ.
+    noinline fn resolveIdentifierAsFunctionValue(self: *Checker, name: []const u8) TypeError!Type {
+        if (self.generic_functions.contains(name)) {
+            return self.fail(error.TypeMismatch, "generic fonksiyon '{s}' bir değer olarak kullanılamaz (yalnızca çağrılabilir)", .{name});
+        }
+        if (self.functions.get(name)) |sig| {
+            if (self.async_functions.contains(name)) {
+                return self.fail(error.TypeMismatch, "'{s}' bir 'async def' fonksiyonudur, bir değer olarak kullanılamaz", .{name});
+            }
+            try self.functions_used_as_value.put(self.allocator, name, {});
+            const ret_boxed = try self.allocator.create(Type);
+            ret_boxed.* = sig.return_type;
+            return .{ .func = .{ .params = sig.params, .return_type = ret_boxed } };
+        }
+        return self.fail(error.UndefinedVariable, "tanımsız değişken: {s}", .{name});
+    }
+
     fn checkExpr(self: *Checker, ctx: *FnCtx, expr: ast.Expr) TypeError!Type {
         return switch (expr) {
             .int_lit => .int,
@@ -1843,8 +1891,11 @@ pub const Checker = struct {
             .none_lit => .none,
             // Faz FF.6: daraltma örtüsü (bkz. `FnCtx.narrowed`in belge notu)
             // GERÇEK scope aramasından ÖNCE denetlenir.
-            .identifier => |name| ctx.narrowed.get(name) orelse (try ctx.scope.lookup(self.allocator, name)) orelse
-                return self.fail(error.UndefinedVariable, "tanımsız değişken: {s}", .{name}),
+            .identifier => |name| blk: {
+                if (ctx.narrowed.get(name)) |t| break :blk t;
+                if (try ctx.scope.lookup(self.allocator, name)) |t| break :blk t;
+                break :blk try self.resolveIdentifierAsFunctionValue(name);
+            },
             .unary => |u| blk: {
                 const t = try self.checkExpr(ctx, u.operand.*);
                 switch (u.op) {
@@ -2487,10 +2538,42 @@ pub const Checker = struct {
                 };
                 const info = self.classes.getPtr(class_name) orelse
                     return self.fail(error.UndefinedClass, "bilinmeyen sınıf: {s}", .{class_name});
-                const sig = info.methods.get(a.attr) orelse
-                    return self.fail(error.UndefinedMethod, "'{s}' sınıfının '{s}' metodu yok", .{ class_name, a.attr });
-                try self.checkArgs(ctx, sig.params, c.args, a.attr);
-                return sig.return_type;
+                if (info.methods.get(a.attr)) |sig| {
+                    try self.checkArgs(ctx, sig.params, c.args, a.attr);
+                    return sig.return_type;
+                }
+                // Faz U.4.5: `a.attr` bir METOD DEĞİLSE (method İSİM
+                // ÇAKIŞMASINDA HER ZAMAN ÖNCELİKLİDİR — bir sınıf ZATEN
+                // aynı isimde hem method hem alan TANIMLAYAMADIĞINDAN bu
+                // sıralama BELİRSİZLİK YARATMAZ), func-tipli bir ALAN
+                // OLABİLİR (`stdlib/nox/router.nox`nin `route.handler(ctx)`
+                // deseni — bkz. `Value.func_sig`in belge notu) — DOLAYLI
+                // bir çağrıdır, `ctx.scope.lookup`nin `.func` işleme
+                // BLOĞUYLA (aşağısı) AYNI mantık.
+                if (info.fields.get(a.attr)) |ft| {
+                    if (ft == .func) {
+                        try self.checkArgs(ctx, ft.func.params, c.args, a.attr);
+                        return ft.func.return_type.*;
+                    }
+                    return self.fail(error.TypeMismatch, "'{s}' bir fonksiyon değildir, çağrılamaz", .{a.attr});
+                }
+                return self.fail(error.UndefinedMethod, "'{s}' sınıfının '{s}' metodu yok", .{ class_name, a.attr });
+            },
+            // Faz U.4.5: `xs[i](...)` — `xs`nin ELEMAN tipi `.func` İSE
+            // (`list[(T)->U]`, bkz. `stdlib/nox/router.nox`nin `self.
+            // before[j](ctx)` deseni) bu bir DOLAYLI çağrıdır, `ctx.scope.
+            // lookup`nin `.func` işleme BLOĞUYLA (yukarısı, ~satır 2316)
+            // AYNI mantık.
+            .index => |idx| {
+                const obj_t = try self.checkExpr(ctx, idx.obj.*);
+                try self.requireNotOptional(obj_t, "[]");
+                if (obj_t != .list) return self.fail(error.NotCallable, "bu ifade çağrılabilir değil", .{});
+                const idx_t = try self.checkExpr(ctx, idx.index.*);
+                if (idx_t != .int) return self.fail(error.TypeMismatch, "liste indeksi 'int' olmalıdır", .{});
+                const elem_t = obj_t.list.*;
+                if (elem_t != .func) return self.fail(error.NotCallable, "bu ifade çağrılabilir değil", .{});
+                try self.checkArgs(ctx, elem_t.func.params, c.args, "<liste elemanı>");
+                return elem_t.func.return_type.*;
             },
             else => return self.fail(error.NotCallable, "bu ifade çağrılabilir değil", .{}),
         }

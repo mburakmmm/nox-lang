@@ -1152,6 +1152,13 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     var generic_it = checker_state.generic_functions.keyIterator();
     while (generic_it.next()) |k| try generic_names.append(a, k.*);
 
+    // Faz U.4.5 (bkz. `checker.zig`nin `functions_used_as_value`i VE
+    // `codegen_qbe/closures.zig`nin `genFunctionValueTrampoline`ının belge
+    // notu): `generic_names` İLE AYNI "keyIterator → slice" deseni.
+    var functions_used_as_value: std.ArrayListUnmanaged([]const u8) = .empty;
+    var fn_value_it = checker_state.functions_used_as_value.keyIterator();
+    while (fn_value_it.next()) |k| try functions_used_as_value.append(a, k.*);
+
     // Faz P2.1 (bkz. proje belleği "generic sınıflar" planı): `instantiations`/
     // `generic_names`in AYNISI ama SINIFLAR İçin.
     const class_instantiations = checker_state.class_instantiations.items;
@@ -1193,7 +1200,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // codegen.zig'in modül üstü notu (TEK dosya, stdlib-merge yanlış-atıf
     // sınırlaması bilinçli olarak KABUL EDİLDİ).
     const debug_source_path: ?[]const u8 = if (debug_info) path_arg else null;
-    const ir = codegen.generateModule(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports) catch |err| switch (err) {
+    const ir = codegen.generateModule(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items) catch |err| switch (err) {
         error.Unsupported => {
             std.debug.print(
                 "codegen: bu program şu an desteklenmeyen bir yapı içeriyor " ++

@@ -20,6 +20,9 @@ const DictInfo = types.DictInfo;
 const RT_PARAM = types.RT_PARAM;
 const LIST_HEADER_SIZE = types.LIST_HEADER_SIZE;
 const ARC_HEADER_SIZE = types.ARC_HEADER_SIZE;
+const CLOSURE_HEADER_SIZE = types.CLOSURE_HEADER_SIZE;
+const CLOSURE_RELEASE_FN_PTR_OFFSET = types.CLOSURE_RELEASE_FN_PTR_OFFSET;
+const FuncSigInfo = types.FuncSigInfo;
 const CodegenError = abi.CodegenError;
 const qbeTypeName = abi.qbeTypeName;
 const qbeSizeOf = abi.qbeSizeOf;
@@ -190,6 +193,48 @@ pub fn emitStringLiteral(self: *Codegen, s: []const u8) CodegenError!Value {
     return .{ .text = addr, .qtype = .l, .heap = .str };
 }
 
+/// Faz U.4.5 (bkz. `checker.zig`nin `checkExpr`'in `.identifier` dalı VE
+/// `functions_used_as_value`in belge notu): `genExpr`nin `.identifier`
+/// dalının, `self.vars`de BULUNAMAYAN bir isim İçin YEDEK inşası — üst-
+/// düzey (non-generic) bir `def`, ÇAĞRI DIŞINDA bir DEĞER olarak
+/// kullanılıyor OLABİLİR. Checker BUNU ZATEN `functions_used_as_value`e
+/// KAYDEDİP `generateModule`nin `genFunctionValueTrampoline` GEÇİŞİNİN
+/// (BU noktadan ÖNCE çalışır, bkz. onun çağrı sitesi) `$<isim>__fnval`/
+/// `$<isim>__fnval_release`i ZATEN ÜRETMİŞ olmasını GARANTİ eder — burada
+/// YALNIZCA `buildClosureValue`nin AYNI SIFIR-yakalama İnşa deseni (bkz.
+/// onun belge notu) TEKRARLANIR.
+///
+/// **BİLİNÇLİ OLARAK `noinline` VE `genExpr`den AYRI bir fonksiyon:**
+/// `checker.zig`nin `resolveIdentifierAsFunctionValue`iyle AYNI gerekçe
+/// (bkz. onun belge notu) — `genExpr` de (`genBinary` ÜZERİNDEN)
+/// ÖZYİNELEMELİDİR, bu YÜZDEN `.identifier` dalına YENİ yerel değişkenleri
+/// DOĞRUDAN EKLEMEK `genExpr`nin HER özyinelemeli çağrısının çerçeve
+/// boyutunu büyütüp DERİN (`.binary` ZİNCİRLERİ GİBİ) özyinelemelerde
+/// YIĞIN-TAŞMASI RİSKİNİ ARTIRIRDI (bkz. checker.zig tarafında GERÇEKTEN
+/// YAKALANAN AYNI sınıf hata — bir fuzz-regresyon testi).
+pub noinline fn buildFunctionValueForIdentifier(self: *Codegen, name: []const u8) CodegenError!Value {
+    const sig = self.functions.get(name) orelse return error.Unsupported;
+    const trampoline_name = try std.fmt.allocPrint(self.allocator, "{s}__fnval", .{name});
+    const block = try self.newTemp();
+    try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ block, RT_PARAM, CLOSURE_HEADER_SIZE });
+    try self.out.writer.print("    storel ${s}, {s}\n", .{ trampoline_name, block });
+    const rel_addr = try self.newTemp();
+    try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ rel_addr, block, CLOSURE_RELEASE_FN_PTR_OFFSET });
+    try self.out.writer.print("    storel ${s}_release, {s}\n", .{ trampoline_name, rel_addr });
+    const fsig = try self.allocator.create(FuncSigInfo);
+    fsig.* = .{ .params = sig.params, .ret = sig.ret };
+    // `always_fresh = true`: `isAliasingExpr`in `.identifier => true` GENEL
+    // kuralı (bkz. onun belge notu — normalde bir ÇIPLAK isim HER ZAMAN
+    // VAR OLAN bir yereli/parametreyi ALIASLAR, bu YÜZDEN `retainIfAliasing`
+    // bir retain EMİTİR) BURADA GEÇERSİZDİR — bu değer VAR OLAN hiçbir
+    // şeyi ALIASLAMAZ, HER değerlendirmede TAZE inşa edilir (bir `.call`
+    // GİBİ). `always_fresh` (`s[i]`nin AYNI mekanizması, bkz.
+    // `retainIfAliasing`nin belge notu) BUNU `retainIfAliasing`e bildirir
+    // — AKSİ HALDE GERÇEK bir ÇİFT-RETAIN/sızıntı OLUŞUR (test EDİLİP
+    // BULUNDU).
+    return .{ .text = block, .qtype = .l, .heap = .closure, .func_sig = fsig, .always_fresh = true };
+}
+
 pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
     return switch (expr) {
         .int_lit => |v| .{ .text = try std.fmt.allocPrint(self.allocator, "{d}", .{v}), .qtype = .l },
@@ -197,7 +242,7 @@ pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
         .bool_lit => |v| .{ .text = if (v) "1" else "0", .qtype = .w },
         .string_lit => |s| try self.emitStringLiteral(s),
         .identifier => |name| blk: {
-            const info = self.vars.get(name) orelse return error.Unsupported;
+            const info = self.vars.get(name) orelse break :blk try self.buildFunctionValueForIdentifier(name);
             const t = try self.newTemp();
             try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ t, qbeTypeName(info.qtype), qbeTypeName(info.qtype), info.slot });
             // Faz FF.6.4: bkz. `narrowed_unbox`'ın belge notu — bu isim
@@ -208,7 +253,7 @@ pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
                 try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ payload, qbeTypeName(info.elem_qtype), qbeTypeName(info.elem_qtype), t });
                 break :blk .{ .text = payload, .qtype = info.elem_qtype };
             }
-            break :blk .{ .text = t, .qtype = info.qtype, .heap = info.heap, .elem_qtype = info.elem_qtype, .class_name = info.class_name, .elem_heap_info = info.elem_heap_info, .elem_is_str = info.elem_is_str, .dict_info = info.dict_info, .arena = info.arena };
+            break :blk .{ .text = t, .qtype = info.qtype, .heap = info.heap, .elem_qtype = info.elem_qtype, .class_name = info.class_name, .elem_heap_info = info.elem_heap_info, .elem_is_str = info.elem_is_str, .dict_info = info.dict_info, .func_sig = info.func_sig, .arena = info.arena };
         },
         .unary => |u| try self.genUnary(u),
         .binary => |b| try self.genBinary(b),
@@ -250,7 +295,7 @@ pub fn genFieldRead(self: *Codegen, a: ast.Attribute) CodegenError!Value {
             try self.emitInlineRetain(result);
         }
         try self.releaseIfTemporary(a.obj.*, obj);
-        return .{ .text = result, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str, .dict_info = f.info.dict_info };
+        return .{ .text = result, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str, .dict_info = f.info.dict_info, .func_sig = f.info.func_sig };
     }
     return error.Unsupported;
 }
@@ -274,7 +319,7 @@ pub fn genFieldReadFromValue(self: *Codegen, obj: Value, field_name: []const u8)
         try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, obj.text, f.offset });
         const result = try self.newTemp();
         try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ result, qbeTypeName(f.info.qtype), qbeTypeName(f.info.qtype), addr });
-        return .{ .text = result, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str, .dict_info = f.info.dict_info };
+        return .{ .text = result, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str, .dict_info = f.info.dict_info, .func_sig = f.info.func_sig };
     }
     return error.Unsupported;
 }
@@ -520,9 +565,13 @@ pub fn genListLit(self: *Codegen, elems: []const ast.Expr) CodegenError!Value {
     // `str` DAHİL (bkz. `resolveType`in list dalındaki AYNI gerekçe,
     // stdlib fazı §B) — `list[str]` elemanlarının kapsam-sonu/yeniden
     // atamada özyinelemeli release'e girmesi için gerekli.
-    if (first.heap == .class or first.heap == .list or first.heap == .str) {
+    // Faz U.4.5: `.closure` EKLENDİ — bkz. `resolveType`nin list dalındaki
+    // AYNI gerekçe/belge notu (`stdlib/nox/router.nox`nin `list[(T)->U]`
+    // alanları İçin — bu OLMADAN listenin KENDİSİ düşürüldüğünde eleman
+    // closure'ları HİÇ serbest bırakılmazdı, GERÇEK bir sızıntı).
+    if (first.heap == .class or first.heap == .list or first.heap == .str or first.heap == .closure) {
         const info = try self.allocator.create(ElemHeapInfo);
-        info.* = .{ .heap = first.heap, .class_name = first.class_name, .elem_qtype = first.elem_qtype, .nested = first.elem_heap_info, .elem_is_str = first.elem_is_str };
+        info.* = .{ .heap = first.heap, .class_name = first.class_name, .elem_qtype = first.elem_qtype, .nested = first.elem_heap_info, .elem_is_str = first.elem_is_str, .func_sig = first.func_sig };
         elem_heap_info = info;
     }
     const elem_is_str = first.heap == .str;

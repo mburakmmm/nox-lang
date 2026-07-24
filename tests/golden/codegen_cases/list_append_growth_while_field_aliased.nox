@@ -1,0 +1,49 @@
+# Bulundu, GERÇEK bir erken-serbest-bırakma hatası (bkz. proje belleği
+# "nox.router" fazı): `self.attr.append(v)` doğrudan desteklenmediğinden
+# (append'in alıcısı ÇIPLAK bir yerel OLMALI — bkz. checker.zig),
+# yaygın v1 çözümü "yerel değişkene oku, .append() et, geri yaz"dır:
+#   yerel: list[T] = self.attr
+#   yerel.append(v)
+#   self.attr = yerel
+# Bu, `yerel`i self.attr'ın GEÇİCİ bir alias'ı yapar. `.append()` BÜYÜME
+# gerektirdiğinde (`nox_list_grow`), ESKİ bloktaki eleman işaretçileri
+# YENİ bloğa retain'SİZ kopyalanır — bu SADECE ESKİ bloğun HER ZAMAN
+# "ham" (elemanları DOKUNMADAN) serbest bırakılmasıyla GÜVENLİDİR. Ama
+# `self.attr` BU ANDA HÂLÂ ESKİ bloğu gördüğünden (writeback HENÜZ
+# olmadı), ESKİ blok BU çağrıda SERBEST BIRAKILMAZ — DAHA SONRA
+# `self.attr = yerel` atamasının "eski değeri serbest bırak" adımında,
+# TAM özyinelemeli (elemanları DA serbest bırakan) bir release ile
+# serbest bırakılır. Bu, YENİ bloğun retain'SİZ kopyaladığı elemanların
+# refcount'unu YANLIŞLIKLA erken sıfıra düşürüp (elemanlar HÂLÂ YENİ
+# blok tarafından kullanılıyorken) serbest bırakıyordu.
+class Item:
+    def __init__(self: Item, tag: str) -> None:
+        self.tag = tag
+
+class Holder:
+    items: list[Item]
+    def __init__(self: Holder) -> None:
+        self.items = []
+    def add(self: Holder, tag: str) -> None:
+        items: list[Item] = self.items
+        items.append(Item(tag))
+        self.items = items
+
+h: Holder = Holder()
+h.add("a")
+h.add("b")
+h.add("c")
+i: int = 0
+while i < len(h.items):
+    print(h.items[i].tag)
+    i = i + 1
+
+# Büyümeden HEMEN SONRA yapılan BAŞKA bir tahsis, önceden serbest
+# bırakılmış (ama HÂLÂ kullanımda sanılan) belleğin yeniden kullanılıp
+# kullanılmadığını ortaya çıkarır (gerçek regresyonda GÖZLEMLENDİ).
+extra: Item = Item("z")
+print(extra.tag)
+j: int = 0
+while j < len(h.items):
+    print(h.items[j].tag)
+    j = j + 1
