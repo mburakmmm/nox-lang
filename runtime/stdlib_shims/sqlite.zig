@@ -36,6 +36,47 @@ fn libraryFileName() [:0]const u8 {
     };
 }
 
+/// Bulundu (GERÇEK bir platform hatası, `windows-x64` release CI'sinde
+/// YAKALANDI — bkz. nox-teknik-spesifikasyon.md): Zig 0.16'nın `std.
+/// DynLib`i Windows İçin HİÇBİR implementasyon TAŞIMAZ (bkz. std kaynağı
+/// `dynamic_library.zig`, `switch (native_os)`in `else` dalı BİLİNÇLİ bir
+/// `@compileError("unsupported platform")`dır — geçici bir eksiklik
+/// DEĞİL, bu Zig sürümünün KENDİ tasarım kararı). Bu, `noxrt.o`nun
+/// (HER Nox programına koşulsuz bağlı) Windows'ta HİÇ DERLENEMEMESİNE
+/// yol açan bir regresyondu — `crypto.zig`nin `SystemFunction036`/
+/// `advapi32` özel-durumuyla AYNI desen İZLENİR: Windows'ta `std.DynLib`
+/// YERİNE `kernel32.dll`nin KENDİ `LoadLibraryA`/`GetProcAddress`si
+/// DOĞRUDAN kullanılır (ASCII kütüphane/sembol adları YETERLİ, geniş
+/// karakter dönüşümüne GEREK YOK).
+const Kernel32 = if (builtin.os.tag == .windows) struct {
+    extern "kernel32" fn LoadLibraryA(lpLibFileName: [*:0]const u8) callconv(.c) ?*anyopaque;
+    extern "kernel32" fn GetProcAddress(hModule: ?*anyopaque, lpProcName: [*:0]const u8) callconv(.c) ?*anyopaque;
+} else struct {};
+
+/// Windows'ta ham bir kütüphane handle'ı (`kernel32.LoadLibraryA`nın
+/// döndürdüğü); diğer TÜM platformlarda (`std.DynLib`nin GERÇEKTEN
+/// desteklediği macOS/Linux/BSD) olağan `std.DynLib`. `ensureLoaded`/
+/// `loadAll` bu ikisini TEK bir kod yolunda BİRLEŞTİRİR (`openLib`/
+/// `lookupSym` yardımcıları ÜZERİNDEN) — geri kalan TÜM `nox_sqlite_*_raw`
+/// dışa aktarımları bu platform farkından TAMAMEN İZOLE KALIR.
+const LibHandle = if (builtin.os.tag == .windows) ?*anyopaque else std.DynLib;
+
+fn openLib() ?LibHandle {
+    if (builtin.os.tag == .windows) {
+        return Kernel32.LoadLibraryA(libraryFileName());
+    }
+    return std.DynLib.open(libraryFileName()) catch null;
+}
+
+fn lookupSym(lib: *LibHandle, comptime T: type, name: [:0]const u8) ?T {
+    if (builtin.os.tag == .windows) {
+        const handle = lib.* orelse return null;
+        const addr = Kernel32.GetProcAddress(handle, name) orelse return null;
+        return @ptrCast(addr);
+    }
+    return lib.lookup(T, name);
+}
+
 const OpenFn = *const fn (filename: [*:0]const u8, ppDb: *?*anyopaque) callconv(.c) c_int;
 const CloseFn = *const fn (db: ?*anyopaque) callconv(.c) c_int;
 const ErrmsgFn = *const fn (db: ?*anyopaque) callconv(.c) ?[*:0]const u8;
@@ -78,27 +119,27 @@ const Funcs = struct {
 /// diğerleri BEKLESİN.
 const LoadState = enum(u8) { uninit, initializing, ready, failed };
 var g_state: std.atomic.Value(LoadState) = .init(.uninit);
-var g_lib: std.DynLib = undefined;
+var g_lib: LibHandle = undefined;
 var g_funcs: Funcs = undefined;
 
 fn loadAll() bool {
-    var lib = std.DynLib.open(libraryFileName()) catch return false;
-    const open_fn = lib.lookup(OpenFn, "sqlite3_open") orelse return false;
-    const close_fn = lib.lookup(CloseFn, "sqlite3_close") orelse return false;
-    const errmsg_fn = lib.lookup(ErrmsgFn, "sqlite3_errmsg") orelse return false;
-    const prepare_fn = lib.lookup(PrepareFn, "sqlite3_prepare_v2") orelse return false;
-    const step_fn = lib.lookup(StepFn, "sqlite3_step") orelse return false;
-    const finalize_fn = lib.lookup(FinalizeFn, "sqlite3_finalize") orelse return false;
-    const column_count_fn = lib.lookup(ColumnCountFn, "sqlite3_column_count") orelse return false;
-    const column_type_fn = lib.lookup(ColumnTypeFn, "sqlite3_column_type") orelse return false;
-    const column_text_fn = lib.lookup(ColumnTextFn, "sqlite3_column_text") orelse return false;
-    const column_name_fn = lib.lookup(ColumnNameFn, "sqlite3_column_name") orelse return false;
-    const bind_int64_fn = lib.lookup(BindInt64Fn, "sqlite3_bind_int64") orelse return false;
-    const bind_double_fn = lib.lookup(BindDoubleFn, "sqlite3_bind_double") orelse return false;
-    const bind_text_fn = lib.lookup(BindTextFn, "sqlite3_bind_text") orelse return false;
-    const bind_null_fn = lib.lookup(BindNullFn, "sqlite3_bind_null") orelse return false;
-    const changes_fn = lib.lookup(ChangesFn, "sqlite3_changes") orelse return false;
-    const last_insert_rowid_fn = lib.lookup(LastInsertRowidFn, "sqlite3_last_insert_rowid") orelse return false;
+    var lib = openLib() orelse return false;
+    const open_fn = lookupSym(&lib, OpenFn, "sqlite3_open") orelse return false;
+    const close_fn = lookupSym(&lib, CloseFn, "sqlite3_close") orelse return false;
+    const errmsg_fn = lookupSym(&lib, ErrmsgFn, "sqlite3_errmsg") orelse return false;
+    const prepare_fn = lookupSym(&lib, PrepareFn, "sqlite3_prepare_v2") orelse return false;
+    const step_fn = lookupSym(&lib, StepFn, "sqlite3_step") orelse return false;
+    const finalize_fn = lookupSym(&lib, FinalizeFn, "sqlite3_finalize") orelse return false;
+    const column_count_fn = lookupSym(&lib, ColumnCountFn, "sqlite3_column_count") orelse return false;
+    const column_type_fn = lookupSym(&lib, ColumnTypeFn, "sqlite3_column_type") orelse return false;
+    const column_text_fn = lookupSym(&lib, ColumnTextFn, "sqlite3_column_text") orelse return false;
+    const column_name_fn = lookupSym(&lib, ColumnNameFn, "sqlite3_column_name") orelse return false;
+    const bind_int64_fn = lookupSym(&lib, BindInt64Fn, "sqlite3_bind_int64") orelse return false;
+    const bind_double_fn = lookupSym(&lib, BindDoubleFn, "sqlite3_bind_double") orelse return false;
+    const bind_text_fn = lookupSym(&lib, BindTextFn, "sqlite3_bind_text") orelse return false;
+    const bind_null_fn = lookupSym(&lib, BindNullFn, "sqlite3_bind_null") orelse return false;
+    const changes_fn = lookupSym(&lib, ChangesFn, "sqlite3_changes") orelse return false;
+    const last_insert_rowid_fn = lookupSym(&lib, LastInsertRowidFn, "sqlite3_last_insert_rowid") orelse return false;
 
     g_lib = lib;
     g_funcs = .{

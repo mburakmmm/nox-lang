@@ -14,6 +14,27 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.1.1]
+
+### Düzeltildi
+- **`nox.sqlite`nin Zig kabuğu (`runtime/stdlib_shims/sqlite.zig`) Windows'ta
+  HİÇ DERLENEMİYORDU** — `v1.1.0`nun `windows-x64` release CI işi bunu
+  YAKALADI (bkz. `gh run view`, `zig build (ReleaseFast)` adımı 11 hatayla
+  başarısız oldu). Kök sebep: Zig 0.16'nın `std.DynLib`i Windows İçin
+  HİÇBİR implementasyon TAŞIMIYOR (`dynamic_library.zig`nin `switch
+  (native_os)`ı yalnızca Linux/macOS/BSD'yi kapsıyor, `else` dalı BİLİNÇLİ
+  bir `@compileError`dır — geçici bir eksiklik DEĞİL). `noxrt.o` HER Nox
+  programına koşulsuz bağlandığından, bu Windows'ta noxc'nin KENDİSİNİN
+  derlenmesini (sqlite KULLANMAYAN programlar DAHİL) BOZUYORDU. Düzeltme:
+  `crypto.zig`nin `SystemFunction036`/`advapi32` özel-durumuyla AYNI desen
+  — Windows'ta `std.DynLib` YERİNE `kernel32.dll`nin KENDİ `LoadLibraryA`/
+  `GetProcAddress`si DOĞRUDAN kullanılır. `-Dtarget=x86_64-windows` İLE
+  çapraz-derleme yapılarak DOĞRULANDI (bu makinede gerçek bir Windows
+  ortamı olmadığından, çalışma-zamanı testi CI'nin bir SONRAKİ `windows-x64`
+  işine bırakılıyor). **v1.1.0'ın GitHub Release'i bu YÜZDEN `windows-x64`
+  varlığından YOKSUNDU** — `VERSIONING.md`nin KENDİ politikası gereği o
+  etiket/release SİLİNMEDİ, düzeltme bu YENİ PATCH sürümüyle gelir.
+
 ## [1.1.0]
 
 ### Değerlendirildi
