@@ -595,6 +595,60 @@ NE KADARINDAN sorumlu olduğunu AYRIŞTIRMAK İçin HH.6'yı TEK BAŞINA test
 eden bir ARA ölçüm) — bu tur, TOPLU etkiyi doğrulamayı hedefledi, katkı
 AYRIŞTIRMASINI DEĞİL.
 
+### 2026-07-25 yeniden-koşumu — README'nin tablosuyla RESULTS.md'nin bu bölümü ARASINDAKİ tutarsızlık düzeltildi
+
+**Bulundu (kullanıcının AÇIK talebiyle):** README.md/README.en.md'nin
+"HTTP verimi" tablosu (o dosyaların KENDİ İÇİNDE) HÂLÂ Faz HH'DEN ÖNCEKİ
+(keep-alive EKLENMEDEN ÖNCEki, ~12-17K İstek/sn) Nox sayılarını
+gösteriyordu — HH.6'nin keep-alive'ı EKLEMESİNDEN SONRA (yukarıdaki
+"Faz HH SONRASI yeniden-koşum" bölümünde ZATEN ölçülüp belgelenmiş,
+~165K-182K) HİÇ GÜNCELLENMEMİŞTİ. Bu, README'DE Nox'un ~13-17K
+İstek/sn'YE KARŞI Go'nun 190-196K İstek/sn GÖSTERMESİNE yol açıyordu —
+kullanıcının "garip duruyor" olarak fark ettiği TAM OLARAK BUYDU (Nox
+SAYISI kendi RESULTS.md'sindeki DAHA GÜNCEL sayıyla bile TUTARSIZDI).
+
+**Bu turda TÜM DÖRT sunucu SIFIRDAN, aynı `benchmarks/http_compare/`
+kaynağıyla (kod DEĞİŞMEDİ) yeniden ölçüldü** (Apple M4, 10 çekirdek —
+HH-sonrası turla AYNI makine, `wrk 4.2.0`, `--latency`, `ReleaseFast`
+runtime `zig build -Doptimize=ReleaseFast` İLE DOĞRULANARAK). **Metodoloji
+notu (bu turda BULUNAN, GERÇEK bir tuzak):** `uvicorn --workers`in
+SPAWN ettiği worker'lar (`pkill -f "uvicorn fastapi_server:app"`
+deseniyle EŞLEŞMEYEN, bare `python -c "from multiprocessing.spawn..."`
+komut satırlı alt süreçler — Faz II'nin ÖNCEKİ bir turunda ZATEN
+BULUNMUŞ AYNI hata) VE macOS'un port'u hemen yeniden kullanılabilir
+KILMAMASI (ilk denemede Go sunucusunun `ListenAndServe`i hatasını
+KONTROL ETMEDİĞİNDEN, bir ÖNCEKİ sunucunun bıraktığı TIME_WAIT
+soketleri YÜZÜNDEN sessizce ÇÖKÜP çıkması) İKİ AYRI koşumu bozdu; HER
+sunucu geçişi ARASINA `lsof`/`pkill` İLE port'u ZORLA temizleyen VE
+BAĞLANTI-fırtınası SONRASI 4-6 saniyelik bir soğuma süresi TANIYAN bir
+script İLE düzeltildi. HER sunucu/eşzamanlılık kombinasyonu 3 KEZ
+koşturuldu, tabloda ORTANCA (median) DEĞER kullanıldı (varyans, ÖZELLİKLE
+İLK — daha kısa soğuma süreli — denemede YÜKSEKTİ; 4-6sn soğuma İLE 3
+koşum ARASI fark tek haneli yüzdelere düştü).
+
+| Sunucu | c=30 (İstek/sn, ortanca/3) | c=100 (İstek/sn, ortanca/3) |
+|---|---|---|
+| Nox (`serve_multicore`, N=10) | **108,378** | **117,195** |
+| Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 21,479 | 15,930 |
+| Go (`net/http`, varsayılan keep-alive) | 103,177 | 82,784 |
+| FastAPI (`uvicorn --workers 10`, varsayılan keep-alive) | 8,936 | 9,702 |
+
+**ÖNEMLİ, DÜRÜST bir gözlem:** BU turun MUTLAK sayıları, HH-sonrası
+turun sayılarından (Nox 165K→108K/177K-182K→117K, Go 191K→103K/196K→83K,
+FastAPI 21K→9K/25K→10K) HEPSİ AŞAĞI — yalnızca Zig KABACA aynı kaldı
+(18.8K→21.5K/7.4K→15.9K, gürültü payında). TÜM sunucuların AYNI ANDA,
+AYNI YÖNDE düşmesi (Zig hariç, ki O ZATEN en YAVAŞ/en BASİT mimari
+olduğundan paylaşımlı yükten en AZ etkilenir) bu makinenin BU oturumda
+(Claude Code'un KENDİSİ + editör/tarayıcı gibi ARKA PLAN uygulamaları
+İLE) HH-sonrası turun "sessiz" ortamına GÖRE paylaşımlı bir CPU yükü
+ALTINDA olduğuna işaret ediyor — Nox'ta/Go'da/FastAPI'de bir GERİLEME
+DEĞİL. **Kritik olan, sunucular ARASI SIRALAMA/ORAN BU turda da
+KORUNDU:** Nox HÂLÂ hem Zig'i hem Go'yu hem FastAPI'yi HER İKİ
+eşzamanlılık seviyesinde de GEÇİYOR — HH-sonrası turun "Nox artık Go'nun
+mimarisiyle AYNI rejimde çalışıyor" bulgusu BU turda da (hatta Nox
+Go'yu MUTLAK olarak da geçecek kadar) DOĞRULANDI. README.md/README.en.md
+BU tabloyla güncellendi (eski, Faz HH-ÖNCESİ sayılar SİLİNDİ).
+
 ## Bölüm 4 — Faz II: `nox.*` stdlib / Rust `std` karşılaştırması ve eksik-fonksiyon analizi
 
 **Kaynak:** kullanıcının AÇIK talebi — HH serisinin kapanışının hemen

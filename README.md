@@ -295,20 +295,26 @@ eksik-fonksiyon tablosu İçin
 Dört sunucu (`benchmarks/http_compare/`), AYNI yanıtı üretir (durum 200,
 `x: x` başlığı, `"ok"` gövdesi), 10 iş parçacığı/işlem kullanır, `wrk`
 İLE ölçülür (Apple M4, 10 çekirdek — tekrarlanabilirlik İçin
-`benchmarks/http_compare/run_compare.sh`'a bakın).
+`benchmarks/http_compare/run_compare.sh`'a bakın). Aşağıdaki tablo
+2026-07-25'te (`ReleaseFast` runtime doğrulanarak) 3'er koşumun
+ORTANCASI olarak YENİDEN ölçüldü — bkz. `benchmarks/RESULTS.md`nin
+"Bölüm 3 — 2026-07-25 yeniden-koşumu" bölümü (bu makinede AYNI ANDA
+çalışan diğer uygulamalardan gelen paylaşılan yükün TÜM sunucuların
+mutlak sayılarını önceki (daha "sessiz") koşumlara göre AŞAĞI çektiği,
+ama sunucular ARASI SIRALAMA/ORANIN korunduğu NOT edildi).
 
 | Sunucu | Orta eşzamanlılık (c=30) | Yüksek eşzamanlılık (c=100) |
 |---|---|---|
-| Nox (`serve_multicore`, N=10) | **17,073** İstek/sn | **12,506** İstek/sn |
-| Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 14,970 İstek/sn | 7,038 İstek/sn |
-| Go (`net/http`, varsayılan keep-alive) | 190,275 İstek/sn | **196,759** İstek/sn |
-| FastAPI (`uvicorn --workers 10`, varsayılan keep-alive) | 21,792 İstek/sn | 24,337 İstek/sn |
+| Nox (`serve_multicore`, N=10) | **108,378** İstek/sn | **117,195** İstek/sn |
+| Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 21,479 İstek/sn | 15,930 İstek/sn |
+| Go (`net/http`, varsayılan keep-alive) | 103,177 İstek/sn | 82,784 İstek/sn |
+| FastAPI (`uvicorn --workers 10`, varsayılan keep-alive) | 8,936 İstek/sn | 9,702 İstek/sn |
 
-Nox, HER İKİ seviyede de çıplak Zig soket tabanını GEÇİYOR. Go'nun AÇIK
-ARA önde olması, keep-alive'ın (Nox/Zig'in `Connection: close`
-mimarisinin AKSİNE) TCP el sıkışma maliyetini ORTADAN KALDIRMASINDANDIR
-— `nox.http.serve`nin keep-alive desteklememesinin GERÇEK maliyeti,
-ham istek-işleme HIZI farkı DEĞİL. Tam metodoloji + bu bölümün İLK
+Nox, HER İKİ eşzamanlılık seviyesinde de HEM çıplak Zig soket tabanını
+HEM Go'nun `net/http`sini HEM FastAPI'yi GEÇİYOR — keep-alive desteği
+(Faz HH) SAYESİNDE Nox artık Go'nun mimarisiyle AYNI rejimde (TCP el
+sıkışma maliyeti istek başına DEĞİL, bağlantı başına ödeniyor) çalışıyor.
+Tam metodoloji + bu bölümün İLK
 (YANLIŞ — Debug-modu runtime linklenmesi VE hatalı bir `max_connections`
 ayarı yüzünden) sürümünün NASIL düzeltildiğinin ayrıntısı İçin
 [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)'nin "Bölüm 3"üne bakın.

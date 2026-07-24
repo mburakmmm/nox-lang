@@ -302,20 +302,25 @@ methodology and the missing-function table.
 Four servers (`benchmarks/http_compare/`) all produce the identical
 response (status 200, header `x: x`, body `"ok"`), each using 10
 threads/processes, measured with `wrk` (Apple M4, 10 cores — see
-`benchmarks/http_compare/run_compare.sh` for reproducibility).
+`benchmarks/http_compare/run_compare.sh` for reproducibility). The
+table below was re-measured on 2026-07-25 (`ReleaseFast` runtime
+confirmed) as the median of 3 runs each — see "Bölüm 3 — 2026-07-25
+yeniden-koşumu" in `benchmarks/RESULTS.md` (shared load from other
+apps running on the machine at the same time pulled every server's
+absolute numbers down relative to earlier, "quieter" runs, but the
+relative ranking/ratio between servers held).
 
 | Server | Moderate concurrency (c=30) | High concurrency (c=100) |
 |---|---|---|
-| Nox (`serve_multicore`, N=10) | **17,073** req/s | **12,506** req/s |
-| Zig (raw `std.c` sockets, N=10 threads) | 14,970 req/s | 7,038 req/s |
-| Go (`net/http`, default keep-alive) | 190,275 req/s | **196,759** req/s |
-| FastAPI (`uvicorn --workers 10`) | 21,792 req/s | 24,337 req/s |
+| Nox (`serve_multicore`, N=10) | **108,378** req/s | **117,195** req/s |
+| Zig (raw `std.c` sockets, N=10 threads) | 21,479 req/s | 15,930 req/s |
+| Go (`net/http`, default keep-alive) | 103,177 req/s | 82,784 req/s |
+| FastAPI (`uvicorn --workers 10`) | 8,936 req/s | 9,702 req/s |
 
-Nox beats the raw Zig socket baseline at both levels. Go's large lead is
-because keep-alive (unlike Nox/Zig's `Connection: close` design)
-eliminates TCP handshake cost per request — this reflects the real,
-measurable cost of `nox.http.serve` not yet supporting keep-alive, not a
-difference in raw request-processing speed. See "Bölüm 3" in
+Nox now beats the raw Zig socket baseline, Go's `net/http`, and FastAPI
+at both concurrency levels — thanks to keep-alive support (Phase HH),
+Nox runs in the same regime as Go's architecture (TCP handshake cost
+paid per connection, not per request). See "Bölüm 3" in
 [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md) (Turkish) for the full
 methodology, including how this section's *first* published version was
 wrong (a Debug-mode runtime link + a misconfigured `max_connections`
