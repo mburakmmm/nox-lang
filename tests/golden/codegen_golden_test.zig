@@ -1603,6 +1603,18 @@ test "codegen(çalıştır): Güvenlik M-4/M-6 — nox.crypto.hmac_sha256/consta
     );
 }
 
+// Parola hash'leme (argon2id/bcrypt/scrypt) — hash'in KENDİSİ (rastgele
+// tuz İçerdiğinden) deterministik DEĞİLDİR, bu YÜZDEN `crypto_hmac_and_
+// secure_random`daki `t1 == t2` deseniyle AYNI: yalnızca doğrulama
+// SONUÇLARI (bool) VE İKİ hash'in birbirinden FARKLI olduğu (`h1 == h1b`)
+// karşılaştırılır, ham hash dizesi YAZDIRILMAZ.
+test "codegen(çalıştır): nox.crypto.argon2_hash/bcrypt_hash/scrypt_hash + verify" {
+    try expectGolden(
+        @embedFile("codegen_cases/crypto_password_hashing.nox"),
+        @embedFile("codegen_cases/crypto_password_hashing.expected"),
+    );
+}
+
 test "codegen(çalıştır): nox.time.DateTime — bilinen epoch-ms'in doğru takvim bileşenlerine ayrıştırılması" {
     try expectGolden(
         @embedFile("codegen_cases/time_datetime_from_epoch_ms.nox"),

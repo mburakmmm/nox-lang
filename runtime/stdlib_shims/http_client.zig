@@ -148,7 +148,7 @@ const ClientIoState = enum(u8) { uninit, initializing, ready };
 var g_client_io_state: std.atomic.Value(ClientIoState) = .init(.uninit);
 var g_client_io_storage: std.Io.Threaded = undefined;
 
-fn sharedClientIo() std.Io {
+pub fn sharedClientIo() std.Io {
     if (g_client_io_state.cmpxchgStrong(.uninit, .initializing, .acquire, .monotonic) == null) {
         // `async_limit`/`concurrent_limit` BİLİNÇLİ olarak `.nothing` —
         // `std.http.Client`in KENDİSİ `io.async`/`io.concurrent` üzerinden

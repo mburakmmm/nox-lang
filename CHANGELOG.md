@@ -1617,6 +1617,23 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
   "AST alanı bir kez çözülüp yerinde YENİDEN YAZILMIYOR, HER tüketici
   kendi başına çözmeli" kalıbının kod tabanında en az 4. tekrarı.
 
+### Eklendi (gerçek backend/app kütüphaneleri turu — nox.sqlite'tan sonra)
+- **Parola hash'leme: `nox.crypto.argon2_hash`/`bcrypt_hash`/`scrypt_hash`
+  + karşılık gelen `*_verify`.** Zig'in KENDİ, savaş-test edilmiş
+  `std.crypto.pwhash.{argon2,bcrypt,scrypt}`si — sıfırdan bir algoritma
+  YAZILMADI, harici bağımlılık EKLENMEDİ. Üçü de OWASP'ın ÖNERDİĞİ tek bir
+  maliyet parametresi ön-ayarını kullanır, HİÇBİR tuning seçeneği v1'de
+  SUNULMAZ. Dönen dize (`$argon2id$v=19$...`/`$2b$10$...`/`$scrypt$...`)
+  tuzu (salt) + tüm parametreleri KENDİ İÇİNDE taşır, doğrudan bir DB
+  sütununa yazılabilir. `*_verify`, yanlış parola İLE bozuk/başka-
+  algoritmadan bir hash dizesini AYNI şekilde `False` DÖNEREK ayırt
+  etmez (yan-kanal/oracle sızıntısını ÖNLEMEK İçin bilinçli bir karar).
+  `argon2`/`scrypt`in `strHash`ı bir `std.Io` gerektirdiğinden,
+  `http_client.zig`nin TÜM istekler ARASINDA paylaşılan `sharedClientIo`si
+  (`pub` yapılarak) burada da yeniden kullanıldı — YENİ bir `std.Io.
+  Threaded` örneği süreç-geneli bir sinyal-işleyici çakışması riski
+  taşırdı (bkz. o fonksiyonun KENDİ belge notu).
+
 ## [1.0.0]
 
 ### Eklendi

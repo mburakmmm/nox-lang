@@ -53,3 +53,53 @@ def constant_time_eq(a: str, b: str) -> bool:
 # (GERÇEKÇİ HERHANGİ bir token/anahtar büyüklüğünün ÇOK ÜSTÜNDE).
 def secure_random_hex(n_bytes: int) -> str:
     return nox_crypto_secure_random_hex_raw(n_bytes)
+
+# Parola hash'leme (argon2id/bcrypt/scrypt) — Zig'in KENDİ `std.crypto.
+# pwhash.*`si (`runtime/stdlib_shims/crypto.zig`). Üçü de OWASP'ın ÖNERDİĞİ
+# maliyet parametresini KULLANIR, HİÇBİR tuning seçeneği SUNULMAZ (yanlış/
+# zayıf bir parametre seçme riskini TAMAMEN ortadan kaldırır). Dönen dize
+# TÜM parametreleri+tuzu (salt) KENDİ İÇİNDE taşır — AYRI bir tuz saklamaya
+# GEREK YOK, doğrudan bir veritabanı sütununa yazılabilir.
+#
+# GÜVENLİK NOTU: `sha256`/`sha512`/`sha1` parola SAKLAMAK İçin ASLA
+# KULLANILMAMALIDIR (hızlı hash'ler, kaba-kuvvet/gökkuşağı-tablosu
+# saldırılarına AÇIKTIR) — parola saklama İçin HER ZAMAN bu üçünden
+# BİRİNİ (argon2id ÖNERİLİR, OWASP'ın 2024 önerisiyle UYUMLU) kullanın.
+extern def nox_crypto_argon2_hash_raw(password: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_crypto_argon2_verify_raw(hash: str, password: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_crypto_bcrypt_hash_raw(password: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_crypto_bcrypt_verify_raw(hash: str, password: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_crypto_scrypt_hash_raw(password: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_crypto_scrypt_verify_raw(hash: str, password: str) -> int from "zig-out/lib/noxrt.o"
+
+# Argon2id (OWASP'ın 2024 parola-saklama önerisinde İLK sırada önerilen
+# algoritma) İLE bir parolayı hash'ler — dönen dize (`$argon2id$v=19$...`)
+# doğrudan saklanabilir, doğrulama İçin `argon2_verify`ye geçilir.
+def argon2_hash(password: str) -> str:
+    return nox_crypto_argon2_hash_raw(password)
+
+# `argon2_hash`nin ürettiği bir hash'e karşı bir parolayı doğrular. Yanlış
+# parola VE bozuk/geçersiz bir `hash` (ör. BAŞKA bir algoritmadan gelen)
+# AYNI şekilde `False` DÖNER — hangi nedenle başarısız olduğu bilinçli
+# olarak AYIRT EDİLMEZ (bir yan-kanal sızıntısı olmasın diye).
+def argon2_verify(hash: str, password: str) -> bool:
+    return nox_crypto_argon2_verify_raw(hash, password) != 0
+
+# bcrypt İLE bir parolayı hash'ler ($2b$... biçimi) — eski sistemlerle
+# uyumluluk/dosya-boyutu ÖNEMLİYSE argon2id YERİNE tercih edilebilir
+# (60 karakterlik SABİT uzunluk, argon2/scrypt'in AKSİNE).
+def bcrypt_hash(password: str) -> str:
+    return nox_crypto_bcrypt_hash_raw(password)
+
+def bcrypt_verify(hash: str, password: str) -> bool:
+    return nox_crypto_bcrypt_verify_raw(hash, password) != 0
+
+# scrypt İLE bir parolayı hash'ler — bellek-sert (memory-hard) bir
+# alternatif, ÖZEL donanım (ASIC/FPGA) saldırılarına argon2id/bcrypt'ten
+# DAHA dirençlidir ama OWASP varsayılan parametreleriyle (128 MB/çağrı)
+# argon2id'den DAHA maliyetlidir.
+def scrypt_hash(password: str) -> str:
+    return nox_crypto_scrypt_hash_raw(password)
+
+def scrypt_verify(hash: str, password: str) -> bool:
+    return nox_crypto_scrypt_verify_raw(hash, password) != 0

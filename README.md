@@ -65,11 +65,13 @@ print(c.value)
   çekirdeğiyle sınırlı KALMADAN gerçek paralellik sağlar.
 - Büyüyen bir standart kütüphane (`nox.http`, `nox.json`, `nox.strings`,
   `nox.math`, `nox.os`/`nox.fs`/`nox.path`, `nox.time`, `nox.random`,
-  `nox.crypto`, `nox.regex`, `nox.test`, `nox.thread`, `nox.sqlite` —
-  `libsqlite3`e çalışma zamanında tembel bağlanan, statik bağımlılık
-  KATMAYAN bir SQLite sürücüsü) ve Go tarzı merkeziyetsiz (GitHub URL'si
-  ya da doğrudan bir indeks URL'si üzerinden, `noxc search`) bir paket
-  sistemi.
+  `nox.crypto` (SHA-256/1/512, HMAC, zaman-sabit karşılaştırma, güvenli
+  rastgelelik, VE argon2id/bcrypt/scrypt parola hash'leme — hepsi Zig'in
+  KENDİ `std.crypto`si, harici bağımlılık YOK), `nox.regex`, `nox.test`,
+  `nox.thread`, `nox.sqlite` — `libsqlite3`e çalışma zamanında tembel
+  bağlanan, statik bağımlılık KATMAYAN bir SQLite sürücüsü) ve Go tarzı
+  merkeziyetsiz (GitHub URL'si ya da doğrudan bir indeks URL'si
+  üzerinden, `noxc search`) bir paket sistemi.
 
 Mimari/tasarım kararlarının tam dökümü için
 [`nox-teknik-spesifikasyon.md`](nox-teknik-spesifikasyon.md)'ye bakın.

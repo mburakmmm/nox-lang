@@ -67,11 +67,13 @@ print(c.value)
   core.
 - A growing standard library (`nox.http`, `nox.json`, `nox.strings`,
   `nox.math`, `nox.os`/`nox.fs`/`nox.path`, `nox.time`, `nox.random`,
-  `nox.crypto`, `nox.regex`, `nox.test`, `nox.thread`, `nox.sqlite` — a
-  SQLite driver that lazily dlopen's `libsqlite3` at runtime, adding zero
-  static dependency for programs that don't use it) and a Go-style
-  decentralized package system (GitHub URL, or a direct package-index
-  URL via `noxc search`).
+  `nox.crypto` (SHA-256/1/512, HMAC, constant-time compare, secure
+  randomness, and argon2id/bcrypt/scrypt password hashing — all backed
+  by Zig's own `std.crypto`, no external dependency), `nox.regex`,
+  `nox.test`, `nox.thread`, `nox.sqlite` — a SQLite driver that lazily
+  dlopen's `libsqlite3` at runtime, adding zero static dependency for
+  programs that don't use it) and a Go-style decentralized package
+  system (GitHub URL, or a direct package-index URL via `noxc search`).
 
 For the full record of architectural/design decisions, see
 [`nox-teknik-spesifikasyon.md`](nox-teknik-spesifikasyon.md) (Turkish).

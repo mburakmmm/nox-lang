@@ -13,6 +13,94 @@ const http_client = @import("http_client.zig");
 const dupeToNoxStr = http_client.dupeToNoxStr;
 const hex_chars = "0123456789abcdef";
 
+// Parola hash'leme (argon2id/bcrypt/scrypt) — Zig'in KENDİ, savaş-test
+// edilmiş `std.crypto.pwhash.*`si (sıfırdan YAZILMAZ, dosyanın geri kalanıyla
+// AYNI ilke). Üçü de OWASP'ın KENDİ önerdiği parametre ön-ayarını kullanır
+// (`Params.owasp*`) — kullanıcıya bir tuning API'si SUNULMAZ, "doğru
+// varsayılan, hiç seçenek yok" v1 basitleştirmesi (yanlış/zayıf bir maliyet
+// parametresi seçme riskini TAMAMEN ortadan kaldırır). `strHash`/`strVerify`
+// PHC/crypt biçimli TEK bir dizede TÜM parametreleri+tuzu (salt) gömer, bu
+// YÜZDEN doğrulama İçin AYRI bir tuz/parametre saklanmasına GEREK YOK.
+// `argon2`/`scrypt`in `strHash`ı bir `std.Io` GEREKTİRİR (yalnızca
+// `io.random()` İçin, tuz üretimi — bkz. std kaynağı) — `http_client.zig`nin
+// TÜM istekler ARASINDA PAYLAŞILAN `sharedClientIo()`sı burada da YENİDEN
+// KULLANILIR (ayrı bir `std.Io.Threaded` örneği İçin AYNI süreç-geneli
+// sinyal-işleyici çakışması riski taşımamak İçin — bkz. o fonksiyonun KENDİ
+// belge notu).
+const pwhash = std.crypto.pwhash;
+const sharedIo = http_client.sharedClientIo;
+
+/// Herhangi bir parola-hash `strHash`/`strVerify` çağrısı İçin yeterince
+/// büyük, sabit boyutlu bir yığın arabelleği — argon2/scrypt'in KENDİ
+/// test dosyalarında AYNI amaçla kullanılan 128 bayt İLE AYNI (bkz. std
+/// kaynağı `argon2.zig`/`scrypt.zig` testleri); bcrypt'in `hash_length`i
+/// (60) zaten bunun ÇOK altında.
+const pwhash_buf_len = 128;
+
+export fn nox_crypto_argon2_hash_raw(rt: ?*anyopaque, password: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    const p = password orelse return dupeToNoxStr(rt, "");
+    var buf: [pwhash_buf_len]u8 = undefined;
+    const hash = pwhash.argon2.strHash(std.mem.span(p), .{
+        .allocator = std.heap.page_allocator,
+        .params = pwhash.argon2.Params.owasp_2id,
+    }, &buf, sharedIo()) catch return dupeToNoxStr(rt, "");
+    return dupeToNoxStr(rt, hash);
+}
+
+/// Bir parolayı DAHA ÖNCE `argon2_hash`nin ürettiği bir PHC dizesine karşı
+/// doğrular. Yanlış parola VE bozuk/geçersiz bir `hash` dizesi (ör. BAŞKA
+/// bir algoritmadan gelen) AYNI şekilde "doğrulanamadı" (0) DÖNER — hangi
+/// nedenle başarısız olduğunu AYIRT ETMEMEK bilinçli bir güvenlik kararıdır
+/// (bir saldırgana bozuk-hash/yanlış-parola arasındaki farkı bir yan-kanal
+/// OLARAK sızdırmaz).
+export fn nox_crypto_argon2_verify_raw(hash: ?[*:0]const u8, password: ?[*:0]const u8) callconv(.c) i32 {
+    const h = hash orelse return 0;
+    const p = password orelse return 0;
+    pwhash.argon2.strVerify(std.mem.span(h), std.mem.span(p), .{
+        .allocator = std.heap.page_allocator,
+    }, sharedIo()) catch return 0;
+    return 1;
+}
+
+export fn nox_crypto_bcrypt_hash_raw(rt: ?*anyopaque, password: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    const p = password orelse return dupeToNoxStr(rt, "");
+    var buf: [pwhash_buf_len]u8 = undefined;
+    const hash = pwhash.bcrypt.strHash(std.mem.span(p), .{
+        .params = pwhash.bcrypt.Params.owasp,
+        .encoding = .crypt,
+    }, &buf, sharedIo()) catch return dupeToNoxStr(rt, "");
+    return dupeToNoxStr(rt, hash);
+}
+
+export fn nox_crypto_bcrypt_verify_raw(hash: ?[*:0]const u8, password: ?[*:0]const u8) callconv(.c) i32 {
+    const h = hash orelse return 0;
+    const p = password orelse return 0;
+    pwhash.bcrypt.strVerify(std.mem.span(h), std.mem.span(p), .{
+        .silently_truncate_password = false,
+    }) catch return 0;
+    return 1;
+}
+
+export fn nox_crypto_scrypt_hash_raw(rt: ?*anyopaque, password: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    const p = password orelse return dupeToNoxStr(rt, "");
+    var buf: [pwhash_buf_len]u8 = undefined;
+    const hash = pwhash.scrypt.strHash(std.mem.span(p), .{
+        .allocator = std.heap.page_allocator,
+        .params = pwhash.scrypt.Params.owasp,
+        .encoding = .phc,
+    }, &buf, sharedIo()) catch return dupeToNoxStr(rt, "");
+    return dupeToNoxStr(rt, hash);
+}
+
+export fn nox_crypto_scrypt_verify_raw(hash: ?[*:0]const u8, password: ?[*:0]const u8) callconv(.c) i32 {
+    const h = hash orelse return 0;
+    const p = password orelse return 0;
+    pwhash.scrypt.strVerify(std.mem.span(h), std.mem.span(p), .{
+        .allocator = std.heap.page_allocator,
+    }) catch return 0;
+    return 1;
+}
+
 /// Faz LL.4 (bkz. nox-teknik-spesifikasyon.md §3.71): `std.c.arc4random_buf`
 /// Windows'ta void'dir (bkz. `runtime/collections/dict.zig`nin AYNI
 /// düzeltmesi) — `advapi32.dll`nin `RtlGenRandom`i (`SystemFunction036`)
@@ -342,4 +430,69 @@ test "Faz KK.6: nox_crypto_secure_random_hex_raw doğru uzunlukta hex döner VE 
     const empty = nox_crypto_secure_random_hex_raw(rt, 0) orelse return error.Failed;
     defer str.nox_str_release(rt, empty);
     try std.testing.expectEqual(@as(usize, 0), std.mem.sliceTo(empty, 0).len);
+}
+
+test "argon2_hash/verify: dogru parola dogrulanir, yanlis parola reddedilir" {
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const hash = nox_crypto_argon2_hash_raw(rt, "doğru parola") orelse return error.Failed;
+    defer str.nox_str_release(rt, hash);
+    try std.testing.expect(std.mem.startsWith(u8, std.mem.sliceTo(hash, 0), "$argon2id$"));
+
+    try std.testing.expectEqual(@as(i32, 1), nox_crypto_argon2_verify_raw(hash, "doğru parola"));
+    try std.testing.expectEqual(@as(i32, 0), nox_crypto_argon2_verify_raw(hash, "yanlış parola"));
+}
+
+test "bcrypt_hash/verify: dogru parola dogrulanir, yanlis parola reddedilir" {
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const hash = nox_crypto_bcrypt_hash_raw(rt, "doğru parola") orelse return error.Failed;
+    defer str.nox_str_release(rt, hash);
+    try std.testing.expect(std.mem.startsWith(u8, std.mem.sliceTo(hash, 0), "$2"));
+
+    try std.testing.expectEqual(@as(i32, 1), nox_crypto_bcrypt_verify_raw(hash, "doğru parola"));
+    try std.testing.expectEqual(@as(i32, 0), nox_crypto_bcrypt_verify_raw(hash, "yanlış parola"));
+}
+
+test "scrypt_hash/verify: dogru parola dogrulanir, yanlis parola reddedilir" {
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const hash = nox_crypto_scrypt_hash_raw(rt, "doğru parola") orelse return error.Failed;
+    defer str.nox_str_release(rt, hash);
+    try std.testing.expect(std.mem.startsWith(u8, std.mem.sliceTo(hash, 0), "$scrypt$"));
+
+    try std.testing.expectEqual(@as(i32, 1), nox_crypto_scrypt_verify_raw(hash, "doğru parola"));
+    try std.testing.expectEqual(@as(i32, 0), nox_crypto_scrypt_verify_raw(hash, "yanlış parola"));
+}
+
+test "parola hash'leri her cagrida farkli tuz uretir (deterministik DEGIL)" {
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const h1 = nox_crypto_argon2_hash_raw(rt, "ayni parola") orelse return error.Failed;
+    defer str.nox_str_release(rt, h1);
+    const h2 = nox_crypto_argon2_hash_raw(rt, "ayni parola") orelse return error.Failed;
+    defer str.nox_str_release(rt, h2);
+    try std.testing.expect(!std.mem.eql(u8, std.mem.sliceTo(h1, 0), std.mem.sliceTo(h2, 0)));
+    // İKİSİ de AYNI parolayı doğrulamalı — farklı tuz, AYNI sonuç.
+    try std.testing.expectEqual(@as(i32, 1), nox_crypto_argon2_verify_raw(h1, "ayni parola"));
+    try std.testing.expectEqual(@as(i32, 1), nox_crypto_argon2_verify_raw(h2, "ayni parola"));
+}
+
+test "bozuk/capraz-algoritma hash dizeleri cokme yerine guvenle reddedilir" {
+    try std.testing.expectEqual(@as(i32, 0), nox_crypto_argon2_verify_raw("gecersiz-bir-dize", "parola"));
+    try std.testing.expectEqual(@as(i32, 0), nox_crypto_bcrypt_verify_raw("gecersiz-bir-dize", "parola"));
+    try std.testing.expectEqual(@as(i32, 0), nox_crypto_scrypt_verify_raw("gecersiz-bir-dize", "parola"));
+    try std.testing.expectEqual(@as(i32, 0), nox_crypto_argon2_verify_raw("", ""));
 }
