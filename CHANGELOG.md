@@ -8,7 +8,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `[1.0.0]` girişi altında toplanmıştır; öncesi için
 `nox-teknik-spesifikasyon.md`nin tam geliştirme geçmişine bakın.
 
-## [Yayımlanmamış]
+`v1.0.0`dan SONRA (2026-07-24'ten itibaren) `VERSIONING.md` §4'ün "her
+commit bir sürümdür" politikası GEÇERLİDİR — `main`e giden HER commit
+KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
+ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
+BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
+
+## [1.1.0]
 
 ### Değerlendirildi
 - Gerçek M:N (çok çekirdekli) fiber zamanlayıcısı (Faz AA.1) — yalnızca

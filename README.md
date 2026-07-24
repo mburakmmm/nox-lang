@@ -8,14 +8,15 @@ derlenen** bir dildir. Yorumlayıcı yok, GC duraklaması yok — [QBE](https://
 tabanlı bir derleyici arka ucu ve Zig ile yazılmış hafif bir çalışma zamanı
 kullanılır.
 
-> **`v1.0.0` yayımlandı ve etiketlendi** — `docs/uretim-hazirlik-analizi.md`nin
+> **`v1.1.0` yayımlandı ve etiketlendi** — `docs/uretim-hazirlik-analizi.md`nin
 > üretim-hazırlığı yol haritasındaki TÜM fazlar (Q–Z) tamamlandı, bkz.
 > [`nox-teknik-spesifikasyon.md` §3.43](nox-teknik-spesifikasyon.md)
 > (somut "hazır" tanımı) ve [`VERSIONING.md`](VERSIONING.md) (semver
-> politikası + stabilite garantisi). **`main` dalı ŞU AN `v1.1.0`a doğru
-> aktif geliştiriliyor** (`noxc --version` bunu doğru raporlar) — henüz
-> yayımlanmamış değişiklikler için bkz. [`CHANGELOG.md`](CHANGELOG.md)nin
-> `[Yayımlanmamış]` bölümü. Katkı için bkz.
+> politikası + stabilite garantisi). **`main`e giden HER commit ARTIK
+> KENDİ sürüm etiketiyle otomatik yayımlanır** (bkz. `VERSIONING.md` §4,
+> "her commit bir sürümdür") — `noxc --version` HER ZAMAN çalıştığınız
+> ikilinin GERÇEK sürümünü raporlar; tam geçmiş için bkz.
+> [`CHANGELOG.md`](CHANGELOG.md). Katkı için bkz.
 > [Katkıda Bulunma](CONTRIBUTING.md).
 
 ```nox

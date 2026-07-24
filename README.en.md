@@ -8,14 +8,15 @@ systems programming languages. No interpreter, no GC pauses — it uses a
 [QBE](https://c9x.me/compile/)-based compiler backend and a lightweight
 runtime written in Zig.
 
-> **`v1.0.0` has been released and tagged** — every phase (Q–Z) of the
+> **`v1.1.0` has been released and tagged** — every phase (Q–Z) of the
 > production-readiness roadmap in `docs/uretim-hazirlik-analizi.md` is
 > complete; see [`nox-teknik-spesifikasyon.md` §3.43](nox-teknik-spesifikasyon.md)
 > (the concrete "done" definition) and [`VERSIONING.md`](VERSIONING.md)
-> (semver policy + stability guarantee). **The `main` branch is currently
-> under active development towards `v1.1.0`** (`noxc --version` reports
-> this correctly) — see the `[Unreleased]` section of
-> [`CHANGELOG.md`](CHANGELOG.md) for changes not yet released. See
+> (semver policy + stability guarantee). **Every commit to `main` is now
+> automatically released under its own version tag** (see `VERSIONING.md`
+> §4, "every commit is a release") — `noxc --version` always reports the
+> real version of the binary you're running; see
+> [`CHANGELOG.md`](CHANGELOG.md) for the full history. See
 > [Contributing](CONTRIBUTING.en.md) to contribute.
 >
 > The technical specification (`nox-teknik-spesifikasyon.md`) is Nox's
