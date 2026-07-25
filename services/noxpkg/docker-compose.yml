@@ -1,0 +1,33 @@
+# services/noxpkg/docker-compose.yml — buradan (nox-lang deposunun
+# İÇİNDEN) çalıştırılmalıdır: `docker compose -f services/noxpkg/
+# docker-compose.yml up --build` (build context'in DEPO KÖKÜNE
+# İŞARET ettiğine dikkat — Dockerfile compiler/stdlib/runtime'a
+# ihtiyaç duyar).
+#
+# `NOXPKG_ADMIN_PASSWORD_HASH`/`NOXPKG_SESSION_SECRET` ortamdan
+# okunur (`.env` dosyası ya da kabuk export'u) — ASLA bu dosyaya
+# GÖMÜLMEZ. Şifre hash'i üretmek İçin:
+#   noxc run services/noxpkg/scripts/gen_admin_hash.nox -- '<sifre>'
+services:
+  noxpkg:
+    build:
+      context: ../..
+      dockerfile: services/noxpkg/Dockerfile
+    environment:
+      NOXPKG_ADMIN_PASSWORD_HASH: ${NOXPKG_ADMIN_PASSWORD_HASH:?NOXPKG_ADMIN_PASSWORD_HASH ayarlanmali}
+      NOXPKG_SESSION_SECRET: ${NOXPKG_SESSION_SECRET:?NOXPKG_SESSION_SECRET ayarlanmali}
+    # **Bulundu, GERÇEK bir çalışma zamanı kısıtı:** `nox.http.serve*`
+    # BAĞLAMA adresini `127.0.0.1`e SABİTLER (runtime/stdlib_shims/
+    # http_server.zig, doğrulandı — `/proc/net/tcp`de `0100007F` olarak
+    # GÖRÜNÜR, `00000000` [`0.0.0.0`] DEĞİL) — bu YÜZDEN normal Docker
+    # port-YÖNLENDİRMESİ (`ports: "host:container"`, konteynerin KENDİ
+    # arayüz IP'sine ADRESLENMİŞ trafiği İLETİR) SESSİZCE ULAŞAMAZ.
+    # `network_mode: host` İLE konteyner HOST'un AĞ ad alanını DOĞRUDAN
+    # PAYLAŞIR — böylece içerideki `127.0.0.1` bağlaması GERÇEKTEN
+    # host'un KENDİ loopback'idir. Bu, ZATEN İSTENEN güvenlik özelliğiyle
+    # (SADECE loopback + Cloudflare Tunnel giriş yolu) TAM UYUMLU —
+    # bilinçli bir workaround, güvenlik GEVŞETMESİ DEĞİL.
+    network_mode: host
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

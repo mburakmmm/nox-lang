@@ -1,0 +1,91 @@
+# handlers_public — kimlik doğrulama GEREKTİRMEYEN uç noktalar: genel
+# index (`noxc search`/`noxc add`nin tükettiği) + `noxc publish`in
+# gönderi-kutusu.
+import nox.fs
+import nox.json
+import nox.validate
+from nox.validate import Schema
+from nox.router import Context
+from nox.http import HttpResponse
+import store
+from store import Submission
+
+# Üst-düzey `var_decl`lar fonksiyon İÇİNDEN GÖRÜLEMEDİĞİNDEN (bkz.
+# auth.nox'un belge notu) yol sabitleri sıfır-argümanlı fonksiyonlardır.
+def _index_path() -> str:
+    return "data/index.json"
+
+def _inbox_path() -> str:
+    return "data/inbox.json"
+
+def index_json(ctx: Context) -> HttpResponse:
+    path: str = _index_path()
+    if not nox.fs.exists(path):
+        return HttpResponse(200, "{\"packages\": []}", {"Content-Type": "application/json"})
+    content: str = nox.fs.read_to_string(path)
+    return HttpResponse(200, content, {"Content-Type": "application/json"})
+
+def _publish_schema() -> Schema:
+    s: Schema = Schema()
+    s.require("name", "string")
+    s.require("repo", "string")
+    s.optional("ref", "string")
+    s.optional("description", "string")
+    s.optional("tags", "array")
+    return s
+
+def _opt_field(v: JsonValue, key: str) -> JsonValue | None:
+    i: int = 0
+    n: int = nox.json.object_len(v)
+    while i < n:
+        if nox.json.object_key(v, i) == key:
+            return nox.json.object_value(v, i)
+        i = i + 1
+    return None
+
+def publish(ctx: Context) -> HttpResponse:
+    errors: list[str] = nox.validate.validate_json_str(ctx.request.body, _publish_schema())
+    if len(errors) > 0:
+        body: str = "{\"ok\": false, \"error\": " + nox.json.encode_string(errors[0]) + "}"
+        return HttpResponse(400, body, {"Content-Type": "application/json"})
+
+    v: JsonValue = nox.json.decode(ctx.request.body)
+    name: str = ""
+    name_v: JsonValue | None = _opt_field(v, "name")
+    if name_v != None:
+        name = nox.json.as_string(name_v)
+    repo: str = ""
+    repo_v: JsonValue | None = _opt_field(v, "repo")
+    if repo_v != None:
+        repo = nox.json.as_string(repo_v)
+    ref: str = "main"
+    ref_v: JsonValue | None = _opt_field(v, "ref")
+    if ref_v != None:
+        ref = nox.json.as_string(ref_v)
+    description: str = ""
+    desc_v: JsonValue | None = _opt_field(v, "description")
+    if desc_v != None:
+        description = nox.json.as_string(desc_v)
+    tags: list[str] = []
+    tags_v: JsonValue | None = _opt_field(v, "tags")
+    if tags_v != None:
+        i: int = 0
+        n: int = nox.json.array_len(tags_v)
+        while i < n:
+            tags.append(nox.json.as_string(nox.json.array_get(tags_v, i)))
+            i = i + 1
+
+    inbox_path: str = _inbox_path()
+    ok: bool = store.add_submission(inbox_path, name, repo, ref, description, tags)
+    if not ok:
+        return HttpResponse(429, "{\"ok\": false, \"error\": \"cok fazla bekleyen gonderi\"}", {"Content-Type": "application/json"})
+
+    subs: list[Submission] = store.load_inbox(inbox_path)
+    id: str = ""
+    i2: int = 0
+    while i2 < len(subs):
+        if subs[i2].name == name and subs[i2].repo == repo:
+            id = subs[i2].id
+        i2 = i2 + 1
+    body2: str = "{\"ok\": true, \"id\": " + nox.json.encode_string(id) + "}"
+    return HttpResponse(200, body2, {"Content-Type": "application/json"})

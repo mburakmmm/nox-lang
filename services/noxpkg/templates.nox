@@ -1,0 +1,60 @@
+# templates — noxpkg'in minimal/profesyonel HTML sayfaları. `nox.
+# template.render` (varsayılan HTML-kaçırma) İLE `{{ isim }}` yer-
+# tutucuları doldurulur; TEKRARLANAN satırlar (bekleyen gönderiler/index
+# girdileri) `handlers_admin.nox`de bir Nox döngüsüyle ÖNCEDEN inşa
+# edilip (HER PARÇA ZATEN `render` İLE kaçırılmış olduğundan) `render_
+# unescaped` İLE tek bir yer-tutucuya GEÇİRİLİR.
+#
+# **BİLİNÇLİ güvenlik kararı:** `id`/`name`/`repo` (`noxc publish` İLE
+# GÖNDERİLEN, GÜVENİLMEYEN girdi) HİÇBİR ZAMAN doğrudan bir inline JS
+# string literal'inin İÇİNE gömülmez (`onclick="...'{{ deger }}'..."`)
+# — `nox.template.render`in HTML-kaçırması yalnızca HTML ÖZNİTELİK
+# AYRIŞTIRMASINI korur, TARAYICI özniteliği ÇÖZÜP JS'e VERDİKTEN SONRA
+# (ör. `&#39;` -> `'`) o değer HÂLÂ bir JS string literal'inin İÇİNDEYSE
+# tırnak-kırma enjeksiyonu HÂLÂ MÜMKÜNDÜR. Bunun yerine TÜM dinamik
+# değerler `data-*` özniteliklerine yazılır, JS TARAFINDAN `.dataset`
+# ÜZERİNDEN (düz METİN olarak, ASLA kod olarak yeniden ayrıştırılmadan)
+# okunur — TEK paylaşımlı `<script>` (event delegation, satır-içi
+# `onclick` YOK) `dashboard_template`in KENDİSİNDE.
+import nox.template
+
+# Üst-düzey `var_decl`lar fonksiyon İÇİNDEN GÖRÜLEMEDİĞİNDEN (bkz.
+# auth.nox'un belge notu) TÜM şablon SABİTLERİ sıfır-argümanlı
+# fonksiyonlardır — fonksiyonlar (var_decl'ların AKSİNE) HER YERDEN
+# çağrılabilir.
+def _style() -> str:
+    return "body{font-family:-apple-system,system-ui,sans-serif;max-width:760px;margin:60px auto;padding:0 20px;color:#1a1a1a}h1{font-size:1.4rem}table{width:100%;border-collapse:collapse;margin:16px 0}th,td{text-align:left;padding:8px;border-bottom:1px solid #e0e0e0;font-size:0.9rem}th{color:#666;font-weight:600}button{padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#fff;cursor:pointer}button.danger{border-color:#c00;color:#c00}input[type=password]{width:100%;padding:10px;margin:8px 0;box-sizing:border-box;border:1px solid #ccc;border-radius:4px}.err{color:#b00;margin:8px 0;font-size:0.9rem}.muted{color:#888;font-size:0.85rem}"
+
+def _login_template() -> str:
+    return "<!doctype html><html><head><meta charset=\"utf-8\"><title>noxpkg</title><style>{{ style }}</style></head><body><h1>noxpkg</h1>{{ error_html }}<form id=\"f\"><input type=\"password\" id=\"pw\" placeholder=\"sifre\" autofocus><button type=\"submit\">Giris</button></form><script>document.getElementById('f').addEventListener('submit',function(e){e.preventDefault();fetch('/admin/login',{method:'POST',body:document.getElementById('pw').value}).then(function(r){if(r.ok){window.location='/admin';}else if(r.status===429){window.location='/admin/login?err=locked';}else{window.location='/admin/login?err=1';}});});</script></body></html>"
+
+def login_page(error_message: str) -> str:
+    error_html: str = ""
+    if len(error_message) > 0:
+        ctx: dict[str, str] = {"msg": error_message}
+        error_html = nox.template.render("<div class=\"err\">{{ msg }}</div>", ctx)
+    ctx2: dict[str, str] = {"style": _style(), "error_html": error_html}
+    return nox.template.render_unescaped(_login_template(), ctx2)
+
+# `data-csrf` KENDİSİ de bir öznitelik (JS string literal İÇİNDE DEĞİL)
+# — `<meta>` üzerinden okunur, hiçbir zaman kod olarak yeniden ayrıştırılmaz.
+def _dashboard_template() -> str:
+    return "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"csrf\" content=\"{{ csrf }}\"><title>noxpkg admin</title><style>{{ style }}</style></head><body><h1>noxpkg admin</h1><p class=\"muted\"><button id=\"logout\">cikis yap</button></p><h2>Bekleyen gonderiler</h2><table id=\"pending\"><tr><th>isim</th><th>repo</th><th>ref</th><th>aciklama</th><th></th></tr>{{ pending_rows }}</table><h2>Yayinda</h2><table id=\"idx\"><tr><th>isim</th><th>repo</th><th>aciklama</th><th></th></tr>{{ index_rows }}</table><script>function csrf(){return document.querySelector('meta[name=csrf]').content;}function post(url){return fetch(url,{method:'POST',body:csrf()});}document.getElementById('logout').addEventListener('click',function(){post('/admin/logout').then(function(){window.location='/admin/login';});});document.getElementById('pending').addEventListener('click',function(e){var tr=e.target.closest('tr');if(!tr||!tr.dataset.id)return;var id=tr.dataset.id;if(e.target.classList.contains('approve')){post('/admin/approve/'+encodeURIComponent(id)).then(function(){window.location.reload();});}else if(e.target.classList.contains('reject')){post('/admin/reject/'+encodeURIComponent(id)).then(function(){window.location.reload();});}});document.getElementById('idx').addEventListener('click',function(e){var tr=e.target.closest('tr');if(!tr||!tr.dataset.name)return;if(!e.target.classList.contains('remove'))return;fetch('/admin/index/remove',{method:'POST',body:csrf()+'\\n'+tr.dataset.name}).then(function(){window.location.reload();});});</script></body></html>"
+
+def dashboard(pending_rows_html: str, index_rows_html: str, csrf_token: str) -> str:
+    ctx: dict[str, str] = {"style": _style(), "pending_rows": pending_rows_html, "index_rows": index_rows_html, "csrf": csrf_token}
+    return nox.template.render_unescaped(_dashboard_template(), ctx)
+
+def _pending_row_template() -> str:
+    return "<tr data-id=\"{{ id }}\"><td>{{ name }}</td><td>{{ repo }}</td><td>{{ ref }}</td><td>{{ description }}</td><td><button class=\"approve\">onayla</button> <button class=\"danger reject\">reddet</button></td></tr>"
+
+def pending_row(id: str, name: str, repo: str, ref: str, description: str) -> str:
+    ctx: dict[str, str] = {"id": id, "name": name, "repo": repo, "ref": ref, "description": description}
+    return nox.template.render(_pending_row_template(), ctx)
+
+def _index_row_template() -> str:
+    return "<tr data-name=\"{{ name }}\"><td>{{ name }}</td><td>{{ repo }}</td><td>{{ description }}</td><td><button class=\"danger remove\">cikar</button></td></tr>"
+
+def index_row(name: str, repo: str, description: str) -> str:
+    ctx: dict[str, str] = {"name": name, "repo": repo, "description": description}
+    return nox.template.render(_index_row_template(), ctx)

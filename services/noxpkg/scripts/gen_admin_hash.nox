@@ -1,0 +1,20 @@
+# gen_admin_hash — tek-seferlik operatör aracı: verilen şifreyi argon2id
+# ile hash'ler, stdout'a yazar. Kullanım (bu depo kökünden):
+#   noxc run services/noxpkg/scripts/gen_admin_hash.nox -- '<sifre>'
+# Çıktı, `NOXPKG_ADMIN_PASSWORD_HASH` ortam değişkenine (container'a)
+# konur — düz metin şifre HİÇBİR YERDE saklanmaz.
+# **Bulundu, GERÇEK bir kullanım tuzağı:** `nox.os.arg(i)` HAM C
+# argv'sine dayanır (`i=0` PROGRAMIN KENDİ yolu, KULLANICI argümanları
+# DEĞİL — bir Docker container'da GERÇEK bir çökme İLE bulundu: `arg(0)`
+# ile hash'lenen değer YANLIŞLIKLA çalıştırılabilir dosyanın KENDİ
+# yoluydu, `argon2_verify` bu YÜZDEN HER ZAMAN `False` dönüyordu). İLK
+# kullanıcı argümanı İçin `arg(1)` KULLANILMALIDIR.
+import nox.crypto
+import nox.os
+
+if nox.os.arg_count() < 2:
+    print("kullanim: noxc run gen_admin_hash.nox -- '<sifre>'")
+    nox.os.exit(1)
+
+password: str = nox.os.arg(1)
+print(nox.crypto.argon2_hash(password))

@@ -1,0 +1,41 @@
+# http_util — noxpkg'in el-yazımı form-gövdesi/çerez yardımcıları.
+# stdlib'de sorgu-string/çerez ayrıştırıcı YOK (`nox.strings.split`/
+# `splitn`/`trim`/`replace` yeterli ama HAZIR DEĞİL) — bu YÜZDEN burada
+# el-yazımı. `%XX` percent-decode BİLİNÇLİ olarak YOK (Nox'ta rastgele
+# bir baytı `chr`leyecek bir ilkel YOK); bu uygulamanın ayrıştırdığı TÜM
+# form alanları (csrf_token, id, name) zaten hex/slug — admin şifresi İSE
+# form-encoding'i TAMAMEN ATLAYIP HAM POST gövdesi olarak gönderilir
+# (bkz. templates.nox'un login sayfası), bu YÜZDEN kayıp yaşanmaz.
+import nox.strings
+
+def parse_form_body(body: str) -> dict[str, str]:
+    result: dict[str, str] = {}
+    pairs: list[str] = nox.strings.split(body, "&")
+    i: int = 0
+    while i < len(pairs):
+        pair: str = pairs[i]
+        if len(pair) > 0:
+            kv: list[str] = nox.strings.splitn(pair, "=", 2)
+            key: str = nox.strings.replace(kv[0], "+", " ")
+            value: str = ""
+            if len(kv) > 1:
+                value = nox.strings.replace(kv[1], "+", " ")
+            result[key] = value
+        i = i + 1
+    return result
+
+def parse_cookies(cookie_header: str) -> dict[str, str]:
+    result: dict[str, str] = {}
+    parts: list[str] = nox.strings.split(cookie_header, ";")
+    i: int = 0
+    while i < len(parts):
+        part: str = nox.strings.trim(parts[i])
+        if len(part) > 0:
+            kv: list[str] = nox.strings.splitn(part, "=", 2)
+            if len(kv) > 1:
+                result[kv[0]] = kv[1]
+        i = i + 1
+    return result
+
+def build_set_cookie(name: str, value: str, max_age_seconds: int) -> str:
+    return name + "=" + value + "; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=" + str(max_age_seconds)

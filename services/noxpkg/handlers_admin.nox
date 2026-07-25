@@ -1,0 +1,168 @@
+# handlers_admin — şifre-korumalı admin paneli: giriş, dashboard, onay/
+# red/çıkarma, çıkış. `require_admin_session`, `main.nox`nin `Router.
+# use_before`una bağlanır (yalnızca `/admin` ÖNEKLİ rotaları GATE'ler).
+import nox.os
+import nox.crypto
+import nox.strings
+import nox.time
+import store
+from store import Submission, IndexEntry
+from nox.router import Context
+from nox.http import HttpResponse
+import http_util
+import auth
+from auth import Session, RateLimiter
+import templates
+
+def _admin_password_hash() -> str:
+    return nox.os.getenv("NOXPKG_ADMIN_PASSWORD_HASH")
+
+def _session_secret() -> str:
+    return nox.os.getenv("NOXPKG_SESSION_SECRET")
+
+def _ratelimit_path() -> str:
+    return "data/ratelimit.txt"
+
+def _index_path() -> str:
+    return "data/index.json"
+
+def _inbox_path() -> str:
+    return "data/inbox.json"
+
+def _cookie_value(ctx: Context) -> str:
+    if not ctx.request.headers.contains("Cookie"):
+        return ""
+    cookies: dict[str, str] = http_util.parse_cookies(ctx.request.headers["Cookie"])
+    if not cookies.contains("noxpkg_session"):
+        return ""
+    return cookies["noxpkg_session"]
+
+def _query_param(target: str, name: str) -> str:
+    parts: list[str] = nox.strings.splitn(target, "?", 2)
+    if len(parts) < 2:
+        return ""
+    pairs: list[str] = nox.strings.split(parts[1], "&")
+    i: int = 0
+    while i < len(pairs):
+        kv: list[str] = nox.strings.splitn(pairs[i], "=", 2)
+        if kv[0] == name and len(kv) > 1:
+            return kv[1]
+        i = i + 1
+    return ""
+
+def _client_key(ctx: Context) -> str:
+    if ctx.request.headers.contains("CF-Connecting-IP"):
+        return ctx.request.headers["CF-Connecting-IP"]
+    return "unknown"
+
+# `Router.use_before`a bağlanır — YALNIZCA `/admin` ÖNEKLİ rotaları
+# GATE'ler (`/admin/login` HARİÇ, oturum ÖNCESİ erişilebilir olmalı).
+def require_admin_session(ctx: Context) -> HttpResponse | None:
+    target: str = ctx.request.target
+    if not nox.strings.starts_with(target, "/admin"):
+        return None
+    if nox.strings.starts_with(target, "/admin/login"):
+        return None
+    session: Session = Session(_session_secret())
+    cv: str = _cookie_value(ctx)
+    if len(cv) == 0 or not session.is_valid(cv):
+        return HttpResponse(302, "", {"Location": "/admin/login"})
+    return None
+
+def login_page(ctx: Context) -> HttpResponse:
+    err: str = _query_param(ctx.request.target, "err")
+    message: str = ""
+    if err == "locked":
+        message = "cok fazla basarisiz deneme, birazdan tekrar deneyin"
+    elif err == "1":
+        message = "yanlis sifre"
+    html: str = templates.login_page(message)
+    return HttpResponse(200, html, {"Content-Type": "text/html; charset=utf-8"})
+
+def login_submit(ctx: Context) -> HttpResponse:
+    key: str = _client_key(ctx)
+    rl_path: str = _ratelimit_path()
+    rl: RateLimiter = RateLimiter()
+    rl.load(rl_path)
+    if rl.is_locked(key, 900000, 5):
+        return HttpResponse(429, "", {})
+
+    password: str = ctx.request.body
+    hash: str = _admin_password_hash()
+    if not nox.crypto.argon2_verify(hash, password):
+        rl.record_failure(key, 900000)
+        rl.save(rl_path)
+        return HttpResponse(401, "", {})
+
+    rl.reset(key)
+    rl.save(rl_path)
+    session: Session = Session(_session_secret())
+    cv: str = session.mint_cookie_value()
+    set_cookie: str = http_util.build_set_cookie("noxpkg_session", cv, 43200)
+    return HttpResponse(200, "", {"Set-Cookie": set_cookie})
+
+def dashboard(ctx: Context) -> HttpResponse:
+    session: Session = Session(_session_secret())
+    cv: str = _cookie_value(ctx)
+    csrf: str = session.csrf_token(cv)
+
+    subs: list[Submission] = store.load_inbox(_inbox_path())
+    pending_html: str = ""
+    i: int = 0
+    while i < len(subs):
+        s: Submission = subs[i]
+        pending_html = pending_html + templates.pending_row(s.id, s.name, s.repo, s.ref, s.description)
+        i = i + 1
+
+    entries: list[IndexEntry] = store.load_index(_index_path())
+    index_html: str = ""
+    j: int = 0
+    while j < len(entries):
+        e: IndexEntry = entries[j]
+        index_html = index_html + templates.index_row(e.name, e.repo, e.description)
+        j = j + 1
+
+    html: str = templates.dashboard(pending_html, index_html, csrf)
+    return HttpResponse(200, html, {"Content-Type": "text/html; charset=utf-8"})
+
+def _verify_csrf_from_body(ctx: Context, submitted: str) -> bool:
+    session: Session = Session(_session_secret())
+    cv: str = _cookie_value(ctx)
+    return session.verify_csrf(cv, submitted)
+
+def approve(ctx: Context) -> HttpResponse:
+    if not _verify_csrf_from_body(ctx, ctx.request.body):
+        return HttpResponse(403, "", {})
+    id: str = ctx.param("id")
+    ok: bool = store.approve_submission(_index_path(), _inbox_path(), id)
+    if not ok:
+        return HttpResponse(404, "", {})
+    return HttpResponse(200, "", {})
+
+def reject(ctx: Context) -> HttpResponse:
+    if not _verify_csrf_from_body(ctx, ctx.request.body):
+        return HttpResponse(403, "", {})
+    id: str = ctx.param("id")
+    ok: bool = store.reject_submission(_inbox_path(), id)
+    if not ok:
+        return HttpResponse(404, "", {})
+    return HttpResponse(200, "", {})
+
+def remove_entry(ctx: Context) -> HttpResponse:
+    parts: list[str] = nox.strings.splitn(ctx.request.body, "\n", 2)
+    if len(parts) != 2:
+        return HttpResponse(400, "", {})
+    submitted_csrf: str = parts[0]
+    name: str = parts[1]
+    if not _verify_csrf_from_body(ctx, submitted_csrf):
+        return HttpResponse(403, "", {})
+    ok: bool = store.remove_index_entry(_index_path(), name)
+    if not ok:
+        return HttpResponse(404, "", {})
+    return HttpResponse(200, "", {})
+
+def logout(ctx: Context) -> HttpResponse:
+    if not _verify_csrf_from_body(ctx, ctx.request.body):
+        return HttpResponse(403, "", {})
+    set_cookie: str = http_util.build_set_cookie("noxpkg_session", "", 0)
+    return HttpResponse(200, "", {"Set-Cookie": set_cookie})

@@ -1,0 +1,78 @@
+# main — noxpkg sunucusunun giriş noktası.
+#
+# **BULUNDU, GERÇEK bir İKİNCİ dil kısıtı** (`auth.nox`nin belge
+# notundaki "modül-üstü durum GÖRÜLEMEZ" bulgusuna EK): birinci-sınıf
+# fonksiyon-değer mekanizması (Faz U.4.5) yalnızca AYNI dosyada
+# TANIMLANMIŞ üst-düzey fonksiyonlar İçin çalışır — `from handlers_
+# public import index_json` İLE alınan bir fonksiyonu DOĞRUDAN
+# `router.get(...)`e DEĞER olarak vermek `UndefinedVariable` verir
+# (minimal, İKİ dosyalık bir örnekle DOĞRULANDI). Çözüm: HER handler
+# İçin, `handlers_public`/`handlers_admin`i SIRADAN bir NİTELENDİRİLMİŞ
+# ÇAĞRIYLA (bu ÇALIŞIYOR — yalnızca "değer olarak alma" BOZUK) saran
+# İNCE, AYNI-dosya sarmalayıcılar (`h_*`) — BUNLAR birinci-sınıf değer
+# olarak kullanılabilir.
+#
+# `handle`, `nox.http.serve*`nin ÇIPLAK üst-düzey fonksiyon
+# ZORUNLULUĞU YÜZÜNDEN `Router`u HER İSTEKTE SIFIRDAN inşa eder
+# (`build_router`, 9 rota kaydı — saf `list.append`, G/Ç YOK, İHMAL
+# EDİLEBİLİR maliyet). `PORT` SABİT `8080` (env-yapılandırılabilir
+# DEĞİL, gerekirse Docker katmanında remap edilir). `num_threads=1` —
+# TÜM dosya-tabanlı durumun (`data/index.json`/`data/inbox.json`/
+# `data/ratelimit.txt`) YARIŞ-KOŞULSUZ round-trip yapabilmesi İçin
+# (bkz. `auth.nox`/`store.nox`nin AYNI belge notu) BİLİNÇLİ bir
+# tasarım kararı, performans kısıtı DEĞİL.
+import nox.http
+from nox.http import HttpRequest, HttpResponse
+from nox.router import Router, Context
+import handlers_public
+import handlers_admin
+
+def h_index_json(ctx: Context) -> HttpResponse:
+    return handlers_public.index_json(ctx)
+
+def h_publish(ctx: Context) -> HttpResponse:
+    return handlers_public.publish(ctx)
+
+def h_login_page(ctx: Context) -> HttpResponse:
+    return handlers_admin.login_page(ctx)
+
+def h_login_submit(ctx: Context) -> HttpResponse:
+    return handlers_admin.login_submit(ctx)
+
+def h_dashboard(ctx: Context) -> HttpResponse:
+    return handlers_admin.dashboard(ctx)
+
+def h_approve(ctx: Context) -> HttpResponse:
+    return handlers_admin.approve(ctx)
+
+def h_reject(ctx: Context) -> HttpResponse:
+    return handlers_admin.reject(ctx)
+
+def h_remove_entry(ctx: Context) -> HttpResponse:
+    return handlers_admin.remove_entry(ctx)
+
+def h_logout(ctx: Context) -> HttpResponse:
+    return handlers_admin.logout(ctx)
+
+def h_require_admin_session(ctx: Context) -> HttpResponse | None:
+    return handlers_admin.require_admin_session(ctx)
+
+def build_router() -> Router:
+    router: Router = Router()
+    router.get("/index.json", h_index_json)
+    router.post("/api/publish", h_publish)
+    router.get("/admin/login", h_login_page)
+    router.post("/admin/login", h_login_submit)
+    router.get("/admin", h_dashboard)
+    router.post("/admin/approve/:id", h_approve)
+    router.post("/admin/reject/:id", h_reject)
+    router.post("/admin/index/remove", h_remove_entry)
+    router.post("/admin/logout", h_logout)
+    router.use_before(h_require_admin_session)
+    return router
+
+def handle(req: HttpRequest) -> HttpResponse:
+    router: Router = build_router()
+    return router.dispatch(req)
+
+nox.http.serve_multicore(8080, handle, 1, 0)

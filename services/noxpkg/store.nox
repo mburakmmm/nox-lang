@@ -1,0 +1,275 @@
+# store — noxpkg'in `data/index.json`/`data/inbox.json` kalıcılığı.
+#
+# **Bilinçli olarak DURUMSUZ (bkz. `auth.nox`nin AYNI belge notu):**
+# modül-düzeyi durum HİÇBİR fonksiyonun İÇİNDEN görülemediğinden burada
+# TEK bir global `Store` örneği YOK — her fonksiyon `path` argümanından
+# DOSYAYI OKUYUP/YAZAR, hiçbir bellek-içi ÖNBELLEK TAŞIMAZ. `main.nox`nin
+# `num_threads=1`i bu round-trip'leri YARIŞ-KOŞULUNDAN korur.
+#
+# `index.json`, `compiler/pkg/index.zig`nin `Index{packages:[{name,repo,
+# description,tags}]}` ŞEMASIYLA BİREBİR AYNIDIR (`ref` TAŞIMAZ) — bu
+# SAYEDE `noxc search`/`noxc add` SIFIR CLI DEĞİŞİKLİĞİYLE ÇALIŞIR.
+import nox.json
+import nox.fs
+import nox.uuid
+import nox.time
+
+class IndexEntry:
+    def __init__(self: IndexEntry, name: str, repo: str, description: str, tags: list[str]) -> None:
+        self.name = name
+        self.repo = repo
+        self.description = description
+        self.tags = tags
+
+class Submission:
+    def __init__(self: Submission, id: str, name: str, repo: str, ref: str, description: str, tags: list[str], submitted_at_ms: int) -> None:
+        self.id = id
+        self.name = name
+        self.repo = repo
+        self.ref = ref
+        self.description = description
+        self.tags = tags
+        self.submitted_at_ms = submitted_at_ms
+
+def _json_str(s: str) -> JsonValue:
+    empty_arr: list[JsonValue] = []
+    empty_keys: list[str] = []
+    empty_vals: list[JsonValue] = []
+    return nox_json_make_json_value(3, False, 0.0, s, empty_arr, empty_keys, empty_vals)
+
+def _json_num(n: float) -> JsonValue:
+    empty_arr: list[JsonValue] = []
+    empty_keys: list[str] = []
+    empty_vals: list[JsonValue] = []
+    return nox_json_make_json_value(2, False, n, "", empty_arr, empty_keys, empty_vals)
+
+def _json_array(items: list[JsonValue]) -> JsonValue:
+    empty_keys: list[str] = []
+    empty_vals: list[JsonValue] = []
+    return nox_json_make_json_value(4, False, 0.0, "", items, empty_keys, empty_vals)
+
+def _json_object(keys: list[str], vals: list[JsonValue]) -> JsonValue:
+    empty_arr: list[JsonValue] = []
+    return nox_json_make_json_value(5, False, 0.0, "", empty_arr, keys, vals)
+
+def _object_get(v: JsonValue, key: str) -> JsonValue | None:
+    i: int = 0
+    n: int = nox.json.object_len(v)
+    while i < n:
+        if nox.json.object_key(v, i) == key:
+            return nox.json.object_value(v, i)
+        i = i + 1
+    return None
+
+def _str_array_to_json(items: list[str]) -> JsonValue:
+    vals: list[JsonValue] = []
+    i: int = 0
+    while i < len(items):
+        vals.append(_json_str(items[i]))
+        i = i + 1
+    return _json_array(vals)
+
+def _json_to_str_array(v: JsonValue) -> list[str]:
+    out: list[str] = []
+    i: int = 0
+    n: int = nox.json.array_len(v)
+    while i < n:
+        out.append(nox.json.as_string(nox.json.array_get(v, i)))
+        i = i + 1
+    return out
+
+def _index_entry_to_json(e: IndexEntry) -> JsonValue:
+    keys: list[str] = ["name", "repo", "description", "tags"]
+    vals: list[JsonValue] = [_json_str(e.name), _json_str(e.repo), _json_str(e.description), _str_array_to_json(e.tags)]
+    return _json_object(keys, vals)
+
+def _json_to_index_entry(v: JsonValue) -> IndexEntry:
+    name: str = ""
+    repo: str = ""
+    description: str = ""
+    tags: list[str] = []
+    name_v: JsonValue | None = _object_get(v, "name")
+    if name_v != None:
+        name = nox.json.as_string(name_v)
+    repo_v: JsonValue | None = _object_get(v, "repo")
+    if repo_v != None:
+        repo = nox.json.as_string(repo_v)
+    desc_v: JsonValue | None = _object_get(v, "description")
+    if desc_v != None:
+        description = nox.json.as_string(desc_v)
+    tags_v: JsonValue | None = _object_get(v, "tags")
+    if tags_v != None:
+        tags = _json_to_str_array(tags_v)
+    return IndexEntry(name, repo, description, tags)
+
+def load_index(path: str) -> list[IndexEntry]:
+    out: list[IndexEntry] = []
+    if not nox.fs.exists(path):
+        return out
+    v: JsonValue = nox.json.decode(nox.fs.read_to_string(path))
+    packages_v: JsonValue | None = _object_get(v, "packages")
+    if packages_v != None:
+        i: int = 0
+        n: int = nox.json.array_len(packages_v)
+        while i < n:
+            out.append(_json_to_index_entry(nox.json.array_get(packages_v, i)))
+            i = i + 1
+    return out
+
+def save_index(path: str, entries: list[IndexEntry]) -> None:
+    entry_vals: list[JsonValue] = []
+    i: int = 0
+    while i < len(entries):
+        entry_vals.append(_index_entry_to_json(entries[i]))
+        i = i + 1
+    keys: list[str] = ["packages"]
+    vals: list[JsonValue] = [_json_array(entry_vals)]
+    root: JsonValue = _json_object(keys, vals)
+    content: str = nox.json.encode_pretty(root, 2)
+    tmp: str = path + ".tmp"
+    nox.fs.write_string(tmp, content)
+    nox.fs.rename(tmp, path)
+
+def _submission_to_json(s: Submission) -> JsonValue:
+    keys: list[str] = ["id", "name", "repo", "ref", "description", "tags", "submitted_at_ms"]
+    vals: list[JsonValue] = [_json_str(s.id), _json_str(s.name), _json_str(s.repo), _json_str(s.ref), _json_str(s.description), _str_array_to_json(s.tags), _json_num(s.submitted_at_ms * 1.0)]
+    return _json_object(keys, vals)
+
+def _json_to_submission(v: JsonValue) -> Submission:
+    id_v: JsonValue | None = _object_get(v, "id")
+    name_v: JsonValue | None = _object_get(v, "name")
+    repo_v: JsonValue | None = _object_get(v, "repo")
+    ref_v: JsonValue | None = _object_get(v, "ref")
+    desc_v: JsonValue | None = _object_get(v, "description")
+    tags_v: JsonValue | None = _object_get(v, "tags")
+    at_v: JsonValue | None = _object_get(v, "submitted_at_ms")
+    id: str = ""
+    name: str = ""
+    repo: str = ""
+    ref: str = "main"
+    description: str = ""
+    tags: list[str] = []
+    at: int = 0
+    if id_v != None:
+        id = nox.json.as_string(id_v)
+    if name_v != None:
+        name = nox.json.as_string(name_v)
+    if repo_v != None:
+        repo = nox.json.as_string(repo_v)
+    if ref_v != None:
+        ref = nox.json.as_string(ref_v)
+    if desc_v != None:
+        description = nox.json.as_string(desc_v)
+    if tags_v != None:
+        tags = _json_to_str_array(tags_v)
+    if at_v != None:
+        at_f: float = nox.json.as_number(at_v)
+        at = int(at_f)
+    return Submission(id, name, repo, ref, description, tags, at)
+
+def load_inbox(path: str) -> list[Submission]:
+    out: list[Submission] = []
+    if not nox.fs.exists(path):
+        return out
+    v: JsonValue = nox.json.decode(nox.fs.read_to_string(path))
+    subs_v: JsonValue | None = _object_get(v, "submissions")
+    if subs_v != None:
+        i: int = 0
+        n: int = nox.json.array_len(subs_v)
+        while i < n:
+            out.append(_json_to_submission(nox.json.array_get(subs_v, i)))
+            i = i + 1
+    return out
+
+def save_inbox(path: str, subs: list[Submission]) -> None:
+    sub_vals: list[JsonValue] = []
+    i: int = 0
+    while i < len(subs):
+        sub_vals.append(_submission_to_json(subs[i]))
+        i = i + 1
+    keys: list[str] = ["submissions"]
+    vals: list[JsonValue] = [_json_array(sub_vals)]
+    root: JsonValue = _json_object(keys, vals)
+    content: str = nox.json.encode_pretty(root, 2)
+    tmp: str = path + ".tmp"
+    nox.fs.write_string(tmp, content)
+    nox.fs.rename(tmp, path)
+
+# `inbox.json`e KABA bir tavan (spam savunması, bkz. plan) — bunun
+# ÜZERİNDE yeni gönderiler SESSİZCE reddedilir (`False` döner). Üst-düzey
+# `var_decl`lar fonksiyon İÇİNDEN GÖRÜLEMEDİĞİNDEN (bkz. auth.nox'un
+# belge notu) bir sabit YERİNE sıfır-argümanlı bir fonksiyon.
+def _max_pending_submissions() -> int:
+    return 500
+
+def add_submission(path: str, name: str, repo: str, ref: str, description: str, tags: list[str]) -> bool:
+    subs: list[Submission] = load_inbox(path)
+    if len(subs) >= _max_pending_submissions():
+        return False
+    id: str = nox.uuid.uuid4()
+    subs.append(Submission(id, name, repo, ref, description, tags, nox.time.now_ms()))
+    save_inbox(path, subs)
+    return True
+
+def approve_submission(index_path: str, inbox_path: str, id: str) -> bool:
+    subs: list[Submission] = load_inbox(inbox_path)
+    found: Submission | None = None
+    remaining: list[Submission] = []
+    i: int = 0
+    while i < len(subs):
+        if subs[i].id == id:
+            found = subs[i]
+        else:
+            remaining.append(subs[i])
+        i = i + 1
+    if found != None:
+        entries: list[IndexEntry] = load_index(index_path)
+        new_entry: IndexEntry = IndexEntry(found.name, found.repo, found.description, found.tags)
+        new_entries: list[IndexEntry] = []
+        replaced: bool = False
+        j: int = 0
+        while j < len(entries):
+            if entries[j].name == found.name:
+                new_entries.append(new_entry)
+                replaced = True
+            else:
+                new_entries.append(entries[j])
+            j = j + 1
+        if not replaced:
+            new_entries.append(new_entry)
+        save_index(index_path, new_entries)
+        save_inbox(inbox_path, remaining)
+        return True
+    return False
+
+def reject_submission(inbox_path: str, id: str) -> bool:
+    subs: list[Submission] = load_inbox(inbox_path)
+    remaining: list[Submission] = []
+    found: bool = False
+    i: int = 0
+    while i < len(subs):
+        if subs[i].id == id:
+            found = True
+        else:
+            remaining.append(subs[i])
+        i = i + 1
+    if not found:
+        return False
+    save_inbox(inbox_path, remaining)
+    return True
+
+def remove_index_entry(index_path: str, name: str) -> bool:
+    entries: list[IndexEntry] = load_index(index_path)
+    remaining: list[IndexEntry] = []
+    found: bool = False
+    i: int = 0
+    while i < len(entries):
+        if entries[i].name == name:
+            found = True
+        else:
+            remaining.append(entries[i])
+        i = i + 1
+    if not found:
+        return False
+    save_index(index_path, remaining)
+    return True
