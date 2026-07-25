@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.8.1]
+
+### Düzeltildi
+- `services/noxpkg/` admin giriş sayfası artık ağ hatalarını (fetch
+  reddi) sessizce yutmuyor (`.catch` ile görünür bir hata mesajı),
+  gönderim sırasında butonu devre dışı bırakıp "giris yapiliyor..."
+  gösteriyor (çift-gönderim/karışıklığı önler), ve şifre alanına
+  `autocomplete="current-password"` eklendi (bazı tarayıcıların "güçlü
+  şifre öner" davranışının giriş akışına karışmasını önler).
+
 ## [1.8.0]
 
 ### Eklendi
