@@ -1,0 +1,33 @@
+# services/noxpkg — Cloudflare Tunnel (cloudflared)
+# Tunnel: noxpkg (10d2b429-9912-44a6-8615-11ef5910ba74)
+#
+# Routing:
+#   noxpkg.2mtechnology.org → services/noxpkg (index.json + admin panel)
+#
+# Credentials: host ~/.cloudflared/10d2b429-9912-44a6-8615-11ef5910ba74.json
+#              → /etc/cloudflared/tunnel.json (bkz. docker-compose.yml'in
+#              `cloudflared` servisi — astro-ai/backend-go/deploy/
+#              cloudflared.yml İLE AYNI desen, M4'teki KURULU örüntüyle
+#              TUTARLI).
+#
+# DNS (BİLİNÇLİ olarak burada/`tunnel route dns` İLE OTOMATİK EKLENMEDİ —
+# kullanıcı kendisi ekleyecek): Cloudflare DNS'e bir CNAME kaydı ekleyin:
+#   noxpkg.2mtechnology.org → 10d2b429-9912-44a6-8615-11ef5910ba74.cfargotunnel.com
+#   (Proxied/turuncu bulut AÇIK)
+
+tunnel: 10d2b429-9912-44a6-8615-11ef5910ba74
+credentials-file: /etc/cloudflared/tunnel.json
+
+# Outbound-only; host 80/443 publish yok.
+originRequest:
+  connectTimeout: 30s
+  tcpKeepAlive: 30s
+  noHappyEyeballs: true
+
+ingress:
+  - hostname: noxpkg.2mtechnology.org
+    service: http://noxpkg:8080
+    originRequest:
+      httpHostHeader: noxpkg.2mtechnology.org
+
+  - service: http_status:404

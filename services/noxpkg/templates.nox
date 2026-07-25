@@ -58,3 +58,24 @@ def _index_row_template() -> str:
 def index_row(name: str, repo: str, description: str) -> str:
     ctx: dict[str, str] = {"name": name, "repo": repo, "description": description}
     return nox.template.render(_index_row_template(), ctx)
+
+# Herkese açık anasayfa — yayındaki paketleri listeler + arama kutusu.
+# `dashboard_template`in AYNI güvenlik deseni: dinamik değerler `data-*`
+# özniteliklerine yazılır, arama JS'i yalnızca `.dataset` (düz METİN)
+# okur, hiçbir sunucu-taraflı sorgu-string ayrıştırıcısı GEREKMEZ
+# (bkz. http_util.nox'un belge notu — stdlib'de HENÜZ YOK) — bu YÜZDEN
+# arama TAMAMEN istemci tarafında, sayfa TEK seferde yüklenen satırlar
+# üzerinde satır göster/gizle yapar.
+def _home_template() -> str:
+    return "<!doctype html><html><head><meta charset=\"utf-8\"><title>noxpkg</title><style>{{ style }}</style></head><body><h1>noxpkg</h1><p class=\"muted\">Nox paket indeksi &mdash; <code>noxc search &lt;isim&gt;</code> ile ara, <code>noxc add &lt;isim&gt;</code> ile projene ekle.</p><input type=\"text\" id=\"q\" placeholder=\"paket ara...\" autofocus><table id=\"pkgs\"><tr><th>isim</th><th>repo</th><th>aciklama</th><th>etiketler</th></tr>{{ rows }}</table><p class=\"muted\" id=\"empty\" style=\"display:none\">eslesen paket yok</p><p class=\"muted\"><a href=\"/admin/login\">admin</a></p><script>var q=document.getElementById('q');var rows=Array.prototype.slice.call(document.querySelectorAll('#pkgs tr[data-name]'));var empty=document.getElementById('empty');q.addEventListener('input',function(){var v=q.value.toLowerCase();var shown=0;rows.forEach(function(r){var hay=(r.dataset.name+' '+r.dataset.repo+' '+r.dataset.description+' '+r.dataset.tags).toLowerCase();var vis=hay.indexOf(v)!==-1;r.style.display=vis?'':'none';if(vis)shown++;});empty.style.display=shown===0?'':'none';});</script></body></html>"
+
+def home(rows_html: str) -> str:
+    ctx: dict[str, str] = {"style": _style(), "rows": rows_html}
+    return nox.template.render_unescaped(_home_template(), ctx)
+
+def _package_row_template() -> str:
+    return "<tr data-name=\"{{ name }}\" data-repo=\"{{ repo }}\" data-description=\"{{ description }}\" data-tags=\"{{ tags }}\"><td>{{ name }}</td><td><a href=\"{{ repo }}\" target=\"_blank\" rel=\"noopener noreferrer\">{{ repo }}</a></td><td>{{ description }}</td><td>{{ tags }}</td></tr>"
+
+def package_row(name: str, repo: str, description: str, tags: str) -> str:
+    ctx: dict[str, str] = {"name": name, "repo": repo, "description": description, "tags": tags}
+    return nox.template.render(_package_row_template(), ctx)

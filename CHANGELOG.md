@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.8.0]
+
+### Eklendi
+- **`noxc search <sorgu>`** (TEK argüman) artık `NOX_INDEX_URL`den
+  (varsayılan: `noxpkg.2mtechnology.org` merkezi kaydı) sorgular —
+  `noxc add`nin `repo` atlandığında AYNI varsayılana düşmesiyle TUTARLI.
+  Açık indeksli iki argümanlı form (`noxc search <indeks> <sorgu>`)
+  DEĞİŞMEDEN kalır.
+- `services/noxpkg/`e herkese açık bir anasayfa (`GET /`) eklendi —
+  yayındaki paketleri listeler, istemci-taraflı (sunucu sorgu-string
+  ayrıştırması GEREKMEDEN) bir arama kutusuyla.
+
 ## [1.7.1]
 
 ### Düzeltildi

@@ -113,7 +113,8 @@ fn printHelp(is_tr: bool) void {
             \\  init [ad]             yeni bir proje iskeleti oluşturur (nox.json + main.nox)
             \\  fetch                 nox.json'daki bağımlılıkları önbelleğe doldurur
             \\  update                bağımlılıkları en son ref'lerine yeniden çözer, nox.lock'u günceller
-            \\  search <indeks> [q]   bir paket indeksini (dosya veya URL) sorgular
+            \\  search <q>            merkezi indekste (varsayilan: noxpkg.2mtechnology.org) sorgular
+            \\  search <indeks> <q>   belirtilen bir paket indeksini (dosya veya URL) sorgular
             \\  add <alias> [repo]    bagimliligi nox.json'a ekler (repo verilmezse indeksten cozer)
             \\  delete <alias>        bagimliligi nox.json'dan (ve nox.lock'tan) cikarir
             \\  publish <repo>        paket metadatasini merkezi indekse gonderir (admin onayi bekler)
@@ -127,6 +128,7 @@ fn printHelp(is_tr: bool) void {
             \\Örnekler:
             \\  noxc run main.nox -- a b c
             \\  noxc build -o app main.nox
+            \\  noxc search http
             \\  noxc search https://example.com/index.json http
             \\
             \\Daha fazla bilgi: https://github.com/mburakmmm/nox-lang
@@ -149,7 +151,8 @@ fn printHelp(is_tr: bool) void {
             \\  init [name]           scaffold a new project (nox.json + main.nox)
             \\  fetch                 populate the dependency cache from nox.json
             \\  update                re-resolve dependencies to their latest refs, update nox.lock
-            \\  search <index> [q]    query a package index (file or URL)
+            \\  search <q>            query the central index (default: noxpkg.2mtechnology.org)
+            \\  search <index> <q>    query a specific package index (file or URL)
             \\  add <alias> [repo]    add a dependency to nox.json (resolves repo from the index if omitted)
             \\  delete <alias>        remove a dependency from nox.json (and nox.lock)
             \\  publish <repo>        submit package metadata to the central index (awaits admin approval)
@@ -163,6 +166,7 @@ fn printHelp(is_tr: bool) void {
             \\Examples:
             \\  noxc run main.nox -- a b c
             \\  noxc build -o app main.nox
+            \\  noxc search http
             \\  noxc search https://example.com/index.json http
             \\
             \\More info: https://github.com/mburakmmm/nox-lang
@@ -308,7 +312,7 @@ pub fn main(init: std.process.Init) !void {
         .run => try cmdRun(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
         .test_cmd => try cmdTest(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
         .fmt => try cmdFmt(gpa, io, a, rest),
-        .search => try cmdSearch(io, a, rest, fetch_policy),
+        .search => try cmdSearch(io, a, rest, registry_policy, fetch_policy),
         .add => try cmdAdd(io, a, rest, registry_policy, fetch_policy),
         .delete => try cmdDelete(io, a, rest),
         .publish => try cmdPublish(io, a, rest, registry_policy, fetch_policy),
@@ -399,12 +403,24 @@ fn cmdUpgrade(a: std.mem.Allocator, io: std.Io, args: []const []const u8, resour
 /// AKSİNE (henüz REZERVE), TAM olarak ÇALIŞIR — herhangi bir AĞ erişimi
 /// GEREKMEZ (yalnızca YEREL bir JSON dosyası okur, bkz. modül üstü not
 /// "gelecekte eklenebilir" tasarım kararı).
-fn cmdSearch(io: std.Io, a: std.mem.Allocator, args: []const []const u8, fetch_policy: fetch.FetchPolicy) !void {
-    const index_arg = if (args.len > 0) args[0] else {
-        std.debug.print("kullanim: noxc search <indeks-dosyasi.json|https://...> [sorgu]\n", .{});
+///
+/// **Bulundu, kullanıcı isteği (services/noxpkg/'in GERÇEK bir merkezi
+/// dizin OLARAK canlıya alınmasından SONRA):** `noxc add`nin `repo`
+/// atlandığında `registry_policy.index_url`e (varsayılan: `noxpkg.
+/// 2mtechnology.org`) DÜŞMESİYLE AYNI desen `search`e de eklendi — TEK
+/// bir pozisyonel argüman VERİLDİĞİNDE (`noxc search <isim>`) o argüman
+/// artık `<indeks>` DEĞİL `<sorgu>` olarak yorumlanır, indeks HER ZAMAN
+/// varsayılan merkezi kayda düşer. Açık indeksli İKİ argümanlı form
+/// (`noxc search <indeks> <sorgu>`) DEĞİŞMEDEN kalır — TEK argümanlı
+/// eski "bir dosyayı sorgusuz listele" kullanımı (bu komut BU oturumda
+/// YENİ eklendiği İçin GERÇEK bir kullanıcıya henüz ULAŞMADI) `noxc
+/// search <indeks> ""` İLE İFADE edilebilir.
+fn cmdSearch(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registry_policy: registry.RegistryPolicy, fetch_policy: fetch.FetchPolicy) !void {
+    if (args.len == 0) {
+        std.debug.print("kullanim: noxc search <sorgu> | noxc search <indeks-dosyasi.json|https://...> <sorgu>\n", .{});
         std.process.exit(1);
-    };
-    const query = if (args.len > 1) args[1] else "";
+    }
+    const index_arg, const query = if (args.len == 1) .{ registry_policy.index_url, args[0] } else .{ args[0], args[1] };
 
     // Bulundu (bkz. proje belleği "f-string + augmented atama" görevi):
     // `pkg_index.loadIndexFromUrl` (YENİ) — `index.zig`nin KENDİ belge

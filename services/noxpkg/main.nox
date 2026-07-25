@@ -27,6 +27,9 @@ from nox.router import Router, Context
 import handlers_public
 import handlers_admin
 
+def h_home(ctx: Context) -> HttpResponse:
+    return handlers_public.home(ctx)
+
 def h_index_json(ctx: Context) -> HttpResponse:
     return handlers_public.index_json(ctx)
 
@@ -59,6 +62,7 @@ def h_require_admin_session(ctx: Context) -> HttpResponse | None:
 
 def build_router() -> Router:
     router: Router = Router()
+    router.get("/", h_home)
     router.get("/index.json", h_index_json)
     router.post("/api/publish", h_publish)
     router.get("/admin/login", h_login_page)

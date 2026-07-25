@@ -8,7 +8,8 @@ from nox.validate import Schema
 from nox.router import Context
 from nox.http import HttpResponse
 import store
-from store import Submission
+from store import Submission, IndexEntry
+import templates
 
 # Üst-düzey `var_decl`lar fonksiyon İÇİNDEN GÖRÜLEMEDİĞİNDEN (bkz.
 # auth.nox'un belge notu) yol sabitleri sıfır-argümanlı fonksiyonlardır.
@@ -24,6 +25,30 @@ def index_json(ctx: Context) -> HttpResponse:
         return HttpResponse(200, "{\"packages\": []}", {"Content-Type": "application/json"})
     content: str = nox.fs.read_to_string(path)
     return HttpResponse(200, content, {"Content-Type": "application/json"})
+
+def _join_tags(tags: list[str]) -> str:
+    result: str = ""
+    i: int = 0
+    while i < len(tags):
+        if i > 0:
+            result = result + ", "
+        result = result + tags[i]
+        i = i + 1
+    return result
+
+# Herkese açık anasayfa — `GET /`. `data/index.json`i (`index_json`YLE
+# AYNI dosyayı, `store.load_index` ÜZERİNDEN yapılandırılmış olarak)
+# okuyup `templates.home`e satır satır geçirir.
+def home(ctx: Context) -> HttpResponse:
+    entries: list[IndexEntry] = store.load_index(_index_path())
+    rows_html: str = ""
+    i: int = 0
+    while i < len(entries):
+        e: IndexEntry = entries[i]
+        rows_html = rows_html + templates.package_row(e.name, e.repo, e.description, _join_tags(e.tags))
+        i = i + 1
+    html: str = templates.home(rows_html)
+    return HttpResponse(200, html, {"Content-Type": "text/html; charset=utf-8"})
 
 def _publish_schema() -> Schema:
     s: Schema = Schema()

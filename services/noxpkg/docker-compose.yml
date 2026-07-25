@@ -32,3 +32,25 @@ services:
     volumes:
       - ./data:/app/data
     restart: unless-stopped
+
+  # Public ingress: Cloudflare Tunnel — astro-ai/backend-go/docker-compose.yml'in
+  # (M4'te ZATEN KURULU) `cloudflared` servisiYLE AYNI desen: dedike bir
+  # config.yml + host'taki tünel kimlik bilgisi dosyası salt-okunur MOUNT
+  # edilir, `~/.cloudflared/config.yml`daki (astro-ai'nin KENDİ tünelİNE
+  # AİT) PAYLAŞILAN host config'e HİÇ DOKUNULMAZ. Ingress `http://noxpkg:
+  # 8080` (compose servis adı, `127.0.0.1` DEĞİL) hedefler — AYNI compose
+  # ağı üzerinden DOĞRUDAN konteynere ulaşır, host port-eşlemesine
+  # BAĞIMLI DEĞİLDİR. DNS BİLİNÇLİ olarak burada OTOMATİK EKLENMEZ (bkz.
+  # deploy/cloudflared.yml'in belge notu) — kullanıcı `noxpkg.
+  # 2mtechnology.org` CNAME'ini Cloudflare panelinden KENDİSİ ekler.
+  cloudflared:
+    image: cloudflare/cloudflared:2026.7.1
+    container_name: noxpkg-cloudflared
+    restart: unless-stopped
+    command: ["tunnel", "--config", "/etc/cloudflared/config.yml", "run"]
+    volumes:
+      - ./deploy/cloudflared.yml:/etc/cloudflared/config.yml:ro
+      - ${HOME}/.cloudflared/10d2b429-9912-44a6-8615-11ef5910ba74.json:/etc/cloudflared/tunnel.json:ro
+    depends_on:
+      noxpkg:
+        condition: service_started

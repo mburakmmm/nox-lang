@@ -17,7 +17,7 @@ const FIXTURE_INDEX =
     \\]}
 ;
 
-test "noxc search: sorgu olmadan tum katalogu listeler" {
+test "noxc search: bos sorguyla (2-argumanli form) tum katalogu listeler" {
     const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -32,13 +32,52 @@ test "noxc search: sorgu olmadan tum katalogu listeler" {
     const index_path = try std.fmt.allocPrint(a, "{s}/index.json", .{path_buf[0..len]});
 
     const result = try std.process.run(std.testing.allocator, io, .{
-        .argv = &.{ noxcPath(), "search", index_path },
+        .argv = &.{ noxcPath(), "search", index_path, "" },
     });
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
     try std.testing.expect(result.term == .exited and result.term.exited == 0);
     try std.testing.expect(std.mem.indexOf(u8, result.stdout, "noxhttp-extras") != null);
     try std.testing.expect(std.mem.indexOf(u8, result.stdout, "noxcolor") != null);
+}
+
+// Bulundu, kullanıcı isteği (services/noxpkg/'in canlıya alınmasından
+// SONRA — bkz. proje belleği "noxc add/delete/publish + noxpkg merkezi
+// sunucusu" fazı): `noxc add`nin `repo` atlandığında `NOX_INDEX_URL`e
+// (varsayılan merkezi kayıt) DÜŞMESİYLE AYNI desen `search`e de eklendi
+// — TEK bir pozisyonel argüman (`noxc search <isim>`), o argümanı
+// `<indeks>` DEĞİL `<sorgu>` olarak yorumlayıp indeksi HER ZAMAN
+// `NOX_INDEX_URL`den (ya da varsayılandan) çözer.
+test "noxc search: TEK argumanla (sorgu) varsayilan/NOX_INDEX_URL indeksi sorgular" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "index.json", .data = FIXTURE_INDEX });
+
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &path_buf);
+    const index_path = try std.fmt.allocPrint(a, "{s}/index.json", .{path_buf[0..len]});
+
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+    try env_map.put("NOX_INDEX_URL", index_path);
+
+    const result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxcPath(), "search", "http" },
+        .environ_map = &env_map,
+    });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    if (result.term != .exited or result.term.exited != 0) {
+        std.debug.print("search basarisiz, stderr: {s}\n", .{result.stderr});
+    }
+    try std.testing.expect(result.term == .exited and result.term.exited == 0);
+    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "noxhttp-extras") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "noxcolor") == null);
 }
 
 test "noxc search: sorgu eslesen TEK paketi doner" {
@@ -100,7 +139,7 @@ test "noxc search: bozuk indeks dosyasi net bir hatayla cikis kodu 1 doner" {
     const index_path = try std.fmt.bufPrint(&buf, "{s}/bad.json", .{path_buf[0..len]});
 
     const result = try std.process.run(std.testing.allocator, io, .{
-        .argv = &.{ noxcPath(), "search", index_path },
+        .argv = &.{ noxcPath(), "search", index_path, "" },
     });
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
@@ -177,7 +216,7 @@ test "noxc search: http:// URL varsayilan olarak reddedilir (guvenli-tasima)" {
     defer std.testing.allocator.free(url);
 
     const result = try std.process.run(std.testing.allocator, io, .{
-        .argv = &.{ noxcPath(), "search", url },
+        .argv = &.{ noxcPath(), "search", url, "" },
     });
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
