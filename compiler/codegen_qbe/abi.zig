@@ -59,6 +59,14 @@ pub fn valueFromElemDescriptor(text: []const u8, qtype: QbeType, container_elem_
         .elem_qtype = if (container_elem_heap_info) |ehi| ehi.elem_qtype else .none,
         .elem_heap_info = if (container_elem_heap_info) |ehi| ehi.nested else null,
         .func_sig = if (container_elem_heap_info) |ehi| ehi.func_sig else null,
+        // Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
+        // incelemesi", C1): ÖNCEDEN burada HİÇ AKITILMIYORDU — `list[dict[...]]`
+        // İÇİNDEN okunan bir eleman (`rows[i]`), o elemanı `["anahtar"]`
+        // İLE İNDEKSLEMEYE (bkz. `genDictGet`) ÇALIŞTIĞINDA `dict_info ==
+        // null` İLE karşılaşıp `obj.dict_info.?` üzerinde bir Zig optional-
+        // unwrap PANİĞİYLE (derleyicinin KENDİSİ çökerdi) ÇÖKERDİ —
+        // GERÇEK bir tekrar-üretimle DOĞRULANDI.
+        .dict_info = if (container_elem_heap_info) |ehi| ehi.dict_info else null,
     };
 }
 
@@ -92,6 +100,32 @@ pub fn cmpMnemonic(op: ast.BinaryOp, common: QbeType) []const u8 {
     };
 }
 
+/// **Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
+/// incelemesi", C5): `\r` ÖNCEDEN burada EKSİKTİ** — `else` dalına
+/// düşüp HAM `0x0D` baytı OLARAK `.ssa` metin dosyasına gömülüyordu.
+/// `parser.zig`nin `decodeEscapes`i `\r`yi DOĞRU çözse BİLE (o ayrı bir
+/// hata YERİYDİ, AYRICA düzeltildi), bu ikinci kaçış tablosu OLMADAN
+/// sonuç HÂLÂ bozuktu: QBE'nin (ya da alt katmandaki `as`/`cc`nin) HAM
+/// gömülü CR baytını `.ssa`/`.s` METİN dosyasında SATIR-SONU gibi
+/// yorumlayıp `\n`e (0x0A) DÖNÜŞTÜRDÜĞÜ GERÇEK bir tekrar-üretimle
+/// DOĞRULANDI (`data $str0 = { ... b "a\rb" ... }` yerine HAM `0x0D`
+/// gömülünce derlenmiş ikili çalıştırıldığında `0x0A` ÜRETİYORDU).
+/// Çözüm: `\n`/`\t` İLE AYNI desen — QBE'nin KENDİ harf-tabanlı kaçış
+/// dizisini (`\r`, iki KARAKTER) yaz, ham baytı GÖMME.
+///
+/// **BİLİNÇLİ olarak `\xNN` onaltılık kaçışa GENELLEŞTİRİLMEDİ:** QBE'nin
+/// KENDİ `\xNN` ayrıştırıcısı, kaçıştan HEMEN SONRA gelen bir onaltılık-
+/// BENZERİ karakteri (`0-9a-fA-F`) YANLIŞLIKLA üçüncü bir basamak olarak
+/// TÜKETİYOR — GERÇEK bir tekrar-üretimle DOĞRULANDI (`"a\x01\x1fb"`,
+/// `\x1f`den HEMEN SONRA gelen `b` harfi `\x1fb`nin bir PARÇASI sanılıp
+/// YUTULUYOR, ÜRETİLEN bayt de YANLIŞ [`0xfb`] ÇIKIYOR). Bu YÜZDEN diğer
+/// kontrol baytları (`\r`/`\n`/`\t` DIŞINDAKİ, ör. `\x00`-`\x1f`) BİLİNÇLİ
+/// olarak BURADA ele ALINMADI — hex kaçışla "düzeltmeye ÇALIŞMAK" bu
+/// bitişik-basamak tuzağı YÜZÜNDEN YENİ bir bozulma sınıfı YARATIRDI.
+/// Nox kaynak dilinin KENDİSİ zaten yalnızca `\n \t \r \\ \' \"`i (bkz.
+/// `parser.zig`nin `decodeEscapes`i) DESTEKLEDİĞİNDEN, diğer ham kontrol
+/// baytları YALNIZCA `nox.strings.byte_at`/harici veriden GELEBİLİR —
+/// v1 kapsamında GÖZLEMLENMEMİŞ bir senaryo.
 pub fn escapeForQbeString(allocator: std.mem.Allocator, s: []const u8) CodegenError![]const u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
     for (s) |c| {
@@ -100,6 +134,7 @@ pub fn escapeForQbeString(allocator: std.mem.Allocator, s: []const u8) CodegenEr
             '\\' => try out.appendSlice(allocator, "\\\\"),
             '\n' => try out.appendSlice(allocator, "\\n"),
             '\t' => try out.appendSlice(allocator, "\\t"),
+            '\r' => try out.appendSlice(allocator, "\\r"),
             else => try out.append(allocator, c),
         }
     }

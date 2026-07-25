@@ -14,6 +14,26 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.8.2]
+
+### Düzeltildi
+- `nyx` framework geliştirilirken bulunan, `docs/NOX_LIMITATIONS.md` İLE
+  raporlanan 2 GERÇEK derleyici hatası düzeltildi:
+  - **`\r` kaçışı** — İKİ AYRI yerde eksikti: `parser.zig`nin `decodeEscapes`i
+    (düz VE f-string literalleri) VE `codegen_qbe/abi.zig`nin
+    `escapeForQbeString`i (parser DOĞRU çözse BİLE, ham CR baytı `.ssa`
+    metin dosyasına gömülünce QBE/`as` tarafından `\n`e bozuluyordu).
+  - **`list[dict[K,V]]`** (bir dict listesi) codegen'de "desteklenmeyen
+    bir yapı" hatasıyla çöküyordu — checker ZATEN kabul ediyordu, eksik
+    olan codegen'in KENDİ `ElemHeapInfo`sunun `dict`in şeklini (`key_is_str`/
+    `value_is_str`) taşıyacak bir alanının OLMAMASIYDI. İnşa (boş liste +
+    append), listeler arası eleman okuma (`rows[i]["ad"]`), indeksle atama
+    ve kapsam-sonu temizliği artık DOĞRU çalışıyor.
+- `docs/NOX_LIMITATIONS.md`daki DİĞER maddelerin çoğu (C2/C3/C4/C6,
+  `finally`) BU depoya karşı yeniden doğrulandı ve zaten ÇALIŞIYOR (nyx
+  ~1.6.x'e karşı gözlemlenmişti, bu oturumdaki önceki düzeltmelerle ZATEN
+  çözülmüştü).
+
 ## [1.8.1]
 
 ### Düzeltildi

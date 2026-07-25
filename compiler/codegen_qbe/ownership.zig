@@ -145,6 +145,14 @@ pub fn releaseFnNameFor(self: *Codegen, info: ElemHeapInfo) CodegenError![]const
         // `releaseValueIfSet`nin `.closure` dalıYLA AYNI desen) AYRICA
         // özel durum uygular.
         .closure => return "closure",
+        // Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
+        // incelemesi", C1): `.str`/`.closure` İLE AYNI "yalnızca etiket"
+        // deseni — GERÇEK eleman release'i `$dict_release` diye bir sembol
+        // ÜZERİNDEN DEĞİL, DOĞRUDAN `nox_dict_release(rt, ptr, key_is_str,
+        // value_is_str)` çağrısıyla (bkz. `releaseValueIfSet`nin `.dict`
+        // dalıYLA AYNI desen) — `genListElemRelease` bunu `info.dict_info`den
+        // okuyarak ÖZEL durum uygular.
+        .dict => return "dict",
         .list => {
             const inner_tag = if (info.nested) |n|
                 try self.releaseFnNameFor(n.*)
@@ -218,7 +226,12 @@ pub fn genListElemRelease(self: *Codegen, fn_name: []const u8, info: ElemHeapInf
         // `null` bırakılır (`.str`in KENDİ "özel durum" desenine BENZER),
         // ama aşağıdaki ÇAĞRI SİTESİ (`if (n.heap == .closure)`) BUNU
         // `nox_str_release` YERİNE dinamik dispatch'e YÖNLENDİRİR.
-        const callee: ?[]const u8 = if (n.heap == .str or n.heap == .closure) null else try self.releaseFnNameFor(n.*);
+        // Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
+        // incelemesi", C1): `.dict` de AYNI "özel durum" listesine eklendi
+        // — `nox_dict_release` sabit bir `$<isim>_release` sembolü DEĞİL,
+        // `key_is_str`/`value_is_str` argümanları GEREKTİREN doğrudan bir
+        // çağrı (bkz. aşağıdaki `if (n.heap == .dict)` dalı).
+        const callee: ?[]const u8 = if (n.heap == .str or n.heap == .closure or n.heap == .dict) null else try self.releaseFnNameFor(n.*);
         const idx_slot = try self.newTemp();
         try self.out.writer.print("    {s} =l alloc8 8\n", .{idx_slot});
         try self.out.writer.print("    storel 0, {s}\n", .{idx_slot});
@@ -261,6 +274,16 @@ pub fn genListElemRelease(self: *Codegen, fn_name: []const u8, info: ElemHeapInf
             const rel_fn = try self.newTemp();
             try self.out.writer.print("    {s} =l loadl {s}\n", .{ rel_fn, rel_addr });
             try self.out.writer.print("    call {s}(l {s}, l {s})\n", .{ rel_fn, RT_PARAM, elem });
+        } else if (n.heap == .dict) {
+            // Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
+            // incelemesi", C1): `releaseValueIfSet`nin `.dict` dalıYLA AYNI
+            // çağrı deseni — `nox_dict_release`nin KENDİSİ predecrement'e
+            // göre koşullu serbest bırakır, burada EK bir `jnz`/`should_free`
+            // sarmalayıcı GEREKMEZ.
+            const dinfo = n.dict_info.?;
+            const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
+            const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
+            try self.out.writer.print("    call $nox_dict_release(l {s}, l {s}, w {s}, w {s})\n", .{ RT_PARAM, elem, key_is_str_lit, value_is_str_lit });
         } else {
             try self.out.writer.print("    call $nox_str_release(l {s}, l {s})\n", .{ RT_PARAM, elem });
         }

@@ -162,9 +162,19 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
             // `genListElemRelease`in listenin KENDİSİ DÜŞÜRÜLDÜĞÜNDE
             // eleman closure'larını HİÇ serbest BIRAKMAMASINA (GERÇEK bir
             // sızıntı) yol AÇARDI.
-            if (elem.heap == .class or elem.heap == .list or elem.heap == .str or elem.heap == .closure) {
+            // Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
+            // incelemesi", C1): `.dict` EKLENDİ — `dict` (Faz FF.3'ten beri
+            // `str`/`list`/`class` İLE AYNI TAM ARC modelinde, bkz. `HeapKind`in
+            // belge notu) bir `list[T]`nin ELEMAN tipi OLARAK kullanıldığında
+            // (`list[dict[str,str]]`) BU dal ÖNCEDEN `.dict`i ATLIYORDU —
+            // `error.Unsupported`a düşüp "desteklenmeyen bir yapı" hatasıyla
+            // ÇÖKÜYORDU (checker ZATEN kabul ettiğinden — `Type`, `list`nin
+            // eleman tipinin `dict` OLMASINI hiç KISITLAMAZ — bu SADECE
+            // codegen'in `ElemHeapInfo`sunda eksik bir dal, mimari bir sınır
+            // DEĞİLDİ).
+            if (elem.heap == .class or elem.heap == .list or elem.heap == .str or elem.heap == .closure or elem.heap == .dict) {
                 const info = try self.allocator.create(ElemHeapInfo);
-                info.* = .{ .heap = elem.heap, .class_name = elem.class_name, .elem_qtype = elem.elem_qtype, .nested = elem.elem_heap_info, .elem_is_str = elem.elem_is_str, .func_sig = elem.func_sig };
+                info.* = .{ .heap = elem.heap, .class_name = elem.class_name, .elem_qtype = elem.elem_qtype, .nested = elem.elem_heap_info, .elem_is_str = elem.elem_is_str, .func_sig = elem.func_sig, .dict_info = elem.dict_info };
                 elem_heap_info = info;
             } else if (elem.heap != .none) {
                 return error.Unsupported;

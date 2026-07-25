@@ -658,6 +658,43 @@ test "codegen(çalıştır): f-string interpolasyonu + augmented atama + genişl
     );
 }
 
+// Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
+// incelemesi", C5): `\r` İKİ AYRI yerde eksikti — `parser.zig`nin
+// `decodeEscapes`i (düz VE f-string literalleri) VE `codegen_qbe/abi.zig`nin
+// `escapeForQbeString`i (parser DOĞRU çözse BİLE, ham CR baytı `.ssa`
+// METİN dosyasına gömülünce QBE/`as` tarafından BOZULUYORDU — GERÇEK bir
+// tekrar-üretimle DOĞRULANDI). Bu test HEM düz string HEM f-string
+// içindeki `\r`nin UÇTAN UCA (derle+çalıştır) doğru bayt (13) ürettiğini
+// kanıtlar.
+test "codegen(çalıştır): \\r kaçışı düz string VE f-string içinde doğru CR baytı üretir" {
+    try expectGolden(
+        @embedFile("codegen_cases/escape_sequences.nox"),
+        @embedFile("codegen_cases/escape_sequences.expected"),
+    );
+}
+
+// Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
+// incelemesi", C1): `list[dict[K,V]]` (bir dict listesi) ÖNCEDEN
+// codegen'de "desteklenmeyen bir yapı" hatasıyla ÇÖKÜYORDU — checker
+// ZATEN kabul ediyordu (`Type`, `list`nin eleman tipini KISITLAMAZ),
+// yalnızca `ElemHeapInfo`nun (codegen'in KENDİ, checker'dan AYRI, daha
+// küçük "elemanın şekli" betimleyicisi) `.dict` durumunu HİÇ TAŞIMAMASI
+// (dict'in KENDİ `key_is_str`/`value_is_str` "şeklini" saklayacak bir
+// alanı YOKTU) EKSİKTİ. Bu test boş listeden inşa+append, listeler ARASI
+// eleman OKUMA (`rows[i]["ad"]` — İKİ KAT indeksleme, dict eleman `Value`
+// sinin `dict_info`sinin `list` okumasından SONRA da AKMASI GEREKTİĞİNİ
+// kanıtlar), İNDEKSLE ATAMA (`xs[0] = {...}`, eski dict elemanının DOĞRU
+// serbest bırakılması) VE kapsam-sonu temizliğinin (fonksiyon dönüşü +
+// döngü içi taze listeler) hiçbirinin ÇÖKMEDİĞİNİ/SIZDIRMADIĞINI
+// (`--summary all`ın ReleaseFast koşusunda leak-detector'lı derleyici
+// binary'si ÜZERİNDEN) kanıtlar.
+test "codegen(çalıştır): list[dict[K,V]] — insa, cift-indeksleme, indeksle atama, kapsam-sonu" {
+    try expectGolden(
+        @embedFile("codegen_cases/list_of_dict.nox"),
+        @embedFile("codegen_cases/list_of_dict.expected"),
+    );
+}
+
 // Bulundu (bkz. proje belleği "UTF-8 farkındalığı" görevi): `len(s)`/`s[i]`
 // ÖNCEDEN bayt-tabanlıydı (çok baytlı UTF-8 karakterleri — "café"nin
 // "é"si, "日本語"nin her karakteri — ORTADAN kesiyordu). ARTIK codepoint-

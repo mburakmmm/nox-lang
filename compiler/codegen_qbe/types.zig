@@ -60,6 +60,13 @@ pub const ElemHeapInfo = struct {
     /// — bkz. `Value.func_sig`in belge notu, AYNI amaç, `list[(T)->U]`nin
     /// ELEMAN tipi İçin taşınır.
     func_sig: ?*const FuncSigInfo = null,
+    /// Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
+    /// incelemesi", C1): `heap == .dict` OLAN elemanların (`list[dict[K,V]]`)
+    /// anahtar/değer "şekli" — `TypeInfo`/`Value`nin KENDİ `dict_info`si
+    /// İLE AYNI amaç, `nox_dict_release(rt, ptr, key_is_str, value_is_str)`
+    /// çağrısını doğru argümanlarla üretebilmek İçin GEREKLİ (bkz.
+    /// `ownership.zig`nin `genListElemRelease`ı).
+    dict_info: ?*const DictInfo = null,
 };
 
 /// `dict[K, V]`nin anahtar/değer "şeklini" betimler.

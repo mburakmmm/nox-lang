@@ -15,6 +15,7 @@ const Value = types.Value;
 const QbeType = types.QbeType;
 const HeapKind = types.HeapKind;
 const ElemHeapInfo = types.ElemHeapInfo;
+const DictInfo = types.DictInfo;
 const LocalDecl = types.LocalDecl;
 const TypeInfo = types.TypeInfo;
 const RT_PARAM = types.RT_PARAM;
@@ -324,7 +325,15 @@ pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
         const elem_class_name: ?[]const u8 = if (obj.elem_heap_info) |ehi| ehi.class_name else null;
         const elem_inner_qtype: QbeType = if (obj.elem_heap_info) |ehi| ehi.elem_qtype else .none;
         const elem_nested: ?*const ElemHeapInfo = if (obj.elem_heap_info) |ehi| ehi.nested else null;
-        try self.releaseValueIfSet(old_ptr, elem_heap, elem_inner_qtype, elem_class_name, elem_nested, null);
+        // Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
+        // incelemesi", C1): ÖNCEDEN burada SABİT `null` geçiriliyordu —
+        // `list[dict[...]]`e İNDEKSLE atama (`xs[i] = {...}`) `releaseValueIfSet`in
+        // `.dict` dalına (bkz. onun belge notu) `dict_info == null` İLE
+        // ULAŞIP `dinfo.?` üzerinde bir Zig optional-unwrap PANİĞİYLE
+        // (derleyicinin KENDİSİ çökerdi, Nox-seviyesi bir hata DEĞİL)
+        // ÇÖKERDİ. `elem_heap_info.dict_info` BURADAN DOĞRU akıtılır.
+        const elem_dict_info: ?*const DictInfo = if (obj.elem_heap_info) |ehi| ehi.dict_info else null;
+        try self.releaseValueIfSet(old_ptr, elem_heap, elem_inner_qtype, elem_class_name, elem_nested, elem_dict_info);
     } else {
         try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(obj.elem_qtype), val.text, addr });
     }

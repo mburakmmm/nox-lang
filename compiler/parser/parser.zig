@@ -1018,7 +1018,14 @@ pub const Parser = struct {
         }
     }
 
-    /// Tırnakları kaldırır ve temel kaçış dizilerini (\n \t \\ \' \") çözer.
+    /// Tırnakları kaldırır ve temel kaçış dizilerini (\n \t \r \\ \' \") çözer.
+    ///
+    /// **Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
+    /// incelemesi"): `\r` ÖNCEDEN bu listede EKSİKTİ** (belge notunun
+    /// KENDİSİ bile yalnızca `\n \t \\ \' \"`i saymıştı) — `\` sessizce
+    /// DÜŞÜRÜLÜP `r` DÜZ karakter olarak KALIYORDU (`"\r"` → tek bayt
+    /// `114`/'r', 13/CR DEĞİL). Mail header injection kontrolü GİBİ
+    /// `\r`/`\n` ARAYAN kod bu YÜZDEN GERÇEK CR baytını hiç GÖRMÜYORDU.
     fn decodeString(self: *Parser, lexeme: []const u8) ParseError![]const u8 {
         return self.decodeEscapes(lexeme[1 .. lexeme.len - 1]);
     }
@@ -1036,6 +1043,7 @@ pub const Parser = struct {
                 const decoded: u8 = switch (esc) {
                     'n' => '\n',
                     't' => '\t',
+                    'r' => '\r',
                     '\\' => '\\',
                     '\'' => '\'',
                     '"' => '"',
@@ -1082,6 +1090,7 @@ pub const Parser = struct {
                 const decoded: u8 = switch (esc) {
                     'n' => '\n',
                     't' => '\t',
+                    'r' => '\r',
                     '\\' => '\\',
                     '\'' => '\'',
                     '"' => '"',

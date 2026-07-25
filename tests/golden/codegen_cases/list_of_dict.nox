@@ -1,0 +1,25 @@
+def build() -> list[dict[str, str]]:
+    xs: list[dict[str, str]] = []
+    xs.append({"name": "alice", "role": "admin"})
+    xs.append({"name": "bob", "role": "user"})
+    return xs
+
+def render_records(rows: list[dict[str, str]]) -> str:
+    result: str = ""
+    i: int = 0
+    while i < len(rows):
+        result = result + rows[i]["name"] + ":" + rows[i]["role"] + ";"
+        i = i + 1
+    return result
+
+xs: list[dict[str, str]] = build()
+print(render_records(xs))
+
+xs[0] = {"name": "carol", "role": "owner"}
+print(render_records(xs))
+
+i: int = 0
+while i < 5:
+    ys: list[dict[str, str]] = [{"k": str(i)}]
+    i = i + 1
+print("stress done")

@@ -579,9 +579,15 @@ pub fn genListLit(self: *Codegen, elems: []const ast.Expr) CodegenError!Value {
     // AYNI gerekçe/belge notu (`stdlib/nox/router.nox`nin `list[(T)->U]`
     // alanları İçin — bu OLMADAN listenin KENDİSİ düşürüldüğünde eleman
     // closure'ları HİÇ serbest bırakılmazdı, GERÇEK bir sızıntı).
-    if (first.heap == .class or first.heap == .list or first.heap == .str or first.heap == .closure) {
+    // Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
+    // incelemesi", C1): `.dict` EKLENDİ — bkz. `registration.zig`nin
+    // `resolveType`indeki AYNI gerekçe/belge notu. Bu dal ÖNCEDEN `.dict`i
+    // ATLIYORDU — `[{...}, {...}]` GİBİ bir `list_lit` ifadesi SESSİZCE
+    // `elem_heap_info = null` ile devam ediyordu (GERÇEK bir sızıntı: dict
+    // elemanları listenin KENDİSİ düşürüldüğünde HİÇ serbest bırakılmıyordu).
+    if (first.heap == .class or first.heap == .list or first.heap == .str or first.heap == .closure or first.heap == .dict) {
         const info = try self.allocator.create(ElemHeapInfo);
-        info.* = .{ .heap = first.heap, .class_name = first.class_name, .elem_qtype = first.elem_qtype, .nested = first.elem_heap_info, .elem_is_str = first.elem_is_str, .func_sig = first.func_sig };
+        info.* = .{ .heap = first.heap, .class_name = first.class_name, .elem_qtype = first.elem_qtype, .nested = first.elem_heap_info, .elem_is_str = first.elem_is_str, .func_sig = first.func_sig, .dict_info = first.dict_info };
         elem_heap_info = info;
     }
     const elem_is_str = first.heap == .str;
