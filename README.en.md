@@ -158,6 +158,11 @@ noxc run main.nox -- a b c  # compiles + runs, forwarding argv
 noxc test                   # discovers and runs all *_test.nox files under the CWD
 noxc fetch                  # populates the dependency cache from nox.json
 noxc update                 # re-resolves dependencies to their latest refs, updates nox.lock
+noxc add nyx                # resolves "nyx" from the central index and adds it to nox.json
+noxc add nyx --ref v1.2.0   # pin to a specific version/ref
+noxc add nyx github.com/x/y # give the repo explicitly instead of using the index (e.g. private packages)
+noxc delete nyx             # remove a dependency from nox.json (and nox.lock)
+noxc publish github.com/me/nyx --description "..."  # submit package metadata to the central index (awaits admin approval)
 noxc upgrade [--check]      # self-updates noxc itself (binary+runtime+stdlib) to the latest release
 ```
 

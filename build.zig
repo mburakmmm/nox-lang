@@ -347,6 +347,7 @@ pub fn build(b: *std.Build) void {
         "tests/unit/module_loader_test.zig",
         "tests/cli/subcommand_test.zig",
         "tests/cli/package_resolution_test.zig",
+        "tests/cli/add_delete_test.zig",
         "tests/cli/local_import_test.zig",
         "tests/cli/lsp_test.zig",
         "tests/cli/sqlite_test.zig",
@@ -637,6 +638,18 @@ pub fn build(b: *std.Build) void {
     });
     const upgrade_test = b.addTest(.{ .root_module = upgrade_test_mod });
     test_step.dependOn(&b.addRunArtifact(upgrade_test).step);
+
+    // `noxc publish` (bkz. `compiler/pkg/registry.zig`nin modül üstü notu)
+    // uçtan uca testleri — `search_test_mod`/`upgrade_test_mod` İLE AYNI
+    // gerekçeyle (`std.c.socket` DOĞRUDAN çağrısı) `link_libc` gerektirir.
+    const publish_test_mod = b.createModule(.{
+        .root_source_file = b.path("tests/cli/publish_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const publish_test = b.addTest(.{ .root_module = publish_test_mod });
+    test_step.dependOn(&b.addRunArtifact(publish_test).step);
 
     // ---- Stdlib fazı §D.1.6: `nox.http.serve` özel yerleşiğinin uçtan uca
     // golden testi — `http_stdlib_test` İLE AYNI bağımlılık (yalnızca

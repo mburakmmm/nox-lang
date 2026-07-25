@@ -14,6 +14,35 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.7.0]
+
+### Eklendi
+- **`noxc add <alias> [repo] [--ref <ref>]`** — bir bağımlılığı `nox.json`a
+  ekler (zaten VARSA upsert — `repo`/`ref`i günceller). `repo`
+  VERİLMEZSE, `NOX_INDEX_URL`den (varsayılan: `noxpkg.2mtechnology.org`
+  merkezi indeksi, henüz yayında OLMASA bile env override'ıyla test
+  EDİLEBİLİR) alias'ı ARAYIP çözer.
+- **`noxc delete <alias>`** — bağımlılığı `nox.json`dan (VE `nox.lock`taki
+  eşleşen girdiden) çıkarır.
+- **`noxc publish <repo> [--ref <ref>] [--description <metin>] [--tags a,b,c]`**
+  — paketin METADATASINI (kod/tarball YOK — mevcut GitHub-tabanlı
+  mimariyle uyumlu) `NOX_PUBLISH_API_BASE`e (varsayılan: `noxpkg.
+  2mtechnology.org`) gönderir; onay merkezi sitenin admin panelinden
+  manuel yapılır, bu komut poll ETMEZ.
+- `compiler/project.zig`ye `saveManifest` (`nox.json`i geri yazan İLK
+  kod yolu — `saveLockfile` İLE AYNI desen) VE `compiler/pkg/registry.zig`
+  (indeks-alias çözümü + yayınlama İSTEMCİSİ) eklendi.
+
+## [1.6.1]
+
+### Düzeltildi
+- README.md/README.en.md'nin "HTTP verimi" tablosu Faz HH'nin keep-alive
+  eklemesinden ÖNCEki, güncelliğini yitirmiş Nox sayılarını (~12-17K
+  İstek/sn) gösteriyordu — `benchmarks/RESULTS.md`nin KENDİ, DAHA GÜNCEL
+  sayısıyla (~165K-182K) bile TUTARSIZDI. Dört sunucu (Nox/Zig/Go/
+  FastAPI) sıfırdan, 3'er koşumun ortancası olarak yeniden ölçüldü;
+  `benchmarks/RESULTS.md`ye tarihli bir metodoloji notu eklendi.
+
 ## [1.6.0]
 
 ### Eklendi

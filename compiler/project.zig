@@ -83,6 +83,20 @@ pub fn loadManifest(a: Allocator, io: Io, dir_path: []const u8) ManifestError!Ma
     return parsed.value;
 }
 
+/// `manifest`i `dir_path/nox.json`a (okunabilir, girintili JSON olarak)
+/// yazar — `saveLockfile` İLE BİREBİR AYNI desen (Faz O §P.5.5, `noxc add`/
+/// `noxc delete`in GERÇEK yazma yolu). Çağıran, YAZMADAN ÖNCE
+/// `validateManifest`i KENDİSİ çağırmalıdır (bu fonksiyon TEKRAR
+/// doğrulamaz — `loadManifest`nin okuma tarafındaki simetriden FARKLI
+/// olarak, yazma öncesi doğrulama ÇAĞIRANIN sorumluluğundadır, böylece
+/// "geçersiz bir manifesti neden REDDETTİ" hatası her ZAMAN çağıranın
+/// KENDİ, bağlam-özel mesajıyla raporlanabilir).
+pub fn saveManifest(a: Allocator, io: Io, dir_path: []const u8, manifest: Manifest) !void {
+    const manifest_path = try std.fmt.allocPrint(a, "{s}/nox.json", .{dir_path});
+    const json_text = try std.json.Stringify.valueAlloc(a, manifest, .{ .whitespace = .indent_2 });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = manifest_path, .data = json_text });
+}
+
 /// `start_dir`den (**mutlak yol OLMALI** — çağıran, ör. `Dir.realPath` ile
 /// önce mutlak hale getirmeli) YUKARI doğru `nox.json` arar (Cargo/`go.mod`
 /// keşfiyle AYNI desen); bulursa onu İÇEREN dizinin yolunu döner, dosya

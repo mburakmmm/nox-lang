@@ -32,6 +32,7 @@ const test_runner = @import("pkg/test_runner.zig");
 const fetch = @import("pkg/fetch.zig");
 const pkg_index = @import("pkg/index.zig");
 const upgrade_mod = @import("pkg/upgrade.zig");
+const registry = @import("pkg/registry.zig");
 const formatter = @import("fmt/formatter.zig");
 const build_options = @import("build_options");
 
@@ -113,6 +114,9 @@ fn printHelp(is_tr: bool) void {
             \\  fetch                 nox.json'daki bağımlılıkları önbelleğe doldurur
             \\  update                bağımlılıkları en son ref'lerine yeniden çözer, nox.lock'u günceller
             \\  search <indeks> [q]   bir paket indeksini (dosya veya URL) sorgular
+            \\  add <alias> [repo]    bagimliligi nox.json'a ekler (repo verilmezse indeksten cozer)
+            \\  delete <alias>        bagimliligi nox.json'dan (ve nox.lock'tan) cikarir
+            \\  publish <repo>        paket metadatasini merkezi indekse gonderir (admin onayi bekler)
             \\  upgrade [--check] [s] noxc'nin kendisini en son (ya da belirtilen) surume gunceller
             \\  version               sürüm bilgisini yazdırır (--version/-V ile aynı)
             \\
@@ -146,6 +150,9 @@ fn printHelp(is_tr: bool) void {
             \\  fetch                 populate the dependency cache from nox.json
             \\  update                re-resolve dependencies to their latest refs, update nox.lock
             \\  search <index> [q]    query a package index (file or URL)
+            \\  add <alias> [repo]    add a dependency to nox.json (resolves repo from the index if omitted)
+            \\  delete <alias>        remove a dependency from nox.json (and nox.lock)
+            \\  publish <repo>        submit package metadata to the central index (awaits admin approval)
             \\  upgrade [--check] [v] self-update noxc to the latest (or a given) version
             \\  version               print version info (same as --version/-V)
             \\
@@ -254,7 +261,14 @@ pub fn main(init: std.process.Init) !void {
     if (init.environ_map.get("NOX_UPGRADE_API_BASE")) |v| upgrade_policy.api_base = try a.dupe(u8, v);
     if (init.environ_map.get("NOX_UPGRADE_DOWNLOAD_BASE")) |v| upgrade_policy.download_base = try a.dupe(u8, v);
 
-    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, init, check, version, help, upgrade, legacy };
+    // `noxc add`/`noxc publish` (bkz. `pkg/registry.zig`nin modül üstü
+    // notu) — `upgrade_policy` İLE AYNI desen: varsayılan GERÇEK `noxpkg`
+    // URL'leri, testler/yerel geliştirme İçin env override'ları.
+    var registry_policy: registry.RegistryPolicy = .{};
+    if (init.environ_map.get("NOX_INDEX_URL")) |v| registry_policy.index_url = try a.dupe(u8, v);
+    if (init.environ_map.get("NOX_PUBLISH_API_BASE")) |v| registry_policy.publish_api_base = try a.dupe(u8, v);
+
+    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, init, check, version, help, upgrade, legacy };
     const sub: Subcommand = blk: {
         // Bulundu (kullanıcı geri bildirimi): çıplak `noxc` ÖNCEDEN `.legacy`ye
         // düşüp `cmdBuild`i argümansız çağırıyordu — tek satırlık bir
@@ -271,6 +285,9 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.eql(u8, first, "fetch")) break :blk .fetch;
         if (std.mem.eql(u8, first, "update")) break :blk .update;
         if (std.mem.eql(u8, first, "search")) break :blk .search;
+        if (std.mem.eql(u8, first, "add")) break :blk .add;
+        if (std.mem.eql(u8, first, "delete")) break :blk .delete;
+        if (std.mem.eql(u8, first, "publish")) break :blk .publish;
         if (std.mem.eql(u8, first, "init")) break :blk .init;
         if (std.mem.eql(u8, first, "check")) break :blk .check;
         // `-v`/`--dump` ZATEN `build`in AYRINTILI-döküm bayrağı olduğundan
@@ -292,6 +309,9 @@ pub fn main(init: std.process.Init) !void {
         .test_cmd => try cmdTest(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
         .fmt => try cmdFmt(gpa, io, a, rest),
         .search => try cmdSearch(io, a, rest, fetch_policy),
+        .add => try cmdAdd(io, a, rest, registry_policy, fetch_policy),
+        .delete => try cmdDelete(io, a, rest),
+        .publish => try cmdPublish(io, a, rest, registry_policy, fetch_policy),
         .version => std.debug.print("noxc {s}\n", .{build_options.version}),
         .fetch => try cmdFetch(io, a, rest, nox_home, fetch_policy),
         .update => try cmdUpdate(io, a, rest, nox_home, fetch_policy),
@@ -424,6 +444,186 @@ fn cmdSearch(io: std.Io, a: std.mem.Allocator, args: []const []const u8, fetch_p
     }
     if (found == 0) try w.writeAll("eslesen paket bulunamadi\n");
     try w.flush();
+}
+
+/// `noxc add <alias> [repo] [--ref <ref>]` — `repo` VERİLMEDİYSE
+/// `registry_policy.index_url`den (URL ya da yerel dosya yolu —
+/// `cmdSearch`in AYNI `is_url` ayrımı) çözülür. Alias ZATEN `requires[]`de
+/// VARSA üzerine yazar (upsert — İKİNCİ bir `add` çağrısı hata VERMEZ,
+/// `repo`/`ref`i günceller), YOKSA ekler.
+fn cmdAdd(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registry_policy: registry.RegistryPolicy, fetch_policy: fetch.FetchPolicy) !void {
+    var positionals: std.ArrayListUnmanaged([]const u8) = .empty;
+    var ref: []const u8 = "main";
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "--ref")) {
+            i += 1;
+            if (i >= args.len) {
+                printErr("add: --ref bir deger bekliyor\n", .{});
+                std.process.exit(1);
+            }
+            ref = args[i];
+        } else {
+            try positionals.append(a, args[i]);
+        }
+    }
+    if (positionals.items.len == 0) {
+        std.debug.print("kullanim: noxc add <alias> [repo] [--ref <ref>]\n", .{});
+        std.process.exit(1);
+    }
+    const alias = positionals.items[0];
+
+    const repo: []const u8 = if (positionals.items.len > 1) positionals.items[1] else blk: {
+        const index_arg = registry_policy.index_url;
+        const is_url = std.mem.startsWith(u8, index_arg, "http://") or std.mem.startsWith(u8, index_arg, "https://");
+        const idx = if (is_url)
+            pkg_index.loadIndexFromUrl(a, io, index_arg, fetch_policy) catch |e| {
+                printErr("add: indeks getirilemedi/ayristirilamadi ({t}): {s}\n", .{ e, index_arg });
+                std.process.exit(1);
+            }
+        else
+            pkg_index.loadIndexFromFile(a, io, index_arg) catch |e| {
+                printErr("add: indeks okunamadi/ayristirilamadi ({t}): {s}\n", .{ e, index_arg });
+                std.process.exit(1);
+            };
+        const entry = registry.findByAlias(idx, alias) orelse {
+            printErr("add: '{s}' indekste bulunamadi ({s}) — repo'yu acikca belirtin: noxc add {s} <repo>\n", .{ alias, index_arg, alias });
+            std.process.exit(1);
+        };
+        break :blk entry.repo;
+    };
+
+    const root = try findProjectRootOrExit(io, a, "add");
+    const manifest = loadManifestOrExit(a, io, root);
+
+    var new_requires: std.ArrayListUnmanaged(project.Requirement) = .empty;
+    try new_requires.appendSlice(a, manifest.requires);
+    var existing_idx: ?usize = null;
+    for (new_requires.items, 0..) |req, idx| {
+        if (std.mem.eql(u8, req.alias, alias)) {
+            existing_idx = idx;
+            break;
+        }
+    }
+    const new_req: project.Requirement = .{ .alias = alias, .repo = repo, .ref = ref };
+    if (existing_idx) |idx| {
+        new_requires.items[idx] = new_req;
+    } else {
+        try new_requires.append(a, new_req);
+    }
+
+    const new_manifest: project.Manifest = .{ .name = manifest.name, .entry = manifest.entry, .requires = new_requires.items };
+    project.validateManifest(new_manifest) catch |e| {
+        printErr("add: gecersiz alias '{s}' ({t})\n", .{ alias, e });
+        std.process.exit(1);
+    };
+    try project.saveManifest(a, io, root, new_manifest);
+
+    if (existing_idx != null) {
+        printOk("guncellendi: {s} -> {s}@{s}\n", .{ alias, repo, ref });
+    } else {
+        printOk("eklendi: {s} -> {s}@{s}\n", .{ alias, repo, ref });
+    }
+    std.debug.print("sonraki adim: 'noxc fetch' calistirin\n", .{});
+}
+
+/// `noxc delete <alias>` — `requires[]`den çıkarır VE `nox.lock`taki
+/// eşleşen (VARSA) girdiyi de budar (bayat, referanssız bir kilit
+/// girdisi KALMASIN).
+fn cmdDelete(io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
+    const alias = if (args.len > 0) args[0] else {
+        std.debug.print("kullanim: noxc delete <alias>\n", .{});
+        std.process.exit(1);
+    };
+
+    const root = try findProjectRootOrExit(io, a, "delete");
+    const manifest = loadManifestOrExit(a, io, root);
+
+    var new_requires: std.ArrayListUnmanaged(project.Requirement) = .empty;
+    var found = false;
+    for (manifest.requires) |req| {
+        if (std.mem.eql(u8, req.alias, alias)) {
+            found = true;
+            continue;
+        }
+        try new_requires.append(a, req);
+    }
+    if (!found) {
+        printErr("delete: '{s}' requires[] icinde bulunamadi\n", .{alias});
+        std.process.exit(1);
+    }
+
+    const new_manifest: project.Manifest = .{ .name = manifest.name, .entry = manifest.entry, .requires = new_requires.items };
+    try project.saveManifest(a, io, root, new_manifest);
+
+    const lock = project.loadLockfile(a, io, root) catch project.Lockfile{};
+    var new_packages: std.ArrayListUnmanaged(project.LockedPackage) = .empty;
+    var lock_changed = false;
+    for (lock.packages) |pkg| {
+        if (std.mem.eql(u8, pkg.alias, alias)) {
+            lock_changed = true;
+            continue;
+        }
+        try new_packages.append(a, pkg);
+    }
+    if (lock_changed) {
+        try project.saveLockfile(a, io, root, .{ .packages = new_packages.items });
+    }
+
+    printOk("silindi: {s}\n", .{alias});
+}
+
+/// `noxc publish <repo> [--ref <ref>] [--description <metin>] [--tags a,b,c]`
+/// — YALNIZCA METADATA gönderir (kod/tarball YOK). `noxpkg` sunucusunun
+/// gönderi-kutusuna EKLENİR; onay kullanıcının KENDİSİ tarafından admin
+/// panelinden yapılır (bu komut onay-BEKLEMEZ/poll ETMEZ).
+fn cmdPublish(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registry_policy: registry.RegistryPolicy, fetch_policy: fetch.FetchPolicy) !void {
+    var repo_opt: ?[]const u8 = null;
+    var ref: []const u8 = "main";
+    var description: []const u8 = "";
+    var tags: []const []const u8 = &.{};
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "--ref")) {
+            i += 1;
+            if (i < args.len) ref = args[i];
+        } else if (std.mem.eql(u8, args[i], "--description")) {
+            i += 1;
+            if (i < args.len) description = args[i];
+        } else if (std.mem.eql(u8, args[i], "--tags")) {
+            i += 1;
+            if (i < args.len) {
+                var tag_list: std.ArrayListUnmanaged([]const u8) = .empty;
+                var it = std.mem.splitScalar(u8, args[i], ',');
+                while (it.next()) |t| try tag_list.append(a, t);
+                tags = tag_list.items;
+            }
+        } else if (repo_opt == null) {
+            repo_opt = args[i];
+        }
+    }
+    const repo = repo_opt orelse {
+        std.debug.print("kullanim: noxc publish <repo> [--ref <ref>] [--description <metin>] [--tags a,b,c]\n", .{});
+        std.process.exit(1);
+    };
+
+    const root = try findProjectRootOrExit(io, a, "publish");
+    const manifest = loadManifestOrExit(a, io, root);
+    if (manifest.name.len == 0) {
+        printErr("publish: nox.json'da 'name' bos, publish icin gerekli\n", .{});
+        std.process.exit(1);
+    }
+
+    const payload: registry.PublishPayload = .{ .name = manifest.name, .repo = repo, .ref = ref, .description = description, .tags = tags };
+    const result = registry.submitPublish(a, io, registry_policy.publish_api_base, payload, fetch_policy.allow_insecure_transport) catch |e| {
+        printErr("publish: gonderilemedi ({t}): {s}\n", .{ e, registry_policy.publish_api_base });
+        std.process.exit(1);
+    };
+    if (!result.ok) {
+        printErr("publish: reddedildi: {s}\n", .{result.@"error"});
+        std.process.exit(1);
+    }
+    printOk("gonderildi: {s} (id={s}) — onay bekleniyor\n", .{ manifest.name, result.id });
 }
 
 const BuildOpts = struct {
