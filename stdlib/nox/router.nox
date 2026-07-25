@@ -9,6 +9,37 @@
 # ZAMAN `nox.http.serve`e DOĞRUDAN geçirilmez, kullanıcı KENDİ TEK
 # `handle` fonksiyonundan `router.dispatch(req)`i ÇAĞIRIR.
 #
+# **KRİTİK, GERÇEK bir kısıt (`services/noxpkg/` inşa edilirken
+# BULUNDU, bkz. proje belleği "noxc add/delete/publish + noxpkg merkezi
+# sunucusu" fazı):** Nox'ta üst-düzey (script-seviyesi) `var_decl`
+# durumu HİÇBİR fonksiyonun İÇİNDEN GÖRÜLEMEZ — ne okuma ne yazma
+# (minimal bir `counter: int = 0` + `def f(): counter = counter + 1`
+# BİLE `error.UndefinedVariable` verir, GERÇEK bir tekrar-üretimle
+# DOĞRULANDI: bkz. `tests/compat/router_module_state_golden_test.zig`).
+# Bu YÜZDEN AŞAĞIDAKİ desen **ÇALIŞMAZ**:
+# ```
+# r: Router = Router()          # script top-level'da inşa edildi
+# r.get("/", hello)
+# def handle(req: HttpRequest) -> HttpResponse:
+#     return r.dispatch(req)    # UndefinedVariable: r — handle `r`yi GÖREMEZ
+# nox.http.serve(8080, handle, 1)
+# ```
+# **DOĞRU desen:** `Router`u `handle`in KENDİSİNİN (ya da ondan çağrılan
+# bir yardımcı fonksiyonun) İÇİNDE, HER İSTEKTE yeniden inşa edin —
+# rota kaydı SAF `list.append` (G/Ç YOK), maliyeti İHMAL EDİLEBİLİR:
+# ```
+# def build_router() -> Router:
+#     r: Router = Router()
+#     r.get("/", hello)
+#     return r
+# def handle(req: HttpRequest) -> HttpResponse:
+#     r: Router = build_router()
+#     return r.dispatch(req)
+# nox.http.serve(8080, handle, 1)
+# ```
+# GERÇEK bir alt-süreç+soket İLE DOĞRULANDI (`services/noxpkg/main.nox`,
+# `tests/compat/router_module_state_golden_test.zig`nin İLK testi).
+#
 # Faz U.4 (bkz. nox-teknik-spesifikasyon.md) İLE eklenen BİRİNCİ-SINIF
 # fonksiyon/closure tipleri (`(T) -> U` sözdizimi) SAYESİNDE rota
 # işleyicileri/ara katmanlar GERÇEK, ÇALIŞMA-ZAMANI değerleri olarak

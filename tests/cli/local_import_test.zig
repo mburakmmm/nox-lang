@@ -305,6 +305,80 @@ test "U.2: gercekten var olmayan proje-ici modul acik hata mesajiyla basarisiz o
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "bilinmeyen alias") != null);
 }
 
+// Bulundu (task_32f43efe, bkz. proje belleği "noxc add/delete/publish +
+// noxpkg merkezi sunucusu" fazı — `services/noxpkg/` inşa edilirken):
+// birinci-sınıf fonksiyon-değer mekanizması (v1.4.0, `checker.zig`nin
+// `resolveIdentifierAsFunctionValue`ı + `codegen_qbe/expr.zig`nin
+// `buildFunctionValueForIdentifier`ı) ÖNCEDEN yalnızca AYNI dosyada
+// tanımlı üst-düzey fonksiyonlar İçin çalışıyordu — `from helpers import
+// greet` İLE alınan `greet`, bir ÇAĞRI DIŞINDA bir DEĞER olarak (ör. bir
+// `list[(str)->str]`e KONULDUĞUNDA) `UndefinedVariable: greet` verirdi,
+// ÇÜNKÜ HER İKİ fonksiyon da yalnızca YEREL (mangle EDİLMEMİŞ) `self.
+// functions` anahtarını dener, `self.from_imports`e HİÇ bakmazdı —
+// `checkCall`nin `.identifier` dalının (DOĞRUDAN çağrı İçin) ZATEN
+// yaptığı AYNI geri düşüş EKSİKTİ. Düzeltildi: HER İKİSİ de artık ÖNCE
+// `self.functions`/`self.from_imports`i dener, from_imports EŞLEŞMESİ
+// VARSA mangled adı KULLANIR (checker `functions_used_as_value`e mangled
+// adı KAYDEDER, codegen'in trampoline üretimi/kullanım-sitesi AYNI
+// mangled adı BAĞIMSIZ olarak yeniden türetir — `registration.zig`/
+// `exceptions.zig`nin ZATEN kurduğu `from_imports` geri düşüş DESENİYLE
+// TUTARLI). Bu test hem from_imports geri düşüşünü (`greet` bir DEĞER
+// olarak) HEM DE dolaylı çağrının (`fns[0](...)`, Faz U.4/Gap 2)
+// SONUCUNU DOĞRU üretmesini kanıtlar.
+test "task_32f43efe: from-import edilen bir fonksiyon ÇAĞRI DISINDA bir DEGER olarak (list icinde, dolayli cagriyla) calisir" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var proj = std.testing.tmpDir(.{});
+    defer proj.cleanup();
+    var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const proj_path = try absPath(io, proj.dir, &proj_buf);
+
+    try proj.dir.writeFile(io, .{ .sub_path = "nox.json", .data = "{\"name\":\"proj\",\"entry\":\"main.nox\"}" });
+    try proj.dir.writeFile(io, .{
+        .sub_path = "helpers.nox",
+        .data = "def greet(name: str) -> str:\n    return \"hello \" + name\n",
+    });
+    try proj.dir.writeFile(io, .{
+        .sub_path = "main.nox",
+        .data =
+        \\from helpers import greet
+        \\
+        \\fns: list[(str) -> str] = [greet]
+        \\print(fns[0]("world"))
+        \\
+        ,
+    });
+
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var env_map = try isolatedNoxHome(io, home.dir, &home_buf);
+    defer env_map.deinit();
+
+    const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{proj_path});
+    const bin_path = try std.fmt.allocPrint(a, "{s}/main", .{proj_path});
+
+    const build_result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxcPath(), "build", main_path },
+        .environ_map = &env_map,
+    });
+    defer std.testing.allocator.free(build_result.stdout);
+    defer std.testing.allocator.free(build_result.stderr);
+    if (build_result.term != .exited or build_result.term.exited != 0) {
+        std.debug.print("build basarisiz, stderr: {s}\n", .{build_result.stderr});
+    }
+    try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
+
+    const run_result = try std.process.run(std.testing.allocator, io, .{ .argv = &.{bin_path} });
+    defer std.testing.allocator.free(run_result.stdout);
+    defer std.testing.allocator.free(run_result.stderr);
+    try std.testing.expectEqualStrings("", run_result.stderr);
+    try std.testing.expectEqualStrings("hello world\n", run_result.stdout);
+}
+
 test "U.2: nox.json olmadan (manifestsiz) proje-ici import ESKI davranisla basarisiz olur" {
     const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);

@@ -14,6 +14,25 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.7.1]
+
+### Düzeltildi
+- `nox.http.serve`/`serve_multicore` artık `0.0.0.0`e (TÜM arayüzler)
+  bağlanıyor — ÖNCEDEN sabit `127.0.0.1` idi, bu YÜZDEN Docker'ın NORMAL
+  port-yönlendirmesi (`ports: "host:container"`) sessizce ulaşamıyordu
+  (`services/noxpkg/` inşa edilirken bulundu, `network_mode: host`
+  workaround'u artık gereksiz — geri alındı).
+- Birinci-sınıf fonksiyon-değer mekanizması artık `from other_module
+  import f` İLE alınan bir fonksiyonu ÇAĞRI DIŞINDA bir DEĞER olarak
+  (ör. bir `list[(T)->U]`e KONULDUĞUNDA) da çözer — ÖNCEDEN yalnızca
+  AYNI dosyada tanımlı fonksiyonlar İçin çalışıyordu, cross-module
+  kullanım `UndefinedVariable` verirdi.
+- `stdlib/nox/router.nox`nin belge notu, `Router`nin modül-üstünde bir
+  KEZ inşa edilip `handle`den kullanılamayacağını (Nox'ta üst-düzey
+  `var_decl` durumu HİÇBİR fonksiyon içinden görülemez) VE doğru
+  deseni (HER istekte yeniden inşa) AÇIKÇA belgeler; bu regresyonu
+  yakalayan yeni bir uçtan-uca test eklendi.
+
 ## [1.7.0]
 
 ### Eklendi

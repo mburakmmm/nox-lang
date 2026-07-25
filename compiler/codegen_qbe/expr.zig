@@ -213,8 +213,18 @@ pub fn emitStringLiteral(self: *Codegen, s: []const u8) CodegenError!Value {
 /// YIĞIN-TAŞMASI RİSKİNİ ARTIRIRDI (bkz. checker.zig tarafında GERÇEKTEN
 /// YAKALANAN AYNI sınıf hata — bir fuzz-regresyon testi).
 pub noinline fn buildFunctionValueForIdentifier(self: *Codegen, name: []const u8) CodegenError!Value {
-    const sig = self.functions.get(name) orelse return error.Unsupported;
-    const trampoline_name = try std.fmt.allocPrint(self.allocator, "{s}__fnval", .{name});
+    // Faz KK.1 (task_32f43efe): `registration.zig`/`exceptions.zig`nin
+    // KENDİ `from_imports` geri düşüşüyle AYNI desen — `name` bir `from
+    // other_module import f` İLE alınan BARE isim OLABİLİR; `self.functions`
+    // yalnızca (`checker.zig`nin `resolveIdentifierAsFunctionValue`ının
+    // AYNI geri düşüşle `functions_used_as_value`e KAYDETTİĞİ) MANGLED
+    // anahtarı taşır.
+    const resolved_name = if (self.functions.contains(name))
+        name
+    else
+        self.from_imports.get(name) orelse return error.Unsupported;
+    const sig = self.functions.get(resolved_name) orelse return error.Unsupported;
+    const trampoline_name = try std.fmt.allocPrint(self.allocator, "{s}__fnval", .{resolved_name});
     const block = try self.newTemp();
     try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ block, RT_PARAM, CLOSURE_HEADER_SIZE });
     try self.out.writer.print("    storel ${s}, {s}\n", .{ trampoline_name, block });

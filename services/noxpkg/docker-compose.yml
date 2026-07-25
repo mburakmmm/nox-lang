@@ -16,18 +16,19 @@ services:
     environment:
       NOXPKG_ADMIN_PASSWORD_HASH: ${NOXPKG_ADMIN_PASSWORD_HASH:?NOXPKG_ADMIN_PASSWORD_HASH ayarlanmali}
       NOXPKG_SESSION_SECRET: ${NOXPKG_SESSION_SECRET:?NOXPKG_SESSION_SECRET ayarlanmali}
-    # **Bulundu, GERÇEK bir çalışma zamanı kısıtı:** `nox.http.serve*`
-    # BAĞLAMA adresini `127.0.0.1`e SABİTLER (runtime/stdlib_shims/
-    # http_server.zig, doğrulandı — `/proc/net/tcp`de `0100007F` olarak
-    # GÖRÜNÜR, `00000000` [`0.0.0.0`] DEĞİL) — bu YÜZDEN normal Docker
-    # port-YÖNLENDİRMESİ (`ports: "host:container"`, konteynerin KENDİ
-    # arayüz IP'sine ADRESLENMİŞ trafiği İLETİR) SESSİZCE ULAŞAMAZ.
-    # `network_mode: host` İLE konteyner HOST'un AĞ ad alanını DOĞRUDAN
-    # PAYLAŞIR — böylece içerideki `127.0.0.1` bağlaması GERÇEKTEN
-    # host'un KENDİ loopback'idir. Bu, ZATEN İSTENEN güvenlik özelliğiyle
-    # (SADECE loopback + Cloudflare Tunnel giriş yolu) TAM UYUMLU —
-    # bilinçli bir workaround, güvenlik GEVŞETMESİ DEĞİL.
-    network_mode: host
+    # **DÜZELTİLDİ (task_d6eb2053, bkz. runtime/stdlib_shims/http_server.zig'in
+    # `bindAndListen` belge notu):** `nox.http.serve*` ARTIK `0.0.0.0`e
+    # (TÜM arayüzler, konteynerin KENDİ ağ ad alanı İÇİNDE) bağlanıyor —
+    # ÖNCEDEN burada kullanılan `network_mode: host` workaround'u ARTIK
+    # GEREKMEZ (ve GERÇEKTEN, dil-seviyesi düzeltmeden SONRA `host` modu
+    # BIRAKILSAYDI sunucu HOST'un TÜM arayüzlerinde dinlerdi — İSTENEN
+    # "sadece loopback + Cloudflare Tunnel" tasarımını BOZARDI). Normal
+    # köprü (bridge) ağı + AÇIKÇA `127.0.0.1:`e SINIRLANDIRILMIŞ port
+    # eşlemesi hem BAĞLANTIYI SAĞLAR (host'un loopback'i → Docker NAT →
+    # konteynerin `0.0.0.0:8080`ü) HEM DE güvenlik özelliğini KORUR
+    # (host'un DIŞ arayüzlerinden HİÇBİR paket konteynere ULAŞMAZ).
+    ports:
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./data:/app/data
     restart: unless-stopped

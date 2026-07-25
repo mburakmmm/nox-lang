@@ -672,6 +672,23 @@ pub fn build(b: *std.Build) void {
     http_serve_test.step.dependOn(&install_noxrt.step);
     test_step.dependOn(&b.addRunArtifact(http_serve_test).step);
 
+    // ---- `stdlib/nox/router.nox` + `nox.http.serve*` etkileşiminin
+    // regresyon testi (bkz. router_module_state_golden_test.zig'in modül
+    // üstü notu — `services/noxpkg/` inşa edilirken BULUNAN, GERÇEK bir
+    // kısıt) — `http_serve_test` İLE AYNI bağımlılık/model ----
+    const router_module_state_test_mod = b.createModule(.{
+        .root_source_file = b.path("tests/compat/router_module_state_golden_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "nox", .module = nox_mod },
+        },
+    });
+    const router_module_state_test = b.addTest(.{ .root_module = router_module_state_test_mod });
+    router_module_state_test.step.dependOn(&install_noxrt.step);
+    test_step.dependOn(&b.addRunArtifact(router_module_state_test).step);
+
     // ---- Faz DD.1: çok-çekirdekli `nox.http.serve` uçtan uca golden
     // testleri — `http_serve_test` İLE AYNI bağımlılık/model, AYRI bir
     // dosya (bkz. http_serve_multicore_golden_test.zig'in modül üstü notu) ----

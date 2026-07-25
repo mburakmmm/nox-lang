@@ -1870,11 +1870,34 @@ pub const Checker = struct {
         if (self.generic_functions.contains(name)) {
             return self.fail(error.TypeMismatch, "generic fonksiyon '{s}' bir değer olarak kullanılamaz (yalnızca çağrılabilir)", .{name});
         }
-        if (self.functions.get(name)) |sig| {
-            if (self.async_functions.contains(name)) {
+        // Faz KK.1 (task_32f43efe): `checkCall`nin `.identifier` dalıyla
+        // (satır ~2289, `resolveMangledCall`) AYNI `from_imports` geri
+        // düşüşü — ÖNCEDEN yalnızca YEREL (bare) `self.functions` anahtarı
+        // denenirdi, bu YÜZDEN `from other_module import f` İLE alınan
+        // `f`nin ÇAĞRI DIŞINDA bir DEĞER olarak kullanılması (ör.
+        // `some_list.append(f)`) HER ZAMAN `UndefinedVariable` verirdi —
+        // `module_loader.zig`nin ithal edilen modüllerdeki ÜST-DÜZEY
+        // isimleri MANGLE ETTİĞİ (bkz. onun belge notu) İÇİN `self.functions`
+        // yalnızca mangled anahtarı ("other_module_f") TAŞIR, bare "f"yi
+        // DEĞİL. `functions_used_as_value`e MANGLED adı KAYDETMEK
+        // (codegen'in `genFunctionValueTrampoline`/`buildFunctionValueForIdentifier`ı
+        // AYNI `from_imports` geri düşüşünü KENDİ tarafında TEKRARLAR,
+        // bkz. `expr.zig`) — AST YENİDEN YAZILMAZ (bare `.identifier`
+        // `Call.callee`nin AKSİNE bir `*Expr` İşaretçisi TAŞIMAZ, bkz.
+        // `ast.Expr`in belge notu), bu YÜZDEN codegen KENDİ geri düşüşünü
+        // BAĞIMSIZ olarak yapmalıdır.
+        const resolved_name = if (self.functions.contains(name))
+            name
+        else if (self.from_imports.get(name)) |mangled|
+            mangled
+        else
+            null;
+        if (resolved_name) |rn| {
+            const sig = self.functions.get(rn).?;
+            if (self.async_functions.contains(rn)) {
                 return self.fail(error.TypeMismatch, "'{s}' bir 'async def' fonksiyonudur, bir değer olarak kullanılamaz", .{name});
             }
-            try self.functions_used_as_value.put(self.allocator, name, {});
+            try self.functions_used_as_value.put(self.allocator, rn, {});
             const ret_boxed = try self.allocator.create(Type);
             ret_boxed.* = sig.return_type;
             return .{ .func = .{ .params = sig.params, .return_type = ret_boxed } };

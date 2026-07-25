@@ -215,6 +215,27 @@ const ServerHandle = struct { listen_fd: posix.fd_t, owns_fd: bool };
 /// `nox_http_listen_fd`in de (ham fd'yi `ServerHandle` SARMADAN, saf bir
 /// `int` olarak dönmesi için) kullanabilmesi için ÇIKARILDI. `port = 0`
 /// İSE OS boş bir port ATAR.
+///
+/// **BULUNDU, GERÇEK bir hata (`services/noxpkg/` inşa edilirken, bkz.
+/// proje belleği "noxc add/delete/publish + noxpkg merkezi sunucusu"
+/// fazı — task_d6eb2053):** ÖNCEDEN bağlama adresi SABİT `127.0.0.1`
+/// (`0x7f000001`) idi — Docker'ın NORMAL port-yönlendirmesi (`ports:
+/// "host:container"`, konteynerin KENDİ ağ ad alanından host'a bağlanan
+/// bir NAT köprüsü) bu YÜZDEN SESSİZCE ULAŞAMIYORDU (yalnızca konteynerin
+/// KENDİ loopback'inden erişilebilirdi, host'un DIŞINDAN DEĞİL). DÜZELTME:
+/// `0.0.0.0` (`INADDR_ANY`, `addr=0`) — Python `http.server`/Node `http.
+/// createServer().listen(port)` GİBİ diğer dillerin STANDART sunucu
+/// API'leriyle TUTARLI varsayılan. `127.0.0.1` HÂLÂ erişilebilir (TÜM
+/// arayüzlere bağlanmak loopback'i DIŞLAMAZ) — bu YÜZDEN mevcut testler
+/// (`testConnect`, aşağıda) DEĞİŞİKLİKSİZ geçer. Yalnızca-loopback
+/// GÜVENLİK izolasyonu İSTEYEN dağıtımlar (ör. `services/noxpkg/`nin
+/// KENDİ "sadece Cloudflare Tunnel" tasarımı) BUNU konteyner/güvenlik-
+/// duvarı SEVİYESİNDE (ör. Docker `network_mode: host` + host'un KENDİ
+/// güvenlik duvarı, YA DA container'ı yalnızca `127.0.0.1:port:port`
+/// PORT-EŞLEMESİYLE yayınlamak) SAĞLAMALIDIR — bu artık dil-seviyesinde
+/// ZORLANMIYOR, çünkü "sunucu varsayılan olarak yalnızca loopback'e
+/// bağlanır" davranışı GENEL kullanım İçin SÜRPRİZ BOZUCUYDU (bu HATANIN
+/// KENDİSİ bunun KANITI).
 fn bindAndListen(port: i64) ?posix.fd_t {
     if (builtin.os.tag == .windows) {
         const ws = io_mod.WinSock;
@@ -225,7 +246,7 @@ fn bindAndListen(port: i64) ?posix.fd_t {
 
         var addr: std.os.windows.ws2_32.sockaddr.in = .{
             .port = std.mem.nativeToBig(u16, @intCast(port)),
-            .addr = std.mem.nativeToBig(u32, 0x7f000001),
+            .addr = 0,
         };
         if (ws.bind(fd, &addr, @sizeOf(std.os.windows.ws2_32.sockaddr.in)) != 0) {
             _ = ws.closesocket(fd);
@@ -245,7 +266,7 @@ fn bindAndListen(port: i64) ?posix.fd_t {
 
     var addr: std.c.sockaddr.in = .{
         .port = std.mem.nativeToBig(u16, @intCast(port)),
-        .addr = std.mem.nativeToBig(u32, 0x7f000001),
+        .addr = 0,
     };
     if (std.c.bind(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in)) != 0) {
         _ = closeSocket(fd);
@@ -265,8 +286,9 @@ fn bindAndListen(port: i64) ?posix.fd_t {
     return fd;
 }
 
-/// `127.0.0.1:port`e bağlanıp dinlemeye başlar. `port = 0` İSE OS boş bir
-/// port ATAR — gerçek portu `nox_http_server_port`la öğren.
+/// `0.0.0.0:port`e (TÜM arayüzler, bkz. `bindAndListen`nin belge notu)
+/// bağlanıp dinlemeye başlar. `port = 0` İSE OS boş bir port ATAR —
+/// gerçek portu `nox_http_server_port`la öğren.
 export fn nox_http_server_listen(rt: ?*anyopaque, port: i64) callconv(.c) ?*anyopaque {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
     const fd = bindAndListen(port) orelse return null;
