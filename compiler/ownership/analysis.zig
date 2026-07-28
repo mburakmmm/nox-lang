@@ -376,6 +376,10 @@ fn isHeapTypeExpr(te: ast.TypeExpr) bool {
         // `HeapKind.boxed_scalar`) — HER İKİ durumda da Optional'ın
         // KENDİSİ heap-yönetimlidir, taban tip ne olursa olsun.
         .optional => true,
+        // Faz NN.2: nitelikli (`pkg.module.X`) bir tip adı HER ZAMAN bir
+        // SINIF örneğine çözümlenir (bkz. `typeExprToType`in `.qualified`
+        // dalı) — sınıflar HER ZAMAN heap-yönetimlidir.
+        .qualified => true,
     };
 }
 
@@ -391,6 +395,14 @@ fn typeExprName(allocator: std.mem.Allocator, te: ast.TypeExpr) ![]const u8 {
         .optional => |inner| blk: {
             const inner_name = try typeExprName(allocator, inner.*);
             break :blk try std.fmt.allocPrint(allocator, "{s}|None", .{inner_name});
+        },
+        .qualified => |segments| blk: {
+            var buf: std.ArrayListUnmanaged(u8) = .empty;
+            for (segments, 0..) |seg, i| {
+                if (i != 0) try buf.append(allocator, '.');
+                try buf.appendSlice(allocator, seg);
+            }
+            break :blk try buf.toOwnedSlice(allocator);
         },
     };
 }

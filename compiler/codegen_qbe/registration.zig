@@ -48,6 +48,32 @@ pub fn newLabel(self: *Codegen, comptime prefix: []const u8) CodegenError![]cons
 /// kaydettiği `Box__int` mangled adını BULABİLMESİ İçin. **Bu iki
 /// fonksiyon SENKRON KALMALIDIR** — biri değişirse (ör. yeni bir mangled
 /// isim BİÇİMİ) diğeri de GÜNCELLENMELİDİR.
+/// Faz NN.2: `pkg.module.ClassName` — `.qualified`in segmentlerini
+/// (`self.module_aliases` İLE ilk segmenti ikame ettikten SONRA) `_`
+/// İLE birleştirip checker'ın `typeExprToType`indeki (VE `resolveType`in
+/// `.qualified` dalındaki) AYNI mangled sınıf adını üretir. Hem `resolveType`
+/// hem `appendMangledTypeExprName` (bir generic sınıf tip ARGÜMANI olarak
+/// kullanıldığında, ör. `Box[pkg.module.Foo]`) TARAFINDAN paylaşılır —
+/// checker'ın `appendMangledType`inin `.class` dalı ZATEN ÇÖZÜLMÜŞ (mangled)
+/// isimle çalıştığından, İKİSİNİN de AYNI sonucu üretmesi GEREKİR.
+fn mangledQualifiedClassName(self: *Codegen, raw_segments: []const []const u8) CodegenError![]const u8 {
+    var segments: []const []const u8 = raw_segments;
+    if (raw_segments.len > 0) {
+        if (self.module_aliases.get(raw_segments[0])) |target| {
+            const out = try self.allocator.alloc([]const u8, target.len + raw_segments.len - 1);
+            @memcpy(out[0..target.len], target);
+            @memcpy(out[target.len..], raw_segments[1..]);
+            segments = out;
+        }
+    }
+    var mangled: std.ArrayListUnmanaged(u8) = .empty;
+    for (segments, 0..) |seg, i| {
+        if (i != 0) try mangled.append(self.allocator, '_');
+        try mangled.appendSlice(self.allocator, seg);
+    }
+    return mangled.toOwnedSlice(self.allocator);
+}
+
 fn mangleGenericClassName(self: *Codegen, base: []const u8, args: []const ast.TypeExpr) CodegenError![]const u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     try buf.appendSlice(self.allocator, base);
@@ -84,6 +110,11 @@ fn appendMangledTypeExprName(self: *Codegen, buf: *std.ArrayListUnmanaged(u8), t
         // bu dal PRATİKTE tetiklenmez, yalnızca exhaustive switch
         // GEREKSİNİMİNİ karşılar.
         .func_type, .optional => return error.Unsupported,
+        // Faz NN.2: `Box[pkg.module.Foo]` gibi bir generic tip ARGÜMANI —
+        // checker'ın `appendMangledType`inin `.class` dalı ZATEN ÇÖZÜLMÜŞ
+        // mangled isimle çalıştığından, BURADA da AYNI mangled ismi
+        // (`mangledQualifiedClassName`) üretip yazıyoruz.
+        .qualified => |segments| try buf.appendSlice(self.allocator, try mangledQualifiedClassName(self, segments)),
     }
 }
 
@@ -264,6 +295,20 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
             // kullanır) — kutunun KENDİSİ HER ZAMAN `.l` (pointer).
             if (inner.heap == .none and (inner.qtype == .l or inner.qtype == .d or inner.qtype == .w)) {
                 return .{ .qtype = .l, .heap = .boxed_scalar, .elem_qtype = inner.qtype };
+            }
+            return error.Unsupported;
+        },
+        // Faz NN.2: `pkg.module.ClassName` — checker'ın `typeExprToType`
+        // İLE AYNI alias-ikame + `_`-mangling mantığı (bkz. `Codegen.
+        // module_aliases`in belge notu) — codegen KENDİ BAĞIMSIZ kopyasını
+        // yapmak ZORUNDADIR çünkü checker `ast.TypeExpr.qualified`'ı YERİNDE
+        // mangled forma YENİDEN YAZAMAZ (`from_imports`in AYNI kısıtı).
+        // Checker BUNU ZATEN başarıyla çözmüş OLMALIDIR (aksi halde tip
+        // denetimi BAŞARISIZ olurdu) — burası SAVUNMACI bir güvenlik ağıdır.
+        .qualified => |raw_segments| {
+            const mangled_name = try mangledQualifiedClassName(self, raw_segments);
+            if (self.classes.contains(mangled_name)) {
+                return .{ .qtype = .l, .heap = .class, .class_name = mangled_name };
             }
             return error.Unsupported;
         },

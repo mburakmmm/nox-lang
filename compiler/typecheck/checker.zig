@@ -481,6 +481,27 @@ pub const Checker = struct {
                 boxed.* = inner;
                 return .{ .optional = boxed };
             },
+            // Faz NN.2 (bkz. proje belleği "nyx v2 limitasyon listesi
+            // doğrulaması"): `pkg.module.ClassName` bir TİP-AÇIKLAMASI
+            // konumunda — `tryResolveQualifiedCall`in (satır ~978) İFADE
+            // konumundaki AYNI mangling mantığı burada tekrar kullanılır
+            // (alias ikame + `module_path`nin `imported_modules`de olduğu
+            // doğrulaması + `_`-birleştirilmiş mangled ad araması), ama
+            // BURADA yalnızca `self.classes`e bakılır — bir TİP konumunda
+            // bir FONKSİYON/generic-fonksiyon adı anlamsızdır.
+            .qualified => |raw_segments| {
+                const segments = try self.substituteAlias(raw_segments);
+                if (segments.len < 2) {
+                    return self.fail(error.UnknownType, "gecersiz nitelikli tip adi", .{});
+                }
+                const module_path = try self.joinSegments(segments[0 .. segments.len - 1], '.');
+                if (!self.imported_modules.contains(module_path)) {
+                    return self.fail(error.UnknownType, "bilinmeyen modul: {s}", .{module_path});
+                }
+                const mangled = try self.joinSegments(segments, '_');
+                if (self.classes.contains(mangled)) return .{ .class = mangled };
+                return self.fail(error.UnknownType, "'{s}' modulunun '{s}' adli bir sinifi yok", .{ module_path, segments[segments.len - 1] });
+            },
         }
     }
 
@@ -868,6 +889,10 @@ pub const Checker = struct {
                 try self.collectProtocolNames(ft.return_type.*, names);
             },
             .optional => |inner| try self.collectProtocolNames(inner.*, names),
+            // Nitelikli (`pkg.module.X`) bir tip adı ASLA bir protokol
+            // adına eşit OLAMAZ (protokoller yalnızca ÇIPLAK isimle
+            // tanımlanır) — yapılacak bir şey yok.
+            .qualified => {},
         }
     }
 
@@ -2818,6 +2843,16 @@ pub const Checker = struct {
                     else => return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{fn_name}),
                 }
             },
+            // Nitelikli (`pkg.module.X`) bir tip adı ASLA bir tip
+            // parametresi OLAMAZ (`[T]` sözdizimi HER ZAMAN çıplak bir
+            // isim) — `.simple`in tip-parametresi OLMAYAN dalıyla AYNI:
+            // doğrudan somut tipe çöz VE `assignable` İLE karşılaştır.
+            .qualified => {
+                const declared = try self.typeExprToType(te);
+                if (!assignable(declared, actual)) {
+                    return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{fn_name});
+                }
+            },
         }
     }
 
@@ -2953,6 +2988,10 @@ pub const Checker = struct {
                 boxed.* = try self.substituteTypeExpr(inner.*, bindings);
                 break :blk .{ .optional = boxed };
             },
+            // Nitelikli (`pkg.module.X`) bir tip adı ASLA bir tip
+            // parametresi (`bindings`in anahtarları HER ZAMAN çıplak
+            // isimlerdir) OLAMAZ — değiştirilecek bir şey yok.
+            .qualified => te,
         };
     }
 

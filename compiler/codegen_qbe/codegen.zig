@@ -685,6 +685,18 @@ pub const Codegen = struct {
     /// İHTİYAÇ DUYAR (`registration.zig`nin `resolveType`inin `.simple`
     /// dalına bkz.).
     from_imports: std.StringHashMapUnmanaged([]const u8) = .{},
+    /// Faz NN.2 (bkz. proje belleği "nyx v2 limitasyon listesi doğrulaması"):
+    /// `checker.zig`nin `Checker.module_aliases`iyle AYNI TİP/anahtar (bir
+    /// modül takma adı → hedef modülün TAM segment dizisi, ör. `import
+    /// nox.http as h` sonrası `"h"` → `["nox","http"]`) — `from_imports`
+    /// İLE AYNI DESEN, `main.zig` TARAFINDAN DOĞRUDAN aktarılır. `resolveType`in
+    /// `.qualified` dalı, checker'ın `typeExprToType`indeki AYNI alias-ikame
+    /// + mangling mantığını (`substituteAlias`/`tryResolveQualifiedCall`)
+    /// tekrarlamak İçin BUNA İHTİYAÇ duyar — `ast.TypeExpr.qualified`
+    /// (`Param.type_expr`/`VarDecl.type_expr` GİBİ düz değer alanlarında
+    /// saklanır) checker TARAFINDAN YERİNDE mangled forma YENİDEN
+    /// YAZILMADIĞINDAN (`from_imports`in belge notundaki AYNI kısıt).
+    module_aliases: std.StringHashMapUnmanaged([]const []const u8) = .{},
     /// Şu an derlenen fonksiyonun `defer`-yığını POINTER'ını TUTAN QBE geçici
     /// değişkenin adı (`fnBodyHasDefer` `true` DÖNDÜĞÜNDE ayarlanır, aksi
     /// halde `null`) — `current_ret_qtype` İLE AYNI "fonksiyon-başına durum"
@@ -793,8 +805,8 @@ pub const Codegen = struct {
 /// `debug_source_path`: Faz T.3, `null` DIŞINDA VERİLİRSE (bkz. modül üstü
 /// not) `dbgfile`/`dbgloc` yönergeleri yayınlanır — `null` İKEN çıktı
 /// ÖNCEKİYLE BİREBİR AYNI kalır (opt-in, sıfır davranış değişikliği).
-pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8) CodegenError![]u8 {
-    var gen: Codegen = .{ .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos, .defer_synthetic_names = defer_synthetic_names, .from_imports = from_imports };
+pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8)) CodegenError![]u8 {
+    var gen: Codegen = .{ .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos, .defer_synthetic_names = defer_synthetic_names, .from_imports = from_imports, .module_aliases = module_aliases };
 
     if (debug_source_path) |path| {
         gen.debug_info = true;

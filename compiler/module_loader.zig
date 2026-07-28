@@ -284,6 +284,13 @@ fn renameTypeExpr(a: std.mem.Allocator, te: ast.TypeExpr, map: *const RenameMap)
             boxed.* = try renameTypeExpr(a, inner.*, map);
             break :blk .{ .optional = boxed };
         },
+        // Faz NN.2: nitelikli (`pkg.module.X`) bir tip adı, `map`in yeniden
+        // adlandırdığı ÇIPLAK isimlerden biri DEĞİLDİR — çözümlemesi
+        // (alias ikamesi + mangling) checker'da (`typeExprToType`in
+        // `.qualified` dalı) DENETİM ZAMANINDA yapılır, bu ERKEN birleştirme/
+        // yeniden-adlandırma geçişinde DEĞİL. Değiştirmeden olduğu gibi
+        // bırak.
+        .qualified => te,
     };
 }
 

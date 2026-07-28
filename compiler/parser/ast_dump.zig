@@ -250,6 +250,12 @@ fn dumpType(writer: *std.Io.Writer, t: ast.TypeExpr) std.Io.Writer.Error!void {
             try dumpType(writer, inner.*);
             try writer.writeAll(" | None");
         },
+        .qualified => |segments| {
+            for (segments, 0..) |seg, idx| {
+                if (idx != 0) try writer.writeAll(".");
+                try writer.writeAll(seg);
+            }
+        },
     }
 }
 

@@ -1416,7 +1416,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // codegen.zig'in modül üstü notu (TEK dosya, stdlib-merge yanlış-atıf
     // sınırlaması bilinçli olarak KABUL EDİLDİ).
     const debug_source_path: ?[]const u8 = if (debug_info) path_arg else null;
-    const ir = codegen.generateModule(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items) catch |err| switch (err) {
+    const ir = codegen.generateModule(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases) catch |err| switch (err) {
         error.Unsupported => {
             std.debug.print(
                 "codegen: bu program şu an desteklenmeyen bir yapı içeriyor " ++

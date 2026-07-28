@@ -14,6 +14,21 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.11.3]
+
+### Eklendi
+- **Nitelikli (`pkg.module.ClassName`) tip adları artık tip-açıklaması
+  konumunda kullanılabiliyor** (`var_decl`/fonksiyon parametresi/dönüş
+  tipi) — ÖNCEDEN `import pkg.module` (nitelikli import, `from pkg.module
+  import ClassName` DEĞİL) sonrası bu, parser'da `UnexpectedToken` hatasına
+  yol açıyordu (tip adı İçin TEK bir `identifier` token'ı bekleniyordu,
+  noktalı yol DEĞİL); nitelikli isimler SADECE İFADE konumunda (`pkg.
+  module.ClassName(...)` bir kurucu çağrısı) ÇALIŞIYORDU. `import ... as`
+  İLE gelen modül takma adları da ÇÖZÜLÜYOR. Bu, bir nyx v2 limitasyon
+  iddiasının ("fonksiyon-tipi parametre SIGSEGV veriyor") araştırılması
+  sırasında bulunan GERÇEK, önceden bilinmeyen bir kısıttı — asıl semptom
+  SIGSEGV DEĞİLDİ ama kökeni AYNIYDI.
+
 ## [1.11.2]
 
 ### Düzeltildi

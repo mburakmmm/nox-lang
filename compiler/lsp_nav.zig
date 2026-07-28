@@ -122,6 +122,14 @@ fn typeExprToString(a: std.mem.Allocator, te: ast.TypeExpr) std.mem.Allocator.Er
             const base = try typeExprToString(a, inner.*);
             return std.fmt.allocPrint(a, "{s} | None", .{base});
         },
+        .qualified => |segments| {
+            var parts: std.ArrayListUnmanaged(u8) = .empty;
+            for (segments, 0..) |seg, i| {
+                if (i > 0) try parts.append(a, '.');
+                try parts.appendSlice(a, seg);
+            }
+            return parts.toOwnedSlice(a);
+        },
     }
 }
 

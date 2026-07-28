@@ -282,6 +282,19 @@ pub const Parser = struct {
             _ = try self.expect(.r_bracket);
             return .{ .generic = .{ .name = name, .args = try args.toOwnedSlice(self.allocator) } };
         }
+        // Faz NN.2: `pkg.module.ClassName` — nitelikli tip adı (bkz.
+        // `ast.TypeExpr.qualified`in belge notu). Bir tip adı ŞİMDİYE
+        // KADAR HİÇ `dot` İLE devam etmediğinden (`.generic`in `l_bracket`
+        // dalıyla AYNI konumda), bu YENİ dal HİÇBİR ÇAKIŞMA yaratmaz —
+        // yalnızca `name` SONRASI bir `.` görülürse tetiklenir.
+        if (self.check(.dot)) {
+            var segments = std.ArrayList([]const u8).empty;
+            try segments.append(self.allocator, name);
+            while (self.match(.dot)) {
+                try segments.append(self.allocator, (try self.expect(.identifier)).lexeme);
+            }
+            return .{ .qualified = try segments.toOwnedSlice(self.allocator) };
+        }
         return .{ .simple = name };
     }
 

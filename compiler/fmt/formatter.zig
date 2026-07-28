@@ -475,6 +475,14 @@ const Printer = struct {
                 try self.printType(inner.*);
                 try self.writer.writeAll(" | None");
             },
+            // Faz NN.2: `pkg.module.ClassName` — segmentleri kaynak
+            // sözdizimiyle AYNI (`.`-ayrılmış) biçimde yeniden yaz.
+            .qualified => |segments| {
+                for (segments, 0..) |seg, idx| {
+                    if (idx > 0) try self.writer.writeAll(".");
+                    try self.writer.writeAll(seg);
+                }
+            },
         }
     }
 

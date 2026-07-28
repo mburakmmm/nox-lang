@@ -22,6 +22,19 @@ pub const TypeExpr = union(enum) {
     /// BİLİNÇLİ bir tercihtir (FF.4'ün `self` istisnasıyla AYNI
     /// gerekçe: dar/öngörülebilir gramer).
     optional: *TypeExpr,
+    /// `pkg.module.ClassName` — Faz NN.2 (bkz. proje belleği "nyx v2
+    /// limitasyon listesi doğrulaması"): `import pkg.module` (nitelikli
+    /// import, `from pkg.module import ClassName` DEĞİL) sonrası, o
+    /// modülün bir sınıf tipini TİP-AÇIKLAMASI konumunda ADLANDIRABİLMEK
+    /// İçin. ÖNCEDEN `parseBaseTypeExpr` tip adı İçin TEK bir `identifier`
+    /// token'ı BEKLİYORDU (noktalı yol DEĞİL) — `x: pkg.module.Foo` bu
+    /// yüzden `UnexpectedToken` veriyordu (nitelikli isimler SADECE İFADE
+    /// konumunda, ör. `pkg.module.Foo(...)` bir kurucu çağrısı olarak,
+    /// ÇALIŞIYORDU). `segments`: en az 2 eleman (`["pkg", "module",
+    /// "ClassName"]` gibi) — checker bunu, `.attribute` İFADE
+    /// çözümlemesinin (paket alias → modül → sınıf) AYNI mantığıyla
+    /// çözer.
+    qualified: []const []const u8,
 };
 
 pub const Generic = struct {

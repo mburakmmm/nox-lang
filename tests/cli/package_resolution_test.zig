@@ -262,6 +262,91 @@ test "P.7: iki farkli paket ayni adli fonksiyonu ihrac ederse mangling CAKISMAZ"
     try std.testing.expectEqualStrings("101\n201\n", run_result.stdout);
 }
 
+// Faz NN.2 (bkz. proje belleği "nyx v2 limitasyon listesi doğrulaması"):
+// `import pkg.module` (nitelikli import, `from pkg.module import X` DEĞİL)
+// sonrası, o modülün bir sınıf tipini TİP-AÇIKLAMASI konumunda (`x:
+// pkg.module.ClassName`) adlandırabilmek — ÖNCEDEN parser `UnexpectedToken`
+// veriyordu (tip adı İçin TEK bir `identifier` token'ı bekleniyordu, noktalı
+// yol DEĞİL). Bu test var_decl + fonksiyon parametresi + dönüş tipinin
+// ÜÇÜNDE de nitelikli tip adını, bir GERÇEK üçüncü-taraf paket bağımlılığı
+// ÜZERİNDEN doğrular.
+test "ucdan uca: nitelikli (pkg.module.Sinif) tip adi var_decl/parametre/donus tipinde calisir" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var pkg = std.testing.tmpDir(.{});
+    defer pkg.cleanup();
+    try pkg.dir.writeFile(io, .{
+        .sub_path = "records.nox",
+        .data =
+        \\class Record:
+        \\    def __init__(self: Record, name: str) -> None:
+        \\        self.name = name
+        \\
+        \\def make(name: str) -> Record:
+        \\    return Record(name)
+        \\
+        ,
+    });
+    var pkg_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const pkg_path = try absPath(io, pkg.dir, &pkg_buf);
+    try initFixtureRepo(io, std.testing.allocator, pkg_path);
+
+    var proj = std.testing.tmpDir(.{});
+    defer proj.cleanup();
+    var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const proj_path = try absPath(io, proj.dir, &proj_buf);
+
+    const manifest_json = try std.fmt.allocPrint(a,
+        \\{{"name":"proj","entry":"main.nox","requires":[{{"alias":"mypkg","repo":"{s}","ref":"main"}}]}}
+    , .{pkg_path});
+    try proj.dir.writeFile(io, .{ .sub_path = "nox.json", .data = manifest_json });
+    try proj.dir.writeFile(io, .{
+        .sub_path = "main.nox",
+        .data =
+        \\import mypkg.records
+        \\
+        \\def wrap(r: mypkg.records.Record) -> mypkg.records.Record:
+        \\    return r
+        \\
+        \\x: mypkg.records.Record = mypkg.records.make("alice")
+        \\y: mypkg.records.Record = wrap(x)
+        \\print(y.name)
+        \\
+        ,
+    });
+
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const home_path = try absPath(io, home.dir, &home_buf);
+
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+    try env_map.put("NOX_HOME", home_path);
+
+    const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{proj_path});
+    const bin_path = try std.fmt.allocPrint(a, "{s}/main", .{proj_path});
+
+    const build_result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxcPath(), "build", main_path },
+        .environ_map = &env_map,
+    });
+    defer std.testing.allocator.free(build_result.stdout);
+    defer std.testing.allocator.free(build_result.stderr);
+    if (build_result.term != .exited or build_result.term.exited != 0) {
+        std.debug.print("build basarisiz, stderr: {s}\n", .{build_result.stderr});
+    }
+    try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
+
+    const run_result = try std.process.run(std.testing.allocator, io, .{ .argv = &.{bin_path} });
+    defer std.testing.allocator.free(run_result.stdout);
+    defer std.testing.allocator.free(run_result.stderr);
+    try std.testing.expectEqualStrings("alice\n", run_result.stdout);
+}
+
 fn addFixtureCommit(io: std.Io, allocator: std.mem.Allocator, dir_path: []const u8, file_name: []const u8, contents: []const u8) !void {
     // `std.Io.Dir.openAbsolute` bu Zig sürümünde YOK — `project.zig`nin
     // `saveLockfile`i GİBİ, `Dir.cwd()`e MUTLAK bir `sub_path` geçmek
