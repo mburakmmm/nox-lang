@@ -14,6 +14,30 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.11.1]
+
+### Düzeltildi
+- **GERÇEK 4 bellek sızıntısı düzeltildi** (v1.11.0'ın "genMethodCall/
+  genListPop" düzeltmesinin AYNI sınıfı — istisna kontrolünden ÖNCE
+  serbest bırakma sırası): `genIndirectCallThroughClosurePtr` (dolaylı
+  closure çağrıları), `genCall`nin serbest fonksiyon dağıtımı (derleyicideki
+  EN SIK çalışan yol), VE `genConstructFromValues` (`__init__` istisna
+  fırlatırsa HEM argümanların HEM TAM İNŞA EDİLMEMİŞ `self`in KENDİSİNİN
+  sızması — ikincisi YENİ bulunan, AYRI bir alt-hataydı).
+
+### Bilinç notu (düzeltilmedi, bilinçli olarak)
+- `genIndex`/`genStrIndex`/`genListAssign`nin sınır-dışı-erişim hata
+  dallarındaki (list/str `[i]`) BENZER bir sızıntı İçin "AÇIK" düzeltme
+  (`genListPop`nin AYNI deseni) DENENDİ ama bir `while` döngüsü İÇİNDE
+  (3+ yineleme) `incorrect alignment` PANİĞİYLE ÇÖKMEYE yol açtığı
+  bulundu — sızıntıdan DAHA KÖTÜ bir regresyon olduğundan GERİ ALINDI.
+  Bu araştırma sırasında AYRI, DAHA CİDDİ bir hata da bulundu: `list[T]`
+  DÖNEN bir fonksiyonun bir `while` döngüsü İÇİNDE bir yerele TEKRAR
+  TEKRAR atanması (İSTİSNA/hata OLMADAN, TAMAMEN normal kod) AYNI
+  çökmeye yol açıyor — `v1.11.0`de ZATEN VAR OLAN, bu oturumdan BAĞIMSIZ
+  bir hata. HER İKİSİ de AYRI bir görev olarak kaydedildi (bkz. proje
+  belleği "ARC sızıntı düzeltmeleri follow-up").
+
 ## [1.11.0]
 
 ### Eklendi

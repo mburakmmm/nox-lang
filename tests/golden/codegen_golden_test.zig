@@ -828,12 +828,23 @@ test "codegen(çalıştır): nox.process Command.run() — stdout/stderr/cwd/Pro
     );
 }
 
-// Yukarıdaki `genMethodCall`/`genListPop` düzeltmelerinin KENDİSİ İçin
+// `genMethodCall`/`genListPop` (önceki oturum) VE `genIndirectCallThroughClosurePtr`/
+// `genCall`nin serbest-fonksiyon dalı/`genConstruct` (bu oturum — bkz.
+// proje belleği "ARC sızıntı düzeltmeleri") düzeltmelerinin KENDİSİ İçin
 // AYRI bir regresyon testi — `expectGolden`nin BOŞ-stderr kontrolü
 // (DebugAllocator sızıntı uyarılarını YAKALAR) bu YÜZDEN bu test AYNI
 // ZAMANDA bir bellek-sızıntısı regresyon testidir: geçici bir sınıf
-// ÖRNEĞİ/liste üzerinde ÇAĞRILAN VE istisna FIRLATAN bir metod/işlem,
-// alıcısını SIZDIRMAMALIDIR.
+// ÖRNEĞİ/liste/argüman üzerinde ÇAĞRILAN VE istisna FIRLATAN bir metod/
+// serbest fonksiyon/dolaylı-closure-çağrısı/kurucu (__init__ — HEM
+// argümanı HEM alan-atamasından SONRA raise eden `self`in KENDİSİ
+// DAHİL), hiçbir şeyi SIZDIRMAMALIDIR. **Bilinçli eksik**: `genIndex`/
+// `genStrIndex`/`genListAssign`nin AYNI sınır-kontrolü hata dallarındaki
+// (list/str `[i]` sınır dışı erişimi) sızıntı BURAYA KASITLI olarak
+// EKLENMEDİ — bir `releaseIfTemporary` eklemek (`genListPop`nin AYNI
+// deseni) TEK-SEFERLİK çalışırken bir `while` döngüsü İÇİNDE
+// TEKRARLANDIĞINDA `incorrect alignment` PANİĞİYLE ÇÖKMEYE yol açtığı
+// bulundu — sızıntıdan DAHA KÖTÜ bir regresyon olduğundan GERİ ALINDI,
+// KÖK NEDEN henüz bulunamadı (AYRI bir görev, bkz. proje belleği).
 test "codegen(çalıştır): gecici alici uzerinde istisna firlatan metod/pop() sizmaz" {
     try expectGolden(
         @embedFile("codegen_cases/temporary_receiver_raises_no_leak.nox"),

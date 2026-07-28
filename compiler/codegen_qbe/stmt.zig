@@ -322,8 +322,16 @@ pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
 
     const msg_value = try self.emitStringLiteral("liste indeksi sinirlarin disinda");
     const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
-    const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value});
+    const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
     try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ie_obj.text });
+    // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı, `genIndex`in
+    // AYNI belge notu): bu dal KOŞULSUZ raise edip ATLADIĞINDAN `obj`
+    // (taban liste) TEMPORARY İSE burada sızar (GERÇEK bir sızıntı) —
+    // BURAYA bir `releaseIfTemporary` EKLEMEK denendi (`genListPop`nin
+    // AYNI deseni) ama bir `while` DÖNGÜSÜ İÇİNDE TEKRARLANDIĞINDA
+    // `incorrect alignment` PANİĞİYLE ÇÖKMEYE yol açtığı bulundu —
+    // sızıntıdan DAHA KÖTÜ olduğundan GERİ ALINDI (bkz. proje belleği
+    // "ARC sızıntı düzeltmeleri", AYRI bir görev olarak kaydedildi).
     try self.emitExceptionCheck();
     try self.out.writer.print("    jmp {s}\n", .{ok_label});
 
@@ -430,7 +438,7 @@ pub fn genDictGet(self: *Codegen, obj: Value, key_expr: ast.Expr) CodegenError!V
 
     const msg_value = try self.emitStringLiteral("anahtar bulunamadi");
     const ke_cinfo = self.classes.get("KeyError") orelse return error.Unsupported;
-    const ke_obj = try self.genConstructFromValues("KeyError", ke_cinfo, &.{msg_value});
+    const ke_obj = try self.genConstructFromValues("KeyError", ke_cinfo, &.{msg_value}, null);
     try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ke_obj.text });
     try self.emitExceptionCheck();
     try self.out.writer.print("    jmp {s}\n", .{ok_label});

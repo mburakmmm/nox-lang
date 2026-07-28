@@ -29,3 +29,41 @@ try:
     w: int = make_empty().pop()
 except IndexError:
     print("IndexError yakalandi (gecici liste sizmadan)")
+
+def make_temp_arg() -> str:
+    s: str = "gecici"
+    return s
+
+def boom_free(x: str) -> int:
+    raise BoomError("bum")
+
+try:
+    r1: int = boom_free(make_temp_arg())
+except BoomError:
+    print("BoomError yakalandi (serbest fonksiyon, gecici arguman)")
+
+fn: (str) -> int = boom_free
+try:
+    r2: int = fn(make_temp_arg())
+except BoomError:
+    print("BoomError yakalandi (dolayli closure cagrisi, gecici arguman)")
+
+class Bad:
+    def __init__(self: Bad, seed: str) -> None:
+        raise BoomError("init basarisiz")
+
+try:
+    b: Bad = Bad(make_temp_arg())
+except BoomError:
+    print("BoomError yakalandi (__init__ raise, gecici arguman)")
+
+class BadWithField:
+    items: list[str]
+    def __init__(self: BadWithField, seed: str) -> None:
+        self.items = [seed]
+        raise BoomError("init basarisiz (alan atandiktan sonra)")
+
+try:
+    bf: BadWithField = BadWithField(make_temp_arg())
+except BoomError:
+    print("BoomError yakalandi (__init__ raise, alan atandiktan sonra)")

@@ -66,8 +66,15 @@ pub fn genIndirectCallThroughClosurePtr(self: *Codegen, closure_ptr: []const u8,
     // bilinmediğinden `must_not_raise` eleme optimizasyonu (bkz. normal
     // fonksiyon çağrısı dalı) burada UYGULANAMAZ — İSTİSNA kontrolü HER
     // ZAMAN yapılır (güvenli varsayılan).
-    try self.emitExceptionCheck();
+    // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı, `genMethodCall`nin
+    // AYNI belge notu): çağrı ZATEN yapıldığından (başarılı ya da
+    // İSTİSNALI), geçici argümanların serbest bırakılması çağrının
+    // SONUCUNDAN BAĞIMSIZDIR — `emitExceptionCheck` İSTİSNA durumunda
+    // BURADAN SONRAKİ HER ŞEYİ atlayıp propagate/catch etiketine
+    // ZIPLADIĞINDAN, serbest bırakma ÖNCEYE taşınmalıdır (aksi halde
+    // İSTİSNA fırlatan bir dolaylı çağrının geçici argümanları sızar).
     try self.releaseTemporaryArgs(args, arg_values);
+    try self.emitExceptionCheck();
 
     if (result_temp) |rt| {
         return .{ .text = rt, .qtype = ret_qtype, .heap = fsig.ret.heap, .elem_qtype = fsig.ret.elem_qtype, .class_name = fsig.ret.class_name, .elem_heap_info = fsig.ret.elem_heap_info, .elem_is_str = fsig.ret.elem_is_str };
@@ -329,8 +336,13 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             // Performans fazı: `name`in ASLA istisna fırlatamayacağı
             // KANITLANDIYSA (bkz. `self.must_not_raise`, `computeMustNotRaise`)
             // kontrolü ATLA.
-            if (!self.must_not_raise.contains(name)) try self.emitExceptionCheck();
+            // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı,
+            // `genMethodCall`nin AYNI belge notu): serbest bırakma
+            // kontrolden ÖNCEYE taşındı — bu, DERLEYİCİDEKİ EN SIK
+            // ÇALIŞAN çağrı yolu (HER serbest fonksiyon çağrısı) OLDUĞUNDAN
+            // özellikle önemli.
             try self.releaseTemporaryArgs(c.args, arg_values);
+            if (!self.must_not_raise.contains(name)) try self.emitExceptionCheck();
 
             if (result_temp) |rt| {
                 return .{ .text = rt, .qtype = sig.ret.qtype, .heap = sig.ret.heap, .elem_qtype = sig.ret.elem_qtype, .class_name = sig.ret.class_name, .elem_heap_info = sig.ret.elem_heap_info, .elem_is_str = sig.ret.elem_is_str };
@@ -392,7 +404,7 @@ pub fn genParseOrRaise(self: *Codegen, v: Value, valid_fn: []const u8, convert_f
 
     const msg_value = try self.emitStringLiteral(message);
     const ve_cinfo = self.classes.get("ValueError") orelse return error.Unsupported;
-    const ve_obj = try self.genConstructFromValues("ValueError", ve_cinfo, &.{msg_value});
+    const ve_obj = try self.genConstructFromValues("ValueError", ve_cinfo, &.{msg_value}, null);
     try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ve_obj.text });
     try self.emitExceptionCheck();
     try self.out.writer.print("    jmp {s}\n", .{ok_label});
@@ -459,20 +471,39 @@ pub fn genConstruct(self: *Codegen, class_name: []const u8, cinfo: ClassInfo, ar
         try self.checkNoLowlevelEscape(v0);
         arg_values[i] = try self.convert(v0, cinfo.init_params[i].qtype);
     }
-    const result = try self.genConstructFromValues(class_name, cinfo, arg_values);
-    try self.releaseTemporaryArgs(args, arg_values);
-    return result;
+    // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı): geçici
+    // argümanların serbest bırakılması ÖNCEDEN `genConstructFromValues`in
+    // DÖNÜŞÜNDEN SONRA (burada, bu Zig fonksiyonunun İÇİNDE) yapılıyordu —
+    // ama `__init__` GERÇEKTEN istisna fırlatırsa, `genConstructFromValues`in
+    // KENDİSİNİN emisyon ettiği `emitExceptionCheck` (QBE ÇIKTISINDA,
+    // `__init__` çağrısının HEMEN ARDINDAN) propagate/catch etiketine
+    // ZIPLAR — bu ZIP, BURAYA (Zig çağrı sınırı ÖTESİNDEKİ bu satıra)
+    // HİÇ dönmeden GERÇEKLEŞİR, bu yüzden aşağıdaki (ARTIK KALDIRILAN)
+    // `releaseTemporaryArgs` çağrısının ÜRETTİĞİ kod ASLA ÇALIŞMAZDI —
+    // GERÇEK bir tekrar-üretimle (`SomeClass(gecici_arg()).use()` GİBİ,
+    // `__init__` istisna fırlatan bir sınıf) DOĞRULANDI. Düzeltme:
+    // serbest bırakma artık `genConstructFromValues`e (`temp_release`
+    // parametresi İLE) taşındı — O fonksiyon BUNU `__init__` çağrısından
+    // HEMEN SONRA, KENDİ `emitExceptionCheck`İNDEN ÖNCE yapar.
+    return self.genConstructFromValues(class_name, cinfo, arg_values, .{ .exprs = args, .values = arg_values });
 }
 
 /// `genConstruct`ın AST-BAĞIMSIZ çekirdeği — stdlib fazı §D.1.6'nın
 /// `nox.http.serve` sarmalayıcısı (bkz. `genHttpServeWrapper`), bir
 /// `HttpRequest` örneğini kaynak-düzeyi `ast.Expr` argümanlarından DEĞİL,
 /// zaten HESAPLANMIŞ `Value`lerden (extern erişimci çağrılarının
-/// sonuçlarından) inşa etmesi GEREKTİĞİNDEN bu ayrım gerekli — çağıran
-/// TARAF, `arg_values`in serbest bırakılması/geçici argüman temizliği
-/// GEREKİP GEREKMEDİĞİNİ kendisi bilir (bkz. `genConstruct`ın
-/// `releaseTemporaryArgs` çağrısı — bu YARDIMCI onu YAPMAZ).
-pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: ClassInfo, arg_values: []const Value) CodegenError!Value {
+/// sonuçlarından) inşa etmesi GEREKTİĞİNDEN bu ayrım gerekli. `temp_release`
+/// (bkz. proje belleği "4 yeni stdlib modülü" planı, GERÇEK bir bellek
+/// sızıntısı düzeltmesi): `genConstruct`ın ÇAĞIRDIĞI durumda dolu (kaynak-
+/// düzeyi `args`/`arg_values` çifti) — bu ikisi `__init__` çağrısından
+/// HEMEN SONRA, `emitExceptionCheck`DEN ÖNCE serbest bırakılır (aksi
+/// halde `__init__` istisna fırlatırsa SIZAR, bkz. `genConstruct`ın
+/// belge notu). Diğer TÜM çağıranlar (`genConstructFromValues`in KENDİ
+/// çağrı siteleri — `ValueError`/`IndexError`/`KeyError` GİBİ yerleşik
+/// hata sınıfları İçin bir string LİTERALİ argümanıyla, ya da
+/// `genHttpServeWrapper`ın extern-erişimci `Value`leriyle — HİÇBİRİNİN
+/// karşılık gelen bir `ast.Expr`si YOK) `null` bırakır.
+pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: ClassInfo, arg_values: []const Value, temp_release: ?struct { exprs: []const ast.Expr, values: []const Value }) CodegenError!Value {
     if (cinfo.init_params.len != arg_values.len) return error.Unsupported;
     const t = try self.newTemp();
     const arena = self.currentArena();
@@ -500,10 +531,39 @@ pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: Cla
         try self.out.writer.print("    call ${s}_{s}(l {s}, l {s}", .{ class_name, "__init__", RT_PARAM, t });
         for (arg_values) |v| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(v.qtype), v.text });
         try self.out.writer.writeAll(")\n");
+        // Bkz. bu fonksiyonun `temp_release` belge notu — `__init__`
+        // çağrısından HEMEN SONRA, `emitExceptionCheck`DEN ÖNCE.
+        if (temp_release) |tr| try self.releaseTemporaryArgs(tr.exprs, tr.values);
         // Performans fazı: `__init__`in ASLA istisna fırlatamayacağı
         // KANITLANDIYSA (bkz. `ClassInfo.init_is_safe`, `computeMustNotRaise`)
         // kontrolü ATLA.
-        if (!cinfo.init_is_safe) try self.emitExceptionCheck();
+        if (!cinfo.init_is_safe) {
+            // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı,
+            // `Command`/`temp_release` düzeltmesiyle AYNI turda YAKALANDI):
+            // `__init__` GERÇEKTEN istisna fırlatırsa, TAM OLARAK inşa
+            // EDİLMEMİŞ `t` (yukarıda ayrılan yeni örnek — İÇİNDE __init__in
+            // istisnadan ÖNCE atadığı HERHANGİ bir alan DAHİL) hiçbir yere
+            // atanmadan/döndürülmeden SIZIYORDU (`genConstruct`nin çağıranı
+            // istisna nedeniyle sonucu HİÇ kullanmıyor) — GERÇEK bir
+            // tekrar-üretimle (`__init__`i istisna fırlatan bir sınıfın
+            // kurucu çağrısı) DOĞRULANDI. Arena-tahsisli örnekler HARİÇ
+            // (arena'nın KENDİSİ toplu serbest bırakılır, tekil `_release`
+            // YANLIŞ olur) — `t` istisna durumunda `$ClassName_release`
+            // İLE (alanları ÖNCEDEN sıfırlandığından, henüz atanmamış
+            // alanlar GÜVENLE atlanır) serbest bırakılır.
+            if (arena == null) {
+                const pending = try self.newTemp();
+                try self.out.writer.print("    {s} =w call $nox_exception_pending(l {s})\n", .{ pending, RT_PARAM });
+                const release_label = try self.newLabel("ctor_init_failed");
+                const cont_label = try self.newLabel("ctor_init_cont");
+                try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ pending, release_label, cont_label });
+                try self.out.writer.print("{s}\n", .{release_label});
+                try self.releaseValueIfSet(t, .class, .none, class_name, null, null);
+                try self.out.writer.print("    jmp {s}\n", .{cont_label});
+                try self.out.writer.print("{s}\n", .{cont_label});
+            }
+            try self.emitExceptionCheck();
+        }
     }
     return .{ .text = t, .qtype = .l, .heap = .class, .class_name = class_name, .arena = arena != null };
 }
@@ -925,7 +985,7 @@ pub fn genListPop(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Val
     try self.out.writer.print("{s}\n", .{err_label});
     const msg_value = try self.emitStringLiteral("bos liste (list) pop edilemez");
     const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
-    const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value});
+    const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
     try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ie_obj.text });
     // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı — AYNI
     // sınıf hata, `genMethodCall`in belge notundaki GİBİ): bu dal

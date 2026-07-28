@@ -546,7 +546,7 @@ pub fn genHttpServeWrapper(self: *Codegen, spec: HttpServeWrapperSpec) CodegenEr
             return error.Unsupported;
         }
     }
-    const req_obj = try self.genConstructFromValues(spec.req_class, req_cinfo, req_values);
+    const req_obj = try self.genConstructFromValues(spec.req_class, req_cinfo, req_values, null);
     // `req_values` — `releaseTemporaryArgs`in gerekçesiyle AYNI (bkz.
     // onun belge notu): her biri TAZE bir `nox_http_request_*` çağrısının
     // SONUCUdur (KENDİ releaser'ı yok). `__init__`in `self.x = x` alan
