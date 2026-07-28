@@ -1,0 +1,60 @@
+# nox.tls — Faz NN.5 (bkz. proje belleği "nyx v2 limitasyon listesi
+# doğrulaması"): ham bir TLS akışı ilkeli. `nox.http` istemcisinin
+# `https://` desteği ZATEN Zig'in KENDİ `std.crypto.tls`ine DELEGE
+# EDİLİYOR — bu modül AYNI mekanizmayı, HTTP protokolü OLMADAN, genel-
+# amaçlı bir "ham TLS akışı" olarak açar (ör. özel bir ikili protokolü
+# TLS üzerinden konuşmak İçin). `nox.sqlite`/`nox.postgres`/`nox.mysql`nin
+# AKSİNE bu SAF Zig kodudur — HİÇBİR harici sistem kütüphanesine (OpenSSL)
+# bağımlılık YOKTUR.
+#
+# **Bilinçli v1 kapsamı**: SADECE İSTEMCİ — Zig'in std kütüphanesinde bir
+# TLS SUNUCUSU (`std.crypto.tls.Server`) HENÜZ YOK, bu YÜZDEN `nox.tls`
+# sunucu tarafı bu fazın kapsamı DIŞINDA bırakıldı.
+#
+# **Senkron/bloklayan**: `connect`/`read`/`write` ÇAĞIRAN iş parçacığını
+# DOĞRUDAN BLOKLAR (fiber zamanlayıcısına ENTEGRE DEĞİLDİR, `nox.sqlite`/
+# `nox.postgres`/`nox.mysql` İLE AYNI v1 basitleştirmesi) — arka-plan
+# çalıştırma İSTENİYORSA `nox.thread` KULLANILABİLİR.
+
+extern def nox_tls_connect_raw(host: str, port: int) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_tls_ok_raw(handle: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_tls_errmsg_raw(handle: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_tls_write_raw(handle: ptr, data: str, len: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_tls_read_raw(handle: ptr, max_len: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_tls_close_raw(handle: ptr) -> None from "zig-out/lib/noxrt.o"
+extern def nox_tls_is_null_ptr(p: ptr) -> int from "zig-out/lib/noxrt.o"
+
+class TlsError:
+    def __init__(self: TlsError, message: str) -> None:
+        self.message = message
+
+class TlsStream:
+    def __init__(self: TlsStream, handle: ptr) -> None:
+        self.handle = handle
+
+    def write(self: TlsStream, data: str) -> int:
+        n: int = nox_tls_write_raw(self.handle, data, len(data))
+        if n < 0:
+            raise TlsError("TLS yazma basarisiz: " + nox_tls_errmsg_raw(self.handle))
+        return n
+
+    # En fazla `max_len` bayt okur — bağlantı temiz kapandıysa BOŞ dize
+    # döner (hata DEĞİL, çağıran BUNU "artık veri yok" olarak yorumlamalı).
+    def read(self: TlsStream, max_len: int) -> str:
+        return nox_tls_read_raw(self.handle, max_len)
+
+    def close(self: TlsStream) -> None:
+        nox_tls_close_raw(self.handle)
+
+# `host`e (port üzerinden) TCP+TLS bağlantısı kurar — sistemin CA
+# sertifika deposuna karşı sunucu sertifikasını doğrular (`host`
+# hostname'iyle eşleşmesi DAHİL).
+def connect(host: str, port: int) -> TlsStream:
+    handle: ptr = nox_tls_connect_raw(host, port)
+    if nox_tls_is_null_ptr(handle) != 0:
+        raise TlsError("bellek yetersiz")
+    if nox_tls_ok_raw(handle) == 0:
+        msg: str = nox_tls_errmsg_raw(handle)
+        nox_tls_close_raw(handle)
+        raise TlsError("baglanti basarisiz: " + msg)
+    return TlsStream(handle)

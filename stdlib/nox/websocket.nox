@@ -1,0 +1,74 @@
+# nox.websocket — Faz NN.5 (bkz. proje belleği "nyx v2 limitasyon listesi
+# doğrulaması"): RFC 6455 WebSocket istemcisi — `ws://`/`wss://` URL'lerine
+# bağlanır (el sıkışma + metin frame gönderme/alma). SAF Zig kodudur
+# (`nox.tls`nin AYNI `std.crypto.tls` temeli, `wss://` İçin).
+#
+# **Bilinçli v1 kapsamı**: SADECE İSTEMCİ — `nox.http.serve`nin karmaşık
+# async sunucu mimarisine bir Upgrade-hijack yolu eklemek bu fazın kapsamı
+# DIŞINDA bırakıldı (bkz. `runtime/stdlib_shims/websocket.zig`nin belge
+# notu).
+#
+# **Senkron/bloklayan**: `nox.tls`nin AYNI v1 basitleştirmesi.
+
+import nox.url
+from nox.url import URL
+
+extern def nox_ws_connect_raw(host: str, port: int, path: str, use_tls: int) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_ws_ok_raw(handle: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_ws_errmsg_raw(handle: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_ws_send_text_raw(handle: ptr, data: str, len: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_ws_recv_raw(handle: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_ws_close_raw(handle: ptr) -> None from "zig-out/lib/noxrt.o"
+extern def nox_ws_is_null_ptr(p: ptr) -> int from "zig-out/lib/noxrt.o"
+
+class WebSocketError:
+    def __init__(self: WebSocketError, message: str) -> None:
+        self.message = message
+
+class WebSocketClient:
+    def __init__(self: WebSocketClient, handle: ptr) -> None:
+        self.handle = handle
+
+    def send_text(self: WebSocketClient, data: str) -> int:
+        n: int = nox_ws_send_text_raw(self.handle, data, len(data))
+        if n < 0:
+            raise WebSocketError("gonderme basarisiz: " + nox_ws_errmsg_raw(self.handle))
+        return n
+
+    # Bir sonraki METİN/İKİLİ payload'ı okur (PING/PONG dahili olarak ele
+    # alınır, kullanıcıya HİÇ gösterilmez) — bağlantı kapandıysa BOŞ dize
+    # döner (`is_open()` ARTIK `False` döner).
+    def recv(self: WebSocketClient) -> str:
+        return nox_ws_recv_raw(self.handle)
+
+    def is_open(self: WebSocketClient) -> bool:
+        return nox_ws_ok_raw(self.handle) != 0
+
+    def close(self: WebSocketClient) -> None:
+        nox_ws_close_raw(self.handle)
+
+# `ws://host[:port]/path` ya da `wss://host[:port]/path` — port
+# belirtilmemişse `ws` İçin `80`, `wss` İçin `443` kullanılır.
+def connect(url: str) -> WebSocketClient:
+    u: URL = nox.url.parse(url)
+    use_tls: bool = u.scheme == "wss"
+    port: int = u.port
+    if port == 0:
+        if use_tls:
+            port = 443
+        else:
+            port = 80
+    path: str = u.path
+    if len(path) == 0:
+        path = "/"
+    use_tls_int: int = 0
+    if use_tls:
+        use_tls_int = 1
+    handle: ptr = nox_ws_connect_raw(u.host, port, path, use_tls_int)
+    if nox_ws_is_null_ptr(handle) != 0:
+        raise WebSocketError("bellek yetersiz")
+    if nox_ws_ok_raw(handle) == 0:
+        msg: str = nox_ws_errmsg_raw(handle)
+        nox_ws_close_raw(handle)
+        raise WebSocketError("baglanti/el sikisma basarisiz: " + msg)
+    return WebSocketClient(handle)

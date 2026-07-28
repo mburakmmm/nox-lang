@@ -874,6 +874,22 @@ test "codegen(çalıştır): nox.postgres/nox.mysql — ulasilamayan baglantida 
     );
 }
 
+// Faz NN.5 (bkz. proje belleği "nyx v2 limitasyon listesi doğrulaması"):
+// `nox.tls`/`nox.websocket`nin ULAŞILAMAYAN bir adrese karşı HER ZAMAN
+// temiz bir TlsError/WebSocketError fırlattığını (çökme/sızıntı YOK)
+// doğrular — `postgres_mysql_connect_error`in AYNI deseni. GERÇEK bir uzak
+// sunucuya karşı (`example.com` — ham TLS+HTTP/1.1, VE `wss://ws.postman-
+// echo.com/raw` — TAM WebSocket el sıkışması+metin frame round-trip) TAM
+// doğrulama ELLE yapıldı (bu oturumda): TLS handshake/sertifika doğrulaması,
+// `Sec-WebSocket-Accept` SHA1/base64 hesaplaması, frame maskeleme/çözme
+// hepsi GERÇEK bir sunucuya karşı ÇALIŞTI.
+test "codegen(çalıştır): nox.tls/nox.websocket — ulasilamayan baglantida temiz hata" {
+    try expectGolden(
+        @embedFile("codegen_cases/tls_websocket_connect_error.nox"),
+        @embedFile("codegen_cases/tls_websocket_connect_error.expected"),
+    );
+}
+
 // Bulundu (bkz. proje belleği "UTF-8 farkındalığı" görevi): `len(s)`/`s[i]`
 // ÖNCEDEN bayt-tabanlıydı (çok baytlı UTF-8 karakterleri — "café"nin
 // "é"si, "日本語"nin her karakteri — ORTADAN kesiyordu). ARTIK codepoint-

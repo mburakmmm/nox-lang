@@ -14,6 +14,25 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.14.0]
+
+### Eklendi
+- **`nox.tls`**: ham bir TLS akışı ilkeli (`connect`/`write`/`read`/
+  `close`) — Zig'in KENDİ `std.crypto.tls.Client`ini ham bir soket
+  üzerinde DOĞRUDAN sürer (sqlite/postgres/mysql'in dlopen desenlerinin
+  AKSİNE SAF Zig kodudur, HİÇBİR harici bağımlılık YOK). Sistemin CA
+  sertifika deposuna (`std.crypto.Certificate.Bundle.rescan`, platform
+  bağımsız) karşı sunucu sertifikasını doğrular. GERÇEK bir uzak sunucuya
+  (`example.com`) karşı uçtan uca doğrulandı. **Bilinçli v1 kapsamı**:
+  SADECE İSTEMCİ (Zig std kütüphanesinde bir TLS SUNUCUSU HENÜZ YOK).
+- **`nox.websocket`**: RFC 6455 WebSocket istemcisi (`connect`/`send_text`/
+  `recv`/`close`) — `ws://`/`wss://` el sıkışması (SHA1/base64 doğrulaması
+  DAHİL) + frame kodlama/çözme/maskeleme. GERÇEK bir uzak sunucuya
+  (`wss://ws.postman-echo.com/raw`) karşı TAM round-trip doğrulandı.
+  **Bilinçli v1 kapsamı**: SADECE İSTEMCİ (`nox.http.serve`nin karmaşık
+  async sunucu mimarisine bir Upgrade-hijack yolu eklemek bu fazın kapsamı
+  DIŞINDA bırakıldı).
+
 ## [1.13.0]
 
 ### Eklendi

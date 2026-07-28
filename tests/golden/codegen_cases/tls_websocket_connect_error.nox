@@ -1,0 +1,25 @@
+# Faz NN.5 (bkz. proje belleği "nyx v2 limitasyon listesi doğrulaması"):
+# ULAŞILAMAYAN bir adrese karşı `nox.tls.connect`/`nox.websocket.connect`in
+# HER ZAMAN temiz bir TlsError/WebSocketError fırlattığını (çökme YOK,
+# sızıntı YOK — `expectGolden`nin boş-stderr kontrolü BUNU da doğrular)
+# doğrular — `postgres_mysql_connect_error`in AYNI deseni. GERÇEK bir uzak
+# sunucuya karşı TAM el sıkışma + round-trip doğrulaması (`example.com`/
+# `wss://ws.postman-echo.com/raw`) ELLE yapıldı (bkz. proje belleği), CI'da
+# OTOMATİK DEĞİL (harici İnternet erişimine bağımlı olmaması İçin).
+from nox.tls import connect, TlsError
+from nox.websocket import connect as ws_connect, WebSocketError
+
+try:
+    connect("127.0.0.1", 1)
+except TlsError:
+    print("TlsError yakalandi")
+
+try:
+    ws_connect("ws://127.0.0.1:1/nope")
+except WebSocketError:
+    print("WebSocketError yakalandi")
+
+try:
+    ws_connect("wss://127.0.0.1:1/nope")
+except WebSocketError:
+    print("WebSocketError yakalandi (wss)")
