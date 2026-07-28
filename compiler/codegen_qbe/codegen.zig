@@ -209,6 +209,7 @@ const http_intrinsics = @import("http_intrinsics.zig");
 const inlining = @import("inlining.zig");
 const closures = @import("closures.zig");
 const layout = @import("layout.zig");
+const globals_mod = @import("globals.zig");
 const ownership = @import("ownership.zig");
 const exceptions = @import("exceptions.zig");
 const calls = @import("calls.zig");
@@ -241,6 +242,7 @@ const StringDatum = types.StringDatum;
 const ModCacheEntry = types.ModCacheEntry;
 const ClassField = types.ClassField;
 const ClassIdEntry = types.ClassIdEntry;
+const GlobalVar = types.GlobalVar;
 const ClassInfo = types.ClassInfo;
 const RT_PARAM = types.RT_PARAM;
 const FIELD_SLOT_SIZE = types.FIELD_SLOT_SIZE;
@@ -296,6 +298,8 @@ pub const Codegen = struct {
     pub const genClassGcFree = layout.genClassGcFree;
     pub const genClassReleaseDispatch = layout.genClassReleaseDispatch;
     pub const genTraceDispatch = layout.genTraceDispatch;
+    pub const genNoxInitGlobals = globals_mod.genNoxInitGlobals;
+    pub const genNoxDeinitGlobals = globals_mod.genNoxDeinitGlobals;
     pub const genGcFreeDispatch = layout.genGcFreeDispatch;
     pub const genClassEq = layout.genClassEq;
     pub const genEqCompareOrJump = layout.genEqCompareOrJump;
@@ -408,6 +412,7 @@ pub const Codegen = struct {
     pub const newLabel = registration.newLabel;
     pub const resolveType = registration.resolveType;
     pub const registerClass = registration.registerClass;
+    pub const collectModuleGlobals = registration.collectModuleGlobals;
     pub const inferFieldType = registration.inferFieldType;
     pub const registerFunc = registration.registerFunc;
     pub const registerExternFunc = registration.registerExternFunc;
@@ -477,6 +482,18 @@ pub const Codegen = struct {
     extern_functions: std.StringHashMapUnmanaged(FuncSig) = .empty,
     classes: std.StringHashMapUnmanaged(ClassInfo) = .empty,
     vars: std.StringHashMapUnmanaged(VarInfo) = .empty,
+    /// Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
+    /// üst-düzey `var_decl`ların adı → (tip, opak globals-bloğundaki
+    /// ofset) eşlemesi — `registration.zig`nin `collectModuleGlobals`ı
+    /// TARAFINDAN doldurulur, `expr.zig`/`stmt.zig`nin `.identifier`
+    /// okuma/yazma dallarının `self.vars` ISKALADIĞINDA düştüğü YEDEK
+    /// tablo.
+    module_globals: std.StringHashMapUnmanaged(GlobalVar) = .empty,
+    /// `nox_alloc(rt, module_globals_size)` İLE ayrılacak opak bloğun
+    /// TOPLAM baytı — `module_globals`teki HER girdi `idx *
+    /// FIELD_SLOT_SIZE` ofsetinde (`TAG_SIZE` YOK, bkz. `GlobalVar`nin
+    /// belge notu).
+    module_globals_size: usize = 0,
     /// Faz FF.6.4 (bkz. nox-teknik-spesifikasyon.md §3.65): `genIf`/`genWhile`nin
     /// `checker.zig`'in `FnCtx.narrowed`iyle AYNI DAR örüntüyü (yalnızca
     /// `if x != None:`/`if x == None:`) MEKANİK olarak YANSITAN örtüsü —
@@ -836,6 +853,15 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
         }
     }
     for (extra_classes) |cd| try gen.registerClass(cd);
+
+    // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
+    // TÜM sınıflar KAYDEDİLDİKTEN HEMEN SONRA (bir global'in tipi
+    // `list[Foo]`/`Foo` olabileceğinden `resolveType`in `self.classes`e
+    // İHTİYACI VAR) VE herhangi bir fonksiyon gövdesi/`$main` üretilmeden
+    // ÖNCE (`genExpr`/`genAssign`nin `.identifier` yedek dalları
+    // `gen.module_globals`in DOLU olmasına güvenir).
+    try gen.collectModuleGlobals(module);
+
     for (module.body) |stmt| {
         if (stmt.kind == .extern_def) try gen.registerExternFunc(stmt.kind.extern_def);
     }
@@ -905,6 +931,18 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
         try gen.genGcFreeDispatch(class_ids.items);
         try gen.genClassReleaseDispatch(class_ids.items);
     }
+    // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
+    // `$nox_init_globals`/`$nox_deinit_globals`, SADECE modül GERÇEKTEN
+    // üst-düzey `var_decl` İÇERİYORSA üretilir (sıfır-maliyetli yaygın
+    // "global YOK" durumu) — HERHANGİ bir fonksiyon gövdesi ($main DAHİL)
+    // üretilmeden ÖNCE (çağrı SİTELERİ, bkz. `registration.zig`nin
+    // `genMain`ı VE `http_intrinsics.zig`/`async_thread.zig`nin worker
+    // codegen'i, bu sembollere İSME göre başvurur — QBE tanım SIRASINDAN
+    // BAĞIMSIZ çözer, ama TÜM üretim tek yerde toplanır).
+    if (gen.module_globals.count() > 0) {
+        try gen.genNoxInitGlobals(module);
+        try gen.genNoxDeinitGlobals();
+    }
     for (module.body) |stmt| {
         if (stmt.kind == .func_def and stmt.kind.func_def.type_params.len == 0 and !containsName(generic_template_names, stmt.kind.func_def.name)) {
             try gen.genFunction(stmt.kind.func_def);
@@ -917,6 +955,12 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     for (module.body) |stmt| {
         switch (stmt.kind) {
             .func_def, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
+            // Bulundu (bkz. proje belleği "modül-seviyesi global durum"
+            // planı): modül-global'i OLAN bir `var_decl`, `$main`in SIRADAN
+            // yerel/deyim işleyişine (collectLocals/genStmts) HİÇ ULAŞMAZ
+            // — initializer'ı ZATEN `$nox_init_globals`de (yukarıda,
+            // `genNoxInitGlobals`) üretildi.
+            .var_decl => |v| if (!gen.module_globals.contains(v.name)) try loose.append(allocator, stmt),
             else => try loose.append(allocator, stmt),
         }
     }

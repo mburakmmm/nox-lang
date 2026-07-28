@@ -223,6 +223,18 @@ pub const ClassField = struct {
 /// `class_id`) çiftleri.
 pub const ClassIdEntry = struct { name: []const u8, id: usize };
 
+/// Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı): bir
+/// üst-düzey (script top-level) `var_decl`nin, `nox_globals_get(rt)`nin
+/// döndürdüğü opak bloktaki YERİ — `ClassField` İLE AYNI amaç (isim,
+/// tip, ofset) ama `TAG_SIZE` YOK (blok'un KENDİSİ bir ARC başlığı
+/// TAŞIMAZ — `nox_alloc` ile ayrılan DÜZ bir bellek bloğu, sınıf
+/// örneklerinin AKSİNE).
+pub const GlobalVar = struct {
+    name: []const u8,
+    info: TypeInfo,
+    offset: usize,
+};
+
 pub const ClassInfo = struct {
     fields: std.ArrayListUnmanaged(ClassField) = .empty,
     total_size: usize = 0,

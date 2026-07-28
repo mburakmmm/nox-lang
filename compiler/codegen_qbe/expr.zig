@@ -252,18 +252,36 @@ pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
         .bool_lit => |v| .{ .text = if (v) "1" else "0", .qtype = .w },
         .string_lit => |s| try self.emitStringLiteral(s),
         .identifier => |name| blk: {
-            const info = self.vars.get(name) orelse break :blk try self.buildFunctionValueForIdentifier(name);
-            const t = try self.newTemp();
-            try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ t, qbeTypeName(info.qtype), qbeTypeName(info.qtype), info.slot });
-            // Faz FF.6.4: bkz. `narrowed_unbox`'ın belge notu — bu isim
-            // ŞU AN daraltılmış bir kutulanmış Optional-ilkel İSE, kutu
-            // POINTER'ı DEĞİL İÇİNDEKİ ham değer döndürülür.
-            if (info.heap == .boxed_scalar and self.narrowed_unbox.contains(name)) {
-                const payload = try self.newTemp();
-                try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ payload, qbeTypeName(info.elem_qtype), qbeTypeName(info.elem_qtype), t });
-                break :blk .{ .text = payload, .qtype = info.elem_qtype };
+            if (self.vars.get(name)) |info| {
+                const t = try self.newTemp();
+                try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ t, qbeTypeName(info.qtype), qbeTypeName(info.qtype), info.slot });
+                // Faz FF.6.4: bkz. `narrowed_unbox`'ın belge notu — bu isim
+                // ŞU AN daraltılmış bir kutulanmış Optional-ilkel İSE, kutu
+                // POINTER'ı DEĞİL İÇİNDEKİ ham değer döndürülür.
+                if (info.heap == .boxed_scalar and self.narrowed_unbox.contains(name)) {
+                    const payload = try self.newTemp();
+                    try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ payload, qbeTypeName(info.elem_qtype), qbeTypeName(info.elem_qtype), t });
+                    break :blk .{ .text = payload, .qtype = info.elem_qtype };
+                }
+                break :blk .{ .text = t, .qtype = info.qtype, .heap = info.heap, .elem_qtype = info.elem_qtype, .class_name = info.class_name, .elem_heap_info = info.elem_heap_info, .elem_is_str = info.elem_is_str, .dict_info = info.dict_info, .func_sig = info.func_sig, .arena = info.arena };
             }
-            break :blk .{ .text = t, .qtype = info.qtype, .heap = info.heap, .elem_qtype = info.elem_qtype, .class_name = info.class_name, .elem_heap_info = info.elem_heap_info, .elem_is_str = info.elem_is_str, .dict_info = info.dict_info, .func_sig = info.func_sig, .arena = info.arena };
+            // Bulundu (bkz. proje belleği "modül-seviyesi global durum"
+            // planı): yerel/parametre BAŞARISIZ olursa — `buildFunctionValueForIdentifier`
+            // fonksiyon-değeri YEDEĞİNDEN ÖNCE — modül-seviyesi bir global
+            // denenir. `nox_globals_get(rt)` + ofset + `load<qtype>` İLE
+            // İNŞA edilen `Value`nin ŞEKLİ `genFieldRead`nin sınıf-alanı
+            // okumasıYLA BİREBİR AYNIDIR (checker.zig'in AYNI düşüşüyle
+            // TUTARLI, bkz. onun belge notu).
+            if (self.module_globals.get(name)) |g| {
+                const block = try self.newTemp();
+                try self.out.writer.print("    {s} =l call $nox_globals_get(l {s})\n", .{ block, RT_PARAM });
+                const addr = try self.newTemp();
+                try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, block, g.offset });
+                const t = try self.newTemp();
+                try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ t, qbeTypeName(g.info.qtype), qbeTypeName(g.info.qtype), addr });
+                break :blk .{ .text = t, .qtype = g.info.qtype, .heap = g.info.heap, .elem_qtype = g.info.elem_qtype, .class_name = g.info.class_name, .elem_heap_info = g.info.elem_heap_info, .elem_is_str = g.info.elem_is_str, .dict_info = g.info.dict_info, .func_sig = g.info.func_sig };
+            }
+            break :blk try self.buildFunctionValueForIdentifier(name);
         },
         .unary => |u| try self.genUnary(u),
         .binary => |b| try self.genBinary(b),

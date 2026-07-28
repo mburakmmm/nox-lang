@@ -114,6 +114,19 @@ pub const RuntimeState = struct {
     /// yakalanabilir hale GETİRMEK tercih edildi.
     arc_owner_tid: if (debug_thread_check) ?std.Thread.Id else void =
         if (debug_thread_check) null else {},
+    /// Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
+    /// derleyicinin ürettiği `$nox_init_globals`in `nox_alloc` İLE ayırıp
+    /// `nox_globals_set` İLE buraya yazdığı, programa özgü DÜZ bellek
+    /// bloğu — üst-düzey (script top-level) `var_decl`ların DEPOLANDIĞI
+    /// yer. `arena_pool`/`cycle_gc` İLE AYNI gerekçeyle OPAK: bu dosya
+    /// (runtime) HANGİ Nox programının HANGİ global'leri bildirdiğini
+    /// HİÇBİR ZAMAN bilmez/yorumlamaz — bayt-düzeni TAMAMEN derleyicinin
+    /// (compiler/codegen_qbe/globals.zig) sahip olduğu bir SÖZLEŞMEDİR,
+    /// tıpkı bir sınıf örneğinin alan düzeni gibi. Her `RuntimeState`
+    /// (bkz. `arc_owner_tid`in belge notu — HER OS iş parçacığı KENDİ
+    /// BAĞIMSIZ `RuntimeState`ine sahiptir) KENDİ bağımsız bloğuna
+    /// sahiptir — worker'LAR ARASI PAYLAŞIM YOK (bilinçli v1 kapsamı).
+    globals_block: ?*anyopaque = null,
 
     pub fn allocator(self: *RuntimeState) std.mem.Allocator {
         if (use_debug_allocator) return self.debug_gpa.allocator();
@@ -183,6 +196,26 @@ pub export fn nox_free(rt: ?*anyopaque, ptr: ?*anyopaque, size: usize) void {
     const state: *RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const bytes: [*]u8 = @ptrCast(p);
     state.allocator().free(bytes[0..size]);
+}
+
+/// Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
+/// `RuntimeState.globals_block`in erişimcileri — QBE codegen `RuntimeState`in
+/// KENDİSİNE (Zig struct'ı, ABI garantisi YOK) DOĞRUDAN bayt-ofseti İLE
+/// erişemez (`nox_alloc`/`nox_free`nin AYNI `@ptrCast(@alignCast(...))`
+/// deseni HARİÇ HİÇBİR alanına doğrudan erişilmez) — bu YÜZDEN diğer
+/// TÜM opak `RuntimeState` alanları (`arena_pool`/`cycle_gc`) GİBİ, BURADA
+/// da iki küçük `extern fn` GEREKİR. Asıl bayt-ofseti aritmetiği (HANGİ
+/// global HANGİ ofsette) TAMAMEN derleyicinin (compiler/codegen_qbe/
+/// globals.zig) KENDİ SORUMLULUĞUDUR — bu fonksiyonlar yalnızca OPAK
+/// işaretçiyi taşır, hiçbir yorum yapmaz.
+pub export fn nox_globals_get(rt: ?*anyopaque) ?*anyopaque {
+    const state: *RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    return state.globals_block;
+}
+
+pub export fn nox_globals_set(rt: ?*anyopaque, block: ?*anyopaque) void {
+    const state: *RuntimeState = @ptrCast(@alignCast(rt orelse return));
+    state.globals_block = block;
 }
 
 test "tahsis edilen bellek yazılabilir/okunabilir ve serbest bırakılabilir" {

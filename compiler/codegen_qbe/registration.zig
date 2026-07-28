@@ -333,6 +333,219 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
     try self.classes.put(self.allocator, cd.name, info);
 }
 
+/// Bulundu, GERÇEK bir regresyon (bkz. proje belleği "modül-seviyesi
+/// global durum" planı): İLK uygulama HER üst-düzey `var_decl`yi
+/// KOŞULSUZ bir "global" sayıp `$main`in SIRADAN yerellerinden (bkz.
+/// `codegen.zig`nin `loose` inşası) ÇIKARIYORDU — bu, SADECE üst-düzey
+/// kodun KENDİSİ İçinde kullanılan (HİÇBİR fonksiyondan REFERANS
+/// ALINMAYAN) sıradan bir betik değişkenini de (ör. `xs: list[int] =
+/// [...]` + `for v in xs: ...`, HİÇ fonksiyon İÇERMEYEN onlarca MEVCUT
+/// golden test) `self.vars`den ÇIKARDI — `genForList`/`genListAppend`
+/// GİBİ ALICIYI `self.vars.get(isim)` İLE DOĞRUDAN (genExpr'in genel
+/// düşüşünden BAĞIMSIZ) arayan ÖZEL-DURUM kod yolları BU YÜZDEN
+/// `error.Unsupported`a düşüyordu (23 AYRI, TAMAMEN ilgisiz golden test
+/// GERÇEKTEN kırıldı — tekrar-üretilip DOĞRULANDI). **Düzeltme:** bir
+/// `var_decl`, YALNIZCA adı HİÇ OLMAZSA bir fonksiyon/metod gövdesinin
+/// İÇİNDEN (nerede olursa olsun, iç içe `def`ler DAHİL) REFERANS
+/// ALINIYORSA "global" sayılır — SAF üst-düzey betik değişkenleri
+/// (fonksiyonlardan HİÇ erişilmeyenler) `$main`in SIRADAN bir yereli
+/// olarak KALMAYA devam eder, DAVRANIŞLARI HİÇ DEĞİŞMEZ.
+///
+/// `registerClass`in AYNI alan-ofseti formülü (`idx * FIELD_SLOT_SIZE`),
+/// ama `TAG_SIZE` YOK (opak globals bloğu bir ARC başlığı TAŞIMAZ —
+/// `nox_alloc` İLE ayrılan DÜZ bellek). TÜM sınıflar KAYDEDİLDİKTEN
+/// SONRA çağrılmalıdır (`generateModule`, sınıf kayıt döngülerinden
+/// HEMEN SONRA) — bir global'in tipi `list[Foo]`/`Foo` OLABİLİR,
+/// `resolveType`in `self.classes`e İHTİYACI VAR.
+pub fn collectModuleGlobals(self: *Codegen, module: ast.Module) CodegenError!void {
+    var used_in_functions: std.StringHashMapUnmanaged(void) = .empty;
+    defer used_in_functions.deinit(self.allocator);
+    for (module.body) |stmt| {
+        switch (stmt.kind) {
+            .func_def => |fd| try collectFreeNamesForTopLevelFunc(self.allocator, fd.params, fd.body, &used_in_functions),
+            .class_def => |cd| for (cd.methods) |m| try collectFreeNamesForTopLevelFunc(self.allocator, m.params, m.body, &used_in_functions),
+            else => {},
+        }
+    }
+
+    var idx: usize = 0;
+    for (module.body) |stmt| {
+        if (stmt.kind != .var_decl) continue;
+        const v = stmt.kind.var_decl;
+        if (!used_in_functions.contains(v.name)) continue;
+        const info = try self.resolveType(v.type_expr);
+        try self.module_globals.put(self.allocator, v.name, .{
+            .name = v.name,
+            .info = info,
+            .offset = idx * FIELD_SLOT_SIZE,
+        });
+        idx += 1;
+    }
+    self.module_globals_size = idx * FIELD_SLOT_SIZE;
+}
+
+/// Bir üst-düzey `func_def`/metod gövdesindeki (İÇ İÇE `def`ler DAHİL,
+/// hepsi TEK bir düz ağaç olarak) HANGİ isimlerin GERÇEKTEN "serbest"
+/// (yani KENDİ parametresi/yerel bildirimi OLMAYAN, dolayısıyla bir
+/// modül-global'e DÜŞEBİLECEK) olduğunu hesaplar. **Bulundu:** ilk
+/// uygulama SADECE kullanılan isimleri (`collectIdentifierNamesStmts`)
+/// topluyordu, KENDİ parametresi/yerelini HİÇ ÇIKARMADAN — bu YÜZDEN
+/// otomatik-enjekte edilen builtin sarmalayıcıları (ör. `sum(xs: list[int])`,
+/// `compiler/codegen_qbe/registration.zig`nin builtin-genişletme fazında
+/// eklenen fonksiyonlar) KENDİ `xs` PARAMETRESİNİ, kullanıcının TAMAMEN
+/// İLGİSİZ üst-düzey `xs` değişkeniyle SADECE İSİM ÇAKIŞMASI yüzünden
+/// bir "global kullanımı" SANIYORDU — 22 AYRI golden test'i KIRDI (hiçbir
+/// fonksiyonu OLMAYAN programlar DAHİL, çünkü her programa OTOMATİK
+/// enjekte edilen builtin fonksiyonlar zaten module.body'DE mevcuttur).
+/// **Düzeltme:** `bound` kümesi (parametreler + `var_decl`/for-döngüsü/
+/// except-as/with-as bağlamaları, İÇ İÇE `def`ler DAHİL tek bir düz
+/// kümede biriktirilir) `used` kümesinden ÇIKARILIR — yalnızca GERÇEKTEN
+/// dışarıdan (modül-seviyesinden) gelmesi gereken isimler `out`a girer.
+fn collectFreeNamesForTopLevelFunc(a: std.mem.Allocator, params: []const ast.Param, body: []const ast.Stmt, out: *std.StringHashMapUnmanaged(void)) CodegenError!void {
+    var bound: std.StringHashMapUnmanaged(void) = .empty;
+    defer bound.deinit(a);
+    for (params) |p| try bound.put(a, p.name, {});
+    try collectBoundNamesStmts(a, body, &bound);
+
+    var used: std.StringHashMapUnmanaged(void) = .empty;
+    defer used.deinit(a);
+    try collectIdentifierNamesStmts(a, body, &used);
+
+    var it = used.keyIterator();
+    while (it.next()) |k| {
+        if (!bound.contains(k.*)) try out.put(a, k.*, {});
+    }
+}
+
+/// `collectIdentifierNamesStmts`nin "İKİZİ" — KULLANILAN isimler YERİNE
+/// BAĞLANAN (bir parametre, `var_decl`, for-döngüsü değişkeni, except-as/
+/// with-as bağlaması ya da İÇ İÇE bir `def`in KENDİ adı/parametreleri
+/// OLARAK tanımlanan) isimleri toplar — İÇ İÇE `def`/sınıf gövdelerine
+/// de İNER (kapsayan fonksiyonun TÜM ağacı TEK düz bir "bağlı isimler"
+/// kümesi sayılır, closure'ların dış yerelleri YAKALAMASIYLA TUTARLI).
+fn collectBoundNamesStmts(a: std.mem.Allocator, stmts: []const ast.Stmt, out: *std.StringHashMapUnmanaged(void)) CodegenError!void {
+    for (stmts) |stmt| {
+        switch (stmt.kind) {
+            .var_decl => |v| try out.put(a, v.name, {}),
+            .for_stmt => |f| {
+                try out.put(a, f.var_name, {});
+                try collectBoundNamesStmts(a, f.body, out);
+            },
+            .if_stmt => |f| {
+                try collectBoundNamesStmts(a, f.then_body, out);
+                for (f.elif_clauses) |ec| try collectBoundNamesStmts(a, ec.body, out);
+                if (f.else_body) |eb| try collectBoundNamesStmts(a, eb, out);
+            },
+            .while_stmt => |w| try collectBoundNamesStmts(a, w.body, out),
+            .func_def => |fd| {
+                try out.put(a, fd.name, {});
+                for (fd.params) |p| try out.put(a, p.name, {});
+                try collectBoundNamesStmts(a, fd.body, out);
+            },
+            .class_def => |cd| for (cd.methods) |m| {
+                for (m.params) |p| try out.put(a, p.name, {});
+                try collectBoundNamesStmts(a, m.body, out);
+            },
+            .try_stmt => |t| {
+                try collectBoundNamesStmts(a, t.try_body, out);
+                for (t.except_clauses) |ec| {
+                    if (ec.bind_name) |n| try out.put(a, n, {});
+                    try collectBoundNamesStmts(a, ec.body, out);
+                }
+                if (t.finally_body) |fb| try collectBoundNamesStmts(a, fb, out);
+            },
+            .lowlevel_stmt => |ll| try collectBoundNamesStmts(a, ll.body, out),
+            .with_stmt => |w| {
+                if (w.binding) |n| try out.put(a, n, {});
+                try collectBoundNamesStmts(a, w.body, out);
+            },
+            else => {},
+        }
+    }
+}
+
+/// `async_thread.zig`nin `stmtUsesAsync`/`exprUsesAsync`ıyla AYNI
+/// KAPSAMLI (TÜM `StmtKind`/`Expr` varyantlarını gezen, iç içe `func_def`/
+/// `class_def` gövdelerine de İNEN) gezinme İSKELETİ — yalnızca "async
+/// kullanımı VAR MI" bool'u YERİNE, karşılaşılan HER çıplak `.identifier`
+/// ismini (HEM okuma HEM `.assign` hedefi konumunda — `ast.Assign.target`
+/// KENDİSİ bir `Expr` olduğundan, `.identifier` varyantı İKİSİNİ de
+/// KAPSAR) `out`a ekler.
+fn collectIdentifierNamesStmts(a: std.mem.Allocator, stmts: []const ast.Stmt, out: *std.StringHashMapUnmanaged(void)) CodegenError!void {
+    for (stmts) |stmt| {
+        switch (stmt.kind) {
+            .expr_stmt => |e| try collectIdentifierNamesExpr(a, e, out),
+            .var_decl => |v| try collectIdentifierNamesExpr(a, v.value, out),
+            .assign => |asg| {
+                try collectIdentifierNamesExpr(a, asg.target, out);
+                try collectIdentifierNamesExpr(a, asg.value, out);
+            },
+            .if_stmt => |f| {
+                try collectIdentifierNamesExpr(a, f.cond, out);
+                try collectIdentifierNamesStmts(a, f.then_body, out);
+                for (f.elif_clauses) |ec| {
+                    try collectIdentifierNamesExpr(a, ec.cond, out);
+                    try collectIdentifierNamesStmts(a, ec.body, out);
+                }
+                if (f.else_body) |eb| try collectIdentifierNamesStmts(a, eb, out);
+            },
+            .while_stmt => |w| {
+                try collectIdentifierNamesExpr(a, w.cond, out);
+                try collectIdentifierNamesStmts(a, w.body, out);
+            },
+            .for_stmt => |f| {
+                try collectIdentifierNamesExpr(a, f.iterable, out);
+                try collectIdentifierNamesStmts(a, f.body, out);
+            },
+            .func_def => |fd| try collectIdentifierNamesStmts(a, fd.body, out),
+            .class_def => |cd| for (cd.methods) |m| try collectIdentifierNamesStmts(a, m.body, out),
+            .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt => {},
+            .return_stmt => |r| if (r) |e| try collectIdentifierNamesExpr(a, e, out),
+            .raise_stmt => |e| try collectIdentifierNamesExpr(a, e, out),
+            .try_stmt => |t| {
+                try collectIdentifierNamesStmts(a, t.try_body, out);
+                for (t.except_clauses) |ec| try collectIdentifierNamesStmts(a, ec.body, out);
+                if (t.finally_body) |fb| try collectIdentifierNamesStmts(a, fb, out);
+            },
+            .lowlevel_stmt => |ll| try collectIdentifierNamesStmts(a, ll.body, out),
+            .with_stmt => |w| {
+                try collectIdentifierNamesExpr(a, w.ctx_expr, out);
+                try collectIdentifierNamesStmts(a, w.body, out);
+            },
+            .defer_stmt => |d| try collectIdentifierNamesExpr(a, ast.Expr{ .call = d.call }, out),
+        }
+    }
+}
+
+fn collectIdentifierNamesExpr(a: std.mem.Allocator, expr: ast.Expr, out: *std.StringHashMapUnmanaged(void)) CodegenError!void {
+    switch (expr) {
+        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => {},
+        .identifier => |name| try out.put(a, name, {}),
+        .unary => |u| try collectIdentifierNamesExpr(a, u.operand.*, out),
+        .binary => |b| {
+            try collectIdentifierNamesExpr(a, b.left.*, out);
+            try collectIdentifierNamesExpr(a, b.right.*, out);
+        },
+        .call => |c| {
+            try collectIdentifierNamesExpr(a, c.callee.*, out);
+            for (c.args) |arg| try collectIdentifierNamesExpr(a, arg, out);
+        },
+        .attribute => |attr| try collectIdentifierNamesExpr(a, attr.obj.*, out),
+        .index => |idx| {
+            try collectIdentifierNamesExpr(a, idx.obj.*, out);
+            try collectIdentifierNamesExpr(a, idx.index.*, out);
+        },
+        .list_lit => |elems| for (elems) |el| try collectIdentifierNamesExpr(a, el, out),
+        .dict_lit => |pairs| for (pairs) |p| {
+            try collectIdentifierNamesExpr(a, p.key, out);
+            try collectIdentifierNamesExpr(a, p.value, out);
+        },
+        .await_expr => |operand| try collectIdentifierNamesExpr(a, operand.*, out),
+        .spawn_expr => |operand| try collectIdentifierNamesExpr(a, operand.*, out),
+        .generic_construct => |g| for (g.args) |arg| try collectIdentifierNamesExpr(a, arg, out),
+    }
+}
+
 /// Bir sınıf alanının tipini yalnızca gerçekçi/yaygın örüntülerden çıkarır:
 /// doğrudan bir `__init__` parametresi, `self` (bkz. aşağı), ya da bir
 /// literal. Daha karmaşık ifadeler (checker'ın tam tip çıkarımını burada
@@ -767,6 +980,13 @@ pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool) Codegen
     try self.out.writer.writeAll("export function w $main(w %argc, l %argv) {\n@start\n");
     try self.out.writer.print("    {s} =l call $nox_runtime_init()\n", .{RT_PARAM});
     try self.out.writer.writeAll("    call $nox_os_init(w %argc, l %argv)\n");
+    // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
+    // üst-düzey `var_decl`ların initializer'ları, KALAN gevşek deyimler
+    // (`stmts`, artık modül-global `var_decl`ları HARİÇ tutar — bkz.
+    // `codegen.zig`nin `loose` inşası) İŞLENMEDEN ÖNCE çalıştırılır.
+    if (self.module_globals.count() > 0) {
+        try self.out.writer.print("    call $nox_init_globals(l {s})\n", .{RT_PARAM});
+    }
     // Not: `main`in kendi PARAMETRESİ yoktur, ama `collectLocals` artık
     // BAZI yerelleri (heap-yönetimli elemanlı bir `for`nin döngü
     // değişkeni — bkz. `collectLocals`) ödünç alınmış olarak `is_param =
@@ -777,6 +997,9 @@ pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool) Codegen
     try self.prepareInlineSites(stmts);
     try self.genStmts(stmts, .w);
     try self.releaseAllLocals();
+    if (self.module_globals.count() > 0) {
+        try self.out.writer.print("    call $nox_deinit_globals(l {s})\n", .{RT_PARAM});
+    }
     try self.out.writer.print("    call $nox_runtime_deinit(l {s})\n", .{RT_PARAM});
     const end_label = try self.newLabel("fn_end");
     try self.out.writer.print("{s}\n", .{end_label});
@@ -847,6 +1070,14 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt) CodegenError!void {
     try self.out.writer.print("    {s} =l call $nox_runtime_init()\n", .{RT_PARAM});
     try self.out.writer.writeAll("    call $nox_os_init(w %argc, l %argv)\n");
     try self.out.writer.print("    call $nox_async_init(l {s})\n", .{RT_PARAM});
+    // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
+    // `$main_body`nin GERÇEK üst-düzey deyimleri (bkz. `genStmts` çağrısı
+    // YUKARIDA) çalıştırılmadan ÖNCE — `$main_body` BİR GÖREV olarak
+    // spawn edilir, bu YÜZDEN init BURADA (spawn'DAN ÖNCE), `$main_body`nin
+    // KENDİSİNDE DEĞİL.
+    if (self.module_globals.count() > 0) {
+        try self.out.writer.print("    call $nox_init_globals(l {s})\n", .{RT_PARAM});
+    }
     const closure_t = try self.newTemp();
     try self.out.writer.print("    {s} =l call $nox_alloc(l {s}, l 8)\n", .{ closure_t, RT_PARAM });
     try self.out.writer.print("    storel {s}, {s}\n", .{ RT_PARAM, closure_t });
@@ -863,6 +1094,9 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt) CodegenError!void {
     try self.out.writer.print("{s}\n", .{ok_label});
     try self.out.writer.print("    call $nox_async_destroy_task(l {s}, l {s})\n", .{ RT_PARAM, task_t });
     try self.out.writer.print("    call $nox_async_deinit(l {s})\n", .{RT_PARAM});
+    if (self.module_globals.count() > 0) {
+        try self.out.writer.print("    call $nox_deinit_globals(l {s})\n", .{RT_PARAM});
+    }
     try self.out.writer.print("    call $nox_runtime_deinit(l {s})\n", .{RT_PARAM});
     try self.out.writer.writeAll("    ret 0\n}\n");
 }

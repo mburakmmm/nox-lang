@@ -311,6 +311,18 @@ pub const Checker = struct {
     /// yerel bir tanımla ÇAKIŞTIĞINDA yerel tanım HER ZAMAN ÖNCELİKLİDİR
     /// (Python'un gölgeleme davranışına BENZER, ama statik/tek-geçişli).
     from_imports: std.StringHashMapUnmanaged([]const u8) = .{},
+    /// Modül-seviyesi global durum (bkz. proje belleği "modül-seviyesi
+    /// global durum" planı — `nyx`/`services/noxpkg/` bağımsız olarak
+    /// çarptığı, ÖNCEDEN üst-düzey `var_decl`ların HİÇBİR fonksiyon
+    /// gövdesinden GÖRÜLEMEDİĞİ gerçek kısıtın çözümü). `collectModuleGlobals`
+    /// (Geçiş 1.5 — `collectClassNames`den SONRA, `registerSignatures`den
+    /// ÖNCE de OLABİLİRDİ ama fonksiyon İMZALARININ global TİPLERE bağımlı
+    /// OLMAMASI nedeniyle sıralama ESNEKTİR; `checkModule`nin KENDİSİ
+    /// `registerSignatures`den HEMEN SONRA çağırır) TARAFINDAN doldurulur.
+    /// Yalnızca DECLARED tip taşınır (initializer İFADESİ DEĞİL) — tıpkı
+    /// `registerSignatures`in parametre/dönüş tiplerini gövdeyi kontrol
+    /// ETMEDEN çözmesi gibi.
+    module_globals: std.StringHashMapUnmanaged(Type) = .{},
     /// Faz U.4.2: İÇ İÇE `def`lerin yakalama listeleri — anahtar
     /// `"<dış_yol>.<iç_isim>"` (bkz. `FnCtx.path`in belge notu),
     /// `checkNestedFuncDef` tarafından doldurulur. U.4.3'ün codegen'i
@@ -550,6 +562,37 @@ pub const Checker = struct {
                     try self.classes.put(self.allocator, cd.name, .{});
                 }
             }
+        }
+    }
+
+    // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
+    // üst-düzey `var_decl`ların (declared) tiplerini `self.module_globals`e
+    // kaydeder — `collectClassNames`in AYNI "ileri referansları destekle"
+    // gerekçesiyle: `checkModule`nin ana geçişi fonksiyon gövdelerini
+    // METİN SIRASIYLA kontrol ettiğinden (registerSignatures'ın AKSİNE
+    // ERTELENMİŞ değil), bu ön-geçiş OLMADAN bir global'den ÖNCE tanımlı
+    // bir fonksiyon o global'i HİÇ GÖREMEZDİ. Yalnızca DECLARED tip
+    // taşınır — initializer İFADESİ burada DEĞERLENDİRİLMEZ (checker'ın
+    // ana geçişindeki normal `.var_decl` işleyişi `top_scope` İÇİN bunu
+    // zaten yapıyor, bkz. `checkModule`).
+    //
+    // **Bilinçli v1 semantiği (codegen'in `globals.zig`sindeki `genNoxInitGlobals`
+    // İLE UYGULANIR, burada YALNIZCA belgelenir):** üst-düzey `var_decl`
+    // initializer'ları ÇALIŞMA ZAMANINDA HER ZAMAN diğer TÜM üst-düzey
+    // deyimlerden ÖNCE çalışır — metinsel sırayla İÇ İÇE geçmiş olsalar
+    // BİLE (`x: int = 1; print(x); y: int = f()` → HEM `x` HEM `y`
+    // initializer'ı `print`den ÖNCE çalışır). Bu, `collectImports`/
+    // `collectClassNames`in ZATEN "yapısal bildirimleri ÖNCE işle"
+    // deseniyle TUTARLI ama DAHA GÜÇLÜ bir iddiadır (initializer KODU,
+    // sadece bildirim DEĞİL, metin dışı sırada çalışıyor) — BİLİNÇLİ.
+    fn collectModuleGlobals(self: *Checker, module: ast.Module) TypeError!void {
+        for (module.body) |stmt| {
+            self.current_line = stmt.line;
+            self.current_span = stmt.span;
+            if (stmt.kind != .var_decl) continue;
+            const v = stmt.kind.var_decl;
+            const declared = try self.typeExprToType(v.type_expr);
+            try self.module_globals.put(self.allocator, v.name, declared);
         }
     }
 
@@ -1204,6 +1247,7 @@ pub const Checker = struct {
         try self.collectClassNames(module);
         try self.collectProtocols(module);
         try self.registerSignatures(module);
+        try self.collectModuleGlobals(module);
 
         var top_scope: Scope = .{};
         // `in_async = true`: Nox'ta açık bir `def main()` sözleşmesi YOK —
@@ -1709,7 +1753,7 @@ pub const Checker = struct {
     fn checkAssign(self: *Checker, ctx: *FnCtx, a: ast.Assign) TypeError!void {
         switch (a.target) {
             .identifier => |name| {
-                const existing = ctx.scope.lookupLocal(name) orelse {
+                const existing = ctx.scope.lookupLocal(name) orelse blk: {
                     // Faz U.4.2: `name` bir İÇ İÇE `def`in yakaladığı DIŞ
                     // bir değişkense (`parent` zincirinde bulunuyorsa) BUNU
                     // AYIRT EDEN, daha AÇIK bir hata verilir — capture BİLİNÇLİ
@@ -1718,6 +1762,14 @@ pub const Checker = struct {
                     if (ctx.scope.parent != null and ctx.scope.existsInChain(name)) {
                         return self.fail(error.TypeMismatch, "'{s}' iç içe fonksiyonun DIŞINDAN yakalanan bir değişkendir, yalnızca OKUNABİLİR (atama desteklenmiyor)", .{name});
                     }
+                    // Bulundu (bkz. proje belleği "modül-seviyesi global durum"
+                    // planı): yerel BAŞARISIZ olursa (VE bir yakalama da
+                    // DEĞİLSE) modül-seviyesi bir global denenir — capture-yazma
+                    // hatasından SONRA ama `UndefinedVariable`den ÖNCE, böylece
+                    // bir yakalama İLE aynı isimli bir global ARASINDA capture
+                    // hatası ÖNCELİKLİ kalır (capture'lar zaten mutasyona
+                    // KAPALI, bu değişmiyor).
+                    if (self.module_globals.get(name)) |gt| break :blk gt;
                     return self.fail(error.UndefinedVariable, "tanımsız değişken: {s}", .{name});
                 };
                 const value_t = try self.checkExprExpected(ctx, a.value, existing);
@@ -1926,6 +1978,13 @@ pub const Checker = struct {
             .identifier => |name| blk: {
                 if (ctx.narrowed.get(name)) |t| break :blk t;
                 if (try ctx.scope.lookup(self.allocator, name)) |t| break :blk t;
+                // Bulundu (bkz. proje belleği "modül-seviyesi global durum"
+                // planı): yerel/parametre/yakalama BAŞARISIZ olursa —
+                // `resolveIdentifierAsFunctionValue`den ÖNCE — modül-seviyesi
+                // bir global denenir. Yerel gölgeleme OTOMATİK çalışır:
+                // aynı isimde bir yerel/parametre HER ZAMAN `ctx.scope.lookup`
+                // TARAFINDAN BURADAN ÖNCE bulunur, bu dala HİÇ ULAŞILMAZ.
+                if (self.module_globals.get(name)) |t| break :blk t;
                 break :blk try self.resolveIdentifierAsFunctionValue(name);
             },
             .unary => |u| blk: {

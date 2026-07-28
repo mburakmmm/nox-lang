@@ -680,8 +680,23 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     // checker `a.obj.*`in bir `.identifier` OLMASINI ZORUNLU kıldı
     // (bkz. checker.zig'in `.list` dalı) — codegen bu ŞEKLE GÜVENİR.
     const recv_name = a.obj.identifier;
-    const var_info = self.vars.get(recv_name) orelse return error.Unsupported;
-    if (var_info.is_param) return error.Unsupported;
+    // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
+    // alıcı YEREL DEĞİL modül-seviyesi bir global OLABİLİR — büyüme
+    // yolunun YENİ işaretçiyi geri yazacağı ADRES ya bir yerelin KENDİ
+    // stack slotu ya da globals bloğundaki ofsetidir (`recv_addr`, HER
+    // İKİ durumda da düz bir `storel val, <adres>` hedefi).
+    const recv_addr: []const u8 = blk: {
+        if (self.vars.get(recv_name)) |var_info| {
+            if (var_info.is_param) return error.Unsupported;
+            break :blk var_info.slot;
+        }
+        const g = self.module_globals.get(recv_name) orelse return error.Unsupported;
+        const block = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_globals_get(l {s})\n", .{ block, RT_PARAM });
+        const addr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, block, g.offset });
+        break :blk addr;
+    };
 
     const v0 = try self.genExpr(args[0]);
     try self.checkNoLowlevelEscape(v0);
@@ -818,9 +833,10 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     try self.out.writer.print("    jmp {s}\n", .{skip_free_label});
     try self.out.writer.print("{s}\n", .{skip_free_label});
 
-    // Alıcının KENDİ slotuna YENİ işaretçiyi geri yaz — TEK yerde
-    // (hızlı yol bloğun adresini HİÇ değiştirmediğinden gerekmez).
-    try self.out.writer.print("    storel {s}, {s}\n", .{ new_ptr, var_info.slot });
+    // Alıcının KENDİ slotuna/global ofsetine YENİ işaretçiyi geri yaz —
+    // TEK yerde (hızlı yol bloğun adresini HİÇ değiştirmediğinden
+    // gerekmez).
+    try self.out.writer.print("    storel {s}, {s}\n", .{ new_ptr, recv_addr });
     try self.out.writer.print("    jmp {s}\n", .{done_label});
 
     // Hızlı yol: KENDİ bloğuna yerinde yaz.

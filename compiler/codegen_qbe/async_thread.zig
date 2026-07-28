@@ -377,6 +377,19 @@ pub fn genThreadStartWrapper(self: *Codegen, spec: ThreadWrapperSpec) CodegenErr
 
     try self.out.writer.print("export function l ${s}(l %argp) {{\n@start\n", .{spec.name});
     try self.out.writer.print("    {s} =l loadl %argp\n", .{RT_PARAM});
+    // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
+    // `nox.thread.start` İLE oluşturulan HER GERÇEK OS iş parçacığı KENDİ
+    // bağımsız `RuntimeState`ine (bkz. `childThreadMain`) sahiptir —
+    // `globals_block`u BAŞTA `null`, KENDİ taze kopyasını burada
+    // ilklendirir. `nox.http.serve_multicore`nin worker'ından FARKLI
+    // olarak bu iş parçacığı GERÇEKTEN döner (`childThreadMain`
+    // `ret`ten SONRA `nox_runtime_deinit` ÇAĞIRIR) — bu YÜZDEN deinit
+    // de (aşağıda, `ret`ten HEMEN ÖNCE) ÇAĞRILMALIDIR, aksi halde HER
+    // `nox.thread.start` çağrısı heap-yönetimli bir global TAŞIYAN
+    // programlarda sızdırır.
+    if (self.module_globals.count() > 0) {
+        try self.out.writer.print("    call $nox_init_globals(l {s})\n", .{RT_PARAM});
+    }
 
     const payload_addr = try self.newTemp();
     try self.out.writer.print("    {s} =l add %argp, 8\n", .{payload_addr});
@@ -405,6 +418,14 @@ pub fn genThreadStartWrapper(self: *Codegen, spec: ThreadWrapperSpec) CodegenErr
     // uçtan uca golden testinde YAKALANAN GERÇEK bir sızıntıydı).
     if (spec.sig.params[0].heap == .str) {
         try self.releaseValueIfSet(arg_val.text, .str, .none, null, null, null);
+    }
+
+    // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
+    // `ret`ten HEMEN ÖNCE — `childThreadMain` BUNDAN SONRA GERÇEKTEN
+    // `nox_runtime_deinit` ÇAĞIRACAĞINDAN (bkz. yukarıdaki init notu),
+    // heap-yönetimli global'ler BURADA serbest bırakılMAZSA sızar.
+    if (self.module_globals.count() > 0) {
+        try self.out.writer.print("    call $nox_deinit_globals(l {s})\n", .{RT_PARAM});
     }
 
     try self.out.writer.print("    ret {s}\n}}\n", .{result_payload.text});

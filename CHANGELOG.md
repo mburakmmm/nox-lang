@@ -14,6 +14,39 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.10.0]
+
+### Eklendi
+- **Modül-seviyesi global durum**: üst-düzey (script top-level) bir
+  `var_decl`, ARTIK herhangi bir fonksiyon/metod gövdesinden (HEM okuma
+  HEM yazma, iç içe `def`ler DAHİL) görülebiliyor — `docs/NOX_LIMITATIONS.
+  md`nin (`nyx` framework) VE `services/noxpkg/`nin BAĞIMSIZ olarak
+  çarptığı AYNI kısıt artık YOK. YENİ bir `global` anahtar kelimesi
+  EKLENMEDİ (bilinçli tasarım kararı) — Nox'ta çıplak bir atama zaten
+  ÖNCEDEN VAR OLAN bir ismi gerektirdiğinden (Python'daki "yeni yerel mi
+  global güncelleme mi" belirsizliği hiç yok), yerel/parametre/yakalama
+  kapsamında BULUNAMAYAN çıplak bir isim OTOMATİK olarak modül-global'e
+  düşer; mevcut yerel gölgeleme her zaman ÖNCELİKLİDİR. Depolama: her
+  OS iş parçacığının (`nox.http.serve_multicore`nin HER worker'ı,
+  `nox.thread.start`nin HER worker'ı DAHİL) KENDİ bağımsız, taze
+  ilklendirilmiş global bloğu vardır — worker'lar ARASI PAYLAŞILMAZ
+  (ARC refcount'larının atomik OLMAMASIYLA tutarlı, bilinçli v1 kararı).
+  `stdlib/nox/router.nox`nin `Router`u ARTIK script top-level'da BİR KEZ
+  inşa edilip `handle`den REFERANS alınabiliyor (`services/noxpkg/main.
+  nox` bu deseni KULLANACAK şekilde basitleştirildi — ÖNCEDEN her istekte
+  `build_router()` çağırmak ZORUNDAYDI).
+
+### Düzeltildi
+- `list_build_index_iterate.nox` benzeri, HİÇBİR fonksiyonu OLMAYAN
+  programları DAHİL 22 golden testi kıran bir REGRESYON (bu özelliğin
+  geliştirilmesi SIRASINDA bulunup düzeltildi, YAYIMLANMADAN önce):
+  otomatik-enjekte edilen builtin sarmalayıcıların (ör. `sum(xs: list
+  [int])`) KENDİ parametre isimleri, kullanıcının İLGİSİZ üst-düzey
+  değişkenleriyle SADECE isim çakışması yüzünden "modül-global kullanımı"
+  sayılıyordu — düzeltme, bir fonksiyon ağacının KENDİ bağladığı
+  (parametre/yerel/for-döngüsü/except-as/with-as) isimleri artık
+  ÇIKARIYOR, yalnızca GERÇEKTEN serbest isimler global sayılıyor.
+
 ## [1.9.0]
 
 ### Eklendi

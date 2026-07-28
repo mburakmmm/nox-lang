@@ -712,6 +712,37 @@ test "codegen(çalıştır): ciplak except: + as-baglamasiz except (sizinti yok)
     );
 }
 
+// Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
+// üst-düzey bir `int` global'in İKİ AYRI fonksiyondan (biri yazar,
+// biri okur) doğru çalıştığını kanıtlar.
+test "codegen(çalıştır): modül-seviyesi int global iki fonksiyondan okunup yazilir" {
+    try expectGolden(
+        @embedFile("codegen_cases/module_global_int.nox"),
+        @embedFile("codegen_cases/module_global_int.expected"),
+    );
+}
+
+// Heap-yönetimli bir global (`list[str]`) birden fazla çağrı boyunca
+// doğru büyüdüğünü VE sızıntısız olduğunu (`expectGolden`nin BOŞ-stderr
+// kontrolü — `$nox_deinit_globals`in `releaseValueIfSet` çağrısını
+// doğrular) kanıtlar.
+test "codegen(çalıştır): modül-seviyesi heap-yönetimli global (list[str]) sizintisiz büyür" {
+    try expectGolden(
+        @embedFile("codegen_cases/module_global_heap_list.nox"),
+        @embedFile("codegen_cases/module_global_heap_list.expected"),
+    );
+}
+
+// Bir fonksiyonun KENDİ yerelinin AYNI isimde bir global'i gölgelediğini
+// (`shadowed()`), KARDEŞ bir fonksiyonun İSE (`unshadowed()`, hiç yerel
+// bildirmez) AYNI global'i GERÇEKTEN okuyup/yazdığını kanıtlar.
+test "codegen(çalıştır): yerel degisken/parametre modül-global'ini gölgeler, kardes fonksiyon global'i görür" {
+    try expectGolden(
+        @embedFile("codegen_cases/module_global_shadowing.nox"),
+        @embedFile("codegen_cases/module_global_shadowing.expected"),
+    );
+}
+
 // Bulundu (bkz. proje belleği "UTF-8 farkındalığı" görevi): `len(s)`/`s[i]`
 // ÖNCEDEN bayt-tabanlıydı (çok baytlı UTF-8 karakterleri — "café"nin
 // "é"si, "日本語"nin her karakteri — ORTADAN kesiyordu). ARTIK codepoint-

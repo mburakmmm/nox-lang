@@ -12,10 +12,12 @@
 # İNCE, AYNI-dosya sarmalayıcılar (`h_*`) — BUNLAR birinci-sınıf değer
 # olarak kullanılabilir.
 #
-# `handle`, `nox.http.serve*`nin ÇIPLAK üst-düzey fonksiyon
-# ZORUNLULUĞU YÜZÜNDEN `Router`u HER İSTEKTE SIFIRDAN inşa eder
-# (`build_router`, 9 rota kaydı — saf `list.append`, G/Ç YOK, İHMAL
-# EDİLEBİLİR maliyet). `PORT` SABİT `8080` (env-yapılandırılabilir
+# `router`, modül-seviyesi global durum ARTIK desteklendiğinden (bkz.
+# proje belleği "modül-seviyesi global durum" planı) script top-level'da
+# BİR KEZ inşa edilir — ÖNCEDEN (v1.9.0'a KADAR) `handle` HER İSTEKTE
+# `build_router()`u SIFIRDAN çağırmak ZORUNDAYDI (saf `list.append`,
+# G/Ç YOK, İHMAL EDİLEBİLİR maliyetliydi ama GEREKSİZDİ). `PORT` SABİT
+# `8080` (env-yapılandırılabilir
 # DEĞİL, gerekirse Docker katmanında remap edilir). `num_threads=1` —
 # TÜM dosya-tabanlı durumun (`data/index.json`/`data/inbox.json`/
 # `data/ratelimit.txt`) YARIŞ-KOŞULSUZ round-trip yapabilmesi İçin
@@ -75,8 +77,9 @@ def build_router() -> Router:
     router.use_before(h_require_admin_session)
     return router
 
+router: Router = build_router()
+
 def handle(req: HttpRequest) -> HttpResponse:
-    router: Router = build_router()
     return router.dispatch(req)
 
 nox.http.serve_multicore(8080, handle, 1, 0)

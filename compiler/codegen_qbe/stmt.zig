@@ -176,27 +176,50 @@ pub fn genLowLevel(self: *Codegen, ll: ast.LowLevelStmt, ret_qtype: QbeType) Cod
 pub fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {
     switch (a.target) {
         .identifier => |name| {
-            const info = self.vars.get(name) orelse return error.Unsupported;
-            const v0 = try self.genExprForTarget(a.value, info);
-            const retained = try self.retainIfAliasing(a.value, v0);
-            const val = try self.convert(retained, info.qtype);
-            // Bkz. `var_decl` kolundaki aynı gerekçe: arena yerelleri asla
-            // ARC ile serbest bırakılmaz (arenanın toplu yıkımı zaten
-            // bunu yapar) — aksi halde döngü içinde yeniden atama, önceki
-            // yinelemede zaten yıkılmış bir arenaya ait belleği tekrar
-            // serbest bırakmaya çalışır.
-            if (isHeapManaged(info.heap) and !info.is_param and !info.arena) {
-                try self.releaseSlotIfSet(info);
-            } else if ((info.heap == .task or info.heap == .channel or info.heap == .thread_handle or info.heap == .thread_channel) and !info.is_param and !info.arena) {
-                // Faz S.1: `Task[T]`/`Channel[T]`/`ThreadHandle[T]`/
-                // `ThreadChannel[T]` yeniden atamada ESKİ değer artık
-                // sızmaz — `destroyNonArcSlotIfSet`
-                // (bkz. onun belge notu, `Task` İÇİN `nox_async_destroy_task`nin
-                // GÜVENLİ ertelenmiş yıkım semantiği) mevcut slot değerini
-                // YENİ değer BURAYA yazılmadan ÖNCE yok eder.
-                try self.destroyNonArcSlotIfSet(info);
+            if (self.vars.get(name)) |info| {
+                const v0 = try self.genExprForTarget(a.value, info);
+                const retained = try self.retainIfAliasing(a.value, v0);
+                const val = try self.convert(retained, info.qtype);
+                // Bkz. `var_decl` kolundaki aynı gerekçe: arena yerelleri asla
+                // ARC ile serbest bırakılmaz (arenanın toplu yıkımı zaten
+                // bunu yapar) — aksi halde döngü içinde yeniden atama, önceki
+                // yinelemede zaten yıkılmış bir arenaya ait belleği tekrar
+                // serbest bırakmaya çalışır.
+                if (isHeapManaged(info.heap) and !info.is_param and !info.arena) {
+                    try self.releaseSlotIfSet(info);
+                } else if ((info.heap == .task or info.heap == .channel or info.heap == .thread_handle or info.heap == .thread_channel) and !info.is_param and !info.arena) {
+                    // Faz S.1: `Task[T]`/`Channel[T]`/`ThreadHandle[T]`/
+                    // `ThreadChannel[T]` yeniden atamada ESKİ değer artık
+                    // sızmaz — `destroyNonArcSlotIfSet`
+                    // (bkz. onun belge notu, `Task` İÇİN `nox_async_destroy_task`nin
+                    // GÜVENLİ ertelenmiş yıkım semantiği) mevcut slot değerini
+                    // YENİ değer BURAYA yazılmadan ÖNCE yok eder.
+                    try self.destroyNonArcSlotIfSet(info);
+                }
+                try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(info.qtype), val.text, info.slot });
+                return;
             }
-            try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(info.qtype), val.text, info.slot });
+            // Bulundu (bkz. proje belleği "modül-seviyesi global durum"
+            // planı): yerel BAŞARISIZ olursa modül-seviyesi bir global
+            // yazması denenir — `.attribute` yazmasıYLA (aşağıda) AYNI
+            // "eski değeri yükle → yeni değeri yaz → eskiyi serbest
+            // bırak" deseni.
+            const g = self.module_globals.get(name) orelse return error.Unsupported;
+            const v0 = try self.genExprForTarget(a.value, g.info);
+            const retained = try self.retainIfAliasing(a.value, v0);
+            const val = try self.convert(retained, g.info.qtype);
+            const block = try self.newTemp();
+            try self.out.writer.print("    {s} =l call $nox_globals_get(l {s})\n", .{ block, RT_PARAM });
+            const addr = try self.newTemp();
+            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, block, g.offset });
+            if (isHeapManaged(g.info.heap)) {
+                const old_ptr = try self.newTemp();
+                try self.out.writer.print("    {s} =l loadl {s}\n", .{ old_ptr, addr });
+                try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(g.info.qtype), val.text, addr });
+                try self.releaseValueIfSet(old_ptr, g.info.heap, g.info.elem_qtype, g.info.class_name, g.info.elem_heap_info, g.info.dict_info);
+            } else {
+                try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(g.info.qtype), val.text, addr });
+            }
         },
         .attribute => |attr| {
             // Genel durum (bkz. checker.zig'in `checkAssign`indeki AYNI

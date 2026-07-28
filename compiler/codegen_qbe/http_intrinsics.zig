@@ -448,6 +448,17 @@ pub fn genHttpServeMulticoreWorker(self: *Codegen, spec: HttpServeMulticoreWorke
 
     try self.out.writer.print("export function l ${s}(l %argp) {{\n@start\n", .{spec.name});
     try self.out.writer.print("    {s} =l loadl %argp\n", .{RT_PARAM});
+    // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
+    // BU worker KENDİ bağımsız `RuntimeState`ine (bkz. `childThreadMain`,
+    // `runtime/async_rt/thread_bridge.zig`) sahiptir — `globals_block`u
+    // BAŞTA `null`dır, KENDİ taze kopyasını burada ilklendirir (worker'LAR
+    // ARASI PAYLAŞIM YOK, bilinçli v1 kapsamı). **Deinit ÇAĞRILMAZ**: bu
+    // worker `emitFdServeTail`in accept döngüsünde SONSUZA dek çalışır
+    // (`max_connections=0` varsayılanında `ret 0` erişilemez), `rt`nin
+    // KENDİSİ de zaten HİÇ deinit edilmiyor.
+    if (self.module_globals.count() > 0) {
+        try self.out.writer.print("    call $nox_init_globals(l {s})\n", .{RT_PARAM});
+    }
     const payload_addr = try self.newTemp();
     try self.out.writer.print("    {s} =l add %argp, 8\n", .{payload_addr});
     const fd = try self.newTemp();

@@ -9,36 +9,29 @@
 # ZAMAN `nox.http.serve`e DOĞRUDAN geçirilmez, kullanıcı KENDİ TEK
 # `handle` fonksiyonundan `router.dispatch(req)`i ÇAĞIRIR.
 #
-# **KRİTİK, GERÇEK bir kısıt (`services/noxpkg/` inşa edilirken
-# BULUNDU, bkz. proje belleği "noxc add/delete/publish + noxpkg merkezi
-# sunucusu" fazı):** Nox'ta üst-düzey (script-seviyesi) `var_decl`
-# durumu HİÇBİR fonksiyonun İÇİNDEN GÖRÜLEMEZ — ne okuma ne yazma
-# (minimal bir `counter: int = 0` + `def f(): counter = counter + 1`
-# BİLE `error.UndefinedVariable` verir, GERÇEK bir tekrar-üretimle
-# DOĞRULANDI: bkz. `tests/compat/router_module_state_golden_test.zig`).
-# Bu YÜZDEN AŞAĞIDAKİ desen **ÇALIŞMAZ**:
+# **Modül-seviyesi bir kez inşa (ÖNCEDEN mümkün DEĞİLDİ, bkz. proje
+# belleği "modül-seviyesi global durum" planı):** Nox'ta üst-düzey
+# (script-seviyesi) `var_decl` durumu ARTIK herhangi bir fonksiyon
+# gövdesinden GÖRÜLEBİLİYOR (hem okuma hem yazma) — bu YÜZDEN AŞAĞIDAKİ
+# desen ÇALIŞIR, `Router` yalnızca BİR KEZ inşa edilir:
 # ```
-# r: Router = Router()          # script top-level'da inşa edildi
+# r: Router = Router()          # script top-level'da BİR KEZ inşa edildi
 # r.get("/", hello)
 # def handle(req: HttpRequest) -> HttpResponse:
-#     return r.dispatch(req)    # UndefinedVariable: r — handle `r`yi GÖREMEZ
+#     return r.dispatch(req)    # `handle` `r`yi modül-global olarak GÖRÜR
 # nox.http.serve(8080, handle, 1)
 # ```
-# **DOĞRU desen:** `Router`u `handle`in KENDİSİNİN (ya da ondan çağrılan
-# bir yardımcı fonksiyonun) İÇİNDE, HER İSTEKTE yeniden inşa edin —
-# rota kaydı SAF `list.append` (G/Ç YOK), maliyeti İHMAL EDİLEBİLİR:
-# ```
-# def build_router() -> Router:
-#     r: Router = Router()
-#     r.get("/", hello)
-#     return r
-# def handle(req: HttpRequest) -> HttpResponse:
-#     r: Router = build_router()
-#     return r.dispatch(req)
-# nox.http.serve(8080, handle, 1)
-# ```
-# GERÇEK bir alt-süreç+soket İLE DOĞRULANDI (`services/noxpkg/main.nox`,
-# `tests/compat/router_module_state_golden_test.zig`nin İLK testi).
+# GERÇEK bir alt-süreç+soket İLE DOĞRULANDI (bkz. `tests/compat/
+# router_module_state_golden_test.zig`). **Bilinçli v1 semantiği:**
+# üst-düzey `var_decl` initializer'ları HER ZAMAN diğer TÜM üst-düzey
+# deyimlerden ÖNCE çalışır (metinsel sırayla İÇ İÇE geçmiş olsalar bile)
+# — bkz. `compiler/typecheck/checker.zig`nin `collectModuleGlobals`ının
+# belge notu. **İş parçacığı modeli:** `nox.http.serve_multicore`nin HER
+# worker OS iş parçacığı KENDİ BAĞIMSIZ kopyasını (taze ilklendirilmiş)
+# alır — worker'LAR ARASINDA PAYLAŞILMAZ (Nox'un ARC refcount'larının
+# ATOMİK OLMAMASIYLA TUTARLI bilinçli bir v1 kararı). Worker'lar ARASI
+# GERÇEK paylaşılan durum İSTENİYORSA `nox.thread.ThreadChannel`
+# kullanılmalıdır.
 #
 # Faz U.4 (bkz. nox-teknik-spesifikasyon.md) İLE eklenen BİRİNCİ-SINIF
 # fonksiyon/closure tipleri (`(T) -> U` sözdizimi) SAYESİNDE rota

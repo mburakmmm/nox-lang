@@ -1,28 +1,24 @@
 //! `stdlib/nox/router.nox` + `nox.http.serve*` etkileşiminin uçtan uca
-//! regresyon testi — bkz. proje belleği "noxc add/delete/publish +
-//! noxpkg merkezi sunucusu" fazı (`services/noxpkg/` inşa edilirken
-//! BULUNAN, GERÇEK bir kısıt).
+//! regresyon testi — bkz. proje belleği "modül-seviyesi global durum"
+//! planı.
 //!
-//! **Bulgu:** Nox'ta üst-düzey (script-seviyesi) `var_decl` durumu
-//! HİÇBİR fonksiyonun İÇİNDEN GÖRÜLEMEZ — ne okuma ne yazma (minimal
-//! bir `counter: int = 0` + `def f(): counter = counter + 1` BİLE
-//! `error.UndefinedVariable` verir). `nox.http.serve*`nin `handle`si
-//! DERLEYİCİ tarafından ÇIPLAK bir üst-düzey fonksiyon OLMAK ZORUNDA
-//! OLDUĞUNDAN (closure/metod DEĞİL, bkz. `codegen_qbe/http_intrinsics.
-//! zig`nin `genHttpServeWrapper`ı), `router.nox`nin KENDİ modül üstü
-//! belge notunun (`router.nox:1-10`) ÖRTÜK varsaydığı "TEK bir `Router`
-//! inşa et, `handle`den `dispatch` çağır" deseni — `Router`nin İNŞASI
-//! `handle`nin DIŞINDA, script top-level'da OLURSA — ÇALIŞMAZ.
+//! **Geçmiş (bkz. proje belleği "noxc add/delete/publish + noxpkg
+//! merkezi sunucusu" fazı):** `services/noxpkg/` inşa edilirken
+//! BULUNDU: Nox'ta üst-düzey (script-seviyesi) `var_decl` durumu HİÇBİR
+//! fonksiyonun İÇİNDEN GÖRÜLEMİYORDU — bu YÜZDEN `Router`nin İNŞASI
+//! `handle`nin DIŞINDA, script top-level'da OLURSA ÇALIŞMIYORDU. Bu
+//! kısıt "modül-seviyesi global durum" planıyla ÇÖZÜLDÜ (bkz. `compiler/
+//! typecheck/checker.zig`nin `collectModuleGlobals`ı + `compiler/
+//! codegen_qbe/globals.zig`).
 //!
 //! Bu dosya İKİ senaryoyu doğrular: (1) `Router` `handle`nin KENDİSİNİN
 //! (ya da ondan çağrılan bir yardımcı fonksiyonun) İÇİNDE, HER istekte
-//! yeniden inşa edilirse GERÇEK bir alt-süreç+soket İLE ÇALIŞIR; (2)
-//! `Router` script top-level'da inşa edilip `handle`den REFERANS
-//! ALINIRSA tip denetimi `error.UndefinedVariable` İLE BAŞARISIZ olur —
-//! bu İKİNCİ test, gelecekte modül-üstü durum desteği EKLENİRSE (bkz.
-//! `router.nox`nin güncellenmiş belge notu) bu testin de GÜNCELLENMESİ
-//! GEREKTİĞİNİ hatırlatan bir "regresyon kilidi"dir, YOKSA sessizce
-//! eskimiş kalır.
+//! yeniden inşa edilirse GERÇEK bir alt-süreç+soket İLE ÇALIŞIR (ESKİ
+//! desen, HÂLÂ geçerli/desteklenen bir alternatif); (2) `Router` script
+//! top-level'da BİR KEZ inşa edilip `handle`den REFERANS ALINIRSA da
+//! (YENİ, tercih edilen desen) ARTIK GERÇEK bir alt-süreç+soket İLE
+//! ÇALIŞIR — bu İKİNCİ test ÖNCEDEN (`error.UndefinedVariable` BEKLEYEN)
+//! bir "regresyon kilidi" İDİ, ARTIK özelliğin VARLIĞINI doğrular.
 
 const std = @import("std");
 const posix = std.posix;
@@ -210,30 +206,31 @@ test "nox.router + nox.http.serve: Router handle'in ICINDE (her istekte yeniden)
     try std.testing.expect(std.mem.indexOf(u8, resp, "hello") != null);
 }
 
-// **Regresyon kilidi:** `Router` script top-level'da inşa edilip
-// `handle`den DOĞRUDAN referans alınırsa (bu dosyanın modül üstü
-// notunun anlattığı, `router.nox`nin KENDİ belge notunun ÖRTÜK
-// varsaydığı desen) tip denetimi BAŞARISIZ OLMALIDIR — bu test, o
-// varsayımın HÂLÂ doğru olduğunu (yani hâlâ `error.UndefinedVariable`
-// verdiğini) doğrular. Gelecekte modül-üstü durum desteği EKLENİRSE
-// bu test KIRILIR — bu, `router.nox`nin belge notunun da GÜNCELLENMESİ
-// GEREKTİĞİNE dair BİLİNÇLİ bir hatırlatmadır (bkz. bu dosyanın modül
-// üstü notu).
-test "nox.router + nox.http.serve: Router script top-level'da insa edilip handle'dan REFERANS alinirsa tip denetimi basarisiz olur (bilinen kisit)" {
+// Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
+// ÖNCEDEN bu test `Router` script top-level'da inşa edilip `handle`den
+// REFERANS alındığında tip denetiminin `error.UndefinedVariable` İLE
+// BAŞARISIZ OLMASINI bekleyen bir "regresyon kilidi" İDİ. Artık modül-
+// seviyesi global durum desteklendiğinden bu desen GERÇEKTEN çalışır —
+// bu test şimdi TAM UÇTAN UCA (gerçek alt-süreç+soket) doğrular: `r`
+// SADECE BİR KEZ inşa edilir (`handle` HER istekte YENİDEN inşa ETMEZ),
+// AMA HER istek yine de doğru yanıtlanır.
+test "nox.router + nox.http.serve: Router script top-level'da BIR KEZ insa edilip handle'dan REFERANS alinirsa GERCEKTEN calisir" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
+
+    const port = try probeFreePort();
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const a = arena.allocator();
 
-    const source =
+    const source = try std.fmt.allocPrint(a,
         \\import nox.http
         \\from nox.router import Router, Context
         \\from nox.http import HttpRequest, HttpResponse
         \\
         \\def hello(ctx: Context) -> HttpResponse:
-        \\    return HttpResponse(200, "hello", {})
+        \\    return HttpResponse(200, "hello", {{}})
         \\
         \\r: Router = Router()
         \\r.get("/", hello)
@@ -241,29 +238,59 @@ test "nox.router + nox.http.serve: Router script top-level'da insa edilip handle
         \\def handle(req: HttpRequest) -> HttpResponse:
         \\    return r.dispatch(req)
         \\
-        \\nox.http.serve(18099, handle, 1)
+        \\nox.http.serve({d}, handle, 1)
         \\
-    ;
+    , .{port});
 
-    const tokens = try nox.lexer.tokenize(a, source);
-    const user_module = try nox.parser.parseModule(a, tokens);
-    const module = try nox.module_loader.resolveImports(a, io, user_module);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const bin_path = try compileToBinary(a, &tmp, source);
 
-    var checker_state = nox.checker.Checker.init(a);
-    const check_result = checker_state.checkModule(module);
+    var child = try std.process.spawn(io, .{
+        .argv = &.{bin_path},
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
 
-    var failed = false;
-    var message: []const u8 = "";
-    if (check_result) |_| {
-        if (checker_state.diagnostics.items.len > 0) {
-            failed = true;
-            message = checker_state.diagnostics.items[0].message;
+    var resp_buf: [256]u8 = undefined;
+    var resp_len: usize = 0;
+    const client_thread = try std.Thread.spawn(.{}, struct {
+        fn run(p: u16, out: []u8, out_len: *usize) void {
+            const fd = testConnect(p) catch return;
+            defer _ = std.c.close(fd);
+            const req = "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+            var off: usize = 0;
+            while (off < req.len) {
+                const n = std.c.write(fd, req[off..].ptr, req.len - off);
+                if (n <= 0) return;
+                off += @intCast(n);
+            }
+            var total: usize = 0;
+            while (total < out.len) {
+                const n = std.c.read(fd, out[total..].ptr, out.len - total);
+                if (n <= 0) break;
+                total += @intCast(n);
+            }
+            out_len.* = total;
         }
-    } else |err| {
-        failed = true;
-        message = checker_state.diagnostic orelse @errorName(err);
+    }.run, .{ port, &resp_buf, &resp_len });
+    client_thread.join();
+
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
+    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stderr_data);
+
+    const term = try child.wait(io);
+    try std.testing.expect(term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), term.exited);
+
+    if (stderr_data.len != 0) {
+        std.debug.print("program stderr'e beklenmeyen bir çıktı yazdı (olası bellek sızıntısı/UAF): {s}\n", .{stderr_data});
+        return error.UnexpectedStderrOutput;
     }
 
-    try std.testing.expect(failed);
-    try std.testing.expect(std.mem.indexOf(u8, message, "tanımsız değişken") != null or std.mem.indexOf(u8, message, "UndefinedVariable") != null);
+    const resp = resp_buf[0..resp_len];
+    try std.testing.expect(std.mem.indexOf(u8, resp, "200") != null);
+    try std.testing.expect(std.mem.indexOf(u8, resp, "hello") != null);
 }
