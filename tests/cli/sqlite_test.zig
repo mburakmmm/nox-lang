@@ -131,3 +131,55 @@ test "nox.sqlite: bozuk SQL SqliteError firlatir, try/except yakalar; bos tablo 
     }
     try std.testing.expectEqualStrings("caught\n0\n", result.stdout);
 }
+
+// Faz NN.4 (bkz. proje belleği "nyx v2 limitasyon listesi doğrulaması",
+// limitasyon #1'in "ortak Connection tipi yok" kısmı): `nox.db.DbConnection`
+// protokolünün GERÇEK bir `nox.sqlite.Connection` örneğini (bir sürücüye
+// BAĞLI KALMADAN yazılmış genel bir fonksiyon ARACILIĞIYLA) KARŞILADIĞINI
+// doğrular — `nox.postgres`/`nox.mysql`nin GERÇEK bir sunucu GEREKTİRMEYEN
+// EŞDEĞER doğrulaması `postgres_mysql_connect_error` golden testinde.
+test "nox.db.DbConnection protokolu nox.sqlite.Connection'i yapisal olarak karsiliyor" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir_len = try tmp.dir.realPath(io, &path_buf);
+    const db_path = try std.fmt.allocPrint(gpa, "{s}/test3.db", .{path_buf[0..dir_len]});
+    defer gpa.free(db_path);
+
+    const source = try std.fmt.allocPrint(gpa,
+        \\from nox.sqlite import open, Connection
+        \\from nox.db import DbConnection
+        \\
+        \\def close_via_protocol(conn: DbConnection) -> None:
+        \\    conn.close()
+        \\
+        \\conn: Connection = open("{s}")
+        \\conn.execute("CREATE TABLE t (id INTEGER)")
+        \\close_via_protocol(conn)
+        \\print("kapatildi")
+        \\
+    , .{db_path});
+    defer gpa.free(source);
+
+    const nox_path = try std.fmt.allocPrint(gpa, "{s}/prog3.nox", .{path_buf[0..dir_len]});
+    defer gpa.free(nox_path);
+    try tmp.dir.writeFile(io, .{ .sub_path = "prog3.nox", .data = source });
+
+    const result = try std.process.run(gpa, io, .{
+        .argv = &.{ noxcPath(), "run", nox_path },
+    });
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    if (result.term != .exited or result.term.exited != 0) {
+        std.debug.print("program basarisiz cikti (stderr): {s}\n", .{result.stderr});
+        return error.ProgramFailed;
+    }
+    if (result.stderr.len != 0) {
+        std.debug.print("program stderr'e beklenmeyen bir cikti yazdi (olasi bellek sizintisi): {s}\n", .{result.stderr});
+        return error.UnexpectedStderrOutput;
+    }
+    try std.testing.expectEqualStrings("kapatildi\n", result.stdout);
+}

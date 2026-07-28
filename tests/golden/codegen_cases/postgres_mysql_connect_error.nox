@@ -7,8 +7,9 @@
 # temiz hata yolu). Gerçek bir sunucuya karşı TAM CRUD doğrulaması
 # (Docker ile) elle yapıldı, bkz. proje belleği "4 yeni stdlib modülü"
 # planı.
-from nox.postgres import open, PostgresError
+from nox.postgres import open, PostgresError, Connection, Statement, Row
 from nox.mysql import open_url, MysqlError
+from nox.db import DbConnection
 
 try:
     open("postgres://baduser@127.0.0.1:1/nonexistentdb")
@@ -19,3 +20,28 @@ try:
     open_url("mysql://baduser@127.0.0.1:1/nonexistentdb")
 except MysqlError:
     print("MysqlError yakalandi")
+
+# Faz NN.4 (bkz. proje belleği "nyx v2 limitasyon listesi doğrulaması"):
+# `Statement`/`prepare()` yolunun da (bağlantı ULAŞILAMAZ olsa BİLE, çökme
+# YOK — parametreli sorgu yolunun eklenmesi mevcut hata-yolu davranışını
+# BOZMADI) VE `DbConnection` protokolünün (`close()` metoduyla) GERÇEK bir
+# `nox.postgres.Connection` örneğini KARŞILADIĞINI doğrular.
+try:
+    conn: Connection = open("postgres://baduser@127.0.0.1:1/nonexistentdb")
+    stmt: Statement = conn.prepare("select $1::int")
+    stmt.bind_int(0, 42)
+    stmt.bind_str(1, "test")
+    stmt.bind_null(2)
+    rows: list[Row] = stmt.query()
+except PostgresError:
+    print("Statement/prepare yolu (postgres) temiz basarisiz oldu")
+
+def close_via_protocol(conn: DbConnection) -> None:
+    conn.close()
+
+try:
+    conn2: Connection = open("postgres://baduser@127.0.0.1:1/nonexistentdb")
+    close_via_protocol(conn2)
+    print("DbConnection protokolu nox.postgres.Connection'i karsiliyor")
+except PostgresError:
+    print("Statement/prepare yolu (postgres) temiz basarisiz oldu")

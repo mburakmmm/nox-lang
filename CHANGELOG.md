@@ -14,6 +14,33 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.13.0]
+
+### Eklendi
+- **`nox.postgres`: parametreli sorgu desteği** — `Connection.prepare(sql)`
+  bir `Statement` döner (`bind_int`/`bind_float`/`bind_str`/`bind_null`
+  sonra `execute()`/`query()`) — libpq'nun `PQexecParams`i (TEK çağrıda
+  TÜM parametreleri kabul eder, sqlite'ın GERÇEK artımlı bind'inden FARKLI
+  "biriktir-sonra-ateşle" felsefesiyle) kullanılır. `bind_null` GERÇEK SQL
+  `NULL` üretir (libpq'ya `NULL` C işaretçisi geçirilerek).
+- **`nox.mysql`: parametreli sorgu desteği + `last_insert_rowid()`** —
+  `Connection.prepare(sql)` AYNI `Statement` API'sini sunar, ama İÇ
+  MEKANİZMA `mysql_real_escape_string` İLE İSTEMCİ-TARAFLI GÜVENLİ kaçışlama
+  KULLANIR (GERÇEK `mysql_stmt_*` sunucu-taraflı hazır deyimleri DEĞİL —
+  `MYSQL_BIND` struct'ının ÇOK-TİPLİ, ABI-KIRILGAN TAM Zig karşılığına
+  girmeden, AYNI GÜVENLİK garantisini SQL-enjeksiyona karşı sağlayan
+  BİLİNÇLİ bir tasarım kararı, bkz. `runtime/stdlib_shims/mysql.zig`nin
+  belge notu). `Connection.last_insert_rowid()` EKLENDİ (`mysql_insert_id`
+  — Postgres'in AKSİNE MySQL bunu DOĞRUDAN destekler).
+- **`nox.db.DbConnection`**: `nox.sqlite`/`nox.postgres`/`nox.mysql`nin
+  ÜÇÜNÜN de `Connection` sınıfının PAYLAŞTIĞI `close(self) -> None`
+  metodu İçin yapısal (duck-typed) bir `protocol` — kullanıcı kodu tek
+  bir sürücüye BAĞLI KALMADAN yazılabilir. **Bilinçli kapsam sınırlaması**:
+  `execute`in dönüş tipi (sqlite: `None`, postgres/mysql: `int` — ÖNCEDEN
+  VAR OLAN bir tasarım ayrışması, geriye dönük uyumluluk İçin DEĞİŞTİRİLMEDİ)
+  VE `query`nin dönüş tipi (`Row` üç sürücüde AYRI concrete sınıflar)
+  protokole DAHİL EDİLEMEDİ (bkz. `stdlib/nox/db.nox`nin belge notu).
+
 ## [1.12.1]
 
 ### Düzeltildi

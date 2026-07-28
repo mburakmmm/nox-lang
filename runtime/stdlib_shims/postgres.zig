@@ -22,6 +22,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
+const abi_layout = @import("abi_layout");
+
+const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
+const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 
 fn libraryFileName() [:0]const u8 {
     return switch (builtin.os.tag) {
@@ -59,6 +63,16 @@ const FinishFn = *const fn (conn: ?*anyopaque) callconv(.c) void;
 const StatusFn = *const fn (conn: ?*anyopaque) callconv(.c) c_int;
 const ErrorMessageFn = *const fn (conn: ?*anyopaque) callconv(.c) ?[*:0]const u8;
 const ExecFn = *const fn (conn: ?*anyopaque, query: [*:0]const u8) callconv(.c) ?*anyopaque;
+const ExecParamsFn = *const fn (
+    conn: ?*anyopaque,
+    command: [*:0]const u8,
+    n_params: c_int,
+    param_types: ?[*]const c_uint,
+    param_values: ?[*]const ?[*:0]const u8,
+    param_lengths: ?[*]const c_int,
+    param_formats: ?[*]const c_int,
+    result_format: c_int,
+) callconv(.c) ?*anyopaque;
 const ResultStatusFn = *const fn (res: ?*anyopaque) callconv(.c) c_int;
 const ResultErrorMessageFn = *const fn (res: ?*anyopaque) callconv(.c) ?[*:0]const u8;
 const NtuplesFn = *const fn (res: ?*anyopaque) callconv(.c) c_int;
@@ -75,6 +89,7 @@ const Funcs = struct {
     status: StatusFn,
     error_message: ErrorMessageFn,
     exec: ExecFn,
+    exec_params: ExecParamsFn,
     result_status: ResultStatusFn,
     result_error_message: ResultErrorMessageFn,
     ntuples: NtuplesFn,
@@ -98,6 +113,7 @@ fn loadAll() bool {
     const status_fn = lookupSym(&lib, StatusFn, "PQstatus") orelse return false;
     const error_message_fn = lookupSym(&lib, ErrorMessageFn, "PQerrorMessage") orelse return false;
     const exec_fn = lookupSym(&lib, ExecFn, "PQexec") orelse return false;
+    const exec_params_fn = lookupSym(&lib, ExecParamsFn, "PQexecParams") orelse return false;
     const result_status_fn = lookupSym(&lib, ResultStatusFn, "PQresultStatus") orelse return false;
     const result_error_message_fn = lookupSym(&lib, ResultErrorMessageFn, "PQresultErrorMessage") orelse return false;
     const ntuples_fn = lookupSym(&lib, NtuplesFn, "PQntuples") orelse return false;
@@ -115,6 +131,7 @@ fn loadAll() bool {
         .status = status_fn,
         .error_message = error_message_fn,
         .exec = exec_fn,
+        .exec_params = exec_params_fn,
         .result_status = result_status_fn,
         .result_error_message = result_error_message_fn,
         .ntuples = ntuples_fn,
@@ -196,6 +213,48 @@ pub export fn nox_pg_exec_raw(conn: ?*anyopaque, query: ?[*:0]const u8) callconv
     const q = query orelse return null;
     if (!ensureLoaded()) return null;
     return g_funcs.exec(conn, q);
+}
+
+/// `Statement.bind_*`nin BİRİKTİRDİĞİ metin-formatlı parametreleri (bir
+/// `list[str]` + PARALEL bir `list[str]` NULL bayrağı — checker'ın FFI
+/// sınırı `list[str]` DIŞINDA HİÇBİR `list[T]`ye (ör. `list[bool]`e)
+/// PARAMETRE olarak İZİN VERMEDİĞİNDEN, `is_null` bayrağı "1"/"0" metin
+/// dizeleri OLARAK kodlanır — `Statement.nox`'un KENDİ İÇ tamponları)
+/// `PQexecParams`e iletir — sqlite'ın GERÇEK artımlı bind'inin AKSİNE,
+/// libpq'nun `PQexecParams` API'si TEK bir çağrıda TÜM parametreleri alır
+/// ("biriktir-sonra-ateşle", bkz. `stdlib/nox/postgres.nox`nin `Statement`
+/// sınıfının belge notu). `null_flags`te "1" OLAN bir indeks İçin
+/// `paramValues[i]` C `NULL` olarak geçirilir (libpq'nun SQL `NULL`
+/// sözleşmesi) — `params_list`teki KARŞILIK gelen dize (BOŞ bir yer
+/// tutucu) YOK SAYILIR. `paramTypes`/`paramLengths`/`paramFormats` HEPSİ
+/// `null` (metin formatı — libpq TÜM değerleri metin olarak yorumlar,
+/// sunucu tipi KENDİSİ ÇIKARIR), `resultFormat = 0` (metin) —
+/// `nox_pg_getvalue_raw`in mevcut metin-tabanlı okuma yoluyla TUTARLI.
+pub export fn nox_pg_exec_params_raw(conn: ?*anyopaque, query: ?[*:0]const u8, params_list: ?*anyopaque, null_flags_list: ?*anyopaque) callconv(.c) ?*anyopaque {
+    const q = query orelse return null;
+    if (!ensureLoaded()) return null;
+    const bytes: [*]u8 = @ptrCast(params_list orelse return g_funcs.exec_params(conn, q, 0, null, null, null, null, 0));
+    const count: usize = @intCast(@as(*align(1) i64, @ptrCast(bytes)).*);
+    if (count == 0) return g_funcs.exec_params(conn, q, 0, null, null, null, null, 0);
+    const null_bytes: ?[*]u8 = if (null_flags_list) |p| @ptrCast(p) else null;
+    const gpa = std.heap.page_allocator;
+    const values = gpa.alloc(?[*:0]const u8, count) catch return null;
+    defer gpa.free(values);
+    var i: usize = 0;
+    while (i < count) : (i += 1) {
+        const is_null = if (null_bytes) |nb| blk: {
+            const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(nb + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*);
+            const flag_str: [*:0]const u8 = @ptrFromInt(addr);
+            break :blk flag_str[0] == '1';
+        } else false;
+        if (is_null) {
+            values[i] = null;
+        } else {
+            const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*);
+            values[i] = @ptrFromInt(addr);
+        }
+    }
+    return g_funcs.exec_params(conn, q, @intCast(count), null, values.ptr, null, null, 0);
 }
 
 pub export fn nox_pg_result_ok_raw(res: ?*anyopaque) callconv(.c) i64 {

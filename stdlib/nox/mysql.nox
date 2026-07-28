@@ -12,9 +12,23 @@
 # parse` İLE ayrıştırıp BU parçaları ÇIKARIR (port belirtilmemişse
 # MySQL'in KENDİ varsayılanı 3306 kullanılır).
 #
-# **Bilinçli v1 sınırlaması**: `nox.postgres` İLE AYNI — `query`/`execute`
-# parametreli (`?`/bind) sorgu DESTEKLEMEZ (yalnızca düz SQL metni,
-# kullanıcı değerleri KENDİSİ kaçışlamalıdır).
+# **Faz NN.4 (bkz. proje belleği "nyx v2 limitasyon listesi doğrulaması"):**
+# `Statement` sınıfı İLE PARAMETRELİ (`?`) sorgu ARTIK DESTEKLENİYOR —
+# `Connection.prepare(sql)` bir `Statement` döner, `bind_int`/`bind_float`/
+# `bind_str`/`bind_null` çağrıları BİRİKTİRİLİR. **Bilinçli tasarım
+# kararı**: GERÇEK sunucu-taraflı `mysql_stmt_*` hazırlanmış deyimleri
+# (`MYSQL_BIND` struct'ının ÇOK-TİPLİ, ABI-KIRILGAN TAM Zig karşılığını
+# gerektirirdi) YERİNE, `mysql_real_escape_string` (libmysqlclient'ın
+# KENDİ, iyi-test-edilmiş SQL-enjeksiyon kaçışlama fonksiyonu) İLE
+# İSTEMCİ-TARAFLI kaçışlama KULLANILIR — `bind_str` değeri kaçışlanıp
+# SQL metnine `?` yerine DOĞRUDAN gömülür, SONRA MEVCUT `nox_mysql_
+# query_raw` (düz metin) çağrılır. KULLANICI API'si (`bind_int`/`bind_str`
+# sonra `execute()`/`query()`) Postgres/sqlite İLE AYNI görünür — GERÇEK
+# SQL-enjeksiyon koruması (asıl pratik endişe) sağlanır, sunucu tarafında
+# İSE isimli bir "prepared statement" YOK (bkz. `nox_mysql_escape_raw`nin
+# Zig belge notu, `runtime/stdlib_shims/mysql.zig`). `last_insert_rowid()`
+# ARTIK VAR (`mysql_insert_id` — Postgres'in AKSİNE MySQL bunu DOĞRUDAN
+# destekler).
 
 import nox.url
 import nox.strings
@@ -35,6 +49,8 @@ extern def nox_mysql_row_isnull_raw(row: ptr, col: int) -> int from "zig-out/lib
 extern def nox_mysql_row_getvalue_raw(row: ptr, col: int) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_mysql_free_result_raw(res: ptr) -> None from "zig-out/lib/noxrt.o"
 extern def nox_mysql_is_null_ptr(p: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_mysql_insert_id_raw(conn: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_mysql_escape_raw(conn: ptr, value: str) -> str from "zig-out/lib/noxrt.o" with_rt
 
 class MysqlError:
     def __init__(self: MysqlError, message: str) -> None:
@@ -98,9 +114,87 @@ def _read_rows(res: ptr, ncols: int) -> list[Row]:
         row = nox_mysql_fetch_row_raw(res)
     return rows
 
+# `sqlite.nox`/`postgres.nox`nin `Statement`iyle AYNI KULLANICI API'si
+# (`bind_int(idx, val)` sonra `execute()`/`query()`), İÇ MEKANİZMA
+# FARKLI: `bind_*` çağrıları `self.fragments`e SQL METNİ parçaları olarak
+# EKLER (`bind_str` `mysql_real_escape_string` İLE kaçışlayıp tek-tırnak
+# İÇİNE alır, `bind_null` literal `"NULL"` ekler, `bind_int`/`bind_float`
+# sayısal olduğundan kaçışlamaya GEREK DUYMAZ) — `idx` parametresi bu
+# YÜZDEN KULLANILMAZ (SADECE eklenme SIRASI önemlidir, çağıranın `bind_*`i
+# SQL'deki `?` işaretlerinin SIRASIYLA ÇAĞIRDIĞI VARSAYILIR). `execute()`/
+# `query()` anında `self.sql`deki HER `?` KARAKTERİ, SIRAYLA `self.
+# fragments`teki karşılığıyla DEĞİŞTİRİLİR (bkz. `nox_mysql_escape_raw`nin
+# Zig belge notu — bu, GERÇEK sunucu-taraflı hazır deyim DEĞİL, İSTEMCİ-
+# TARAFLI güvenli metin ikamesidir).
+class Statement:
+    fragments: list[str]
+
+    def __init__(self: Statement, conn_handle: ptr, sql: str) -> None:
+        self.conn_handle = conn_handle
+        self.sql = sql
+        self.fragments = []
+
+    def _push(self: Statement, fragment: str) -> None:
+        fragments: list[str] = self.fragments
+        fragments.append(fragment)
+        self.fragments = fragments
+
+    def bind_int(self: Statement, idx: int, value: int) -> None:
+        self._push(str(value))
+
+    def bind_float(self: Statement, idx: int, value: float) -> None:
+        self._push(str(value))
+
+    def bind_str(self: Statement, idx: int, value: str) -> None:
+        escaped: str = nox_mysql_escape_raw(self.conn_handle, value)
+        self._push("'" + escaped + "'")
+
+    def bind_null(self: Statement, idx: int) -> None:
+        self._push("NULL")
+
+    def _build_sql(self: Statement) -> str:
+        result: str = ""
+        frag_idx: int = 0
+        i: int = 0
+        n: int = len(self.sql)
+        while i < n:
+            ch: str = self.sql[i]
+            if ch == "?":
+                result = result + self.fragments[frag_idx]
+                frag_idx = frag_idx + 1
+            else:
+                result = result + ch
+            i = i + 1
+        return result
+
+    def execute(self: Statement) -> int:
+        sql: str = self._build_sql()
+        rc: int = nox_mysql_query_raw(self.conn_handle, sql)
+        if rc != 0:
+            raise MysqlError("deyim basarisiz: " + nox_mysql_errmsg_raw(self.conn_handle))
+        return nox_mysql_affected_rows_raw(self.conn_handle)
+
+    def query(self: Statement) -> list[Row]:
+        sql: str = self._build_sql()
+        rc: int = nox_mysql_query_raw(self.conn_handle, sql)
+        if rc != 0:
+            raise MysqlError("sorgu basarisiz: " + nox_mysql_errmsg_raw(self.conn_handle))
+        ncols: int = nox_mysql_field_count_raw(self.conn_handle)
+        if ncols == 0:
+            return []
+        res: ptr = nox_mysql_store_result_raw(self.conn_handle)
+        if nox_mysql_is_null_ptr(res) != 0:
+            raise MysqlError("sonuc alinamadi: " + nox_mysql_errmsg_raw(self.conn_handle))
+        rows: list[Row] = _read_rows(res, ncols)
+        nox_mysql_free_result_raw(res)
+        return rows
+
 class Connection:
     def __init__(self: Connection, handle: ptr) -> None:
         self.handle = handle
+
+    def prepare(self: Connection, sql: str) -> Statement:
+        return Statement(self.handle, sql)
 
     # Etkilenen satır sayısını döner (`INSERT`/`UPDATE`/`DELETE`/DDL İçin
     # `0`).
@@ -123,6 +217,11 @@ class Connection:
         rows: list[Row] = _read_rows(res, ncols)
         nox_mysql_free_result_raw(res)
         return rows
+
+    # Postgres'in AKSİNE MySQL BUNU DOĞRUDAN destekler (`mysql_insert_id`,
+    # bağlantı-durumu — sqlite'ın `last_insert_rowid()`iyle AYNI KAVRAM).
+    def last_insert_rowid(self: Connection) -> int:
+        return nox_mysql_insert_id_raw(self.handle)
 
     def close(self: Connection) -> None:
         nox_mysql_close_raw(self.handle)

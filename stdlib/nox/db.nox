@@ -1,0 +1,24 @@
+# nox.db — Faz NN.4 (bkz. proje belleği "nyx v2 limitasyon listesi
+# doğrulaması", limitasyon #1'in "ortak Connection tipi yok" kısmı):
+# Nox'ta inheritance YOK ama YAPISAL (duck-typed) `protocol` VAR (bkz.
+# AGENTS.md §12) — bu YÜZDEN `nox.sqlite`/`nox.postgres`/`nox.mysql`nin
+# `Connection` sınıflarının ÜÇÜNÜN de PAYLAŞTIĞI metodlar İçin ortak bir
+# tip yazılabilir, HİÇBİR `implements`/açık ilişki bildirimi GEREKMEDEN.
+#
+# **Bilinçli kapsam sınırlaması — protokol NEDEN sadece `close()` içeriyor**:
+# `execute(sql: str)`in dönüş tipi ÜÇ sürücü arasında GERÇEKTEN FARKLIDIR
+# (ÖNCEDEN VAR OLAN, bu oturumdan BAĞIMSIZ şekillenmiş bir tasarım
+# ayrışması — GERİYE DÖNÜK UYUMLULUK İçin BİLİNÇLİ olarak DEĞİŞTİRİLMEDİ):
+# `nox.sqlite.Connection.execute` `None` döner (etkilenen satır sayısı
+# AYRI bir `changes()` metoduyla okunur), `nox.postgres`/`nox.mysql`nin
+# `execute`i İSE doğrudan etkilenen satır sayısını (`int`) döner. `query
+# (sql: str) -> list[Row]` DA BENZER şekilde protokole DAHİL EDİLEMEZ —
+# üç sürücünün `Row` sınıfı (alanları/metodları BİREBİR AYNI olsa da) ÜÇ
+# AYRI, BAĞIMSIZ concrete sınıf tanımıdır, VE Nox'un protokol eşleştirmesi
+# (`satisfiesProtocol`) dönüş tipini TAM (exact) eşleştirir. `close(self)
+# -> None` İSE HER ÜÇ sürücüde de BİREBİR AYNI, TEK bir gerçekten ortak
+# metoddur — bu YÜZDEN protokol BUNUNLA SINIRLI tutuldu (kapsamı yanlış
+# genişletmek yerine dürüst/dar bırakmak tercih edildi).
+protocol DbConnection:
+    def close(self: DbConnection) -> None:
+        pass

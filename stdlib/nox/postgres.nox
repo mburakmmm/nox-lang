@@ -13,17 +13,27 @@
 # db"`) bağlantı dizesini NATİF kabul eder — ham dize DOĞRUDAN iletilir,
 # AYRI bir DSN ayrıştırıcısı YOK.
 #
-# **Bilinçli v1 sınırlaması**: `query`/`execute` parametreli (`$1`/bind)
-# sorgu DESTEKLEMEZ (yalnızca `PQexec`, düz SQL metni) — kullanıcı
-# değerleri KENDİSİ kaçışlamalı/birleştirmelidir (SQL enjeksiyonu
-# RİSKİNE DİKKAT). `last_insert_rowid()` YOK — Postgres'in KENDİ idiyomu
-# `INSERT ... RETURNING id` yazıp sonucu `query()`den OKUMAKTIR.
+# **Faz NN.4 (bkz. proje belleği "nyx v2 limitasyon listesi doğrulaması"):**
+# `Statement` sınıfı İLE PARAMETRELİ (`$1`/`$2`/...) sorgu ARTIK
+# DESTEKLENİYOR — `Connection.prepare(sql)` bir `Statement` döner,
+# `bind_int`/`bind_float`/`bind_str`/`bind_null` çağrıları BİRİKTİRİLİR
+# (libpq'nun `PQexecParams`i sqlite'ın AKSİNE TEK bir çağrıda TÜM
+# parametreleri istediğinden — "biriktir-sonra-ateşle" — sqlite.nox'un
+# GERÇEK artımlı bind'inden FARKLI ama KULLANICI API'si AYNI ŞEKİLDE
+# görünür), gerçek `PQexecParams` çağrısı `execute()`/`query()` anında
+# yapılır. `last_insert_rowid()` YOK — Postgres'in KENDİ idiyomu `INSERT
+# ... RETURNING id` yazıp sonucu `query()`den OKUMAKTIR (bu, hâlâ bilinçli
+# bir v1 sınırlaması — `nox_pg_*` shim'i `PQprepare`/adlandırılmış hazır
+# deyimleri KULLANMAZ, HER `Statement.execute()`in kendi `PQexecParams`
+# çağrısı BAĞIMSIZDIR, sunucu tarafında ismi olan bir "prepared statement"
+# YOK).
 
 extern def nox_pg_connect_raw(conninfo: str) -> ptr from "zig-out/lib/noxrt.o"
 extern def nox_pg_status_ok_raw(conn: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_pg_errmsg_raw(conn: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_pg_finish_raw(conn: ptr) -> None from "zig-out/lib/noxrt.o"
 extern def nox_pg_exec_raw(conn: ptr, query: str) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_pg_exec_params_raw(conn: ptr, query: str, params: list[str], null_flags: list[str]) -> ptr from "zig-out/lib/noxrt.o"
 extern def nox_pg_result_ok_raw(res: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_pg_result_errmsg_raw(res: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_pg_ntuples_raw(res: ptr) -> int from "zig-out/lib/noxrt.o"
@@ -93,9 +103,74 @@ def _read_rows(res: ptr) -> list[Row]:
         r = r + 1
     return rows
 
+# `sqlite.nox`nin `Statement`iyle AYNI KULLANICI API'si (`bind_int(idx,
+# val)` sonra `execute()`/`query()`), ama İÇ MEKANİZMA FARKLI: `bind_*`
+# çağrıları sadece `self.params`/`self.null_flags`e EKLER (libpq'nun
+# `PQexecParams`i TÜM parametreleri TEK çağrıda istediğinden gerçek
+# artımlı bind YOK) — `idx` parametresi bu YÜZDEN KULLANILMAZ (sqlite'ın
+# 0/1-tabanlı indeks çevirisinin AKSİNE, burada SADECE eklenme SIRASI
+# ÖNEMLİDİR — çağıranın `bind_*`i `$1, $2, ...` sırasıyla ÇAĞIRDIĞI
+# VARSAYILIR, `sqlite.nox`nin `Statement`iyle AYNI sözleşme).
+class Statement:
+    params: list[str]
+    null_flags: list[str]
+
+    def __init__(self: Statement, conn_handle: ptr, sql: str) -> None:
+        self.conn_handle = conn_handle
+        self.sql = sql
+        self.params = []
+        self.null_flags = []
+
+    # `is_null_flag`: `"1"` (NULL) ya da `"0"` (NULL değil) — checker'ın
+    # FFI sınırı `list[str]` DIŞINDA HİÇBİR `list[T]`ye (ör. `list[bool]`e)
+    # PARAMETRE olarak İZİN VERMEDİĞİNDEN metin olarak kodlanır (bkz.
+    # `nox_pg_exec_params_raw`in belge notu).
+    def _push(self: Statement, value: str, is_null_flag: str) -> None:
+        params: list[str] = self.params
+        params.append(value)
+        self.params = params
+        null_flags: list[str] = self.null_flags
+        null_flags.append(is_null_flag)
+        self.null_flags = null_flags
+
+    def bind_int(self: Statement, idx: int, value: int) -> None:
+        self._push(str(value), "0")
+
+    def bind_float(self: Statement, idx: int, value: float) -> None:
+        self._push(str(value), "0")
+
+    def bind_str(self: Statement, idx: int, value: str) -> None:
+        self._push(value, "0")
+
+    def bind_null(self: Statement, idx: int) -> None:
+        self._push("", "1")
+
+    def execute(self: Statement) -> int:
+        res: ptr = nox_pg_exec_params_raw(self.conn_handle, self.sql, self.params, self.null_flags)
+        if nox_pg_result_ok_raw(res) == 0:
+            msg: str = nox_pg_result_errmsg_raw(res)
+            nox_pg_clear_raw(res)
+            raise PostgresError("deyim basarisiz: " + msg)
+        n: int = nox_pg_changes_raw(res)
+        nox_pg_clear_raw(res)
+        return n
+
+    def query(self: Statement) -> list[Row]:
+        res: ptr = nox_pg_exec_params_raw(self.conn_handle, self.sql, self.params, self.null_flags)
+        if nox_pg_result_ok_raw(res) == 0:
+            msg: str = nox_pg_result_errmsg_raw(res)
+            nox_pg_clear_raw(res)
+            raise PostgresError("sorgu basarisiz: " + msg)
+        rows: list[Row] = _read_rows(res)
+        nox_pg_clear_raw(res)
+        return rows
+
 class Connection:
     def __init__(self: Connection, handle: ptr) -> None:
         self.handle = handle
+
+    def prepare(self: Connection, sql: str) -> Statement:
+        return Statement(self.handle, sql)
 
     # Etkilenen satır sayısını döner (`INSERT`/`UPDATE`/`DELETE`/DDL İçin
     # `0`) — Postgres'te bu bir SONUÇ özelliğidir (sqlite'ın `sqlite3_
