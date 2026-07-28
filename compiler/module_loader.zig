@@ -28,6 +28,7 @@ const std = @import("std");
 const lexer = @import("lexer/lexer.zig");
 const parser = @import("parser/parser.zig");
 const ast = @import("parser/ast.zig");
+const project = @import("project.zig");
 
 pub const LoadError = error{ ModuleNotFound, UnknownImportAlias } || lexer.LexError || parser.ParseError || std.Io.Dir.ReadFileAllocError;
 
@@ -118,7 +119,7 @@ fn resolveImportsImpl(
     const core_module = try parser.parseModule(a, core_tokens);
     try extra.appendSlice(a, core_module.body);
 
-    try loadImportsRecursive(a, io, user_module.body, &loaded, &extra, alias_roots, stdlib_root, project_root);
+    try loadImportsRecursive(a, io, user_module.body, &loaded, &extra, alias_roots, stdlib_root, project_root, null, null);
 
     const combined = try a.alloc(ast.Stmt, extra.items.len + user_module.body.len);
     @memcpy(combined[0..extra.items.len], extra.items);
@@ -142,6 +143,18 @@ fn fileExistsAbsolute(io: std.Io, path: []const u8) bool {
     if (std.Io.Dir.accessAbsolute(io, path, .{})) |_| return true else |_| return false;
 }
 
+/// Faz NN.3 (bkz. proje belleği "nyx v2 limitasyon listesi doğrulaması",
+/// limitasyon #5): `current_own_name`/`current_own_root` — ŞU AN gövdesi
+/// işlenmekte olan paketin KENDİ `nox.json`ından okunan `name` alanı VE bu
+/// paketin kök dizini (varsa). Bir paketin KENDİ İÇ `import X.Y` deyimleri
+/// ÖNCEDEN her zaman TÜKETİCİNİN `alias_roots`ına (`nox.json`daki
+/// `requires[].alias`) karşı çözülüyordu — yani paket YALNIZCA tüketici
+/// TESADÜFEN aynı alias'ı seçerse doğru çalışıyordu (nyx İçin bu, `alias:
+/// "nyx"` ZORUNLULUĞU anlamına geliyordu). Bu ikili, `segments[0]`in
+/// `alias_roots`a bakılmadan ÖNCE bu paketin KENDİ adına eşit olup
+/// OLMADIĞINI kontrol etmek İçin kullanılır — eşleşirse KENDİ kökü
+/// KULLANILIR (tüketicinin alias'ı NE OLURSA olsun). `null`/`null` üst-düzey
+/// kullanıcı modülü İçin (VE `nox.json`ı olmayan/geçersiz olan paketler İçin).
 fn loadImportsRecursive(
     a: std.mem.Allocator,
     io: std.Io,
@@ -151,6 +164,8 @@ fn loadImportsRecursive(
     alias_roots: ?*const std.StringHashMapUnmanaged([]const u8),
     stdlib_root: []const u8,
     project_root: ?[]const u8,
+    current_own_name: ?[]const u8,
+    current_own_root: ?[]const u8,
 ) LoadError!void {
     for (stmts) |stmt| {
         // Faz U.3: `from X.Y import foo` DA `import X.Y`İLE AYNI dosya
@@ -177,10 +192,25 @@ fn loadImportsRecursive(
         // DEĞİLSE, ÖNCE alias haritasına, SONRA (Faz U.2) `project_root`a
         // bakılır — bkz. `resolveProjectImports`in belge notu.
         const is_nox_stdlib = segments.len == 0 or std.mem.eql(u8, segments[0], "nox");
+        var pkg_root: ?[]const u8 = null;
         const file_path = blk: {
+            // Faz NN.3: BU paketin KENDİ İÇİNDEYKEN (`current_own_name`
+            // set VE `segments[0]` ONA eşitse), tüketicinin `alias_roots`ına
+            // HİÇ BAKMADAN doğrudan `current_own_root` kullanılır — bir
+            // paketin kendi iç import'ları KENDİ adıyla ÇALIŞIR, tüketicinin
+            // SEÇTİĞİ alias NE OLURSA olsun.
+            if (current_own_name) |own| {
+                if (segments.len > 0 and std.mem.eql(u8, segments[0], own)) {
+                    const root = current_own_root.?;
+                    pkg_root = root;
+                    const rest = try joinWith(a, segments[1..], '/');
+                    break :blk try std.fmt.allocPrint(a, "{s}/{s}.nox", .{ root, rest });
+                }
+            }
             if (alias_roots) |roots| {
                 if (!is_nox_stdlib) {
                     if (roots.get(segments[0])) |root| {
+                        pkg_root = root;
                         const rest = try joinWith(a, segments[1..], '/');
                         break :blk try std.fmt.allocPrint(a, "{s}/{s}.nox", .{ root, rest });
                     }
@@ -212,10 +242,21 @@ fn loadImportsRecursive(
         const tokens = try lexer.tokenize(a, source);
         const stdlib_module = try parser.parseModule(a, tokens);
 
+        // Faz NN.3: BU dosyanın (varsa) kendi paket kökünün KENDİ `nox.json`
+        // adını best-effort okur (yok/geçersizse SESSİZCE yok sayılır —
+        // her paketin bir `nox.json`ı OLMASI gerekmez, ör. eski/basit
+        // paketler) — bu, AŞAĞIDAKİ özyinelemeli çağrının "şu an bu paketin
+        // İÇİNDEYİZ" bağlamını KURAR.
+        const next_own_name: ?[]const u8, const next_own_root: ?[]const u8 = if (pkg_root) |root| blk: {
+            const manifest = project.loadManifest(a, io, root) catch break :blk .{ null, null };
+            if (manifest.name.len == 0) break :blk .{ null, null };
+            break :blk .{ manifest.name, root };
+        } else .{ null, null };
+
         // ÖNCE bu stdlib modülünün KENDİ import'larını özyinelemeli çöz
         // (transitif — bir stdlib modülü başka bir stdlib modülünü import
         // edebilir).
-        try loadImportsRecursive(a, io, stdlib_module.body, loaded, out, alias_roots, stdlib_root, project_root);
+        try loadImportsRecursive(a, io, stdlib_module.body, loaded, out, alias_roots, stdlib_root, project_root, next_own_name, next_own_root);
 
         // Bu modülün KENDİ üst-düzey `func_def`/`class_def` adlarını topla.
         var rename_map: std.StringHashMapUnmanaged([]const u8) = .empty;

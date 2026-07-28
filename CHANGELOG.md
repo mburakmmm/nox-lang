@@ -14,7 +14,20 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
-## [1.11.3]
+## [1.12.1]
+
+### Düzeltildi
+- **Paket alias zorunluluğu kaldırıldı**: bir paketin KENDİ İÇ `import X.Y`
+  deyimleri ÖNCEDEN TÜKETİCİNİN `nox.json`ındaki `requires[].alias`ına
+  karşı çözülüyordu — yani paket YALNIZCA tüketici TESADÜFEN aynı alias'ı
+  seçerse doğru çalışıyordu (nyx İçin bu, `alias: "nyx"` ZORUNLULUĞU
+  anlamına geliyordu, doğrulanan bir nyx v2 limitasyonuydu). Artık her
+  paketin KENDİ `nox.json`ındaki `name` alanı okunuyor — bir paketin
+  kendi-içi import'ları KENDİ adıyla çözülür, tüketicinin seçtiği alias NE
+  OLURSA olsun. `nox.json`ı olmayan (veya `name` alanı boş) eski/basit
+  paketler İçin davranış DEĞİŞMEDİ (geriye dönük UYUMLU).
+
+## [1.12.0]
 
 ### Eklendi
 - **Nitelikli (`pkg.module.ClassName`) tip adları artık tip-açıklaması

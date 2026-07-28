@@ -347,6 +347,92 @@ test "ucdan uca: nitelikli (pkg.module.Sinif) tip adi var_decl/parametre/donus t
     try std.testing.expectEqualStrings("alice\n", run_result.stdout);
 }
 
+// Faz NN.3 (bkz. proje belleği "nyx v2 limitasyon listesi doğrulaması",
+// limitasyon #5): bir paketin KENDİ İÇ import'ları (ör. `pkg/other.nox`nin
+// KENDİ `import realpkg.foo`su) ÖNCEDEN TÜKETİCİNİN seçtiği alias'a karşı
+// çözülüyordu — yani paket YALNIZCA tüketici TESADÜFEN aynı alias'ı seçerse
+// çalışıyordu. Bu test, paketin KENDİ `nox.json`ındaki `name` alanını
+// KULLANARAK (tüketicinin BİLEREK FARKLI bir alias seçtiği bir senaryoda)
+// paketin transitif kendi-içi import'unun DOĞRU çözüldüğünü kanıtlar.
+test "ucdan uca: paketin kendi ic import'u KENDI adiyla cozulur (tuketici FARKLI alias secse bile)" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var pkg = std.testing.tmpDir(.{});
+    defer pkg.cleanup();
+    try pkg.dir.writeFile(io, .{ .sub_path = "nox.json", .data = "{\"name\":\"realpkg\",\"entry\":\"main.nox\"}" });
+    try pkg.dir.writeFile(io, .{
+        .sub_path = "runtime.nox",
+        .data =
+        \\import realpkg.other
+        \\
+        \\def begin() -> str:
+        \\    return realpkg.other.helper()
+        \\
+        ,
+    });
+    try pkg.dir.writeFile(io, .{
+        .sub_path = "other.nox",
+        .data = "def helper() -> str:\n    return \"merhaba realpkg'den\"\n",
+    });
+    try pkg.dir.writeFile(io, .{ .sub_path = "main.nox", .data = "print(\"kullanilmayan giris\")\n" });
+    var pkg_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const pkg_path = try absPath(io, pkg.dir, &pkg_buf);
+    try initFixtureRepo(io, std.testing.allocator, pkg_path);
+
+    var proj = std.testing.tmpDir(.{});
+    defer proj.cleanup();
+    var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const proj_path = try absPath(io, proj.dir, &proj_buf);
+
+    // Tüketici BİLEREK paketin kendi adından ("realpkg") FARKLI bir alias
+    // ("consumeralias") seçiyor — düzeltmeden ÖNCE bu senaryo `error.
+    // ModuleNotFound` ile başarısız OLURDU.
+    const manifest_json = try std.fmt.allocPrint(a,
+        \\{{"name":"proj","entry":"main.nox","requires":[{{"alias":"consumeralias","repo":"{s}","ref":"main"}}]}}
+    , .{pkg_path});
+    try proj.dir.writeFile(io, .{ .sub_path = "nox.json", .data = manifest_json });
+    try proj.dir.writeFile(io, .{
+        .sub_path = "main.nox",
+        .data =
+        \\import consumeralias.runtime
+        \\
+        \\print(consumeralias.runtime.begin())
+        \\
+        ,
+    });
+
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const home_path = try absPath(io, home.dir, &home_buf);
+
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+    try env_map.put("NOX_HOME", home_path);
+
+    const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{proj_path});
+    const bin_path = try std.fmt.allocPrint(a, "{s}/main", .{proj_path});
+
+    const build_result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxcPath(), "build", main_path },
+        .environ_map = &env_map,
+    });
+    defer std.testing.allocator.free(build_result.stdout);
+    defer std.testing.allocator.free(build_result.stderr);
+    if (build_result.term != .exited or build_result.term.exited != 0) {
+        std.debug.print("build basarisiz, stderr: {s}\n", .{build_result.stderr});
+    }
+    try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
+
+    const run_result = try std.process.run(std.testing.allocator, io, .{ .argv = &.{bin_path} });
+    defer std.testing.allocator.free(run_result.stdout);
+    defer std.testing.allocator.free(run_result.stderr);
+    try std.testing.expectEqualStrings("merhaba realpkg'den\n", run_result.stdout);
+}
+
 fn addFixtureCommit(io: std.Io, allocator: std.mem.Allocator, dir_path: []const u8, file_name: []const u8, contents: []const u8) !void {
     // `std.Io.Dir.openAbsolute` bu Zig sürümünde YOK — `project.zig`nin
     // `saveLockfile`i GİBİ, `Dir.cwd()`e MUTLAK bir `sub_path` geçmek
