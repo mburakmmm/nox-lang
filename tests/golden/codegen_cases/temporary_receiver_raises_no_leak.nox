@@ -67,3 +67,34 @@ try:
     bf: BadWithField = BadWithField(make_temp_arg())
 except BoomError:
     print("BoomError yakalandi (__init__ raise, alan atandiktan sonra)")
+
+def make_list3() -> list[int]:
+    return [1, 2, 3]
+
+try:
+    oob1: int = make_list3()[99]
+except IndexError:
+    print("IndexError yakalandi (gecici liste indeksleme sizmadan)")
+
+def make_str3() -> str:
+    return "abc"
+
+try:
+    oob2: str = make_str3()[99]
+except IndexError:
+    print("IndexError yakalandi (gecici str indeksleme sizmadan)")
+
+try:
+    make_list3()[99] = 5
+except IndexError:
+    print("IndexError yakalandi (gecici listeye indeksle atama sizmadan)")
+
+def make_dict3() -> dict[str, int]:
+    d: dict[str, int] = {}
+    d["a"] = 1
+    return d
+
+try:
+    oob3: int = make_dict3()["eksik"]
+except KeyError:
+    print("KeyError yakalandi (gecici sozluk anahtari sizmadan)")

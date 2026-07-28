@@ -24,6 +24,7 @@ const CodegenError = abi.CodegenError;
 const qbeTypeName = abi.qbeTypeName;
 const qbeSizeOf = abi.qbeSizeOf;
 const isHeapManaged = abi.isHeapManaged;
+const isTemporaryExpr = abi.isTemporaryExpr;
 const forListIdxName = abi.forListIdxName;
 const collectReassignedNames = optimizations.collectReassignedNames;
 
@@ -324,14 +325,10 @@ pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
     const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
     try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ie_obj.text });
-    // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı, `genIndex`in
-    // AYNI belge notu): bu dal KOŞULSUZ raise edip ATLADIĞINDAN `obj`
-    // (taban liste) TEMPORARY İSE burada sızar (GERÇEK bir sızıntı) —
-    // BURAYA bir `releaseIfTemporary` EKLEMEK denendi (`genListPop`nin
-    // AYNI deseni) ama bir `while` DÖNGÜSÜ İÇİNDE TEKRARLANDIĞINDA
-    // `incorrect alignment` PANİĞİYLE ÇÖKMEYE yol açtığı bulundu —
-    // sızıntıdan DAHA KÖTÜ olduğundan GERİ ALINDI (bkz. proje belleği
-    // "ARC sızıntı düzeltmeleri", AYRI bir görev olarak kaydedildi).
+    // Bkz. `genIndex`in AYNI belge notu — Faz NN kök-neden düzeltmesinden
+    // (bkz. `ownership.zig`nin `releaseNamedLocalsExcept`i) SONRA GÜVENLE
+    // yeniden eklendi, döngü testiyle DOĞRULANDI.
+    try self.releaseIfTemporary(idx.obj.*, obj);
     try self.emitExceptionCheck();
     try self.out.writer.print("    jmp {s}\n", .{ok_label});
 
@@ -422,7 +419,7 @@ pub fn genDictAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
 /// AYIRT ETMEK GEREKTİĞİNDEN, `nox_dict_get`in KENDİ dönüş değerine
 /// GÜVENMEK ASLA YETERLİ DEĞİLDİ — bu AYRICA bağımsız bir doğruluk
 /// hatasıydı, yalnızca bellek güvenliği DEĞİL).
-pub fn genDictGet(self: *Codegen, obj: Value, key_expr: ast.Expr) CodegenError!Value {
+pub fn genDictGet(self: *Codegen, obj_expr: ast.Expr, obj: Value, key_expr: ast.Expr) CodegenError!Value {
     const dinfo = obj.dict_info.?;
     const key_v0 = try self.genExpr(key_expr);
     try self.checkNoLowlevelEscape(key_v0);
@@ -440,6 +437,16 @@ pub fn genDictGet(self: *Codegen, obj: Value, key_expr: ast.Expr) CodegenError!V
     const ke_cinfo = self.classes.get("KeyError") orelse return error.Unsupported;
     const ke_obj = try self.genConstructFromValues("KeyError", ke_cinfo, &.{msg_value}, null);
     try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ke_obj.text });
+    // Faz NN: `genIndex`/`genListAssign`in AYNI belge notu — kök-neden
+    // düzeltmesinden (bkz. `ownership.zig`) SONRA GÜVENLE eklendi. `obj`
+    // (taban SÖZLÜK) İçin de aynı serbest bırakma GEREKİYORDU — bu dal
+    // `emitExceptionCheck`in ÜRETTİĞİ jnz İLE fonksiyonun temizlik/yayma
+    // yoluna ATLADIĞINDAN, BU noktadan SONRA (ör. `genIndex`nin çağrı
+    // SİTESİNDE, fonksiyon DÖNDÜKTEN sonra) eklenecek herhangi bir serbest
+    // bırakma KOD'u HİÇ ÇALIŞMAZ — bu YÜZDEN `emitExceptionCheck`den ÖNCE,
+    // BURADA olmak ZORUNDA.
+    try self.releaseIfTemporary(key_expr, key_v0);
+    try self.releaseIfTemporary(obj_expr, obj);
     try self.emitExceptionCheck();
     try self.out.writer.print("    jmp {s}\n", .{ok_label});
 
@@ -449,6 +456,17 @@ pub fn genDictGet(self: *Codegen, obj: Value, key_expr: ast.Expr) CodegenError!V
     try self.out.writer.print("    {s} =l call $nox_dict_get(l {s}, l {s}, w {s}, l {s})\n", .{ payload_t, RT_PARAM, obj.text, key_is_str_lit, key_payload.text });
     const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, dinfo.value_qtype);
     try self.releaseIfTemporary(key_expr, key_v0);
+    // `nox_dict_get` ÖDÜNÇ bir referans döner (bkz. `runtime/collections/
+    // dict.zig`, retain YOK) — değer `str` İSE (dict[K,V]'nin TEK olası
+    // heap-yönetimli değer tipi) VE taban TEMPORARY'YSE, tabanı serbest
+    // bırakmadan ÖNCE retain ET (`genIndex`nin list dalıyla AYNI koruma) —
+    // aksi halde taban hemen aşağıda serbest bırakılınca (refcount sıfıra
+    // düşüp dict'in TÜM girdileri özyinelemeli serbest bırakılınca) az
+    // önce okuduğumuz string kullanım-sonrası-serbest-bırakmaya döner.
+    if (isTemporaryExpr(obj_expr) and dinfo.value_is_str) {
+        try self.emitInlineRetain(converted.text);
+    }
+    try self.releaseIfTemporary(obj_expr, obj);
     return .{ .text = converted.text, .qtype = converted.qtype, .heap = if (dinfo.value_is_str) .str else .none };
 }
 

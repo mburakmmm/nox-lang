@@ -829,23 +829,28 @@ test "codegen(çalıştır): nox.process Command.run() — stdout/stderr/cwd/Pro
 }
 
 // `genMethodCall`/`genListPop` (önceki oturum) VE `genIndirectCallThroughClosurePtr`/
-// `genCall`nin serbest-fonksiyon dalı/`genConstruct` (bu oturum — bkz.
-// proje belleği "ARC sızıntı düzeltmeleri") düzeltmelerinin KENDİSİ İçin
-// AYRI bir regresyon testi — `expectGolden`nin BOŞ-stderr kontrolü
-// (DebugAllocator sızıntı uyarılarını YAKALAR) bu YÜZDEN bu test AYNI
-// ZAMANDA bir bellek-sızıntısı regresyon testidir: geçici bir sınıf
-// ÖRNEĞİ/liste/argüman üzerinde ÇAĞRILAN VE istisna FIRLATAN bir metod/
-// serbest fonksiyon/dolaylı-closure-çağrısı/kurucu (__init__ — HEM
-// argümanı HEM alan-atamasından SONRA raise eden `self`in KENDİSİ
-// DAHİL), hiçbir şeyi SIZDIRMAMALIDIR. **Bilinçli eksik**: `genIndex`/
-// `genStrIndex`/`genListAssign`nin AYNI sınır-kontrolü hata dallarındaki
-// (list/str `[i]` sınır dışı erişimi) sızıntı BURAYA KASITLI olarak
-// EKLENMEDİ — bir `releaseIfTemporary` eklemek (`genListPop`nin AYNI
-// deseni) TEK-SEFERLİK çalışırken bir `while` döngüsü İÇİNDE
-// TEKRARLANDIĞINDA `incorrect alignment` PANİĞİYLE ÇÖKMEYE yol açtığı
-// bulundu — sızıntıdan DAHA KÖTÜ bir regresyon olduğundan GERİ ALINDI,
-// KÖK NEDEN henüz bulunamadı (AYRI bir görev, bkz. proje belleği).
-test "codegen(çalıştır): gecici alici uzerinde istisna firlatan metod/pop() sizmaz" {
+// `genCall`nin serbest-fonksiyon dalı/`genConstruct` (bir önceki oturum)
+// VE `genIndex`/`genStrIndex`/`genListAssign`/`genDictGet`nin sınır-kontrolü/
+// eksik-anahtar hata dalları + `genIndex`nin `dict` dispatch'inin KENDİSİ
+// (Faz NN, bu oturum — bkz. proje belleği "ARC sızıntı düzeltmeleri
+// follow-up") düzeltmelerinin KENDİSİ İçin AYRI bir regresyon testi —
+// `expectGolden`nin BOŞ-stderr kontrolü (DebugAllocator sızıntı uyarılarını
+// YAKALAR) bu YÜZDEN bu test AYNI ZAMANDA bir bellek-sızıntısı regresyon
+// testidir: geçici bir sınıf ÖRNEĞİ/liste/str/sözlük/argüman üzerinde
+// ÇAĞRILAN VE istisna FIRLATAN bir metod/serbest fonksiyon/dolaylı-closure-
+// çağrısı/kurucu/indeksleme/sözlük-erişimi (__init__ — HEM argümanı HEM
+// alan-atamasından SONRA raise eden `self`in KENDİSİ DAHİL), hiçbir şeyi
+// SIZDIRMAMALIDIR. `genIndex`/`genStrIndex`/`genListAssign`/`genDictGet`nin
+// hata dallarındaki düzeltmeler ÖNCE (Faz JJ benzeri bir çift-serbest-
+// bırakma çökmesi yüzünden) GERİ ALINMIŞTI — kök neden (`ownership.zig`nin
+// `releaseNamedLocalsExcept`i, bkz. `inline_loop_list_return_identifier`
+// testi) BULUNUP DÜZELTİLDİKTEN SONRA GÜVENLE yeniden eklendi, HER BİRİ
+// 50 iterasyonluk döngü testiyle AYRICA doğrulandı. Ayrıca `genIndex`nin
+// `dict` dispatch'inde (`d[key]`) taban sözlüğün TEMPORARY İSE HİÇ serbest
+// bırakılmadığı — tamamen AYRI ve önceden BİLİNMEYEN bir sızıntı — bu
+// oturumda bulunup düzeltildi (retain-önce-serbest-bırak koruması DAHİL,
+// `str`-değerli sözlükler İçin kullanım-sonrası-serbest-bırakmayı önler).
+test "codegen(çalıştır): gecici alici uzerinde istisna firlatan metod/pop()/indeksleme sizmaz" {
     try expectGolden(
         @embedFile("codegen_cases/temporary_receiver_raises_no_leak.nox"),
         @embedFile("codegen_cases/temporary_receiver_raises_no_leak.expected"),
@@ -2027,6 +2032,23 @@ test "codegen(çalıştır): Faz JJ — list[str] yerelli küçük fonksiyon, 2+
     try expectGolden(
         @embedFile("codegen_cases/inline_loop_list_str_local_double_call.nox"),
         @embedFile("codegen_cases/inline_loop_list_str_local_double_call.expected"),
+    );
+}
+
+// Faz NN — Faz JJ'nin "identifier ile taşınan" varyantı: `return xs` (çıplak
+// identifier) İLE bir `list[str]`i döndüren küçük bir fonksiyon, bir `while`
+// döngüsü İÇİNDE TEKRAR TEKRAR inline çağrılıp SONUCU bir `var_decl`e
+// atandığında ÖNCEDEN "incorrect alignment" paniğiyle ÇÖKÜYORDU — kök neden
+// `ownership.zig`nin `releaseNamedLocalsExcept`inin, değeri arayana "taşıyan"
+// (yani `except_name` eşleşen) yerelin slotunu HİÇ sıfırlamamasıydı (Faz
+// JJ'nin `releaseSlotIfSet`de düzelttiği AYNI kök nedenin bu değişkeni).
+// `.ssa` çıktısı dump edilerek İKİNCİ yinelemede callee'nin KENDİ `xs:
+// list[str] = [...]` var_decl'inin bir sonraki iterasyonda ÖNCEKİ (artık
+// arayana taşınmış) işaretçiyi TEKRAR serbest bıraktığı KANITLANDI.
+test "codegen(çalıştır): Faz NN — list[str] döndüren fonksiyon 'return xs' ile döngüde tekrar tekrar inline çağrılır (ÖNCEDEN SIGSEGV)" {
+    try expectGolden(
+        @embedFile("codegen_cases/inline_loop_list_return_identifier.nox"),
+        @embedFile("codegen_cases/inline_loop_list_return_identifier.expected"),
     );
 }
 

@@ -364,7 +364,14 @@ pub fn boundsElideApplies(self: *Codegen, idx: ast.Index) bool {
 
 pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
     const obj = try self.genExpr(idx.obj.*);
-    if (obj.heap == .dict) return self.genDictGet(obj, idx.index.*);
+    // Faz NN: `d[key]`nin taban SÖZLÜĞÜ (`obj`) TEMPORARY İSE (ör.
+    // `make_dict()[key]`), `genDictGet` ÖNCEDEN yalnızca ANAHTARI serbest
+    // bırakıyordu — sözlüğün KENDİSİ HİÇ serbest bırakılmıyordu (ne başarı
+    // ne hata dalında, GERÇEK bir sızıntıyla DOĞRULANDI). Bu ARTIK
+    // `genDictGet`nin KENDİSİ (hem hata DALINDA `emitExceptionCheck`den
+    // ÖNCE, hem başarı dalında retain-önce-serbest-bırak korumasıyla)
+    // ele alınır — `obj_expr` (taban ifadenin AST'ı) bu YÜZDEN de geçirilir.
+    if (obj.heap == .dict) return self.genDictGet(idx.obj.*, obj, idx.index.*);
     if (obj.heap == .str) return self.genStrIndex(obj, idx);
     if (obj.heap != .list) return error.Unsupported;
     const index_v = try self.genExpr(idx.index.*);
@@ -398,15 +405,12 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
         // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı): bu dal
         // KOŞULSUZ raise edip ATLADIĞINDAN, `obj` (taban liste) TEMPORARY
         // İSE normal yoldaki serbest bırakma BURAYA HİÇ ULAŞMAZ (GERÇEK
-        // bir sızıntı — GERÇEK bir tekrar-üretimle DOĞRULANDI). BURAYA
-        // AYNI `releaseIfTemporary` çağrısını EKLEMEK denendi (`genListPop`nin
-        // AYNI deseni) ama bu, TEK-SEFERLİK bir çağrıda TEMİZ çalışırken
-        // bir `while` DÖNGÜSÜ İÇİNDE TEKRARLANDIĞINDA (ör. 3+ yineleme)
-        // `incorrect alignment` PANİĞİYLE ÇÖKMEYE yol açtı — sızıntıdan
-        // DAHA KÖTÜ bir regresyon olduğundan GERİ ALINDI (bkz. proje
-        // belleği "ARC sızıntı düzeltmeleri", KÖK NEDEN henüz BULUNAMADI —
-        // AYRI bir görev olarak kaydedildi, BURAYA basitçe bir `releaseIfTemporary`
-        // EKLEMEK YETERLİ DEĞİL).
+        // bir sızıntı). Faz NN: kök neden (`releaseNamedLocalsExcept`nin
+        // "identifier ile taşınan" değerin slotunu sıfırlamaması, bkz.
+        // `ownership.zig`) DÜZELTİLDİKTEN SONRA bu çağrı GÜVENLE yeniden
+        // eklendi — 50 iterasyonluk döngü testiyle DOĞRULANDI (bkz. proje
+        // belleği "ARC sızıntı düzeltmeleri").
+        try self.releaseIfTemporary(idx.obj.*, obj);
         try self.emitExceptionCheck();
         try self.out.writer.print("    jmp {s}\n", .{ok_label});
 
@@ -490,8 +494,10 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
         const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
         const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
         try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ie_obj.text });
-        // Bkz. `genIndex`in AYNI belge notu (GERİ ALINDI — döngü içinde
-        // çökmeye yol açtığı bulundu, AYRI bir görev olarak kaydedildi).
+        // Bkz. `genIndex`in AYNI belge notu — Faz NN kök-neden düzeltmesinden
+        // (bkz. `ownership.zig`nin `releaseNamedLocalsExcept`i) SONRA GÜVENLE
+        // yeniden eklendi, döngü testiyle DOĞRULANDI.
+        try self.releaseIfTemporary(idx.obj.*, obj);
         try self.emitExceptionCheck();
         try self.out.writer.print("    jmp {s}\n", .{ok_label});
 

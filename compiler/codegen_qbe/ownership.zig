@@ -81,12 +81,38 @@ pub fn releaseOneLocalIfManaged(self: *Codegen, entry: VarInfo) CodegenError!voi
 /// parametre+yerelleri) isimler İçin — inline edilen bir `return_stmt`
 /// (bkz. `genStmts`in `.return_stmt` dalı) caller'ın DİĞER yerellerine
 /// ASLA dokunmamalıdır, yalnızca callee'nin KENDİ kapsamını KAPATIR.
+///
+/// **Faz NN (Faz JJ'nin "identifier ile taşınan" varyantı — GERÇEK bir
+/// çift-serbest-bırakma, `make_list() -> list[T]` gibi bir fonksiyonun
+/// `return xs` İLE (çıplak identifier) bir `while` döngüsü İçİNDE inline
+/// edilip TEKRAR TEKRAR çağrıldığı senaryoda bir .ssa dökümüyle KANITLANDI):**
+/// `except_name` eşleşen dalda (değer sahipliği ARAYANA TAŞINDIĞI İçin
+/// serbest bırakma ÇAĞRILMAZ) ÖNCEDEN slot HİÇ sıfırlanmıyordu. Bu, Faz
+/// JJ'nin `releaseSlotIfSet`de düzelttiği AYNI kök nedenin (inline edilmiş
+/// bir çağrı sitesinin kalıcı slotu döngü yinelemeleri ARASI YENİDEN
+/// KULLANILIR) "gerçekten serbest bırakılan" DEĞİL "arayana taşınan" varyantı
+/// içindi: bir SONRAKİ yinelemede callee'nin KENDİ `var_decl`i (ör. `xs:
+/// list[int] = [...]`), "üzerine yazmadan ÖNCE eskiyi serbest bırak"
+/// mantığında (bkz. `stmt.zig`'in `.var_decl` dalı) BU AYNI (artık ARAYANA
+/// ait, muhtemelen ZATEN serbest bırakılmış) işaretçiyi HÂLÂ "canlı" SANIP
+/// TEKRAR serbest bırakıyordu — GERÇEK çift serbest bırakma. Düzeltme:
+/// `releaseSlotIfSet`nin YAPTIĞI AYNI sıfırlamayı (serbest bırakma ÇAĞRISI
+/// OLMADAN) burada da uygula. Parametreler (`is_param`) İçin GEREK YOK —
+/// `genInlinedCall`in argüman-geçirme adımı (bkz. `inlining.zig`) parametre
+/// slotlarını HER yinelemede KOŞULSUZ (release-before-overwrite OLMADAN)
+/// ÜZERİNE YAZAR, bu YÜZDEN param slotlarında STALE bir "taşınmış" işaretçi
+/// ZARARSIZDIR (hiçbir kod ONU okuyup serbest bırakmaya ÇALIŞMAZ).
 pub fn releaseNamedLocalsExcept(self: *Codegen, names: []const []const u8, except_name: ?[]const u8) CodegenError!void {
     for (names) |name| {
-        if (except_name) |en| {
-            if (std.mem.eql(u8, name, en)) continue;
-        }
         const entry = self.vars.get(name) orelse continue;
+        if (except_name) |en| {
+            if (std.mem.eql(u8, name, en)) {
+                if (!entry.is_param and !entry.arena and isHeapManaged(entry.heap)) {
+                    try self.out.writer.print("    storel 0, {s}\n", .{entry.slot});
+                }
+                continue;
+            }
+        }
         try self.releaseOneLocalIfManaged(entry);
     }
 }

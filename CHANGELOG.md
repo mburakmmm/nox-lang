@@ -14,6 +14,32 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.11.2]
+
+### Düzeltildi
+- **GERÇEK, doğrulanmış ARC çift-serbest-bırakma kök nedeni bulunup
+  düzeltildi** (v1.11.1'de bulunan "list[T] döndüren fonksiyon + `while`
+  döngüsü" çökmesinin kök nedeni): `ownership.zig`nin
+  `releaseNamedLocalsExcept`i, bir callee `return <isim>` (çıplak
+  identifier) İLE bir değeri ARAYANA "taşıdığında", o yerelin SLOT'unu
+  SIFIRLAMIYORDU — inline edilmiş bir çağrı sitesinin slotu bir `while`
+  döngüsü İÇİNDE YENİDEN KULLANILDIĞINDA, bir SONRAKİ yinelemenin KENDİ
+  `var_decl`i BU STALE (artık arayana ait) işaretçiyi HÂLÂ "canlı" SANIP
+  TEKRAR serbest bırakıyordu (çift serbest bırakma). `.ssa` çıktısı
+  dump edilerek KANITLANDI (Faz JJ'nin `releaseSlotIfSet`de düzelttiği
+  AYNI kök nedenin "identifier ile taşınan" varyantı).
+- Bu kök-neden düzeltmesinden SONRA, v1.11.1'de GÜVENSİZ bulunup GERİ
+  ALINAN 4 sızıntı düzeltmesi (`genIndex`/`genStrIndex`/`genListAssign`/
+  `genDictGet`nin sınır-kontrolü/eksik-anahtar hata dalları) GÜVENLE
+  yeniden eklendi — HER BİRİ 50 iterasyonluk gerçek döngü testiyle
+  doğrulandı.
+- **YENİ, önceden bilinmeyen bir sızıntı bulunup düzeltildi**: `d[key]`
+  (`genIndex`nin `dict` dispatch dalı) taban sözlük TEMPORARY İSE (ör.
+  `make_dict()[key]`) hiçbir zaman serbest bırakılmıyordu (ne başarı ne
+  hata dalında) — `str`-değerli sözlükler İçin retain-önce-serbest-bırak
+  korumasıyla birlikte düzeltildi (aksi halde kullanım-sonrası-serbest-
+  bırakma riski vardı).
+
 ## [1.11.1]
 
 ### Düzeltildi
