@@ -14,6 +14,48 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.15.0]
+
+### Eklendi
+- **`nox.sharedmem`**: GERÇEK, isimli bir paylaşımlı bellek (shared-memory)
+  IPC ilkeli — `shm_open`+`mmap(MAP_SHARED)` (macOS/Linux) ile BAĞIMSIZ
+  (fork EDİLMEMİŞ) `noxc run` çalıştırmalarının AYNI bellek bölgesini
+  GÖRMESİNİ sağlar (limitasyon #6: "process'ler arası paylaşılan state
+  yok, sadece per-process modül globals" — bkz. proje belleği "nyx v2
+  limitasyon listesi doğrulaması"). `SharedBuffer` sınıfı: `lock()`/
+  `unlock()` (basit bir spinlock, Go-tarzı `defer` ile eşleştirilmesi
+  ÖNERİLİR), `read_int`/`write_int` (ham 8 bayt, `str` ARA KATMANI
+  ATLANARAK — bkz. aşağıdaki düzeltme notu), `read_str`/`write_str`.
+  `close()` sadece bu process'in eşlemesini kapatır (segment DİĞER
+  process'ler için YAŞAMAYA devam eder), `unlink(name)` segmenti KALICI
+  olarak SİLER (`nox.sqlite`nin dosya-silme deseniyle TUTARLI). Windows
+  için `CreateFileMappingA`/`MapViewOfFile` ile GERÇEK bir implementasyon
+  hedeflendi (derleme zamanında doğrulandı, çalışma zamanı Windows testi
+  bu ortamda YAPILAMADI). GERÇEK iki AYRI `noxc run` process'iyle
+  (`tests/cli/shared_mem_test.zig`) uçtan uca doğrulandı.
+
+### Düzeltildi
+- **`nox.sharedmem`: macOS'ta ikinci process'in `shm_open`ı HER ZAMAN
+  başarısız oluyordu** — `openPosix` KOŞULSUZ olarak `ftruncate`
+  çağırıyordu, ama macOS ZATEN boyutlandırılmış bir POSIX shm nesnesine
+  TEKRAR `ftruncate` çağrılmasını `EINVAL` ile REDDEDİYOR (Linux'un
+  AKSİNE) — bu YÜZDEN paylaşımlı belleği İLK AÇAN process ÇALIŞIYORDU
+  ama İKİNCİ/SONRAKİ HER process (yani ÇAPRAZ-PROCESS paylaşımın TAMAMI)
+  BOZUKTU. GERÇEK iki-process testiyle YAKALANDI. Düzeltme: `ftruncate`
+  ÖNCESİ `fstat` ile MEVCUT boyut kontrol edilir, ZATEN yeterince
+  büyükse `ftruncate` hiç ÇAĞRILMAZ.
+- **`nox.sharedmem`: int'lerin `str` üzerinden ham bayt olarak
+  kodlanması ARC çift-serbest-bırakmaya yol açıyordu** — ilk tasarım
+  `read_int`/`write_int`i `char_from_byte`/`byte_at` ile 8 baytlık bir
+  `str`e kodluyordu, ama Nox'un TÜM `str` temsili sıfırla-sonlanan
+  (`strlen`-tabanlı) OLDUĞUNDAN (bkz. `runtime/str.zig`) GÖMÜLÜ bir NUL
+  bayt (küçük int'lerin YÜKSEK baytları İçin YAYGIN) ARC boyut hesabını
+  BOZUYORDU (GERÇEK bir "Allocation size N does not match free size N-1"
+  çökmesiyle KANITLANDI). Düzeltme: int'ler İçin `nox_shm_read_i64_raw`/
+  `nox_shm_write_i64_raw` (Zig şiminde YENİ) ile `str` ARA KATMANI
+  TAMAMEN ATLANDI — bu, Nox'un DAHA GENİŞ "string'ler gömülü NUL
+  taşıyamaz" kısıtının bilinen bir sonucu, YENİ bir dil hatası DEĞİL.
+
 ## [1.14.0]
 
 ### Eklendi

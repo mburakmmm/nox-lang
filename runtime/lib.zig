@@ -33,6 +33,7 @@ pub const postgres_shim = @import("stdlib_shims/postgres.zig");
 pub const mysql_shim = @import("stdlib_shims/mysql.zig");
 pub const tls_shim = @import("stdlib_shims/tls.zig");
 pub const websocket_shim = @import("stdlib_shims/websocket.zig");
+pub const shared_mem_shim = @import("stdlib_shims/shared_mem.zig");
 
 // Bu modüllerin yalnızca isim üzerinden yeniden dışa aktarılması, Zig'in
 // tembel (lazy) analiz modelinde `export fn` bildirimlerinin nesne çıktısına
@@ -71,4 +72,5 @@ comptime {
     _ = mysql_shim;
     _ = tls_shim;
     _ = websocket_shim;
+    _ = shared_mem_shim;
 }

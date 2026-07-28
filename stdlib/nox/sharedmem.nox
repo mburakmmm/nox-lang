@@ -1,0 +1,77 @@
+# nox.sharedmem — Faz NN.6 (bkz. proje belleği "nyx v2 limitasyon listesi
+# doğrulaması"): GERÇEK, isimli bir paylaşımlı bellek ilkeli —
+# `shm_open`+`mmap(MAP_SHARED)` (macOS/Linux) İLE BAĞIMSIZ (fork
+# EDİLMEMİŞ) `noxc run` çalıştırmalarının AYNI bellek bölgesini GÖRMESİNİ
+# sağlar. Nox'un KENDİ eşzamanlılık modeli (fiber'lar) TEK bir OS
+# sürecinde çalıştığından, BU MODÜL SADECE gerçekten AYRI süreçler
+# arasındaki paylaşım İçindir.
+#
+# Senkronizasyon İçin `lock()`/`unlock()` (basit bir spinlock) — Go-tarzı
+# `defer` İLE eşleştirilmesi ÖNERİLİR: `buf.lock(); defer buf.unlock()`.
+#
+# Kaynak yönetimi: `close()` SADECE bu process'in eşlemesini kapatır
+# (segment DİĞER process'ler İçin YAŞAMAYA devam eder) — `unlink(name)`
+# segmenti KALICI olarak SİLER (kullanıcı KENDİSİ ne zaman sileceğine
+# karar verir, `nox.sqlite`nin dosya-silme deseniyle TUTARLI).
+
+extern def nox_shm_open_raw(name: str, size: int) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_shm_is_null_ptr(p: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_shm_lock_raw(handle: ptr) -> None from "zig-out/lib/noxrt.o"
+extern def nox_shm_unlock_raw(handle: ptr) -> None from "zig-out/lib/noxrt.o"
+extern def nox_shm_read_bytes_raw(handle: ptr, offset: int, len: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_shm_write_bytes_raw(handle: ptr, offset: int, data: str, data_len: int) -> None from "zig-out/lib/noxrt.o"
+extern def nox_shm_read_i64_raw(handle: ptr, offset: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_shm_write_i64_raw(handle: ptr, offset: int, value: int) -> None from "zig-out/lib/noxrt.o"
+extern def nox_shm_close_raw(handle: ptr) -> None from "zig-out/lib/noxrt.o"
+extern def nox_shm_unlink_raw(name: str) -> None from "zig-out/lib/noxrt.o"
+
+class SharedMemError:
+    def __init__(self: SharedMemError, message: str) -> None:
+        self.message = message
+
+class SharedBuffer:
+    def __init__(self: SharedBuffer, handle: ptr, name: str, size: int) -> None:
+        self.handle = handle
+        self.name = name
+        self.size = size
+
+    def lock(self: SharedBuffer) -> None:
+        nox_shm_lock_raw(self.handle)
+
+    def unlock(self: SharedBuffer) -> None:
+        nox_shm_unlock_raw(self.handle)
+
+    # `value`/okunan veri GÖMÜLÜ bir NUL (`\0`) bayt İÇEREMEZ — Nox'un TÜM
+    # `str` temsili sıfırla-sonlanan (C-tarzı, `strlen`-tabanlı) OLDUĞUNDAN
+    # (bkz. `runtime/str.zig` modül-üstü not) gömülü bir NUL, ARC boyut
+    # hesabını BOZAR. Ham ikili veri (ör. int'ler) İçin `read_int`/
+    # `write_int` KULLANIN — onlar `str` ARA KATMANINI TAMAMEN ATLAR.
+    def read_str(self: SharedBuffer, offset: int, length: int) -> str:
+        return nox_shm_read_bytes_raw(self.handle, offset, length)
+
+    def write_str(self: SharedBuffer, offset: int, value: str) -> None:
+        nox_shm_write_bytes_raw(self.handle, offset, value, len(value))
+
+    def read_int(self: SharedBuffer, offset: int) -> int:
+        return nox_shm_read_i64_raw(self.handle, offset)
+
+    def write_int(self: SharedBuffer, offset: int, value: int) -> None:
+        nox_shm_write_i64_raw(self.handle, offset, value)
+
+    def close(self: SharedBuffer) -> None:
+        nox_shm_close_raw(self.handle)
+
+# `name`e (dosya sistemi/`/dev/shm` benzeri bir isim alanına AİT — `noxc
+# run`ın AYRI çalıştırmaları AYNI ismi kullanarak AYNI bölgeyi PAYLAŞIR)
+# `size` baytlık bir paylaşımlı bellek bölgesi AÇAR (yoksa OLUŞTURUR).
+def open(name: str, size: int) -> SharedBuffer:
+    handle: ptr = nox_shm_open_raw(name, size)
+    if nox_shm_is_null_ptr(handle) != 0:
+        raise SharedMemError("paylasimli bellek acilamadi: " + name)
+    return SharedBuffer(handle, name, size)
+
+# `name`li bölgeyi KALICI olarak SİLER — HİÇBİR process ONU (mmap İLE)
+# AÇIK TUTMUYORSA hemen, TUTUYORSA son `close()` çağrıldığında (POSIX'in
+# KENDİ `shm_unlink` sözleşmesi).
+def unlink(name: str) -> None:
+    nox_shm_unlink_raw(name)
