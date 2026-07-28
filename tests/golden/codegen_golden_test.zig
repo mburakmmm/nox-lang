@@ -695,6 +695,23 @@ test "codegen(çalıştır): list[dict[K,V]] — insa, cift-indeksleme, indeksle
     );
 }
 
+// Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
+// incelemesi", P5): ÇIPLAK `except:` (tipsiz, HERHANGİ bir istisnayla
+// eşleşen bir yakalama) ARTIK destekleniyor — `finally` ZATEN
+// çalışıyordu (bu test AYRICA `finally`nin yakalanmamış BİR istisnadan
+// SONRA da çalıştığını yeniden doğrular). Bu test AYRICA `as e:`
+// bağlaması OLMAYAN (tipli VEYA ÇIPLAK) bir `except`in yakaladığı
+// istisna nesnesini GERÇEKTEN serbest bıraktığını (`nox_class_release_
+// dispatch` — bkz. `layout.zig`nin belge notu) kanıtlar: `expectGolden`
+// stderr'in BOŞ olmasını zorunlu kıldığından (bkz. onun belge notu),
+// bu test aynı zamanda GERÇEK bir bellek-sızıntısı regresyon testidir.
+test "codegen(çalıştır): ciplak except: + as-baglamasiz except (sizinti yok)" {
+    try expectGolden(
+        @embedFile("codegen_cases/bare_except.nox"),
+        @embedFile("codegen_cases/bare_except.expected"),
+    );
+}
+
 // Bulundu (bkz. proje belleği "UTF-8 farkındalığı" görevi): `len(s)`/`s[i]`
 // ÖNCEDEN bayt-tabanlıydı (çok baytlı UTF-8 karakterleri — "café"nin
 // "é"si, "日本語"nin her karakteri — ORTADAN kesiyordu). ARTIK codepoint-

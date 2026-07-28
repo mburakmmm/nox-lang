@@ -248,6 +248,41 @@ pub fn genTraceDispatch(self: *Codegen, classes: []const ClassIdEntry) CodegenEr
     try self.out.writer.print("    ret {s}\n}}\n", .{empty});
 }
 
+/// Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
+/// incelemesi", P5): `genGcFreeDispatch`/`genTraceDispatch` İLE AYNI
+/// desen, ama `$ClassName_gc_free` (koşulsuz, cycle-detector'ın KENDİ
+/// yolu) YERİNE NORMAL ARC `$ClassName_release`e (predecrement'e göre
+/// KOŞULLU serbest bırakma) dağıtan `$nox_class_release_dispatch(rt,
+/// tag, p)`. **Tek gerçek kullanım yeri:** `exceptions.zig`nin `genTry`ı
+/// — ÇIPLAK `except:` (VEYA `as e:` bağlaması OLMAYAN TİPLİ bir `except
+/// X:`) bir istisnayı yakaladığında, `nox_exception_take`in döndürdüğü
+/// nesnenin ÇALIŞMA-ZAMANI sınıfı DERLEME ZAMANINDA BİLİNMEZ (Nox'ta
+/// kalıtım/RTTI OLMADIĞINDAN, HERHANGİ bir sınıf `raise` EDİLEBİLİR) —
+/// bu YÜZDEN sabit bir `$<isim>_release` çağrısı YAPILAMAZ, ÇALIŞMA
+/// ZAMANINDA tag'e göre DOĞRU release fonksiyonuna dal açılması GEREKİR
+/// (aksi halde yakalanan istisna nesnesi HER ZAMAN sızar — GERÇEK bir
+/// tekrar-üretimle DOĞRULANDI).
+pub fn genClassReleaseDispatch(self: *Codegen, classes: []const ClassIdEntry) CodegenError!void {
+    self.temp_counter = 0;
+    self.label_counter = 0;
+    self.mod_cache.deinit(self.allocator);
+    self.mod_cache = .empty;
+
+    try self.out.writer.print("export function $nox_class_release_dispatch(l {s}, l %tag, l %p) {{\n@start\n", .{RT_PARAM});
+    for (classes) |c| {
+        const eq = try self.newTemp();
+        try self.out.writer.print("    {s} =w ceql %tag, {d}\n", .{ eq, c.id });
+        const case_label = try self.newLabel("class_release_case");
+        const next_label = try self.newLabel("class_release_next");
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ eq, case_label, next_label });
+        try self.out.writer.print("{s}\n", .{case_label});
+        try self.out.writer.print("    call ${s}_release(l {s}, l %p)\n", .{ c.name, RT_PARAM });
+        try self.out.writer.writeAll("    ret\n");
+        try self.out.writer.print("{s}\n", .{next_label});
+    }
+    try self.out.writer.writeAll("    ret\n}\n");
+}
+
 /// `genTraceDispatch` İLE AYNI desen, `$ClassName_gc_free`ye dağıtan
 /// `$nox_gc_free_dispatch(rt, tag, p)` (dönüş değeri YOK).
 pub fn genGcFreeDispatch(self: *Codegen, classes: []const ClassIdEntry) CodegenError!void {

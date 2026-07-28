@@ -137,10 +137,14 @@ fn dumpStmt(writer: *std.Io.Writer, stmt: ast.Stmt, depth: usize) std.Io.Writer.
             for (t.try_body) |s| try dumpStmt(writer, s, depth + 1);
             for (t.except_clauses) |ec| {
                 try indent(writer, depth);
-                if (ec.bind_name) |bn| {
-                    try writer.print("(except {s} as {s}\n", .{ ec.class_name, bn });
+                if (ec.class_name) |cn| {
+                    if (ec.bind_name) |bn| {
+                        try writer.print("(except {s} as {s}\n", .{ cn, bn });
+                    } else {
+                        try writer.print("(except {s}\n", .{cn});
+                    }
                 } else {
-                    try writer.print("(except {s}\n", .{ec.class_name});
+                    try writer.writeAll("(except\n");
                 }
                 for (ec.body) |s| try dumpStmt(writer, s, depth + 1);
                 try indent(writer, depth);

@@ -1565,6 +1565,15 @@ pub const Checker = struct {
     fn checkTry(self: *Checker, ctx: *FnCtx, t: ast.TryStmt) TypeError!void {
         for (t.try_body) |s| try self.checkStmt(ctx, s);
         for (t.except_clauses) |ec| {
+            // Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
+            // incelemesi", P5): ÇIPLAK `except:` (`ec.class_name == null`,
+            // parser'ın `bind_name`i de HER ZAMAN `null` bıraktığını
+            // GARANTİ ettiği) — sınıf çözümlemesi TAMAMEN ATLANIR, HİÇBİR
+            // isim BAĞLANMAZ, gövde doğrudan denetlenir.
+            const ec_class_name = ec.class_name orelse {
+                for (ec.body) |s| try self.checkStmt(ctx, s);
+                continue;
+            };
             // Bulundu (bkz. proje belleği "from-import class type
             // annotations" görevi, `typeExprToType`in AYNI `from_imports`
             // geri düşüşüyle AYNI KÖK neden): `except X as e:` ÖNCEDEN
@@ -1577,14 +1586,14 @@ pub const Checker = struct {
             // BAŞVURMADAN) HER ZAMAN `bilinmeyen sınıf` hatasıyla
             // BAŞARISIZ oluyordu (GERÇEKTEN gözlemlendi, bkz. `nox.sqlite`
             // hata-yolu testi).
-            const resolved_class_name = if (self.classes.contains(ec.class_name))
-                ec.class_name
-            else if (self.from_imports.get(ec.class_name)) |mangled|
+            const resolved_class_name = if (self.classes.contains(ec_class_name))
+                ec_class_name
+            else if (self.from_imports.get(ec_class_name)) |mangled|
                 (if (self.classes.contains(mangled)) mangled else null)
             else
                 null;
             const class_name = resolved_class_name orelse
-                return self.fail(error.UndefinedClass, "bilinmeyen sınıf: {s}", .{ec.class_name});
+                return self.fail(error.UndefinedClass, "bilinmeyen sınıf: {s}", .{ec_class_name});
             if (ec.bind_name) |bn| {
                 try ctx.scope.declare(self.allocator, bn, .{ .class = class_name });
             }

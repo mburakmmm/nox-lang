@@ -251,7 +251,12 @@ pub const Assign = struct {
 };
 
 pub const ExceptClause = struct {
-    class_name: []const u8,
+    /// `null`: ÇIPLAK `except:` (bkz. nyx framework — proje belleği
+    /// "NOX_LIMITATIONS.md incelemesi", P5) — HERHANGİ bir bekleyen
+    /// istisnayla EŞLEŞİR, `bind_name` BU durumda HER ZAMAN `null`
+    /// OLMALIDIR (parser BUNU zorunlu kılar) — Python'un KENDİ `except:`
+    /// İLE AYNI kısıt (tip YOKSA bağlanacak bir DEĞER de yoktur).
+    class_name: ?[]const u8,
     bind_name: ?[]const u8,
     body: []Stmt,
 };

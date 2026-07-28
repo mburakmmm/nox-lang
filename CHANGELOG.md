@@ -14,6 +14,30 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.9.0]
+
+### Eklendi
+- **Çıplak `except:`** (tipsiz, HERHANGİ bir bekleyen istisnayla eşleşen
+  bir yakalama yan tümcesi) — Python'un kendi kısıtıyla tutarlı, yalnızca
+  SON `except` yan tümcesi olabilir (aksi halde net bir ayrıştırma
+  hatası). `finally` zaten çalışıyordu (`nyx` framework'ün gözlemlediği
+  ~1.6.x'ten beri) — `docs/NOX_LIMITATIONS.md` (P5) İLE raporlanan eksik
+  yalnızca ÇIPLAK `except:`ydi.
+
+### Düzeltildi
+- **GERÇEK bir bellek sızıntısı**: `as e:` bağlaması OLMAYAN bir `except`
+  (hem tipli hem YENİ çıplak biçim) yakaladığı istisna nesnesini HİÇBİR
+  ZAMAN serbest bırakmıyordu (`nox_exception_take`in döndürdüğü nesne
+  hiçbir yerelde saklanmadığından normal kapsam-sonu temizliği devreye
+  girmiyordu) — bu, ÇIPLAK `except:` eklenmeden ÖNCE de var olan bir
+  hataydı (`except SomeType:` — bağlamasız — İLE de tetiklenebilirdi).
+  Çözüm: yeni bir çalışma-zamanı dağıtım fonksiyonu (`nox_class_release_
+  dispatch`, `nox_trace_dispatch`/`nox_gc_free_dispatch` İLE AYNI
+  "sınıf-id'ye göre doğru fonksiyona dal aç" deseninde) — istisnanın
+  ÇALIŞMA-ZAMANI sınıfı derleme zamanında bilinmese bile (Nox'ta kalıtım/
+  RTTI olmadığından HERHANGİ bir sınıf raise edilebilir) doğru `_release`
+  fonksiyonuna dal açar.
+
 ## [1.8.2]
 
 ### Düzeltildi

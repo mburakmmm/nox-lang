@@ -1,0 +1,28 @@
+def f() -> None:
+    try:
+        raise ValueError("boom")
+    except:
+        print("caught")
+    finally:
+        print("cleanup")
+
+f()
+print("after")
+
+def g() -> None:
+    try:
+        raise KeyError("nope")
+    except ValueError as e:
+        print("wrong: " + e.message)
+    except:
+        print("caught generic")
+
+g()
+
+def h() -> None:
+    try:
+        raise ValueError("no binding")
+    except ValueError:
+        print("caught, no binding")
+
+h()

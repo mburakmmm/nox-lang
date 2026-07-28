@@ -473,7 +473,7 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
         .try_stmt => |t| blk: {
             const ecs = try a.alloc(ast.ExceptClause, t.except_clauses.len);
             for (t.except_clauses, 0..) |ec, i| ecs[i] = .{
-                .class_name = map.get(ec.class_name) orelse ec.class_name,
+                .class_name = if (ec.class_name) |cn| (map.get(cn) orelse cn) else null,
                 .bind_name = ec.bind_name,
                 .body = try renameStmts(a, ec.body, map),
             };

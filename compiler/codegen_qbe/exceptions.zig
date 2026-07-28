@@ -118,26 +118,37 @@ pub fn genTry(self: *Codegen, t: ast.TryStmt, ret_qtype: QbeType) CodegenError!v
     try self.out.writer.print("    jmp {s}\n", .{next_check});
 
     for (t.except_clauses, 0..) |ec, i| {
-        // Bulundu (bkz. proje belleği "from-import class type
-        // annotations" görevi, `registration.zig`nin `resolveType`
-        // `.simple` dalıyla AYNI KÖK neden): checker `ec.class_name`i
-        // KENDİ amaçları İçin çözse BİLE, AST düğümünün KENDİSİ
-        // (`ast.ExceptClause.class_name`, düz bir DEĞER alanı) YENİDEN
-        // YAZILMAZ — codegen'in KENDİ (BAĞIMSIZ) `self.classes` araması
-        // bu YÜZDEN AYNI `from_imports` geri düşüşüne İHTİYAÇ duyar.
-        const cinfo = self.classes.get(ec.class_name) orelse blk: {
-            if (self.from_imports.get(ec.class_name)) |mangled| {
-                if (self.classes.get(mangled)) |info| break :blk info;
-            }
-            return error.Unsupported;
-        };
         try self.out.writer.print("{s}\n", .{next_check});
-        const matches = try self.newTemp();
-        try self.out.writer.print("    {s} =w ceql {s}, {d}\n", .{ matches, tag, cinfo.class_id });
         const handler_label = try self.newLabel("except_body");
         const is_last = i == t.except_clauses.len - 1;
         const following = if (!is_last) try self.newLabel("except_check") else try self.newLabel("except_reraise");
-        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ matches, handler_label, following });
+        // Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
+        // incelemesi", P5): ÇIPLAK `except:` (`ec.class_name == null`) —
+        // HERHANGİ bir bekleyen istisnayla EŞLEŞİR, bu YÜZDEN `tag`
+        // KARŞILAŞTIRMASI (`ceql`) TAMAMEN ATLANIR — DOĞRUDAN `handler_
+        // label`e atlanır (parser bunun HER ZAMAN SON yan tümce olduğunu
+        // GARANTİ eder, `following`/`except_reraise` dalı bu YÜZDEN ÖLÜ
+        // koddur ama ZARARSIZDIR).
+        if (ec.class_name) |cn| {
+            // Bulundu (bkz. proje belleği "from-import class type
+            // annotations" görevi, `registration.zig`nin `resolveType`
+            // `.simple` dalıyla AYNI KÖK neden): checker `ec.class_name`i
+            // KENDİ amaçları İçin çözse BİLE, AST düğümünün KENDİSİ
+            // (`ast.ExceptClause.class_name`, düz bir DEĞER alanı) YENİDEN
+            // YAZILMAZ — codegen'in KENDİ (BAĞIMSIZ) `self.classes` araması
+            // bu YÜZDEN AYNI `from_imports` geri düşüşüne İHTİYAÇ duyar.
+            const cinfo = self.classes.get(cn) orelse blk: {
+                if (self.from_imports.get(cn)) |mangled| {
+                    if (self.classes.get(mangled)) |info| break :blk info;
+                }
+                return error.Unsupported;
+            };
+            const matches = try self.newTemp();
+            try self.out.writer.print("    {s} =w ceql {s}, {d}\n", .{ matches, tag, cinfo.class_id });
+            try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ matches, handler_label, following });
+        } else {
+            try self.out.writer.print("    jmp {s}\n", .{handler_label});
+        }
         try self.out.writer.print("{s}\n", .{handler_label});
         if (ec.bind_name) |bn| {
             const info = self.vars.get(bn).?;
@@ -148,6 +159,19 @@ pub fn genTry(self: *Codegen, t: ast.TryStmt, ret_qtype: QbeType) CodegenError!v
             // önceki istisna nesnesi sonsuza dek sızar.
             try self.releaseSlotIfSet(info);
             try self.out.writer.print("    storel {s}, {s}\n", .{ exc_ptr, info.slot });
+        } else {
+            // Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
+            // incelemesi", P5), GERÇEK bir sızıntı — `as e:` bağlaması
+            // OLMAYAN bir `except` (tipli VEYA ÇIPLAK) `exc_ptr`yi HİÇBİR
+            // yerelde SAKLAMAZ, bu YÜZDEN normal kapsam-sonu temizliği
+            // onu ASLA serbest BIRAKMAZ. `exc_ptr`nin ÇALIŞMA-ZAMANI sınıfı
+            // (ÇIPLAK `except:` İçin HERHANGİ bir sınıf OLABİLİR, Nox'ta
+            // kalıtım/RTTI OLMADIĞINDAN) DERLEME ZAMANINDA BİLİNMEYEBİLİR
+            // — bu YÜZDEN sabit bir `$<isim>_release` YERİNE `tag`e göre
+            // ÇALIŞMA ZAMANINDA doğru release'e dal açan `nox_class_
+            // release_dispatch`e (bkz. `layout.zig`nin `genClassReleaseDispatch`ı)
+            // BAŞVURULUR.
+            try self.out.writer.print("    call $nox_class_release_dispatch(l {s}, l {s}, l {s})\n", .{ RT_PARAM, tag, exc_ptr });
         }
         try self.genStmts(ec.body, ret_qtype);
         if (t.finally_body) |fb| try self.runDetachedFinally(fb, ret_qtype);

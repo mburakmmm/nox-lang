@@ -543,12 +543,28 @@ pub const Parser = struct {
         const try_body = try self.parseBlock();
 
         var except_clauses = std.ArrayList(ast.ExceptClause).empty;
+        // Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
+        // incelemesi", P5): ÇIPLAK `except:` (tip YOK) ARTIK destekleniyor
+        // — HERHANGİ bir bekleyen istisnayla EŞLEŞİR (bkz. `checker.zig`nin
+        // `checkTry`ı VE `exceptions.zig`nin `genTry`ı). Python'un KENDİ
+        // kısıtı UYGULANIR: ÇIPLAK `except:` yalnızca SON except-yan
+        // tümcesi OLABİLİR (aksi halde ONDAN SONRAKİ hiçbir yan tümce ASLA
+        // eşleşemez, HER ZAMAN ÖLÜ kod olurdu) — bu YÜZDEN bir ÇIPLAK
+        // `except:` GÖRÜLDÜKTEN SONRA döngü BAŞKA bir `except` TOKEN'ı
+        // görürse net bir ayrıştırma hatası verilir.
+        var saw_bare_except = false;
         while (self.check(.kw_except)) {
+            if (saw_bare_except) return error.UnexpectedToken;
             _ = self.advance();
-            const class_name = (try self.expect(.identifier)).lexeme;
+            var class_name: ?[]const u8 = null;
             var bind_name: ?[]const u8 = null;
-            if (self.match(.kw_as)) {
-                bind_name = (try self.expect(.identifier)).lexeme;
+            if (!self.check(.colon)) {
+                class_name = (try self.expect(.identifier)).lexeme;
+                if (self.match(.kw_as)) {
+                    bind_name = (try self.expect(.identifier)).lexeme;
+                }
+            } else {
+                saw_bare_except = true;
             }
             _ = try self.expect(.colon);
             const body = try self.parseBlock();

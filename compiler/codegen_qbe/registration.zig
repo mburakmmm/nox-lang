@@ -454,26 +454,33 @@ pub fn collectLocals(self: *Codegen, locals: *std.ArrayListUnmanaged(LocalDecl),
             .try_stmt => |t| {
                 try self.collectLocals(locals, t.try_body, in_lowlevel);
                 for (t.except_clauses) |ec| {
-                    // Bulundu (bkz. proje belleği "from-import class type
-                    // annotations" görevi, `exceptions.zig`nin `genTry`
-                    // dallıyla AYNI KÖK neden — bu ÜÇÜNCÜ bağımsız kod
-                    // yolu, `genTry`den ÖNCE, `genMain`in `collectLocals`
-                    // ÇAĞRISINDAN çalışır): `from nox.sqlite import
-                    // SqliteError` GİBİ bir from-import edilmiş istisna
-                    // sınıfı BURADA da AYNI `from_imports` geri düşüşüne
-                    // İHTİYAÇ duyar.
-                    const class_name = if (self.classes.contains(ec.class_name))
-                        ec.class_name
-                    else if (self.from_imports.get(ec.class_name)) |mangled| blk: {
-                        if (!self.classes.contains(mangled)) return error.Unsupported;
-                        break :blk mangled;
-                    } else return error.Unsupported;
-                    if (ec.bind_name) |bn| {
-                        try locals.append(self.allocator, .{
-                            .name = bn,
-                            .info = .{ .qtype = .l, .heap = .class, .class_name = class_name },
-                            .arena = in_lowlevel,
-                        });
+                    // Bulundu (nyx framework — bkz. proje belleği
+                    // "NOX_LIMITATIONS.md incelemesi", P5): ÇIPLAK
+                    // `except:` (`ec.class_name == null`) — HİÇBİR sınıf
+                    // çözümlemesi/YEREL EKLENMEZ (parser `bind_name`i de
+                    // HER ZAMAN `null` bırakır), yalnızca gövde işlenir.
+                    if (ec.class_name) |cn| {
+                        // Bulundu (bkz. proje belleği "from-import class type
+                        // annotations" görevi, `exceptions.zig`nin `genTry`
+                        // dallıyla AYNI KÖK neden — bu ÜÇÜNCÜ bağımsız kod
+                        // yolu, `genTry`den ÖNCE, `genMain`in `collectLocals`
+                        // ÇAĞRISINDAN çalışır): `from nox.sqlite import
+                        // SqliteError` GİBİ bir from-import edilmiş istisna
+                        // sınıfı BURADA da AYNI `from_imports` geri düşüşüne
+                        // İHTİYAÇ duyar.
+                        const class_name = if (self.classes.contains(cn))
+                            cn
+                        else if (self.from_imports.get(cn)) |mangled| blk: {
+                            if (!self.classes.contains(mangled)) return error.Unsupported;
+                            break :blk mangled;
+                        } else return error.Unsupported;
+                        if (ec.bind_name) |bn| {
+                            try locals.append(self.allocator, .{
+                                .name = bn,
+                                .info = .{ .qtype = .l, .heap = .class, .class_name = class_name },
+                                .arena = in_lowlevel,
+                            });
+                        }
                     }
                     try self.collectLocals(locals, ec.body, in_lowlevel);
                 }

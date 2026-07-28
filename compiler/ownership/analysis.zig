@@ -176,7 +176,14 @@ pub const Analyzer = struct {
                             if (!index_of.contains(bn)) {
                                 try scope.bindings.append(self.allocator, .{
                                     .name = bn,
-                                    .type_name = ec.class_name,
+                                    // Bulundu (nyx framework — bkz. proje belleği
+                                    // "NOX_LIMITATIONS.md incelemesi", P5):
+                                    // `ec.class_name` ARTIK `?[]const u8` —
+                                    // parser ÇIPLAK `except:`de `bind_name`i
+                                    // HER ZAMAN `null` bıraktığını GARANTİ
+                                    // eder, bu YÜZDEN `bind_name != null`
+                                    // İKEN `class_name` de HER ZAMAN doludur.
+                                    .type_name = ec.class_name.?,
                                     .is_param = false,
                                     .decision = .asap,
                                     .reason = "kapsam içinde kalıyor (kaçış tespit edilmedi)",

@@ -294,6 +294,7 @@ pub const Codegen = struct {
     pub const genClassRelease = layout.genClassRelease;
     pub const genClassTrace = layout.genClassTrace;
     pub const genClassGcFree = layout.genClassGcFree;
+    pub const genClassReleaseDispatch = layout.genClassReleaseDispatch;
     pub const genTraceDispatch = layout.genTraceDispatch;
     pub const genGcFreeDispatch = layout.genGcFreeDispatch;
     pub const genClassEq = layout.genClassEq;
@@ -902,6 +903,7 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     if (class_ids.items.len > 0) {
         try gen.genTraceDispatch(class_ids.items);
         try gen.genGcFreeDispatch(class_ids.items);
+        try gen.genClassReleaseDispatch(class_ids.items);
     }
     for (module.body) |stmt| {
         if (stmt.kind == .func_def and stmt.kind.func_def.type_params.len == 0 and !containsName(generic_template_names, stmt.kind.func_def.name)) {

@@ -318,10 +318,17 @@ const Printer = struct {
                 try self.printStmts(t.try_body, depth + 1);
                 for (t.except_clauses) |ec| {
                     try self.indentTo(depth);
-                    if (ec.bind_name) |bn| {
-                        try self.writer.print("except {s} as {s}:\n", .{ ec.class_name, bn });
+                    if (ec.class_name) |cn| {
+                        if (ec.bind_name) |bn| {
+                            try self.writer.print("except {s} as {s}:\n", .{ cn, bn });
+                        } else {
+                            try self.writer.print("except {s}:\n", .{cn});
+                        }
                     } else {
-                        try self.writer.print("except {s}:\n", .{ec.class_name});
+                        // Bulundu (nyx framework — bkz. proje belleği
+                        // "NOX_LIMITATIONS.md incelemesi", P5): ÇIPLAK
+                        // `except:`.
+                        try self.writer.writeAll("except:\n");
                     }
                     self.last_was_blank = false;
                     try self.printStmts(ec.body, depth + 1);
