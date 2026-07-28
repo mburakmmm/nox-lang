@@ -1,0 +1,31 @@
+class BoomError:
+    def __init__(self: BoomError, message: str) -> None:
+        self.message = message
+
+class Box:
+    items: list[str]
+    def __init__(self: Box, seed: str) -> None:
+        self.items = [seed]
+
+    def boom(self: Box) -> int:
+        raise BoomError("bum")
+
+try:
+    x: int = Box("hello").boom()
+except BoomError:
+    print("BoomError yakalandi (gecici alici sizmadan)")
+
+ys: list[int] = []
+try:
+    v: int = ys.pop()
+except IndexError:
+    print("IndexError yakalandi (yerel liste)")
+
+def make_empty() -> list[int]:
+    xs: list[int] = []
+    return xs
+
+try:
+    w: int = make_empty().pop()
+except IndexError:
+    print("IndexError yakalandi (gecici liste sizmadan)")

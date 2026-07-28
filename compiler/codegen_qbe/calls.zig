@@ -519,6 +519,7 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
         // YAPMAZ, `args.len`e göre AYRIM yapardı — `sort`nin 0 argümanı
         // `append`nin "tam olarak 1 argüman" KONTROLÜNE takılırdı).
         if (std.mem.eql(u8, a.attr, "sort")) return self.genListSort(obj, a, args);
+        if (std.mem.eql(u8, a.attr, "pop")) return self.genListPop(obj, a);
         return self.genListAppend(obj, a, args);
     }
     if (obj.heap != .class) return error.Unsupported;
@@ -566,9 +567,19 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
     // (sembol formatı `genCall`in serbest-fonksiyon dalıyla TUTARLI,
     // bkz. `computeMustNotRaise`in belge notu) kontrol atlanabilir.
     const method_sym = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ obj.class_name.?, a.attr });
-    if (!self.must_not_raise.contains(method_sym)) try self.emitExceptionCheck();
+    // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı, nox.process):
+    // GERÇEK bir bellek sızıntısı — alıcı/argümanların serbest bırakılması
+    // ÖNCEDEN `emitExceptionCheck`DEN SONRA geliyordu, bu da metod
+    // İSTİSNA fırlatırsa (`Command("yok").run()` GİBİ bir GEÇİCİ alıcı
+    // üzerinde) kontrolün BU serbest bırakma satırlarına HİÇ ULAŞMADAN
+    // (catch/propagate etiketine ZIPLAYARAK) sızmasına yol açıyordu —
+    // GERÇEK bir tekrar-üretimle (`Cmd("x").boom()` İÇİNDE `boom` istisna
+    // fırlatıyor) DOĞRULANDI. Çağrı ZATEN yapıldığından (başarılı ya da
+    // İSTİSNALI), alıcı/argümanların SERBEST BIRAKILMASI çağrının
+    // SONUCUNDAN BAĞIMSIZDIR — bu yüzden kontrolden ÖNCEYE taşındı.
     try self.releaseIfTemporary(a.obj.*, obj);
     try self.releaseTemporaryArgs(args, arg_values);
+    if (!self.must_not_raise.contains(method_sym)) try self.emitExceptionCheck();
 
     if (result_temp) |rt| {
         return .{ .text = rt, .qtype = msig.ret.qtype, .heap = msig.ret.heap, .elem_qtype = msig.ret.elem_qtype, .class_name = msig.ret.class_name, .elem_heap_info = msig.ret.elem_heap_info, .elem_is_str = msig.ret.elem_is_str };
@@ -889,6 +900,65 @@ pub fn genListSort(self: *Codegen, obj: Value, a: ast.Attribute, args: []const a
     // dallarıyla AYNI şekilde serbest bırakılmalıdır.
     try self.releaseIfTemporary(a.obj.*, obj);
     return .{ .text = "0", .qtype = .none };
+}
+
+/// `list[T].pop()` — SON elemanı kaldırıp döner. `.append`in AKSİNE HİÇBİR
+/// ZAMAN büyümez/yeniden ayırmaz (SADECE `len` başlığını AYNI blokta bir
+/// AZALTIR) — bu yüzden `.sort()` İLE AYNI şekilde alıcı keyfi bir ifade
+/// olabilir (`self.items.pop()` doğrudan geçerli, "yerele kopyala-mutasyona
+/// uğrat-geri yaz" dansı GEREKMEZ, bkz. `stdlib/nox/collections.nox`).
+/// Sahiplik: dönen değer ARTIK SADECE çağırana AİTTİR — `len`i AZALTMAK
+/// bu slotu listenin KENDİ yıkımının (`genListElemRelease`, 0..len'i
+/// gezer) taradığı ARALIK DIŞINA çıkarır, bu yüzden EK bir retain/release
+/// GEREKMEZ (net refcount DEĞİŞMEZ, sadece MÜLKİYET listeden çağırana
+/// TAŞINIR) — `genIndex`in ÖDÜNÇ-ALINMIŞ okumasının AKSİNE (bkz. onun
+/// belge notu), çünkü ORADA eleman listenin İÇİNDE KALIR.
+pub fn genListPop(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Value {
+    const len_t = try self.newTemp();
+    try self.out.writer.print("    {s} =l loadl {s}\n", .{ len_t, obj.text });
+
+    const empty_t = try self.newTemp();
+    try self.out.writer.print("    {s} =w ceql {s}, 0\n", .{ empty_t, len_t });
+    const err_label = try self.newLabel("list_pop_err");
+    const ok_label = try self.newLabel("list_pop_ok");
+    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ empty_t, err_label, ok_label });
+    try self.out.writer.print("{s}\n", .{err_label});
+    const msg_value = try self.emitStringLiteral("bos liste (list) pop edilemez");
+    const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
+    const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value});
+    try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ie_obj.text });
+    // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı — AYNI
+    // sınıf hata, `genMethodCall`in belge notundaki GİBİ): bu dal
+    // KOŞULSUZ raise edip aşağı ATLAR — `obj` (alıcı) TEMPORARY İSE
+    // (ör. `getList().pop()` boş bir liste üzerinde) normal yoldaki
+    // (aşağıdaki `ok_label` SONRASI) serbest bırakma BURAYA HİÇ
+    // ULAŞMAZ. `obj`nin BURADAN SONRA HİÇ kullanılmadığı İçin (SADECE
+    // raise edip çıkıyoruz) serbest bırakmak GÜVENLİDİR.
+    try self.releaseIfTemporary(a.obj.*, obj);
+    try self.emitExceptionCheck();
+    try self.out.writer.print("    jmp {s}\n", .{ok_label});
+    try self.out.writer.print("{s}\n", .{ok_label});
+
+    const new_len = try self.newTemp();
+    try self.out.writer.print("    {s} =l sub {s}, 1\n", .{ new_len, len_t });
+    // Yeni `len`i ÖNCE yaz — `obj` temporary İSE aşağıdaki `releaseIfTemporary`
+    // listeyi TAMAMEN yıkıyorsa (refcount sıfıra düşerse), `genListElemRelease`
+    // bu ANDAN İTİBAREN yalnızca 0..new_len'i gezer, az önce okuduğumuz
+    // (şimdi new_len indeksindeki) elemana HİÇ dokunmaz.
+    try self.out.writer.print("    storel {s}, {s}\n", .{ new_len, obj.text });
+
+    const byte_off = try self.newTemp();
+    try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ byte_off, new_len, qbeSizeOf(obj.elem_qtype) });
+    const off8 = try self.newTemp();
+    try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ off8, byte_off, LIST_HEADER_SIZE });
+    const addr = try self.newTemp();
+    try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ addr, obj.text, off8 });
+    const result = try self.newTemp();
+    try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ result, qbeTypeName(obj.elem_qtype), qbeTypeName(obj.elem_qtype), addr });
+
+    try self.releaseIfTemporary(a.obj.*, obj);
+
+    return abi.valueFromElemDescriptor(result, obj.elem_qtype, obj.elem_heap_info, obj.elem_is_str);
 }
 
 /// `Channel[T](capacity)`/`ThreadChannel[T](capacity)` (yerleşikler) YA DA

@@ -436,8 +436,23 @@ pub const Checker = struct {
                 // Faz P2.1: kullanıcı-tanımlı bir generic sınıf — bir alan/
                 // parametre `Box[int]` OLARAK bildirilirse (bir kurucu
                 // çağrısı HİÇ görülmeden BİLE) buradan çözülür (bkz.
-                // `instantiateGenericClass`in belge notu).
-                if (self.generic_classes.get(g.name)) |gcd| {
+                // `instantiateGenericClass`in belge notu). Bulundu (bkz.
+                // proje belleği "4 yeni stdlib modülü" planı, nox.collections):
+                // `checkGenericConstruct`in (satır ~2175) `from_imports`
+                // GERİ DÜŞÜŞÜ BURADA EKSİKTİ — `from nox.collections import
+                // Stack` İLE getirilen bir generic sınıf, `s: Stack[int] =
+                // ...` GİBİ bir TİP ANNOTASYONUNDA (kurucu çağrısından ÖNCE
+                // BİLE, ör. bir alan bildirimi) "bilinmeyen generic tip"
+                // hatası verirdi çünkü `g.name` ("Stack") burada YALNIZCA
+                // `self.generic_classes`e (mangled isimlerle anahtarlı)
+                // ÇIPLAK karşılaştırılıyordu — GERÇEK bir tekrar-üretimle
+                // (nox.collections'ın `import`+tip-annotasyon KULLANIMIYLA)
+                // DOĞRULANDI.
+                const maybe_gcd = self.generic_classes.get(g.name) orelse blk: {
+                    const mangled_base = self.from_imports.get(g.name) orelse break :blk null;
+                    break :blk self.generic_classes.get(mangled_base);
+                };
+                if (maybe_gcd) |gcd| {
                     const bound = try self.allocator.alloc(Type, g.args.len);
                     for (g.args, 0..) |a, i| bound[i] = try self.typeExprToType(a);
                     return try self.instantiateGenericClass(gcd, bound);
@@ -2621,7 +2636,18 @@ pub const Checker = struct {
                         }
                         return .none;
                     }
-                    return self.fail(error.UndefinedMethod, "list'in '{s}' metodu yok (yalnızca append/sort)", .{a.attr});
+                    // `list[T].pop()`: `.sort()` GİBİ alıcı keyfi bir ifade
+                    // OLABİLİR (`self.items.pop()` doğrudan geçerli) —
+                    // `.append`in AKSİNE `pop` HİÇBİR ZAMAN büyümez/yeniden
+                    // ayırmaz (yalnızca `len` başlığını AYNI blokta bir
+                    // AZALTIR, bkz. `codegen_qbe/calls.zig`nin `genListPop`ı),
+                    // bu yüzden alıcının KENDİ SLOTUNA geri yazma GEREKMEZ.
+                    // Boş listede `IndexError` (bkz. `core.nox`) fırlatılır.
+                    if (std.mem.eql(u8, a.attr, "pop")) {
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'pop' hiç argüman almaz", .{});
+                        return obj_t.list.*;
+                    }
+                    return self.fail(error.UndefinedMethod, "list'in '{s}' metodu yok (yalnızca append/sort/pop)", .{a.attr});
                 }
                 const class_name = switch (obj_t) {
                     .class => |n| n,

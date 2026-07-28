@@ -357,6 +357,7 @@ pub const Codegen = struct {
     pub const genDictMethod = calls.genDictMethod;
     pub const genListAppend = calls.genListAppend;
     pub const genListSort = calls.genListSort;
+    pub const genListPop = calls.genListPop;
     pub const genGenericConstruct = calls.genGenericConstruct;
 
     pub const genExprForTarget = expr_mod.genExprForTarget;

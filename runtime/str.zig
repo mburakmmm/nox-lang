@@ -257,6 +257,17 @@ test "nox_str_is_ascii ASCII dizelerde 1, cok baytli UTF-8 iceren dizelerde 0 do
     try std.testing.expectEqual(@as(i64, 0), nox_str_is_ascii("日本語"));
 }
 
+/// Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı, nox.url):
+/// `byte_at`i GÜVENLE bayt-bayt gezmek İçin (ör. `percent_encode`nin çok
+/// baytlı UTF-8 karakterleri DOĞRU kodlaması GEREKİR — `len(s)` ARTIK
+/// codepoint SAYDIĞINDAN, bkz. `nox_str_char_count`, bir çok-baytlı
+/// karakter İçin `len(s)` YETERSİZ kalırdı) HAM bayt SAYISI (`strlen`)
+/// gerekiyordu — bu ÖNCEDEN dışarı AÇILMAMIŞTI.
+pub export fn nox_str_byte_len(s: ?[*:0]const u8) i64 {
+    const p = s orelse return 0;
+    return @intCast(std.mem.len(p));
+}
+
 /// Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) — `nox_str_char_at`
 /// İLE AYNI "çağıran ÖNCEDEN sınırı doğruladı" sözleşmesi, ama HİÇBİR
 /// TAHSİS YAPMAZ: ham bayt değerini doğrudan bir `int` olarak döner.
@@ -274,6 +285,51 @@ pub export fn nox_str_byte_at(s: ?[*:0]const u8, idx: i64) i64 {
 test "nox_str_byte_at gecerli indekste dogru bayti tahsissiz doner" {
     try std.testing.expectEqual(@as(i64, 'h'), nox_str_byte_at("hello", 0));
     try std.testing.expectEqual(@as(i64, 'o'), nox_str_byte_at("hello", 4));
+}
+
+/// `nox_str_byte_at`nin TERSİ (bkz. proje belleği "4 yeni stdlib modülü"
+/// planı, nox.url) — HAM bir bayt DEĞERİNİ (0-255) TEK karakterlik bir
+/// `str`e çevirir. `nox.url`nin percent-*decode*i (`%XX` → gerçek bayt)
+/// İçin eklendi: `nox.strings`de str→bayt (`byte_at`) yönü ZATEN vardı,
+/// ama bayt→str YOKTU — `%XX`den ÇÖZÜLEN bir bayt DEĞERİNİ (int) tekrar
+/// bir `str` karaktere DÖNÜŞTÜRMENİN başka yolu YOK (string literal
+/// escape'leri `\xHH` DESTEKLEMİYOR, bkz. `parser.zig`nin `decodeEscapes`ı).
+/// **Bilinçli v1 kapsamı**: `b` HER ZAMAN TEK bir HAM BAYT olarak yazılır
+/// (0-255 aralığı DIŞI `0`a KIRPILIR) — bu, çok baytlı bir UTF-8 dizisi
+/// OLUŞTURMAZ (percent-encoding zaten HER bayt İçin AYRI `%XX` üretir/tüketir,
+/// bkz. `nox.url.percent_encode`/`percent_decode`, bu yüzden çağıran taraf
+/// zaten HER baytı TEK TEK işler). **Bulundu (test yazarken)**: `b == 0`
+/// (KIRPILMIŞ geçersiz girdi DAHİL) HER ZAMAN BOŞ bir `str` üretir, "tek
+/// baytlı" DEĞİL — Nox'un TÜM string temsili NUL-sonlandırmalı (C-tarzı)
+/// OLDUĞUNDAN gömülü bir NUL bayt asla TEMSİL EDİLEMEZ (`std.mem.span`
+/// İLK bayt olan NUL'da DURUR). Pratikte SORUN DEĞİL — bu fonksiyonun TEK
+/// çağıranı (`nox.url.percent_decode`) `hi*16+lo`yi HER ZAMAN 0-255
+/// (hex ayrıştırmasından, ZATEN geçerli) besler; `%00` GEÇERLİ bir girdi
+/// olsa BİLE sonuç boş `str` olur — bu, DAHA GENİŞ "Nox string'leri gömülü
+/// NUL taşıyamaz" kısıtının DOĞAL bir sonucudur, BU fonksiyona özgü YENİ
+/// bir sınırlama DEĞİL.
+pub export fn nox_char_from_byte(rt: ?*anyopaque, b: i64) ?[*:0]u8 {
+    const byte: u8 = if (b < 0 or b > 255) 0 else @intCast(b);
+    const raw = arc.nox_rc_alloc(rt, 2) orelse return null;
+    const out: [*]u8 = @ptrCast(raw);
+    out[0] = byte;
+    out[1] = 0;
+    return @ptrCast(out);
+}
+
+test "nox_char_from_byte gecerli baytlardan tek karakterlik str uretir" {
+    const asap = @import("alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const s1 = nox_char_from_byte(rt, 'A') orelse return error.ConvFailed;
+    try std.testing.expectEqualStrings("A", std.mem.span(s1));
+    const s2 = nox_char_from_byte(rt, 0xC3) orelse return error.ConvFailed;
+    try std.testing.expectEqual(@as(usize, 1), std.mem.span(s2).len);
+    // Kırpılan (0-255 dışı) girdi 0'a düşer — NUL-sonlandırmalı temsil
+    // GÖMÜLÜ bir NUL bayt TAŞIYAMADIĞINDAN bu HER ZAMAN boş bir `str`
+    // üretir (bkz. fonksiyonun belge notu) — "tek bayt" DEĞİL.
+    const s3 = nox_char_from_byte(rt, 300) orelse return error.ConvFailed;
+    try std.testing.expectEqual(@as(usize, 0), std.mem.span(s3).len);
 }
 
 test "nox_int_to_str/nox_float_to_str dogru bicimlendirir" {

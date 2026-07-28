@@ -144,6 +144,23 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
                 if (self.classes.contains(mangled)) {
                     return .{ .qtype = .l, .heap = .class, .class_name = mangled };
                 }
+                // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı,
+                // nox.collections): `.simple` dalı (satır ~109) `from_imports`
+                // geri düşüşüne SAHİPTİ ama BU dal DEĞİLDİ — `from nox.
+                // collections import Stack` İLE getirilen bir generic sınıf,
+                // `g.name` HÂLÂ ÇIPLAK "Stack" OLDUĞUNDAN (module_loader'ın
+                // `renameTypeExpr`i `.generic` kolunda YALNIZCA `g.args`ı
+                // yeniden adlandırır, `g.name`i DEĞİL — bkz. onun belge notu)
+                // `mangleGenericClassName(self, "Stack", ...)` checker'ın
+                // GERÇEKTEN kaydettiği (modül-önekli TABAN isimden türeyen)
+                // mangled adla HİÇ EŞLEŞMEZDİ. `from_imports` üzerinden
+                // TABAN ismi çözüp mangling'i O isimle TEKRARLIYORUZ.
+                if (self.from_imports.get(g.name)) |mangled_base| {
+                    const mangled2 = try mangleGenericClassName(self, mangled_base, g.args);
+                    if (self.classes.contains(mangled2)) {
+                        return .{ .qtype = .l, .heap = .class, .class_name = mangled2 };
+                    }
+                }
                 return error.Unsupported;
             }
             if (g.args.len != 1) return error.Unsupported;

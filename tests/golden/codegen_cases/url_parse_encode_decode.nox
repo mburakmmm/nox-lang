@@ -1,0 +1,38 @@
+import nox.url
+from nox.url import URL, UrlError
+
+u: URL = nox.url.parse("https://user:pass@example.com:8080/a/b/c?page=2&q=hello+world#frag")
+print(u.scheme)
+print(u.userinfo)
+print(u.host)
+print(u.port)
+print(u.path)
+print(u.query["page"])
+print(u.fragment)
+
+u2: URL = nox.url.parse("http://example.com/users")
+print(u2.port)
+print(u2.path)
+
+enc: str = nox.url.percent_encode("hello world/é")
+print(enc)
+dec: str = nox.url.percent_decode(enc)
+print(dec)
+
+q: dict[str, str] = {}
+q["a"] = "1"
+q["b"] = "hello world"
+qs: str = nox.url.query_encode(q)
+print(qs)
+qd: dict[str, str] = nox.url.query_decode(qs)
+print(qd["a"])
+print(qd["b"])
+
+print(nox.url.join("https://example.com/a/b/c", "d"))
+print(nox.url.join("https://example.com/a/b/c", "/x/y"))
+print(nox.url.join("https://example.com/a/b/c", "https://other.com/z"))
+
+try:
+    bad: URL = nox.url.parse("not-a-url")
+except UrlError:
+    print("UrlError yakalandi")

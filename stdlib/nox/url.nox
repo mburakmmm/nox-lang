@@ -1,0 +1,262 @@
+# nox.url — URL ayrıştırma + percent-encoding + sorgu (query string)
+# kodlama/çözme. Tamamen saf Nox (yeni bir compiler ilkeli GEREKMEDİ,
+# yalnızca `nox.strings`e İKİ küçük yeni yardımcı eklendi — bkz. onların
+# belge notu: `char_from_byte`/`byte_len`).
+#
+# **Bulunan gerçek boşluk** (bkz. proje belleği "4 yeni stdlib modülü"
+# planı): kullanıcının kendi `nyx` framework'ünde (github.com/mburakmmm/
+# nyx) AYNI "sorgu dizesini yoldan ayır" mantığı 4 AYRI dosyada
+# (`app.nox`/`csrf.nox`/`params.nox` x2) elle kopyalanmıştı — bu modül
+# o tekrarı tek bir yerde toplar.
+#
+# `s[start:end]` (Nox'ta dilim sözdizimi YOK) eşdeğeri İçin `uuid.nox`/
+# `router.nox`nin AYNI çıplak `_substr` yardımcısı kullanılır — bu YÜZDEN
+# yapısal ayırıcı arama (`index_of`) VE dilimleme (`_substr`/`s[i]`)
+# CODEPOINT birimindedir; şema/host/port/`://`/`?`/`#`/`@`/`:` gibi TÜM
+# yapısal karakterler HER ZAMAN ASCII olduğundan bu pratikte sorunsuzdur
+# — **bilinçli v1 sınırlaması**: bir host/path'İN KENDİSİ çok-baytlı bir
+# UTF-8 karakteri bir yapısal ayırıcıdan HEMEN ÖNCE İçeriyorsa (son derece
+# nadir), codepoint/bayt karışıklığı TEORİK olarak yanlış bir bölünmeye
+# yol açabilir. `percent_encode`/`percent_decode` İSE (asıl çok-baytlı
+# içerik BURADAN geçer) BİLEREK bayt-tabanlıdır (`nox.strings.byte_at`/
+# `byte_len`/`char_from_byte`) — TAM UTF-8 doğruluğu SADECE bu ikisinde
+# gerekir.
+#
+# `join(base, relative)` BASİT bir alt küme (mutlak-yol göreli çözümleme,
+# `.`/`..` segment normalizasyonu YOK) İLE SINIRLIDIR — tam RFC 3986
+# çözümleme algoritması v1 kapsamı DIŞI.
+
+import nox.strings
+
+class UrlError:
+    def __init__(self: UrlError, message: str) -> None:
+        self.message = message
+
+class URL:
+    def __init__(
+        self: URL,
+        scheme: str,
+        userinfo: str,
+        host: str,
+        port: int,
+        path: str,
+        query: dict[str, str],
+        fragment: str
+    ) -> None:
+        self.scheme = scheme
+        self.userinfo = userinfo
+        self.host = host
+        self.port = port
+        self.path = path
+        self.query = query
+        self.fragment = fragment
+
+def _substr(s: str, start: int, end: int) -> str:
+    result: str = ""
+    i: int = start
+    while i < end:
+        result = result + s[i]
+        i = i + 1
+    return result
+
+def _default_port(scheme: str) -> int:
+    if scheme == "http":
+        return 80
+    if scheme == "https":
+        return 443
+    if scheme == "ftp":
+        return 21
+    return 0
+
+# `scheme://[userinfo@]host[:port][/path][?query][#fragment]` — `path`
+# HİÇ yoksa `"/"` varsayılır. Bozuk girdide (`://` yok, port sayısal
+# değil) `UrlError` fırlatır.
+def parse(s: str) -> URL:
+    rest: str = s
+
+    fragment: str = ""
+    hash_idx: int = nox.strings.index_of(rest, "#")
+    if hash_idx >= 0:
+        fragment = _substr(rest, hash_idx + 1, len(rest))
+        rest = _substr(rest, 0, hash_idx)
+
+    query_str: str = ""
+    q_idx: int = nox.strings.index_of(rest, "?")
+    if q_idx >= 0:
+        query_str = _substr(rest, q_idx + 1, len(rest))
+        rest = _substr(rest, 0, q_idx)
+
+    scheme_sep_idx: int = nox.strings.index_of(rest, "://")
+    if scheme_sep_idx < 0:
+        raise UrlError("URL'de sema (scheme://) yok: " + s)
+    scheme: str = _substr(rest, 0, scheme_sep_idx)
+    after_scheme: str = _substr(rest, scheme_sep_idx + 3, len(rest))
+
+    authority: str = after_scheme
+    path: str = "/"
+    slash_idx: int = nox.strings.index_of(after_scheme, "/")
+    if slash_idx >= 0:
+        authority = _substr(after_scheme, 0, slash_idx)
+        path = _substr(after_scheme, slash_idx, len(after_scheme))
+
+    userinfo: str = ""
+    host_port: str = authority
+    at_idx: int = nox.strings.index_of(authority, "@")
+    if at_idx >= 0:
+        userinfo = _substr(authority, 0, at_idx)
+        host_port = _substr(authority, at_idx + 1, len(authority))
+
+    host: str = host_port
+    port: int = _default_port(scheme)
+    colon_idx: int = nox.strings.index_of(host_port, ":")
+    if colon_idx >= 0:
+        host = _substr(host_port, 0, colon_idx)
+        port_str: str = _substr(host_port, colon_idx + 1, len(host_port))
+        try:
+            port = int(port_str)
+        except ValueError:
+            raise UrlError("gecersiz port: " + port_str)
+
+    query: dict[str, str] = query_decode(query_str)
+    return URL(scheme, userinfo, host, port, path, query, fragment)
+
+def _is_unreserved_byte(b: int) -> bool:
+    if b >= 65 and b <= 90:
+        return True
+    if b >= 97 and b <= 122:
+        return True
+    if b >= 48 and b <= 57:
+        return True
+    if b == 45 or b == 95 or b == 46 or b == 126:
+        return True
+    return False
+
+def _hex_digit(n: int) -> str:
+    digits: list[str] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F"]
+    return digits[n]
+
+# RFC 3986 "unreserved" karakterler (A-Z a-z 0-9 - _ . ~) OLDUĞU GİBİ
+# bırakılır, geri kalan HER bayt `%XX` (büyük harf hex) olarak yazılır —
+# bayt-tabanlı (bkz. modül başlığı), çok-baytlı UTF-8 karakterleri DOĞRU
+# kodlar.
+def percent_encode(s: str) -> str:
+    out: str = ""
+    i: int = 0
+    n: int = nox.strings.byte_len(s)
+    while i < n:
+        b: int = nox.strings.byte_at(s, i)
+        if _is_unreserved_byte(b):
+            out = out + nox.strings.char_from_byte(b)
+        else:
+            out = out + "%" + _hex_digit(b // 16) + _hex_digit(b % 16)
+        i = i + 1
+    return out
+
+def _hex_val(ch: str) -> int:
+    if ch == "0":
+        return 0
+    if ch == "1":
+        return 1
+    if ch == "2":
+        return 2
+    if ch == "3":
+        return 3
+    if ch == "4":
+        return 4
+    if ch == "5":
+        return 5
+    if ch == "6":
+        return 6
+    if ch == "7":
+        return 7
+    if ch == "8":
+        return 8
+    if ch == "9":
+        return 9
+    if ch == "a" or ch == "A":
+        return 10
+    if ch == "b" or ch == "B":
+        return 11
+    if ch == "c" or ch == "C":
+        return 12
+    if ch == "d" or ch == "D":
+        return 13
+    if ch == "e" or ch == "E":
+        return 14
+    if ch == "f" or ch == "F":
+        return 15
+    raise UrlError("gecersiz hex basamak: " + ch)
+
+# `%XX` dizilerini gerçek baytlara çözer (`nox.strings.char_from_byte`
+# İLE) — ardışık `%XX`ler (ör. "é" İçin "%C3%A9") baytları TEK TEK
+# üretir ama string BİRLEŞTİRME saf bayt-ekleme OLDUĞUNDAN (KENDİ
+# başına yeniden-UTF-8-doğrulaması YAPMAZ) doğru çok-baytlı karakteri
+# YENİDEN OLUŞTURUR.
+def percent_decode(s: str) -> str:
+    out: str = ""
+    i: int = 0
+    n: int = len(s)
+    while i < n:
+        ch: str = s[i]
+        if ch == "%":
+            if i + 2 >= n:
+                raise UrlError("eksik percent-encoding: " + s)
+            hi: int = _hex_val(s[i + 1])
+            lo: int = _hex_val(s[i + 2])
+            out = out + nox.strings.char_from_byte(hi * 16 + lo)
+            i = i + 3
+        else:
+            out = out + ch
+            i = i + 1
+    return out
+
+def query_encode(params: dict[str, str]) -> str:
+    keys: list[str] = params.keys()
+    parts: list[str] = []
+    i: int = 0
+    while i < len(keys):
+        k: str = keys[i]
+        parts.append(percent_encode(k) + "=" + percent_encode(params[k]))
+        i = i + 1
+    return nox.strings.join(parts, "&")
+
+def query_decode(s: str) -> dict[str, str]:
+    result: dict[str, str] = {}
+    if len(s) == 0:
+        return result
+    pairs: list[str] = nox.strings.split(s, "&")
+    i: int = 0
+    while i < len(pairs):
+        pair: str = pairs[i]
+        eq_idx: int = nox.strings.index_of(pair, "=")
+        if eq_idx < 0:
+            result[percent_decode(pair)] = ""
+        else:
+            k: str = _substr(pair, 0, eq_idx)
+            v: str = _substr(pair, eq_idx + 1, len(pair))
+            result[percent_decode(k)] = percent_decode(v)
+        i = i + 1
+    return result
+
+# `relative` ZATEN mutlaksa (`://` içeriyorsa) OLDUĞU GİBİ döner. `/` İLE
+# başlıyorsa `base`nin şema+host(+port)ını KORUYUP yolu DEĞİŞTİRİR. Aksi
+# halde `base`nin yolunun SON segmentini `relative` İLE değiştirir
+# (klasik "göreli yol" çözümlemesi — `.`/`..` normalizasyonu YOK).
+def join(base: str, relative: str) -> str:
+    if nox.strings.contains(relative, "://"):
+        return relative
+    base_url: URL = parse(base)
+    prefix: str = base_url.scheme + "://" + base_url.host
+    if base_url.port != _default_port(base_url.scheme):
+        prefix = prefix + ":" + str(base_url.port)
+    if nox.strings.starts_with(relative, "/"):
+        return prefix + relative
+    base_path: str = base_url.path
+    last_slash: int = 0
+    i: int = 0
+    while i < len(base_path):
+        if base_path[i] == "/":
+            last_slash = i
+        i = i + 1
+    dir_path: str = _substr(base_path, 0, last_slash + 1)
+    return prefix + dir_path + relative

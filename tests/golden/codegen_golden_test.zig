@@ -743,6 +743,121 @@ test "codegen(çalıştır): yerel degisken/parametre modül-global'ini gölgele
     );
 }
 
+// Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı): YENİ `list[T].
+// pop()` ilkeli — `.append`in AKSİNE HİÇBİR ZAMAN yeniden ayırmadığından
+// alıcı keyfi bir ifade olabilir (`self.items.pop()` doğrudan, "yerele
+// kopyala-mutasyona uğrat-geri yaz" dansı GEREKMEZ). Boş listede `IndexError`
+// fırlattığını da kanıtlar.
+test "codegen(çalıştır): list.pop() — cıplak degisken + sinif alani + bos liste IndexError" {
+    try expectGolden(
+        @embedFile("codegen_cases/list_pop.nox"),
+        @embedFile("codegen_cases/list_pop.expected"),
+    );
+}
+
+// nox.collections — Stack[T]/Queue[T]/Deque[T]: LIFO/FIFO/çift-uçlu sıra
+// semantiğinin (iki-yığın hilesi DAHİL) doğru çalıştığını kanıtlar. Bu,
+// çok-parametreli (`Pair[K,V]` benzeri) generic sınıfların `from X import Y`
+// İLE getirilip bir TİP ANNOTASYONUNDA kullanılmasının İLK gerçek testidir
+// — bu SIRADA `checker.zig`nin `typeExprToType`indeki VE `codegen_qbe/
+// registration.zig`nin `resolveType`indeki `.generic` dalının `from_imports`
+// geri düşüşü EKSİK olduğu bulunup İKİSİ de düzeltildi (`from nox.collections
+// import Stack` + `s: Stack[int] = ...` ÖNCEDEN "bilinmeyen generic tip"/
+// "desteklenmeyen bir yapı" hatalarıyla ÇÖKERDİ).
+test "codegen(çalıştır): nox.collections Stack/Queue/Deque" {
+    try expectGolden(
+        @embedFile("codegen_cases/collections_stack_queue_deque.nox"),
+        @embedFile("codegen_cases/collections_stack_queue_deque.expected"),
+    );
+}
+
+// nox.collections — Set[T]/Counter[T]/OrderedDict[K,V]: hepsi `list[T]`
+// üzerinde DOĞRUSAL TARAMA (`==` İLE) kullanır (Nox'ta kullanıcı sınıfları
+// İçin `__hash__` YOK) — bu test tekrarlı `add`ın idempotent kaldığını,
+// `remove`nin çalıştığını VE `OrderedDict`in ekleme SIRASINI koruduğunu
+// kanıtlar.
+test "codegen(çalıştır): nox.collections Set/Counter/OrderedDict" {
+    try expectGolden(
+        @embedFile("codegen_cases/collections_set_counter_ordereddict.nox"),
+        @embedFile("codegen_cases/collections_set_counter_ordereddict.expected"),
+    );
+}
+
+// nox.collections — LRUCache[K,V]/Heap[T]/PriorityQueue[T]: LRU'nun
+// kapasite-aşımında en-eski-kullanılanı tahliye ettiğini, `Heap`in artan
+// sırayla `pop_min` verdiğini (ikili min-heap sift-up/sift-down) VE
+// `PriorityQueue`nun `T`ye HİÇ dokunmadan yalnızca `priority: int` alanına
+// göre sıraladığını kanıtlar. **GERÇEK bir hata bulunup düzeltildi**
+// (bu fixture'ın geliştirilmesi sırasında): Nox'ta `and`/`or` kısa devre
+// YAPMAZ (bkz. nox-teknik-spesifikasyon.md, bilinçli v0.1 kararı) — ilk
+// `_sift_down` uygulaması `left < n and self._items[left] < ...` yazıyordu,
+// bu da `left >= n` OLSA BİLE `self._items[left]`i (sınır dışı) okuyup
+// GERÇEK bir `IndexError`a yol açıyordu; düzeltme İÇ İÇE `if`lere geçti.
+test "codegen(çalıştır): nox.collections LRUCache/Heap/PriorityQueue" {
+    try expectGolden(
+        @embedFile("codegen_cases/collections_lru_heap_priority.nox"),
+        @embedFile("codegen_cases/collections_lru_heap_priority.expected"),
+    );
+}
+
+// nox.url — `URL.parse` (şema/userinfo/host/port/yol/sorgu/fragment),
+// `percent_encode`/`percent_decode` (çok-baytlı UTF-8 DAHİL round-trip),
+// `query_encode`/`query_decode`, VE basit `join` göreli-yol çözümlemesi.
+// Bozuk bir URL'de (`://` yok) `UrlError` fırlattığını da kanıtlar.
+test "codegen(çalıştır): nox.url parse/percent-encode-decode/query/join" {
+    try expectGolden(
+        @embedFile("codegen_cases/url_parse_encode_decode.nox"),
+        @embedFile("codegen_cases/url_parse_encode_decode.expected"),
+    );
+}
+
+// nox.process — `Command.run()`: stdout yakalama, sıfır-olmayan çıkış
+// koduyla stderr yakalama, `set_cwd`, VE bulunamayan bir programda
+// `ProcessError`. **GERÇEK bir bellek sızıntısı bulunup düzeltildi**
+// (bu fixture'ın geliştirilmesi sırasında, `Command("yok").run()` GİBİ
+// GEÇİCİ bir alıcı üzerinde ÇAĞRILAN VE istisna FIRLATAN bir metodun
+// alıcısının/argümanlarının HİÇ serbest bırakılmadığı — `emitExceptionCheck`
+// KAÇIŞ dalının serbest-bırakma kodunu HER ZAMAN atladığı — GENEL bir
+// derleyici hatası, bkz. `calls.zig`nin `genMethodCall`/`genListPop`
+// belge notları): düzeltme serbest-bırakmayı istisna KONTROLÜNDEN ÖNCEYE
+// taşıdı (`genMethodCall`) / hata dalına DA ekledi (`genListPop`).
+test "codegen(çalıştır): nox.process Command.run() — stdout/stderr/cwd/ProcessError" {
+    try expectGolden(
+        @embedFile("codegen_cases/process_command_run.nox"),
+        @embedFile("codegen_cases/process_command_run.expected"),
+    );
+}
+
+// Yukarıdaki `genMethodCall`/`genListPop` düzeltmelerinin KENDİSİ İçin
+// AYRI bir regresyon testi — `expectGolden`nin BOŞ-stderr kontrolü
+// (DebugAllocator sızıntı uyarılarını YAKALAR) bu YÜZDEN bu test AYNI
+// ZAMANDA bir bellek-sızıntısı regresyon testidir: geçici bir sınıf
+// ÖRNEĞİ/liste üzerinde ÇAĞRILAN VE istisna FIRLATAN bir metod/işlem,
+// alıcısını SIZDIRMAMALIDIR.
+test "codegen(çalıştır): gecici alici uzerinde istisna firlatan metod/pop() sizmaz" {
+    try expectGolden(
+        @embedFile("codegen_cases/temporary_receiver_raises_no_leak.nox"),
+        @embedFile("codegen_cases/temporary_receiver_raises_no_leak.expected"),
+    );
+}
+
+// nox.postgres/nox.mysql — ULAŞILAMAYAN bir adrese karşı `open`/`open_url`nin
+// HER ZAMAN temiz bir PostgresError/MysqlError fırlattığını (çökme YOK)
+// doğrular — CI'da libpq/libmysqlclient KURULU OLMASA (ensureLoaded
+// başarısız) YA DA kurulu olup bağlantı başarısız olsa (her iki durumda
+// da AYNI temiz hata yolu) BİLE ÇALIŞIR, GERÇEK bir sunucu GEREKTİRMEZ.
+// TAM CRUD doğrulaması (Docker'daki gerçek postgres:16/mysql:8'e karşı)
+// ELLE yapıldı — bkz. proje belleği "4 yeni stdlib modülü" planı
+// (postgres: INSERT/SELECT/tip-NULL/hatalı-sorgu/hatalı-baglanti hepsi
+// doğru; mysql: AYNI senaryolar + `MYSQL_FIELD.name`in ham-ofset
+// okumasının GERÇEKTEN doğru sütun adlarını döndürdüğü doğrulandı).
+test "codegen(çalıştır): nox.postgres/nox.mysql — ulasilamayan baglantida temiz hata" {
+    try expectGolden(
+        @embedFile("codegen_cases/postgres_mysql_connect_error.nox"),
+        @embedFile("codegen_cases/postgres_mysql_connect_error.expected"),
+    );
+}
+
 // Bulundu (bkz. proje belleği "UTF-8 farkındalığı" görevi): `len(s)`/`s[i]`
 // ÖNCEDEN bayt-tabanlıydı (çok baytlı UTF-8 karakterleri — "café"nin
 // "é"si, "日本語"nin her karakteri — ORTADAN kesiyordu). ARTIK codepoint-

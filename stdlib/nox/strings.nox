@@ -24,6 +24,14 @@ extern def nox_strings_ends_with_raw(s: str, suffix: str) -> int from "zig-out/l
 # kullanıma açık `byte_at` İçin kullanılır (`starts_with`/`ends_with`/
 # `index_of` ARTIK Zig'de, bkz. yukarısı).
 extern def nox_str_byte_at(s: str, idx: int) -> int from "zig-out/lib/noxrt.o"
+# `byte_at`nin TERSİ (bkz. proje belleği "4 yeni stdlib modülü" planı,
+# nox.url'nin percent-decode İhtiyacı) — HAM bir bayt DEĞERİNİ (0-255)
+# TEK karakterlik bir `str`e çevirir.
+extern def nox_char_from_byte(b: int) -> str from "zig-out/lib/noxrt.o" with_rt
+# `len(s)` ARTIK codepoint SAYIYOR (bkz. UTF-8 farkındalığı görevi) — HAM
+# bayt SAYISI (`percent_encode`nin çok-baytlı UTF-8'i DOĞRU işlemesi İçin
+# GEREKLİ, bkz. `byte_at`) AYRI bir ilkel gerektirir.
+extern def nox_str_byte_len(s: str) -> int from "zig-out/lib/noxrt.o"
 # Faz III.2 (bkz. nox-teknik-spesifikasyon.md §3.69).
 extern def nox_strings_trim_start_raw(s: str) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_strings_trim_end_raw(s: str) -> str from "zig-out/lib/noxrt.o" with_rt
@@ -61,6 +69,15 @@ def replace(s: str, old: str, new: str) -> str:
 # `byte_at` yalnızca genel/dış kullanım İçin AÇIK kalır.
 def byte_at(s: str, idx: int) -> int:
     return nox_str_byte_at(s, idx)
+
+# `byte_at`nin TERSİ — HAM bir bayt DEĞERİNİ (0-255) TEK karakterlik bir
+# `str`e çevirir (ör. `nox.url.percent_decode`nin `%XX`den çözdüğü bayt
+# değerini gerçek karaktere DÖNÜŞTÜRMESİ İçin).
+def char_from_byte(b: int) -> str:
+    return nox_char_from_byte(b)
+
+def byte_len(s: str) -> int:
+    return nox_str_byte_len(s)
 
 def join(parts: list[str], sep: str) -> str:
     return nox_strings_join_raw(parts, sep)

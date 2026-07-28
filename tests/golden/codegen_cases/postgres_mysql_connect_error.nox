@@ -1,0 +1,21 @@
+# libpq/libmysqlclient KURULU olsun ya da olmasın, ULAŞILAMAYAN bir
+# adrese/geçersiz bir bağlantıya karşı `open`/`open_url`nin HER ZAMAN
+# temiz bir PostgresError/MysqlError fırlattığını (çökme YOK) doğrular —
+# CI ortamında GERÇEK bir Postgres/MySQL sunucusu OLMASA BİLE çalışır
+# (`libpq`/`libmysqlclient` kurulu değilse `ensureLoaded` başarısız olur,
+# kuruluysa bağlantının kendisi başarısız olur — HER İKİ durumda da AYNI
+# temiz hata yolu). Gerçek bir sunucuya karşı TAM CRUD doğrulaması
+# (Docker ile) elle yapıldı, bkz. proje belleği "4 yeni stdlib modülü"
+# planı.
+from nox.postgres import open, PostgresError
+from nox.mysql import open_url, MysqlError
+
+try:
+    open("postgres://baduser@127.0.0.1:1/nonexistentdb")
+except PostgresError:
+    print("PostgresError yakalandi")
+
+try:
+    open_url("mysql://baduser@127.0.0.1:1/nonexistentdb")
+except MysqlError:
+    print("MysqlError yakalandi")

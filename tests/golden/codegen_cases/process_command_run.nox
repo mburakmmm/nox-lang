@@ -1,0 +1,19 @@
+from nox.process import Command, Output, ProcessError
+
+out1: Output = Command("echo").arg("merhaba dunya").run()
+print(out1.stdout)
+print(out1.status)
+print(out1.success())
+
+out2: Output = Command("sh").arg("-c").arg("echo hata-mesaji 1>&2; exit 7").run()
+print(out2.status)
+print(out2.stderr)
+print(out2.success())
+
+out3: Output = Command("pwd").set_cwd("/tmp").run()
+print(out3.stdout)
+
+try:
+    bad: Output = Command("bu-program-kesinlikle-yok-xyz123").run()
+except ProcessError:
+    print("ProcessError yakalandi")

@@ -1,0 +1,576 @@
+# nox.collections — genel amaçlı veri yapıları (Stack/Queue/Deque/Set/
+# Counter/OrderedDict/LRUCache/Heap/PriorityQueue), TAMAMEN saf Nox
+# (extern def YOK) — `class Foo[T, ...]:` (Faz P2.1, ARİTE-GENEL generic
+# sınıflar) üzerine inşa edilir.
+#
+# **Bilinçli v1 tasarım kısıtı:** Nox'ta kullanıcı sınıfları İçin `__hash__`
+# YOK (`==` HER ZAMAN derleyici-üretimi ALAN-ALANA yapısal karşılaştırma,
+# bkz. `codegen_qbe/layout.zig`nin `$ClassName_eq`ı) — bu YÜZDEN `Set[T]`/
+# `Counter[T]`/`OrderedDict[K,V]`/`LRUCache[K,V]` native `dict[K,V]`e
+# DAYANAMAZ (`dict`in KENDİ anahtar/değer tipi `int`/`bool`/`str`/`float`
+# İLE SINIRLI, bkz. checker.zig). Bunun yerine `list[T]` üzerinde DOĞRUSAL
+# TARAMA (`==` İLE) kullanılır — O(n) per işlem, ama HERHANGİ bir `T`/`K`
+# İçin doğru (sınıflar DAHİL). Daha hızlı, `str`/`int` anahtarlarla
+# SINIRLI bir varyant istenirse (native `dict` üzerine), bu AYRI bir
+# gelecek görev olabilir — bu modül BİLİNÇLİ olarak genelliği tercih eder.
+#
+# `Heap[T]`/`PriorityQueue[T]`: Nox'ta kullanıcı-tanımlı `__lt__` YOK
+# (`list.sort()`nin AYNI kısıtı) — `Heap[T]`, `T`yi `<` operatörünün
+# ZATEN desteklediği tiplerle (int/float/str) SOMUTLAŞTIĞINDA doğal
+# olarak tip kontrolünden GEÇER; sınıf tipli `T` İLE somutlaştırılırsa
+# `<` KENDİSİ derleme zamanında reddedilir (EK bir kısıt kodu YAZILMADI,
+# dilin KENDİ operatör tipi kontrolü yeterli). `PriorityQueue[T]` bunun
+# TERSİNE `T` üzerinde HİÇ karşılaştırma yapmaz (yalnızca ayrı bir
+# `priority: int` alanı üzerinde) — bu YÜZDEN `T` KEYFİ olabilir (sınıflar
+# DAHİL).
+#
+# `.append()`in AKSİNE (alıcısı ÇIPLAK bir isim OLMAK ZORUNDA, bkz.
+# `codegen_qbe/calls.zig`nin `genListAppend`ı), YENİ `.pop()` ilkeli
+# (bu oturumda eklendi) HİÇBİR ZAMAN yeniden ayırmadığından `self.field.
+# pop()` GİBİ keyfi bir alıcı üzerinde DOĞRUDAN çalışır — bu modülde
+# HER `.append()` çağrısından ÖNCE hâlâ "yerele kopyala → mutasyona
+# uğrat → geri yaz" deseni (bkz. `stdlib/nox/router.nox`nin `Router.add`ı)
+# UYGULANIR, ama `.pop()`/indeksleme (`xs[i]`/`xs[i] = v`)/`len(xs)`
+# HİÇBİRİ bu dansı GEREKTİRMEZ (doğrudan `self.field` üzerinde çağrılır).
+#
+# Nox'ta `break`/`continue` YOK — döngü-içi erken-çıkış TÜM metodlarda
+# bir `active: bool` bayrağıyla (`while cond and active:`) taklit edilir.
+
+# ---------------------------------------------------------------------
+# Stack[T] — LIFO, dogrudan list[T] uzerinde.
+class Stack[T]:
+    items: list[T]
+
+    def __init__(self: Stack) -> None:
+        self.items = []
+
+    def push(self: Stack, v: T) -> None:
+        items: list[T] = self.items
+        items.append(v)
+        self.items = items
+
+    def pop(self: Stack) -> T:
+        return self.items.pop()
+
+    def peek(self: Stack) -> T:
+        return self.items[len(self.items) - 1]
+
+    def is_empty(self: Stack) -> bool:
+        return len(self.items) == 0
+
+    def size(self: Stack) -> int:
+        return len(self.items)
+
+# ---------------------------------------------------------------------
+# Queue[T] — FIFO, klasik "iki-yigin" hilesiyle amortize O(1) (bkz.
+# modul basligi). `inbox`a push edilir; `outbox` bosaldiginda `inbox`in
+# TAMAMI (`.pop()` ile, ters sirada) `outbox`a aktarilir.
+class Queue[T]:
+    inbox: list[T]
+    outbox: list[T]
+
+    def __init__(self: Queue) -> None:
+        self.inbox = []
+        self.outbox = []
+
+    def push(self: Queue, v: T) -> None:
+        inbox: list[T] = self.inbox
+        inbox.append(v)
+        self.inbox = inbox
+
+    def _shift(self: Queue) -> None:
+        outbox: list[T] = self.outbox
+        while len(self.inbox) > 0:
+            outbox.append(self.inbox.pop())
+        self.outbox = outbox
+
+    def pop(self: Queue) -> T:
+        if len(self.outbox) == 0:
+            self._shift()
+        return self.outbox.pop()
+
+    def peek(self: Queue) -> T:
+        if len(self.outbox) == 0:
+            self._shift()
+        return self.outbox[len(self.outbox) - 1]
+
+    def is_empty(self: Queue) -> bool:
+        return len(self.inbox) == 0 and len(self.outbox) == 0
+
+    def size(self: Queue) -> int:
+        return len(self.inbox) + len(self.outbox)
+
+# ---------------------------------------------------------------------
+# Deque[T] — her iki ucta da amortize O(1), Queue'nun IKI-YONLU hali:
+# `front`/`back` iki liste, biri bosaldiginda DIGERININ TAMAMI (ters
+# sirada) aktarilir.
+class Deque[T]:
+    front: list[T]
+    back: list[T]
+
+    def __init__(self: Deque) -> None:
+        self.front = []
+        self.back = []
+
+    def push_front(self: Deque, v: T) -> None:
+        front: list[T] = self.front
+        front.append(v)
+        self.front = front
+
+    def push_back(self: Deque, v: T) -> None:
+        back: list[T] = self.back
+        back.append(v)
+        self.back = back
+
+    def _drain_back_to_front(self: Deque) -> None:
+        front: list[T] = self.front
+        while len(self.back) > 0:
+            front.append(self.back.pop())
+        self.front = front
+
+    def _drain_front_to_back(self: Deque) -> None:
+        back: list[T] = self.back
+        while len(self.front) > 0:
+            back.append(self.front.pop())
+        self.back = back
+
+    def pop_front(self: Deque) -> T:
+        if len(self.front) == 0:
+            self._drain_back_to_front()
+        return self.front.pop()
+
+    def pop_back(self: Deque) -> T:
+        if len(self.back) == 0:
+            self._drain_front_to_back()
+        return self.back.pop()
+
+    def peek_front(self: Deque) -> T:
+        if len(self.front) == 0:
+            self._drain_back_to_front()
+        return self.front[len(self.front) - 1]
+
+    def peek_back(self: Deque) -> T:
+        if len(self.back) == 0:
+            self._drain_front_to_back()
+        return self.back[len(self.back) - 1]
+
+    def is_empty(self: Deque) -> bool:
+        return len(self.front) == 0 and len(self.back) == 0
+
+    def size(self: Deque) -> int:
+        return len(self.front) + len(self.back)
+
+# ---------------------------------------------------------------------
+# Set[T] — dogrusal tarama (bkz. modul basligi), HERHANGI bir T icin
+# dogru (siniflar DAHIL).
+class Set[T]:
+    items: list[T]
+
+    def __init__(self: Set) -> None:
+        self.items = []
+
+    def contains(self: Set, v: T) -> bool:
+        i: int = 0
+        while i < len(self.items):
+            if self.items[i] == v:
+                return True
+            i = i + 1
+        return False
+
+    def add(self: Set, v: T) -> None:
+        if self.contains(v):
+            return
+        items: list[T] = self.items
+        items.append(v)
+        self.items = items
+
+    def remove(self: Set, v: T) -> bool:
+        items: list[T] = self.items
+        new_items: list[T] = []
+        found: bool = False
+        i: int = 0
+        while i < len(items):
+            if not found and items[i] == v:
+                found = True
+            else:
+                new_items.append(items[i])
+            i = i + 1
+        self.items = new_items
+        return found
+
+    def size(self: Set) -> int:
+        return len(self.items)
+
+    def is_empty(self: Set) -> bool:
+        return len(self.items) == 0
+
+    def to_list(self: Set) -> list[T]:
+        return self.items
+
+# ---------------------------------------------------------------------
+# Counter[T] — paralel anahtar/sayac listeleri, dogrusal tarama.
+class Counter[T]:
+    _keys: list[T]
+    _counts: list[int]
+
+    def __init__(self: Counter) -> None:
+        self._keys = []
+        self._counts = []
+
+    def _index_of(self: Counter, v: T) -> int:
+        i: int = 0
+        while i < len(self._keys):
+            if self._keys[i] == v:
+                return i
+            i = i + 1
+        return -1
+
+    def add(self: Counter, v: T) -> None:
+        idx: int = self._index_of(v)
+        if idx < 0:
+            keys: list[T] = self._keys
+            counts: list[int] = self._counts
+            keys.append(v)
+            counts.append(1)
+            self._keys = keys
+            self._counts = counts
+        else:
+            self._counts[idx] = self._counts[idx] + 1
+
+    def count(self: Counter, v: T) -> int:
+        idx: int = self._index_of(v)
+        if idx < 0:
+            return 0
+        return self._counts[idx]
+
+    def total(self: Counter) -> int:
+        t: int = 0
+        i: int = 0
+        while i < len(self._counts):
+            t = t + self._counts[i]
+            i = i + 1
+        return t
+
+    def size(self: Counter) -> int:
+        return len(self._keys)
+
+# ---------------------------------------------------------------------
+# OrderedDict[K, V] — paralel anahtar/deger listeleri, ekleme SIRASINI
+# dogal olarak korur (dogrusal tarama, `dict`in K/V kisitindan BAGIMSIZ
+# herhangi bir K/V icin calisir).
+class OrderedDict[K, V]:
+    _keys: list[K]
+    _values: list[V]
+
+    def __init__(self: OrderedDict) -> None:
+        self._keys = []
+        self._values = []
+
+    def _index_of(self: OrderedDict, k: K) -> int:
+        i: int = 0
+        while i < len(self._keys):
+            if self._keys[i] == k:
+                return i
+            i = i + 1
+        return -1
+
+    def contains(self: OrderedDict, k: K) -> bool:
+        return self._index_of(k) >= 0
+
+    def set(self: OrderedDict, k: K, v: V) -> None:
+        idx: int = self._index_of(k)
+        if idx >= 0:
+            self._values[idx] = v
+        else:
+            keys: list[K] = self._keys
+            values: list[V] = self._values
+            keys.append(k)
+            values.append(v)
+            self._keys = keys
+            self._values = values
+
+    def get(self: OrderedDict, k: K) -> V:
+        idx: int = self._index_of(k)
+        if idx < 0:
+            raise KeyError("OrderedDict'te anahtar yok")
+        return self._values[idx]
+
+    def remove(self: OrderedDict, k: K) -> bool:
+        idx: int = self._index_of(k)
+        if idx < 0:
+            return False
+        keys: list[K] = self._keys
+        values: list[V] = self._values
+        new_keys: list[K] = []
+        new_values: list[V] = []
+        i: int = 0
+        while i < len(keys):
+            if i != idx:
+                new_keys.append(keys[i])
+                new_values.append(values[i])
+            i = i + 1
+        self._keys = new_keys
+        self._values = new_values
+        return True
+
+    def keys_list(self: OrderedDict) -> list[K]:
+        return self._keys
+
+    def values_list(self: OrderedDict) -> list[V]:
+        return self._values
+
+    def size(self: OrderedDict) -> int:
+        return len(self._keys)
+
+# ---------------------------------------------------------------------
+# LRUCache[K, V] — OrderedDict'in AYNI dogrusal-tarama deseni + sabit
+# `capacity`. `get` erisileni SONA (en-son-kullanilan) tasir; `put`
+# kapasiteyi ASARSA en ESKIYI (BASTAKI) atar.
+class LRUCache[K, V]:
+    _keys: list[K]
+    _values: list[V]
+    capacity: int
+
+    def __init__(self: LRUCache, capacity: int) -> None:
+        self._keys = []
+        self._values = []
+        self.capacity = capacity
+
+    def _index_of(self: LRUCache, k: K) -> int:
+        i: int = 0
+        while i < len(self._keys):
+            if self._keys[i] == k:
+                return i
+            i = i + 1
+        return -1
+
+    def contains(self: LRUCache, k: K) -> bool:
+        return self._index_of(k) >= 0
+
+    def _move_to_end(self: LRUCache, idx: int) -> None:
+        keys: list[K] = self._keys
+        values: list[V] = self._values
+        k: K = keys[idx]
+        v: V = values[idx]
+        new_keys: list[K] = []
+        new_values: list[V] = []
+        i: int = 0
+        while i < len(keys):
+            if i != idx:
+                new_keys.append(keys[i])
+                new_values.append(values[i])
+            i = i + 1
+        new_keys.append(k)
+        new_values.append(v)
+        self._keys = new_keys
+        self._values = new_values
+
+    def get(self: LRUCache, k: K) -> V:
+        idx: int = self._index_of(k)
+        if idx < 0:
+            raise KeyError("LRUCache'te anahtar yok")
+        v: V = self._values[idx]
+        self._move_to_end(self._index_of(k))
+        return v
+
+    def put(self: LRUCache, k: K, v: V) -> None:
+        idx: int = self._index_of(k)
+        if idx >= 0:
+            self._values[idx] = v
+            self._move_to_end(idx)
+            return
+        keys: list[K] = self._keys
+        values: list[V] = self._values
+        keys.append(k)
+        values.append(v)
+        self._keys = keys
+        self._values = values
+        if len(self._keys) > self.capacity:
+            self._evict_oldest()
+
+    def _evict_oldest(self: LRUCache) -> None:
+        keys: list[K] = self._keys
+        values: list[V] = self._values
+        new_keys: list[K] = []
+        new_values: list[V] = []
+        i: int = 1
+        while i < len(keys):
+            new_keys.append(keys[i])
+            new_values.append(values[i])
+            i = i + 1
+        self._keys = new_keys
+        self._values = new_values
+
+    def size(self: LRUCache) -> int:
+        return len(self._keys)
+
+# ---------------------------------------------------------------------
+# Heap[T] — ikili min-heap (index aritmetigi), T yalnizca `<` destekleyen
+# tiplerle (int/float/str) somutlastirilabilir (bkz. modul basligi —
+# EK bir kisit kodu YOK, dilin operator tip kontrolu yeterli).
+class Heap[T]:
+    _items: list[T]
+
+    def __init__(self: Heap) -> None:
+        self._items = []
+
+    def size(self: Heap) -> int:
+        return len(self._items)
+
+    def is_empty(self: Heap) -> bool:
+        return len(self._items) == 0
+
+    def peek_min(self: Heap) -> T:
+        return self._items[0]
+
+    def _swap(self: Heap, i: int, j: int) -> None:
+        tmp: T = self._items[i]
+        self._items[i] = self._items[j]
+        self._items[j] = tmp
+
+    def _sift_up(self: Heap, idx: int) -> None:
+        i: int = idx
+        active: bool = True
+        while i > 0 and active:
+            parent: int = (i - 1) // 2
+            if self._items[i] < self._items[parent]:
+                self._swap(i, parent)
+                i = parent
+            else:
+                active = False
+
+    # Bulundu (bkz. nox-teknik-spesifikasyon.md §"and/or kısa devre
+    # yapmaz"): `left < n and self._items[left] < ...` YAZILAMAZ —
+    # Nox'ta `and` HER İKİ operandı da HER ZAMAN değerlendirir, bu yüzden
+    # `left >= n` OLSA BİLE `self._items[left]` DEĞERLENDİRİLİR (sınır
+    # dışı bir okuma — GERÇEK bir `IndexError`la tekrar-üretilip
+    # DOĞRULANDI). Bunun yerine İÇ İÇE `if`ler kullanılır (dıştaki sınır
+    # kontrolü, İÇTEKİ karşılaştırma yalnızca sınır GEÇERLİYSE çalışır).
+    def _sift_down(self: Heap, idx: int) -> None:
+        i: int = idx
+        n: int = len(self._items)
+        active: bool = True
+        while active:
+            left: int = i * 2 + 1
+            right: int = i * 2 + 2
+            smallest: int = i
+            if left < n:
+                if self._items[left] < self._items[smallest]:
+                    smallest = left
+            if right < n:
+                if self._items[right] < self._items[smallest]:
+                    smallest = right
+            if smallest != i:
+                self._swap(i, smallest)
+                i = smallest
+            else:
+                active = False
+
+    def push(self: Heap, v: T) -> None:
+        items: list[T] = self._items
+        items.append(v)
+        self._items = items
+        self._sift_up(len(self._items) - 1)
+
+    def pop_min(self: Heap) -> T:
+        n: int = len(self._items)
+        result: T = self._items[0]
+        last: T = self._items[n - 1]
+        self._items[0] = last
+        items: list[T] = self._items
+        items.pop()
+        self._items = items
+        if len(self._items) > 0:
+            self._sift_down(0)
+        return result
+
+# ---------------------------------------------------------------------
+# PriorityQueue[T] — Heap'ten BAGIMSIZ, ayri bir `priority: int` alanina
+# gore siralanir — T KEYFI olabilir (siniflar DAHIL) cunku T uzerinde
+# HIC karsilastirma yapilmaz.
+class PriorityQueue[T]:
+    _priorities: list[int]
+    _values: list[T]
+
+    def __init__(self: PriorityQueue) -> None:
+        self._priorities = []
+        self._values = []
+
+    def size(self: PriorityQueue) -> int:
+        return len(self._values)
+
+    def is_empty(self: PriorityQueue) -> bool:
+        return len(self._values) == 0
+
+    def peek_min(self: PriorityQueue) -> T:
+        return self._values[0]
+
+    def peek_min_priority(self: PriorityQueue) -> int:
+        return self._priorities[0]
+
+    def _swap(self: PriorityQueue, i: int, j: int) -> None:
+        tp: int = self._priorities[i]
+        tv: T = self._values[i]
+        self._priorities[i] = self._priorities[j]
+        self._values[i] = self._values[j]
+        self._priorities[j] = tp
+        self._values[j] = tv
+
+    def _sift_up(self: PriorityQueue, idx: int) -> None:
+        i: int = idx
+        active: bool = True
+        while i > 0 and active:
+            parent: int = (i - 1) // 2
+            if self._priorities[i] < self._priorities[parent]:
+                self._swap(i, parent)
+                i = parent
+            else:
+                active = False
+
+    # Bkz. `Heap._sift_down`nin AYNI belge notu — Nox'ta `and` kısa devre
+    # YAPMADIĞINDAN İÇ İÇE `if` kullanılır (aksi halde sınır dışı okuma).
+    def _sift_down(self: PriorityQueue, idx: int) -> None:
+        i: int = idx
+        n: int = len(self._values)
+        active: bool = True
+        while active:
+            left: int = i * 2 + 1
+            right: int = i * 2 + 2
+            smallest: int = i
+            if left < n:
+                if self._priorities[left] < self._priorities[smallest]:
+                    smallest = left
+            if right < n:
+                if self._priorities[right] < self._priorities[smallest]:
+                    smallest = right
+            if smallest != i:
+                self._swap(i, smallest)
+                i = smallest
+            else:
+                active = False
+
+    def push(self: PriorityQueue, priority: int, v: T) -> None:
+        priorities: list[int] = self._priorities
+        values: list[T] = self._values
+        priorities.append(priority)
+        values.append(v)
+        self._priorities = priorities
+        self._values = values
+        self._sift_up(len(self._values) - 1)
+
+    def pop_min(self: PriorityQueue) -> T:
+        n: int = len(self._values)
+        result: T = self._values[0]
+        last_p: int = self._priorities[n - 1]
+        last_v: T = self._values[n - 1]
+        self._priorities[0] = last_p
+        self._values[0] = last_v
+        priorities: list[int] = self._priorities
+        values: list[T] = self._values
+        priorities.pop()
+        values.pop()
+        self._priorities = priorities
+        self._values = values
+        if len(self._values) > 0:
+            self._sift_down(0)
+        return result

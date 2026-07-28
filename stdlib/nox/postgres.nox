@@ -1,0 +1,135 @@
+# nox.postgres — libpq'ya `std.DynLib` (dlopen/dlsym, ÇALIŞMA ZAMANINDA,
+# TEMBEL) İLE bağlanan bir PostgreSQL sürücüsü — `nox.sqlite`nin BİREBİR
+# AYNI şablonu (bkz. proje belleği "4 yeni stdlib modülü" planı): TÜM
+# postgres erişimi `runtime/stdlib_shims/postgres.zig`nin `nox_pg_*_raw`
+# sarmalayıcılarından geçer, bu dosyada `from "pq"` İÇEREN TEK BİR `extern
+# def` bile YOK — `libpq` yalnızca GERÇEKTEN `nox.postgres.open()`
+# ÇAĞRILDIĞINDA yüklenir, KURULU DEĞİLSE (nadir ama olası) temiz bir
+# `PostgresError` fırlatılır (ÇÖKME YOK), `libpq` KULLANMAYAN HİÇBİR Nox
+# programı ETKİLENMEZ.
+#
+# `open(conninfo)`: `PQconnectdb` HEM keyword-value (`"host=localhost
+# user=postgres dbname=mydb"`) HEM URI (`"postgres://user:pass@host:port/
+# db"`) bağlantı dizesini NATİF kabul eder — ham dize DOĞRUDAN iletilir,
+# AYRI bir DSN ayrıştırıcısı YOK.
+#
+# **Bilinçli v1 sınırlaması**: `query`/`execute` parametreli (`$1`/bind)
+# sorgu DESTEKLEMEZ (yalnızca `PQexec`, düz SQL metni) — kullanıcı
+# değerleri KENDİSİ kaçışlamalı/birleştirmelidir (SQL enjeksiyonu
+# RİSKİNE DİKKAT). `last_insert_rowid()` YOK — Postgres'in KENDİ idiyomu
+# `INSERT ... RETURNING id` yazıp sonucu `query()`den OKUMAKTIR.
+
+extern def nox_pg_connect_raw(conninfo: str) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_pg_status_ok_raw(conn: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_pg_errmsg_raw(conn: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_pg_finish_raw(conn: ptr) -> None from "zig-out/lib/noxrt.o"
+extern def nox_pg_exec_raw(conn: ptr, query: str) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_pg_result_ok_raw(res: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_pg_result_errmsg_raw(res: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_pg_ntuples_raw(res: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_pg_nfields_raw(res: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_pg_fname_raw(res: ptr, col: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_pg_getvalue_raw(res: ptr, row: int, col: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_pg_getisnull_raw(res: ptr, row: int, col: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_pg_changes_raw(res: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_pg_clear_raw(res: ptr) -> None from "zig-out/lib/noxrt.o"
+extern def nox_pg_is_null_ptr(p: ptr) -> int from "zig-out/lib/noxrt.o"
+
+class PostgresError:
+    def __init__(self: PostgresError, message: str) -> None:
+        self.message = message
+
+# `nox.sqlite`nin `Row`ıyla AYNI şekil — her sütun TEK bir metin
+# değeriyle saklanır (`PQgetvalue` de sqlite'ın `sqlite3_column_text`i
+# GİBİ HER sütun tipini metin olarak döner).
+class Row:
+    def __init__(self: Row, values: list[str], is_null_flags: list[bool], names: list[str]) -> None:
+        self.values = values
+        self.is_null_flags = is_null_flags
+        self.names = names
+
+    def get_str(self: Row, i: int) -> str:
+        return self.values[i]
+
+    def get_int(self: Row, i: int) -> int:
+        return int(self.values[i])
+
+    def get_float(self: Row, i: int) -> float:
+        return float(self.values[i])
+
+    def is_null(self: Row, i: int) -> bool:
+        return self.is_null_flags[i]
+
+    def column_count(self: Row) -> int:
+        return len(self.values)
+
+    def column_name(self: Row, i: int) -> str:
+        return self.names[i]
+
+def _read_rows(res: ptr) -> list[Row]:
+    nrows: int = nox_pg_ntuples_raw(res)
+    ncols: int = nox_pg_nfields_raw(res)
+    names: list[str] = []
+    c: int = 0
+    while c < ncols:
+        names.append(nox_pg_fname_raw(res, c))
+        c = c + 1
+
+    rows: list[Row] = []
+    r: int = 0
+    while r < nrows:
+        values: list[str] = []
+        is_null_flags: list[bool] = []
+        c2: int = 0
+        while c2 < ncols:
+            is_null: bool = nox_pg_getisnull_raw(res, r, c2) != 0
+            value: str = ""
+            if not is_null:
+                value = nox_pg_getvalue_raw(res, r, c2)
+            values.append(value)
+            is_null_flags.append(is_null)
+            c2 = c2 + 1
+        rows.append(Row(values, is_null_flags, names))
+        r = r + 1
+    return rows
+
+class Connection:
+    def __init__(self: Connection, handle: ptr) -> None:
+        self.handle = handle
+
+    # Etkilenen satır sayısını döner (`INSERT`/`UPDATE`/`DELETE`/DDL İçin
+    # `0`) — Postgres'te bu bir SONUÇ özelliğidir (sqlite'ın `sqlite3_
+    # changes(db)`si GİBİ AYRI bir bağlantı-durumu DEĞİL), bu YÜZDEN
+    # `execute`in KENDİSİ döner, ayrı bir `changes()` metoduna GEREK YOK.
+    def execute(self: Connection, sql: str) -> int:
+        res: ptr = nox_pg_exec_raw(self.handle, sql)
+        if nox_pg_result_ok_raw(res) == 0:
+            msg: str = nox_pg_result_errmsg_raw(res)
+            nox_pg_clear_raw(res)
+            raise PostgresError("deyim basarisiz: " + msg)
+        n: int = nox_pg_changes_raw(res)
+        nox_pg_clear_raw(res)
+        return n
+
+    def query(self: Connection, sql: str) -> list[Row]:
+        res: ptr = nox_pg_exec_raw(self.handle, sql)
+        if nox_pg_result_ok_raw(res) == 0:
+            msg: str = nox_pg_result_errmsg_raw(res)
+            nox_pg_clear_raw(res)
+            raise PostgresError("sorgu basarisiz: " + msg)
+        rows: list[Row] = _read_rows(res)
+        nox_pg_clear_raw(res)
+        return rows
+
+    def close(self: Connection) -> None:
+        nox_pg_finish_raw(self.handle)
+
+def open(conninfo: str) -> Connection:
+    handle: ptr = nox_pg_connect_raw(conninfo)
+    if nox_pg_is_null_ptr(handle) != 0:
+        raise PostgresError("baglanti kurulamadi (libpq yuklenemedi olabilir): " + conninfo)
+    if nox_pg_status_ok_raw(handle) == 0:
+        msg: str = nox_pg_errmsg_raw(handle)
+        nox_pg_finish_raw(handle)
+        raise PostgresError("baglanti basarisiz: " + msg)
+    return Connection(handle)

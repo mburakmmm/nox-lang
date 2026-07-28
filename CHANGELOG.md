@@ -14,6 +14,45 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.11.0]
+
+### Eklendi
+- **`nox.collections`**: `Stack[T]`/`Queue[T]`/`Deque[T]`/`Set[T]`/
+  `Counter[T]`/`OrderedDict[K,V]`/`LRUCache[K,V]`/`Heap[T]`/
+  `PriorityQueue[T]` — tamamen saf Nox, arite-genel `class Foo[T, ...]:`
+  generic sınıfları üzerine (`Pair[K,V]` tarzı çok-parametreli generic
+  sınıfların İLK gerçek kullanımı — bu SIRADA `checker.zig`/`codegen_qbe/
+  registration.zig`nin `.generic` tip ifadesi çözümlemesinde `from X
+  import Y` İLE getirilen generic sınıflar İçin eksik bir `from_imports`
+  geri düşüşü bulunup İKİSİ de düzeltildi).
+- **Yeni derleyici ilkeli: `list[T].pop()`** — son elemanı kaldırıp döner
+  (boş listede `IndexError`). `.append`in AKSİNE alıcı keyfi bir ifade
+  olabilir (`self.items.pop()` doğrudan geçerli).
+- **`nox.url`**: `URL.parse`/`percent_encode`/`percent_decode`/
+  `query_encode`/`query_decode`/`join` — `nox.strings`e İKİ küçük yeni
+  ilkel eklendi (`char_from_byte`, `byte_len`) percent-decode'un çok-
+  baytlı UTF-8'i doğru işlemesi İçin.
+- **`nox.process`**: `Command`/`Output` — fiber-uyumlu (zamanlayıcıyı
+  KİLİTLEMEYEN) alt-süreç çalıştırma (`std.process.run` üzerine,
+  `nox.http`nin İSTEMCİSİYLE AYNI arka-plan-iş-parçacığı+self-pipe
+  köprüleme deseni).
+- **`nox.postgres`/`nox.mysql`**: `libpq`/`libmysqlclient`e çalışma
+  zamanında tembel bağlanan (statik bağımlılık KATMAYAN, `nox.sqlite`nin
+  AYNI deseni) veritabanı sürücüleri — Docker'daki gerçek postgres:16/
+  mysql:8 sunucularına karşı TAM CRUD (INSERT/SELECT/tip-NULL/hatalı-
+  sorgu/hatalı-bağlantı) doğrulandı.
+
+### Düzeltildi
+- **GERÇEK bir bellek sızıntısı**: geçici (isimsiz, bir değişkene
+  bağlanmamış) bir sınıf örneği/liste üzerinde ÇAĞRILAN bir metod/işlem
+  İSTİSNA fırlatırsa (ör. `Command("yok").run()`), alıcı/argümanların
+  serbest bırakılması `emitExceptionCheck`nin kaçış dalında HİÇ
+  ÇALIŞMIYORDU (kontrol HER ZAMAN serbest-bırakma kodundan ÖNCE
+  atlıyordu) — `genMethodCall`/`genListPop` düzeltildi; YAPISAL OLARAK
+  AYNI hata (`genCall`nin serbest fonksiyon/dolaylı-closure çağrı
+  yolları, `genConstruct`, `genIndex`/`genStrIndex`, İKİ `stmt.zig`
+  sitesi) HENÜZ giderilmedi, AYRI bir görev olarak kaydedildi.
+
 ## [1.10.0]
 
 ### Eklendi

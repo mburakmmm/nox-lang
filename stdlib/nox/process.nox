@@ -1,0 +1,89 @@
+# nox.process — alt süreç (subprocess) çalıştırma. `std.process.run`
+# (Zig 0.16'nın `std.Io`-parametreli API'si, `noxc`nin KENDİSİNİN qbe/cc
+# çağırmak İçin KULLANDIĞI AYNI ilkel) üzerine kurulu — bkz. `runtime/
+# stdlib_shims/process.zig`nin belge notu.
+#
+# import nox.process
+# from nox.process import Command
+#
+# out: Output = Command("git").arg("status").run()
+# if out.success():
+#     print(out.stdout)
+#
+# **Bilinçli v1 kapsamı**: `Command.run()` TEK, bloklayan (ama fiber-
+# uyumlu) bir çağrıdır — canlı bir `Process` tutamacı/`kill()`/stdin
+# STREAMING YOK (`set_timeout` DIŞINDA). Ortam değişkenleri İçin AYRI
+# bir `.env()` metodu YOK — çocuk süreç ebeveynin ortamını zaten MİRAS
+# ALIR, bu yüzden `nox.os.set_var(...)` `run()`DAN ÖNCE çağrılması
+# YETERLİDİR. Alt sürecin stdout/stderr'i GÖMÜLÜ bir NUL bayt İçerirse
+# (Nox string'leri NUL-sonlandırmalı OLDUĞUNDAN temsil EDİLEMEZ)
+# `ProcessError` fırlatılır — TAMAMEN ikili çıktı üreten süreçler v1
+# kapsamı DIŞI.
+
+extern def nox_process_run_raw(program: str, args: list[str], cwd: str, timeout_ms: int) -> ptr from "zig-out/lib/noxrt.o" with_rt
+extern def nox_process_output_ok_raw(h: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_process_output_status_raw(h: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_process_output_stdout_raw(h: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_process_output_stderr_raw(h: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_process_output_free_raw(h: ptr) -> None from "zig-out/lib/noxrt.o"
+
+class ProcessError:
+    def __init__(self: ProcessError, message: str) -> None:
+        self.message = message
+
+class Output:
+    def __init__(self: Output, status: int, out: str, err: str) -> None:
+        self.status = status
+        self.stdout = out
+        self.stderr = err
+
+    def success(self: Output) -> bool:
+        return self.status == 0
+
+class Command:
+    program: str
+    args: list[str]
+    cwd_path: str
+    timeout_ms: int
+
+    def __init__(self: Command, program: str) -> None:
+        self.program = program
+        self.args = []
+        self.cwd_path = ""
+        self.timeout_ms = 0
+
+    def arg(self: Command, v: str) -> Command:
+        args: list[str] = self.args
+        args.append(v)
+        self.args = args
+        return self
+
+    def arg_list(self: Command, xs: list[str]) -> Command:
+        args: list[str] = self.args
+        i: int = 0
+        while i < len(xs):
+            args.append(xs[i])
+            i = i + 1
+        self.args = args
+        return self
+
+    # Bos bırakılırsa (varsayılan) ebeveynin ÇALIŞMA DİZİNİ miras alınır.
+    def set_cwd(self: Command, path: str) -> Command:
+        self.cwd_path = path
+        return self
+
+    # `0` (varsayılan) = zaman aşımı YOK.
+    def set_timeout(self: Command, ms: int) -> Command:
+        self.timeout_ms = ms
+        return self
+
+    def run(self: Command) -> Output:
+        h: ptr = nox_process_run_raw(self.program, self.args, self.cwd_path, self.timeout_ms)
+        if nox_process_output_ok_raw(h) == 0:
+            nox_process_output_free_raw(h)
+            raise ProcessError("surec calistirilamadi (bulunamadi/NUL-bayt-icerikli/zaman-asimi): " + self.program)
+        status: int = nox_process_output_status_raw(h)
+        out: str = nox_process_output_stdout_raw(h)
+        err: str = nox_process_output_stderr_raw(h)
+        nox_process_output_free_raw(h)
+        return Output(status, out, err)

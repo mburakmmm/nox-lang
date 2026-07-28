@@ -69,18 +69,24 @@ print(c.value)
   `nox.crypto` (SHA-256/1/512, HMAC, zaman-sabit karşılaştırma, güvenli
   rastgelelik, VE argon2id/bcrypt/scrypt parola hash'leme — hepsi Zig'in
   KENDİ `std.crypto`si, harici bağımlılık YOK), `nox.regex`, `nox.test`,
-  `nox.thread`, `nox.sqlite` — `libsqlite3`e çalışma zamanında tembel
-  bağlanan, statik bağımlılık KATMAYAN bir SQLite sürücüsü — `nox.uuid`
-  (UUID v4 üretimi/doğrulaması), `nox.router` — `nox.http.serve`in
-  ham `handle` geri çağrısı üzerine saf Nox'ta yazılmış path parametreli
-  yol yönlendirme + before/after ara katman katmanı (üst-düzey `def`
+  `nox.thread`, `nox.sqlite`/`nox.postgres`/`nox.mysql` — `libsqlite3`/
+  `libpq`/`libmysqlclient`e çalışma zamanında tembel bağlanan, statik
+  bağımlılık KATMAYAN veritabanı sürücüleri — `nox.uuid` (UUID v4
+  üretimi/doğrulaması), `nox.router` — `nox.http.serve`in ham `handle`
+  geri çağrısı üzerine saf Nox'ta yazılmış path parametreli yol
+  yönlendirme + before/after ara katman katmanı (üst-düzey `def`
   fonksiyonlarının artık BİRİNCİ-SINIF bir değer olarak `list`lerde/sınıf
   alanlarında saklanabilmesi SAYESİNDE mümkün oldu), `nox.validate` —
   bir HTTP istek gövdesi gibi ham JSON metnini basit bir alan-kuralları
-  şemasına (isim/tip/zorunlu) karşı doğrulayan bir katman, ve `nox.template`
+  şemasına (isim/tip/zorunlu) karşı doğrulayan bir katman, `nox.template`
   — varsayılan olarak HTML-güvenli (XSS'e karşı otomatik kaçırma) basit
-  bir `{{ isim }}` string-değiştirme şablon motoru) ve Go tarzı
-  merkeziyetsiz (GitHub URL'si ya da doğrudan bir indeks URL'si
+  bir `{{ isim }}` string-değiştirme şablon motoru, `nox.collections` —
+  `Stack`/`Queue`/`Deque`/`Set`/`Counter`/`OrderedDict`/`LRUCache`/
+  `Heap`/`PriorityQueue` (arite-genel `class Foo[T, ...]:` generic
+  sınıfları üzerine), `nox.url` — URL ayrıştırma + percent-encoding +
+  sorgu (query string) kodlama/çözme, VE `nox.process` — fiber-uyumlu
+  (zamanlayıcıyı KİLİTLEMEYEN) alt-süreç (subprocess) çalıştırma) ve Go
+  tarzı merkeziyetsiz (GitHub URL'si ya da doğrudan bir indeks URL'si
   üzerinden, `noxc search`) bir paket sistemi.
 
 Mimari/tasarım kararlarının tam dökümü için

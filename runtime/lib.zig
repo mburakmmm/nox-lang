@@ -28,6 +28,9 @@ pub const crypto_shim = @import("stdlib_shims/crypto.zig");
 pub const regex_shim = @import("stdlib_shims/regex.zig");
 pub const io_shim = @import("stdlib_shims/io.zig");
 pub const sqlite_shim = @import("stdlib_shims/sqlite.zig");
+pub const process_shim = @import("stdlib_shims/process.zig");
+pub const postgres_shim = @import("stdlib_shims/postgres.zig");
+pub const mysql_shim = @import("stdlib_shims/mysql.zig");
 
 // Bu modüllerin yalnızca isim üzerinden yeniden dışa aktarılması, Zig'in
 // tembel (lazy) analiz modelinde `export fn` bildirimlerinin nesne çıktısına
@@ -61,4 +64,7 @@ comptime {
     _ = regex_shim;
     _ = io_shim;
     _ = sqlite_shim;
+    _ = process_shim;
+    _ = postgres_shim;
+    _ = mysql_shim;
 }
