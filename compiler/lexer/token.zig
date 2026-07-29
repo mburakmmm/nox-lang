@@ -63,6 +63,10 @@ pub const TokenKind = enum {
     /// (ne değer ne tip pozisyonunda) kullanılmadığından bu YENİ token
     /// SIFIR çakışma riski taşır.
     pipe, // |
+    /// Faz 1 (bkz. nox-teknik-spesifikasyon.md decorator bölümü): `@isim`
+    /// decorator satırının başlatıcısı. Dilde BAŞKA HİÇBİR yerde
+    /// kullanılmadığından SIFIR çakışma riski taşır.
+    at_sign, // @
 
     // operators
     plus,

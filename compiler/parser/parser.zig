@@ -155,6 +155,7 @@ pub const Parser = struct {
             .kw_def, .kw_async => .{ .func_def = try self.parseFuncDef(null) },
             .kw_extern => try self.parseExternDef(),
             .kw_class => try self.parseClassDef(),
+            .at_sign => try self.parseDecoratedDef(),
             .kw_protocol => try self.parseProtocolDef(),
             .kw_return => try self.parseReturn(),
             .kw_raise => try self.parseRaise(),
@@ -343,6 +344,58 @@ pub const Parser = struct {
         _ = try self.expect(.colon);
         const body = try self.parseBlock();
         return .{ .for_stmt = .{ .var_name = name, .iterable = iterable, .body = body } };
+    }
+
+    /// Faz 1 decorator (bkz. nox-teknik-spesifikasyon.md decorator bölümü):
+    /// `@isim` / `@isim(arg1, arg2, ...)`, HER biri kendi satırında, sıfır-
+    /// veya-daha-fazla. Argümanlar burada HERHANGİ bir ifade olarak
+    /// ayrıştırılır — "yalnızca literal" KISITI BİLEREK checker'a bırakılır
+    /// (`hpy_call`nin AYNI deseni, bkz. `checker.zig`).
+    fn parseDecorators(self: *Parser) ParseError![]ast.Decorator {
+        var decorators = std.ArrayList(ast.Decorator).empty;
+        while (self.check(.at_sign)) {
+            const line = self.cur().line;
+            _ = self.advance(); // '@'
+            const name = (try self.expect(.identifier)).lexeme;
+            var args = std.ArrayList(ast.Expr).empty;
+            if (self.match(.l_paren)) {
+                if (!self.check(.r_paren)) {
+                    try args.append(self.allocator, try self.parseExpr());
+                    while (self.match(.comma)) {
+                        try args.append(self.allocator, try self.parseExpr());
+                    }
+                }
+                _ = try self.expect(.r_paren);
+            }
+            _ = try self.expect(.newline);
+            try decorators.append(self.allocator, .{ .name = name, .args = try args.toOwnedSlice(self.allocator), .line = line });
+        }
+        return decorators.toOwnedSlice(self.allocator);
+    }
+
+    /// `@isim(...)` satırlarının ARDINDAN gelen `def`/`class`e decorator
+    /// listesini İLİŞTİRİR — v1: yalnızca bu ikisi geçerlidir (üst-düzey
+    /// deyim dispatch'i, bkz. `parseStmt`in `.at_sign` dalı). `class`
+    /// decorator'ları PARSE EDİLİR ama checker AŞAMA 1'de reddeder (bkz.
+    /// plan dosyası "kapsam DIŞI").
+    fn parseDecoratedDef(self: *Parser) ParseError!ast.StmtKind {
+        const decorators = try self.parseDecorators();
+        return switch (self.curKind()) {
+            .kw_def, .kw_async => blk: {
+                var fd = try self.parseFuncDef(null);
+                fd.decorators = decorators;
+                break :blk .{ .func_def = fd };
+            },
+            .kw_class => blk: {
+                var kind = try self.parseClassDef();
+                kind.class_def.decorators = decorators;
+                break :blk kind;
+            },
+            else => {
+                self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()) };
+                return error.UnexpectedToken;
+            },
+        };
     }
 
     /// `enclosing_name`: `parseClassDef`/`parseProtocolDef`in KENDİ adını
@@ -1308,4 +1361,69 @@ test "list[int] tipi ve liste literali ayrıştırılır" {
     const decl = module.body[0].kind.var_decl;
     try std.testing.expectEqualStrings("list", decl.type_expr.generic.name);
     try std.testing.expectEqual(@as(usize, 3), decl.value.list_lit.len);
+}
+
+// Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi + metadata-tabanlı
+// metaprogramming"): sözdizimi testleri.
+
+test "decorator: argümansız tek at-isim bir üst-düzey def'e iliştirilir" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const module = try parseSource(arena.allocator(),
+        \\@bare
+        \\def f() -> int:
+        \\    return 1
+        \\
+    );
+    const fd = module.body[0].kind.func_def;
+    try std.testing.expectEqual(@as(usize, 1), fd.decorators.len);
+    try std.testing.expectEqualStrings("bare", fd.decorators[0].name);
+    try std.testing.expectEqual(@as(usize, 0), fd.decorators[0].args.len);
+}
+
+test "decorator: argümanlı at-isim(string) ayrıştırılır" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const module = try parseSource(arena.allocator(),
+        \\@get("/users/:id")
+        \\def show_user() -> int:
+        \\    return 1
+        \\
+    );
+    const fd = module.body[0].kind.func_def;
+    try std.testing.expectEqual(@as(usize, 1), fd.decorators.len);
+    try std.testing.expectEqualStrings("get", fd.decorators[0].name);
+    try std.testing.expectEqual(@as(usize, 1), fd.decorators[0].args.len);
+    try std.testing.expectEqualStrings("/users/:id", fd.decorators[0].args[0].string_lit);
+}
+
+test "decorator: birden fazla at-isim satırı sırayla toplanır" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const module = try parseSource(arena.allocator(),
+        \\@a("1")
+        \\@b("2")
+        \\def f() -> int:
+        \\    return 1
+        \\
+    );
+    const fd = module.body[0].kind.func_def;
+    try std.testing.expectEqual(@as(usize, 2), fd.decorators.len);
+    try std.testing.expectEqualStrings("a", fd.decorators[0].name);
+    try std.testing.expectEqualStrings("b", fd.decorators[1].name);
+}
+
+test "decorator: bir class üzerinde de PARSE edilir (checker aşamasında reddedilir)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const module = try parseSource(arena.allocator(),
+        \\@controller("/x")
+        \\class Foo:
+        \\    def __init__(self: Foo) -> None:
+        \\        pass
+        \\
+    );
+    const cd = module.body[0].kind.class_def;
+    try std.testing.expectEqual(@as(usize, 1), cd.decorators.len);
+    try std.testing.expectEqualStrings("controller", cd.decorators[0].name);
 }

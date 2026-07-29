@@ -227,6 +227,62 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 try self.out.writer.print("    {s} =l call $nox_hpy_call_str(l {s}, l {s}, l {s}, l {s}, l {s})\n", .{ result_temp, RT_PARAM, path_v.text, ext_v.text, func_v.text, arg_v.text });
                 return .{ .text = result_temp, .qtype = .l, .heap = .str };
             }
+            // Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi +
+            // metadata-tabanlı metaprogramming", `checker.zig`deki eşdeğer
+            // not): `stdlib/nox/reflect.nox`nin sardığı 6 SABİT-imzalı
+            // yerleşik — hepsi `decorators.zig`nin `genDecoratorMetadata`
+            // TARAFINDAN KOŞULSUZ üretilen (Zig runtime shim'i OLMAYAN,
+            // TAMAMEN derleyici-emisyonlu QBE fonksiyonu olan) `$__nox_
+            // reflect_decorator_*` sembollerine DOĞRUDAN çağrıya çevrilir.
+            if (std.mem.eql(u8, name, "__nox_reflect_decorator_count")) {
+                if (c.args.len != 0) return error.Unsupported;
+                const result_temp = try self.newTemp();
+                try self.out.writer.print("    {s} =l call $__nox_reflect_decorator_count(l {s})\n", .{ result_temp, RT_PARAM });
+                return .{ .text = result_temp, .qtype = .l };
+            }
+            if (std.mem.eql(u8, name, "__nox_reflect_decorator_target_name") or std.mem.eql(u8, name, "__nox_reflect_decorator_name")) {
+                if (c.args.len != 1) return error.Unsupported;
+                const i_v = try self.genExpr(c.args[0]);
+                const result_temp = try self.newTemp();
+                try self.out.writer.print("    {s} =l call ${s}(l {s}, l {s})\n", .{ result_temp, name, RT_PARAM, i_v.text });
+                return .{ .text = result_temp, .qtype = .l, .heap = .str };
+            }
+            if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg_count")) {
+                if (c.args.len != 1) return error.Unsupported;
+                const i_v = try self.genExpr(c.args[0]);
+                const result_temp = try self.newTemp();
+                try self.out.writer.print("    {s} =l call $__nox_reflect_decorator_arg_count(l {s}, l {s})\n", .{ result_temp, RT_PARAM, i_v.text });
+                return .{ .text = result_temp, .qtype = .l };
+            }
+            if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg")) {
+                if (c.args.len != 2) return error.Unsupported;
+                const i_v = try self.genExpr(c.args[0]);
+                const j_v = try self.genExpr(c.args[1]);
+                const result_temp = try self.newTemp();
+                try self.out.writer.print("    {s} =l call $__nox_reflect_decorator_arg(l {s}, l {s}, l {s})\n", .{ result_temp, RT_PARAM, i_v.text, j_v.text });
+                return .{ .text = result_temp, .qtype = .l, .heap = .str };
+            }
+            if (std.mem.eql(u8, name, "__nox_reflect_decorator_is_handler")) {
+                if (c.args.len != 1) return error.Unsupported;
+                const i_v = try self.genExpr(c.args[0]);
+                const result_temp = try self.newTemp();
+                try self.out.writer.print("    {s} =w call $__nox_reflect_decorator_is_handler(l {s}, l {s})\n", .{ result_temp, RT_PARAM, i_v.text });
+                return .{ .text = result_temp, .qtype = .w };
+            }
+            // `.heap = .closure` — dönüş DEĞERİ normal kullanımda HER ZAMAN
+            // TAZE bir ARC kapanış BLOĞUDUR (`router_from_decorators()`
+            // ÖNCE `__nox_reflect_decorator_is_handler`ı KONTROL ETMELİDİR
+            // — bkz. checker.zig'deki eşdeğer not); eşleşmeyen bir `i` İçin
+            // `decorators.zig`nin `genReflectDecoratorHandler`ı `0` döner
+            // (YANLIŞ kullanımda null-çağrı çökmesi, BEKLENEN sözleşme
+            // İHLALİ — framework KODU BUNU asla tetiklememelidir).
+            if (std.mem.eql(u8, name, "__nox_reflect_decorator_handler")) {
+                if (c.args.len != 1) return error.Unsupported;
+                const i_v = try self.genExpr(c.args[0]);
+                const result_temp = try self.newTemp();
+                try self.out.writer.print("    {s} =l call $__nox_reflect_decorator_handler(l {s}, l {s})\n", .{ result_temp, RT_PARAM, i_v.text });
+                return .{ .text = result_temp, .qtype = .l, .heap = .closure };
+            }
             if (std.mem.eql(u8, name, "wasm_call")) {
                 if (c.args.len != 3) return error.Unsupported;
                 const path_v = try self.genExpr(c.args[0]);

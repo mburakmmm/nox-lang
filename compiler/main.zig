@@ -110,6 +110,7 @@ fn printHelp(is_tr: bool) void {
             \\  run <dosya.nox>       derler + hemen çalıştırır (-- ile argv iletilir)
             \\  test                  CWD altındaki tüm *_test.nox dosyalarını keşfedip çalıştırır
             \\  check <dosya.nox>     yalnızca tip denetimi yapar (codegen/qbe/cc yok, hızlı)
+            \\  expand <dosya.nox>    decorator metadata'sını (isim/argümanlar) yazdırır
             \\  fmt <dosya.nox>       dosyayı standart biçimde yeniden yazar
             \\  init [ad]             yeni bir proje iskeleti oluşturur (nox.json + main.nox)
             \\  fetch                 nox.json'daki bağımlılıkları önbelleğe doldurur
@@ -151,6 +152,7 @@ fn printHelp(is_tr: bool) void {
             \\  run <file.nox>        compile + run immediately (argv after --)
             \\  test                  discover and run all *_test.nox files under the CWD
             \\  check <file.nox>      type-check only (no codegen/qbe/cc, fast feedback)
+            \\  expand <file.nox>     print decorator metadata (name/args) extracted from the file
             \\  fmt <file.nox>        rewrite the file in the standard format
             \\  init [name]           scaffold a new project (nox.json + main.nox)
             \\  fetch                 populate the dependency cache from nox.json
@@ -279,7 +281,7 @@ pub fn main(init: std.process.Init) !void {
     if (init.environ_map.get("NOX_INDEX_URL")) |v| registry_policy.index_url = try a.dupe(u8, v);
     if (init.environ_map.get("NOX_PUBLISH_API_BASE")) |v| registry_policy.publish_api_base = try a.dupe(u8, v);
 
-    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, init, check, version, help, upgrade, install, uninstall, list_installed, legacy };
+    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, init, check, expand, version, help, upgrade, install, uninstall, list_installed, legacy };
     const sub: Subcommand = blk: {
         // Bulundu (kullanıcı geri bildirimi): çıplak `noxc` ÖNCEDEN `.legacy`ye
         // düşüp `cmdBuild`i argümansız çağırıyordu — tek satırlık bir
@@ -301,6 +303,7 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.eql(u8, first, "publish")) break :blk .publish;
         if (std.mem.eql(u8, first, "init")) break :blk .init;
         if (std.mem.eql(u8, first, "check")) break :blk .check;
+        if (std.mem.eql(u8, first, "expand")) break :blk .expand;
         // `-v`/`--dump` ZATEN `build`in AYRINTILI-döküm bayrağı olduğundan
         // (bkz. modül üstü not), sürüm İÇİN `-V` (büyük harf, `-v` İLE
         // ÇAKIŞMAZ) VE `--version`/`version` KULLANILIR — `rustc`/`go`/`node`
@@ -331,6 +334,7 @@ pub fn main(init: std.process.Init) !void {
         .update => try cmdUpdate(io, a, rest, nox_home, fetch_policy),
         .init => try cmdInit(io, a, rest),
         .check => try cmdCheck(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
+        .expand => try cmdExpand(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
         .upgrade => try cmdUpgrade(a, io, rest, resource_dir_override, upgrade_policy, fetch_policy, is_tr),
         .install => try cmdInstall(gpa, io, a, rest, nox_home, resource_dirs, registry_policy, fetch_policy, init.environ_map, is_tr),
         .uninstall => try cmdUninstall(io, a, rest, nox_home),
@@ -1494,6 +1498,64 @@ fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
     printOk("tip hatasi yok: {s}\n", .{path_arg});
 }
 
+/// `noxc expand <dosya.nox>` — Faz 1 decorator (bkz. plan dosyası
+/// "Decorator sözdizimi + metadata-tabanlı metaprogramming" §6): derleyicinin
+/// decorator'lardan ÇIKARDIĞI metadata'yı insan-okunur biçimde YAZDIRIR.
+/// Metadata-only tasarım GEREĞİ GERÇEK bir kod dönüşümü YOKTUR — bu YÜZDEN
+/// "üretilen kod" GÖSTERİLMEZ, yalnızca `checker.zig`nin `registerDecorators`
+/// ının topladığı `decorated_functions` listesi (`cmdCheck` İLE AYNI
+/// derleme adımlarından SONRA) DÖKÜLÜR. Kullanıcının decorator'larının
+/// DOĞRU ayrıştırıldığını/geçerli argümanlar TAŞIDIĞINI DOĞRULAMASI İçİndir.
+fn cmdExpand(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy) !void {
+    const path_arg = if (args.len > 0) args[0] else {
+        std.debug.print("kullanim: noxc expand <dosya.nox>\n", .{});
+        std.process.exit(1);
+    };
+
+    const source = try std.Io.Dir.cwd().readFileAlloc(io, path_arg, gpa, .limited(1024 * 1024));
+    defer gpa.free(source);
+
+    const tokens = try lexer.tokenize(a, source);
+    const user_module = try parser.parseModule(a, tokens);
+    const module = try resolveImportsForBuild(io, a, user_module, path_arg, nox_home, resource_dirs, fetch_policy);
+
+    var checker_state = checker.Checker.init(a);
+    checker_state.checkModule(module) catch |e| {
+        printErr("tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
+        std.process.exit(1);
+    };
+    if (checker_state.diagnostics.items.len > 0) {
+        for (checker_state.diagnostics.items) |d| {
+            printErr("tip hatasi ({t}): {s}\n", .{ d.code, d.message });
+        }
+        std.process.exit(1);
+    }
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
+    const w = &stdout_writer.interface;
+    const decorated = checker_state.decorated_functions.items;
+    if (decorated.len == 0) {
+        try w.print("decorator bulunamadi: {s}\n", .{path_arg});
+    } else {
+        try w.print("{d} decorator bulundu:\n", .{decorated.len});
+        for (decorated) |d| {
+            try w.print("  @{s}(", .{d.decorator_name});
+            for (d.args, 0..) |arg, i| {
+                if (i > 0) try w.writeAll(", ");
+                try w.print("\"{s}\"", .{arg});
+            }
+            try w.print(") -> {s}", .{d.func_name});
+            if (d.is_handler_shaped) {
+                try w.writeAll("  [handler: (Context) -> HttpResponse]\n");
+            } else {
+                try w.writeAll("\n");
+            }
+        }
+    }
+    try w.flush();
+}
+
 /// Tek bir `.nox` dosyasını uçtan uca derler (lex→parse→import çözümü→tip
 /// denetimi→[isteğe bağlı döküm]→codegen→qbe→cc) ve üretilen binary'nin
 /// yolunu döner. Hata durumlarında (mevcut davranışla BİREBİR aynı mesaj/
@@ -1613,7 +1675,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // codegen.zig'in modül üstü notu (TEK dosya, stdlib-merge yanlış-atıf
     // sınırlaması bilinçli olarak KABUL EDİLDİ).
     const debug_source_path: ?[]const u8 = if (debug_info) path_arg else null;
-    const ir = codegen.generateModule(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases) catch |err| switch (err) {
+    const ir = codegen.generateModule(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items) catch |err| switch (err) {
         error.Unsupported => {
             std.debug.print(
                 "codegen: bu program şu an desteklenmeyen bir yapı içeriyor " ++

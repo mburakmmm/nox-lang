@@ -203,6 +203,27 @@ pub fn emitStringLiteral(self: *Codegen, s: []const u8) CodegenError!Value {
     return .{ .text = addr, .qtype = .l, .heap = .str };
 }
 
+/// `emitStringLiteral`nin STATİK-BAĞLAM kardeşi (Faz 1 decorator, bkz.
+/// `decorators.zig`nin metadata tablosu): bir ÇALIŞMA-ZAMANI `add` komutu
+/// üretmek YERİNE (bir `data $__nox_decorators` bloğunun İÇİNDE
+/// kullanılacak SABİT bir sembol İFADESİ gerektiğinden) DOĞRUDAN
+/// `"$strN+16"` biçiminde bir dize döner — QBE'nin data initializer'
+/// larının `$sym + SAYI` sözdizimini DESTEKLEDİĞİ elle doğrulandı.
+pub fn internPinnedStringConst(self: *Codegen, s: []const u8) CodegenError![]const u8 {
+    const sym = try std.fmt.allocPrint(self.allocator, "$str{d}", .{self.string_counter});
+    self.string_counter += 1;
+    const escaped = try escapeForQbeString(self.allocator, s);
+    var is_ascii = true;
+    for (s) |b| {
+        if (b >= 0x80) {
+            is_ascii = false;
+            break;
+        }
+    }
+    try self.string_data.append(self.allocator, .{ .symbol = sym, .escaped = escaped, .byte_len = s.len, .is_ascii = is_ascii });
+    return std.fmt.allocPrint(self.allocator, "{s}+{d}", .{ sym, ARC_HEADER_SIZE + STR_HEADER_SIZE });
+}
+
 /// Faz U.4.5 (bkz. `checker.zig`nin `checkExpr`'in `.identifier` dalı VE
 /// `functions_used_as_value`in belge notu): `genExpr`nin `.identifier`
 /// dalının, `self.vars`de BULUNAMAYAN bir isim İçin YEDEK inşası — üst-

@@ -456,6 +456,10 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
                 try tokens.append(allocator, mkToken(.pipe, "|", line, col, i));
                 i += 1;
             },
+            '@' => {
+                try tokens.append(allocator, mkToken(.at_sign, "@", line, col, i));
+                i += 1;
+            },
             '=' => {
                 if (peek(source, i + 1) == '=') {
                     try tokens.append(allocator, mkToken(.eq_eq, "==", line, col, i));

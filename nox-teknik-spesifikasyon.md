@@ -13613,6 +13613,136 @@ YALNIZCA `str` argüman/dönüş taşır (`loads()`in dönüşü BİR `str` İSE
 `str` döner). Genel "HERHANGİ bir HPy değerini Nox değerine çevir"
 ihtiyacı, GEREKTİĞİNDE ayrı bir görev olarak ele alınabilir.
 
+## 3.79 Decorator sözdizimi + metadata-tabanlı metaprogramming (Faz 1: üst-düzey fonksiyonlar)
+
+Kullanıcı, Nox üzerinde ExpressJS/NestJS-tarzı bir API/microservice web
+framework'ü geliştirmek istedi — bunun İçİN decorator (`@get("/:id")`
+gibi) sözdizimine İHTİYAÇ duyuldu. Daha önceki bir ChatGPT analizinin
+önerdiği "decorator+metaprogramming ekle, SONRA dil yüzeyini dondurup
+stabilizasyona geç" planının, kullanıcının BİLİNÇLİ SEÇİMİYLE, sırası
+bu şekilde belirlendi.
+
+**Tasarım İLKESİ:** Rust procedural macro/Lisp macro seviyesinde
+SINIRSIZ bir runtime reflection/AST-dönüştürme sistemi DEĞİL —
+decorator'lar **yapılandırılmış, derleme-zamanı METADATA**dır.
+Derleyici decorator'ın ANLAMINI yorumlamaz (`"get"` adının "HTTP GET"
+demek olduğunu BİLMEZ) — yalnızca (isim, literal argümanlar, hedef
+fonksiyon) üçlüsünü KAYDEDER ve bunu ÇALIŞMA ZAMANINDA sorgulanabilir
+hale getirir. Framework (nyx gibi), BU ham metadata'yı YORUMLAYIP
+kendi route/DI/vb. tablosunu İNŞA EDER — derleyici hiçbir zaman "HTTP"
+ya da "route" bilmez, tamamen framework-agnostik kalır.
+
+**v1 kapsam kararı (kullanıcıyla netleşen):** YALNIZCA üst-düzey
+(top-level) `def` fonksiyonlarını hedefler — `@controller(...) class
+X:` VE metod decorator'ları BİLEREK bu fazın DIŞINDA bırakıldı. Neden:
+Nox'ta "bir metodu `self`e bağlı, çağrılabilir bir DEĞER olarak dışarı
+ver" mekanizması HENÜZ yok — bunu ŞİMDİ eklemek işi ciddi büyütür/
+riskli kılar. Üst-düzey fonksiyon yaklaşımı ÇOK DAHA AZ riskle teslim
+edilebilir.
+
+**Sözdizimi (lexer + parser):** YENİ bir `at_sign` token'ı (`@`). `def`/
+`class` ayrıştırılmadan HEMEN ÖNCE, sıfır-veya-daha-fazla `@isim` veya
+`@isim(arg1, arg2, ...)` satırı (Python İLE AYNI sözdizimi) toplanıp
+`ast.Decorator` listesi olarak `FuncDef.decorators`/`ClassDef.
+decorators`e (YENİ, varsayılan boş alanlar) İLİŞTİRİLİR. Sınıf
+decorator'ları PARSE EDİLİR (`class` üzerinde de geçerli sözdizimi)
+ama checker `collectClassNames` aşamasında AÇIKÇA reddeder (sessizce
+YOK SAYMAK YERİNE net bir hata — kullanıcı yanlışlıkla decorator'ının
+etkisiz olduğunu SANMASIN).
+
+**Checker doğrulaması:** `hpy_call`nin AYNI "yalnızca string LİTERALİ"
+güvenlik deseniyle (`c.args[i] != .string_lit` ham AST karşılaştırması)
+decorator argümanları doğrulanır (v1: yalnızca string, int/float/bool
+v2'ye ERTELENDİ). Decorator İSMİ derleyici TARAFINDAN yorumlanmaz —
+HERHANGİ bir tanımlayıcı GEÇERLİDİR (framework-agnostik kalmak İçin).
+"Handler-şekilli" (`(ctx: Context) -> HttpResponse` imzalı) bir
+decorator'lı fonksiyon, `functions_used_as_value`e OTOMATİK EKLENİR
+(checker.zig'in ZATEN VAR OLAN "üst-düzey fonksiyon değer olarak
+kullanılıyor" mekanizması, bkz. §3.23'ün `functions_used_as_value`i) —
+bu SAYEDE codegen'in `genFunctionValueTrampoline`ı OTOMATİK üretilir,
+decorator İçİn YENİ bir codegen yolu İCAT EDİLMEDİ. `Context`/
+`HttpResponse` isimleri `module_loader.zig`nin mangling kuralına TABİ
+OLDUĞUNDAN (ör. "nox_router_Context"), ham "Context" DİZE karşılaştırması
+YANLIŞTIR — bunun yerine `self.from_imports` (PROGRAM GENELİNDE
+PAYLAŞILAN harita, `typeExprToType`in AYNI YEDEK mekanizması) ÜZERİNDEN
+GEÇERLİ mangled ad çözülür.
+
+**Codegen — metadata tablosu (`compiler/codegen_qbe/decorators.zig`,
+yeni dosya):** `layout.zig`nin `genClassVtable`ıyla AYNI desende
+statik bir `data $__nox_decorators = { ... }` tablosu — HER decorator
+kaydı (bir fonksiyon+decorator ÇİFTİ) sabit 5-kelimelik (40 bayt) bir
+satır: `[func_name_ptr, dec_name_ptr, arg_count, arg_start, is_handler]`.
+Dize alanları `expr.zig`nin YENİ `internPinnedStringConst`ıyla (`emitStringLiteral`nin
+STATİK-BAĞLAM kardeşi — bir çalışma-zamanı `add` komutu ÜRETMEK YERİNE
+`"$strN+16"` biçiminde bir sembol İFADESİ döner; QBE'nin data
+initializer'larının `$sym + SAYI` sözdizimini DESTEKLEDİĞİ elle
+doğrulandı) intern edilir. Argümanlar AYRI, düzleştirilmiş bir
+`$__nox_decorator_args` tablosunda TUTULUR (`arg_start` bir İNDEKS).
+
+**7 SABİT-imzalı derleyici yerleşiği** (`__nox_reflect_decorator_*`,
+Zig runtime shim'İ GEREKMEZ — HER şey `$__nox_decorators`ı DOĞRUDAN
+OKUYAN QBE IR'ı olarak üretilir, `checker.zig`/`calls.zig`de `hpy_call`
+İLE AYNI "özel işlenen SABİT isim" deseninde): `count/target_name/
+name/arg_count/arg/is_handler/handler`. `handler` erişimcisi (bkz.
+`genReflectDecoratorHandler`) DİĞERLERİNDEN FARKLI — derleme-zamanı
+statik veri OKUMASI DEĞİLDİR, `(T) -> U` değerinin çalışma-zamanı
+temsili TAZE bir ARC bloğu GEREKTİRİR (bkz. `buildFunctionValueForIdentifier`).
+Bu YÜZDEN HER "handler-şekilli" kayıt İçin `%i`yi karşılaştırıp EŞLEŞEN
+dalda O fonksiyonun trampoline'ından TAZE bir kapanış İNŞA EDEN bir
+dallanma zinciri üretilir; eşleşme YOKSA `0` (None) döner.
+
+**GERÇEK bir tasarım tuzağı bulunup düzeltildi:** İlk tasarım
+`decorator_handler(i) -> (Context) -> HttpResponse | None` (Optional
+bir func_type) İDİ. Ama Nox'un `T | None` sözdizimi bir `(P) -> R`
+func_type'ını SARAYAMAZ — `parseBaseTypeExpr`nin func_type dalı DÖNÜŞ
+TİPİNİ `parseTypeExpr`i ÖZYİNELEMELİ çağırarak ayrıştırdığından, `|
+None` HER ZAMAN EN YAKIN dönüş tipine bağlanır (`(Context) -> HttpResponse
+| None` GERÇEKTE `(Context) -> (HttpResponse | None)` anlamına gelir —
+`stdlib/nox/router.nox`nin VAR OLAN, ÇALIŞAN `list[(Context) -> HttpResponse
+| None]` middleware imzasıyla TUTARLI, BİLİNÇLİ olarak BOZULMADI). Bu
+YÜZDEN `decorator_handler(i)` NON-optional bırakıldı; AYRI bir
+`__nox_reflect_decorator_is_handler(i) -> bool` erişimcisi eklendi —
+çağıran (`router_from_decorators()`) `decorator_handler(i)`i çağırmadan
+ÖNCE bunu kontrol ETMELİDİR (aksi halde eşleşmeyen bir `i` İçin `null`
+bir kapanışa yol açar).
+
+**`stdlib/nox/reflect.nox` (yeni):** Yukarıdaki 7 yerleşiği saran ince
+bir API (`nox.reflect.decorator_count()` vb.) + `router_from_decorators()`
+— `@get`/`@post`/`@put`/`@delete` İLE decore edilmiş, `(ctx: Context)
+-> HttpResponse` imzalı TÜM fonksiyonlardan MEVCUT `nox.router.Router`ı
+(`Router.add(method, pattern, handler)`, HİÇBİR DEĞİŞİKLİK GEREKMEDEN)
+inşa eden ÖRNEK bir tüketici. `stdlib/nox/router.nox`ya EKLENMEDİ (
+router.nox'un reflect.nox'u, reflect.nox'un router.nox'u ithal etmesi
+DÖNGÜSEL bir bağımlılık yaratırdı — `module_loader.zig`nin `loaded`
+kümesi bunu GÜVENLE HANDLE eder ama test EDİLMEMİŞ bir yol olduğundan,
+tek yönlü bağımlılık — reflect.nox router.nox'u ithal eder, TERSİ
+DEĞİL — TERCİH edildi).
+
+**`noxc expand <dosya.nox>` (yeni CLI alt-komutu):** derleyicinin
+decorator'lardan çıkardığı metadata'yı insan-okunur biçimde yazdırır —
+metadata-only tasarım GEREĞİ GERÇEK bir kod dönüşümü OLMADIĞINDAN
+"üretilen kod" GÖSTERİLMEZ, yalnızca `checker.zig`'in `decorated_functions`
+listesi dökülür. `cmdCheck` İLE BİREBİR AYNI derleme adımlarını (lex→
+parse→import çözümü→tip denetimi) izler, SONRA codegen'e GİRMEDEN durur.
+
+**Doğrulama:** 10 yeni test — 4 parser (argümansız/argümanlı/çoklu/
+sınıf-üzerinde sözdizimi), 3 checker golden (temel kabul, literal-olmayan
+argüman reddi, sınıf-decorator reddi), 1 codegen golden (uçtan uca
+`@get`+`@post` İLE `router_from_decorators()` + GERÇEK dispatch, hem
+200 HEM 201 yanıtları doğru rotaya yönlendirilir), 1 CLI testi (`noxc
+expand`). Tam regresyon (`zig build test`, Debug + ReleaseFast):
+mevcut HİÇBİR test KIRILMADI (yeni sözdizimi/yerleşikler TAMAMEN
+katmalı — decorator KULLANMAYAN mevcut programlar HİÇBİR ŞEKİLDE
+etkilenmez).
+
+**Kapsam DIŞI bırakılan (bilinçli, v1):** sınıf/metod decorator'ları
+(bağlı-metod-değer mekanizması GEREKTİRİR, AYRI bir sonraki faz);
+int/float/bool/list decorator argümanları (YALNIZCA string); genel-
+amaçlı (herhangi bir imza) "handler" reflection'ı (YALNIZCA `(Context)
+-> HttpResponse` şekli); decorator'ların KENDİSİNİN kod ÜRETMESİ/
+dönüştürmesi (Rust proc-macro tarzı — BİLİNÇLİ OLARAK asla planlanmıyor,
+metadata-only tasarım kararı KALICI).
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

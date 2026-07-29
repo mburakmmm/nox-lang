@@ -216,6 +216,7 @@ const calls = @import("calls.zig");
 const expr_mod = @import("expr.zig");
 const stmt_mod = @import("stmt.zig");
 const registration = @import("registration.zig");
+const decorators_mod = @import("decorators.zig");
 
 pub const CodegenError = abi.CodegenError;
 
@@ -304,6 +305,7 @@ pub const Codegen = struct {
     pub const genTraceDispatch = layout.genTraceDispatch;
     pub const genNoxInitGlobals = globals_mod.genNoxInitGlobals;
     pub const genNoxDeinitGlobals = globals_mod.genNoxDeinitGlobals;
+    pub const genDecoratorMetadata = decorators_mod.genDecoratorMetadata;
     pub const genGcFreeDispatch = layout.genGcFreeDispatch;
     pub const genClassEq = layout.genClassEq;
     pub const genEqCompareOrJump = layout.genEqCompareOrJump;
@@ -371,6 +373,7 @@ pub const Codegen = struct {
     pub const toPayload = expr_mod.toPayload;
     pub const fromPayload = expr_mod.fromPayload;
     pub const emitStringLiteral = expr_mod.emitStringLiteral;
+    pub const internPinnedStringConst = expr_mod.internPinnedStringConst;
     pub const genExpr = expr_mod.genExpr;
     pub const genFieldRead = expr_mod.genFieldRead;
     pub const genFieldReadFromValue = expr_mod.genFieldReadFromValue;
@@ -819,7 +822,7 @@ pub const Codegen = struct {
 /// `debug_source_path`: Faz T.3, `null` DIŞINDA VERİLİRSE (bkz. modül üstü
 /// not) `dbgfile`/`dbgloc` yönergeleri yayınlanır — `null` İKEN çıktı
 /// ÖNCEKİYLE BİREBİR AYNI kalır (opt-in, sıfır davranış değişikliği).
-pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8)) CodegenError![]u8 {
+pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo) CodegenError![]u8 {
     var gen: Codegen = .{ .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos, .defer_synthetic_names = defer_synthetic_names, .from_imports = from_imports, .module_aliases = module_aliases };
 
     if (debug_source_path) |path| {
@@ -1089,6 +1092,16 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     while (gen.http_serve_multicore_workers.pop()) |spec| {
         try gen.genHttpServeMulticoreWorker(spec);
     }
+
+    // Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi + metadata-
+    // tabanlı metaprogramming"): `$__nox_decorators` statik tablosu VE
+    // `nox.reflect`in 6 SABİT-imzalı yerleşiği — KOŞULSUZ üretilir
+    // (`decorated_functions` boş OLSA BİLE, `genNoxInitGlobals`nin AYNI
+    // gerekçesi: bu semboller HERHANGİ bir programda `stdlib/nox/reflect.
+    // nox` İTHAL EDİLİRSE referans EDİLİR). `gen.string_data`ya YENİ
+    // girdiler EKLEDİĞİNDEN aşağıdaki `string_data` FLUSH döngüsünden
+    // ÖNCE çalışmalıdır.
+    try gen.genDecoratorMetadata(decorated_functions);
 
     for (gen.string_data.items) |sd| {
         // `PINNED_REFCOUNT` (1<<30, bkz. `abi_layout.PINNED_REFCOUNT`nin

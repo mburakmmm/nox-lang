@@ -14,6 +14,53 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.21.0]
+
+### Eklendi
+- **Decorator sözdizimi + metadata-tabanlı metaprogramming (Faz 1: üst-düzey
+  fonksiyonlar)**: `@isim` / `@isim("arg1", "arg2")` — bir veya daha fazla
+  satır, HEMEN bir üst-düzey `def`den ÖNCE. Rust proc-macro/Lisp makro
+  tarzı bir kod-dönüşüm sistemi DEĞİL — derleyici decorator'ın ANLAMINI
+  yorumlamaz, YALNIZCA (isim, string-literal argümanlar, hedef fonksiyon)
+  üçlüsünü derleme-zamanı bir metadata tablosuna KAYDEDER; framework'ler
+  (ör. bir ExpressJS/NestJS-tarzı web katmanı) bu ham veriyi ÇALIŞMA
+  ZAMANINDA `nox.reflect` üzerinden sorgular.
+  - Yeni `@` token'ı (lexer), `ast.Decorator` + `FuncDef.decorators`/
+    `ClassDef.decorators` alanları (parser). v1: yalnızca üst-düzey
+    fonksiyonları hedefler — sınıf decorator'ları PARSE EDİLİR ama checker
+    AÇIKÇA reddeder (`self`e bağlı, çağrılabilir bir metod-değeri
+    mekanizması HENÜZ olmadığından, BİLİNÇLİ kapsam daraltması).
+  - Checker: argümanlar YALNIZCA string LİTERALİ olabilir (`hpy_call`nin
+    AYNI güvenlik deseni); decorator'lı fonksiyon OTOMATİK olarak
+    `functions_used_as_value`e eklenir (MEVCUT trampoline mekanizması
+    yeniden kullanılır, YENİ codegen İCAT EDİLMEDİ).
+  - Codegen: `layout.zig`nin `genClassVtable`ıyla AYNI desende statik bir
+    `$__nox_decorators` `.data` tablosu (`compiler/codegen_qbe/
+    decorators.zig`, yeni dosya) + 7 SABİT-imzalı derleyici yerleşiği
+    (`__nox_reflect_decorator_count/target_name/name/arg_count/arg/
+    is_handler/handler`).
+  - `stdlib/nox/reflect.nox` (yeni): bu yerleşikleri saran ince bir API +
+    `router_from_decorators()` — `@get`/`@post`/`@put`/`@delete` İLE
+    decore edilmiş, `(ctx: Context) -> HttpResponse` imzalı TÜM
+    fonksiyonlardan MEVCUT `nox.router.Router`ı (hiçbir değişiklik
+    gerekmeden) inşa eden, ÖRNEK bir tüketici.
+  - `noxc expand <dosya.nox>` (yeni CLI alt-komutu): derleyicinin
+    decorator'lardan çıkardığı metadata'yı insan-okunur biçimde yazdırır
+    (şeffaflık — GERÇEK bir kod dönüşümü OLMADIĞINDAN "üretilen kod"
+    GÖSTERİLMEZ).
+  - GERÇEK bir tasarım tuzağı bulunup düzeltildi: Nox'un `T | None`
+    sözdizimi bir `(P) -> R` func_type'ını SARAYAMAZ (`| None` HER ZAMAN
+    en yakın DÖNÜŞ tipine bağlanır, `parseBaseTypeExpr`nin func_type
+    dalının KENDİ İÇİNDE `parseTypeExpr`i özyinelemeli çağırması nedeniyle
+    — `list[(Context) -> HttpResponse | None]` middleware imzasının VAR
+    OLAN, ÇALIŞAN semantiğini BOZMAMAK İçin BİLEREK dokunulmadı) — bu
+    yüzden "Optional handler" YERİNE AYRI bir `__nox_reflect_decorator_
+    is_handler(i) -> bool` erişimcisi eklendi (`decorator_handler(i)`
+    NON-optional kalır, çağıran ÖNCE `is_handler`ı kontrol eder).
+  - 10 yeni test: 4 parser (sözdizimi), 3 checker golden (literal-olmayan
+    argüman reddi, sınıf-decorator reddi, temel kabul), 1 codegen golden
+    (uçtan uca GET+POST router dispatch'i), 1 CLI test (`noxc expand`).
+
 ## [1.20.0]
 
 ### Eklendi

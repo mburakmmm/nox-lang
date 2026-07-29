@@ -1,0 +1,76 @@
+# nox.reflect — Faz 1 decorator (bkz. nox-teknik-spesifikasyon.md decorator
+# bölümü, "Decorator sözdizimi + metadata-tabanlı metaprogramming" planı):
+# derleyicinin topladığı decorator METADATA'sını (isim, literal argümanlar,
+# varsa çağrılabilir bir "handler") sorgulamak için ince bir sarmalayıcı.
+#
+# **Tasarım ilkesi:** Derleyici decorator'ların ANLAMINI yorumlamaz — bir
+# `@get("/users")` yalnızca (decorator adı: "get", argümanlar: ["/users"],
+# hedef fonksiyon) üçlüsü olarak KAYDEDİLİR. Bu modül YALNIZCA bu ham
+# veriyi açığa çıkarır; `router_from_decorators()` (aşağıda) BU ham veriyi
+# YORUMLAYAN, framework-seviyesinde BİR ÖRNEK tüketicidir — kendi
+# projeleriniz `decorator_name`/`decorator_arg` üzerine KENDİ yorumlayıcı
+# mantığınızı (ör. `@inject`, `@cache`) inşa edebilir.
+#
+# `__nox_reflect_decorator_*` alttaki yerleşikler DERLEYİCİ TARAFINDAN ÖZEL
+# TANINIR (bkz. `compiler/typecheck/checker.zig`/`compiler/codegen_qbe/
+# calls.zig`) — kullanıcı kodu bunları DOĞRUDAN çağırmamalı, HER ZAMAN bu
+# modülün sardığı isimler (`nox.reflect.decorator_count()` vb.) üzerinden
+# erişmelidir.
+from nox.router import Context, Router
+from nox.http import HttpResponse
+import nox.strings
+
+def decorator_count() -> int:
+    return __nox_reflect_decorator_count()
+
+# Decorator'ın UYGULANDIĞI fonksiyonun adı (hata ayıklama/tanılama İçin).
+def decorator_target_name(i: int) -> str:
+    return __nox_reflect_decorator_target_name(i)
+
+def decorator_name(i: int) -> str:
+    return __nox_reflect_decorator_name(i)
+
+def decorator_arg_count(i: int) -> int:
+    return __nox_reflect_decorator_arg_count(i)
+
+def decorator_arg(i: int, j: int) -> str:
+    return __nox_reflect_decorator_arg(i, j)
+
+# `true` İSE `decorator_handler(i)` GÜVENLE çağrılabilir (fonksiyonun imzası
+# TAM OLARAK `(ctx: Context) -> HttpResponse`dir) — `false` İKEN
+# `decorator_handler(i)` ÇAĞRILMAMALIDIR (null bir kapanışa yol açar).
+def decorator_is_handler(i: int) -> bool:
+    return __nox_reflect_decorator_is_handler(i)
+
+# YALNIZCA `decorator_is_handler(i)` `true` İKEN çağırın — bkz. yukarıdaki not.
+def decorator_handler(i: int) -> (Context) -> HttpResponse:
+    return __nox_reflect_decorator_handler(i)
+
+# Framework tüketimi (bkz. plan dosyası §5): `@get`/`@post`/`@put`/`@delete`
+# İLE decore edilmiş, `(Context) -> HttpResponse` imzalı TÜM üst-düzey
+# fonksiyonlardan bir `Router` inşa eder — `Router.add(method, pattern,
+# handler)`ın (stdlib/nox/router.nox, MEVCUT, hiçbir değişiklik GEREKMEDEN)
+# ÜZERİNE. Kullanım:
+# ```
+# @get("/users/:id")
+# def show_user(ctx: Context) -> HttpResponse:
+#     ...
+#
+# r: Router = nox.reflect.router_from_decorators()
+# def handle(req: HttpRequest) -> HttpResponse:
+#     return r.dispatch(req)
+# nox.http.serve(8080, handle, 1)
+# ```
+def router_from_decorators() -> Router:
+    r: Router = Router()
+    n: int = decorator_count()
+    i: int = 0
+    while i < n:
+        name: str = decorator_name(i)
+        is_route: bool = name == "get" or name == "post" or name == "put" or name == "delete"
+        if is_route and decorator_is_handler(i):
+            pattern: str = decorator_arg(i, 0)
+            handler: (Context) -> HttpResponse = decorator_handler(i)
+            r.add(nox.strings.upper(name), pattern, handler)
+        i = i + 1
+    return r

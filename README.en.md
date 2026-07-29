@@ -94,6 +94,14 @@ print(c.value)
   `nox.json` can also be installed GLOBALLY with `noxc install` (`pip`/
   `cargo install`-style) and run from anywhere as a PATH command
   (managed with `noxc uninstall`/`noxc list`).
+- **Decorator syntax** (`@get("/users/:id")`-style, on top-level `def`s)
+  — a framework-agnostic mechanism where the compiler never interprets
+  what a decorator means, it only records compile-time metadata (name +
+  literal arguments + target function). `nox.reflect` exposes an API to
+  query this metadata at runtime; `router_from_decorators()` is a sample
+  consumer that turns it into a `nox.router.Router` (ExpressJS/NestJS-style
+  routing). `noxc expand <file.nox>` prints the extracted metadata in a
+  human-readable form for transparency.
 
 For the full record of architectural/design decisions, see
 [`nox-teknik-spesifikasyon.md`](nox-teknik-spesifikasyon.md) (Turkish).

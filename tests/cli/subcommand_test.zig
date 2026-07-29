@@ -457,6 +457,66 @@ test "check: gecerli dosyada codegen'e HIC girmeden basarili, hatali dosyada net
     try std.testing.expect(std.mem.indexOf(u8, bad_result.stderr, "tip hatasi") != null);
 }
 
+// Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi + metadata-tabanlı
+// metaprogramming" §6): `noxc expand`, decorator metadata'sını STDOUT'a
+// yazdırır (`check`in AKSİNE codegen'e HİÇ GİRMEDEN) — kullanıcının
+// decorator'larının DOĞRU ayrıştırıldığını doğrulaması içindir.
+test "expand: decorator metadata'sini stdout'a yazdirir, decoratorsuz dosyada 'bulunamadi' basar" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const noxc = try noxcPath(a);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "deco.nox",
+        .data =
+        \\from nox.router import Context
+        \\from nox.http import HttpResponse
+        \\
+        \\@get("/users/:id")
+        \\def show_user(ctx: Context) -> HttpResponse:
+        \\    return HttpResponse(200, "hi", {})
+        \\
+        \\@admin("only", "x")
+        \\def other() -> int:
+        \\    return 1
+        \\
+        ,
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "plain.nox", .data = "print(\"merhaba\")\n" });
+
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &path_buf);
+    const dir_path = path_buf[0..len];
+
+    const deco_path = try std.fmt.allocPrint(a, "{s}/deco.nox", .{dir_path});
+    const deco_result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxc, "expand", deco_path },
+    });
+    defer std.testing.allocator.free(deco_result.stdout);
+    defer std.testing.allocator.free(deco_result.stderr);
+    if (deco_result.term != .exited or deco_result.term.exited != 0) {
+        std.debug.print("expand basarisiz, stderr: {s}\n", .{deco_result.stderr});
+    }
+    try std.testing.expect(deco_result.term == .exited and deco_result.term.exited == 0);
+    try std.testing.expect(std.mem.indexOf(u8, deco_result.stdout, "2 decorator bulundu") != null);
+    try std.testing.expect(std.mem.indexOf(u8, deco_result.stdout, "@get(\"/users/:id\") -> show_user") != null);
+    try std.testing.expect(std.mem.indexOf(u8, deco_result.stdout, "[handler: (Context) -> HttpResponse]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, deco_result.stdout, "@admin(\"only\", \"x\") -> other") != null);
+
+    const plain_path = try std.fmt.allocPrint(a, "{s}/plain.nox", .{dir_path});
+    const plain_result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxc, "expand", plain_path },
+    });
+    defer std.testing.allocator.free(plain_result.stdout);
+    defer std.testing.allocator.free(plain_result.stderr);
+    try std.testing.expect(plain_result.term == .exited and plain_result.term.exited == 0);
+    try std.testing.expect(std.mem.indexOf(u8, plain_result.stdout, "decorator bulunamadi") != null);
+}
+
 // Faz CC.2.3 (bkz. nox-teknik-spesifikasyon.md §3.58): `noxc` çıktısı
 // artık `printErr`/`printOk` İLE (TTY VE `NO_COLOR` tespitine göre) ANSI
 // renk kodlarıyla SARILABİLİR — AMA `std.process.run`ın YAKALADIĞI stdout/

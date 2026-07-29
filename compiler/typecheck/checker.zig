@@ -97,6 +97,25 @@ const FuncSig = struct {
     return_type: Type,
 };
 
+/// Faz 1 decorator: `Checker.decorated_functions`in ELEMANI (bkz. onun
+/// belge notu). `args`, decorator'ın string-literal argümanlarının ÇÖZÜLMÜŞ
+/// (tırnaksız/kaçışsız) DEĞERLERİDİR — `ast.Decorator.args`nin HAM `Expr`
+/// AĞACI DEĞİL.
+pub const DecoratedFuncInfo = struct {
+    /// `registerFunc`e ULAŞTIĞI ANDAKİ `fd.name` — üst-düzey fonksiyonlar
+    /// İçin bu ZATEN codegen sembolüyle (VE `functions_used_as_value`nin
+    /// anahtarıyla) BİREBİR AYNIDIR (ithal edilen paket modüllerinde
+    /// `module_loader.zig` TARAFINDAN ÖNCEDEN mangle edilmiş olabilir).
+    func_name: []const u8,
+    decorator_name: []const u8,
+    args: []const []const u8,
+    /// `true` İSE fonksiyonun imzası TAM OLARAK `(ctx: Context) ->
+    /// HttpResponse`dir — `nox.reflect.decorator_handler(i)` bu durumda
+    /// çağrılabilir bir DEĞER döner (bkz. `functions_used_as_value`e
+    /// otomatik eklenmesi), aksi halde `None` döner.
+    is_handler_shaped: bool,
+};
+
 const ClassInfo = struct {
     /// Faz 7 (tekli kalıtım): `class Derived(Base):` — `ast.ClassDef.base`nin
     /// AYNISI, `registerClassSignatures` tarafından KOPYALANIR. `fields`/
@@ -272,6 +291,14 @@ pub const Checker = struct {
     /// `%env` TAŞIMAZ — bkz. `closures.zig`nin `genFunctionValueTrampoline`
     /// belge notu).
     functions_used_as_value: std.StringHashMapUnmanaged(void) = .{},
+    /// Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi +
+    /// metadata-tabanlı metaprogramming"): `registerFunc` TARAFINDAN
+    /// doldurulan, HER `@isim(...)` decoratörlü üst-düzey `def` İçin BİR
+    /// `DecoratedFuncInfo` — codegen'in `$__nox_decorators` statik `.data`
+    /// tablosunu (bkz. `layout.zig`nin `genClassVtable`ıyla AYNI desen)
+    /// ÜRETMESİ İçin `generateModule`e AYNEN `functions_used_as_value` GİBİ
+    /// bir parametre olarak geçirilir.
+    decorated_functions: std.ArrayListUnmanaged(DecoratedFuncInfo) = .empty,
     /// `instantiateGeneric` tarafından üretilen, somut (monomorphize edilmiş)
     /// fonksiyon tanımları — `main.zig`/codegen bunları modülün geri kalanı
     /// gibi normal, generic olmayan fonksiyonlar olarak derler. Adları
@@ -643,6 +670,16 @@ pub const Checker = struct {
                 if (self.classes.contains(cd.name) or self.generic_classes.contains(cd.name)) {
                     return self.fail(error.DuplicateDefinition, "sınıf zaten tanımlı: {s}", .{cd.name});
                 }
+                // Faz 1 decorator (bkz. plan dosyası "kapsam DIŞI"): sınıf
+                // decorator'ları PARSE EDİLİR (`ast.ClassDef.decorators`)
+                // ama v1'de HENÜZ desteklenmez — Nox'ta "bir metodu `self`e
+                // bağlı, çağrılabilir bir DEĞER olarak dışarı ver" mekanizması
+                // YOK, bu YÜZDEN sessizce YOK SAYMAK YERİNE AÇIK bir hata
+                // verilir (kullanıcı yanlışlıkla decorator'ının hiçbir ETKİSİ
+                // olmadığını SANMASIN).
+                if (cd.decorators.len > 0) {
+                    return self.fail(error.TypeMismatch, "sınıf decorator'ları henüz desteklenmiyor: @{s} (sınıf: {s}) — v1 yalnızca üst-düzey fonksiyon decorator'larını destekler", .{ cd.decorators[0].name, cd.name });
+                }
                 // Faz P2.1: generic (`type_params.len > 0`) bir sınıf
                 // `self.classes`e ASLA girmez — `registerFunc`in
                 // `generic_functions` İLE AYNI ayrımı (bkz. `generic_classes`
@@ -972,6 +1009,50 @@ pub const Checker = struct {
         }
         try self.functions.put(self.allocator, fd.name, .{ .params = params, .return_type = ret });
         if (fd.is_async) try self.async_functions.put(self.allocator, fd.name, {});
+        if (fd.decorators.len > 0) try self.registerDecorators(fd, params, ret);
+    }
+
+    /// Faz 1 decorator: `registerFunc`in AYIRDIĞI (sinyal amaçlı) alt
+    /// adım — `fd.decorators`nin HER girdisi İçin (a) argümanların
+    /// YALNIZCA string LİTERALİ olduğunu doğrular (`hpy_call`nin AYNI
+    /// deseni, bkz. onun belge notu), (b) fonksiyonu `functions_used_as_
+    /// value`e EKLEYEREK codegen'in bir trampoline ÜRETMESİNİ sağlar
+    /// (`resolveIdentifierAsFunctionValue`in AYNI mekanizması), (c) imza
+    /// TAM OLARAK `(ctx: Context) -> HttpResponse` İSE `is_handler_shaped`
+    /// bayrağını işaretler (bkz. `DecoratedFuncInfo`nin belge notu).
+    fn registerDecorators(self: *Checker, fd: ast.FuncDef, params: []const Type, ret: Type) TypeError!void {
+        // `Context`/`HttpResponse` (`stdlib/nox/router.nox`/`nox/http.nox`de
+        // TANIMLI), `module_loader.zig`nin HER içe aktarılan modülün üst-
+        // düzey adlarını mangle ETME kuralına TABİDİR (ör. "nox_router_
+        // Context") — bu YÜZDEN ham "Context"/"HttpResponse" DİZE
+        // karşılaştırması YANLIŞTIR. Bunun yerine `self.from_imports`ın
+        // (PROGRAM GENELİNDE PAYLAŞILAN, `resolveIdentifierAsFunctionValue`/
+        // `typeExprToType`in AYNI YEDEK mekanizması) GEÇERLİ mangled adını
+        // ARANIR — bu isimler YALNIZCA `stdlib/nox/reflect.nox`nin KENDİSİ
+        // `from nox.router import Context`/`from nox.http import
+        // HttpResponse` yaptığı İçin haritada BULUNUR (o dosya HER ZAMAN
+        // ithal edilir, bkz. onun modül üstü notu).
+        const context_name = self.from_imports.get("Context") orelse "Context";
+        const http_response_name = self.from_imports.get("HttpResponse") orelse "HttpResponse";
+        const is_handler_shaped = params.len == 1 and
+            params[0] == .class and std.mem.eql(u8, params[0].class, context_name) and
+            ret == .class and std.mem.eql(u8, ret.class, http_response_name);
+        for (fd.decorators) |dec| {
+            const arg_values = try self.allocator.alloc([]const u8, dec.args.len);
+            for (dec.args, 0..) |a, i| {
+                if (a != .string_lit) {
+                    return self.fail(error.TypeMismatch, "decorator '@{s}' argümanı {d} yalnızca bir string LİTERALİ olabilir (fonksiyon: {s})", .{ dec.name, i + 1, fd.name });
+                }
+                arg_values[i] = a.string_lit;
+            }
+            if (is_handler_shaped) try self.functions_used_as_value.put(self.allocator, fd.name, {});
+            try self.decorated_functions.append(self.allocator, .{
+                .func_name = fd.name,
+                .decorator_name = dec.name,
+                .args = arg_values,
+                .is_handler_shaped = is_handler_shaped,
+            });
+        }
     }
 
     /// `fd`nin GERÇEK (etkin) tip parametre listesini hesaplar: açıkça
@@ -2718,6 +2799,73 @@ pub const Checker = struct {
                         return self.fail(error.TypeMismatch, "'hpy_call_str' argümanı 3 (fonksiyon adı) yalnızca bir string LİTERALİ olabilir", .{});
                     }
                     return .str;
+                }
+                // Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi +
+                // metadata-tabanlı metaprogramming"): `stdlib/nox/reflect.
+                // nox`nin sardığı 6 SABİT-imzalı yerleşik — `hpy_call`nin
+                // AYNI "özel işlenen, kullanıcı TARAFINDAN yeniden
+                // tanımlanamayan builtin isim" deseni. İsimler HERHANGİ bir
+                // Nox tanımlayıcısıyla ÇAKIŞMAYACAK biçimde `__nox_reflect_`
+                // öneki taşır (yalnızca `reflect.nox` bunları çağırır —
+                // kullanıcı KODU DOĞRUDAN çağırmaz).
+                if (std.mem.eql(u8, name, "__nox_reflect_decorator_count")) {
+                    if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_count' hiçbir argüman almaz", .{});
+                    return .int;
+                }
+                if (std.mem.eql(u8, name, "__nox_reflect_decorator_target_name")) {
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_target_name' tam olarak 1 argüman alır (i: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_target_name' argümanı int olmalıdır", .{});
+                    return .str;
+                }
+                if (std.mem.eql(u8, name, "__nox_reflect_decorator_name")) {
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_name' tam olarak 1 argüman alır (i: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_name' argümanı int olmalıdır", .{});
+                    return .str;
+                }
+                if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg_count")) {
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg_count' tam olarak 1 argüman alır (i: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_count' argümanı int olmalıdır", .{});
+                    return .int;
+                }
+                if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg")) {
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg' tam olarak 2 argüman alır (i: int, j: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg' argümanı 1 (i) int olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg' argümanı 2 (j) int olmalıdır", .{});
+                    return .str;
+                }
+                // `i`nin kaydı "handler-şekilli" mi (bkz. `registerDecorators`
+                // in `is_handler_shaped` belge notu) — `stdlib/nox/router.
+                // nox`nin ekleyeceği `router_from_decorators()` yardımcısı,
+                // `__nox_reflect_decorator_handler(i)`i ÇAĞIRMADAN ÖNCE BUNU
+                // kontrol ETMELİDİR (aksi halde eşleşmeyen bir `i` İçin
+                // `handler` NULL/0 döner — bkz. `decorators.zig`nin
+                // `genReflectDecoratorHandler`ı).
+                if (std.mem.eql(u8, name, "__nox_reflect_decorator_is_handler")) {
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_is_handler' tam olarak 1 argüman alır (i: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_is_handler' argümanı int olmalıdır", .{});
+                    return .boolean;
+                }
+                // Dönüş tipi `(Context) -> HttpResponse` — BİLİNÇLİ OLARAK
+                // Optional DEĞİL (Nox'un `T | None` sözdizimi bir `(P) -> R`
+                // func_type'ını SARAMAZ — `| None` HER ZAMAN `parseTypeExpr`
+                // İÇİNDE en yakın DÖNÜŞ tipine bağlanır, bkz. `parser.zig`nin
+                // `parseBaseTypeExpr`inin func_type dalı — bu BİLİNÇLİ, VAR
+                // OLAN `list[(Context) -> HttpResponse | None]` (ara katman
+                // İmzası, router.nox) semantiğini BOZMAMAK İçin dokunulmadı).
+                // Bu YÜZDEN çağıran TARAF (`__nox_reflect_decorator_is_
+                // handler` İLE) ÖNCE doğrulamalıdır — "Context"/"HttpResponse"
+                // İSE `registerDecorators`in AYNI mangled-isim gerekçesiyle
+                // (`self.from_imports` ÜZERİNDEN) çözülür.
+                if (std.mem.eql(u8, name, "__nox_reflect_decorator_handler")) {
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_handler' tam olarak 1 argüman alır (i: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_handler' argümanı int olmalıdır", .{});
+                    const context_name = self.from_imports.get("Context") orelse "Context";
+                    const http_response_name = self.from_imports.get("HttpResponse") orelse "HttpResponse";
+                    const params = try self.allocator.alloc(Type, 1);
+                    params[0] = .{ .class = context_name };
+                    const ret_ty = try self.allocator.create(Type);
+                    ret_ty.* = .{ .class = http_response_name };
+                    return .{ .func = .{ .params = params, .return_type = ret_ty } };
                 }
                 if (std.mem.eql(u8, name, "wasm_call")) {
                     if (c.args.len != 3) {

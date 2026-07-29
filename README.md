@@ -92,6 +92,14 @@ print(c.value)
   sinde bir `bin` girdi noktası tanımlıyorsa `noxc install` ile (`pip`/
   `cargo install` tarzı) GLOBAL olarak da kurulup PATH'ten çalıştırılabilir
   bir CLI komutuna dönüşebilir (`noxc uninstall`/`noxc list` ile yönetilir).
+- **Decorator sözdizimi** (`@get("/users/:id")` gibi, üst-düzey `def`ler
+  üzerinde) — derleyici decorator'ın anlamını yorumlamayan, YALNIZCA
+  derleme-zamanı metadata (isim + literal argümanlar + hedef fonksiyon)
+  kaydeden, framework-agnostik bir mekanizma. `nox.reflect` bu metadata'yı
+  çalışma zamanında sorgulayan API'yi sunar; `router_from_decorators()`
+  bunu `nox.router.Router`a çeviren örnek bir tüketicidir (ExpressJS/
+  NestJS tarzı yönlendirme). `noxc expand <dosya.nox>` çıkarılan
+  metadata'yı şeffaflık için insan-okunur biçimde yazdırır.
 
 Mimari/tasarım kararlarının tam dökümü için
 [`nox-teknik-spesifikasyon.md`](nox-teknik-spesifikasyon.md)'ye bakın.

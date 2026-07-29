@@ -163,6 +163,18 @@ pub const ForStmt = struct {
     body: []Stmt,
 };
 
+/// `@isim` / `@isim(arg1, arg2, ...)` — Faz 1 decorator (bkz. nox-teknik-
+/// spesifikasyon.md decorator bölümü). Derleyici İSMİ yorumlamaz — SADECE
+/// (isim, literal argümanlar) çiftini KAYDEDER, framework bunu çalışma
+/// zamanında `nox.reflect` üzerinden sorgular. v1: `args` yalnızca
+/// `.string_lit` OLABİLİR (checker zorunlu kılar) — parser HERHANGİ bir
+/// ifadeyi kabul eder, kısıt BİLEREK checker'da (hpy_call'ın AYNI deseni).
+pub const Decorator = struct {
+    name: []const u8,
+    args: []Expr,
+    line: u32 = 0,
+};
+
 pub const FuncDef = struct {
     name: []const u8,
     /// `def name[T, U](...)` — boşsa sıradan (generic olmayan) bir fonksiyon/
@@ -176,6 +188,9 @@ pub const FuncDef = struct {
     /// kılar); yalnızca `spawn` ile çağrılabilir (bkz. nox-teknik-
     /// spesifikasyon.md §3.21).
     is_async: bool = false,
+    /// Faz 1 decorator: `def` HEMEN ÖNCESİNDE ayrıştırılan sıfır-veya-daha
+    /// fazla `@isim(...)` satırı — boşsa (varsayılan) HİÇBİR decorator YOK.
+    decorators: []const Decorator = &.{},
 };
 
 /// Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): bir sınıf gövdesinde
@@ -221,6 +236,10 @@ pub const ClassDef = struct {
     /// listelenen adlar İçin ÇIKARIM ATLANIR, tip DOĞRUDAN bu bildirimden
     /// alınır.
     fields: []FieldDecl = &.{},
+    /// Faz 1 decorator: PARSE EDİLİR (sözdizimi sınıflarda da geçerli) ama
+    /// checker v1'de sınıf decorator'larını AÇIKÇA reddeder (bkz. plan
+    /// dosyası "kapsam DIŞI" — bağlı-metod-değer mekanizması gerektirir).
+    decorators: []const Decorator = &.{},
 };
 
 /// Yapısal (structural) bir protokol — Python'ın `typing.Protocol`'üne

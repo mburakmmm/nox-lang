@@ -615,3 +615,27 @@ test "golden(typecheck): Faz 7 — 'super()' bir metod gövdesi DIŞINDA reddedi
         @embedFile("typecheck_cases/err_class_super_outside_method.expected"),
     );
 }
+
+// Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi + metadata-tabanlı
+// metaprogramming"): checker doğrulama testleri.
+
+test "golden(decorator): argümansız + string-literal argümanlı decorator'lar üst-düzey fonksiyonlarda kabul edilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_decorator_basic.nox"),
+        @embedFile("typecheck_cases/ok_decorator_basic.expected"),
+    );
+}
+
+test "golden(decorator): literal-olmayan bir decorator argümanı reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_decorator_non_literal_arg.nox"),
+        @embedFile("typecheck_cases/err_decorator_non_literal_arg.expected"),
+    );
+}
+
+test "golden(decorator): bir sınıf üzerindeki decorator v1'de AÇIKÇA reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_decorator_on_class.nox"),
+        @embedFile("typecheck_cases/err_decorator_on_class.expected"),
+    );
+}
