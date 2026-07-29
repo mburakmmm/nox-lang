@@ -743,6 +743,35 @@ test "codegen(çalıştır): yerel degisken/parametre modül-global'ini gölgele
     );
 }
 
+// P1c (bkz. kullanıcı repro'su, "P1c — package-module globals + nested
+// closure" olarak bildirildi) — `genNoxInitGlobals`, `module.body`deki HER
+// `var_decl`nin `module_globals`e TERFİ ETTİĞİNİ (`collectModuleGlobals`nin
+// yalnızca bir fonksiyondan REFERANS ALINAN isimleri terfi ETTİĞİNİ görmeyip)
+// VARSAYIYORDU — `y` gibi SAF bir üst-düzey betik değişkeni (hiçbir
+// fonksiyondan erişilmeyen) `_x` GİBİ GERÇEK terfi eden bir global İLE AYNI
+// PROGRAMDA olduğunda `.get(v.name).?` panige/segfault'a yol açıyordu.
+test "codegen(çalıştır): modül-global VE terfi ETMEMİŞ sıradan üst-düzey değişken AYNI programda çöker miydi (P1c)" {
+    try expectGolden(
+        @embedFile("codegen_cases/module_global_plus_unpromoted_local.nox"),
+        @embedFile("codegen_cases/module_global_plus_unpromoted_local.expected"),
+    );
+}
+
+// C2 (bkz. kullanıcı repro'su, "C2 — package function-type param → import
+// SIGSEGV" olarak bildirildi) — `genIndirectCallThroughClosurePtr` (bir
+// `(T) -> dict[K,V]` FONKSİYON-TİPLİ parametre/değişken ÜZERİNDEN dolaylı
+// çağrı) döndürdüğü `Value`de `dict_info`yi KOPYALAMAYI unutuyordu — dönüş
+// değeri BAŞKA bir çağrıya İNLINE argüman olarak geçirildiğinde (ör.
+// `use_ctx(to_context_fn(rows[i]))`), `releaseTemporaryArgs` bu TAZE
+// `dict` değerini serbest bırakmaya çalışırken `dict_info.?`nin null
+// olması yüzünden çöküyordu (derleme-zamanı panik/ReleaseFast'te SIGSEGV).
+test "codegen(çalıştır): (T) -> dict[K,V] fonksiyon-tipli parametre üzerinden dolaylı çağrı, sonucu inline BAŞKA çağrıya argüman olarak geçtiğinde çökmez (C2)" {
+    try expectGolden(
+        @embedFile("codegen_cases/inline_closure_call_returns_dict.nox"),
+        @embedFile("codegen_cases/inline_closure_call_returns_dict.expected"),
+    );
+}
+
 // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı): YENİ `list[T].
 // pop()` ilkeli — `.append`in AKSİNE HİÇBİR ZAMAN yeniden ayırmadığından
 // alıcı keyfi bir ifade olabilir (`self.items.pop()` doğrudan, "yerele

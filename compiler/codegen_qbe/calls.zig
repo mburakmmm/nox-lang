@@ -78,7 +78,7 @@ pub fn genIndirectCallThroughClosurePtr(self: *Codegen, closure_ptr: []const u8,
     try self.emitExceptionCheck();
 
     if (result_temp) |rt| {
-        return .{ .text = rt, .qtype = ret_qtype, .heap = fsig.ret.heap, .elem_qtype = fsig.ret.elem_qtype, .class_name = fsig.ret.class_name, .elem_heap_info = fsig.ret.elem_heap_info, .elem_is_str = fsig.ret.elem_is_str };
+        return .{ .text = rt, .qtype = ret_qtype, .heap = fsig.ret.heap, .elem_qtype = fsig.ret.elem_qtype, .class_name = fsig.ret.class_name, .elem_heap_info = fsig.ret.elem_heap_info, .elem_is_str = fsig.ret.elem_is_str, .dict_info = fsig.ret.dict_info };
     }
     return .{ .text = "0", .qtype = .w };
 }

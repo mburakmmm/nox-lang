@@ -1,0 +1,20 @@
+class Row:
+    def __init__(self: Row, title: str) -> None:
+        self.title = title
+
+def use_ctx(context: dict[str, str]) -> str:
+    return context["title"]
+
+def to_context(r: Row) -> dict[str, str]:
+    return {"title": r.title}
+
+def map_inline(rows: list[Row], to_context_fn: (Row) -> dict[str, str]) -> str:
+    out: str = ""
+    i: int = 0
+    while i < len(rows):
+        out = out + use_ctx(to_context_fn(rows[i]))
+        i = i + 1
+    return out
+
+rows: list[Row] = [Row("a"), Row("b")]
+print(map_inline(rows, to_context))

@@ -41,7 +41,23 @@ pub fn genNoxInitGlobals(self: *Codegen, module: ast.Module) CodegenError!void {
     for (module.body) |stmt| {
         if (stmt.kind != .var_decl) continue;
         const v = stmt.kind.var_decl;
-        const g = self.module_globals.get(v.name).?;
+        // Bulundu (P1c — bkz. proje belleği/kullanıcı repro'su): `module.
+        // body`deki HER `var_decl`nin `module_globals`e TERFİ ETTİĞİNİ
+        // VARSAYMAK YANLIŞTI — TERFİ (bkz. `collectModuleGlobals`) yalnızca
+        // adı BİR fonksiyon/metod gövdesinden (iç içe `def`ler DAHİL)
+        // REFERANS ALINAN var_decl'lere UYGULANIR; SAF üst-düzey betik
+        // değişkenleri (`codegen.zig`nin `loose` inşasında GÖRÜLDÜĞÜ gibi,
+        // `$main`in SIRADAN bir yereli olarak KALIR) `module_globals`de
+        // HİÇ YOKTUR. ÖNCEKİ `.get(v.name).?` bu YÜZDEN, PROGRAMDA
+        // HERHANGİ bir BAŞKA (paket İÇİ DAHİL) global TERFİ ETTİĞİ ANDA
+        // (`module_globals.count() > 0` — bu fonksiyonun ÇAĞRILMA koşulu)
+        // BU tür TERFİ ETMEMİŞ var_decl'lerde ÇÖKÜYORDU (GERÇEKTEN
+        // gözlemlendi: bir paket modülünün OKUNAN/YAZILAN bir globali +
+        // programda HERHANGİ bir yerde `mw`/`ctx` GİBİ sıradan üst-düzey
+        // betik değişkenleri BİR ARADA olduğunda panik). Düzeltme: terfi
+        // ETMEMİŞ bir `var_decl`, `loose`un ZATEN doğru şekilde işlediği
+        // gibi burada SESSİZCE ATLANIR.
+        const g = self.module_globals.get(v.name) orelse continue;
         const v0 = try self.genExprForTarget(v.value, g.info);
         const retained = try self.retainIfAliasing(v.value, v0);
         const val = try self.convert(retained, g.info.qtype);

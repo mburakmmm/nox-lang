@@ -14,6 +14,38 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.18.1]
+
+### Düzeltildi
+- **`noxc install`/`add` sabit `"main"` dal varsayımı**: `--ref` AÇIKÇA
+  verilmediğinde repo'nun GERÇEK varsayılan dalına (`git ls-remote
+  --symref`) bakmadan sabit `"main"` varsayıyordu — varsayılan dalı
+  `master` (ya da başka bir isim) olan repolar İçin (GERÇEKTEN gözlemlendi:
+  `github.com/mburakmmm/nyx`) `noxc install <alias>` HER ZAMAN
+  `GitCommandFailed` İLE başarısız oluyordu. Artık GERÇEK varsayılan dal
+  otomatik tespit edilir; tespit başarısız olursa sessizce eski `"main"`
+  varsayımına düşülür (geriye dönük DAVRANIŞ DEĞİŞMEZ).
+- **P1c — modül-global + terfi ETMEMİŞ üst-düzey değişken → derleyici
+  paniği**: `genNoxInitGlobals`, `module.body`deki HER `var_decl`nin
+  `module_globals`e TERFİ ETTİĞİNİ VARSAYIYORDU — GERÇEKTE terfi yalnızca
+  adı bir fonksiyon/metod gövdesinden (iç içe `def`ler DAHİL) REFERANS
+  alınan `var_decl`lere UYGULANIR. Programda (paket İÇİ DAHİL) HERHANGİ
+  bir global terfi ETTİĞİ anda, terfi ETMEMİŞ SAF bir üst-düzey betik
+  değişkeni (ör. hiçbir fonksiyondan erişilmeyen bir `y: int = 5`)
+  `.get(v.name).?`de panige/segfault'a yol açıyordu — kullanıcı repro'suyla
+  (paket modülü global + nested closure middleware) doğrulandı.
+- **C2 — `(T) -> dict[K,V]` fonksiyon-tipli parametre üzerinden dolaylı
+  çağrı, sonucu inline argüman olarak geçtiğinde çöküyordu**:
+  `genIndirectCallThroughClosurePtr`, döndürdüğü `Value`de `dict_info`yi
+  KOPYALAMAYI unutuyordu — dönüş değeri (`heap == .dict`) BAŞKA bir çağrıya
+  DOĞRUDAN argüman olarak geçirildiğinde (ör. `use_ctx(to_context_fn(rows[i]))`),
+  `releaseTemporaryArgs` bu TAZE `dict` değerini serbest bırakmaya
+  çalışırken `dict_info.?`nin null olmasıyla çöküyordu (derleme-zamanı
+  panik Debug'da, SIGSEGV ReleaseFast'te). Bir yerel değişkene atayıp SONRA
+  geçirmek geçici çözümdü — artık gerek YOK.
+- Her iki codegen hatası İçin (`module_global_plus_unpromoted_local`,
+  `inline_closure_call_returns_dict`) yeni golden test eklendi.
+
 ## [1.18.0]
 
 ### Değiştirildi

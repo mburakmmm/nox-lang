@@ -317,3 +317,27 @@ fn runGit(a: Allocator, io: Io, argv_tail: []const []const u8, cwd_path: ?[]cons
     }
     return result.stdout;
 }
+
+/// `--ref` AÇIKÇA verilmediğinde `noxc install`/`add`nin "main" varsayımı
+/// YERİNE `repo`nun GERÇEK varsayılan dalını (`HEAD`) sorgular — GERÇEKTEN
+/// gözlemlendi: `github.com/mburakmmm/nyx` GİBİ varsayılan dalı `main`
+/// DEĞİL `master` olan (ya da başka herhangi bir isimde olan) repolar İçin
+/// sabit "main" varsayımı `noxc install <alias>`i HER ZAMAN
+/// `GitCommandFailed` İLE BAŞARISIZ KILIYORDU (dal LİTERALEN yoktu). `git
+/// ls-remote --symref <url> HEAD` çıktısı `ref: refs/heads/<dal>\tHEAD`
+/// satırıyla BAŞLAR — dal adı BURADAN ayrıştırılır. Çağıran (bkz.
+/// `main.zig`nin `cmdInstall`/`cmdAdd`si), BU fonksiyon HERHANGİ bir
+/// nedenle (ağ hatası, beklenmeyen çıktı biçimi) başarısız OLURSA eski
+/// "main" varsayımına GERİ DÜŞMELİDİR — bu YÜZDEN dönüş tipi `!` (çağıran
+/// `catch` İLE ele alır), asla `noxc install`i eskiye göre DAHA KIRILGAN
+/// hale GETİRMEZ.
+pub fn resolveDefaultRef(a: Allocator, io: Io, repo: []const u8, policy: FetchPolicy) ![]const u8 {
+    const clone_url = try resolveCloneUrl(a, repo, policy.allow_insecure_transport);
+    const out = try runGit(a, io, &.{ "ls-remote", "--symref", clone_url, "HEAD" }, null, policy);
+    const prefix = "ref: refs/heads/";
+    const start = std.mem.indexOf(u8, out, prefix) orelse return error.DefaultRefNotFound;
+    const rest = out[start + prefix.len ..];
+    const end = std.mem.indexOfAny(u8, rest, "\t\r\n") orelse return error.DefaultRefNotFound;
+    if (end == 0) return error.DefaultRefNotFound;
+    return a.dupe(u8, rest[0..end]);
+}

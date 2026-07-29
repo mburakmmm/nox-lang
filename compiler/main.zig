@@ -483,6 +483,7 @@ fn cmdSearch(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registr
 fn cmdAdd(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registry_policy: registry.RegistryPolicy, fetch_policy: fetch.FetchPolicy) !void {
     var positionals: std.ArrayListUnmanaged([]const u8) = .empty;
     var ref: []const u8 = "main";
+    var ref_explicit = false;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "--ref")) {
@@ -492,6 +493,7 @@ fn cmdAdd(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registry_p
                 std.process.exit(1);
             }
             ref = args[i];
+            ref_explicit = true;
         } else {
             try positionals.append(a, args[i]);
         }
@@ -521,6 +523,13 @@ fn cmdAdd(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registry_p
         };
         break :blk entry.repo;
     };
+
+    // Bkz. `cmdInstall`nin AYNI düzeltmesi/belge notu — `--ref` AÇIKÇA
+    // verilmediyse sabit "main" varsayımı YERİNE repo'nun GERÇEK varsayılan
+    // dalı sorgulanır, başarısız olursa sessizce eski davranışa DÜŞÜLÜR.
+    if (!ref_explicit) {
+        ref = fetch.resolveDefaultRef(a, io, repo, fetch_policy) catch ref;
+    }
 
     const root = try findProjectRootOrExit(io, a, "add");
     const manifest = loadManifestOrExit(a, io, root);
@@ -664,6 +673,7 @@ fn cmdPublish(io: std.Io, a: std.mem.Allocator, args: []const []const u8, regist
 /// GELİR.
 fn cmdInstall(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, registry_policy: registry.RegistryPolicy, fetch_policy: fetch.FetchPolicy, environ_map: *const std.process.Environ.Map, is_tr: bool) !void {
     var ref: []const u8 = "main";
+    var ref_explicit = false;
     var pkg_arg: ?[]const u8 = null;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
@@ -674,6 +684,7 @@ fn cmdInstall(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
                 std.process.exit(1);
             }
             ref = args[i];
+            ref_explicit = true;
         } else if (pkg_arg == null) {
             pkg_arg = args[i];
         }
@@ -707,6 +718,16 @@ fn cmdInstall(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
         };
         break :blk entry.repo;
     };
+
+    // `--ref` AÇIKÇA verilmediyse sabit "main" varsayımına GÜVENMEK YERİNE
+    // (bkz. `fetch.resolveDefaultRef`nin belge notu — repo'nun varsayılan
+    // dalı `master`/başka bir isim OLABİLİR) GERÇEK varsayılan dal
+    // SORGULANIR; sorgu HERHANGİ bir nedenle başarısız OLURSA sessizce
+    // eski "main" varsayımına DÜŞÜLÜR (asla eskiye göre DAHA KIRILGAN hale
+    // GELMEZ).
+    if (!ref_explicit) {
+        ref = fetch.resolveDefaultRef(a, io, repo, fetch_policy) catch ref;
+    }
 
     var sig_diag: ?[]const u8 = null;
     const fetch_result = fetch.fetchToCache(a, io, nox_home, repo, ref, false, &sig_diag, fetch_policy) catch |e| {
