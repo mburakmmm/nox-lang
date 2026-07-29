@@ -14,6 +14,23 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.21.3]
+
+### Düzeltildi
+- **`nox.sqlite`nin `execute`i ARTIK `nox.postgres`/`nox.mysql` İLE
+  TUTARLI olarak etkilenen satır sayısını (`int`) döner** (ÖNCEDEN
+  `None`): `Statement.execute()`/`Connection.execute()` — geriye dönük
+  UYUMLU (mevcut, dönüş değerini yok sayan HİÇBİR çağrı sitesi
+  etkilenmez, bkz. `tests/cli/sqlite_test.zig`). Bu tutarsızlık,
+  `nox.db.DbConnection` protokolüne `execute`in EKLENEMEMESİNİN kök
+  nedeniydi (protokol eşleştirmesi dönüş tipini TAM eşleştirir) — ARTIK
+  protokole EKLENDİ. Kullanıcının `nyx` framework'ünde farkedilen "ortak
+  DB Connection tipi" eksikliğinin BİR PARÇASI olarak bulunup düzeltildi
+  (kalan kısım — `query`/`prepare`/`Row`nin protokole DAHİL EDİLEMEMESİ,
+  generic konteynerler İçin kovaryant protokol eşleştirmesi GEREKTİRDİĞİNDEN
+  — BİLİNÇLİ olarak AYRI, daha büyük bir compiler-tasarım işi olarak
+  bırakıldı).
+
 ## [1.21.2]
 
 ### Düzeltildi

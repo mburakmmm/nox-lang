@@ -125,11 +125,24 @@ class Statement:
     # UPDATE/DELETE/DDL) sonuna kadar çalıştırır, ardından finalize eder —
     # `http.nox`nin "free-before-return" disipliniyle AYNI, `Statement`
     # TEK KULLANIMLIKTIR.
-    def execute(self: Statement) -> None:
+    #
+    # Bulundu (kullanıcının `nyx` framework'ünde farkedilen bir Nox
+    # eksikliği): ÖNCEDEN `None` dönüyordu, `nox.postgres`/`nox.mysql`nin
+    # `execute`i İSE (SIFIRDAN, aynı ismi PAYLAŞTIKLARI HALDE) etkilenen
+    # satır sayısını (`int`) döndürüyordu — bu tutarsızlık, `nox.db`nin
+    # `DbConnection` protokolüne `execute`i EKLEMEYİ engelliyordu (protokol
+    # eşleştirmesi dönüş tipini TAM eşleştirir). `nox_sqlite_changes_raw`
+    # (ZATEN `Connection.changes()`in kullandığı AYNI birincil işlem, bkz.
+    # `sqlite3_changes()`) BURADA da çağrılıp SONUÇ döndürülerek üç
+    # sürücü ARASINDA tutarlı hale getirildi — `self.db` (bağlantı
+    # tanıtıcısı) `Statement`nin KENDİSİNDE ZATEN saklı olduğundan EK bir
+    # parametre GEREKMEDİ.
+    def execute(self: Statement) -> int:
         rc: int = nox_sqlite_step_raw(self.handle)
         nox_sqlite_finalize_raw(self.handle)
         if rc != 101:
             raise SqliteError("adim basarisiz: " + nox_sqlite_errmsg_raw(self.db))
+        return nox_sqlite_changes_raw(self.db)
 
     def query(self: Statement) -> list[Row]:
         rows: list[Row] = []
@@ -152,8 +165,8 @@ class Connection:
             raise SqliteError("hazirlama basarisiz: " + nox_sqlite_errmsg_raw(self.handle))
         return Statement(stmt, self.handle)
 
-    def execute(self: Connection, sql: str) -> None:
-        self.prepare(sql).execute()
+    def execute(self: Connection, sql: str) -> int:
+        return self.prepare(sql).execute()
 
     def query(self: Connection, sql: str) -> list[Row]:
         return self.prepare(sql).query()
