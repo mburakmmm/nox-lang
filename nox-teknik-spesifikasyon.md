@@ -13275,6 +13275,114 @@ polimorfizm; hiyerarşik `except`; `super().metod(...)` — sonsuz
 4 hata-durumu testi (override imza uyuşmazlığı, bilinmeyen taban,
 generic+taban, `super()` metod DIŞI). Tam `zig build test` yeşil.
 
+## 3.74 GLOBAL paket kurulumu (`noxc install`/`uninstall`/`list`)
+
+Kullanıcının ikinci soru/istek turu: Nox'un paket sistemi (`noxc add`/
+`delete`/`publish`) bugüne kadar TAMAMEN proje-yerel — npm'in
+`node_modules`si gibi, bir paket sadece `nox.json` `requires[]`ine
+eklenip O projenin derlemesine dahil edilebiliyordu. `pip`/`npm -g`/
+`cargo install`/`pipx` tarzı GLOBAL bir kurulum mekanizması YOKTU — bir
+paketin (ör. `nyx` web framework'ünün) `nyx new myproject` şeklinde
+HERHANGİ bir dizinden çalıştırılabilen KENDİ CLI komutunu sisteme
+kurmanın yolu yoktu.
+
+**Nox'un AOT derlenmesi bunu npm/pip'ten yapısal olarak FARKLI kılar:**
+yorumlanan diller İçin global kurulum SADECE dosya kopyalamaktır; Nox'ta
+paketin belirttiği giriş dosyasının GERÇEKTEN derlenip native bir ikili
+olarak üretilmesi GEREKİR — bu YÜZDEN bu özellik `noxc upgrade`nin
+(indirilmiş bir ikiliyi güvenli şekilde yerine koyma) İLE `noxc build`in
+(kaynak derleme) KESİŞİMİDİR.
+
+**Doğrulanan ÖN KOŞUL:** `nox.os.arg_count()`/`nox.os.arg(i)`
+(`stdlib/nox/os.nox`) ZATEN gerçek `argc`/`argv`i taşıyor — yani bir
+paket YAZARI kendi `nyx new <isim>` tarzı alt-komut ayrıştırmasını SAF
+Nox koduyla yazabilir; bu özelliğin TEK işi "paketin gösterdiği dosyayı
+derleyip PATH'teki bir native ikiliye dönüştürmek"tir — kurulan ikilinin
+KENDİ CLI ergonomisi (alt-komutlar) TAMAMEN paketin sorumluluğudur,
+`noxc`nin BİLMESİ GEREKMEZ.
+
+### Yeniden KULLANILAN mevcut altyapı
+
+Bu özellik SIFIRDAN bir mekanizma İCAT ETMEZ, DÖRT mevcut parçayı
+BİRLEŞTİRİR:
+- `compiler/pkg/fetch.zig`nin `fetchToCache`i ZATEN global, içerik-adresli
+  bir önbellek kullanıyor (`{nox_home}/pkg/mod/{sanitized_repo}/
+  {resolved_sha}`) — proje-yerel DEĞİL.
+- `compiler/main.zig`nin `buildOne`i, fetch edilen paketin İÇİNDEKİ bir
+  bin-dosyasına DOĞRUDAN çağrılabilir — `project.findProjectRoot` o
+  dizinden YUKARI arayarak paketin KENDİ `nox.json`sini proje kökü olarak
+  bulur, paketin KENDİ `requires`i (varsa) DOĞRU çözülür.
+- `compiler/pkg/registry.zig`nin `findByAlias`ı bare bir isim İçin
+  (`noxc install nyx`) repo URL'ini çözer — merkezi indekste HİÇBİR şema
+  değişikliği GEREKMEZ (bin bilgisi paketin KENDİ `nox.json`sinde yaşar).
+- `compiler/pkg/upgrade.zig`nin güvenli-yerleştirme deseni (scratch dizine
+  derle → SADECE başarılıysa gerçek hedefe kopyala; Windows'ta çalışan
+  bir `.exe`nin `.old`'a yeniden adlandırılıp SONRA üzerine yazılması)
+  genellenmiş haliyle (`compiler/pkg/install.zig`nin `placeBinary`ı)
+  yeniden kullanılır.
+
+### Yeni tasarım kararları
+
+- **`nox.json`ye YENİ, opsiyonel bir `bin` alanı** —
+  `Manifest.bin: ?BinSpec = null` (`BinSpec = {name, path}`); `null` İSE
+  paket "global kurulabilir" DEĞİLDİR. v1 KASITLI olarak TEK bir `bin`
+  girdisi destekler (npm'in çoklu-komut `bin` haritasının AKSİNE) —
+  `entry`nin ZATEN kurduğu "tek giriş noktası" hassasiyetiyle TUTARLI.
+  `std.json`nin `.ignore_unknown_fields = true` ayarı BUNU geriye-uyumlu
+  kılar.
+- **Global bin dizini `{nox_home}/bin/`** (varsayılan `~/.nox/bin/`) —
+  `noxc`nin KENDİ kurulduğu `~/.nox-lang/bin/`den (`upgrade`nin sabit
+  `noxc`/`noxlsp`/`qbe` üçlüsüyle TAMAMEN yönettiği ağaç) BİLİNÇLİ olarak
+  AYRI tutulur — kullanıcı tarafından kurulmuş KEYFİ üçüncü-taraf
+  ikillileri AYNI dizine karıştırmak, gelecekteki bir `upgrade`
+  sürprizini gereksiz yere riske ATARDI. `noxc install` shell rc
+  dosyalarını OTOMATİK DÜZENLEMEZ (kalıcı yapılandırma değişikliği,
+  sessiz kalması gereken bir yan etki OLURDU) — dizin PATH'te DEĞİLSE
+  TEK SATIRLIK bir `export PATH=...` talimatı YAZDIRIR (rustup/`go
+  install`in davranışıyla TUTARLI).
+- **YENİ bookkeeping dosyası `{nox_home}/pkg/installed.json`**
+  (`InstalledRegistry{packages: []InstalledPackage}`) — proje `nox.json`/
+  `nox.lock`dan TAMAMEN AYRI, SADECE global kurulumları izler. `install`
+  AYNI `command_name` varsa üzerine YAZAR (`pip install --upgrade`la
+  TUTARLI semantik); `uninstall` SADECE kayıttan ÇIKARIP ikiliyi SİLER —
+  paylaşılan İÇERİK-ADRESLİ paket önbelleğine (`pkg/mod/...`) DOKUNMAZ
+  (referans-sayımlı temizlik v1 kapsamı DIŞINDA — o BAŞKA kurulumlar/
+  projeler tarafından paylaşılıyor olabilir).
+- **Mimari:** CLI-ayrıştırma/orkestrasyon (`cmdInstall`/`cmdUninstall`/
+  `cmdListInstalled`) `main.zig`de, SAF/yeniden-kullanılabilir yardımcılar
+  (`placeBinary`, `isDirOnPath`, `printPathHint`, `exeFileName`,
+  `nowAsEpochSecondsString`) YENİ `compiler/pkg/install.zig`de —
+  `cmdAdd`/`cmdUpgrade`in AYNI, ZATEN yerleşik deseni.
+
+### Bulunan GERÇEK hatalar
+
+- **`cmdAdd`/`cmdDelete`nin manifest-yeniden-kurma satırları YENİ `bin`
+  alanını KOPYALAMIYORDU** — HER `noxc add`/`noxc delete` çağrısı bir
+  paketin `bin` bildirimini SESSİZCE SİLİYORDU (struct literal'ın
+  varsayılan `null`u ile). Kod incelemesiyle (bir test hatasıyla DEĞİL)
+  bulunup `.bin = manifest.bin` eklenerek düzeltildi.
+- **`cmdListInstalled` çıktısını `std.debug.print` (stderr'e YAZAR) İLE
+  basıyordu** — `noxc list`in çıktısı `noxc search`inki GİBİ PRİMER VERİ
+  olduğundan (hata/durum mesajı DEĞİL) stdout'a YAZILMALIYDI; bu, YENİ
+  `tests/cli/install_test.zig`nin `noxc list` çıktısını `stdout`da
+  ARAYAN bir uçtan-uca testi TARAFINDAN yakalandı (test "çıktısız
+  başarısız" oldu — `std.testing.expect` bare çağrısı fark YAZDIRMAZ).
+  Düzeltme: `cmdSearch`in KENDİ `std.Io.File.stdout().writer` desenine
+  taşındı.
+
+### Kapsam DIŞI (v1, BİLİNÇLİ)
+
+Sürüm pinleme (`noxc install pkg@1.2.3` — `--ref` YETERLİ); çoklu-komut
+paketleri (npm'in `bin` HARİTASI); PATH'e OTOMATİK ekleme (shell rc
+düzenleme); içerik-adresli paket önbelleğinin referans-sayımlı temizliği.
+
+**Doğrulama:** YENİ `tests/cli/install_test.zig` (`tests/unit/
+fetch_test.zig`nin YEREL git-fixture deseni + `tests/cli/
+upgrade_test.zig`nin GERÇEK-alt-süreç deseni) — TAM uçtan-uca
+install/çalıştır/list/uninstall döngüsü + `bin`SİZ paket reddi + kurulu-
+OLMAYAN komut reddi + boş-liste mesajı. Tam `zig build test
+-Doptimize=ReleaseFast --summary all` yeşil (765/765).
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

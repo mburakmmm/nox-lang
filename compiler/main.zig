@@ -33,6 +33,7 @@ const fetch = @import("pkg/fetch.zig");
 const pkg_index = @import("pkg/index.zig");
 const upgrade_mod = @import("pkg/upgrade.zig");
 const registry = @import("pkg/registry.zig");
+const install_mod = @import("pkg/install.zig");
 const formatter = @import("fmt/formatter.zig");
 const build_options = @import("build_options");
 
@@ -119,6 +120,9 @@ fn printHelp(is_tr: bool) void {
             \\  delete <alias>        bagimliligi nox.json'dan (ve nox.lock'tan) cikarir
             \\  publish <repo>        paket metadatasini merkezi indekse gonderir (admin onayi bekler)
             \\  upgrade [--check] [s] noxc'nin kendisini en son (ya da belirtilen) surume gunceller
+            \\  install <ad|repo>     bir paketi GLOBAL olarak kurar (paketin kendi 'bin' giris noktasi gerekir)
+            \\  uninstall <komut>     global kurulu bir paketi kaldirir
+            \\  list                  global kurulu paketleri listeler
             \\  version               sürüm bilgisini yazdırır (--version/-V ile aynı)
             \\
             \\Ortak seçenekler:
@@ -157,6 +161,9 @@ fn printHelp(is_tr: bool) void {
             \\  delete <alias>        remove a dependency from nox.json (and nox.lock)
             \\  publish <repo>        submit package metadata to the central index (awaits admin approval)
             \\  upgrade [--check] [v] self-update noxc to the latest (or a given) version
+            \\  install <name|repo>   GLOBALLY install a package (needs its own 'bin' entry point)
+            \\  uninstall <command>   remove a globally installed package
+            \\  list                  list globally installed packages
             \\  version               print version info (same as --version/-V)
             \\
             \\Common options:
@@ -272,7 +279,7 @@ pub fn main(init: std.process.Init) !void {
     if (init.environ_map.get("NOX_INDEX_URL")) |v| registry_policy.index_url = try a.dupe(u8, v);
     if (init.environ_map.get("NOX_PUBLISH_API_BASE")) |v| registry_policy.publish_api_base = try a.dupe(u8, v);
 
-    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, init, check, version, help, upgrade, legacy };
+    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, init, check, version, help, upgrade, install, uninstall, list_installed, legacy };
     const sub: Subcommand = blk: {
         // Bulundu (kullanıcı geri bildirimi): çıplak `noxc` ÖNCEDEN `.legacy`ye
         // düşüp `cmdBuild`i argümansız çağırıyordu — tek satırlık bir
@@ -301,6 +308,9 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.eql(u8, first, "version") or std.mem.eql(u8, first, "--version") or std.mem.eql(u8, first, "-V")) break :blk .version;
         if (std.mem.eql(u8, first, "help") or std.mem.eql(u8, first, "--help") or std.mem.eql(u8, first, "-h")) break :blk .help;
         if (std.mem.eql(u8, first, "upgrade")) break :blk .upgrade;
+        if (std.mem.eql(u8, first, "install")) break :blk .install;
+        if (std.mem.eql(u8, first, "uninstall")) break :blk .uninstall;
+        if (std.mem.eql(u8, first, "list")) break :blk .list_installed;
         break :blk .legacy;
     };
     const rest: []const []const u8 = if (sub == .legacy or all_args.items.len == 0) all_args.items else all_args.items[1..];
@@ -322,6 +332,9 @@ pub fn main(init: std.process.Init) !void {
         .init => try cmdInit(io, a, rest),
         .check => try cmdCheck(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
         .upgrade => try cmdUpgrade(a, io, rest, resource_dir_override, upgrade_policy, fetch_policy, is_tr),
+        .install => try cmdInstall(gpa, io, a, rest, nox_home, resource_dirs, registry_policy, fetch_policy, init.environ_map, is_tr),
+        .uninstall => try cmdUninstall(io, a, rest, nox_home),
+        .list_installed => try cmdListInstalled(io, a, nox_home),
     }
 }
 
@@ -528,7 +541,7 @@ fn cmdAdd(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registry_p
         try new_requires.append(a, new_req);
     }
 
-    const new_manifest: project.Manifest = .{ .name = manifest.name, .entry = manifest.entry, .requires = new_requires.items };
+    const new_manifest: project.Manifest = .{ .name = manifest.name, .entry = manifest.entry, .bin = manifest.bin, .requires = new_requires.items };
     project.validateManifest(new_manifest) catch |e| {
         printErr("add: gecersiz alias '{s}' ({t})\n", .{ alias, e });
         std.process.exit(1);
@@ -569,7 +582,7 @@ fn cmdDelete(io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
         std.process.exit(1);
     }
 
-    const new_manifest: project.Manifest = .{ .name = manifest.name, .entry = manifest.entry, .requires = new_requires.items };
+    const new_manifest: project.Manifest = .{ .name = manifest.name, .entry = manifest.entry, .bin = manifest.bin, .requires = new_requires.items };
     try project.saveManifest(a, io, root, new_manifest);
 
     const lock = project.loadLockfile(a, io, root) catch project.Lockfile{};
@@ -640,6 +653,169 @@ fn cmdPublish(io: std.Io, a: std.mem.Allocator, args: []const []const u8, regist
         std.process.exit(1);
     }
     printOk("gonderildi: {s} (id={s}) — onay bekleniyor\n", .{ manifest.name, result.id });
+}
+
+/// `noxc install <paket-adi|repo> [--ref <ref>]` — bkz. `pkg/install.zig`nin
+/// modül üstü notu (GLOBAL paket kurulumu tasarımı). `noxc add`in AYNI
+/// "bare isimse registry'den coz, aksi halde DOGRUDAN kullan" deseni —
+/// TEK fark: `add`in iki AYRI pozisyonel argümanı (alias + opsiyonel repo)
+/// yerine burada TEK argüman var, çünkü komut ADI `add`in aksine kullanıcı
+/// tarafından SEÇİLMEZ — paketin KENDİ `nox.json`sindeki `bin.name`den
+/// GELİR.
+fn cmdInstall(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, registry_policy: registry.RegistryPolicy, fetch_policy: fetch.FetchPolicy, environ_map: *const std.process.Environ.Map, is_tr: bool) !void {
+    var ref: []const u8 = "main";
+    var pkg_arg: ?[]const u8 = null;
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "--ref")) {
+            i += 1;
+            if (i >= args.len) {
+                printErr("install: --ref bir deger bekliyor\n", .{});
+                std.process.exit(1);
+            }
+            ref = args[i];
+        } else if (pkg_arg == null) {
+            pkg_arg = args[i];
+        }
+    }
+    const pkg = pkg_arg orelse {
+        std.debug.print("kullanim: noxc install <paket-adi|repo> [--ref <ref>]\n", .{});
+        std.process.exit(1);
+    };
+
+    // Bare bir kayit-defteri ismi mi (`/` ICERMIYOR — "nyx" gibi) yoksa
+    // dogrudan bir repo/yerel yol mu (`add`in "iki pozisyonel argüman"
+    // yerine tek argümanın İÇERİĞİNE bakan, daha basit bir ayrım — bkz.
+    // bu fonksiyonun belge notu).
+    const looks_like_repo = std.mem.indexOfScalar(u8, pkg, '/') != null;
+    const repo: []const u8 = if (looks_like_repo) pkg else blk: {
+        const index_arg = registry_policy.index_url;
+        const is_url = std.mem.startsWith(u8, index_arg, "http://") or std.mem.startsWith(u8, index_arg, "https://");
+        const idx = if (is_url)
+            pkg_index.loadIndexFromUrl(a, io, index_arg, fetch_policy) catch |e| {
+                printErr("install: indeks getirilemedi/ayristirilamadi ({t}): {s}\n", .{ e, index_arg });
+                std.process.exit(1);
+            }
+        else
+            pkg_index.loadIndexFromFile(a, io, index_arg) catch |e| {
+                printErr("install: indeks okunamadi/ayristirilamadi ({t}): {s}\n", .{ e, index_arg });
+                std.process.exit(1);
+            };
+        const entry = registry.findByAlias(idx, pkg) orelse {
+            printErr("install: '{s}' indekste bulunamadi ({s}) — repo'yu acikca belirtin: noxc install <repo>\n", .{ pkg, index_arg });
+            std.process.exit(1);
+        };
+        break :blk entry.repo;
+    };
+
+    var sig_diag: ?[]const u8 = null;
+    const fetch_result = fetch.fetchToCache(a, io, nox_home, repo, ref, false, &sig_diag, fetch_policy) catch |e| {
+        printErr("install: getirilemedi ({t}): {s}@{s}\n", .{ e, repo, ref });
+        std.process.exit(1);
+    };
+
+    const pkg_manifest = project.loadManifest(a, io, fetch_result.cache_dir) catch |e| {
+        printErr("install: paketin nox.json'i okunamadi/gecersiz ({s}): {t}\n", .{ fetch_result.cache_dir, e });
+        std.process.exit(1);
+    };
+    const bin_spec = pkg_manifest.bin orelse {
+        printErr("install: '{s}' global kurulum icin bir 'bin' giris noktasi tanimlamiyor\n", .{repo});
+        std.process.exit(1);
+    };
+    const bin_source_path = try std.fmt.allocPrint(a, "{s}/{s}", .{ fetch_result.cache_dir, bin_spec.path });
+
+    // Derleme SCRATCH bir dizine yapılır — `noxc upgrade`nin "HERHANGİ bir
+    // aşama BAŞARISIZ olursa GERÇEK kuruluma HİÇ dokunulmaz" ilkesiyle
+    // TUTARLI (buradaki "gerçek kurulum", ZATEN VAR olan BAŞKA bir global
+    // ikilidir — yarım kalmış bir derleme ONU asla ETKİLEMEZ).
+    var suffix_bytes: [8]u8 = undefined;
+    io.random(&suffix_bytes);
+    const suffix = std.mem.readInt(u64, &suffix_bytes, .little);
+    const scratch_dir_path = try std.fmt.allocPrint(a, "{s}/pkg/tmp/install-scratch-{x}", .{ nox_home, suffix });
+    try std.Io.Dir.cwd().createDirPath(io, scratch_dir_path);
+    defer std.Io.Dir.cwd().deleteTree(io, scratch_dir_path) catch {};
+    const scratch_bin_path = try std.fmt.allocPrint(a, "{s}/{s}", .{ scratch_dir_path, bin_spec.name });
+
+    const compiled_path = try buildOne(gpa, io, a, bin_source_path, false, scratch_bin_path, nox_home, resource_dirs, false, fetch_policy);
+
+    const bin_dir_path = try project.resolveGlobalBinDir(a, nox_home);
+    try std.Io.Dir.cwd().createDirPath(io, bin_dir_path);
+    var bin_dir = try std.Io.Dir.openDirAbsolute(io, bin_dir_path, .{});
+    defer bin_dir.close(io);
+
+    const dest_name = try install_mod.exeFileName(a, bin_spec.name);
+    try install_mod.placeBinary(a, io, compiled_path, bin_dir, dest_name);
+
+    const registry_state = project.loadInstalledRegistry(a, io, nox_home) catch project.InstalledRegistry{};
+    const installed_at = try install_mod.nowAsEpochSecondsString(a, io);
+    const new_packages = try project.upsertInstalled(a, registry_state, .{
+        .command_name = bin_spec.name,
+        .repo = repo,
+        .ref = ref,
+        .resolved_sha = fetch_result.resolved_sha,
+        .bin_path = bin_spec.path,
+        .installed_at = installed_at,
+    });
+    try project.saveInstalledRegistry(a, io, nox_home, .{ .packages = new_packages });
+
+    const short_sha = fetch_result.resolved_sha[0..@min(8, fetch_result.resolved_sha.len)];
+    printOk("kuruldu: {s} ({s}@{s})\n", .{ bin_spec.name, repo, short_sha });
+
+    const path_env = environ_map.get("PATH") orelse "";
+    if (!install_mod.isDirOnPath(path_env, bin_dir_path)) {
+        install_mod.printPathHint(bin_dir_path, is_tr);
+    }
+}
+
+/// `noxc uninstall <komut-adi>` — `{nox_home}/bin/{komut-adi}[.exe]`i
+/// SİLER VE `installed.json`dan ÇIKARIR. Paylaşılan (içerik-adresli)
+/// paket önbelleğine (`pkg/mod/...`) DOKUNMAZ — bkz. `project.
+/// removeInstalled`in belge notu.
+fn cmdUninstall(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8) !void {
+    const command_name = if (args.len > 0) args[0] else {
+        std.debug.print("kullanim: noxc uninstall <komut-adi>\n", .{});
+        std.process.exit(1);
+    };
+
+    const registry_state = project.loadInstalledRegistry(a, io, nox_home) catch |e| {
+        printErr("uninstall: kurulu-paket kaydi okunamadi: {t}\n", .{e});
+        std.process.exit(1);
+    };
+    const new_packages = try project.removeInstalled(a, registry_state, command_name) orelse {
+        printErr("uninstall: '{s}' global kurulu degil\n", .{command_name});
+        std.process.exit(1);
+    };
+
+    const bin_dir_path = try project.resolveGlobalBinDir(a, nox_home);
+    const dest_name = try install_mod.exeFileName(a, command_name);
+    const bin_file_path = try std.fmt.allocPrint(a, "{s}/{s}", .{ bin_dir_path, dest_name });
+    std.Io.Dir.cwd().deleteFile(io, bin_file_path) catch {};
+
+    try project.saveInstalledRegistry(a, io, nox_home, .{ .packages = new_packages });
+    printOk("kaldirildi: {s}\n", .{command_name});
+}
+
+/// `noxc list` — global kurulu paketlerin insan-okunur bir tablosunu
+/// yazdırır (bkz. `project.InstalledRegistry`).
+fn cmdListInstalled(io: std.Io, a: std.mem.Allocator, nox_home: []const u8) !void {
+    const registry_state = project.loadInstalledRegistry(a, io, nox_home) catch |e| {
+        printErr("list: kurulu-paket kaydi okunamadi: {t}\n", .{e});
+        std.process.exit(1);
+    };
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
+    const w = &stdout_writer.interface;
+
+    if (registry_state.packages.len == 0) {
+        try w.writeAll("hicbir paket global olarak kurulu degil (bkz. 'noxc install --help')\n");
+        try w.flush();
+        return;
+    }
+    for (registry_state.packages) |pkg| {
+        try w.print("{s}\t{s}@{s} ({s})\n", .{ pkg.command_name, pkg.repo, pkg.ref, pkg.resolved_sha[0..@min(8, pkg.resolved_sha.len)] });
+    }
+    try w.flush();
 }
 
 const BuildOpts = struct {

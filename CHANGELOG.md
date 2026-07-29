@@ -14,6 +14,26 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.17.0]
+
+### Eklendi
+- **GLOBAL paket kurulumu**: `noxc install <paket|repo> [--ref <ref>]` —
+  bir paketin `nox.json`sinde bildirilen `bin` girdi noktasını (YENİ
+  opsiyonel `Manifest.bin: {name, path}` alanı) derleyip `{nox_home}/bin/`
+  (varsayılan `~/.nox/bin/`) altına GLOBAL bir ikili olarak kurar — `pip`/
+  `cargo install`/`pipx` tarzı, `noxc`nin KENDİ araç-zinciri kurulumundan
+  (`~/.nox-lang/bin/`) bilinçli olarak AYRI bir dizin/kayıt (`{nox_home}/
+  pkg/installed.json`). `noxc uninstall <komut-adi>` kurulu ikiliyi kaldırır
+  (paylaşılan paket önbelleğine dokunmadan); `noxc list` global kurulu tüm
+  komutları listeler. PATH'te değilse tek satırlık bir `export PATH=...`
+  ipucu bir kez yazdırılır (shell rc dosyaları OTOMATİK düzenlenmez).
+
+### Düzeltildi
+- `noxc add`/`noxc delete`, manifest'i yeniden yazarken YENİ `bin` alanını
+  SESSİZCE siliyordu (kod incelemesiyle bulundu, test hatası DEĞİL).
+- `noxc list` çıktısını stderr'e yazıyordu — `noxc search`le TUTARLI
+  olacak şekilde stdout'a taşındı (uçtan-uca testle yakalanan gerçek hata).
+
 ## [1.16.1]
 
 ### Değiştirildi

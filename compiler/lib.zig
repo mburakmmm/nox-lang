@@ -18,6 +18,7 @@ pub const test_runner = @import("pkg/test_runner.zig");
 pub const fetch = @import("pkg/fetch.zig");
 pub const pkg_index = @import("pkg/index.zig");
 pub const upgrade = @import("pkg/upgrade.zig");
+pub const install = @import("pkg/install.zig");
 pub const registry = @import("pkg/registry.zig");
 pub const qbe_target = @import("qbe_target.zig");
 

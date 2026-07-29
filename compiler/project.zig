@@ -38,6 +38,20 @@ pub const Requirement = struct {
     require_signed_commit: bool = false,
 };
 
+/// GLOBAL paket kurulumu (`noxc install`, bkz. `pkg/install.zig`) — bir
+/// paket, KENDİ `nox.json`sinde BUNU bildirirse, PATH'e eklenmiş bir
+/// native ikili olarak kurulabilir hale gelir. `name`, kurulunca ortaya
+/// çıkacak CLI komut adıdır (paketin KENDİ `Manifest.name`sinden
+/// BAĞIMSIZ — bir paket kendi adından FARKLI bir komut adı sunmak
+/// isteyebilir); `path`, paket KÖKÜNE GÖRELİ, derlenecek `.nox` giriş
+/// dosyasıdır. **Bilinçli v1 kapsamı:** TEK bir `bin` girdisi (npm'in
+/// çoklu-komut `bin` haritasının AKSİNE) — `entry`nin ZATEN kurduğu
+/// "tek giriş noktası" hassasiyetiyle TUTARLI.
+pub const BinSpec = struct {
+    name: []const u8,
+    path: []const u8,
+};
+
 /// Proje manifesti (`nox.json`, proje kökünde). `.ignore_unknown_fields`
 /// (bkz. `loadManifest`) sayesinde P.1'de ZATEN `requires`lı bir manifesti
 /// ayrıştırmak (o alanı yok sayarak) başarısız OLMUYORDU — §P.4 bu alanı
@@ -45,6 +59,9 @@ pub const Requirement = struct {
 pub const Manifest = struct {
     name: []const u8 = "",
     entry: []const u8 = "main.nox",
+    /// `null` İSE bu paket global olarak kurulamaz (bkz. `BinSpec`in
+    /// belge notu) — `noxc install` bu durumda net bir hatayla REDDEDER.
+    bin: ?BinSpec = null,
     requires: []const Requirement = &.{},
 };
 
@@ -228,4 +245,125 @@ pub fn findLocked(lock: Lockfile, alias: []const u8) ?LockedPackage {
         if (std.mem.eql(u8, pkg.alias, alias)) return pkg;
     }
     return null;
+}
+
+// ---- GLOBAL paket kurulumu (`noxc install`/`uninstall`/`list`) ----
+// `Lockfile`/`LockedPackage`in AYNI ŞEMA/serileştirme deseni — ama proje
+// `nox.json`/`nox.lock`dan TAMAMEN AYRI, TEK bir GLOBAL dosyada
+// (`{nox_home}/pkg/installed.json`, bkz. `resolveInstalledRegistryPath`)
+// yaşar. Bir projenin bağımlılıkları İLE bu makinede GLOBAL kurulu CLI
+// araçları KAVRAMSAL olarak TAMAMEN AYRI kavramlardır — BİRİNİN şeması
+// DİĞERİNİ ETKİLEMEZ.
+
+/// Global kurulu TEK bir paketin kaydı — `pkg/install.zig`nin `cmdInstall`ı
+/// tarafından YAZILIR, `cmdUninstall`/`cmdListInstalled` tarafından OKUNUR.
+pub const InstalledPackage = struct {
+    command_name: []const u8,
+    repo: []const u8,
+    ref: []const u8,
+    resolved_sha: []const u8,
+    /// Kaynak dosyanın paket-içi yolu (bilgi amaçlı — `noxc list`in
+    /// gösterdiği ek bağlam, YENİDEN kurulum İçin GEREKLİ değil çünkü
+    /// paketin KENDİ `nox.json`sindeki `bin.path` HER ZAMAN yeniden
+    /// okunur).
+    bin_path: []const u8,
+    /// ISO8601 (`noxc list` çıktısı İçin) — `nox_now_iso8601_raw` GİBİ
+    /// mevcut bir yardımcı YOKSA `pkg/install.zig` bunu KENDİSİ üretir
+    /// (bkz. onun belge notu).
+    installed_at: []const u8,
+};
+
+pub const InstalledRegistry = struct {
+    packages: []const InstalledPackage = &.{},
+};
+
+pub const InstalledRegistryError = error{InvalidInstalledRegistry} ||
+    std.Io.Dir.ReadFileAllocError ||
+    Allocator.Error;
+
+/// Global kurulu paketlerin KAYIT dosyasının mutlak yolu —
+/// `{nox_home}/pkg/installed.json`. `nox_home`, `main.zig`nin ZATEN
+/// hesapladığı (varsayılan `$HOME/.nox`) paket-önbelleği KÖKÜDÜR (bkz.
+/// `fetch.zig`nin `cachedDirFor`ı, AYNI `nox_home` parametresi) — bu
+/// dosya BİLEREK O KÖKÜN altında yaşar (`pkg/mod`/`pkg/tmp`nin YANINDA),
+/// `resolveInstallRoot`ın (noxc'nin KENDİ araç-zinciri kurulumu, TAMAMEN
+/// AYRI bir kavram) DEĞİL.
+pub fn resolveInstalledRegistryPath(a: Allocator, nox_home: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(a, "{s}/pkg/installed.json", .{nox_home});
+}
+
+/// GLOBAL kurulu paket ikililerinin YAŞADIĞI dizin — `{nox_home}/bin`.
+/// `resolveInstallRoot`ın döndürdüğü (`noxc`/`noxlsp`/`qbe`nin KENDİ
+/// kurulum kökü, `upgrade.zig` tarafından YÖNETİLİR) İLE BİLEREK AYRI
+/// bir dizin — kullanıcı tarafından kurulmuş KEYFİ üçüncü-taraf
+/// ikilileri `upgrade`nin TAMAMEN kendi yönettiği sabit-3-isim ağacına
+/// karıştırmamak İçin (bkz. proje belleği/plan dosyası "GLOBAL paket
+/// kurulumu" gerekçesi).
+pub fn resolveGlobalBinDir(a: Allocator, nox_home: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(a, "{s}/bin", .{nox_home});
+}
+
+/// `{nox_home}/pkg/installed.json`ı okuyup ayrıştırır. Dosya HİÇ YOKSA
+/// (henüz HİÇ global kurulum YAPILMAMIŞ) bu bir HATA DEĞİLDİR — BOŞ bir
+/// `InstalledRegistry` döner (`loadLockfile`nin AYNI "henüz yok = boş
+/// başlangıç durumu" ilkesiyle TUTARLI).
+pub fn loadInstalledRegistry(a: Allocator, io: Io, nox_home: []const u8) InstalledRegistryError!InstalledRegistry {
+    const path = try resolveInstalledRegistryPath(a, nox_home);
+    const source = std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1024 * 1024)) catch |e| switch (e) {
+        error.FileNotFound => return InstalledRegistry{},
+        else => |err| return err,
+    };
+    const parsed = std.json.parseFromSlice(InstalledRegistry, a, source, .{ .ignore_unknown_fields = true }) catch {
+        return error.InvalidInstalledRegistry;
+    };
+    return parsed.value;
+}
+
+/// `registry`i `{nox_home}/pkg/installed.json`a (okunabilir, girintili
+/// JSON olarak) yazar — `saveLockfile`/`saveManifest`le BİREBİR AYNI
+/// desen. `{nox_home}/pkg/` dizininin ZATEN VAR OLDUĞUNU VARSAYMAZ —
+/// çağıran (`pkg/install.zig`) YAZMADAN ÖNCE `makePath` ile GARANTİ eder
+/// (bu fonksiyon dizin OLUŞTURMAZ, `saveLockfile`nin AYNI "sadece dosyaya
+/// yaz" sorumluluk sınırı).
+pub fn saveInstalledRegistry(a: Allocator, io: Io, nox_home: []const u8, registry: InstalledRegistry) !void {
+    const path = try resolveInstalledRegistryPath(a, nox_home);
+    const json_text = try std.json.Stringify.valueAlloc(a, registry, .{ .whitespace = .indent_2 });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = json_text });
+}
+
+/// `registry` İÇİNDE `command_name`e karşılık gelen kurulu paketi bulur
+/// — `findLocked`nin AYNI arama deseni.
+pub fn findInstalled(registry: InstalledRegistry, command_name: []const u8) ?InstalledPackage {
+    for (registry.packages) |pkg| {
+        if (std.mem.eql(u8, pkg.command_name, command_name)) return pkg;
+    }
+    return null;
+}
+
+/// `registry`e `entry`i EKLER — `command_name` ZATEN VARSA ÜZERİNE YAZAR
+/// (yeniden kurulum/güncelleme = "zaten kurulu, üzerine yaz" semantiği,
+/// `pip install --upgrade`la TUTARLI). Yeni bir dilim döner (çağıran
+/// `registry.packages`i BUNUNLA DEĞİŞTİRİR) — `Lockfile`ın kendi
+/// (değişmez/immutable) alan tarzıyla TUTARLI.
+pub fn upsertInstalled(a: Allocator, registry: InstalledRegistry, entry: InstalledPackage) ![]const InstalledPackage {
+    var list = std.ArrayListUnmanaged(InstalledPackage).empty;
+    for (registry.packages) |pkg| {
+        if (std.mem.eql(u8, pkg.command_name, entry.command_name)) continue;
+        try list.append(a, pkg);
+    }
+    try list.append(a, entry);
+    return try list.toOwnedSlice(a);
+}
+
+/// `registry`den `command_name`i ÇIKARIR — bulunamazsa `null` döner (var
+/// olmayan bir isim silinmeye çalışılıyor, çağıran BUNU net bir hatayla
+/// raporlar).
+pub fn removeInstalled(a: Allocator, registry: InstalledRegistry, command_name: []const u8) !?[]const InstalledPackage {
+    if (findInstalled(registry, command_name) == null) return null;
+    var list = std.ArrayListUnmanaged(InstalledPackage).empty;
+    for (registry.packages) |pkg| {
+        if (std.mem.eql(u8, pkg.command_name, command_name)) continue;
+        try list.append(a, pkg);
+    }
+    return try list.toOwnedSlice(a);
 }

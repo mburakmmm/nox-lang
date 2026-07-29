@@ -88,7 +88,10 @@ print(c.value)
   sorgu (query string) kodlama/çözme, VE `nox.process` — fiber-uyumlu
   (zamanlayıcıyı KİLİTLEMEYEN) alt-süreç (subprocess) çalıştırma) ve Go
   tarzı merkeziyetsiz (GitHub URL'si ya da doğrudan bir indeks URL'si
-  üzerinden, `noxc search`) bir paket sistemi.
+  üzerinden, `noxc search`) bir paket sistemi — bir paket kendi `nox.json`
+  sinde bir `bin` girdi noktası tanımlıyorsa `noxc install` ile (`pip`/
+  `cargo install` tarzı) GLOBAL olarak da kurulup PATH'ten çalıştırılabilir
+  bir CLI komutuna dönüşebilir (`noxc uninstall`/`noxc list` ile yönetilir).
 
 Mimari/tasarım kararlarının tam dökümü için
 [`nox-teknik-spesifikasyon.md`](nox-teknik-spesifikasyon.md)'ye bakın.
@@ -168,6 +171,10 @@ noxc add nyx github.com/x/y # indeks yerine repo'yu doğrudan belirtir (ör. pri
 noxc delete nyx             # bağımlılığı nox.json'dan (ve nox.lock'tan) çıkarır
 noxc publish github.com/me/nyx --description "..."  # paket metadatasını merkezi indekse gönderir (admin onayı bekler)
 noxc upgrade [--check]      # noxc'nin kendisini (binary+runtime+stdlib) en son sürüme günceller
+noxc install nyx            # "nyx"nin bin girdi noktasını derleyip ~/.nox/bin'e GLOBAL kurar (PATH'ten çalıştırılabilir)
+noxc install github.com/x/y --ref v1.2.0  # repo/ref doğrudan belirtilerek de kurulabilir
+noxc uninstall nyx          # global kurulu komutu kaldırır
+noxc list                   # global kurulu tüm komutları listeler
 ```
 
 Bir proje birden fazla üçüncü-taraf bağımlılık gerektiriyorsa proje

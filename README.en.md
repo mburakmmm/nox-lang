@@ -90,7 +90,10 @@ print(c.value)
   encoding + query-string encode/decode, and `nox.process` — fiber-aware
   (non-blocking) subprocess execution) and a Go-style decentralized
   package system (GitHub URL, or a direct package-index URL via
-  `noxc search`).
+  `noxc search`) — a package that declares a `bin` entry point in its own
+  `nox.json` can also be installed GLOBALLY with `noxc install` (`pip`/
+  `cargo install`-style) and run from anywhere as a PATH command
+  (managed with `noxc uninstall`/`noxc list`).
 
 For the full record of architectural/design decisions, see
 [`nox-teknik-spesifikasyon.md`](nox-teknik-spesifikasyon.md) (Turkish).
@@ -171,6 +174,10 @@ noxc add nyx github.com/x/y # give the repo explicitly instead of using the inde
 noxc delete nyx             # remove a dependency from nox.json (and nox.lock)
 noxc publish github.com/me/nyx --description "..."  # submit package metadata to the central index (awaits admin approval)
 noxc upgrade [--check]      # self-updates noxc itself (binary+runtime+stdlib) to the latest release
+noxc install nyx            # compiles "nyx"'s bin entry point and installs it GLOBALLY to ~/.nox/bin (runnable from PATH)
+noxc install github.com/x/y --ref v1.2.0  # can also install directly from a repo/ref
+noxc uninstall nyx          # removes a globally installed command
+noxc list                   # lists all globally installed commands
 ```
 
 If a project needs one or more third-party dependencies, define a
