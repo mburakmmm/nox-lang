@@ -14,6 +14,21 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.19.0]
+
+### Eklendi
+- **HPy köprüsünde yerleşik tip tekilleri**: `h_LongType`/`h_FloatType`/
+  `h_BoolType`/`h_UnicodeType`/`h_TupleType`/`h_ListType`/`h_BytesType`
+  (`HPyContext`) ÖNCEDEN HİÇ doldurulmuyordu — `HPy_Type` bu tiplerde
+  `HPy_NULL` döndürüyordu. Bu, `HPyType_IsSubtype(ctx, HPy_Type(ctx,
+  deger), ctx->h_FloatType)` GİBİ bir tip-dispatch deseni kullanan (JSON
+  encoder'ların YAYGIN kullandığı) HPy eklentilerinin (kullanıcının kendi
+  `hpy-ujson` portu ARAŞTIRMASI SIRASINDA bulundu) HER ZAMAN yanlış
+  sonuç üretmesine yol açıyordu. Artık bu 7 tekil GERÇEK yerleşik-tip
+  handle'larıyla dolduruluyor, `HPy_Type` yerleşik tipler İçin doğru
+  tekili döner — `ctx_Type_IsSubtype`nin KİMLİK karşılaştırması bu
+  dispatch deseni İçin ARTIK doğru çalışır. Yeni birim testi eklendi.
+
 ## [1.18.1]
 
 ### Düzeltildi

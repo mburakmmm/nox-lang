@@ -13513,6 +13513,55 @@ oluşturan bir iş yükünde tepe bellek ayak izi: eski ~66.4MB → yeni
 BEKLENEN büyüklük mertebesiyle TUTARLI) — plan dosyasında BAŞTAN kabul
 edilen, bilinçli bir ödünleşim.
 
+## 3.77 HPy köprüsünde yerleşik tip tekilleri (`h_LongType`/`h_FloatType`/vb.)
+
+Kullanıcı, kendi geliştirdiği bir HPy portu — `hpy-ujson`
+(github.com/mburakmmm/hpy-ujson, upstream UltraJSON'un `ujson_hpy` HPy
+Universal ABI portu) — Nox'tan çalıştırılıp çalıştırılamayacağını sordu.
+Araştırma: build sistemi (`hpy>=0.9,<0.10`, Universal ABI hedefi) Nox'un
+HPy köprüsünün TAM OLARAK hedeflediği şey; `ujson_hpy.c`nin kullandığı
+API yüzeyinin neredeyse TAMAMI (Dup/Close/GetAttr/Long/Float/Unicode/
+Dict/List/Tuple/Err vb. onlarca fonksiyon) zaten `runtime/hpy_bridge/
+context.zig`de uygulanmış.
+
+**Bulunan GERÇEK hata:** `ujson_hpy.c`nin `dumps()` sırasında HER
+seferinde çalışan tip-tespit yolu `HPyType_IsSubtype(ctx, HPy_Type(ctx,
+deger), ctx->h_FloatType)` KULLANIR (JSON encoder'ların YAYGIN
+kullandığı bir dispatch deseni) — `HPyContext`nin `h_LongType`/
+`h_FloatType`/`h_BoolType`/`h_UnicodeType`/`h_TupleType`/`h_ListType`/
+`h_BytesType` alanları TANIMLI ama `createContext`de HİÇBİR YERDE
+ATANMIYORDU (hep `HPy_NULL` kalıyordu) VE `ctxType` (`HPy_Type`) yerleşik
+tipler İçin KOŞULSUZ `HPy_NULL` DÖNÜYORDU (bilinçli, DOKÜMANTE edilmiş
+v1 sınırlaması) — bu YÜZDEN bu dispatch deseni HER ZAMAN yanlış dönerdi.
+
+**Düzeltme:** `pinnedExcType`yle AYNI desende (`pinnedBuiltinType`) 7
+YENİ pinned "tip kimliği" tekili oluşturulup `createContext`de bu
+alanlara atandı; `ctxType`, `.instance_` DIŞINDAKİ yerleşik tag'ler
+(`.long`/`.float_`/`.bool_`/`.str_`/`.tuple_`/`.list_`/`.bytes_`) İçin
+DE artık ilgili tekili döner (`ctx_Type_IsSubtype` yalnızca KİMLİK
+karşılaştırması yaptığından — bkz. onun belge notu — bu YETERLİ).
+`destroyContext`in tekil temizleme listesine BU 7 YENİ tekil de
+eklenmedi İLK yazımda — HER `HPyContext` yaşam döngüsünde 7 sızıntıya
+yol açan GERÇEK bir regresyon AYNI oturumda bulunup düzeltildi (`zig
+build test`in "leaked 7 allocations" raporuyla YAKALANDI). Yeni birim
+testi: `ctxType`nin `long`/`float`/`bool`/`str` değerleri İçin doğru
+tekili döndürdüğünü VE `ctx_Type_IsSubtype`nin bu tekillerle DOĞRU
+sonuç verdiğini (bir `long`, `h_FloatType`in alt tipi SAYILMAZ) kanıtlar.
+
+**Doğrulama:** `hpy-ujson`, GERÇEK `hpy` araç zinciriyle (`pip install
+"hpy>=0.9,<0.10"`) hem CPython ABI hem Universal ABI (`./scripts/
+hpy-build.sh universal`) modunda BAŞARIYLA derlendi (`ujson_hpy.hpy0.so`,
+Mach-O arm64 bundle) — C kodunun KENDİSİ TAM olarak GEÇERLİ/UYUMLU.
+
+**Kapsam DIŞI bırakılan (bilinçli, kullanıcıya AÇIKÇA bildirildi):**
+`ujson_hpy.dumps()/loads()`i GERÇEK Nox KAYNAK kodundan uçtan uca
+çağırmak, `hpy_call` yerleşiğinin (Faz 14) BUGÜNKÜ ÇOK dar imzasını
+(`(yol: str, uzantı_adı: str, fonksiyon_adı: str, argüman: int) -> int`
+— SABİT, tek bir `int` argüman/dönüş) `str`/`dict`/`list` argüman VE
+dönüş TAŞIYABİLECEK şekilde genişletmeyi GEREKTİRİR — bu, BAŞLI BAŞINA
+AYRI VE DAHA BÜYÜK bir özellik, BU oturumun kapsamı DIŞINDA bırakıldı
+(kullanıcıyla görüşülüp AYRI bir karar bekliyor).
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

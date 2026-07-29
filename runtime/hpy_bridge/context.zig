@@ -1967,14 +1967,31 @@ fn ctxAsStructObject(ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque {
     return obj.instance_data.ptr;
 }
 
-/// `h`nin tipini döndürür. **Kapsam:** yalnızca `.instance_` için anlamlı
-/// bir şey döner (kendi `type_` nesnesi, `ctxDup` ile) — yerleşik tipler
-/// (`long`/`float_`/...) için karşılık gelen `h_LongType`/... tekilleri
-/// HENÜZ doldurulmadığından `HPy_NULL` döner (bilinçli sınırlama).
+/// `h`nin tipini döndürür. `.instance_` İçin kendi `type_` nesnesini
+/// (`ctxDup` İLE) döner. Yerleşik tipler (`long`/`float_`/`bool_`/`str_`/
+/// `tuple_`/`list_`/`bytes_`) İçin (bulundu, `hpy-ujson` entegrasyonu
+/// ARAŞTIRMASI SIRASINDA — bkz. `pinnedBuiltinType`nin belge notu) karşılık
+/// gelen `h_LongType`/`h_FloatType`/`h_BoolType`/`h_UnicodeType`/
+/// `h_TupleType`/`h_ListType`/`h_BytesType` tekili döner — `ctx_Type_
+/// IsSubtype`nin KİMLİK karşılaştırması (bkz. onun belge notu) BU YÜZDEN
+/// `HPy_Type(ctx, bir_float) == ctx->h_FloatType` GİBİ dispatch desenleri
+/// İçin ARTIK DOĞRU çalışır. Diğer TÜM tipler (`.none`/`.dict_`/`.type_`/
+/// `.exc_type`/`.bound_method_`/`.capsule_`/`.contextvar_`) İçin HÂLÂ
+/// `HPy_NULL` döner (kapsam bilinçli olarak dar — genişletmek yalnızca
+/// BU switch'e yeni bir dal eklemek kadar basit).
 fn ctxType(ctx: *HPyContext, obj_h: HPy) callconv(.c) HPy {
     const obj = objOf(obj_h) orelse return HPy_NULL;
-    if (obj.tag == .instance_) return ctxDup(ctx, obj.instance_type);
-    return HPy_NULL;
+    return switch (obj.tag) {
+        .instance_ => ctxDup(ctx, obj.instance_type),
+        .long => ctx.h_LongType,
+        .float_ => ctx.h_FloatType,
+        .bool_ => ctx.h_BoolType,
+        .str_ => ctx.h_UnicodeType,
+        .tuple_ => ctx.h_TupleType,
+        .list_ => ctx.h_ListType,
+        .bytes_ => ctx.h_BytesType,
+        else => HPy_NULL,
+    };
 }
 
 /// `obj`nin TAM OLARAK `type` tipinde (alt sınıflama YOK, bkz. kapsam notu)
@@ -3568,6 +3585,22 @@ fn pinnedExcType(allocator: std.mem.Allocator) !HPy {
     return .{ ._i = @intCast(@intFromPtr(obj)) };
 }
 
+/// `pinnedExcType` ile AYNI desen (kimlik-yalnızca, hiç serbest
+/// bırakılmayan tekil) — `h_LongType`/`h_FloatType`/`h_BoolType`/
+/// `h_UnicodeType`/`h_TupleType`/`h_ListType`/`h_BytesType`i doldurmak
+/// İçin: eklentiler (ör. `hpy-ujson`) `HPyType_IsSubtype(ctx, HPy_Type(ctx,
+/// value), ctx->h_FloatType)` GİBİ bir dispatch deseni KULLANIR —
+/// `ctx_Type_IsSubtype` yalnızca `sub._i == type._i` KİMLİK karşılaştırması
+/// yaptığından (bkz. onun belge notu), BU tekillerin `ctxType`in (aşağıda,
+/// `obj.tag`e göre) DÖNDÜRDÜĞÜ handle İLE AYNI olması YETERLİ VE GEREKLİ —
+/// `.exc_type`den AYRI bir tag KULLANILMASININ NEDENİ SADECE okunabilirlik
+/// (davranışsal FARK yok, `ctxTypeIsSubtype` tag'e HİÇ bakmaz).
+fn pinnedBuiltinType(allocator: std.mem.Allocator, name: [:0]const u8) !HPy {
+    const obj = try allocator.create(Obj);
+    obj.* = .{ .refcount = PINNED_REFCOUNT, .tag = .type_, .payload = .{ .l = 0 }, .type_name = name };
+    return .{ ._i = @intCast(@intFromPtr(obj)) };
+}
+
 pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
     const state = try allocator.create(PrivateState);
     const ctx = try allocator.create(HPyContext);
@@ -3607,6 +3640,21 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
     const h_unicode_encode_error = try pinnedExcType(allocator);
     const h_unicode_decode_error = try pinnedExcType(allocator);
 
+    // Bulundu (kullanıcının kendi `hpy-ujson` portu İçin araştırma sırasında):
+    // yerleşik tiplerin (`long`/`float`/`bool`/`str`/`tuple`/`list`/`bytes`)
+    // `h_XxxType` tekilleri ÖNCEDEN HİÇ doldurulmuyordu — eklentiler
+    // `HPyType_IsSubtype(ctx, HPy_Type(ctx, value), ctx->h_FloatType)` GİBİ
+    // bir dispatch deseni kullandığında (ör. JSON encoder'ların tip-ayrımı)
+    // bu HER ZAMAN yanlış dönerdi (`HPy_Type` de bu tiplerde `HPy_NULL`
+    // döndürüyordu — bkz. `ctxType`in AŞAĞIDAKİ güncellenmiş belge notu).
+    const h_long_type = try pinnedBuiltinType(allocator, "int");
+    const h_float_type = try pinnedBuiltinType(allocator, "float");
+    const h_bool_type = try pinnedBuiltinType(allocator, "bool");
+    const h_unicode_type = try pinnedBuiltinType(allocator, "str");
+    const h_tuple_type = try pinnedBuiltinType(allocator, "tuple");
+    const h_list_type = try pinnedBuiltinType(allocator, "list");
+    const h_bytes_type = try pinnedBuiltinType(allocator, "bytes");
+
     state.* = .{ .allocator = allocator, .h_true_obj = h_true, .h_false_obj = h_false };
 
     ctx.* = .{
@@ -3634,6 +3682,13 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
         .h_LookupError = h_lookup_error,
         .h_UnicodeEncodeError = h_unicode_encode_error,
         .h_UnicodeDecodeError = h_unicode_decode_error,
+        .h_LongType = h_long_type,
+        .h_FloatType = h_float_type,
+        .h_BoolType = h_bool_type,
+        .h_UnicodeType = h_unicode_type,
+        .h_TupleType = h_tuple_type,
+        .h_ListType = h_list_type,
+        .h_BytesType = h_bytes_type,
         .ctx_Dup = ctxDup,
         .ctx_Close = ctxClose,
         .ctx_Long_FromInt32_t = ctxLongFromInt32,
@@ -3833,6 +3888,9 @@ pub fn destroyContext(allocator: std.mem.Allocator, ctx: *HPyContext) void {
         ctx.h_ZeroDivisionError,   ctx.h_MemoryError,    ctx.h_StopIteration,
         ctx.h_NotImplementedError, ctx.h_ImportError,    ctx.h_OSError,
         ctx.h_LookupError,         ctx.h_UnicodeEncodeError, ctx.h_UnicodeDecodeError,
+        ctx.h_LongType,            ctx.h_FloatType,      ctx.h_BoolType,
+        ctx.h_UnicodeType,         ctx.h_TupleType,      ctx.h_ListType,
+        ctx.h_BytesType,
     };
     for (singletons) |h| allocator.destroy(objOf(h).?);
 
@@ -3870,6 +3928,34 @@ test "tekiller (None/True/False) hiç serbest bırakılmaz" {
     ctxClose(ctx, ctx.h_None);
     ctxClose(ctx, ctx.h_None);
     try std.testing.expectEqual(PINNED_REFCOUNT, none_obj.refcount);
+}
+
+// Bulundu (kullanıcının `hpy-ujson` portu araştırması SIRASINDA): yerleşik
+// tiplerin `h_XxxType` tekilleri ÖNCEDEN HİÇ doldurulmuyordu — `HPy_Type`
+// bunlarda `HPy_NULL` döndürüyordu, bu yüzden `HPyType_IsSubtype(ctx,
+// HPy_Type(ctx, deger), ctx->h_FloatType)` GİBİ bir tip-dispatch deseni
+// (JSON encoder'ların YAYGIN kullandığı) HER ZAMAN yanlış dönerdi.
+test "yerleşik tip tekilleri (h_LongType/h_FloatType/vb.) HPy_Type ile eşleşir" {
+    const ctx = try createContext(std.testing.allocator);
+    defer destroyContext(std.testing.allocator, ctx);
+
+    const long_h = ctxLongFromInt64(ctx, 7);
+    defer ctxClose(ctx, long_h);
+    try std.testing.expectEqual(ctx.h_LongType._i, ctxType(ctx, long_h)._i);
+    try std.testing.expectEqual(@as(c_int, 1), ctxTypeIsSubtype(ctx, ctxType(ctx, long_h), ctx.h_LongType));
+
+    const float_h = ctxFloatFromDouble(ctx, 3.5);
+    defer ctxClose(ctx, float_h);
+    try std.testing.expectEqual(ctx.h_FloatType._i, ctxType(ctx, float_h)._i);
+    try std.testing.expectEqual(@as(c_int, 1), ctxTypeIsSubtype(ctx, ctxType(ctx, float_h), ctx.h_FloatType));
+    // Bir `long`, `h_FloatType`in ALT tipi DEĞİLDİR (kimlik-yalnızca karşılaştırma).
+    try std.testing.expectEqual(@as(c_int, 0), ctxTypeIsSubtype(ctx, ctxType(ctx, long_h), ctx.h_FloatType));
+
+    try std.testing.expectEqual(ctx.h_BoolType._i, ctxType(ctx, ctx.h_True)._i);
+
+    const str_h = ctxUnicodeFromString(ctx, "merhaba");
+    defer ctxClose(ctx, str_h);
+    try std.testing.expectEqual(ctx.h_UnicodeType._i, ctxType(ctx, str_h)._i);
 }
 
 test "ctxUnicodeFromString/Check/AsUTF8AndSize round-trip" {
