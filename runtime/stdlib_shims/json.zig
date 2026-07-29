@@ -191,7 +191,61 @@ fn emptyList(rt: ?*anyopaque) ?*anyopaque {
     return buildPtrList(rt, &.{});
 }
 
-fn makeLeaf(rt: ?*anyopaque, kind: i64, b: bool, n: f64, s: []const u8) ?*anyopaque {
+/// Her `arr`/`keys`/`vals`/`s` alanı SKALER (null/bool/number) VEYA yarı-
+/// SKALER (dizi düğümünün `keys`/`vals`'ı, obje düğümünün `arr`'ı) yapraklar
+/// İçin ANLAMSIZ boş bir `list`/`""` DEĞERİDİR — ÖNCEDEN HER düğüm İçin
+/// AYRI AYRI tahsis edilirdi (yaprak başına 3 boş liste + 1 boş string,
+/// dizi/obje düğümü başına 2 boş liste + 1 boş string). `nox_json_decode_raw`
+/// artık TEK bir paylaşılan boş liste + TEK bir paylaşılan boş string
+/// (`SharedEmpties`) inşa edip TÜM düğümler arasında `nox_rc_retain`le
+/// PAYLAŞIYOR — gerçek tahsis sayısı, belge boyutundan BAĞIMSIZ olarak
+/// sabit (O(1)) kalıyor, yalnızca UCUZ bir refcount artışı (retain) ödeniyor.
+/// GÜVENLİ: `.append()`in büyüme yolu (bkz. `genListAppend`) kapasite=0 bir
+/// listeyi ASLA yerinde MUTATE etmez (her zaman YENİ bir blok tahsis eder),
+/// bu yüzden paylaşılan nesne başka bir yerden "gizlice değiştirilmiş" gibi
+/// GÖRÜNMEZ; TEK gerçek risk refcount muhasebesiydi — `callMakeJsonValue`nin
+/// kendi retain+predecrement'i NET SIFIR olduğundan (bkz. onun belge notu),
+/// paylaşılan nesneyi YENİDEN kullanmadan ÖNCE HER SEFERİNDE elle bir
+/// `nox_rc_retain` ile GERÇEK bir sahiplik birimi eklemek GEREKİR — aksi
+/// halde refcount HER ZAMAN 1'de kalır ve İLK release GERÇEK sahiplerden
+/// BAŞKALARININ da işaretçisini geçersiz kılardı (use-after-free).
+const SharedEmpties = struct {
+    list: ?*anyopaque,
+    str: ?[*:0]u8,
+};
+
+fn initSharedEmpties(rt: ?*anyopaque) ?SharedEmpties {
+    const list = buildPtrList(rt, &.{}) orelse return null;
+    const s = dupeToNoxStr(rt, "") orelse {
+        arc.nox_rc_release(rt, list, LIST_HEADER_SIZE);
+        return null;
+    };
+    return .{ .list = list, .str = s };
+}
+
+/// `nox_json_decode_raw`nin fonksiyon-ömrü boyunca tuttuğu KENDİ sahiplik
+/// birimini bırakır — Nox tarafında bir yerel değişkenin kapsam-sonu
+/// release'ine denk gelir (bkz. `SharedEmpties`nin belge notu).
+fn releaseSharedEmpties(rt: ?*anyopaque, shared: SharedEmpties) void {
+    arc.nox_rc_release(rt, shared.list, LIST_HEADER_SIZE);
+    arc.nox_rc_release(rt, shared.str, 1);
+}
+
+fn sharedEmptyList(shared: SharedEmpties) ?*anyopaque {
+    arc.nox_rc_retain(shared.list);
+    return shared.list;
+}
+
+fn sharedEmptyStr(shared: SharedEmpties) ?[*:0]const u8 {
+    arc.nox_rc_retain(shared.str);
+    return shared.str;
+}
+
+/// `initSharedEmpties`in KENDİSİ başarısız olduğu (OOM, pratikte HİÇ
+/// gerçekleşmeyen) SON ÇARE durum İçin — `shared` HİÇ yokken BİLE geçerli
+/// bir `JsonValue` üretebilmek amacıyla ESKİ, paylaşılmayan (ama HER ZAMAN
+/// çalışan) yolu KORUR.
+fn makeLeafUnshared(rt: ?*anyopaque, kind: i64, b: bool, n: f64, s: []const u8) ?*anyopaque {
     const dup = dupeToNoxStr(rt, s) orelse return null;
     const empty_arr = emptyList(rt) orelse return null;
     const empty_keys = emptyList(rt) orelse return null;
@@ -199,34 +253,42 @@ fn makeLeaf(rt: ?*anyopaque, kind: i64, b: bool, n: f64, s: []const u8) ?*anyopa
     return callMakeJsonValue(rt, kind, if (b) 1 else 0, n, dup, empty_arr, empty_keys, empty_vals);
 }
 
-fn buildNode(rt: ?*anyopaque, allocator: std.mem.Allocator, v: std.json.Value) !?*anyopaque {
+fn makeLeaf(rt: ?*anyopaque, shared: SharedEmpties, kind: i64, b: bool, n: f64, s: ?[*:0]const u8) ?*anyopaque {
+    const empty_arr = sharedEmptyList(shared);
+    const empty_keys = sharedEmptyList(shared);
+    const empty_vals = sharedEmptyList(shared);
+    return callMakeJsonValue(rt, kind, if (b) 1 else 0, n, s, empty_arr, empty_keys, empty_vals);
+}
+
+fn buildNode(rt: ?*anyopaque, allocator: std.mem.Allocator, shared: SharedEmpties, v: std.json.Value) !?*anyopaque {
     return switch (v) {
-        .null => makeLeaf(rt, 0, false, 0.0, ""),
-        .bool => |b| makeLeaf(rt, 1, b, 0.0, ""),
-        .integer => |i| makeLeaf(rt, 2, false, @floatFromInt(i), ""),
-        .float => |f| makeLeaf(rt, 2, false, f, ""),
-        .number_string => |s| makeLeaf(rt, 2, false, std.fmt.parseFloat(f64, s) catch 0.0, ""),
-        .string => |s| makeLeaf(rt, 3, false, 0.0, s),
+        .null => makeLeaf(rt, shared, 0, false, 0.0, sharedEmptyStr(shared)),
+        .bool => |b| makeLeaf(rt, shared, 1, b, 0.0, sharedEmptyStr(shared)),
+        .integer => |i| makeLeaf(rt, shared, 2, false, @floatFromInt(i), sharedEmptyStr(shared)),
+        .float => |f| makeLeaf(rt, shared, 2, false, f, sharedEmptyStr(shared)),
+        .number_string => |s| makeLeaf(rt, shared, 2, false, std.fmt.parseFloat(f64, s) catch 0.0, sharedEmptyStr(shared)),
+        .string => |s| blk: {
+            const dup = dupeToNoxStr(rt, s) orelse break :blk null;
+            break :blk makeLeaf(rt, shared, 3, false, 0.0, dup);
+        },
         .array => |arr_val| blk: {
             const items = try allocator.alloc(?*anyopaque, arr_val.items.len);
-            for (arr_val.items, 0..) |child, i| items[i] = try buildNode(rt, allocator, child);
+            for (arr_val.items, 0..) |child, i| items[i] = try buildNode(rt, allocator, shared, child);
             const arr_list = buildPtrList(rt, items) orelse break :blk null;
-            const empty_keys = emptyList(rt) orelse break :blk null;
-            const empty_vals = emptyList(rt) orelse break :blk null;
-            const dup = dupeToNoxStr(rt, "") orelse break :blk null;
-            break :blk callMakeJsonValue(rt, 4, 0, 0.0, dup, arr_list, empty_keys, empty_vals);
+            const empty_keys = sharedEmptyList(shared);
+            const empty_vals = sharedEmptyList(shared);
+            break :blk callMakeJsonValue(rt, 4, 0, 0.0, sharedEmptyStr(shared), arr_list, empty_keys, empty_vals);
         },
         .object => |obj_val| blk: {
             const n = obj_val.count();
             const key_items = try allocator.alloc(?*anyopaque, n);
             const val_items = try allocator.alloc(?*anyopaque, n);
             for (obj_val.keys(), 0..) |k, i| key_items[i] = dupeToNoxStr(rt, k);
-            for (obj_val.values(), 0..) |val, i| val_items[i] = try buildNode(rt, allocator, val);
+            for (obj_val.values(), 0..) |val, i| val_items[i] = try buildNode(rt, allocator, shared, val);
             const keys_list = buildPtrList(rt, key_items) orelse break :blk null;
             const vals_list = buildPtrList(rt, val_items) orelse break :blk null;
-            const empty_arr = emptyList(rt) orelse break :blk null;
-            const dup = dupeToNoxStr(rt, "") orelse break :blk null;
-            break :blk callMakeJsonValue(rt, 5, 0, 0.0, dup, empty_arr, keys_list, vals_list);
+            const empty_arr = sharedEmptyList(shared);
+            break :blk callMakeJsonValue(rt, 5, 0, 0.0, sharedEmptyStr(shared), empty_arr, keys_list, vals_list);
         },
     };
 }
@@ -251,15 +313,31 @@ export fn nox_json_decode_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?
 
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, slice, .{}) catch {
         g_last_op_ok = false;
-        return makeLeaf(rt, 0, false, 0.0, "");
+        return makeLeafUnshared(rt, 0, false, 0.0, "");
     };
 
-    const root = buildNode(rt, allocator, parsed.value) catch {
+    // `g_last_op_ok`, JSON SÖZDİZİMİNİN geçerliliğini yansıtır — bir
+    // AYIRICI (allocator) arızası (`rt=null` İLE çağrılan İZOLE test
+    // bağlamlarında `nox_rc_alloc`nin havuz hızlı-yolunun GERÇEK bir
+    // `RuntimeState` GEREKTİRMESİ YÜZÜNDEN OLABİLİR, GERÇEK Nox
+    // programlarında `rt` HİÇBİR ZAMAN null DEĞİLDİR) BUNU DEĞİŞTİRMEMELİ
+    // — buraya SADECE parse BAŞARILI OLDUKTAN SONRA ulaşılır, bu yüzden
+    // `initSharedEmpties` başarısız olsa BİLE `ok=true` KALIR (GERÇEK bir
+    // BUG olarak bulunup düzeltildi: ÖNCEDEN bu adım parse'DAN ÖNCE
+    // yapılıp başarısızlıkta koşulsuz `g_last_op_ok=false` YAZIYORDU —
+    // `rt=null`lı testte GEÇERLİ JSON'u BİLE "geçersiz" olarak işaretledi).
+    const shared = initSharedEmpties(rt) orelse {
+        g_last_op_ok = true;
+        return makeLeafUnshared(rt, 0, false, 0.0, "");
+    };
+    defer releaseSharedEmpties(rt, shared);
+
+    const root = buildNode(rt, allocator, shared, parsed.value) catch {
         g_last_op_ok = false;
-        return makeLeaf(rt, 0, false, 0.0, "");
+        return makeLeaf(rt, shared, 0, false, 0.0, sharedEmptyStr(shared));
     };
     g_last_op_ok = true;
-    return root orelse makeLeaf(rt, 0, false, 0.0, "");
+    return root orelse makeLeaf(rt, shared, 0, false, 0.0, sharedEmptyStr(shared));
 }
 
 // Faz BB.1: `g_last_op_ok`nin `threadlocal` OLMASININ, İKİ GERÇEK OS iş

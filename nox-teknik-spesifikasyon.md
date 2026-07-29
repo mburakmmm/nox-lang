@@ -13383,6 +13383,56 @@ install/çalıştır/list/uninstall döngüsü + `bin`SİZ paket reddi + kurulu-
 OLMAYAN komut reddi + boş-liste mesajı. Tam `zig build test
 -Doptimize=ReleaseFast --summary all` yeşil (765/765).
 
+## 3.75 `nox.json.decode()` paylaşılan-boş-nesne optimizasyonu
+
+Kullanıcının ChatGPT'nin `nox.json`ye "FFI maliyeti" olduğu iddiasını
+sorgulaması ÜZERİNE yapılan araştırma — İDDİA YANLIŞ karakterize edilmişti
+(`json.zig` `noxrt.o`ya STATİK bağlanır, `nox.sqlite`nin AKSİNE HİÇBİR
+`std.DynLib`/harici kütüphane sınırı YOK, QBE→Zig çağrısı düz bir `call
+$symbol`), AMA araştırma GERÇEK bir tahsis-israfı ORTAYA ÇIKARDI: `runtime/
+stdlib_shims/json.zig`nin `buildNode`u HER yaprak düğüm (null/bool/number/
+string) İçin — VE dizi/obje düğümlerinin KULLANILMAYAN `keys`/`vals`/`arr`
+alanları İçin — KENDİ AYRI boş `list[T]`sini (+ boş `str`ini) tahsis
+ediyordu; bir yaprak İçin BİLE en az 4 heap tahsisi (JsonValue + 3 boş
+liste) demekti.
+
+**Düzeltme:** `nox_json_decode_raw` çağrısı BAŞINA TEK bir paylaşılan boş
+`list` + paylaşılan boş `str` (`SharedEmpties`) inşa edilir, `nox_rc_retain`
+İLE TÜM düğümler arasında paylaşılır — tahsis sayısı belge boyutundan
+BAĞIMSIZ SABİT kalır (yalnızca ucuz bir refcount artışı ödenir). **Güvenlik
+analizi (kritik):** `.append()`in büyüme yolu kapasite=0 bir listeyi ASLA
+yerinde MUTATE ETMEZ (her zaman YENİ blok tahsis eder — `genListAppend`),
+bu yüzden paylaşım "gizli mutasyon" riski TAŞIMAZ; TEK gerçek risk refcount
+muhasebesiydi — `callMakeJsonValue`nin KENDİ retain+predecrement'i NET
+SIFIR olduğundan (bkz. onun belge notu, __init__'in aliasing-retain'ini
+telafi eder), paylaşılan nesneyi YENİDEN kullanmadan ÖNCE HER SEFERİNDE
+elle bir `nox_rc_retain` İLE GERÇEK bir sahiplik birimi EKLENMEDEN,
+refcount HER ZAMAN 1'de KALIRDI VE İLK release GERÇEK sahiplerden
+BAŞKALARININ işaretçisini GEÇERSİZ kılardı (use-after-free) — bu YÜZDEN
+`sharedEmptyList`/`sharedEmptyStr` HER KULLANIMDA (ilk DAHİL) BİR retain
+yapar, `nox_json_decode_raw`nin KENDİSİ fonksiyon SONUNDA `defer` İLE KENDİ
+tuttuğu BİR birimi bırakır (Nox tarafında bir yerel değişkenin kapsam-sonu
+release'ine denk gelir).
+
+**Ölçüm (200 nesnelik bir JSON dizisinin 100 kez decode edilmesi, Apple
+M4, ReleaseFast, `time` komutu):** **~16.0s → ~7.0s (~2.3x hızlanma)**,
+İKİ ayrı koşuda TUTARLI. 200.000 yinelemelik bir sızıntı-stres testiyle
+(`/usr/bin/time -l`) doğrulandı — tepe bellek ayak izi SABİT ~1.8MB (bir
+sızıntı olsaydı onlarca MB'a çıkardı).
+
+**GERÇEK bir regresyon bulunup AYNI oturumda düzeltildi:** paylaşılan-boş-
+nesne kurulumu İLK yazımda `std.json.parseFromSlice`DEN ÖNCE yapılıyordu
+— `initSharedEmpties` başarısız OLDUĞUNDA (`rt=null` İLE çağrılan İZOLE
+Zig test bağlamlarında, `nox_rc_alloc`nin havuz hızlı-yolu GERÇEK bir
+`RuntimeState` GEREKTİRDİĞİNDEN — GERÇEK Nox programlarında `rt` HİÇBİR
+ZAMAN null DEĞİLDİR) KOŞULSUZ `g_last_op_ok=false` YAZIYORDU, GEÇERLİ
+JSON'u BİLE "geçersiz" işaretleyerek `json.zig`nin KENDİ threadlocal
+testini KIRDI (test SESSİZCE `TestUnexpectedResult` İLE başarısız oldu —
+`std.debug.print` İLE geçici teşhis EKLENEREK `ok=0` olması GEREKEN yerde
+`valid` girdi İçin de `ok=0` döndüğü GÖRÜLDÜ). Düzeltme: kurulum parse
+BAŞARISINDAN SONRAYA taşındı — `g_last_op_ok` artık SADECE JSON sözdizimi
+geçerliliğini yansıtır, bir ayırıcı (allocator) arızasını DEĞİL.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

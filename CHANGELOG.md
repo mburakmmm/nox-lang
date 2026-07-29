@@ -14,6 +14,28 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.17.1]
+
+### Düzeltildi
+- **`nox.json.decode()` yaprak-başına gereksiz tahsis israfı**: her yaprak
+  düğüm (null/bool/number/string) — VE dizi/obje düğümlerinin kullanılmayan
+  `keys`/`vals`/`arr` alanları — ÖNCEDEN kendi ayrı boş `list`lerini (+ boş
+  `str`ini) tahsis ediyordu (yaprak başına EN AZ 4 heap tahsisi). Artık TEK
+  bir paylaşılan boş `list` + paylaşılan boş `str` (`nox_json_decode_raw`
+  çağrısı başına BİR KEZ inşa edilir) `nox_rc_retain`le TÜM düğümler
+  arasında paylaşılıyor — tahsis sayısı belge boyutundan BAĞIMSIZ sabit
+  kalıyor. Ölçüm (200 nesnelik bir dizinin 100 kez decode edilmesi,
+  Apple M4, ReleaseFast): **~16.0s → ~7.0s (~2.3x)**. DebugAllocator'lı
+  200.000 yinelemelik bir sızıntı testiyle doğrulandı (sabit ~1.8MB tepe
+  bellek ayak izi).
+- Bu düzeltme sırasında GERÇEK bir regresyon bulunup AYNI oturumda
+  düzeltildi: paylaşılan-boş-nesne kurulumunun `parseFromSlice`DEN ÖNCE
+  yapılması, `rt=null` İLE çağrılan İZOLE test bağlamlarında (`nox_rc_alloc`nin
+  havuz hızlı-yolu gerçek bir `RuntimeState` gerektirdiğinden) GEÇERLİ
+  JSON'u BİLE `nox_json_last_op_ok()=false` olarak işaretliyordu — kurulum
+  artık parse BAŞARISINDAN SONRAYA taşındı, `g_last_op_ok` yalnızca JSON
+  sözdizimi geçerliliğini yansıtır.
+
 ## [1.17.0]
 
 ### Eklendi
