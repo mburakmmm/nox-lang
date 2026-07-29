@@ -13553,14 +13553,65 @@ sonuç verdiğini (bir `long`, `h_FloatType`in alt tipi SAYILMAZ) kanıtlar.
 hpy-build.sh universal`) modunda BAŞARIYLA derlendi (`ujson_hpy.hpy0.so`,
 Mach-O arm64 bundle) — C kodunun KENDİSİ TAM olarak GEÇERLİ/UYUMLU.
 
-**Kapsam DIŞI bırakılan (bilinçli, kullanıcıya AÇIKÇA bildirildi):**
+**Kapsam DIŞI bırakılan — SONRADAN (AYNI gün, bkz. §3.78) YAPILDI:**
 `ujson_hpy.dumps()/loads()`i GERÇEK Nox KAYNAK kodundan uçtan uca
 çağırmak, `hpy_call` yerleşiğinin (Faz 14) BUGÜNKÜ ÇOK dar imzasını
 (`(yol: str, uzantı_adı: str, fonksiyon_adı: str, argüman: int) -> int`
-— SABİT, tek bir `int` argüman/dönüş) `str`/`dict`/`list` argüman VE
-dönüş TAŞIYABİLECEK şekilde genişletmeyi GEREKTİRİR — bu, BAŞLI BAŞINA
-AYRI VE DAHA BÜYÜK bir özellik, BU oturumun kapsamı DIŞINDA bırakıldı
-(kullanıcıyla görüşülüp AYRI bir karar bekliyor).
+— SABİT, tek bir `int` argüman/dönüş) genişletmeyi GEREKTİRİYORDU —
+kullanıcıyla görüşülüp `hpy_call_str` olarak SONRADAN uygulandı.
+
+## 3.78 `hpy_call_str` — `HPyFunc_KEYWORDS` imzalı HPy metodlarını `str` argüman/dönüşle çağırma
+
+§3.77'nin "kapsam dışı" bıraktığı iş — kullanıcı `ujson_hpy.dumps()/
+loads()`u GERÇEK Nox kaynak kodundan çağırılabilir hale getirmek istedi.
+
+**Engel:** `hpy_call`in yükleyicisi (`runtime/hpy_bridge/loader.zig`nin
+`findMethodO`su) YALNIZCA `HPyFunc_O` (tek, TİPSİZ `HPy` argümanlı)
+imzalı metodları buluyordu. `ujson_hpy.c`de `dumps`/`loads`/`dump`/
+`load`/`encode`/`decode`nin HEPSİ `HPyFunc_KEYWORDS` (`fn(ctx, self,
+args: *const HPy, nargs, kwnames) -> HPy`) İLE KAYITLI — JSON encoder'
+larının `indent=`/`separators=` GİBİ OPSİYONEL anahtar kelime argümanları
+desteklemesi TİPİK olduğundan. Bu YÜZDEN `findMethodO` bu metodları HİÇ
+BULAMIYORDU.
+
+**Çözüm — `hpy_call_str(yol, uzantı_adı, fonksiyon_adı, argüman: str)
+-> str`:** `hpy_call`nin AYNI güvenlik kısıtlarını (İLK 3 argüman
+STRING LİTERALİ olmak ZORUNDA) KORUYAN yeni bir yerleşik.
+- `loader.zig`ye `findMethodKeywords` eklendi (`findMethodO` İLE AYNI
+  arama, `HPyFuncSignature.keywords` filtresiyle).
+- `runtime/foreign_bridge.zig`nin `nox_hpy_call_str`ı, metodu `args=
+  [1]HPy{h_arg}, nargs=1, kwnames=HPy_NULL` İLE (yani POZİSYONEL-TEK-
+  ARGÜMAN, HİÇ anahtar kelime KULLANMADAN) çağırır — `dumps(deger)`/
+  `loads(json_metni)`nin EN YAYGIN çağrılma biçimiyle TAM eşleşir.
+  Sonuç `ctx_Unicode_AsUTF8AndSize` İLE okunup `dupeToNoxStr` İLE GERÇEK,
+  başlıklı bir Nox `str`ine KOPYALANIR (HPy handle'ı HEMEN `ctx_Close`
+  İLE kapatıldığından ham işaretçi PAYLAŞILAMAZ). Argüman `str_mod.
+  nox_str_slice` İLE O(1) okunur (§3.76'nın str ABI'siyle TUTARLI).
+  `hpy_call`in AYNI "entegre istisna mekanizması HENÜZ yok" ilkesiyle,
+  HERHANGİ bir hata adımında (yükleme/metod bulunamadı, HPy istisnası,
+  sonuç `str` DEĞİL) boş bir `str` döner.
+- `checker.zig`/`calls.zig`/`exceptions.zig`e `hpy_call`in üçlü çift
+  tam eşleniği eklendi (tip denetimi, codegen — dönüş `.heap = .str`
+  İŞARETLENİR ARC'nin DOĞRU çalışması İçin —, "asla raise etmez"
+  listesi).
+
+**Doğrulama:** GERÇEKTEN derlenmiş `ujson_hpy.hpy0.so` (§3.77) İLE:
+`hpy_call_str(..., "dumps", "hello world")` → `"hello world"`,
+`hpy_call_str(..., "loads", "\"decoded value\"")` → `decoded value` —
+500 yinelemede (hem `dumps` HEM `loads`) DebugAllocator'ın sızıntı
+tespitiyle SIFIR sızıntı. `tests/compat/hpy_ext/noxtest.c`ye YENİ bir
+`HPyFunc_KEYWORDS` test metodu (`upper_str_via_c`) + `hpy_call_golden_
+test.zig`ye yeni bir golden test eklendi — bu, `ujson_hpy`nin (harici,
+Python+hpy araç zinciri GEREKTİREN) build'ine bağımlı OLMADAN, projenin
+KENDİ CI'sinde ÇALIŞAN bir regresyon testidir.
+
+**Kapsam DIŞI bırakılan (bilinçli):** `loads()`nin döndürdüğü ARBİTRER
+iç içe değerleri (`dict`/`list`/sayı/`bool`/`None`) Nox'un KENDİ
+karşılık gelen tiplerine ÖZYİNELEMELİ olarak dönüştürmek — BU sürüm
+YALNIZCA `str` argüman/dönüş taşır (`loads()`in dönüşü BİR `str` İSE
+çalışır, `dict`/`list` İSE `ctx_Unicode_AsUTF8AndSize` HATA verip boş
+`str` döner). Genel "HERHANGİ bir HPy değerini Nox değerine çevir"
+ihtiyacı, GEREKTİĞİNDE ayrı bir görev olarak ele alınabilir.
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.

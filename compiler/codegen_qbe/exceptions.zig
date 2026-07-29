@@ -476,7 +476,7 @@ pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInf
                         // katılmaz (bkz. `genCall`in extern dalı) — güvenli.
                     } else if (std.mem.eql(u8, name, "print") or std.mem.eql(u8, name, "len") or
                         std.mem.eql(u8, name, "str") or std.mem.eql(u8, name, "hpy_call") or
-                        std.mem.eql(u8, name, "wasm_call"))
+                        std.mem.eql(u8, name, "hpy_call_str") or std.mem.eql(u8, name, "wasm_call"))
                     {
                         // `genCall`in KENDİ özel dispatch'iyle (satır ~4258
                         // civarı) TUTARLI, AÇIKÇA belgelenmiş "asla raise

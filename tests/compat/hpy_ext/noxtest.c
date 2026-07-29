@@ -25,6 +25,7 @@
 #include "hpy.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 /* Çağrılabilir nesne protokolü (ctx_Call/ctx_CallTupleDict/ctx_Callable_
  * Check) test amaçlı minimal bir tip: `Widget(5)` -> value=5 (tp_new)
@@ -1027,6 +1028,39 @@ static HPy call_add_value_via_c_impl(HPyContext *ctx, HPy self, HPy arg)
     return result;
 }
 
+/* Faz 15 (bkz. runtime/hpy_bridge/loader.zig'in `findMethodKeywords`ının
+ * belge notu): `HPyFunc_KEYWORDS` imzalı, `hpy_call_str`in (bkz. Nox
+ * tarafı, compiler/typecheck/checker.zig) POZİSYONEL-TEK-ARGÜMAN
+ * çağırma deseninin GERÇEK bir HPy eklentisine karşı doğrulanması.
+ * `ujson_hpy.dumps`/`loads` İLE AYNI imza sınıfı (JSON encoder'ların
+ * yaygın kullandığı, opsiyonel anahtar-kelime argümanları destekleyen
+ * kayıt biçimi) — burada kwnames'e HİÇ bakılmaz (`kwnames` HER ZAMAN
+ * `HPy_NULL` geçirilir, bkz. `nox_hpy_call_str`nin çağrısı). */
+HPyDef_METH(upper_str_via_c, "upper_str_via_c", HPyFunc_KEYWORDS)
+static HPy upper_str_via_c_impl(HPyContext *ctx, HPy self, const HPy *args, size_t nargs, HPy kwnames)
+{
+    (void)self;
+    (void)kwnames;
+    if (nargs != 1) {
+        HPyErr_SetString(ctx, ctx->h_TypeError, "upper_str_via_c tam olarak 1 argüman bekler");
+        return HPy_NULL;
+    }
+    HPy_ssize_t size = 0;
+    const char *s = HPyUnicode_AsUTF8AndSize(ctx, args[0], &size);
+    if (!s) {
+        return HPy_NULL;
+    }
+    char *buf = (char *)malloc((size_t)size + 1);
+    for (HPy_ssize_t i = 0; i < size; i++) {
+        char c = s[i];
+        buf[i] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c;
+    }
+    buf[size] = '\0';
+    HPy result = HPyUnicode_FromString(ctx, buf);
+    free(buf);
+    return result;
+}
+
 static HPyDef *module_defines[] = {
     &long_conv_roundtrip,
     &long_as_double_via_c,
@@ -1100,6 +1134,7 @@ static HPyDef *module_defines[] = {
     &get_widget_type,
     &get_attr_via_c,
     &call_add_value_via_c,
+    &upper_str_via_c,
     NULL
 };
 

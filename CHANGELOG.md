@@ -14,6 +14,23 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.20.0]
+
+### Eklendi
+- **`hpy_call_str` yerleşiği**: `hpy_call`in (yalnızca `int` argüman/dönüş,
+  `HPyFunc_O` imzalı metodlar) YALNIZCA `str` argüman/dönüşlü kardeşi —
+  `HPyFunc_KEYWORDS` imzalı metodları (JSON encoder'ların YAYGIN kullandığı
+  kayıt biçimi, ör. `ujson_hpy.dumps`/`loads`) POZİSYONEL-TEK-ARGÜMAN
+  (anahtar kelime OLMADAN) çağırır. `hpy_call`in AYNI güvenlik kısıtları
+  geçerlidir (yol/uzantı-adı/fonksiyon-adı yalnızca string LİTERALİ
+  olabilir). `runtime/hpy_bridge/loader.zig`ye `findMethodKeywords`
+  eklendi. Kullanıcının kendi `hpy-ujson` portu (upstream UltraJSON'un
+  HPy Universal ABI'ye taşınmış hali) İLE GERÇEKTEN doğrulandı:
+  `ujson_hpy.dumps("hello world")` → `"hello world"`, `ujson_hpy.
+  loads("\"decoded value\"")` → `decoded value` — 500 yinelemede sıfır
+  sızıntı. `tests/compat/hpy_ext/noxtest.c`ye YENİ bir `HPyFunc_KEYWORDS`
+  test metodu (`upper_str_via_c`) + yeni bir golden test eklendi.
+
 ## [1.19.0]
 
 ### Eklendi

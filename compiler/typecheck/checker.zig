@@ -2692,6 +2692,33 @@ pub const Checker = struct {
                     }
                     return .int;
                 }
+                // Faz 15 (bkz. nox-teknik-spesifikasyon.md §3.78): `hpy_call`in
+                // AYNI güvenlik kısıtlarına (İLK 3 argüman string LİTERALİ
+                // OLMAK ZORUNDA) sahip, YALNIZCA `str` argüman/dönüşlü kardeşi
+                // — `HPyFunc_KEYWORDS` imzalı metodları (`hpy_call`nin
+                // `HPyFunc_O`sunun AKSİNE, ör. `ujson_hpy.dumps`/`loads`)
+                // POZİSYONEL-TEK-ARGÜMAN (anahtar kelime YOK) olarak çağırır.
+                if (std.mem.eql(u8, name, "hpy_call_str")) {
+                    if (c.args.len != 4) {
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_call_str' tam olarak 4 argüman alır (yol: str, uzantı_adı: str, fonksiyon_adı: str, argüman: str)", .{});
+                    }
+                    if (try self.checkExpr(ctx, c.args[0]) != .str) return self.fail(error.TypeMismatch, "'hpy_call_str' argümanı 1 (yol) str olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "'hpy_call_str' argümanı 2 (uzantı adı) str olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "'hpy_call_str' argümanı 3 (fonksiyon adı) str olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[3]) != .str) return self.fail(error.TypeMismatch, "'hpy_call_str' argümanı 4 (argüman) str olmalıdır", .{});
+                    // Güvenlik bulgusu H-1'in AYNI düzeltmesi — bkz. `hpy_call`nin
+                    // belge notu.
+                    if (c.args[0] != .string_lit) {
+                        return self.fail(error.TypeMismatch, "'hpy_call_str' argümanı 1 (yol) yalnızca bir string LİTERALİ olabilir (güvenlik: çalışma-zamanı hesaplı bir yoldan keyfi native kütüphane yüklenmesi önlenir)", .{});
+                    }
+                    if (c.args[1] != .string_lit) {
+                        return self.fail(error.TypeMismatch, "'hpy_call_str' argümanı 2 (uzantı adı) yalnızca bir string LİTERALİ olabilir", .{});
+                    }
+                    if (c.args[2] != .string_lit) {
+                        return self.fail(error.TypeMismatch, "'hpy_call_str' argümanı 3 (fonksiyon adı) yalnızca bir string LİTERALİ olabilir", .{});
+                    }
+                    return .str;
+                }
                 if (std.mem.eql(u8, name, "wasm_call")) {
                     if (c.args.len != 3) {
                         return self.fail(error.ArgumentCountMismatch, "'wasm_call' tam olarak 3 argüman alır (yol: str, fonksiyon_adı: str, argüman: int)", .{});

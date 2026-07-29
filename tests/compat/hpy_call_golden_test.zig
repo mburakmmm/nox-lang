@@ -97,3 +97,17 @@ test "hpy_call: gerçek bir .nox programından gerçek bir HPy eklentisi çağr�
         "42\n",
     );
 }
+
+// Faz 15 (bkz. nox-teknik-spesifikasyon.md §3.78): `hpy_call`in yalnızca-
+// `str` kardeşi — `HPyFunc_KEYWORDS` imzalı (`ujson_hpy.dumps`/`loads` İLE
+// AYNI imza sınıfı) bir metodu POZİSYONEL-TEK-ARGÜMAN olarak çağırır.
+// `upper_str_via_c` (bkz. `tests/compat/hpy_ext/noxtest.c`) bu imzayla
+// KAYITLI, tam olarak bu deseni doğrulamak İçin eklendi.
+test "hpy_call_str: HPyFunc_KEYWORDS imzalı bir HPy metodu str argüman/dönüşle çağrılır" {
+    try expectGolden(
+        \\print(hpy_call_str("tests/compat/hpy_ext/noxtest.so", "noxtest", "upper_str_via_c", "merhaba dunya"))
+        \\
+    ,
+        "MERHABA DUNYA\n",
+    );
+}

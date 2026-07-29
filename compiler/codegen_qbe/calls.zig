@@ -210,6 +210,23 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 try self.out.writer.print("    {s} =l call $nox_hpy_call(l {s}, l {s}, l {s}, l {s}, l {s})\n", .{ result_temp, RT_PARAM, path_v.text, ext_v.text, func_v.text, arg_v.text });
                 return .{ .text = result_temp, .qtype = .l };
             }
+            // Faz 15 (bkz. checker.zig'deki eşdeğer not): `hpy_call`in
+            // yalnızca-`str` kardeşi — dönüş DEĞERİ (`nox_hpy_call_str`,
+            // bkz. `runtime/foreign_bridge.zig`) GERÇEK, başlıklı bir Nox
+            // `str`i olduğundan (`dupeToNoxStr` İLE inşa edilir), `.heap =
+            // .str` İŞARETLENMELİDİR — aksi halde çağıran taraf bunu ARC-
+            // yönetimli bir değer olarak TANIMAZ (retain/release ASLA
+            // tetiklenmez, sızıntıya yol açar).
+            if (std.mem.eql(u8, name, "hpy_call_str")) {
+                if (c.args.len != 4) return error.Unsupported;
+                const path_v = try self.genExpr(c.args[0]);
+                const ext_v = try self.genExpr(c.args[1]);
+                const func_v = try self.genExpr(c.args[2]);
+                const arg_v = try self.genExpr(c.args[3]);
+                const result_temp = try self.newTemp();
+                try self.out.writer.print("    {s} =l call $nox_hpy_call_str(l {s}, l {s}, l {s}, l {s}, l {s})\n", .{ result_temp, RT_PARAM, path_v.text, ext_v.text, func_v.text, arg_v.text });
+                return .{ .text = result_temp, .qtype = .l, .heap = .str };
+            }
             if (std.mem.eql(u8, name, "wasm_call")) {
                 if (c.args.len != 3) return error.Unsupported;
                 const path_v = try self.genExpr(c.args[0]);

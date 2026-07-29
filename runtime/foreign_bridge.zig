@@ -18,6 +18,7 @@ const std = @import("std");
 const asap = @import("alloc/asap.zig");
 const hpy_bridge = @import("hpy_bridge");
 const wasm_bridge = @import("wasm_bridge");
+const str_mod = @import("str.zig");
 
 /// Doğrudan libc bağlamaları — bu dosya `std.Io`nun (uygulama düzeyi,
 /// başlatma gerektiren) soyutlamasını KULLANMAZ; runtime zaten sistem
@@ -74,6 +75,61 @@ pub export fn nox_hpy_call(
     const h_result = method(ctx, hpy_bridge.context.HPy_NULL, h_arg);
     defer ctx.ctx_Close.?(ctx, h_result);
     return ctx.ctx_Long_AsInt64_t.?(ctx, h_result);
+}
+
+/// Faz 15 (bkz. compiler/typecheck/checker.zig'deki `hpy_call_str`in
+/// belge notu): `nox_hpy_call`nin YALNIZCA `str` argüman/dönüşlü kardeşi
+/// — `HPyFunc_KEYWORDS` imzalı metodları (`ujson_hpy.dumps`/`loads` GİBİ)
+/// TEK, POZİSYONEL argümanla (anahtar kelime OLMADAN, `kwnames=HPy_NULL`)
+/// çağırır. `arg`, GEÇERLİ (başlıklı) bir Nox `str`i OLMALIDIR — `str_mod.
+/// nox_str_slice` İLE O(1) okunur (bkz. `str.zig`nin modül üstü notu,
+/// bu ARTIK bir `strlen` taraması GEREKTİRMEZ). Sonuç, `ctx_Unicode_
+/// AsUTF8AndSize` İLE HPy tarafından okunup `dupeToNoxStr` İLE GERÇEK,
+/// başlıklı bir Nox `str`ine KOPYALANIR (HPy handle'ının KENDİSİ `ctx_
+/// Close` İLE hemen ARDINDAN kapatıldığından, ham işaretçiyi PAYLAŞMAK
+/// GÜVENLİ DEĞİLDİR). Herhangi bir adımda hata OLURSA (yükleme/metod
+/// bulunamadı, HPy istisnası, sonuç `str` DEĞİL) `hpy_call`nin AYNI
+/// "entegre istisna mekanizması HENÜZ yok" ilkesiyle boş bir `str` döner.
+pub export fn nox_hpy_call_str(
+    rt: ?*anyopaque,
+    path: ?[*:0]const u8,
+    ext_name: ?[*:0]const u8,
+    func_name: ?[*:0]const u8,
+    arg: ?[*:0]const u8,
+) ?[*:0]u8 {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    const allocator = state.allocator();
+    const p = path orelse return str_mod.nox_str_from_bytes(rt, "");
+    const en = ext_name orelse return str_mod.nox_str_from_bytes(rt, "");
+    const fnm = func_name orelse return str_mod.nox_str_from_bytes(rt, "");
+    const arg_h = arg orelse return str_mod.nox_str_from_bytes(rt, "");
+
+    var mod = hpy_bridge.loader.load(std.mem.span(p), std.mem.span(en)) catch return str_mod.nox_str_from_bytes(rt, "");
+    defer mod.deinit();
+
+    const method = mod.findMethodKeywords(std.mem.span(fnm)) orelse return str_mod.nox_str_from_bytes(rt, "");
+
+    const ctx = hpy_bridge.context.createContext(allocator) catch return str_mod.nox_str_from_bytes(rt, "");
+    defer hpy_bridge.context.destroyContext(allocator, ctx);
+
+    const arg_slice = str_mod.nox_str_slice(arg_h);
+    const arg_z = allocator.dupeZ(u8, arg_slice) catch return str_mod.nox_str_from_bytes(rt, "");
+    defer allocator.free(arg_z);
+    const h_arg = ctx.ctx_Unicode_FromString.?(ctx, arg_z);
+    defer ctx.ctx_Close.?(ctx, h_arg);
+
+    const args = [_]hpy_bridge.context.HPy{h_arg};
+    const h_result = method(ctx, hpy_bridge.context.HPy_NULL, &args, 1, hpy_bridge.context.HPy_NULL);
+    defer ctx.ctx_Close.?(ctx, h_result);
+
+    if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
+        ctx.ctx_Err_Clear.?(ctx);
+        return str_mod.nox_str_from_bytes(rt, "");
+    }
+
+    var size: isize = 0;
+    const result_str = ctx.ctx_Unicode_AsUTF8AndSize.?(ctx, h_result, &size) orelse return str_mod.nox_str_from_bytes(rt, "");
+    return str_mod.nox_str_from_bytes(rt, result_str[0..@intCast(size)]);
 }
 
 /// `path`teki `.wasm` ikilisini yükler, `func_name` adlı (yalnızca `i32`

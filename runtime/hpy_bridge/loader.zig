@@ -117,6 +117,16 @@ pub const HPyModuleDef = extern struct {
 
 const InitFn = *const fn () callconv(.c) ?*const HPyModuleDef;
 const MethO = *const fn (ctx: *HPyContext, self: HPy, arg: HPy) callconv(.c) HPy;
+/// Faz 15: `HPyFunc_KEYWORDS` imzası — gerçek HPy'de `fn(ctx, self, args:
+/// *const HPy, nargs: usize, kwnames: HPy) -> HPy` (`args`in İLK `nargs`
+/// öğesi POZİSYONEL argümanlar, `kwnames` bir tuple/`HPy_NULL` — anahtar
+/// kelime OLMADAN çağırmak İçin `kwnames = HPy_NULL` yeterlidir). `hpy-
+/// ujson` GİBİ eklentilerin `dumps`/`loads`si BU imzayla KAYITLIDIR (JSON
+/// encoder'ların `indent=`/`separators=` gibi OPSİYONEL anahtar kelime
+/// argümanları desteklemesi TİPİK olduğundan) — `HPyFunc_O`nun (`findMethodO`)
+/// AKSİNE, `hpy_call_str`nin (bkz. `foreign_bridge.zig`) ihtiyaç duyduğu
+/// TEK, POZİSYONEL argümanlı çağrı BİLE bu imza ÜZERİNDEN yapılmalıdır.
+const MethKeywords = *const fn (ctx: *HPyContext, self: HPy, args: ?[*]const HPy, nargs: usize, kwnames: HPy) callconv(.c) HPy;
 
 pub const LoadedModule = struct {
     lib: NoxDynLib,
@@ -136,6 +146,22 @@ pub const LoadedModule = struct {
             const meth_name = d.meth.name orelse continue;
             if (!std.mem.eql(u8, std.mem.sliceTo(meth_name, 0), name)) continue;
             if (d.meth.signature != @intFromEnum(HPyFuncSignature.o)) return null;
+            const impl = d.meth.impl orelse return null;
+            return @ptrCast(@alignCast(impl));
+        }
+        return null;
+    }
+
+    /// `findMethodO` İLE AYNI arama, YALNIZCA `HPyFunc_KEYWORDS` imzalı
+    /// metodlar İçin (bkz. `MethKeywords`nin belge notu).
+    pub fn findMethodKeywords(self: *const LoadedModule, name: []const u8) ?MethKeywords {
+        const defines = self.def.defines orelse return null;
+        var i: usize = 0;
+        while (defines[i]) |d| : (i += 1) {
+            if (d.kind != @intFromEnum(HPyDefKind.meth)) continue;
+            const meth_name = d.meth.name orelse continue;
+            if (!std.mem.eql(u8, std.mem.sliceTo(meth_name, 0), name)) continue;
+            if (d.meth.signature != @intFromEnum(HPyFuncSignature.keywords)) return null;
             const impl = d.meth.impl orelse return null;
             return @ptrCast(@alignCast(impl));
         }
