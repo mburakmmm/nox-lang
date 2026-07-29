@@ -41,8 +41,9 @@ print(c.value)
   tipleme yaklaşımından farklı olarak) — `f"..."` biçimlendirilmiş dize
   literalleri, 7 birleşik atama operatörü (`+=`/`-=`/`*=`/`/=`/`//=`/
   `%=`/`**=`), UTF-8 karakter-farkındalıklı `len()`/`s[i]` (ASCII hızlı
-  yolu ile) ve derleme-zamanı monomorfizasyonlu kullanıcı-tanımlı generic
-  sınıflar (`class Box[T]:`) DAHİL.
+  yolu ile), derleme-zamanı monomorfizasyonlu kullanıcı-tanımlı generic
+  sınıflar (`class Box[T]:`) ve basit tek-kalıtım (`class Derived(Base):`
+  — metod override, `super()`, çalışma-zamanı polimorfik dispatch) DAHİL.
 - **QBE üzerinden doğrudan native koda AOT derleme** — LLVM/MLIR bağımlılığı
   yok.
 - **Katmanlı, çoğunlukla görünmez bir bellek modeli** ("Sahiplik Piramidi"):

@@ -48,8 +48,9 @@ print(c.value)
   gradual-typing approach) — including `f"..."` formatted string
   literals, 7 augmented-assignment operators (`+=`/`-=`/`*=`/`/=`/`//=`/
   `%=`/`**=`), UTF-8-character-aware `len()`/`s[i]` (with an ASCII fast
-  path), and compile-time-monomorphized user-defined generic classes
-  (`class Box[T]:`).
+  path), compile-time-monomorphized user-defined generic classes
+  (`class Box[T]:`), and simple single inheritance (`class Derived(Base):`
+  — method overriding, `super()`, runtime polymorphic dispatch).
 - **AOT compilation directly to native code via QBE** — no LLVM/MLIR
   dependency.
 - **A layered, mostly invisible memory model** (the "Ownership Pyramid"):

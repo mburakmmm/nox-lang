@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.16.1]
+
+### Değiştirildi
+- README.md/README.en.md'nin özellik listesine tek-kalıtım (`class
+  Derived(Base):`) eklendi (v1.16.0'ın dokümantasyon takibi).
+
 ## [1.16.0]
 
 ### Eklendi
