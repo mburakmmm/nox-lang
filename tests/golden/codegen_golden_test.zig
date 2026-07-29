@@ -1122,6 +1122,24 @@ test "codegen(çalıştır): Faz U.4.3 — iç içe def bir str'i (heap-yönetim
     );
 }
 
+// Bulundu (nyx framework — bkz. proje belleği "nyx'te farkedilen Nox
+// eksiklikleri" görevi): `closures.zig`nin `buildClosureValue`ı, bir
+// yakalanan (capture) DEĞERİN `func_sig`ini (`heap == .closure` OLAN
+// yakalamalar İçİn ÇAĞRI imzası) KOPYALAMIYORDU — bu YÜZDEN bir iç içe
+// `def`, ÇEVRELEYEN fonksiyonun FONKSIYON-TİPLİ (ör. `(int) -> int`) bir
+// parametresini/yerel değişkenini YAKALAYIP ÇAĞIRMAYA çalıştığında
+// (`handler(x)`) codegen "desteklenmeyen bir yapı" hatasıyla BAŞARISIZ
+// oluyordu (list/dict/str/sınıf GİBİ VERİ tipi yakalamalar ETKİLENMİYORDU
+// — yalnızca FONKSİYON tipi). Tek satırlık eksik alan ATAMASI (`.func_sig
+// = src.func_sig`) İLE düzeltildi; iç içe SARMALAMA (bir closure'ın BAŞKA
+// bir closure'ı yakalayıp SARMASI) DAHİL 500 yinelemede sızıntısız.
+test "codegen(çalıştır): iç içe def, çevreleyen fonksiyonun FONKSİYON-TİPLİ bir parametresini yakalayıp çağırır (ÖNCEDEN 'desteklenmeyen yapı')" {
+    try expectGolden(
+        @embedFile("codegen_cases/nested_def_captures_func_typed_value.nox"),
+        @embedFile("codegen_cases/nested_def_captures_func_typed_value.expected"),
+    );
+}
+
 test "codegen(çalıştır): Faz U.4.4 — döndürülen bir closure func-tipli değişkene atanır, DOLAYLI çağrılır (birden çok kez, birden çok somut closure)" {
     try expectGolden(
         @embedFile("codegen_cases/closure_returned_and_called_indirectly.nox"),

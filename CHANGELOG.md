@@ -14,6 +14,30 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.21.1]
+
+### Düzeltildi
+- **Kapanış-tipi (closure) yakalama eksik `func_sig` alanı**: `closures.zig`nin
+  `buildClosureValue`ı, bir yakalanan (capture) DEĞERİN `func_sig`ini
+  (`heap == .closure` olan yakalamalar İçİn ÇAĞRI imzası) KOPYALAMIYORDU —
+  bu YÜZDEN bir iç içe `def`, ÇEVRELEYEN fonksiyonun FONKSİYON-TİPLİ (ör.
+  `(int) -> int`) bir parametresini/yerel değişkenini YAKALAYIP
+  ÇAĞIRMAYA çalıştığında (`handler(x)`) codegen "desteklenmeyen bir yapı"
+  hatasıyla BAŞARISIZ oluyordu (list/dict/str/sınıf gibi VERİ tipi
+  yakalamalar ETKİLENMİYORDU — yalnızca FONKSİYON tipi). Kullanıcının
+  `nyx` framework'ünde (`routes.nox`, `post_with_override`-tarzı sarmalayıcı
+  desenler) BULUNUP BAĞIMSIZ olarak GERÇEK nox-lang koduyla doğrulandı.
+  Tek satırlık eksik alan atamasıyla (`.func_sig = src.func_sig`)
+  düzeltildi; iç içe SARMALAMA (bir closure'ın BAŞKA bir closure'ı
+  yakalayıp SARMASI) DAHİL 2000+ yinelemede sızıntısız doğrulandı. Ayrı
+  bir bulgu: kullanıcının `nyx.app`de `on_shutdown` hook registry'sini
+  DEVRE DIŞI bırakan (`Nox package codegen limit` diye not düşülmüş)
+  eski bir workaround, GERÇEKTEN aynı desende (paket-modül sınıfı + list-
+  of-closure alan + Router ile birlikte) test EDİLDİ ve v1.18.1'in
+  P1c/C2 düzeltmeleriyle ZATEN çözüldüğü doğrulandı — bu, nox-lang
+  tarafında YAPILACAK bir şey GEREKTİRMİYOR (nyx tarafında kaldırılabilir
+  bir eski not).
+
 ## [1.21.0]
 
 ### Eklendi

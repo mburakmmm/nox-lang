@@ -68,6 +68,18 @@ pub fn buildClosureValue(self: *Codegen, fd: ast.FuncDef) CodegenError![]const u
             .elem_heap_info = src.elem_heap_info,
             .elem_is_str = src.elem_is_str,
             .dict_info = src.dict_info,
+            // Bulundu (nyx framework — bkz. proje belleği "nyx'te farkedilen
+            // Nox eksiklikleri" görevi): bu alan EKSİKTİ — `heap == .closure`
+            // OLAN bir yakalanan (capture) değerin STATİK çağrı imzası
+            // (`func_sig`) BURADA kopyalanmadığından, iç içe `def`in KENDİ
+            // gövdesi yakalanan bir FONKSİYON-TİPLİ değeri (ör. `handler(x)`)
+            // ÇAĞIRMAYA çalıştığında `genCall`nin dolaylı-çağrı yolu
+            // `func_sig`i `null` BULUP `error.Unsupported` dönüyordu — SADECE
+            // fonksiyon-tipli yakalamalar ETKİLENİYORDU (list/dict/str/sınıf
+            // GİBİ VERİ tipi yakalamalar `func_sig` KULLANMADIĞINDAN
+            // sorunsuzdu). `allocSlot` (bkz. `registration.zig`) BU alanı
+            // zaten doğru taşıyordu — eksik olan yalnızca BURASIYDI.
+            .func_sig = src.func_sig,
         } };
     }
 

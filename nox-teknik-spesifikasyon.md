@@ -13743,6 +13743,55 @@ amaçlı (herhangi bir imza) "handler" reflection'ı (YALNIZCA `(Context)
 dönüştürmesi (Rust proc-macro tarzı — BİLİNÇLİ OLARAK asla planlanmıyor,
 metadata-only tasarım kararı KALICI).
 
+## 3.80 İç içe `def`in fonksiyon-tipli bir yakalamayı (capture) çağıramaması (`func_sig` eksikliği)
+
+Kullanıcının `nyx` framework'ünde (`routes.nox`nin `post_with_override`-tarzı
+sarmalayıcı desenleri) BULUNAN, GERÇEK bir compiler bug'ı — nyx'in KENDİ
+yorum satırında "GERÇEKTEN denenip DOĞRULANDI" diye belgelenmiş, saf
+nox-lang koduyla BAĞIMSIZ olarak yeniden üretilip DOĞRULANDI ve düzeltildi.
+
+**Belirti:** bir iç içe `def`, ÇEVRELEYEN fonksiyonun FONKSİYON-TİPLİ (ör.
+`(int) -> int`) bir parametresini/yerel değişkenini YAKALAYIP ÇAĞIRMAYA
+çalıştığında (`handler(x)`) codegen "desteklenmeyen bir yapı" hatasıyla
+BAŞARISIZ oluyordu:
+```nox
+def make_wrapper(handler: (int) -> int) -> (int) -> int:
+    def wrapped(x: int) -> int:
+        return handler(x) + 1   # <-- burada BAŞARISIZ oluyordu
+    return wrapped
+```
+list/dict/str/sınıf GİBİ VERİ tipi yakalamalar ETKİLENMİYORDU — YALNIZCA
+FONKSİYON (closure) tipi yakalamalar.
+
+**Kök neden:** `closures.zig`nin `buildClosureValue`ı (Faz U.4.3/U.4.4'ün
+closure-inşa çekirdeği), bir yakalanan DEĞERİN `TypeInfo`sini `self.vars`
+(kaynak `VarInfo`) TEN kopyalarken `qtype`/`heap`/`elem_qtype`/`class_name`/
+`elem_heap_info`/`elem_is_str`/`dict_info` alanlarının HEPSİNİ kopyalıyordu
+AMA `func_sig`i (bkz. `types.zig`nin `TypeInfo.func_sig`i, "`heap == .closure`
+OLAN elemanların STATİK çağrı imzası") ATLAMIŞTI. İç fonksiyonun gövdesi
+(`genClosureFunc`) yakalanan değeri `allocSlot` İLE (BU fonksiyon `func_sig`i
+DOĞRU kopyalıyordu) bir yerel olarak KAYDETTİĞİNDEN, sorun YALNIZCA
+`buildClosureValue`nin İLK kopyalama noktasındaydı — `func_sig` `null`
+kaldığından, gövde İÇİNDE `handler(x)` GİBİ bir dolaylı çağrı `genCall`de
+çağrı imzası BULUNAMAYIP `error.Unsupported` dönüyordu.
+
+**Düzeltme:** tek satırlık eksik alan ataması — `captures[i].info.func_sig
+= src.func_sig`.
+
+**Doğrulama:** tek-seviye yakalama (`make_wrapper`) VE İKİ-seviye SARMALAMA
+(bir closure'ın BAŞKA bir closure'ı yakalayıp sarması, `double_wrap`)
+2000+ yinelemede DebugAllocator'ın sızıntı tespitiyle SIFIR sızıntı, doğru
+sonuçlarla doğrulandı. Yeni golden test: `nested_def_captures_func_typed_
+value.nox`.
+
+**Ayrı bir bulgu (nox-lang tarafında YAPILACAK bir şey GEREKTİRMEDİ):**
+kullanıcının `nyx.app`de `on_shutdown` hook registry'sini "Nox package
+codegen limit" diye not düşerek DEVRE DIŞI bırakan eski bir workaround,
+GERÇEKTEN aynı desende (paket-modül sınıfı + list-of-closure alan + Router
+İLE BİRLİKTE, HEM `noxc` 1.18.1 HEM 1.21.0 İLE) test EDİLDİ — bu, v1.18.1'in
+P1c/C2 düzeltmeleriyle (bkz. `CHANGELOG.md`, [1.18.1]) ZATEN çözülmüş,
+ARTIK STALE (güncel olmayan) bir yorum — nyx tarafında kaldırılabilir.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.
