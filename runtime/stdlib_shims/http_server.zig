@@ -500,11 +500,11 @@ fn retainHeaders(rt: ?*anyopaque, gpa: std.mem.Allocator, headers_dict: ?*anyopa
     for (d.entries.items) |e| {
         const key_ptr: [*:0]u8 = @ptrFromInt(@as(usize, @bitCast(e.key)));
         const value_ptr: [*:0]u8 = @ptrFromInt(@as(usize, @bitCast(e.value)));
-        const key = std.mem.span(key_ptr);
-        const value = std.mem.span(value_ptr);
+        const key = str_mod.nox_str_slice(key_ptr);
+        const value = str_mod.nox_str_slice(value_ptr);
         if (containsCrOrLf(key) or containsCrOrLf(value)) return error.InvalidHeaderValue;
-        arc.nox_rc_retain(key_ptr);
-        arc.nox_rc_retain(value_ptr);
+        str_mod.nox_str_retain(key_ptr);
+        str_mod.nox_str_retain(value_ptr);
         out[filled] = .{ .name = key, .value = value };
         filled += 1;
     }
@@ -518,7 +518,7 @@ export fn nox_http_response_new(rt: ?*anyopaque, status: i64, body: ?[*:0]const 
     const gpa = state.allocator();
     const resp = gpa.create(ServerResponse) catch return null;
     const body_ptr: ?[*:0]u8 = if (body) |b| @ptrCast(@constCast(b)) else null;
-    if (body_ptr) |p| arc.nox_rc_retain(p);
+    if (body_ptr) |p| str_mod.nox_str_retain(p);
     // Güvenlik M-1: bir başlık CR/LF İÇERİYORSA (bkz. `retainHeaders`in
     // belge notu) TÜM yanıt REDDEDİLİR (`null` döner) — `connectionEntry`
     // BUNU ZATEN, `gpa.create` OOM'uyla AYNI, GÜVENLE ele alınan "handler
@@ -543,21 +543,21 @@ export fn nox_http_response_new(rt: ?*anyopaque, status: i64, body: ?[*:0]const 
 export fn nox_http_request_method(rt: ?*anyopaque, req: ?*anyopaque) callconv(.c) ?[*:0]u8 {
     _ = rt;
     const r: *ServerRequest = @ptrCast(@alignCast(req orelse return null));
-    if (r.method) |p| arc.nox_rc_retain(p);
+    if (r.method) |p| str_mod.nox_str_retain(p);
     return r.method;
 }
 
 export fn nox_http_request_target(rt: ?*anyopaque, req: ?*anyopaque) callconv(.c) ?[*:0]u8 {
     _ = rt;
     const r: *ServerRequest = @ptrCast(@alignCast(req orelse return null));
-    if (r.target) |p| arc.nox_rc_retain(p);
+    if (r.target) |p| str_mod.nox_str_retain(p);
     return r.target;
 }
 
 export fn nox_http_request_body(rt: ?*anyopaque, req: ?*anyopaque) callconv(.c) ?[*:0]u8 {
     _ = rt;
     const r: *ServerRequest = @ptrCast(@alignCast(req orelse return null));
-    if (r.body) |p| arc.nox_rc_retain(p);
+    if (r.body) |p| str_mod.nox_str_retain(p);
     return r.body;
 }
 
@@ -572,8 +572,8 @@ export fn nox_http_request_headers(rt: ?*anyopaque, req: ?*anyopaque) callconv(.
     for (r.headers) |h| {
         const k: [*:0]u8 = @ptrCast(@constCast(h.name.ptr));
         const v: [*:0]u8 = @ptrCast(@constCast(h.value.ptr));
-        arc.nox_rc_retain(k);
-        arc.nox_rc_retain(v);
+        str_mod.nox_str_retain(k);
+        str_mod.nox_str_retain(v);
         dict_mod.nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(k)), @bitCast(@intFromPtr(v)));
     }
     return d;
@@ -645,7 +645,7 @@ fn connectionEntry(arg: *anyopaque) void {
                 str_mod.nox_str_release(rt, name_copy);
                 continue;
             };
-            headers_list.append(gpa, .{ .name = std.mem.span(name_copy), .value = std.mem.span(value_copy) }) catch {
+            headers_list.append(gpa, .{ .name = str_mod.nox_str_slice(name_copy), .value = str_mod.nox_str_slice(value_copy) }) catch {
                 str_mod.nox_str_release(rt, name_copy);
                 str_mod.nox_str_release(rt, value_copy);
                 continue;
@@ -700,7 +700,7 @@ fn connectionEntry(arg: *anyopaque) void {
 
         if (resp_payload) |r| {
             const resp: *ServerResponse = @ptrCast(@alignCast(r));
-            const body_slice: []const u8 = if (resp.body) |p| std.mem.span(p) else &.{};
+            const body_slice: []const u8 = if (resp.body) |p| str_mod.nox_str_slice(p) else &.{};
             request.respond(body_slice, .{
                 .status = @enumFromInt(resp.status),
                 .keep_alive = true,
@@ -1364,8 +1364,8 @@ test "Güvenlik M-1: nox_http_response_new CR/LF İÇEREN bir başlık DEĞERİN
 
     const d = dict_mod.nox_dict_new(rt, 1) orelse return error.NewFailed;
     defer dict_mod.nox_dict_release(rt, d, 1, 1);
-    const key = str_mod.nox_str_concat(rt, "X-Ec", "ho") orelse return error.ConcatFailed;
-    const value = str_mod.nox_str_concat(rt, "zararli\r\nSet-Cookie: pwned=", "1") orelse return error.ConcatFailed;
+    const key = str_mod.nox_str_from_bytes(rt, "X-Echo") orelse return error.ConcatFailed;
+    const value = str_mod.nox_str_from_bytes(rt, "zararli\r\nSet-Cookie: pwned=1") orelse return error.ConcatFailed;
     dict_mod.nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(key)), @bitCast(@intFromPtr(value)));
 
     const resp = nox_http_response_new(rt, 200, null, d);
@@ -1378,8 +1378,8 @@ test "Güvenlik M-1: nox_http_response_new normal (CR/LF'siz) başlıklarda HÂL
 
     const d = dict_mod.nox_dict_new(rt, 1) orelse return error.NewFailed;
     defer dict_mod.nox_dict_release(rt, d, 1, 1);
-    const key = str_mod.nox_str_concat(rt, "X-Norm", "al") orelse return error.ConcatFailed;
-    const value = str_mod.nox_str_concat(rt, "deger", "1") orelse return error.ConcatFailed;
+    const key = str_mod.nox_str_from_bytes(rt, "X-Normal") orelse return error.ConcatFailed;
+    const value = str_mod.nox_str_from_bytes(rt, "deger1") orelse return error.ConcatFailed;
     dict_mod.nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(key)), @bitCast(@intFromPtr(value)));
 
     const resp = nox_http_response_new(rt, 200, null, d) orelse return error.UnexpectedNull;

@@ -9,6 +9,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const http_client = @import("http_client.zig");
+const str_mod = @import("../str.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
 const hex_chars = "0123456789abcdef";
@@ -40,7 +41,7 @@ const pwhash_buf_len = 128;
 export fn nox_crypto_argon2_hash_raw(rt: ?*anyopaque, password: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const p = password orelse return dupeToNoxStr(rt, "");
     var buf: [pwhash_buf_len]u8 = undefined;
-    const hash = pwhash.argon2.strHash(std.mem.span(p), .{
+    const hash = pwhash.argon2.strHash(str_mod.nox_str_slice(p), .{
         .allocator = std.heap.page_allocator,
         .params = pwhash.argon2.Params.owasp_2id,
     }, &buf, sharedIo()) catch return dupeToNoxStr(rt, "");
@@ -56,7 +57,7 @@ export fn nox_crypto_argon2_hash_raw(rt: ?*anyopaque, password: ?[*:0]const u8) 
 export fn nox_crypto_argon2_verify_raw(hash: ?[*:0]const u8, password: ?[*:0]const u8) callconv(.c) i32 {
     const h = hash orelse return 0;
     const p = password orelse return 0;
-    pwhash.argon2.strVerify(std.mem.span(h), std.mem.span(p), .{
+    pwhash.argon2.strVerify(str_mod.nox_str_slice(h), str_mod.nox_str_slice(p), .{
         .allocator = std.heap.page_allocator,
     }, sharedIo()) catch return 0;
     return 1;
@@ -65,7 +66,7 @@ export fn nox_crypto_argon2_verify_raw(hash: ?[*:0]const u8, password: ?[*:0]con
 export fn nox_crypto_bcrypt_hash_raw(rt: ?*anyopaque, password: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const p = password orelse return dupeToNoxStr(rt, "");
     var buf: [pwhash_buf_len]u8 = undefined;
-    const hash = pwhash.bcrypt.strHash(std.mem.span(p), .{
+    const hash = pwhash.bcrypt.strHash(str_mod.nox_str_slice(p), .{
         .params = pwhash.bcrypt.Params.owasp,
         .encoding = .crypt,
     }, &buf, sharedIo()) catch return dupeToNoxStr(rt, "");
@@ -75,7 +76,7 @@ export fn nox_crypto_bcrypt_hash_raw(rt: ?*anyopaque, password: ?[*:0]const u8) 
 export fn nox_crypto_bcrypt_verify_raw(hash: ?[*:0]const u8, password: ?[*:0]const u8) callconv(.c) i32 {
     const h = hash orelse return 0;
     const p = password orelse return 0;
-    pwhash.bcrypt.strVerify(std.mem.span(h), std.mem.span(p), .{
+    pwhash.bcrypt.strVerify(str_mod.nox_str_slice(h), str_mod.nox_str_slice(p), .{
         .silently_truncate_password = false,
     }) catch return 0;
     return 1;
@@ -84,7 +85,7 @@ export fn nox_crypto_bcrypt_verify_raw(hash: ?[*:0]const u8, password: ?[*:0]con
 export fn nox_crypto_scrypt_hash_raw(rt: ?*anyopaque, password: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const p = password orelse return dupeToNoxStr(rt, "");
     var buf: [pwhash_buf_len]u8 = undefined;
-    const hash = pwhash.scrypt.strHash(std.mem.span(p), .{
+    const hash = pwhash.scrypt.strHash(str_mod.nox_str_slice(p), .{
         .allocator = std.heap.page_allocator,
         .params = pwhash.scrypt.Params.owasp,
         .encoding = .phc,
@@ -95,7 +96,7 @@ export fn nox_crypto_scrypt_hash_raw(rt: ?*anyopaque, password: ?[*:0]const u8) 
 export fn nox_crypto_scrypt_verify_raw(hash: ?[*:0]const u8, password: ?[*:0]const u8) callconv(.c) i32 {
     const h = hash orelse return 0;
     const p = password orelse return 0;
-    pwhash.scrypt.strVerify(std.mem.span(h), std.mem.span(p), .{
+    pwhash.scrypt.strVerify(str_mod.nox_str_slice(h), str_mod.nox_str_slice(p), .{
         .allocator = std.heap.page_allocator,
     }) catch return 0;
     return 1;
@@ -116,7 +117,7 @@ extern "advapi32" fn SystemFunction036(buf: [*]u8, len: u32) callconv(.c) u8;
 
 export fn nox_crypto_sha256_hex_raw(rt: ?*anyopaque, data: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const d = data orelse return dupeToNoxStr(rt, "");
-    const span = std.mem.span(d);
+    const span = str_mod.nox_str_slice(d);
 
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(span, &digest, .{});
@@ -134,7 +135,7 @@ export fn nox_crypto_sha256_hex_raw(rt: ?*anyopaque, data: ?[*:0]const u8) callc
 /// kullanır (20 baytlık özet, 40 karakterlik hex).
 export fn nox_crypto_sha1_hex_raw(rt: ?*anyopaque, data: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const d = data orelse return dupeToNoxStr(rt, "");
-    const span = std.mem.span(d);
+    const span = str_mod.nox_str_slice(d);
 
     var digest: [std.crypto.hash.Sha1.digest_length]u8 = undefined;
     std.crypto.hash.Sha1.hash(span, &digest, .{});
@@ -151,7 +152,7 @@ export fn nox_crypto_sha1_hex_raw(rt: ?*anyopaque, data: ?[*:0]const u8) callcon
 /// sha2.Sha512` (64 baytlık özet, 128 karakterlik hex).
 export fn nox_crypto_sha512_hex_raw(rt: ?*anyopaque, data: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const d = data orelse return dupeToNoxStr(rt, "");
-    const span = std.mem.span(d);
+    const span = str_mod.nox_str_slice(d);
 
     var digest: [std.crypto.hash.sha2.Sha512.digest_length]u8 = undefined;
     std.crypto.hash.sha2.Sha512.hash(span, &digest, .{});
@@ -180,8 +181,8 @@ export fn nox_crypto_sha512_hex_raw(rt: ?*anyopaque, data: ?[*:0]const u8) callc
 export fn nox_crypto_hmac_sha256_hex_raw(rt: ?*anyopaque, key: ?[*:0]const u8, data: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const k = key orelse return dupeToNoxStr(rt, "");
     const d = data orelse return dupeToNoxStr(rt, "");
-    const key_span = std.mem.span(k);
-    const data_span = std.mem.span(d);
+    const key_span = str_mod.nox_str_slice(k);
+    const data_span = str_mod.nox_str_slice(d);
 
     const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
     var digest: [HmacSha256.mac_length]u8 = undefined;
@@ -207,8 +208,8 @@ export fn nox_crypto_hmac_sha256_hex_raw(rt: ?*anyopaque, key: ?[*:0]const u8, d
 export fn nox_crypto_constant_time_eq_raw(a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) i32 {
     const av = a orelse return 0;
     const bv = b orelse return 0;
-    const a_span = std.mem.span(av);
-    const b_span = std.mem.span(bv);
+    const a_span = str_mod.nox_str_slice(av);
+    const b_span = str_mod.nox_str_slice(bv);
     if (a_span.len != b_span.len) return 0;
     var diff: u8 = 0;
     for (a_span, 0..) |byte, i| {
@@ -252,20 +253,33 @@ export fn nox_crypto_secure_random_hex_raw(rt: ?*anyopaque, n_bytes: i64) callco
 // diye ÖNCE kontrol edilmeli; bkz. `http_client.zig`nin `dupeToNoxStr`ı —
 // `nox_rc_alloc` `rt` GEREKTİRDİĞİNDEN GERÇEK bir runtime ile çağrılır) test
 // edilir.
+// `nox_crypto_*_raw` (DIŞA açılan C-ABI sarmalayıcıları) `str_mod.nox_str_
+// slice`i ÇAĞIRIYOR — GEÇERLİ bir Nox `str` başlığı (ARC+STR_HEADER) BEKLER.
+// Çıplak Zig string LİTERALLERİNİ DOĞRUDAN bu fonksiyonlara geçirmek
+// `regex.zig`nin AYNI belge notunda UYARDIĞI tuzak — bu yüzden AŞAĞIDAKİ
+// TÜM testler `makeTestStr` İLE GERÇEK başlıklı `str`ler İNŞA EDER.
+fn makeTestStr(rt: ?*anyopaque, bytes: []const u8) [*:0]u8 {
+    return str_mod.nox_str_from_bytes(rt, bytes) orelse unreachable;
+}
+
 test "nox_crypto_sha256_hex_raw bilinen vektörler" {
     const asap = @import("../alloc/asap.zig");
     const str = @import("../str.zig");
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const empty = nox_crypto_sha256_hex_raw(rt, "") orelse return error.Failed;
+    const empty_in = makeTestStr(rt, "");
+    defer str.nox_str_release(rt, empty_in);
+    const empty = nox_crypto_sha256_hex_raw(rt, empty_in) orelse return error.Failed;
     defer str.nox_str_release(rt, empty);
     try std.testing.expectEqualStrings(
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         std.mem.sliceTo(empty, 0),
     );
 
-    const abc = nox_crypto_sha256_hex_raw(rt, "abc") orelse return error.Failed;
+    const abc_in = makeTestStr(rt, "abc");
+    defer str.nox_str_release(rt, abc_in);
+    const abc = nox_crypto_sha256_hex_raw(rt, abc_in) orelse return error.Failed;
     defer str.nox_str_release(rt, abc);
     try std.testing.expectEqualStrings(
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
@@ -281,7 +295,9 @@ test "nox_crypto_sha256_hex_raw hep 64 karakter, kucuk harf hex doner" {
 
     const inputs = [_][]const u8{ "x", "hello world", "a much longer input string used to check chunking" };
     for (inputs) |input| {
-        const h = nox_crypto_sha256_hex_raw(rt, @ptrCast(input.ptr)) orelse return error.Failed;
+        const input_str = makeTestStr(rt, input);
+        defer str.nox_str_release(rt, input_str);
+        const h = nox_crypto_sha256_hex_raw(rt, input_str) orelse return error.Failed;
         defer str.nox_str_release(rt, h);
         const slice = std.mem.sliceTo(h, 0);
         try std.testing.expectEqual(@as(usize, 64), slice.len);
@@ -297,13 +313,17 @@ test "nox_crypto_sha256_hex_raw deterministik VE farkli girdiler farkli hash ure
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const h1 = nox_crypto_sha256_hex_raw(rt, "same input") orelse return error.Failed;
+    const same_input = makeTestStr(rt, "same input");
+    defer str.nox_str_release(rt, same_input);
+    const h1 = nox_crypto_sha256_hex_raw(rt, same_input) orelse return error.Failed;
     defer str.nox_str_release(rt, h1);
-    const h2 = nox_crypto_sha256_hex_raw(rt, "same input") orelse return error.Failed;
+    const h2 = nox_crypto_sha256_hex_raw(rt, same_input) orelse return error.Failed;
     defer str.nox_str_release(rt, h2);
     try std.testing.expectEqualStrings(std.mem.sliceTo(h1, 0), std.mem.sliceTo(h2, 0));
 
-    const h3 = nox_crypto_sha256_hex_raw(rt, "different input") orelse return error.Failed;
+    const different_input = makeTestStr(rt, "different input");
+    defer str.nox_str_release(rt, different_input);
+    const h3 = nox_crypto_sha256_hex_raw(rt, different_input) orelse return error.Failed;
     defer str.nox_str_release(rt, h3);
     try std.testing.expect(!std.mem.eql(u8, std.mem.sliceTo(h1, 0), std.mem.sliceTo(h3, 0)));
 }
@@ -314,14 +334,18 @@ test "Faz III.9: nox_crypto_sha1_hex_raw bilinen vektörler" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const empty = nox_crypto_sha1_hex_raw(rt, "") orelse return error.Failed;
+    const empty_in = makeTestStr(rt, "");
+    defer str.nox_str_release(rt, empty_in);
+    const empty = nox_crypto_sha1_hex_raw(rt, empty_in) orelse return error.Failed;
     defer str.nox_str_release(rt, empty);
     try std.testing.expectEqualStrings(
         "da39a3ee5e6b4b0d3255bfef95601890afd80709",
         std.mem.sliceTo(empty, 0),
     );
 
-    const abc = nox_crypto_sha1_hex_raw(rt, "abc") orelse return error.Failed;
+    const abc_in = makeTestStr(rt, "abc");
+    defer str.nox_str_release(rt, abc_in);
+    const abc = nox_crypto_sha1_hex_raw(rt, abc_in) orelse return error.Failed;
     defer str.nox_str_release(rt, abc);
     try std.testing.expectEqualStrings(
         "a9993e364706816aba3e25717850c26c9cd0d89d",
@@ -335,14 +359,18 @@ test "Faz III.9: nox_crypto_sha512_hex_raw bilinen vektörler" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const empty = nox_crypto_sha512_hex_raw(rt, "") orelse return error.Failed;
+    const empty_in = makeTestStr(rt, "");
+    defer str.nox_str_release(rt, empty_in);
+    const empty = nox_crypto_sha512_hex_raw(rt, empty_in) orelse return error.Failed;
     defer str.nox_str_release(rt, empty);
     try std.testing.expectEqualStrings(
         "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
         std.mem.sliceTo(empty, 0),
     );
 
-    const abc = nox_crypto_sha512_hex_raw(rt, "abc") orelse return error.Failed;
+    const abc_in = makeTestStr(rt, "abc");
+    defer str.nox_str_release(rt, abc_in);
+    const abc = nox_crypto_sha512_hex_raw(rt, abc_in) orelse return error.Failed;
     defer str.nox_str_release(rt, abc);
     try std.testing.expectEqualStrings(
         "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f",
@@ -358,13 +386,16 @@ test "Faz III.9: nox_crypto_sha1_hex_raw/sha512_hex_raw hep dogru sabit uzunlukt
 
     const inputs = [_][]const u8{ "x", "hello world", "a much longer input string used to check chunking" };
     for (inputs) |input| {
-        const h1 = nox_crypto_sha1_hex_raw(rt, @ptrCast(input.ptr)) orelse return error.Failed;
+        const input_str = makeTestStr(rt, input);
+        defer str.nox_str_release(rt, input_str);
+
+        const h1 = nox_crypto_sha1_hex_raw(rt, input_str) orelse return error.Failed;
         defer str.nox_str_release(rt, h1);
         const s1 = std.mem.sliceTo(h1, 0);
         try std.testing.expectEqual(@as(usize, 40), s1.len);
         for (s1) |c| try std.testing.expect(std.ascii.isDigit(c) or (c >= 'a' and c <= 'f'));
 
-        const h5 = nox_crypto_sha512_hex_raw(rt, @ptrCast(input.ptr)) orelse return error.Failed;
+        const h5 = nox_crypto_sha512_hex_raw(rt, input_str) orelse return error.Failed;
         defer str.nox_str_release(rt, h5);
         const s5 = std.mem.sliceTo(h5, 0);
         try std.testing.expectEqual(@as(usize, 128), s5.len);
@@ -380,7 +411,11 @@ test "Faz KK.6: nox_crypto_hmac_sha256_hex_raw bilinen test vektörü (RFC 4231/
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const mac = nox_crypto_hmac_sha256_hex_raw(rt, "Jefe", "what do ya want for nothing?") orelse return error.Failed;
+    const key_in = makeTestStr(rt, "Jefe");
+    defer str.nox_str_release(rt, key_in);
+    const data_in = makeTestStr(rt, "what do ya want for nothing?");
+    defer str.nox_str_release(rt, data_in);
+    const mac = nox_crypto_hmac_sha256_hex_raw(rt, key_in, data_in) orelse return error.Failed;
     defer str.nox_str_release(rt, mac);
     try std.testing.expectEqualStrings(
         "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
@@ -394,18 +429,40 @@ test "Faz KK.6: nox_crypto_hmac_sha256_hex_raw farklı anahtar farklı MAC üret
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const mac1 = nox_crypto_hmac_sha256_hex_raw(rt, "anahtar1", "ayni mesaj") orelse return error.Failed;
+    const key1 = makeTestStr(rt, "anahtar1");
+    defer str.nox_str_release(rt, key1);
+    const key2 = makeTestStr(rt, "anahtar2");
+    defer str.nox_str_release(rt, key2);
+    const msg = makeTestStr(rt, "ayni mesaj");
+    defer str.nox_str_release(rt, msg);
+    const mac1 = nox_crypto_hmac_sha256_hex_raw(rt, key1, msg) orelse return error.Failed;
     defer str.nox_str_release(rt, mac1);
-    const mac2 = nox_crypto_hmac_sha256_hex_raw(rt, "anahtar2", "ayni mesaj") orelse return error.Failed;
+    const mac2 = nox_crypto_hmac_sha256_hex_raw(rt, key2, msg) orelse return error.Failed;
     defer str.nox_str_release(rt, mac2);
     try std.testing.expect(!std.mem.eql(u8, std.mem.sliceTo(mac1, 0), std.mem.sliceTo(mac2, 0)));
 }
 
 test "Faz KK.6: nox_crypto_constant_time_eq_raw eşit/farklı/farklı-uzunluk dizeleri doğru ayırt eder" {
-    try std.testing.expectEqual(@as(i32, 1), nox_crypto_constant_time_eq_raw("gizli-belirtec", "gizli-belirtec"));
-    try std.testing.expectEqual(@as(i32, 0), nox_crypto_constant_time_eq_raw("gizli-belirtec", "gizli-belirteC"));
-    try std.testing.expectEqual(@as(i32, 0), nox_crypto_constant_time_eq_raw("kisa", "cokdahauzunbirdize"));
-    try std.testing.expectEqual(@as(i32, 1), nox_crypto_constant_time_eq_raw("", ""));
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const secret_token = makeTestStr(rt, "gizli-belirtec");
+    defer str.nox_str_release(rt, secret_token);
+    const secret_token_diff_case = makeTestStr(rt, "gizli-belirteC");
+    defer str.nox_str_release(rt, secret_token_diff_case);
+    const short_s = makeTestStr(rt, "kisa");
+    defer str.nox_str_release(rt, short_s);
+    const long_s = makeTestStr(rt, "cokdahauzunbirdize");
+    defer str.nox_str_release(rt, long_s);
+    const empty = makeTestStr(rt, "");
+    defer str.nox_str_release(rt, empty);
+
+    try std.testing.expectEqual(@as(i32, 1), nox_crypto_constant_time_eq_raw(secret_token, secret_token));
+    try std.testing.expectEqual(@as(i32, 0), nox_crypto_constant_time_eq_raw(secret_token, secret_token_diff_case));
+    try std.testing.expectEqual(@as(i32, 0), nox_crypto_constant_time_eq_raw(short_s, long_s));
+    try std.testing.expectEqual(@as(i32, 1), nox_crypto_constant_time_eq_raw(empty, empty));
 }
 
 test "Faz KK.6: nox_crypto_secure_random_hex_raw doğru uzunlukta hex döner VE deterministik DEĞİLDİR" {
@@ -438,12 +495,17 @@ test "argon2_hash/verify: dogru parola dogrulanir, yanlis parola reddedilir" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const hash = nox_crypto_argon2_hash_raw(rt, "doğru parola") orelse return error.Failed;
+    const correct_pw = makeTestStr(rt, "doğru parola");
+    defer str.nox_str_release(rt, correct_pw);
+    const wrong_pw = makeTestStr(rt, "yanlış parola");
+    defer str.nox_str_release(rt, wrong_pw);
+
+    const hash = nox_crypto_argon2_hash_raw(rt, correct_pw) orelse return error.Failed;
     defer str.nox_str_release(rt, hash);
     try std.testing.expect(std.mem.startsWith(u8, std.mem.sliceTo(hash, 0), "$argon2id$"));
 
-    try std.testing.expectEqual(@as(i32, 1), nox_crypto_argon2_verify_raw(hash, "doğru parola"));
-    try std.testing.expectEqual(@as(i32, 0), nox_crypto_argon2_verify_raw(hash, "yanlış parola"));
+    try std.testing.expectEqual(@as(i32, 1), nox_crypto_argon2_verify_raw(hash, correct_pw));
+    try std.testing.expectEqual(@as(i32, 0), nox_crypto_argon2_verify_raw(hash, wrong_pw));
 }
 
 test "bcrypt_hash/verify: dogru parola dogrulanir, yanlis parola reddedilir" {
@@ -452,12 +514,17 @@ test "bcrypt_hash/verify: dogru parola dogrulanir, yanlis parola reddedilir" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const hash = nox_crypto_bcrypt_hash_raw(rt, "doğru parola") orelse return error.Failed;
+    const correct_pw = makeTestStr(rt, "doğru parola");
+    defer str.nox_str_release(rt, correct_pw);
+    const wrong_pw = makeTestStr(rt, "yanlış parola");
+    defer str.nox_str_release(rt, wrong_pw);
+
+    const hash = nox_crypto_bcrypt_hash_raw(rt, correct_pw) orelse return error.Failed;
     defer str.nox_str_release(rt, hash);
     try std.testing.expect(std.mem.startsWith(u8, std.mem.sliceTo(hash, 0), "$2"));
 
-    try std.testing.expectEqual(@as(i32, 1), nox_crypto_bcrypt_verify_raw(hash, "doğru parola"));
-    try std.testing.expectEqual(@as(i32, 0), nox_crypto_bcrypt_verify_raw(hash, "yanlış parola"));
+    try std.testing.expectEqual(@as(i32, 1), nox_crypto_bcrypt_verify_raw(hash, correct_pw));
+    try std.testing.expectEqual(@as(i32, 0), nox_crypto_bcrypt_verify_raw(hash, wrong_pw));
 }
 
 test "scrypt_hash/verify: dogru parola dogrulanir, yanlis parola reddedilir" {
@@ -466,12 +533,17 @@ test "scrypt_hash/verify: dogru parola dogrulanir, yanlis parola reddedilir" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const hash = nox_crypto_scrypt_hash_raw(rt, "doğru parola") orelse return error.Failed;
+    const correct_pw = makeTestStr(rt, "doğru parola");
+    defer str.nox_str_release(rt, correct_pw);
+    const wrong_pw = makeTestStr(rt, "yanlış parola");
+    defer str.nox_str_release(rt, wrong_pw);
+
+    const hash = nox_crypto_scrypt_hash_raw(rt, correct_pw) orelse return error.Failed;
     defer str.nox_str_release(rt, hash);
     try std.testing.expect(std.mem.startsWith(u8, std.mem.sliceTo(hash, 0), "$scrypt$"));
 
-    try std.testing.expectEqual(@as(i32, 1), nox_crypto_scrypt_verify_raw(hash, "doğru parola"));
-    try std.testing.expectEqual(@as(i32, 0), nox_crypto_scrypt_verify_raw(hash, "yanlış parola"));
+    try std.testing.expectEqual(@as(i32, 1), nox_crypto_scrypt_verify_raw(hash, correct_pw));
+    try std.testing.expectEqual(@as(i32, 0), nox_crypto_scrypt_verify_raw(hash, wrong_pw));
 }
 
 test "parola hash'leri her cagrida farkli tuz uretir (deterministik DEGIL)" {
@@ -480,19 +552,33 @@ test "parola hash'leri her cagrida farkli tuz uretir (deterministik DEGIL)" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const h1 = nox_crypto_argon2_hash_raw(rt, "ayni parola") orelse return error.Failed;
+    const same_pw = makeTestStr(rt, "ayni parola");
+    defer str.nox_str_release(rt, same_pw);
+    const h1 = nox_crypto_argon2_hash_raw(rt, same_pw) orelse return error.Failed;
     defer str.nox_str_release(rt, h1);
-    const h2 = nox_crypto_argon2_hash_raw(rt, "ayni parola") orelse return error.Failed;
+    const h2 = nox_crypto_argon2_hash_raw(rt, same_pw) orelse return error.Failed;
     defer str.nox_str_release(rt, h2);
     try std.testing.expect(!std.mem.eql(u8, std.mem.sliceTo(h1, 0), std.mem.sliceTo(h2, 0)));
     // İKİSİ de AYNI parolayı doğrulamalı — farklı tuz, AYNI sonuç.
-    try std.testing.expectEqual(@as(i32, 1), nox_crypto_argon2_verify_raw(h1, "ayni parola"));
-    try std.testing.expectEqual(@as(i32, 1), nox_crypto_argon2_verify_raw(h2, "ayni parola"));
+    try std.testing.expectEqual(@as(i32, 1), nox_crypto_argon2_verify_raw(h1, same_pw));
+    try std.testing.expectEqual(@as(i32, 1), nox_crypto_argon2_verify_raw(h2, same_pw));
 }
 
 test "bozuk/capraz-algoritma hash dizeleri cokme yerine guvenle reddedilir" {
-    try std.testing.expectEqual(@as(i32, 0), nox_crypto_argon2_verify_raw("gecersiz-bir-dize", "parola"));
-    try std.testing.expectEqual(@as(i32, 0), nox_crypto_bcrypt_verify_raw("gecersiz-bir-dize", "parola"));
-    try std.testing.expectEqual(@as(i32, 0), nox_crypto_scrypt_verify_raw("gecersiz-bir-dize", "parola"));
-    try std.testing.expectEqual(@as(i32, 0), nox_crypto_argon2_verify_raw("", ""));
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const invalid_str = makeTestStr(rt, "gecersiz-bir-dize");
+    defer str.nox_str_release(rt, invalid_str);
+    const pw = makeTestStr(rt, "parola");
+    defer str.nox_str_release(rt, pw);
+    const empty = makeTestStr(rt, "");
+    defer str.nox_str_release(rt, empty);
+
+    try std.testing.expectEqual(@as(i32, 0), nox_crypto_argon2_verify_raw(invalid_str, pw));
+    try std.testing.expectEqual(@as(i32, 0), nox_crypto_bcrypt_verify_raw(invalid_str, pw));
+    try std.testing.expectEqual(@as(i32, 0), nox_crypto_scrypt_verify_raw(invalid_str, pw));
+    try std.testing.expectEqual(@as(i32, 0), nox_crypto_argon2_verify_raw(empty, empty));
 }

@@ -25,13 +25,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
+const str_mod = @import("../str.zig");
 
 fn dupeToNoxStr(rt: ?*anyopaque, bytes: []const u8) ?[*:0]u8 {
-    const raw = arc.nox_rc_alloc(rt, bytes.len + 1) orelse return null;
-    const out: [*]u8 = @ptrCast(raw);
-    @memcpy(out[0..bytes.len], bytes);
-    out[bytes.len] = 0;
-    return @ptrCast(out);
+    return str_mod.nox_str_from_bytes(rt, bytes);
 }
 
 fn dupeEmpty(rt: ?*anyopaque) ?[*:0]u8 {
@@ -143,9 +140,9 @@ pub export fn nox_shm_open_raw(name: ?[*:0]const u8, size: i64) callconv(.c) ?*a
     const n = name orelse return null;
     if (size <= 0) return null;
     const h = if (builtin.os.tag == .windows)
-        openWindows(std.mem.span(n), @intCast(size)) catch return null
+        openWindows(str_mod.nox_str_slice(n), @intCast(size)) catch return null
     else
-        openPosix(std.mem.span(n), @intCast(size)) catch return null;
+        openPosix(str_mod.nox_str_slice(n), @intCast(size)) catch return null;
     return h;
 }
 
@@ -247,6 +244,6 @@ pub export fn nox_shm_unlink_raw(name: ?[*:0]const u8) callconv(.c) void {
     if (builtin.os.tag == .windows) return;
     const n = name orelse return;
     var name_buf: [256]u8 = undefined;
-    const shm_name = std.fmt.bufPrintZ(&name_buf, "/{s}", .{std.mem.span(n)}) catch return;
+    const shm_name = std.fmt.bufPrintZ(&name_buf, "/{s}", .{str_mod.nox_str_slice(n)}) catch return;
     _ = std.c.shm_unlink(shm_name);
 }

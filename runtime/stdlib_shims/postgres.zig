@@ -22,6 +22,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
+const str_mod = @import("../str.zig");
 const abi_layout = @import("abi_layout");
 
 const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
@@ -159,11 +160,7 @@ fn ensureLoaded() bool {
 }
 
 fn dupeToNoxStr(rt: ?*anyopaque, bytes: []const u8) ?[*:0]u8 {
-    const raw = arc.nox_rc_alloc(rt, bytes.len + 1) orelse return null;
-    const out: [*]u8 = @ptrCast(raw);
-    @memcpy(out[0..bytes.len], bytes);
-    out[bytes.len] = 0;
-    return @ptrCast(out);
+    return str_mod.nox_str_from_bytes(rt, bytes);
 }
 
 fn dupeEmpty(rt: ?*anyopaque) ?[*:0]u8 {

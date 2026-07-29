@@ -984,7 +984,7 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     // HEMEN ölür / DAHA SONRA bir alias üzerinden ölür) net refcount
     // DEĞİŞİMİ doğru kalır.
     if (obj.elem_heap_info != null) {
-        try self.emitListElemRetainLoop(new_ptr, len_t);
+        try self.emitListElemRetainLoop(new_ptr, len_t, obj.elem_heap_info.?.heap);
     }
 
     // YENİ elemanı YENİ bloğa yaz, başlığı (len/cap) GÜNCELLE.
@@ -1007,7 +1007,7 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     // ESKİ bloğu (yalnızca KENDİ ham belleğini — elemanlar TAŞINDI,
     // özyinelemeli release EDİLMEZ) refcount'u sıfıra düşerse serbest
     // bırak (bkz. bu fonksiyonun belge notu, "büyüme yolu").
-    const should_free = try self.emitInlinePredecrement(obj.text);
+    const should_free = try self.emitInlinePredecrement(obj.text, .list);
     const free_label = try self.newLabel("append_free_old");
     const skip_free_label = try self.newLabel("append_skip_free");
     try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ should_free, free_label, skip_free_label });
@@ -1019,7 +1019,7 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         // DEĞİL: bu decrement ASLA sıfıra/altına düşemez, çünkü elemanın
         // ÖNCEKİ, GEÇERLİ sahipliği HÂLÂ duruyor — bkz. `genListAppend`nin
         // büyüme-retain notunun tam gerekçesi).
-        try self.emitListElemPlainDecrementLoop(obj.text, len_t);
+        try self.emitListElemPlainDecrementLoop(obj.text, len_t, obj.elem_heap_info.?.heap);
     }
     const old_size = try self.newTemp();
     {

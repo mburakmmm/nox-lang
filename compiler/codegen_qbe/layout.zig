@@ -101,7 +101,7 @@ pub fn genClassRelease(self: *Codegen, class_name: []const u8, cinfo: ClassInfo)
     }
 
     try self.out.writer.print("export function ${s}_release(l {s}, l %p) {{\n@start\n", .{ class_name, RT_PARAM });
-    const should_free = try self.emitInlinePredecrement("%p");
+    const should_free = try self.emitInlinePredecrement("%p", .class);
     const free_label = try self.newLabel("release_free");
     const done_label = try self.newLabel("release_done");
     if (has_class_field) {

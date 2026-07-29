@@ -110,6 +110,18 @@ const stress_benchmarks = [_]Benchmark{
     // `s` döngü İçinde HİÇ yeniden atanmadığından TAM olarak GG.5'in hedef
     // aldığı desen.
     .{ .name = "str_index_loop_licm", .path = "benchmarks/str_index_loop_licm.nox", .expected = "20000000\n" },
+    // str ABI faz (uzunluk alanı + ASCII bayrağı, bkz. nox-teknik-
+    // spesifikasyon.md §3.76): `str_index_loop_licm`nin AKSİNE, `len()`
+    // BURADA TEK bir değişmez değişken ÜZERİNDE DEĞİL, bir `list[str]`in
+    // FARKLI elemanları (`strs[i]`) ÜZERİNDE çağrılır — derleyicinin
+    // `str_len_cache` LICM'i (TEK bir değişkenin döngü İÇİNDE yeniden
+    // atanmadığını KANITLAR) bu deseni HİÇBİR ŞEKİLDE hoist EDEMEZ (her
+    // yinelemede GERÇEKTEN FARKLI bir çalışma-zamanı nesnesi). Eski
+    // (uzunluk alanı OLMAYAN) `str` temsili İçin bu, HER çağrıda TAM bir
+    // `strlen`-tarzı tarama demekti; YENİ paketlenmiş başlık BUNU O(1)
+    // yapar — ÖLÇÜLDÜ: ~110ms (eski) → ~10ms (yeni), ~11x hızlanma (bkz.
+    // spesifikasyon notu, git-stash İLE İZOLE ölçüldü).
+    .{ .name = "str_len_many_strings", .path = "benchmarks/str_len_many_strings.nox", .expected = "467800000\n" },
     // Faz GG.7 (bkz. nox-teknik-spesifikasyon.md §3.66): `make_list`
     // (GG.2'nin seçici inlining'iyle `run`nin İÇİNE spliced) HER yinelemede
     // TAZE bir `list[int]` inşa edip HEMEN tüketiyor — ilkel-elemanlı

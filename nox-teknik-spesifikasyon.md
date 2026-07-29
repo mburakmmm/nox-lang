@@ -13433,6 +13433,86 @@ testini KIRDI (test SESSİZCE `TestUnexpectedResult` İLE başarısız oldu —
 BAŞARISINDAN SONRAYA taşındı — `g_last_op_ok` artık SADECE JSON sözdizimi
 geçerliliğini yansıtır, bir ayırıcı (allocator) arızasını DEĞİL.
 
+## 3.76 `str` ABI değişikliği — uzunluk alanı + ASCII bayrağı
+
+Kullanıcı, §3.75'in JSON düzeltmesinin ARDINDAN, `str`in zero-copy'ye NE
+KADAR yaklaşabileceğini sordu. Önceki temsil `[8 bayt refcount][NUL-
+sonlandırılmış baytlar]` idi — HİÇ uzunluk alanı YOKTU; `len()`/`s[i]`
+ZATEN bir UTF-8 codepoint-SAYAN tarama (`nox_str_char_count`) kullanıyordu
+(ham `strlen` DEĞİL). Kullanıcıya iki seçenek sunuldu (yalnızca uzunluk
+alanı VEYA uzunluk+ASCII bayrağı) — kullanıcı, `len()`/`s[i]`nin ASCII
+string'lerde (pratikte ÇOĞU) codepoint taramasını TAMAMEN ATLAYIP O(1)
+olmasını sağlayan DAHA GENİŞ, DAHA RİSKLİ kapsamı BİLİNÇLİ olarak seçti.
+
+**Yeni düzen:** `[ARC_HEADER_SIZE=8 (refcount)][STR_HEADER_SIZE=8
+(paketlenmiş i64: alt 61 bit=bayt-uzunluğu, üst 2 bit=ascii-durumu:
+00=bilinmiyor/01=ascii/10=ascii-değil)][baytlar...NUL]` — kamuya açık
+`str_ptr`, `list[T]`nin AKSİNE, PAKETLENMİŞ başlığın HEMEN ARDINDAN GERÇEK
+bayt verisine işaret eder (NUL-sonlandırma KORUNUR — `extern def`/HPy
+geçişi BOZULMAZ). `ARC_HEADER_SIZE` TÜM heap tiplerince PAYLAŞILAN,
+DEĞİŞMEYEN 8 bayt kalır — yalnızca `str` KENDİ AYRI bir başlık katmanı
+kazanır (`list[T]`nin KENDİ `len`/`cap` başlığıyla AYNI katmanlama deseni).
+Tembel ASCII çözümleme (`ensureAsciiResolved`): "bilinmiyor" durumundaki
+bir `str` İLK `char_count`/`is_ascii` çağrısında BİR KEZ taranır, sonuç
+HEADER'A yazılır (SONRAKİ tüm çağrılar İçin önbelleklenir) — atomik
+OLMAYAN düz oku/yaz YETERLİDİR, çünkü Nox'un ARC nesneleri ASLA GERÇEK
+paralel erişime AÇILMAZ (`nox.thread`/`ThreadChannel` string'leri OS iş
+parçacıkları ARASINDA HER ZAMAN derin KOPYALAR — bkz. `asap.zig`nin
+`arc_owner_tid` belge notu).
+
+**En yüksek riskli dokunma noktası — GERÇEKTEN doğrulandı:**
+`ownership.zig`nin `emitInlineRetain`/`emitInlinePredecrement`i ÖNCEDEN
+tip-BAĞIMSIZDI (SADECE `ARC_HEADER_SIZE` sabit ofseti); `.str` İçin
+`ARC_HEADER_SIZE + STR_HEADER_SIZE` hesaplayan bir `heap`-farkında
+parametre eklenip TÜM çağrı sitelerine (retain-döngüleri DAHİL) taşındı.
+
+**Üç AYRI bug kategorisi bulunup düzeltildi (uygulama sırasında):**
+1. **Inline QBE codegen'in yeni başlığı ATLAMASI** — `genStrIndex`nin
+   ascii-hızlı-yolu (`expr.zig`), bir Zig yardımcısı ÇAĞIRMAK YERİNE
+   DOĞRUDAN `nox_rc_alloc(rt, 2)` + ham bayt yazma yayınlıyordu; paketlenmiş
+   başlığı HİÇ EKLEMİYORDU. Kök neden, "https"→"gttps"/"item_0"→"htem_0"
+   BOZULMASI ÜZERİNDEN, minimal bir `s[i]`-döngü tekrar-üretimiyle bulundu.
+2. **Runtime'ın genel `arc.*` fonksiyonlarının `str` işaretçileri ÜZERİNDE
+   ÇIPLAK çağrılması** (`json.zig`/`http_server.zig`/`dict.zig` — 8+ site) —
+   eski (str-BAĞIMSIZ) ofseti VARSAYIYORDU, PAKETLENMİŞ başlığı SESSİZCE
+   BOZUYORDU (refcount YERİNE uzunluk alanını azaltıyordu — "hi"→"h"
+   kısalması ÜZERİNDEN bulundu). Yeni `str_mod.nox_str_retain`/
+   `nox_str_predecrement` sarmalayıcıları eklenip TÜM bu siteler taşındı.
+3. **Test/uzantı KODUNUN başlıksız ham `str` İNŞA EDİP YENİ ABI'yi
+   BEKLEYEN fonksiyonlara geçirmesi** (`regex.zig`/`strings.zig`/`fs.zig`/
+   `path.zig`/`json.zig`/`crypto.zig`nin GÖMÜLÜ testleri — TOPLAM 6 dosya)
+   — çıplak Zig string LİTERALLERİ (`nox_regex_find_raw("wor.d", ...)` GİBİ)
+   HİÇBİR ARC/STR başlığı TAŞIMADIĞINDAN, `nox_str_slice` işaretçinin
+   HEMEN ÖNCESİNDEKİ rastgele belleği "paketlenmiş uzunluk" olarak OKUR —
+   GERÇEKTEN gözlemlendi: kararsız segfault/sonsuz-döngü davranışı (`zig
+   build test` koşularının BİRDEN ÇOK kez "takılmış" GİBİ görünmesinin KÖK
+   nedeni — GERÇEKTE bir zamanlama/bellek-bozması hatasıydı, zig build
+   sisteminin KENDİSİ DEĞİL). Düzeltme: TÜM bu testler `nox_str_from_bytes`
+   İLE GERÇEK başlıklı `str`ler İNŞA EDER hale getirildi; `runtime/
+   stdlib_shims/` + `collections`/`async_rt` genelinde BENZER bir site
+   KALMADIĞI bir grep taramasıyla doğrulandı.
+
+**Doğrulama:** `zig build test -Doptimize=Debug` — SADECE 2 bilinen,
+BU ÇALIŞMAYLA İLİŞKİSİZ hata (temiz `main` üzerinde de AYNEN
+tekrarlandığı doğrulanan `lexer_parser_checker_fuzz`in yığın-taşması VE
+`http_serve_multicore`nin N=2 uçtan-uca testi — İKİSİ de ÖNCEDEN vardı,
+ayrı bir görev olarak işaretlendi). `zig build test -Doptimize=ReleaseFast`
+— TAM YEŞİL, sıfır hata.
+
+**Ölçüm (kazanç, Apple M4, ReleaseFast):** `benchmarks/
+str_len_many_strings.nox` — bir `list[str]`in 500 FARKLI elemanı
+ÜZERİNDE 20.000 kez `len()` çağrılır (derleyicinin TEK-değişkenli
+`str_len_cache` LICM'i BU deseni hoist EDEMEZ, HER yineleme GERÇEKTEN
+FARKLI bir nesne). Eski temsil: ~110ms (her çağrı TAM bir `strlen`-tarzı
+tarama); yeni temsil: ~10ms (O(1) başlık okuması) — **~11x hızlanma**
+(git-stash İLE İZOLE ölçüldü, İKİ kod tabanı da AYNI ikili girdiyle).
+
+**Ölçüm (risk, kabul edilen ödünleşim):** 2.000.000 kısa (~8 bayt) string
+oluşturan bir iş yükünde tepe bellek ayak izi: eski ~66.4MB → yeni
+~82.3MB (~%24 artış, `STR_HEADER_SIZE`in EKLEDİĞİ 8 bayt/string'DEN
+BEKLENEN büyüklük mertebesiyle TUTARLI) — plan dosyasında BAŞTAN kabul
+edilen, bilinçli bir ödünleşim.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

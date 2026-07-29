@@ -53,6 +53,7 @@ const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
 const http_client = @import("http_client.zig");
 const abi_layout = @import("abi_layout");
+const str_mod = @import("../str.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
 /// Faz P1.2: bkz. `strings.zig`nin AYNI re-export notu.
@@ -163,7 +164,7 @@ fn callMakeJsonValue(
     // HİÇ olmamıştır, telafi edici predecrement'i ATLAMAK GEREKİR (aksi
     // halde HENÜZ hiç retain edilmemiş taze değerleri ERKEN serbest bırakırdı).
     if (result == null) return null;
-    _ = arc.nox_rc_predecrement(@ptrCast(@constCast(s)));
+    _ = str_mod.nox_str_predecrement(s);
     _ = arc.nox_rc_predecrement(arr);
     _ = arc.nox_rc_predecrement(keys);
     _ = arc.nox_rc_predecrement(vals);
@@ -228,7 +229,7 @@ fn initSharedEmpties(rt: ?*anyopaque) ?SharedEmpties {
 /// release'ine denk gelir (bkz. `SharedEmpties`nin belge notu).
 fn releaseSharedEmpties(rt: ?*anyopaque, shared: SharedEmpties) void {
     arc.nox_rc_release(rt, shared.list, LIST_HEADER_SIZE);
-    arc.nox_rc_release(rt, shared.str, 1);
+    str_mod.nox_str_release(rt, shared.str);
 }
 
 fn sharedEmptyList(shared: SharedEmpties) ?*anyopaque {
@@ -237,7 +238,7 @@ fn sharedEmptyList(shared: SharedEmpties) ?*anyopaque {
 }
 
 fn sharedEmptyStr(shared: SharedEmpties) ?[*:0]const u8 {
-    arc.nox_rc_retain(shared.str);
+    str_mod.nox_str_retain(shared.str);
     return shared.str;
 }
 
@@ -294,7 +295,10 @@ fn buildNode(rt: ?*anyopaque, allocator: std.mem.Allocator, shared: SharedEmptie
 }
 
 export fn nox_json_decode_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?*anyopaque {
-    const slice = std.mem.span(s orelse "");
+    // NOT: `s`in null olduğu dal İçin `str_mod.nox_str_slice`e DÜŞMEYİZ —
+    // o yol yalnızca GERÇEK bir Nox `str` (görünmez başlıklı) BEKLER, boş
+    // Zig dize literal'i "" BUNU SAĞLAMAZ (başlıksız bellek okunması OLURDU).
+    const slice = if (s) |sp| str_mod.nox_str_slice(sp) else "";
 
     // Dil stabilizasyonu fazı §M.6: ÖNCEDEN `std.json.parseFromSlice` VE
     // `buildNode`nin dizi/obje dalları `std.heap.page_allocator`a DOĞRUDAN
@@ -344,18 +348,32 @@ export fn nox_json_decode_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?
 // parçacığının AYNI ANDA `nox.json.decode` ÇAĞIRDIĞINDA (biri BOZUK, diğeri
 // GEÇERLİ JSON İLE) birbirinin bayrağını EZMEDİĞİNİ kanıtlar.
 test "g_last_op_ok threadlocal: iki gerçek OS iş parçacığı bağımsız bayrak görür" {
+    // `nox_json_decode_raw`nin `s` parametresi `str_mod.nox_str_slice`den
+    // GEÇTİĞİNDEN (bkz. yukarısı) GEÇERLİ bir Nox `str` başlığı GEREKİR —
+    // çıplak Zig LİTERALLERİNİ DOĞRUDAN geçirmek `regex.zig`nin AYNI belge
+    // notunda UYARDIĞI tuzak. TEK bir `rt` İLE İNŞA EDİLİP HER İKİ iş
+    // parçacığı ARASINDA (SADECE OKUNDUĞU İÇİN GÜVENLE) PAYLAŞILIR.
+    const asap = @import("../alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const malformed_json = str_mod.nox_str_from_bytes(rt, "{ bozuk") orelse return error.AllocFailed;
+    defer str_mod.nox_str_release(rt, malformed_json);
+    const valid_json = str_mod.nox_str_from_bytes(rt, "{\"a\": 1}") orelse return error.AllocFailed;
+    defer str_mod.nox_str_release(rt, valid_json);
+
     const Worker = struct {
-        fn malformed(iterations: usize, all_false: *bool) void {
+        fn malformed(iterations: usize, s: [*:0]const u8, all_false: *bool) void {
             var i: usize = 0;
             while (i < iterations) : (i += 1) {
-                _ = nox_json_decode_raw(null, "{ bozuk");
+                _ = nox_json_decode_raw(null, s);
                 if (nox_json_last_op_ok() != 0) all_false.* = false;
             }
         }
-        fn valid(iterations: usize, all_true: *bool) void {
+        fn valid(iterations: usize, s: [*:0]const u8, all_true: *bool) void {
             var i: usize = 0;
             while (i < iterations) : (i += 1) {
-                _ = nox_json_decode_raw(null, "{\"a\": 1}");
+                _ = nox_json_decode_raw(null, s);
                 if (nox_json_last_op_ok() == 0) all_true.* = false;
             }
         }
@@ -363,8 +381,8 @@ test "g_last_op_ok threadlocal: iki gerçek OS iş parçacığı bağımsız bay
 
     var all_false = true;
     var all_true = true;
-    const thread_a = try std.Thread.spawn(.{}, Worker.malformed, .{ 2000, &all_false });
-    const thread_b = try std.Thread.spawn(.{}, Worker.valid, .{ 2000, &all_true });
+    const thread_a = try std.Thread.spawn(.{}, Worker.malformed, .{ 2000, malformed_json, &all_false });
+    const thread_b = try std.Thread.spawn(.{}, Worker.valid, .{ 2000, valid_json, &all_true });
     thread_a.join();
     thread_b.join();
 

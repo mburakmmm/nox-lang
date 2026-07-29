@@ -87,7 +87,7 @@ pub fn buildClosureValue(self: *Codegen, fd: ast.FuncDef) CodegenError![]const u
         const src_slot = self.vars.get(c.name).?;
         const v = try self.newTemp();
         try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ v, qbeTypeName(src_slot.qtype), qbeTypeName(src_slot.qtype), src_slot.slot });
-        if (isHeapManaged(c.info.heap)) try self.emitInlineRetain(v);
+        if (isHeapManaged(c.info.heap)) try self.emitInlineRetain(v, c.info.heap);
         try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(src_slot.qtype), v, addr });
     }
 
@@ -292,7 +292,7 @@ pub fn genClosureRelease(self: *Codegen, mangled_name: []const u8, captures: []c
     self.mod_cache = .empty;
 
     try self.out.writer.print("export function ${s}_release(l {s}, l %p) {{\n@start\n", .{ mangled_name, RT_PARAM });
-    const should_free = try self.emitInlinePredecrement("%p");
+    const should_free = try self.emitInlinePredecrement("%p", .closure);
     const free_label = try self.newLabel("release_free");
     const done_label = try self.newLabel("release_done");
     try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ should_free, free_label, done_label });

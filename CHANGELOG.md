@@ -14,6 +14,23 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.18.0]
+
+### Değiştirildi
+- **`str` ABI değişikliği — uzunluk alanı + ASCII bayrağı** (kök-seviyeli
+  bir runtime değişikliği, davranış AYNI kalıyor): `str`in temsili
+  `[8 bayt refcount][8 bayt paketlenmiş uzunluk+ascii][baytlar...NUL]`
+  oldu (ÖNCEDEN uzunluk alanı YOKTU). `len()`/`s[i]` artık ASCII
+  string'lerde (pratikte ÇOĞU) O(1) — codepoint taraması TAMAMEN
+  atlanıyor; ASCII-OLMAYAN string'ler İçin tek bir tarama tembel (lazy)
+  yapılıp SONUÇ önbelleklenir. NUL-sonlandırma KORUNDU — `extern def`/HPy
+  geçişi ETKİLENMEDİ. Ölçüm (bkz. `benchmarks/str_len_many_strings.nox`,
+  Apple M4, ReleaseFast): bir `list[str]`in FARKLI elemanları üzerinde
+  tekrarlanan `len()` çağrıları İçin **~11x hızlanma** (~110ms → ~10ms).
+  Kabul edilen ödünleşim: kısa string ağırlıklı iş yüklerinde tepe bellek
+  ayak izinde ~%24 artış (8 bayt/string başlık maliyeti — bkz.
+  nox-teknik-spesifikasyon.md §3.76).
+
 ## [1.17.1]
 
 ### Düzeltildi

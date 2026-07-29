@@ -8,6 +8,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
 const http_client = @import("http_client.zig");
+const str_mod = @import("../str.zig");
 const abi_layout = @import("abi_layout");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
@@ -35,8 +36,8 @@ const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 /// yalnızca `..`/`.` NORMALİZASYONU YAPILMAZ, ki ZATEN ESKİ `std.fs.path.
 /// join` de YAPMIYORDU (davranış DEĞİŞMEDİ, yalnızca tahsis stratejisi).
 export fn nox_path_join_raw(rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    const a_slice = std.mem.span(a orelse return null);
-    const b_slice = std.mem.span(b orelse return null);
+    const a_slice = str_mod.nox_str_slice(a orelse return null);
+    const b_slice = str_mod.nox_str_slice(b orelse return null);
 
     if (a_slice.len == 0) return dupeToNoxStr(rt, b_slice);
     if (b_slice.len == 0) return dupeToNoxStr(rt, a_slice);
@@ -47,22 +48,27 @@ export fn nox_path_join_raw(rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const u
     const b_adjusted = if (a_ends_sep and b_starts_sep) b_slice[1..] else b_slice;
 
     const total_len = a_slice.len + @as(usize, if (need_sep) 1 else 0) + b_adjusted.len;
-    const raw = arc.nox_rc_alloc(rt, total_len + 1) orelse return null;
-    const out: [*]u8 = @ptrCast(raw);
-    @memcpy(out[0..a_slice.len], a_slice);
+    // `str`e uzunluk alanı + ASCII bayrağı eklenmesinden BERİ (bkz. plan
+    // dosyası) İKİ parçayı DOĞRUDAN `nox_rc_alloc`ın SONUCUNA yazmak
+    // ARTIK GÜVENLİ DEĞİL (paketlenmiş başlık İçin yer AYRILMAZ) — ÖNCE
+    // düz (ARC-dışı) bir arabellekte BİRLEŞTİRİLİR, SONRA `dupeToNoxStr`
+    // (`nox_str_from_bytes`) İLE GERÇEK, başlıklı bir Nox `str`ine
+    // kopyalanır.
+    const buf = std.heap.page_allocator.alloc(u8, total_len) catch return null;
+    defer std.heap.page_allocator.free(buf);
+    @memcpy(buf[0..a_slice.len], a_slice);
     var off: usize = a_slice.len;
     if (need_sep) {
-        out[off] = std.fs.path.sep;
+        buf[off] = std.fs.path.sep;
         off += 1;
     }
-    @memcpy(out[off..][0..b_adjusted.len], b_adjusted);
+    @memcpy(buf[off..][0..b_adjusted.len], b_adjusted);
     off += b_adjusted.len;
-    out[off] = 0;
-    return @ptrCast(out);
+    return dupeToNoxStr(rt, buf);
 }
 
 export fn nox_path_basename_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    const slice = std.mem.span(p orelse return null);
+    const slice = str_mod.nox_str_slice(p orelse return null);
     return dupeToNoxStr(rt, std.fs.path.basename(slice));
 }
 
@@ -70,13 +76,13 @@ export fn nox_path_basename_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.c)
 /// döner — Nox `str`ın nullable bir karşılığı OLMADIĞINDAN bu durumda boş
 /// dize (`""`) döndürülür (belgelenen, kasıtlı bir varsayılan).
 export fn nox_path_dirname_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    const slice = std.mem.span(p orelse return null);
+    const slice = str_mod.nox_str_slice(p orelse return null);
     const d = std.fs.path.dirname(slice) orelse "";
     return dupeToNoxStr(rt, d);
 }
 
 export fn nox_path_extension_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    const slice = std.mem.span(p orelse return null);
+    const slice = str_mod.nox_str_slice(p orelse return null);
     return dupeToNoxStr(rt, std.fs.path.extension(slice));
 }
 
@@ -85,7 +91,7 @@ export fn nox_path_extension_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.c
 /// `bool`a çevirir (bu projede DAHA ÖNCE `-> bool` dönüşü test edilmiş bir
 /// yol DEĞİL, `-> int` İSE HER YERDE KANITLANMIŞ).
 export fn nox_path_is_absolute_raw(p: ?[*:0]const u8) callconv(.c) i32 {
-    const slice = std.mem.span(p orelse return 0);
+    const slice = str_mod.nox_str_slice(p orelse return 0);
     return if (std.fs.path.isAbsolute(slice)) 1 else 0;
 }
 
@@ -144,8 +150,8 @@ export fn nox_path_canonicalize_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv
 /// DEĞİŞMEDEN döner — bilinçli v1 basitleştirmesi (`nox.path`nin "hiç
 /// I/O yok, hiç raise yok" ilkesiyle TUTARLI, bkz. modül-üstü not).
 export fn nox_path_strip_prefix_raw(rt: ?*anyopaque, p: ?[*:0]const u8, prefix: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    const slice = std.mem.span(p orelse return null);
-    const pre = std.mem.span(prefix orelse return null);
+    const slice = str_mod.nox_str_slice(p orelse return null);
+    const pre = str_mod.nox_str_slice(prefix orelse return null);
     if (!std.mem.startsWith(u8, slice, pre)) return dupeToNoxStr(rt, slice);
     var rest = slice[pre.len..];
     if (rest.len > 0 and std.fs.path.isSep(rest[0])) rest = rest[1..];
@@ -157,7 +163,7 @@ export fn nox_path_strip_prefix_raw(rt: ?*anyopaque, p: ?[*:0]const u8, prefix: 
 /// döner. `std.fs.path.componentIterator` SAF bir string ayrıştırıcıdır
 /// (I/O GEREKMEZ).
 export fn nox_path_components_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.c) ?*anyopaque {
-    const slice = std.mem.span(p orelse return null);
+    const slice = str_mod.nox_str_slice(p orelse return null);
 
     var names: std.ArrayListUnmanaged([]const u8) = .empty;
     defer names.deinit(std.heap.page_allocator);
@@ -178,28 +184,51 @@ export fn nox_path_components_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.
     return @ptrCast(bytes);
 }
 
+// `nox_path_*_raw` (DIŞA açılan C-ABI sarmalayıcıları) `str_mod.nox_str_
+// slice`i ÇAĞIRIYOR — GEÇERLİ bir Nox `str` başlığı (ARC+STR_HEADER) BEKLER.
+// Çıplak Zig string LİTERALLERİNİ DOĞRUDAN bu fonksiyonlara geçirmek
+// `regex.zig`nin AYNI belge notunda UYARDIĞI tuzak — bu yüzden AŞAĞIDAKİ
+// TÜM testler `makeTestStr` İLE GERÇEK başlıklı `str`ler İNŞA EDER.
+fn makeTestStr(rt: ?*anyopaque, bytes: []const u8) [*:0]u8 {
+    return str_mod.nox_str_from_bytes(rt, bytes) orelse unreachable;
+}
+
 test "nox_path_join_raw iki parcayi dogru birlestirir" {
     const asap = @import("../alloc/asap.zig");
     const str = @import("../str.zig");
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const j = nox_path_join_raw(rt, "a/b", "c.txt") orelse return error.Failed;
+    const a_b = makeTestStr(rt, "a/b");
+    defer str.nox_str_release(rt, a_b);
+    const c_txt = makeTestStr(rt, "c.txt");
+    defer str.nox_str_release(rt, c_txt);
+    const j = nox_path_join_raw(rt, a_b, c_txt) orelse return error.Failed;
     defer str.nox_str_release(rt, j);
     try std.testing.expectEqualStrings("a/b/c.txt", std.mem.sliceTo(j, 0));
 
     // Faz II devamı — `join`in EL İLE yazılan uzunluk-hesabının/ayraç-
     // çakışması mantığının `std.fs.path.joinSepMaybeZ` İLE AYNI davrandığını
     // doğrulayan kenar durumları.
-    const j2 = nox_path_join_raw(rt, "a/", "/b") orelse return error.Failed;
+    const a_slash = makeTestStr(rt, "a/");
+    defer str.nox_str_release(rt, a_slash);
+    const slash_b = makeTestStr(rt, "/b");
+    defer str.nox_str_release(rt, slash_b);
+    const j2 = nox_path_join_raw(rt, a_slash, slash_b) orelse return error.Failed;
     defer str.nox_str_release(rt, j2);
     try std.testing.expectEqualStrings("a/b", std.mem.sliceTo(j2, 0));
 
-    const j3 = nox_path_join_raw(rt, "", "b") orelse return error.Failed;
+    const empty = makeTestStr(rt, "");
+    defer str.nox_str_release(rt, empty);
+    const b_only = makeTestStr(rt, "b");
+    defer str.nox_str_release(rt, b_only);
+    const j3 = nox_path_join_raw(rt, empty, b_only) orelse return error.Failed;
     defer str.nox_str_release(rt, j3);
     try std.testing.expectEqualStrings("b", std.mem.sliceTo(j3, 0));
 
-    const j4 = nox_path_join_raw(rt, "a", "") orelse return error.Failed;
+    const a_only = makeTestStr(rt, "a");
+    defer str.nox_str_release(rt, a_only);
+    const j4 = nox_path_join_raw(rt, a_only, empty) orelse return error.Failed;
     defer str.nox_str_release(rt, j4);
     try std.testing.expectEqualStrings("a", std.mem.sliceTo(j4, 0));
 }
@@ -210,26 +239,41 @@ test "nox_path_basename_raw/dirname/extension dogru calisir" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const b = nox_path_basename_raw(rt, "/a/b/c.txt") orelse return error.Failed;
+    const abc_txt = makeTestStr(rt, "/a/b/c.txt");
+    defer str.nox_str_release(rt, abc_txt);
+    const c_txt = makeTestStr(rt, "c.txt");
+    defer str.nox_str_release(rt, c_txt);
+
+    const b = nox_path_basename_raw(rt, abc_txt) orelse return error.Failed;
     defer str.nox_str_release(rt, b);
     try std.testing.expectEqualStrings("c.txt", std.mem.sliceTo(b, 0));
 
-    const d = nox_path_dirname_raw(rt, "/a/b/c.txt") orelse return error.Failed;
+    const d = nox_path_dirname_raw(rt, abc_txt) orelse return error.Failed;
     defer str.nox_str_release(rt, d);
     try std.testing.expectEqualStrings("/a/b", std.mem.sliceTo(d, 0));
 
-    const d2 = nox_path_dirname_raw(rt, "c.txt") orelse return error.Failed;
+    const d2 = nox_path_dirname_raw(rt, c_txt) orelse return error.Failed;
     defer str.nox_str_release(rt, d2);
     try std.testing.expectEqualStrings("", std.mem.sliceTo(d2, 0));
 
-    const e = nox_path_extension_raw(rt, "/a/b/c.txt") orelse return error.Failed;
+    const e = nox_path_extension_raw(rt, abc_txt) orelse return error.Failed;
     defer str.nox_str_release(rt, e);
     try std.testing.expectEqualStrings(".txt", std.mem.sliceTo(e, 0));
 }
 
 test "nox_path_is_absolute_raw mutlak/goreli yollari dogru ayirt eder" {
-    try std.testing.expectEqual(@as(i32, 1), nox_path_is_absolute_raw("/a/b"));
-    try std.testing.expectEqual(@as(i32, 0), nox_path_is_absolute_raw("a/b"));
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const abs = makeTestStr(rt, "/a/b");
+    defer str.nox_str_release(rt, abs);
+    const rel = makeTestStr(rt, "a/b");
+    defer str.nox_str_release(rt, rel);
+
+    try std.testing.expectEqual(@as(i32, 1), nox_path_is_absolute_raw(abs));
+    try std.testing.expectEqual(@as(i32, 0), nox_path_is_absolute_raw(rel));
 }
 
 test "Faz III.4: nox_path_canonicalize_raw sembolik link/./.. cozer, olmayan yolda basarisiz olur" {
@@ -246,12 +290,16 @@ test "Faz III.4: nox_path_canonicalize_raw sembolik link/./.. cozer, olmayan yol
     // GERÇEK CI'de bulunan bir platform farkıyla (bkz. nox-teknik-
     // spesifikasyon.md §3.71) platform-koşullu hale getirildi.
     const expected_tmp = if (builtin.os.tag == .macos) "/private/tmp" else "/tmp";
-    const c = nox_path_canonicalize_raw(rt, "/tmp/../tmp") orelse return error.Failed;
+    const tmp_dotdot = makeTestStr(rt, "/tmp/../tmp");
+    defer str.nox_str_release(rt, tmp_dotdot);
+    const c = nox_path_canonicalize_raw(rt, tmp_dotdot) orelse return error.Failed;
     defer str.nox_str_release(rt, c);
     try std.testing.expectEqualStrings(expected_tmp, std.mem.sliceTo(c, 0));
     try std.testing.expect(g_last_ok);
 
-    const missing = nox_path_canonicalize_raw(rt, "/definitely/does/not/exist/nox_iii4_test") orelse return error.Failed;
+    const missing_path = makeTestStr(rt, "/definitely/does/not/exist/nox_iii4_test");
+    defer str.nox_str_release(rt, missing_path);
+    const missing = nox_path_canonicalize_raw(rt, missing_path) orelse return error.Failed;
     defer str.nox_str_release(rt, missing);
     try std.testing.expect(!g_last_ok);
 }
@@ -262,11 +310,18 @@ test "Faz III.4: nox_path_strip_prefix_raw onek eslesirse cikarir, eslesmezse de
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const s1 = nox_path_strip_prefix_raw(rt, "/a/b/c.txt", "/a/b") orelse return error.Failed;
+    const abc_txt = makeTestStr(rt, "/a/b/c.txt");
+    defer str.nox_str_release(rt, abc_txt);
+    const ab_pre = makeTestStr(rt, "/a/b");
+    defer str.nox_str_release(rt, ab_pre);
+    const xy_pre = makeTestStr(rt, "/x/y");
+    defer str.nox_str_release(rt, xy_pre);
+
+    const s1 = nox_path_strip_prefix_raw(rt, abc_txt, ab_pre) orelse return error.Failed;
     defer str.nox_str_release(rt, s1);
     try std.testing.expectEqualStrings("c.txt", std.mem.sliceTo(s1, 0));
 
-    const s2 = nox_path_strip_prefix_raw(rt, "/a/b/c.txt", "/x/y") orelse return error.Failed;
+    const s2 = nox_path_strip_prefix_raw(rt, abc_txt, xy_pre) orelse return error.Failed;
     defer str.nox_str_release(rt, s2);
     try std.testing.expectEqualStrings("/a/b/c.txt", std.mem.sliceTo(s2, 0));
 }
@@ -277,7 +332,9 @@ test "Faz III.4: nox_path_components_raw yol bilesenlerini dogru sirada doner" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const list_ptr = nox_path_components_raw(rt, "/a/b/c.txt") orelse return error.Failed;
+    const abc_txt = makeTestStr(rt, "/a/b/c.txt");
+    defer str.nox_str_release(rt, abc_txt);
+    const list_ptr = nox_path_components_raw(rt, abc_txt) orelse return error.Failed;
     const bytes: [*]u8 = @ptrCast(list_ptr);
     const count: usize = @intCast(@as(*align(1) i64, @ptrCast(bytes)).*);
     try std.testing.expectEqual(@as(usize, 3), count);

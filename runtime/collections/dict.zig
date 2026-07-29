@@ -295,7 +295,7 @@ fn buildEntryList(rt: ?*anyopaque, d: *Dict, is_str: bool, elem_size: i64, want_
     @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(n);
     for (d.entries.items, 0..) |e, i| {
         const payload = if (want_key) e.key else e.value;
-        if (is_str and payload != 0) arc.nox_rc_retain(payloadToStrPtr(payload).?);
+        if (is_str and payload != 0) str_mod.nox_str_retain(payloadToStrPtr(payload).?);
         const slot = bytes + LIST_HEADER_SIZE + esz * i;
         if (esz == 4) {
             @as(*align(1) i32, @ptrCast(slot)).* = @truncate(payload);
@@ -366,14 +366,14 @@ test "nox_dict — str anahtar İÇERİK eşitliğiyle bulunur (pointer eşitli�
 
     const d = nox_dict_new(rt, 1) orelse return error.NewFailed;
 
-    const k1 = str_lib.nox_str_concat(rt, "ana", "htar") orelse return error.ConcatFailed; // "anahtar"
-    const v1 = str_lib.nox_str_concat(rt, "deger", "1") orelse return error.ConcatFailed;
+    const k1 = str_lib.nox_str_from_bytes(rt, "anahtar") orelse return error.ConcatFailed;
+    const v1 = str_lib.nox_str_from_bytes(rt, "deger1") orelse return error.ConcatFailed;
     nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(k1)), @bitCast(@intFromPtr(v1)));
 
     // AYNI İÇERİKLİ ama FARKLI POINTER'lı ikinci bir anahtar — content-based
     // eşleşme sayesinde AYNI slotu güncellemeli (yeni bir eleman EKLENMEMELİ).
-    const k2 = str_lib.nox_str_concat(rt, "ana", "htar") orelse return error.ConcatFailed;
-    const v2 = str_lib.nox_str_concat(rt, "deger", "2") orelse return error.ConcatFailed;
+    const k2 = str_lib.nox_str_from_bytes(rt, "anahtar") orelse return error.ConcatFailed;
+    const v2 = str_lib.nox_str_from_bytes(rt, "deger2") orelse return error.ConcatFailed;
     nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(k2)), @bitCast(@intFromPtr(v2)));
 
     try std.testing.expectEqual(@as(i64, 1), nox_dict_len(d));
@@ -522,8 +522,8 @@ test "Faz III.6: nox_dict_keys str anahtarlari retain eder — dict VE list bagi
     defer asap.nox_runtime_deinit(rt);
 
     const d = nox_dict_new(rt, 1) orelse return error.NewFailed;
-    const k1 = str_lib.nox_str_concat(rt, "anah", "tar1") orelse return error.ConcatFailed;
-    const v1 = str_lib.nox_str_concat(rt, "deg", "er1") orelse return error.ConcatFailed;
+    const k1 = str_lib.nox_str_from_bytes(rt, "anahtar1") orelse return error.ConcatFailed;
+    const v1 = str_lib.nox_str_from_bytes(rt, "deger1") orelse return error.ConcatFailed;
     nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(k1)), @bitCast(@intFromPtr(v1)));
 
     const keys_list = nox_dict_keys(rt, d, 1, 8) orelse return error.Failed;
@@ -571,7 +571,7 @@ test "Güvenlik M-3: rastgeleleştirilmiş hash tohumuyla SMALL_MAP_THRESHOLD ü
     while (i < SMALL_MAP_THRESHOLD + 5) : (i += 1) {
         const key = std.fmt.allocPrintSentinel(std.testing.allocator, "anahtar{d}", .{i}, 0) catch return error.OutOfMemory;
         defer std.testing.allocator.free(key);
-        const key_str = str_mod.nox_str_concat(rt, key.ptr, "") orelse return error.ConcatFailed;
+        const key_str = str_mod.nox_str_from_bytes(rt, key) orelse return error.ConcatFailed;
         nox_dict_set(rt, d, 1, 0, @bitCast(@intFromPtr(key_str)), @intCast(i * 10));
     }
     try std.testing.expect(dict_ptr.index_built);
@@ -580,7 +580,7 @@ test "Güvenlik M-3: rastgeleleştirilmiş hash tohumuyla SMALL_MAP_THRESHOLD ü
     while (i < SMALL_MAP_THRESHOLD + 5) : (i += 1) {
         const key = std.fmt.allocPrintSentinel(std.testing.allocator, "anahtar{d}", .{i}, 0) catch return error.OutOfMemory;
         defer std.testing.allocator.free(key);
-        const key_str = str_mod.nox_str_concat(rt, key.ptr, "") orelse return error.ConcatFailed;
+        const key_str = str_mod.nox_str_from_bytes(rt, key) orelse return error.ConcatFailed;
         defer str_mod.nox_str_release(rt, key_str);
         try std.testing.expectEqual(@as(i64, @intCast(i * 10)), nox_dict_get(rt, d, 1, @bitCast(@intFromPtr(key_str))));
     }

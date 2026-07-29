@@ -34,8 +34,37 @@ Bu testler yalnızca Nox'un büyük ölçekte çökmediğini/sızdırmadığın�
 | list_release_overhead | 155.7ms |
 | bounds_check_elision | 38.1ms |
 | strings_perf_bench | 201.5ms |
+| str_len_many_strings | 14.8ms |
 
-**24/24 geçti.**
+**25/25 geçti.**
+
+#### str ABI fazı — uzunluk alanı + ASCII bayrağı (bkz. nox-teknik-spesifikasyon.md §3.76)
+
+`str_len_many_strings.nox`: bir `list[str]`in 500 FARKLI elemanı ÜZERİNDE
+20.000 kez `len()` çağrılır — derleyicinin TEK-değişkenli `str_len_cache`
+LICM'i (`str_index_loop_licm`nin dayandığı optimizasyon) bu deseni hoist
+EDEMEZ, çünkü HER yineleme GERÇEKTEN FARKLI bir çalışma-zamanı nesnesi
+üzerinde çalışır. git-stash İLE İZOLE ölçüldü (AYNI ikili girdi, İKİ AYRI
+kod tabanı):
+
+| Kod tabanı | Süre (min) |
+|---|---|
+| Eski (uzunluk alanı YOK, `len()` = tam `strlen`-tarzı tarama) | ~110ms |
+| Yeni (paketlenmiş başlık, `len()` = O(1) okuma) | ~10-15ms |
+
+**~%80-90 azalma (~7-11x hızlanma).**
+
+Bellek ayak izi (risk tarafı, KABUL EDİLEN ödünleşim): 2.000.000 kısa
+(~8 bayt) string oluşturan bir iş yükünde (`/usr/bin/time -l`, tepe RSS):
+
+| Kod tabanı | Tepe RSS |
+|---|---|
+| Eski | ~66.4MB |
+| Yeni | ~82.3MB |
+
+**~%24 artış** — `STR_HEADER_SIZE`in (8 bayt/string) EKLEDİĞİ maliyetle
+büyüklük mertebesi olarak TUTARLI, plan dosyasında BAŞTAN kabul edilen
+bir ödünleşim.
 
 #### Faz M.8 (yeniden ele alındı) — metod çağrısı istisna-kontrolü eleme
 

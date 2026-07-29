@@ -22,6 +22,7 @@
 //! senaryolarıdır (ör. bir dosya adının bir uzantıyla BİTİP bitmediğini,
 //! bir metnin YALNIZCA rakam İÇERİP içermediğini kontrol etmek).
 const std = @import("std");
+const str_mod = @import("../str.zig");
 
 /// Bir "atom"un (literal karakter, `.`, ya da `[...]` karakter sınıfı)
 /// pattern İÇİNDEKİ bayt uzunluğunu (nicelik işaretçisi — `*`/`+`/`?` —
@@ -119,7 +120,7 @@ fn matchFrom(pat: []const u8, text: []const u8) bool {
 export fn nox_regex_is_match_raw(pattern: ?[*:0]const u8, text: ?[*:0]const u8) callconv(.c) i32 {
     const p = pattern orelse return 0;
     const t = text orelse return 0;
-    return if (matchFrom(std.mem.span(p), std.mem.span(t))) 1 else 0;
+    return if (matchFrom(str_mod.nox_str_slice(p), str_mod.nox_str_slice(t))) 1 else 0;
 }
 
 /// İlk eşleşmenin BAŞLADIĞI 0-tabanlı bayt İNDEKSİNİ döner, eşleşme YOKSA
@@ -127,8 +128,8 @@ export fn nox_regex_is_match_raw(pattern: ?[*:0]const u8, text: ?[*:0]const u8) 
 export fn nox_regex_find_raw(pattern: ?[*:0]const u8, text: ?[*:0]const u8) callconv(.c) i64 {
     const p = pattern orelse return -1;
     const t = text orelse return -1;
-    const pat = std.mem.span(p);
-    const txt = std.mem.span(t);
+    const pat = str_mod.nox_str_slice(p);
+    const txt = str_mod.nox_str_slice(t);
     if (pat.len > 0 and pat[0] == '^') {
         return if (matchHere(pat[1..], txt)) 0 else -1;
     }
@@ -185,10 +186,37 @@ test "karakter sınıfları" {
     try std.testing.expect(!matchFrom("^[^0-9]+$", "abc123"));
 }
 
+// `nox_regex_is_match_raw`/`nox_regex_find_raw` (DIŞA açılan C-ABI
+// sarmalayıcıları) artık `str_mod.nox_str_slice`i ÇAĞIRIYOR — bu, GEÇERLİ
+// bir Nox `str` başlığı (ARC+STR_HEADER, bkz. `str.zig`) BEKLER. Çıplak Zig
+// string LİTERALLERİNİ (başlıksız) DOĞRUDAN bu fonksiyonlara geçirmek,
+// `tests/compat/zig_ext/util.zig`nin belge notunda UYARDIĞI AYNI tuzak —
+// başlığın hemen ÖNCESİNDEKİ rastgele belleği "paketlenmiş uzunluk" olarak
+// OKUR (GERÇEKTEN gözlemlendi: `zig build test` çalıştırmalarında kararsız
+// ÇÖKME/sonsuz-döngü DAVRANIŞI). Bu yüzden bu testler `nox_str_from_bytes`
+// İLE GERÇEK başlıklı `str`ler İNŞA EDER (`matchFrom`i DOĞRUDAN çağıran
+// YUKARIDAKİ testler İSE `matchFrom`in DÜZ `[]const u8` ALDIĞINDAN etkilenmez).
+fn makeTestStr(rt: ?*anyopaque, bytes: []const u8) [*:0]u8 {
+    return str_mod.nox_str_from_bytes(rt, bytes) orelse unreachable;
+}
+
 test "nox_regex_find_raw ilk eşleşmenin indeksini döner" {
-    try std.testing.expectEqual(@as(i64, 6), nox_regex_find_raw("wor.d", "hello world"));
-    try std.testing.expectEqual(@as(i64, -1), nox_regex_find_raw("xyz", "hello world"));
-    try std.testing.expectEqual(@as(i64, 0), nox_regex_find_raw("^hello", "hello world"));
+    const asap = @import("../alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const wor_d = makeTestStr(rt, "wor.d");
+    defer str_mod.nox_str_release(rt, wor_d);
+    const xyz = makeTestStr(rt, "xyz");
+    defer str_mod.nox_str_release(rt, xyz);
+    const caret_hello = makeTestStr(rt, "^hello");
+    defer str_mod.nox_str_release(rt, caret_hello);
+    const hello_world = makeTestStr(rt, "hello world");
+    defer str_mod.nox_str_release(rt, hello_world);
+
+    try std.testing.expectEqual(@as(i64, 6), nox_regex_find_raw(wor_d, hello_world));
+    try std.testing.expectEqual(@as(i64, -1), nox_regex_find_raw(xyz, hello_world));
+    try std.testing.expectEqual(@as(i64, 0), nox_regex_find_raw(caret_hello, hello_world));
 }
 
 // Faz II devamı (test kapsamı genişletmesi, bkz. nox-teknik-spesifikasyon.md
@@ -197,22 +225,55 @@ test "nox_regex_find_raw ilk eşleşmenin indeksini döner" {
 // DOĞRUDAN hiç test edilmemişti; ayrıca negatif karakter sınıfı + nicelik
 // işaretçisi KOMBİNASYONU ve boş desen/metin kenar durumları da eksikti.
 test "nox_regex_is_match_raw sarmalayicisi dogrudan calisir" {
-    try std.testing.expectEqual(@as(i32, 1), nox_regex_is_match_raw("[0-9]+", "abc123"));
-    try std.testing.expectEqual(@as(i32, 0), nox_regex_is_match_raw("^[0-9]+$", "abc123"));
+    const asap = @import("../alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const digits_plus = makeTestStr(rt, "[0-9]+");
+    defer str_mod.nox_str_release(rt, digits_plus);
+    const anchored_digits = makeTestStr(rt, "^[0-9]+$");
+    defer str_mod.nox_str_release(rt, anchored_digits);
+    const abc123 = makeTestStr(rt, "abc123");
+    defer str_mod.nox_str_release(rt, abc123);
+
+    try std.testing.expectEqual(@as(i32, 1), nox_regex_is_match_raw(digits_plus, abc123));
+    try std.testing.expectEqual(@as(i32, 0), nox_regex_is_match_raw(anchored_digits, abc123));
 }
 
 test "negatif karakter sinifi + nicelik isaretcisi kombinasyonu" {
+    const asap = @import("../alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
     try std.testing.expect(matchFrom("^[^0-9]+$", "hello"));
     try std.testing.expect(!matchFrom("^[^0-9]+$", "hell0"));
-    try std.testing.expectEqual(@as(i64, 3), nox_regex_find_raw("[^a-z]+", "abc123def"));
+
+    const not_lower_plus = makeTestStr(rt, "[^a-z]+");
+    defer str_mod.nox_str_release(rt, not_lower_plus);
+    const mixed = makeTestStr(rt, "abc123def");
+    defer str_mod.nox_str_release(rt, mixed);
+    try std.testing.expectEqual(@as(i64, 3), nox_regex_find_raw(not_lower_plus, mixed));
 }
 
 test "bos desen/metin kenar durumlari" {
+    const asap = @import("../alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const empty = makeTestStr(rt, "");
+    defer str_mod.nox_str_release(rt, empty);
+    const anything = makeTestStr(rt, "anything");
+    defer str_mod.nox_str_release(rt, anything);
+    const a_pat = makeTestStr(rt, "a");
+    defer str_mod.nox_str_release(rt, a_pat);
+    const a_star = makeTestStr(rt, "a*");
+    defer str_mod.nox_str_release(rt, a_star);
+
     // Bos desen HER metinde (bos metin DAHIL) index 0'da eslesir.
-    try std.testing.expectEqual(@as(i32, 1), nox_regex_is_match_raw("", "anything"));
-    try std.testing.expectEqual(@as(i64, 0), nox_regex_find_raw("", ""));
+    try std.testing.expectEqual(@as(i32, 1), nox_regex_is_match_raw(empty, anything));
+    try std.testing.expectEqual(@as(i64, 0), nox_regex_find_raw(empty, empty));
     // Bos metinde bos-olmayan bir desen (nicelik isaretcisi olmadan) eslesmez.
-    try std.testing.expectEqual(@as(i32, 0), nox_regex_is_match_raw("a", ""));
+    try std.testing.expectEqual(@as(i32, 0), nox_regex_is_match_raw(a_pat, empty));
     // Ama `a*` (sifir-veya-fazla) bos metinde de eslesir.
-    try std.testing.expectEqual(@as(i32, 1), nox_regex_is_match_raw("a*", ""));
+    try std.testing.expectEqual(@as(i32, 1), nox_regex_is_match_raw(a_star, empty));
 }

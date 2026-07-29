@@ -47,6 +47,61 @@ pub const ARC_HEADER_SIZE: usize = 8;
 /// düzeniyle HİÇBİR paylaşılan ABI'ye sahip değildir; BİRLEŞTİRİLMEMELİDİR.
 pub const PINNED_REFCOUNT: i64 = 1 << 30; // 1073741824
 
+// ---- `str` başlığı: { refcount: i64 @-8 (ARC_HEADER_SIZE), packed: i64 @0, baytlar @8...NUL } ----
+
+/// `str`nin KENDİ (ARC refcount başlığından SONRA, `list[T]`nin `len`/`cap`
+/// başlığıyla AYNI KATMANLAMA deseni) ek başlığı — TEK bir paketlenmiş
+/// `i64`: alt `STR_LENGTH_BITS` bit HAM BAYT uzunluğu, üst 2 bit ascii-
+/// durumu (`STR_ASCII_*`). `list[T]`nin AKSİNE (`list_ptr == payload_ptr`,
+/// elemanlar `LIST_HEADER_SIZE`den SONRA başlar), `str_ptr` bu paketlenmiş
+/// alanın KENDİSİNİ DEĞİL, HEMEN ARDINDAKİ baytları gösterir (`str_ptr =
+/// arc_payload_ptr + STR_HEADER_SIZE`) — BU KASITLI: `str_ptr` HÂLÂ
+/// GEÇERLİ, NUL-sonlandırılmış bir C bayt dizisine işaret eder, `extern
+/// def`/HPy geçişinin "zaten sıfır-sonlandırılmış, dönüşüm YOK" varsayımı
+/// KORUNUR. Runtime tarafında `runtime/str.zig`nin TÜM str-üreten
+/// fonksiyonları (`nox_str_concat`/`nox_int_to_str`/`nox_str_char_at`/vb.)
+/// VE `nox_str_release`/`free_now` (`arc_ptr = str_ptr - STR_HEADER_SIZE`
+/// hesaplayıp GENEL `arc.*` fonksiyonlarını BUNUN üzerinde çağırır)
+/// BUNA dayanır; derleyici tarafında `expr.zig`nin `emitStringLiteral`ı
+/// VE string-literal `.data $strN` yayını (`codegen.zig`) BUNA dayanır.
+pub const STR_HEADER_SIZE: usize = 8;
+
+/// Paketlenmiş `str` başlık alanının alt kaç biti HAM BAYT uzunluğuna
+/// ayrılmış — kalan üst 2 bit `STR_ASCII_*` durumuna. 61 bit, pratikte
+/// ulaşılamayacak kadar büyük bir üst sınır (2^61 bayt) sağlar.
+pub const STR_LENGTH_BITS: u6 = 61;
+pub const STR_LENGTH_MASK: u64 = (1 << STR_LENGTH_BITS) - 1;
+pub const STR_ASCII_SHIFT: u6 = STR_LENGTH_BITS;
+
+/// ASCII-durumu ÜÇ değerli (iki bit): henüz ÇÖZÜMLENMEMİŞ (`UNKNOWN` —
+/// yapıcı fonksiyon ascii-liği SIFIR maliyetle BİLEMEDİĞİNDE, ör. keyfi
+/// baytlardan `dupeToNoxStr` İLE kopyalama), KESİN ascii, KESİN ascii-
+/// DEĞİL. `runtime/str.zig`nin `nox_str_ensure_ascii`si `UNKNOWN`ı BİR
+/// KEZ çözüp SONUCU bu alana YAZARAK önbellekler (bkz. onun belge notu —
+/// bu yazma ATOMİK OLMAK ZORUNDA DEĞİLDİR, Nox'un ARC nesneleri ASLA
+/// gerçek paralel erişime açılmaz, `runtime/alloc/asap.zig`nin
+/// `arc_owner_tid` belge notuna bkz.).
+pub const STR_ASCII_UNKNOWN: u64 = 0;
+pub const STR_ASCII_TRUE: u64 = 1;
+pub const STR_ASCII_FALSE: u64 = 2;
+
+/// `runtime/str.zig` VE derleyicinin `emitStringLiteral`ı (derleme
+/// ZAMANINDA bir literal İçin) TARAFINDAN PAYLAŞILAN, TEK bir paketleme
+/// noktası — iki taraf ayrı ayrı bit-aritmetiği TEKRARLAMAZ.
+pub fn packStrHeader(byte_len: u64, ascii_state: u64) i64 {
+    return @bitCast((byte_len & STR_LENGTH_MASK) | (ascii_state << STR_ASCII_SHIFT));
+}
+
+pub fn unpackStrLength(packed_header: i64) u64 {
+    const bits: u64 = @bitCast(packed_header);
+    return bits & STR_LENGTH_MASK;
+}
+
+pub fn unpackStrAsciiState(packed_header: i64) u64 {
+    const bits: u64 = @bitCast(packed_header);
+    return bits >> STR_ASCII_SHIFT;
+}
+
 // ---- `list[T]` başlığı: { len: i64 @0, cap: i64 @8, elemanlar @16... } ----
 
 /// `list[T]`nin (ARC payload'ının KENDİSİ) başlık bayt boyutu. Runtime

@@ -225,7 +225,7 @@ pub fn genListElemRelease(self: *Codegen, fn_name: []const u8, info: ElemHeapInf
     self.mod_cache = .empty;
 
     try self.out.writer.print("export function ${s}_release(l {s}, l %p) {{\n@start\n", .{ fn_name, RT_PARAM });
-    const should_free = try self.emitInlinePredecrement("%p");
+    const should_free = try self.emitInlinePredecrement("%p", .list);
     const free_label = try self.newLabel("list_release_free");
     const done_label = try self.newLabel("list_release_done");
     try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ should_free, free_label, done_label });
@@ -432,7 +432,7 @@ pub fn releaseValueIfSet(self: *Codegen, ptr: []const u8, heap: HeapKind, elem_q
         // GERÇEKTEN sıfıra/altına düştüğünde (NADİR yol) `strlen`+gerçek
         // serbest bırakma İçin `nox_str_free_now`ya (predecrement'siz
         // hafif sürüm) düşülür.
-        const should_free = try self.emitInlinePredecrement(ptr);
+        const should_free = try self.emitInlinePredecrement(ptr, .str);
         const free_label = try self.newLabel("str_free");
         const skip_free_label = try self.newLabel("str_free_skip");
         const free_done_label = try self.newLabel("str_free_done");
@@ -474,7 +474,7 @@ pub fn releaseValueIfSet(self: *Codegen, ptr: []const u8, heap: HeapKind, elem_q
         // ÇAĞRI OLARAK DEĞİL, predecrement'i `emitInlinePredecrement`
         // İLE inline edip YALNIZCA GERÇEKTEN sıfıra/altına düştüğünde
         // (NADİR yol) `nox_rc_free_payload`ya düşerek.
-        const should_free = try self.emitInlinePredecrement(ptr);
+        const should_free = try self.emitInlinePredecrement(ptr, .boxed_scalar);
         const free_label = try self.newLabel("boxed_free");
         const skip_free_label = try self.newLabel("boxed_free_skip");
         const free_done_label = try self.newLabel("boxed_free_done");
@@ -499,7 +499,7 @@ pub fn releaseValueIfSet(self: *Codegen, ptr: []const u8, heap: HeapKind, elem_q
         // ilkel-elemanlı `list[T]` release'i (ÇOK SIK bir yol) inline
         // predecrement'e taşınır.
         const size = try self.listPayloadSize(ptr, elem_qtype);
-        const should_free = try self.emitInlinePredecrement(ptr);
+        const should_free = try self.emitInlinePredecrement(ptr, .list);
         const free_label = try self.newLabel("list_free");
         const skip_free_label = try self.newLabel("list_free_skip");
         const free_done_label = try self.newLabel("list_free_done");
@@ -638,7 +638,21 @@ pub fn checkNoLowlevelEscape(self: *Codegen, v: Value) CodegenError!void {
 /// sahip olduğu AYNI null-güvenliği retain YÖNÜNDE de eklemek GEREKTİ
 /// (aksi halde `null - 8` adresinden okuma DENEMESİ çöker — bu, GERÇEK
 /// bir segfault olarak GÖZLEMLENDİ, bkz. break→red→fix ritüeli).
-pub fn emitInlineRetain(self: *Codegen, ptr: []const u8) CodegenError!void {
+/// Faz (str-header genişletmesi, bkz. plan dosyası "`str`e uzunluk alanı +
+/// ASCII bayrağı ekleme"): `str` DIŞINDAKİ HER heap tipi İçin refcount
+/// `ARC_HEADER_SIZE` uzaklıktadır (`payload_ptr - ARC_HEADER_SIZE`) — ama
+/// `str`nin KENDİ paketlenmiş uzunluk+ascii başlığı (`STR_HEADER_SIZE`)
+/// ARC başlığı İLE kamuya açık işaretçi ARASINA girdiğinden (bkz.
+/// `runtime/str.zig`nin modül üstü notu), `str` İçin refcount
+/// `ARC_HEADER_SIZE + STR_HEADER_SIZE` uzaklıktadır. `emitInlineRetain`/
+/// `emitInlinePredecrement`in TEK bir sabit ofset varsayması (`.str`
+/// DAHİL) `list[str].append()`nin büyüme yolu GİBİ yerlerde SESSİZCE
+/// yanlış adreste refcount okur/yazardı — bulunup düzeltildi.
+fn retainOffset(heap: HeapKind) usize {
+    return if (heap == .str) ARC_HEADER_SIZE + types.STR_HEADER_SIZE else ARC_HEADER_SIZE;
+}
+
+pub fn emitInlineRetain(self: *Codegen, ptr: []const u8, heap: HeapKind) CodegenError!void {
     const is_null = try self.newTemp();
     try self.out.writer.print("    {s} =w ceql {s}, 0\n", .{ is_null, ptr });
     const retain_label = try self.newLabel("retain");
@@ -647,7 +661,7 @@ pub fn emitInlineRetain(self: *Codegen, ptr: []const u8) CodegenError!void {
     try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ is_null, skip_label, retain_label });
     try self.out.writer.print("{s}\n", .{retain_label});
     const hdr = try self.newTemp();
-    try self.out.writer.print("    {s} =l sub {s}, {d}\n", .{ hdr, ptr, ARC_HEADER_SIZE });
+    try self.out.writer.print("    {s} =l sub {s}, {d}\n", .{ hdr, ptr, retainOffset(heap) });
     const rc = try self.newTemp();
     try self.out.writer.print("    {s} =l loadl {s}\n", .{ rc, hdr });
     const rc2 = try self.newTemp();
@@ -665,9 +679,9 @@ pub fn emitInlineRetain(self: *Codegen, ptr: []const u8) CodegenError!void {
 /// sorumluluğu ÇAĞIRANDADIR (`nox_rc_free_payload`, HÂLÂ bir runtime
 /// çağrısı — gerçek `free` allocator'a ihtiyaç duyduğundan inline
 /// edilemez); `0` — nesne hâlâ canlı (başka bir sahibi var).
-pub fn emitInlinePredecrement(self: *Codegen, ptr: []const u8) CodegenError![]const u8 {
+pub fn emitInlinePredecrement(self: *Codegen, ptr: []const u8, heap: HeapKind) CodegenError![]const u8 {
     const hdr = try self.newTemp();
-    try self.out.writer.print("    {s} =l sub {s}, {d}\n", .{ hdr, ptr, ARC_HEADER_SIZE });
+    try self.out.writer.print("    {s} =l sub {s}, {d}\n", .{ hdr, ptr, retainOffset(heap) });
     const rc = try self.newTemp();
     try self.out.writer.print("    {s} =l loadl {s}\n", .{ rc, hdr });
     const rc2 = try self.newTemp();
@@ -687,7 +701,7 @@ pub fn emitInlinePredecrement(self: *Codegen, ptr: []const u8) CodegenError![]co
 /// eleman işaretçilerini retain'SİZ kopyaladığından, bu ÇAĞRI YENİ bloğun
 /// bu elemanlar üzerinde ESKİ bloktan BAĞIMSIZ, GEÇERLİ bir sahiplik payı
 /// KAZANDIĞINI YANSITIR.
-pub fn emitListElemRetainLoop(self: *Codegen, list_ptr: []const u8, count: []const u8) CodegenError!void {
+pub fn emitListElemRetainLoop(self: *Codegen, list_ptr: []const u8, count: []const u8, elem_heap: HeapKind) CodegenError!void {
     const idx_slot = try self.newTemp();
     try self.out.writer.print("    {s} =l alloc8 8\n", .{idx_slot});
     try self.out.writer.print("    storel 0, {s}\n", .{idx_slot});
@@ -710,7 +724,7 @@ pub fn emitListElemRetainLoop(self: *Codegen, list_ptr: []const u8, count: []con
     try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ addr, list_ptr, off16 });
     const elem = try self.newTemp();
     try self.out.writer.print("    {s} =l loadl {s}\n", .{ elem, addr });
-    try self.emitInlineRetain(elem);
+    try self.emitInlineRetain(elem, elem_heap);
     const idx_next = try self.newTemp();
     try self.out.writer.print("    {s} =l add {s}, 1\n", .{ idx_next, idx_cur });
     try self.out.writer.print("    storel {s}, {s}\n", .{ idx_next, idx_slot });
@@ -726,7 +740,7 @@ pub fn emitListElemRetainLoop(self: *Codegen, list_ptr: []const u8, count: []con
 /// sahipliği HÂLÂ durur — bu SADECE bu fonksiyonun EKLEDİĞİ +1'i geri
 /// alır) — bu YÜZDEN TAM özyinelemeli `release` (nested serbest bırakma)
 /// GEREKMEZ, TİPE özgü dispatch OLMADAN düz bir "refcount-1" YETERLİDİR.
-pub fn emitListElemPlainDecrementLoop(self: *Codegen, list_ptr: []const u8, count: []const u8) CodegenError!void {
+pub fn emitListElemPlainDecrementLoop(self: *Codegen, list_ptr: []const u8, count: []const u8, elem_heap: HeapKind) CodegenError!void {
     const idx_slot = try self.newTemp();
     try self.out.writer.print("    {s} =l alloc8 8\n", .{idx_slot});
     try self.out.writer.print("    storel 0, {s}\n", .{idx_slot});
@@ -757,7 +771,7 @@ pub fn emitListElemPlainDecrementLoop(self: *Codegen, list_ptr: []const u8, coun
     try self.out.writer.print("{s}\n", .{dec_label});
     // Bu decrement ASLA sıfıra/altına düşemez (bkz. bu fonksiyonun belge
     // notu) — `should_free` dönüş değeri BİLİNÇLİ olarak yok sayılır.
-    _ = try self.emitInlinePredecrement(elem);
+    _ = try self.emitInlinePredecrement(elem, elem_heap);
     try self.out.writer.print("    jmp {s}\n", .{skip_label});
     try self.out.writer.print("{s}\n", .{skip_label});
     const idx_next = try self.newTemp();
@@ -799,7 +813,7 @@ pub fn retainIfAliasing(self: *Codegen, value: ast.Expr, v0: Value) CodegenError
     // `dict` mi olduğunu AYIRT EDEMEZ).
     if (!v0.always_fresh and isAliasingExpr(value) and isHeapManaged(v0.heap)) {
         try self.checkNoLowlevelEscape(v0);
-        try self.emitInlineRetain(v0.text);
+        try self.emitInlineRetain(v0.text, v0.heap);
     }
     return v0;
 }

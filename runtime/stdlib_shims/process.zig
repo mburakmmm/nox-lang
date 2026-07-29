@@ -38,6 +38,7 @@ const http_client = @import("http_client.zig");
 const bridge = @import("../async_rt/bridge.zig");
 const io_mod = @import("../async_rt/io.zig");
 const abi_layout = @import("abi_layout");
+const str_mod = @import("../str.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
 const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
@@ -64,7 +65,7 @@ fn copyStrList(gpa: std.mem.Allocator, list_ptr: ?*anyopaque) ![][:0]u8 {
     while (i < count) : (i += 1) {
         const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*);
         const p: [*:0]const u8 = @ptrFromInt(addr);
-        out[i] = try gpa.dupeZ(u8, std.mem.span(p));
+        out[i] = try gpa.dupeZ(u8, str_mod.nox_str_slice(p));
     }
     return out;
 }
@@ -163,7 +164,7 @@ export fn nox_process_run_raw(
         http_client.closeFd(fds[1]);
         return null;
     };
-    argv[0] = gpa.dupeZ(u8, std.mem.span(prog)) catch {
+    argv[0] = gpa.dupeZ(u8, str_mod.nox_str_slice(prog)) catch {
         gpa.free(argv);
         http_client.closeFd(fds[0]);
         http_client.closeFd(fds[1]);
@@ -173,7 +174,7 @@ export fn nox_process_run_raw(
     if (extra_args.len > 0) gpa.free(extra_args);
 
     const cwd_copy: ?[]u8 = if (cwd) |c| blk: {
-        const s = std.mem.span(c);
+        const s = str_mod.nox_str_slice(c);
         break :blk if (s.len == 0) null else (gpa.dupe(u8, s) catch null);
     } else null;
 

@@ -19,6 +19,32 @@ const std = @import("std");
 /// GERÇEK kabuğunun `rt` üzerinden ARC tahsisi yapacağı YÖNTEMİN AYNISI.
 extern fn nox_rc_alloc(rt: ?*anyopaque, payload_size: usize) callconv(.c) ?*anyopaque;
 
+/// **`str`e uzunluk alanı + ASCII bayrağı eklenmesinden BERİ (bkz. plan
+/// dosyası "`str`e uzunluk alanı + ASCII bayrağı ekleme") HERHANGİ bir
+/// HARİCİ (üçüncü-taraf) Zig/C modülünün bir Nox `str` İNŞA ETMESİ İçin
+/// GEÇERLİ KONTRAT DEĞİŞTİ** — kamuya açık `str` işaretçisi ARTIK
+/// `nox_rc_alloc`ın DÖNDÜRDÜĞÜ işaretçinin KENDİSİ DEĞİL, ONUN 8 BAYT
+/// İLERİSİDİR (`STR_HEADER_SIZE=8`): `nox_rc_alloc(rt, 8 + bayt_uzunluğu +
+/// 1)` çağrılır, İLK 8 bayta PAKETLENMİŞ bir `i64` (alt 61 bit = bayt
+/// uzunluğu, üst 2 bit = ascii-durumu — `0=bilinmiyor/1=ascii/2=ascii-
+/// değil`, `bilinmiyor` GÜVENLİ bir varsayılandır) YAZILIR, GERÇEK
+/// baytlar+NUL bunun HEMEN ARDINDAN başlar — DÖNDÜRÜLEN işaretçi BU
+/// baytların başlangıcıdır. Bu fonksiyon, GÜNCELLENMİŞ kontratı izleyen
+/// (`str_mod.nox_str_from_bytes`in AYNI mantığı, harici bir modülün
+/// Nox'un dahili `str.zig`/`abi_layout`ına erişimi OLMADAN nasıl elle
+/// uygulayacağının KANITI) bir örnektir.
+fn makeNoxStr(rt: ?*anyopaque, bytes: []const u8) ?[*:0]u8 {
+    const str_header_size: usize = 8;
+    const ascii_unknown: i64 = 0;
+    const raw = nox_rc_alloc(rt, str_header_size + bytes.len + 1) orelse return null;
+    const base: [*]u8 = @ptrCast(raw);
+    @as(*align(1) i64, @ptrCast(base)).* = @as(i64, @intCast(bytes.len)) | (ascii_unknown << 61);
+    const data = base + str_header_size;
+    @memcpy(data[0..bytes.len], bytes);
+    data[bytes.len] = 0;
+    return @ptrCast(data);
+}
+
 /// `with_rt` (bkz. nox-teknik-spesifikasyon.md, stdlib fazı §D.1, Keşif 3)
 /// doğrulama testi: `rt` üzerinden GERÇEKTEN bir ARC-yönetimli `str` tahsis
 /// edip döner — Nox tarafının bunu (özellikle `nox_str_release` ile) doğru
@@ -27,13 +53,11 @@ export fn nox_test_make_greeting(rt: ?*anyopaque, name: ?[*:0]const u8) callconv
     const n = name orelse return null;
     const prefix = "merhaba, ";
     const name_len = std.mem.len(n);
+    var buf: [256]u8 = undefined;
     const total = prefix.len + name_len;
-    const raw = nox_rc_alloc(rt, total + 1) orelse return null;
-    const bytes: [*]u8 = @ptrCast(raw);
-    @memcpy(bytes[0..prefix.len], prefix);
-    @memcpy(bytes[prefix.len..][0..name_len], n[0..name_len]);
-    bytes[total] = 0;
-    return @ptrCast(bytes);
+    @memcpy(buf[0..prefix.len], prefix);
+    @memcpy(buf[prefix.len..][0..name_len], n[0..name_len]);
+    return makeNoxStr(rt, buf[0..total]);
 }
 
 /// `noxrt.o`nun `nox_dict_get`i (bkz. `runtime/collections/dict.zig`) —
@@ -84,10 +108,7 @@ export fn nox_test_make_list(rt: ?*anyopaque, n: i64) callconv(.c) ?*anyopaque {
     while (i < count) : (i += 1) {
         var buf: [32]u8 = undefined;
         const s = std.fmt.bufPrint(&buf, "item_{d}", .{i}) catch return null;
-        const item_raw = nox_rc_alloc(rt, s.len + 1) orelse return null;
-        const item_bytes: [*]u8 = @ptrCast(item_raw);
-        @memcpy(item_bytes[0..s.len], s);
-        item_bytes[s.len] = 0;
+        const item_bytes = makeNoxStr(rt, s) orelse return null;
         const slot_addr = bytes + header_size + elem_size * i;
         @as(*align(1) i64, @ptrCast(slot_addr)).* = @intCast(@intFromPtr(item_bytes));
     }

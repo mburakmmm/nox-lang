@@ -335,7 +335,7 @@ test "nox_threadchannel: str payload, iki BAĞIMSIZ RuntimeState arasinda, sizin
 
             const names = [_][*:0]const u8{ "bir", "iki", "üç" };
             for (names) |n| {
-                const s = str_mod.nox_str_concat(child_rt, n, "") orelse @panic("concat basarisiz");
+                const s = str_mod.nox_str_from_bytes(child_rt, std.mem.span(n)) orelse @panic("concat basarisiz");
                 defer str_mod.nox_str_release(child_rt, s);
                 nox_threadchannel_send_str(child_rt, c, ptrToPayload(s));
             }

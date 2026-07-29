@@ -205,6 +205,16 @@ pub const LocalDecl = struct {
 pub const StringDatum = struct {
     symbol: []const u8,
     escaped: []const u8,
+    /// `str`e uzunluk alanı + ASCII bayrağı eklenmesi (bkz. plan dosyası):
+    /// derleyici bir literal İçin (Zig ile derlenmiş `runtime/str.zig`nin
+    /// AKSİNE) HAM bayt dizisini ZATEN derleme ZAMANINDA bildiğinden,
+    /// uzunluk+ascii-durumu SIFIR ÇALIŞMA-ZAMANI maliyetiyle burada
+    /// hesaplanıp `.data $strN`nin paketlenmiş İKİNCİ alanına GÖMÜLÜR —
+    /// `escaped`in KENDİSİ QBE'nin ÖZ escape biçimidir (`\xHH` vb.),
+    /// GERÇEK çalışma-zamanı bayt uzunluğu DEĞİLDİR, bu YÜZDEN `byte_len`
+    /// AYRI taşınır.
+    byte_len: usize = 0,
+    is_ascii: bool = true,
 };
 
 /// Bkz. `Codegen.mod_cache`nin belge notu (`optimizations.zig`).
@@ -320,3 +330,10 @@ pub const PINNED_REFCOUNT = abi_layout.PINNED_REFCOUNT;
 /// bkz. `abi_layout.TRACE_BUF_LEN_SIZE`/`TRACE_BUF_SLOT_SIZE`nin belge notu.
 pub const TRACE_BUF_LEN_SIZE = abi_layout.TRACE_BUF_LEN_SIZE;
 pub const TRACE_BUF_SLOT_SIZE = abi_layout.TRACE_BUF_SLOT_SIZE;
+/// `str`nin KENDİ (ARC refcount başlığından SONRA) paketlenmiş uzunluk+
+/// ascii-durumu başlığı — bkz. `abi_layout.STR_HEADER_SIZE`nin belge notu.
+pub const STR_HEADER_SIZE = abi_layout.STR_HEADER_SIZE;
+pub const STR_ASCII_TRUE = abi_layout.STR_ASCII_TRUE;
+pub const STR_ASCII_FALSE = abi_layout.STR_ASCII_FALSE;
+pub const STR_ASCII_UNKNOWN = abi_layout.STR_ASCII_UNKNOWN;
+pub const packStrHeader = abi_layout.packStrHeader;

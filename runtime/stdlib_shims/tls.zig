@@ -26,14 +26,11 @@
 
 const std = @import("std");
 const arc = @import("../alloc/arc.zig");
+const str_mod = @import("../str.zig");
 const http_client = @import("http_client.zig");
 
 fn dupeToNoxStr(rt: ?*anyopaque, bytes: []const u8) ?[*:0]u8 {
-    const raw = arc.nox_rc_alloc(rt, bytes.len + 1) orelse return null;
-    const out: [*]u8 = @ptrCast(raw);
-    @memcpy(out[0..bytes.len], bytes);
-    out[bytes.len] = 0;
-    return @ptrCast(out);
+    return str_mod.nox_str_from_bytes(rt, bytes);
 }
 
 fn dupeEmpty(rt: ?*anyopaque) ?[*:0]u8 {
@@ -148,7 +145,7 @@ pub export fn nox_tls_connect_raw(host: ?[*:0]const u8, port: i64) callconv(.c) 
         conn.errmsg = "host bos olamaz";
         return conn;
     };
-    connectInner(conn, std.mem.span(h), port) catch |err| {
+    connectInner(conn, str_mod.nox_str_slice(h), port) catch |err| {
         conn.errmsg = @errorName(err);
         conn.connected = false;
         return conn;

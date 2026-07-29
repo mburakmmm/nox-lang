@@ -27,6 +27,7 @@ const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
 const http_client = @import("http_client.zig");
 const abi_layout = @import("abi_layout");
+const str_mod = @import("../str.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
 /// Faz P1.2: bkz. `strings.zig`nin AYNI re-export notu.
@@ -211,20 +212,25 @@ export fn nox_fs_read_to_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callc
     };
     const size: usize = @intCast(info.size);
 
-    const raw = arc.nox_rc_alloc(rt, size + 1) orelse {
+    // `str`e uzunluk alanı + ASCII bayrağı eklenmesinden BERİ (bkz. plan
+    // dosyası) bir `str`in KENDİ paketlenmiş başlığı OLMADAN elle
+    // `nox_rc_alloc` edilip DOĞRUDAN İÇİNE okunması ARTIK GÜVENLİ DEĞİL —
+    // dosya İÇERİĞİ ÖNCE düz (ARC-dışı) bir arabelleğe okunur, SONRA
+    // `nox_str_from_bytes` İLE GERÇEK, başlıklı bir Nox `str`ine kopyalanır
+    // (`dupeToNoxStr`nin KENDİ KANONİK sarmalayıcısı).
+    const buf = std.heap.page_allocator.alloc(u8, size) catch {
         g_last_ok = false;
         return dupeToNoxStr(rt, "");
     };
-    const out: [*]u8 = @ptrCast(raw);
+    defer std.heap.page_allocator.free(buf);
     var total_read: usize = 0;
     while (total_read < size) {
-        const n = readFd(fd, out[total_read..size]);
+        const n = readFd(fd, buf[total_read..size]);
         if (n <= 0) break;
         total_read += @intCast(n);
     }
-    out[total_read] = 0;
     g_last_ok = true;
-    return @ptrCast(out);
+    return dupeToNoxStr(rt, buf[0..total_read]);
 }
 
 fn writeAllToFile(append: bool, path: [*:0]const u8, content: [*:0]const u8) void {
@@ -235,7 +241,7 @@ fn writeAllToFile(append: bool, path: [*:0]const u8, content: [*:0]const u8) voi
     }
     defer closeFd(fd);
 
-    const bytes = std.mem.span(content);
+    const bytes = str_mod.nox_str_slice(content);
     var off: usize = 0;
     while (off < bytes.len) {
         const n = writeFd(fd, bytes[off..]);
@@ -380,7 +386,7 @@ export fn nox_fs_stat_mtime_ms_raw() callconv(.c) i64 {
 fn collectDirNames(path: [*:0]const u8, names: *std.ArrayListUnmanaged([]const u8)) !void {
     if (builtin.os.tag == .windows) {
         var pattern_buf: [std.c.PATH_MAX + 4]u8 = undefined;
-        const pattern = std.fmt.bufPrintZ(&pattern_buf, "{s}/*", .{std.mem.span(path)}) catch return error.PathTooLong;
+        const pattern = std.fmt.bufPrintZ(&pattern_buf, "{s}/*", .{str_mod.nox_str_slice(path)}) catch return error.PathTooLong;
         var data: WinFile.WIN32_FIND_DATAA = undefined;
         const h = WinFile.FindFirstFileA(pattern.ptr, &data);
         if (h == WinFile.INVALID_HANDLE_VALUE) return error.OpenDirFailed;
@@ -531,13 +537,24 @@ fn testTmpPrefix() []const u8 {
 }
 
 test "nox_fs_exists/is_file/is_dir_raw dogru sonuc doner" {
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
     var full_buf: [128]u8 = undefined;
     const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_ee1_fs_test_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
     defer _ = std.c.unlink(full_path.ptr);
 
     try std.testing.expectEqual(@as(i32, 0), nox_fs_exists_raw("/definitely/does/not/exist/nox_ee1_test"));
 
-    nox_fs_write_string_raw(null, full_path.ptr, "hi");
+    // `content` (`path` DEĞİL — bkz. dosya başındaki `writeAllToFile`nin
+    // AYRIMI) `nox_str_slice`den GEÇTİĞİNDEN GEÇERLİ bir Nox `str` başlığı
+    // GEREKTİRİR; `path` argümanları İSE HAM libc syscall'larına (bkz.
+    // `nox_fs_exists_raw` vb.) DOĞRUDAN geçtiğinden başlıksız KALABİLİR.
+    const hi = str.nox_str_from_bytes(rt, "hi") orelse return error.AllocFailed;
+    defer str.nox_str_release(rt, hi);
+    nox_fs_write_string_raw(null, full_path.ptr, hi);
     try std.testing.expectEqual(@as(i32, 1), nox_fs_exists_raw(full_path.ptr));
     try std.testing.expectEqual(@as(i32, 1), nox_fs_is_file_raw(full_path.ptr));
     try std.testing.expectEqual(@as(i32, 0), nox_fs_is_dir_raw(full_path.ptr));
@@ -558,10 +575,12 @@ test "Faz III.3: nox_fs_read_to_string_raw (fstat-tabanli tek-tahsis) dogru cali
     const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_iii3_read_test_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
     defer _ = std.c.unlink(full_path.ptr);
 
-    nox_fs_write_string_raw(rt, full_path.ptr, "hello world");
+    const str = @import("../str.zig");
+    const hello_world = str.nox_str_from_bytes(rt, "hello world") orelse return error.AllocFailed;
+    defer str.nox_str_release(rt, hello_world);
+    nox_fs_write_string_raw(rt, full_path.ptr, hello_world);
     try std.testing.expect(g_last_ok);
 
-    const str = @import("../str.zig");
     const content = nox_fs_read_to_string_raw(rt, full_path.ptr) orelse return error.Failed;
     defer str.nox_str_release(rt, content);
     try std.testing.expectEqualStrings("hello world", std.mem.sliceTo(content, 0));
@@ -577,22 +596,32 @@ test "Faz III.3: nox_fs_append_string_raw dosyayi KISALTMAZ, SONUNA ekler" {
     const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_iii3_append_test_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
     defer _ = std.c.unlink(full_path.ptr);
 
-    nox_fs_write_string_raw(rt, full_path.ptr, "abc");
-    nox_fs_append_string_raw(rt, full_path.ptr, "def");
-    try std.testing.expect(g_last_ok);
-
     const str = @import("../str.zig");
+    const abc = str.nox_str_from_bytes(rt, "abc") orelse return error.AllocFailed;
+    defer str.nox_str_release(rt, abc);
+    const def = str.nox_str_from_bytes(rt, "def") orelse return error.AllocFailed;
+    defer str.nox_str_release(rt, def);
+    nox_fs_write_string_raw(rt, full_path.ptr, abc);
+    nox_fs_append_string_raw(rt, full_path.ptr, def);
+    try std.testing.expect(g_last_ok);
     const content = nox_fs_read_to_string_raw(rt, full_path.ptr) orelse return error.Failed;
     defer str.nox_str_release(rt, content);
     try std.testing.expectEqualStrings("abcdef", std.mem.sliceTo(content, 0));
 }
 
 test "Faz III.3: nox_fs_stat_raw boyut/mtime dogru doner" {
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
     var full_buf: [64]u8 = undefined;
     const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_iii3_stat_test_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
     defer _ = std.c.unlink(full_path.ptr);
 
-    nox_fs_write_string_raw(null, full_path.ptr, "12345");
+    const digits = str.nox_str_from_bytes(rt, "12345") orelse return error.AllocFailed;
+    defer str.nox_str_release(rt, digits);
+    nox_fs_write_string_raw(null, full_path.ptr, digits);
     nox_fs_stat_raw(full_path.ptr);
     try std.testing.expect(g_last_ok);
     try std.testing.expectEqual(@as(i64, 5), nox_fs_stat_size_raw());
@@ -613,15 +642,20 @@ test "Faz III.3: nox_fs_read_dir_raw dizin girdilerini dogru doner (./.. haric)"
     _ = std.c.mkdir(dir_path.ptr, 0o755);
     defer _ = std.c.rmdir(dir_path.ptr);
 
+    const x_content = str.nox_str_from_bytes(rt, "x") orelse return error.AllocFailed;
+    defer str.nox_str_release(rt, x_content);
+    const y_content = str.nox_str_from_bytes(rt, "y") orelse return error.AllocFailed;
+    defer str.nox_str_release(rt, y_content);
+
     var f1_buf: [80]u8 = undefined;
     const f1_path = try std.fmt.bufPrintZ(&f1_buf, "{s}/nox_iii3_readdir_{d}/a.txt", .{ testTmpPrefix(), std.c.getpid() });
     defer _ = std.c.unlink(f1_path.ptr);
-    nox_fs_write_string_raw(null, f1_path.ptr, "x");
+    nox_fs_write_string_raw(null, f1_path.ptr, x_content);
 
     var f2_buf: [80]u8 = undefined;
     const f2_path = try std.fmt.bufPrintZ(&f2_buf, "{s}/nox_iii3_readdir_{d}/b.txt", .{ testTmpPrefix(), std.c.getpid() });
     defer _ = std.c.unlink(f2_path.ptr);
-    nox_fs_write_string_raw(null, f2_path.ptr, "y");
+    nox_fs_write_string_raw(null, f2_path.ptr, y_content);
 
     const list_ptr = nox_fs_read_dir_raw(rt, dir_path.ptr) orelse return error.Failed;
     const bytes: [*]u8 = @ptrCast(list_ptr);
@@ -660,7 +694,9 @@ test "Faz III.3: nox_fs_copy_raw/rename_raw/remove_file_raw/create_dir_raw dogru
     defer _ = std.c.unlink(dst_path.ptr);
     defer _ = std.c.unlink(ren_path.ptr);
 
-    nox_fs_write_string_raw(rt, src_path.ptr, "copy me");
+    const copy_me = str.nox_str_from_bytes(rt, "copy me") orelse return error.AllocFailed;
+    defer str.nox_str_release(rt, copy_me);
+    nox_fs_write_string_raw(rt, src_path.ptr, copy_me);
     nox_fs_copy_raw(src_path.ptr, dst_path.ptr);
     try std.testing.expect(g_last_ok);
     {
@@ -694,12 +730,24 @@ test "Faz III.3: nox_fs_copy_raw/rename_raw/remove_file_raw/create_dir_raw dogru
 // parçacığı KENDİ `nox_fs_last_op_ok()` sonucunu GÖZLEMLER — paylaşılan bir
 // bayrak OLSAYDI bu SONUÇLAR ARA SIRA birbirini EZERDİ.
 test "g_last_ok threadlocal: iki gerçek OS iş parçacığı bağımsız bayrak görür" {
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
     // Bu dosya ZATEN "ham libc çağrıları" katmanında (bkz. modül üstü not) —
     // `std.testing.tmpDir`/`std.Io.Dir` KARMAŞIKLIĞINDAN kaçınmak İÇİN
     // `/tmp` altında PID'e göre BENZERSİZ bir yol DOĞRUDAN inşa edilir.
     var full_buf: [64]u8 = undefined;
     const full_path = try std.fmt.bufPrintZ(&full_buf, "{s}/nox_bb1_fs_test_{d}.txt", .{ testTmpPrefix(), std.c.getpid() });
     defer _ = std.c.unlink(full_path.ptr);
+
+    // `content` GEÇERLİ bir Nox `str` başlığı GEREKTİRDİĞİNDEN (bkz.
+    // dosyanın üst kısmındaki testlerin AYNI notu) TEK bir headed `str`
+    // İNŞA EDİLİP HER İKİ iş parçacığı ARASINDA (SADECE OKUNDUĞU İÇİN
+    // GÜVENLE) PAYLAŞILIR.
+    const hi = str.nox_str_from_bytes(rt, "hi") orelse return error.AllocFailed;
+    defer str.nox_str_release(rt, hi);
 
     const Worker = struct {
         fn failing(iterations: usize, all_false: *bool) void {
@@ -709,10 +757,10 @@ test "g_last_ok threadlocal: iki gerçek OS iş parçacığı bağımsız bayrak
                 if (nox_fs_last_op_ok() != 0) all_false.* = false;
             }
         }
-        fn succeeding(iterations: usize, path: [*:0]const u8, all_true: *bool) void {
+        fn succeeding(iterations: usize, path: [*:0]const u8, content: [*:0]const u8, all_true: *bool) void {
             var i: usize = 0;
             while (i < iterations) : (i += 1) {
-                nox_fs_write_string_raw(null, path, "hi");
+                nox_fs_write_string_raw(null, path, content);
                 if (nox_fs_last_op_ok() == 0) all_true.* = false;
             }
         }
@@ -721,7 +769,7 @@ test "g_last_ok threadlocal: iki gerçek OS iş parçacığı bağımsız bayrak
     var all_false = true;
     var all_true = true;
     const thread_a = try std.Thread.spawn(.{}, Worker.failing, .{ 2000, &all_false });
-    const thread_b = try std.Thread.spawn(.{}, Worker.succeeding, .{ 2000, full_path.ptr, &all_true });
+    const thread_b = try std.Thread.spawn(.{}, Worker.succeeding, .{ 2000, full_path.ptr, hi, &all_true });
     thread_a.join();
     thread_b.join();
 

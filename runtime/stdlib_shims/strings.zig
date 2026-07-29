@@ -20,6 +20,7 @@ const std = @import("std");
 const arc = @import("../alloc/arc.zig");
 const http_client = @import("http_client.zig");
 const abi_layout = @import("abi_layout");
+const str_mod = @import("../str.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
 /// Faz P1.2: `list[T]` başlığının bayt boyutu — `../../shared/abi_layout.zig`den
@@ -41,8 +42,8 @@ const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 /// TANIMSIZ/kullanışsız davranışına GÜVENMEK YERİNE), TÜM `s`i TEK elemanlı
 /// bir liste olarak döner.
 export fn nox_strings_split_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]const u8) callconv(.c) ?*anyopaque {
-    const s_slice = std.mem.span(s orelse return null);
-    const sep_slice = std.mem.span(sep orelse return null);
+    const s_slice = str_mod.nox_str_slice(s orelse return null);
+    const sep_slice = str_mod.nox_str_slice(sep orelse return null);
 
     if (sep_slice.len == 0) {
         const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE) orelse return null;
@@ -77,7 +78,7 @@ export fn nox_strings_split_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]c
 }
 
 export fn nox_strings_trim_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    const slice = std.mem.span(s orelse return null);
+    const slice = str_mod.nox_str_slice(s orelse return null);
     const trimmed = std.mem.trim(u8, slice, " \t\r\n");
     return dupeToNoxStr(rt, trimmed);
 }
@@ -85,13 +86,13 @@ export fn nox_strings_trim_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) 
 // Faz III.2 (bkz. nox-teknik-spesifikasyon.md §3.69) — `trim`in TEK
 // yönlü varyantları, AYNI boşluk kümesiyle.
 export fn nox_strings_trim_start_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    const slice = std.mem.span(s orelse return null);
+    const slice = str_mod.nox_str_slice(s orelse return null);
     const trimmed = std.mem.trimStart(u8, slice, " \t\r\n");
     return dupeToNoxStr(rt, trimmed);
 }
 
 export fn nox_strings_trim_end_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    const slice = std.mem.span(s orelse return null);
+    const slice = str_mod.nox_str_slice(s orelse return null);
     const trimmed = std.mem.trimEnd(u8, slice, " \t\r\n");
     return dupeToNoxStr(rt, trimmed);
 }
@@ -103,8 +104,8 @@ export fn nox_strings_trim_end_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(
 /// `nox_strings_join_raw`nin test yardımcısıyla PAYLAŞILAN) İLE inşa
 /// edilir.
 export fn nox_strings_splitn_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]const u8, n: i64) callconv(.c) ?*anyopaque {
-    const s_slice = std.mem.span(s orelse return null);
-    const sep_slice = std.mem.span(sep orelse return null);
+    const s_slice = str_mod.nox_str_slice(s orelse return null);
+    const sep_slice = str_mod.nox_str_slice(sep orelse return null);
 
     if (n <= 1 or sep_slice.len == 0) {
         return buildStrList(rt, &.{s_slice});
@@ -128,8 +129,8 @@ export fn nox_strings_splitn_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]
 /// Faz III.2 — `split`in AYNI parçalarını, SONDAN başlayarak (Rust'ın
 /// `str::rsplit`iyle TUTARLI — AYNI eleman kümesi, TERS sıra) döner.
 export fn nox_strings_rsplit_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]const u8) callconv(.c) ?*anyopaque {
-    const s_slice = std.mem.span(s orelse return null);
-    const sep_slice = std.mem.span(sep orelse return null);
+    const s_slice = str_mod.nox_str_slice(s orelse return null);
+    const sep_slice = str_mod.nox_str_slice(sep orelse return null);
 
     if (sep_slice.len == 0) {
         return buildStrList(rt, &.{s_slice});
@@ -152,63 +153,62 @@ export fn nox_strings_rsplit_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]
 /// — saf Nox `out = out + s` döngüsünün O(n²) maliyetinden KAÇINMAK
 /// İçin). `n<=0` BOŞ dize döner.
 export fn nox_strings_repeat_raw(rt: ?*anyopaque, s: ?[*:0]const u8, n: i64) callconv(.c) ?[*:0]u8 {
-    const s_slice = std.mem.span(s orelse return null);
+    const s_slice = str_mod.nox_str_slice(s orelse return null);
     if (n <= 0) return dupeToNoxStr(rt, "");
 
     const count: usize = @intCast(n);
     const total_len = s_slice.len * count;
-    const raw = arc.nox_rc_alloc(rt, total_len + 1) orelse return null;
-    const out: [*]u8 = @ptrCast(raw);
+    // `str`e uzunluk alanı + ASCII bayrağı eklenmesinden BERİ (bkz. plan
+    // dosyası) düz (ARA) bir arabellekte İNŞA EDİLİP `dupeToNoxStr` İLE
+    // GERÇEK, başlıklı bir Nox `str`ine kopyalanır.
+    const buf = std.heap.page_allocator.alloc(u8, total_len) catch return null;
+    defer std.heap.page_allocator.free(buf);
     var i: usize = 0;
     while (i < count) : (i += 1) {
-        @memcpy(out[i * s_slice.len ..][0..s_slice.len], s_slice);
+        @memcpy(buf[i * s_slice.len ..][0..s_slice.len], s_slice);
     }
-    out[total_len] = 0;
-    return @ptrCast(out);
+    return dupeToNoxStr(rt, buf);
 }
 
 /// Faz III.2 — ASCII büyük/küçük harf DUYARSIZ karşılaştırma (ASCII v1
 /// kapsamı, bkz. dosya başındaki belge notu — çok baytlı UTF-8 aynen
 /// karşılaştırılır).
 export fn nox_strings_eq_ignore_case_raw(a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) i32 {
-    const a_slice = std.mem.span(a orelse return 0);
-    const b_slice = std.mem.span(b orelse return 0);
+    const a_slice = str_mod.nox_str_slice(a orelse return 0);
+    const b_slice = str_mod.nox_str_slice(b orelse return 0);
     return if (std.ascii.eqlIgnoreCase(a_slice, b_slice)) 1 else 0;
 }
 
 export fn nox_strings_upper_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    const slice = std.mem.span(s orelse return null);
-    const raw = arc.nox_rc_alloc(rt, slice.len + 1) orelse return null;
-    const bytes: [*]u8 = @ptrCast(raw);
-    for (slice, 0..) |c, i| bytes[i] = std.ascii.toUpper(c);
-    bytes[slice.len] = 0;
-    return @ptrCast(bytes);
+    const slice = str_mod.nox_str_slice(s orelse return null);
+    const buf = std.heap.page_allocator.alloc(u8, slice.len) catch return null;
+    defer std.heap.page_allocator.free(buf);
+    for (slice, 0..) |c, i| buf[i] = std.ascii.toUpper(c);
+    return dupeToNoxStr(rt, buf);
 }
 
 export fn nox_strings_lower_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    const slice = std.mem.span(s orelse return null);
-    const raw = arc.nox_rc_alloc(rt, slice.len + 1) orelse return null;
-    const bytes: [*]u8 = @ptrCast(raw);
-    for (slice, 0..) |c, i| bytes[i] = std.ascii.toLower(c);
-    bytes[slice.len] = 0;
-    return @ptrCast(bytes);
+    const slice = str_mod.nox_str_slice(s orelse return null);
+    const buf = std.heap.page_allocator.alloc(u8, slice.len) catch return null;
+    defer std.heap.page_allocator.free(buf);
+    for (slice, 0..) |c, i| buf[i] = std.ascii.toLower(c);
+    return dupeToNoxStr(rt, buf);
 }
 
 /// `old` BOŞSA (v1 bilinçli basitleştirmesi — sonsuz/anlamsız bir
 /// eşleştirme sayısına yol AÇMAMAK İÇİN) `s`nin DEĞİŞMEMİŞ bir kopyasını
 /// döner.
 export fn nox_strings_replace_raw(rt: ?*anyopaque, s: ?[*:0]const u8, old: ?[*:0]const u8, new: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    const s_slice = std.mem.span(s orelse return null);
-    const old_slice = std.mem.span(old orelse return null);
-    const new_slice = std.mem.span(new orelse return null);
+    const s_slice = str_mod.nox_str_slice(s orelse return null);
+    const old_slice = str_mod.nox_str_slice(old orelse return null);
+    const new_slice = str_mod.nox_str_slice(new orelse return null);
     if (old_slice.len == 0) return dupeToNoxStr(rt, s_slice);
 
     const out_len = std.mem.replacementSize(u8, s_slice, old_slice, new_slice);
-    const raw = arc.nox_rc_alloc(rt, out_len + 1) orelse return null;
-    const bytes: [*]u8 = @ptrCast(raw);
-    _ = std.mem.replace(u8, s_slice, old_slice, new_slice, bytes[0..out_len]);
-    bytes[out_len] = 0;
-    return @ptrCast(bytes);
+    const buf = std.heap.page_allocator.alloc(u8, out_len) catch return null;
+    defer std.heap.page_allocator.free(buf);
+    _ = std.mem.replace(u8, s_slice, old_slice, new_slice, buf[0..out_len]);
+    return dupeToNoxStr(rt, buf);
 }
 
 /// Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) — `join`nin ÖNCEKİ
@@ -222,7 +222,7 @@ export fn nox_strings_replace_raw(rt: ?*anyopaque, s: ?[*:0]const u8, old: ?[*:0
 /// kapasite + `str` işaretçileri) AYNIDIR — bkz. onun belge notu.
 export fn nox_strings_join_raw(rt: ?*anyopaque, parts: ?*anyopaque, sep: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const bytes: [*]u8 = @ptrCast(parts orelse return null);
-    const sep_slice = std.mem.span(sep orelse return null);
+    const sep_slice = str_mod.nox_str_slice(sep orelse return null);
     const count: usize = @intCast(@as(*align(1) i64, @ptrCast(bytes)).*);
 
     if (count == 0) return dupeToNoxStr(rt, "");
@@ -236,23 +236,22 @@ export fn nox_strings_join_raw(rt: ?*anyopaque, parts: ?*anyopaque, sep: ?[*:0]c
         if (i + 1 < count) total_len += sep_slice.len;
     }
 
-    const raw = arc.nox_rc_alloc(rt, total_len + 1) orelse return null;
-    const out: [*]u8 = @ptrCast(raw);
+    const buf = std.heap.page_allocator.alloc(u8, total_len) catch return null;
+    defer std.heap.page_allocator.free(buf);
     var off: usize = 0;
     i = 0;
     while (i < count) : (i += 1) {
         const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*);
         const p: [*:0]const u8 = @ptrFromInt(addr);
-        const slice = std.mem.span(p);
-        @memcpy(out[off..][0..slice.len], slice);
+        const slice = str_mod.nox_str_slice(p);
+        @memcpy(buf[off..][0..slice.len], slice);
         off += slice.len;
         if (i + 1 < count) {
-            @memcpy(out[off..][0..sep_slice.len], sep_slice);
+            @memcpy(buf[off..][0..sep_slice.len], sep_slice);
             off += sep_slice.len;
         }
     }
-    out[total_len] = 0;
-    return @ptrCast(out);
+    return dupeToNoxStr(rt, buf);
 }
 
 /// Faz II devamı (bkz. nox-teknik-spesifikasyon.md §3.67) — `index_of`nin
@@ -291,8 +290,8 @@ fn fastIndexOf(haystack: []const u8, needle: []const u8) ?usize {
 }
 
 export fn nox_strings_index_of_raw(s: ?[*:0]const u8, needle: ?[*:0]const u8) callconv(.c) i64 {
-    const s_slice = std.mem.span(s orelse return -1);
-    const needle_slice = std.mem.span(needle orelse return -1);
+    const s_slice = str_mod.nox_str_slice(s orelse return -1);
+    const needle_slice = str_mod.nox_str_slice(needle orelse return -1);
     if (needle_slice.len == 0) return 0;
     const idx = fastIndexOf(s_slice, needle_slice) orelse return -1;
     return @intCast(idx);
@@ -303,36 +302,74 @@ export fn nox_strings_index_of_raw(s: ?[*:0]const u8, needle: ?[*:0]const u8) ca
 /// gibi mevcut "ham bool" extern'lerle AYNI sözleşme, Nox tarafı `!= 0`
 /// ile `bool`a çevirir.
 export fn nox_strings_starts_with_raw(s: ?[*:0]const u8, prefix: ?[*:0]const u8) callconv(.c) i64 {
-    const s_slice = std.mem.span(s orelse return 0);
-    const prefix_slice = std.mem.span(prefix orelse return 0);
+    const s_slice = str_mod.nox_str_slice(s orelse return 0);
+    const prefix_slice = str_mod.nox_str_slice(prefix orelse return 0);
     return if (std.mem.startsWith(u8, s_slice, prefix_slice)) 1 else 0;
 }
 
 export fn nox_strings_ends_with_raw(s: ?[*:0]const u8, suffix: ?[*:0]const u8) callconv(.c) i64 {
-    const s_slice = std.mem.span(s orelse return 0);
-    const suffix_slice = std.mem.span(suffix orelse return 0);
+    const s_slice = str_mod.nox_str_slice(s orelse return 0);
+    const suffix_slice = str_mod.nox_str_slice(suffix orelse return 0);
     return if (std.mem.endsWith(u8, s_slice, suffix_slice)) 1 else 0;
 }
 
+// `nox_strings_*_raw` (DIŞA açılan C-ABI sarmalayıcıları) `str_mod.nox_str_
+// slice`i ÇAĞIRIYOR — GEÇERLİ bir Nox `str` başlığı (ARC+STR_HEADER) BEKLER.
+// Çıplak Zig string LİTERALLERİNİ DOĞRUDAN bu fonksiyonlara geçirmek
+// `regex.zig`nin AYNI belge notunda UYARDIĞI tuzak — bu yüzden AŞAĞIDAKİ
+// TÜM testler `makeTestStr` İLE GERÇEK başlıklı `str`ler İNŞA EDER.
+fn makeTestStr(rt: ?*anyopaque, bytes: []const u8) [*:0]u8 {
+    return str_mod.nox_str_from_bytes(rt, bytes) orelse unreachable;
+}
+
 test "nox_strings_index_of_raw/starts_with_raw/ends_with_raw dogru calisir" {
-    try std.testing.expectEqual(@as(i64, 2), nox_strings_index_of_raw("hello", "l"));
-    try std.testing.expectEqual(@as(i64, -1), nox_strings_index_of_raw("hello", "z"));
-    try std.testing.expectEqual(@as(i64, 0), nox_strings_index_of_raw("hello", ""));
+    const asap = @import("../alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const hello = makeTestStr(rt, "hello");
+    defer str_mod.nox_str_release(rt, hello);
+    const l = makeTestStr(rt, "l");
+    defer str_mod.nox_str_release(rt, l);
+    const z = makeTestStr(rt, "z");
+    defer str_mod.nox_str_release(rt, z);
+    const empty = makeTestStr(rt, "");
+    defer str_mod.nox_str_release(rt, empty);
+    const hi = makeTestStr(rt, "hi");
+    defer str_mod.nox_str_release(rt, hi);
+    const aaab = makeTestStr(rt, "aaab");
+    defer str_mod.nox_str_release(rt, aaab);
+    const b = makeTestStr(rt, "b");
+    defer str_mod.nox_str_release(rt, b);
+    const aaXY = makeTestStr(rt, "aaXY");
+    defer str_mod.nox_str_release(rt, aaXY);
+    const aY = makeTestStr(rt, "aY");
+    defer str_mod.nox_str_release(rt, aY);
+    const XY = makeTestStr(rt, "XY");
+    defer str_mod.nox_str_release(rt, XY);
+    const he = makeTestStr(rt, "he");
+    defer str_mod.nox_str_release(rt, he);
+    const lo = makeTestStr(rt, "lo");
+    defer str_mod.nox_str_release(rt, lo);
+
+    try std.testing.expectEqual(@as(i64, 2), nox_strings_index_of_raw(hello, l));
+    try std.testing.expectEqual(@as(i64, -1), nox_strings_index_of_raw(hello, z));
+    try std.testing.expectEqual(@as(i64, 0), nox_strings_index_of_raw(hello, empty));
     // `fastIndexOf`nin (BMH degil, "ilk bayti bul + dogrula") kenar durumlari:
-    try std.testing.expectEqual(@as(i64, -1), nox_strings_index_of_raw("hi", "hello"));
-    try std.testing.expectEqual(@as(i64, 0), nox_strings_index_of_raw("hello", "hello"));
-    try std.testing.expectEqual(@as(i64, 3), nox_strings_index_of_raw("aaab", "b"));
+    try std.testing.expectEqual(@as(i64, -1), nox_strings_index_of_raw(hi, hello));
+    try std.testing.expectEqual(@as(i64, 0), nox_strings_index_of_raw(hello, hello));
+    try std.testing.expectEqual(@as(i64, 3), nox_strings_index_of_raw(aaab, b));
     // Ilk bayti TEKRARLI eslesmeyen adaylar (yanlis-pozitif "ilk bayt"
     // sonrasi geri sarma dogru calisiyor mu): "aaXY" icinde "aY" araninca
     // ilk 'a' (idx 0) eslesmez ('a' sonrasi 'a' != 'Y'), idx 1'de ('a'
     // sonrasi 'X' != 'Y') de eslesmez, gercek eslesme YOK.
-    try std.testing.expectEqual(@as(i64, -1), nox_strings_index_of_raw("aaXY", "aY"));
-    try std.testing.expectEqual(@as(i64, 2), nox_strings_index_of_raw("aaXY", "XY"));
+    try std.testing.expectEqual(@as(i64, -1), nox_strings_index_of_raw(aaXY, aY));
+    try std.testing.expectEqual(@as(i64, 2), nox_strings_index_of_raw(aaXY, XY));
 
-    try std.testing.expectEqual(@as(i64, 1), nox_strings_starts_with_raw("hello", "he"));
-    try std.testing.expectEqual(@as(i64, 0), nox_strings_starts_with_raw("hello", "lo"));
-    try std.testing.expectEqual(@as(i64, 1), nox_strings_ends_with_raw("hello", "lo"));
-    try std.testing.expectEqual(@as(i64, 0), nox_strings_ends_with_raw("hello", "he"));
+    try std.testing.expectEqual(@as(i64, 1), nox_strings_starts_with_raw(hello, he));
+    try std.testing.expectEqual(@as(i64, 0), nox_strings_starts_with_raw(hello, lo));
+    try std.testing.expectEqual(@as(i64, 1), nox_strings_ends_with_raw(hello, lo));
+    try std.testing.expectEqual(@as(i64, 0), nox_strings_ends_with_raw(hello, he));
 }
 
 test "nox_strings_split_raw temel bolme" {
@@ -341,7 +378,11 @@ test "nox_strings_split_raw temel bolme" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const list_ptr = nox_strings_split_raw(rt, "a,b,c", ",") orelse return error.SplitFailed;
+    const s_in = makeTestStr(rt, "a,b,c");
+    defer str_mod.nox_str_release(rt, s_in);
+    const sep_in = makeTestStr(rt, ",");
+    defer str_mod.nox_str_release(rt, sep_in);
+    const list_ptr = nox_strings_split_raw(rt, s_in, sep_in) orelse return error.SplitFailed;
     const bytes: [*]u8 = @ptrCast(list_ptr);
     const count: i64 = @as(*align(1) i64, @ptrCast(bytes)).*;
     try std.testing.expectEqual(@as(i64, 3), count);
@@ -363,19 +404,31 @@ test "nox_strings_trim/upper/lower/replace_raw dogru calisir" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const t = nox_strings_trim_raw(rt, "  hi  ") orelse return error.Failed;
+    const padded = makeTestStr(rt, "  hi  ");
+    defer str.nox_str_release(rt, padded);
+    const t = nox_strings_trim_raw(rt, padded) orelse return error.Failed;
     defer str.nox_str_release(rt, t);
     try std.testing.expectEqualStrings("hi", std.mem.sliceTo(t, 0));
 
-    const u = nox_strings_upper_raw(rt, "hi") orelse return error.Failed;
+    const hi_in = makeTestStr(rt, "hi");
+    defer str.nox_str_release(rt, hi_in);
+    const u = nox_strings_upper_raw(rt, hi_in) orelse return error.Failed;
     defer str.nox_str_release(rt, u);
     try std.testing.expectEqualStrings("HI", std.mem.sliceTo(u, 0));
 
-    const l = nox_strings_lower_raw(rt, "HI") orelse return error.Failed;
+    const HI_in = makeTestStr(rt, "HI");
+    defer str.nox_str_release(rt, HI_in);
+    const l = nox_strings_lower_raw(rt, HI_in) orelse return error.Failed;
     defer str.nox_str_release(rt, l);
     try std.testing.expectEqualStrings("hi", std.mem.sliceTo(l, 0));
 
-    const r = nox_strings_replace_raw(rt, "foo bar foo", "foo", "x") orelse return error.Failed;
+    const foobar = makeTestStr(rt, "foo bar foo");
+    defer str.nox_str_release(rt, foobar);
+    const foo = makeTestStr(rt, "foo");
+    defer str.nox_str_release(rt, foo);
+    const x_new = makeTestStr(rt, "x");
+    defer str.nox_str_release(rt, x_new);
+    const r = nox_strings_replace_raw(rt, foobar, foo, x_new) orelse return error.Failed;
     defer str.nox_str_release(rt, r);
     try std.testing.expectEqualStrings("x bar x", std.mem.sliceTo(r, 0));
 }
@@ -386,11 +439,14 @@ test "Faz III.2: nox_strings_trim_start_raw/trim_end_raw dogru calisir" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const ts = nox_strings_trim_start_raw(rt, "  hi  ") orelse return error.Failed;
+    const padded = makeTestStr(rt, "  hi  ");
+    defer str.nox_str_release(rt, padded);
+
+    const ts = nox_strings_trim_start_raw(rt, padded) orelse return error.Failed;
     defer str.nox_str_release(rt, ts);
     try std.testing.expectEqualStrings("hi  ", std.mem.sliceTo(ts, 0));
 
-    const te = nox_strings_trim_end_raw(rt, "  hi  ") orelse return error.Failed;
+    const te = nox_strings_trim_end_raw(rt, padded) orelse return error.Failed;
     defer str.nox_str_release(rt, te);
     try std.testing.expectEqualStrings("  hi", std.mem.sliceTo(te, 0));
 }
@@ -401,18 +457,32 @@ test "Faz III.2: nox_strings_repeat_raw dogru calisir" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const r0 = nox_strings_repeat_raw(rt, "ab", 0) orelse return error.Failed;
+    const ab = makeTestStr(rt, "ab");
+    defer str.nox_str_release(rt, ab);
+
+    const r0 = nox_strings_repeat_raw(rt, ab, 0) orelse return error.Failed;
     defer str.nox_str_release(rt, r0);
     try std.testing.expectEqualStrings("", std.mem.sliceTo(r0, 0));
 
-    const r3 = nox_strings_repeat_raw(rt, "ab", 3) orelse return error.Failed;
+    const r3 = nox_strings_repeat_raw(rt, ab, 3) orelse return error.Failed;
     defer str.nox_str_release(rt, r3);
     try std.testing.expectEqualStrings("ababab", std.mem.sliceTo(r3, 0));
 }
 
 test "Faz III.2: nox_strings_eq_ignore_case_raw dogru calisir" {
-    try std.testing.expectEqual(@as(i32, 1), nox_strings_eq_ignore_case_raw("Hello", "hello"));
-    try std.testing.expectEqual(@as(i32, 0), nox_strings_eq_ignore_case_raw("Hello", "world"));
+    const asap = @import("../alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const Hello = makeTestStr(rt, "Hello");
+    defer str_mod.nox_str_release(rt, Hello);
+    const hello = makeTestStr(rt, "hello");
+    defer str_mod.nox_str_release(rt, hello);
+    const world = makeTestStr(rt, "world");
+    defer str_mod.nox_str_release(rt, world);
+
+    try std.testing.expectEqual(@as(i32, 1), nox_strings_eq_ignore_case_raw(Hello, hello));
+    try std.testing.expectEqual(@as(i32, 0), nox_strings_eq_ignore_case_raw(Hello, world));
 }
 
 /// `nox_strings_split_raw temel bolme` testindeki (bkz. yukarısı) AYNI
@@ -438,7 +508,11 @@ test "Faz III.2: nox_strings_splitn_raw en fazla n parca uretir, sonuncu kalanin
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const list_ptr = nox_strings_splitn_raw(rt, "a,b,c,d", ",", 2) orelse return error.Failed;
+    const s_in = makeTestStr(rt, "a,b,c,d");
+    defer str_mod.nox_str_release(rt, s_in);
+    const sep_in = makeTestStr(rt, ",");
+    defer str_mod.nox_str_release(rt, sep_in);
+    const list_ptr = nox_strings_splitn_raw(rt, s_in, sep_in, 2) orelse return error.Failed;
     try expectStrListAndRelease(rt, list_ptr, &.{ "a", "b,c,d" });
 }
 
@@ -447,7 +521,11 @@ test "Faz III.2: nox_strings_rsplit_raw AYNI parcalari TERS sirada doner" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const list_ptr = nox_strings_rsplit_raw(rt, "a,b,c", ",") orelse return error.Failed;
+    const s_in = makeTestStr(rt, "a,b,c");
+    defer str_mod.nox_str_release(rt, s_in);
+    const sep_in = makeTestStr(rt, ",");
+    defer str_mod.nox_str_release(rt, sep_in);
+    const list_ptr = nox_strings_rsplit_raw(rt, s_in, sep_in) orelse return error.Failed;
     try expectStrListAndRelease(rt, list_ptr, &.{ "c", "b", "a" });
 }
 
@@ -488,7 +566,9 @@ test "nox_strings_join_raw parcalari ayiraçla dogru birlestirir (tek gecis, O(n
         arc.nox_rc_release(rt, parts, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * 3);
     }
 
-    const joined = nox_strings_join_raw(rt, parts, ", ") orelse return error.JoinFailed;
+    const sep_in = makeTestStr(rt, ", ");
+    defer str.nox_str_release(rt, sep_in);
+    const joined = nox_strings_join_raw(rt, parts, sep_in) orelse return error.JoinFailed;
     defer str.nox_str_release(rt, joined);
     try std.testing.expectEqualStrings("a, bb, ccc", std.mem.sliceTo(joined, 0));
 }
@@ -502,7 +582,9 @@ test "nox_strings_join_raw bos liste bos dize doner" {
     const parts = buildStrList(rt, &.{}) orelse return error.BuildFailed;
     defer arc.nox_rc_release(rt, parts, 16);
 
-    const joined = nox_strings_join_raw(rt, parts, ", ") orelse return error.JoinFailed;
+    const sep_in = makeTestStr(rt, ", ");
+    defer str.nox_str_release(rt, sep_in);
+    const joined = nox_strings_join_raw(rt, parts, sep_in) orelse return error.JoinFailed;
     defer str.nox_str_release(rt, joined);
     try std.testing.expectEqualStrings("", std.mem.sliceTo(joined, 0));
 }

@@ -54,7 +54,7 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
                         const v0 = try self.genExprForTarget(e, self.current_ret_info);
                         try self.checkNoLowlevelEscape(v0);
                         if (isHeapManaged(v0.heap) and self.returnNeedsRetain(e)) {
-                            try self.emitInlineRetain(v0.text);
+                            try self.emitInlineRetain(v0.text, v0.heap);
                         }
                         const v = try self.convert(v0, ret_qtype);
                         const except_name: ?[]const u8 = if (e == .identifier) e.identifier else null;
@@ -84,7 +84,7 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
                     // (ör. döndürülen değere daha önce takma ad olmuş
                     // başka bir yerel) onu erken sıfıra indirebilirdi.
                     if (isHeapManaged(v0.heap) and self.returnNeedsRetain(e)) {
-                        try self.emitInlineRetain(v0.text);
+                        try self.emitInlineRetain(v0.text, v0.heap);
                     }
                     const v = try self.convert(v0, ret_qtype);
                     // Sıra önemli: finally/arena yıkımı, yereller hâlâ
@@ -464,7 +464,7 @@ pub fn genDictGet(self: *Codegen, obj_expr: ast.Expr, obj: Value, key_expr: ast.
     // düşüp dict'in TÜM girdileri özyinelemeli serbest bırakılınca) az
     // önce okuduğumuz string kullanım-sonrası-serbest-bırakmaya döner.
     if (isTemporaryExpr(obj_expr) and dinfo.value_is_str) {
-        try self.emitInlineRetain(converted.text);
+        try self.emitInlineRetain(converted.text, .str);
     }
     try self.releaseIfTemporary(obj_expr, obj);
     return .{ .text = converted.text, .qtype = converted.qtype, .heap = if (dinfo.value_is_str) .str else .none };

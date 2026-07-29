@@ -388,8 +388,8 @@ pub fn copyHeaders(allocator: std.mem.Allocator, headers_dict: ?*anyopaque) ![]s
     for (d.entries.items) |e| {
         const key_ptr: [*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(e.key)));
         const value_ptr: [*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(e.value)));
-        const key = std.mem.span(key_ptr);
-        const value = std.mem.span(value_ptr);
+        const key = str_mod.nox_str_slice(key_ptr);
+        const value = str_mod.nox_str_slice(value_ptr);
         if (containsCrOrLf(key) or containsCrOrLf(value)) return error.InvalidHeaderValue;
         out[filled] = .{
             .name = try allocator.dupe(u8, key),
@@ -422,12 +422,12 @@ fn doRequest(
 
     const fds = makeSelfPipe() orelse return null;
 
-    const url_copy = gpa.dupeZ(u8, std.mem.span(u)) catch {
+    const url_copy = gpa.dupeZ(u8, str_mod.nox_str_slice(u)) catch {
         closeFd(fds[0]);
         closeFd(fds[1]);
         return null;
     };
-    const body_copy: ?[]const u8 = if (body) |b| (gpa.dupe(u8, std.mem.span(b)) catch null) else null;
+    const body_copy: ?[]const u8 = if (body) |b| (gpa.dupe(u8, str_mod.nox_str_slice(b)) catch null) else null;
     // Güvenlik M-1: `copyHeaders`in `error.InvalidHeaderValue`si (bkz. onun
     // belge notu) İSTEĞİN TAMAMI reddedilerek ele alınır — `url_copy`
     // başarısızlığıyla AYNI "temizle, `null` dön" deseni.
@@ -517,15 +517,12 @@ export fn nox_http_response_headers(rt: ?*anyopaque, h: ?*anyopaque) callconv(.c
     return d;
 }
 
-/// Bir C bayt dizisini `nox_rc_alloc` üzerinden YENİ, sıfırla-sonlanan bir
-/// Nox `str`ine kopyalar (refcount 1 İLE başlar) — `runtime/str.zig`nin
-/// `nox_str_concat`ıyla AYNI tahsis deseni.
+/// Bir C bayt dizisini YENİ, sıfırla-sonlanan, paketlenmiş uzunluk+ascii
+/// başlıklı bir Nox `str`ine kopyalar — `runtime/str.zig`nin KANONİK
+/// `nox_str_from_bytes` sarmalayıcısı (bkz. onun belge notu — `str`e
+/// uzunluk alanı + ASCII bayrağı eklenmesinden BERİ TEK doğru yol).
 pub fn dupeToNoxStr(rt: ?*anyopaque, bytes: []const u8) ?[*:0]u8 {
-    const raw = arc.nox_rc_alloc(rt, bytes.len + 1) orelse return null;
-    const out: [*]u8 = @ptrCast(raw);
-    @memcpy(out[0..bytes.len], bytes);
-    out[bytes.len] = 0;
-    return @ptrCast(out);
+    return str_mod.nox_str_from_bytes(rt, bytes);
 }
 
 /// Tutamacı VE İÇİNDEKİ TÜM (henüz `nox_http_response_body`/`headers`
@@ -676,10 +673,12 @@ test "nox_http_get_raw: gerçek yerel HTTP sunucusuna GET isteği — status/bod
     const server_thread = try std.Thread.spawn(.{}, testServeOnce, .{listen_fd});
     defer server_thread.join();
 
-    const url = try std.fmt.allocPrintSentinel(std.testing.allocator, "http://127.0.0.1:{d}/hello", .{port}, 0);
-    defer std.testing.allocator.free(url);
+    var url_buf: [128]u8 = undefined;
+    const url_slice = try std.fmt.bufPrint(&url_buf, "http://127.0.0.1:{d}/hello", .{port});
+    const url = str_mod.nox_str_from_bytes(rt, url_slice) orelse return error.AllocFailed;
+    defer str_mod.nox_str_release(rt, url);
 
-    const resp = nox_http_get_raw(rt, url.ptr, null) orelse return error.RequestFailed;
+    const resp = nox_http_get_raw(rt, url, null) orelse return error.RequestFailed;
     defer nox_http_response_free(resp);
 
     try std.testing.expectEqual(@as(i32, 1), nox_http_response_ok(resp));
@@ -716,8 +715,10 @@ test "nox_http_get_raw: bir fiber İÇİNDEN çağrıldığında zamanlayıcı B
     const server_thread = try std.Thread.spawn(.{}, testServeOnceDelayed, .{ listen_fd, 150 });
     defer server_thread.join();
 
-    const url = try std.fmt.allocPrintSentinel(std.testing.allocator, "http://127.0.0.1:{d}/hello", .{port}, 0);
-    defer std.testing.allocator.free(url);
+    var url_buf: [128]u8 = undefined;
+    const url_slice = try std.fmt.bufPrint(&url_buf, "http://127.0.0.1:{d}/hello", .{port});
+    const url = str_mod.nox_str_from_bytes(rt, url_slice) orelse return error.AllocFailed;
+    defer str_mod.nox_str_release(rt, url);
 
     // `nox_async_spawn`ın (bkz. `bridge.zig`) ÇAĞIRDIĞI sarmalayıcı — codegen'in
     // GERÇEK bir `spawn <fn>(url)` çağrı sitesi İÇİN ürettiği sarmalayıcıyla
@@ -768,7 +769,7 @@ test "nox_http_get_raw: bir fiber İÇİNDEN çağrıldığında zamanlayıcı B
     };
 
     var dummy: i64 = 0;
-    const req_task = bridge.nox_async_spawn(rt, Fn.requestOne, url.ptr).?;
+    const req_task = bridge.nox_async_spawn(rt, Fn.requestOne, url).?;
     const other_task = bridge.nox_async_spawn(rt, OtherFiber.run, &dummy).?;
 
     try std.testing.expectEqual(@as(i32, 0), bridge.nox_async_run_to_completion(rt));
@@ -796,8 +797,8 @@ test "Güvenlik M-1: copyHeaders CR/LF İÇEREN bir başlık DEĞERİNDE Invalid
 
     const d = dict_mod.nox_dict_new(rt, 1) orelse return error.NewFailed;
     defer dict_mod.nox_dict_release(rt, d, 1, 1);
-    const key = str_mod.nox_str_concat(rt, "X-Ec", "ho") orelse return error.ConcatFailed;
-    const value = str_mod.nox_str_concat(rt, "zararli\r\nSet-Cookie: pwned=", "1") orelse return error.ConcatFailed;
+    const key = str_mod.nox_str_from_bytes(rt, "X-Echo") orelse return error.ConcatFailed;
+    const value = str_mod.nox_str_from_bytes(rt, "zararli\r\nSet-Cookie: pwned=1") orelse return error.ConcatFailed;
     dict_mod.nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(key)), @bitCast(@intFromPtr(value)));
 
     try std.testing.expectError(error.InvalidHeaderValue, copyHeaders(std.testing.allocator, d));
@@ -809,8 +810,8 @@ test "Güvenlik M-1: copyHeaders CR/LF İÇEREN bir başlık ADINDA da InvalidHe
 
     const d = dict_mod.nox_dict_new(rt, 1) orelse return error.NewFailed;
     defer dict_mod.nox_dict_release(rt, d, 1, 1);
-    const key = str_mod.nox_str_concat(rt, "X-Bad\r\nSet-Cookie", ": pwned=1") orelse return error.ConcatFailed;
-    const value = str_mod.nox_str_concat(rt, "zararsiz", "") orelse return error.ConcatFailed;
+    const key = str_mod.nox_str_from_bytes(rt, "X-Bad\r\nSet-Cookie: pwned=1") orelse return error.ConcatFailed;
+    const value = str_mod.nox_str_from_bytes(rt, "zararsiz") orelse return error.ConcatFailed;
     dict_mod.nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(key)), @bitCast(@intFromPtr(value)));
 
     try std.testing.expectError(error.InvalidHeaderValue, copyHeaders(std.testing.allocator, d));
@@ -822,8 +823,8 @@ test "Güvenlik M-1: copyHeaders normal (CR/LF'siz) başlıklarda HÂLÂ doğru 
 
     const d = dict_mod.nox_dict_new(rt, 1) orelse return error.NewFailed;
     defer dict_mod.nox_dict_release(rt, d, 1, 1);
-    const key = str_mod.nox_str_concat(rt, "X-Norm", "al") orelse return error.ConcatFailed;
-    const value = str_mod.nox_str_concat(rt, "deger", "1") orelse return error.ConcatFailed;
+    const key = str_mod.nox_str_from_bytes(rt, "X-Normal") orelse return error.ConcatFailed;
+    const value = str_mod.nox_str_from_bytes(rt, "deger1") orelse return error.ConcatFailed;
     dict_mod.nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(key)), @bitCast(@intFromPtr(value)));
 
     const headers = try copyHeaders(std.testing.allocator, d);

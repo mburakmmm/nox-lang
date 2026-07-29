@@ -20,6 +20,9 @@ const DictInfo = types.DictInfo;
 const RT_PARAM = types.RT_PARAM;
 const LIST_HEADER_SIZE = types.LIST_HEADER_SIZE;
 const ARC_HEADER_SIZE = types.ARC_HEADER_SIZE;
+const STR_HEADER_SIZE = types.STR_HEADER_SIZE;
+const packStrHeader = types.packStrHeader;
+const STR_ASCII_TRUE = types.STR_ASCII_TRUE;
 const CLOSURE_HEADER_SIZE = types.CLOSURE_HEADER_SIZE;
 const CLOSURE_RELEASE_FN_PTR_OFFSET = types.CLOSURE_RELEASE_FN_PTR_OFFSET;
 const FuncSigInfo = types.FuncSigInfo;
@@ -187,9 +190,16 @@ pub fn emitStringLiteral(self: *Codegen, s: []const u8) CodegenError!Value {
     const sym = try std.fmt.allocPrint(self.allocator, "$str{d}", .{self.string_counter});
     self.string_counter += 1;
     const escaped = try escapeForQbeString(self.allocator, s);
-    try self.string_data.append(self.allocator, .{ .symbol = sym, .escaped = escaped });
+    var is_ascii = true;
+    for (s) |b| {
+        if (b >= 0x80) {
+            is_ascii = false;
+            break;
+        }
+    }
+    try self.string_data.append(self.allocator, .{ .symbol = sym, .escaped = escaped, .byte_len = s.len, .is_ascii = is_ascii });
     const addr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, sym, ARC_HEADER_SIZE });
+    try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, sym, ARC_HEADER_SIZE + STR_HEADER_SIZE });
     return .{ .text = addr, .qtype = .l, .heap = .str };
 }
 
@@ -320,7 +330,7 @@ pub fn genFieldRead(self: *Codegen, a: ast.Attribute) CodegenError!Value {
         // (`genClassRelease`) — az önce okuduğumuz değeri kullanım-
         // sonrası-serbest-bırakmaya dönüştürür.
         if (isTemporaryExpr(a.obj.*) and isHeapManaged(f.info.heap)) {
-            try self.emitInlineRetain(result);
+            try self.emitInlineRetain(result, f.info.heap);
         }
         try self.releaseIfTemporary(a.obj.*, obj);
         return .{ .text = result, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str, .dict_info = f.info.dict_info, .func_sig = f.info.func_sig };
@@ -439,7 +449,7 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
     // serbest bırakırsa (`genListElemRelease`), az önce okuduğumuz
     // elemanı kullanım-sonrası-serbest-bırakmaya çeviririz.
     if (isTemporaryExpr(idx.obj.*) and obj.elem_heap_info != null) {
-        try self.emitInlineRetain(result);
+        try self.emitInlineRetain(result, obj.elem_heap_info.?.heap);
     }
     try self.releaseIfTemporary(idx.obj.*, obj);
     return valueFromElemDescriptor(result, obj.elem_qtype, obj.elem_heap_info, obj.elem_is_str);
@@ -526,8 +536,23 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
         try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ byte_addr, obj.text, index_v.text });
         const byte_val = try self.newTemp();
         try self.out.writer.print("    {s} =w loadub {s}\n", .{ byte_val, byte_addr });
+        // `str`e uzunluk alanı + ASCII bayrağı eklenmesinden BERİ (bkz.
+        // plan dosyası) bu O(1) ASCII-hızlı-yol İNLINE'ı (`nox_str_char_at`i
+        // ÇAĞIRMAK YERİNE doğrudan QBE'de bir 2 baytlık `[bayt][NUL]`
+        // tahsis ediyordu) PAKETLENMİŞ başlığı UNUTUYORDU — GERÇEK bir bug
+        // olarak bulunup düzeltildi (`s[i]` bir DÖNGÜ İÇİNDE, cache'lenmiş-
+        // ASCII bir tabandan çağrıldığında SESSİZCE başlıksız/bozuk bir
+        // `str` üretiyordu, SONRAKİ HERHANGİ bir `nox_str_*` çağrısında
+        // çökme/veri bozulmasına yol açıyordu — GERÇEKTEN `s[i]` bir
+        // döngüde kullanılan HER golden test regresyona uğradı). Tek
+        // karakterlik SONUÇ HER ZAMAN ascii'dir (bu dal, tanım gereği) —
+        // paketlenmiş başlık (`uzunluk=1, ascii=TRUE`) DERLEME ZAMANINDA
+        // sabit bir değerdir, SIFIR ek çalışma-zamanı maliyetiyle yazılır.
+        const raw = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ raw, RT_PARAM, STR_HEADER_SIZE + 2 });
+        try self.out.writer.print("    storel {d}, {s}\n", .{ packStrHeader(1, STR_ASCII_TRUE), raw });
         const ascii_result = try self.newTemp();
-        try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l 2)\n", .{ ascii_result, RT_PARAM });
+        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ ascii_result, raw, STR_HEADER_SIZE });
         try self.out.writer.print("    storeb {s}, {s}\n", .{ byte_val, ascii_result });
         const nul_addr = try self.newTemp();
         try self.out.writer.print("    {s} =l add {s}, 1\n", .{ nul_addr, ascii_result });

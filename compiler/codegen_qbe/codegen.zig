@@ -223,6 +223,9 @@ const QbeType = types.QbeType;
 const HeapKind = types.HeapKind;
 const CLOSURE_HEADER_SIZE = types.CLOSURE_HEADER_SIZE;
 const PINNED_REFCOUNT = types.PINNED_REFCOUNT;
+const packStrHeader = types.packStrHeader;
+const STR_ASCII_TRUE = types.STR_ASCII_TRUE;
+const STR_ASCII_FALSE = types.STR_ASCII_FALSE;
 const ElemHeapInfo = types.ElemHeapInfo;
 const DictInfo = types.DictInfo;
 const FuncSigInfo = types.FuncSigInfo;
@@ -1095,7 +1098,8 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
         // kadar büyük bir değerle başlar, bu yüzden `nox_rc_release` bu
         // statik belleği asla gerçekten serbest bırakmaya çalışmaz (bkz.
         // `.string_lit` kolu).
-        try gen.out.writer.print("data {s} = {{ l {d}, b \"{s}\", b 0 }}\n", .{ sd.symbol, PINNED_REFCOUNT, sd.escaped });
+        const packed_header = packStrHeader(sd.byte_len, if (sd.is_ascii) STR_ASCII_TRUE else STR_ASCII_FALSE);
+        try gen.out.writer.print("data {s} = {{ l {d}, l {d}, b \"{s}\", b 0 }}\n", .{ sd.symbol, PINNED_REFCOUNT, packed_header, sd.escaped });
     }
 
     // `print(list[T]/sınıf)` görüntülemesinin (bkz. `internFmtString`)
