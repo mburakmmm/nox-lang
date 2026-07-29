@@ -293,6 +293,7 @@ pub const Codegen = struct {
     pub const genClosureRelease = closures.genClosureRelease;
     pub const genFunctionValueTrampoline = closures.genFunctionValueTrampoline;
 
+    pub const genClassVtable = layout.genClassVtable;
     pub const genClassRelease = layout.genClassRelease;
     pub const genClassTrace = layout.genClassTrace;
     pub const genClassGcFree = layout.genClassGcFree;
@@ -353,6 +354,7 @@ pub const Codegen = struct {
     pub const genConstruct = calls.genConstruct;
     pub const genConstructFromValues = calls.genConstructFromValues;
     pub const genMethodCall = calls.genMethodCall;
+    pub const genSuperMethodCall = calls.genSuperMethodCall;
     pub const genIndirectCallThroughClosurePtr = calls.genIndirectCallThroughClosurePtr;
     pub const genDictMethod = calls.genDictMethod;
     pub const genListAppend = calls.genListAppend;
@@ -413,6 +415,7 @@ pub const Codegen = struct {
     pub const newLabel = registration.newLabel;
     pub const resolveType = registration.resolveType;
     pub const registerClass = registration.registerClass;
+    pub const registerClassesInOrder = registration.registerClassesInOrder;
     pub const collectModuleGlobals = registration.collectModuleGlobals;
     pub const inferFieldType = registration.inferFieldType;
     pub const registerFunc = registration.registerFunc;
@@ -615,6 +618,14 @@ pub const Codegen = struct {
     string_counter: usize = 0,
     string_data: std.ArrayListUnmanaged(StringDatum) = .empty,
     next_class_id: usize = 1,
+    /// Faz 7 (tekli kalıtım): `registration.computeInheritingClasses`
+    /// tarafından, HERHANGİ bir sınıf kaydedilmeden ÖNCE BİR KEZ doldurulur
+    /// — bkz. onun belge notu ("ileri bilgi problemi"nin çözümü).
+    inheriting_classes: std.StringHashMapUnmanaged(void) = .empty,
+    /// Faz 7: `genMethod` TARAFINDAN, o metodun AİT olduğu sınıfın adıyla
+    /// set edilir — `super()`in (bkz. `calls.zig`nin `genSuperMethodCall`ı)
+    /// taban sınıfı bulması İçin.
+    current_self_class: ?[]const u8 = null,
     /// `list[T]`nin elemanları heap-yönetimliyken (sınıf/iç içe liste) gereken
     /// `$List_<mangled>_release` fonksiyonlarının TEMBEL kaydı — `string_data`
     /// gibi kodgen sırasında keşfedilir, `generateModule`nin sonunda TÜKETİLİR
@@ -860,12 +871,47 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
         }
     }
     for (extra_classes) |cd| try gen.classes.put(gen.allocator, cd.name, .{});
+
+    // Faz 7 (tekli kalıtım): TÜM (generic olmayan) sınıf tanımlarını TEK
+    // bir listede topla — `inheriting_classes`in SAF/sıraya BAĞIMSIZ
+    // ön-taraması (bkz. `computeInheritingClasses`in belge notu, "ileri
+    // bilgi problemi") VE `registerClassesInOrder`ın taban-önce kaydı
+    // (bkz. onun belge notu) İKİSİ de bu TAM listeye ihtiyaç duyar.
+    var class_defs_to_register: std.ArrayListUnmanaged(ast.ClassDef) = .empty;
     for (module.body) |stmt| {
         if (stmt.kind == .class_def and stmt.kind.class_def.type_params.len == 0 and !containsName(generic_class_template_names, stmt.kind.class_def.name)) {
-            try gen.registerClass(stmt.kind.class_def);
+            try class_defs_to_register.append(gen.allocator, stmt.kind.class_def);
         }
     }
-    for (extra_classes) |cd| try gen.registerClass(cd);
+    for (extra_classes) |cd| try class_defs_to_register.append(gen.allocator, cd);
+    gen.inheriting_classes = try registration.computeInheritingClasses(gen.allocator, class_defs_to_register.items);
+    try gen.registerClassesInOrder(class_defs_to_register.items);
+
+    // Faz 7: TÜM sınıflar kaydedildikten SONRA (KENDİ + TÜM atalarının
+    // `class_id`si BİLİNDİĞİNDEN) HER sınıf İçin KENDİSİ + TÜM (transitif)
+    // alt sınıflarının `class_id`lerini hesapla — `exceptions.zig`nin
+    // `except Base:`in bir `Derived` örneğini de YAKALAMASI İçin gereken
+    // hiyerarşik eşleşmesi (OR-zinciri, bkz. onun belge notu).
+    {
+        var it = gen.classes.iterator();
+        while (it.next()) |entry| {
+            var ids: std.ArrayListUnmanaged(usize) = .empty;
+            try ids.append(gen.allocator, entry.value_ptr.class_id);
+            var it2 = gen.classes.iterator();
+            while (it2.next()) |e2| {
+                if (std.mem.eql(u8, e2.key_ptr.*, entry.key_ptr.*)) continue;
+                var cur: ?[]const u8 = e2.value_ptr.base;
+                while (cur) |c| {
+                    if (std.mem.eql(u8, c, entry.key_ptr.*)) {
+                        try ids.append(gen.allocator, e2.value_ptr.class_id);
+                        break;
+                    }
+                    cur = if (gen.classes.get(c)) |ci| ci.base else null;
+                }
+            }
+            entry.value_ptr.descendant_class_ids = try ids.toOwnedSlice(gen.allocator);
+        }
+    }
 
     // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
     // TÜM sınıflar KAYDEDİLDİKTEN HEMEN SONRA (bir global'in tipi
@@ -927,6 +973,7 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
             try gen.genClassEq(cd.name, cinfo);
             try gen.genClassTrace(cd.name, cinfo);
             try gen.genClassGcFree(cd.name, cinfo);
+            try gen.genClassVtable(cd.name, cinfo);
             try class_ids.append(allocator, .{ .name = cd.name, .id = cinfo.class_id });
         }
     }
@@ -937,6 +984,7 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
         try gen.genClassEq(cd.name, cinfo);
         try gen.genClassTrace(cd.name, cinfo);
         try gen.genClassGcFree(cd.name, cinfo);
+        try gen.genClassVtable(cd.name, cinfo);
         try class_ids.append(allocator, .{ .name = cd.name, .id = cinfo.class_id });
     }
     if (class_ids.items.len > 0) {

@@ -88,7 +88,11 @@ fn dumpStmt(writer: *std.Io.Writer, stmt: ast.Stmt, depth: usize) std.Io.Writer.
         },
         .func_def => unreachable, // yukarıda erken döndürüldü
         .class_def => |c| {
-            try writer.print("(class {s}\n", .{c.name});
+            if (c.base) |b| {
+                try writer.print("(class {s}({s})\n", .{ c.name, b });
+            } else {
+                try writer.print("(class {s}\n", .{c.name});
+            }
             for (c.fields) |fd| {
                 try indent(writer, depth + 1);
                 try writer.print("(field {s}:", .{fd.name});

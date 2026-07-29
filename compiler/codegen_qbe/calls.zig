@@ -20,6 +20,7 @@ const ClassInfo = types.ClassInfo;
 const ElemHeapInfo = types.ElemHeapInfo;
 const RT_PARAM = types.RT_PARAM;
 const LIST_HEADER_SIZE = types.LIST_HEADER_SIZE;
+const TAG_SIZE = types.TAG_SIZE;
 const FuncSigInfo = types.FuncSigInfo;
 const CodegenError = abi.CodegenError;
 const qbeTypeName = abi.qbeTypeName;
@@ -513,6 +514,26 @@ pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: Cla
         try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ t, RT_PARAM, cinfo.total_size });
     }
     try self.out.writer.print("    storel {d}, {s}\n", .{ cinfo.class_id, t });
+    // Faz 7 (tekli kalıtım): `has_vtable` İSE, TAG'den HEMEN SONRA (alanlar
+    // BAŞLAMADAN ÖNCE) bu SOMUT sınıfın vtable veri bloğunun adresini
+    // yaz (bkz. `layout.zig`nin `genClassVtable`ı, `abi_layout.VTABLE_
+    // PTR_SIZE`nin belge notu) — `genMethodCall`in dolaylı çağrı yolu
+    // BUNU okur.
+    if (cinfo.has_vtable) {
+        const vt_addr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ vt_addr, t, TAG_SIZE });
+        // `next_vtable_slot == 0`: bu SOMUT sınıfın (VE tüm hiyerarşisinin
+        // BURAYA kadar) HİÇ sanal metodu yok (`genClassVtable` BU durumda
+        // hiçbir `data $..._vtable` bloğu YAYINLAMAZ, bkz. onun belge
+        // notu) — VAR OLMAYAN bir sembole işaret ETMEK yerine yuvayı
+        // SIFIRLA (zaten HİÇBİR yerden okunmayacak, ama bağlantı-zamanı
+        // "tanımsız sembol" hatasından KAÇINMAK İçin).
+        if (cinfo.next_vtable_slot > 0) {
+            try self.out.writer.print("    storel ${s}_vtable, {s}\n", .{ class_name, vt_addr });
+        } else {
+            try self.out.writer.print("    storel 0, {s}\n", .{vt_addr});
+        }
+    }
     // Alanlar `__init__` çalışmadan ÖNCE sıfırlanır: bu sayede sınıf tipli
     // bir alana ilk kez yazarken `genAssign`'in "önce eskiyi serbest
     // bırak" mantığı (bkz. `.attribute` durumu) çöp bir işaretçiyi asla
@@ -526,9 +547,13 @@ pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: Cla
     // `has_init == false`: sınıfın hiç `__init__`i yok (bkz.
     // `ClassInfo.has_init`in belge notu) — `generateModule` bu sınıf için
     // `$ClassName___init__`i HİÇ ÜRETMEDİ, bu yüzden burada çağırmak
-    // bağlantı zamanında çözülemeyen bir sembole yol açardı.
+    // bağlantı zamanında çözülemeyen bir sembole yol açardı. Faz 7: bu
+    // sınıfın KENDİ `__init__`i yoksa (taban sınıftan MİRAS alındı)
+    // `cinfo.init_owner` GERÇEK implementasyonu TAŞIYAN sınıfa işaret
+    // eder — `class_name`in KENDİSİ DEĞİL (o sembol HİÇ ÜRETİLMEZ).
     if (cinfo.has_init) {
-        try self.out.writer.print("    call ${s}_{s}(l {s}, l {s}", .{ class_name, "__init__", RT_PARAM, t });
+        const init_owner = cinfo.init_owner.?;
+        try self.out.writer.print("    call ${s}_{s}(l {s}, l {s}", .{ init_owner, "__init__", RT_PARAM, t });
         for (arg_values) |v| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(v.qtype), v.text });
         try self.out.writer.writeAll(")\n");
         // Bkz. bu fonksiyonun `temp_release` belge notu — `__init__`
@@ -568,7 +593,23 @@ pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: Cla
     return .{ .text = t, .qtype = .l, .heap = .class, .class_name = class_name, .arena = arena != null };
 }
 
+/// Faz 7 (tekli kalıtım): `e` TAM OLARAK `super()` MI — checker.zig'in
+/// AYNI adlı yardımcısıyla BİREBİR AYNI kalıp tanıma (checker `super()`in
+/// SADECE bu ŞEKİLDE, doğrudan bir metod çağrısının alıcısı OLARAK
+/// kullanılmasına İZİN VERDİĞİNDEN, codegen buraya BAŞKA bir şekilde ASLA
+/// ULAŞAMAZ).
+fn isSuperCallExpr(e: ast.Expr) bool {
+    return switch (e) {
+        .call => |c| switch (c.callee.*) {
+            .identifier => |n| c.args.len == 0 and std.mem.eql(u8, n, "super"),
+            else => false,
+        },
+        else => false,
+    };
+}
+
 pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
+    if (isSuperCallExpr(a.obj.*)) return self.genSuperMethodCall(a, args);
     const obj = try self.genExpr(a.obj.*);
     if (obj.heap == .dict) return self.genDictMethod(obj, a, args);
     if (obj.heap == .list) {
@@ -604,20 +645,45 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
         }
         return error.Unsupported;
     };
-    if (msig.params.len != args.len) return error.Unsupported;
+    if (msig.sig.params.len != args.len) return error.Unsupported;
 
     const arg_values = try self.allocator.alloc(Value, args.len);
     for (args, 0..) |arg, i| {
-        const v0 = try self.genExprForTarget(arg, msig.params[i]);
+        const v0 = try self.genExprForTarget(arg, msig.sig.params[i]);
         try self.checkNoLowlevelEscape(v0);
-        arg_values[i] = try self.convert(v0, msig.params[i].qtype);
+        arg_values[i] = try self.convert(v0, msig.sig.params[i].qtype);
     }
 
-    const result_temp: ?[]const u8 = if (msig.ret.qtype == .none) null else try self.newTemp();
-    if (result_temp) |rt| {
-        try self.out.writer.print("    {s} ={s} call ${s}_{s}(l {s}, l {s}", .{ rt, qbeTypeName(msig.ret.qtype), obj.class_name.?, a.attr, RT_PARAM, obj.text });
+    const result_temp: ?[]const u8 = if (msig.sig.ret.qtype == .none) null else try self.newTemp();
+    // Faz 7: `cinfo.has_vtable` İSE metod çağrısı DOLAYLI (indirect) yapılır
+    // — statik alıcı tipi (`obj.class_name.?`) ile ÇALIŞMA ZAMANI tipi
+    // (Base-tipli bir değişken bir Derived örneği TUTABİLİR) FARKLI
+    // olabileceğinden, çağrının GERÇEKTEN hangi override'a gideceği
+    // ÇALIŞMA ZAMANINDA belirlenir: nesnenin vtable işaretçisi OKUNUR,
+    // ilgili SLOT'taki fonksiyon işaretçisi YÜKLENİR, ONUN ÜZERİNDEN
+    // çağrılır (closure'ların `genIndirectCallThroughClosurePtr`ıyla AYNI
+    // register-call mekanizması). **Bilinçli v1 kapsamı**: override
+    // EDİLMEMİŞ metodlar İçin BİLE (devirtualization YOK) — kalıtıma HİÇ
+    // KATILMAYAN sınıflar İçin (`has_vtable == false`, Nox kodunun BÜYÜK
+    // ÇOĞUNLUĞU) davranış/performans BİREBİR ÖNCEKİ GİBİ kalır.
+    if (cinfo.has_vtable) {
+        const vt_addr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ vt_addr, obj.text, TAG_SIZE });
+        const vtable_ptr = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ vtable_ptr, vt_addr });
+        const slot_addr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ slot_addr, vtable_ptr, msig.slot * 8 });
+        const fn_ptr = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ fn_ptr, slot_addr });
+        if (result_temp) |rt| {
+            try self.out.writer.print("    {s} ={s} call {s}(l {s}, l {s}", .{ rt, qbeTypeName(msig.sig.ret.qtype), fn_ptr, RT_PARAM, obj.text });
+        } else {
+            try self.out.writer.print("    call {s}(l {s}, l {s}", .{ fn_ptr, RT_PARAM, obj.text });
+        }
+    } else if (result_temp) |rt| {
+        try self.out.writer.print("    {s} ={s} call ${s}_{s}(l {s}, l {s}", .{ rt, qbeTypeName(msig.sig.ret.qtype), msig.owner, a.attr, RT_PARAM, obj.text });
     } else {
-        try self.out.writer.print("    call ${s}_{s}(l {s}, l {s}", .{ obj.class_name.?, a.attr, RT_PARAM, obj.text });
+        try self.out.writer.print("    call ${s}_{s}(l {s}, l {s}", .{ msig.owner, a.attr, RT_PARAM, obj.text });
     }
     for (arg_values) |v| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(v.qtype), v.text });
     try self.out.writer.writeAll(")\n");
@@ -625,8 +691,11 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
     // §3.59): `computeMustNotRaise` ARTIK TÜM metodları (yalnızca
     // `__init__` değil) analiz ediyor — hedef metod bu kümedeyse
     // (sembol formatı `genCall`in serbest-fonksiyon dalıyla TUTARLI,
-    // bkz. `computeMustNotRaise`in belge notu) kontrol atlanabilir.
-    const method_sym = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ obj.class_name.?, a.attr });
+    // bkz. `computeMustNotRaise`in belge notu) kontrol atlanabilir. Faz 7:
+    // DOLAYLI (vtable) bir çağrının GERÇEKTE hangi override'a gideceği
+    // ÇALIŞMA ZAMANINDA belirlendiğinden, bu optimizasyon SADECE DOĞRUDAN
+    // çağrılar İçin (has_vtable == false) uygulanır — vtable çağrıları
+    // HER ZAMAN MUHAFAZAKÂR (güvenli) davranır, kontrolü ASLA atlamaz.
     // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı, nox.process):
     // GERÇEK bir bellek sızıntısı — alıcı/argümanların serbest bırakılması
     // ÖNCEDEN `emitExceptionCheck`DEN SONRA geliyordu, bu da metod
@@ -639,10 +708,68 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
     // SONUCUNDAN BAĞIMSIZDIR — bu yüzden kontrolden ÖNCEYE taşındı.
     try self.releaseIfTemporary(a.obj.*, obj);
     try self.releaseTemporaryArgs(args, arg_values);
-    if (!self.must_not_raise.contains(method_sym)) try self.emitExceptionCheck();
+    if (cinfo.has_vtable) {
+        try self.emitExceptionCheck();
+    } else {
+        const method_sym = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ msig.owner, a.attr });
+        if (!self.must_not_raise.contains(method_sym)) try self.emitExceptionCheck();
+    }
 
     if (result_temp) |rt| {
-        return .{ .text = rt, .qtype = msig.ret.qtype, .heap = msig.ret.heap, .elem_qtype = msig.ret.elem_qtype, .class_name = msig.ret.class_name, .elem_heap_info = msig.ret.elem_heap_info, .elem_is_str = msig.ret.elem_is_str };
+        return .{ .text = rt, .qtype = msig.sig.ret.qtype, .heap = msig.sig.ret.heap, .elem_qtype = msig.sig.ret.elem_qtype, .class_name = msig.sig.ret.class_name, .elem_heap_info = msig.sig.ret.elem_heap_info, .elem_is_str = msig.sig.ret.elem_is_str };
+    }
+    return .{ .text = "0", .qtype = .w };
+}
+
+/// Faz 7: `super().metod(...)` / `super().__init__(...)` — checker.zig'in
+/// AYNI adlı özel-işlemesinin codegen tarafı. HER ZAMAN DOĞRUDAN (asla
+/// vtable ÜZERİNDEN) çağrılır: `self`in ÇALIŞMA ZAMANI tipi (Derived)
+/// SET OLSA BİLE, `super()`in AMACI TAM OLARAK belirli bir ATANIN
+/// implementasyonunu çağırmaktır (ANLIK sınıfın KENDİ vtable'ı ÜZERİNDEN
+/// gitmek, GERİ DÖNÜP KENDİ override'ını TEKRAR çağırarak sonsuz
+/// özyinelemeye yol açardı).
+pub fn genSuperMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
+    const self_class = self.current_self_class.?;
+    const base_name = self.classes.get(self_class).?.base.?;
+    const base_info = self.classes.get(base_name).?;
+    const self_val = try self.genExpr(.{ .identifier = "self" });
+
+    if (std.mem.eql(u8, a.attr, "__init__")) {
+        const init_owner = base_info.init_owner.?;
+        const arg_values = try self.allocator.alloc(Value, args.len);
+        for (args, base_info.init_params, 0..) |arg, pt, i| {
+            const v0 = try self.genExprForTarget(arg, pt);
+            try self.checkNoLowlevelEscape(v0);
+            arg_values[i] = try self.convert(v0, pt.qtype);
+        }
+        try self.out.writer.print("    call ${s}___init__(l {s}, l {s}", .{ init_owner, RT_PARAM, self_val.text });
+        for (arg_values) |v| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(v.qtype), v.text });
+        try self.out.writer.writeAll(")\n");
+        try self.releaseTemporaryArgs(args, arg_values);
+        try self.emitExceptionCheck();
+        return .{ .text = "0", .qtype = .w };
+    }
+
+    const msig = base_info.methods.get(a.attr) orelse return error.Unsupported;
+    if (msig.sig.params.len != args.len) return error.Unsupported;
+    const arg_values = try self.allocator.alloc(Value, args.len);
+    for (args, 0..) |arg, i| {
+        const v0 = try self.genExprForTarget(arg, msig.sig.params[i]);
+        try self.checkNoLowlevelEscape(v0);
+        arg_values[i] = try self.convert(v0, msig.sig.params[i].qtype);
+    }
+    const result_temp: ?[]const u8 = if (msig.sig.ret.qtype == .none) null else try self.newTemp();
+    if (result_temp) |rt| {
+        try self.out.writer.print("    {s} ={s} call ${s}_{s}(l {s}, l {s}", .{ rt, qbeTypeName(msig.sig.ret.qtype), msig.owner, a.attr, RT_PARAM, self_val.text });
+    } else {
+        try self.out.writer.print("    call ${s}_{s}(l {s}, l {s}", .{ msig.owner, a.attr, RT_PARAM, self_val.text });
+    }
+    for (arg_values) |v| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(v.qtype), v.text });
+    try self.out.writer.writeAll(")\n");
+    try self.releaseTemporaryArgs(args, arg_values);
+    try self.emitExceptionCheck();
+    if (result_temp) |rt| {
+        return .{ .text = rt, .qtype = msig.sig.ret.qtype, .heap = msig.sig.ret.heap, .elem_qtype = msig.sig.ret.elem_qtype, .class_name = msig.sig.ret.class_name, .elem_heap_info = msig.sig.ret.elem_heap_info, .elem_is_str = msig.sig.ret.elem_is_str };
     }
     return .{ .text = "0", .qtype = .w };
 }

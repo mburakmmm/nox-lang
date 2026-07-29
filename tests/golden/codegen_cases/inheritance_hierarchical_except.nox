@@ -1,0 +1,21 @@
+class AnimalError:
+    def __init__(self: AnimalError, message: str) -> None:
+        self.message = message
+
+class DogError(AnimalError):
+    def __init__(self: DogError, message: str, breed: str) -> None:
+        super().__init__(message)
+        self.breed = breed
+
+def raise_dog_error() -> None:
+    raise DogError("bad dog", "Labrador")
+
+try:
+    raise_dog_error()
+except AnimalError as e:
+    print("caught via base: " + e.message)
+
+try:
+    raise DogError("still bad", "Poodle")
+except DogError as e:
+    print("caught via exact type: " + e.message + " (" + e.breed + ")")

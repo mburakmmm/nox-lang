@@ -317,6 +317,54 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
 
 // ---- Sınıf kaydı (fonksiyon/main gövdeleri üretilmeden ÖNCE tamamlanmalı) ----
 
+/// Faz 7 (tekli kalıtım): `class_defs`i TABAN sınıf ÖNCE, türetilen SONRA
+/// olacak şekilde bir İŞ LİSTESİ (worklist) İLE kaydeder — `registerClass`ın
+/// alan/metod DÜZLEŞTİRMESİ tabanın ZATEN TAM doldurulmuş `ClassInfo`suna
+/// ihtiyaç duyar (checker.zig'in `registerClassesInOrder`ıyla AYNI
+/// gerekçe/tasarım). Checker BU sıralamayı ZATEN doğruladığından (döngüsel
+/// kalıtım/bilinmeyen taban DERLEME buraya HİÇ ULAŞAMAZ) burada SADECE
+/// savunmacı bir `error.Unsupported` vardır.
+pub fn registerClassesInOrder(self: *Codegen, class_defs: []const ast.ClassDef) CodegenError!void {
+    var remaining: std.ArrayListUnmanaged(ast.ClassDef) = .empty;
+    try remaining.appendSlice(self.allocator, class_defs);
+    var processed: std.StringHashMapUnmanaged(void) = .{};
+    while (remaining.items.len > 0) {
+        var progress = false;
+        var i: usize = 0;
+        while (i < remaining.items.len) {
+            const cd = remaining.items[i];
+            const ready = cd.base == null or processed.contains(cd.base.?);
+            if (ready) {
+                try self.registerClass(cd);
+                try processed.put(self.allocator, cd.name, {});
+                _ = remaining.swapRemove(i);
+                progress = true;
+            } else {
+                i += 1;
+            }
+        }
+        if (!progress) return error.Unsupported;
+    }
+}
+
+/// Faz 7: `class_defs`teki HER `cd.base`i (KENDİSİ VE hedefi) toplayan,
+/// SAF/sıraya BAĞIMSIZ bir ön-tarama — bir sınıfın kalıtıma KATILIP
+/// KATILMADIĞINI (`ClassInfo.has_vtable`), o sınıf HENÜZ (taban-önce
+/// sırada) kaydedilmeden ÖNCE bilmek İçin gerekir (bir taban sınıfın
+/// KENDİ nesne düzeni, HENÜZ KAYDEDİLMEMİŞ bir alt sınıfın var OLUP
+/// OLMADIĞINA bağlı olduğundan — bkz. Faz 7 tasarım notu, "ileri bilgi
+/// problemi").
+pub fn computeInheritingClasses(allocator: std.mem.Allocator, class_defs: []const ast.ClassDef) !std.StringHashMapUnmanaged(void) {
+    var set: std.StringHashMapUnmanaged(void) = .{};
+    for (class_defs) |cd| {
+        if (cd.base) |b| {
+            try set.put(allocator, cd.name, {});
+            try set.put(allocator, b, {});
+        }
+    }
+    return set;
+}
+
 pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
     var init_fd: ?ast.FuncDef = null;
     for (cd.methods) |m| {
@@ -324,6 +372,26 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
     }
 
     var info: types.ClassInfo = .{};
+    info.base = cd.base;
+    info.has_vtable = self.inheriting_classes.contains(cd.name);
+    const field_base_offset = TAG_SIZE + (if (info.has_vtable) types.VTABLE_PTR_SIZE else 0);
+
+    // Faz 7: taban sınıfın (bu noktada `registerClassesInOrder` sayesinde
+    // ZATEN TAM kaydedilmiş) alanlarını/metodlarını KOPYALA — "en az
+    // invaziv strateji" (checker.zig'in `registerClassSignatures`ıyla
+    // AYNI gerekçe). Codegen'in checker'DAN FARKLI olarak İKİNCİ bir
+    // "gövde denetiminden SONRA tamamlayıcı kopyalama" adımına İHTİYACI
+    // YOKTUR — `inferFieldType` HER ZAMAN SADECE bu sınıfın KENDİ
+    // `__init__` AST'sini tarar (başka bir sınıfın gövdesinin ÖNCE
+    // işlenmiş OLMASINA hiç bağımlı DEĞİL), bu yüzden taban-önce KAYIT
+    // sırası (checker'ın taban-önce GÖVDE DENETİM sırasından FARKLI
+    // olarak) TEK BAŞINA yeterlidir.
+    var base_info: ?types.ClassInfo = null;
+    if (cd.base) |base_name| {
+        base_info = self.classes.get(base_name).?;
+        for (base_info.?.fields.items) |f| try info.fields.append(self.allocator, f);
+    }
+
     // Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): AÇIKÇA
     // bildirilen alanlar, `__init__` gövdesi taranmadan ÖNCE (bildirim
     // SIRASIYLA) `info.fields`e eklenir — tipleri `resolveType` İLE
@@ -337,7 +405,7 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
         try info.fields.append(self.allocator, .{
             .name = fd.name,
             .info = try self.resolveType(fd.type_expr),
-            .offset = TAG_SIZE + info.fields.items.len * FIELD_SLOT_SIZE,
+            .offset = field_base_offset + (info.fields.items.len) * FIELD_SLOT_SIZE,
         });
     }
     if (init_fd) |init| {
@@ -359,38 +427,70 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
             try info.fields.append(self.allocator, .{
                 .name = attr.attr,
                 .info = ftype,
-                .offset = TAG_SIZE + info.fields.items.len * FIELD_SLOT_SIZE,
+                .offset = field_base_offset + (info.fields.items.len) * FIELD_SLOT_SIZE,
             });
         }
-        info.total_size = TAG_SIZE + info.fields.items.len * FIELD_SLOT_SIZE;
+        info.total_size = field_base_offset + info.fields.items.len * FIELD_SLOT_SIZE;
 
         const iparams = try self.allocator.alloc(TypeInfo, init.params.len - 1);
         for (init.params[1..], 0..) |p, i| iparams[i] = try self.resolveType(p.type_expr);
         info.init_params = iparams;
+        info.init_owner = cd.name;
+    } else if (base_info) |bi| {
+        // Faz 7: bu sınıfın KENDİ `__init__`i yok — taban sınıfın
+        // kurucusunu (parametreleri VE hangi sınıfın onu GERÇEKTEN
+        // uyguladığını) OLDUĞU GİBİ MİRAS AL (Python-tarzı örtük kurucu
+        // zincirleme — checker.zig'in `registerClassSignatures`ıyla AYNI
+        // semantik).
+        info.has_init = bi.has_init;
+        info.init_params = bi.init_params;
+        info.init_owner = bi.init_owner;
+        info.total_size = field_base_offset + info.fields.items.len * FIELD_SLOT_SIZE;
     } else {
-        // `__init__`i olmayan sınıf (bkz. `ClassInfo.has_init`in belge
-        // notu): kurucu 0 argüman alır — checker zaten bu durumda
-        // çağrı sitesinde 0 argüman şart koşar (bkz. checker.zig,
-        // `checkCall`in `.identifier` dalı, `init_sig orelse` varsayılanı).
-        // Faz FF.5: bildirilen alanlar (varsa) YİNE de `info.fields`de
-        // KALIR (yukarıda eklendi) — ama checker BU durumu (bildirilen
-        // bir alanın `__init__` OLMADIĞI İçin HİÇ atanamaması) ZATEN
-        // `UnassignedField` İLE REDDETTİĞİNDEN (bkz. `checkClassBody`),
-        // bu yol PRATİKTE codegen'e HİÇ ULAŞMAZ — yalnızca savunmacı
-        // tutarlılık İçin `total_size` yine de alanları HESABA katar.
+        // `__init__`i olmayan (VE taban sınıfı da OLMAYAN) sınıf (bkz.
+        // `ClassInfo.has_init`in belge notu): kurucu 0 argüman alır —
+        // checker zaten bu durumda çağrı sitesinde 0 argüman şart koşar
+        // (bkz. checker.zig, `checkCall`in `.identifier` dalı, `init_sig
+        // orelse` varsayılanı). Faz FF.5: bildirilen alanlar (varsa) YİNE
+        // de `info.fields`de KALIR (yukarıda eklendi) — ama checker BU
+        // durumu (bildirilen bir alanın `__init__` OLMADIĞI İçin HİÇ
+        // atanamaması) ZATEN `UnassignedField` İLE REDDETTİĞİNDEN (bkz.
+        // `checkClassBody`), bu yol PRATİKTE codegen'e HİÇ ULAŞMAZ —
+        // yalnızca savunmacı tutarlılık İçin `total_size` yine de
+        // alanları HESABA katar.
         info.has_init = false;
-        info.total_size = TAG_SIZE + info.fields.items.len * FIELD_SLOT_SIZE;
+        info.total_size = field_base_offset + info.fields.items.len * FIELD_SLOT_SIZE;
     }
     info.class_id = self.next_class_id;
     self.next_class_id += 1;
 
+    // Faz 7: taban sınıfın metodlarını (SAHİP/owner + vtable slotuyla
+    // BİRLİKTE) KOPYALA — miras alınan, override EDİLMEMİŞ bir metod
+    // İçin `owner`/`slot` DEĞİŞMEDEN kalır (`genMethodCall`in ÜRETTİĞİ
+    // sembol/dispatch, TABANIN KENDİ gövdesine gider).
+    var next_slot: usize = 0;
+    if (base_info) |bi| {
+        var mit = bi.methods.iterator();
+        while (mit.next()) |e| try info.methods.put(self.allocator, e.key_ptr.*, e.value_ptr.*);
+        next_slot = bi.next_vtable_slot;
+    }
     for (cd.methods) |m| {
         if (std.mem.eql(u8, m.name, "__init__")) continue;
         const params = try self.allocator.alloc(TypeInfo, m.params.len - 1);
         for (m.params[1..], 0..) |p, i| params[i] = try self.resolveType(p.type_expr);
         const ret = try self.resolveType(m.return_type);
-        try info.methods.put(self.allocator, m.name, .{ .params = params, .ret = ret });
+        var slot: usize = 0;
+        if (info.has_vtable) {
+            if (info.methods.get(m.name)) |inherited| {
+                slot = inherited.slot; // override: AYNI slot (checker ZATEN imzanın TAM eşleştiğini doğruladı)
+            } else {
+                slot = next_slot;
+                next_slot += 1;
+            }
+        }
+        try info.methods.put(self.allocator, m.name, .{ .sig = .{ .params = params, .ret = ret }, .owner = cd.name, .slot = slot });
     }
+    info.next_vtable_slot = next_slot;
 
     try self.classes.put(self.allocator, cd.name, info);
 }
@@ -795,7 +895,7 @@ pub fn collectLocals(self: *Codegen, locals: *std.ArrayListUnmanaged(LocalDecl),
                 if (w.binding) |bn| {
                     const cinfo = self.classes.get(class_name).?;
                     const enter_sig = cinfo.methods.get("__enter__") orelse return error.Unsupported;
-                    try locals.append(self.allocator, .{ .name = bn, .info = enter_sig.ret, .arena = in_lowlevel });
+                    try locals.append(self.allocator, .{ .name = bn, .info = enter_sig.sig.ret, .arena = in_lowlevel });
                 }
                 try self.collectLocals(locals, w.body, in_lowlevel);
             },
@@ -946,6 +1046,10 @@ pub fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) Codegen
     self.mod_cache.deinit(self.allocator);
     self.mod_cache = .empty;
     self.current_path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ class_name, m.name });
+    // Faz 7 (tekli kalıtım): `super().metod(...)`/`super().__init__(...)`in
+    // (bkz. `calls.zig`nin `genSuperMethodCall`ı) BU metodun HANGİ SINIFA
+    // AİT olduğunu (taban sınıfı bulmak İçin) bilmesi gerekir.
+    self.current_self_class = class_name;
 
     const ret_info = try self.resolveType(m.return_type);
     self.current_ret_qtype = ret_info.qtype;

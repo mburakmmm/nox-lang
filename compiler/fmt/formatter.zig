@@ -229,7 +229,11 @@ const Printer = struct {
             .func_def => |fd| try self.printFuncDef(fd, depth, stmt.line),
             .class_def => |c| {
                 try self.indentTo(depth);
-                try self.writer.print("class {s}:", .{c.name});
+                if (c.base) |b| {
+                    try self.writer.print("class {s}({s}):", .{ c.name, b });
+                } else {
+                    try self.writer.print("class {s}:", .{c.name});
+                }
                 try self.line(stmt.line);
                 // Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): AÇIKÇA
                 // bildirilen alanlar (varsa) metodlardan ÖNCE, her biri

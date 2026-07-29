@@ -26,6 +26,35 @@ const qbeTypeName = abi.qbeTypeName;
 const qbeSizeOf = abi.qbeSizeOf;
 const isHeapManaged = abi.isHeapManaged;
 
+/// Faz 7 (tekli kalıtım): `cinfo.has_vtable` İSE bu SOMUT sınıfın vtable
+/// veri bloğunu YAYINLAR — `data $ClassName_vtable = { l $Owner1_M1, l
+/// $Owner2_M2, ... }`, slot SIRASINA göre (0..`next_vtable_slot`-1). HER
+/// slot İçin o slotu TAŞIYAN metod adını `cinfo.methods`de ARAYIP
+/// `owner`ını KULLANARAK gerçek sembolü yazar — miras alınan (override
+/// EDİLMEMİŞ) bir slot İçin bu, ATANIN sembolüdür (bu SINIFIN KENDİ
+/// sembolü DEĞİL). `genMethodCall`in dolaylı çağrı yolu BU bloğu
+/// `loadl $ClassName_vtable + slot*8` İLE OKUR; `genConstructFromValues`
+/// bu bloğun ADRESİNİ HER yeni örneğe (TAG'den HEMEN SONRA) yazar.
+pub fn genClassVtable(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) CodegenError!void {
+    if (!cinfo.has_vtable or cinfo.next_vtable_slot == 0) return;
+    const slots = try self.allocator.alloc(?struct { owner: []const u8, name: []const u8 }, cinfo.next_vtable_slot);
+    @memset(slots, null);
+    var it = cinfo.methods.iterator();
+    while (it.next()) |e| {
+        slots[e.value_ptr.slot] = .{ .owner = e.value_ptr.owner, .name = e.key_ptr.* };
+    }
+    try self.out.writer.print("data ${s}_vtable = {{ ", .{class_name});
+    for (slots, 0..) |s, i| {
+        if (i > 0) try self.out.writer.writeAll(", ");
+        // Her slot HER ZAMAN bir metod TARAFINDAN doldurulmuş OLMALIDIR —
+        // `registerClass` HER hiyerarşi seviyesinde TÜM önceki slotları
+        // (miras yoluyla) KORUR, hiçbiri asla BOŞ kalmaz.
+        const entry = s.?;
+        try self.out.writer.print("l ${s}_{s}", .{ entry.owner, entry.name });
+    }
+    try self.out.writer.writeAll(" }\n");
+}
+
 /// Her sınıf için `$ClassName_release(rt, p)` üretir: refcount'u azaltır
 /// (`nox_rc_predecrement`); sıfıra düştüyse, ÖNCE heap-yönetimli her alanı
 /// (sınıf TİPLİ ya da — bkz. görev "Sınıf alanı list[T] tipinde olabilsin"

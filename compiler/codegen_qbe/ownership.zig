@@ -290,7 +290,22 @@ pub fn genListElemRelease(self: *Codegen, fn_name: []const u8, info: ElemHeapInf
         try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ is_null, skip_label, rel_label });
         try self.out.writer.print("{s}\n", .{rel_label});
         if (callee) |c| {
-            try self.out.writer.print("    call ${s}_release(l {s}, l {s})\n", .{ c, RT_PARAM, elem });
+            // Faz 7 (tekli kalıtım): `releaseValueIfSet`in AYNI gerekçesi —
+            // `n.class_name` (BU listenin STATİK eleman sınıfı) kalıtıma
+            // KATILIYORSA, ÇALIŞMA ZAMANI elemanı bir alt sınıf OLABİLİR
+            // (fazladan alanlarla) — sabit `$c_release` yerine ÇALIŞMA-
+            // ZAMANI etiket-dağıtımına gidilir.
+            const dispatch_dynamic = if (n.heap == .class) blk: {
+                const ci = self.classes.get(c) orelse break :blk false;
+                break :blk ci.has_vtable;
+            } else false;
+            if (dispatch_dynamic) {
+                const tag = try self.newTemp();
+                try self.out.writer.print("    {s} =l loadl {s}\n", .{ tag, elem });
+                try self.out.writer.print("    call $nox_class_release_dispatch(l {s}, l {s}, l {s})\n", .{ RT_PARAM, tag, elem });
+            } else {
+                try self.out.writer.print("    call ${s}_release(l {s}, l {s})\n", .{ c, RT_PARAM, elem });
+            }
         } else if (n.heap == .closure) {
             // Faz U.4.5: `releaseValueIfSet`nin `.closure` dalıYLA AYNI
             // dinamik dispatch (bkz. onun belge notu) — elemanın KENDİ
@@ -360,7 +375,32 @@ pub fn releaseValueIfSet(self: *Codegen, ptr: []const u8, heap: HeapKind, elem_q
     try self.out.writer.print("{s}\n", .{release_label});
     if (heap == .class) {
         const cn = class_name.?;
-        try self.out.writer.print("    call ${s}_release(l {s}, l {s})\n", .{ cn, RT_PARAM, ptr });
+        // Faz 7 (tekli kalıtım): `cn` (bu SLOT'un STATİK/bildirilen sınıfı)
+        // kalıtıma KATILIYORSA, ÇALIŞMA ZAMANI nesnesi `cn`nin bir alt
+        // sınıfı OLABİLİR — o alt sınıf `cn`nin SAHİP OLMADIĞI EK alanlar
+        // TAŞIYOR olabileceğinden, sabit `$cn_release` çağrısı SADECE
+        // `cn`nin KENDİ (miras alınan) alanlarını serbest bırakır, alt
+        // sınıfın EK alanlarını SESSİZCE ATLAR (GERÇEK bir sızıntı —
+        // bellek BOZULMAZ, `nox_rc_free_payload` YİNE de TÜM payload'ı
+        // serbest bırakır, ama alt sınıfın EK alanlarının KENDİ İÇ
+        // referansları hiç serbest bırakılmaz). Düzeltme: bare `except:`in
+        // ZATEN kullandığı AYNI ÇALIŞMA-ZAMANI etiket-dağıtımı
+        // (`$nox_class_release_dispatch`, bkz. `layout.zig`nin
+        // `genClassReleaseDispatch`ı) — nesnenin KENDİ tag'i OKUNUP DOĞRU
+        // (GERÇEK, çalışma-zamanı) sınıfın `_release`ine dal açılır.
+        // Kalıtıma KATILMAYAN sınıflar İçin (`has_vtable == false`, BÜYÜK
+        // ÇOĞUNLUK) davranış BİREBİR ÖNCEKİ GİBİ (sabit çağrı) kalır.
+        if (self.classes.get(cn)) |cinfo| {
+            if (cinfo.has_vtable) {
+                const tag = try self.newTemp();
+                try self.out.writer.print("    {s} =l loadl {s}\n", .{ tag, ptr });
+                try self.out.writer.print("    call $nox_class_release_dispatch(l {s}, l {s}, l {s})\n", .{ RT_PARAM, tag, ptr });
+            } else {
+                try self.out.writer.print("    call ${s}_release(l {s}, l {s})\n", .{ cn, RT_PARAM, ptr });
+            }
+        } else {
+            try self.out.writer.print("    call ${s}_release(l {s}, l {s})\n", .{ cn, RT_PARAM, ptr });
+        }
     } else if (heap == .closure) {
         // Faz U.4.4: bir `.closure` değerinin SOMUT release fonksiyonu
         // ARTIK `class_name` (statik/isim-tabanlı dispatch) ÜZERİNDEN

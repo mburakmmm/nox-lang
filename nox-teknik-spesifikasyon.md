@@ -13123,6 +13123,158 @@ stderr-boş kontrolü (`nox_runtime_deinit`nin sızıntı-tespit çıktısı) HE
 `defer` testini örtülü bir bellek-güvenliği testi de yapar. Tam `zig
 build test` yeşil (609→619 test).
 
+## 3.73 Faz 7 — Basit tek-kalıtım (`class Derived(Base):`)
+
+Kullanıcının `nyx` web framework'ünü geliştirirken karşılaştığı 7 "Nox
+limitasyonu"ndan biri ("Context genişletilemez") — Nox'ta ÖNCEDEN HİÇBİR
+kalıtım/base-class kavramı YOKTU (grep: `super`/`extends`/`isinstance`
+SIFIR eşleşme). Kullanıcı en GENİŞ kapsamı ("Basit tek-kalıtım ekle")
+seçti — tek bir taban sınıf, override, `super()`.
+
+### Sözdizimi ve tip sistemi
+
+- `class Derived(Base):` — parser `parseClassDef`de `[T,U]` generic
+  parantezinden ÖNCE, tek bir taban sınıf adı ayrıştırır (çoklu kalıtım
+  YOK). `ast.ClassDef.base: ?[]const u8` yeni alan.
+- `Type.class` (checker) HÂLÂ sadece bir isim taşır — hiyerarşi bilgisi
+  `Checker.classes[name].base` zincirinden `isSubclassOf` İLE çözülür.
+  `assignable` ARTIK sınıf tipleri İçin `isSubclassOf(value, declared)`i
+  de dener (kovaryans: bir taban-tipli yere HERHANGİ bir alt sınıf
+  atanabilir) — `types.eql` (KATI, `==`/protokol karşılaması/homojen
+  liste İçin) DEĞİŞMEDİ.
+- **Alan/metod DÜZLEŞTİRMESİ** (en az invaziv strateji): bir sınıfın
+  `ClassInfo.fields`/`methods`i HER ZAMAN taban zincirinin TAMAMINI
+  İÇİNDE barındırır (taban sınıfın KENDİ ÇAĞRISI ZATEN düzleştirilmiş
+  OLDUĞUNDAN, TEK seviyeli bir kopyalama YETERLİDİR) — tüm arama
+  siteleri (metod çağrısı, alan erişimi, protokol karşılama)
+  HİÇBİR taban-zinciri YÜRÜMEDEN, tek bir düz haritaya bakmaya DEVAM
+  eder. **Sıralama tuzağı (GERÇEK, bulunup düzeltildi):** `self.x = ...`
+  İLE (açık bir alan bildirimi OLMADAN) ÇIKARSANAN alanlar SADECE o
+  sınıfın KENDİ gövde-denetimi (Geçiş 3) ÇALIŞTIKTAN SONRA bilinir hale
+  gelir — imza kaydı (Geçiş 2) SIRASINDA yapılan TEK'lik bir kopyalama
+  bu YÜZDEN İNFERRED alanları KAÇIRIR. Çözüm: `checkModule`nin
+  `ensureClassBodyChecked`i taban gövdesini ÖNCE (gerekirse metinsel
+  sıradan SAPARAK) denetler, SONRA türetilene TAMAMLAYICI bir alan
+  kopyalaması yapar.
+- **İkinci, DAHA ciddi sıralama tuzağı (GERÇEK, bulunup düzeltildi):**
+  `registerSignatures`i "ÖNCE TÜM fonksiyonlar, SONRA TÜM sınıflar"
+  şeklinde yeniden sıralamak YANLIŞTIR — bir fonksiyonun İMZASI (ör.
+  `-> Box[int]`) Geçiş 2 SIRASINDA bir generic sınıfı ANINDA
+  somutlaştırabilir (`instantiateGenericClass`), bu da o somutlaştırmanın
+  `__init__` gövdesini HEMEN denetler — EĞER o gövde `core.nox`nin
+  `ValueError` GİBİ, METİNSEL olarak SONRA gelen bir sınıfı kullanıyorsa,
+  bu sınıf HENÜZ kayıtlı OLMAZ. Düzeltme: `registerSignatures` METİNSEL
+  sırayı KORUR (`func_def`/`class_def`/`extern_def` İÇ İÇE, ÖNCEKİ GİBİ),
+  `ensureClassSignatureRegistered` SADECE bir taban sınıf İLERİ bir
+  referansSA (nadir) taban için sıra dışı bir kayda SAPAR.
+- **Generic sınıf + kalıtım ETKİLEŞİMİ v1 kapsamı DIŞINDA** — `class
+  Box(Base)[T]:` AÇIKÇA (sessizce YOK sayılmadan) reddedilir.
+
+### `super()`
+
+Yeni bir anahtar kelime DEĞİL — `super` çıplak bir tanımlayıcı olarak
+LEXlenir, checker/codegen SADECE `super().metod(...)`/`super().
+__init__(...)` KALIBINI (bir metod çağrısının ALICISI olarak, argümansız
+bir `super()` çağrısı) TANIR; başka HERHANGİ bir kullanım (`x =
+super()`, bir argüman olarak geçirme) AÇIKÇA reddedilir. Checker `super()`i
+`self_class`in tabanına ÇÖZER (`.class = base_name` tipi); codegen İSE
+BUNU (bkz. aşağıdaki vtable tasarımı) HER ZAMAN DOĞRUDAN — ASLA vtable
+ÜZERİNDEN DEĞİL — atanın implementasyonuna çağırır (`genSuperMethodCall`)
+— bu, bir override'ın KENDİ `super()` çağrısının SONSUZ ÖZYİNELEMEYE YOL
+AÇMAMASI İçin ZORUNLUDUR.
+
+### Codegen: vtable mekanizması (BİLİNÇLİ v1 basitleştirmesi)
+
+Metod çağrıları ÖNCEDEN %100 DOĞRUDAN/statik sembol çağrısıydı
+(`call $ClassName_method(...)`) — polimorfik dispatch İçin GERÇEK bir
+indirect-call mekanizması GEREKİYORDU (closure'ların `fn_ptr@0`
+başlığıyla AYNI ruh, ama sınıf başına bir vtable BLOĞU üzerinden).
+
+- Nesne başlığı: `[refcount@-8][tag@0]` — kalıtıma KATILAN (taban YA DA
+  türetilen) sınıflar İçin `[vtable_ptr@TAG_SIZE]` EK bir 8 bayt YUVA
+  KAZANIR, fiili alanlar `TAG_SIZE+8`den başlar. Kalıtıma HİÇ KATILMAYAN
+  sınıflar (Nox kodunun BÜYÜK ÇOĞUNLUĞU) İçin düzen BİREBİR ÖNCEKİ GİBİ
+  kalır — SIFIR performans/boyut regresyonu (tam regresyon suitiyle
+  doğrulandı: MEVCUT TÜM sınıf golden testleri byte-bir-byte AYNI
+  `.expected` çıktıyı ÜRETMEYE DEVAM ETTİ).
+- "Kalıtıma katılıyor mu" (`has_vtable`), bir sınıf KAYDEDİLMEDEN ÖNCE
+  bilinmesi GEREKTİĞİNDEN (bir TABAN sınıfın KENDİ nesne düzeni, HENÜZ
+  kaydedilmemiş bir ALT sınıfın var OLUP OLMADIĞINA bağlıdır — "ileri
+  bilgi problemi") TÜM sınıf tanımlarının SAF, sıraya BAĞIMSIZ bir
+  ön-taramasıyla (`computeInheritingClasses`) ÖNCEDEN hesaplanır.
+- vtable SLOT numaralandırma: bir metod adı bir hiyerarşide İLK KEZ
+  tanımlandığında YENİ bir slot alır (taban sınıftan devralınıp
+  GENİŞLETİLEN bir `next_vtable_slot` sayacı ile); HER override AYNI
+  slotu KULLANIR. `ClassInfo.methods`in DEĞER tipi (`ClassMethodInfo`)
+  ARTIK `{sig, owner, slot}` taşır — `owner`, metodun GERÇEK gövdesini
+  taşıyan sınıftır (miras alınmışsa ATA, override EDİLMİŞSE KENDİSİ).
+- **Bilinçli v1 basitleştirmesi — DEVIRTUALIZATION YOK:** ORİJİNAL plan
+  (bkz. plan dosyası) override EDİLMEMİŞ metodlar İçin doğrudan çağrıyı
+  KORUMAYI (statik olarak KANITLANABİLİRSE) öngörüyordu — bu, "hangi
+  metod HERHANGİ bir yerde override EDİLİYOR" bilgisinin taban sınıf
+  KAYDEDİLİRKEN (henüz görülmemiş alt sınıflar YÜZÜNDEN) bilinemeyeceği
+  GERÇEĞİYLE ÇATIŞTI. Basitleştirilmiş v1 kuralı: kalıtıma KATILAN bir
+  sınıfın TÜM metod çağrıları (override EDİLSİN EDİLMESİN) vtable
+  ÜZERİNDEN dolaylı yapılır; SADECE `super()` HER ZAMAN doğrudandır.
+  Bu, küçük bir (tek bir EK pointer-chase) performans maliyeti
+  karşılığında TASARIMI/DOĞRULAMAYI ÖNEMLİ ÖLÇÜDE BASİTLEŞTİRİR —
+  kalıtıma HİÇ KATILMAYAN kodun performansı ETKİLENMEZ.
+- **GERÇEK bir hata bulundu (bağlantı hatası):** kalıtıma katılan ama
+  SIFIR sanal metodu olan bir sınıf (ör. sadece `__init__`i olan bir
+  istisna sınıfı hiyerarşisi) İçin `genClassVtable` HİÇBİR `data
+  $ClassName_vtable` bloğu YAYINLAMAZ (boş vtable anlamsız) — ama
+  `genConstructFromValues` KOŞULSUZ olarak vtable işaretçisini YAZIYORDU,
+  VAR OLMAYAN bir sembole işaret EDEREK bağlantı hatasına yol AÇIYORDU.
+  Düzeltme: sadece `next_vtable_slot > 0` İKEN GERÇEK sembolü yaz, aksi
+  halde yuvayı sıfırla.
+- **GERÇEK bir ARC sızıntı riski bulundu (bellek bozulmaz, ama sızar):**
+  taban-tipli bir SLOT'un (yerel değişken, sınıf alanı, `list[Base]`
+  elemanı) release'i ÖNCEDEN HER ZAMAN sabit `$Base_release`e giderdi —
+  ÇALIŞMA ZAMANI nesnesi bir `Derived` İSE (fazladan alanlarla) bu, SADECE
+  `Base`nin (miras alınan) alanlarını serbest bırakır, `Derived`in EK
+  alanlarını SESSİZCE ATLAR. Düzeltme: `has_vtable` bir sınıf İçin
+  release, bare `except:`in ZATEN kullandığı ÇALIŞMA-ZAMANI etiket
+  dağıtımına (`$nox_class_release_dispatch`, `layout.zig`nin
+  `genClassReleaseDispatch`ı) YÖNLENDİRİLİR — hem `releaseValueIfSet`
+  (yerel/alan release'inin TEK ORTAK yolu) hem `genListElemRelease`
+  (liste elemanı release'i, AYRI bir doğrudan-çağrı sitesi) düzeltildi.
+
+### Hiyerarşik `except`
+
+`except Base:` bir `Derived` örneğini de yakalar — `codegen.zig`
+TÜM sınıflar kaydedildikten SONRA HER sınıf İçin KENDİSİ + TÜM
+(transitif) alt sınıflarının `class_id`lerini (`descendant_class_ids`)
+ÖNCEDEN hesaplar; `exceptions.zig`nin except-eşleştirmesi TEK bir `ceql`
+YERİNE bu listenin TAMAMI üzerinde bir OR-zinciri üretir (liste TEK
+elemanlıysa — kalıtıma KATILMAYAN/yaprak sınıfların BÜYÜK ÇOĞUNLUĞU —
+BİREBİR ÖNCEKİ tek-`ceql` kodu üretilir, SIFIR regresyon).
+
+### Polimorfik liste literalleri
+
+`xs: list[Animal] = [Dog(...), Cat(...)]` — `checkExprExpected`, eleman
+tipi bir SINIF olan VE bir BEKLENEN tip (`list[Animal]`) BİLİNEN, BOŞ
+OLMAYAN bir liste literali İçin HER elemanın `assignable` (kovaryant)
+olmasını YETERLİ SAYAR (`checkExpr`in KENDİ pairwise-`types.eql`
+davranışı BAĞLAMSIZ liste literalleri İçin — ör. iç içe geçmiş, `int`/
+`float` GİBİ primitive elemanlı — DEĞİŞMEDİ, SADECE sınıf eleman
+tipleriyle SINIRLI YENİ bir dar kapsam).
+
+**Bilinçli v1 kapsamı (kalan, belgelenen sınırlamalar):** çoklu kalıtım
+YOK; generic sınıf + kalıtım ETKİLEŞİMİ YOK (AÇIKÇA reddedilir);
+kovaryant dönüş/kontravaryant parametre YOK (override TAM imza eşleşmesi
+gerektirir — protokol karşılamasının AYNI katı kuralı); `$ClassName_eq`
+(yapısal `==`) HÂLÂ statik/alıcı-tipi TABANLIDIR (taban-tipli bir
+karşılaştırma, alt sınıfın EK alanlarını GÖRMEZ — `_release`in AKSİNE
+BU düzeltilmedi, SEMANTİK bir sürpriz ama bellek-GÜVENLİ, düşük öncelik
+olarak KAYDEDİLDİ).
+
+**Doğrulama:** `tests/golden/codegen_cases/`e 4 YENİ uçtan-uca test
+(temel kalıtım+`super().__init__`; taban-tipli liste/parametre ÜZERİNDEN
+polimorfizm; hiyerarşik `except`; `super().metod(...)` — sonsuz
+özyinelemeye YOL AÇMADIĞININ KANITI) + `tests/golden/typecheck_cases/`e
+4 hata-durumu testi (override imza uyuşmazlığı, bilinmeyen taban,
+generic+taban, `super()` metod DIŞI). Tam `zig build test` yeşil.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

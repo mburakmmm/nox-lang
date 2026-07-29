@@ -14,6 +14,44 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.16.0]
+
+### Eklendi
+- **Basit tek-kalıtım**: `class Derived(Base):` — tek bir taban sınıf,
+  metod override (taban ile TAM imza eşleşmesi gerektirir), `super().
+  __init__(...)` ile AÇIK kurucu zincirleme, `super().metod(...)` (HER
+  ZAMAN doğrudan, asla vtable üzerinden — sonsuz özyinelemeyi önler).
+  Taban-tipli bir değişken/liste/fonksiyon parametresi bir alt sınıf
+  örneğini tutabilir ve `obj.metod()` ÇALIŞMA ZAMANINDA doğru override'a
+  gider (yeni bir vtable mekanizması — closure'ların `fn_ptr` başlığıyla
+  aynı ruh). `except Base:` bir `Derived` örneğini de yakalar (hiyerarşik
+  `class_id` eşleşmesi). `xs: list[Animal] = [Dog(...), Cat(...)]` gibi
+  polimorfik liste literalleri artık kabul ediliyor. **Bilinçli v1
+  kapsamı**: çoklu kalıtım yok; generic sınıf + kalıtım etkileşimi yok
+  (açıkça reddedilir); kovaryant dönüş/kontravaryant parametre yok;
+  kalıtıma katılan bir sınıfın TÜM metod çağrıları (override edilsin
+  edilmesin) vtable üzerinden dolaylı yapılır — devirtualization
+  (orijinal tasarımda planlanan bir optimizasyon) "hangi metod herhangi
+  bir yerde override ediliyor" bilgisinin taban sınıf kaydedilirken
+  bilinemeyeceği gerçeğiyle çatıştığından v1'de basitleştirildi; kalıtıma
+  HİÇ katılmayan sınıflar (Nox kodunun büyük çoğunluğu) için nesne
+  düzeni/performans birebir öncekiyle aynı kalır (tam regresyon suitiyle
+  doğrulandı — mevcut tüm sınıf golden testleri byte-bir-byte aynı çıktı
+  üretmeye devam etti); `$ClassName_eq` (yapısal `==`) hâlâ statik/alıcı-
+  tipi tabanlı (bir alt sınıfın ek alanlarını görmez — bellek-güvenli ama
+  semantik bir sürpriz, düşük öncelik olarak kaydedildi).
+
+### Düzeltildi
+- **Kalıtıma katılan bir sınıfın taban-tipli release'i alt sınıfın ek
+  alanlarını sessizce atlıyordu** (bellek bozulmaz, ama alt sınıfın ek
+  alanlarının kendi iç referansları hiç serbest bırakılmazdı — gerçek bir
+  sızıntı) — `releaseValueIfSet`/`genListElemRelease` artık bare
+  `except:`in zaten kullandığı çalışma-zamanı etiket dağıtımına
+  (`nox_class_release_dispatch`) yönlendiriliyor.
+- **Sıfır sanal metotlu (yalnızca `__init__`) kalıtımsal bir sınıf
+  bağlantı hatasına yol açıyordu** — `genConstructFromValues` var
+  olmayan bir `$ClassName_vtable` sembolüne koşulsuz referans veriyordu.
+
 ## [1.15.0]
 
 ### Eklendi

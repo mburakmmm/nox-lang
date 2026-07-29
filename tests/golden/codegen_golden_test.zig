@@ -1298,6 +1298,50 @@ test "codegen(calistir): generic sinif __init__ icinde raise sessizce YUTULMAZ" 
     );
 }
 
+// Faz 7 (tekli kalıtım, bkz. proje belleği "7 fazlı düzeltme planı"):
+// `super().__init__(...)` ile kurucu zincirleme, override + alan mirası
+// (taban+türetilen alanların TEK bir düz nesnede birleşmesi), sızıntı yok.
+test "codegen(çalıştır): Faz 7 — tekli kalıtım temel: super().__init__, override, miras alınan alan" {
+    try expectGolden(
+        @embedFile("codegen_cases/inheritance_basic.nox"),
+        @embedFile("codegen_cases/inheritance_basic.expected"),
+    );
+}
+
+// Faz 7: taban-tipli bir DEĞİŞKEN/liste/fonksiyon parametresi üzerinden
+// ÇALIŞMA ZAMANI polimorfik dispatch (vtable) — hem doğrudan `a.speak()`
+// hem BAŞKA bir metod (`describe`) İÇİNDEN `self.speak()` hem de bir
+// fonksiyon parametresi (`make_speak(a: Animal)`) ÜZERİNDEN AYNI şekilde
+// çalışır; sızıntı yok.
+test "codegen(çalıştır): Faz 7 — tekli kalıtım polimorfizm: taban-tipli liste/parametre üzerinden vtable dispatch" {
+    try expectGolden(
+        @embedFile("codegen_cases/inheritance_polymorphism.nox"),
+        @embedFile("codegen_cases/inheritance_polymorphism.expected"),
+    );
+}
+
+// Faz 7: `except Base:` bir `Derived` örneğini de YAKALAR (hiyerarşik
+// class_id eşleşmesi, OR-zinciri) — hem TABAN-tipli hem TAM-tipli
+// `except` yan tümcesi AYNI `raise`i doğru şekilde yakalar; sızıntı yok.
+test "codegen(çalıştır): Faz 7 — hiyerarşik except: taban sınıf yan tümcesi bir alt sınıf örneğini yakalar" {
+    try expectGolden(
+        @embedFile("codegen_cases/inheritance_hierarchical_except.nox"),
+        @embedFile("codegen_cases/inheritance_hierarchical_except.expected"),
+    );
+}
+
+// Faz 7: `super().metod(...)` (yalnızca `__init__` DEĞİL) — HER ZAMAN
+// DOĞRUDAN (asla vtable ÜZERİNDEN) atanın KENDİ implementasyonuna gider,
+// hem override EDEN sınıfın KENDİSİNDEN hem taban-tipli bir değişken
+// ÜZERİNDEN (override'ın KENDİSİ dolaylı dispatch İLE çağrılsa BİLE
+// override'ın İÇİNDEKİ `super()` çağrısı sonsuz özyinelemeye YOL AÇMAZ).
+test "codegen(çalıştır): Faz 7 — super().metod(...) her zaman doğrudan atanın implementasyonuna gider" {
+    try expectGolden(
+        @embedFile("codegen_cases/inheritance_super_method.nox"),
+        @embedFile("codegen_cases/inheritance_super_method.expected"),
+    );
+}
+
 test "codegen(çalıştır): yapısal protokol — iki farklı sınıf, monomorphize edilmiş dispatch, sızıntı yok" {
     try expectGolden(
         @embedFile("codegen_cases/protocol_dispatch.nox"),

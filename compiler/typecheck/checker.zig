@@ -98,6 +98,14 @@ const FuncSig = struct {
 };
 
 const ClassInfo = struct {
+    /// Faz 7 (tekli kalıtım): `class Derived(Base):` — `ast.ClassDef.base`nin
+    /// AYNISI, `registerClassSignatures` tarafından KOPYALANIR. `fields`/
+    /// `methods`/`init_sig` HER ZAMAN ZATEN DÜZLEŞTİRİLMİŞTİR (tabanın
+    /// KENDİ tabanı DAHİL TÜM ataları BURAYA KOPYALANMIŞTIR) — bu alan
+    /// SADECE `isSubclassOf`/`super()` çözümlemesi İçin taşınır, alan/metod
+    /// ARAMALARI HİÇBİR YERDE bu zinciri KENDİLERİ YÜRÜMEZ (bkz. Faz 7
+    /// tasarım notu: "en az invaziv strateji" — kayıt-zamanında düzleştirme).
+    base: ?[]const u8 = null,
     fields: std.StringHashMapUnmanaged(Type) = .{},
     methods: std.StringHashMapUnmanaged(FuncSig) = .{},
     init_sig: ?FuncSig = null,
@@ -277,6 +285,22 @@ pub const Checker = struct {
     /// beklerler; `self.classes`e ASLA girmez (bare isimleriyle DOĞRUDAN
     /// inşa/tip OLARAK kullanılamazlar).
     generic_classes: std.StringHashMapUnmanaged(ast.ClassDef) = .{},
+    /// Faz 7 (tekli kalıtım): `collectClassNames` tarafından doldurulur —
+    /// `ensureClassBodyChecked`in bir sınıfın ADINDAN kendi `ast.ClassDef`ine
+    /// (taban zincirini YUKARI doğru YÜRÜMEK İçin) geri gitmesi İçin.
+    class_defs_by_name: std.StringHashMapUnmanaged(ast.ClassDef) = .{},
+    /// Faz 7: `ensureClassBodyChecked` tarafından tutulan — bir sınıfın
+    /// gövdesinin (Geçiş 3) ZATEN denetlenip denetlenmediği (bkz. onun
+    /// belge notu, "taban ÖNCE, ama SADECE gerektiğinde" deseni).
+    class_body_checked: std.StringHashMapUnmanaged(void) = .{},
+    /// Faz 7: `ensureClassSignatureRegistered` tarafından tutulan — bir
+    /// sınıfın İMZASININ (Geçiş 2) ZATEN kaydedilip kaydedilmediği.
+    class_sig_registered: std.StringHashMapUnmanaged(void) = .{},
+    /// Faz 7: `ensureClassSignatureRegistered`in KENDİ ÇAĞRI YIĞININDA
+    /// "şu an işleniyor" işareti — döngüsel kalıtımı (A→B→A) yakalamak
+    /// İçin (`class_sig_registered`den AYRI: o SADECE "TAMAMLANDI" bilgisi
+    /// taşır, BU ise "HÂLÂ İŞLENİYOR" bilgisini).
+    class_sig_in_progress: std.StringHashMapUnmanaged(void) = .{},
     /// `instantiateGenericClass` tarafından üretilen, somut (monomorphize
     /// edilmiş) sınıf tanımları — `instantiations`in AYNISI ama SINIFLAR
     /// İçin.
@@ -505,17 +529,50 @@ pub const Checker = struct {
         }
     }
 
-    fn assignable(declared: Type, value: Type) bool {
+    fn assignable(self: *Checker, declared: Type, value: Type) bool {
         if (types.eql(declared, value)) return true;
         if (declared == .float and value == .int) return true;
+        // Faz 7 (tekli kalıtım): bir taban-sınıf tipi bildirilen bir yere
+        // (parametre/alan/dönüş/var_decl) taban sınıfın HERHANGİ bir
+        // (transitif) ALT sınıfının bir örneği atanabilir — standart
+        // nesne-yönelimli kovaryans (bkz. `isSubclassOf`).
+        if (declared == .class and value == .class) {
+            return self.isSubclassOf(value.class, declared.class);
+        }
         // Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `T | None`e
         // hem `None` HEM DE çıplak `T` (Python'daki "auto-wrap" gibi,
         // `x: int | None = 5` GEÇERLİDİR) atanabilir.
         if (declared == .optional) {
             if (value == .none) return true;
-            return assignable(declared.optional.*, value);
+            return self.assignable(declared.optional.*, value);
         }
         return false;
+    }
+
+    /// Faz 7 (tekli kalıtım): `sub` sınıfı `sup`un KENDİSİ ya da
+    /// (transitif) bir alt sınıfı MI — taban zincirini `sup`a ULAŞANA ya
+    /// da taban BİTENE (bilinmeyen/YOK) kadar yukarı doğru YÜRÜR.
+    fn isSubclassOf(self: *Checker, sub: []const u8, sup: []const u8) bool {
+        var cur: ?[]const u8 = sub;
+        while (cur) |name| {
+            if (std.mem.eql(u8, name, sup)) return true;
+            const info = self.classes.get(name) orelse return false;
+            cur = info.base;
+        }
+        return false;
+    }
+
+    /// Faz 7 (tekli kalıtım): `e` TAM OLARAK `super()` (argümansız,
+    /// çıplak `super` tanımlayıcısına yapılan bir çağrı) MI — `checkCall`in
+    /// `.attribute` dalının `super().metod(...)` desenini tanıması İçin.
+    fn isSuperCallExpr(e: ast.Expr) bool {
+        return switch (e) {
+            .call => |c| switch (c.callee.*) {
+                .identifier => |n| c.args.len == 0 and std.mem.eql(u8, n, "super"),
+                else => false,
+            },
+            else => false,
+        };
     }
 
     /// Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): bir alan/metod/
@@ -593,9 +650,19 @@ pub const Checker = struct {
                 // ne DOĞRUDAN inşa EDİLEBİLİR ne de bir tip ifadesinde
                 // KULLANILABİLİR.
                 if (cd.type_params.len > 0) {
+                    // Faz 7 (tekli kalıtım): generic sınıf + kalıtım
+                    // ETKİLEŞİMİ v1 KAPSAMI DIŞINDA (bkz. proje belleği
+                    // "7 fazlı düzeltme planı" Faz 7) — `instantiateGenericClass`
+                    // somut örneklemeyi `.base` OLMADAN sentezlediğinden
+                    // (bilerek, generic+kalıtım DESTEKLENMEDİĞİNDEN),
+                    // bunu SESSİZCE DÜŞÜRMEK YERİNE burada AÇIKÇA reddedilir.
+                    if (cd.base != null) {
+                        return self.fail(error.TypeMismatch, "generic bir sınıfın ('{s}') taban sınıfı olamaz (generic + kalıtım v1 kapsamında desteklenmiyor)", .{cd.name});
+                    }
                     try self.generic_classes.put(self.allocator, cd.name, cd);
                 } else {
                     try self.classes.put(self.allocator, cd.name, .{});
+                    try self.class_defs_by_name.put(self.allocator, cd.name, cd);
                 }
             }
         }
@@ -635,16 +702,61 @@ pub const Checker = struct {
     // ---- Geçiş 2: fonksiyon/sınıf imzalarını çözümle ----
 
     fn registerSignatures(self: *Checker, module: ast.Module) TypeError!void {
+        // Faz 7 (tekli kalıtım): sınıflar METİNSEL sırayla kaydedilmeye
+        // DEVAM eder (`func_def`/`extern_def` İLE İÇ İÇE geçmiş — bu SIRA
+        // KORUNMALIDIR: bir `func_def`in dönüş/parametre tipi bir generic
+        // sınıfı ANINDA (Geçiş 2 SIRASINDA, `typeExprToType`nin `.generic`
+        // dalı üzerinden) somutlaştırabilir — bkz. `instantiateGenericClass`
+        // — bu YÜZDEN "ÖNCE TÜM sınıfları, SONRA TÜM fonksiyonları
+        // kaydet" gibi bir GENEL yeniden-sıralama YANLIŞTIR: `core.nox`nin
+        // `ValueError` GİBİ (kullanıcı kodundan ÖNCE, ama LİSTEDE HENÜZ
+        // "sınıf" olarak İŞLENMEMİŞ) sınıfları, DAHA SONRAKİ bir
+        // fonksiyonun İMZASI (ör. `-> Box[int]`) TARAFINDAN TETİKLENEN bir
+        // somutlaştırmanın (`raise ValueError(...)` İÇEREN bir `__init__`
+        // gövdesi) İÇİNDE HENÜZ KAYITLI OLMAYAN bir `init_sig`le
+        // BULUNMASINA yol AÇARDI — GERÇEK bir regresyonla BULUNDU/
+        // DÜZELTİLDİ, bkz. proje belleği). SADECE `cd.base` bir İLERİ
+        // referansSA (Derived, Base'den ÖNCE YAZILMIŞSA) `ensureClass
+        // SignatureRegistered` Base'i HEMEN, sıra dışı kaydeder — AKSİ
+        // HALDE (BÜYÜK ÇOĞUNLUK: taban YOK ya da taban ZATEN ÖNCE
+        // YAZILMIŞ) davranış BİREBİR ÖNCEKİ METİNSEL sırayla AYNIDIR.
         for (module.body) |stmt| {
             self.current_line = stmt.line;
             self.current_span = stmt.span;
             switch (stmt.kind) {
                 .func_def => |fd| try self.registerFunc(fd),
-                .class_def => |cd| try self.registerClassSignatures(cd),
+                .class_def => |cd| try self.ensureClassSignatureRegistered(cd),
                 .extern_def => |ed| try self.registerExternFunc(ed),
                 else => {},
             }
         }
+    }
+
+    /// Faz 7: `cd`nin İMZASININ (Geçiş 2) KAYITLI olduğundan EMİN olur —
+    /// taban sınıfı (varsa) HENÜZ kayıtlı DEĞİLSE (`class Derived(Base):`
+    /// `Base`den ÖNCE de YAZILABİLİR) ÖNCE ONU (özyinelemeli olarak)
+    /// kaydeder. `class_sig_in_progress` DÖNGÜSEL kalıtımı (A→B→A)
+    /// yakalar (`class_sig_registered`e HENÜZ EKLENMEMİŞ ama BU ÇAĞRI
+    /// YIĞININDA HÂLÂ "işleniyor" İŞARETLİ bir sınıfa TEKRAR rastlanırsa).
+    fn ensureClassSignatureRegistered(self: *Checker, cd: ast.ClassDef) TypeError!void {
+        if (cd.type_params.len > 0) return; // generic şablon — registerClassSignatures ZATEN erken döner
+        if (self.class_sig_registered.contains(cd.name)) return;
+        if (self.class_sig_in_progress.contains(cd.name)) {
+            return self.fail(error.TypeMismatch, "sınıflar arasında döngüsel kalıtım tespit edildi: {s}", .{cd.name});
+        }
+        try self.class_sig_in_progress.put(self.allocator, cd.name, {});
+        if (cd.base) |base_name| {
+            if (self.class_defs_by_name.get(base_name)) |base_cd| {
+                try self.ensureClassSignatureRegistered(base_cd);
+            }
+            // `class_defs_by_name`de YOKSA (ne bir sıradan ne generic bir
+            // sınıf adı) — `registerClassSignatures`in KENDİ `self.classes.
+            // get(base_name) orelse UndefinedClass` kontrolü BUNU zaten
+            // NET bir tanılamayla YAKALAYACAKTIR, burada EK bir kontrol
+            // GEREKMEZ.
+        }
+        try self.registerClassSignatures(cd);
+        try self.class_sig_registered.put(self.allocator, cd.name, {});
     }
 
     /// `extern def` bildirimini normal fonksiyonlarla AYNI tabloya
@@ -1223,7 +1335,7 @@ pub const Checker = struct {
         }
 
         const arg_t = try self.checkExpr(ctx, c.args[1]);
-        if (!assignable(sig.params[0], arg_t)) {
+        if (!self.assignable(sig.params[0], arg_t)) {
             return self.fail(error.TypeMismatch, "'nox.thread.start': 'arg' tipi 'entry'in parametre tipiyle uyuşmuyor", .{});
         }
 
@@ -1240,15 +1352,44 @@ pub const Checker = struct {
         // erken dönüşten ETKİLENMEZ.
         if (cd.type_params.len > 0) return;
         const info = self.classes.getPtr(cd.name).?; // collectClassNames'de eklendi
+        info.base = cd.base;
+        // Faz 7 (tekli kalıtım): taban sınıfın (bu noktada `registerClassesInOrder`
+        // sayesinde ZATEN TAM kaydedilmiş) TÜM alanlarını/metodlarını/
+        // `init_sig`ini KOPYALA — "en az invaziv strateji" (bkz. Faz 7
+        // tasarım notu): tüm arama siteleri (metod çağrısı, alan erişimi,
+        // protokol karşılama) HİÇBİR taban-zinciri YÜRÜMEDEN, tek bir düz
+        // `info.methods`/`info.fields` haritasına bakmaya DEVAM eder.
+        // **ÖNEMLİ SINIRLAMA (bu noktada)**: bu, tabanın `__init__`
+        // gövdesinde `self.<ad> = ...` İLE (AÇIKÇA bir `FieldDecl` OLMADAN)
+        // ÇIKARSANAN alanları henüz YAKALAYAMAZ — o çıkarım Geçiş 3'te
+        // (`checkClassBody`/`checkAssign`) OLUR, BU fonksiyondan (Geçiş 2)
+        // SONRA. `ensureClassBodyChecked` (Geçiş 3), taban gövdesi
+        // denetlendikten HEMEN SONRA (artık TAM alan kümesiyle) İKİNCİ bir
+        // TAMAMLAYICI kopyalama YAPAR — bkz. onun belge notu. Metodlar
+        // BURADA TAM kopyalanır (metod imzaları HER ZAMAN açık/tam bilinir,
+        // çıkarım YOK) — ikinci bir metod-kopyalama adımına GEREK yoktur.
+        if (cd.base) |base_name| {
+            const base_info = self.classes.get(base_name) orelse
+                return self.fail(error.UndefinedClass, "sınıf '{s}' bilinmeyen bir taban sınıfa sahip: {s}", .{ cd.name, base_name });
+            var field_it = base_info.fields.iterator();
+            while (field_it.next()) |e| try info.fields.put(self.allocator, e.key_ptr.*, e.value_ptr.*);
+            var method_it = base_info.methods.iterator();
+            while (method_it.next()) |e| try info.methods.put(self.allocator, e.key_ptr.*, e.value_ptr.*);
+            info.init_sig = base_info.init_sig;
+        }
         // Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): AÇIKÇA
         // bildirilen alanlar, metod imza döngüsünden ÖNCE `info.fields`e
         // yerleştirilir — bu SAYEDE `__init__`deki `self.<ad> = ...`
         // atamaları AŞAĞIDAKİ `checkAssign`in ZATEN VAR OLAN "bilinen tip
         // İLE assignable" dalından GEÇER (yeni bir alan YARATMAZ). Aynı
-        // alan İKİ KEZ bildirilirse `DuplicateDefinition` (`collectClassNames`nin
-        // sınıf-adı yinelemesiyle AYNI hata kodu).
+        // alan İKİ KEZ bildirilirse (ya da taban sınıfta ZATEN VARSA)
+        // `DuplicateDefinition` (`collectClassNames`nin sınıf-adı
+        // yinelemesiyle AYNI hata kodu).
         for (cd.fields) |fd| {
             if (info.fields.contains(fd.name)) {
+                if (cd.base != null) {
+                    return self.fail(error.DuplicateDefinition, "sınıf '{s}'in '{s}' alanı zaten bildirilmiş (belki de bir taban sınıfta)", .{ cd.name, fd.name });
+                }
                 return self.fail(error.DuplicateDefinition, "sınıf '{s}'in '{s}' alanı zaten bildirilmiş", .{ cd.name, fd.name });
             }
             const ft = try self.typeExprToType(fd.type_expr);
@@ -1274,9 +1415,32 @@ pub const Checker = struct {
             if (std.mem.eql(u8, m.name, "__init__")) {
                 info.init_sig = sig;
             } else {
+                // Faz 7: miras alınan bir metodu EZİYORSA (override) —
+                // v1 katı kuralı, Nox'un genel açık/statik tarzıyla TUTARLI:
+                // imza (self HARİÇ parametre tipleri + dönüş tipi) taban
+                // sınıftakiyle TAM eşleşmeli (kovaryant dönüş/kontravaryant
+                // parametre YOK — `protocol` karşılamasının KENDİ katı
+                // `types.eql` kuralıyla AYNI gerekçe).
+                if (info.methods.get(m.name)) |inherited| {
+                    if (!funcSigEqlIgnoringSelf(inherited, sig)) {
+                        return self.fail(error.TypeMismatch, "metod '{s}.{s}' taban sınıftaki imzayla eşleşmiyor (override tam imza eşleşmesi gerektirir)", .{ cd.name, m.name });
+                    }
+                }
                 try info.methods.put(self.allocator, m.name, sig);
             }
         }
+    }
+
+    /// Faz 7: iki metod imzasının (self HARİÇ) TAM eşleşip eşleşmediğini
+    /// kontrol eder — override doğrulaması İçin (`satisfiesProtocol`nin
+    /// KENDİ `types.eql` tabanlı katı eşleşmesiyle AYNI ruh, ama TEK bir
+    /// `FuncSig` çifti üzerinde).
+    fn funcSigEqlIgnoringSelf(a: FuncSig, b: FuncSig) bool {
+        if (a.params.len != b.params.len) return false;
+        for (a.params, b.params) |pa, pb| {
+            if (!types.eql(pa, pb)) return false;
+        }
+        return types.eql(a.return_type, b.return_type);
     }
 
     // ---- Geçiş 3: gövdeleri denetle ----
@@ -1323,7 +1487,7 @@ pub const Checker = struct {
                 // tarafından somut bir örnekleme sentezlendiğinde yapılır.
                 .class_def => |cd| {
                     if (!self.generic_classes.contains(cd.name))
-                        self.checkClassBody(cd) catch |e| try self.recordDiagnostic(e);
+                        try self.ensureClassBodyChecked(cd);
                 },
                 // Protokoller `collectProtocols`te zaten tamamen doğrulandı;
                 // çalışma zamanı kodu üretmezler (yalnızca imza), bu yüzden
@@ -1407,6 +1571,46 @@ pub const Checker = struct {
         if (ret != .none and !alwaysReturns(fd.body)) {
             return self.fail(error.MissingReturn, "fonksiyon '{s}' tüm yollarda değer döndürmüyor", .{fd.name});
         }
+    }
+
+    /// Faz 7 (tekli kalıtım): `cd`nin gövdesini, taban sınıfının (varsa)
+    /// gövdesi ZATEN denetlenmiş OLDUĞUNDAN EMİN OLARAK denetler — bir
+    /// tabanın `__init__`inde `self.<ad> = ...` İLE (AÇIKÇA bir `FieldDecl`
+    /// OLMADAN) ÇIKARSANAN alanlar SADECE o tabanın KENDİ `checkClassBody`si
+    /// ÇALIŞTIKTAN SONRA `info.fields`e girer (bkz. `checkAssign`in
+    /// `.attribute` dalı) — `registerClassSignatures` (Geçiş 2) BUNU henüz
+    /// YAKALAYAMAMIŞTI (SADECE açıkça bildirilen alanlar/metod imzaları
+    /// o AŞAMADA tamdır). `checkModule`nin ana döngüsü `class_def`i METİNSEL
+    /// sırada ziyaret ETSE de (`Derived` `Base`den ÖNCE de YAZILABİLİR),
+    /// bu fonksiyon taban zincirini GEREKTİĞİNDE (yalnızca kalıtım
+    /// KULLANILDIĞINDA — kalıtımsız sınıflar İçin `cd.base == null`,
+    /// davranış BİREBİR ÖNCEKİ GİBİ KALIR) ÖNCE ÇAĞIRARAK doğru sırayı
+    /// GARANTİ EDER; `class_body_checked` her sınıfı EN FAZLA BİR KEZ
+    /// denetler (metinsel döngü, BU fonksiyon TARAFINDAN ÖNCEDEN ÇOKTAN
+    /// denetlenmiş bir tabanla TEKRAR karşılaştığında NO-OP olur).
+    fn ensureClassBodyChecked(self: *Checker, cd: ast.ClassDef) TypeError!void {
+        if (self.class_body_checked.contains(cd.name)) return;
+        try self.class_body_checked.put(self.allocator, cd.name, {});
+        if (cd.base) |base_name| {
+            if (self.class_defs_by_name.get(base_name)) |base_cd| {
+                try self.ensureClassBodyChecked(base_cd);
+                // Taban gövdesi ARTIK denetlendi (ÇIKARSANMIŞ alanlar DAHİL
+                // TAM) — bu alanları ŞİMDİ türetilene TAMAMLAYICI olarak
+                // KOPYALA (Geçiş 2'nin kopyalaması SADECE o anda bilinen,
+                // yani AÇIKÇA bildirilen, alanları yakalayabilmişti; zaten
+                // VAR olan bir alanın ÜZERİNE YAZILMAZ — türetilenin KENDİ
+                // AÇIKÇA bildirdiği/ÇIKARSADIĞI bir alan HER ZAMAN ÖNCELİKLİDİR).
+                const base_info = self.classes.get(base_name).?;
+                const info = self.classes.getPtr(cd.name).?;
+                var field_it = base_info.fields.iterator();
+                while (field_it.next()) |e| {
+                    if (!info.fields.contains(e.key_ptr.*)) {
+                        try info.fields.put(self.allocator, e.key_ptr.*, e.value_ptr.*);
+                    }
+                }
+            }
+        }
+        self.checkClassBody(cd) catch |e| try self.recordDiagnostic(e);
     }
 
     fn checkClassBody(self: *Checker, cd: ast.ClassDef) TypeError!void {
@@ -1496,7 +1700,7 @@ pub const Checker = struct {
             .var_decl => |v| {
                 const declared = try self.typeExprToType(v.type_expr);
                 const value_t = try self.checkExprExpected(ctx, v.value, declared);
-                if (!assignable(declared, value_t)) {
+                if (!self.assignable(declared, value_t)) {
                     return self.fail(error.TypeMismatch, "'{s}' için tip uyuşmazlığı", .{v.name});
                 }
                 try ctx.scope.declare(self.allocator, v.name, declared);
@@ -1603,7 +1807,7 @@ pub const Checker = struct {
                     return self.fail(error.TypeMismatch, "'return' yalnızca fonksiyon/metod içinde kullanılabilir", .{});
                 if (r) |e| {
                     const rt = try self.checkExprExpected(ctx, e, expected);
-                    if (!assignable(expected, rt)) return self.fail(error.TypeMismatch, "dönüş tipi uyuşmuyor", .{});
+                    if (!self.assignable(expected, rt)) return self.fail(error.TypeMismatch, "dönüş tipi uyuşmuyor", .{});
                 } else if (expected != .none) {
                     return self.fail(error.TypeMismatch, "fonksiyon bir değer döndürmelidir", .{});
                 }
@@ -1813,7 +2017,7 @@ pub const Checker = struct {
                     return self.fail(error.UndefinedVariable, "tanımsız değişken: {s}", .{name});
                 };
                 const value_t = try self.checkExprExpected(ctx, a.value, existing);
-                if (!assignable(existing, value_t)) {
+                if (!self.assignable(existing, value_t)) {
                     return self.fail(error.TypeMismatch, "'{s}' için tip uyuşmazlığı", .{name});
                 }
                 // Faz FF.6: yeniden atama, daraltma DURUMUNU geçersiz kılar
@@ -1848,7 +2052,7 @@ pub const Checker = struct {
                 const existing_field_t = info.fields.get(attr.attr);
                 const value_t = try self.checkExprExpected(ctx, a.value, existing_field_t);
                 if (existing_field_t) |existing_t| {
-                    if (!assignable(existing_t, value_t)) {
+                    if (!self.assignable(existing_t, value_t)) {
                         return self.fail(error.TypeMismatch, "'{s}.{s}' için tip uyuşmazlığı", .{ class_name, attr.attr });
                     }
                     // Faz FF.5: AÇIKÇA bildirilen bir alan (`registerClassSignatures`
@@ -1875,7 +2079,7 @@ pub const Checker = struct {
                         return self.fail(error.TypeMismatch, "liste indeksi 'int' olmalı", .{});
                     }
                     const value_t = try self.checkExpr(ctx, a.value);
-                    if (!assignable(obj_t.list.*, value_t)) {
+                    if (!self.assignable(obj_t.list.*, value_t)) {
                         return self.fail(error.TypeMismatch, "indeksli atamada tip uyuşmazlığı: listenin eleman tipiyle uyuşmuyor", .{});
                     }
                     return;
@@ -1888,7 +2092,7 @@ pub const Checker = struct {
                     return self.fail(error.TypeMismatch, "dict indeksi anahtar tipiyle uyuşmuyor", .{});
                 }
                 const value_t = try self.checkExpr(ctx, a.value);
-                if (!assignable(obj_t.dict.value.*, value_t)) {
+                if (!self.assignable(obj_t.dict.value.*, value_t)) {
                     return self.fail(error.TypeMismatch, "dict değeri değer tipiyle uyuşmuyor", .{});
                 }
             },
@@ -1934,6 +2138,28 @@ pub const Checker = struct {
         if (expr == .list_lit and expr.list_lit.len == 0) {
             if (expected) |exp| {
                 if (exp == .list) return exp;
+            }
+        }
+        // Faz 7 (tekli kalıtım): eleman tipi bir SINIF olan, BOŞ OLMAYAN
+        // bir liste literali İçin bir BEKLENEN tip BİLİNİYORSA, HER
+        // elemanın ONA `assignable` (taban/alt sınıf İLİŞKİSİ DAHİL)
+        // olması YETERLİDİR — `xs: list[Animal] = [Dog(...), Cat(...)]`
+        // GİBİ polimorfik liste literallerini MÜMKÜN KILAR. **Bilinçli v1
+        // kapsamı**: SADECE sınıf eleman tipleri İçin (primitive
+        // list'lerin `checkExpr`in KENDİ katı pairwise-`types.eql`
+        // davranışı DEĞİŞMEDİ — int→float genişletme GİBİ farklı bir
+        // semantiğe kazara KAYMAMAK İçin bilinçli olarak dar tutuldu).
+        if (expr == .list_lit and expr.list_lit.len > 0) {
+            if (expected) |exp| {
+                if (exp == .list and exp.list.* == .class) {
+                    for (expr.list_lit) |el| {
+                        const t = try self.checkExpr(ctx, el);
+                        if (!self.assignable(exp.list.*, t)) {
+                            return self.fail(error.TypeMismatch, "liste elemanı beklenen sınıf tipiyle uyuşmuyor", .{});
+                        }
+                    }
+                    return exp;
+                }
             }
         }
         if (expr == .dict_lit and expr.dict_lit.len == 0) {
@@ -2351,6 +2577,16 @@ pub const Checker = struct {
     fn checkCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!Type {
         switch (c.callee.*) {
             .identifier => |name| {
+                // Faz 7 (tekli kalıtım): çıplak `super()` (yani `super().
+                // metod(...)`un ALICI konumu DIŞINDA bir yerde) HER ZAMAN
+                // reddedilir — `super()`in TEK geçerli kullanımı
+                // `checkCall`in `.attribute` dalındaki `isSuperCallExpr`
+                // ÖZEL-işlemesidir (bkz. onun belge notu); BU dal SADECE
+                // `x = super()` / `f(super())` gibi (`checkExpr` ÜZERİNDEN
+                // BURAYA sızan) YANLIŞ kullanımları YAKALAR.
+                if (std.mem.eql(u8, name, "super")) {
+                    return self.fail(error.TypeMismatch, "'super()' yalnızca 'super().metod(...)' ya da 'super().__init__(...)' kalıbında, doğrudan bir metod çağrısının alıcısı olarak kullanılabilir", .{});
+                }
                 if (std.mem.eql(u8, name, "print")) {
                     if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'print' tam olarak 1 argüman alır", .{});
                     _ = try self.checkExpr(ctx, c.args[0]);
@@ -2539,6 +2775,35 @@ pub const Checker = struct {
                 // olurdu). Eşleşmezse (`null`) MEVCUT metod-çağrısı
                 // çözümlemesine (aşağısı, DEĞİŞMEMİŞ) düşülür.
                 if (try self.tryResolveQualifiedCall(ctx, c)) |t| return t;
+                // Faz 7 (tekli kalıtım): `super().metod(...)` /
+                // `super().__init__(...)` — GENEL `checkExpr(a.obj.*)`
+                // çağrısından ÖNCE yakalanır (çıplak `super()`, YUKARIDAKİ
+                // `.identifier` dalında HER ZAMAN reddedilir — bu yüzden
+                // `checkExpr` ÜZERİNDEN asla BURAYA ULAŞAMAZ; süper-çağrı
+                // deseni SADECE burada, doğrudan bir metod çağrısının
+                // ALICISI olarak tanınır). `__init__` normal `info.methods`
+                // haritasında HİÇ YOKTUR (ayrı `info.init_sig`de tutulur,
+                // bkz. `registerClassSignatures`) — bu yüzden özel olarak
+                // ele alınır.
+                if (isSuperCallExpr(a.obj.*)) {
+                    const self_class = ctx.self_class orelse
+                        return self.fail(error.TypeMismatch, "'super()' yalnızca bir metod gövdesi içinde kullanılabilir", .{});
+                    const self_info = self.classes.get(self_class) orelse
+                        return self.fail(error.UndefinedClass, "bilinmeyen sınıf: {s}", .{self_class});
+                    const base_name = self_info.base orelse
+                        return self.fail(error.TypeMismatch, "'{s}' sınıfının bir taban sınıfı yok, 'super()' kullanılamaz", .{self_class});
+                    const base_info = self.classes.get(base_name).?;
+                    if (std.mem.eql(u8, a.attr, "__init__")) {
+                        const init_sig = base_info.init_sig orelse FuncSig{ .params = &.{}, .return_type = .none };
+                        try self.checkArgs(ctx, init_sig.params, c.args, "__init__");
+                        return .none;
+                    }
+                    if (base_info.methods.get(a.attr)) |sig| {
+                        try self.checkArgs(ctx, sig.params, c.args, a.attr);
+                        return sig.return_type;
+                    }
+                    return self.fail(error.UndefinedMethod, "'{s}' taban sınıfının '{s}' metodu yok", .{ base_name, a.attr });
+                }
 
                 const obj_t = try self.checkExpr(ctx, a.obj.*);
                 try self.requireNotOptional(obj_t, a.attr);
@@ -2552,7 +2817,7 @@ pub const Checker = struct {
                     if (std.mem.eql(u8, a.attr, "send")) {
                         if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'send' tam olarak 1 argüman alır", .{});
                         const at = try self.checkExpr(ctx, c.args[0]);
-                        if (!assignable(elem_t, at)) return self.fail(error.TypeMismatch, "'send' argümanı kanalın eleman tipiyle uyuşmuyor", .{});
+                        if (!self.assignable(elem_t, at)) return self.fail(error.TypeMismatch, "'send' argümanı kanalın eleman tipiyle uyuşmuyor", .{});
                         return .none;
                     }
                     if (std.mem.eql(u8, a.attr, "recv")) {
@@ -2585,7 +2850,7 @@ pub const Checker = struct {
                     if (std.mem.eql(u8, a.attr, "send")) {
                         if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'send' tam olarak 1 argüman alır", .{});
                         const at = try self.checkExpr(ctx, c.args[0]);
-                        if (!assignable(elem_t, at)) return self.fail(error.TypeMismatch, "'send' argümanı kanalın eleman tipiyle uyuşmuyor", .{});
+                        if (!self.assignable(elem_t, at)) return self.fail(error.TypeMismatch, "'send' argümanı kanalın eleman tipiyle uyuşmuyor", .{});
                         return .none;
                     }
                     if (std.mem.eql(u8, a.attr, "recv")) {
@@ -2639,7 +2904,7 @@ pub const Checker = struct {
                         }
                         if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'append' tam olarak 1 argüman alır", .{});
                         const vt = try self.checkExpr(ctx, c.args[0]);
-                        if (!assignable(obj_t.list.*, vt)) return self.fail(error.TypeMismatch, "'append' argümanı listenin eleman tipiyle uyuşmuyor", .{});
+                        if (!self.assignable(obj_t.list.*, vt)) return self.fail(error.TypeMismatch, "'append' argümanı listenin eleman tipiyle uyuşmuyor", .{});
                         return .none;
                     }
                     // Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61) —
@@ -2727,7 +2992,7 @@ pub const Checker = struct {
         }
         for (params, args, 0..) |pt, ae, i| {
             const at = try self.checkExprExpected(ctx, ae, pt);
-            if (!assignable(pt, at)) {
+            if (!self.assignable(pt, at)) {
                 // Gerçek span sistemi (bkz. plan dosyası "Gerçek span
                 // sistemi + yapılandırılmış tanılamalar"): mümkünse
                 // `recordDiagnostic`nin (BU hata YUKARI doğru YAYILDIKTAN
@@ -2815,7 +3080,7 @@ pub const Checker = struct {
                     return;
                 }
                 const declared = try self.typeExprToType(te);
-                if (!assignable(declared, actual)) {
+                if (!self.assignable(declared, actual)) {
                     return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{fn_name});
                 }
             },
@@ -2849,7 +3114,7 @@ pub const Checker = struct {
             // doğrudan somut tipe çöz VE `assignable` İLE karşılaştır.
             .qualified => {
                 const declared = try self.typeExprToType(te);
-                if (!assignable(declared, actual)) {
+                if (!self.assignable(declared, actual)) {
                     return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{fn_name});
                 }
             },

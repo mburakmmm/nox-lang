@@ -72,6 +72,20 @@ pub const TAG_SIZE: usize = 8;
 /// alan ofsetlerini `TAG_SIZE + index * FIELD_SLOT_SIZE` İLE hesaplar.
 pub const FIELD_SLOT_SIZE: usize = 8;
 
+/// Faz 7 (tekli kalıtım): kalıtıma KATILAN (taban YA DA türetilen) her
+/// sınıfın örneğine `TAG_SIZE`den HEMEN SONRA, alanlardan ÖNCE eklenen
+/// EK bir 8 baytlık yuva — bu sınıfın (somut, çalışma-zamanı) vtable veri
+/// bloğuna (`$ClassName_vtable`, `layout.zig`) İŞARET EDER. Kalıtıma HİÇ
+/// KATILMAYAN (v1 Nox kodunun BÜYÜK ÇOĞUNLUĞU) sınıflar bu yuvaya SAHİP
+/// DEĞİLDİR — alanları HÂLÂ doğrudan `TAG_SIZE`den başlar (BİREBİR ÖNCEKİ
+/// düzen, SIFIR performans/boyut regresyonu). `TAG_SIZE` İLE
+/// KARIŞTIRILMAMALI: TAG HER ZAMAN VARDIR (çalışma-zamanı tip etiketi,
+/// `except`/döngü-çözücü İçin), vtable-işaretçisi İSE SADECE kalıtım
+/// KULLANILDIĞINDA vardır — İKİSİ AYRI ABI gerçekleridir (`CLOSURE_
+/// RELEASE_FN_PTR_OFFSET`in modül-üstü notundaki AYNI "sayısal çakışma
+/// ≠ aynı anlam" uyarısı burada da geçerli).
+pub const VTABLE_PTR_SIZE: usize = 8;
+
 // ---- Closure heap bloğu: { fn_ptr: l @0, release_fn_ptr: l @8, yakalananlar @16+ } ----
 
 /// Closure heap bloğunun başlık bayt boyutu — `fn_ptr` + `release_fn_ptr`,

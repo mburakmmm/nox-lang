@@ -587,3 +587,31 @@ test "golden(typecheck): Faz GG.3 — 'defer' modül seviyesinde (fonksiyon/meto
         @embedFile("typecheck_cases/err_defer_outside_function.expected"),
     );
 }
+
+test "golden(typecheck): Faz 7 (tekli kalıtım) — override taban sınıftaki imzayla eşleşmezse reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_class_override_signature_mismatch.nox"),
+        @embedFile("typecheck_cases/err_class_override_signature_mismatch.expected"),
+    );
+}
+
+test "golden(typecheck): Faz 7 — bilinmeyen bir taban sınıf adı reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_class_unknown_base.nox"),
+        @embedFile("typecheck_cases/err_class_unknown_base.expected"),
+    );
+}
+
+test "golden(typecheck): Faz 7 — generic sınıf + taban sınıf birlikte reddedilir (v1 kapsamı dışı)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_class_generic_with_base.nox"),
+        @embedFile("typecheck_cases/err_class_generic_with_base.expected"),
+    );
+}
+
+test "golden(typecheck): Faz 7 — 'super()' bir metod gövdesi DIŞINDA reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_class_super_outside_method.nox"),
+        @embedFile("typecheck_cases/err_class_super_outside_method.expected"),
+    );
+}

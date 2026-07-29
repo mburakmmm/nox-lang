@@ -235,16 +235,64 @@ pub const GlobalVar = struct {
     offset: usize,
 };
 
+/// Faz 7 (tekli kalıtım): `ClassInfo.methods`in DEĞER tipi — çıplak
+/// `FuncSig`in YERİNE geçer (serbest fonksiyonların/extern def'lerin
+/// KENDİ `FuncSig` kullanımı DEĞİŞMEZ, bu SADECE sınıf metodları İçindir).
+pub const ClassMethodInfo = struct {
+    sig: FuncSig,
+    /// Bu metodun GERÇEK gövdesini TAŞIYAN sınıf — KENDİSİ (yeni bir
+    /// metod YA DA bir override) ya da bir atası (miras alınan, override
+    /// EDİLMEMİŞ bir metod). `genMethodCall`in ÜRETTİĞİ sembol
+    /// (`$owner_method`) BUNDAN gelir — kalıtıma KATILMAYAN bir sınıf
+    /// İçin `owner` HER ZAMAN sınıfın KENDİ adıdır (davranış BİREBİR
+    /// ÖNCEKİ GİBİ kalır).
+    owner: []const u8,
+    /// vtable SLOT numarası — SADECE `ClassInfo.has_vtable == true` İSE
+    /// anlamlıdır (aksi halde HER ZAMAN `0`, HİÇ okunmaz). Bir metod adı
+    /// bir hiyerarşide İLK KEZ tanımlandığında YENİ bir slot ALIR; HER
+    /// override AYNI slotu KULLANIR (bkz. `registerClass`in belge notu).
+    slot: usize = 0,
+};
+
 pub const ClassInfo = struct {
     fields: std.ArrayListUnmanaged(ClassField) = .empty,
     total_size: usize = 0,
     init_params: []const TypeInfo = &.{},
-    methods: std.StringHashMapUnmanaged(FuncSig) = .empty,
+    methods: std.StringHashMapUnmanaged(ClassMethodInfo) = .empty,
     class_id: usize = 0,
     /// `false`: sınıfın bir `__init__`i yok — bkz. `registerClass`.
     has_init: bool = true,
     /// `true`: `__init__`in ASLA istisna fırlatmadığı KANITLANDI.
     init_is_safe: bool = false,
+    /// Faz 7 (tekli kalıtım): `class Derived(Base):` — `ast.ClassDef.base`.
+    base: ?[]const u8 = null,
+    /// Faz 7: bu sınıf KALITIMA KATILIYOR MU (KENDİSİ türetilmiş YA DA
+    /// başka bir sınıfın tabanı) — `Codegen.inheriting_classes`den (TÜM
+    /// sınıf tanımlarının SAF/sıraya BAĞIMSIZ bir ön-taraması, bkz.
+    /// `computeInheritingClasses`) `registerClass` tarafından okunur.
+    /// `true` İSE nesne düzeni `TAG_SIZE`den SONRA EK bir `VTABLE_PTR_SIZE`
+    /// yuvası taşır (bkz. `VTABLE_PTR_SIZE`nin belge notu) VE metod
+    /// çağrıları `layout.zig`nin ürettiği `$ClassName_vtable` bloğu
+    /// ÜZERİNDEN dolaylı (indirect) yapılır — kalıtıma KATILMAYAN sınıflar
+    /// İçin `false` (BÜYÜK ÇOĞUNLUK), davranış/düzen BİREBİR ÖNCEKİ GİBİ.
+    has_vtable: bool = false,
+    /// Faz 7: `has_vtable == true` İKEN bir SONRAKİ YENİ (override
+    /// OLMAYAN) metodun alacağı vtable slot numarası — taban sınıftan
+    /// devralınıp GENİŞLETİLİR (bkz. `registerClass`in belge notu, "her
+    /// alt sınıf KENDİ next_slot kopyasını taşır" tasarımı).
+    next_vtable_slot: usize = 0,
+    /// Faz 7: `__init__`in GERÇEK gövdesini TAŞIYAN sınıf — `methods`in
+    /// `owner`ıyla AYNI fikir ama `__init__` AYRI tutulduğundan (asla
+    /// `methods` haritasına GİRMEZ, bkz. checker.zig'in AYNI ayrımı) ayrı
+    /// bir alan gerekir. `has_init == true` İKEN her zaman doludur.
+    init_owner: ?[]const u8 = null,
+    /// Faz 7: KENDİSİ + TÜM (transitif) alt sınıflarının `class_id`leri —
+    /// `exceptions.zig`nin `except Base:`in bir `Derived` örneğini de
+    /// YAKALAMASI İçin gereken hiyerarşik eşleşmesi (OR-zinciri) İçin.
+    /// TÜM sınıflar kaydedildikten SONRA, AYRI bir geçişte doldurulur
+    /// (bkz. `codegen.zig`, `computeDescendantClassIds`) — kalıtıma
+    /// KATILMAYAN bir sınıf İçin TEK elemanlı (yalnızca KENDİ id'si).
+    descendant_class_ids: []const usize = &.{},
 };
 
 pub const RT_PARAM = "%rt";
@@ -260,6 +308,8 @@ pub const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 /// zamanında `except ClassName:` eşleştirmesi için kullanılan tip etiketi.
 /// Faz P1.2: `abi_layout`den RE-EXPORT.
 pub const TAG_SIZE = abi_layout.TAG_SIZE;
+/// Faz 7: `abi_layout.VTABLE_PTR_SIZE`den RE-EXPORT — bkz. onun belge notu.
+pub const VTABLE_PTR_SIZE = abi_layout.VTABLE_PTR_SIZE;
 /// Faz P1.2: ARC refcount başlığının bayt boyutu — bkz.
 /// `abi_layout.ARC_HEADER_SIZE`nin belge notu.
 pub const ARC_HEADER_SIZE = abi_layout.ARC_HEADER_SIZE;

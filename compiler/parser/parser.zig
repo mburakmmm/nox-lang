@@ -458,6 +458,16 @@ pub const Parser = struct {
         _ = try self.expect(.kw_class);
         const name = (try self.expect(.identifier)).lexeme;
 
+        // Faz 7 (bkz. proje belleği "7 fazlı düzeltme planı" Faz 7):
+        // basit TEK-kalıtım — `class Derived(Base):`. Yalnızca TEK bir
+        // taban sınıf adı kabul edilir (virgülle ayrılmış çoklu taban
+        // YOK, Python'un çoklu-kalıtımı Nox'un v1 kapsamı DIŞINDA).
+        var base_class: ?[]const u8 = null;
+        if (self.match(.l_paren)) {
+            base_class = (try self.expect(.identifier)).lexeme;
+            _ = try self.expect(.r_paren);
+        }
+
         // Faz P2.1 (bkz. proje belleği "generic sınıflar" planı):
         // `parseFuncDef`in `[T, U]` ayrıştırmasıyla BİREBİR AYNI desen —
         // yalnızca isimler toplanır, `T`nin KENDİSİ `parseTypeExpr`de
@@ -498,6 +508,7 @@ pub const Parser = struct {
 
         return .{ .class_def = .{
             .name = name,
+            .base = base_class,
             .type_params = try type_params.toOwnedSlice(self.allocator),
             .methods = try methods.toOwnedSlice(self.allocator),
             .fields = try fields.toOwnedSlice(self.allocator),

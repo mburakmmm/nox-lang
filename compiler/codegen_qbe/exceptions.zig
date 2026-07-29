@@ -143,9 +143,29 @@ pub fn genTry(self: *Codegen, t: ast.TryStmt, ret_qtype: QbeType) CodegenError!v
                 }
                 return error.Unsupported;
             };
-            const matches = try self.newTemp();
-            try self.out.writer.print("    {s} =w ceql {s}, {d}\n", .{ matches, tag, cinfo.class_id });
-            try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ matches, handler_label, following });
+            // Faz 7 (tekli kalıtım): `except Base:`in bir `Derived`
+            // örneğini de YAKALAMASI İçin — KENDİSİ + TÜM (transitif) alt
+            // sınıflarının `class_id`lerinden (bkz. `codegen.zig`nin
+            // `descendant_class_ids` ön-hesabı) HERHANGİ biriyle eşleşirse
+            // handler'a git (OR-zinciri). `descendant_class_ids.len == 1`
+            // İKEN (kalıtıma HİÇ KATILMAYAN — YA DA hiç alt sınıfı olmayan
+            // — sınıfların BÜYÜK ÇOĞUNLUĞU) BU, ÖNCEKİ tek `ceql` İLE
+            // BİREBİR AYNI kodu üretir (SIFIR regresyon).
+            if (cinfo.descendant_class_ids.len <= 1) {
+                const matches = try self.newTemp();
+                const only_id = if (cinfo.descendant_class_ids.len == 1) cinfo.descendant_class_ids[0] else cinfo.class_id;
+                try self.out.writer.print("    {s} =w ceql {s}, {d}\n", .{ matches, tag, only_id });
+                try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ matches, handler_label, following });
+            } else {
+                for (cinfo.descendant_class_ids, 0..) |id, di| {
+                    const matches = try self.newTemp();
+                    try self.out.writer.print("    {s} =w ceql {s}, {d}\n", .{ matches, tag, id });
+                    const is_last_id = di + 1 == cinfo.descendant_class_ids.len;
+                    const next_check_label = if (is_last_id) following else try self.newLabel("except_hier_check");
+                    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ matches, handler_label, next_check_label });
+                    if (!is_last_id) try self.out.writer.print("{s}\n", .{next_check_label});
+                }
+            }
         } else {
             try self.out.writer.print("    jmp {s}\n", .{handler_label});
         }

@@ -201,6 +201,11 @@ pub const FieldDecl = struct {
 
 pub const ClassDef = struct {
     name: []const u8,
+    /// Faz 7 (basit tek-kalıtım): `class Derived(Base):` — boşsa
+    /// (varsayılan) sınıfın taban sınıfı YOK. Çoklu kalıtım (birden
+    /// fazla parantez-içi ad) v1 kapsamı DIŞINDA — parser TEK bir
+    /// tanımlayıcı bekler.
+    base: ?[]const u8 = null,
     /// `class Name[T, U]:` — boşsa (varsayılan) sıradan (generic olmayan)
     /// bir sınıf. `FuncDef.type_params`in AYNISI (Faz P2.1, bkz. proje
     /// belleği "generic sınıflar" planı) — checker, niteliksiz `T`
