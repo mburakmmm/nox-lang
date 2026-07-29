@@ -69,6 +69,27 @@ const ShmHandle = struct {
     }
 };
 
+/// Faz LL.1'in `fs.zig`deki `fstatCompat`ıyla AYNI kök nedene (bkz. onun
+/// belge notu, nox-teknik-spesifikasyon.md §3.71) sahip, ama YALNIZCA
+/// BOYUTA ihtiyaç duyan minimal bir kardeş — GERÇEK bir Linux CI
+/// çalıştırmasıyla (release.yml) BULUNDU: bu Zig sürümünde `std.c.fstat`
+/// `.linux => {}` İLE (GERÇEK bir libc sembolüne BAĞLANMADAN, `void`
+/// olarak) tanımlı, `fd` üzerinde ÇAĞRILAMAZ — Linux'ta `std.c.statx`
+/// (KOŞULSUZ bir `extern "c"` bildirimi, GERÇEK bir glibc sembolüne
+/// bağlı KALIR) `AT.EMPTY_PATH` bayrağıyla (boş göreli yol) KULLANILIR.
+fn fstatSize(fd: std.posix.fd_t) ?i64 {
+    if (builtin.os.tag == .linux) {
+        var buf: std.os.linux.Statx = undefined;
+        const mask: std.os.linux.STATX = .{ .SIZE = true };
+        const rc = std.c.statx(fd, "", std.os.linux.AT.EMPTY_PATH, mask, &buf);
+        if (rc != 0) return null;
+        return @intCast(buf.size);
+    }
+    var st: std.c.Stat = undefined;
+    if (std.c.fstat(fd, &st) != 0) return null;
+    return st.size;
+}
+
 fn openPosix(name: []const u8, size: usize) !*ShmHandle {
     var name_buf: [256]u8 = undefined;
     const shm_name = try std.fmt.bufPrintZ(&name_buf, "/{s}", .{name});
@@ -84,10 +105,9 @@ fn openPosix(name: []const u8, size: usize) !*ShmHandle {
     // GERÇEK bir iki-process repro İLE KANITLANDI — bu YÜZDEN başarısızlığı
     // KOŞULSUZ ölümcül SAYMAK, İKİNCİ/SONRAKİ açan HER process'i BOZAR,
     // yani ÇAPRAZ-PROCESS paylaşımın TAMAMI çalışmaz hale gelir). Önce
-    // MEVCUT boyutu `fstat` İLE kontrol et — ZATEN yeterince büyükse
+    // MEVCUT boyutu `fstatSize` İLE kontrol et — ZATEN yeterince büyükse
     // `ftruncate` hatasını YOK SAY (segment ZATEN doğru boyutta).
-    var st: std.c.Stat = undefined;
-    const existing_size: i64 = if (std.c.fstat(fd, &st) == 0) st.size else 0;
+    const existing_size: i64 = fstatSize(fd) orelse 0;
     if (existing_size < @as(i64, @intCast(total_size))) {
         if (std.c.ftruncate(fd, @intCast(total_size)) != 0) return error.FtruncateFailed;
     }

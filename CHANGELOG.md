@@ -14,6 +14,29 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.21.2]
+
+### Düzeltildi
+- **`nox.sharedmem`nin Linux build'lerini v1.18.0'dan beri KIRAN bir
+  `std.c.fstat` uyumsuzluğu**: `runtime/stdlib_shims/shared_mem.zig`,
+  `openPosix`da mevcut segment boyutunu kontrol etmek İçin `std.c.fstat`
+  KULLANIYORDU — bu Zig sürümünde (0.16.0) `std.c.fstat` Linux'ta `void`
+  olarak tanımlı (GERÇEK bir libc sembolüne BAĞLANMIYOR, bkz. `fs.zig`nin
+  ÖNCEDEN AYNI kısıt İçin bulduğu `fstatCompat` deseni, nox-teknik-
+  spesifikasyon.md §3.71) — `nox.sharedmem` (Faz 6, v1.13.0 civarı)
+  eklendiğinde bu ÇÖZÜM oraya UYGULANMAMIŞTI. `release.yml`nin GitHub
+  Actions'ta linux-x64 hedefini derlerken v1.18.0'dan İTİBAREN sürekli
+  BAŞARISIZ olmasının kök nedeniydi (`gh run list` İLE DOĞRULANDI).
+  `fs.zig`nin KANITLANMIŞ `fstatCompat` desenini (Linux'ta `std.c.statx`
+  + `AT.EMPTY_PATH`, diğer platformlarda ESKİ `std.c.fstat`) minimal bir
+  `fstatSize` yardımcısıyla `shared_mem.zig`ye UYGULAYARAK düzeltildi.
+  macOS native build + tam regresyon YEŞİL; `zig build -Dtarget=x86_64-
+  linux` çapraz derlemesiyle DOĞRULANDI (asıl hata KAYBOLDU — kalan tek
+  hata macOS'un KENDİ `cc`sinin bir Linux `.S` dosyasını assemble
+  EDEMEMESİ, saf host-only çapraz-araç zinciri kısıtı, GERÇEK Linux CI
+  runner'ında OLUŞMAZ). Kullanıcının "GitHub Actions release workflow'u
+  sürekli başarısız oluyor" gözlemine yanıt olarak bulunup düzeltildi.
+
 ## [1.21.1]
 
 ### Düzeltildi
