@@ -257,17 +257,27 @@ jobs:
         run: |
           $ErrorActionPreference = "Continue"
           # NOT: `choco`nun KENDİ çıktısı (`Out-Null` İLE GİZLENMEDEN)
-          # GÖRÜNÜR bırakılır — GERÇEK bir CI çalıştırmasında `libssl-3-
-          # x64.dll`nin `C:\Program Files\OpenSSL-Win64\bin` altında
-          # BULUNAMADIĞI keşfedildi (kurulum YOLU choco paket sürümüne
-          # göre DEĞİŞEBİLİR) — bu YÜZDEN ARAMA, MUTLAK bir tek yola
-          # GÜVENMEK YERİNE BİRDEN FAZLA olası kökü (Program Files, choco
-          # paket kütüphanesinin KENDİSİ) dener, HİÇBİRİ bulamazsa `C:\`
-          # KÖKÜNDEN sınırlı-derinlikli bir SON ÇARE taraması yapar.
+          # GÖRÜNÜR bırakılır. **GERÇEK bir CI çalıştırmasıyla BULUNAN İKİ
+          # hata:** (1) `openssl.light` (v3.1.4) GERÇEKTE `C:\Program
+          # Files\OpenSSL`e kurulur (`OpenSSL-Win64` DEĞİL — bkz. çıktının
+          # KENDİSİ, "Deployed to 'C:\Program Files\OpenSSL\'"); (2) BUNU
+          # BİLMEDEN önce eklenen "C:\Program Files altında HERHANGİ bir
+          # `libssl-*.dll`" SON ÇARE taraması, `windows-latest` çalıştırıcısında
+          # ÖNCEDEN kurulu AWS CLI'nin KENDİ BAĞIMSIZ `libssl-3.dll`sini
+          # (`C:\Program Files\Amazon\AWSCLIV2\`, alfabetik olarak
+          # "OpenSSL"DEN ÖNCE geldiği İçİn İLK eşleşen) buluyordu — bu
+          # BAŞKA bir uygulamanın KENDİ paketlediği, uyumsuz/eksik bir
+          # libssl kopyası olduğundan `newServerCtx` SESSİZCE başarısız
+          # oluyordu (TLS sunucusu HİÇ dinlemeye BAŞLAMADI). Düzeltme: KESİN
+          # kurulum yolu `C:\Program Files\OpenSSL` İLK sırada denenir,
+          # GENİŞ "C:\ TARAMASI" YEDEĞİ TAMAMEN KALDIRILDI (yanlış-pozitif
+          # riski, HİÇ bulamamaktan DAHA KÖTÜ — sessizce YANLIŞ bir
+          # kütüphaneyi seçip anlaşılmaz bir zaman aşımına yol açar).
           choco install openssl.light -y --no-progress
           $ErrorActionPreference = "Stop"
 
           $roots = @(
+            "C:\Program Files\OpenSSL",
             "C:\Program Files\OpenSSL-Win64",
             "C:\Program Files (x86)\OpenSSL-Win64",
             "C:\Program Files\OpenSSL-Win32",
@@ -281,11 +291,7 @@ jobs:
               if ($dll) { break }
             }
           }
-          if (-not $dll) {
-            Write-Host "bilinen koklerde bulunamadi, C:\ altinda sinirli-derinlikli son care taramasi yapiliyor..."
-            $dll = Get-ChildItem -Path "C:\Program Files","C:\ProgramData\chocolatey" -Filter "libssl-*.dll" -Recurse -Depth 6 -ErrorAction SilentlyContinue | Select-Object -First 1
-          }
-          if (-not $dll) { throw "libssl DLL bulunamadi (openssl.light kurulumu basarisiz olabilir)" }
+          if (-not $dll) { throw "libssl DLL bulunamadi (openssl.light kurulumu basarisiz olabilir ya da kurulum yolu tekrar degismis olabilir)" }
           Write-Host "libssl bulundu: $($dll.FullName)"
           Add-Content -Path $env:GITHUB_ENV -Value "NOX_OPENSSL_LIB=$($dll.FullName)"
 

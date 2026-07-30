@@ -14,6 +14,23 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.22.3]
+
+### Düzeltildi
+- **CI'nin Windows `libssl` kurulumu YANLIŞ bir kütüphaneyi buluyordu**:
+  `v1.22.2`nin geniş "`C:\Program Files` altında HERHANGİ bir `libssl-
+  *.dll`" son çare taraması, GERÇEK bir CI çalıştırmasında `windows-
+  latest` çalıştırıcısında ÖNCEDEN kurulu AWS CLI'nin KENDİ BAĞIMSIZ
+  `libssl-3.dll`sini (`C:\Program Files\Amazon\AWSCLIV2\`, alfabetik
+  sırada "OpenSSL"DEN ÖNCE geldiğinden İLK eşleşen) BULUYORDU — bu YABANCI
+  kütüphane `TLS_server_method`/`SSL_CTX_new` gibi sembolleri EKSİK/uyumsuz
+  OLDUĞUNDAN `nox.http.serve_tls` SESSİZCE hiç dinlemeye BAŞLAMIYORDU
+  (`Invoke-WebRequest`in 50 denemesi de zaman AŞIMINA UĞRADI). Ayrıca
+  `choco install openssl.light`in (v3.1.4) GERÇEK kurulum yolu `C:\
+  Program Files\OpenSSL`ydi (`OpenSSL-Win64` DEĞİL). Düzeltme: KESİN
+  kurulum yolu ARTIK İLK sırada denenir, YANLIŞ-POZİTİF riski taşıyan
+  GENİŞ `C:\` taraması TAMAMEN KALDIRILDI.
+
 ## [1.22.2]
 
 ### Düzeltildi
