@@ -32,7 +32,9 @@ pub const process_shim = @import("stdlib_shims/process.zig");
 pub const postgres_shim = @import("stdlib_shims/postgres.zig");
 pub const mysql_shim = @import("stdlib_shims/mysql.zig");
 pub const tls_shim = @import("stdlib_shims/tls.zig");
+pub const tls_server_shim = @import("stdlib_shims/tls_server.zig");
 pub const websocket_shim = @import("stdlib_shims/websocket.zig");
+pub const websocket_server_shim = @import("stdlib_shims/websocket_server.zig");
 pub const shared_mem_shim = @import("stdlib_shims/shared_mem.zig");
 
 // Bu modüllerin yalnızca isim üzerinden yeniden dışa aktarılması, Zig'in
@@ -72,5 +74,6 @@ comptime {
     _ = mysql_shim;
     _ = tls_shim;
     _ = websocket_shim;
+    _ = websocket_server_shim;
     _ = shared_mem_shim;
 }

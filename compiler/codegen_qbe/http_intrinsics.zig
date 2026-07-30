@@ -214,11 +214,35 @@ pub fn genHttpServe(self: *Codegen, c: ast.Call) CodegenError!Value {
 /// (`"%rt"`) ismini KENDİ fonksiyon gövdelerinde ÖNCEDEN TANIMLAMIŞ
 /// olmalıdır (`genThreadStartWrapper`nin `%argp`den `RT_PARAM`
 /// YÜKLEMESİYLE AYNI sözleşme).
-pub fn emitFdServeTail(self: *Codegen, fd_text: []const u8, wrapper_name: []const u8, max_conn_text: []const u8) CodegenError!void {
-    const server = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_http_server_from_fd(l {s}, l {s})\n", .{ server, RT_PARAM, fd_text });
-    try self.out.writer.print("    call $nox_http_serve_raw(l {s}, l {s}, l ${s}, l {s}, l {s})\n", .{ RT_PARAM, server, wrapper_name, RT_PARAM, max_conn_text });
+/// Faz "sunucu-tarafı TLS + WS": `tls_ctx_text` (varsa) `nox_http_server_
+/// from_fd` YERİNE `nox_http_server_from_fd_tls`i, `ws_wrapper_name`
+/// (varsa) `nox_http_serve_raw` YERİNE `nox_http_serve_ws_raw`ı seçer —
+/// `null` GEÇİLDİĞİNDE davranış BİREBİR ÖNCEKİYLE AYNIDIR (mevcut TÜM
+/// çağıranlar `null, null` geçer).
+/// `ws_wrapper_name` VARSA `nox_http_serve_raw` YERİNE `nox_http_serve_
+/// ws_raw`ı çağırır, SONRA `server`ı kapatır — `emitFdServeTail`/
+/// `genHttpServe*Generic`nin ÜÇÜ de PAYLAŞTIĞI ORTAK kuyruk.
+pub fn emitServeAndClose(self: *Codegen, server: []const u8, wrapper_name: []const u8, max_conn_text: []const u8, ws_wrapper_name: ?[]const u8) CodegenError!void {
+    if (ws_wrapper_name) |wsw| {
+        try self.out.writer.print("    call $nox_http_serve_ws_raw(l {s}, l {s}, l ${s}, l {s}, l ${s}, l {s})\n", .{ RT_PARAM, server, wrapper_name, RT_PARAM, wsw, max_conn_text });
+    } else {
+        try self.out.writer.print("    call $nox_http_serve_raw(l {s}, l {s}, l ${s}, l {s}, l {s})\n", .{ RT_PARAM, server, wrapper_name, RT_PARAM, max_conn_text });
+    }
     try self.out.writer.print("    call $nox_http_server_close(l {s}, l {s})\n", .{ RT_PARAM, server });
+}
+
+/// Faz "sunucu-tarafı TLS + WS": `tls_ctx_text` (varsa) `nox_http_server_
+/// from_fd` YERİNE `nox_http_server_from_fd_tls`i seçer — `null` GEÇİLDİĞİNDE
+/// davranış BİREBİR ÖNCEKİYLE AYNIDIR (`genHttpServeFd`nin AYNI çağrısı
+/// `null, null` geçer).
+pub fn emitFdServeTail(self: *Codegen, fd_text: []const u8, wrapper_name: []const u8, max_conn_text: []const u8, tls_ctx_text: ?[]const u8, ws_wrapper_name: ?[]const u8) CodegenError!void {
+    const server = try self.newTemp();
+    if (tls_ctx_text) |ctx| {
+        try self.out.writer.print("    {s} =l call $nox_http_server_from_fd_tls(l {s}, l {s}, l {s})\n", .{ server, RT_PARAM, fd_text, ctx });
+    } else {
+        try self.out.writer.print("    {s} =l call $nox_http_server_from_fd(l {s}, l {s})\n", .{ server, RT_PARAM, fd_text });
+    }
+    try self.emitServeAndClose(server, wrapper_name, max_conn_text, ws_wrapper_name);
 }
 
 /// `nox.http.serve_fd(fd, handle[, max_connections])` çağrı sitesi
@@ -260,7 +284,7 @@ pub fn genHttpServeFd(self: *Codegen, c: ast.Call) CodegenError!Value {
     self.http_serve_wrapper_counter += 1;
     try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class, .used_fields = self.computeUsedFieldsFor(handle_name) });
 
-    try self.emitFdServeTail(fd_v.text, wrapper_name, max_conn_text);
+    try self.emitFdServeTail(fd_v.text, wrapper_name, max_conn_text, null, null);
     return .{ .text = "0", .qtype = .none };
 }
 
@@ -378,7 +402,7 @@ pub fn genHttpServeMulticore(self: *Codegen, c: ast.Call) CodegenError!Value {
     try self.out.writer.print("    jmp {s}\n", .{cond_label});
     try self.out.writer.print("{s}\n", .{end_label});
 
-    try self.emitFdServeTail(fd, wrapper_name, max_conn_text);
+    try self.emitFdServeTail(fd, wrapper_name, max_conn_text, null, null);
 
     // Faz HH.8: ÇAĞIRANIN KENDİ payı (yukarıdaki `emitFdServeTail`)
     // BİTTİKTEN SONRA, spawn edilen HER worker'ı join et — `max_
@@ -461,10 +485,32 @@ pub fn genHttpServeMulticoreWorker(self: *Codegen, spec: HttpServeMulticoreWorke
     }
     const payload_addr = try self.newTemp();
     try self.out.writer.print("    {s} =l add %argp, 8\n", .{payload_addr});
-    const fd = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ fd, payload_addr });
 
-    try self.emitFdServeTail(fd, spec.wrapper_name, spec.max_conn_text);
+    // Faz "sunucu-tarafı TLS": `spec.tls` İSE `payload_addr`nin İÇERDİĞİ
+    // DEĞER ÇIPLAK bir `fd` DEĞİL, `nox_http_listen_fd_tls`nin döndürdüğü
+    // bir `FdTlsPayload*`dir (bkz. `genHttpServeMulticoreCore`) — bu
+    // İŞARETÇİ ÜZERİNDEN İKİ ALAN (`fd` @ ofset 0, `tls_ctx` @ ofset 8)
+    // AYRICA YÜKLENİR.
+    var fd: []const u8 = undefined;
+    var tls_ctx_text: ?[]const u8 = null;
+    if (spec.tls) {
+        const payload_ptr = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ payload_ptr, payload_addr });
+        const fd_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ fd_t, payload_ptr });
+        const ctx_addr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 8\n", .{ ctx_addr, payload_ptr });
+        const ctx_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ ctx_t, ctx_addr });
+        fd = fd_t;
+        tls_ctx_text = ctx_t;
+    } else {
+        const fd_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ fd_t, payload_addr });
+        fd = fd_t;
+    }
+
+    try self.emitFdServeTail(fd, spec.wrapper_name, spec.max_conn_text, tls_ctx_text, spec.ws_wrapper_name);
 
     try self.out.writer.writeAll("    ret 0\n}\n");
 }
@@ -577,4 +623,387 @@ pub fn genHttpServeWrapper(self: *Codegen, spec: HttpServeWrapperSpec) CodegenEr
     try self.releaseValueIfSet(resp_obj.text, resp_obj.heap, resp_obj.elem_qtype, resp_obj.class_name, resp_obj.elem_heap_info, resp_obj.dict_info);
 
     try self.out.writer.print("    ret {s}\n}}\n", .{raw_resp});
+}
+
+/// `nox_http_serve_ws_raw`nin (bkz. `websocket_server.zig`nin `WsHandlerFn`i,
+/// `fn(?*anyopaque, ?*anyopaque) callconv(.c) void`) Upgrade edilmiş HER
+/// bağlantı İçin ÇAĞIRDIĞI, `nox.http.serve_ws*` çağrı sitesi başına
+/// üretilen C-ABI sarmalayıcı — bkz. `HttpServeWsWrapperSpec`in belge
+/// notu. `%ctx` (`rt`) VE `%conn` (ham `WsServerConn*`) alır: `conn_class`ın
+/// (ör. `WebSocketServerConn`) TEK `handle: ptr` alanını `%conn`DAN
+/// DOĞRUDAN doldurup bir örnek İNŞA EDER, kullanıcının `ws_handler_fn`ini
+/// (dönüşü `None`, checker TARAFINDAN ZATEN doğrulandı — bkz. `validateWsHandler`)
+/// çağırır, örneği serbest bırakır. `genHttpServeWrapper`nin AKSİNE
+/// üretilecek/serbest BIRAKILACAK bir yanıt nesnesi YOKTUR (bir WS
+/// oturumunun "yanıtı" yoktur).
+pub fn genHttpServeWsWrapper(self: *Codegen, spec: types.HttpServeWsWrapperSpec) CodegenError!void {
+    self.temp_counter = 0;
+    self.label_counter = 0;
+    self.mod_cache.deinit(self.allocator);
+    self.mod_cache = .empty;
+
+    try self.out.writer.print("export function l ${s}(l %ctx, l %conn) {{\n@start\n", .{spec.name});
+    try self.out.writer.print("    {s} =l copy %ctx\n", .{RT_PARAM});
+
+    const conn_cinfo = self.classes.get(spec.conn_class) orelse return error.Unsupported;
+    const conn_values = try self.allocator.alloc(Value, conn_cinfo.fields.items.len);
+    for (conn_cinfo.fields.items, 0..) |f, i| {
+        if (std.mem.eql(u8, f.name, "handle")) {
+            conn_values[i] = .{ .text = "%conn", .qtype = .l, .heap = .none };
+        } else {
+            return error.Unsupported;
+        }
+    }
+    const conn_obj = try self.genConstructFromValues(spec.conn_class, conn_cinfo, conn_values, null);
+
+    try self.out.writer.print("    call ${s}(l {s}, l {s})\n", .{ spec.ws_handler_fn, RT_PARAM, conn_obj.text });
+
+    try self.releaseValueIfSet(conn_obj.text, conn_obj.heap, conn_obj.elem_qtype, conn_obj.class_name, conn_obj.elem_heap_info, conn_obj.dict_info);
+
+    try self.out.writer.writeAll("    ret 0\n}\n");
+}
+
+/// Faz "sunucu-tarafı TLS + WebSocket Upgrade" (bkz. plan dosyası §6) —
+/// `handle`in (bkz. `genHttpServe`nin AYNI doğrulaması) VE isteğe bağlı
+/// olarak `ws_handle`nin ÇÖZÜMLENMESİNİ, `HttpServeWrapperSpec`/
+/// `HttpServeWsWrapperSpec` KAYDINI paylaşan yardımcı — `genHttpServe*
+/// Generic`nin ÜÇÜ TARAFINDAN da çağrılır.
+pub fn registerHttpHandlers(self: *Codegen, handle_name: []const u8, ws_handle_name: ?[]const u8) CodegenError!struct {
+    wrapper_name: []const u8,
+    ws_wrapper_name: ?[]const u8,
+} {
+    const sig = self.functions.get(handle_name) orelse return error.Unsupported;
+    if (sig.params.len != 1) return error.Unsupported;
+    if (sig.params[0].heap != .class or sig.params[0].class_name == null) return error.Unsupported;
+    if (sig.ret.heap != .class or sig.ret.class_name == null) return error.Unsupported;
+    const req_class = sig.params[0].class_name.?;
+    const resp_class = sig.ret.class_name.?;
+
+    const wrapper_name = try std.fmt.allocPrint(self.allocator, "http_serve_wrap_{d}", .{self.http_serve_wrapper_counter});
+    self.http_serve_wrapper_counter += 1;
+    try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class, .used_fields = self.computeUsedFieldsFor(handle_name) });
+
+    var ws_wrapper_name: ?[]const u8 = null;
+    if (ws_handle_name) |wsh| {
+        const ws_sig = self.functions.get(wsh) orelse return error.Unsupported;
+        if (ws_sig.params.len != 1) return error.Unsupported;
+        if (ws_sig.params[0].heap != .class or ws_sig.params[0].class_name == null) return error.Unsupported;
+        const conn_class = ws_sig.params[0].class_name.?;
+        const name = try std.fmt.allocPrint(self.allocator, "http_serve_ws_wrap_{d}", .{self.http_serve_ws_wrapper_counter});
+        self.http_serve_ws_wrapper_counter += 1;
+        try self.http_serve_ws_wrappers.append(self.allocator, .{ .name = name, .ws_handler_fn = wsh, .conn_class = conn_class });
+        ws_wrapper_name = name;
+    }
+
+    return .{ .wrapper_name = wrapper_name, .ws_wrapper_name = ws_wrapper_name };
+}
+
+/// `nox.http.serve_tls`/`serve_ws`/`serve_ws_tls` — `genHttpServe`nin
+/// PARAMETRİK genellemesi (bkz. plan dosyası §6). Argüman SIRASI
+/// checker'ın `tryResolveHttpServeGeneric`sinin AYNI formülüne uyar:
+/// `[port, handle, (ws_handle varsa), (cert_path, key_path varsa),
+/// (max_connections isteğe bağlı)]`. Var OLAN `genHttpServe`ye (`serve`nin
+/// KENDİSİ) DOKUNULMADI — bu, YALNIZCA `_tls`/`_ws`/`_ws_tls` uzantılı 3
+/// YENİ isim İçİn kullanılır.
+pub fn genHttpServeGeneric(self: *Codegen, c: ast.Call, want_tls: bool, want_ws: bool) CodegenError!Value {
+    var idx: usize = 0;
+    const port_v0 = try self.genExpr(c.args[idx]);
+    try self.checkNoLowlevelEscape(port_v0);
+    const port_v = try self.convert(port_v0, .l);
+    try self.releaseIfTemporary(c.args[idx], port_v0);
+    idx += 1;
+
+    const handle_name = switch (c.args[idx]) {
+        .identifier => |n| n,
+        else => return error.Unsupported,
+    };
+    idx += 1;
+
+    var ws_handle_name: ?[]const u8 = null;
+    if (want_ws) {
+        ws_handle_name = switch (c.args[idx]) {
+            .identifier => |n| n,
+            else => return error.Unsupported,
+        };
+        idx += 1;
+    }
+
+    var cert_v: Value = undefined;
+    var key_v: Value = undefined;
+    if (want_tls) {
+        const cert_v0 = try self.genExpr(c.args[idx]);
+        try self.checkNoLowlevelEscape(cert_v0);
+        cert_v = try self.convert(cert_v0, .l);
+        try self.releaseIfTemporary(c.args[idx], cert_v0);
+        idx += 1;
+        const key_v0 = try self.genExpr(c.args[idx]);
+        try self.checkNoLowlevelEscape(key_v0);
+        key_v = try self.convert(key_v0, .l);
+        try self.releaseIfTemporary(c.args[idx], key_v0);
+        idx += 1;
+    }
+
+    var max_conn_text: []const u8 = "0";
+    if (c.args.len > idx) {
+        const mc_v0 = try self.genExpr(c.args[idx]);
+        try self.checkNoLowlevelEscape(mc_v0);
+        const mc_v = try self.convert(mc_v0, .l);
+        try self.releaseIfTemporary(c.args[idx], mc_v0);
+        max_conn_text = mc_v.text;
+        idx += 1;
+    }
+
+    const server = try self.newTemp();
+    if (want_tls) {
+        try self.out.writer.print("    {s} =l call $nox_http_server_listen_tls(l {s}, l {s}, l {s}, l {s})\n", .{ server, RT_PARAM, port_v.text, cert_v.text, key_v.text });
+    } else {
+        try self.out.writer.print("    {s} =l call $nox_http_server_listen(l {s}, l {s})\n", .{ server, RT_PARAM, port_v.text });
+    }
+
+    const handlers = try self.registerHttpHandlers(handle_name, ws_handle_name);
+    try self.emitServeAndClose(server, handlers.wrapper_name, max_conn_text, handlers.ws_wrapper_name);
+    return .{ .text = "0", .qtype = .none };
+}
+
+/// `nox.http.serve_fd_tls`/`serve_fd_ws`/`serve_fd_ws_tls` — `genHttpServeFd`nin
+/// PARAMETRİK genellemesi. `want_tls` İSE `nox_http_server_from_fd_tls`
+/// (paylaşılan/dıştan verilen bir bağlam) DEĞİL, `nox_http_server_from_
+/// fd_tls_owned`i (cert/key'DEN kendi bağlamını YARATIP SAHİPLENİR)
+/// çağırır — `serve_fd*`nin `fd`si ÇAĞIRANIN mülkiyetinde KALDIĞINDAN
+/// (bkz. `nox_http_server_from_fd`in belge notu) TLS bağlamının kaynağı
+/// BAŞKA bir yerde (multicore'un `nox_http_listen_fd_tls`i GİBİ)
+/// PAYLAŞILMAZ, bu ÇAĞRI SİTESİ TARAFINDAN taze YARATILIR.
+pub fn genHttpServeFdGeneric(self: *Codegen, c: ast.Call, want_tls: bool, want_ws: bool) CodegenError!Value {
+    var idx: usize = 0;
+    const fd_v0 = try self.genExpr(c.args[idx]);
+    try self.checkNoLowlevelEscape(fd_v0);
+    const fd_v = try self.convert(fd_v0, .l);
+    try self.releaseIfTemporary(c.args[idx], fd_v0);
+    idx += 1;
+
+    const handle_name = switch (c.args[idx]) {
+        .identifier => |n| n,
+        else => return error.Unsupported,
+    };
+    idx += 1;
+
+    var ws_handle_name: ?[]const u8 = null;
+    if (want_ws) {
+        ws_handle_name = switch (c.args[idx]) {
+            .identifier => |n| n,
+            else => return error.Unsupported,
+        };
+        idx += 1;
+    }
+
+    var cert_v: Value = undefined;
+    var key_v: Value = undefined;
+    if (want_tls) {
+        const cert_v0 = try self.genExpr(c.args[idx]);
+        try self.checkNoLowlevelEscape(cert_v0);
+        cert_v = try self.convert(cert_v0, .l);
+        try self.releaseIfTemporary(c.args[idx], cert_v0);
+        idx += 1;
+        const key_v0 = try self.genExpr(c.args[idx]);
+        try self.checkNoLowlevelEscape(key_v0);
+        key_v = try self.convert(key_v0, .l);
+        try self.releaseIfTemporary(c.args[idx], key_v0);
+        idx += 1;
+    }
+
+    var max_conn_text: []const u8 = "0";
+    if (c.args.len > idx) {
+        const mc_v0 = try self.genExpr(c.args[idx]);
+        try self.checkNoLowlevelEscape(mc_v0);
+        const mc_v = try self.convert(mc_v0, .l);
+        try self.releaseIfTemporary(c.args[idx], mc_v0);
+        max_conn_text = mc_v.text;
+        idx += 1;
+    }
+
+    const handlers = try self.registerHttpHandlers(handle_name, ws_handle_name);
+
+    if (want_tls) {
+        const server = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_http_server_from_fd_tls_owned(l {s}, l {s}, l {s}, l {s})\n", .{ server, RT_PARAM, fd_v.text, cert_v.text, key_v.text });
+        try self.emitServeAndClose(server, handlers.wrapper_name, max_conn_text, handlers.ws_wrapper_name);
+    } else {
+        try self.emitFdServeTail(fd_v.text, handlers.wrapper_name, max_conn_text, null, handlers.ws_wrapper_name);
+    }
+    return .{ .text = "0", .qtype = .none };
+}
+
+/// `nox.http.serve_multicore_tls`/`serve_multicore_ws`/`serve_multicore_
+/// ws_tls` — `genHttpServeMulticore`nin PARAMETRİK genellemesi.
+/// `want_tls` İSE paylaşılan dinleme fd'si `nox_http_listen_fd_tls` İLE
+/// (ÇIPLAK bir `int` DEĞİL, bir `FdTlsPayload*` olarak) elde edilir —
+/// HER worker (bkz. `genHttpServeMulticoreWorker`nin `spec.tls` dalı) VE
+/// ÇAĞIRANIN KENDİ payı (aşağıda, `emitFdServeTail`DEN ÖNCE) bu İŞARETÇİDEN
+/// `fd`/`tls_ctx`yi AYRI AYRI ÇIKARIR. Paylaşılan `SSL_CTX*`, TÜM
+/// worker'lar JOIN EDİLDİKTEN SONRA (bkz. `nox_tls_ctx_free`nin belge
+/// notu — ERKEN serbest bırakmak bir kullanım-sonrası-serbest-bırakma
+/// YARIŞI olurdu) TEK bir yerden serbest bırakılır.
+pub fn genHttpServeMulticoreGeneric(self: *Codegen, c: ast.Call, want_tls: bool, want_ws: bool) CodegenError!Value {
+    var idx: usize = 0;
+    const port_v0 = try self.genExpr(c.args[idx]);
+    try self.checkNoLowlevelEscape(port_v0);
+    const port_v = try self.convert(port_v0, .l);
+    try self.releaseIfTemporary(c.args[idx], port_v0);
+    idx += 1;
+
+    const handle_name = switch (c.args[idx]) {
+        .identifier => |n| n,
+        else => return error.Unsupported,
+    };
+    idx += 1;
+
+    const num_threads_v0 = try self.genExpr(c.args[idx]);
+    try self.checkNoLowlevelEscape(num_threads_v0);
+    const num_threads_v = try self.convert(num_threads_v0, .l);
+    try self.releaseIfTemporary(c.args[idx], num_threads_v0);
+    idx += 1;
+
+    var ws_handle_name: ?[]const u8 = null;
+    if (want_ws) {
+        ws_handle_name = switch (c.args[idx]) {
+            .identifier => |n| n,
+            else => return error.Unsupported,
+        };
+        idx += 1;
+    }
+
+    var cert_v: Value = undefined;
+    var key_v: Value = undefined;
+    if (want_tls) {
+        const cert_v0 = try self.genExpr(c.args[idx]);
+        try self.checkNoLowlevelEscape(cert_v0);
+        cert_v = try self.convert(cert_v0, .l);
+        try self.releaseIfTemporary(c.args[idx], cert_v0);
+        idx += 1;
+        const key_v0 = try self.genExpr(c.args[idx]);
+        try self.checkNoLowlevelEscape(key_v0);
+        key_v = try self.convert(key_v0, .l);
+        try self.releaseIfTemporary(c.args[idx], key_v0);
+        idx += 1;
+    }
+
+    // Checker ZATEN `.int_lit` olduğunu garanti etti (bkz.
+    // `tryResolveHttpServeGeneric`nin belge notu) — `genHttpServeMulticore`nin
+    // AYNI derleme-zamanı metin sabiti taktiği.
+    var max_conn_text: []const u8 = "0";
+    if (c.args.len > idx) {
+        max_conn_text = try std.fmt.allocPrint(self.allocator, "{d}", .{c.args[idx].int_lit});
+        idx += 1;
+    }
+
+    const fd = try self.newTemp();
+    if (want_tls) {
+        try self.out.writer.print("    {s} =l call $nox_http_listen_fd_tls(l {s}, l {s}, l {s}, l {s})\n", .{ fd, RT_PARAM, port_v.text, cert_v.text, key_v.text });
+    } else {
+        try self.out.writer.print("    {s} =l call $nox_http_listen_fd(l {s}, l {s})\n", .{ fd, RT_PARAM, port_v.text });
+    }
+
+    const handlers = try self.registerHttpHandlers(handle_name, ws_handle_name);
+
+    const worker_name = try std.fmt.allocPrint(self.allocator, "http_serve_mc_worker_{d}", .{self.http_serve_multicore_worker_counter});
+    self.http_serve_multicore_worker_counter += 1;
+    try self.http_serve_multicore_workers.append(self.allocator, .{ .name = worker_name, .wrapper_name = handlers.wrapper_name, .max_conn_text = max_conn_text, .ws_wrapper_name = handlers.ws_wrapper_name, .tls = want_tls });
+
+    // Faz HH.8 (bkz. `genHttpServeMulticore`nin AYNI belge notu): spawn
+    // edilen `ThreadHandle`ları daha SONRA join edebilmek İçin geçici bir
+    // dizide TUTULUR.
+    const handles_bytes = try self.newTemp();
+    try self.out.writer.print("    {s} =l mul {s}, 8\n", .{ handles_bytes, num_threads_v.text });
+    const handles_arr = try self.newTemp();
+    try self.out.writer.print("    {s} =l call $nox_alloc(l {s}, l {s})\n", .{ handles_arr, RT_PARAM, handles_bytes });
+
+    const i_slot = try self.newTemp();
+    try self.out.writer.print("    {s} =l alloc8 8\n", .{i_slot});
+    try self.out.writer.print("    storel 1, {s}\n", .{i_slot});
+
+    const cond_label = try self.newLabel("mc_spawn_cond");
+    const body_label = try self.newLabel("mc_spawn_body");
+    const end_label = try self.newLabel("mc_spawn_end");
+
+    try self.out.writer.print("    jmp {s}\n", .{cond_label});
+    try self.out.writer.print("{s}\n", .{cond_label});
+    const cur = try self.newTemp();
+    try self.out.writer.print("    {s} =l loadl {s}\n", .{ cur, i_slot });
+    const cmp = try self.newTemp();
+    try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ cmp, cur, num_threads_v.text });
+    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cmp, body_label, end_label });
+    try self.out.writer.print("{s}\n", .{body_label});
+    const handle_ptr = try self.newTemp();
+    try self.out.writer.print("    {s} =l call $nox_thread_spawn(l {s}, l ${s}, l {s}, w 0, w 0)\n", .{ handle_ptr, RT_PARAM, worker_name, fd });
+    const slot_off = try self.newTemp();
+    try self.out.writer.print("    {s} =l mul {s}, 8\n", .{ slot_off, cur });
+    const slot_ptr = try self.newTemp();
+    try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ slot_ptr, handles_arr, slot_off });
+    try self.out.writer.print("    storel {s}, {s}\n", .{ handle_ptr, slot_ptr });
+    const cur2 = try self.newTemp();
+    try self.out.writer.print("    {s} =l loadl {s}\n", .{ cur2, i_slot });
+    const next = try self.newTemp();
+    try self.out.writer.print("    {s} =l add {s}, 1\n", .{ next, cur2 });
+    try self.out.writer.print("    storel {s}, {s}\n", .{ next, i_slot });
+    try self.out.writer.print("    jmp {s}\n", .{cond_label});
+    try self.out.writer.print("{s}\n", .{end_label});
+
+    // ÇAĞIRANIN KENDİ payı: `want_tls` İSE `fd` ÇIPLAK bir değer DEĞİL,
+    // bir `FdTlsPayload*`dir (bkz. `genHttpServeMulticoreWorker`nin AYNI
+    // çıkarma dalı) — `emitFdServeTail`e VERİLMEDEN ÖNCE İKİ alanı AYRI
+    // AYRI ÇIKARILIR.
+    var fd_text: []const u8 = fd;
+    var tls_ctx_text: ?[]const u8 = null;
+    if (want_tls) {
+        const fd_extracted = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ fd_extracted, fd });
+        const ctx_addr = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, 8\n", .{ ctx_addr, fd });
+        const ctx_extracted = try self.newTemp();
+        try self.out.writer.print("    {s} =l loadl {s}\n", .{ ctx_extracted, ctx_addr });
+        fd_text = fd_extracted;
+        tls_ctx_text = ctx_extracted;
+    }
+    try self.emitFdServeTail(fd_text, handlers.wrapper_name, max_conn_text, tls_ctx_text, handlers.ws_wrapper_name);
+
+    // Faz HH.8: ÇAĞIRANIN KENDİ payı BİTTİKTEN SONRA, spawn edilen HER
+    // worker'ı join et (bkz. `genHttpServeMulticore`nin AYNI gerekçesi).
+    const j_slot = try self.newTemp();
+    try self.out.writer.print("    {s} =l alloc8 8\n", .{j_slot});
+    try self.out.writer.print("    storel 1, {s}\n", .{j_slot});
+
+    const jcond_label = try self.newLabel("mc_join_cond");
+    const jbody_label = try self.newLabel("mc_join_body");
+    const jend_label = try self.newLabel("mc_join_end");
+
+    try self.out.writer.print("    jmp {s}\n", .{jcond_label});
+    try self.out.writer.print("{s}\n", .{jcond_label});
+    const jcur = try self.newTemp();
+    try self.out.writer.print("    {s} =l loadl {s}\n", .{ jcur, j_slot });
+    const jcmp = try self.newTemp();
+    try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ jcmp, jcur, num_threads_v.text });
+    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ jcmp, jbody_label, jend_label });
+    try self.out.writer.print("{s}\n", .{jbody_label});
+    const jslot_off = try self.newTemp();
+    try self.out.writer.print("    {s} =l mul {s}, 8\n", .{ jslot_off, jcur });
+    const jslot_ptr = try self.newTemp();
+    try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ jslot_ptr, handles_arr, jslot_off });
+    const jhandle = try self.newTemp();
+    try self.out.writer.print("    {s} =l loadl {s}\n", .{ jhandle, jslot_ptr });
+    try self.out.writer.print("    call $nox_thread_join(l {s}, l {s})\n", .{ RT_PARAM, jhandle });
+    try self.out.writer.print("    call $nox_thread_destroy(l {s}, l {s})\n", .{ RT_PARAM, jhandle });
+    const jcur2 = try self.newTemp();
+    try self.out.writer.print("    {s} =l loadl {s}\n", .{ jcur2, j_slot });
+    const jnext = try self.newTemp();
+    try self.out.writer.print("    {s} =l add {s}, 1\n", .{ jnext, jcur2 });
+    try self.out.writer.print("    storel {s}, {s}\n", .{ jnext, j_slot });
+    try self.out.writer.print("    jmp {s}\n", .{jcond_label});
+    try self.out.writer.print("{s}\n", .{jend_label});
+    try self.out.writer.print("    call $nox_free(l {s}, l {s}, l {s})\n", .{ RT_PARAM, handles_arr, handles_bytes });
+
+    if (tls_ctx_text) |ctx| {
+        try self.out.writer.print("    call $nox_tls_ctx_free(l {s})\n", .{ctx});
+    }
+
+    return .{ .text = "0", .qtype = .none };
 }

@@ -14,6 +14,85 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.22.0]
+
+### Eklendi
+- **`nox.http` sunucusuna GERÇEK TLS terminasyonu (OpenSSL/BoringSSL FFI) +
+  sunucu-tarafı WebSocket Upgrade** — kullanıcının `nyx` framework'ünde
+  farkedilen SON Nox eksikliği (bkz. proje belleği "server TLS +
+  WebSocket Upgrade" fazı). Zig'in KENDİ `std.crypto.tls`i (0.16.0)
+  YALNIZCA istemci tarafını (`Client.zig`) uyguladığından — `Server.zig`
+  YOK — kullanıcı BİLEREK sıfırdan bir TLS handshake yazmak yerine
+  `sqlite.zig`/`postgres.zig`/`mysql.zig` İLE AYNI çalışma-zamanı dlopen-
+  FFI desenini seçti (`runtime/stdlib_shims/tls_server.zig`, YENİ):
+  `libssl`e (macOS: Homebrew MUTLAK yolları; Windows: `Kernel32.
+  LoadLibraryA`; Linux: `libssl.so.3`/`.so.1.1`; hepsinde `NOX_OPENSSL_LIB`
+  ortam değişkeni kaçış kapısı) TEMBEL bağlanır, TLS'i bellek-BIO'lar
+  (`BIO_s_mem`) üzerinden sürer — OpenSSL GERÇEK fd'ye HİÇ dokunmaz,
+  TÜM soket G/Ç'si mevcut fiber-farkında `rawRead`/`rawWriteAll`
+  altyapısından geçer, böylece TLS/düz-metin bağlantılar AYNI eşzamanlı
+  zamanlayıcıyı PAYLAŞIR.
+- Sunucu-tarafı WebSocket Upgrade (`runtime/stdlib_shims/websocket_server.zig`,
+  YENİ): RFC 6455 el sıkışması (`Sec-WebSocket-Accept` hesaplaması istemci
+  kabuğuyla — `websocket.zig`nin YENİ `computeAcceptValue`i — PAYLAŞILIR),
+  maskesiz gelen istemci frame'lerini REDDEDER (Close 1002), sunucu→istemci
+  frame'lerini HİÇBİR ZAMAN maskelemez. `stdlib/nox/websocket.nox`ye YENİ
+  `WebSocketServerConn` sınıfı (`WebSocketClient` İLE AYNI API: `send_text`/
+  `recv`/`is_open`/`close`) eklendi.
+- **TAM 12'lik Nox-yüzü fonksiyon matrisi**: `serve`/`serve_fd`/
+  `serve_multicore`nin ÜÇÜ de artık `_tls`/`_ws`/`_ws_tls` uzantılarına
+  sahip (`serve_tls`, `serve_ws`, `serve_ws_tls`, `serve_fd_tls`,
+  `serve_fd_ws`, `serve_fd_ws_tls`, `serve_multicore_tls`,
+  `serve_multicore_ws`, `serve_multicore_ws_tls` — 9 YENİ isim).
+  Codegen (`compiler/codegen_qbe/http_intrinsics.zig`) bunların HEPSİNİ
+  3 PARAMETRİK "generic" çekirdek fonksiyona (`genHttpServeGeneric`/
+  `genHttpServeFdGeneric`/`genHttpServeMulticoreGeneric`, `want_tls`/
+  `want_ws` bayraklarıyla) indirger — kombinatoryal patlama runtime
+  SEVİYESİNDE tamamen "bedava" (`ConnCtx`ye `tls_ctx`/`ws_handler` alanı
+  eklemek TÜM ÜÇ transport biçimine YETTİ), yalnızca codegen/checker'da
+  mekanik bir isimlendirme işiydi.
+- `tests/fixtures/tls/test_cert.pem`/`test_key.pem` — sabit, tek-seferlik
+  üretilmiş test-only self-signed sertifika+anahtar çifti (100 yıl geçerli,
+  `CN=localhost`). `tests/compat/http_serve_tls_golden_test.zig` (Zig'in
+  KENDİ `std.crypto.tls.Client`ıyla GERÇEK bir el sıkışma+istek/yanıt
+  interop kanıtı) + `tests/compat/http_serve_ws_golden_test.zig` (ham bir
+  RFC 6455 istemcisiyle el sıkışma+maskeli frame yankısı VE maskesiz bir
+  frame'in REDDEDİLDİĞİNİN kanıtı) eklendi.
+- CI (`ci.yml`nin `windows-frontend` işi): kullanıcının AÇIKÇA seçtiği
+  "Windows'u da TAM doğrula" kararı — Chocolatey İLE GERÇEK bir `libssl`
+  kurulup (`NOX_OPENSSL_LIB` İLE %100 güvenilir biçimde BULUNARAK)
+  `nox.http.serve_tls`in GERÇEK bir HTTPS isteğine yanıt verdiği native
+  bir Windows runner'da doğrulanıyor, ARDINDAN TAM 12'lik isim matrisinin
+  HEPSİNİN Windows qbe.exe+MinGW cc İLE derlenip BAĞLANDIĞI ayrıca
+  kontrol ediliyor.
+
+### Düzeltildi (bu fazın KENDİ araştırması sırasında bulunan GERÇEK hatalar)
+- **macOS'ta bare `dlopen("libssl.dylib")` Apple'ın dyld PAYLAŞILAN
+  önbelleğindeki bir "sahte" kütüphaneyle eşleşip `abort()` çağırıyordu**
+  ("... is loading libcrypto in an unsafe way" — Apple, sistemden OpenSSL'i
+  KALDIRDIĞINDAN bu isimlerle dlopen eden uygulamaları BİLEREK kırmak İçin
+  tutuyor). `lldb` backtrace'iyle YAKALANDI. Düzeltme: macOS'ta ARTIK
+  YALNIZCA Homebrew/MacPorts'un MUTLAK yolları denenir, bare isimler HİÇ
+  denenmez.
+- **GERÇEK bir use-after-free yarışı**: `serve_multicore_tls`/tekli
+  `serve_tls` bağlantı-başına bir fiber olarak SPAWN edilirken, `max_
+  connections`e ulaşılınca ÇAĞIRANIN payı BİTER BİTMEZ (yeni spawn edilen
+  fiber HENÜZ HİÇ ÇALIŞMAMIŞKEN) `nox_http_server_close` `SSL_CTX_free`
+  çağırıyordu — `lldb` İLE (`x8+0x10` → serbest bırakılmış belleğin
+  içeriği) KANITLANDI. Düzeltme: `SSL_CTX_up_ref` İLE bağlantı fiber'ı
+  SPAWN EDİLMEDEN ÖNCE (hâlâ GÜVENLİ orijinal fiber'dayken) EK bir
+  referans alınır, `acceptHandshake` `SSL_new`DAN SONRA bırakır.
+- `connectionEntry`, TLS-farkında `reader_ptr`/`writer_ptr` yerine HER
+  ZAMAN düz-metin `fiber_reader`/`fiber_writer`i `std.http.Server.init`e
+  veriyordu — el sıkışma BAŞARILI olsa BİLE HTTP katmanı şifreli baytları
+  OKUYUP YAZARDI (bkz. yukarıdaki GERÇEK yarış hatasının düzeltilmesi
+  SIRASINDA fark edildi).
+- `SSL_shutdown`in ürettiği `close_notify` alert'i `flushWbio` İLE GERÇEK
+  soketE AKTARILMIYORDU — istemciler (Zig'in `std.crypto.tls.Client`ı
+  DAHİL, `allow_truncation_attacks=false` VARSAYILANIYLA) bağlantıyı
+  `error.TlsConnectionTruncated` İLE REDDEDİYORDU (`http_serve_tls_
+  golden_test.zig`nin İLK çalıştırmasıyla YAKALANDI).
+
 ## [1.21.3]
 
 ### Düzeltildi

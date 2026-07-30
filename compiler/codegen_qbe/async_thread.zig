@@ -126,7 +126,27 @@ pub fn matchesNoxAttr(callee: ast.Expr, module: []const u8, name: []const u8) bo
 /// BİR varyant + `genCall`nin dispatch switch'ine BİR `case` eklemektir —
 /// `exprUsesAsync` HİÇ DEĞİŞMEZ (TÜM intrinsic'ler ZATEN async-tetikleyici
 /// olduğundan `matchIntrinsicKind(...) != null` TEK kontrolü yeterlidir).
-pub const IntrinsicKind = enum { http_serve, http_serve_fd, http_serve_multicore, thread_start };
+pub const IntrinsicKind = enum {
+    http_serve,
+    http_serve_fd,
+    http_serve_multicore,
+    // Faz "sunucu-tarafı TLS + WebSocket Upgrade" (bkz. plan dosyası §6,
+    // TAM 12'lik isim matrisi) — çıplak `http_serve`/`http_serve_fd`/
+    // `http_serve_multicore`nin `_tls`/`_ws`/`_ws_tls` UZANTILARI. Codegen
+    // TARAFI (`calls.zig`nin dispatch switch'i) HEPSİNİ `genHttpServe*
+    // Generic(c, want_tls, want_ws)` ÜÇLÜSÜNE yönlendirir — bu varyantların
+    // HİÇBİRİ KENDİ AYRI bir codegen fonksiyonuna İHTİYAÇ DUYMAZ.
+    http_serve_tls,
+    http_serve_ws,
+    http_serve_ws_tls,
+    http_serve_fd_tls,
+    http_serve_fd_ws,
+    http_serve_fd_ws_tls,
+    http_serve_multicore_tls,
+    http_serve_multicore_ws,
+    http_serve_multicore_ws_tls,
+    thread_start,
+};
 
 const IntrinsicEntry = struct { module: []const u8, name: []const u8, kind: IntrinsicKind };
 
@@ -134,6 +154,15 @@ const intrinsic_table = [_]IntrinsicEntry{
     .{ .module = "http", .name = "serve", .kind = .http_serve },
     .{ .module = "http", .name = "serve_fd", .kind = .http_serve_fd },
     .{ .module = "http", .name = "serve_multicore", .kind = .http_serve_multicore },
+    .{ .module = "http", .name = "serve_tls", .kind = .http_serve_tls },
+    .{ .module = "http", .name = "serve_ws", .kind = .http_serve_ws },
+    .{ .module = "http", .name = "serve_ws_tls", .kind = .http_serve_ws_tls },
+    .{ .module = "http", .name = "serve_fd_tls", .kind = .http_serve_fd_tls },
+    .{ .module = "http", .name = "serve_fd_ws", .kind = .http_serve_fd_ws },
+    .{ .module = "http", .name = "serve_fd_ws_tls", .kind = .http_serve_fd_ws_tls },
+    .{ .module = "http", .name = "serve_multicore_tls", .kind = .http_serve_multicore_tls },
+    .{ .module = "http", .name = "serve_multicore_ws", .kind = .http_serve_multicore_ws },
+    .{ .module = "http", .name = "serve_multicore_ws_tls", .kind = .http_serve_multicore_ws_tls },
     .{ .module = "thread", .name = "start", .kind = .thread_start },
 };
 

@@ -49,6 +49,8 @@ const scheduler_mod = @import("../async_rt/scheduler.zig");
 const fiber_mod = @import("../async_rt/fiber.zig");
 const http_client = @import("http_client.zig");
 const str_mod = @import("../str.zig");
+const tls_server = @import("tls_server.zig");
+const websocket_server = @import("websocket_server.zig");
 
 /// Faz HH.7 (bkz. nox-teknik-spesifikasyon.md §3.68): okuma zaman aşımı —
 /// bir bağlantı BAŞLIK/GÖVDE göndermeden bu süreden UZUN askıda kalırsa
@@ -209,7 +211,17 @@ const FiberWriter = struct {
 /// parçacıklarını "bad file descriptor" ile keserdi. `true` YALNIZCA
 /// `nox_http_server_listen`in KENDİSİ fd'yi `socket()`/`bind()`/`listen()`
 /// İLE YARATTIĞINDA (fd'nin GERÇEK sahibi OLDUĞUNDA).
-const ServerHandle = struct { listen_fd: posix.fd_t, owns_fd: bool };
+const ServerHandle = struct {
+    listen_fd: posix.fd_t,
+    owns_fd: bool,
+    /// Faz "sunucu-tarafı TLS" (bkz. plan dosyası): `SSL_CTX*`, düz-metin
+    /// sunucular İçin `null`. `owns_tls_ctx` YALNIZCA bu bağlamı YARATAN
+    /// `ServerHandle` İçin `true`dur (`owns_fd`in AYNI disiplini —
+    /// `serve_multicore`nin PAYLAŞILAN bağlamını her worker'ın KENDİ
+    /// `ServerHandle`ı SERBEST BIRAKMAMALI).
+    tls_ctx: ?*anyopaque = null,
+    owns_tls_ctx: bool = false,
+};
 
 /// `nox_http_server_listen`in socket/bind/listen mantığı — Faz DD.1'de
 /// `nox_http_listen_fd`in de (ham fd'yi `ServerHandle` SARMADAN, saf bir
@@ -301,6 +313,39 @@ export fn nox_http_server_listen(rt: ?*anyopaque, port: i64) callconv(.c) ?*anyo
     return handle;
 }
 
+/// stderr'e tek satırlık bir TLS yapılandırma tanısı basar — kullanıcı
+/// seçimi (bkz. plan dosyası): SSL_CTX yükleme hatası (libssl yok, yanlış
+/// cert/key yolu, eşleşmeyen cert/key) sessizce yutulmaz, ama davranış
+/// (mevcut `serve`/`serve_fd`/`serve_multicore`nin bind-hatası davranışıyla
+/// TUTARLI) YİNE DE "sunucu hiçbir şey yapmadan döner" olarak kalır.
+fn logTlsCtxFailure() void {
+    std.debug.print("nox.http.serve_tls: TLS baglami olusturulamadi (libssl kurulu degil olabilir, ya da cert/key yolu/eslesmesi yanlis)\n", .{});
+}
+
+/// Faz "sunucu-tarafı TLS": `nox_http_server_listen`in AYNISI, AMA
+/// bağlanılan soketin ÜZERİNE bir `SSL_CTX` (PEM cert+key'den) İNŞA
+/// EDİLİR. Başarısız OLURSA (bkz. `logTlsCtxFailure`) soket kapatılıp
+/// `null` döner.
+export fn nox_http_server_listen_tls(rt: ?*anyopaque, port: i64, cert_path: ?[*:0]const u8, key_path: ?[*:0]const u8) callconv(.c) ?*anyopaque {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    const cp = cert_path orelse return null;
+    const kp = key_path orelse return null;
+    const fd = bindAndListen(port) orelse return null;
+    const ctx = tls_server.newServerCtx(cp, kp) orelse {
+        logTlsCtxFailure();
+        _ = closeSocket(fd);
+        return null;
+    };
+
+    const handle = state.allocator().create(ServerHandle) catch {
+        tls_server.freeServerCtx(ctx);
+        _ = closeSocket(fd);
+        return null;
+    };
+    handle.* = .{ .listen_fd = fd, .owns_fd = true, .tls_ctx = ctx, .owns_tls_ctx = true };
+    return handle;
+}
+
 /// Faz DD.1 — `bindAndListen`i çağırıp ham fd'yi (ya da hatada `-1`)
 /// DOĞRUDAN döner, hiçbir `ServerHandle` YARATMAZ. Bu ham `int`, `nox.
 /// thread`in ZATEN desteklediği iş-parçacıkları-arası aktarım
@@ -318,6 +363,35 @@ export fn nox_http_listen_fd(rt: ?*anyopaque, port: i64) callconv(.c) i64 {
     return fdToI64(fd);
 }
 
+/// Faz "sunucu-tarafı TLS" — `serve_multicore_tls` İçİn: TEK bir dinleme
+/// fd'si + TEK bir paylaşılan `SSL_CTX*` (OpenSSL'in KENDİ belgelerine
+/// göre `SSL_new(ctx)` DIŞINDA `ctx`nin KENDİSİ HİÇ MUTASYONA UĞRAMADIĞI
+/// sürece BİRDEN FAZLA iş parçacığı arasında GÜVENLE PAYLAŞILABİLİR).
+/// İkisini TEK bir `nox_alloc`'lu struct'a paketleyip döner — codegen
+/// (`genHttpServeMulticoreTls`) BUNU `nox_thread_spawn`ın TEK-argüman
+/// payload'ı olarak GEÇİRİR (`genSpawnExpr`nin AYNI closure-paketleme
+/// hilesi).
+const FdTlsPayload = struct { fd: i64, tls_ctx: ?*anyopaque };
+
+export fn nox_http_listen_fd_tls(rt: ?*anyopaque, port: i64, cert_path: ?[*:0]const u8, key_path: ?[*:0]const u8) callconv(.c) ?*anyopaque {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    const cp = cert_path orelse return null;
+    const kp = key_path orelse return null;
+    const fd = bindAndListen(port) orelse return null;
+    const ctx = tls_server.newServerCtx(cp, kp) orelse {
+        logTlsCtxFailure();
+        _ = closeSocket(fd);
+        return null;
+    };
+    const payload = state.allocator().create(FdTlsPayload) catch {
+        tls_server.freeServerCtx(ctx);
+        _ = closeSocket(fd);
+        return null;
+    };
+    payload.* = .{ .fd = fdToI64(fd), .tls_ctx = ctx };
+    return payload;
+}
+
 /// Faz DD.1 — `nox_http_listen_fd`İLE elde edilmiş, ZATEN dinlemede olan
 /// PAYLAŞILAN bir fd'yi ÇAĞIRAN iş parçacığının KENDİ (`state.
 /// allocator()`) taze bir `ServerHandle`ına SARAR — YENİDEN bağlamaz/
@@ -330,6 +404,42 @@ export fn nox_http_server_from_fd(rt: ?*anyopaque, fd: i64) callconv(.c) ?*anyop
     if (fd < 0) return null;
     const handle = state.allocator().create(ServerHandle) catch return null;
     handle.* = .{ .listen_fd = i64ToFd(fd), .owns_fd = false };
+    return handle;
+}
+
+/// `nox_http_server_from_fd`in TLS eşleniği — `tls_ctx` PAYLAŞILAN
+/// bağlamdır (bkz. `nox_http_listen_fd_tls`in belge notu), bu YÜZDEN
+/// `owns_tls_ctx = false` (bu worker'ın `nox_http_server_close`ı bağlamı
+/// SERBEST BIRAKMAZ — YALNIZCA `serve_multicore_tls`in KENDİSİ, TÜM
+/// worker'lar bittikten SONRA, yapar — bkz. `genHttpServeMulticoreTls`).
+export fn nox_http_server_from_fd_tls(rt: ?*anyopaque, fd: i64, tls_ctx: ?*anyopaque) callconv(.c) ?*anyopaque {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    if (fd < 0) return null;
+    const handle = state.allocator().create(ServerHandle) catch return null;
+    handle.* = .{ .listen_fd = i64ToFd(fd), .owns_fd = false, .tls_ctx = tls_ctx, .owns_tls_ctx = false };
+    return handle;
+}
+
+/// Faz "sunucu-tarafı TLS" — `serve_fd_tls`/`serve_fd_ws_tls` İçİn:
+/// ÇAĞIRANIN VERDİĞİ (ZATEN dinlemede olan) bir `fd`yi SARAR, AMA
+/// `nox_http_server_from_fd_tls`nin AKSİNE `tls_ctx`yi (paylaşılan/dıştan
+/// verilen DEĞİL) BİZZAT `cert_path`/`key_path`DEN YARATIR VE SAHİPLENİR
+/// (`owns_tls_ctx = true` — `owns_fd = false` KALIR, `fd` HÂLÂ ÇAĞIRANIN
+/// mülkiyetindedir, `nox_http_server_from_fd`in AYNI disiplini).
+export fn nox_http_server_from_fd_tls_owned(rt: ?*anyopaque, fd: i64, cert_path: ?[*:0]const u8, key_path: ?[*:0]const u8) callconv(.c) ?*anyopaque {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    if (fd < 0) return null;
+    const cp = cert_path orelse return null;
+    const kp = key_path orelse return null;
+    const ctx = tls_server.newServerCtx(cp, kp) orelse {
+        logTlsCtxFailure();
+        return null;
+    };
+    const handle = state.allocator().create(ServerHandle) catch {
+        tls_server.freeServerCtx(ctx);
+        return null;
+    };
+    handle.* = .{ .listen_fd = i64ToFd(fd), .owns_fd = false, .tls_ctx = ctx, .owns_tls_ctx = true };
     return handle;
 }
 
@@ -350,6 +460,7 @@ export fn nox_http_server_port(server: ?*anyopaque) callconv(.c) i64 {
 export fn nox_http_server_close(rt: ?*anyopaque, server: ?*anyopaque) callconv(.c) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const h: *ServerHandle = @ptrCast(@alignCast(server orelse return));
+    if (h.owns_tls_ctx) if (h.tls_ctx) |ctx| tls_server.freeServerCtx(ctx);
     if (h.owns_fd) _ = closeSocket(h.listen_fd);
     state.allocator().destroy(h);
 }
@@ -424,6 +535,17 @@ const ConnCtx = struct {
     /// BEKLEMEDEN testlerin KÜÇÜK/HIZLI değerlerle sınırı EGZERSİZ
     /// edebilmesi" gerekçesiyle PARAMETRE olarak taşınır.
     read_timeout_ms: u32,
+    /// Faz "sunucu-tarafı TLS": `ServerHandle.tls_ctx`nin (bkz. onun belge
+    /// notu) bağlantı-başına KOPYASI — `null` İSE bu bağlantı düz-metin
+    /// (TLS'siz) İŞLENİR. `serveImpl` TARAFINDAN `h.tls_ctx`DEN DOLDURULUR.
+    tls_ctx: ?*anyopaque = null,
+    /// Faz "sunucu-tarafı WebSocket Upgrade": AYARLIYSA, `receiveHead`
+    /// SONRASI HER istek ÖNCE `websocket_server.tryHandleUpgrade`e
+    /// SUNULUR — Upgrade İSE bu, bağlantının TÜM ömrünü SAHİPLENİR (bkz.
+    /// `connectionEntry`nin `.upgraded` dalı); DEĞİLSE MEVCUT `handler`a
+    /// (DEĞİŞMEDEN) DÜŞÜLÜR. `handler_ctx` HER İKİSİ İçİn de PAYLAŞILIR
+    /// (`WsHandlerFn`nin (ctx, tutamaç) sırası `HandlerFn`la AYNI).
+    ws_handler: ?websocket_server.WsHandlerFn = null,
 };
 
 // Faz HH.2 (bkz. nox-teknik-spesifikasyon.md §3.68): `method`/`target`/
@@ -607,6 +729,31 @@ fn connectionEntry(arg: *anyopaque) void {
     var fiber_reader = FiberReader.init(conn.fd, scheduler, &read_buf, conn.read_timeout_ms);
     var fiber_writer = FiberWriter.init(conn.fd, scheduler, &write_buf);
 
+    // Faz "sunucu-tarafı TLS": `conn.tls_ctx` AYARLIYSA `std.http.Server`e
+    // VERİLECEK Reader/Writer ÇİFTİ `fiber_reader`/`fiber_writer` YERİNE bu
+    // İKİSİNİN TLS eşleniği OLUR — `connectionEntry`nin GERİ KALANI
+    // (`server.receiveHead`/gövde okuma/`request.respond`) `reader_ptr`/
+    // `writer_ptr`nin ARKASINDA TLS OLUP OLMADIĞINDAN TAMAMEN BİHABERDİR
+    // (bkz. plan dosyasının "ŞEFFAF katman" tasarım ilkesi).
+    var tls_conn: ?*tls_server.TlsConn = null;
+    defer if (tls_conn) |tc| tls_server.tlsShutdown(tc, gpa);
+    var tls_read_buf: [4096]u8 = undefined;
+    var tls_write_buf: [4096]u8 = undefined;
+    var tls_reader: tls_server.TlsServerReader = undefined;
+    var tls_writer: tls_server.TlsServerWriter = undefined;
+
+    var reader_ptr: *std.Io.Reader = &fiber_reader.interface;
+    var writer_ptr: *std.Io.Writer = &fiber_writer.interface;
+
+    if (conn.tls_ctx) |ctx| {
+        const tc = tls_server.acceptHandshake(ctx, conn.fd, scheduler, conn.read_timeout_ms, gpa) catch return;
+        tls_conn = tc;
+        tls_reader = tls_server.TlsServerReader.init(tc, &tls_read_buf);
+        tls_writer = tls_server.TlsServerWriter.init(tc, &tls_write_buf);
+        reader_ptr = &tls_reader.interface;
+        writer_ptr = &tls_writer.interface;
+    }
+
     // Faz HH.6: `std.http.Server` ZATEN "aynı bağlantıda birden çok
     // isteği" desteklemek İçin tasarlanmıştır (bkz. `Server.zig`nin modül
     // üstü notu) — TEK `receiveHead()` çağrısı YERİNE bir döngüye alınır.
@@ -614,10 +761,33 @@ fn connectionEntry(arg: *anyopaque) void {
     // sayesinde) O TURUN sonunda (bir SONRAKİ `receiveHead`den ÖNCE)
     // ateşlenir — ÖNCEKİ (tek-istekli) davranışla AYNI temizlik disiplini,
     // yalnızca TEKRARLANIR.
-    var server: std.http.Server = .init(&fiber_reader.interface, &fiber_writer.interface);
+    var server: std.http.Server = .init(reader_ptr, writer_ptr);
     var requests_served: usize = 0;
     while (requests_served < MAX_REQUESTS_PER_CONNECTION) : (requests_served += 1) {
         var request = server.receiveHead() catch break;
+
+        // Faz "sunucu-tarafı WebSocket Upgrade": `conn.ws_handler` AYARLIYSA
+        // HER istek ÖNCE Upgrade ADAYI olarak SUNULUR. `reader_ptr`/
+        // `writer_ptr` (yukarıda, TLS var/yok FARK ETMEKSİZİN `std.http.
+        // Server.init`e VERİLEN AYNI işaretçiler) `tryHandleUpgrade`e
+        // GEÇİRİLİR — `std.http.Server.receiveHead`in İÇ arabelleğinde
+        // headers SONRASI fazla baytlar (erken bir WS frame'i) OLABİLECEĞİ
+        // İçİn bu ZORUNLUDUR (bkz. plan dosyasının "kritik doğruluk kısıtı").
+        if (conn.ws_handler) |wsh| {
+            const upgrade_result = websocket_server.tryHandleUpgrade(rt, &request, reader_ptr, writer_ptr, wsh, conn.handler_ctx) catch break;
+            switch (upgrade_result) {
+                // Handler DÖNDÜĞÜNDE bağlantının TÜM ömrü ZATEN TÜKETİLDİ —
+                // İstek döngüsüne ASLA GERİ DÖNÜLMEZ (fonksiyonun ÜST
+                // seviye `defer`leri fd'yi/`conn`u/TLS oturumunu YİNE DE
+                // temizler).
+                .upgraded => return,
+                .rejected => {
+                    request.respond("Bad Request", .{ .status = .bad_request, .keep_alive = false }) catch {};
+                    break;
+                },
+                .not_upgrade => {},
+            }
+        }
 
         // Faz HH.2: ÖNCEDEN `gpa.dupe` (düz kopya) — `nox_http_request_*`
         // ÇAĞRILDIĞINDA `dupeToNoxStr` İKİNCİ bir ARC kopyası çıkarırdı.
@@ -745,7 +915,17 @@ fn connectionEntry(arg: *anyopaque) void {
 /// pozitifse TAM O SAYIDA bağlantı kabul edilince döner (bu dosyanın KENDİ
 /// testinin deterministik olması İÇİN gerekli).
 export fn nox_http_serve_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, max_connections: i64) callconv(.c) void {
-    serveImpl(rt, server, handler, handler_ctx, max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS);
+    serveImpl(rt, server, handler, handler_ctx, null, max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS);
+}
+
+/// Faz "sunucu-tarafı WebSocket Upgrade": `nox_http_serve_raw`nin AYNISI,
+/// AMA EK bir `ws_handler` İLE — `handler_ctx` HER İKİ handler İçİn de
+/// PAYLAŞILIR (bkz. `ConnCtx.ws_handler`nin belge notu). `handler`,
+/// Upgrade OLMAYAN (`.not_upgrade`) istekler İçİn ÇALIŞMAYA DEVAM eder —
+/// TEK bir sunucu HEM normal HTTP rotalarını HEM DE WS Upgrade'i
+/// KARIŞIK sunabilir.
+export fn nox_http_serve_ws_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, ws_handler: websocket_server.WsHandlerFn, max_connections: i64) callconv(.c) void {
+    serveImpl(rt, server, handler, handler_ctx, ws_handler, max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS);
 }
 
 /// `nox_http_serve_raw`nin GERÇEK gövdesi — `max_concurrent`/`max_body_bytes`/
@@ -755,7 +935,7 @@ export fn nox_http_serve_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: Hand
 /// MAX_CONCURRENT_CONNECTIONS`/`READ_TIMEOUT_MS` gibi GERÇEKÇİ (büyük)
 /// varsayılanları BEKLEMEDEN, testlerin KÜÇÜK/HIZLI değerlerle sınırları
 /// GERÇEKTEN EGZERSİZ edebilmesi İÇİNDİR (bkz. aşağıdaki testler).
-fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, max_connections: i64, max_concurrent: usize, max_body_bytes: usize, read_timeout_ms: u32) void {
+fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, ws_handler: ?websocket_server.WsHandlerFn, max_connections: i64, max_concurrent: usize, max_body_bytes: usize, read_timeout_ms: u32) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const h: *ServerHandle = @ptrCast(@alignCast(server orelse return));
     const gpa = state.allocator();
@@ -797,7 +977,26 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
             .max_body_bytes = max_body_bytes,
             .active_connections = &active_connections,
             .read_timeout_ms = read_timeout_ms,
+            .tls_ctx = h.tls_ctx,
+            .ws_handler = ws_handler,
         };
+        // **KÖK NEDEN düzeltmesi (kullanım-sonrası-serbest-bırakma, TLS +
+        // fiber zamanlaması — bkz. `tls_server.ctxTakeExtraRef`nin belge
+        // notu):** `max_connections` sınırına TAM OLARAK bu bağlantıda
+        // ULAŞILIRSA, bu döngü (dolayısıyla `nox_http_serve_raw`) bu
+        // bağlantının fiber'ı HENÜZ BİR KEZ BİLE ÇALIŞTIRILMADAN döner —
+        // codegen'in HEMEN ARDINDAN çağırdığı `nox_http_server_close`
+        // (bkz. `emitServeAndClose`), `owns_tls_ctx` İSE, PAYLAŞILAN
+        // `SSL_CTX*`yi bu fiber `SSL_new(ctx)`yi HİÇ ÇAĞIRMADAN SERBEST
+        // BIRAKIR — bağlantı fiber'ı SONRADAN çalıştırıldığında `SSL_new`
+        // ÇOKTAN yok edilmiş bir `ctx`i dereferans edip GERÇEK, tekrarlanabilir
+        // bir `EXC_BAD_ACCESS`e (`libssl`de) düşer. Düzeltme: `ctx`nin
+        // OpenSSL'in KENDİ atomik referans sayacına, bu bağlantı ADINA
+        // fazladan BİR referans EKLENİR — `acceptHandshake` `SSL_new`
+        // çağrısından HEMEN SONRA (bkz. onun belge notu) bunu geri verir,
+        // bu ARADA `ctx` sunucunun KENDİ referansı ERKEN bırakılsa BİLE
+        // CANLI kalır.
+        if (conn.tls_ctx) |ctx| tls_server.ctxTakeExtraRef(ctx);
         // `connectionEntry`nin (fiber İÇİNDE YA DA senkron çağrıldığında
         // AYNI şekilde) `defer conn.active_connections.* -= 1`i bunu HER
         // ZAMAN dengeler — spawn/çağrı BAŞARISIZ OLURSA (aşağıdaki `catch`
@@ -819,12 +1018,20 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
             // ölçümü). Düzeltme: `spawn` İLE AYNI `acquireStack`+
             // `createWithStack` çifti.
             const stack = s.acquireStack() catch {
+                // `connectionEntry`/`acceptHandshake` ARTIK HİÇ ÇALIŞMAYACAĞINDAN
+                // (bu yüzden `ctxReleaseExtraRef`e ASLA ULAŞMAYACAĞINDAN),
+                // yukarıda alınan fazladan referans BURADA elle geri verilir
+                // (bkz. `ctxTakeExtraRef`nin belge notu) — aksi halde `ctx`
+                // ASLA GERÇEKTEN sıfır referansa DÜŞMEZ (kalıcı bir "referans
+                // sızıntısı", çökme DEĞİL ama YİNE DE bir kaynak sızıntısı).
+                if (conn.tls_ctx) |ctx| tls_server.ctxReleaseExtraRef(ctx);
                 active_connections -= 1;
                 gpa.destroy(conn);
                 _ = closeSocket(conn_fd);
                 continue;
             };
             const fiber = fiber_mod.Fiber.createWithStack(gpa, connectionEntry, conn, stack) catch {
+                if (conn.tls_ctx) |ctx| tls_server.ctxReleaseExtraRef(ctx);
                 active_connections -= 1;
                 s.releaseStack(stack);
                 gpa.destroy(conn);
@@ -931,11 +1138,12 @@ const ServeArgs = struct {
     max_concurrent: usize = DEFAULT_MAX_CONCURRENT_CONNECTIONS,
     max_body_bytes: usize = MAX_REQUEST_BODY_BYTES,
     read_timeout_ms: u32 = READ_TIMEOUT_MS,
+    ws_handler: ?websocket_server.WsHandlerFn = null,
 };
 
 fn testServeEntry(arg: *anyopaque) callconv(.c) i64 {
     const args: *ServeArgs = @ptrCast(@alignCast(arg));
-    serveImpl(args.rt, args.server, TestHandlerLog.handle, null, args.max_connections, args.max_concurrent, args.max_body_bytes, args.read_timeout_ms);
+    serveImpl(args.rt, args.server, TestHandlerLog.handle, null, args.ws_handler, args.max_connections, args.max_concurrent, args.max_body_bytes, args.read_timeout_ms);
     return 0;
 }
 
@@ -1080,7 +1288,7 @@ const ThreadSafeCounter = struct {
 };
 
 fn sharedFdServeEntry(args: *ServeArgs) void {
-    serveImpl(args.rt, args.server, ThreadSafeCounter.handle, args.rt, args.max_connections, args.max_concurrent, args.max_body_bytes, args.read_timeout_ms);
+    serveImpl(args.rt, args.server, ThreadSafeCounter.handle, args.rt, args.ws_handler, args.max_connections, args.max_concurrent, args.max_body_bytes, args.read_timeout_ms);
 }
 
 // Faz DD.1 — `owns_fd`in KENDİSİNİ (bkz. `ServerHandle`in belge notu),
@@ -1200,7 +1408,7 @@ test "Faz Q.5: govde boyutu siniri asilirsa 413 Payload Too Large doner, handler
         }
     }.run, .{ port, &resp_buf, &resp_len });
 
-    serveImpl(rt, server, TestHandlerLog.handle, null, 1, DEFAULT_MAX_CONCURRENT_CONNECTIONS, 16, READ_TIMEOUT_MS);
+    serveImpl(rt, server, TestHandlerLog.handle, null, null, 1, DEFAULT_MAX_CONCURRENT_CONNECTIONS, 16, READ_TIMEOUT_MS);
     client_thread.join();
 
     try std.testing.expectEqual(@as(usize, 0), TestHandlerLog.log.items.len);

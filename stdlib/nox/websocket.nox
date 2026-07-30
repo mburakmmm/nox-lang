@@ -21,6 +21,18 @@ extern def nox_ws_recv_raw(handle: ptr) -> str from "zig-out/lib/noxrt.o" with_r
 extern def nox_ws_close_raw(handle: ptr) -> None from "zig-out/lib/noxrt.o"
 extern def nox_ws_is_null_ptr(p: ptr) -> int from "zig-out/lib/noxrt.o"
 
+# Faz "sunucu-tarafı WebSocket Upgrade" (bkz. proje belleği "server TLS +
+# WebSocket Upgrade" fazı): `nox.http.serve_ws*`nin `ws_handle`ına geçirilen
+# tutamacın Nox-yüzü sarmalayıcısı — `WebSocketClient`in AYNI API şekli
+# (`send_text`/`recv`/`is_open`/`close`), AMA `handle` DIŞARIDAN bir
+# `nox_ws_connect_raw` çağrısıyla DEĞİL, codegen'in ürettiği sarmalayıcı
+# (bkz. `genHttpServeWsWrapper`) TARAFINDAN doğrudan doldurulur.
+extern def nox_ws_server_recv_raw(handle: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_ws_server_errmsg_raw(handle: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_ws_server_send_text_raw(handle: ptr, data: str, len: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_ws_server_ok_raw(handle: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_ws_server_close_raw(handle: ptr) -> None from "zig-out/lib/noxrt.o"
+
 class WebSocketError:
     def __init__(self: WebSocketError, message: str) -> None:
         self.message = message
@@ -46,6 +58,35 @@ class WebSocketClient:
 
     def close(self: WebSocketClient) -> None:
         nox_ws_close_raw(self.handle)
+
+# Faz "sunucu-tarafı WebSocket Upgrade" — `nox.http.serve_ws*`nin
+# `ws_handle`ına GEÇİRİLEN oturum tutamacı. `WebSocketClient`nin AYNI API
+# şekli (`send_text`/`recv`/`is_open`/`close`), AMA `handle`, DIŞARIDAN
+# bir `connect()` çağrısıyla DEĞİL codegen'in ürettiği C-ABI sarmalayıcı
+# (bkz. `genHttpServeWsWrapper`) TARAFINDAN her Upgrade edilmiş bağlantı
+# İçİn OTOMATİK doldurulur — kullanıcı BU sınıfı ASLA doğrudan İNŞA
+# ETMEZ, yalnızca `ws_handle(conn: WebSocketServerConn) -> None` imzalı
+# fonksiyonunun parametresi olarak ALIR.
+class WebSocketServerConn:
+    def __init__(self: WebSocketServerConn, handle: ptr) -> None:
+        self.handle = handle
+
+    def send_text(self: WebSocketServerConn, data: str) -> int:
+        n: int = nox_ws_server_send_text_raw(self.handle, data, len(data))
+        if n < 0:
+            raise WebSocketError("gonderme basarisiz: " + nox_ws_server_errmsg_raw(self.handle))
+        return n
+
+    # `WebSocketClient.recv`in AYNI davranışı (PING/PONG dahili, bağlantı
+    # kapandıysa BOŞ dize).
+    def recv(self: WebSocketServerConn) -> str:
+        return nox_ws_server_recv_raw(self.handle)
+
+    def is_open(self: WebSocketServerConn) -> bool:
+        return nox_ws_server_ok_raw(self.handle) != 0
+
+    def close(self: WebSocketServerConn) -> None:
+        nox_ws_server_close_raw(self.handle)
 
 # `ws://host[:port]/path` ya da `wss://host[:port]/path` — port
 # belirtilmemişse `ws` İçin `80`, `wss` İçin `443` kullanılır.

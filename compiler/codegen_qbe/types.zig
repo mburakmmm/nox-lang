@@ -148,6 +148,17 @@ pub const HttpServeWrapperSpec = struct {
     used_fields: UsedRequestFields,
 };
 
+/// Faz "sunucu-tarafı WebSocket Upgrade": `nox.http.serve_ws*` çağrı
+/// sitesi başına TEMBEL kaydedilen, `WsHandlerFn`e uyan (`fn(ctx, conn)
+/// callconv(.c) void`) C-ABI sarmalayıcının tarifi — `HttpServeWrapperSpec`in
+/// AYNI deseni, AMA yanıt nesnesi/`used_fields` YOK (bir WS oturumunun
+/// "yanıtı" yoktur, bkz. `genHttpServeWsWrapper`).
+pub const HttpServeWsWrapperSpec = struct {
+    name: []const u8,
+    ws_handler_fn: []const u8,
+    conn_class: []const u8,
+};
+
 pub const SpawnWrapperSpec = struct {
     name: []const u8,
     target_fn: []const u8,
@@ -164,10 +175,17 @@ pub const ThreadWrapperSpec = struct {
 
 /// Faz DD.1: `nox.http.serve_multicore` çağrı sitesi başına TEMBEL
 /// kaydedilen bir "iş parçacığı girişi" worker fonksiyonunun tarifi.
+/// Faz "sunucu-tarafı TLS + WS": `tls`/`ws_wrapper_name` bu worker'ın
+/// (a) paylaşılan payload'ın ÇIPLAK bir `fd` mi yoksa bir `FdTlsPayload*`
+/// mi olduğunu (bkz. `genHttpServeMulticoreWorker`nin payload YÜKLEME
+/// dalı) ve (b) `nox_http_serve_raw` mı `nox_http_serve_ws_raw` mı
+/// çağıracağını (bkz. `emitFdServeTail`) BELİRLER.
 pub const HttpServeMulticoreWorkerSpec = struct {
     name: []const u8,
     wrapper_name: []const u8,
     max_conn_text: []const u8,
+    ws_wrapper_name: ?[]const u8 = null,
+    tls: bool = false,
 };
 
 /// Faz U.4.3: bir closure'ın TEK bir yakalanan (capture) değeri.

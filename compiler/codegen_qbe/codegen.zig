@@ -235,6 +235,7 @@ const Value = types.Value;
 const FuncSig = types.FuncSig;
 const UsedRequestFields = types.UsedRequestFields;
 const HttpServeWrapperSpec = types.HttpServeWrapperSpec;
+const HttpServeWsWrapperSpec = types.HttpServeWsWrapperSpec;
 const SpawnWrapperSpec = types.SpawnWrapperSpec;
 const ThreadWrapperSpec = types.ThreadWrapperSpec;
 const HttpServeMulticoreWorkerSpec = types.HttpServeMulticoreWorkerSpec;
@@ -456,6 +457,12 @@ pub const Codegen = struct {
     pub const genHttpServeMulticore = http_intrinsics.genHttpServeMulticore;
     pub const genHttpServeMulticoreWorker = http_intrinsics.genHttpServeMulticoreWorker;
     pub const genHttpServeWrapper = http_intrinsics.genHttpServeWrapper;
+    pub const genHttpServeWsWrapper = http_intrinsics.genHttpServeWsWrapper;
+    pub const emitServeAndClose = http_intrinsics.emitServeAndClose;
+    pub const registerHttpHandlers = http_intrinsics.registerHttpHandlers;
+    pub const genHttpServeGeneric = http_intrinsics.genHttpServeGeneric;
+    pub const genHttpServeFdGeneric = http_intrinsics.genHttpServeFdGeneric;
+    pub const genHttpServeMulticoreGeneric = http_intrinsics.genHttpServeMulticoreGeneric;
 
     pub const genSpawnExpr = async_thread_mod.genSpawnExpr;
     pub const genSpawnWrapper = async_thread_mod.genSpawnWrapper;
@@ -665,6 +672,12 @@ pub const Codegen = struct {
     /// AYNI desen, `nox.http.serve` çağrı siteleri İÇİN.
     http_serve_wrapper_counter: usize = 0,
     http_serve_wrappers: std.ArrayListUnmanaged(HttpServeWrapperSpec) = .empty,
+    /// Faz "sunucu-tarafı WebSocket Upgrade": `http_serve_wrapper_counter`/
+    /// `http_serve_wrappers` İLE AYNI desen, `nox.http.serve_ws*` çağrı
+    /// sitelerinin `ws_handle`i İçİn (bkz. `HttpServeWsWrapperSpec`in
+    /// belge notu).
+    http_serve_ws_wrapper_counter: usize = 0,
+    http_serve_ws_wrappers: std.ArrayListUnmanaged(HttpServeWsWrapperSpec) = .empty,
     /// Faz BB.4 — `spawn_wrapper_counter`/`spawn_wrappers` İLE AYNI desen,
     /// `nox.thread.start` çağrı siteleri İÇİN (bkz. `ThreadWrapperSpec`in
     /// belge notu).
@@ -1077,6 +1090,14 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     // belge notu) — AYNI "sonda tüket" deseni.
     while (gen.http_serve_wrappers.pop()) |spec| {
         try gen.genHttpServeWrapper(spec);
+    }
+
+    // Faz "sunucu-tarafı WebSocket Upgrade": her `nox.http.serve_ws*`
+    // çağrı sitesi için TEMBEL kaydedilen `ws_handle` sarmalayıcıları
+    // (bkz. `HttpServeWsWrapperSpec`in belge notu) — AYNI "sonda tüket"
+    // deseni.
+    while (gen.http_serve_ws_wrappers.pop()) |spec| {
+        try gen.genHttpServeWsWrapper(spec);
     }
 
     // Faz BB.4: her `nox.thread.start` çağrı sitesi için TEMBEL kaydedilen

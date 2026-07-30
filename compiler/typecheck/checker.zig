@@ -1338,6 +1338,114 @@ pub const Checker = struct {
         return .none;
     }
 
+    /// `validateHttpHandler`in WebSocket eşleniği — Faz "sunucu-tarafı
+    /// WebSocket Upgrade" (bkz. plan dosyası): `ws_handle` de `handle`
+    /// GİBİ çıplak bir fonksiyon ADI olmalı (birinci sınıf değer OLARAK
+    /// GEÇİRİLEMEZ), TEK farkı: parametresi `HttpRequest` DEĞİL
+    /// `WebSocketServerConn`dir ve `HttpResponse` DEĞİL `None` döner (bir
+    /// WS oturumunun "yanıt nesnesi" YOKTUR).
+    fn validateWsHandler(self: *Checker, fn_label: []const u8, handle_expr: ast.Expr) TypeError!void {
+        const handle_name = switch (handle_expr) {
+            .identifier => |n| n,
+            else => return self.fail(error.NotCallable, "'{s}': 'ws_handle' doğrudan bir fonksiyon adı olmalı (metod/lambda henüz desteklenmiyor)", .{fn_label}),
+        };
+        if (self.async_functions.contains(handle_name)) {
+            return self.fail(error.TypeMismatch, "'{s}': 'ws_handle' ('{s}') bir 'async def' OLAMAZ (WS oturumu zaten kendi fiber'ında senkron çalışır)", .{ fn_label, handle_name });
+        }
+        const sig = self.functions.get(handle_name) orelse
+            return self.fail(error.UndefinedFunction, "tanımsız fonksiyon: {s}", .{handle_name});
+        if (sig.params.len != 1) {
+            return self.fail(error.TypeMismatch, "'{s}': 'ws_handle' TAM OLARAK bir parametre almalı (bir WebSocketServerConn)", .{fn_label});
+        }
+        const conn_class = switch (sig.params[0]) {
+            .class => |n| n,
+            else => return self.fail(error.TypeMismatch, "'{s}': 'ws_handle'in parametresi 'WebSocketServerConn' olmalı", .{fn_label}),
+        };
+        if (!std.mem.eql(u8, conn_class, "nox_websocket_WebSocketServerConn")) {
+            return self.fail(error.TypeMismatch, "'{s}': 'ws_handle'in parametresi 'WebSocketServerConn' olmalı", .{fn_label});
+        }
+        if (sig.return_type != .none) {
+            return self.fail(error.TypeMismatch, "'{s}': 'ws_handle' 'None' döndürmeli", .{fn_label});
+        }
+    }
+
+    /// Faz "sunucu-tarafı TLS + WebSocket Upgrade" (bkz. plan dosyası §6,
+    /// TAM 12'lik isim matrisi): `serve`/`serve_fd`/`serve_multicore`nin
+    /// `_tls`/`_ws`/`_ws_tls` VARYANTLARININ HEPSİ İçin PAYLAŞILAN TEK bir
+    /// çözümleyici — argümanların SIRASI (bkz. plan dosyasının şeması)
+    /// SABİT bir formüle uyar: `[port|fd, handle, (num_threads varsa),
+    /// (ws_handle varsa), (cert_path, key_path varsa), (max_connections
+    /// isteğe bağlı)]`. Var OLAN 3 çıplak `serve`/`serve_fd`/`serve_
+    /// multicore` fonksiyonuna DOKUNULMADI (hata mesajları/testler İLE
+    /// TAM UYUMLULUK İçin) — bu, YALNIZCA 9 YENİ varyant İçin kullanılır.
+    fn tryResolveHttpServeGeneric(
+        self: *Checker,
+        ctx: *FnCtx,
+        c: ast.Call,
+        name: []const u8,
+        is_multicore: bool,
+        want_ws: bool,
+        want_tls: bool,
+    ) TypeError!?Type {
+        if (!(try self.matchesNoxHttpCall(c, name))) return null;
+        const fn_label = try std.fmt.allocPrint(self.allocator, "nox.http.{s}", .{name});
+
+        var next: usize = 2;
+        const num_threads_idx: ?usize = if (is_multicore) blk: {
+            const i = next;
+            next += 1;
+            break :blk i;
+        } else null;
+        const ws_idx: ?usize = if (want_ws) blk: {
+            const i = next;
+            next += 1;
+            break :blk i;
+        } else null;
+        const cert_idx: ?usize = if (want_tls) blk: {
+            const i = next;
+            next += 2;
+            break :blk i;
+        } else null;
+        const key_idx: ?usize = if (cert_idx) |ci| ci + 1 else null;
+        const min_args = next;
+        const max_args = next + 1;
+
+        if (c.args.len != min_args and c.args.len != max_args) {
+            return self.fail(error.ArgumentCountMismatch, "'{s}' {d} ya da {d} argüman alır", .{ fn_label, min_args, max_args });
+        }
+        if (try self.checkExpr(ctx, c.args[0]) != .int) {
+            return self.fail(error.TypeMismatch, "'{s}': '{s}' bir 'int' olmalı", .{ fn_label, if (is_multicore) "port" else "port/fd" });
+        }
+        if (num_threads_idx) |i| {
+            if (try self.checkExpr(ctx, c.args[i]) != .int) {
+                return self.fail(error.TypeMismatch, "'{s}': 'num_threads' bir 'int' olmalı", .{fn_label});
+            }
+        }
+        if (c.args.len == max_args) {
+            const max_idx = max_args - 1;
+            if (is_multicore) {
+                if (c.args[max_idx] != .int_lit) {
+                    return self.fail(error.TypeMismatch, "'{s}': 'max_connections' sabit bir tamsayı olmalı (derleme zamanında worker fonksiyonlarına gömülür)", .{fn_label});
+                }
+            } else if (try self.checkExpr(ctx, c.args[max_idx]) != .int) {
+                return self.fail(error.TypeMismatch, "'{s}': 'max_connections' bir 'int' olmalı", .{fn_label});
+            }
+        }
+        if (cert_idx) |ci| {
+            if (try self.checkExpr(ctx, c.args[ci]) != .str) {
+                return self.fail(error.TypeMismatch, "'{s}': 'cert_path' bir 'str' olmalı", .{fn_label});
+            }
+            if (try self.checkExpr(ctx, c.args[key_idx.?]) != .str) {
+                return self.fail(error.TypeMismatch, "'{s}': 'key_path' bir 'str' olmalı", .{fn_label});
+            }
+        }
+        try self.validateHttpHandler(fn_label, c.args[1]);
+        if (ws_idx) |wi| {
+            try self.validateWsHandler(fn_label, c.args[wi]);
+        }
+        return .none;
+    }
+
     /// `matchIntrinsicKind`in (codegen_qbe/async_thread.zig, Faz P1.6) çekirdek
     /// çözümleme mantığı — callee TAM OLARAK `nox.http.<name>` şeklinde (üç
     /// segmentli, `nox`/`http`/`name`) VE `nox.http` İTHAL edilmişse `true`.
@@ -2938,6 +3046,21 @@ pub const Checker = struct {
                 // belge notu, AYNI gerekçe).
                 if (try self.tryResolveHttpServeFdCall(ctx, c)) |t| return t;
                 if (try self.tryResolveHttpServeMulticoreCall(ctx, c)) |t| return t;
+                // Faz "sunucu-tarafı TLS + WebSocket Upgrade" — 9 YENİ
+                // varyant (bkz. plan dosyası §6, TAM 12'lik isim matrisi),
+                // ÜÇÜ ZATEN YUKARIDA çözümlenen çıplak formların (`serve`/
+                // `serve_fd`/`serve_multicore`) `_tls`/`_ws`/`_ws_tls`
+                // eklentileri — hepsi PAYLAŞILAN `tryResolveHttpServeGeneric`
+                // İLE çözümlenir.
+                if (try self.tryResolveHttpServeGeneric(ctx, c, "serve_tls", false, false, true)) |t| return t;
+                if (try self.tryResolveHttpServeGeneric(ctx, c, "serve_ws", false, true, false)) |t| return t;
+                if (try self.tryResolveHttpServeGeneric(ctx, c, "serve_ws_tls", false, true, true)) |t| return t;
+                if (try self.tryResolveHttpServeGeneric(ctx, c, "serve_fd_tls", false, false, true)) |t| return t;
+                if (try self.tryResolveHttpServeGeneric(ctx, c, "serve_fd_ws", false, true, false)) |t| return t;
+                if (try self.tryResolveHttpServeGeneric(ctx, c, "serve_fd_ws_tls", false, true, true)) |t| return t;
+                if (try self.tryResolveHttpServeGeneric(ctx, c, "serve_multicore_tls", true, false, true)) |t| return t;
+                if (try self.tryResolveHttpServeGeneric(ctx, c, "serve_multicore_ws", true, true, false)) |t| return t;
+                if (try self.tryResolveHttpServeGeneric(ctx, c, "serve_multicore_ws_tls", true, true, true)) |t| return t;
                 // `nox.thread.start(entry, arg)` — Faz BB.3'ün AYNI
                 // gerekçesi (`entry` ÇIPLAK bir fonksiyon adı, birinci
                 // sınıf DEĞER OLARAK GEÇİRİLEMEZ).

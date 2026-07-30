@@ -435,6 +435,15 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     .http_serve => self.genHttpServe(c),
                     .http_serve_fd => self.genHttpServeFd(c),
                     .http_serve_multicore => self.genHttpServeMulticore(c),
+                    .http_serve_tls => self.genHttpServeGeneric(c, true, false),
+                    .http_serve_ws => self.genHttpServeGeneric(c, false, true),
+                    .http_serve_ws_tls => self.genHttpServeGeneric(c, true, true),
+                    .http_serve_fd_tls => self.genHttpServeFdGeneric(c, true, false),
+                    .http_serve_fd_ws => self.genHttpServeFdGeneric(c, false, true),
+                    .http_serve_fd_ws_tls => self.genHttpServeFdGeneric(c, true, true),
+                    .http_serve_multicore_tls => self.genHttpServeMulticoreGeneric(c, true, false),
+                    .http_serve_multicore_ws => self.genHttpServeMulticoreGeneric(c, false, true),
+                    .http_serve_multicore_ws_tls => self.genHttpServeMulticoreGeneric(c, true, true),
                     .thread_start => self.genThreadStartExpr(c),
                 };
             }

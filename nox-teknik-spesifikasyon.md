@@ -13792,6 +13792,109 @@ GERÇEKTEN aynı desende (paket-modül sınıfı + list-of-closure alan + Router
 P1c/C2 düzeltmeleriyle (bkz. `CHANGELOG.md`, [1.18.1]) ZATEN çözülmüş,
 ARTIK STALE (güncel olmayan) bir yorum — nyx tarafında kaldırılabilir.
 
+## 3.81 Sunucu-tarafı TLS terminasyonu (OpenSSL FFI) + WebSocket Upgrade
+
+Kullanıcının `nyx` framework'ünde farkedilen SON Nox eksikliği: `nox.tls`/
+`nox.websocket` YALNIZCA istemci tarafını destekliyordu, `nox.http.serve`
+üzerinde GERÇEK TLS terminasyonu YOKTU. Zig'in KENDİ `std.crypto.tls`i
+(0.16.0) YALNIZCA istemci tarafını (`Client.zig`) uygular — `Server.zig`
+YOK — bu YÜZDEN kullanıcı BİLEREK "gerçek OpenSSL/BoringSSL FFI TLS
+sunucusu" yaklaşımını seçti (`sqlite.zig`/`postgres.zig`/`mysql.zig` İLE
+AYNI çalışma-zamanı dlopen deseni).
+
+**Mimari:** `runtime/stdlib_shims/tls_server.zig` `libssl`e TEMBEL
+bağlanır (macOS: bare isim ARAMASI YOK, YALNIZCA Homebrew/MacPorts'un
+MUTLAK yolları — bkz. AŞAĞIDAKİ GERÇEK hata; Windows: `Kernel32.
+LoadLibraryA`; Linux: `libssl.so.3`/`.so.1.1`; HER platformda `NOX_
+OPENSSL_LIB` kaçış kapısı). TLS bellek-BIO'lar (`BIO_s_mem`) üzerinden
+sürülür (`SSL_set_fd` KULLANILMAZ) — OpenSSL GERÇEK fd'ye HİÇ dokunmaz,
+TÜM soket G/Ç'si `http_server.zig`nin fiber-farkında `rawRead`/
+`rawWriteAll`ıyla AYNI desendeki bir "pompa döngüsü" (`drive`) üzerinden
+geçer. `TlsServerReader`/`TlsServerWriter`, `FiberReader`/`FiberWriter`ı
+(mevcut düz-metin yolu) BİREBİR taklit eder — `connectionEntry`,
+`conn.tls_ctx` VARSA bunları `std.http.Server.init`e verir, YOKSA
+DEĞİŞMEDEN mevcut yolu kullanır. Sunucu-tarafı WebSocket Upgrade
+(`websocket_server.zig`) AYNI ilkeyle: `server.receiveHead()`
+SONRASI, `conn.ws_handler` VARSA istek `tryHandleUpgrade`e sunulur —
+`101` yanıtı DOĞRUDAN `connectionEntry`nin `std.http.Server.init`e
+VERDİĞİ AYNI Reader/Writer'a yazılır (fd'den YENİDEN OKUNMAZ — `std.http.
+Server.receiveHead()`nin İÇ arabelleğinde headers-sonrası fazla baytlar
+OLABİLECEĞİNDEN bu KRİTİKTİR).
+
+**TAM 12'lik isim matrisi:** `serve`/`serve_fd`/`serve_multicore`nin
+ÜÇÜ de `_tls`/`_ws`/`_ws_tls` uzantılarına sahip. Codegen
+(`http_intrinsics.zig`) bunların HEPSİNİ `genHttpServeGeneric`/
+`genHttpServeFdGeneric`/`genHttpServeMulticoreGeneric` (`want_tls`/
+`want_ws` bayraklarıyla parametrize edilmiş 3 çekirdek) İÇİNE İNDİRGER —
+runtime SEVİYESİNDE `ConnCtx`ye `tls_ctx`/`ws_handler` EKLEMEK TÜM ÜÇ
+transport biçimine "bedava" TLS+WS KAZANDIRDIĞINDAN, 9 yeni Nox-yüzü
+isim ESAS OLARAK mekanik bir codegen/checker EGZERSİZİYDİ.
+
+**Bulunan, GERÇEK hatalar (bu fazın KENDİ araştırması sırasında):**
+
+1. **macOS'ta bare `dlopen("libssl.dylib")` bir "tuzak" kütüphaneyle
+   eşleşiyordu**: Apple sistemden OpenSSL'i KALDIRDIĞINDAN, dyld'in
+   PAYLAŞILAN önbelleği bu isimler İçin bir SAHTE kütüphane TUTUYOR —
+   `dlopen` BAŞARIYLA döner AMA yüklenen kütüphanenin KENDİ İLKLENDİRİCİSİ
+   "... is loading libcrypto in an unsafe way" YAZIP `abort()` ÇAĞIRIYOR
+   (`openLib`in "sıradaki adayı dene" mantığının HİÇ YAKALAYAMADIĞI bir
+   SIGABRT — dlopen'in KENDİSİ başarısız DÖNMÜYOR). `lldb` backtrace'i
+   (`libssl.dylib\`__report_load`) İLE YAKALANDI. Düzeltme:
+   `libraryCandidates()`nin macOS dalı ARTIK YALNIZCA MUTLAK yolları
+   (Homebrew arm64/Intel + MacPorts) dener, bare isim HİÇ denenmez.
+2. **GERÇEK bir use-after-free yarışı** (kök neden — `serveImpl`nin
+   accept döngüsü bir bağlantıyı KABUL EDİP fiber'ını `acquireStack`+
+   `createWithStack`+`markReady` İLE SPAWN EDER EDER ETMEZ bir SONRAKİ
+   `max_connections` denetimine GEÇER; `max_connections`e TAM O
+   bağlantıda ULAŞILIRSA, `nox_http_serve_raw` HEMEN döner ve codegen'in
+   BİR SONRAKİ satırı olan `nox_http_server_close` — TLS'te `owns_tls_
+   ctx=true` İSE — `SSL_CTX_free(ctx)`i ÇAĞIRIR; YENİ spawn edilen
+   bağlantı fiber'ı İSE zamanlayıcının HAZIR kuyruğunda HENÜZ HİÇ
+   ÇALIŞMAMIŞ bekliyordur — DAHA SONRA çalışınca `acceptHandshake`
+   `SSL_new`ı ARTIK SERBEST BIRAKILMIŞ bir `ctx` İLE çağırır).
+   `lldb` İLE (`SSL_new`in çöktüğü `x8+0x10` adresi, serbest bırakılmış
+   belleğin İÇERİĞİYLE eşleşti — bir kontrol tamponu, AYNI fiber-switch
+   penceresinde, BOZULMADAN kaldı, yani sorun fiber ANAHTARLAMASININ
+   KENDİSİ DEĞİL, SPESİFİK olarak bu erken-serbest-bırakma YARIŞIYDI)
+   KANITLANDI. Düzeltme: `SSL_CTX_up_ref` (YENİ FFI bağlaması) İLE
+   bağlantı fiber'ı SPAWN EDİLMEDEN ÖNCE (`serveImpl`, HÂLÂ GÜVENLİ
+   orijinal fiber'dayken) EK bir referans ALINIR; `acceptHandshake`
+   `SSL_new`DAN HEMEN SONRA (başarı ya da BAŞARISIZLIK FARK ETMEKSİZİN)
+   bu referansı BIRAKIR — spawn BAŞARISIZ olursa (`acquireStack`/
+   `createWithStack` hatası) `serveImpl` de AYNI referansı SERBEST
+   BIRAKIR (sızıntı önlenir).
+3. **`connectionEntry`, TLS-farkında `reader_ptr`/`writer_ptr` YERİNE
+   HER ZAMAN düz-metin `fiber_reader`/`fiber_writer`i `std.http.Server.
+   init`e VERİYORDU** — el sıkışma BAŞARILI OLSA BİLE HTTP katmanı
+   şifreli baytları DOĞRUDAN okuyup yazardı (yarış hatası düzeltilirken
+   fark edildi, `http_serve_tls_golden_test.zig`nin İLK GERÇEK
+   çalıştırmasından ÖNCE).
+4. **`SSL_shutdown`in ürettiği `close_notify` alert'i `flushWbio` İLE
+   GERÇEK soketE hiç aktarılmıyordu** — istemciler (Zig'in `std.crypto.
+   tls.Client`ı DAHİL, `allow_truncation_attacks=false` VARSAYILANIYLA)
+   bağlantıyı `error.TlsConnectionTruncated` İLE REDDEDİYORDU (`http_
+   serve_tls_golden_test.zig`nin GERÇEK bir çalıştırmasıyla YAKALANDI —
+   el sıkışma VE istek/yanıt TAM OLARAK DOĞRU çalışıyordu, yalnızca
+   kapanış eksikti). Düzeltme: `tlsShutdown`, `SSL_shutdown`DAN SONRA
+   `flushWbio`yu (best-effort, `catch {}`) ÇAĞIRIR.
+
+**Doğrulama:** `tests/compat/http_serve_tls_golden_test.zig` (Zig'in
+KENDİ `std.crypto.tls.Client`ıyla GERÇEK bir el sıkışma+istek/yanıt) +
+`tests/compat/http_serve_ws_golden_test.zig` (ham bir RFC 6455
+istemcisiyle el sıkışma+maskeli frame yankısı VE maskesiz bir frame'in
+REDDİ) — İKİSİ de `zig build test`in HEM Debug HEM `ReleaseFast`
+modlarında YEŞİL. Windows: `ci.yml`nin `windows-frontend` işine
+Chocolatey İLE GERÇEK bir `libssl` kurup (`NOX_OPENSSL_LIB` İLE %100
+güvenilir biçimde BULUNARAK) `nox.http.serve_tls`in GERÇEK bir HTTPS
+isteğine yanıt verdiğini native bir Windows runner'da doğrulayan VE
+TAM 12'lik isim matrisinin HEPSİNİN Windows qbe.exe+MinGW cc İLE
+derlenip BAĞLANDIĞINI kontrol eden adımlar EKLENDİ.
+
+**Bilinçli KAPSAM DIŞI:** HTTP/2 ALPN, sertifika ZİNCİRİ/SNI-çoklu-host
+(sunucu SADECE TEK bir cert+key sunar), SSL_CTX yükleme hatası SONRASI
+Nox-seviyesi bir `raise` (mevcut `serve*` ailesinin bind-hatası
+davranışıyla PAYLAŞILAN bir gap, stderr TANI mesajı YETERLİ sayıldı).
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

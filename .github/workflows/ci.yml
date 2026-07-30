@@ -241,3 +241,131 @@ jobs:
           $output = & ".\zig-out\bin\noxc.exe" run run_smoke.nox
           if ($LASTEXITCODE -ne 0) { throw "noxc run basarisiz (exit $LASTEXITCODE): $output" }
           if ($output -ne "42") { throw "noxc run yanlis cikti: '$output' (beklenen '42')" }
+
+      # Faz "sunucu-tarafı TLS terminasyonu + WebSocket Upgrade" (bkz. plan
+      # dosyası): kullanıcının AÇIKÇA seçtiği "Windows'u da TAM doğrula"
+      # kararının GERÇEK CI uygulaması. `tls_server.zig`nin Windows dalı
+      # (`Kernel32.LoadLibraryA`) bare-isim ARAMASI KULLANIR — bu YÜZDEN
+      # `libssl-3-x64.dll`nin GERÇEKTEN PATH'te bulunması GEREKİR. Chocolatey
+      # paketinin KURDUĞU DLL'in TAM yolunu `NOX_OPENSSL_LIB` ORTAM
+      # DEĞİŞKENİNE (bkz. `tls_server.zig`nin `openLib`inin belge notu — HER
+      # DİĞER adaydan ÖNCE denenir) YAZMAK, PATH'in bu iş adımından SONRAKİ
+      # bir GitHub Actions adımına GERÇEKTEN yayılıp yayılmadığına
+      # GÜVENMEK YERİNE %100 GÜVENİLİR bir garanti sağlar.
+      - name: OpenSSL kur (Windows — TLS testleri icin)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          choco install openssl.light -y --no-progress | Out-Null
+          $dll = Get-ChildItem -Path "C:\Program Files\OpenSSL-Win64\bin" -Filter "libssl-*-x64.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $dll) {
+            $dll = Get-ChildItem -Path "C:\Program Files\OpenSSL-Win64" -Filter "libssl-*-x64.dll" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $dll) { throw "libssl DLL bulunamadi (openssl.light kurulumu basarisiz olabilir)" }
+          Write-Host "libssl bulundu: $($dll.FullName)"
+          Add-Content -Path $env:GITHUB_ENV -Value "NOX_OPENSSL_LIB=$($dll.FullName)"
+
+      # `tests/fixtures/tls/test_cert.pem`/`test_key.pem` (SABİT, ÖNCEDEN
+      # macOS'ta `openssl req -x509 ... -subj "/CN=localhost"` İLE üretilmiş
+      # test-only self-signed çift) DOĞRUDAN kullanılır — self-signed bir
+      # sertifika+anahtar çifti PLATFORM-BAĞIMSIZDIR, Windows'ta YENİDEN
+      # ÜRETMEYE GEREK YOK.
+      - name: Duman testi — nox.http.serve_tls (GERCEK OpenSSL FFI, Windows)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # NOT: PowerShell here-string'leri (`@'...'@`) sınırlayıcılarının
+          # SATIRIN İLK SÜTUNUNDA olmasını GEREKTİRİR — bu, YAML'ın `run: |`
+          # blok skaler GİRİNTİ tutarlılığı KURALIYLA ÇAKIŞIR (GERÇEK bir
+          # CI ayrıştırma hatasıyla BULUNDU: girinti aniden düşünce YAML
+          # blok skaleri ERKEN SONLANDIRIYORDU). Düzeltme: bir DİZİ satır +
+          # `-join "`n"` (HİÇBİR satırın SÜTUN-0 KISITINA uyması GEREKMEZ).
+          $lines = @(
+            'import nox.http',
+            'from nox.http import HttpRequest',
+            'from nox.http import HttpResponse',
+            '',
+            'def handle(req: HttpRequest) -> HttpResponse:',
+            '    return HttpResponse(200, "ok-windows-tls", {})',
+            '',
+            'def run() -> None:',
+            '    nox.http.serve_tls(18443, handle, "tests/fixtures/tls/test_cert.pem", "tests/fixtures/tls/test_key.pem", 1)',
+            'run()'
+          )
+          Set-Content -Path tls_smoke.nox -Value ($lines -join "`n") -NoNewline
+          & ".\zig-out\bin\noxc.exe" build tls_smoke.nox -o tls_smoke.exe
+          if ($LASTEXITCODE -ne 0) { throw "serve_tls derlemesi basarisiz (exit $LASTEXITCODE)" }
+
+          $proc = Start-Process -FilePath ".\tls_smoke.exe" -PassThru -NoNewWindow -RedirectStandardError "tls_smoke_stderr.txt"
+          try {
+            $connected = $false
+            for ($i = 0; $i -lt 50; $i++) {
+              Start-Sleep -Milliseconds 200
+              try {
+                $resp = Invoke-WebRequest -Uri "https://127.0.0.1:18443/hello" -SkipCertificateCheck -UseBasicParsing -TimeoutSec 2
+                $connected = $true
+                break
+              } catch { Start-Sleep -Milliseconds 100 }
+            }
+            if (-not $connected) { throw "serve_tls'e GERCEK bir HTTPS baglantisi kurulamadi (50 deneme)" }
+            if ($resp.StatusCode -ne 200) { throw "beklenmeyen durum kodu: $($resp.StatusCode)" }
+            if ($resp.Content -ne "ok-windows-tls") { throw "beklenmeyen govde: '$($resp.Content)'" }
+            Write-Host "nox.http.serve_tls Windows duman testi BASARILI: $($resp.Content)"
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+          }
+          $stderrContent = Get-Content -Path "tls_smoke_stderr.txt" -Raw -ErrorAction SilentlyContinue
+          if ($stderrContent) { throw "sunucu stderr'e beklenmeyen bir cikti yazdi (olasi bellek sizintisi/UAF): $stderrContent" }
+
+      # Faz "sunucu-tarafı TLS + WebSocket Upgrade" §6 (TAM 12'lik isim
+      # matrisi) — Windows'ta (Windows qbe.exe + MinGW cc ile) HER
+      # kombinasyonun GERÇEKTEN derlenip BAĞLANDIĞINI doğrular. Runtime
+      # DAVRANIŞI (yalnızca `serve_tls`in YUKARIDA GERÇEK bir istemciyle
+      # doğrulanması KADAR derin) BURADA sınanmaz — bu, YALNIZCA codegen/
+      # link seviyesinde `_tls`/`_ws`/`_ws_tls` uzantılarının Windows QBE/cc
+      # ikilisiyle de SORUNSUZ ürettiğinin kanıtıdır.
+      - name: Duman testi — TAM 12'lik serve* isim matrisi derlenir (Windows)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cert = "tests/fixtures/tls/test_cert.pem"
+          $key = "tests/fixtures/tls/test_key.pem"
+          $variants = [ordered]@{
+            "serve"                   = "nox.http.serve(0, handle, 1)"
+            "serve_tls"               = "nox.http.serve_tls(0, handle, `"$cert`", `"$key`", 1)"
+            "serve_ws"                = "nox.http.serve_ws(0, handle, ws_handle, 1)"
+            "serve_ws_tls"            = "nox.http.serve_ws_tls(0, handle, ws_handle, `"$cert`", `"$key`", 1)"
+            "serve_fd"                = "nox.http.serve_fd(nox.http.listen(0), handle, 1)"
+            "serve_fd_tls"            = "nox.http.serve_fd_tls(nox.http.listen(0), handle, `"$cert`", `"$key`", 1)"
+            "serve_fd_ws"             = "nox.http.serve_fd_ws(nox.http.listen(0), handle, ws_handle, 1)"
+            "serve_fd_ws_tls"         = "nox.http.serve_fd_ws_tls(nox.http.listen(0), handle, ws_handle, `"$cert`", `"$key`", 1)"
+            "serve_multicore"         = "nox.http.serve_multicore(0, handle, 2, 2)"
+            "serve_multicore_tls"     = "nox.http.serve_multicore_tls(0, handle, 2, `"$cert`", `"$key`", 2)"
+            "serve_multicore_ws"      = "nox.http.serve_multicore_ws(0, handle, 2, ws_handle, 2)"
+            "serve_multicore_ws_tls"  = "nox.http.serve_multicore_ws_tls(0, handle, 2, ws_handle, `"$cert`", `"$key`", 2)"
+          }
+          foreach ($name in $variants.Keys) {
+            $srcLines = @(
+              'import nox.http',
+              'import nox.websocket',
+              'from nox.http import HttpRequest',
+              'from nox.http import HttpResponse',
+              'from nox.websocket import WebSocketServerConn',
+              '',
+              'def handle(req: HttpRequest) -> HttpResponse:',
+              '    return HttpResponse(200, "ok", {})',
+              '',
+              'def ws_handle(conn: WebSocketServerConn) -> None:',
+              '    msg: str = conn.recv()',
+              '    if len(msg) > 0:',
+              '        conn.send_text(msg)',
+              '',
+              'def run() -> None:',
+              "    $($variants[$name])",
+              'run()'
+            )
+            Set-Content -Path "matrix_$name.nox" -Value ($srcLines -join "`n") -NoNewline
+            & ".\zig-out\bin\noxc.exe" build "matrix_$name.nox" -o "matrix_$name.exe"
+            if ($LASTEXITCODE -ne 0) { throw "'$name' derlemesi basarisiz (exit $LASTEXITCODE)" }
+            Write-Host "'$name' derlemesi basarili."
+          }

@@ -51,6 +51,21 @@ fn ensureCaBundle(io: std.Io) bool {
 const BUF: usize = std.crypto.tls.Client.min_buffer_len;
 const websocket_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
+/// RFC 6455 `Sec-WebSocket-Accept` hesaplaması (`SHA1(key_b64 ++ GUID)`
+/// base64) — İSTEMCİ (BURADA, sunucunun döndürdüğü değeri DOĞRULAMAK
+/// İçİn) VE `websocket_server.zig`nin sunucu tarafı (AYNI değeri
+/// ÜRETMEK İçİn) TARAFINDAN PAYLAŞILIR — Faz "sunucu-tarafı TLS + WS
+/// Upgrade" İLE (bkz. plan dosyası) `connectInner`nin İÇİNE GÖMÜLÜ
+/// hesaplamadan BURAYA ÇIKARILDI (davranış DEĞİŞMEDİ, saf sadeleştirme).
+pub fn computeAcceptValue(key_b64: []const u8, out: *[28]u8) void {
+    var sha1 = std.crypto.hash.Sha1.init(.{});
+    sha1.update(key_b64);
+    sha1.update(websocket_guid);
+    var digest: [20]u8 = undefined;
+    sha1.final(&digest);
+    _ = std.base64.standard.Encoder.encode(out, &digest);
+}
+
 /// `net.Stream.Reader.interface`/`Writer.interface`i DOĞRUDAN kullanır
 /// (plaintext yol), TLS İSE `tls_client` ARACILIĞIYLA (bkz. `nox.tls`nin
 /// AYNI `@fieldParentPtr` güvenlik gerekçesi — TEK bir heap-tahsisi,
@@ -161,14 +176,9 @@ fn connectInner(conn: *WsConn, host: []const u8, port: i64, path: []const u8, us
         if (trimmed.len == 0) break;
         if (std.ascii.startsWithIgnoreCase(trimmed, "sec-websocket-accept:")) {
             const value = std.mem.trim(u8, trimmed["sec-websocket-accept:".len..], " ");
-            var sha1 = std.crypto.hash.Sha1.init(.{});
-            sha1.update(key_b64);
-            sha1.update(websocket_guid);
-            var digest: [20]u8 = undefined;
-            sha1.final(&digest);
             var expected_buf: [28]u8 = undefined;
-            const expected = std.base64.standard.Encoder.encode(&expected_buf, &digest);
-            if (std.mem.eql(u8, value, expected)) accept_ok = true;
+            computeAcceptValue(key_b64, &expected_buf);
+            if (std.mem.eql(u8, value, &expected_buf)) accept_ok = true;
         }
     }
     if (!accept_ok) return error.HandshakeAcceptMismatch;
