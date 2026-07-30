@@ -850,11 +850,49 @@ test "codegen(çalıştır): nox.url parse/percent-encode-decode/query/join" {
 // derleyici hatası, bkz. `calls.zig`nin `genMethodCall`/`genListPop`
 // belge notları): düzeltme serbest-bırakmayı istisna KONTROLÜNDEN ÖNCEYE
 // taşıdı (`genMethodCall`) / hata dalına DA ekledi (`genListPop`).
+// NOT (pre-existing, Linux CI'de bulundu, bu oturumda düzeltildi):
+// `Command("pwd").set_cwd("/tmp").run()`nin çıktısı PLATFORM'a göre
+// DEĞİŞİR — macOS'ta `/tmp` bir SEMBOLİK BAĞDIR (`/private/tmp`e); `pwd`
+// (bir alt süreç olarak, `getcwd()` ÜZERİNDEN) HER ZAMAN FİZİKSEL
+// (sembolik bağı ÇÖZÜLMÜŞ) yolu DÖNDÜRÜR, bu YÜZDEN macOS'ta
+// "/private/tmp" yazdırır. Linux'ta `/tmp` GENELDE bir sembolik bağ
+// DEĞİLDİR, bu YÜZDEN DÜZ "/tmp" yazdırır. ÖNCEDEN `expectGolden`nin
+// SABİT `.expected` metin dosyası "/private/tmp"i SABİTLİYORDU — bu, bu
+// TEK satır DIŞINDA platform-bağımsız olan bir testi Linux'ta HER ZAMAN
+// BAŞARISIZ kılıyordu. Düzeltme: bu satırı AYRI doğrula (iki bilinen
+// GERÇEK çözünürlükten biriyle eşleşmeli), geri kalanı TAM eşleştir.
 test "codegen(çalıştır): nox.process Command.run() — stdout/stderr/cwd/ProcessError" {
-    try expectGolden(
-        @embedFile("codegen_cases/process_command_run.nox"),
-        @embedFile("codegen_cases/process_command_run.expected"),
-    );
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/process_command_run.nox");
+
+    const run_result = try compileAndRun(allocator, source);
+    if (run_result.term != .exited or run_result.term.exited != 0) {
+        std.debug.print("program basarisiz cikti (stderr): {s}\n", .{run_result.stderr});
+        return error.ProgramFailed;
+    }
+    if (run_result.stderr.len != 0) {
+        std.debug.print("program stderr'e beklenmeyen bir çıktı yazdı (olası bellek sızıntısı): {s}\n", .{run_result.stderr});
+        return error.UnexpectedStderrOutput;
+    }
+
+    const expected_prefix = "merhaba dunya\n\n0\nTrue\n7\nhata-mesaji\n\nFalse\n";
+    const expected_suffix = "\n\nProcessError yakalandi\n";
+    if (!std.mem.startsWith(u8, run_result.stdout, expected_prefix)) {
+        std.debug.print("beklenmeyen on-ek:\n{s}\n", .{run_result.stdout});
+        return error.UnexpectedOutput;
+    }
+    const after_prefix = run_result.stdout[expected_prefix.len..];
+    if (!std.mem.endsWith(u8, after_prefix, expected_suffix)) {
+        std.debug.print("beklenmeyen son-ek:\n{s}\n", .{after_prefix});
+        return error.UnexpectedOutput;
+    }
+    const cwd_line = after_prefix[0 .. after_prefix.len - expected_suffix.len];
+    if (!std.mem.eql(u8, cwd_line, "/tmp") and !std.mem.eql(u8, cwd_line, "/private/tmp")) {
+        std.debug.print("beklenmeyen cwd satiri: '{s}'\n", .{cwd_line});
+        return error.UnexpectedCwdLine;
+    }
 }
 
 // `genMethodCall`/`genListPop` (önceki oturum) VE `genIndirectCallThroughClosurePtr`/

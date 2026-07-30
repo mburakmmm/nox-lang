@@ -158,15 +158,27 @@ pub fn build(b: *std.Build) void {
     // bkz. runtime/foreign_bridge.zig, `nox_hpy_call`/`nox_wasm_call`); bu
     // yüzden `noxrt_mod`dan ÖNCE tanımlanmalılar ki ona named import olarak
     // verilebilsinler.
+    // NOT: `hpy_bridge_mod`/`wasm_bridge_mod`, `noxrt_mod`a İTHAL EDİLDİĞİNDE
+    // ONUN `.link_libc = true`SUNU (aşağıdaki Faz R.1 notu) MİRAS ALIYOR
+    // GİBİ GÖRÜNSE de, KENDİ BAĞIMSIZ test hedefleri (`hpy_bridge_test`/
+    // `wasm_bridge_test`, aşağıda) BU İKİ modülü KENDİ KÖK modülleri olarak
+    // derliyor — bu YÜZDEN `link_libc` HER İKİSİNE de AYRICA (`noxrt_mod`dan
+    // BAĞIMSIZ) tanımlı OLMALI. GERÇEK bir Linux CI çalıştırmasında BULUNDU:
+    // `hpy_bridge/context.zig`nin `std.c.arc4random_buf` ÇAĞRISI (dict.zig'in
+    // AYNI Faz LL.4 deseni) `link_libc` OLMADAN "dependency on libc must be
+    // explicitly specified"/"type 'void' not a function" hatalarıyla
+    // BAŞARISIZ oluyordu.
     const hpy_bridge_mod = b.addModule("hpy_bridge", .{
         .root_source_file = b.path("runtime/hpy_bridge/lib.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
     const wasm_bridge_mod = b.addModule("wasm_bridge", .{
         .root_source_file = b.path("runtime/wasm_bridge/lib.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
         .imports = &.{
             .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
         },
@@ -366,6 +378,17 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path(path),
             .target = target,
             .optimize = optimize,
+            // NOT: `tests/cli/shared_mem_test.zig`nin KENDİSİ `std.c.getpid()`
+            // ÇAĞIRIYOR (paylaşımlı bellek testinin İKİ ayrı process'i AYNI
+            // PID uzayında OLMADIĞINI doğrulamak İçİn) — `hpy_bridge_mod`/
+            // `wasm_bridge_mod`İLE AYNI, GERÇEK bir Linux CI çalıştırmasında
+            // BULUNAN sınıf hatası: `std.c.*` KULLANIMI Linux'ta `link_libc`
+            // OLMADAN "dependency on libc must be explicitly specified"
+            // derleme hatası verir. Bu döngüdeki DİĞER dosyaların HİÇBİRİ
+            // `std.c.*` KULLANMASA da `link_libc` EKLEMEK ZARARSIZDIR — bu
+            // YÜZDEN dosya-başına özel durum AYIRT ETMEK yerine TÜMÜNE
+            // uygulanır.
+            .link_libc = true,
             .imports = &.{
                 .{ .name = "nox", .module = nox_mod },
             },

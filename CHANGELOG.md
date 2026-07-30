@@ -14,6 +14,27 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.22.9]
+
+### Düzeltildi
+- **`hpy_bridge`/`wasm_bridge` (Linux)**: `hpy_bridge_mod`/`wasm_bridge_mod`nin
+  KENDİ bağımsız test hedefleri (`hpy_bridge_test`/`wasm_bridge_test`),
+  `noxrt_mod`nin (onları İTHAL EDEN) `.link_libc = true`SUNU MİRAS
+  ALMIYORDU — bu modüllerin kendi kök test derlemesinde `std.c.arc4random_
+  buf` (bkz. `context.zig`, Faz LL.4 deseni) Linux'ta "dependency on libc
+  must be explicitly specified" hatasıyla BAŞARISIZ oluyordu. Ayrıca AYNI
+  sınıftan bir ÜÇÜNCÜ site bulundu: `tests/cli/shared_mem_test.zig`nin
+  KENDİ `std.c.getpid()` çağrısı, `external_test_files` döngüsündeki HİÇBİR
+  test modülünün `link_libc` TANIMLAMAMASI yüzünden AYNI hatayı veriyordu.
+  Düzeltme: her ikisine de `.link_libc = true` eklendi.
+- **`nox.process` cwd testi (Linux)**: `Command("pwd").set_cwd("/tmp")`nin
+  çıktısı PLATFORM'a göre değişir (macOS'ta `/tmp` sembolik bağdır →
+  `/private/tmp` yazdırır; Linux'ta genelde DEĞİLDİR → düz `/tmp` yazdırır)
+  — ÖNCEDEN sabit bir `.expected` metin dosyası `/private/tmp`i
+  SABİTLİYORDU, bu YÜZDEN Linux'ta HER ZAMAN başarısız oluyordu. Düzeltme:
+  bu SATIR ayrı doğrulanıyor (iki bilinen GERÇEK çözünürlükten biriyle
+  eşleşmeli), geri kalan çıktı TAM eşleştiriliyor.
+
 ## [1.22.8]
 
 ### Düzeltildi
