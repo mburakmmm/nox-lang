@@ -326,13 +326,22 @@ jobs:
           # CI ayrıştırma hatasıyla BULUNDU: girinti aniden düşünce YAML
           # blok skaleri ERKEN SONLANDIRIYORDU). Düzeltme: bir DİZİ satır +
           # `-join "`n"` (HİÇBİR satırın SÜTUN-0 KISITINA uyması GEREKMEZ).
+          # NOT: `Content-Type` başlığı KASITLI OLARAK eklendi — GERÇEK bir
+          # CI çalıştırmasıyla BULUNDU: başlıksız bir yanıtta PowerShell'in
+          # `Invoke-WebRequest -UseBasicParsing`i `$resp.Content`yi bir
+          # STRING DEĞİL, HAM `byte[]` olarak dönüyordu — bu, string
+          # interpolasyonunda ("$($resp.Content)") İÇERİĞİ "111 107 45 ..."
+          # (ASCII kodlarının ONDALIK karşılıkları, boşlukla ayrılmış) OLARAK
+          # YAZDIRIYORDU, `-ne "ok-windows-tls"` KARŞILAŞTIRMASINI HER ZAMAN
+          # BAŞARISIZ kılıyordu — TLS handshake+HTTP yanıtının KENDİSİ
+          # ASLINDA BAŞARILI olsa BİLE.
           $lines = @(
             'import nox.http',
             'from nox.http import HttpRequest',
             'from nox.http import HttpResponse',
             '',
             'def handle(req: HttpRequest) -> HttpResponse:',
-            '    return HttpResponse(200, "ok-windows-tls", {})',
+            '    return HttpResponse(200, "ok-windows-tls", {"Content-Type": "text/plain"})',
             '',
             'def run() -> None:',
             '    nox.http.serve_tls(18443, handle, "tests/fixtures/tls/test_cert.pem", "tests/fixtures/tls/test_key.pem", 1)',

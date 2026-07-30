@@ -14,6 +14,22 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.22.8]
+
+### Düzeltildi
+- **CI'nin Windows TLS duman testi, TLS+HTTP GERÇEKTEN BAŞARILI OLDUĞU
+  HALDE yanlış-pozitif olarak BAŞARISIZ görünüyordu**: `v1.22.7`nin kök-neden
+  düzeltmesi SONRASI TLS handshake+HTTP yanıtının KENDİSİ ARTIK GERÇEKTEN
+  BAŞARILI oluyordu (`tls_smoke.exe` stderr'i BOŞTU) — AMA CI betiği yine
+  "beklenmeyen govde: '111 107 45 119 105 110 100 111 119 115 45 116 108
+  115'" diyerek başarısız oluyordu. Bu, PowerShell'in `Invoke-WebRequest
+  -UseBasicParsing`inin, yanıtta bir `Content-Type` başlığı OLMADIĞINDA
+  `$resp.Content`yi bir STRING DEĞİL HAM `byte[]` olarak DÖNDÜRMESİNDEN
+  kaynaklanıyordu — string interpolasyonu bu byte dizisini ASCII kodlarının
+  ONDALIK karşılıklarının boşlukla ayrılmış hali OLARAK yazdırıyordu (`111
+  107 45 ...` = "ok-windows-tls"nin ASCII kodları). Düzeltme: duman testinin
+  yanıtına bir `Content-Type: text/plain` başlığı EKLENDİ.
+
 ## [1.22.7]
 
 ### Düzeltildi
