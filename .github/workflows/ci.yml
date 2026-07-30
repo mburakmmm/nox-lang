@@ -255,11 +255,35 @@ jobs:
       - name: OpenSSL kur (Windows — TLS testleri icin)
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Continue"
+          # NOT: `choco`nun KENDİ çıktısı (`Out-Null` İLE GİZLENMEDEN)
+          # GÖRÜNÜR bırakılır — GERÇEK bir CI çalıştırmasında `libssl-3-
+          # x64.dll`nin `C:\Program Files\OpenSSL-Win64\bin` altında
+          # BULUNAMADIĞI keşfedildi (kurulum YOLU choco paket sürümüne
+          # göre DEĞİŞEBİLİR) — bu YÜZDEN ARAMA, MUTLAK bir tek yola
+          # GÜVENMEK YERİNE BİRDEN FAZLA olası kökü (Program Files, choco
+          # paket kütüphanesinin KENDİSİ) dener, HİÇBİRİ bulamazsa `C:\`
+          # KÖKÜNDEN sınırlı-derinlikli bir SON ÇARE taraması yapar.
+          choco install openssl.light -y --no-progress
           $ErrorActionPreference = "Stop"
-          choco install openssl.light -y --no-progress | Out-Null
-          $dll = Get-ChildItem -Path "C:\Program Files\OpenSSL-Win64\bin" -Filter "libssl-*-x64.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+
+          $roots = @(
+            "C:\Program Files\OpenSSL-Win64",
+            "C:\Program Files (x86)\OpenSSL-Win64",
+            "C:\Program Files\OpenSSL-Win32",
+            "C:\ProgramData\chocolatey\lib\openssl.light",
+            "C:\ProgramData\chocolatey\lib\openssl"
+          )
+          $dll = $null
+          foreach ($root in $roots) {
+            if (Test-Path $root) {
+              $dll = Get-ChildItem -Path $root -Filter "libssl-*.dll" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($dll) { break }
+            }
+          }
           if (-not $dll) {
-            $dll = Get-ChildItem -Path "C:\Program Files\OpenSSL-Win64" -Filter "libssl-*-x64.dll" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            Write-Host "bilinen koklerde bulunamadi, C:\ altinda sinirli-derinlikli son care taramasi yapiliyor..."
+            $dll = Get-ChildItem -Path "C:\Program Files","C:\ProgramData\chocolatey" -Filter "libssl-*.dll" -Recurse -Depth 6 -ErrorAction SilentlyContinue | Select-Object -First 1
           }
           if (-not $dll) { throw "libssl DLL bulunamadi (openssl.light kurulumu basarisiz olabilir)" }
           Write-Host "libssl bulundu: $($dll.FullName)"

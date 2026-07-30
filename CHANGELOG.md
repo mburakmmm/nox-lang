@@ -14,6 +14,22 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.22.2]
+
+### Düzeltildi
+- **CI'nin Windows `libssl` kurulum adımı yanlış yolda arıyordu**:
+  `v1.22.1`in düzeltmesi SONRASI `windows-frontend` işi GERÇEKTEN
+  `nox.http.serve_tls` duman testi adımına ULAŞTI (bu, o job'ın Windows
+  CI TARİHİNDE İLK KEZ bu kadar İLERİ gittiği anlamına gelir) AMA
+  Chocolatey'nin `openssl.light` paketinin GERÇEK kurulum yolu, sabit
+  varsayılan `C:\Program Files\OpenSSL-Win64\bin`den FARKLI çıktı —
+  `libssl DLL bulunamadi` İLE BAŞARISIZ oldu. Düzeltme: ARTIK BİRDEN
+  FAZLA olası kök (Program Files/(x86)/OpenSSL-Win32/chocolatey'nin
+  KENDİ paket kütüphanesi) DENENİR, HİÇBİRİ bulamazsa `C:\Program
+  Files`/`C:\ProgramData\chocolatey` altında sınırlı-derinlikli bir SON
+  ÇARE taraması yapılır; `choco`nun KENDİ çıktısı da ARTIK GİZLENMEZ
+  (gelecekteki bir başarısızlıkta tanı KOLAYLAŞSIN diye).
+
 ## [1.22.1]
 
 ### Düzeltildi
