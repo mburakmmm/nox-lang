@@ -14,6 +14,22 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.22.1]
+
+### Düzeltildi
+- **`compiler/pkg/install.zig`nin `exeFileName` testi, GitHub Actions'ın
+  native `windows-latest` çalıştırıcısında GERÇEKTEN başarısız oluyordu**
+  (bu değişiklikle İLİŞKİSİZ, ÖNCEDEN VAR OLAN bir Windows CI kırılması —
+  `v1.21.3` dahil ÖNCEKİ birkaç sürümün CI koşularında da AYNI ŞEKİLDE
+  başarısız olduğu doğrulandı, bu YÜZDEN `v1.22.0`nun Windows doğrulama
+  adımları HİÇ ÇALIŞAMADAN `windows-frontend` işi bu testte DURUYORDU).
+  `std.heap.FixedBufferAllocator` (64 baytlık sabit bir tampon) ile
+  `std.fmt.allocPrint`in (`Writer.Allocating.initCapacity`, YALNIZCA
+  6 bayt İLE başlayıp 7 bayta büyümesi GEREKEN) etkileşimi Windows'ta
+  `error.OutOfMemory` İLE BAŞARISIZ oluyordu — macOS/Linux'ta AYNI kod
+  SORUNSUZDU. Düzeltme: teste ÖZGÜ, gereksiz `FixedBufferAllocator`
+  yerine `std.testing.allocator` (sızıntı TESPİTLİ GERÇEK heap) kullanıldı.
+
 ## [1.22.0]
 
 ### Eklendi

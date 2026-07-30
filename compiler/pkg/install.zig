@@ -109,10 +109,24 @@ test "isDirOnPath: tam segment eslesmesi, alt-dizge DEGIL" {
     try std.testing.expect(!isDirOnPath(path_env, "/home/x/.nox"));
 }
 
+// **GERÇEK, GitHub Actions'ın native `windows-latest` çalıştırıcısında
+// BULUNAN bir hata (bu değişiklikle İLİŞKİSİZ, ÖNCEDEN VAR OLAN bir
+// Windows CI kırılması — v1.21.3 dahil ÖNCEKİ sürümlerin CI koşularında
+// da AYNI ŞEKİLDE başarısız oluyordu):** ÖNCEDEN bu test `std.heap.
+// FixedBufferAllocator` (64 baytlık SABİT bir yığın tamponu) kullanıyordu
+// — `exeFileName`nin İÇİNDEKİ `std.fmt.allocPrint` (`Writer.Allocating.
+// initCapacity(gpa, fmt.len)`, YALNIZCA 6 bayt İLE başlar, SONRA 7 bayta
+// BÜYÜMESİ GEREKİR) Windows'ta bu KÜÇÜK, TEK-tahsisli büyüme senaryosuyla
+// `error.OutOfMemory` İLE BAŞARISIZ oluyordu (macOS/Linux'ta AYNI kod
+// SORUNSUZ çalışıyordu — Windows'a ÖZGÜ bir `FixedBufferAllocator.resize`/
+// `Writer.Allocating` etkileşimi GİBİ görünüyor). Düzeltme: GERÇEK bir
+// yığın (heap) ayırıcısına (`std.testing.allocator`, sızıntı TESPİTLİ)
+// geçildi — `FixedBufferAllocator`nin KENDİSİ `exeFileName`nin GERÇEK
+// davranışının bir PARÇASI DEĞİLDİ, yalnızca testin KENDİ (gereksiz)
+// tercihiydi.
 test "exeFileName: platforma gore uzanti eklenir" {
-    var buf: [64]u8 = undefined;
-    var fba = std.heap.FixedBufferAllocator.init(&buf);
-    const name = try exeFileName(fba.allocator(), "nyx");
+    const name = try exeFileName(std.testing.allocator, "nyx");
+    defer std.testing.allocator.free(name);
     if (builtin.os.tag == .windows) {
         try std.testing.expectEqualStrings("nyx.exe", name);
     } else {
