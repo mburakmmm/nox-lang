@@ -295,6 +295,22 @@ jobs:
           Write-Host "libssl bulundu: $($dll.FullName)"
           Add-Content -Path $env:GITHUB_ENV -Value "NOX_OPENSSL_LIB=$($dll.FullName)"
 
+          # NOT: `libssl-3-x64.dll`, KENDİ `libcrypto-3-x64.dll` bağımlılığını
+          # (Windows PE import tablosu ÜZERİNDEN) taşır. `LoadLibraryA` MUTLAK
+          # bir yolla ÇAĞRILDIĞINDA SADECE O TEK DLL'i o yoldan yükler —
+          # onun BAĞIMLILIKLARI (libcrypto) YİNE standart Windows DLL arama
+          # SIRASIYLA (uygulamanın kendi dizini, sistem dizini, PATH) çözülür;
+          # `libssl-3-x64.dll`nin BULUNDUĞU dizin bu aramaya DAHİL DEĞİLDİR
+          # (aksi halde LOAD_WITH_ALTERED_SEARCH_PATH GEREKİR). Bu YÜZDEN
+          # OpenSSL dizini PATH'e EKLENMEZSE, `LoadLibraryA(libssl yolu)`
+          # SESSİZCE BAŞARISIZ olabilir (libcrypto bulunamadığı İçİn) — bu,
+          # `newServerCtx`nin `ensureLoaded()` adımında BAŞARISIZ olup TLS
+          # sunucusunun HİÇ dinlemeye BAŞLAMAMASINA yol açar. Düzeltme: OpenSSL
+          # dizinini bu JOB'un KALAN adımları İçin PATH'e EKLE.
+          $cryptoDll = Get-ChildItem -Path $dll.DirectoryName -Filter "libcrypto-*.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($cryptoDll) { Write-Host "libcrypto bulundu: $($cryptoDll.FullName)" } else { Write-Host "UYARI: libcrypto-*.dll $($dll.DirectoryName) icinde bulunamadi" }
+          Add-Content -Path $env:GITHUB_PATH -Value $dll.DirectoryName
+
       # `tests/fixtures/tls/test_cert.pem`/`test_key.pem` (SABİT, ÖNCEDEN
       # macOS'ta `openssl req -x509 ... -subj "/CN=localhost"` İLE üretilmiş
       # test-only self-signed çift) DOĞRUDAN kullanılır — self-signed bir
@@ -326,7 +342,17 @@ jobs:
           & ".\zig-out\bin\noxc.exe" build tls_smoke.nox -o tls_smoke.exe
           if ($LASTEXITCODE -ne 0) { throw "serve_tls derlemesi basarisiz (exit $LASTEXITCODE)" }
 
+          # NOT: ONCEKI surum, baglanti kurulamazsa DOGRUDAN `throw` ATIYORDU
+          # — bu, betigin SONUNDAKI stderr-dump/kontrolune HIC ULASMADAN
+          # cikmasina sebep oluyordu (GERCEK bir CI-tanılama hatasıyla
+          # BULUNDU: dogru libssl DLL'i bulundugu HALDE baglanti KURULAMADIGI
+          # bir calismada, ASIL sebep [orn. tls_smoke.exe'nin stderr'i, ya da
+          # surecin erken cikip cikmadigi] HICBIR ZAMAN goruntulenemedi).
+          # Duzeltme: hatayi bir DEGISKENDE biriktir, stderr'i/surec durumunu
+          # HER ZAMAN yazdir, SONRA (varsa) hatayi fırlat.
           $proc = Start-Process -FilePath ".\tls_smoke.exe" -PassThru -NoNewWindow -RedirectStandardError "tls_smoke_stderr.txt"
+          $failure = $null
+          $resp = $null
           try {
             $connected = $false
             for ($i = 0; $i -lt 50; $i++) {
@@ -337,15 +363,29 @@ jobs:
                 break
               } catch { Start-Sleep -Milliseconds 100 }
             }
-            if (-not $connected) { throw "serve_tls'e GERCEK bir HTTPS baglantisi kurulamadi (50 deneme)" }
-            if ($resp.StatusCode -ne 200) { throw "beklenmeyen durum kodu: $($resp.StatusCode)" }
-            if ($resp.Content -ne "ok-windows-tls") { throw "beklenmeyen govde: '$($resp.Content)'" }
-            Write-Host "nox.http.serve_tls Windows duman testi BASARILI: $($resp.Content)"
+            if (-not $connected) {
+              $procState = if ($proc.HasExited) { "surec ERKEN SONLANDI, ExitCode=$($proc.ExitCode)" } else { "surec HALA CALISIYOR (port dinlemiyor olabilir)" }
+              $failure = "serve_tls'e GERCEK bir HTTPS baglantisi kurulamadi (50 deneme). $procState"
+            } elseif ($resp.StatusCode -ne 200) {
+              $failure = "beklenmeyen durum kodu: $($resp.StatusCode)"
+            } elseif ($resp.Content -ne "ok-windows-tls") {
+              $failure = "beklenmeyen govde: '$($resp.Content)'"
+            }
           } finally {
             if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
           }
+          Start-Sleep -Milliseconds 300
           $stderrContent = Get-Content -Path "tls_smoke_stderr.txt" -Raw -ErrorAction SilentlyContinue
+          if ($stderrContent) {
+            Write-Host "=== tls_smoke.exe stderr ==="
+            Write-Host $stderrContent
+            Write-Host "==========================="
+          } else {
+            Write-Host "tls_smoke.exe stderr bos."
+          }
+          if ($failure) { throw "$failure" }
           if ($stderrContent) { throw "sunucu stderr'e beklenmeyen bir cikti yazdi (olasi bellek sizintisi/UAF): $stderrContent" }
+          Write-Host "nox.http.serve_tls Windows duman testi BASARILI: $($resp.Content)"
 
       # Faz "sunucu-tarafı TLS + WebSocket Upgrade" §6 (TAM 12'lik isim
       # matrisi) — Windows'ta (Windows qbe.exe + MinGW cc ile) HER

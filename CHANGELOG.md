@@ -14,6 +14,29 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.22.4]
+
+### Düzeltildi
+- **CI'nin Windows TLS duman testi, GERÇEK hata sebebini HİÇBİR ZAMAN
+  göstermiyordu**: doğru `libssl-3-x64.dll` ARTIK bulunduğu (bkz. `v1.22.3`)
+  HALDE HTTPS bağlantısı yine kurulamıyordu, ama betik bağlantı hatasında
+  DOĞRUDAN `throw` attığından `tls_smoke.exe`nin stderr çıktısını dump'layan
+  KOD SATIRINA HİÇ ULAŞILMIYORDU (hata HER ZAMAN körlemesine "50 deneme"
+  mesajıyla SINIRLI kalıyordu). Düzeltme: hata artık bir DEĞİŞKENDE
+  biriktirilip stderr/süreç-durumu HER ZAMAN yazdırıldıktan SONRA
+  fırlatılıyor.
+- **OpenSSL kurulum dizini PATH'e EKLENMİYORDU (muhtemel kök neden)**:
+  `LoadLibraryA` mutlak bir yolla çağrıldığında SADECE o TEK DLL'i o
+  yoldan yükler — `libssl-3-x64.dll`nin KENDİ `libcrypto-3-x64.dll`
+  bağımlılığı YİNE standart Windows DLL arama sırasıyla (PATH DAHİL,
+  ama libssl'in BULUNDUĞU dizin DAHİL DEĞİL) çözülür. Bu YÜZDEN
+  `C:\Program Files\OpenSSL` PATH'te DEĞİLKEN `libcrypto` bulunamayıp
+  `LoadLibraryA` SESSİZCE başarısız olabiliyordu — `newServerCtx` bu
+  YÜZDEN `ensureLoaded()` adımında başarısız olup TLS sunucusu HİÇ
+  dinlemeye BAŞLAMIYOR olabilirdi. Düzeltme: OpenSSL kurulum dizini ARTIK
+  `GITHUB_PATH`e eklenip job'ın KALAN adımları İçin PATH'e DAHİL ediliyor;
+  `libcrypto-*.dll`nin varlığı da AYRICA tanı olarak loglanıyor.
+
 ## [1.22.3]
 
 ### Düzeltildi
