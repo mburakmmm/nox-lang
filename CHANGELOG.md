@@ -14,6 +14,27 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.22.7]
+
+### Düzeltildi
+- **GERÇEK KÖK NEDEN bulundu ve düzeltildi — `nox.http.serve_tls` Windows'ta
+  HİÇ dinlemeye BAŞLAMIYORDU**: `v1.22.6`nin sembol-seviyesi tanısı
+  KESİN olarak gösterdi: `nox_tls_server: sembol bulunamadi: BIO_new`.
+  `BIO_new`/`BIO_s_mem`/`BIO_read`/`BIO_write`/`BIO_ctrl` OpenSSL'in
+  `libcrypto`SUNDA tanımlıdır, `libssl`DE DEĞİL. POSIX'te (`dlsym`) bu
+  SORUN OLMAZ — bir handle üzerinde arama YAPARKEN o modülün bağımlılık
+  grafiğini (libssl'in KENDİ `libcrypto` bağımlılığı DAHİL) transitif
+  olarak TARAR (macOS/Linux CI ZATEN bunu doğruladı). AMA Windows'ta
+  `GetProcAddress` YALNIZCA verilen HMODULE'ün KENDİ exports tablosuna
+  BAKAR, bağımlılıklarına ASLA İNMEZ — bu YÜZDEN `GetProcAddress(libssl_
+  handle, "BIO_new")` HER ZAMAN başarısız OLUYORDU (`libssl-3-x64.dll`/
+  `libcrypto-3-x64.dll` HER İKİSİ de DİSKTE doğrulanmış OLSA BİLE).
+  Düzeltme: Windows'ta BIO_* sembolleri ARTIK AYRI bir `libcrypto` handle'ından
+  aranıyor — bu handle'ı elde etmek İçİn AYRI bir arama/PATH GEREKMİYOR,
+  çünkü `libcrypto` `libssl` yüklendiğinde ZATEN işlem belleğine
+  yüklenmiş oluyor (bare-isimli bir `LoadLibraryA` çağrısı SADECE
+  refcount'u artırıp AYNI, ZATEN-yüklü handle'ı DÖNÜYOR).
+
 ## [1.22.6]
 
 ### Düzeltildi

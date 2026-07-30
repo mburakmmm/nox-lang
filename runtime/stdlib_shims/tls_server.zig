@@ -103,6 +103,35 @@ fn openLib() ?LibHandle {
     return null;
 }
 
+/// **GERÇEK, ÇALIŞMA-ZAMANINDA bulunan hata (Windows):** `BIO_new`/`BIO_
+/// s_mem`/`BIO_read`/`BIO_write`/`BIO_ctrl` OpenSSL'in `libcrypto`SUNDA
+/// tanımlıdır, `libssl`DE DEĞİL (`libssl`, `libcrypto`yu SADECE `SSL_*`
+/// fonksiyonlarının İÇ UYGULAMASI İçİn ÇAĞIRIR — `libcrypto`nun KENDİ
+/// exports tablosuna sahip fonksiyonları libssl'in EXPORTS tablosuna
+/// YENİDEN İHRAÇ EDİLMEZ). POSIX'te (`dlsym`) bu SORUN OLMAZ — `dlsym`
+/// bir handle ÜZERİNDE arama YAPARKEN o modülün BAĞIMLILIK grafiğini
+/// (libssl'in KENDİ `DT_NEEDED libcrypto`SU DAHİL) TRANSİTİF olarak
+/// TARAR — GERÇEK bir macOS/Linux CI çalıştırması BUNU zaten doğruladı.
+/// AMA Windows'ta `GetProcAddress` YALNIZCA VERİLEN HMODULE'ün KENDİ
+/// exports tablosuna BAKAR, bağımlılıklarına ASLA İNMEZ — bu YÜZDEN
+/// `GetProcAddress(libssl_handle, "BIO_new")` HER ZAMAN BAŞARISIZ olur
+/// (GERÇEK bir Windows CI çalıştırmasında `libssl-3-x64.dll`/`libcrypto-
+/// 3-x64.dll` HER İKİSİ de DİSKTE doğrulanmış OLDUĞU HALDE `nox_tls_
+/// server: sembol bulunamadi: BIO_new` HATASIYLA YAKALANDI). Düzeltme:
+/// Windows'ta BIO_* sembolleri AYRI bir `libcrypto` handle'ından
+/// aranır — bu handle'ı elde etmek İçİn AYRI bir arama/PATH GEREKMEZ:
+/// `libcrypto`, `libssl` ZATEN yüklendiğinde (onun KENDİ import
+/// tablosundaki bir bağımlılık olarak) işlem belleğine ÇOKTAN
+/// YÜKLENMİŞTİR — bare-isimli bir `LoadLibraryA` çağrısı bu YÜZDEN
+/// SADECE refcount'u artırıp AYNI, ZATEN-yüklü handle'ı DÖNER (YENİDEN
+/// disk/PATH araması YAPMAZ).
+fn openCryptoLibWindows() ?*anyopaque {
+    if (Kernel32.LoadLibraryA("libcrypto-3-x64.dll")) |h| return h;
+    if (Kernel32.LoadLibraryA("libcrypto-1_1-x64.dll")) |h| return h;
+    std.debug.print("nox_tls_server: libcrypto-*.dll (BIO_* sembolleri icin) bulunamadi (GetLastError={d})\n", .{Kernel32.GetLastError()});
+    return null;
+}
+
 fn lookupSym(lib: *LibHandle, comptime T: type, name: [:0]const u8) ?T {
     if (builtin.os.tag == .windows) {
         const handle = lib.* orelse return null;
@@ -180,6 +209,14 @@ var g_funcs: Funcs = undefined;
 
 fn loadAll() bool {
     var lib = openLib() orelse return false;
+    // BIO_* sembolleri Windows'ta AYRI bir `libcrypto` handle'INDAN aranır
+    // (bkz. `openCryptoLibWindows`nin belge notu); DİĞER platformlarda
+    // `dlsym`in KENDİSİ ZATEN transitif ÇÖZÜYOR, bu YÜZDEN AYNI `lib`
+    // handle'ı YETERLİ.
+    var bio_lib: LibHandle = if (builtin.os.tag == .windows)
+        openCryptoLibWindows() orelse return false
+    else
+        lib;
     const tls_server_method = lookupSym(&lib, TlsMethodFn, "TLS_server_method") orelse return false;
     const ctx_new = lookupSym(&lib, CtxNewFn, "SSL_CTX_new") orelse return false;
     const ctx_free = lookupSym(&lib, CtxFreeFn, "SSL_CTX_free") orelse return false;
@@ -196,11 +233,11 @@ fn loadAll() bool {
     const ssl_write = lookupSym(&lib, SslWriteFn, "SSL_write") orelse return false;
     const ssl_shutdown = lookupSym(&lib, SslShutdownFn, "SSL_shutdown") orelse return false;
     const ssl_get_error = lookupSym(&lib, SslGetErrorFn, "SSL_get_error") orelse return false;
-    const bio_new = lookupSym(&lib, BioNewFn, "BIO_new") orelse return false;
-    const bio_s_mem = lookupSym(&lib, BioMethodFn, "BIO_s_mem") orelse return false;
-    const bio_read = lookupSym(&lib, BioReadFn, "BIO_read") orelse return false;
-    const bio_write = lookupSym(&lib, BioWriteFn, "BIO_write") orelse return false;
-    const bio_ctrl = lookupSym(&lib, BioCtrlFn, "BIO_ctrl") orelse return false;
+    const bio_new = lookupSym(&bio_lib, BioNewFn, "BIO_new") orelse return false;
+    const bio_s_mem = lookupSym(&bio_lib, BioMethodFn, "BIO_s_mem") orelse return false;
+    const bio_read = lookupSym(&bio_lib, BioReadFn, "BIO_read") orelse return false;
+    const bio_write = lookupSym(&bio_lib, BioWriteFn, "BIO_write") orelse return false;
+    const bio_ctrl = lookupSym(&bio_lib, BioCtrlFn, "BIO_ctrl") orelse return false;
 
     g_lib = lib;
     g_funcs = .{
