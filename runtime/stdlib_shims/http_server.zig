@@ -318,8 +318,14 @@ export fn nox_http_server_listen(rt: ?*anyopaque, port: i64) callconv(.c) ?*anyo
 /// cert/key yolu, eşleşmeyen cert/key) sessizce yutulmaz, ama davranış
 /// (mevcut `serve`/`serve_fd`/`serve_multicore`nin bind-hatası davranışıyla
 /// TUTARLI) YİNE DE "sunucu hiçbir şey yapmadan döner" olarak kalır.
-fn logTlsCtxFailure() void {
-    std.debug.print("nox.http.serve_tls: TLS baglami olusturulamadi (libssl kurulu degil olabilir, ya da cert/key yolu/eslesmesi yanlis)\n", .{});
+fn logTlsCtxFailure(reason: tls_server.CtxError) void {
+    const msg = switch (reason) {
+        .lib_load_failed => "libssl yuklenemedi (kurulu degil olabilir, ya da NOX_OPENSSL_LIB/PATH uzerinden bulunamadi)",
+        .cert_file_failed => "sertifika dosyasi kullanilamadi (yol yanlis olabilir ya da PEM formatinda degil)",
+        .key_file_failed => "anahtar dosyasi kullanilamadi (yol yanlis olabilir ya da PEM formatinda degil)",
+        .key_mismatch => "anahtar sertifikayla eslesmiyor",
+    };
+    std.debug.print("nox.http.serve_tls: TLS baglami olusturulamadi: {s}\n", .{msg});
 }
 
 /// Faz "sunucu-tarafı TLS": `nox_http_server_listen`in AYNISI, AMA
@@ -331,8 +337,9 @@ export fn nox_http_server_listen_tls(rt: ?*anyopaque, port: i64, cert_path: ?[*:
     const cp = cert_path orelse return null;
     const kp = key_path orelse return null;
     const fd = bindAndListen(port) orelse return null;
-    const ctx = tls_server.newServerCtx(cp, kp) orelse {
-        logTlsCtxFailure();
+    var ctx_err: tls_server.CtxError = undefined;
+    const ctx = tls_server.newServerCtx(cp, kp, &ctx_err) orelse {
+        logTlsCtxFailure(ctx_err);
         _ = closeSocket(fd);
         return null;
     };
@@ -378,8 +385,9 @@ export fn nox_http_listen_fd_tls(rt: ?*anyopaque, port: i64, cert_path: ?[*:0]co
     const cp = cert_path orelse return null;
     const kp = key_path orelse return null;
     const fd = bindAndListen(port) orelse return null;
-    const ctx = tls_server.newServerCtx(cp, kp) orelse {
-        logTlsCtxFailure();
+    var ctx_err: tls_server.CtxError = undefined;
+    const ctx = tls_server.newServerCtx(cp, kp, &ctx_err) orelse {
+        logTlsCtxFailure(ctx_err);
         _ = closeSocket(fd);
         return null;
     };
@@ -431,8 +439,9 @@ export fn nox_http_server_from_fd_tls_owned(rt: ?*anyopaque, fd: i64, cert_path:
     if (fd < 0) return null;
     const cp = cert_path orelse return null;
     const kp = key_path orelse return null;
-    const ctx = tls_server.newServerCtx(cp, kp) orelse {
-        logTlsCtxFailure();
+    var ctx_err: tls_server.CtxError = undefined;
+    const ctx = tls_server.newServerCtx(cp, kp, &ctx_err) orelse {
+        logTlsCtxFailure(ctx_err);
         return null;
     };
     const handle = state.allocator().create(ServerHandle) catch {

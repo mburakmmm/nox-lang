@@ -14,6 +14,21 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.22.5]
+
+### Düzeltildi
+- **`nox.http.serve_tls`nin TLS bağlamı hatası TEK bir belirsiz stderr
+  mesajına DÜŞÜYORDU**: `newServerCtx`nin dört FARKLI başarısızlık nedeni
+  (libssl yüklenemedi, sertifika dosyası kullanılamadı, anahtar dosyası
+  kullanılamadı, anahtar sertifikayla eşleşmiyor) HEPSİ AYNI belirsiz
+  mesaja ("libssl kurulu degil olabilir, ya da cert/key yolu/eslesmesi
+  yanlis") düşüyordu — bu, GERÇEK bir Windows CI çalıştırmasında `libssl`/
+  `libcrypto` HER İKİSİ de doğrulanmış OLDUĞU HALDE sunucunun yine de
+  dinlemeye BAŞLAMADIĞI bir durumu teşhis etmeyi ZORLAŞTIRIYORDU.
+  Düzeltme: `tls_server.CtxError` (4 üyeli enum) EKLENDİ, `newServerCtx`
+  ARTIK bir `err_out` parametresi ALIYOR, `logTlsCtxFailure` HANGİ adımın
+  başarısız olduğunu AYRI AYRI mesajlarla bildiriyor.
+
 ## [1.22.4]
 
 ### Düzeltildi

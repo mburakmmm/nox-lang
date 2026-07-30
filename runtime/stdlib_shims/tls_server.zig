@@ -221,23 +221,52 @@ fn ensureLoaded() bool {
     return g_state.load(.acquire) == .ready;
 }
 
+/// `newServerCtx`nin BAŞARISIZLIK nedeni — ÖNCEDEN (`v1.22.4`e KADAR)
+/// TÜM bu dört farklı hata TEK bir belirsiz stderr mesajına ("libssl
+/// kurulu degil olabilir, ya da cert/key yolu/eslesmesi yanlis")
+/// düşüyordu; bu, GERÇEK bir Windows CI çalıştırmasında `libssl`/
+/// `libcrypto` HER İKİSİ de doğrulanmış (bulunmuş) OLDUĞU HALDE sunucunun
+/// yine de dinlemeye BAŞLAMADIĞI bir durumda hangi ADIMIN başarısız
+/// OLDUĞUNU (kütüphane yükleme mi, cert dosyası mı, key dosyası mı, yoksa
+/// eşleşme mi) TEŞHİS ETMEYİ İMKANSIZ kılıyordu. Artık HER ADIM kendi
+/// nedenini bildirir.
+pub const CtxError = enum {
+    lib_load_failed,
+    cert_file_failed,
+    key_file_failed,
+    key_mismatch,
+};
+
 /// `SSL_CTX*`. `cert_path`/`key_path` PEM biçiminde OLMALIDIR (Apache/nginx
 /// İLE AYNI KONVANSİYON). HERHANGİ bir adımda BAŞARISIZ OLURSA (libssl
-/// yüklenemedi, dosya bulunamadı, cert/key EŞLEŞMİYOR) `null` döner —
+/// yüklenemedi, dosya bulunamadı, cert/key EŞLEŞMİYOR) `null` döner ve
+/// (VERİLDİYSE) `err_out`a HANGİ adımın başarısız olduğunu YAZAR —
 /// çağıran (`http_server.zig`) stderr'e TEK satırlık bir tanı BASAR.
-pub fn newServerCtx(cert_path: [*:0]const u8, key_path: [*:0]const u8) ?*anyopaque {
-    if (!ensureLoaded()) return null;
-    const method = g_funcs.tls_server_method() orelse return null;
-    const ctx = g_funcs.ctx_new(method) orelse return null;
+pub fn newServerCtx(cert_path: [*:0]const u8, key_path: [*:0]const u8, err_out: ?*CtxError) ?*anyopaque {
+    if (!ensureLoaded()) {
+        if (err_out) |e| e.* = .lib_load_failed;
+        return null;
+    }
+    const method = g_funcs.tls_server_method() orelse {
+        if (err_out) |e| e.* = .lib_load_failed;
+        return null;
+    };
+    const ctx = g_funcs.ctx_new(method) orelse {
+        if (err_out) |e| e.* = .lib_load_failed;
+        return null;
+    };
     if (g_funcs.ctx_use_cert(ctx, cert_path, SSL_FILETYPE_PEM) != 1) {
+        if (err_out) |e| e.* = .cert_file_failed;
         g_funcs.ctx_free(ctx);
         return null;
     }
     if (g_funcs.ctx_use_key(ctx, key_path, SSL_FILETYPE_PEM) != 1) {
+        if (err_out) |e| e.* = .key_file_failed;
         g_funcs.ctx_free(ctx);
         return null;
     }
     if (g_funcs.ctx_check_key(ctx) != 1) {
+        if (err_out) |e| e.* = .key_mismatch;
         g_funcs.ctx_free(ctx);
         return null;
     }
