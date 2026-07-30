@@ -63,6 +63,7 @@ fn libraryCandidates() []const [:0]const u8 {
 const Kernel32 = if (builtin.os.tag == .windows) struct {
     extern "kernel32" fn LoadLibraryA(lpLibFileName: [*:0]const u8) callconv(.c) ?*anyopaque;
     extern "kernel32" fn GetProcAddress(hModule: ?*anyopaque, lpProcName: [*:0]const u8) callconv(.c) ?*anyopaque;
+    extern "kernel32" fn GetLastError() callconv(.c) u32;
 } else struct {};
 
 const LibHandle = if (builtin.os.tag == .windows) ?*anyopaque else std.DynLib;
@@ -70,20 +71,34 @@ const LibHandle = if (builtin.os.tag == .windows) ?*anyopaque else std.DynLib;
 /// `NOX_OPENSSL_LIB` — kullanıcının KENDİ libssl yolunu (ör. keg-only bir
 /// Homebrew kurulumunda bare-isim adaylarının HİÇBİRİ bulunamazsa) BELİRTMESİ
 /// İçİn bir kaçış kapısı. Bulunursa DİĞER TÜM adaylardan ÖNCE denenir.
+///
+/// **NOT (`v1.22.5`+):** her BAŞARISIZ deneme ARTIK stderr'e TEK satırlık
+/// bir tanı BASAR (Windows'ta `GetLastError()` DAHİL) — bu, GERÇEK bir
+/// Windows CI çalıştırmasında `libssl-3-x64.dll`/`libcrypto-3-x64.dll`
+/// HER İKİSİ de DİSKTE doğrulanmış OLDUĞU HALDE `ensureLoaded()`nin YİNE
+/// DE başarısız OLDUĞU bir durumu (HANGİ adımın – `LoadLibraryA`nın
+/// KENDİSİ mi, yoksa SONRAKİ bir `GetProcAddress` sembol araması mı –
+/// başarısız olduğunu ayırt EDEMEDİĞİMİZ) teşhis ETMEK İçİn EKLENDİ.
 fn openLib() ?LibHandle {
     if (std.c.getenv("NOX_OPENSSL_LIB")) |override_path| {
         if (builtin.os.tag == .windows) {
             if (Kernel32.LoadLibraryA(override_path)) |h| return h;
+            std.debug.print("nox_tls_server: NOX_OPENSSL_LIB LoadLibraryA basarisiz: {s} (GetLastError={d})\n", .{ override_path, Kernel32.GetLastError() });
         } else if (std.DynLib.open(std.mem.span(override_path))) |lib| {
             return lib;
-        } else |_| {}
+        } else |err| {
+            std.debug.print("nox_tls_server: NOX_OPENSSL_LIB dlopen basarisiz: {s} ({t})\n", .{ override_path, err });
+        }
     }
     for (libraryCandidates()) |name| {
         if (builtin.os.tag == .windows) {
             if (Kernel32.LoadLibraryA(name)) |h| return h;
+            std.debug.print("nox_tls_server: LoadLibraryA basarisiz: {s} (GetLastError={d})\n", .{ name, Kernel32.GetLastError() });
         } else if (std.DynLib.open(name)) |lib| {
             return lib;
-        } else |_| {}
+        } else |err| {
+            std.debug.print("nox_tls_server: dlopen basarisiz: {s} ({t})\n", .{ name, err });
+        }
     }
     return null;
 }
@@ -91,10 +106,16 @@ fn openLib() ?LibHandle {
 fn lookupSym(lib: *LibHandle, comptime T: type, name: [:0]const u8) ?T {
     if (builtin.os.tag == .windows) {
         const handle = lib.* orelse return null;
-        const addr = Kernel32.GetProcAddress(handle, name) orelse return null;
+        const addr = Kernel32.GetProcAddress(handle, name) orelse {
+            std.debug.print("nox_tls_server: sembol bulunamadi: {s}\n", .{name});
+            return null;
+        };
         return @ptrCast(addr);
     }
-    return lib.lookup(T, name);
+    return lib.lookup(T, name) orelse {
+        std.debug.print("nox_tls_server: sembol bulunamadi: {s}\n", .{name});
+        return null;
+    };
 }
 
 // ---- OpenSSL C ABI (tamamen opak işaretçiler + sabit manifest değerleri —

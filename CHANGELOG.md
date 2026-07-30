@@ -14,6 +14,23 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.22.6]
+
+### Düzeltildi
+- **`libssl` yükleme başarısızlığı ("lib_load_failed") HALA kör bir kutuydu**:
+  `v1.22.5`nin `CtxError` ayrımı `newServerCtx` seviyesinde HANGİ adımın
+  başarısız olduğunu (kütüphane yükleme mi, cert mi, key mi) gösterse de,
+  "kütüphane yükleme" adının KENDİSİ HÂLÂ tek bir kara kutuydu: `openLib()`
+  (`LoadLibraryA`/`dlopen`) mi başarısız oldu, yoksa kütüphane BULUNUP
+  `loadAll()`daki ~20 `GetProcAddress`/`lookup` çağrısından BİRİ mi başarısız
+  oldu — bilinmiyordu. GERÇEK bir Windows CI çalıştırmasında `libssl-3-x64.
+  dll`/`libcrypto-3-x64.dll` HER İKİSİ de doğrulanmış (bulunmuş) OLDUĞU
+  HALDE `nox.http.serve_tls` yine "libssl yuklenemedi" diyordu — HANGİ
+  adımın gerçekte başarısız olduğu teşhis EDİLEMİYORDU. Düzeltme: `openLib`
+  ARTIK her başarısız `LoadLibraryA`/`dlopen` denemesinde (Windows'ta
+  `GetLastError()` KODU DAHİL) stderr'e satır basıyor; `lookupSym` ARTIK
+  HANGİ sembol adının bulunamadığını basıyor.
+
 ## [1.22.5]
 
 ### Düzeltildi
