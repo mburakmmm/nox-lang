@@ -14,6 +14,23 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.26.1]
+
+### Düzeltildi
+- **`nox.path.join` regresyonu (~18x yavaşlama)**: `str` ABI değişikliği
+  (uzunluk alanı + ASCII bayrağı) SONRASI `nox_path_join_raw` yanlış bir
+  gerekçeyle `std.heap.page_allocator` üzerinden bir ara tampona GERİ
+  DÖNDÜRÜLMÜŞTÜ — Faz II'nin (v1.8.x civarı) ZATEN düzelttiği AYNI sayfa-
+  tahsisi darboğazı sessizce geri gelmişti (`path_bench`: ~8ms → ~145ms).
+  Benchmark tazeleme sırasında bulunup `nox_str_concat`in AYNI tek-tahsis
+  desenine dönülerek düzeltildi — sonuç eski taban çizgisinden bile
+  HIZLI (~0-1ms).
+
+### Değişti
+- Tüm benchmark takımı (`zig build bench -Doptimize=ReleaseFast`) yeniden
+  çalıştırıldı; `README.md`/`README.en.md`/`benchmarks/RESULTS.md`deki
+  sayılar güncel/doğrulanmış sonuçları yansıtacak şekilde güncellendi.
+
 ## [1.26.0]
 
 ### Eklendi

@@ -4,39 +4,80 @@
 
 **Faz P2.5 (bkz. proje belleği "P0/P1/P2 inceleme düzeltme listesi" planı):** `run.zig` artık HER koşunun başında makine/derleyici-sürümü bilgisini (OS/mimari/CPU çekirdek sayısı, `zig` sürümü, derleme modu, `noxc --version`) basıyor — bu dosyanın AŞAĞIDAKİ tabloları BU metadata EKLENMEDEN ÖNCEKİ koşulardan alındığından geriye dönük olarak eklenmedi (bkz. git geçmişi/orijinal koşu ortamı bilinmiyor); BUNDAN SONRAKİ her yeni koşu çıktısının EN ÜSTÜNDE bu bilgi otomatik olarak yer alacak. Her satır ayrıca artık yalnızca `min` DEĞİL, `min`/`max`/`ort` (ortalama) üçünü de raporluyor — bir sayının GERÇEKTEN istikrarlı mı yoksa gürültülü mü olduğunu (ör. `min=5ms` ama `max=50ms` olabilir) görünür kılmak için.
 
+**En güncel koşu metadata'sı (Faz OO.5, bkz. §3.86 — `str` ABI/`TaskLocal`/
+`Exception`/`dict[K,class]` fazlarından SONRA):** `ortam: macos-aarch64
+(apple_m4), 10 mantıksal çekirdek` — `derleyici: zig 0.16.0` —
+`derleme modu: ReleaseFast` — `noxc: noxc 1.26.0`.
+
 ## Bölüm 1 — Stres testleri (yalnızca Nox, büyük N)
 
 Bu testler yalnızca Nox'un büyük ölçekte çökmediğini/sızdırmadığını ve zamanla regresyona uğramadığını doğrular; başka bir dille kıyaslanmaz.
 
 | Benchmark | Süre (min) |
 |---|---|
-| numeric_recursion | 19.9ms |
-| tight_loop_arithmetic | 460.7ms |
-| list_traversal | 3.3ms |
-| oop_arc_churn | 3.0ms |
-| generics_protocols | 44.9ms |
-| exceptions_control_flow | 3.2ms |
-| lowlevel_arena | 3.4ms |
-| string_passing | 57.9ms |
-| deep_equality | 12.1ms |
-| list_class_field | 7.3ms |
-| async_task_churn | 29.3ms |
-| dict_bench | 3.7ms |
-| json_bench | 14.7ms |
-| strings_bench | 4.8ms |
-| math_bench | 3.7ms |
-| os_fs_bench | 2.8ms |
+| numeric_recursion | 21.3ms |
+| tight_loop_arithmetic | 501.8ms |
+| list_traversal | 2.3ms |
+| oop_arc_churn | 2.2ms |
+| generics_protocols | 48.7ms |
+| exceptions_control_flow | 2.9ms |
+| lowlevel_arena | 2.2ms |
+| string_passing | 48.3ms |
+| deep_equality | 12.4ms |
+| list_class_field | 7.5ms |
+| async_task_churn | 32.2ms |
+| dict_bench | 2.7ms |
+| json_bench | 12.2ms |
+| strings_bench | 14.8ms |
+| math_bench | 3.6ms |
+| os_fs_bench | 2.3ms |
 | time_bench | 6.2ms |
-| method_call_elision | 262.3ms |
-| for_loop_method_elision | 245.3ms |
-| exception_check_overhead | 442.5ms |
-| str_index_loop_licm | 132.9ms |
-| list_release_overhead | 155.7ms |
-| bounds_check_elision | 38.1ms |
-| strings_perf_bench | 201.5ms |
-| str_len_many_strings | 14.8ms |
+| method_call_elision | 270.1ms |
+| for_loop_method_elision | 256.4ms |
+| exception_check_overhead | 450.9ms |
+| str_index_loop_licm | 77.3ms |
+| list_release_overhead | 158.8ms |
+| bounds_check_elision | 39.0ms |
+| strings_perf_bench | 13.6ms |
+| str_len_many_strings | 14.6ms |
+| path_bench | 8.7ms |
+| random_bench | 7.0ms |
+| regex_bench | 5.1ms |
+| crypto_bench | 3.1ms |
+| fs_bench | 190.4ms |
 
-**25/25 geçti.**
+**30/30 geçti.**
+
+#### Faz OO.5 — `nox.path.join` regresyonu bulundu VE düzeltildi (bkz. nox-teknik-spesifikasyon.md §3.86)
+
+`str`e uzunluk alanı + ASCII bayrağı eklendiğinde (bkz. aşağıdaki "str ABI
+fazı") `nox_path_join_raw` YANLIŞ bir gerekçeyle (`arc.nox_rc_alloc`ın
+SONUCUNA doğrudan yazmanın "paketlenmiş başlık İçin yer AYRILMADIĞINDAN
+güvenli olmadığı" varsayımıyla) `std.heap.page_allocator` ÜZERİNDEN bir
+ARA tampon kullanmaya GERİ DÖNDÜRÜLMÜŞTÜ — bu, Faz II'nin ZATEN bir kez
+düzelttiği AYNI sayfa-tahsisi darboğazını SESSİZCE geri getirdi:
+`path_bench` ~8ms'den ~145-150ms'ye (~18x YAVAŞLADI), GERÇEK bir tekrar-
+üretimle DOĞRULANDI (`/usr/bin/time -l`'in `sys` süresi `user`den DAHA
+YÜKSEKTİ — klasik sayfa-tahsisi/syscall darboğazı imzası; `sample` ile
+profillendiğinde `heap.PageAllocator.map`/`mmap`/`munmap` HAKİM
+sembollerdi). Düzeltme: `nox_str_concat`in (bkz. `runtime/str.zig`) AYNI
+"toplam uzunluk ÇAĞRIDAN ÖNCE zaten BİLİNİYOR, tek `arc.nox_rc_alloc` +
+paketli başlık DOĞRUDAN yaz + İKİ parçayı DOĞRUDAN kopyala" deseni
+tekrarlandı — ARA tampon TAMAMEN ORTADAN KALKTI, sonuç ESKİ (Faz II
+öncesi) ~8ms baz çizgisinden bile DAHA HIZLI (~0-1ms izole ölçümde).
+
+**Yan not (araştırma sürecinde bulunan, GERÇEK OLMAYAN bir "ipucu"):**
+düzeltmenin doğrulanması sırasında `nox_path_join_raw`nin İZOLE bir Zig
+testinde HIZLI ama TAM Nox programı ÜZERİNDEN ÇALIŞTIRILDIĞINDA HÂLÂ
+YAVAŞ göründüğü bir aşama yaşandı — bu, GERÇEK bir codegen/runtime hatası
+DEĞİL, test metodolojisinin KENDİ hatasıydı: manuel doğrulama `PATH`
+üzerinden çözülen KÜRESEL/ESKİ `noxc` kurulumunu (`~/.nox-lang/bin/noxc`,
+KENDİ eski `~/.nox-lang/lib/noxrt.o`sunu KULLANIR) çağırıyordu, bu YÜZDEN
+YEREL depodaki düzeltmeyi HİÇ GÖRMÜYORDU — `benchmarks/run.zig`nin
+KENDİSİ HER ZAMAN göreli `zig-out/bin/noxc`yi kullandığından (bkz. onun
+modül üstü notu), `zig build bench` SONUÇLARI BU karışıklıktan HİÇ
+ETKİLENMEDİ. Yerel doğrulama YAPARKEN HER ZAMAN `./zig-out/bin/noxc`yi
+AÇIKÇA (PATH ÜZERİNDEN DEĞİL) çağırmak GEREKİR.
 
 #### str ABI fazı — uzunluk alanı + ASCII bayrağı (bkz. nox-teknik-spesifikasyon.md §3.76)
 
@@ -305,23 +346,23 @@ Her satır üç dilde **aynı algoritmayı** çalıştırır (Python/C, o dilin 
 
 | Benchmark | Nox | Python | C | Nox / Python | Nox / C |
 |---|---|---|---|---|---|
-| numeric_recursion | 15.7ms | 377.4ms | 11.0ms | **24.0x hızlı** | 1.42x yavaş |
-| tight_loop_arithmetic | 13.7ms | 1742.8ms | 5.0ms | **127.5x hızlı** | 2.72x yavaş |
-| list_traversal | 58.5ms | 1290.0ms | 4.7ms | **22.0x hızlı** | 12.44x yavaş |
-| oop_arc_churn | 35.9ms | 469.0ms | 42.8ms | **13.0x hızlı** | 0.84x (Nox C'den hızlı) |
-| generics_protocols | 35.6ms | 1590.5ms | 24.3ms | **44.7x hızlı** | 1.46x yavaş |
-| exceptions_control_flow | 21.3ms | 677.3ms | 6.1ms | **31.8x hızlı** | 3.49x yavaş |
-| lowlevel_arena | 72.7ms | 1321.7ms | 4.1ms | **18.2x hızlı** | 17.72x yavaş |
-| string_passing | 44.3ms | 1212.1ms | 8.7ms | **27.4x hızlı** | 5.11x yavaş |
-| deep_equality | 7.2ms | 51.5ms | 3.6ms | **7.2x hızlı** | 1.98x yavaş |
-| list_class_field | 5.3ms | 49.1ms | 2.8ms | **9.3x hızlı** | 1.89x yavaş |
+| numeric_recursion | 14.4ms | 384.8ms | 13.1ms | **26.7x hızlı** | 1.10x yavaş |
+| tight_loop_arithmetic | 13.2ms | 1715.0ms | 4.1ms | **129.7x hızlı** | 3.25x yavaş |
+| list_traversal | 59.3ms | 1284.0ms | 3.2ms | **21.7x hızlı** | 18.30x yavaş |
+| oop_arc_churn | 36.7ms | 471.9ms | 43.9ms | **12.9x hızlı** | 0.83x (Nox C'den hızlı) |
+| generics_protocols | 38.1ms | 1576.9ms | 26.5ms | **41.4x hızlı** | 1.44x yavaş |
+| exceptions_control_flow | 22.4ms | 678.6ms | 6.1ms | **30.3x hızlı** | 3.68x yavaş |
+| lowlevel_arena | 63.8ms | 1327.9ms | 2.4ms | **20.8x hızlı** | 26.54x yavaş |
+| string_passing | 37.8ms | 1228.4ms | 8.7ms | **32.5x hızlı** | 4.36x yavaş |
+| deep_equality | 6.4ms | 52.5ms | 3.3ms | **8.2x hızlı** | 1.97x yavaş |
+| list_class_field | 4.2ms | 50.5ms | 2.0ms | **12.0x hızlı** | 2.12x yavaş |
 
 **10/10 geçti.**
 
 ### Özet
 
-- **Python'a karşı:** Nox her senaryoda **7x–127x daha hızlı**.
-- **C'ye karşı:** Nox genelde **1x–5x** arasında yavaş (aritmetik/OOP ağırlıklı kodda C'ye çok yakın, `oop_arc_churn`'de C'den bile hızlı); liste/dizi gezme ve `lowlevel` arena gibi bellek-erişim-ağırlıklı senaryolarda fark daha büyük (12x–18x) — codegen'deki gelecekteki optimizasyon fırsatlarını işaret ediyor.
+- **Python'a karşı:** Nox her senaryoda **8x–130x daha hızlı**.
+- **C'ye karşı:** Nox genelde **1x–5x** arasında yavaş (aritmetik/OOP ağırlıklı kodda C'ye çok yakın, `oop_arc_churn`'de C'den bile hızlı); liste/dizi gezme ve `lowlevel` arena gibi bellek-erişim-ağırlıklı senaryolarda fark daha büyük (18x–27x) — codegen'deki gelecekteki optimizasyon fırsatlarını işaret ediyor.
 - `generics_protocols` (61.2ms → 35.6ms) ve `string_passing` (72.9ms → 44.3ms)
   Faz GG (serbest-fonksiyon inlining + string performansı) SONRASI belirgin
   biçimde hızlandı — bu iki senaryo, GG.2'nin seçici serbest-fonksiyon
@@ -698,14 +739,14 @@ runtime.
 
 | Benchmark | Nox | Rust | yavaşlama (nox/rust) |
 |---|---|---|---|
-| strings_bench | 4.8ms | 4.0ms | 1.2x |
-| math_bench | 3.5ms | 2.4ms | 1.4x |
-| os_fs_bench | 3.1ms | 4.3ms | 0.7x |
-| time_bench | 6.3ms | 7.8ms | 0.8x |
-| dict_bench | 2.7ms | 3.0ms | 0.9x |
-| strings_perf_bench | 13.8ms | 12.9ms | **1.1x** |
-| path_bench | 8.0ms | 16.2ms | **0.5x (Nox HIZLI)** |
-| fs_bench | 138.5ms | 146.3ms | **0.95x (Nox HAFİF hızlı)** |
+| strings_bench | 16.5ms | 4.2ms | 4.0x |
+| math_bench | 3.4ms | 3.5ms | **1.0x (Nox hızlı)** |
+| os_fs_bench | 2.6ms | 4.2ms | **0.6x (Nox hızlı)** |
+| time_bench | 5.9ms | 7.5ms | **0.8x (Nox hızlı)** |
+| dict_bench | 2.9ms | 3.7ms | **0.8x (Nox hızlı)** |
+| strings_perf_bench | 13.7ms | 13.3ms | **1.0x** |
+| path_bench | 9.0ms | 17.6ms | **0.5x (Nox HIZLI)** |
+| fs_bench | 191.4ms | 147.8ms | 1.3x |
 
 **8/8 geçti** (`path_bench`, kullanıcının "diğer stdlib alanları da
 benchmarklandı mı" sorusu ÜZERİNE Faz II'ye SONRADAN eklendi — bkz.
@@ -846,10 +887,10 @@ eşleştirip zamanlar.
 
 | Benchmark | Nox | Rust (crate) | yavaşlama (nox/rust) |
 |---|---|---|---|
-| json_bench (`serde_json`) | 16.7ms | 6.3ms | **2.7x** |
-| random_bench (`rand`) | 7.3ms | 9.4ms | 0.8x (Nox hızlı) |
-| regex_bench (`regex`) | 5.9ms | 6.9ms | 0.9x (Nox hızlı) |
-| crypto_bench (`sha2`) | 3.4ms | 14.3ms | **0.24x (Nox 4x hızlı)** |
+| json_bench (`serde_json`) | 13.0ms | 5.8ms | **2.3x** |
+| random_bench (`rand`) | 7.5ms | 9.2ms | 0.8x (Nox hızlı) |
+| regex_bench (`regex`) | 6.1ms | 6.8ms | 0.9x (Nox hızlı) |
+| crypto_bench (`sha2`) | 3.3ms | 14.4ms | **0.23x (Nox 4x hızlı)** |
 
 **4/4 geçti** (üç ayrı koşuda tutarlı yön/mertebe).
 

@@ -227,21 +227,21 @@ sections below: **language fundamentals** (vs. Python/C), **stdlib**
 
 | Benchmark | Nox | Python | C | Nox / Python | Nox / C |
 |---|---|---|---|---|---|
-| numeric_recursion | 15.7ms | 377.4ms | 11.0ms | **24.0x faster** | 1.42x slower |
-| tight_loop_arithmetic | 13.7ms | 1742.8ms | 5.0ms | **127.5x faster** | 2.72x slower |
-| list_traversal | 58.5ms | 1290.0ms | 4.7ms | **22.0x faster** | 12.44x slower |
-| oop_arc_churn | 35.9ms | 469.0ms | 42.8ms | **13.0x faster** | 0.84x (Nox faster than C) |
-| generics_protocols | 35.6ms | 1590.5ms | 24.3ms | **44.7x faster** | 1.46x slower |
-| exceptions_control_flow | 21.3ms | 677.3ms | 6.1ms | **31.8x faster** | 3.49x slower |
-| lowlevel_arena | 72.7ms | 1321.7ms | 4.1ms | **18.2x faster** | 17.72x slower |
-| string_passing | 44.3ms | 1212.1ms | 8.7ms | **27.4x faster** | 5.11x slower |
-| deep_equality | 7.2ms | 51.5ms | 3.6ms | **7.2x faster** | 1.98x slower |
-| list_class_field | 5.3ms | 49.1ms | 2.8ms | **9.3x faster** | 1.89x slower |
+| numeric_recursion | 14.4ms | 384.8ms | 13.1ms | **26.7x faster** | 1.10x slower |
+| tight_loop_arithmetic | 13.2ms | 1715.0ms | 4.1ms | **129.7x faster** | 3.25x slower |
+| list_traversal | 59.3ms | 1284.0ms | 3.2ms | **21.7x faster** | 18.30x slower |
+| oop_arc_churn | 36.7ms | 471.9ms | 43.9ms | **12.9x faster** | 0.83x (Nox faster than C) |
+| generics_protocols | 38.1ms | 1576.9ms | 26.5ms | **41.4x faster** | 1.44x slower |
+| exceptions_control_flow | 22.4ms | 678.6ms | 6.1ms | **30.3x faster** | 3.68x slower |
+| lowlevel_arena | 63.8ms | 1327.9ms | 2.4ms | **20.8x faster** | 26.54x slower |
+| string_passing | 37.8ms | 1228.4ms | 8.7ms | **32.5x faster** | 4.36x slower |
+| deep_equality | 6.4ms | 52.5ms | 3.3ms | **8.2x faster** | 1.97x slower |
+| list_class_field | 4.2ms | 50.5ms | 2.0ms | **12.0x faster** | 2.12x slower |
 
-**Summary:** **7x–127x faster** than Python in every scenario; generally
+**Summary:** **8x–130x faster** than Python in every scenario; generally
 **1x–5x slower** than C (very close to C on arithmetic/OOP-heavy code,
 even faster than C on `oop_arc_churn` — memory-access-heavy scenarios
-like list traversal show a bigger gap, 12x-18x). `generics_protocols`/
+like list traversal show a bigger gap, 18x-27x). `generics_protocols`/
 `string_passing` improved markedly after Phase GG (free-function inlining
 + string performance work). See
 [`benchmarks/compare/`](benchmarks/compare/) for the methodology and the
@@ -253,14 +253,14 @@ C/Python source files.
 
 | Benchmark | Time (min) |
 |---|---|
-| json_bench | 14.7ms |
-| strings_bench | 4.8ms |
-| math_bench | 3.5ms |
-| os_fs_bench | 3.1ms |
-| time_bench | 6.3ms |
+| json_bench | 12.2ms |
+| strings_bench | 14.8ms |
+| math_bench | 3.6ms |
+| os_fs_bench | 2.3ms |
+| time_bench | 6.2ms |
 | dict_bench | 2.7ms |
-| path_bench | 8.0ms |
-| strings_perf_bench (`contains`/`index_of` + `join`, Phase EE.1 + Phase II) | 13.8ms |
+| path_bench | 8.7ms |
+| strings_perf_bench (`contains`/`index_of` + `join`, Phase EE.1 + Phase II) | 13.6ms |
 
 `strings_perf_bench` measures two Phase EE.1 optimizations together (an
 alloc-free `byte_at`-based comparison + a single-pass O(n) `join` in
@@ -280,19 +280,24 @@ methodology.
 
 | Benchmark | Nox | Rust | slowdown (nox/rust) |
 |---|---|---|---|
-| strings_bench | 4.8ms | 4.0ms | 1.2x |
-| math_bench | 3.5ms | 2.4ms | 1.4x |
-| os_fs_bench | 3.1ms | 4.3ms | 0.7x |
-| time_bench | 6.3ms | 7.8ms | 0.8x |
-| dict_bench | 2.7ms | 3.0ms | 0.9x |
-| strings_perf_bench | 13.8ms | 12.9ms | 1.1x |
-| path_bench | 8.0ms | 16.2ms | **0.5x (Nox faster)** |
+| strings_bench | 16.5ms | 4.2ms | 4.0x |
+| math_bench | 3.4ms | 3.5ms | **1.0x (Nox faster)** |
+| os_fs_bench | 2.6ms | 4.2ms | **0.6x (Nox faster)** |
+| time_bench | 5.9ms | 7.5ms | **0.8x (Nox faster)** |
+| dict_bench | 2.9ms | 3.7ms | **0.8x (Nox faster)** |
+| strings_perf_bench | 13.7ms | 13.3ms | 1.0x |
+| path_bench | 9.0ms | 17.6ms | **0.5x (Nox faster)** |
+| fs_bench | 191.4ms | 147.8ms | 1.3x |
 
 The comparison surfaced and fixed two real bottlenecks: `nox.strings.
 contains`/`index_of` (pure-Nox O(n×m) scan → Zig's SIMD-vectorized
 `indexOfScalarPos`, **16.2x → 1.1x**) and `nox.path.join` (double
 allocation via `std.heap.page_allocator` → a single `arc.nox_rc_alloc`,
-**9.9x → 0.5x, Nox now faster than Rust**). See "Bölüm 4" in
+**9.9x → 0.5x, Nox now faster than Rust**). After the `str` ABI change
+(length field + ASCII flag, see §3.76) `nox.path.join` briefly regressed
+back to the same `page_allocator` bottleneck (~18x slower) — found via a
+real reproduction and fixed again (see nox-teknik-spesifikasyon.md
+§3.86). See "Bölüm 4" in
 [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md) (Turkish) for the full
 methodology.
 </details>
@@ -307,10 +312,10 @@ crates (`serde_json`/`rand`/`regex`/`sha2`):
 
 | Benchmark | Nox | Rust (crate) | slowdown (nox/rust) |
 |---|---|---|---|
-| json_bench (`serde_json`) | 16.7ms | 6.3ms | **2.7x** |
-| random_bench (`rand`) | 7.3ms | 9.4ms | 0.8x (Nox faster) |
-| regex_bench (`regex`) | 5.9ms | 6.9ms | 0.9x (Nox faster) |
-| crypto_bench (`sha2`) | 3.4ms | 14.3ms | **0.24x (Nox 4x faster)** |
+| json_bench (`serde_json`) | 13.0ms | 5.8ms | **2.3x** |
+| random_bench (`rand`) | 7.5ms | 9.2ms | 0.8x (Nox faster) |
+| regex_bench (`regex`) | 6.1ms | 6.8ms | 0.9x (Nox faster) |
+| crypto_bench (`sha2`) | 3.3ms | 14.4ms | **0.23x (Nox 4x faster)** |
 
 `json_bench`'s ~2.7x gap is architectural (a Zig→Nox cross-language call
 per JSON node) — not fixed, would need a redesign. While expanding test

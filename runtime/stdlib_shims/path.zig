@@ -15,21 +15,31 @@ const dupeToNoxStr = http_client.dupeToNoxStr;
 /// Faz P1.2: bkz. `strings.zig`nin AYNI re-export notu.
 const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
+const STR_HEADER_SIZE = abi_layout.STR_HEADER_SIZE;
 
 /// Faz II devamı (bkz. nox-teknik-spesifikasyon.md §3.67) — `join`nin
 /// ÖNCEKİ uygulaması `std.fs.path.join`i `std.heap.page_allocator` İLE
 /// çağırıp SONRA `dupeToNoxStr` İLE İKİNCİ bir kopya çıkarıyordu (ÇAĞRI
 /// başına 2 tahsis, biri SAYFA-granülerlikli bir "genel amaçlı" ayırıcı
 /// üzerinden). Bir Rust `std::path::Path` karşılaştırması (`benchmarks/
-/// path_bench`) bunun ~9.4-9.9x YAVAŞ olduğunu ORTAYA ÇIKARDI; İZOLE bir
-/// Zig testiyle (Nox/ARC/QBE HİÇ karışmadan, YALNIZCA `std.fs.path.join`+
-/// `page_allocator` döngüsü) DOĞRULANDI: 100000 çağrı TEK BAŞINA ~130ms
-/// (path_bench'in TOPLAM ~147ms'inin BÜYÜK kısmı) — `page_allocator`nin
-/// KENDİSİ (genel bir bump/pool ayırıcı DEĞİL, OS SAYFASI granülerlikli)
-/// darboğazdı. Burada `nox_strings_join_raw`nin (EE.1) AYNI stratejisi
-/// uygulanır: `std.fs.path.join`in KENDİ (yalnızca 2 yol İçin basitleşmiş)
-/// uzunluk-hesabı + tek-geçiş kopyalama mantığı EL İLE, DOĞRUDAN
-/// `arc.nox_rc_alloc`a (TEK tahsis, ARA tampon YOK) yazılarak tekrarlanır.
+/// path_bench`) bunun ~9.4-9.9x YAVAŞ olduğunu ORTAYA ÇIKARDI — düzeltildi
+/// (`arc.nox_rc_alloc`a doğrudan tek tahsis).
+///
+/// **Faz OO.5 — REGRESYON bulundu VE düzeltildi (bkz. nox-teknik-
+/// spesifikasyon.md §3.86):** `str`e uzunluk alanı + ASCII bayrağı
+/// eklendiğinde (bkz. plan dosyası) BU fonksiyon `page_allocator`
+/// temp-arabelleğine GERİ DÖNDÜRÜLMÜŞTÜ (yanlış gerekçeyle: "paketlenmiş
+/// başlık İçin yer AYRILMAZ" — ama `total_len` `nox_str_concat`taki (bkz.
+/// `runtime/str.zig`) İLE AYNI şekilde ÇAĞRIDAN ÖNCE zaten TAM olarak
+/// BİLİNİYOR, bu YÜZDEN başlık İçin yer AYIRMAK hiç ZOR DEĞİLDİ) —
+/// düzeltme `nox_str_concat`nin AYNI deseni: `STR_HEADER_SIZE + total_len
+/// + 1` tek `arc.nox_rc_alloc`, paketli başlık DOĞRUDAN yazılır, İKİ
+/// parça (+ gereken ayraç) DOĞRUDAN `data`ya kopyalanır — ARA
+/// (`page_allocator`) tampon YOK. ASCII durumu BİLİNÇLİ OLARAK
+/// `STR_ASCII_UNKNOWN` (ESKİ `dupeToNoxStr`/`nox_str_from_bytes` yolunun
+/// DAVRANIŞIYLA BİREBİR AYNI — saf bir perf düzeltmesi, davranış
+/// DEĞİŞMEDİ).
+///
 /// Ayırıcı-arasındaki ayraç ÇAKIŞMASI/EKSİKLİĞİ kuralı (`a` SONU VE `b`
 /// BAŞI ikisi de ayraçsa TEKİ ATLA, ikisi de DEĞİLSE BİR ayraç EKLE)
 /// `std.fs.path.joinSepMaybeZ` İLE BİREBİR AYNIDIR (bkz. Zig std kaynağı) —
@@ -48,23 +58,21 @@ export fn nox_path_join_raw(rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const u
     const b_adjusted = if (a_ends_sep and b_starts_sep) b_slice[1..] else b_slice;
 
     const total_len = a_slice.len + @as(usize, if (need_sep) 1 else 0) + b_adjusted.len;
-    // `str`e uzunluk alanı + ASCII bayrağı eklenmesinden BERİ (bkz. plan
-    // dosyası) İKİ parçayı DOĞRUDAN `nox_rc_alloc`ın SONUCUNA yazmak
-    // ARTIK GÜVENLİ DEĞİL (paketlenmiş başlık İçin yer AYRILMAZ) — ÖNCE
-    // düz (ARC-dışı) bir arabellekte BİRLEŞTİRİLİR, SONRA `dupeToNoxStr`
-    // (`nox_str_from_bytes`) İLE GERÇEK, başlıklı bir Nox `str`ine
-    // kopyalanır.
-    const buf = std.heap.page_allocator.alloc(u8, total_len) catch return null;
-    defer std.heap.page_allocator.free(buf);
-    @memcpy(buf[0..a_slice.len], a_slice);
+    const raw = arc.nox_rc_alloc(rt, STR_HEADER_SIZE + total_len + 1) orelse return null;
+    const base: [*]u8 = @ptrCast(raw);
+    const header: *align(1) i64 = @ptrCast(base);
+    header.* = abi_layout.packStrHeader(total_len, abi_layout.STR_ASCII_UNKNOWN);
+    const data = base + STR_HEADER_SIZE;
+    @memcpy(data[0..a_slice.len], a_slice);
     var off: usize = a_slice.len;
     if (need_sep) {
-        buf[off] = std.fs.path.sep;
+        data[off] = std.fs.path.sep;
         off += 1;
     }
-    @memcpy(buf[off..][0..b_adjusted.len], b_adjusted);
+    @memcpy(data[off..][0..b_adjusted.len], b_adjusted);
     off += b_adjusted.len;
-    return dupeToNoxStr(rt, buf);
+    data[off] = 0;
+    return @ptrCast(data);
 }
 
 export fn nox_path_basename_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {

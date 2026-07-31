@@ -223,21 +223,21 @@ ve **HTTP verimi** (Nox/Go/Zig/FastAPI).
 
 | Benchmark | Nox | Python | C | Nox / Python | Nox / C |
 |---|---|---|---|---|---|
-| numeric_recursion | 15.7ms | 377.4ms | 11.0ms | **24.0x hızlı** | 1.42x yavaş |
-| tight_loop_arithmetic | 13.7ms | 1742.8ms | 5.0ms | **127.5x hızlı** | 2.72x yavaş |
-| list_traversal | 58.5ms | 1290.0ms | 4.7ms | **22.0x hızlı** | 12.44x yavaş |
-| oop_arc_churn | 35.9ms | 469.0ms | 42.8ms | **13.0x hızlı** | 0.84x (Nox C'den hızlı) |
-| generics_protocols | 35.6ms | 1590.5ms | 24.3ms | **44.7x hızlı** | 1.46x yavaş |
-| exceptions_control_flow | 21.3ms | 677.3ms | 6.1ms | **31.8x hızlı** | 3.49x yavaş |
-| lowlevel_arena | 72.7ms | 1321.7ms | 4.1ms | **18.2x hızlı** | 17.72x yavaş |
-| string_passing | 44.3ms | 1212.1ms | 8.7ms | **27.4x hızlı** | 5.11x yavaş |
-| deep_equality | 7.2ms | 51.5ms | 3.6ms | **7.2x hızlı** | 1.98x yavaş |
-| list_class_field | 5.3ms | 49.1ms | 2.8ms | **9.3x hızlı** | 1.89x yavaş |
+| numeric_recursion | 14.4ms | 384.8ms | 13.1ms | **26.7x hızlı** | 1.10x yavaş |
+| tight_loop_arithmetic | 13.2ms | 1715.0ms | 4.1ms | **129.7x hızlı** | 3.25x yavaş |
+| list_traversal | 59.3ms | 1284.0ms | 3.2ms | **21.7x hızlı** | 18.30x yavaş |
+| oop_arc_churn | 36.7ms | 471.9ms | 43.9ms | **12.9x hızlı** | 0.83x (Nox C'den hızlı) |
+| generics_protocols | 38.1ms | 1576.9ms | 26.5ms | **41.4x hızlı** | 1.44x yavaş |
+| exceptions_control_flow | 22.4ms | 678.6ms | 6.1ms | **30.3x hızlı** | 3.68x yavaş |
+| lowlevel_arena | 63.8ms | 1327.9ms | 2.4ms | **20.8x hızlı** | 26.54x yavaş |
+| string_passing | 37.8ms | 1228.4ms | 8.7ms | **32.5x hızlı** | 4.36x yavaş |
+| deep_equality | 6.4ms | 52.5ms | 3.3ms | **8.2x hızlı** | 1.97x yavaş |
+| list_class_field | 4.2ms | 50.5ms | 2.0ms | **12.0x hızlı** | 2.12x yavaş |
 
-**Özet:** Python'a karşı her senaryoda **7x–127x daha hızlı**; C'ye karşı
+**Özet:** Python'a karşı her senaryoda **8x–130x daha hızlı**; C'ye karşı
 genelde **1x–5x yavaş** (aritmetik/OOP'de C'ye çok yakın, `oop_arc_churn`'de
 C'den bile hızlı — liste/dizi gezme gibi bellek-erişim-ağırlıklı
-senaryolarda fark daha büyük, 12x-18x). `generics_protocols`/`string_passing`
+senaryolarda fark daha büyük, 18x-27x). `generics_protocols`/`string_passing`
 Faz GG (serbest-fonksiyon inlining + string performansı) SONRASI belirgin
 biçimde hızlandı. Metodoloji + `C`/Python kaynak dosyaları İçin
 [`benchmarks/compare/`](benchmarks/compare/)ye bakın.
@@ -248,14 +248,14 @@ biçimde hızlandı. Metodoloji + `C`/Python kaynak dosyaları İçin
 
 | Benchmark | Süre (min) |
 |---|---|
-| json_bench | 14.7ms |
-| strings_bench | 4.8ms |
-| math_bench | 3.5ms |
-| os_fs_bench | 3.1ms |
-| time_bench | 6.3ms |
+| json_bench | 12.2ms |
+| strings_bench | 14.8ms |
+| math_bench | 3.6ms |
+| os_fs_bench | 2.3ms |
+| time_bench | 6.2ms |
 | dict_bench | 2.7ms |
-| path_bench | 8.0ms |
-| strings_perf_bench (`contains`/`index_of` + `join`, Faz EE.1 + Faz II) | 13.8ms |
+| path_bench | 8.7ms |
+| strings_perf_bench (`contains`/`index_of` + `join`, Faz EE.1 + Faz II) | 13.6ms |
 
 `strings_perf_bench`, Faz EE.1'in İKİ optimizasyonunu (alloc-sız `byte_at`
 tabanlı karşılaştırma + Zig'de tek-geçiş O(n) `join`) BİRLİKTE ölçer —
@@ -274,19 +274,24 @@ II'nin Rust karşılaştırması (aşağıya bkz.) BUNUN ÜZERİNE `contains`/
 
 | Benchmark | Nox | Rust | yavaşlama (nox/rust) |
 |---|---|---|---|
-| strings_bench | 4.8ms | 4.0ms | 1.2x |
-| math_bench | 3.5ms | 2.4ms | 1.4x |
-| os_fs_bench | 3.1ms | 4.3ms | 0.7x |
-| time_bench | 6.3ms | 7.8ms | 0.8x |
-| dict_bench | 2.7ms | 3.0ms | 0.9x |
-| strings_perf_bench | 13.8ms | 12.9ms | 1.1x |
-| path_bench | 8.0ms | 16.2ms | **0.5x (Nox hızlı)** |
+| strings_bench | 16.5ms | 4.2ms | 4.0x |
+| math_bench | 3.4ms | 3.5ms | **1.0x (Nox hızlı)** |
+| os_fs_bench | 2.6ms | 4.2ms | **0.6x (Nox hızlı)** |
+| time_bench | 5.9ms | 7.5ms | **0.8x (Nox hızlı)** |
+| dict_bench | 2.9ms | 3.7ms | **0.8x (Nox hızlı)** |
+| strings_perf_bench | 13.7ms | 13.3ms | 1.0x |
+| path_bench | 9.0ms | 17.6ms | **0.5x (Nox hızlı)** |
+| fs_bench | 191.4ms | 147.8ms | 1.3x |
 
 Karşılaştırmada İKİ GERÇEK darboğaz bulunup düzeltildi: `nox.strings.
 contains`/`index_of` (SAF Nox O(n×m) taraması → Zig'in SIMD-vektörleştirilmiş
 `indexOfScalarPos`i, **16.2x → 1.1x**) ve `nox.path.join` (`std.heap.
 page_allocator` üzerinden çift-tahsis → tek `arc.nox_rc_alloc`, **9.9x →
-0.5x, Nox artık Rust'tan hızlı**). Tam metodoloji İçin
+0.5x, Nox artık Rust'tan hızlı**). `str` ABI değişikliği (uzunluk alanı +
+ASCII bayrağı, bkz. §3.76) SONRASI `nox.path.join` KISA BİR SÜRE İçin AYNI
+`page_allocator` darboğazına GERİ DÖNMÜŞTÜ (~18x yavaşlama) — GERÇEK bir
+tekrar-üretimle bulunup TEKRAR düzeltildi (bkz. nox-teknik-spesifikasyon.md
+§3.86). Tam metodoloji İçin
 [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md) "Bölüm 4"e bakın.
 </details>
 
@@ -300,10 +305,10 @@ projesi (`benchmarks/rust_crates/`) İLE fiili standart crate'lerine
 
 | Benchmark | Nox | Rust (crate) | yavaşlama (nox/rust) |
 |---|---|---|---|
-| json_bench (`serde_json`) | 16.7ms | 6.3ms | **2.7x** |
-| random_bench (`rand`) | 7.3ms | 9.4ms | 0.8x (Nox hızlı) |
-| regex_bench (`regex`) | 5.9ms | 6.9ms | 0.9x (Nox hızlı) |
-| crypto_bench (`sha2`) | 3.4ms | 14.3ms | **0.24x (Nox 4x hızlı)** |
+| json_bench (`serde_json`) | 13.0ms | 5.8ms | **2.3x** |
+| random_bench (`rand`) | 7.5ms | 9.2ms | 0.8x (Nox hızlı) |
+| regex_bench (`regex`) | 6.1ms | 6.8ms | 0.9x (Nox hızlı) |
+| crypto_bench (`sha2`) | 3.3ms | 14.4ms | **0.23x (Nox 4x hızlı)** |
 
 `json_bench`nin ~2.7x farkı MİMARİ (HER JSON düğümü İçin bir Zig→Nox
 çapraz-dil çağrısı) — düzeltilmedi, ayrı bir yeniden-tasarım gerektirir.

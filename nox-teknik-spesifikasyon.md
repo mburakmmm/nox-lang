@@ -14113,6 +14113,58 @@ değerinin GERÇEKTEN serbest bırakıldığını, SIZDIRILMADIĞINI `expectGold
 nin boş-stderr kontrolüyle kanıtlar) VE `.values()`i kapsar. `zig build
 test` HEM Debug HEM `ReleaseFast` modlarında YEŞİL.
 
+## 3.86 `nox.path.join` regresyonu — benchmark tazeleme sırasında bulunup düzeltildi
+
+Kullanıcının "str ABI değişikliği gibi güncellemeler sonrası tüm
+benchmarkları çalıştırıp README'leri güncelle" isteği ÜZERİNE `zig build
+bench -Doptimize=ReleaseFast` yeniden çalıştırıldığında `path_bench`nin
+~8ms'lik tarihsel taban çizgisinden ~145-150ms'ye (~18x) YAVAŞLADIĞI
+GÖZLEMLENDİ — GERÇEK bir regresyon, ölçüm gürültüsü DEĞİL.
+
+**Kök neden:** `str`e uzunluk alanı + ASCII bayrağı eklendiğinde (bkz.
+§3.76) `nox_path_join_raw` (`runtime/stdlib_shims/path.zig`) YANLIŞ bir
+gerekçeyle (`arc.nox_rc_alloc`ın SONUCUNA doğrudan yazmanın "paketlenmiş
+başlık İçin yer AYRILMADIĞINDAN güvenli olmadığı" varsayımıyla)
+`std.heap.page_allocator` ÜZERİNDEN bir ARA tampon + `dupeToNoxStr` İLE
+İKİNCİ bir kopya deseninE GERİ DÖNDÜRÜLMÜŞTÜ — Faz II'nin (§3.67) TAM
+OLARAK DÜZELTTİĞİ AYNI sayfa-tahsisi darboğazı, SESSİZCE (fark edilmeden)
+geri gelmişti. `total_len`, `nox_str_concat`taki (bkz. `runtime/str.zig`)
+İLE AYNI şekilde ÇAĞRIDAN ÖNCE ZATEN tam olarak BİLİNİYOR, bu YÜZDEN
+başlık İçin yer AYIRMAK hiç ZOR DEĞİLDİ — varsayım YANLIŞTI.
+
+**Doğrulama:** GERÇEK bir tekrar-üretimle onaylandı (`/usr/bin/time -l`
+`sys` süresinin `user`den DAHA YÜKSEK olması — klasik sayfa-tahsisi/
+syscall darboğazı imzası); `sample` İLE profillendiğinde `heap.
+PageAllocator.map`/`mmap`/`munmap` HAKİM semboller olarak GÖRÜLDÜ.
+
+**Düzeltme:** `nox_str_concat`in AYNI deseni tekrarlandı — `STR_HEADER_
+SIZE + total_len + 1` TEK `arc.nox_rc_alloc`, paketli başlık DOĞRUDAN
+yazılır, İKİ parça (+ gereken ayraç) DOĞRUDAN `data`ya kopyalanır — ARA
+tampon TAMAMEN ORTADAN KALKTI. Sonuç: `path_bench` ESKİ (Faz II ÖNCESİ)
+~8ms taban çizgisinden bile DAHA HIZLI (izole ölçümde ~0-1ms).
+
+**Yan not — araştırma sürecinde GERÇEK OLMAYAN bir "ipucu" (metodoloji
+hatası, kod hatası DEĞİL):** düzeltmenin doğrulanması sırasında, `nox_
+path_join_raw`nin İZOLE bir Zig testinde HIZLI ama TAM bir Nox programı
+İLE (`noxc build ...`) ÇALIŞTIRILDIĞINDA HÂLÂ YAVAŞ göründüğü bir ara
+aşama yaşandı. Kök neden GERÇEK bir codegen/runtime hatası DEĞİLDİ:
+manuel doğrulama komutları `PATH` üzerinden çözülen KÜRESEL (global)
+`noxc` kurulumunu (`~/.nox-lang/bin/noxc`) çağırıyordu — bu, KENDİ ESKİ
+`~/.nox-lang/lib/noxrt.o`sunu kullanır VE bu YÜZDEN yerel depodaki
+düzeltmeyi HİÇ GÖRMÜYORDU. `benchmarks/run.zig`nin KENDİSİ HER ZAMAN
+göreli `zig-out/bin/noxc`yi (PATH ÜZERİNDEN DEĞİL) çağırdığından (bkz.
+onun modül üstü notu), `zig build bench`in KENDİ SONUÇLARI bu
+karışıklıktan HİÇ ETKİLENMEDİ — yalnızca EK, manuel doğrulama adımları
+etkilendi. **Ders:** yerel bir düzeltmeyi `noxc`/`noxrt.o` İLE elle
+doğrularken HER ZAMAN `./zig-out/bin/noxc`yi AÇIKÇA (PATH'TEKİ küresel
+kuruluma GÜVENMEDEN) çağırmak GEREKİR.
+
+**Doğrulama:** `zig build test` HEM Debug HEM `ReleaseFast` modlarında
+YEŞİL (bilinen, ilgisiz bir flaky fuzz çökmesi HARİÇ — bkz. proje
+geçmişi); `zig build bench -Doptimize=ReleaseFast`nin TAM çıktısı
+`benchmarks/RESULTS.md`ye, özet tabloları `README.md`/`README.en.md`ye
+yansıtıldı.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.
