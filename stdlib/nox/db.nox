@@ -14,21 +14,51 @@
 # GÜNCELLENEREK giderildi (geriye dönük UYUMLU: dönüş değerini yok sayan
 # mevcut çağrı siteleri etkilenmez).
 #
-# **Kalan bilinçli kapsam sınırlaması — `query`/`prepare` NEDEN HÂLÂ
-# protokolde DEĞİL**: `query(sql: str) -> list[Row]` protokole DAHİL
-# EDİLEMEZ — üç sürücünün `Row` sınıfı (alanları/metodları BİREBİR AYNI
-# olsa da) ÜÇ AYRI, BAĞIMSIZ concrete sınıf tanımıdır, VE Nox'un protokol
-# eşleştirmesi (`satisfiesProtocol`) dönüş tipini TAM (exact) eşleştirir
-# — `list[sqlite.Row]` bir `list[RowProtocol]` İMZASINI KARŞILAMAZ
-# (generic konteynerler İçin kovaryant protokol eşleştirmesi YOK). Bunu
-# GERÇEKTEN çözmek İçin checker'ın protokol dönüş-tipi eşleştirmesinin
-# `list[T]` GİBİ generic sarmalayıcılar İçİNDEN de kovaryant çalışması
-# GEREKİR — bu, kendi başına AYRI bir compiler tasarım/Plan Mode turu
-# gerektiren daha büyük bir iş (bilinçli olarak bu oturumun kapsamı
-# DIŞINDA bırakıldı).
+# **`query` da ARTIK protokolde (Faz OO — nyx'te farkedilen İKİNCİ bir
+# eksiklik)**: ÖNCEDEN `nox.sqlite`/`nox.postgres`/`nox.mysql`nin ÜÇÜ
+# de YAPISAL OLARAK BİREBİR AYNI (alanlar/metodlar TIPATIP eşleşen) ama
+# ÜÇ AYRI, BAĞIMSIZ concrete `Row` sınıfı tanımlıyordu — bu YÜZDEN
+# `query(sql) -> list[Row]` protokole EKLENEMİYORDU (checker'ın protokol
+# dönüş-tipi eşleştirmesi TAM/invaryant: `list[sqlite.Row]` bir
+# `list[RowProtocol]` İMZASINI KARŞILAMAZ, generic konteynerler İçin
+# kovaryant protokol eşleştirmesi YOK). Çözüm — kovaryant protokol
+# eşleştirmesi GİBİ büyük bir compiler özelliği EKLEMEK YERİNE, ÜÇ
+# sürücünün `Row`unu BURADA (aşağıda) TEK, PAYLAŞILAN bir concrete
+# sınıfa BİRLEŞTİRDİK: `sqlite.nox`/`postgres.nox`/`mysql.nox` ARTIK
+# KENDİ `Row`larını TANIMLAMIYOR, `from nox.db import Row` İLE BU
+# sınıfı KULLANIYOR — `list[db.Row]` HER YERDE `types.eql`-EŞİT
+# olduğundan protokol eşleştirmesi HİÇBİR yeni özellik GEREKMEDEN
+# ÇALIŞIYOR.
+class Row:
+    def __init__(self: Row, values: list[str], is_null_flags: list[bool], names: list[str]) -> None:
+        self.values = values
+        self.is_null_flags = is_null_flags
+        self.names = names
+
+    def get_str(self: Row, i: int) -> str:
+        return self.values[i]
+
+    def get_int(self: Row, i: int) -> int:
+        return int(self.values[i])
+
+    def get_float(self: Row, i: int) -> float:
+        return float(self.values[i])
+
+    def is_null(self: Row, i: int) -> bool:
+        return self.is_null_flags[i]
+
+    def column_count(self: Row) -> int:
+        return len(self.values)
+
+    def column_name(self: Row, i: int) -> str:
+        return self.names[i]
+
 protocol DbConnection:
     def close(self: DbConnection) -> None:
         pass
 
     def execute(self: DbConnection, sql: str) -> int:
+        pass
+
+    def query(self: DbConnection, sql: str) -> list[Row]:
         pass

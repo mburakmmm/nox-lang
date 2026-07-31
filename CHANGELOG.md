@@ -14,6 +14,27 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.23.0]
+
+### Eklendi
+- **`nox.db.Row` — ortak, PAYLAŞILAN satır sınıfı**: `nox.sqlite`/`nox.
+  postgres`/`nox.mysql`nin ÜÇÜ de YAPISAL OLARAK BİREBİR AYNI ama
+  BAĞIMSIZ birer `Row` sınıfı tanımlıyordu — bu YÜZDEN `DbConnection`
+  protokolüne `query(sql) -> list[Row]` EKLENEMİYORDU (checker'ın
+  protokol dönüş-tipi eşleştirmesi TAM/invaryant: `list[sqlite.Row]`
+  bir `list[RowProtocol]` İMZASINI KARŞILAMIYORDU). Kovaryant protokol
+  eşleştirmesi GİBİ büyük bir compiler özelliği EKLEMEK YERİNE, ÜÇ
+  sürücünün `Row`u `stdlib/nox/db.nox`ta TEK, PAYLAŞILAN bir concrete
+  sınıfa BİRLEŞTİRİLDİ — `sqlite.nox`/`postgres.nox`/`mysql.nox` ARTIK
+  KENDİ `Row`larını TANIMLAMIYOR, `from nox.db import Row` KULLANIYOR.
+  `DbConnection` protokolü ARTIK `query`yi de KAPSIYOR.
+- **DAVRANIŞ DEĞİŞİKLİĞİ (kasıtlı)**: `from nox.sqlite import Row` (VEYA
+  `nox.postgres`/`nox.mysql`) ARTIK ÇALIŞMAZ — `Row` ARTIK `nox.db`den
+  İTHAL EDİLMELİDİR (`from nox.db import Row`). Nox'un `from X import
+  Y`si TRANSİTİF/yeniden-ihraç EDİCİ DEĞİLDİR (Y'nin GERÇEKTEN X'te
+  TANIMLI olmasını VARSAYAR) — bu YÜZDEN `Row`un `nox.db`ye taşınması
+  ONU İTHAL EDEN HER YERİN güncellenmesini GEREKTİRİYOR.
+
 ## [1.22.9]
 
 ### Düzeltildi

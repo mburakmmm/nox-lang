@@ -28,6 +28,10 @@
 # çağrısı BAĞIMSIZDIR, sunucu tarafında ismi olan bir "prepared statement"
 # YOK).
 
+# Faz OO: `Row` ARTIK `nox.db`den PAYLAŞILAN — bkz. `db.nox`nin belge
+# notu (`DbConnection` protokolünün `query`yi KAPSAYABİLMESİNİN nedeni).
+from nox.db import Row
+
 extern def nox_pg_connect_raw(conninfo: str) -> ptr from "zig-out/lib/noxrt.o"
 extern def nox_pg_status_ok_raw(conn: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_pg_errmsg_raw(conn: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
@@ -48,33 +52,6 @@ extern def nox_pg_is_null_ptr(p: ptr) -> int from "zig-out/lib/noxrt.o"
 class PostgresError:
     def __init__(self: PostgresError, message: str) -> None:
         self.message = message
-
-# `nox.sqlite`nin `Row`ıyla AYNI şekil — her sütun TEK bir metin
-# değeriyle saklanır (`PQgetvalue` de sqlite'ın `sqlite3_column_text`i
-# GİBİ HER sütun tipini metin olarak döner).
-class Row:
-    def __init__(self: Row, values: list[str], is_null_flags: list[bool], names: list[str]) -> None:
-        self.values = values
-        self.is_null_flags = is_null_flags
-        self.names = names
-
-    def get_str(self: Row, i: int) -> str:
-        return self.values[i]
-
-    def get_int(self: Row, i: int) -> int:
-        return int(self.values[i])
-
-    def get_float(self: Row, i: int) -> float:
-        return float(self.values[i])
-
-    def is_null(self: Row, i: int) -> bool:
-        return self.is_null_flags[i]
-
-    def column_count(self: Row) -> int:
-        return len(self.values)
-
-    def column_name(self: Row, i: int) -> str:
-        return self.names[i]
 
 def _read_rows(res: ptr) -> list[Row]:
     nrows: int = nox_pg_ntuples_raw(res)

@@ -24,6 +24,10 @@
 # çağırmaya İZİN VERİR — bu YÜZDEN `Row` her sütunu TEK bir metin
 # değeriyle saklar; `get_int`/`get_float` bunu Nox'un ZATEN VAR OLAN
 # `int(s)`/`float(s)` ayrıştırıcılarıyla dönüştürür.
+#
+# Faz OO: `Row` ARTIK `nox.db`den PAYLAŞILAN — bkz. `db.nox`nin belge
+# notu (`DbConnection` protokolünün `query`yi KAPSAYABİLMESİNİN nedeni).
+from nox.db import Row
 
 extern def nox_sqlite_open_raw(path: str) -> ptr from "zig-out/lib/noxrt.o"
 extern def nox_sqlite_errmsg_raw(db: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
@@ -50,30 +54,6 @@ extern def nox_sqlite_is_null_ptr(p: ptr) -> int from "zig-out/lib/noxrt.o"
 class SqliteError:
     def __init__(self: SqliteError, message: str) -> None:
         self.message = message
-
-class Row:
-    def __init__(self: Row, values: list[str], is_null_flags: list[bool], names: list[str]) -> None:
-        self.values = values
-        self.is_null_flags = is_null_flags
-        self.names = names
-
-    def get_str(self: Row, i: int) -> str:
-        return self.values[i]
-
-    def get_int(self: Row, i: int) -> int:
-        return int(self.values[i])
-
-    def get_float(self: Row, i: int) -> float:
-        return float(self.values[i])
-
-    def is_null(self: Row, i: int) -> bool:
-        return self.is_null_flags[i]
-
-    def column_count(self: Row) -> int:
-        return len(self.values)
-
-    def column_name(self: Row, i: int) -> str:
-        return self.names[i]
 
 # `stmt`in TEK bir satırını (o an `sqlite3_step` ROW döndürdüğünde, stmt
 # HÂLÂ geçerliyken) eager olarak bir `Row`a okur — hem `Connection.query`

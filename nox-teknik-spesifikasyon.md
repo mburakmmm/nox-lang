@@ -13895,6 +13895,38 @@ derlenip BAĞLANDIĞINI kontrol eden adımlar EKLENDİ.
 Nox-seviyesi bir `raise` (mevcut `serve*` ailesinin bind-hatası
 davranışıyla PAYLAŞILAN bir gap, stderr TANI mesajı YETERLİ sayıldı).
 
+## 3.82 Ortak `nox.db.Row` (sqlite/postgres/mysql sürücüleri arası)
+
+Kullanıcının `nyx` framework'ünde farkedilen bir sonraki Nox eksikliği:
+`nox.sqlite`/`nox.postgres`/`nox.mysql`nin ÜÇÜ de YAPISAL OLARAK BİREBİR
+AYNI (alanlar `values`/`is_null_flags`/`names`, metodlar `get_str`/
+`get_int`/`get_float`/`is_null`/`column_count`/`column_name`) ama ÜÇ
+AYRI, BAĞIMSIZ concrete `Row` sınıfı tanımlıyordu — bu YÜZDEN `stdlib/
+nox/db.nox`nin `DbConnection` protokolüne `query(sql) -> list[Row]`
+EKLENEMİYORDU (checker'ın protokol dönüş-tipi eşleştirmesi TAM/
+invaryant: `list[sqlite.Row]` bir `list[RowProtocol]` İMZASINI
+KARŞILAMAZ, generic konteynerler İçin kovaryant protokol eşleştirmesi
+YOK).
+
+**Çözüm — kovaryant protokol eşleştirmesi GİBİ büyük bir compiler
+özelliği EKLEMEK YERİNE, ÜÇ sürücünün `Row`u TEK, PAYLAŞILAN bir
+concrete sınıfa BİRLEŞTİRİLDİ:** `Row` ARTIK YALNIZCA `db.nox`ta
+tanımlı; `sqlite.nox`/`postgres.nox`/`mysql.nox` KENDİ yerel `Row`
+sınıflarını SİLİP `from nox.db import Row` KULLANIYOR. `Type.class`
+eşitliği (`types.zig`) mangled sınıf ADI ÜZERİNDEN karşılaştırıldığından,
+ÜÇÜ de AYNI `db.Row`ya atıfta BULUNDUĞUNDA `list[db.Row]` HER YERDE
+TRIVIAL OLARAK eşit oluyor — HİÇBİR yeni compiler özelliği GEREKMEDEN
+`DbConnection` protokolü ARTIK `query`yi de KAPSIYOR.
+
+**Kasıtlı davranış değişikliği:** Nox'un `from X import Y`si TRANSİTİF/
+yeniden-ihraç EDİCİ DEĞİLDİR (`Y`nin GERÇEKTEN `X`te TANIMLI olmasını
+VARSAYAR, mangled ad `X`in KENDİ modül yoluyla HESAPLANIR) — bu YÜZDEN
+`from nox.sqlite import Row` (Row artık `nox.sqlite`de TANIMLI DEĞİL)
+ARTIK ÇALIŞMAZ; `Row` her zaman `from nox.db import Row` İLE İTHAL
+EDİLMELİDİR. Bu, projenin KENDİ testlerinde (`tests/cli/sqlite_test.zig`,
+`tests/golden/codegen_cases/postgres_mysql_connect_error.nox`) GERÇEK
+bir derleme hatasıyla (`bilinmeyen tip: Row`) YAKALANDI ve düzeltildi.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

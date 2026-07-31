@@ -33,6 +33,9 @@
 import nox.url
 import nox.strings
 from nox.url import URL
+# Faz OO: `Row` ARTIK `nox.db`den PAYLAŞILAN — bkz. `db.nox`nin belge
+# notu (`DbConnection` protokolünün `query`yi KAPSAYABİLMESİNİN nedeni).
+from nox.db import Row
 
 extern def nox_mysql_connect_raw(host: str, user: str, passwd: str, db: str, port: int) -> ptr from "zig-out/lib/noxrt.o"
 extern def nox_mysql_status_ok_raw(conn: ptr) -> int from "zig-out/lib/noxrt.o"
@@ -55,31 +58,6 @@ extern def nox_mysql_escape_raw(conn: ptr, value: str) -> str from "zig-out/lib/
 class MysqlError:
     def __init__(self: MysqlError, message: str) -> None:
         self.message = message
-
-# `nox.sqlite`/`nox.postgres`nin `Row`ıyla AYNI şekil.
-class Row:
-    def __init__(self: Row, values: list[str], is_null_flags: list[bool], names: list[str]) -> None:
-        self.values = values
-        self.is_null_flags = is_null_flags
-        self.names = names
-
-    def get_str(self: Row, i: int) -> str:
-        return self.values[i]
-
-    def get_int(self: Row, i: int) -> int:
-        return int(self.values[i])
-
-    def get_float(self: Row, i: int) -> float:
-        return float(self.values[i])
-
-    def is_null(self: Row, i: int) -> bool:
-        return self.is_null_flags[i]
-
-    def column_count(self: Row) -> int:
-        return len(self.values)
-
-    def column_name(self: Row, i: int) -> str:
-        return self.names[i]
 
 def _substr(s: str, start: int, end: int) -> str:
     result: str = ""

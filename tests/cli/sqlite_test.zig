@@ -27,7 +27,8 @@ test "nox.sqlite: tablo olustur + parametreli INSERT (int/float/str/NULL) + SELE
     defer gpa.free(db_path);
 
     const source = try std.fmt.allocPrint(gpa,
-        \\from nox.sqlite import open, Connection, Statement, Row
+        \\from nox.sqlite import open, Connection, Statement
+        \\from nox.db import Row
         \\
         \\conn: Connection = open("{s}")
         \\conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, score REAL, bio TEXT)")
@@ -96,7 +97,8 @@ test "nox.sqlite: bozuk SQL SqliteError firlatir, try/except yakalar; bos tablo 
     defer gpa.free(db_path);
 
     const source = try std.fmt.allocPrint(gpa,
-        \\from nox.sqlite import open, Connection, Row, SqliteError
+        \\from nox.sqlite import open, Connection, SqliteError
+        \\from nox.db import Row
         \\
         \\conn: Connection = open("{s}")
         \\try:
