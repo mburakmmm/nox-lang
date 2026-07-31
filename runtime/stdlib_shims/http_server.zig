@@ -705,7 +705,7 @@ export fn nox_http_request_headers(rt: ?*anyopaque, req: ?*anyopaque) callconv(.
         const v: [*:0]u8 = @ptrCast(@constCast(h.value.ptr));
         str_mod.nox_str_retain(k);
         str_mod.nox_str_retain(v);
-        dict_mod.nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(k)), @bitCast(@intFromPtr(v)));
+        dict_mod.nox_dict_set(rt, d, 1, 1, 0, @bitCast(@intFromPtr(k)), @bitCast(@intFromPtr(v)));
     }
     return d;
 }
@@ -1580,10 +1580,10 @@ test "Güvenlik M-1: nox_http_response_new CR/LF İÇEREN bir başlık DEĞERİN
     defer asap.nox_runtime_deinit(rt);
 
     const d = dict_mod.nox_dict_new(rt, 1) orelse return error.NewFailed;
-    defer dict_mod.nox_dict_release(rt, d, 1, 1);
+    defer dict_mod.nox_dict_release(rt, d, 1, 1, 0);
     const key = str_mod.nox_str_from_bytes(rt, "X-Echo") orelse return error.ConcatFailed;
     const value = str_mod.nox_str_from_bytes(rt, "zararli\r\nSet-Cookie: pwned=1") orelse return error.ConcatFailed;
-    dict_mod.nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(key)), @bitCast(@intFromPtr(value)));
+    dict_mod.nox_dict_set(rt, d, 1, 1, 0, @bitCast(@intFromPtr(key)), @bitCast(@intFromPtr(value)));
 
     const resp = nox_http_response_new(rt, 200, null, d);
     try std.testing.expect(resp == null);
@@ -1594,10 +1594,10 @@ test "Güvenlik M-1: nox_http_response_new normal (CR/LF'siz) başlıklarda HÂL
     defer asap.nox_runtime_deinit(rt);
 
     const d = dict_mod.nox_dict_new(rt, 1) orelse return error.NewFailed;
-    defer dict_mod.nox_dict_release(rt, d, 1, 1);
+    defer dict_mod.nox_dict_release(rt, d, 1, 1, 0);
     const key = str_mod.nox_str_from_bytes(rt, "X-Normal") orelse return error.ConcatFailed;
     const value = str_mod.nox_str_from_bytes(rt, "deger1") orelse return error.ConcatFailed;
-    dict_mod.nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(key)), @bitCast(@intFromPtr(value)));
+    dict_mod.nox_dict_set(rt, d, 1, 1, 0, @bitCast(@intFromPtr(key)), @bitCast(@intFromPtr(value)));
 
     const resp = nox_http_response_new(rt, 200, null, d) orelse return error.UnexpectedNull;
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));

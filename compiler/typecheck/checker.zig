@@ -483,8 +483,17 @@ pub const Checker = struct {
                     if (key_t != .int and key_t != .boolean and key_t != .str) {
                         return self.fail(error.UnknownType, "'dict' anahtar tipi yalnızca int/bool/str olabilir (v1 kapsamı)", .{});
                     }
-                    if (value_t != .int and value_t != .float and value_t != .boolean and value_t != .str) {
-                        return self.fail(error.UnknownType, "'dict' değer tipi yalnızca int/float/bool/str olabilir (v1 kapsamı)", .{});
+                    // Faz OO.4 (bkz. nox-teknik-spesifikasyon.md §3.85):
+                    // `.class` DEĞER OLARAK KABUL EDİLİR — `nox_class_
+                    // release_dispatch`in (bkz. `layout.zig`) tag-tabanlı
+                    // dispatch'i ÜZERİNDEN, ÇALIŞMA ZAMANI sınıf etiketi
+                    // değerin KENDİ gömülü baytlarından okunur, `dict.zig`
+                    // KENDİSİ hangi SOMUT sınıf olduğunu BİLMEK ZORUNDA
+                    // DEĞİLDİR (Madde 1'in `TaskLocal[T]`siyle AYNI desen).
+                    // Sınıf ANAHTAR olarak HÂLÂ REDDEDİLİR (hash/eşitlik
+                    // AYRI, DAHA ZOR bir problem — bilinçli kapsam DIŞI).
+                    if (value_t != .int and value_t != .float and value_t != .boolean and value_t != .str and value_t != .class) {
+                        return self.fail(error.UnknownType, "'dict' değer tipi yalnızca int/float/bool/str/sınıf olabilir (v1 kapsamı)", .{});
                     }
                     const key_boxed = try self.allocator.create(Type);
                     key_boxed.* = key_t;
@@ -2518,8 +2527,8 @@ pub const Checker = struct {
                 if (first_key != .int and first_key != .boolean and first_key != .str) {
                     return self.fail(error.TypeMismatch, "'dict' anahtar tipi yalnızca int/bool/str olabilir (v1 kapsamı)", .{});
                 }
-                if (first_value != .int and first_value != .float and first_value != .boolean and first_value != .str) {
-                    return self.fail(error.TypeMismatch, "'dict' değer tipi yalnızca int/float/bool/str olabilir (v1 kapsamı)", .{});
+                if (first_value != .int and first_value != .float and first_value != .boolean and first_value != .str and first_value != .class) {
+                    return self.fail(error.TypeMismatch, "'dict' değer tipi yalnızca int/float/bool/str/sınıf olabilir (v1 kapsamı)", .{});
                 }
                 for (pairs[1..]) |p| {
                     const kt = try self.checkExpr(ctx, p.key);

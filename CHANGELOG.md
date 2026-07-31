@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.26.0]
+
+### Eklendi
+- **`dict[K, class]` — sınıf DEĞERLİ dict'ler**: nyx'te farkedilen bir
+  Nox eksikliği — checker `dict[K, V]`nin DEĞER tipini `int`/`float`/
+  `bool`/`str`e KISITLIYORDU, nyx "preload list API" GİBİ bir geçici
+  çözüme MAHKUMDU. Artık `dict[int, Record]` GİBİ bir kullanım
+  MÜMKÜN (ANAHTAR kısıtlaması AYNEN KALDI — sınıf anahtarlar HÂLÂ
+  REDDEDİLİR). `TaskLocal[T]`in AYNI tasarımını (Tasarım B: `nox_class_
+  release_dispatch`in tag-tabanlı dağıtımı) YENİDEN kullanır —
+  `dict.zig` hangi SOMUT sınıf olduğunu HİÇ bilmek zorunda DEĞİLDİR.
+
 ## [1.25.0]
 
 ### Eklendi

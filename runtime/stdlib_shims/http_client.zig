@@ -508,7 +508,7 @@ export fn nox_http_response_headers(rt: ?*anyopaque, h: ?*anyopaque) callconv(.c
     for (ctx.response_headers) |header| {
         const key_str = dupeToNoxStr(rt, header.name) orelse continue;
         const value_str = dupeToNoxStr(rt, header.value) orelse continue;
-        dict_mod.nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(key_str)), @bitCast(@intFromPtr(value_str)));
+        dict_mod.nox_dict_set(rt, d, 1, 1, 0, @bitCast(@intFromPtr(key_str)), @bitCast(@intFromPtr(value_str)));
         // `nox_dict_set` KENDİ kopyasını SAKLAR (str'i doğrudan payload
         // olarak depolar, bkz. onun belge notu — "sahiplik ÇAĞIRANDAN
         // devralınır") — `dupeToNoxStr`nin ürettiği YENİ referans artık
@@ -689,7 +689,7 @@ test "nox_http_get_raw: gerçek yerel HTTP sunucusuna GET isteği — status/bod
     try std.testing.expectEqualStrings("hello", std.mem.sliceTo(body, 0));
 
     const headers = nox_http_response_headers(rt, resp) orelse return error.NoHeaders;
-    defer dict_mod.nox_dict_release(rt, headers, 1, 1);
+    defer dict_mod.nox_dict_release(rt, headers, 1, 1, 0);
     const key = try std.testing.allocator.dupeZ(u8, "X-Nox-Test");
     defer std.testing.allocator.free(key);
     const value_payload = dict_mod.nox_dict_get(rt, headers, 1, @bitCast(@intFromPtr(key.ptr)));
@@ -796,10 +796,10 @@ test "Güvenlik M-1: copyHeaders CR/LF İÇEREN bir başlık DEĞERİNDE Invalid
     defer asap.nox_runtime_deinit(rt);
 
     const d = dict_mod.nox_dict_new(rt, 1) orelse return error.NewFailed;
-    defer dict_mod.nox_dict_release(rt, d, 1, 1);
+    defer dict_mod.nox_dict_release(rt, d, 1, 1, 0);
     const key = str_mod.nox_str_from_bytes(rt, "X-Echo") orelse return error.ConcatFailed;
     const value = str_mod.nox_str_from_bytes(rt, "zararli\r\nSet-Cookie: pwned=1") orelse return error.ConcatFailed;
-    dict_mod.nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(key)), @bitCast(@intFromPtr(value)));
+    dict_mod.nox_dict_set(rt, d, 1, 1, 0, @bitCast(@intFromPtr(key)), @bitCast(@intFromPtr(value)));
 
     try std.testing.expectError(error.InvalidHeaderValue, copyHeaders(std.testing.allocator, d));
 }
@@ -809,10 +809,10 @@ test "Güvenlik M-1: copyHeaders CR/LF İÇEREN bir başlık ADINDA da InvalidHe
     defer asap.nox_runtime_deinit(rt);
 
     const d = dict_mod.nox_dict_new(rt, 1) orelse return error.NewFailed;
-    defer dict_mod.nox_dict_release(rt, d, 1, 1);
+    defer dict_mod.nox_dict_release(rt, d, 1, 1, 0);
     const key = str_mod.nox_str_from_bytes(rt, "X-Bad\r\nSet-Cookie: pwned=1") orelse return error.ConcatFailed;
     const value = str_mod.nox_str_from_bytes(rt, "zararsiz") orelse return error.ConcatFailed;
-    dict_mod.nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(key)), @bitCast(@intFromPtr(value)));
+    dict_mod.nox_dict_set(rt, d, 1, 1, 0, @bitCast(@intFromPtr(key)), @bitCast(@intFromPtr(value)));
 
     try std.testing.expectError(error.InvalidHeaderValue, copyHeaders(std.testing.allocator, d));
 }
@@ -822,10 +822,10 @@ test "Güvenlik M-1: copyHeaders normal (CR/LF'siz) başlıklarda HÂLÂ doğru 
     defer asap.nox_runtime_deinit(rt);
 
     const d = dict_mod.nox_dict_new(rt, 1) orelse return error.NewFailed;
-    defer dict_mod.nox_dict_release(rt, d, 1, 1);
+    defer dict_mod.nox_dict_release(rt, d, 1, 1, 0);
     const key = str_mod.nox_str_from_bytes(rt, "X-Normal") orelse return error.ConcatFailed;
     const value = str_mod.nox_str_from_bytes(rt, "deger1") orelse return error.ConcatFailed;
-    dict_mod.nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(key)), @bitCast(@intFromPtr(value)));
+    dict_mod.nox_dict_set(rt, d, 1, 1, 0, @bitCast(@intFromPtr(key)), @bitCast(@intFromPtr(value)));
 
     const headers = try copyHeaders(std.testing.allocator, d);
     defer {

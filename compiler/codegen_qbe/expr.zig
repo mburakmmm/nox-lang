@@ -738,14 +738,16 @@ pub fn genDictLit(self: *Codegen, pairs: []const ast.DictPair) CodegenError!Valu
     }
     const key_is_str = key_values[0].heap == .str;
     const value_is_str = value_values[0].heap == .str;
+    const value_is_class = value_values[0].heap == .class;
     const key_qtype = key_values[0].qtype;
     const value_qtype = value_values[0].qtype;
 
     const dinfo = try self.allocator.create(DictInfo);
-    dinfo.* = .{ .key_is_str = key_is_str, .key_qtype = key_qtype, .value_qtype = value_qtype, .value_is_str = value_is_str };
+    dinfo.* = .{ .key_is_str = key_is_str, .key_qtype = key_qtype, .value_qtype = value_qtype, .value_is_str = value_is_str, .value_is_class = value_is_class, .value_class_name = value_values[0].class_name };
 
     const key_is_str_lit: []const u8 = if (key_is_str) "1" else "0";
     const value_is_str_lit: []const u8 = if (value_is_str) "1" else "0";
+    const value_is_class_lit: []const u8 = if (value_is_class) "1" else "0";
 
     const d = try self.newTemp();
     try self.out.writer.print("    {s} =l call $nox_dict_new(l {s}, w {s})\n", .{ d, RT_PARAM, key_is_str_lit });
@@ -753,7 +755,7 @@ pub fn genDictLit(self: *Codegen, pairs: []const ast.DictPair) CodegenError!Valu
     for (key_values, 0..) |kv, i| {
         const key_payload = try self.toPayload(kv);
         const value_payload = try self.toPayload(value_values[i]);
-        try self.out.writer.print("    call $nox_dict_set(l {s}, l {s}, w {s}, w {s}, l {s}, l {s})\n", .{ RT_PARAM, d, key_is_str_lit, value_is_str_lit, key_payload.text, value_payload.text });
+        try self.out.writer.print("    call $nox_dict_set(l {s}, l {s}, w {s}, w {s}, w {s}, l {s}, l {s})\n", .{ RT_PARAM, d, key_is_str_lit, value_is_str_lit, value_is_class_lit, key_payload.text, value_payload.text });
     }
 
     return .{ .text = d, .qtype = .l, .heap = .dict, .dict_info = dinfo };

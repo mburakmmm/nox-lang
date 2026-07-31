@@ -913,14 +913,19 @@ pub fn genDictMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     if (std.mem.eql(u8, a.attr, "values")) {
         if (args.len != 0) return error.Unsupported;
         const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
+        const value_is_class_lit: []const u8 = if (dinfo.value_is_class) "1" else "0";
         const elem_size = qbeSizeOf(dinfo.value_qtype);
         const result = try self.newTemp();
-        try self.out.writer.print("    {s} =l call $nox_dict_values(l {s}, l {s}, w {s}, l {d})\n", .{ result, RT_PARAM, obj.text, value_is_str_lit, elem_size });
+        try self.out.writer.print("    {s} =l call $nox_dict_values(l {s}, l {s}, w {s}, w {s}, l {d})\n", .{ result, RT_PARAM, obj.text, value_is_str_lit, value_is_class_lit, elem_size });
         try self.releaseIfTemporary(a.obj.*, obj);
         var elem_heap_info: ?*const ElemHeapInfo = null;
         if (dinfo.value_is_str) {
             const info = try self.allocator.create(ElemHeapInfo);
             info.* = .{ .heap = .str };
+            elem_heap_info = info;
+        } else if (dinfo.value_is_class) {
+            const info = try self.allocator.create(ElemHeapInfo);
+            info.* = .{ .heap = .class, .class_name = dinfo.value_class_name };
             elem_heap_info = info;
         }
         return .{ .text = result, .qtype = .l, .heap = .list, .elem_qtype = dinfo.value_qtype, .elem_heap_info = elem_heap_info, .elem_is_str = dinfo.value_is_str };

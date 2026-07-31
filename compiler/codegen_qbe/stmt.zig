@@ -398,7 +398,8 @@ pub fn genDictAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     const value_payload = try self.toPayload(value_converted);
     const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
     const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
-    try self.out.writer.print("    call $nox_dict_set(l {s}, l {s}, w {s}, w {s}, l {s}, l {s})\n", .{ RT_PARAM, obj.text, key_is_str_lit, value_is_str_lit, key_payload.text, value_payload.text });
+    const value_is_class_lit: []const u8 = if (dinfo.value_is_class) "1" else "0";
+    try self.out.writer.print("    call $nox_dict_set(l {s}, l {s}, w {s}, w {s}, w {s}, l {s}, l {s})\n", .{ RT_PARAM, obj.text, key_is_str_lit, value_is_str_lit, value_is_class_lit, key_payload.text, value_payload.text });
     try self.releaseIfTemporary(idx.obj.*, obj);
 }
 
@@ -468,9 +469,16 @@ pub fn genDictGet(self: *Codegen, obj_expr: ast.Expr, obj: Value, key_expr: ast.
     // önce okuduğumuz string kullanım-sonrası-serbest-bırakmaya döner.
     if (isTemporaryExpr(obj_expr) and dinfo.value_is_str) {
         try self.emitInlineRetain(converted.text, .str);
+    } else if (isTemporaryExpr(obj_expr) and dinfo.value_is_class) {
+        try self.emitInlineRetain(converted.text, .class);
     }
     try self.releaseIfTemporary(obj_expr, obj);
-    return .{ .text = converted.text, .qtype = converted.qtype, .heap = if (dinfo.value_is_str) .str else .none };
+    return .{
+        .text = converted.text,
+        .qtype = converted.qtype,
+        .heap = if (dinfo.value_is_str) .str else if (dinfo.value_is_class) .class else .none,
+        .class_name = if (dinfo.value_is_class) dinfo.value_class_name else null,
+    };
 }
 
 /// Faz FF.6.4 (bkz. `narrowed_unbox`ın belge notu): `checker.zig`'in

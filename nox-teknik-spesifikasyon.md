@@ -14058,6 +14058,61 @@ VE `raise` satırını YAZDIĞINI (`expectUncaughtExceptionWithStderr`,
 sıfırdan-farklı çıkış kodu + stdout + stderr'in TAMAMI doğrulanır)
 kanıtlar. `zig build test` HEM Debug HEM `ReleaseFast` modlarında YEŞİL.
 
+## 3.85 `dict[K, class]` — sınıf DEĞERLİ dict'ler (Tasarım B: tag-dispatch)
+
+Kullanıcının `nyx` framework'ünde farkedilen bir Nox eksikliği: checker
+`dict[K, V]`nin DEĞER tipini BİLİNÇLİ OLARAK `int`/`float`/`bool`/`str`e
+KISITLIYORDU (bkz. §3.28) — nyx bu YÜZDEN "preload list API" GİBİ bir
+geçici çözüme MAHKUMDU. **Anahtar kısıtlaması AYNEN KALIR** (sınıf
+anahtarların hash/eşitliği AYRI, DAHA ZOR bir problem — bilinçli kapsam
+DIŞI); yalnızca DEĞER tipi genişletildi.
+
+**Checker:** `typeExprToType`nin `.generic` dalındaki (`"dict"`) VE
+`dict_lit` ifadesindeki DEĞER-tipi kısıtlama kontrolleri `value_t ==
+.class`i de KABUL edecek şekilde gevşetildi.
+
+**Tasarım B — `nox_class_release_dispatch` YENİDEN kullanımı
+(TaskLocal[T]in AYNI mekanizması, bkz. §3.83):** fonksiyon-pointer
+aktarma (Tasarım A) YERİNE, `compiler/codegen_qbe/types.zig`nin
+`DictInfo`sine `value_is_class: bool` + `value_class_name: ?[]const
+u8` eklendi (`value_t == .class` İKEN checker→codegen el değişiminde
+DOLDURULUR — `expr.zig`nin `genDictLit`ı VE `registration.zig`nin
+`resolveType`i, İKİ AYRI `DictInfo` inşa SİTESİ). `runtime/collections/
+dict.zig`nin `nox_dict_set`/`nox_dict_release`/`nox_dict_values`ine
+(TÜMÜ `value_is_str`in YANINA) bir `value_is_class: i32` parametresi
+EKLENDİ:
+- **Serbest bırakma** (`nox_dict_set`in üzerine-yazma dalı VE `nox_
+  dict_release`in TÜM-girdi döngüsü): `value_is_class != 0` İSE
+  `$nox_class_release_dispatch(rt, tag, p)`e (tag DEĞERİN KENDİ İLK
+  `TAG_SIZE` baytından okunur) dağıtılır — `dict.zig` HANGİ SOMUT
+  sınıf olduğunu HİÇ BİLMEK ZORUNDA DEĞİLDİR.
+- **Retain** (`.values()`in `buildEntryList`ı): sınıf değerleri `str`
+  İLE AYNI "ödünç-sonra-ikinci-sahiplik" gerekçesiyle retain edilir,
+  ama `nox_str_retain` (str'e ÖZGÜ `STR_HEADER_SIZE` ofseti) YERİNE
+  DÜZ `arc.nox_rc_retain` (`ARC_HEADER_SIZE` sabit ofseti, `class`/
+  `list`/`dict`/`closure`in ORTAK konvansiyonu) kullanılır.
+- **`$nox_class_release_dispatch`e dlsym İLE erişim:** `dict.zig`
+  (`noxrt.o`nun bir PARÇASI, HER programa bağlanır) bu sembolü sabit
+  bir `extern fn` OLARAK bildiremez — sınıfSIZ bir programda/`noxrt_
+  test`te HİÇ üretilmez (bkz. `genClassNameDispatch`in AYNI gerekçesi,
+  §3.84). `cycle_detector.zig`nin `resolveTraceDispatch`ıYLA BİREBİR
+  AYNI `dlsym`/`GetProcAddress` çözümleme deseni KULLANILDI.
+- `d[key]` OKUMASI (`genDictGet`): dönen `Value`nin `.heap`/`.class_
+  name`i `dinfo.value_is_class`e göre DOLDURULUR; taban dict TEMPORARY
+  İSE (`str` dalıyla AYNI koruma) okunan sınıf değeri, taban serbest
+  bırakılmadan ÖNCE retain edilir (aksi halde dict'in KENDİ release'i
+  değeri de özyinelemeli serbest bırakınca kullanım-sonrası-serbest-
+  bırakma OLURDU).
+
+**Yan bulgu:** `dict[K, V]`nin ANAHTAR kısıtlaması (`int`/`bool`/`str`)
+DEĞİŞMEDİ — sınıf anahtarlar HÂLÂ REDDEDİLİR.
+
+**Doğrulama:** `tests/golden/codegen_cases/dict_int_key_class_value.nox`
+— `dict[int, Record]` İNŞASI, OKUMASI, ÜZERİNE-YAZMASI (ESKİ `Record`
+değerinin GERÇEKTEN serbest bırakıldığını, SIZDIRILMADIĞINI `expectGolden`
+nin boş-stderr kontrolüyle kanıtlar) VE `.values()`i kapsar. `zig build
+test` HEM Debug HEM `ReleaseFast` modlarında YEŞİL.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

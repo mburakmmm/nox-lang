@@ -324,7 +324,8 @@ pub fn genListElemRelease(self: *Codegen, fn_name: []const u8, info: ElemHeapInf
             const dinfo = n.dict_info.?;
             const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
             const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
-            try self.out.writer.print("    call $nox_dict_release(l {s}, l {s}, w {s}, w {s})\n", .{ RT_PARAM, elem, key_is_str_lit, value_is_str_lit });
+            const value_is_class_lit: []const u8 = if (dinfo.value_is_class) "1" else "0";
+            try self.out.writer.print("    call $nox_dict_release(l {s}, l {s}, w {s}, w {s}, w {s})\n", .{ RT_PARAM, elem, key_is_str_lit, value_is_str_lit, value_is_class_lit });
         } else {
             try self.out.writer.print("    call $nox_str_release(l {s}, l {s})\n", .{ RT_PARAM, elem });
         }
@@ -451,7 +452,8 @@ pub fn releaseValueIfSet(self: *Codegen, ptr: []const u8, heap: HeapKind, elem_q
         const dinfo = dict_info.?;
         const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
         const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
-        try self.out.writer.print("    call $nox_dict_release(l {s}, l {s}, w {s}, w {s})\n", .{ RT_PARAM, ptr, key_is_str_lit, value_is_str_lit });
+        const value_is_class_lit: []const u8 = if (dinfo.value_is_class) "1" else "0";
+        try self.out.writer.print("    call $nox_dict_release(l {s}, l {s}, w {s}, w {s}, w {s})\n", .{ RT_PARAM, ptr, key_is_str_lit, value_is_str_lit, value_is_class_lit });
     } else if (heap == .boxed_scalar) {
         // Faz FF.6.4 (bkz. nox-teknik-spesifikasyon.md §3.65): kutu,
         // `nox_rc_alloc(rt, 8)`den gelen DÜZ 8 baytlık bir skaler

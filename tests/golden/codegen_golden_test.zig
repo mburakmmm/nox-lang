@@ -2336,3 +2336,18 @@ test "codegen(çalıştır): Faz OO.3 — yakalanmamış istisna GERÇEK sınıf
         "nox: yakalanmamış istisna: ShoppingCartError (satır 6) — program sonlandırılıyor\n",
     );
 }
+
+// Faz OO.4 (bkz. nox-teknik-spesifikasyon.md §3.85): nyx'te farkedilen
+// bir Nox eksikliği (`dict[int, Record]` YOKTU, checker dict değer
+// tipini int/float/bool/str'e KISITLIYORDU) — ARTIK `.class` DEĞER
+// olarak KABUL EDİLİR (`nox_class_release_dispatch`in tag-tabanlı
+// dispatch'i ÜZERİNDEN, Madde 1'in `TaskLocal[T]`siYLE AYNI mekanizma).
+// İNŞA+OKUMA+ÜZERİNE-YAZMA (eski Record değerinin serbest bırakıldığını,
+// SIZDIRILMADIĞINI kanıtlar — `expectGolden`nin boş-stderr kontrolü)
+// +`.values()`i kapsar.
+test "codegen(çalıştır): dict[int, class] — inşa+oku+üzerine-yaz+values(), sızıntı yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/dict_int_key_class_value.nox"),
+        @embedFile("codegen_cases/dict_int_key_class_value.expected"),
+    );
+}

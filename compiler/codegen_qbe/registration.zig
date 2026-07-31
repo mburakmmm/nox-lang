@@ -149,12 +149,13 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
                 const value = try self.resolveType(g.args[1]);
                 // v1 kapsamı (checker.zig'in `typeExprToType`indeki
                 // `"dict"` dalıyla TUTARLI): K int/bool/str, V int/float/
-                // bool/str — sınıf/list/dict/Task/Channel anahtar/değer
-                // checker'da ZATEN reddedilir, burası savunmacıdır.
+                // bool/str/sınıf (Faz OO.4) — list/dict/Task/Channel
+                // anahtar/değer checker'da ZATEN reddedilir, burası
+                // savunmacıdır.
                 if (key.heap != .none and key.heap != .str) return error.Unsupported;
-                if (value.heap != .none and value.heap != .str) return error.Unsupported;
+                if (value.heap != .none and value.heap != .str and value.heap != .class) return error.Unsupported;
                 const dinfo = try self.allocator.create(DictInfo);
-                dinfo.* = .{ .key_is_str = key.heap == .str, .key_qtype = key.qtype, .value_qtype = value.qtype, .value_is_str = value.heap == .str };
+                dinfo.* = .{ .key_is_str = key.heap == .str, .key_qtype = key.qtype, .value_qtype = value.qtype, .value_is_str = value.heap == .str, .value_is_class = value.heap == .class, .value_class_name = value.class_name };
                 return .{ .qtype = .l, .heap = .dict, .dict_info = dinfo };
             }
             const is_list = std.mem.eql(u8, g.name, "list");

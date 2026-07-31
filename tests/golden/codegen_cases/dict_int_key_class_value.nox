@@ -1,0 +1,28 @@
+class Record:
+    def __init__(self: Record, name: str, age: int) -> None:
+        self.name = name
+        self.age = age
+
+records: dict[int, Record] = {}
+records[1] = Record("Ayse", 30)
+records[2] = Record("Mehmet", 42)
+
+r1: Record = records[1]
+print(r1.name + " " + str(r1.age))
+
+r2: Record = records[2]
+print(r2.name + " " + str(r2.age))
+
+# Üzerine yazma: eski Record değeri (bkz. `nox_dict_set`'in `value_is_class`
+# dalı) serbest bırakılmalı — sızıntı olmamalı.
+records[1] = Record("Ayse2", 31)
+r3: Record = records[1]
+print(r3.name + " " + str(r3.age))
+
+vals: list[Record] = records.values()
+i: int = 0
+total: int = 0
+while i < len(vals):
+    total = total + vals[i].age
+    i = i + 1
+print(str(total))

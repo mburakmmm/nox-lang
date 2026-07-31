@@ -75,6 +75,16 @@ pub const DictInfo = struct {
     key_qtype: QbeType,
     value_qtype: QbeType,
     value_is_str: bool,
+    /// Faz OO.4 (bkz. nox-teknik-spesifikasyon.md §3.85): `dict[K, class]`
+    /// — `value_is_str` İLE AYNI DÜZEYDE bir bayrak, RUNTIME serbest
+    /// bırakma/retain kararları İçİn (`nox_class_release_dispatch` tag-
+    /// tabanlıdır, SOMUT sınıf adını ÇALIŞMA ZAMANINDA GEREKTİRMEZ).
+    value_is_class: bool = false,
+    /// `value_is_class` İKEN sınıfın DERLEME-ZAMANI adı — `d[key]`
+    /// OKUMASININ döndürdüğü `Value.class_name`i (METOD/alan çözümlemesi
+    /// STATİK olarak BUNA İHTİYAÇ DUYAR, `list[T]`nin `ElemHeapInfo.
+    /// class_name`iyle AYNI gerekçe) doğru DOLDURABİLMEK İçİn.
+    value_class_name: ?[]const u8 = null,
 };
 
 /// Faz U.4.4: bir `(params) -> ret` tip ifadesinin (`ast.TypeExpr.func_type`)

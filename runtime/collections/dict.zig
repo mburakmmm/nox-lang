@@ -60,6 +60,56 @@ const abi_layout = @import("abi_layout");
 const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 
+/// Faz OO.4 (bkz. nox-teknik-spesifikasyon.md §3.85): `dict[K, class]` —
+/// sınıf DEĞERLİ bir dict'in ESKİ (üzerine yazılan) ya da TÜM (release
+/// sırasında) değerlerini serbest bırakmak İçİn derleyicinin ürettiği
+/// `$nox_class_release_dispatch(rt, tag, p)`e (bkz. `compiler/codegen_qbe/
+/// layout.zig`nin `genClassReleaseDispatch`ı) İHTİYAÇ VAR — Madde 1'in
+/// (`TaskLocal[T]`) `nox_tasklocal_set`iYLE BİREBİR AYNI mekanizma.
+/// **NEDEN sabit bir `extern fn` DEĞİL, `dlsym` İLE ÇALIŞMA ZAMANINDA
+/// aranan bir sembol — `runtime/alloc/cycle_detector.zig`nin
+/// `resolveTraceDispatch`ıYLA BİREBİR AYNI gerekçe (bkz. onun belge
+/// notu):** bu sembol yalnızca EN AZ BİR sınıf İÇEREN bir programda
+/// üretilir; `dict.zig` (`noxrt.o`nun bir PARÇASI) HER programda
+/// (sınıfSIZ olanlar VE `noxrt_test` DAHİL) bağlanır — sabit bir
+/// `extern fn` bu durumlarda bağlama adımını ÇÖKERTİRDİ.
+const ClassReleaseDispatchFn = fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) void;
+threadlocal var g_class_release_dispatch_resolved = false;
+threadlocal var g_class_release_dispatch_fn: ?*const ClassReleaseDispatchFn = null;
+
+const WinSelf = if (builtin.os.tag == .windows) struct {
+    extern "kernel32" fn GetModuleHandleA(name: ?[*:0]const u8) callconv(.c) ?*anyopaque;
+    extern "kernel32" fn GetProcAddress(module: *anyopaque, name: [*:0]const u8) callconv(.c) ?*anyopaque;
+} else struct {};
+
+fn resolveClassReleaseDispatch() ?*const ClassReleaseDispatchFn {
+    if (g_class_release_dispatch_resolved) return g_class_release_dispatch_fn;
+    g_class_release_dispatch_resolved = true;
+    const name = "nox_class_release_dispatch";
+    if (builtin.os.tag == .windows) {
+        const module = WinSelf.GetModuleHandleA(null) orelse return null;
+        const sym = WinSelf.GetProcAddress(module, name) orelse return null;
+        g_class_release_dispatch_fn = @ptrCast(@alignCast(sym));
+        return g_class_release_dispatch_fn;
+    }
+    const handle = std.c.dlopen(null, .{ .NOW = true }) orelse return null;
+    const sym = std.c.dlsym(handle, name) orelse return null;
+    g_class_release_dispatch_fn = @ptrCast(@alignCast(sym));
+    return g_class_release_dispatch_fn;
+}
+
+/// `payload`i (`Entry.key`/`.value`) bir sınıf örneği İŞARETÇİSİ olarak
+/// yorumlayıp `nox_class_release_dispatch`e (tag'i KENDİ İLK `TAG_SIZE`
+/// baytından okuyarak) dağıtır — `payload == 0` (hiç ATANMAMIŞ) İSE
+/// hiçbir şey YAPMAZ.
+fn releaseClassPayload(rt: ?*anyopaque, payload: i64) void {
+    if (payload == 0) return;
+    const p: *anyopaque = @ptrFromInt(@as(usize, @bitCast(payload)));
+    const f = resolveClassReleaseDispatch() orelse return;
+    const tag: *const i64 = @ptrCast(@alignCast(p));
+    f(rt, tag.*, p);
+}
+
 /// `pub` — stdlib fazı §D.1 (Keşif 4): `nox.http`in Zig kabuğu, bir
 /// `dict[str, str]`in içeriğini (ör. yanıt başlıklarını inşa ederken)
 /// Nox'ta HENÜZ olmayan bir "dict iterasyonu" sözdizimine (`for k in d`)
@@ -216,13 +266,14 @@ pub export fn nox_dict_new(rt: ?*anyopaque, key_is_str: i32) ?*anyopaque {
 /// Üzerine yazma: ESKİ anahtar/değer (`str` iseler) serbest bırakılır,
 /// YENİ anahtar/değer (çağıran tarafından ZATEN retain edilmiş — bkz. modül
 /// üstü not) saklanır.
-pub export fn nox_dict_set(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, value_is_str: i32, key: i64, value: i64) void {
+pub export fn nox_dict_set(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32, key: i64, value: i64) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const d: *Dict = @ptrCast(@alignCast(dp orelse return));
     const ctx: StrOrIntContext = .{ .key_is_str = key_is_str != 0 };
     if (findIndex(d, key)) |i| {
         const old = d.entries.items[i];
         if (value_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(old.value));
+        if (value_is_class != 0) releaseClassPayload(rt, old.value);
         // `index`in KENDİ sakladığı anahtar (ESKİ pointer, İÇERİK olarak
         // AYNI ama pointer FARKLI olabilir) YENİ anahtarla DEĞİŞTİRİLİR
         // (yalnızca DEĞER GÜNCELLENMEZ) — bkz. modül üstü not, "ince tuzak".
@@ -286,7 +337,7 @@ pub export fn nox_dict_len(dp: ?*anyopaque) i64 {
 /// (`nox_rc_retain`) — dict KENDİ referansını KORUR, YENİ liste BAĞIMSIZ
 /// bir İKİNCİ sahip olur (`nox_dict_release`/liste'nin KENDİ release'i
 /// birbirinden bağımsız, İKİSİ de kendi payını serbest bırakır).
-fn buildEntryList(rt: ?*anyopaque, d: *Dict, is_str: bool, elem_size: i64, want_key: bool) ?*anyopaque {
+fn buildEntryList(rt: ?*anyopaque, d: *Dict, is_str: bool, is_class: bool, elem_size: i64, want_key: bool) ?*anyopaque {
     const n = d.entries.items.len;
     const esz: usize = @intCast(elem_size);
     const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + esz * n) orelse return null;
@@ -296,6 +347,13 @@ fn buildEntryList(rt: ?*anyopaque, d: *Dict, is_str: bool, elem_size: i64, want_
     for (d.entries.items, 0..) |e, i| {
         const payload = if (want_key) e.key else e.value;
         if (is_str and payload != 0) str_mod.nox_str_retain(payloadToStrPtr(payload).?);
+        // Faz OO.4: sınıf DEĞERLERİ `str` İLE AYNI "ödünç okuma, bağımsız
+        // ikinci sahip İçİn retain" gerekçesiyle — ama `str`nin KENDİ
+        // paketlenmiş uzunluk+ASCII başlığı (`STR_HEADER_SIZE`) OLMADIĞINDAN
+        // (bkz. `retainOffset`in codegen'deki AYNI ayrımı) DÜZ `arc.
+        // nox_rc_retain` (ARC_HEADER_SIZE'lık sabit ofset) KULLANILIR,
+        // `nox_str_retain` DEĞİL.
+        if (is_class and payload != 0) arc.nox_rc_retain(payloadToStrPtr(payload).?);
         const slot = bytes + LIST_HEADER_SIZE + esz * i;
         if (esz == 4) {
             @as(*align(1) i32, @ptrCast(slot)).* = @truncate(payload);
@@ -309,13 +367,13 @@ fn buildEntryList(rt: ?*anyopaque, d: *Dict, is_str: bool, elem_size: i64, want_
 /// `d.keys() -> list[K]` — bkz. `buildEntryList`in belge notu.
 pub export fn nox_dict_keys(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key_elem_size: i64) ?*anyopaque {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return null));
-    return buildEntryList(rt, d, key_is_str != 0, key_elem_size, true);
+    return buildEntryList(rt, d, key_is_str != 0, false, key_elem_size, true);
 }
 
 /// `d.values() -> list[V]` — bkz. `buildEntryList`in belge notu.
-pub export fn nox_dict_values(rt: ?*anyopaque, dp: ?*anyopaque, value_is_str: i32, value_elem_size: i64) ?*anyopaque {
+pub export fn nox_dict_values(rt: ?*anyopaque, dp: ?*anyopaque, value_is_str: i32, value_is_class: i32, value_elem_size: i64) ?*anyopaque {
     const d: *Dict = @ptrCast(@alignCast(dp orelse return null));
-    return buildEntryList(rt, d, value_is_str != 0, value_elem_size, false);
+    return buildEntryList(rt, d, value_is_str != 0, value_is_class != 0, value_elem_size, false);
 }
 
 /// Faz FF.3 — `dict`in refcount'unu bir azaltır; sıfıra/altına düşerse
@@ -323,13 +381,14 @@ pub export fn nox_dict_values(rt: ?*anyopaque, dp: ?*anyopaque, value_is_str: i3
 /// yıkar — `runtime/str.zig`nin `nox_str_release`iyle (`nox_rc_
 /// predecrement`e göre koşullu) BİREBİR AYNI desen (ESKİ `nox_dict_
 /// destroy`nin AKSİNE, artık KOŞULSUZ değil — bkz. modül üstü not).
-pub export fn nox_dict_release(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, value_is_str: i32) void {
+pub export fn nox_dict_release(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32) void {
     const ptr = dp orelse return;
     if (arc.nox_rc_predecrement(ptr) == 0) return;
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const d: *Dict = @ptrCast(@alignCast(ptr));
     for (d.entries.items) |e| {
         if (value_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(e.value));
+        if (value_is_class != 0) releaseClassPayload(rt, e.value);
         if (key_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(e.key));
     }
     d.entries.deinit(state.allocator());
@@ -342,8 +401,8 @@ test "nox_dict_new/set/get/contains/len/destroy — int anahtar/değer" {
     defer asap.nox_runtime_deinit(rt);
 
     const d = nox_dict_new(rt, 0) orelse return error.NewFailed;
-    nox_dict_set(rt, d, 0, 0, 1, 100);
-    nox_dict_set(rt, d, 0, 0, 2, 200);
+    nox_dict_set(rt, d, 0, 0, 0, 1, 100);
+    nox_dict_set(rt, d, 0, 0, 0, 2, 200);
     try std.testing.expectEqual(@as(i64, 100), nox_dict_get(rt, d, 0, 1));
     try std.testing.expectEqual(@as(i64, 200), nox_dict_get(rt, d, 0, 2));
     try std.testing.expectEqual(@as(i64, 0), nox_dict_get(rt, d, 0, 999));
@@ -352,11 +411,11 @@ test "nox_dict_new/set/get/contains/len/destroy — int anahtar/değer" {
     try std.testing.expectEqual(@as(i64, 2), nox_dict_len(d));
 
     // Üzerine yazma: aynı anahtar, YENİ değer.
-    nox_dict_set(rt, d, 0, 0, 1, 999);
+    nox_dict_set(rt, d, 0, 0, 0, 1, 999);
     try std.testing.expectEqual(@as(i64, 999), nox_dict_get(rt, d, 0, 1));
     try std.testing.expectEqual(@as(i64, 2), nox_dict_len(d));
 
-    nox_dict_release(rt, d, 0, 0);
+    nox_dict_release(rt, d, 0, 0, 0);
 }
 
 test "nox_dict — str anahtar İÇERİK eşitliğiyle bulunur (pointer eşitliği DEĞİL), üzerine yazma eskiyi serbest bırakır" {
@@ -368,13 +427,13 @@ test "nox_dict — str anahtar İÇERİK eşitliğiyle bulunur (pointer eşitli�
 
     const k1 = str_lib.nox_str_from_bytes(rt, "anahtar") orelse return error.ConcatFailed;
     const v1 = str_lib.nox_str_from_bytes(rt, "deger1") orelse return error.ConcatFailed;
-    nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(k1)), @bitCast(@intFromPtr(v1)));
+    nox_dict_set(rt, d, 1, 1, 0, @bitCast(@intFromPtr(k1)), @bitCast(@intFromPtr(v1)));
 
     // AYNI İÇERİKLİ ama FARKLI POINTER'lı ikinci bir anahtar — content-based
     // eşleşme sayesinde AYNI slotu güncellemeli (yeni bir eleman EKLENMEMELİ).
     const k2 = str_lib.nox_str_from_bytes(rt, "anahtar") orelse return error.ConcatFailed;
     const v2 = str_lib.nox_str_from_bytes(rt, "deger2") orelse return error.ConcatFailed;
-    nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(k2)), @bitCast(@intFromPtr(v2)));
+    nox_dict_set(rt, d, 1, 1, 0, @bitCast(@intFromPtr(k2)), @bitCast(@intFromPtr(v2)));
 
     try std.testing.expectEqual(@as(i64, 1), nox_dict_len(d));
     const got = nox_dict_get(rt, d, 1, @bitCast(@intFromPtr(k2)));
@@ -385,7 +444,7 @@ test "nox_dict — str anahtar İÇERİK eşitliğiyle bulunur (pointer eşitli�
     // KENDİSİ çağıran rolünü oynuyor, bu yüzden burada MANUEL retain
     // GEREKMEDİ: k1/v1 üzerine yazıldığı için dict tarafından ZATEN serbest
     // bırakıldı, k2/v2 dict'in TEK sahibi).
-    nox_dict_release(rt, d, 1, 1);
+    nox_dict_release(rt, d, 1, 1, 0);
 }
 
 // Faz FF.3 (bkz. nox-teknik-spesifikasyon.md §3.62) — `dict`in ARTIK
@@ -403,17 +462,17 @@ test "nox_dict — nox_rc_retain + İKİ nox_dict_release: birinci HÂLÂ canlı
     defer asap.nox_runtime_deinit(rt);
 
     const d = nox_dict_new(rt, 0) orelse return error.NewFailed;
-    nox_dict_set(rt, d, 0, 0, 1, 42);
+    nox_dict_set(rt, d, 0, 0, 0, 1, 42);
 
     arc.nox_rc_retain(d);
 
     // Birinci release: refcount 2 → 1, dict HÂLÂ canlı/okunabilir olmalı.
-    nox_dict_release(rt, d, 0, 0);
+    nox_dict_release(rt, d, 0, 0, 0);
     try std.testing.expectEqual(@as(i64, 42), nox_dict_get(rt, d, 0, 1));
     try std.testing.expectEqual(@as(i64, 1), nox_dict_len(d));
 
     // İkinci release: refcount 1 → 0, GERÇEKTEN serbest bırakılır.
-    nox_dict_release(rt, d, 0, 0);
+    nox_dict_release(rt, d, 0, 0, 0);
 }
 
 // Faz HH.5 (bkz. nox-teknik-spesifikasyon.md §3.68): `SMALL_MAP_THRESHOLD`
@@ -432,7 +491,7 @@ test "nox_dict — SMALL_MAP_THRESHOLD asilana kadar dogrusal tarama, sonra inde
     var i: usize = 0;
     while (i < SMALL_MAP_THRESHOLD) : (i += 1) {
         const ii: i64 = @intCast(i);
-        nox_dict_set(rt, d, 0, 0, ii, ii * 10);
+        nox_dict_set(rt, d, 0, 0, 0, ii, ii * 10);
     }
     try std.testing.expectEqual(@as(i64, @intCast(SMALL_MAP_THRESHOLD)), nox_dict_len(d));
     try std.testing.expect(!dict_ptr.index_built);
@@ -443,13 +502,13 @@ test "nox_dict — SMALL_MAP_THRESHOLD asilana kadar dogrusal tarama, sonra inde
 
     // Üzerine yazma (HÂLÂ doğrusal modda) — index güncellemesi GEREKMEZ,
     // yalnızca `entries` içindeki slot değişir.
-    nox_dict_set(rt, d, 0, 0, 3, 3000);
+    nox_dict_set(rt, d, 0, 0, 0, 3, 3000);
     try std.testing.expectEqual(@as(i64, 3000), nox_dict_get(rt, d, 0, 3));
     try std.testing.expectEqual(@as(i64, @intCast(SMALL_MAP_THRESHOLD)), nox_dict_len(d));
 
     // Eşiği AŞAN (SMALL_MAP_THRESHOLD + 1. eleman) ekleme — index GERÇEKTEN
     // inşa EDİLMELİ (bkz. `buildIndex`).
-    nox_dict_set(rt, d, 0, 0, 999, 9990);
+    nox_dict_set(rt, d, 0, 0, 0, 999, 9990);
     try std.testing.expect(dict_ptr.index_built);
     try std.testing.expectEqual(@as(i64, @intCast(SMALL_MAP_THRESHOLD + 1)), nox_dict_len(d));
 
@@ -461,11 +520,11 @@ test "nox_dict — SMALL_MAP_THRESHOLD asilana kadar dogrusal tarama, sonra inde
 
     // İndeks modunda ÜZERİNE yazma da (removeContext+putContext yolu) doğru
     // çalışmalı.
-    nox_dict_set(rt, d, 0, 0, 999, 12345);
+    nox_dict_set(rt, d, 0, 0, 0, 999, 12345);
     try std.testing.expectEqual(@as(i64, 12345), nox_dict_get(rt, d, 0, 999));
     try std.testing.expectEqual(@as(i64, @intCast(SMALL_MAP_THRESHOLD + 1)), nox_dict_len(d));
 
-    nox_dict_release(rt, d, 0, 0);
+    nox_dict_release(rt, d, 0, 0, 0);
 }
 
 test "Faz III.6: nox_dict_keys/nox_dict_values int anahtar/deger icin dogru list olusturur (8 baytlik eleman)" {
@@ -473,8 +532,8 @@ test "Faz III.6: nox_dict_keys/nox_dict_values int anahtar/deger icin dogru list
     defer asap.nox_runtime_deinit(rt);
 
     const d = nox_dict_new(rt, 0) orelse return error.NewFailed;
-    nox_dict_set(rt, d, 0, 0, 1, 100);
-    nox_dict_set(rt, d, 0, 0, 2, 200);
+    nox_dict_set(rt, d, 0, 0, 0, 1, 100);
+    nox_dict_set(rt, d, 0, 0, 0, 2, 200);
 
     const keys_list = nox_dict_keys(rt, d, 0, 8) orelse return error.Failed;
     const kbytes: [*]u8 = @ptrCast(keys_list);
@@ -485,14 +544,14 @@ test "Faz III.6: nox_dict_keys/nox_dict_values int anahtar/deger icin dogru list
     _ = arc.nox_rc_predecrement(keys_list);
     arc.nox_rc_free_payload(rt, keys_list, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * 2);
 
-    const values_list = nox_dict_values(rt, d, 0, 8) orelse return error.Failed;
+    const values_list = nox_dict_values(rt, d, 0, 0, 8) orelse return error.Failed;
     const vbytes: [*]u8 = @ptrCast(values_list);
     try std.testing.expectEqual(@as(i64, 100), @as(*align(1) i64, @ptrCast(vbytes + LIST_HEADER_SIZE)).*);
     try std.testing.expectEqual(@as(i64, 200), @as(*align(1) i64, @ptrCast(vbytes + 24)).*);
     _ = arc.nox_rc_predecrement(values_list);
     arc.nox_rc_free_payload(rt, values_list, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * 2);
 
-    nox_dict_release(rt, d, 0, 0);
+    nox_dict_release(rt, d, 0, 0, 0);
 }
 
 test "Faz III.6: nox_dict_values bool degerler icin 4 baytlik eleman round-trip yapar (dogru truncate/extend)" {
@@ -502,10 +561,10 @@ test "Faz III.6: nox_dict_values bool degerler icin 4 baytlik eleman round-trip 
     const d = nox_dict_new(rt, 0) orelse return error.NewFailed;
     // `toPayload`in `w`->`l` `extuw` deseni (bkz. codegen.zig) TAKLİT
     // edilir: bool `true`/`false` ÖNCE 8 bayta sifir-genisletilerek saklanir.
-    nox_dict_set(rt, d, 0, 0, 1, 1); // true
-    nox_dict_set(rt, d, 0, 0, 2, 0); // false
+    nox_dict_set(rt, d, 0, 0, 0, 1, 1); // true
+    nox_dict_set(rt, d, 0, 0, 0, 2, 0); // false
 
-    const values_list = nox_dict_values(rt, d, 0, 4) orelse return error.Failed;
+    const values_list = nox_dict_values(rt, d, 0, 0, 4) orelse return error.Failed;
     const vbytes: [*]u8 = @ptrCast(values_list);
     try std.testing.expectEqual(@as(i64, 2), @as(*align(1) i64, @ptrCast(vbytes)).*);
     try std.testing.expectEqual(@as(i32, 1), @as(*align(1) i32, @ptrCast(vbytes + LIST_HEADER_SIZE)).*);
@@ -513,7 +572,7 @@ test "Faz III.6: nox_dict_values bool degerler icin 4 baytlik eleman round-trip 
     _ = arc.nox_rc_predecrement(values_list);
     arc.nox_rc_free_payload(rt, values_list, LIST_HEADER_SIZE + 4 * 2);
 
-    nox_dict_release(rt, d, 0, 0);
+    nox_dict_release(rt, d, 0, 0, 0);
 }
 
 test "Faz III.6: nox_dict_keys str anahtarlari retain eder — dict VE list bagimsiz serbest birakilabilir" {
@@ -524,7 +583,7 @@ test "Faz III.6: nox_dict_keys str anahtarlari retain eder — dict VE list bagi
     const d = nox_dict_new(rt, 1) orelse return error.NewFailed;
     const k1 = str_lib.nox_str_from_bytes(rt, "anahtar1") orelse return error.ConcatFailed;
     const v1 = str_lib.nox_str_from_bytes(rt, "deger1") orelse return error.ConcatFailed;
-    nox_dict_set(rt, d, 1, 1, @bitCast(@intFromPtr(k1)), @bitCast(@intFromPtr(v1)));
+    nox_dict_set(rt, d, 1, 1, 0, @bitCast(@intFromPtr(k1)), @bitCast(@intFromPtr(v1)));
 
     const keys_list = nox_dict_keys(rt, d, 1, 8) orelse return error.Failed;
     const kbytes: [*]u8 = @ptrCast(keys_list);
@@ -536,7 +595,7 @@ test "Faz III.6: nox_dict_keys str anahtarlari retain eder — dict VE list bagi
     // serbest bırakır) — list'in KENDİ retain'i sayesinde `kptr` HÂLÂ
     // GEÇERLİ olmalı (DebugAllocator, dict'in serbest bıraktığı belleğe
     // list'in HÂLÂ eriştiğini fark ederse çökerdi).
-    nox_dict_release(rt, d, 1, 1);
+    nox_dict_release(rt, d, 1, 1, 0);
     try std.testing.expectEqualStrings("anahtar1", std.mem.sliceTo(kptr, 0));
 
     str_lib.nox_str_release(rt, kptr);
@@ -572,7 +631,7 @@ test "Güvenlik M-3: rastgeleleştirilmiş hash tohumuyla SMALL_MAP_THRESHOLD ü
         const key = std.fmt.allocPrintSentinel(std.testing.allocator, "anahtar{d}", .{i}, 0) catch return error.OutOfMemory;
         defer std.testing.allocator.free(key);
         const key_str = str_mod.nox_str_from_bytes(rt, key) orelse return error.ConcatFailed;
-        nox_dict_set(rt, d, 1, 0, @bitCast(@intFromPtr(key_str)), @intCast(i * 10));
+        nox_dict_set(rt, d, 1, 0, 0, @bitCast(@intFromPtr(key_str)), @intCast(i * 10));
     }
     try std.testing.expect(dict_ptr.index_built);
 
@@ -585,5 +644,5 @@ test "Güvenlik M-3: rastgeleleştirilmiş hash tohumuyla SMALL_MAP_THRESHOLD ü
         try std.testing.expectEqual(@as(i64, @intCast(i * 10)), nox_dict_get(rt, d, 1, @bitCast(@intFromPtr(key_str))));
     }
 
-    nox_dict_release(rt, d, 1, 0);
+    nox_dict_release(rt, d, 1, 0, 0);
 }
