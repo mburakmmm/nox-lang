@@ -49,9 +49,8 @@ extern def nox_pg_changes_raw(res: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_pg_clear_raw(res: ptr) -> None from "zig-out/lib/noxrt.o"
 extern def nox_pg_is_null_ptr(p: ptr) -> int from "zig-out/lib/noxrt.o"
 
-class PostgresError:
-    def __init__(self: PostgresError, message: str) -> None:
-        self.message = message
+class PostgresError(Exception):
+    pass
 
 def _read_rows(res: ptr) -> list[Row]:
     nrows: int = nox_pg_ntuples_raw(res)

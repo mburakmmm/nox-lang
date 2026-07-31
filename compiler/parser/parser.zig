@@ -551,7 +551,21 @@ pub const Parser = struct {
         // `parseFuncDef(name)` yoluna (metodlar) DÜŞÜLÜR. Bildirimler/
         // metodlar HERHANGİ bir SIRADA karışabilir (Python'da OLDUĞU GİBİ).
         while (!self.check(.dedent)) {
-            if (self.check(.identifier) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .colon) {
+            // Faz OO.3 (bkz. nox-teknik-spesifikasyon.md §3.84): `class X(Base):
+            // pass` — Faz 7 tekli kalıtımın "KENDİ __init__i yoksa taban
+            // sınıftan MİRAS alınır" mekanizmasıyla (bkz. `calls.zig`nin
+            // `has_init`/`init_owner`) tamamen BOŞ bir alt sınıf gövdesi ARTIK
+            // ANLAMLI (`Exception` taban sınıfının HERHANGİ bir alan/metod
+            // EKLEMEDEN türetilmesi gibi) — ama `pass` ÖNCEDEN yalnızca
+            // FONKSİYON gövdelerinde (bkz. yukarısı, `parseStmt`) TANINIYORDU,
+            // sınıf gövdesi dispatch'i BUNU `parseFuncDef`e (bir `def`
+            // BEKLEYEN) düşürüp `UnexpectedToken`E ÇÖKÜYORDU (GERÇEK bir
+            // tekrar-üretimle DOĞRULANDI). Ne bir alan NE bir metod ÜRETİR —
+            // sadece TÜKETİLİR.
+            if (self.check(.kw_pass)) {
+                _ = self.advance();
+                _ = try self.expect(.newline);
+            } else if (self.check(.identifier) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .colon) {
                 try fields.append(self.allocator, try self.parseClassFieldDecl());
             } else {
                 try methods.append(self.allocator, try self.parseFuncDef(name));

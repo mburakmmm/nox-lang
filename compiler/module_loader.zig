@@ -506,7 +506,28 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
             // (YANLIŞLIKLA, `T` HÂLÂ çözülmemiş bir alan/metod tipi
             // OLARAK) doğrudan kaydeder, `error.UnknownType: T` İLE
             // SONUÇLANIR (GERÇEK bir hata olarak BULUNDU/doğrulandı).
-            break :blk .{ .class_def = .{ .name = map.get(cd.name).?, .type_params = cd.type_params, .methods = methods, .fields = fields } };
+            //
+            // Faz OO.3 (bkz. nox-teknik-spesifikasyon.md §3.84): `cd.base`
+            // AYNI gerekçeyle BURADA EKSİKTİ — Faz 7 (tekli kalıtım)
+            // `ClassDef`e `base` alanını EKLEDİĞİNDE bu struct literal'ı
+            // GÜNCELLENMEMİŞTİ (`base: ?[]const u8 = null` varsayılanına
+            // SESSİZCE düşüyordu). Stdlib'in `Exception` taban sınıfını
+            // TÜM `*Error` sınıflarına EKLEDİĞİMİZDE (bu sınıfların HEPSİ
+            // qualified/mangled bir stdlib modülünde YAŞAR) İLK KEZ ortaya
+            // ÇIKTI: `class SharedMemError(Exception): pass` `import
+            // nox.sharedmem`DEN SONRA `base = null`a DÜŞÜYORDU — checker
+            // sınıfı TABANSIZ kaydediyor, `init_sig`i HİÇ MİRAS ALMIYORDU
+            // (`SharedMemError("...")` çağrısı "0 argüman bekler" İLE
+            // ÇÖKÜYORDU). GERÇEK bir tekrar-üretimle DOĞRULANDI. `base`
+            // KENDİSİ bir `TypeExpr` DEĞİL, ÇIPLAK bir isim STRING'İDİR —
+            // `renameTypeExpr`nin `.qualified` dalıyla AYNI gerekçeyle
+            // (bkz. onun belge notu) YENİDEN ADLANDIRILMAZ: taban ya BU
+            // MODÜLÜN KENDİ (mangled) bir sınıfıdır (`map.get` İLE
+            // BULUNUR) YA DA `core.nox`nin ÇIPLAK/mangle-EDİLMEYEN bir
+            // sınıfıdır (`Exception` GİBİ, `map`de YOKTUR, OLDUĞU GİBİ
+            // KALIR) — HER İKİ durumda da checker'ın `self.classes.get(
+            // base_name)`i DOĞRU sonucu BULUR.
+            break :blk .{ .class_def = .{ .name = map.get(cd.name).?, .base = if (cd.base) |b| (map.get(b) orelse b) else null, .type_params = cd.type_params, .methods = methods, .fields = fields, .decorators = cd.decorators } };
         },
         .protocol_def => |pd| blk: {
             const methods = try a.alloc(ast.FuncDef, pd.methods.len);

@@ -135,6 +135,24 @@ fn expectUncaughtException(comptime source: []const u8, comptime expected_stdout
     try std.testing.expectEqualStrings(expected_stdout, run_result.stdout);
 }
 
+/// `expectUncaughtException`in AYNISI ama Faz OO.3 (bkz. nox-teknik-
+/// spesifikasyon.md §3.84) İçİn: STDERR'in `nox_unhandled_exception`ın
+/// ARTIK RAPORLADIĞI GERÇEK sınıf adı + `raise` satır numarasını TAM
+/// olarak TAŞIDIĞINI da doğrular (`expectGolden`nin AKSİNE — burada
+/// sıfırdan-farklı çıkış YÜZÜNDEN stderr'in DOLU olması ZATEN BEKLENİR,
+/// bu YÜZDEN "boş stderr = sızıntı" kontrolü UYGULANMAZ).
+fn expectUncaughtExceptionWithStderr(comptime source: []const u8, comptime expected_stdout: []const u8, comptime expected_stderr: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const run_result = try compileAndRun(arena.allocator(), source);
+    if (run_result.term != .exited or run_result.term.exited == 0) {
+        std.debug.print("program beklenenden farklı sonlandı (sıfırdan farklı bir çıkış kodu bekleniyordu)\n", .{});
+        return error.ExpectedNonZeroExit;
+    }
+    try std.testing.expectEqualStrings(expected_stdout, run_result.stdout);
+    try std.testing.expectEqualStrings(expected_stderr, run_result.stderr);
+}
+
 test "codegen(çalıştır): fibonacci (özyineleme + while + print)" {
     try expectGolden(
         @embedFile("codegen_cases/fibonacci.nox"),
@@ -2298,5 +2316,23 @@ test "codegen(çalıştır): TaskLocal[T] — iki fiber arasında GERÇEK per-fi
     try expectGolden(
         @embedFile("codegen_cases/task_local_basic.nox"),
         @embedFile("codegen_cases/task_local_basic.expected"),
+    );
+}
+
+// Faz OO.3 (bkz. nox-teknik-spesifikasyon.md §3.84): nyx'te farkedilen
+// bir Nox eksikliği (zengin exception stack/source span) — `nox_raise`
+// ARTIK `raise` deyiminin satırını taşır, `$nox_class_name_dispatch`
+// (bkz. `layout.zig`nin `genClassNameDispatch`ı) ARTIK yakalanmamış
+// istisnanın GERÇEK ÇALIŞMA-ZAMANI sınıf adını çözer — `nox_unhandled_
+// exception` İKİSİNİ de tek satırlık ANLAMLI bir mesajda RAPORLAR (ÖNCEDEN
+// tamamen sabit/jenerik bir mesajdı, ne tip ne satır bilgisi TAŞIRDI).
+// Ayrıca `Exception` taban sınıfının (core.nox) VE `class X(Exception):
+// pass` sözdiziminin (bkz. `parser.zig`nin sınıf gövdesindeki YENİ `pass`
+// desteği) ÇALIŞTIĞINI da dolaylı olarak DOĞRULAR.
+test "codegen(çalıştır): Faz OO.3 — yakalanmamış istisna GERÇEK sınıf adını ve satır numarasını raporlar" {
+    try expectUncaughtExceptionWithStderr(
+        @embedFile("codegen_cases/exception_line_and_name.nox"),
+        @embedFile("codegen_cases/exception_line_and_name.expected"),
+        "nox: yakalanmamış istisna: ShoppingCartError (satır 6) — program sonlandırılıyor\n",
     );
 }

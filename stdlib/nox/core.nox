@@ -4,13 +4,24 @@
 # ÇIPLAK kullanılır) — `print`/`len` gibi modül gerektirmeyen çekirdek dil
 # yerleşikleriyle AYNI "her yerde hazır" statüsü.
 
-class ValueError:
-    def __init__(self: ValueError, message: str) -> None:
+# Faz OO.3 (bkz. nox-teknik-spesifikasyon.md §3.84): TÜM `raise`
+# edilebilir sınıfların ORTAK taban sınıfı — `except Exception:` İLE
+# programdaki HERHANGİ bir istisnayı (hangi modülden gelirse gelsin)
+# tek bir kolla yakalamak İçİN (Faz 7 tekli kalıtım + hiyerarşik
+# `except` mekanizması, `isSubclassOf`, ZATEN bunu DESTEKLİYOR — burada
+# YENİ bir dil özelliği GEREKMEZ, SADECE stdlib'in TÜM `*Error`
+# sınıflarının BU taban sınıftan türemesi GEREKİR). Alt sınıflar KENDİ
+# `__init__`ini TANIMLAMAZ (bkz. `calls.zig`nin `has_init`/`init_owner`
+# belge notu) — inşa çağrısı OTOMATİK OLARAK BU `__init__`e dağıtılır.
+class Exception:
+    def __init__(self: Exception, message: str) -> None:
         self.message = message
 
-class IndexError:
-    def __init__(self: IndexError, message: str) -> None:
-        self.message = message
+class ValueError(Exception):
+    pass
+
+class IndexError(Exception):
+    pass
 
 # Güvenlik bulgusu H-2 (bkz. güvenlik raporu) — `d[key]`nin eksik bir
 # anahtarda SESSİZCE `0`/null DÖNDÜRDÜĞÜ (Python'un `KeyError`ı YOK
@@ -19,9 +30,8 @@ class IndexError:
 # taşınıyordu, `len()`/indeksleme gibi HERHANGİ bir sonraki kullanım
 # çöküyordu. `IndexError` İLE AYNI desen İZLENİR — `genDictGet` artık
 # `contains` KONTROLÜNDEN SONRA raise eder (bkz. onun belge notu).
-class KeyError:
-    def __init__(self: KeyError, message: str) -> None:
-        self.message = message
+class KeyError(Exception):
+    pass
 
 # Stdlib fazı §L (`nox.json`, bkz. nox-teknik-spesifikasyon.md) — `JsonValue`
 # ve onun fabrika fonksiyonu BİLİNÇLİ OLARAK burada, `stdlib/nox/json.nox`

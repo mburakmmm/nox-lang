@@ -68,6 +68,12 @@ pub const PoolNode = struct { next: ?*PoolNode };
 pub const RuntimeState = struct {
     debug_gpa: if (use_debug_allocator) std.heap.DebugAllocator(.{}) else void,
     pending_exception: ?*anyopaque = null,
+    /// Faz OO.3 (bkz. nox-teknik-spesifikasyon.md §3.84, "zengin exception
+    /// stack/source span"): `nox_raise`in ARTIK ikinci bir argümanla
+    /// aldığı, `raise`/örtük-raise (IndexError/KeyError/ValueError) SATIR
+    /// numarası — `nox_unhandled_exception`ın yakalanmamış bir istisnayı
+    /// TİP ADI + SATIR + MESAJLA raporlayabilmesi İçİn.
+    pending_exception_line: i64 = 0,
     pool_free_lists: [POOL_NUM_CLASSES]?*PoolNode = @splat(null),
     /// Dil stabilizasyonu fazı §M.7: `lowlevel` arena TUTAMAÇLARININ (bkz.
     /// `runtime/alloc/lowlevel.zig`, `ArenaHandle`) LIFO serbest liste BAŞI

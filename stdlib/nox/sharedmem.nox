@@ -25,9 +25,8 @@ extern def nox_shm_write_i64_raw(handle: ptr, offset: int, value: int) -> None f
 extern def nox_shm_close_raw(handle: ptr) -> None from "zig-out/lib/noxrt.o"
 extern def nox_shm_unlink_raw(name: str) -> None from "zig-out/lib/noxrt.o"
 
-class SharedMemError:
-    def __init__(self: SharedMemError, message: str) -> None:
-        self.message = message
+class SharedMemError(Exception):
+    pass
 
 class SharedBuffer:
     def __init__(self: SharedBuffer, handle: ptr, name: str, size: int) -> None:

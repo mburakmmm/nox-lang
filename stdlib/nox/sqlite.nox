@@ -51,9 +51,8 @@ extern def nox_sqlite_is_null_ptr(p: ptr) -> int from "zig-out/lib/noxrt.o"
 # SQLITE_ROW=100, SQLITE_DONE=101, SQLITE_NULL=5 (sqlite3.h'de sabit,
 # istikrarlı bir C ABI sözleşmesinin parçası).
 
-class SqliteError:
-    def __init__(self: SqliteError, message: str) -> None:
-        self.message = message
+class SqliteError(Exception):
+    pass
 
 # `stmt`in TEK bir satırını (o an `sqlite3_step` ROW döndürdüğünde, stmt
 # HÂLÂ geçerliyken) eager olarak bir `Row`a okur — hem `Connection.query`

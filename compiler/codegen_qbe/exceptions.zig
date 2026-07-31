@@ -23,7 +23,7 @@ const isHeapManaged = abi.isHeapManaged;
 pub fn genRaise(self: *Codegen, expr: ast.Expr) CodegenError!void {
     const obj = try self.genExpr(expr);
     if (obj.heap != .class) return error.Unsupported;
-    try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, obj.text });
+    try self.out.writer.print("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, obj.text, self.current_raise_line });
     try self.emitExceptionCheck();
 }
 
@@ -208,7 +208,7 @@ pub fn genTry(self: *Codegen, t: ast.TryStmt, ret_qtype: QbeType) CodegenError!v
     // değil — `current_catch_label` yukarıda eski değerine geri alındı).
     try self.out.writer.print("{s}\n", .{next_check});
     if (t.finally_body) |fb| try self.genStmts(fb, ret_qtype);
-    try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, exc_ptr });
+    try self.out.writer.print("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, exc_ptr, self.current_raise_line });
     try self.emitExceptionCheck();
     try self.out.writer.print("    jmp {s}\n", .{after_label});
 

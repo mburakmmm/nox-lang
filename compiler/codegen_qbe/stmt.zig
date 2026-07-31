@@ -38,6 +38,9 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
         if (self.debug_info and stmt.line > 0) {
             try self.out.writer.print("    dbgloc {d}\n", .{stmt.line});
         }
+        // Faz OO.3: bkz. `current_raise_line`in belge notu — `dbgloc`den
+        // BAĞIMSIZ, HER ZAMAN AÇIK.
+        self.current_raise_line = stmt.line;
         switch (stmt.kind) {
             .return_stmt => |r| {
                 // Faz GG.2 (bkz. nox-teknik-spesifikasyon.md §3.67): bir
@@ -324,7 +327,7 @@ pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     const msg_value = try self.emitStringLiteral("liste indeksi sinirlarin disinda");
     const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
     const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
-    try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ie_obj.text });
+    try self.out.writer.print("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ie_obj.text, self.current_raise_line });
     // Bkz. `genIndex`in AYNI belge notu — Faz NN kök-neden düzeltmesinden
     // (bkz. `ownership.zig`nin `releaseNamedLocalsExcept`i) SONRA GÜVENLE
     // yeniden eklendi, döngü testiyle DOĞRULANDI.
@@ -436,7 +439,7 @@ pub fn genDictGet(self: *Codegen, obj_expr: ast.Expr, obj: Value, key_expr: ast.
     const msg_value = try self.emitStringLiteral("anahtar bulunamadi");
     const ke_cinfo = self.classes.get("KeyError") orelse return error.Unsupported;
     const ke_obj = try self.genConstructFromValues("KeyError", ke_cinfo, &.{msg_value}, null);
-    try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ke_obj.text });
+    try self.out.writer.print("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ke_obj.text, self.current_raise_line });
     // Faz NN: `genIndex`/`genListAssign`in AYNI belge notu — kök-neden
     // düzeltmesinden (bkz. `ownership.zig`) SONRA GÜVENLE eklendi. `obj`
     // (taban SÖZLÜK) İçin de aynı serbest bırakma GEREKİYORDU — bu dal

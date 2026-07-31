@@ -25,6 +25,7 @@ const CodegenError = abi.CodegenError;
 const qbeTypeName = abi.qbeTypeName;
 const qbeSizeOf = abi.qbeSizeOf;
 const isHeapManaged = abi.isHeapManaged;
+const escapeForQbeString = abi.escapeForQbeString;
 
 /// Faz 7 (tekli kalıtım): `cinfo.has_vtable` İSE bu SOMUT sınıfın vtable
 /// veri bloğunu YAYINLAR — `data $ClassName_vtable = { l $Owner1_M1, l
@@ -310,6 +311,52 @@ pub fn genClassReleaseDispatch(self: *Codegen, classes: []const ClassIdEntry) Co
         try self.out.writer.print("{s}\n", .{next_label});
     }
     try self.out.writer.writeAll("    ret\n}\n");
+}
+
+/// Faz OO.3 (bkz. nox-teknik-spesifikasyon.md §3.84): `genClassRelease
+/// Dispatch` İLE AYNI if-zinciri kalıbı, ama `$ClassName_release`e
+/// DAĞITMAK YERİNE sınıfın KENDİ ADINI döndüren `$nox_class_name_
+/// dispatch(rt, tag, p) -> l`. **Tek gerçek kullanım yeri:**
+/// `runtime/errors/handle.zig`nin `nox_unhandled_exception`ı — yakalan-
+/// mamış bir istisnanın ÇALIŞMA-ZAMANI sınıfı DERLEME ZAMANINDA
+/// BİLİNMEZ (`genClassReleaseDispatch`İN AYNI gerekçesi), bu YÜZDEN
+/// tip adı da TAG'e göre ÇALIŞMA ZAMANINDA aranmalıdır. Dönen değer
+/// BİLİNÇLİ OLARAK ARC-başlıksız, düz (NUL-sonlandırılmış) bir C dizesi
+/// SEMBOLÜdür — `internPinnedStringConst`in ürettiği pinned-refcount'lu
+/// Nox `str` biçimi DEĞİL, çünkü TEK tüketicisi (`nox_unhandled_
+/// exception`) SAF Zig kodudur ve Nox `str`in ARC/uzunluk başlığı
+/// biçimini (`STR_HEADER_SIZE`) BİLMEK ZORUNDA KALMAMALIDIR. Eşleşen
+/// bir dal BULUNAMAZSA (savunmacı) `$__nox_classname_unknown`e döner.
+pub fn genClassNameDispatch(self: *Codegen, classes: []const ClassIdEntry) CodegenError!void {
+    self.temp_counter = 0;
+    self.label_counter = 0;
+    self.mod_cache.deinit(self.allocator);
+    self.mod_cache = .empty;
+
+    const unknown_escaped = try escapeForQbeString(self.allocator, "bilinmeyen sinif");
+    try self.out.writer.print("data $__nox_classname_unknown = {{ b \"{s}\", b 0 }}\n", .{unknown_escaped});
+
+    var name_syms: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer name_syms.deinit(self.allocator);
+    for (classes) |c| {
+        const sym = try std.fmt.allocPrint(self.allocator, "$__nox_classname_{s}", .{c.name});
+        const escaped = try escapeForQbeString(self.allocator, c.name);
+        try self.out.writer.print("data {s} = {{ b \"{s}\", b 0 }}\n", .{ sym, escaped });
+        try name_syms.append(self.allocator, sym);
+    }
+
+    try self.out.writer.print("export function l $nox_class_name_dispatch(l {s}, l %tag, l %p) {{\n@start\n", .{RT_PARAM});
+    for (classes, name_syms.items) |c, sym| {
+        const eq = try self.newTemp();
+        try self.out.writer.print("    {s} =w ceql %tag, {d}\n", .{ eq, c.id });
+        const case_label = try self.newLabel("class_name_case");
+        const next_label = try self.newLabel("class_name_next");
+        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ eq, case_label, next_label });
+        try self.out.writer.print("{s}\n", .{case_label});
+        try self.out.writer.print("    ret {s}\n", .{sym});
+        try self.out.writer.print("{s}\n", .{next_label});
+    }
+    try self.out.writer.print("    ret $__nox_classname_unknown\n}}\n", .{});
 }
 
 /// `genTraceDispatch` İLE AYNI desen, `$ClassName_gc_free`ye dağıtan

@@ -432,7 +432,7 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
         const msg_value = try self.emitStringLiteral("liste indeksi sinirlarin disinda");
         const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
         const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
-        try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ie_obj.text });
+        try self.out.writer.print("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ie_obj.text, self.current_raise_line });
         // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı): bu dal
         // KOŞULSUZ raise edip ATLADIĞINDAN, `obj` (taban liste) TEMPORARY
         // İSE normal yoldaki serbest bırakma BURAYA HİÇ ULAŞMAZ (GERÇEK
@@ -524,7 +524,7 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
         const msg_value = try self.emitStringLiteral("str indeksi sinirlarin disinda");
         const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
         const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
-        try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ie_obj.text });
+        try self.out.writer.print("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ie_obj.text, self.current_raise_line });
         // Bkz. `genIndex`in AYNI belge notu — Faz NN kök-neden düzeltmesinden
         // (bkz. `ownership.zig`nin `releaseNamedLocalsExcept`i) SONRA GÜVENLE
         // yeniden eklendi, döngü testiyle DOĞRULANDI.

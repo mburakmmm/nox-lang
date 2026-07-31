@@ -14,6 +14,34 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.25.0]
+
+### Eklendi
+- **Yakalanmamış istisna raporlaması: sınıf adı + satır numarası**: nyx'te
+  farkedilen bir Nox eksikliği — `raise` edilen bir istisna HİÇBİR konum
+  (satır) veya tip adı bilgisi TAŞIMIYORDU, yakalanmamış bir istisna
+  `nox_unhandled_exception`ın SABİT, jenerik tek satırlık mesajıyla
+  SONLANIYORDU. Artık `nox_raise` `raise` deyiminin KAYNAK satırını da
+  taşır; yeni `$nox_class_name_dispatch` (derleyicinin ÜRETTİĞİ, `$nox_
+  class_release_dispatch`in AYNI tag-tabanlı if-zinciri kalıbı) istisnanın
+  GERÇEK çalışma-zamanı sınıf adını çözer. Örnek: `nox: yakalanmamış
+  istisna: ShoppingCartError (satır 6) — program sonlandırılıyor`.
+- **`Exception` taban sınıfı**: `stdlib/nox/core.nox`'a TÜM `raise`
+  edilebilir sınıfların ORTAK atası olarak eklendi; stdlib'in TÜM 18
+  `*Error` sınıfı (`ValueError`/`IndexError`/`KeyError`/`HttpError`/
+  `JsonError`/`FsError`/`OsError`/`PathError`/`ProcessError`/
+  `SharedMemError`/`PostgresError`/`MysqlError`/`SqliteError`/
+  `AssertionError`/`TlsError`/`TemplateError`/`WebSocketError`/
+  `UrlError`) ARTIK `Exception`den TÜRER — `except Exception:` İLE
+  programdaki HANGİ modülden gelirse gelsin HERHANGİ bir istisnayı TEK
+  bir kolla yakalamak MÜMKÜN (Faz 7 tekli kalıtım + hiyerarşik `except`
+  mekanizması ZATEN bunu destekliyordu, YENİ bir dil özelliği GEREKMEDİ).
+- **Parser: sınıf gövdesinde `pass`**: `class X(Base): pass` (HİÇBİR
+  KENDİ alan/metod EKLEMEYEN bir alt sınıf — `Exception` migrasyonunun
+  KENDİSİ bunu GEREKTİRDİ) ÖNCEDEN `UnexpectedToken` İLE ÇÖKÜYORDU (sınıf
+  gövdesi dispatch'i `pass`i SADECE fonksiyon gövdelerinde tanıyordu) —
+  GERÇEK bir dil boşluğuydu, düzeltildi.
+
 ## [1.24.0]
 
 ### Eklendi

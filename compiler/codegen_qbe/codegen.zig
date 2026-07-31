@@ -303,6 +303,7 @@ pub const Codegen = struct {
     pub const genClassTrace = layout.genClassTrace;
     pub const genClassGcFree = layout.genClassGcFree;
     pub const genClassReleaseDispatch = layout.genClassReleaseDispatch;
+    pub const genClassNameDispatch = layout.genClassNameDispatch;
     pub const genTraceDispatch = layout.genTraceDispatch;
     pub const genNoxInitGlobals = globals_mod.genNoxInitGlobals;
     pub const genNoxDeinitGlobals = globals_mod.genNoxDeinitGlobals;
@@ -482,6 +483,17 @@ pub const Codegen = struct {
     /// not) yayınlar. `false` İKEN sıfır ek maliyet/çıktı (v1'de OPT-IN,
     /// `-g` bayrağı OLMADAN varsayılan çıktı DEĞİŞMEZ).
     debug_info: bool = false,
+    /// Faz OO.3 (bkz. nox-teknik-spesifikasyon.md §3.84): `genStmts`nin
+    /// TEK dağıtım noktasında HER deyimden ÖNCE `stmt.line`a güncellenir
+    /// (`debug_info`nin AKSİNE HER ZAMAN AÇIK — `dbgloc` yalnızca debug-
+    /// build tanılaması İçİnken, BU `call $nox_raise(...)`in İKİNCİ
+    /// argümanı İçİn KOŞULSUZ gereklidir). Derinlemesine iç içe ifade
+    /// codegen'i (`genParseOrRaise`/`genIndex`/`genStrIndex`/`genRaise`
+    /// GİBİ, KENDİ `line` parametresi TAŞIMAYAN yardımcılar) BUNU okuyarak
+    /// hangi KAYNAK satırında olduklarını bilir — HER çağrı zincirine AYRI
+    /// bir `line` parametresi EKLEMEK YERİNE (invaziv bir imza değişikliği)
+    /// `dbgloc`in AYNI "TEK dağıtım noktasında GÜNCELLE" deseni.
+    current_raise_line: i64 = 0,
     functions: std.StringHashMapUnmanaged(FuncSig) = .empty,
     /// Faz HH.4 (bkz. nox-teknik-spesifikasyon.md §3.68): `functions`
     /// (İMZA-YALNIZCA) İLE AYNI anda, AYNI isimlerle doldurulur — ama TAM
@@ -1010,6 +1022,7 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
         try gen.genTraceDispatch(class_ids.items);
         try gen.genGcFreeDispatch(class_ids.items);
         try gen.genClassReleaseDispatch(class_ids.items);
+        try gen.genClassNameDispatch(class_ids.items);
     }
     // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
     // `$nox_init_globals`/`$nox_deinit_globals`, SADECE modül GERÇEKTEN

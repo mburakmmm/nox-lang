@@ -13982,6 +13982,82 @@ GERÇEK bir eşzamanlı-çakışma senaryosu OLUŞTURUR); `clear()`in `get()`i
 doğrular. `zig build test` HEM Debug HEM `ReleaseFast` modlarında
 YEŞİL.
 
+## 3.84 Yakalanmamış istisna raporlaması: satır numarası + tip adı + `Exception` taban sınıfı
+
+Kullanıcının `nyx` framework'ünde farkedilen bir Nox eksikliği: `raise`
+edilen bir istisna HİÇBİR konum (satır) veya tip adı bilgisi TAŞIMIYORDU
+— yakalanmamış bir istisna `nox_unhandled_exception`ın SABİT, jenerik
+tek satırlık mesajıyla ("nox: yakalanmamış istisna — program
+sonlandırılıyor") SONLANIYORDU, ne HANGİ sınıfın ne HANGİ satırdan
+`raise` edildiği BİLİNMİYORDU.
+
+**Satır numarası — `nox_raise`nin üçüncü argümanı:** `RuntimeState`e
+`pending_exception_line: i64` eklendi; `nox_raise(rt, obj, line)` artık
+BUNU da SAKLAR. `line`, `raise` deyiminin (ya da örtük `IndexError`/
+`KeyError`/`ValueError`ın) KAYNAK satırıdır — `Codegen.current_raise_
+line`, `genStmts`in TEK dispatch noktasında (`stmt.zig`) HER deyimden
+ÖNCE `stmt.line`e GÜNCELLENİR (mevcut, debug-build'e ÖZGÜ `dbgloc`
+emisyonunun AYNI yerinde ama KOŞULSUZ) — 8 AYRI `call $nox_raise(...)`
+sitesi (`calls.zig`×2, `exceptions.zig`×2, `expr.zig`×2, `stmt.zig`×2)
+BUNU üçüncü argüman olarak GEÇİRİR. **Bilinçli kapsam DIŞI:** TAM çoklu-
+çerçeve çağrı yığını/unwind — QBE HİÇBİR unwind tablosu ÜRETMEZ, bu
+YÜZDEN sadece TEK bir satır (raise NOKTASI) izlenir.
+
+**Tip adı — `$nox_class_name_dispatch`:** `layout.zig`nin YENİ
+`genClassNameDispatch`ı, `genClassReleaseDispatch`in (bkz. §3.7) AYNI
+if-zinciri kalıbıyla — ama `$ClassName_release`e DAĞITMAK YERİNE, HER
+sınıf İçin ham (ARC-başlıksız, NUL-sonlandırılmış C dizesi) bir `data
+$__nox_classname_<isim>` sabiti ÜRETİP tag'e göre O sabite dallanan
+`$nox_class_name_dispatch(rt, tag, p) -> l` üretir. Eşleşen bir dal
+BULUNAMAZSA (savunmacı) `$__nox_classname_unknown`e döner. **Dönen
+değer NEDEN bir Nox `str` DEĞİL:** TEK tüketicisi (`nox_unhandled_
+exception`) SAF Zig kodudur — Nox `str`in ARC/uzunluk başlığı biçimini
+(`STR_HEADER_SIZE`) BİLMEK ZORUNDA KALMAMASI İçin ham bir C dizesi
+YETERLİDİR.
+
+**`nox_unhandled_exception`nin YENİDEN yazımı:** `runtime/errors/
+handle.zig`, `runtime/alloc/cycle_detector.zig`nin `resolveTraceDispatch`
+İYLE BİREBİR AYNI `dlsym`/`GetProcAddress` gerekçesiyle (`$nox_class_
+name_dispatch` yalnızca EN AZ BİR sınıf İÇEREN bir programda üretilir,
+sabit bir `extern fn` sınıfSIZ bir programda/`noxrt_test`te bağlama
+adımını ÇÖKERTİRDİ) sembolü ÇALIŞMA ZAMANINDA çözer, `pending_exception`
+İŞARETÇİSİNİN İLK `TAG_SIZE` baytından (`genClassReleaseDispatch`in AYNI
+tag konvansiyonu) tip adını ALIR, `pending_exception_line`i OKUR, İKİSİNİ
+"nox: yakalanmamış istisna: {tip} (satır {n}) — program sonlandırılıyor"
+biçiminde TEK satırda RAPORLAR.
+
+**`Exception` taban sınıfı:** `stdlib/nox/core.nox`a TÜM `raise`
+edilebilir sınıfların ORTAK atası olarak eklendi (`message: str` alanlı
+TEK bir `__init__`). Stdlib'in TÜM 18 `*Error` sınıfı (`ValueError`/
+`IndexError`/`KeyError`/`HttpError`/`JsonError`/`FsError`/`OsError`/
+`PathError`/`ProcessError`/`SharedMemError`/`PostgresError`/
+`MysqlError`/`SqliteError`/`AssertionError`/`TlsError`/`TemplateError`/
+`WebSocketError`/`UrlError`) BİREBİR AYNI gövdeye (`message: str` alan+
+`__init__`) sahipti — HEPSİ `class X(Exception): pass` OLARAK
+sadeleştirildi. Alt sınıflar KENDİ `__init__`ini TANIMLAMAZ; `calls.zig`
+nin `has_init == false` / `cinfo.init_owner` mekanizması (Faz 7 tekli
+kalıtım, bkz. §3.73 — ÖNCEDEN BİLE VAR OLAN bir yetenek) inşa çağrısını
+OTOMATİK OLARAK `Exception___init__`e dağıtır. SONUÇ: `except
+Exception:` İLE programdaki HANGİ modülden gelirse gelsin HERHANGİ bir
+istisnayı TEK bir kolla yakalamak MÜMKÜN — YENİ bir dil özelliği
+GEREKMEDİ, SADECE stdlib'in KENDİ hiyerarşisi.
+
+**Yan bulgu — parser'da GERÇEK bir boşluk:** `class X(Base): pass` (yani
+tamamen BOŞ bir alt sınıf gövdesi) `UnexpectedToken` İLE ÇÖKÜYORDU —
+`parseClassDef`nin gövde-dispatch döngüsü (bkz. §3.64) SADECE bir alan
+bildirimini (`identifier` + `:`) YA DA bir metodu (`parseFuncDef`,
+`def` BEKLER) TANIYORDU; `pass` ÖNCEDEN yalnızca FONKSİYON gövdelerinde
+(`parseStmt`) tanınıyordu. GERÇEK bir tekrar-üretimle DOĞRULANDI, `pass`
+sınıf gövdesi dispatch'ine de EKLENEREK düzeltildi (ne alan NE metod
+ÜRETİR — sadece TÜKETİLİR).
+
+**Doğrulama:** `tests/golden/codegen_cases/exception_line_and_name.nox`
+— `except Exception:` OLMADAN yakalanmamış bırakılan bir
+`ShoppingCartError(Exception)`nin stderr'e TAM OLARAK GERÇEK sınıf adını
+VE `raise` satırını YAZDIĞINI (`expectUncaughtExceptionWithStderr`,
+sıfırdan-farklı çıkış kodu + stdout + stderr'in TAMAMI doğrulanır)
+kanıtlar. `zig build test` HEM Debug HEM `ReleaseFast` modlarında YEŞİL.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

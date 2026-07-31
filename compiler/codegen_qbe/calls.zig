@@ -488,7 +488,7 @@ pub fn genParseOrRaise(self: *Codegen, v: Value, valid_fn: []const u8, convert_f
     const msg_value = try self.emitStringLiteral(message);
     const ve_cinfo = self.classes.get("ValueError") orelse return error.Unsupported;
     const ve_obj = try self.genConstructFromValues("ValueError", ve_cinfo, &.{msg_value}, null);
-    try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ve_obj.text });
+    try self.out.writer.print("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ve_obj.text, self.current_raise_line });
     try self.emitExceptionCheck();
     try self.out.writer.print("    jmp {s}\n", .{ok_label});
 
@@ -1201,7 +1201,7 @@ pub fn genListPop(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Val
     const msg_value = try self.emitStringLiteral("bos liste (list) pop edilemez");
     const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
     const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
-    try self.out.writer.print("    call $nox_raise(l {s}, l {s})\n", .{ RT_PARAM, ie_obj.text });
+    try self.out.writer.print("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ie_obj.text, self.current_raise_line });
     // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı — AYNI
     // sınıf hata, `genMethodCall`in belge notundaki GİBİ): bu dal
     // KOŞULSUZ raise edip aşağı ATLAR — `obj` (alıcı) TEMPORARY İSE
