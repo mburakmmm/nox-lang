@@ -317,7 +317,7 @@ pub fn genClosureRelease(self: *Codegen, mangled_name: []const u8, captures: []c
             const fv = try self.newTemp();
             try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
             try self.releaseValueIfSet(fv, c.info.heap, c.info.elem_qtype, c.info.class_name, c.info.elem_heap_info, c.info.dict_info);
-        } else if (c.info.heap == .task or c.info.heap == .channel or c.info.heap == .thread_handle or c.info.heap == .thread_channel) {
+        } else if (c.info.heap == .task or c.info.heap == .channel or c.info.heap == .thread_handle or c.info.heap == .thread_channel or c.info.heap == .task_local) {
             const addr = try self.newTemp();
             try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, offset });
             const fv = try self.newTemp();

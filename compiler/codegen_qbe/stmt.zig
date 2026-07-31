@@ -188,7 +188,7 @@ pub fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {
                 // serbest bırakmaya çalışır.
                 if (isHeapManaged(info.heap) and !info.is_param and !info.arena) {
                     try self.releaseSlotIfSet(info);
-                } else if ((info.heap == .task or info.heap == .channel or info.heap == .thread_handle or info.heap == .thread_channel) and !info.is_param and !info.arena) {
+                } else if ((info.heap == .task or info.heap == .channel or info.heap == .thread_handle or info.heap == .thread_channel or info.heap == .task_local) and !info.is_param and !info.arena) {
                     // Faz S.1: `Task[T]`/`Channel[T]`/`ThreadHandle[T]`/
                     // `ThreadChannel[T]` yeniden atamada ESKİ değer artık
                     // sızmaz — `destroyNonArcSlotIfSet`
@@ -255,7 +255,7 @@ pub fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {
                     try self.out.writer.print("    {s} =l loadl {s}\n", .{ old_ptr, addr });
                     try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(f.info.qtype), val.text, addr });
                     try self.releaseValueIfSet(old_ptr, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info, f.info.dict_info);
-                } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .thread_handle or f.info.heap == .thread_channel) {
+                } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .thread_handle or f.info.heap == .thread_channel or f.info.heap == .task_local) {
                     // Faz S.1: `isHeapManaged`in DIŞINDaki DÖRT tür İÇİN de
                     // (yukarıdaki dalla AYNI "önce oku, SONRA üzerine yaz,
                     // SONRA eskiyi yok et" sırası) — bkz. `destroyNonArcValue`.

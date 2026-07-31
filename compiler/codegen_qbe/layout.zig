@@ -124,7 +124,7 @@ pub fn genClassRelease(self: *Codegen, class_name: []const u8, cinfo: ClassInfo)
             const fv = try self.newTemp();
             try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
             try self.releaseValueIfSet(fv, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info, f.info.dict_info);
-        } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .thread_handle or f.info.heap == .thread_channel) {
+        } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .thread_handle or f.info.heap == .thread_channel or f.info.heap == .task_local) {
             // `Task[T]`/`Channel[T]`/`ThreadHandle[T]`/`ThreadChannel[T]`
             // sınıf alanı — ARC-yönetimli DEĞİLDİR (`isHeapManaged` bunu
             // KAPSAMAZ, `dict[K,V]`in AKSİNE — bkz. Faz FF.3), bu yüzden
@@ -226,7 +226,7 @@ pub fn genClassGcFree(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) 
             const fv = try self.newTemp();
             try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
             try self.releaseValueIfSet(fv, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info, f.info.dict_info);
-        } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .thread_handle or f.info.heap == .thread_channel) {
+        } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .thread_handle or f.info.heap == .thread_channel or f.info.heap == .task_local) {
             const addr = try self.newTemp();
             try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, f.offset });
             const fv = try self.newTemp();
@@ -496,7 +496,7 @@ pub fn genEqCompareOrJump(
         // karşılaştırmasına düşülür (DEĞER eşitliği DEĞİL) — İKİ AYRI
         // kutunun AYNI değeri TAŞISA BİLE eşit SAYILMAYACAĞI, bilinçli
         // bir v1 sınırlamasıdır.
-        .dict, .task, .channel, .closure, .thread_handle, .thread_channel, .boxed_scalar => blk: {
+        .dict, .task, .channel, .closure, .thread_handle, .thread_channel, .boxed_scalar, .task_local => blk: {
             const t = try self.newTemp();
             try self.out.writer.print("    {s} =w ceql {s}, {s}\n", .{ t, va, vb });
             break :blk t;
@@ -543,6 +543,7 @@ pub fn eqMangleFor(self: *Codegen, elem_qtype: QbeType, elem_heap_info: ?*const 
             .thread_handle => "thread_handle",
             .thread_channel => "thread_channel",
             .boxed_scalar => "boxed_scalar",
+            .task_local => "task_local",
             .none => unreachable,
         };
     }

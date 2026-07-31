@@ -531,6 +531,62 @@ pub fn genChannelOp(self: *Codegen, a: ast.Attribute, args: []const ast.Expr, ch
     return error.Unsupported;
 }
 
+/// `tl.get()`/`tl.set(v)`/`tl.clear()` — Faz OO.2 (bkz. nox-teknik-
+/// spesifikasyon.md §3.83): `genChannelOp`in AYNI "opak payload taşı,
+/// TÜM tip-farkındalığı BURADA kal" felsefesi, AMA `Channel`in AKSİNE
+/// `await` GEREKTİRMEZ — `calls.zig`nin `genMethodCall`ı `tl_val`i
+/// (obj.heap == .task_local İSE) NORMAL metod-çağrısı yolunda BURAYA
+/// dispatch eder (`genAwaitExpr` YOLUNDAN GEÇMEZ). Checker `T`nin HEP
+/// HEAP-yönetimli (sınıf/str/list/dict) OLMASINI ZORUNLU KILAR (bkz.
+/// `checkGenericConstruct`in `TaskLocal` dalı) — bu SAYEDE `None`
+/// (boş yuva) HER ZAMAN `0` işaretçisiyle temsil edilir, çıplak bir
+/// ilkelin (`int`/`float`/`bool`) "0 mı YOKSA ayarlanmamış mı" belirsizliği
+/// (Optional-ilkel'in `boxed_scalar` KUTULAMASI GEREKTİRDİĞİ SORUN)
+/// HİÇ ORTAYA ÇIKMAZ.
+pub fn genTaskLocalOp(self: *Codegen, tl_val: Value, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
+    const elem_heap: types.HeapKind = if (tl_val.elem_heap_info) |ehi| ehi.heap else if (tl_val.elem_is_str) .str else .none;
+    const elem_class_name: ?[]const u8 = if (tl_val.elem_heap_info) |ehi| ehi.class_name else null;
+    const elem_nested: ?*const ElemHeapInfo = if (tl_val.elem_heap_info) |ehi| ehi.nested else null;
+    if (std.mem.eql(u8, a.attr, "get")) {
+        if (args.len != 0) return error.Unsupported;
+        const payload_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_tasklocal_get(l {s}, l {s})\n", .{ payload_t, RT_PARAM, tl_val.text });
+        // `nox_tasklocal_get` ÖDÜNÇ bir referans döner (fiber'ın KENDİ
+        // haritası kendi referansını KORUR) — `.call` sonucu HER YERDE
+        // "taze/sahipli" SAYILDIĞINDAN (bkz. `isTemporaryExpr`), bunu
+        // GERÇEKTEN TUTARLI kılmak İçİn burada (NULL DEĞİLSE) retain
+        // edilir — `genDictGet`in AYNI "ödünç okuma → çağrı SİTESİNDE
+        // retain" ilkesi, `Channel.recv`den (kuyruktan çıkan değerin
+        // sahipliği ZATEN tamamen devredildiğinden retain GEREKMEZ)
+        // BİLİNÇLİ OLARAK FARKLI.
+        try self.emitInlineRetain(payload_t, elem_heap);
+        try self.releaseIfTemporary(a.obj.*, tl_val);
+        return valueFromElemDescriptor(payload_t, tl_val.elem_qtype, tl_val.elem_heap_info, tl_val.elem_is_str);
+    }
+    if (std.mem.eql(u8, a.attr, "set")) {
+        if (args.len != 1) return error.Unsupported;
+        const v0 = try self.genExpr(args[0]);
+        try self.checkNoLowlevelEscape(v0);
+        const retained = try self.retainIfAliasing(args[0], v0);
+        const converted = try self.convert(retained, tl_val.elem_qtype);
+        const payload = try self.toPayload(converted);
+        const old_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_tasklocal_set(l {s}, l {s}, l {s})\n", .{ old_t, RT_PARAM, tl_val.text, payload.text });
+        try self.releaseValueIfSet(old_t, elem_heap, tl_val.elem_qtype, elem_class_name, elem_nested, null);
+        try self.releaseIfTemporary(a.obj.*, tl_val);
+        return .{ .text = "0", .qtype = .none };
+    }
+    if (std.mem.eql(u8, a.attr, "clear")) {
+        if (args.len != 0) return error.Unsupported;
+        const old_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_tasklocal_clear(l {s}, l {s})\n", .{ old_t, RT_PARAM, tl_val.text });
+        try self.releaseValueIfSet(old_t, elem_heap, tl_val.elem_qtype, elem_class_name, elem_nested, null);
+        try self.releaseIfTemporary(a.obj.*, tl_val);
+        return .{ .text = "0", .qtype = .none };
+    }
+    return error.Unsupported;
+}
+
 /// `tc.send(v)`/`tc.recv()` — Faz BB.6 (bkz. nox-teknik-spesifikasyon.md
 /// §3.52): `genChannelOp`in AYNI deseni, AMA `nox_channel_*` yerine
 /// `nox_threadchannel_*`e ÇAĞRI YAPAR VE `T`nin `str` OLUP OLMADIĞINA

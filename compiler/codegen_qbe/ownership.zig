@@ -64,7 +64,7 @@ pub fn releaseOneLocalIfManaged(self: *Codegen, entry: VarInfo) CodegenError!voi
     if (entry.is_param or entry.arena) return;
     if (isHeapManaged(entry.heap)) {
         try self.releaseSlotIfSet(entry);
-    } else if (entry.heap == .task or entry.heap == .channel or entry.heap == .thread_handle or entry.heap == .thread_channel) {
+    } else if (entry.heap == .task or entry.heap == .channel or entry.heap == .thread_handle or entry.heap == .thread_channel or entry.heap == .task_local) {
         // `Task[T]`/`Channel[T]`/`ThreadHandle[T]`/`ThreadChannel[T]`
         // ARC-yönetimli DEĞİLDİR (bkz. `HeapKind`in belge notu,
         // `dict[K,V]`in AKSİNE — bkz. Faz FF.3) — `destroyNonArcSlotIfSet`
@@ -564,12 +564,13 @@ pub fn releaseSlotIfSet(self: *Codegen, info: VarInfo) CodegenError!void {
 /// fiber kendi sonucunu SERBEST BIRAKILMIŞ belleğe yazardı.
 pub fn destroyNonArcValue(self: *Codegen, ptr: []const u8, heap: HeapKind) CodegenError!void {
     switch (heap) {
-        .task, .channel, .thread_handle, .thread_channel => {
+        .task, .channel, .thread_handle, .thread_channel, .task_local => {
             const fn_name = switch (heap) {
                 .task => "nox_async_destroy_task",
                 .channel => "nox_channel_destroy",
                 .thread_handle => "nox_thread_destroy",
                 .thread_channel => "nox_threadchannel_destroy",
+                .task_local => "nox_tasklocal_destroy",
                 else => unreachable,
             };
             try self.out.writer.print("    call ${s}(l {s}, l {s})\n", .{ fn_name, RT_PARAM, ptr });

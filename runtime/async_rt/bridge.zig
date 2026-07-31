@@ -60,6 +60,19 @@ pub fn currentFiberScheduler() ?*scheduler_mod.Scheduler {
     return null;
 }
 
+/// Faz OO.2 (bkz. nox-teknik-spesifikasyon.md §3.83, `TaskLocal[T]`):
+/// `currentFiberScheduler`in AYNI "sadece GERÇEKTEN bir fiber çalışıyorsa"
+/// koruması, ama doğrudan `*Fiber`i döner — `runtime/async_rt/task_local.
+/// zig`nin `nox_tasklocal_get/set/clear`i BUNU kullanır. Bir fiber DIŞINDA
+/// (senkron üst-düzey kod) çağrılırsa `null` döner — çağıran taraf BUNU
+/// "hiçbir değer YOK" olarak ele almalıdır (`suspendForIo`nun AKSİNE
+/// burada panik ATILMAZ, ÇÜNKÜ TaskLocal fiber DIŞINDA da SÖZDİZİMSEL
+/// olarak ÇAĞRILABİLİR bir metod çağrısıdır — checker BUNU kısıtlamaz).
+pub fn currentFiber() ?*fiber_mod.Fiber {
+    if (g_scheduler) |*s| return s.current;
+    return null;
+}
+
 fn allocatorFromRt(rt: ?*anyopaque) std.mem.Allocator {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));
     return state.allocator();

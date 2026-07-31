@@ -2283,3 +2283,20 @@ test "codegen(çalıştır): Faz 1 decorator — router_from_decorators() uçtan
         "200\nhello 42\n201\ncreated\n",
     );
 }
+
+// Faz OO.2 (bkz. nox-teknik-spesifikasyon.md §3.83): `TaskLocal[T]` —
+// nyx'te farkedilen bir Nox eksikliği (task/fiber-local bağlam). İKİ
+// AYRI fiber'ın (A/B) AYNI `TaskLocal[Ctx]` örneğine `set` ETTİĞİ
+// DEĞERİN BİRBİRİNE SIZMADIĞINI (gerçek per-fiber izolasyon) kanıtlar —
+// `Channel`ler ile İKİ fiber'ın da `set` ÇAĞIRDIKTAN SONRA (ama `get`
+// ÇAĞIRMADAN ÖNCE) senkronize edilmesi, GERÇEK bir eşzamanlı-çakışma
+// senaryosu OLUŞTURUR (sıralı çalıştırma İLE YETİNİLSEYDİ, tek-paylaşılan-
+// yuva GİBİ bir hata BİLE fark edilmeyebilirdi). `clear()`in `get()`i
+// `None`e DÖNDÜRDÜĞÜNÜ VE hiçbir sızıntı OLMADIĞINI (DebugAllocator)
+// da doğrular.
+test "codegen(çalıştır): TaskLocal[T] — iki fiber arasında GERÇEK per-fiber izolasyon, sızıntı yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/task_local_basic.nox"),
+        @embedFile("codegen_cases/task_local_basic.expected"),
+    );
+}

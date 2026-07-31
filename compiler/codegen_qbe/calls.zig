@@ -705,6 +705,12 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
         if (std.mem.eql(u8, a.attr, "pop")) return self.genListPop(obj, a);
         return self.genListAppend(obj, a, args);
     }
+    // Faz OO.2 (bkz. nox-teknik-spesifikasyon.md §3.83): `TaskLocal[T]`in
+    // `get`/`set`/`clear`i — `Channel`nin `send`/`recv`sinin AKSİNE
+    // `await` GEREKTİRMEZ, bu YÜZDEN (yerleşik bir tip olarak `self.
+    // classes`de YOK OLMASINA RAĞMEN) `genAwaitExpr` YERİNE BURADA,
+    // NORMAL metod-çağrısı yolunda ele alınır.
+    if (obj.heap == .task_local) return async_thread_mod.genTaskLocalOp(self, obj, a, args);
     if (obj.heap != .class) return error.Unsupported;
     try self.checkNoLowlevelEscape(obj);
     const cinfo = self.classes.get(obj.class_name.?).?;
@@ -1243,6 +1249,30 @@ pub fn genGenericConstruct(self: *Codegen, g: ast.GenericConstruct) CodegenError
     if (g.resolved_class_name.*) |mangled| {
         const cinfo = self.classes.get(mangled) orelse return error.Unsupported;
         return self.genConstruct(mangled, cinfo, g.args);
+    }
+    // Faz OO.2 (bkz. nox-teknik-spesifikasyon.md §3.83): `TaskLocal[T]()`
+    // — `Channel[T]`in AYNI `elem_heap_info`/`elem_is_str` yakalama
+    // deseni (checker `T`nin HEAP-yönetimli OLMASINI ZATEN ZORUNLU KILDI),
+    // ama `nox_tasklocal_new`nin `capacity` argümanı YOKTUR.
+    if (std.mem.eql(u8, g.name, "TaskLocal")) {
+        if (g.type_args.len != 1 or g.args.len != 0) return error.Unsupported;
+        const elem = try self.resolveType(g.type_args[0]);
+        const tl_t = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_tasklocal_new(l {s})\n", .{ tl_t, RT_PARAM });
+        var elem_heap_info: ?*const ElemHeapInfo = null;
+        if (elem.heap == .class or elem.heap == .list) {
+            const info = try self.allocator.create(ElemHeapInfo);
+            info.* = .{ .heap = elem.heap, .class_name = elem.class_name, .elem_qtype = elem.elem_qtype, .nested = elem.elem_heap_info, .elem_is_str = elem.elem_is_str };
+            elem_heap_info = info;
+        }
+        return .{
+            .text = tl_t,
+            .qtype = .l,
+            .heap = .task_local,
+            .elem_qtype = elem.qtype,
+            .elem_heap_info = elem_heap_info,
+            .elem_is_str = elem.heap == .str,
+        };
     }
     const is_thread_channel = std.mem.eql(u8, g.name, "ThreadChannel");
     if (!(is_thread_channel or std.mem.eql(u8, g.name, "Channel")) or g.type_args.len != 1 or g.args.len != 1) return error.Unsupported;

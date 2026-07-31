@@ -448,17 +448,25 @@ pub const Checker = struct {
                 return self.fail(error.UnknownType, "bilinmeyen tip: {s}", .{name});
             },
             .generic => |g| {
-                if (std.mem.eql(u8, g.name, "list") or std.mem.eql(u8, g.name, "Task") or std.mem.eql(u8, g.name, "Channel") or std.mem.eql(u8, g.name, "ThreadHandle") or std.mem.eql(u8, g.name, "ThreadChannel")) {
+                if (std.mem.eql(u8, g.name, "list") or std.mem.eql(u8, g.name, "Task") or std.mem.eql(u8, g.name, "Channel") or std.mem.eql(u8, g.name, "ThreadHandle") or std.mem.eql(u8, g.name, "ThreadChannel") or std.mem.eql(u8, g.name, "TaskLocal")) {
                     if (g.args.len != 1) {
                         return self.fail(error.UnknownType, "'{s}' tam olarak bir tip argümanı alır", .{g.name});
                     }
                     const elem = try self.typeExprToType(g.args[0]);
+                    // Faz OO.2: `TaskLocal[T]`nin `T`si — `checkGenericConstruct`nin
+                    // AYNI kısıtlaması (bkz. onun belge notu) BURADA da (BİR
+                    // `TaskLocal[int]` DEĞİŞKEN/ALAN TİPİ bildirimi İçin de)
+                    // GEÇERLİDİR.
+                    if (std.mem.eql(u8, g.name, "TaskLocal") and (elem == .int or elem == .float or elem == .boolean)) {
+                        return self.fail(error.TypeMismatch, "'TaskLocal[T]'nin T'si bir sınıf/str/list/dict olmalıdır (çıplak int/float/bool v1 kapsamı dışı)", .{});
+                    }
                     const boxed = try self.allocator.create(Type);
                     boxed.* = elem;
                     if (std.mem.eql(u8, g.name, "list")) return .{ .list = boxed };
                     if (std.mem.eql(u8, g.name, "Task")) return .{ .task = boxed };
                     if (std.mem.eql(u8, g.name, "Channel")) return .{ .channel = boxed };
                     if (std.mem.eql(u8, g.name, "ThreadHandle")) return .{ .thread_handle = boxed };
+                    if (std.mem.eql(u8, g.name, "TaskLocal")) return .{ .task_local = boxed };
                     return .{ .thread_channel = boxed };
                 }
                 // `dict[K, V]` — stdlib fazı §C. v1 kapsamı bilinçli olarak
@@ -893,7 +901,7 @@ pub const Checker = struct {
             // GEÇEMEZ. `ptr`in AKSİNE hiçbir Optional temsili ARC-DIŞI
             // DEĞİLDİR (heap tarafı BİLE checker seviyesinde "bu bir null
             // olabilir" anlamı taşır, C tarafı bunu YORUMLAYAMAZ).
-            .list, .class, .task, .channel, .thread_handle, .thread_channel, .func, .optional => false,
+            .list, .class, .task, .channel, .thread_handle, .thread_channel, .task_local, .func, .optional => false,
         };
     }
 
@@ -917,7 +925,7 @@ pub const Checker = struct {
     /// olarak çocuk iş parçacığına GEÇİRİLMESİ).
     fn isSpawnParamSafeType(t: Type) bool {
         return switch (t) {
-            .int, .float, .boolean, .str, .none, .task, .channel, .ptr, .thread_channel => true,
+            .int, .float, .boolean, .str, .none, .task, .channel, .ptr, .thread_channel, .task_local => true,
             // Faz FF.6: bilinçli v1 sınırlaması — `isFfiSafeType`in AYNI
             // gerekçesiyle, `Optional[T]` `spawn`ın kapanış paketlemesinden
             // GEÇEMEZ.
@@ -951,8 +959,10 @@ pub const Checker = struct {
             .int, .float, .boolean, .str, .none, .ptr, .thread_channel => true,
             // Faz FF.6: bilinçli v1 sınırlaması — `isFfiSafeType`in AYNI
             // gerekçesiyle, `Optional[T]` `nox.thread.start`ın sınırından
-            // GEÇEMEZ.
-            .list, .class, .dict, .task, .channel, .thread_handle, .func, .optional => false,
+            // GEÇEMEZ. `task_local` da (`task`/`channel` İLE AYNI
+            // gerekçeyle — per-fiber depolama BAŞKA bir OS iş parçacığının
+            // KENDİ fiber ağacına ANLAMLI biçimde taşınamaz) HARİÇ.
+            .list, .class, .dict, .task, .channel, .thread_handle, .task_local, .func, .optional => false,
         };
     }
 
@@ -2641,6 +2651,36 @@ pub const Checker = struct {
             g.resolved_class_name.* = class_t.class;
             return class_t;
         }
+        // Faz OO.2 (bkz. nox-teknik-spesifikasyon.md §3.83): `TaskLocal[T]()`
+        // — `Channel[T]`nin AYNI "sihirli generic isim" deseni, ama
+        // kurucusu ARGÜMAN ALMAZ (bir kapasite kavramı YOK — her fiber
+        // İçİn BAŞLANGIÇTA BOŞ bir yuva).
+        if (std.mem.eql(u8, g.name, "TaskLocal")) {
+            if (g.type_args.len != 1) {
+                return self.fail(error.UnknownType, "'TaskLocal' tam olarak bir tip argümanı alır", .{});
+            }
+            const elem_t = try self.typeExprToType(g.type_args[0]);
+            // **Bilinçli v1 kısıtlaması:** `T` bir sınıf/`str`/`list`/`dict`
+            // (HEAP-yönetimli, HER ZAMAN null OLABİLEN bir işaretçi temsili)
+            // OLMALIDIR — `get() -> T?`nin "hiç ayarlanmamış" (`None`) İLE
+            // "0/boş DEĞERİ ayarlandı" durumlarını AYIRT ETMESİ GEREKİR;
+            // heap-yönetimli tipler İçin BU ZATEN null-pointer İLE BEDAVA
+            // gelir, ama ÇIPLAK bir `int`/`float`/`bool` İçin `0` DEĞERİ
+            // "ayarlanmamış" İLE TAM olarak ÇAKIŞIR (`Optional[int]`in
+            // KUTULAMA GEREKTİRMESİYLE AYNI sorun, bkz. `boxed_scalar`) —
+            // KUTULAMAYI TaskLocal'a AYRICA entegre etmek BU turun kapsamı
+            // DIŞINDA bırakıldı (nyx'in GERÇEK kullanım örneği ZATEN her
+            // zaman bir SINIF örneğidir).
+            if (elem_t == .int or elem_t == .float or elem_t == .boolean) {
+                return self.fail(error.TypeMismatch, "'TaskLocal[T]'nin T'si bir sınıf/str/list/dict olmalıdır (çıplak int/float/bool v1 kapsamı dışı — Optional[int] gibi kutulama gerektirir)", .{});
+            }
+            if (g.args.len != 0) {
+                return self.fail(error.ArgumentCountMismatch, "'TaskLocal' kurucusu argüman almaz", .{});
+            }
+            const boxed = try self.allocator.create(Type);
+            boxed.* = elem_t;
+            return .{ .task_local = boxed };
+        }
         // v0.1'de diğer tanınan yerleşik generic kurucu: `Channel[T](
         // capacity)`.
         if (!std.mem.eql(u8, g.name, "Channel")) {
@@ -3124,6 +3164,31 @@ pub const Checker = struct {
                     }
                     return self.fail(error.UndefinedMethod, "Channel'ın '{s}' metodu yok (yalnızca send/recv)", .{a.attr});
                 }
+                // `TaskLocal[T]`in yerleşik `get`/`set`/`clear`i — Faz OO.2
+                // (bkz. nox-teknik-spesifikasyon.md §3.83), `Channel` İLE
+                // AYNI desen (bir kullanıcı sınıfı DEĞİL). `send`/`recv`nin
+                // AKSİNE `await` GEREKTİRMEZ — senkron, o AN çalışan fiber'a
+                // ÖZGÜ bir okuma/yazma.
+                if (obj_t == .task_local) {
+                    const elem_t = obj_t.task_local.*;
+                    if (std.mem.eql(u8, a.attr, "get")) {
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'get' hiç argüman almaz", .{});
+                        const boxed = try self.allocator.create(Type);
+                        boxed.* = elem_t;
+                        return .{ .optional = boxed };
+                    }
+                    if (std.mem.eql(u8, a.attr, "set")) {
+                        if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'set' tam olarak 1 argüman alır", .{});
+                        const at = try self.checkExpr(ctx, c.args[0]);
+                        if (!self.assignable(elem_t, at)) return self.fail(error.TypeMismatch, "'set' argümanı TaskLocal'ın eleman tipiyle uyuşmuyor", .{});
+                        return .none;
+                    }
+                    if (std.mem.eql(u8, a.attr, "clear")) {
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'clear' hiç argüman almaz", .{});
+                        return .none;
+                    }
+                    return self.fail(error.UndefinedMethod, "TaskLocal'ın '{s}' metodu yok (yalnızca get/set/clear)", .{a.attr});
+                }
                 // `ThreadHandle[T]`in yerleşik `join`i — Faz BB.3, `Channel`
                 // İLE AYNI desen (bir kullanıcı sınıfı DEĞİL, burada özel
                 // işlenir). `await` İLE sarmalanmalıdır — bu kısıt burada
@@ -3504,6 +3569,11 @@ pub const Checker = struct {
                 args[0] = try self.typeToTypeExpr(elem.*);
                 break :blk .{ .generic = .{ .name = "ThreadChannel", .args = args } };
             },
+            .task_local => |elem| blk: {
+                const args = try self.allocator.alloc(ast.TypeExpr, 1);
+                args[0] = try self.typeToTypeExpr(elem.*);
+                break :blk .{ .generic = .{ .name = "TaskLocal", .args = args } };
+            },
             .dict => |d| blk: {
                 const args = try self.allocator.alloc(ast.TypeExpr, 2);
                 args[0] = try self.typeToTypeExpr(d.key.*);
@@ -3657,6 +3727,10 @@ pub const Checker = struct {
             },
             .thread_channel => |elem| {
                 try buf.appendSlice(self.allocator, "ThreadChannel_");
+                try self.appendMangledType(buf, elem.*);
+            },
+            .task_local => |elem| {
+                try buf.appendSlice(self.allocator, "TaskLocal_");
                 try self.appendMangledType(buf, elem.*);
             },
             .dict => |d| {

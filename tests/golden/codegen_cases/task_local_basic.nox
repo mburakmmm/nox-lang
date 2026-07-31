@@ -1,0 +1,37 @@
+class Ctx:
+    def __init__(self: Ctx, name: str) -> None:
+        self.name = name
+
+async def worker(ctx_local: TaskLocal[Ctx], name: str, ready: Channel[int], go: Channel[int]) -> None:
+    ctx_local.set(Ctx(name))
+    await ready.send(1)
+    await go.recv()
+    seen: Ctx | None = ctx_local.get()
+    if seen != None:
+        print(name + " sees " + seen.name)
+    else:
+        print(name + " sees NONE")
+    ctx_local.clear()
+    after: Ctx | None = ctx_local.get()
+    if after == None:
+        print(name + " cleared ok")
+    else:
+        print(name + " clear FAILED")
+
+async def main_task() -> None:
+    ctx_local: TaskLocal[Ctx] = TaskLocal[Ctx]()
+    a_ready: Channel[int] = Channel[int](0)
+    b_ready: Channel[int] = Channel[int](0)
+    a_go: Channel[int] = Channel[int](0)
+    b_go: Channel[int] = Channel[int](0)
+    ta: Task[None] = spawn worker(ctx_local, "A", a_ready, a_go)
+    tb: Task[None] = spawn worker(ctx_local, "B", b_ready, b_go)
+    await a_ready.recv()
+    await b_ready.recv()
+    await a_go.send(1)
+    await b_go.send(1)
+    await ta
+    await tb
+
+m: Task[None] = spawn main_task()
+await m

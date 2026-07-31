@@ -12,6 +12,7 @@ pub const foreign_bridge = @import("foreign_bridge.zig");
 pub const async_bridge = @import("async_rt/bridge.zig");
 pub const thread_bridge = @import("async_rt/thread_bridge.zig");
 pub const thread_channel = @import("async_rt/thread_channel.zig");
+pub const task_local = @import("async_rt/task_local.zig");
 pub const str = @import("str.zig");
 pub const dict = @import("collections/dict.zig");
 pub const list_sort = @import("collections/list_sort.zig");
@@ -53,6 +54,7 @@ comptime {
     _ = async_bridge;
     _ = thread_bridge;
     _ = thread_channel;
+    _ = task_local;
     _ = str;
     _ = dict;
     _ = list_sort;

@@ -14,6 +14,24 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.24.0]
+
+### Eklendi
+- **`TaskLocal[T]` — task/fiber-local bağlam**: nyx'te farkedilen bir
+  Nox eksikliği — async çalışma zamanında HERHANGİ bir task/fiber-local
+  depolama ilkeli YOKTU, nyx her İSTEK İçİn bir OS-thread-local
+  "worker-local" durum torbasıyla İDARE EDİYORDU (AYNI worker thread'te
+  ZAMANLANAN İKİ fiber'ın BİRBİRİNİN bağlamını GÖRME riski taşıyordu).
+  `TaskLocal[T]`, `Channel[T]`nin BİREBİR paraleli (yerleşik generic,
+  `get()/set(value)/clear()` — `await` GEREKTİRMEZ, senkron): GERÇEK
+  değer `Fiber`nin KENDİ per-fiber haritasında saklanır, `TaskLocal`
+  örneğinin KENDİSİ (TİPİK KULLANIM: modül-seviyesi bir global) TÜM
+  fiber'lar arasında PAYLAŞILABİLİR. Bilinçli v1 kısıtlaması: `T` bir
+  sınıf/`str`/`list`/`dict` OLMALIDIR (çıplak `int`/`float`/`bool`
+  `Optional`-kutulama komplikasyonu YÜZÜNDEN REDDEDİLİR). Yeni golden
+  test (`task_local_basic.nox`) İKİ fiber'ın GERÇEK eşzamanlı-çakışma
+  senaryosunda BİRBİRİNİN değerini GÖRMEDİĞİNİ kanıtlar.
+
 ## [1.23.0]
 
 ### Eklendi

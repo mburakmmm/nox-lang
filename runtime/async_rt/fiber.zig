@@ -85,6 +85,15 @@ pub const Fiber = struct {
     arg: *anyopaque,
     finished: bool = false,
     allocator: std.mem.Allocator,
+    /// Faz OO.2 (bkz. nox-teknik-spesifikasyon.md §3.83, `TaskLocal[T]`):
+    /// bu fiber'a ÖZGÜ, `TaskLocal` tutamacı işaretçisiyle ANAHTARLANMIŞ
+    /// depolama — `runtime/async_rt/task_local.zig`nin `nox_tasklocal_
+    /// get/set/clear`i BU haritayı okur/yazar (`bridge.zig`nin `currentFiber()`
+    /// erişimcisi ÜZERİNDEN). Fiber yok edilirken (`destroy`/
+    /// `destroyKeepStack`) TAMAMEN boşaltılır — bkz. o fonksiyonların
+    /// belge notu (leftover değerlerin `release_kind`e göre serbest
+    /// bırakılması `task_local.zig`nin `drainTaskLocals`inde yapılır).
+    task_locals: std.AutoHashMapUnmanaged(*anyopaque, ?*anyopaque) = .empty,
 
     pub fn create(allocator: std.mem.Allocator, entry: FiberFn, arg: *anyopaque) !*Fiber {
         const stack = try allocator.alignedAlloc(u8, .fromByteUnits(STACK_ALIGN), STACK_SIZE);
@@ -183,6 +192,7 @@ pub const Fiber = struct {
     }
 
     pub fn destroy(self: *Fiber) void {
+        self.task_locals.deinit(self.allocator);
         self.allocator.free(self.stack);
         self.allocator.destroy(self);
     }
@@ -191,7 +201,21 @@ pub const Fiber = struct {
     /// `Scheduler.releaseStack`) geri döner, böylece bir sonraki `spawn`
     /// tarafından yeniden kullanılabilir. Yalnızca `Fiber` struct'ının
     /// kendisi (küçük, sabit boyutlu) serbest bırakılır.
+    ///
+    /// **`task_locals`nin BİLİNÇLİ v1 sınırlaması:** BURADA (VE `destroy`da)
+    /// SADECE haritanın KENDİ Zig-İÇİ ayırımı boşaltılır — SAKLANAN Nox
+    /// DEĞERLERİ serbest BIRAKILMAZ. `scheduler.zig`/`fiber.zig` KASITLI
+    /// OLARAK `RuntimeState`ten BAĞIMSIZDIR (bkz. modül üstü not, "İlke
+    /// #6") — bu YÜZDEN burada `nox_class_release_dispatch` GİBİ bir
+    /// çağrı YAPILAMAZ (`rt` yoktur). Bu, iyi-davranışlı kodun (nyx'in
+    /// İSTEK-sonu middleware zincirinin ZATEN doğal olarak yapacağı gibi)
+    /// bir fiber bitmeden ÖNCE KENDİ `TaskLocal`larını `clear()`
+    /// ETMESİNİ gerektiren, BELGELENMİŞ bir v1 sınırlamasıdır (aksi
+    /// halde o TEK değerin referansı sızar — TÜM programın çökmesine
+    /// YOL AÇMAZ, yalnızca o değerin serbest bırakılmasını GECİKTİRİR/
+    /// engeller).
     pub fn destroyKeepStack(self: *Fiber) []align(STACK_ALIGN) u8 {
+        self.task_locals.deinit(self.allocator);
         const stack = self.stack;
         self.allocator.destroy(self);
         return stack;

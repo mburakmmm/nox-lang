@@ -13927,6 +13927,61 @@ EDİLMELİDİR. Bu, projenin KENDİ testlerinde (`tests/cli/sqlite_test.zig`,
 `tests/golden/codegen_cases/postgres_mysql_connect_error.nox`) GERÇEK
 bir derleme hatasıyla (`bilinmeyen tip: Row`) YAKALANDI ve düzeltildi.
 
+## 3.83 `TaskLocal[T]` — task/fiber-local bağlam
+
+Kullanıcının `nyx` framework'ünde farkedilen bir Nox eksikliği: Nox'un
+async çalışma zamanında (`spawn`/`await`/`Channel[T]`) HERHANGİ bir
+task/fiber-local DEPOLAMA ilkeli YOKTU — nyx bu YÜZDEN her İSTEK İçİn
+GERÇEK İZOLASYON YERİNE bir OS-thread-local "worker-local" durum
+torbasıyla İDARE EDİYORDU, bu da AYNI worker thread'te ZAMANLANAN İKİ
+fiber'ın (isteğin) BİRBİRİNİN bağlamını GÖRMESİ riskini TAŞIYORDU.
+
+**Tasarım — `Channel[T]`nin BİREBİR paraleli:** `TaskLocal` `Channel`
+İLE AYNI "sihirli generic isim" deseni (GERÇEK bir sınıf DEĞİL,
+checker+codegen'de ÖZEL olarak tanınan bir yerleşik) — `TaskLocal[T]()`
+kurucusu argüman ALMAZ (bir kapasite kavramı YOK), `get() -> T?`/
+`set(value: T) -> None`/`clear() -> None` metodları VARDIR. `Channel`in
+`send`/`recv`sinin AKSİNE `await` GEREKTİRMEZ (senkron, o AN çalışan
+fiber'a ÖZGÜ bir okuma/yazma) — bu YÜZDEN codegen'de `genAwaitExpr`
+YERİNE NORMAL metod-çağrısı yolunda (`genMethodCall`) ele alınır.
+
+**Depolama modeli:** GERÇEK değer, `TaskLocal` örneğinin (handle) KENDİ
+İÇİNDE DEĞİL, ÇAĞRILDIĞI ANDA çalışan `Fiber`nin (bkz. `runtime/async_rt/
+fiber.zig`) KENDİ `task_locals` haritasında, handle işaretçisiyle
+ANAHTARLANMIŞ olarak SAKLANIR (`runtime/async_rt/task_local.zig`nin
+`nox_tasklocal_get/set/clear`i). Bu SAYEDE: AYNI `TaskLocal` örneği
+(TİPİK KULLANIM: modül-seviyesi BİR GLOBAL) TÜM fiber'lar arasında
+PAYLAŞILABİLİR ama HER fiber KENDİ değerini görür.
+
+**Bilinçli v1 kısıtlamaları:**
+1. `T` bir SINIF/`str`/`list`/`dict` (HEAP-yönetimli, HER ZAMAN null
+   OLABİLEN bir işaretçi temsili) OLMALIDIR — ÇIPLAK `int`/`float`/
+   `bool` REDDEDİLİR (`get() -> T?`nin "hiç ayarlanmamış" İLE "0 DEĞERİ
+   ayarlandı" durumlarını AYIRT ETMESİ GEREKİR; heap tipler İçin BU
+   ZATEN null-pointer İLE BEDAVA gelir, çıplak bir ilkel İçin
+   `Optional[int]`in `boxed_scalar` KUTULAMASINI TaskLocal'a AYRICA
+   entegre etmek GEREKİRDİ — nyx'in GERÇEK kullanım örneği ZATEN her
+   zaman bir SINIF örneği olduğundan bu turun kapsamı DIŞINDA
+   bırakıldı).
+2. `scheduler.zig`/`fiber.zig` KASITLI OLARAK `RuntimeState`ten
+   BAĞIMSIZDIR (bkz. §3.47'nin "İlke #6"sı) — bu YÜZDEN bir fiber
+   `clear()` ÇAĞIRMADAN biterse, `fiber.destroy`/`destroyKeepStack`
+   o TEK değerin referansını serbest BIRAKAMAZ (`nox_class_release_
+   dispatch` GİBİ bir çağrı O KATMANDA `rt` OLMADAN YAPILAMAZ) —
+   BELGELENMİŞ bir sızıntı riski, iyi-davranışlı kodun (nyx'in İSTEK-
+   sonu middleware zincirinin ZATEN doğal olarak yapacağı gibi) bir
+   fiber bitmeden ÖNCE KENDİ `TaskLocal`larını `clear()` ETMESİNİ
+   gerektirir.
+
+**Doğrulama:** `tests/golden/codegen_cases/task_local_basic.nox` — İKİ
+AYRI fiber'ın (A/B) AYNI `TaskLocal[Ctx]` örneğine `set` ETTİĞİ DEĞERİN
+BİRBİRİNE SIZMADIĞINI kanıtlar (`Channel`ler İLE İKİ fiber'ın da `set`
+ÇAĞIRDIKTAN SONRA — ama `get` ÇAĞIRMADAN ÖNCE — senkronize edilmesi,
+GERÇEK bir eşzamanlı-çakışma senaryosu OLUŞTURUR); `clear()`in `get()`i
+`None`e DÖNDÜRDÜĞÜNÜ VE hiçbir sızıntı OLMADIĞINI (DebugAllocator) da
+doğrular. `zig build test` HEM Debug HEM `ReleaseFast` modlarında
+YEŞİL.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

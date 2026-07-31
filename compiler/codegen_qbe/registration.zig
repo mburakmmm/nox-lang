@@ -162,7 +162,8 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
             const is_channel = std.mem.eql(u8, g.name, "Channel");
             const is_thread_handle = std.mem.eql(u8, g.name, "ThreadHandle");
             const is_thread_channel = std.mem.eql(u8, g.name, "ThreadChannel");
-            if (!(is_list or is_task or is_channel or is_thread_handle or is_thread_channel)) {
+            const is_task_local = std.mem.eql(u8, g.name, "TaskLocal");
+            if (!(is_list or is_task or is_channel or is_thread_handle or is_thread_channel or is_task_local)) {
                 // Faz P2.1: kullanıcı-tanımlı bir generic sınıf tip ifadesi
                 // (ör. bir alan/parametre `Box[int]` OLARAK bildirilmiş) —
                 // checker'ın ZATEN monomorphize edip `self.classes`e
@@ -239,7 +240,7 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
             // üretebilmesi için (bkz. `genAwaitExpr`, `genChannelOp`).
             return .{
                 .qtype = .l,
-                .heap = if (is_list) .list else if (is_task) .task else if (is_channel) .channel else if (is_thread_handle) .thread_handle else .thread_channel,
+                .heap = if (is_list) .list else if (is_task) .task else if (is_channel) .channel else if (is_thread_handle) .thread_handle else if (is_thread_channel) .thread_channel else .task_local,
                 .elem_qtype = elem.qtype,
                 .elem_heap_info = elem_heap_info,
                 .elem_is_str = elem.heap == .str,

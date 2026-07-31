@@ -36,6 +36,13 @@ pub const Type = union(enum) {
     /// parçacığı-GÜVENLİDİR, bkz. `thread_channel.zig`nin modül üstü
     /// notu).
     thread_channel: *const Type,
+    /// `TaskLocal[T]` — Faz OO.2 (bkz. nox-teknik-spesifikasyon.md §3.83):
+    /// `Channel[T]`in AYNI "sihirli generic isim" deseni (GERÇEK bir sınıf
+    /// DEĞİL) — TEK fark, `send`/`recv` YERİNE `get`/`set`/`clear`
+    /// metodları OLMASI ve `await` GEREKTİRMEMESİ (senkron, o AN çalışan
+    /// fiber'a ÖZGÜ bir depolama yuvası). `runtime/async_rt/task_local.
+    /// zig`nin PER-FIBER `task_locals` haritasına DAYANIR.
+    task_local: *const Type,
     /// `ptr` — Faz 20'nin ikinci artımı (bkz. nox-teknik-spesifikasyon.md
     /// §3.20): handle-tabanlı C API'leri (`FILE*`/`sqlite3*` gibi) açan,
     /// ARC-İZLENMEYEN OPAK bir işaretçi. Nox bunun İÇİNDEKİ veriyi HİÇ
@@ -76,6 +83,7 @@ pub fn eql(a: Type, b: Type) bool {
         .channel => |elem_a| eql(elem_a.*, b.channel.*),
         .thread_handle => |elem_a| eql(elem_a.*, b.thread_handle.*),
         .thread_channel => |elem_a| eql(elem_a.*, b.thread_channel.*),
+        .task_local => |elem_a| eql(elem_a.*, b.task_local.*),
         .optional => |elem_a| eql(elem_a.*, b.optional.*),
         .dict => |d_a| eql(d_a.key.*, b.dict.key.*) and eql(d_a.value.*, b.dict.value.*),
         .func => |f_a| blk: {
@@ -123,6 +131,11 @@ pub fn format(t: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         },
         .thread_channel => |elem| {
             try writer.writeAll("ThreadChannel[");
+            try format(elem.*, writer);
+            try writer.writeAll("]");
+        },
+        .task_local => |elem| {
+            try writer.writeAll("TaskLocal[");
             try format(elem.*, writer);
             try writer.writeAll("]");
         },
