@@ -14,6 +14,7 @@ const Codegen = codegen.Codegen;
 const QbeType = types.QbeType;
 const Value = types.Value;
 const ModCacheEntry = types.ModCacheEntry;
+const LocalDecl = types.LocalDecl;
 const CodegenError = abi.CodegenError;
 const qbeTypeName = abi.qbeTypeName;
 
@@ -88,6 +89,313 @@ pub fn bodyHasNestedFuncDef(body: []const ast.Stmt) bool {
         }
     }
     return false;
+}
+
+/// GG.12 (bkz. nox-teknik-spesifikasyon.md §3.66): `expr` içinde (HERHANGİ
+/// bir derinlikte) `name` adlı bir tanımlayıcı GEÇİYOR mu? `nameUsedUnsafely`
+/// İçin çekirdek — `ast.Expr`nin TÜM varyantlarını AÇIKÇA ele alır (sessiz
+/// `else => false` YOK): eksik bırakılan bir dal burada YANLIŞ bir
+/// "kullanılmıyor" sonucuna (ve dolayısıyla GÜVENSİZ bir eleme kararına)
+/// yol açardı — `detectWhileBoundsElideCtx`nin AKSİNE (orada eksik kapsam
+/// sadece fırsatı KAÇIRIR), bu YÜZDEN burada TAM kapsam ZORUNLUDUR.
+fn exprMentionsName(expr: ast.Expr, name: []const u8) bool {
+    return switch (expr) {
+        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => false,
+        .identifier => |n| std.mem.eql(u8, n, name),
+        .unary => |u| exprMentionsName(u.operand.*, name),
+        .binary => |b| exprMentionsName(b.left.*, name) or exprMentionsName(b.right.*, name),
+        .call => |c| callMentionsName(c, name),
+        .attribute => |a| exprMentionsName(a.obj.*, name),
+        .index => |idx| exprMentionsName(idx.obj.*, name) or exprMentionsName(idx.index.*, name),
+        .list_lit => |items| blk: {
+            for (items) |it| if (exprMentionsName(it, name)) break :blk true;
+            break :blk false;
+        },
+        .dict_lit => |pairs| blk: {
+            for (pairs) |p| {
+                if (exprMentionsName(p.key, name)) break :blk true;
+                if (exprMentionsName(p.value, name)) break :blk true;
+            }
+            break :blk false;
+        },
+        .await_expr => |e| exprMentionsName(e.*, name),
+        .spawn_expr => |e| exprMentionsName(e.*, name),
+        .generic_construct => |gc| blk: {
+            for (gc.args) |a| if (exprMentionsName(a, name)) break :blk true;
+            break :blk false;
+        },
+    };
+}
+
+fn callMentionsName(c: ast.Call, name: []const u8) bool {
+    if (exprMentionsName(c.callee.*, name)) return true;
+    for (c.args) |a| if (exprMentionsName(a, name)) return true;
+    return false;
+}
+
+/// GG.12: `body` içinde `name`in, DOĞRUDAN bir `for_stmt`nin ÜST-DÜZEY
+/// iterable'ı (`for x in name:`) OLMAYAN HERHANGİ BİR kullanımı var mı?
+/// `selfFieldSnapshotEligible`nin (e) adımı İçin — "TEK kullanım for
+/// iterable'ı" garantisi BURADA doğrulanır. `ast.Stmt`nin TÜM varyantları
+/// AÇIKÇA ele alınır (`exprMentionsName`İLE AYNI TAM-kapsam gerekçesi).
+/// İç içe bir `func_def` (closure `name`i YAKALAYABİLİR — bilinmeyen
+/// kapsam) HER ZAMAN "güvensiz" SAYILIR.
+fn nameUsedUnsafely(body: []const ast.Stmt, name: []const u8) bool {
+    for (body) |stmt| {
+        switch (stmt.kind) {
+            .var_decl => |v| if (exprMentionsName(v.value, name)) return true,
+            .assign => |a| {
+                if (exprMentionsName(a.target, name)) return true;
+                if (exprMentionsName(a.value, name)) return true;
+            },
+            .expr_stmt => |e| if (exprMentionsName(e, name)) return true,
+            .return_stmt => |maybe_e| {
+                if (maybe_e) |e| if (exprMentionsName(e, name)) return true;
+            },
+            .raise_stmt => |e| if (exprMentionsName(e, name)) return true,
+            .if_stmt => |f| {
+                if (exprMentionsName(f.cond, name)) return true;
+                if (nameUsedUnsafely(f.then_body, name)) return true;
+                for (f.elif_clauses) |ec| {
+                    if (exprMentionsName(ec.cond, name)) return true;
+                    if (nameUsedUnsafely(ec.body, name)) return true;
+                }
+                if (f.else_body) |eb| if (nameUsedUnsafely(eb, name)) return true;
+            },
+            .while_stmt => |w| {
+                if (exprMentionsName(w.cond, name)) return true;
+                if (nameUsedUnsafely(w.body, name)) return true;
+            },
+            .for_stmt => |f| {
+                const iterable_is_direct_match = f.iterable == .identifier and std.mem.eql(u8, f.iterable.identifier, name);
+                if (!iterable_is_direct_match and exprMentionsName(f.iterable, name)) return true;
+                if (nameUsedUnsafely(f.body, name)) return true;
+            },
+            .try_stmt => |t| {
+                if (nameUsedUnsafely(t.try_body, name)) return true;
+                for (t.except_clauses) |ec| if (nameUsedUnsafely(ec.body, name)) return true;
+                if (t.finally_body) |fb| if (nameUsedUnsafely(fb, name)) return true;
+            },
+            .lowlevel_stmt => |ll| if (nameUsedUnsafely(ll.body, name)) return true,
+            .with_stmt => |w| {
+                if (exprMentionsName(w.ctx_expr, name)) return true;
+                if (nameUsedUnsafely(w.body, name)) return true;
+            },
+            .func_def => return true,
+            .defer_stmt => |d| if (callMentionsName(d.call, name)) return true,
+            .pass_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
+        }
+    }
+    return false;
+}
+
+/// GG.12: `body` içinde `self.<field_name>`e (doğrudan `self.<alan> =
+/// ...` biçiminde) bir YENİDEN ATAMA var mı? `selfFieldSnapshotEligible`nin
+/// (c) adımı İçin. İç içe bir `func_def` (closure `self`i YAKALAYIP alanı
+/// değiştirebilir) HER ZAMAN "yeniden atanmış" SAYILIR (güvenli taraf).
+fn fieldReassignedInBody(body: []const ast.Stmt, field_name: []const u8) bool {
+    for (body) |stmt| {
+        switch (stmt.kind) {
+            .assign => |a| {
+                if (a.target == .attribute) {
+                    const t = a.target.attribute;
+                    if (t.obj.* == .identifier and std.mem.eql(u8, t.obj.identifier, "self") and std.mem.eql(u8, t.attr, field_name)) return true;
+                }
+            },
+            .if_stmt => |f| {
+                if (fieldReassignedInBody(f.then_body, field_name)) return true;
+                for (f.elif_clauses) |ec| if (fieldReassignedInBody(ec.body, field_name)) return true;
+                if (f.else_body) |eb| if (fieldReassignedInBody(eb, field_name)) return true;
+            },
+            .while_stmt => |w| if (fieldReassignedInBody(w.body, field_name)) return true,
+            .for_stmt => |f| if (fieldReassignedInBody(f.body, field_name)) return true,
+            .try_stmt => |t| {
+                if (fieldReassignedInBody(t.try_body, field_name)) return true;
+                for (t.except_clauses) |ec| if (fieldReassignedInBody(ec.body, field_name)) return true;
+                if (t.finally_body) |fb| if (fieldReassignedInBody(fb, field_name)) return true;
+            },
+            .lowlevel_stmt => |ll| if (fieldReassignedInBody(ll.body, field_name)) return true,
+            .with_stmt => |w| if (fieldReassignedInBody(w.body, field_name)) return true,
+            .func_def => return true,
+            else => {},
+        }
+    }
+    return false;
+}
+
+/// GG.12: `v.name`in KENDİ bildirim satırından SONRA GERÇEKTEN yeniden
+/// atanıp/gölgelenmediğini kontrol eder. `collectReassignedNames`in
+/// KENDİSİ KULLANILAMAZ — o fonksiyon HER `var_decl`i (BİR ismin İLK/TEK
+/// bildirimi DAHİL) "yeniden atama" SAYAR (GG.5'teki KULLANIM deseninde
+/// zararsızdır, çünkü ORADA izlenen isim HER ZAMAN bir PARAMETRE, gövde
+/// İÇİNDE ASLA bildirilmez) — BURADA İSE `name` TAM OLARAK gövdede
+/// bildirilen isim OLDUĞUNDAN `collectReassignedNames` HER ZAMAN `true`
+/// dönerdi (yanlış-pozitif, optimizasyonun HİÇ tetiklenmemesine yol açar).
+/// Bu YÜZDEN SADECE gerçek bir yeniden-atama/gölgeleme (`.assign`/for
+/// döngü değişkeni/`except ... as`/`with ... as`) arar, `var_decl`in
+/// KENDİSİNİ SAYMAZ (`varDeclCountForName`in `!= 1` kontrolü ZATEN aynı
+/// isimle İKİNCİ bir `var_decl`i ayrıca ELİYOR).
+fn nameReassignedAfterDecl(body: []const ast.Stmt, name: []const u8) bool {
+    for (body) |stmt| {
+        switch (stmt.kind) {
+            .assign => |a| if (a.target == .identifier and std.mem.eql(u8, a.target.identifier, name)) return true,
+            .for_stmt => |f| {
+                if (std.mem.eql(u8, f.var_name, name)) return true;
+                if (nameReassignedAfterDecl(f.body, name)) return true;
+            },
+            .if_stmt => |f| {
+                if (nameReassignedAfterDecl(f.then_body, name)) return true;
+                for (f.elif_clauses) |ec| if (nameReassignedAfterDecl(ec.body, name)) return true;
+                if (f.else_body) |eb| if (nameReassignedAfterDecl(eb, name)) return true;
+            },
+            .while_stmt => |w| if (nameReassignedAfterDecl(w.body, name)) return true,
+            .try_stmt => |t| {
+                if (nameReassignedAfterDecl(t.try_body, name)) return true;
+                for (t.except_clauses) |ec| {
+                    if (ec.bind_name) |bn| if (std.mem.eql(u8, bn, name)) return true;
+                    if (nameReassignedAfterDecl(ec.body, name)) return true;
+                }
+                if (t.finally_body) |fb| if (nameReassignedAfterDecl(fb, name)) return true;
+            },
+            .lowlevel_stmt => |ll| if (nameReassignedAfterDecl(ll.body, name)) return true,
+            .with_stmt => |w| {
+                if (w.binding) |b| if (std.mem.eql(u8, b, name)) return true;
+                if (nameReassignedAfterDecl(w.body, name)) return true;
+            },
+            .func_def => return true,
+            else => {},
+        }
+    }
+    return false;
+}
+
+/// GG.12: `body` (TAM gövde) içinde `name` adlı bir `var_decl`in KAÇ KEZ
+/// geçtiğini sayar — `selfFieldSnapshotEligible`nin AYNI adın (ör. iki
+/// farklı `if`/`else` dalında) BELİRSİZ/çelişkili biçimde İKİ KEZ
+/// bildirilmesi durumunda GÜVENLİ tarafta kalması İçin (tek bir `VarInfo`
+/// girdisi HER İKİ bildirime de karşılık geldiğinden — bkz. `self.vars`in
+/// "son yazan kazanır" HashMap semantiği).
+fn varDeclCountForName(body: []const ast.Stmt, name: []const u8) usize {
+    var count: usize = 0;
+    for (body) |stmt| {
+        switch (stmt.kind) {
+            .var_decl => |v| if (std.mem.eql(u8, v.name, name)) {
+                count += 1;
+            },
+            .if_stmt => |f| {
+                count += varDeclCountForName(f.then_body, name);
+                for (f.elif_clauses) |ec| count += varDeclCountForName(ec.body, name);
+                if (f.else_body) |eb| count += varDeclCountForName(eb, name);
+            },
+            .while_stmt => |w| count += varDeclCountForName(w.body, name),
+            .for_stmt => |f| count += varDeclCountForName(f.body, name),
+            .try_stmt => |t| {
+                count += varDeclCountForName(t.try_body, name);
+                for (t.except_clauses) |ec| count += varDeclCountForName(ec.body, name);
+                if (t.finally_body) |fb| count += varDeclCountForName(fb, name);
+            },
+            .lowlevel_stmt => |ll| count += varDeclCountForName(ll.body, name),
+            .with_stmt => |w| count += varDeclCountForName(w.body, name),
+            else => {},
+        }
+    }
+    return count;
+}
+
+/// GG.12 (bkz. nox-teknik-spesifikasyon.md §3.66): `Box.sum()`daki
+/// `local_items: list[int] = self.items` gibi bir `var_decl`in — `self`in
+/// bir alanının salt-okunur, TEK-kullanım (bir `for` döngüsünün iterable'ı)
+/// bir kopyası olduğu, dolayısıyla retain/release'inin TAMAMEN GEREKSİZ
+/// olduğu — kanıtlanıp KANITLANAMADIĞINI belirler. TÜM koşullar
+/// sağlanmazsa (belirsizlikte) `false` döner (mevcut davranış KORUNUR) —
+/// `detectWhileBoundsElideCtx`in "dar, yerel, deyim-başına, belirsizlikte
+/// null'a düş" deseniyle AYNI disiplin.
+pub fn selfFieldSnapshotEligible(self: *Codegen, v: ast.VarDecl, locals: []const LocalDecl, body: []const ast.Stmt) CodegenError!bool {
+    // `self` (Codegen) burada KULLANILMIYOR — diğer `optimizations.zig`
+    // yardımcılarıyla (ör. `detectWhileBoundsElideCtx`) AYNI çağrı
+    // imzasını KORUMAK İçin bilinçli olarak TUTULDU (`markBorrowedFieldLocals`
+    // KENDİSİ bir `Codegen` metodu OLDUĞUNDAN `self.selfFieldSnapshotEligible(...)`
+    // ŞEKLİNDE ÇAĞRILIR).
+    _ = self;
+    // (a) v.value TAM OLARAK `self.<alan>` biçiminde olmalı.
+    if (v.value != .attribute) return false;
+    const attr = v.value.attribute;
+    if (attr.obj.* != .identifier or !std.mem.eql(u8, attr.obj.identifier, "self")) return false;
+
+    // (b) `self` bilinen, parametre-olan bir sınıf örneği olmalı.
+    // `Codegen.findLocal`in DÖNDÜRDÜĞÜ `TypeInfo` `is_param`ı taşımaz —
+    // burada `LocalDecl`in KENDİSİ gerekir, bu YÜZDEN listenin en SONUNDAN
+    // (gölgeleme İçin AYNI "en son eşleşen kazanır" kuralı) elle aranır.
+    const self_decl: LocalDecl = blk: {
+        var i = locals.len;
+        while (i > 0) {
+            i -= 1;
+            if (std.mem.eql(u8, locals[i].name, "self")) break :blk locals[i];
+        }
+        return false;
+    };
+    if (self_decl.info.heap != .class or !self_decl.is_param) return false;
+
+    // `v.name` gövdede BİRDEN FAZLA `var_decl` İLE bildirilmişse (ör. bir
+    // `if`/`else`nin İKİ dalında AYRI AYRI), TEK bir `VarInfo` girdisi HER
+    // İKİSİNE de karşılık geleceğinden (bkz. `varDeclCountForName`nin
+    // belge notu) BELİRSİZLİK var — GÜVENLİ tarafta kal.
+    if (varDeclCountForName(body, v.name) != 1) return false;
+
+    // (c) alan BU metodun gövdesinde HİÇ yeniden atanmıyor.
+    if (fieldReassignedInBody(body, attr.attr)) return false;
+
+    // (d) `v.name` normal bir yeniden-atamayla GÖLGELENMİYOR/değişmiyor
+    // (bkz. `nameReassignedAfterDecl`nin belge notu — `collectReassigned
+    // Names` BURADA KULLANILAMAZ, KENDİ `var_decl` bildirimini de "yeniden
+    // atama" SAYARDI).
+    if (nameReassignedAfterDecl(body, v.name)) return false;
+
+    // (e) `v.name`in TEK kullanımı bir `for` döngüsünün iterable'ı olmalı
+    // — başka HERHANGİ bir kullanım (return/çağrı argümanı/bir alana-
+    // listeye-dict'e yazma/iç içe `def` tarafından yakalanma) `false`a düşer.
+    if (nameUsedUnsafely(body, v.name)) return false;
+
+    return true;
+}
+
+/// GG.12: `full_body` (metodun TAM gövdesi, HER derinlikte SABİT — sadece
+/// `selfFieldSnapshotEligible`nin (c)/(e) adımları İçin taşınır) İçindeki
+/// HERHANGİ bir derinlikteki `var_decl`leri BULUP uygun olanları `locals`
+/// İÇİNDEKİ karşılık gelen `LocalDecl.borrowed_field`i İŞARETLER. AYRI,
+/// İKİNCİ bir geçiş olarak tasarlandı — `collectLocals`in KENDİ imzasına
+/// DOKUNMAZ (patlama yarıçapı SADECE `genMethod`e, `self`i OLAN TEK codegen
+/// yoluna, daralır).
+pub fn markBorrowedFieldLocals(self: *Codegen, locals: *std.ArrayListUnmanaged(LocalDecl), body: []const ast.Stmt, full_body: []const ast.Stmt) CodegenError!void {
+    for (body) |stmt| {
+        switch (stmt.kind) {
+            .var_decl => |v| {
+                if (try selfFieldSnapshotEligible(self, v, locals.items, full_body)) {
+                    for (locals.items) |*l| {
+                        if (std.mem.eql(u8, l.name, v.name)) {
+                            l.borrowed_field = true;
+                            break;
+                        }
+                    }
+                }
+            },
+            .if_stmt => |f| {
+                try markBorrowedFieldLocals(self, locals, f.then_body, full_body);
+                for (f.elif_clauses) |ec| try markBorrowedFieldLocals(self, locals, ec.body, full_body);
+                if (f.else_body) |eb| try markBorrowedFieldLocals(self, locals, eb, full_body);
+            },
+            .while_stmt => |w| try markBorrowedFieldLocals(self, locals, w.body, full_body),
+            .for_stmt => |f| try markBorrowedFieldLocals(self, locals, f.body, full_body),
+            .try_stmt => |t| {
+                try markBorrowedFieldLocals(self, locals, t.try_body, full_body);
+                for (t.except_clauses) |ec| try markBorrowedFieldLocals(self, locals, ec.body, full_body);
+                if (t.finally_body) |fb| try markBorrowedFieldLocals(self, locals, fb, full_body);
+            },
+            .lowlevel_stmt => |ll| try markBorrowedFieldLocals(self, locals, ll.body, full_body),
+            .with_stmt => |w| try markBorrowedFieldLocals(self, locals, w.body, full_body),
+            else => {},
+        }
+    }
 }
 
 pub fn collectLoopInvariantStrBases(self: *Codegen, body: []const ast.Stmt) CodegenError!std.StringHashMapUnmanaged(void) {

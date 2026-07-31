@@ -933,6 +933,14 @@ pub fn inferWithCtxClassName(self: *Codegen, ctx_expr: ast.Expr, locals: []const
 }
 
 pub fn allocSlot(self: *Codegen, name: []const u8, info: TypeInfo, is_param: bool, arena: bool) CodegenError!void {
+    try self.allocSlotEx(name, info, is_param, arena, false);
+}
+
+/// GG.12: `allocSlot`in AYNISI, YALNIZCA `borrowed_field`i (`VarInfo`ye
+/// AKTARILMASI GEREKEN TEK ekstra bayrak) de kabul eder — mevcut
+/// `allocSlot` çağıranlarının (self'i OLMAYAN fonksiyonlar/inline-splice
+/// siteleri DAHİL, HİÇBİRİ bu bayrağı KULLANMIYOR) imzasını DEĞİŞTİRMEDEN.
+pub fn allocSlotEx(self: *Codegen, name: []const u8, info: TypeInfo, is_param: bool, arena: bool, borrowed_field: bool) CodegenError!void {
     const slot = try self.newTemp();
     const size: usize = if (info.qtype == .w) 4 else 8;
     try self.out.writer.print("    {s} =l alloc{d} {d}\n", .{ slot, size, size });
@@ -951,6 +959,7 @@ pub fn allocSlot(self: *Codegen, name: []const u8, info: TypeInfo, is_param: boo
         .func_sig = info.func_sig,
         .is_param = is_param,
         .arena = arena,
+        .borrowed_field = borrowed_field,
     });
 }
 
@@ -1070,6 +1079,12 @@ pub fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) Codegen
         try locals.append(self.allocator, .{ .name = p.name, .info = try self.resolveType(p.type_expr), .is_param = true });
     }
     try self.collectLocals(&locals, m.body, false);
+    // GG.12 (bkz. nox-teknik-spesifikasyon.md §3.66): `self.<alan>`ın
+    // salt-okunur, tek-kullanım kopyalarını (ör. `local_items: list[int]
+    // = self.items`) `collectLocals`in KENDİSİNE dokunmadan AYRI bir
+    // geçişle işaretle — `retainIfAliasing`/`releaseOneLocalIfManaged`
+    // BU bayrağı görüp gereksiz retain/release trafiğini atlar.
+    try self.markBorrowedFieldLocals(&locals, m.body, m.body);
 
     const fn_name = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ class_name, m.name });
     if (ret_info.qtype == .none) {
@@ -1084,7 +1099,7 @@ pub fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) Codegen
     }
     try self.out.writer.writeAll(") {\n@start\n");
 
-    for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
+    for (locals.items) |l| try self.allocSlotEx(l.name, l.info, l.is_param, l.arena, l.borrowed_field);
     try self.prepareInlineSites(m.body);
     {
         const info = self.vars.get("self").?;

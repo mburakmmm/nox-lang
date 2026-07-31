@@ -431,6 +431,7 @@ pub const Codegen = struct {
     pub const collectLocals = registration.collectLocals;
     pub const inferWithCtxClassName = registration.inferWithCtxClassName;
     pub const allocSlot = registration.allocSlot;
+    pub const allocSlotEx = registration.allocSlotEx;
     pub const allocInlineSlot = registration.allocInlineSlot;
     pub const genFunction = registration.genFunction;
     pub const genMethod = registration.genMethod;
@@ -438,6 +439,7 @@ pub const Codegen = struct {
     pub const genMainAsync = registration.genMainAsync;
 
     pub const collectLoopInvariantStrBases = optimizations.collectLoopInvariantStrBases;
+    pub const markBorrowedFieldLocals = optimizations.markBorrowedFieldLocals;
     pub const detectWhileBoundsElideCtx = optimizations.detectWhileBoundsElideCtx;
     pub const enterStrLenCacheScope = optimizations.enterStrLenCacheScope;
     pub const exitStrLenCacheScope = optimizations.exitStrLenCacheScope;

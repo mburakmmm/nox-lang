@@ -14,6 +14,22 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.26.2]
+
+### Değişti
+- **GG.11 (belge-only)**: `generics_protocols.nox`nin `identity()` inlining
+  "bulgusu" TAZE bir derlemeyle YENİDEN DOĞRULANAMADI — `identity__int`
+  zaten TAMAMEN inline ediliyor (checked-in `.ssa` byte-byte identik çıktı,
+  "stale artefakt" hipotezi de yanlıştı). Kod değişikliği yok.
+- **GG.12**: `Box.sum()` gibi `local_items: list[int] = self.items` +
+  `for x in local_items:` desenlerinde `self`in bir alanının salt-okunur,
+  tek-kullanım kopyası ARTIK retain/release GEREKTİRMİYOR — `self` metodun
+  tüm aktivasyonu boyunca canlı, alan hiç yeniden atanmıyor, kopya hiçbir
+  yere aktarılmıyor. Yeni bir IR-metni testi + taze `.ssa` incelemesiyle
+  retain/predecrement'in GERÇEKTEN elendiği doğrulandı — wall-clock etkisi
+  bu benchmark'ın ms-ölçeğinde gürültüden ayırt edilemediğinden README
+  rakamları güncellenmedi (bkz. nox-teknik-spesifikasyon.md §3.66 GG.12).
+
 ## [1.26.1]
 
 ### Düzeltildi

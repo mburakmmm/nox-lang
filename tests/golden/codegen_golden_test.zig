@@ -1343,6 +1343,47 @@ test "codegen(çalıştır): list[T] tipli bir sınıf alanı — inşa, takma a
     );
 }
 
+// GG.12 (bkz. nox-teknik-spesifikasyon.md §3.66): `Box.sum()`daki
+// `local_items: list[int] = self.items` — `self`in bir alanının salt-
+// okunur, TEK-kullanım (bir `for` döngüsünün iterable'ı) bir kopyası —
+// ARTIK retain/release GEREKTİRMEMELİDİR (`self` metodun tüm aktivasyonu
+// boyunca CANLI, alan hiç yeniden atanmıyor, kopya hiçbir yere aktarılmıyor).
+// Davranış (doğru toplam) yukarıdaki ile AYNI fixture'da ZATEN doğrulandı
+// (aliasing/passthrough DAHİL) — burada YALNIZCA `$Box_sum`in ÜRETTİĞİ
+// IR'da retain/predecrement'in GERÇEKTEN elendiği (yalnızca davranışın
+// DEĞİŞMEDİĞİNİN değil) doğrudan kanıtlanır.
+test "codegen: GG.12 — self.<alan> salt-okunur kopyasının ÜRETTİĞİ IR'da retain/release GERÇEKTEN YOK" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/list_class_field.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{});
+
+    // `$Box_sum`in KENDİ gövdesini (bir SONRAKİ "export function"a KADAR)
+    // izole et — modülün BAŞKA yerlerinde (ör. `c: Box = b` takma adı,
+    // `make_box()`nin dönüş değeri) GERÇEK retain'ler VARDIR, bu test
+    // SADECE `Box_sum`in İÇİNİ kontrol eder.
+    const start_marker = "function l $Box_sum(l %rt, l %p_self) {\n";
+    const start = std.mem.indexOf(u8, ir, start_marker) orelse return error.MarkerNotFound;
+    const body_start = start + start_marker.len;
+    const end_rel = std.mem.indexOf(u8, ir[body_start..], "\nexport function") orelse return error.MarkerNotFound;
+    const box_sum_ir = ir[body_start .. body_start + end_rel];
+
+    // `emitInlineRetain`/`emitInlinePredecrement`in İKİSİ de `@retain*`/
+    // `@predecrement*` ETİKETLİ bloklar üretir (bkz. `ownership.zig`) —
+    // İKİSİNİN de YOKLUĞU, `local_items`in retain/release trafiğinin
+    // TAMAMEN elendiğinin kanıtıdır.
+    try std.testing.expect(std.mem.indexOf(u8, box_sum_ir, "retain") == null);
+    try std.testing.expect(std.mem.indexOf(u8, box_sum_ir, "predecrement") == null);
+}
+
 // Faz P2.2 (bkz. proje belleği "P0/P1/P2 inceleme düzeltme listesi"): boş
 // `[]` literalinin tipi DÖRT bağlamda ("var_decl" bildirilen tipi, bir
 // atamanın hedefinin ZATEN bilinen tipi, çağrı argümanı/parametre tipi,

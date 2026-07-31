@@ -113,7 +113,13 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
             .var_decl => |v| {
                 const info = self.vars.get(v.name).?;
                 const v0 = try self.genExprForTarget(v.value, info);
-                const retained = try self.retainIfAliasing(v.value, v0);
+                // GG.12 (bkz. nox-teknik-spesifikasyon.md §3.66):
+                // `info.borrowed_field` — `selfFieldSnapshotEligible`nin
+                // KANITLADIĞI, `self`in bir alanının salt-okunur/tek-
+                // kullanım kopyası — retain'İ TAMAMEN atlar (`self` bu
+                // metodun tüm aktivasyonu boyunca CANLI, alan hiç yeniden
+                // atanmıyor, kopya hiçbir yere aktarılmıyor).
+                const retained = if (info.borrowed_field) v0 else try self.retainIfAliasing(v.value, v0);
                 const val = try self.convert(retained, info.qtype);
                 // `.arena` bir yerelse (bir `lowlevel` bloğu içindeyse),
                 // bu bildirim bir DÖNGÜ gövdesinde olabilir ve slot önceki
@@ -122,7 +128,13 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
                 // serbest bırakılmıştır (bkz. `genLowLevel`). Burada normal
                 // ARC serbest bırakmayı çağırmak, ZATEN serbest bırakılmış
                 // belleği tekrar serbest bırakmaya (geçersiz free) yol açar.
-                if (isHeapManaged(info.heap) and !info.arena) try self.releaseSlotIfSet(info);
+                // GG.12: `borrowed_field` yerelleri de (arena YERELLERİYLE
+                // AYNI gerekçeyle) ASLA bireysel release EDİLMEZ — slot
+                // ZATEN sıfır kalır (`allocSlot` bunu `is_param` OLMAYAN
+                // heap-yönetimli yerellerde `storel 0` İLE başlatır),
+                // bu YÜZDEN `releaseSlotIfSet` burada ÇAĞRILMASA da
+                // ZARARSIZDIR — ama tutarlılık İçin AÇIKÇA atlanır.
+                if (isHeapManaged(info.heap) and !info.arena and !info.borrowed_field) try self.releaseSlotIfSet(info);
                 try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(info.qtype), val.text, info.slot });
                 // Bkz. `Codegen.mod_cache`nin belge notu, madde 2: bu
                 // slota YENİ bir değer YAZILDI — o slot İçin ÖNCEKİ TÜM

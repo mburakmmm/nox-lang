@@ -61,7 +61,7 @@ pub fn releaseOneLocalIfManaged(self: *Codegen, entry: VarInfo) CodegenError!voi
     // Arena tipli bağlamalar hiçbir zaman bireysel release edilmez —
     // refcount başlıkları yoktur, yaşam süreleri yalnızca kendi
     // `lowlevel` bloğunun `nox_arena_destroy`'una bağlıdır.
-    if (entry.is_param or entry.arena) return;
+    if (entry.is_param or entry.arena or entry.borrowed_field) return;
     if (isHeapManaged(entry.heap)) {
         try self.releaseSlotIfSet(entry);
     } else if (entry.heap == .task or entry.heap == .channel or entry.heap == .thread_handle or entry.heap == .thread_channel or entry.heap == .task_local) {

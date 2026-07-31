@@ -221,6 +221,12 @@ pub const VarInfo = struct {
     func_sig: ?*const FuncSigInfo = null,
     is_param: bool = false,
     arena: bool = false,
+    /// GG.12: `self.<alan>`in salt-okunur, HİÇBİR yere aktarılmayan bir
+    /// kopyası (ör. sadece bir `for` döngüsünün iterable'ı) — `self`in
+    /// KENDİSİ metodun tüm aktivasyonu boyunca CANLI olduğundan retain/
+    /// release tamamen GEREKSİZ. `is_param`i aşırı yüklemez (o başka
+    /// birçok yerde kontrol ediliyor, ayrı bayrak patlama yarıçapını daraltır).
+    borrowed_field: bool = false,
 };
 
 pub const LocalDecl = struct {
@@ -228,6 +234,9 @@ pub const LocalDecl = struct {
     info: TypeInfo,
     is_param: bool = false,
     arena: bool = false,
+    /// GG.12: bkz. `VarInfo.borrowed_field`in belge notu — `allocSlot`
+    /// BUNU doğrudan `VarInfo`ye taşır.
+    borrowed_field: bool = false,
 };
 
 pub const StringDatum = struct {

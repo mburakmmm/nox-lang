@@ -10971,7 +10971,114 @@ fayda OLMADAN kabul etmek YANLIŞ olur. GG.10 DEĞERLENDİRİLDİ, KAPATILDI
 — mevcut mimari (AA.1/BB.1) BİLGİLİ VE HÂLÂ GEÇERLİ bir karardır, KOD
 DEĞİŞİKLİĞİ YAPILMADI.
 
-**Faz GG (GG.1-GG.10) BURADA TAMAMEN KAPANIR.**
+**Faz GG (GG.1-GG.10) BURADA TAMAMEN KAPANIR.** (Not: bu faz DAHA SONRA,
+README/benchmark tazeleme sonrası kullanıcının "list_traversal ve
+lowlevel_arena'yı C'ye yaklaştıramaz mıyız, diğer alanları da" talebiyle
+GG.11-GG.16 OLARAK YENİDEN AÇILDI — bkz. aşağı.)
+
+### GG.11 (DEĞERLENDİRİLDİ, GEÇERSİZ) — `generics_protocols`'un `identity()` inlining bulgusu YENİDEN GERÇEKLEŞMİYOR
+
+**Kaynak:** benchmark tazeleme sonrası GENİŞ bir "C'ye yaklaşma" araştırması
+(2 paralel Explore agent + 1 Plan agent) 6 aday bulgu ÜRETTİ. Bunlardan
+biri — `generics_protocols.nox`daki `identity[T](x: T) -> T` çağrısının
+`total_area`/metod-çağrısı GİBİ inline EDİLMEDİĞİ, checked-in
+`benchmarks/compare/generics_protocols.ssa` dosyasında `call $identity`
+GÖRÜLDÜĞÜ iddiası — Plan agent'ın KENDİ TAZE derlemesiyle (checked-in
+artefaktlara GÜVENMEDEN) DOĞRULANAMADI.
+
+**Doğrulama (bu oturumda BAĞIMSIZ TEKRARLANDI):** `zig build
+-Doptimize=ReleaseFast` İLE taze bir `noxc` derlendi, `./zig-out/bin/noxc
+build benchmarks/compare/generics_protocols.nox -o /tmp/gp_fresh --emit-ssa
+--emit-asm` İLE YENİDEN üretildi. Sonuç: `identity__int` fonksiyonu
+TANIMLANIYOR (`export function l $identity__int(...)`) ama HİÇBİR YERDE
+`call $identity` / `call $identity__int` YOK — yani zaten TAMAMEN inline
+edilmiş, ölü kod olarak KALIYOR (linkleme kolaylığı İçin üretiliyor, hiç
+çağrılmıyor). Kök neden: `checker.zig`nin `instantiateGeneric`i
+monomorphize edilmiş `ast.FuncDef`e MANGLE EDİLMİŞ bir ad (`"identity__int"`,
+`"identity"` DEĞİL) veriyor; `inlining.zig:95-107`nin
+`isFuncInlineEligible`i generic ŞABLON adını (`"identity"`) DIŞLAMAK İçin
+kontrol ediyor ama bu kontrol `"identity__int"`e HİÇ eşleşmiyor — yani
+dışlama zaten hiç TETİKLENMİYOR, fonksiyon normal seçici-inlining
+(GG.2) yoluyla NORMAL ŞEKİLDE inline ediliyor.
+
+**Ek doğrulama:** checked-in `benchmarks/compare/generics_protocols.ssa`/
+`.s` dosyaları `diff` İLE taze üretilen kopyalarla TAM OLARAK
+KARŞILAŞTIRILDI — SIFIR fark bulundu (byte-byte identik). Yani orijinal
+"stale artefakt" hipotezi de YANLIŞ ÇIKTI: checked-in dosyalar zaten
+GÜNCELdi, bulgunun kendisi baştan beri GEÇERSİZDİ (muhtemelen `.ssa`daki
+`identity__int` TANIMININ varlığı "inline edilmemiş" ile KARIŞTIRILDI).
+
+**Sonuç: kod değişikliği YOK.** Bu alt-bölüm SADECE gelecekte aynı YANLIŞ
+bulgunun tekrar açılmasını ÖNLEMEK İçin belgeleniyor. **Risk: yok.**
+
+### GG.12 (TAMAMLANDI) — `list_class_field`: `self.<alan>` salt-okunur kopyasının retain/release'ini ele
+
+**Kök neden:** `Box.sum()`daki `local_items: list[int] = self.items` —
+`stmt.zig`nin `.var_decl` kolu `retainIfAliasing`i (`ownership.zig`)
+çağırıyordu çünkü `isAliasingExpr`nin `.attribute` dalı `self` bir
+temporary OLMADIĞINDAN `true` dönüyordu. `local_items` sonra normal bir
+yerel olduğundan kapsam-sonu `releaseOneLocalIfManaged`de de bir release
+alıyordu. AMA `self` bu metodun TÜM aktivasyonu boyunca CANLI (parametre,
+çağıran tarafından ödünç verilmiş), `items` bu metotta ASLA yeniden
+atanmıyor, `local_items` de ASLA yeniden atanmıyor/döndürülmüyor/başka bir
+yere geçirilmiyor — TEK kullanımı bir `for` döngüsünün iterable'ı olmak.
+Retain/release TAMAMEN gereksizdi.
+
+**Uygulama:**
+1. `VarInfo`/`LocalDecl`e (`types.zig`) YENİ bir alan: `borrowed_field:
+   bool = false` (`is_param`i AŞIRI YÜKLEMEDEN — ayrı bayrak patlama
+   yarıçapını daraltır).
+2. `releaseOneLocalIfManaged`de (`ownership.zig:64`) `if (entry.is_param
+   or entry.arena)`e `or entry.borrowed_field` EKLENDİ.
+3. `optimizations.zig`e YENİ, dar bir yerel-kontrol yardımcısı
+   `selfFieldSnapshotEligible` EKLENDİ — `detectWhileBoundsElideCtx`nin
+   AYNI "dar, belirsizlikte false'a düş" deseninde: (a) `v.value`
+   `self.<alan>` biçiminde, (b) `self` bilinen bir sınıf-tipli PARAMETRE,
+   (c) `v.name` gövdede TAM OLARAK BİR `var_decl` İLE bildiriliyor
+   (`varDeclCountForName`), (d) alan METODUN gövdesinde HİÇ yeniden
+   atanmıyor (`fieldReassignedInBody`), (e) `v.name` GERÇEK bir yeniden-
+   atama/gölgelemeye UĞRAMIYOR (`nameReassignedAfterDecl` — DİKKAT:
+   mevcut `collectReassignedNames` BURADA KULLANILAMADI, o fonksiyon HER
+   `var_decl`i "yeniden atama" SAYDIĞINDAN `v.name`in KENDİ bildirimini
+   de sayıp HER ZAMAN `true` dönerdi — GG.5'teki kullanımında zararsız,
+   çünkü ORADA izlenen isim HER ZAMAN bir parametre), (f) `v.name`in TEK
+   kullanımı bir `for` döngüsünün ÜST-DÜZEY iterable'ı (`nameUsedUnsafely`
+   — `ast.Expr`/`ast.Stmt`nin TÜM varyantlarını AÇIKÇA ele alır, sessiz
+   `else` YOK — eksik bir dal burada YANLIŞ bir "güvenli" sonucuna yol
+   açardı). YENİ, AYRI bir geçiş (`markBorrowedFieldLocals`) `collectLocals`in
+   İMZASINA DOKUNMADAN (patlama yarıçapı SADECE `genMethod`e daralır)
+   `genMethod`de `collectLocals` SONRASI çağrılır, uygun `LocalDecl`leri
+   işaretler; `allocSlot` (artık `allocSlotEx` üzerinden) bu bayrağı
+   `VarInfo`ye taşır.
+4. `stmt.zig`nin `.var_decl` kolunda `info.borrowed_field` İKEN
+   `retainIfAliasing` TAMAMEN ATLANIR VE kapsam-sonu `releaseSlotIfSet`
+   ÇAĞRILMAZ (arena yerelleriyle AYNI gerekçe — slot zaten sıfır kalır).
+
+**Doğrulama:** Mevcut `tests/golden/codegen_cases/list_class_field.nox`
+(inşa+takma ad+passthrough+sızıntı-yok, ZATEN vardı) davranışı DOĞRULAR;
+YENİ bir IR-metni testi (`"codegen: GG.12 — ... retain/release GERÇEKTEN
+YOK"`) `$Box_sum`in ÜRETTİĞİ IR'ı izole edip `"retain"`/`"predecrement"`
+alt-dizelerinin HİÇBİRİNİN geçmediğini doğrudan kanıtlar. Taze bir derlemeyle
+(`.ssa`) BAĞIMSIZ olarak TEYİT edildi: düzeltme ÖNCESİ `$Box_sum` bir
+`@retain0/@retain_skip0/@retain_done0` etiket üçlüsü İÇERİRDİ; SONRASINDA
+`self.items`in işaretçisi DOĞRUDAN `local_items` slotuna kopyalanıyor,
+HİÇBİR retain/release/predecrement YOK. `zig build test` (Debug + ReleaseFast)
+yeşil.
+
+**Ölçüm:** `benchmarks/compare/list_class_field.nox` (n=300.000) — ÖNCESİ
+nox min=4.2ms/C min=2.0ms (2.12x). SONRASI koşularda nox min 4.0-5.1ms
+ARALIĞINDA, C min 1.7-3.5ms ARALIĞINDA ÖLÇÜLDÜ — GG.11/GG'nin bu turdaki
+kendi "ölçüm gürültüsü" dersiyle TUTARLI biçimde, bu benchmark'ın MUTLAK
+ölçeği (birkaç milisaniye) HEM nox HEM C tarafında process-başlatma
+gürültüsünün BASKIN olduğu bir bölgede — tek bir güvenilir ORAN
+ÇIKARILAMADI (5 farklı koşuda 1.62x-2.62x arası SAÇILDI). Plan dosyasının
+KENDİ ÖNGÖRDÜĞÜ gibi ("asıl maliyet — metot-çağrısı overhead'i — BU fazın
+kapsamı DIŞINDA kalıyor") kazanç MÜTEVAZİ VE bu ölçekte gürültüden AYIRT
+EDİLEMEZ — retain/release'in GERÇEKTEN elendiği (IR kanıtı, YUKARIDA) KESİN,
+ama wall-clock etkisi bu benchmark'ta İSTATİSTİKSEL olarak GÖRÜNMÜYOR. Bu
+YÜZDEN README/RESULTS.md tabloları BU sayı İLE GÜNCELLENMEDİ (gürültülü bir
+sayıyı "iyileşme" OLARAK sunmak, bu turun KENDİ eleştirdiği hatayı TEKRARLARDI).
+**Risk: düşük-orta, GERÇEKLEŞTİ (yeni kod bulunmadı).**
 
 ### HH.1 (TAMAMLANDI) — Accept backlog artırımı; `ConnCtx` havuzu DENENDİ, GERİ ALINDI
 
