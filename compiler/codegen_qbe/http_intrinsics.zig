@@ -195,14 +195,15 @@ pub fn genHttpServe(self: *Codegen, c: ast.Call) CodegenError!Value {
     }
 
     const server = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_http_server_listen(l {s}, l {s})\n", .{ server, RT_PARAM, port_v.text });
+    try self.qbeCall(.{ .name = server, .ty = .l }, "$nox_http_server_listen", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = port_v.text } });
 
     const wrapper_name = try std.fmt.allocPrint(self.allocator, "http_serve_wrap_{d}", .{self.http_serve_wrapper_counter});
     self.http_serve_wrapper_counter += 1;
     try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class, .used_fields = self.computeUsedFieldsFor(handle_name) });
 
-    try self.out.writer.print("    call $nox_http_serve_raw(l {s}, l {s}, l ${s}, l {s}, l {s})\n", .{ RT_PARAM, server, wrapper_name, RT_PARAM, max_conn_text });
-    try self.out.writer.print("    call $nox_http_server_close(l {s}, l {s})\n", .{ RT_PARAM, server });
+    const wrapper_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{wrapper_name});
+    try self.qbeCall(null, "$nox_http_serve_raw", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server }, .{ .ty = .l, .text = wrapper_sym }, .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = max_conn_text } });
+    try self.qbeCall(null, "$nox_http_server_close", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server } });
     return .{ .text = "0", .qtype = .none };
 }
 
@@ -223,12 +224,14 @@ pub fn genHttpServe(self: *Codegen, c: ast.Call) CodegenError!Value {
 /// ws_raw`ı çağırır, SONRA `server`ı kapatır — `emitFdServeTail`/
 /// `genHttpServe*Generic`nin ÜÇÜ de PAYLAŞTIĞI ORTAK kuyruk.
 pub fn emitServeAndClose(self: *Codegen, server: []const u8, wrapper_name: []const u8, max_conn_text: []const u8, ws_wrapper_name: ?[]const u8) CodegenError!void {
+    const wrapper_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{wrapper_name});
     if (ws_wrapper_name) |wsw| {
-        try self.out.writer.print("    call $nox_http_serve_ws_raw(l {s}, l {s}, l ${s}, l {s}, l ${s}, l {s})\n", .{ RT_PARAM, server, wrapper_name, RT_PARAM, wsw, max_conn_text });
+        const wsw_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{wsw});
+        try self.qbeCall(null, "$nox_http_serve_ws_raw", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server }, .{ .ty = .l, .text = wrapper_sym }, .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = wsw_sym }, .{ .ty = .l, .text = max_conn_text } });
     } else {
-        try self.out.writer.print("    call $nox_http_serve_raw(l {s}, l {s}, l ${s}, l {s}, l {s})\n", .{ RT_PARAM, server, wrapper_name, RT_PARAM, max_conn_text });
+        try self.qbeCall(null, "$nox_http_serve_raw", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server }, .{ .ty = .l, .text = wrapper_sym }, .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = max_conn_text } });
     }
-    try self.out.writer.print("    call $nox_http_server_close(l {s}, l {s})\n", .{ RT_PARAM, server });
+    try self.qbeCall(null, "$nox_http_server_close", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server } });
 }
 
 /// Faz "sunucu-tarafı TLS + WS": `tls_ctx_text` (varsa) `nox_http_server_
@@ -238,9 +241,9 @@ pub fn emitServeAndClose(self: *Codegen, server: []const u8, wrapper_name: []con
 pub fn emitFdServeTail(self: *Codegen, fd_text: []const u8, wrapper_name: []const u8, max_conn_text: []const u8, tls_ctx_text: ?[]const u8, ws_wrapper_name: ?[]const u8) CodegenError!void {
     const server = try self.newTemp();
     if (tls_ctx_text) |ctx| {
-        try self.out.writer.print("    {s} =l call $nox_http_server_from_fd_tls(l {s}, l {s}, l {s})\n", .{ server, RT_PARAM, fd_text, ctx });
+        try self.qbeCall(.{ .name = server, .ty = .l }, "$nox_http_server_from_fd_tls", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = fd_text }, .{ .ty = .l, .text = ctx } });
     } else {
-        try self.out.writer.print("    {s} =l call $nox_http_server_from_fd(l {s}, l {s})\n", .{ server, RT_PARAM, fd_text });
+        try self.qbeCall(.{ .name = server, .ty = .l }, "$nox_http_server_from_fd", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = fd_text } });
     }
     try self.emitServeAndClose(server, wrapper_name, max_conn_text, ws_wrapper_name);
 }
@@ -350,7 +353,7 @@ pub fn genHttpServeMulticore(self: *Codegen, c: ast.Call) CodegenError!Value {
     }
 
     const fd = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_http_listen_fd(l {s}, l {s})\n", .{ fd, RT_PARAM, port_v.text });
+    try self.qbeCall(.{ .name = fd, .ty = .l }, "$nox_http_listen_fd", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = port_v.text } });
 
     const wrapper_name = try std.fmt.allocPrint(self.allocator, "http_serve_wrap_{d}", .{self.http_serve_wrapper_counter});
     self.http_serve_wrapper_counter += 1;
@@ -367,40 +370,41 @@ pub fn genHttpServeMulticore(self: *Codegen, c: ast.Call) CodegenError!Value {
     // (bkz. yukarıdaki `.int` denetimi, `max_connections`in AKSİNE
     // `.int_lit` ZORUNLU DEĞİL) boyut ÇALIŞMA ZAMANINDA hesaplanır.
     const handles_bytes = try self.newTemp();
-    try self.out.writer.print("    {s} =l mul {s}, 8\n", .{ handles_bytes, num_threads_v.text });
+    try self.qbeOp2Imm(handles_bytes, .l, "mul", num_threads_v.text, 8);
     const handles_arr = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_alloc(l {s}, l {s})\n", .{ handles_arr, RT_PARAM, handles_bytes });
+    try self.qbeCall(.{ .name = handles_arr, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handles_bytes } });
 
     const i_slot = try self.newTemp();
-    try self.out.writer.print("    {s} =l alloc8 8\n", .{i_slot});
-    try self.out.writer.print("    storel 1, {s}\n", .{i_slot});
+    try self.qbeAlloc(i_slot, .eight, 8);
+    try self.qbeStoreImmL(1, i_slot);
 
     const cond_label = try self.newLabel("mc_spawn_cond");
     const body_label = try self.newLabel("mc_spawn_body");
     const end_label = try self.newLabel("mc_spawn_end");
 
-    try self.out.writer.print("    jmp {s}\n", .{cond_label});
-    try self.out.writer.print("{s}\n", .{cond_label});
+    try self.qbeJmp(cond_label);
+    try self.qbeLabel(cond_label);
     const cur = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ cur, i_slot });
+    try self.qbeLoadL(cur, i_slot);
     const cmp = try self.newTemp();
-    try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ cmp, cur, num_threads_v.text });
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cmp, body_label, end_label });
-    try self.out.writer.print("{s}\n", .{body_label});
+    try self.qbeOp2(cmp, .w, "csltl", cur, num_threads_v.text);
+    try self.qbeJnz(cmp, body_label, end_label);
+    try self.qbeLabel(body_label);
     const handle_ptr = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_thread_spawn(l {s}, l ${s}, l {s}, w 0, w 0)\n", .{ handle_ptr, RT_PARAM, worker_name, fd });
+    const worker_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{worker_name});
+    try self.qbeCall(.{ .name = handle_ptr, .ty = .l }, "$nox_thread_spawn", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = worker_sym }, .{ .ty = .l, .text = fd }, .{ .ty = .w, .text = "0" }, .{ .ty = .w, .text = "0" } });
     const slot_off = try self.newTemp();
-    try self.out.writer.print("    {s} =l mul {s}, 8\n", .{ slot_off, cur });
+    try self.qbeOp2Imm(slot_off, .l, "mul", cur, 8);
     const slot_ptr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ slot_ptr, handles_arr, slot_off });
-    try self.out.writer.print("    storel {s}, {s}\n", .{ handle_ptr, slot_ptr });
+    try self.qbeOp2(slot_ptr, .l, "add", handles_arr, slot_off);
+    try self.qbeStoreL(handle_ptr, slot_ptr);
     const cur2 = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ cur2, i_slot });
+    try self.qbeLoadL(cur2, i_slot);
     const next = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, 1\n", .{ next, cur2 });
-    try self.out.writer.print("    storel {s}, {s}\n", .{ next, i_slot });
-    try self.out.writer.print("    jmp {s}\n", .{cond_label});
-    try self.out.writer.print("{s}\n", .{end_label});
+    try self.qbeOp2Imm(next, .l, "add", cur2, 1);
+    try self.qbeStoreL(next, i_slot);
+    try self.qbeJmp(cond_label);
+    try self.qbeLabel(end_label);
 
     try self.emitFdServeTail(fd, wrapper_name, max_conn_text, null, null);
 
@@ -412,37 +416,37 @@ pub fn genHttpServeMulticore(self: *Codegen, c: ast.Call) CodegenError!Value {
     // bağlantılarını kabul ETMEDEN süreç çıkışına izin verdiği GERÇEK
     // yarış durumunu (bkz. yukarıdaki belge notu) KAPATIR.
     const j_slot = try self.newTemp();
-    try self.out.writer.print("    {s} =l alloc8 8\n", .{j_slot});
-    try self.out.writer.print("    storel 1, {s}\n", .{j_slot});
+    try self.qbeAlloc(j_slot, .eight, 8);
+    try self.qbeStoreImmL(1, j_slot);
 
     const jcond_label = try self.newLabel("mc_join_cond");
     const jbody_label = try self.newLabel("mc_join_body");
     const jend_label = try self.newLabel("mc_join_end");
 
-    try self.out.writer.print("    jmp {s}\n", .{jcond_label});
-    try self.out.writer.print("{s}\n", .{jcond_label});
+    try self.qbeJmp(jcond_label);
+    try self.qbeLabel(jcond_label);
     const jcur = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ jcur, j_slot });
+    try self.qbeLoadL(jcur, j_slot);
     const jcmp = try self.newTemp();
-    try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ jcmp, jcur, num_threads_v.text });
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ jcmp, jbody_label, jend_label });
-    try self.out.writer.print("{s}\n", .{jbody_label});
+    try self.qbeOp2(jcmp, .w, "csltl", jcur, num_threads_v.text);
+    try self.qbeJnz(jcmp, jbody_label, jend_label);
+    try self.qbeLabel(jbody_label);
     const jslot_off = try self.newTemp();
-    try self.out.writer.print("    {s} =l mul {s}, 8\n", .{ jslot_off, jcur });
+    try self.qbeOp2Imm(jslot_off, .l, "mul", jcur, 8);
     const jslot_ptr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ jslot_ptr, handles_arr, jslot_off });
+    try self.qbeOp2(jslot_ptr, .l, "add", handles_arr, jslot_off);
     const jhandle = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ jhandle, jslot_ptr });
-    try self.out.writer.print("    call $nox_thread_join(l {s}, l {s})\n", .{ RT_PARAM, jhandle });
-    try self.out.writer.print("    call $nox_thread_destroy(l {s}, l {s})\n", .{ RT_PARAM, jhandle });
+    try self.qbeLoadL(jhandle, jslot_ptr);
+    try self.qbeCall(null, "$nox_thread_join", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = jhandle } });
+    try self.qbeCall(null, "$nox_thread_destroy", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = jhandle } });
     const jcur2 = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ jcur2, j_slot });
+    try self.qbeLoadL(jcur2, j_slot);
     const jnext = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, 1\n", .{ jnext, jcur2 });
-    try self.out.writer.print("    storel {s}, {s}\n", .{ jnext, j_slot });
-    try self.out.writer.print("    jmp {s}\n", .{jcond_label});
-    try self.out.writer.print("{s}\n", .{jend_label});
-    try self.out.writer.print("    call $nox_free(l {s}, l {s}, l {s})\n", .{ RT_PARAM, handles_arr, handles_bytes });
+    try self.qbeOp2Imm(jnext, .l, "add", jcur2, 1);
+    try self.qbeStoreL(jnext, j_slot);
+    try self.qbeJmp(jcond_label);
+    try self.qbeLabel(jend_label);
+    try self.qbeCall(null, "$nox_free", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handles_arr }, .{ .ty = .l, .text = handles_bytes } });
 
     return .{ .text = "0", .qtype = .none };
 }
@@ -470,8 +474,11 @@ pub fn genHttpServeMulticoreWorker(self: *Codegen, spec: HttpServeMulticoreWorke
     self.mod_cache.deinit(self.allocator);
     self.mod_cache = .empty;
 
-    try self.out.writer.print("export function l ${s}(l %argp) {{\n@start\n", .{spec.name});
-    try self.out.writer.print("    {s} =l loadl %argp\n", .{RT_PARAM});
+    const spec_name_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{spec.name});
+    try self.qbeFuncHeaderStart(.l, spec_name_sym);
+    try self.qbeFuncParam(.l, "%argp", true);
+    try self.qbeFuncHeaderEnd();
+    try self.qbeLoadL(RT_PARAM, "%argp");
     // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
     // BU worker KENDİ bağımsız `RuntimeState`ine (bkz. `childThreadMain`,
     // `runtime/async_rt/thread_bridge.zig`) sahiptir — `globals_block`u
@@ -481,10 +488,10 @@ pub fn genHttpServeMulticoreWorker(self: *Codegen, spec: HttpServeMulticoreWorke
     // (`max_connections=0` varsayılanında `ret 0` erişilemez), `rt`nin
     // KENDİSİ de zaten HİÇ deinit edilmiyor.
     if (self.module_globals.count() > 0) {
-        try self.out.writer.print("    call $nox_init_globals(l {s})\n", .{RT_PARAM});
+        try self.qbeCall(null, "$nox_init_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
     }
     const payload_addr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add %argp, 8\n", .{payload_addr});
+    try self.qbeOp2Imm(payload_addr, .l, "add", "%argp", 8);
 
     // Faz "sunucu-tarafı TLS": `spec.tls` İSE `payload_addr`nin İÇERDİĞİ
     // DEĞER ÇIPLAK bir `fd` DEĞİL, `nox_http_listen_fd_tls`nin döndürdüğü
@@ -495,24 +502,25 @@ pub fn genHttpServeMulticoreWorker(self: *Codegen, spec: HttpServeMulticoreWorke
     var tls_ctx_text: ?[]const u8 = null;
     if (spec.tls) {
         const payload_ptr = try self.newTemp();
-        try self.out.writer.print("    {s} =l loadl {s}\n", .{ payload_ptr, payload_addr });
+        try self.qbeLoadL(payload_ptr, payload_addr);
         const fd_t = try self.newTemp();
-        try self.out.writer.print("    {s} =l loadl {s}\n", .{ fd_t, payload_ptr });
+        try self.qbeLoadL(fd_t, payload_ptr);
         const ctx_addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, 8\n", .{ ctx_addr, payload_ptr });
+        try self.qbeOp2Imm(ctx_addr, .l, "add", payload_ptr, 8);
         const ctx_t = try self.newTemp();
-        try self.out.writer.print("    {s} =l loadl {s}\n", .{ ctx_t, ctx_addr });
+        try self.qbeLoadL(ctx_t, ctx_addr);
         fd = fd_t;
         tls_ctx_text = ctx_t;
     } else {
         const fd_t = try self.newTemp();
-        try self.out.writer.print("    {s} =l loadl {s}\n", .{ fd_t, payload_addr });
+        try self.qbeLoadL(fd_t, payload_addr);
         fd = fd_t;
     }
 
     try self.emitFdServeTail(fd, spec.wrapper_name, spec.max_conn_text, tls_ctx_text, spec.ws_wrapper_name);
 
-    try self.out.writer.writeAll("    ret 0\n}\n");
+    try self.qbeRet("0");
+    try self.qbeFuncEnd();
 }
 
 /// `nox_http_serve_raw`nin (bkz. runtime/stdlib_shims/http_server.zig'in
@@ -548,8 +556,12 @@ pub fn genHttpServeWrapper(self: *Codegen, spec: HttpServeWrapperSpec) CodegenEr
     self.mod_cache.deinit(self.allocator);
     self.mod_cache = .empty;
 
-    try self.out.writer.print("export function l ${s}(l %ctx, l %req) {{\n@start\n", .{spec.name});
-    try self.out.writer.print("    {s} =l copy %ctx\n", .{RT_PARAM});
+    const spec_name_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{spec.name});
+    try self.qbeFuncHeaderStart(.l, spec_name_sym);
+    try self.qbeFuncParam(.l, "%ctx", true);
+    try self.qbeFuncParam(.l, "%req", false);
+    try self.qbeFuncHeaderEnd();
+    try self.qbeOp1(RT_PARAM, .l, "copy", "%ctx");
 
     const req_cinfo = self.classes.get(spec.req_class) orelse return error.Unsupported;
     const req_values = try self.allocator.alloc(Value, req_cinfo.fields.items.len);
@@ -560,19 +572,19 @@ pub fn genHttpServeWrapper(self: *Codegen, spec: HttpServeWrapperSpec) CodegenEr
             // ucuz, PINNED-refcount'lu boş bir literal üretilir.
             req_values[i] = if (spec.used_fields.method) blk: {
                 const t = try self.newTemp();
-                try self.out.writer.print("    {s} =l call $nox_http_request_method(l {s}, l %req)\n", .{ t, RT_PARAM });
+                try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_http_request_method", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%req" } });
                 break :blk .{ .text = t, .qtype = .l, .heap = .str };
             } else try self.emitStringLiteral("");
         } else if (std.mem.eql(u8, f.name, "target")) {
             req_values[i] = if (spec.used_fields.target) blk: {
                 const t = try self.newTemp();
-                try self.out.writer.print("    {s} =l call $nox_http_request_target(l {s}, l %req)\n", .{ t, RT_PARAM });
+                try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_http_request_target", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%req" } });
                 break :blk .{ .text = t, .qtype = .l, .heap = .str };
             } else try self.emitStringLiteral("");
         } else if (std.mem.eql(u8, f.name, "body")) {
             req_values[i] = if (spec.used_fields.body) blk: {
                 const t = try self.newTemp();
-                try self.out.writer.print("    {s} =l call $nox_http_request_body(l {s}, l %req)\n", .{ t, RT_PARAM });
+                try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_http_request_body", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%req" } });
                 break :blk .{ .text = t, .qtype = .l, .heap = .str };
             } else try self.emitStringLiteral("");
         } else if (std.mem.eql(u8, f.name, "headers")) {
@@ -583,9 +595,9 @@ pub fn genHttpServeWrapper(self: *Codegen, spec: HttpServeWrapperSpec) CodegenEr
             // TAMAMEN atlanır.
             const t = try self.newTemp();
             if (spec.used_fields.headers) {
-                try self.out.writer.print("    {s} =l call $nox_http_request_headers(l {s}, l %req)\n", .{ t, RT_PARAM });
+                try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_http_request_headers", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%req" } });
             } else {
-                try self.out.writer.print("    {s} =l call $nox_dict_new(l {s}, w 1)\n", .{ t, RT_PARAM });
+                try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_dict_new", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .w, .text = "1" } });
             }
             req_values[i] = .{ .text = t, .qtype = .l, .heap = .dict, .dict_info = f.info.dict_info };
         } else {
@@ -608,7 +620,8 @@ pub fn genHttpServeWrapper(self: *Codegen, spec: HttpServeWrapperSpec) CodegenEr
     }
 
     const resp_obj_text = try self.newTemp();
-    try self.out.writer.print("    {s} =l call ${s}(l {s}, l {s})\n", .{ resp_obj_text, spec.handler_fn, RT_PARAM, req_obj.text });
+    const handler_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{spec.handler_fn});
+    try self.qbeCall(.{ .name = resp_obj_text, .ty = .l }, handler_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = req_obj.text } });
     const resp_obj: Value = .{ .text = resp_obj_text, .qtype = .l, .heap = .class, .class_name = spec.resp_class };
 
     try self.releaseValueIfSet(req_obj.text, req_obj.heap, req_obj.elem_qtype, req_obj.class_name, req_obj.elem_heap_info, req_obj.dict_info);
@@ -618,11 +631,12 @@ pub fn genHttpServeWrapper(self: *Codegen, spec: HttpServeWrapperSpec) CodegenEr
     const headers = try self.genFieldReadFromValue(resp_obj, "headers");
 
     const raw_resp = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_http_response_new(l {s}, l {s}, l {s}, l {s})\n", .{ raw_resp, RT_PARAM, status.text, body.text, headers.text });
+    try self.qbeCall(.{ .name = raw_resp, .ty = .l }, "$nox_http_response_new", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = status.text }, .{ .ty = .l, .text = body.text }, .{ .ty = .l, .text = headers.text } });
 
     try self.releaseValueIfSet(resp_obj.text, resp_obj.heap, resp_obj.elem_qtype, resp_obj.class_name, resp_obj.elem_heap_info, resp_obj.dict_info);
 
-    try self.out.writer.print("    ret {s}\n}}\n", .{raw_resp});
+    try self.qbeRet(raw_resp);
+    try self.qbeFuncEnd();
 }
 
 /// `nox_http_serve_ws_raw`nin (bkz. `websocket_server.zig`nin `WsHandlerFn`i,
@@ -642,8 +656,12 @@ pub fn genHttpServeWsWrapper(self: *Codegen, spec: types.HttpServeWsWrapperSpec)
     self.mod_cache.deinit(self.allocator);
     self.mod_cache = .empty;
 
-    try self.out.writer.print("export function l ${s}(l %ctx, l %conn) {{\n@start\n", .{spec.name});
-    try self.out.writer.print("    {s} =l copy %ctx\n", .{RT_PARAM});
+    const spec_name_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{spec.name});
+    try self.qbeFuncHeaderStart(.l, spec_name_sym);
+    try self.qbeFuncParam(.l, "%ctx", true);
+    try self.qbeFuncParam(.l, "%conn", false);
+    try self.qbeFuncHeaderEnd();
+    try self.qbeOp1(RT_PARAM, .l, "copy", "%ctx");
 
     const conn_cinfo = self.classes.get(spec.conn_class) orelse return error.Unsupported;
     const conn_values = try self.allocator.alloc(Value, conn_cinfo.fields.items.len);
@@ -656,11 +674,13 @@ pub fn genHttpServeWsWrapper(self: *Codegen, spec: types.HttpServeWsWrapperSpec)
     }
     const conn_obj = try self.genConstructFromValues(spec.conn_class, conn_cinfo, conn_values, null);
 
-    try self.out.writer.print("    call ${s}(l {s}, l {s})\n", .{ spec.ws_handler_fn, RT_PARAM, conn_obj.text });
+    const ws_handler_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{spec.ws_handler_fn});
+    try self.qbeCall(null, ws_handler_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = conn_obj.text } });
 
     try self.releaseValueIfSet(conn_obj.text, conn_obj.heap, conn_obj.elem_qtype, conn_obj.class_name, conn_obj.elem_heap_info, conn_obj.dict_info);
 
-    try self.out.writer.writeAll("    ret 0\n}\n");
+    try self.qbeRet("0");
+    try self.qbeFuncEnd();
 }
 
 /// Faz "sunucu-tarafı TLS + WebSocket Upgrade" (bkz. plan dosyası §6) —
@@ -755,9 +775,9 @@ pub fn genHttpServeGeneric(self: *Codegen, c: ast.Call, want_tls: bool, want_ws:
 
     const server = try self.newTemp();
     if (want_tls) {
-        try self.out.writer.print("    {s} =l call $nox_http_server_listen_tls(l {s}, l {s}, l {s}, l {s})\n", .{ server, RT_PARAM, port_v.text, cert_v.text, key_v.text });
+        try self.qbeCall(.{ .name = server, .ty = .l }, "$nox_http_server_listen_tls", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = port_v.text }, .{ .ty = .l, .text = cert_v.text }, .{ .ty = .l, .text = key_v.text } });
     } else {
-        try self.out.writer.print("    {s} =l call $nox_http_server_listen(l {s}, l {s})\n", .{ server, RT_PARAM, port_v.text });
+        try self.qbeCall(.{ .name = server, .ty = .l }, "$nox_http_server_listen", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = port_v.text } });
     }
 
     const handlers = try self.registerHttpHandlers(handle_name, ws_handle_name);
@@ -825,7 +845,7 @@ pub fn genHttpServeFdGeneric(self: *Codegen, c: ast.Call, want_tls: bool, want_w
 
     if (want_tls) {
         const server = try self.newTemp();
-        try self.out.writer.print("    {s} =l call $nox_http_server_from_fd_tls_owned(l {s}, l {s}, l {s}, l {s})\n", .{ server, RT_PARAM, fd_v.text, cert_v.text, key_v.text });
+        try self.qbeCall(.{ .name = server, .ty = .l }, "$nox_http_server_from_fd_tls_owned", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = fd_v.text }, .{ .ty = .l, .text = cert_v.text }, .{ .ty = .l, .text = key_v.text } });
         try self.emitServeAndClose(server, handlers.wrapper_name, max_conn_text, handlers.ws_wrapper_name);
     } else {
         try self.emitFdServeTail(fd_v.text, handlers.wrapper_name, max_conn_text, null, handlers.ws_wrapper_name);
@@ -898,9 +918,9 @@ pub fn genHttpServeMulticoreGeneric(self: *Codegen, c: ast.Call, want_tls: bool,
 
     const fd = try self.newTemp();
     if (want_tls) {
-        try self.out.writer.print("    {s} =l call $nox_http_listen_fd_tls(l {s}, l {s}, l {s}, l {s})\n", .{ fd, RT_PARAM, port_v.text, cert_v.text, key_v.text });
+        try self.qbeCall(.{ .name = fd, .ty = .l }, "$nox_http_listen_fd_tls", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = port_v.text }, .{ .ty = .l, .text = cert_v.text }, .{ .ty = .l, .text = key_v.text } });
     } else {
-        try self.out.writer.print("    {s} =l call $nox_http_listen_fd(l {s}, l {s})\n", .{ fd, RT_PARAM, port_v.text });
+        try self.qbeCall(.{ .name = fd, .ty = .l }, "$nox_http_listen_fd", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = port_v.text } });
     }
 
     const handlers = try self.registerHttpHandlers(handle_name, ws_handle_name);
@@ -913,40 +933,41 @@ pub fn genHttpServeMulticoreGeneric(self: *Codegen, c: ast.Call, want_tls: bool,
     // edilen `ThreadHandle`ları daha SONRA join edebilmek İçin geçici bir
     // dizide TUTULUR.
     const handles_bytes = try self.newTemp();
-    try self.out.writer.print("    {s} =l mul {s}, 8\n", .{ handles_bytes, num_threads_v.text });
+    try self.qbeOp2Imm(handles_bytes, .l, "mul", num_threads_v.text, 8);
     const handles_arr = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_alloc(l {s}, l {s})\n", .{ handles_arr, RT_PARAM, handles_bytes });
+    try self.qbeCall(.{ .name = handles_arr, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handles_bytes } });
 
     const i_slot = try self.newTemp();
-    try self.out.writer.print("    {s} =l alloc8 8\n", .{i_slot});
-    try self.out.writer.print("    storel 1, {s}\n", .{i_slot});
+    try self.qbeAlloc(i_slot, .eight, 8);
+    try self.qbeStoreImmL(1, i_slot);
 
     const cond_label = try self.newLabel("mc_spawn_cond");
     const body_label = try self.newLabel("mc_spawn_body");
     const end_label = try self.newLabel("mc_spawn_end");
 
-    try self.out.writer.print("    jmp {s}\n", .{cond_label});
-    try self.out.writer.print("{s}\n", .{cond_label});
+    try self.qbeJmp(cond_label);
+    try self.qbeLabel(cond_label);
     const cur = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ cur, i_slot });
+    try self.qbeLoadL(cur, i_slot);
     const cmp = try self.newTemp();
-    try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ cmp, cur, num_threads_v.text });
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cmp, body_label, end_label });
-    try self.out.writer.print("{s}\n", .{body_label});
+    try self.qbeOp2(cmp, .w, "csltl", cur, num_threads_v.text);
+    try self.qbeJnz(cmp, body_label, end_label);
+    try self.qbeLabel(body_label);
     const handle_ptr = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_thread_spawn(l {s}, l ${s}, l {s}, w 0, w 0)\n", .{ handle_ptr, RT_PARAM, worker_name, fd });
+    const worker_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{worker_name});
+    try self.qbeCall(.{ .name = handle_ptr, .ty = .l }, "$nox_thread_spawn", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = worker_sym }, .{ .ty = .l, .text = fd }, .{ .ty = .w, .text = "0" }, .{ .ty = .w, .text = "0" } });
     const slot_off = try self.newTemp();
-    try self.out.writer.print("    {s} =l mul {s}, 8\n", .{ slot_off, cur });
+    try self.qbeOp2Imm(slot_off, .l, "mul", cur, 8);
     const slot_ptr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ slot_ptr, handles_arr, slot_off });
-    try self.out.writer.print("    storel {s}, {s}\n", .{ handle_ptr, slot_ptr });
+    try self.qbeOp2(slot_ptr, .l, "add", handles_arr, slot_off);
+    try self.qbeStoreL(handle_ptr, slot_ptr);
     const cur2 = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ cur2, i_slot });
+    try self.qbeLoadL(cur2, i_slot);
     const next = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, 1\n", .{ next, cur2 });
-    try self.out.writer.print("    storel {s}, {s}\n", .{ next, i_slot });
-    try self.out.writer.print("    jmp {s}\n", .{cond_label});
-    try self.out.writer.print("{s}\n", .{end_label});
+    try self.qbeOp2Imm(next, .l, "add", cur2, 1);
+    try self.qbeStoreL(next, i_slot);
+    try self.qbeJmp(cond_label);
+    try self.qbeLabel(end_label);
 
     // ÇAĞIRANIN KENDİ payı: `want_tls` İSE `fd` ÇIPLAK bir değer DEĞİL,
     // bir `FdTlsPayload*`dir (bkz. `genHttpServeMulticoreWorker`nin AYNI
@@ -956,11 +977,11 @@ pub fn genHttpServeMulticoreGeneric(self: *Codegen, c: ast.Call, want_tls: bool,
     var tls_ctx_text: ?[]const u8 = null;
     if (want_tls) {
         const fd_extracted = try self.newTemp();
-        try self.out.writer.print("    {s} =l loadl {s}\n", .{ fd_extracted, fd });
+        try self.qbeLoadL(fd_extracted, fd);
         const ctx_addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, 8\n", .{ ctx_addr, fd });
+        try self.qbeOp2Imm(ctx_addr, .l, "add", fd, 8);
         const ctx_extracted = try self.newTemp();
-        try self.out.writer.print("    {s} =l loadl {s}\n", .{ ctx_extracted, ctx_addr });
+        try self.qbeLoadL(ctx_extracted, ctx_addr);
         fd_text = fd_extracted;
         tls_ctx_text = ctx_extracted;
     }
@@ -969,40 +990,40 @@ pub fn genHttpServeMulticoreGeneric(self: *Codegen, c: ast.Call, want_tls: bool,
     // Faz HH.8: ÇAĞIRANIN KENDİ payı BİTTİKTEN SONRA, spawn edilen HER
     // worker'ı join et (bkz. `genHttpServeMulticore`nin AYNI gerekçesi).
     const j_slot = try self.newTemp();
-    try self.out.writer.print("    {s} =l alloc8 8\n", .{j_slot});
-    try self.out.writer.print("    storel 1, {s}\n", .{j_slot});
+    try self.qbeAlloc(j_slot, .eight, 8);
+    try self.qbeStoreImmL(1, j_slot);
 
     const jcond_label = try self.newLabel("mc_join_cond");
     const jbody_label = try self.newLabel("mc_join_body");
     const jend_label = try self.newLabel("mc_join_end");
 
-    try self.out.writer.print("    jmp {s}\n", .{jcond_label});
-    try self.out.writer.print("{s}\n", .{jcond_label});
+    try self.qbeJmp(jcond_label);
+    try self.qbeLabel(jcond_label);
     const jcur = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ jcur, j_slot });
+    try self.qbeLoadL(jcur, j_slot);
     const jcmp = try self.newTemp();
-    try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ jcmp, jcur, num_threads_v.text });
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ jcmp, jbody_label, jend_label });
-    try self.out.writer.print("{s}\n", .{jbody_label});
+    try self.qbeOp2(jcmp, .w, "csltl", jcur, num_threads_v.text);
+    try self.qbeJnz(jcmp, jbody_label, jend_label);
+    try self.qbeLabel(jbody_label);
     const jslot_off = try self.newTemp();
-    try self.out.writer.print("    {s} =l mul {s}, 8\n", .{ jslot_off, jcur });
+    try self.qbeOp2Imm(jslot_off, .l, "mul", jcur, 8);
     const jslot_ptr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ jslot_ptr, handles_arr, jslot_off });
+    try self.qbeOp2(jslot_ptr, .l, "add", handles_arr, jslot_off);
     const jhandle = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ jhandle, jslot_ptr });
-    try self.out.writer.print("    call $nox_thread_join(l {s}, l {s})\n", .{ RT_PARAM, jhandle });
-    try self.out.writer.print("    call $nox_thread_destroy(l {s}, l {s})\n", .{ RT_PARAM, jhandle });
+    try self.qbeLoadL(jhandle, jslot_ptr);
+    try self.qbeCall(null, "$nox_thread_join", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = jhandle } });
+    try self.qbeCall(null, "$nox_thread_destroy", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = jhandle } });
     const jcur2 = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ jcur2, j_slot });
+    try self.qbeLoadL(jcur2, j_slot);
     const jnext = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, 1\n", .{ jnext, jcur2 });
-    try self.out.writer.print("    storel {s}, {s}\n", .{ jnext, j_slot });
-    try self.out.writer.print("    jmp {s}\n", .{jcond_label});
-    try self.out.writer.print("{s}\n", .{jend_label});
-    try self.out.writer.print("    call $nox_free(l {s}, l {s}, l {s})\n", .{ RT_PARAM, handles_arr, handles_bytes });
+    try self.qbeOp2Imm(jnext, .l, "add", jcur2, 1);
+    try self.qbeStoreL(jnext, j_slot);
+    try self.qbeJmp(jcond_label);
+    try self.qbeLabel(jend_label);
+    try self.qbeCall(null, "$nox_free", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handles_arr }, .{ .ty = .l, .text = handles_bytes } });
 
     if (tls_ctx_text) |ctx| {
-        try self.out.writer.print("    call $nox_tls_ctx_free(l {s})\n", .{ctx});
+        try self.qbeCall(null, "$nox_tls_ctx_free", &.{.{ .ty = .l, .text = ctx }});
     }
 
     return .{ .text = "0", .qtype = .none };
