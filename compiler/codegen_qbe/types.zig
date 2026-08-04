@@ -141,6 +141,16 @@ pub const Value = struct {
     /// TAMAMEN ATLANABİLİR. `emitStringLiteral`nin KENDİSİ tarafından
     /// doldurulur.
     is_pinned: bool = false,
+    /// GG.16 (bkz. nox-teknik-spesifikasyon.md §3.66): BU değer,
+    /// `paramNeverEscapes`in KANITLADIĞI bir çağrı-sınırı-ÖTESİ yığın
+    /// slotundan geliyor — `.arena`DAN BİLİNÇLİ olarak AYRI bir bayrak:
+    /// `.arena=true` `checkNoLowlevelEscape`nin BU değeri bir çağrı
+    /// argümanı OLARAK kullanmayı KOŞULSUZ REDDETMESİNE yol AÇARDI (GG.16
+    /// TAM OLARAK bunu YAPMAK İSTİYOR — bir `lowlevel:` bloğunun DIŞINDA,
+    /// gerçek bir fonksiyon çağrısı SINIRINI AŞARAK). `releaseIfTemporary`/
+    /// `releaseTemporaryArgs` BUNU görüp release'İ atlar; `checkNoLowlevelEscape`
+    /// BUNU HİÇ GÖRMEZ (kasıtlı — bu bayrak ONUN kontrolüne DAHİL DEĞİL).
+    is_stack_slot: bool = false,
 };
 
 pub const FuncSig = struct {

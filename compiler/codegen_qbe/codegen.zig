@@ -291,6 +291,7 @@ pub const Codegen = struct {
     pub const prepareInlineSites = inlining.prepareInlineSites;
     pub const genInlinedCall = inlining.genInlinedCall;
     pub const scanStackConstructSites = inlining.scanStackConstructSites;
+    pub const tryRegisterCrossCallStackSlots = inlining.tryRegisterCrossCallStackSlots;
 
     pub const buildClosureValue = closures.buildClosureValue;
     pub const genNestedFuncDef = closures.genNestedFuncDef;
@@ -812,6 +813,32 @@ pub const Codegen = struct {
     /// (`null`a sıfırlayıp) KULLANIR. `genListLit` BUNA İHTİYAÇ DUYMAZ
     /// (`elems.ptr`i DOĞRUDAN kendisi sorgular).
     pending_stack_slot: ?[]const u8 = null,
+    /// GG.16 (bkz. nox-teknik-spesifikasyon.md §3.66): `tryRegisterCrossCallStackSlots`
+    /// TARAFINDAN, BAŞARIYLA bir yığın slotuna dönüştürülen HER inşanın
+    /// KENDİ (ARGÜMAN sitesindeki, ör. `make_data()`nin) `@intFromPtr(c.callee)`
+    /// kimliğine → o SPESİFİK çağrı sitesi İçin ayrılmış slotu EŞLER.
+    ///
+    /// **KRİTİK — neden `stack_construct_sites` (elems.ptr) DEĞİL:** bu
+    /// tablo BİLİNÇLİ olarak ARGÜMAN ÇAĞRI SİTESİNİN (`make_data()`nin BU
+    /// ÖZEL kullanımının) kimliğiyle anahtarlanır, `list_lit` AST düğümüyle
+    /// DEĞİL — çünkü aynı `return [10, 20]` gövdesi (`make_pair` GİBİ)
+    /// PROGRAMDA BİRDEN ÇOK, FARKLI güvenlik gereksinimli çağrı sitesinden
+    /// (ör. `total(make_pair())` — kaçmaz, GÜVENLİ — VE `stored: list[int]
+    /// = make_pair()` — kalıcı bir isme bağlanır, GÜVENSİZ) çağrılabilir.
+    /// `elems.ptr` İLE anahtarlamak (İLK denemede yapıldığı gibi) BU İKİ
+    /// SİTEYİ karıştırıp `stored`e de yanlışlıkla bir yığın-slot işaretçisi
+    /// yazdırırdı (GERÇEKTEN gözlemlendi — `inline_same_function_both_
+    /// paths.nox` çöktü, break→red→fix ritüeliyle bulunup düzeltildi).
+    /// `genInlinedCall`, BU tabloyu `c.callee` (splice edilen ÇAĞRININ
+    /// KENDİSİ) İLE sorgulayıp SADECE tanınan O ÖZEL siteyi işlerken
+    /// `self.pending_stack_slot`i ayarlar — `genListLit` BUNU (varsa)
+    /// `elems.ptr`den ÖNCE tüketir, bu YÜZDEN dönüşüm doğal olarak
+    /// ÇAĞRI-SİTESİNE ÖZGÜ kalır. `genInlinedCall`nin sonuç-yükleme adımı
+    /// (adım 7) de AYNI tabloyu görüp DÖNDÜRDÜĞÜ `Value`ye `is_stack_slot=
+    /// true` İŞARETLER (aksi halde bu bayrak, inline-sonuç YÜKLEME/geri-dönüş
+    /// TURUNDA KAYBOLURDU — GG.14'ün `is_pinned`de ÖNCEDEN gözlemlediği
+    /// AYNI boşluk).
+    stack_slot_call_sites: std.AutoHashMapUnmanaged(usize, []const u8) = .empty,
     /// Faz GG.2: `genInlinedCall` bir splice ÜRETİRKEN AYARLANIR (splice
     /// SONRASI eski değerine GERİ YÜKLENİR) — `genStmts`in `.return_stmt`
     /// dalı bu DOLUYSA gerçek bir `ret` YERİNE sonuç slotuna YAZIP `jmp`

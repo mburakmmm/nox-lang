@@ -225,7 +225,7 @@ ve **HTTP verimi** (Nox/Go/Zig/FastAPI).
 |---|---|---|---|---|---|
 | numeric_recursion | 14.4ms | 384.8ms | 13.1ms | **26.7x hızlı** | 1.10x yavaş |
 | tight_loop_arithmetic | 13.2ms | 1715.0ms | 4.1ms | **129.7x hızlı** | 3.25x yavaş |
-| list_traversal | 59.3ms | 1284.0ms | 3.2ms | **21.7x hızlı** | 18.30x yavaş |
+| list_traversal | 50.1ms | 1284.0ms | 1.7ms | **25.6x hızlı** | 30.2x yavaş (C ms-altı, gürültü baskın -- GG.16 sonrası nox'un KENDİ mutlak süresi ~%16 iyileşti) |
 | oop_arc_churn | 36.7ms | 471.9ms | 43.9ms | **12.9x hızlı** | 0.83x (Nox C'den hızlı) |
 | generics_protocols | 38.1ms | 1576.9ms | 26.5ms | **41.4x hızlı** | 1.44x yavaş |
 | exceptions_control_flow | 22.4ms | 678.6ms | 6.1ms | **30.3x hızlı** | 3.68x yavaş |

@@ -4,10 +4,10 @@
 
 **Faz P2.5 (bkz. proje belleği "P0/P1/P2 inceleme düzeltme listesi" planı):** `run.zig` artık HER koşunun başında makine/derleyici-sürümü bilgisini (OS/mimari/CPU çekirdek sayısı, `zig` sürümü, derleme modu, `noxc --version`) basıyor — bu dosyanın AŞAĞIDAKİ tabloları BU metadata EKLENMEDEN ÖNCEKİ koşulardan alındığından geriye dönük olarak eklenmedi (bkz. git geçmişi/orijinal koşu ortamı bilinmiyor); BUNDAN SONRAKİ her yeni koşu çıktısının EN ÜSTÜNDE bu bilgi otomatik olarak yer alacak. Her satır ayrıca artık yalnızca `min` DEĞİL, `min`/`max`/`ort` (ortalama) üçünü de raporluyor — bir sayının GERÇEKTEN istikrarlı mı yoksa gürültülü mü olduğunu (ör. `min=5ms` ama `max=50ms` olabilir) görünür kılmak için.
 
-**En güncel koşu metadata'sı (Faz GG.15, bkz. §3.66 — `lowlevel:` bloğu
-İçindeki sabit-boyutlu inşaların yığın slotlarına dönüştürülmesi SONRASI):**
+**En güncel koşu metadata'sı (Faz GG.16, bkz. §3.66 — `list_traversal`in
+çağrı-sınırı ötesi yığın slotu genellemesi SONRASI):**
 `ortam: macos-aarch64 (apple_m4), 10 mantıksal çekirdek` —
-`derleyici: zig 0.16.0` — `derleme modu: ReleaseFast` — `noxc: noxc 1.26.5`.
+`derleyici: zig 0.16.0` — `derleme modu: ReleaseFast` — `noxc: noxc 1.26.6`.
 
 ## Bölüm 1 — Stres testleri (yalnızca Nox, büyük N)
 
@@ -348,7 +348,7 @@ Her satır üç dilde **aynı algoritmayı** çalıştırır (Python/C, o dilin 
 |---|---|---|---|---|---|
 | numeric_recursion | 14.4ms | 384.8ms | 13.1ms | **26.7x hızlı** | 1.10x yavaş |
 | tight_loop_arithmetic | 13.2ms | 1715.0ms | 4.1ms | **129.7x hızlı** | 3.25x yavaş |
-| list_traversal | 59.3ms | 1284.0ms | 3.2ms | **21.7x hızlı** | 18.30x yavaş |
+| list_traversal | 50.1ms | 1284.0ms | 1.7ms | **25.6x hızlı** | 30.2x yavaş (C ms-altı, gürültü baskın -- GG.16 sonrası nox'un KENDİ mutlak süresi ~%16 iyileşti) |
 | oop_arc_churn | 36.7ms | 471.9ms | 43.9ms | **12.9x hızlı** | 0.83x (Nox C'den hızlı) |
 | generics_protocols | 38.1ms | 1576.9ms | 26.5ms | **41.4x hızlı** | 1.44x yavaş |
 | exceptions_control_flow | 22.4ms | 678.6ms | 6.1ms | **30.3x hızlı** | 3.68x yavaş |

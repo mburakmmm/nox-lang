@@ -1466,6 +1466,80 @@ test "codegen: GG.15 — karışık lowlevel bloğunun ÜRETTİĞİ IR'da nox_ar
     try std.testing.expect(std.mem.indexOf(u8, ir, "nox_arena_destroy") != null);
 }
 
+// GG.16 (bkz. nox-teknik-spesifikasyon.md §3.66): `sum_list(make_data())`
+// gibi bir ÇAĞRI SINIRI ÖTESİNDE — `make_data()`nin GG.2 İLE inline edilmiş
+// sabit-boyutlu liste literali, `sum_list`in KENDİ `xs` parametresinin
+// GÖVDESİ İÇİNDE HİÇ kaçmadığı (`paramNeverEscapes`) KANITLANDIĞINDA —
+// `nox_rc_alloc` YERİNE `compute`nin GİRİŞ bloğunda ÖNCEDEN ayrılmış TEK bir
+// yığın slotu KULLANILIR (HER yinelemede YENİDEN kullanılır). `expectGolden`
+// davranışın DEĞİŞMEDİĞİNİ, aşağıdaki AYRI IR-metni testi elenmenin GERÇEKTEN
+// gerçekleştiğini kanıtlar.
+test "codegen(çalıştır): GG.16 — çağrı-sınırı ötesi yığın slotu (kaçmayan parametre), davranış değişmedi" {
+    try expectGolden(
+        @embedFile("codegen_cases/cross_call_stack_slot.nox"),
+        @embedFile("codegen_cases/cross_call_stack_slot.expected"),
+    );
+}
+
+test "codegen: GG.16 — compute() ÜRETTİĞİ IR'da nox_rc_alloc/nox_arena_alloc GERÇEKTEN YOK" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/cross_call_stack_slot.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{});
+
+    const compute_start = std.mem.indexOf(u8, ir, "$compute(") orelse return error.ComputeNotFound;
+    const compute_end = std.mem.indexOfPos(u8, ir, compute_start, "\n}\n") orelse ir.len;
+    const compute_ir = ir[compute_start..compute_end];
+
+    try std.testing.expect(std.mem.indexOf(u8, compute_ir, "nox_rc_alloc") == null);
+    try std.testing.expect(std.mem.indexOf(u8, compute_ir, "nox_arena_alloc") == null);
+}
+
+// GG.16 NEGATİF durum: `forward(xs): return xs` parametresini DOĞRUDAN
+// döndürür — `paramNeverEscapes`in TANIDIĞI ÜÇ güvenli şekilden (for-iterable/
+// index-tabanı/`len()`) HİÇBİRİ DEĞİL, bu YÜZDEN `false` dönmeli VE
+// `make_pair()`nin listesi normal `nox_rc_alloc`a DÜŞMELİDİR — yanlış bir
+// `true` burada GERÇEK bir kullanım-sonrası-serbest-bırakmaya yol açardı
+// (`forward`nin döndürdüğü, `compute`nin YIĞIN ÇERÇEVESİ silindikten SONRA
+// da kullanılan bir işaretçi).
+test "codegen(çalıştır): GG.16 — parametresini döndüren callee (kaçış), yığın slotuna DÖNÜŞTÜRÜLMEZ" {
+    try expectGolden(
+        @embedFile("codegen_cases/cross_call_param_escapes.nox"),
+        @embedFile("codegen_cases/cross_call_param_escapes.expected"),
+    );
+}
+
+test "codegen: GG.16 — kaçan parametrenin ÜRETTİĞİ IR'da nox_rc_alloc HÂLÂ VAR" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/cross_call_param_escapes.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const user_module = try nox.parser.parseModule(allocator, tokens);
+    // GG.5'in AYNI IR-metni testindeki `resolveImports` notu: `forward(...)
+    // [0]`nin sınır-dışı dalı `IndexError`ı (bir `nox.core` yerleşiği) İNŞA
+    // EDER — `compileAndRun`in AYNI `resolveImports` çağrısı GEREKİR, aksi
+    // halde `genIndex` `self.classes.get("IndexError")`ı BULAMAYIP
+    // `error.Unsupported` döner.
+    const module = try nox.module_loader.resolveImports(allocator, std.testing.io, user_module);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{});
+
+    try std.testing.expect(std.mem.indexOf(u8, ir, "nox_rc_alloc") != null);
+}
+
 test "codegen(çalıştır): zincirlenmiş alan okuması bir çağrı sonucu üzerinde — ara nesne sızmaz" {
     try expectGolden(
         @embedFile("codegen_cases/chained_attr_temporary_release.nox"),

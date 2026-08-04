@@ -255,6 +255,15 @@ pub fn collectInlineSitesExpr(self: *Codegen, expr: ast.Expr) CodegenError!void 
                         if (self.inlinable_funcs.get(name)) |callee_fd| {
                             try self.registerInlineSite(@intFromPtr(c.callee), callee_fd);
                         }
+                        // GG.16 (bkz. nox-teknik-spesifikasyon.md §3.66):
+                        // BU çağrının KENDİSİ inline-edilebilir OLMASA da
+                        // (ör. `sum_list` bir `for` İÇERİYOR) — argümanlarından
+                        // BİRİ sabit-boyutlu bir liste ÜRETEN, GG.2-inline-
+                        // edilebilir bir çağrıysa VE karşılık gelen parametre
+                        // KAÇMIYORSA, o listeyi bir yığın slotuna dönüştürür.
+                        if (self.func_defs.get(name)) |outer_fd| {
+                            try self.tryRegisterCrossCallStackSlots(outer_fd, c.args);
+                        }
                     }
                 },
                 .attribute => |att| try self.collectInlineSitesExpr(att.obj.*),
@@ -332,6 +341,31 @@ fn scanStackConstructsStmts(self: *Codegen, stmts: []const ast.Stmt, all_ok: *bo
     }
 }
 
+/// GG.15/GG.16 (bkz. nox-teknik-spesifikasyon.md §3.66): `elems`in TÜMÜ
+/// AYNI türden BASİT bir literal (`int_lit`/`float_lit`/`bool_lit`) İSE
+/// (boyutun ÇALIŞMA ZAMANI DEĞERLENDİRMESİ OLMADAN, SADECE AST'den
+/// bilindiği TEK durum) o türün QBE karşılığını döner; AKSİ HALDE `null`
+/// (identifier/çağrı İÇEREN HERHANGİ bir eleman, KARIŞIK türler, boş liste).
+fn simpleLiteralListQtype(elems: []const ast.Expr) ?QbeType {
+    if (elems.len == 0) return null;
+    const elem_qtype: QbeType = switch (elems[0]) {
+        .int_lit => .l,
+        .float_lit => .d,
+        .bool_lit => .w,
+        else => return null,
+    };
+    for (elems) |el| {
+        const ok = switch (el) {
+            .int_lit => elem_qtype == .l,
+            .float_lit => elem_qtype == .d,
+            .bool_lit => elem_qtype == .w,
+            else => false,
+        };
+        if (!ok) return null;
+    }
+    return elem_qtype;
+}
+
 /// GG.15: bir sınıf kurucusu çağrısı (`ClassName(...)`) YA DA basit-
 /// literal (`int_lit`/`float_lit`/`bool_lit`, TÜMÜ AYNI türden) bir
 /// `list_lit` BULURSA, HEMEN (writer'ın O ANKİ, GİRİŞ-bloğu konumunda)
@@ -365,29 +399,8 @@ fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *
         },
         .list_lit => |elems| {
             any.* = true;
-            const elem_qtype: ?QbeType = if (elems.len == 0) null else switch (elems[0]) {
-                .int_lit => .l,
-                .float_lit => .d,
-                .bool_lit => .w,
-                else => null,
-            };
-            var uniform = elem_qtype != null;
-            if (uniform) {
-                for (elems) |el| {
-                    const ok = switch (el) {
-                        .int_lit => elem_qtype.? == .l,
-                        .float_lit => elem_qtype.? == .d,
-                        .bool_lit => elem_qtype.? == .w,
-                        else => false,
-                    };
-                    if (!ok) {
-                        uniform = false;
-                        break;
-                    }
-                }
-            }
-            if (uniform) {
-                const elem_size = qbeSizeOf(elem_qtype.?);
+            if (simpleLiteralListQtype(elems)) |elem_qtype| {
+                const elem_size = qbeSizeOf(elem_qtype);
                 const payload_size = LIST_HEADER_SIZE + elem_size * elems.len;
                 const slot = try self.newTemp();
                 try self.out.writer.print("    {s} =l alloc8 {d}\n", .{ slot, payload_size });
@@ -413,6 +426,153 @@ fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *
             all_ok.* = false;
             for (g.args) |a| try scanStackConstructsExpr(self, a, all_ok, any);
         },
+    }
+}
+
+/// GG.16 (bkz. nox-teknik-spesifikasyon.md §3.66): `fd`nin `param_name`
+/// adlı parametresinin, gövde İÇİNDE HİÇ "kaçmadığını" (bir isme
+/// BAĞLANMA/`return`/`len` DIŞINDA bir çağrıya argüman/bir alana-listeye-
+/// dict'e YAZMA/İÇ İÇE `def` TARAFINDAN yakalanma OLMADIĞINI) KANITLAR.
+/// BİLİNÇLİ olarak DAR: v1 SADECE ÜÇ salt-okunur kullanımı GÜVENLİ tanır —
+/// (i) bir `for_stmt`nin ÜST-DÜZEY iterable'ı, (ii) bir `.index`
+/// okumasının TABANI, (iii) `len(...)`e TEK argüman. VARSAYILAN `false`tur
+/// (kaçtığını VARSAY) — BU, bu plandaki EN RİSKLİ karar noktası OLDUĞUNDAN
+/// (yanlış bir `true`, ÇOK SONRA bir kullanım-sonrası-serbest-bırakmaya
+/// yol açabilir) BİLİNÇLİ bir GÜVENLİK ilkesidir, sadece bir kolaylık
+/// DEĞİL — güvenli-şekiller listesini BURADAN AYRI, bilinçli takip
+/// işleri/YENİ golden testler OLMADAN GENİŞLETME.
+fn paramNeverEscapes(fd: ast.FuncDef, param_name: []const u8) bool {
+    return stmtsSafeForParam(fd.body, param_name);
+}
+
+fn stmtsSafeForParam(stmts: []const ast.Stmt, name: []const u8) bool {
+    for (stmts) |stmt| {
+        switch (stmt.kind) {
+            .var_decl => |v| {
+                if (std.mem.eql(u8, v.name, name)) return false;
+                if (exprHasUnsafeParamUse(v.value, name)) return false;
+            },
+            .assign => |a| {
+                if (a.target == .identifier and std.mem.eql(u8, a.target.identifier, name)) return false;
+                if (exprHasUnsafeParamUse(a.target, name)) return false;
+                if (exprHasUnsafeParamUse(a.value, name)) return false;
+            },
+            .expr_stmt => |e| if (exprHasUnsafeParamUse(e, name)) return false,
+            .if_stmt => |f| {
+                if (exprHasUnsafeParamUse(f.cond, name)) return false;
+                if (!stmtsSafeForParam(f.then_body, name)) return false;
+                for (f.elif_clauses) |ec| {
+                    if (exprHasUnsafeParamUse(ec.cond, name)) return false;
+                    if (!stmtsSafeForParam(ec.body, name)) return false;
+                }
+                if (f.else_body) |eb| if (!stmtsSafeForParam(eb, name)) return false;
+            },
+            .while_stmt => |w| {
+                if (exprHasUnsafeParamUse(w.cond, name)) return false;
+                if (!stmtsSafeForParam(w.body, name)) return false;
+            },
+            .for_stmt => |f| {
+                if (std.mem.eql(u8, f.var_name, name)) return false;
+                const iterable_is_direct = f.iterable == .identifier and std.mem.eql(u8, f.iterable.identifier, name);
+                if (!iterable_is_direct and exprHasUnsafeParamUse(f.iterable, name)) return false;
+                if (!stmtsSafeForParam(f.body, name)) return false;
+            },
+            .return_stmt => |r| {
+                if (r) |e| if (exprHasUnsafeParamUse(e, name)) return false;
+            },
+            .raise_stmt => |e| if (exprHasUnsafeParamUse(e, name)) return false,
+            // `try`/İç İçe `lowlevel`/`with`/`func_def`/`defer` — BİLİNMEYEN/
+            // riskli bölge, TÜM analiz GÜVENLİ tarafta kalmak İçin İPTAL edilir.
+            .try_stmt, .lowlevel_stmt, .with_stmt, .func_def, .defer_stmt => return false,
+            .pass_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
+        }
+    }
+    return true;
+}
+
+/// `expr` İÇİNDE `name`in, `paramNeverEscapes`in TANIDIĞI üç GÜVENLİ
+/// şekilden (for-iterable/index-tabanı/tek `len()` argümanı) BİRİSİ
+/// OLMAYAN HERHANGİ bir kullanımı VARSA `true` döner (GÜVENSİZ). Bu üç
+/// şekil BU fonksiyonun KENDİSİNDE DEĞİL, çağıranların (`stmtsSafeForParam`nin
+/// `.for_stmt` dalı VE BURADAKİ `.index`/`len()` özel-durumları) ÖZEL
+/// olarak TANIDIĞI konumlardır — bu fonksiyon SADECE "başka HERHANGİ bir
+/// yerde çıplak bir `identifier(name)`" durumunu YAKALAR.
+fn exprHasUnsafeParamUse(expr: ast.Expr, name: []const u8) bool {
+    return switch (expr) {
+        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => false,
+        .identifier => |n| std.mem.eql(u8, n, name),
+        .unary => |u| exprHasUnsafeParamUse(u.operand.*, name),
+        .binary => |b| exprHasUnsafeParamUse(b.left.*, name) or exprHasUnsafeParamUse(b.right.*, name),
+        .call => |c| blk: {
+            if (c.callee.* == .identifier and std.mem.eql(u8, c.callee.identifier, "len") and
+                c.args.len == 1 and c.args[0] == .identifier and std.mem.eql(u8, c.args[0].identifier, name))
+            {
+                break :blk false; // `len(name)` TEK BAŞINA GÜVENLİDİR.
+            }
+            if (exprHasUnsafeParamUse(c.callee.*, name)) break :blk true;
+            for (c.args) |a| if (exprHasUnsafeParamUse(a, name)) break :blk true;
+            break :blk false;
+        },
+        .attribute => |a| exprHasUnsafeParamUse(a.obj.*, name),
+        .index => |idx| blk: {
+            const obj_is_direct = idx.obj.* == .identifier and std.mem.eql(u8, idx.obj.identifier, name);
+            if (!obj_is_direct and exprHasUnsafeParamUse(idx.obj.*, name)) break :blk true;
+            break :blk exprHasUnsafeParamUse(idx.index.*, name);
+        },
+        .list_lit => |elems| blk: {
+            for (elems) |el| if (exprHasUnsafeParamUse(el, name)) break :blk true;
+            break :blk false;
+        },
+        .dict_lit => |pairs| blk: {
+            for (pairs) |p| {
+                if (exprHasUnsafeParamUse(p.key, name)) break :blk true;
+                if (exprHasUnsafeParamUse(p.value, name)) break :blk true;
+            }
+            break :blk false;
+        },
+        .await_expr => |op| exprHasUnsafeParamUse(op.*, name),
+        .spawn_expr => |op| exprHasUnsafeParamUse(op.*, name),
+        .generic_construct => |g| blk: {
+            for (g.args) |a| if (exprHasUnsafeParamUse(a, name)) break :blk true;
+            break :blk false;
+        },
+    };
+}
+
+/// GG.16: `outer_callee`nin (`self.func_defs`den, GG.2-inline-edilebilirlik
+/// ARANMAZ — `sum_list` gibi bir `for` İÇEREN fonksiyon da BURAYA
+/// UYGUNDUR) `args`ının HER birinde, argümanın KENDİSİ GG.2-inline-edilebilir
+/// bir fonksiyona (`self.inlinable_funcs`) TEK-satırlık `return <basit-
+/// literal list_lit>` biçiminde bir çağrıysa VE KARŞILIK GELEN parametre
+/// `paramNeverEscapes` İLE KANITLANIYORSA, o `list_lit`i bir yığın slotuna
+/// dönüştürür — ama SADECE BU ÖZEL çağrı sitesi İçin (bkz. `Codegen.
+/// stack_slot_call_sites`in belge notu: `elems.ptr` DEĞİL, `arg_call.callee`
+/// İLE anahtarlanır — AYNI `list_lit` gövdesinin BAŞKA, güvensiz bir çağrı
+/// sitesinden — ör. bir isme atanarak — de çağrılabileceği İçin).
+pub fn tryRegisterCrossCallStackSlots(self: *Codegen, outer_callee: ast.FuncDef, args: []const ast.Expr) CodegenError!void {
+    const n = @min(outer_callee.params.len, args.len);
+    for (0..n) |i| {
+        if (args[i] != .call) continue;
+        const arg_call = args[i].call;
+        if (arg_call.callee.* != .identifier) continue;
+        if (self.stack_slot_call_sites.contains(@intFromPtr(arg_call.callee))) continue;
+        const arg_fd = self.inlinable_funcs.get(arg_call.callee.identifier) orelse continue;
+        if (arg_fd.body.len != 1 or arg_fd.body[0].kind != .return_stmt) continue;
+        const ret_expr = arg_fd.body[0].kind.return_stmt orelse continue;
+        if (ret_expr != .list_lit) continue; // v1: yalnızca liste literalleri.
+        const elems = ret_expr.list_lit;
+        if (self.stack_construct_sites.contains(@intFromPtr(elems.ptr))) continue;
+        const elem_qtype = simpleLiteralListQtype(elems) orelse continue;
+        if (!paramNeverEscapes(outer_callee, outer_callee.params[i].name)) continue;
+        const payload_size = LIST_HEADER_SIZE + qbeSizeOf(elem_qtype) * elems.len;
+        const slot = try self.newTemp();
+        try self.out.writer.print("    {s} =l alloc8 {d}\n", .{ slot, payload_size });
+        // `genInlinedCall`, BU SPESİFİK çağrı sitesini (`c.callee ==
+        // arg_call.callee`) splice ederken `self.pending_stack_slot`i
+        // BUNUNLA ayarlar — `genListLit` BUNU tüketir. AYNI `list_lit`
+        // gövdesinin BAŞKA bir çağrı sitesi (ör. `stored = make_pair()`)
+        // BU tabloda YOK olduğundan normal heap-tahsise DÜŞMEYE devam eder.
+        try self.stack_slot_call_sites.put(self.allocator, @intFromPtr(arg_call.callee), slot);
     }
 }
 
@@ -652,7 +812,17 @@ pub fn genInlinedCall(self: *Codegen, c: ast.Call, site: InlineSiteInfo) Codegen
     // HİÇ uğramadığından (Zig fonksiyonu erken `return` eder), bu kod
     // YALNIZCA gerçek bir düz-düşme SIRASINDA çalışır — çift serbest
     // bırakma RİSKİ YOKTUR.
+    // GG.16: BU splice'ın KENDİ çağrı sitesi (`c.callee`) `tryRegisterCrossCallStackSlots`
+    // TARAFINDAN ÖNCEDEN bir yığın slotuna EŞLENDİYSE, `self.pending_stack_slot`i
+    // SADECE BU gövde-üretimi SÜRESİNCE ayarla — `genListLit` (gövde İÇİNDEKİ
+    // `return [10, 20]`) BUNU görüp `nox_arena_alloc`/`nox_rc_alloc` ÇAĞRISINI
+    // ATLAR. Kapsamı BU tek splice'a sıkı tutmak (SAKLA/GERİ-YÜKLE), AYNI
+    // `list_lit` gövdesinin BAŞKA bir splice sitesinde (bu tabloda YOK)
+    // yanlışlıkla yığın-slotlu ÜRETİLMESİNİ ÖNLER.
+    const saved_pending_stack_slot = self.pending_stack_slot;
+    self.pending_stack_slot = self.stack_slot_call_sites.get(@intFromPtr(c.callee));
     try self.genStmts(site.callee.body, callee_ret_info.qtype);
+    self.pending_stack_slot = saved_pending_stack_slot;
     try self.releaseNamedLocalsExcept(owned_names, null);
     try self.out.writer.print("    jmp {s}\n", .{done_label});
     try self.out.writer.print("{s}\n", .{done_label});
@@ -705,6 +875,13 @@ pub fn genInlinedCall(self: *Codegen, c: ast.Call, site: InlineSiteInfo) Codegen
             .elem_heap_info = r.info.elem_heap_info,
             .elem_is_str = r.info.elem_is_str,
             .dict_info = r.info.dict_info,
+            // GG.16: `c.callee`nin (BU splice'ın KENDİ çağrı sitesi —
+            // ör. `make_data()`) `tryRegisterCrossCallStackSlots` TARAFINDAN
+            // İŞARETLENİP İŞARETLENMEDİĞİNİ kontrol eder — bkz. `Codegen.
+            // stack_slot_call_sites`in belge notu (bu bayrak, `genListLit`nin
+            // İÇERİDE ayarladığı `is_stack_slot`in, BU "sonuç-slotundan
+            // YÜKLE" adımında KAYBOLMAMASI İçin BURADA YENİDEN kurulur).
+            .is_stack_slot = self.stack_slot_call_sites.contains(@intFromPtr(c.callee)),
         };
     }
     return .{ .text = "0", .qtype = .w };

@@ -681,14 +681,28 @@ pub fn genListLit(self: *Codegen, elems: []const ast.Expr) CodegenError!Value {
     const payload_size = LIST_HEADER_SIZE + elem_size * elems.len;
 
     const arena = self.currentArena();
-    // GG.15 (bkz. nox-teknik-spesifikasyon.md §3.66): BU `list_lit` AST
-    // düğümü (`elems.ptr` İLE anahtarlanır) `scanStackConstructSites`
-    // TARAFINDAN ÖNCEDEN bir yığın slotuna dönüştürüldüyse (fonksiyon
-    // GİRİŞİNDE) `nox_arena_alloc`/`nox_rc_alloc` ÇAĞRISI TAMAMEN ATLANIR.
-    // `genConstructFromValues`nin `pending_stack_slot`INİN AKSİNE burada
-    // AYRI bir GEÇİCİ alan GEREKMEZ — `elems` ZATEN doğrudan mevcut.
+    // GG.15/GG.16 (bkz. nox-teknik-spesifikasyon.md §3.66): BU `list_lit`
+    // İçin ÖNCEDEN bir yığın slotu ayrılmışsa `nox_arena_alloc`/`nox_rc_alloc`
+    // ÇAĞRISI TAMAMEN ATLANIR. İKİ AYRI kaynak kontrol edilir:
+    // (1) `self.pending_stack_slot` — GG.16'nın `genInlinedCall`nin BU ÖZEL
+    // splice sitesi İçin GEÇİCİ olarak ayarladığı, ÇAĞRI-SİTESİNE ÖZGÜ slot
+    // (bkz. `Codegen.stack_slot_call_sites`in belge notu — AYNI `list_lit`
+    // gövdesinin BAŞKA bir çağrı sitesinde YANLIŞLIKLA tüketilmesini
+    // ÖNLEMEK İçin BUNUN `elems.ptr`den ÖNCE kontrol edilmesi ZORUNLUDUR).
+    // (2) `self.stack_construct_sites` (`elems.ptr` İLE anahtarlı) — GG.15'in
+    // DOĞRUDAN bir `lowlevel:` gövdesi İÇİNDEKİ (fonksiyon-çağrısı SINIRI
+    // OLMAYAN, bu YÜZDEN AST-düğüm-kimliği GÜVENLİ olan) inşaları İçin.
+    var from_stack_site = false;
     const t: []const u8 = blk: {
-        if (self.stack_construct_sites.get(@intFromPtr(elems.ptr))) |site| break :blk site.slot;
+        if (self.pending_stack_slot) |slot| {
+            self.pending_stack_slot = null;
+            from_stack_site = true;
+            break :blk slot;
+        }
+        if (self.stack_construct_sites.get(@intFromPtr(elems.ptr))) |site| {
+            from_stack_site = true;
+            break :blk site.slot;
+        }
         const temp = try self.newTemp();
         if (arena) |ap| {
             try self.out.writer.print("    {s} =l call $nox_arena_alloc(l {s}, l {d})\n", .{ temp, ap, payload_size });
@@ -710,7 +724,7 @@ pub fn genListLit(self: *Codegen, elems: []const ast.Expr) CodegenError!Value {
         try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, t, off });
         try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(elem_qtype), v.text, addr });
     }
-    return .{ .text = t, .qtype = .l, .heap = .list, .elem_qtype = elem_qtype, .elem_heap_info = elem_heap_info, .elem_is_str = elem_is_str, .arena = arena != null };
+    return .{ .text = t, .qtype = .l, .heap = .list, .elem_qtype = elem_qtype, .elem_heap_info = elem_heap_info, .elem_is_str = elem_is_str, .arena = arena != null, .is_stack_slot = from_stack_site and arena == null };
 }
 
 /// `genEmptyListLit`in AYNISI, `{}` (boş dict) İÇİN — `nox_dict_new`nin

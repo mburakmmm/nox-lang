@@ -14,6 +14,29 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.26.6]
+
+### Değişti
+- **GG.16**: `sum_list(make_data())` gibi bir çağrı sınırı ötesinde --
+  `make_data()`nin GG.2 ile inline edilmiş sabit-boyutlu liste literali,
+  `sum_list`in kendi `xs` parametresinin gövdesi içinde hiç kaçmadığı
+  (yeni `paramNeverEscapes` analizi -- yalnızca for-iterable/`.index`
+  tabanı/tek `len()` argümanı güvenli sayılır, varsayılan "kaçtığını
+  varsay") kanıtlandığında `nox_rc_alloc` yerine çağıranın giriş bloğunda
+  önceden ayrılmış bir yığın slotu kullanılıyor. Uygulama sırasında GERÇEK
+  bir çağrı-sitesi-karışması hatası bulunup düzeltildi: ilk sürüm yığın
+  slotunu paylaşılan liste-literali AST düğümüyle (`elems.ptr`)
+  anahtalıyordu -- aynı `make_pair()` gövdesi güvenli BİR çağrı sitesinde
+  (`total(make_pair())`) VE güvensiz BAŞKA bir sitede (`stored: list[int]
+  = make_pair()`, kalıcı bir isme bağlanıyor) kullanıldığında, ikincisi de
+  yanlışlıkla aynı slotu aldı (SIGBUS çökmesi). Düzeltme: slot artık
+  argüman ÇAĞRI SİTESİNİN kendi kimliğiyle anahtarlanıyor, `genInlinedCall`
+  sadece kayıtlı o özel siteyi splice ederken geçici olarak devreye
+  sokuyor. 4 yeni golden test (2 pozitif + 2 IR-metni kanıtı) + öncekinin
+  kendisi regresyon koruması olarak eklendi. `list_traversal`: 59.3ms ->
+  ~49-50ms (~%15-16 iyileşme; GG.15'ten daha küçük ama gerçek kazanç, bkz.
+  nox-teknik-spesifikasyon.md §3.66 GG.16).
+
 ## [1.26.5]
 
 ### Değişti

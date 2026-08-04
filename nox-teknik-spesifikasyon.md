@@ -11271,6 +11271,90 @@ STRATEJİSİNİ değiştiren İLK faz, ama `checkNoLowlevelEscape`nin ZATEN
 YAPTIĞI kaçış-kanıtına DAYANDIĞINDAN YENİ bir kaçış analizi GEREKMEDİ —
 plan dosyasının kendi "GG.16'DAN daha GÜVENLİ" değerlendirmesiyle TUTARLI).
 
+### GG.16 (TAMAMLANDI) — `list_traversal`: TEK-kullanımlı geçicilerin yığın-tahsisini fonksiyon-çağrısı SINIRI ÖTESİNE genelleştir
+
+**Kök neden:** `compute()`nin döngüsü `total = total + sum_list(make_data())`
+yapıyordu. `make_data()` GG.2 İLE inline (20-elemanlı liste literali
+`nox_rc_alloc(l 176)` DOĞRUDAN `compute`e splice edilmiş), ama `sum_list`
+bir `for` İÇERDİĞİNDEN GG.2-uygun DEĞİL — gerçek bir `call` OLARAK KALIYOR.
+Liste `nox_rc_alloc` İLE tahsis edilip `sum_list`e İŞARETÇİ OLARAK
+geçiriliyor, çağrıdan HEMEN SONRA `releaseIfTemporary` İLE serbest
+bırakılıyor — "tek kullanım, yerel" ZATEN kanıtlı; eksik olan TEK parça
+`sum_list`in KENDİ PARAMETRESİNİN (`xs`) KENDİ GÖVDESİ İÇİNDE HİÇ
+kaçmadığının kanıtlanmasıydı.
+
+**Uygulama:**
+1. `inlining.zig`e YENİ `paramNeverEscapes(fd, param_name) bool` —
+   `fd`nin `param_name`li parametresinin gövde İÇİNDE SADECE ÜÇ salt-okunur
+   şekilde (for-iterable, `.index` okumasının tabanı, TEK `len()` argümanı)
+   kullanıldığını KANITLAR; VARSAYILAN `false` (kaçtığını VARSAY) — BAŞKA
+   HERHANGİ bir kullanım (isme BAĞLANMA/`return`/`len` DIŞINDA bir çağrıya
+   argüman/alana-listeye-dict'e YAZMA/İÇ İÇE `def` TARAFINDAN yakalanma,
+   YA DA `try`/`lowlevel`/`with`/`func_def`/`defer` GİBİ BİLİNMEYEN bir
+   bölge) `false`a düşer.
+2. YENİ `tryRegisterCrossCallStackSlots(outer_callee, args)` —
+   `collectInlineSitesExpr`nin `.call` dalından, HER çağrı sitesi İçin
+   çağrılır: argümanlardan BİRİ GG.2-inline-edilebilir bir fonksiyona
+   (`self.inlinable_funcs`) TEK-satırlık `return <basit-literal list_lit>`
+   biçiminde bir çağrıysa VE KARŞILIK GELEN dış parametre
+   `paramNeverEscapes` İLE KANITLANIYORSA, o listeyi `alloc8` İLE bir yığın
+   slotuna dönüştürür.
+3. `genInlinedCall`, splice ettiği ÇAĞRININ KENDİ SİTESİ (`c.callee`)
+   `stack_slot_call_sites`de KAYITLIYSA gövde-üretimi SÜRESİNCE
+   `self.pending_stack_slot`i AYARLAR; `genListLit` BUNU `elems.ptr`
+   tabanlı `stack_construct_sites` sorgusundan ÖNCE tüketir.
+
+**Güvenlik — çağrı-sitesine ÖZGÜ kapsam (break→red→fix ile bulunan GERÇEK
+bir hata):** İLK uygulama, GG.15'in `stack_construct_sites`ini AYNEN
+tekrar kullanıp yığın slotunu `elems.ptr` (list_lit AST düğümünün KENDİSİ)
+İLE anahtarladı — GG.15'te bu GÜVENLİYDİ (bir `lowlevel:` gövdesindeki bir
+liste literali HER ZAMAN TEK bir yerde, doğrudan kullanılır) ama GG.16'da
+DEĞİL: `make_pair()`in TEK bir `return [10, 20]` gövdesi, GG.2 İLE HER
+çağrı SİTESİNDE AYRI AYRI yeniden üretilir (splice). `tests/golden/
+codegen_cases/inline_same_function_both_paths.nox` fixture'ı BUNU
+YAKALADI — `total(make_pair())` (güvenli, `total`nin `xs`si sadece
+`xs[0]+xs[1]`) `make_pair()`in listesini `elems.ptr` ANAHTARIYLA bir yığın
+slotuna KAYDETTİĞİNDE, AYNI ANAHTAR, TAMAMEN AYRI VE GÜVENSİZ bir ikinci
+çağrı sitesini de (`stored: list[int] = make_pair()` — kalıcı bir isme
+bağlanıp SONRAKİ üç deyimde kullanılıyor) YANLIŞLIKLA etkiledi (program
+SIGBUS İLE çöktü). **Düzeltme:** yığın slotu ARTIK `elems.ptr` DEĞİL,
+ARGÜMAN çağrı sitesinin KENDİ kimliğiyle (`@intFromPtr(arg_call.callee)`)
+`Codegen.stack_slot_call_sites`e KAYDEDİLİR; `genInlinedCall`
+`self.pending_stack_slot`i SADECE splice ettiği ÇAĞRININ KENDİ sitesi BU
+tabloda VARSA, VE SADECE o gövde-üretimi SÜRESİNCE ayarlar (SAKLA/GERİ-
+YÜKLE) — `genListLit` BUNU `elems.ptr`den ÖNCE tüketir. Böylece AYNI
+`list_lit` gövdesinin BAŞKA bir çağrı sitesi (tabloda YOK) MEVCUT
+`nox_rc_alloc` yoluna DEĞİŞMEDEN düşmeye devam eder. `paramNeverEscapes`in
+KENDİSİ (yanlış bir `true` durumunda) BİLE tek başına yeterli DEĞİLDİ —
+asıl açık, "GÜVENLİ olduğu KANITLANAN BİR site'ın slotunun, KANITLANMAMIŞ
+BAŞKA bir site'a SIZMASI"ydı.
+
+**Doğrulama:** `tests/golden/codegen_cases/cross_call_stack_slot.nox`
+(pozitif: `compute()`nin ÜRETTİĞİ IR'da `nox_rc_alloc`/`nox_arena_alloc`
+HİÇ YOK, TEK bir `alloc8` HER yinelemede yeniden kullanılıyor) +
+`cross_call_param_escapes.nox` (NEGATİF: `forward(xs): return xs`
+parametresini DOĞRUDAN döndürdüğünden `paramNeverEscapes` `false`
+dönüyor, `nox_rc_alloc` HÂLÂ ÜRETİLİYOR) — 4 YENİ golden test (2 pozitif
+`expectGolden` + 2 IR-metni kanıtı). Ayrıca `inline_same_function_both_
+paths.nox` (YUKARIDAKİ break→red→fix'in KENDİSİ, ÖNCEDEN VAR OLAN bir
+fixture) DÜZELTMEDEN SONRA yeniden yeşil. `zig build test` (Debug +
+ReleaseFast) — Debug'daki TEK kalan hata, BU fazdan TAMAMEN BAĞIMSIZ,
+ÖNCEDEN VAR OLAN (git stash İLE GG.15 baseline'ında da AYNI şekilde
+tekrarlanan) bir fuzz testi yığın-taşması.
+
+**Ölçüm:** `benchmarks/compare/list_traversal.nox` (n=5.000.000) — ÖNCESİ
+nox min=59.3ms/C min=3.2ms (18.30x). SONRASI nox min TUTARLI biçimde
+~49.3-50.1ms (5 koşu, **~%15-16 İYİLEŞME**) — `lowlevel_arena`nin (GG.15)
+tahsis SAYISINA kıyasla BURADA HER yinelemede yalnızca TEK bir liste
+tahsisi elendiğinden (Point YOK, `sum_list`in KENDİSİ HÂLÂ gerçek bir
+`call`) kazanç GG.15den KÜÇÜK ama GERÇEK. C min bu ölçekte 1.7-3.8ms
+ARALIĞINDA SAÇILDI (process-başlatma gürültüsü DAHA BÜYÜK PAY tutuyor,
+bkz. GG.15'in AYNI metodoloji notu) — oran BU YÜZDEN gürültülü, ama nox'un
+KENDİ mutlak süresindeki İYİLEŞME KESİN. **Risk: bu 6 fazlık plandaki EN
+YÜKSEK (plan dosyasının kendi değerlendirmesiyle TUTARLI) — GERÇEKLEŞTİ**
+(yukarıdaki çağrı-sitesi-conflation hatası), ama break→red→fix ritüeliyle
+YAKALANIP KALICI olarak düzeltildi.
+
 ### HH.1 (TAMAMLANDI) — Accept backlog artırımı; `ConnCtx` havuzu DENENDİ, GERİ ALINDI
 
 **Kaynak:** `nox.http` darboğaz analizinin (kullanıcı talebiyle yapılan

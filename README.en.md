@@ -229,7 +229,7 @@ sections below: **language fundamentals** (vs. Python/C), **stdlib**
 |---|---|---|---|---|---|
 | numeric_recursion | 14.4ms | 384.8ms | 13.1ms | **26.7x faster** | 1.10x slower |
 | tight_loop_arithmetic | 13.2ms | 1715.0ms | 4.1ms | **129.7x faster** | 3.25x slower |
-| list_traversal | 59.3ms | 1284.0ms | 3.2ms | **21.7x faster** | 18.30x slower |
+| list_traversal | 50.1ms | 1284.0ms | 1.7ms | **25.6x faster** | 30.2x slower (C sub-ms, noise-dominated -- Nox's own absolute time improved ~16% after GG.16) |
 | oop_arc_churn | 36.7ms | 471.9ms | 43.9ms | **12.9x faster** | 0.83x (Nox faster than C) |
 | generics_protocols | 38.1ms | 1576.9ms | 26.5ms | **41.4x faster** | 1.44x slower |
 | exceptions_control_flow | 22.4ms | 678.6ms | 6.1ms | **30.3x faster** | 3.68x slower |
