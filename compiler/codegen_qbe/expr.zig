@@ -28,7 +28,6 @@ const CLOSURE_HEADER_SIZE = types.CLOSURE_HEADER_SIZE;
 const CLOSURE_RELEASE_FN_PTR_OFFSET = types.CLOSURE_RELEASE_FN_PTR_OFFSET;
 const FuncSigInfo = types.FuncSigInfo;
 const CodegenError = abi.CodegenError;
-const qbeTypeName = abi.qbeTypeName;
 const qbeSizeOf = abi.qbeSizeOf;
 const cmpMnemonic = abi.cmpMnemonic;
 const isHeapManaged = abi.isHeapManaged;
@@ -108,8 +107,8 @@ pub fn genExprForTarget(self: *Codegen, expr: ast.Expr, target: anytype) Codegen
 /// dalı BU DÜZ 8-baytlık payload'ı VARSAYAR — İKİSİ TUTARLI kalmalıdır.
 pub fn boxScalar(self: *Codegen, v: Value, elem_qtype: QbeType) CodegenError!Value {
     const box = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l 8)\n", .{ box, RT_PARAM });
-    try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(elem_qtype), v.text, box });
+    try self.qbeCall(.{ .name = box, .ty = .l }, "$nox_rc_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "8" } });
+    try self.qbeStore(elem_qtype, v.text, box);
     // `always_fresh = true` (bkz. `Value`nin belge notu, stdlib fazı §G
     // — `emitStringLiteral`in AYNI deseni): bu kutu HER ZAMAN TAZE bir
     // tahsistir (kaynak ifade bir `.identifier` OLSA BİLE — ör. `y: int
@@ -125,12 +124,12 @@ pub fn convert(self: *Codegen, v: Value, target: QbeType) CodegenError!Value {
     if (v.qtype == target) return v;
     if (v.qtype == .l and target == .d) {
         const t = try self.newTemp();
-        try self.out.writer.print("    {s} =d sltof {s}\n", .{ t, v.text });
+        try self.qbeOp1(t, .d, "sltof", v.text);
         return .{ .text = t, .qtype = .d };
     }
     if (v.qtype == .d and target == .l) {
         const t = try self.newTemp();
-        try self.out.writer.print("    {s} =l dtosi {s}\n", .{ t, v.text });
+        try self.qbeOp1(t, .l, "dtosi", v.text);
         return .{ .text = t, .qtype = .l };
     }
     return error.Unsupported;
@@ -148,12 +147,12 @@ pub fn toPayload(self: *Codegen, v: Value) CodegenError!Value {
         .l => v,
         .w => blk: {
             const t = try self.newTemp();
-            try self.out.writer.print("    {s} =l extuw {s}\n", .{ t, v.text });
+            try self.qbeOp1(t, .l, "extuw", v.text);
             break :blk .{ .text = t, .qtype = .l };
         },
         .d => blk: {
             const t = try self.newTemp();
-            try self.out.writer.print("    {s} =l cast {s}\n", .{ t, v.text });
+            try self.qbeOp1(t, .l, "cast", v.text);
             break :blk .{ .text = t, .qtype = .l };
         },
         .none => .{ .text = "0", .qtype = .l },
@@ -168,12 +167,12 @@ pub fn fromPayload(self: *Codegen, payload: Value, target_qtype: QbeType) Codege
         .l => payload,
         .w => blk: {
             const t = try self.newTemp();
-            try self.out.writer.print("    {s} =w copy {s}\n", .{ t, payload.text });
+            try self.qbeOp1(t, .w, "copy", payload.text);
             break :blk .{ .text = t, .qtype = .w };
         },
         .d => blk: {
             const t = try self.newTemp();
-            try self.out.writer.print("    {s} =d cast {s}\n", .{ t, payload.text });
+            try self.qbeOp1(t, .d, "cast", payload.text);
             break :blk .{ .text = t, .qtype = .d };
         },
         .none => .{ .text = "0", .qtype = .none },
@@ -201,7 +200,7 @@ pub fn emitStringLiteral(self: *Codegen, s: []const u8) CodegenError!Value {
     }
     try self.string_data.append(self.allocator, .{ .symbol = sym, .escaped = escaped, .byte_len = s.len, .is_ascii = is_ascii });
     const addr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, sym, ARC_HEADER_SIZE + STR_HEADER_SIZE });
+    try self.qbeOp2Imm(addr, .l, "add", sym, @intCast(ARC_HEADER_SIZE + STR_HEADER_SIZE));
     return .{ .text = addr, .qtype = .l, .heap = .str, .is_pinned = true };
 }
 
@@ -259,11 +258,13 @@ pub noinline fn buildFunctionValueForIdentifier(self: *Codegen, name: []const u8
     const sig = self.functions.get(resolved_name) orelse return error.Unsupported;
     const trampoline_name = try std.fmt.allocPrint(self.allocator, "{s}__fnval", .{resolved_name});
     const block = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ block, RT_PARAM, CLOSURE_HEADER_SIZE });
-    try self.out.writer.print("    storel ${s}, {s}\n", .{ trampoline_name, block });
+    try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_rc_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = std.fmt.comptimePrint("{d}", .{CLOSURE_HEADER_SIZE}) } });
+    const trampoline_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{trampoline_name});
+    try self.qbeStoreL(trampoline_sym, block);
     const rel_addr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ rel_addr, block, CLOSURE_RELEASE_FN_PTR_OFFSET });
-    try self.out.writer.print("    storel ${s}_release, {s}\n", .{ trampoline_name, rel_addr });
+    try self.qbeOp2Imm(rel_addr, .l, "add", block, @intCast(CLOSURE_RELEASE_FN_PTR_OFFSET));
+    const trampoline_release_sym = try std.fmt.allocPrint(self.allocator, "${s}_release", .{trampoline_name});
+    try self.qbeStoreL(trampoline_release_sym, rel_addr);
     const fsig = try self.allocator.create(FuncSigInfo);
     fsig.* = .{ .params = sig.params, .ret = sig.ret };
     // `always_fresh = true`: `isAliasingExpr`in `.identifier => true` GENEL
@@ -287,13 +288,13 @@ pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
         .identifier => |name| blk: {
             if (self.vars.get(name)) |info| {
                 const t = try self.newTemp();
-                try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ t, qbeTypeName(info.qtype), qbeTypeName(info.qtype), info.slot });
+                try self.qbeLoad(t, info.qtype, info.qtype, info.slot);
                 // Faz FF.6.4: bkz. `narrowed_unbox`'ın belge notu — bu isim
                 // ŞU AN daraltılmış bir kutulanmış Optional-ilkel İSE, kutu
                 // POINTER'ı DEĞİL İÇİNDEKİ ham değer döndürülür.
                 if (info.heap == .boxed_scalar and self.narrowed_unbox.contains(name)) {
                     const payload = try self.newTemp();
-                    try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ payload, qbeTypeName(info.elem_qtype), qbeTypeName(info.elem_qtype), t });
+                    try self.qbeLoad(payload, info.elem_qtype, info.elem_qtype, t);
                     break :blk .{ .text = payload, .qtype = info.elem_qtype };
                 }
                 break :blk .{ .text = t, .qtype = info.qtype, .heap = info.heap, .elem_qtype = info.elem_qtype, .class_name = info.class_name, .elem_heap_info = info.elem_heap_info, .elem_is_str = info.elem_is_str, .dict_info = info.dict_info, .func_sig = info.func_sig, .arena = info.arena };
@@ -307,11 +308,11 @@ pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
             // TUTARLI, bkz. onun belge notu).
             if (self.module_globals.get(name)) |g| {
                 const block = try self.newTemp();
-                try self.out.writer.print("    {s} =l call $nox_globals_get(l {s})\n", .{ block, RT_PARAM });
+                try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_globals_get", &.{.{ .ty = .l, .text = RT_PARAM }});
                 const addr = try self.newTemp();
-                try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, block, g.offset });
+                try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
                 const t = try self.newTemp();
-                try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ t, qbeTypeName(g.info.qtype), qbeTypeName(g.info.qtype), addr });
+                try self.qbeLoad(t, g.info.qtype, g.info.qtype, addr);
                 break :blk .{ .text = t, .qtype = g.info.qtype, .heap = g.info.heap, .elem_qtype = g.info.elem_qtype, .class_name = g.info.class_name, .elem_heap_info = g.info.elem_heap_info, .elem_is_str = g.info.elem_is_str, .dict_info = g.info.dict_info, .func_sig = g.info.func_sig };
             }
             break :blk try self.buildFunctionValueForIdentifier(name);
@@ -340,9 +341,9 @@ pub fn genFieldRead(self: *Codegen, a: ast.Attribute) CodegenError!Value {
     for (cinfo.fields.items) |f| {
         if (!std.mem.eql(u8, f.name, a.attr)) continue;
         const addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, obj.text, f.offset });
+        try self.qbeOp2Imm(addr, .l, "add", obj.text, @intCast(f.offset));
         const result = try self.newTemp();
-        try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ result, qbeTypeName(f.info.qtype), qbeTypeName(f.info.qtype), addr });
+        try self.qbeLoad(result, f.info.qtype, f.info.qtype, addr);
         // `obj` TAZE bir değerse (ör. `make_car(i).engine`), okunan alanı
         // döndürmeden ÖNCE `obj`'yi serbest bırakırız (bkz.
         // `releaseIfTemporary`) — ama alanın KENDİSİ heap tipliyse (sınıf
@@ -377,9 +378,9 @@ pub fn genFieldReadFromValue(self: *Codegen, obj: Value, field_name: []const u8)
     for (cinfo.fields.items) |f| {
         if (!std.mem.eql(u8, f.name, field_name)) continue;
         const addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, obj.text, f.offset });
+        try self.qbeOp2Imm(addr, .l, "add", obj.text, @intCast(f.offset));
         const result = try self.newTemp();
-        try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ result, qbeTypeName(f.info.qtype), qbeTypeName(f.info.qtype), addr });
+        try self.qbeLoad(result, f.info.qtype, f.info.qtype, addr);
         return .{ .text = result, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str, .dict_info = f.info.dict_info, .func_sig = f.info.func_sig };
     }
     return error.Unsupported;
@@ -419,22 +420,22 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
     // olduğu döngünün KENDİ sınırından ZATEN KANITLANMIŞTIR.
     if (!self.boundsElideApplies(idx)) {
         const len_t = try self.newTemp();
-        try self.out.writer.print("    {s} =l loadl {s}\n", .{ len_t, obj.text });
+        try self.qbeLoadL(len_t, obj.text);
         const neg_t = try self.newTemp();
-        try self.out.writer.print("    {s} =w csltl {s}, 0\n", .{ neg_t, index_v.text });
+        try self.qbeOp2Imm(neg_t, .w, "csltl", index_v.text, 0);
         const oob_hi_t = try self.newTemp();
-        try self.out.writer.print("    {s} =w csgel {s}, {s}\n", .{ oob_hi_t, index_v.text, len_t });
+        try self.qbeOp2(oob_hi_t, .w, "csgel", index_v.text, len_t);
         const oob_t = try self.newTemp();
-        try self.out.writer.print("    {s} =w or {s}, {s}\n", .{ oob_t, neg_t, oob_hi_t });
+        try self.qbeOp2(oob_t, .w, "or", neg_t, oob_hi_t);
         const err_label = try self.newLabel("list_idx_err");
         const ok_label = try self.newLabel("list_idx_ok");
-        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ oob_t, err_label, ok_label });
-        try self.out.writer.print("{s}\n", .{err_label});
+        try self.qbeJnz(oob_t, err_label, ok_label);
+        try self.qbeLabel(err_label);
 
         const msg_value = try self.emitStringLiteral("liste indeksi sinirlarin disinda");
         const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
         const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
-        try self.out.writer.print("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ie_obj.text, self.current_raise_line });
+        try self.qbeRaw("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ie_obj.text, self.current_raise_line });
         // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı): bu dal
         // KOŞULSUZ raise edip ATLADIĞINDAN, `obj` (taban liste) TEMPORARY
         // İSE normal yoldaki serbest bırakma BURAYA HİÇ ULAŞMAZ (GERÇEK
@@ -445,18 +446,18 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
         // belleği "ARC sızıntı düzeltmeleri").
         try self.releaseIfTemporary(idx.obj.*, obj);
         try self.emitExceptionCheck();
-        try self.out.writer.print("    jmp {s}\n", .{ok_label});
+        try self.qbeJmp(ok_label);
 
-        try self.out.writer.print("{s}\n", .{ok_label});
+        try self.qbeLabel(ok_label);
     }
     const byte_off = try self.newTemp();
-    try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ byte_off, index_v.text, qbeSizeOf(obj.elem_qtype) });
+    try self.qbeOp2Imm(byte_off, .l, "mul", index_v.text, @intCast(qbeSizeOf(obj.elem_qtype)));
     const off8 = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ off8, byte_off, LIST_HEADER_SIZE });
+    try self.qbeOp2Imm(off8, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
     const addr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ addr, obj.text, off8 });
+    try self.qbeOp2(addr, .l, "add", obj.text, off8);
     const result = try self.newTemp();
-    try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ result, qbeTypeName(obj.elem_qtype), qbeTypeName(obj.elem_qtype), addr });
+    try self.qbeLoad(result, obj.elem_qtype, obj.elem_qtype, addr);
     // `list[T]`nin elemanları (Faz 21 ön-koşulundan beri) heap tipli
     // (sınıf/iç içe liste) OLABİLİR — okunan değer listenin İÇİNDEKİ bir
     // elemana ÖDÜNÇ ALINMIŞ bir referanstır (bu okuma BAŞLI BAŞINA retain
@@ -509,32 +510,32 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
             self.str_len_cache.get(idx.obj.identifier).?
         else blk: {
             const t = try self.newTemp();
-            try self.out.writer.print("    {s} =l call $nox_str_char_count(l {s})\n", .{ t, obj.text });
+            try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_str_char_count", &.{.{ .ty = .l, .text = obj.text }});
             break :blk t;
         };
         const neg_t = try self.newTemp();
-        try self.out.writer.print("    {s} =w csltl {s}, 0\n", .{ neg_t, index_v.text });
+        try self.qbeOp2Imm(neg_t, .w, "csltl", index_v.text, 0);
         const oob_hi_t = try self.newTemp();
-        try self.out.writer.print("    {s} =w csgel {s}, {s}\n", .{ oob_hi_t, index_v.text, len_t });
+        try self.qbeOp2(oob_hi_t, .w, "csgel", index_v.text, len_t);
         const oob_t = try self.newTemp();
-        try self.out.writer.print("    {s} =w or {s}, {s}\n", .{ oob_t, neg_t, oob_hi_t });
+        try self.qbeOp2(oob_t, .w, "or", neg_t, oob_hi_t);
         const err_label = try self.newLabel("str_idx_err");
         const ok_label = try self.newLabel("str_idx_ok");
-        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ oob_t, err_label, ok_label });
-        try self.out.writer.print("{s}\n", .{err_label});
+        try self.qbeJnz(oob_t, err_label, ok_label);
+        try self.qbeLabel(err_label);
 
         const msg_value = try self.emitStringLiteral("str indeksi sinirlarin disinda");
         const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
         const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
-        try self.out.writer.print("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ie_obj.text, self.current_raise_line });
+        try self.qbeRaw("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ie_obj.text, self.current_raise_line });
         // Bkz. `genIndex`in AYNI belge notu — Faz NN kök-neden düzeltmesinden
         // (bkz. `ownership.zig`nin `releaseNamedLocalsExcept`i) SONRA GÜVENLE
         // yeniden eklendi, döngü testiyle DOĞRULANDI.
         try self.releaseIfTemporary(idx.obj.*, obj);
         try self.emitExceptionCheck();
-        try self.out.writer.print("    jmp {s}\n", .{ok_label});
+        try self.qbeJmp(ok_label);
 
-        try self.out.writer.print("{s}\n", .{ok_label});
+        try self.qbeLabel(ok_label);
     }
     const result_t = try self.newTemp();
     // Bulundu (bkz. `Codegen.str_ascii_cache`nin belge notu, GERÇEK ölçüm:
@@ -552,13 +553,13 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
         const ascii_label = try self.newLabel("str_idx_ascii");
         const unicode_label = try self.newLabel("str_idx_unicode");
         const done_label = try self.newLabel("str_idx_done");
-        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ ascii_flag, ascii_label, unicode_label });
+        try self.qbeJnz(ascii_flag, ascii_label, unicode_label);
 
-        try self.out.writer.print("{s}\n", .{ascii_label});
+        try self.qbeLabel(ascii_label);
         const byte_addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ byte_addr, obj.text, index_v.text });
+        try self.qbeOp2(byte_addr, .l, "add", obj.text, index_v.text);
         const byte_val = try self.newTemp();
-        try self.out.writer.print("    {s} =w loadub {s}\n", .{ byte_val, byte_addr });
+        try self.qbeRaw("    {s} =w loadub {s}\n", .{ byte_val, byte_addr });
         // `str`e uzunluk alanı + ASCII bayrağı eklenmesinden BERİ (bkz.
         // plan dosyası) bu O(1) ASCII-hızlı-yol İNLINE'ı (`nox_str_char_at`i
         // ÇAĞIRMAK YERİNE doğrudan QBE'de bir 2 baytlık `[bayt][NUL]`
@@ -572,25 +573,25 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
         // paketlenmiş başlık (`uzunluk=1, ascii=TRUE`) DERLEME ZAMANINDA
         // sabit bir değerdir, SIFIR ek çalışma-zamanı maliyetiyle yazılır.
         const raw = try self.newTemp();
-        try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ raw, RT_PARAM, STR_HEADER_SIZE + 2 });
-        try self.out.writer.print("    storel {d}, {s}\n", .{ packStrHeader(1, STR_ASCII_TRUE), raw });
+        try self.qbeCall(.{ .name = raw, .ty = .l }, "$nox_rc_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{STR_HEADER_SIZE + 2}) } });
+        try self.qbeStoreImmL(@intCast(packStrHeader(1, STR_ASCII_TRUE)), raw);
         const ascii_result = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ ascii_result, raw, STR_HEADER_SIZE });
-        try self.out.writer.print("    storeb {s}, {s}\n", .{ byte_val, ascii_result });
+        try self.qbeOp2Imm(ascii_result, .l, "add", raw, @intCast(STR_HEADER_SIZE));
+        try self.qbeRaw("    storeb {s}, {s}\n", .{ byte_val, ascii_result });
         const nul_addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, 1\n", .{ nul_addr, ascii_result });
-        try self.out.writer.print("    storeb 0, {s}\n", .{nul_addr});
-        try self.out.writer.print("    jmp {s}\n", .{done_label});
+        try self.qbeOp2Imm(nul_addr, .l, "add", ascii_result, 1);
+        try self.qbeRaw("    storeb 0, {s}\n", .{nul_addr});
+        try self.qbeJmp(done_label);
 
-        try self.out.writer.print("{s}\n", .{unicode_label});
+        try self.qbeLabel(unicode_label);
         const unicode_result = try self.newTemp();
-        try self.out.writer.print("    {s} =l call $nox_str_char_at(l {s}, l {s}, l {s})\n", .{ unicode_result, RT_PARAM, obj.text, index_v.text });
-        try self.out.writer.print("    jmp {s}\n", .{done_label});
+        try self.qbeCall(.{ .name = unicode_result, .ty = .l }, "$nox_str_char_at", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = index_v.text } });
+        try self.qbeJmp(done_label);
 
-        try self.out.writer.print("{s}\n", .{done_label});
-        try self.out.writer.print("    {s} =l phi {s} {s}, {s} {s}\n", .{ result_t, ascii_label, ascii_result, unicode_label, unicode_result });
+        try self.qbeLabel(done_label);
+        try self.qbePhi(result_t, .l, ascii_label, ascii_result, unicode_label, unicode_result);
     } else {
-        try self.out.writer.print("    {s} =l call $nox_str_char_at(l {s}, l {s}, l {s})\n", .{ result_t, RT_PARAM, obj.text, index_v.text });
+        try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_str_char_at", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = index_v.text } });
     }
     try self.releaseIfTemporary(idx.obj.*, obj);
     return .{ .text = result_t, .qtype = .l, .heap = .str, .always_fresh = true };
@@ -604,15 +605,16 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
 fn genEmptyListLit(self: *Codegen, target: anytype) CodegenError!Value {
     const t = try self.newTemp();
     const arena = self.currentArena();
+    const list_header_size_text = comptime std.fmt.comptimePrint("{d}", .{LIST_HEADER_SIZE});
     if (arena) |ap| {
-        try self.out.writer.print("    {s} =l call $nox_arena_alloc(l {s}, l {d})\n", .{ t, ap, LIST_HEADER_SIZE });
+        try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_arena_alloc", &.{ .{ .ty = .l, .text = ap }, .{ .ty = .l, .text = list_header_size_text } });
     } else {
-        try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ t, RT_PARAM, LIST_HEADER_SIZE });
+        try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_rc_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = list_header_size_text } });
     }
-    try self.out.writer.print("    storel 0, {s}\n", .{t});
+    try self.qbeStoreImmL(0, t);
     const cap_addr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, 8\n", .{ cap_addr, t });
-    try self.out.writer.print("    storel 0, {s}\n", .{cap_addr});
+    try self.qbeOp2Imm(cap_addr, .l, "add", t, 8);
+    try self.qbeStoreImmL(0, cap_addr);
     return .{
         .text = t,
         .qtype = .l,
@@ -705,24 +707,24 @@ pub fn genListLit(self: *Codegen, elems: []const ast.Expr) CodegenError!Value {
         }
         const temp = try self.newTemp();
         if (arena) |ap| {
-            try self.out.writer.print("    {s} =l call $nox_arena_alloc(l {s}, l {d})\n", .{ temp, ap, payload_size });
+            try self.qbeCall(.{ .name = temp, .ty = .l }, "$nox_arena_alloc", &.{ .{ .ty = .l, .text = ap }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{payload_size}) } });
         } else {
-            try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ temp, RT_PARAM, payload_size });
+            try self.qbeCall(.{ .name = temp, .ty = .l }, "$nox_rc_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{payload_size}) } });
         }
         break :blk temp;
     };
-    try self.out.writer.print("    storel {d}, {s}\n", .{ elems.len, t });
+    try self.qbeStoreImmL(@intCast(elems.len), t);
     // Faz U.1: kapasite (@8) — bir literalden inşa edilen bir liste HER
     // ZAMAN tam-oturan başlar (kapasite=uzunluk, büyüme SLACK'i YOK) —
     // yalnızca `.append()` GEREKTİĞİNDE gerçek büyüme uygular.
     const cap_addr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, 8\n", .{ cap_addr, t });
-    try self.out.writer.print("    storel {d}, {s}\n", .{ elems.len, cap_addr });
+    try self.qbeOp2Imm(cap_addr, .l, "add", t, 8);
+    try self.qbeStoreImmL(@intCast(elems.len), cap_addr);
     for (values, 0..) |v, i| {
         const off = LIST_HEADER_SIZE + elem_size * i;
         const addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, t, off });
-        try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(elem_qtype), v.text, addr });
+        try self.qbeOp2Imm(addr, .l, "add", t, @intCast(off));
+        try self.qbeStore(elem_qtype, v.text, addr);
     }
     return .{ .text = t, .qtype = .l, .heap = .list, .elem_qtype = elem_qtype, .elem_heap_info = elem_heap_info, .elem_is_str = elem_is_str, .arena = arena != null, .is_stack_slot = from_stack_site and arena == null };
 }
@@ -737,7 +739,7 @@ fn genEmptyDictLit(self: *Codegen, target: anytype) CodegenError!Value {
     const dinfo = target.dict_info.?;
     const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
     const d = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_dict_new(l {s}, w {s})\n", .{ d, RT_PARAM, key_is_str_lit });
+    try self.qbeCall(.{ .name = d, .ty = .l }, "$nox_dict_new", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .w, .text = key_is_str_lit } });
     return .{ .text = d, .qtype = .l, .heap = .dict, .dict_info = dinfo };
 }
 
@@ -776,12 +778,20 @@ pub fn genDictLit(self: *Codegen, pairs: []const ast.DictPair) CodegenError!Valu
     const value_is_class_lit: []const u8 = if (value_is_class) "1" else "0";
 
     const d = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_dict_new(l {s}, w {s})\n", .{ d, RT_PARAM, key_is_str_lit });
+    try self.qbeCall(.{ .name = d, .ty = .l }, "$nox_dict_new", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .w, .text = key_is_str_lit } });
 
     for (key_values, 0..) |kv, i| {
         const key_payload = try self.toPayload(kv);
         const value_payload = try self.toPayload(value_values[i]);
-        try self.out.writer.print("    call $nox_dict_set(l {s}, l {s}, w {s}, w {s}, w {s}, l {s}, l {s})\n", .{ RT_PARAM, d, key_is_str_lit, value_is_str_lit, value_is_class_lit, key_payload.text, value_payload.text });
+        try self.qbeCall(null, "$nox_dict_set", &.{
+            .{ .ty = .l, .text = RT_PARAM },
+            .{ .ty = .l, .text = d },
+            .{ .ty = .w, .text = key_is_str_lit },
+            .{ .ty = .w, .text = value_is_str_lit },
+            .{ .ty = .w, .text = value_is_class_lit },
+            .{ .ty = .l, .text = key_payload.text },
+            .{ .ty = .l, .text = value_payload.text },
+        });
     }
 
     return .{ .text = d, .qtype = .l, .heap = .dict, .dict_info = dinfo };
@@ -792,12 +802,12 @@ pub fn genUnary(self: *Codegen, u: ast.Unary) CodegenError!Value {
     return switch (u.op) {
         .neg => blk: {
             const t = try self.newTemp();
-            try self.out.writer.print("    {s} ={s} neg {s}\n", .{ t, qbeTypeName(operand.qtype), operand.text });
+            try self.qbeOp1(t, operand.qtype, "neg", operand.text);
             break :blk .{ .text = t, .qtype = operand.qtype };
         },
         .not_ => blk: {
             const t = try self.newTemp();
-            try self.out.writer.print("    {s} =w xor {s}, 1\n", .{ t, operand.text });
+            try self.qbeOp2Imm(t, .w, "xor", operand.text, 1);
             break :blk .{ .text = t, .qtype = .w };
         },
     };
@@ -805,25 +815,25 @@ pub fn genUnary(self: *Codegen, u: ast.Unary) CodegenError!Value {
 
 pub fn emitBin(self: *Codegen, mnemonic: []const u8, l: Value, r: Value, result_qtype: QbeType) CodegenError!Value {
     const t = try self.newTemp();
-    try self.out.writer.print("    {s} ={s} {s} {s}, {s}\n", .{ t, qbeTypeName(result_qtype), mnemonic, l.text, r.text });
+    try self.qbeOp2(t, result_qtype, mnemonic, l.text, r.text);
     return .{ .text = t, .qtype = result_qtype };
 }
 
 pub fn emitCmp(self: *Codegen, op: ast.BinaryOp, l: Value, r: Value, common: QbeType) CodegenError!Value {
     const t = try self.newTemp();
-    try self.out.writer.print("    {s} =w {s} {s}, {s}\n", .{ t, cmpMnemonic(op, common), l.text, r.text });
+    try self.qbeOp2(t, .w, cmpMnemonic(op, common), l.text, r.text);
     return .{ .text = t, .qtype = .w };
 }
 
 pub fn callLibm1(self: *Codegen, comptime name: []const u8, v: Value) CodegenError!Value {
     const t = try self.newTemp();
-    try self.out.writer.print("    {s} =d call ${s}(d {s})\n", .{ t, name, v.text });
+    try self.qbeCall(.{ .name = t, .ty = .d }, "$" ++ name, &.{.{ .ty = .d, .text = v.text }});
     return .{ .text = t, .qtype = .d };
 }
 
 pub fn callLibm2(self: *Codegen, comptime name: []const u8, l: Value, r: Value) CodegenError!Value {
     const t = try self.newTemp();
-    try self.out.writer.print("    {s} =d call ${s}(d {s}, d {s})\n", .{ t, name, l.text, r.text });
+    try self.qbeCall(.{ .name = t, .ty = .d }, "$" ++ name, &.{ .{ .ty = .d, .text = l.text }, .{ .ty = .d, .text = r.text } });
     return .{ .text = t, .qtype = .d };
 }
 
@@ -832,10 +842,10 @@ pub fn callLibm2(self: *Codegen, comptime name: []const u8, l: Value, r: Value) 
 /// `str`in İÇERİĞİNİ karşılaştırır; sonucu `0`a karşı `w` bir bool'a çevirir.
 pub fn genStrCompare(self: *Codegen, op: ast.BinaryOp, l: Value, r: Value) CodegenError!Value {
     const cmp_t = try self.newTemp();
-    try self.out.writer.print("    {s} =w call $strcmp(l {s}, l {s})\n", .{ cmp_t, l.text, r.text });
+    try self.qbeCall(.{ .name = cmp_t, .ty = .w }, "$strcmp", &.{ .{ .ty = .l, .text = l.text }, .{ .ty = .l, .text = r.text } });
     const result = try self.newTemp();
     const mnemonic: []const u8 = if (op == .eq) "ceqw" else "cnew";
-    try self.out.writer.print("    {s} =w {s} {s}, 0\n", .{ result, mnemonic, cmp_t });
+    try self.qbeOp2Imm(result, .w, mnemonic, cmp_t, 0);
     return .{ .text = result, .qtype = .w };
 }
 
@@ -876,7 +886,7 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
         const other = try self.genExpr(other_expr);
         const cmp_t = try self.newTemp();
         const mnemonic: []const u8 = if (b.op == .eq) "ceql" else "cnel";
-        try self.out.writer.print("    {s} =w {s} {s}, 0\n", .{ cmp_t, mnemonic, other.text });
+        try self.qbeOp2Imm(cmp_t, .w, mnemonic, other.text, 0);
         try self.releaseIfTemporary(other_expr, other);
         return .{ .text = cmp_t, .qtype = .w };
     }
@@ -929,16 +939,18 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
         else blk: {
             const t = try self.newTemp();
             if (l0.heap == .class) {
-                try self.out.writer.print("    {s} =w call ${s}_eq(l {s}, l {s}, l {s})\n", .{ t, l0.class_name.?, RT_PARAM, l0.text, r0.text });
+                const eq_sym = try std.fmt.allocPrint(self.allocator, "${s}_eq", .{l0.class_name.?});
+                try self.qbeCall(.{ .name = t, .ty = .w }, eq_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = l0.text }, .{ .ty = .l, .text = r0.text } });
             } else {
                 const fn_name = try self.eqFnNameForList(l0.elem_qtype, l0.elem_heap_info, l0.elem_is_str);
-                try self.out.writer.print("    {s} =w call ${s}_eq(l {s}, l {s}, l {s})\n", .{ t, fn_name, RT_PARAM, l0.text, r0.text });
+                const eq_sym = try std.fmt.allocPrint(self.allocator, "${s}_eq", .{fn_name});
+                try self.qbeCall(.{ .name = t, .ty = .w }, eq_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = l0.text }, .{ .ty = .l, .text = r0.text } });
             }
             break :blk t;
         };
         const result: []const u8 = if (b.op == .ne) blk: {
             const t = try self.newTemp();
-            try self.out.writer.print("    {s} =w xor {s}, 1\n", .{ t, eq_temp });
+            try self.qbeOp2Imm(t, .w, "xor", eq_temp, 1);
             break :blk t;
         } else eq_temp;
         try self.releaseIfTemporary(b.left.*, l0);
@@ -956,7 +968,7 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
         try self.checkNoLowlevelEscape(l0);
         try self.checkNoLowlevelEscape(r0);
         const result_t = try self.newTemp();
-        try self.out.writer.print("    {s} =l call $nox_str_concat(l {s}, l {s}, l {s})\n", .{ result_t, RT_PARAM, l0.text, r0.text });
+        try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_str_concat", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = l0.text }, .{ .ty = .l, .text = r0.text } });
         try self.releaseIfTemporary(b.left.*, l0);
         try self.releaseIfTemporary(b.right.*, r0);
         return .{ .text = result_t, .qtype = .l, .heap = .str };
@@ -1019,23 +1031,23 @@ pub fn genFloorDiv(self: *Codegen, l: Value, r: Value, common: QbeType) CodegenE
     const rem = try self.emitBin("rem", l, r, .l);
 
     const rem_nonzero = try self.newTemp();
-    try self.out.writer.print("    {s} =w cnel {s}, 0\n", .{ rem_nonzero, rem.text });
+    try self.qbeOp2Imm(rem_nonzero, .w, "cnel", rem.text, 0);
     const rem_neg = try self.newTemp();
-    try self.out.writer.print("    {s} =w csltl {s}, 0\n", .{ rem_neg, rem.text });
+    try self.qbeOp2Imm(rem_neg, .w, "csltl", rem.text, 0);
     const r_neg = try self.newTemp();
-    try self.out.writer.print("    {s} =w csltl {s}, 0\n", .{ r_neg, r.text });
+    try self.qbeOp2Imm(r_neg, .w, "csltl", r.text, 0);
     const sign_diff = try self.newTemp();
-    try self.out.writer.print("    {s} =w xor {s}, {s}\n", .{ sign_diff, rem_neg, r_neg });
+    try self.qbeOp2(sign_diff, .w, "xor", rem_neg, r_neg);
     const need_adjust = try self.newTemp();
-    try self.out.writer.print("    {s} =w and {s}, {s}\n", .{ need_adjust, rem_nonzero, sign_diff });
+    try self.qbeOp2(need_adjust, .w, "and", rem_nonzero, sign_diff);
 
     // Dallanma/yığın yuvası KULLANMADAN (bkz. `adjustModSign`'daki aynı
     // gerekçe) `need_adjust`i (0 ya da 1) `l`ye genişletip bölümden
     // çıkarırız — 0 ise değişiklik yok, 1 ise bir eksiltilmiş olur.
     const mask = try self.newTemp();
-    try self.out.writer.print("    {s} =l extuw {s}\n", .{ mask, need_adjust });
+    try self.qbeOp1(mask, .l, "extuw", need_adjust);
     const result = try self.newTemp();
-    try self.out.writer.print("    {s} =l sub {s}, {s}\n", .{ result, q.text, mask });
+    try self.qbeOp2(result, .l, "sub", q.text, mask);
     return .{ .text = result, .qtype = .l };
 }
 
@@ -1043,7 +1055,7 @@ pub fn genPow(self: *Codegen, l: Value, r: Value, common: QbeType) CodegenError!
     const lf = try self.convert(l, .d);
     const rf = try self.convert(r, .d);
     const t = try self.newTemp();
-    try self.out.writer.print("    {s} =d call $pow(d {s}, d {s})\n", .{ t, lf.text, rf.text });
+    try self.qbeCall(.{ .name = t, .ty = .d }, "$pow", &.{ .{ .ty = .d, .text = lf.text }, .{ .ty = .d, .text = rf.text } });
     const result: Value = .{ .text = t, .qtype = .d };
     if (common == .l) return self.convert(result, .l);
     return result;
@@ -1059,27 +1071,27 @@ pub fn genPow(self: *Codegen, l: Value, r: Value, common: QbeType) CodegenError!
 pub fn genPrint(self: *Codegen, v: Value) CodegenError!void {
     if (v.heap == .list or v.heap == .class) {
         try self.genPrintFragment(v);
-        try self.out.writer.writeAll("    call $printf(l $fmt_newline)\n");
+        try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_newline" }});
         return;
     }
     switch (v.qtype) {
         .l => if (v.heap == .str)
-            try self.out.writer.print("    call $printf(l $fmt_str, ..., l {s})\n", .{v.text})
+            try self.qbeRaw("    call $printf(l $fmt_str, ..., l {s})\n", .{v.text})
         else
-            try self.out.writer.print("    call $printf(l $fmt_int, ..., l {s})\n", .{v.text}),
-        .d => try self.out.writer.print("    call $printf(l $fmt_float, ..., d {s})\n", .{v.text}),
+            try self.qbeRaw("    call $printf(l $fmt_int, ..., l {s})\n", .{v.text}),
+        .d => try self.qbeRaw("    call $printf(l $fmt_float, ..., d {s})\n", .{v.text}),
         .w => {
             const true_label = try self.newLabel("print_true");
             const false_label = try self.newLabel("print_false");
             const done_label = try self.newLabel("print_done");
-            try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ v.text, true_label, false_label });
-            try self.out.writer.print("{s}\n", .{true_label});
-            try self.out.writer.writeAll("    call $printf(l $fmt_bool_true)\n");
-            try self.out.writer.print("    jmp {s}\n", .{done_label});
-            try self.out.writer.print("{s}\n", .{false_label});
-            try self.out.writer.writeAll("    call $printf(l $fmt_bool_false)\n");
-            try self.out.writer.print("    jmp {s}\n", .{done_label});
-            try self.out.writer.print("{s}\n", .{done_label});
+            try self.qbeJnz(v.text, true_label, false_label);
+            try self.qbeLabel(true_label);
+            try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_bool_true" }});
+            try self.qbeJmp(done_label);
+            try self.qbeLabel(false_label);
+            try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_bool_false" }});
+            try self.qbeJmp(done_label);
+            try self.qbeLabel(done_label);
         },
         .none => return error.Unsupported,
     }
@@ -1094,22 +1106,22 @@ pub fn genPrintFragment(self: *Codegen, v: Value) CodegenError!void {
     if (v.heap == .class) return self.genPrintClass(v);
     switch (v.qtype) {
         .l => if (v.heap == .str)
-            try self.out.writer.print("    call $printf(l $fmt_str_frag, ..., l {s})\n", .{v.text})
+            try self.qbeRaw("    call $printf(l $fmt_str_frag, ..., l {s})\n", .{v.text})
         else
-            try self.out.writer.print("    call $printf(l $fmt_int_frag, ..., l {s})\n", .{v.text}),
-        .d => try self.out.writer.print("    call $printf(l $fmt_float_frag, ..., d {s})\n", .{v.text}),
+            try self.qbeRaw("    call $printf(l $fmt_int_frag, ..., l {s})\n", .{v.text}),
+        .d => try self.qbeRaw("    call $printf(l $fmt_float_frag, ..., d {s})\n", .{v.text}),
         .w => {
             const true_label = try self.newLabel("print_true");
             const false_label = try self.newLabel("print_false");
             const done_label = try self.newLabel("print_done");
-            try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ v.text, true_label, false_label });
-            try self.out.writer.print("{s}\n", .{true_label});
-            try self.out.writer.writeAll("    call $printf(l $fmt_bool_true_frag)\n");
-            try self.out.writer.print("    jmp {s}\n", .{done_label});
-            try self.out.writer.print("{s}\n", .{false_label});
-            try self.out.writer.writeAll("    call $printf(l $fmt_bool_false_frag)\n");
-            try self.out.writer.print("    jmp {s}\n", .{done_label});
-            try self.out.writer.print("{s}\n", .{done_label});
+            try self.qbeJnz(v.text, true_label, false_label);
+            try self.qbeLabel(true_label);
+            try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_bool_true_frag" }});
+            try self.qbeJmp(done_label);
+            try self.qbeLabel(false_label);
+            try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_bool_false_frag" }});
+            try self.qbeJmp(done_label);
+            try self.qbeLabel(done_label);
         },
         .none => return error.Unsupported,
     }
@@ -1138,53 +1150,53 @@ pub fn internFmtString(self: *Codegen, text: []const u8) CodegenError![]const u8
 /// format dizesi ÇÖZÜLEMEZ), `genForList`/`genListElemRelease` ile AYNI
 /// güvenli döngü desenini (FONKSİYON GİRİŞİNDE bir kez `alloc8`) kullanır.
 pub fn genPrintList(self: *Codegen, v: Value) CodegenError!void {
-    try self.out.writer.writeAll("    call $printf(l $fmt_lbracket)\n");
+    try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_lbracket" }});
 
     const len_t = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ len_t, v.text });
+    try self.qbeLoadL(len_t, v.text);
     const idx_slot = try self.newTemp();
-    try self.out.writer.print("    {s} =l alloc8 8\n", .{idx_slot});
-    try self.out.writer.print("    storel 0, {s}\n", .{idx_slot});
+    try self.qbeAlloc(idx_slot, .eight, 8);
+    try self.qbeStoreImmL(0, idx_slot);
 
     const cond_label = try self.newLabel("printlist_cond");
     const body_label = try self.newLabel("printlist_body");
     const end_label = try self.newLabel("printlist_end");
-    try self.out.writer.print("    jmp {s}\n", .{cond_label});
-    try self.out.writer.print("{s}\n", .{cond_label});
+    try self.qbeJmp(cond_label);
+    try self.qbeLabel(cond_label);
     const idx_cur = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ idx_cur, idx_slot });
+    try self.qbeLoadL(idx_cur, idx_slot);
     const cont = try self.newTemp();
-    try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ cont, idx_cur, len_t });
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cont, body_label, end_label });
-    try self.out.writer.print("{s}\n", .{body_label});
+    try self.qbeOp2(cont, .w, "csltl", idx_cur, len_t);
+    try self.qbeJnz(cont, body_label, end_label);
+    try self.qbeLabel(body_label);
 
     const not_first = try self.newTemp();
-    try self.out.writer.print("    {s} =w cnel {s}, 0\n", .{ not_first, idx_cur });
+    try self.qbeOp2Imm(not_first, .w, "cnel", idx_cur, 0);
     const comma_label = try self.newLabel("printlist_comma");
     const skip_comma_label = try self.newLabel("printlist_skipcomma");
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ not_first, comma_label, skip_comma_label });
-    try self.out.writer.print("{s}\n", .{comma_label});
-    try self.out.writer.writeAll("    call $printf(l $fmt_comma_sp)\n");
-    try self.out.writer.print("    jmp {s}\n", .{skip_comma_label});
-    try self.out.writer.print("{s}\n", .{skip_comma_label});
+    try self.qbeJnz(not_first, comma_label, skip_comma_label);
+    try self.qbeLabel(comma_label);
+    try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_comma_sp" }});
+    try self.qbeJmp(skip_comma_label);
+    try self.qbeLabel(skip_comma_label);
 
     const off = try self.newTemp();
-    try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ off, idx_cur, qbeSizeOf(v.elem_qtype) });
+    try self.qbeOp2Imm(off, .l, "mul", idx_cur, @intCast(qbeSizeOf(v.elem_qtype)));
     const off8 = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ off8, off, LIST_HEADER_SIZE });
+    try self.qbeOp2Imm(off8, .l, "add", off, @intCast(LIST_HEADER_SIZE));
     const addr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ addr, v.text, off8 });
+    try self.qbeOp2(addr, .l, "add", v.text, off8);
     const elem = try self.newTemp();
-    try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ elem, qbeTypeName(v.elem_qtype), qbeTypeName(v.elem_qtype), addr });
+    try self.qbeLoad(elem, v.elem_qtype, v.elem_qtype, addr);
     try self.genPrintFragment(valueFromElemDescriptor(elem, v.elem_qtype, v.elem_heap_info, v.elem_is_str));
 
     const idx_next = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, 1\n", .{ idx_next, idx_cur });
-    try self.out.writer.print("    storel {s}, {s}\n", .{ idx_next, idx_slot });
-    try self.out.writer.print("    jmp {s}\n", .{cond_label});
-    try self.out.writer.print("{s}\n", .{end_label});
+    try self.qbeOp2Imm(idx_next, .l, "add", idx_cur, 1);
+    try self.qbeStoreL(idx_next, idx_slot);
+    try self.qbeJmp(cond_label);
+    try self.qbeLabel(end_label);
 
-    try self.out.writer.writeAll("    call $printf(l $fmt_rbracket)\n");
+    try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_rbracket" }});
 }
 
 /// Sınıf görüntülemesi — `ClassName(alan1=değer1, alan2=değer2, ...)`.
@@ -1195,16 +1207,16 @@ pub fn genPrintClass(self: *Codegen, v: Value) CodegenError!void {
     const class_name = v.class_name.?;
     const cinfo = self.classes.get(class_name).?;
     const open_sym = try self.internFmtString(try std.fmt.allocPrint(self.allocator, "{s}(", .{class_name}));
-    try self.out.writer.print("    call $printf(l {s})\n", .{open_sym});
+    try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = open_sym }});
     for (cinfo.fields.items, 0..) |f, i| {
-        if (i != 0) try self.out.writer.writeAll("    call $printf(l $fmt_comma_sp)\n");
+        if (i != 0) try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_comma_sp" }});
         const name_sym = try self.internFmtString(try std.fmt.allocPrint(self.allocator, "{s}=", .{f.name}));
-        try self.out.writer.print("    call $printf(l {s})\n", .{name_sym});
+        try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = name_sym }});
         const addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, v.text, f.offset });
+        try self.qbeOp2Imm(addr, .l, "add", v.text, @intCast(f.offset));
         const fv = try self.newTemp();
-        try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ fv, qbeTypeName(f.info.qtype), qbeTypeName(f.info.qtype), addr });
+        try self.qbeLoad(fv, f.info.qtype, f.info.qtype, addr);
         try self.genPrintFragment(.{ .text = fv, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str });
     }
-    try self.out.writer.writeAll("    call $printf(l $fmt_rparen)\n");
+    try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_rparen" }});
 }
