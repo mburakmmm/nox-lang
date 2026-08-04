@@ -86,34 +86,42 @@ fn genDecoratorTable(self: *Codegen, decorated: []const DecoratedFuncInfo) Codeg
         try records.append(self.allocator, .{ .func_name = func_name_ptr, .dec_name = dec_name_ptr, .arg_count = info.args.len, .arg_start = arg_start, .is_handler = info.is_handler_shaped });
     }
 
-    try self.out.writer.writeAll("data $__nox_decorators = { ");
+    // `data $sym = {...}` direktifleri BU planın (Faz IR.0-14) KAPSAMI
+    // DIŞINDA (bkz. plan dosyasının "Kapsam DIŞI" notu) — bu İKİ döngü
+    // BİLİNÇLİ olarak `qbeRaw`/`qbeRawAll` KULLANIR.
+    try self.qbeRawAll("data $__nox_decorators = { ");
     if (records.items.len == 0) {
         // Sembol HER ZAMAN çözülmeli (bkz. modül üstü not) — kayıt yoksa
         // tek bir dolgu kelimesi yeterli, hiçbir erişimci geçerli bir
         // `%i` ile buraya asla ulaşmaz (`decorator_count()` 0 döner).
-        try self.out.writer.writeAll("l 0");
+        try self.qbeRawAll("l 0");
     } else {
         for (records.items, 0..) |r, i| {
-            if (i > 0) try self.out.writer.writeAll(", ");
-            try self.out.writer.print("l {s}, l {s}, l {d}, l {d}, l {d}", .{ r.func_name, r.dec_name, r.arg_count, r.arg_start, @intFromBool(r.is_handler) });
+            if (i > 0) try self.qbeRawAll(", ");
+            try self.qbeRaw("l {s}, l {s}, l {d}, l {d}, l {d}", .{ r.func_name, r.dec_name, r.arg_count, r.arg_start, @intFromBool(r.is_handler) });
         }
     }
-    try self.out.writer.writeAll(" }\n");
+    try self.qbeRawAll(" }\n");
 
-    try self.out.writer.writeAll("data $__nox_decorator_args = { ");
+    try self.qbeRawAll("data $__nox_decorator_args = { ");
     if (arg_ptrs.items.len == 0) {
-        try self.out.writer.writeAll("l 0");
+        try self.qbeRawAll("l 0");
     } else {
         for (arg_ptrs.items, 0..) |p, i| {
-            if (i > 0) try self.out.writer.writeAll(", ");
-            try self.out.writer.print("l {s}", .{p});
+            if (i > 0) try self.qbeRawAll(", ");
+            try self.qbeRaw("l {s}", .{p});
         }
     }
-    try self.out.writer.writeAll(" }\n");
+    try self.qbeRawAll(" }\n");
 }
 
 fn genReflectDecoratorCount(self: *Codegen, n: usize) CodegenError!void {
-    try self.out.writer.print("export function l $__nox_reflect_decorator_count(l {s}) {{\n@start\n    ret {d}\n}}\n", .{ RT_PARAM, n });
+    try self.qbeFuncHeaderStart(.l, "$__nox_reflect_decorator_count");
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncHeaderEnd();
+    const n_text = try std.fmt.allocPrint(self.allocator, "{d}", .{n});
+    try self.qbeRet(n_text);
+    try self.qbeFuncEnd();
 }
 
 /// `target_name`/`name`/`arg_count` ÜÇÜNÜN de İskeleti AYNIDIR: `$__nox_
@@ -123,39 +131,49 @@ fn genReflectDecoratorCount(self: *Codegen, n: usize) CodegenError!void {
 fn genReflectFieldGetter(self: *Codegen, func_name: []const u8, field_offset: usize) CodegenError!void {
     self.temp_counter = 0;
     self.label_counter = 0;
-    try self.out.writer.print("export function l ${s}(l {s}, l %i) {{\n@start\n", .{ func_name, RT_PARAM });
+    const name_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{func_name});
+    try self.qbeFuncHeaderStart(.l, name_sym);
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%i", false);
+    try self.qbeFuncHeaderEnd();
     const off = try self.newTemp();
-    try self.out.writer.print("    {s} =l mul %i, {d}\n", .{ off, RECORD_SIZE });
+    try self.qbeOp2Imm(off, .l, "mul", "%i", RECORD_SIZE);
     const base = try self.newTemp();
-    try self.out.writer.print("    {s} =l add $__nox_decorators, {s}\n", .{ base, off });
+    try self.qbeOp2(base, .l, "add", "$__nox_decorators", off);
     const addr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, base, field_offset });
+    try self.qbeOp2Imm(addr, .l, "add", base, @intCast(field_offset));
     const val = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ val, addr });
-    try self.out.writer.print("    ret {s}\n}}\n", .{val});
+    try self.qbeLoadL(val, addr);
+    try self.qbeRet(val);
+    try self.qbeFuncEnd();
 }
 
 fn genReflectDecoratorArg(self: *Codegen) CodegenError!void {
     self.temp_counter = 0;
     self.label_counter = 0;
-    try self.out.writer.print("export function l $__nox_reflect_decorator_arg(l {s}, l %i, l %j) {{\n@start\n", .{RT_PARAM});
+    try self.qbeFuncHeaderStart(.l, "$__nox_reflect_decorator_arg");
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%i", false);
+    try self.qbeFuncParam(.l, "%j", false);
+    try self.qbeFuncHeaderEnd();
     const rec_off = try self.newTemp();
-    try self.out.writer.print("    {s} =l mul %i, {d}\n", .{ rec_off, RECORD_SIZE });
+    try self.qbeOp2Imm(rec_off, .l, "mul", "%i", RECORD_SIZE);
     const rec_base = try self.newTemp();
-    try self.out.writer.print("    {s} =l add $__nox_decorators, {s}\n", .{ rec_base, rec_off });
+    try self.qbeOp2(rec_base, .l, "add", "$__nox_decorators", rec_off);
     const start_addr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ start_addr, rec_base, FIELD_OFFSET_ARG_START });
+    try self.qbeOp2Imm(start_addr, .l, "add", rec_base, FIELD_OFFSET_ARG_START);
     const arg_start = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ arg_start, start_addr });
+    try self.qbeLoadL(arg_start, start_addr);
     const idx = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, %j\n", .{ idx, arg_start });
+    try self.qbeOp2(idx, .l, "add", arg_start, "%j");
     const arg_off = try self.newTemp();
-    try self.out.writer.print("    {s} =l mul {s}, 8\n", .{ arg_off, idx });
+    try self.qbeOp2Imm(arg_off, .l, "mul", idx, 8);
     const arg_addr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add $__nox_decorator_args, {s}\n", .{ arg_addr, arg_off });
+    try self.qbeOp2(arg_addr, .l, "add", "$__nox_decorator_args", arg_off);
     const val = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ val, arg_addr });
-    try self.out.writer.print("    ret {s}\n}}\n", .{val});
+    try self.qbeLoadL(val, arg_addr);
+    try self.qbeRet(val);
+    try self.qbeFuncEnd();
 }
 
 /// `is_handler` alanı `l` (0/1) olarak SAKLANIR ama Nox `bool`u QBE'de `w`
@@ -165,18 +183,22 @@ fn genReflectDecoratorArg(self: *Codegen) CodegenError!void {
 fn genReflectDecoratorIsHandler(self: *Codegen) CodegenError!void {
     self.temp_counter = 0;
     self.label_counter = 0;
-    try self.out.writer.print("export function w $__nox_reflect_decorator_is_handler(l {s}, l %i) {{\n@start\n", .{RT_PARAM});
+    try self.qbeFuncHeaderStart(.w, "$__nox_reflect_decorator_is_handler");
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%i", false);
+    try self.qbeFuncHeaderEnd();
     const off = try self.newTemp();
-    try self.out.writer.print("    {s} =l mul %i, {d}\n", .{ off, RECORD_SIZE });
+    try self.qbeOp2Imm(off, .l, "mul", "%i", RECORD_SIZE);
     const base = try self.newTemp();
-    try self.out.writer.print("    {s} =l add $__nox_decorators, {s}\n", .{ base, off });
+    try self.qbeOp2(base, .l, "add", "$__nox_decorators", off);
     const addr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, base, FIELD_OFFSET_IS_HANDLER });
+    try self.qbeOp2Imm(addr, .l, "add", base, FIELD_OFFSET_IS_HANDLER);
     const val = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ val, addr });
+    try self.qbeLoadL(val, addr);
     const narrowed = try self.newTemp();
-    try self.out.writer.print("    {s} =w copy {s}\n", .{ narrowed, val });
-    try self.out.writer.print("    ret {s}\n}}\n", .{narrowed});
+    try self.qbeOp1(narrowed, .w, "copy", val);
+    try self.qbeRet(narrowed);
+    try self.qbeFuncEnd();
 }
 
 /// Bkz. modül üstü not ("handler erişimcisi NEDEN AYRI") — `%i` bilinen
@@ -188,18 +210,22 @@ fn genReflectDecoratorHandler(self: *Codegen, decorated: []const DecoratedFuncIn
     self.label_counter = 0;
     self.mod_cache.deinit(self.allocator);
     self.mod_cache = .empty;
-    try self.out.writer.print("export function l $__nox_reflect_decorator_handler(l {s}, l %i) {{\n@start\n", .{RT_PARAM});
+    try self.qbeFuncHeaderStart(.l, "$__nox_reflect_decorator_handler");
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%i", false);
+    try self.qbeFuncHeaderEnd();
     for (decorated, 0..) |info, idx| {
         if (!info.is_handler_shaped) continue;
         const cmp = try self.newTemp();
-        try self.out.writer.print("    {s} =w ceql %i, {d}\n", .{ cmp, idx });
+        try self.qbeOp2Imm(cmp, .w, "ceql", "%i", @intCast(idx));
         const match_label = try self.newLabel("dec_handler_match");
         const next_label = try self.newLabel("dec_handler_next");
-        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cmp, match_label, next_label });
-        try self.out.writer.print("{s}\n", .{match_label});
+        try self.qbeJnz(cmp, match_label, next_label);
+        try self.qbeLabel(match_label);
         const val = try self.buildFunctionValueForIdentifier(info.func_name);
-        try self.out.writer.print("    ret {s}\n", .{val.text});
-        try self.out.writer.print("{s}\n", .{next_label});
+        try self.qbeRet(val.text);
+        try self.qbeLabel(next_label);
     }
-    try self.out.writer.writeAll("    ret 0\n}\n");
+    try self.qbeRet("0");
+    try self.qbeFuncEnd();
 }
