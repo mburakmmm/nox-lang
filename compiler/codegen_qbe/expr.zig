@@ -680,13 +680,23 @@ pub fn genListLit(self: *Codegen, elems: []const ast.Expr) CodegenError!Value {
     const elem_size = qbeSizeOf(elem_qtype);
     const payload_size = LIST_HEADER_SIZE + elem_size * elems.len;
 
-    const t = try self.newTemp();
     const arena = self.currentArena();
-    if (arena) |ap| {
-        try self.out.writer.print("    {s} =l call $nox_arena_alloc(l {s}, l {d})\n", .{ t, ap, payload_size });
-    } else {
-        try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ t, RT_PARAM, payload_size });
-    }
+    // GG.15 (bkz. nox-teknik-spesifikasyon.md §3.66): BU `list_lit` AST
+    // düğümü (`elems.ptr` İLE anahtarlanır) `scanStackConstructSites`
+    // TARAFINDAN ÖNCEDEN bir yığın slotuna dönüştürüldüyse (fonksiyon
+    // GİRİŞİNDE) `nox_arena_alloc`/`nox_rc_alloc` ÇAĞRISI TAMAMEN ATLANIR.
+    // `genConstructFromValues`nin `pending_stack_slot`INİN AKSİNE burada
+    // AYRI bir GEÇİCİ alan GEREKMEZ — `elems` ZATEN doğrudan mevcut.
+    const t: []const u8 = blk: {
+        if (self.stack_construct_sites.get(@intFromPtr(elems.ptr))) |site| break :blk site.slot;
+        const temp = try self.newTemp();
+        if (arena) |ap| {
+            try self.out.writer.print("    {s} =l call $nox_arena_alloc(l {s}, l {d})\n", .{ temp, ap, payload_size });
+        } else {
+            try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ temp, RT_PARAM, payload_size });
+        }
+        break :blk temp;
+    };
     try self.out.writer.print("    storel {d}, {s}\n", .{ elems.len, t });
     // Faz U.1: kapasite (@8) — bir literalden inşa edilen bir liste HER
     // ZAMAN tam-oturan başlar (kapasite=uzunluk, büyüme SLACK'i YOK) —

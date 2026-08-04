@@ -14,6 +14,25 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.26.5]
+
+### Değişti
+- **GG.15**: `lowlevel:` bloğu içindeki sabit-boyutlu inşalar (sınıf
+  kurucuları + basit-literal `list_lit`'ler) artık `nox_arena_alloc`
+  yerine fonksiyon-girişinde önceden ayrılmış yığın slotlarını kullanıyor
+  -- `checkNoLowlevelEscape` bu değerlerin hiçbir zaman kaçmadığını zaten
+  kanıtladığından, tahsis stratejisini bump-pointer arenadan gerçek QBE
+  yığın slotuna çevirmek güvenli. Bir `lowlevel:` örneğindeki TÜM inşalar
+  dönüştürülebiliyorsa `nox_arena_create`/`destroy` çifti de tamamen
+  eleniyor; karışık durumda (identifier elemanlı liste gibi tanınmayan
+  bir şekil varsa) "ya hepsi ya hiçbiri" ilkesiyle mevcut arena davranışı
+  korunuyor. 4 yeni golden test (2 pozitif + 2 IR-metni kanıtı) ile
+  doğrulandı. Bu fazın kazancı projenin şimdiye kadarki en büyüğü:
+  63.8ms->~28.3ms (~%56 iyileşme), C karşılaştırması 26.54x->~10-15x
+  yavaş (C tarafı ms-altı gürültü nedeniyle oran dalgalanıyor ama nox'un
+  kendi mutlak süresindeki iyileşme kesin, bkz.
+  nox-teknik-spesifikasyon.md §3.66 GG.15).
+
 ## [1.26.4]
 
 ### Değişti

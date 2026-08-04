@@ -11194,6 +11194,83 @@ GERÇEKLEŞTİ** (3 ARC karar noktası güncellendi; uygulama SIRASINDA
 BULUNAN "sızıntı" bir test-metodolojisi ARTEFAKTIYDI, KOD hatası DEĞİLDİ —
 yukarıya bkz.).
 
+### GG.15 (TAMAMLANDI) — `lowlevel_arena`: sabit-boyutlu, kaçmayan tahsisleri GERÇEK yığın slotuna çevir
+
+**Kök neden:** `genLowLevel` (`stmt.zig`) `while` döngüsünün İÇİNDE
+olduğundan `nox_arena_create`/`nox_arena_destroy` çiftini HER yinelemede
+(5.000.000 kez) üretiyordu; `Point(i,i+1)`/`[1..8]` HER BİRİ bir
+`nox_arena_alloc` ÇAĞRISI (bump-pointer ama YİNE DE gerçek bir çağrı).
+`checkNoLowlevelEscape` bu değerlerin KAÇAMAYACAĞINI ZATEN KANITLIYOR —
+sorun SALT tahsis STRATEJİSİYDİ.
+
+**Uygulama (2 parça):**
+1. **Sabit-boyutlu yığın slotları.** `inlining.zig`e YENİ bir
+   `scanStackConstructSites` — `collectInlineSitesStmt`nin `.lowlevel_stmt`
+   dalından, `prepareInlineSites` İLE AYNI zamanlamada (fonksiyon GİRİŞİNDE,
+   `genStmts` ÇAĞRILMADAN ÖNCE) çağrılır. `ll.body`yi (if/while/for İÇİNE
+   de, ama İÇ İÇE `lowlevel`/`try`/`with`/`func_def`/`defer` HARİÇ)
+   tarayıp: (a) sınıf kurucusu çağrılarını (`self.classes.get(name)`,
+   boyut `cinfo.total_size`den DOĞRUDAN bilinir) VE (b) TÜM elemanları
+   AYNI türden BASİT literal (`int_lit`/`float_lit`/`bool_lit`) olan
+   `list_lit`leri (boyut `LIST_HEADER_SIZE + elem_size*len`den bilinir)
+   BULUP HER BİRİ İçin fonksiyon-GİRİŞİNDE (writer HÂLÂ ORADA) bir
+   `alloc8` yığın slotu üretir, `self.stack_construct_sites`e (AST düğümü
+   POINTER kimliğiyle — sınıf İçin `@intFromPtr(c.callee)`, liste İçin
+   `@intFromPtr(elems.ptr)`) kaydeder. `genConstructFromValues`
+   (`pending_stack_slot` GEÇİCİ alanı ÜZERİNDEN — `genConstruct`ın çağrı
+   sitesi `stack_construct_sites`i sorgulayıp AYARLAR) VE `genListLit`
+   (`elems.ptr`i DOĞRUDAN sorgular) BU slotu GÖRÜNCE `nox_arena_alloc`/
+   `nox_rc_alloc` ÇAĞRISINI TAMAMEN ATLAR. **Düzeltme (plan dosyasının
+   YANLIŞ varsayımı):** plan `Value.text = slot_base + ARC_HEADER_SIZE`
+   (başlık-boşluğu KORUNMASI) öngörüyordu — GERÇEKTE `nox_arena_alloc`nin
+   KENDİSİ HİÇ başlık-boşluğu AYIRMIYOR (`cinfo.total_size`/`payload_size`
+   İKİ tahsis yolunda da AYNI, `nox_rc_alloc`in `payload_size+HEADER_SIZE`
+   İÇSEL hesabından FARKLI) — yığın slotu DOĞRUDAN `t` OLARAK kullanılır,
+   HİÇBİR ofset GEREKMEZ.
+2. **Arena elemesi.** `ll.body`deki TÜM inşalar (en az BİR tane VARSA)
+   dönüştürülebildiyse (`all_ok && any`), `self.lowlevel_arena_elidable`e
+   `true` yazılır — `genLowLevel` BUNU görüp `nox_arena_create`/`destroy`
+   çiftini TAMAMEN ATLAR. KARIŞIK durumda (identifier/çağrı İÇEREN bir
+   liste ELEMANI GİBİ tanınmayan HERHANGİ bir şekil) "ya HEPSİ ya HİÇBİRİ"
+   ilkesiyle TÜM `lowlevel:` örneği MEVCUT (DEĞİŞMEMİŞ) arena davranışına
+   düşer.
+
+**Güvenlik — `arena_stack`in `.elided` bayrağı:** `Value.arena`/`checkNoLowlevelEscape`nin
+"BU değer lowlevel kapsamına AİT" ayrımının (VE erken-çıkış `drainArenas`inin)
+BOZULMAMASI İçin, arena TAMAMEN elense BİLE `genLowLevel` `arena_stack`e
+YİNE DE bir girdi İTER — SADECE `.elided=true` İŞARETLENİR (`.handle` bir
+yer tutucu, `"0"`). `drainArenas` `.elided` girdiler İçin `nox_arena_destroy`
+ÇAĞIRMAZ (GEÇERSİZ bir handle'a `nox_arena_destroy` çağırmak TANIMSIZ
+davranış olurdu). Yerellerin release-atlaması İçin YENİ bir bayrağa GEREK
+YOKTUR — `collectLocals`in MEVCUT `in_lowlevel` → `VarInfo.arena=true`
+işaretlemesi (SADECE "bu yerel bireysel ARC İLE serbest bırakılmaz" anlamına
+gelir, KAYNAĞA — arena bump-pointer'ı MI yığın slotu MU — KAYITSIZDIR)
+ZATEN DOĞRU davranışı BEDAVA sağlar.
+
+**Doğrulama:** Taze `.ssa`: `lowlevel_stack_construct.nox` (eligible örnek)
+İçin `nox_arena_create`/`nox_arena_alloc`/`nox_arena_destroy` HİÇ
+GÖRÜNMÜYOR — `Point` (24 bayt) VE 8-elemanlı liste (80 bayt) fonksiyon
+GİRİŞİNDE BİR KEZ `alloc8` İLE tahsis EDİLİP HER yinelemede YENİDEN
+KULLANILIYOR. `lowlevel_mixed_no_stack_construct.nox` (identifier-elemanlı
+liste İÇEREN KARIŞIK örnek) İçin `nox_arena_create`/`destroy` HÂLÂ
+ÜRETİLİYOR (doğru fallback). Manuel bir üçüncü fixture (N=1000, iç içe
+`while`) İLE hem eligible HEM mixed durumların ÇIKTI DOĞRULUĞU AYRICA
+teyit edildi. 4 YENİ golden test (2 pozitif `expectGolden` + 2 IR-metni
+kanıtı) + `zig build test` (Debug + ReleaseFast, TAM temiz `rm -rf
+.zig-cache` yeniden derleme DAHİL) yeşil — Debug'daki TEK kalan hata,
+BU fazdan TAMAMEN BAĞIMSIZ, ÖNCEDEN VAR OLAN bir fuzz testi yığın-taşması.
+
+**Ölçüm:** `benchmarks/compare/lowlevel_arena.nox` (n=5.000.000) — ÖNCESİ
+nox min=63.8ms/C min=2.4ms (26.54x). SONRASI 3 BAĞIMSIZ koşuda nox min
+TUTARLI biçimde 28.2-28.4ms (**~%56 İYİLEŞME, HAM SÜREDE İKİYE KATLANMADAN
+FAZLA HIZLANMA** — bu projenin ŞİMDİYE KADARKİ EN BÜYÜK kazancı), C min
+1.9-2.9ms ARALIĞINDA (gürültü) NEDENİYLE oran 9.78x-14.60x ARASINDA
+SAÇILDI — ama nox'un KENDİ mutlak süresindeki İYİLEŞME KESİN VE gürültüden
+TAMAMEN AYIRT EDİLEBİLİR. **Risk: orta-yüksek, GERÇEKLEŞTİ** (tahsis
+STRATEJİSİNİ değiştiren İLK faz, ama `checkNoLowlevelEscape`nin ZATEN
+YAPTIĞI kaçış-kanıtına DAYANDIĞINDAN YENİ bir kaçış analizi GEREKMEDİ —
+plan dosyasının kendi "GG.16'DAN daha GÜVENLİ" değerlendirmesiyle TUTARLI).
+
 ### HH.1 (TAMAMLANDI) — Accept backlog artırımı; `ConnCtx` havuzu DENENDİ, GERİ ALINDI
 
 **Kaynak:** `nox.http` darboğaz analizinin (kullanıcı talebiyle yapılan

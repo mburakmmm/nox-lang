@@ -178,15 +178,32 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
 /// Gövde içinde bir `return`/yakalanmamış istisna olduysa, o çıkış yolu
 /// `drainArenas` ile arenayı ZATEN yıkmıştır — bu durumda buradaki yıkım
 /// çağrısı erişilemez (ölü) koddur, `genTry`'deki eşdeğer durum gibi.
+///
+/// GG.15 (bkz. nox-teknik-spesifikasyon.md §3.66): `prepareInlineSites`in
+/// (`.lowlevel_stmt` dalından `scanStackConstructSites` ÜZERİNDEN) BU
+/// AYNI `ll.body`YE daha ÖNCE (fonksiyon GİRİŞİNDEYKEN) baktığı VE
+/// İÇİNDEKİ TÜM inşaların (en az BİR tane VARSA) yığın slotlarına
+/// dönüştürüldüğü KANITLANMIŞSA (`self.lowlevel_arena_elidable`), `nox_
+/// arena_create`/`destroy` çifti TAMAMEN ATLANIR — ama `arena_stack`e
+/// YİNE DE bir GİRDİ (`.elided=true`) İTİLİR: `Value.arena`/`checkNoLowlevel
+/// Escape`nin "BU değer lowlevel kapsamına AİT" ayrımı DEĞİŞMEMELİDİR
+/// (SADECE gerçek `nox_arena_alloc` çağrıları elenir).
 pub fn genLowLevel(self: *Codegen, ll: ast.LowLevelStmt, ret_qtype: QbeType) CodegenError!void {
-    const arena_temp = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_arena_create(l {s})\n", .{ arena_temp, RT_PARAM });
-    try self.arena_stack.append(self.allocator, arena_temp);
+    const elided = self.lowlevel_arena_elidable.get(@intFromPtr(ll.body.ptr)) orelse false;
+    if (elided) {
+        try self.arena_stack.append(self.allocator, .{ .handle = "0", .elided = true });
+    } else {
+        const arena_temp = try self.newTemp();
+        try self.out.writer.print("    {s} =l call $nox_arena_create(l {s})\n", .{ arena_temp, RT_PARAM });
+        try self.arena_stack.append(self.allocator, .{ .handle = arena_temp, .elided = false });
+    }
     self.in_lowlevel_depth += 1;
     try self.genStmts(ll.body, ret_qtype);
     self.in_lowlevel_depth -= 1;
-    _ = self.arena_stack.pop();
-    try self.out.writer.print("    call $nox_arena_destroy(l {s}, l {s})\n", .{ RT_PARAM, arena_temp });
+    const entry = self.arena_stack.pop().?;
+    if (!entry.elided) {
+        try self.out.writer.print("    call $nox_arena_destroy(l {s}, l {s})\n", .{ RT_PARAM, entry.handle });
+    }
 }
 
 pub fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {

@@ -293,7 +293,18 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 return .{ .text = result_temp, .qtype = .l };
             }
 
-            if (self.classes.get(name)) |cinfo| return self.genConstruct(name, cinfo, c.args);
+            if (self.classes.get(name)) |cinfo| {
+                // GG.15 (bkz. nox-teknik-spesifikasyon.md §3.66): BU inşa
+                // sitesi, `prepareStackConstructSites`in ÖNCEDEN taradığı
+                // bir `lowlevel:` bloğu İÇİNDEYSE, `self.pending_stack_slot`
+                // GEÇİCİ olarak İŞARETLENİR — `genConstructFromValues`
+                // BUNU görüp `nox_arena_alloc` ÇAĞRISI YERİNE fonksiyon-
+                // girişinde ÖNCEDEN ayrılmış bu yığın slotunu KULLANIR.
+                if (self.stack_construct_sites.get(@intFromPtr(c.callee))) |site| {
+                    self.pending_stack_slot = site.slot;
+                }
+                return self.genConstruct(name, cinfo, c.args);
+            }
 
             // `extern def` — Nox'un runtime çağrılarıyla (`RT_PARAM`) VE
             // istisna yayılımıyla (`emitExceptionCheck`) HİÇ ilgisi
@@ -543,9 +554,14 @@ pub fn releaseIfTemporary(self: *Codegen, e: ast.Expr, v: Value) CodegenError!vo
 }
 
 /// İçinde bulunulan en yakın `lowlevel` bloğunun arena işaretçisi (varsa).
+/// GG.15: `.elided` girdiler İçin de (bilinçli olarak) NON-NULL bir
+/// tutamaç DÖNDÜRÜR — `Value.arena`/`checkNoLowlevelEscape`nin "BU değer
+/// bir lowlevel kapsamına AİT" ayrımı yığın-dönüştürülmüş değerler İçin
+/// de AYNEN KORUNMALIDIR (SADECE gerçek `nox_arena_alloc` çağrısı
+/// atlanır — bkz. `genConstructFromValues`/`genListLit`).
 pub fn currentArena(self: *Codegen) ?[]const u8 {
     if (self.arena_stack.items.len == 0) return null;
-    return self.arena_stack.items[self.arena_stack.items.len - 1];
+    return self.arena_stack.items[self.arena_stack.items.len - 1].handle;
 }
 
 pub fn genConstruct(self: *Codegen, class_name: []const u8, cinfo: ClassInfo, args: []const ast.Expr) CodegenError!Value {
@@ -590,13 +606,30 @@ pub fn genConstruct(self: *Codegen, class_name: []const u8, cinfo: ClassInfo, ar
 /// karşılık gelen bir `ast.Expr`si YOK) `null` bırakır.
 pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: ClassInfo, arg_values: []const Value, temp_release: ?struct { exprs: []const ast.Expr, values: []const Value }) CodegenError!Value {
     if (cinfo.init_params.len != arg_values.len) return error.Unsupported;
-    const t = try self.newTemp();
     const arena = self.currentArena();
-    if (arena) |ap| {
-        try self.out.writer.print("    {s} =l call $nox_arena_alloc(l {s}, l {d})\n", .{ t, ap, cinfo.total_size });
-    } else {
-        try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ t, RT_PARAM, cinfo.total_size });
-    }
+    // GG.15 (bkz. nox-teknik-spesifikasyon.md §3.66): BU inşa sitesi İçin
+    // `genCall`in DAHA ÖNCE (`stack_construct_sites` sorgusuyla) ÖNCEDEN
+    // ayrılmış bir yığın slotu BULDUYSA, `nox_arena_alloc`/`nox_rc_alloc`
+    // ÇAĞRISI TAMAMEN ATLANIR — slot DOĞRUDAN `t` OLARAK kullanılır (arena
+    // yolunun `cinfo.total_size` argümanıyla AYNI boyutta ÖNCEDEN ayrılmıştı,
+    // hiçbir başlık-boşluğu FARKI YOK — bkz. arena/`nox_rc_alloc`'un
+    // `t` üzerindeki AYNI, header-SONRASI kullanım deseni). `pending_stack_
+    // slot` her zaman `self.currentArena() != null` İKEN (BU splice sitesi
+    // ZATEN bir `lowlevel:` bloğu İÇİNDE) ayarlandığından, `arena != null`
+    // AŞAĞIDAKİ dönüş değerinde de doğru KALIR.
+    const t: []const u8 = blk: {
+        if (self.pending_stack_slot) |slot| {
+            self.pending_stack_slot = null;
+            break :blk slot;
+        }
+        const temp = try self.newTemp();
+        if (arena) |ap| {
+            try self.out.writer.print("    {s} =l call $nox_arena_alloc(l {s}, l {d})\n", .{ temp, ap, cinfo.total_size });
+        } else {
+            try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ temp, RT_PARAM, cinfo.total_size });
+        }
+        break :blk temp;
+    };
     try self.out.writer.print("    storel {d}, {s}\n", .{ cinfo.class_id, t });
     // Faz 7 (tekli kalıtım): `has_vtable` İSE, TAG'den HEMEN SONRA (alanlar
     // BAŞLAMADAN ÖNCE) bu SOMUT sınıfın vtable veri bloğunun adresini

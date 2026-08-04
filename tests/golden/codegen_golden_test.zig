@@ -1401,6 +1401,71 @@ test "codegen: GG.14 — pinned passthrough'un ÜRETTİĞİ IR'da SADECE dinamik
     try std.testing.expectEqual(@as(usize, 2), occurrences); // TEK retain çağrısı (dinamik yol İçin) = 2 geçiş
 }
 
+// GG.15 (bkz. nox-teknik-spesifikasyon.md §3.66): `lowlevel:` bloğu
+// İÇİNDEKİ sabit-boyutlu inşalar (bir sınıf kurucusu + basit-literal
+// `list_lit`) ARTIK `nox_arena_alloc` YERİNE fonksiyon-girişinde ÖNCEDEN
+// ayrılmış yığın slotlarını KULLANIR — `nox_arena_create`/`destroy` çifti
+// (BU örnek İçin TÜM inşalar dönüştürülebildiğinden) TAMAMEN ELENİR.
+// `expectGolden` (Debug ARC güvenlik ağı DAHİL) davranışın DEĞİŞMEDİĞİNİ
+// doğrular; aşağıdaki AYRI IR-metni testi elenmenin GERÇEKTEN gerçekleştiğini
+// kanıtlar.
+test "codegen(çalıştır): GG.15 — lowlevel bloğunda sabit-boyutlu inşalar (yığın slotu), davranış değişmedi" {
+    try expectGolden(
+        @embedFile("codegen_cases/lowlevel_stack_construct.nox"),
+        @embedFile("codegen_cases/lowlevel_stack_construct.expected"),
+    );
+}
+
+test "codegen: GG.15 — lowlevel bloğunun ÜRETTİĞİ IR'da nox_arena_create/alloc GERÇEKTEN YOK" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/lowlevel_stack_construct.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{});
+
+    try std.testing.expect(std.mem.indexOf(u8, ir, "nox_arena_create") == null);
+    try std.testing.expect(std.mem.indexOf(u8, ir, "nox_arena_alloc") == null);
+    try std.testing.expect(std.mem.indexOf(u8, ir, "nox_arena_destroy") == null);
+}
+
+// GG.15 NEGATİF durum: `nums: list[int] = [a, b, c]` (identifier ELEMANLI,
+// basit-literal DEĞİL) `scanStackConstructSites`in "uniform" kontrolünü
+// GEÇEMEZ — TÜM `lowlevel:` örneği GÜVENLİ tarafta kalıp MEVCUT arena
+// davranışına DEĞİŞMEDEN düşmelidir (`Point` İçin BİLE, "ya HEPSİ ya
+// HİÇBİRİ" ilkesi GEREĞİ). `expectGolden` davranış/bellek güvenliğini,
+// aşağıdaki IR-metni testi `nox_arena_create`in HÂLÂ ÜRETİLDİĞİNİ kanıtlar.
+test "codegen(çalıştır): GG.15 — karışık lowlevel bloğu (identifier elemanlı liste), arena elenmez" {
+    try expectGolden(
+        @embedFile("codegen_cases/lowlevel_mixed_no_stack_construct.nox"),
+        @embedFile("codegen_cases/lowlevel_mixed_no_stack_construct.expected"),
+    );
+}
+
+test "codegen: GG.15 — karışık lowlevel bloğunun ÜRETTİĞİ IR'da nox_arena_create HÂLÂ VAR" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/lowlevel_mixed_no_stack_construct.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{});
+
+    try std.testing.expect(std.mem.indexOf(u8, ir, "nox_arena_create") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ir, "nox_arena_destroy") != null);
+}
+
 test "codegen(çalıştır): zincirlenmiş alan okuması bir çağrı sonucu üzerinde — ara nesne sızmaz" {
     try expectGolden(
         @embedFile("codegen_cases/chained_attr_temporary_release.nox"),

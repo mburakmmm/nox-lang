@@ -46,7 +46,11 @@ pub fn drainArenas(self: *Codegen) CodegenError!void {
     var i = self.arena_stack.items.len;
     while (i > 0) {
         i -= 1;
-        try self.out.writer.print("    call $nox_arena_destroy(l {s}, l {s})\n", .{ RT_PARAM, self.arena_stack.items[i] });
+        // GG.15: `.elided` girdiler İçin `nox_arena_create` HİÇ
+        // ÇAĞRILMAMIŞTIR — `.handle` GEÇERSİZ bir yer tutucudur, `nox_
+        // arena_destroy`e geçirmek TANIMSIZ davranışa yol AÇARDI.
+        if (self.arena_stack.items[i].elided) continue;
+        try self.out.writer.print("    call $nox_arena_destroy(l {s}, l {s})\n", .{ RT_PARAM, self.arena_stack.items[i].handle });
     }
 }
 

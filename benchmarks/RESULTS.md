@@ -4,10 +4,10 @@
 
 **Faz P2.5 (bkz. proje belleği "P0/P1/P2 inceleme düzeltme listesi" planı):** `run.zig` artık HER koşunun başında makine/derleyici-sürümü bilgisini (OS/mimari/CPU çekirdek sayısı, `zig` sürümü, derleme modu, `noxc --version`) basıyor — bu dosyanın AŞAĞIDAKİ tabloları BU metadata EKLENMEDEN ÖNCEKİ koşulardan alındığından geriye dönük olarak eklenmedi (bkz. git geçmişi/orijinal koşu ortamı bilinmiyor); BUNDAN SONRAKİ her yeni koşu çıktısının EN ÜSTÜNDE bu bilgi otomatik olarak yer alacak. Her satır ayrıca artık yalnızca `min` DEĞİL, `min`/`max`/`ort` (ortalama) üçünü de raporluyor — bir sayının GERÇEKTEN istikrarlı mı yoksa gürültülü mü olduğunu (ör. `min=5ms` ama `max=50ms` olabilir) görünür kılmak için.
 
-**En güncel koşu metadata'sı (Faz GG.14, bkz. §3.66 — pinned string
-literallerinin retain/release trafiğinin elenmesi SONRASI):**
+**En güncel koşu metadata'sı (Faz GG.15, bkz. §3.66 — `lowlevel:` bloğu
+İçindeki sabit-boyutlu inşaların yığın slotlarına dönüştürülmesi SONRASI):**
 `ortam: macos-aarch64 (apple_m4), 10 mantıksal çekirdek` —
-`derleyici: zig 0.16.0` — `derleme modu: ReleaseFast` — `noxc: noxc 1.26.4`.
+`derleyici: zig 0.16.0` — `derleme modu: ReleaseFast` — `noxc: noxc 1.26.5`.
 
 ## Bölüm 1 — Stres testleri (yalnızca Nox, büyük N)
 
@@ -21,7 +21,7 @@ Bu testler yalnızca Nox'un büyük ölçekte çökmediğini/sızdırmadığın�
 | oop_arc_churn | 2.2ms |
 | generics_protocols | 48.7ms |
 | exceptions_control_flow | 2.9ms |
-| lowlevel_arena | 2.2ms |
+| lowlevel_arena | 2.3ms |
 | string_passing | 44.4ms |
 | deep_equality | 11.3ms |
 | list_class_field | 7.5ms |
@@ -352,7 +352,7 @@ Her satır üç dilde **aynı algoritmayı** çalıştırır (Python/C, o dilin 
 | oop_arc_churn | 36.7ms | 471.9ms | 43.9ms | **12.9x hızlı** | 0.83x (Nox C'den hızlı) |
 | generics_protocols | 38.1ms | 1576.9ms | 26.5ms | **41.4x hızlı** | 1.44x yavaş |
 | exceptions_control_flow | 22.4ms | 678.6ms | 6.1ms | **30.3x hızlı** | 3.68x yavaş |
-| lowlevel_arena | 63.8ms | 1327.9ms | 2.4ms | **20.8x hızlı** | 26.54x yavaş |
+| lowlevel_arena | 28.2ms | 1346.2ms | 2.9ms | **47.7x hızlı** | 9.78x yavaş |
 | string_passing | 33.7ms | 1208.8ms | 8.2ms | **35.9x hızlı** | 4.12x yavaş |
 | deep_equality | 6.2ms | 51.1ms | 3.9ms | **8.2x hızlı** | 1.61x yavaş |
 | list_class_field | 4.2ms | 50.5ms | 2.0ms | **12.0x hızlı** | 2.12x yavaş |

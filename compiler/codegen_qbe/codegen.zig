@@ -277,6 +277,8 @@ const modCacheKey = optimizations.modCacheKey;
 
 const NamedSlot = inlining.NamedSlot;
 const InlineSiteInfo = inlining.InlineSiteInfo;
+const StackConstructSite = inlining.StackConstructSite;
+const ArenaStackEntry = types.ArenaStackEntry;
 const InlineReturnTarget = inlining.InlineReturnTarget;
 
 pub const Codegen = struct {
@@ -288,6 +290,7 @@ pub const Codegen = struct {
     pub const collectInlineSitesExpr = inlining.collectInlineSitesExpr;
     pub const prepareInlineSites = inlining.prepareInlineSites;
     pub const genInlinedCall = inlining.genInlinedCall;
+    pub const scanStackConstructSites = inlining.scanStackConstructSites;
 
     pub const buildClosureValue = closures.buildClosureValue;
     pub const genNestedFuncDef = closures.genNestedFuncDef;
@@ -788,6 +791,27 @@ pub const Codegen = struct {
     /// `genCall`'ın `.identifier` dalı BU haritaya BAKARAK normal `call`
     /// yerine `genInlinedCall`e DÜŞER.
     inline_sites: std.AutoHashMapUnmanaged(usize, InlineSiteInfo) = .empty,
+    /// GG.15 (bkz. nox-teknik-spesifikasyon.md §3.66): `inline_sites`
+    /// İLE AYNI zamanlamada (`collectInlineSitesStmts`nin `.lowlevel_stmt`
+    /// dalından) doldurulur — BİR `lowlevel:` bloğu İÇİNDEKİ sabit-boyutlu
+    /// bir inşanın (sınıf kurucusu YA DA basit-literal `list_lit`) AST
+    /// düğümü POINTER kimliği (sınıf İçin `@intFromPtr(c.callee)`, liste
+    /// İçin `@intFromPtr(elems.ptr)`) → fonksiyon-girişinde ÖNCEDEN
+    /// ayrılmış YIĞIN slotu eşlemesi. `genConstructFromValues`/`genListLit`
+    /// BUNU görüp `nox_arena_alloc` ÇAĞRISI YERİNE bu slotu KULLANIR.
+    stack_construct_sites: std.AutoHashMapUnmanaged(usize, StackConstructSite) = .empty,
+    /// GG.15: `@intFromPtr(ll.body.ptr)` (BİR `lowlevel:` örneğinin
+    /// BENZERSİZ kimliği) → o örnekteki TÜM inşaların (ll.body`de bulunan
+    /// EN AZ BİR tane VARSA) yığın slotuna dönüştürülüp DÖNÜŞTÜRÜLMEDİĞİ.
+    /// `true` İSE `genLowLevel` `nox_arena_create`/`destroy` çiftini
+    /// TAMAMEN ATLAR.
+    lowlevel_arena_elidable: std.AutoHashMapUnmanaged(usize, bool) = .empty,
+    /// GG.15: `genConstruct`ın (AST düğümü İLE `genConstructFromValues`
+    /// ARASINDAKİ TEK köprü) `stack_construct_sites`de BULDUĞU bir slotu
+    /// GEÇİCİ olarak taşır — `genConstructFromValues` BUNU TÜKETİP
+    /// (`null`a sıfırlayıp) KULLANIR. `genListLit` BUNA İHTİYAÇ DUYMAZ
+    /// (`elems.ptr`i DOĞRUDAN kendisi sorgular).
+    pending_stack_slot: ?[]const u8 = null,
     /// Faz GG.2: `genInlinedCall` bir splice ÜRETİRKEN AYARLANIR (splice
     /// SONRASI eski değerine GERİ YÜKLENİR) — `genStmts`in `.return_stmt`
     /// dalı bu DOLUYSA gerçek bir `ret` YERİNE sonuç slotuna YAZIP `jmp`
@@ -821,8 +845,11 @@ pub const Codegen = struct {
     /// İçinde bulunulan `lowlevel` bloklarının arena işaretçileri yığını (en
     /// dıştan en içe) — Katman 4 (AGENTS.md §8). Her `return`/yakalanmamış
     /// istisna, `finally` gibi, bu arenaları da (`drainArenas`) gerçek
-    /// çıkıştan önce toplu olarak yıkmalıdır.
-    arena_stack: std.ArrayListUnmanaged([]const u8) = .empty,
+    /// çıkıştan önce toplu olarak yıkmalıdır. GG.15: `.elided=true` İSE bu
+    /// girdi İçin `nox_arena_create` HİÇ ÇAĞRILMAMIŞTIR (TÜM inşalar yığın
+    /// slotlarına dönüştürüldü) — `.handle` GEÇERSİZ bir yer tutucudur,
+    /// `drainArenas`/`genLowLevel` BUNUN İçin `nox_arena_destroy` ÇAĞIRMAZ.
+    arena_stack: std.ArrayListUnmanaged(ArenaStackEntry) = .empty,
     /// `> 0`: şu an bir `lowlevel` bloğunun (doğrudan ya da iç içe) içindeyiz.
     /// Basitlik ve güvenlik için, bu blok içindeyken heap tipli (`list`/sınıf)
     /// hiçbir değer bir çağrıya argüman/alıcı olamaz, döndürülemez, başka bir

@@ -50,6 +50,13 @@ pub const CLOSURE_RELEASE_FN_PTR_OFFSET = abi_layout.CLOSURE_RELEASE_FN_PTR_OFFS
 
 /// `list[T]`nin elemanları KENDİLERİ heap-yönetimliyse (sınıf ya da iç içe
 /// `list[T']`) bunu ÖZYİNELEMELİ olarak betimler.
+/// GG.15 (bkz. nox-teknik-spesifikasyon.md §3.66): bkz. `Codegen.
+/// arena_stack`in belge notu.
+pub const ArenaStackEntry = struct {
+    handle: []const u8,
+    elided: bool = false,
+};
+
 pub const ElemHeapInfo = struct {
     heap: HeapKind,
     class_name: ?[]const u8 = null,

@@ -15,8 +15,11 @@ const Codegen = codegen.Codegen;
 const Value = types.Value;
 const TypeInfo = types.TypeInfo;
 const VarInfo = types.VarInfo;
+const QbeType = types.QbeType;
+const LIST_HEADER_SIZE = types.LIST_HEADER_SIZE;
 const CodegenError = abi.CodegenError;
 const qbeTypeName = abi.qbeTypeName;
+const qbeSizeOf = abi.qbeSizeOf;
 const collectReassignedNames = optimizations.collectReassignedNames;
 
 /// Faz GG.2 (bkz. nox-teknik-spesifikasyon.md §3.67): inline edilen bir
@@ -39,6 +42,12 @@ pub const InlineSiteInfo = struct {
     locals: []const NamedSlot,
     /// `null` İSE callee'nin dönüş tipi `None` (sonuç YOK).
     result: ?NamedSlot,
+};
+
+/// GG.15 (bkz. nox-teknik-spesifikasyon.md §3.66): bkz. `Codegen.
+/// stack_construct_sites`in belge notu.
+pub const StackConstructSite = struct {
+    slot: []const u8,
 };
 
 /// Faz GG.2: `genStmts`in `.return_stmt` dalının, İÇİNDE bulunulan
@@ -208,7 +217,13 @@ pub fn collectInlineSitesStmt(self: *Codegen, stmt: ast.Stmt) CodegenError!void 
             for (t.except_clauses) |ec| try self.collectInlineSitesStmts(ec.body);
             if (t.finally_body) |fb| try self.collectInlineSitesStmts(fb);
         },
-        .lowlevel_stmt => |ll| try self.collectInlineSitesStmts(ll.body),
+        .lowlevel_stmt => |ll| {
+            try self.collectInlineSitesStmts(ll.body);
+            // GG.15 (bkz. nox-teknik-spesifikasyon.md §3.66): AYNI
+            // zamanlamada (writer HÂLÂ fonksiyon GİRİŞİNDE), sabit-boyutlu
+            // inşalar İçin yığın slotlarını AYRICA tara/ayır.
+            try self.scanStackConstructSites(ll.body);
+        },
         .with_stmt => |w| {
             try self.collectInlineSitesExpr(w.ctx_expr);
             try self.collectInlineSitesStmts(w.body);
@@ -259,6 +274,145 @@ pub fn collectInlineSitesExpr(self: *Codegen, expr: ast.Expr) CodegenError!void 
         .await_expr => |op| try self.collectInlineSitesExpr(op.*),
         .spawn_expr => |op| try self.collectInlineSitesExpr(op.*),
         .generic_construct => |g| for (g.args) |a| try self.collectInlineSitesExpr(a),
+    }
+}
+
+/// GG.15 (bkz. nox-teknik-spesifikasyon.md §3.66): `ll_body`i (bir
+/// `lowlevel:` bloğunun gövdesi) tarayıp İÇİNDEKİ HER sabit-boyutlu
+/// inşa (sınıf kurucusu/basit-literal `list_lit`) İçin fonksiyon
+/// GİRİŞİNDE (writer HÂLÂ ORADA — bkz. `collectInlineSitesStmt`nin
+/// `.lowlevel_stmt` dalındaki AYNI zamanlama garantisi) bir yığın slotu
+/// ayırıp `self.stack_construct_sites`e KAYDEDER. `ll_body`deki TÜM
+/// inşalar (en az BİR tane VARSA) dönüştürülebildiyse `self.
+/// lowlevel_arena_elidable`e `true` yazar — `genLowLevel` BUNU `nox_
+/// arena_create`/`destroy` çiftini TAMAMEN ATLAMAK İçin kullanır.
+pub fn scanStackConstructSites(self: *Codegen, ll_body: []const ast.Stmt) CodegenError!void {
+    var all_ok = true;
+    var any = false;
+    try scanStackConstructsStmts(self, ll_body, &all_ok, &any);
+    try self.lowlevel_arena_elidable.put(self.allocator, @intFromPtr(ll_body.ptr), any and all_ok);
+}
+
+fn scanStackConstructsStmts(self: *Codegen, stmts: []const ast.Stmt, all_ok: *bool, any: *bool) CodegenError!void {
+    for (stmts) |stmt| {
+        switch (stmt.kind) {
+            .var_decl => |v| try scanStackConstructsExpr(self, v.value, all_ok, any),
+            .assign => |a| {
+                try scanStackConstructsExpr(self, a.target, all_ok, any);
+                try scanStackConstructsExpr(self, a.value, all_ok, any);
+            },
+            .expr_stmt => |e| try scanStackConstructsExpr(self, e, all_ok, any),
+            .if_stmt => |f| {
+                try scanStackConstructsExpr(self, f.cond, all_ok, any);
+                try scanStackConstructsStmts(self, f.then_body, all_ok, any);
+                for (f.elif_clauses) |ec| {
+                    try scanStackConstructsExpr(self, ec.cond, all_ok, any);
+                    try scanStackConstructsStmts(self, ec.body, all_ok, any);
+                }
+                if (f.else_body) |eb| try scanStackConstructsStmts(self, eb, all_ok, any);
+            },
+            .while_stmt => |w| {
+                try scanStackConstructsExpr(self, w.cond, all_ok, any);
+                try scanStackConstructsStmts(self, w.body, all_ok, any);
+            },
+            .for_stmt => |f| {
+                try scanStackConstructsExpr(self, f.iterable, all_ok, any);
+                try scanStackConstructsStmts(self, f.body, all_ok, any);
+            },
+            .return_stmt => |r| if (r) |e| try scanStackConstructsExpr(self, e, all_ok, any),
+            .raise_stmt => |e| try scanStackConstructsExpr(self, e, all_ok, any),
+            // `try`/İç İçe `lowlevel`/`func_def`/`with` — GG.15'in
+            // KAPSAMI DIŞINDA (bilinçli, MUHAFAZAKÂR): BULUNURSA BU
+            // `lowlevel:` örneğinin arena elenmesi İPTAL edilir (`all_ok
+            // = false`), ama fonksiyonun GERİ KALANI/DİĞER `lowlevel`
+            // örnekleri ETKİLENMEZ.
+            .try_stmt, .lowlevel_stmt, .func_def, .with_stmt, .defer_stmt => all_ok.* = false,
+            .pass_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
+        }
+    }
+}
+
+/// GG.15: bir sınıf kurucusu çağrısı (`ClassName(...)`) YA DA basit-
+/// literal (`int_lit`/`float_lit`/`bool_lit`, TÜMÜ AYNI türden) bir
+/// `list_lit` BULURSA, HEMEN (writer'ın O ANKİ, GİRİŞ-bloğu konumunda)
+/// bir `alloc8` yığın slotu üretir. BAŞKA HERHANGİ bir inşa şekli
+/// (identifier/çağrı İÇEREN eleman, `dict_lit`, `generic_construct`)
+/// `all_ok`i `false` yapar — GG.13/14 İLE AYNI "belirsizlikte GÜVENLİ
+/// tarafta kal" disiplini.
+fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *bool) CodegenError!void {
+    switch (expr) {
+        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+        .unary => |u| try scanStackConstructsExpr(self, u.operand.*, all_ok, any),
+        .binary => |b| {
+            try scanStackConstructsExpr(self, b.left.*, all_ok, any);
+            try scanStackConstructsExpr(self, b.right.*, all_ok, any);
+        },
+        .call => |c| {
+            for (c.args) |a| try scanStackConstructsExpr(self, a, all_ok, any);
+            if (c.callee.* == .identifier) {
+                if (self.classes.get(c.callee.identifier)) |cinfo| {
+                    any.* = true;
+                    const slot = try self.newTemp();
+                    try self.out.writer.print("    {s} =l alloc8 {d}\n", .{ slot, cinfo.total_size });
+                    try self.stack_construct_sites.put(self.allocator, @intFromPtr(c.callee), .{ .slot = slot });
+                }
+            }
+        },
+        .attribute => |a| try scanStackConstructsExpr(self, a.obj.*, all_ok, any),
+        .index => |idx| {
+            try scanStackConstructsExpr(self, idx.obj.*, all_ok, any);
+            try scanStackConstructsExpr(self, idx.index.*, all_ok, any);
+        },
+        .list_lit => |elems| {
+            any.* = true;
+            const elem_qtype: ?QbeType = if (elems.len == 0) null else switch (elems[0]) {
+                .int_lit => .l,
+                .float_lit => .d,
+                .bool_lit => .w,
+                else => null,
+            };
+            var uniform = elem_qtype != null;
+            if (uniform) {
+                for (elems) |el| {
+                    const ok = switch (el) {
+                        .int_lit => elem_qtype.? == .l,
+                        .float_lit => elem_qtype.? == .d,
+                        .bool_lit => elem_qtype.? == .w,
+                        else => false,
+                    };
+                    if (!ok) {
+                        uniform = false;
+                        break;
+                    }
+                }
+            }
+            if (uniform) {
+                const elem_size = qbeSizeOf(elem_qtype.?);
+                const payload_size = LIST_HEADER_SIZE + elem_size * elems.len;
+                const slot = try self.newTemp();
+                try self.out.writer.print("    {s} =l alloc8 {d}\n", .{ slot, payload_size });
+                try self.stack_construct_sites.put(self.allocator, @intFromPtr(elems.ptr), .{ .slot = slot });
+            } else {
+                all_ok.* = false;
+            }
+            for (elems) |el| try scanStackConstructsExpr(self, el, all_ok, any);
+        },
+        .dict_lit => |pairs| {
+            all_ok.* = false;
+            for (pairs) |p| {
+                try scanStackConstructsExpr(self, p.key, all_ok, any);
+                try scanStackConstructsExpr(self, p.value, all_ok, any);
+            }
+        },
+        .await_expr => |op| try scanStackConstructsExpr(self, op.*, all_ok, any),
+        .spawn_expr => |op| {
+            all_ok.* = false;
+            try scanStackConstructsExpr(self, op.*, all_ok, any);
+        },
+        .generic_construct => |g| {
+            all_ok.* = false;
+            for (g.args) |a| try scanStackConstructsExpr(self, a, all_ok, any);
+        },
     }
 }
 

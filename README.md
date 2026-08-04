@@ -229,7 +229,7 @@ ve **HTTP verimi** (Nox/Go/Zig/FastAPI).
 | oop_arc_churn | 36.7ms | 471.9ms | 43.9ms | **12.9x hızlı** | 0.83x (Nox C'den hızlı) |
 | generics_protocols | 38.1ms | 1576.9ms | 26.5ms | **41.4x hızlı** | 1.44x yavaş |
 | exceptions_control_flow | 22.4ms | 678.6ms | 6.1ms | **30.3x hızlı** | 3.68x yavaş |
-| lowlevel_arena | 63.8ms | 1327.9ms | 2.4ms | **20.8x hızlı** | 26.54x yavaş |
+| lowlevel_arena | 28.2ms | 1346.2ms | 2.9ms | **47.7x hızlı** | 9.78x yavaş |
 | string_passing | 33.7ms | 1208.8ms | 8.2ms | **35.9x hızlı** | 4.12x yavaş |
 | deep_equality | 6.2ms | 51.1ms | 3.9ms | **8.2x hızlı** | 1.61x yavaş |
 | list_class_field | 4.2ms | 50.5ms | 2.0ms | **12.0x hızlı** | 2.12x yavaş |
