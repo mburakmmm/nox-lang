@@ -44,16 +44,16 @@ pub fn genClassVtable(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) 
     while (it.next()) |e| {
         slots[e.value_ptr.slot] = .{ .owner = e.value_ptr.owner, .name = e.key_ptr.* };
     }
-    try self.out.writer.print("data ${s}_vtable = {{ ", .{class_name});
+    try self.qbeRaw("data ${s}_vtable = {{ ", .{class_name});
     for (slots, 0..) |s, i| {
-        if (i > 0) try self.out.writer.writeAll(", ");
+        if (i > 0) try self.qbeRawAll(", ");
         // Her slot HER ZAMAN bir metod TARAFINDAN doldurulmuş OLMALIDIR —
         // `registerClass` HER hiyerarşi seviyesinde TÜM önceki slotları
         // (miras yoluyla) KORUR, hiçbiri asla BOŞ kalmaz.
         const entry = s.?;
-        try self.out.writer.print("l ${s}_{s}", .{ entry.owner, entry.name });
+        try self.qbeRaw("l ${s}_{s}", .{ entry.owner, entry.name });
     }
-    try self.out.writer.writeAll(" }\n");
+    try self.qbeRawAll(" }\n");
 }
 
 /// Her sınıf için `$ClassName_release(rt, p)` üretir: refcount'u azaltır
@@ -101,29 +101,33 @@ pub fn genClassRelease(self: *Codegen, class_name: []const u8, cinfo: ClassInfo)
         }
     }
 
-    try self.out.writer.print("export function ${s}_release(l {s}, l %p) {{\n@start\n", .{ class_name, RT_PARAM });
+    const release_sym = try std.fmt.allocPrint(self.allocator, "${s}_release", .{class_name});
+    try self.qbeFuncHeaderStart(null, release_sym);
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%p", false);
+    try self.qbeFuncHeaderEnd();
     const should_free = try self.emitInlinePredecrement("%p", .class);
     const free_label = try self.newLabel("release_free");
     const done_label = try self.newLabel("release_done");
     if (has_class_field) {
         const root_label = try self.newLabel("release_possible_root");
-        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ should_free, free_label, root_label });
-        try self.out.writer.print("{s}\n", .{root_label});
-        try self.out.writer.print("    call $nox_cycle_possible_root(l {s}, l %p)\n", .{RT_PARAM});
-        try self.out.writer.print("    jmp {s}\n", .{done_label});
+        try self.qbeJnz(should_free, free_label, root_label);
+        try self.qbeLabel(root_label);
+        try self.qbeCall(null, "$nox_cycle_possible_root", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%p" } });
+        try self.qbeJmp(done_label);
     } else {
-        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ should_free, free_label, done_label });
+        try self.qbeJnz(should_free, free_label, done_label);
     }
-    try self.out.writer.print("{s}\n", .{free_label});
+    try self.qbeLabel(free_label);
     if (has_class_field) {
-        try self.out.writer.print("    call $nox_cycle_forget(l {s}, l %p)\n", .{RT_PARAM});
+        try self.qbeCall(null, "$nox_cycle_forget", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%p" } });
     }
     for (cinfo.fields.items) |f| {
         if (isHeapManaged(f.info.heap)) {
             const addr = try self.newTemp();
-            try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, f.offset });
+            try self.qbeOp2Imm(addr, .l, "add", "%p", @intCast(f.offset));
             const fv = try self.newTemp();
-            try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
+            try self.qbeLoadL(fv, addr);
             try self.releaseValueIfSet(fv, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info, f.info.dict_info);
         } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .thread_handle or f.info.heap == .thread_channel or f.info.heap == .task_local) {
             // `Task[T]`/`Channel[T]`/`ThreadHandle[T]`/`ThreadChannel[T]`
@@ -134,16 +138,17 @@ pub fn genClassRelease(self: *Codegen, class_name: []const u8, cinfo: ClassInfo)
             // yalnızca YEREL değil, sınıf ALANI için, Faz S.1'den beri
             // doğru).
             const addr = try self.newTemp();
-            try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, f.offset });
+            try self.qbeOp2Imm(addr, .l, "add", "%p", @intCast(f.offset));
             const fv = try self.newTemp();
-            try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
+            try self.qbeLoadL(fv, addr);
             try self.destroyNonArcValue(fv, f.info.heap);
         }
     }
-    try self.out.writer.print("    call $nox_rc_free_payload(l {s}, l %p, l {d})\n", .{ RT_PARAM, cinfo.total_size });
-    try self.out.writer.print("    jmp {s}\n", .{done_label});
-    try self.out.writer.print("{s}\n", .{done_label});
-    try self.out.writer.writeAll("    ret\n}\n");
+    try self.qbeRaw("    call $nox_rc_free_payload(l {s}, l %p, l {d})\n", .{ RT_PARAM, cinfo.total_size });
+    try self.qbeJmp(done_label);
+    try self.qbeLabel(done_label);
+    try self.qbeRet(null);
+    try self.qbeFuncEnd();
 }
 
 /// Faz S.3: HER sınıf İÇİN `$ClassName_trace(rt, p) -> l` üretir —
@@ -178,20 +183,25 @@ pub fn genClassTrace(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) C
         if (f.info.heap == .class) try class_fields.append(self.allocator, f);
     }
 
-    try self.out.writer.print("export function l ${s}_trace(l {s}, l %p) {{\n@start\n", .{ class_name, RT_PARAM });
+    const trace_sym = try std.fmt.allocPrint(self.allocator, "${s}_trace", .{class_name});
+    try self.qbeFuncHeaderStart(.l, trace_sym);
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%p", false);
+    try self.qbeFuncHeaderEnd();
     const buf = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_alloc(l {s}, l {d})\n", .{ buf, RT_PARAM, TRACE_BUF_LEN_SIZE + class_fields.items.len * TRACE_BUF_SLOT_SIZE });
-    try self.out.writer.print("    storel {d}, {s}\n", .{ class_fields.items.len, buf });
+    try self.qbeRaw("    {s} =l call $nox_alloc(l {s}, l {d})\n", .{ buf, RT_PARAM, TRACE_BUF_LEN_SIZE + class_fields.items.len * TRACE_BUF_SLOT_SIZE });
+    try self.qbeStoreImmL(@intCast(class_fields.items.len), buf);
     for (class_fields.items, 0..) |f, i| {
         const addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, f.offset });
+        try self.qbeOp2Imm(addr, .l, "add", "%p", @intCast(f.offset));
         const fv = try self.newTemp();
-        try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
+        try self.qbeLoadL(fv, addr);
         const slot = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ slot, buf, TRACE_BUF_LEN_SIZE + i * TRACE_BUF_SLOT_SIZE });
-        try self.out.writer.print("    storel {s}, {s}\n", .{ fv, slot });
+        try self.qbeOp2Imm(slot, .l, "add", buf, @intCast(TRACE_BUF_LEN_SIZE + i * TRACE_BUF_SLOT_SIZE));
+        try self.qbeStoreL(fv, slot);
     }
-    try self.out.writer.print("    ret {s}\n}}\n", .{buf});
+    try self.qbeRet(buf);
+    try self.qbeFuncEnd();
 }
 
 /// Faz S.3: HER sınıf İÇİN `$ClassName_gc_free(rt, p)` üretir —
@@ -218,25 +228,30 @@ pub fn genClassGcFree(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) 
     self.mod_cache.deinit(self.allocator);
     self.mod_cache = .empty;
 
-    try self.out.writer.print("export function ${s}_gc_free(l {s}, l %p) {{\n@start\n", .{ class_name, RT_PARAM });
+    const gc_free_sym = try std.fmt.allocPrint(self.allocator, "${s}_gc_free", .{class_name});
+    try self.qbeFuncHeaderStart(null, gc_free_sym);
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%p", false);
+    try self.qbeFuncHeaderEnd();
     for (cinfo.fields.items) |f| {
         if (f.info.heap == .class) continue; // bkz. yukarıdaki belge notu
         if (isHeapManaged(f.info.heap)) {
             const addr = try self.newTemp();
-            try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, f.offset });
+            try self.qbeOp2Imm(addr, .l, "add", "%p", @intCast(f.offset));
             const fv = try self.newTemp();
-            try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
+            try self.qbeLoadL(fv, addr);
             try self.releaseValueIfSet(fv, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info, f.info.dict_info);
         } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .thread_handle or f.info.heap == .thread_channel or f.info.heap == .task_local) {
             const addr = try self.newTemp();
-            try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, f.offset });
+            try self.qbeOp2Imm(addr, .l, "add", "%p", @intCast(f.offset));
             const fv = try self.newTemp();
-            try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
+            try self.qbeLoadL(fv, addr);
             try self.destroyNonArcValue(fv, f.info.heap);
         }
     }
-    try self.out.writer.print("    call $nox_rc_free_payload(l {s}, l %p, l {d})\n", .{ RT_PARAM, cinfo.total_size });
-    try self.out.writer.writeAll("    ret\n}\n");
+    try self.qbeRaw("    call $nox_rc_free_payload(l {s}, l %p, l {d})\n", .{ RT_PARAM, cinfo.total_size });
+    try self.qbeRet(null);
+    try self.qbeFuncEnd();
 }
 
 /// Faz S.3: `$nox_trace_dispatch(rt, tag, p) -> l` — `runtime/alloc/
@@ -259,23 +274,29 @@ pub fn genTraceDispatch(self: *Codegen, classes: []const ClassIdEntry) CodegenEr
     self.mod_cache.deinit(self.allocator);
     self.mod_cache = .empty;
 
-    try self.out.writer.print("export function l $nox_trace_dispatch(l {s}, l %tag, l %p) {{\n@start\n", .{RT_PARAM});
+    try self.qbeFuncHeaderStart(.l, "$nox_trace_dispatch");
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%tag", false);
+    try self.qbeFuncParam(.l, "%p", false);
+    try self.qbeFuncHeaderEnd();
     for (classes) |c| {
         const eq = try self.newTemp();
-        try self.out.writer.print("    {s} =w ceql %tag, {d}\n", .{ eq, c.id });
+        try self.qbeOp2Imm(eq, .w, "ceql", "%tag", @intCast(c.id));
         const case_label = try self.newLabel("trace_case");
         const next_label = try self.newLabel("trace_next");
-        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ eq, case_label, next_label });
-        try self.out.writer.print("{s}\n", .{case_label});
+        try self.qbeJnz(eq, case_label, next_label);
+        try self.qbeLabel(case_label);
         const r = try self.newTemp();
-        try self.out.writer.print("    {s} =l call ${s}_trace(l {s}, l %p)\n", .{ r, c.name, RT_PARAM });
-        try self.out.writer.print("    ret {s}\n", .{r});
-        try self.out.writer.print("{s}\n", .{next_label});
+        const trace_sym = try std.fmt.allocPrint(self.allocator, "${s}_trace", .{c.name});
+        try self.qbeCall(.{ .name = r, .ty = .l }, trace_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%p" } });
+        try self.qbeRet(r);
+        try self.qbeLabel(next_label);
     }
     const empty = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_alloc(l {s}, l {d})\n", .{ empty, RT_PARAM, TRACE_BUF_LEN_SIZE });
-    try self.out.writer.print("    storel 0, {s}\n", .{empty});
-    try self.out.writer.print("    ret {s}\n}}\n", .{empty});
+    try self.qbeCall(.{ .name = empty, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "8" } });
+    try self.qbeStoreImmL(0, empty);
+    try self.qbeRet(empty);
+    try self.qbeFuncEnd();
 }
 
 /// Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
@@ -298,19 +319,25 @@ pub fn genClassReleaseDispatch(self: *Codegen, classes: []const ClassIdEntry) Co
     self.mod_cache.deinit(self.allocator);
     self.mod_cache = .empty;
 
-    try self.out.writer.print("export function $nox_class_release_dispatch(l {s}, l %tag, l %p) {{\n@start\n", .{RT_PARAM});
+    try self.qbeFuncHeaderStart(null, "$nox_class_release_dispatch");
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%tag", false);
+    try self.qbeFuncParam(.l, "%p", false);
+    try self.qbeFuncHeaderEnd();
     for (classes) |c| {
         const eq = try self.newTemp();
-        try self.out.writer.print("    {s} =w ceql %tag, {d}\n", .{ eq, c.id });
+        try self.qbeOp2Imm(eq, .w, "ceql", "%tag", @intCast(c.id));
         const case_label = try self.newLabel("class_release_case");
         const next_label = try self.newLabel("class_release_next");
-        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ eq, case_label, next_label });
-        try self.out.writer.print("{s}\n", .{case_label});
-        try self.out.writer.print("    call ${s}_release(l {s}, l %p)\n", .{ c.name, RT_PARAM });
-        try self.out.writer.writeAll("    ret\n");
-        try self.out.writer.print("{s}\n", .{next_label});
+        try self.qbeJnz(eq, case_label, next_label);
+        try self.qbeLabel(case_label);
+        const release_sym = try std.fmt.allocPrint(self.allocator, "${s}_release", .{c.name});
+        try self.qbeCall(null, release_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%p" } });
+        try self.qbeRet(null);
+        try self.qbeLabel(next_label);
     }
-    try self.out.writer.writeAll("    ret\n}\n");
+    try self.qbeRet(null);
+    try self.qbeFuncEnd();
 }
 
 /// Faz OO.3 (bkz. nox-teknik-spesifikasyon.md §3.84): `genClassRelease
@@ -334,29 +361,34 @@ pub fn genClassNameDispatch(self: *Codegen, classes: []const ClassIdEntry) Codeg
     self.mod_cache = .empty;
 
     const unknown_escaped = try escapeForQbeString(self.allocator, "bilinmeyen sinif");
-    try self.out.writer.print("data $__nox_classname_unknown = {{ b \"{s}\", b 0 }}\n", .{unknown_escaped});
+    try self.qbeRaw("data $__nox_classname_unknown = {{ b \"{s}\", b 0 }}\n", .{unknown_escaped});
 
     var name_syms: std.ArrayListUnmanaged([]const u8) = .empty;
     defer name_syms.deinit(self.allocator);
     for (classes) |c| {
         const sym = try std.fmt.allocPrint(self.allocator, "$__nox_classname_{s}", .{c.name});
         const escaped = try escapeForQbeString(self.allocator, c.name);
-        try self.out.writer.print("data {s} = {{ b \"{s}\", b 0 }}\n", .{ sym, escaped });
+        try self.qbeRaw("data {s} = {{ b \"{s}\", b 0 }}\n", .{ sym, escaped });
         try name_syms.append(self.allocator, sym);
     }
 
-    try self.out.writer.print("export function l $nox_class_name_dispatch(l {s}, l %tag, l %p) {{\n@start\n", .{RT_PARAM});
+    try self.qbeFuncHeaderStart(.l, "$nox_class_name_dispatch");
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%tag", false);
+    try self.qbeFuncParam(.l, "%p", false);
+    try self.qbeFuncHeaderEnd();
     for (classes, name_syms.items) |c, sym| {
         const eq = try self.newTemp();
-        try self.out.writer.print("    {s} =w ceql %tag, {d}\n", .{ eq, c.id });
+        try self.qbeOp2Imm(eq, .w, "ceql", "%tag", @intCast(c.id));
         const case_label = try self.newLabel("class_name_case");
         const next_label = try self.newLabel("class_name_next");
-        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ eq, case_label, next_label });
-        try self.out.writer.print("{s}\n", .{case_label});
-        try self.out.writer.print("    ret {s}\n", .{sym});
-        try self.out.writer.print("{s}\n", .{next_label});
+        try self.qbeJnz(eq, case_label, next_label);
+        try self.qbeLabel(case_label);
+        try self.qbeRet(sym);
+        try self.qbeLabel(next_label);
     }
-    try self.out.writer.print("    ret $__nox_classname_unknown\n}}\n", .{});
+    try self.qbeRet("$__nox_classname_unknown");
+    try self.qbeFuncEnd();
 }
 
 /// `genTraceDispatch` İLE AYNI desen, `$ClassName_gc_free`ye dağıtan
@@ -375,19 +407,25 @@ pub fn genGcFreeDispatch(self: *Codegen, classes: []const ClassIdEntry) CodegenE
     self.mod_cache.deinit(self.allocator);
     self.mod_cache = .empty;
 
-    try self.out.writer.print("export function $nox_gc_free_dispatch(l {s}, l %tag, l %p) {{\n@start\n", .{RT_PARAM});
+    try self.qbeFuncHeaderStart(null, "$nox_gc_free_dispatch");
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%tag", false);
+    try self.qbeFuncParam(.l, "%p", false);
+    try self.qbeFuncHeaderEnd();
     for (classes) |c| {
         const eq = try self.newTemp();
-        try self.out.writer.print("    {s} =w ceql %tag, {d}\n", .{ eq, c.id });
+        try self.qbeOp2Imm(eq, .w, "ceql", "%tag", @intCast(c.id));
         const case_label = try self.newLabel("gc_free_case");
         const next_label = try self.newLabel("gc_free_next");
-        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ eq, case_label, next_label });
-        try self.out.writer.print("{s}\n", .{case_label});
-        try self.out.writer.print("    call ${s}_gc_free(l {s}, l %p)\n", .{ c.name, RT_PARAM });
-        try self.out.writer.writeAll("    ret\n");
-        try self.out.writer.print("{s}\n", .{next_label});
+        try self.qbeJnz(eq, case_label, next_label);
+        try self.qbeLabel(case_label);
+        const gc_free_sym = try std.fmt.allocPrint(self.allocator, "${s}_gc_free", .{c.name});
+        try self.qbeCall(null, gc_free_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%p" } });
+        try self.qbeRet(null);
+        try self.qbeLabel(next_label);
     }
-    try self.out.writer.writeAll("    ret\n}\n");
+    try self.qbeRet(null);
+    try self.qbeFuncEnd();
 }
 
 /// Her sınıf için `$ClassName_eq(rt, a, b) w` üretir — Python'un varsayılan
@@ -412,22 +450,28 @@ pub fn genClassEq(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) Code
     self.mod_cache.deinit(self.allocator);
     self.mod_cache = .empty;
 
-    try self.out.writer.print("export function w ${s}_eq(l {s}, l %a, l %b) {{\n@start\n", .{ class_name, RT_PARAM });
+    const eq_sym = try std.fmt.allocPrint(self.allocator, "${s}_eq", .{class_name});
+    try self.qbeFuncHeaderStart(.w, eq_sym);
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%a", false);
+    try self.qbeFuncParam(.l, "%b", false);
+    try self.qbeFuncHeaderEnd();
     const mismatch_label = try self.newLabel("classeq_mismatch");
     for (cinfo.fields.items) |f| {
         const addr_a = try self.newTemp();
-        try self.out.writer.print("    {s} =l add %a, {d}\n", .{ addr_a, f.offset });
+        try self.qbeOp2Imm(addr_a, .l, "add", "%a", @intCast(f.offset));
         const addr_b = try self.newTemp();
-        try self.out.writer.print("    {s} =l add %b, {d}\n", .{ addr_b, f.offset });
+        try self.qbeOp2Imm(addr_b, .l, "add", "%b", @intCast(f.offset));
         const va = try self.newTemp();
-        try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ va, qbeTypeName(f.info.qtype), qbeTypeName(f.info.qtype), addr_a });
+        try self.qbeLoad(va, f.info.qtype, f.info.qtype, addr_a);
         const vb = try self.newTemp();
-        try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ vb, qbeTypeName(f.info.qtype), qbeTypeName(f.info.qtype), addr_b });
+        try self.qbeLoad(vb, f.info.qtype, f.info.qtype, addr_b);
         try self.genEqCompareOrJump(va, vb, f.info.qtype, f.info.heap, f.info.class_name, f.info.elem_qtype, f.info.elem_heap_info, f.info.elem_is_str, mismatch_label, null);
     }
-    try self.out.writer.writeAll("    ret 1\n");
-    try self.out.writer.print("{s}\n", .{mismatch_label});
-    try self.out.writer.writeAll("    ret 0\n}\n");
+    try self.qbeRet("1");
+    try self.qbeLabel(mismatch_label);
+    try self.qbeRet("0");
+    try self.qbeFuncEnd();
 }
 
 /// Verilen iki (zaten yüklenmiş) `w`/`l`/`d` değerini `heap`/`class_name`/
@@ -480,49 +524,51 @@ pub fn genEqCompareOrJump(
             .d => "ceqd",
             .none => unreachable,
         };
-        try self.out.writer.print("    {s} =w {s} {s}, {s}\n", .{ t, mnemonic, va, vb });
+        try self.qbeOp2(t, .w, mnemonic, va, vb);
         const cont_label = try self.newLabel("eqcmp_cont");
-        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ t, cont_label, mismatch_label });
-        try self.out.writer.print("{s}\n", .{cont_label});
-        if (success_label) |sl| try self.out.writer.print("    jmp {s}\n", .{sl});
+        try self.qbeJnz(t, cont_label, mismatch_label);
+        try self.qbeLabel(cont_label);
+        if (success_label) |sl| try self.qbeJmp(sl);
         return;
     }
     if (heap == .str) {
         const cmp = try self.newTemp();
-        try self.out.writer.print("    {s} =w call $strcmp(l {s}, l {s})\n", .{ cmp, va, vb });
+        try self.qbeCall(.{ .name = cmp, .ty = .w }, "$strcmp", &.{ .{ .ty = .l, .text = va }, .{ .ty = .l, .text = vb } });
         const cont_label = try self.newLabel("eqcmp_cont");
-        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cmp, mismatch_label, cont_label });
-        try self.out.writer.print("{s}\n", .{cont_label});
-        if (success_label) |sl| try self.out.writer.print("    jmp {s}\n", .{sl});
+        try self.qbeJnz(cmp, mismatch_label, cont_label);
+        try self.qbeLabel(cont_label);
+        if (success_label) |sl| try self.qbeJmp(sl);
         return;
     }
 
     // `heap == .class` ya da `.list` — NULL olabilir (bkz. belge notu).
     const a_null = try self.newTemp();
-    try self.out.writer.print("    {s} =w ceql {s}, 0\n", .{ a_null, va });
+    try self.qbeOp2Imm(a_null, .w, "ceql", va, 0);
     const b_null = try self.newTemp();
-    try self.out.writer.print("    {s} =w ceql {s}, 0\n", .{ b_null, vb });
+    try self.qbeOp2Imm(b_null, .w, "ceql", vb, 0);
     const either_null = try self.newTemp();
-    try self.out.writer.print("    {s} =w or {s}, {s}\n", .{ either_null, a_null, b_null });
+    try self.qbeOp2(either_null, .w, "or", a_null, b_null);
     const null_case_label = try self.newLabel("eqcmp_nullcase");
     const rec_label = try self.newLabel("eqcmp_rec");
     const cont_label = try self.newLabel("eqcmp_cont");
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ either_null, null_case_label, rec_label });
-    try self.out.writer.print("{s}\n", .{null_case_label});
+    try self.qbeJnz(either_null, null_case_label, rec_label);
+    try self.qbeLabel(null_case_label);
     const both_null = try self.newTemp();
-    try self.out.writer.print("    {s} =w and {s}, {s}\n", .{ both_null, a_null, b_null });
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ both_null, cont_label, mismatch_label });
-    try self.out.writer.print("{s}\n", .{rec_label});
+    try self.qbeOp2(both_null, .w, "and", a_null, b_null);
+    try self.qbeJnz(both_null, cont_label, mismatch_label);
+    try self.qbeLabel(rec_label);
     const rec: []const u8 = switch (heap) {
         .class => blk: {
             const t = try self.newTemp();
-            try self.out.writer.print("    {s} =w call ${s}_eq(l {s}, l {s}, l {s})\n", .{ t, class_name.?, RT_PARAM, va, vb });
+            const eq_sym = try std.fmt.allocPrint(self.allocator, "${s}_eq", .{class_name.?});
+            try self.qbeCall(.{ .name = t, .ty = .w }, eq_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = va }, .{ .ty = .l, .text = vb } });
             break :blk t;
         },
         .list => blk: {
             const fn_name = try self.eqFnNameForList(elem_qtype, elem_heap_info, elem_is_str);
+            const eq_sym = try std.fmt.allocPrint(self.allocator, "${s}_eq", .{fn_name});
             const t = try self.newTemp();
-            try self.out.writer.print("    {s} =w call ${s}_eq(l {s}, l {s}, l {s})\n", .{ t, fn_name, RT_PARAM, va, vb });
+            try self.qbeCall(.{ .name = t, .ty = .w }, eq_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = va }, .{ .ty = .l, .text = vb } });
             break :blk t;
         },
         // `dict`/`Task`/`Channel` — opak tutamaçlar, YAPISAL derinlemesine
@@ -545,14 +591,14 @@ pub fn genEqCompareOrJump(
         // bir v1 sınırlamasıdır.
         .dict, .task, .channel, .closure, .thread_handle, .thread_channel, .boxed_scalar, .task_local => blk: {
             const t = try self.newTemp();
-            try self.out.writer.print("    {s} =w ceql {s}, {s}\n", .{ t, va, vb });
+            try self.qbeOp2(t, .w, "ceql", va, vb);
             break :blk t;
         },
         .none, .str => unreachable,
     };
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ rec, cont_label, mismatch_label });
-    try self.out.writer.print("{s}\n", .{cont_label});
-    if (success_label) |sl| try self.out.writer.print("    jmp {s}\n", .{sl});
+    try self.qbeJnz(rec, cont_label, mismatch_label);
+    try self.qbeLabel(cont_label);
+    if (success_label) |sl| try self.qbeJmp(sl);
 }
 
 /// GG.13 (bkz. nox-teknik-spesifikasyon.md §3.66): `a == b`/`a != b`
@@ -590,28 +636,28 @@ pub fn genClassEqInline(self: *Codegen, cinfo: ClassInfo, a_ptr: []const u8, b_p
         // Alanı olmayan bir sınıf: iki örnek YAPISAL olarak HER ZAMAN
         // "eşit"tir (bkz. `genClassEq`nin AYNI ilkesi) — karşılaştırılacak
         // hiçbir şey yok, doğrudan eşleşme dalına atla.
-        try self.out.writer.print("    jmp {s}\n", .{match_label});
+        try self.qbeJmp(match_label);
     }
     for (cinfo.fields.items, 0..) |f, i| {
         const addr_a = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr_a, a_ptr, f.offset });
+        try self.qbeOp2Imm(addr_a, .l, "add", a_ptr, @intCast(f.offset));
         const addr_b = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr_b, b_ptr, f.offset });
+        try self.qbeOp2Imm(addr_b, .l, "add", b_ptr, @intCast(f.offset));
         const va = try self.newTemp();
-        try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ va, qbeTypeName(f.info.qtype), qbeTypeName(f.info.qtype), addr_a });
+        try self.qbeLoad(va, f.info.qtype, f.info.qtype, addr_a);
         const vb = try self.newTemp();
-        try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ vb, qbeTypeName(f.info.qtype), qbeTypeName(f.info.qtype), addr_b });
+        try self.qbeLoad(vb, f.info.qtype, f.info.qtype, addr_b);
         const is_last = i == cinfo.fields.items.len - 1;
         try self.genEqCompareOrJump(va, vb, f.info.qtype, f.info.heap, f.info.class_name, f.info.elem_qtype, f.info.elem_heap_info, f.info.elem_is_str, mismatch_label, if (is_last) match_label else null);
     }
-    try self.out.writer.print("{s}\n", .{match_label});
+    try self.qbeLabel(match_label);
     const done_label = try self.newLabel("eqinline_done");
-    try self.out.writer.print("    jmp {s}\n", .{done_label});
-    try self.out.writer.print("{s}\n", .{mismatch_label});
-    try self.out.writer.print("    jmp {s}\n", .{done_label});
-    try self.out.writer.print("{s}\n", .{done_label});
+    try self.qbeJmp(done_label);
+    try self.qbeLabel(mismatch_label);
+    try self.qbeJmp(done_label);
+    try self.qbeLabel(done_label);
     const result = try self.newTemp();
-    try self.out.writer.print("    {s} =w phi {s} 1, {s} 0\n", .{ result, match_label, mismatch_label });
+    try self.qbePhi(result, .w, match_label, "1", mismatch_label, "0");
     return result;
 }
 
@@ -690,17 +736,22 @@ pub fn genListEq(self: *Codegen, name: []const u8, elem_qtype: QbeType, elem_hea
     self.mod_cache.deinit(self.allocator);
     self.mod_cache = .empty;
 
-    try self.out.writer.print("export function w ${s}_eq(l {s}, l %a, l %b) {{\n@start\n", .{ name, RT_PARAM });
+    const listeq_sym = try std.fmt.allocPrint(self.allocator, "${s}_eq", .{name});
+    try self.qbeFuncHeaderStart(.w, listeq_sym);
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%a", false);
+    try self.qbeFuncParam(.l, "%b", false);
+    try self.qbeFuncHeaderEnd();
     const len_a = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl %a\n", .{len_a});
+    try self.qbeLoadL(len_a, "%a");
     const len_b = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl %b\n", .{len_b});
+    try self.qbeLoadL(len_b, "%b");
     const len_diff = try self.newTemp();
-    try self.out.writer.print("    {s} =w cnel {s}, {s}\n", .{ len_diff, len_a, len_b });
+    try self.qbeOp2(len_diff, .w, "cnel", len_a, len_b);
     const false_label = try self.newLabel("listeq_lendiff");
     const loop_init_label = try self.newLabel("listeq_init");
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ len_diff, false_label, loop_init_label });
-    try self.out.writer.print("{s}\n", .{loop_init_label});
+    try self.qbeJnz(len_diff, false_label, loop_init_label);
+    try self.qbeLabel(loop_init_label);
 
     const cond_label = try self.newLabel("listeq_cond");
     const body_label = try self.newLabel("listeq_body");
@@ -734,36 +785,37 @@ pub fn genListEq(self: *Codegen, name: []const u8, elem_qtype: QbeType, elem_hea
     // KORUR). Doğrulama: `qbe`nin ÜRETTİĞİ ARM64'te ARTIK NE `alloc8`/
     // `sub sp` NE DE bir `str`/`ldr` ÇİFTİ VAR — sayaç TAMAMEN TEK bir
     // yazmaçta YAŞIYOR.
-    try self.out.writer.print("    jmp {s}\n", .{cond_label});
-    try self.out.writer.print("{s}\n", .{cond_label});
+    try self.qbeJmp(cond_label);
+    try self.qbeLabel(cond_label);
     const idx_cur = try self.newTemp();
     const idx_next = try self.newTemp();
-    try self.out.writer.print("    {s} =l phi {s} 0, {s} {s}\n", .{ idx_cur, loop_init_label, backedge_label, idx_next });
+    try self.qbePhi(idx_cur, .l, loop_init_label, "0", backedge_label, idx_next);
     const cont = try self.newTemp();
-    try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ cont, idx_cur, len_a });
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cont, body_label, true_label });
-    try self.out.writer.print("{s}\n", .{body_label});
+    try self.qbeOp2(cont, .w, "csltl", idx_cur, len_a);
+    try self.qbeJnz(cont, body_label, true_label);
+    try self.qbeLabel(body_label);
 
     const off = try self.newTemp();
-    try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ off, idx_cur, qbeSizeOf(elem_qtype) });
+    try self.qbeOp2Imm(off, .l, "mul", idx_cur, @intCast(qbeSizeOf(elem_qtype)));
     const off8 = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ off8, off, LIST_HEADER_SIZE });
+    try self.qbeOp2Imm(off8, .l, "add", off, @intCast(LIST_HEADER_SIZE));
     const addr_a = try self.newTemp();
-    try self.out.writer.print("    {s} =l add %a, {s}\n", .{ addr_a, off8 });
+    try self.qbeOp2(addr_a, .l, "add", "%a", off8);
     const addr_b = try self.newTemp();
-    try self.out.writer.print("    {s} =l add %b, {s}\n", .{ addr_b, off8 });
+    try self.qbeOp2(addr_b, .l, "add", "%b", off8);
     const ea = try self.newTemp();
-    try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ ea, qbeTypeName(elem_qtype), qbeTypeName(elem_qtype), addr_a });
+    try self.qbeLoad(ea, elem_qtype, elem_qtype, addr_a);
     const eb = try self.newTemp();
-    try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ eb, qbeTypeName(elem_qtype), qbeTypeName(elem_qtype), addr_b });
+    try self.qbeLoad(eb, elem_qtype, elem_qtype, addr_b);
     const elem_heap: HeapKind = if (elem_heap_info) |ehi| ehi.heap else if (elem_is_str) .str else .none;
     const elem_class_name: ?[]const u8 = if (elem_heap_info) |ehi| ehi.class_name else null;
     try self.genEqCompareOrJump(ea, eb, elem_qtype, elem_heap, elem_class_name, if (elem_heap_info) |ehi| ehi.elem_qtype else .none, if (elem_heap_info) |ehi| ehi.nested else null, if (elem_heap_info) |ehi| ehi.elem_is_str else false, false_label, backedge_label);
-    try self.out.writer.print("{s}\n", .{backedge_label});
-    try self.out.writer.print("    {s} =l add {s}, 1\n", .{ idx_next, idx_cur });
-    try self.out.writer.print("    jmp {s}\n", .{cond_label});
-    try self.out.writer.print("{s}\n", .{true_label});
-    try self.out.writer.writeAll("    ret 1\n");
-    try self.out.writer.print("{s}\n", .{false_label});
-    try self.out.writer.writeAll("    ret 0\n}\n");
+    try self.qbeLabel(backedge_label);
+    try self.qbeOp2Imm(idx_next, .l, "add", idx_cur, 1);
+    try self.qbeJmp(cond_label);
+    try self.qbeLabel(true_label);
+    try self.qbeRet("1");
+    try self.qbeLabel(false_label);
+    try self.qbeRet("0");
+    try self.qbeFuncEnd();
 }
