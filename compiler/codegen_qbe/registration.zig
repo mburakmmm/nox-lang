@@ -22,7 +22,6 @@ const RT_PARAM = types.RT_PARAM;
 const TAG_SIZE = types.TAG_SIZE;
 const FIELD_SLOT_SIZE = types.FIELD_SLOT_SIZE;
 const CodegenError = abi.CodegenError;
-const qbeTypeName = abi.qbeTypeName;
 const isHeapManaged = abi.isHeapManaged;
 const sanitizePathToSymbol = abi.sanitizePathToSymbol;
 const forListIdxName = abi.forListIdxName;
@@ -943,9 +942,9 @@ pub fn allocSlot(self: *Codegen, name: []const u8, info: TypeInfo, is_param: boo
 pub fn allocSlotEx(self: *Codegen, name: []const u8, info: TypeInfo, is_param: bool, arena: bool, borrowed_field: bool) CodegenError!void {
     const slot = try self.newTemp();
     const size: usize = if (info.qtype == .w) 4 else 8;
-    try self.out.writer.print("    {s} =l alloc{d} {d}\n", .{ slot, size, size });
+    try self.qbeAlloc(slot, if (info.qtype == .w) .four else .eight, size);
     if (isHeapManaged(info.heap) and !is_param) {
-        try self.out.writer.print("    storel 0, {s}\n", .{slot});
+        try self.qbeStoreL("0", slot);
     }
     try self.vars.put(self.allocator, name, .{
         .slot = slot,
@@ -974,9 +973,9 @@ pub fn allocSlotEx(self: *Codegen, name: []const u8, info: TypeInfo, is_param: b
 pub fn allocInlineSlot(self: *Codegen, orig_name: []const u8, info: TypeInfo, is_param: bool) CodegenError!NamedSlot {
     const slot = try self.newTemp();
     const size: usize = if (info.qtype == .w) 4 else 8;
-    try self.out.writer.print("    {s} =l alloc{d} {d}\n", .{ slot, size, size });
+    try self.qbeAlloc(slot, if (info.qtype == .w) .four else .eight, size);
     if (isHeapManaged(info.heap) and !is_param) {
-        try self.out.writer.print("    storel 0, {s}\n", .{slot});
+        try self.qbeStoreL("0", slot);
     }
     return .{ .orig_name = orig_name, .slot = slot, .info = info };
 }
@@ -1011,23 +1010,22 @@ pub fn genFunction(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
     }
     try self.collectLocals(&locals, fd.body, false);
 
-    if (ret_info.qtype == .none) {
-        try self.out.writer.print("export function ${s}(l {s}", .{ fd.name, RT_PARAM });
-    } else {
-        try self.out.writer.print("export function {s} ${s}(l {s}", .{ qbeTypeName(ret_info.qtype), fd.name, RT_PARAM });
-    }
+    const fn_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{fd.name});
+    try self.qbeFuncHeaderStart(if (ret_info.qtype == .none) null else ret_info.qtype, fn_sym);
+    try self.qbeFuncParam(.l, RT_PARAM, true);
     for (fd.params) |p| {
-        try self.out.writer.writeAll(", ");
         const info = try self.resolveType(p.type_expr);
-        try self.out.writer.print("{s} %p_{s}", .{ qbeTypeName(info.qtype), p.name });
+        const param_text = try std.fmt.allocPrint(self.allocator, "%p_{s}", .{p.name});
+        try self.qbeFuncParam(info.qtype, param_text, false);
     }
-    try self.out.writer.writeAll(") {\n@start\n");
+    try self.qbeFuncHeaderEnd();
 
     for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
     try self.prepareInlineSites(fd.body);
     for (fd.params) |p| {
         const info = self.vars.get(p.name).?;
-        try self.out.writer.print("    store{s} %p_{s}, {s}\n", .{ qbeTypeName(info.qtype), p.name, info.slot });
+        const param_text = try std.fmt.allocPrint(self.allocator, "%p_{s}", .{p.name});
+        try self.qbeStore(info.qtype, param_text, info.slot);
     }
     try self.setupDeferListIfNeeded(fd.body);
 
@@ -1036,9 +1034,9 @@ pub fn genFunction(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
     try self.releaseAllLocals();
 
     const end_label = try self.newLabel("fn_end");
-    try self.out.writer.print("{s}\n", .{end_label});
+    try self.qbeLabel(end_label);
     try self.emitDefaultReturn(ret_info.qtype);
-    try self.out.writer.writeAll("}\n");
+    try self.qbeFuncEnd();
 }
 
 pub fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) CodegenError!void {
@@ -1087,27 +1085,27 @@ pub fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) Codegen
     try self.markBorrowedFieldLocals(&locals, m.body, m.body);
 
     const fn_name = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ class_name, m.name });
-    if (ret_info.qtype == .none) {
-        try self.out.writer.print("export function ${s}(l {s}, l %p_self", .{ fn_name, RT_PARAM });
-    } else {
-        try self.out.writer.print("export function {s} ${s}(l {s}, l %p_self", .{ qbeTypeName(ret_info.qtype), fn_name, RT_PARAM });
-    }
+    const fn_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{fn_name});
+    try self.qbeFuncHeaderStart(if (ret_info.qtype == .none) null else ret_info.qtype, fn_sym);
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%p_self", false);
     for (m.params[1..]) |p| {
-        try self.out.writer.writeAll(", ");
         const info = try self.resolveType(p.type_expr);
-        try self.out.writer.print("{s} %p_{s}", .{ qbeTypeName(info.qtype), p.name });
+        const param_text = try std.fmt.allocPrint(self.allocator, "%p_{s}", .{p.name});
+        try self.qbeFuncParam(info.qtype, param_text, false);
     }
-    try self.out.writer.writeAll(") {\n@start\n");
+    try self.qbeFuncHeaderEnd();
 
     for (locals.items) |l| try self.allocSlotEx(l.name, l.info, l.is_param, l.arena, l.borrowed_field);
     try self.prepareInlineSites(m.body);
     {
         const info = self.vars.get("self").?;
-        try self.out.writer.print("    storel %p_self, {s}\n", .{info.slot});
+        try self.qbeStoreL("%p_self", info.slot);
     }
     for (m.params[1..]) |p| {
         const info = self.vars.get(p.name).?;
-        try self.out.writer.print("    store{s} %p_{s}, {s}\n", .{ qbeTypeName(info.qtype), p.name, info.slot });
+        const param_text = try std.fmt.allocPrint(self.allocator, "%p_{s}", .{p.name});
+        try self.qbeStore(info.qtype, param_text, info.slot);
     }
     try self.setupDeferListIfNeeded(m.body);
 
@@ -1116,9 +1114,9 @@ pub fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) Codegen
     try self.releaseAllLocals();
 
     const end_label = try self.newLabel("fn_end");
-    try self.out.writer.print("{s}\n", .{end_label});
+    try self.qbeLabel(end_label);
     try self.emitDefaultReturn(ret_info.qtype);
-    try self.out.writer.writeAll("}\n");
+    try self.qbeFuncEnd();
 }
 
 pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool) CodegenError!void {
@@ -1160,15 +1158,18 @@ pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool) Codegen
     // kodgen yolu YOK, argv'yi HİÇ kullanmayan programlar İÇİN bu
     // parametreler yalnızca kullanılmadan geçilir, sıfıra yakın
     // maliyet).
-    try self.out.writer.writeAll("export function w $main(w %argc, l %argv) {\n@start\n");
-    try self.out.writer.print("    {s} =l call $nox_runtime_init()\n", .{RT_PARAM});
-    try self.out.writer.writeAll("    call $nox_os_init(w %argc, l %argv)\n");
+    try self.qbeFuncHeaderStart(.w, "$main");
+    try self.qbeFuncParam(.w, "%argc", true);
+    try self.qbeFuncParam(.l, "%argv", false);
+    try self.qbeFuncHeaderEnd();
+    try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, "$nox_runtime_init", &.{});
+    try self.qbeCall(null, "$nox_os_init", &.{ .{ .ty = .w, .text = "%argc" }, .{ .ty = .l, .text = "%argv" } });
     // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
     // üst-düzey `var_decl`ların initializer'ları, KALAN gevşek deyimler
     // (`stmts`, artık modül-global `var_decl`ları HARİÇ tutar — bkz.
     // `codegen.zig`nin `loose` inşası) İŞLENMEDEN ÖNCE çalıştırılır.
     if (self.module_globals.count() > 0) {
-        try self.out.writer.print("    call $nox_init_globals(l {s})\n", .{RT_PARAM});
+        try self.qbeCall(null, "$nox_init_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
     }
     // Not: `main`in kendi PARAMETRESİ yoktur, ama `collectLocals` artık
     // BAZI yerelleri (heap-yönetimli elemanlı bir `for`nin döngü
@@ -1181,12 +1182,13 @@ pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool) Codegen
     try self.genStmts(stmts, .w);
     try self.releaseAllLocals();
     if (self.module_globals.count() > 0) {
-        try self.out.writer.print("    call $nox_deinit_globals(l {s})\n", .{RT_PARAM});
+        try self.qbeCall(null, "$nox_deinit_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
     }
-    try self.out.writer.print("    call $nox_runtime_deinit(l {s})\n", .{RT_PARAM});
+    try self.qbeCall(null, "$nox_runtime_deinit", &.{.{ .ty = .l, .text = RT_PARAM }});
     const end_label = try self.newLabel("fn_end");
-    try self.out.writer.print("{s}\n", .{end_label});
-    try self.out.writer.writeAll("    ret 0\n}\n");
+    try self.qbeLabel(end_label);
+    try self.qbeRet("0");
+    try self.qbeFuncEnd();
 }
 
 /// `moduleUsesAsync` `true` döndüğünde `genMain` yerine kullanılır —
@@ -1222,16 +1224,19 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt) CodegenError!void {
     defer locals.deinit(self.allocator);
     try self.collectLocals(&locals, stmts, false);
 
-    try self.out.writer.writeAll("export function l $main_body(l %argp) {\n@start\n");
-    try self.out.writer.print("    {s} =l loadl %argp\n", .{RT_PARAM});
+    try self.qbeFuncHeaderStart(.l, "$main_body");
+    try self.qbeFuncParam(.l, "%argp", true);
+    try self.qbeFuncHeaderEnd();
+    try self.qbeLoadL(RT_PARAM, "%argp");
     for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
     try self.prepareInlineSites(stmts);
     try self.genStmts(stmts, .l);
     try self.releaseAllLocals();
-    try self.out.writer.print("    call $nox_free(l {s}, l %argp, l 8)\n", .{RT_PARAM});
+    try self.qbeCall(null, "$nox_free", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%argp" }, .{ .ty = .l, .text = "8" } });
     const end_label = try self.newLabel("fn_end");
-    try self.out.writer.print("{s}\n", .{end_label});
-    try self.out.writer.writeAll("    ret 0\n}\n");
+    try self.qbeLabel(end_label);
+    try self.qbeRet("0");
+    try self.qbeFuncEnd();
 
     // `$main` — gerçek C ABI girişi: çalışma zamanını/zamanlayıcıyı
     // başlatır, üst düzey kodu (`$main_body`) TEK bir görev olarak
@@ -1249,37 +1254,41 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt) CodegenError!void {
     self.mod_cache.deinit(self.allocator);
     self.mod_cache = .empty;
     // Bkz. `genMain`in AYNI notu — `w %argc, l %argv` KOŞULSUZ eklenir.
-    try self.out.writer.writeAll("export function w $main(w %argc, l %argv) {\n@start\n");
-    try self.out.writer.print("    {s} =l call $nox_runtime_init()\n", .{RT_PARAM});
-    try self.out.writer.writeAll("    call $nox_os_init(w %argc, l %argv)\n");
-    try self.out.writer.print("    call $nox_async_init(l {s})\n", .{RT_PARAM});
+    try self.qbeFuncHeaderStart(.w, "$main");
+    try self.qbeFuncParam(.w, "%argc", true);
+    try self.qbeFuncParam(.l, "%argv", false);
+    try self.qbeFuncHeaderEnd();
+    try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, "$nox_runtime_init", &.{});
+    try self.qbeCall(null, "$nox_os_init", &.{ .{ .ty = .w, .text = "%argc" }, .{ .ty = .l, .text = "%argv" } });
+    try self.qbeCall(null, "$nox_async_init", &.{.{ .ty = .l, .text = RT_PARAM }});
     // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
     // `$main_body`nin GERÇEK üst-düzey deyimleri (bkz. `genStmts` çağrısı
     // YUKARIDA) çalıştırılmadan ÖNCE — `$main_body` BİR GÖREV olarak
     // spawn edilir, bu YÜZDEN init BURADA (spawn'DAN ÖNCE), `$main_body`nin
     // KENDİSİNDE DEĞİL.
     if (self.module_globals.count() > 0) {
-        try self.out.writer.print("    call $nox_init_globals(l {s})\n", .{RT_PARAM});
+        try self.qbeCall(null, "$nox_init_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
     }
     const closure_t = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_alloc(l {s}, l 8)\n", .{ closure_t, RT_PARAM });
-    try self.out.writer.print("    storel {s}, {s}\n", .{ RT_PARAM, closure_t });
+    try self.qbeCall(.{ .name = closure_t, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "8" } });
+    try self.qbeStoreL(RT_PARAM, closure_t);
     const task_t = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_async_spawn(l {s}, l $main_body, l {s})\n", .{ task_t, RT_PARAM, closure_t });
+    try self.qbeCall(.{ .name = task_t, .ty = .l }, "$nox_async_spawn", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "$main_body" }, .{ .ty = .l, .text = closure_t } });
     const run_result_t = try self.newTemp();
-    try self.out.writer.print("    {s} =w call $nox_async_run_to_completion(l {s})\n", .{ run_result_t, RT_PARAM });
+    try self.qbeCall(.{ .name = run_result_t, .ty = .w }, "$nox_async_run_to_completion", &.{.{ .ty = .l, .text = RT_PARAM }});
     const deadlock_label = try self.newLabel("deadlock");
     const ok_label = try self.newLabel("no_deadlock");
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ run_result_t, deadlock_label, ok_label });
-    try self.out.writer.print("{s}\n", .{deadlock_label});
-    try self.out.writer.print("    call $nox_async_deadlock_abort(l {s})\n", .{RT_PARAM});
-    try self.out.writer.writeAll("    ret 0\n"); // erişilemez — savunmacı (bkz. `emitExceptionCheck`in AYNI deseni)
-    try self.out.writer.print("{s}\n", .{ok_label});
-    try self.out.writer.print("    call $nox_async_destroy_task(l {s}, l {s})\n", .{ RT_PARAM, task_t });
-    try self.out.writer.print("    call $nox_async_deinit(l {s})\n", .{RT_PARAM});
+    try self.qbeJnz(run_result_t, deadlock_label, ok_label);
+    try self.qbeLabel(deadlock_label);
+    try self.qbeCall(null, "$nox_async_deadlock_abort", &.{.{ .ty = .l, .text = RT_PARAM }});
+    try self.qbeRet("0"); // erişilemez — savunmacı (bkz. `emitExceptionCheck`in AYNI deseni)
+    try self.qbeLabel(ok_label);
+    try self.qbeCall(null, "$nox_async_destroy_task", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = task_t } });
+    try self.qbeCall(null, "$nox_async_deinit", &.{.{ .ty = .l, .text = RT_PARAM }});
     if (self.module_globals.count() > 0) {
-        try self.out.writer.print("    call $nox_deinit_globals(l {s})\n", .{RT_PARAM});
+        try self.qbeCall(null, "$nox_deinit_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
     }
-    try self.out.writer.print("    call $nox_runtime_deinit(l {s})\n", .{RT_PARAM});
-    try self.out.writer.writeAll("    ret 0\n}\n");
+    try self.qbeCall(null, "$nox_runtime_deinit", &.{.{ .ty = .l, .text = RT_PARAM }});
+    try self.qbeRet("0");
+    try self.qbeFuncEnd();
 }
