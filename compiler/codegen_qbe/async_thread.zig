@@ -17,7 +17,6 @@ const SpawnWrapperSpec = types.SpawnWrapperSpec;
 const ThreadWrapperSpec = types.ThreadWrapperSpec;
 const RT_PARAM = types.RT_PARAM;
 const CodegenError = abi.CodegenError;
-const qbeTypeName = abi.qbeTypeName;
 const valueFromElemDescriptor = abi.valueFromElemDescriptor;
 
 /// Modülün (üst düzey deyimler + tüm fonksiyon/metod gövdeleri) HERHANGİ bir
@@ -223,21 +222,25 @@ pub fn genSpawnExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
 
     const closure_size = 8 + 8 * call.args.len;
     const closure = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_alloc(l {s}, l {d})\n", .{ closure, RT_PARAM, closure_size });
-    try self.out.writer.print("    storel {s}, {s}\n", .{ RT_PARAM, closure });
+    // `closure_size`nin (bir `usize`) `qbeCall`nin metin-operand modeline
+    // UYMAMASI NEDENİYLE bu site BİLİNÇLİ olarak `qbeRaw` KULLANIR — bkz.
+    // `qbe_emit.zig`nin kaçış-kapısı notu.
+    try self.qbeRaw("    {s} =l call $nox_alloc(l {s}, l {d})\n", .{ closure, RT_PARAM, closure_size });
+    try self.qbeStoreL(RT_PARAM, closure);
     for (arg_values, 0..) |av, i| {
         const off = 8 + 8 * i;
         const addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, closure, off });
-        try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(av.qtype), av.text, addr });
+        try self.qbeOp2Imm(addr, .l, "add", closure, @intCast(off));
+        try self.qbeStore(av.qtype, av.text, addr);
     }
 
     const wrapper_name = try std.fmt.allocPrint(self.allocator, "spawn_wrap_{d}", .{self.spawn_wrapper_counter});
     self.spawn_wrapper_counter += 1;
     try self.spawn_wrappers.append(self.allocator, .{ .name = wrapper_name, .target_fn = fn_name, .sig = sig });
 
+    const wrapper_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{wrapper_name});
     const task_ptr = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_async_spawn(l {s}, l ${s}, l {s})\n", .{ task_ptr, RT_PARAM, wrapper_name, closure });
+    try self.qbeCall(.{ .name = task_ptr, .ty = .l }, "$nox_async_spawn", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = wrapper_sym }, .{ .ty = .l, .text = closure } });
 
     var elem_heap_info: ?*const ElemHeapInfo = null;
     if (sig.ret.heap == .class or sig.ret.heap == .list) {
@@ -283,36 +286,41 @@ pub fn genSpawnWrapper(self: *Codegen, spec: SpawnWrapperSpec) CodegenError!void
     self.mod_cache.deinit(self.allocator);
     self.mod_cache = .empty;
 
-    try self.out.writer.print("export function l ${s}(l %argp) {{\n@start\n", .{spec.name});
-    try self.out.writer.print("    {s} =l loadl %argp\n", .{RT_PARAM});
+    const wrapper_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{spec.name});
+    try self.qbeFuncHeaderStart(.l, wrapper_sym);
+    try self.qbeFuncParam(.l, "%argp", true);
+    try self.qbeFuncHeaderEnd();
+    try self.qbeLoadL(RT_PARAM, "%argp");
 
     const arg_texts = try self.allocator.alloc([]const u8, spec.sig.params.len);
     for (spec.sig.params, 0..) |p, i| {
         const off = 8 + 8 * i;
         const addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add %argp, {d}\n", .{ addr, off });
+        try self.qbeOp2Imm(addr, .l, "add", "%argp", @intCast(off));
         const val = try self.newTemp();
-        try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ val, qbeTypeName(p.qtype), qbeTypeName(p.qtype), addr });
+        try self.qbeLoad(val, p.qtype, p.qtype, addr);
         arg_texts[i] = val;
     }
 
+    const target_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{spec.target_fn});
+    const call_args = try self.allocator.alloc(codegen.QbeArg, 1 + spec.sig.params.len);
+    call_args[0] = .{ .ty = .l, .text = RT_PARAM };
+    for (spec.sig.params, arg_texts, 0..) |p, at, i| call_args[1 + i] = .{ .ty = p.qtype, .text = at };
     const payload = blk: {
         if (spec.sig.ret.qtype == .none) {
-            try self.out.writer.print("    call ${s}(l {s}", .{ spec.target_fn, RT_PARAM });
-            for (spec.sig.params, arg_texts) |p, at| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(p.qtype), at });
-            try self.out.writer.writeAll(")\n");
+            try self.qbeCall(null, target_sym, call_args);
             break :blk Value{ .text = "0", .qtype = .l };
         }
         const result_t = try self.newTemp();
-        try self.out.writer.print("    {s} ={s} call ${s}(l {s}", .{ result_t, qbeTypeName(spec.sig.ret.qtype), spec.target_fn, RT_PARAM });
-        for (spec.sig.params, arg_texts) |p, at| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(p.qtype), at });
-        try self.out.writer.writeAll(")\n");
+        try self.qbeCall(.{ .name = result_t, .ty = spec.sig.ret.qtype }, target_sym, call_args);
         break :blk try self.toPayload(.{ .text = result_t, .qtype = spec.sig.ret.qtype });
     };
 
     const closure_size = 8 + 8 * spec.sig.params.len;
-    try self.out.writer.print("    call $nox_free(l {s}, l %argp, l {d})\n", .{ RT_PARAM, closure_size });
-    try self.out.writer.print("    ret {s}\n}}\n", .{payload.text});
+    // Bkz. YUKARIDAKİ `nox_alloc` çağrısının AYNI `qbeRaw` notu.
+    try self.qbeRaw("    call $nox_free(l {s}, l %argp, l {d})\n", .{ RT_PARAM, closure_size });
+    try self.qbeRet(payload.text);
+    try self.qbeFuncEnd();
 }
 
 /// `nox.thread.start(entry, arg)` çağrı sitesi codegen'i — Faz BB.4
@@ -354,8 +362,15 @@ pub fn genThreadStartExpr(self: *Codegen, c: ast.Call) CodegenError!Value {
     self.thread_wrapper_counter += 1;
     try self.thread_wrappers.append(self.allocator, .{ .name = wrapper_name, .target_fn = fn_name, .sig = sig });
 
+    const wrapper_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{wrapper_name});
     const handle_ptr = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_thread_spawn(l {s}, l ${s}, l {s}, w {s}, w {s})\n", .{ handle_ptr, RT_PARAM, wrapper_name, arg_payload.text, arg_is_str, result_is_str });
+    try self.qbeCall(.{ .name = handle_ptr, .ty = .l }, "$nox_thread_spawn", &.{
+        .{ .ty = .l, .text = RT_PARAM },
+        .{ .ty = .l, .text = wrapper_sym },
+        .{ .ty = .l, .text = arg_payload.text },
+        .{ .ty = .w, .text = arg_is_str },
+        .{ .ty = .w, .text = result_is_str },
+    });
 
     var elem_heap_info: ?*const ElemHeapInfo = null;
     if (sig.ret.heap == .class or sig.ret.heap == .list) {
@@ -404,8 +419,11 @@ pub fn genThreadStartWrapper(self: *Codegen, spec: ThreadWrapperSpec) CodegenErr
     self.mod_cache.deinit(self.allocator);
     self.mod_cache = .empty;
 
-    try self.out.writer.print("export function l ${s}(l %argp) {{\n@start\n", .{spec.name});
-    try self.out.writer.print("    {s} =l loadl %argp\n", .{RT_PARAM});
+    const wrapper_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{spec.name});
+    try self.qbeFuncHeaderStart(.l, wrapper_sym);
+    try self.qbeFuncParam(.l, "%argp", true);
+    try self.qbeFuncHeaderEnd();
+    try self.qbeLoadL(RT_PARAM, "%argp");
     // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
     // `nox.thread.start` İLE oluşturulan HER GERÇEK OS iş parçacığı KENDİ
     // bağımsız `RuntimeState`ine (bkz. `childThreadMain`) sahiptir —
@@ -417,22 +435,23 @@ pub fn genThreadStartWrapper(self: *Codegen, spec: ThreadWrapperSpec) CodegenErr
     // `nox.thread.start` çağrısı heap-yönetimli bir global TAŞIYAN
     // programlarda sızdırır.
     if (self.module_globals.count() > 0) {
-        try self.out.writer.print("    call $nox_init_globals(l {s})\n", .{RT_PARAM});
+        try self.qbeCall(null, "$nox_init_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
     }
 
     const payload_addr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add %argp, 8\n", .{payload_addr});
+    try self.qbeOp2Imm(payload_addr, .l, "add", "%argp", 8);
     const payload_val = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ payload_val, payload_addr });
+    try self.qbeLoadL(payload_val, payload_addr);
     const arg_val = try self.fromPayload(.{ .text = payload_val, .qtype = .l }, spec.sig.params[0].qtype);
 
+    const target_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{spec.target_fn});
     const result_payload = blk: {
         if (spec.sig.ret.qtype == .none) {
-            try self.out.writer.print("    call ${s}(l {s}, {s} {s})\n", .{ spec.target_fn, RT_PARAM, qbeTypeName(arg_val.qtype), arg_val.text });
+            try self.qbeCall(null, target_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = arg_val.qtype, .text = arg_val.text } });
             break :blk Value{ .text = "0", .qtype = .l };
         }
         const result_t = try self.newTemp();
-        try self.out.writer.print("    {s} ={s} call ${s}(l {s}, {s} {s})\n", .{ result_t, qbeTypeName(spec.sig.ret.qtype), spec.target_fn, RT_PARAM, qbeTypeName(arg_val.qtype), arg_val.text });
+        try self.qbeCall(.{ .name = result_t, .ty = spec.sig.ret.qtype }, target_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = arg_val.qtype, .text = arg_val.text } });
         break :blk try self.toPayload(.{ .text = result_t, .qtype = spec.sig.ret.qtype });
     };
 
@@ -454,10 +473,11 @@ pub fn genThreadStartWrapper(self: *Codegen, spec: ThreadWrapperSpec) CodegenErr
     // `nox_runtime_deinit` ÇAĞIRACAĞINDAN (bkz. yukarıdaki init notu),
     // heap-yönetimli global'ler BURADA serbest bırakılMAZSA sızar.
     if (self.module_globals.count() > 0) {
-        try self.out.writer.print("    call $nox_deinit_globals(l {s})\n", .{RT_PARAM});
+        try self.qbeCall(null, "$nox_deinit_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
     }
 
-    try self.out.writer.print("    ret {s}\n}}\n", .{result_payload.text});
+    try self.qbeRet(result_payload.text);
+    try self.qbeFuncEnd();
 }
 
 /// `handle.join()` — YALNIZCA `await` üzerinden (bkz. `genAwaitExpr`)
@@ -467,7 +487,7 @@ pub fn genThreadStartWrapper(self: *Codegen, spec: ThreadWrapperSpec) CodegenErr
 pub fn genThreadHandleJoin(self: *Codegen, a: ast.Attribute) CodegenError!Value {
     const handle_val = try self.genExpr(a.obj.*);
     const payload_t = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_thread_join(l {s}, l {s})\n", .{ payload_t, RT_PARAM, handle_val.text });
+    try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_thread_join", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handle_val.text } });
     const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, handle_val.elem_qtype);
     return valueFromElemDescriptor(converted.text, converted.qtype, handle_val.elem_heap_info, handle_val.elem_is_str);
 }
@@ -500,7 +520,7 @@ pub fn genAwaitExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
     }
     const task_val = try self.genExpr(operand);
     const payload_t = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_async_await(l {s}, l {s})\n", .{ payload_t, RT_PARAM, task_val.text });
+    try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_async_await", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = task_val.text } });
     const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, task_val.elem_qtype);
     return valueFromElemDescriptor(converted.text, converted.qtype, task_val.elem_heap_info, task_val.elem_is_str);
 }
@@ -518,13 +538,13 @@ pub fn genChannelOp(self: *Codegen, a: ast.Attribute, args: []const ast.Expr, ch
         const v = try self.genExpr(args[0]);
         const converted = try self.convert(v, ch_val.elem_qtype);
         const payload = try self.toPayload(converted);
-        try self.out.writer.print("    call $nox_channel_send(l {s}, l {s}, l {s})\n", .{ RT_PARAM, ch_val.text, payload.text });
+        try self.qbeCall(null, "$nox_channel_send", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ch_val.text }, .{ .ty = .l, .text = payload.text } });
         return .{ .text = "0", .qtype = .none };
     }
     if (std.mem.eql(u8, a.attr, "recv")) {
         if (args.len != 0) return error.Unsupported;
         const payload_t = try self.newTemp();
-        try self.out.writer.print("    {s} =l call $nox_channel_recv(l {s}, l {s})\n", .{ payload_t, RT_PARAM, ch_val.text });
+        try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_channel_recv", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ch_val.text } });
         const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, ch_val.elem_qtype);
         return valueFromElemDescriptor(converted.text, converted.qtype, ch_val.elem_heap_info, ch_val.elem_is_str);
     }
@@ -550,7 +570,7 @@ pub fn genTaskLocalOp(self: *Codegen, tl_val: Value, a: ast.Attribute, args: []c
     if (std.mem.eql(u8, a.attr, "get")) {
         if (args.len != 0) return error.Unsupported;
         const payload_t = try self.newTemp();
-        try self.out.writer.print("    {s} =l call $nox_tasklocal_get(l {s}, l {s})\n", .{ payload_t, RT_PARAM, tl_val.text });
+        try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_tasklocal_get", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = tl_val.text } });
         // `nox_tasklocal_get` ÖDÜNÇ bir referans döner (fiber'ın KENDİ
         // haritası kendi referansını KORUR) — `.call` sonucu HER YERDE
         // "taze/sahipli" SAYILDIĞINDAN (bkz. `isTemporaryExpr`), bunu
@@ -571,7 +591,7 @@ pub fn genTaskLocalOp(self: *Codegen, tl_val: Value, a: ast.Attribute, args: []c
         const converted = try self.convert(retained, tl_val.elem_qtype);
         const payload = try self.toPayload(converted);
         const old_t = try self.newTemp();
-        try self.out.writer.print("    {s} =l call $nox_tasklocal_set(l {s}, l {s}, l {s})\n", .{ old_t, RT_PARAM, tl_val.text, payload.text });
+        try self.qbeCall(.{ .name = old_t, .ty = .l }, "$nox_tasklocal_set", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = tl_val.text }, .{ .ty = .l, .text = payload.text } });
         try self.releaseValueIfSet(old_t, elem_heap, tl_val.elem_qtype, elem_class_name, elem_nested, null);
         try self.releaseIfTemporary(a.obj.*, tl_val);
         return .{ .text = "0", .qtype = .none };
@@ -579,7 +599,7 @@ pub fn genTaskLocalOp(self: *Codegen, tl_val: Value, a: ast.Attribute, args: []c
     if (std.mem.eql(u8, a.attr, "clear")) {
         if (args.len != 0) return error.Unsupported;
         const old_t = try self.newTemp();
-        try self.out.writer.print("    {s} =l call $nox_tasklocal_clear(l {s}, l {s})\n", .{ old_t, RT_PARAM, tl_val.text });
+        try self.qbeCall(.{ .name = old_t, .ty = .l }, "$nox_tasklocal_clear", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = tl_val.text } });
         try self.releaseValueIfSet(old_t, elem_heap, tl_val.elem_qtype, elem_class_name, elem_nested, null);
         try self.releaseIfTemporary(a.obj.*, tl_val);
         return .{ .text = "0", .qtype = .none };
@@ -600,14 +620,16 @@ pub fn genThreadChannelOp(self: *Codegen, a: ast.Attribute, args: []const ast.Ex
         const converted = try self.convert(v, ch_val.elem_qtype);
         const payload = try self.toPayload(converted);
         const fn_name = if (ch_val.elem_is_str) "nox_threadchannel_send_str" else "nox_threadchannel_send_val";
-        try self.out.writer.print("    call ${s}(l {s}, l {s}, l {s})\n", .{ fn_name, RT_PARAM, ch_val.text, payload.text });
+        const fn_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{fn_name});
+        try self.qbeCall(null, fn_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ch_val.text }, .{ .ty = .l, .text = payload.text } });
         return .{ .text = "0", .qtype = .none };
     }
     if (std.mem.eql(u8, a.attr, "recv")) {
         if (args.len != 0) return error.Unsupported;
         const fn_name = if (ch_val.elem_is_str) "nox_threadchannel_recv_str" else "nox_threadchannel_recv_val";
+        const fn_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{fn_name});
         const payload_t = try self.newTemp();
-        try self.out.writer.print("    {s} =l call ${s}(l {s}, l {s})\n", .{ payload_t, fn_name, RT_PARAM, ch_val.text });
+        try self.qbeCall(.{ .name = payload_t, .ty = .l }, fn_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ch_val.text } });
         const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, ch_val.elem_qtype);
         return valueFromElemDescriptor(converted.text, converted.qtype, ch_val.elem_heap_info, ch_val.elem_is_str);
     }
