@@ -10,6 +10,7 @@ const types = @import("types.zig");
 const abi = @import("abi.zig");
 const codegen = @import("codegen.zig");
 const optimizations = @import("optimizations.zig");
+const layout = @import("layout.zig");
 
 const Codegen = codegen.Codegen;
 const Value = types.Value;
@@ -35,6 +36,7 @@ const isTemporaryExpr = abi.isTemporaryExpr;
 const valueFromElemDescriptor = abi.valueFromElemDescriptor;
 const escapeForQbeString = abi.escapeForQbeString;
 const modCacheKey = optimizations.modCacheKey;
+const classEqInlineEligible = layout.classEqInlineEligible;
 
 /// Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `.none_lit`in
 /// bağlam-duyarlı üretimi — `genExpr`in KENDİSİ (bkz. onun `.none_lit`
@@ -894,13 +896,22 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
     if ((l0.heap == .list or l0.heap == .class) and r0.heap == l0.heap and (b.op == .eq or b.op == .ne)) {
         try self.checkNoLowlevelEscape(l0);
         try self.checkNoLowlevelEscape(r0);
-        const eq_temp = try self.newTemp();
-        if (l0.heap == .class) {
-            try self.out.writer.print("    {s} =w call ${s}_eq(l {s}, l {s}, l {s})\n", .{ eq_temp, l0.class_name.?, RT_PARAM, l0.text, r0.text });
-        } else {
-            const fn_name = try self.eqFnNameForList(l0.elem_qtype, l0.elem_heap_info, l0.elem_is_str);
-            try self.out.writer.print("    {s} =w call ${s}_eq(l {s}, l {s}, l {s})\n", .{ eq_temp, fn_name, RT_PARAM, l0.text, r0.text });
-        }
+        // GG.13 (bkz. nox-teknik-spesifikasyon.md §3.66): küçük (≤8 alan),
+        // paylaşılan `$ClassName_eq`e bir `call`+dönüş yerine, karşılaştırıcıyı
+        // DOĞRUDAN BU kullanım sitesine splice et — `list == list` (HER ZAMAN
+        // bir döngü gerektirir) BU optimizasyonun kapsamı DIŞINDA kalır.
+        const eq_temp: []const u8 = if (l0.heap == .class and classEqInlineEligible(self.classes.get(l0.class_name.?).?))
+            try self.genClassEqInline(self.classes.get(l0.class_name.?).?, l0.text, r0.text)
+        else blk: {
+            const t = try self.newTemp();
+            if (l0.heap == .class) {
+                try self.out.writer.print("    {s} =w call ${s}_eq(l {s}, l {s}, l {s})\n", .{ t, l0.class_name.?, RT_PARAM, l0.text, r0.text });
+            } else {
+                const fn_name = try self.eqFnNameForList(l0.elem_qtype, l0.elem_heap_info, l0.elem_is_str);
+                try self.out.writer.print("    {s} =w call ${s}_eq(l {s}, l {s}, l {s})\n", .{ t, fn_name, RT_PARAM, l0.text, r0.text });
+            }
+            break :blk t;
+        };
         const result: []const u8 = if (b.op == .ne) blk: {
             const t = try self.newTemp();
             try self.out.writer.print("    {s} =w xor {s}, 1\n", .{ t, eq_temp });

@@ -555,6 +555,66 @@ pub fn genEqCompareOrJump(
     if (success_label) |sl| try self.out.writer.print("    jmp {s}\n", .{sl});
 }
 
+/// GG.13 (bkz. nox-teknik-spesifikasyon.md §3.66): `a == b`/`a != b`
+/// (`a`/`b` `cinfo` sınıfının örnekleri) — bir `call $ClassName_eq`
+/// ÜRETMEK YERİNE `genClassEq`nin AYNI alan-alana karşılaştırma
+/// mantığını KULLANIM SİTESİNE doğrudan SPLICE edip edemeyeceğimizi
+/// belirler. BU sadece bir KOD-BOYUTU sezgisidir (DOĞRULUK kapısı
+/// DEĞİL) — `genEqCompareOrJump` iç içe `.class`/`.list` alanları İçin
+/// ZATEN sadece TEK bir `call` üretir (kendi İÇİNE splice etmez), bu
+/// yüzden alan sayısı ne olursa olsun sonuç HER ZAMAN doğrudur; SADECE
+/// `==`in ÇOK sayıda KULLANIM sitesinde tekrar tekrar üretilen kod
+/// miktarını sınırlamak İçin küçük bir eşik (≤8 alan) uygulanır.
+pub fn classEqInlineEligible(cinfo: ClassInfo) bool {
+    return cinfo.fields.items.len <= 8;
+}
+
+/// GG.13: `genClassEq`nin AYNI alan-alana karşılaştırma mantığını,
+/// PAYLAŞILAN bir `$ClassName_eq` fonksiyonu ÜZERİNDEN ÇAĞIRMAK YERİNE,
+/// `expr.zig`nin `.binary` `==`/`!=` KULLANIM SİTESİNE DOĞRUDAN splice
+/// eder — çağrı/dönüş overhead'ini eler. `a_ptr`/`b_ptr` (ZATEN
+/// yüklenmiş, HİÇBİR ZAMAN null OLAMAYAN — bkz. `expr.zig`nin AYNI
+/// gerekçesi, TAM sınıf örnekleri, alan/eleman OKUMASI DEĞİL) iki
+/// işaretçidir. Dönen `Value.text`, `1`/`0` OLARAK çözülen bir QBE
+/// `phi`dir — GG.2'nin fonksiyon-girişi ÖN-TAHSİSLİ slot mekanizmasına
+/// (`inlining.zig`) GEREK YOKTUR: burada TAŞINACAK bir YEREL DEĞİŞKEN
+/// yok, sadece bir dal-sonucu KONSOLİDASYONU — QBE'nin `phi`si bunu
+/// (bir `alloc` GİBİ) yığın büyümesi RİSKİ OLMADAN, HER kontrol-akışı
+/// geçişinde TAZE çözer (bkz. `layout.zig`nin `genForList`teki AYNI
+/// `phi` kullanımı, §3.16'nın `alloc`/yığın-taşması dersiyle KARIŞTIRILMAMALI
+/// — o ders SADECE `alloc4`/`alloc8`e ÖZGÜDÜR).
+pub fn genClassEqInline(self: *Codegen, cinfo: ClassInfo, a_ptr: []const u8, b_ptr: []const u8) CodegenError![]const u8 {
+    const mismatch_label = try self.newLabel("eqinline_mismatch");
+    const match_label = try self.newLabel("eqinline_match");
+    if (cinfo.fields.items.len == 0) {
+        // Alanı olmayan bir sınıf: iki örnek YAPISAL olarak HER ZAMAN
+        // "eşit"tir (bkz. `genClassEq`nin AYNI ilkesi) — karşılaştırılacak
+        // hiçbir şey yok, doğrudan eşleşme dalına atla.
+        try self.out.writer.print("    jmp {s}\n", .{match_label});
+    }
+    for (cinfo.fields.items, 0..) |f, i| {
+        const addr_a = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr_a, a_ptr, f.offset });
+        const addr_b = try self.newTemp();
+        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr_b, b_ptr, f.offset });
+        const va = try self.newTemp();
+        try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ va, qbeTypeName(f.info.qtype), qbeTypeName(f.info.qtype), addr_a });
+        const vb = try self.newTemp();
+        try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ vb, qbeTypeName(f.info.qtype), qbeTypeName(f.info.qtype), addr_b });
+        const is_last = i == cinfo.fields.items.len - 1;
+        try self.genEqCompareOrJump(va, vb, f.info.qtype, f.info.heap, f.info.class_name, f.info.elem_qtype, f.info.elem_heap_info, f.info.elem_is_str, mismatch_label, if (is_last) match_label else null);
+    }
+    try self.out.writer.print("{s}\n", .{match_label});
+    const done_label = try self.newLabel("eqinline_done");
+    try self.out.writer.print("    jmp {s}\n", .{done_label});
+    try self.out.writer.print("{s}\n", .{mismatch_label});
+    try self.out.writer.print("    jmp {s}\n", .{done_label});
+    try self.out.writer.print("{s}\n", .{done_label});
+    const result = try self.newTemp();
+    try self.out.writer.print("    {s} =w phi {s} 1, {s} 0\n", .{ result, match_label, mismatch_label });
+    return result;
+}
+
 /// `releaseFnNameFor` ile AYNI özyineli mangling şeması, ama derin
 /// yapısal eşitlik İÇİN: `str` elemanlar `int`/`float`/`bool`dan (`prim*`)
 /// AYRI bir ad alır — release'in aksine eşitlik `strcmp` ile `ceq*`i

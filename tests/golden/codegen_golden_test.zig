@@ -1314,6 +1314,33 @@ test "codegen(çalıştır): bir döngü içindeki list[T]/sınıf '==' yığın
     );
 }
 
+// GG.13 (bkz. nox-teknik-spesifikasyon.md §3.66): `Point == Point` (küçük,
+// ≤8 alanlı, döngüsüz bir sınıf) ARTIK paylaşılan `$Point_eq`e bir
+// `call`/dönüş YERİNE, karşılaştırıcı DOĞRUDAN kullanım sitesine SPLICE
+// EDİLİR. Davranış (yukarıdaki AYNI fixture'da, milyonlarca yinelemede
+// yığın taşması OLMADAN) ZATEN doğrulandı — burada YALNIZCA `call
+// $Point_eq`in ÜRETİLEN IR'da GERÇEKTEN artık HİÇ görünmediği (yalnızca
+// davranışın değişmediğinin DEĞİL) doğrudan kanıtlanır. `la == lb`
+// (list[int], HER ZAMAN bir döngü gerektirir) BU optimizasyonun kapsamı
+// DIŞINDA kalır — `call $List_priml_eq` HÂLÂ ÜRETİLMELİDİR.
+test "codegen: GG.13 — küçük sınıf '=='inin ÜRETTİĞİ IR'da call \\$Point_eq GERÇEKTEN YOK" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/deep_equality_in_loop_no_stack_growth.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{});
+
+    try std.testing.expect(std.mem.indexOf(u8, ir, "call $Point_eq") == null);
+    try std.testing.expect(std.mem.indexOf(u8, ir, "call $List_priml_eq") != null);
+}
+
 test "codegen(çalıştır): zincirlenmiş alan okuması bir çağrı sonucu üzerinde — ara nesne sızmaz" {
     try expectGolden(
         @embedFile("codegen_cases/chained_attr_temporary_release.nox"),

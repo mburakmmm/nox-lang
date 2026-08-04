@@ -4,10 +4,10 @@
 
 **Faz P2.5 (bkz. proje belleği "P0/P1/P2 inceleme düzeltme listesi" planı):** `run.zig` artık HER koşunun başında makine/derleyici-sürümü bilgisini (OS/mimari/CPU çekirdek sayısı, `zig` sürümü, derleme modu, `noxc --version`) basıyor — bu dosyanın AŞAĞIDAKİ tabloları BU metadata EKLENMEDEN ÖNCEKİ koşulardan alındığından geriye dönük olarak eklenmedi (bkz. git geçmişi/orijinal koşu ortamı bilinmiyor); BUNDAN SONRAKİ her yeni koşu çıktısının EN ÜSTÜNDE bu bilgi otomatik olarak yer alacak. Her satır ayrıca artık yalnızca `min` DEĞİL, `min`/`max`/`ort` (ortalama) üçünü de raporluyor — bir sayının GERÇEKTEN istikrarlı mı yoksa gürültülü mü olduğunu (ör. `min=5ms` ama `max=50ms` olabilir) görünür kılmak için.
 
-**En güncel koşu metadata'sı (Faz OO.5, bkz. §3.86 — `str` ABI/`TaskLocal`/
-`Exception`/`dict[K,class]` fazlarından SONRA):** `ortam: macos-aarch64
-(apple_m4), 10 mantıksal çekirdek` — `derleyici: zig 0.16.0` —
-`derleme modu: ReleaseFast` — `noxc: noxc 1.26.0`.
+**En güncel koşu metadata'sı (Faz GG.13, bkz. §3.66 — küçük sınıf `==`
+karşılaştırıcısının kullanım sitesine splice edilmesi SONRASI):**
+`ortam: macos-aarch64 (apple_m4), 10 mantıksal çekirdek` —
+`derleyici: zig 0.16.0` — `derleme modu: ReleaseFast` — `noxc: noxc 1.26.3`.
 
 ## Bölüm 1 — Stres testleri (yalnızca Nox, büyük N)
 
@@ -23,7 +23,7 @@ Bu testler yalnızca Nox'un büyük ölçekte çökmediğini/sızdırmadığın�
 | exceptions_control_flow | 2.9ms |
 | lowlevel_arena | 2.2ms |
 | string_passing | 48.3ms |
-| deep_equality | 12.4ms |
+| deep_equality | 11.3ms |
 | list_class_field | 7.5ms |
 | async_task_churn | 32.2ms |
 | dict_bench | 2.7ms |
@@ -354,7 +354,7 @@ Her satır üç dilde **aynı algoritmayı** çalıştırır (Python/C, o dilin 
 | exceptions_control_flow | 22.4ms | 678.6ms | 6.1ms | **30.3x hızlı** | 3.68x yavaş |
 | lowlevel_arena | 63.8ms | 1327.9ms | 2.4ms | **20.8x hızlı** | 26.54x yavaş |
 | string_passing | 37.8ms | 1228.4ms | 8.7ms | **32.5x hızlı** | 4.36x yavaş |
-| deep_equality | 6.4ms | 52.5ms | 3.3ms | **8.2x hızlı** | 1.97x yavaş |
+| deep_equality | 6.2ms | 51.1ms | 3.9ms | **8.2x hızlı** | 1.61x yavaş |
 | list_class_field | 4.2ms | 50.5ms | 2.0ms | **12.0x hızlı** | 2.12x yavaş |
 
 **10/10 geçti.**

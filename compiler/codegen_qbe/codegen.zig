@@ -311,6 +311,7 @@ pub const Codegen = struct {
     pub const genGcFreeDispatch = layout.genGcFreeDispatch;
     pub const genClassEq = layout.genClassEq;
     pub const genEqCompareOrJump = layout.genEqCompareOrJump;
+    pub const genClassEqInline = layout.genClassEqInline;
     pub const eqMangleFor = layout.eqMangleFor;
     pub const eqFnNameForList = layout.eqFnNameForList;
     pub const genListEq = layout.genListEq;

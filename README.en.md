@@ -235,7 +235,7 @@ sections below: **language fundamentals** (vs. Python/C), **stdlib**
 | exceptions_control_flow | 22.4ms | 678.6ms | 6.1ms | **30.3x faster** | 3.68x slower |
 | lowlevel_arena | 63.8ms | 1327.9ms | 2.4ms | **20.8x faster** | 26.54x slower |
 | string_passing | 37.8ms | 1228.4ms | 8.7ms | **32.5x faster** | 4.36x slower |
-| deep_equality | 6.4ms | 52.5ms | 3.3ms | **8.2x faster** | 1.97x slower |
+| deep_equality | 6.2ms | 51.1ms | 3.9ms | **8.2x faster** | 1.61x slower |
 | list_class_field | 4.2ms | 50.5ms | 2.0ms | **12.0x faster** | 2.12x slower |
 
 **Summary:** **8x–130x faster** than Python in every scenario; generally

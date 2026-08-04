@@ -11080,6 +11080,53 @@ YÜZDEN README/RESULTS.md tabloları BU sayı İLE GÜNCELLENMEDİ (gürültül�
 sayıyı "iyileşme" OLARAK sunmak, bu turun KENDİ eleştirdiği hatayı TEKRARLARDI).
 **Risk: düşük-orta, GERÇEKLEŞTİ (yeni kod bulunmadı).**
 
+### GG.13 (TAMAMLANDI) — `deep_equality`: küçük sınıf `==` karşılaştırıcısını KULLANIM sitesine SPLICE et
+
+**Kök neden:** `a == b`/`la == lb` `call $Point_eq`/`call $List_priml_eq`e
+lowlerleniyordu. `$Point_eq` (`layout.zig`nin `genClassEq`i) TÜM alanları
+primitive OLAN bir sınıf İçin (`Point`) düz-çizgi bir dizi — DÖNGÜSÜZ,
+ÖZYİNELEMESİZ. GG.2'nin "sadece SERBEST fonksiyon" kuralı BU ÇAĞRILARI
+hiç GÖRMÜYOR bile — `==` bir `ast.Call` DEĞİL, `genExpr`nin `.binary`
+kolundan DOĞRUDAN üretiliyor. Yani bu GG.2'yi "metotlara GENİŞLETMEK"
+DEĞİL, TAMAMEN AYRI, dar bir splice mekanizması.
+
+**Uygulama:**
+1. `layout.zig`e `classEqInlineEligible(cinfo)` — alan sayısı ≤8 İSE
+   `true` (kod-boyutu koruması, doğruluk kapısı DEĞİL — `genEqCompareOrJump`
+   iç içe `.class`/`.list` alanları İçin ZATEN sadece BİR `call` üretiyor,
+   bu fazdan ETKİLENMEZ).
+2. YENİ bir `genClassEqInline` — `genClassEq`nin AYNI alan-alana mantığını
+   `genEqCompareOrJump` ÜZERİNDEN kullanım sitesine DOĞRUDAN splice eder.
+   Sonucu TEK bir boole DEĞERİNE toplamak İçin GG.2'nin slot-tabanlı
+   mekanizmasına (`inlining.zig`) GEREK YOKTUR — burada TAŞINACAK bir
+   YEREL yok, SADECE bir dal-sonucu konsolidasyonu; QBE'nin `phi`si BUNU
+   (bir `alloc`'un AKSİNE) yığın-büyümesi RİSKİ OLMADAN, HER kontrol-akışı
+   geçişinde TAZE çözer.
+3. `expr.zig:~894`nin `.binary` `==`/`!=` kolunda, `l0.heap == .class` VE
+   `classEqInlineEligible` İSE `call $ClassName_eq` YERİNE `genClassEqInline`
+   çağrılır; `list == list` (HER ZAMAN döngü gerektirir) DEĞİŞMEDEN
+   `call $List_..._eq` yoluna DÜŞER.
+
+**Doğrulama:** Taze `.ssa` incelemesi: `Point == Point` SPLICE edilmiş
+(`call $Point_eq` YOK, `@eqinline_match*/@eqinline_mismatch*/@eqinline_done*`
++ `phi` bloğu VAR), `la == lb` HÂLÂ `call $List_priml_eq`. Mevcut
+`deep_equality_in_loop_no_stack_growth.nox` (2.000.000 yineleme) davranışı
+DEĞİŞMEDEN DOĞRU (`4000000`) VE yığın büyümesi YOK (peak RSS ~1.5MB).
+YENİ bir IR-metni testi (`"codegen: GG.13 — ... call $Point_eq GERÇEKTEN
+YOK"`) BUNU otomatik doğrular. `zig build test` (Debug + ReleaseFast)
+yeşil — Debug'daki TEK kalan hata, BU fazdan TAMAMEN BAĞIMSIZ, ÖNCEDEN
+VAR OLAN bir fuzz testi yığın-taşması (ayrı bir göreve bırakıldı, bkz.
+proje belleği).
+
+**Ölçüm:** `benchmarks/compare/deep_equality.nox` (n=500.000) — ÖNCESİ
+stres tablosu 12.4ms, C-karşılaştırma tablosu nox 6.4ms/C 3.3ms (1.97x).
+SONRASI stres tablosu 3 BAĞIMSIZ koşuda TUTARLI biçimde 10.8-11.3ms
+ARALIĞINDA (~%9-13 GERÇEK, gürültüden AYIRT EDİLEBİLİR bir iyileşme — GG.12'nin
+AKSİNE, bu fazın kazancı bu benchmark'ın MUTLAK ölçeğinde (düzinelerce ms)
+gürültünün ÜZERİNDE görünür kalacak KADAR BÜYÜK). C-karşılaştırma tablosu:
+nox 6.2ms/C 3.9ms (1.61x, ÖNCEKİ 1.97x'ten İYİLEŞTİ). **Risk: düşük-orta,
+GERÇEKLEŞTİ (yeni kod bulunmadı).**
+
 ### HH.1 (TAMAMLANDI) — Accept backlog artırımı; `ConnCtx` havuzu DENENDİ, GERİ ALINDI
 
 **Kaynak:** `nox.http` darboğaz analizinin (kullanıcı talebiyle yapılan

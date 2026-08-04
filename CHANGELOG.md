@@ -14,6 +14,20 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.26.3]
+
+### Değişti
+- **GG.13**: küçük (≤8 alan), döngüsüz sınıflar için `a == b`/`a != b`
+  ARTIK paylaşılan `$ClassName_eq`e bir `call`+dönüş yerine, karşılaştırıcı
+  DOĞRUDAN kullanım sitesine spliced ediliyor -- `list == list` (her zaman
+  döngü gerektirir) bu optimizasyonun kapsamı dışında kalıyor. Yeni bir
+  IR-metni testi + taze `.ssa` incelemesiyle `call $Point_eq`in gerçekten
+  üretilmediği doğrulandı; mevcut 2.000.000 yinelemelik yığın-taşması
+  regresyon testi davranış/bellek güvenliğini teyit etti. Bu fazın kazancı
+  (GG.12'nin aksine) gürültüden ayırt edilebilir büyüklükte: stres tablosu
+  12.4ms->11.3ms, C karşılaştırması 1.97x->1.61x yavaş (bkz.
+  nox-teknik-spesifikasyon.md §3.66 GG.13).
+
 ## [1.26.2]
 
 ### Değişti
