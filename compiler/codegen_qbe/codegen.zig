@@ -217,6 +217,7 @@ const expr_mod = @import("expr.zig");
 const stmt_mod = @import("stmt.zig");
 const registration = @import("registration.zig");
 const decorators_mod = @import("decorators.zig");
+const qbe_emit = @import("qbe_emit.zig");
 
 pub const CodegenError = abi.CodegenError;
 
@@ -280,6 +281,15 @@ const InlineSiteInfo = inlining.InlineSiteInfo;
 const StackConstructSite = inlining.StackConstructSite;
 const ArenaStackEntry = types.ArenaStackEntry;
 const InlineReturnTarget = inlining.InlineReturnTarget;
+
+/// Faz IR.0: `qbe_emit.zig`nin metin-emisyon katmanının PAYLAŞILAN veri
+/// tipleri — diğer alt modüllerin `qbeCall`/`qbeAlloc` çağırırken
+/// kullandığı yapılar (`Codegen`nin metot re-export'larıyla AYNI
+/// zamanlamada, bu YÜZDEN BURADA, `pub const Codegen = struct {...}`
+/// AÇILMADAN HEMEN ÖNCE).
+pub const QbeArg = qbe_emit.QbeArg;
+pub const QbeCallDst = qbe_emit.QbeCallDst;
+pub const QbeAllocSize = qbe_emit.QbeAllocSize;
 
 pub const Codegen = struct {
     pub const isFuncInlineEligible = inlining.isFuncInlineEligible;
@@ -480,6 +490,32 @@ pub const Codegen = struct {
     pub const genAwaitExpr = async_thread_mod.genAwaitExpr;
     pub const genChannelOp = async_thread_mod.genChannelOp;
     pub const genThreadChannelOp = async_thread_mod.genThreadChannelOp;
+
+    // Faz IR.0: `qbe_emit.zig`nin metin-emisyon katmanı — bkz. onun
+    // modül-üstü belge notu. Bu blok, 15 sibling dosyanın `self.out.
+    // writer.print(...)`i doğrudan çağırması YERİNE geçireceği TEK
+    // yüzey.
+    pub const qbeLabel = qbe_emit.qbeLabel;
+    pub const qbeJmp = qbe_emit.qbeJmp;
+    pub const qbeJnz = qbe_emit.qbeJnz;
+    pub const qbePhi = qbe_emit.qbePhi;
+    pub const qbeRet = qbe_emit.qbeRet;
+    pub const qbeFuncEnd = qbe_emit.qbeFuncEnd;
+    pub const qbeOp1 = qbe_emit.qbeOp1;
+    pub const qbeOp2 = qbe_emit.qbeOp2;
+    pub const qbeOp2Imm = qbe_emit.qbeOp2Imm;
+    pub const qbeLoad = qbe_emit.qbeLoad;
+    pub const qbeLoadL = qbe_emit.qbeLoadL;
+    pub const qbeStore = qbe_emit.qbeStore;
+    pub const qbeStoreL = qbe_emit.qbeStoreL;
+    pub const qbeStoreImmL = qbe_emit.qbeStoreImmL;
+    pub const qbeAlloc = qbe_emit.qbeAlloc;
+    pub const qbeCall = qbe_emit.qbeCall;
+    pub const qbeFuncHeaderStart = qbe_emit.qbeFuncHeaderStart;
+    pub const qbeFuncParam = qbe_emit.qbeFuncParam;
+    pub const qbeFuncHeaderEnd = qbe_emit.qbeFuncHeaderEnd;
+    pub const qbeRaw = qbe_emit.qbeRaw;
+    pub const qbeRawAll = qbe_emit.qbeRawAll;
 
     allocator: std.mem.Allocator,
     out: std.Io.Writer.Allocating,
