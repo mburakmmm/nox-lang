@@ -17,13 +17,15 @@ const Codegen = codegen.Codegen;
 const QbeType = types.QbeType;
 const RT_PARAM = types.RT_PARAM;
 const CodegenError = abi.CodegenError;
-const qbeTypeName = abi.qbeTypeName;
 const isHeapManaged = abi.isHeapManaged;
 
 pub fn genRaise(self: *Codegen, expr: ast.Expr) CodegenError!void {
     const obj = try self.genExpr(expr);
     if (obj.heap != .class) return error.Unsupported;
-    try self.out.writer.print("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, obj.text, self.current_raise_line });
+    // `current_raise_line`nin (bir çalışma-zamanı tam sayı) `qbeCall`nin
+    // metin-operand modeline UYMAMASI NEDENİYLE bu site BİLİNÇLİ olarak
+    // `qbeRaw` KULLANIR — bkz. `qbe_emit.zig`nin kaçış-kapısı notu.
+    try self.qbeRaw("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, obj.text, self.current_raise_line });
     try self.emitExceptionCheck();
 }
 
@@ -50,7 +52,7 @@ pub fn drainArenas(self: *Codegen) CodegenError!void {
         // ÇAĞRILMAMIŞTIR — `.handle` GEÇERSİZ bir yer tutucudur, `nox_
         // arena_destroy`e geçirmek TANIMSIZ davranışa yol AÇARDI.
         if (self.arena_stack.items[i].elided) continue;
-        try self.out.writer.print("    call $nox_arena_destroy(l {s}, l {s})\n", .{ RT_PARAM, self.arena_stack.items[i].handle });
+        try self.qbeCall(null, "$nox_arena_destroy", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = self.arena_stack.items[i].handle } });
     }
 }
 
@@ -110,19 +112,19 @@ pub fn genTry(self: *Codegen, t: ast.TryStmt, ret_qtype: QbeType) CodegenError!v
     // çalıştırıp SONSUZ derleme-zamanı özyinelemesine yol açardı
     // (bkz. Faz U.5'in doğrulaması, bunu İLK KEZ ortaya çıkaran senaryo).
     if (t.finally_body) |fb| try self.runDetachedFinally(fb, ret_qtype);
-    try self.out.writer.print("    jmp {s}\n", .{after_label});
+    try self.qbeJmp(after_label);
 
-    try self.out.writer.print("{s}\n", .{dispatch_label});
+    try self.qbeLabel(dispatch_label);
     const exc_ptr = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_exception_take(l {s})\n", .{ exc_ptr, RT_PARAM });
+    try self.qbeCall(.{ .name = exc_ptr, .ty = .l }, "$nox_exception_take", &.{.{ .ty = .l, .text = RT_PARAM }});
     const tag = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ tag, exc_ptr });
+    try self.qbeLoadL(tag, exc_ptr);
 
     var next_check = try self.newLabel("except_check");
-    try self.out.writer.print("    jmp {s}\n", .{next_check});
+    try self.qbeJmp(next_check);
 
     for (t.except_clauses, 0..) |ec, i| {
-        try self.out.writer.print("{s}\n", .{next_check});
+        try self.qbeLabel(next_check);
         const handler_label = try self.newLabel("except_body");
         const is_last = i == t.except_clauses.len - 1;
         const following = if (!is_last) try self.newLabel("except_check") else try self.newLabel("except_reraise");
@@ -158,22 +160,22 @@ pub fn genTry(self: *Codegen, t: ast.TryStmt, ret_qtype: QbeType) CodegenError!v
             if (cinfo.descendant_class_ids.len <= 1) {
                 const matches = try self.newTemp();
                 const only_id = if (cinfo.descendant_class_ids.len == 1) cinfo.descendant_class_ids[0] else cinfo.class_id;
-                try self.out.writer.print("    {s} =w ceql {s}, {d}\n", .{ matches, tag, only_id });
-                try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ matches, handler_label, following });
+                try self.qbeOp2Imm(matches, .w, "ceql", tag, @intCast(only_id));
+                try self.qbeJnz(matches, handler_label, following);
             } else {
                 for (cinfo.descendant_class_ids, 0..) |id, di| {
                     const matches = try self.newTemp();
-                    try self.out.writer.print("    {s} =w ceql {s}, {d}\n", .{ matches, tag, id });
+                    try self.qbeOp2Imm(matches, .w, "ceql", tag, @intCast(id));
                     const is_last_id = di + 1 == cinfo.descendant_class_ids.len;
                     const next_check_label = if (is_last_id) following else try self.newLabel("except_hier_check");
-                    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ matches, handler_label, next_check_label });
-                    if (!is_last_id) try self.out.writer.print("{s}\n", .{next_check_label});
+                    try self.qbeJnz(matches, handler_label, next_check_label);
+                    if (!is_last_id) try self.qbeLabel(next_check_label);
                 }
             }
         } else {
-            try self.out.writer.print("    jmp {s}\n", .{handler_label});
+            try self.qbeJmp(handler_label);
         }
-        try self.out.writer.print("{s}\n", .{handler_label});
+        try self.qbeLabel(handler_label);
         if (ec.bind_name) |bn| {
             const info = self.vars.get(bn).?;
             // Bu `except` gövdesi bir döngü içindeyse aynı bağlama ismi
@@ -182,7 +184,7 @@ pub fn genTry(self: *Codegen, t: ast.TryStmt, ret_qtype: QbeType) CodegenError!v
             // değeri (varsa) ÜZERİNE YAZMADAN ÖNCE serbest bırakmazsak
             // önceki istisna nesnesi sonsuza dek sızar.
             try self.releaseSlotIfSet(info);
-            try self.out.writer.print("    storel {s}, {s}\n", .{ exc_ptr, info.slot });
+            try self.qbeStoreL(exc_ptr, info.slot);
         } else {
             // Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
             // incelemesi", P5), GERÇEK bir sızıntı — `as e:` bağlaması
@@ -195,11 +197,11 @@ pub fn genTry(self: *Codegen, t: ast.TryStmt, ret_qtype: QbeType) CodegenError!v
             // ÇALIŞMA ZAMANINDA doğru release'e dal açan `nox_class_
             // release_dispatch`e (bkz. `layout.zig`nin `genClassReleaseDispatch`ı)
             // BAŞVURULUR.
-            try self.out.writer.print("    call $nox_class_release_dispatch(l {s}, l {s}, l {s})\n", .{ RT_PARAM, tag, exc_ptr });
+            try self.qbeCall(null, "$nox_class_release_dispatch", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = tag }, .{ .ty = .l, .text = exc_ptr } });
         }
         try self.genStmts(ec.body, ret_qtype);
         if (t.finally_body) |fb| try self.runDetachedFinally(fb, ret_qtype);
-        try self.out.writer.print("    jmp {s}\n", .{after_label});
+        try self.qbeJmp(after_label);
         next_check = following;
     }
 
@@ -210,14 +212,15 @@ pub fn genTry(self: *Codegen, t: ast.TryStmt, ret_qtype: QbeType) CodegenError!v
     // Hiçbir `except` eşleşmedi: finally'i çalıştır, istisnayı yeniden
     // işaretle ve dışarıya yay (bu `try`'ın kendi dispatch'i artık devrede
     // değil — `current_catch_label` yukarıda eski değerine geri alındı).
-    try self.out.writer.print("{s}\n", .{next_check});
+    try self.qbeLabel(next_check);
     if (t.finally_body) |fb| try self.genStmts(fb, ret_qtype);
-    try self.out.writer.print("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, exc_ptr, self.current_raise_line });
+    // Bkz. `genRaise`nin AYNI `qbeRaw` notu.
+    try self.qbeRaw("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, exc_ptr, self.current_raise_line });
     try self.emitExceptionCheck();
-    try self.out.writer.print("    jmp {s}\n", .{after_label});
+    try self.qbeJmp(after_label);
 
-    try self.out.writer.print("{s}\n", .{after_label});
-    try self.out.writer.print("{s}\n", .{end_label});
+    try self.qbeLabel(after_label);
+    try self.qbeLabel(end_label);
 }
 
 /// Faz U.5: `with EXPR as NAME:` — bkz. `ast.WithStmt`in belge notu.
@@ -252,7 +255,7 @@ pub fn genWith(self: *Codegen, w: ast.WithStmt, line: u32, ret_qtype: QbeType) C
     const hidden = self.vars.get(hidden_name).?;
     const retained = try self.retainIfAliasing(w.ctx_expr, ctx_val);
     if (isHeapManaged(hidden.heap) and !hidden.arena) try self.releaseSlotIfSet(hidden);
-    try self.out.writer.print("    storel {s}, {s}\n", .{ retained.text, hidden.slot });
+    try self.qbeStoreL(retained.text, hidden.slot);
 
     const enter_call = try self.buildMethodCallExpr(hidden_name, "__enter__");
     const enter_result = try self.genExpr(enter_call);
@@ -260,7 +263,7 @@ pub fn genWith(self: *Codegen, w: ast.WithStmt, line: u32, ret_qtype: QbeType) C
         const bind_info = self.vars.get(bn).?;
         const converted = try self.convert(enter_result, bind_info.qtype);
         if (isHeapManaged(bind_info.heap) and !bind_info.arena) try self.releaseSlotIfSet(bind_info);
-        try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(bind_info.qtype), converted.text, bind_info.slot });
+        try self.qbeStore(bind_info.qtype, converted.text, bind_info.slot);
     } else {
         try self.releaseIfTemporary(enter_call, enter_result);
     }
@@ -807,16 +810,16 @@ pub fn markRecursiveFuncs(self: *Codegen, info_map: *const std.StringHashMapUnma
 /// fonksiyonun erken (temizlenmiş) çıkışına dallanır.
 pub fn emitExceptionCheck(self: *Codegen) CodegenError!void {
     const pending = try self.newTemp();
-    try self.out.writer.print("    {s} =w call $nox_exception_pending(l {s})\n", .{ pending, RT_PARAM });
+    try self.qbeCall(.{ .name = pending, .ty = .w }, "$nox_exception_pending", &.{.{ .ty = .l, .text = RT_PARAM }});
     const propagate_label = try self.newLabel("exc_propagate");
     const continue_label = try self.newLabel("exc_continue");
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ pending, propagate_label, continue_label });
-    try self.out.writer.print("{s}\n", .{propagate_label});
+    try self.qbeJnz(pending, propagate_label, continue_label);
+    try self.qbeLabel(propagate_label);
     if (self.current_catch_label) |cl| {
         // Bu `try`nin kendi dispatch'ine giriyoruz — henüz onun korumalı
         // bölgesinden ÇIKMIYORUZ, bu yüzden `finally` burada DEĞİL,
         // dispatch'in kendi tamamlanma/yeniden-fırlatma yollarında çalışır.
-        try self.out.writer.print("    jmp {s}\n", .{cl});
+        try self.qbeJmp(cl);
     } else if (self.in_main) {
         // Gerçekten dışarı sızıyoruz: aradan geçtiğimiz her `try`nin
         // `finally`'si ve her `lowlevel` arenası burada, program
@@ -827,8 +830,8 @@ pub fn emitExceptionCheck(self: *Codegen) CodegenError!void {
         // `nox_unhandled_exception` `noreturn`dur (process.exit çağırır),
         // ama QBE bunu bilmez — bloğun bir sonlandırıcıyla bitmesi için
         // savunmacı (asla çalışmayacak) bir `ret` gerekir.
-        try self.out.writer.print("    call $nox_unhandled_exception(l {s})\n", .{RT_PARAM});
-        try self.out.writer.writeAll("    ret 0\n");
+        try self.qbeCall(null, "$nox_unhandled_exception", &.{.{ .ty = .l, .text = RT_PARAM }});
+        try self.qbeRet("0");
     } else {
         try self.drainFinally(self.current_ret_qtype);
         try self.drainArenas();
@@ -836,5 +839,5 @@ pub fn emitExceptionCheck(self: *Codegen) CodegenError!void {
         try self.releaseAllLocals();
         try self.emitDefaultReturn(self.current_ret_qtype);
     }
-    try self.out.writer.print("{s}\n", .{continue_label});
+    try self.qbeLabel(continue_label);
 }
