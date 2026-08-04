@@ -128,6 +128,12 @@ pub const Value = struct {
     /// Stdlib fazı §G: `s[i]`nin BİLİNÇLİ bir istisnası — bkz. `Codegen`nin
     /// modül üstü notu (`always_fresh`in TAM gerekçesi).
     always_fresh: bool = false,
+    /// GG.14 (bkz. nox-teknik-spesifikasyon.md §3.66): bu değer bir string
+    /// LİTERALİ (`PINNED_REFCOUNT`, ASLA sıfıra İNMEZ) — retain/release
+    /// ÜZERİNDE mantıksal olarak GÜVENLİ birer no-op'tur, bu YÜZDEN
+    /// TAMAMEN ATLANABİLİR. `emitStringLiteral`nin KENDİSİ tarafından
+    /// doldurulur.
+    is_pinned: bool = false,
 };
 
 pub const FuncSig = struct {
@@ -227,6 +233,14 @@ pub const VarInfo = struct {
     /// release tamamen GEREKSİZ. `is_param`i aşırı yüklemez (o başka
     /// birçok yerde kontrol ediliyor, ayrı bayrak patlama yarıçapını daraltır).
     borrowed_field: bool = false,
+    /// GG.14: BU parametre, `genInlinedCall`nin BU splice SİTESİNDE,
+    /// `exprAlwaysProducesPinnedString` İLE HER ZAMAN bir string LİTERALİ
+    /// (`PINNED_REFCOUNT`) ÜRETTİĞİ KANITLANMIŞ bir argümanla ÇAĞRILDI —
+    /// `is_param`ı AŞIRI YÜKLEMEZ (`returnNeedsRetain`nin `.identifier`
+    /// dalı `is_param` YÜZÜNDEN retain İSTERDİ, BU bayrak SADECE o kararı
+    /// GEÇERSİZ kılar). Argüman-BAĞIMLI olduğundan `LocalDecl`e DEĞİL,
+    /// SADECE BURAYA (call-site'a özgü `VarInfo` gölgelemesine) aittir.
+    is_pinned_str: bool = false,
 };
 
 pub const LocalDecl = struct {

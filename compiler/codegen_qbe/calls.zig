@@ -523,7 +523,9 @@ pub fn releaseTemporaryArgs(self: *Codegen, exprs: []const ast.Expr, values: []c
         // `v.always_fresh` (bkz. `Value`nin belge notu, stdlib fazı §G):
         // `s[i]` HER ZAMAN serbest bırakılmalıdır — AST-tabanlı
         // `isTemporaryExpr` sezgisi burada GEÇERSİZDİR.
-        if (isHeapManaged(v.heap) and (v.always_fresh or isTemporaryExpr(e))) {
+        // GG.14: `v.is_pinned` (bkz. `retainIfAliasing`nin AYNI gerekçesi)
+        // İSE release TAMAMEN ATLANIR.
+        if (!v.is_pinned and isHeapManaged(v.heap) and (v.always_fresh or isTemporaryExpr(e))) {
             try self.releaseValueIfSet(v.text, v.heap, v.elem_qtype, v.class_name, v.elem_heap_info, v.dict_info);
         }
     }
@@ -534,8 +536,8 @@ pub fn releaseTemporaryArgs(self: *Codegen, exprs: []const ast.Expr, values: []c
 /// okumasının/indekslemenin TABANI (ör. `make_car(i).engine`,
 /// `make_list()[0]`) da aynı şekilde taze bir geçici olabilir.
 pub fn releaseIfTemporary(self: *Codegen, e: ast.Expr, v: Value) CodegenError!void {
-    // Bkz. `releaseTemporaryArgs`in AYNI notu (`v.always_fresh`).
-    if (isHeapManaged(v.heap) and (v.always_fresh or isTemporaryExpr(e))) {
+    // Bkz. `releaseTemporaryArgs`in AYNI notu (`v.always_fresh`/`v.is_pinned`).
+    if (!v.is_pinned and isHeapManaged(v.heap) and (v.always_fresh or isTemporaryExpr(e))) {
         try self.releaseValueIfSet(v.text, v.heap, v.elem_qtype, v.class_name, v.elem_heap_info, v.dict_info);
     }
 }

@@ -1341,6 +1341,66 @@ test "codegen: GG.13 — küçük sınıf '=='inin ÜRETTİĞİ IR'da call \\$Po
     try std.testing.expect(std.mem.indexOf(u8, ir, "call $List_priml_eq") != null);
 }
 
+// GG.14 (bkz. nox-teknik-spesifikasyon.md §3.66): `forward(literal_str(i))`
+// (`literal_str`in TÜM dalları DOĞRUDAN string literali döndürüyor) —
+// `forward`in inline-splice edilmiş `s`si ARTIK retain/release
+// GEREKTİRMEMELİDİR (`s` her zaman `PINNED_REFCOUNT`lı bir literal).
+// AYNI fixture, POZİTİF durumun YANINDA bir NEGATİF durumu da (`forward
+// (make_dynamic(i))` — `make_dynamic` bir string BİRLEŞTİRMESİ döndürür,
+// ASLA pinned DEĞİL) KASITLI olarak İÇERİR: `exprAlwaysProducesPinnedString`
+// bunu TANIMAMALI (aksi halde GERÇEK bir bellek sızıntısı/çift-serbest-
+// bırakma olurdu). 2.000.000 yinelemelik `expectGolden` çalışması (ARC
+// güvenlik ağının GERÇEKTEN çalıştığı Debug modu DAHİL, `zig build test`
+// İLE) hem doğru sayıyı HEM DE sınırlı bellek kullanımını (dolaylı olarak,
+// çökme/OOM OLMADAN tamamlanarak) doğrular.
+test "codegen(çalıştır): GG.14 — pinned string passthrough (pozitif) + dinamik string passthrough (negatif), sızıntı yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/pinned_string_passthrough.nox"),
+        @embedFile("codegen_cases/pinned_string_passthrough.expected"),
+    );
+}
+
+// GG.14: `forward(literal_str(i))`in inline-splice edilmiş gövdesindeki
+// `return s`in ÜRETTİĞİ IR'da retain'in GERÇEKTEN elendiğini DOĞRUDAN
+// kanıtlar (yalnızca davranışın DEĞİŞMEDİĞİNİN değil) — `compute()`nin
+// TAM gövdesi izole edilip İÇİNDEKİ `@retain`/`@predecrement` etiketli
+// blok SAYISI TAM OLARAK BİR olmalıdır: `dynamic`in (`make_dynamic`
+// literal DÖNDÜRMEDİĞİNDEN pinned OLARAK tanınmayan) `return s`si HÂLÂ
+// GERÇEK bir retain YAPMALIDIR — `pinned`in retain'i ELENDİĞİ İçin
+// TOPLAM SAYI iki DEĞİL, bir olmalıdır.
+test "codegen: GG.14 — pinned passthrough'un ÜRETTİĞİ IR'da SADECE dinamik yol İçin BİR retain VAR" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/pinned_string_passthrough.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{});
+
+    const start_marker = "function l $compute(l %rt, l %p_n) {\n";
+    const start = std.mem.indexOf(u8, ir, start_marker) orelse return error.MarkerNotFound;
+    const body_start = start + start_marker.len;
+    const end_rel = std.mem.indexOf(u8, ir[body_start..], "\nexport function") orelse return error.MarkerNotFound;
+    const compute_ir = ir[body_start .. body_start + end_rel];
+
+    // `emitInlineRetain` HER çağrıda `retain_skip` alt-dizesini TAM OLARAK
+    // İKİ KEZ üretir (bir `jnz` HEDEFİ + KENDİ etiket TANIMI) — bu alt-dize
+    // BAŞKA HİÇBİR YERDE geçmeyecek KADAR özgün, bu YÜZDEN toplam
+    // geçiş SAYISI/2, GERÇEK `emitInlineRetain` ÇAĞRI SAYISINI verir.
+    var occurrences: usize = 0;
+    var pos: usize = 0;
+    while (std.mem.indexOf(u8, compute_ir[pos..], "retain_skip")) |idx| {
+        occurrences += 1;
+        pos += idx + "retain_skip".len;
+    }
+    try std.testing.expectEqual(@as(usize, 2), occurrences); // TEK retain çağrısı (dinamik yol İçin) = 2 geçiş
+}
+
 test "codegen(çalıştır): zincirlenmiş alan okuması bir çağrı sonucu üzerinde — ara nesne sızmaz" {
     try expectGolden(
         @embedFile("codegen_cases/chained_attr_temporary_release.nox"),

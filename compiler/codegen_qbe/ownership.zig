@@ -808,6 +808,18 @@ fn isAliasingExpr(expr: ast.Expr) bool {
 }
 
 pub fn retainIfAliasing(self: *Codegen, value: ast.Expr, v0: Value) CodegenError!Value {
+    // GG.14 (bkz. nox-teknik-spesifikasyon.md §3.66): `v0.is_pinned`
+    // (`emitStringLiteral`in DOĞRUDAN işaretlediği) YA DA `value` BİLİNEN,
+    // BU splice sitesinde HER ZAMAN pinned OLDUĞU KANITLANMIŞ bir
+    // parametre İSE (`VarInfo.is_pinned_str`) — retain, `PINNED_REFCOUNT`
+    // (ASLA sıfıra İNMEZ) üzerinde mantıksal olarak GÜVENLİ ama TAMAMEN
+    // GEREKSİZ bir no-op olurdu, TAMAMEN ATLANIR.
+    if (v0.is_pinned) return v0;
+    if (value == .identifier) {
+        if (self.vars.get(value.identifier)) |info| {
+            if (info.is_pinned_str) return v0;
+        }
+    }
     // `v0.always_fresh` (bkz. `Value`nin belge notu, stdlib fazı §G):
     // `s[i]` gibi TABANDAN BAĞIMSIZ TAZE bir tahsis üreten ifadeler
     // ASLA aliasing SAYILMAZ — `isAliasingExpr`in AST-tabanlı sezgisi
@@ -844,6 +856,12 @@ pub fn returnNeedsRetain(self: *Codegen, e: ast.Expr) bool {
     return switch (e) {
         .identifier => |name| blk: {
             const info = self.vars.get(name) orelse break :blk false;
+            // GG.14 (bkz. nox-teknik-spesifikasyon.md §3.66):
+            // `info.is_pinned_str` — BU parametrenin, BU splice sitesinde,
+            // HER ZAMAN bir string literaline (`PINNED_REFCOUNT`, ASLA
+            // sıfıra İNMEZ) çözüldüğü KANITLANDI (`exprAlwaysProducesPinnedString`)
+            // — `is_param` OLSA BİLE retain GEREKSİZDİR.
+            if (info.is_pinned_str) break :blk false;
             break :blk info.is_param;
         },
         .attribute => true,

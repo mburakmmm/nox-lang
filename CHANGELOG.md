@@ -14,6 +14,22 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.26.4]
+
+### Değişti
+- **GG.14**: string literali döndüren fonksiyonlardan (ör. `pick`) geçen
+  bir değeri (ör. `pass_through(s): return s`) inline-splice edilmiş bir
+  parametre üzerinden ARTIK gereksiz retain/release almıyor -- string
+  literalleri `PINNED_REFCOUNT` (asla sıfıra inmez) taşıdığından bu
+  aritmetik mantıksal olarak güvenli ama tamamen israftı. Bilinçli olarak
+  dar: yalnızca TÜM return'leri doğrudan string literali olan fonksiyonlar
+  tanınır -- `pass_through` gibi parametresini olduğu gibi döndüren
+  fonksiyonlar hiçbir zaman tanınmaz. Yeni bir pozitif+negatif fixture
+  (pinned/dinamik string'i aynı `forward()` üzerinden geçiren) + bir
+  IR-metni testi ile doğrulandı. Bu fazın kazancı gürültüden ayırt
+  edilebilir büyüklükte: stres tablosu 48.3ms->44.4ms, C karşılaştırması
+  4.36x->4.12x yavaş (bkz. nox-teknik-spesifikasyon.md §3.66 GG.14).
+
 ## [1.26.3]
 
 ### Değişti

@@ -202,7 +202,7 @@ pub fn emitStringLiteral(self: *Codegen, s: []const u8) CodegenError!Value {
     try self.string_data.append(self.allocator, .{ .symbol = sym, .escaped = escaped, .byte_len = s.len, .is_ascii = is_ascii });
     const addr = try self.newTemp();
     try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, sym, ARC_HEADER_SIZE + STR_HEADER_SIZE });
-    return .{ .text = addr, .qtype = .l, .heap = .str };
+    return .{ .text = addr, .qtype = .l, .heap = .str, .is_pinned = true };
 }
 
 /// `emitStringLiteral`nin STATİK-BAĞLAM kardeşi (Faz 1 decorator, bkz.

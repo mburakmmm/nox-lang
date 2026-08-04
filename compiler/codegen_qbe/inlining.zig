@@ -289,6 +289,76 @@ pub fn prepareInlineSites(self: *Codegen, stmts: []const ast.Stmt) CodegenError!
     try self.collectInlineSitesStmts(stmts);
 }
 
+/// GG.14 (bkz. nox-teknik-spesifikasyon.md §3.66): `expr`nin HER ZAMAN
+/// (çalışma zamanı değerinden BAĞIMSIZ) bir string LİTERALİNE (`PINNED_
+/// REFCOUNT`, ASLA sıfıra İNMEZ) çözüldüğünü KANITLAR — TAMAMEN dar VE
+/// bilinçli MUHAFAZAKÂR: `.string_lit` → `true`; `self.func_defs`den
+/// (ZATEN dolu, YENİ bir tüm-program geçişi GEREKMEZ) çözülen bir SERBEST
+/// fonksiyona çağrıysa VE gövdesindeki TÜM `return`lar DOĞRUDAN
+/// `.string_lit` (ya da — `depth` sınırı İÇİNDE — YİNE BÖYLE bir fonksiyona
+/// çağrı) İSE → `true`; AKSİ HALDE (BAŞTA `pass_through(s): return s` GİBİ
+/// bir PARAMETREYİ olduğu gibi döndüren fonksiyonlar — bunun HER ZAMAN
+/// pinned OLDUĞU ANCAK ÇAĞRI SİTESİNE bakılarak bilinebilir, bu FONKSİYONUN
+/// KENDİ gövdesinden DEĞİL, bu YÜZDEN BİLİNÇLİ olarak TANINMAZ) → `false`.
+/// `depth` özyinelemeyi (ör. birbirini ÇAĞIRAN sabit-döndüren fonksiyonlar
+/// zinciri) SINIRLAR — aşılırsa GÜVENLİ tarafta (`false`) KAL.
+pub fn exprAlwaysProducesPinnedString(self: *Codegen, expr: ast.Expr, depth: u32) bool {
+    if (depth > 2) return false;
+    return switch (expr) {
+        .string_lit => true,
+        .call => |c| blk: {
+            if (c.callee.* != .identifier) break :blk false;
+            const fd = self.func_defs.get(c.callee.identifier) orelse break :blk false;
+            break :blk funcAlwaysReturnsPinnedString(self, fd.body, depth + 1);
+        },
+        else => false,
+    };
+}
+
+/// `body`deki (özyinelemeli, `if`/`elif`/`else` İÇİNE de) HER `return_stmt`in
+/// DOĞRUDAN (ya da GG.14'ün `depth` sınırı İÇİNDE, başka bir sabit-döndüren
+/// fonksiyona çağrı İLE) bir string literaline çözüldüğünü doğrular.
+/// Dönüş: `null` — bir İHLAL bulundu (GÜVENSİZ, hemen `false`a düş);
+/// `true`/`false` — hiçbir İHLAL YOK, ama en az BİR gerçek `return_stmt`
+/// bulunup BULUNMADIĞI (boş/return'süz bir dal `false` — vacuous-truth
+/// RİSKİNİ engeller, ör. TÜM dalları BOŞ olan bir `if` YANLIŞLIKLA
+/// "her zaman pinned" SAYILMASIN).
+fn funcAlwaysReturnsPinnedString(self: *Codegen, body: []const ast.Stmt, depth: u32) bool {
+    return (bodyReturnsCheck(self, body, depth) orelse false) == true;
+}
+
+fn bodyReturnsCheck(self: *Codegen, body: []const ast.Stmt, depth: u32) ?bool {
+    var found_any = false;
+    for (body) |stmt| {
+        switch (stmt.kind) {
+            .return_stmt => |r| {
+                const e = r orelse return null;
+                if (!exprAlwaysProducesPinnedString(self, e, depth)) return null;
+                found_any = true;
+            },
+            .if_stmt => |f| {
+                const then_r = bodyReturnsCheck(self, f.then_body, depth) orelse return null;
+                if (then_r) found_any = true;
+                for (f.elif_clauses) |ec| {
+                    const r = bodyReturnsCheck(self, ec.body, depth) orelse return null;
+                    if (r) found_any = true;
+                }
+                if (f.else_body) |eb| {
+                    const r = bodyReturnsCheck(self, eb, depth) orelse return null;
+                    if (r) found_any = true;
+                }
+            },
+            // Döngü/`try`/`lowlevel`/iç içe `func_def` İÇEREN bir gövde —
+            // BİLİNÇLİ olarak TANINMAZ (bu fonksiyon zaten GG.14'ün
+            // KAPSAMI DIŞINDA — `while`/`for` İÇİNDEKİ bir `return` bu
+            // basit "TÜM return'ler İNCELENDİ" sayımını KARMAŞIKLAŞTIRır).
+            .while_stmt, .for_stmt, .try_stmt, .lowlevel_stmt, .func_def, .with_stmt => return null,
+            else => {},
+        }
+    }
+    return found_any;
+}
+
 /// Faz GG.2: `prepareInlineSites`in ÖNCEDEN KAYDETTİĞİ bir splice
 /// sitesini ÜRETİR — GERÇEK bir `call` YERİNE `site.callee.body`yi
 /// caller'ın KENDİ QBE akışına SPLICE eder. QBE-seviyesi SSA geçicileri
@@ -352,9 +422,17 @@ pub fn genInlinedCall(self: *Codegen, c: ast.Call, site: InlineSiteInfo) Codegen
     const owned_names = try self.allocator.alloc([]const u8, owned_count);
     const saved = try self.allocator.alloc(?VarInfo, owned_count);
     var idx: usize = 0;
-    for (site.params) |p| {
+    for (site.params, 0..) |p, i| {
         owned_names[idx] = p.orig_name;
         saved[idx] = self.vars.get(p.orig_name);
+        // GG.14 (bkz. nox-teknik-spesifikasyon.md §3.66): BU splice
+        // sitesinde `c.args[i]`nin HER ZAMAN bir string LİTERALİ
+        // ürettiği KANITLANABİLİYORSA (`exprAlwaysProducesPinnedString`),
+        // `returnNeedsRetain`/`retainIfAliasing`nin BU parametre İçin
+        // retain'i TAMAMEN atlaması İçin işaretlenir — `pass_through(s):
+        // return s`in `s`si HER ZAMAN `is_param`, bu YÜZDEN normalde
+        // KOŞULSUZ retain İSTERdi.
+        const is_pinned_str = p.info.heap == .str and exprAlwaysProducesPinnedString(self, c.args[i], 0);
         try self.vars.put(self.allocator, p.orig_name, .{
             .slot = p.slot,
             .qtype = p.info.qtype,
@@ -367,6 +445,7 @@ pub fn genInlinedCall(self: *Codegen, c: ast.Call, site: InlineSiteInfo) Codegen
             .func_sig = p.info.func_sig,
             .is_param = true,
             .arena = false,
+            .is_pinned_str = is_pinned_str,
         });
         idx += 1;
     }

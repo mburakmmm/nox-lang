@@ -11127,6 +11127,73 @@ gürültünün ÜZERİNDE görünür kalacak KADAR BÜYÜK). C-karşılaştırma
 nox 6.2ms/C 3.9ms (1.61x, ÖNCEKİ 1.97x'ten İYİLEŞTİ). **Risk: düşük-orta,
 GERÇEKLEŞTİ (yeni kod bulunmadı).**
 
+### GG.14 (TAMAMLANDI) — `string_passing`: PINNED string literallerinin retain/release trafiğini ele
+
+**Kök neden:** `pick`/`pass_through` GG.2 İLE ZATEN inline edilmiş. Kalan
+maliyet: `pass_through(s): return s`in inline-splice edilmiş gövdesindeki
+`return s` — parametreler `returnNeedsRetain`de HER ZAMAN aliased
+sayıldığından (`is_param`) BİR retain (`emitInlineRetain`) üretiyordu,
+ARDINDAN çağıranın `genInlinedCall`i BİR release (`releaseTemporaryArgs`)
+üretiyordu — İKİSİ birbirini dengeleyip "passthrough güvenliğini" sağlıyor
+ama HER İKİSİ de, argüman ZATEN bir string LİTERALİYSE (`PINNED_REFCOUNT`,
+ASLA sıfıra İNMEZ), tamamen GEREKSİZ ARİTMETİK.
+
+**Uygulama:**
+1. `inlining.zig`e YENİ, dar bir yardımcı `exprAlwaysProducesPinnedString`
+   — `.string_lit` → `true`; `self.func_defs`den çözülen bir SERBEST
+   fonksiyona çağrıysa VE gövdesindeki TÜM `return`lar DOĞRUDAN
+   `.string_lit` (ya da, `depth`≤2 İÇİNDE, YİNE böyle bir fonksiyona
+   çağrı) İSE → `true`. BİLİNÇLİ olarak DAR: `pass_through(s): return s`
+   gibi bir PARAMETREYİ olduğu gibi döndüren fonksiyonlar ASLA tanınmaz
+   (bunun pinned olup OLMADIĞI SADECE çağrı sitesine bakılarak bilinir,
+   fonksiyonun KENDİ gövdesinden DEĞİL).
+2. `VarInfo.is_pinned_str`/`Value.is_pinned` (YENİ, AYRI bayraklar —
+   `is_param`i AŞIRI YÜKLEMEDEN). `emitStringLiteral` DOĞRUDAN
+   `is_pinned=true` işaretler.
+3. `genInlinedCall`nin parametre-gölgeleme adımında, `exprAlwaysProducesPinnedString(
+   c.args[i])` `true`YSA shadowed `VarInfo`ye `is_pinned_str=true` yazılır.
+4. ÜÇ ARC karar noktası GÜNCELLENDİ: `returnNeedsRetain`nin `.identifier`
+   dalı `is_pinned_str` İSE `false` döner; `retainIfAliasing`
+   `v0.is_pinned`/İSİMLENDİRİLMİŞ `is_pinned_str`Yİ görüp retain'i atlar;
+   `releaseIfTemporary`/`releaseTemporaryArgs` `v.is_pinned` İSE release'İ
+   atlar.
+
+**Bulunup düzeltilen GERÇEK bir bellek sızıntısı (uygulama SIRASINDA,
+commit'TEN ÖNCE):** `releaseIfTemporary`/`releaseTemporaryArgs`e
+`!v.is_pinned` koşulu eklendiğinde YENİ bir test fixture'ında (`pinned_
+string_passthrough.nox`, HEM pinned HEM DİNAMİK/birleştirilmiş bir string'i
+`forward()` ÜZERİNDEN geçiren) n=100.000'de ~334MB'a KADAR BÜYÜYEN bir
+bellek kullanımı GÖZLEMLENDİ (n=2.000.000'da 2+ dakika/4.7GB'a KADAR).
+Git `stash` İLE İZOLE edilen bir dizi bisection sonrası, TEMİZ bir
+`rm -rf .zig-cache` + YENİDEN derleme SONRASI sorunun YENİDEN
+ÜRETİLEMEDİĞİ TESPİT edildi — kök neden koddan DEĞİL, testler ARASINDAKİ
+BOZUK/KISMİ bir `.zig-cache` durumundan (muhtemelen ART ARDA gelen HIZLI
+Edit/build döngüleri sırasında bir YARIŞ durumu) kaynaklanıyordu. Tam bir
+temiz derleme + `zig build test` (Debug + ReleaseFast) SONRASI n=2.000.000
+sabit ~1.6MB bellekte TAMAMLANDI — GERÇEK bir kod hatası DEĞİLDİ, ama
+BULGUNUN KENDİSİ (ve doğrulama disiplini) BURAYA, gelecekte AYNI şüpheli
+sonuçla KARŞILAŞILDIĞINDA "önce temiz derle" refleksini HATIRLATMAK İçin
+kaydedildi.
+
+**Doğrulama:** Taze `.ssa`: `compute()`nin ÖNCESİ 2 `retain` bloğu (İKİ
+`pass_through` çağrısı İçin) VARDI, SONRASI SADECE 1 (yalnızca dış
+çağrı — iç çağrının argümanı `pick(i)`, HER ZAMAN pinned OLARAK
+tanınıyor). YENİ pozitif+negatif fixture (`pinned_string_passthrough.nox`
+— `forward(literal_str(i))` pinned OLARAK TANINIR, `forward(make_dynamic(i))`
+BİLİNÇLİ olarak TANINMAZ, İKİSİ de `expectGolden` İLE 2.000.000 yinelemede
+doğru sayı VE sınırlı bellek İLE ÇALIŞIR) + BİR IR-metni testi (`compute()`
+İçindeki `retain_skip` alt-dize SAYISI TAM OLARAK BİR retain çağrısına
+karşılık gelir). `zig build test` (Debug + ReleaseFast) yeşil.
+
+**Ölçüm:** `benchmarks/compare/string_passing.nox` (n=15.000.000) —
+ÖNCESİ stres tablosu 48.3ms, C-karşılaştırma nox 37.8ms/C 8.7ms (4.36x).
+SONRASI stres tablosu 44.4ms (~%8 iyileşme), C-karşılaştırma nox 33.7ms/C
+8.2ms (4.12x, İYİLEŞTİ). En yüksek n'li benchmark'ta BEKLENDİĞİ gibi
+ÖLÇÜLEBİLİR VE gürültüden AYIRT EDİLEBİLİR bir kazanç. **Risk: orta,
+GERÇEKLEŞTİ** (3 ARC karar noktası güncellendi; uygulama SIRASINDA
+BULUNAN "sızıntı" bir test-metodolojisi ARTEFAKTIYDI, KOD hatası DEĞİLDİ —
+yukarıya bkz.).
+
 ### HH.1 (TAMAMLANDI) — Accept backlog artırımı; `ConnCtx` havuzu DENENDİ, GERİ ALINDI
 
 **Kaynak:** `nox.http` darboğaz analizinin (kullanıcı talebiyle yapılan
