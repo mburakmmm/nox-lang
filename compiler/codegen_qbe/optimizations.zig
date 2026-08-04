@@ -16,7 +16,6 @@ const Value = types.Value;
 const ModCacheEntry = types.ModCacheEntry;
 const LocalDecl = types.LocalDecl;
 const CodegenError = abi.CodegenError;
-const qbeTypeName = abi.qbeTypeName;
 
 /// Faz GG.5: bir isim BU gövde İÇİNDE YENİDEN atanıyorsa (doğrudan
 /// `assign`/`var_decl` gölgelemesi/`for` döngü değişkeni/`except ... as
@@ -675,7 +674,7 @@ pub fn enterStrLenCacheScope(self: *Codegen, body: []const ast.Stmt) CodegenErro
         // Bulundu (bkz. proje belleği "UTF-8 farkındalığı" görevi): ÖNCEDEN
         // `strlen` (bayt sayısı) çağırıyordu — `genStrIndex`in AYNI notuyla
         // TUTARLI OLMASI GEREKİYOR (`nox_str_char_count`, codepoint sayar).
-        try self.out.writer.print("    {s} =l call $nox_str_char_count(l {s})\n", .{ len_t, v.text });
+        try self.qbeCall(.{ .name = len_t, .ty = .l }, "$nox_str_char_count", &.{.{ .ty = .l, .text = v.text }});
         try self.str_len_cache.put(self.allocator, name, len_t);
         // Bulundu (bkz. `Codegen.str_ascii_cache`nin belge notu, GERÇEK
         // ölçüm: `str_index_loop_licm.nox` ~30 saniyeye çıktı) — AYNI
@@ -684,7 +683,7 @@ pub fn enterStrLenCacheScope(self: *Codegen, body: []const ast.Stmt) CodegenErro
         // buna göre O(1) HAM erişim İLE O(i) UTF-8 yürüyüşü ARASINDA
         // dallanır.
         const ascii_t = try self.newTemp();
-        try self.out.writer.print("    {s} =l call $nox_str_is_ascii(l {s})\n", .{ ascii_t, v.text });
+        try self.qbeCall(.{ .name = ascii_t, .ty = .l }, "$nox_str_is_ascii", &.{.{ .ty = .l, .text = v.text }});
         try self.str_ascii_cache.put(self.allocator, name, ascii_t);
         try added.append(self.allocator, name);
     }
@@ -835,25 +834,26 @@ pub fn adjustModSign(self: *Codegen, rem: Value, divisor: Value, common: QbeType
     const lt_op: []const u8 = if (common == .d) "cltd" else "csltl";
 
     const rem_nonzero = try self.newTemp();
-    try self.out.writer.print("    {s} =w cne{s} {s}, {s}\n", .{ rem_nonzero, eq_ne_suffix, rem.text, zero_lit });
+    const cne_mnemonic = try std.fmt.allocPrint(self.allocator, "cne{s}", .{eq_ne_suffix});
+    try self.qbeOp2(rem_nonzero, .w, cne_mnemonic, rem.text, zero_lit);
     const rem_neg = try self.newTemp();
-    try self.out.writer.print("    {s} =w {s} {s}, {s}\n", .{ rem_neg, lt_op, rem.text, zero_lit });
+    try self.qbeOp2(rem_neg, .w, lt_op, rem.text, zero_lit);
     const div_neg = try self.newTemp();
-    try self.out.writer.print("    {s} =w {s} {s}, {s}\n", .{ div_neg, lt_op, divisor.text, zero_lit });
+    try self.qbeOp2(div_neg, .w, lt_op, divisor.text, zero_lit);
     const sign_diff = try self.newTemp();
-    try self.out.writer.print("    {s} =w xor {s}, {s}\n", .{ sign_diff, rem_neg, div_neg });
+    try self.qbeOp2(sign_diff, .w, "xor", rem_neg, div_neg);
     const need_adjust = try self.newTemp();
-    try self.out.writer.print("    {s} =w and {s}, {s}\n", .{ need_adjust, rem_nonzero, sign_diff });
+    try self.qbeOp2(need_adjust, .w, "and", rem_nonzero, sign_diff);
 
     const mask = try self.newTemp();
     if (common == .d) {
-        try self.out.writer.print("    {s} =d uwtof {s}\n", .{ mask, need_adjust });
+        try self.qbeOp1(mask, .d, "uwtof", need_adjust);
     } else {
-        try self.out.writer.print("    {s} =l extuw {s}\n", .{ mask, need_adjust });
+        try self.qbeOp1(mask, .l, "extuw", need_adjust);
     }
     const amount = try self.newTemp();
-    try self.out.writer.print("    {s} ={s} mul {s}, {s}\n", .{ amount, qbeTypeName(common), mask, divisor.text });
+    try self.qbeOp2(amount, common, "mul", mask, divisor.text);
     const result = try self.newTemp();
-    try self.out.writer.print("    {s} ={s} add {s}, {s}\n", .{ result, qbeTypeName(common), rem.text, amount });
+    try self.qbeOp2(result, common, "add", rem.text, amount);
     return .{ .text = result, .qtype = common };
 }
