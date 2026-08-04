@@ -18,7 +18,6 @@ const VarInfo = types.VarInfo;
 const QbeType = types.QbeType;
 const LIST_HEADER_SIZE = types.LIST_HEADER_SIZE;
 const CodegenError = abi.CodegenError;
-const qbeTypeName = abi.qbeTypeName;
 const qbeSizeOf = abi.qbeSizeOf;
 const collectReassignedNames = optimizations.collectReassignedNames;
 
@@ -387,7 +386,7 @@ fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *
                 if (self.classes.get(c.callee.identifier)) |cinfo| {
                     any.* = true;
                     const slot = try self.newTemp();
-                    try self.out.writer.print("    {s} =l alloc8 {d}\n", .{ slot, cinfo.total_size });
+                    try self.qbeAlloc(slot, .eight, cinfo.total_size);
                     try self.stack_construct_sites.put(self.allocator, @intFromPtr(c.callee), .{ .slot = slot });
                 }
             }
@@ -403,7 +402,7 @@ fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *
                 const elem_size = qbeSizeOf(elem_qtype);
                 const payload_size = LIST_HEADER_SIZE + elem_size * elems.len;
                 const slot = try self.newTemp();
-                try self.out.writer.print("    {s} =l alloc8 {d}\n", .{ slot, payload_size });
+                try self.qbeAlloc(slot, .eight, payload_size);
                 try self.stack_construct_sites.put(self.allocator, @intFromPtr(elems.ptr), .{ .slot = slot });
             } else {
                 all_ok.* = false;
@@ -566,7 +565,7 @@ pub fn tryRegisterCrossCallStackSlots(self: *Codegen, outer_callee: ast.FuncDef,
         if (!paramNeverEscapes(outer_callee, outer_callee.params[i].name)) continue;
         const payload_size = LIST_HEADER_SIZE + qbeSizeOf(elem_qtype) * elems.len;
         const slot = try self.newTemp();
-        try self.out.writer.print("    {s} =l alloc8 {d}\n", .{ slot, payload_size });
+        try self.qbeAlloc(slot, .eight, payload_size);
         // `genInlinedCall`, BU SPESİFİK çağrı sitesini (`c.callee ==
         // arg_call.callee`) splice ederken `self.pending_stack_slot`i
         // BUNUNLA ayarlar — `genListLit` BUNU tüketir. AYNI `list_lit`
@@ -721,7 +720,7 @@ pub fn genInlinedCall(self: *Codegen, c: ast.Call, site: InlineSiteInfo) Codegen
         try self.checkNoLowlevelEscape(v0);
         arg_v0s[i] = v0;
         const v = try self.convert(v0, p.info.qtype);
-        try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(p.info.qtype), v.text, p.slot });
+        try self.qbeStore(p.info.qtype, v.text, p.slot);
         // Bkz. `Codegen.mod_cache`nin belge notu, madde 5: bu yazma da
         // BİR `.assign` AST düğümünü BAYPAS EDER (BİR ÖNCEKİ çağrıdan —
         // ör. bir döngü İÇİNDEYSE bir ÖNCEKİ yinelemeden — kalan bayat
@@ -824,8 +823,8 @@ pub fn genInlinedCall(self: *Codegen, c: ast.Call, site: InlineSiteInfo) Codegen
     try self.genStmts(site.callee.body, callee_ret_info.qtype);
     self.pending_stack_slot = saved_pending_stack_slot;
     try self.releaseNamedLocalsExcept(owned_names, null);
-    try self.out.writer.print("    jmp {s}\n", .{done_label});
-    try self.out.writer.print("{s}\n", .{done_label});
+    try self.qbeJmp(done_label);
+    try self.qbeLabel(done_label);
 
     // 4.5) Bkz. `Codegen.mod_cache`nin belge notu, madde 5 VE 1. adımdaki
     // `arg_alias_slot` notu: `self.vars` HENÜZ geri YÜKLENMEDEN (callee'nin
@@ -865,7 +864,7 @@ pub fn genInlinedCall(self: *Codegen, c: ast.Call, site: InlineSiteInfo) Codegen
     // 7) Sonucu üret.
     if (site.result) |r| {
         const t = try self.newTemp();
-        try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ t, qbeTypeName(r.info.qtype), qbeTypeName(r.info.qtype), r.slot });
+        try self.qbeLoad(t, r.info.qtype, r.info.qtype, r.slot);
         return .{
             .text = t,
             .qtype = r.info.qtype,
