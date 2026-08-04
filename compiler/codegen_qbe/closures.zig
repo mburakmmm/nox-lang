@@ -19,7 +19,6 @@ const CLOSURE_HEADER_SIZE = types.CLOSURE_HEADER_SIZE;
 const CLOSURE_RELEASE_FN_PTR_OFFSET = types.CLOSURE_RELEASE_FN_PTR_OFFSET;
 const RT_PARAM = types.RT_PARAM;
 const CodegenError = abi.CodegenError;
-const qbeTypeName = abi.qbeTypeName;
 const sanitizePathToSymbol = abi.sanitizePathToSymbol;
 const isHeapManaged = abi.isHeapManaged;
 
@@ -85,22 +84,27 @@ pub fn buildClosureValue(self: *Codegen, fd: ast.FuncDef) CodegenError![]const u
 
     const total_size = CLOSURE_HEADER_SIZE + 8 * captures.len;
     const block = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ block, RT_PARAM, total_size });
-    try self.out.writer.print("    storel ${s}, {s}\n", .{ mangled, block });
+    // `nox_rc_alloc`nin `total_size`si (bir `usize`) `qbeCall`nin metin-
+    // operand modeline UYMADIĞINDAN bu site BİLİNÇLİ olarak `qbeRaw`
+    // KULLANIR — bkz. `qbe_emit.zig`nin kaçış-kapısı notu.
+    try self.qbeRaw("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ block, RT_PARAM, total_size });
+    const mangled_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{mangled});
+    try self.qbeStoreL(mangled_sym, block);
     {
         const rel_addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ rel_addr, block, CLOSURE_RELEASE_FN_PTR_OFFSET });
-        try self.out.writer.print("    storel ${s}_release, {s}\n", .{ mangled, rel_addr });
+        try self.qbeOp2Imm(rel_addr, .l, "add", block, @intCast(CLOSURE_RELEASE_FN_PTR_OFFSET));
+        const mangled_release_sym = try std.fmt.allocPrint(self.allocator, "${s}_release", .{mangled});
+        try self.qbeStoreL(mangled_release_sym, rel_addr);
     }
     for (captures, 0..) |c, i| {
         const offset = CLOSURE_HEADER_SIZE + 8 * i;
         const addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, block, offset });
+        try self.qbeOp2Imm(addr, .l, "add", block, @intCast(offset));
         const src_slot = self.vars.get(c.name).?;
         const v = try self.newTemp();
-        try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ v, qbeTypeName(src_slot.qtype), qbeTypeName(src_slot.qtype), src_slot.slot });
+        try self.qbeLoad(v, src_slot.qtype, src_slot.qtype, src_slot.slot);
         if (isHeapManaged(c.info.heap)) try self.emitInlineRetain(v, c.info.heap);
-        try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(src_slot.qtype), v, addr });
+        try self.qbeStore(src_slot.qtype, v, addr);
     }
 
     try self.closure_funcs.append(self.allocator, .{ .mangled_name = mangled, .path = path, .fd = fd, .captures = captures });
@@ -111,7 +115,7 @@ pub fn genNestedFuncDef(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
     const block = try self.buildClosureValue(fd);
     const bound = self.vars.get(fd.name).?;
     try self.releaseSlotIfSet(bound);
-    try self.out.writer.print("    storel {s}, {s}\n", .{ block, bound.slot });
+    try self.qbeStoreL(block, bound.slot);
 }
 
 /// Go-tarzı `defer CALL` (bkz. `ast.DeferStmt`nin belge notu) — checker'ın
@@ -137,7 +141,7 @@ pub fn genDeferStmt(self: *Codegen, d: ast.DeferStmt, line: u32) CodegenError!vo
     };
     const closure_ptr = try self.buildClosureValue(synthetic_fd);
     const defer_list = self.current_defer_list orelse return error.Unsupported;
-    try self.out.writer.print("    call $nox_defer_stack_push(l {s}, l {s}, l {s})\n", .{ RT_PARAM, defer_list, closure_ptr });
+    try self.qbeCall(null, "$nox_defer_stack_push", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = defer_list }, .{ .ty = .l, .text = closure_ptr } });
 }
 
 /// `genFunction`/`genMethod`/`genClosureFunc`nin ÜÇÜNÜN de girişinde
@@ -150,7 +154,7 @@ pub fn genDeferStmt(self: *Codegen, d: ast.DeferStmt, line: u32) CodegenError!vo
 pub fn setupDeferListIfNeeded(self: *Codegen, body: []const ast.Stmt) CodegenError!void {
     if (fnBodyHasDefer(body)) {
         const dl = try self.newTemp();
-        try self.out.writer.print("    {s} =l call $nox_defer_stack_new(l {s})\n", .{ dl, RT_PARAM });
+        try self.qbeCall(.{ .name = dl, .ty = .l }, "$nox_defer_stack_new", &.{.{ .ty = .l, .text = RT_PARAM }});
         self.current_defer_list = dl;
     } else {
         self.current_defer_list = null;
@@ -163,7 +167,7 @@ pub fn setupDeferListIfNeeded(self: *Codegen, body: []const ast.Stmt) CodegenErr
 /// `defer` SONRA çalışır (doğal İÇTEN-DIŞA sıralama).
 pub fn drainDeferIfSet(self: *Codegen) CodegenError!void {
     if (self.current_defer_list) |dl| {
-        try self.out.writer.print("    call $nox_defer_stack_run_all(l {s}, l {s})\n", .{ RT_PARAM, dl });
+        try self.qbeCall(null, "$nox_defer_stack_run_all", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = dl } });
     }
 }
 
@@ -240,17 +244,16 @@ pub fn genClosureFunc(self: *Codegen, spec: ClosureFuncSpec) CodegenError!void {
     }
     try self.collectLocals(&locals, spec.fd.body, false);
 
-    if (ret_info.qtype == .none) {
-        try self.out.writer.print("export function ${s}(l {s}, l %env", .{ spec.mangled_name, RT_PARAM });
-    } else {
-        try self.out.writer.print("export function {s} ${s}(l {s}, l %env", .{ qbeTypeName(ret_info.qtype), spec.mangled_name, RT_PARAM });
-    }
+    const mangled_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{spec.mangled_name});
+    try self.qbeFuncHeaderStart(if (ret_info.qtype == .none) null else ret_info.qtype, mangled_sym);
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%env", false);
     for (spec.fd.params) |p| {
-        try self.out.writer.writeAll(", ");
         const info = try self.resolveType(p.type_expr);
-        try self.out.writer.print("{s} %p_{s}", .{ qbeTypeName(info.qtype), p.name });
+        const param_text = try std.fmt.allocPrint(self.allocator, "%p_{s}", .{p.name});
+        try self.qbeFuncParam(info.qtype, param_text, false);
     }
-    try self.out.writer.writeAll(") {\n@start\n");
+    try self.qbeFuncHeaderEnd();
 
     for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
     try self.prepareInlineSites(spec.fd.body);
@@ -258,14 +261,15 @@ pub fn genClosureFunc(self: *Codegen, spec: ClosureFuncSpec) CodegenError!void {
         const offset = CLOSURE_HEADER_SIZE + 8 * i;
         const info = self.vars.get(c.name).?;
         const addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add %env, {d}\n", .{ addr, offset });
+        try self.qbeOp2Imm(addr, .l, "add", "%env", @intCast(offset));
         const v = try self.newTemp();
-        try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ v, qbeTypeName(info.qtype), qbeTypeName(info.qtype), addr });
-        try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(info.qtype), v, info.slot });
+        try self.qbeLoad(v, info.qtype, info.qtype, addr);
+        try self.qbeStore(info.qtype, v, info.slot);
     }
     for (spec.fd.params) |p| {
         const info = self.vars.get(p.name).?;
-        try self.out.writer.print("    store{s} %p_{s}, {s}\n", .{ qbeTypeName(info.qtype), p.name, info.slot });
+        const param_text = try std.fmt.allocPrint(self.allocator, "%p_{s}", .{p.name});
+        try self.qbeStore(info.qtype, param_text, info.slot);
     }
     try self.setupDeferListIfNeeded(spec.fd.body);
 
@@ -274,9 +278,9 @@ pub fn genClosureFunc(self: *Codegen, spec: ClosureFuncSpec) CodegenError!void {
     try self.releaseAllLocals();
 
     const end_label = try self.newLabel("fn_end");
-    try self.out.writer.print("{s}\n", .{end_label});
+    try self.qbeLabel(end_label);
     try self.emitDefaultReturn(ret_info.qtype);
-    try self.out.writer.writeAll("}\n");
+    try self.qbeFuncEnd();
 
     try self.genClosureRelease(spec.mangled_name, spec.captures);
 }
@@ -303,33 +307,40 @@ pub fn genClosureRelease(self: *Codegen, mangled_name: []const u8, captures: []c
     self.mod_cache.deinit(self.allocator);
     self.mod_cache = .empty;
 
-    try self.out.writer.print("export function ${s}_release(l {s}, l %p) {{\n@start\n", .{ mangled_name, RT_PARAM });
+    const mangled_release_sym = try std.fmt.allocPrint(self.allocator, "${s}_release", .{mangled_name});
+    try self.qbeFuncHeaderStart(null, mangled_release_sym);
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%p", false);
+    try self.qbeFuncHeaderEnd();
     const should_free = try self.emitInlinePredecrement("%p", .closure);
     const free_label = try self.newLabel("release_free");
     const done_label = try self.newLabel("release_done");
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ should_free, free_label, done_label });
-    try self.out.writer.print("{s}\n", .{free_label});
+    try self.qbeJnz(should_free, free_label, done_label);
+    try self.qbeLabel(free_label);
     for (captures, 0..) |c, i| {
         const offset = CLOSURE_HEADER_SIZE + 8 * i;
         if (isHeapManaged(c.info.heap)) {
             const addr = try self.newTemp();
-            try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, offset });
+            try self.qbeOp2Imm(addr, .l, "add", "%p", @intCast(offset));
             const fv = try self.newTemp();
-            try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
+            try self.qbeLoadL(fv, addr);
             try self.releaseValueIfSet(fv, c.info.heap, c.info.elem_qtype, c.info.class_name, c.info.elem_heap_info, c.info.dict_info);
         } else if (c.info.heap == .task or c.info.heap == .channel or c.info.heap == .thread_handle or c.info.heap == .thread_channel or c.info.heap == .task_local) {
             const addr = try self.newTemp();
-            try self.out.writer.print("    {s} =l add %p, {d}\n", .{ addr, offset });
+            try self.qbeOp2Imm(addr, .l, "add", "%p", @intCast(offset));
             const fv = try self.newTemp();
-            try self.out.writer.print("    {s} =l loadl {s}\n", .{ fv, addr });
+            try self.qbeLoadL(fv, addr);
             try self.destroyNonArcValue(fv, c.info.heap);
         }
     }
     const total_size = CLOSURE_HEADER_SIZE + 8 * captures.len;
-    try self.out.writer.print("    call $nox_rc_free_payload(l {s}, l %p, l {d})\n", .{ RT_PARAM, total_size });
-    try self.out.writer.print("    jmp {s}\n", .{done_label});
-    try self.out.writer.print("{s}\n", .{done_label});
-    try self.out.writer.writeAll("    ret\n}\n");
+    // Bkz. `buildClosureValue`nin AYNI `qbeRaw` notu — `total_size` bir
+    // `usize`, `qbeCall`nin metin-operand modeline UYMUYOR.
+    try self.qbeRaw("    call $nox_rc_free_payload(l {s}, l %p, l {d})\n", .{ RT_PARAM, total_size });
+    try self.qbeJmp(done_label);
+    try self.qbeLabel(done_label);
+    try self.qbeRet(null);
+    try self.qbeFuncEnd();
 }
 
 /// Faz U.4.5 (bkz. `checker.zig`nin `checkExpr`'in `.identifier` dalı VE
@@ -366,26 +377,24 @@ pub fn genFunctionValueTrampoline(self: *Codegen, name: []const u8) CodegenError
     self.mod_cache.deinit(self.allocator);
     self.mod_cache = .empty;
 
-    if (sig.ret.qtype == .none) {
-        try self.out.writer.print("export function ${s}(l {s}, l %env", .{ trampoline_name, RT_PARAM });
-    } else {
-        try self.out.writer.print("export function {s} ${s}(l {s}, l %env", .{ qbeTypeName(sig.ret.qtype), trampoline_name, RT_PARAM });
-    }
+    const trampoline_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{trampoline_name});
+    try self.qbeFuncHeaderStart(if (sig.ret.qtype == .none) null else sig.ret.qtype, trampoline_sym);
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%env", false);
     for (sig.params, 0..) |p, i| {
-        try self.out.writer.print(", {s} %p{d}", .{ qbeTypeName(p.qtype), i });
+        const param_text = try std.fmt.allocPrint(self.allocator, "%p{d}", .{i});
+        try self.qbeFuncParam(p.qtype, param_text, false);
     }
-    try self.out.writer.writeAll(") {\n@start\n");
+    try self.qbeFuncHeaderEnd();
 
     const ret_temp: ?[]const u8 = if (sig.ret.qtype == .none) null else try self.newTemp();
-    if (ret_temp) |rv| {
-        try self.out.writer.print("    {s} ={s} call ${s}(l {s}", .{ rv, qbeTypeName(sig.ret.qtype), name, RT_PARAM });
-    } else {
-        try self.out.writer.print("    call ${s}(l {s}", .{ name, RT_PARAM });
-    }
+    const inner_args = try self.allocator.alloc(codegen.QbeArg, 1 + sig.params.len);
+    inner_args[0] = .{ .ty = .l, .text = RT_PARAM };
     for (sig.params, 0..) |p, i| {
-        try self.out.writer.print(", {s} %p{d}", .{ qbeTypeName(p.qtype), i });
+        inner_args[1 + i] = .{ .ty = p.qtype, .text = try std.fmt.allocPrint(self.allocator, "%p{d}", .{i}) };
     }
-    try self.out.writer.writeAll(")\n");
+    const name_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{name});
+    try self.qbeCall(if (ret_temp) |rv| .{ .name = rv, .ty = sig.ret.qtype } else null, name_sym, inner_args);
     // Faz U.4.5: burada `emitExceptionCheck` GEREKMEZ — `name`nin ATTIĞI
     // bir istisna (bu çalışma zamanının paylaşılan/genel istisna
     // BAYRAĞI mekanizmasıyla) BURADA temizlenmeden geçer, DIŞ dolaylı-
@@ -393,11 +402,8 @@ pub fn genFunctionValueTrampoline(self: *Codegen, name: []const u8) CodegenError
     // SONRASI kontrol eder — hedef derleme-zamanında BİLİNMEDİĞİNDEN
     // eleme YAPILAMAZ) BUNU zaten YAKALAR; sarmalayıcının ARADA hiçbir
     // temizlik/ARC işi YOK, erken dönmeye GEREK yok.
-    if (ret_temp) |rv| {
-        try self.out.writer.print("    ret {s}\n}}\n", .{rv});
-    } else {
-        try self.out.writer.writeAll("    ret\n}\n");
-    }
+    try self.qbeRet(ret_temp);
+    try self.qbeFuncEnd();
 
     try self.genClosureRelease(trampoline_name, &.{});
 }
