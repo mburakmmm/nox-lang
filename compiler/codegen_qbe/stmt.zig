@@ -21,7 +21,6 @@ const TypeInfo = types.TypeInfo;
 const RT_PARAM = types.RT_PARAM;
 const LIST_HEADER_SIZE = types.LIST_HEADER_SIZE;
 const CodegenError = abi.CodegenError;
-const qbeTypeName = abi.qbeTypeName;
 const qbeSizeOf = abi.qbeSizeOf;
 const isHeapManaged = abi.isHeapManaged;
 const isTemporaryExpr = abi.isTemporaryExpr;
@@ -36,7 +35,7 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
         // (iç içe olanlar DAHİL) otomatik kapsar (T.1'in `checkStmt`
         // deseniyle AYNI).
         if (self.debug_info and stmt.line > 0) {
-            try self.out.writer.print("    dbgloc {d}\n", .{stmt.line});
+            try self.qbeRaw("    dbgloc {d}\n", .{stmt.line});
         }
         // Faz OO.3: bkz. `current_raise_line`in belge notu — `dbgloc`den
         // BAĞIMSIZ, HER ZAMAN AÇIK.
@@ -63,14 +62,14 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
                         const except_name: ?[]const u8 = if (e == .identifier) e.identifier else null;
                         try self.releaseNamedLocalsExcept(t.owned_names, except_name);
                         if (t.result_slot) |rs| {
-                            try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(ret_qtype), v.text, rs });
+                            try self.qbeStore(ret_qtype, v.text, rs);
                         }
                     } else {
                         try self.releaseNamedLocalsExcept(t.owned_names, null);
                     }
-                    try self.out.writer.print("    jmp {s}\n", .{t.done_label});
+                    try self.qbeJmp(t.done_label);
                     const label = try self.newLabel("after_inline_return");
-                    try self.out.writer.print("{s}\n", .{label});
+                    try self.qbeLabel(label);
                     return;
                 }
                 if (r) |e| {
@@ -99,16 +98,16 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
                     try self.drainDeferIfSet();
                     const except_name: ?[]const u8 = if (e == .identifier) e.identifier else null;
                     try self.releaseAllLocalsExcept(except_name);
-                    try self.out.writer.print("    ret {s}\n", .{v.text});
+                    try self.qbeRet(v.text);
                 } else {
                     try self.drainFinally(ret_qtype);
                     try self.drainArenas();
                     try self.drainDeferIfSet();
                     try self.releaseAllLocalsExcept(null);
-                    try self.out.writer.writeAll("    ret\n");
+                    try self.qbeRet(null);
                 }
                 const label = try self.newLabel("after_return");
-                try self.out.writer.print("{s}\n", .{label});
+                try self.qbeLabel(label);
             },
             .var_decl => |v| {
                 const info = self.vars.get(v.name).?;
@@ -135,7 +134,7 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
                 // bu YÜZDEN `releaseSlotIfSet` burada ÇAĞRILMASA da
                 // ZARARSIZDIR — ama tutarlılık İçin AÇIKÇA atlanır.
                 if (isHeapManaged(info.heap) and !info.arena and !info.borrowed_field) try self.releaseSlotIfSet(info);
-                try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(info.qtype), val.text, info.slot });
+                try self.qbeStore(info.qtype, val.text, info.slot);
                 // Bkz. `Codegen.mod_cache`nin belge notu, madde 2: bu
                 // slota YENİ bir değer YAZILDI — o slot İçin ÖNCEKİ TÜM
                 // `%d`-önbellek girdileri BAYATLADI.
@@ -194,7 +193,7 @@ pub fn genLowLevel(self: *Codegen, ll: ast.LowLevelStmt, ret_qtype: QbeType) Cod
         try self.arena_stack.append(self.allocator, .{ .handle = "0", .elided = true });
     } else {
         const arena_temp = try self.newTemp();
-        try self.out.writer.print("    {s} =l call $nox_arena_create(l {s})\n", .{ arena_temp, RT_PARAM });
+        try self.qbeCall(.{ .name = arena_temp, .ty = .l }, "$nox_arena_create", &.{.{ .ty = .l, .text = RT_PARAM }});
         try self.arena_stack.append(self.allocator, .{ .handle = arena_temp, .elided = false });
     }
     self.in_lowlevel_depth += 1;
@@ -202,7 +201,7 @@ pub fn genLowLevel(self: *Codegen, ll: ast.LowLevelStmt, ret_qtype: QbeType) Cod
     self.in_lowlevel_depth -= 1;
     const entry = self.arena_stack.pop().?;
     if (!entry.elided) {
-        try self.out.writer.print("    call $nox_arena_destroy(l {s}, l {s})\n", .{ RT_PARAM, entry.handle });
+        try self.qbeCall(null, "$nox_arena_destroy", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = entry.handle } });
     }
 }
 
@@ -229,7 +228,7 @@ pub fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {
                     // YENİ değer BURAYA yazılmadan ÖNCE yok eder.
                     try self.destroyNonArcSlotIfSet(info);
                 }
-                try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(info.qtype), val.text, info.slot });
+                try self.qbeStore(info.qtype, val.text, info.slot);
                 return;
             }
             // Bulundu (bkz. proje belleği "modül-seviyesi global durum"
@@ -242,16 +241,16 @@ pub fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {
             const retained = try self.retainIfAliasing(a.value, v0);
             const val = try self.convert(retained, g.info.qtype);
             const block = try self.newTemp();
-            try self.out.writer.print("    {s} =l call $nox_globals_get(l {s})\n", .{ block, RT_PARAM });
+            try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_globals_get", &.{.{ .ty = .l, .text = RT_PARAM }});
             const addr = try self.newTemp();
-            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, block, g.offset });
+            try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
             if (isHeapManaged(g.info.heap)) {
                 const old_ptr = try self.newTemp();
-                try self.out.writer.print("    {s} =l loadl {s}\n", .{ old_ptr, addr });
-                try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(g.info.qtype), val.text, addr });
+                try self.qbeLoadL(old_ptr, addr);
+                try self.qbeStore(g.info.qtype, val.text, addr);
                 try self.releaseValueIfSet(old_ptr, g.info.heap, g.info.elem_qtype, g.info.class_name, g.info.elem_heap_info, g.info.dict_info);
             } else {
-                try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(g.info.qtype), val.text, addr });
+                try self.qbeStore(g.info.qtype, val.text, addr);
             }
         },
         .attribute => |attr| {
@@ -277,26 +276,26 @@ pub fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {
                 const retained = try self.retainIfAliasing(a.value, v0);
                 const val = try self.convert(retained, f.info.qtype);
                 const addr = try self.newTemp();
-                try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, obj.text, f.offset });
+                try self.qbeOp2Imm(addr, .l, "add", obj.text, @intCast(f.offset));
                 if (isHeapManaged(f.info.heap)) {
                     // Üzerine yazılacak ESKİ değeri önce oku (adres henüz
                     // üzerine yazılmadı), yeni değeri sakla, SONRA eskiyi
                     // serbest bırak — aksi halde eski nesne sonsuza dek
                     // sızardı (kendi refcount'u hiç azalmazdı).
                     const old_ptr = try self.newTemp();
-                    try self.out.writer.print("    {s} =l loadl {s}\n", .{ old_ptr, addr });
-                    try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(f.info.qtype), val.text, addr });
+                    try self.qbeLoadL(old_ptr, addr);
+                    try self.qbeStore(f.info.qtype, val.text, addr);
                     try self.releaseValueIfSet(old_ptr, f.info.heap, f.info.elem_qtype, f.info.class_name, f.info.elem_heap_info, f.info.dict_info);
                 } else if (f.info.heap == .task or f.info.heap == .channel or f.info.heap == .thread_handle or f.info.heap == .thread_channel or f.info.heap == .task_local) {
                     // Faz S.1: `isHeapManaged`in DIŞINDaki DÖRT tür İÇİN de
                     // (yukarıdaki dalla AYNI "önce oku, SONRA üzerine yaz,
                     // SONRA eskiyi yok et" sırası) — bkz. `destroyNonArcValue`.
                     const old_ptr = try self.newTemp();
-                    try self.out.writer.print("    {s} =l loadl {s}\n", .{ old_ptr, addr });
-                    try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(f.info.qtype), val.text, addr });
+                    try self.qbeLoadL(old_ptr, addr);
+                    try self.qbeStore(f.info.qtype, val.text, addr);
                     try self.destroyNonArcValue(old_ptr, f.info.heap);
                 } else {
-                    try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(f.info.qtype), val.text, addr });
+                    try self.qbeStore(f.info.qtype, val.text, addr);
                 }
                 try self.releaseIfTemporary(attr.obj.*, obj);
                 return;
@@ -341,46 +340,46 @@ pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     const index_v = try self.genExpr(idx.index.*);
 
     const len_t = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ len_t, obj.text });
+    try self.qbeLoadL(len_t, obj.text);
     const neg_t = try self.newTemp();
-    try self.out.writer.print("    {s} =w csltl {s}, 0\n", .{ neg_t, index_v.text });
+    try self.qbeOp2Imm(neg_t, .w, "csltl", index_v.text, 0);
     const oob_hi_t = try self.newTemp();
-    try self.out.writer.print("    {s} =w csgel {s}, {s}\n", .{ oob_hi_t, index_v.text, len_t });
+    try self.qbeOp2(oob_hi_t, .w, "csgel", index_v.text, len_t);
     const oob_t = try self.newTemp();
-    try self.out.writer.print("    {s} =w or {s}, {s}\n", .{ oob_t, neg_t, oob_hi_t });
+    try self.qbeOp2(oob_t, .w, "or", neg_t, oob_hi_t);
     const err_label = try self.newLabel("list_assign_err");
     const ok_label = try self.newLabel("list_assign_ok");
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ oob_t, err_label, ok_label });
-    try self.out.writer.print("{s}\n", .{err_label});
+    try self.qbeJnz(oob_t, err_label, ok_label);
+    try self.qbeLabel(err_label);
 
     const msg_value = try self.emitStringLiteral("liste indeksi sinirlarin disinda");
     const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
     const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
-    try self.out.writer.print("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ie_obj.text, self.current_raise_line });
+    try self.qbeRaw("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ie_obj.text, self.current_raise_line });
     // Bkz. `genIndex`in AYNI belge notu — Faz NN kök-neden düzeltmesinden
     // (bkz. `ownership.zig`nin `releaseNamedLocalsExcept`i) SONRA GÜVENLE
     // yeniden eklendi, döngü testiyle DOĞRULANDI.
     try self.releaseIfTemporary(idx.obj.*, obj);
     try self.emitExceptionCheck();
-    try self.out.writer.print("    jmp {s}\n", .{ok_label});
+    try self.qbeJmp(ok_label);
 
-    try self.out.writer.print("{s}\n", .{ok_label});
+    try self.qbeLabel(ok_label);
     const value_v0 = try self.genExpr(value_expr);
     try self.checkNoLowlevelEscape(value_v0);
     const retained = try self.retainIfAliasing(value_expr, value_v0);
     const val = try self.convert(retained, obj.elem_qtype);
 
     const byte_off = try self.newTemp();
-    try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ byte_off, index_v.text, qbeSizeOf(obj.elem_qtype) });
+    try self.qbeOp2Imm(byte_off, .l, "mul", index_v.text, @intCast(qbeSizeOf(obj.elem_qtype)));
     const off16 = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ off16, byte_off, LIST_HEADER_SIZE });
+    try self.qbeOp2Imm(off16, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
     const addr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ addr, obj.text, off16 });
+    try self.qbeOp2(addr, .l, "add", obj.text, off16);
 
     if (obj.elem_heap_info != null or obj.elem_is_str) {
         const old_ptr = try self.newTemp();
-        try self.out.writer.print("    {s} =l loadl {s}\n", .{ old_ptr, addr });
-        try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(obj.elem_qtype), val.text, addr });
+        try self.qbeLoadL(old_ptr, addr);
+        try self.qbeStore(obj.elem_qtype, val.text, addr);
         const elem_heap: HeapKind = if (obj.elem_heap_info) |ehi| ehi.heap else .str;
         const elem_class_name: ?[]const u8 = if (obj.elem_heap_info) |ehi| ehi.class_name else null;
         const elem_inner_qtype: QbeType = if (obj.elem_heap_info) |ehi| ehi.elem_qtype else .none;
@@ -395,7 +394,7 @@ pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
         const elem_dict_info: ?*const DictInfo = if (obj.elem_heap_info) |ehi| ehi.dict_info else null;
         try self.releaseValueIfSet(old_ptr, elem_heap, elem_inner_qtype, elem_class_name, elem_nested, elem_dict_info);
     } else {
-        try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(obj.elem_qtype), val.text, addr });
+        try self.qbeStore(obj.elem_qtype, val.text, addr);
     }
     try self.releaseIfTemporary(idx.obj.*, obj);
 }
@@ -428,7 +427,15 @@ pub fn genDictAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
     const value_is_str_lit: []const u8 = if (dinfo.value_is_str) "1" else "0";
     const value_is_class_lit: []const u8 = if (dinfo.value_is_class) "1" else "0";
-    try self.out.writer.print("    call $nox_dict_set(l {s}, l {s}, w {s}, w {s}, w {s}, l {s}, l {s})\n", .{ RT_PARAM, obj.text, key_is_str_lit, value_is_str_lit, value_is_class_lit, key_payload.text, value_payload.text });
+    try self.qbeCall(null, "$nox_dict_set", &.{
+        .{ .ty = .l, .text = RT_PARAM },
+        .{ .ty = .l, .text = obj.text },
+        .{ .ty = .w, .text = key_is_str_lit },
+        .{ .ty = .w, .text = value_is_str_lit },
+        .{ .ty = .w, .text = value_is_class_lit },
+        .{ .ty = .l, .text = key_payload.text },
+        .{ .ty = .l, .text = value_payload.text },
+    });
     try self.releaseIfTemporary(idx.obj.*, obj);
 }
 
@@ -460,16 +467,16 @@ pub fn genDictGet(self: *Codegen, obj_expr: ast.Expr, obj: Value, key_expr: ast.
     const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
 
     const contains_t = try self.newTemp();
-    try self.out.writer.print("    {s} =w call $nox_dict_contains(l {s}, w {s}, l {s})\n", .{ contains_t, obj.text, key_is_str_lit, key_payload.text });
+    try self.qbeCall(.{ .name = contains_t, .ty = .w }, "$nox_dict_contains", &.{ .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
     const err_label = try self.newLabel("dict_get_err");
     const ok_label = try self.newLabel("dict_get_ok");
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ contains_t, ok_label, err_label });
-    try self.out.writer.print("{s}\n", .{err_label});
+    try self.qbeJnz(contains_t, ok_label, err_label);
+    try self.qbeLabel(err_label);
 
     const msg_value = try self.emitStringLiteral("anahtar bulunamadi");
     const ke_cinfo = self.classes.get("KeyError") orelse return error.Unsupported;
     const ke_obj = try self.genConstructFromValues("KeyError", ke_cinfo, &.{msg_value}, null);
-    try self.out.writer.print("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ke_obj.text, self.current_raise_line });
+    try self.qbeRaw("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ke_obj.text, self.current_raise_line });
     // Faz NN: `genIndex`/`genListAssign`in AYNI belge notu — kök-neden
     // düzeltmesinden (bkz. `ownership.zig`) SONRA GÜVENLE eklendi. `obj`
     // (taban SÖZLÜK) İçin de aynı serbest bırakma GEREKİYORDU — bu dal
@@ -481,12 +488,12 @@ pub fn genDictGet(self: *Codegen, obj_expr: ast.Expr, obj: Value, key_expr: ast.
     try self.releaseIfTemporary(key_expr, key_v0);
     try self.releaseIfTemporary(obj_expr, obj);
     try self.emitExceptionCheck();
-    try self.out.writer.print("    jmp {s}\n", .{ok_label});
+    try self.qbeJmp(ok_label);
 
-    try self.out.writer.print("{s}\n", .{ok_label});
+    try self.qbeLabel(ok_label);
 
     const payload_t = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_dict_get(l {s}, l {s}, w {s}, l {s})\n", .{ payload_t, RT_PARAM, obj.text, key_is_str_lit, key_payload.text });
+    try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_dict_get", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
     const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, dinfo.value_qtype);
     try self.releaseIfTemporary(key_expr, key_v0);
     // `nox_dict_get` ÖDÜNÇ bir referans döner (bkz. `runtime/collections/
@@ -566,8 +573,8 @@ pub fn genIf(self: *Codegen, f: ast.IfStmt, ret_qtype: QbeType) CodegenError!voi
         try self.newLabel("if_else")
     else
         end_label;
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cond0.text, then_label, next_label });
-    try self.out.writer.print("{s}\n", .{then_label});
+    try self.qbeJnz(cond0.text, then_label, next_label);
+    try self.qbeLabel(then_label);
     {
         // Bkz. `Codegen.mod_cache`nin belge notu, madde 3: bu dal
         // ÇALIŞMAMIŞ OLABİLİR (KARDEŞ bir dal alınmış olabilir) — dal
@@ -588,10 +595,10 @@ pub fn genIf(self: *Codegen, f: ast.IfStmt, ret_qtype: QbeType) CodegenError!voi
         }
         self.restoreModCache(mc_snap);
     }
-    try self.out.writer.print("    jmp {s}\n", .{end_label});
+    try self.qbeJmp(end_label);
 
     for (f.elif_clauses, 0..) |ec, i| {
-        try self.out.writer.print("{s}\n", .{next_label});
+        try self.qbeLabel(next_label);
         // `ec.cond` if/elif zincirinin BU NOKTAYA ULAŞAN HER yolunda
         // KOŞULSUZ değerlendirilir — bu YÜZDEN önbelleğe katkısı
         // ANLIK-GÖRÜNTÜLENMEZ (bkz. `Codegen.mod_cache`nin belge notu,
@@ -605,19 +612,19 @@ pub fn genIf(self: *Codegen, f: ast.IfStmt, ret_qtype: QbeType) CodegenError!voi
             try self.newLabel("if_else")
         else
             end_label;
-        try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cond_i.text, body_label, following });
-        try self.out.writer.print("{s}\n", .{body_label});
+        try self.qbeJnz(cond_i.text, body_label, following);
+        try self.qbeLabel(body_label);
         {
             const mc_snap = try self.snapshotModCache();
             try self.genStmts(ec.body, ret_qtype);
             self.restoreModCache(mc_snap);
         }
-        try self.out.writer.print("    jmp {s}\n", .{end_label});
+        try self.qbeJmp(end_label);
         next_label = following;
     }
 
     if (f.else_body) |eb| {
-        try self.out.writer.print("{s}\n", .{next_label});
+        try self.qbeLabel(next_label);
         const mc_snap = try self.snapshotModCache();
         if (self.detectNarrowedBoxedName(f.cond)) |n| {
             const was_present = self.narrowed_unbox.contains(n.name);
@@ -632,10 +639,10 @@ pub fn genIf(self: *Codegen, f: ast.IfStmt, ret_qtype: QbeType) CodegenError!voi
             try self.genStmts(eb, ret_qtype);
         }
         self.restoreModCache(mc_snap);
-        try self.out.writer.print("    jmp {s}\n", .{end_label});
+        try self.qbeJmp(end_label);
     }
 
-    try self.out.writer.print("{s}\n", .{end_label});
+    try self.qbeLabel(end_label);
 }
 
 /// Faz GG.5: iç içe geçmiş İFADE ağacının HER YERİNDE (`if`/`while`/`for`/
@@ -728,11 +735,11 @@ pub fn genWhile(self: *Codegen, w: ast.WhileStmt, ret_qtype: QbeType) CodegenErr
 
     const str_len_scope = try self.enterStrLenCacheScope(w.body);
     const mc_scope = try self.enterModCacheLoopScope(w.body);
-    try self.out.writer.print("    jmp {s}\n", .{cond_label});
-    try self.out.writer.print("{s}\n", .{cond_label});
+    try self.qbeJmp(cond_label);
+    try self.qbeLabel(cond_label);
     const cond_v = try self.genExpr(w.cond);
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cond_v.text, body_label, end_label });
-    try self.out.writer.print("{s}\n", .{body_label});
+    try self.qbeJnz(cond_v.text, body_label, end_label);
+    try self.qbeLabel(body_label);
     if (self.detectNarrowedBoxedName(w.cond)) |n| {
         if (n.narrows_then) {
             const was_present = self.narrowed_unbox.contains(n.name);
@@ -745,8 +752,8 @@ pub fn genWhile(self: *Codegen, w: ast.WhileStmt, ret_qtype: QbeType) CodegenErr
     } else {
         try self.genStmts(w.body, ret_qtype);
     }
-    try self.out.writer.print("    jmp {s}\n", .{cond_label});
-    try self.out.writer.print("{s}\n", .{end_label});
+    try self.qbeJmp(cond_label);
+    try self.qbeLabel(end_label);
     self.restoreModCache(mc_scope);
     self.exitStrLenCacheScope(str_len_scope);
 }
@@ -774,7 +781,7 @@ pub fn genFor(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenError!v
 pub fn genForRange(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenError!void {
     const limit = try self.genExpr(f.iterable.call.args[0]);
     const var_info = self.vars.get(f.var_name).?;
-    try self.out.writer.print("    storel 0, {s}\n", .{var_info.slot});
+    try self.qbeStoreImmL(0, var_info.slot);
 
     const cond_label = try self.newLabel("for_cond");
     const body_label = try self.newLabel("for_body");
@@ -794,22 +801,22 @@ pub fn genForRange(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenEr
     const mc_scope = try self.enterModCacheLoopScope(f.body);
     const saved_bounds_ctx = self.bounds_elide_ctx;
     self.bounds_elide_ctx = try self.detectBoundsElideCtx(f);
-    try self.out.writer.print("    jmp {s}\n", .{cond_label});
-    try self.out.writer.print("{s}\n", .{cond_label});
+    try self.qbeJmp(cond_label);
+    try self.qbeLabel(cond_label);
     const cur = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ cur, var_info.slot });
+    try self.qbeLoadL(cur, var_info.slot);
     const cmp = try self.newTemp();
-    try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ cmp, cur, limit.text });
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cmp, body_label, end_label });
-    try self.out.writer.print("{s}\n", .{body_label});
+    try self.qbeOp2(cmp, .w, "csltl", cur, limit.text);
+    try self.qbeJnz(cmp, body_label, end_label);
+    try self.qbeLabel(body_label);
     try self.genStmts(f.body, ret_qtype);
     const cur2 = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ cur2, var_info.slot });
+    try self.qbeLoadL(cur2, var_info.slot);
     const next = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, 1\n", .{ next, cur2 });
-    try self.out.writer.print("    storel {s}, {s}\n", .{ next, var_info.slot });
-    try self.out.writer.print("    jmp {s}\n", .{cond_label});
-    try self.out.writer.print("{s}\n", .{end_label});
+    try self.qbeOp2Imm(next, .l, "add", cur2, 1);
+    try self.qbeStoreL(next, var_info.slot);
+    try self.qbeJmp(cond_label);
+    try self.qbeLabel(end_label);
     self.bounds_elide_ctx = saved_bounds_ctx;
     self.restoreModCache(mc_scope);
     self.exitStrLenCacheScope(str_len_scope);
@@ -826,12 +833,12 @@ pub fn genForList(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenErr
     // dış yinelemede yığını küçültüp asla geri almaz (yığın taşması).
     const idx_name = try forListIdxName(self.allocator, f.var_name);
     const idx_slot = self.vars.get(idx_name).?.slot;
-    try self.out.writer.print("    storel 0, {s}\n", .{idx_slot});
+    try self.qbeStoreImmL(0, idx_slot);
 
     const list_ptr = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ list_ptr, list_info.slot });
+    try self.qbeLoadL(list_ptr, list_info.slot);
     const len_t = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ len_t, list_ptr });
+    try self.qbeLoadL(len_t, list_ptr);
 
     const cond_label = try self.newLabel("forlist_cond");
     const body_label = try self.newLabel("forlist_body");
@@ -844,34 +851,34 @@ pub fn genForList(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenErr
     // ŞEKİLDE kritiktir: `enterModCacheLoopScope`DEN ÖNCE).
     try self.modCacheInvalidateName(f.var_name);
     const mc_scope = try self.enterModCacheLoopScope(f.body);
-    try self.out.writer.print("    jmp {s}\n", .{cond_label});
-    try self.out.writer.print("{s}\n", .{cond_label});
+    try self.qbeJmp(cond_label);
+    try self.qbeLabel(cond_label);
     const idx_cur = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ idx_cur, idx_slot });
+    try self.qbeLoadL(idx_cur, idx_slot);
     const cmp = try self.newTemp();
-    try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ cmp, idx_cur, len_t });
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cmp, body_label, end_label });
-    try self.out.writer.print("{s}\n", .{body_label});
+    try self.qbeOp2(cmp, .w, "csltl", idx_cur, len_t);
+    try self.qbeJnz(cmp, body_label, end_label);
+    try self.qbeLabel(body_label);
 
     const byte_off = try self.newTemp();
-    try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ byte_off, idx_cur, qbeSizeOf(loop_var.qtype) });
+    try self.qbeOp2Imm(byte_off, .l, "mul", idx_cur, @intCast(qbeSizeOf(loop_var.qtype)));
     const off8 = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ off8, byte_off, LIST_HEADER_SIZE });
+    try self.qbeOp2Imm(off8, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
     const elem_addr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ elem_addr, list_ptr, off8 });
+    try self.qbeOp2(elem_addr, .l, "add", list_ptr, off8);
     const elem_val = try self.newTemp();
-    try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ elem_val, qbeTypeName(loop_var.qtype), qbeTypeName(loop_var.qtype), elem_addr });
-    try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(loop_var.qtype), elem_val, loop_var.slot });
+    try self.qbeLoad(elem_val, loop_var.qtype, loop_var.qtype, elem_addr);
+    try self.qbeStore(loop_var.qtype, elem_val, loop_var.slot);
 
     try self.genStmts(f.body, ret_qtype);
 
     const idx_base = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ idx_base, idx_slot });
+    try self.qbeLoadL(idx_base, idx_slot);
     const idx_next = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, 1\n", .{ idx_next, idx_base });
-    try self.out.writer.print("    storel {s}, {s}\n", .{ idx_next, idx_slot });
-    try self.out.writer.print("    jmp {s}\n", .{cond_label});
-    try self.out.writer.print("{s}\n", .{end_label});
+    try self.qbeOp2Imm(idx_next, .l, "add", idx_base, 1);
+    try self.qbeStoreL(idx_next, idx_slot);
+    try self.qbeJmp(cond_label);
+    try self.qbeLabel(end_label);
     self.restoreModCache(mc_scope);
     self.exitStrLenCacheScope(str_len_scope);
 }
