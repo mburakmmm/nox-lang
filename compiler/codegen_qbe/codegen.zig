@@ -653,6 +653,21 @@ pub const Codegen = struct {
     /// örtük bir `br label` EKLER). `.qbe` backend'İ BU ALANI HİÇ OKUMAZ/
     /// YAZMAZ.
     llvm_block_open: bool = false,
+    /// Faz LLVM.3: `qbeCall`nin (bkz. `llvm_emit.zig`) `declare`-takibi —
+    /// LLVM'de bir sembol İçin HEM `declare` HEM `define` bulunması
+    /// GEÇERSİZDİR (deneyerek doğrulandı) — bu YÜZDEN `self.functions`de
+    /// (bu MODÜLÜN KENDİSİNİN TANIMLAYACAĞI Nox fonksiyonları) KAYITLI
+    /// OLMAYAN direkt-sembol çağrıları İçin, İSİM başına EN FAZLA BİR
+    /// `declare` üretilir (bu set BUNU izler).
+    llvm_declared_externs: std.StringHashMapUnmanaged(void) = .empty,
+    /// `declare` bir MODÜL-seviyesi yapıdır — bir fonksiyon GÖVDESİNİN
+    /// (`define ... { ... }`) İÇİNE YAZILAMAZ. `qbeCall` bir gövde
+    /// üretimi SIRASINDA çağrıldığından, üretilen `declare` satırları
+    /// BURADA biriktirilir; `generateModule` (Faz LLVM.4) TÜM fonksiyon
+    /// gövdeleri yazıldıktan SONRA bunları `gen.out`a FLUSH eder (sıra
+    /// ÖNEMLİ DEĞİL — bkz. `llvm_emit.zig`nin belge notu, LLVM `declare`/
+    /// `define`/`call` sırasından BAĞIMSIZ çözer, sadece TEKRAR ETMEMELİ).
+    llvm_pending_declares: std.ArrayListUnmanaged([]const u8) = .empty,
     /// Faz T.3: `generateModule`e bir `debug_source_path` VERİLDİYSE `true` —
     /// `genStmts` (TÜM deyim kodgen'inin TEK dağıtım noktası, bkz. `checkStmt`
     /// İLE AYNI T.1 deseni) HER deyimden ÖNCE bir `dbgloc <satır>` (QBE IL,
