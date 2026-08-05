@@ -218,6 +218,7 @@ const stmt_mod = @import("stmt.zig");
 const registration = @import("registration.zig");
 const decorators_mod = @import("decorators.zig");
 const qbe_emit = @import("qbe_emit.zig");
+const llvm_emit = @import("llvm_emit.zig");
 
 pub const CodegenError = abi.CodegenError;
 
@@ -290,6 +291,13 @@ const InlineReturnTarget = inlining.InlineReturnTarget;
 pub const QbeArg = qbe_emit.QbeArg;
 pub const QbeCallDst = qbe_emit.QbeCallDst;
 pub const QbeAllocSize = qbe_emit.QbeAllocSize;
+
+/// DENEYSEL (bkz. plan dosyası "`noxc build --release` için deneysel bir
+/// LLVM backend'i"): `Codegen.backend`in seçtiği metin-emisyon hedefi.
+/// `.qbe` VARSAYILAN — TÜM mevcut davranış BUNUNLA DEĞİŞMEDEN kalır.
+/// `.llvm`, HER `qbeX` metodunun `qbe_emit.zig` YERİNE `llvm_emit.zig`e
+/// dallanmasını SAĞLAR (aşağıdaki dispatch sarmalayıcılarına bkz.).
+pub const Backend = enum { qbe, llvm };
 
 pub const Codegen = struct {
     pub const isFuncInlineEligible = inlining.isFuncInlineEligible;
@@ -495,30 +503,148 @@ pub const Codegen = struct {
     // modül-üstü belge notu. Bu blok, 15 sibling dosyanın `self.out.
     // writer.print(...)`i doğrudan çağırması YERİNE geçireceği TEK
     // yüzey.
-    pub const qbeLabel = qbe_emit.qbeLabel;
-    pub const qbeJmp = qbe_emit.qbeJmp;
-    pub const qbeJnz = qbe_emit.qbeJnz;
-    pub const qbePhi = qbe_emit.qbePhi;
-    pub const qbeRet = qbe_emit.qbeRet;
-    pub const qbeFuncEnd = qbe_emit.qbeFuncEnd;
-    pub const qbeOp1 = qbe_emit.qbeOp1;
-    pub const qbeOp2 = qbe_emit.qbeOp2;
-    pub const qbeOp2Imm = qbe_emit.qbeOp2Imm;
-    pub const qbeLoad = qbe_emit.qbeLoad;
-    pub const qbeLoadL = qbe_emit.qbeLoadL;
-    pub const qbeStore = qbe_emit.qbeStore;
-    pub const qbeStoreL = qbe_emit.qbeStoreL;
-    pub const qbeStoreImmL = qbe_emit.qbeStoreImmL;
-    pub const qbeAlloc = qbe_emit.qbeAlloc;
-    pub const qbeCall = qbe_emit.qbeCall;
-    pub const qbeFuncHeaderStart = qbe_emit.qbeFuncHeaderStart;
-    pub const qbeFuncParam = qbe_emit.qbeFuncParam;
-    pub const qbeFuncHeaderEnd = qbe_emit.qbeFuncHeaderEnd;
-    pub const qbeRaw = qbe_emit.qbeRaw;
-    pub const qbeRawAll = qbe_emit.qbeRawAll;
+    //
+    // Faz LLVM.1 (bkz. plan dosyası "`noxc build --release` için deneysel
+    // bir LLVM backend'i"): BASİT `pub const qbeX = qbe_emit.qbeX;` takma
+    // adları YERİNE, HER metot `self.backend`e göre `qbe_emit`/`llvm_emit`
+    // arasında ÇALIŞMA-ZAMANI dallanan GERÇEK bir sarmalayıcı fonksiyon —
+    // comptime-generic `Codegen(Backend)` YAKLAŞIMI BİLİNÇLİ REDDEDİLDİ
+    // (15 sibling dosyanın `*Codegen` imzalarına dokunmayı GEREKTİRİRDİ).
+    // `.qbe` dalı DAVRANIŞ olarak ESKİ takma-ad İLE BYTE-BİREBİR AYNI.
+    pub fn qbeLabel(self: *Codegen, label: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeLabel(self, label),
+            .llvm => llvm_emit.qbeLabel(self, label),
+        };
+    }
+    pub fn qbeJmp(self: *Codegen, target: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeJmp(self, target),
+            .llvm => llvm_emit.qbeJmp(self, target),
+        };
+    }
+    pub fn qbeJnz(self: *Codegen, cond: []const u8, t: []const u8, f: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeJnz(self, cond, t, f),
+            .llvm => llvm_emit.qbeJnz(self, cond, t, f),
+        };
+    }
+    pub fn qbePhi(self: *Codegen, dst: []const u8, ty: QbeType, l1: []const u8, v1: []const u8, l2: []const u8, v2: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbePhi(self, dst, ty, l1, v1, l2, v2),
+            .llvm => llvm_emit.qbePhi(self, dst, ty, l1, v1, l2, v2),
+        };
+    }
+    pub fn qbeRet(self: *Codegen, value: ?[]const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeRet(self, value),
+            .llvm => llvm_emit.qbeRet(self, value),
+        };
+    }
+    pub fn qbeFuncEnd(self: *Codegen) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeFuncEnd(self),
+            .llvm => llvm_emit.qbeFuncEnd(self),
+        };
+    }
+    pub fn qbeOp1(self: *Codegen, dst: []const u8, ty: QbeType, mnemonic: []const u8, a: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeOp1(self, dst, ty, mnemonic, a),
+            .llvm => llvm_emit.qbeOp1(self, dst, ty, mnemonic, a),
+        };
+    }
+    pub fn qbeOp2(self: *Codegen, dst: []const u8, ty: QbeType, mnemonic: []const u8, a: []const u8, b: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeOp2(self, dst, ty, mnemonic, a, b),
+            .llvm => llvm_emit.qbeOp2(self, dst, ty, mnemonic, a, b),
+        };
+    }
+    pub fn qbeOp2Imm(self: *Codegen, dst: []const u8, ty: QbeType, mnemonic: []const u8, a: []const u8, imm: i64) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeOp2Imm(self, dst, ty, mnemonic, a, imm),
+            .llvm => llvm_emit.qbeOp2Imm(self, dst, ty, mnemonic, a, imm),
+        };
+    }
+    pub fn qbeLoad(self: *Codegen, dst: []const u8, dst_ty: QbeType, mem_ty: QbeType, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeLoad(self, dst, dst_ty, mem_ty, addr),
+            .llvm => llvm_emit.qbeLoad(self, dst, dst_ty, mem_ty, addr),
+        };
+    }
+    pub fn qbeLoadL(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeLoadL(self, dst, addr),
+            .llvm => llvm_emit.qbeLoadL(self, dst, addr),
+        };
+    }
+    pub fn qbeStore(self: *Codegen, ty: QbeType, value: []const u8, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeStore(self, ty, value, addr),
+            .llvm => llvm_emit.qbeStore(self, ty, value, addr),
+        };
+    }
+    pub fn qbeStoreL(self: *Codegen, value: []const u8, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeStoreL(self, value, addr),
+            .llvm => llvm_emit.qbeStoreL(self, value, addr),
+        };
+    }
+    pub fn qbeStoreImmL(self: *Codegen, imm: i64, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeStoreImmL(self, imm, addr),
+            .llvm => llvm_emit.qbeStoreImmL(self, imm, addr),
+        };
+    }
+    pub fn qbeAlloc(self: *Codegen, dst: []const u8, size: QbeAllocSize, n: usize) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeAlloc(self, dst, size, n),
+            .llvm => llvm_emit.qbeAlloc(self, dst, size, n),
+        };
+    }
+    pub fn qbeCall(self: *Codegen, dst: ?QbeCallDst, func_text: []const u8, args: []const QbeArg) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeCall(self, dst, func_text, args),
+            .llvm => llvm_emit.qbeCall(self, dst, func_text, args),
+        };
+    }
+    pub fn qbeFuncHeaderStart(self: *Codegen, ret_ty: ?QbeType, name_text: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeFuncHeaderStart(self, ret_ty, name_text),
+            .llvm => llvm_emit.qbeFuncHeaderStart(self, ret_ty, name_text),
+        };
+    }
+    pub fn qbeFuncParam(self: *Codegen, ty: QbeType, text: []const u8, first: bool) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeFuncParam(self, ty, text, first),
+            .llvm => llvm_emit.qbeFuncParam(self, ty, text, first),
+        };
+    }
+    pub fn qbeFuncHeaderEnd(self: *Codegen) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeFuncHeaderEnd(self),
+            .llvm => llvm_emit.qbeFuncHeaderEnd(self),
+        };
+    }
+    pub fn qbeRaw(self: *Codegen, comptime fmt: []const u8, args: anytype) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeRaw(self, fmt, args),
+            .llvm => llvm_emit.qbeRaw(self, fmt, args),
+        };
+    }
+    pub fn qbeRawAll(self: *Codegen, text: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeRawAll(self, text),
+            .llvm => llvm_emit.qbeRawAll(self, text),
+        };
+    }
 
     allocator: std.mem.Allocator,
     out: std.Io.Writer.Allocating,
+    /// DENEYSEL (bkz. plan dosyası "`noxc build --release` için deneysel
+    /// bir LLVM backend'i"): yukarıdaki `qbeX` dispatch sarmalayıcılarının
+    /// `qbe_emit.zig`/`llvm_emit.zig` arasında SEÇTİĞİ hedef. Varsayılan
+    /// `.qbe` — `--release` VERİLMEDİĞİ SÜRECE davranış SIFIR değişir.
+    backend: Backend = .qbe,
     /// Faz T.3: `generateModule`e bir `debug_source_path` VERİLDİYSE `true` —
     /// `genStmts` (TÜM deyim kodgen'inin TEK dağıtım noktası, bkz. `checkStmt`
     /// İLE AYNI T.1 deseni) HER deyimden ÖNCE bir `dbgloc <satır>` (QBE IL,
@@ -940,8 +1066,8 @@ pub const Codegen = struct {
 /// `debug_source_path`: Faz T.3, `null` DIŞINDA VERİLİRSE (bkz. modül üstü
 /// not) `dbgfile`/`dbgloc` yönergeleri yayınlanır — `null` İKEN çıktı
 /// ÖNCEKİYLE BİREBİR AYNI kalır (opt-in, sıfır davranış değişikliği).
-pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo) CodegenError![]u8 {
-    var gen: Codegen = .{ .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos, .defer_synthetic_names = defer_synthetic_names, .from_imports = from_imports, .module_aliases = module_aliases };
+pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo, backend: Backend) CodegenError![]u8 {
+    var gen: Codegen = .{ .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos, .defer_synthetic_names = defer_synthetic_names, .from_imports = from_imports, .module_aliases = module_aliases, .backend = backend };
 
     if (debug_source_path) |path| {
         gen.debug_info = true;

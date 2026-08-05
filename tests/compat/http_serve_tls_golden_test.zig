@@ -51,7 +51,7 @@ fn compileToBinary(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, sourc
     var fn_value_it = checker_state.functions_used_as_value.keyIterator();
     while (fn_value_it.next()) |k| try functions_used_as_value.append(allocator, k.*);
 
-    const ir = try nox.codegen.generateModule(allocator, module, checker_state.instantiations.items, generic_names.items, &.{}, &.{}, null, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items);
+    const ir = try nox.codegen.generateModule(allocator, module, checker_state.instantiations.items, generic_names.items, &.{}, &.{}, null, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, .qbe);
 
     var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const len = try tmp.dir.realPath(io, &path_buf);

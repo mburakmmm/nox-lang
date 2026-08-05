@@ -761,7 +761,7 @@ fn cmdInstall(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
     defer std.Io.Dir.cwd().deleteTree(io, scratch_dir_path) catch {};
     const scratch_bin_path = try std.fmt.allocPrint(a, "{s}/{s}", .{ scratch_dir_path, bin_spec.name });
 
-    const compiled_path = try buildOne(gpa, io, a, bin_source_path, false, scratch_bin_path, nox_home, resource_dirs, false, fetch_policy);
+    const compiled_path = try buildOne(gpa, io, a, bin_source_path, false, scratch_bin_path, nox_home, resource_dirs, false, false, fetch_policy);
 
     const bin_dir_path = try project.resolveGlobalBinDir(a, nox_home);
     try std.Io.Dir.cwd().createDirPath(io, bin_dir_path);
@@ -852,6 +852,12 @@ const BuildOpts = struct {
     /// TETİKLER. Varsayılan `false` — M.2'nin "sessiz varsayılan" ilkesiyle
     /// TUTARLI (opt-in, çıktı boyutunu/derleme süresini gereksiz büyütmez).
     debug_info: bool = false,
+    /// DENEYSEL (bkz. plan dosyası "`noxc build --release` için deneysel
+    /// bir LLVM backend'i"): `true` İKEN `buildOne` QBE/`qbe`/`cc` yolu
+    /// YERİNE `.ll`/`clang -O2` yolunu kullanır. Kapsam BİLİNÇLİ olarak dar
+    /// (bkz. planın "Kapsam DIŞI" bölümü) — varsayılan `false`, mevcut QBE
+    /// yolu DEĞİŞMEDEN kalır.
+    release: bool = false,
 };
 
 fn parseBuildOpts(args: []const []const u8) BuildOpts {
@@ -863,6 +869,8 @@ fn parseBuildOpts(args: []const []const u8) BuildOpts {
             opts.verbose = true;
         } else if (std.mem.eql(u8, arg, "-g")) {
             opts.debug_info = true;
+        } else if (std.mem.eql(u8, arg, "--release")) {
+            opts.release = true;
         } else if (std.mem.eql(u8, arg, "-o")) {
             i += 1;
             if (i < args.len) opts.output = args[i];
@@ -890,7 +898,7 @@ fn cmdBuild(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
         std.debug.print("{s}", .{usage});
         std.process.exit(1);
     };
-    const out = try buildOne(gpa, io, a, path_arg, opts.verbose, opts.output, nox_home, resource_dirs, opts.debug_info, fetch_policy);
+    const out = try buildOne(gpa, io, a, path_arg, opts.verbose, opts.output, nox_home, resource_dirs, opts.debug_info, opts.release, fetch_policy);
     printOk("derlendi: {s}\n", .{out});
 }
 
@@ -910,7 +918,7 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
     };
 
     const cache_bin_path = try cacheBinPath(io, a, path_arg);
-    const bin_path = try buildOne(gpa, io, a, path_arg, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, fetch_policy);
+    const bin_path = try buildOne(gpa, io, a, path_arg, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.release, fetch_policy);
 
     const code = try runAndWait(io, a, bin_path, split.after);
     std.process.exit(code);
@@ -955,7 +963,7 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
     if (opts.path) |t| {
         if (std.mem.endsWith(u8, t, ".nox")) {
             const cache_bin_path = try cacheBinPath(io, a, t);
-            const bin_path = try buildOne(gpa, io, a, t, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, fetch_policy);
+            const bin_path = try buildOne(gpa, io, a, t, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.release, fetch_policy);
             const code = try runAndWait(io, a, bin_path, &.{});
             std.process.exit(code);
         }
@@ -981,7 +989,7 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
         const fa = file_arena.allocator();
 
         const cache_bin_path = try cacheBinPath(io, fa, file);
-        const bin_path = try buildOne(gpa, io, fa, file, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, fetch_policy);
+        const bin_path = try buildOne(gpa, io, fa, file, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.release, fetch_policy);
         const code = runAndWait(io, fa, bin_path, &.{}) catch 1;
         if (code == 0) {
             printOk("GECTI: {s}\n", .{file});
@@ -1561,7 +1569,7 @@ fn cmdExpand(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []c
 /// yolunu döner. Hata durumlarında (mevcut davranışla BİREBİR aynı mesaj/
 /// çıkış kodu) doğrudan `std.process.exit(1)` çağırır — `cmdBuild`/`cmdRun`
 /// bu davranışı DEĞİŞTİRMEDEN miras alır.
-fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: []const u8, verbose: bool, output_override: ?[]const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, debug_info: bool, fetch_policy: fetch.FetchPolicy) ![]const u8 {
+fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: []const u8, verbose: bool, output_override: ?[]const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, debug_info: bool, release: bool, fetch_policy: fetch.FetchPolicy) ![]const u8 {
     // Bulundu (kullanıcı geri bildirimi): `noxc upgrade` gibi mistyped/
     // bilinmeyen bir alt komut, tanınan HİÇBİR anahtar kelimeyle
     // eşleşmediğinden `.legacy`ye (bkz. `main`'in belge notu) düşüp
@@ -1675,7 +1683,20 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // codegen.zig'in modül üstü notu (TEK dosya, stdlib-merge yanlış-atıf
     // sınırlaması bilinçli olarak KABUL EDİLDİ).
     const debug_source_path: ?[]const u8 = if (debug_info) path_arg else null;
-    const ir = codegen.generateModule(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items) catch |err| switch (err) {
+
+    // DENEYSEL (bkz. plan dosyası "`noxc build --release` için deneysel
+    // bir LLVM backend'i", Faz 1): LLVM yolu HENÜZ (Faz 2-5 tamamlanana
+    // kadar) hiçbir gerçek programı derleyemez — `llvm_emit.zig`nin TÜM
+    // metotları `error.Unsupported` döner. Bu GEÇİCİ kapı, bu ara durumda
+    // net bir hata mesajı verir; Faz 5'te GERÇEK `.ll`/`clang` çağrısıyla
+    // DEĞİŞTİRİLECEK.
+    const backend: codegen.Backend = if (release) .llvm else .qbe;
+    if (release) {
+        printErr("noxc build --release: LLVM backend'i henuz deneysel/eksik (bkz. plan dosyasi) - qbe yolunu (bayraksiz build) kullanin\n", .{});
+        std.process.exit(1);
+    }
+
+    const ir = codegen.generateModule(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend) catch |err| switch (err) {
         error.Unsupported => {
             std.debug.print(
                 "codegen: bu program şu an desteklenmeyen bir yapı içeriyor " ++
