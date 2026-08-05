@@ -95,6 +95,28 @@ fn llGlobalRef(text: []const u8) []const u8 {
     return if (text.len > 0 and text[0] == '$') text[1..] else text;
 }
 
+/// `bytes`i (SONUNA otomatik bir null-terminator EKLENMİŞ — QBE'nin
+/// `b "...", b 0` deseniyle AYNI) LLVM'in `c"..."` DİZİ SABİTİ sözdizimine
+/// çevirir — `codegen.zig`nin `generateModule`ı (Faz LLVM.4, bulgu #3)
+/// TARAFINDAN, sabit biçim-dizesi ön-bloğu İçin DIŞARIDAN çağrılır (seam'in
+/// GERİ KALANININ AKSİNE bu `pub fn` `Codegen`e DEĞİL, DOĞRUDAN metne
+/// çalışır — çağrı sitesi HENÜZ bir `Codegen` örneği KURMADAN ÖNCEKİ bir
+/// hazırlık adımıdır).
+pub fn llvmCStringConstant(allocator: std.mem.Allocator, name: []const u8, bytes: []const u8) ![]const u8 {
+    var escaped: std.ArrayListUnmanaged(u8) = .empty;
+    for (bytes) |b| {
+        if (b == '\\' or b == '"' or b < 0x20 or b > 0x7E) {
+            var buf: [4]u8 = undefined;
+            const hex = std.fmt.bufPrint(&buf, "\\{X:0>2}", .{b}) catch unreachable;
+            try escaped.appendSlice(allocator, hex);
+        } else {
+            try escaped.append(allocator, b);
+        }
+    }
+    try escaped.appendSlice(allocator, "\\00");
+    return std.fmt.allocPrint(allocator, "@{s} = private unnamed_addr constant [{d} x i8] c\"{s}\"\n", .{ name, bytes.len + 1, escaped.items });
+}
+
 pub fn qbeLabel(self: *Codegen, label: []const u8) CodegenError!void {
     if (self.llvm_block_open) {
         try self.out.writer.print("    br label %{s}\n", .{llLabelRef(label)});
@@ -312,35 +334,47 @@ fn renderOperand(self: *Codegen, text: []const u8) CodegenError![]const u8 {
     return text;
 }
 
-pub fn qbeCall(self: *Codegen, dst: ?QbeCallDst, func_text: []const u8, args: []const QbeArg) CodegenError!void {
-    var callee_text: []const u8 = undefined;
-    if (func_text.len > 0 and func_text[0] == '$') {
-        const name = func_text[1..];
-        // `self.functions`: BU modülün KENDİSİNİN `define` edeceği üst-
-        // düzey Nox fonksiyonları (registerFunc, generateModule'ün
-        // TÜM gövde codegen'İNDEN ÖNCE dolar) — bunlar İçin `declare`
-        // ÜRETME (bkz. modül üstü not, declare+define ÇAKIŞIR).
-        if (!self.functions.contains(name) and !self.llvm_declared_externs.contains(name)) {
-            var params_buf: std.ArrayListUnmanaged(u8) = .empty;
-            for (args, 0..) |arg, i| {
-                if (i != 0) try params_buf.appendSlice(self.allocator, ", ");
-                try params_buf.appendSlice(self.allocator, llvmTypeName(arg.ty));
-            }
-            const ret_str = if (dst) |d| llvmTypeName(d.ty) else "void";
-            const decl_line = try std.fmt.allocPrint(self.allocator, "declare {s} @{s}({s})\n", .{ ret_str, name, params_buf.items });
-            try self.llvm_pending_declares.append(self.allocator, decl_line);
-            try self.llvm_declared_externs.put(self.allocator, name, {});
-        }
-        callee_text = try std.fmt.allocPrint(self.allocator, "@{s}", .{name});
-    } else {
-        // Dolaylı çağrı: `func_text` bir `i64`-taşınan fonksiyon işaretçisi
-        // (kaçış/`.func` değerleri) — `clang`e karşı EMPİRİK doğrulandı
-        // (`loadstore_indirect_check.ll`): LLVM 21'in opak-işaretçi modu
-        // dolaylı çağrı sitesinde AYRI bir fonksiyon-tipi GEREKTİRMİYOR.
-        const ptr_reg = try self.newTemp();
-        try self.out.writer.print("    {s} = inttoptr i64 {s} to ptr\n", .{ ptr_reg, func_text });
-        callee_text = ptr_reg;
+/// `self.functions`de (BU modülün KENDİSİNİN `define` edeceği üst-düzey
+/// Nox fonksiyonları) KAYITLI OLMAYAN, HENÜZ declare EDİLMEMİŞ direkt-
+/// sembol çağrıları İçin BİR `declare` üretip `llvm_pending_declares`e
+/// biriktirir (bkz. modül üstü not, declare+define ÇAKIŞIR).
+fn ensureDeclared(self: *Codegen, name: []const u8, ret_str: []const u8, fixed_args: []const QbeArg, variadic: bool) CodegenError!void {
+    if (self.functions.contains(name) or self.llvm_declared_externs.contains(name)) return;
+    var params_buf: std.ArrayListUnmanaged(u8) = .empty;
+    for (fixed_args, 0..) |arg, i| {
+        if (i != 0) try params_buf.appendSlice(self.allocator, ", ");
+        try params_buf.appendSlice(self.allocator, llvmTypeName(arg.ty));
     }
+    if (variadic) {
+        if (fixed_args.len != 0) try params_buf.appendSlice(self.allocator, ", ");
+        try params_buf.appendSlice(self.allocator, "...");
+    }
+    const decl_line = try std.fmt.allocPrint(self.allocator, "declare {s} @{s}({s})\n", .{ ret_str, name, params_buf.items });
+    try self.llvm_pending_declares.append(self.allocator, decl_line);
+    try self.llvm_declared_externs.put(self.allocator, name, {});
+}
+
+/// `func_text` bir `$sembol` İSE (direkt çağrı) `"@sembol"` metnini
+/// döner; AKSİ HALDE (dolaylı çağrı — `func_text` bir `i64`-taşınan
+/// fonksiyon işaretçisi) `inttoptr` İLE `ptr`a çevirip o geçici kaydı
+/// döner. `clang`e karşı EMPİRİK doğrulandı (`loadstore_indirect_check.
+/// ll`): LLVM 21'in opak-işaretçi modu dolaylı çağrı sitesinde AYRI bir
+/// fonksiyon-tipi GEREKTİRMİYOR.
+fn resolveCallee(self: *Codegen, func_text: []const u8) CodegenError![]const u8 {
+    if (func_text.len > 0 and func_text[0] == '$') {
+        return std.fmt.allocPrint(self.allocator, "@{s}", .{func_text[1..]});
+    }
+    const ptr_reg = try self.newTemp();
+    try self.out.writer.print("    {s} = inttoptr i64 {s} to ptr\n", .{ ptr_reg, func_text });
+    return ptr_reg;
+}
+
+pub fn qbeCall(self: *Codegen, dst: ?QbeCallDst, func_text: []const u8, args: []const QbeArg) CodegenError!void {
+    if (func_text.len > 0 and func_text[0] == '$') {
+        const ret_str = if (dst) |d| llvmTypeName(d.ty) else "void";
+        try ensureDeclared(self, func_text[1..], ret_str, args, false);
+    }
+    const callee_text = try resolveCallee(self, func_text);
 
     if (dst) |d| {
         try self.out.writer.print("    {s} = call {s} {s}(", .{ d.name, llvmTypeName(d.ty), callee_text });
@@ -349,6 +383,44 @@ pub fn qbeCall(self: *Codegen, dst: ?QbeCallDst, func_text: []const u8, args: []
     }
     for (args, 0..) |arg, i| {
         if (i != 0) try self.out.writer.writeAll(", ");
+        const rendered = try renderOperand(self, arg.text);
+        try self.out.writer.print("{s} {s}", .{ llvmTypeName(arg.ty), rendered });
+    }
+    try self.out.writer.writeAll(")\n");
+}
+
+/// `qbeCall`in variadic (`...`) versiyonu — `genPrint`/`genPrintFragment`nin
+/// `printf`e yaptığı çağrılar İçin. LLVM'de variadic çağrılar `call`
+/// SİTESİNDE TAM fonksiyon-tipini (`(sabit_tipler, ...)`) İSTER — `clang`e
+/// karşı EMPİRİK doğrulandı (`ptrtoint_check.ll`).
+pub fn qbeCallVariadic(self: *Codegen, dst: ?QbeCallDst, func_text: []const u8, fixed: []const QbeArg, variadic: []const QbeArg) CodegenError!void {
+    const ret_str = if (dst) |d| llvmTypeName(d.ty) else "void";
+    if (func_text.len > 0 and func_text[0] == '$') {
+        try ensureDeclared(self, func_text[1..], ret_str, fixed, true);
+    }
+    const callee_text = try resolveCallee(self, func_text);
+
+    var fixed_types_buf: std.ArrayListUnmanaged(u8) = .empty;
+    for (fixed, 0..) |arg, i| {
+        if (i != 0) try fixed_types_buf.appendSlice(self.allocator, ", ");
+        try fixed_types_buf.appendSlice(self.allocator, llvmTypeName(arg.ty));
+    }
+
+    if (dst) |d| {
+        try self.out.writer.print("    {s} = call {s} ({s}, ...) {s}(", .{ d.name, ret_str, fixed_types_buf.items, callee_text });
+    } else {
+        try self.out.writer.print("    call void ({s}, ...) {s}(", .{ fixed_types_buf.items, callee_text });
+    }
+    var first = true;
+    for (fixed) |arg| {
+        if (!first) try self.out.writer.writeAll(", ");
+        first = false;
+        const rendered = try renderOperand(self, arg.text);
+        try self.out.writer.print("{s} {s}", .{ llvmTypeName(arg.ty), rendered });
+    }
+    for (variadic) |arg| {
+        if (!first) try self.out.writer.writeAll(", ");
+        first = false;
         const rendered = try renderOperand(self, arg.text);
         try self.out.writer.print("{s} {s}", .{ llvmTypeName(arg.ty), rendered });
     }

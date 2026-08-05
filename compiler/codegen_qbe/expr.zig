@@ -1076,10 +1076,10 @@ pub fn genPrint(self: *Codegen, v: Value) CodegenError!void {
     }
     switch (v.qtype) {
         .l => if (v.heap == .str)
-            try self.qbeRaw("    call $printf(l $fmt_str, ..., l {s})\n", .{v.text})
+            try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_str" }}, &.{.{ .ty = .l, .text = v.text }})
         else
-            try self.qbeRaw("    call $printf(l $fmt_int, ..., l {s})\n", .{v.text}),
-        .d => try self.qbeRaw("    call $printf(l $fmt_float, ..., d {s})\n", .{v.text}),
+            try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_int" }}, &.{.{ .ty = .l, .text = v.text }}),
+        .d => try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_float" }}, &.{.{ .ty = .d, .text = v.text }}),
         .w => {
             const true_label = try self.newLabel("print_true");
             const false_label = try self.newLabel("print_false");
@@ -1106,10 +1106,10 @@ pub fn genPrintFragment(self: *Codegen, v: Value) CodegenError!void {
     if (v.heap == .class) return self.genPrintClass(v);
     switch (v.qtype) {
         .l => if (v.heap == .str)
-            try self.qbeRaw("    call $printf(l $fmt_str_frag, ..., l {s})\n", .{v.text})
+            try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_str_frag" }}, &.{.{ .ty = .l, .text = v.text }})
         else
-            try self.qbeRaw("    call $printf(l $fmt_int_frag, ..., l {s})\n", .{v.text}),
-        .d => try self.qbeRaw("    call $printf(l $fmt_float_frag, ..., d {s})\n", .{v.text}),
+            try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_int_frag" }}, &.{.{ .ty = .l, .text = v.text }}),
+        .d => try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_float_frag" }}, &.{.{ .ty = .d, .text = v.text }}),
         .w => {
             const true_label = try self.newLabel("print_true");
             const false_label = try self.newLabel("print_false");

@@ -607,6 +607,12 @@ pub const Codegen = struct {
             .llvm => llvm_emit.qbeCall(self, dst, func_text, args),
         };
     }
+    pub fn qbeCallVariadic(self: *Codegen, dst: ?QbeCallDst, func_text: []const u8, fixed: []const QbeArg, variadic: []const QbeArg) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeCallVariadic(self, dst, func_text, fixed, variadic),
+            .llvm => llvm_emit.qbeCallVariadic(self, dst, func_text, fixed, variadic),
+        };
+    }
     pub fn qbeFuncHeaderStart(self: *Codegen, ret_ty: ?QbeType, name_text: []const u8) CodegenError!void {
         return switch (self.backend) {
             .qbe => qbe_emit.qbeFuncHeaderStart(self, ret_ty, name_text),
@@ -1098,24 +1104,56 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
         try gen.out.writer.print("dbgfile \"{s}\"\n", .{escaped});
     }
 
-    try gen.out.writer.writeAll(
-        \\data $fmt_int = { b "%lld\n", b 0 }
-        \\data $fmt_float = { b "%g\n", b 0 }
-        \\data $fmt_str = { b "%s\n", b 0 }
-        \\data $fmt_bool_true = { b "True\n", b 0 }
-        \\data $fmt_bool_false = { b "False\n", b 0 }
-        \\data $fmt_newline = { b "\n", b 0 }
-        \\data $fmt_int_frag = { b "%lld", b 0 }
-        \\data $fmt_float_frag = { b "%g", b 0 }
-        \\data $fmt_str_frag = { b "'%s'", b 0 }
-        \\data $fmt_bool_true_frag = { b "True", b 0 }
-        \\data $fmt_bool_false_frag = { b "False", b 0 }
-        \\data $fmt_lbracket = { b "[", b 0 }
-        \\data $fmt_rbracket = { b "]", b 0 }
-        \\data $fmt_rparen = { b ")", b 0 }
-        \\data $fmt_comma_sp = { b ", ", b 0 }
-        \\
-    );
+    // Faz LLVM.4 (bkz. plan dosyası "`noxc build --release` için deneysel
+    // bir LLVM backend'i", bulgu #3): bu blok `qbe_emit`/`llvm_emit`
+    // seam'İNİ ATLAYIP `gen.out.writer`e DOĞRUDAN yazıyor — `generateModule`
+    // (bu dosya) 15 sibling dosyanın migrasyonuna HİÇ dahil değildi. `.qbe`
+    // dalı ESKİ metinle BİREBİR AYNI (IR-diff İLE doğrulandı); `.llvm` dalı
+    // `llvm_emit.llvmCStringConstant`İLE AYNI 15 sabiti `@name = ... c"..."`
+    // GLOBAL sabitleri olarak üretir (bkz. onun belge notu).
+    if (gen.backend == .qbe) {
+        try gen.out.writer.writeAll(
+            \\data $fmt_int = { b "%lld\n", b 0 }
+            \\data $fmt_float = { b "%g\n", b 0 }
+            \\data $fmt_str = { b "%s\n", b 0 }
+            \\data $fmt_bool_true = { b "True\n", b 0 }
+            \\data $fmt_bool_false = { b "False\n", b 0 }
+            \\data $fmt_newline = { b "\n", b 0 }
+            \\data $fmt_int_frag = { b "%lld", b 0 }
+            \\data $fmt_float_frag = { b "%g", b 0 }
+            \\data $fmt_str_frag = { b "'%s'", b 0 }
+            \\data $fmt_bool_true_frag = { b "True", b 0 }
+            \\data $fmt_bool_false_frag = { b "False", b 0 }
+            \\data $fmt_lbracket = { b "[", b 0 }
+            \\data $fmt_rbracket = { b "]", b 0 }
+            \\data $fmt_rparen = { b ")", b 0 }
+            \\data $fmt_comma_sp = { b ", ", b 0 }
+            \\
+        );
+    } else {
+        const FmtStr = struct { name: []const u8, bytes: []const u8 };
+        const fmt_strings = [_]FmtStr{
+            .{ .name = "fmt_int", .bytes = "%lld\n" },
+            .{ .name = "fmt_float", .bytes = "%g\n" },
+            .{ .name = "fmt_str", .bytes = "%s\n" },
+            .{ .name = "fmt_bool_true", .bytes = "True\n" },
+            .{ .name = "fmt_bool_false", .bytes = "False\n" },
+            .{ .name = "fmt_newline", .bytes = "\n" },
+            .{ .name = "fmt_int_frag", .bytes = "%lld" },
+            .{ .name = "fmt_float_frag", .bytes = "%g" },
+            .{ .name = "fmt_str_frag", .bytes = "'%s'" },
+            .{ .name = "fmt_bool_true_frag", .bytes = "True" },
+            .{ .name = "fmt_bool_false_frag", .bytes = "False" },
+            .{ .name = "fmt_lbracket", .bytes = "[" },
+            .{ .name = "fmt_rbracket", .bytes = "]" },
+            .{ .name = "fmt_rparen", .bytes = ")" },
+            .{ .name = "fmt_comma_sp", .bytes = ", " },
+        };
+        for (fmt_strings) |fs| {
+            const line = try llvm_emit.llvmCStringConstant(allocator, fs.name, fs.bytes);
+            try gen.out.writer.writeAll(line);
+        }
+    }
 
     // Stdlib fazı §L: kendi kendine başvuran (self-referential) bir sınıf
     // alanı (`class JsonValue: arr: list[JsonValue]`) `resolveType`in
@@ -1377,25 +1415,57 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     // nox` İTHAL EDİLİRSE referans EDİLİR). `gen.string_data`ya YENİ
     // girdiler EKLEDİĞİNDEN aşağıdaki `string_data` FLUSH döngüsünden
     // ÖNCE çalışmalıdır.
-    try gen.genDecoratorMetadata(decorated_functions);
-
-    for (gen.string_data.items) |sd| {
-        // `PINNED_REFCOUNT` (1<<30, bkz. `abi_layout.PINNED_REFCOUNT`nin
-        // belge notu — HPy'nin KENDİ, TAMAMEN ALAKASIZ `PINNED_REFCOUNT`i
-        // İLE KARIŞTIRILMAMALI) — string literalinin görünmez ARC başlığı,
-        // hiçbir gerçekçi retain/release dizisinin sıfıra indiremeyeceği
-        // kadar büyük bir değerle başlar, bu yüzden `nox_rc_release` bu
-        // statik belleği asla gerçekten serbest bırakmaya çalışmaz (bkz.
-        // `.string_lit` kolu).
-        const packed_header = packStrHeader(sd.byte_len, if (sd.is_ascii) STR_ASCII_TRUE else STR_ASCII_FALSE);
-        try gen.out.writer.print("data {s} = {{ l {d}, l {d}, b \"{s}\", b 0 }}\n", .{ sd.symbol, PINNED_REFCOUNT, packed_header, sd.escaped });
+    //
+    // Faz LLVM.4 (bulgu #2): `genDecoratorMetadata`nin KENDİSİ (`qbeRaw`
+    // İLE `data $sym = {...}` array-literalleri üreten `decorators.zig`)
+    // LLVM'e HİÇ taşınmadı — Decorator'lar Kapsam DIŞI (bkz. plan). Gerçek
+    // decorator KULLANAN bir program `--release`de AÇIKÇA reddedilir;
+    // decorator YOKSA (yaygın durum) SESSİZCE atlanır (`genNoxInitGlobals`
+    // İLE AYNI "boşsa üretme" ilkesi).
+    if (gen.backend == .qbe) {
+        try gen.genDecoratorMetadata(decorated_functions);
+    } else if (decorated_functions.len > 0) {
+        return error.Unsupported;
     }
 
-    // `print(list[T]/sınıf)` görüntülemesinin (bkz. `internFmtString`)
-    // sınıf/alan adı fragmanları — `string_data`nın AKSİNE pinned-refcount
-    // başlığı OLMADAN, düz birer `printf` format dizesi olarak yayılır.
-    for (gen.fmt_data.items) |fd| {
-        try gen.out.writer.print("data {s} = {{ b \"{s}\", b 0 }}\n", .{ fd.symbol, fd.escaped });
+    // Faz LLVM.4 (bulgu #3, devamı): string/list-görüntüleme literalleri
+    // (`string_data`/`fmt_data`) HENÜZ LLVM'e taşınmadı (str/list/dict
+    // TAMAMEN Kapsam DIŞI, bkz. plan) — `.llvm`de bu kuyruklar BOŞSA
+    // (minimal fixture'da HER ZAMAN) sessizce atlanır, DOLUYSA (str/list
+    // KULLANAN bir program) AÇIKÇA reddedilir.
+    if (gen.backend == .qbe) {
+        for (gen.string_data.items) |sd| {
+            // `PINNED_REFCOUNT` (1<<30, bkz. `abi_layout.PINNED_REFCOUNT`nin
+            // belge notu — HPy'nin KENDİ, TAMAMEN ALAKASIZ `PINNED_REFCOUNT`i
+            // İLE KARIŞTIRILMAMALI) — string literalinin görünmez ARC başlığı,
+            // hiçbir gerçekçi retain/release dizisinin sıfıra indiremeyeceği
+            // kadar büyük bir değerle başlar, bu yüzden `nox_rc_release` bu
+            // statik belleği asla gerçekten serbest bırakmaya çalışmaz (bkz.
+            // `.string_lit` kolu).
+            const packed_header = packStrHeader(sd.byte_len, if (sd.is_ascii) STR_ASCII_TRUE else STR_ASCII_FALSE);
+            try gen.out.writer.print("data {s} = {{ l {d}, l {d}, b \"{s}\", b 0 }}\n", .{ sd.symbol, PINNED_REFCOUNT, packed_header, sd.escaped });
+        }
+
+        // `print(list[T]/sınıf)` görüntülemesinin (bkz. `internFmtString`)
+        // sınıf/alan adı fragmanları — `string_data`nın AKSİNE pinned-refcount
+        // başlığı OLMADAN, düz birer `printf` format dizesi olarak yayılır.
+        for (gen.fmt_data.items) |fd| {
+            try gen.out.writer.print("data {s} = {{ b \"{s}\", b 0 }}\n", .{ fd.symbol, fd.escaped });
+        }
+    } else if (gen.string_data.items.len > 0 or gen.fmt_data.items.len > 0) {
+        return error.Unsupported;
+    }
+
+    // Faz LLVM.4: `qbeCall`/`qbeCallVariadic`nin BİRİKTİRDİĞİ `declare`
+    // satırları (bkz. `Codegen.llvm_pending_declares`nin belge notu) —
+    // TÜM fonksiyon gövdeleri (`define ... { ... }`) yazıldıktan SONRA,
+    // modülün SONUNA flush edilir (sıra ÖNEMLİ DEĞİL, bkz. `llvm_emit.
+    // zig`nin belge notu — SADECE tekrar etmemeli, BUNU `llvm_declared_
+    // externs` ZATEN garanti eder).
+    if (gen.backend == .llvm) {
+        for (gen.llvm_pending_declares.items) |decl| {
+            try gen.out.writer.writeAll(decl);
+        }
     }
 
     return gen.out.toOwnedSlice();

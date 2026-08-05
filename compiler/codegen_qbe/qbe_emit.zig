@@ -159,6 +159,28 @@ pub fn qbeCall(self: *Codegen, dst: ?QbeCallDst, func_text: []const u8, args: []
     try self.out.writer.writeAll(")\n");
 }
 
+/// Faz LLVM.4: `qbeCall`in variadic (`...`) versiyonu — `genPrint`/
+/// `genPrintFragment`nin `printf`e yaptığı çağrılar İçin (QBE'nin `...`
+/// işaretinin `qbeCall`de karşılığı YOK, bu YÜZDEN bu ayrı metot). `fixed`
+/// `...`DAN ÖNCEKİ, `variadic` SONRAKİ argümanlar — bu kod tabanında HER
+/// ZAMAN `fixed.len == 1` (biçim dizesi) + `variadic.len == 1` (basılacak
+/// değer), ama İMZA genel BIRAKILDI.
+pub fn qbeCallVariadic(self: *Codegen, dst: ?QbeCallDst, func_text: []const u8, fixed: []const QbeArg, variadic: []const QbeArg) CodegenError!void {
+    if (dst) |d| {
+        try self.out.writer.print("    {s} ={s} call {s}(", .{ d.name, qbeTypeName(d.ty), func_text });
+    } else {
+        try self.out.writer.print("    call {s}(", .{func_text});
+    }
+    for (fixed) |arg| {
+        try self.out.writer.print("{s} {s}, ", .{ qbeTypeName(arg.ty), arg.text });
+    }
+    try self.out.writer.writeAll("...");
+    for (variadic) |arg| {
+        try self.out.writer.print(", {s} {s}", .{ qbeTypeName(arg.ty), arg.text });
+    }
+    try self.out.writer.writeAll(")\n");
+}
+
 // ---- Fonksiyon başlıkları -----------------------------------------------
 //
 // Her dosyada farklı sabit parametre isimleri (`%argp`/`%env`/`%p_self`/
