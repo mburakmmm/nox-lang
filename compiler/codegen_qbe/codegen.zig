@@ -645,6 +645,14 @@ pub const Codegen = struct {
     /// `qbe_emit.zig`/`llvm_emit.zig` arasında SEÇTİĞİ hedef. Varsayılan
     /// `.qbe` — `--release` VERİLMEDİĞİ SÜRECE davranış SIFIR değişir.
     backend: Backend = .qbe,
+    /// Faz LLVM.2: `llvm_emit.zig`nin kendi kendini onaran `qbeLabel`i
+    /// İçin — `true` İKEN geçerli LLVM temel bloğunun HENÜZ bir terminatör
+    /// (`br`/`ret`/`unreachable`) ALMADIĞINI işaretler (bkz. bulgu #4:
+    /// `registration.zig`nin `end_label` siteleri, QBE'de LEGAL implicit
+    /// fallthrough'a GÜVENİR — LLVM'de İLLEGAL, `qbeLabel` bu durumda
+    /// örtük bir `br label` EKLER). `.qbe` backend'İ BU ALANI HİÇ OKUMAZ/
+    /// YAZMAZ.
+    llvm_block_open: bool = false,
     /// Faz T.3: `generateModule`e bir `debug_source_path` VERİLDİYSE `true` —
     /// `genStmts` (TÜM deyim kodgen'inin TEK dağıtım noktası, bkz. `checkStmt`
     /// İLE AYNI T.1 deseni) HER deyimden ÖNCE bir `dbgloc <satır>` (QBE IL,
