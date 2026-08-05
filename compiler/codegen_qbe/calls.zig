@@ -23,7 +23,6 @@ const LIST_HEADER_SIZE = types.LIST_HEADER_SIZE;
 const TAG_SIZE = types.TAG_SIZE;
 const FuncSigInfo = types.FuncSigInfo;
 const CodegenError = abi.CodegenError;
-const qbeTypeName = abi.qbeTypeName;
 const qbeSizeOf = abi.qbeSizeOf;
 const isHeapManaged = abi.isHeapManaged;
 const isTemporaryExpr = abi.isTemporaryExpr;
@@ -45,7 +44,7 @@ const IntrinsicKind = async_thread_mod.IntrinsicKind;
 pub fn genIndirectCallThroughClosurePtr(self: *Codegen, closure_ptr: []const u8, fsig: *const FuncSigInfo, args: []const ast.Expr) CodegenError!Value {
     if (fsig.params.len != args.len) return error.Unsupported;
     const fn_ptr = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ fn_ptr, closure_ptr });
+    try self.qbeLoadL(fn_ptr, closure_ptr);
 
     const arg_values = try self.allocator.alloc(Value, args.len);
     for (args, 0..) |a, i| {
@@ -56,13 +55,17 @@ pub fn genIndirectCallThroughClosurePtr(self: *Codegen, closure_ptr: []const u8,
 
     const ret_qtype = fsig.ret.qtype;
     const result_temp: ?[]const u8 = if (ret_qtype == .none) null else try self.newTemp();
-    if (result_temp) |rt| {
-        try self.out.writer.print("    {s} ={s} call {s}(l {s}, l {s}", .{ rt, qbeTypeName(ret_qtype), fn_ptr, RT_PARAM, closure_ptr });
-    } else {
-        try self.out.writer.print("    call {s}(l {s}, l {s}", .{ fn_ptr, RT_PARAM, closure_ptr });
+    {
+        const call_args = try self.allocator.alloc(codegen.QbeArg, 2 + arg_values.len);
+        call_args[0] = .{ .ty = .l, .text = RT_PARAM };
+        call_args[1] = .{ .ty = .l, .text = closure_ptr };
+        for (arg_values, 0..) |v, i| call_args[2 + i] = .{ .ty = v.qtype, .text = v.text };
+        if (result_temp) |rt| {
+            try self.qbeCall(.{ .name = rt, .ty = ret_qtype }, fn_ptr, call_args);
+        } else {
+            try self.qbeCall(null, fn_ptr, call_args);
+        }
     }
-    for (arg_values) |v| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(v.qtype), v.text });
-    try self.out.writer.writeAll(")\n");
     // Dolaylı çağrının HEDEFİ (çağrılan SOMUT closure) derleme zamanında
     // bilinmediğinden `must_not_raise` eleme optimizasyonu (bkz. normal
     // fonksiyon çağrısı dalı) burada UYGULANAMAZ — İSTİSNA kontrolü HER
@@ -114,9 +117,9 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 // okunur (`nox.json`nin `array_len`/`object_len`si İÇİN
                 // eklendi — GENEL bir yerleşik, JSON'a özgü DEĞİL).
                 if (v.heap == .list) {
-                    try self.out.writer.print("    {s} =l loadl {s}\n", .{ result_t, v.text });
+                    try self.qbeLoadL(result_t, v.text);
                 } else {
-                    try self.out.writer.print("    {s} =l call $nox_str_char_count(l {s})\n", .{ result_t, v.text });
+                    try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_str_char_count", &.{.{ .ty = .l, .text = v.text }});
                 }
                 try self.releaseIfTemporary(c.args[0], v);
                 return .{ .text = result_t, .qtype = .l };
@@ -149,23 +152,23 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     const true_label = try self.newLabel("str_bool_true");
                     const false_label = try self.newLabel("str_bool_false");
                     const done_label = try self.newLabel("str_bool_done");
-                    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ v.text, true_label, false_label });
-                    try self.out.writer.print("{s}\n", .{true_label});
+                    try self.qbeJnz(v.text, true_label, false_label);
+                    try self.qbeLabel(true_label);
                     const true_v = try self.emitStringLiteral("True");
-                    try self.out.writer.print("    jmp {s}\n", .{done_label});
-                    try self.out.writer.print("{s}\n", .{false_label});
+                    try self.qbeJmp(done_label);
+                    try self.qbeLabel(false_label);
                     const false_v = try self.emitStringLiteral("False");
-                    try self.out.writer.print("    jmp {s}\n", .{done_label});
-                    try self.out.writer.print("{s}\n", .{done_label});
+                    try self.qbeJmp(done_label);
+                    try self.qbeLabel(done_label);
                     const result_t = try self.newTemp();
-                    try self.out.writer.print("    {s} =l phi {s} {s}, {s} {s}\n", .{ result_t, true_label, true_v.text, false_label, false_v.text });
+                    try self.qbePhi(result_t, .l, true_label, true_v.text, false_label, false_v.text);
                     return .{ .text = result_t, .qtype = .l, .heap = .str };
                 }
                 const result_t = try self.newTemp();
                 if (v.qtype == .d) {
-                    try self.out.writer.print("    {s} =l call $nox_float_to_str(l {s}, d {s})\n", .{ result_t, RT_PARAM, v.text });
+                    try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_float_to_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .d, .text = v.text } });
                 } else {
-                    try self.out.writer.print("    {s} =l call $nox_int_to_str(l {s}, l {s})\n", .{ result_t, RT_PARAM, v.text });
+                    try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_int_to_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = v.text } });
                 }
                 return .{ .text = result_t, .qtype = .l, .heap = .str };
             }
@@ -207,7 +210,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 const func_v = try self.genExpr(c.args[2]);
                 const arg_v = try self.genExpr(c.args[3]);
                 const result_temp = try self.newTemp();
-                try self.out.writer.print("    {s} =l call $nox_hpy_call(l {s}, l {s}, l {s}, l {s}, l {s})\n", .{ result_temp, RT_PARAM, path_v.text, ext_v.text, func_v.text, arg_v.text });
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = path_v.text }, .{ .ty = .l, .text = ext_v.text }, .{ .ty = .l, .text = func_v.text }, .{ .ty = .l, .text = arg_v.text } });
                 return .{ .text = result_temp, .qtype = .l };
             }
             // Faz 15 (bkz. checker.zig'deki eşdeğer not): `hpy_call`in
@@ -224,7 +227,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 const func_v = try self.genExpr(c.args[2]);
                 const arg_v = try self.genExpr(c.args[3]);
                 const result_temp = try self.newTemp();
-                try self.out.writer.print("    {s} =l call $nox_hpy_call_str(l {s}, l {s}, l {s}, l {s}, l {s})\n", .{ result_temp, RT_PARAM, path_v.text, ext_v.text, func_v.text, arg_v.text });
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = path_v.text }, .{ .ty = .l, .text = ext_v.text }, .{ .ty = .l, .text = func_v.text }, .{ .ty = .l, .text = arg_v.text } });
                 return .{ .text = result_temp, .qtype = .l, .heap = .str };
             }
             // Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi +
@@ -237,21 +240,22 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             if (std.mem.eql(u8, name, "__nox_reflect_decorator_count")) {
                 if (c.args.len != 0) return error.Unsupported;
                 const result_temp = try self.newTemp();
-                try self.out.writer.print("    {s} =l call $__nox_reflect_decorator_count(l {s})\n", .{ result_temp, RT_PARAM });
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$__nox_reflect_decorator_count", &.{.{ .ty = .l, .text = RT_PARAM }});
                 return .{ .text = result_temp, .qtype = .l };
             }
             if (std.mem.eql(u8, name, "__nox_reflect_decorator_target_name") or std.mem.eql(u8, name, "__nox_reflect_decorator_name")) {
                 if (c.args.len != 1) return error.Unsupported;
                 const i_v = try self.genExpr(c.args[0]);
                 const result_temp = try self.newTemp();
-                try self.out.writer.print("    {s} =l call ${s}(l {s}, l {s})\n", .{ result_temp, name, RT_PARAM, i_v.text });
+                const sym = try std.fmt.allocPrint(self.allocator, "${s}", .{name});
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = i_v.text } });
                 return .{ .text = result_temp, .qtype = .l, .heap = .str };
             }
             if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg_count")) {
                 if (c.args.len != 1) return error.Unsupported;
                 const i_v = try self.genExpr(c.args[0]);
                 const result_temp = try self.newTemp();
-                try self.out.writer.print("    {s} =l call $__nox_reflect_decorator_arg_count(l {s}, l {s})\n", .{ result_temp, RT_PARAM, i_v.text });
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$__nox_reflect_decorator_arg_count", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = i_v.text } });
                 return .{ .text = result_temp, .qtype = .l };
             }
             if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg")) {
@@ -259,14 +263,14 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 const i_v = try self.genExpr(c.args[0]);
                 const j_v = try self.genExpr(c.args[1]);
                 const result_temp = try self.newTemp();
-                try self.out.writer.print("    {s} =l call $__nox_reflect_decorator_arg(l {s}, l {s}, l {s})\n", .{ result_temp, RT_PARAM, i_v.text, j_v.text });
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$__nox_reflect_decorator_arg", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = i_v.text }, .{ .ty = .l, .text = j_v.text } });
                 return .{ .text = result_temp, .qtype = .l, .heap = .str };
             }
             if (std.mem.eql(u8, name, "__nox_reflect_decorator_is_handler")) {
                 if (c.args.len != 1) return error.Unsupported;
                 const i_v = try self.genExpr(c.args[0]);
                 const result_temp = try self.newTemp();
-                try self.out.writer.print("    {s} =w call $__nox_reflect_decorator_is_handler(l {s}, l {s})\n", .{ result_temp, RT_PARAM, i_v.text });
+                try self.qbeCall(.{ .name = result_temp, .ty = .w }, "$__nox_reflect_decorator_is_handler", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = i_v.text } });
                 return .{ .text = result_temp, .qtype = .w };
             }
             // `.heap = .closure` — dönüş DEĞERİ normal kullanımda HER ZAMAN
@@ -280,7 +284,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 if (c.args.len != 1) return error.Unsupported;
                 const i_v = try self.genExpr(c.args[0]);
                 const result_temp = try self.newTemp();
-                try self.out.writer.print("    {s} =l call $__nox_reflect_decorator_handler(l {s}, l {s})\n", .{ result_temp, RT_PARAM, i_v.text });
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$__nox_reflect_decorator_handler", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = i_v.text } });
                 return .{ .text = result_temp, .qtype = .l, .heap = .closure };
             }
             if (std.mem.eql(u8, name, "wasm_call")) {
@@ -289,7 +293,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 const func_v = try self.genExpr(c.args[1]);
                 const arg_v = try self.genExpr(c.args[2]);
                 const result_temp = try self.newTemp();
-                try self.out.writer.print("    {s} =l call $nox_wasm_call(l {s}, l {s}, l {s}, l {s})\n", .{ result_temp, RT_PARAM, path_v.text, func_v.text, arg_v.text });
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_wasm_call", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = path_v.text }, .{ .ty = .l, .text = func_v.text }, .{ .ty = .l, .text = arg_v.text } });
                 return .{ .text = result_temp, .qtype = .l };
             }
 
@@ -321,27 +325,29 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     arg_values[i] = try self.convert(v0, esig.params[i].qtype);
                 }
                 const result_temp: ?[]const u8 = if (esig.ret.qtype == .none) null else try self.newTemp();
-                if (result_temp) |rt| {
-                    try self.out.writer.print("    {s} ={s} call ${s}(", .{ rt, qbeTypeName(esig.ret.qtype), name });
-                } else {
-                    try self.out.writer.print("    call ${s}(", .{name});
-                }
                 // `with_rt` (bkz. `ast.ExternDef.needs_rt`in belge notu,
                 // stdlib fazı §D.1): `RT_PARAM` GİZLİCE argüman
                 // listesinin BAŞINA eklenir (normal fonksiyon
                 // çağrılarıyla AYNI kalıp) — Zig tarafının İLK parametresi
                 // `rt: ?*anyopaque` olmalıdır.
-                var wrote_arg = false;
-                if (esig.needs_rt) {
-                    try self.out.writer.print("l {s}", .{RT_PARAM});
-                    wrote_arg = true;
+                const extern_args = try self.allocator.alloc(codegen.QbeArg, (if (esig.needs_rt) @as(usize, 1) else 0) + arg_values.len);
+                {
+                    var idx: usize = 0;
+                    if (esig.needs_rt) {
+                        extern_args[idx] = .{ .ty = .l, .text = RT_PARAM };
+                        idx += 1;
+                    }
+                    for (arg_values) |v| {
+                        extern_args[idx] = .{ .ty = v.qtype, .text = v.text };
+                        idx += 1;
+                    }
                 }
-                for (arg_values) |v| {
-                    if (wrote_arg) try self.out.writer.writeAll(", ");
-                    try self.out.writer.print("{s} {s}", .{ qbeTypeName(v.qtype), v.text });
-                    wrote_arg = true;
+                const extern_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{name});
+                if (result_temp) |rt| {
+                    try self.qbeCall(.{ .name = rt, .ty = esig.ret.qtype }, extern_sym, extern_args);
+                } else {
+                    try self.qbeCall(null, extern_sym, extern_args);
                 }
-                try self.out.writer.writeAll(")\n");
                 // Stdlib fazı §F: `elem_qtype`/`elem_heap_info`/
                 // `elem_is_str` ÖNCEDEN eksikti (yalnızca `qtype`/`heap`
                 // kopyalanıyordu) — D.1.5'in `genFieldRead`de bulunan
@@ -386,7 +392,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 if (info.heap == .closure) {
                     const fsig = info.func_sig orelse return error.Unsupported;
                     const closure_ptr = try self.newTemp();
-                    try self.out.writer.print("    {s} =l loadl {s}\n", .{ closure_ptr, info.slot });
+                    try self.qbeLoadL(closure_ptr, info.slot);
                     return self.genIndirectCallThroughClosurePtr(closure_ptr, fsig, c.args);
                 }
             }
@@ -411,13 +417,17 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             }
 
             const result_temp: ?[]const u8 = if (sig.ret.qtype == .none) null else try self.newTemp();
-            if (result_temp) |rt| {
-                try self.out.writer.print("    {s} ={s} call ${s}(l {s}", .{ rt, qbeTypeName(sig.ret.qtype), name, RT_PARAM });
-            } else {
-                try self.out.writer.print("    call ${s}(l {s}", .{ name, RT_PARAM });
+            {
+                const fn_args = try self.allocator.alloc(codegen.QbeArg, 1 + arg_values.len);
+                fn_args[0] = .{ .ty = .l, .text = RT_PARAM };
+                for (arg_values, 0..) |v, i| fn_args[1 + i] = .{ .ty = v.qtype, .text = v.text };
+                const fn_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{name});
+                if (result_temp) |rt| {
+                    try self.qbeCall(.{ .name = rt, .ty = sig.ret.qtype }, fn_sym, fn_args);
+                } else {
+                    try self.qbeCall(null, fn_sym, fn_args);
+                }
             }
-            for (arg_values) |v| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(v.qtype), v.text });
-            try self.out.writer.writeAll(")\n");
             // Performans fazı: `name`in ASLA istisna fırlatamayacağı
             // KANITLANDIYSA (bkz. `self.must_not_raise`, `computeMustNotRaise`)
             // kontrolü ATLA.
@@ -490,22 +500,24 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
 /// bile TUTARLILIK için AYNI desen tercih edildi).
 pub fn genParseOrRaise(self: *Codegen, v: Value, valid_fn: []const u8, convert_fn: []const u8, result_qtype: QbeType, message: []const u8) CodegenError!Value {
     const valid_t = try self.newTemp();
-    try self.out.writer.print("    {s} =w call ${s}(l {s})\n", .{ valid_t, valid_fn, v.text });
+    const valid_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{valid_fn});
+    try self.qbeCall(.{ .name = valid_t, .ty = .w }, valid_sym, &.{.{ .ty = .l, .text = v.text }});
     const err_label = try self.newLabel("parse_err");
     const ok_label = try self.newLabel("parse_ok");
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ valid_t, ok_label, err_label });
-    try self.out.writer.print("{s}\n", .{err_label});
+    try self.qbeJnz(valid_t, ok_label, err_label);
+    try self.qbeLabel(err_label);
 
     const msg_value = try self.emitStringLiteral(message);
     const ve_cinfo = self.classes.get("ValueError") orelse return error.Unsupported;
     const ve_obj = try self.genConstructFromValues("ValueError", ve_cinfo, &.{msg_value}, null);
-    try self.out.writer.print("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ve_obj.text, self.current_raise_line });
+    try self.qbeRaw("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ve_obj.text, self.current_raise_line });
     try self.emitExceptionCheck();
-    try self.out.writer.print("    jmp {s}\n", .{ok_label});
+    try self.qbeJmp(ok_label);
 
-    try self.out.writer.print("{s}\n", .{ok_label});
+    try self.qbeLabel(ok_label);
     const result_t = try self.newTemp();
-    try self.out.writer.print("    {s} ={s} call ${s}(l {s})\n", .{ result_t, qbeTypeName(result_qtype), convert_fn, v.text });
+    const convert_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{convert_fn});
+    try self.qbeCall(.{ .name = result_t, .ty = result_qtype }, convert_sym, &.{.{ .ty = .l, .text = v.text }});
     return .{ .text = result_t, .qtype = result_qtype };
 }
 
@@ -627,13 +639,13 @@ pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: Cla
         }
         const temp = try self.newTemp();
         if (arena) |ap| {
-            try self.out.writer.print("    {s} =l call $nox_arena_alloc(l {s}, l {d})\n", .{ temp, ap, cinfo.total_size });
+            try self.qbeRaw("    {s} =l call $nox_arena_alloc(l {s}, l {d})\n", .{ temp, ap, cinfo.total_size });
         } else {
-            try self.out.writer.print("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ temp, RT_PARAM, cinfo.total_size });
+            try self.qbeRaw("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ temp, RT_PARAM, cinfo.total_size });
         }
         break :blk temp;
     };
-    try self.out.writer.print("    storel {d}, {s}\n", .{ cinfo.class_id, t });
+    try self.qbeStoreImmL(@intCast(cinfo.class_id), t);
     // Faz 7 (tekli kalıtım): `has_vtable` İSE, TAG'den HEMEN SONRA (alanlar
     // BAŞLAMADAN ÖNCE) bu SOMUT sınıfın vtable veri bloğunun adresini
     // yaz (bkz. `layout.zig`nin `genClassVtable`ı, `abi_layout.VTABLE_
@@ -641,7 +653,7 @@ pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: Cla
     // BUNU okur.
     if (cinfo.has_vtable) {
         const vt_addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ vt_addr, t, TAG_SIZE });
+        try self.qbeOp2Imm(vt_addr, .l, "add", t, @intCast(TAG_SIZE));
         // `next_vtable_slot == 0`: bu SOMUT sınıfın (VE tüm hiyerarşisinin
         // BURAYA kadar) HİÇ sanal metodu yok (`genClassVtable` BU durumda
         // hiçbir `data $..._vtable` bloğu YAYINLAMAZ, bkz. onun belge
@@ -649,9 +661,10 @@ pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: Cla
         // SIFIRLA (zaten HİÇBİR yerden okunmayacak, ama bağlantı-zamanı
         // "tanımsız sembol" hatasından KAÇINMAK İçin).
         if (cinfo.next_vtable_slot > 0) {
-            try self.out.writer.print("    storel ${s}_vtable, {s}\n", .{ class_name, vt_addr });
+            const vtable_sym = try std.fmt.allocPrint(self.allocator, "${s}_vtable", .{class_name});
+            try self.qbeStoreL(vtable_sym, vt_addr);
         } else {
-            try self.out.writer.print("    storel 0, {s}\n", .{vt_addr});
+            try self.qbeStoreImmL(0, vt_addr);
         }
     }
     // Alanlar `__init__` çalışmadan ÖNCE sıfırlanır: bu sayede sınıf tipli
@@ -661,8 +674,8 @@ pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: Cla
     // doldurulmuş SAYILAMAZ (bkz. runtime/alloc/asap.zig, DebugAllocator).
     for (cinfo.fields.items) |f| {
         const addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, t, f.offset });
-        try self.out.writer.print("    storel 0, {s}\n", .{addr});
+        try self.qbeOp2Imm(addr, .l, "add", t, @intCast(f.offset));
+        try self.qbeStoreImmL(0, addr);
     }
     // `has_init == false`: sınıfın hiç `__init__`i yok (bkz.
     // `ClassInfo.has_init`in belge notu) — `generateModule` bu sınıf için
@@ -673,9 +686,14 @@ pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: Cla
     // eder — `class_name`in KENDİSİ DEĞİL (o sembol HİÇ ÜRETİLMEZ).
     if (cinfo.has_init) {
         const init_owner = cinfo.init_owner.?;
-        try self.out.writer.print("    call ${s}_{s}(l {s}, l {s}", .{ init_owner, "__init__", RT_PARAM, t });
-        for (arg_values) |v| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(v.qtype), v.text });
-        try self.out.writer.writeAll(")\n");
+        {
+            const init_args = try self.allocator.alloc(codegen.QbeArg, 2 + arg_values.len);
+            init_args[0] = .{ .ty = .l, .text = RT_PARAM };
+            init_args[1] = .{ .ty = .l, .text = t };
+            for (arg_values, 0..) |v, i| init_args[2 + i] = .{ .ty = v.qtype, .text = v.text };
+            const init_sym = try std.fmt.allocPrint(self.allocator, "${s}___init__", .{init_owner});
+            try self.qbeCall(null, init_sym, init_args);
+        }
         // Bkz. bu fonksiyonun `temp_release` belge notu — `__init__`
         // çağrısından HEMEN SONRA, `emitExceptionCheck`DEN ÖNCE.
         if (temp_release) |tr| try self.releaseTemporaryArgs(tr.exprs, tr.values);
@@ -698,14 +716,14 @@ pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: Cla
             // alanlar GÜVENLE atlanır) serbest bırakılır.
             if (arena == null) {
                 const pending = try self.newTemp();
-                try self.out.writer.print("    {s} =w call $nox_exception_pending(l {s})\n", .{ pending, RT_PARAM });
+                try self.qbeCall(.{ .name = pending, .ty = .w }, "$nox_exception_pending", &.{.{ .ty = .l, .text = RT_PARAM }});
                 const release_label = try self.newLabel("ctor_init_failed");
                 const cont_label = try self.newLabel("ctor_init_cont");
-                try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ pending, release_label, cont_label });
-                try self.out.writer.print("{s}\n", .{release_label});
+                try self.qbeJnz(pending, release_label, cont_label);
+                try self.qbeLabel(release_label);
                 try self.releaseValueIfSet(t, .class, .none, class_name, null, null);
-                try self.out.writer.print("    jmp {s}\n", .{cont_label});
-                try self.out.writer.print("{s}\n", .{cont_label});
+                try self.qbeJmp(cont_label);
+                try self.qbeLabel(cont_label);
             }
             try self.emitExceptionCheck();
         }
@@ -762,9 +780,9 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
             if (!std.mem.eql(u8, f.name, a.attr) or f.info.heap != .closure) continue;
             const fsig = f.info.func_sig orelse return error.Unsupported;
             const addr = try self.newTemp();
-            try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, obj.text, f.offset });
+            try self.qbeOp2Imm(addr, .l, "add", obj.text, @intCast(f.offset));
             const closure_ptr = try self.newTemp();
-            try self.out.writer.print("    {s} =l loadl {s}\n", .{ closure_ptr, addr });
+            try self.qbeLoadL(closure_ptr, addr);
             const result = try self.genIndirectCallThroughClosurePtr(closure_ptr, fsig, args);
             try self.releaseIfTemporary(a.obj.*, obj);
             return result;
@@ -792,27 +810,27 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
     // EDİLMEMİŞ metodlar İçin BİLE (devirtualization YOK) — kalıtıma HİÇ
     // KATILMAYAN sınıflar İçin (`has_vtable == false`, Nox kodunun BÜYÜK
     // ÇOĞUNLUĞU) davranış/performans BİREBİR ÖNCEKİ GİBİ kalır.
-    if (cinfo.has_vtable) {
-        const vt_addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ vt_addr, obj.text, TAG_SIZE });
-        const vtable_ptr = try self.newTemp();
-        try self.out.writer.print("    {s} =l loadl {s}\n", .{ vtable_ptr, vt_addr });
-        const slot_addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ slot_addr, vtable_ptr, msig.slot * 8 });
-        const fn_ptr = try self.newTemp();
-        try self.out.writer.print("    {s} =l loadl {s}\n", .{ fn_ptr, slot_addr });
-        if (result_temp) |rt| {
-            try self.out.writer.print("    {s} ={s} call {s}(l {s}, l {s}", .{ rt, qbeTypeName(msig.sig.ret.qtype), fn_ptr, RT_PARAM, obj.text });
+    {
+        const method_args = try self.allocator.alloc(codegen.QbeArg, 2 + arg_values.len);
+        method_args[0] = .{ .ty = .l, .text = RT_PARAM };
+        method_args[1] = .{ .ty = .l, .text = obj.text };
+        for (arg_values, 0..) |v, i| method_args[2 + i] = .{ .ty = v.qtype, .text = v.text };
+        const dst: ?codegen.QbeCallDst = if (result_temp) |rt| .{ .name = rt, .ty = msig.sig.ret.qtype } else null;
+        if (cinfo.has_vtable) {
+            const vt_addr = try self.newTemp();
+            try self.qbeOp2Imm(vt_addr, .l, "add", obj.text, @intCast(TAG_SIZE));
+            const vtable_ptr = try self.newTemp();
+            try self.qbeLoadL(vtable_ptr, vt_addr);
+            const slot_addr = try self.newTemp();
+            try self.qbeOp2Imm(slot_addr, .l, "add", vtable_ptr, @intCast(msig.slot * 8));
+            const fn_ptr = try self.newTemp();
+            try self.qbeLoadL(fn_ptr, slot_addr);
+            try self.qbeCall(dst, fn_ptr, method_args);
         } else {
-            try self.out.writer.print("    call {s}(l {s}, l {s}", .{ fn_ptr, RT_PARAM, obj.text });
+            const method_sym = try std.fmt.allocPrint(self.allocator, "${s}_{s}", .{ msig.owner, a.attr });
+            try self.qbeCall(dst, method_sym, method_args);
         }
-    } else if (result_temp) |rt| {
-        try self.out.writer.print("    {s} ={s} call ${s}_{s}(l {s}, l {s}", .{ rt, qbeTypeName(msig.sig.ret.qtype), msig.owner, a.attr, RT_PARAM, obj.text });
-    } else {
-        try self.out.writer.print("    call ${s}_{s}(l {s}, l {s}", .{ msig.owner, a.attr, RT_PARAM, obj.text });
     }
-    for (arg_values) |v| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(v.qtype), v.text });
-    try self.out.writer.writeAll(")\n");
     // Faz M.8 (yeniden ele alındı, bkz. nox-teknik-spesifikasyon.md
     // §3.59): `computeMustNotRaise` ARTIK TÜM metodları (yalnızca
     // `__init__` değil) analiz ediyor — hedef metod bu kümedeyse
@@ -868,9 +886,14 @@ pub fn genSuperMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Ex
             try self.checkNoLowlevelEscape(v0);
             arg_values[i] = try self.convert(v0, pt.qtype);
         }
-        try self.out.writer.print("    call ${s}___init__(l {s}, l {s}", .{ init_owner, RT_PARAM, self_val.text });
-        for (arg_values) |v| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(v.qtype), v.text });
-        try self.out.writer.writeAll(")\n");
+        {
+            const init_args = try self.allocator.alloc(codegen.QbeArg, 2 + arg_values.len);
+            init_args[0] = .{ .ty = .l, .text = RT_PARAM };
+            init_args[1] = .{ .ty = .l, .text = self_val.text };
+            for (arg_values, 0..) |v, i| init_args[2 + i] = .{ .ty = v.qtype, .text = v.text };
+            const init_sym = try std.fmt.allocPrint(self.allocator, "${s}___init__", .{init_owner});
+            try self.qbeCall(null, init_sym, init_args);
+        }
         try self.releaseTemporaryArgs(args, arg_values);
         try self.emitExceptionCheck();
         return .{ .text = "0", .qtype = .w };
@@ -885,13 +908,15 @@ pub fn genSuperMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Ex
         arg_values[i] = try self.convert(v0, msig.sig.params[i].qtype);
     }
     const result_temp: ?[]const u8 = if (msig.sig.ret.qtype == .none) null else try self.newTemp();
-    if (result_temp) |rt| {
-        try self.out.writer.print("    {s} ={s} call ${s}_{s}(l {s}, l {s}", .{ rt, qbeTypeName(msig.sig.ret.qtype), msig.owner, a.attr, RT_PARAM, self_val.text });
-    } else {
-        try self.out.writer.print("    call ${s}_{s}(l {s}, l {s}", .{ msig.owner, a.attr, RT_PARAM, self_val.text });
+    {
+        const method_args = try self.allocator.alloc(codegen.QbeArg, 2 + arg_values.len);
+        method_args[0] = .{ .ty = .l, .text = RT_PARAM };
+        method_args[1] = .{ .ty = .l, .text = self_val.text };
+        for (arg_values, 0..) |v, i| method_args[2 + i] = .{ .ty = v.qtype, .text = v.text };
+        const method_sym = try std.fmt.allocPrint(self.allocator, "${s}_{s}", .{ msig.owner, a.attr });
+        const dst: ?codegen.QbeCallDst = if (result_temp) |rt| .{ .name = rt, .ty = msig.sig.ret.qtype } else null;
+        try self.qbeCall(dst, method_sym, method_args);
     }
-    for (arg_values) |v| try self.out.writer.print(", {s} {s}", .{ qbeTypeName(v.qtype), v.text });
-    try self.out.writer.writeAll(")\n");
     try self.releaseTemporaryArgs(args, arg_values);
     try self.emitExceptionCheck();
     if (result_temp) |rt| {
@@ -912,7 +937,7 @@ pub fn genDictMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         const key_payload = try self.toPayload(key_v0);
         const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
         const result = try self.newTemp();
-        try self.out.writer.print("    {s} =w call $nox_dict_contains(l {s}, w {s}, l {s})\n", .{ result, obj.text, key_is_str_lit, key_payload.text });
+        try self.qbeCall(.{ .name = result, .ty = .w }, "$nox_dict_contains", &.{ .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
         try self.releaseIfTemporary(args[0], key_v0);
         try self.releaseIfTemporary(a.obj.*, obj);
         return .{ .text = result, .qtype = .w };
@@ -920,7 +945,7 @@ pub fn genDictMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     if (std.mem.eql(u8, a.attr, "len")) {
         if (args.len != 0) return error.Unsupported;
         const result = try self.newTemp();
-        try self.out.writer.print("    {s} =l call $nox_dict_len(l {s})\n", .{ result, obj.text });
+        try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_dict_len", &.{.{ .ty = .l, .text = obj.text }});
         try self.releaseIfTemporary(a.obj.*, obj);
         return .{ .text = result, .qtype = .l };
     }
@@ -938,7 +963,7 @@ pub fn genDictMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
         const elem_size = qbeSizeOf(dinfo.key_qtype);
         const result = try self.newTemp();
-        try self.out.writer.print("    {s} =l call $nox_dict_keys(l {s}, l {s}, w {s}, l {d})\n", .{ result, RT_PARAM, obj.text, key_is_str_lit, elem_size });
+        try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_dict_keys", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{elem_size}) } });
         try self.releaseIfTemporary(a.obj.*, obj);
         var elem_heap_info: ?*const ElemHeapInfo = null;
         if (dinfo.key_is_str) {
@@ -954,7 +979,7 @@ pub fn genDictMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         const value_is_class_lit: []const u8 = if (dinfo.value_is_class) "1" else "0";
         const elem_size = qbeSizeOf(dinfo.value_qtype);
         const result = try self.newTemp();
-        try self.out.writer.print("    {s} =l call $nox_dict_values(l {s}, l {s}, w {s}, w {s}, l {d})\n", .{ result, RT_PARAM, obj.text, value_is_str_lit, value_is_class_lit, elem_size });
+        try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_dict_values", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = value_is_str_lit }, .{ .ty = .w, .text = value_is_class_lit }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{elem_size}) } });
         try self.releaseIfTemporary(a.obj.*, obj);
         var elem_heap_info: ?*const ElemHeapInfo = null;
         if (dinfo.value_is_str) {
@@ -1021,9 +1046,9 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         }
         const g = self.module_globals.get(recv_name) orelse return error.Unsupported;
         const block = try self.newTemp();
-        try self.out.writer.print("    {s} =l call $nox_globals_get(l {s})\n", .{ block, RT_PARAM });
+        try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_globals_get", &.{.{ .ty = .l, .text = RT_PARAM }});
         const addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ addr, block, g.offset });
+        try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
         break :blk addr;
     };
 
@@ -1034,56 +1059,56 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     const elem_size = qbeSizeOf(obj.elem_qtype);
 
     const len_t = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ len_t, obj.text });
+    try self.qbeLoadL(len_t, obj.text);
     const cap_addr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, 8\n", .{ cap_addr, obj.text });
+    try self.qbeOp2Imm(cap_addr, .l, "add", obj.text, 8);
     const cap_t = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ cap_t, cap_addr });
+    try self.qbeLoadL(cap_t, cap_addr);
     const has_room = try self.newTemp();
-    try self.out.writer.print("    {s} =w csltl {s}, {s}\n", .{ has_room, len_t, cap_t });
+    try self.qbeOp2(has_room, .w, "csltl", len_t, cap_t);
     const grow_label = try self.newLabel("append_grow");
     const write_label = try self.newLabel("append_write");
     const done_label = try self.newLabel("append_done");
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ has_room, write_label, grow_label });
+    try self.qbeJnz(has_room, write_label, grow_label);
 
     // Büyüme yolu: new_cap = (cap == 0) ? 1 : cap * 2 (phi'siz, alloc8
     // tabanlı bir slot ile — bu projenin TÜM merge noktalarında
     // kullandığı AYNI desen, bkz. `genListElemRelease`nin idx_slot'u).
-    try self.out.writer.print("{s}\n", .{grow_label});
+    try self.qbeLabel(grow_label);
     const cap_is_zero = try self.newTemp();
-    try self.out.writer.print("    {s} =w ceql {s}, 0\n", .{ cap_is_zero, cap_t });
+    try self.qbeOp2Imm(cap_is_zero, .w, "ceql", cap_t, 0);
     const doubled = try self.newTemp();
-    try self.out.writer.print("    {s} =l mul {s}, 2\n", .{ doubled, cap_t });
+    try self.qbeOp2Imm(doubled, .l, "mul", cap_t, 2);
     const new_cap_slot = try self.newTemp();
-    try self.out.writer.print("    {s} =l alloc8 8\n", .{new_cap_slot});
+    try self.qbeAlloc(new_cap_slot, .eight, 8);
     const capzero_label = try self.newLabel("append_capzero");
     const capnz_label = try self.newLabel("append_capnz");
     const capdone_label = try self.newLabel("append_capdone");
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cap_is_zero, capzero_label, capnz_label });
-    try self.out.writer.print("{s}\n", .{capzero_label});
-    try self.out.writer.print("    storel 1, {s}\n", .{new_cap_slot});
-    try self.out.writer.print("    jmp {s}\n", .{capdone_label});
-    try self.out.writer.print("{s}\n", .{capnz_label});
-    try self.out.writer.print("    storel {s}, {s}\n", .{ doubled, new_cap_slot });
-    try self.out.writer.print("    jmp {s}\n", .{capdone_label});
-    try self.out.writer.print("{s}\n", .{capdone_label});
+    try self.qbeJnz(cap_is_zero, capzero_label, capnz_label);
+    try self.qbeLabel(capzero_label);
+    try self.qbeStoreImmL(1, new_cap_slot);
+    try self.qbeJmp(capdone_label);
+    try self.qbeLabel(capnz_label);
+    try self.qbeStoreL(doubled, new_cap_slot);
+    try self.qbeJmp(capdone_label);
+    try self.qbeLabel(capdone_label);
     const new_cap = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ new_cap, new_cap_slot });
+    try self.qbeLoadL(new_cap, new_cap_slot);
 
     const new_payload_size = try self.newTemp();
     {
         const sz = try self.newTemp();
-        try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ sz, new_cap, elem_size });
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ new_payload_size, sz, LIST_HEADER_SIZE });
+        try self.qbeOp2Imm(sz, .l, "mul", new_cap, @intCast(elem_size));
+        try self.qbeOp2Imm(new_payload_size, .l, "add", sz, @intCast(LIST_HEADER_SIZE));
     }
     const copy_bytes = try self.newTemp();
     {
         const sz = try self.newTemp();
-        try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ sz, len_t, elem_size });
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ copy_bytes, sz, LIST_HEADER_SIZE });
+        try self.qbeOp2Imm(sz, .l, "mul", len_t, @intCast(elem_size));
+        try self.qbeOp2Imm(copy_bytes, .l, "add", sz, @intCast(LIST_HEADER_SIZE));
     }
     const new_ptr = try self.newTemp();
-    try self.out.writer.print("    {s} =l call $nox_list_grow(l {s}, l {s}, l {s}, l {s})\n", .{ new_ptr, RT_PARAM, obj.text, copy_bytes, new_payload_size });
+    try self.qbeCall(.{ .name = new_ptr, .ty = .l }, "$nox_list_grow", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = copy_bytes }, .{ .ty = .l, .text = new_payload_size } });
 
     // **Bulundu, GERÇEK bir çift-serbest-bırakma/erken-serbest-bırakma
     // hatası** (`self.attr` alanı `list[T]`i büyüten "yerel değişkene
@@ -1121,19 +1146,19 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     // YENİ elemanı YENİ bloğa yaz, başlığı (len/cap) GÜNCELLE.
     {
         const byte_off = try self.newTemp();
-        try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ byte_off, len_t, elem_size });
+        try self.qbeOp2Imm(byte_off, .l, "mul", len_t, @intCast(elem_size));
         const off16 = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ off16, byte_off, LIST_HEADER_SIZE });
+        try self.qbeOp2Imm(off16, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
         const addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ addr, new_ptr, off16 });
-        try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(obj.elem_qtype), val.text, addr });
+        try self.qbeOp2(addr, .l, "add", new_ptr, off16);
+        try self.qbeStore(obj.elem_qtype, val.text, addr);
     }
     const new_len = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, 1\n", .{ new_len, len_t });
-    try self.out.writer.print("    storel {s}, {s}\n", .{ new_len, new_ptr });
+    try self.qbeOp2Imm(new_len, .l, "add", len_t, 1);
+    try self.qbeStoreL(new_len, new_ptr);
     const new_cap_addr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, 8\n", .{ new_cap_addr, new_ptr });
-    try self.out.writer.print("    storel {s}, {s}\n", .{ new_cap, new_cap_addr });
+    try self.qbeOp2Imm(new_cap_addr, .l, "add", new_ptr, 8);
+    try self.qbeStoreL(new_cap, new_cap_addr);
 
     // ESKİ bloğu (yalnızca KENDİ ham belleğini — elemanlar TAŞINDI,
     // özyinelemeli release EDİLMEZ) refcount'u sıfıra düşerse serbest
@@ -1141,8 +1166,8 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     const should_free = try self.emitInlinePredecrement(obj.text, .list);
     const free_label = try self.newLabel("append_free_old");
     const skip_free_label = try self.newLabel("append_skip_free");
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ should_free, free_label, skip_free_label });
-    try self.out.writer.print("{s}\n", .{free_label});
+    try self.qbeJnz(should_free, free_label, skip_free_label);
+    try self.qbeLabel(free_label);
     if (obj.elem_heap_info != null) {
         // ESKİ blok BU çağrıda gerçekten ölüyor (`self.attr` GİBİ başka
         // bir alias YOK) — yukarıdaki retain döngüsünün eklediği "fazladan"
@@ -1155,36 +1180,36 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     const old_size = try self.newTemp();
     {
         const sz = try self.newTemp();
-        try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ sz, cap_t, elem_size });
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ old_size, sz, LIST_HEADER_SIZE });
+        try self.qbeOp2Imm(sz, .l, "mul", cap_t, @intCast(elem_size));
+        try self.qbeOp2Imm(old_size, .l, "add", sz, @intCast(LIST_HEADER_SIZE));
     }
-    try self.out.writer.print("    call $nox_rc_free_payload(l {s}, l {s}, l {s})\n", .{ RT_PARAM, obj.text, old_size });
-    try self.out.writer.print("    jmp {s}\n", .{skip_free_label});
-    try self.out.writer.print("{s}\n", .{skip_free_label});
+    try self.qbeCall(null, "$nox_rc_free_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = old_size } });
+    try self.qbeJmp(skip_free_label);
+    try self.qbeLabel(skip_free_label);
 
     // Alıcının KENDİ slotuna/global ofsetine YENİ işaretçiyi geri yaz —
     // TEK yerde (hızlı yol bloğun adresini HİÇ değiştirmediğinden
     // gerekmez).
-    try self.out.writer.print("    storel {s}, {s}\n", .{ new_ptr, recv_addr });
-    try self.out.writer.print("    jmp {s}\n", .{done_label});
+    try self.qbeStoreL(new_ptr, recv_addr);
+    try self.qbeJmp(done_label);
 
     // Hızlı yol: KENDİ bloğuna yerinde yaz.
-    try self.out.writer.print("{s}\n", .{write_label});
+    try self.qbeLabel(write_label);
     {
         const byte_off = try self.newTemp();
-        try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ byte_off, len_t, elem_size });
+        try self.qbeOp2Imm(byte_off, .l, "mul", len_t, @intCast(elem_size));
         const off16 = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ off16, byte_off, LIST_HEADER_SIZE });
+        try self.qbeOp2Imm(off16, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
         const addr = try self.newTemp();
-        try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ addr, obj.text, off16 });
-        try self.out.writer.print("    store{s} {s}, {s}\n", .{ qbeTypeName(obj.elem_qtype), val.text, addr });
+        try self.qbeOp2(addr, .l, "add", obj.text, off16);
+        try self.qbeStore(obj.elem_qtype, val.text, addr);
     }
     const fast_new_len = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, 1\n", .{ fast_new_len, len_t });
-    try self.out.writer.print("    storel {s}, {s}\n", .{ fast_new_len, obj.text });
-    try self.out.writer.print("    jmp {s}\n", .{done_label});
+    try self.qbeOp2Imm(fast_new_len, .l, "add", len_t, 1);
+    try self.qbeStoreL(fast_new_len, obj.text);
+    try self.qbeJmp(done_label);
 
-    try self.out.writer.print("{s}\n", .{done_label});
+    try self.qbeLabel(done_label);
     return .{ .text = "0", .qtype = .w };
 }
 
@@ -1201,9 +1226,9 @@ pub fn genListSort(self: *Codegen, obj: Value, a: ast.Attribute, args: []const a
     if (args.len != 0) return error.Unsupported;
 
     const len_t = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ len_t, obj.text });
+    try self.qbeLoadL(len_t, obj.text);
     const data_addr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ data_addr, obj.text, LIST_HEADER_SIZE });
+    try self.qbeOp2Imm(data_addr, .l, "add", obj.text, @intCast(LIST_HEADER_SIZE));
 
     const fn_name = if (obj.elem_qtype == .d)
         "nox_list_sort_float"
@@ -1211,7 +1236,8 @@ pub fn genListSort(self: *Codegen, obj: Value, a: ast.Attribute, args: []const a
         "nox_list_sort_str"
     else
         "nox_list_sort_int";
-    try self.out.writer.print("    call ${s}(l {s}, l {s})\n", .{ fn_name, data_addr, len_t });
+    const fn_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{fn_name});
+    try self.qbeCall(null, fn_sym, &.{ .{ .ty = .l, .text = data_addr }, .{ .ty = .l, .text = len_t } });
     // `.append`nin AKSİNE alıcı çıplak bir isimle SINIRLI DEĞİLDİR
     // (bkz. bu fonksiyonun belge notu) — `a.obj.*` bir GEÇİCİ (ör.
     // `getList().sort()`) OLABİLİR, `genDictMethod`nin `contains`/`len`
@@ -1233,18 +1259,18 @@ pub fn genListSort(self: *Codegen, obj: Value, a: ast.Attribute, args: []const a
 /// belge notu), çünkü ORADA eleman listenin İÇİNDE KALIR.
 pub fn genListPop(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Value {
     const len_t = try self.newTemp();
-    try self.out.writer.print("    {s} =l loadl {s}\n", .{ len_t, obj.text });
+    try self.qbeLoadL(len_t, obj.text);
 
     const empty_t = try self.newTemp();
-    try self.out.writer.print("    {s} =w ceql {s}, 0\n", .{ empty_t, len_t });
+    try self.qbeOp2Imm(empty_t, .w, "ceql", len_t, 0);
     const err_label = try self.newLabel("list_pop_err");
     const ok_label = try self.newLabel("list_pop_ok");
-    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ empty_t, err_label, ok_label });
-    try self.out.writer.print("{s}\n", .{err_label});
+    try self.qbeJnz(empty_t, err_label, ok_label);
+    try self.qbeLabel(err_label);
     const msg_value = try self.emitStringLiteral("bos liste (list) pop edilemez");
     const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
     const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
-    try self.out.writer.print("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ie_obj.text, self.current_raise_line });
+    try self.qbeRaw("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ie_obj.text, self.current_raise_line });
     // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı — AYNI
     // sınıf hata, `genMethodCall`in belge notundaki GİBİ): bu dal
     // KOŞULSUZ raise edip aşağı ATLAR — `obj` (alıcı) TEMPORARY İSE
@@ -1254,25 +1280,25 @@ pub fn genListPop(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Val
     // raise edip çıkıyoruz) serbest bırakmak GÜVENLİDİR.
     try self.releaseIfTemporary(a.obj.*, obj);
     try self.emitExceptionCheck();
-    try self.out.writer.print("    jmp {s}\n", .{ok_label});
-    try self.out.writer.print("{s}\n", .{ok_label});
+    try self.qbeJmp(ok_label);
+    try self.qbeLabel(ok_label);
 
     const new_len = try self.newTemp();
-    try self.out.writer.print("    {s} =l sub {s}, 1\n", .{ new_len, len_t });
+    try self.qbeOp2Imm(new_len, .l, "sub", len_t, 1);
     // Yeni `len`i ÖNCE yaz — `obj` temporary İSE aşağıdaki `releaseIfTemporary`
     // listeyi TAMAMEN yıkıyorsa (refcount sıfıra düşerse), `genListElemRelease`
     // bu ANDAN İTİBAREN yalnızca 0..new_len'i gezer, az önce okuduğumuz
     // (şimdi new_len indeksindeki) elemana HİÇ dokunmaz.
-    try self.out.writer.print("    storel {s}, {s}\n", .{ new_len, obj.text });
+    try self.qbeStoreL(new_len, obj.text);
 
     const byte_off = try self.newTemp();
-    try self.out.writer.print("    {s} =l mul {s}, {d}\n", .{ byte_off, new_len, qbeSizeOf(obj.elem_qtype) });
+    try self.qbeOp2Imm(byte_off, .l, "mul", new_len, @intCast(qbeSizeOf(obj.elem_qtype)));
     const off8 = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {d}\n", .{ off8, byte_off, LIST_HEADER_SIZE });
+    try self.qbeOp2Imm(off8, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
     const addr = try self.newTemp();
-    try self.out.writer.print("    {s} =l add {s}, {s}\n", .{ addr, obj.text, off8 });
+    try self.qbeOp2(addr, .l, "add", obj.text, off8);
     const result = try self.newTemp();
-    try self.out.writer.print("    {s} ={s} load{s} {s}\n", .{ result, qbeTypeName(obj.elem_qtype), qbeTypeName(obj.elem_qtype), addr });
+    try self.qbeLoad(result, obj.elem_qtype, obj.elem_qtype, addr);
 
     try self.releaseIfTemporary(a.obj.*, obj);
 
@@ -1301,7 +1327,7 @@ pub fn genGenericConstruct(self: *Codegen, g: ast.GenericConstruct) CodegenError
         if (g.type_args.len != 1 or g.args.len != 0) return error.Unsupported;
         const elem = try self.resolveType(g.type_args[0]);
         const tl_t = try self.newTemp();
-        try self.out.writer.print("    {s} =l call $nox_tasklocal_new(l {s})\n", .{ tl_t, RT_PARAM });
+        try self.qbeCall(.{ .name = tl_t, .ty = .l }, "$nox_tasklocal_new", &.{.{ .ty = .l, .text = RT_PARAM }});
         var elem_heap_info: ?*const ElemHeapInfo = null;
         if (elem.heap == .class or elem.heap == .list) {
             const info = try self.allocator.create(ElemHeapInfo);
@@ -1323,7 +1349,8 @@ pub fn genGenericConstruct(self: *Codegen, g: ast.GenericConstruct) CodegenError
     const cap_val = try self.genExpr(g.args[0]);
     const ch_t = try self.newTemp();
     const new_fn_name = if (is_thread_channel) "nox_threadchannel_new" else "nox_channel_new";
-    try self.out.writer.print("    {s} =l call ${s}(l {s}, l {s})\n", .{ ch_t, new_fn_name, RT_PARAM, cap_val.text });
+    const new_fn_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{new_fn_name});
+    try self.qbeCall(.{ .name = ch_t, .ty = .l }, new_fn_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = cap_val.text } });
 
     var elem_heap_info: ?*const ElemHeapInfo = null;
     if (elem.heap == .class or elem.heap == .list) {
