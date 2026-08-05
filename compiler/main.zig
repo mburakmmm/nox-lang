@@ -1685,16 +1685,10 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     const debug_source_path: ?[]const u8 = if (debug_info) path_arg else null;
 
     // DENEYSEL (bkz. plan dosyası "`noxc build --release` için deneysel
-    // bir LLVM backend'i", Faz 1): LLVM yolu HENÜZ (Faz 2-5 tamamlanana
-    // kadar) hiçbir gerçek programı derleyemez — `llvm_emit.zig`nin TÜM
-    // metotları `error.Unsupported` döner. Bu GEÇİCİ kapı, bu ara durumda
-    // net bir hata mesajı verir; Faz 5'te GERÇEK `.ll`/`clang` çağrısıyla
-    // DEĞİŞTİRİLECEK.
+    // bir LLVM backend'i"): `--release` `.ll`/`clang -O2` yoluna, bayraksız
+    // `build` (varsayılan) DEĞİŞMEDEN `.ssa`/`qbe`/`cc` yoluna gider —
+    // aşağıda `release`e göre dallanır (bkz. Faz LLVM.5).
     const backend: codegen.Backend = if (release) .llvm else .qbe;
-    if (release) {
-        printErr("noxc build --release: LLVM backend'i henuz deneysel/eksik (bkz. plan dosyasi) - qbe yolunu (bayraksiz build) kullanin\n", .{});
-        std.process.exit(1);
-    }
 
     const ir = codegen.generateModule(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend) catch |err| switch (err) {
         error.Unsupported => {
@@ -1712,8 +1706,6 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     };
 
     const stem = output_override orelse stemOf(path_arg);
-    const ssa_path = try std.fmt.allocPrint(a, "{s}.ssa", .{stem});
-    const asm_path = try std.fmt.allocPrint(a, "{s}.s", .{stem});
     // Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71): MinGW'in `cc`si,
     // `-o` AÇIKÇA verilmiş olsa BİLE, PE (Windows) çıktı dosyasına HER ZAMAN
     // `.exe` uzantısı EKLER (`stem` zaten `.exe` İLE BİTMİYORSA) — `noxc`
@@ -1723,6 +1715,45 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         try std.fmt.allocPrint(a, "{s}.exe", .{stem})
     else
         stem;
+
+    // Faz R.3/LL.6 (bkz. AŞAĞIDAKİ QBE yolunun AYNI notu): `.qbe` VE
+    // `.llvm` yollarının İKİSİ de dinamik sembol dışa-aktarımına İHTİYAÇ
+    // DUYAR (`nox.json`nin `dlopen(null,...)` deseni) — TEK yerde hesaplanır.
+    const dynamic_export_flag = if (builtin.os.tag == .windows) "-Wl,--export-all-symbols" else "-rdynamic";
+
+    // Faz LLVM.5 (bkz. plan dosyası "`noxc build --release` için deneysel
+    // bir LLVM backend'i"): `--release` İKEN `.ssa`/`qbe`/`cc` boru hattı
+    // YERİNE TEK bir `.ll`/`clang -O2` çağrısı — geleneksel `opt|llc|cc`
+    // boru hattı DEĞİL (bilinçli, bkz. plan). Kapsam BİLİNÇLİ olarak dar
+    // (SADECE macOS/arm64, bkz. planın "Kapsam DIŞI" bölümü) — Windows'un
+    // MinGW-özel bağlama argümanları (`swap_asm_path`/`-lntdll` vb.) bu
+    // yola EKLENMEDİ.
+    if (release) {
+        const ll_path = try std.fmt.allocPrint(a, "{s}.ll", .{stem});
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ll_path, .data = ir });
+
+        var clang_argv: std.ArrayListUnmanaged([]const u8) = .empty;
+        try clang_argv.appendSlice(a, &.{ "clang", "-O2", dynamic_export_flag, "-o", bin_path, ll_path, resource_dirs.noxrt_path, "-lm" });
+        try appendExternLinkArgs(a, &clang_argv, module);
+
+        const clang_result = std.process.run(gpa, io, .{ .argv = clang_argv.items }) catch |err| {
+            if (err == error.FileNotFound) {
+                printErr("clang bulunamadi: --release icin PATH'te bir 'clang' calistirilabilir dosyasi gerekir (ornegin: brew install llvm)\n", .{});
+                std.process.exit(1);
+            }
+            return err;
+        };
+        defer gpa.free(clang_result.stdout);
+        defer gpa.free(clang_result.stderr);
+        if (clang_result.term != .exited or clang_result.term.exited != 0) {
+            printErr("clang basarisiz:\n{s}\n", .{clang_result.stderr});
+            std.process.exit(1);
+        }
+        return bin_path;
+    }
+
+    const ssa_path = try std.fmt.allocPrint(a, "{s}.ssa", .{stem});
+    const asm_path = try std.fmt.allocPrint(a, "{s}.s", .{stem});
 
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ssa_path, .data = ir });
 
@@ -1755,8 +1786,8 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71): MinGW'in `cc`si
     // `-rdynamic`yi TANIMAZ (`cc: error: unrecognized command-line option
     // '-rdynamic'` — GERÇEK Windows CI'de doğrulandı) — PE bağlayıcısının
-    // "TÜM genel sembolleri dışa aç" karşılığı `-Wl,--export-all-symbols`dir.
-    const dynamic_export_flag = if (builtin.os.tag == .windows) "-Wl,--export-all-symbols" else "-rdynamic";
+    // "TÜM genel sembolleri dışa aç" karşılığı `-Wl,--export-all-symbols`dir
+    // (`dynamic_export_flag`, YUKARIDA — LLVM yoluyla PAYLAŞILDI).
     var cc_argv: std.ArrayListUnmanaged([]const u8) = .empty;
     try cc_argv.appendSlice(a, &.{ "cc", dynamic_export_flag, "-o", bin_path, asm_path, resource_dirs.noxrt_path });
     // Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71): Windows'ta fiber

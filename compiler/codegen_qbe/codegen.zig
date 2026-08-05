@@ -659,21 +659,38 @@ pub const Codegen = struct {
     /// örtük bir `br label` EKLER). `.qbe` backend'İ BU ALANI HİÇ OKUMAZ/
     /// YAZMAZ.
     llvm_block_open: bool = false,
-    /// Faz LLVM.3: `qbeCall`nin (bkz. `llvm_emit.zig`) `declare`-takibi —
+    /// Faz LLVM.3/5: `qbeCall`nin (bkz. `llvm_emit.zig`) `declare`-takibi —
     /// LLVM'de bir sembol İçin HEM `declare` HEM `define` bulunması
-    /// GEÇERSİZDİR (deneyerek doğrulandı) — bu YÜZDEN `self.functions`de
-    /// (bu MODÜLÜN KENDİSİNİN TANIMLAYACAĞI Nox fonksiyonları) KAYITLI
-    /// OLMAYAN direkt-sembol çağrıları İçin, İSİM başına EN FAZLA BİR
-    /// `declare` üretilir (bu set BUNU izler).
+    /// GEÇERSİZDİR (deneyerek doğrulandı). Bulundu (Faz LLVM.5, `List_
+    /// JsonValue_release` GİBİ TEMBEL-kaydedilen sentetik yardımcılarda
+    /// GERÇEK bir hata): "bu sembol `self.functions`de (üst-düzey Nox
+    /// `def`leri) KAYITLI MI" sorusu YETERSİZDİ — closure/liste-release/
+    /// sarmalayıcı GİBİ sentetik fonksiyonlar `self.functions`DE HİÇ
+    /// YOK ama YİNE DE `generateModule`nin SONUNDA (`list_release_queue`
+    /// GİBİ "sonda tüket" kuyruklarından) TANIMLANACAKLAR — bu YÜZDEN
+    /// karar `qbeCall` ZAMANINDA (henüz TÜM `define`ler BİLİNMEDEN)
+    /// DEĞİL, `generateModule`nin SONUNDA (Faz LLVM.4/5, TÜM `qbeFuncHeader
+    /// Start` çağrıları TAMAMLANDIKTAN SONRA) verilir — bu set İSİM
+    /// BAŞINA EN FAZLA BİR `declare` ÜRETİLMESİNİ (tekrar önleme) izler,
+    /// LOKAL-mi-DEĞİL-mi kararını VERMEZ (bkz. `llvm_defined_syms`).
     llvm_declared_externs: std.StringHashMapUnmanaged(void) = .empty,
+    /// `qbeFuncHeaderStart`nin (bkz. onun belge notu) HER çağrısında
+    /// EKLENEN, bu MODÜLÜN `define` EDECEĞİ TÜM sembol adlarının TAM
+    /// kümesi — üst-düzey Nox `def`leri, metodlar, closure'lar, liste-
+    /// release yardımcıları, sarmalayıcılar DAHİL HER ŞEY (`qbeFuncHeader
+    /// Start`tan GEÇMEYEN TEK şey YOK). `generateModule`nin SONUNDAKİ
+    /// flush (bkz. o alanın belge notu), bu kümede OLAN bir isim İçin
+    /// biriktirilmiş HERHANGİ bir `declare`yi YAZMAZ (declare+define
+    /// çakışmasını KESİN olarak önler — TÜM `qbeFuncHeaderStart`lar bu
+    /// noktada ZATEN çalışmış OLDUĞUNDAN küme TAMAMDIR).
+    llvm_defined_syms: std.StringHashMapUnmanaged(void) = .empty,
     /// `declare` bir MODÜL-seviyesi yapıdır — bir fonksiyon GÖVDESİNİN
     /// (`define ... { ... }`) İÇİNE YAZILAMAZ. `qbeCall` bir gövde
     /// üretimi SIRASINDA çağrıldığından, üretilen `declare` satırları
-    /// BURADA biriktirilir; `generateModule` (Faz LLVM.4) TÜM fonksiyon
-    /// gövdeleri yazıldıktan SONRA bunları `gen.out`a FLUSH eder (sıra
-    /// ÖNEMLİ DEĞİL — bkz. `llvm_emit.zig`nin belge notu, LLVM `declare`/
-    /// `define`/`call` sırasından BAĞIMSIZ çözer, sadece TEKRAR ETMEMELİ).
-    llvm_pending_declares: std.ArrayListUnmanaged([]const u8) = .empty,
+    /// (İSİM + METİN çifti OLARAK) BURADA biriktirilir; `generateModule`
+    /// (Faz LLVM.4/5) TÜM fonksiyon gövdeleri yazıldıktan SONRA, `llvm_
+    /// defined_syms`e göre FİLTRELEYEREK `gen.out`a FLUSH eder.
+    llvm_pending_declares: std.ArrayListUnmanaged(struct { name: []const u8, line: []const u8 }) = .empty,
     /// Faz T.3: `generateModule`e bir `debug_source_path` VERİLDİYSE `true` —
     /// `genStmts` (TÜM deyim kodgen'inin TEK dağıtım noktası, bkz. `checkStmt`
     /// İLE AYNI T.1 deseni) HER deyimden ÖNCE bir `dbgloc <satır>` (QBE IL,
@@ -1456,15 +1473,19 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
         return error.Unsupported;
     }
 
-    // Faz LLVM.4: `qbeCall`/`qbeCallVariadic`nin BİRİKTİRDİĞİ `declare`
+    // Faz LLVM.4/5: `qbeCall`/`qbeCallVariadic`nin BİRİKTİRDİĞİ `declare`
     // satırları (bkz. `Codegen.llvm_pending_declares`nin belge notu) —
     // TÜM fonksiyon gövdeleri (`define ... { ... }`) yazıldıktan SONRA,
-    // modülün SONUNA flush edilir (sıra ÖNEMLİ DEĞİL, bkz. `llvm_emit.
-    // zig`nin belge notu — SADECE tekrar etmemeli, BUNU `llvm_declared_
-    // externs` ZATEN garanti eder).
+    // modülün SONUNA flush edilir. Bulundu (Faz LLVM.5): `gen.llvm_defined_
+    // syms`de (BU noktada TAMAMEN dolu — bkz. onun belge notu) OLAN bir
+    // isim İçin biriktirilmiş `declare` ATLANIR — o sembol ZATEN BURADAN
+    // ÖNCE bir `define` ALMIŞTIR (declare+define ÇAKIŞMASINI KESİN olarak
+    // önler, `List_JsonValue_release` GİBİ TEMBEL-kaydedilen sentetik
+    // yardımcılarda GERÇEK bir hata bulunup düzeltildi).
     if (gen.backend == .llvm) {
         for (gen.llvm_pending_declares.items) |decl| {
-            try gen.out.writer.writeAll(decl);
+            if (gen.llvm_defined_syms.contains(decl.name)) continue;
+            try gen.out.writer.writeAll(decl.line);
         }
     }
 

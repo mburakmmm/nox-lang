@@ -117,6 +117,25 @@ pub fn llvmCStringConstant(allocator: std.mem.Allocator, name: []const u8, bytes
     return std.fmt.allocPrint(allocator, "@{s} = private unnamed_addr constant [{d} x i8] c\"{s}\"\n", .{ name, bytes.len + 1, escaped.items });
 }
 
+/// `syms`i (sembol adları, `$`/`@` ÖN-EKİ OLMADAN) fonksiyon-işaretçisi-
+/// olarak-`i64` DİZİSİNE çeviren bir LLVM GLOBAL sabiti üretir — `layout.
+/// zig`nin `genClassVtable`ı (bkz. onun belge notu, Faz 7 vtable) İçin,
+/// QBE'nin `data $name = { l $sym1, l $sym2, ... }`inin LLVM karşılığı.
+/// `layout.zig` (`codegen.zig`nin `generateModule`ı GİBİ) BU fonksiyonu
+/// DOĞRUDAN çağırır — sınıf-makinesi HER programda (core.nox'un KOŞULSUZ
+/// birleşimi YÜZÜNDEN) tetiklendiğinden, `qbeX` seam'İNİN "İSİMLİ metot"
+/// deseninin DIŞINDA, `generateModule`nin direkt-yazıcı ÖRNEĞİYLE TUTARLI
+/// bir "hazırlık yardımcısı" olarak sunulur.
+pub fn llvmPtrArrayConstant(allocator: std.mem.Allocator, name: []const u8, syms: []const []const u8) ![]const u8 {
+    var items: std.ArrayListUnmanaged(u8) = .empty;
+    for (syms, 0..) |sym, i| {
+        if (i != 0) try items.appendSlice(allocator, ", ");
+        const entry = try std.fmt.allocPrint(allocator, "i64 ptrtoint (ptr @{s} to i64)", .{sym});
+        try items.appendSlice(allocator, entry);
+    }
+    return std.fmt.allocPrint(allocator, "@{s} = private unnamed_addr constant [{d} x i64] [{s}]\n", .{ name, syms.len, items.items });
+}
+
 pub fn qbeLabel(self: *Codegen, label: []const u8) CodegenError!void {
     if (self.llvm_block_open) {
         try self.out.writer.print("    br label %{s}\n", .{llLabelRef(label)});
@@ -140,16 +159,25 @@ pub fn qbeJnz(self: *Codegen, cond: []const u8, t: []const u8, f: []const u8) Co
     self.llvm_block_open = false;
 }
 
+/// `v1`/`v2` — `genClassNameDispatch` GİBİ siteler BURAYA bir `$sembol`
+/// metni (bkz. modül üstü not, `renderOperand`) GEÇİREBİLİR — bu YÜZDEN
+/// HER ikisi de `renderOperand`DAN geçirilir (sıradan register/literal
+/// operandlar İçin NO-OP, `$sembol` İçin `ptrtoint` sabit-ifadesi).
 pub fn qbePhi(self: *Codegen, dst: []const u8, ty: QbeType, l1: []const u8, v1: []const u8, l2: []const u8, v2: []const u8) CodegenError!void {
-    try self.out.writer.print("    {s} = phi {s} [ {s}, %{s} ], [ {s}, %{s} ]\n", .{ dst, llvmTypeName(ty), v1, llLabelRef(l1), v2, llLabelRef(l2) });
+    const rv1 = try renderOperand(self, v1);
+    const rv2 = try renderOperand(self, v2);
+    try self.out.writer.print("    {s} = phi {s} [ {s}, %{s} ], [ {s}, %{s} ]\n", .{ dst, llvmTypeName(ty), rv1, llLabelRef(l1), rv2, llLabelRef(l2) });
 }
 
 /// `self.current_ret_qtype` (HER fonksiyon-girişinde ayarlanır, bkz.
 /// `registration.zig`) — bulgu #5: YENİ durum GEREKMEDEN dönüş tipini
-/// verir.
+/// verir. `value` — `genClassNameDispatch` GİBİ siteler (bkz. modül üstü
+/// not) BURAYA bir `$sembol` metni GEÇİREBİLİR, bu YÜZDEN `renderOperand`
+/// DAN geçirilir.
 pub fn qbeRet(self: *Codegen, value: ?[]const u8) CodegenError!void {
     if (value) |v| {
-        try self.out.writer.print("    ret {s} {s}\n", .{ llvmTypeName(self.current_ret_qtype), v });
+        const rendered = try renderOperand(self, v);
+        try self.out.writer.print("    ret {s} {s}\n", .{ llvmTypeName(self.current_ret_qtype), rendered });
     } else {
         try self.out.writer.writeAll("    ret void\n");
     }
@@ -211,7 +239,8 @@ fn arithOpFor(mnemonic: []const u8, ty: QbeType) ?[]const u8 {
     return null;
 }
 
-pub fn qbeOp1(self: *Codegen, dst: []const u8, ty: QbeType, mnemonic: []const u8, a: []const u8) CodegenError!void {
+pub fn qbeOp1(self: *Codegen, dst: []const u8, ty: QbeType, mnemonic: []const u8, a_raw: []const u8) CodegenError!void {
+    const a = try renderOperand(self, a_raw);
     if (std.mem.eql(u8, mnemonic, "copy")) {
         if (ty == .d) {
             try self.out.writer.print("    {s} = fadd double {s}, 0.0\n", .{ dst, a });
@@ -257,7 +286,9 @@ pub fn qbeOp1(self: *Codegen, dst: []const u8, ty: QbeType, mnemonic: []const u8
     return error.Unsupported;
 }
 
-pub fn qbeOp2(self: *Codegen, dst: []const u8, ty: QbeType, mnemonic: []const u8, a: []const u8, b: []const u8) CodegenError!void {
+pub fn qbeOp2(self: *Codegen, dst: []const u8, ty: QbeType, mnemonic: []const u8, a_raw: []const u8, b_raw: []const u8) CodegenError!void {
+    const a = try renderOperand(self, a_raw);
+    const b = try renderOperand(self, b_raw);
     if (cmpSpecFor(mnemonic)) |spec| {
         const i1_reg = try self.newTemp();
         const cmp_kind: []const u8 = if (spec.float) "fcmp" else "icmp";
@@ -269,7 +300,8 @@ pub fn qbeOp2(self: *Codegen, dst: []const u8, ty: QbeType, mnemonic: []const u8
     try self.out.writer.print("    {s} = {s} {s} {s}, {s}\n", .{ dst, op, llvmTypeName(ty), a, b });
 }
 
-pub fn qbeOp2Imm(self: *Codegen, dst: []const u8, ty: QbeType, mnemonic: []const u8, a: []const u8, imm: i64) CodegenError!void {
+pub fn qbeOp2Imm(self: *Codegen, dst: []const u8, ty: QbeType, mnemonic: []const u8, a_raw: []const u8, imm: i64) CodegenError!void {
+    const a = try renderOperand(self, a_raw);
     if (cmpSpecFor(mnemonic)) |spec| {
         const i1_reg = try self.newTemp();
         const cmp_kind: []const u8 = if (spec.float) "fcmp" else "icmp";
@@ -295,7 +327,8 @@ pub fn qbeLoadL(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!
     try qbeLoad(self, dst, .l, .l, addr);
 }
 
-pub fn qbeStore(self: *Codegen, ty: QbeType, value: []const u8, addr: []const u8) CodegenError!void {
+pub fn qbeStore(self: *Codegen, ty: QbeType, value_raw: []const u8, addr: []const u8) CodegenError!void {
+    const value = try renderOperand(self, value_raw);
     const ptr_reg = try self.newTemp();
     try self.out.writer.print("    {s} = inttoptr i64 {s} to ptr\n", .{ ptr_reg, addr });
     try self.out.writer.print("    store {s} {s}, ptr {s}\n", .{ llvmTypeName(ty), value, ptr_reg });
@@ -321,15 +354,39 @@ pub fn qbeAlloc(self: *Codegen, dst: []const u8, size: QbeAllocSize, n: usize) C
     try self.out.writer.print("    {s} = ptrtoint ptr {s} to i64\n", .{ dst, ptr_reg });
 }
 
-/// `$sym` metnini bir DEĞER operandı OLARAK (çağrı HEDEFİ OLARAK DEĞİL —
-/// bkz. `qbeCall`) kullanan siteler İçin (ör. `printf`e bir `$fmt_int`
-/// biçim-dizesi sembolünü ARGÜMAN olarak geçirmek) — bir global sembolün
-/// ADRESİNİ `i64`e (bu kod tabanının HER YERDE kullandığı "işaretçi-
-/// olarak-tamsayı" temsiline) çeviren bir LLVM SABİT-İFADESİ üretir.
-/// `clang`e karşı EMPİRİK doğrulandı (`ptrtoint_check.ll`).
+/// İKİ bağımsız ham-metin sızıntısını render eden GENEL operand
+/// dönüştürücü — HER `qbeX` metodunun TEXT alan operandı (dst/addr
+/// HARİÇ) bunu ÇAĞIRMALIDIR:
+///
+/// 1. **`$sym`** (bir DEĞER operandı OLARAK — çağrı HEDEFİ OLARAK DEĞİL,
+///    bkz. `qbeCall`): ör. `printf`e bir `$fmt_int` biçim-dizesi
+///    sembolünü ARGÜMAN olarak geçirmek — sembolün ADRESİNİ `i64`e (bu
+///    kod tabanının HER YERDE kullandığı "işaretçi-olarak-tamsayı"
+///    temsiline) çeviren bir LLVM SABİT-İFADESİ üretir. `clang`e karşı
+///    EMPİRİK doğrulandı (`ptrtoint_check.ll`).
+/// 2. **`d_N`** (Faz LLVM.5, GERÇEK bir bulgu — `t1.nox` GİBİ EN basit
+///    bir programda BİLE `core.nox`nin `JsonValue`si [`n: float` alanı]
+///    ÜZERİNDEN tetiklenir): `expr.zig`nin `.float_lit` kolu (bkz. onun
+///    belge notu, bulgu #6) float literallerini `Value.text`e QBE'nin
+///    KENDİ `d_{d}` sözdizimiyle DOĞRUDAN gömer — bu metin `qbeOp1`/
+///    `qbeOp2`/`qbeStore` GİBİ metotlara da (SADECE `qbeCall`nin
+///    argümanlarına DEĞİL) bir operand OLARAK ULAŞABİLİR. LLVM'in double
+///    sabitleri BİR ondalık NOKTASI gerektirdiğinden (`0` GEÇERSİZ, `0.0`
+///    GEÇERLİ) `d_` ÖN-EKİ SIYRILIP, nokta YOKSA `.0` eklenir. **Bilinçli,
+///    DAR kapsam:** bu SADECE operand RENDER noktasındaki bir metin
+///    dönüşümüdür — float literal TEMSİLİNİN KENDİSİ (`expr.zig`)
+///    DEĞİŞMEDİ, bu YÜZDEN float'ların GENEL desteği (aritmetik/
+///    fonksiyon-imzaları/vb.) HÂLÂ Kapsam DIŞI kalır (bkz. plan dosyası).
 fn renderOperand(self: *Codegen, text: []const u8) CodegenError![]const u8 {
     if (text.len > 0 and text[0] == '$') {
         return std.fmt.allocPrint(self.allocator, "ptrtoint (ptr @{s} to i64)", .{text[1..]});
+    }
+    if (text.len > 2 and text[0] == 'd' and text[1] == '_') {
+        const num = text[2..];
+        if (std.mem.indexOfScalar(u8, num, '.') == null) {
+            return std.fmt.allocPrint(self.allocator, "{s}.0", .{num});
+        }
+        return num;
     }
     return text;
 }
@@ -339,7 +396,7 @@ fn renderOperand(self: *Codegen, text: []const u8) CodegenError![]const u8 {
 /// sembol çağrıları İçin BİR `declare` üretip `llvm_pending_declares`e
 /// biriktirir (bkz. modül üstü not, declare+define ÇAKIŞIR).
 fn ensureDeclared(self: *Codegen, name: []const u8, ret_str: []const u8, fixed_args: []const QbeArg, variadic: bool) CodegenError!void {
-    if (self.functions.contains(name) or self.llvm_declared_externs.contains(name)) return;
+    if (self.llvm_declared_externs.contains(name)) return;
     var params_buf: std.ArrayListUnmanaged(u8) = .empty;
     for (fixed_args, 0..) |arg, i| {
         if (i != 0) try params_buf.appendSlice(self.allocator, ", ");
@@ -350,7 +407,7 @@ fn ensureDeclared(self: *Codegen, name: []const u8, ret_str: []const u8, fixed_a
         try params_buf.appendSlice(self.allocator, "...");
     }
     const decl_line = try std.fmt.allocPrint(self.allocator, "declare {s} @{s}({s})\n", .{ ret_str, name, params_buf.items });
-    try self.llvm_pending_declares.append(self.allocator, decl_line);
+    try self.llvm_pending_declares.append(self.allocator, .{ .name = name, .line = decl_line });
     try self.llvm_declared_externs.put(self.allocator, name, {});
 }
 
@@ -427,9 +484,28 @@ pub fn qbeCallVariadic(self: *Codegen, dst: ?QbeCallDst, func_text: []const u8, 
     try self.out.writer.writeAll(")\n");
 }
 
+/// Bulundu (Faz LLVM.5, `t1.nox` GİBİ EN basit bir programda BİLE
+/// tetiklenen GERÇEK bir hata): `current_ret_qtype`nin (bulgu #5, Faz
+/// LLVM.2) "HER fonksiyon-girişinde ayarlanır" varsayımı YANLIŞTI —
+/// `registration.zig`nin `genFunction`/`genMethod`/`genMain`ı BUNU
+/// KENDİLERİ ayarlıyor, AMA `layout.zig`nin sentetik yardımcıları
+/// (`genClassEq`/`genClassRelease`/`genClassTrace`/`genClassGcFree`/
+/// dispatch fonksiyonları) HİÇ ayarlamıyor — QBE'nin `ret`i TİP
+/// GEREKTİRMEDİĞİNDEN bu ONLARIN İçin ÖNEMSİZDİ. Sonuç: bu yardımcıların
+/// `qbeRet`i eski/varsayılan `.none`u (`ret void 1` GİBİ GEÇERSİZ LLVM
+/// üretiyordu) kullanıyordu. Düzeltme: `qbeFuncHeaderStart`nin KENDİSİ
+/// `current_ret_qtype`i AYARLAR — TEK, kapsayıcı doğruluk kaynağı (ZATEN
+/// doğru ayarlayan `genFunction` GİBİ çağıranlar İçin bu AYNI değerle
+/// YİNELENEN, zararsız bir atama).
 pub fn qbeFuncHeaderStart(self: *Codegen, ret_ty: ?QbeType, name_text: []const u8) CodegenError!void {
+    self.current_ret_qtype = ret_ty orelse .none;
+    const name = llGlobalRef(name_text);
+    // Bulundu (Faz LLVM.5): `self.llvm_defined_syms`e KAYIT — `qbeCall`nin
+    // `declare`-takibinin (bkz. `Codegen.llvm_pending_declares`nin belge
+    // notu) `generateModule`nin SONUNDAKİ flush'ının TEK doğruluk kaynağı.
+    try self.llvm_defined_syms.put(self.allocator, name, {});
     const rt_name = if (ret_ty) |rt| llvmTypeName(rt) else "void";
-    try self.out.writer.print("define {s} @{s}(", .{ rt_name, llGlobalRef(name_text) });
+    try self.out.writer.print("define {s} @{s}(", .{ rt_name, name });
 }
 
 pub fn qbeFuncParam(self: *Codegen, ty: QbeType, text: []const u8, first: bool) CodegenError!void {

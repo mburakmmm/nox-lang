@@ -510,7 +510,7 @@ pub fn genParseOrRaise(self: *Codegen, v: Value, valid_fn: []const u8, convert_f
     const msg_value = try self.emitStringLiteral(message);
     const ve_cinfo = self.classes.get("ValueError") orelse return error.Unsupported;
     const ve_obj = try self.genConstructFromValues("ValueError", ve_cinfo, &.{msg_value}, null);
-    try self.qbeRaw("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ve_obj.text, self.current_raise_line });
+    try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ve_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
     try self.emitExceptionCheck();
     try self.qbeJmp(ok_label);
 
@@ -639,9 +639,9 @@ pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: Cla
         }
         const temp = try self.newTemp();
         if (arena) |ap| {
-            try self.qbeRaw("    {s} =l call $nox_arena_alloc(l {s}, l {d})\n", .{ temp, ap, cinfo.total_size });
+            try self.qbeCall(.{ .name = temp, .ty = .l }, "$nox_arena_alloc", &.{ .{ .ty = .l, .text = ap }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{cinfo.total_size}) } });
         } else {
-            try self.qbeRaw("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ temp, RT_PARAM, cinfo.total_size });
+            try self.qbeCall(.{ .name = temp, .ty = .l }, "$nox_rc_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{cinfo.total_size}) } });
         }
         break :blk temp;
     };
@@ -1270,7 +1270,7 @@ pub fn genListPop(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Val
     const msg_value = try self.emitStringLiteral("bos liste (list) pop edilemez");
     const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
     const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
-    try self.qbeRaw("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ie_obj.text, self.current_raise_line });
+    try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ie_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
     // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı — AYNI
     // sınıf hata, `genMethodCall`in belge notundaki GİBİ): bu dal
     // KOŞULSUZ raise edip aşağı ATLAR — `obj` (alıcı) TEMPORARY İSE

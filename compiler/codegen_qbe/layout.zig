@@ -9,6 +9,7 @@ const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
 const abi = @import("abi.zig");
 const codegen = @import("codegen.zig");
+const llvm_emit = @import("llvm_emit.zig");
 
 const Codegen = codegen.Codegen;
 const QbeType = types.QbeType;
@@ -44,16 +45,36 @@ pub fn genClassVtable(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) 
     while (it.next()) |e| {
         slots[e.value_ptr.slot] = .{ .owner = e.value_ptr.owner, .name = e.key_ptr.* };
     }
-    try self.qbeRaw("data ${s}_vtable = {{ ", .{class_name});
-    for (slots, 0..) |s, i| {
-        if (i > 0) try self.qbeRawAll(", ");
-        // Her slot HER ZAMAN bir metod TARAFINDAN doldurulmuş OLMALIDIR —
-        // `registerClass` HER hiyerarşi seviyesinde TÜM önceki slotları
-        // (miras yoluyla) KORUR, hiçbiri asla BOŞ kalmaz.
-        const entry = s.?;
-        try self.qbeRaw("l ${s}_{s}", .{ entry.owner, entry.name });
+    // Faz LLVM.5 (bkz. plan dosyası "`noxc build --release` için deneysel
+    // bir LLVM backend'i"): `core.nox`nin (Exception/ValueError/...)
+    // KOŞULSUZ HER programa birleştirilmesi YÜZÜNDEN sınıf-makinesi
+    // (vtable/release/trace/gc_free/name-dispatch) LİTERALDE "sınıf
+    // kullanmayan" bir program TARAFINDAN BİLE tetiklenir — bu YÜZDEN bu
+    // metot de (SIBLING dosyaların geri kalanının AKSİNE, `qbe_emit`/
+    // `llvm_emit` seam'İNİN DIŞINDA) DOĞRUDAN `self.backend`e göre
+    // dallanır — `generateModule`nin KENDİ direkt-yazıcı sitelerinin
+    // (bkz. onun belge notu) AYNI deseni.
+    if (self.backend == .qbe) {
+        try self.qbeRaw("data ${s}_vtable = {{ ", .{class_name});
+        for (slots, 0..) |s, i| {
+            if (i > 0) try self.qbeRawAll(", ");
+            // Her slot HER ZAMAN bir metod TARAFINDAN doldurulmuş OLMALIDIR —
+            // `registerClass` HER hiyerarşi seviyesinde TÜM önceki slotları
+            // (miras yoluyla) KORUR, hiçbiri asla BOŞ kalmaz.
+            const entry = s.?;
+            try self.qbeRaw("l ${s}_{s}", .{ entry.owner, entry.name });
+        }
+        try self.qbeRawAll(" }\n");
+    } else {
+        const syms = try self.allocator.alloc([]const u8, slots.len);
+        for (slots, 0..) |s, i| {
+            const entry = s.?;
+            syms[i] = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ entry.owner, entry.name });
+        }
+        const vtable_name = try std.fmt.allocPrint(self.allocator, "{s}_vtable", .{class_name});
+        const line = try llvm_emit.llvmPtrArrayConstant(self.allocator, vtable_name, syms);
+        try self.out.writer.writeAll(line);
     }
-    try self.qbeRawAll(" }\n");
 }
 
 /// Her sınıf için `$ClassName_release(rt, p)` üretir: refcount'u azaltır
@@ -144,7 +165,7 @@ pub fn genClassRelease(self: *Codegen, class_name: []const u8, cinfo: ClassInfo)
             try self.destroyNonArcValue(fv, f.info.heap);
         }
     }
-    try self.qbeRaw("    call $nox_rc_free_payload(l {s}, l %p, l {d})\n", .{ RT_PARAM, cinfo.total_size });
+    try self.qbeCall(null, "$nox_rc_free_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%p" }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{cinfo.total_size}) } });
     try self.qbeJmp(done_label);
     try self.qbeLabel(done_label);
     try self.qbeRet(null);
@@ -189,7 +210,7 @@ pub fn genClassTrace(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) C
     try self.qbeFuncParam(.l, "%p", false);
     try self.qbeFuncHeaderEnd();
     const buf = try self.newTemp();
-    try self.qbeRaw("    {s} =l call $nox_alloc(l {s}, l {d})\n", .{ buf, RT_PARAM, TRACE_BUF_LEN_SIZE + class_fields.items.len * TRACE_BUF_SLOT_SIZE });
+    try self.qbeCall(.{ .name = buf, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{TRACE_BUF_LEN_SIZE + class_fields.items.len * TRACE_BUF_SLOT_SIZE}) } });
     try self.qbeStoreImmL(@intCast(class_fields.items.len), buf);
     for (class_fields.items, 0..) |f, i| {
         const addr = try self.newTemp();
@@ -249,7 +270,7 @@ pub fn genClassGcFree(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) 
             try self.destroyNonArcValue(fv, f.info.heap);
         }
     }
-    try self.qbeRaw("    call $nox_rc_free_payload(l {s}, l %p, l {d})\n", .{ RT_PARAM, cinfo.total_size });
+    try self.qbeCall(null, "$nox_rc_free_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%p" }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{cinfo.total_size}) } });
     try self.qbeRet(null);
     try self.qbeFuncEnd();
 }
@@ -360,15 +381,30 @@ pub fn genClassNameDispatch(self: *Codegen, classes: []const ClassIdEntry) Codeg
     self.mod_cache.deinit(self.allocator);
     self.mod_cache = .empty;
 
-    const unknown_escaped = try escapeForQbeString(self.allocator, "bilinmeyen sinif");
-    try self.qbeRaw("data $__nox_classname_unknown = {{ b \"{s}\", b 0 }}\n", .{unknown_escaped});
+    // Faz LLVM.5 (bkz. `genClassVtable`nin AYNI belge notu): `string_data`/
+    // `fmt_data` İLE AYNI şekil (ARC başlıksız, düz C dizesi) — `.llvm`de
+    // `llvm_emit.llvmCStringConstant` KULLANILIR, KAÇAN metin (`escaped`)
+    // DEĞİL HAM metin (`llvmCStringConstant` KENDİ escape'ini yapar).
+    if (self.backend == .qbe) {
+        const unknown_escaped = try escapeForQbeString(self.allocator, "bilinmeyen sinif");
+        try self.qbeRaw("data $__nox_classname_unknown = {{ b \"{s}\", b 0 }}\n", .{unknown_escaped});
+    } else {
+        const line = try llvm_emit.llvmCStringConstant(self.allocator, "__nox_classname_unknown", "bilinmeyen sinif");
+        try self.out.writer.writeAll(line);
+    }
 
     var name_syms: std.ArrayListUnmanaged([]const u8) = .empty;
     defer name_syms.deinit(self.allocator);
     for (classes) |c| {
         const sym = try std.fmt.allocPrint(self.allocator, "$__nox_classname_{s}", .{c.name});
-        const escaped = try escapeForQbeString(self.allocator, c.name);
-        try self.qbeRaw("data {s} = {{ b \"{s}\", b 0 }}\n", .{ sym, escaped });
+        if (self.backend == .qbe) {
+            const escaped = try escapeForQbeString(self.allocator, c.name);
+            try self.qbeRaw("data {s} = {{ b \"{s}\", b 0 }}\n", .{ sym, escaped });
+        } else {
+            const llvm_name = try std.fmt.allocPrint(self.allocator, "__nox_classname_{s}", .{c.name});
+            const line = try llvm_emit.llvmCStringConstant(self.allocator, llvm_name, c.name);
+            try self.out.writer.writeAll(line);
+        }
         try name_syms.append(self.allocator, sym);
     }
 
