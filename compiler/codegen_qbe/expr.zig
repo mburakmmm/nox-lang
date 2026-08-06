@@ -198,7 +198,7 @@ pub fn emitStringLiteral(self: *Codegen, s: []const u8) CodegenError!Value {
             break;
         }
     }
-    try self.string_data.append(self.allocator, .{ .symbol = sym, .escaped = escaped, .byte_len = s.len, .is_ascii = is_ascii });
+    try self.string_data.append(self.allocator, .{ .symbol = sym, .escaped = escaped, .byte_len = s.len, .is_ascii = is_ascii, .raw = s });
     const addr = try self.newTemp();
     try self.qbeOp2Imm(addr, .l, "add", sym, @intCast(ARC_HEADER_SIZE + STR_HEADER_SIZE));
     return .{ .text = addr, .qtype = .l, .heap = .str, .is_pinned = true };
@@ -221,7 +221,7 @@ pub fn internPinnedStringConst(self: *Codegen, s: []const u8) CodegenError![]con
             break;
         }
     }
-    try self.string_data.append(self.allocator, .{ .symbol = sym, .escaped = escaped, .byte_len = s.len, .is_ascii = is_ascii });
+    try self.string_data.append(self.allocator, .{ .symbol = sym, .escaped = escaped, .byte_len = s.len, .is_ascii = is_ascii, .raw = s });
     return std.fmt.allocPrint(self.allocator, "{s}+{d}", .{ sym, ARC_HEADER_SIZE + STR_HEADER_SIZE });
 }
 
@@ -435,7 +435,7 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
         const msg_value = try self.emitStringLiteral("liste indeksi sinirlarin disinda");
         const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
         const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
-        try self.qbeRaw("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ie_obj.text, self.current_raise_line });
+        try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ie_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
         // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı): bu dal
         // KOŞULSUZ raise edip ATLADIĞINDAN, `obj` (taban liste) TEMPORARY
         // İSE normal yoldaki serbest bırakma BURAYA HİÇ ULAŞMAZ (GERÇEK
@@ -527,7 +527,7 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
         const msg_value = try self.emitStringLiteral("str indeksi sinirlarin disinda");
         const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
         const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
-        try self.qbeRaw("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, ie_obj.text, self.current_raise_line });
+        try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ie_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
         // Bkz. `genIndex`in AYNI belge notu — Faz NN kök-neden düzeltmesinden
         // (bkz. `ownership.zig`nin `releaseNamedLocalsExcept`i) SONRA GÜVENLE
         // yeniden eklendi, döngü testiyle DOĞRULANDI.
@@ -553,13 +553,13 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
         const ascii_label = try self.newLabel("str_idx_ascii");
         const unicode_label = try self.newLabel("str_idx_unicode");
         const done_label = try self.newLabel("str_idx_done");
-        try self.qbeJnz(ascii_flag, ascii_label, unicode_label);
+        try self.qbeJnzL(ascii_flag, ascii_label, unicode_label);
 
         try self.qbeLabel(ascii_label);
         const byte_addr = try self.newTemp();
         try self.qbeOp2(byte_addr, .l, "add", obj.text, index_v.text);
         const byte_val = try self.newTemp();
-        try self.qbeRaw("    {s} =w loadub {s}\n", .{ byte_val, byte_addr });
+        try self.qbeLoadUB(byte_val, byte_addr);
         // `str`e uzunluk alanı + ASCII bayrağı eklenmesinden BERİ (bkz.
         // plan dosyası) bu O(1) ASCII-hızlı-yol İNLINE'ı (`nox_str_char_at`i
         // ÇAĞIRMAK YERİNE doğrudan QBE'de bir 2 baytlık `[bayt][NUL]`
@@ -577,10 +577,10 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
         try self.qbeStoreImmL(@intCast(packStrHeader(1, STR_ASCII_TRUE)), raw);
         const ascii_result = try self.newTemp();
         try self.qbeOp2Imm(ascii_result, .l, "add", raw, @intCast(STR_HEADER_SIZE));
-        try self.qbeRaw("    storeb {s}, {s}\n", .{ byte_val, ascii_result });
+        try self.qbeStoreB(byte_val, ascii_result);
         const nul_addr = try self.newTemp();
         try self.qbeOp2Imm(nul_addr, .l, "add", ascii_result, 1);
-        try self.qbeRaw("    storeb 0, {s}\n", .{nul_addr});
+        try self.qbeStoreB("0", nul_addr);
         try self.qbeJmp(done_label);
 
         try self.qbeLabel(unicode_label);
@@ -1139,7 +1139,7 @@ pub fn internFmtString(self: *Codegen, text: []const u8) CodegenError![]const u8
     const sym = try std.fmt.allocPrint(self.allocator, "$fmt_lit{d}", .{self.fmt_counter});
     self.fmt_counter += 1;
     const escaped = try escapeForQbeString(self.allocator, text);
-    try self.fmt_data.append(self.allocator, .{ .symbol = sym, .escaped = escaped });
+    try self.fmt_data.append(self.allocator, .{ .symbol = sym, .escaped = escaped, .raw = text });
     return sym;
 }
 

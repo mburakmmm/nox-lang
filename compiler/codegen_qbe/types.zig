@@ -283,6 +283,12 @@ pub const StringDatum = struct {
     /// AYRI taşınır.
     byte_len: usize = 0,
     is_ascii: bool = true,
+    /// Faz LLVM.7: `escaped` QBE'nin KENDİ escape biçimi (yukarıdaki not) —
+    /// LLVM'in `c"..."` sabit-dizi sözdiziminin KENDİ (FARKLI, `\XX` iki-
+    /// hex-basamaklı) escape kuralları olduğundan, `llvm_emit.
+    /// llvmStrHeaderConstant`in KENDİ escape'ini yapabilmesi İçin HAM
+    /// (kaçışsız) baytlar AYRICA taşınır. `.qbe` bu alanı HİÇ OKUMAZ.
+    raw: []const u8 = "",
 };
 
 /// Bkz. `Codegen.mod_cache`nin belge notu (`optimizations.zig`).

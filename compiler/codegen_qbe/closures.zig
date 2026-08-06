@@ -84,10 +84,7 @@ pub fn buildClosureValue(self: *Codegen, fd: ast.FuncDef) CodegenError![]const u
 
     const total_size = CLOSURE_HEADER_SIZE + 8 * captures.len;
     const block = try self.newTemp();
-    // `nox_rc_alloc`nin `total_size`si (bir `usize`) `qbeCall`nin metin-
-    // operand modeline UYMADIĞINDAN bu site BİLİNÇLİ olarak `qbeRaw`
-    // KULLANIR — bkz. `qbe_emit.zig`nin kaçış-kapısı notu.
-    try self.qbeRaw("    {s} =l call $nox_rc_alloc(l {s}, l {d})\n", .{ block, RT_PARAM, total_size });
+    try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_rc_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{total_size}) } });
     const mangled_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{mangled});
     try self.qbeStoreL(mangled_sym, block);
     {
@@ -334,9 +331,7 @@ pub fn genClosureRelease(self: *Codegen, mangled_name: []const u8, captures: []c
         }
     }
     const total_size = CLOSURE_HEADER_SIZE + 8 * captures.len;
-    // Bkz. `buildClosureValue`nin AYNI `qbeRaw` notu — `total_size` bir
-    // `usize`, `qbeCall`nin metin-operand modeline UYMUYOR.
-    try self.qbeRaw("    call $nox_rc_free_payload(l {s}, l %p, l {d})\n", .{ RT_PARAM, total_size });
+    try self.qbeCall(null, "$nox_rc_free_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%p" }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{total_size}) } });
     try self.qbeJmp(done_label);
     try self.qbeLabel(done_label);
     try self.qbeRet(null);

@@ -529,6 +529,12 @@ pub const Codegen = struct {
             .llvm => llvm_emit.qbeJnz(self, cond, t, f),
         };
     }
+    pub fn qbeJnzL(self: *Codegen, cond: []const u8, t: []const u8, f: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeJnzL(self, cond, t, f),
+            .llvm => llvm_emit.qbeJnzL(self, cond, t, f),
+        };
+    }
     pub fn qbePhi(self: *Codegen, dst: []const u8, ty: QbeType, l1: []const u8, v1: []const u8, l2: []const u8, v2: []const u8) CodegenError!void {
         return switch (self.backend) {
             .qbe => qbe_emit.qbePhi(self, dst, ty, l1, v1, l2, v2),
@@ -593,6 +599,18 @@ pub const Codegen = struct {
         return switch (self.backend) {
             .qbe => qbe_emit.qbeStoreImmL(self, imm, addr),
             .llvm => llvm_emit.qbeStoreImmL(self, imm, addr),
+        };
+    }
+    pub fn qbeLoadUB(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeLoadUB(self, dst, addr),
+            .llvm => llvm_emit.qbeLoadUB(self, dst, addr),
+        };
+    }
+    pub fn qbeStoreB(self: *Codegen, value: []const u8, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeStoreB(self, value, addr),
+            .llvm => llvm_emit.qbeStoreB(self, value, addr),
         };
     }
     pub fn qbeAlloc(self: *Codegen, dst: []const u8, size: QbeAllocSize, n: usize) CodegenError!void {
@@ -1445,11 +1463,10 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
         return error.Unsupported;
     }
 
-    // Faz LLVM.4 (bulgu #3, devamı): string/list-görüntüleme literalleri
-    // (`string_data`/`fmt_data`) HENÜZ LLVM'e taşınmadı (str/list/dict
-    // TAMAMEN Kapsam DIŞI, bkz. plan) — `.llvm`de bu kuyruklar BOŞSA
-    // (minimal fixture'da HER ZAMAN) sessizce atlanır, DOLUYSA (str/list
-    // KULLANAN bir program) AÇIKÇA reddedilir.
+    // Faz LLVM.7 (bkz. plan dosyası): `string_data`/`fmt_data` artık HER
+    // İKİ backend'de de gerçek metin üretiyor — `.llvm` dalı `llvm_emit.
+    // llvmStrHeaderConstant`/`llvmCStringConstant`i kullanır (bkz. onların
+    // belge notu — ARC-pinned başlık bayt-düzeni QBE İLE BİREBİR AYNI).
     if (gen.backend == .qbe) {
         for (gen.string_data.items) |sd| {
             // `PINNED_REFCOUNT` (1<<30, bkz. `abi_layout.PINNED_REFCOUNT`nin
@@ -1469,8 +1486,18 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
         for (gen.fmt_data.items) |fd| {
             try gen.out.writer.print("data {s} = {{ b \"{s}\", b 0 }}\n", .{ fd.symbol, fd.escaped });
         }
-    } else if (gen.string_data.items.len > 0 or gen.fmt_data.items.len > 0) {
-        return error.Unsupported;
+    } else {
+        for (gen.string_data.items) |sd| {
+            const packed_header = packStrHeader(sd.byte_len, if (sd.is_ascii) STR_ASCII_TRUE else STR_ASCII_FALSE);
+            const name = if (sd.symbol.len > 0 and sd.symbol[0] == '$') sd.symbol[1..] else sd.symbol;
+            const line = try llvm_emit.llvmStrHeaderConstant(allocator, name, PINNED_REFCOUNT, packed_header, sd.raw);
+            try gen.out.writer.writeAll(line);
+        }
+        for (gen.fmt_data.items) |fd| {
+            const name = if (fd.symbol.len > 0 and fd.symbol[0] == '$') fd.symbol[1..] else fd.symbol;
+            const line = try llvm_emit.llvmCStringConstant(allocator, name, fd.raw);
+            try gen.out.writer.writeAll(line);
+        }
     }
 
     // Faz LLVM.4/5: `qbeCall`/`qbeCallVariadic`nin BİRİKTİRDİĞİ `declare`

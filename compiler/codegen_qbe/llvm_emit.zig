@@ -102,7 +102,9 @@ fn llGlobalRef(text: []const u8) []const u8 {
 /// GERİ KALANININ AKSİNE bu `pub fn` `Codegen`e DEĞİL, DOĞRUDAN metne
 /// çalışır — çağrı sitesi HENÜZ bir `Codegen` örneği KURMADAN ÖNCEKİ bir
 /// hazırlık adımıdır).
-pub fn llvmCStringConstant(allocator: std.mem.Allocator, name: []const u8, bytes: []const u8) ![]const u8 {
+/// `bytes`i (SONA `\00` EKLENMEDEN) LLVM `c"..."` escape kurallarına
+/// çevirir — `llvmCStringConstant`/`llvmStrHeaderConstant` PAYLAŞIR.
+fn llvmEscapeBytes(allocator: std.mem.Allocator, bytes: []const u8) !std.ArrayListUnmanaged(u8) {
     var escaped: std.ArrayListUnmanaged(u8) = .empty;
     for (bytes) |b| {
         if (b == '\\' or b == '"' or b < 0x20 or b > 0x7E) {
@@ -113,8 +115,32 @@ pub fn llvmCStringConstant(allocator: std.mem.Allocator, name: []const u8, bytes
             try escaped.append(allocator, b);
         }
     }
+    return escaped;
+}
+
+pub fn llvmCStringConstant(allocator: std.mem.Allocator, name: []const u8, bytes: []const u8) ![]const u8 {
+    var escaped = try llvmEscapeBytes(allocator, bytes);
     try escaped.appendSlice(allocator, "\\00");
-    return std.fmt.allocPrint(allocator, "@{s} = private unnamed_addr constant [{d} x i8] c\"{s}\"\n", .{ name, bytes.len + 1, escaped.items });
+    return std.fmt.allocPrint(allocator, "@{s} = private unnamed_addr global [{d} x i8] c\"{s}\"\n", .{ name, bytes.len + 1, escaped.items });
+}
+
+/// `str` literallerinin ARC-pinned başlığını (bkz. `abi_layout.zig`nin
+/// `packStrHeader`i) TAŞIYAN LLVM struct sabiti — QBE'nin `data $sym = {
+/// l PINNED_REFCOUNT, l packed_header, b "...", b 0 }`sinin karşılığı.
+/// `{ i64, i64, [N x i8] }` düzeni BİLİNÇLİ: `i64`ler ARADA/SONRASINDA
+/// dolgu (padding) GEREKTİRMEZ (8-bayt hizalı alanlar + 1-bayt hizalı
+/// dizi), bu YÜZDEN `expr.zig`nin `emitStringLiteral`ının `qbeOp2Imm(addr,
+/// .l, "add", sym, ARC_HEADER_SIZE+STR_HEADER_SIZE)` İLE (bkz. `renderOperand`,
+/// `$sym` → `ptrtoint (ptr @sym to i64)`) hesapladığı `sym+16` ADRES
+/// ARİTMETİĞİ, QBE'DEKİYLE BAYT-BİREBİR AYNI byte-offset'lere İSABET EDER.
+pub fn llvmStrHeaderConstant(allocator: std.mem.Allocator, name: []const u8, pinned_refcount: i64, packed_header: i64, bytes: []const u8) ![]const u8 {
+    var escaped = try llvmEscapeBytes(allocator, bytes);
+    try escaped.appendSlice(allocator, "\\00");
+    return std.fmt.allocPrint(
+        allocator,
+        "@{s} = private unnamed_addr global {{ i64, i64, [{d} x i8] }} {{ i64 {d}, i64 {d}, [{d} x i8] c\"{s}\" }}\n",
+        .{ name, bytes.len + 1, pinned_refcount, packed_header, bytes.len + 1, escaped.items },
+    );
 }
 
 /// `syms`i (sembol adları, `$`/`@` ÖN-EKİ OLMADAN) fonksiyon-işaretçisi-
@@ -155,6 +181,16 @@ pub fn qbeJmp(self: *Codegen, target: []const u8) CodegenError!void {
 pub fn qbeJnz(self: *Codegen, cond: []const u8, t: []const u8, f: []const u8) CodegenError!void {
     const cmp_reg = try self.newTemp();
     try self.out.writer.print("    {s} = icmp ne i32 {s}, 0\n", .{ cmp_reg, cond });
+    try self.out.writer.print("    br i1 {s}, label %{s}, label %{s}\n", .{ cmp_reg, llLabelRef(t), llLabelRef(f) });
+    self.llvm_block_open = false;
+}
+
+/// `qbeJnz`nin `l`-tipli (i64) koşul VARYANTI — bkz. `qbe_emit.zig`nin
+/// AYNI adının belge notu (`nox_str_is_ascii`nin GERÇEK `i64` dönüşü,
+/// `Codegen.str_ascii_cache`nin TEK üreticisi).
+pub fn qbeJnzL(self: *Codegen, cond: []const u8, t: []const u8, f: []const u8) CodegenError!void {
+    const cmp_reg = try self.newTemp();
+    try self.out.writer.print("    {s} = icmp ne i64 {s}, 0\n", .{ cmp_reg, cond });
     try self.out.writer.print("    br i1 {s}, label %{s}, label %{s}\n", .{ cmp_reg, llLabelRef(t), llLabelRef(f) });
     self.llvm_block_open = false;
 }
@@ -341,6 +377,30 @@ pub fn qbeStoreL(self: *Codegen, value: []const u8, addr: []const u8) CodegenErr
 pub fn qbeStoreImmL(self: *Codegen, imm: i64, addr: []const u8) CodegenError!void {
     const text = try std.fmt.allocPrint(self.allocator, "{d}", .{imm});
     try qbeStore(self, .l, text, addr);
+}
+
+/// QBE'nin `loadub`u (`w`ye SIFIR-genişleten TEK-bayt yükleme) — `genStrIndex`nin
+/// ASCII-hızlı-yolu İçin (bkz. `qbe_emit.zig`nin AYNI eklentisinin belge
+/// notu).
+pub fn qbeLoadUB(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+    const ptr_reg = try self.newTemp();
+    try self.out.writer.print("    {s} = inttoptr i64 {s} to ptr\n", .{ ptr_reg, addr });
+    const byte_reg = try self.newTemp();
+    try self.out.writer.print("    {s} = load i8, ptr {s}\n", .{ byte_reg, ptr_reg });
+    try self.out.writer.print("    {s} = zext i8 {s} to i32\n", .{ dst, byte_reg });
+}
+
+/// QBE'nin `storeb`i (TEK bayt saklama, imzalı/imzasız FARK ETMEZ) —
+/// `value_raw` HER ZAMAN `w`/i32-taşınan bir değer (register YA DA `0`
+/// GİBİ bir literal) OLDUĞUNDAN önce `i8`e KIRPILIR (`trunc` bir sabit
+/// İçin de GEÇERLİDİR).
+pub fn qbeStoreB(self: *Codegen, value_raw: []const u8, addr: []const u8) CodegenError!void {
+    const value = try renderOperand(self, value_raw);
+    const ptr_reg = try self.newTemp();
+    try self.out.writer.print("    {s} = inttoptr i64 {s} to ptr\n", .{ ptr_reg, addr });
+    const byte_reg = try self.newTemp();
+    try self.out.writer.print("    {s} = trunc i32 {s} to i8\n", .{ byte_reg, value });
+    try self.out.writer.print("    store i8 {s}, ptr {s}\n", .{ byte_reg, ptr_reg });
 }
 
 /// QBE'nin `%dst =l alloc{4/8} {n}`i — dönüş HER ZAMAN bir `l` (i64)

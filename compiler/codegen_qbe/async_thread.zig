@@ -222,10 +222,7 @@ pub fn genSpawnExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
 
     const closure_size = 8 + 8 * call.args.len;
     const closure = try self.newTemp();
-    // `closure_size`nin (bir `usize`) `qbeCall`nin metin-operand modeline
-    // UYMAMASI NEDENİYLE bu site BİLİNÇLİ olarak `qbeRaw` KULLANIR — bkz.
-    // `qbe_emit.zig`nin kaçış-kapısı notu.
-    try self.qbeRaw("    {s} =l call $nox_alloc(l {s}, l {d})\n", .{ closure, RT_PARAM, closure_size });
+    try self.qbeCall(.{ .name = closure, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{closure_size}) } });
     try self.qbeStoreL(RT_PARAM, closure);
     for (arg_values, 0..) |av, i| {
         const off = 8 + 8 * i;
@@ -317,8 +314,7 @@ pub fn genSpawnWrapper(self: *Codegen, spec: SpawnWrapperSpec) CodegenError!void
     };
 
     const closure_size = 8 + 8 * spec.sig.params.len;
-    // Bkz. YUKARIDAKİ `nox_alloc` çağrısının AYNI `qbeRaw` notu.
-    try self.qbeRaw("    call $nox_free(l {s}, l %argp, l {d})\n", .{ RT_PARAM, closure_size });
+    try self.qbeCall(null, "$nox_free", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%argp" }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{closure_size}) } });
     try self.qbeRet(payload.text);
     try self.qbeFuncEnd();
 }

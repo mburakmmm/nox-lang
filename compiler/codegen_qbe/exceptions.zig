@@ -22,10 +22,7 @@ const isHeapManaged = abi.isHeapManaged;
 pub fn genRaise(self: *Codegen, expr: ast.Expr) CodegenError!void {
     const obj = try self.genExpr(expr);
     if (obj.heap != .class) return error.Unsupported;
-    // `current_raise_line`nin (bir çalışma-zamanı tam sayı) `qbeCall`nin
-    // metin-operand modeline UYMAMASI NEDENİYLE bu site BİLİNÇLİ olarak
-    // `qbeRaw` KULLANIR — bkz. `qbe_emit.zig`nin kaçış-kapısı notu.
-    try self.qbeRaw("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, obj.text, self.current_raise_line });
+    try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
     try self.emitExceptionCheck();
 }
 
@@ -214,8 +211,7 @@ pub fn genTry(self: *Codegen, t: ast.TryStmt, ret_qtype: QbeType) CodegenError!v
     // değil — `current_catch_label` yukarıda eski değerine geri alındı).
     try self.qbeLabel(next_check);
     if (t.finally_body) |fb| try self.genStmts(fb, ret_qtype);
-    // Bkz. `genRaise`nin AYNI `qbeRaw` notu.
-    try self.qbeRaw("    call $nox_raise(l {s}, l {s}, l {d})\n", .{ RT_PARAM, exc_ptr, self.current_raise_line });
+    try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = exc_ptr }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
     try self.emitExceptionCheck();
     try self.qbeJmp(after_label);
 

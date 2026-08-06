@@ -36,11 +36,7 @@ pub fn genNoxInitGlobals(self: *Codegen, module: ast.Module) CodegenError!void {
     try self.qbeFuncParam(.l, RT_PARAM, true);
     try self.qbeFuncHeaderEnd();
     const block = try self.newTemp();
-    // `module_globals_size`nin (bir `usize`) `qbeCall`nin metin-operand
-    // modeline UYMAMASI (ÇALIŞMA-ZAMANI bir tam sayı, ÖNCEDEN render
-    // edilmiş metin DEĞİL) NEDENİYLE bu İKİ site BİLİNÇLİ olarak `qbeRaw`
-    // KULLANIR — bkz. `qbe_emit.zig`nin kaçış-kapısı notu.
-    try self.qbeRaw("    {s} =l call $nox_alloc(l {s}, l {d})\n", .{ block, RT_PARAM, self.module_globals_size });
+    try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.module_globals_size}) } });
     try self.qbeCall(null, "$nox_globals_set", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = block } });
 
     for (module.body) |stmt| {
@@ -103,9 +99,7 @@ pub fn genNoxDeinitGlobals(self: *Codegen) CodegenError!void {
         try self.qbeLoadL(ptr, addr);
         try self.releaseValueIfSet(ptr, g.info.heap, g.info.elem_qtype, g.info.class_name, g.info.elem_heap_info, g.info.dict_info);
     }
-    // Bkz. `genNoxInitGlobals`in AYNI `qbeRaw` notu — `module_globals_size`
-    // metin OLARAK ÖNCEDEN render EDİLMEMİŞ bir `usize`.
-    try self.qbeRaw("    call $nox_free(l {s}, l {s}, l {d})\n", .{ RT_PARAM, block, self.module_globals_size });
+    try self.qbeCall(null, "$nox_free", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = block }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.module_globals_size}) } });
     try self.qbeRet(null);
     try self.qbeFuncEnd();
 }

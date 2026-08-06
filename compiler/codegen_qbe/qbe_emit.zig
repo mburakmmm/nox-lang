@@ -53,6 +53,16 @@ pub fn qbeJnz(self: *Codegen, cond: []const u8, t: []const u8, f: []const u8) Co
     try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cond, t, f });
 }
 
+/// `qbeJnz`nin `l`-tipli (i64-taşınan) koşul VARYANTI — QBE'nin `jnz`ı
+/// GENİŞLİK-BAĞIMSIZ olduğundan (bkz. `Codegen.str_ascii_cache`nin TEK
+/// üreticisi, `nox_str_is_ascii`nin GERÇEK `i64` dönüş tipi) BU dal İLE
+/// `qbeJnz` BİREBİR AYNI metni üretir — SADECE LLVM'in `icmp`inin doğru
+/// operand tipini SEÇMESİ İçin (bkz. `llvm_emit.zig`nin AYNI adı) AYRI
+/// bir isim taşır.
+pub fn qbeJnzL(self: *Codegen, cond: []const u8, t: []const u8, f: []const u8) CodegenError!void {
+    try self.out.writer.print("    jnz {s}, {s}, {s}\n", .{ cond, t, f });
+}
+
 /// İki dallı bir `phi` — DOĞRULANDI: `ty` `w`/`l` İKİSİ de görülüyor,
 /// operandlar (literal `"0"`/`"1"` YA DA değişken metni) HER ZAMAN
 /// ÖNCEDEN render edilmiş metin, bu YÜZDEN `ty` SABİTLENMEZ, PARAMETRE.
@@ -125,6 +135,18 @@ pub fn qbeStoreL(self: *Codegen, value: []const u8, addr: []const u8) CodegenErr
 /// (`storel 0`/`storel 1` DAHİL) DOĞRUDAN bir adrese yazılması.
 pub fn qbeStoreImmL(self: *Codegen, imm: i64, addr: []const u8) CodegenError!void {
     try self.out.writer.print("    storel {d}, {s}\n", .{ imm, addr });
+}
+
+/// Faz LLVM.7: `genStrIndex`nin ASCII-hızlı-yolunun BAYT-granülerlikli
+/// yükleme/saklama çifti (`qbeLoad`/`qbeStore`nin `w`/`l`/`d`-SINIRLI
+/// API'sine UYMAZ) — `loadub` HER ZAMAN `w`ye sıfır-genişletir, `storeb`
+/// TEK bir bayt yazar (imzasız/imzalı FARK ETMEZ, QBE'de TEK `storeb`).
+pub fn qbeLoadUB(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+    try self.out.writer.print("    {s} =w loadub {s}\n", .{ dst, addr });
+}
+
+pub fn qbeStoreB(self: *Codegen, value: []const u8, addr: []const u8) CodegenError!void {
+    try self.out.writer.print("    storeb {s}, {s}\n", .{ value, addr });
 }
 
 pub const QbeAllocSize = enum(u8) { four = 4, eight = 8 };
