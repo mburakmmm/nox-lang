@@ -709,6 +709,16 @@ pub const Codegen = struct {
     /// (Faz LLVM.4/5) TÜM fonksiyon gövdeleri yazıldıktan SONRA, `llvm_
     /// defined_syms`e göre FİLTRELEYEREK `gen.out`a FLUSH eder.
     llvm_pending_declares: std.ArrayListUnmanaged(struct { name: []const u8, line: []const u8 }) = .empty,
+    /// Faz LLVM.8: `qbeAlloc`nin (bkz. llvm_emit.zig) mem2reg-dostu alloca
+    /// şeması — bir slotun "genel" dst adını (ör. "%t5", TÜM sibling
+    /// dosyaların kullandığı AYNI metin) o alloca'nın GERÇEK `ptr`-tipli
+    /// LLVM SSA register'ına eşler. `dst` ARTIK bir LLVM SSA değeri OLARAK
+    /// TANIMLANMAZ — SADECE bu map'te bir anahtar olarak var olur; adres
+    /// asla bir DEĞER olarak KULLANILMADIĞI SÜRECE (yaygın durum: sıradan
+    /// yerel değişkenler) alloca mem2reg TARAFINDAN register'a terfi
+    /// edilebilir kalır. `qbeFuncHeaderStart` HER fonksiyon-benzeri codegen
+    /// girişinde temizler (bkz. onun belge notu).
+    llvm_alloca_ptrs: std.StringHashMapUnmanaged([]const u8) = .empty,
     /// Faz T.3: `generateModule`e bir `debug_source_path` VERİLDİYSE `true` —
     /// `genStmts` (TÜM deyim kodgen'inin TEK dağıtım noktası, bkz. `checkStmt`
     /// İLE AYNI T.1 deseni) HER deyimden ÖNCE bir `dbgloc <satır>` (QBE IL,

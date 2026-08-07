@@ -349,13 +349,27 @@ pub fn qbeOp2Imm(self: *Codegen, dst: []const u8, ty: QbeType, mnemonic: []const
     try self.out.writer.print("    {s} = {s} {s} {s}, {d}\n", .{ dst, op, llvmTypeName(ty), a, imm });
 }
 
+/// Faz LLVM.8 (bkz. `qbeAlloc`nin belge notu): `addr` KAYITLI bir
+/// alloca-ptr (yani `qbeAlloc`nin DOĞRUDAN dst'i) İSE o `ptr`-tipli SSA
+/// register'ı SIFIR ek instruction İLE DOĞRUDAN döner — bu, `alloca`nın
+/// mem2reg TARAFINDAN terfi edilebilir KALMASININ tek koşuludur (SADECE
+/// load/store kullanımı). KAYITLI DEĞİLSE (`addr` bir heap-tahsis
+/// çağrısının/aritmetiğin sonucu YA DA `renderOperand` YOLUYLA
+/// materyalize edilmiş bir Desen-B adresi), eski davranışa (`inttoptr`)
+/// düşer.
+fn resolveAddrPtr(self: *Codegen, addr: []const u8) CodegenError![]const u8 {
+    if (self.llvm_alloca_ptrs.get(addr)) |ptr_reg| return ptr_reg;
+    const ptr_reg = try self.newTemp();
+    try self.out.writer.print("    {s} = inttoptr i64 {s} to ptr\n", .{ ptr_reg, addr });
+    return ptr_reg;
+}
+
 /// `dst_ty != mem_ty` bu kod tabanında HİÇ GÖZLEMLENMEDİ (20/20 çağrı
 /// sitesi eşleşiyor, bkz. plan doğrulaması) — GÖZLEMLENMEYEN bu durum
 /// GÜVENLİ bir şekilde `error.Unsupported` ile REDDEDİLİR.
 pub fn qbeLoad(self: *Codegen, dst: []const u8, dst_ty: QbeType, mem_ty: QbeType, addr: []const u8) CodegenError!void {
     if (dst_ty != mem_ty) return error.Unsupported;
-    const ptr_reg = try self.newTemp();
-    try self.out.writer.print("    {s} = inttoptr i64 {s} to ptr\n", .{ ptr_reg, addr });
+    const ptr_reg = try resolveAddrPtr(self, addr);
     try self.out.writer.print("    {s} = load {s}, ptr {s}\n", .{ dst, llvmTypeName(dst_ty), ptr_reg });
 }
 
@@ -365,8 +379,7 @@ pub fn qbeLoadL(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!
 
 pub fn qbeStore(self: *Codegen, ty: QbeType, value_raw: []const u8, addr: []const u8) CodegenError!void {
     const value = try renderOperand(self, value_raw);
-    const ptr_reg = try self.newTemp();
-    try self.out.writer.print("    {s} = inttoptr i64 {s} to ptr\n", .{ ptr_reg, addr });
+    const ptr_reg = try resolveAddrPtr(self, addr);
     try self.out.writer.print("    store {s} {s}, ptr {s}\n", .{ llvmTypeName(ty), value, ptr_reg });
 }
 
@@ -383,8 +396,7 @@ pub fn qbeStoreImmL(self: *Codegen, imm: i64, addr: []const u8) CodegenError!voi
 /// ASCII-hızlı-yolu İçin (bkz. `qbe_emit.zig`nin AYNI eklentisinin belge
 /// notu).
 pub fn qbeLoadUB(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
-    const ptr_reg = try self.newTemp();
-    try self.out.writer.print("    {s} = inttoptr i64 {s} to ptr\n", .{ ptr_reg, addr });
+    const ptr_reg = try resolveAddrPtr(self, addr);
     const byte_reg = try self.newTemp();
     try self.out.writer.print("    {s} = load i8, ptr {s}\n", .{ byte_reg, ptr_reg });
     try self.out.writer.print("    {s} = zext i8 {s} to i32\n", .{ dst, byte_reg });
@@ -396,22 +408,31 @@ pub fn qbeLoadUB(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError
 /// İçin de GEÇERLİDİR).
 pub fn qbeStoreB(self: *Codegen, value_raw: []const u8, addr: []const u8) CodegenError!void {
     const value = try renderOperand(self, value_raw);
-    const ptr_reg = try self.newTemp();
-    try self.out.writer.print("    {s} = inttoptr i64 {s} to ptr\n", .{ ptr_reg, addr });
+    const ptr_reg = try resolveAddrPtr(self, addr);
     const byte_reg = try self.newTemp();
     try self.out.writer.print("    {s} = trunc i32 {s} to i8\n", .{ byte_reg, value });
     try self.out.writer.print("    store i8 {s}, ptr {s}\n", .{ byte_reg, ptr_reg });
 }
 
 /// QBE'nin `%dst =l alloc{4/8} {n}`i — dönüş HER ZAMAN bir `l` (i64)
-/// "işaretçi-olarak-tamsayı" değeridir (bkz. modül üstü not). LLVM'de
-/// `alloca` bir GERÇEK `ptr` döner, bu YÜZDEN hemen `ptrtoint` İLE `i64`e
-/// indirgenir — bu SINIR geçişi (`qbeLoad`/`qbeStore`nin `inttoptr`si,
-/// Faz LLVM.3) HARİÇ, KOD TABANININ geri kalanı bunu HİÇ BİLMEZ.
+/// "işaretçi-olarak-tamsayı" değeridir (bkz. modül üstü not). Faz LLVM.8
+/// (bkz. plan dosyası "LLVM.8: qbeAlloc'nin mem2reg'i engelleyen ptrtoint
+/// deseni"): `dst`, ARTIK bir LLVM SSA değeri OLARAK TANIMLANMAZ — `alloca`
+/// SONUCU (`ptr_reg`) SADECE `self.llvm_alloca_ptrs`e (dst → ptr_reg)
+/// KAYDEDİLİR. `qbeLoad`/`qbeStore`/vb. (`resolveAddrPtr` ÜZERİNDEN) bu
+/// kaydı BULDUĞUNDA `ptr_reg`i SIFIR ek instruction İLE DOĞRUDAN kullanır;
+/// `renderOperand` İSE `dst`nin bir DEĞER olarak (çağrı argümanı/başka bir
+/// slota yazılan değer/aritmetik operandı) kaçtığı NADİR durumda TALEP
+/// ÜZERİNE bir `ptrtoint` YAYAR. Bu, `alloca`nın SONUCUNUN (adresi bir
+/// DEĞER olarak HİÇ kullanılmayan — Nox'taki EZİCİ ÇOĞUNLUK — sıradan
+/// yerel değişkenler İçin) SADECE load/store'da kullanılmasını KORUYARAK
+/// LLVM'in `mem2reg`/SROA geçişinin GERÇEKTEN register'a terfi
+/// ettirebilmesini SAĞLAR (eskiden HER `alloca` `ptrtoint` İLE "kaçtığı"
+/// İçin BU HİÇ mümkün DEĞİLDİ — bkz. plan dosyasının kök-neden analizi).
 pub fn qbeAlloc(self: *Codegen, dst: []const u8, size: QbeAllocSize, n: usize) CodegenError!void {
     const ptr_reg = try self.newTemp();
     try self.out.writer.print("    {s} = alloca [{d} x i8], align {d}\n", .{ ptr_reg, n, @intFromEnum(size) });
-    try self.out.writer.print("    {s} = ptrtoint ptr {s} to i64\n", .{ dst, ptr_reg });
+    try self.llvm_alloca_ptrs.put(self.allocator, dst, ptr_reg);
 }
 
 /// İKİ bağımsız ham-metin sızıntısını render eden GENEL operand
@@ -438,6 +459,17 @@ pub fn qbeAlloc(self: *Codegen, dst: []const u8, size: QbeAllocSize, n: usize) C
 ///    DEĞİŞMEDİ, bu YÜZDEN float'ların GENEL desteği (aritmetik/
 ///    fonksiyon-imzaları/vb.) HÂLÂ Kapsam DIŞI kalır (bkz. plan dosyası).
 fn renderOperand(self: *Codegen, text: []const u8) CodegenError![]const u8 {
+    // Faz LLVM.8 (bkz. `qbeAlloc`nin belge notu, "Desen B"): `text`
+    // KAYITLI bir alloca-ptr İSE, adresi bir DEĞER olarak (çağrı argümanı/
+    // başka bir slota yazılan değer/aritmetik operandı) KULLANMAK ÜZERE
+    // TALEP ÜZERİNE materyalize eder — `$sym`nin AKSİNE (link-zamanı
+    // SABİTİ) bir alloca'nın adresi ÇALIŞMA-ZAMANI değeridir, bu YÜZDEN
+    // bir SABİT-İFADE DEĞİL, GERÇEK bir `ptrtoint` INSTRUCTION'I yayılır.
+    if (self.llvm_alloca_ptrs.get(text)) |ptr_reg| {
+        const iv = try self.newTemp();
+        try self.out.writer.print("    {s} = ptrtoint ptr {s} to i64\n", .{ iv, ptr_reg });
+        return iv;
+    }
     if (text.len > 0 and text[0] == '$') {
         return std.fmt.allocPrint(self.allocator, "ptrtoint (ptr @{s} to i64)", .{text[1..]});
     }
@@ -493,17 +525,27 @@ pub fn qbeCall(self: *Codegen, dst: ?QbeCallDst, func_text: []const u8, args: []
     }
     const callee_text = try resolveCallee(self, func_text);
 
-    if (dst) |d| {
-        try self.out.writer.print("    {s} = call {s} {s}(", .{ d.name, llvmTypeName(d.ty), callee_text });
-    } else {
-        try self.out.writer.print("    call void {s}(", .{callee_text});
-    }
+    // Faz LLVM.8 (bkz. `qbeAlloc`nin belge notu): argümanlar `call ...(`
+    // AÇILIŞ satırı YAZILMADAN ÖNCE render EDİLİR — `renderOperand`nin
+    // Desen-B "talep üzerine materyalize" dalı (`self.out.writer`e AYRI
+    // bir `ptrtoint` INSTRUCTION'I yazabilir) çağrı satırı ZATEN yarım
+    // yazılmışKEN çalışırsa, o instruction'ın metni çağrı satırının
+    // ORTASINA SIZAR (GEÇERSİZ LLVM IR — `lowlevel_arena` fixture'ında
+    // GERÇEKTEN gözlemlenip DÜZELTİLDİ).
+    var args_buf: std.ArrayListUnmanaged(u8) = .empty;
     for (args, 0..) |arg, i| {
-        if (i != 0) try self.out.writer.writeAll(", ");
+        if (i != 0) try args_buf.appendSlice(self.allocator, ", ");
         const rendered = try renderOperand(self, arg.text);
-        try self.out.writer.print("{s} {s}", .{ llvmTypeName(arg.ty), rendered });
+        try args_buf.appendSlice(self.allocator, llvmTypeName(arg.ty));
+        try args_buf.append(self.allocator, ' ');
+        try args_buf.appendSlice(self.allocator, rendered);
     }
-    try self.out.writer.writeAll(")\n");
+
+    if (dst) |d| {
+        try self.out.writer.print("    {s} = call {s} {s}({s})\n", .{ d.name, llvmTypeName(d.ty), callee_text, args_buf.items });
+    } else {
+        try self.out.writer.print("    call void {s}({s})\n", .{ callee_text, args_buf.items });
+    }
 }
 
 /// `qbeCall`in variadic (`...`) versiyonu — `genPrint`/`genPrintFragment`nin
@@ -523,25 +565,32 @@ pub fn qbeCallVariadic(self: *Codegen, dst: ?QbeCallDst, func_text: []const u8, 
         try fixed_types_buf.appendSlice(self.allocator, llvmTypeName(arg.ty));
     }
 
-    if (dst) |d| {
-        try self.out.writer.print("    {s} = call {s} ({s}, ...) {s}(", .{ d.name, ret_str, fixed_types_buf.items, callee_text });
-    } else {
-        try self.out.writer.print("    call void ({s}, ...) {s}(", .{ fixed_types_buf.items, callee_text });
-    }
+    // Faz LLVM.8 (bkz. `qbeCall`nin AYNI belge notu): argümanlar `call
+    // (...) ...(` AÇILIŞ satırı YAZILMADAN ÖNCE render EDİLİR.
+    var args_buf: std.ArrayListUnmanaged(u8) = .empty;
     var first = true;
     for (fixed) |arg| {
-        if (!first) try self.out.writer.writeAll(", ");
+        if (!first) try args_buf.appendSlice(self.allocator, ", ");
         first = false;
         const rendered = try renderOperand(self, arg.text);
-        try self.out.writer.print("{s} {s}", .{ llvmTypeName(arg.ty), rendered });
+        try args_buf.appendSlice(self.allocator, llvmTypeName(arg.ty));
+        try args_buf.append(self.allocator, ' ');
+        try args_buf.appendSlice(self.allocator, rendered);
     }
     for (variadic) |arg| {
-        if (!first) try self.out.writer.writeAll(", ");
+        if (!first) try args_buf.appendSlice(self.allocator, ", ");
         first = false;
         const rendered = try renderOperand(self, arg.text);
-        try self.out.writer.print("{s} {s}", .{ llvmTypeName(arg.ty), rendered });
+        try args_buf.appendSlice(self.allocator, llvmTypeName(arg.ty));
+        try args_buf.append(self.allocator, ' ');
+        try args_buf.appendSlice(self.allocator, rendered);
     }
-    try self.out.writer.writeAll(")\n");
+
+    if (dst) |d| {
+        try self.out.writer.print("    {s} = call {s} ({s}, ...) {s}({s})\n", .{ d.name, ret_str, fixed_types_buf.items, callee_text, args_buf.items });
+    } else {
+        try self.out.writer.print("    call void ({s}, ...) {s}({s})\n", .{ fixed_types_buf.items, callee_text, args_buf.items });
+    }
 }
 
 /// Bulundu (Faz LLVM.5, `t1.nox` GİBİ EN basit bir programda BİLE
@@ -558,6 +607,14 @@ pub fn qbeCallVariadic(self: *Codegen, dst: ?QbeCallDst, func_text: []const u8, 
 /// doğru ayarlayan `genFunction` GİBİ çağıranlar İçin bu AYNI değerle
 /// YİNELENEN, zararsız bir atama).
 pub fn qbeFuncHeaderStart(self: *Codegen, ret_ty: ?QbeType, name_text: []const u8) CodegenError!void {
+    // Faz LLVM.8: `self.llvm_alloca_ptrs`i (bkz. `qbeAlloc`nin belge notu)
+    // temizle — `temp_counter` (29 AYRI sitede, 8 sibling dosyada dağınık
+    // olarak sıfırlanıyor) İLE AYNI "her fonksiyon-benzeri codegen girişi"
+    // noktasıdır (`qbeFuncHeaderStart` HER BİRİNDE TAM OLARAK BİR KEZ
+    // çağrılıyor) — bu TEK satır TÜM harici sıfırlama sitelerini kapsar,
+    // çapraz-fonksiyon `%tN` çakışmasını (bir SONRAKİ fonksiyonun %t5'inin
+    // YANLIŞLIKLA ÖNCEKİ fonksiyonun alloca-ptr'ına eşlenmesi) önler.
+    self.llvm_alloca_ptrs.clearRetainingCapacity();
     self.current_ret_qtype = ret_ty orelse .none;
     const name = llGlobalRef(name_text);
     // Bulundu (Faz LLVM.5): `self.llvm_defined_syms`e KAYIT — `qbeCall`nin
