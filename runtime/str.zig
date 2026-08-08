@@ -132,7 +132,7 @@ pub fn nox_str_slice(str_ptr: [*:0]const u8) []const u8 {
 /// uzunlukla SINIRLI) baytları BİR KEZ tarar, SONUCU header'a YAZARAK
 /// önbellekler (gelecekteki TÜM çağrılar İçin), döner.
 ///
-/// **Atomik OLMASI GEREKMEZ**: `runtime/alloc/asap.zig`nin `arc_owner_tid`
+/// **Atomik OLMASI GEREKMEZ**: `runtime/alloc/asap.zig`nin `arc_owner_pool`
 /// belge notu, Nox'un ARC nesnelerinin ASLA GERÇEK paralel erişime
 /// AÇILMADIĞINI belirtir; `nox.thread`/`ThreadChannel` bir `str`i GERÇEK
 /// OS iş parçacıkları ARASINDA geçirirken HER ZAMAN derin kopyalar (bkz.

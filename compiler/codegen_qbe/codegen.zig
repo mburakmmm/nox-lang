@@ -601,6 +601,18 @@ pub const Codegen = struct {
             .llvm => llvm_emit.qbeStoreImmL(self, imm, addr),
         };
     }
+    pub fn qbeAtomicAdd(self: *Codegen, addr: []const u8, imm: i64) CodegenError![]const u8 {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeAtomicAdd(self, addr, imm),
+            .llvm => llvm_emit.qbeAtomicAdd(self, addr, imm),
+        };
+    }
+    pub fn qbeAtomicSub(self: *Codegen, addr: []const u8, imm: i64) CodegenError![]const u8 {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeAtomicSub(self, addr, imm),
+            .llvm => llvm_emit.qbeAtomicSub(self, addr, imm),
+        };
+    }
     pub fn qbeLoadUB(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
         return switch (self.backend) {
             .qbe => qbe_emit.qbeLoadUB(self, dst, addr),

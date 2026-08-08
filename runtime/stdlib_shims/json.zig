@@ -54,6 +54,7 @@ const arc = @import("../alloc/arc.zig");
 const http_client = @import("http_client.zig");
 const abi_layout = @import("abi_layout");
 const str_mod = @import("../str.zig");
+const bridge = @import("../async_rt/bridge.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
 /// Faz P1.2: bkz. `strings.zig`nin AYNI re-export notu.
@@ -125,10 +126,17 @@ fn nox_json_make_json_value(
 }
 
 // Faz BB.1: `nox.fs`nin `g_last_ok`ıyla AYNI gerekçeyle `threadlocal`.
-threadlocal var g_last_op_ok: bool = true;
+// Faz MN.2: bkz. `fiber.zig`nin belge notu — fiber İÇİNDE `Fiber.
+// json_last_op_ok`e, DIŞINDA (senkron üst-düzey kod) BU yedeğe düşer.
+threadlocal var g_last_op_ok_fallback: bool = true;
+
+fn jsonLastOpOkPtr() *bool {
+    if (bridge.currentFiber()) |f| return &f.json_last_op_ok;
+    return &g_last_op_ok_fallback;
+}
 
 export fn nox_json_last_op_ok() callconv(.c) i32 {
-    return if (g_last_op_ok) 1 else 0;
+    return if (jsonLastOpOkPtr().*) 1 else 0;
 }
 
 /// `nox_json_make_json_value`nin (yani `JsonValue.__init__`in) `self.field =
@@ -316,7 +324,7 @@ export fn nox_json_decode_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?
     const allocator = arena.allocator();
 
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, slice, .{}) catch {
-        g_last_op_ok = false;
+        jsonLastOpOkPtr().* = false;
         return makeLeafUnshared(rt, 0, false, 0.0, "");
     };
 
@@ -331,16 +339,16 @@ export fn nox_json_decode_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?
     // yapılıp başarısızlıkta koşulsuz `g_last_op_ok=false` YAZIYORDU —
     // `rt=null`lı testte GEÇERLİ JSON'u BİLE "geçersiz" olarak işaretledi).
     const shared = initSharedEmpties(rt) orelse {
-        g_last_op_ok = true;
+        jsonLastOpOkPtr().* = true;
         return makeLeafUnshared(rt, 0, false, 0.0, "");
     };
     defer releaseSharedEmpties(rt, shared);
 
     const root = buildNode(rt, allocator, shared, parsed.value) catch {
-        g_last_op_ok = false;
+        jsonLastOpOkPtr().* = false;
         return makeLeaf(rt, shared, 0, false, 0.0, sharedEmptyStr(shared));
     };
-    g_last_op_ok = true;
+    jsonLastOpOkPtr().* = true;
     return root orelse makeLeaf(rt, shared, 0, false, 0.0, sharedEmptyStr(shared));
 }
 

@@ -35,7 +35,7 @@
 //! arabellekleri) BİLİNÇLİ olarak `std.heap.page_allocator` üzerinden
 //! tahsis edilir — `rt`nin (`RuntimeState`) ARC ayırıcısı DEĞİL: `rt`nin
 //! ayırıcısı BİR iş parçacığına AİT olma VARSAYIMINI TAŞIR (bkz. Faz X.3'ün
-//! `arc_owner_tid`ı) — `page_allocator` İSE (Zig'in DOĞRUDAN OS `mmap`
+//! `arc_owner_pool`ı) — `page_allocator` İSE (Zig'in DOĞRUDAN OS `mmap`
 //! sarmalayıcısı) doğası GEREĞİ iş-parçacığı-BAĞIMSIZDIR, bu yüzden
 //! `ThreadHandle`nin İKİ taraftan da GÜVENLE serbest bırakılabilmesi İÇİN
 //! DOĞRU seçimdir (`rt`nin Debug-modu `DebugAllocator`ı VARSAYILAN olarak

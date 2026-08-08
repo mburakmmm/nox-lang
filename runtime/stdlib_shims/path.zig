@@ -10,6 +10,7 @@ const arc = @import("../alloc/arc.zig");
 const http_client = @import("http_client.zig");
 const str_mod = @import("../str.zig");
 const abi_layout = @import("abi_layout");
+const bridge = @import("../async_rt/bridge.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
 /// Faz P1.2: bkz. `strings.zig`nin AYNI re-export notu.
@@ -109,10 +110,17 @@ export fn nox_path_is_absolute_raw(p: ?[*:0]const u8) callconv(.c) i32 {
 // "hiç I/O yok" ilkesinin BİLİNÇLİ, TEK istisnası. Bu YÜZDEN `nox.fs` İLE
 // AYNI "ham çağrı + AYRI durum sorgusu" desenine (`PathError`) ihtiyaç
 // duyan TEK fonksiyon budur.
-threadlocal var g_last_ok: bool = true;
+/// Faz MN.2: bkz. `fiber.zig`nin belge notu — fiber İÇİNDE `Fiber.
+/// path_last_ok`e, DIŞINDA (senkron üst-düzey kod) BU yedeğe düşer.
+threadlocal var g_last_ok_fallback: bool = true;
+
+fn pathLastOkPtr() *bool {
+    if (bridge.currentFiber()) |f| return &f.path_last_ok;
+    return &g_last_ok_fallback;
+}
 
 export fn nox_path_last_op_ok() callconv(.c) i32 {
-    return if (g_last_ok) 1 else 0;
+    return if (pathLastOkPtr().*) 1 else 0;
 }
 
 /// Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71): `std.c.realpath`
@@ -130,25 +138,25 @@ const WinPath = if (builtin.os.tag == .windows) struct {
 
 export fn nox_path_canonicalize_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const path = p orelse {
-        g_last_ok = false;
+        pathLastOkPtr().* = false;
         return dupeToNoxStr(rt, "");
     };
     if (builtin.os.tag == .windows) {
         var buf: [std.c.PATH_MAX]u8 = undefined;
         const len = WinPath.GetFullPathNameA(path, buf.len, &buf, null);
         if (len == 0 or len >= buf.len) {
-            g_last_ok = false;
+            pathLastOkPtr().* = false;
             return dupeToNoxStr(rt, "");
         }
-        g_last_ok = true;
+        pathLastOkPtr().* = true;
         return dupeToNoxStr(rt, buf[0..len]);
     }
     var buf: [std.c.PATH_MAX]u8 = undefined;
     const resolved = std.c.realpath(path, &buf) orelse {
-        g_last_ok = false;
+        pathLastOkPtr().* = false;
         return dupeToNoxStr(rt, "");
     };
-    g_last_ok = true;
+    pathLastOkPtr().* = true;
     return dupeToNoxStr(rt, std.mem.span(resolved));
 }
 
@@ -303,13 +311,13 @@ test "Faz III.4: nox_path_canonicalize_raw sembolik link/./.. cozer, olmayan yol
     const c = nox_path_canonicalize_raw(rt, tmp_dotdot) orelse return error.Failed;
     defer str.nox_str_release(rt, c);
     try std.testing.expectEqualStrings(expected_tmp, std.mem.sliceTo(c, 0));
-    try std.testing.expect(g_last_ok);
+    try std.testing.expect(pathLastOkPtr().*);
 
     const missing_path = makeTestStr(rt, "/definitely/does/not/exist/nox_iii4_test");
     defer str.nox_str_release(rt, missing_path);
     const missing = nox_path_canonicalize_raw(rt, missing_path) orelse return error.Failed;
     defer str.nox_str_release(rt, missing);
-    try std.testing.expect(!g_last_ok);
+    try std.testing.expect(!pathLastOkPtr().*);
 }
 
 test "Faz III.4: nox_path_strip_prefix_raw onek eslesirse cikarir, eslesmezse degismeden doner" {

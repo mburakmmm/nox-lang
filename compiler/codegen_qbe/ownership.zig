@@ -675,11 +675,13 @@ pub fn emitInlineRetain(self: *Codegen, ptr: []const u8, heap: HeapKind) Codegen
     try self.qbeLabel(retain_label);
     const hdr = try self.newTemp();
     try self.qbeOp2Imm(hdr, .l, "sub", ptr, @intCast(retainOffset(heap)));
-    const rc = try self.newTemp();
-    try self.qbeLoadL(rc, hdr);
-    const rc2 = try self.newTemp();
-    try self.qbeOp2Imm(rc2, .l, "add", rc, 1);
-    try self.qbeStoreL(rc2, hdr);
+    // Faz MN.1 (bkz. plan dosyası): `load → add → store` dizisi
+    // `qbeAtomicAdd`e taşındı — QBE'de BAYT-BİREBİR AYNI metni üretir,
+    // LLVM'de (`--release`) GERÇEK bir `atomicrmw add` yayar. Dönüş
+    // değeri (yeni refcount) burada KULLANILMIYOR — sadece `qbeAlloc`
+    // deseninin AKSİNE burada bir slot DEĞİL, HEAP başlığı söz konusu
+    // olduğundan mem2reg'in KENDİSİ zaten İLGİSİZ.
+    _ = try self.qbeAtomicAdd(hdr, 1);
     try self.qbeJmp(done_label);
     try self.qbeLabel(skip_label);
     try self.qbeJmp(done_label);
@@ -695,11 +697,14 @@ pub fn emitInlineRetain(self: *Codegen, ptr: []const u8, heap: HeapKind) Codegen
 pub fn emitInlinePredecrement(self: *Codegen, ptr: []const u8, heap: HeapKind) CodegenError![]const u8 {
     const hdr = try self.newTemp();
     try self.qbeOp2Imm(hdr, .l, "sub", ptr, @intCast(retainOffset(heap)));
-    const rc = try self.newTemp();
-    try self.qbeLoadL(rc, hdr);
-    const rc2 = try self.newTemp();
-    try self.qbeOp2Imm(rc2, .l, "sub", rc, 1);
-    try self.qbeStoreL(rc2, hdr);
+    // Faz MN.1 (bkz. plan dosyası, VE `emitInlineRetain`nin AYNI notu):
+    // `load → sub → store` dizisi `qbeAtomicSub`e taşındı. `qbeAtomicSub`
+    // İŞLEM-SONRASI (NEW) değeri döner (`qbeAtomicAdd` İLE AYNI SÖZLEŞME)
+    // — bu YÜZDEN aşağıdaki `cslel rc2, 0` karşılaştırması DEĞİŞMEDEN
+    // kalıyor (LLVM'in `atomicrmw sub`ı ESKİ değeri döndürse DE, seam'in
+    // KENDİSİ `new = old - imm`yi DAHİLİ olarak hesaplayıp döner — bkz.
+    // `llvm_emit.zig`nin AYNI-isimli metodu).
+    const rc2 = try self.qbeAtomicSub(hdr, 1);
     const should_free = try self.newTemp();
     try self.qbeOp2Imm(should_free, .w, "cslel", rc2, 0);
     return should_free;

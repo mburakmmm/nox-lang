@@ -85,6 +85,23 @@ pub const Fiber = struct {
     arg: *anyopaque,
     finished: bool = false,
     allocator: std.mem.Allocator,
+    /// Faz MN.2: eskiden `RuntimeState.pending_exception`/`pending_
+    /// exception_line`di (bkz. `runtime/errors/handle.zig`) — bir istisna
+    /// `raise` EDİLDİĞİNDEN yakalanana/YENİDEN fırlatılana KADAR, ARADA
+    /// hiçbir yield noktası GEÇMEDEN, SAF senkron QBE kontrol akışıyla
+    /// (her çağrı sitesi `nox_exception_pending`i KONTROL EDER) yayılır
+    /// — bu YÜZDEN Fiber'e taşımak GÜVENLİDİR (hash-tohumunun AKSİNE,
+    /// bkz. `dict.zig`nin belge notu — burada AYNI OS iş parçacığında
+    /// farklı iki fiber'ın AYNI bekleyen istisnayı GÖRMESİ gerekmez,
+    /// ÇÜNKÜ bir istisna ASLA bir fiber'ın kendi çalışma penceresini
+    /// AŞAN bir ömre sahip DEĞİLDİR). `RuntimeState`te BIRAKILMIŞ olması
+    /// (`pending_exception`, önceki tasarım) MN.3b/MN.4'te (`RuntimeState`
+    /// BİRDEN FAZLA worker OS iş parçacığı ARASINDA PAYLAŞILDIĞINDA) GERÇEK
+    /// bir yarış durumu (İKİ worker'ın AYNI ANDA `raise` etmesi) OLURDU —
+    /// bu YÜZDEN buraya taşınması ZORUNLUYDU (hash-tohumunun AKSİNE, bir
+    /// "BİLİNÇLİ taşınmadı" durumu DEĞİL).
+    pending_exception: ?*anyopaque = null,
+    pending_exception_line: i64 = 0,
     /// Faz OO.2 (bkz. nox-teknik-spesifikasyon.md §3.83, `TaskLocal[T]`):
     /// bu fiber'a ÖZGÜ, `TaskLocal` tutamacı işaretçisiyle ANAHTARLANMIŞ
     /// depolama — `runtime/async_rt/task_local.zig`nin `nox_tasklocal_
@@ -94,6 +111,40 @@ pub const Fiber = struct {
     /// belge notu (leftover değerlerin `release_kind`e göre serbest
     /// bırakılması `task_local.zig`nin `drainTaskLocals`inde yapılır).
     task_locals: std.AutoHashMapUnmanaged(*anyopaque, ?*anyopaque) = .empty,
+
+    /// Faz MN.2 (bkz. proje planı "LLVM-only atomic ARC + M:N zamanlayıcı"):
+    /// eskiden `threadlocal var` OLAN, ama GERÇEKTEN mutasyona uğrayan
+    /// (idempotent önbellek DEĞİL) runtime-içi durum — `nox.random`
+    /// (`prng`/`prng_seeded`), `nox.path`/`nox.fs`in "son işlem başarılı
+    /// mıydı" bayrakları (`path_last_ok`/`fs_last_ok`), `nox.fs.size`/
+    /// `mtime_ms`in ÖNBELLEĞİ (`fs_last_size`/`fs_last_mtime_ms`),
+    /// `nox.io.read_line`in satır-arası tampon fazlası (`stdin_leftover`),
+    /// VE `nox.json`nin "son ayrıştırma başarılı mıydı" bayrağı
+    /// (`json_last_op_ok`). Bir `threadlocal`, work-stealing altında
+    /// fiber TAŞINDIĞINDA (bkz. `bridge.currentFiber()`) YANLIŞ OS iş
+    /// parçacığının belleğine sessizce çözülürdü — bu alanlar fiber'IN
+    /// KENDİSİYLE TAŞINARAK bu tehlikeyi ORTADAN KALDIRIR. İlgili
+    /// `runtime/stdlib_shims/*.zig`, fiber DIŞINDA (senkron üst-düzey
+    /// kod, `bridge.currentFiber() == null`) ÇAĞRILDIĞINDA KENDİ dosya-
+    /// yerel `threadlocal` YEDEĞİNE (BUGÜNKÜ davranışla BİREBİR aynı)
+    /// DÜŞER — bkz. o dosyaların KENDİ "fallback" belge notları.
+    ///
+    /// **BİLİNÇLİ olarak BURAYA TAŞINMAYAN**: `dict.zig`nin hash-tohumu
+    /// (`g_hash_seed`/`g_hash_seed_init`) — bkz. `dict.zig`nin KENDİ
+    /// belge notu, "neden Fiber'e taşınmadı" (fiber-affine yapmak, AYNI
+    /// dict'e AYNI OS iş parçacığında farklı iki fiber'ın dokunması
+    /// durumunda insert/lookup arasında SESSİZ bir hash-tutarsızlığı
+    /// hatası YARATIRDI — `RuntimeState`e taşınması GEREKİR, ki bu da
+    /// `nox_dict_contains`ın ABI'sini değiştirmeyi gerektiren, MN.2'nin
+    /// kapsamı DIŞINDA AYRI bir iş).
+    prng: std.Random.DefaultPrng = std.Random.DefaultPrng.init(0),
+    prng_seeded: bool = false,
+    path_last_ok: bool = true,
+    fs_last_ok: bool = true,
+    fs_last_size: i64 = 0,
+    fs_last_mtime_ms: i64 = 0,
+    stdin_leftover: std.ArrayListUnmanaged(u8) = .empty,
+    json_last_op_ok: bool = true,
 
     pub fn create(allocator: std.mem.Allocator, entry: FiberFn, arg: *anyopaque) !*Fiber {
         const stack = try allocator.alignedAlloc(u8, .fromByteUnits(STACK_ALIGN), STACK_SIZE);
@@ -193,6 +244,7 @@ pub const Fiber = struct {
 
     pub fn destroy(self: *Fiber) void {
         self.task_locals.deinit(self.allocator);
+        self.stdin_leftover.deinit(self.allocator);
         self.allocator.free(self.stack);
         self.allocator.destroy(self);
     }
@@ -216,6 +268,7 @@ pub const Fiber = struct {
     /// engeller).
     pub fn destroyKeepStack(self: *Fiber) []align(STACK_ALIGN) u8 {
         self.task_locals.deinit(self.allocator);
+        self.stdin_leftover.deinit(self.allocator);
         const stack = self.stack;
         self.allocator.destroy(self);
         return stack;

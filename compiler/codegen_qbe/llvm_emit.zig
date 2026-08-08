@@ -364,6 +364,47 @@ fn resolveAddrPtr(self: *Codegen, addr: []const u8) CodegenError![]const u8 {
     return ptr_reg;
 }
 
+/// Faz MN.1 (bkz. plan dosyası "LLVM-only atomic ARC"): `addr`deki `i64`
+/// ARC refcount alanını GERÇEKTEN atomik olarak `imm` KADAR artırır,
+/// İŞLEM-SONRASI (NEW) değeri döner — `qbe_emit.zig`nin AYNI-isimli
+/// (ama atomik OLMAYAN, `--release` bayrağı OLMADAN QBE'nin ürettiği
+/// binary'ler DEĞİŞMESİN diye) metoduyla AYNI dönüş SÖZLEŞMESİNİ
+/// paylaşır — `ownership.zig`nin ÇAĞIRAN kodu (`emitInlineRetain`/
+/// `emitInlinePredecrement`) İKİ backend arasında TAMAMEN AYNI kalır,
+/// hangi backend'in AKTİF olduğunu HİÇ bilmesi GEREKMEZ (bkz. `qbeJnzL`
+/// öncedeni, Faz LLVM.7).
+///
+/// Sıralama (memory ordering) KARARI: `acq_rel` (HEM `retain` HEM
+/// `predecrement` İçin, tekdüze). Araştırmanın önerdiği DAHA UCUZ şema
+/// (relaxed retain / release predecrement / SADECE sıfıra-düşme
+/// dalında koşullu acquire fence) BİLİNÇLİ olarak BURADA UYGULANMADI —
+/// bu şema, `should_free`i KONTROL EDİP `nox_rc_free_payload`/
+/// `$ClassName_release`i ÇAĞIRAN (`ownership.zig`nin DIŞINDA, onlarca
+/// site) HER `emitInlinePredecrement` ÇAĞRI SİTESİNE bir fence
+/// eklenmesini GEREKTİRİRDİ — geniş bir alan yayılımı, İNCE bir
+/// sıralama hatası riskiyle. `acq_rel` DAHA UCUZ olmasa DA KESİN doğru
+/// VE TEK bir yerde (bu iki metot) UYGULANIYOR — M:N ardışık düzeni
+/// UÇTAN UCA kanıtlandıktan SONRA, gelecekte DAR bir perf-optimizasyonu
+/// olarak GÖZDEN GEÇİRİLEBİLİR (bkz. plan dosyası).
+pub fn qbeAtomicAdd(self: *Codegen, addr: []const u8, imm: i64) CodegenError![]const u8 {
+    const ptr_reg = try resolveAddrPtr(self, addr);
+    const old = try self.newTemp();
+    try self.out.writer.print("    {s} = atomicrmw add ptr {s}, i64 {d} acq_rel\n", .{ old, ptr_reg, imm });
+    const new = try self.newTemp();
+    try self.out.writer.print("    {s} = add i64 {s}, {d}\n", .{ new, old, imm });
+    return new;
+}
+
+/// `qbeAtomicAdd`nin AYNISI, `atomicrmw sub` İLE.
+pub fn qbeAtomicSub(self: *Codegen, addr: []const u8, imm: i64) CodegenError![]const u8 {
+    const ptr_reg = try resolveAddrPtr(self, addr);
+    const old = try self.newTemp();
+    try self.out.writer.print("    {s} = atomicrmw sub ptr {s}, i64 {d} acq_rel\n", .{ old, ptr_reg, imm });
+    const new = try self.newTemp();
+    try self.out.writer.print("    {s} = sub i64 {s}, {d}\n", .{ new, old, imm });
+    return new;
+}
+
 /// `dst_ty != mem_ty` bu kod tabanında HİÇ GÖZLEMLENMEDİ (20/20 çağrı
 /// sitesi eşleşiyor, bkz. plan doğrulaması) — GÖZLEMLENMEYEN bu durum
 /// GÜVENLİ bir şekilde `error.Unsupported` ile REDDEDİLİR.

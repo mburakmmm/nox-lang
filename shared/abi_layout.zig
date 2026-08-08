@@ -80,7 +80,7 @@ pub const STR_ASCII_SHIFT: u6 = STR_LENGTH_BITS;
 /// KEZ çözüp SONUCU bu alana YAZARAK önbellekler (bkz. onun belge notu —
 /// bu yazma ATOMİK OLMAK ZORUNDA DEĞİLDİR, Nox'un ARC nesneleri ASLA
 /// gerçek paralel erişime açılmaz, `runtime/alloc/asap.zig`nin
-/// `arc_owner_tid` belge notuna bkz.).
+/// `arc_owner_pool` belge notuna bkz.).
 pub const STR_ASCII_UNKNOWN: u64 = 0;
 pub const STR_ASCII_TRUE: u64 = 1;
 pub const STR_ASCII_FALSE: u64 = 2;

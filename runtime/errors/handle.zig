@@ -22,6 +22,19 @@ const std = @import("std");
 const builtin = @import("builtin");
 const asap = @import("../alloc/asap.zig");
 const abi_layout = @import("abi_layout");
+const bridge = @import("../async_rt/bridge.zig");
+
+/// Faz MN.2 (bkz. `fiber.zig`nin `pending_exception` belge notu): fiber
+/// İÇİNDE `Fiber.pending_exception`/`pending_exception_line`e, DIŞINDA
+/// (senkron üst-düzey kod, `async` HİÇ kullanmayan bir programın `main`i
+/// GİBİ) `RuntimeState`in KENDİ alanlarına (BUGÜNKÜ davranışla BİREBİR
+/// aynı) düşer.
+const PendingException = struct { obj: *?*anyopaque, line: *i64 };
+
+fn pendingException(state: *asap.RuntimeState) PendingException {
+    if (bridge.currentFiber()) |f| return .{ .obj = &f.pending_exception, .line = &f.pending_exception_line };
+    return .{ .obj = &state.pending_exception, .line = &state.pending_exception_line };
+}
 
 /// `obj`'yi (bir Nox sınıf örneği işaretçisini) bekleyen istisna olarak
 /// işaretler. Faz OO.3: `line` — `raise` deyiminin (ya da örtük IndexError/
@@ -29,23 +42,25 @@ const abi_layout = @import("abi_layout");
 /// exception`ın raporlaması İçİn saklanır, akış kontrolünü ETKİLEMEZ.
 export fn nox_raise(rt: ?*anyopaque, obj: ?*anyopaque, line: i64) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
-    state.pending_exception = obj;
-    state.pending_exception_line = line;
+    const pe = pendingException(state);
+    pe.obj.* = obj;
+    pe.line.* = line;
 }
 
 /// Şu an bekleyen bir istisna olup olmadığını bildirir (0/1 — QBE `w` ile
 /// çağrılır; ABI belirsizliğinden kaçınmak için `bool` yerine `i32` kullanılır).
 export fn nox_exception_pending(rt: ?*anyopaque) i32 {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return 0));
-    return if (state.pending_exception != null) 1 else 0;
+    return if (pendingException(state).obj.* != null) 1 else 0;
 }
 
 /// Bekleyen istisnayı döndürür ve durumu temizler (bir `except` onu yakaladığında
 /// ya da yeniden fırlatmadan önce çağrılır).
 export fn nox_exception_take(rt: ?*anyopaque) ?*anyopaque {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
-    const obj = state.pending_exception;
-    state.pending_exception = null;
+    const pe = pendingException(state);
+    const obj = pe.obj.*;
+    pe.obj.* = null;
     return obj;
 }
 
@@ -100,9 +115,10 @@ export fn nox_unhandled_exception(rt: ?*anyopaque) noreturn {
         std.debug.print("nox: yakalanmamış istisna — program sonlandırılıyor\n", .{});
         std.process.exit(1);
     }));
-    const line = state.pending_exception_line;
+    const pe = pendingException(state);
+    const line = pe.line.*;
     var class_name: [*:0]const u8 = "bilinmeyen sinif";
-    if (state.pending_exception) |obj| {
+    if (pe.obj.*) |obj| {
         const tag: *const i64 = @ptrCast(@alignCast(obj));
         if (resolveClassNameDispatch()) |f| {
             class_name = f(rt, tag.*, obj);
@@ -122,7 +138,7 @@ test "raise sonrası pending true olur, take alır ve temizler" {
     nox_raise(rt, &dummy, 42);
     try std.testing.expectEqual(@as(i32, 1), nox_exception_pending(rt));
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
-    try std.testing.expectEqual(@as(i64, 42), state.pending_exception_line);
+    try std.testing.expectEqual(@as(i64, 42), pendingException(state).line.*);
 
     const taken = nox_exception_take(rt);
     try std.testing.expectEqual(@as(?*anyopaque, &dummy), taken);

@@ -21,6 +21,7 @@
 //! PRNG durumunu VERİR, SIFIR ek senkronizasyon MALİYETİYLE.
 const std = @import("std");
 const builtin = @import("builtin");
+const bridge = @import("../async_rt/bridge.zig");
 
 /// Faz LL.5 (bkz. nox-teknik-spesifikasyon.md §3.71): `std.c.clock_gettime`nin
 /// `clockid_t` parametre tipi Windows İçin `void` — `time.zig`nin
@@ -31,16 +32,32 @@ const WinSeed = if (builtin.os.tag == .windows) struct {
     extern "kernel32" fn QueryPerformanceCounter(count: *i64) callconv(.c) i32;
 } else struct {};
 
-threadlocal var g_prng: std.Random.DefaultPrng = std.Random.DefaultPrng.init(0);
-threadlocal var g_seeded: bool = false;
+/// Faz MN.2: `g_prng`/`g_seeded` artık ÖNCELİKLE `Fiber.prng`/
+/// `Fiber.prng_seeded`de (bkz. `fiber.zig`nin belge notu) YAŞAR — burada
+/// KALAN `threadlocal` çift, SADECE fiber DIŞINDA (`bridge.currentFiber()
+/// == null`, senkron üst-düzey kod) ÇAĞRILDIĞINDA kullanılan YEDEKTİR,
+/// BUGÜNKÜ (Faz BB.1) davranışla BİREBİR aynı.
+threadlocal var g_prng_fallback: std.Random.DefaultPrng = std.Random.DefaultPrng.init(0);
+threadlocal var g_seeded_fallback: bool = false;
+
+fn prngPtr() *std.Random.DefaultPrng {
+    if (bridge.currentFiber()) |f| return &f.prng;
+    return &g_prng_fallback;
+}
+fn seededPtr() *bool {
+    if (bridge.currentFiber()) |f| return &f.prng_seeded;
+    return &g_seeded_fallback;
+}
 
 fn ensureSeeded() void {
-    if (!g_seeded) {
+    const seeded = seededPtr();
+    if (!seeded.*) {
+        const prng = prngPtr();
         if (builtin.os.tag == .windows) {
             var counter: i64 = 0;
             _ = WinSeed.QueryPerformanceCounter(&counter);
-            g_prng = std.Random.DefaultPrng.init(@bitCast(counter));
-            g_seeded = true;
+            prng.* = std.Random.DefaultPrng.init(@bitCast(counter));
+            seeded.* = true;
             return;
         }
         // `nox.time`in AYNI `clock_gettime` deseni (bkz. `time.zig`'in
@@ -49,14 +66,14 @@ fn ensureSeeded() void {
         var ts: std.c.timespec = undefined;
         _ = std.c.clock_gettime(.REALTIME, &ts);
         const seed: u64 = @bitCast(@as(i64, ts.sec) *% 1_000_000_000 +% ts.nsec);
-        g_prng = std.Random.DefaultPrng.init(seed);
-        g_seeded = true;
+        prng.* = std.Random.DefaultPrng.init(seed);
+        seeded.* = true;
     }
 }
 
 export fn nox_random_seed_raw(s: i64) callconv(.c) void {
-    g_prng = std.Random.DefaultPrng.init(@bitCast(s));
-    g_seeded = true;
+    prngPtr().* = std.Random.DefaultPrng.init(@bitCast(s));
+    seededPtr().* = true;
 }
 
 /// `lo`/`hi` İKİSİ de DAHİLDİR (Python'un `random.randint`iyle TUTARLI).
@@ -65,13 +82,13 @@ export fn nox_random_seed_raw(s: i64) callconv(.c) void {
 export fn nox_random_randint_raw(lo: i64, hi: i64) callconv(.c) i64 {
     ensureSeeded();
     if (hi <= lo) return lo;
-    return g_prng.random().intRangeLessThan(i64, lo, hi + 1);
+    return prngPtr().random().intRangeLessThan(i64, lo, hi + 1);
 }
 
 /// `[0.0, 1.0)` aralığında.
 export fn nox_random_random_raw() callconv(.c) f64 {
     ensureSeeded();
-    return g_prng.random().float(f64);
+    return prngPtr().random().float(f64);
 }
 
 // Faz BB.1: `g_prng`/`g_seeded`nin `threadlocal` OLMASININ, İKİ GERÇEK OS

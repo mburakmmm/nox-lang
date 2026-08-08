@@ -65,14 +65,33 @@ extern fn nox_cycle_collect(rt: ?*anyopaque) callconv(.c) void;
 pub const POOL_NUM_CLASSES = 10;
 pub const PoolNode = struct { next: ?*PoolNode };
 
+/// Faz MN.1: `RuntimeState.arc_owner_pool`in DEPOLAMASI — bkz. onun belge
+/// notu. `MAX_MEMBERS`, gelecekteki bir worker havuzunun ÜST sınırıdır
+/// (dinamik ayırma GEREKTİRMEYECEK kadar KÜÇÜK/sabit); `capacity`,
+/// `members`in KAÇ İNDEKSİNİN GEÇERLİ sayılacağını (`MAX_MEMBERS`e KADAR)
+/// belirler — varsayılan 1, Faz X.3'ün ORİJİNAL "tek sahip" semantiğidir.
+pub const OwnerPool = struct {
+    pub const MAX_MEMBERS = 64;
+    members: [MAX_MEMBERS]std.Thread.Id = undefined,
+    count: usize = 0,
+    capacity: usize = 1,
+};
+
 pub const RuntimeState = struct {
     debug_gpa: if (use_debug_allocator) std.heap.DebugAllocator(.{}) else void,
+    /// Faz OO.3, Faz MN.2'de fiber-affine hale GETİRİLDİ: birincil depo
+    /// ARTIK `Fiber.pending_exception`dir (bkz. onun belge notu) —
+    /// BURADAKİ alan SADECE fiber DIŞINDA (senkron üst-düzey kod,
+    /// `bridge.currentFiber() == null`) çalışan `nox_raise`/`nox_
+    /// exception_*` çağrıları İçin YEDEKTİR (`runtime/errors/handle.zig`nin
+    /// `pendingException`i, BUGÜNKÜ davranışla BİREBİR aynı).
     pending_exception: ?*anyopaque = null,
     /// Faz OO.3 (bkz. nox-teknik-spesifikasyon.md §3.84, "zengin exception
     /// stack/source span"): `nox_raise`in ARTIK ikinci bir argümanla
     /// aldığı, `raise`/örtük-raise (IndexError/KeyError/ValueError) SATIR
     /// numarası — `nox_unhandled_exception`ın yakalanmamış bir istisnayı
-    /// TİP ADI + SATIR + MESAJLA raporlayabilmesi İçİn.
+    /// TİP ADI + SATIR + MESAJLA raporlayabilmesi İçİn. Faz MN.2: AYNI
+    /// yedek-depo notu (`pending_exception`e bkz.) BURASI İçin de geçerlidir.
     pending_exception_line: i64 = 0,
     pool_free_lists: [POOL_NUM_CLASSES]?*PoolNode = @splat(null),
     /// Dil stabilizasyonu fazı §M.7: `lowlevel` arena TUTAMAÇLARININ (bkz.
@@ -94,32 +113,28 @@ pub const RuntimeState = struct {
     /// (aşağıdaki `extern fn` bildirimi, DÜZ bağlama — bkz. `runtime/lib.zig`nin
     /// İKİSİNİ de AYNI `noxrt` nesnesine derlediği) DELEGE edilir.
     cycle_gc: ?*anyopaque = null,
-    /// Faz X.3: bu `rt`nin ARC (Katman 2, bkz. `runtime/alloc/arc.zig`)
-    /// işlemlerine İLK dokunan OS iş parçacığının kimliği — `nox_rc_alloc`/
-    /// `nox_rc_free_payload` (aşağıdaki `arcOwnerThreadOk`ya bkz.) HER
-    /// çağrıda BUNU doğrular. **Nox'un çalışma zamanı ARC refcount'unu
-    /// (`arc.zig`nin `i64` başlığı) ASLA atomik OLARAK artırıp AZALTMAZ**
-    /// (bkz. `arc.zig`nin `nox_rc_retain`/`nox_rc_predecrement`i, VE
-    /// performans fazında BUNLARIN QBE'ye INLINE EDİLMİŞ HALİ, `codegen_qbe/
-    /// codegen.zig`nin `emitInlineRetain`/`emitInlinePredecrement`i) — bu
-    /// GÜVENLİDİR ÇÜNKÜ Nox'un eşzamanlılık modeli (Faz 21, `runtime/
-    /// async_rt/`) TEK bir OS iş parçacığı üzerinde KOOPERATİF fiber
-    /// zamanlamasıdır (`scheduler.zig`nin KENDİ modül üstü notu) — ARC
-    /// nesneleri ASLA GERÇEKTEN paralel erişime MARUZ KALMAZ. **TEK bilinen
-    /// istisna** (`nox.http` istemcisinin arka plan `std.Thread.spawn`
-    /// işçisi, bkz. `runtime/stdlib_shims/http_client.zig`) DOĞRULANDI:
-    /// işçi iş parçacığı YALNIZCA ham/allocator-tabanlı (ARC-DIŞI) tampon
-    /// kopyaları üretir, ARC tahsisi/serbest bırakması İSE TAMAMEN ana
-    /// (çağıran) iş parçacığında, işçi TAMAMLANDIKTAN SONRA (pipe İLE
-    /// senkronize) GERÇEKLEŞİR — bkz. `dupeToNoxStr`nin çağrı SİTELERİ.
-    /// Bu alan, bu İNCE-AMA-KIRILGAN invariant'ı (gelecekteki bir kod
-    /// değişikliği YANLIŞLIKLA İHLAL ederse) Debug modunda KESİN olarak
-    /// yakalamak İÇİNDİR — GERÇEK atomik refcount'lara geçmek YERİNE
-    /// (ÖLÇÜLMEMİŞ bir performans MALİYETİ, bkz. M.5'in "ölçülmeden mimari
-    /// EKLEME" reddi İLE AYNI gerekçe) BU invariant'ı DOĞRULANABİLİR/
-    /// yakalanabilir hale GETİRMEK tercih edildi.
-    arc_owner_tid: if (debug_thread_check) ?std.Thread.Id else void =
-        if (debug_thread_check) null else {},
+    /// Faz X.3, Faz MN.1'de HAVUZ-farkındalıklı hale GENİŞLETİLDİ: bu
+    /// `rt`nin ARC (Katman 2, bkz. `runtime/alloc/arc.zig`) işlemlerine
+    /// dokunmasına İZİN VERİLEN OS iş parçacıklarının KÜÇÜK bir kümesi
+    /// (varsayılan KAPASİTE 1 — Faz X.3'ün ORİJİNAL "tek sahip" semantiğiyle
+    /// BİREBİR aynı, aşağıdaki `arcOwnerThreadOk` testleri BUNU KANITLAR).
+    /// `nox_rc_alloc`/`nox_rc_free_payload` (aşağıdaki `arcOwnerThreadOk`ya
+    /// bkz.) HER çağrıda BUNU doğrular. **Nox'un çalışma zamanı ARC
+    /// refcount'u (`arc.zig`nin `i64` başlığı) Faz MN.1'DEN İTİBAREN
+    /// KOŞULSUZ atomiktir** (bkz. `arc.zig`nin `nox_rc_retain`/
+    /// `nox_rc_predecrement`i) — AMA `pool_free_lists`/`arena_pool`/
+    /// `cycle_gc`/`globals_block` (bu struct'ın DİĞER alanları) HÂLÂ
+    /// senkronize DEĞİL, bu YÜZDEN bir `RuntimeState`ye GERÇEKTEN birden
+    /// fazla worker'ın PARALEL dokunması HÂLÂ GÜVENLİ DEĞİL (bkz. proje
+    /// planı "Faz MN.3b" — havuz/arena senkronizasyonu VE paylaşılan-
+    /// `RuntimeState` kararı AYRI, HENÜZ uygulanmamış bir faz). Kapasite
+    /// varsayılan olarak 1 kaldığı SÜRECE bu alan BUGÜNKÜ "tek sahip"
+    /// güvenlik ağını (bkz. `arcOwnerThreadOk`) TAM olarak korur — MN.3b
+    /// gerçek bir worker havuzu KURDUĞUNDA `setArcOwnerPoolCapacity` İLE
+    /// kapasiteyi havuz büyüklüğüne YÜKSELTİP HER worker'ı KAYITLI bir
+    /// üye olarak İŞARETLEYECEKTİR.
+    arc_owner_pool: if (debug_thread_check) OwnerPool else void =
+        if (debug_thread_check) .{} else {},
     /// Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
     /// derleyicinin ürettiği `$nox_init_globals`in `nox_alloc` İLE ayırıp
     /// `nox_globals_set` İLE buraya yazdığı, programa özgü DÜZ bellek
@@ -129,7 +144,7 @@ pub const RuntimeState = struct {
     /// HİÇBİR ZAMAN bilmez/yorumlamaz — bayt-düzeni TAMAMEN derleyicinin
     /// (compiler/codegen_qbe/globals.zig) sahip olduğu bir SÖZLEŞMEDİR,
     /// tıpkı bir sınıf örneğinin alan düzeni gibi. Her `RuntimeState`
-    /// (bkz. `arc_owner_tid`in belge notu — HER OS iş parçacığı KENDİ
+    /// (bkz. `arc_owner_pool`in belge notu — HER OS iş parçacığı KENDİ
     /// BAĞIMSIZ `RuntimeState`ine sahiptir) KENDİ bağımsız bloğuna
     /// sahiptir — worker'LAR ARASI PAYLAŞIM YOK (bilinçli v1 kapsamı).
     globals_block: ?*anyopaque = null,
@@ -140,22 +155,42 @@ pub const RuntimeState = struct {
     }
 };
 
-/// Faz X.3: `state.arc_owner_tid`i (bkz. onun belge notu) doğrular/
-/// başlatır. **Yalnızca `debug_thread_check` AKTİFKEN GERÇEK bir kontrol
-/// yapar** — Release modlarında HER ZAMAN `true` döner (hiçbir maliyet
-/// EKLEMEZ, `std.Thread.getCurrentId()` bile ÇAĞRILMAZ). İLK çağrıda
-/// (`arc_owner_tid == null`) çağıran iş parçacığını SAHİP OLARAK
-/// KAYDEDER ve `true` döner; SONRAKİ HER çağrıda o KAYITLI sahiple
-/// KARŞILAŞTIRIR. `pub fn` OLARAK (export DEĞİL) dışa açılır ki bu
+/// Faz X.3, Faz MN.1'de havuz-farkındalıklı hale GENİŞLETİLDİ:
+/// `state.arc_owner_pool`u (bkz. onun belge notu) doğrular/kaydeder.
+/// **Yalnızca `debug_thread_check` AKTİFKEN GERÇEK bir kontrol yapar** —
+/// Release modlarında HER ZAMAN `true` döner (hiçbir maliyet EKLEMEZ,
+/// `std.Thread.getCurrentId()` bile ÇAĞRILMAZ). Çağıran iş parçacığı
+/// ZATEN KAYITLI bir üyeyse `true` döner; DEĞİLSE VE havuz KAPASİTESİNİN
+/// ALTINDAYSA (varsayılan kapasite 1) YENİ üye olarak KAYDEDİP `true`
+/// döner; kapasite DOLUYSA `false` döner (İHLAL YAKALANDI). Kapasite 1
+/// kaldığı sürece bu, Faz X.3'ün ORİJİNAL "tek sahip" davranışıyla
+/// BİREBİR aynıdır. `pub fn` OLARAK (export DEĞİL) dışa açılır ki bu
 /// FONKSİYONUN KENDİSİ (bir `std.debug.assert`e SARILMADAN) DOĞRUDAN
 /// test edilebilsin — bkz. aşağıdaki "gerçek bir iş parçacığı ihlali
 /// YAKALANIR" testi.
 pub fn arcOwnerThreadOk(state: *RuntimeState) bool {
     if (!debug_thread_check) return true;
     const current = std.Thread.getCurrentId();
-    if (state.arc_owner_tid) |owner| return owner == current;
-    state.arc_owner_tid = current;
+    const pool = &state.arc_owner_pool;
+    var i: usize = 0;
+    while (i < pool.count) : (i += 1) {
+        if (pool.members[i] == current) return true;
+    }
+    if (pool.count >= pool.capacity) return false;
+    pool.members[pool.count] = current;
+    pool.count += 1;
     return true;
+}
+
+/// Faz MN.1: gelecekteki bir worker havuzunun (bkz. proje planı "Faz
+/// MN.3b") `arc_owner_pool` KAPASİTESİNİ YÜKSELTMESİ İçİn — henüz HİÇBİR
+/// çağrı sitesi YOK (MN.3b'nin KENDİ Worker soyutlaması BUNU çağıracak),
+/// ama tip/API ŞİMDİDEN burada, MN.1 kapsamında hazırlanıyor. Release
+/// modlarında hiçbir etkisi YOK (`debug_thread_check` KAPALIYKEN no-op).
+pub fn setArcOwnerPoolCapacity(state: *RuntimeState, capacity: usize) void {
+    if (!debug_thread_check) return;
+    std.debug.assert(capacity <= OwnerPool.MAX_MEMBERS);
+    state.arc_owner_pool.capacity = capacity;
 }
 
 /// Yeni bir çalışma zamanı bağlamı oluşturur. Başarısızlıkta `null` döner.
@@ -253,7 +288,7 @@ test "arcOwnerThreadOk: aynı iş parçacığından tekrarlanan çağrılar hep 
 }
 
 test "arcOwnerThreadOk: Faz X.3 — gerçek bir farklı-iş-parçacığı ihlali YAKALANIR" {
-    // Bu, X.3'ün TÜM amacının SOMUT kanıtıdır: `state.arc_owner_tid` ANA
+    // Bu, X.3'ün TÜM amacının SOMUT kanıtıdır: `state.arc_owner_pool` ANA
     // iş parçacığında SABİTLENDİKTEN SONRA, GERÇEKTEN SPAWN edilmiş AYRI
     // bir OS iş parçacığından (`std.Thread.spawn` — sahte/simüle EDİLMEMİŞ)
     // AYNI `state`e yapılan bir çağrı `false` DÖNMELİDİR — `nox_rc_alloc`/

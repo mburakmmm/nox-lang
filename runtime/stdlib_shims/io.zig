@@ -19,6 +19,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const http_client = @import("http_client.zig");
+const bridge = @import("../async_rt/bridge.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
 
@@ -34,7 +35,19 @@ fn readStdinChunk(buf: []u8) isize {
     return std.c.read(0, buf.ptr, buf.len);
 }
 
-threadlocal var g_stdin_leftover: std.ArrayListUnmanaged(u8) = .empty;
+/// Faz MN.2 (bkz. `fiber.zig`nin belge notu): fiber İÇİNDE `Fiber.
+/// stdin_leftover`e (`fiber.allocator`YLA), DIŞINDA (senkron üst-düzey
+/// kod) BU yedeğe (`page_allocator`YLA, BUGÜNKÜ davranışla BİREBİR aynı)
+/// düşer — SEÇİLEN depo, KENDİ ömrü BOYUNCA HER ZAMAN AYNI allocator'ı
+/// kullanır (ArrayListUnmanaged'ın gerektirdiği tutarlılık).
+threadlocal var g_stdin_leftover_fallback: std.ArrayListUnmanaged(u8) = .empty;
+
+const StdinLeftover = struct { buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator };
+
+fn stdinLeftover() StdinLeftover {
+    if (bridge.currentFiber()) |f| return .{ .buf = &f.stdin_leftover, .allocator = f.allocator };
+    return .{ .buf = &g_stdin_leftover_fallback, .allocator = std.heap.page_allocator };
+}
 
 fn finishLine(rt: ?*anyopaque, line: *std.ArrayListUnmanaged(u8)) ?[*:0]u8 {
     var slice = line.items;
@@ -48,17 +61,18 @@ export fn nox_stdin_read_line_raw(rt: ?*anyopaque) callconv(.c) ?[*:0]u8 {
     const a = std.heap.page_allocator;
     var line: std.ArrayListUnmanaged(u8) = .empty;
     defer line.deinit(a);
+    const leftover = stdinLeftover();
 
-    if (std.mem.indexOfScalar(u8, g_stdin_leftover.items, '\n')) |nl_idx| {
-        line.appendSlice(a, g_stdin_leftover.items[0..nl_idx]) catch {};
+    if (std.mem.indexOfScalar(u8, leftover.buf.items, '\n')) |nl_idx| {
+        line.appendSlice(a, leftover.buf.items[0..nl_idx]) catch {};
         const rest_start = nl_idx + 1;
-        const remaining = g_stdin_leftover.items.len - rest_start;
-        std.mem.copyForwards(u8, g_stdin_leftover.items[0..remaining], g_stdin_leftover.items[rest_start..]);
-        g_stdin_leftover.shrinkRetainingCapacity(remaining);
+        const remaining = leftover.buf.items.len - rest_start;
+        std.mem.copyForwards(u8, leftover.buf.items[0..remaining], leftover.buf.items[rest_start..]);
+        leftover.buf.shrinkRetainingCapacity(remaining);
         return finishLine(rt, &line);
     }
-    line.appendSlice(a, g_stdin_leftover.items) catch {};
-    g_stdin_leftover.clearRetainingCapacity();
+    line.appendSlice(a, leftover.buf.items) catch {};
+    leftover.buf.clearRetainingCapacity();
 
     var chunk: [256]u8 = undefined;
     while (true) {
@@ -67,7 +81,7 @@ export fn nox_stdin_read_line_raw(rt: ?*anyopaque) callconv(.c) ?[*:0]u8 {
         const bytes = chunk[0..@intCast(n)];
         if (std.mem.indexOfScalar(u8, bytes, '\n')) |idx| {
             line.appendSlice(a, bytes[0..idx]) catch {};
-            g_stdin_leftover.appendSlice(a, bytes[idx + 1 ..]) catch {};
+            leftover.buf.appendSlice(leftover.allocator, bytes[idx + 1 ..]) catch {};
             break;
         }
         line.appendSlice(a, bytes) catch {};

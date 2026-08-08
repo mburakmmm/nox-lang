@@ -140,7 +140,7 @@ fn keysEqual(key_is_str: bool, a: i64, b: i64) bool {
 /// parçacığı) başına RASTGELELEŞTİRMESİYLE AYNI ilkeyle DÜZELTİLDİ: HER
 /// iş parçacığının kendi `threadlocal` (bkz. `nox.random`nin `g_prng`si
 /// İLE AYNI "gerçek OS iş parçacıkları bir dict'i PAYLAŞMAZ" gerekçesi —
-/// bir `Dict`, `arc_owner_tid`nin ZATEN zorladığı gibi HER ZAMAN TEK bir
+/// bir `Dict`, `arc_owner_pool`nin ZATEN zorladığı gibi HER ZAMAN TEK bir
 /// iş parçacığına aittir) RASTGELE tohumu, İLK dict-hash işleminde BİR
 /// KEZ üretilir VE o iş parçacığının TÜM sonraki dict işlemleri İçin
 /// YENİDEN KULLANILIR. `std.crypto.random` BU Zig sürümünde YOK —
@@ -148,6 +148,26 @@ fn keysEqual(key_is_str: bool, a: i64, b: i64) bool {
 /// shims/os.zig`nin belge notu), macOS'un libc'sinin ZATEN GÜVENLE
 /// bağladığı ham `std.c.arc4random_buf`ı (OS'un GÜVENLİ rastgelelik
 /// kaynağına dayanır) DOĞRUDAN kullanılır.
+/// Faz MN.2 (bkz. proje planı "LLVM-only atomic ARC + M:N zamanlayıcı"):
+/// BİLİNÇLİ olarak `Fiber`e TAŞINMADI — plan bu alanı fiber-affine
+/// depolamaya taşınacak 7 global'DEN biri OLARAK listeler, ama uygulama
+/// SIRASINDA GERÇEK bir tasarım hatası TESPİT EDİLDİ: `nox_dict_contains`
+/// (aşağıya bkz.) `rt` ALMAZ (`nox_dict_len` de öyle) — bu YÜZDEN
+/// `hashSeed()` `rt`ye ERİŞEMEZ, `RuntimeState`e taşınması `nox_dict_
+/// contains`ın ABI'sini (VE onu çağıran codegen sitesini) DEĞİŞTİRMEYİ
+/// GEREKTİRİRDİ (MN.2'nin kapsamı DIŞI — codegen'e dokunmayan DAR bir
+/// refactor). DAHA KÖTÜSÜ: `Fiber`e taşımak (planın YAZILI HALİ) YENİ BİR
+/// GERÇEK HATA yaratırdı — AYNI dict, AYNI OS iş parçacığında farklı İKİ
+/// fiber tarafından (ör. bir kanal üzerinden AKTARILDIKTAN sonra)
+/// dokunulursa, `insert` VE `lookup` FARKLI seed'lerle FARKLI Wyhash
+/// değerleri üretir — VAR OLAN bir anahtar SESSİZCE "bulunamadı"
+/// görünürdü (BUGÜN, threadlocal'ın TEK OS iş parçacığına bağlı olduğu
+/// M:1 modelinde, TÜM fiber'lar AYNI `g_hash_seed`i PAYLAŞTIĞINDAN bu
+/// sorun YOKTUR). Bu YÜZDEN `threadlocal` OLARAK KALIR — BUGÜNKÜ
+/// davranışla SIFIR regresyon, ama GERÇEK çapraz-iş-parçacığı fiber
+/// taşınması (Faz MN.4+) etkinleştirildiğinde BU alanın `RuntimeState`e
+/// taşınması (VE `nox_dict_contains`ın `rt` ALMASI) GEREKECEKTİR — bkz.
+/// proje planı, Faz MN.3b/MN.4 notları.
 threadlocal var g_hash_seed: u64 = 0;
 threadlocal var g_hash_seed_init: bool = false;
 

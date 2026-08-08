@@ -137,6 +137,35 @@ pub fn qbeStoreImmL(self: *Codegen, imm: i64, addr: []const u8) CodegenError!voi
     try self.out.writer.print("    storel {d}, {s}\n", .{ imm, addr });
 }
 
+/// Faz MN.1 (bkz. plan dosyası): `addr`deki `i64` değeri `imm` KADAR
+/// ATOMİK olarak artırır/azaltır, İŞLEM-SONRASI (NEW) değeri döner.
+/// QBE'nin HİÇ atomik instruction'ı OLMADIĞINDAN (bkz. plan dosyasının
+/// GG.10 alıntısı), bu metotlar `emitInlineRetain`/`emitInlinePredecrement`in
+/// ÖNCEDEN elle yazdığı `load → add/sub → store` dizisiyle BAYT-BİREBİR
+/// AYNI temp-tahsis SIRASINI (ÖNCE load-sonucu, SONRA add/sub-sonucu)
+/// KORUYARAK üretir — `llvm_emit.zig`nin AYNI-isimli metodu GERÇEK
+/// `atomicrmw` yayar (bkz. onun belge notu), QBE İSE atomik OLMAYAN
+/// ama IR-diff'in (204 fixture, bayt-birebir) BEKLEDİĞİ AYNI metni
+/// üretmeye devam eder — SIFIR davranış değişikliği.
+pub fn qbeAtomicAdd(self: *Codegen, addr: []const u8, imm: i64) CodegenError![]const u8 {
+    const old = try self.newTemp();
+    try self.qbeLoadL(old, addr);
+    const new = try self.newTemp();
+    try self.qbeOp2Imm(new, .l, "add", old, imm);
+    try self.qbeStoreL(new, addr);
+    return new;
+}
+
+/// `qbeAtomicAdd`nin AYNISI, `sub` mnemoniğiyle.
+pub fn qbeAtomicSub(self: *Codegen, addr: []const u8, imm: i64) CodegenError![]const u8 {
+    const old = try self.newTemp();
+    try self.qbeLoadL(old, addr);
+    const new = try self.newTemp();
+    try self.qbeOp2Imm(new, .l, "sub", old, imm);
+    try self.qbeStoreL(new, addr);
+    return new;
+}
+
 /// Faz LLVM.7: `genStrIndex`nin ASCII-hızlı-yolunun BAYT-granülerlikli
 /// yükleme/saklama çifti (`qbeLoad`/`qbeStore`nin `w`/`l`/`d`-SINIRLI
 /// API'sine UYMAZ) — `loadub` HER ZAMAN `w`ye sıfır-genişletir, `storeb`

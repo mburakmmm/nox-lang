@@ -28,6 +28,7 @@ const arc = @import("../alloc/arc.zig");
 const http_client = @import("http_client.zig");
 const abi_layout = @import("abi_layout");
 const str_mod = @import("../str.zig");
+const bridge = @import("../async_rt/bridge.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
 /// Faz P1.2: bkz. `strings.zig`nin AYNI re-export notu.
@@ -177,10 +178,17 @@ fn closeFd(fd: c_int) void {
     }
 }
 
-threadlocal var g_last_ok: bool = true;
+/// Faz MN.2: bkz. `fiber.zig`nin belge notu — fiber İÇİNDE `Fiber.
+/// fs_last_ok`e, DIŞINDA (senkron üst-düzey kod) BU yedeğe düşer.
+threadlocal var g_fs_last_ok_fallback: bool = true;
+
+fn fsLastOkPtr() *bool {
+    if (bridge.currentFiber()) |f| return &f.fs_last_ok;
+    return &g_fs_last_ok_fallback;
+}
 
 export fn nox_fs_last_op_ok() callconv(.c) i32 {
-    return if (g_last_ok) 1 else 0;
+    return if (fsLastOkPtr().*) 1 else 0;
 }
 
 /// Faz III.3 (bkz. nox-teknik-spesifikasyon.md §3.69) — ÖNCEKİ sürüm
@@ -195,19 +203,19 @@ export fn nox_fs_last_op_ok() callconv(.c) i32 {
 /// boyut ESAS alınır — bilinçli v1 basitleştirmesi.
 export fn nox_fs_read_to_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const p = path orelse {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return dupeToNoxStr(rt, "");
     };
 
     const fd = openFileRead(p);
     if (fd < 0) {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return dupeToNoxStr(rt, "");
     }
     defer closeFd(fd);
 
     const info = fstatCompat(fd) orelse {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return dupeToNoxStr(rt, "");
     };
     const size: usize = @intCast(info.size);
@@ -219,7 +227,7 @@ export fn nox_fs_read_to_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callc
     // `nox_str_from_bytes` İLE GERÇEK, başlıklı bir Nox `str`ine kopyalanır
     // (`dupeToNoxStr`nin KENDİ KANONİK sarmalayıcısı).
     const buf = std.heap.page_allocator.alloc(u8, size) catch {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return dupeToNoxStr(rt, "");
     };
     defer std.heap.page_allocator.free(buf);
@@ -229,14 +237,14 @@ export fn nox_fs_read_to_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callc
         if (n <= 0) break;
         total_read += @intCast(n);
     }
-    g_last_ok = true;
+    fsLastOkPtr().* = true;
     return dupeToNoxStr(rt, buf[0..total_read]);
 }
 
 fn writeAllToFile(append: bool, path: [*:0]const u8, content: [*:0]const u8) void {
     const fd = openFileWrite(path, append);
     if (fd < 0) {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return;
     }
     defer closeFd(fd);
@@ -246,22 +254,22 @@ fn writeAllToFile(append: bool, path: [*:0]const u8, content: [*:0]const u8) voi
     while (off < bytes.len) {
         const n = writeFd(fd, bytes[off..]);
         if (n <= 0) {
-            g_last_ok = false;
+            fsLastOkPtr().* = false;
             return;
         }
         off += @intCast(n);
     }
-    g_last_ok = true;
+    fsLastOkPtr().* = true;
 }
 
 export fn nox_fs_write_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8, content: ?[*:0]const u8) callconv(.c) void {
     _ = rt;
     const p = path orelse {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return;
     };
     const c = content orelse {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return;
     };
     writeAllToFile(false, p, c);
@@ -274,11 +282,11 @@ export fn nox_fs_write_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8, content
 export fn nox_fs_append_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8, content: ?[*:0]const u8) callconv(.c) void {
     _ = rt;
     const p = path orelse {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return;
     };
     const c = content orelse {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return;
     };
     writeAllToFile(true, p, c);
@@ -341,36 +349,46 @@ export fn nox_fs_is_file_raw(path: ?[*:0]const u8) callconv(.c) i32 {
 // bağlı değil" kısıtlaması YALNIZCA `std.c.stat`i etkiliyor, `fstat`
 // (zaten AÇIK bir fd üzerinden) GERÇEKTEN test EDİLİP ÇALIŞTIĞI
 // DOĞRULANDI.
-threadlocal var g_last_size: i64 = 0;
-threadlocal var g_last_mtime_ms: i64 = 0;
+/// Faz MN.2: bkz. `fsLastOkPtr`in AYNI fiber-affine+yedek deseni.
+threadlocal var g_fs_last_size_fallback: i64 = 0;
+threadlocal var g_fs_last_mtime_ms_fallback: i64 = 0;
+
+fn fsLastSizePtr() *i64 {
+    if (bridge.currentFiber()) |f| return &f.fs_last_size;
+    return &g_fs_last_size_fallback;
+}
+fn fsLastMtimePtr() *i64 {
+    if (bridge.currentFiber()) |f| return &f.fs_last_mtime_ms;
+    return &g_fs_last_mtime_ms_fallback;
+}
 
 export fn nox_fs_stat_raw(path: ?[*:0]const u8) callconv(.c) void {
     const p = path orelse {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return;
     };
     const fd = openFileRead(p);
     if (fd < 0) {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return;
     }
     defer closeFd(fd);
 
     const info = fstatCompat(fd) orelse {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return;
     };
-    g_last_size = @intCast(info.size);
-    g_last_mtime_ms = info.mtime_sec * 1000 + @divTrunc(@as(i64, @intCast(info.mtime_nsec)), 1_000_000);
-    g_last_ok = true;
+    fsLastSizePtr().* = @intCast(info.size);
+    fsLastMtimePtr().* = info.mtime_sec * 1000 + @divTrunc(@as(i64, @intCast(info.mtime_nsec)), 1_000_000);
+    fsLastOkPtr().* = true;
 }
 
 export fn nox_fs_stat_size_raw() callconv(.c) i64 {
-    return g_last_size;
+    return fsLastSizePtr().*;
 }
 
 export fn nox_fs_stat_mtime_ms_raw() callconv(.c) i64 {
-    return g_last_mtime_ms;
+    return fsLastMtimePtr().*;
 }
 
 /// Faz III.3 — `list[str]` DÖNÜŞ desteğinin (Alt-Faz F, `nox_strings_
@@ -413,7 +431,7 @@ fn collectDirNames(path: [*:0]const u8, names: *std.ArrayListUnmanaged([]const u
 
 export fn nox_fs_read_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c) ?*anyopaque {
     const p = path orelse {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return null;
     };
 
@@ -423,12 +441,12 @@ export fn nox_fs_read_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c
         names.deinit(std.heap.page_allocator);
     }
     collectDirNames(p, &names) catch {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return null;
     };
 
     const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * names.items.len) orelse {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return null;
     };
     const bytes: [*]u8 = @ptrCast(raw);
@@ -436,13 +454,13 @@ export fn nox_fs_read_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c
     @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(names.items.len);
     for (names.items, 0..) |name, i| {
         const dup = dupeToNoxStr(rt, name) orelse {
-            g_last_ok = false;
+            fsLastOkPtr().* = false;
             return null;
         };
         const slot = bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
         @as(*align(1) i64, @ptrCast(slot)).* = @bitCast(@as(isize, @intCast(@intFromPtr(dup))));
     }
-    g_last_ok = true;
+    fsLastOkPtr().* = true;
     return @ptrCast(bytes);
 }
 
@@ -451,24 +469,24 @@ export fn nox_fs_read_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c
 /// yuvarlağına HİÇ GİRMEDEN — ARC tahsisi GEREKMEZ).
 export fn nox_fs_copy_raw(src: ?[*:0]const u8, dst: ?[*:0]const u8) callconv(.c) void {
     const s = src orelse {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return;
     };
     const d = dst orelse {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return;
     };
 
     const src_fd = openFileRead(s);
     if (src_fd < 0) {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return;
     }
     defer closeFd(src_fd);
 
     const dst_fd = openFileWrite(d, false);
     if (dst_fd < 0) {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return;
     }
     defer closeFd(dst_fd);
@@ -477,7 +495,7 @@ export fn nox_fs_copy_raw(src: ?[*:0]const u8, dst: ?[*:0]const u8) callconv(.c)
     while (true) {
         const n = readFd(src_fd, &chunk);
         if (n < 0) {
-            g_last_ok = false;
+            fsLastOkPtr().* = false;
             return;
         }
         if (n == 0) break;
@@ -486,41 +504,41 @@ export fn nox_fs_copy_raw(src: ?[*:0]const u8, dst: ?[*:0]const u8) callconv(.c)
         while (off < want) {
             const w = writeFd(dst_fd, chunk[off..want]);
             if (w <= 0) {
-                g_last_ok = false;
+                fsLastOkPtr().* = false;
                 return;
             }
             off += @intCast(w);
         }
     }
-    g_last_ok = true;
+    fsLastOkPtr().* = true;
 }
 
 export fn nox_fs_rename_raw(old: ?[*:0]const u8, new: ?[*:0]const u8) callconv(.c) void {
     const o = old orelse {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return;
     };
     const n = new orelse {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return;
     };
-    g_last_ok = std.c.rename(o, n) == 0;
+    fsLastOkPtr().* = std.c.rename(o, n) == 0;
 }
 
 export fn nox_fs_remove_file_raw(path: ?[*:0]const u8) callconv(.c) void {
     const p = path orelse {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return;
     };
-    g_last_ok = std.c.unlink(p) == 0;
+    fsLastOkPtr().* = std.c.unlink(p) == 0;
 }
 
 export fn nox_fs_create_dir_raw(path: ?[*:0]const u8) callconv(.c) void {
     const p = path orelse {
-        g_last_ok = false;
+        fsLastOkPtr().* = false;
         return;
     };
-    g_last_ok = std.c.mkdir(p, 0o755) == 0;
+    fsLastOkPtr().* = std.c.mkdir(p, 0o755) == 0;
 }
 
 /// Faz LL.4 (bkz. nox-teknik-spesifikasyon.md §3.71): testler `/tmp`i
@@ -579,12 +597,12 @@ test "Faz III.3: nox_fs_read_to_string_raw (fstat-tabanli tek-tahsis) dogru cali
     const hello_world = str.nox_str_from_bytes(rt, "hello world") orelse return error.AllocFailed;
     defer str.nox_str_release(rt, hello_world);
     nox_fs_write_string_raw(rt, full_path.ptr, hello_world);
-    try std.testing.expect(g_last_ok);
+    try std.testing.expect(fsLastOkPtr().*);
 
     const content = nox_fs_read_to_string_raw(rt, full_path.ptr) orelse return error.Failed;
     defer str.nox_str_release(rt, content);
     try std.testing.expectEqualStrings("hello world", std.mem.sliceTo(content, 0));
-    try std.testing.expect(g_last_ok);
+    try std.testing.expect(fsLastOkPtr().*);
 }
 
 test "Faz III.3: nox_fs_append_string_raw dosyayi KISALTMAZ, SONUNA ekler" {
@@ -603,7 +621,7 @@ test "Faz III.3: nox_fs_append_string_raw dosyayi KISALTMAZ, SONUNA ekler" {
     defer str.nox_str_release(rt, def);
     nox_fs_write_string_raw(rt, full_path.ptr, abc);
     nox_fs_append_string_raw(rt, full_path.ptr, def);
-    try std.testing.expect(g_last_ok);
+    try std.testing.expect(fsLastOkPtr().*);
     const content = nox_fs_read_to_string_raw(rt, full_path.ptr) orelse return error.Failed;
     defer str.nox_str_release(rt, content);
     try std.testing.expectEqualStrings("abcdef", std.mem.sliceTo(content, 0));
@@ -623,12 +641,12 @@ test "Faz III.3: nox_fs_stat_raw boyut/mtime dogru doner" {
     defer str.nox_str_release(rt, digits);
     nox_fs_write_string_raw(null, full_path.ptr, digits);
     nox_fs_stat_raw(full_path.ptr);
-    try std.testing.expect(g_last_ok);
+    try std.testing.expect(fsLastOkPtr().*);
     try std.testing.expectEqual(@as(i64, 5), nox_fs_stat_size_raw());
     try std.testing.expect(nox_fs_stat_mtime_ms_raw() > 0);
 
     nox_fs_stat_raw("/definitely/does/not/exist/nox_iii3_test");
-    try std.testing.expect(!g_last_ok);
+    try std.testing.expect(!fsLastOkPtr().*);
 }
 
 test "Faz III.3: nox_fs_read_dir_raw dizin girdilerini dogru doner (./.. haric)" {
@@ -698,7 +716,7 @@ test "Faz III.3: nox_fs_copy_raw/rename_raw/remove_file_raw/create_dir_raw dogru
     defer str.nox_str_release(rt, copy_me);
     nox_fs_write_string_raw(rt, src_path.ptr, copy_me);
     nox_fs_copy_raw(src_path.ptr, dst_path.ptr);
-    try std.testing.expect(g_last_ok);
+    try std.testing.expect(fsLastOkPtr().*);
     {
         const content = nox_fs_read_to_string_raw(rt, dst_path.ptr) orelse return error.Failed;
         defer str.nox_str_release(rt, content);
@@ -707,19 +725,19 @@ test "Faz III.3: nox_fs_copy_raw/rename_raw/remove_file_raw/create_dir_raw dogru
     try std.testing.expectEqual(@as(i32, 1), nox_fs_exists_raw(src_path.ptr));
 
     nox_fs_rename_raw(dst_path.ptr, ren_path.ptr);
-    try std.testing.expect(g_last_ok);
+    try std.testing.expect(fsLastOkPtr().*);
     try std.testing.expectEqual(@as(i32, 0), nox_fs_exists_raw(dst_path.ptr));
     try std.testing.expectEqual(@as(i32, 1), nox_fs_exists_raw(ren_path.ptr));
 
     nox_fs_remove_file_raw(src_path.ptr);
-    try std.testing.expect(g_last_ok);
+    try std.testing.expect(fsLastOkPtr().*);
     try std.testing.expectEqual(@as(i32, 0), nox_fs_exists_raw(src_path.ptr));
 
     var dir_buf: [64]u8 = undefined;
     const dir_path = try std.fmt.bufPrintZ(&dir_buf, "{s}/nox_iii3_mkdir_{d}", .{ testTmpPrefix(), std.c.getpid() });
     defer _ = std.c.rmdir(dir_path.ptr);
     nox_fs_create_dir_raw(dir_path.ptr);
-    try std.testing.expect(g_last_ok);
+    try std.testing.expect(fsLastOkPtr().*);
     try std.testing.expectEqual(@as(i32, 1), nox_fs_is_dir_raw(dir_path.ptr));
 }
 

@@ -83,7 +83,7 @@ fn poolClassSize(idx: usize) usize {
 /// (istenenden fazla olabilir — bu blok daha sonra AYNI sınıfa geri
 /// dönecektir) bir blok alır.
 pub export fn nox_rc_alloc(rt: ?*anyopaque, payload_size: usize) ?*anyopaque {
-    // Faz X.3 (bkz. `asap.RuntimeState.arc_owner_tid`nin belge notu):
+    // Faz X.3 (bkz. `asap.RuntimeState.arc_owner_pool`nin belge notu):
     // Debug modunda BU rt'nin ARC işlemlerine dokunan iş parçacığının
     // HER ZAMAN AYNI olduğunu doğrular — ihlal EDİLİRSE burada, gerçek
     // bir data-race'e İLERLEMEDEN, KESİN bir panikle DURUR.
@@ -113,10 +113,19 @@ pub export fn nox_rc_alloc(rt: ?*anyopaque, payload_size: usize) ?*anyopaque {
 }
 
 /// Refcount'u bir artırır (bir değer başka bir isme/alana atandığında).
+/// Faz MN.1 (bkz. plan dosyası "LLVM-only atomic ARC"): bu fonksiyon
+/// ZATEN gerçek bir çağrı (inline EDİLMİYOR — bkz. `codegen_qbe/
+/// ownership.zig`nin `emitInlineRetain`si, HIZLI yol AYRI), bu YÜZDEN
+/// KOŞULSUZ atomic yapmanın maliyeti SIFIR ek çağrı — SADECE ZATEN
+/// yapılan bir çağrıda birkaç ekstra çevrim. `noxrt.o` TEK (bkz.
+/// `main.zig`nin HEM QBE HEM LLVM yolunda AYNI `noxrt_path`yi bağlaması)
+/// — build bayrağı YOK, `--release` OLMADAN da ATOMİK, davranış AYNI
+/// (atomiklik non-atomic'in GÖZLEMLENEBİLİR bir DAVRANIŞ FARKI yaratmadığı
+/// tek-iş-parçacıklı bir bağlamda hiçbir şeyi BOZMAZ).
 pub export fn nox_rc_retain(ptr: ?*anyopaque) void {
     const p = ptr orelse return;
-    const rc = refcountOf(p);
-    rc.* += 1;
+    const rc: *std.atomic.Value(i64) = @ptrCast(refcountOf(p));
+    _ = rc.fetchAdd(1, .acq_rel);
 }
 
 /// Refcount'u bir azaltır; sıfıra ya da altına düşerse tüm bloğu (başlık
@@ -135,9 +144,11 @@ pub export fn nox_rc_release(rt: ?*anyopaque, ptr: ?*anyopaque, payload_size: us
 /// `nox_rc_release`'den ayrıştırılmış olarak kullanır.
 pub export fn nox_rc_predecrement(ptr: ?*anyopaque) i32 {
     const p = ptr orelse return 0;
-    const rc = refcountOf(p);
-    rc.* -= 1;
-    return if (rc.* <= 0) 1 else 0;
+    const rc: *std.atomic.Value(i64) = @ptrCast(refcountOf(p));
+    // `fetchSub` işlem-ÖNCESİ değeri döner (`old`); eski kodun `rc.* <= 0`
+    // (post-decrement) karşılaştırması `old <= 1`e denk düşer.
+    const old = rc.fetchSub(1, .acq_rel);
+    return if (old <= 1) 1 else 0;
 }
 
 /// `nox_rc_predecrement` 1 döndürdükten SONRA belleği (başlık dahil) gerçekten
