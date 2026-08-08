@@ -13,6 +13,11 @@ pub const async_bridge = @import("async_rt/bridge.zig");
 pub const thread_bridge = @import("async_rt/thread_bridge.zig");
 pub const thread_channel = @import("async_rt/thread_channel.zig");
 pub const task_local = @import("async_rt/task_local.zig");
+/// Faz MN.3a: BAĞIMSIZ, henüz HİÇBİR yere BAĞLANMAMIŞ (bkz. onun modül
+/// üstü notu) — SADECE `zig build test`nin `noxrt_test`inin (bu dosyayı
+/// KÖK modül olarak kullanan) KENDİ testlerini KEŞFEDEBİLMESİ İçİn burada
+/// isim-üzerinden yeniden dışa aktarılıyor.
+pub const chase_lev_deque = @import("async_rt/chase_lev_deque.zig");
 pub const str = @import("str.zig");
 pub const dict = @import("collections/dict.zig");
 pub const list_sort = @import("collections/list_sort.zig");
@@ -55,6 +60,7 @@ comptime {
     _ = thread_bridge;
     _ = thread_channel;
     _ = task_local;
+    _ = chase_lev_deque;
     _ = str;
     _ = dict;
     _ = list_sort;
