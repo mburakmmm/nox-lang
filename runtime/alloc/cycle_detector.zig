@@ -235,6 +235,8 @@ fn traceChildren(rt: ?*anyopaque, p: *anyopaque) ChildrenBuf {
 /// `extern fn` ile düz bağlanır (bkz. `asap.zig`deki forward declaration).
 pub export fn nox_cycle_deinit(rt: ?*anyopaque) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
+    state.cycle_gc_lock.lock();
+    defer state.cycle_gc_lock.unlock();
     const gc_ptr = state.cycle_gc orelse return;
     const gc: *CycleGc = @ptrCast(@alignCast(gc_ptr));
     gc.deinit(state.allocator());
@@ -249,6 +251,13 @@ pub export fn nox_cycle_deinit(rt: ?*anyopaque) void {
 pub export fn nox_cycle_possible_root(rt: ?*anyopaque, p: ?*anyopaque) void {
     const ptr = p orelse return;
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));
+    // Faz MN.3b: TÜM fonksiyon TEK bir kilit ALTINDA — eşik AŞILDIĞINDA
+    // `collectLocked`i (`nox_cycle_collect`in KENDİSİNİ DEĞİL, aşağıya
+    // bkz.) DOĞRUDAN çağırır, AKSİ HALDE `nox_cycle_collect`in KENDİ
+    // kilidini TEKRAR almaya ÇALIŞIR — bu SpinLock YENİDEN-GİRİLEBİLİR
+    // (reentrant) DEĞİLDİR, KENDİ KENDİSİYLE KİLİTLENİRDİ.
+    state.cycle_gc_lock.lock();
+    defer state.cycle_gc_lock.unlock();
     const gc = getGc(state);
 
     const entry = gc.meta.getOrPut(state.allocator(), ptr) catch return;
@@ -263,7 +272,7 @@ pub export fn nox_cycle_possible_root(rt: ?*anyopaque, p: ?*anyopaque) void {
 
     gc.possible_roots_since_collect += 1;
     if (gc.possible_roots_since_collect >= gc.collect_threshold) {
-        nox_cycle_collect(rt);
+        collectLocked(rt, state, gc);
     }
 }
 
@@ -280,6 +289,8 @@ pub export fn nox_cycle_possible_root(rt: ?*anyopaque, p: ?*anyopaque) void {
 pub export fn nox_cycle_forget(rt: ?*anyopaque, p: ?*anyopaque) void {
     const ptr = p orelse return;
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));
+    state.cycle_gc_lock.lock();
+    defer state.cycle_gc_lock.unlock();
     const gc_ptr = state.cycle_gc orelse return; // hiç başlatılmadıysa unutacak bir şey yok
     const gc: *CycleGc = @ptrCast(@alignCast(gc_ptr));
     _ = gc.meta.remove(ptr);
@@ -290,10 +301,19 @@ pub export fn nox_cycle_forget(rt: ?*anyopaque, p: ?*anyopaque) void {
 /// programlar deterministik bir toplama İÇİN doğrudan da çağırabilir.
 pub export fn nox_cycle_collect(rt: ?*anyopaque) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
+    state.cycle_gc_lock.lock();
+    defer state.cycle_gc_lock.unlock();
     const gc_ptr = state.cycle_gc orelse return;
     const gc: *CycleGc = @ptrCast(@alignCast(gc_ptr));
-    gc.possible_roots_since_collect = 0;
+    collectLocked(rt, state, gc);
+}
 
+/// Faz MN.3b: `nox_cycle_collect`in KENDİSİNDEN VE `nox_cycle_possible_
+/// root`un eşik-aşıldı dalından (ZATEN `cycle_gc_lock` TUTULUYORKEN)
+/// PAYLAŞILAN, KİLİTSİZ çekirdek — bkz. `nox_cycle_possible_root`un belge
+/// notu, "YENİDEN-GİRİLEBİLİR DEĞİL" gerekçesi.
+fn collectLocked(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
+    gc.possible_roots_since_collect = 0;
     markRoots(rt, state, gc);
     scanRoots(rt, state, gc);
     collectRoots(rt, state, gc);
@@ -416,7 +436,10 @@ const arc = @import("arc.zig");
 const testing = std.testing;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 
-const FAKE_PAYLOAD_SIZE: usize = TAG_SIZE + FIELD_SLOT_SIZE; // 1 alan yuvası
+/// Faz MN.3b: `pub` — `runtime/async_rt/worker_pool.zig`nin KENDİ eşzamanlı
+/// testi de BU sahte dispatch enjeksiyon desenini (BU dosyanın KENDİ
+/// testleriyle AYNI) yeniden kullanır.
+pub const FAKE_PAYLOAD_SIZE: usize = TAG_SIZE + FIELD_SLOT_SIZE; // 1 alan yuvası
 
 fn fakeTraceDispatch(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) callconv(.c) ?*anyopaque {
     _ = tag;
@@ -450,7 +473,8 @@ fn fakeGcFreeDispatch(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) callconv(.c) vo
     arc.nox_rc_free_payload(rt, p, FAKE_PAYLOAD_SIZE);
 }
 
-fn injectFakeDispatch() void {
+/// Faz MN.3b: `pub` — bkz. `FAKE_PAYLOAD_SIZE`in belge notu.
+pub fn injectFakeDispatch() void {
     g_trace_dispatch_resolved = true;
     g_trace_dispatch_fn = &fakeTraceDispatch;
     g_gc_free_dispatch_resolved = true;
@@ -467,7 +491,8 @@ fn wireField(p: *anyopaque, child: *anyopaque) void {
     field_addr.* = child;
 }
 
-fn newFakeObject(rt: ?*anyopaque) *anyopaque {
+/// Faz MN.3b: `pub` — bkz. `FAKE_PAYLOAD_SIZE`in belge notu.
+pub fn newFakeObject(rt: ?*anyopaque) *anyopaque {
     const p = arc.nox_rc_alloc(rt, FAKE_PAYLOAD_SIZE).?;
     const tag_ptr: *i64 = @ptrCast(@alignCast(p));
     tag_ptr.* = 99; // keyfi, `fakeTraceDispatch` tag'e hiç BAKMIYOR

@@ -48,12 +48,17 @@ const ArenaHandle = struct {
 export fn nox_arena_create(rt: ?*anyopaque) ?*anyopaque {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
     if (use_pool) {
-        if (state.arena_pool) |raw| {
-            const handle: *ArenaHandle = @ptrCast(@alignCast(raw));
+        // Faz MN.3b: `arena_pool`un oku+yaz'ı `arena_pool_lock` ALTINDA.
+        state.arena_pool_lock.lock();
+        const raw = state.arena_pool;
+        if (raw) |r| {
+            const handle: *ArenaHandle = @ptrCast(@alignCast(r));
             state.arena_pool = @ptrCast(handle.next);
             handle.next = null;
+            state.arena_pool_lock.unlock();
             return @ptrCast(handle);
         }
+        state.arena_pool_lock.unlock();
     }
     const handle = state.allocator().create(ArenaHandle) catch return null;
     handle.* = .{ .arena = std.heap.ArenaAllocator.init(state.allocator()) };
@@ -76,8 +81,10 @@ export fn nox_arena_destroy(rt: ?*anyopaque, arena_ptr: ?*anyopaque) void {
     const handle: *ArenaHandle = @ptrCast(@alignCast(arena_ptr orelse return));
     if (use_pool) {
         _ = handle.arena.reset(.retain_capacity);
+        state.arena_pool_lock.lock();
         handle.next = @ptrCast(@alignCast(state.arena_pool));
         state.arena_pool = @ptrCast(handle);
+        state.arena_pool_lock.unlock();
         return;
     }
     handle.arena.deinit();

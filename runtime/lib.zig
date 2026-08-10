@@ -18,6 +18,9 @@ pub const task_local = @import("async_rt/task_local.zig");
 /// KÖK modül olarak kullanan) KENDİ testlerini KEŞFEDEBİLMESİ İçİn burada
 /// isim-üzerinden yeniden dışa aktarılıyor.
 pub const chase_lev_deque = @import("async_rt/chase_lev_deque.zig");
+/// Faz MN.3b: MN.3a İLE AYNI "bağımsız, sadece test-keşfi İçİn KAYITLI"
+/// deseni — bkz. onun modül üstü notu.
+pub const worker_pool = @import("async_rt/worker_pool.zig");
 pub const str = @import("str.zig");
 pub const dict = @import("collections/dict.zig");
 pub const list_sort = @import("collections/list_sort.zig");
@@ -61,6 +64,7 @@ comptime {
     _ = thread_channel;
     _ = task_local;
     _ = chase_lev_deque;
+    _ = worker_pool;
     _ = str;
     _ = dict;
     _ = list_sort;

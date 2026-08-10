@@ -92,13 +92,15 @@ pub export fn nox_rc_alloc(rt: ?*anyopaque, payload_size: usize) ?*anyopaque {
     if (use_pool) {
         if (poolClassIndex(total)) |idx| {
             const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
-            const base: *anyopaque = blk: {
-                if (state.pool_free_lists[idx]) |node| {
-                    state.pool_free_lists[idx] = node.next;
-                    break :blk @ptrCast(node);
-                }
-                break :blk asap.nox_alloc(rt, poolClassSize(idx)) orelse return null;
-            };
+            // Faz MN.3b: `pool_free_lists[idx]`in oku+yaz'ı `pool_free_
+            // lists_lock` ALTINDA — genel ayırıcıya (`asap.nox_alloc`)
+            // düşme dalı KİLİDİN DIŞINDA kalır (gereksiz uzun kritik
+            // bölümden kaçınmak İçİn).
+            state.pool_free_lists_lock.lock();
+            const popped = state.pool_free_lists[idx];
+            if (popped) |node| state.pool_free_lists[idx] = node.next;
+            state.pool_free_lists_lock.unlock();
+            const base: *anyopaque = if (popped) |node| @ptrCast(node) else (asap.nox_alloc(rt, poolClassSize(idx)) orelse return null);
             const rc: *i64 = @ptrCast(@alignCast(base));
             rc.* = 1;
             const base_bytes: [*]u8 = @ptrCast(base);
@@ -170,8 +172,10 @@ pub export fn nox_rc_free_payload(rt: ?*anyopaque, ptr: ?*anyopaque, payload_siz
         if (poolClassIndex(total)) |idx| {
             const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
             const node: *asap.PoolNode = @ptrCast(@alignCast(base));
+            state.pool_free_lists_lock.lock();
             node.* = .{ .next = state.pool_free_lists[idx] };
             state.pool_free_lists[idx] = node;
+            state.pool_free_lists_lock.unlock();
             return;
         }
     }

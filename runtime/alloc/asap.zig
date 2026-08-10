@@ -65,16 +65,45 @@ extern fn nox_cycle_collect(rt: ?*anyopaque) callconv(.c) void;
 pub const POOL_NUM_CLASSES = 10;
 pub const PoolNode = struct { next: ?*PoolNode };
 
+/// Faz MN.3b: bir `RuntimeState` havuzunun (bkz. proje planı "Worker
+/// soyutlaması") destekleyebileceği ÜST worker sınırı — TEK kaynak,
+/// `OwnerPool.MAX_MEMBERS` (Faz MN.1) VE `RuntimeState.globals_blocks`
+/// (aşağıya bkz.) İKİSİ de BUNU kullanır (AYNI "bir havuzun üst sınırı"
+/// kavramının İKİ AYRI sihirli sayıya SÜRÜKLENMESİNİ ÖNLER).
+pub const MAX_POOL_WORKERS = 64;
+
 /// Faz MN.1: `RuntimeState.arc_owner_pool`in DEPOLAMASI — bkz. onun belge
 /// notu. `MAX_MEMBERS`, gelecekteki bir worker havuzunun ÜST sınırıdır
 /// (dinamik ayırma GEREKTİRMEYECEK kadar KÜÇÜK/sabit); `capacity`,
 /// `members`in KAÇ İNDEKSİNİN GEÇERLİ sayılacağını (`MAX_MEMBERS`e KADAR)
 /// belirler — varsayılan 1, Faz X.3'ün ORİJİNAL "tek sahip" semantiğidir.
 pub const OwnerPool = struct {
-    pub const MAX_MEMBERS = 64;
+    pub const MAX_MEMBERS = MAX_POOL_WORKERS;
     members: [MAX_MEMBERS]std.Thread.Id = undefined,
     count: usize = 0,
     capacity: usize = 1,
+};
+
+/// Faz MN.3b: `runtime/async_rt/thread_channel.zig`nin `ThreadChannel`ı
+/// İçİn yazılmış CAS-tabanlı spin-kilidin BURAYA taşınmış TEK doğruluk
+/// kaynağı hali (Faz P1.2'nin AYNI ilkesi) — `RuntimeState`nin YENİ
+/// senkronize alanları (`pool_free_lists_lock`/`arena_pool_lock`/
+/// `cycle_gc_lock`, aşağıya bkz.) VE `ThreadChannel`nin KENDİSİ artık
+/// AYNI bu tipi paylaşır. `std.Thread.Mutex` bu Zig sürümünde YOK
+/// (`std.Io.Mutex`, kilit alma İçİn bir `Io` arayüzü İSTER — genel
+/// amaçlı bir OS-iş-parçacığı kilidi DEĞİL).
+pub const SpinLock = struct {
+    state: std.atomic.Value(u8) = .init(0),
+
+    pub fn lock(self: *SpinLock) void {
+        while (self.state.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) {
+            std.Thread.yield() catch {};
+        }
+    }
+
+    pub fn unlock(self: *SpinLock) void {
+        self.state.store(0, .release);
+    }
 };
 
 pub const RuntimeState = struct {
@@ -94,6 +123,12 @@ pub const RuntimeState = struct {
     /// yedek-depo notu (`pending_exception`e bkz.) BURASI İçin de geçerlidir.
     pending_exception_line: i64 = 0,
     pool_free_lists: [POOL_NUM_CLASSES]?*PoolNode = @splat(null),
+    /// Faz MN.3b: `pool_free_lists`in push/pop'unu (bkz. `arc.zig`nin
+    /// `nox_rc_alloc`/`nox_rc_free_payload`ı) korur — paylaşılmayan
+    /// (tek-iş-parçacıklı) bir `RuntimeState`te BİLE HER ZAMAN AKTİF
+    /// (çekişmesiz bir `cmpxchgWeak` ÇOK UCUZDUR — "paylaşılıyor mu"
+    /// dallanması YOK, TEK kod yolu HER ZAMAN doğru).
+    pool_free_lists_lock: SpinLock = .{},
     /// Dil stabilizasyonu fazı §M.7: `lowlevel` arena TUTAMAÇLARININ (bkz.
     /// `runtime/alloc/lowlevel.zig`, `ArenaHandle`) LIFO serbest liste BAŞI
     /// — `pool_free_lists`in AYNI Release-only prensibi (`lowlevel.zig`nin
@@ -105,6 +140,10 @@ pub const RuntimeState = struct {
     /// arasında DAİRESEL import GEREKMEZ, tıpkı `PoolNode`nin arc.zig
     /// tarafından KULLANILMASI gibi).
     arena_pool: ?*anyopaque = null,
+    /// Faz MN.3b: `arena_pool`un push/pop'unu (bkz. `lowlevel.zig`nin
+    /// `nox_arena_create`/`nox_arena_destroy`ı) korur — `pool_free_lists_
+    /// lock`la AYNI "her zaman aktif" gerekçesi.
+    arena_pool_lock: SpinLock = .{},
     /// Faz S.3 (Katman 3, döngü çözücü) — `runtime/alloc/cycle_detector.zig`nin
     /// KENDİ `CycleGc` durumuna opak bir işaretçi (tembel/lazy oluşturulur,
     /// bkz. onun `getGc`si). `arena_pool` İLE AYNI gerekçeyle opak: `asap.zig`
@@ -113,6 +152,27 @@ pub const RuntimeState = struct {
     /// (aşağıdaki `extern fn` bildirimi, DÜZ bağlama — bkz. `runtime/lib.zig`nin
     /// İKİSİNİ de AYNI `noxrt` nesnesine derlediği) DELEGE edilir.
     cycle_gc: ?*anyopaque = null,
+    /// Faz MN.3b: `cycle_gc`ye dokunan TÜM fonksiyonları (`getGc`/`nox_
+    /// cycle_possible_root`/`nox_cycle_forget`/`nox_cycle_collect`/`nox_
+    /// cycle_deinit`) SERİLEŞTİRİR — AMA **SADECE `CycleGc`nin KENDİ
+    /// defter tutma yapılarını (`gc.meta`/`gc.roots`) korur, TAM bir
+    /// çözüm DEĞİLDİR.** `nox_cycle_collect`in GERÇEK mark/scan geçişi
+    /// (bkz. `cycle_detector.zig`nin `markGray`/`scanBlack`ı) taranan
+    /// nesnelerin refcount'unu PLAIN (ATOMİK OLMAYAN) `-=`/`+=` İLE
+    /// okur/yazar — bu kilidin KAPSAMI DIŞINDA kalan BAŞKA bir worker'ın
+    /// AYNI nesneyi O ANDA ATOMİK `nox_rc_retain`/`nox_rc_predecrement`
+    /// İLE dokunmasıyla YARIŞABİLİR. **BU, UYGULAMA SIRASINDA (`runtime/
+    /// async_rt/worker_pool.zig`nin eşzamanlı stres testinde) GERÇEKTEN
+    /// DENENİP SIGBUS İLE ÇÖKTÜĞÜ DOĞRULANDI** — bu YÜZDEN `worker_pool.
+    /// zig`nin KENDİ testi `nox_cycle_collect`i eş zamanlı ÇAĞIRMAZ
+    /// (SADECE TÜM worker'lar `join` edildikten SONRA, TEK iş parçacıklı
+    /// bağlamda). GERÇEK güvenlik SADECE Faz MN.6'nın (TÜM worker'lar
+    /// fiber-yield noktalarında DURDURULDUKTAN SONRA collect çalışır)
+    /// kooperatif "dünyayı-durdur" bariyeriyle mümkündür — bu alan ONA
+    /// kadar SADECE `CycleGc`nin defter tutmasını (collector-VS-collector
+    /// çekişmesini) korumaya YARAR, collector-VS-eşzamanlı-ARC-mutasyonu
+    /// riskini ORTADAN KALDIRMAZ.
+    cycle_gc_lock: SpinLock = .{},
     /// Faz X.3, Faz MN.1'de HAVUZ-farkındalıklı hale GENİŞLETİLDİ: bu
     /// `rt`nin ARC (Katman 2, bkz. `runtime/alloc/arc.zig`) işlemlerine
     /// dokunmasına İZİN VERİLEN OS iş parçacıklarının KÜÇÜK bir kümesi
@@ -121,18 +181,12 @@ pub const RuntimeState = struct {
     /// `nox_rc_alloc`/`nox_rc_free_payload` (aşağıdaki `arcOwnerThreadOk`ya
     /// bkz.) HER çağrıda BUNU doğrular. **Nox'un çalışma zamanı ARC
     /// refcount'u (`arc.zig`nin `i64` başlığı) Faz MN.1'DEN İTİBAREN
-    /// KOŞULSUZ atomiktir** (bkz. `arc.zig`nin `nox_rc_retain`/
-    /// `nox_rc_predecrement`i) — AMA `pool_free_lists`/`arena_pool`/
-    /// `cycle_gc`/`globals_block` (bu struct'ın DİĞER alanları) HÂLÂ
-    /// senkronize DEĞİL, bu YÜZDEN bir `RuntimeState`ye GERÇEKTEN birden
-    /// fazla worker'ın PARALEL dokunması HÂLÂ GÜVENLİ DEĞİL (bkz. proje
-    /// planı "Faz MN.3b" — havuz/arena senkronizasyonu VE paylaşılan-
-    /// `RuntimeState` kararı AYRI, HENÜZ uygulanmamış bir faz). Kapasite
-    /// varsayılan olarak 1 kaldığı SÜRECE bu alan BUGÜNKÜ "tek sahip"
-    /// güvenlik ağını (bkz. `arcOwnerThreadOk`) TAM olarak korur — MN.3b
-    /// gerçek bir worker havuzu KURDUĞUNDA `setArcOwnerPoolCapacity` İLE
-    /// kapasiteyi havuz büyüklüğüne YÜKSELTİP HER worker'ı KAYITLI bir
-    /// üye olarak İŞARETLEYECEKTİR.
+    /// KOŞULSUZ atomiktir**, `pool_free_lists`/`arena_pool`/`cycle_gc`
+    /// Faz MN.3b'DEN İTİBAREN KİLİTLERLE korunur (bkz. yukarıdaki
+    /// `*_lock` alanları) — kapasite BİR worker havuzu (bkz. `runtime/
+    /// async_rt/worker_pool.zig`) KURULDUĞUNDA `setArcOwnerPoolCapacity`
+    /// İLE havuz büyüklüğüne YÜKSELTİLİR, HER worker BİRİNCİ ARC
+    /// dokunuşunda KENDİLİĞİNDEN KAYITLI bir üye OLUR.
     arc_owner_pool: if (debug_thread_check) OwnerPool else void =
         if (debug_thread_check) .{} else {},
     /// Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
@@ -143,17 +197,48 @@ pub const RuntimeState = struct {
     /// (runtime) HANGİ Nox programının HANGİ global'leri bildirdiğini
     /// HİÇBİR ZAMAN bilmez/yorumlamaz — bayt-düzeni TAMAMEN derleyicinin
     /// (compiler/codegen_qbe/globals.zig) sahip olduğu bir SÖZLEŞMEDİR,
-    /// tıpkı bir sınıf örneğinin alan düzeni gibi. Her `RuntimeState`
-    /// (bkz. `arc_owner_pool`in belge notu — HER OS iş parçacığı KENDİ
-    /// BAĞIMSIZ `RuntimeState`ine sahiptir) KENDİ bağımsız bloğuna
-    /// sahiptir — worker'LAR ARASI PAYLAŞIM YOK (bilinçli v1 kapsamı).
-    globals_block: ?*anyopaque = null,
+    /// tıpkı bir sınıf örneğinin alan düzeni gibi.
+    ///
+    /// **Faz MN.3b: TEKİL alandan `MAX_POOL_WORKERS` uzunluklu bir
+    /// DİZİYE genişletildi** — bir worker havuzunda (bkz. `worker_pool.
+    /// zig`) N OS iş parçacığı ARTIK TEK bir `RuntimeState`yi
+    /// PAYLAŞTIĞINDAN, `globals_block` TEKİL bir alan OLARAK KALSAYDI
+    /// TÜM worker'lar YANLIŞLIKLA AYNI globals bloğunu (SON `nox_init_
+    /// globals` çağrısı KAZANIR) PAYLAŞIRDI — Nox'ta HENÜZ HİÇBİR
+    /// senkronizasyon ilkeli (mutex/atomic) KULLANICI KODUNA AÇIK
+    /// OLMADIĞINDAN, BU genuinely-shared mutable global'ları
+    /// KORUYAMAYACAKLARI bir veri-yarışı silahı OLURDU — BİLİNÇLİ olarak
+    /// REDDEDİLDİ. Bunun yerine HER worker KENDİ `g_worker_slot`una
+    /// (aşağıya bkz.) göre dizinin KENDİ HÜCRESİNE erişir — `nox_globals_
+    /// get`/`nox_globals_set`in ABI'si (`compiler/codegen_qbe/globals.zig`
+    /// tarafından üretilen `$nox_init_globals`/`$nox_deinit_globals`)
+    /// DEĞİŞMEZ, SIFIR codegen etkisi. Paylaşımsız (tek-iş-parçacıklı,
+    /// BUGÜNKÜ) kullanım HER ZAMAN slot 0'ı kullanır — davranış BİREBİR
+    /// aynı kalır.
+    globals_blocks: [MAX_POOL_WORKERS]?*anyopaque = @splat(null),
 
     pub fn allocator(self: *RuntimeState) std.mem.Allocator {
         if (use_debug_allocator) return self.debug_gpa.allocator();
         return std.heap.smp_allocator;
     }
 };
+
+/// Faz MN.3b: bu OS iş parçacığının BİR worker havuzu İÇİNDEKİ konumu
+/// (`RuntimeState.globals_blocks`e bkz.) — varsayılan 0, tek-iş-parçacıklı
+/// (paylaşımsız) kullanım İçİn HER ZAMAN doğru olan değer. Bir havuz
+/// worker'ı `worker_pool.zig`nin `WorkerPool.spawnWorkers`ı TARAFINDAN
+/// başlatılırken BUNU KENDİ slotuna AYARLAR (`bridge.zig`nin `g_scheduler`ı
+/// İLE AYNI `threadlocal` deseni).
+threadlocal var g_worker_slot: usize = 0;
+
+pub fn setWorkerSlot(slot: usize) void {
+    std.debug.assert(slot < MAX_POOL_WORKERS);
+    g_worker_slot = slot;
+}
+
+pub fn currentWorkerSlot() usize {
+    return g_worker_slot;
+}
 
 /// Faz X.3, Faz MN.1'de havuz-farkındalıklı hale GENİŞLETİLDİ:
 /// `state.arc_owner_pool`u (bkz. onun belge notu) doğrular/kaydeder.
@@ -240,7 +325,7 @@ pub export fn nox_free(rt: ?*anyopaque, ptr: ?*anyopaque, size: usize) void {
 }
 
 /// Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
-/// `RuntimeState.globals_block`in erişimcileri — QBE codegen `RuntimeState`in
+/// `RuntimeState.globals_blocks`in erişimcileri — QBE codegen `RuntimeState`in
 /// KENDİSİNE (Zig struct'ı, ABI garantisi YOK) DOĞRUDAN bayt-ofseti İLE
 /// erişemez (`nox_alloc`/`nox_free`nin AYNI `@ptrCast(@alignCast(...))`
 /// deseni HARİÇ HİÇBİR alanına doğrudan erişilmez) — bu YÜZDEN diğer
@@ -248,15 +333,17 @@ pub export fn nox_free(rt: ?*anyopaque, ptr: ?*anyopaque, size: usize) void {
 /// da iki küçük `extern fn` GEREKİR. Asıl bayt-ofseti aritmetiği (HANGİ
 /// global HANGİ ofsette) TAMAMEN derleyicinin (compiler/codegen_qbe/
 /// globals.zig) KENDİ SORUMLULUĞUDUR — bu fonksiyonlar yalnızca OPAK
-/// işaretçiyi taşır, hiçbir yorum yapmaz.
+/// işaretçiyi taşır, hiçbir yorum yapmaz. Faz MN.3b: `g_worker_slot`e
+/// göre dizinin İLGİLİ hücresine erişir — ABI DEĞİŞMEDİ (bkz. `globals_
+/// blocks`in KENDİ belge notu).
 pub export fn nox_globals_get(rt: ?*anyopaque) ?*anyopaque {
     const state: *RuntimeState = @ptrCast(@alignCast(rt orelse return null));
-    return state.globals_block;
+    return state.globals_blocks[g_worker_slot];
 }
 
 pub export fn nox_globals_set(rt: ?*anyopaque, block: ?*anyopaque) void {
     const state: *RuntimeState = @ptrCast(@alignCast(rt orelse return));
-    state.globals_block = block;
+    state.globals_blocks[g_worker_slot] = block;
 }
 
 test "tahsis edilen bellek yazılabilir/okunabilir ve serbest bırakılabilir" {

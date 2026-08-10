@@ -835,4 +835,25 @@ pub fn build(b: *std.Build) void {
     async_rt_test_step.dependOn(&b.addRunArtifact(scheduler_test).step);
     async_rt_test_step.dependOn(&b.addRunArtifact(channel_test).step);
     async_rt_test_step.dependOn(&b.addRunArtifact(io_test).step);
+
+    // Faz MN.3b: `worker_pool.zig`nin KENDİ eşzamanlı stres testi — `noxrt`in
+    // TAMAMINI (TÜM stdlib_shims) BEKLEMEDEN hızlı yineleme İçİn AYRI, DAR
+    // bir hedef (`fiber_test`/`scheduler_test` İLE AYNI desen, TEK FARKLA:
+    // `arc.zig`/`cycle_detector.zig` `abi_layout`e ihtiyaç duyar). `test_step`e
+    // de eklenir (tam regresyonun BİR PARÇASI olsun diye).
+    const worker_pool_test_mod = b.createModule(.{
+        .root_source_file = b.path("runtime/worker_pool_test_root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "abi_layout", .module = abi_layout_mod },
+        },
+    });
+    worker_pool_test_mod.addObjectFile(b.path(swap_asm_o_path));
+    const worker_pool_test = b.addTest(.{ .root_module = worker_pool_test_mod });
+    worker_pool_test.step.dependOn(&compile_swap_asm.step);
+    const worker_pool_test_step = b.step("worker-pool-test", "Yalnızca Faz MN.3b'nin worker_pool.zig testini çalıştırır (hızlı yineleme İçİn)");
+    worker_pool_test_step.dependOn(&b.addRunArtifact(worker_pool_test).step);
+    test_step.dependOn(&b.addRunArtifact(worker_pool_test).step);
 }

@@ -74,24 +74,10 @@ const str_mod = @import("../str.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
 
-/// `std.Thread.Mutex` bu Zig sürümünde YOK (`std.Io.Mutex`, kilit alma
-/// İÇİN bir `Io` arayüzü İSTER — genel amaçlı bir OS-iş-parçacığı
-/// kilidi DEĞİL) — `http_client.zig`nin `g_client_io_state`i İÇİN
-/// KULLANDIĞI AYNI CAS-tabanlı spin-kilit deseni (bkz. onun belge notu)
-/// burada da yeniden kullanılır.
-const SpinLock = struct {
-    state: std.atomic.Value(u8) = .init(0),
-
-    fn lock(self: *SpinLock) void {
-        while (self.state.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) {
-            std.Thread.yield() catch {};
-        }
-    }
-
-    fn unlock(self: *SpinLock) void {
-        self.state.store(0, .release);
-    }
-};
+/// Faz MN.3b: BURADA tanımlı bir kopya OLMAK YERİNE `asap.SpinLock`
+/// KULLANILIR (Faz P1.2'nin AYNI "TEK doğruluk kaynağı" ilkesi —
+/// `RuntimeState`nin YENİ senkronize alanları BUNU ZATEN kullanıyor).
+const SpinLock = asap.SpinLock;
 
 pub const ThreadChannel = struct {
     mutex: SpinLock = .{},
