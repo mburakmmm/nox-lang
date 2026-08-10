@@ -271,7 +271,15 @@ pub export fn nox_cycle_possible_root(rt: ?*anyopaque, p: ?*anyopaque) void {
     }
 
     gc.possible_roots_since_collect += 1;
-    if (gc.possible_roots_since_collect >= gc.collect_threshold) {
+    // Faz MN.4/5.4: havuzlanmış (`state.worker_pool != null`) bir `RuntimeState`de
+    // OTOMATİK eşik-tetiklemesi KOŞULSUZ devre dışı — `nox_cycle_collect`in mark/
+    // scan geçişi BAŞKA nesnelerin refcount'unu PLAIN (atomik OLMAYAN) okur/yazar,
+    // BAŞKA bir worker'ın O ANDA ATOMİK retain/predecrement ETTİĞİ bir nesneyle
+    // YARIŞABİLİR (bkz. MN.3b'de GERÇEKTEN SIGBUS İLE ÇÖKTÜĞÜ doğrulanan hata).
+    // Olası kökler HÂLÂ KAYDEDİLİR (yukarısı), sadece OTOMATİK collect ASLA
+    // TETİKLENMEZ — GERÇEK collect çağrısı MN.6 (kooperatif STW) gelene KADAR
+    // SADECE tek-worker'lı/havuzsuz `RuntimeState`lerde gerçekleşir.
+    if (state.worker_pool == null and gc.possible_roots_since_collect >= gc.collect_threshold) {
         collectLocked(rt, state, gc);
     }
 }

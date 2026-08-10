@@ -467,7 +467,8 @@ pub fn genDictGet(self: *Codegen, obj_expr: ast.Expr, obj: Value, key_expr: ast.
     const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
 
     const contains_t = try self.newTemp();
-    try self.qbeCall(.{ .name = contains_t, .ty = .w }, "$nox_dict_contains", &.{ .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
+    // Faz MN.4: bkz. `calls.zig`nin `genDictMethod`indeki AYNI notu.
+    try self.qbeCall(.{ .name = contains_t, .ty = .w }, "$nox_dict_contains", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
     const err_label = try self.newLabel("dict_get_err");
     const ok_label = try self.newLabel("dict_get_ok");
     try self.qbeJnz(contains_t, ok_label, err_label);

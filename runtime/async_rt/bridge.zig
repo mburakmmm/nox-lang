@@ -34,6 +34,7 @@ const asap = @import("../alloc/asap.zig");
 const fiber_mod = @import("fiber.zig");
 const scheduler_mod = @import("scheduler.zig");
 const channel_mod = @import("channel.zig");
+const worker_pool_mod = @import("worker_pool.zig");
 
 const TaskI64 = scheduler_mod.Task(i64);
 const ChannelI64 = channel_mod.Channel(i64);
@@ -91,6 +92,30 @@ pub export fn nox_async_init(rt: ?*anyopaque) void {
     // `null` dönmesi kadar SON DERECE nadir bir kaynak tükenmesi senaryosudur
     // (bkz. `markReady`in AYNI gerekçeyle kullandığı `@panic`).
     g_scheduler = scheduler_mod.Scheduler.init(allocatorFromRt(rt)) catch @panic("async zamanlayici baslatilamadi (kqueue)");
+
+    // Faz MN.4/5: `rt`nin `RuntimeState.worker_pool`u SET İSE (bkz.
+    // `worker_pool.zig`nin `WorkerPool.create`ı) bu OS iş parçacığı bir
+    // havuzun parçasıdır — `g_scheduler`ı `asap.currentWorkerSlot()` İLE
+    // belirlenen KENDİ slotuna BAĞLAR. `worker_pool == null` İKEN
+    // (BUGÜNKÜ, paylaşımsız kullanım) BU BLOK HİÇ ÇALIŞMAZ, davranış
+    // BİREBİR AYNI kalır. Faz MN.4/5.8: `scheduler.zig`nin `attachToPool`ı
+    // ARTIK `worker_pool.Worker`nin TAM TİPİNİ ALMAZ (bkz. onun belge
+    // notu, "runtime/alloc/den bağımsız kalma" sınırı) — SADECE İLKEL
+    // (`WorkerPool`den ÇIKARILAN) değerlerle çağrılır; BU çıkarma İŞİ
+    // BURADA (HEM `scheduler_mod` HEM `worker_pool_mod`u SERBESTÇE
+    // ithal edebilen `bridge.zig`de) yapılır.
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));
+    if (state.worker_pool) |wp_ptr| {
+        const pool: *worker_pool_mod.WorkerPool = @ptrCast(@alignCast(wp_ptr));
+        const slot = asap.currentWorkerSlot();
+        g_scheduler.?.attachToPool(
+            slot,
+            pool.deque_list,
+            pool.pool_live_count,
+            pool.pool_waiting_on_io,
+            pool.pool_idle_workers,
+        ) catch {};
+    }
 }
 
 /// `Scheduler`in KENDİ iç durumunu (hazır kuyruğu) serbest bırakır — codegen,
@@ -111,6 +136,12 @@ pub export fn nox_async_deinit(rt: ?*anyopaque) void {
 /// sitesi için ürettiği, argümanları paketten çıkarıp gerçek `async def`
 /// fonksiyonunu çağıran bir sarmalayıcıdır (bkz. codegen.zig, `genSpawnExpr`).
 pub export fn nox_async_spawn(rt: ?*anyopaque, func: *const fn (*anyopaque) callconv(.c) i64, arg: ?*anyopaque) ?*anyopaque {
+    // Faz MN.4/5.7: `rt` BURADA KULLANILMIYOR — havuzlu/çalma-farkındalı
+    // yönlendirme (yeni fiber'ı `markReady` YERİNE `Worker.deque`ye PUSH
+    // etmek) `scheduler_mod.spawn`ın KENDİSİNDE, `scheduler.worker`
+    // ÜZERİNDEN yapılıyor (bkz. onun belge notu) — `g_scheduler` `nox_
+    // async_init`de ZATEN `attachToPool` İLE bağlandığından BURADA AYRICA
+    // `rt`ye bakmaya GEREK YOK.
     _ = rt;
     const task = scheduler_mod.spawn(&g_scheduler.?, i64, func, arg.?) catch @panic("OOM: spawn");
     return task;

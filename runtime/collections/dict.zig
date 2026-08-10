@@ -148,28 +148,16 @@ fn keysEqual(key_is_str: bool, a: i64, b: i64) bool {
 /// shims/os.zig`nin belge notu), macOS'un libc'sinin ZATEN GÜVENLE
 /// bağladığı ham `std.c.arc4random_buf`ı (OS'un GÜVENLİ rastgelelik
 /// kaynağına dayanır) DOĞRUDAN kullanılır.
-/// Faz MN.2 (bkz. proje planı "LLVM-only atomic ARC + M:N zamanlayıcı"):
-/// BİLİNÇLİ olarak `Fiber`e TAŞINMADI — plan bu alanı fiber-affine
-/// depolamaya taşınacak 7 global'DEN biri OLARAK listeler, ama uygulama
-/// SIRASINDA GERÇEK bir tasarım hatası TESPİT EDİLDİ: `nox_dict_contains`
-/// (aşağıya bkz.) `rt` ALMAZ (`nox_dict_len` de öyle) — bu YÜZDEN
-/// `hashSeed()` `rt`ye ERİŞEMEZ, `RuntimeState`e taşınması `nox_dict_
-/// contains`ın ABI'sini (VE onu çağıran codegen sitesini) DEĞİŞTİRMEYİ
-/// GEREKTİRİRDİ (MN.2'nin kapsamı DIŞI — codegen'e dokunmayan DAR bir
-/// refactor). DAHA KÖTÜSÜ: `Fiber`e taşımak (planın YAZILI HALİ) YENİ BİR
-/// GERÇEK HATA yaratırdı — AYNI dict, AYNI OS iş parçacığında farklı İKİ
-/// fiber tarafından (ör. bir kanal üzerinden AKTARILDIKTAN sonra)
-/// dokunulursa, `insert` VE `lookup` FARKLI seed'lerle FARKLI Wyhash
-/// değerleri üretir — VAR OLAN bir anahtar SESSİZCE "bulunamadı"
-/// görünürdü (BUGÜN, threadlocal'ın TEK OS iş parçacığına bağlı olduğu
-/// M:1 modelinde, TÜM fiber'lar AYNI `g_hash_seed`i PAYLAŞTIĞINDAN bu
-/// sorun YOKTUR). Bu YÜZDEN `threadlocal` OLARAK KALIR — BUGÜNKÜ
-/// davranışla SIFIR regresyon, ama GERÇEK çapraz-iş-parçacığı fiber
-/// taşınması (Faz MN.4+) etkinleştirildiğinde BU alanın `RuntimeState`e
-/// taşınması (VE `nox_dict_contains`ın `rt` ALMASI) GEREKECEKTİR — bkz.
-/// proje planı, Faz MN.3b/MN.4 notları.
-threadlocal var g_hash_seed: u64 = 0;
-threadlocal var g_hash_seed_init: bool = false;
+/// Faz MN.2'de BİLİNÇLİ olarak `Fiber`e TAŞINMAMIŞTI (`nox_dict_contains`
+/// `rt` ALMADIĞINDAN — bkz. git geçmişi) — Faz MN.4'te GERÇEK çapraz-
+/// iş-parçacığı fiber göçü (work-stealing) AÇILDIĞINDAN, artık `Runtime
+/// State`e (`asap.zig`nin `dict_hash_seed`/`dict_hash_seed_init`
+/// alanları) TAŞINDI: bir `Dict`, HANGİ worker'a TAŞINIRSA taşınsın AYNI
+/// `rt`ye (VE dolayısıyla AYNI tohuma) BAĞLI KALDIĞINDAN, insert/lookup
+/// ARASINDA FARKLI worker'ların FARKLI tohumlar KULLANMASI (`Fiber`e
+/// taşınsaydı OLACAK hata) İMKANSIZ hale gelir. Bu, `nox_dict_contains`ın
+/// ABI'sine (`rt` parametresi EKLENDİ) VE onu çağıran codegen sitesine
+/// dokunan, Faz MN.4'ün İLK GERÇEK codegen/checker DEĞİŞİKLİĞİDİR.
 
 /// Faz LL.4 (bkz. nox-teknik-spesifikasyon.md §3.71): `std.c.arc4random_buf`
 /// Windows'ta `.windows => {}` İLE (`.linux`nin `fstat`i GİBİ) void'dir —
@@ -185,14 +173,15 @@ fn secureRandomBuf(buf: []u8) void {
 }
 extern "advapi32" fn SystemFunction036(buf: [*]u8, len: u32) callconv(.c) u8;
 
-fn hashSeed() u64 {
-    if (!g_hash_seed_init) {
+fn hashSeed(rt: ?*anyopaque) u64 {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));
+    if (!state.dict_hash_seed_init) {
         var buf: [8]u8 = undefined;
         secureRandomBuf(&buf);
-        g_hash_seed = std.mem.readInt(u64, &buf, .little);
-        g_hash_seed_init = true;
+        state.dict_hash_seed = std.mem.readInt(u64, &buf, .little);
+        state.dict_hash_seed_init = true;
     }
-    return g_hash_seed;
+    return state.dict_hash_seed;
 }
 
 /// `index`in hash tablosu Context'i — `key_is_str` ÇALIŞMA ZAMANINDA
@@ -200,15 +189,17 @@ fn hashSeed() u64 {
 /// KULLANILAMAZ, bu yüzden HER çağrıda (`getContext`/`putContext`/
 /// `removeContext`) `Dict.key_is_str`den türetilen bir örneği argüman
 /// olarak GEÇİRİLİR (`std.HashMapUnmanaged`in *Context varyantları TAM
-/// BUNUN İÇİN var).
+/// BUNUN İÇİN var). Faz MN.4: `rt` alanı `hashSeed`in `RuntimeState`e
+/// taşınmasıyla EKLENDİ (bkz. `hashSeed`in belge notu).
 const StrOrIntContext = struct {
     key_is_str: bool,
+    rt: ?*anyopaque,
 
     pub fn hash(self: @This(), key: i64) u64 {
-        if (!self.key_is_str) return std.hash.Wyhash.hash(hashSeed(), std.mem.asBytes(&key));
+        if (!self.key_is_str) return std.hash.Wyhash.hash(hashSeed(self.rt), std.mem.asBytes(&key));
         if (key == 0) return 0;
         const p: [*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(key)));
-        return std.hash.Wyhash.hash(hashSeed(), std.mem.sliceTo(p, 0));
+        return std.hash.Wyhash.hash(hashSeed(self.rt), std.mem.sliceTo(p, 0));
     }
 
     pub fn eql(self: @This(), a: i64, b: i64) bool {
@@ -253,9 +244,9 @@ fn findIndexLinear(d: *Dict, key: i64) ?usize {
     return null;
 }
 
-fn findIndex(d: *Dict, key: i64) ?usize {
+fn findIndex(d: *Dict, key: i64, rt: ?*anyopaque) ?usize {
     if (!d.index_built) return findIndexLinear(d, key);
-    return d.index.getContext(key, .{ .key_is_str = d.key_is_str });
+    return d.index.getContext(key, .{ .key_is_str = d.key_is_str, .rt = rt });
 }
 
 /// `entries`i (TÜMÜNÜ, MEVCUT haliyle) `index`e AKTARIR VE `index_built`i
@@ -264,8 +255,8 @@ fn findIndex(d: *Dict, key: i64) ?usize {
 /// `false` KALIR — `findIndex`/`nox_dict_set` bu durumda DOĞRUSAL taramaya
 /// GÜVENLE geri düşmeye DEVAM eder (yalnızca performans kaybı, DOĞRULUK
 /// ETKİLENMEZ).
-fn buildIndex(d: *Dict, allocator: std.mem.Allocator) void {
-    const ctx: StrOrIntContext = .{ .key_is_str = d.key_is_str };
+fn buildIndex(d: *Dict, allocator: std.mem.Allocator, rt: ?*anyopaque) void {
+    const ctx: StrOrIntContext = .{ .key_is_str = d.key_is_str, .rt = rt };
     for (d.entries.items, 0..) |e, i| {
         d.index.putContext(allocator, e.key, i, ctx) catch return;
     }
@@ -289,8 +280,8 @@ pub export fn nox_dict_new(rt: ?*anyopaque, key_is_str: i32) ?*anyopaque {
 pub export fn nox_dict_set(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32, key: i64, value: i64) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const d: *Dict = @ptrCast(@alignCast(dp orelse return));
-    const ctx: StrOrIntContext = .{ .key_is_str = key_is_str != 0 };
-    if (findIndex(d, key)) |i| {
+    const ctx: StrOrIntContext = .{ .key_is_str = key_is_str != 0, .rt = rt };
+    if (findIndex(d, key, rt)) |i| {
         const old = d.entries.items[i];
         if (value_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(old.value));
         if (value_is_class != 0) releaseClassPayload(rt, old.value);
@@ -315,7 +306,7 @@ pub export fn nox_dict_set(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, va
         } else if (d.entries.items.len > SMALL_MAP_THRESHOLD) {
             // Faz HH.5: eşik AŞILDI — `index` TEK SEFERLİK inşa edilir,
             // BUNDAN SONRAKİ TÜM aramalar O(1) hash'e geçer.
-            buildIndex(d, state.allocator());
+            buildIndex(d, state.allocator(), rt);
         }
     }
 }
@@ -325,17 +316,19 @@ pub export fn nox_dict_set(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, va
 /// semantik). Anahtar YOKSA `0` döner (v1 kapsamı: Python'ın `KeyError`ı
 /// YOK — bkz. nox-teknik-spesifikasyon.md §3.28, bilinçli sınırlama).
 pub export fn nox_dict_get(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key: i64) i64 {
-    _ = rt;
     _ = key_is_str;
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
-    if (findIndex(d, key)) |i| return d.entries.items[i].value;
+    if (findIndex(d, key, rt)) |i| return d.entries.items[i].value;
     return 0;
 }
 
-pub export fn nox_dict_contains(dp: ?*anyopaque, key_is_str: i32, key: i64) i32 {
+/// Faz MN.4: `rt` parametresi EKLENDİ (bkz. `hashSeed`in belge notu) —
+/// `nox_dict_len`in AKSİNE (hiç hash'lemez, `rt`ye ihtiyacı YOK, DEĞİŞMEDİ)
+/// BU fonksiyon `findIndex` ÜZERİNDEN hash'e İHTİYAÇ DUYABİLİR.
+pub export fn nox_dict_contains(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key: i64) i32 {
     _ = key_is_str;
     const d: *Dict = @ptrCast(@alignCast(dp orelse return 0));
-    return if (findIndex(d, key) != null) 1 else 0;
+    return if (findIndex(d, key, rt) != null) 1 else 0;
 }
 
 pub export fn nox_dict_len(dp: ?*anyopaque) i64 {
@@ -426,8 +419,8 @@ test "nox_dict_new/set/get/contains/len/destroy — int anahtar/değer" {
     try std.testing.expectEqual(@as(i64, 100), nox_dict_get(rt, d, 0, 1));
     try std.testing.expectEqual(@as(i64, 200), nox_dict_get(rt, d, 0, 2));
     try std.testing.expectEqual(@as(i64, 0), nox_dict_get(rt, d, 0, 999));
-    try std.testing.expectEqual(@as(i32, 1), nox_dict_contains(d, 0, 1));
-    try std.testing.expectEqual(@as(i32, 0), nox_dict_contains(d, 0, 999));
+    try std.testing.expectEqual(@as(i32, 1), nox_dict_contains(rt, d, 0, 1));
+    try std.testing.expectEqual(@as(i32, 0), nox_dict_contains(rt, d, 0, 999));
     try std.testing.expectEqual(@as(i64, 2), nox_dict_len(d));
 
     // Üzerine yazma: aynı anahtar, YENİ değer.
@@ -517,8 +510,8 @@ test "nox_dict — SMALL_MAP_THRESHOLD asilana kadar dogrusal tarama, sonra inde
     try std.testing.expect(!dict_ptr.index_built);
     // Doğrusal tarama yolu HÂLÂ doğru sonuç vermeli.
     try std.testing.expectEqual(@as(i64, 30), nox_dict_get(rt, d, 0, 3));
-    try std.testing.expectEqual(@as(i32, 1), nox_dict_contains(d, 0, 3));
-    try std.testing.expectEqual(@as(i32, 0), nox_dict_contains(d, 0, 999));
+    try std.testing.expectEqual(@as(i32, 1), nox_dict_contains(rt, d, 0, 3));
+    try std.testing.expectEqual(@as(i32, 0), nox_dict_contains(rt, d, 0, 999));
 
     // Üzerine yazma (HÂLÂ doğrusal modda) — index güncellemesi GEREKMEZ,
     // yalnızca `entries` içindeki slot değişir.
@@ -629,9 +622,11 @@ test "Faz III.6: nox_dict_keys str anahtarlari retain eder — dict VE list bagi
 // doğrular. `std.c.arc4random_buf`nin GERÇEK entropi KALİTESİ bu testin
 // KAPSAMI DIŞINDA (OS'un KENDİ sorumluluğu) — yalnızca "artık sabit
 // SIFIR/bilinen bir değer DEĞİL" doğrulanır.
-test "Güvenlik M-3: hashSeed sabit 0 DEĞİL VE aynı iş parçacığı içinde TUTARLI (memoized)" {
-    const s1 = hashSeed();
-    const s2 = hashSeed();
+test "Güvenlik M-3: hashSeed sabit 0 DEĞİL VE aynı rt içinde TUTARLI (memoized)" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const s1 = hashSeed(rt);
+    const s2 = hashSeed(rt);
     try std.testing.expectEqual(s1, s2);
     try std.testing.expect(s1 != 0);
 }

@@ -23,15 +23,48 @@
 //! `ArrayListUnmanaged`) eklenir; bir sonraki `spawn` önce havuzu dener.
 
 const std = @import("std");
+const builtin = @import("builtin");
+const posix = std.posix;
 const fiber_mod = @import("fiber.zig");
 const Fiber = fiber_mod.Fiber;
 const Context = fiber_mod.Context;
 const io_reactor = @import("io_reactor.zig");
 const IoReactor = io_reactor.IoReactor;
+/// Faz MN.4/5.8: `SpinLock`in TEK doğruluk kaynağı `runtime/async_rt/
+/// spinlock.zig`ye taşındı (bkz. onun belge notu) — `runtime/alloc/asap.zig`
+/// BURADAN KESİNLİKLE İTHAL EDİLEMEZ: `fiber.zig`/`scheduler.zig`/
+/// `channel.zig`/`io.zig` BİLİNÇLİ olarak `runtime/alloc/`den (dolayısıyla
+/// `runtime/stdlib_shims`den) BAĞIMSIZ kalacak şekilde tasarlanmıştır
+/// (bkz. `build.zig`nin `async-rt-test` adımı — Windows CI'ın kullandığı,
+/// `noxrt`in TAMAMINI BEKLEMEDEN SADECE bu katmanı doğrulayan standalone
+/// hedef, VE `scheduler_test`/`channel_test`in `runtime/async_rt/
+/// scheduler.zig`yi KENDİ modül KÖKÜ olarak kullanması).
+const SpinLock = @import("spinlock.zig").SpinLock;
+/// Faz MN.4/5.8: `chase_lev_deque.zig` (MN.3a) TAMAMEN bağımsız (SADECE
+/// std/builtin) — `runtime/async_rt/`nin AYNI "runtime/alloc/den bağımsız"
+/// sınırı İçİNDE GÜVENLE İTHAL EDİLEBİLİR. **`worker_pool.zig` İSE ASLA
+/// İTHAL EDİLEMEZ** — `asap.zig`ye (dolayısıyla `runtime/alloc/`e)
+/// bağımlı OLDUĞUNDAN, `Scheduler`nin havuz-farkındalılığı BURADA
+/// `worker_pool.Worker`/`WorkerPool`nin TAM TİPLERİNE DEĞİL, SADECE
+/// bu dosyanın (`own_slot`/`sibling_deques`/`pool_*` alanları — aşağıya
+/// bkz.) TANIMLADIĞI İLKEL (std-only) tiplere DAYANIR — `bridge.zig`nin
+/// `nox_async_init`i (HEM `scheduler.zig`yi HEM `worker_pool.zig`yi
+/// SINIRSIZ ithal edebilen TAM `noxrt_mod` bağlamında) `WorkerPool`dan
+/// bu İLKEL değerleri ÇIKARIP `attachToPool`e GEÇİRİR (bkz. onun belge
+/// notu) — İKİ dosya birbirini HİÇ TANIMAZ.
+const chase_lev_deque = @import("chase_lev_deque.zig");
+const Deque = chase_lev_deque.ChaseLevDeque(*Fiber, 256);
 
 pub const Scheduler = struct {
     allocator: std.mem.Allocator,
     ready: std.ArrayListUnmanaged(*Fiber) = .empty,
+    /// Faz MN.4/5: `ready`yi korur — HEM YEREL (worker KENDİ fiber'ını
+    /// uyandırır, ÇOK SIK) HEM YABANCI (havuzdaki BAŞKA bir worker `task.
+    /// scheduler` ÜZERİNDEN bir waiter'ı uyandırır, NADİR) yol AYNI, TEK
+    /// kilidi kullanır — bkz. `markReady`/`run`. Çekişmesiz `cmpxchgWeak`
+    /// UCUZ olduğundan havuzsuz/tek-iş-parçacıklı kullanımda da HER ZAMAN
+    /// AKTİF (dallanma YOK, TEK kod yolu HER ZAMAN doğru).
+    ready_lock: SpinLock = .{},
     /// Zamanlayıcı döngüsünün (fiber DIŞI, "kök") bağlamı — bir fiber'a
     /// `resume_` edildiğinde buraya "geri dönülür".
     root_ctx: Context = .{},
@@ -51,9 +84,45 @@ pub const Scheduler = struct {
     /// boş VE `waiting_on_io > 0` İSE bu bir deadlock DEĞİLDİR, `reactor.poll`
     /// çağrılıp beklenir (bkz. `run`).
     waiting_on_io: usize = 0,
+    /// Faz MN.4/5: bu zamanlayıcının `init()` SIRASINDA kaydedilen sahibi —
+    /// `markReady`nin ÇAĞIRAN iş parçacığının KENDİ zamanlayıcısı MI
+    /// (yerel, ÇOK SIK) YOKSA YABANCI (havuzdaki BAŞKA bir worker, NADİR)
+    /// MI olduğunu ayırt etmesi İçİn — SADECE `worker != null` İKEN
+    /// anlamlıdır (bkz. `markReady`).
+    owner_tid: std.Thread.Id = undefined,
+    /// Faz MN.4/5.8: havuzdaki KENDİ konumu (`attachToPool`in `own_slot`
+    /// parametresi) — SADECE `pool_live_count != null` İKEN anlamlıdır.
+    own_slot: usize = 0,
+    /// Faz MN.4/5.8: havuzdaki TÜM worker'ların deque'lerine (KENDİSİ
+    /// DAHİL, `own_slot` İNDEKSİNDE) İşaretçilerin dizisi — `bridge.zig`
+    /// TARAFINDAN `WorkerPool.deque_list`den GEÇİRİLİR (bkz. modül üstü
+    /// not). BOŞ dizi (`&.{}`) İSE havuzsuz kullanım.
+    sibling_deques: []const *Deque = &.{},
+    /// Faz MN.4/5.8: havuz-çapında YAKLAŞIK deadlock tespiti İçİn ÜÇ
+    /// PAYLAŞILAN atomik sayaca DOĞRUDAN işaretçiler (bkz. `asap.
+    /// RuntimeState`nin `pool_live_count`/`pool_waiting_on_io`/
+    /// `pool_idle_workers`ı — `bridge.zig` `WorkerPool` ÜZERİNDEN BUNLARI
+    /// ÇIKARIP GEÇİRİR). `null` İSE (BUGÜNKÜ, paylaşımsız kullanım)
+    /// `markReady`/`run` DAVRANIŞI BİREBİR DEĞİŞMEZ — bu ÜÇ alan "havuzlu
+    /// muyum" sorusunun TEK doğruluk kaynağıdır (`pool_live_count != null`).
+    pool_live_count: ?*std.atomic.Value(usize) = null,
+    pool_waiting_on_io: ?*std.atomic.Value(usize) = null,
+    pool_idle_workers: ?*std.atomic.Value(usize) = null,
+    /// Faz MN.4/5: çapraz-worker uyandırma İçİn self-pipe ÇİFTİ — SADECE
+    /// `attachToPool` çağrıldığında (havuzlu kullanım) kurulur, AKSİ HALDE
+    /// `null` kalır.
+    wake_read_fd: ?posix.fd_t = null,
+    wake_write_fd: ?posix.fd_t = null,
+    /// Wake-fd'nin reaktöre KAYDI İçİn sahte, ASLA GERÇEKTEN resume EDİLMEYEN
+    /// bir "fiber" yer tutucusu — `markReady` bunun ADRESİNİ gördüğünde hazır
+    /// kuyruğa EKLEMEK yerine SADECE byte'ı tüketip fd'yi YENİDEN kaydeder
+    /// (bkz. `armWakeFd`/`markReady`). İÇERİĞİ HİÇBİR ZAMAN okunmaz/yazılmaz
+    /// (`undefined` GÜVENLİDİR) — SADECE ADRESİ bir kimlik olarak kullanılır.
+    wake_sentinel: Fiber = undefined,
+    wake_ctx: io_reactor.WaitCtx = undefined,
 
     pub fn init(allocator: std.mem.Allocator) !Scheduler {
-        return .{ .allocator = allocator, .reactor = try IoReactor.init() };
+        return .{ .allocator = allocator, .reactor = try IoReactor.init(), .owner_tid = std.Thread.getCurrentId() };
     }
 
     pub fn deinit(self: *Scheduler) void {
@@ -61,6 +130,45 @@ pub const Scheduler = struct {
         self.ready.deinit(self.allocator);
         for (self.stack_pool.items) |stack| self.allocator.free(stack);
         self.stack_pool.deinit(self.allocator);
+        if (self.wake_read_fd) |fd| closeSelfPipeFd(fd);
+        if (self.wake_write_fd) |fd| closeSelfPipeFd(fd);
+    }
+
+    /// Faz MN.4/5: bu zamanlayıcıyı bir `WorkerPool`e BAĞLAR — `bridge.zig`nin
+    /// `nox_async_init`i, `rt`nin `RuntimeState.worker_pool`u SET İSE bunu
+    /// OTOMATİK çağırır (bkz. onun belge notu). Self-pipe kurar VE HEMEN
+    /// reaktöre kaydeder (`armWakeFd`) — `run`, İLK `reactor.poll()`
+    /// çağrısından İTİBAREN çapraz-worker uyandırmaya HAZIR olur.
+    pub fn attachToPool(
+        self: *Scheduler,
+        own_slot: usize,
+        sibling_deques: []const *Deque,
+        pool_live_count: *std.atomic.Value(usize),
+        pool_waiting_on_io: *std.atomic.Value(usize),
+        pool_idle_workers: *std.atomic.Value(usize),
+    ) !void {
+        self.own_slot = own_slot;
+        self.sibling_deques = sibling_deques;
+        self.pool_live_count = pool_live_count;
+        self.pool_waiting_on_io = pool_waiting_on_io;
+        self.pool_idle_workers = pool_idle_workers;
+        const fds = try makeSelfPipe();
+        self.wake_read_fd = fds[0];
+        self.wake_write_fd = fds[1];
+        self.armWakeFd();
+    }
+
+    /// Faz MN.4/5.8: `sibling_deques[own_slot]` — BU worker'ın KENDİ
+    /// deque'i (spawn/pop İçİn).
+    fn ownDeque(self: *Scheduler) ?*Deque {
+        if (self.sibling_deques.len == 0) return null;
+        return self.sibling_deques[self.own_slot];
+    }
+
+    fn armWakeFd(self: *Scheduler) void {
+        const fd = self.wake_read_fd orelse return;
+        self.wake_ctx = .{ .fiber = &self.wake_sentinel };
+        self.reactor.register(fd, .read, &self.wake_ctx) catch {};
     }
 
     /// Havuzdan bir yığın alır (varsa); yoksa genel ayırıcıdan taze tahsis eder.
@@ -85,9 +193,28 @@ pub const Scheduler = struct {
     }
 
     /// Bir fiber'ı hazır kuyruğuna ekler — HEM ilk `spawn`da HEM bir görev
-    /// tamamlanıp bekleyenini uyandırırken kullanılır.
+    /// tamamlanıp bekleyenini uyandırırken kullanılır. Faz MN.4/5: ARTIK
+    /// `ready_lock` İLE korunuyor VE `wake_sentinel`i (bkz. onun belge
+    /// notu) ÖZEL olarak ele alıyor; ÇAĞIRAN iş parçacığı bu zamanlayıcının
+    /// SAHİBİ DEĞİLSE (havuzdaki YABANCI bir worker — bkz. `owner_tid`)
+    /// kilitli `append` SONRASI wake-fd'ye bir bayt yazarak hedef worker'ı
+    /// (`reactor.poll()`da BLOKE olmuş olsa BİLE) uyandırır.
     pub fn markReady(self: *Scheduler, fiber: *Fiber) void {
+        if (fiber == &self.wake_sentinel) {
+            // Wake-fd ateşledi — GERÇEK bir fiber DEĞİL, sadece byte'ı
+            // tüket VE reaktöre YENİDEN kaydol (EV_ONESHOT/EPOLLONESHOT
+            // her ateşlemeden sonra SÖKÜLÜR/silahsızlanır).
+            if (self.wake_read_fd) |fd| drainWakeFd(fd);
+            self.armWakeFd();
+            return;
+        }
+        const is_foreign = self.pool_live_count != null and std.Thread.getCurrentId() != self.owner_tid;
+        self.ready_lock.lock();
         self.ready.append(self.allocator, fiber) catch @panic("OOM: zamanlayıcı hazır kuyruğu büyütülemedi");
+        self.ready_lock.unlock();
+        if (is_foreign) {
+            if (self.wake_write_fd) |fd| signalWakeFd(fd);
+        }
     }
 
     /// ŞU AN çalışan fiber tarafından çağrılır (yalnızca fiber bağlamında
@@ -113,8 +240,10 @@ pub const Scheduler = struct {
         var ctx: io_reactor.WaitCtx = .{ .fiber = fiber };
         self.reactor.register(fd, filter, &ctx) catch @panic("kqueue register basarisiz");
         self.waiting_on_io += 1;
+        if (self.pool_waiting_on_io) |pwio| _ = pwio.fetchAdd(1, .monotonic);
         fiber.yield();
         self.waiting_on_io -= 1;
+        if (self.pool_waiting_on_io) |pwio| _ = pwio.fetchSub(1, .monotonic);
     }
 
     /// Faz HH.7 (bkz. nox-teknik-spesifikasyon.md §3.68): `suspendForIo`
@@ -130,9 +259,68 @@ pub const Scheduler = struct {
         var ctx: io_reactor.WaitCtx = .{ .fiber = fiber };
         self.reactor.registerWithTimeout(fd, filter, timeout_ms, &ctx) catch @panic("kqueue register basarisiz");
         self.waiting_on_io += 1;
+        if (self.pool_waiting_on_io) |pwio| _ = pwio.fetchAdd(1, .monotonic);
         fiber.yield();
         self.waiting_on_io -= 1;
+        if (self.pool_waiting_on_io) |pwio| _ = pwio.fetchSub(1, .monotonic);
         return ctx.result;
+    }
+
+    /// Faz MN.4: KENDİ deque'i BOŞ İKEN kardeşlerden (round-robin, KENDİ
+    /// slotundan HEMEN SONRAKİNDEN başlayarak) TEK bir fiber çalmayı
+    /// DENER — Cilk'in klasik "SADECE spawn edilmiş, henüz BAŞLAMAMIŞ
+    /// görevler çalınabilir" basitleştirmesi (bkz. proje planı, tasarım
+    /// #1): bir fiber BİR KEZ çalınıp ÇALIŞTIRILDIKTAN SONRA KALICI olarak
+    /// bu worker'a SABİTLENİR (`markReady`nin `owner_tid` kontrolü bunu
+    /// doğal olarak sağlar — bu fonksiyon SADECE İLK, hazır-kuyruğa HİÇ
+    /// GİRMEMİŞ fiber'ları çalar).
+    fn tryStealFromSiblings(self: *Scheduler) ?*Fiber {
+        const siblings = self.sibling_deques;
+        var i: usize = 0;
+        while (i < siblings.len) : (i += 1) {
+            const idx = (self.own_slot + 1 + i) % siblings.len;
+            if (idx == self.own_slot) continue;
+            if (siblings[idx].steal()) |f| return f;
+        }
+        return null;
+    }
+
+    /// Faz MN.5: havuz-çapında YAKLAŞIK deadlock tespiti — bkz. proje
+    /// planı, tasarım #4 ("Go'nun checkdead()'inin BASİTLEŞTİRİLMİŞ hali,
+    /// TAM bir dağıtık-sonlanma algoritması DEĞİL"). Bu worker'ın KENDİ
+    /// hazır kuyruğu+deque'i BOŞ VE kardeşlerden çalma BAŞARISIZ OLDUĞUNDA
+    /// çağrılır. **KRİTİK doğruluk noktası**: `pool_live_count > 0` TEK
+    /// BAŞINA deadlock'a İŞARET ETMEZ — BAŞKA bir worker HÂLÂ MEŞGUL
+    /// olabilir (TAMAMEN NORMAL, dengesiz bir iş yükü) — bu YÜZDEN ÖNCE
+    /// `self`i `pool_idle_workers`e SAYAR, SONRA SABİT KÜÇÜK bir sayıda
+    /// KISA bekleme+yeniden-çalma-denemesi+yeniden-kontrol turu (ANLIK
+    /// bir yarışı — ör. BAŞKA bir worker'ın TAM O ANDA bir `spawn` yapması
+    /// — yanlış-pozitife çevirmemek İçİn) SONUNDA `pool_idle_workers ==
+    /// (havuzdaki TOPLAM worker sayısı)` **VE** `pool_live_count > 0`
+    /// **VE** `pool_waiting_on_io == 0` İSE deadlock İLAN eder — yani
+    /// SADECE TÜM worker'lar AYNI ANDA boştaysa.
+    fn poolWideDeadlockCheck(self: *Scheduler) bool {
+        const n_workers = self.sibling_deques.len;
+        const live = self.pool_live_count.?;
+        const waiting_io = self.pool_waiting_on_io.?;
+        const idle = self.pool_idle_workers.?;
+        _ = idle.fetchAdd(1, .monotonic);
+        defer _ = idle.fetchSub(1, .monotonic);
+
+        var attempt: usize = 0;
+        while (attempt < 20) : (attempt += 1) {
+            sleepMs(1);
+            if (self.tryStealFromSiblings()) |f| {
+                self.markReady(f);
+                return false;
+            }
+            if (live.load(.monotonic) == 0) return false;
+            if (waiting_io.load(.monotonic) > 0) return false;
+            if (idle.load(.monotonic) < n_workers) return false;
+        }
+        return idle.load(.monotonic) >= n_workers and
+            live.load(.monotonic) > 0 and
+            waiting_io.load(.monotonic) == 0;
     }
 
     pub const RunError = error{Deadlock};
@@ -147,14 +335,14 @@ pub const Scheduler = struct {
     /// en az bir fiber'ı hazır kuyruğa geri koyar VE döngü DEVAM eder.
     pub fn run(self: *Scheduler) RunError!void {
         while (true) {
-            if (self.ready.items.len == 0) {
-                if (self.live_count == 0) return;
-                if (self.waiting_on_io > 0) {
-                    _ = self.reactor.poll(self) catch @panic("kqueue poll basarisiz");
-                    continue;
-                }
-                return error.Deadlock;
-            }
+            // Faz MN.4/5: `ready` ARTIK BİRDEN FAZLA iş parçacığı TARAFINDAN
+            // (yerel `run` döngüsü BURADA pop eder, YABANCI worker'lar
+            // `markReady` İLE append eder) dokunulabilir — okuma (uzunluk
+            // kontrolü) VE pop (`swapRemove`) AYNI `ready_lock` ALTINDA,
+            // TEK bir kritik bölümde yapılır (aksi halde BAŞKA bir iş
+            // parçacığının `append`i SIRASINDA `.items` alanını [ptr+len]
+            // KİLİTSİZ okumak GERÇEK bir veri yarışı olurdu).
+            self.ready_lock.lock();
             // `swapRemove(0)` — bkz. HTTP yüksek-eşzamanlılık araştırması
             // (benchmarks/RESULTS.md "Bölüm 3"): `orderedRemove(0)` HER
             // fiber devralımında hazır kuyruğun TÜM KALAN elemanlarını BİR
@@ -169,17 +357,130 @@ pub const Scheduler = struct {
             // `swapRemove(0)`, `orderedRemove(0)` İLE AYNI sonucu verir,
             // bu yüzden O test DEĞİŞMEDEN geçer); `swapRemove`, kaldırılan
             // elemanın YERİNE kuyruğun SON elemanını taşıyarak O(1) yapar.
-            const fiber = self.ready.swapRemove(0);
+            const maybe_fiber: ?*Fiber = if (self.ready.items.len > 0) self.ready.swapRemove(0) else null;
+            self.ready_lock.unlock();
+            const fiber = maybe_fiber orelse blk: {
+                // Faz MN.4: KENDİ hazır kuyruğu BOŞ — havuzluysa (bkz.
+                // `pool_live_count`) ÖNCE KENDİ deque'inden pop, SONRA
+                // kardeşlerden çal DENE (bkz. tasarım #1 — "spawn-anında
+                // çal, İLK-çalıştırmadan SONRA sabitlen").
+                if (self.pool_live_count) |plc| {
+                    if (self.ownDeque().?.popBottom()) |f| break :blk f;
+                    if (self.tryStealFromSiblings()) |f| break :blk f;
+                    // **KRİTİK**: BURADAN SONRA YEREL `self.live_count`/
+                    // `self.waiting_on_io` ARTIK GÜVENİLMEZ — bir fiber'ı
+                    // KİMİN `spawn` ETTİĞİ (o zamanlayıcının `live_count`unu
+                    // artırır) İLE KİMİN ÇALIŞTIRIP BİTİRDİĞİ (çalınmış
+                    // olabilir, BAŞKA bir worker) FARKLI olabileceğinden,
+                    // `self.live_count` BU worker'ın kendi spawn ETTİKLERİNİ
+                    // bile TAM YANSITMAZ (bkz. aşağıdaki tamamlanma dalı —
+                    // `pool_live_count` KULLANILIR, `self.live_count`e ASLA
+                    // dokunulmaz). Bu YÜZDEN pool-çapında karar SADECE
+                    // `pool_live_count`/`pool_waiting_on_io`ya bakar.
+                    if (plc.load(.monotonic) == 0) return;
+                    if (self.waiting_on_io > 0) {
+                        // KENDİ fiber'larımızdan biri G/Ç bekliyor —
+                        // reaktörümüzde bloklamak TAMAMEN GÜVENLİ (`suspendForIo`
+                        // ile AYNI zamanlayıcı KAYDOLUR/uyandırılır, bkz.
+                        // onun belge notu — bir fiber PINLENDIKTEN sonra
+                        // KENDİ G/Ç uyandırması HİÇ göç ETMEZ).
+                        _ = self.reactor.poll(self) catch @panic("kqueue poll basarisiz");
+                        continue;
+                    }
+                    if (self.poolWideDeadlockCheck()) return error.Deadlock;
+                    continue;
+                }
+                // Havuzsuz kullanım — BİREBİR ESKİ (Faz MN.4/5 ÖNCESİ)
+                // davranış, SIFIR değişiklik.
+                if (self.live_count == 0) return;
+                if (self.waiting_on_io > 0) {
+                    _ = self.reactor.poll(self) catch @panic("kqueue poll basarisiz");
+                    continue;
+                }
+                return error.Deadlock;
+            };
             self.current = fiber;
             fiber.resume_(&self.root_ctx);
             self.current = null;
             if (fiber.finished) {
-                self.live_count -= 1;
+                // Faz MN.4/5: havuzluysa `pool_live_count` (PAYLAŞILAN,
+                // HANGİ worker'ın azalttığından BAĞIMSIZ doğru) azaltılır —
+                // YEREL `self.live_count` KESİNLİKLE dokunulmaz (bkz.
+                // YUKARIDAKİ "KRİTİK" not — bu fiber BAŞKA bir worker
+                // TARAFINDAN spawn EDİLMİŞ olabilir, `self.live_count -= 1`
+                // O DURUMDA YANLIŞ worker'ın sayacını azaltır VE (0'dan
+                // başladığından) usize TAŞMASIYLA PANİKLER).
+                if (self.pool_live_count) |plc| {
+                    _ = plc.fetchSub(1, .monotonic);
+                } else {
+                    self.live_count -= 1;
+                }
                 self.releaseStack(fiber.destroyKeepStack());
             }
         }
     }
 };
+
+// ---- Faz MN.4/5: havuz-farkındalı self-pipe yardımcıları ----
+//
+// `http_client.zig`nin `makeSelfPipe`/`signalSelfPipe`/`readSelfPipe`si İLE
+// AYNI teknik (POSIX `pipe()` + tek-bayt `write`/`read`, `PIPE_BUF` altı
+// boyutlar İçİn POSIX'te ATOMİK, kilitsiz GÜVENLİ) — ama BURADA AYRICA
+// tanımlanır, DOĞRUDAN İTHAL EDİLMEZ: `http_client.zig`, `bridge.zig`yi
+// (O DA `scheduler.zig`yi) İTHAL EDER — `scheduler.zig`nin `http_client.
+// zig`yi DOĞRUDAN İTHAL ETMESİ döngüsel bir bağımlılık (Zig'de TEKNİK
+// olarak İZİN VERİLİR ama katman disiplinini BOZAR: `scheduler.zig`
+// `bridge.zig`nin ALTINDA yer alan bir katmandır) kurardı. Faz LL.2
+// (nox-teknik-spesifikasyon.md §3.71) Windows İçİn `pipe()` YERİNE bir
+// UDP-loopback ÇİFTİ KULLANIYORDU — BURADA Windows dalı BİLİNÇLİ olarak
+// UYGULANMADI (`makeSelfPipe` `error.Unsupported` döner): work-stealing
+// HENÜZ (bu fazda) GERÇEK bir Nox programından/codegen'den BAĞLANMADIĞINDAN
+// (bkz. proje planı, MN.7 kapsamı) Windows'ta test EDİLEMEZ durumda —
+// `attachToPool` başarısız OLURSA havuz KURULUMU (bkz. `worker_pool.zig`)
+// BUNU ele almalıdır.
+fn makeSelfPipe() ![2]posix.fd_t {
+    if (builtin.os.tag == .windows) return error.Unsupported;
+    var fds: [2]posix.fd_t = undefined;
+    if (std.c.pipe(&fds) != 0) return error.PipeFailed;
+    return fds;
+}
+
+fn closeSelfPipeFd(fd: posix.fd_t) void {
+    if (builtin.os.tag != .windows) _ = std.c.close(fd);
+}
+
+fn signalWakeFd(fd: posix.fd_t) void {
+    if (builtin.os.tag != .windows) {
+        var signal_byte = [_]u8{1};
+        _ = std.c.write(fd, &signal_byte, 1);
+    }
+}
+
+fn drainWakeFd(fd: posix.fd_t) void {
+    if (builtin.os.tag != .windows) {
+        var buf: [1]u8 = undefined;
+        _ = std.c.read(fd, &buf, 1);
+    }
+}
+
+/// Faz MN.5: `poolWideDeadlockCheck`nin KISA bekleme turları İçİn — `std.
+/// Thread`da bir `sleep` metodu YOK (Zig 0.16.0'da doğrulandı) — `runtime/
+/// stdlib_shims/time.zig`nin `nox_time_sleep_ms_raw`ı İLE AYNI desen
+/// (`std.c.nanosleep`/Windows'ta `kernel32.Sleep`).
+const WinSleep = if (builtin.os.tag == .windows) struct {
+    extern "kernel32" fn Sleep(ms: u32) callconv(.c) void;
+} else struct {};
+fn sleepMs(ms: i64) void {
+    if (builtin.os.tag == .windows) {
+        WinSleep.Sleep(@intCast(ms));
+        return;
+    }
+    const ts: std.c.timespec = .{
+        .sec = @divTrunc(ms, std.time.ms_per_s),
+        .nsec = @mod(ms, std.time.ms_per_s) * std.time.ns_per_ms,
+    };
+    _ = std.c.nanosleep(&ts, null);
+}
 
 /// `T` dönen bir `spawn`dan gelen tutamaç. `await_` çağrıldığında görev
 /// tamamlanmışsa sonucu HEMEN döner; değilse ÇAĞIRAN fiber'ı bu görevin
@@ -250,8 +551,30 @@ pub fn spawn(scheduler: *Scheduler, comptime T: type, func: *const fn (*anyopaqu
         scheduler.releaseStack(stack);
         return e;
     };
-    scheduler.live_count += 1;
-    scheduler.markReady(task.fiber);
+    // Faz MN.4/5: havuzluysa YEREL `live_count` YERİNE (bkz. `run()`nin
+    // tamamlanma dalındaki AYNI "KRİTİK" not) SADECE PAYLAŞILAN `pool_
+    // live_count` artırılır — bir fiber BAŞKA bir worker TARAFINDAN
+    // ÇALINIP TAMAMLANABİLECEĞİNDEN, YEREL `live_count` HİÇBİR ZAMAN
+    // doğru şekilde AZALTILAMAZ (kim spawn etti İLE kim bitirdi FARKLI
+    // olabilir) — bu YÜZDEN havuzlu modda BAŞTAN HİÇ artırılmaz.
+    if (scheduler.pool_live_count) |plc| {
+        _ = plc.fetchAdd(1, .monotonic);
+    } else {
+        scheduler.live_count += 1;
+    }
+    // Faz MN.4: havuzluysa (bkz. `scheduler.pool_live_count`) YENİ fiber
+    // `markReady` YERİNE KENDİ deque'ine PUSH edilir — "spawn-anında çal,
+    // İLK-çalıştırmadan SONRA sabitlen" modeli (bkz. proje planı, tasarım
+    // #1) — böylece `bridge.zig`nin `nox_async_spawn`ı (BU fonksiyona
+    // DELEGE eder) AYRICA bir değişiklik GEREKTİRMEZ. Deque DOLUYSA (ÇOK
+    // nadir, 256 kapasiteli) `markReady`e GERİ DÜŞÜLÜR — davranışsal
+    // olarak GÜVENLİ, SADECE çalınamaz hale gelir, YEREL çalışmaya devam
+    // eder.
+    if (scheduler.ownDeque()) |d| {
+        d.pushBottom(task.fiber) catch scheduler.markReady(task.fiber);
+    } else {
+        scheduler.markReady(task.fiber);
+    }
     return task;
 }
 

@@ -92,19 +92,15 @@ pub const OwnerPool = struct {
 /// AYNI bu tipi paylaşır. `std.Thread.Mutex` bu Zig sürümünde YOK
 /// (`std.Io.Mutex`, kilit alma İçİn bir `Io` arayüzü İSTER — genel
 /// amaçlı bir OS-iş-parçacığı kilidi DEĞİL).
-pub const SpinLock = struct {
-    state: std.atomic.Value(u8) = .init(0),
-
-    pub fn lock(self: *SpinLock) void {
-        while (self.state.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) {
-            std.Thread.yield() catch {};
-        }
-    }
-
-    pub fn unlock(self: *SpinLock) void {
-        self.state.store(0, .release);
-    }
-};
+///
+/// Faz MN.4/5.8: GERÇEK tanım `runtime/async_rt/spinlock.zig`ye TAŞINDI
+/// (bkz. onun belge notu — `scheduler.zig`nin BUNU `../alloc/asap.zig`
+/// ÜZERİNDEN İTHAL ETMESİ, `fiber.zig`/`scheduler.zig`/`channel.zig`/
+/// `io.zig`nin BİLİNÇLİ "runtime/alloc/den BAĞIMSIZ" sınırını KIRIYORDU)
+/// — BURADA SADECE YENİDEN DIŞA AÇILIR, TÜM mevcut `asap.SpinLock`
+/// kullanım siteleri (`thread_channel.zig`, aşağıdaki `*_lock` alanları)
+/// SIFIR değişiklik GÖRÜR.
+pub const SpinLock = @import("../async_rt/spinlock.zig").SpinLock;
 
 pub const RuntimeState = struct {
     debug_gpa: if (use_debug_allocator) std.heap.DebugAllocator(.{}) else void,
@@ -189,6 +185,24 @@ pub const RuntimeState = struct {
     /// dokunuşunda KENDİLİĞİNDEN KAYITLI bir üye OLUR.
     arc_owner_pool: if (debug_thread_check) OwnerPool else void =
         if (debug_thread_check) .{} else {},
+    /// Faz MN.4/5.8: `arcOwnerThreadOk`nin KENDİ "üye mi, DEĞİLSE kaydet"
+    /// mantığını korur — **GERÇEK, ÖNCEDEN VAR OLAN bir eşzamanlılık
+    /// hatası** (bu görev SIRASINDA, `WorkerPool`nin GERÇEK 4-iş-parçacıklı
+    /// stres testinde AMPİRİK olarak yakalandı VE `git stash` İLE
+    /// düzeltmeler OLMADAN, TAMAMEN İLİŞKİSİZ bir Zig sürümünde BİLE
+    /// TEKRARLANDIĞI doğrulandı — bkz. proje belleği): `arcOwnerThreadOk`
+    /// `pool.members[pool.count] = current; pool.count += 1;` yazımını
+    /// HİÇBİR kilit OLMADAN yapıyordu — İKİ (VEYA DAHA FAZLA) worker AYNI
+    /// ANDA İLK KEZ kayıt OLMAYA çalıştığında (TAM OLARAK bir worker
+    /// havuzunun BAŞLANGICINDA olan şey) bu bir veri yarışıydı — kayıp bir
+    /// güncelleme `pool.count`u YANLIŞ bırakabilir, DAHA SONRA GERÇEKTEN
+    /// KAYITLI bir worker'ın `arcOwnerThreadOk`sinin YANLIŞLIKLA `false`
+    /// dönüp `nox_rc_free_payload`nin `std.debug.assert`ini ÇÖKERTMESİNE
+    /// yol açabilirdi (GERÇEKTEN GÖZLEMLENDİ). SADECE `debug_thread_check`
+    /// AKTİFKEN VAR (Release'de HİÇBİR maliyet — `arc_owner_pool`nun
+    /// KENDİSİYLE AYNI koşullu tip deseni).
+    arc_owner_pool_lock: if (debug_thread_check) SpinLock else void =
+        if (debug_thread_check) .{} else {},
     /// Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
     /// derleyicinin ürettiği `$nox_init_globals`in `nox_alloc` İLE ayırıp
     /// `nox_globals_set` İLE buraya yazdığı, programa özgü DÜZ bellek
@@ -216,6 +230,47 @@ pub const RuntimeState = struct {
     /// BUGÜNKÜ) kullanım HER ZAMAN slot 0'ı kullanır — davranış BİREBİR
     /// aynı kalır.
     globals_blocks: [MAX_POOL_WORKERS]?*anyopaque = @splat(null),
+    /// Faz MN.4/5: BU `rt`nin BİR `worker_pool.WorkerPool`e AİT olup
+    /// OLMADIĞINI (VE öyleyse HANGİSİNE) İŞARET EDER — `arena_pool`/
+    /// `cycle_gc` İLE AYNI OPAK-işaretçi gerekçesiyle (`asap.zig`,
+    /// `worker_pool.zig`yi IMPORT ETMEDEN döngüsel bağımlılık kurmadan
+    /// bu alanı taşıyabilir). `null` İSE (BUGÜNKÜ, tek-iş-parçacıklı/
+    /// paylaşımsız kullanım) DAVRANIŞ TAMAMEN BİREBİR AYNI kalır — BU
+    /// alana bakan HER kod yolu (`nox_cycle_possible_root`nun oto-eşik
+    /// kapısı, `nox_async_spawn`nin deque-yönlendirmesi) `null` dalında
+    /// BUGÜNKÜ, DEĞİŞMEMİŞ mantığı izler. `WorkerPool.create` BUNU
+    /// kendine işaret edecek şekilde AYARLAR.
+    worker_pool: ?*anyopaque = null,
+    /// Faz MN.4/5: `dict.zig`nin (ESKİDEN `threadlocal var g_hash_seed`/
+    /// `g_hash_seed_init` OLAN) hash-flood-direnç tohumu — BURAYA
+    /// TAŞINDI ÇÜNKÜ artık GERÇEK fiber göçü (work-stealing) AÇIK: bir
+    /// `Dict`, HANGİ worker'a taşınırsa taşınsın AYNI `rt`ye (VE
+    /// dolayısıyla AYNI tohuma) bağlı KALDIĞINDAN, insert/lookup ARASINDA
+    /// FARKLI worker'ların FARKLI tohumlar kullanması (eskiden `Fiber`e
+    /// TAŞINSAYDI OLACAK hata — bkz. `fiber.zig`nin Faz MN.2 notu, "dict
+    /// hash-tohumu BİLİNÇLİ olarak Fiber'e taşınmadı") İMKANSIZ hale
+    /// gelir — TEK bir `rt` İçİNDE TÜM worker'lar AYNI tohumu PAYLAŞIR.
+    dict_hash_seed: u64 = 0,
+    dict_hash_seed_init: bool = false,
+    /// Faz MN.5: havuz-çapında YAKLAŞIK deadlock tespiti İçİn (bkz.
+    /// proje planı, "Go'nun checkdead()'inin BASİTLEŞTİRİLMİŞ hali") —
+    /// HER worker'ın `spawn`/fiber-bitişi KENDİ YEREL `Scheduler.
+    /// live_count`uYLA BİRLİKTE BUNU da atomik olarak GÜNCELLER.
+    /// `worker_pool == null` İKEN KULLANILMAZ (tek-worker'lı kullanım
+    /// KENDİ YEREL `Scheduler.run()` kontrolüne GÜVENMEYE DEVAM eder,
+    /// SIFIR davranış değişikliği).
+    pool_live_count: std.atomic.Value(usize) = .init(0),
+    /// Faz MN.5: AYNI gerekçe — HER worker'ın KENDİ YEREL `waiting_on_io`
+    /// sayacıYLA BİRLİKTE günceller.
+    pool_waiting_on_io: std.atomic.Value(usize) = .init(0),
+    /// Faz MN.5: `runtime/async_rt/scheduler.zig`nin `poolWideDeadlockCheck`i
+    /// İçİn — KAÇ worker'ın ŞU AN "boşta" (KENDİ deque'i+hazır kuyruğu BOŞ,
+    /// kardeşlerden çalma BAŞARISIZ) OLDUĞUNU sayar. `pool_live_count > 0`
+    /// OLMASI TEK BAŞINA deadlock'a İŞARET ETMEZ (BAŞKA bir worker HÂLÂ
+    /// MEŞGUL olabilir — bu TAMAMEN NORMAL, dengesiz bir iş yükü) — deadlock
+    /// SADECE `pool_idle_workers == (havuzdaki TOPLAM worker sayısı)`
+    /// İKEN (yani TÜM worker'lar AYNI ANDA boştaysa) ANLAMLIDIR.
+    pool_idle_workers: std.atomic.Value(usize) = .init(0),
 
     pub fn allocator(self: *RuntimeState) std.mem.Allocator {
         if (use_debug_allocator) return self.debug_gpa.allocator();
@@ -256,6 +311,10 @@ pub fn currentWorkerSlot() usize {
 pub fn arcOwnerThreadOk(state: *RuntimeState) bool {
     if (!debug_thread_check) return true;
     const current = std.Thread.getCurrentId();
+    // Faz MN.4/5.8: `arc_owner_pool_lock` — bkz. onun belge notu, GERÇEK
+    // bir kayıp-güncelleme yarışının düzeltmesi.
+    state.arc_owner_pool_lock.lock();
+    defer state.arc_owner_pool_lock.unlock();
     const pool = &state.arc_owner_pool;
     var i: usize = 0;
     while (i < pool.count) : (i += 1) {

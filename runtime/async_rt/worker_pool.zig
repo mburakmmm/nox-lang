@@ -32,6 +32,13 @@ const std = @import("std");
 const asap = @import("../alloc/asap.zig");
 const chase_lev_deque = @import("chase_lev_deque.zig");
 const fiber_mod = @import("fiber.zig");
+/// Faz MN.4/5.8: SADECE aşağıdaki GERÇEK spawn/await/çalma testi İçİn —
+/// `scheduler.zig` ZATEN BU dosyayı (`Scheduler.worker: ?*Worker` alan
+/// tipi İçİn) İMPORT EDİYOR, bu YÜZDEN BU YÖNDEKİ import DÖNGÜSEL (Zig'de
+/// dosyalar ARASI karşılıklı `@import` TEKNİK olarak DESTEKLENİR — HİÇBİR
+/// tip SONSUZ boyutlu OLMADIĞINDAN, HEPSİ İŞARETÇİ ÜZERİNDEN referans
+/// verildiğinden, sorunsuz derlenir).
+const scheduler_mod = @import("scheduler.zig");
 
 /// Bir havuzdaki TEK worker — "bir deque + bir OS iş parçacığı" (bkz.
 /// proje planı, MN.3b'nin (a) maddesi). `deque` BU FAZDA hiç KULLANILMAZ
@@ -52,20 +59,51 @@ pub const WorkerPool = struct {
     /// http_intrinsics.zig`nin `genHttpServeMulticore`si).
     threads: []std.Thread,
     allocator: std.mem.Allocator,
+    /// Faz MN.4/5.8: `state.pool_live_count`/`pool_waiting_on_io`/
+    /// `pool_idle_workers`e (bkz. `asap.zig`) DOĞRUDAN İŞARETÇİLER —
+    /// `bridge.zig`nin `nox_async_init`i BUNLARI `Scheduler.attachToPool`e
+    /// GEÇİRİR (bkz. `scheduler.zig`nin belge notu, "runtime/alloc/den
+    /// bağımsız kalma" sınırı — `scheduler.zig` `asap.RuntimeState`nin
+    /// TAM TİPİNİ ASLA GÖRMEZ, SADECE bu üç `*std.atomic.Value(usize)`
+    /// işaretçisiyle KONUŞUR).
+    pool_live_count: *std.atomic.Value(usize),
+    pool_waiting_on_io: *std.atomic.Value(usize),
+    pool_idle_workers: *std.atomic.Value(usize),
+    /// Faz MN.4/5.8: HER worker'ın `deque`ine (KENDİSİ DAHİL) İşaretçilerin
+    /// ÖNCEDEN HESAPLANMIŞ dizisi — `Scheduler.attachToPool`e `sibling_
+    /// deques` OLARAK GEÇİRİLİR (bkz. `scheduler.zig`nin belge notu,
+    /// "worker_pool.Worker'ın TAM TİPİNE ASLA REFERANS VERİLMEZ" — SADECE
+    /// `*ChaseLevDeque(...)` işaretçileri paylaşılır).
+    deque_list: []*chase_lev_deque.ChaseLevDeque(*fiber_mod.Fiber, 256),
 
     /// TEK paylaşılan `RuntimeState`yi kurar, `arc_owner_pool` kapasitesini
     /// `n_workers`e YÜKSELTİR (Debug-only etki — bkz. `asap.
     /// setArcOwnerPoolCapacity`), ÇAĞIRAN iş parçacığını slot 0'a BAĞLAR.
     /// `spawnWorkers` ÇAĞRILMADAN ÖNCE BUNUN dönmüş OLMASI GEREKİR.
-    pub fn create(allocator: std.mem.Allocator, n_workers: usize) !WorkerPool {
+    ///
+    /// Faz MN.4/5: ARTIK `WorkerPool`u (`nox_runtime_init`in `RuntimeState`yi
+    /// heap'e ayırıp `*anyopaque` DÖNDÜRDÜĞÜ AYNI "çalışma-zamanı tutamacı"
+    /// deseniyle) HEAP'E AYIRIP `*WorkerPool` DÖNDÜRÜR — DEĞER-tabanlı bir
+    /// dönüş (`WorkerPool` BY VALUE) çağıranın YEREL değişkenine kopyalanır,
+    /// bu da `state.worker_pool`un (aşağıda ayarlanan) İŞARET ETTİĞİ adresin
+    /// `create()` DÖNDÜKTEN SONRA GEÇERSİZLEŞMESİNE (sallanan işaretçi) yol
+    /// AÇARDI — heap tahsisi bu SORUNU YAPISAL olarak ORTADAN KALDIRIR.
+    pub fn create(allocator: std.mem.Allocator, n_workers: usize) !*WorkerPool {
         std.debug.assert(n_workers >= 1 and n_workers <= asap.MAX_POOL_WORKERS);
         const rt = asap.nox_runtime_init() orelse return error.RuntimeInitFailed;
         const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
         asap.setArcOwnerPoolCapacity(state, n_workers);
 
+        const self = try allocator.create(WorkerPool);
+        errdefer allocator.destroy(self);
+
         const workers = try allocator.alloc(Worker, n_workers);
         errdefer allocator.free(workers);
         for (workers, 0..) |*w, i| w.* = .{ .slot = i };
+
+        const deque_list = try allocator.alloc(*chase_lev_deque.ChaseLevDeque(*fiber_mod.Fiber, 256), n_workers);
+        errdefer allocator.free(deque_list);
+        for (workers, 0..) |*w, i| deque_list[i] = &w.deque;
 
         const threads = try allocator.alloc(std.Thread, n_workers - 1);
         errdefer allocator.free(threads);
@@ -73,7 +111,20 @@ pub const WorkerPool = struct {
         // Çağıran iş parçacığı HER ZAMAN slot 0'dır.
         asap.setWorkerSlot(0);
 
-        return .{ .rt = rt, .workers = workers, .threads = threads, .allocator = allocator };
+        self.* = .{
+            .rt = rt,
+            .workers = workers,
+            .threads = threads,
+            .allocator = allocator,
+            .pool_live_count = &state.pool_live_count,
+            .pool_waiting_on_io = &state.pool_waiting_on_io,
+            .pool_idle_workers = &state.pool_idle_workers,
+            .deque_list = deque_list,
+        };
+        // `bridge.zig`nin `nox_async_init`i BUNU görüp `Scheduler.
+        // attachToPool`ı OTOMATİK çağırır (bkz. onun belge notu).
+        state.worker_pool = self;
+        return self;
     }
 
     /// Slot 1..n-1 İçİn `n_workers - 1` OS iş parçacığı BAŞLATIR — HER BİRİ
@@ -118,9 +169,16 @@ pub const WorkerPool = struct {
     /// çağırır (bkz. `asap.zig`nin belge notu, "paylaşılan bir havuzda
     /// deinit TAM OLARAK BİR KEZ, TÜM worker'lar `join` EDİLDİKTEN SONRA").
     pub fn destroy(self: *WorkerPool) void {
+        // `state.worker_pool`u `nox_runtime_deinit`DEN ÖNCE temizle —
+        // AKSİ HALDE (deinit `state`yi SERBEST BIRAKTIKTAN SONRA) bu bir
+        // kullanım-sonrası-serbest-bırakma YAZIMI olurdu.
+        const state: *asap.RuntimeState = @ptrCast(@alignCast(self.rt));
+        state.worker_pool = null;
+        self.allocator.free(self.deque_list);
         self.allocator.free(self.workers);
         self.allocator.free(self.threads);
         asap.nox_runtime_deinit(self.rt);
+        self.allocator.destroy(self);
     }
 };
 
@@ -261,4 +319,107 @@ test "WorkerPool: create/destroy tek başına (worker yok) sızmaz" {
     defer pool.destroy();
     try testing.expectEqual(@as(usize, 0), pool.threads.len);
     try testing.expectEqual(@as(usize, 1), pool.workers.len);
+}
+
+// ---- Faz MN.4/5.8: GERÇEK spawn/await + KANITLANMIŞ çapraz-worker çalma ----
+
+const STEAL_TEST_N_TASKS = 200;
+
+const StealTestChildArg = struct {
+    index: usize,
+    executed_by: *[STEAL_TEST_N_TASKS]std.atomic.Value(usize),
+};
+
+/// `999`: "HENÜZ ÇALIŞTIRILMADI" duyarga (sentinel) değeri — GERÇEK bir
+/// worker slotu (0..3) İLE ASLA ÇAKIŞMAZ (bkz. `asap.MAX_POOL_WORKERS`,
+/// 64 — 999 KESİNLİKLE bunun ÜZERİNDE).
+const STEAL_TEST_NOT_RUN: usize = 999;
+
+fn stealTestChildFn(arg: *anyopaque) callconv(.c) i64 {
+    const a: *StealTestChildArg = @ptrCast(@alignCast(arg));
+    // `asap.currentWorkerSlot()` — BU fiber'ı O ANDA HANGİ OS iş
+    // parçacığının (`scheduler.run()`nün KENDİ döngüsü) ÇALIŞTIRDIĞINI
+    // (`threadlocal`, bkz. `asap.zig`) doğrudan okur — TÜM görevler
+    // SADECE worker 0'ın deque'ine PUSH edildiğinden (bkz. aşağıdaki
+    // test), BAŞKA bir slotta ÇALIŞMIŞ olması GERÇEK bir çalmayı kanıtlar.
+    a.executed_by[a.index].store(asap.currentWorkerSlot(), .seq_cst);
+    return @intCast(a.index * 2);
+}
+
+const StealTestCtx = struct {
+    pool: *WorkerPool,
+    /// Slot 0 TÜM görevleri spawn EDENE kadar diğer worker'ların
+    /// `run()`a BAŞLAMASINI erteler — AKSİ HALDE bir thief, worker 0
+    /// HENÜZ HİÇ spawn ETMEDEN `pool_live_count == 0` GÖRÜP HEMEN
+    /// (YANLIŞLIKLA "iş yok") DÖNEBİLİRDİ.
+    ready: std.atomic.Value(bool) = .init(false),
+    tasks: [STEAL_TEST_N_TASKS]*scheduler_mod.Task(i64) = undefined,
+    child_args: [STEAL_TEST_N_TASKS]StealTestChildArg = undefined,
+    executed_by: [STEAL_TEST_N_TASKS]std.atomic.Value(usize) = @splat(std.atomic.Value(usize).init(STEAL_TEST_NOT_RUN)),
+};
+
+fn stealTestWorkerEntry(rt: *anyopaque, slot: usize, ctx: *StealTestCtx) void {
+    _ = rt;
+    var sched = scheduler_mod.Scheduler.init(ctx.pool.allocator) catch @panic("zamanlayici baslatilamadi");
+    sched.attachToPool(
+        slot,
+        ctx.pool.deque_list,
+        ctx.pool.pool_live_count,
+        ctx.pool.pool_waiting_on_io,
+        ctx.pool.pool_idle_workers,
+    ) catch {};
+
+    if (slot == 0) {
+        var i: usize = 0;
+        while (i < STEAL_TEST_N_TASKS) : (i += 1) {
+            ctx.child_args[i] = .{ .index = i, .executed_by = &ctx.executed_by };
+            ctx.tasks[i] = scheduler_mod.spawn(&sched, i64, stealTestChildFn, &ctx.child_args[i]) catch @panic("spawn basarisiz");
+        }
+        ctx.ready.store(true, .release);
+        // Faz MN.4/5.8: 200 önemsiz (I/O'suz, hemen dönen) görev worker
+        // 0'ın KENDİ deque'inde `run()` BAŞLAMADAN ÖNCE bile ÇOK HIZLI
+        // tüketilebilir — kardeşlerin `std.Thread.spawn`ı HENÜZ
+        // ZAMANLANMAMIŞSA HİÇBİR ŞEY çalamadan test yanlışlıkla
+        // BAŞARISIZ olabilir (GERÇEKTEN gözlemlendi, ender bir zamanlama
+        // yarışı — çalma mantığının KENDİSİNDE bir hata DEĞİL). Birkaç
+        // `yield`, OS zamanlayıcısına kardeşleri ÇALIŞTIRMASI İçİn adil
+        // bir fırsat tanır.
+        var y: usize = 0;
+        while (y < 8) : (y += 1) std.Thread.yield() catch {};
+    } else {
+        while (!ctx.ready.load(.acquire)) std.Thread.yield() catch {};
+    }
+
+    sched.run() catch |e| switch (e) {
+        error.Deadlock => @panic("MN.4/5.8 testinde beklenmedik deadlock"),
+    };
+    sched.deinit();
+}
+
+test "WorkerPool: GERÇEK spawn/await, TÜM sonuçlar doğru VE kanıtlanmış çapraz-worker çalma" {
+    const testing = std.testing;
+    const pool = try WorkerPool.create(testing.allocator, 4);
+    defer pool.destroy();
+
+    var ctx = StealTestCtx{ .pool = pool };
+
+    try pool.spawnWorkers(*StealTestCtx, stealTestWorkerEntry, &ctx);
+    // Çağıran iş parçacığı (slot 0) KENDİSİ de bir worker OLUR — TÜM
+    // görevleri BU slot spawn eder (bkz. `stealTestWorkerEntry`).
+    stealTestWorkerEntry(pool.rt, 0, &ctx);
+    pool.joinAll();
+
+    var stolen_count: usize = 0;
+    var i: usize = 0;
+    while (i < STEAL_TEST_N_TASKS) : (i += 1) {
+        const by = ctx.executed_by[i].load(.seq_cst);
+        try testing.expect(by != STEAL_TEST_NOT_RUN); // HER görev GERÇEKTEN çalıştı
+        if (by != 0) stolen_count += 1;
+        try testing.expect(ctx.tasks[i].completed);
+        try testing.expectEqual(@as(i64, @intCast(i * 2)), ctx.tasks[i].result);
+        testing.allocator.destroy(ctx.tasks[i]);
+    }
+    // Kanıt: EN AZ bir görev worker 0 DIŞINDA bir worker TARAFINDAN
+    // ÇALIŞTIRILDI — bkz. `stealTestChildFn`nin belge notu.
+    try testing.expect(stolen_count > 0);
 }

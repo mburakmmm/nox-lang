@@ -937,7 +937,10 @@ pub fn genDictMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         const key_payload = try self.toPayload(key_v0);
         const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
         const result = try self.newTemp();
-        try self.qbeCall(.{ .name = result, .ty = .w }, "$nox_dict_contains", &.{ .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
+        // Faz MN.4: `nox_dict_contains` ARTIK `rt` ALIYOR (hash-tohumu
+        // `RuntimeState`e taşındı — bkz. `dict.zig`nin `hashSeed` belge
+        // notu) — İLK argüman olarak `RT_PARAM` EKLENDİ.
+        try self.qbeCall(.{ .name = result, .ty = .w }, "$nox_dict_contains", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
         try self.releaseIfTemporary(args[0], key_v0);
         try self.releaseIfTemporary(a.obj.*, obj);
         return .{ .text = result, .qtype = .w };
