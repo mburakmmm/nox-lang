@@ -35,6 +35,11 @@ const fiber_mod = @import("fiber.zig");
 const scheduler_mod = @import("scheduler.zig");
 const channel_mod = @import("channel.zig");
 const worker_pool_mod = @import("worker_pool.zig");
+/// Faz MN.6: `nox_async_init`in havuzlu dalının `PoolLink.collect_fn`e
+/// GERÇEK `nox_cycle_collect`i BAĞLAYABİLMESİ İçİn — `scheduler.zig`nin
+/// KENDİSİ BUNU YAPAMAZ (bkz. onun belge notu, "runtime/alloc/den
+/// bağımsız kalma" sınırı), `bridge.zig` İSE SINIRSIZ bir bağlamdır.
+const cycle_detector = @import("../alloc/cycle_detector.zig");
 
 const TaskI64 = scheduler_mod.Task(i64);
 const ChannelI64 = channel_mod.Channel(i64);
@@ -108,13 +113,19 @@ pub export fn nox_async_init(rt: ?*anyopaque) void {
     if (state.worker_pool) |wp_ptr| {
         const pool: *worker_pool_mod.WorkerPool = @ptrCast(@alignCast(wp_ptr));
         const slot = asap.currentWorkerSlot();
-        g_scheduler.?.attachToPool(
-            slot,
-            pool.deque_list,
-            pool.pool_live_count,
-            pool.pool_waiting_on_io,
-            pool.pool_idle_workers,
-        ) catch {};
+        g_scheduler.?.attachToPool(.{
+            .own_slot = slot,
+            .sibling_deques = pool.deque_list,
+            .live_count = pool.pool_live_count,
+            .waiting_on_io = pool.pool_waiting_on_io,
+            .idle_workers = pool.pool_idle_workers,
+            .stw_requested = pool.pool_stw_requested,
+            .stw_arrived = pool.pool_stw_arrived,
+            .stw_sense = pool.pool_stw_sense,
+            .wake_fds = pool.wake_fds,
+            .collect_fn = &cycle_detector.nox_cycle_collect,
+            .rt = rt,
+        }) catch {};
     }
 }
 

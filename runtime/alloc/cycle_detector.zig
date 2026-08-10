@@ -53,6 +53,13 @@
 const std = @import("std");
 const asap = @import("asap.zig");
 const abi_layout = @import("abi_layout");
+/// Faz MN.6: `runtime/alloc/`den `runtime/async_rt/`e — `asap.zig`nin
+/// `spinlock.zig` İçİn ZATEN yaptığı AYNI yön, SORUNSUZ (`self_pipe.zig`
+/// SIFIR-bağımlılıklı bir yaprak dosya, `runtime/async_rt/`nin standalone
+/// sınırını BOZMAZ — SADECE `runtime/alloc/`den ONA BAKMAK, TERSİ DEĞİL,
+/// yasak olan yöndü). YENİ bir STW round'u BAŞLATILDIĞINDA (bkz. `nox_
+/// cycle_possible_root`) TÜM worker'ların wake-fd'lerini uyandırmak İçİn.
+const self_pipe = @import("../async_rt/self_pipe.zig");
 
 /// Derleyicinin ÜRETTİĞİ, TÜM sınıflar için tek bir dağıtım noktası —
 /// bkz. modül üstü not. `tag`, `p`nin İLK 8 baytından (bkz. codegen.zig,
@@ -271,16 +278,30 @@ pub export fn nox_cycle_possible_root(rt: ?*anyopaque, p: ?*anyopaque) void {
     }
 
     gc.possible_roots_since_collect += 1;
-    // Faz MN.4/5.4: havuzlanmış (`state.worker_pool != null`) bir `RuntimeState`de
-    // OTOMATİK eşik-tetiklemesi KOŞULSUZ devre dışı — `nox_cycle_collect`in mark/
-    // scan geçişi BAŞKA nesnelerin refcount'unu PLAIN (atomik OLMAYAN) okur/yazar,
-    // BAŞKA bir worker'ın O ANDA ATOMİK retain/predecrement ETTİĞİ bir nesneyle
-    // YARIŞABİLİR (bkz. MN.3b'de GERÇEKTEN SIGBUS İLE ÇÖKTÜĞÜ doğrulanan hata).
-    // Olası kökler HÂLÂ KAYDEDİLİR (yukarısı), sadece OTOMATİK collect ASLA
-    // TETİKLENMEZ — GERÇEK collect çağrısı MN.6 (kooperatif STW) gelene KADAR
-    // SADECE tek-worker'lı/havuzsuz `RuntimeState`lerde gerçekleşir.
-    if (state.worker_pool == null and gc.possible_roots_since_collect >= gc.collect_threshold) {
-        collectLocked(rt, state, gc);
+    // Faz MN.6: havuzsuz İSE (BUGÜNKÜ gibi) DOĞRUDAN, SENKRON collect —
+    // SIFIR davranış değişikliği. Havuzlu İSE (Faz MN.4/5.4'ün GEÇİCİ
+    // "koşulsuz devre dışı bırakma" ÖNLEMİNİN YERİNE) `pool_stw_requested`i
+    // `cmpxchgStrong` İLE ayarla — SADECE bu YARIŞI KAZANAN çağrı YENİ bir
+    // STW round'u BAŞLATIR (bkz. `asap.RuntimeState`nin AYNI-adlı alanının
+    // belge notu). GERÇEK collect, `runtime/async_rt/scheduler.zig`nin
+    // `stwParticipate`i TARAFINDAN, TÜM worker'lar KENDİ safe point'lerinde
+    // bariyerde BULUŞTUĞUNDA ASENKRON olarak çalışır — BU fonksiyon
+    // ÇAĞIRAN fiber'ı HİÇ BLOKE ETMEDEN HEMEN döner. Sonra, `reactor.
+    // poll()`de bloke olmuş (GERÇEK, İLİŞKİSİZ G/Ç bekleyen) worker'ları
+    // DERHAL uyandırmak İçİn TÜM DOLU `pool_wake_fds` slotlarına bir bayt
+    // yazılır (AKSİ HALDE `io_reactor.zig`nin `poll()`ü NULL/-1 zaman
+    // aşımıyla SONSUZA KADAR bloke KALIR, `stw_requested`i HİÇ FARK ETMEZ).
+    if (gc.possible_roots_since_collect >= gc.collect_threshold) {
+        if (state.worker_pool == null) {
+            collectLocked(rt, state, gc);
+        } else if (state.pool_stw_requested.cmpxchgStrong(false, true, .acq_rel, .monotonic) == null) {
+            if (builtin.os.tag != .windows) {
+                for (&state.pool_wake_fds) |*fd_atomic| {
+                    const fd = fd_atomic.load(.monotonic);
+                    if (fd >= 0) self_pipe.signalWakeFd(@intCast(fd));
+                }
+            }
+        }
     }
 }
 
@@ -493,7 +514,9 @@ pub fn injectFakeDispatch() void {
 /// `p`nin TEK (8 baytlık) alanına `child`i yazar — `self.next = <ifade>`nin
 /// codegen'deki karşılığının ÇALIŞMA ZAMANI etkisiyle AYNI (bkz.
 /// `genAssign`'ın `.attribute` dalı): yazmadan ÖNCE `child`i retain eder.
-fn wireField(p: *anyopaque, child: *anyopaque) void {
+/// Faz MN.6: `pub` — `worker_pool.zig`nin KENDİ eşzamanlı otomatik-collect
+/// stres testi de BU sahte A<->B döngü kurma desenini yeniden kullanır.
+pub fn wireField(p: *anyopaque, child: *anyopaque) void {
     arc.nox_rc_retain(child);
     const field_addr: *?*anyopaque = @ptrFromInt(@intFromPtr(p) + TAG_SIZE);
     field_addr.* = child;

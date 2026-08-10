@@ -75,6 +75,15 @@ pub const WorkerPool = struct {
     /// "worker_pool.Worker'ın TAM TİPİNE ASLA REFERANS VERİLMEZ" — SADECE
     /// `*ChaseLevDeque(...)` işaretçileri paylaşılır).
     deque_list: []*chase_lev_deque.ChaseLevDeque(*fiber_mod.Fiber, 256),
+    /// Faz MN.6: `state.pool_stw_requested`/`pool_stw_arrived`/
+    /// `pool_stw_sense`e (bkz. `asap.zig`) DOĞRUDAN İşaretçiler VE
+    /// `state.pool_wake_fds`in TAM dilimi — `Scheduler.attachToPool`e
+    /// `PoolLink` OLARAK GEÇİRİLİR (bkz. `scheduler.zig`nin belge notu,
+    /// AYNI "runtime/alloc/den bağımsız kalma" sınırı).
+    pool_stw_requested: *std.atomic.Value(bool),
+    pool_stw_arrived: *std.atomic.Value(usize),
+    pool_stw_sense: *std.atomic.Value(bool),
+    wake_fds: []std.atomic.Value(i32),
 
     /// TEK paylaşılan `RuntimeState`yi kurar, `arc_owner_pool` kapasitesini
     /// `n_workers`e YÜKSELTİR (Debug-only etki — bkz. `asap.
@@ -120,6 +129,10 @@ pub const WorkerPool = struct {
             .pool_waiting_on_io = &state.pool_waiting_on_io,
             .pool_idle_workers = &state.pool_idle_workers,
             .deque_list = deque_list,
+            .pool_stw_requested = &state.pool_stw_requested,
+            .pool_stw_arrived = &state.pool_stw_arrived,
+            .pool_stw_sense = &state.pool_stw_sense,
+            .wake_fds = state.pool_wake_fds[0..],
         };
         // `bridge.zig`nin `nox_async_init`i BUNU görüp `Scheduler.
         // attachToPool`ı OTOMATİK çağırır (bkz. onun belge notu).
@@ -359,15 +372,23 @@ const StealTestCtx = struct {
 };
 
 fn stealTestWorkerEntry(rt: *anyopaque, slot: usize, ctx: *StealTestCtx) void {
-    _ = rt;
     var sched = scheduler_mod.Scheduler.init(ctx.pool.allocator) catch @panic("zamanlayici baslatilamadi");
-    sched.attachToPool(
-        slot,
-        ctx.pool.deque_list,
-        ctx.pool.pool_live_count,
-        ctx.pool.pool_waiting_on_io,
-        ctx.pool.pool_idle_workers,
-    ) catch {};
+    // Faz MN.6: bu test cycle-gc baskısı KURMAZ — `collect_fn` yine de
+    // GERÇEK `nox_cycle_collect`e bağlanır (zararsız, HİÇ TETİKLENMEZ)
+    // çünkü `PoolLink` artık ZORUNLU bir alan (bkz. `scheduler.zig`).
+    sched.attachToPool(.{
+        .own_slot = slot,
+        .sibling_deques = ctx.pool.deque_list,
+        .live_count = ctx.pool.pool_live_count,
+        .waiting_on_io = ctx.pool.pool_waiting_on_io,
+        .idle_workers = ctx.pool.pool_idle_workers,
+        .stw_requested = ctx.pool.pool_stw_requested,
+        .stw_arrived = ctx.pool.pool_stw_arrived,
+        .stw_sense = ctx.pool.pool_stw_sense,
+        .wake_fds = ctx.pool.wake_fds,
+        .collect_fn = &cycle_detector.nox_cycle_collect,
+        .rt = rt,
+    }) catch {};
 
     if (slot == 0) {
         var i: usize = 0;
@@ -422,4 +443,124 @@ test "WorkerPool: GERÇEK spawn/await, TÜM sonuçlar doğru VE kanıtlanmış �
     // Kanıt: EN AZ bir görev worker 0 DIŞINDA bir worker TARAFINDAN
     // ÇALIŞTIRILDI — bkz. `stealTestChildFn`nin belge notu.
     try testing.expect(stolen_count > 0);
+}
+
+// ---- Faz MN.6: eşzamanlı otomatik-collect (STW bariyeri) stres testi ----
+
+const CYCLE_STRESS_N_WORKERS = 4;
+/// `chase_lev_deque.ChaseLevDeque`nin SABİT kapasitesi 256'dır (bkz. onun
+/// belge notu) — HER worker KENDİ 200 görevini `sched.run()` BAŞLAMADAN
+/// ÖNCE TEK BAŞINA push ettiğinden (bkz. `cycleStressWorkerEntry`), bu
+/// SINIRIN altında GÜVENLE kalır (`STEAL_TEST_N_TASKS`İLE AYNI, KANITLANMIŞ
+/// değer). 4 worker × 200 görev × HER görevde 2 `nox_cycle_possible_root`
+/// çağrısı = 1600 — `DEFAULT_COLLECT_THRESHOLD`i (700) run SIRASINDA
+/// BİRDEN FAZLA KEZ aşar.
+const CYCLE_STRESS_TASKS_PER_WORKER = 200;
+
+/// Faz MN.6: bu testin KENDİ `collect_fn`i — GERÇEK `nox_cycle_collect`e
+/// delege ETMEDEN ÖNCE bir GÖZLEM sayacını artırır. Bariyerin STRES
+/// SIRASINDA GERÇEKTEN ateşlediğini (sadece `joinAll` SONRASI bir mop-up
+/// çağrısı DEĞİL) KANITLAMANIN TEK yolu — `PoolLink.collect_fn` düz bir
+/// fonksiyon İŞARETÇİSİ olduğundan (yakalama YAPAMAZ), sayaç modül-seviyesi
+/// bir global OLMAK ZORUNDADIR.
+var g_cycle_stress_collect_rounds: std.atomic.Value(usize) = .init(0);
+
+fn countingCollectFn(rt: ?*anyopaque) callconv(.c) void {
+    _ = g_cycle_stress_collect_rounds.fetchAdd(1, .seq_cst);
+    cycle_detector.nox_cycle_collect(rt);
+}
+
+const CycleStressArg = struct { rt: *anyopaque };
+
+/// HER görev: GERÇEK bir A<->B döngü çifti KURAR (`cycle_detector.zig`nin
+/// KENDİ `newFakeObject`/`wireField` yardımcılarıyla — BİREBİR "Faz S.3"
+/// testinin `simulateRelease`iyle AYNI mantık, BURADA doğrudan İNLİNE
+/// edilir çünkü `simulateRelease` `pub` DEĞİL), SONRA HER İKİSİNİ de
+/// `nox_cycle_possible_root`e YÖNLENDİRİR (mutual retain SAYESİNDE İKİSİ
+/// de sıfıra DÜŞMEZ — GERÇEK bir döngü sızıntısı, TAM OLARAK `nox_cycle_
+/// collect`in ÇÖZMESİ GEREKEN durum).
+fn cycleStressChildFn(arg: *anyopaque) callconv(.c) i64 {
+    const a: *CycleStressArg = @ptrCast(@alignCast(arg));
+    const obj_a = cycle_detector.newFakeObject(a.rt);
+    const obj_b = cycle_detector.newFakeObject(a.rt);
+    cycle_detector.wireField(obj_a, obj_b); // a.next = b (RC(b)=2)
+    cycle_detector.wireField(obj_b, obj_a); // b.next = a (RC(a)=2)
+    if (arc.nox_rc_predecrement(obj_a) == 0) cycle_detector.nox_cycle_possible_root(a.rt, obj_a);
+    if (arc.nox_rc_predecrement(obj_b) == 0) cycle_detector.nox_cycle_possible_root(a.rt, obj_b);
+    return 0;
+}
+
+const CycleStressCtx = struct {
+    pool: *WorkerPool,
+    /// `spawn`nin döndürdüğü `*Task(i64)` HEAP tahsislidir (bkz. `scheduler.
+    /// zig`nin `spawn`ı) VE hiçbir `await` OTOMATİK olarak SERBEST
+    /// BIRAKMAZ — `stealTestWorkerEntry`nin AYNI deseni: HER worker KENDİ
+    /// görev İşaretçilerini BURAYA yazar, test SONUNDA (`joinAll` SONRASI)
+    /// TEK TEK `destroy` edilirler.
+    tasks: [CYCLE_STRESS_N_WORKERS][CYCLE_STRESS_TASKS_PER_WORKER]*scheduler_mod.Task(i64) = undefined,
+};
+
+fn cycleStressWorkerEntry(rt: *anyopaque, slot: usize, ctx: *CycleStressCtx) void {
+    // `g_trace_dispatch_fn`/`g_gc_free_dispatch_fn` THREADLOCAL'DIR — HER
+    // worker KENDİ enjeksiyonunu YAPMALIDIR (bkz. `stressWorkerBody`nin
+    // AYNI notu). Bir görev BAŞKA bir worker TARAFINDAN ÇALINSA BİLE, O
+    // worker de KENDİ enjeksiyonunu YAPMIŞ OLACAĞINDAN sorun OLMAZ.
+    cycle_detector.injectFakeDispatch();
+
+    var sched = scheduler_mod.Scheduler.init(ctx.pool.allocator) catch @panic("zamanlayici baslatilamadi");
+    sched.attachToPool(.{
+        .own_slot = slot,
+        .sibling_deques = ctx.pool.deque_list,
+        .live_count = ctx.pool.pool_live_count,
+        .waiting_on_io = ctx.pool.pool_waiting_on_io,
+        .idle_workers = ctx.pool.pool_idle_workers,
+        .stw_requested = ctx.pool.pool_stw_requested,
+        .stw_arrived = ctx.pool.pool_stw_arrived,
+        .stw_sense = ctx.pool.pool_stw_sense,
+        .wake_fds = ctx.pool.wake_fds,
+        .collect_fn = &countingCollectFn,
+        .rt = rt,
+    }) catch {};
+
+    // `arg`, BU fonksiyonun YIĞIN çerçevesinde yaşar — `sched.run()`
+    // TÜM havuz genelinde HİÇBİR canlı görev KALMAYANA KADAR DÖNMEZ (bkz.
+    // pool-çapında deadlock kontrolü), bu YÜZDEN spawn edilen (VE
+    // muhtemelen BAŞKA bir worker'a ÇALINAN) görevler `arg`i OKURKEN bu
+    // çerçeve HER ZAMAN GEÇERLİDİR.
+    var arg = CycleStressArg{ .rt = rt };
+    var i: usize = 0;
+    while (i < CYCLE_STRESS_TASKS_PER_WORKER) : (i += 1) {
+        ctx.tasks[slot][i] = scheduler_mod.spawn(&sched, i64, cycleStressChildFn, &arg) catch @panic("spawn basarisiz");
+    }
+
+    sched.run() catch |e| switch (e) {
+        error.Deadlock => @panic("MN.6 cycle-stres testinde beklenmedik deadlock"),
+    };
+    sched.deinit();
+}
+
+test "WorkerPool: GERÇEK eş zamanlı otomatik-collect (STW bariyeri) ÇÖKMEDEN/SIZMADAN çalışır" {
+    const testing = std.testing;
+    g_cycle_stress_collect_rounds.store(0, .seq_cst);
+
+    const pool = try WorkerPool.create(testing.allocator, CYCLE_STRESS_N_WORKERS);
+    defer pool.destroy();
+
+    var ctx = CycleStressCtx{ .pool = pool };
+    try pool.spawnWorkers(*CycleStressCtx, cycleStressWorkerEntry, &ctx);
+    // Çağıran iş parçacığı (slot 0) KENDİSİ de bir worker OLUR.
+    cycleStressWorkerEntry(pool.rt, 0, &ctx);
+    pool.joinAll();
+
+    for (ctx.tasks) |worker_tasks| {
+        for (worker_tasks) |t| testing.allocator.destroy(t);
+    }
+
+    // Bariyer GERÇEKTEN, stres SIRASINDA (`joinAll` ÖNCESİ, worker'lar HÂLÂ
+    // eş zamanlı ÇALIŞIRKEN) EN AZ bir KEZ ateşledi — SADECE bir son mop-up
+    // ÇAĞRISI DEĞİL. `WorkerPool.destroy()`nün OTOMATİK `debug_gpa` sızıntı
+    // denetimi (Debug modunda) ANA doğruluk kanıtıdır: HERHANGİ bir bariyer
+    // hatası (yarış/çift-serbest-bırakma/SIGBUS) BURADA ÇÖKME ya da sızıntı
+    // OLARAK ortaya çıkardı.
+    try testing.expect(g_cycle_stress_collect_rounds.load(.seq_cst) >= 1);
 }

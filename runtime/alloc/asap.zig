@@ -271,6 +271,36 @@ pub const RuntimeState = struct {
     /// SADECE `pool_idle_workers == (havuzdaki TOPLAM worker sayısı)`
     /// İKEN (yani TÜM worker'lar AYNI ANDA boştaysa) ANLAMLIDIR.
     pool_idle_workers: std.atomic.Value(usize) = .init(0),
+    /// Faz MN.6: `runtime/async_rt/scheduler.zig`nin `stwParticipate`sinin
+    /// kullandığı "sense-reversing barrier" — kooperatif dünyayı-durdur
+    /// (STW) round'unun giriş kapısı. `runtime/alloc/cycle_detector.zig`nin
+    /// `nox_cycle_possible_root`ü eşiği AŞTIĞINDA `cmpxchgStrong(false,
+    /// true, ...)` İLE BUNU ayarlar (yalnızca YARIŞI KAZANAN çağrı YENİ
+    /// bir round BAŞLATIR) — GERÇEK collect, TÜM worker'lar `pool_stw_
+    /// arrived`e ULAŞTIĞINDA (bkz. aşağısı) round'un LİDERİ TARAFINDAN
+    /// çalıştırılır, BURADAN döner (BLOKE ETMEZ).
+    pool_stw_requested: std.atomic.Value(bool) = .init(false),
+    /// Faz MN.6: bu round'a KATILAN (kendi safe point'inde `stwParticipate`e
+    /// GİRMİŞ) worker sayısı — `n_workers`e ULAŞTIĞINDA SON gelen worker
+    /// "lider" olur.
+    pool_stw_arrived: std.atomic.Value(usize) = .init(0),
+    /// Faz MN.6: "sense-reversal" — HER round TAMAMLANDIĞINDA lider
+    /// TARAFINDAN o round'un `Scheduler.stw_local_sense`iNE eşitlenir;
+    /// straggler worker'lar KENDİ `stw_local_sense`leriyle EŞLEŞENE KADAR
+    /// bekler. Bariyerin (TEK bir `bool` bayrağın YENİDEN KULLANILMASI
+    /// olsaydı OLUŞACAK) ABA-tipi yeniden-kullanım hatasına KARŞI GEREKLİ
+    /// (bkz. proje planı, "Faz MN.6" tasarım notu #1).
+    pool_stw_sense: std.atomic.Value(bool) = .init(false),
+    /// Faz MN.6: HER worker'ın ÇAPRAZ-worker uyandırma self-pipe'ının
+    /// YAZMA ucu (bkz. `runtime/async_rt/self_pipe.zig`) — `-1` = BU
+    /// slot HENÜZ yayınlanmadı/Windows'ta desteklenmiyor (bkz. `self_pipe.
+    /// zig`nin modül üstü notu). `cycle_detector.zig`, YENİ bir STW
+    /// round'u BAŞLATTIĞINDA TÜM DOLU (>= 0) slotlara `signalWakeFd`
+    /// göndererek `self.reactor.poll()`de bloke olmuş worker'ları DERHAL
+    /// uyandırır — AKSİ HALDE (`io_reactor.zig`nin `poll()`ü NULL/-1
+    /// zaman aşımıyla SONSUZA KADAR bloklar) bir worker `stw_requested`i
+    /// ASLA FARK ETMEZDİ.
+    pool_wake_fds: [MAX_POOL_WORKERS]std.atomic.Value(i32) = @splat(.init(-1)),
 
     pub fn allocator(self: *RuntimeState) std.mem.Allocator {
         if (use_debug_allocator) return self.debug_gpa.allocator();

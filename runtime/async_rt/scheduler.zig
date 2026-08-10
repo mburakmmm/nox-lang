@@ -54,6 +54,42 @@ const SpinLock = @import("spinlock.zig").SpinLock;
 /// notu) — İKİ dosya birbirini HİÇ TANIMAZ.
 const chase_lev_deque = @import("chase_lev_deque.zig");
 const Deque = chase_lev_deque.ChaseLevDeque(*Fiber, 256);
+/// Faz MN.6: self-pipe yardımcıları BURAYA taşındı — bkz. onun modül üstü
+/// notu (`cycle_detector.zig`nin STW round'unu `signalWakeFd` İLE
+/// UYANDIRABİLMESİ İçİn gereken paylaşım).
+const self_pipe = @import("self_pipe.zig");
+
+/// Faz MN.6: `attachToPool`in TEK parametresi — `own_slot`/`sibling_deques`
+/// + havuz-çapında YEDİ atomik/fonksiyon işaretçisinin TAMAMINI TEK bir
+/// struct'a SARAR (ARTIK ~11 alan, ayrı parametreler OLARAK sürdürülemez).
+/// `bridge.zig`nin `nox_async_init`i (HEM `scheduler.zig`yi HEM `worker_
+/// pool.zig`yi İTHAL EDEBİLEN, SINIRSIZ bağlam) `WorkerPool`dan bu İLKEL
+/// değerleri ÇIKARIP İNŞA EDER.
+pub const PoolLink = struct {
+    own_slot: usize,
+    sibling_deques: []const *Deque,
+    live_count: *std.atomic.Value(usize),
+    waiting_on_io: *std.atomic.Value(usize),
+    idle_workers: *std.atomic.Value(usize),
+    /// Faz MN.6: STW bariyerinin ÜÇ paylaşılan atomiği (bkz. `asap.
+    /// RuntimeState`nin AYNI-adlı alanlarının belge notu).
+    stw_requested: *std.atomic.Value(bool),
+    stw_arrived: *std.atomic.Value(usize),
+    stw_sense: *std.atomic.Value(bool),
+    /// Faz MN.6: HER worker'ın wake-fd YAZMA ucuna işaretçilerin dizisi
+    /// (`RuntimeState.pool_wake_fds`e karşılık gelir, AYNI `own_slot`
+    /// İNDEKSİYLE) — `attachToPool`, KENDİ `wake_write_fd`sini `wake_fds
+    /// [own_slot]`e YAYINLAR (bkz. `cycle_detector.zig`nin BUNU nasıl
+    /// KULLANDIĞI İçİn `self_pipe.zig`nin modül üstü notu).
+    wake_fds: []std.atomic.Value(i32),
+    /// Faz MN.6: `nox_cycle_collect`e (Zig FONKSİYON DEĞERİ olarak,
+    /// `extern fn`e BİLE GEREK YOK — bkz. proje planı, tasarım #3)
+    /// enjekte edilen işaretçi. `scheduler.zig` `cycle_detector.zig`yi
+    /// (dolayısıyla `runtime/alloc/`i) ASLA İTHAL ETMEZ — standalone
+    /// `async-rt-test` sınırı BÖYLECE KORUNUR.
+    collect_fn: *const fn (rt: ?*anyopaque) callconv(.c) void,
+    rt: ?*anyopaque,
+};
 
 pub const Scheduler = struct {
     allocator: std.mem.Allocator,
@@ -108,6 +144,23 @@ pub const Scheduler = struct {
     pool_live_count: ?*std.atomic.Value(usize) = null,
     pool_waiting_on_io: ?*std.atomic.Value(usize) = null,
     pool_idle_workers: ?*std.atomic.Value(usize) = null,
+    /// Faz MN.6: STW bariyerinin ÜÇ paylaşılan atomiğine işaretçiler —
+    /// `null` İSE (havuzsuz) `stwParticipate` HİÇ ÇALIŞMAZ (bkz. onun
+    /// gövdesi, İLK satır).
+    stw_requested: ?*std.atomic.Value(bool) = null,
+    stw_arrived: ?*std.atomic.Value(usize) = null,
+    stw_sense: ?*std.atomic.Value(bool) = null,
+    /// Faz MN.6: BU worker'ın KENDİ "sense" biti — PAYLAŞILMAZ, SADECE
+    /// bu `Scheduler`ın KENDİ iş parçacığı OKUR/YAZAR (bkz. proje planı,
+    /// "sense-reversing barrier" tasarım notu — TEK bir paylaşılan bayrağın
+    /// YENİDEN KULLANIMININ ABA-tipi bir bariyer-kilitlenmesi YARATTIĞI
+    /// bulundu, düzeltmesi BUDUR).
+    stw_local_sense: bool = false,
+    /// Faz MN.6: `nox_cycle_collect`e (bkz. `PoolLink`in AYNI-adlı alanının
+    /// belge notu) enjekte edilen fonksiyon işaretçisi + onu ÇAĞIRMAK İçİn
+    /// gereken `rt`.
+    collect_fn: ?*const fn (rt: ?*anyopaque) callconv(.c) void = null,
+    rt: ?*anyopaque = null,
     /// Faz MN.4/5: çapraz-worker uyandırma İçİn self-pipe ÇİFTİ — SADECE
     /// `attachToPool` çağrıldığında (havuzlu kullanım) kurulur, AKSİ HALDE
     /// `null` kalır.
@@ -130,8 +183,8 @@ pub const Scheduler = struct {
         self.ready.deinit(self.allocator);
         for (self.stack_pool.items) |stack| self.allocator.free(stack);
         self.stack_pool.deinit(self.allocator);
-        if (self.wake_read_fd) |fd| closeSelfPipeFd(fd);
-        if (self.wake_write_fd) |fd| closeSelfPipeFd(fd);
+        if (self.wake_read_fd) |fd| self_pipe.closeSelfPipeFd(fd);
+        if (self.wake_write_fd) |fd| self_pipe.closeSelfPipeFd(fd);
     }
 
     /// Faz MN.4/5: bu zamanlayıcıyı bir `WorkerPool`e BAĞLAR — `bridge.zig`nin
@@ -139,23 +192,32 @@ pub const Scheduler = struct {
     /// OTOMATİK çağırır (bkz. onun belge notu). Self-pipe kurar VE HEMEN
     /// reaktöre kaydeder (`armWakeFd`) — `run`, İLK `reactor.poll()`
     /// çağrısından İTİBAREN çapraz-worker uyandırmaya HAZIR olur.
-    pub fn attachToPool(
-        self: *Scheduler,
-        own_slot: usize,
-        sibling_deques: []const *Deque,
-        pool_live_count: *std.atomic.Value(usize),
-        pool_waiting_on_io: *std.atomic.Value(usize),
-        pool_idle_workers: *std.atomic.Value(usize),
-    ) !void {
-        self.own_slot = own_slot;
-        self.sibling_deques = sibling_deques;
-        self.pool_live_count = pool_live_count;
-        self.pool_waiting_on_io = pool_waiting_on_io;
-        self.pool_idle_workers = pool_idle_workers;
-        const fds = try makeSelfPipe();
+    pub fn attachToPool(self: *Scheduler, link: PoolLink) !void {
+        self.own_slot = link.own_slot;
+        self.sibling_deques = link.sibling_deques;
+        self.pool_live_count = link.live_count;
+        self.pool_waiting_on_io = link.waiting_on_io;
+        self.pool_idle_workers = link.idle_workers;
+        self.stw_requested = link.stw_requested;
+        self.stw_arrived = link.stw_arrived;
+        self.stw_sense = link.stw_sense;
+        self.collect_fn = link.collect_fn;
+        self.rt = link.rt;
+        const fds = try self_pipe.makeSelfPipe();
         self.wake_read_fd = fds[0];
         self.wake_write_fd = fds[1];
         self.armWakeFd();
+        // Faz MN.6: KENDİ wake-fd'mizin YAZMA ucunu YAYINLA — `cycle_
+        // detector.zig`nin YENİ bir STW round'u BAŞLATTIĞINDA (bkz.
+        // `nox_cycle_possible_root`) TÜM worker'ları uyandırabilmesi İçİn.
+        // Windows'ta `wake_write_fd == null` OLDUĞUNDAN (bkz. `self_pipe.
+        // zig`) bu adım SESSİZCE ATLANIR — YENİ bir regresyon DEĞİL,
+        // wake-fd mekanizmasının KENDİSİ ZATEN Windows'ta YOK.
+        if (builtin.os.tag != .windows) {
+            if (self.wake_write_fd) |wfd| {
+                link.wake_fds[link.own_slot].store(@intCast(wfd), .release);
+            }
+        }
     }
 
     /// Faz MN.4/5.8: `sibling_deques[own_slot]` — BU worker'ın KENDİ
@@ -204,7 +266,7 @@ pub const Scheduler = struct {
             // Wake-fd ateşledi — GERÇEK bir fiber DEĞİL, sadece byte'ı
             // tüket VE reaktöre YENİDEN kaydol (EV_ONESHOT/EPOLLONESHOT
             // her ateşlemeden sonra SÖKÜLÜR/silahsızlanır).
-            if (self.wake_read_fd) |fd| drainWakeFd(fd);
+            if (self.wake_read_fd) |fd| self_pipe.drainWakeFd(fd);
             self.armWakeFd();
             return;
         }
@@ -213,7 +275,7 @@ pub const Scheduler = struct {
         self.ready.append(self.allocator, fiber) catch @panic("OOM: zamanlayıcı hazır kuyruğu büyütülemedi");
         self.ready_lock.unlock();
         if (is_foreign) {
-            if (self.wake_write_fd) |fd| signalWakeFd(fd);
+            if (self.wake_write_fd) |fd| self_pipe.signalWakeFd(fd);
         }
     }
 
@@ -264,6 +326,59 @@ pub const Scheduler = struct {
         self.waiting_on_io -= 1;
         if (self.pool_waiting_on_io) |pwio| _ = pwio.fetchSub(1, .monotonic);
         return ctx.result;
+    }
+
+    /// Faz MN.6: kooperatif "dünyayı-durdur" (STW) bariyerine KATILIM —
+    /// `run()`nün `while (true) { ... }` döngüsünün TAM İLK SATIRI olarak
+    /// çağrılır, bu YÜZDEN HER ZAMAN `fiber.resume_()` ÇAĞRILARI ARASINDA
+    /// çalışır (bir worker BURADAYKEN HİÇBİR fiber'ın ORTASINDA OLAMAZ) —
+    /// `cycle_detector.zig`nin `nox_cycle_collect`i (mark/scan geçişinde
+    /// BAŞKA nesnelerin refcount'unu ATOMİK OLMAYAN şekilde okur/yazar,
+    /// bkz. onun belge notu) SADECE `collect_fn` BURADAN, TÜM `n` worker
+    /// KANITLANMIŞ ŞEKİLDE bariyerdeyken ÇAĞRILDIĞINDAN GÜVENLİDİR.
+    ///
+    /// **"Sense-reversing barrier" — bkz. proje planı, tasarım #1:** TEK
+    /// bir paylaşılan `bool`ün (HEM giriş kapısı HEM bekleme-koşulu
+    /// OLARAK) YENİDEN KULLANILMASI, art arda İKİ round HIZLI
+    /// tetiklendiğinde bir "straggler" worker'ın YANLIŞLIKLA SONRAKİ
+    /// round'u "önceki round HÂLÂ sürüyor" SANIP SONSUZA KADAR BLOKE
+    /// KALMASINA (TÜM sonraki toplama round'larının SESSİZCE DURMASINA)
+    /// yol açan GERÇEK bir ABA-tipi hata İDİ — HER worker'ın KENDİ
+    /// (paylaşılmayan) `stw_local_sense`i + PAYLAŞILAN `stw_sense`in
+    /// SADECE round TAMAMLANDIĞINDA lider TARAFINDAN YAZILMASI BUNU
+    /// yapısal olarak İMKANSIZ kılar.
+    fn stwParticipate(self: *Scheduler) void {
+        const reqp = self.stw_requested orelse return;
+        if (!reqp.load(.acquire)) return;
+        self.stw_local_sense = !self.stw_local_sense;
+        const arrived = self.stw_arrived.?;
+        const n = self.sibling_deques.len;
+        if (arrived.fetchAdd(1, .acq_rel) + 1 == n) {
+            // SON varan → lider. TÜM n worker ARTIK KANITLANMIŞ şekilde
+            // fiber'ın ORTASINDA DEĞİL — collect'i GÜVENLE çalıştırabiliriz.
+            if (self.collect_fn) |f| f(self.rt);
+            arrived.store(0, .release);
+            // KRİTİK SIRA: ÖNCE `reqp`i temizle, SONRA straggler'ları
+            // `stw_sense` ÜZERİNDEN SERBEST BIRAK — TERSİ (sense ÖNCE)
+            // GERÇEK bir yarış İçERİR: uyanan bir straggler `stwParticipate`i
+            // HEMEN TERK EDİP (bu testte/production `run()`nün döngüsünde)
+            // GERİ DÖNÜP `reqp`i TEKRAR OKUYABİLİR — leader HENÜZ `reqp`i
+            // TEMİZLEMEMİŞSE, straggler AYNI (ESKİ) round İçİn İKİNCİ KEZ
+            // `stwParticipate`e GİRER (`local_sense`ini TEKRAR TERSİNE
+            // ÇEVİRİP `arrived`e TEKRAR `fetchAdd` eder) — bu da `local_
+            // sense`in kalıcı olarak SENKRONİZASYONUNU BOZAR (GERÇEKTEN
+            // GÖZLEMLENDİ: `zig build test`in TAM takımında `Thread.yield()`
+            // içinde SONSUZA KADAR dönen bir livelock). `reqp`i ÖNCE
+            // temizlemek, `stw_sense`i acquire-load EDEN HER straggler'ın
+            // (release-acquire senkronizasyonu SAYESİNDE) `reqp == false`yi
+            // ZATEN GÖRMESİNİ GARANTİ eder — geri döndüğünde ya YENİ bir
+            // GERÇEK round'u (reqp tekrar true İSE) ya HİÇBİR ŞEYİ (henüz
+            // İSE) görür, ASLA ESKİ round'u TEKRAR görmez.
+            reqp.store(false, .release);
+            self.stw_sense.?.store(self.stw_local_sense, .release);
+        } else {
+            while (self.stw_sense.?.load(.acquire) != self.stw_local_sense) sleepMs(1);
+        }
     }
 
     /// Faz MN.4: KENDİ deque'i BOŞ İKEN kardeşlerden (round-robin, KENDİ
@@ -335,6 +450,12 @@ pub const Scheduler = struct {
     /// en az bir fiber'ı hazır kuyruğa geri koyar VE döngü DEVAM eder.
     pub fn run(self: *Scheduler) RunError!void {
         while (true) {
+            // Faz MN.6: STW bariyerine katılım — döngünün TAM İLK satırı
+            // (bkz. `stwParticipate`nin belge notu, "HER ZAMAN fiber.
+            // resume_() ÇAĞRILARI ARASINDA" garantisi). `continue` İLE
+            // buraya DÖNEN HER yol (G/Ç-poll SONRASI, çalma/deadlock-
+            // kontrolü BAŞARISIZ OLDUĞUNDA) DA kapsanır.
+            self.stwParticipate();
             // Faz MN.4/5: `ready` ARTIK BİRDEN FAZLA iş parçacığı TARAFINDAN
             // (yerel `run` döngüsü BURADA pop eder, YABANCI worker'lar
             // `markReady` İLE append eder) dokunulabilir — okuma (uzunluk
@@ -420,48 +541,6 @@ pub const Scheduler = struct {
         }
     }
 };
-
-// ---- Faz MN.4/5: havuz-farkındalı self-pipe yardımcıları ----
-//
-// `http_client.zig`nin `makeSelfPipe`/`signalSelfPipe`/`readSelfPipe`si İLE
-// AYNI teknik (POSIX `pipe()` + tek-bayt `write`/`read`, `PIPE_BUF` altı
-// boyutlar İçİn POSIX'te ATOMİK, kilitsiz GÜVENLİ) — ama BURADA AYRICA
-// tanımlanır, DOĞRUDAN İTHAL EDİLMEZ: `http_client.zig`, `bridge.zig`yi
-// (O DA `scheduler.zig`yi) İTHAL EDER — `scheduler.zig`nin `http_client.
-// zig`yi DOĞRUDAN İTHAL ETMESİ döngüsel bir bağımlılık (Zig'de TEKNİK
-// olarak İZİN VERİLİR ama katman disiplinini BOZAR: `scheduler.zig`
-// `bridge.zig`nin ALTINDA yer alan bir katmandır) kurardı. Faz LL.2
-// (nox-teknik-spesifikasyon.md §3.71) Windows İçİn `pipe()` YERİNE bir
-// UDP-loopback ÇİFTİ KULLANIYORDU — BURADA Windows dalı BİLİNÇLİ olarak
-// UYGULANMADI (`makeSelfPipe` `error.Unsupported` döner): work-stealing
-// HENÜZ (bu fazda) GERÇEK bir Nox programından/codegen'den BAĞLANMADIĞINDAN
-// (bkz. proje planı, MN.7 kapsamı) Windows'ta test EDİLEMEZ durumda —
-// `attachToPool` başarısız OLURSA havuz KURULUMU (bkz. `worker_pool.zig`)
-// BUNU ele almalıdır.
-fn makeSelfPipe() ![2]posix.fd_t {
-    if (builtin.os.tag == .windows) return error.Unsupported;
-    var fds: [2]posix.fd_t = undefined;
-    if (std.c.pipe(&fds) != 0) return error.PipeFailed;
-    return fds;
-}
-
-fn closeSelfPipeFd(fd: posix.fd_t) void {
-    if (builtin.os.tag != .windows) _ = std.c.close(fd);
-}
-
-fn signalWakeFd(fd: posix.fd_t) void {
-    if (builtin.os.tag != .windows) {
-        var signal_byte = [_]u8{1};
-        _ = std.c.write(fd, &signal_byte, 1);
-    }
-}
-
-fn drainWakeFd(fd: posix.fd_t) void {
-    if (builtin.os.tag != .windows) {
-        var buf: [1]u8 = undefined;
-        _ = std.c.read(fd, &buf, 1);
-    }
-}
 
 /// Faz MN.5: `poolWideDeadlockCheck`nin KISA bekleme turları İçİn — `std.
 /// Thread`da bir `sleep` metodu YOK (Zig 0.16.0'da doğrulandı) — `runtime/
@@ -714,4 +793,111 @@ test "Faz S.1: tamamlanmadan (fire-and-forget) 'destroy' edilen görev sızmadan
     // bıraktı (bkz. yukarıdaki not). Testin asıl iddiası, `std.testing.
     // allocator`ın fonksiyon SONUNDA OTOMATİK olarak doğruladığı şeydir:
     // struct ne SIZDI ne de ÇİFT serbest bırakıldı.
+}
+
+// ---- Faz MN.6: STW bariyeri (sense-reversing barrier) testi ----
+//
+// `alloc/`den TAMAMEN BAĞIMSIZ (`async-rt-test`nin HIZLI çalıştırdığı
+// standalone hedefin BİR PARÇASI) — GERÇEK bir `WorkerPool` KURULMAZ,
+// `PoolLink`in TÜM alanları BURADA ELLE inşa edilir. Bariyerin KENDİSİNE
+// ODAKLANIR (`Scheduler.stwParticipate`i doğrudan çağırır) — bu, "TEK bir
+// paylaşılan bayrağın YENİDEN KULLANIMI" ABA-tipi hatasının (bkz. proje
+// planı, "Faz MN.6" tasarım notu #1) DOĞRUDAN regresyon testidir: HATALI
+// tasarımla BU test 50 round'un ÇOK ÖNCESİNDE bir straggler worker'ın
+// SONSUZA KADAR bloke KALMASIYLA (dolayısıyla `t.join()`ün ASLA
+// DÖNMEMESİYLE) ASILI KALIRDI.
+
+test "Faz MN.6: STW bariyeri (sense-reversal) ART ARDA round'larda KİLİTLENMEDEN çalışır" {
+    const N = 4;
+    const ROUNDS = 50;
+
+    const Shared = struct {
+        stw_requested: std.atomic.Value(bool) = .init(false),
+        stw_arrived: std.atomic.Value(usize) = .init(0),
+        stw_sense: std.atomic.Value(bool) = .init(false),
+        collect_count: std.atomic.Value(usize) = .init(0),
+        live_count: std.atomic.Value(usize) = .init(0),
+        waiting_on_io: std.atomic.Value(usize) = .init(0),
+        idle_workers: std.atomic.Value(usize) = .init(0),
+        deques: [N]Deque = @splat(.{}),
+        deque_ptrs: [N]*Deque = undefined,
+        wake_fds: [N]std.atomic.Value(i32) = @splat(.init(-1)),
+        rounds_done: [N]std.atomic.Value(usize) = @splat(.init(0)),
+    };
+
+    const Fn = struct {
+        fn fakeCollect(rt: ?*anyopaque) callconv(.c) void {
+            const s: *Shared = @ptrCast(@alignCast(rt.?));
+            _ = s.collect_count.fetchAdd(1, .monotonic);
+        }
+
+        fn workerBody(shared: *Shared, own_slot: usize) void {
+            var sched = Scheduler.init(std.testing.allocator) catch @panic("zamanlayici baslatilamadi");
+            defer sched.deinit();
+            sched.attachToPool(.{
+                .own_slot = own_slot,
+                .sibling_deques = &shared.deque_ptrs,
+                .live_count = &shared.live_count,
+                .waiting_on_io = &shared.waiting_on_io,
+                .idle_workers = &shared.idle_workers,
+                .stw_requested = &shared.stw_requested,
+                .stw_arrived = &shared.stw_arrived,
+                .stw_sense = &shared.stw_sense,
+                .wake_fds = &shared.wake_fds,
+                .collect_fn = &fakeCollect,
+                .rt = shared,
+            }) catch {};
+
+            var r: usize = 0;
+            while (r < ROUNDS) : (r += 1) {
+                while (!shared.stw_requested.load(.acquire)) std.Thread.yield() catch {};
+                sched.stwParticipate();
+                _ = shared.rounds_done[own_slot].fetchAdd(1, .monotonic);
+            }
+        }
+    };
+
+    var shared = Shared{};
+    for (0..N) |i| shared.deque_ptrs[i] = &shared.deques[i];
+
+    var threads: [N]std.Thread = undefined;
+    for (&threads, 0..) |*t, i| {
+        t.* = try std.Thread.spawn(.{}, Fn.workerBody, .{ &shared, i });
+    }
+
+    // Faz MN.6: ART ARDA `ROUNDS` round'u SÜRÜCÜLE — HER round'u BAŞLATMADAN
+    // ÖNCE ÖNCEKİ round'un GERÇEKTEN TAMAMLANDIĞINI (`collect_count`
+    // ARTTI) doğrula, bu YÜZDEN round'lar ASLA ÇAKIŞMAZ (sense-reversal
+    // düzeltmesinin DOĞRU çalıştığının bağımsız bir kanıtı).
+    var round: usize = 0;
+    while (round < ROUNDS) : (round += 1) {
+        // **GERÇEK, DENEYEREK BULUNAN hata**: `collect_fn` (`fakeCollect`)
+        // `collect_count`u lider'in `arrived`/`stw_requested`i TEMİZLEMESİNDEN
+        // ÖNCE artırır — bu YÜZDEN bu sürücü, "önceki round bitti" sinyalini
+        // (`collect_count` arttı) lider HENÜZ `stw_requested`i `false`
+        // YAPMADAN görebilir. TEK seferlik bir `cmpxchgStrong` (ÖNCEKİ
+        // kod) bu dar pencerede BAŞARISIZ olup HİÇ TEKRAR DENEMEZSE, `true`
+        // değeri KALICI olarak KAYBOLUR — lider (ÖNCEKİ round'dan) HEMEN
+        // ARDINDAN `false` yazar VE HİÇ KİMSE bir daha `true` YAZMAZ,
+        // TÜM worker'lar `stwParticipate`in dışındaki OUTER `while
+        // (!stw_requested.load()) yield();` döngüsünde SONSUZA KADAR
+        // döner (GERÇEKTEN, `zig build test`in TAM takımında, 494% CPU'lu
+        // bir livelock OLARAK gözlemlendi). Düzeltme: `false`→`true`
+        // GEÇİŞİNİ GERÇEKTEN BAŞARANA KADAR TEKRAR DENE — üretim kodundaki
+        // (`nox_cycle_possible_root`) TEK-seferlik cmpxchg GÜVENLİDİR
+        // ÇÜNKÜ o SÜREKLİ tekrar tekrar çağrılır (HER olası-kök olayında);
+        // BU test sürücüsü İSE round başına TAM BİR KEZ çağrıldığından
+        // KENDİ İçİNDE tekrar etmesi GEREKİR.
+        while (shared.stw_requested.cmpxchgWeak(false, true, .acq_rel, .monotonic) != null) {
+            std.Thread.yield() catch {};
+        }
+        while (shared.collect_count.load(.acquire) <= round) std.Thread.yield() catch {};
+    }
+
+    for (&threads) |t| t.join();
+
+    try std.testing.expectEqual(@as(usize, ROUNDS), shared.collect_count.load(.monotonic));
+    for (0..N) |i| {
+        try std.testing.expectEqual(@as(usize, ROUNDS), shared.rounds_done[i].load(.monotonic));
+    }
 }
