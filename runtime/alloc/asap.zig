@@ -271,6 +271,20 @@ pub const RuntimeState = struct {
     /// SADECE `pool_idle_workers == (havuzdaki TOPLAM worker sayısı)`
     /// İKEN (yani TÜM worker'lar AYNI ANDA boştaysa) ANLAMLIDIR.
     pool_idle_workers: std.atomic.Value(usize) = .init(0),
+    /// Faz MN.8, Bulgu B: `poolWideDeadlockCheck`nin (bkz. scheduler.zig)
+    /// YAKLAŞIK sezgiselinin KÖK NEDEN düzeltmesi — MN.7a/7b doğrulamasında
+    /// TEKRAR TEKRAR GERÇEKTEN gözlemlenen ("toplu spawn + sıralı await"
+    /// deseni, GERÇEK bir fan-out/fan-in kullanımı, YAPAY bir stres deseni
+    /// DEĞİL) YANLIŞ pozitif deadlock tespitini HEDEFLER. `markReady`nin
+    /// `is_foreign` dalında VE `Scheduler.spawn`ın deque-push dalında
+    /// `fetchAdd(1, .release)` EDİLİR (BİLİNÇLİ olarak DAR TUTULDU — HTTP
+    /// bağlantı-kabul döngüsü GİBİ AŞIRI SIK AMA HER ZAMAN YEREL `markReady`
+    /// çağıran yollar BUNA HİÇ dokunmaz). `poolWideDeadlockCheck`, deadlock
+    /// İLAN ETMEDEN ÖNCE, GÖZLEM PENCERESİNİN BAŞINDA VE SONUNDA okunan
+    /// İKİ değerin EŞİT OLDUĞUNU (yani HİÇBİR ÜRETİM olayının o pencerede
+    /// GERÇEKLEŞMEDİĞİNİ) `.acquire` sıralı okumalarla KANITLAR — sadece
+    /// "son anlık görüntü boş GÖRÜNDÜ" DEĞİL.
+    pool_activity_epoch: std.atomic.Value(u64) = .init(0),
     /// Faz MN.6: `runtime/async_rt/scheduler.zig`nin `stwParticipate`sinin
     /// kullandığı "sense-reversing barrier" — kooperatif dünyayı-durdur
     /// (STW) round'unun giriş kapısı. `runtime/alloc/cycle_detector.zig`nin

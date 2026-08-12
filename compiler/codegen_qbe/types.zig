@@ -216,6 +216,17 @@ pub const ThreadWrapperSpec = struct {
 pub const PoolRunWrapperSpec = struct {
     name: []const u8,
     target_fn: []const u8,
+    /// Faz MN.8: `pool_run`ın sibling (saf-çalma) worker'larının KENDİ
+    /// worker slotu İçİn modül-global durumu HİÇ ilklendirmediği GERÇEK
+    /// hatanın düzeltmesi (bkz. proje planı, Bulgu A) — SADECE `self.
+    /// module_globals.count() > 0` İKEN doldurulur, AKSİ HALDE `null`
+    /// (gereksiz sıfır-alanlı fonksiyon üretimi YOK). `genPoolRunGlobals
+    /// InitWrapper`/`genPoolRunGlobalsDeinitWrapper`nin ÜRETTİĞİ, TEK
+    /// satırlık (`$nox_init_globals`/`$nox_deinit_globals` + `ret 0`)
+    /// minik fonksiyonların ADLARI — `nox_pool_run`ın C-ABI'sine EK
+    /// parametre OLARAK geçilirler.
+    globals_init_wrapper_name: ?[]const u8 = null,
+    globals_deinit_wrapper_name: ?[]const u8 = null,
 };
 
 /// Faz DD.1: `nox.http.serve_multicore` çağrı sitesi başına TEMBEL

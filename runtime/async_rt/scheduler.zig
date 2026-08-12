@@ -71,6 +71,10 @@ pub const PoolLink = struct {
     live_count: *std.atomic.Value(usize),
     waiting_on_io: *std.atomic.Value(usize),
     idle_workers: *std.atomic.Value(usize),
+    /// Faz MN.8, Bulgu B: `poolWideDeadlockCheck`nin epoch-doğrulamalı
+    /// kök-neden düzeltmesi İçİn (bkz. `asap.RuntimeState`nin `pool_
+    /// activity_epoch`inin AYNI belge notu).
+    activity_epoch: *std.atomic.Value(u64),
     /// Faz MN.6: STW bariyerinin ÜÇ paylaşılan atomiği (bkz. `asap.
     /// RuntimeState`nin AYNI-adlı alanlarının belge notu).
     stw_requested: *std.atomic.Value(bool),
@@ -144,6 +148,8 @@ pub const Scheduler = struct {
     pool_live_count: ?*std.atomic.Value(usize) = null,
     pool_waiting_on_io: ?*std.atomic.Value(usize) = null,
     pool_idle_workers: ?*std.atomic.Value(usize) = null,
+    /// Faz MN.8, Bulgu B: bkz. `PoolLink.activity_epoch`in belge notu.
+    pool_activity_epoch: ?*std.atomic.Value(u64) = null,
     /// Faz MN.6: STW bariyerinin ÜÇ paylaşılan atomiğine işaretçiler —
     /// `null` İSE (havuzsuz) `stwParticipate` HİÇ ÇALIŞMAZ (bkz. onun
     /// gövdesi, İLK satır).
@@ -181,7 +187,7 @@ pub const Scheduler = struct {
     pub fn deinit(self: *Scheduler) void {
         self.reactor.deinit();
         self.ready.deinit(self.allocator);
-        for (self.stack_pool.items) |stack| self.allocator.free(stack);
+        for (self.stack_pool.items) |stack| fiber_mod.freeGuardedStack(stack);
         self.stack_pool.deinit(self.allocator);
         if (self.wake_read_fd) |fd| self_pipe.closeSelfPipeFd(fd);
         if (self.wake_write_fd) |fd| self_pipe.closeSelfPipeFd(fd);
@@ -198,6 +204,7 @@ pub const Scheduler = struct {
         self.pool_live_count = link.live_count;
         self.pool_waiting_on_io = link.waiting_on_io;
         self.pool_idle_workers = link.idle_workers;
+        self.pool_activity_epoch = link.activity_epoch;
         self.stw_requested = link.stw_requested;
         self.stw_arrived = link.stw_arrived;
         self.stw_sense = link.stw_sense;
@@ -240,7 +247,12 @@ pub const Scheduler = struct {
     /// `Fiber.create`yi DOĞRUDAN çağırıp havuzu HİÇ KULLANMIYORDU).
     pub fn acquireStack(self: *Scheduler) ![]align(fiber_mod.STACK_ALIGN) u8 {
         if (self.stack_pool.pop()) |stack| return stack;
-        return self.allocator.alignedAlloc(u8, .fromByteUnits(fiber_mod.STACK_ALIGN), fiber_mod.STACK_SIZE);
+        // Faz MN.8, Bulgu C: TAZE yığınlar ARTIK `self.allocator.alignedAlloc`
+        // YERİNE koruma-sayfalı `fiber_mod.allocGuardedStack()` İLE tahsis
+        // edilir (bkz. onun belge notu) — havuzdan GERİ KAZANILAN yığınlar
+        // (yukarıdaki `pop()` dalı) zaten koruma-sayfalı OLARAK kuruldu,
+        // BURADA tekrar dokunulmaz.
+        return fiber_mod.allocGuardedStack();
     }
 
     /// Bir yığını (artık kullanılmayan) genel ayırıcıya GERİ VERMEK yerine
@@ -250,7 +262,7 @@ pub const Scheduler = struct {
     /// `acquireStack`in AYNI gerekçesi.
     pub fn releaseStack(self: *Scheduler, stack: []align(fiber_mod.STACK_ALIGN) u8) void {
         self.stack_pool.append(self.allocator, stack) catch {
-            self.allocator.free(stack);
+            fiber_mod.freeGuardedStack(stack);
         };
     }
 
@@ -275,6 +287,13 @@ pub const Scheduler = struct {
         self.ready.append(self.allocator, fiber) catch @panic("OOM: zamanlayıcı hazır kuyruğu büyütülemedi");
         self.ready_lock.unlock();
         if (is_foreign) {
+            // Faz MN.8, Bulgu B: çapraz-worker bir uyandırma — BİR
+            // worker'ın `poolWideDeadlockCheck`i TAM O ANDA "boş"
+            // GÖRDÜĞÜ kendi ready/deque'sini BU EKLEMEDEN HEMEN ÖNCE
+            // kontrol ETMİŞ olabileceğinden, epoch'u İŞARETLE — deadlock
+            // İLANI, GÖZLEM PENCERESİ boyunca BU artışın OLMADIĞINI
+            // KANITLAMAK ZORUNDA kalacak.
+            if (self.pool_activity_epoch) |epoch| _ = epoch.fetchAdd(1, .release);
             if (self.wake_write_fd) |fd| self_pipe.signalWakeFd(fd);
         }
     }
@@ -442,13 +461,35 @@ pub const Scheduler = struct {
         return self.ready.items.len > 0;
     }
 
+    /// **Faz MN.8, Bulgu B — epoch-doğrulamalı kök-neden düzeltmesi**
+    /// (bkz. proje planı): MN.7a/7b doğrulamasında TEKRAR TEKRAR
+    /// GERÇEKTEN gözlemlenen ("toplu spawn + sıralı await" deseni —
+    /// GERÇEK bir fan-out/fan-in kullanımı, YAPAY bir stres deseni
+    /// DEĞİL) YANLIŞ pozitif deadlock tespitinin HEDEFİ. Aşağıdaki
+    /// 20-denemelik retry döngüsü (GENUİNE meşgul-ama-henüz-üretmemiş
+    /// durumlara ZAMAN TANIMAK İçİn) DEĞİŞMEDEN KALIR — YENİ olan,
+    /// deadlock İLAN ETMEDEN HEMEN ÖNCEKİ SON kontroldür: `pool_
+    /// activity_epoch`un (bkz. `markReady`nin `is_foreign` dalı VE
+    /// `spawn`nin deque-push dalı — BUNLAR HER "çalınabilir YENİ İş
+    /// üretimi" olayında `fetchAdd(1, .release)` yapar) GÖZLEM
+    /// PENCERESİNİN (bu fonksiyon ÇAĞRILDIĞI ANDAN deadlock kararı
+    /// verileceği ANA KADAR) BAŞINDA VE SONUNDA okunan İKİ değerinin
+    /// EŞİT OLDUĞU `.acquire` sıralı okumalarla KANITLANMASI — SADECE
+    /// "son anlık görüntü boş GÖRÜNDÜ" DEĞİL, TÜM pencerede HİÇBİR
+    /// ÜRETİM olayının GERÇEKLEŞMEDİĞİ. Epoch DEĞİŞTİYSE (BİR ŞEY
+    /// üretildi — belki TAM O ANDA bir görev BİTİP bir bekleyeni
+    /// UYANDIRDI), deadlock İLAN EDİLMEZ — çağıran `run()` döngüsü
+    /// BAŞA DÖNÜP YENİDEN dener (bu FONKSİYON YENİDEN çağrılır).
     fn poolWideDeadlockCheck(self: *Scheduler) bool {
         const n_workers = self.sibling_deques.len;
         const live = self.pool_live_count.?;
         const waiting_io = self.pool_waiting_on_io.?;
         const idle = self.pool_idle_workers.?;
+        const epoch = self.pool_activity_epoch.?;
         _ = idle.fetchAdd(1, .monotonic);
         defer _ = idle.fetchSub(1, .monotonic);
+
+        const epoch_before = epoch.load(.acquire);
 
         var attempt: usize = 0;
         while (attempt < 20) : (attempt += 1) {
@@ -463,9 +504,13 @@ pub const Scheduler = struct {
             if (idle.load(.monotonic) < n_workers) return false;
         }
         if (self.hasLocalReadyWork()) return false;
-        return idle.load(.monotonic) >= n_workers and
+        if (!(idle.load(.monotonic) >= n_workers and
             live.load(.monotonic) > 0 and
-            waiting_io.load(.monotonic) == 0;
+            waiting_io.load(.monotonic) == 0))
+        {
+            return false;
+        }
+        return epoch.load(.acquire) == epoch_before;
     }
 
     pub const RunError = error{Deadlock};
@@ -636,6 +681,15 @@ pub fn Task(comptime T: type) type {
     return struct {
         const Self = @This();
 
+        /// Faz MN.8, Bulgu B (KÖK NEDEN düzeltmesi) — `state`nin özel
+        /// değerleri: `PENDING`(0) görev HENÜZ bitmedi, hiçbir bekleyen
+        /// KAYITLI DEĞİL; `COMPLETED`(1) görev bitti (`result` GÜVENLE
+        /// okunabilir); BAŞKA HERHANGİ bir değer KAYITLI bir bekleyenin
+        /// `*Fiber` işaretçisidir (Fiber'lar HER ZAMAN >=8-bayt hizalı
+        /// tahsis edildiğinden 0/1 İLE ASLA ÇAKIŞMAZ).
+        pub const PENDING: usize = 0;
+        pub const COMPLETED: usize = 1;
+
         scheduler: *Scheduler,
         fiber: *Fiber = undefined,
         /// `callconv(.c)`: bu alan çoğunlukla QBE'nin ÜRETTİĞİ (dolayısıyla
@@ -646,13 +700,41 @@ pub fn Task(comptime T: type) type {
         func: *const fn (*anyopaque) callconv(.c) T,
         arg: *anyopaque,
         result: T = undefined,
-        completed: bool = false,
-        waiter: ?*Fiber = null,
+        /// Faz MN.8, Bulgu B — `entryTrampoline`/`await_` ARASINDAKİ
+        /// "kayıp uyandırma" (lost wakeup) yarışının KÖK NEDEN düzeltmesi:
+        /// ESKİDEN `completed: bool`/`waiter: ?*Fiber` İKİ AYRI, PLAIN
+        /// (senkronize-OLMAYAN) alandı — `nox.thread.pool_run`ın 1000/
+        /// 10000 görevlik toplu-spawn+sıralı-await stres testinde
+        /// GERÇEKTEN, TEKRARLANABİLİR şekilde bulundu: `entryTrampoline`
+        /// (BİR worker'da) `completed=true` YAZARKEN, `await_` (BAŞKA
+        /// bir worker'da, ÇALINAN bir görevin sonucunu bekleyen) `self.
+        /// waiter = current_fiber` YAZARKEN ARASINDA HİÇBİR bellek
+        /// bariyeri YOKTU — M:1 modelde SORUN DEĞİLDİ (TEK iş parçacığı,
+        /// program SIRASI YETERLİYDİ), M:N work-stealing'de GERÇEK bir
+        /// veri yarışıydı VE `poolWideDeadlockCheck`nin `pool_activity_
+        /// epoch`u BİLE BUNU YAKALAYAMADI (o mekanizma "YANLIŞ pozitif
+        /// deadlock tespiti"ni HEDEFLİYORDU — BURADAKİ SORUN "algılama"
+        /// DEĞİL, waiter'ın HİÇ KAYDEDİLMEMESİ/HİÇ UYANDIRILMAMASIYDI,
+        /// yani GERÇEK bir kayıp-uyandırma). Düzeltme: TEK bir atomik
+        /// `state` alanı + CAS tabanlı protokol (klasik "single-shot
+        /// future" deseni) — `await_`, `PENDING`DEN KENDİ fiber'ına CAS
+        /// yapmayı DENER; BAŞARILIYSA GERÇEKTEN kaydolmuş VE askıya
+        /// alınmış olur; BAŞARISIZSA (state ZATEN `COMPLETED`) `result`
+        /// (CAS'ın KENDİ `.acquire`si SAYESİNDE) GÜVENLE GÖRÜNÜRDÜR, HİÇ
+        /// askıya ALINMADAN döner. `entryTrampoline` KOŞULSUZ `swap
+        /// (COMPLETED, .acq_rel)` yapar — ESKİ değer `PENDING` İSE
+        /// bekleyen YOK; BAŞKA (bir `*Fiber`) İSE O ANDA doğru bekleyeni
+        /// GÜVENLE (kaçırmadan) uyandırır. `result`ın uyandırılan
+        /// tarafta GÖRÜNÜRLÜĞÜ AYRICA `markReady`nin KENDİ `ready_lock`
+        /// (`asap.SpinLock`, `.acquire`/`.release`) SENKRONİZASYONUNDAN
+        /// GELİR (çapraz-worker uyandırmanın ZATEN KANITLANMIŞ mekanizması
+        /// — bkz. MN.4/5'in "GERÇEK çapraz-worker fiber çalma" tasarımı).
+        state: std.atomic.Value(usize) = .init(PENDING),
         /// Faz S.1: `destroy` (bkz. `bridge.zig`nin `nox_async_destroy_task`ı)
         /// bu görev HENÜZ tamamlanmamışken çağrıldıysa `true` olur — bu
         /// GÜVENLİK için ZORUNLUDUR: `self` (`Task` struct'ının KENDİSİ),
         /// fiber'ın `entryTrampoline`si HENÜZ tamamlanmadığından, fiber
-        /// tarafından `self.result`/`self.completed`e YAZILACAK bellektir.
+        /// tarafından `self.result`/`self.state`e YAZILACAK bellektir.
         /// `self`i HEMEN serbest bırakmak (görev tamamlanmadan) fiber
         /// sonunda serbest bırakılmış belleğe YAZAN bir use-after-free
         /// olurdu. Bunun yerine yalnızca bu bayrak işaretlenir — GERÇEK
@@ -671,13 +753,27 @@ pub fn Task(comptime T: type) type {
                 self.scheduler.allocator.destroy(self);
                 return;
             }
-            self.completed = true;
-            if (self.waiter) |w| self.scheduler.markReady(w);
+            const old = self.state.swap(COMPLETED, .acq_rel);
+            if (old != PENDING) {
+                const w: *Fiber = @ptrFromInt(old);
+                self.scheduler.markReady(w);
+            }
         }
 
         pub fn await_(self: *Self) T {
-            if (!self.completed) {
-                self.waiter = self.scheduler.current.?;
+            // Hızlı yol: görev ZATEN tamamlanmışsa `self.scheduler.current`e
+            // HİÇ DOKUNMA — `await_` bir fiber BAĞLAMI OLMADAN (ör. üst-
+            // düzey test kodu, `scheduler.run()` DIŞINDA) ZATEN tamamlanmış
+            // bir görevi beklemek İçİn ÇAĞRILABİLİR (`current` O DURUMDA
+            // `null`dır) — bu ESKİ (`if (!self.completed)`) davranışla
+            // BİREBİR AYNIDIR. SADECE görev HÂLÂ PENDING İSE (bekleyen
+            // KAYDEDİLMESİ GEREKEBİLİR) `current`in DOLU (fiber bağlamı
+            // İçİNDE çağrıldığı) OLMASI GEREKİR.
+            if (self.state.load(.acquire) == COMPLETED) {
+                return self.result;
+            }
+            const me = self.scheduler.current.?;
+            if (self.state.cmpxchgStrong(PENDING, @intFromPtr(me), .acq_rel, .acquire) == null) {
                 self.scheduler.suspendCurrent();
             }
             return self.result;
@@ -717,6 +813,13 @@ pub fn spawn(scheduler: *Scheduler, comptime T: type, func: *const fn (*anyopaqu
     // eder.
     if (scheduler.ownDeque()) |d| {
         d.pushBottom(task.fiber) catch scheduler.markReady(task.fiber);
+        // Faz MN.8, Bulgu B: YENİ bir görev (BAŞKA bir worker TARAFINDAN
+        // çalınabilir hale GELDİ) — `markReady`nin `is_foreign` dalının
+        // AKSİNE, BU spawn HER ZAMAN YEREL (çağıran KENDİ deque'ine
+        // ekliyor) OLDUĞUNDAN `markReady` BUNU işaretlemez — BURADA AYRICA
+        // işaretlenmesi GEREKİR (bkz. `poolWideDeadlockCheck`nin epoch-
+        // doğrulaması).
+        if (scheduler.pool_activity_epoch) |epoch| _ = epoch.fetchAdd(1, .release);
     } else {
         scheduler.markReady(task.fiber);
     }
@@ -740,7 +843,7 @@ test "tek görev, await olmadan sonucu doğru hesaplar" {
 
     try scheduler.run();
 
-    try std.testing.expect(task.completed);
+    try std.testing.expect(task.state.load(.acquire) == Task(i64).COMPLETED);
     try std.testing.expectEqual(@as(i64, 42), task.result);
 }
 
@@ -773,7 +876,7 @@ test "bir görev başka bir görevi await eder (iç içe askıya alma)" {
 
     try scheduler.run();
 
-    try std.testing.expect(parent_task.completed);
+    try std.testing.expect(parent_task.state.load(.acquire) == Task(i64).COMPLETED);
     try std.testing.expectEqual(@as(i64, 21), parent_task.result);
 }
 
@@ -850,7 +953,7 @@ test "Faz S.1: tamamlanmadan (fire-and-forget) 'destroy' edilen görev sızmadan
     var input: i64 = 7;
     task.* = .{ .scheduler = &scheduler, .func = Fn.triple, .arg = &input };
 
-    try std.testing.expect(!task.completed);
+    try std.testing.expect(task.state.load(.acquire) == TaskI64.PENDING);
     task.detached = true;
 
     TaskI64.entryTrampoline(task);
@@ -885,6 +988,7 @@ test "Faz MN.6: STW bariyeri (sense-reversal) ART ARDA round'larda KİLİTLENMED
         live_count: std.atomic.Value(usize) = .init(0),
         waiting_on_io: std.atomic.Value(usize) = .init(0),
         idle_workers: std.atomic.Value(usize) = .init(0),
+        activity_epoch: std.atomic.Value(u64) = .init(0),
         deques: [N]Deque = @splat(.{}),
         deque_ptrs: [N]*Deque = undefined,
         wake_fds: [N]std.atomic.Value(i32) = @splat(.init(-1)),
@@ -906,6 +1010,7 @@ test "Faz MN.6: STW bariyeri (sense-reversal) ART ARDA round'larda KİLİTLENMED
                 .live_count = &shared.live_count,
                 .waiting_on_io = &shared.waiting_on_io,
                 .idle_workers = &shared.idle_workers,
+                .activity_epoch = &shared.activity_epoch,
                 .stw_requested = &shared.stw_requested,
                 .stw_arrived = &shared.stw_arrived,
                 .stw_sense = &shared.stw_sense,

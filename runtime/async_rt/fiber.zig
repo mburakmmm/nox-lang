@@ -71,6 +71,98 @@ extern fn nox_swap_context(old: *Context, new: *Context) void;
 pub const STACK_SIZE: usize = 256 * 1024;
 pub const STACK_ALIGN: usize = 16;
 
+/// Faz MN.8, Bulgu C — GÜVENLİK AĞI: fiber yığınları ARTIK düz `std.mem.
+/// Allocator.alignedAlloc` YERİNE `mmap`+`mprotect` (POSIX) / `VirtualAlloc`+
+/// `VirtualProtect` (Windows) İLE, KULLANILABİLİR `STACK_SIZE` bölgesinin
+/// HEMEN ALTINDA (yığın AŞAĞI doğru büyüdüğünden) 1 sayfalık ERİŞİLEMEZ bir
+/// "koruma sayfası" (guard page) İLE tahsis edilir. Bir yığın taşması ARTIK
+/// SESSİZCE bitişik belleği bozmak YERİNE BELİRLİ bir SIGSEGV/erişim-ihlaline
+/// dönüşür — GERÇEK bir güvenlik/doğruluk kazancı, `STACK_SIZE`in KENDİSİ
+/// BU FAZDA DEĞİŞMEZ (256 KiB olarak KALIR; küçültme AYRI, ÖLÇÜME-DAYALI
+/// bir gelecek fazdır). `Scheduler.acquireStack`/`releaseStack`nin havuz
+/// mantığı (`stack_pool`) DEĞİŞMEZ — bir yığın HAVUZDAN GERİ KAZANILDIĞINDA
+/// koruma sayfası ZATEN YERİNDE KALIR (yeniden mmap/mprotect GEREKMEZ,
+/// SADECE `acquireStack`nin havuz-BOŞ dalı VE `releaseStack`/`deinit`nin
+/// KENDİSİ, `Scheduler`'in KENDİ `allocator`i YERİNE bu fonksiyonları
+/// çağıracak şekilde güncellenir).
+fn guardPageSize() usize {
+    return std.heap.pageSize();
+}
+
+const WinVirtual = if (builtin.os.tag == .windows) struct {
+    extern "kernel32" fn VirtualAlloc(lpAddress: ?*anyopaque, dwSize: usize, flAllocationType: u32, flProtect: u32) callconv(.c) ?*anyopaque;
+    extern "kernel32" fn VirtualProtect(lpAddress: *anyopaque, dwSize: usize, flNewProtect: u32, lpflOldProtect: *u32) callconv(.c) i32;
+    extern "kernel32" fn VirtualFree(lpAddress: *anyopaque, dwSize: usize, dwFreeType: u32) callconv(.c) i32;
+} else struct {};
+
+const WIN_MEM_COMMIT: u32 = 0x1000;
+const WIN_MEM_RESERVE: u32 = 0x2000;
+const WIN_MEM_RELEASE: u32 = 0x8000;
+const WIN_PAGE_READWRITE: u32 = 0x04;
+const WIN_PAGE_NOACCESS: u32 = 0x01;
+
+fn allocGuardedStackWindows() ![]align(STACK_ALIGN) u8 {
+    const page = guardPageSize();
+    const total = page + STACK_SIZE;
+    const base = WinVirtual.VirtualAlloc(null, total, WIN_MEM_COMMIT | WIN_MEM_RESERVE, WIN_PAGE_READWRITE) orelse return error.VirtualAllocFailed;
+    var old_protect: u32 = 0;
+    if (WinVirtual.VirtualProtect(base, page, WIN_PAGE_NOACCESS, &old_protect) == 0) {
+        _ = WinVirtual.VirtualFree(base, 0, WIN_MEM_RELEASE);
+        return error.VirtualProtectFailed;
+    }
+    const usable_addr = @intFromPtr(base) + page;
+    const usable_ptr: [*]align(STACK_ALIGN) u8 = @ptrFromInt(usable_addr);
+    return usable_ptr[0..STACK_SIZE];
+}
+
+fn freeGuardedStackWindows(stack: []align(STACK_ALIGN) u8) void {
+    const page = guardPageSize();
+    const base_addr = @intFromPtr(stack.ptr) - page;
+    const base: *anyopaque = @ptrFromInt(base_addr);
+    _ = WinVirtual.VirtualFree(base, 0, WIN_MEM_RELEASE);
+}
+
+fn allocGuardedStackPosix() ![]align(STACK_ALIGN) u8 {
+    const page = guardPageSize();
+    const total = page + STACK_SIZE;
+    const region = try std.posix.mmap(
+        null,
+        total,
+        .{ .READ = true, .WRITE = true },
+        .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
+        -1,
+        0,
+    );
+    errdefer std.posix.munmap(region);
+    // Koruma sayfası — KULLANILABİLİR bölgenin ALTINDA (stack AŞAĞI büyür).
+    if (std.c.mprotect(@ptrCast(region.ptr), page, .{}) != 0) {
+        return error.MprotectFailed;
+    }
+    const usable_addr = @intFromPtr(region.ptr) + page;
+    const usable_ptr: [*]align(STACK_ALIGN) u8 = @ptrFromInt(usable_addr);
+    return usable_ptr[0..STACK_SIZE];
+}
+
+fn freeGuardedStackPosix(stack: []align(STACK_ALIGN) u8) void {
+    const page = guardPageSize();
+    const base_addr = @intFromPtr(stack.ptr) - page;
+    const base_ptr: [*]align(std.heap.page_size_min) u8 = @ptrFromInt(base_addr);
+    std.posix.munmap(base_ptr[0 .. page + STACK_SIZE]);
+}
+
+pub fn allocGuardedStack() ![]align(STACK_ALIGN) u8 {
+    if (builtin.os.tag == .windows) return allocGuardedStackWindows();
+    return allocGuardedStackPosix();
+}
+
+pub fn freeGuardedStack(stack: []align(STACK_ALIGN) u8) void {
+    if (builtin.os.tag == .windows) {
+        freeGuardedStackWindows(stack);
+        return;
+    }
+    freeGuardedStackPosix(stack);
+}
+
 pub const FiberFn = *const fn (*anyopaque) void;
 
 pub const Fiber = struct {
@@ -147,8 +239,8 @@ pub const Fiber = struct {
     json_last_op_ok: bool = true,
 
     pub fn create(allocator: std.mem.Allocator, entry: FiberFn, arg: *anyopaque) !*Fiber {
-        const stack = try allocator.alignedAlloc(u8, .fromByteUnits(STACK_ALIGN), STACK_SIZE);
-        errdefer allocator.free(stack);
+        const stack = try allocGuardedStack();
+        errdefer freeGuardedStack(stack);
         return createWithStack(allocator, entry, arg, stack);
     }
 
@@ -245,7 +337,7 @@ pub const Fiber = struct {
     pub fn destroy(self: *Fiber) void {
         self.task_locals.deinit(self.allocator);
         self.stdin_leftover.deinit(self.allocator);
-        self.allocator.free(self.stack);
+        freeGuardedStack(self.stack);
         self.allocator.destroy(self);
     }
 
@@ -428,4 +520,49 @@ test "birden çok bağımsız fiber, ara katmanlı (interleaved) resume" {
     try std.testing.expectEqualStrings("1728", Harness.log.items);
     try std.testing.expect(f1.finished);
     try std.testing.expect(f2.finished);
+}
+
+test "Faz MN.8, Bulgu C: yığın taşması guard page İLE BELİRLİ bir çökmeye dönüşür (sessizce bozulma DEĞİL)" {
+    // BU test KENDİ süreci İçİNDE bir yığın taşması ÜRETEMEZ (test binary'sinin
+    // TAMAMINI çökertirdi) — bunun yerine `guard_overflow_repro.zig`yi AYRI
+    // bir süreç OLARAK derleyip ÇALIŞTIRIR VE o sürecin TEMİZ (çıkış kodu 0)
+    // BİTMEDİĞİNİ (guard page'e GERÇEKTEN ÇARPTIĞINI) doğrular.
+    if (builtin.os.tag == .windows) return error.SkipZigTest; // TODO: Windows repro ayrı ele alınacak
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const swap_o_path = switch (builtin.cpu.arch) {
+        .aarch64 => "runtime/async_rt/swap_aarch64.o",
+        .x86_64 => "runtime/async_rt/swap_x86_64.o",
+        else => return error.SkipZigTest,
+    };
+    // `swap_o_path` KENDİ İçİNDE ÇALIŞTIĞIMIZ `noxrt_test` binary'sinin
+    // KENDİSİ TARAFINDAN ZATEN bağlandığından (bkz. build.zig'nin
+    // `compile_swap_asm` adımı), var OLDUĞU GARANTİDİR — AYRICA bir
+    // varlık kontrolüne GEREK YOK (`std.fs.cwd()` BU Zig sürümünde
+    // KALDIRILMIŞ, bkz. `runtime/stdlib_shims/fs.zig`nin AYNI notu).
+    const bin_path = "/tmp/nox_guard_overflow_repro_bin";
+
+    {
+        const build_result = try std.process.run(allocator, io, .{
+            .argv = &.{ "zig", "build-exe", "runtime/async_rt/guard_overflow_repro.zig", swap_o_path, "-lc", "-femit-bin=" ++ bin_path },
+        });
+        defer allocator.free(build_result.stdout);
+        defer allocator.free(build_result.stderr);
+        if (build_result.term != .exited or build_result.term.exited != 0) {
+            std.debug.print("guard_overflow_repro derlenemedi: {s}\n", .{build_result.stderr});
+            return error.ReproBuildFailed;
+        }
+    }
+
+    const run_result = try std.process.run(allocator, io, .{ .argv = &.{bin_path} });
+    defer allocator.free(run_result.stdout);
+    defer allocator.free(run_result.stderr);
+    // Temiz (0) çıkış BEKLENMEZ — guard page GERÇEKTEN ÇARPILDIYSA süreç
+    // anormal SONLANIR (sinyal/panik-abort). `.exited` DAHİ olsa sıfır
+    // DEĞİLSE (panik-çıkışı) KABUL edilir.
+    switch (run_result.term) {
+        .exited => |code| try std.testing.expect(code != 0),
+        .signal, .stopped, .unknown => {},
+    }
 }

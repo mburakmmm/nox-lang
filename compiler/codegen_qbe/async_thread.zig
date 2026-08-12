@@ -512,7 +512,35 @@ pub fn genPoolRunExpr(self: *Codegen, c: ast.Call) CodegenError!Value {
 
     const wrapper_name = try std.fmt.allocPrint(self.allocator, "pool_run_wrap_{d}", .{self.pool_run_wrapper_counter});
     self.pool_run_wrapper_counter += 1;
-    try self.pool_run_wrappers.append(self.allocator, .{ .name = wrapper_name, .target_fn = fn_name });
+
+    // Faz MN.8, Bulgu A: `pool_run`ın sibling (saf-çalma) worker'ları
+    // KENDİ worker slotu İçİn modül-global durumu HİÇ ilklendirmiyordu
+    // (SADECE sürücü/slot-0, `entry()`nin GERÇEK çalıştığı worker,
+    // `genPoolRunWrapper`nin AŞAĞIDAKİ init/deinit çiftini alıyordu) —
+    // çalınan bir görev bir sibling'de modül-global OKUR/YAZARSA `null`
+    // işaretçi dereferansıyla ÇÖKÜYORDU. Düzeltme: SADECE modül-global
+    // VARSA (`module_globals.count() > 0`) İKİ minik sarmalayıcı DAHA
+    // kaydedilir — `nox_pool_run`ın C-ABI'sine EK parametre OLARAK
+    // geçilir, `pool_bridge.zig`nin `poolWorkerMain`ı (sibling'ler)
+    // BUNLARI KENDİ slotu İçİn ÇAĞIRIR.
+    var globals_init_wrapper_name: ?[]const u8 = null;
+    var globals_deinit_wrapper_name: ?[]const u8 = null;
+    var globals_init_sym: []const u8 = "0";
+    var globals_deinit_sym: []const u8 = "0";
+    if (self.module_globals.count() > 0) {
+        const ginit_name = try std.fmt.allocPrint(self.allocator, "{s}_ginit", .{wrapper_name});
+        const gdeinit_name = try std.fmt.allocPrint(self.allocator, "{s}_gdeinit", .{wrapper_name});
+        globals_init_wrapper_name = ginit_name;
+        globals_deinit_wrapper_name = gdeinit_name;
+        globals_init_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{ginit_name});
+        globals_deinit_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{gdeinit_name});
+    }
+    try self.pool_run_wrappers.append(self.allocator, .{
+        .name = wrapper_name,
+        .target_fn = fn_name,
+        .globals_init_wrapper_name = globals_init_wrapper_name,
+        .globals_deinit_wrapper_name = globals_deinit_wrapper_name,
+    });
 
     const wrapper_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{wrapper_name});
     const rc = try self.newTemp();
@@ -520,6 +548,8 @@ pub fn genPoolRunExpr(self: *Codegen, c: ast.Call) CodegenError!Value {
         .{ .ty = .l, .text = RT_PARAM },
         .{ .ty = .l, .text = num_workers_v.text },
         .{ .ty = .l, .text = wrapper_sym },
+        .{ .ty = .l, .text = globals_init_sym },
+        .{ .ty = .l, .text = globals_deinit_sym },
     });
     return .{ .text = "0", .qtype = .none };
 }
@@ -536,12 +566,21 @@ pub fn genPoolRunExpr(self: *Codegen, c: ast.Call) CodegenError!Value {
 ///
 /// **Globals: `entry()` KENDİ, BAĞLANTISIZ bir kopya alır** (bkz. proje
 /// planı Tasarım #5) — `WorkerPool.create`in KENDİ `RuntimeState`si
-/// PROGRAMIN ana `rt`sinden TAMAMEN BAĞIMSIZDIR, bu YÜZDEN `genThreadStart
-/// Wrapper` İLE AYNI `nox_init_globals`/`nox_deinit_globals` çifti
-/// GEREKİR (worker'ın `poolWorkerMain`i GERÇEKTEN döndüğü İçİn —
-/// `genHttpServeMulticoreWorker`nin SONSUZA-KADAR-ÇALIŞAN worker'ının
-/// AKSİNE — deinit BURADA da, `genThreadStartWrapper` GİBİ, GÜVENLE
-/// çağrılabilir).
+/// PROGRAMIN ana `rt`sinden TAMAMEN BAĞIMSIZDIR.
+///
+/// **`$nox_init_globals`/`$nox_deinit_globals`i BURADA ÇAĞIRMAZ** (Faz
+/// MN.8, Bulgu A'nın İKİNCİ, DAHA DERİN düzeltmesi — bkz. `pool_bridge.
+/// zig`nin `poolRunDriverThreadMain`ının belge notu): bu sarmalayıcı,
+/// `entry()`in fiber'ının GÖVDESİDİR — VE o fiber, SPAWN EDİLDİĞİ ANDA
+/// KENDİ deque'ine PUSH EDİLDİĞİNDEN (`Scheduler.spawn`nin "spawn-anında
+/// çal" modeli), driver KENDİ `run()`una BİLE ULAŞMADAN bir KARDEŞ
+/// TARAFINDAN ÇALINABİLİR — bu YÜZDEN "BURADA çağrılan `$nox_init_
+/// globals` slot-0'ı ilklendirir" VARSAYIMI YANLIŞTIR (`entry()` HANGİ
+/// worker'da ÇALIŞIRSA çalışsın, O worker'ın globals'ı `poolRunDriver
+/// ThreadMain`/`poolWorkerMain` TARAFINDAN, run() BAŞLAMADAN ÖNCE,
+/// KOŞULSUZ VE run-KONUMUNDAN BAĞIMSIZ olarak ZATEN ilklendirilmiştir
+/// — BURADA TEKRAR çağırmak `$nox_init_globals`in İDEMPOTENT OLMAYAN
+/// `nox_alloc`ı YÜZÜNDEN ÇİFT-tahsis/SIZINTI olurdu).
 pub fn genPoolRunWrapper(self: *Codegen, spec: types.PoolRunWrapperSpec) CodegenError!void {
     self.temp_counter = 0;
     self.label_counter = 0;
@@ -553,17 +592,48 @@ pub fn genPoolRunWrapper(self: *Codegen, spec: types.PoolRunWrapperSpec) Codegen
     try self.qbeFuncParam(.l, "%argp", true);
     try self.qbeFuncHeaderEnd();
     try self.qbeOp1(RT_PARAM, .l, "copy", "%argp");
-    if (self.module_globals.count() > 0) {
-        try self.qbeCall(null, "$nox_init_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
-    }
 
     const target_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{spec.target_fn});
     try self.qbeCall(null, target_sym, &.{.{ .ty = .l, .text = RT_PARAM }});
 
-    if (self.module_globals.count() > 0) {
-        try self.qbeCall(null, "$nox_deinit_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
-    }
+    try self.qbeRet("0");
+    try self.qbeFuncEnd();
+}
 
+/// Faz MN.8, Bulgu A: `pool_run`ın sibling worker'larının KENDİ slotu
+/// İçİn modül-global durumu ilklendirmesi/temizlemesi İçİn TEK satırlık
+/// (`%argp` DOĞRUDAN `rt`dir, `genPoolRunWrapper` İLE AYNI "kapanış
+/// YOK" şekli) minik sarmalayıcılar — `spec.globals_init_wrapper_name`/
+/// `globals_deinit_wrapper_name` `null` DEĞİLSE (yani `module_globals.
+/// count() > 0` İSE) çağrılır (bkz. `genPoolRunExpr`nin belge notu).
+pub fn genPoolRunGlobalsInitWrapper(self: *Codegen, wrapper_name: []const u8) CodegenError!void {
+    self.temp_counter = 0;
+    self.label_counter = 0;
+    self.mod_cache.deinit(self.allocator);
+    self.mod_cache = .empty;
+
+    const wrapper_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{wrapper_name});
+    try self.qbeFuncHeaderStart(.l, wrapper_sym);
+    try self.qbeFuncParam(.l, "%argp", true);
+    try self.qbeFuncHeaderEnd();
+    try self.qbeOp1(RT_PARAM, .l, "copy", "%argp");
+    try self.qbeCall(null, "$nox_init_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
+    try self.qbeRet("0");
+    try self.qbeFuncEnd();
+}
+
+pub fn genPoolRunGlobalsDeinitWrapper(self: *Codegen, wrapper_name: []const u8) CodegenError!void {
+    self.temp_counter = 0;
+    self.label_counter = 0;
+    self.mod_cache.deinit(self.allocator);
+    self.mod_cache = .empty;
+
+    const wrapper_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{wrapper_name});
+    try self.qbeFuncHeaderStart(.l, wrapper_sym);
+    try self.qbeFuncParam(.l, "%argp", true);
+    try self.qbeFuncHeaderEnd();
+    try self.qbeOp1(RT_PARAM, .l, "copy", "%argp");
+    try self.qbeCall(null, "$nox_deinit_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
     try self.qbeRet("0");
     try self.qbeFuncEnd();
 }

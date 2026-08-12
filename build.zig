@@ -348,6 +348,12 @@ pub fn build(b: *std.Build) void {
     const noxrt_test = b.addTest(.{ .root_module = noxrt_mod });
     noxrt_test.step.dependOn(&compile_swap_asm.step);
     test_step.dependOn(&b.addRunArtifact(noxrt_test).step);
+    // Faz MN.8: `worker-pool-test`/`async-rt-test` İLE AYNI desen — SADECE
+    // `noxrt_test`i (pool_bridge.zig/scheduler.zig/http_server.zig DAHİL
+    // TÜM Zig-seviyesi runtime testleri) TAM takımın 700+ saniyelik golden/
+    // codegen fixture'larını BEKLEMEDEN hızlı yineleme İçİn.
+    const noxrt_test_step = b.step("noxrt-test", "Yalnızca noxrt_test'i (runtime/ altındaki TÜM Zig-seviyesi testler) çalıştırır (hızlı yineleme İçİn)");
+    noxrt_test_step.dependOn(&b.addRunArtifact(noxrt_test).step);
 
     // "nox" modülünü dışarıdan tüketen ayrı test dosyaları (tests/unit, tests/golden).
     const external_test_files = [_][]const u8{

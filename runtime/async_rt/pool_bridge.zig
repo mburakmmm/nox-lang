@@ -78,6 +78,16 @@ const worker_pool_mod = @import("worker_pool.zig");
 /// KOPYALAMASI, `genThreadStartWrapper`nin AKSİNE `loadl` KULLANMAMASI).
 const PoolRunCtx = struct {
     entry_fn: *const fn (*anyopaque) callconv(.c) i64,
+    /// Faz MN.8, Bulgu A: `null` DEĞİLSE (`module_globals.count() > 0`
+    /// İKEN codegen TARAFINDAN geçilir), `poolWorkerMain`nin (sibling
+    /// worker'lar — SADECE ONLAR, sürücü KENDİ globals'ını `entry_fn`
+    /// [`genPoolRunWrapper`] ÜZERİNDEN ZATEN halleder) KENDİ worker slotu
+    /// İçİn `$nox_init_globals`/`$nox_deinit_globals`i ÇAĞIRMASINI sağlar
+    /// — bkz. proje planı, Bulgu A: BUNLAR OLMADAN, çalınan bir görev
+    /// bir sibling'de modül-global OKUR/YAZARSA `globals_blocks[slot]`
+    /// HİÇ ilklendirilmemiş (`null`) OLDUĞUNDAN çöker.
+    globals_init_fn: ?*const fn (*anyopaque) callconv(.c) i64,
+    globals_deinit_fn: ?*const fn (*anyopaque) callconv(.c) i64,
 };
 
 /// `poolWorkerMain`/sürücünün ORTAK "çalıştır ve temizle" kuyruğu —
@@ -128,9 +138,16 @@ fn poolWorkerRunAndCleanup(rt: *anyopaque, entry_task: ?*anyopaque) void {
 /// ULAŞTIĞINDA ZATEN `>= 1`dir, yarış YAPISAL olarak KAPATILIR.
 fn poolWorkerMain(rt: *anyopaque, slot: usize, ctx: *PoolRunCtx) void {
     _ = slot;
-    _ = ctx;
     bridge.nox_async_init(rt);
+    // Faz MN.8, Bulgu A: KENDİ worker slotu İçİn modül-global durumunu
+    // ilklendir — `asap.setWorkerSlot(slot)` `WorkerPool.spawnWorkers`nin
+    // trampoline'ı TARAFINDAN BU fonksiyon ÇAĞRILMADAN ÖNCE ZATEN
+    // ayarlandığından (bkz. `worker_pool.zig`), `g_worker_slot` BURADA
+    // DOĞRUDUR — HENÜZ hiçbir çalınmış görev ÇALIŞTIRILMADAN önce yapılır,
+    // yarış YOK.
+    if (ctx.globals_init_fn) |f| _ = f(rt);
     poolWorkerRunAndCleanup(rt, null);
+    if (ctx.globals_deinit_fn) |f| _ = f(rt);
 }
 
 const PoolRunDriverArgs = struct {
@@ -144,17 +161,40 @@ fn poolRunDriverThreadMain(args: *PoolRunDriverArgs) void {
 
     const pool = worker_pool_mod.WorkerPool.create(std.heap.page_allocator, args.num_workers) catch @panic("OOM: nox.thread.pool_run havuzu");
 
+    bridge.nox_async_init(pool.rt);
+    // Faz MN.8, Bulgu A (İKİNCİ, DAHA DERİN yarış — İLK düzeltmeden SONRA
+    // DENEYEREK bulundu): `entry_task`nin KENDİSİ de (spawn edildiği ANDA
+    // KENDİ deque'ine PUSH edildiğinden, bkz. `Scheduler.spawn`nin "spawn-
+    // anında çal" modeli) BİR kardeş TARAFINDAN ÇALINABİLİR — driver KENDİ
+    // `run()`una BİLE ULAŞMADAN. ESKİ tasarım (`genPoolRunWrapper`nin
+    // gövdesine GÖMÜLÜ `$nox_init_globals` çağrısı) BU YÜZDEN slot-0'ın
+    // globals'ını KONUMA BAĞIMLI hale getiriyordu: `entry_task` BAŞKA bir
+    // worker'a ÇALINIRSA, O worker'ın KENDİ (ZATEN ilklendirilmiş) slotu
+    // TEKRAR ilklendirilir (ZARARSIZ AMA İSRAF), AMA slot 0 (driver)
+    // ASLA `$nox_init_globals` ÇAĞIRMAZ — driver DAHA SONRA BAŞKA bir
+    // ÇALINMIŞ göreve (`childFn`) ev sahipliği yaparsa `globals_blocks[0]`
+    // HÂLÂ `null`dır. Düzeltme: driver KENDİ globals'ını, `entry_task`
+    // SPAWN EDİLMEDEN ÖNCE, KOŞULSUZ VE DOĞRUDAN (`poolWorkerMain`nin
+    // sibling'ler İçİn ZATEN yaptığı AYNI desen) ilklendirir — ARTIK
+    // `entry()`nin fiber'ının NEREDE çalıştığından TAMAMEN BAĞIMSIZ.
+    // `genPoolRunWrapper` BU YÜZDEN ARTIK `$nox_init_globals`/`$nox_
+    // deinit_globals` ÇAĞIRMAZ (bkz. onun belge notu) — BURADAKİ VE
+    // `poolWorkerMain`daki çağrılarla ÇAKIŞIP ÇİFT-İLKLENDİRME (VE bir
+    // ÖNCEKİ bloğun SIZMASI — `$nox_init_globals` KOŞULSUZ `nox_alloc`
+    // yapar, İDEMPOTENT DEĞİLDİR) YARATMAMASI İçİn.
+    if (args.ctx.globals_init_fn) |f| _ = f(pool.rt);
+
     // KRİTİK SIRA (bkz. `poolWorkerMain`nin belge notu, GERÇEK bir yarış
     // BULUNUP burada düzeltildi): slot 0'ın `entry()`i, DİĞER worker'lar
     // (`spawnWorkers`) BAŞLATILMADAN ÖNCE, BURADA spawn edilir — `pool_
     // live_count`, HERHANGİ bir kardeş İLK `run()`una ULAŞTIĞINDA ZATEN
     // `>= 1`dir (`WorkerPool.create` sürücüyü ZATEN slot 0'a BAĞLADI).
-    bridge.nox_async_init(pool.rt);
     const entry_task = bridge.nox_async_spawn(pool.rt, args.ctx.entry_fn, pool.rt) orelse @panic("OOM: nox.thread.pool_run entry spawn");
 
     pool.spawnWorkers(*PoolRunCtx, poolWorkerMain, args.ctx) catch @panic("OOM: nox.thread.pool_run worker'ları");
 
     poolWorkerRunAndCleanup(pool.rt, entry_task);
+    if (args.ctx.globals_deinit_fn) |f| _ = f(pool.rt);
     pool.joinAll();
     pool.destroy();
 
@@ -173,6 +213,8 @@ pub export fn nox_pool_run(
     rt: ?*anyopaque,
     num_workers: i64,
     entry_fn: *const fn (*anyopaque) callconv(.c) i64,
+    globals_init_fn: ?*const fn (*anyopaque) callconv(.c) i64,
+    globals_deinit_fn: ?*const fn (*anyopaque) callconv(.c) i64,
 ) callconv(.c) i32 {
     _ = rt; // Bilinçli olarak KULLANILMAZ — bkz. `nox_thread_spawn`nin AYNI
     // notu: havuzun KENDİ, YENİ `rt`si `WorkerPool.create` TARAFINDAN
@@ -190,7 +232,7 @@ pub export fn nox_pool_run(
     const fds = http_client.makeSelfPipe() orelse return 1;
 
     const ctx = std.heap.page_allocator.create(PoolRunCtx) catch return 1;
-    ctx.* = .{ .entry_fn = entry_fn };
+    ctx.* = .{ .entry_fn = entry_fn, .globals_init_fn = globals_init_fn, .globals_deinit_fn = globals_deinit_fn };
 
     const driver_args = std.heap.page_allocator.create(PoolRunDriverArgs) catch {
         std.heap.page_allocator.destroy(ctx);
@@ -453,7 +495,7 @@ test "nox_pool_run: GERÇEK spawn/await İÇEREN bir entry, TÜM sonuçlar doğr
     Global.shared_ptr = &shared;
     Global.child_args_ptr = &child_args;
 
-    const rc = nox_pool_run(null, 4, Global.realEntry);
+    const rc = nox_pool_run(null, 4, Global.realEntry, null, null);
     try testing.expectEqual(@as(i32, 0), rc);
 
     try testing.expect(shared.tasks_done.load(.acquire));
@@ -541,5 +583,134 @@ test "nox_pool_serve: TÜM slotlar (0 DAHİL) KENDİ entry'sini ÇALIŞTIRIR + K
     var slot: usize = 0;
     while (slot < SERVE_N_WORKERS) : (slot += 1) {
         try testing.expect(shared.entry_ran[slot].load(.seq_cst));
+    }
+}
+
+test "nox_pool_run: Faz MN.8 Bulgu A - sibling worker'lar globals_init_fn ile KENDİ slotu İçİn ilklendirilir, ÇALINAN bir görev doğru bloğu okur" {
+    const testing = std.testing;
+
+    const N_WORKERS = 4;
+    const N_TASKS = 30; // AYNI gerekçe, bkz. STEAL_TEST_N_TASKS'in belge notu.
+
+    // Bu test, `genPoolRunGlobalsInitWrapper`/`genPoolRunGlobalsDeinitWrapper`nin
+    // (compiler/codegen_qbe/async_thread.zig) GERÇEK codegen'i OLMADAN,
+    // AYNI C-ABI sözleşmesini (`?*const fn(*anyopaque) callconv(.c) i64`)
+    // ELLE-YAZILMIŞ Zig fonksiyonlarıYLA egzersiz eder — `worker_pool.zig`nin
+    // KENDİ testlerinin "sarmalayıcı YERİNE GEÇEN düz Zig fonksiyonları"
+    // deseniyle TUTARLI. HER worker'ın (0 DAHİL) `globals_blocks[slot]`ına
+    // `0x1000 + slot` benzersiz bir "işaret" değeri YAZILIR (`globalsInitFn`)
+    // — bir görev HANGİ worker'da ÇALIŞIRSA ÇALIŞSIN (spawn edildiği worker
+    // MI, ÇALINDIĞI worker MI FARK ETMEZ), `nox_globals_get`in KENDİ worker
+    // slotuna karşılık gelen DOĞRU işareti OKUMASI GEREKİR — Bulgu A
+    // DÜZELTİLMEDEN ÖNCE, sibling worker'ların `globals_blocks[slot]`ı HİÇ
+    // yazılmadığından bu `null` DÖNERDİ (bu testin YAZILMA GEREKÇESİ).
+    const Global = struct {
+        var mismatch_count: std.atomic.Value(usize) = .init(0);
+        var stolen_count: std.atomic.Value(usize) = .init(0);
+
+        fn globalsInitFn(rt: *anyopaque) callconv(.c) i64 {
+            const slot = asap.currentWorkerSlot();
+            asap.nox_globals_set(rt, @ptrFromInt(0x1000 + slot));
+            return 0;
+        }
+
+        fn globalsDeinitFn(rt: *anyopaque) callconv(.c) i64 {
+            asap.nox_globals_set(rt, null);
+            return 0;
+        }
+
+        // `arg`, GERÇEK codegen'in `RT_PARAM`i HER fonksiyona AÇIKÇA
+        // taşımasıyla AYNI gerekçeyle, DOĞRUDAN `rt`nin KENDİSİDİR.
+        fn childFn(rt_arg: *anyopaque) callconv(.c) i64 {
+            const slot = asap.currentWorkerSlot();
+            const got = asap.nox_globals_get(rt_arg);
+            const expected: usize = 0x1000 + slot;
+            if (@intFromPtr(got) != expected) {
+                _ = mismatch_count.fetchAdd(1, .seq_cst);
+            }
+            if (slot != 0) _ = stolen_count.fetchAdd(1, .seq_cst);
+            return 0;
+        }
+
+        var tasks: [N_TASKS]?*anyopaque = @splat(null);
+
+        fn realEntry(rt: *anyopaque) callconv(.c) i64 {
+            // Sürücünün (slot 0) KENDİ globals ilklendirmesi ARTIK BURADA
+            // YAPILMAZ (bkz. `genPoolRunWrapper`nin GÜNCELLENMİŞ belge
+            // notu, `poolRunDriverThreadMain`nin `globals_init_fn`i
+            // `entry_task` SPAWN EDİLMEDEN ÖNCE, KOŞULSUZ olarak ZATEN
+            // çağırdığı — `entry()`nin fiber'ı BİR KARDEŞE ÇALINSA BİLE
+            // slot 0'ın globals'ı GÜVENDE).
+
+            var i: usize = 0;
+            while (i < N_TASKS) : (i += 1) {
+                tasks[i] = bridge.nox_async_spawn(rt, childFn, rt).?;
+            }
+            i = 0;
+            while (i < N_TASKS) : (i += 1) {
+                _ = bridge.nox_async_await(rt, tasks[i]);
+                bridge.nox_async_destroy_task(rt, tasks[i]);
+            }
+            return 0;
+        }
+    };
+
+    const rc = nox_pool_run(null, N_WORKERS, Global.realEntry, Global.globalsInitFn, Global.globalsDeinitFn);
+    try testing.expectEqual(@as(i32, 0), rc);
+
+    try testing.expectEqual(@as(usize, 0), Global.mismatch_count.load(.seq_cst));
+    // Kanıt: EN AZ bir görev worker 0 DIŞINDA bir worker TARAFINDAN
+    // ÇALIŞTIRILDI (yani Bulgu A'nın senaryosu GERÇEKTEN egzersiz EDİLDİ,
+    // sadece slot 0'da çalışıp testin ANLAMSIZCA GEÇMESİ DEĞİL).
+    try testing.expect(Global.stolen_count.load(.seq_cst) > 0);
+}
+
+test "Faz MN.8 Bulgu B: 1000/10000 görevlik toplu-spawn+sıralı-await, false-deadlock YOK (20 tekrar/boyut)" {
+    // BU test, MN.7a doğrulamasında GERÇEKTEN gözlemlenen ("hepsini
+    // spawn et, SONRA sırayla await et" — GERÇEK bir fan-out/fan-in
+    // deseni, YAPAY bir stres deseni DEĞİL) YANLIŞ pozitif deadlock
+    // tespitinin KÖK NEDEN düzeltmesini (bkz. `poolWideDeadlockCheck`nin
+    // `pool_activity_epoch` doğrulaması, `scheduler.zig`) doğrudan
+    // hedefler. ESKİ "yaklaşımı" (testin GÖREV SAYISINI 200→30'a
+    // DÜŞÜRMEK, bkz. `STEAL_TEST_N_TASKS`'in belge notu) BİLİNÇLİ olarak
+    // TEKRARLANMAZ — BU test TAM TERSİNE 1000 VE 10000 görevle, 20'şer
+    // KEZ ard arda (zamanlamaya duyarlı bir düzeltme İçİn TEK geçiş
+    // YETERLİ güven VERMEZ) ÇALIŞIR.
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const Global = struct {
+        var tasks_ptr: []?*anyopaque = undefined;
+
+        fn trivial(rt_arg: *anyopaque) callconv(.c) i64 {
+            _ = rt_arg;
+            return 0;
+        }
+
+        fn realEntry(rt: *anyopaque) callconv(.c) i64 {
+            var i: usize = 0;
+            while (i < tasks_ptr.len) : (i += 1) {
+                tasks_ptr[i] = bridge.nox_async_spawn(rt, trivial, rt).?;
+            }
+            i = 0;
+            while (i < tasks_ptr.len) : (i += 1) {
+                _ = bridge.nox_async_await(rt, tasks_ptr[i]);
+                bridge.nox_async_destroy_task(rt, tasks_ptr[i]);
+            }
+            return 0;
+        }
+    };
+
+    const sizes = [_]usize{ 1000, 10000 };
+    for (sizes) |n_tasks| {
+        const tasks = try allocator.alloc(?*anyopaque, n_tasks);
+        defer allocator.free(tasks);
+        Global.tasks_ptr = tasks;
+
+        var round: usize = 0;
+        while (round < 20) : (round += 1) {
+            const rc = nox_pool_run(null, 4, Global.realEntry, null, null);
+            try testing.expectEqual(@as(i32, 0), rc);
+        }
     }
 }

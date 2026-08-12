@@ -497,6 +497,8 @@ pub const Codegen = struct {
     pub const genThreadStartWrapper = async_thread_mod.genThreadStartWrapper;
     pub const genPoolRunExpr = async_thread_mod.genPoolRunExpr;
     pub const genPoolRunWrapper = async_thread_mod.genPoolRunWrapper;
+    pub const genPoolRunGlobalsInitWrapper = async_thread_mod.genPoolRunGlobalsInitWrapper;
+    pub const genPoolRunGlobalsDeinitWrapper = async_thread_mod.genPoolRunGlobalsDeinitWrapper;
     pub const genThreadHandleJoin = async_thread_mod.genThreadHandleJoin;
     pub const genAwaitExpr = async_thread_mod.genAwaitExpr;
     pub const genChannelOp = async_thread_mod.genChannelOp;
@@ -1470,6 +1472,11 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     // belge notu) — AYNI "sonda tüket" deseni.
     while (gen.pool_run_wrappers.pop()) |spec| {
         try gen.genPoolRunWrapper(spec);
+        // Faz MN.8, Bulgu A: sibling worker'ların KENDİ slotu İçİn
+        // modül-global ilklendirme/temizleme sarmalayıcıları — SADECE
+        // spec'e KAYDEDİLDİLERSE (module_globals.count() > 0) ÜRETİLİR.
+        if (spec.globals_init_wrapper_name) |n| try gen.genPoolRunGlobalsInitWrapper(n);
+        if (spec.globals_deinit_wrapper_name) |n| try gen.genPoolRunGlobalsDeinitWrapper(n);
     }
 
     // Faz DD.1: her `nox.http.serve_multicore` çağrı sitesi için TEMBEL

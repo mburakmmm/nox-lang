@@ -119,6 +119,7 @@ pub export fn nox_async_init(rt: ?*anyopaque) void {
             .live_count = pool.pool_live_count,
             .waiting_on_io = pool.pool_waiting_on_io,
             .idle_workers = pool.pool_idle_workers,
+            .activity_epoch = pool.pool_activity_epoch,
             .stw_requested = pool.pool_stw_requested,
             .stw_arrived = pool.pool_stw_arrived,
             .stw_sense = pool.pool_stw_sense,
@@ -186,7 +187,7 @@ pub export fn nox_async_destroy_task(rt: ?*anyopaque, task: ?*anyopaque) void {
     // (bkz. `stmt.zig`) ARTIK bir slotun İLK yazımında (henüz `null` İKEN)
     // BİLE "üzerine yazmadan ÖNCE eskiyi yok et" çağrısı yapıyor.
     const t: *TaskI64 = @ptrCast(@alignCast(task orelse return));
-    if (t.completed) {
+    if (t.state.load(.acquire) == TaskI64.COMPLETED) {
         allocatorFromRt(rt).destroy(t);
     } else {
         t.detached = true;

@@ -69,6 +69,10 @@ pub const WorkerPool = struct {
     pool_live_count: *std.atomic.Value(usize),
     pool_waiting_on_io: *std.atomic.Value(usize),
     pool_idle_workers: *std.atomic.Value(usize),
+    /// Faz MN.8, Bulgu B: `state.pool_activity_epoch`e (bkz. `asap.zig`)
+    /// DOĞRUDAN İŞARETÇİ — AYNI desen, `Scheduler.attachToPool`e `PoolLink.
+    /// activity_epoch` OLARAK GEÇİRİLİR.
+    pool_activity_epoch: *std.atomic.Value(u64),
     /// Faz MN.4/5.8: HER worker'ın `deque`ine (KENDİSİ DAHİL) İşaretçilerin
     /// ÖNCEDEN HESAPLANMIŞ dizisi — `Scheduler.attachToPool`e `sibling_
     /// deques` OLARAK GEÇİRİLİR (bkz. `scheduler.zig`nin belge notu,
@@ -128,6 +132,7 @@ pub const WorkerPool = struct {
             .pool_live_count = &state.pool_live_count,
             .pool_waiting_on_io = &state.pool_waiting_on_io,
             .pool_idle_workers = &state.pool_idle_workers,
+            .pool_activity_epoch = &state.pool_activity_epoch,
             .deque_list = deque_list,
             .pool_stw_requested = &state.pool_stw_requested,
             .pool_stw_arrived = &state.pool_stw_arrived,
@@ -382,6 +387,7 @@ fn stealTestWorkerEntry(rt: *anyopaque, slot: usize, ctx: *StealTestCtx) void {
         .live_count = ctx.pool.pool_live_count,
         .waiting_on_io = ctx.pool.pool_waiting_on_io,
         .idle_workers = ctx.pool.pool_idle_workers,
+        .activity_epoch = ctx.pool.pool_activity_epoch,
         .stw_requested = ctx.pool.pool_stw_requested,
         .stw_arrived = ctx.pool.pool_stw_arrived,
         .stw_sense = ctx.pool.pool_stw_sense,
@@ -436,7 +442,7 @@ test "WorkerPool: GERÇEK spawn/await, TÜM sonuçlar doğru VE kanıtlanmış �
         const by = ctx.executed_by[i].load(.seq_cst);
         try testing.expect(by != STEAL_TEST_NOT_RUN); // HER görev GERÇEKTEN çalıştı
         if (by != 0) stolen_count += 1;
-        try testing.expect(ctx.tasks[i].completed);
+        try testing.expect(ctx.tasks[i].state.load(.acquire) == scheduler_mod.Task(i64).COMPLETED);
         try testing.expectEqual(@as(i64, @intCast(i * 2)), ctx.tasks[i].result);
         testing.allocator.destroy(ctx.tasks[i]);
     }
@@ -514,6 +520,7 @@ fn cycleStressWorkerEntry(rt: *anyopaque, slot: usize, ctx: *CycleStressCtx) voi
         .live_count = ctx.pool.pool_live_count,
         .waiting_on_io = ctx.pool.pool_waiting_on_io,
         .idle_workers = ctx.pool.pool_idle_workers,
+        .activity_epoch = ctx.pool.pool_activity_epoch,
         .stw_requested = ctx.pool.pool_stw_requested,
         .stw_arrived = ctx.pool.pool_stw_arrived,
         .stw_sense = ctx.pool.pool_stw_sense,
