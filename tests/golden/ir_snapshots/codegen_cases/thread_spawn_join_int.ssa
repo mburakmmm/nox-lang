@@ -1027,16 +1027,20 @@ export function l $main_body(l %argp) {
 @start
     %rt =l loadl %argp
     %t0 =l alloc8 8
+    storel 0, %t0
     %t1 =l alloc8 8
     %t2 =l call $nox_thread_spawn(l %rt, l $thread_wrap_0, l 21, w 0, w 0)
-    storel %t2, %t0
     %t3 =l loadl %t0
-    %t4 =l call $nox_thread_join(l %rt, l %t3)
-    storel %t4, %t1
-    %t5 =l loadl %t1
-    call $printf(l $fmt_int, ..., l %t5)
-    %t6 =l loadl %t0
-    call $nox_thread_destroy(l %rt, l %t6)
+    call $nox_thread_destroy(l %rt, l %t3)
+    storel 0, %t0
+    storel %t2, %t0
+    %t4 =l loadl %t0
+    %t5 =l call $nox_thread_join(l %rt, l %t4)
+    storel %t5, %t1
+    %t6 =l loadl %t1
+    call $printf(l $fmt_int, ..., l %t6)
+    %t7 =l loadl %t0
+    call $nox_thread_destroy(l %rt, l %t7)
     storel 0, %t0
     call $nox_free(l %rt, l %argp, l 8)
 @fn_end0

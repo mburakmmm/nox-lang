@@ -1028,25 +1028,29 @@ export function l $main_body(l %argp) {
 @start
     %rt =l loadl %argp
     %t0 =l alloc8 8
+    storel 0, %t0
     %t1 =l alloc8 8
     storel 0, %t1
     %t2 =l add $str1, 16
     %t3 =l call $nox_thread_spawn(l %rt, l $thread_wrap_0, l %t2, w 1, w 1)
-    storel %t3, %t0
     %t4 =l loadl %t0
-    %t5 =l call $nox_thread_join(l %rt, l %t4)
-    %t6 =l loadl %t1
-    %t7 =w ceql %t6, 0
-    jnz %t7, @release_skip1, @release0
+    call $nox_thread_destroy(l %rt, l %t4)
+    storel 0, %t0
+    storel %t3, %t0
+    %t5 =l loadl %t0
+    %t6 =l call $nox_thread_join(l %rt, l %t5)
+    %t7 =l loadl %t1
+    %t8 =w ceql %t7, 0
+    jnz %t8, @release_skip1, @release0
 @release0
-    %t8 =l sub %t6, 16
-    %t9 =l loadl %t8
-    %t10 =l sub %t9, 1
-    storel %t10, %t8
-    %t11 =w cslel %t10, 0
-    jnz %t11, @str_free3, @str_free_skip4
+    %t9 =l sub %t7, 16
+    %t10 =l loadl %t9
+    %t11 =l sub %t10, 1
+    storel %t11, %t9
+    %t12 =w cslel %t11, 0
+    jnz %t12, @str_free3, @str_free_skip4
 @str_free3
-    call $nox_str_free_now(l %rt, l %t6)
+    call $nox_str_free_now(l %rt, l %t7)
     jmp @str_free_done5
 @str_free_skip4
     jmp @str_free_done5
@@ -1056,24 +1060,24 @@ export function l $main_body(l %argp) {
     jmp @release_done2
 @release_done2
     storel 0, %t1
-    storel %t5, %t1
-    %t12 =l loadl %t1
-    call $printf(l $fmt_str, ..., l %t12)
+    storel %t6, %t1
     %t13 =l loadl %t1
-    %t14 =l call $nox_str_char_count(l %t13)
-    call $printf(l $fmt_int, ..., l %t14)
-    %t15 =l loadl %t1
-    %t16 =w ceql %t15, 0
-    jnz %t16, @release_skip7, @release6
+    call $printf(l $fmt_str, ..., l %t13)
+    %t14 =l loadl %t1
+    %t15 =l call $nox_str_char_count(l %t14)
+    call $printf(l $fmt_int, ..., l %t15)
+    %t16 =l loadl %t1
+    %t17 =w ceql %t16, 0
+    jnz %t17, @release_skip7, @release6
 @release6
-    %t17 =l sub %t15, 16
-    %t18 =l loadl %t17
-    %t19 =l sub %t18, 1
-    storel %t19, %t17
-    %t20 =w cslel %t19, 0
-    jnz %t20, @str_free9, @str_free_skip10
+    %t18 =l sub %t16, 16
+    %t19 =l loadl %t18
+    %t20 =l sub %t19, 1
+    storel %t20, %t18
+    %t21 =w cslel %t20, 0
+    jnz %t21, @str_free9, @str_free_skip10
 @str_free9
-    call $nox_str_free_now(l %rt, l %t15)
+    call $nox_str_free_now(l %rt, l %t16)
     jmp @str_free_done11
 @str_free_skip10
     jmp @str_free_done11
@@ -1083,8 +1087,8 @@ export function l $main_body(l %argp) {
     jmp @release_done8
 @release_done8
     storel 0, %t1
-    %t21 =l loadl %t0
-    call $nox_thread_destroy(l %rt, l %t21)
+    %t22 =l loadl %t0
+    call $nox_thread_destroy(l %rt, l %t22)
     storel 0, %t0
     call $nox_free(l %rt, l %argp, l 8)
 @fn_end12

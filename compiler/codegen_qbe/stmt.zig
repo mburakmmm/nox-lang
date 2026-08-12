@@ -133,7 +133,32 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
                 // heap-yönetimli yerellerde `storel 0` İLE başlatır),
                 // bu YÜZDEN `releaseSlotIfSet` burada ÇAĞRILMASA da
                 // ZARARSIZDIR — ama tutarlılık İçin AÇIKÇA atlanır.
-                if (isHeapManaged(info.heap) and !info.arena and !info.borrowed_field) try self.releaseSlotIfSet(info);
+                if (isHeapManaged(info.heap) and !info.arena and !info.borrowed_field) {
+                    try self.releaseSlotIfSet(info);
+                } else if ((info.heap == .task or info.heap == .channel or info.heap == .thread_handle or info.heap == .thread_channel or info.heap == .task_local) and !info.arena and !info.borrowed_field) {
+                    // **GERÇEK, DENEYEREK BULUNAN sızıntı**: `genAssign`nin
+                    // `.identifier` dalı (BURADAN AŞAĞIDA) `Task[T]`/
+                    // `Channel[T]`/vb. tipli bir DEĞİŞKENE yeniden atama
+                    // yapıldığında `destroyNonArcSlotIfSet` İLE eski değeri
+                    // yok eder — AMA bu AYNI çağrı BURADA (`.var_decl`)
+                    // EKSİKTİ. `t: Task[int] = spawn ...` GİBİ tip
+                    // ANOTASYONLU bir bildirim bir `while`/`for` GÖVDESİNDE
+                    // (Nox'ta HER yineleme "yeni" bir yerel değişken doğuşu
+                    // sayılır) YAZILDIĞINDA, ÜRETİLEN kod TEK bir `.var_decl`
+                    // sitesidir — RUNTIME'da HER yinelemede TEKRAR ÇALIŞIR VE
+                    // slotun İÇİNDEKİ BİR ÖNCEKİ yinelemenin `Task`ını
+                    // SERBEST BIRAKMADAN üzerine yazardı (`benchmarks/
+                    // async_task_churn.nox`, 500k yinelemede yineleme
+                    // başına TAM OLARAK BİR `Task(T)` struct'ı sızdırdığı
+                    // DebugAllocator İLE doğrulandı). Düzeltme, `.identifier`
+                    // dalıyla AYNI: üzerine yazmadan ÖNCE eskiyi yok et.
+                    // `destroyNonArcValue` slotun İLK yazımında (henüz
+                    // sıfır/`null` İKEN) de ÇAĞRILDIĞINDAN, ARTIK karşılık
+                    // gelen `nox_*_destroy` fonksiyonlarının (bridge.zig)
+                    // TÜMÜ `orelse return` İLE null-güvenli (bkz. onların
+                    // belge notu).
+                    try self.destroyNonArcSlotIfSet(info);
+                }
                 try self.qbeStore(info.qtype, val.text, info.slot);
                 // Bkz. `Codegen.mod_cache`nin belge notu, madde 2: bu
                 // slota YENİ bir değer YAZILDI — o slot İçin ÖNCEKİ TÜM

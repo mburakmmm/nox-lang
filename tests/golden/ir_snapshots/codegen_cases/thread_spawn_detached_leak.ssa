@@ -2072,12 +2072,16 @@ export function l $worker(l %rt, l %p_ms) {
 export function $spawn_detached(l %rt) {
 @start
     %t0 =l alloc8 8
+    storel 0, %t0
     %t1 =l call $nox_thread_spawn(l %rt, l $thread_wrap_0, l 30, w 0, w 0)
+    %t2 =l loadl %t0
+    call $nox_thread_destroy(l %rt, l %t2)
+    storel 0, %t0
     storel %t1, %t0
-    %t2 =l add $str11, 16
-    call $printf(l $fmt_str, ..., l %t2)
-    %t3 =l loadl %t0
-    call $nox_thread_destroy(l %rt, l %t3)
+    %t3 =l add $str11, 16
+    call $printf(l $fmt_str, ..., l %t3)
+    %t4 =l loadl %t0
+    call $nox_thread_destroy(l %rt, l %t4)
     storel 0, %t0
 @fn_end0
     ret
@@ -2085,22 +2089,26 @@ export function $spawn_detached(l %rt) {
 export function $main_task(l %rt) {
 @start
     %t0 =l alloc8 8
+    storel 0, %t0
     %t1 =l alloc8 8
     %t2 =l call $nox_alloc(l %rt, l 8)
     storel %rt, %t2
     %t3 =l call $nox_async_spawn(l %rt, l $spawn_wrap_0, l %t2)
-    storel %t3, %t0
     %t4 =l loadl %t0
-    %t5 =l call $nox_async_await(l %rt, l %t4)
+    call $nox_async_destroy_task(l %rt, l %t4)
+    storel 0, %t0
+    storel %t3, %t0
+    %t5 =l loadl %t0
+    %t6 =l call $nox_async_await(l %rt, l %t5)
     storel 100, %t1
-    %t6 =l loadl %t1
-    call $nox_time_sleep_ms_raw(l %t6)
+    %t7 =l loadl %t1
+    call $nox_time_sleep_ms_raw(l %t7)
     jmp @inline_done0
 @inline_done0
-    %t7 =l add $str12, 16
-    call $printf(l $fmt_str, ..., l %t7)
-    %t8 =l loadl %t0
-    call $nox_async_destroy_task(l %rt, l %t8)
+    %t8 =l add $str12, 16
+    call $printf(l $fmt_str, ..., l %t8)
+    %t9 =l loadl %t0
+    call $nox_async_destroy_task(l %rt, l %t9)
     storel 0, %t0
 @fn_end1
     ret
@@ -2109,14 +2117,18 @@ export function l $main_body(l %argp) {
 @start
     %rt =l loadl %argp
     %t0 =l alloc8 8
+    storel 0, %t0
     %t1 =l call $nox_alloc(l %rt, l 8)
     storel %rt, %t1
     %t2 =l call $nox_async_spawn(l %rt, l $spawn_wrap_1, l %t1)
-    storel %t2, %t0
     %t3 =l loadl %t0
-    %t4 =l call $nox_async_await(l %rt, l %t3)
-    %t5 =l loadl %t0
-    call $nox_async_destroy_task(l %rt, l %t5)
+    call $nox_async_destroy_task(l %rt, l %t3)
+    storel 0, %t0
+    storel %t2, %t0
+    %t4 =l loadl %t0
+    %t5 =l call $nox_async_await(l %rt, l %t4)
+    %t6 =l loadl %t0
+    call $nox_async_destroy_task(l %rt, l %t6)
     storel 0, %t0
     call $nox_free(l %rt, l %argp, l 8)
 @fn_end0

@@ -1016,16 +1016,20 @@ export function l $main_body(l %argp) {
 @start
     %rt =l loadl %argp
     %t0 =l alloc8 8
-    %t1 =l call $nox_channel_new(l %rt, l 1)
-    storel %t1, %t0
-    %t2 =l call $nox_channel_new(l %rt, l 2)
-    %t3 =l loadl %t0
-    call $nox_channel_destroy(l %rt, l %t3)
     storel 0, %t0
-    storel %t2, %t0
-    call $printf(l $fmt_int, ..., l 42)
+    %t1 =l call $nox_channel_new(l %rt, l 1)
+    %t2 =l loadl %t0
+    call $nox_channel_destroy(l %rt, l %t2)
+    storel 0, %t0
+    storel %t1, %t0
+    %t3 =l call $nox_channel_new(l %rt, l 2)
     %t4 =l loadl %t0
     call $nox_channel_destroy(l %rt, l %t4)
+    storel 0, %t0
+    storel %t3, %t0
+    call $printf(l $fmt_int, ..., l 42)
+    %t5 =l loadl %t0
+    call $nox_channel_destroy(l %rt, l %t5)
     storel 0, %t0
     call $nox_free(l %rt, l %argp, l 8)
 @fn_end0

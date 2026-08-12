@@ -1026,35 +1026,43 @@ export function $producer(l %rt, l %p_ch) {
 export function $main_task(l %rt) {
 @start
     %t0 =l alloc8 8
+    storel 0, %t0
     %t1 =l alloc8 8
+    storel 0, %t1
     %t2 =l alloc8 8
     %t3 =l alloc8 8
     %t4 =l call $nox_channel_new(l %rt, l 0)
-    storel %t4, %t0
     %t5 =l loadl %t0
-    %t6 =l call $nox_alloc(l %rt, l 16)
-    storel %rt, %t6
-    %t7 =l add %t6, 8
-    storel %t5, %t7
-    %t8 =l call $nox_async_spawn(l %rt, l $spawn_wrap_0, l %t6)
-    storel %t8, %t1
-    %t9 =l loadl %t0
-    %t10 =l call $nox_channel_recv(l %rt, l %t9)
-    storel %t10, %t2
+    call $nox_channel_destroy(l %rt, l %t5)
+    storel 0, %t0
+    storel %t4, %t0
+    %t6 =l loadl %t0
+    %t7 =l call $nox_alloc(l %rt, l 16)
+    storel %rt, %t7
+    %t8 =l add %t7, 8
+    storel %t6, %t8
+    %t9 =l call $nox_async_spawn(l %rt, l $spawn_wrap_0, l %t7)
+    %t10 =l loadl %t1
+    call $nox_async_destroy_task(l %rt, l %t10)
+    storel 0, %t1
+    storel %t9, %t1
     %t11 =l loadl %t0
     %t12 =l call $nox_channel_recv(l %rt, l %t11)
-    storel %t12, %t3
-    %t13 =l loadl %t2
-    call $printf(l $fmt_int, ..., l %t13)
-    %t14 =l loadl %t3
-    call $printf(l $fmt_int, ..., l %t14)
-    %t15 =l loadl %t1
-    %t16 =l call $nox_async_await(l %rt, l %t15)
+    storel %t12, %t2
+    %t13 =l loadl %t0
+    %t14 =l call $nox_channel_recv(l %rt, l %t13)
+    storel %t14, %t3
+    %t15 =l loadl %t2
+    call $printf(l $fmt_int, ..., l %t15)
+    %t16 =l loadl %t3
+    call $printf(l $fmt_int, ..., l %t16)
     %t17 =l loadl %t1
-    call $nox_async_destroy_task(l %rt, l %t17)
+    %t18 =l call $nox_async_await(l %rt, l %t17)
+    %t19 =l loadl %t1
+    call $nox_async_destroy_task(l %rt, l %t19)
     storel 0, %t1
-    %t18 =l loadl %t0
-    call $nox_channel_destroy(l %rt, l %t18)
+    %t20 =l loadl %t0
+    call $nox_channel_destroy(l %rt, l %t20)
     storel 0, %t0
 @fn_end0
     ret
@@ -1063,14 +1071,18 @@ export function l $main_body(l %argp) {
 @start
     %rt =l loadl %argp
     %t0 =l alloc8 8
+    storel 0, %t0
     %t1 =l call $nox_alloc(l %rt, l 8)
     storel %rt, %t1
     %t2 =l call $nox_async_spawn(l %rt, l $spawn_wrap_1, l %t1)
-    storel %t2, %t0
     %t3 =l loadl %t0
-    %t4 =l call $nox_async_await(l %rt, l %t3)
-    %t5 =l loadl %t0
-    call $nox_async_destroy_task(l %rt, l %t5)
+    call $nox_async_destroy_task(l %rt, l %t3)
+    storel 0, %t0
+    storel %t2, %t0
+    %t4 =l loadl %t0
+    %t5 =l call $nox_async_await(l %rt, l %t4)
+    %t6 =l loadl %t0
+    call $nox_async_destroy_task(l %rt, l %t6)
     storel 0, %t0
     call $nox_free(l %rt, l %argp, l 8)
 @fn_end0

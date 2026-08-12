@@ -181,7 +181,11 @@ pub export fn nox_async_await(rt: ?*anyopaque, task: ?*anyopaque) i64 {
 /// (hiç `await` edilmeden bırakılan) görevlerin de sızmadan VE bellek
 /// güvenliği ihlal edilmeden temizlenmesini sağlar.
 pub export fn nox_async_destroy_task(rt: ?*anyopaque, task: ?*anyopaque) void {
-    const t: *TaskI64 = @ptrCast(@alignCast(task.?));
+    // `nox_tasklocal_destroy`/`nox_threadchannel_destroy`/`nox_thread_destroy`
+    // İLE AYNI `orelse return` null-koruması — codegen'in `.var_decl` dalı
+    // (bkz. `stmt.zig`) ARTIK bir slotun İLK yazımında (henüz `null` İKEN)
+    // BİLE "üzerine yazmadan ÖNCE eskiyi yok et" çağrısı yapıyor.
+    const t: *TaskI64 = @ptrCast(@alignCast(task orelse return));
     if (t.completed) {
         allocatorFromRt(rt).destroy(t);
     } else {
@@ -220,7 +224,11 @@ export fn nox_channel_new(rt: ?*anyopaque, capacity: i64) ?*anyopaque {
 /// codegen, `Channel[T]` tipli bir yerel değişkenin kapsam sonunda çağırır
 /// (bkz. `HeapKind.channel`, `releaseAllLocalsExcept`).
 export fn nox_channel_destroy(rt: ?*anyopaque, ch: ?*anyopaque) void {
-    const c: *ChannelI64 = @ptrCast(@alignCast(ch.?));
+    // `nox_tasklocal_destroy`/`nox_threadchannel_destroy`/`nox_thread_destroy`
+    // İLE AYNI `orelse return` null-koruması — codegen'in `.var_decl` dalı
+    // (bkz. `stmt.zig`) ARTIK bir slotun İLK yazımında (henüz `null` İKEN)
+    // BİLE "üzerine yazmadan ÖNCE eskiyi yok et" çağrısı yapıyor.
+    const c: *ChannelI64 = @ptrCast(@alignCast(ch orelse return));
     c.deinit();
     allocatorFromRt(rt).destroy(c);
 }

@@ -1039,38 +1039,46 @@ export function l $main_body(l %argp) {
 @start
     %rt =l loadl %argp
     %t0 =l alloc8 8
+    storel 0, %t0
     %t1 =l alloc8 8
+    storel 0, %t1
     %t2 =l alloc8 8
     %t3 =l alloc8 8
     %t4 =l call $nox_threadchannel_new(l %rt, l 2)
-    storel %t4, %t0
     %t5 =l loadl %t0
-    %t6 =l call $nox_thread_spawn(l %rt, l $thread_wrap_0, l %t5, w 0, w 0)
-    storel %t6, %t1
+    call $nox_threadchannel_destroy(l %rt, l %t5)
+    storel 0, %t0
+    storel %t4, %t0
+    %t6 =l loadl %t0
+    %t7 =l call $nox_thread_spawn(l %rt, l $thread_wrap_0, l %t6, w 0, w 0)
+    %t8 =l loadl %t1
+    call $nox_thread_destroy(l %rt, l %t8)
+    storel 0, %t1
+    storel %t7, %t1
     storel 0, %t2
     jmp @while_cond0
 @while_cond0
-    %t7 =l loadl %t2
-    %t8 =w csltl %t7, 5
-    jnz %t8, @while_body1, @while_end2
+    %t9 =l loadl %t2
+    %t10 =w csltl %t9, 5
+    jnz %t10, @while_body1, @while_end2
 @while_body1
-    %t9 =l loadl %t0
-    %t10 =l call $nox_threadchannel_recv_val(l %rt, l %t9)
-    storel %t10, %t3
-    %t11 =l loadl %t3
-    call $printf(l $fmt_int, ..., l %t11)
-    %t12 =l loadl %t2
-    %t13 =l add %t12, 1
-    storel %t13, %t2
+    %t11 =l loadl %t0
+    %t12 =l call $nox_threadchannel_recv_val(l %rt, l %t11)
+    storel %t12, %t3
+    %t13 =l loadl %t3
+    call $printf(l $fmt_int, ..., l %t13)
+    %t14 =l loadl %t2
+    %t15 =l add %t14, 1
+    storel %t15, %t2
     jmp @while_cond0
 @while_end2
-    %t14 =l loadl %t1
-    %t15 =l call $nox_thread_join(l %rt, l %t14)
-    %t16 =l loadl %t0
-    call $nox_threadchannel_destroy(l %rt, l %t16)
+    %t16 =l loadl %t1
+    %t17 =l call $nox_thread_join(l %rt, l %t16)
+    %t18 =l loadl %t0
+    call $nox_threadchannel_destroy(l %rt, l %t18)
     storel 0, %t0
-    %t17 =l loadl %t1
-    call $nox_thread_destroy(l %rt, l %t17)
+    %t19 =l loadl %t1
+    call $nox_thread_destroy(l %rt, l %t19)
     storel 0, %t1
     call $nox_free(l %rt, l %argp, l 8)
 @fn_end3

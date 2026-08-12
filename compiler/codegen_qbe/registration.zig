@@ -943,7 +943,22 @@ pub fn allocSlotEx(self: *Codegen, name: []const u8, info: TypeInfo, is_param: b
     const slot = try self.newTemp();
     const size: usize = if (info.qtype == .w) 4 else 8;
     try self.qbeAlloc(slot, if (info.qtype == .w) .four else .eight, size);
-    if (isHeapManaged(info.heap) and !is_param) {
+    // **GERÇEK, DENEYEREK BULUNAN sızıntının kök nedeninin BİR KISMI**
+    // (bkz. `stmt.zig`nin `.var_decl` dalındaki YENİ `destroyNonArcSlotIfSet`
+    // çağrısının belge notu): `Task[T]`/`Channel[T]`/`ThreadHandle[T]`/
+    // `ThreadChannel[T]`/`TaskLocal[T]` `isHeapManaged`in DIŞINDA
+    // OLDUĞUNDAN, ÖNCEDEN yalnızca ARC-yönetimli türler sıfırla
+    // dolduruluyordu — bu türlerin slotu YIĞINDAN gelen ÇÖP baytlarla
+    // BAŞLIYORDU. `.var_decl`nin "üzerine yazmadan ÖNCE eskiyi yok et"
+    // mantığı (döngü İçİNDE TEKRAR TEKRAR çalıştığında) İLK çalışmada BU
+    // ÇÖPÜ geçerli bir işaretçi SANIP `nox_async_destroy_task`e geçirip
+    // "incorrect alignment" panikleriyle ÇÖKÜYORDU (GERÇEKTEN denenip
+    // gözlemlendi). Düzeltme: BU BEŞ tür de (ARC-yönetimli türlerle AYNI
+    // gerekçeyle) slot GİRİŞTE sıfırlanmalı — `destroyNonArcValue`nin
+    // KARŞILIK gelen `nox_*_destroy` fonksiyonlarının HEPSİ (bkz. bridge.zig)
+    // ARTIK `orelse return` İLE null-güvenli olduğundan, sıfır bir
+    // "henüz atanmadı" duyargası olarak GÜVENLE İŞLENİR.
+    if ((isHeapManaged(info.heap) or info.heap == .task or info.heap == .channel or info.heap == .thread_handle or info.heap == .thread_channel or info.heap == .task_local) and !is_param) {
         try self.qbeStoreL("0", slot);
     }
     try self.vars.put(self.allocator, name, .{
@@ -974,7 +989,8 @@ pub fn allocInlineSlot(self: *Codegen, orig_name: []const u8, info: TypeInfo, is
     const slot = try self.newTemp();
     const size: usize = if (info.qtype == .w) 4 else 8;
     try self.qbeAlloc(slot, if (info.qtype == .w) .four else .eight, size);
-    if (isHeapManaged(info.heap) and !is_param) {
+    // Bkz. `allocSlotEx`nin AYNI belge notu — TUTARLILIK İçİn burada da.
+    if ((isHeapManaged(info.heap) or info.heap == .task or info.heap == .channel or info.heap == .thread_handle or info.heap == .thread_channel or info.heap == .task_local) and !is_param) {
         try self.qbeStoreL("0", slot);
     }
     return .{ .orig_name = orig_name, .slot = slot, .info = info };
