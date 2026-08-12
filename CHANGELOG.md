@@ -14,6 +14,46 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.27.0]
+
+### Eklendi
+- **Deneysel `noxc build --release` LLVM backend'i** (Faz LLVM.1-8):
+  QBE yolu (varsayılan, bayraksız `noxc build`) TAMAMEN değişmeden,
+  `--release` bayrağıyla `.ll`/`clang -O2` üzerinden derleyen İKİNCİ
+  bir backend. Ön koşul olarak `compiler/codegen_qbe/`nin TÜM QBE metin-
+  emisyonu TEK bir seam'e (`qbe_emit.zig`) çekildi (Faz IR.0-14, 16
+  dosyadaki 960 çağrı sitesi, HER dilim IR-diff aracıyla bayt-birebir
+  doğrulandı — davranış SIFIR değişti). LLVM yolu 30/30 benchmark'ta
+  QBE'yle stdout eşleşiyor; `qbeAlloc`nin mem2reg'i engelleyen bir
+  `ptrtoint` deseni bulunup düzeltildi (`json_bench`: 51s→~28s).
+- **M:N iş-çalan (work-stealing) fiber zamanlayıcı altyapısı** (Faz
+  MN.1-6, `runtime/async_rt/`+`runtime/alloc/`): LLVM yoluna sınırlı
+  atomic ARC (QBE'nin atomic instruction'ı olmadığından), fiber-affine
+  çalışma-zamanı global'leri, standalone Chase-Lev work-stealing deque,
+  paylaşılan `RuntimeState`li worker havuzu, gerçek çapraz-worker
+  fiber çalma + havuz-çapında yaklaşık deadlock tespiti, VE döngü
+  çözücü İçİn kooperatif "dünyayı-durdur" bariyeri. Şu an SADECE Zig-
+  seviyesi altyapı — `nox.thread`/`nox.http.serve_multicore`e BAĞLANMASI
+  (gerçek bir Nox programının bunu KULLANABİLMESİ) AYRI, henüz
+  başlanmamış bir sonraki faz. Uygulama sırasında 4 GERÇEK eşzamanlılık
+  hatası bulunup düzeltildi (worker-havuzu senkronizasyon hataları +
+  `Scheduler`ın standalone Windows-CI test hedefini kırması + STW
+  bariyerinin İKİ AYRI livelock'u — biri `zig build test`in TAM
+  takımında 30+ dakikalık GERÇEK bir CPU-yüklü livelock OLARAK
+  gözlemlenip `sample` İLE teşhis edildi).
+
+### Düzeltildi
+- **`Task[T]`/`Channel[T]`/`ThreadHandle[T]`/`ThreadChannel[T]`/
+  `TaskLocal[T]` tipli bir yerel değişken bir döngü İçİNDE yeniden
+  bildirildiğinde (`t: Task[int] = spawn ...`) yineleme başına BİR
+  `Task` struct'ı sızması**: kök neden codegen'deydi (`stmt.zig`nin
+  `.var_decl` dalı, runtime DEĞİL) — bu 5 tür `isHeapManaged`in DIŞINDA
+  olduğundan "üzerine yazmadan önce eskiyi yok et" çağrısı eksikti.
+  Düzeltme İKİ parçalıydı: eksik çağrı eklendi VE bu 5 türün slotu artık
+  (ARC-yönetimli türlerle AYNI şekilde) girişte sıfırlanıyor +
+  `nox_async_destroy_task`/`nox_channel_destroy` artık null-güvenli
+  (500k yinelemelik `benchmarks/async_task_churn.nox` sızıntısız).
+
 ## [1.26.6]
 
 ### Değişti
