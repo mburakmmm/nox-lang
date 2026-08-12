@@ -14,6 +14,40 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.28.0]
+
+### Eklendi
+- **`nox.thread.pool_run(num_workers, entry)`** (Faz MN.7a): Faz MN.1-6'da
+  inşa edilen M:N iş-çalan zamanlayıcı altyapısını (o zamana kadar SADECE
+  Zig-seviyesi, hiçbir Nox programından erişilemeyen) İLK KEZ gerçek,
+  derlenmiş bir Nox programından çağrılabilir kılan genel-amaçlı ilkel —
+  SADECE `noxc build --release` (LLVM backend) İLE derlenebilir (QBE'nin
+  atomic instruction'ı olmadığından). `entry` İçİNDEKİ `spawn`/`await`
+  ARTIK ŞEFFAF olarak çapraz-worker çalmadan yararlanır.
+- **`nox.http.serve_multicore`nin `--release` altında havuz-tabanlı
+  lowering'i** (Faz MN.7b): YENİ `nox_pool_serve` — `nox_thread_spawn`nin
+  ESKİ, worker-başına BAĞIMSIZ `RuntimeState` modeli YERİNE TÜM worker'lar
+  TEK bir paylaşılan `WorkerPool`/ARC havuzu/döngü-çözücüyü PAYLAŞIR.
+  QBE yolu (bayraksız `noxc build`) bayt-birebir değişmedi.
+
+### Düzeltildi
+- MN.7a/7b'nin GERÇEK, çok-worker kullanım desenlerini İLK KEZ
+  egzersiz etmesi SIRASINDA, MN.4/5/6'dan kalma **4 GERÇEK eşzamanlılık
+  hatası** bulunup düzeltildi: (1-2) `Scheduler.run()`ün `pool_live_
+  count==0` erken-çıkış yolu, KENDİSİ ÇIKARKEN TAM O ANDA istenen bir
+  STW/döngü-çözücü turuna katılmayı KAÇIRABİLİYORDU (İKİ AYRI varyant —
+  biri sibling-başlangıç sırasıyla, biri release/acquire sıralama
+  eksikliğiyle ilgili; İKİNCİSİ `worker_pool.zig`nin KENDİ MN.6 stres
+  testinde 37+ dakikalık GERÇEK bir asılı-kalma OLARAK gözlemlenip
+  `sample` İLE teşhis edildi); (3) `poolWideDeadlockCheck`, BAŞKA bir
+  worker'ın ÇAPRAZ-worker `markReady` İLE eklediği yerel hazır-işleri HİÇ
+  KONTROL ETMİYORDU (YANLIŞ pozitif deadlock); (4) `http_server.zig`nin
+  `serveImpl`i bağlantı-fiber'larını spawn ederken (havuzlu modda
+  SADECE `pool_live_count`ın kullanıldığı yerde) koşulsuz `self.live_
+  count`e dokunuyordu — `usize` alta-taşması İLE GERÇEK HTTP trafiği
+  altında YANLIŞ pozitif "kilitlenme tespit edildi" hatasına yol açtığı
+  DOĞRUDAN gözlemlendi.
+
 ## [1.27.0]
 
 ### Eklendi
