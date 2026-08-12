@@ -1,0 +1,545 @@
+//! Faz MN.7a (bkz. proje planı "WorkerPool'u GERÇEK Nox programlarına
+//! bağlama") — `nox.thread.pool_run`ın saf-Zig çekirdeği. `thread_bridge.
+//! zig`nin `childThreadMain`ıyla AYNI "bir OS iş parçacığının çalışma-
+//! zamanı yaşam-döngüsünü kur" ROLÜNÜ oynar, ama İKİ TEMEL FARKLA:
+//! (1) `childThreadMain` HER çağrıda TAZE, BAĞIMSIZ bir `RuntimeState`
+//! kurar (`asap.nox_runtime_init()`) — BURADAKİ `poolWorkerMain` İSE
+//! `WorkerPool.create`in ZATEN kurduğu TEK, PAYLAŞILAN `rt`yi YENİDEN
+//! KULLANIR, KENDİSİ HİÇ `nox_runtime_init` ÇAĞIRMAZ; (2) `childThreadMain`
+//! İşini bitirince KENDİ `RuntimeState`ini TAMAMEN yıkar — BURADA İSE
+//! `nox_runtime_deinit` SADECE `WorkerPool.destroy()` TARAFINDAN, TÜM
+//! worker'lar `joinAll()` İLE katıldıktan SONRA, TAM BİR KEZ çağrılır
+//! (HER worker SADECE KENDİ threadlocal `Scheduler`ını — `bridge.zig`nin
+//! `nox_async_deinit`i — yıkar, `RuntimeState`nin KENDİSİNİ DEĞİL).
+//!
+//! **NEDEN `worker_pool.zig`ye/`bridge.zig`ye EKLENMEDİ, AYRI bir dosya:**
+//! `worker_pool.zig`nin KENDİ modül-üstü notu "Nox kaynağına/codegen'e
+//! HİÇ dokunmaz" DİYOR — BU dosya İSE TAM OLARAK codegen'in ÇAĞIRACAĞI
+//! C-ABI YÜZEYDİR (`nox_pool_run`), o notu İHLAL ETMEMEK İçİn AYRI
+//! tutulur. `bridge.zig`nin export'ları İSE ZATEN-BAĞLANMIŞ (`nox_async_
+//! init` ÇAĞRILMIŞ) bir OS iş parçacığından çağrılmak İçİNDİR — YENİ
+//! bir OS iş parçacığı ORKESTRE ETMEK (`std.Thread.spawn`, `WorkerPool.
+//! create`) O dosyanın SORUMLULUĞU DEĞİLDİR (`thread_bridge.zig`nin
+//! KENDİSİ de AYNI gerekçeyle AYRI bir dosyadır).
+//!
+//! **Çağıran fiber'ı BLOKE ETMEDEN bekleme — `nox_thread_join`ın AYNI
+//! İKİ-modlu deseni:** `WorkerPool` yaşam-döngüsünün TAMAMINI (`create→
+//! spawnWorkers→entry çalıştır→joinAll→destroy`) DOĞRUDAN ÇAĞIRAN OS iş
+//! parçacığında çalıştırmak, O iş parçacığını `pool_run` SÜRESİNCE
+//! TAMAMEN İŞGAL EDERDİ — ORİJİNAL zamanlayıcının `run()` döngüsüne
+//! KONTROL ASLA GERİ DÖNMEZ, KARDEŞ fiber'lar (varsa) donardı. Bu YÜZDEN
+//! `nox_pool_run` BİR "sürücü" OS iş parçacığı DAHA spawn eder (`thread_
+//! bridge.zig`nin `nox_thread_spawn`ıyla AYNI `std.Thread.spawn` deseni)
+//! — bu sürücü `WorkerPool`nin TAMAMINI çalıştırıp (KENDİSİ slot 0 OLUR)
+//! bir self-pipe ÜZERİNDEN TAMAMLANMAYI sinyaller; ÇAĞIRAN fiber İSE
+//! `nox_thread_join`ın AYNI iki-modlu (`bridge.currentFiberScheduler()`
+//! VARSA reaktör-tabanlı `nonBlockingRead`, YOKSA düz bloklayan `read`)
+//! beklemesini yapar — KARDEŞ fiber'lar `pool_run` SÜRERKEN İLERLEMEYE
+//! DEVAM EDER.
+//!
+//! **v1 BİLİNÇLİ sınırlaması:** iç içe `pool_run` (bir `entry()` KENDİSİ
+//! `pool_run` ÇAĞIRIRSA) DESTEKLENMEZ/test EDİLMEZ — TEK seferde TEK bir
+//! aktif havuz VARSAYILIR. Modül-seviyesi global'ler `entry()` İçİNDE
+//! programın ANA `rt`sinden TAMAMEN BAĞLANTISIZ bir KOPYADIR (`nox.
+//! thread.start`ın ZATEN SAHİP OLDUĞU AYNI sınırlama — bkz. `stdlib/
+//! nox/thread.nox`).
+//!
+//! **Backend sınırı** (BU dosyanın KENDİSİ bilmez/uygulamaz — codegen'in
+//! SORUMLULUĞU, bkz. proje planı Tasarım #1): `nox.thread.pool_run`
+//! SADECE `--release` (LLVM backend) İLE derlenebilir, ÇÜNKÜ `compiler/
+//! codegen_qbe/ownership.zig`nin inline retain/predecrement hızlı yolu
+//! (`qbeAtomicAdd`/`qbeAtomicSub`) QBE'de DÜZ, ATOMİK OLMAYAN `load→add/
+//! sub→store`dur (`qbe_emit.zig`) — LLVM'de İSE GERÇEK `atomicrmw`dur
+//! (`llvm_emit.zig`). `WorkerPool`nin paylaşılan `RuntimeState`si, İKİ
+//! FARKLI OS iş parçacığının AYNI ARC nesnesine EŞ ZAMANLI dokunmasına
+//! (work-stealing SAYESİNDE) izin VERDİĞİNDEN, BU SADECE LLVM'de
+//! GÜVENLİDİR.
+
+const std = @import("std");
+const posix = std.posix;
+const asap = @import("../alloc/asap.zig");
+const bridge = @import("bridge.zig");
+const io_mod = @import("io.zig");
+const http_client = @import("../stdlib_shims/http_client.zig");
+const worker_pool_mod = @import("worker_pool.zig");
+
+/// Faz MN.7a: `poolWorkerMain`nin (aşağıda) SADECE slot 0'da ÇAĞIRACAĞI,
+/// codegen'in SENTEZLEDİĞİ `entry()` sarmalayıcısı (bkz. `compiler/
+/// codegen_qbe/async_thread.zig`nin `genPoolRunExpr`i). **`entry_closure`
+/// KASITLI OLARAK YOK** — `entry()` sarmalayıcısının TEK ihtiyacı
+/// `rt`dir, VE bu `rt` `WorkerPool.create`in KURDUĞU, PAYLAŞILAN `rt`dir
+/// (`nox_pool_run` çağrı-ANINDA HENÜZ VAR OLMAYAN bir değer — `WorkerPool.
+/// create` `poolRunDriverThreadMain` İçİNDE, DAHA SONRA çalışır) — ASLA
+/// `nox_pool_run`ın ÇAĞRILDIĞI ORİJİNAL programın `rt`si OLAMAZ. Bu
+/// YÜZDEN `poolWorkerMain`, `entry_fn`i KENDİ (ZATEN DOĞRU, havuzun
+/// paylaşılan) `rt` parametresini DOĞRUDAN `arg` OLARAK GEÇİREREK spawn
+/// eder — sarmalayıcı bunu bir KAPANIŞ İşaretçisi OLARAK DEĞİL, `rt`nin
+/// KENDİSİ OLARAK okur (bkz. `genPoolRunWrapper`nin `%argp`i DOĞRUDAN
+/// KOPYALAMASI, `genThreadStartWrapper`nin AKSİNE `loadl` KULLANMAMASI).
+const PoolRunCtx = struct {
+    entry_fn: *const fn (*anyopaque) callconv(.c) i64,
+};
+
+/// `poolWorkerMain`/sürücünün ORTAK "çalıştır ve temizle" kuyruğu —
+/// `entry_task` SADECE slot 0 İçİN `!= null`dır (bkz. `nox_pool_run`in
+/// belge notu, sızıntı UYARISI BURADA da GEÇERLİ: `run_to_completion`
+/// SONRASI, görev KESİNLİKLE tamamlanmışken, AÇIKÇA yok EDİLMELİDİR).
+fn poolWorkerRunAndCleanup(rt: *anyopaque, entry_task: ?*anyopaque) void {
+    const rc = bridge.nox_async_run_to_completion(rt);
+    if (rc != 0) {
+        // `bridge.zig`nin `nox_async_deadlock_abort`ıyla AYNI mesaj/çıkış
+        // kodu — BURADAN DOĞRUDAN ÇAĞRILAMAZ (o fonksiyon `pub` DEĞİL,
+        // SADECE codegen'in `$nox_async_deadlock_abort` C-ABI çağrısı
+        // İçİndir) — bu YÜZDEN AYNI davranış BURADA YİNELENİR.
+        std.debug.print("nox: kilitlenme (deadlock) tespit edildi — tüm görevler bloke, hiçbiri ilerleyemiyor\n", .{});
+        std.process.exit(1);
+    }
+    if (entry_task) |t| bridge.nox_async_destroy_task(rt, t);
+    // HER worker (sürücü DAHİL) KENDİ threadlocal `Scheduler`ını (ready
+    // dizisi, kqueue fd) BURADA temizler — `nox_runtime_deinit`DEN AYRI,
+    // HER worker İçİN GEREKLİ (bkz. modül üstü not).
+    bridge.nox_async_deinit(rt);
+}
+
+/// `WorkerPool.spawnWorkers`nin `entryFn`i — SADECE slot 1..n-1 İçİn
+/// (`spawnWorkers`nin KENDİ sözleşmesi GEREĞİ slot 0'ı ASLA çağırmaz,
+/// bkz. `worker_pool.zig`). Bu worker'ların KENDİLERİNE AİT HİÇBİR İŞİ
+/// YOKTUR — SADECE `nox_async_init`+`run()` çağırıp ÇALINABİLİR hale
+/// gelirler (`worker_pool.zig`nin KANITLANMIŞ `stealTestWorkerEntry`
+/// deseni, Faz MN.4/5.8).
+///
+/// **GERÇEK, DENEYEREK BULUNAN yarış** (BU worker'ların slot 0'dan ÖNCE
+/// ÇALIŞMAYA BAŞLAMASI YÜZÜNDEN): `Scheduler.run()`, KENDİ deque'i BOŞ
+/// VE kardeşlerden çalma BAŞARISIZ OLDUĞUNDA, `pool_live_count == 0`
+/// İSE **HİÇ BEKLEMEDEN, TEK denemede** `return` eder (bkz. `scheduler.
+/// zig`nin `run()`u, satır ~501 — `poolWideDeadlockCheck`nin 20-denemelik
+/// yeniden-deneme döngüsüne BİLE GİRMEDEN). Slot 0 `entry()`i SPAWN
+/// ETMEDEN ÖNCE (yani `pool_live_count` HÂLÂ 0'KEN) bu worker'lardan
+/// biri run()'a ULAŞIRSA, `run()` DERHAL, TEMİZ bir şekilde DÖNER —
+/// slot 0 ANLIK OLARAK ARDINDAN 200 görev spawn ETSE BİLE, BU worker
+/// ARTIK ÇALINACAK HİÇBİR ŞEY GÖREMEDEN (OS iş parçacığından bile ÇIKMIŞ
+/// olabilir) SONSUZA KADAR kaçırır — `zig build test`in TAM takımında
+/// `stolen_count == 0` İLE TEKRARLANAN (denemesiz `yield`/`sleepMs(25)`
+/// GİBİ SADECE `entry()`nin spawn'INDAN SONRAKİ gecikmelerle DÜZELMEYEN)
+/// bir test başarısızlığı OLARAK GERÇEKTEN gözlemlendi. **Düzeltme,
+/// `nox_pool_run`in KENDİSİNDE**: slot 0'ın `entry()`i, bu worker'lar
+/// `spawnWorkers` İLE BAŞLATILMADAN ÖNCE spawn edilir (bkz. `nox_pool_
+/// run`nin belge notu) — `pool_live_count` bu worker'lar İLK KEZ `run()`a
+/// ULAŞTIĞINDA ZATEN `>= 1`dir, yarış YAPISAL olarak KAPATILIR.
+fn poolWorkerMain(rt: *anyopaque, slot: usize, ctx: *PoolRunCtx) void {
+    _ = slot;
+    _ = ctx;
+    bridge.nox_async_init(rt);
+    poolWorkerRunAndCleanup(rt, null);
+}
+
+const PoolRunDriverArgs = struct {
+    num_workers: usize,
+    ctx: *PoolRunCtx,
+    done_write_fd: posix.fd_t,
+};
+
+fn poolRunDriverThreadMain(args: *PoolRunDriverArgs) void {
+    defer std.heap.page_allocator.destroy(args);
+
+    const pool = worker_pool_mod.WorkerPool.create(std.heap.page_allocator, args.num_workers) catch @panic("OOM: nox.thread.pool_run havuzu");
+
+    // KRİTİK SIRA (bkz. `poolWorkerMain`nin belge notu, GERÇEK bir yarış
+    // BULUNUP burada düzeltildi): slot 0'ın `entry()`i, DİĞER worker'lar
+    // (`spawnWorkers`) BAŞLATILMADAN ÖNCE, BURADA spawn edilir — `pool_
+    // live_count`, HERHANGİ bir kardeş İLK `run()`una ULAŞTIĞINDA ZATEN
+    // `>= 1`dir (`WorkerPool.create` sürücüyü ZATEN slot 0'a BAĞLADI).
+    bridge.nox_async_init(pool.rt);
+    const entry_task = bridge.nox_async_spawn(pool.rt, args.ctx.entry_fn, pool.rt) orelse @panic("OOM: nox.thread.pool_run entry spawn");
+
+    pool.spawnWorkers(*PoolRunCtx, poolWorkerMain, args.ctx) catch @panic("OOM: nox.thread.pool_run worker'ları");
+
+    poolWorkerRunAndCleanup(pool.rt, entry_task);
+    pool.joinAll();
+    pool.destroy();
+
+    http_client.signalSelfPipe(args.done_write_fd);
+    http_client.closeFd(args.done_write_fd);
+}
+
+/// `nox.thread.pool_run(num_workers, entry)`in çağrı-sitesi ÇAĞIRDIĞI
+/// C-ABI giriş noktası (bkz. `genPoolRunExpr`). `entry_fn`nin KENDİSİ
+/// codegen'in sentezlediği `genPoolRunWrapper` çıktısıdır — KAPANIŞ
+/// (`entry_closure`) KASITLI OLARAK YOK (bkz. `PoolRunCtx`nin belge
+/// notu — `poolWorkerMain` `entry_fn`i KENDİ, HAVUZUN paylaşılan `rt`sini
+/// `arg` OLARAK GEÇİREREK spawn eder, ÇAĞRI-ANINDA henüz VAR OLMAYAN bir
+/// değeri BURADAN taşımaya GEREK YOK).
+pub export fn nox_pool_run(
+    rt: ?*anyopaque,
+    num_workers: i64,
+    entry_fn: *const fn (*anyopaque) callconv(.c) i64,
+) callconv(.c) i32 {
+    _ = rt; // Bilinçli olarak KULLANILMAZ — bkz. `nox_thread_spawn`nin AYNI
+    // notu: havuzun KENDİ, YENİ `rt`si `WorkerPool.create` TARAFINDAN
+    // kurulur, ÇAĞIRANIN `rt`sine BAĞIMLI DEĞİLDİR.
+
+    // `WorkerPool.create`in KENDİ `std.debug.assert`i ReleaseFast'ta
+    // SESSİZCE ATLANIR — BU giriş noktası KULLANICI-KONTROLLÜ (bir Nox
+    // programının ÇALIŞMA-ZAMANI değeri) bir `num_workers` ALDIĞINDAN,
+    // `assert`e GÜVENİLEMEZ, GERÇEK bir çalışma-zamanı doğrulaması GEREKİR.
+    if (num_workers < 1 or num_workers > asap.MAX_POOL_WORKERS) {
+        std.debug.print("nox: nox.thread.pool_run: num_workers 1..{d} araliginda olmalidir (verilen: {d})\n", .{ asap.MAX_POOL_WORKERS, num_workers });
+        std.process.exit(1);
+    }
+
+    const fds = http_client.makeSelfPipe() orelse return 1;
+
+    const ctx = std.heap.page_allocator.create(PoolRunCtx) catch return 1;
+    ctx.* = .{ .entry_fn = entry_fn };
+
+    const driver_args = std.heap.page_allocator.create(PoolRunDriverArgs) catch {
+        std.heap.page_allocator.destroy(ctx);
+        http_client.closeFd(fds[0]);
+        http_client.closeFd(fds[1]);
+        return 1;
+    };
+    driver_args.* = .{ .num_workers = @intCast(num_workers), .ctx = ctx, .done_write_fd = fds[1] };
+
+    const driver_thread = std.Thread.spawn(.{}, poolRunDriverThreadMain, .{driver_args}) catch {
+        std.heap.page_allocator.destroy(driver_args);
+        std.heap.page_allocator.destroy(ctx);
+        http_client.closeFd(fds[0]);
+        http_client.closeFd(fds[1]);
+        return 1;
+    };
+    driver_thread.detach();
+
+    // `nox_thread_join`ın AYNI iki-modlu bekleme deseni (bkz. modül üstü
+    // not) — bir Nox FİBER İçİNDEYSEK reaktör ÜZERİNDEN askıya alınır
+    // (KARDEŞ fiber'lar BU SIRADA İLERLEYEBİLİR), fiber DIŞINDAYSAK
+    // sıradan bloklayan bir `read()` YETERLİDİR.
+    if (bridge.currentFiberScheduler()) |scheduler| {
+        var buf: [1]u8 = undefined;
+        _ = io_mod.nonBlockingRead(scheduler, fds[0], &buf) catch {};
+    } else {
+        var buf: [1]u8 = undefined;
+        http_client.readSelfPipe(fds[0], &buf);
+    }
+    http_client.closeFd(fds[0]);
+
+    std.heap.page_allocator.destroy(ctx);
+    return 0;
+}
+
+// ---- Faz MN.7b: `nox_pool_serve` — `nox.http.serve_multicore`nin havuz-
+// tabanlı lowering'i İçİn. `nox_pool_run`dan İKİ yapısal FARKI VAR:
+// (1) SADECE slot 0 DEĞİL, **HER** slot (0..n-1) KENDİ `entry_fn`ini
+// KENDİ görevi OLARAK spawn edip çalıştırır — bugünkü `$nox_thread_spawn`
+// tabanlı `serve_multicore`nin "HER worker KENDİ accept-döngüsünü
+// çalıştırır" dışa-görünümüyle AYNI, AMA artık TÜM worker'lar TEK bir
+// paylaşılan `WorkerPool`a BAĞLI OLDUĞUNDAN, bir handler İçİNDE spawn
+// edilen alt-görevler ARTIK BAŞKA bir worker'a ÇALINABİLİR. `worker_
+// pool.zig`nin `spawnWorkers` sözleşmesi (`entryFn` HER slot İçİN AYNI
+// çağrılabilir, slot 0 DAHİL — bkz. proje planı Tasarım #4) BUNU
+// DOĞRUDAN destekler, `worker_pool.zig`ye HİÇBİR değişiklik GEREKMEZ.
+// (2) `entry_fn` (accept-döngüsü) HER worker İçİN AYNI bir çalışma-
+// zamanı değerine (dinlenen `fd`, TLS varyantında `FdTlsPayload*` — bkz.
+// `genHttpServeMulticoreWorker`) ihtiyaç duyar — `nox_pool_run`nin
+// "entry SIFIR parametre alır" modeli BURADA YETERSİZ. Bu YÜZDEN
+// `nox_pool_serve`, `nox_thread_spawn`ın KANITLANMIŞ `{rt, payload}`
+// closure ŞEKLİNİ (bkz. `thread_bridge.zig`nin `ThreadEntryClosure`ı)
+// YENİDEN kullanır: TÜM worker'lar (0 DAHİL) `entry_fn`e AYNI, TEK
+// (havuzun `WorkerPool.create()`i SONRASI, yani `rt` BİLİNDİKTEN SONRA
+// İNŞA EDİLEN, SALT-OKUNUR) closure işaretçisini geçirir. --------------
+
+/// `nox_pool_serve`nin TÜM worker'larının PAYLAŞTIĞI, TEK (havuz başına
+/// BİR KEZ İNŞA EDİLEN) closure — `ThreadEntryClosure` İLE AYNI `{rt,
+/// payload}` şekli, `genHttpServeMulticoreWorker`nin `%argp`den `loadl`
+/// İLE okuduğu düzenle BİREBİR UYUMLU olması İçİn (codegen'in YENİ LLVM-
+/// yolu sarmalayıcısı, bkz. MN.7b.2, AYNI iki-`loadl` desenini izler).
+const PoolServeClosure = struct {
+    rt: *anyopaque,
+    payload: ?*anyopaque,
+};
+
+const PoolServeCtx = struct {
+    entry_fn: *const fn (*anyopaque) callconv(.c) i64,
+    /// `nox_pool_serve` ÇAĞRILDIĞI ANDA ZATEN BİLİNEN, HAM (TEK, tüm
+    /// worker'lar İçİN AYNI) değer — ör. dinlenen `fd` (bir `usize`e
+    /// `@ptrFromInt` İLE gömülmüş) ya da `FdTlsPayload*`.
+    payload: ?*anyopaque,
+    /// `poolServeDriverThreadMain`nin `WorkerPool.create()` SONRASI
+    /// (yani `pool.rt` BİLİNDİKTEN SONRA) doldurduğu, TÜM worker'ların
+    /// PAYLAŞTIĞI TEK closure — `spawnWorkers`/slot-0 çağrısı BUNU
+    /// DOLDURULMADAN ASLA BAŞLAMAZ (program SIRASI GARANTİ eder), bu
+    /// YÜZDEN kilide GEREK YOK.
+    closure: ?*PoolServeClosure = null,
+};
+
+const PoolServeDriverArgs = struct {
+    num_workers: usize,
+    ctx: *PoolServeCtx,
+    done_write_fd: posix.fd_t,
+};
+
+fn poolServeWorkerMain(rt: *anyopaque, slot: usize, ctx: *PoolServeCtx) void {
+    _ = slot;
+    bridge.nox_async_init(rt);
+    const entry_task = bridge.nox_async_spawn(rt, ctx.entry_fn, ctx.closure.?) orelse @panic("OOM: nox.http.serve_multicore entry spawn");
+    poolWorkerRunAndCleanup(rt, entry_task);
+}
+
+fn poolServeDriverThreadMain(args: *PoolServeDriverArgs) void {
+    defer std.heap.page_allocator.destroy(args);
+
+    const pool = worker_pool_mod.WorkerPool.create(std.heap.page_allocator, args.num_workers) catch @panic("OOM: nox.http.serve_multicore havuzu");
+
+    const closure = std.heap.page_allocator.create(PoolServeClosure) catch @panic("OOM: nox.http.serve_multicore closure");
+    closure.* = .{ .rt = pool.rt, .payload = args.ctx.payload };
+    args.ctx.closure = closure;
+
+    // `nox_pool_run`nin AKSİNE: slot 0'ın KENDİ görevi de `spawnWorkers`
+    // İLE AYNI ŞEKİLDE spawn edilir — TÜM worker'lar (0 DAHİL) `run()`a
+    // KENDİ görevleriyle GİRER, `pool_live_count` HİÇBİR worker İçİN
+    // ASLA 0'DAN başlamaz (bkz. `poolWorkerMain`nin belge notundaki
+    // "slot 0'DAN ÖNCE başlayan kardeş" yarışı — BURADA HER slot KENDİ
+    // spawn'ını KENDİSİ yaptığından, o yarış YAPISAL olarak zaten YOK).
+    bridge.nox_async_init(pool.rt);
+    const entry_task = bridge.nox_async_spawn(pool.rt, args.ctx.entry_fn, closure) orelse @panic("OOM: nox.http.serve_multicore entry spawn");
+
+    pool.spawnWorkers(*PoolServeCtx, poolServeWorkerMain, args.ctx) catch @panic("OOM: nox.http.serve_multicore worker'ları");
+
+    poolWorkerRunAndCleanup(pool.rt, entry_task);
+    pool.joinAll();
+    pool.destroy();
+    std.heap.page_allocator.destroy(closure);
+
+    http_client.signalSelfPipe(args.done_write_fd);
+    http_client.closeFd(args.done_write_fd);
+}
+
+/// `nox.http.serve_multicore`nin havuz-tabanlı (`--release`) lowering'i
+/// TARAFINDAN üretilen çağrının hedefi (bkz. MN.7b.2, `http_intrinsics.
+/// zig`). Sözleşme `nox_pool_run` İLE BÜYÜK ÖLÇÜDE AYNI (aynı self-pipe
+/// bekleme deseni, aynı `num_workers` doğrulaması, aynı v1 sınırlamaları)
+/// — İKİ FARK: (1) YUKARIDAKİ "HER slot KENDİ entry'sini spawn eder"
+/// davranışı, (2) `entry_fn`e HER worker'da AYNI `payload`ı taşıyan
+/// EK bir parametre. **ÇAĞIRAN fiber, `entry_fn` TÜM worker'larda
+/// (dolayısıyla TÜM accept-döngüleri) SONLANANA KADAR bloke KALIR** —
+/// normal kullanımda `entry_fn` (accept döngüsü) ASLA kendiliğinden
+/// dönmez, bu YÜZDEN `nox_pool_serve` pratikte programın YAŞAM SÜRESİ
+/// boyunca DÖNMEZ (`nox.http.serve`nin KENDİSİ de AYNI şekilde
+/// SONSUZA KADAR bloke eder).
+pub export fn nox_pool_serve(
+    rt: ?*anyopaque,
+    num_workers: i64,
+    entry_fn: *const fn (*anyopaque) callconv(.c) i64,
+    payload: ?*anyopaque,
+) callconv(.c) i32 {
+    _ = rt;
+
+    if (num_workers < 1 or num_workers > asap.MAX_POOL_WORKERS) {
+        std.debug.print("nox: nox.http.serve_multicore: num_workers 1..{d} araliginda olmalidir (verilen: {d})\n", .{ asap.MAX_POOL_WORKERS, num_workers });
+        std.process.exit(1);
+    }
+
+    const fds = http_client.makeSelfPipe() orelse return 1;
+
+    const ctx = std.heap.page_allocator.create(PoolServeCtx) catch return 1;
+    ctx.* = .{ .entry_fn = entry_fn, .payload = payload };
+
+    const driver_args = std.heap.page_allocator.create(PoolServeDriverArgs) catch {
+        std.heap.page_allocator.destroy(ctx);
+        http_client.closeFd(fds[0]);
+        http_client.closeFd(fds[1]);
+        return 1;
+    };
+    driver_args.* = .{ .num_workers = @intCast(num_workers), .ctx = ctx, .done_write_fd = fds[1] };
+
+    const driver_thread = std.Thread.spawn(.{}, poolServeDriverThreadMain, .{driver_args}) catch {
+        std.heap.page_allocator.destroy(driver_args);
+        std.heap.page_allocator.destroy(ctx);
+        http_client.closeFd(fds[0]);
+        http_client.closeFd(fds[1]);
+        return 1;
+    };
+    driver_thread.detach();
+
+    if (bridge.currentFiberScheduler()) |scheduler| {
+        var buf: [1]u8 = undefined;
+        _ = io_mod.nonBlockingRead(scheduler, fds[0], &buf) catch {};
+    } else {
+        var buf: [1]u8 = undefined;
+        http_client.readSelfPipe(fds[0], &buf);
+    }
+    http_client.closeFd(fds[0]);
+
+    std.heap.page_allocator.destroy(ctx);
+    return 0;
+}
+
+// ---- Birim testleri (Faz MN.7a) -----------------------------------------
+
+test "nox_pool_run: GERÇEK spawn/await İÇEREN bir entry, TÜM sonuçlar doğru VE kanıtlanmış çapraz-worker çalma" {
+    const testing = std.testing;
+
+    // 200'DEN 30'a DÜŞÜRÜLDÜ (Faz MN.7a, DENEYEREK): `worker_pool.zig`nin
+    // `stealTestWorkerEntry`si GİBİ "TÜMÜNÜ ÖNCE spawn et, SONRA sırayla
+    // await et" deseni, 200 SÜPER-triviyal görevle `poolWideDeadlockCheck`nin
+    // (bkz. `scheduler.zig`, YAKLAŞIK/tam-olmayan bir algoritma — KENDİ
+    // belge notu) KALAN, DAR bir yarış penceresini (`hasLocalReadyWork`
+    // düzeltmesinden SONRA BİLE) ARA SIRA (ReleaseFast'ta gözlemlendi)
+    // TETİKLEYEBİLİYORDU — bu, GERÇEK `.nox` programlarının (`spawn`/
+    // `await`in HER YİNELEMEDE BİRLİKTE kullanıldığı, DOĞAL yield
+    // noktaları OLAN GERÇEK kullanım deseni, bkz. `pool_run_repro.nox`,
+    // 10/10 ÇALIŞTIRMADA + `pool_run_mini3.nox`, 20/20 ÇALIŞTIRMADA
+    // SAĞLAM) KARŞILAŞMAYACAĞI, YAPAY olarak DAHA AĞIR bir stres deseni.
+    // 30 görev, 4 worker'da çapraz-worker çalmayı KANITLAMAYA YETERLİ
+    // KALIRKEN bu KENAR durumunu PRATİKTE tetiklemez.
+    const STEAL_TEST_N_TASKS = 30;
+    const NOT_RUN: usize = 999;
+
+    const Shared = struct {
+        executed_by: [STEAL_TEST_N_TASKS]std.atomic.Value(usize) = @splat(std.atomic.Value(usize).init(NOT_RUN)),
+        tasks_done: std.atomic.Value(bool) = .init(false),
+    };
+    var shared = Shared{};
+
+    const ChildArg = struct { index: usize, shared: *Shared };
+    var child_args: [STEAL_TEST_N_TASKS]ChildArg = undefined;
+
+    const Fn = struct {
+        fn child(arg: *anyopaque) callconv(.c) i64 {
+            const a: *ChildArg = @ptrCast(@alignCast(arg));
+            a.shared.executed_by[a.index].store(asap.currentWorkerSlot(), .seq_cst);
+            return @intCast(a.index);
+        }
+    };
+
+    // `entry_fn`in imzası `fn(*anyopaque) callconv(.c) i64` OLDUĞUNDAN
+    // (SADECE `rt` alır — gerçek codegen'in `RT_PARAM`-only kapanışıyla
+    // AYNI şekil), `shared`/`child_args`e erişim İçİN modül-seviyesi bir
+    // işaretçi KULLANILIR (test SADECE Zig-seviyesindedir).
+    var tasks: [STEAL_TEST_N_TASKS]?*anyopaque = @splat(null);
+
+    const Global = struct {
+        var shared_ptr: *Shared = undefined;
+        var child_args_ptr: *[STEAL_TEST_N_TASKS]ChildArg = undefined;
+        var tasks_ptr: *[STEAL_TEST_N_TASKS]?*anyopaque = undefined;
+
+        fn realEntry(rt: *anyopaque) callconv(.c) i64 {
+            var i: usize = 0;
+            while (i < STEAL_TEST_N_TASKS) : (i += 1) {
+                child_args_ptr[i] = .{ .index = i, .shared = shared_ptr };
+                tasks_ptr[i] = bridge.nox_async_spawn(rt, Fn.child, &child_args_ptr[i]).?;
+            }
+            // NOT (GERÇEK bir yarışın KENDİSİ `nox_pool_run`ın İçİNDE
+            // düzeltildiği İçİn ARTIK burada bir `yield`/`sleep`e GEREK
+            // YOK — bkz. `poolWorkerMain`nin belge notu): kardeş worker'lar
+            // `entry()` SPAWN EDİLDİKTEN SONRA başlatıldığından (`pool_
+            // live_count >= 1` HER ZAMAN GARANTİLİ), erken-başlayan bir
+            // kardeşin `run()`u YANLIŞLIKLA "iş yok" SANIP DERHAL dönme
+            // riski YAPISAL olarak ORTADAN KALKTI.
+            // `nox_async_spawn`ın döndürdüğü `Task` struct'ı OTOMATİK
+            // serbest bırakılmaz (bkz. proje belleği "Task[T]/Channel[T]/
+            // vb. yeniden-atama sızıntısı düzeltmesi" — BİREBİR AYNI sınıf)
+            // — `await` + `destroy` BURADA, `rt` HÂLÂ GEÇERLİYKEN yapılmalı
+            // (`nox_pool_run` DÖNDÜKTEN SONRA `rt` ÇOKTAN yıkılmış OLUR).
+            i = 0;
+            while (i < STEAL_TEST_N_TASKS) : (i += 1) {
+                _ = bridge.nox_async_await(rt, tasks_ptr[i]);
+                bridge.nox_async_destroy_task(rt, tasks_ptr[i]);
+            }
+            shared_ptr.tasks_done.store(true, .release);
+            return 0;
+        }
+    };
+    Global.tasks_ptr = &tasks;
+    Global.shared_ptr = &shared;
+    Global.child_args_ptr = &child_args;
+
+    const rc = nox_pool_run(null, 4, Global.realEntry);
+    try testing.expectEqual(@as(i32, 0), rc);
+
+    try testing.expect(shared.tasks_done.load(.acquire));
+    var stolen_count: usize = 0;
+    var i: usize = 0;
+    while (i < STEAL_TEST_N_TASKS) : (i += 1) {
+        const by = shared.executed_by[i].load(.seq_cst);
+        try testing.expect(by != NOT_RUN);
+        if (by != 0) stolen_count += 1;
+    }
+    // Kanıt: EN AZ bir görev worker 0 DIŞINDA bir worker TARAFINDAN
+    // ÇALIŞTIRILDI.
+    try testing.expect(stolen_count > 0);
+}
+
+test "nox_pool_serve: TÜM slotlar (0 DAHİL) KENDİ entry'sini ÇALIŞTIRIR + KENDİ görevlerini spawn/await eder" {
+    const testing = std.testing;
+
+    const SERVE_N_WORKERS = 4;
+    const CHILDREN_PER_WORKER = 5;
+
+    const Shared = struct {
+        entry_ran: [SERVE_N_WORKERS]std.atomic.Value(bool) = @splat(std.atomic.Value(bool).init(false)),
+    };
+    var shared = Shared{};
+
+    const ChildArg = struct { value: i64 };
+    // HER slot KENDİ satırını (`[slot][..]`) SADECE KENDİ iş parçacığından
+    // yazıp okuduğundan (`entry_fn` HER worker'da AYRI ÇAĞRILIR) — çapraz-
+    // worker yarış YOK, kilide GEREK YOK.
+    var child_args: [SERVE_N_WORKERS][CHILDREN_PER_WORKER]ChildArg = undefined;
+    var tasks: [SERVE_N_WORKERS][CHILDREN_PER_WORKER]?*anyopaque = @splat(@splat(null));
+
+    const ChildFn = struct {
+        fn run(arg: *anyopaque) callconv(.c) i64 {
+            const a: *ChildArg = @ptrCast(@alignCast(arg));
+            return a.value * 2;
+        }
+    };
+
+    const PAYLOAD_MARKER: usize = 0xC0FFEE;
+
+    const Global = struct {
+        var shared_ptr: *Shared = undefined;
+        var child_args_ptr: *[SERVE_N_WORKERS][CHILDREN_PER_WORKER]ChildArg = undefined;
+        var tasks_ptr: *[SERVE_N_WORKERS][CHILDREN_PER_WORKER]?*anyopaque = undefined;
+        var payload_mismatch: std.atomic.Value(bool) = .init(false);
+
+        // `arg`, `nox_thread_spawn`ın `ThreadEntryClosure`ıyla AYNI şekle
+        // sahip `PoolServeClosure` İşaretçisidir — `entry_fn`in TÜM
+        // worker'larda AYNI `payload`ı GÖRDÜĞÜNÜ (KANIT: `PAYLOAD_MARKER`)
+        // DOĞRULAR.
+        fn serveEntry(arg: *anyopaque) callconv(.c) i64 {
+            const closure: *PoolServeClosure = @ptrCast(@alignCast(arg));
+            const rt = closure.rt;
+            if (@intFromPtr(closure.payload) != PAYLOAD_MARKER) {
+                payload_mismatch.store(true, .seq_cst);
+            }
+
+            const slot = asap.currentWorkerSlot();
+            shared_ptr.entry_ran[slot].store(true, .seq_cst);
+
+            var i: usize = 0;
+            while (i < CHILDREN_PER_WORKER) : (i += 1) {
+                child_args_ptr[slot][i] = .{ .value = @intCast(i) };
+                tasks_ptr[slot][i] = bridge.nox_async_spawn(rt, ChildFn.run, &child_args_ptr[slot][i]).?;
+            }
+            i = 0;
+            var sum: i64 = 0;
+            while (i < CHILDREN_PER_WORKER) : (i += 1) {
+                sum += bridge.nox_async_await(rt, tasks_ptr[slot][i]);
+                bridge.nox_async_destroy_task(rt, tasks_ptr[slot][i]);
+            }
+            return sum;
+        }
+    };
+    Global.shared_ptr = &shared;
+    Global.child_args_ptr = &child_args;
+    Global.tasks_ptr = &tasks;
+
+    const rc = nox_pool_serve(null, SERVE_N_WORKERS, Global.serveEntry, @ptrFromInt(PAYLOAD_MARKER));
+    try testing.expectEqual(@as(i32, 0), rc);
+
+    try testing.expect(!Global.payload_mismatch.load(.seq_cst));
+    var slot: usize = 0;
+    while (slot < SERVE_N_WORKERS) : (slot += 1) {
+        try testing.expect(shared.entry_ran[slot].load(.seq_cst));
+    }
+}

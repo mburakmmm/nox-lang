@@ -35,6 +35,17 @@ extern def nox_http_response_free(h: ptr) -> None from "zig-out/lib/noxrt.o"
 # `nox.http.serve_fd(fd, handle)`ini çağırabilir (ya da tek satırlık
 # `nox.http.serve_multicore(port, handle, num_threads)` kolaylığı
 # kullanılabilir).
+#
+# Faz MN.7b: `noxc build --release` (LLVM backend) İLE derlendiğinde
+# `serve_multicore` ARTIK `nox.thread.start`nin N-BAĞIMSIZ-`RuntimeState`
+# modeli YERİNE `nox.thread.pool_run`ın AYNI paylaşılan `WorkerPool`unu
+# kullanır — TÜM worker'lar TEK bir ARC havuzunu/döngü-çözücüyü
+# PAYLAŞIR (`nox.thread.start` tabanlı bayraksız `noxc build` yolu
+# BİREBİR DEĞİŞMEDEN kalır). Bağlantı işleyicisi (`handle`) HÂLÂ
+# `async def` OLAMAZ — `spawn`/`await` handler İçİNDEN KULLANILAMAZ
+# (bağlantı zaten kendi fiber'ında senkron çalışır); bağlantı-seviyesi
+# dengeleme ZATEN paylaşılan-fd üzerindeki OS-seviyesi `accept()`
+# yarışıyla sağlanır, --release'in KENDİSİ BUNU DEĞİŞTİRMEZ.
 extern def nox_http_listen_fd(port: int) -> int from "zig-out/lib/noxrt.o" with_rt
 
 def listen(port: int) -> int:

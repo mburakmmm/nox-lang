@@ -1552,6 +1552,54 @@ pub const Checker = struct {
         return .{ .thread_handle = boxed };
     }
 
+    /// Faz MN.7a: `nox.thread.pool_run(num_workers, entry)` — `tryResolve
+    /// ThreadSpawnCall`ın AYNI "`entry` ÇIPLAK bir fonksiyon adı, birinci
+    /// sınıf DEĞER OLARAK GEÇİRİLEMEZ" deseni, AMA DAHA BASİT: `entry`
+    /// SIFIR parametre alır (`pool_run`ın havuza taşınacak bir ARGÜMANI
+    /// YOKTUR — SADECE `entry()` İçİNDEN yapılan `spawn`/`await` çağrıları
+    /// çapraz-worker çalmadan YARARLANIR, bkz. `runtime/async_rt/pool_
+    /// bridge.zig`nin modül üstü notu) — BU YÜZDEN `isThreadTransferSafeType`
+    /// kontrolüne HİÇ GEREK YOK (taşınacak bir argüman/dönüş DEĞERİ YOK).
+    /// `num_workers`, `serve_multicore`nin `max_connections`ının AKSİNE,
+    /// DERLEME-ZAMANI SABİTİ OLMAK ZORUNDA DEĞİLDİR — DOĞRUDAN çalışma-
+    /// zamanı değeri olarak `nox_pool_run`e GEÇER.
+    fn tryResolvePoolRunCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!?Type {
+        var raw_segments: std.ArrayListUnmanaged([]const u8) = .empty;
+        if (!(try self.flattenDottedPath(c.callee.*, &raw_segments))) return null;
+        if (raw_segments.items.len < 2) return null;
+        const segments = try self.substituteAlias(raw_segments.items);
+        if (segments.len != 3) return null;
+        if (!std.mem.eql(u8, segments[0], "nox")) return null;
+        if (!std.mem.eql(u8, segments[1], "thread")) return null;
+        if (!std.mem.eql(u8, segments[2], "pool_run")) return null;
+        if (!self.imported_modules.contains("nox.thread")) return null;
+
+        if (c.args.len != 2) {
+            return self.fail(error.ArgumentCountMismatch, "'nox.thread.pool_run' tam olarak 2 argüman alır: (num_workers, entry)", .{});
+        }
+        const num_workers_t = try self.checkExpr(ctx, c.args[0]);
+        if (num_workers_t != .int) {
+            return self.fail(error.TypeMismatch, "'nox.thread.pool_run': 'num_workers' int olmalıdır", .{});
+        }
+        const entry_name = switch (c.args[1]) {
+            .identifier => |n| n,
+            else => return self.fail(error.NotCallable, "'nox.thread.pool_run': 'entry' doğrudan bir fonksiyon adı olmalı (metod/lambda henüz desteklenmiyor)", .{}),
+        };
+        const sig = self.functions.get(entry_name) orelse
+            return self.fail(error.UndefinedFunction, "tanımsız fonksiyon: {s}", .{entry_name});
+        if (!self.async_functions.contains(entry_name)) {
+            return self.fail(error.TypeMismatch, "'nox.thread.pool_run': 'entry' ('{s}') bir 'async def' OLMALI (havuzun tek sürücü worker'ının tek üst-düzey görevi olarak çalışır)", .{entry_name});
+        }
+        if (sig.params.len != 0) {
+            return self.fail(error.TypeMismatch, "'nox.thread.pool_run': 'entry' SIFIR parametre almalıdır", .{});
+        }
+        if (sig.return_type != .none) {
+            return self.fail(error.TypeMismatch, "'nox.thread.pool_run': 'entry' hiçbir şey döndürmemelidir (-> None)", .{});
+        }
+
+        return .none;
+    }
+
     fn registerClassSignatures(self: *Checker, cd: ast.ClassDef) TypeError!void {
         // Faz P2.1: generic bir sınıf ŞABLONUNUN gövdesi BURADA HİÇ İŞLENMEZ
         // — `T` gibi bir tip parametresi `typeExprToType`e (AŞAĞIDA, HER
@@ -3114,6 +3162,9 @@ pub const Checker = struct {
                 // gerekçesi (`entry` ÇIPLAK bir fonksiyon adı, birinci
                 // sınıf DEĞER OLARAK GEÇİRİLEMEZ).
                 if (try self.tryResolveThreadSpawnCall(ctx, c)) |t| return t;
+                // `nox.thread.pool_run(num_workers, entry)` — Faz MN.7a
+                // (bkz. `tryResolvePoolRunCall`nin belge notu).
+                if (try self.tryResolvePoolRunCall(ctx, c)) |t| return t;
                 // `nox.http.get(url)` gibi bir stdlib modülüne nitelikli
                 // erişimi dener (bkz. `tryResolveQualifiedCall`in belge
                 // notu) — bu, ASAĞIDAKİ `checkExpr(ctx, a.obj.*)`DEN ÖNCE

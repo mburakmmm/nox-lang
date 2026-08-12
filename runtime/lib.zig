@@ -21,6 +21,11 @@ pub const chase_lev_deque = @import("async_rt/chase_lev_deque.zig");
 /// Faz MN.3b: MN.3a İLE AYNI "bağımsız, sadece test-keşfi İçİn KAYITLI"
 /// deseni — bkz. onun modül üstü notu.
 pub const worker_pool = @import("async_rt/worker_pool.zig");
+/// Faz MN.7a: `nox.thread.pool_run`ın C-ABI yüzeyi — `thread_bridge`/
+/// `thread_channel` İLE AYNI, GERÇEK Nox codegen'inden çağrılan bir
+/// modül (`chase_lev_deque`/`worker_pool`nin "bağımsız, sadece test-
+/// keşfi İçİN" notu BURAYA UYGULANMAZ).
+pub const pool_bridge = @import("async_rt/pool_bridge.zig");
 pub const str = @import("str.zig");
 pub const dict = @import("collections/dict.zig");
 pub const list_sort = @import("collections/list_sort.zig");
@@ -61,6 +66,7 @@ comptime {
     _ = foreign_bridge;
     _ = async_bridge;
     _ = thread_bridge;
+    _ = pool_bridge;
     _ = thread_channel;
     _ = task_local;
     _ = chase_lev_deque;

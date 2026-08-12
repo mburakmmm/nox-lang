@@ -206,6 +206,18 @@ pub const ThreadWrapperSpec = struct {
     sig: FuncSig,
 };
 
+/// Faz MN.7a: `nox.thread.pool_run(num_workers, entry)` çağrı sitesi
+/// başına TEMBEL kaydedilen bir sarmalayıcının tarifi. `ThreadWrapperSpec`
+/// (yukarısı) İLE AYNI amaç, AMA `sig` TAŞIMAZ — checker (`tryResolvePoolRun
+/// Call`) `entry`in SIFIR parametre alıp `None` döndürdüğünü ZATEN GARANTİ
+/// ETTİĞİNDEN (bkz. `runtime/async_rt/pool_bridge.zig`nin `entry`in
+/// Nox-seviyesi argüman ALMADIĞI notu), `genPoolRunWrapper`nin payload-
+/// dönüştürme İçİN `sig.params`/`sig.ret`e İHTİYACI YOKTUR.
+pub const PoolRunWrapperSpec = struct {
+    name: []const u8,
+    target_fn: []const u8,
+};
+
 /// Faz DD.1: `nox.http.serve_multicore` çağrı sitesi başına TEMBEL
 /// kaydedilen bir "iş parçacığı girişi" worker fonksiyonunun tarifi.
 /// Faz "sunucu-tarafı TLS + WS": `tls`/`ws_wrapper_name` bu worker'ın

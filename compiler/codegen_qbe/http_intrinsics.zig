@@ -363,6 +363,29 @@ pub fn genHttpServeMulticore(self: *Codegen, c: ast.Call) CodegenError!Value {
     self.http_serve_multicore_worker_counter += 1;
     try self.http_serve_multicore_workers.append(self.allocator, .{ .name = worker_name, .wrapper_name = wrapper_name, .max_conn_text = max_conn_text });
 
+    // Faz MN.7b: `--release` (LLVM backend) altında, `num_threads - 1`
+    // × `$nox_thread_spawn` (AŞAĞIDAKİ, `.qbe`de DEĞİŞMEDEN KALAN yol)
+    // YERİNE TEK bir `$nox_pool_serve` çağrısı — TÜM `num_threads` worker
+    // (0 DAHİL) TEK bir paylaşılan `WorkerPool`a BAĞLANIR, bir handler
+    // İçİNDE spawn edilen alt-görevler ARTIK ÇAPRAZ-worker ÇALINABİLİR.
+    // `genHttpServeMulticoreWorker`nin (aşağıda, ÜRETİLEN worker
+    // fonksiyonu) `%argp` şekli (`{rt, payload}`, `payload` @ offset 8 =
+    // ÇIPLAK `fd`) `nox_pool_serve`nin `PoolServeClosure`ıyla BİREBİR
+    // AYNI olduğundan — AYNI ÜRETİLEN fonksiyon HEM `$nox_thread_spawn`
+    // (`.qbe`) HEM `$nox_pool_serve` (`.llvm`) TARAFINDAN `entry_fn`
+    // OLARAK KULLANILABİLİR, İKİNCİ bir sarmalayıcı GEREKMEZ.
+    if (self.backend == .llvm) {
+        const worker_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{worker_name});
+        const rc = try self.newTemp();
+        try self.qbeCall(.{ .name = rc, .ty = .w }, "$nox_pool_serve", &.{
+            .{ .ty = .l, .text = RT_PARAM },
+            .{ .ty = .l, .text = num_threads_v.text },
+            .{ .ty = .l, .text = worker_sym },
+            .{ .ty = .l, .text = fd },
+        });
+        return .{ .text = "0", .qtype = .none };
+    }
+
     // Faz HH.8 (bkz. nox-teknik-spesifikasyon.md §3.66): spawn edilen
     // `ThreadHandle`ları (yalnızca `num_threads - 1` kadarı KULLANILIR,
     // indeks 0 hiç YAZILMAZ) daha SONRA join edebilmek İçin geçici bir
@@ -928,6 +951,23 @@ pub fn genHttpServeMulticoreGeneric(self: *Codegen, c: ast.Call, want_tls: bool,
     const worker_name = try std.fmt.allocPrint(self.allocator, "http_serve_mc_worker_{d}", .{self.http_serve_multicore_worker_counter});
     self.http_serve_multicore_worker_counter += 1;
     try self.http_serve_multicore_workers.append(self.allocator, .{ .name = worker_name, .wrapper_name = handlers.wrapper_name, .max_conn_text = max_conn_text, .ws_wrapper_name = handlers.ws_wrapper_name, .tls = want_tls });
+
+    // Faz MN.7b (bkz. `genHttpServeMulticore`nin AYNI belge notu):
+    // `fd` BURADA da (`want_tls` İSE `FdTlsPayload*`, DEĞİLSE ÇIPLAK fd)
+    // `genHttpServeMulticoreWorker`nin `spec.tls`-güdümlü `%argp+8`
+    // yorumuyla BİREBİR UYUMLU olduğundan, AYNI ÜRETİLEN worker fonksiyonu
+    // DEĞİŞİKLİKSİZ `nox_pool_serve`nin `entry_fn`i OLARAK kullanılabilir.
+    if (self.backend == .llvm) {
+        const worker_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{worker_name});
+        const rc = try self.newTemp();
+        try self.qbeCall(.{ .name = rc, .ty = .w }, "$nox_pool_serve", &.{
+            .{ .ty = .l, .text = RT_PARAM },
+            .{ .ty = .l, .text = num_threads_v.text },
+            .{ .ty = .l, .text = worker_sym },
+            .{ .ty = .l, .text = fd },
+        });
+        return .{ .text = "0", .qtype = .none };
+    }
 
     // Faz HH.8 (bkz. `genHttpServeMulticore`nin AYNI belge notu): spawn
     // edilen `ThreadHandle`ları daha SONRA join edebilmek İçin geçici bir

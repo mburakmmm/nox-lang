@@ -466,6 +466,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     .http_serve_multicore_ws => self.genHttpServeMulticoreGeneric(c, false, true),
                     .http_serve_multicore_ws_tls => self.genHttpServeMulticoreGeneric(c, true, true),
                     .thread_start => self.genThreadStartExpr(c),
+                    .pool_run => self.genPoolRunExpr(c),
                 };
             }
             return self.genMethodCall(a, c.args);

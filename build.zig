@@ -732,6 +732,25 @@ pub fn build(b: *std.Build) void {
     http_serve_multicore_test.step.dependOn(&install_noxrt.step);
     test_step.dependOn(&b.addRunArtifact(http_serve_multicore_test).step);
 
+    // ---- Faz MN.7b: `nox.http.serve_multicore`nin havuz-tabanlı
+    // (`--release`/LLVM) lowering'i İçİn AYNI uçtan uca golden desen —
+    // AYRI dosya (bkz. http_serve_multicore_pool_golden_test.zig'in modül
+    // üstü notu) — `llvm_golden_test.zig`nin AKSİNE `std.c.*` (socket/
+    // connect) KULLANDIĞINDAN `http_serve_multicore_test`in AYNI `link_libc`
+    // + AÇIK `install_noxrt.step` bağımlılığı deseni İZLENİR.
+    const http_serve_multicore_pool_test_mod = b.createModule(.{
+        .root_source_file = b.path("tests/compat/http_serve_multicore_pool_golden_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "nox", .module = nox_mod },
+        },
+    });
+    const http_serve_multicore_pool_test = b.addTest(.{ .root_module = http_serve_multicore_pool_test_mod });
+    http_serve_multicore_pool_test.step.dependOn(&install_noxrt.step);
+    test_step.dependOn(&b.addRunArtifact(http_serve_multicore_pool_test).step);
+
     // ---- Faz "sunucu-tarafı TLS terminasyonu + WebSocket Upgrade" —
     // `nox.http.serve_tls`/`serve_ws` uçtan uca golden testleri — `http_
     // serve_test` İLE AYNI bağımlılık/model, AYRI dosyalar (bkz. ilgili

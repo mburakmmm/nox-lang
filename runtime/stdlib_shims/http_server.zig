@@ -1050,7 +1050,33 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
             // `scheduler_mod.spawn`ın KENDİ iç tarifiyle AYNI (bkz. modül
             // üstü not) — `Task` sarmalamadan `live_count`ı elle artırıyoruz,
             // `Scheduler.run()`ün MEVCUT temizleme yolu bunu dengeler.
-            s.live_count += 1;
+            //
+            // **GERÇEK, Faz MN.7b'nin (`nox.http.serve_multicore`nin havuz-
+            // tabanlı lowering'i) DENEYEREK bulduğu hata**: BU kod SADECE
+            // `self.live_count`e (havuzSUZ sayaç) dokunuyordu — `serve_
+            // multicore` HER ZAMAN havuzSUZ, bağımsız bir `RuntimeState`
+            // ÇALIŞTIRDIĞI SÜRECE (`nox_thread_spawn` tabanlı ESKİ yol)
+            // bu DOĞRUYDU. AMA `nox_pool_serve` (Faz MN.7b) worker'ları TEK
+            // paylaşılan bir `WorkerPool`a BAĞLADIĞINDA (`s.pool_live_count
+            // != null`), `Scheduler.run()`ün "fiber bitti" temizleme yolu
+            // (bkz. `scheduler.zig`) `self.pool_live_count`I DEĞİL `self.
+            // live_count`ı ASLA kullanmaz (`if (self.pool_live_count) |plc|
+            // ... else self.live_count -= 1`) — BU bağlantı fiber'ı BİTTİĞİNDE
+            // `pool_live_count` (HİÇ artırılmamışken) YİNE DE `fetchSub`
+            // EDİLİYORDU — `usize` ALTINA TAŞMA (SIFIRIN ALTINA) İLE dev bir
+            // sayıya SIÇRIYOR, `poolWideDeadlockCheck`nin `live > 0` kontrolü
+            // BU YÜZDEN HER ZAMAN doğru kalıp (worker'lar GERÇEKTE TAMAMEN
+            // boşta olsa BİLE) YANLIŞ pozitif bir "kilitlenme tespit edildi"
+            // İLAN EDİYORDU (`nox_pool_serve` İLE N=2 worker, max_connections=1
+            // fixture'ında 2 GERÇEK istemci de 200 ALDIKTAN SONRA GERÇEKTEN
+            // gözlemlendi). Düzeltme: `scheduler_mod.spawn`nin KENDİ deseni
+            // BİREBİR izlenir — havuzluysa `pool_live_count` artırılır,
+            // `self.live_count`e HİÇ dokunulmaz.
+            if (s.pool_live_count) |plc| {
+                _ = plc.fetchAdd(1, .monotonic);
+            } else {
+                s.live_count += 1;
+            }
             s.markReady(fiber);
         } else {
             connectionEntry(conn);

@@ -145,6 +145,7 @@ pub const IntrinsicKind = enum {
     http_serve_multicore_ws,
     http_serve_multicore_ws_tls,
     thread_start,
+    pool_run,
 };
 
 const IntrinsicEntry = struct { module: []const u8, name: []const u8, kind: IntrinsicKind };
@@ -163,6 +164,7 @@ const intrinsic_table = [_]IntrinsicEntry{
     .{ .module = "http", .name = "serve_multicore_ws", .kind = .http_serve_multicore_ws },
     .{ .module = "http", .name = "serve_multicore_ws_tls", .kind = .http_serve_multicore_ws_tls },
     .{ .module = "thread", .name = "start", .kind = .thread_start },
+    .{ .module = "thread", .name = "pool_run", .kind = .pool_run },
 };
 
 pub fn matchIntrinsicKind(callee: ast.Expr) ?IntrinsicKind {
@@ -473,6 +475,96 @@ pub fn genThreadStartWrapper(self: *Codegen, spec: ThreadWrapperSpec) CodegenErr
     }
 
     try self.qbeRet(result_payload.text);
+    try self.qbeFuncEnd();
+}
+
+/// `nox.thread.pool_run(num_workers, entry)` — Faz MN.7a. `genThreadStartExpr`
+/// İLE AYNI "çıplak fonksiyon adını sarmalayıcıya sar, TEMBEL kaydet"
+/// deseni, AMA İKİ noktada BASİTLEŞTİRİLMİŞ: (1) `entry` SIFIR parametre
+/// aldığından (checker ZATEN garanti ETTİ) `toPayload`/`arg_is_str` YOK
+/// — kapanış SADECE `RT_PARAM`i taşır; (2) `$nox_thread_spawn` YERİNE
+/// `$nox_pool_run` çağrılır (bkz. `runtime/async_rt/pool_bridge.zig`nin
+/// `nox_pool_run`ı) VE dönüş `i32` bir durum kodudur (`ThreadHandle`
+/// GİBİ bir tutamaç DEĞİL — `pool_run` ZATEN BLOKE OLUP TAMAMLANMAYI
+/// BEKLER, bkz. onun modül üstü notu), Nox-seviyesinde `None` döner.
+///
+/// **Backend sınırı** (bkz. proje planı Tasarım #1): `WorkerPool`nin
+/// paylaşılan `RuntimeState`si, İKİ FARKLI OS iş parçacığının AYNI ARC
+/// nesnesine EŞ ZAMANLI dokunmasına (work-stealing SAYESİNDE) izin
+/// VERİR — `ownership.zig`nin inline retain/predecrement hızlı yolu
+/// (`qbeAtomicAdd`/`qbeAtomicSub`) SADECE LLVM'de GERÇEK `atomicrmw`dır,
+/// QBE'de DÜZ, ATOMİK OLMAYAN `load→add/sub→store`dur (`qbe_emit.zig`)
+/// — bu YÜZDEN `nox.thread.pool_run` SADECE `--release` (LLVM backend)
+/// İLE derlenebilir.
+pub fn genPoolRunExpr(self: *Codegen, c: ast.Call) CodegenError!Value {
+    if (self.backend == .qbe) return error.Unsupported;
+    if (c.args.len != 2) return error.Unsupported;
+    const num_workers_v0 = try self.genExpr(c.args[0]);
+    try self.checkNoLowlevelEscape(num_workers_v0);
+    const num_workers_v = try self.convert(num_workers_v0, .l);
+    try self.releaseIfTemporary(c.args[0], num_workers_v0);
+
+    const fn_name = switch (c.args[1]) {
+        .identifier => |n| n,
+        else => return error.Unsupported,
+    };
+    if (self.functions.get(fn_name) == null) return error.Unsupported;
+
+    const wrapper_name = try std.fmt.allocPrint(self.allocator, "pool_run_wrap_{d}", .{self.pool_run_wrapper_counter});
+    self.pool_run_wrapper_counter += 1;
+    try self.pool_run_wrappers.append(self.allocator, .{ .name = wrapper_name, .target_fn = fn_name });
+
+    const wrapper_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{wrapper_name});
+    const rc = try self.newTemp();
+    try self.qbeCall(.{ .name = rc, .ty = .w }, "$nox_pool_run", &.{
+        .{ .ty = .l, .text = RT_PARAM },
+        .{ .ty = .l, .text = num_workers_v.text },
+        .{ .ty = .l, .text = wrapper_sym },
+    });
+    return .{ .text = "0", .qtype = .none };
+}
+
+/// `nox_pool_run`ın çağırdığı, `nox.thread.pool_run` çağrı sitesi
+/// başına üretilen sarmalayıcı — bkz. `PoolRunWrapperSpec`in belge notu.
+/// **`genThreadStartWrapper`den FARKLI**: `%argp` bir KAPANIŞ struct'ına
+/// (`rt`+`payload`) İşaret ETMEZ — `runtime/async_rt/pool_bridge.zig`nin
+/// `poolWorkerMain`ı `entry_fn`i KENDİ (havuzun paylaşılan) `rt`sini
+/// DOĞRUDAN `arg` OLARAK GEÇİREREK spawn eder (bkz. onun belge notu) —
+/// bu YÜZDEN `%argp`nin KENDİSİ `rt` DEĞERİDİR, bir POINTER-TO-rt DEĞİL
+/// (`genHttpServeWrapper`nin `%ctx→RT_PARAM` KOPYASIYLA AYNI desen,
+/// `genThreadStartWrapper`nin `loadl`İYLE DEĞİL).
+///
+/// **Globals: `entry()` KENDİ, BAĞLANTISIZ bir kopya alır** (bkz. proje
+/// planı Tasarım #5) — `WorkerPool.create`in KENDİ `RuntimeState`si
+/// PROGRAMIN ana `rt`sinden TAMAMEN BAĞIMSIZDIR, bu YÜZDEN `genThreadStart
+/// Wrapper` İLE AYNI `nox_init_globals`/`nox_deinit_globals` çifti
+/// GEREKİR (worker'ın `poolWorkerMain`i GERÇEKTEN döndüğü İçİn —
+/// `genHttpServeMulticoreWorker`nin SONSUZA-KADAR-ÇALIŞAN worker'ının
+/// AKSİNE — deinit BURADA da, `genThreadStartWrapper` GİBİ, GÜVENLE
+/// çağrılabilir).
+pub fn genPoolRunWrapper(self: *Codegen, spec: types.PoolRunWrapperSpec) CodegenError!void {
+    self.temp_counter = 0;
+    self.label_counter = 0;
+    self.mod_cache.deinit(self.allocator);
+    self.mod_cache = .empty;
+
+    const wrapper_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{spec.name});
+    try self.qbeFuncHeaderStart(.l, wrapper_sym);
+    try self.qbeFuncParam(.l, "%argp", true);
+    try self.qbeFuncHeaderEnd();
+    try self.qbeOp1(RT_PARAM, .l, "copy", "%argp");
+    if (self.module_globals.count() > 0) {
+        try self.qbeCall(null, "$nox_init_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
+    }
+
+    const target_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{spec.target_fn});
+    try self.qbeCall(null, target_sym, &.{.{ .ty = .l, .text = RT_PARAM }});
+
+    if (self.module_globals.count() > 0) {
+        try self.qbeCall(null, "$nox_deinit_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
+    }
+
+    try self.qbeRet("0");
     try self.qbeFuncEnd();
 }
 

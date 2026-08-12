@@ -3,18 +3,26 @@
 # BAĞIMSIZ M:1 fiber çalışma zamanının (HER BİRİ KENDİ Scheduler'ı, KENDİ
 # ARC yığınıyla) OS iş parçacıkları üzerinde PARALEL çalışması (Faz DD.1'in
 # `nox.http.serve_multicore`si de AYNI modeli KULLANIR — bkz. §3.60).
-# **Bilinçli terminoloji netliği:** BU, işlerin OS iş parçacıkları
-# ARASINDA çalıntı/göçle (work-stealing/task migration) DAĞITILDIĞI TEK
-# bir PAYLAŞILAN M:N zamanlayıcı DEĞİLDİR — Faz AA.1 (§3.46) BUNU somut
-# mimari engeller (zamanlayıcı tekil-örneği, atomik OLMAYAN ARC) nedeniyle
-# AYRI bir araştırma turunda ERTELEMİŞTİ VE ERTELENMİŞ KALIYOR.
+#
+# **GÜNCELLEME (Faz MN.7a):** Faz AA.1/GG.10'un "GERÇEK PAYLAŞILAN bir
+# M:N zamanlayıcı, atomik OLMAYAN ARC YÜZÜNDEN mimari olarak İMKANSIZ"
+# tespiti ARTIK SADECE QBE (varsayılan) backend'i İçİn GEÇERLİDİR — Faz
+# MN.1-6, `noxc build --release` (LLVM backend'i) İçİn GERÇEK bir
+# paylaşılan, iş-çalan (work-stealing) M:N zamanlayıcı İNŞA ETTİ (LLVM'in
+# GERÇEK `atomicrmw` atomiklerine sahip OLMASI SAYESİNDE — QBE'nin HİÇ
+# atomik instruction'ı YOK, bu YÜZDEN QBE'de `Katman 1`/`Katman 2`
+# (aşağıda) HÂLÂ paylaşımsız modeldir, DEĞİŞMEDİ). **`Katman 3` (aşağıda,
+# `pool_run`) BU YENİ zamanlayıcıyı KULLANIR VE SADECE `--release` İLE
+# derlenebilir** — bayraksız `noxc build` İLE derlenirse net bir
+# derleme-zamanı hatasıyla BAŞARISIZ olur.
 #
 # `nox.http.serve`nin `serve`i GİBİ, `start`/`ThreadHandle[T].
-# join()`/`ThreadChannel[T](capacity)` GERÇEK bir `func_def`/`class_def`
-# DEĞİLDİR — TAMAMEN checker (`tryResolveThreadSpawnCall`/
-# `checkGenericConstruct`) VE codegen (`genThreadStartExpr`/
-# `genThreadStartWrapper`/`genThreadHandleJoin`/`genThreadChannelOp`)
-# sihridir. Bu dosya SADECE `import nox.thread`in ÇÖZÜLEBİLMESİ İÇİN VAR.
+# join()`/`ThreadChannel[T](capacity)`/`pool_run` GERÇEK bir `func_def`/
+# `class_def` DEĞİLDİR — TAMAMEN checker (`tryResolveThreadSpawnCall`/
+# `tryResolvePoolRunCall`/`checkGenericConstruct`) VE codegen
+# (`genThreadStartExpr`/`genThreadStartWrapper`/`genThreadHandleJoin`/
+# `genThreadChannelOp`/`genPoolRunExpr`/`genPoolRunWrapper`) sihridir.
+# Bu dosya SADECE `import nox.thread`in ÇÖZÜLEBİLMESİ İÇİN VAR.
 #
 # Katman 1 — tek seferlik spawn+join:
 #   import nox.thread
@@ -63,3 +71,41 @@
 # olarak GEÇİRİLEBİLİR — bir `*Scheduler` alanı TAŞIMADIĞINDAN (saf
 # page_allocator + OS pipe'ları + spin-kilit), paylaşımı iş parçacığı-
 # GÜVENLİDİR.
+#
+# Katman 3 — GERÇEK, paylaşılan bir M:N iş-çalan (work-stealing) havuzu
+# (bkz. YUKARIDAKİ "GÜNCELLEME" notu — SADECE `noxc build --release`):
+#   import nox.thread
+#
+#   async def make_value(x: int) -> int:
+#       return x * 2
+#
+#   async def entry() -> None:
+#       total: int = 0
+#       i: int = 0
+#       n: int = 1000
+#       while i < n:
+#           t: Task[int] = spawn make_value(i)
+#           total = total + await t
+#           i = i + 1
+#       print(total)
+#
+#   nox.thread.pool_run(4, entry)
+#
+# `pool_run(num_workers, entry)`, `num_workers` OS iş parçacığını TEK,
+# PAYLAŞILAN bir zamanlayıcı havuzuna BAĞLAR — `entry` (`async def () ->
+# None`, SIFIR parametre — Katman 1'in `start`ının AKSİNE taşınacak bir
+# ARGÜMAN YOKTUR) SADECE havuzun "sürücü" worker'ında (spawn edilen)
+# GERÇEK bir görev OLARAK ÇALIŞTIRILIR; DİĞER `num_workers - 1` worker
+# SADECE `entry()` İçİNDEN (DOĞRUDAN ya da GEÇİŞLİ olarak) yapılan `spawn`/
+# `await`/`Task[T]` çağrılarının İŞİNİ ÇALAR (work-stealing). `pool_run`
+# TÜM iş bitene KADAR bloke olur (ÇAĞIRAN fiber'ı DONDURMADAN — KARDEŞ
+# fiber'lar İLERLEMEYE DEVAM EDER), sonra döner (`None`).
+#
+# **KRİTİK sınırlama (Katman 1/2 İLE PAYLAŞILAN, YENİ bir kategori
+# DEĞİL):** `entry()`, `pool_run`u ÇAĞIRAN programın modül-seviyesi
+# global'lerinin (varsa) TAMAMEN BAĞLANTISIZ, AYRI bir KOPYASINI görür —
+# `entry()` İçİNDEKİ yazmalar `pool_run` DÖNDÜKTEN SONRA çağıranın
+# global'lerinde GÖRÜNMEZ (VE tam tersi). `entry()`nin `spawn`ladığı
+# görevlerin SONUÇLARINI `pool_run` DÖNDÜKTEN SONRA kullanmak İçİN bir
+# yol YOK — TÜM sonuç işleme `entry()`nin KENDİ İçİNDE (`print`/bir
+# `Channel`/bir dosyaya yazma GİBİ) yapılmalıdır.

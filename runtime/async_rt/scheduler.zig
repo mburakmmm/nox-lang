@@ -414,6 +414,34 @@ pub const Scheduler = struct {
     /// (havuzdaki TOPLAM worker sayısı)` **VE** `pool_live_count > 0`
     /// **VE** `pool_waiting_on_io == 0` İSE deadlock İLAN eder — yani
     /// SADECE TÜM worker'lar AYNI ANDA boştaysa.
+    /// **GERÇEK, Faz MN.7a'da DENEYEREK bulunan bir hata İçİn EKLENDİ**:
+    /// `poolWideDeadlockCheck`nin (aşağıda) döngüsü SADECE `tryStealFrom
+    /// Siblings`e (KARDEŞ DEQUE'LERİNİ kontrol eder) VE pool-çapında
+    /// SAYAÇLARA (`live`/`waiting_io`/`idle`) bakıyordu — `self.ready`
+    /// (BAŞKA bir worker'ın `markReady` İLE, kilit ALTINDA, ÇAPRAZ-worker
+    /// EKLEDİĞİ hazır fiber'lar) HİÇ KONTROL EDİLMİYORDU. Somut senaryo:
+    /// worker A `entry()`i askıya alır (`await t`), `t` BAŞKA bir worker
+    /// TARAFINDAN ÇALINIP tamamlanır VE `entryTrampoline` `t.scheduler`
+    /// (= worker A) ÜZERİNDEN `markReady(entry_fiber)` ÇAĞIRIR — BU,
+    /// `entry_fiber`ı worker A'nın `self.ready`SİNE EKLER, AMA worker A
+    /// O ANDA `poolWideDeadlockCheck`nin 20-denemelik döngüsü İçİNDEYSE,
+    /// BU YENİ hazır fiber'ı ASLA GÖRMEZ (`tryStealFromSiblings` DEQUE'
+    /// LERE bakar, `ready` LİSTESİNE DEĞİL) — TÜM worker'lar AYNI ANDA
+    /// (BAŞKA hiçbir DEQUE'de İş YOKKEN, AMA worker A'nın `ready`sinde
+    /// TAM OLARAK bu fiber VARKEN) "idle" SAYILDIĞINDA, FONKSİYON YANLIŞ
+    /// pozitif bir DEADLOCK ilan eder. `noxc build --release` İLE GERÇEK
+    /// bir `nox.thread.pool_run` programında (`spawn`/`await`nin AYNI
+    /// döngüde TEKRARLANDIĞI, 4 worker'lı) ARALIKLI olarak GERÇEKTEN
+    /// gözlemlendi. Düzeltme: `self.ready`nin (kilit ALTINDA) DOLU olup
+    /// OLMADIĞINI da kontrol et — DOLUYSA, BU deadlock DEĞİL, SADECE
+    /// worker'ın run() döngüsünün BAŞINA DÖNÜP `ready`den POP ETMESİ
+    /// GEREKEN bir an.
+    fn hasLocalReadyWork(self: *Scheduler) bool {
+        self.ready_lock.lock();
+        defer self.ready_lock.unlock();
+        return self.ready.items.len > 0;
+    }
+
     fn poolWideDeadlockCheck(self: *Scheduler) bool {
         const n_workers = self.sibling_deques.len;
         const live = self.pool_live_count.?;
@@ -425,6 +453,7 @@ pub const Scheduler = struct {
         var attempt: usize = 0;
         while (attempt < 20) : (attempt += 1) {
             sleepMs(1);
+            if (self.hasLocalReadyWork()) return false;
             if (self.tryStealFromSiblings()) |f| {
                 self.markReady(f);
                 return false;
@@ -433,6 +462,7 @@ pub const Scheduler = struct {
             if (waiting_io.load(.monotonic) > 0) return false;
             if (idle.load(.monotonic) < n_workers) return false;
         }
+        if (self.hasLocalReadyWork()) return false;
         return idle.load(.monotonic) >= n_workers and
             live.load(.monotonic) > 0 and
             waiting_io.load(.monotonic) == 0;
@@ -498,7 +528,38 @@ pub const Scheduler = struct {
                     // `pool_live_count` KULLANILIR, `self.live_count`e ASLA
                     // dokunulmaz). Bu YÜZDEN pool-çapında karar SADECE
                     // `pool_live_count`/`pool_waiting_on_io`ya bakar.
-                    if (plc.load(.monotonic) == 0) return;
+                    //
+                    // **GERÇEK, worker_pool.zig'in KENDİ STW-stres testinde
+                    // DENEYEREK bulunan bir hata İçİN EKLENDİ (37+ dakika
+                    // ASILI KALAN bir test İLE gözlemlendi, `sample` İLE
+                    // teşhis edildi)**: BU worker `plc==0` GÖRÜP run()'DAN
+                    // KALICI olarak `return` ettiğinde, EĞER TAM O ANDA
+                    // BAŞKA bir worker'ın (henüz TAMAMLANMAMIŞ) fiber'ı bir
+                    // STW round'u ZATEN İSTEMİŞSE (`stw_requested=true`,
+                    // O fiber HENÜZ BİTMEDİĞİNDEN `plc` HÂLÂ onu SAYIYORDU,
+                    // ama SONRA O fiber de BİTİP `plc`yi 0'A İNDİRDİ) — BU
+                    // worker O round'a ASLA KATILMAZ (`stwParticipate`,
+                    // SADECE `while(true)` döngüsünün BAŞINDA çağrılır, BU
+                    // `return` YOLU HİÇ oraya UĞRAMAZ) — bariyerin GEREKTİRDİĞİ
+                    // `n = sibling_deques.len` katılımcı SAYISI KALICI olarak
+                    // EKSİK KALIR, KALAN worker'lar `stw_sense`i SONSUZA KADAR
+                    // BEKLER. Düzeltme: `stw_requested` bekliyorsa ÖNCE
+                    // katıl, SONRA (round KAPANDIKTAN SONRA) YENİDEN plc'yi
+                    // kontrol et — `plc`nin fetchSub'ı (aşağıda) `.release`,
+                    // BU okuma `.acquire` OLDUĞUNDAN (release-sequence
+                    // kuralı gereği), BU worker plc==0'ı GÖRDÜĞÜ AN, O 0'ı
+                    // ÜRETEN fiber'ın KENDİ ÖNCESİNDE yazdığı `stw_requested`
+                    // DEĞERİNİ de GARANTİLİ olarak görür — bu YÜZDEN AŞAĞIDAKİ
+                    // kontrol "kaçırma" YAŞAMAZ.
+                    if (plc.load(.acquire) == 0) {
+                        if (self.stw_requested) |reqp| {
+                            if (reqp.load(.acquire)) {
+                                self.stwParticipate();
+                                continue;
+                            }
+                        }
+                        return;
+                    }
                     if (self.waiting_on_io > 0) {
                         // KENDİ fiber'larımızdan biri G/Ç bekliyor —
                         // reaktörümüzde bloklamak TAMAMEN GÜVENLİ (`suspendForIo`
@@ -532,7 +593,12 @@ pub const Scheduler = struct {
                 // O DURUMDA YANLIŞ worker'ın sayacını azaltır VE (0'dan
                 // başladığından) usize TAŞMASIYLA PANİKLER).
                 if (self.pool_live_count) |plc| {
-                    _ = plc.fetchSub(1, .monotonic);
+                    // `.release` — YUKARIDAKİ (`plc==0` çıkış yolu) `.acquire`
+                    // okumasıyla EŞLEŞİR; bir fiber'ın BİTİŞ-ÖNCESİ yazdığı
+                    // `stw_requested`in, plc'yi 0'a indiren fetchSub'ı GÖREN
+                    // HERHANGİ bir worker'a GARANTİLİ olarak GÖRÜNÜR OLMASI
+                    // İçİN (release-sequence kuralı) GEREKLİ.
+                    _ = plc.fetchSub(1, .release);
                 } else {
                     self.live_count -= 1;
                 }

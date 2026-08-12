@@ -240,6 +240,7 @@ const HttpServeWrapperSpec = types.HttpServeWrapperSpec;
 const HttpServeWsWrapperSpec = types.HttpServeWsWrapperSpec;
 const SpawnWrapperSpec = types.SpawnWrapperSpec;
 const ThreadWrapperSpec = types.ThreadWrapperSpec;
+const PoolRunWrapperSpec = types.PoolRunWrapperSpec;
 const HttpServeMulticoreWorkerSpec = types.HttpServeMulticoreWorkerSpec;
 const ClosureCaptureField = types.ClosureCaptureField;
 const ClosureFuncSpec = types.ClosureFuncSpec;
@@ -494,6 +495,8 @@ pub const Codegen = struct {
     pub const genSpawnWrapper = async_thread_mod.genSpawnWrapper;
     pub const genThreadStartExpr = async_thread_mod.genThreadStartExpr;
     pub const genThreadStartWrapper = async_thread_mod.genThreadStartWrapper;
+    pub const genPoolRunExpr = async_thread_mod.genPoolRunExpr;
+    pub const genPoolRunWrapper = async_thread_mod.genPoolRunWrapper;
     pub const genThreadHandleJoin = async_thread_mod.genThreadHandleJoin;
     pub const genAwaitExpr = async_thread_mod.genAwaitExpr;
     pub const genChannelOp = async_thread_mod.genChannelOp;
@@ -950,6 +953,11 @@ pub const Codegen = struct {
     /// belge notu).
     thread_wrapper_counter: usize = 0,
     thread_wrappers: std.ArrayListUnmanaged(ThreadWrapperSpec) = .empty,
+    /// Faz MN.7a — `thread_wrapper_counter`/`thread_wrappers` İLE AYNI
+    /// desen, `nox.thread.pool_run` çağrı siteleri İçİN (bkz.
+    /// `PoolRunWrapperSpec`in belge notu).
+    pool_run_wrapper_counter: usize = 0,
+    pool_run_wrappers: std.ArrayListUnmanaged(PoolRunWrapperSpec) = .empty,
     /// Faz DD.1 — `thread_wrapper_counter`/`thread_wrappers` İLE AYNI
     /// desen, `nox.http.serve_multicore` çağrı siteleri İÇİN (bkz.
     /// `HttpServeMulticoreWorkerSpec`in belge notu).
@@ -1455,6 +1463,13 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     // AYNI "sonda tüket" deseni.
     while (gen.thread_wrappers.pop()) |spec| {
         try gen.genThreadStartWrapper(spec);
+    }
+
+    // Faz MN.7a: her `nox.thread.pool_run` çağrı sitesi için TEMBEL
+    // kaydedilen sarmalayıcı fonksiyonlar (bkz. `PoolRunWrapperSpec`in
+    // belge notu) — AYNI "sonda tüket" deseni.
+    while (gen.pool_run_wrappers.pop()) |spec| {
+        try gen.genPoolRunWrapper(spec);
     }
 
     // Faz DD.1: her `nox.http.serve_multicore` çağrı sitesi için TEMBEL
