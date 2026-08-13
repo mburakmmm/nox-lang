@@ -14,6 +14,41 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.29.2]
+
+### İyileştirildi
+- **Nox'un HTTP/M:N tavan hızını artıran 3 madde** — Aether çerçevesinin
+  `PERF_GAPS.md` raporu analiz edilirken, Aether'e ÖZGÜ OLMAYAN, Nox'un
+  KENDİ derleyici/runtime'ındaki gerçek darboğazlar tespit edilip
+  düzeltildi:
+  1. **`TCP_NODELAY`** — kabul edilen HER bağlantı soketine (`runtime/
+     async_rt/io.zig`, `runtime/stdlib_shims/http_server.zig`) uygulanır
+     hale getirildi (Nagle algoritması küçük JSON yanıtlarında gereksiz
+     gecikme EKLİYORDU). Ölçüldü: `benchmarks/http_compare` c=30'da
+     +%4.0, c=100'de +%15.1.
+  2. **Header kopyalama döngüsünün atlanması** — `genHttpServeWrapper`nin
+     DERLEME-ZAMANINDA ZATEN hesapladığı "handler `req.headers`e
+     dokunuyor mu" bilgisi (`used_fields.headers`) ARTIK `nox_http_
+     serve_raw`/`_ws_raw`e kadar taşınıyor — handler headers'a HİÇ
+     dokunmuyorsa `connectionEntry`nin HER istekte ÇALIŞTIRDIĞI
+     `iterateHeaders`+`dupeToNoxStr` (header başına 2 ARC tahsisi)
+     döngüsü TAMAMEN atlanır.
+  3. **`--release` altında `$main`in otomatik havuzu artık KÜÇÜK bir
+     varsayılana (2 worker) düşer** — modül `nox.http.serve_multicore*`/
+     `nox.thread.pool_run` HİÇ ÇAĞIRMIYORSA (YENİ, ayrı bir derleme-
+     zamanı AST yürüyüşü, `moduleUsesMulticorePool`, İLE tespit edilir).
+     `serve_multicore`/`pool_run` KULLANAN programlar HÂLÂ CPU çekirdek
+     sayısı kadar worker ALIR (DEĞİŞMEDİ); `NOX_POOL_WORKERS` HER İKİ
+     durumda da KOŞULSUZ ÖNCELİKLİDİR. Bilinçli ödünleşim: GERÇEK ağır
+     paralel İş İçİn çıplak `spawn`/`nox.thread.start` KULLANAN AMA
+     `serve_multicore`/`pool_run` ÇAĞIRMAYAN programlar artık SESSİZCE
+     2 worker'a düşer — İSTENEN paralellik `NOX_POOL_WORKERS`İLE AÇIKÇA
+     belirtilmelidir.
+
+  Her 3 madde de `self.backend == .llvm` (`--release`) dalına SINIRLI —
+  QBE yolu (bayraksız `noxc build`) BAYT-BİREBİR DEĞİŞMEDİ (IR-diff
+  204/0/3-atlandı KORUNDU).
+
 ## [1.29.1]
 
 ### Düzeltildi

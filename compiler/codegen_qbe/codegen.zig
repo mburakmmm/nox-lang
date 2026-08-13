@@ -271,6 +271,7 @@ const containsName = abi.containsName;
 const moduleUsesAsync = async_thread_mod.moduleUsesAsync;
 const stmtUsesAsync = async_thread_mod.stmtUsesAsync;
 const exprUsesAsync = async_thread_mod.exprUsesAsync;
+const moduleUsesMulticorePool = async_thread_mod.moduleUsesMulticorePool;
 
 const BoundsElideCtx = optimizations.BoundsElideCtx;
 const StrLenCacheScope = optimizations.StrLenCacheScope;
@@ -1417,7 +1418,14 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     // çalıştıran fiber-sarmalı bir kökle üretilir; kullanmıyorsa (büyük
     // çoğunluk) `genMain` DEĞİŞMEDEN, sıfır ek maliyetle çalışır.
     const use_async = moduleUsesAsync(module, extra_functions);
-    try gen.genMain(loose.items, use_async);
+    // Performans (bkz. proje planı, "Nox tavan hızı" bölümü, Madde 3):
+    // `--release` altında `$main`in otomatik havuzunun (`genMainAsync`,
+    // `self.backend == .llvm`) CPU-sayısı YERİNE küçük bir sabite
+    // düşüp düşmeyeceğine karar vermek İçİn — `genMain`nin (QBE yolu)
+    // KENDİSİ BUNU HİÇ KULLANMAZ, SADECE `use_async == true` İKEN
+    // `genMainAsync`e taşınır.
+    const wants_multicore_pool = moduleUsesMulticorePool(module, extra_functions);
+    try gen.genMain(loose.items, use_async, wants_multicore_pool);
 
     // `list[T]`nin elemanları heap-yönetimliyken (sınıf/iç içe liste) gereken
     // `$List_<...>_release` fonksiyonları — `string_data` gibi TEMBEL keşfedilir

@@ -163,3 +163,19 @@
 # OLMADIĞI (nadir: örneğin bir Zig-seviyesi birim testinden `rt=null`
 # İLE ÇAĞRILDIĞINDA) tek durumdur; NORMAL bir `--release` programında
 # BU YOLA HİÇ GİRİLMEZ.
+#
+# **GÜNCELLEME (Nox'un tavan hızı projesi, "Madde 3"):** `$main`in
+# OTOMATİK kurduğu havuzun BOYUTU ARTIK KOŞULSUZ CPU çekirdek sayısı
+# DEĞİLDİR — derleme-zamanında modül (VE `spawn` edilen HER fonksiyon)
+# `nox.http.serve_multicore*`/`nox.thread.pool_run` ÇAĞIRMIYORSA (yani
+# GERÇEKTEN çok-worker İSTEDİĞİNİ AÇIKÇA BELİRTMİYORSA), havuz KÜÇÜK,
+# SABİT bir varsayılana (`2` worker — work-stealing'in ANLAMLI olması
+# İçİn ASGARİ) DÜŞER; `serve_multicore`/`pool_run` KULLANAN programlar
+# HÂLÂ CPU çekirdek sayısı kadar worker ALIR (DEĞİŞMEDİ). `NOX_POOL_
+# WORKERS` ortam değişkeni HER İKİ durumda da KOŞULSUZ ÖNCELİKLİDİR
+# (elle AÇIKÇA istenen sayıyı EZER). **Bilinçli ödünleşim**: `nox.
+# thread.start`/çıplak `spawn`ı GERÇEK, ağır paralel İş İçİn (SADECE
+# "birkaç arka plan görevi" DEĞİL) KULLANAN AMA `serve_multicore`/
+# `pool_run`i HİÇ ÇAĞIRMAYAN programlar, BU değişiklikten SONRA
+# SESSİZCE CPU-sayısından 2'ye DÜŞER — İSTENEN paralellik SEVİYESİ
+# BUYSA `NOX_POOL_WORKERS`i AÇIKÇA set ETMEK GEREKİR.

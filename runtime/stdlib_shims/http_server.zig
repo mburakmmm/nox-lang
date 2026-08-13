@@ -478,13 +478,20 @@ fn blockingAccept(listen_fd: posix.fd_t) !posix.fd_t {
     if (builtin.os.tag == .windows) {
         while (true) {
             const rc = io_mod.WinSock.accept(@intFromPtr(listen_fd), null, null);
-            if (rc != io_mod.WinSock.INVALID_SOCKET) return @ptrFromInt(rc);
+            if (rc != io_mod.WinSock.INVALID_SOCKET) {
+                const conn_fd: posix.fd_t = @ptrFromInt(rc);
+                io_mod.setTcpNodelay(conn_fd);
+                return conn_fd;
+            }
             return error.Unexpected;
         }
     }
     while (true) {
         const rc = std.c.accept(listen_fd, null, null);
-        if (rc >= 0) return rc;
+        if (rc >= 0) {
+            io_mod.setTcpNodelay(rc);
+            return rc;
+        }
         switch (posix.errno(rc)) {
             .INTR => continue,
             else => |e| return posix.unexpectedErrno(e),
@@ -555,6 +562,15 @@ const ConnCtx = struct {
     /// (DEĞİŞMEDEN) DÜŞÜLÜR. `handler_ctx` HER İKİSİ İçİn de PAYLAŞILIR
     /// (`WsHandlerFn`nin (ctx, tutamaç) sırası `HandlerFn`la AYNI).
     ws_handler: ?websocket_server.WsHandlerFn = null,
+    /// Performans (bkz. proje planı, "Nox tavan hızı" bölümü, Madde 2):
+    /// `genHttpServeWrapper`nin DERLEME-ZAMANINDA (`UsedRequestFields.
+    /// headers` — handler'ın KAYNAK kodu `req.headers`e HİÇ dokunmuyorsa)
+    /// hesapladığı bilgi — `false` İKEN `connectionEntry`nin header
+    /// kopyalama döngüsü (HER header İçİn 2 ARC tahsisi) TAMAMEN atlanır.
+    /// Varsayılan `true` (GÜVENLİ yön — headers KOPYALANIR) SADECE
+    /// codegen'in (`http_intrinsics.zig`) BİLİNÇLİ olarak `false` GEÇTİĞİ
+    /// çağrı sitelerinde DEĞİŞİR.
+    needs_headers: bool = true,
 };
 
 // Faz HH.2 (bkz. nox-teknik-spesifikasyon.md §3.68): `method`/`target`/
@@ -817,18 +833,27 @@ fn connectionEntry(arg: *anyopaque) void {
             }
             headers_list.deinit(gpa);
         }
-        var it = request.iterateHeaders();
-        while (it.next()) |h| {
-            const name_copy = http_client.dupeToNoxStr(rt, h.name) orelse continue;
-            const value_copy = http_client.dupeToNoxStr(rt, h.value) orelse {
-                str_mod.nox_str_release(rt, name_copy);
-                continue;
-            };
-            headers_list.append(gpa, .{ .name = str_mod.nox_str_slice(name_copy), .value = str_mod.nox_str_slice(value_copy) }) catch {
-                str_mod.nox_str_release(rt, name_copy);
-                str_mod.nox_str_release(rt, value_copy);
-                continue;
-            };
+        // Performans (bkz. proje planı, "Nox tavan hızı" bölümü, Madde 2):
+        // handler'ın KAYNAK kodu `req.headers`e HİÇ dokunmuyorsa (`conn.
+        // needs_headers == false`, `genHttpServeWrapper`nin DERLEME-
+        // ZAMANI `UsedRequestFields.headers` analizinden GELİR) bu döngü
+        // TAMAMEN atlanır — `headers_list` BOŞ kalır, header başına 2
+        // ARC tahsisi (`dupeToNoxStr`) HİÇ YAPILMAZ.
+        if (conn.needs_headers) {
+            var it = request.iterateHeaders();
+            while (it.next()) |h| {
+                if (builtin.is_test) test_header_loop_iterations += 1;
+                const name_copy = http_client.dupeToNoxStr(rt, h.name) orelse continue;
+                const value_copy = http_client.dupeToNoxStr(rt, h.value) orelse {
+                    str_mod.nox_str_release(rt, name_copy);
+                    continue;
+                };
+                headers_list.append(gpa, .{ .name = str_mod.nox_str_slice(name_copy), .value = str_mod.nox_str_slice(value_copy) }) catch {
+                    str_mod.nox_str_release(rt, name_copy);
+                    str_mod.nox_str_release(rt, value_copy);
+                    continue;
+                };
+            }
         }
 
         var transfer_buffer: [1024]u8 = undefined;
@@ -923,8 +948,8 @@ fn connectionEntry(arg: *anyopaque) void {
 /// `max_connections <= 0` İSE SINIRSIZ (gerçek bir sunucu programı İÇİN);
 /// pozitifse TAM O SAYIDA bağlantı kabul edilince döner (bu dosyanın KENDİ
 /// testinin deterministik olması İÇİN gerekli).
-export fn nox_http_serve_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, max_connections: i64) callconv(.c) void {
-    serveImpl(rt, server, handler, handler_ctx, null, max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS);
+export fn nox_http_serve_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, max_connections: i64, needs_headers: i32) callconv(.c) void {
+    serveImpl(rt, server, handler, handler_ctx, null, max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS, needs_headers != 0);
 }
 
 /// Faz "sunucu-tarafı WebSocket Upgrade": `nox_http_serve_raw`nin AYNISI,
@@ -933,8 +958,8 @@ export fn nox_http_serve_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: Hand
 /// Upgrade OLMAYAN (`.not_upgrade`) istekler İçİn ÇALIŞMAYA DEVAM eder —
 /// TEK bir sunucu HEM normal HTTP rotalarını HEM DE WS Upgrade'i
 /// KARIŞIK sunabilir.
-export fn nox_http_serve_ws_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, ws_handler: websocket_server.WsHandlerFn, max_connections: i64) callconv(.c) void {
-    serveImpl(rt, server, handler, handler_ctx, ws_handler, max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS);
+export fn nox_http_serve_ws_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, ws_handler: websocket_server.WsHandlerFn, max_connections: i64, needs_headers: i32) callconv(.c) void {
+    serveImpl(rt, server, handler, handler_ctx, ws_handler, max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS, needs_headers != 0);
 }
 
 /// `nox_http_serve_raw`nin GERÇEK gövdesi — `max_concurrent`/`max_body_bytes`/
@@ -944,7 +969,7 @@ export fn nox_http_serve_ws_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: H
 /// MAX_CONCURRENT_CONNECTIONS`/`READ_TIMEOUT_MS` gibi GERÇEKÇİ (büyük)
 /// varsayılanları BEKLEMEDEN, testlerin KÜÇÜK/HIZLI değerlerle sınırları
 /// GERÇEKTEN EGZERSİZ edebilmesi İÇİNDİR (bkz. aşağıdaki testler).
-fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, ws_handler: ?websocket_server.WsHandlerFn, max_connections: i64, max_concurrent: usize, max_body_bytes: usize, read_timeout_ms: u32) void {
+fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, ws_handler: ?websocket_server.WsHandlerFn, max_connections: i64, max_concurrent: usize, max_body_bytes: usize, read_timeout_ms: u32, needs_headers: bool) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const h: *ServerHandle = @ptrCast(@alignCast(server orelse return));
     const gpa = state.allocator();
@@ -988,6 +1013,7 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
             .read_timeout_ms = read_timeout_ms,
             .tls_ctx = h.tls_ctx,
             .ws_handler = ws_handler,
+            .needs_headers = needs_headers,
         };
         // **KÖK NEDEN düzeltmesi (kullanım-sonrası-serbest-bırakma, TLS +
         // fiber zamanlaması — bkz. `tls_server.ctxTakeExtraRef`nin belge
@@ -1147,6 +1173,13 @@ fn testReadAll(fd: posix.fd_t) void {
     }
 }
 
+/// Performans (bkz. proje planı, "Nox tavan hızı" bölümü, Madde 2):
+/// `connectionEntry`nin header-kopyalama döngüsünün `conn.needs_headers
+/// == false` İKEN GERÇEKTEN atlandığını (SADECE sonuç sözlüğünün boş
+/// OLDUĞUNU DEĞİL) DOĞRUDAN kanıtlamak İçİn — `builtin.is_test` İLE
+/// KAPILI, SADECE test derlemelerinde artan bir sayaç.
+var test_header_loop_iterations: usize = 0;
+
 const TestHandlerLog = struct {
     var log: std.ArrayListUnmanaged([]const u8) = .empty;
     var rt_ptr: ?*anyopaque = null;
@@ -1174,11 +1207,12 @@ const ServeArgs = struct {
     max_body_bytes: usize = MAX_REQUEST_BODY_BYTES,
     read_timeout_ms: u32 = READ_TIMEOUT_MS,
     ws_handler: ?websocket_server.WsHandlerFn = null,
+    needs_headers: bool = true,
 };
 
 fn testServeEntry(arg: *anyopaque) callconv(.c) i64 {
     const args: *ServeArgs = @ptrCast(@alignCast(arg));
-    serveImpl(args.rt, args.server, TestHandlerLog.handle, null, args.ws_handler, args.max_connections, args.max_concurrent, args.max_body_bytes, args.read_timeout_ms);
+    serveImpl(args.rt, args.server, TestHandlerLog.handle, null, args.ws_handler, args.max_connections, args.max_concurrent, args.max_body_bytes, args.read_timeout_ms, args.needs_headers);
     return 0;
 }
 
@@ -1235,6 +1269,66 @@ test "nox_http_serve_raw: GERÇEK bir TCP bağlantısı kabul edip std.http.Serv
 
     try std.testing.expectEqual(@as(usize, 1), TestHandlerLog.log.items.len);
     try std.testing.expectEqualStrings("fast tamamlandi", TestHandlerLog.log.items[0]);
+}
+
+test "Performans: needs_headers=false iken header kopyalama döngüsü GERÇEKTEN atlanır, true iken çalışır" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const server = nox_http_server_listen(rt, 0) orelse return error.ListenFailed;
+    defer nox_http_server_close(rt, server);
+    const port: u16 = @intCast(nox_http_server_port(server));
+
+    const sendWithHeaders = struct {
+        fn run(p: u16) void {
+            const fd = testConnect(p) catch return;
+            defer _ = closeSocket(fd);
+            var buf: [256]u8 = undefined;
+            const req = std.fmt.bufPrint(&buf, "GET /hello HTTP/1.1\r\nHost: 127.0.0.1\r\nX-A: 1\r\nX-B: 2\r\nX-C: 3\r\nConnection: close\r\n\r\n", .{}) catch unreachable;
+            var off: usize = 0;
+            while (off < req.len) {
+                const n = std.c.write(fd, req[off..].ptr, req.len - off);
+                if (n <= 0) break;
+                off += @intCast(n);
+            }
+            testReadAll(fd);
+        }
+    }.run;
+
+    // Tur 1: `needs_headers = false` — döngü TAMAMEN atlanmalı (sayaç 0
+    // KALMALI), sonuç DEĞİŞMEDEN doğru olmalı (handler HÂLÂ ÇAĞRILIR).
+    TestHandlerLog.log.clearRetainingCapacity();
+    TestHandlerLog.rt_ptr = rt;
+    test_header_loop_iterations = 0;
+    {
+        const client_thread = try std.Thread.spawn(.{}, struct {
+            fn run(p: u16, send: @TypeOf(sendWithHeaders)) void {
+                send(p);
+            }
+        }.run, .{ port, sendWithHeaders });
+        defer client_thread.join();
+        var args: ServeArgs = .{ .rt = rt, .server = server, .max_connections = 1, .needs_headers = false };
+        _ = testServeEntry(&args);
+    }
+    try std.testing.expectEqual(@as(usize, 1), TestHandlerLog.log.items.len);
+    try std.testing.expectEqual(@as(usize, 0), test_header_loop_iterations);
+
+    // Tur 2: AYNI sunucu, AYNI istek şekli, `needs_headers = true` —
+    // döngü GERÇEKTEN çalışmalı (sayaç > 0).
+    TestHandlerLog.log.clearRetainingCapacity();
+    test_header_loop_iterations = 0;
+    {
+        const client_thread = try std.Thread.spawn(.{}, struct {
+            fn run(p: u16, send: @TypeOf(sendWithHeaders)) void {
+                send(p);
+            }
+        }.run, .{ port, sendWithHeaders });
+        defer client_thread.join();
+        var args: ServeArgs = .{ .rt = rt, .server = server, .max_connections = 1, .needs_headers = true };
+        _ = testServeEntry(&args);
+    }
+    try std.testing.expectEqual(@as(usize, 1), TestHandlerLog.log.items.len);
+    try std.testing.expect(test_header_loop_iterations > 0);
 }
 
 test "nox_http_serve_raw: bir fiber İÇİNDEN çalıştırıldığında eşzamanlı İKİ bağlantı GERÇEKTEN çakışır (yavaş bağlantı hızlıyı BLOKE ETMEZ)" {
@@ -1323,7 +1417,7 @@ const ThreadSafeCounter = struct {
 };
 
 fn sharedFdServeEntry(args: *ServeArgs) void {
-    serveImpl(args.rt, args.server, ThreadSafeCounter.handle, args.rt, args.ws_handler, args.max_connections, args.max_concurrent, args.max_body_bytes, args.read_timeout_ms);
+    serveImpl(args.rt, args.server, ThreadSafeCounter.handle, args.rt, args.ws_handler, args.max_connections, args.max_concurrent, args.max_body_bytes, args.read_timeout_ms, args.needs_headers);
 }
 
 // Faz DD.1 — `owns_fd`in KENDİSİNİ (bkz. `ServerHandle`in belge notu),
@@ -1443,7 +1537,7 @@ test "Faz Q.5: govde boyutu siniri asilirsa 413 Payload Too Large doner, handler
         }
     }.run, .{ port, &resp_buf, &resp_len });
 
-    serveImpl(rt, server, TestHandlerLog.handle, null, null, 1, DEFAULT_MAX_CONCURRENT_CONNECTIONS, 16, READ_TIMEOUT_MS);
+    serveImpl(rt, server, TestHandlerLog.handle, null, null, 1, DEFAULT_MAX_CONCURRENT_CONNECTIONS, 16, READ_TIMEOUT_MS, true);
     client_thread.join();
 
     try std.testing.expectEqual(@as(usize, 0), TestHandlerLog.log.items.len);

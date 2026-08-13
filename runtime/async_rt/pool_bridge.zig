@@ -169,7 +169,25 @@ fn poolWorkerMain(rt: *anyopaque, slot: usize, ctx: *PoolRunCtx) void {
 /// `state.worker_pool`un DOLU olduğunu görüp OTOMATİK `attachToPool`
 /// çağırır — bkz. `bridge.zig`nin belge notu, BURADA SIFIR YENİ mantık
 /// gerekir).
-fn pickMainWorkerCount() usize {
+/// Performans (bkz. proje planı, "Nox tavan hızı" bölümü, Madde 3):
+/// `wants_multicore_pool` — `moduleUsesMulticorePool`nin (`compiler/
+/// codegen_qbe/async_thread.zig`) DERLEME-ZAMANI kararı: modül `nox.http.
+/// serve_multicore*`/`nox.thread.pool_run`DAN HİÇBİRİNİ ÇAĞIRMIYORSA
+/// `false` — bu durumda CPU-sayısı YERİNE `SMALL_MAIN_POOL_DEFAULT`e
+/// (work-stealing'in ANLAMLI olması İçİn EN AZ 2 GEREKİR — 1'e düşürmek
+/// `nox.thread.start`/çıplak `spawn`ı `$main`in KENDİ worker'ına
+/// TAMAMEN SERİLEŞTİRİRDİ) düşülür. `NOX_POOL_WORKERS` HER İKİ dalda
+/// da ÖNCE kontrol edilir — KOŞULSUZ EZER (kaçış kapısı DEĞİŞMEDEN kalır).
+/// **Bilinçli ödünleşim (kullanıcı KARARIYLA kabul edildi):** `nox.
+/// thread.start`/çıplak `spawn`ı GERÇEK paralel iş İçİn (sadece "birkaç
+/// arka plan görevi" DEĞİL) KULLANAN AMA `serve_multicore`/`pool_run`i
+/// HİÇ ÇAĞIRMAYAN programlar BU değişiklikten SONRA SESSİZCE CPU-
+/// sayısından `SMALL_MAIN_POOL_DEFAULT`e düşer — `NOX_POOL_WORKERS`
+/// kaçış kapısı VAR ama otomatik/uyarısız (bkz. `stdlib/nox/thread.nox`
+/// belge notu).
+const SMALL_MAIN_POOL_DEFAULT: usize = 2;
+
+fn pickMainWorkerCount(wants_multicore_pool: bool) usize {
     // Kaçış kapısı — küçük/gecikme-duyarlı `--release` betikleri İçİn
     // `NOX_POOL_WORKERS=1` TAM opt-out sağlar. `std.process`nin YENİ
     // `Environ` API'si `main`in KENDİ ortam-bloğunu GEREKTİRDİĞİNDEN
@@ -182,12 +200,13 @@ fn pickMainWorkerCount() usize {
             return std.math.clamp(n, @as(usize, 1), asap.MAX_POOL_WORKERS);
         } else |_| {}
     }
+    if (!wants_multicore_pool) return SMALL_MAIN_POOL_DEFAULT;
     const cpu = std.Thread.getCpuCount() catch 1;
     return std.math.clamp(cpu, @as(usize, 1), asap.MAX_POOL_WORKERS);
 }
 
-pub export fn nox_pool_main_init() callconv(.c) ?*anyopaque {
-    const pool = worker_pool_mod.WorkerPool.create(std.heap.page_allocator, pickMainWorkerCount()) catch @panic("OOM: $main havuzu");
+pub export fn nox_pool_main_init(wants_multicore_pool: i32) callconv(.c) ?*anyopaque {
+    const pool = worker_pool_mod.WorkerPool.create(std.heap.page_allocator, pickMainWorkerCount(wants_multicore_pool != 0)) catch @panic("OOM: $main havuzu");
     return pool.rt;
 }
 
@@ -665,6 +684,25 @@ pub export fn nox_pool_serve(
 
     std.heap.page_allocator.destroy(ctx);
     return 0;
+}
+
+// ---- Birim testleri (Nox tavan hızı, Madde 3) --------------------------
+
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+extern "c" fn unsetenv(name: [*:0]const u8) c_int;
+
+test "pickMainWorkerCount: multicore-olmayan $main küçük sabit worker sayısı kullanır, multicore CPU sayısını kullanmaya devam eder" {
+    _ = unsetenv("NOX_POOL_WORKERS");
+    try std.testing.expectEqual(@as(usize, SMALL_MAIN_POOL_DEFAULT), pickMainWorkerCount(false));
+    const cpu = std.Thread.getCpuCount() catch 1;
+    try std.testing.expectEqual(std.math.clamp(cpu, @as(usize, 1), asap.MAX_POOL_WORKERS), pickMainWorkerCount(true));
+}
+
+test "pickMainWorkerCount: NOX_POOL_WORKERS HER İKİ dalı da (multicore/multicore-olmayan) EZER" {
+    _ = setenv("NOX_POOL_WORKERS", "5", 1);
+    defer _ = unsetenv("NOX_POOL_WORKERS");
+    try std.testing.expectEqual(@as(usize, 5), pickMainWorkerCount(false));
+    try std.testing.expectEqual(@as(usize, 5), pickMainWorkerCount(true));
 }
 
 // ---- Birim testleri (Faz MN.7a) -----------------------------------------

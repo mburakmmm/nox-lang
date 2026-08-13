@@ -197,12 +197,14 @@ pub fn genHttpServe(self: *Codegen, c: ast.Call) CodegenError!Value {
     const server = try self.newTemp();
     try self.qbeCall(.{ .name = server, .ty = .l }, "$nox_http_server_listen", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = port_v.text } });
 
+    const used_fields = self.computeUsedFieldsFor(handle_name);
     const wrapper_name = try std.fmt.allocPrint(self.allocator, "http_serve_wrap_{d}", .{self.http_serve_wrapper_counter});
     self.http_serve_wrapper_counter += 1;
-    try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class, .used_fields = self.computeUsedFieldsFor(handle_name) });
+    try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class, .used_fields = used_fields });
 
     const wrapper_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{wrapper_name});
-    try self.qbeCall(null, "$nox_http_serve_raw", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server }, .{ .ty = .l, .text = wrapper_sym }, .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = max_conn_text } });
+    const needs_headers_text: []const u8 = if (used_fields.headers) "1" else "0";
+    try self.qbeCall(null, "$nox_http_serve_raw", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server }, .{ .ty = .l, .text = wrapper_sym }, .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = max_conn_text }, .{ .ty = .w, .text = needs_headers_text } });
     try self.qbeCall(null, "$nox_http_server_close", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server } });
     return .{ .text = "0", .qtype = .none };
 }
@@ -223,13 +225,14 @@ pub fn genHttpServe(self: *Codegen, c: ast.Call) CodegenError!Value {
 /// `ws_wrapper_name` VARSA `nox_http_serve_raw` YERİNE `nox_http_serve_
 /// ws_raw`ı çağırır, SONRA `server`ı kapatır — `emitFdServeTail`/
 /// `genHttpServe*Generic`nin ÜÇÜ de PAYLAŞTIĞI ORTAK kuyruk.
-pub fn emitServeAndClose(self: *Codegen, server: []const u8, wrapper_name: []const u8, max_conn_text: []const u8, ws_wrapper_name: ?[]const u8) CodegenError!void {
+pub fn emitServeAndClose(self: *Codegen, server: []const u8, wrapper_name: []const u8, max_conn_text: []const u8, ws_wrapper_name: ?[]const u8, needs_headers: bool) CodegenError!void {
     const wrapper_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{wrapper_name});
+    const needs_headers_text: []const u8 = if (needs_headers) "1" else "0";
     if (ws_wrapper_name) |wsw| {
         const wsw_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{wsw});
-        try self.qbeCall(null, "$nox_http_serve_ws_raw", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server }, .{ .ty = .l, .text = wrapper_sym }, .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = wsw_sym }, .{ .ty = .l, .text = max_conn_text } });
+        try self.qbeCall(null, "$nox_http_serve_ws_raw", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server }, .{ .ty = .l, .text = wrapper_sym }, .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = wsw_sym }, .{ .ty = .l, .text = max_conn_text }, .{ .ty = .w, .text = needs_headers_text } });
     } else {
-        try self.qbeCall(null, "$nox_http_serve_raw", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server }, .{ .ty = .l, .text = wrapper_sym }, .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = max_conn_text } });
+        try self.qbeCall(null, "$nox_http_serve_raw", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server }, .{ .ty = .l, .text = wrapper_sym }, .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = max_conn_text }, .{ .ty = .w, .text = needs_headers_text } });
     }
     try self.qbeCall(null, "$nox_http_server_close", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server } });
 }
@@ -238,14 +241,14 @@ pub fn emitServeAndClose(self: *Codegen, server: []const u8, wrapper_name: []con
 /// from_fd` YERİNE `nox_http_server_from_fd_tls`i seçer — `null` GEÇİLDİĞİNDE
 /// davranış BİREBİR ÖNCEKİYLE AYNIDIR (`genHttpServeFd`nin AYNI çağrısı
 /// `null, null` geçer).
-pub fn emitFdServeTail(self: *Codegen, fd_text: []const u8, wrapper_name: []const u8, max_conn_text: []const u8, tls_ctx_text: ?[]const u8, ws_wrapper_name: ?[]const u8) CodegenError!void {
+pub fn emitFdServeTail(self: *Codegen, fd_text: []const u8, wrapper_name: []const u8, max_conn_text: []const u8, tls_ctx_text: ?[]const u8, ws_wrapper_name: ?[]const u8, needs_headers: bool) CodegenError!void {
     const server = try self.newTemp();
     if (tls_ctx_text) |ctx| {
         try self.qbeCall(.{ .name = server, .ty = .l }, "$nox_http_server_from_fd_tls", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = fd_text }, .{ .ty = .l, .text = ctx } });
     } else {
         try self.qbeCall(.{ .name = server, .ty = .l }, "$nox_http_server_from_fd", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = fd_text } });
     }
-    try self.emitServeAndClose(server, wrapper_name, max_conn_text, ws_wrapper_name);
+    try self.emitServeAndClose(server, wrapper_name, max_conn_text, ws_wrapper_name, needs_headers);
 }
 
 /// `nox.http.serve_fd(fd, handle[, max_connections])` çağrı sitesi
@@ -283,11 +286,12 @@ pub fn genHttpServeFd(self: *Codegen, c: ast.Call) CodegenError!Value {
         max_conn_text = mc_v.text;
     }
 
+    const used_fields = self.computeUsedFieldsFor(handle_name);
     const wrapper_name = try std.fmt.allocPrint(self.allocator, "http_serve_wrap_{d}", .{self.http_serve_wrapper_counter});
     self.http_serve_wrapper_counter += 1;
-    try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class, .used_fields = self.computeUsedFieldsFor(handle_name) });
+    try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class, .used_fields = used_fields });
 
-    try self.emitFdServeTail(fd_v.text, wrapper_name, max_conn_text, null, null);
+    try self.emitFdServeTail(fd_v.text, wrapper_name, max_conn_text, null, null, used_fields.headers);
     return .{ .text = "0", .qtype = .none };
 }
 
@@ -355,13 +359,14 @@ pub fn genHttpServeMulticore(self: *Codegen, c: ast.Call) CodegenError!Value {
     const fd = try self.newTemp();
     try self.qbeCall(.{ .name = fd, .ty = .l }, "$nox_http_listen_fd", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = port_v.text } });
 
+    const used_fields = self.computeUsedFieldsFor(handle_name);
     const wrapper_name = try std.fmt.allocPrint(self.allocator, "http_serve_wrap_{d}", .{self.http_serve_wrapper_counter});
     self.http_serve_wrapper_counter += 1;
-    try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class, .used_fields = self.computeUsedFieldsFor(handle_name) });
+    try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class, .used_fields = used_fields });
 
     const worker_name = try std.fmt.allocPrint(self.allocator, "http_serve_mc_worker_{d}", .{self.http_serve_multicore_worker_counter});
     self.http_serve_multicore_worker_counter += 1;
-    try self.http_serve_multicore_workers.append(self.allocator, .{ .name = worker_name, .wrapper_name = wrapper_name, .max_conn_text = max_conn_text });
+    try self.http_serve_multicore_workers.append(self.allocator, .{ .name = worker_name, .wrapper_name = wrapper_name, .max_conn_text = max_conn_text, .needs_headers = used_fields.headers });
 
     // Faz MN.7b: `--release` (LLVM backend) altında, `num_threads - 1`
     // × `$nox_thread_spawn` (AŞAĞIDAKİ, `.qbe`de DEĞİŞMEDEN KALAN yol)
@@ -429,7 +434,7 @@ pub fn genHttpServeMulticore(self: *Codegen, c: ast.Call) CodegenError!Value {
     try self.qbeJmp(cond_label);
     try self.qbeLabel(end_label);
 
-    try self.emitFdServeTail(fd, wrapper_name, max_conn_text, null, null);
+    try self.emitFdServeTail(fd, wrapper_name, max_conn_text, null, null, used_fields.headers);
 
     // Faz HH.8: ÇAĞIRANIN KENDİ payı (yukarıdaki `emitFdServeTail`)
     // BİTTİKTEN SONRA, spawn edilen HER worker'ı join et — `max_
@@ -540,7 +545,7 @@ pub fn genHttpServeMulticoreWorker(self: *Codegen, spec: HttpServeMulticoreWorke
         fd = fd_t;
     }
 
-    try self.emitFdServeTail(fd, spec.wrapper_name, spec.max_conn_text, tls_ctx_text, spec.ws_wrapper_name);
+    try self.emitFdServeTail(fd, spec.wrapper_name, spec.max_conn_text, tls_ctx_text, spec.ws_wrapper_name, spec.needs_headers);
 
     try self.qbeRet("0");
     try self.qbeFuncEnd();
@@ -714,6 +719,7 @@ pub fn genHttpServeWsWrapper(self: *Codegen, spec: types.HttpServeWsWrapperSpec)
 pub fn registerHttpHandlers(self: *Codegen, handle_name: []const u8, ws_handle_name: ?[]const u8) CodegenError!struct {
     wrapper_name: []const u8,
     ws_wrapper_name: ?[]const u8,
+    needs_headers: bool,
 } {
     const sig = self.functions.get(handle_name) orelse return error.Unsupported;
     if (sig.params.len != 1) return error.Unsupported;
@@ -722,9 +728,10 @@ pub fn registerHttpHandlers(self: *Codegen, handle_name: []const u8, ws_handle_n
     const req_class = sig.params[0].class_name.?;
     const resp_class = sig.ret.class_name.?;
 
+    const used_fields = self.computeUsedFieldsFor(handle_name);
     const wrapper_name = try std.fmt.allocPrint(self.allocator, "http_serve_wrap_{d}", .{self.http_serve_wrapper_counter});
     self.http_serve_wrapper_counter += 1;
-    try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class, .used_fields = self.computeUsedFieldsFor(handle_name) });
+    try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = handle_name, .req_class = req_class, .resp_class = resp_class, .used_fields = used_fields });
 
     var ws_wrapper_name: ?[]const u8 = null;
     if (ws_handle_name) |wsh| {
@@ -738,7 +745,7 @@ pub fn registerHttpHandlers(self: *Codegen, handle_name: []const u8, ws_handle_n
         ws_wrapper_name = name;
     }
 
-    return .{ .wrapper_name = wrapper_name, .ws_wrapper_name = ws_wrapper_name };
+    return .{ .wrapper_name = wrapper_name, .ws_wrapper_name = ws_wrapper_name, .needs_headers = used_fields.headers };
 }
 
 /// `nox.http.serve_tls`/`serve_ws`/`serve_ws_tls` — `genHttpServe`nin
@@ -804,7 +811,7 @@ pub fn genHttpServeGeneric(self: *Codegen, c: ast.Call, want_tls: bool, want_ws:
     }
 
     const handlers = try self.registerHttpHandlers(handle_name, ws_handle_name);
-    try self.emitServeAndClose(server, handlers.wrapper_name, max_conn_text, handlers.ws_wrapper_name);
+    try self.emitServeAndClose(server, handlers.wrapper_name, max_conn_text, handlers.ws_wrapper_name, handlers.needs_headers);
     return .{ .text = "0", .qtype = .none };
 }
 
@@ -869,9 +876,9 @@ pub fn genHttpServeFdGeneric(self: *Codegen, c: ast.Call, want_tls: bool, want_w
     if (want_tls) {
         const server = try self.newTemp();
         try self.qbeCall(.{ .name = server, .ty = .l }, "$nox_http_server_from_fd_tls_owned", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = fd_v.text }, .{ .ty = .l, .text = cert_v.text }, .{ .ty = .l, .text = key_v.text } });
-        try self.emitServeAndClose(server, handlers.wrapper_name, max_conn_text, handlers.ws_wrapper_name);
+        try self.emitServeAndClose(server, handlers.wrapper_name, max_conn_text, handlers.ws_wrapper_name, handlers.needs_headers);
     } else {
-        try self.emitFdServeTail(fd_v.text, handlers.wrapper_name, max_conn_text, null, handlers.ws_wrapper_name);
+        try self.emitFdServeTail(fd_v.text, handlers.wrapper_name, max_conn_text, null, handlers.ws_wrapper_name, handlers.needs_headers);
     }
     return .{ .text = "0", .qtype = .none };
 }
@@ -950,7 +957,7 @@ pub fn genHttpServeMulticoreGeneric(self: *Codegen, c: ast.Call, want_tls: bool,
 
     const worker_name = try std.fmt.allocPrint(self.allocator, "http_serve_mc_worker_{d}", .{self.http_serve_multicore_worker_counter});
     self.http_serve_multicore_worker_counter += 1;
-    try self.http_serve_multicore_workers.append(self.allocator, .{ .name = worker_name, .wrapper_name = handlers.wrapper_name, .max_conn_text = max_conn_text, .ws_wrapper_name = handlers.ws_wrapper_name, .tls = want_tls });
+    try self.http_serve_multicore_workers.append(self.allocator, .{ .name = worker_name, .wrapper_name = handlers.wrapper_name, .max_conn_text = max_conn_text, .ws_wrapper_name = handlers.ws_wrapper_name, .tls = want_tls, .needs_headers = handlers.needs_headers });
 
     // Faz MN.7b (bkz. `genHttpServeMulticore`nin AYNI belge notu):
     // `fd` BURADA da (`want_tls` İSE `FdTlsPayload*`, DEĞİLSE ÇIPLAK fd)
@@ -1025,7 +1032,7 @@ pub fn genHttpServeMulticoreGeneric(self: *Codegen, c: ast.Call, want_tls: bool,
         fd_text = fd_extracted;
         tls_ctx_text = ctx_extracted;
     }
-    try self.emitFdServeTail(fd_text, handlers.wrapper_name, max_conn_text, tls_ctx_text, handlers.ws_wrapper_name);
+    try self.emitFdServeTail(fd_text, handlers.wrapper_name, max_conn_text, tls_ctx_text, handlers.ws_wrapper_name, handlers.needs_headers);
 
     // Faz HH.8: ÇAĞIRANIN KENDİ payı BİTTİKTEN SONRA, spawn edilen HER
     // worker'ı join et (bkz. `genHttpServeMulticore`nin AYNI gerekçesi).

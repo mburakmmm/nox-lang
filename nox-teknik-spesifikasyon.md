@@ -14591,9 +14591,13 @@ zamanlayıcı HER YERDE ŞEFFAFTIR** (Faz MN.9, kullanıcı isteği "artık
 release dendiğinde m:n çalışsın heryerde"): `$main`in KENDİSİ (herhangi
 bir async yapı — `spawn`/`await`/`nox.thread`/`Channel[T]` — KULLANAN
 HER programda) program başlangıcında OTOMATİK olarak bir worker havuzu
-kurar (CPU çekirdek sayısı kadar, `NOX_POOL_WORKERS` ortam değişkeniyle
-YAPILANDIRILABİLİR) — kod DEĞİŞİKLİĞİ/opt-in GEREKMEZ, sıradan `spawn`/
-`await` DAHİ çapraz-çekirdek çalınabilir hale gelir. `nox.thread.
+kurar — kod DEĞİŞİKLİĞİ/opt-in GEREKMEZ, sıradan `spawn`/`await` DAHİ
+çapraz-çekirdek çalınabilir hale gelir. Havuzun BOYUTU derleme-zamanında
+belirlenir (`moduleUsesMulticorePool`, bkz. §3.88): modül `nox.http.
+serve_multicore*`/`nox.thread.pool_run` ÇAĞIRIYORSA CPU çekirdek sayısı
+kadar, ÇAĞIRMIYORSA (SADECE sıradan `spawn`/`nox.thread.start` KULLANAN
+"hafif" programlar) küçük, SABİT bir varsayılan (2 worker) — HER İKİ
+durumda da `NOX_POOL_WORKERS` ortam değişkeniyle YAPILANDIRILABİLİR. `nox.thread.
 pool_run`/`nox.http.serve_multicore` ARTIK BU aynı otomatik havuza
 DÜZLEŞTİRİLİR (YENİ bir OS iş parçacığı/havuz İNŞA ETMEZLER); `nox.
 thread.start`/`ThreadChannel[T]` (paylaşımsız, Katman 1/2 API'si)
@@ -14630,6 +14634,43 @@ test` (standalone, `runtime/alloc/`den BAĞIMSIZ Windows-CI hedefi);
 `.nox` fixture'ları (senkron Zig birim testleri DEĞİL) — ÖZELLİKLE
 zamanlamaya-duyarlı düzeltmeler İçİn TEK bir geçişin YETERLİ olmadığı,
 6-20+ ard arda tekrarın standart olduğu bir disiplinle.
+
+## 3.88 Nox'un HTTP/M:N tavan hızını artıran 3 madde
+
+Aether çerçevesinin `PERF_GAPS.md` raporu analiz edilirken, Aether'e
+ÖZGÜ OLMAYAN, Nox'un KENDİ derleyici/runtime'ındaki gerçek darboğazlar
+tespit edilip düzeltildi (v1.29.2):
+
+1. **`TCP_NODELAY`** — kabul edilen HER bağlantı soketine (`runtime/
+   async_rt/io.zig`nin `setTcpNodelay`si, hem `io.zig`nin `nonBlocking
+   Accept`ı HEM `http_server.zig`nin `blockingAccept`ı) uygulanır —
+   Nagle algoritması küçük JSON yanıtlarında gereksiz gecikme
+   EKLİYORDU. Ölçüldü: `benchmarks/http_compare` c=30'da +%4.0, c=100'de
+   +%15.1.
+2. **Header kopyalama döngüsünün ATLANMASI** — `genHttpServeWrapper`nin
+   DERLEME-ZAMANINDA ZATEN hesapladığı `used_fields.headers` (handler
+   `req.headers`e HİÇ dokunmuyor mu) bilgisi `nox_http_serve_raw`/`_ws_
+   raw`in `needs_headers` C-ABI parametresine kadar taşınıp
+   `connectionEntry`nin (`http_server.zig`) HER istekte çalıştırdığı
+   `iterateHeaders`+`dupeToNoxStr` (header başına 2 ARC tahsisi)
+   döngüsünü `false` İKEN TAMAMEN ATLAR.
+3. **`$main`in otomatik havuzunun KÜÇÜK bir varsayılana düşmesi** —
+   `--release` altında `moduleUsesMulticorePool` (`async_thread.zig`,
+   `moduleUsesAsync`İLE AYNI deseni İZLEYEN AYRI, DAHA DAR bir AST
+   yürüyüşü) modülün `nox.http.serve_multicore*`/`nox.thread.pool_run`
+   ÇAĞIRIP ÇAĞIRMADIĞINI derleme-zamanında tespit eder — ÇAĞIRMIYORSA
+   `pickMainWorkerCount` (`pool_bridge.zig`) CPU çekirdek sayısı YERİNE
+   `SMALL_MAIN_POOL_DEFAULT = 2`ye düşer (work-stealing'in ANLAMLI
+   olması İçİn asgari). Bilinçli ödünleşim: `nox.thread.start`/çıplak
+   `spawn`ı GERÇEK ağır paralel İş İçİn KULLANAN AMA `serve_multicore`/
+   `pool_run` ÇAĞIRMAYAN programlar SESSİZCE 2 worker'a düşer —
+   `NOX_POOL_WORKERS` KOŞULSUZ KAÇIŞ KAPISIDIR.
+
+Her 3 madde `self.backend == .llvm` (`--release`) dalına SINIRLI — QBE
+yolu (bayraksız `noxc build`) BAYT-BİREBİR DEĞİŞMEDİ (IR-diff
+204/0/3-atlandı KORUNDU, madde 1/2'nin `.nox`-KAYNAK GÖRÜNÜR HİÇBİR
+API'yi/checker davranışını DEĞİŞTİRMEMESİ SAYESİNDE HER İKİ backend'de
+de aynı Nox kaynağı ÇALIŞIR).
 
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.

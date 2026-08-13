@@ -54,6 +54,11 @@ pub const WinSock = if (builtin.os.tag == .windows) struct {
     pub const SOCK_STREAM: i32 = 1;
     pub const SOL_SOCKET: i32 = 0xffff;
     pub const SO_REUSEADDR: i32 = 0x0004;
+    /// Performans notu (bkz. `setTcpNodelay`nin belge notu): standart
+    /// Winsock değerleri — `IPPROTO_TCP`/`TCP_NODELAY` platformdan bağımsız
+    /// SABİT sayılardır (BSD soket API'siyle PAYLAŞILIR).
+    pub const IPPROTO_TCP: i32 = 6;
+    pub const TCP_NODELAY: i32 = 1;
 } else struct {};
 
 /// Bir soketi non-blocking yapar — idempotenttir (zaten non-blocking olan
@@ -71,6 +76,27 @@ fn setNonBlocking(fd: posix.fd_t) void {
     _ = std.c.fcntl(fd, std.c.F.SETFL, @as(u32, @bitCast(flags)));
 }
 
+/// Performans: Nagle algoritmasını KAPATIR — `nox.http`nin kabul ettiği
+/// HER bağlantı soketine (dinleme soketine DEĞİL) uygulanır. `http_server.
+/// zig`nin `connectionEntry`si küçük yanıtları (JSON gövdeli, birkaç yüz
+/// bayt) `request.respond`ın KENDİ TAMPONLU `Writer`ı ÜZERİNDEN yazar —
+/// Nagle AÇIKKEN, bu küçük yazımlar istemcinin gecikmeli-ACK'ıyla
+/// ETKİLEŞİME girip yanıt başına onlarca milisaniyelik GEREKSİZ bir
+/// gecikme EKLEYEBİLİR (klasik "Nagle + delayed-ACK" sorunu — HTTP
+/// keep-alive sunucularında İYİ bilinen bir throughput darboğazı).
+/// `setsockopt` başarısız OLURSA (nadir, platforma özgü) sessizce
+/// YOKSAYILIR — bu SADECE bir gecikme OPTİMİZASYONU, doğruluğu ETKİLEMEZ.
+/// `pub` — `nonBlockingAccept` (aşağı) VE `http_server.zig`nin `blockingAccept`i
+/// (fiber-DIŞI/senkron kabul yolu) İKİSİ de ÇAĞIRIR.
+pub fn setTcpNodelay(fd: posix.fd_t) void {
+    var enable: c_int = 1;
+    if (builtin.os.tag == .windows) {
+        _ = WinSock.setsockopt(@intFromPtr(fd), WinSock.IPPROTO_TCP, WinSock.TCP_NODELAY, &enable, @sizeOf(c_int));
+        return;
+    }
+    _ = std.c.setsockopt(fd, std.c.IPPROTO.TCP, std.c.TCP.NODELAY, &enable, @sizeOf(c_int));
+}
+
 /// `listen_fd` üzerinde bir bağlantı hazır olana kadar ÇAĞIRAN fiber'ı
 /// (bkz. `Scheduler.suspendForIo`) askıya alır — GERÇEK sonuç alınana ya
 /// da gerçek bir hataya kadar TEKRAR dener.
@@ -79,7 +105,11 @@ pub fn nonBlockingAccept(scheduler: *Scheduler, listen_fd: posix.fd_t) !posix.fd
     while (true) {
         if (builtin.os.tag == .windows) {
             const rc = WinSock.accept(@intFromPtr(listen_fd), null, null);
-            if (rc != WinSock.INVALID_SOCKET) return @ptrFromInt(rc);
+            if (rc != WinSock.INVALID_SOCKET) {
+                const conn_fd: posix.fd_t = @ptrFromInt(rc);
+                setTcpNodelay(conn_fd);
+                return conn_fd;
+            }
             if (WinSock.WSAGetLastError() == WinSock.WSAEWOULDBLOCK) {
                 scheduler.suspendForIo(listen_fd, .read);
                 continue;
@@ -87,7 +117,10 @@ pub fn nonBlockingAccept(scheduler: *Scheduler, listen_fd: posix.fd_t) !posix.fd
             return error.Unexpected;
         }
         const rc = std.c.accept(listen_fd, null, null);
-        if (rc >= 0) return rc;
+        if (rc >= 0) {
+            setTcpNodelay(rc);
+            return rc;
+        }
         switch (posix.errno(rc)) {
             .AGAIN => scheduler.suspendForIo(listen_fd, .read),
             else => |e| return posix.unexpectedErrno(e),

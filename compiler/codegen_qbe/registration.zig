@@ -1135,8 +1135,8 @@ pub fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) Codegen
     try self.qbeFuncEnd();
 }
 
-pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool) CodegenError!void {
-    if (use_async) return self.genMainAsync(stmts);
+pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool, wants_multicore_pool: bool) CodegenError!void {
+    if (use_async) return self.genMainAsync(stmts, wants_multicore_pool);
 
     self.vars.clearRetainingCapacity();
     self.narrowed_unbox.clearRetainingCapacity();
@@ -1216,7 +1216,7 @@ pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool) Codegen
 /// çoğunluk) `genMain`in DEĞİŞMEMİŞ, sıfır-ek-maliyetli yolundan
 /// geçmeye devam etmesini sağlar (bkz. nox-teknik-spesifikasyon.md
 /// §3.21, aşama 4).
-pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt) CodegenError!void {
+pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_pool: bool) CodegenError!void {
     self.vars.clearRetainingCapacity();
     self.narrowed_unbox.clearRetainingCapacity();
     self.temp_counter = 0;
@@ -1285,7 +1285,14 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt) CodegenError!void {
     // ailesinin TAMAMI GÜVENSİZDİR — bkz. `pool_bridge.zig`nin backend
     // sınırı notu).
     if (self.backend == .llvm) {
-        try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, "$nox_pool_main_init", &.{});
+        // Performans (bkz. proje planı, "Nox tavan hızı" bölümü, Madde 3):
+        // `wants_multicore_pool` — modül `serve_multicore*`/`pool_run`
+        // HİÇ ÇAĞIRMIYORSA (`moduleUsesMulticorePool`, `async_thread.zig`)
+        // `pickMainWorkerCount` CPU-sayısı YERİNE küçük bir sabite düşer
+        // (bkz. `pool_bridge.zig`nin belge notu, BURADA SADECE derleme-
+        // zamanı sinyali `.w`-tipli 0/1 olarak TAŞINIR).
+        const wmp_text: []const u8 = if (wants_multicore_pool) "1" else "0";
+        try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, "$nox_pool_main_init", &.{.{ .ty = .w, .text = wmp_text }});
     } else {
         try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, "$nox_runtime_init", &.{});
     }

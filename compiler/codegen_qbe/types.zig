@@ -242,6 +242,10 @@ pub const HttpServeMulticoreWorkerSpec = struct {
     max_conn_text: []const u8,
     ws_wrapper_name: ?[]const u8 = null,
     tls: bool = false,
+    /// Performans (bkz. proje planı, "Nox tavan hızı" bölümü, Madde 2):
+    /// `used_fields.headers`den GELİR — `genHttpServeMulticoreWorker`nin
+    /// KENDİ `emitFdServeTail` çağrısına taşınır.
+    needs_headers: bool = true,
 };
 
 /// Faz U.4.3: bir closure'ın TEK bir yakalanan (capture) değeri.

@@ -201,6 +201,135 @@ pub fn exprUsesAsync(expr: ast.Expr) bool {
     };
 }
 
+/// Performans (bkz. proje planı, "Nox tavan hızı" bölümü, Madde 3):
+/// `matchIntrinsicKind`in 5 türünden (`serve_multicore` AİLESİ + `pool_run`)
+/// SADECE BUNLARIN "GERÇEKTEN çoklu-worker İSTİYOR" SAYILDIĞINI belirler
+/// — çıplak `spawn`/`await`/`Channel[T]`/`nox.thread.start` (`moduleUsesAsync`nin
+/// KOŞULSUZ `true` SAYDIĞI türler) BU sınıflandırmaya DAHİL DEĞİL.
+fn isMulticorePoolKind(kind: IntrinsicKind) bool {
+    return switch (kind) {
+        .http_serve_multicore,
+        .http_serve_multicore_tls,
+        .http_serve_multicore_ws,
+        .http_serve_multicore_ws_tls,
+        .pool_run,
+        => true,
+        .http_serve, .http_serve_fd, .http_serve_tls, .http_serve_ws, .http_serve_ws_tls, .http_serve_fd_tls, .http_serve_fd_ws, .http_serve_fd_ws_tls, .thread_start => false,
+    };
+}
+
+/// Performans (bkz. proje planı, "Nox tavan hızı" bölümü, Madde 3):
+/// `moduleUsesAsync`/`stmtUsesAsync`/`exprUsesAsync`nin (yukarıda) AYNI
+/// AST-yürüyüş ŞEKLİNİ TEKRARLAYAN, AMA BAĞIMSIZ, DAHA DAR bir İKİNCİ
+/// geçiş — `$main`in `--release` altındaki otomatik havuzunun (bkz.
+/// `pool_bridge.zig`nin `pickMainWorkerCount`ı) CPU-sayısı YERİNE küçük
+/// bir SABİTE düşüp DÜŞMEYECEĞİNE karar vermek İçİn kullanılır. AYRI bir
+/// fonksiyon OLARAK tutulması (mevcut `moduleUsesAsync`i GENİŞLETMEK
+/// YERİNE) BİLİNÇLİ bir tasarım kararı: `moduleUsesAsync`nin agresif
+/// kısa-devresi (`break :blk true`, İLK tetikleyicide) BU DAHA DAR sinyali
+/// YAKALAYAMAZ (ör. modülün BAŞINDA bir çıplak `spawn` VARSA `moduleUsesAsync`
+/// HEMEN `true` döner AMA modülün SONUNDAKİ bir `serve_multicore` çağrısı
+/// ASLA ziyaret EDİLMEZ) — İKİ AYRI, TAM geçiş bunu ÖNLER. Zig'in
+/// ayrıntılı-switch zorunluluğu (gelecekte YENİ bir `ast.Expr`/`Stmt`
+/// varyantı HER İKİ yürüyüşTE de AYRI AYRI derleme hatası verir) "iki
+/// yürüyüşün senkron kalması" riskini KENDİLİĞİNDEN sınırlar.
+pub fn moduleUsesMulticorePool(module: ast.Module, extra_functions: []const ast.FuncDef) bool {
+    for (module.body) |stmt| if (stmtUsesMulticorePool(stmt)) return true;
+    for (extra_functions) |fd| {
+        for (fd.body) |s| if (stmtUsesMulticorePool(s)) return true;
+    }
+    return false;
+}
+
+pub fn stmtUsesMulticorePool(stmt: ast.Stmt) bool {
+    return switch (stmt.kind) {
+        .expr_stmt => |e| exprUsesMulticorePool(e),
+        .var_decl => |v| exprUsesMulticorePool(v.value),
+        .assign => |a| exprUsesMulticorePool(a.target) or exprUsesMulticorePool(a.value),
+        .if_stmt => |f| blk: {
+            if (exprUsesMulticorePool(f.cond)) break :blk true;
+            for (f.then_body) |s| if (stmtUsesMulticorePool(s)) break :blk true;
+            for (f.elif_clauses) |ec| {
+                if (exprUsesMulticorePool(ec.cond)) break :blk true;
+                for (ec.body) |s| if (stmtUsesMulticorePool(s)) break :blk true;
+            }
+            if (f.else_body) |eb| for (eb) |s| if (stmtUsesMulticorePool(s)) break :blk true;
+            break :blk false;
+        },
+        .while_stmt => |w| blk: {
+            if (exprUsesMulticorePool(w.cond)) break :blk true;
+            for (w.body) |s| if (stmtUsesMulticorePool(s)) break :blk true;
+            break :blk false;
+        },
+        .for_stmt => |f| blk: {
+            if (exprUsesMulticorePool(f.iterable)) break :blk true;
+            for (f.body) |s| if (stmtUsesMulticorePool(s)) break :blk true;
+            break :blk false;
+        },
+        .func_def => |fd| blk: {
+            for (fd.body) |s| if (stmtUsesMulticorePool(s)) break :blk true;
+            break :blk false;
+        },
+        .class_def => |cd| blk: {
+            for (cd.methods) |m| {
+                for (m.body) |s| if (stmtUsesMulticorePool(s)) break :blk true;
+            }
+            break :blk false;
+        },
+        .protocol_def, .extern_def, .pass_stmt, .import_stmt, .from_import_stmt => false,
+        .return_stmt => |r| if (r) |e| exprUsesMulticorePool(e) else false,
+        .raise_stmt => |e| exprUsesMulticorePool(e),
+        .try_stmt => |t| blk: {
+            for (t.try_body) |s| if (stmtUsesMulticorePool(s)) break :blk true;
+            for (t.except_clauses) |ec| for (ec.body) |s| if (stmtUsesMulticorePool(s)) break :blk true;
+            if (t.finally_body) |fb| for (fb) |s| if (stmtUsesMulticorePool(s)) break :blk true;
+            break :blk false;
+        },
+        .lowlevel_stmt => |ll| blk: {
+            for (ll.body) |s| if (stmtUsesMulticorePool(s)) break :blk true;
+            break :blk false;
+        },
+        .with_stmt => |w| blk: {
+            if (exprUsesMulticorePool(w.ctx_expr)) break :blk true;
+            for (w.body) |s| if (stmtUsesMulticorePool(s)) break :blk true;
+            break :blk false;
+        },
+        .defer_stmt => |d| exprUsesMulticorePool(ast.Expr{ .call = d.call }),
+    };
+}
+
+pub fn exprUsesMulticorePool(expr: ast.Expr) bool {
+    return switch (expr) {
+        .await_expr => |e| exprUsesMulticorePool(e.*),
+        .spawn_expr => |e| exprUsesMulticorePool(e.*),
+        .generic_construct => |gc| blk: {
+            for (gc.args) |a| if (exprUsesMulticorePool(a)) break :blk true;
+            break :blk false;
+        },
+        .unary => |u| exprUsesMulticorePool(u.operand.*),
+        .binary => |b| exprUsesMulticorePool(b.left.*) or exprUsesMulticorePool(b.right.*),
+        .call => |c| blk: {
+            if (matchIntrinsicKind(c.callee.*)) |k| if (isMulticorePoolKind(k)) break :blk true;
+            if (exprUsesMulticorePool(c.callee.*)) break :blk true;
+            for (c.args) |a| if (exprUsesMulticorePool(a)) break :blk true;
+            break :blk false;
+        },
+        .attribute => |a| exprUsesMulticorePool(a.obj.*),
+        .index => |idx| exprUsesMulticorePool(idx.obj.*) or exprUsesMulticorePool(idx.index.*),
+        .list_lit => |elems| blk: {
+            for (elems) |el| if (exprUsesMulticorePool(el)) break :blk true;
+            break :blk false;
+        },
+        .dict_lit => |pairs| blk: {
+            for (pairs) |p| {
+                if (exprUsesMulticorePool(p.key) or exprUsesMulticorePool(p.value)) break :blk true;
+            }
+            break :blk false;
+        },
+        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => false,
+    };
+}
+
 /// `spawn <hedef_fn>(args...)` — checker ZATEN operandın `.call` olup
 /// `.identifier` bir `async def`e başvurduğunu doğruladı (bkz.
 /// checker.zig'in `.spawn_expr` dalı); codegen burada bu ŞEKLE GÜVENİR.
