@@ -46,6 +46,9 @@ fn compileToBinaryLlvm(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, s
     const module = try nox.module_loader.resolveImports(allocator, io, user_module);
 
     var checker_state = nox.checker.Checker.init(allocator);
+    // Faz MN.9.4: bkz. `llvm_golden_test.zig`nin AYNI notu — bu dosya
+    // `.llvm` backend'i test EDİYOR, `Checker.backend` da ONU YANSITMALI.
+    checker_state.backend = .llvm;
     checker_state.checkModule(module) catch |e| {
         std.debug.print("beklenmeyen tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
         return error.FixtureNotWellTyped;

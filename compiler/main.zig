@@ -1607,11 +1607,21 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // KENDİ çözülmüş kaynak dizinini) kullanır.
     const module = try resolveImportsForBuild(io, a, user_module, path_arg, nox_home, resource_dirs, fetch_policy);
 
+    // DENEYSEL (bkz. plan dosyası "`noxc build --release` için deneysel
+    // bir LLVM backend'i"): `--release` `.ll`/`clang -O2` yoluna, bayraksız
+    // `build` (varsayılan) DEĞİŞMEDEN `.ssa`/`qbe`/`cc` yoluna gider —
+    // aşağıda `release`e göre dallanır (bkz. Faz LLVM.5). Faz MN.9.4:
+    // `checkModule` ÇAĞRILMADAN ÖNCE hesaplanır — `Checker.backend`
+    // (`isThreadTransferSafeType`/`isSpawnParamSafeType`nin backend-
+    // farkındalı gevşetmesi İçİn, bkz. checker.zig) BUNU İHTİYAÇ DUYAR.
+    const backend: codegen.Backend = if (release) .llvm else .qbe;
+
     // `checker.check`'in kullanışlı ok/err sarmalayıcısı yerine `Checker`
     // doğrudan kullanılır: Faz 10 generics'i somut örneklemeleri
     // (`checker_state.instantiations`) burada, ownership analizi ve codegen'e
     // iletmek için gereklidir (bkz. checker.zig, "Faz 10: generics" notu).
     var checker_state = checker.Checker.init(a);
+    checker_state.backend = backend;
     checker_state.checkModule(module) catch |e| {
         printErr("tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
         std.process.exit(1);
@@ -1683,12 +1693,6 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // codegen.zig'in modül üstü notu (TEK dosya, stdlib-merge yanlış-atıf
     // sınırlaması bilinçli olarak KABUL EDİLDİ).
     const debug_source_path: ?[]const u8 = if (debug_info) path_arg else null;
-
-    // DENEYSEL (bkz. plan dosyası "`noxc build --release` için deneysel
-    // bir LLVM backend'i"): `--release` `.ll`/`clang -O2` yoluna, bayraksız
-    // `build` (varsayılan) DEĞİŞMEDEN `.ssa`/`qbe`/`cc` yoluna gider —
-    // aşağıda `release`e göre dallanır (bkz. Faz LLVM.5).
-    const backend: codegen.Backend = if (release) .llvm else .qbe;
 
     const ir = codegen.generateModule(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend) catch |err| switch (err) {
         error.Unsupported => {

@@ -45,7 +45,10 @@ print(c.value)
   sınıflar (`class Box[T]:`) ve basit tek-kalıtım (`class Derived(Base):`
   — metod override, `super()`, çalışma-zamanı polimorfik dispatch) DAHİL.
 - **QBE üzerinden doğrudan native koda AOT derleme** — LLVM/MLIR bağımlılığı
-  yok.
+  yok. `noxc build --release` (macOS/arm64, deneysel) İSTEĞE BAĞLI olarak
+  ikinci, LLVM tabanlı bir backend'e (`clang -O2`) geçer — YALNIZCA
+  `--release`in KENDİ SEÇTİĞİ programlar İçİn, varsayılan QBE yolu
+  DEĞİŞMEDEN kalır.
 - **Katmanlı, çoğunlukla görünmez bir bellek modeli** ("Sahiplik Piramidi"):
   derleyici mümkün olduğunda sıfır maliyetli ASAP destructor'lar üretir,
   belirsiz durumlarda ARC'ye (referans sayımı) düşer — kullanıcıya hiçbir
@@ -60,11 +63,23 @@ print(c.value)
   ile bırakıldı (bkz. `runtime/hpy_bridge/context.zig`).
 - **Go tarzı fiber/kooperatif async çalışma zamanı** (`spawn`/`await`,
   `Task`/`Channel`) + gerçek eşzamanlı G/Ç (kqueue tabanlı reaktör).
+  Varsayılan (bayraksız) derlemede TEK bir OS iş parçacığında kooperatif
+  çalışır (M:1); **`noxc build --release` altında İSE TÜM async
+  çalışma zamanı ŞEFFAF olarak GERÇEK, paylaşılan bir M:N iş-çalan
+  (work-stealing) zamanlayıcıya (atomik ARC, Chase-Lev deque'ler,
+  kooperatif "dünyayı-durdur" döngü-çözücü) OTOMATİK BAĞLANIR** — hiçbir
+  kod değişikliği/opt-in GEREKMEZ, `$main`in KENDİSİ program başlarken
+  (CPU çekirdek sayısı kadar, `NOX_POOL_WORKERS` İLE yapılandırılabilir)
+  bir worker havuzu kurar, sıradan `spawn`/`await` DAHİ birden fazla OS
+  çekirdeğine dağılır.
 - **Paylaşımsız (shared-nothing), çok çekirdekli iş parçacığı desteği**
-  (`nox.thread`) — her biri KENDİ bağımsız fiber çalışma zamanına sahip
-  gerçek OS iş parçacıkları (`ThreadHandle[T]`/`.join()`) ve aralarında
-  sürekli, çift-yönlü iletişim (`ThreadChannel[T]`), tek bir OS
-  çekirdeğiyle sınırlı KALMADAN gerçek paralellik sağlar.
+  (`nox.thread`) — bayraksız (QBE) derlemede her biri KENDİ bağımsız
+  fiber çalışma zamanına sahip gerçek OS iş parçacıkları (`ThreadHandle[T]`/
+  `.join()`) ve aralarında sürekli, çift-yönlü iletişim (`ThreadChannel[T]`).
+  **`--release` altında İSE `nox.thread.start`/`ThreadChannel[T]` de
+  YUKARIDAKİ AYNI paylaşılan M:N havuzuna BİRLEŞİR** (Nox-kaynak API'si
+  DEĞİŞMEDEN) — argüman/dönüş tipi kısıtı GENİŞLER (`list`/sınıf/`dict`
+  DE artık taşınabilir), çalınabilir gerçek paralellik SAĞLAR.
 - Büyüyen bir standart kütüphane (`nox.http`, `nox.json`, `nox.strings`,
   `nox.math`, `nox.os`/`nox.fs`/`nox.path`, `nox.time`, `nox.random`,
   `nox.crypto` (SHA-256/1/512, HMAC, zaman-sabit karşılaştırma, güvenli

@@ -95,6 +95,31 @@ pub const PoolLink = struct {
     rt: ?*anyopaque,
 };
 
+/// Faz MN.9.1: "BU OS iş parçacığı ŞU AN HANGİ `Scheduler`ı ÇALIŞTIRIYOR"
+/// sorusunun standalone (`runtime/alloc/`den BAĞIMSIZ) doğruluk kaynağı.
+/// `bridge.zig`nin `g_scheduler`ı (Scheduler struct'ının KENDİSİNİ TLS'te
+/// TUTAN, "full" dünyanın threadlocal'ı) `nox_async_init`/`nox_async_deinit`
+/// SIRASINDA `setCurrentScheduler`İLE BUNU eşitler (bkz. onun belge notu).
+///
+/// **BULUNAN, AYRI bir GERÇEK hata İçİn eklendi (Faz MN.9.1):** `Channel(T).
+/// send`/`recv` ESKİDEN `self.scheduler`i (OLUŞTURMA-ANINDA SABİTLENEN bir
+/// alan) `.current`/`suspendCurrent`/`markReady` İçİn kullanıyordu — checker'ın
+/// `isSpawnParamSafeType`si BİR `Channel[T]`nin `spawn`e argüman OLARAK
+/// GEÇİRİLMESİNE İZİN VERDİĞİNDEN (M:N iş-çalma ALTINDA, ÇALINABİLİR bir
+/// alt göreve), OLUŞTURAN fiber'DAN BAŞKA bir fiber BU Channel'ı KULLANIRSA
+/// (VE o fiber BAŞKA bir worker'a ÇALINDIYSA) `self.scheduler` ARTIK GERÇEKTEN
+/// ÇALIŞAN worker'ı DEĞİL, OLUŞTURAN worker'ı GÖSTERİYORDU — `.current`/
+/// `suspendCurrent`/`markReady` YANLIŞ worker'ın durumuna dokunuyordu.
+/// `currentScheduler()` (ÇAĞIRANIN KENDİ, GERÇEKTEN ÇALIŞAN worker'ının
+/// scheduler'ı) BU YÜZDEN `self.scheduler` YERİNE kullanılmalıdır.
+threadlocal var g_current_scheduler: ?*Scheduler = null;
+pub fn currentScheduler() ?*Scheduler {
+    return g_current_scheduler;
+}
+pub fn setCurrentScheduler(s: ?*Scheduler) void {
+    g_current_scheduler = s;
+}
+
 pub const Scheduler = struct {
     allocator: std.mem.Allocator,
     ready: std.ArrayListUnmanaged(*Fiber) = .empty,
@@ -824,6 +849,49 @@ pub fn spawn(scheduler: *Scheduler, comptime T: type, func: *const fn (*anyopaqu
         scheduler.markReady(task.fiber);
     }
     return task;
+}
+
+/// Faz MN.9.3: `nox.http.serve_multicore`nin havuz-tabanlı `nox_pool_serve`
+/// lowering'inin (bkz. `pool_bridge.zig`nin `broadcastRunOnEachWorker`ı)
+/// çekirdek ilkeli — `spawn()`nin AKSİNE (TEK-üretici, SADECE ÇAĞIRANIN
+/// KENDİ deque'ine `pushBottom`; `target != scheduler.ownDeque()`nin sahibi
+/// İSE VERİ YARIŞIDIR), BU fonksiyon `target` ÇAĞIRANDAN FARKLI (YABANCI)
+/// bir worker'a AİT OLSA BİLE güvenlidir — `markReady` (`self.owner_tid`ye
+/// KARŞI ÇAĞIRAN iş parçacığını kontrol eden, `Task(T).entryTrampoline`nin
+/// çapraz-worker uyandırmasında ZATEN KANITLANMIŞ, kilit+wake-fd korumalı
+/// ilkel) ÜZERİNDEN enjekte eder. `target.stack_pool`a (SENKRONİZE OLMAYAN,
+/// SADECE sahibi tarafından dokunulan) HİÇ DOKUNULMAZ — yığın DOĞRUDAN
+/// `target.allocator` (havuzlu bir `target` İçİn HER ZAMAN `page_allocator`,
+/// bkz. `WorkerPool.create`) İLE tahsis edilir; `target` KENDİ `run()`u
+/// İçİNDE (fiber bittiğinde) KENDİ havuzuna GERİ VERİR (bkz. `run()`nin
+/// "fiber.finished" dalı — HANGİ iş parçacığının enjekte ETTİĞİNDEN
+/// TAMAMEN BAĞIMSIZ çalışır, `pool_live_count`u SADECE PAYLAŞILAN,
+/// atomik sayaç OLARAK görür).
+pub fn spawnToForeignScheduler(target: *Scheduler, func: *const fn (*anyopaque) callconv(.c) i64, arg: *anyopaque) !void {
+    const Payload = struct {
+        func: *const fn (*anyopaque) callconv(.c) i64,
+        arg: *anyopaque,
+        allocator: std.mem.Allocator,
+
+        fn trampoline(erased: *anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(erased));
+            _ = self.func(self.arg);
+            self.allocator.destroy(self);
+        }
+    };
+    const payload = try target.allocator.create(Payload);
+    payload.* = .{ .func = func, .arg = arg, .allocator = target.allocator };
+    const fiber = Fiber.create(target.allocator, Payload.trampoline, payload) catch |e| {
+        target.allocator.destroy(payload);
+        return e;
+    };
+    // `spawn()`ın AYNI muhasebesi (bkz. onun belge notu) — BU fonksiyon
+    // SADECE havuzlu bir `target` İçİn çağrılır (`broadcastRunOnEachWorker`
+    // DIŞINDA HİÇ ÇAĞRILMAZ), bu YÜZDEN `pool_live_count` HER ZAMAN DOLU
+    // VARSAYILIR (havuzsuz bir `target`e enjekte etmenin ANLAMI YOK —
+    // "yabancı worker" kavramının KENDİSİ havuz GEREKTİRİR).
+    if (target.pool_live_count) |plc| _ = plc.fetchAdd(1, .monotonic);
+    target.markReady(fiber);
 }
 
 test "tek görev, await olmadan sonucu doğru hesaplar" {

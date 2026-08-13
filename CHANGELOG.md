@@ -14,6 +14,57 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.29.0]
+
+### Eklendi
+- **`--release` altında M:N zamanlayıcının HER YERDE şeffaf aktivasyonu**
+  (Faz MN.9): MN.1-8'in inşa ettiği iş-çalan (work-stealing) M:N
+  zamanlayıcı, ARTIK SADECE `pool_run`/`serve_multicore` açıkça
+  çağrıldığında DEĞİL, `--release` altında `async def`/`spawn`/`await`/
+  `Channel[T]` KULLANAN HER programda `$main` TARAFINDAN OTOMATİK
+  kurulur (`NOX_POOL_WORKERS` ortam değişkeni İLE ayarlanabilir/devre
+  dışı bırakılabilir işçi sayısı, VARSAYILAN CPU çekirdek sayısı).
+  `nox_pool_run`/`nox_pool_serve` ARTIK YENİ bir havuz İNŞA ETMEK
+  YERİNE bu OTOMATİK havuza DÜZLEŞTİRİLİR (`spawnToForeignScheduler`
+  İLE çapraz-worker YAYIN). `nox.thread.start`/`ThreadChannel[T]`
+  (ÖNCEDEN TAMAMEN AYRI, paylaşımsız-OS-iş-parçacığı modeli) `--release`
+  altında AYNI paylaşılan havuza BİRLEŞTİRİLDİ — argüman/dönüş tip
+  sınırı `--release`de `list`/`class`/`dict`/`Task[T]`/`Channel[T]`/
+  `TaskLocal[T]`yi de KAPSAYACAK şekilde genişledi (Nox-KAYNAK
+  sözdizimi/API'si HİÇ DEĞİŞMEDİ, `.qbe` altında ESKİ, DAR tip sınırı
+  AYNEN korunur). `Channel[T]`ye koşulsuz `SpinLock` eklenerek (Faz
+  MN.9.1) ebeveyn-çalınan-çocuk arası eş zamanlı erişim GÜVENLİ hale
+  getirildi — Bölüm 4/5'in ÖN KOŞULUYDU.
+
+### Düzeltildi
+- Uygulama SIRASINDA MN.1-8'den kalma **3 GERÇEK eşzamanlılık hatası**
+  bulunup düzeltildi (bkz. plan dosyasının detaylı analizi):
+  `Channel[T]`nin çapraz-worker `markReady` hedefinin YANLIŞ scheduler'a
+  gitmesi (worker'ın KENDİ scheduler'ı YERİNE uyandırılan fiber'ın
+  PİNLİ olduğu scheduler kullanılmalıydı); DebugAllocator'ın fiber-
+  yığını İç tahsislerde çerçeve-yürüme İz yakalamasıyla ÇAKIŞMASI (test
+  `page_allocator`a geçirilerek düzeltildi); `poolServeFlattened`nin
+  yayın hedefi sayısının `num_workers` YERİNE TAM havuz boyutunu
+  kullanması (fazladan worker'ların SONSUZA KADAR bloke kalmasına yol
+  açıyordu — `lldb` İLE teşhis edildi).
+
+## [1.28.1]
+
+### Düzeltildi
+- Harici bir teknik değerlendirmenin (bkz. MN.8 plan notu) İŞARET
+  ETTİĞİ 2 GERÇEK sorun + 1 sertleştirme (Faz MN.8): (A) `nox.thread.
+  pool_run`ın saf-çalma sibling worker'larının modül-global durumu HİÇ
+  ilklendirmemesi (VE driver'ın KENDİ globals'ının, `entry_task`ın
+  ÇALINABİLİRLİĞİ YÜZÜNDEN konuma bağımlı kalması — iki AYRI düzeltme
+  gerekti); (B) `poolWideDeadlockCheck`nin YAKLAŞIK algoritmasının
+  GERÇEK kök nedeni — `Task(T)`nin PLAIN `completed`/`waiter` alanları
+  YÜZÜNDEN GERÇEK bir kayıp-uyandırma (lost wakeup) yarışı, CAS tabanlı
+  "single-shot future" protokolüyle düzeltildi (paylaşılan bir
+  "aktivite epoch"u İLE YANLIŞ-pozitif tespiti de AYRICA sertleştirildi);
+  (C) fiber yığınlarına mmap+koruma sayfası (guard page) eklendi
+  (POSIX `mprotect`/Windows `VirtualProtect`) — taşma ARTIK sessizce
+  bitişik belleği bozmak YERİNE belirli bir SIGSEGV'e dönüşür.
+
 ## [1.28.0]
 
 ### Eklendi

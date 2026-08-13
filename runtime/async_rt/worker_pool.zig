@@ -39,6 +39,7 @@ const fiber_mod = @import("fiber.zig");
 /// tip SONSUZ boyutlu OLMADIĞINDAN, HEPSİ İŞARETÇİ ÜZERİNDEN referans
 /// verildiğinden, sorunsuz derlenir).
 const scheduler_mod = @import("scheduler.zig");
+const channel_mod = @import("channel.zig");
 
 /// Bir havuzdaki TEK worker — "bir deque + bir OS iş parçacığı" (bkz.
 /// proje planı, MN.3b'nin (a) maddesi). `deque` BU FAZDA hiç KULLANILMAZ
@@ -570,4 +571,136 @@ test "WorkerPool: GERÇEK eş zamanlı otomatik-collect (STW bariyeri) ÇÖKMEDE
     // hatası (yarış/çift-serbest-bırakma/SIGBUS) BURADA ÇÖKME ya da sızıntı
     // OLARAK ortaya çıkardı.
     try testing.expect(g_cycle_stress_collect_rounds.load(.seq_cst) >= 1);
+}
+
+// ---- Faz MN.9.1: Channel[T]nin çapraz-worker senkronizasyon stres testi ----
+
+const ChanStress = channel_mod.Channel(i64);
+const CHAN_STRESS_N_PRODUCERS = 64;
+const CHAN_STRESS_ROUNDS = 20;
+
+const ChanStressProducerArg = struct {
+    chan: *ChanStress,
+    value: i64,
+};
+
+fn chanStressProducerFn(arg: *anyopaque) callconv(.c) void {
+    const a: *ChanStressProducerArg = @ptrCast(@alignCast(arg));
+    a.chan.send(a.value);
+}
+
+const ChanStressCtx = struct {
+    pool: *WorkerPool,
+    chan: ChanStress = undefined,
+    ready: std.atomic.Value(bool) = .init(false),
+    producer_args: [CHAN_STRESS_N_PRODUCERS]ChanStressProducerArg = undefined,
+    producer_tasks: [CHAN_STRESS_N_PRODUCERS]*scheduler_mod.Task(void) = undefined,
+    consumer_task: *scheduler_mod.Task(void) = undefined,
+    /// Tüketicinin HER değeri EN FAZLA BİR KEZ gördüğünü kanıtlar —
+    /// GERÇEK bir yarış (kilitsiz tampon/bekleyen listesi MUTASYONU)
+    /// DEĞER kaybına/YİNELENMESİNE yol AÇARDI.
+    seen: [CHAN_STRESS_N_PRODUCERS]std.atomic.Value(bool) = @splat(std.atomic.Value(bool).init(false)),
+};
+
+fn chanStressConsumerFn(arg: *anyopaque) callconv(.c) void {
+    const ctx: *ChanStressCtx = @ptrCast(@alignCast(arg));
+    var i: usize = 0;
+    while (i < CHAN_STRESS_N_PRODUCERS) : (i += 1) {
+        const v = ctx.chan.recv();
+        ctx.seen[@intCast(v)].store(true, .seq_cst);
+    }
+}
+
+fn chanStressWorkerEntry(rt: *anyopaque, slot: usize, ctx: *ChanStressCtx) void {
+    var sched = scheduler_mod.Scheduler.init(ctx.pool.allocator) catch @panic("zamanlayici baslatilamadi");
+    // Faz MN.9.1: `bridge.zig`nin `nox_async_init`inin GERÇEK programlarda
+    // OTOMATİK yaptığı eşitleme — BURADA (bridge.zig'i İTHAL ETMEYEN,
+    // standalone bir test yardımcısı OLDUĞUNDAN) ELLE yapılır.
+    scheduler_mod.setCurrentScheduler(&sched);
+    defer scheduler_mod.setCurrentScheduler(null);
+    sched.attachToPool(.{
+        .own_slot = slot,
+        .sibling_deques = ctx.pool.deque_list,
+        .live_count = ctx.pool.pool_live_count,
+        .waiting_on_io = ctx.pool.pool_waiting_on_io,
+        .idle_workers = ctx.pool.pool_idle_workers,
+        .activity_epoch = ctx.pool.pool_activity_epoch,
+        .stw_requested = ctx.pool.pool_stw_requested,
+        .stw_arrived = ctx.pool.pool_stw_arrived,
+        .stw_sense = ctx.pool.pool_stw_sense,
+        .wake_fds = ctx.pool.wake_fds,
+        .collect_fn = &cycle_detector.nox_cycle_collect,
+        .rt = rt,
+    }) catch {};
+
+    if (slot == 0) {
+        ctx.chan = ChanStress.init(&sched, 4); // küçük kapasite — GERÇEK çekişme/bloklama zorlar
+        var i: usize = 0;
+        while (i < CHAN_STRESS_N_PRODUCERS) : (i += 1) {
+            ctx.producer_args[i] = .{ .chan = &ctx.chan, .value = @intCast(i) };
+            ctx.producer_tasks[i] = scheduler_mod.spawn(&sched, void, chanStressProducerFn, &ctx.producer_args[i]) catch @panic("spawn basarisiz");
+        }
+        // Tüketici de BİR GÖREV olarak spawn edilir (senkron, doğrudan
+        // `recv()` ÇAĞRILAMAZ — `sched.current` BURADA `null` OLDUĞUNDAN
+        // askıya alma GEÇERSİZ olurdu) — `sched.run()` AŞAĞIDA HEPSİNİ
+        // (üreticiler+tüketici) çalıştırır.
+        ctx.consumer_task = scheduler_mod.spawn(&sched, void, chanStressConsumerFn, ctx) catch @panic("spawn basarisiz");
+        ctx.ready.store(true, .release);
+        var y: usize = 0;
+        while (y < 8) : (y += 1) std.Thread.yield() catch {};
+    } else {
+        while (!ctx.ready.load(.acquire)) std.Thread.yield() catch {};
+    }
+
+    sched.run() catch |e| switch (e) {
+        error.Deadlock => @panic("MN.9.1 Channel stres testinde beklenmedik deadlock"),
+    };
+    // `ctx.chan.scheduler` BU `sched`e (YEREL DEĞİŞKEN) İşaret ETTİĞİNDEN —
+    // `deinit()` BURADA, `sched` HÂLÂ CANLIYKEN çağrılmalıdır (test
+    // fonksiyonunun KENDİSİNDEN, `chanStressWorkerEntry` DÖNDÜKTEN SONRA
+    // çağrılsaydı SARKAN bir işaretçi olurdu — GERÇEKTEN SIGSEGV İLE
+    // yakalandı).
+    if (slot == 0) ctx.chan.deinit();
+    sched.deinit();
+}
+
+test "WorkerPool: Channel[T] çapraz-worker paylaşımı — GERÇEK çalma altında SIFIR kayıp/yinelenme (20 tekrar)" {
+    const testing = std.testing;
+    // Faz MN.9.1: `testing.allocator` (DebugAllocator, sızıntı-izleme İçİn
+    // HER `alloc`de bir yığın izi YAKALAR) YERİNE `page_allocator` —
+    // `fiber.zig`nin KENDİ, ÖNCEDEN belgelenmiş "Fiber yığını + DebugAllocator
+    // tuzağı" notu: bir fiber'ın SAHTE önyükleme çerçevesinin fp/lr'si
+    // GERÇEK bir çağrı zincirini TEMSİL ETMEZ — bu YÜZDEN bir fiber
+    // GÖVDESİ İçİNDEN (BURADA: `Channel.send`in `buffer.append`i, ÜRETİCİ/
+    // TÜKETİCİ görevlerin KENDİ fiber'ları İçİNDEN) yapılan bir tahsis,
+    // DebugAllocator'ın çerçeve-yürüme izlemesini GEÇERSİZ belleğe
+    // düşürüp `-Doptimize=ReleaseFast`da GERÇEKTEN SIGSEGV İLE çöktü
+    // (`lldb` İLE doğrulandı: `DebugAllocator.alloc` → `captureCurrentStackTrace`
+    // → `SelfUnwinder.nextInner`, `channel.zig`nin `send`i İçİNDEN).
+    // `channel.zig`/`fiber.zig`nin KENDİ testleri ZATEN AYNI gerekçeyle
+    // `page_allocator` kullanıyor — BURADA da AYNI, KANITLANMIŞ desen.
+    const allocator = std.heap.page_allocator;
+
+    var round: usize = 0;
+    while (round < CHAN_STRESS_ROUNDS) : (round += 1) {
+        const pool = try WorkerPool.create(allocator, 4);
+        defer pool.destroy();
+
+        var ctx = ChanStressCtx{ .pool = pool };
+        try pool.spawnWorkers(*ChanStressCtx, chanStressWorkerEntry, &ctx);
+        chanStressWorkerEntry(pool.rt, 0, &ctx);
+        pool.joinAll();
+
+        var i: usize = 0;
+        while (i < CHAN_STRESS_N_PRODUCERS) : (i += 1) {
+            try testing.expectEqual(scheduler_mod.Task(void).COMPLETED, ctx.producer_tasks[i].state.load(.acquire));
+            allocator.destroy(ctx.producer_tasks[i]);
+        }
+        try testing.expectEqual(scheduler_mod.Task(void).COMPLETED, ctx.consumer_task.state.load(.acquire));
+        allocator.destroy(ctx.consumer_task);
+        i = 0;
+        while (i < CHAN_STRESS_N_PRODUCERS) : (i += 1) {
+            try testing.expect(ctx.seen[i].load(.seq_cst));
+        }
+    }
 }

@@ -298,7 +298,15 @@ pub const QbeAllocSize = qbe_emit.QbeAllocSize;
 /// `.qbe` VARSAYILAN — TÜM mevcut davranış BUNUNLA DEĞİŞMEDEN kalır.
 /// `.llvm`, HER `qbeX` metodunun `qbe_emit.zig` YERİNE `llvm_emit.zig`e
 /// dallanmasını SAĞLAR (aşağıdaki dispatch sarmalayıcılarına bkz.).
-pub const Backend = enum { qbe, llvm };
+///
+/// Faz MN.9.4: `compiler/typecheck/types.zig`den yeniden İHRAÇ edilir
+/// (TANIM ORADA — bkz. onun belge notu, `checker.zig`nin `Checker.
+/// backend` alanının da AYNI enum'ı KULLANABİLMESİ İçİn, DÖNGÜSEL
+/// bağımlılık YARATMADAN) — TÜM mevcut `self.backend == .llvm`/`.qbe`
+/// KULLANIMLARI (BU dosyanın İçİNDE VE 15+ sibling dosyada) DEĞİŞMEDEN
+/// çalışmaya devam eder (enum-literal karşılaştırması bir TİP TAKMA
+/// ADI ÜZERİNDEN ŞEFFAFTIR).
+pub const Backend = @import("../typecheck/types.zig").Backend;
 
 pub const Codegen = struct {
     pub const isFuncInlineEligible = inlining.isFuncInlineEligible;

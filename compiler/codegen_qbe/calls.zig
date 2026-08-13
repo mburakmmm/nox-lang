@@ -1352,7 +1352,15 @@ pub fn genGenericConstruct(self: *Codegen, g: ast.GenericConstruct) CodegenError
     const elem = try self.resolveType(g.type_args[0]);
     const cap_val = try self.genExpr(g.args[0]);
     const ch_t = try self.newTemp();
-    const new_fn_name = if (is_thread_channel) "nox_threadchannel_new" else "nox_channel_new";
+    // Faz MN.9.4: `--release` altında `ThreadChannel[T]`nin ÇALIŞMA-ZAMANI
+    // temsili ARTIK GERÇEKTEN bir `Channel(T)` (`nox_channel_new`) —
+    // `thread_channel.zig`nin ÖZEL çift-self-pipe protokolü (İKİ BAĞIMSIZ
+    // `RuntimeState`yi köprülemek İçİN VARDI, Bölüm 1 SONRASI TEK bir
+    // paylaşılan havuzda ARTIK GEREKMEZ) ATLANIR — Nox-KAYNAK seviyesinde
+    // `ThreadChannel` tip adı KORUNUR (aşağıdaki `.heap = .thread_channel`
+    // etiketi DEĞİŞMEDEN kalır), SADECE ALTTAKİ runtime çağrısı DEĞİŞİR
+    // (bkz. `genThreadChannelOp`/`destroyNonArcValue`nin AYNI MN.9.4 notu).
+    const new_fn_name = if (is_thread_channel and self.backend != .llvm) "nox_threadchannel_new" else "nox_channel_new";
     const new_fn_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{new_fn_name});
     try self.qbeCall(.{ .name = ch_t, .ty = .l }, new_fn_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = cap_val.text } });
 

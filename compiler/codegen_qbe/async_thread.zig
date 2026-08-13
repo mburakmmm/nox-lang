@@ -227,10 +227,36 @@ pub fn genSpawnExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
     try self.qbeCall(.{ .name = closure, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{closure_size}) } });
     try self.qbeStoreL(RT_PARAM, closure);
     for (arg_values, 0..) |av, i| {
+        // Faz MN.9.4: `self.backend == .llvm` İKEN `list`/`class`/`dict`
+        // tipli bir argüman (checker'ın `isSpawnParamSafeType`si BUNLARI
+        // SADECE LLVM altında geçirir, bkz. onun belge notu) kapanışa
+        // YAZILMADAN ÖNCE RETAIN edilir — kapanış (VE onu tüketen `genSpawn
+        // Wrapper`) böylece BAĞIMSIZ, KENDİ sahip olduğu bir referans taşır
+        // (görev BAŞKA bir worker'a ÇALINIP, ÇAĞIRAN çoktan dönmüş/`av`nin
+        // ORİJİNAL kaynağı [YEREL değişken İSE kapsam-sonunda, GEÇİCİ İSE
+        // aşağıdaki `releaseIfTemporary` İLE] serbest bırakılmış OLSA BİLE
+        // GÜVENLE hayatta kalır). `emitInlineRetain`nin KENDİSİ `qbeAtomicAdd`
+        // ÜZERİNDEN (MN.1) GERÇEKTEN atomiktir — QBE'de BU KOD YOLU HİÇ
+        // ÇALIŞMAZ (checker list/class/dict'i `.qbe`de HİÇ GEÇİRMEZ).
+        if (self.backend == .llvm and (av.heap == .list or av.heap == .class or av.heap == .dict)) {
+            try self.emitInlineRetain(av.text, av.heap);
+        }
         const off = 8 + 8 * i;
         const addr = try self.newTemp();
         try self.qbeOp2Imm(addr, .l, "add", closure, @intCast(off));
         try self.qbeStore(av.qtype, av.text, addr);
+    }
+    // Faz MN.9.4: YUKARIDAKİ retain'in EŞLEŞEN yarısı — ÇAĞIRANIN KENDİ
+    // (GEÇİCİYSE) sahipliği BIRAKILIR (kapanış ZATEN KENDİ bağımsız
+    // referansını ALDI); bir DEĞİŞKEN İSE bu NO-OP'tur (`releaseIfTemporary`
+    // SADECE GERÇEKTEN geçici ifadeler İçİn serbest bırakır), değişkenin
+    // KENDİ kapsamı DEĞİŞMEDEN normal şekilde YÖNETMEYE devam eder.
+    if (self.backend == .llvm) {
+        for (call.args, 0..) |a, i| {
+            if (arg_values[i].heap == .list or arg_values[i].heap == .class or arg_values[i].heap == .dict) {
+                try self.releaseIfTemporary(a, arg_values[i]);
+            }
+        }
     }
 
     const wrapper_name = try std.fmt.allocPrint(self.allocator, "spawn_wrap_{d}", .{self.spawn_wrapper_counter});
@@ -315,6 +341,20 @@ pub fn genSpawnWrapper(self: *Codegen, spec: SpawnWrapperSpec) CodegenError!void
         break :blk try self.toPayload(.{ .text = result_t, .qtype = spec.sig.ret.qtype });
     };
 
+    // Faz MN.9.4: `genSpawnExpr`nin `emitInlineRetain`inin EŞLEŞEN yarısı
+    // — `target_fn` parametrelerini ÖDÜNÇ ALIR (bkz. `genThreadStartWrapper`nin
+    // AYNI "çağrı SİTESİ sahipliği ELİNDE TUTAR" sözleşmesi), bu YÜZDEN
+    // kapanışın (BU sarmalayıcının) KENDİ retain edilmiş referansı `target_
+    // fn` DÖNDÜKTEN SONRA BURADA serbest bırakılmalıdır — `.qbe`de BU KOD
+    // YOLU HİÇ ÇALIŞMAZ (checker list/class/dict'i `.qbe`de HİÇ GEÇİRMEZ).
+    if (self.backend == .llvm) {
+        for (spec.sig.params, arg_texts) |p, at| {
+            if (p.heap == .list or p.heap == .class or p.heap == .dict) {
+                try self.releaseValueIfSet(at, p.heap, p.elem_qtype, p.class_name, p.elem_heap_info, p.dict_info);
+            }
+        }
+    }
+
     const closure_size = 8 + 8 * spec.sig.params.len;
     try self.qbeCall(null, "$nox_free", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%argp" }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{closure_size}) } });
     try self.qbeRet(payload.text);
@@ -348,6 +388,32 @@ pub fn genThreadStartExpr(self: *Codegen, c: ast.Call) CodegenError!Value {
     };
     const sig = self.functions.get(fn_name) orelse return error.Unsupported;
     if (sig.params.len != 1) return error.Unsupported;
+
+    // Faz MN.9.4: `--release` altında `nox.thread.start`, GERÇEK bir OS
+    // iş parçacığı AÇAN `$nox_thread_spawn` YERİNE, `genSpawnExpr`in AYNI
+    // mekanizmasını (ARC-heap kapanış + `SpawnWrapperSpec` + `$nox_async_
+    // spawn`) yeniden kullanır — `entry(arg)` sentetik bir spawn-ifadesi
+    // OLARAK inşa edilip DOĞRUDAN `genSpawnExpr`e devredilir (`list`/
+    // `class`/`dict`/`task`/`channel`/`task_local` argümanları İçİn YENİ
+    // retain/release paketlemesi ORADA ZATEN VAR — bkz. onun MN.9.4 notu).
+    // Nox-KAYNAK seviyesinde `ThreadHandle[T]` tip adı KORUNUR (checker
+    // DEĞİŞMEDİ, `--release`de de `.qbe`de de AYNI STATİK tip) — SADECE
+    // dönen `Value`nin `.heap` etiketi `.task`tan `.thread_handle`a
+    // ÇEVRİLİR: İKİSİNİN ÇALIŞMA-ZAMANI temsili ZATEN BİREBİR AYNIDIR
+    // (bir `*Task(i64)` işaretçisi) — TEK fark, `destroyNonArcValue`/
+    // `genThreadHandleJoin`nin (bkz. onların MN.9.4 notları) HANGİ
+    // runtime fonksiyonlarını ÇAĞIRACAĞINI seçen STATİK dispatch
+    // etiketidir.
+    if (self.backend == .llvm) {
+        const arg_arr = try self.allocator.alloc(ast.Expr, 1);
+        arg_arr[0] = c.args[1];
+        const callee_expr = try self.allocator.create(ast.Expr);
+        callee_expr.* = .{ .identifier = fn_name };
+        const synthetic: ast.Expr = .{ .call = .{ .callee = callee_expr, .args = arg_arr } };
+        var result = try self.genSpawnExpr(synthetic);
+        result.heap = .thread_handle;
+        return result;
+    }
 
     const arg_v0 = try self.genExpr(c.args[1]);
     const arg_v = try self.convert(arg_v0, sig.params[0].qtype);
@@ -645,7 +711,12 @@ pub fn genPoolRunGlobalsDeinitWrapper(self: *Codegen, wrapper_name: []const u8) 
 pub fn genThreadHandleJoin(self: *Codegen, a: ast.Attribute) CodegenError!Value {
     const handle_val = try self.genExpr(a.obj.*);
     const payload_t = try self.newTemp();
-    try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_thread_join", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handle_val.text } });
+    // Faz MN.9.4: `--release` altında `handle_val.text` GERÇEKTEN bir
+    // `*Task(i64)`dir (bkz. `genThreadStartExpr`nin MN.9.4 notu) — `$nox_
+    // async_await` `$nox_thread_join` İLE BİREBİR AYNI ŞEKLİ (`(rt,
+    // işaretçi) -> i64 payload`) taşıdığından SADECE sembol adı DEĞİŞİR.
+    const join_sym = if (self.backend == .llvm) "$nox_async_await" else "$nox_thread_join";
+    try self.qbeCall(.{ .name = payload_t, .ty = .l }, join_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handle_val.text } });
     const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, handle_val.elem_qtype);
     return valueFromElemDescriptor(converted.text, converted.qtype, handle_val.elem_heap_info, handle_val.elem_is_str);
 }
@@ -772,6 +843,15 @@ pub fn genTaskLocalOp(self: *Codegen, tl_val: Value, a: ast.Attribute, args: []c
 /// `_val`/`_str` ikili API'sinin GEREĞİ) GÖRE `_val`/`_str` varyantı
 /// SEÇER.
 pub fn genThreadChannelOp(self: *Codegen, a: ast.Attribute, args: []const ast.Expr, ch_val: Value) CodegenError!Value {
+    // Faz MN.9.4: `--release` altında `ch_val.text` GERÇEKTEN bir
+    // `Channel(T)*`dir (bkz. `genGenericConstruct`nin MN.9.4 notu —
+    // `nox_channel_new` ile inşa edildi) — `genChannelOp`in AYNI şekli
+    // (`(self, a, args, ch_val) -> Value`) taşıdığından DOĞRUDAN devredilir
+    // (`nox_channel_send`/`_recv`, ZATEN her `T` İçİn ÇALIŞAN, MN.9.1'de
+    // çapraz-worker GÜVENLİ hale getirilmiş mekanizma). `.qbe` dalı
+    // BİREBİR DEĞİŞMEDEN kalır (`nox_threadchannel_*`nin `_val`/`_str`
+    // ikili API'si).
+    if (self.backend == .llvm) return self.genChannelOp(a, args, ch_val);
     if (std.mem.eql(u8, a.attr, "send")) {
         if (args.len != 1) return error.Unsupported;
         const v = try self.genExpr(args[0]);

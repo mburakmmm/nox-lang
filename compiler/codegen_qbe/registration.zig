@@ -1274,14 +1274,32 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt) CodegenError!void {
     try self.qbeFuncParam(.w, "%argc", true);
     try self.qbeFuncParam(.l, "%argv", false);
     try self.qbeFuncHeaderEnd();
-    try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, "$nox_runtime_init", &.{});
+    // Faz MN.9.2: `--release` altında `$main`in KENDİSİ otomatik olarak
+    // bir `WorkerPool` kurar — `nox_pool_main_init`, `$nox_runtime_init`in
+    // YAPTIĞI HER ŞEYİ yapar (TEK, PAYLAŞILAN `RuntimeState`) + `$main`in
+    // OS iş parçacığını slot 0'a BAĞLAR. `$nox_async_init`in ARTIK
+    // DEĞİŞMESİ GEREKMEZ — `state.worker_pool` ZATEN DOLU olduğundan
+    // OTOMATİK `attachToPool` çağırır (bkz. `bridge.zig`nin belge notu).
+    // QBE dalı BİREBİR AYNI kalır (`self.backend == .qbe` İKEN ATOMİK
+    // OLMAYAN inline ARC retain/release YÜZÜNDEN paylaşılan-havuz MN.9
+    // ailesinin TAMAMI GÜVENSİZDİR — bkz. `pool_bridge.zig`nin backend
+    // sınırı notu).
+    if (self.backend == .llvm) {
+        try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, "$nox_pool_main_init", &.{});
+    } else {
+        try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, "$nox_runtime_init", &.{});
+    }
     try self.qbeCall(null, "$nox_os_init", &.{ .{ .ty = .w, .text = "%argc" }, .{ .ty = .l, .text = "%argv" } });
     try self.qbeCall(null, "$nox_async_init", &.{.{ .ty = .l, .text = RT_PARAM }});
     // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
     // `$main_body`nin GERÇEK üst-düzey deyimleri (bkz. `genStmts` çağrısı
     // YUKARIDA) çalıştırılmadan ÖNCE — `$main_body` BİR GÖREV olarak
     // spawn edilir, bu YÜZDEN init BURADA (spawn'DAN ÖNCE), `$main_body`nin
-    // KENDİSİNDE DEĞİL.
+    // KENDİSİNDE DEĞİL. `--release` altında BU, driver'ın (slot 0'ın)
+    // KENDİ globals'ıdır — MN.8'in `pool_run` düzeltmesiyle AYNI "doğrudan,
+    // koşulsuz, run()'dan bağımsız" desen (entry_task'ın ÇALINABİLİRLİĞİNDEN
+    // TAMAMEN BAĞIMSIZ, ÇÜNKÜ BURADA HİÇ bir fiber'ın GÖVDESİNE GÖMÜLÜ
+    // DEĞİL — düz, sıralı `$main` kodu).
     if (self.module_globals.count() > 0) {
         try self.qbeCall(null, "$nox_init_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
     }
@@ -1290,6 +1308,28 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt) CodegenError!void {
     try self.qbeStoreL(RT_PARAM, closure_t);
     const task_t = try self.newTemp();
     try self.qbeCall(.{ .name = task_t, .ty = .l }, "$nox_async_spawn", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "$main_body" }, .{ .ty = .l, .text = closure_t } });
+    // Faz MN.9.2: kardeş worker'lar `$main_body` GÖREVİ spawn EDİLDİKTEN
+    // HEMEN SONRA başlatılır — MN.8'in KENDİ, KANITLANMIŞ sıralama
+    // düzeltmesiyle TUTARLI (entry görevi HER ZAMAN kardeşler BAŞLAMADAN
+    // ÖNCE spawn EDİLMELİDİR, AKSİ HALDE `pool_live_count==0` GÖREN bir
+    // kardeş HEMEN döner VE o görevi SONSUZA KADAR kaçırabilir).
+    var main_ginit_name: ?[]const u8 = null;
+    var main_gdeinit_name: ?[]const u8 = null;
+    if (self.backend == .llvm) {
+        var ginit_sym: []const u8 = "0";
+        var gdeinit_sym: []const u8 = "0";
+        if (self.module_globals.count() > 0) {
+            main_ginit_name = try std.fmt.allocPrint(self.allocator, "main_pool_ginit", .{});
+            main_gdeinit_name = try std.fmt.allocPrint(self.allocator, "main_pool_gdeinit", .{});
+            ginit_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{main_ginit_name.?});
+            gdeinit_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{main_gdeinit_name.?});
+        }
+        try self.qbeCall(null, "$nox_pool_main_spawn_workers", &.{
+            .{ .ty = .l, .text = RT_PARAM },
+            .{ .ty = .l, .text = ginit_sym },
+            .{ .ty = .l, .text = gdeinit_sym },
+        });
+    }
     const run_result_t = try self.newTemp();
     try self.qbeCall(.{ .name = run_result_t, .ty = .w }, "$nox_async_run_to_completion", &.{.{ .ty = .l, .text = RT_PARAM }});
     const deadlock_label = try self.newLabel("deadlock");
@@ -1304,7 +1344,21 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt) CodegenError!void {
     if (self.module_globals.count() > 0) {
         try self.qbeCall(null, "$nox_deinit_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
     }
-    try self.qbeCall(null, "$nox_runtime_deinit", &.{.{ .ty = .l, .text = RT_PARAM }});
+    if (self.backend == .llvm) {
+        try self.qbeCall(null, "$nox_pool_main_join_and_destroy", &.{.{ .ty = .l, .text = RT_PARAM }});
+    } else {
+        try self.qbeCall(null, "$nox_runtime_deinit", &.{.{ .ty = .l, .text = RT_PARAM }});
+    }
     try self.qbeRet("0");
     try self.qbeFuncEnd();
+
+    // Faz MN.9.2: kardeş worker'ların KENDİ slotu İçİn modül-global
+    // ilklendirme/temizleme sarmalayıcıları — `$main`nin KENDİ `qbeFuncEnd`ı
+    // SONRASI (YENİ, BAĞIMSIZ fonksiyonlar), SADECE kaydedildilerse
+    // (`module_globals.count() > 0`) üretilir — MN.8'in `pool_run_wrappers`
+    // TÜKETİM DÖNGÜSÜNÜN (`codegen.zig`) AYNI desenini BURADA DOĞRUDAN
+    // (TEMBEL bir kuyruk GEREKMEDEN, `genMainAsync` ZATEN TEK SEFERLİK VE
+    // İYİ-TANIMLI bir noktada çağrıldığından) uygular.
+    if (main_ginit_name) |n| try self.genPoolRunGlobalsInitWrapper(n);
+    if (main_gdeinit_name) |n| try self.genPoolRunGlobalsDeinitWrapper(n);
 }

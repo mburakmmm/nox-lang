@@ -14547,6 +14547,90 @@ geçmişi); `zig build bench -Doptimize=ReleaseFast`nin TAM çıktısı
 `benchmarks/RESULTS.md`ye, özet tabloları `README.md`/`README.en.md`ye
 yansıtıldı.
 
+## 3.87 `noxc build --release`: deneysel LLVM backend'i + gerçek, paylaşılan M:N iş-çalan (work-stealing) zamanlayıcı
+
+§3.46 (Faz AA.1) M:N (çok çekirdekli, paylaşılan) bir fiber zamanlayıcıyı
+DEĞERLENDİRİP REDDETMİŞTİ — GEREKÇE: ARC refcount'ları atomik DEĞİLDİ
+(bkz. §3.40'ın Faz X.3 kararı) VE QBE'nin HİÇ atomik instruction'ı YOK,
+bu YÜZDEN atomik ARC'a geçmek TÜM inline retain/release'leri gerçek
+fonksiyon çağrısına düşürüp GG serisinin (§3.66) kazandığı performansı
+GERİ VERİRDİ. Bu bölüm, o kararı AÇIP DEĞİŞTİRMEZ — QBE (varsayılan,
+bayraksız `noxc build`) BİREBİR AYNI, tek-iş-parçacıklı (M:1) model
+olarak KALIR. Bunun yerine, `noxc build --release` (macOS/arm64,
+DENEYSEL) altında İKİNCİ, LLVM tabanlı (`clang -O2`) bir backend
+EKLENDİ — LLVM'in GERÇEK `atomicrmw` atomik instruction'larına sahip
+OLMASI SAYESİNDE, atomik ARC maliyetini SADECE bu opt-in yola HAPSEDEREK
+§3.46'nın kök engelini BY-PASS eder.
+
+**LLVM backend'i (LLVM.1-8, `compiler/codegen_qbe/llvm_emit.zig`):**
+`codegen.zig`nin `qbeX` seam'i (204-fixture'lık IR-diff aracıyla,
+byte-birebir, davranış DEĞİŞMEDEN çıkarıldı — bkz. §"IR-extraction"
+notları) HER metodu ya `qbe_emit.zig`ye (QBE metni, DEĞİŞMEDEN) ya
+`llvm_emit.zig`ye (GERÇEK LLVM IR) dallandıran TEK bir dispatch
+noktasıdır — `Codegen.backend: enum{qbe, llvm}`. `--release`, `.ssa`/
+`qbe`/`cc` boru hattı YERİNE TEK bir `clang -O2 <dosya>.ll noxrt.o -lm`
+çağrısı kullanır. Kapsam BİLİNÇLİ olarak sınıf-makinesi/closure/exception/
+async/lowlevel DAHİL TÜM dile GENİŞTİR (float HARİÇ, HÂLÂ Kapsam DIŞI) —
+İLK taslağın "minimal aritmetik" varsayımı, `core.nox`nin (Exception/
+ValueError/JsonValue) HER programa KOŞULSUZ birleştirilmesi YÜZÜNDEN
+YANLIŞ ÇIKIP genişletildi. `qbeAlloc`nin `mem2reg`i engelleyen bir
+`ptrtoint`-erken-materyalizasyon deseni (bulunup düzeltildi, `json_bench`
+51s→28s) DIŞINDA, İKİ backend'in ÜRETTİĞİ programlar 30/30 benchmark'ta
+davranışsal olarak eşleşir.
+
+**M:N iş-çalan (work-stealing) zamanlayıcı (MN.1-9, `runtime/async_rt/`):**
+`--release` altında (SADECE) ATOMİK ARC (`ownership.zig`nin inline
+retain/predecrement'i LLVM'de GERÇEK `atomicrmw`, QBE'de DEĞİŞMEDEN
+düz `add`/`sub`), Lê/Pop/Cohen/Zappa Nardelli tarzı Chase-Lev work-
+stealing kuyrukları, kooperatif bir "dünyayı-durdur" (STW) bariyeri
+(mevcut Bacon-Rajan döngü-çözücünün tek-iş-parçacıklı varsayımını
+BOZMADAN paylaşılan bir ARC yığınında GÜVENLE çalışmasını sağlayan),
+havuz-çapında YAKLAŞIK (bir "aktivite epoch"uyla sızıntı-önlenmiş)
+kilitlenme (deadlock) tespiti İNŞA EDİLDİ. **`--release` altında BU
+zamanlayıcı HER YERDE ŞEFFAFTIR** (Faz MN.9, kullanıcı isteği "artık
+release dendiğinde m:n çalışsın heryerde"): `$main`in KENDİSİ (herhangi
+bir async yapı — `spawn`/`await`/`nox.thread`/`Channel[T]` — KULLANAN
+HER programda) program başlangıcında OTOMATİK olarak bir worker havuzu
+kurar (CPU çekirdek sayısı kadar, `NOX_POOL_WORKERS` ortam değişkeniyle
+YAPILANDIRILABİLİR) — kod DEĞİŞİKLİĞİ/opt-in GEREKMEZ, sıradan `spawn`/
+`await` DAHİ çapraz-çekirdek çalınabilir hale gelir. `nox.thread.
+pool_run`/`nox.http.serve_multicore` ARTIK BU aynı otomatik havuza
+DÜZLEŞTİRİLİR (YENİ bir OS iş parçacığı/havuz İNŞA ETMEZLER); `nox.
+thread.start`/`ThreadChannel[T]` (paylaşımsız, Katman 1/2 API'si)
+`--release` altında AYNI havuza BİRLEŞİR — Nox-KAYNAK sözdizimi
+(`ThreadHandle[T]`/`.join()`/`ThreadChannel[T]`) HİÇ DEĞİŞMEZ, SADECE
+ÇALIŞMA-ZAMANI temsilleri İçSEL olarak `Task[T]`/`Channel[T]`ye
+eşdeğer hale gelir VE argüman/dönüş tip kısıtı GENİŞLER (`list`/sınıf/
+`dict` DE artık taşınabilir — `--release`-SINIRLI, YENİ retain/release-
+farkındalıklı kapanış paketleme İLE, bkz. `stdlib/nox/thread.nox`nin
+GÜNCEL modül belgesi).
+
+**Bilinçli v1 sınırlamaları:** `--release` SADECE macOS/arm64'e kapsamlı
+(Windows/Linux LLVM çağrısı ELE ALINMADI); float'lar TAMAMEN LLVM
+yolunun DIŞINDA; `noxc check`/`noxc expand` HER ZAMAN `.qbe` kurallarını
+uygular (BİLİNÇLİ taşınabilirlik-maliyeti — `--release`e ÖZGÜ bir
+programın KAYNAK KODU `noxc check`te HATA verebilir, AYNI kaynak `noxc
+build --release` İLE GERÇEKTEN DERLENEBİLİR); döngü-çözücünün otomatik
+eşik-tetiklemesi paylaşılan bir havuzda STW bariyeri ÜZERİNDEN çalışır
+(SADECE havuzsuz/tek-iş-parçacıklı `RuntimeState`lerde eski, doğrudan
+yol kullanılır). Uygulama BOYUNCA (MN.1-9) TOPLAM 15+ GERÇEK, deneyerek
+bulunan hata (kayıp-uyandırma yarışları, yanlış-hedefli çapraz-worker
+uyandırmalar, modül-global başlatma boşlukları, YANLIŞ-pozitif kilitlenme
+tespitleri, DebugAllocator/fiber-yığını etkileşimleri DAHİL) bulunup
+düzeltildi — TAM liste VE her birinin kök-neden analizi proje planı
+arşivinde belgelidir.
+
+**Doğrulama disiplini (HER alt-faz İçİn TEKRARLANAN):** `codegen_ir_diff_
+test.zig` (204 fixture, byte-birebir) — QBE yolunun BU FAZ BOYUNCA
+SIFIR değiştiğinin kanıtı (TÜM yeni davranış `self.backend == .llvm`e
+KAPILI); `zig build test` (Debug + ReleaseFast, TAM takım); `async-rt-
+test` (standalone, `runtime/alloc/`den BAĞIMSIZ Windows-CI hedefi);
+`worker-pool-test`; 30/30 benchmark'ın HER İKİ backend'de de derlenip
+(davranışsal olarak) eşleştiği taraması; GERÇEK, derlenip ÇALIŞTIRILMIŞ
+`.nox` fixture'ları (senkron Zig birim testleri DEĞİL) — ÖZELLİKLE
+zamanlamaya-duyarlı düzeltmeler İçİn TEK bir geçişin YETERLİ olmadığı,
+6-20+ ard arda tekrarın standart olduğu bir disiplinle.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

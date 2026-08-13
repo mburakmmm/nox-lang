@@ -385,6 +385,18 @@ pub const Checker = struct {
     /// tarafından doldurulur, `check()` tarafından `CheckOutcome.err.all`e
     /// kopyalanır.
     diagnostics: std.ArrayListUnmanaged(Diagnostic) = .empty,
+    /// Faz MN.9.4: `isThreadTransferSafeType`nin (bkz. onun belge notu)
+    /// backend-farkındalı gevşetmesi İçİn — VARSAYILAN `.qbe` (TÜM MEVCUT
+    /// çağrı SİTELERİ/testler/golden fixture'lar BUNU BEKLER, SIFIR
+    /// davranış değişikliği). SADECE `compiler/main.zig`nin `buildOne`si,
+    /// `--release` İKEN (backend ZATEN `codegen.Backend`e ÇÖZÜLDÜKTEN
+    /// SONRA, `checkModule` ÇAĞRILMADAN ÖNCE) BUNU `.llvm` OLARAK
+    /// AYARLAR — `cmdCheck`/`cmdExpand` (HİÇ `--release` KAVRAMI OLMAYAN
+    /// komutlar) HİÇ dokunmaz, VARSAYILANDA KALIR (BİLİNÇLİ taşınabilirlik-
+    /// maliyeti: `noxc check`, `list`/`class`/`dict` taşıyan bir `nox.
+    /// thread.start`ı HATA olarak İŞARETLER, AYNI program `noxc build
+    /// --release` İLE GERÇEKTEN DERLENEBİLİR OLSA BİLE).
+    backend: types.Backend = .qbe,
 
     pub fn init(allocator: std.mem.Allocator) Checker {
         return .{ .allocator = allocator };
@@ -932,7 +944,25 @@ pub const Checker = struct {
     /// `ThreadChannel[T]` parametresi ASLA ALAMAZDI, ki Katman 2'nin
     /// TÜM AMACI TAM OLARAK BUDUR (bir kanalın `nox.thread.start`ın `arg`ı
     /// olarak çocuk iş parçacığına GEÇİRİLMESİ).
-    fn isSpawnParamSafeType(t: Type) bool {
+    /// Faz MN.9.4: `self.backend == .llvm` İKEN `list`/`class`/`dict`
+    /// DE İZİN VERİLİR — `async_thread.zig`nin `genSpawnExpr`/
+    /// `genSpawnWrapper`si `--release` altında (LLVM-only ATOMİK
+    /// `qbeAtomicAdd`/`qbeAtomicSub`, MN.1'in ZATEN inşa ettiği) YENİ
+    /// retain/release-farkındalıklı kapanış paketleme KAZANDIĞINDAN
+    /// (bkz. onların belge notu) — BU GEVŞETME `nox.thread.start`ın
+    /// `--release` altında `genSpawnExpr`in AYNI mekanizmasını yeniden
+    /// KULLANMASININ (bkz. `genThreadStartExpr`) ÖN KOŞULUDUR: `entry`
+    /// bir `async def` OLDUĞUNDAN, KENDİ parametre tipleri BURADA
+    /// (ÇAĞRI MEKANİZMASINDAN — `spawn` mı `thread.start` mı —
+    /// BAĞIMSIZ, TANIM ANINDA) denetlenir. `.qbe` dalı BİREBİR
+    /// DEĞİŞMEDEN kalır.
+    fn isSpawnParamSafeType(self: *const Checker, t: Type) bool {
+        if (self.backend == .llvm) {
+            return switch (t) {
+                .int, .float, .boolean, .str, .none, .task, .channel, .ptr, .thread_channel, .task_local, .list, .class, .dict => true,
+                .thread_handle, .func, .optional => false,
+            };
+        }
         return switch (t) {
             .int, .float, .boolean, .str, .none, .task, .channel, .ptr, .thread_channel, .task_local => true,
             // Faz FF.6: bilinçli v1 sınırlaması — `isFfiSafeType`in AYNI
@@ -963,7 +993,24 @@ pub const Checker = struct {
     /// BUDUR (Katman 2'nin İKİ iş parçacığı ARASINDA gerçek iletişim
     /// sağlaması İÇİN `nox.thread.start`ın `arg`ı olarak GEÇİRİLEBİLMESİ
     /// GEREKİR).
-    fn isThreadTransferSafeType(t: Type) bool {
+    /// Faz MN.9.4: `self.backend == .llvm` İKEN İKİ AŞAMALI GEVŞETİLİR
+    /// (bkz. proje planı, "Gevşetilmiş tip kümesi, İKİ AŞAMALI" tasarım
+    /// notu) — `.qbe` DALI BİREBİR DEĞİŞMEDEN kalır (paylaşımsız model,
+    /// SIFIR regresyon riski): (1) `isSpawnParamSafeType`nin KÜMESİ
+    /// (task/channel/task_local EKLENİR — ÜCRETSİZ, sıradan `spawn`ın
+    /// ZATEN yaptığı ARC-siz FFI paketlemeyi yeniden kullanır, ÇÜNKÜ
+    /// `--release` altında `nox.thread.start`/`ThreadChannel[T]` ARTIK
+    /// AYNI paylaşılan havuza/`Task[T]`/`Channel[T]`ye İNDİRGENİR — bkz.
+    /// `genThreadStartExpr`/`genThreadChannelOp`nin `--release` dalları);
+    /// (2) `list`/`class`/`dict` (YENİ, `async_thread.zig`nin `--release`-
+    /// SINIRLI retain/release-farkındalı kapanış paketlemesi GEREKTİRİR).
+    fn isThreadTransferSafeType(self: *const Checker, t: Type) bool {
+        if (self.backend == .llvm) {
+            return switch (t) {
+                .int, .float, .boolean, .str, .none, .ptr, .thread_channel, .task, .channel, .task_local, .list, .class, .dict => true,
+                .thread_handle, .func, .optional => false,
+            };
+        }
         return switch (t) {
             .int, .float, .boolean, .str, .none, .ptr, .thread_channel => true,
             // Faz FF.6: bilinçli v1 sınırlaması — `isFfiSafeType`in AYNI
@@ -1021,8 +1068,8 @@ pub const Checker = struct {
             // (Task[T]'nin T'si) bu kısıta TABİ DEĞİLDİR (dönüş zaten sıfır
             // maliyetli bir taşımadır, ekstra paketleme gerekmez).
             for (fd.params, 0..) |p, i| {
-                if (!isSpawnParamSafeType(params[i])) {
-                    return self.fail(error.TypeMismatch, "'async def {s}': parametre '{s}' desteklenmeyen bir tipte (v0.1'de spawn kapanışı yalnızca int/float/bool/str/None/Task[T]/Channel[T]/ThreadChannel[T] parametreleri paketleyebilir)", .{ fd.name, p.name });
+                if (!self.isSpawnParamSafeType(params[i])) {
+                    return self.fail(error.TypeMismatch, "'async def {s}': parametre '{s}' desteklenmeyen bir tipte (yalnızca int/float/bool/str/None/Task[T]/Channel[T]/ThreadChannel[T] parametreleri paketleyebilir, --release altında ayrıca list/class/dict)", .{ fd.name, p.name });
                 }
             }
         }
@@ -1535,11 +1582,11 @@ pub const Checker = struct {
         if (sig.params.len != 1) {
             return self.fail(error.TypeMismatch, "'nox.thread.start': 'entry' TAM OLARAK bir parametre almalı", .{});
         }
-        if (!isThreadTransferSafeType(sig.params[0])) {
-            return self.fail(error.TypeMismatch, "'nox.thread.start': 'entry'in parametre tipi iş parçacıkları arası güvenli değil (yalnızca int/float/bool/str/None/ptr)", .{});
+        if (!self.isThreadTransferSafeType(sig.params[0])) {
+            return self.fail(error.TypeMismatch, "'nox.thread.start': 'entry'in parametre tipi iş parçacıkları arası güvenli değil (yalnızca int/float/bool/str/None/ptr, --release altında ayrıca task/channel/list/class/dict)", .{});
         }
-        if (!isThreadTransferSafeType(sig.return_type)) {
-            return self.fail(error.TypeMismatch, "'nox.thread.start': 'entry'in dönüş tipi iş parçacıkları arası güvenli değil (yalnızca int/float/bool/str/None/ptr)", .{});
+        if (!self.isThreadTransferSafeType(sig.return_type)) {
+            return self.fail(error.TypeMismatch, "'nox.thread.start': 'entry'in dönüş tipi iş parçacıkları arası güvenli değil (yalnızca int/float/bool/str/None/ptr, --release altında ayrıca task/channel/list/class/dict)", .{});
         }
 
         const arg_t = try self.checkExpr(ctx, c.args[1]);
@@ -2672,8 +2719,8 @@ pub const Checker = struct {
                 return self.fail(error.UnknownType, "'ThreadChannel' tam olarak bir tip argümanı alır", .{});
             }
             const elem_t = try self.typeExprToType(g.type_args[0]);
-            if (!isThreadTransferSafeType(elem_t)) {
-                return self.fail(error.TypeMismatch, "'ThreadChannel' eleman tipi yalnızca int/float/bool/str/None/ptr olabilir", .{});
+            if (!self.isThreadTransferSafeType(elem_t)) {
+                return self.fail(error.TypeMismatch, "'ThreadChannel' eleman tipi yalnızca int/float/bool/str/None/ptr olabilir (--release altında ayrıca task/channel/list/class/dict)", .{});
             }
             if (g.args.len != 1) {
                 return self.fail(error.ArgumentCountMismatch, "'ThreadChannel' kurucusu tam olarak 1 argüman (capacity: int) alır", .{});

@@ -97,6 +97,10 @@ pub export fn nox_async_init(rt: ?*anyopaque) void {
     // `null` dönmesi kadar SON DERECE nadir bir kaynak tükenmesi senaryosudur
     // (bkz. `markReady`in AYNI gerekçeyle kullandığı `@panic`).
     g_scheduler = scheduler_mod.Scheduler.init(allocatorFromRt(rt)) catch @panic("async zamanlayici baslatilamadi (kqueue)");
+    // Faz MN.9.1: `scheduler.zig`nin standalone `currentScheduler()`ıyla
+    // eşitlenir — bkz. onun belge notu (`Channel[T]`nin çapraz-worker
+    // düzeltmesi BUNA dayanır).
+    scheduler_mod.setCurrentScheduler(&g_scheduler.?);
 
     // Faz MN.4/5: `rt`nin `RuntimeState.worker_pool`u SET İSE (bkz.
     // `worker_pool.zig`nin `WorkerPool.create`ı) bu OS iş parçacığı bir
@@ -127,6 +131,12 @@ pub export fn nox_async_init(rt: ?*anyopaque) void {
             .collect_fn = &cycle_detector.nox_cycle_collect,
             .rt = rt,
         }) catch {};
+        // Faz MN.9.3: `pool_bridge.zig`nin `broadcastRunOnEachWorker`ının
+        // (bkz. `nox_pool_serve`) BU worker'ı `scheduler.spawnToForeignScheduler`
+        // İLE HEDEFLEYEBİLMESİ İçİn KENDİ `*Scheduler`ını (`attachToPool`
+        // BAŞARILI OLDUKTAN SONRA, ARTIK GÜVENLE ÇALINABİLİR/uyandırılabilir
+        // OLDUĞUNDA) yayınlar.
+        state.pool_scheduler_ptrs[slot].store(&g_scheduler.?, .release);
     }
 }
 
@@ -141,6 +151,7 @@ pub export fn nox_async_deinit(rt: ?*anyopaque) void {
     _ = rt;
     if (g_scheduler) |*s| s.deinit();
     g_scheduler = null;
+    scheduler_mod.setCurrentScheduler(null);
 }
 
 /// `func(arg)`i hemen bir yeşil iş parçacığında başlatır, bir `Task`

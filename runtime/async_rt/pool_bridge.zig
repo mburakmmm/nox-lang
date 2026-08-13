@@ -62,6 +62,7 @@ const bridge = @import("bridge.zig");
 const io_mod = @import("io.zig");
 const http_client = @import("../stdlib_shims/http_client.zig");
 const worker_pool_mod = @import("worker_pool.zig");
+const scheduler_mod = @import("scheduler.zig");
 
 /// Faz MN.7a: `poolWorkerMain`nin (aşağıda) SADECE slot 0'da ÇAĞIRACAĞI,
 /// codegen'in SENTEZLEDİĞİ `entry()` sarmalayıcısı (bkz. `compiler/
@@ -150,6 +151,112 @@ fn poolWorkerMain(rt: *anyopaque, slot: usize, ctx: *PoolRunCtx) void {
     if (ctx.globals_deinit_fn) |f| _ = f(rt);
 }
 
+// ---- Faz MN.9.2: `--release` altında `$main`in KENDİSİNİN otomatik bir
+// havuz kurması — `nox.thread.pool_run`ın AKSİNE, AYRI bir "sürücü" OS
+// iş parçacığına/self-pipe'a GEREK YOK: `$main`in KENDİ OS iş parçacığının
+// KORUYACAĞI bir kardeş fiber YOKTUR (program HENÜZ BAŞLAMADI), bu YÜZDEN
+// `$main`in KENDİSİ DOĞRUDAN, SENKRON olarak `WorkerPool.create`/
+// `spawnWorkers`/`joinAll`/`destroy`yi çağırabilir — `poolRunDriverThreadMain`nin
+// TÜM İşini yapar, SADECE AYRI bir iş parçacığına SARILMADAN. ----
+
+/// `genMainAsync`nin (`--release` altında) `$nox_runtime_init` YERİNE
+/// çağırdığı İLK adım — `WorkerPool.create`in KENDİ `RuntimeState`sini
+/// kurar (`$main`in OS iş parçacığı OTOMATİK olarak slot 0 OLUR, bkz.
+/// `WorkerPool.create`nin KENDİ `asap.setWorkerSlot(0)` çağrısı) VE
+/// `pool.rt`yi döner — `genMainAsync`nin GERİ KALANI (`$nox_os_init`/
+/// `$nox_async_init`/`$nox_init_globals`/spawn `$main_body`) BUNU
+/// SIRADAN `rt` OLARAK kullanmaya DEVAM eder (`nox_async_init` ZATEN
+/// `state.worker_pool`un DOLU olduğunu görüp OTOMATİK `attachToPool`
+/// çağırır — bkz. `bridge.zig`nin belge notu, BURADA SIFIR YENİ mantık
+/// gerekir).
+fn pickMainWorkerCount() usize {
+    // Kaçış kapısı — küçük/gecikme-duyarlı `--release` betikleri İçİn
+    // `NOX_POOL_WORKERS=1` TAM opt-out sağlar. `std.process`nin YENİ
+    // `Environ` API'si `main`in KENDİ ortam-bloğunu GEREKTİRDİĞİNDEN
+    // (BURADA, `main`in DIŞINDA, YOK) DOĞRUDAN `std.c.getenv` (ham libc,
+    // `runtime/stdlib_shims`nin BAŞKA yerlerde ZATEN kullandığı desen)
+    // kullanılır.
+    if (std.c.getenv("NOX_POOL_WORKERS")) |s| {
+        const slice = std.mem.span(s);
+        if (std.fmt.parseInt(usize, slice, 10)) |n| {
+            return std.math.clamp(n, @as(usize, 1), asap.MAX_POOL_WORKERS);
+        } else |_| {}
+    }
+    const cpu = std.Thread.getCpuCount() catch 1;
+    return std.math.clamp(cpu, @as(usize, 1), asap.MAX_POOL_WORKERS);
+}
+
+pub export fn nox_pool_main_init() callconv(.c) ?*anyopaque {
+    const pool = worker_pool_mod.WorkerPool.create(std.heap.page_allocator, pickMainWorkerCount()) catch @panic("OOM: $main havuzu");
+    return pool.rt;
+}
+
+/// `genMainAsync`nin `$main_body`yi (slot 0'ın GÖREVİ olarak) spawn
+/// ETTİKTEN HEMEN SONRA, `$nox_async_run_to_completion`DAN ÖNCE çağırdığı
+/// adım — MN.8'in KENDİ, KANITLANMIŞ SIRALAMA düzeltmesiyle TUTARLI
+/// (entry görevi HER ZAMAN kardeşler BAŞLAMADAN ÖNCE spawn edilmelidir,
+/// AKSİ HALDE `pool_live_count==0` GÖREN bir kardeş HEMEN döner VE o
+/// görevi SONSUZA KADAR kaçırabilir).
+pub export fn nox_pool_main_spawn_workers(
+    rt: ?*anyopaque,
+    globals_init_fn: ?*const fn (*anyopaque) callconv(.c) i64,
+    globals_deinit_fn: ?*const fn (*anyopaque) callconv(.c) i64,
+) callconv(.c) void {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));
+    const pool: *worker_pool_mod.WorkerPool = @ptrCast(@alignCast(state.worker_pool.?));
+    const ctx = std.heap.page_allocator.create(PoolRunCtx) catch @panic("OOM: $main havuz ctx");
+    // `entry_fn` `poolWorkerMain`nin sibling-worker dalı TARAFINDAN HİÇ
+    // OKUNMAZ (SADECE `globals_init_fn`/`globals_deinit_fn` kullanılır) —
+    // `$main`in KENDİ "entry"si `$main_body`dir, ZATEN driver (slot 0)
+    // TARAFINDAN AYRICA spawn edilmiştir (bkz. `genMainAsync`).
+    ctx.* = .{ .entry_fn = undefined, .globals_init_fn = globals_init_fn, .globals_deinit_fn = globals_deinit_fn };
+    state.main_pool_ctx = ctx;
+    pool.spawnWorkers(*PoolRunCtx, poolWorkerMain, ctx) catch @panic("OOM: $main havuz worker'ları");
+}
+
+/// `genMainAsync`nin `$nox_runtime_deinit` YERİNE (`--release` altında)
+/// çağırdığı SON adım — `$main_body` TAMAMLANDIKTAN (VEYA deadlock İLE
+/// SÜREÇ SONLANDIRILDIKTAN) SONRA çağrılır: TÜM kardeş worker'ların
+/// bitmesini bekler, `main_pool_ctx`yi serbest bırakır (`pool.destroy()`
+/// `state`in KENDİSİNİ FREE ETTİĞİNDEN, `state.main_pool_ctx` BUNDAN
+/// ÖNCE OKUNMALI/serbest bırakılmalı — SIRA KRİTİK), SONRA `pool.destroy()`
+/// (TEK, doğru `nox_runtime_deinit` çağrısı — `WorkerPool.destroy`nün
+/// KENDİ sözleşmesi).
+pub export fn nox_pool_main_join_and_destroy(rt: ?*anyopaque) callconv(.c) void {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));
+    const pool: *worker_pool_mod.WorkerPool = @ptrCast(@alignCast(state.worker_pool.?));
+    pool.joinAll();
+    if (state.main_pool_ctx) |c| std.heap.page_allocator.destroy(@as(*PoolRunCtx, @ptrCast(@alignCast(c))));
+    pool.destroy();
+}
+
+/// Gözlem/test kancası — HANGİ worker slotunun (`asap.currentWorkerSlot()`)
+/// ÇAĞIRAN fiber'ı ÇALIŞTIRDIĞINI raporlar. Faz MN.9.2'nin "sıradan
+/// spawn/await, `pool_run` HİÇ ÇAĞRILMADAN, GERÇEKTEN çapraz-worker
+/// çalışıyor" iddiasını `extern def` ÜZERİNDEN GERÇEK bir `.nox`
+/// programından DOĞRULAMAK İçİn — kalıcı, ucuz bir birincil.
+pub export fn nox_debug_worker_slot() callconv(.c) i64 {
+    return @intCast(asap.currentWorkerSlot());
+}
+
+var debug_slot_seen: std.atomic.Value(u64) = .init(0);
+
+/// ÇAĞIRAN fiber'ın O ANDA çalıştığı worker slotunu (bit olarak) PAYLAŞILAN
+/// bir bitmask'a KAYDEDER — `nox_debug_worker_slot`nin BİRDEN FAZLA
+/// concurrent görev ARASINDAN "kaç FARKLI worker KULLANILDI" sorusuna
+/// tek bir uçtan-uca doğrulama noktasında CEVAP verebilmesi İçİn.
+pub export fn nox_debug_note_slot() callconv(.c) void {
+    const slot = asap.currentWorkerSlot();
+    if (slot < 64) _ = debug_slot_seen.fetchOr(@as(u64, 1) << @intCast(slot), .monotonic);
+}
+
+/// `nox_debug_note_slot`nin BİRİKTİRDİĞİ bitmask'taki FARKLI worker
+/// SAYISINI döner VE bitmask'ı SIFIRLAR (SONRAKİ bir ölçüm turu İçİn).
+pub export fn nox_debug_distinct_count() callconv(.c) i64 {
+    const mask = debug_slot_seen.swap(0, .monotonic);
+    return @popCount(mask);
+}
+
 const PoolRunDriverArgs = struct {
     num_workers: usize,
     ctx: *PoolRunCtx,
@@ -209,6 +316,36 @@ fn poolRunDriverThreadMain(args: *PoolRunDriverArgs) void {
 /// notu — `poolWorkerMain` `entry_fn`i KENDİ, HAVUZUN paylaşılan `rt`sini
 /// `arg` OLARAK GEÇİREREK spawn eder, ÇAĞRI-ANINDA henüz VAR OLMAYAN bir
 /// değeri BURADAN taşımaya GEREK YOK).
+/// Faz MN.9.3: `rt` ZATEN paylaşılan bir havuza AİTSE (bkz. proje planı
+/// Bölüm 2 — `$main`in MN.9.2'de kurduğu OTOMATİK havuz, YA DA dıştaki BİR
+/// `pool_run`/`pool_serve`nin İçİNDEN çağrılan İç İçe bir çağrı) `nox_pool_
+/// run` YENİ bir OS iş parçacığı/havuz İNŞA ETMEZ — `entry_fn`i AKTİF
+/// havuzda SIRADAN bir görev OLARAK spawn edip await EDER (`bridge.nox_
+/// async_spawn`/`nox_async_await`, `poolRunDriverThreadMain`nin `entry_task`
+/// deseniyle AYNI, SADECE ÇAĞIRAN fiber'ın KENDİ scheduler'ında). `globals_
+/// init_fn`/`globals_deinit_fn` BURADA ÇAĞRILMAZ (ARTIK GEREKMEZ — AYNI
+/// `globals_blocks[slot]` ZATEN VAR, `$main`nin/dış havuzun KENDİ init'i
+/// TARAFINDAN ZATEN kuruldu). `num_workers` SESSİZCE YOK SAYILIR (havuzun
+/// boyutu ZATEN SABİTLENDİ) — SERT bir hata DEĞİL, bir uyarı BİLE DEĞİL:
+/// Bölüm 1 SONRASI HER `--release` programının `pool_run`ı `$main`nin
+/// KENDİ otomatik havuzunun İçİNDEN ÇAĞRILDIĞINDAN (`moduleUsesAsync`,
+/// `nox.thread.pool_run` çağrısının KENDİSİNİ BİLE "async kullanımı"
+/// SAYAR — bkz. `exprUsesAsync`nin `matchIntrinsicKind` dalı), BU YOL
+/// İSTİSNA DEĞİL, KURAL haline geldi — HER derlenmiş programda "uyarı"
+/// basmak GÜRÜLTÜDEN başka bir şey OLMAZDI (VE `tests/compat/http_serve_
+/// multicore_pool_golden_test.zig`nin "hiçbir stderr çıktısı=sızıntı YOK"
+/// KANITINI, doğrudan İLGİSİZ bir nedenle, KIRARDI — GERÇEKTEN denenip
+/// bulundu).
+fn poolRunFlattened(rt_ptr: *anyopaque, entry_fn: *const fn (*anyopaque) callconv(.c) i64) i32 {
+    const t = bridge.nox_async_spawn(rt_ptr, entry_fn, rt_ptr) orelse {
+        std.debug.print("nox: nox.thread.pool_run: OOM (ic-ice cagri)\n", .{});
+        std.process.exit(1);
+    };
+    _ = bridge.nox_async_await(rt_ptr, t);
+    bridge.nox_async_destroy_task(rt_ptr, t);
+    return 0;
+}
+
 pub export fn nox_pool_run(
     rt: ?*anyopaque,
     num_workers: i64,
@@ -216,9 +353,15 @@ pub export fn nox_pool_run(
     globals_init_fn: ?*const fn (*anyopaque) callconv(.c) i64,
     globals_deinit_fn: ?*const fn (*anyopaque) callconv(.c) i64,
 ) callconv(.c) i32 {
-    _ = rt; // Bilinçli olarak KULLANILMAZ — bkz. `nox_thread_spawn`nin AYNI
-    // notu: havuzun KENDİ, YENİ `rt`si `WorkerPool.create` TARAFINDAN
-    // kurulur, ÇAĞIRANIN `rt`sine BAĞIMLI DEĞİLDİR.
+    if (rt) |rt_ptr| {
+        const state: *asap.RuntimeState = @ptrCast(@alignCast(rt_ptr));
+        if (state.worker_pool != null) return poolRunFlattened(rt_ptr, entry_fn);
+    }
+    // Havuzsuz (ya da `rt == null` — bkz. `pool_bridge.zig`nin KENDİ birim
+    // testleri) çağrı — BİREBİR ESKİ (MN.9.3 ÖNCESİ) davranış: `rt`
+    // BİLİNÇLİ olarak KULLANILMAZ (bkz. `nox_thread_spawn`nin AYNI notu:
+    // havuzun KENDİ, YENİ `rt`si `WorkerPool.create` TARAFINDAN kurulur,
+    // ÇAĞIRANIN `rt`sine BAĞIMLI DEĞİLDİR).
 
     // `WorkerPool.create`in KENDİ `std.debug.assert`i ReleaseFast'ta
     // SESSİZCE ATLANIR — BU giriş noktası KULLANICI-KONTROLLÜ (bir Nox
@@ -355,6 +498,108 @@ fn poolServeDriverThreadMain(args: *PoolServeDriverArgs) void {
     http_client.closeFd(args.done_write_fd);
 }
 
+/// `broadcastRunOnEachWorker`nin KENDİ ("yayın") tamamlanma muhasebesi —
+/// `n` worker'ın HEPSİ `entry_fn`i BİTİRDİĞİNDE (pratikte HİÇBİR ZAMAN,
+/// bkz. `nox_pool_serve`nin belge notu — accept döngüsü SONSUZA KADAR
+/// döner) `done_write_fd`ye SİNYAL gönderir.
+const BroadcastCtx = struct {
+    remaining: std.atomic.Value(usize),
+    done_write_fd: posix.fd_t,
+    entry_fn: *const fn (*anyopaque) callconv(.c) i64,
+    closure: *PoolServeClosure,
+
+    fn runOne(erased: *anyopaque) callconv(.c) i64 {
+        const self: *BroadcastCtx = @ptrCast(@alignCast(erased));
+        _ = self.entry_fn(self.closure);
+        if (self.remaining.fetchSub(1, .acq_rel) == 1) {
+            http_client.signalSelfPipe(self.done_write_fd);
+        }
+        return 0;
+    }
+};
+
+/// Faz MN.9.3: `nox_pool_serve`nin `rt` ZATEN paylaşılan bir havuza AİTSE
+/// (bkz. `$main`in MN.9.2'de otomatik kurduğu havuz) aldığı yol — YENİ OS
+/// iş parçacıkları AÇMAK YERİNE `entry_fn`in BİR KOPYASINI AKTİF havuzun
+/// HER worker slotuna (ÇAĞIRANIN KENDİSİ DAHİL) `scheduler_mod.
+/// spawnToForeignScheduler` İLE ENJEKTE eder — `worker_pool.zig`nin
+/// `spawnWorkers`i GİBİ YENİ OS iş parçacığı BAŞLATMAZ, SADECE MEVCUT
+/// worker'ların HER BİRİNİN KENDİ `ready` listesine BİR fiber EKLER
+/// (bkz. `spawnToForeignScheduler`nin belge notu — bu ZATEN ÇALIŞAN, ZATEN
+/// `run()`unda olan worker'lar İçİn TAMAMEN GÜVENLİDİR).
+/// `scheduler.zig`nin ÖZEL `sleepMs`iyle AYNI desen (`std.Thread`da bir
+/// `sleep` metodu YOK, bkz. Zig 0.16.0 — `std.c.nanosleep` DOĞRUDAN
+/// kullanılır) — `poolServeFlattened`nin KISA "worker ZATEN hazır mı"
+/// bekleme döngüsü İçİn.
+fn sleepOneMs() void {
+    const ts: std.c.timespec = .{ .sec = 0, .nsec = 1 * std.time.ns_per_ms };
+    _ = std.c.nanosleep(&ts, null);
+}
+
+// Faz MN.9.3: `poolRunFlattened`nin AYNI gerekçesiyle (bkz. onun belge
+// notu) — `num_workers` BURADA da SESSİZCE YOK SAYILIR, HİÇBİR stderr
+// uyarısı BASILMAZ (BU YOL, Bölüm 1 SONRASI, HER `--release` `serve_
+// multicore` çağrısının KURALIDIR, İSTİSNASI DEĞİL).
+fn poolServeFlattened(rt_ptr: *anyopaque, num_workers: i64, entry_fn: *const fn (*anyopaque) callconv(.c) i64, payload: ?*anyopaque) i32 {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt_ptr));
+    const pool: *worker_pool_mod.WorkerPool = @ptrCast(@alignCast(state.worker_pool.?));
+    // KRİTİK (GERÇEK bir hata, DENEYEREK bulundu — bkz. plan dosyasının
+    // "Hatalar" bölümü): `n` ÇAĞIRANIN İSTEDİĞİ `num_workers`e (havuzun
+    // TAMAMINA DEĞİL) SINIRLANMALIDIR. `n = pool.workers.len` (havuzun
+    // TÜM boyutu, `pickMainWorkerCount()`nin CPU-sayısı varsayılanıyla
+    // GENELDE `num_workers`DEN ÇOK DAHA BÜYÜK) KULLANILSAYDI, `max_
+    // connections > 0` OLAN bir accept-döngüsü kopyası HER BİR FAZLA
+    // worker'a da enjekte edilirdi — O worker'lar ASLA GELMEYECEK bir
+    // bağlantıyı SONSUZA KADAR bekler, `pool_live_count` ASLA 0'A
+    // İNMEZ, SÜREÇ ASLA ÇIKMAZ (GERÇEKTEN, `lldb`nin TÜM worker
+    // iş parçacıklarının `kevent`de bloke olduğunu gösteren bir
+    // backtrace'İYLE doğrulandı).
+    const n: usize = @min(@as(usize, @intCast(num_workers)), pool.workers.len);
+
+    const closure = std.heap.page_allocator.create(PoolServeClosure) catch return 1;
+    defer std.heap.page_allocator.destroy(closure);
+    closure.* = .{ .rt = rt_ptr, .payload = payload };
+
+    const fds = http_client.makeSelfPipe() orelse return 1;
+    defer http_client.closeFd(fds[1]);
+
+    const bctx = std.heap.page_allocator.create(BroadcastCtx) catch {
+        http_client.closeFd(fds[0]);
+        return 1;
+    };
+    defer std.heap.page_allocator.destroy(bctx);
+    bctx.* = .{ .remaining = .init(n), .done_write_fd = fds[1], .entry_fn = entry_fn, .closure = closure };
+
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        // `pool_scheduler_ptrs[i]`, O worker'ın KENDİ OS iş parçacığı
+        // `nox_async_init`in `attachToPool`ını TAMAMLADIĞINDA yazılır —
+        // `spawnWorkers`in TRAMPOLİNİ (bkz. `WorkerPool.spawnWorkers`)
+        // BUNU HEMEN ÇAĞIRIR AMA program SIRASI (`$main`nin `spawn_workers`
+        // çağrısı `$main_body` SPAWN EDİLDİKTEN SONRA yapılır — bkz. MN.9.2)
+        // BURAYA ULAŞILDIĞINDA KISA bir başlangıç penceresi HALA MÜMKÜN
+        // olabileceğinden, KISA bir "hazır olana KADAR bekle" döngüsü
+        // GEREKİR.
+        var sched_ptr: ?*anyopaque = null;
+        while (sched_ptr == null) {
+            sched_ptr = state.pool_scheduler_ptrs[i].load(.acquire);
+            if (sched_ptr == null) sleepOneMs();
+        }
+        const sched: *scheduler_mod.Scheduler = @ptrCast(@alignCast(sched_ptr.?));
+        scheduler_mod.spawnToForeignScheduler(sched, BroadcastCtx.runOne, bctx) catch @panic("OOM: nox_pool_serve yayını");
+    }
+
+    if (bridge.currentFiberScheduler()) |scheduler| {
+        var buf: [1]u8 = undefined;
+        _ = io_mod.nonBlockingRead(scheduler, fds[0], &buf) catch {};
+    } else {
+        var buf: [1]u8 = undefined;
+        http_client.readSelfPipe(fds[0], &buf);
+    }
+    http_client.closeFd(fds[0]);
+    return 0;
+}
+
 /// `nox.http.serve_multicore`nin havuz-tabanlı (`--release`) lowering'i
 /// TARAFINDAN üretilen çağrının hedefi (bkz. MN.7b.2, `http_intrinsics.
 /// zig`). Sözleşme `nox_pool_run` İLE BÜYÜK ÖLÇÜDE AYNI (aynı self-pipe
@@ -367,17 +612,24 @@ fn poolServeDriverThreadMain(args: *PoolServeDriverArgs) void {
 /// dönmez, bu YÜZDEN `nox_pool_serve` pratikte programın YAŞAM SÜRESİ
 /// boyunca DÖNMEZ (`nox.http.serve`nin KENDİSİ de AYNI şekilde
 /// SONSUZA KADAR bloke eder).
+///
+/// Faz MN.9.3: `rt` ZATEN paylaşılan bir havuza AİTSE (bkz. `$main`in
+/// otomatik kurduğu havuz), YENİ OS iş parçacıkları AÇAN eski yol YERİNE
+/// `poolServeFlattened`e (yukarısı) YÖNLENDİRİLİR.
 pub export fn nox_pool_serve(
     rt: ?*anyopaque,
     num_workers: i64,
     entry_fn: *const fn (*anyopaque) callconv(.c) i64,
     payload: ?*anyopaque,
 ) callconv(.c) i32 {
-    _ = rt;
-
     if (num_workers < 1 or num_workers > asap.MAX_POOL_WORKERS) {
         std.debug.print("nox: nox.http.serve_multicore: num_workers 1..{d} araliginda olmalidir (verilen: {d})\n", .{ asap.MAX_POOL_WORKERS, num_workers });
         std.process.exit(1);
+    }
+
+    if (rt) |rt_ptr| {
+        const state: *asap.RuntimeState = @ptrCast(@alignCast(rt_ptr));
+        if (state.worker_pool != null) return poolServeFlattened(rt_ptr, num_workers, entry_fn, payload);
     }
 
     const fds = http_client.makeSelfPipe() orelse return 1;

@@ -52,7 +52,10 @@ print(c.value)
   (`class Box[T]:`), and simple single inheritance (`class Derived(Base):`
   — method overriding, `super()`, runtime polymorphic dispatch).
 - **AOT compilation directly to native code via QBE** — no LLVM/MLIR
-  dependency.
+  dependency. `noxc build --release` (macOS/arm64, experimental)
+  OPTIONALLY switches to a second, LLVM-based backend (`clang -O2`) —
+  ONLY for programs that opt into `--release`; the default QBE path is
+  unchanged.
 - **A layered, mostly invisible memory model** (the "Ownership Pyramid"):
   the compiler emits zero-cost ASAP destructors whenever possible, and
   falls back to ARC (reference counting) when ownership is ambiguous —
@@ -61,12 +64,22 @@ print(c.value)
   importing as a library).
 - **A Go-style fiber/cooperative async runtime** (`spawn`/`await`,
   `Task`/`Channel`) plus real concurrent I/O (a kqueue/epoll-based
-  reactor).
-- **Shared-nothing, multi-core thread support** (`nox.thread`) — real OS
-  threads (`ThreadHandle[T]`/`.join()`), each with its own independent
-  fiber runtime, and continuous, bidirectional communication between them
-  (`ThreadChannel[T]`), delivering real parallelism beyond a single OS
-  core.
+  reactor). The default (flagless) build runs cooperatively on a single
+  OS thread (M:1); **under `noxc build --release`, the ENTIRE async
+  runtime transparently attaches to a real, shared M:N work-stealing
+  scheduler** (atomic ARC, Chase-Lev deques, a cooperative stop-the-world
+  cycle collector) — no code changes or opt-in required: `$main` itself
+  spins up a worker pool at startup (sized to the CPU core count by
+  default, configurable via `NOX_POOL_WORKERS`), and even ordinary
+  `spawn`/`await` gets distributed across multiple cores.
+- **Shared-nothing, multi-core thread support** (`nox.thread`) — under
+  the flagless (QBE) build, real OS threads (`ThreadHandle[T]`/`.join()`),
+  each with its own independent fiber runtime, and continuous,
+  bidirectional communication between them (`ThreadChannel[T]`).
+  **Under `--release`, `nox.thread.start`/`ThreadChannel[T]` join the
+  SAME shared M:N pool described above** (with the Nox-source API
+  unchanged) — the argument/return type restriction widens (`list`/class/
+  `dict` become transferable too), delivering real, stealable parallelism.
 - A growing standard library (`nox.http`, `nox.json`, `nox.strings`,
   `nox.math`, `nox.os`/`nox.fs`/`nox.path`, `nox.time`, `nox.random`,
   `nox.crypto` (SHA-256/1/512, HMAC, constant-time compare, secure

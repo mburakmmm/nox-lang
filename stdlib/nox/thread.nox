@@ -16,6 +16,33 @@
 # derlenebilir** — bayraksız `noxc build` İLE derlenirse net bir
 # derleme-zamanı hatasıyla BAŞARISIZ olur.
 #
+# **GÜNCELLEME (Faz MN.9, "her yerde M:N"):** `--release` altında ARTIK
+# `Katman 1`/`Katman 2` de OTOMATİK OLARAK Katman 3'ün paylaşılan havuzuna
+# BİRLEŞİR — `$main`in KENDİSİ (herhangi bir `nox.thread`/`spawn`/`await`
+# kullanan HER `--release` programında) OTOMATİK olarak bir M:N havuzu
+# kurar (bkz. MN.9.2), `nox.thread.start`/`ThreadChannel[T]` bu ANDAN
+# İTİBAREN KENDİ AYRI OS iş parçacığını/`RuntimeState`ini AÇMAZ — `start`
+# GERÇEKTEN `spawn`ın KULLANDIĞI AYNI paylaşılan havuza bir GÖREV olarak
+# katılır (çapraz-worker ÇALINABİLİR), `ThreadChannel[T]` GERÇEKTEN AYNI
+# `Channel[T]` mekanizmasını (MN.9.1'de çapraz-worker güvenli hale
+# getirildi) kullanır. **SONUÇ:** `--release` altında argüman/dönüş tip
+# SINIRI Katman 1/2 İçİn de GENİŞLER — `int/float/bool/str/None/ptr/
+# ThreadChannel[T]`e EK OLARAK `Task[T]`/`Channel[T]`/`TaskLocal[T]` VE
+# **`list[T]`/sınıf örnekleri/`dict[K,V]`** DE artık taşınabilir (YENİ,
+# `--release`-SINIRLI, retain/release-farkındalıklı kapanış paketleme
+# İLE — bkz. `checker.zig`nin `isThreadTransferSafeType`si, `async_thread.
+# zig`nin `genSpawnExpr`/`genSpawnWrapper`si). **Nox-KAYNAK sözdizimi
+# HİÇ DEĞİŞMEDİ** — `ThreadHandle[T]`/`.join()`/`ThreadChannel[T]` AYNI
+# isimler/AYNI API, SADECE `--release` altında ÇALIŞMA-ZAMANI temsilleri
+# İçSEL olarak `Task[T]`/`Channel[T]`ye eşdeğerdir (bkz. `destroyNonArcValue`/
+# `genThreadHandleJoin`/`genThreadChannelOp`nin backend-farkındalı
+# dispatch'i). **Bayraksız `noxc build` (QBE) altında Katman 1/2 BİREBİR
+# ESKİ (paylaşımsız) davranışını KORUR** — argüman/dönüş tip sınırı
+# `int/float/bool/str/None/ptr/ThreadChannel[T]` İLE SINIRLI kalır
+# (list/class/dict/Task/Channel/TaskLocal HÂLÂ QBE'de REDDEDİLİR) —
+# `noxc check` HER ZAMAN QBE kurallarını uygular (bkz. AŞAĞIDAKİ
+# "taşınabilirlik-maliyeti" notu).
+#
 # `nox.http.serve`nin `serve`i GİBİ, `start`/`ThreadHandle[T].
 # join()`/`ThreadChannel[T](capacity)`/`pool_run` GERÇEK bir `func_def`/
 # `class_def` DEĞİLDİR — TAMAMEN checker (`tryResolveThreadSpawnCall`/
@@ -34,13 +61,22 @@
 #       h: ThreadHandle[int] = nox.thread.start(worker, 21)
 #       result: int = await h.join()
 #
-# `start`ın `entry`i (`worker`) `async def` OLMAK ZORUNDADIR — KENDİ
-# TAZE, bağımsız bir OS iş parçacığında, KENDİ bağımsız zamanlayıcısının
-# TEK üst-düzey görevi olarak çalışır (dolayısıyla `entry`in KENDİSİ de
-# `spawn`/`await`/`Channel[T]` KULLANABİLİR). Argüman/dönüş tipi
-# `int/float/bool/str/None/ptr/ThreadChannel[T]` İLE SINIRLIDIR
-# (class/list/dict/Task/Channel/ThreadHandle KAPSAM DIŞI — bkz.
-# checker.zig'in `isThreadTransferSafeType`i).
+# `start`ın `entry`i (`worker`) `async def` OLMAK ZORUNDADIR. Bayraksız
+# `noxc build` (QBE) İLE `worker` KENDİ TAZE, bağımsız bir OS iş
+# parçacığında, KENDİ bağımsız zamanlayıcısının TEK üst-düzey görevi
+# olarak çalışır (dolayısıyla `entry`in KENDİSİ de `spawn`/`await`/
+# `Channel[T]` KULLANABİLİR), argüman/dönüş tipi `int/float/bool/str/
+# None/ptr/ThreadChannel[T]` İLE SINIRLIDIR. `--release` İLE `worker`
+# ARTIK `$main`in KENDİ paylaşılan M:N havuzunda SIRADAN bir görev
+# OLARAK çalışır (bkz. YUKARIDAKİ "GÜNCELLEME" notu) — argüman/dönüş
+# tipi AYRICA `Task[T]/Channel[T]/TaskLocal[T]/list[T]/sınıf/dict[K,V]`yi
+# de KAPSAR (bkz. checker.zig'in `isThreadTransferSafeType`i).
+#
+# **Taşınabilirlik-maliyeti (BİLİNÇLİ, `--release`-SINIRLI özelliklerin
+# HEPSİ İçİn GEÇERLİ):** `noxc check` HER ZAMAN QBE kurallarını
+# uygular — `list[T]`/sınıf/`dict[K,V]` TAŞIYAN bir `nox.thread.start`
+# `noxc check`te HATA olarak İŞARETLENİR, AYNI kaynak `noxc build
+# --release` İLE GERÇEKTEN DERLENEBİLİR olsa BİLE.
 #
 # Katman 2 — iş parçacıkları arasında sürekli, çift-yönlü iletişim
 # (bkz. §3.51-§3.52):
@@ -66,14 +102,26 @@
 # sözdizimini/`.send`/`.recv`(HER İKİSİ de `await` İLE) sözleşmesini
 # KULLANIR, AMA `capacity >= 1` GEREKTİRİR (el-ele teslim/rendezvous,
 # `capacity == 0`, çapraz-iş-parçacığı bağlamda v1 kapsamı DIŞI). `T`
-# `isThreadTransferSafeType`den geçmelidir. `ThreadChannel`nin KENDİSİ
-# (Task/Channel/ThreadHandle'ın AKSİNE) `nox.thread.start`ın `arg`ı
-# olarak GEÇİRİLEBİLİR — bir `*Scheduler` alanı TAŞIMADIĞINDAN (saf
-# page_allocator + OS pipe'ları + spin-kilit), paylaşımı iş parçacığı-
-# GÜVENLİDİR.
+# `isThreadTransferSafeType`den geçmelidir (`--release`de GENİŞ, YUKARIDAKİ
+# küme). `ThreadChannel`nin KENDİSİ (Task/Channel/ThreadHandle'ın AKSİNE)
+# `nox.thread.start`ın `arg`ı olarak GEÇİRİLEBİLİR — bayraksız `noxc
+# build`da bir `*Scheduler` alanı TAŞIMADIĞINDAN (saf page_allocator +
+# OS pipe'ları + spin-kilit) paylaşımı iş parçacığı-GÜVENLİDİR;
+# `--release`de İSE GERÇEKTEN AYNI `Channel[T]` (MN.9.1'de çapraz-worker
+# güvenli kılınan SpinLock'lu tampon) OLDUĞUNDAN paylaşımı ZATEN
+# HAVUZUN KENDİ ARC-güvenlik modelinin bir PARÇASIDIR.
 #
 # Katman 3 — GERÇEK, paylaşılan bir M:N iş-çalan (work-stealing) havuzu
-# (bkz. YUKARIDAKİ "GÜNCELLEME" notu — SADECE `noxc build --release`):
+# (bkz. YUKARIDAKİ "GÜNCELLEME" notu — SADECE `noxc build --release`).
+# `--release` altında `$main` HER ZAMAN bu havuzu OTOMATİK kurduğundan
+# (bkz. MN.9.2), `pool_run` ARTIK "havuzu KURMAK" İçİn ZORUNLU DEĞİLDİR
+# — Katman 1/2'nin sıradan `spawn`/`await`/`nox.thread.start`ı BİLE
+# `--release` altında OTOMATİK OLARAK bu AYNI havuzda çapraz-worker
+# çalınabilir. `pool_run` HÂLÂ FAYDALIDIR: `entry()`nin İçİNDEKİ TÜM
+# İşi TEK bir mantıksal birim olarak GRUPLAMAK/beklemek İçİn AÇIK bir
+# API sağlar (ZATEN AKTİF olan havuzu İç İçe çağrıldığında YENİDEN
+# İNŞA ETMEZ — bkz. MN.9.3'ün `poolRunFlattened`i, SADECE AKTİF havuzda
+# SIRADAN bir görev spawn EDER):
 #   import nox.thread
 #
 #   async def make_value(x: int) -> int:
@@ -101,11 +149,17 @@
 # TÜM iş bitene KADAR bloke olur (ÇAĞIRAN fiber'ı DONDURMADAN — KARDEŞ
 # fiber'lar İLERLEMEYE DEVAM EDER), sonra döner (`None`).
 #
-# **KRİTİK sınırlama (Katman 1/2 İLE PAYLAŞILAN, YENİ bir kategori
-# DEĞİL):** `entry()`, `pool_run`u ÇAĞIRAN programın modül-seviyesi
-# global'lerinin (varsa) TAMAMEN BAĞLANTISIZ, AYRI bir KOPYASINI görür —
-# `entry()` İçİNDEKİ yazmalar `pool_run` DÖNDÜKTEN SONRA çağıranın
-# global'lerinde GÖRÜNMEZ (VE tam tersi). `entry()`nin `spawn`ladığı
-# görevlerin SONUÇLARINI `pool_run` DÖNDÜKTEN SONRA kullanmak İçİN bir
-# yol YOK — TÜM sonuç işleme `entry()`nin KENDİ İçİNDE (`print`/bir
-# `Channel`/bir dosyaya yazma GİBİ) yapılmalıdır.
+# **GÜNCELLEME (Faz MN.9.3, "düzleştirme"):** `pool_run` çağrıldığı ANDA
+# `rt` ZATEN paylaşılan bir havuza AİTSE (`--release` altında $main'in
+# OTOMATİK kurduğu havuz — bkz. YUKARIDAKİ "GÜNCELLEME" notu — BU ARTIK
+# NEREDEYSE HER ZAMAN DOĞRUDUR) `pool_run` YENİ bir OS iş parçacığı/havuz
+# İNŞA ETMEZ: `num_workers` SESSİZCE YOK SAYILIR (havuzun boyutu ZATEN
+# $main TARAFINDAN SABİTLENDİ — `NOX_POOL_WORKERS` ortam değişkeniyle
+# YAPILANDIRILABİLİR), `entry()` AKTİF havuzda SIRADAN bir görev OLARAK
+# spawn edilip beklenir — VE bu durumda ARTIK modül-seviyesi global'ler
+# TAMAMEN BAĞLANTISIZ DEĞİLDİR, ÇAĞIRANLA AYNI (paylaşılan) `rt`yi
+# GÖRÜR. **Global-bağlantısızlığı SADECE `pool_run` YENİ bir havuz
+# İNŞA ETTİĞİNDE geçerlidir** — bu, `rt`nin HENÜZ hiçbir havuza AİT
+# OLMADIĞI (nadir: örneğin bir Zig-seviyesi birim testinden `rt=null`
+# İLE ÇAĞRILDIĞINDA) tek durumdur; NORMAL bir `--release` programında
+# BU YOLA HİÇ GİRİLMEZ.

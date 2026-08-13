@@ -576,11 +576,22 @@ pub fn releaseSlotIfSet(self: *Codegen, info: VarInfo) CodegenError!void {
 pub fn destroyNonArcValue(self: *Codegen, ptr: []const u8, heap: HeapKind) CodegenError!void {
     switch (heap) {
         .task, .channel, .thread_handle, .thread_channel, .task_local => {
+            // Faz MN.9.4: `--release` altında `.thread_handle`nin ÇALIŞMA-
+            // ZAMANI temsili ARTIK GERÇEKTEN bir `*Task(i64)`dir (bkz.
+            // `genThreadStartExpr`nin MN.9.4 notu — `genSpawnExpr`in AYNI
+            // mekanizması yeniden kullanılıyor) — `nox_thread_destroy`
+            // (self-pipe/atomik-referans-sayımı PROTOKOLÜ BEKLEYEN, ESKİ
+            // paylaşımsız yapı) ÇAĞIRMAK YANLIŞ TİPTE bir işaretçi üzerinde
+            // ÇALIŞIRDI (SIGSEGV/bozulma). `.qbe` dalı BİREBİR DEĞİŞMEDEN
+            // kalır.
             const fn_name = switch (heap) {
                 .task => "nox_async_destroy_task",
                 .channel => "nox_channel_destroy",
-                .thread_handle => "nox_thread_destroy",
-                .thread_channel => "nox_threadchannel_destroy",
+                .thread_handle => if (self.backend == .llvm) "nox_async_destroy_task" else "nox_thread_destroy",
+                // Faz MN.9.4: `--release` altında `.thread_channel`nin
+                // ÇALIŞMA-ZAMANI temsili ARTIK GERÇEKTEN bir `Channel(T)*`
+                // dir (bkz. `genGenericConstruct`nin MN.9.4 notu).
+                .thread_channel => if (self.backend == .llvm) "nox_channel_destroy" else "nox_threadchannel_destroy",
                 .task_local => "nox_tasklocal_destroy",
                 else => unreachable,
             };

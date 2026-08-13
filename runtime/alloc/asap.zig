@@ -241,6 +241,13 @@ pub const RuntimeState = struct {
     /// BUGÜNKÜ, DEĞİŞMEMİŞ mantığı izler. `WorkerPool.create` BUNU
     /// kendine işaret edecek şekilde AYARLAR.
     worker_pool: ?*anyopaque = null,
+    /// Faz MN.9.2: `$main`in (`--release` altında) OTOMATİK kurduğu
+    /// havuzun `PoolRunCtx`si (`pool_bridge.zig`, `nox_pool_main_spawn_
+    /// workers` TARAFINDAN AYARLANIR) — `nox_pool_main_join_and_destroy`
+    /// `pool.destroy()`DAN (`state`in KENDİSİNİ FREE EDER) ÖNCE BUNU
+    /// serbest bırakabilmek İçİn saklar. `worker_pool`/`arena_pool` İLE
+    /// AYNI opak-işaretçi gerekçesi.
+    main_pool_ctx: ?*anyopaque = null,
     /// Faz MN.4/5: `dict.zig`nin (ESKİDEN `threadlocal var g_hash_seed`/
     /// `g_hash_seed_init` OLAN) hash-flood-direnç tohumu — BURAYA
     /// TAŞINDI ÇÜNKÜ artık GERÇEK fiber göçü (work-stealing) AÇIK: bir
@@ -315,6 +322,16 @@ pub const RuntimeState = struct {
     /// zaman aşımıyla SONSUZA KADAR bloklar) bir worker `stw_requested`i
     /// ASLA FARK ETMEZDİ.
     pool_wake_fds: [MAX_POOL_WORKERS]std.atomic.Value(i32) = @splat(.init(-1)),
+    /// Faz MN.9.3: HER worker slotunun KENDİ `*Scheduler`ı (`bridge.zig`nin
+    /// `nox_async_init`i, havuzlu dalında, `attachToPool` SONRASI, KENDİ
+    /// `g_worker_slot`una YAZAR) — `runtime/async_rt/pool_bridge.zig`nin
+    /// `broadcastRunOnEachWorker`ının (bkz. `nox_pool_serve`) TÜM worker'lara
+    /// (SADECE ÇAĞIRANA DEĞİL) `scheduler.spawnToForeignScheduler` İLE
+    /// ULAŞABİLMESİ İçİn — `null` = O slot HENÜZ `nox_async_init`
+    /// ÇAĞIRMADI (`spawnWorkers`nin TRAMPOLİNİ İLE `attachToPool` ARASINDAKİ
+    /// KISA pencerede TEORİK olarak mümkün, `broadcastRunOnEachWorker`
+    /// BUNU KISA bir "hazır olana KADAR bekle" DÖNGÜSÜYLE ele alır).
+    pool_scheduler_ptrs: [MAX_POOL_WORKERS]std.atomic.Value(?*anyopaque) = @splat(.init(null)),
 
     pub fn allocator(self: *RuntimeState) std.mem.Allocator {
         if (use_debug_allocator) return self.debug_gpa.allocator();

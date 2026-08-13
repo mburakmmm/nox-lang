@@ -26,6 +26,13 @@ fn compileAndRunLlvm(allocator: std.mem.Allocator, source: []const u8) !std.proc
     const module = try nox.module_loader.resolveImports(allocator, io, user_module);
 
     var checker_state = nox.checker.Checker.init(allocator);
+    // Faz MN.9.4: `checker_state.backend` `--release` altında `.llvm`
+    // OLMALIDIR — `isThreadTransferSafeType`/`isSpawnParamSafeType`nin
+    // backend-farkındalı gevşetmesi (list/class/dict/task/channel/
+    // ThreadHandle/ThreadChannel'ın `--release`de İZİN VERİLMESİ) BUNA
+    // BAĞLIDIR; `compiler/main.zig`nin `buildOne`sinin GERÇEK sırası
+    // İLE TUTARLI (backend HESAPLANIR, SONRA `Checker.init`e ATANIR).
+    checker_state.backend = .llvm;
     checker_state.checkModule(module) catch |e| {
         std.debug.print("beklenmeyen tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
         return error.FixtureNotWellTyped;
@@ -130,5 +137,41 @@ test "llvm(çalıştır): fonksiyon çağrısı + aritmetik (döngü ve bool YOK
         \\
     ,
         "17\n",
+    );
+}
+
+// Faz MN.9.4: `nox.thread.start`ın `--release` altında `list[int]`
+// argüman/dönüş TAŞIYABİLDİĞİNİN (bkz. `checker.zig`nin `isThreadTransferSafeType`
+// backend-farkındalı gevşetmesi + `genThreadStartExpr`nin `genSpawnExpr`
+// mekanizmasını yeniden kullanan `--release` dalı) uçtan-uca kanıtı —
+// `.qbe`de AYNI program `noxc check` İLE REDDEDİLİR (bkz. `tests/golden/
+// typecheck_cases/err_thread_start_unsafe_type.nox`, AYNI backend-sınırının
+// negatif kanıtı). `expectGoldenLlvm`nin KENDİ `stderr.len != 0` kontrolü
+// (bkz. yukarısı) GERÇEK bir ARC sızıntı-denetimidir — `emitInlineRetain`/
+// `releaseValueIfSet` çiftinin (bkz. `genSpawnExpr`/`genSpawnWrapper`nin
+// MN.9.4 notları) DOĞRU çalıştığını KANITLAR.
+test "llvm(çalıştır): nox.thread.start list[int] argüman/dönüş taşır, havuza entegre, sızıntı yok" {
+    try expectGoldenLlvm(
+        \\import nox.thread
+        \\
+        \\async def make_list(n: int) -> list[int]:
+        \\    r: list[int] = []
+        \\    i: int = 0
+        \\    while i < n:
+        \\        r.append(i * 2)
+        \\        i = i + 1
+        \\    return r
+        \\
+        \\h: ThreadHandle[list[int]] = nox.thread.start(make_list, 5)
+        \\result: list[int] = await h.join()
+        \\i: int = 0
+        \\total: int = 0
+        \\while i < len(result):
+        \\    total = total + result[i]
+        \\    i = i + 1
+        \\print(total)
+        \\
+    ,
+        "20\n",
     );
 }

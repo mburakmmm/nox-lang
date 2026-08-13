@@ -3,6 +3,14 @@
 
 const std = @import("std");
 
+/// Faz MN.9.4: `compiler/codegen_qbe/codegen.zig`nin `Backend`iyle AYNI
+/// KÜME — BURADA tanımlanıp ORADA yeniden İHRAÇ edilir (`codegen.zig`nin
+/// `decorators.zig`si `checker.zig`yi DOĞRUDAN İTHAL ETTİĞİNDEN,
+/// `checker.zig`nin `codegen.zig`yi İTHAL ETMESİ GERÇEK bir döngüsel
+/// bağımlılık OLURDU — `checker.zig`nin ZATEN İTHAL ETTİĞİ BU dosya,
+/// döngü YARATMADAN paylaşılan TEK doğruluk kaynağıdır).
+pub const Backend = enum { qbe, llvm };
+
 pub const Type = union(enum) {
     int,
     float,
