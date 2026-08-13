@@ -489,6 +489,7 @@ pub const Codegen = struct {
     pub const computeUsedFieldsFor = http_intrinsics.computeUsedFieldsFor;
     pub const genHttpServe = http_intrinsics.genHttpServe;
     pub const emitFdServeTail = http_intrinsics.emitFdServeTail;
+    pub const emitListenServeTail = http_intrinsics.emitListenServeTail;
     pub const genHttpServeFd = http_intrinsics.genHttpServeFd;
     pub const genHttpServeMulticore = http_intrinsics.genHttpServeMulticore;
     pub const genHttpServeMulticoreWorker = http_intrinsics.genHttpServeMulticoreWorker;

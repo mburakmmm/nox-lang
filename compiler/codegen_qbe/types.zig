@@ -246,6 +246,12 @@ pub const HttpServeMulticoreWorkerSpec = struct {
     /// `used_fields.headers`den GELİR — `genHttpServeMulticoreWorker`nin
     /// KENDİ `emitFdServeTail` çağrısına taşınır.
     needs_headers: bool = true,
+    /// Faz MN.11.1 (bkz. `SharedServeBudget`nin runtime tarafındaki belge
+    /// notu): `max_connections>0` (SINIRLI, derleme-zamanı sabiti) İKEN
+    /// `true` — worker'ın `%argp+8` payload'ı ÇIPLAK `port`/`PortTlsPayload`
+    /// DEĞİL, `MulticoreBoundedPayload{port, tls_ctx, budget}`dir (bkz.
+    /// `genHttpServeMulticoreWorker`nin payload-çözme dalı).
+    bounded: bool = false,
 };
 
 /// Faz U.4.3: bir closure'ın TEK bir yakalanan (capture) değeri.

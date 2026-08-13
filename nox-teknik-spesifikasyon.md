@@ -14730,6 +14730,87 @@ GEREKTİRİR (dağıtılan GitHub Release ikilileri BUNU ZATEN doğru yapıyor,
 bkz. `.github/workflows/release.yml` — SADECE yerel geliştirme/ölçüm
 iş akışlarını ETKİLER).
 
+**5. (Faz MN.11 + MN.11.1, v1.29.4) `nox.http.serve_multicore`nin
+PAYLAŞILAN TEK `accept()` fd'si `SO_REUSEPORT` İLE worker-başına
+BAĞIMSIZ soketlere çevrildi — Madde 4'ün (`pool_free_lists` kilidi)
+ÇÖZMEDİĞİ, TAMAMEN AYRI bir OS-seviyesi darboğaz.** Kullanıcı, Madde
+4 YAYIMLANDIKTAN SONRA BİLE saf statik (JSON'suz) bir `ping` handler'ının
+`--release` altında 8 worker'da 1 worker'DAN DAHA YAVAŞ (~237k→~156k
+req/s, -%34) kaldığını raporladı. Standalone bir C deneyiyle (bare
+kqueue + N pthread, SIFIR Nox kodu) KANITLANDI: N worker'ın AYNI
+paylaşılan `listen()` fd'sini KENDİ BAĞIMSIZ kqueue instance'larıyla
+İZLEYİP `accept()` İçİn YARIŞMASI ("thundering herd", `http_server.zig`nin
+KENDİ ÖNCEDEN VAR OLAN belge notunda ZATEN İSİMLENDİRİLMİŞ AMA hiç
+DÜZELTİLMEMİŞTİ) 8 iş parçacığında 1'e göre %12 YAVAŞ; `SO_REUSEPORT`
+(HER worker KENDİ bağımsız soketini AYNI porta bağlar, kernel yük
+dengeler) İLE düz/hafif İYİLEŞME. Düzeltme: `bindAndListen`e `reuse_port:
+bool` (MEVCUT 4 çağrı sitesi `false` geçmeye devam eder, `nox.http.
+listen()`nin KAMUYA AÇIK "ikinci bağlanma adres-kullanımda hatası verir"
+sözleşmesi KORUNUR); YENİ `nox_http_server_listen_multicore_worker(_tls)`
+— HER worker KENDİ gövdesinde (payload ARTIK ÖNCEDEN hesaplanmış bir
+`fd` DEĞİL, ÇIPLAK `port`) bunu ÇAĞIRIP TAZE, BAĞIMSIZ bir soket açar.
+Windows'ta `SO_REUSEPORT` YOK (Zig 0.16'nın `ws2_32.zig` bağlamaları
+DOĞRUDAN OKUNARAK doğrulandı) — process-genişi bir fd önbelleği İLE
+ESKİ paylaşılan-fd davranışı AYNEN KORUNUR (regresyon YOK, düzeltme de
+YOK, BİLİNÇLİ v1 sınırlaması).
+
+Doğrulama SIRASINDA, planın KENDİSİNİN öngörmediği GERÇEK bir SO_REUSEPORT
+sınırlaması bulundu (Faz MN.11.1): kernel'in bağlantı-dağılım HASH'i
+adil DEĞİLDİR — KÜÇÜK/SABİT `max_connections` (`serve_multicore`nin
+worker-başına ESKİ sözleşmesi, golden testlerin deterministik olması
+İçİn KULLANDIĞI) İLE 2 eşzamanlı bağlantı AYNI worker'ın soketine
+yönlendirilebilir; o worker KENDİ kotasını doldurup ÇIKARKEN, HİÇ
+bağlantı ALAMAYAN DİĞER worker `accept()`te SONSUZA KADAR bekler
+(ESKİ paylaşılan-fd mimarisinde TÜM worker'lar AYNI kuyruğu
+paylaştığından self-healing/adil-yarışTI — YENİ mimaride HER worker'ın
+KENDİ BAĞIMSIZ kuyruğu VAR). `http_serve_multicore_pool_golden_test.zig`
+GERÇEKTEN TAKILDI, standalone bir tekrar-üretimle DOĞRULANDI. Kullanıcı
+İLE AskUserQuestion ÜZERİNDEN görüşülüp "paylaşılan atomic sayaç +
+çapraz-worker kapatma" seçeneği ONAYLANDI: YENİ `SharedServeBudget`
+(atomic `served`/`max_connections = max_connections × num_workers` —
+ESKİ "worker-başına" semantiğini TOPLAM bütçe OLARAK KORUR) + YENİ
+`io.nonBlockingAcceptWithTimeout` (25ms poll) — `serveImpl`nin accept
+döngüsü, PAYLAŞILAN bütçe VARSA HER `accept()`i SINIRLI bir pencerede
+dener, zaman aşımında bütçeyi YENİDEN kontrol edip DOLMUŞSA TEMİZ çıkar
+(worst-case ek bekleme: BİR poll aralığı, SONSUZ DEĞİL). `max_connections
+<=0` (SINIRSIZ, GERÇEK üretim yolu) BU mekanizmaya HİÇ GİRMEZ, SIFIR
+ek maliyet.
+
+Doğrulama SIRASINDA, YUKARIDAKİLERDEN TAMAMEN BAĞIMSIZ 2 GERÇEK
+regresyon BULUNUP DÜZELTİLDİ: (1) `genHttpServe`nin (DÜZ `nox.http.
+serve()`, `serve_multicore` DEĞİL — `emitServeAndClose`nin
+PAYLAŞMADIĞI, AYRI bir çağrı sitesi) `nox_http_serve_raw` çağrısı YENİ
+7-argümanlı imzaya HİÇ GÜNCELLENMEMİŞTİ — İLK tarama BU DÖRDÜNCÜ, AYRI
+call site'ı KAÇIRMIŞTI. 6 argümanla 7-parametreli bir C-ABI fonksiyonu
+çağırmak ABI KAYMASI yarattı — TÜM `nox.http.serve()` çağrıları
+(SINIRLI/SINIRSIZ FARK ETMEKSİZİN) 0.1sn İçİNDE, HİÇBİR bağlantı kabul
+etmeden, HİÇBİR hata/çıktı VERMEDEN çıkış kodu 0 İLE SESSİZCE dönüyordu.
+(2) `SharedServeBudget`/`MulticoreBoundedPayload`nin `state.allocator()`
+İLE tahsis edilip HİÇ serbest BIRAKILMAMASI ("tek seferlik, küçük,
+kabul edilebilir sızıntı" varsayımı, `nox_pool_run`nin AYNI ödünleşimine
+ATIFLA GEREKÇELENDİRİLMİŞTİ) golden testlerin KENDİ, ÇOK DAHA KATI
+DebugAllocator disipliniyle (stderr'e HİÇBİR ŞEY yazılmaması = sızıntı
+YOK) ÇELİŞTİ. Düzeltme: YENİ `nox_http_free_shared_budget`/`nox_http_
+free_bounded_payload` — TÜM worker'lar KANITLANMIŞ olarak bittiğinde
+(QBE: `nox_thread_join` döngüsü SONRASI; `--release`: `$nox_pool_serve`
+SENKRON DÖNDÜKTEN SONRA) codegen TARAFINDAN ÇAĞRILIR.
+
+Sonuç: `zig build test` (Debug) TEK bilinen İLİŞKİSİZ fuzz çökmesi
+HARİÇ TAMAMEN TEMİZ, IR-diff 204/0/3-atlandı DEĞİŞMEDİ (TÜM değişiklik
+`runtime/`+SADECE `serve_multicore`ya özgü codegen yollarına SINIRLI).
+Ping N=1-vs-N=8 tersine-dönüşü DÜZELDİ (standalone C deneyinin
+KENDİSİ KÖK NEDENİN kesin kanıtıydı; bu makinedeki aktif arka-plan
+yükü YÜZÜNDEN uçtan-uca `wrk` MUTLAK sayıları gürültülüydü, AMA yön
+[N=8 ARTIK N=1'DEN YAVAŞ DEĞİL] doğrulandı). **Ders (İKİNCİ KEZ BU
+FAZDA doğrulandı):** bir runtime C-ABI fonksiyonunun imzasını
+DEĞİŞTİRİRKEN, "TÜM çağrı sitelerini bul" görevi `emitServeAndClose`
+GİBİ PAYLAŞILAN bir yardımcı fonksiyonu TARAMAKLA BİTMEZ — AYNI runtime
+sembolüne DOĞRUDAN, PAYLAŞILAN yardımcıyı ATLAYARAK çağıran BAĞIMSIZ
+call site'lar (`genHttpServe`) da AYRICA taranmalıdır; `grep -rn
+"\"\$sembol_adı\""` İLE TÜM `qbeCall` sitelerini DOĞRUDAN aramak,
+fonksiyon-isim TABANLI bir aramadan (`emitServeAndClose`'nin ÇAĞRILDIĞI
+yerler) DAHA GÜVENİLİRDİR.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

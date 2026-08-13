@@ -14,6 +14,55 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.29.4]
+
+### Düzeltildi
+- **`nox.http.serve_multicore`nin PAYLAŞILAN TEK `accept()` fd'si (N
+  worker'ın AYNI fd üzerinde thundering-herd `accept()`i), `SO_REUSEPORT`
+  İLE worker-başına BAĞIMSIZ soketlere çevrildi** — kullanıcının "ping
+  8 worker'da 1 worker'dan hâlâ yavaş" raporunun KÖK NEDENİ (`pool_free_
+  lists` kilidi [v1.29.3] BUNU DÜZELTMEMİŞTİ, TAMAMEN AYRI bir OS-seviyesi
+  darboğaz). Standalone bir C deneyiyle (bare kqueue + N pthread, SIFIR
+  Nox kodu) KANITLANDI: paylaşılan fd 8 iş parçacığında 1'e göre %12
+  YAVAŞ, `SO_REUSEPORT` İLE düz/hafif İYİLEŞME. HER worker ARTIK `nox_
+  http_server_listen_multicore_worker(_tls)` İLE KENDİ BAĞIMSIZ soketini
+  TAZE açıyor; `nox_http_listen_fd`nin KENDİSİ (`nox.http.listen()`nin
+  KAMUYA AÇIK "birleştirilebilir ilkeller" API'si) DOKUNULMADAN kaldı.
+- **YUKARIDAKİ değişikliğin doğrulanması SIRASINDA bulunan GERÇEK bir
+  SO_REUSEPORT sınırlaması düzeltildi**: kernel'in bağlantı-dağılım
+  hash'i, KÜÇÜK/SABİT `max_connections` (`serve_multicore`nin worker-
+  başına eski sözleşmesi) İLE eşzamanlı bağlantıları TEK bir worker'ın
+  soketine yönlendirebiliyordu — o worker KENDİ kotasını doldurup
+  ÇIKARKEN, HİÇ bağlantı ALAMAYAN DİĞER worker `accept()`te SONSUZA
+  KADAR bekliyordu (`http_serve_multicore_pool_golden_test.zig`
+  GERÇEKTEN takılıyordu, standalone bir tekrar-üretimle DOĞRULANDI).
+  Düzeltme: worker'lar arasında PAYLAŞILAN bir atomic bağlantı bütçesi
+  (`SharedServeBudget`, TOPLAM = `max_connections × num_workers` —
+  ESKİ "her worker KENDİ payını alır" semantiğini KORUR) + zaman
+  aşımlı `accept()` (25ms) İLE periyodik yeniden-kontrol — kotayı hiç
+  ALAMAYAN bir worker artık SONSUZA KADAR DEĞİL, EN FAZLA bir poll
+  aralığı KADAR bekleyip TEMİZ çıkıyor. `max_connections<=0` (SINIRSIZ,
+  GERÇEK üretim yolu) BU mekanizmayı HİÇ DEVREYE SOKMUYOR — SIFIR ek
+  maliyet.
+- **Doğrulama SIRASINDA bulunan, YUKARIDAKİLERDEN TAMAMEN BAĞIMSIZ 2
+  GERÇEK regresyon**: (1) `genHttpServe`nin (düz `nox.http.serve(port,
+  handle[, max_connections])`, `serve_multicore` DEĞİL) `nox_http_
+  serve_raw` çağrısı YENİ 7-argümanlı imzaya GÜNCELLENMEMİŞTİ — 6
+  argümanla çağrıldığından ABI KAYMASI oluşuyor, TÜM `nox.http.serve()`
+  çağrıları (SINIRLI/SINIRSIZ FARK ETMEKSİZİN) ÇALIŞMA ANINDA SESSİZCE,
+  HİÇBİR hata/çıktı VERMEDEN ANINDA dönüyordu (`http_serve_golden_test.
+  zig`nin TÜM testleri GERÇEKTEN başarısız oldu, doğrudan bir tekrar-
+  üretimle DOĞRULANDI: sunucu 0.1sn İçİNDE, hiçbir bağlantı kabul
+  etmeden çıkış kodu 0 İLE dönüyordu). (2) `SharedServeBudget`/
+  `MulticoreBoundedPayload`nin `state.allocator()` İLE tahsis edilip
+  HİÇ serbest BIRAKILMAMASI, golden testlerin KENDİ DebugAllocator
+  sızıntı-denetimini (stderr'e HİÇBİR ŞEY yazılmaması = sızıntı YOK)
+  İHLAL EDİYORDU — "tek seferlik, küçük, kabul edilebilir sızıntı"
+  varsayımı BU test disipliniyle ÇELİŞTİ; TÜM worker'lar (QBE: `nox_
+  thread_join` döngüsü SONRASI; `--release`: `nox_pool_serve` SENKRON
+  DÖNDÜKTEN SONRA) bitince BUNLARI GERÇEKTEN serbest bırakan `nox_http_
+  free_shared_budget`/`nox_http_free_bounded_payload` eklendi.
+
 ## [1.29.3]
 
 ### Düzeltildi

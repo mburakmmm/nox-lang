@@ -204,7 +204,7 @@ pub fn genHttpServe(self: *Codegen, c: ast.Call) CodegenError!Value {
 
     const wrapper_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{wrapper_name});
     const needs_headers_text: []const u8 = if (used_fields.headers) "1" else "0";
-    try self.qbeCall(null, "$nox_http_serve_raw", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server }, .{ .ty = .l, .text = wrapper_sym }, .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = max_conn_text }, .{ .ty = .w, .text = needs_headers_text } });
+    try self.qbeCall(null, "$nox_http_serve_raw", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server }, .{ .ty = .l, .text = wrapper_sym }, .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = max_conn_text }, .{ .ty = .w, .text = needs_headers_text }, .{ .ty = .l, .text = "0" } });
     try self.qbeCall(null, "$nox_http_server_close", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server } });
     return .{ .text = "0", .qtype = .none };
 }
@@ -225,14 +225,20 @@ pub fn genHttpServe(self: *Codegen, c: ast.Call) CodegenError!Value {
 /// `ws_wrapper_name` VARSA `nox_http_serve_raw` YERİNE `nox_http_serve_
 /// ws_raw`ı çağırır, SONRA `server`ı kapatır — `emitFdServeTail`/
 /// `genHttpServe*Generic`nin ÜÇÜ de PAYLAŞTIĞI ORTAK kuyruk.
-pub fn emitServeAndClose(self: *Codegen, server: []const u8, wrapper_name: []const u8, max_conn_text: []const u8, ws_wrapper_name: ?[]const u8, needs_headers: bool) CodegenError!void {
+/// `shared_budget_text` (Faz MN.11.1): `"0"` (null işaretçi) İSE davranış
+/// AYNEN ÖNCEKİYLE AYNIDIR — `serve`/`serve_tls`/`serve_ws`/`serve_fd*`nin
+/// TÜM mevcut çağrı siteleri BUNU geçer. SADECE `serve_multicore`nin
+/// SINIRLI (`max_connections>0`) yolu GERÇEK bir `SharedServeBudget*`
+/// SSA metni geçirir (bkz. `SharedServeBudget`nin runtime tarafındaki
+/// belge notu).
+pub fn emitServeAndClose(self: *Codegen, server: []const u8, wrapper_name: []const u8, max_conn_text: []const u8, ws_wrapper_name: ?[]const u8, needs_headers: bool, shared_budget_text: []const u8) CodegenError!void {
     const wrapper_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{wrapper_name});
     const needs_headers_text: []const u8 = if (needs_headers) "1" else "0";
     if (ws_wrapper_name) |wsw| {
         const wsw_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{wsw});
-        try self.qbeCall(null, "$nox_http_serve_ws_raw", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server }, .{ .ty = .l, .text = wrapper_sym }, .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = wsw_sym }, .{ .ty = .l, .text = max_conn_text }, .{ .ty = .w, .text = needs_headers_text } });
+        try self.qbeCall(null, "$nox_http_serve_ws_raw", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server }, .{ .ty = .l, .text = wrapper_sym }, .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = wsw_sym }, .{ .ty = .l, .text = max_conn_text }, .{ .ty = .w, .text = needs_headers_text }, .{ .ty = .l, .text = shared_budget_text } });
     } else {
-        try self.qbeCall(null, "$nox_http_serve_raw", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server }, .{ .ty = .l, .text = wrapper_sym }, .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = max_conn_text }, .{ .ty = .w, .text = needs_headers_text } });
+        try self.qbeCall(null, "$nox_http_serve_raw", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server }, .{ .ty = .l, .text = wrapper_sym }, .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = max_conn_text }, .{ .ty = .w, .text = needs_headers_text }, .{ .ty = .l, .text = shared_budget_text } });
     }
     try self.qbeCall(null, "$nox_http_server_close", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server } });
 }
@@ -248,7 +254,26 @@ pub fn emitFdServeTail(self: *Codegen, fd_text: []const u8, wrapper_name: []cons
     } else {
         try self.qbeCall(.{ .name = server, .ty = .l }, "$nox_http_server_from_fd", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = fd_text } });
     }
-    try self.emitServeAndClose(server, wrapper_name, max_conn_text, ws_wrapper_name, needs_headers);
+    try self.emitServeAndClose(server, wrapper_name, max_conn_text, ws_wrapper_name, needs_headers, "0");
+}
+
+/// Faz MN.11: `emitFdServeTail`nin `serve_multicore`-ÖZEL eşleniği —
+/// PAYLAŞILAN, ÖNCEDEN hesaplanmış bir `fd`yi `nox_http_server_from_fd`
+/// İLE SARMAK YERİNE `nox_http_server_listen_multicore_worker(_tls)`i
+/// ÇAĞIRIR (KENDİ BAĞIMSIZ `SO_REUSEPORT` soketini TAZE AÇAR — standalone
+/// bir C deneyiyle kanıtlanmış OS-seviyesi "paylaşılan fd + N kqueue"
+/// thundering-herd maliyetini ORTADAN KALDIRAN düzeltme, bkz. proje
+/// planı). `genHttpServeMulticore`/`genHttpServeMulticoreGeneric`nin
+/// ÇAĞIRANIN KENDİ payı İLE `genHttpServeMulticoreWorker`nin ÜRETİLEN
+/// worker gövdesi TARAFINDAN paylaşılır.
+pub fn emitListenServeTail(self: *Codegen, port_text: []const u8, wrapper_name: []const u8, max_conn_text: []const u8, tls_ctx_text: ?[]const u8, ws_wrapper_name: ?[]const u8, needs_headers: bool, shared_budget_text: []const u8) CodegenError!void {
+    const server = try self.newTemp();
+    if (tls_ctx_text) |ctx| {
+        try self.qbeCall(.{ .name = server, .ty = .l }, "$nox_http_server_listen_multicore_worker_tls", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = port_text }, .{ .ty = .l, .text = ctx } });
+    } else {
+        try self.qbeCall(.{ .name = server, .ty = .l }, "$nox_http_server_listen_multicore_worker", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = port_text } });
+    }
+    try self.emitServeAndClose(server, wrapper_name, max_conn_text, ws_wrapper_name, needs_headers, shared_budget_text);
 }
 
 /// `nox.http.serve_fd(fd, handle[, max_connections])` çağrı sitesi
@@ -297,18 +322,23 @@ pub fn genHttpServeFd(self: *Codegen, c: ast.Call) CodegenError!Value {
 
 /// `nox.http.serve_multicore(port, handle, num_threads[,
 /// max_connections])` çağrı sitesi codegen'i — Faz DD.1 (bkz. nox-
-/// teknik-spesifikasyon.md §3.60). `port` BİR KEZ `nox_http_listen_fd`
-/// İLE dinlemeye alınır (ham bir `int` fd, `ServerHandle` YOK),
-/// `num_threads - 1` ek `nox.thread` worker'ı (bkz. `genHttpServeMulticoreWorker`)
-/// AYNI paylaşılan fd üzerinde `nox_thread_spawn` İLE başlatılır —
-/// `genForRange`nin AYNI sayaçlı-döngü şekli (bkz. onun belge notu),
-/// TEK fark: döngü değişkeni bir Nox kullanıcı değişkeni DEĞİL, `self.
-/// vars`e HİÇ kaydedilmeyen sentetik bir yığın yuvasıdır. ÇAĞIRAN iş
-/// parçacığının KENDİSİ Nninci worker OLUR (`emitFdServeTail` İLE,
-/// `genHttpServeFd`nin kuyruğuyla AYNI) — bugünkü `nox.http.serve`nin
-/// "çağrı sonsuza kadar bloke olur" sözleşmesiyle TUTARLI.
+/// teknik-spesifikasyon.md §3.60). **Faz MN.11'DEN İTİBAREN**: `port`
+/// (ÇIPLAK bir i64, HİÇBİR fd ÖNCEDEN hesaplanmaz) `num_threads - 1`
+/// ek `nox.thread` worker'ına (bkz. `genHttpServeMulticoreWorker`)
+/// `nox_thread_spawn` İLE payload OLARAK geçirilir — HER worker `nox_
+/// http_server_listen_multicore_worker`i (bkz. `emitListenServeTail`)
+/// KENDİ gövdesinde ÇAĞIRIP `SO_REUSEPORT` İLE KENDİ BAĞIMSIZ soketini
+/// TAZE açar (standalone bir C deneyiyle kanıtlanmış, "TEK paylaşılan
+/// fd + N kqueue" OS-seviyesi thundering-herd maliyetinin düzeltmesi,
+/// bkz. proje planı) — `genForRange`nin AYNI sayaçlı-döngü şekli (bkz.
+/// onun belge notu), TEK fark: döngü değişkeni bir Nox kullanıcı
+/// değişkeni DEĞİL, `self.vars`e HİÇ kaydedilmeyen sentetik bir yığın
+/// yuvasıdır. ÇAĞIRAN iş parçacığının KENDİSİ Nninci worker OLUR
+/// (`emitListenServeTail` İLE, KENDİ BAĞIMSIZ soketiyle) — bugünkü
+/// `nox.http.serve`nin "çağrı sonsuza kadar bloke olur" sözleşmesiyle
+/// TUTARLI.
 ///
-/// **`ThreadHandle`lar KENDİ `emitFdServeTail`imizden SONRA join
+/// **`ThreadHandle`lar KENDİ `emitListenServeTail`imizden SONRA join
 /// edilir (ARTIK "fire-and-forget" DEĞİL — bkz. aşağıdaki GERÇEK hata
 /// notuyla DÜZELTİLDİ):** `max_connections=0` (sınırsız) OLDUĞUNDA
 /// ÇAĞIRANIN KENDİ `emitFdServeTail`i ZATEN SONSUZA dek bloke olur, bu
@@ -352,13 +382,37 @@ pub fn genHttpServeMulticore(self: *Codegen, c: ast.Call) CodegenError!Value {
     // çağrısına HEM `genHttpServeMulticoreWorker`in sentezlediği
     // worker gövdesine gömülür.
     var max_conn_text: []const u8 = "0";
+    var is_bounded = false;
     if (c.args.len == 4) {
         max_conn_text = try std.fmt.allocPrint(self.allocator, "{d}", .{c.args[3].int_lit});
+        is_bounded = c.args[3].int_lit > 0;
     }
 
-    const fd = try self.newTemp();
-    try self.qbeCall(.{ .name = fd, .ty = .l }, "$nox_http_listen_fd", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = port_v.text } });
+    // Faz MN.11.1 (bkz. `SharedServeBudget`nin runtime tarafındaki belge
+    // notu — SO_REUSEPORT'un KÜÇÜK, SABİT `max_connections`ta kernel-
+    // seviyesi bağlantı dağılım DENGESİZLİĞİ düzeltmesi): `is_bounded`
+    // İSE, worker'lar spawn edilmeden ÖNCE TEK bir PAYLAŞILAN
+    // `SharedServeBudget` ayrılır — HER worker'ın payload'ı ARTIK ÇIPLAK
+    // `port` DEĞİL, bu bütçeyi de TAŞIYAN bir `MulticoreBoundedPayload*`dir.
+    var shared_budget_text: []const u8 = "0";
+    var worker_payload_text: []const u8 = port_v.text;
+    if (is_bounded) {
+        const budget_v = try self.newTemp();
+        try self.qbeCall(.{ .name = budget_v, .ty = .l }, "$nox_http_make_shared_budget", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = max_conn_text }, .{ .ty = .l, .text = num_threads_v.text } });
+        shared_budget_text = budget_v;
+        const payload_v = try self.newTemp();
+        try self.qbeCall(.{ .name = payload_v, .ty = .l }, "$nox_http_make_bounded_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = port_v.text }, .{ .ty = .l, .text = "0" }, .{ .ty = .l, .text = budget_v } });
+        worker_payload_text = payload_v;
+    }
 
+    // Faz MN.11 (bkz. proje planı — standalone bir C deneyiyle kanıtlanmış
+    // OS-seviyesi "paylaşılan fd + N kqueue" thundering-herd maliyetinin
+    // düzeltmesi): TEK bir `nox_http_listen_fd` çağrısıyla ÖNCEDEN
+    // hesaplanmış, HER worker'a AYNI değer olarak GEÇİRİLEN bir `fd`
+    // ARTIK YOK — payload SADECE `port` (HER worker İçİn GERÇEKTEN AYNI
+    // OLAN bir i64), HER worker `nox_http_server_listen_multicore_worker`i
+    // KENDİ gövdesinde (bkz. `genHttpServeMulticoreWorker`) ÇAĞIRIP
+    // `SO_REUSEPORT` İLE KENDİ BAĞIMSIZ soketini TAZE açar.
     const used_fields = self.computeUsedFieldsFor(handle_name);
     const wrapper_name = try std.fmt.allocPrint(self.allocator, "http_serve_wrap_{d}", .{self.http_serve_wrapper_counter});
     self.http_serve_wrapper_counter += 1;
@@ -366,7 +420,7 @@ pub fn genHttpServeMulticore(self: *Codegen, c: ast.Call) CodegenError!Value {
 
     const worker_name = try std.fmt.allocPrint(self.allocator, "http_serve_mc_worker_{d}", .{self.http_serve_multicore_worker_counter});
     self.http_serve_multicore_worker_counter += 1;
-    try self.http_serve_multicore_workers.append(self.allocator, .{ .name = worker_name, .wrapper_name = wrapper_name, .max_conn_text = max_conn_text, .needs_headers = used_fields.headers });
+    try self.http_serve_multicore_workers.append(self.allocator, .{ .name = worker_name, .wrapper_name = wrapper_name, .max_conn_text = max_conn_text, .needs_headers = used_fields.headers, .bounded = is_bounded });
 
     // Faz MN.7b: `--release` (LLVM backend) altında, `num_threads - 1`
     // × `$nox_thread_spawn` (AŞAĞIDAKİ, `.qbe`de DEĞİŞMEDEN KALAN yol)
@@ -375,10 +429,11 @@ pub fn genHttpServeMulticore(self: *Codegen, c: ast.Call) CodegenError!Value {
     // İçİNDE spawn edilen alt-görevler ARTIK ÇAPRAZ-worker ÇALINABİLİR.
     // `genHttpServeMulticoreWorker`nin (aşağıda, ÜRETİLEN worker
     // fonksiyonu) `%argp` şekli (`{rt, payload}`, `payload` @ offset 8 =
-    // ÇIPLAK `fd`) `nox_pool_serve`nin `PoolServeClosure`ıyla BİREBİR
-    // AYNI olduğundan — AYNI ÜRETİLEN fonksiyon HEM `$nox_thread_spawn`
-    // (`.qbe`) HEM `$nox_pool_serve` (`.llvm`) TARAFINDAN `entry_fn`
-    // OLARAK KULLANILABİLİR, İKİNCİ bir sarmalayıcı GEREKMEZ.
+    // Faz MN.11'DEN İTİBAREN ÇIPLAK `port`) `nox_pool_serve`nin
+    // `PoolServeClosure`ıyla BİREBİR AYNI olduğundan — AYNI ÜRETİLEN
+    // fonksiyon HEM `$nox_thread_spawn` (`.qbe`) HEM `$nox_pool_serve`
+    // (`.llvm`) TARAFINDAN `entry_fn` OLARAK KULLANILABİLİR, İKİNCİ bir
+    // sarmalayıcı GEREKMEZ.
     if (self.backend == .llvm) {
         const worker_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{worker_name});
         const rc = try self.newTemp();
@@ -386,8 +441,16 @@ pub fn genHttpServeMulticore(self: *Codegen, c: ast.Call) CodegenError!Value {
             .{ .ty = .l, .text = RT_PARAM },
             .{ .ty = .l, .text = num_threads_v.text },
             .{ .ty = .l, .text = worker_sym },
-            .{ .ty = .l, .text = fd },
+            .{ .ty = .l, .text = worker_payload_text },
         });
+        // Faz MN.11.1: `$nox_pool_serve` SENKRON döner (TÜM worker'lar
+        // BİTTİKTEN SONRA) — bu YÜZDEN paylaşılan bütçe/payload'ı BURADA
+        // GÜVENLE serbest bırakmak mümkün (hiçbir worker ARTIK BUNLARA
+        // dokunmuyor).
+        if (is_bounded) {
+            try self.qbeCall(null, "$nox_http_free_bounded_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = worker_payload_text } });
+            try self.qbeCall(null, "$nox_http_free_shared_budget", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = shared_budget_text } });
+        }
         return .{ .text = "0", .qtype = .none };
     }
 
@@ -420,7 +483,7 @@ pub fn genHttpServeMulticore(self: *Codegen, c: ast.Call) CodegenError!Value {
     try self.qbeLabel(body_label);
     const handle_ptr = try self.newTemp();
     const worker_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{worker_name});
-    try self.qbeCall(.{ .name = handle_ptr, .ty = .l }, "$nox_thread_spawn", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = worker_sym }, .{ .ty = .l, .text = fd }, .{ .ty = .w, .text = "0" }, .{ .ty = .w, .text = "0" } });
+    try self.qbeCall(.{ .name = handle_ptr, .ty = .l }, "$nox_thread_spawn", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = worker_sym }, .{ .ty = .l, .text = worker_payload_text }, .{ .ty = .w, .text = "0" }, .{ .ty = .w, .text = "0" } });
     const slot_off = try self.newTemp();
     try self.qbeOp2Imm(slot_off, .l, "mul", cur, 8);
     const slot_ptr = try self.newTemp();
@@ -434,7 +497,7 @@ pub fn genHttpServeMulticore(self: *Codegen, c: ast.Call) CodegenError!Value {
     try self.qbeJmp(cond_label);
     try self.qbeLabel(end_label);
 
-    try self.emitFdServeTail(fd, wrapper_name, max_conn_text, null, null, used_fields.headers);
+    try self.emitListenServeTail(port_v.text, wrapper_name, max_conn_text, null, null, used_fields.headers, shared_budget_text);
 
     // Faz HH.8: ÇAĞIRANIN KENDİ payı (yukarıdaki `emitFdServeTail`)
     // BİTTİKTEN SONRA, spawn edilen HER worker'ı join et — `max_
@@ -476,14 +539,26 @@ pub fn genHttpServeMulticore(self: *Codegen, c: ast.Call) CodegenError!Value {
     try self.qbeLabel(jend_label);
     try self.qbeCall(null, "$nox_free", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handles_arr }, .{ .ty = .l, .text = handles_bytes } });
 
+    // Faz MN.11.1: TÜM spawn edilen worker'lar YUKARIDAKİ join döngüsüyle
+    // KANITLANMIŞ olarak BİTTİĞİNDEN (payload/bütçeyi BİR DAHA HİÇBİR
+    // worker OKUMAYACAĞINDAN) paylaşılan bütçe/payload'ı BURADA GÜVENLE
+    // serbest bırakabiliriz.
+    if (is_bounded) {
+        try self.qbeCall(null, "$nox_http_free_bounded_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = worker_payload_text } });
+        try self.qbeCall(null, "$nox_http_free_shared_budget", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = shared_budget_text } });
+    }
+
     return .{ .text = "0", .qtype = .none };
 }
 
 /// `nox_thread_spawn`ın ÇAĞIRDIĞI, `nox.http.serve_multicore` çağrı
 /// sitesi başına üretilen bir ÇOCUK İŞ PARÇACIĞI girişi — Faz DD.1
-/// (bkz. nox-teknik-spesifikasyon.md §3.60). `genThreadStartWrapper`nin
-/// KANITLANMIŞ düşük-seviye şekliyle (`%argp`den `RT_PARAM` + payload
-/// YÜKLEMESİ) BİREBİR AYNI iskelet, AMA gövde gerçek bir Nox fonksiyonu
+/// (bkz. nox-teknik-spesifikasyon.md §3.60). **Faz MN.11'DEN İTİBAREN**
+/// payload ÇIPLAK bir `port` (ya da TLS İçİn `{port, tls_ctx}`) — HER
+/// worker BURADA KENDİ BAĞIMSIZ `SO_REUSEPORT` soketini TAZE açar
+/// (bkz. `emitListenServeTail`). `genThreadStartWrapper`nin KANITLANMIŞ
+/// düşük-seviye şekliyle (`%argp`den `RT_PARAM` + payload YÜKLEMESİ)
+/// BİREBİR AYNI iskelet, AMA gövde gerçek bir Nox fonksiyonu
 /// ÇAĞIRMAK yerine `emitFdServeTail`i çağırır — bu worker'ın ARKASINDA
 /// yazılmış bir Nox `entry` fonksiyonu YOKTUR, TAMAMEN sentezlenir
 /// (`genHttpServeWrapper`nin `HandlerFn` sarmalayıcısını
@@ -521,31 +596,57 @@ pub fn genHttpServeMulticoreWorker(self: *Codegen, spec: HttpServeMulticoreWorke
     const payload_addr = try self.newTemp();
     try self.qbeOp2Imm(payload_addr, .l, "add", "%argp", 8);
 
-    // Faz "sunucu-tarafı TLS": `spec.tls` İSE `payload_addr`nin İÇERDİĞİ
-    // DEĞER ÇIPLAK bir `fd` DEĞİL, `nox_http_listen_fd_tls`nin döndürdüğü
-    // bir `FdTlsPayload*`dir (bkz. `genHttpServeMulticoreCore`) — bu
-    // İŞARETÇİ ÜZERİNDEN İKİ ALAN (`fd` @ ofset 0, `tls_ctx` @ ofset 8)
-    // AYRICA YÜKLENİR.
-    var fd: []const u8 = undefined;
+    // Faz MN.11: `spec.tls` İSE `payload_addr`nin İÇERDİĞİ DEĞER ÇIPLAK
+    // bir `port` DEĞİL, `nox_http_make_port_tls_payload`nin döndürdüğü
+    // bir `PortTlsPayload*`dir (bkz. `genHttpServeMulticoreGeneric`) — bu
+    // İŞARETÇİ ÜZERİNDEN İKİ ALAN (`port` @ ofset 0, `tls_ctx` @ ofset 8)
+    // AYRICA YÜKLENİR. HER worker BU `port`u `nox_http_server_listen_
+    // multicore_worker(_tls)`e (bkz. `emitListenServeTail`) geçirip KENDİ
+    // BAĞIMSIZ `SO_REUSEPORT` soketini BURADA TAZE açar — ESKİDEN olduğu
+    // gibi ÖNCEDEN hesaplanmış PAYLAŞILAN bir fd'yi SARMAZ.
+    //
+    // Faz MN.11.1: `spec.bounded` İSE (TLS OLSUN OLMASIN) payload ÜÇÜNCÜ
+    // bir şekildedir — `nox_http_make_bounded_payload`nin döndürdüğü bir
+    // `MulticoreBoundedPayload*` (`port` @ ofset 0, `tls_ctx` @ ofset 8,
+    // `budget` @ ofset 16) — bkz. `SharedServeBudget`nin runtime tarafındaki
+    // belge notu.
+    var port: []const u8 = undefined;
     var tls_ctx_text: ?[]const u8 = null;
-    if (spec.tls) {
+    var shared_budget_text: []const u8 = "0";
+    if (spec.bounded) {
         const payload_ptr = try self.newTemp();
         try self.qbeLoadL(payload_ptr, payload_addr);
-        const fd_t = try self.newTemp();
-        try self.qbeLoadL(fd_t, payload_ptr);
+        const port_t = try self.newTemp();
+        try self.qbeLoadL(port_t, payload_ptr);
         const ctx_addr = try self.newTemp();
         try self.qbeOp2Imm(ctx_addr, .l, "add", payload_ptr, 8);
         const ctx_t = try self.newTemp();
         try self.qbeLoadL(ctx_t, ctx_addr);
-        fd = fd_t;
+        const budget_addr = try self.newTemp();
+        try self.qbeOp2Imm(budget_addr, .l, "add", payload_ptr, 16);
+        const budget_t = try self.newTemp();
+        try self.qbeLoadL(budget_t, budget_addr);
+        port = port_t;
+        if (spec.tls) tls_ctx_text = ctx_t;
+        shared_budget_text = budget_t;
+    } else if (spec.tls) {
+        const payload_ptr = try self.newTemp();
+        try self.qbeLoadL(payload_ptr, payload_addr);
+        const port_t = try self.newTemp();
+        try self.qbeLoadL(port_t, payload_ptr);
+        const ctx_addr = try self.newTemp();
+        try self.qbeOp2Imm(ctx_addr, .l, "add", payload_ptr, 8);
+        const ctx_t = try self.newTemp();
+        try self.qbeLoadL(ctx_t, ctx_addr);
+        port = port_t;
         tls_ctx_text = ctx_t;
     } else {
-        const fd_t = try self.newTemp();
-        try self.qbeLoadL(fd_t, payload_addr);
-        fd = fd_t;
+        const port_t = try self.newTemp();
+        try self.qbeLoadL(port_t, payload_addr);
+        port = port_t;
     }
 
-    try self.emitFdServeTail(fd, spec.wrapper_name, spec.max_conn_text, tls_ctx_text, spec.ws_wrapper_name, spec.needs_headers);
+    try self.emitListenServeTail(port, spec.wrapper_name, spec.max_conn_text, tls_ctx_text, spec.ws_wrapper_name, spec.needs_headers, shared_budget_text);
 
     try self.qbeRet("0");
     try self.qbeFuncEnd();
@@ -811,7 +912,7 @@ pub fn genHttpServeGeneric(self: *Codegen, c: ast.Call, want_tls: bool, want_ws:
     }
 
     const handlers = try self.registerHttpHandlers(handle_name, ws_handle_name);
-    try self.emitServeAndClose(server, handlers.wrapper_name, max_conn_text, handlers.ws_wrapper_name, handlers.needs_headers);
+    try self.emitServeAndClose(server, handlers.wrapper_name, max_conn_text, handlers.ws_wrapper_name, handlers.needs_headers, "0");
     return .{ .text = "0", .qtype = .none };
 }
 
@@ -876,7 +977,7 @@ pub fn genHttpServeFdGeneric(self: *Codegen, c: ast.Call, want_tls: bool, want_w
     if (want_tls) {
         const server = try self.newTemp();
         try self.qbeCall(.{ .name = server, .ty = .l }, "$nox_http_server_from_fd_tls_owned", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = fd_v.text }, .{ .ty = .l, .text = cert_v.text }, .{ .ty = .l, .text = key_v.text } });
-        try self.emitServeAndClose(server, handlers.wrapper_name, max_conn_text, handlers.ws_wrapper_name, handlers.needs_headers);
+        try self.emitServeAndClose(server, handlers.wrapper_name, max_conn_text, handlers.ws_wrapper_name, handlers.needs_headers, "0");
     } else {
         try self.emitFdServeTail(fd_v.text, handlers.wrapper_name, max_conn_text, null, handlers.ws_wrapper_name, handlers.needs_headers);
     }
@@ -884,15 +985,24 @@ pub fn genHttpServeFdGeneric(self: *Codegen, c: ast.Call, want_tls: bool, want_w
 }
 
 /// `nox.http.serve_multicore_tls`/`serve_multicore_ws`/`serve_multicore_
-/// ws_tls` — `genHttpServeMulticore`nin PARAMETRİK genellemesi.
-/// `want_tls` İSE paylaşılan dinleme fd'si `nox_http_listen_fd_tls` İLE
-/// (ÇIPLAK bir `int` DEĞİL, bir `FdTlsPayload*` olarak) elde edilir —
-/// HER worker (bkz. `genHttpServeMulticoreWorker`nin `spec.tls` dalı) VE
-/// ÇAĞIRANIN KENDİ payı (aşağıda, `emitFdServeTail`DEN ÖNCE) bu İŞARETÇİDEN
-/// `fd`/`tls_ctx`yi AYRI AYRI ÇIKARIR. Paylaşılan `SSL_CTX*`, TÜM
-/// worker'lar JOIN EDİLDİKTEN SONRA (bkz. `nox_tls_ctx_free`nin belge
-/// notu — ERKEN serbest bırakmak bir kullanım-sonrası-serbest-bırakma
-/// YARIŞI olurdu) TEK bir yerden serbest bırakılır.
+/// ws_tls` — `genHttpServeMulticore`nin PARAMETRİK genellemesi. **Faz
+/// MN.11'DEN İTİBAREN**: `want_tls` İSE `SSL_CTX*` (`nox_http_build_
+/// tls_ctx`) TEK BİR KEZ BURADA İnşa edilir (worker başına TEKRARLANMAZ,
+/// OpenSSL'in KENDİ, belgelenmiş iş-parçacığı-güvenliği sözleşmesi
+/// SAYESİNDE TÜM worker'lar ARASINDA GERÇEKTEN paylaşılır) VE `{port,
+/// tls_ctx}` (`nox_http_make_port_tls_payload`) TEK bir payload OLARAK
+/// paketlenip HER worker'a geçirilir — HER worker (bkz. `genHttpServeMulticoreWorker`nin
+/// `spec.tls` dalı) BU payload'DAN `port`/`tls_ctx`yi AYRI AYRI ÇIKARIP
+/// `nox_http_server_listen_multicore_worker_tls`i (bkz. `emitListenServeTail`)
+/// ÇAĞIRARAK KENDİ BAĞIMSIZ `SO_REUSEPORT` soketini TAZE açar (paylaşılan
+/// TEK bir fd ARTIK YOK — standalone bir C deneyiyle kanıtlanmış OS-
+/// seviyesi thundering-herd maliyetinin düzeltmesi, bkz. proje planı).
+/// ÇAĞIRANIN KENDİ payı (aşağıda) İSE `port_v.text`/`tls_ctx_v`yi
+/// ZATEN YEREL Zig değişkenleri OLARAK TUTTUĞUNDAN payload'dan HİÇ
+/// ÇIKARMAZ. Paylaşılan `SSL_CTX*`, TÜM worker'lar JOIN EDİLDİKTEN
+/// SONRA (bkz. `nox_tls_ctx_free`nin belge notu — ERKEN serbest bırakmak
+/// bir kullanım-sonrası-serbest-bırakma YARIŞI olurdu) TEK bir yerden
+/// serbest bırakılır.
 pub fn genHttpServeMulticoreGeneric(self: *Codegen, c: ast.Call, want_tls: bool, want_ws: bool) CodegenError!Value {
     var idx: usize = 0;
     const port_v0 = try self.genExpr(c.args[idx]);
@@ -941,29 +1051,59 @@ pub fn genHttpServeMulticoreGeneric(self: *Codegen, c: ast.Call, want_tls: bool,
     // `tryResolveHttpServeGeneric`nin belge notu) — `genHttpServeMulticore`nin
     // AYNI derleme-zamanı metin sabiti taktiği.
     var max_conn_text: []const u8 = "0";
+    var is_bounded = false;
     if (c.args.len > idx) {
         max_conn_text = try std.fmt.allocPrint(self.allocator, "{d}", .{c.args[idx].int_lit});
+        is_bounded = c.args[idx].int_lit > 0;
         idx += 1;
     }
 
-    const fd = try self.newTemp();
+    // Faz MN.11 (bkz. `genHttpServeMulticore`nin AYNI belge notu): TEK
+    // paylaşılan bir `fd` ARTIK YOK. `want_tls` İSE `SSL_CTX*` (cert/
+    // anahtar dosya ayrıştırması İçEREN PAHALI adım) TEK BİR KEZ BURADA
+    // İnşa edilir (`nox_http_build_tls_ctx`) — OpenSSL'in KENDİ, belgelenmiş
+    // iş-parçacığı-güvenliği sözleşmesi SAYESİNDE TÜM worker'lar ARASINDA
+    // GERÇEKTEN paylaşılır; payload SADECE `{port, tls_ctx}` (`nox_http_
+    // make_port_tls_payload`, `FdTlsPayload`İLE AYNI ömür/şekil, SADECE
+    // `fd` alanı `port` OLUR). `want_tls` DEĞİLSE payload SADECE `port_v.
+    // text`in KENDİSİ (yeni bir tahsis GEREKMEZ).
+    //
+    // Faz MN.11.1: `is_bounded` İSE (bkz. `genHttpServeMulticore`nin AYNI
+    // mekanizması) BUNLARIN İKİSİNİN de YERİNE — TLS olsun olmasın — TEK
+    // bir `MulticoreBoundedPayload*` (`nox_http_make_bounded_payload`)
+    // KULLANILIR, PAYLAŞILAN bir `SharedServeBudget` İLE BİRLİKTE.
+    var tls_ctx_v: []const u8 = undefined;
+    var shared_budget_text: []const u8 = "0";
+    var payload: []const u8 = port_v.text;
     if (want_tls) {
-        try self.qbeCall(.{ .name = fd, .ty = .l }, "$nox_http_listen_fd_tls", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = port_v.text }, .{ .ty = .l, .text = cert_v.text }, .{ .ty = .l, .text = key_v.text } });
-    } else {
-        try self.qbeCall(.{ .name = fd, .ty = .l }, "$nox_http_listen_fd", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = port_v.text } });
+        tls_ctx_v = try self.newTemp();
+        try self.qbeCall(.{ .name = tls_ctx_v, .ty = .l }, "$nox_http_build_tls_ctx", &.{ .{ .ty = .l, .text = cert_v.text }, .{ .ty = .l, .text = key_v.text } });
+    }
+    if (is_bounded) {
+        const budget_v = try self.newTemp();
+        try self.qbeCall(.{ .name = budget_v, .ty = .l }, "$nox_http_make_shared_budget", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = max_conn_text }, .{ .ty = .l, .text = num_threads_v.text } });
+        shared_budget_text = budget_v;
+        const bounded_payload = try self.newTemp();
+        try self.qbeCall(.{ .name = bounded_payload, .ty = .l }, "$nox_http_make_bounded_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = port_v.text }, .{ .ty = .l, .text = if (want_tls) tls_ctx_v else "0" }, .{ .ty = .l, .text = budget_v } });
+        payload = bounded_payload;
+    } else if (want_tls) {
+        const port_tls_payload = try self.newTemp();
+        try self.qbeCall(.{ .name = port_tls_payload, .ty = .l }, "$nox_http_make_port_tls_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = port_v.text }, .{ .ty = .l, .text = tls_ctx_v } });
+        payload = port_tls_payload;
     }
 
     const handlers = try self.registerHttpHandlers(handle_name, ws_handle_name);
 
     const worker_name = try std.fmt.allocPrint(self.allocator, "http_serve_mc_worker_{d}", .{self.http_serve_multicore_worker_counter});
     self.http_serve_multicore_worker_counter += 1;
-    try self.http_serve_multicore_workers.append(self.allocator, .{ .name = worker_name, .wrapper_name = handlers.wrapper_name, .max_conn_text = max_conn_text, .ws_wrapper_name = handlers.ws_wrapper_name, .tls = want_tls, .needs_headers = handlers.needs_headers });
+    try self.http_serve_multicore_workers.append(self.allocator, .{ .name = worker_name, .wrapper_name = handlers.wrapper_name, .max_conn_text = max_conn_text, .ws_wrapper_name = handlers.ws_wrapper_name, .tls = want_tls, .needs_headers = handlers.needs_headers, .bounded = is_bounded });
 
     // Faz MN.7b (bkz. `genHttpServeMulticore`nin AYNI belge notu):
-    // `fd` BURADA da (`want_tls` İSE `FdTlsPayload*`, DEĞİLSE ÇIPLAK fd)
-    // `genHttpServeMulticoreWorker`nin `spec.tls`-güdümlü `%argp+8`
-    // yorumuyla BİREBİR UYUMLU olduğundan, AYNI ÜRETİLEN worker fonksiyonu
-    // DEĞİŞİKLİKSİZ `nox_pool_serve`nin `entry_fn`i OLARAK kullanılabilir.
+    // `payload` BURADA da (`want_tls` İSE `PortTlsPayload*`, DEĞİLSE
+    // ÇIPLAK `port`) `genHttpServeMulticoreWorker`nin `spec.tls`-güdümlü
+    // `%argp+8` yorumuyla BİREBİR UYUMLU olduğundan, AYNI ÜRETİLEN worker
+    // fonksiyonu DEĞİŞİKLİKSİZ `nox_pool_serve`nin `entry_fn`i OLARAK
+    // kullanılabilir.
     if (self.backend == .llvm) {
         const worker_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{worker_name});
         const rc = try self.newTemp();
@@ -971,8 +1111,14 @@ pub fn genHttpServeMulticoreGeneric(self: *Codegen, c: ast.Call, want_tls: bool,
             .{ .ty = .l, .text = RT_PARAM },
             .{ .ty = .l, .text = num_threads_v.text },
             .{ .ty = .l, .text = worker_sym },
-            .{ .ty = .l, .text = fd },
+            .{ .ty = .l, .text = payload },
         });
+        // Faz MN.11.1 (bkz. `genHttpServeMulticore`nin AYNI belge notu):
+        // `$nox_pool_serve` SENKRON döner.
+        if (is_bounded) {
+            try self.qbeCall(null, "$nox_http_free_bounded_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = payload } });
+            try self.qbeCall(null, "$nox_http_free_shared_budget", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = shared_budget_text } });
+        }
         return .{ .text = "0", .qtype = .none };
     }
 
@@ -1002,7 +1148,7 @@ pub fn genHttpServeMulticoreGeneric(self: *Codegen, c: ast.Call, want_tls: bool,
     try self.qbeLabel(body_label);
     const handle_ptr = try self.newTemp();
     const worker_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{worker_name});
-    try self.qbeCall(.{ .name = handle_ptr, .ty = .l }, "$nox_thread_spawn", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = worker_sym }, .{ .ty = .l, .text = fd }, .{ .ty = .w, .text = "0" }, .{ .ty = .w, .text = "0" } });
+    try self.qbeCall(.{ .name = handle_ptr, .ty = .l }, "$nox_thread_spawn", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = worker_sym }, .{ .ty = .l, .text = payload }, .{ .ty = .w, .text = "0" }, .{ .ty = .w, .text = "0" } });
     const slot_off = try self.newTemp();
     try self.qbeOp2Imm(slot_off, .l, "mul", cur, 8);
     const slot_ptr = try self.newTemp();
@@ -1016,23 +1162,13 @@ pub fn genHttpServeMulticoreGeneric(self: *Codegen, c: ast.Call, want_tls: bool,
     try self.qbeJmp(cond_label);
     try self.qbeLabel(end_label);
 
-    // ÇAĞIRANIN KENDİ payı: `want_tls` İSE `fd` ÇIPLAK bir değer DEĞİL,
-    // bir `FdTlsPayload*`dir (bkz. `genHttpServeMulticoreWorker`nin AYNI
-    // çıkarma dalı) — `emitFdServeTail`e VERİLMEDEN ÖNCE İKİ alanı AYRI
-    // AYRI ÇIKARILIR.
-    var fd_text: []const u8 = fd;
-    var tls_ctx_text: ?[]const u8 = null;
-    if (want_tls) {
-        const fd_extracted = try self.newTemp();
-        try self.qbeLoadL(fd_extracted, fd);
-        const ctx_addr = try self.newTemp();
-        try self.qbeOp2Imm(ctx_addr, .l, "add", fd, 8);
-        const ctx_extracted = try self.newTemp();
-        try self.qbeLoadL(ctx_extracted, ctx_addr);
-        fd_text = fd_extracted;
-        tls_ctx_text = ctx_extracted;
-    }
-    try self.emitFdServeTail(fd_text, handlers.wrapper_name, max_conn_text, tls_ctx_text, handlers.ws_wrapper_name, handlers.needs_headers);
+    // Faz MN.11: ÇAĞIRANIN KENDİ payı — `port_v.text`/`tls_ctx_v` ZATEN
+    // YEREL Zig değişkenleri OLARAK ELİMİZDE (yukarıda hesaplandı), bir
+    // heap payload'dan (`FdTlsPayload*`) ÇIKARMAYA GEREK YOK — `emitFdServeTail`
+    // YERİNE `emitListenServeTail` (KENDİ BAĞIMSIZ `SO_REUSEPORT` soketini
+    // TAZE açar).
+    const tls_ctx_text: ?[]const u8 = if (want_tls) tls_ctx_v else null;
+    try self.emitListenServeTail(port_v.text, handlers.wrapper_name, max_conn_text, tls_ctx_text, handlers.ws_wrapper_name, handlers.needs_headers, shared_budget_text);
 
     // Faz HH.8: ÇAĞIRANIN KENDİ payı BİTTİKTEN SONRA, spawn edilen HER
     // worker'ı join et (bkz. `genHttpServeMulticore`nin AYNI gerekçesi).
@@ -1068,6 +1204,13 @@ pub fn genHttpServeMulticoreGeneric(self: *Codegen, c: ast.Call, want_tls: bool,
     try self.qbeJmp(jcond_label);
     try self.qbeLabel(jend_label);
     try self.qbeCall(null, "$nox_free", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handles_arr }, .{ .ty = .l, .text = handles_bytes } });
+
+    // Faz MN.11.1 (bkz. `genHttpServeMulticore`nin AYNI belge notu):
+    // TÜM spawn edilen worker'lar YUKARIDAKİ join döngüsüyle bitti.
+    if (is_bounded) {
+        try self.qbeCall(null, "$nox_http_free_bounded_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = payload } });
+        try self.qbeCall(null, "$nox_http_free_shared_budget", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = shared_budget_text } });
+    }
 
     if (tls_ctx_text) |ctx| {
         try self.qbeCall(null, "$nox_tls_ctx_free", &.{.{ .ty = .l, .text = ctx }});

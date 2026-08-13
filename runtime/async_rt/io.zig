@@ -128,6 +128,44 @@ pub fn nonBlockingAccept(scheduler: *Scheduler, listen_fd: posix.fd_t) !posix.fd
     }
 }
 
+/// `nonBlockingAccept`İLE AYNI, AMA `timeout_ms` GEÇTİĞİNDE (bağlantı
+/// GELMEDEN) `error.Timeout` DÖNER — `suspendForIoOrTimeout`nin AYNI
+/// (`nonBlockingReadWithTimeout`de KANITLANMIŞ) deseni. Faz MN.11.1
+/// (bkz. proje planı, "SO_REUSEPORT + sınırlı max_connections" düzeltmesi):
+/// `nox.http.serve_multicore`nin PAYLAŞILAN bağlantı bütçesi (`SharedServeBudget`)
+/// KULLANILDIĞINDA, HER worker'ın `accept()`i SINIRLI bir pencerede
+/// beklemesini VE zaman aşımında paylaşılan sayacı YENİDEN kontrol
+/// edebilmesini SAĞLAR — aksi halde kotayı hiç ALAMAYAN bir worker,
+/// `SO_REUSEPORT`nin kernel-seviyesi bağlantı dağılımının kendisine
+/// HİÇBİR ŞEY yönlendirmediği durumda `accept()`te SONSUZA KADAR bekler.
+pub fn nonBlockingAcceptWithTimeout(scheduler: *Scheduler, listen_fd: posix.fd_t, timeout_ms: u32) !posix.fd_t {
+    setNonBlocking(listen_fd);
+    while (true) {
+        if (builtin.os.tag == .windows) {
+            const rc = WinSock.accept(@intFromPtr(listen_fd), null, null);
+            if (rc != WinSock.INVALID_SOCKET) {
+                const conn_fd: posix.fd_t = @ptrFromInt(rc);
+                setTcpNodelay(conn_fd);
+                return conn_fd;
+            }
+            if (WinSock.WSAGetLastError() == WinSock.WSAEWOULDBLOCK) {
+                if (scheduler.suspendForIoOrTimeout(listen_fd, .read, timeout_ms) == .timed_out) return error.Timeout;
+                continue;
+            }
+            return error.Unexpected;
+        }
+        const rc = std.c.accept(listen_fd, null, null);
+        if (rc >= 0) {
+            setTcpNodelay(rc);
+            return rc;
+        }
+        switch (posix.errno(rc)) {
+            .AGAIN => if (scheduler.suspendForIoOrTimeout(listen_fd, .read, timeout_ms) == .timed_out) return error.Timeout,
+            else => |e| return posix.unexpectedErrno(e),
+        }
+    }
+}
+
 /// `fd`den `buf`a okur — veri hazır olana kadar askıya alıp TEKRAR dener.
 /// `read()`in `0` dönmesi (EOF/bağlantı kapandı) GEÇERLİ bir sonuçtur,
 /// hata SAYILMAZ (çağıran bunu ayırt eder — `strlen`/döngü sonlandırma

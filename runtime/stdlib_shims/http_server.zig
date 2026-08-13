@@ -248,8 +248,15 @@ const ServerHandle = struct {
 /// ZORLANMIYOR, çünkü "sunucu varsayılan olarak yalnızca loopback'e
 /// bağlanır" davranışı GENEL kullanım İçin SÜRPRİZ BOZUCUYDU (bu HATANIN
 /// KENDİSİ bunun KANITI).
-fn bindAndListen(port: i64) ?posix.fd_t {
+fn bindAndListen(port: i64, reuse_port: bool) ?posix.fd_t {
     if (builtin.os.tag == .windows) {
+        // Faz MN.11: Windows'ta `SO_REUSEPORT` YOK (Zig 0.16'nın `ws2_32.zig`
+        // bağlamalarında doğrulandı, sadece `SO_REUSEADDR` VAR — VE onun
+        // semantiği POSIX'ten TEMELDEN FARKLI, port "çalma"ya İZİN VERİR,
+        // yük dengelemeye DEĞİL) — `reuse_port` BURADA HİÇ KULLANILMAZ,
+        // ÇAĞIRAN (`nox_http_server_listen_multicore_worker*`) Windows'ta
+        // KENDİ süreç-geneli önbelleğiyle PAYLAŞIM sağlar (bkz. AŞAĞIDAKİ
+        // `windows_listen_cache`).
         const ws = io_mod.WinSock;
         const fd = ws.socket(ws.AF_INET, ws.SOCK_STREAM, 0);
         if (fd == ws.INVALID_SOCKET) return null;
@@ -275,6 +282,18 @@ fn bindAndListen(port: i64) ?posix.fd_t {
     if (fd < 0) return null;
     var reuse: c_int = 1;
     _ = std.c.setsockopt(fd, std.c.SOL.SOCKET, std.c.SO.REUSEADDR, &reuse, @sizeOf(c_int));
+    // Faz MN.11 (bkz. proje planı — kullanıcının "8 worker ping 1
+    // worker'dan yavaş" raporunun kök nedeni): `serve_multicore`nin HER
+    // worker'ının artık KENDİ BAĞIMSIZ soketini BU bayrakla açması İçİn
+    // — TEK bir paylaşılan fd + N kqueue/epoll instance'ının OS-seviyesi
+    // "thundering herd" maliyetini (standalone bir C deneyiyle KANITLANDI)
+    // ORTADAN KALDIRIR. SADECE `reuse_port=true` İKEN (yalnızca YENİ
+    // multicore-worker yolu) set edilir — `nox.http.listen()`/`serve`/
+    // `serve_tls`nin 4 MEVCUT çağrı sitesi `false` geçer, "aynı porta
+    // ikinci bağlanma denemesi hata verir" sözleşmesi KORUNUR.
+    if (reuse_port) {
+        _ = std.c.setsockopt(fd, std.c.SOL.SOCKET, std.c.SO.REUSEPORT, &reuse, @sizeOf(c_int));
+    }
 
     var addr: std.c.sockaddr.in = .{
         .port = std.mem.nativeToBig(u16, @intCast(port)),
@@ -287,10 +306,11 @@ fn bindAndListen(port: i64) ?posix.fd_t {
     // Faz HH.1 (bkz. nox-teknik-spesifikasyon.md §3.6X): ÖNCEDEN 128 —
     // `benchmarks/http_compare/zig_server.zig`nin KARŞILAŞTIRMA sunucusu
     // ZATEN 1024 kullanıyordu, Nox'un KENDİSİ dezavantajlı bir backlog İLE
-    // ölçülüyordu. Düşük backlog + `serve_multicore`nin N iş parçacığının
-    // AYNI fd üzerinde thundering-herd `accept()`i (bkz. `nox_http_listen_fd`nin
-    // belge notu) BİRLİKTE, yüksek eşzamanlılıkta gözlemlenen bağlantı
-    // reddi/soket hatalarının BİR bileşenidir.
+    // ölçülüyordu. Düşük backlog + (Faz MN.11'DEN ÖNCE) `serve_multicore`nin
+    // N iş parçacığının AYNI fd üzerinde thundering-herd `accept()`i
+    // BİRLİKTE, yüksek eşzamanlılıkta gözlemlenen bağlantı reddi/soket
+    // hatalarının BİR bileşeniydi — Faz MN.11 `SO_REUSEPORT` İLE bu
+    // paylaşılan-fd sorununu ORTADAN KALDIRDI (bkz. yukarıdaki not).
     if (std.c.listen(fd, 1024) != 0) {
         _ = closeSocket(fd);
         return null;
@@ -303,7 +323,7 @@ fn bindAndListen(port: i64) ?posix.fd_t {
 /// gerçek portu `nox_http_server_port`la öğren.
 export fn nox_http_server_listen(rt: ?*anyopaque, port: i64) callconv(.c) ?*anyopaque {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
-    const fd = bindAndListen(port) orelse return null;
+    const fd = bindAndListen(port, false) orelse return null;
 
     const handle = state.allocator().create(ServerHandle) catch {
         _ = closeSocket(fd);
@@ -336,7 +356,7 @@ export fn nox_http_server_listen_tls(rt: ?*anyopaque, port: i64, cert_path: ?[*:
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
     const cp = cert_path orelse return null;
     const kp = key_path orelse return null;
-    const fd = bindAndListen(port) orelse return null;
+    const fd = bindAndListen(port, false) orelse return null;
     var ctx_err: tls_server.CtxError = undefined;
     const ctx = tls_server.newServerCtx(cp, kp, &ctx_err) orelse {
         logTlsCtxFailure(ctx_err);
@@ -366,7 +386,7 @@ export fn nox_http_server_listen_tls(rt: ?*anyopaque, port: i64, cert_path: ?[*:
 /// üzerinden kayıt yaptığı `io.zig`).
 export fn nox_http_listen_fd(rt: ?*anyopaque, port: i64) callconv(.c) i64 {
     _ = rt;
-    const fd = bindAndListen(port) orelse return -1;
+    const fd = bindAndListen(port, false) orelse return -1;
     return fdToI64(fd);
 }
 
@@ -384,7 +404,7 @@ export fn nox_http_listen_fd_tls(rt: ?*anyopaque, port: i64, cert_path: ?[*:0]co
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
     const cp = cert_path orelse return null;
     const kp = key_path orelse return null;
-    const fd = bindAndListen(port) orelse return null;
+    const fd = bindAndListen(port, false) orelse return null;
     var ctx_err: tls_server.CtxError = undefined;
     const ctx = tls_server.newServerCtx(cp, kp, &ctx_err) orelse {
         logTlsCtxFailure(ctx_err);
@@ -398,6 +418,245 @@ export fn nox_http_listen_fd_tls(rt: ?*anyopaque, port: i64, cert_path: ?[*:0]co
     };
     payload.* = .{ .fd = fdToI64(fd), .tls_ctx = ctx };
     return payload;
+}
+
+/// Faz MN.11: Windows'ta `SO_REUSEPORT` YOK OLDUĞUNDAN (bkz. `bindAndListen`nin
+/// belge notu), `nox_http_server_listen_multicore_worker*`nin Windows dalı
+/// BUGÜNKÜ "TEK bir fd, TÜM worker'lar PAYLAŞIR" davranışını AYNEN
+/// KORUMAK İçİn bu SÜREÇ-GENİŞ (process-wide) önbelleğe başvurur — BİLİNÇLİ
+/// olarak `RuntimeState`nin BİR ALANI DEĞİL: QBE yolunda HER worker KENDİ
+/// BAĞIMSIZ `RuntimeState`sine sahiptir (bkz. `thread_bridge.zig`nin
+/// `childThreadMain`ı, `asap.nox_runtime_init()`i HER worker İçİn AYRI
+/// ÇAĞIRIR) — `RuntimeState`-kapsamlı bir önbellek worker'lar ARASINDA
+/// GÖRÜNMEZ OLURDU, Windows'ta İKİNCİ+ worker'ın `bind()`i "port zaten
+/// kullanımda" İLE BAŞARISIZ OLURDU (GERÇEK bir fonksiyonel regresyon,
+/// sadece "hızlanma YOK" DEĞİL). 8 giriş YETERLİ (bir programın TEK bir
+/// `serve_multicore` portu KULLANMASI TİPİK, çoklu port NADİR AMA
+/// desteklenir); girdiler ASLA TAHLİYE EDİLMEZ (soketler süreç ömrü
+/// boyunca YAŞAR, `owns_fd=false` disipliniyle TUTARLI).
+var windows_listen_cache: [8]?struct { port: i64, fd: i64 } = @splat(null);
+var windows_listen_cache_lock: asap.SpinLock = .{};
+
+/// Faz MN.11: `serve_multicore`nin YENİ worker-başına dinleme yolu —
+/// SADECE üretilen `genHttpServeMulticoreWorker` gövdesi TARAFINDAN
+/// çağrılır (kullanıcı-yüzü bir API DEĞİLDİR). POSIX'te HER çağrı TAZE,
+/// BAĞIMSIZ bir soket açar (`SO_REUSEPORT` İLE — bkz. `bindAndListen`nin
+/// belge notu, standalone bir C deneyiyle KANITLANMIŞ OS-seviyesi
+/// "thundering herd accept()" düzeltmesi), `owns_fd=true` (HER worker'ın
+/// fd'si GERÇEKTEN KENDİSİNİNDİR, `owns_fd=false` bırakılsaydı SONLU
+/// `max_connections`lı [her İKİ golden test de KULLANIYOR] durumlarda
+/// HER worker'ın soketi SIZARDI). Windows'ta `windows_listen_cache`
+/// aracılığıyla BUGÜNKÜ "TEK paylaşılan fd" davranışını AYNEN KORUR
+/// (`owns_fd=false`, SIFIR davranış değişikliği).
+export fn nox_http_server_listen_multicore_worker(rt: ?*anyopaque, port: i64) callconv(.c) ?*anyopaque {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    if (builtin.os.tag == .windows) {
+        windows_listen_cache_lock.lock();
+        defer windows_listen_cache_lock.unlock();
+        for (windows_listen_cache) |slot| {
+            if (slot) |s| {
+                if (s.port == port) {
+                    const handle = state.allocator().create(ServerHandle) catch return null;
+                    handle.* = .{ .listen_fd = i64ToFd(s.fd), .owns_fd = false };
+                    return handle;
+                }
+            }
+        }
+        const fd = bindAndListen(port, false) orelse return null;
+        for (&windows_listen_cache) |*slot| {
+            if (slot.* == null) {
+                slot.* = .{ .port = port, .fd = fdToI64(fd) };
+                break;
+            }
+        }
+        const handle = state.allocator().create(ServerHandle) catch {
+            _ = closeSocket(fd);
+            return null;
+        };
+        handle.* = .{ .listen_fd = fd, .owns_fd = false };
+        return handle;
+    }
+    const fd = bindAndListen(port, true) orelse return null;
+    const handle = state.allocator().create(ServerHandle) catch {
+        _ = closeSocket(fd);
+        return null;
+    };
+    handle.* = .{ .listen_fd = fd, .owns_fd = true };
+    return handle;
+}
+
+/// Faz MN.11: `nox_http_listen_fd_tls`nin ctx-inşa yarısı — `SSL_CTX*`
+/// (cert/anahtar dosya ayrıştırması İçEREN, PAHALI bir adım) TEK BİR KEZ,
+/// codegen TARAFINDAN worker'lar spawn edilmeden ÖNCE ÇAĞRILIR (worker
+/// başına TEKRARLANMAZ) — OpenSSL'in KENDİ, belgelenmiş iş-parçacığı-
+/// güvenliği sözleşmesi (`SSL_new(ctx)` DIŞINDA `ctx` HİÇ MUTASYONA
+/// UĞRAMAZSA PAYLAŞIMI GÜVENLİDİR) SAYESİNDE bu ctx TÜM worker'lar
+/// ARASINDA GERÇEKTEN paylaşılabilir; SADECE `fd` worker-başına olur
+/// (bkz. `nox_http_server_listen_multicore_worker_tls`).
+export fn nox_http_build_tls_ctx(cert_path: ?[*:0]const u8, key_path: ?[*:0]const u8) callconv(.c) ?*anyopaque {
+    const cp = cert_path orelse return null;
+    const kp = key_path orelse return null;
+    var ctx_err: tls_server.CtxError = undefined;
+    const ctx = tls_server.newServerCtx(cp, kp, &ctx_err) orelse {
+        logTlsCtxFailure(ctx_err);
+        return null;
+    };
+    return ctx;
+}
+
+/// Faz MN.11: `FdTlsPayload`nin YENİ, port-tabanlı eşleniği — `nox_http_
+/// server_listen_multicore_worker_tls`nin `%argp+8` payload'ı olarak
+/// `genHttpServeMulticoreGeneric` TARAFINDAN worker'lar spawn edilmeden
+/// ÖNCE, `nox_http_build_tls_ctx`nin DÖNDÜRDÜĞÜ TEK, paylaşılan `ctx`İLE
+/// BİRLİKTE TEK bir `nox_alloc`'lu struct'a paketlenir (`FdTlsPayload`
+/// İLE AYNI ömür/paylaşım disiplini, SADECE `fd` alanı `port` OLUR).
+const PortTlsPayload = struct { port: i64, tls_ctx: ?*anyopaque };
+
+export fn nox_http_make_port_tls_payload(rt: ?*anyopaque, port: i64, tls_ctx: ?*anyopaque) callconv(.c) ?*anyopaque {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    const payload = state.allocator().create(PortTlsPayload) catch return null;
+    payload.* = .{ .port = port, .tls_ctx = tls_ctx };
+    return payload;
+}
+
+/// Faz MN.11: `nox_http_server_listen_multicore_worker`nin TLS eşleniği
+/// — AYNI POSIX (`SO_REUSEPORT`, `owns_fd=true`)/Windows (paylaşılan
+/// önbellek, `owns_fd=false`) fd mantığı, AMA `tls_ctx` HER ZAMAN ÖDÜNÇ
+/// ALINIR (`owns_tls_ctx=false` — ctx'i SADECE `genHttpServeMulticoreGeneric`nin
+/// KENDİSİ, TÜM worker'lar bittikten SONRA serbest bırakır, `nox_http_
+/// listen_fd_tls`nin PAYLAŞILAN-bağlam disipliniyle TUTARLI).
+export fn nox_http_server_listen_multicore_worker_tls(rt: ?*anyopaque, port: i64, tls_ctx: ?*anyopaque) callconv(.c) ?*anyopaque {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    if (builtin.os.tag == .windows) {
+        windows_listen_cache_lock.lock();
+        defer windows_listen_cache_lock.unlock();
+        for (windows_listen_cache) |slot| {
+            if (slot) |s| {
+                if (s.port == port) {
+                    const handle = state.allocator().create(ServerHandle) catch return null;
+                    handle.* = .{ .listen_fd = i64ToFd(s.fd), .owns_fd = false, .tls_ctx = tls_ctx, .owns_tls_ctx = false };
+                    return handle;
+                }
+            }
+        }
+        const fd = bindAndListen(port, false) orelse return null;
+        for (&windows_listen_cache) |*slot| {
+            if (slot.* == null) {
+                slot.* = .{ .port = port, .fd = fdToI64(fd) };
+                break;
+            }
+        }
+        const handle = state.allocator().create(ServerHandle) catch {
+            _ = closeSocket(fd);
+            return null;
+        };
+        handle.* = .{ .listen_fd = fd, .owns_fd = false, .tls_ctx = tls_ctx, .owns_tls_ctx = false };
+        return handle;
+    }
+    const fd = bindAndListen(port, true) orelse return null;
+    const handle = state.allocator().create(ServerHandle) catch {
+        _ = closeSocket(fd);
+        return null;
+    };
+    handle.* = .{ .listen_fd = fd, .owns_fd = true, .tls_ctx = tls_ctx, .owns_tls_ctx = false };
+    return handle;
+}
+
+/// Faz MN.11.1 (bkz. proje planı — SO_REUSEPORT'un KÜÇÜK, SABİT
+/// `max_connections`ta kernel-seviyesi bağlantı dağılım DENGESİZLİĞİ
+/// düzeltmesi): `nox.http.serve_multicore`nin ESKİ (Faz MN.11) tasarımında
+/// HER worker `max_connections`ı KENDİ YEREL sayacına göre kontrol
+/// ediyordu — AMA `SO_REUSEPORT`nin kernel-seviyesi bağlantı dağılımı
+/// (adil bir SIRA DEĞİL, bir HASH fonksiyonu) 2 EŞZAMANLI bağlantıyı
+/// AYNI worker'ın soketine yönlendirebilir; o worker KENDİ kotasını
+/// (`max_connections=1`) doldurup döngüsünden ÇIKARKEN, HİÇ bağlantı
+/// ALAMAYAN DİĞER worker `accept()`te SONSUZA KADAR bekler (GERÇEKTEN
+/// gözlemlendi — `tests/compat/http_serve_multicore_pool_golden_test.zig`
+/// TAKILIYORDU, standalone bir C tekrar-üretimiyle de DOĞRULANDI).
+/// Düzeltme: `max_connections>0` (SINIRLI) olduğunda, worker'lar KENDİ
+/// yerel sayaçları YERİNE BU struct'ı (TÜM worker'lar arasında PAYLAŞILAN,
+/// tek bir `nox_http_make_shared_budget` çağrısıyla ÖNCEDEN ayrılan) —
+/// atomik bir "toplam sunulan bağlantı" sayacı OLARAK kullanır. HER
+/// worker'ın `accept()`i `SHARED_BUDGET_POLL_MS` SINIRLI bir pencerede
+/// beklenir (bkz. `io.nonBlockingAcceptWithTimeout`) — zaman aşımında
+/// paylaşılan sayaç YENİDEN kontrol edilir; kota DOLMUŞSA (BAŞKA bir
+/// worker TARAFINDAN) bu worker KENDİ döngüsünden TEMİZ çıkar. Worst-case
+/// EK bekleme SADECE bir poll aralığıdır (25ms) — kotayı hiç ALAMAYAN
+/// bir worker'ın SONSUZA KADAR bloke olmasının YERİNE geçer.
+///
+/// `max_connections<=0` (SINIRSIZ — GERÇEK üretim/throughput-kritik yol)
+/// İçİn BU mekanizma HİÇ DEVREYE GİRMEZ (`shared_budget == null`,
+/// `serveImpl`nin ESKİ, tek başına yerel-`served` yolu AYNEN kullanılır)
+/// — SIFIR ek maliyet, SIFIR davranış değişikliği.
+pub const SharedServeBudget = struct {
+    served: std.atomic.Value(i64) = .init(0),
+    max_connections: i64,
+};
+
+/// `served >= max_connections` KOŞULUNU HER `SHARED_BUDGET_POLL_MS`de
+/// bir YENİDEN kontrol etmek İçİn kullanılan zaman aşımı penceresi —
+/// GERÇEK bağlantı GELDİĞİNDE `accept()` DERHAL döner (bu SADECE "kota
+/// dolmuş MU" sorusunu ne SIKLIKLA sorduğumuzu SINIRLAR, throughput'u
+/// ETKİLEMEZ).
+const SHARED_BUDGET_POLL_MS: u32 = 25;
+
+/// `max_connections_per_worker`, `nox.http.serve_multicore`nin `max_
+/// connections` argümanının ORİJİNAL, HER ZAMAN VAR OLAN anlamıdır —
+/// "HER worker'ın KENDİ bağımsız sayacı" (paylaşımsız, thundering-herd
+/// döneminden BERİ AYNI). `SharedServeBudget` BUNU DEĞİŞTİRMEZ — SADECE
+/// KAÇ worker'ın kotayı GERÇEKTEN dolduracağını kernel'in `SO_REUSEPORT`
+/// dağılımına BIRAKMAK YERİNE, TOPLAM bütçeyi (`max_connections_per_
+/// worker * num_workers`) TÜM worker'lar ARASINDA PAYLAŞTIRIR — HANGİ
+/// worker'ın KAÇ bağlantı ALDIĞI ARTIK ÖNEMSİZDİR, SADECE TOPLAM sayı
+/// "num_workers × max_connections_per_worker"ı AŞMAZ. Bu, ESKİ "her
+/// worker KENDİ payını alır" GARANTİSİNİ (kernel routing bunu artık
+/// SAĞLAYAMADIĞINDAN) "TOPLAM sayı KORUNUR" GARANTİSİNE GEVŞETİR — TEK
+/// pratik fark, worker sayısı KADAR bağlantı GÖNDEREN (bkz. golden
+/// testler) bir çağıranın TÜM bağlantılarının BAŞARIYLA sunulmasıdır,
+/// hangi worker'IN sunduğu ÖNEMLİ DEĞİLDİR.
+export fn nox_http_make_shared_budget(rt: ?*anyopaque, max_connections_per_worker: i64, num_workers: i64) callconv(.c) ?*anyopaque {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    const budget = state.allocator().create(SharedServeBudget) catch return null;
+    const workers: i64 = if (num_workers > 0) num_workers else 1;
+    budget.* = .{ .max_connections = max_connections_per_worker * workers };
+    return budget;
+}
+
+/// `PortTlsPayload`nin SINIRLI-bütçe eşleniği — `tls_ctx` TLS OLMAYAN
+/// çağrılarda `null`dır (worker'ın payload-çözme kodu BUNU AYIRT eder,
+/// bkz. `genHttpServeMulticoreWorker`). Böylece SINIRLI (`max_connections>0`)
+/// serve_multicore çağrıları TLS olsun ya da olmasın TEK bir payload
+/// şekli kullanır — `PortTlsPayload`/çıplak-`port` İKİ şeklinin (SINIRSIZ
+/// yol) YANINA ÜÇÜNCÜ bir varyant.
+const MulticoreBoundedPayload = extern struct { port: i64, tls_ctx: ?*anyopaque, budget: *SharedServeBudget };
+
+export fn nox_http_make_bounded_payload(rt: ?*anyopaque, port: i64, tls_ctx: ?*anyopaque, budget: ?*anyopaque) callconv(.c) ?*anyopaque {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    const b: *SharedServeBudget = @ptrCast(@alignCast(budget orelse return null));
+    const payload = state.allocator().create(MulticoreBoundedPayload) catch return null;
+    payload.* = .{ .port = port, .tls_ctx = tls_ctx, .budget = b };
+    return payload;
+}
+
+/// `nox_http_make_shared_budget`/`nox_http_make_bounded_payload`nin
+/// tahsislerini serbest bırakır — TÜM worker'lar (QBE: `nox_thread_join`
+/// döngüsü TAMAMLANDIKTAN SONRA; `--release`: `nox_pool_serve` DÖNDÜKTEN
+/// SONRA, İKİSİ de SENKRON olarak TÜM worker'ların bittiğini garanti
+/// eder) bittiğinde codegen TARAFINDAN ÇAĞRILIR — DebugAllocator'ın
+/// golden testlerin KENDİ "stderr'e HİÇBİR ŞEY yazılmadı = sızıntı YOK"
+/// katı denetimini geçmek İçİn GEREKLİ (`state.allocator()` İLE tahsis
+/// edilen HER şey GERÇEKTEN serbest bırakılmalı — "tek seferlik, küçük,
+/// kabul edilebilir sızıntı" varsayımı BU test disipliniyle ÇELİŞİYORDU).
+export fn nox_http_free_shared_budget(rt: ?*anyopaque, budget: ?*anyopaque) callconv(.c) void {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
+    const b: *SharedServeBudget = @ptrCast(@alignCast(budget orelse return));
+    state.allocator().destroy(b);
+}
+
+export fn nox_http_free_bounded_payload(rt: ?*anyopaque, payload: ?*anyopaque) callconv(.c) void {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
+    const p: *MulticoreBoundedPayload = @ptrCast(@alignCast(payload orelse return));
+    state.allocator().destroy(p);
 }
 
 /// Faz DD.1 — `nox_http_listen_fd`İLE elde edilmiş, ZATEN dinlemede olan
@@ -948,8 +1207,13 @@ fn connectionEntry(arg: *anyopaque) void {
 /// `max_connections <= 0` İSE SINIRSIZ (gerçek bir sunucu programı İÇİN);
 /// pozitifse TAM O SAYIDA bağlantı kabul edilince döner (bu dosyanın KENDİ
 /// testinin deterministik olması İÇİN gerekli).
-export fn nox_http_serve_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, max_connections: i64, needs_headers: i32) callconv(.c) void {
-    serveImpl(rt, server, handler, handler_ctx, null, max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS, needs_headers != 0);
+/// `shared_budget` (Faz MN.11.1): `null`/`0` İSE (SINIRSIZ serve, HER
+/// tek-worker `nox.http.serve`/`serve_tls`/`serve_ws`/`serve_fd*` çağrısı
+/// VE `serve_multicore`nin SINIRSIZ [`max_connections<=0`] yolu) davranış
+/// AYNEN eski `served`-yerel-sayaçlı yoldur. DOLU İSE (SADECE `serve_
+/// multicore`nin SINIRLI yolu) bkz. `SharedServeBudget`nin belge notu.
+export fn nox_http_serve_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, max_connections: i64, needs_headers: i32, shared_budget: ?*anyopaque) callconv(.c) void {
+    serveImpl(rt, server, handler, handler_ctx, null, max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS, needs_headers != 0, @ptrCast(@alignCast(shared_budget)));
 }
 
 /// Faz "sunucu-tarafı WebSocket Upgrade": `nox_http_serve_raw`nin AYNISI,
@@ -957,9 +1221,9 @@ export fn nox_http_serve_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: Hand
 /// PAYLAŞILIR (bkz. `ConnCtx.ws_handler`nin belge notu). `handler`,
 /// Upgrade OLMAYAN (`.not_upgrade`) istekler İçİn ÇALIŞMAYA DEVAM eder —
 /// TEK bir sunucu HEM normal HTTP rotalarını HEM DE WS Upgrade'i
-/// KARIŞIK sunabilir.
-export fn nox_http_serve_ws_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, ws_handler: websocket_server.WsHandlerFn, max_connections: i64, needs_headers: i32) callconv(.c) void {
-    serveImpl(rt, server, handler, handler_ctx, ws_handler, max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS, needs_headers != 0);
+/// KARIŞIK sunabilir. `shared_budget`: bkz. `nox_http_serve_raw`nin notu.
+export fn nox_http_serve_ws_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, ws_handler: websocket_server.WsHandlerFn, max_connections: i64, needs_headers: i32, shared_budget: ?*anyopaque) callconv(.c) void {
+    serveImpl(rt, server, handler, handler_ctx, ws_handler, max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS, needs_headers != 0, @ptrCast(@alignCast(shared_budget)));
 }
 
 /// `nox_http_serve_raw`nin GERÇEK gövdesi — `max_concurrent`/`max_body_bytes`/
@@ -969,7 +1233,7 @@ export fn nox_http_serve_ws_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: H
 /// MAX_CONCURRENT_CONNECTIONS`/`READ_TIMEOUT_MS` gibi GERÇEKÇİ (büyük)
 /// varsayılanları BEKLEMEDEN, testlerin KÜÇÜK/HIZLI değerlerle sınırları
 /// GERÇEKTEN EGZERSİZ edebilmesi İÇİNDİR (bkz. aşağıdaki testler).
-fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, ws_handler: ?websocket_server.WsHandlerFn, max_connections: i64, max_concurrent: usize, max_body_bytes: usize, read_timeout_ms: u32, needs_headers: bool) void {
+fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, ws_handler: ?websocket_server.WsHandlerFn, max_connections: i64, max_concurrent: usize, max_body_bytes: usize, read_timeout_ms: u32, needs_headers: bool, shared_budget: ?*SharedServeBudget) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const h: *ServerHandle = @ptrCast(@alignCast(server orelse return));
     const gpa = state.allocator();
@@ -981,12 +1245,42 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
     var active_connections: usize = 0;
 
     var served: i64 = 0;
-    while (max_connections <= 0 or served < max_connections) : (served += 1) {
+    accept_loop: while (true) {
+        // Faz MN.11.1: `shared_budget` DOLU İSE (SADECE `serve_multicore`nin
+        // SINIRLI yolu) döngü koşulu PAYLAŞILAN atomik sayaca göre kontrol
+        // edilir — YEREL `served` YERİNE (bkz. `SharedServeBudget`nin belge
+        // notu). BOŞSA (SINIRSIZ YA DA tek-worker serve) davranış AYNEN
+        // eskisi gibi kalır.
+        if (shared_budget) |b| {
+            if (b.served.load(.acquire) >= b.max_connections) break :accept_loop;
+        } else if (!(max_connections <= 0 or served < max_connections)) {
+            break :accept_loop;
+        }
+
         const scheduler = bridge.currentFiberScheduler();
-        const conn_fd = if (scheduler) |s|
-            io_mod.nonBlockingAccept(s, h.listen_fd) catch break
+        const conn_fd = if (shared_budget != null and scheduler != null)
+            (io_mod.nonBlockingAcceptWithTimeout(scheduler.?, h.listen_fd, SHARED_BUDGET_POLL_MS) catch |e| {
+                if (e == error.Timeout) continue :accept_loop;
+                break :accept_loop;
+            })
+        else if (scheduler) |s|
+            io_mod.nonBlockingAccept(s, h.listen_fd) catch break :accept_loop
         else
-            blockingAccept(h.listen_fd) catch break;
+            blockingAccept(h.listen_fd) catch break :accept_loop;
+        served += 1;
+
+        // Faz MN.11.1: BAŞKA bir worker AYNI ANDA kotayı ZATEN doldurmuş
+        // OLABİLİR (kernel'in `SO_REUSEPORT` dağılımı bu worker'a YİNE de
+        // bir bağlantı yönlendirmiş olsa BİLE) — bu FAZLA bağlantı, hiçbir
+        // HTTP yanıtı YAZILMADAN sessizce reddedilir (Q.5'in `max_concurrent`
+        // reddiyle AYNI, en-ucuz-tepki ilkesi).
+        if (shared_budget) |b| {
+            const prev = b.served.fetchAdd(1, .acq_rel);
+            if (prev >= b.max_connections) {
+                _ = closeSocket(conn_fd);
+                continue :accept_loop;
+            }
+        }
 
         // Faz Q.5: eşzamanlı bağlantı SINIRI — bir saldırganın `accept()`i
         // sınırsız tekrarlayıp HER biri İÇİN bir fiber+yığın tükettirmesini
@@ -995,7 +1289,7 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
         // KENDİSİNİN ek kaynak tüketmemesi İÇİN en ucuz tepki).
         if (active_connections >= max_concurrent) {
             _ = closeSocket(conn_fd);
-            continue;
+            continue :accept_loop;
         }
 
         const conn = gpa.create(ConnCtx) catch {
@@ -1208,11 +1502,12 @@ const ServeArgs = struct {
     read_timeout_ms: u32 = READ_TIMEOUT_MS,
     ws_handler: ?websocket_server.WsHandlerFn = null,
     needs_headers: bool = true,
+    shared_budget: ?*SharedServeBudget = null,
 };
 
 fn testServeEntry(arg: *anyopaque) callconv(.c) i64 {
     const args: *ServeArgs = @ptrCast(@alignCast(arg));
-    serveImpl(args.rt, args.server, TestHandlerLog.handle, null, args.ws_handler, args.max_connections, args.max_concurrent, args.max_body_bytes, args.read_timeout_ms, args.needs_headers);
+    serveImpl(args.rt, args.server, TestHandlerLog.handle, null, args.ws_handler, args.max_connections, args.max_concurrent, args.max_body_bytes, args.read_timeout_ms, args.needs_headers, args.shared_budget);
     return 0;
 }
 
@@ -1417,7 +1712,7 @@ const ThreadSafeCounter = struct {
 };
 
 fn sharedFdServeEntry(args: *ServeArgs) void {
-    serveImpl(args.rt, args.server, ThreadSafeCounter.handle, args.rt, args.ws_handler, args.max_connections, args.max_concurrent, args.max_body_bytes, args.read_timeout_ms, args.needs_headers);
+    serveImpl(args.rt, args.server, ThreadSafeCounter.handle, args.rt, args.ws_handler, args.max_connections, args.max_concurrent, args.max_body_bytes, args.read_timeout_ms, args.needs_headers, args.shared_budget);
 }
 
 // Faz DD.1 — `owns_fd`in KENDİSİNİ (bkz. `ServerHandle`in belge notu),
@@ -1431,7 +1726,7 @@ test "Faz DD.1: nox_http_server_close — owns_fd=false PAYLAŞILAN fd'yi KAPATM
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
 
-    const shared_fd = bindAndListen(0) orelse return error.ListenFailed;
+    const shared_fd = bindAndListen(0, false) orelse return error.ListenFailed;
     defer _ = closeSocket(shared_fd);
 
     const wrapped = nox_http_server_from_fd(rt, fdToI64(shared_fd)) orelse return error.WrapFailed;
@@ -1449,7 +1744,7 @@ test "Faz DD.1: nox_http_server_close — owns_fd=false PAYLAŞILAN fd'yi KAPATM
 }
 
 test "Faz DD.1: PAYLAŞILAN bir listen_fd üzerinde İKİ BAĞIMSIZ iş parçacığı/ServerHandle GERÇEKTEN kendi bağlantısını kabul eder" {
-    const fd = bindAndListen(0) orelse return error.ListenFailed;
+    const fd = bindAndListen(0, false) orelse return error.ListenFailed;
     defer _ = closeSocket(fd);
     var port: u16 = undefined;
     if (builtin.os.tag == .windows) {
@@ -1537,7 +1832,7 @@ test "Faz Q.5: govde boyutu siniri asilirsa 413 Payload Too Large doner, handler
         }
     }.run, .{ port, &resp_buf, &resp_len });
 
-    serveImpl(rt, server, TestHandlerLog.handle, null, null, 1, DEFAULT_MAX_CONCURRENT_CONNECTIONS, 16, READ_TIMEOUT_MS, true);
+    serveImpl(rt, server, TestHandlerLog.handle, null, null, 1, DEFAULT_MAX_CONCURRENT_CONNECTIONS, 16, READ_TIMEOUT_MS, true, null);
     client_thread.join();
 
     try std.testing.expectEqual(@as(usize, 0), TestHandlerLog.log.items.len);
