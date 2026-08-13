@@ -342,30 +342,41 @@ methodology and the missing-function table.
 </details>
 
 <details>
-<summary><strong>HTTP throughput — Nox / Go / Zig / FastAPI (via <code>wrk</code>)</strong></summary>
+<summary><strong>HTTP throughput — Nox (QBE) / Nox (<code>--release</code>) / Go / Zig / FastAPI (via <code>wrk</code>)</strong></summary>
 
-Four servers (`benchmarks/http_compare/`) all produce the identical
+Five servers (`benchmarks/http_compare/`) all produce the identical
 response (status 200, header `x: x`, body `"ok"`), each using 10
 threads/processes, measured with `wrk` (Apple M4, 10 cores — see
 `benchmarks/http_compare/run_compare.sh` for reproducibility). The
-table below was re-measured on 2026-07-25 (`ReleaseFast` runtime
-confirmed) as the median of 3 runs each — see "Bölüm 3 — 2026-07-25
-yeniden-koşumu" in `benchmarks/RESULTS.md` (shared load from other
-apps running on the machine at the same time pulled every server's
-absolute numbers down relative to earlier, "quieter" runs, but the
-relative ranking/ratio between servers held).
+table below was measured on 2026-08-13 (post-v1.29.0/Phase MN.9,
+`ReleaseFast` runtime confirmed, no other heavy app running in the
+background) as the median of 3 runs each — see "Bölüm 3 — 2026-08-13
+yeniden-koşumu" in `benchmarks/RESULTS.md` (background load from
+another app was empirically shown to actually flip the Nox-vs-Go
+ranking in an earlier pass of this same session — see the methodology
+note there rather than treating any single measurement pass as final).
 
 | Server | Moderate concurrency (c=30) | High concurrency (c=100) |
 |---|---|---|
-| Nox (`serve_multicore`, N=10) | **108,378** req/s | **117,195** req/s |
-| Zig (raw `std.c` sockets, N=10 threads) | 21,479 req/s | 15,930 req/s |
-| Go (`net/http`, default keep-alive) | 103,177 req/s | 82,784 req/s |
-| FastAPI (`uvicorn --workers 10`) | 8,936 req/s | 9,702 req/s |
+| Nox (QBE, `serve_multicore`, N=10) | **163,062** req/s | **175,752** req/s |
+| Nox (`--release`, LLVM + Phase MN.9 shared M:N pool, N=10) | 135,752 req/s | 131,436 req/s |
+| Go (`net/http`, default keep-alive) | 153,977 req/s | 151,455 req/s |
+| Zig (raw `std.c` sockets, N=10 threads) | 21,479 req/s* | 15,930 req/s* |
+| FastAPI (`uvicorn --workers 10`) | 11,289 req/s | 12,476 req/s |
 
-Nox now beats the raw Zig socket baseline, Go's `net/http`, and FastAPI
-at both concurrency levels — thanks to keep-alive support (Phase HH),
-Nox runs in the same regime as Go's architecture (TCP handshake cost
-paid per connection, not per request). See "Bölüm 3" in
+*The Zig column swings by up to an order of magnitude run-to-run due to
+the raw `accept()`-loop architecture's known fragility under connection
+storms (see RESULTS.md) — the more stable 2026-07-25 numbers are shown
+here instead of this pass's outlier-affected median.
+
+Nox (QBE, the default `noxc build`) beats the raw Zig socket baseline,
+Go's `net/http`, and FastAPI at both concurrency levels — thanks to
+keep-alive support (Phase HH), Nox runs in the same regime as Go's
+architecture (TCP handshake cost paid per connection, not per request).
+`nox.http.serve_multicore` under `--release` (LLVM + Phase MN.9's
+transparent M:N pool) also beats Go at both levels, though it trails
+QBE — suggesting the pool/`clang` toolchain path is more sensitive to
+run-to-run variance than QBE's simple, unshared model. See "Bölüm 3" in
 [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md) (Turkish) for the full
 methodology, including how this section's *first* published version was
 wrong (a Debug-mode runtime link + a misconfigured `max_connections`

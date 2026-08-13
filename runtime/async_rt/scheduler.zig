@@ -715,6 +715,26 @@ pub fn Task(comptime T: type) type {
         pub const PENDING: usize = 0;
         pub const COMPLETED: usize = 1;
 
+        /// **v1.29.1 — GERÇEK, DIŞARIDAN bulunup DOĞRULANMIŞ bir hata İçİN
+        /// eklendi (Channel[T]'nin MN.9.1'de aldığı AYNI düzeltmenin
+        /// Task[T]'ye uygulanmamış hali).** `checker.zig`nin `isSpawnParamSafeType`si
+        /// `Task[T]`yi bir `spawn`e argüman OLARAK ZATEN İZİN VERİYORDU — bir
+        /// fiber KENDİ oluşturduğu bir `Task`ı BAŞKA bir spawn edilmiş
+        /// fonksiyona geçirebilir, O fonksiyonun fiber'ı BAŞKA bir worker'a
+        /// ÇALINABİLİR, VE `await_()` O ÇALINMIŞ fiber'DAN çağrılırsa
+        /// ESKİDEN `self.scheduler`i (görev OLUŞTURULDUĞUNDA sabitlenen,
+        /// yani BAŞKA bir worker'ın scheduler'ı) kullanıyordu — Channel'ın
+        /// AYNI hatasıyla BİREBİR (bkz. `currentScheduler()`nin belge notu).
+        /// Düzeltme: Channel'ın `RecvSlot`/`SendSlot` deseninin AYNISI —
+        /// bekleyenin fiber'I + O fiber'ın PİNLİ OLDUĞU (askıya alma ANINDA
+        /// `currentScheduler()` İLE KAYDEDİLEN) scheduler'ı BİRLİKTE
+        /// saklanır, `entryTrampoline` uyandırmayı O KAYITLI scheduler
+        /// ÜZERİNDEN yapar.
+        const Waiter = struct {
+            fiber: *Fiber,
+            scheduler: *Scheduler,
+        };
+
         scheduler: *Scheduler,
         fiber: *Fiber = undefined,
         /// `callconv(.c)`: bu alan çoğunlukla QBE'nin ÜRETTİĞİ (dolayısıyla
@@ -780,26 +800,29 @@ pub fn Task(comptime T: type) type {
             }
             const old = self.state.swap(COMPLETED, .acq_rel);
             if (old != PENDING) {
-                const w: *Fiber = @ptrFromInt(old);
-                self.scheduler.markReady(w);
+                const w: *Waiter = @ptrFromInt(old);
+                w.scheduler.markReady(w.fiber);
             }
         }
 
         pub fn await_(self: *Self) T {
-            // Hızlı yol: görev ZATEN tamamlanmışsa `self.scheduler.current`e
-            // HİÇ DOKUNMA — `await_` bir fiber BAĞLAMI OLMADAN (ör. üst-
-            // düzey test kodu, `scheduler.run()` DIŞINDA) ZATEN tamamlanmış
-            // bir görevi beklemek İçİn ÇAĞRILABİLİR (`current` O DURUMDA
-            // `null`dır) — bu ESKİ (`if (!self.completed)`) davranışla
-            // BİREBİR AYNIDIR. SADECE görev HÂLÂ PENDING İSE (bekleyen
-            // KAYDEDİLMESİ GEREKEBİLİR) `current`in DOLU (fiber bağlamı
-            // İçİNDE çağrıldığı) OLMASI GEREKİR.
+            // Hızlı yol: görev ZATEN tamamlanmışsa scheduler'a HİÇ DOKUNMA —
+            // `await_` bir fiber BAĞLAMI OLMADAN (ör. üst-düzey test kodu,
+            // `scheduler.run()` DIŞINDA) ZATEN tamamlanmış bir görevi
+            // beklemek İçİn ÇAĞRILABİLİR — bu ESKİ (`if (!self.completed)`)
+            // davranışla BİREBİR AYNIDIR.
             if (self.state.load(.acquire) == COMPLETED) {
                 return self.result;
             }
-            const me = self.scheduler.current.?;
-            if (self.state.cmpxchgStrong(PENDING, @intFromPtr(me), .acq_rel, .acquire) == null) {
-                self.scheduler.suspendCurrent();
+            // ÇAĞIRANIN KENDİ, GERÇEKTEN ÇALIŞAN worker'ının scheduler'ı —
+            // `self.scheduler` (görev OLUŞTURULDUĞUNDA sabitlenen) DEĞİL
+            // (bkz. `Waiter`in belge notu, BURADA NEDEN). `waiter` BU
+            // fiber'ın KENDİ yığınında yaşar — fiber askıdayken yığını
+            // CANLI kalır (Channel'ın `RecvSlot`/`SendSlot`ıyla AYNI ilke).
+            const sched = currentScheduler().?;
+            var waiter = Waiter{ .fiber = sched.current.?, .scheduler = sched };
+            if (self.state.cmpxchgStrong(PENDING, @intFromPtr(&waiter), .acq_rel, .acquire) == null) {
+                sched.suspendCurrent();
             }
             return self.result;
         }
@@ -937,6 +960,11 @@ test "bir görev başka bir görevi await eder (iç içe askıya alma)" {
 
     var scheduler = try Scheduler.init(std.heap.page_allocator);
     defer scheduler.deinit();
+    // v1.29.1: `Task.await_()` artık `currentScheduler()`e dayanıyor (bkz.
+    // `Waiter`in belge notu) — `bridge.zig`nin `nox_async_init`inin GERÇEK
+    // programlarda ZATEN KOŞULSUZ yaptığı eşitlemeyi BURADA elle yapıyoruz.
+    setCurrentScheduler(&scheduler);
+    defer setCurrentScheduler(null);
 
     var parent_arg = Fn.ParentArg{ .scheduler = &scheduler, .child_input = 10 };
     const parent_task = try spawn(&scheduler, i64, Fn.parent, &parent_arg);
@@ -966,6 +994,9 @@ test "dairesel await -> Deadlock hatası net şekilde fırlatılır (asılı KAL
 
     var scheduler = try Scheduler.init(std.heap.page_allocator);
     defer scheduler.deinit();
+    // v1.29.1: bkz. yukarıdaki "iç içe askıya alma" testinin AYNI notu.
+    setCurrentScheduler(&scheduler);
+    defer setCurrentScheduler(null);
 
     var pair = Pair{};
     pair.a = try spawn(&scheduler, i64, Fn.waitForB, &pair);

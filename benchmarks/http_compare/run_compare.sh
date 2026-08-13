@@ -1,12 +1,14 @@
 #!/bin/sh
-# run_compare.sh — builds and benchmarks the Nox/Go/Zig/FastAPI HTTP
-# servers in benchmarks/http_compare/ with `wrk`, one at a time (all four
-# bind to the same port 8801). Each server returns the identical response
-# shape: HTTP 200, header "x: x", body "ok" (2 bytes) — see
-# benchmarks/RESULTS.md for the methodology notes and results table.
+# run_compare.sh — builds and benchmarks the Nox(QBE)/Nox(--release, LLVM
+# + MN.9 shared M:N pool)/Go/Zig/FastAPI HTTP servers in benchmarks/
+# http_compare/ with `wrk`, one at a time (all five bind to the same port
+# 8801). Each server returns the identical response shape: HTTP 200,
+# header "x: x", body "ok" (2 bytes) — see benchmarks/RESULTS.md for the
+# methodology notes and results table.
 #
 # Usage: sh benchmarks/http_compare/run_compare.sh
-# Requires: noxc (zig-out/bin/noxc, already built), go, zig, python3 with
+# Requires: noxc (zig-out/bin/noxc, already built, ReleaseFast runtime —
+# `--release` additionally needs `clang` on PATH), go, zig, python3 with
 # fastapi+uvicorn installed, and `wrk` on PATH.
 
 set -e
@@ -19,6 +21,7 @@ URL="http://127.0.0.1:${PORT}/"
 
 echo "=== building servers ==="
 "$ROOT/zig-out/bin/noxc" build nox_server.nox -o /tmp/http_compare_nox 2>&1
+"$ROOT/zig-out/bin/noxc" build --release nox_server.nox -o /tmp/http_compare_nox_release 2>&1
 zig build-exe zig_server.zig -O ReleaseFast -femit-bin=/tmp/http_compare_zig 2>&1
 go build -o /tmp/http_compare_go go_server.go 2>&1
 echo "built."
@@ -48,6 +51,7 @@ run_one() {
 }
 
 run_one nox /tmp/http_compare_nox /tmp/http_compare_nox
+run_one nox_release /tmp/http_compare_nox_release /tmp/http_compare_nox_release
 run_one zig /tmp/http_compare_zig /tmp/http_compare_zig
 run_one go /tmp/http_compare_go /tmp/http_compare_go
 run_one fastapi "uvicorn fastapi_server:app" python3 -m uvicorn fastapi_server:app --host 0.0.0.0 --port "$PORT" --workers 10

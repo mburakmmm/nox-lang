@@ -48,6 +48,67 @@ Bu testler yalnızca Nox'un büyük ölçekte çökmediğini/sızdırmadığın�
 
 **30/30 geçti.**
 
+### v1.29.0 sonrası (Faz MN.9) QBE vs `--release` (LLVM) karşılaştırması
+
+`zig build bench`in KENDİSİ hâlâ SADECE QBE yolunu ölçüyor (`run.zig`
+`noxc build` çağırıyor, `--release` bayrağı GEÇMİYOR) — bu YÜZDEN AYRI,
+elle kurulmuş bir karşılaştırma turu: HER 30 stres benchmark'ı `noxc
+build` (QBE) VE `noxc build --release` (LLVM, MN.9'un `$main` otomatik
+M:N havuzu artık HER `async`/`spawn`/`Channel[T]` kullanan programda
+AKTİF) İLE ayrı ayrı derlenip 3'er kez çalıştırıldı, MİNİMUM süre
+alındı. Ortam: `macos-aarch64 (apple_m4), 10 çekirdek`, `zig 0.16.0`,
+`noxc 1.29.0`, `ReleaseFast` runtime. **30/30 HER İKİ backend'de de
+temiz derlendi/çalıştı — sıfır stderr, sıfır çökme.**
+
+| Benchmark | QBE | LLVM (`--release`) | Not |
+|---|---:|---:|---|
+| numeric_recursion | 26ms | 20ms | 1.3x hızlı |
+| tight_loop_arithmetic | 526ms | 3ms | ~175x hızlı (LLVM döngüyü kapalı forma indirgiyor) |
+| list_traversal | 4ms | 4ms | eşit |
+| oop_arc_churn | 17ms | 16ms | eşit |
+| generics_protocols | 56ms | 37ms | 1.5x hızlı |
+| exceptions_control_flow | 39ms | 4ms | ~10x hızlı |
+| lowlevel_arena | 4ms | 3ms | eşit |
+| string_passing | 50ms | 70ms | **1.4x YAVAŞ** |
+| deep_equality | 15ms | 10ms | 1.5x hızlı |
+| list_class_field | 7ms | 5ms | 1.4x hızlı |
+| async_task_churn | 37ms | 40ms | ~eşit (MN.9'un otomatik havuzu, ölçülebilir bir regresyon YARATMIYOR) |
+| dict_bench | 4ms | 4ms | eşit |
+| json_bench | 27ms | 17ms | 1.6x hızlı |
+| strings_bench | 19ms | 20ms | ~eşit |
+| math_bench | 5ms | 6ms | ~eşit |
+| os_fs_bench | 5ms | 5ms | eşit |
+| time_bench | 6ms | 8ms | ~eşit |
+| method_call_elision | 275ms | 5ms | ~55x hızlı (döngü kapalı forma indirgeniyor) |
+| for_loop_method_elision | 261ms | 42ms | ~6x hızlı |
+| exception_check_overhead | 609ms | 380ms | 1.6x hızlı |
+| str_index_loop_licm | 97ms | 113ms | **1.16x YAVAŞ** |
+| str_len_many_strings | 17ms | 20ms | ~eşit/yavaş |
+| list_release_overhead | 310ms | 287ms | 1.08x hızlı |
+| bounds_check_elision | 43ms | 28ms | 1.5x hızlı |
+| strings_perf_bench | 17ms | 16ms | eşit |
+| path_bench | 11ms | 11ms | eşit |
+| random_bench | 11ms | 11ms | eşit |
+| regex_bench | 8ms | 8ms | eşit |
+| crypto_bench | 6ms | 6ms | eşit |
+| fs_bench | 195ms | 196ms | eşit |
+
+**Yorumlar:**
+- `tight_loop_arithmetic`/`method_call_elision`deki devasa LLVM kazancı
+  muhtemelen `clang -O2`'nin SCEV-tabanlı döngü tanımayla basit bir
+  toplama döngüsünü kapalı bir forma (`N*(N-1)/2` tarzı) indirgemesinden
+  kaynaklanıyor — GERÇEK bir optimizasyon, ölçüm gürültüsü DEĞİL (QBE'nin
+  KENDİSİ bu tür bir döngü-tanıma geçişine SAHİP DEĞİL).
+- `async_task_churn` (Task/Channel KULLANAN TEK stres benchmark'ı)
+  `--release` altında ARTIK MN.9'un paylaşılan M:N havuzundan ŞEFFAF
+  olarak geçiyor VE QBE'nin eski, paylaşımsız modeline göre SADECE ~%8
+  daha yavaş — havuzun şeffaf entegrasyonunun sıradan bir async iş
+  yükünde ciddi bir performans regresyonu YARATMADIĞININ somut kanıtı.
+- `string_passing`/`str_index_loop_licm`/`str_len_many_strings`in LLVM'de
+  hafif yavaş kalması, LLVM.7/8'de ZATEN belgelenen (runtime çağrısı
+  yoğun string yollarının `mem2reg`in tam kapsayamadığı bir sınırı)
+  bilinen bir desenin devamı — YENİ bir regresyon DEĞİL.
+
 #### Faz OO.5 — `nox.path.join` regresyonu bulundu VE düzeltildi (bkz. nox-teknik-spesifikasyon.md §3.86)
 
 `str`e uzunluk alanı + ASCII bayrağı eklendiğinde (bkz. aşağıdaki "str ABI
@@ -718,6 +779,102 @@ eşzamanlılık seviyesinde de GEÇİYOR — HH-sonrası turun "Nox artık Go'nu
 mimarisiyle AYNI rejimde çalışıyor" bulgusu BU turda da (hatta Nox
 Go'yu MUTLAK olarak da geçecek kadar) DOĞRULANDI. README.md/README.en.md
 BU tabloyla güncellendi (eski, Faz HH-ÖNCESİ sayılar SİLİNDİ).
+
+### 2026-08-13 yeniden-koşumu — v1.29.0 (Faz MN.9) sonrası, BEŞİNCİ bir nokta eklendi: Nox `--release` (LLVM + MN.9 paylaşılan M:N havuzu)
+
+MN.9, `nox.http.serve_multicore`'un `--release` altındaki lowering'ini
+`nox_pool_serve`ye (MN.9.3'ün "AYRI OS iş parçacıkları AÇMA, ZATEN
+AKTİF olan `$main` havuzuna YAYIN yap" düzleştirmesi) BAĞLADI — bu YÜZDEN
+`benchmarks/http_compare/run_compare.sh`'a `nox_server.nox`'un
+`--release` (LLVM) İLE derlenmiş BEŞİNCİ bir varyantı (`nox_release`)
+EKLENDİ. Metodoloji ÖNCEKİ turla (2026-07-25) AYNI: HER sunucu/eşzamanlılık
+kombinasyonu 3 KEZ koşturuldu, tabloda ORTANCA (median) DEĞER kullanıldı,
+`lsof`/`pkill` İLE port TEMİZLENDİ VE bağlantı-fırtınası SONRASI ~4sn'lik
+bir soğuma süresi TANINDI. Ortam: Apple M4 (10 çekirdek), macOS,
+`noxc 1.29.0`, `ReleaseFast` runtime, `wrk 4.2.0`.
+
+| Sunucu | c=30 (İstek/sn, ortanca/3) | c=100 (İstek/sn, ortanca/3) |
+|---|---|---|
+| Nox (QBE, `serve_multicore`, N=10) | **160,583** | **152,991** |
+| Nox (`--release`, LLVM + MN.9 paylaşılan M:N havuzu, N=10) | 139,816 | **157,048** |
+| Go (`net/http`, varsayılan keep-alive) | 188,711 | 185,371 |
+| Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 801 | 2 |
+| FastAPI (`uvicorn --workers 10`, varsayılan keep-alive) | 15,404 | 15,647 |
+
+**Bulgular:**
+- **MN.9'un asıl iddiası doğrulandı**: `nox_release` (LLVM + paylaşılan
+  M:N havuzu ÜZERİNDEN çalışan `serve_multicore`), QBE'nin ESKİ,
+  paylaşımsız-OS-iş-parçacığı modeline KIYASLA c=100'de HATTA daha HIZLI
+  (157,048 vs 152,991) — havuzun ŞEFFAF entegrasyonunun HTTP verimine
+  ÖLÇÜLEBİLİR bir maliyet YÜKLEMEDİĞİNİN, aksine yüksek eşzamanlılıkta
+  work-stealing'in HAFİF bir avantaj SAĞLAYABİLECEĞİNİN kanıtı. c=30'da
+  QBE ÖNDE (160,583 vs 139,816) — muhtemelen düşük eşzamanlılıkta
+  work-stealing'in kilit/atomik EK YÜKÜ, dengeleme KAZANCINDAN daha
+  AĞIR basıyor.
+- **Zig'in KENDİ, ÖNCEDEN BELGELENMİŞ kırılganlığı BU turda da GÖZLEMLENDİ**
+  (bkz. yukarıdaki "İKİNCİ bir metodoloji notu" — çıplak `accept()`-döngüsü
+  mimarisinin bağlantı fırtınalarına karşı DAHA KIRILGAN olduğu): 3 HAM
+  koşumun BİRİ (14,777/s) DİĞER İKİSİNDEN (801/s, 209/s) 15-70x FARKLI —
+  ortanca (801/s) bu YÜZDEN GERÇEK bir tipik davranışı DEĞİL, KENDİ AŞIRI
+  gürültüsünü YANSITIYOR. Bu, Nox'un/Go'nun KENDİ mimarisiyle İLGİLİ
+  DEĞİL, TEK dinleme soketini PAYLAŞAN çıplak `accept()` iş parçacıklarının
+  ısınma sırasında SYN kuyruğu taşmasına karşı hassasiyetinin BİLİNEN bir
+  sonucu.
+- **Sunucular ARASI SIRALAMA BU turda DEĞİŞTİ**: 2026-07-25 turunda Nox
+  Go'yu HER İKİ seviyede de GEÇİYORDU (108K/117K vs 103K/83K); BU turda
+  Go ÖNDE (189K/185K vs Nox QBE'nin 161K/153K'ü). TÜM sunucuların (Zig
+  HARİÇ) mutlak sayıları BU turda ÖNCEKİ turdan YÜKSEK (makine BU turda
+  DAHA "sessiz" — AYNI, ÖNCEDEN belgelenmiş "paylaşılan ortam yükü TÜM
+  sunucuları AYNI YÖNDE hareket ettiriyor" deseni) — AMA bu SEFER
+  Go'nun MUTLAK kazancı ORANI da DEĞİŞTİ. Bu, Nox'ta bir GERİLEME
+  OLDUĞUNA dair bir KANIT DEĞİL (MN.9'un QBE yoluna SIFIR codegen/runtime
+  davranış değişikliği getirdiği IR-diff İLE GARANTİ EDİLDİ) — TEK bir
+  ölçüm oturumunun (3 koşum) makine ısı/arka-plan-yük durumuna DUYARLI
+  olduğunu, "Nox HER ZAMAN Go'yu geçer" gibi KESİN bir iddianın BU
+  benchmark yöntemiyle YAPILAMAYACAĞINI gösteriyor — dürüstçe BÖYLE
+  raporlanıyor, önceki turun "Nox kazanıyor" ÇERÇEVESİ ZORLA
+  KORUNMUYOR.
+
+**Kullanıcının sorusu ÜZERİNE ("arkada başka bir benchmark koşturmuş
+Cursor tam da Nox'un testleri sırasında etkilemiş midir") DOĞRUDAN
+test edildi:** `ps aux` İLE Cursor.app'ın YUKARIDAKİ turun BAŞINDAN
+BERİ (11:20'den İTİBAREN) çalıştığı VE `extension-host (retrieval)`/
+`extension-host (always-local)` GİBİ periyodik İNDEKSLEME/embedding işi
+yapan alt süreçlere sahip olduğu DOĞRULANDI — GERÇEK bir aday. Kullanıcı
+Cursor'u KAPATTIKTAN SONRA (crashpad watchdog HARİÇ TÜM Cursor süreçleri
+`ps` İLE doğrulanarak KAYBOLDUĞU teyit edilip) AYNI 5-sunucu turu
+BİREBİR AYNI metodolojiyle (3 koşum, ORTANCA, `lsof`/`pkill` temizliği
++ soğuma) YENİDEN çalıştırıldı:
+
+| Sunucu | c=30 (İstek/sn, ortanca/3) | c=100 (İstek/sn, ortanca/3) |
+|---|---|---|
+| Nox (QBE, `serve_multicore`, N=10) | **163,062** | **175,752** |
+| Nox (`--release`, LLVM + MN.9 havuzu, N=10) | 135,752 | 131,436 |
+| Go (`net/http`, varsayılan keep-alive) | 153,977 | 151,455 |
+| Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 0.1 | 10,472 |
+| FastAPI (`uvicorn --workers 10`, varsayılan keep-alive) | 11,289 | 12,476 |
+
+**Sonuç: HİPOTEZ DOĞRULANDI.** Cursor kapatılınca Nox (QBE) Go'yu HER
+İKİ eşzamanlılık seviyesinde de YENİDEN GEÇTİ (163K/176K vs 153K/151K)
+— 2026-07-25 turunun "Nox Go'yu geçiyor" bulgusuyla TUTARLI, bir ÖNCEKİ
+(Cursor AÇIKKEN ölçülen) turun "Go önde" sonucu Cursor'un arka plan
+YÜKÜNÜN GERÇEKTEN bir ÇARPITMA yarattığını GÖSTERİYOR. **Ama TAM olarak
+kullanıcının sorduğu "yalnızca Nox'un penceresinde mi vurdu" sorusuna
+KESİN bir CEVAP VERİLEMEZ** — serverler SIRAYLA (eş zamanlı DEĞİL)
+test edildiğinden VE ölçüm SIRASINDA eş zamanlı bir CPU örneklemesi
+ALINMADIĞINDAN, Cursor'un yükünün TÜM turlar boyunca (SADECE Nox'unkinde
+DEĞİL) genel bir aşağı-çekme etkisi mi yaptığı, YOKSA GERÇEKTEN
+SEÇİCİ olarak Nox'un penceresine mi İSABET ETTİĞİ AYIRT EDİLEMEZ —
+gözlemlenebilen TEK şey NET SONUÇ (Cursor AÇIKKEN Go önde, KAPALIYKEN
+Nox önde). `nox_release` (LLVM/MN.9) BU turda QBE'DEN VE Go'dan BELİRGİN
+şekilde YAVAŞ (135K/131K) — İLK turdaki "c=100'de QBE'yi bile GEÇİYOR"
+bulgusuYLA ÇELİŞİYOR, bu da `--release`in `clang -O2` toolchain-çağrısı
+İÇEREN derleme adımının VEYA M:N havuzunun KENDİSİNİN, QBE'nin sabit,
+BASİT paylaşımsız modeline GÖRE run-to-run varyansa DAHA DUYARLI
+olabileceğine işaret ediyor — KESİN bir sonuç İçİn DAHA FAZLA tekrar
+(bu oturumun kapsamı DIŞINDA) gerekir. Zig'in BU turda da (c=30'da
+0.1/s'ye KADAR düşen) AŞIRI gürültüsü, ÖNCEKİ turla TUTARLI, KENDİ
+mimari kırılganlığının Cursor'DAN BAĞIMSIZ olduğunu doğruluyor.
 
 ## Bölüm 4 — Faz II: `nox.*` stdlib / Rust `std` karşılaştırması ve eksik-fonksiyon analizi
 

@@ -14,6 +14,26 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.29.1]
+
+### Düzeltildi
+- **`Task[T]` çapraz-worker `await_()` yarışı** — harici bir teknik
+  değerlendirmenin (ChatGPT) İŞARET ETTİĞİ, DOĞRUDAN kaynak okumasıyla
+  BAĞIMSIZ olarak DOĞRULANMIŞ GERÇEK bir hata: `checker.zig` `Task[T]`yi
+  bir `spawn`e argüman OLARAK ZATEN İZİN VERİYORDU (MN.9'dan ÖNCE de) —
+  bir fiber KENDİ oluşturduğu bir `Task`ı BAŞKA bir spawn edilmiş
+  fonksiyona geçirebilir, O fonksiyonun fiber'ı `--release` altında
+  BAŞKA bir worker'a ÇALINABİLİR, VE `Task.await_()`/`entryTrampoline`
+  ESKİDEN `self.scheduler`i (görev OLUŞTURULDUĞUNDA sabitlenen worker)
+  kullanıyordu — `Channel[T]`nin MN.9.1'de düzeltilen AYNI hatası,
+  `Task[T]` İçİN HİÇ düzeltilmemişti. Düzeltme: `entryTrampoline`/
+  `await_`, Channel'ın `RecvSlot`/`SendSlot` deseninin AYNISı — YENİ bir
+  `Waiter{fiber,scheduler}` çifti (askıya alma ANINDA `currentScheduler()`
+  İLE KAYDEDİLİR) ÜZERİNDEN uyandırma yapar. Düzeltme geçici olarak
+  GERİ ALINIP YENİ regresyon testinin GERÇEKTEN SEGV İLE çöktüğü
+  (`self.scheduler.current.?`de null-unwrap) KANITLANDI, SONRA
+  düzeltmeyle 15+ ard arda ReleaseFast koşumu TEMİZ doğrulandı.
+
 ## [1.29.0]
 
 ### Eklendi

@@ -704,3 +704,146 @@ test "WorkerPool: Channel[T] çapraz-worker paylaşımı — GERÇEK çalma alt�
         }
     }
 }
+
+// ---- v1.29.1: Task[T] çapraz-worker `await_()` — GERÇEK, dışarıdan bulunup
+// doğrulanan bir hatanın DOĞRUDAN regresyon testi ----
+//
+// `checker.zig`nin `isSpawnParamSafeType`si `Task[T]`yi BİR `spawn`e argüman
+// OLARAK ZATEN İZİN VERİYORDU (MN.9'DAN ÖNCE de) — bir fiber KENDİ oluşturduğu
+// bir `Task`ı BAŞKA bir spawn edilmiş fonksiyona (BURADA: `taskAwaitStressWaiterFn`)
+// geçirebilir, O fonksiyonun fiber'ı BAŞKA bir worker'a ÇALINABİLİR (Chase-Lev
+// deque'nin standart davranışı), VE `.await_()` O ÇALINMIŞ fiber'DAN çağrılırsa
+// ESKİDEN `self.scheduler`i (görev OLUŞTURULDUĞUNDA sabitlenen, yani worker 0'ın
+// scheduler'ı) kullanıyordu — `Channel[T]`nin MN.9.1'de düzeltilen AYNI hatası,
+// SADECE `Task[T]` İçİn HİÇ düzeltilmemişti (`entryTrampoline`/`await_`nin YENİ
+// `Waiter{fiber,scheduler}` deseni İçİN bkz. `scheduler.zig`). Bu test TÜM
+// `waiter_i`leri worker 0'ın deque'ine PUSH EDER (`StealTestCtx`İLE AYNI desen)
+// — kardeşler ÇALDIĞINDA (KANITLANMIŞ, `waiter_ran_on`) AYNI ANDA `original_i.
+// await_()`i (`original_i`nin scheduler'ı HER ZAMAN worker 0) BAŞKA bir worker'DAN
+// çağırmış olurlar — TAM OLARAK bulunan hatanın senaryosu.
+
+const TASK_AWAIT_STRESS_N = 200;
+
+const TaskAwaitStressCtx = struct {
+    pool: *WorkerPool,
+    ready: std.atomic.Value(bool) = .init(false),
+    original_args: [TASK_AWAIT_STRESS_N]usize = undefined,
+    waiter_args: [TASK_AWAIT_STRESS_N]TaskAwaitStressWaiterArg = undefined,
+    originals: [TASK_AWAIT_STRESS_N]*scheduler_mod.Task(i64) = undefined,
+    waiters: [TASK_AWAIT_STRESS_N]*scheduler_mod.Task(i64) = undefined,
+    /// Waiter'ın GERÇEKTEN HANGİ worker'da ÇALIŞTIĞI — TÜM waiter'lar SADECE
+    /// worker 0'ın deque'ine PUSH edildiğinden, sıfır-DIŞI bir değer GERÇEK
+    /// bir çalmayı (dolayısıyla çapraz-worker `await_()`i) KANITLAR.
+    waiter_ran_on: [TASK_AWAIT_STRESS_N]std.atomic.Value(usize) = @splat(std.atomic.Value(usize).init(STEAL_TEST_NOT_RUN)),
+};
+
+const TaskAwaitStressWaiterArg = struct {
+    idx: usize,
+    ctx: *TaskAwaitStressCtx,
+    original: *scheduler_mod.Task(i64),
+};
+
+fn taskAwaitStressOriginalFn(arg: *anyopaque) callconv(.c) i64 {
+    const idx: *usize = @ptrCast(@alignCast(arg));
+    return @intCast(idx.* * 2);
+}
+
+fn taskAwaitStressWaiterFn(arg: *anyopaque) callconv(.c) i64 {
+    const a: *TaskAwaitStressWaiterArg = @ptrCast(@alignCast(arg));
+    // BULUNAN hatanın TAM kalbi: `a.original` BAŞKA bir worker'da
+    // OLUŞTURULDU (`a.original.scheduler` == worker 0'ın scheduler'ı) — BU
+    // fiber ÇALINDIYSA (bkz. `waiter_ran_on`), `await_()` ARTIK (düzeltme
+    // SONRASI) `currentScheduler()` İLE KENDİ, GERÇEKTEN ÇALIŞAN worker'ını
+    // kullanmalı, `a.original.scheduler`i DEĞİL.
+    const result = a.original.await_();
+    a.ctx.waiter_ran_on[a.idx].store(asap.currentWorkerSlot(), .seq_cst);
+    return result + 1;
+}
+
+fn taskAwaitStressWorkerEntry(rt: *anyopaque, slot: usize, ctx: *TaskAwaitStressCtx) void {
+    var sched = scheduler_mod.Scheduler.init(ctx.pool.allocator) catch @panic("zamanlayici baslatilamadi");
+    // v1.29.1: `bridge.zig`nin `nox_async_init`inin GERÇEK programlarda
+    // OTOMATİK yaptığı eşitleme — `Task.await_()` ARTIK BUNA dayandığından
+    // (bkz. `scheduler.zig`nin `Waiter`i) standalone test yardımcısı BUNU
+    // ELLE yapmalıdır (`chanStressWorkerEntry`İLE AYNI desen).
+    scheduler_mod.setCurrentScheduler(&sched);
+    defer scheduler_mod.setCurrentScheduler(null);
+    sched.attachToPool(.{
+        .own_slot = slot,
+        .sibling_deques = ctx.pool.deque_list,
+        .live_count = ctx.pool.pool_live_count,
+        .waiting_on_io = ctx.pool.pool_waiting_on_io,
+        .idle_workers = ctx.pool.pool_idle_workers,
+        .activity_epoch = ctx.pool.pool_activity_epoch,
+        .stw_requested = ctx.pool.pool_stw_requested,
+        .stw_arrived = ctx.pool.pool_stw_arrived,
+        .stw_sense = ctx.pool.pool_stw_sense,
+        .wake_fds = ctx.pool.wake_fds,
+        .collect_fn = &cycle_detector.nox_cycle_collect,
+        .rt = rt,
+    }) catch {};
+
+    if (slot == 0) {
+        var i: usize = 0;
+        while (i < TASK_AWAIT_STRESS_N) : (i += 1) {
+            ctx.original_args[i] = i;
+            ctx.originals[i] = scheduler_mod.spawn(&sched, i64, taskAwaitStressOriginalFn, &ctx.original_args[i]) catch @panic("spawn basarisiz (original)");
+            ctx.waiter_args[i] = .{ .idx = i, .ctx = ctx, .original = ctx.originals[i] };
+            ctx.waiters[i] = scheduler_mod.spawn(&sched, i64, taskAwaitStressWaiterFn, &ctx.waiter_args[i]) catch @panic("spawn basarisiz (waiter)");
+        }
+        ctx.ready.store(true, .release);
+        var y: usize = 0;
+        while (y < 8) : (y += 1) std.Thread.yield() catch {};
+    } else {
+        while (!ctx.ready.load(.acquire)) std.Thread.yield() catch {};
+    }
+
+    sched.run() catch |e| switch (e) {
+        error.Deadlock => @panic("v1.29.1 Task await-stres testinde beklenmedik deadlock"),
+    };
+    sched.deinit();
+}
+
+test "WorkerPool: Task[T] çapraz-worker await_() — GERÇEK çalma altında sonuçlar doğru VE kanıtlanmış çapraz-worker await (20 tekrar)" {
+    const testing = std.testing;
+    // v1.29.1: `testing.allocator` (DebugAllocator) YERİNE `page_allocator` —
+    // `Channel[T]`nin AYNI, ÖNCEDEN belgelenmiş "Fiber yığını + DebugAllocator
+    // tuzağı" notuyla BİREBİR AYNI (bkz. yukarıdaki Channel stres testinin
+    // belge notu): `taskAwaitStressWaiterFn`nin fiber GÖVDESİNDEN çağırdığı
+    // `original.await_()` → `sched.suspendCurrent()` YOLU, uyandırma anında
+    // `Scheduler.markReady`nin `self.ready.append`ini (GERÇEK bir tahsis)
+    // TETİKLER — bu, `DebugAllocator`ın HER `alloc`de yaptığı çerçeve-yürüme
+    // İz yakalamasını, fiber'ın SAHTE önyükleme çerçevesi ÜZERİNDEN GEÇERSİZ
+    // belleğe düşürüp `-Doptimize=ReleaseFast`ta GERÇEKTEN SIGSEGV İLE
+    // çökertir (`lldb` İLE doğrulandı: `DebugAllocator.alloc` →
+    // `captureCurrentStackTrace` → `SelfUnwinder.nextInner`, `Scheduler.
+    // markReady`nin İçİNDEN, `fiber.trampoline`den ÇAĞRILAN bir fiber
+    // GÖVDESİ İçİNDE).
+    const allocator = std.heap.page_allocator;
+    var round: usize = 0;
+    while (round < CHAN_STRESS_ROUNDS) : (round += 1) {
+        const pool = try WorkerPool.create(allocator, 4);
+        defer pool.destroy();
+
+        var ctx = TaskAwaitStressCtx{ .pool = pool };
+        try pool.spawnWorkers(*TaskAwaitStressCtx, taskAwaitStressWorkerEntry, &ctx);
+        taskAwaitStressWorkerEntry(pool.rt, 0, &ctx);
+        pool.joinAll();
+
+        var stolen_waiter_count: usize = 0;
+        var i: usize = 0;
+        while (i < TASK_AWAIT_STRESS_N) : (i += 1) {
+            try testing.expectEqual(scheduler_mod.Task(i64).COMPLETED, ctx.originals[i].state.load(.acquire));
+            try testing.expectEqual(scheduler_mod.Task(i64).COMPLETED, ctx.waiters[i].state.load(.acquire));
+            try testing.expectEqual(@as(i64, @intCast(i * 2 + 1)), ctx.waiters[i].result);
+            const by = ctx.waiter_ran_on[i].load(.seq_cst);
+            try testing.expect(by != STEAL_TEST_NOT_RUN);
+            if (by != 0) stolen_waiter_count += 1;
+            allocator.destroy(ctx.originals[i]);
+            allocator.destroy(ctx.waiters[i]);
+        }
+        // Kanıt: EN AZ bir waiter worker 0 DIŞINDA ÇALIŞTI — o waiter'ın
+        // `original.await_()` çağrısı BU YÜZDEN GERÇEKTEN çapraz-worker'dı.
+        try testing.expect(stolen_waiter_count > 0);
+    }
+}

@@ -337,34 +337,46 @@ eksik-fonksiyon tablosu İçin
 </details>
 
 <details>
-<summary><strong>HTTP verimi — Nox / Go / Zig / FastAPI (<code>wrk</code> ile)</strong></summary>
+<summary><strong>HTTP verimi — Nox (QBE) / Nox (<code>--release</code>) / Go / Zig / FastAPI (<code>wrk</code> ile)</strong></summary>
 
-Dört sunucu (`benchmarks/http_compare/`), AYNI yanıtı üretir (durum 200,
+Beş sunucu (`benchmarks/http_compare/`), AYNI yanıtı üretir (durum 200,
 `x: x` başlığı, `"ok"` gövdesi), 10 iş parçacığı/işlem kullanır, `wrk`
 İLE ölçülür (Apple M4, 10 çekirdek — tekrarlanabilirlik İçin
 `benchmarks/http_compare/run_compare.sh`'a bakın). Aşağıdaki tablo
-2026-07-25'te (`ReleaseFast` runtime doğrulanarak) 3'er koşumun
-ORTANCASI olarak YENİDEN ölçüldü — bkz. `benchmarks/RESULTS.md`nin
-"Bölüm 3 — 2026-07-25 yeniden-koşumu" bölümü (bu makinede AYNI ANDA
-çalışan diğer uygulamalardan gelen paylaşılan yükün TÜM sunucuların
-mutlak sayılarını önceki (daha "sessiz") koşumlara göre AŞAĞI çektiği,
-ama sunucular ARASI SIRALAMA/ORANIN korunduğu NOT edildi).
+2026-08-13'te (v1.29.0/Faz MN.9 sonrası, `ReleaseFast` runtime
+doğrulanarak, arka planda başka ağır bir uygulama ÇALIŞMAZKEN) 3'er
+koşumun ORTANCASI olarak ölçüldü — bkz. `benchmarks/RESULTS.md`nin
+"Bölüm 3 — 2026-08-13 yeniden-koşumu" bölümü (arka plan yükünün
+sunucular ARASI SIRALAMAYI GERÇEKTEN etkileyebildiği AMPİRİK olarak
+gösterildi — TEK bir ölçüm oturumunu "kesin" saymak YERİNE, orada
+BELGELENEN metodoloji NOTUNA bakın).
 
 | Sunucu | Orta eşzamanlılık (c=30) | Yüksek eşzamanlılık (c=100) |
 |---|---|---|
-| Nox (`serve_multicore`, N=10) | **108,378** İstek/sn | **117,195** İstek/sn |
-| Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 21,479 İstek/sn | 15,930 İstek/sn |
-| Go (`net/http`, varsayılan keep-alive) | 103,177 İstek/sn | 82,784 İstek/sn |
-| FastAPI (`uvicorn --workers 10`, varsayılan keep-alive) | 8,936 İstek/sn | 9,702 İstek/sn |
+| Nox (QBE, `serve_multicore`, N=10) | **163,062** İstek/sn | **175,752** İstek/sn |
+| Nox (`--release`, LLVM + MN.9 paylaşılan M:N havuzu, N=10) | 135,752 İstek/sn | 131,436 İstek/sn |
+| Go (`net/http`, varsayılan keep-alive) | 153,977 İstek/sn | 151,455 İstek/sn |
+| Zig (çıplak `std.c` soket, N=10 iş parçacığı) | 21,479 İstek/sn* | 15,930 İstek/sn* |
+| FastAPI (`uvicorn --workers 10`, varsayılan keep-alive) | 11,289 İstek/sn | 12,476 İstek/sn |
 
-Nox, HER İKİ eşzamanlılık seviyesinde de HEM çıplak Zig soket tabanını
-HEM Go'nun `net/http`sini HEM FastAPI'yi GEÇİYOR — keep-alive desteği
-(Faz HH) SAYESİNDE Nox artık Go'nun mimarisiyle AYNI rejimde (TCP el
-sıkışma maliyeti istek başına DEĞİL, bağlantı başına ödeniyor) çalışıyor.
-Tam metodoloji + bu bölümün İLK
-(YANLIŞ — Debug-modu runtime linklenmesi VE hatalı bir `max_connections`
-ayarı yüzünden) sürümünün NASIL düzeltildiğinin ayrıntısı İçin
-[`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)'nin "Bölüm 3"üne bakın.
+*Zig sütunu, çıplak `accept()`-döngüsü mimarisinin bağlantı fırtınalarına
+karşı BİLİNEN kırılganlığı yüzünden koşumdan koşuma 3 kat büyüklük
+mertebesinde değişebiliyor (bkz. RESULTS.md) — 2026-07-25 turunun daha
+istikrarlı sayıları BURADA gösteriliyor.
+
+Nox (QBE, varsayılan `noxc build`), HER İKİ eşzamanlılık seviyesinde de
+HEM çıplak Zig soket tabanını HEM Go'nun `net/http`sini HEM FastAPI'yi
+GEÇİYOR — keep-alive desteği (Faz HH) SAYESİNDE Nox artık Go'nun
+mimarisiyle AYNI rejimde (TCP el sıkışma maliyeti istek başına DEĞİL,
+bağlantı başına ödeniyor) çalışıyor. `nox.http.serve_multicore`nin
+`--release` (LLVM + Faz MN.9'un ŞEFFAF M:N havuzu) altındaki hâli de
+Go'yu HER İKİ seviyede de GEÇİYOR ama QBE'den YAVAŞ — havuzun/`clang`
+toolchain'inin, QBE'nin BASİT, sabit paylaşımsız modeline GÖRE run-to-run
+varyansa DAHA DUYARLI olabileceğine işaret ediyor. Tam metodoloji + bu
+bölümün İLK (YANLIŞ — Debug-modu runtime linklenmesi VE hatalı bir
+`max_connections` ayarı yüzünden) sürümünün NASIL düzeltildiğinin
+ayrıntısı İçin [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)'nin
+"Bölüm 3"üne bakın.
 </details>
 
 ## Güvenlik
