@@ -14,6 +14,35 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.29.3]
+
+### Düzeltildi
+- **Paylaşılan M:N havuzunda ARC küçük-nesne havuzunun (`pool_free_lists`)
+  TEK GLOBAL kilidi, worker-slotlu, KİLİTSİZ bir tasarıma çevrildi** —
+  Aether geliştirilirken gözlemlenip Nox'ta doğrulanan gerçek bir yük-
+  altı darboğaz: `nox.json.decode`/`encode` gibi tahsis-yoğun bir HTTP
+  handler'ı `--release` altında `wrk` İLE ölçüldüğünde, `8 worker`
+  paylaşımlı havuzda `1 worker`DAN DAHA YAVAŞ çalışıyordu (~89k req/s vs
+  ~101k req/s) — klasik bir global-kilit çekişmesi imzası. Kök neden:
+  `RuntimeState.pool_free_lists`in (ARC'ın serbest-liste havuzu, 10 boyut
+  sınıfı) TÜM worker'lar TARAFINDAN paylaşılan TEK bir `SpinLock` İLE
+  korunması. Düzeltme: `RuntimeState.globals_blocks`nin (Faz MN.3b'de
+  ZATEN kanıtlanmış) worker-slotlu, kilitsiz deseni AYNEN tekrar
+  kullanıldı — HER worker `asap.currentWorkerSlot()` İLE KENDİ satırına
+  erişir, kilit GEREKMEZ (`nox_rc_free_payload` HER ZAMAN referansı
+  BIRAKAN fiber'ı ÇALIŞTIRAN OS iş parçacığında çalıştığından GÜVENLİDİR).
+  Cache-line ping-pong'u ÖNLEMEK İçİn HER worker'ın satırı 64 bayta
+  hizalandı (`PoolFreeListRow`). Ölçülen sonuç (AYNI makinede, düzeltme
+  ÖNCESİ/SONRASI): 8-worker throughput'u ~%64 arttı (89k→147k req/s) VE
+  8 worker artık 1 worker'ı ~%43 GEÇİYOR (tersine-dönüş TAMAMEN düzeldi).
+  HTTP handler'ları senkron olduğundan (`async def` OLAMAZLAR) bu
+  değişikliğin motive edici İş yükü İçİn (HTTP/JSON) hiçbir dengesiz-
+  dağılım riski YOK; genel `spawn`/work-stealing İçİn kabul edilen,
+  bilinçli bir v1 sınırlaması var (bkz. `asap.zig`nin `pool_free_lists`
+  belge notu). SADECE `--release` (LLVM backend) dalını etkiler — QBE
+  yolu (bayraksız `noxc build`) HİÇ paylaşılan `RuntimeState` KULLANMADIĞI
+  İçİN gözlemsel olarak DEĞİŞMEDİ (IR-diff 204/0/3-atlandı KORUNDU).
+
 ## [1.29.2]
 
 ### İyileştirildi

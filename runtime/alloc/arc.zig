@@ -92,14 +92,16 @@ pub export fn nox_rc_alloc(rt: ?*anyopaque, payload_size: usize) ?*anyopaque {
     if (use_pool) {
         if (poolClassIndex(total)) |idx| {
             const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
-            // Faz MN.3b: `pool_free_lists[idx]`in oku+yaz'ı `pool_free_
-            // lists_lock` ALTINDA — genel ayırıcıya (`asap.nox_alloc`)
-            // düşme dalı KİLİDİN DIŞINDA kalır (gereksiz uzun kritik
-            // bölümden kaçınmak İçİn).
-            state.pool_free_lists_lock.lock();
-            const popped = state.pool_free_lists[idx];
-            if (popped) |node| state.pool_free_lists[idx] = node.next;
-            state.pool_free_lists_lock.unlock();
+            // Faz MN.10: `pool_free_lists[slot]`, ÇAĞIRAN OS iş
+            // parçacığının KENDİ satırıdır (bkz. `asap.currentWorkerSlot`
+            // — 1-iş-parçacığı-1-slot değişmezi, `worker_pool.zig`nin
+            // `setWorkerSlot` çağrı siteleriyle GARANTİ edilir) — SADECE
+            // BU iş parçacığı BU satıra YAZAR, kilit GEREKMEZ (`globals_
+            // blocks`İLE AYNI desen, bkz. `asap.zig`nin `pool_free_lists`
+            // belge notu).
+            const row = &state.pool_free_lists[asap.currentWorkerSlot()].classes;
+            const popped = row[idx];
+            if (popped) |node| row[idx] = node.next;
             const base: *anyopaque = if (popped) |node| @ptrCast(node) else (asap.nox_alloc(rt, poolClassSize(idx)) orelse return null);
             const rc: *i64 = @ptrCast(@alignCast(base));
             rc.* = 1;
@@ -160,7 +162,13 @@ pub export fn nox_rc_predecrement(ptr: ?*anyopaque) i32 {
 /// listesine eklemektir — `total_size` `nox_rc_alloc`daki İLE AYNI sınıfa
 /// deterministik olarak eşleneceğinden (aynı boyut her zaman aynı sınıf),
 /// bu blok yalnızca AYNI sınıftan bir sonraki tahsiste güvenle geri
-/// dönüştürülür.
+/// dönüştürülür. Faz MN.10: blok, ÇAĞIRAN (serbest bırakan) OS iş
+/// parçacığının KENDİ `pool_free_lists` satırına GİDER — bu, nesneyi
+/// TAHSİS EDEN iş parçacığıYLA AYNI OLMAK ZORUNDA DEĞİLDİR (bir fiber
+/// work-stealing İLE göç ETMİŞ olabilir); bu GÜVENLİDİR (bkz. `nox_rc_
+/// alloc`nin AYNI notu), sadece nesnenin geri dönüştürüleceği HAVUZ
+/// satırını DEĞİŞTİRİR (bkz. `asap.zig`nin `pool_free_lists` belge notu,
+/// "bilinçli kabul edilen ödünleşim").
 pub export fn nox_rc_free_payload(rt: ?*anyopaque, ptr: ?*anyopaque, payload_size: usize) void {
     const p = ptr orelse return;
     // Faz X.3 — bkz. `nox_rc_alloc`nin AYNI notu.
@@ -172,10 +180,10 @@ pub export fn nox_rc_free_payload(rt: ?*anyopaque, ptr: ?*anyopaque, payload_siz
         if (poolClassIndex(total)) |idx| {
             const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
             const node: *asap.PoolNode = @ptrCast(@alignCast(base));
-            state.pool_free_lists_lock.lock();
-            node.* = .{ .next = state.pool_free_lists[idx] };
-            state.pool_free_lists[idx] = node;
-            state.pool_free_lists_lock.unlock();
+            // Faz MN.10 — bkz. `nox_rc_alloc`nin AYNI notu.
+            const row = &state.pool_free_lists[asap.currentWorkerSlot()].classes;
+            node.* = .{ .next = row[idx] };
+            row[idx] = node;
             return;
         }
     }

@@ -1,0 +1,9 @@
+import nox.http
+import nox.json
+
+def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+    v: JsonValue = nox.json.decode(req.body)
+    out: str = nox.json.encode(v)
+    return nox_http_HttpResponse(200, out, {"content-type": "application/json"})
+
+nox.http.serve_multicore(8803, handle, __N_WORKERS__, 0)

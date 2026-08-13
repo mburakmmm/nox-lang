@@ -19,10 +19,13 @@
 //! bölümü) BU, DEĞİŞMEYEN bir davranıştır; DEĞİŞEN TEK ŞEY N worker'ın
 //! ARTIK `rt`yi PAYLAŞMASIDIR.
 //!
-//! **Senkronizasyon:** `RuntimeState`nin `pool_free_lists`/`arena_pool`/
-//! `cycle_gc`si (bkz. `asap.zig`) Faz MN.3b'DEN İTİBAREN KENDİ `SpinLock`
-//! alanlarıyla korunur — BU dosya SADECE havuzu KURAR, senkronizasyonun
-//! KENDİSİ `arc.zig`/`lowlevel.zig`/`cycle_detector.zig`dedir.
+//! **Senkronizasyon:** `RuntimeState`nin `arena_pool`/`cycle_gc`si (bkz.
+//! `asap.zig`) Faz MN.3b'DEN İTİBAREN KENDİ `SpinLock` alanlarıyla
+//! korunur — BU dosya SADECE havuzu KURAR, senkronizasyonun KENDİSİ
+//! `lowlevel.zig`/`cycle_detector.zig`dedir. `pool_free_lists` (`arc.
+//! zig`nin ARC küçük-nesne havuzu) Faz MN.10'DAN İTİBAREN `globals_
+//! blocks`İLE AYNI worker-slotlu, KİLİTSİZ desendedir (bkz. AŞAĞIDAKİ
+//! not) — SpinLock DEĞİL.
 //! `globals_block`, worker-slot'lu bir DİZİYE genişletildi (`asap.
 //! RuntimeState.globals_blocks`) — HER worker'ın `nox_init_globals`ı
 //! (bir GERÇEK Nox programında, MN.7'nin bağlayacağı) KENDİ hücresine
@@ -248,7 +251,10 @@ const StressShared = struct {
 ///
 /// HER worker'ın (spawn edilenler VE çağıran/slot-0) çalıştırdığı gövde —
 /// (a) `nox_rc_alloc`/`retain`/`predecrement`/`free_payload` döngüsü
-/// (`pool_free_lists_lock` çekişmesi), (b) arena oluştur/tahsis-et/
+/// (Faz MN.10'DAN İTİBAREN `pool_free_lists` KİLİTSİZ/worker-slotlu —
+/// BU test ARTIK "kilit çekişmesi altında doğruluk" YERİNE "kilitsiz,
+/// worker-slotlu izolasyon altında doğruluk"u kanıtlıyor), (b) arena
+/// oluştur/tahsis-et/
 /// yok-et döngüsü (`arena_pool_lock`), (c) `cycle_detector.zig`nin
 /// KENDİ sahte-dispatch enjeksiyon deseniyle `nox_cycle_possible_root`/
 /// `nox_cycle_forget` (`cycle_gc_lock`, YUKARIDAKİ notla SINIRLI), (d)

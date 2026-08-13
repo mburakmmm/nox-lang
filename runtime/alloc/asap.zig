@@ -65,6 +65,18 @@ extern fn nox_cycle_collect(rt: ?*anyopaque) callconv(.c) void;
 pub const POOL_NUM_CLASSES = 10;
 pub const PoolNode = struct { next: ?*PoolNode };
 
+/// Faz MN.10: `RuntimeState.pool_free_lists`in TEK bir worker'a AİT
+/// satırı — `align(std.atomic.cache_line)` (platform başına doğru sabit)
+/// BİLİNÇLİ: `POOL_NUM_CLASSES * @sizeOf(?*PoolNode)` (80 bayt, 64-bit'te)
+/// TEK bir 64 baytlık cache line'A SIĞMAZ — hizalama OLMADAN komşu
+/// worker'ların satırları bir cache line PAYLAŞABİLİR, bu da (satırlar
+/// arası HİÇBİR mantıksal veri yarışı OLMASA BİLE) yüksek-frekanslı eş
+/// zamanlı erişimde (ör. JSON decode/encode, İSTEK BAŞINA ONLARCA KEZ
+/// dokunulur) donanım seviyesinde MESI cache-line "ping-pong"a yol AÇAR.
+pub const PoolFreeListRow = struct {
+    classes: [POOL_NUM_CLASSES]?*PoolNode align(std.atomic.cache_line) = @splat(null),
+};
+
 /// Faz MN.3b: bir `RuntimeState` havuzunun (bkz. proje planı "Worker
 /// soyutlaması") destekleyebileceği ÜST worker sınırı — TEK kaynak,
 /// `OwnerPool.MAX_MEMBERS` (Faz MN.1) VE `RuntimeState.globals_blocks`
@@ -86,10 +98,11 @@ pub const OwnerPool = struct {
 
 /// Faz MN.3b: `runtime/async_rt/thread_channel.zig`nin `ThreadChannel`ı
 /// İçİn yazılmış CAS-tabanlı spin-kilidin BURAYA taşınmış TEK doğruluk
-/// kaynağı hali (Faz P1.2'nin AYNI ilkesi) — `RuntimeState`nin YENİ
-/// senkronize alanları (`pool_free_lists_lock`/`arena_pool_lock`/
-/// `cycle_gc_lock`, aşağıya bkz.) VE `ThreadChannel`nin KENDİSİ artık
-/// AYNI bu tipi paylaşır. `std.Thread.Mutex` bu Zig sürümünde YOK
+/// kaynağı hali (Faz P1.2'nin AYNI ilkesi) — `RuntimeState`nin senkronize
+/// alanları (`arena_pool_lock`/`cycle_gc_lock`, aşağıya bkz. — Faz MN.10'DAN
+/// İTİBAREN `pool_free_lists_lock` ARTIK YOK, bkz. `pool_free_lists`in
+/// KENDİ belge notu) VE `ThreadChannel`nin KENDİSİ artık AYNI bu tipi
+/// paylaşır. `std.Thread.Mutex` bu Zig sürümünde YOK
 /// (`std.Io.Mutex`, kilit alma İçİn bir `Io` arayüzü İSTER — genel
 /// amaçlı bir OS-iş-parçacığı kilidi DEĞİL).
 ///
@@ -118,13 +131,48 @@ pub const RuntimeState = struct {
     /// TİP ADI + SATIR + MESAJLA raporlayabilmesi İçİn. Faz MN.2: AYNI
     /// yedek-depo notu (`pending_exception`e bkz.) BURASI İçin de geçerlidir.
     pending_exception_line: i64 = 0,
-    pool_free_lists: [POOL_NUM_CLASSES]?*PoolNode = @splat(null),
-    /// Faz MN.3b: `pool_free_lists`in push/pop'unu (bkz. `arc.zig`nin
-    /// `nox_rc_alloc`/`nox_rc_free_payload`ı) korur — paylaşılmayan
-    /// (tek-iş-parçacıklı) bir `RuntimeState`te BİLE HER ZAMAN AKTİF
-    /// (çekişmesiz bir `cmpxchgWeak` ÇOK UCUZDUR — "paylaşılıyor mu"
-    /// dallanması YOK, TEK kod yolu HER ZAMAN doğru).
-    pool_free_lists_lock: SpinLock = .{},
+    /// Faz MN.10 (bkz. profillenmiş kanıt — Aether'in HTTP+JSON `wrk`
+    /// ölçümü, "8 worker 1 worker'dan YAVAŞ" ters ölçekleme): TEK
+    /// paylaşılan diziden (Faz MN.3b'nin ORİJİNAL şekli, `pool_free_
+    /// lists_lock: SpinLock` İLE korunan `[POOL_NUM_CLASSES]?*PoolNode`)
+    /// worker-slotlu bir diziye genişletildi — `globals_blocks`İLE
+    /// (aşağıya bkz.) BİREBİR AYNI desen/gerekçe: HER worker KENDİ
+    /// satırına `asap.currentWorkerSlot()` İLE erişir, kilit YOK (`nox_
+    /// rc_free_payload` HER ZAMAN o ANDA referansı BIRAKAN fiber'ı
+    /// ÇALIŞTIRAN OS iş parçacığında çalışır — nesneyi TAHSİS EDEN iş
+    /// parçacığı OLMAK ZORUNDA DEĞİL [work-stealing İLE göç edebilir],
+    /// AMA bu SORUN DEĞİL: o ANDA `currentWorkerSlot()` O ANKİ iş
+    /// parçacığının KENDİ slotunu doğru tanımlar, SADECE O iş parçacığı
+    /// O slotun satırına DOKUNUR — hiçbir slot İKİ FARKLI iş parçacığı
+    /// TARAFINDAN AYNI ANDA mutasyona UĞRAMAZ).
+    ///
+    /// **BU, MN.3b'nin "her zaman aktif, TEK kilitli kod yolu" ilkesinden
+    /// SAPMA DEĞİL, PROFİLLENMİŞ kanıtla YÖNLENDİRİLEN, DAR kapsamlı bir
+    /// istisnadır** — MN.3b'nin O ZAMANKİ varsayımı ("çekişmesiz bir
+    /// `cmpxchgWeak` ÇOK UCUZDUR") GERÇEK, profillenmiş bir yük HENÜZ
+    /// YOKKEN makuldü; ŞİMDİ (`nox.json.decode`/`encode` GİBİ tahsis-
+    /// yoğun bir HTTP handler'ın 8 paylaşılan worker'DA 1 worker'DAN
+    /// DAHA YAVAŞ olduğu ÖLÇÜLDÜ — kilit çekişmeli HİÇ de ucuz DEĞİLDİ)
+    /// kanıt VAR, bu YÜZDEN SADECE BU alanda `globals_blocks`nin ZATEN
+    /// kanıtlanmış worker-slotlu deseni tekrar KULLANILDI. **Kabul
+    /// edilen v1 ödünleşimi:** bir fiber worker A'da tahsis edip work-
+    /// stealing İLE worker B'ye GÖÇTÜKTEN SONRA serbest bırakırsa,
+    /// serbest bırakılan blok worker B'nin YEREL listesine GİDER —
+    /// worker'lar arası bellek DAĞILIMI zamanla DENGESİZ OLABİLİR
+    /// (SIZINTI DEĞİL, sadece yeniden-kullanım YERELLİĞİ optimal
+    /// OLMAYABİLİR); GERÇEK çapraz-worker yeniden-dengeleme (tcmalloc-
+    /// tarzı merkezi taşma havuzu) BİLİNÇLİ olarak ERTELENDİ ("ölçülmeden
+    /// mimari EKLEME" ilkesiyle TUTARLI — HTTP/JSON İçİn bu risk SIFIRDIR,
+    /// bkz. AŞAĞIDAKİ not). `arena_pool_lock`/`cycle_gc_lock` (AŞAĞIDA)
+    /// AYRI kaynakları koruyan AYRI kilitlerdir, HİÇBİR profillenmiş
+    /// kanıt bunları İŞARET ETMİYOR, DOKUNULMADI.
+    ///
+    /// HTTP/JSON İçİn (bu değişikliği TETİKLEYEN yük) göç riski SIFIRDIR:
+    /// `checker.zig`nin `validateHttpHandler`ı `handle`in `async def`
+    /// OLAMAYACAĞINI ZORUNLU kılar — bağlantı handler'ı SENKRONDUR,
+    /// HİÇBİR `await` NOKTASI TAŞIMAZ, bu YÜZDEN BİR isteğin TAMAMI
+    /// (JSON decode+encode DAHİL) HER ZAMAN AYNI worker'da çalışır.
+    pool_free_lists: [MAX_POOL_WORKERS]PoolFreeListRow = @splat(.{}),
     /// Dil stabilizasyonu fazı §M.7: `lowlevel` arena TUTAMAÇLARININ (bkz.
     /// `runtime/alloc/lowlevel.zig`, `ArenaHandle`) LIFO serbest liste BAŞI
     /// — `pool_free_lists`in AYNI Release-only prensibi (`lowlevel.zig`nin
@@ -177,10 +225,11 @@ pub const RuntimeState = struct {
     /// `nox_rc_alloc`/`nox_rc_free_payload` (aşağıdaki `arcOwnerThreadOk`ya
     /// bkz.) HER çağrıda BUNU doğrular. **Nox'un çalışma zamanı ARC
     /// refcount'u (`arc.zig`nin `i64` başlığı) Faz MN.1'DEN İTİBAREN
-    /// KOŞULSUZ atomiktir**, `pool_free_lists`/`arena_pool`/`cycle_gc`
-    /// Faz MN.3b'DEN İTİBAREN KİLİTLERLE korunur (bkz. yukarıdaki
-    /// `*_lock` alanları) — kapasite BİR worker havuzu (bkz. `runtime/
-    /// async_rt/worker_pool.zig`) KURULDUĞUNDA `setArcOwnerPoolCapacity`
+    /// KOŞULSUZ atomiktir**, `arena_pool`/`cycle_gc` Faz MN.3b'DEN
+    /// İTİBAREN KİLİTLERLE korunur (bkz. yukarıdaki `*_lock` alanları —
+    /// `pool_free_lists` Faz MN.10'DAN İTİBAREN worker-slotlu, KİLİTSİZ
+    /// bir dizi, bkz. onun KENDİ belge notu) — kapasite BİR worker havuzu
+    /// (bkz. `runtime/async_rt/worker_pool.zig`) KURULDUĞUNDA `setArcOwnerPoolCapacity`
     /// İLE havuz büyüklüğüne YÜKSELTİLİR, HER worker BİRİNCİ ARC
     /// dokunuşunda KENDİLİĞİNDEN KAYITLI bir üye OLUR.
     arc_owner_pool: if (debug_thread_check) OwnerPool else void =

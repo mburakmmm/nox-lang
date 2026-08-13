@@ -14672,6 +14672,64 @@ yolu (bayraksız `noxc build`) BAYT-BİREBİR DEĞİŞMEDİ (IR-diff
 API'yi/checker davranışını DEĞİŞTİRMEMESİ SAYESİNDE HER İKİ backend'de
 de aynı Nox kaynağı ÇALIŞIR).
 
+**4. (Faz MN.10, v1.29.3) ARC küçük-nesne havuzunun (`pool_free_lists`)
+TEK global kilidi worker-slotlu, KİLİTSİZ bir tasarıma çevrildi.**
+Yukarıdaki 3 madde YAYIMLANDIKTAN SONRA, kullanıcı Aether'i geliştirirken
+GÖZLEMLEDİĞİ 2 EK sorun raporladı: (a) ping/echo benchmarklarının 3'te
+birine düşmesi, (b) yük altında JSON'un HTTP'yi bozan bir bottleneck
+yaratması. Doğrudan `wrk`+`sample` profillemesiyle DOĞRULANDI: `nox.
+json.decode`/`encode` KULLANAN (~30-50 küçük ARC tahsisi/istek) bir
+handler `--release` altında 8 paylaşılan worker'DA 1 worker'DAN DAHA
+YAVAŞ çalışıyordu (~89k req/s vs ~101k req/s, AYNI makinede) — worker
+sayısı ARTTIKÇA throughput'un DÜŞMESİ klasik bir global-kilit çekişmesi
+imzası. Kök neden: paylaşılan M:N havuzunda `RuntimeState.pool_free_
+lists`in (`arc.zig`nin `nox_rc_alloc`/`nox_rc_free_payload`sinin
+kullandığı, 10 boyut-sınıflı serbest liste) TÜM worker'lar TARAFINDAN
+paylaşılan TEK bir `SpinLock` İLE korunması — HER JSON düğümü (string/
+liste/obje) BU kilide birden fazla kez uğruyordu.
+
+Düzeltme, `RuntimeState.globals_blocks`nin (Faz MN.3b'de ZATEN
+kanıtlanmış) worker-slotlu, kilitsiz desenini AYNEN tekrar kullandı:
+`pool_free_lists` `[POOL_NUM_CLASSES]?*PoolNode` (tek, paylaşılan)
+YERİNE `[MAX_POOL_WORKERS]PoolFreeListRow` (HER worker `asap.
+currentWorkerSlot()` İLE KENDİ satırına erişir) oldu — kilit TAMAMEN
+KALDIRILDI. GÜVENLİK gerekçesi: `nox_rc_free_payload` HER ZAMAN o ANDA
+referansı BIRAKAN fiber'ı ÇALIŞTIRAN OS iş parçacığında çalışır
+(nesneyi TAHSİS EDEN iş parçacığı OLMAK ZORUNDA DEĞİL, work-stealing
+İLE göç edebilir) — AMA bu SORUN DEĞİL, o ANDA `currentWorkerSlot()`
+O ANKİ iş parçacığının KENDİ slotunu doğru tanımlar, hiçbir slot İKİ
+FARKLI iş parçacığı TARAFINDAN AYNI ANDA mutasyona UĞRAMAZ. Cache-line
+ping-pong'u ÖNLEMEK İçİn HER worker'ın satırı (`PoolFreeListRow`) 64
+bayta hizalandı. HTTP handler'ları senkron OLDUĞUNDAN (`async def`
+OLAMAZLAR, `checker.zig`nin `validateHttpHandler`ı ZORUNLU kılar) bu
+değişikliğin motive edici İş yükü (HTTP/JSON) İçİn dengesiz-dağılım
+riski SIFIRDIR; genel `spawn`/work-stealing İçİn (bir fiber worker
+A'da tahsis edip B'ye GÖÇTÜKTEN SONRA serbest bırakırsa) kabul edilen,
+BİLİNÇLİ bir v1 sınırlaması VAR (SIZINTI DEĞİL, sadece yeniden-kullanım
+YERELLİĞİ optimal OLMAYABİLİR) — GERÇEK çapraz-worker yeniden-dengeleme
+(tcmalloc-tarzı merkezi taşma havuzu) "ölçülmeden mimari EKLEME"
+ilkesiyle BİLİNÇLİ olarak ERTELENDİ.
+
+Ölçülen sonuç (AYNI makinede, düzeltme ÖNCESİ/SONRASI, AYNI ReleaseFast
+noxrt.o İLE): 8-worker throughput'u ~%64 arttı (89k→147k req/s) VE 8
+worker artık 1 worker'ı ~%43 GEÇİYOR (tersine-dönüş TAMAMEN düzeldi).
+`benchmarks/http_compare/run_json_worker_sweep.sh` bunu OTOMATİK bir
+regresyon kapısı olarak DOĞRULAR (1/2/4/8 worker İçİn `wrk` çalıştırıp
+"8-worker > 1-worker" iddiasını KONTROL EDER). SADECE `--release`
+dalını etkiler; QBE ASLA bir `RuntimeState`yi OS iş parçacıkları
+ARASINDA PAYLAŞMADIĞINDAN (her worker KENDİ `nox_runtime_init()`ini
+çağırır) O yol gözlemsel olarak DEĞİŞMEDİ (IR-diff 204/0/3-atlandı
+KORUNDU — bu değişiklik `runtime/alloc/{asap,arc}.zig`ye SINIRLI, HİÇBİR
+codegen dosyasına DOKUNMADI). **Yan bulgu** (bu fazın uygulanması
+SIRASINDA, kodun KENDİSİYLE İLGİSİZ): manuel doğrulama İçİn `zig build`
+bayraksız çalıştırılırsa `noxrt.o` VARSAYILAN OLARAK Debug modunda
+(DebugAllocator + her tahsiste tam yığın-izi yakalama, ÖLÇÜLEMEYECEK
+KADAR yavaş) yeniden derlenir — manuel `--release` ölçümleri HER ZAMAN
+`zig build -Doptimize=ReleaseFast` İLE yeniden derlenmiş bir `noxrt.o`
+GEREKTİRİR (dağıtılan GitHub Release ikilileri BUNU ZATEN doğru yapıyor,
+bkz. `.github/workflows/release.yml` — SADECE yerel geliştirme/ölçüm
+iş akışlarını ETKİLER).
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.
