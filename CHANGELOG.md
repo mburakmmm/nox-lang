@@ -14,7 +14,42 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
-## [1.29.9]
+## [1.29.10]
+
+### Düzeltildi
+- **v1.29.9'un ECONNRESET düzeltmesi SIRASINDA bulunan GENEL riskin
+  KENDİSİ kapatıldı: `runtime/async_rt/io.zig`nin fiber-bağlamlı
+  `nonBlocking*` fonksiyonlarında, ECONNRESET/EPIPE/ECONNABORTED AİLESİ
+  DIŞINDA kalan HERHANGİ bir "beklenmeyen" errno'nun (Debug modunda,
+  `zig build test`nin VARSAYILAN modu) HÂLÂ `posix.unexpectedErrno`nin
+  segfault-döngüsü YOLUNA düşme riski VARDI.** v1.29.9'un doğrulama
+  turunda bulunan kök nedenin (fiber'ın ÖZEL yığınında `std.debug.
+  dumpCurrentStackTrace()`nin GERÇEK bir SEGFAULT + segfault-handler'ın
+  KENDİSİ AYNI bozuk yolu TEKRAR çağırması) GENEL bir çözümü: yeni bir
+  `fiberSafeUnexpectedErrno` yardımcı fonksiyonu, `io.zig`nin `.AGAIN`
+  DIŞINDAKİ TÜM `else` dallarına (`nonBlockingAccept`/`WithTimeout`/
+  `nonBlockingRead`/`WithTimeout`/`nonBlockingWrite` — TOPLAM 5 site)
+  eklendi: AYNI hata numarasını (geliştirici tanısı İçİn hâlâ değerli)
+  YAZDIRIR AMA `dumpCurrentStackTrace()`i ASLA çağırmaz. `http_server.
+  zig`/`tls_server.zig`deki AYNI-görünümlü `posix.unexpectedErrno`
+  çağrıları İNCELENİP GÜVENLİ olduğu doğrulandı — HEPSİ `scheduler ==
+  null` (fiber-DIŞI, senkron/bloklayan yedek) DALINDA yaşıyor, normal OS
+  iş parçacığı yığınında ÇALIŞIYORLAR (`io_reactor.zig`nin 7 çağrısı da
+  AYNI gerekçeyle güvenli — `Scheduler.run()`nin KENDİ ana döngüsünden,
+  fiber İÇİNDEN DEĞİL). Kapsam BİLİNÇLİ olarak SADECE GERÇEKTEN fiber-
+  bağlamlı çağrı siteleriyle SINIRLI tutuldu. GERÇEK bir `EBADF` (kapalı
+  fd'ye okuma) errno'sunu fiber bağlamında tetikleyen YENİ bir regresyon
+  testiyle (`runtime/async_rt/io.zig`) askıya-düşme/panik OLMADAN `error.
+  Unexpected`in GRACEFUL döndüğü doğrulandı. Tam `zig build test`: TEK
+  bilinen İLİŞKİSİZ fuzz çökmesi HARİÇ temiz (837/838), IR-diff
+  DEĞİŞMEDİ. (Not: `zig build`nin konsol çıktısında YENİ testin `stderr`e
+  yazdığı tanı mesajı YÜZÜNDEN "failed command" GÖRÜNEBİLİR — bu, Zig'in
+  `--listen=-` yapılandırılmış test protokolünün, GERÇEKTEN GEÇEN bir
+  testin `stderr`e HERHANGİ bir metin yazmasına verdiği KOZMETİK bir
+  tepkidir; GERÇEK süreç çıkış kodu VE `Build Summary`nin KENDİSİ 0/
+  DEĞİŞMEMİŞ olarak DOĞRULANDI.)
+
+
 
 ### Düzeltildi
 - **`nox.http.serve()` sunucuları, bir istemcinin TCP bağlantısını ANİDEN

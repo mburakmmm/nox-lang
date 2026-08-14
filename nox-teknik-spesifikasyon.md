@@ -15161,6 +15161,78 @@ tracing`i devre dışı bırakmak, YA DA fiber trampoline'ının yığın
 düzenini Zig'in unwind'ının ANLAYABİLECEĞİ hale getirmek) AYRI, DAHA
 BÜYÜK bir görev olarak İŞARETLENDİ.
 
+## 3.92 Fiber-bağlamlı `unexpectedErrno`nun GENEL segfault-döngüsü riskini kapatma (v1.29.10)
+
+§3.91'de (v1.29.9) ECONNRESET'e ÖZEL bir düzeltme YAPILDI, ama KÖK NEDEN
+(fiber'ın ÖZEL yığınında `posix.unexpectedErrno`nin çağırdığı `std.debug.
+dumpCurrentStackTrace()`nin GERÇEK bir SEGFAULT'a — ARDINDAN o segfault'un
+handler'ının AYNI yolu TEKRAR çağırmasına — yol açması) GENEL bir sorundu:
+`.AGAIN`/`.CONNRESET`/`.PIPE`/`.CONNABORTED` DIŞINDA kalan HERHANGİ bir
+"beklenmeyen" errno (ör. `EBADF`, `ENOBUFS`, VS.) AYNI riski TAŞIYORDU.
+Kullanıcı bunu AÇIKÇA işaret edip DERİNLEMESİNE bir çözüm İSTEDİ.
+
+**Kapsam belirleme**: `runtime/` genelinde `posix.unexpectedErrno`
+çağıran TÜM siteler TARANDI (`io.zig`: 5, `io_reactor.zig`: 7, `http_
+server.zig`: 3, `tls_server.zig`: 2). Her birinin GERÇEKTEN fiber
+bağlamında mı yoksa NORMAL OS iş parçacığı yığınında mı ÇALIŞTIĞI TEK TEK
+doğrulandı:
+- **`io.zig`nin 5 sitesi (`nonBlockingAccept`/`WithTimeout`/`Read`/
+  `WithTimeout`/`Write`) — GERÇEKTEN fiber-bağlamlı.** Bu fonksiyonlar
+  `Scheduler.suspendForIo(OrTimeout)` çağırır — bu, "ŞU AN askıya
+  alınabilir bir fiber İÇİNDE çalışıyorum" anlamına GELİR (fonksiyonların
+  VAROLUŞ SEBEBİ budur), bu YÜZDEN HER çağrı GARANTİ olarak fiber'ın
+  ÖZEL yığınında yürür.
+- **`http_server.zig`nin `rawRead`/`rawWriteAll`/`blockingAccept`si VE
+  `tls_server.zig`nin `rawSockRead`/`rawSockWriteAll`ı — GÜVENLİ.** Bu 5
+  site `scheduler == null` (fiber-DIŞI, senkron/bloklayan YEDEK — `nox.
+  http.serve`nin async OLMAYAN çağrı yolu) DALINDA yaşıyor; `scheduler !=
+  null` İKEN AYRICA `io_mod.nonBlockingReadWithTimeout`/`nonBlockingWrite`e
+  DELEGE EDİYORLAR (yukarıdaki, ZATEN düzeltilmiş siteler) — bu YÜZDEN
+  KENDİ `posix.unexpectedErrno` çağrıları HİÇBİR ZAMAN fiber bağlamında
+  ÇALIŞMAZ.
+- **`io_reactor.zig`nin 7 sitesi — GÜVENLİ.** `Scheduler.run()`nin KENDİ
+  ana döngüsünden (`scheduler.zig:650,660`, `reactor.poll(self)`)
+  ÇAĞRILIRLAR — bu döngü fiber'lar ARASINDA GEÇİŞ YAPAN KOD'un KENDİSİDİR,
+  normal OS iş parçacığı yığınında çalışır (fiber'lara `swap_aarch64`/
+  trampoline İLE GEÇİŞ, bu döngünün YAPTIĞI bir ŞEYDİR, İÇİNDE OLDUĞU bir
+  ŞEY DEĞİL).
+
+**Düzeltme** (`runtime/async_rt/io.zig`, TEK değişen dosya): yeni bir
+`fiberSafeUnexpectedErrno(e: posix.E) error{Unexpected}` yardımcı
+fonksiyonu — `posix.unexpectedErrno`YLA AYNI tanı çıktısını (`errno`
+sayısı, geliştirici İçİn hâlâ değerli) verir AMA `std.debug.
+dumpCurrentStackTrace()`i ASLA çağırmaz. Yukarıdaki 5 GERÇEKTEN fiber-
+bağlamlı sitenin `else => |e| return posix.unexpectedErrno(e),`si BUNUNLA
+DEĞİŞTİRİLDİ; GÜVENLİ 12 site (http_server.zig/tls_server.zig/
+io_reactor.zig) BİLİNÇLİ olarak DOKUNULMADAN bırakıldı (KANITLANMIŞ
+gereksiz genişletme).
+
+**Doğrulama**: `EBADF` (kapalı bir fd'ye okuma — `.AGAIN`/`.CONNRESET`/
+`.PIPE`/`.CONNABORTED` AİLESİNİN HİÇBİRİYLE eşleşmeyen, GERÇEKTEN
+"beklenmeyen" bir errno) DETERMİNİSTİK olarak tetikleyen YENİ bir
+regresyon testi (`runtime/async_rt/io.zig`) — fiber bağlamında çalıştırılıp
+askıya-düşme/panik OLMADAN `error.Unexpected`in GRACEFUL döndüğü
+doğrulandı (`beklenmeyen errno (fiber baglaminda, yigin izi GUVENLIK icin
+ATLANDI): 6` tanı çıktısıyla BİRLİKTE, HİÇ hang OLMADAN). Tam `zig build
+test`: TEK bilinen İLİŞKİSİZ fuzz çökmesi HARİÇ temiz (837/838), IR-diff
+205/0-yeni/3-atlandı DEĞİŞMEDİ. Gerçek `wrk` yükü altında (`--release`,
+ReleaseFast — burada `std.options.unexpected_error_tracing` zaten
+VARSAYILAN olarak `false`, yani BU düzeltmenin GÖZLEMLENEBİLİR etkisi
+SADECE Debug modunda/`zig build test`de — ama YİNE DE gerçek bir sunucu
+İLE UÇTAN UCA doğrulandı): 3 ardışık koşum, sunucu HİÇBİR çökme/askıya
+düşme OLMADAN hayatta kaldı, throughput ~235-247k req/s (öncekiyle AYNI,
+SIFIR performans regresyonu).
+
+**Kozmetik not (KAFA KARIŞTIRICI ama ZARARSIZ)**: `zig build async-rt-
+test`/`zig build test`nin konsol çıktısında, YENİ testin `fiberSafe
+UnexpectedErrno`sinin bilinçli tanı `std.debug.print`i YÜZÜNDEN "failed
+command: .../test ..." SATIRI GÖRÜNÜR — bu, Zig'in `--listen=-`
+yapılandırılmış test protokolünün, GERÇEKTEN GEÇEN bir testin `stderr`e
+HERHANGİ bir metin yazmasına verdiği KOZMETİK bir tepkidir (GERÇEK süreç
+çıkış kodu doğrudan doğrulandı: `0`; `Build Summary`nin KENDİSİ de
+104/106 — v1.29.9'daki İLE AYNI, TEK bilinen fuzz çökmesi DIŞINDA HİÇBİR
+YENİ "failed" adımı YOK).
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

@@ -102,6 +102,41 @@ pub fn setTcpNodelay(fd: posix.fd_t) void {
     _ = std.c.setsockopt(fd, std.c.IPPROTO.TCP, std.c.TCP.NODELAY, &enable, @sizeOf(c_int));
 }
 
+/// `posix.unexpectedErrno`nin GÜVENLİ eşleniği — BU dosyanın (ECONNRESET/
+/// EPIPE/ECONNABORTED DIŞINDA kalan, gerçekten "beklenmeyen" bir errno'ya
+/// düşen) TÜM `else` dallarının kullanması GEREKİR. **GERÇEK, `sample` İLE
+/// doğrulanmış bir hata (bkz. proje planı "ECONNRESET"): `posix.
+/// unexpectedErrno`nin (Debug modunda, `std.options.unexpected_error_
+/// tracing` AÇIKKEN — bu SADECE Debug'da, `zig build test`nin VARSAYILAN
+/// modu) çağırdığı `std.debug.dumpCurrentStackTrace()`, bu dosyadaki
+/// `nonBlockingAccept`/`Read`/`Write` fonksiyonlarının (`Scheduler.
+/// suspendForIo(OrTimeout)` ÇAĞIRDIKLARI İçİn VAROLUŞ SEBEBİ zaten "bir
+/// fiber İÇİNDE, askıya alınabilir şekilde çalışmak" olan TEK fonksiyon
+/// grubu) çağrıldığı Nox FİBER'ının (ÖZEL, `fiber.zig`nin trampoline'ı
+/// TARAFINDAN tahsis edilen, OS iş parçacığının NORMAL yığınından FARKLI
+/// bir yığın) bağlamından çağrıldığında GERÇEK bir SEGFAULT'a — ARDINDAN o
+/// segfault'un KENDİ handler'ının AYNI bozuk unwind yolunu TEKRAR
+/// çağırmasıyla süreci SONSUZA KADAR askıya düşürmeye — yol AÇIYORDU
+/// (düzeltme GEÇİCİ geri alınıp GERÇEKTEN gözlemlendi, `sample` İLE
+/// doğrulandı). Zig'in yerleşik unwind'ı NORMAL, bitişik bir native yığın
+/// VARSAYDIĞINDAN bir fiber'ın YIĞININI ASLA güvenle unwind EDEMEZ.
+/// **BU dosyanın DIŞINDAKİ** (`http_server.zig`nin `rawRead`/`rawWriteAll`/
+/// `blockingAccept`si, `tls_server.zig`nin `rawSockRead`/`rawSockWriteAll`ı)
+/// AYNI desendeki `posix.unexpectedErrno` çağrıları İSE GÜVENLİDİR —
+/// HEPSİ `scheduler == null` (fiber-DIŞI, senkron/bloklayan yedek) DALINDA
+/// yaşar, YANİ ÇAĞRILDIKLARINDA fiber'ın ÖZEL yığınında DEĞİL, normal OS
+/// iş parçacığı yığınında ÇALIŞIRLAR — bu YÜZDEN BU dosyanın DIŞINA
+/// GENİŞLETİLMEDİ (kapsam BİLİNÇLİ olarak yalnızca GERÇEKTEN fiber-
+/// bağlamlı çağrı siteleriyle SINIRLI tutuldu). Bu fonksiyon AYNI hata
+/// numarasını (geliştirici tanısı İçİn hâlâ değerli) YAZDIRIR AMA
+/// `dumpCurrentStackTrace()`i ASLA çağırmaz.
+fn fiberSafeUnexpectedErrno(e: posix.E) error{Unexpected} {
+    if (std.options.unexpected_error_tracing) {
+        std.debug.print("beklenmeyen errno (fiber baglaminda, yigin izi GUVENLIK icin ATLANDI): {d}\n", .{@intFromEnum(e)});
+    }
+    return error.Unexpected;
+}
+
 /// `listen_fd` üzerinde bir bağlantı hazır olana kadar ÇAĞIRAN fiber'ı
 /// (bkz. `Scheduler.suspendForIo`) askıya alır — GERÇEK sonuç alınana ya
 /// da gerçek bir hataya kadar TEKRAR dener.
@@ -140,7 +175,7 @@ pub fn nonBlockingAccept(scheduler: *Scheduler, listen_fd: posix.fd_t) !posix.fd
             // adayı YOK SAYILIP döngü TEKRARLANIR (`unexpectedErrno`nin
             // gürültülü/panik-BENZERİ yoluna DÜŞMEDEN).
             .CONNABORTED => {},
-            else => |e| return posix.unexpectedErrno(e),
+            else => |e| return fiberSafeUnexpectedErrno(e),
         }
     }
 }
@@ -181,7 +216,7 @@ pub fn nonBlockingAcceptWithTimeout(scheduler: *Scheduler, listen_fd: posix.fd_t
             .AGAIN => if (scheduler.suspendForIoOrTimeout(listen_fd, .read, timeout_ms) == .timed_out) return error.Timeout,
             // Bkz. `nonBlockingAccept`in AYNI notu.
             .CONNABORTED => {},
-            else => |e| return posix.unexpectedErrno(e),
+            else => |e| return fiberSafeUnexpectedErrno(e),
         }
     }
 }
@@ -219,7 +254,7 @@ pub fn nonBlockingRead(scheduler: *Scheduler, fd: posix.fd_t, buf: []u8) !usize 
         switch (posix.errno(rc)) {
             .AGAIN => scheduler.suspendForIo(fd, .read),
             .CONNRESET => return 0,
-            else => |e| return posix.unexpectedErrno(e),
+            else => |e| return fiberSafeUnexpectedErrno(e),
         }
     }
 }
@@ -277,7 +312,7 @@ pub fn nonBlockingReadWithTimeout(scheduler: *Scheduler, fd: posix.fd_t, buf: []
             // HER fiber İçİn GERÇEK bir askıya-düşme/çökme riskini de
             // ORTADAN KALDIRIYOR.
             .CONNRESET => return 0,
-            else => |e| return posix.unexpectedErrno(e),
+            else => |e| return fiberSafeUnexpectedErrno(e),
         }
     }
 }
@@ -321,7 +356,7 @@ pub fn nonBlockingWrite(scheduler: *Scheduler, fd: posix.fd_t, buf: []const u8) 
             // borsağa yazma denemesi — `std.Io.zig`nin (`Io.zig:313`)
             // KENDİ `BrokenPipe` adını taşır, AYNI gerekçeyle.
             .PIPE => return error.BrokenPipe,
-            else => |e| return posix.unexpectedErrno(e),
+            else => |e| return fiberSafeUnexpectedErrno(e),
         }
     }
 }
@@ -504,4 +539,58 @@ test "nonBlockingReadWithTimeout: istemci TCP RST ile ANİ kapatınca ECONNRESET
     // (2) Zamanlayıcı/reaktör BOZULMADI — TAMAMEN BAĞIMSIZ soket çifti
     // AYNI koşumda doğru tamamlandı.
     try std.testing.expectEqualStrings("hala-canli", Shared.pair_got[0..Shared.pair_got_len]);
+}
+
+// `ECONNRESET`in KENDİSİ DIŞINDAKİ (`.CONNRESET`/`.PIPE`/`.CONNABORTED`
+// AİLESİ DIŞINDA kalan) GERÇEKTEN "beklenmeyen" bir errno'nun BİLE (yukarıdaki
+// testin AKSİNE — BURADA hedeflenen `EBADF`, SIRADAN bir "kapalı fd'ye
+// okuma" hatasıdır, ÖZEL olarak ele alınan bir "bağlantı sıfırlandı"
+// AİLESİ DEĞİL) `fiberSafeUnexpectedErrno`nun EN GENEL `else` yoluyla,
+// panik/askıya-düşme OLMADAN GRACEFUL bir `error.Unexpected` döndürdüğünü
+// kanıtlar — `posix.unexpectedErrno`nin KENDİSİNE geri dönülseydi (BU
+// düzeltmenin fonksiyonun İÇİNDE hiç OLMADIĞI bir senaryo) AYNI segfault-
+// döngüsü BURADA da tetiklenirdi (yukarıdaki testin belge notundaki AYNI
+// mekanizma) — bu YÜZDEN `fiberSafeUnexpectedErrno`nun `else` dalının
+// KENDİSİ, TEK bir errno DEĞİL, `.AGAIN` DIŞINDAKİ TÜM beklenmeyen
+// durumlar İçİn genel bir GÜVENLİK AĞI olarak DOĞRU çalıştığını kanıtlamak
+// GEREKİR.
+test "nonBlockingRead: GERÇEKTEN beklenmeyen bir errno (EBADF — kapalı fd) fiber baglaminda PANİK/askıya-düşme OLMADAN error.Unexpected döner" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const spawn = @import("scheduler.zig").spawn;
+
+    // GERÇEK bir fd tahsis edip HEMEN kapatır — kalan `fd` sayısı ARTIK
+    // KESİNLİKLE GEÇERSİZDİR (`EBADF`, `.AGAIN`/`.CONNRESET`/`.PIPE`/
+    // `.CONNABORTED` AİLESİNİN HİÇBİRİYLE EŞLEŞMEZ — `switch`in EN GENEL
+    // `else` dalına DÜŞMESİ GARANTİDİR).
+    var fds: [2]posix.fd_t = undefined;
+    if (std.c.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &fds) != 0) return error.SocketPairFailed;
+    const bad_fd = fds[0];
+    _ = std.c.close(bad_fd);
+    defer _ = std.c.close(fds[1]);
+
+    var scheduler = try Scheduler.init(std.heap.page_allocator);
+    defer scheduler.deinit();
+
+    const Shared = struct {
+        var result: ?(anyerror!usize) = null;
+        var scheduler_ptr: *Scheduler = undefined;
+        var fd: posix.fd_t = undefined;
+
+        fn badReaderFn(_: *anyopaque) callconv(.c) void {
+            var buf: [16]u8 = undefined;
+            result = nonBlockingRead(scheduler_ptr, fd, &buf);
+        }
+    };
+    Shared.scheduler_ptr = &scheduler;
+    Shared.fd = bad_fd;
+
+    var dummy: u8 = 0;
+    const task = try spawn(&scheduler, void, Shared.badReaderFn, &dummy);
+    defer scheduler.allocator.destroy(task);
+
+    try scheduler.run();
+
+    const r = Shared.result orelse return error.ReaderNeverRan;
+    try std.testing.expectError(error.Unexpected, r);
 }
