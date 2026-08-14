@@ -22,11 +22,23 @@
 //! bırakır, TÜM `RuntimeState`ini YIKAR — ebeveyn `nox_thread_join`da bu
 //! düz baytlardan KENDİ ARC `str`ini inşa eder.
 //!
-//! **`ThreadHandle`nin ömrü — atomik referans SAYIMI (Task'ın `detached`
-//! deseninden BİLİNÇLİ olarak FARKLI):** `Task.detached` (bkz. `scheduler.
-//! zig`) TEK bir OS iş parçacığında kooperatif ÇALIŞTIĞI İÇİN güvenlidir
-//! (gerçek bir veri yarışı YOK). `ThreadHandle` İSE GERÇEKTEN İKİ bağımsız
-//! OS iş parçacığı arasında paylaşılır — ebeveyn (`nox_thread_destroy`)
+//! **`ThreadHandle`nin ömrü — atomik referans SAYIMI (Task'ın `DETACHED`
+//! deseninden BİLİNÇLİ olarak FARKLI):** **DÜZELTME (v1.29.11) — ESKİ
+//! yorum YANLIŞTI:** `Task[T]` (bkz. `scheduler.zig`) TEK bir OS iş
+//! parçacığında kooperatif ÇALIŞMAZ — `WorkerPool` GERÇEK `std.Thread.
+//! spawn` OS iş parçacıkları kullanır VE bir Task'ın fiber'ı (v1.29.1'in
+//! `Waiter` düzeltmesinin KANITLADIĞI gibi) BAŞKA bir worker'a ÇALINABİLİR;
+//! `Task[T]` bir `spawn`e argüman olarak da GEÇİLEBİLİR (`checker.zig`nin
+//! `isSpawnParamSafeType`i buna İZİN VERİR). `Task`ın güvenliği TEK iş
+//! parçacıklı ÇALIŞMASINDAN DEĞİL, `state`in TEK bir atomik alanda,
+//! `PENDING`/`COMPLETED`/`DETACHED`/bir waiter işaretçisi olarak, CAS
+//! tabanlı bir protokolle kodlanmasından gelir (bkz. `Task.DETACHED`in
+//! belge notu, `scheduler.zig`) — `ThreadHandle`nin AŞAĞIDAKİ atomik
+//! referans-sayımı deseni İLE AYNI TEMEL prensibi (paylaşılan durumun
+//! HER ZAMAN atomik bir protokolle korunması) İZLER, sadece FARKLI bir
+//! somut mekanizma (CAS/sentinel state vs. referans sayacı) KULLANIR.
+//! `ThreadHandle` İSE GERÇEKTEN İKİ bağımsız OS iş parçacığı arasında
+//! paylaşılır — ebeveyn (`nox_thread_destroy`)
 //! VE çocuk (kendi işini bitirince) HER İKİSİ de `handle`e "sahip"tir,
 //! HANGİSİNİN SIRAYLA biteceği BELİRSİZDİR. Bu yüzden `owners` GERÇEK bir
 //! atomik sayaçtır (2'den başlar) — her taraf işini bitirince BİR azaltır,

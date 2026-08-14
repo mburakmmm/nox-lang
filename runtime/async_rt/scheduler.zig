@@ -786,33 +786,63 @@ pub fn Task(comptime T: type) type {
         /// GELİR (çapraz-worker uyandırmanın ZATEN KANITLANMIŞ mekanizması
         /// — bkz. MN.4/5'in "GERÇEK çapraz-worker fiber çalma" tasarımı).
         state: std.atomic.Value(usize) = .init(PENDING),
-        /// Faz S.1: `destroy` (bkz. `bridge.zig`nin `nox_async_destroy_task`ı)
-        /// bu görev HENÜZ tamamlanmamışken çağrıldıysa `true` olur — bu
-        /// GÜVENLİK için ZORUNLUDUR: `self` (`Task` struct'ının KENDİSİ),
-        /// fiber'ın `entryTrampoline`si HENÜZ tamamlanmadığından, fiber
-        /// tarafından `self.result`/`self.state`e YAZILACAK bellektir.
-        /// `self`i HEMEN serbest bırakmak (görev tamamlanmadan) fiber
-        /// sonunda serbest bırakılmış belleğe YAZAN bir use-after-free
-        /// olurdu. Bunun yerine yalnızca bu bayrak işaretlenir — GERÇEK
-        /// serbest bırakma `entryTrampoline`e ERTELENİR (bkz. orada).
-        detached: bool = false,
+
+        /// **v1.29.11 — GERÇEK, DIŞARIDAN bulunup DOĞRULANMIŞ bir hata
+        /// İçİn eklendi.** ESKİDEN `detached: bool` (Faz S.1) `state`in
+        /// AYNI atomik protokolünün DIŞINDA, DÜZ, senkronize-OLMAYAN AYRI
+        /// bir alandı — `nox_async_destroy_task` (BAŞKA bir OS iş
+        /// parçacığında, `WorkerPool` GERÇEK `std.Thread.spawn`
+        /// kullandığından) onu YAZARKEN, `entryTrampoline` (BAŞKA bir OS
+        /// iş parçacığında) OKUYORDU — happens-before garantisi YOKTU. DAHA
+        /// da ÖNEMLİSİ: `entryTrampoline`nin ESKİ `detached` dalı `self`i
+        /// `state`e/waiter'a HİÇ BAKMADAN serbest bırakıyordu — eğer bir
+        /// BAŞKA fiber (`Task[T]` bir `spawn`e argüman olarak
+        /// GEÇİLEBİLDİĞİNDEN, `checker.zig`nin `isSpawnParamSafeType`i BUNU
+        /// HER İKİ backend'de de İZİN VERİYOR) ZATEN `await_()` İLE kendini
+        /// waiter olarak KAYDETMİŞKEN sahip `destroy()` çağırırsa, ESKİ kod
+        /// waiter'ı UYANDIRMADAN `self`i serbest BIRAKIRDI — waiter'ın
+        /// fiber'ı SONSUZA KADAR askıda kalırdı (Faz MN.8'in ÇÖZDÜĞÜ
+        /// sınıftan bir kayıp-uyandırma, GERİ GELMİŞ). Çözüm: `detached`i
+        /// AYRI bir alan OLARAK DEĞİL, `state`in KENDİSİNİN ÜÇÜNCÜ bir
+        /// değeri olarak KODLAMAK — `nox_async_destroy_task`, `state`i
+        /// `PENDING`den `DETACHED`ye CAS İLE geçirmeyi DENER; CAS SADECE
+        /// HİÇBİR GERÇEK waiter HENÜZ KAYITLI DEĞİLKEN başarılı olur, bu
+        /// YÜZDEN ZATEN KAYITLI bir waiter ASLA çiğnenemez/sallandırılamaz
+        /// (bkz. `nox_async_destroy_task`nin KENDİ belge notu, `bridge.
+        /// zig`). `PENDING`/`COMPLETED` İLE AYNI gerekçeyle (Fiber/Waiter
+        /// işaretçileri HER ZAMAN >=8-bayt hizalı tahsis edildiğinden)
+        /// GERÇEK bir waiter pointer'IYLA ASLA ÇAKIŞMAZ.
+        pub const DETACHED: usize = 2;
 
         fn entryTrampoline(arg_erased: *anyopaque) void {
             const self: *Self = @ptrCast(@alignCast(arg_erased));
             self.result = self.func(self.arg);
-            // Görev tamamlanmadan ÖNCE `destroy` edildiyse (bkz. `detached`in
-            // belge notu) — artık HİÇBİR bekleyen OLAMAZ (destroy anında
-            // sahip elindeki TEK tutamacı bıraktı), bu yüzden `self`i BURADA,
-            // GÜVENLE (fiber KENDİ yazımını BİTİRMİŞKEN) serbest bırakmak
-            // doğru "ertelenmiş temizlik" noktasıdır.
-            if (self.detached) {
-                self.scheduler.allocator.destroy(self);
-                return;
-            }
+            // TEK bir atomik `swap` — `DETACHED`in belge notundaki ESKİ
+            // "önce `detached`i OKU, SONRA AYRICA `state`i swap et" İKİ-
+            // ADIMLI (senkronize-olmayan) desenin YERİNE geçer. `old`nin
+            // ÜÇ olası değeri:
+            // - `PENDING`: HİÇBİR bekleyen/detach isteği YOK — `self`,
+            //   sahibin `nox_async_destroy_task`ı state==COMPLETED bulup
+            //   serbest bırakana kadar YAŞAMAYA devam eder (normal await
+            //   akışı, DEĞİŞMEDİ).
+            // - `DETACHED`: `nox_async_destroy_task` görev tamamlanmadan
+            //   ÖNCE çağrıldı VE HİÇBİR GERÇEK waiter HENÜZ KAYITLI
+            //   DEĞİLKEN `state`i BAŞARIYLA `DETACHED`ye CAS ETTİ — artık
+            //   HİÇBİR bekleyen OLAMAZ (CAS'ın KENDİSİ BUNU GARANTİ eder,
+            //   bkz. `nox_async_destroy_task`), bu yüzden `self`i BURADA,
+            //   GÜVENLE (fiber KENDİ yazımını BİTİRMİŞKEN) serbest bırakmak
+            //   doğru "ertelenmiş temizlik" noktasıdır.
+            // - BAŞKA HERHANGİ bir değer: GERÇEK bir `*Waiter` işaretçisi
+            //   — uyandır, `self`e DOKUNMA (waiter'ın `await_()`ı `self.
+            //   result`ı OKUYANA kadar CANLI kalmalı).
             const old = self.state.swap(COMPLETED, .acq_rel);
-            if (old != PENDING) {
-                const w: *Waiter = @ptrFromInt(old);
-                w.scheduler.markReady(w.fiber);
+            switch (old) {
+                PENDING => {},
+                DETACHED => self.scheduler.allocator.destroy(self),
+                else => {
+                    const w: *Waiter = @ptrFromInt(old);
+                    w.scheduler.markReady(w.fiber);
+                },
             }
         }
 
@@ -1030,9 +1060,10 @@ test "Faz S.1: tamamlanmadan (fire-and-forget) 'destroy' edilen görev sızmadan
     // HENÜZ tamamlanmamışken "yok et" isteği gelir. Eski (Faz S.1 ÖNCESİ)
     // davranış struct'ı BURADA HEMEN serbest bırakırdı — fiber SONRADAN
     // `entryTrampoline`de `self.result`/`self.completed`e YAZARKEN serbest
-    // bırakılmış belleğe yazan bir use-after-free olurdu. `Task.detached`
-    // (bkz. onun belge notu) bunun yerine gerçek serbest bırakmayı görev
-    // KENDİ KENDİNE tamamlanana kadar ERTELER.
+    // bırakılmış belleğe yazan bir use-after-free olurdu. `DETACHED`
+    // (bkz. onun belge notu, v1.29.11'de `detached: bool`den atomik
+    // `state` sentinel'ine TAŞINDI) bunun yerine gerçek serbest bırakmayı
+    // görev KENDİ KENDİNE tamamlanana kadar ERTELER.
     //
     // **`entryTrampoline` BİLEREK gerçek bir fiber/`scheduler.run()` ÜZERİNDEN
     // DEĞİL, DOĞRUDAN çağrılır:** `runtime/async_rt/fiber.zig`nin modül üstü
@@ -1043,7 +1074,7 @@ test "Faz S.1: tamamlanmadan (fire-and-forget) 'destroy' edilen görev sızmadan
     // açtığını GERÇEKTEN kanıtlıyor (bu test İLK yazıldığında `scheduler.
     // run()` üzerinden GERÇEK bir fiber içinde çalıştırılmıştı — `-Doptimize=
     // ReleaseFast`ta TAM OLARAK bu şekilde çöktü). `entryTrampoline`in
-    // `detached` dalı fiber bağlamına ÖZGÜ bir şey YAPMADIĞINDAN (yalnızca
+    // `DETACHED` dalı fiber bağlamına ÖZGÜ bir şey YAPMADIĞINDAN (yalnızca
     // `self.func`/`self.scheduler.allocator`e erişir), test onu doğrudan
     // ÇAĞIRARAK AYNI mantığı fiber/yığın karmaşıklığı OLMADAN, güvenle
     // egzersiz eder — `std.testing.allocator` da BU YÜZDEN güvenle
@@ -1064,7 +1095,11 @@ test "Faz S.1: tamamlanmadan (fire-and-forget) 'destroy' edilen görev sızmadan
     task.* = .{ .scheduler = &scheduler, .func = Fn.triple, .arg = &input };
 
     try std.testing.expect(task.state.load(.acquire) == TaskI64.PENDING);
-    task.detached = true;
+    // `nox_async_destroy_task`nin GERÇEK CAS mantığının SİMÜLASYONU —
+    // `cmpxchgStrong` BAŞARILI OLDUĞUNDA `null` döner (Zig'in KENDİ
+    // sözleşmesi, `await_()`nin satır 865'teki AYNI `== null` kontrolüyle
+    // TUTARLI).
+    try std.testing.expectEqual(@as(?usize, null), task.state.cmpxchgStrong(TaskI64.PENDING, TaskI64.DETACHED, .acq_rel, .acquire));
 
     TaskI64.entryTrampoline(task);
     // `task`e BURADA (serbest bırakıldıktan sonra) KASITLI olarak hiç
@@ -1072,6 +1107,74 @@ test "Faz S.1: tamamlanmadan (fire-and-forget) 'destroy' edilen görev sızmadan
     // bıraktı (bkz. yukarıdaki not). Testin asıl iddiası, `std.testing.
     // allocator`ın fonksiyon SONUNDA OTOMATİK olarak doğruladığı şeydir:
     // struct ne SIZDI ne de ÇİFT serbest bırakıldı.
+}
+
+// **v1.29.11 — GERÇEK, DIŞARIDAN bulunup DOĞRULANMIŞ bir hata İçİn
+// eklendi (yukarıdaki `DETACHED`in belge notuyla AYNI kök neden).** Eski
+// `detached: bool` tasarımında, `Task[T]` bir `spawn`e argüman olarak
+// GEÇİLİP başka bir fiber `await_()` İLE kendini waiter olarak KAYDETMİŞKEN
+// sahip `destroy()` çağırırsa, `entryTrampoline`nin `detached` dalı
+// `state`e/waiter'a HİÇ BAKMADAN `self`i serbest BIRAKIYORDU — waiter'ın
+// fiber'ı SONSUZA KADAR askıda kalıyordu (kayıp uyandırma). Bu test AYNI
+// senaryoyu (Faz S.1 testinin AYNI deterministik "gerçek fiber/`scheduler.
+// run()` OLMADAN, `entryTrampoline`i DOĞRUDAN çağır" desenini İZLEYEREK,
+// manuel bir `Waiter`+SAHTE bir `markReady` KAYDIYLA) kurup: (1) `destroy`
+// eşdeğerinin (CAS) ZATEN KAYITLI waiter pointer'ını ASLA ÇİĞNEMEDİĞİNİ,
+// (2) `entryTrampoline`nin görev tamamlandığında waiter'ı GERÇEKTEN
+// uyandırdığını (ESKİ davranışta ASLA olmazdı) doğrular.
+test "v1.29.11: destroy() ZATEN KAYITLI bir waiter'ı ASLA sallandırmaz — entryTrampoline waiter'ı GERÇEKTEN uyandırır" {
+    const Fn = struct {
+        fn triple(arg: *anyopaque) callconv(.c) i64 {
+            const x: *i64 = @ptrCast(@alignCast(arg));
+            return x.* * 3;
+        }
+    };
+
+    var scheduler = try Scheduler.init(std.testing.allocator);
+    defer scheduler.deinit();
+
+    const TaskI64 = Task(i64);
+    const task = try scheduler.allocator.create(TaskI64);
+    var input: i64 = 7;
+    task.* = .{ .scheduler = &scheduler, .func = Fn.triple, .arg = &input };
+
+    // (1) BAŞKA bir fiber `await_()` çağırmış GİBİ manuel bir `Waiter`
+    // KAYDEDİLİR — `await_()`nin KENDİ CAS'ının BİREBİR SİMÜLASYONU.
+    // `fake_fiber`in İÇERİĞİ HİÇ OKUNMAZ (`Scheduler.markReady` YALNIZCA
+    // işaretçiyi hazır kuyruğa EKLER, İÇERİĞİNİ DEREFERANS ETMEZ), bu
+    // yüzden `undefined` bırakmak GÜVENLİDİR.
+    var fake_fiber: Fiber = undefined;
+    var waiter_scheduler = try Scheduler.init(std.testing.allocator);
+    defer waiter_scheduler.deinit();
+    var waiter = TaskI64.Waiter{ .fiber = &fake_fiber, .scheduler = &waiter_scheduler };
+    try std.testing.expectEqual(@as(?usize, null), task.state.cmpxchgStrong(TaskI64.PENDING, @intFromPtr(&waiter), .acq_rel, .acquire));
+
+    // (2) Sahip ŞİMDİ `destroy()` çağırır (`nox_async_destroy_task`nin
+    // GERÇEK CAS mantığının SİMÜLASYONU) — CAS `PENDING` BEKLEDİĞİNDEN
+    // (state ARTIK bir waiter pointer'ı) BAŞARISIZ OLMALI, waiter
+    // ÇİĞNENMEMELİ.
+    const cas_result = task.state.cmpxchgStrong(TaskI64.PENDING, TaskI64.DETACHED, .acq_rel, .acquire);
+    try std.testing.expect(cas_result != null); // CAS BAŞARISIZ oldu.
+    try std.testing.expectEqual(@intFromPtr(&waiter), task.state.load(.acquire)); // waiter HÂLÂ KAYITLI.
+
+    // (3) Görev TAMAMLANIR — `entryTrampoline` waiter'ı GERÇEKTEN
+    // uyandırmalı (ESKİ davranışta `detached` yanlışlıkla `true`
+    // olduğundan bu ASLA gerçekleşmezdi) VE `task`i SERBEST BIRAKMAMALI
+    // (waiter'ın `await_()`ı `self.result`ı OKUYANA kadar CANLI kalmalı).
+    try std.testing.expectEqual(@as(usize, 0), waiter_scheduler.ready.items.len);
+    TaskI64.entryTrampoline(task);
+    // `markReady` GERÇEKTEN çağrıldı — waiter'ın fiber'ı `waiter_
+    // scheduler`ın hazır kuyruğuna EKLENDİ (ESKİ davranışta bu SATIR
+    // ASLA gerçekleşmezdi, waiter SONSUZA KADAR askıda kalırdı).
+    try std.testing.expectEqual(@as(usize, 1), waiter_scheduler.ready.items.len);
+    try std.testing.expectEqual(@as(*Fiber, &fake_fiber), waiter_scheduler.ready.items[0]);
+    try std.testing.expectEqual(TaskI64.COMPLETED, task.state.load(.acquire));
+    try std.testing.expectEqual(@as(i64, 21), task.result);
+    // `entryTrampoline` `task`i SERBEST BIRAKMADI (waiter-uyandırma dalı
+    // `self`e HİÇ DOKUNMAZ) — bu YÜZDEN burada elle serbest bırakmak
+    // GÜVENLİDİR (double-free OLSAYDI `std.testing.allocator`
+    // YAKALARDI).
+    scheduler.allocator.destroy(task);
 }
 
 // ---- Faz MN.6: STW bariyeri (sense-reversing barrier) testi ----

@@ -14,7 +14,47 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
-## [1.29.10]
+## [1.29.11]
+
+### Düzeltildi
+- **`Task[T].detached` veri yarışı, atomik `state` protokolüne taşındı —
+  ChatGPT'nin M:N incelemesinde işaret ettiği bir bulgunun doğrulanıp
+  düzeltilmesi.** `runtime/async_rt/scheduler.zig`nin `Task(T)` struct'ı
+  tamamlanma durumu İçİn ZATEN doğru bir atomik `state` protokolü
+  kullanıyordu (Faz MN.8, Bulgu B — `PENDING`/`COMPLETED`/bir `*Waiter`
+  işaretçisi, CAS tabanlı) AMA `detached: bool` BU protokolün DIŞINDA,
+  DÜZ, senkronize-OLMAYAN AYRI bir alandı — `nox_async_destroy_task`
+  (`WorkerPool` GERÇEK `std.Thread.spawn` OS iş parçacıkları kullanır)
+  onu BAŞKA bir OS iş parçacığında YAZARKEN, `entryTrampoline` BAŞKA bir
+  OS iş parçacığında OKUYORDU. **Doğrulama SIRASINDA bulunan, incelemenin
+  KENDİSİNİN GÖRMEDİĞİ daha ciddi bir ikinci sonuç**: `entryTrampoline`nin
+  ESKİ `detached` dalı `self`i `state`e/waiter'a HİÇ BAKMADAN serbest
+  bırakıyordu — `Task[T]` bir `spawn`e argüman olarak GEÇİLİP (`checker.
+  zig`nin `isSpawnParamSafeType`i BUNU HER İKİ backend'de de İZİN VERİYOR)
+  BAŞKA bir fiber ZATEN `await_()` İLE kendini waiter olarak KAYDETMİŞKEN
+  sahip `destroy()` çağırırsa, waiter'ı UYANDIRMADAN `self`i serbest
+  BIRAKIYORDU — waiter'ın fiber'ı SONSUZA KADAR askıda kalıyordu (Faz
+  MN.8'in ÇÖZDÜĞÜ sınıftan bir kayıp-uyandırma, GERİ GELMİŞ). Düzeltme:
+  `detached` AYRI bir alan OLARAK DEĞİL, `state`in ÜÇÜNCÜ bir değeri
+  (`DETACHED`) olarak kodlandı — `nox_async_destroy_task`, `state`i
+  `PENDING`den `DETACHED`ye TEK bir atomik CAS İLE geçirmeyi DENER; CAS
+  SADECE HİÇBİR GERÇEK waiter HENÜZ KAYITLI DEĞİLKEN başarılı olur, bu
+  YÜZDEN ZATEN KAYITLI bir waiter ARTIK ASLA çiğnenemez/sallandırılamaz.
+  `thread_bridge.zig`deki BAYAT/YANLIŞ bir yorum ("Task.detached TEK bir
+  OS iş parçacığında kooperatif ÇALIŞTIĞI İçİn güvenlidir") de düzeltildi
+  — bu iddia v1.29.1'in `Waiter` düzeltmesi TARAFINDAN ZATEN yanlışlanmıştı.
+  YENİ bir regresyon testiyle (`runtime/async_rt/scheduler.zig`) hem
+  ZATEN KAYITLI bir waiter'ın CAS TARAFINDAN çiğnenmediği hem
+  `entryTrampoline`nin görev tamamlandığında onu GERÇEKTEN uyandırdığı
+  (ESKİ davranışta ASLA olmazdı) doğrulandı. Tam `zig build test`: TEK
+  bilinen İLİŞKİSİZ fuzz çökmesi HARİÇ temiz (842/843), IR-diff DEĞİŞMEDİ.
+  **Kapsam DIŞI (BİLİNÇLİ, AYRI bir tur gerektirir)**: `Channel[T]`nin
+  `nox_channel_destroy`sı `detached`-BENZERİ BİR erteleme mekanizması BİLE
+  TAŞIMIYOR (HER ZAMAN KOŞULSUZ serbest bırakıyor) — Task/Channel'ın TAM
+  ARC-yönetimli OLMAMASININ (incelemenin "Task/Channel borrow lifetime"
+  bulgusu) DAHA BÜYÜK, YAPISAL bir problemi, BU turun kapsamı DIŞINDA.
+
+
 
 ### Düzeltildi
 - **v1.29.9'un ECONNRESET düzeltmesi SIRASINDA bulunan GENEL riskin

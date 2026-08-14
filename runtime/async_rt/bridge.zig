@@ -187,22 +187,48 @@ pub export fn nox_async_await(rt: ?*anyopaque, task: ?*anyopaque) i64 {
 /// `codegen.zig`nin `destroyNonArcValue`si).
 ///
 /// Görev HENÜZ tamamlanMAMIŞSA struct'ı HEMEN serbest bırakmak GÜVENSİZDİR
-/// (bkz. `Task.detached`in belge notu, `scheduler.zig`) — bu durumda yalnızca
-/// `detached` bayrağı işaretlenir, GERÇEK serbest bırakma görev kendi kendine
-/// tamamlanınca `entryTrampoline` tarafından yapılır. Bu, "fire-and-forget"
-/// (hiç `await` edilmeden bırakılan) görevlerin de sızmadan VE bellek
-/// güvenliği ihlal edilmeden temizlenmesini sağlar.
+/// (bkz. `Task.DETACHED`in belge notu, `scheduler.zig`) — bu durumda `state`
+/// atomik olarak `DETACHED`ye CAS edilir, GERÇEK serbest bırakma görev
+/// kendi kendine tamamlanınca `entryTrampoline` tarafından yapılır. Bu,
+/// "fire-and-forget" (hiç `await` edilmeden bırakılan) görevlerin de
+/// sızmadan VE bellek güvenliği ihlal edilmeden temizlenmesini sağlar.
+///
+/// **v1.29.11 — GERÇEK, DIŞARIDAN bulunup DOĞRULANMIŞ bir hata İçİn
+/// düzeltildi:** ESKİDEN (`detached: bool`) bu fonksiyon `state`in
+/// COMPLETED OLMADIĞINI görünce KOŞULSUZ `detached = true` yazıyordu —
+/// AMA "COMPLETED değil" HEM "hiç waiter yok" HEM "ZATEN GERÇEK bir waiter
+/// KAYITLI" (`Task[T]` bir `spawn`e argüman olarak GEÇİLİP BAŞKA bir fiber
+/// `await_()` çağırmışsa) anlamına GELEBİLİR — İKİNCİ durumda ESKİ kod
+/// waiter'ı ÇİĞNEYİP `entryTrampoline`nin onu ASLA uyandırmamasına (kayıp
+/// uyandırma, waiter'ın fiber'ı SONSUZA KADAR askıda) yol AÇIYORDU. Şimdi
+/// TEK bir atomik CAS (`PENDING`→`DETACHED`) kullanılır: CAS SADECE HİÇBİR
+/// GERÇEK waiter HENÜZ KAYITLI DEĞİLKEN başarılı olur — bu YÜZDEN ZATEN
+/// KAYITLI bir waiter ASLA çiğnenemez.
 pub export fn nox_async_destroy_task(rt: ?*anyopaque, task: ?*anyopaque) void {
     // `nox_tasklocal_destroy`/`nox_threadchannel_destroy`/`nox_thread_destroy`
     // İLE AYNI `orelse return` null-koruması — codegen'in `.var_decl` dalı
     // (bkz. `stmt.zig`) ARTIK bir slotun İLK yazımında (henüz `null` İKEN)
     // BİLE "üzerine yazmadan ÖNCE eskiyi yok et" çağrısı yapıyor.
     const t: *TaskI64 = @ptrCast(@alignCast(task orelse return));
+    if (t.state.cmpxchgStrong(TaskI64.PENDING, TaskI64.DETACHED, .acq_rel, .acquire) == null) {
+        // CAS BAŞARILI: HİÇBİR GERÇEK waiter HENÜZ KAYITLI DEĞİLDİ —
+        // `entryTrampoline` görevi tamamladığında `self`i serbest bırakacak.
+        return;
+    }
     if (t.state.load(.acquire) == TaskI64.COMPLETED) {
         allocatorFromRt(rt).destroy(t);
-    } else {
-        t.detached = true;
+        return;
     }
+    // ELSE: GERÇEK bir waiter ZATEN KAYITLI (`await_()` başka bir fiber
+    // tarafından ÇAĞRILMIŞ) — `entryTrampoline`nin normal uyandırma yolunu
+    // (state'e/`t`e HİÇ DOKUNMADAN) BOZMAMAK İçİn BURADA BİLİNÇLİ olarak
+    // HİÇBİR ŞEY YAPILMAZ. Bu, `Task[T]`nin TAM ARC-yönetimli OLMAMASININ
+    // (ayrı, DAHA BÜYÜK bir görev — kapsamı DIŞINDA) DOĞRUDAN bir sonucu
+    // olan, GERÇEKTEN belirsiz bir sahiplik çakışması (sahip `destroy()`
+    // çağırırken BAŞKA bir fiber ZATEN await ediyor) — BURADA waiter'ı
+    // ASLA sallandırma/bozma tercih edilir; bunun yerine bu NADİR/zaten-
+    // sorunlu kullanım deseninde `t`nin serbest bırakılması ATLANIR (dar
+    // bir sızıntı, askıya-düşmeden/UAF'den KESİNLİKLE daha İYİ bir tercih).
 }
 
 /// Zamanlayıcıyı hazır kuyruk boşalana kadar çalıştırır — codegen, `main`in

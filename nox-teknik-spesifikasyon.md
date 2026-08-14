@@ -15233,6 +15233,91 @@ HERHANGİ bir metin yazmasına verdiği KOZMETİK bir tepkidir (GERÇEK süreç
 104/106 — v1.29.9'daki İLE AYNI, TEK bilinen fuzz çökmesi DIŞINDA HİÇBİR
 YENİ "failed" adımı YOK).
 
+## 3.93 `Task[T].detached` veri yarışı — dış incelemenin doğrulanıp düzeltilmesi (v1.29.11)
+
+Kullanıcı, Nox'un M:N/concurrency tarafına dair harici (ChatGPT) bir
+incelemeyi paylaştı. İncelemedeki İKİ ana teknik iddiayı (Task.detached
+yarışı, Task/Channel'ın spawn'a "borrow" edilmesi) doğrudan kodda
+DOĞRULADIM (bir Explore ajanıyla, DÜŞMANCA/şüpheci bir tavırla — iddiaları
+KÖRÜ KÖRÜNE kabul ETMEDEN):
+
+- **Task.detached yarışı — GERÇEK, ama incelemenin ÇERÇEVELEMESİ EKSİK.**
+  `state: std.atomic.Value(usize)` ZATEN atomikti (CAS'lı, Faz MN.8'in
+  KENDİ ürünü) — bu YÜZDEN incelemenin çizdiği "double-free" senaryosu
+  YAPISAL olarak MÜMKÜN DEĞİLDİ (`nox_async_destroy_task`nin `COMPLETED`
+  dalı ZATEN bu atomiğe DAYANIYORDU). GERÇEK risk daha DAR: `detached:
+  bool` DÜZ, atomik-OLMAYAN AYRI bir alandı, happens-before garantisi
+  YOKTU — bu SADECE sızıntı riskiydi.
+- **İncelemenin GÖRMEDİĞİ, DAHA CİDDİ bir ikinci sonuç (doğrulama
+  SIRASINDA BULUNDU)**: `entryTrampoline`nin ESKİ `if (self.detached) {
+  destroy(); return; }` dalı `state`e/waiter'a HİÇ BAKMADAN `self`i
+  serbest BIRAKIYORDU. `Task[T]` bir `spawn`e argüman olarak
+  GEÇİLEBİLDİĞİNDEN (`checker.zig:959-973`nin `isSpawnParamSafeType`i
+  `.task`/`.channel`i HER İKİ backend'de de İZİN VERİR — YALNIZCA
+  `--release`e ÖZGÜ DEĞİL), BAŞKA bir fiber ZATEN `await_()` İLE kendini
+  waiter olarak KAYDETMİŞKEN sahip `destroy()` çağırırsa: ESKİ
+  `nox_async_destroy_task` `state`in COMPLETED OLMADIĞINI görüp (doğru)
+  ama BUNUN bir waiter pointer'ı (yanlışlıkla "henüz kimse yok" sanıp)
+  OLDUĞUNU AYIRT ETMEDEN `detached=true` yazıyordu; görev TAMAMLANDIĞINDA
+  `entryTrampoline` `detached==true` görüp waiter'ı UYANDIRMADAN `self`i
+  serbest bırakıyordu — waiter'ın fiber'ı SONSUZA KADAR askıda kalıyordu.
+  Bu, Faz MN.8'in (v1.29.1) ÇÖZDÜĞÜ AYNI SINIFTAN bir kayıp-uyandırma,
+  GERİ GELMİŞ hâliydi.
+- **`thread_bridge.zig`de (satır 25-27) BAYAT/YANLIŞ bir yorum
+  BULUNDU**: "`Task.detached` TEK bir OS iş parçacığında kooperatif
+  ÇALIŞTIĞI İçİn güvenlidir (gerçek bir veri yarışı YOK)" — bu iddia
+  v1.29.1'in `Waiter` düzeltmesi TARAFINDAN ZATEN yanlışlanmıştı (o
+  düzeltmenin VAROLUŞ SEBEBİ, Task fiber'ının FARKLI bir OS iş parçacığına
+  ÇALINABİLMESİYDİ). Kodun KENDİ (yanlış) muhakemesi, incelemenin
+  bulgusunu BAĞIMSIZ olarak DOĞRULADI.
+
+**Düzeltme** (`runtime/async_rt/scheduler.zig` + `runtime/async_rt/
+bridge.zig`, TEK-CAS'lı protokol): `detached: bool` alanı TAMAMEN
+KALDIRILDI, `state`e ÜÇÜNCÜ bir sentinel (`DETACHED = 2`, `PENDING`/
+`COMPLETED` İLE AYNI "Fiber/Waiter işaretçileri HER ZAMAN >=8-bayt
+hizalı" gerekçesiyle GERÇEK bir waiter pointer'IYLA ASLA ÇAKIŞMAZ)
+eklendi. `nox_async_destroy_task` artık `state.cmpxchgStrong(PENDING,
+DETACHED, ...)` DENER: CAS BAŞARILI OLURSA (hiçbir GERÇEK waiter HENÜZ
+KAYITLI DEĞİLSE) `entryTrampoline` görevi tamamladığında `self`i serbest
+bırakır (deferred cleanup, DEĞİŞMEDİ); CAS BAŞARISIZ OLURSA (state ya
+COMPLETED ya GERÇEK bir waiter) VE state COMPLETED İSE HEMEN serbest
+bırakılır (DEĞİŞMEDİ); state bir waiter pointer'ı İSE (`Task[T]`nin TAM
+ARC-yönetimli OLMAMASININ — AYRI, DAHA BÜYÜK bir görev — DOĞRUDAN bir
+sonucu olan, GERÇEKTEN belirsiz bir sahiplik çakışması) BİLİNÇLİ olarak
+HİÇBİR ŞEY YAPILMAZ — waiter'ı ASLA sallandırma/bozma, `self`in serbest
+bırakılmasını (dar bir sızıntı) atlamayı tercih eder. `entryTrampoline`
+artık TEK bir `state.swap(COMPLETED, .acq_rel)` sonrası ÜÇ yollu bir
+`switch` (`PENDING`/`DETACHED`/waiter) — İKİ AYRI (senkronize-OLMAYAN)
+adım YERİNE TEK atomik operasyon.
+
+**Kapsam DIŞI (BİLİNÇLİ, kullanıcının BU tur İçİn SEÇMEDİĞİ)**:
+`Channel[T]`nin `nox_channel_destroy`sı (`bridge.zig:238-246`) `detached`-
+BENZERİ BİR erteleme mekanizması BİLE TAŞIMIYOR — HER ZAMAN KOŞULSUZ
+`c.deinit(); destroy(c);` çağırıyor (Task'tan DAHA KÖTÜ, ama YAPISAL
+olarak FARKLI bir problem — incelemenin "Task/Channel ARC-managed değil"
+territoryu). `list`/`class`/`dict`nin `--release`e ÖZGÜ, spawn'lar
+ARASINDA senkronizasyonsuz mutation riski de (incelemenin DOĞRU işaret
+ettiği, AMA `--release`e ÖZGÜ olduğunu BELİRTMEDİĞİ bir detay) AYRI,
+BÜYÜK bir tasarım kararı gerektirir (Send/Sync/Local ayrımı benzeri).
+
+**Doğrulama**: YENİ bir regresyon testi (`runtime/async_rt/scheduler.
+zig`, "v1.29.11: destroy() ZATEN KAYITLI bir waiter'ı ASLA sallandırmaz")
+— Faz S.1 testinin AYNI deterministik desenini (GERÇEK fiber/`scheduler.
+run()` OLMADAN, `entryTrampoline`i DOĞRUDAN çağırarak — `fiber.zig`nin
+"sahte önyükleme çerçevesinden DebugAllocator'ın SIGSEGV riski" notuyla
+AYNI gerekçe) İZLEYEREK: (1) manuel bir `Waiter` KAYDEDİLDİKTEN SONRA
+`destroy`nin CAS'ının BAŞARISIZ OLDUĞUNU (waiter ÇİĞNENMEDİĞİNİ), (2)
+`entryTrampoline`nin görev tamamlandığında waiter'ı GERÇEKTEN (waiter'ın
+KENDİ `Scheduler`ının hazır kuyruğuna EKLENEREK) uyandırdığını, (3) `self`
+İN bu durumda `entryTrampoline` tarafından serbest bırakılmadığını (elle
+serbest bırakma double-free vermeden BAŞARILI olarak) doğrular. `Faz S.1`
+testi de YENİ CAS mantığını yansıtacak şekilde güncellendi. Tam `zig
+build test`: TEK bilinen İLİŞKİSİZ fuzz çökmesi HARİÇ temiz (842/843),
+IR-diff DEĞİŞMEDİ. Gerçek `nox.thread`+`Task[T]`+`spawn`/`await`
+(`tests/golden/codegen_cases/async_spawn_await.nox`nin AYNI desenini
+kullanan) uçtan uca bir sağlık kontrolüyle DE doğrulandı — normal (Task'ın
+BAŞKA bir fiber'e HİÇ geçmediği) `spawn`/`await` akışı DEĞİŞMEDEN çalışır.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.
