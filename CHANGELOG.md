@@ -14,7 +14,32 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
-## [1.29.6]
+## [1.29.7]
+
+### Değiştirildi
+- **`nox.json.decode()`nin düğüm-başına derlenmiş Nox koduna geri dönmesi
+  (dlsym + retain/predecrement dengeleme dansı) kaldırıldı — `JsonValue`
+  örnekleri artık `class_id` çalışma-zamanında BİR KEZ (sabit kodlanmadan,
+  ilk gerçek örneğin tag baytından) keşfedilip `buildPtrList`nin ZATEN
+  kullandığı ilkeyle DOĞRUDAN Zig'de inşa ediliyor.** Kullanıcının Aether
+  ping/echo tablosundaki ~2.3x farkın ("GET /ping ~207k, POST /echo ~91k
+  req/s") araştırılması sırasında bulundu — saf `nox.http`+`nox.json` ile
+  izole ölçüm, farkın body-okuma/`encode()`den DEĞİL `decode()`nin
+  KENDİSİNDEN geldiğini gösterdi. **Dürüst sonuç:** hipotez ("düğüm-başına-
+  Nox-çağrısı domine ediyor") `--release`de (ReleaseFast) ÖLÇÜLDÜĞÜNDE
+  YANLIŞ ÇIKTI — kaldırılan çağrı+ARC-dengeleme zaten ucuzmuş (300k
+  `decode()` çağrısı sıkı döngüde 534ms→522ms, ~%2; `wrk` echo-decode-only
+  135 731→137 589 req/s, ~%1.4). `decode()`nin asıl maliyeti BAŞKA yerde
+  (muhtemelen `std.json.parseFromSlice`nin KENDİSİ veya `dupeToNoxStr`nin
+  string kopyalama maliyeti) — İKİSİ de BU değişiklikle DOKUNULMADI, AYRI
+  bir araştırma/görev olarak devam ediyor. Bu değişiklik KENDİ BAŞINA
+  zararsız bir sadeleştirme (daha az tahsis, daha az ARC işlemi, `nox.
+  json`nin PUBLİK API'si/semantiği DEĞİŞMEDİ) — TÜM golden/IR-diff testleri
+  değişmeden geçti (833/834, tek bilinen ilişkisiz fuzz çökmesi HARİÇ),
+  YENİ bir tekrarlı-decode testiyle (`json_decode_repeated_calls.nox`)
+  hem yavaş/keşif yolu hem hızlı yol sızıntısız doğrulandı.
+
+
 
 ### Düzeltildi
 - **`nox.http.serve_tls`de GERÇEK, ÖNCEDEN VAR OLAN bir eşzamanlılık

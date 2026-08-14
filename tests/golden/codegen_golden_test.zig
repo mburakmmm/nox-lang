@@ -2362,6 +2362,13 @@ test "codegen(çalıştır): nox.json.decode — iç içe dizi/obje, sayı/strin
     );
 }
 
+test "codegen(çalıştır): nox.json.decode TEKRARLANAN çağrılar — İLK çağrı yavaş/keşif yolunu, SONRAKİLER hızlı doğrudan-inşa yolunu (class_id önbelleği) egzersiz eder" {
+    try expectGolden(
+        @embedFile("codegen_cases/json_decode_repeated_calls.nox"),
+        @embedFile("codegen_cases/json_decode_repeated_calls.expected"),
+    );
+}
+
 test "codegen(çalıştır): nox.json — decode/encode round-trip" {
     try expectGolden(
         @embedFile("codegen_cases/json_encode_roundtrip.nox"),

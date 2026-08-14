@@ -1,0 +1,49 @@
+import nox.json
+
+# İLK çağrı: bu OS iş parçacığında class_id HENÜZ bilinmiyor — YAVAŞ/
+# keşif yolunu (buildNode/callMakeJsonValue) egzersiz eder.
+v1: JsonValue = nox.json.decode("{\"a\": [1, 2, true, null, \"hi\"], \"b\": 3.5}")
+print(nox.json.is_object(v1))
+print(nox.json.object_len(v1))
+print(nox.json.object_key(v1, 0))
+
+arr1: JsonValue = nox.json.object_value(v1, 0)
+print(nox.json.is_array(arr1))
+print(nox.json.array_len(arr1))
+print(nox.json.as_number(nox.json.array_get(arr1, 0)))
+print(nox.json.as_number(nox.json.array_get(arr1, 1)))
+print(nox.json.as_bool(nox.json.array_get(arr1, 2)))
+print(nox.json.is_null(nox.json.array_get(arr1, 3)))
+print(nox.json.as_string(nox.json.array_get(arr1, 4)))
+print(nox.json.object_key(v1, 1))
+print(nox.json.as_number(nox.json.object_value(v1, 1)))
+
+# İKİNCİ çağrı: class_id ARTIK önbellekte — HIZLI (makeJsonValueDirect/
+# buildNodeFast) yolunu egzersiz eder. Farklı skaler tipler (negatif sayı,
+# false, bos string) + tek-seviye obje.
+v2: JsonValue = nox.json.decode("{\"neg\": -7, \"flag\": false, \"empty\": \"\"}")
+print(nox.json.is_object(v2))
+print(nox.json.object_len(v2))
+print(nox.json.as_number(nox.json.object_value(v2, 0)))
+print(nox.json.as_bool(nox.json.object_value(v2, 1)))
+print(nox.json.as_string(nox.json.object_value(v2, 2)))
+
+# ÜÇÜNCÜ çağrı: HIZLI yol, dizi-içinde-obje (iç içe konteynerler her iki
+# yönde de).
+v3: JsonValue = nox.json.decode("[{\"x\": 1}, {\"x\": 2}, {\"x\": 3}]")
+print(nox.json.is_array(v3))
+print(nox.json.array_len(v3))
+i: int = 0
+while i < nox.json.array_len(v3):
+    elem: JsonValue = nox.json.array_get(v3, i)
+    print(nox.json.as_number(nox.json.object_value(elem, 0)))
+    i = i + 1
+
+# DÖRDÜNCÜ çağrı: HIZLI yol, dizi-içinde-dizi (derin iç içe geçme).
+v4: JsonValue = nox.json.decode("[[1, 2], [3, 4, 5], []]")
+print(nox.json.is_array(v4))
+print(nox.json.array_len(v4))
+print(nox.json.array_len(nox.json.array_get(v4, 0)))
+print(nox.json.array_len(nox.json.array_get(v4, 1)))
+print(nox.json.array_len(nox.json.array_get(v4, 2)))
+print(nox.json.as_number(nox.json.array_get(nox.json.array_get(v4, 1), 2)))

@@ -14928,6 +14928,74 @@ taşması guard page" test hatası GÖZLEMLENDİ — İZOLE çalıştırıldığ
 süreci ÇATALLAMASINDAN kaynaklanan bir kaynak-çekişmesi FLAKE'i OLDUĞU
 DOĞRULANDI, GERÇEK bir regresyon DEĞİL.
 
+## 3.89 `nox.json.decode()`nin düğüm-başına-Nox-çağrısı sadeleştirmesi — dürüst bir negatif sonuç (v1.29.7)
+
+Kullanıcı, Aether çerçevesinin ping/echo benchmark tablosundaki ~2.3x farkın
+(`GET /ping` ~207k vs `POST /echo` ~91k req/s) Nox tarafında bir sebebi olup
+olmadığını sordu. Aether'i devre dışı bırakıp saf `nox.http`+`nox.json` ile
+izole ölçüm (QBE, `wrk -t4 -c40 -d8s`), farkın body-okumadan (239 680≈244
+658 req/s) VE `encode()`den (135 731→137 250, ~%1) DEĞİL, `nox.json.
+decode()`nin KENDİSİNDEN geldiğini KANITLADI.
+
+Kök neden `runtime/stdlib_shims/json.zig`de bulundu: `nox_json_decode_raw`,
+ayrıştırılan ağaçtaki HER düğüm İçİn derlenmiş Nox koduna (`nox_json_make_
+json_value`, `callMakeJsonValue` üzerinden) geri dönüyordu — 1 `nox_rc_
+alloc` + `__init__`in yarattığı 4 retain + BUNU dengelemek İçİn 4 telafi
+edici `nox_rc_predecrement` (bkz. `json.zig:141-156`nın belge notu).
+Modülün KENDİ belge notu bunun `class_id`nin "derleme sırası bağımlı, Zig'
+den GÜVENLE TAHMİN EDİLEMEZ" olduğu İçİn GEREKLİ olduğunu iddia ediyordu —
+BU iddia `compiler/module_loader.zig:113-126`den (`resolveImportsImpl`,
+`core.nox`u HER programda KOŞULSUZ VE İLK sırada birleştiriyor) YANLIŞ
+ÇIKARILDI: `core.nox`nin sınıf sırası SABİT olduğundan `JsonValue`nin
+`class_id`si HER derlenmiş Nox programında AYNIDIR.
+
+**Uygulanan düzeltme:** `class_id` çalışma-zamanında (derleme-zamanı sabiti
+DEĞİL, `core.nox` GELECEKTE değişse BİLE KENDİ KENDİNİ doğrulayan bir
+tasarımla) BİR KEZ, İLK GERÇEK `JsonValue` örneğinin tag baytından
+(`g_json_value_class_id`, `threadlocal`) keşfedilip önbelleğe alınıyor;
+SONRAKİ HER `decode()` çağrısı `JsonValue`yi `buildPtrList`nin (`list[T]`
+başlığını ZATEN `nox_rc_alloc`+ham bayt yazımıyla DOĞRUDAN inşa eden AYNI
+ilke) `makeJsonValueDirect`/`buildNodeFast`/`makeLeafFast` İLE Zig'de
+DOĞRUDAN inşa ediyor — HİÇ Nox çağrısı, HİÇ retain/predecrement OLMADAN.
+Eski `buildNode`/`makeLeaf`/`callMakeJsonValue` yolu (İLK-çağrı keşfi VE
+`class_id`nin HİÇ keşfedilemediği izole `zig build test` bağlamları İçİn)
+DEĞİŞMEDEN KORUNDU.
+
+**Dürüst sonuç (bu bölümün ASIL değeri):** İLK ölçüm (Debug-modu ikilileri
+İLE yanlışlıkla karıştırılmış — 300k `decode()` çağrısı Debug'da 95
+saniye, ReleaseFast'ta 522ms, **182x fark**) SONRA düzeltilip GERÇEK bir
+elma-elma karşılaştırması (`-Doptimize=ReleaseFast`, HEM sıkı-döngü
+mikro-benchmark HEM `wrk` sunucu testi, ESKİ koda `git stash` İLE geçici
+GERİ DÖNÜLEREK) yapıldığında: "düğüm-başına-Nox-çağrısı domine ediyor"
+HİPOTEZİ YANLIŞ ÇIKTI. Kaldırılan çağrı+ARC-dengeleme, ReleaseFast'ta ZATEN
+ucuzmuş:
+
+| Ölçüm | Eski kod | Yeni kod | Fark |
+|---|---|---|---|
+| Sıkı döngü, 300k `decode()` | 534ms | 522ms | ~%2 |
+| `wrk`, echo decode-only | 135 731 req/s | 137 589 req/s | ~%1.4 |
+
+`decode()`nin ASIL maliyeti BAŞKA yerde — muhtemelen Zig'in `std.json.
+parseFromSlice`sinin KENDİSİ (ayrıştırma + arena kurulum/söküm) VEYA
+`dupeToNoxStr`nin string kopyalama maliyeti (HER string düğümü/obje
+anahtarı İçİn) — İKİSİ de BU değişiklikle DOKUNULMADI. Bu, ayrı bir
+araştırma/görev olarak DEVAM EDİYOR (kullanıcı onayıyla).
+
+Değişikliğin KENDİSİ YİNE DE tutuldu (kullanıcı kararıyla) — kendi başına
+zararsız bir sadeleştirme (daha az tahsis, daha az ARC işlemi, `nox.json`
+nin PUBLİK API'si/semantiği DEĞİŞMEDİ): TÜM golden/IR-diff testleri
+değişmeden geçti (833/834, TEK bilinen İLİŞKİSİZ fuzz çökmesi HARİÇ, IR-
+diff SADECE YENİ eklenen testin snapshot'ıyla arttı — MEVCUT 204 fixture
+DEĞİŞMEDİ), YENİ bir tekrarlı-decode testiyle (`tests/golden/codegen_
+cases/json_decode_repeated_calls.nox`) hem yavaş/keşif yolu hem hızlı yol
+sızıntısız doğrulandı.
+
+**Ders**: bir ARC/ABI maliyetinin Debug-modu MUHAKEMESİYLE (retain/
+predecrement/dlsym çağrısı "pahalı görünüyor") tahmin edilmesi, ReleaseFast
+altında GERÇEK ölçümle DOĞRULANMADAN güvenilir DEĞİLDİR — LLVM'in inlining/
+optimizasyonu bu tür "küçük ama sık" maliyetleri BEKLENENDEN çok daha ucuza
+İNDİREBİLİR.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

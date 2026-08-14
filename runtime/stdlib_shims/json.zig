@@ -26,11 +26,26 @@
 //! OLMAZ.
 //!
 //! **Neden bu yaklaşım (Zig'in `JsonValue`yi KENDİSİNİN ham bellek olarak
-//! İNŞA ETMESİ YERİNE):** her sınıfın `class_id`si (`codegen.zig`nin
-//! `next_class_id` sayacı) DERLEME SIRASINA bağlıdır — Zig'den GÜVENLE
-//! TAHMİN EDİLEMEZ. Gerçek `make_json_value` çağrısı, doğru `class_id`yi
-//! VE doğru ARC muhasebesini (zaten TEST EDİLMİŞ `genConstructFromValues`/
-//! `__init__` yolu üzerinden) OTOMATİK olarak doğru yapar.
+//! İNŞA ETMESİ YERİNE) — TARİHSEL, artık YALNIZCA İLK çağrı İçİn geçerli:**
+//! her sınıfın `class_id`si (`codegen.zig`nin `next_class_id` sayacı)
+//! DERLEME SIRASINA bağlıdır — bu YÜZDEN sabit kodlanan bir sayı GÜVENLE
+//! kullanılamaz. AMA `class_id` ÖNGÖRÜLEMEZ DEĞİLDİR: `module_loader.zig`nin
+//! `resolveImportsImpl`i `core.nox`u (bkz. `JsonValue`nin tanımlı olduğu
+//! dosya) HER programda KOŞULSUZ VE HER ZAMAN İLK sırada birleştirir, bu
+//! yüzden `JsonValue`nin `class_id`si HER derlenmiş Nox programında AYNIDIR
+//! — SADECE Zig-derleme-zamanında BİLİNEMEZ (`json.zig` `noxrt.o`ya AYRI
+//! derlenir). Performans fazı (bkz. proje belleği): düğüm-başına bu
+//! GERÇEK Nox çağrısını yapmanın (ARC retain/predecrement dengeleme dansı
+//! DAHİL) `nox.json.decode()`yi domine eden bir maliyet olduğu ÖLÇÜLDÜ —
+//! bu yüzden `class_id` artık ÇALIŞMA ZAMANINDA (derleme-zamanı sabiti
+//! DEĞİL, `core.nox`nin GELECEKTE değişmesine karşı KENDİ KENDİNİ
+//! doğrulayan bir tasarımla) BİR KEZ, aşağıdaki `makeLeaf`/`buildNode`
+//! (bu YAVAŞ/keşif yolu, DEĞİŞMEDEN KALIR) İLE üretilen İLK GERÇEK
+//! `JsonValue`nin tag baytından OKUNUP `g_json_value_class_id`ye
+//! önbelleğe alınır — SONRAKİ HER `decode()` çağrısı `makeJsonValueDirect`/
+//! `buildNodeFast`/`makeLeafFast` (aşağıya bkz.) İLE `JsonValue`yi
+//! `buildPtrList`nin AYNI ilkesiyle DOĞRUDAN Zig'de inşa eder — HİÇBİR
+//! Nox çağrısı, HİÇBİR retain/predecrement dengeleme dansı OLMADAN.
 //!
 //! **`arr`/`keys`/`vals` İÇİN `list[T]` payload'ları BU DOSYADA el ile inşa
 //! edilir** (`buildPtrList`, Alt-Faz F'nin `nox_test_make_list`iyle AYNI
@@ -60,6 +75,7 @@ const dupeToNoxStr = http_client.dupeToNoxStr;
 /// Faz P1.2: bkz. `strings.zig`nin AYNI re-export notu.
 const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
+const TAG_SIZE = abi_layout.TAG_SIZE;
 
 /// `stdlib/nox/core.nox`nin `nox_json_make_json_value` fonksiyonu — ismi
 /// core.nox'ta SABİT (mangle EDİLMEZ) yazıldığından ("nox_json_make_json_value"),
@@ -302,6 +318,101 @@ fn buildNode(rt: ?*anyopaque, allocator: std.mem.Allocator, shared: SharedEmptie
     };
 }
 
+/// `JsonValue`nin (`TAG_SIZE` + 7 alan, `core.nox:52-61`nin `__init__`
+/// atama SIRASIYLA BİREBİR: kind@8, b@16, n@24, s@32, arr@40, keys@48,
+/// vals@56 — `calls.zig`nin `genConstructFromValues`ıyla BAĞIMSIZ olarak
+/// doğrulandı) toplam payload boyutu.
+const JSONVALUE_FIELD_COUNT: usize = 7;
+const JSONVALUE_PAYLOAD_SIZE: usize = TAG_SIZE + JSONVALUE_FIELD_COUNT * FIELD_SLOT_SIZE;
+
+/// `buildPtrList`nin AYNI ilkesi — bir `JsonValue` örneğini `nox_rc_alloc`
+/// + ham alan yazımıyla DOĞRUDAN inşa eder, `__init__`e (VE onun retain/
+/// `callMakeJsonValue`nin telafi edici predecrement'ine, bkz. yukarıdaki
+/// belge notu) HİÇ gerek KALMADAN. `s`/`arr`/`keys`/`vals` ÇAĞIRANIN ZATEN
+/// TEK bir sahiplik birimiyle (refcount katkısı = 1) ürettiği TAZE
+/// değerler OLDUĞUNDAN (bkz. `dupeToNoxStr`/`buildPtrList`/
+/// `sharedEmptyList`), doğrudan alan yuvasına YAZMAK (retain YOK,
+/// predecrement YOK) `__init__` yolunun NET etkisiyle BİREBİR aynı
+/// sonucu verir — daha AZ atomik işlemle. `class_id`, `g_json_value_
+/// class_id`den (bkz. `nox_json_decode_raw`nin dallanması) GEÇİRİLİR —
+/// BURADA ASLA sabit kodlanmaz.
+fn makeJsonValueDirect(
+    rt: ?*anyopaque,
+    class_id: i64,
+    kind: i64,
+    b: bool,
+    n: f64,
+    s: ?[*:0]const u8,
+    arr: ?*anyopaque,
+    keys: ?*anyopaque,
+    vals: ?*anyopaque,
+) ?*anyopaque {
+    const raw = arc.nox_rc_alloc(rt, JSONVALUE_PAYLOAD_SIZE) orelse return null;
+    const bytes: [*]u8 = @ptrCast(raw);
+    @as(*align(1) i64, @ptrCast(bytes)).* = class_id;
+    @as(*align(1) i64, @ptrCast(bytes + FIELD_SLOT_SIZE * 1)).* = kind;
+    @as(*align(1) i64, @ptrCast(bytes + FIELD_SLOT_SIZE * 2)).* = if (b) 1 else 0;
+    @as(*align(1) f64, @ptrCast(bytes + FIELD_SLOT_SIZE * 3)).* = n;
+    @as(*align(1) ?[*:0]const u8, @ptrCast(bytes + FIELD_SLOT_SIZE * 4)).* = s;
+    @as(*align(1) ?*anyopaque, @ptrCast(bytes + FIELD_SLOT_SIZE * 5)).* = arr;
+    @as(*align(1) ?*anyopaque, @ptrCast(bytes + FIELD_SLOT_SIZE * 6)).* = keys;
+    @as(*align(1) ?*anyopaque, @ptrCast(bytes + FIELD_SLOT_SIZE * 7)).* = vals;
+    return raw;
+}
+
+fn makeLeafFast(rt: ?*anyopaque, shared: SharedEmpties, class_id: i64, kind: i64, b: bool, n: f64, s: ?[*:0]const u8) ?*anyopaque {
+    const empty_arr = sharedEmptyList(shared);
+    const empty_keys = sharedEmptyList(shared);
+    const empty_vals = sharedEmptyList(shared);
+    return makeJsonValueDirect(rt, class_id, kind, b, n, s, empty_arr, empty_keys, empty_vals);
+}
+
+/// `buildNode`nin BİREBİR yapısal kopyası — TEK fark: `callMakeJsonValue`
+/// (derlenmiş Nox'a geri dönen YAVAŞ yol) YERİNE `makeJsonValueDirect`
+/// (doğrudan Zig inşası) çağrılır. `class_id` `g_json_value_class_id`den
+/// ZATEN keşfedilmiş OLARAK gelir (bkz. `nox_json_decode_raw`).
+fn buildNodeFast(rt: ?*anyopaque, allocator: std.mem.Allocator, shared: SharedEmpties, class_id: i64, v: std.json.Value) !?*anyopaque {
+    return switch (v) {
+        .null => makeLeafFast(rt, shared, class_id, 0, false, 0.0, sharedEmptyStr(shared)),
+        .bool => |b| makeLeafFast(rt, shared, class_id, 1, b, 0.0, sharedEmptyStr(shared)),
+        .integer => |i| makeLeafFast(rt, shared, class_id, 2, false, @floatFromInt(i), sharedEmptyStr(shared)),
+        .float => |f| makeLeafFast(rt, shared, class_id, 2, false, f, sharedEmptyStr(shared)),
+        .number_string => |s| makeLeafFast(rt, shared, class_id, 2, false, std.fmt.parseFloat(f64, s) catch 0.0, sharedEmptyStr(shared)),
+        .string => |s| blk: {
+            const dup = dupeToNoxStr(rt, s) orelse break :blk null;
+            break :blk makeLeafFast(rt, shared, class_id, 3, false, 0.0, dup);
+        },
+        .array => |arr_val| blk: {
+            const items = try allocator.alloc(?*anyopaque, arr_val.items.len);
+            for (arr_val.items, 0..) |child, i| items[i] = try buildNodeFast(rt, allocator, shared, class_id, child);
+            const arr_list = buildPtrList(rt, items) orelse break :blk null;
+            const empty_keys = sharedEmptyList(shared);
+            const empty_vals = sharedEmptyList(shared);
+            break :blk makeJsonValueDirect(rt, class_id, 4, false, 0.0, sharedEmptyStr(shared), arr_list, empty_keys, empty_vals);
+        },
+        .object => |obj_val| blk: {
+            const n = obj_val.count();
+            const key_items = try allocator.alloc(?*anyopaque, n);
+            const val_items = try allocator.alloc(?*anyopaque, n);
+            for (obj_val.keys(), 0..) |k, i| key_items[i] = dupeToNoxStr(rt, k);
+            for (obj_val.values(), 0..) |val, i| val_items[i] = try buildNodeFast(rt, allocator, shared, class_id, val);
+            const keys_list = buildPtrList(rt, key_items) orelse break :blk null;
+            const vals_list = buildPtrList(rt, val_items) orelse break :blk null;
+            const empty_arr = sharedEmptyList(shared);
+            break :blk makeJsonValueDirect(rt, class_id, 5, false, 0.0, sharedEmptyStr(shared), empty_arr, keys_list, vals_list);
+        },
+    };
+}
+
+/// `JsonValue`nin `class_id`si — `nox_json_decode_raw`nin İLK çağrısında
+/// (bu OS iş parçacığında) MEVCUT yavaş/keşif yolundan (`buildNode`)
+/// dönen GERÇEK bir örneğin tag baytından OKUNUP BİR KEZ önbelleğe alınır
+/// (bkz. dosya üstü belge notu — `core.nox`nin HER programda İLK sırada
+/// birleştirilmesi SAYESİNDE bu değer HER programda AYNIDIR, ama YİNE DE
+/// burada SABİT KODLANMAZ). `g_make_json_value_fn`/`g_make_json_value_
+/// resolved`İLE AYNI `threadlocal` gerekçesi (Faz BB.1, satır 81-88).
+threadlocal var g_json_value_class_id: ?i64 = null;
+
 export fn nox_json_decode_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?*anyopaque {
     // NOT: `s`in null olduğu dal İçin `str_mod.nox_str_slice`e DÜŞMEYİZ —
     // o yol yalnızca GERÇEK bir Nox `str` (görünmez başlıklı) BEKLER, boş
@@ -344,12 +455,28 @@ export fn nox_json_decode_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?
     };
     defer releaseSharedEmpties(rt, shared);
 
+    if (g_json_value_class_id) |cid| {
+        const root = buildNodeFast(rt, allocator, shared, cid, parsed.value) catch {
+            jsonLastOpOkPtr().* = false;
+            return makeLeafFast(rt, shared, cid, 0, false, 0.0, sharedEmptyStr(shared));
+        };
+        jsonLastOpOkPtr().* = true;
+        return root orelse makeLeafFast(rt, shared, cid, 0, false, 0.0, sharedEmptyStr(shared));
+    }
+
+    // İLK çağrı (bu OS iş parçacığında): `class_id` HENÜZ bilinmiyor —
+    // MEVCUT yavaş/kendi-kendini-doğrulayan yoldan geç, DÖNEN kökün tag
+    // baytından `class_id`yi OKUYUP TÜM sonraki çağrılar İçİn önbelleğe al.
     const root = buildNode(rt, allocator, shared, parsed.value) catch {
         jsonLastOpOkPtr().* = false;
         return makeLeaf(rt, shared, 0, false, 0.0, sharedEmptyStr(shared));
     };
     jsonLastOpOkPtr().* = true;
-    return root orelse makeLeaf(rt, shared, 0, false, 0.0, sharedEmptyStr(shared));
+    if (root) |r| {
+        g_json_value_class_id = @as(*align(1) const i64, @ptrCast(r)).*;
+        return r;
+    }
+    return makeLeaf(rt, shared, 0, false, 0.0, sharedEmptyStr(shared));
 }
 
 // Faz BB.1: `g_last_op_ok`nin `threadlocal` OLMASININ, İKİ GERÇEK OS iş
