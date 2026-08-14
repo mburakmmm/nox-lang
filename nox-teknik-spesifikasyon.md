@@ -14872,6 +14872,62 @@ eşleştirilmiş `wrk` ölçümünde 8-worker'ın ARTIK HİÇBİR ZAMAN 1-worker
 ALTINA düşmediği (+%6 İLA +%25 arası kazanç, ÖNCEKİ -%73'ün TAM TERSİ)
 DOĞRULANDI.
 
+**7. (v1.29.6) `nox.http.serve_tls`de Madde 6'da bulunup AYRI bir göreve
+bırakılan `threadlocal var tl_read_target`/`tl_write_source` hazard'ı
+düzeltildi.** Bu, `serve_multicore`/M:N havuzuyla İLGİSİZ, TEK-worker
+`serve_tls()` DAHİL BUGÜNE kadar var olan TEMEL M:1 kooperatif fiber
+modelinde HER ZAMAN mevcut olan, ÖNCEDEN VAR OLAN bağımsız bir hataydı.
+`tls_server.zig`nin `drive(conn, op)` döngüsü, bir OpenSSL BIO callback
+İmzası (`SSL_read`/`SSL_write` DIŞARIDAN yalnızca `ssl`i alır, bir Zig
+closure GEÇİREMEZ) İLE bir Zig arabelleği ARASINDAKİ farkı `threadlocal
+var tl_read_target`/`tl_write_source`la kapatıyordu; modülün KENDİ belge
+notu bunu "her OS iş parçacığı kendi threadlocal kopyasına sahip
+olduğundan çapraz-iş-parçacığı veri yarışı OLUŞMAZ" diyerek GÜVENLİ ilan
+ediyordu — AMA bu iddia YALNIZCA çapraz-İŞ-PARÇACIĞI yarışını kapsıyordu.
+`drive()`nin `fillRbioOnce` → `rawSockRead` → `suspendForIoOrTimeout`
+çağrısı GERÇEK bir kooperatif yield noktasıdır: bir bağlantının fiber'ı
+ORADA askıdayken AYNI OS iş parçacığında zamanlanan BAŞKA bir TLS
+bağlantısı `tlsRead`/`tlsWrite` çağırırsa, PAYLAŞILAN threadlocal'ı
+EZERdi — ilk fiber uyandığında `drive()`nin BİR SONRAKİ `op(conn.ssl)`
+çağrısı KENDİ arabelleği YERİNE ikinci bağlantının (ÇOKTAN dönmüş,
+potansiyel olarak serbest bırakılmış) arabelleğine okur/yazardı.
+
+Düzeltme: `tl_read_target`/`tl_write_source` threadlocal DEĞİŞKENLERİ
+TAMAMEN kaldırıldı; YERİNE `TlsConn`nin KENDİSİNE `read_target: []u8`/
+`write_source: []const u8` alanları eklendi — HER TLS bağlantısının
+ZATEN KENDİ `TlsConn`u vardır (`acceptHandshake`de tahsis edilir,
+`tlsShutdown`da serbest bırakılır, `ConnCtx`nin KENDİSİ gibi threadlocal
+storage'DAN ZATEN kaçınır), bu YÜZDEN paylaşım İMKANSIZDIR. `drive()`nin
+callback İmzası `*const fn (?*anyopaque) callconv(.c) c_int` (yalnızca
+`ssl`) yerine `*const fn (*TlsConn) callconv(.c) c_int` oldu — `doHandshake
+Op`/`connReadOp`(eski `threadlocalReadOp`)/`connWriteOp`(eski
+`threadlocalWriteOp`) `conn.read_target`/`conn.write_source`i DOĞRUDAN
+okur.
+
+Reprodüksiyon: `tests/compat/http_serve_tls_golden_test.zig`ye YENİ bir
+uçtan-uca test EKLENDİ — TEK-worker `serve_tls()`e "yavaş" bir TLS
+istemcisi bağlanıp isteğinin başlıklarını İKİ parçaya böler (aradaki
+`\r\n\r\n` bitiş satırını 150ms GECİKTİRİR, sunucunun bu bağlantı İçİn
+`tlsRead`nin `drive()` döngüsünde ASKIYA ALINMASINI ZORLAR), BU ASKI
+SÜRESİNCE AYRI bir "hızlı" istemci TAMAMEN BAŞKA bir bağlantı üzerinden
+TAM bir el sıkışma+istek/yanıt döngüsünü BAŞTAN SONA tamamlar; HER iki
+istemcinin YALNIZCA KENDİ yanıtını (DİĞERİNİNKİNİ DEĞİL) aldığı
+doğrulanır. Düzeltme GEÇİCİ olarak GERİ ALINIP (`git stash`) eski
+threadlocal koduyla test 3 kez çalıştırıldığında, 3. denemede "yavaş"
+istemcinin yanıtının GERÇEKTEN BOZULDUĞU (`resp:/slow` yerine BAŞKA bir
+içerik döndüğü) YAKALANDI — race GERÇEK VE REPRODUCE EDİLEBİLİR.
+Düzeltme GERİ UYGULANDIKTAN SONRA test 20 ardışık çalıştırmada (12 tekil
++ eski-kod karşılaştırmasından SONRA 8 tekil daha) TEMİZ. Tam `zig build
+test`: TEK bilinen İLİŞKİSİZ fuzz çökmesi (`lexer_parser_checker_fuzz`)
+HARİÇ TEMİZ (832/833), IR-diff 204/0/3-atlandı DEĞİŞMEDİ (`runtime/`e
+SINIRLI, HİÇBİR codegen dosyasına DOKUNMADI). Ayrıca aynı doğrulama
+turunda, tam paket-test yükü ALTINDA GEÇİCİ bir `fiber.zig` "yığın
+taşması guard page" test hatası GÖZLEMLENDİ — İZOLE çalıştırıldığında
+(`zig build async-rt-test`, 3/3) VE sonraki tam-paket çalıştırmalarında
+(TEMİZ) bunun BU değişiklikle İLGİSİZ, ÇOK-sayıda EŞZAMANLI test alt-
+süreci ÇATALLAMASINDAN kaynaklanan bir kaynak-çekişmesi FLAKE'i OLDUĞU
+DOĞRULANDI, GERÇEK bir regresyon DEĞİL.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

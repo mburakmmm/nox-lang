@@ -14,7 +14,45 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
-## [1.29.5]
+## [1.29.6]
+
+### Düzeltildi
+- **`nox.http.serve_tls`de GERÇEK, ÖNCEDEN VAR OLAN bir eşzamanlılık
+  tehlikesi düzeltildi: `tls_server.zig`nin `threadlocal var tl_read_
+  target`/`tl_write_source`u AYNI OS iş parçacığında İÇ İçe geçen İKİ
+  FARKLI TLS bağlantı fiber'ı arasında karışabiliyordu.** Bu buffer
+  işaretçileri, bir OpenSSL BIO callback İmzası (`SSL_read`/`SSL_write`
+  DIŞARIDAN yalnızca `ssl`i alır, bir Zig closure'ı GEÇİREMEZ) İLE bir
+  Zig arabelleği ARASINDAKİ farkı kapatmak İçİn `drive()`nin çağırdığı
+  `op(conn.ssl)` fonksiyonlarına aktarılıyordu — VE modülün KENDİ belge
+  notu bunu "her OS iş parçacığı kendi threadlocal kopyasına sahip
+  olduğundan çapraz-iş-parçacığı veri yarışı OLUŞMAZ" diyerek
+  GÜVENLİ ilan ediyordu. Bu iddia YALNIZCA çapraz-İŞ-PARÇACIĞI yarışını
+  kapsıyordu — `drive()`nin `fillRbioOnce` → `rawSockRead` →
+  `suspendForIoOrTimeout` çağrısı GERÇEK bir kooperatif yield noktasıdır;
+  bir bağlantının fiber'ı ORADA askıdayken AYNI OS iş parçacığında
+  zamanlanan BAŞKA bir TLS bağlantısı `tlsRead`/`tlsWrite` çağırırsa,
+  PAYLAŞILAN threadlocal'ı EZERdi — ilk fiber uyandığında `op(conn.ssl)`
+  KENDİ arabelleği YERİNE ikinci bağlantının (ÇOKTAN dönmüş, potansiyel
+  olarak yığından serbest bırakılmış) arabelleğine okur/yazardı. Bu,
+  `serve_multicore`nin M:N havuzuyla İLGİSİZ, TEK-worker `serve_tls()`
+  DAHİL, BUGÜNE kadar var olan temel M:1 kooperatif fiber modelinde HER
+  ZAMAN mevcut olan bir hataydı. Düzeltme: `tl_read_target`/`tl_write_
+  source` threadlocal DEĞİŞKENLERİ kaldırıldı, YERİNE `TlsConn`nin
+  KENDİSİNE `read_target`/`write_source` alanları eklendi (HER TLS
+  bağlantısının ZATEN KENDİ `TlsConn`u vardır — `acceptHandshake`de
+  tahsis edilir, `tlsShutdown`da serbest bırakılır — bu YÜZDEN paylaşım
+  İMKANSIZDIR); `drive()`nin callback İmzası `*const fn (?*anyopaque)`
+  (yalnızca `ssl`) yerine `*const fn (*TlsConn)` oldu. GERÇEK bir
+  reprodüksiyon testiyle (`tests/compat/http_serve_tls_golden_test.zig`,
+  "yavaş" istemcinin isteğini İKİ parçaya bölüp ARADA sunucunun `tlsRead`
+  askıya alınmasını ZORLARKEN "hızlı" bir istemcinin AYRI bir bağlantı
+  üzerinden TAM bir el sıkışma+istek/yanıt döngüsünü ARADA tamamladığı)
+  DOĞRULANDI: eski koda GERİ ALINDIĞINDA test 3 denemeden BİRİNDE "yavaş"
+  istemcinin yanıtının BOZULDUĞUNU (`resp:/slow` yerine BAŞKA bir içerik)
+  YAKALADI; düzeltmeyle 20 ardışık çalıştırmada (12 + 8) TEMİZ.
+
+
 
 ### Düzeltildi
 - **`nox.http.serve_multicore`nin `--release` (LLVM M:N havuzu) yolunda

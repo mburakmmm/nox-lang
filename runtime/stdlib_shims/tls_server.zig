@@ -441,6 +441,12 @@ pub const TlsConn = struct {
     fd: posix.fd_t,
     scheduler: ?*scheduler_mod.Scheduler,
     read_timeout_ms: u32,
+    /// `tlsRead`/`tlsWrite` çağrı SÜRESİNCE sabit kalan arabellek işaretçileri
+    /// — bkz. `connReadOp`/`connWriteOp`nin belge notu: BUNLARIN neden
+    /// `TlsConn` alanı olması GEREKTİĞİ (fiber-yerel, OS-iş-parçacığı-yerel
+    /// DEĞİL) burada AÇIKLANIR.
+    read_target: []u8 = &.{},
+    write_source: []const u8 = &.{},
 };
 
 /// Normal durumda döngü 1-3 yinelemede biter (bkz. plan dosyası) — bu
@@ -478,11 +484,11 @@ fn fillRbioOnce(conn: *TlsConn) !void {
     }
 }
 
-fn drive(conn: *TlsConn, op: *const fn (?*anyopaque) callconv(.c) c_int) !c_int {
+fn drive(conn: *TlsConn, op: *const fn (*TlsConn) callconv(.c) c_int) !c_int {
     var iter: usize = 0;
     while (iter < MAX_PUMP_ITERS) : (iter += 1) {
         try flushWbio(conn);
-        const rc = op(conn.ssl);
+        const rc = op(conn);
         try flushWbio(conn);
         if (rc > 0) return rc;
         const err = g_funcs.ssl_get_error(conn.ssl, rc);
@@ -526,31 +532,39 @@ pub fn acceptHandshake(ctx: *anyopaque, fd: posix.fd_t, scheduler: ?*scheduler_m
     return conn;
 }
 
-fn doHandshakeOp(ssl: ?*anyopaque) callconv(.c) c_int {
-    return g_funcs.ssl_do_handshake(ssl);
+fn doHandshakeOp(conn: *TlsConn) callconv(.c) c_int {
+    return g_funcs.ssl_do_handshake(conn.ssl);
 }
 
-/// **Dikkat — iş-parçacığı-yerel geçici depolar**: `tlsRead`/`tlsWrite`
-/// çağrı SÜRESİNCE sabit kalan (bir `drive` döngüsü İÇİNDE, `fillRbioOnce`
-/// ARADA BU globalleri BİR DAHA OKUMAZ) `threadlocal` değişkenler — bir
-/// callback İmzası (`SSL_read`/`SSL_write` DIŞARIDAN, `ssl`i DIŞINDA hiçbir
-/// parametre GEÇMEZ) İLE bir Zig closure ARASINDAKİ farkı KAPATMAK İçİn
-/// GEREKLİ. `serve_multicore`nin AYRI OS iş parçacıkları HER BİRİ KENDİ
-/// `threadlocal` KOPYASINA sahip OLDUĞUNDAN çapraz-iş-parçacığı veri
-/// YARIŞI OLUŞMAZ.
-threadlocal var tl_read_target: []u8 = &.{};
-threadlocal var tl_write_source: []const u8 = &.{};
-
-fn threadlocalReadOp(ssl: ?*anyopaque) callconv(.c) c_int {
-    return g_funcs.ssl_read(ssl, tl_read_target.ptr, @intCast(tl_read_target.len));
+/// **Dikkat — NEDEN `TlsConn` alanı, `threadlocal` DEĞİL**: `tlsRead`/
+/// `tlsWrite` çağrı SÜRESİNCE sabit kalan (bir `drive` döngüsü İÇİNDE,
+/// `fillRbioOnce` ARADA BUNLARI BİR DAHA OKUMAZ) arabellek işaretçilerinin
+/// bir callback İmzası (`SSL_read`/`SSL_write` DIŞARIDAN, `ssl`i DIŞINDA
+/// hiçbir parametre GEÇMEZ) İLE bir Zig closure ARASINDAKİ farkı KAPATMAK
+/// İçİn BİR YERDE taşınması GEREKİR. Bu ESKİDEN `threadlocal var` İDİ; O
+/// YAKLAŞIM YANLIŞTI — YALNIZCA çapraz-İŞ-PARÇACIĞI veri yarışını ÖNLER,
+/// AYNI OS iş parçacığında ÇALIŞAN, KOOPERATİF olarak İÇ İçe geçen İKİ
+/// FARKLI TLS bağlantı fiber'ı arasındaki yarışı ÖNLEMEZ: `drive()`nin
+/// `fillRbioOnce` → `rawSockRead` → `suspendForIoOrTimeout` çağrısı GERÇEK
+/// bir yield noktasıdır — bir fiber orada ASKIDAYKEN AYNI OS iş parçacığında
+/// zamanlanan BAŞKA bir TLS fiber'ı `tlsRead`/`tlsWrite` ÇAĞIRIRSA, PAYLAŞILAN
+/// `threadlocal` DEĞİŞKENİ EZER; ilk fiber uyandığında `op(conn)` KENDİ
+/// arabelleği YERİNE BAŞKA (belki YIĞINDAN ÇOKTAN SERBEST BIRAKILMIŞ) bir
+/// arabelleğe okur/yazardı. Çözüm: arabellek işaretçilerini GERÇEKTEN
+/// fiber-yerel olan (`ConnCtx`nin KENDİSİ gibi, threadlocal storage'DAN
+/// ZATEN kaçınan) `TlsConn`nin KENDİSİNE taşımak — HER TLS bağlantısının
+/// ZATEN KENDİ `TlsConn`u vardır (`acceptHandshake`de tahsis edilir,
+/// `tlsShutdown`da serbest bırakılır), bu YÜZDEN paylaşım İMKANSIZDIR.
+fn connReadOp(conn: *TlsConn) callconv(.c) c_int {
+    return g_funcs.ssl_read(conn.ssl, conn.read_target.ptr, @intCast(conn.read_target.len));
 }
-fn threadlocalWriteOp(ssl: ?*anyopaque) callconv(.c) c_int {
-    return g_funcs.ssl_write(ssl, tl_write_source.ptr, @intCast(tl_write_source.len));
+fn connWriteOp(conn: *TlsConn) callconv(.c) c_int {
+    return g_funcs.ssl_write(conn.ssl, conn.write_source.ptr, @intCast(conn.write_source.len));
 }
 
 pub fn tlsRead(conn: *TlsConn, buf: []u8) !usize {
-    tl_read_target = buf;
-    const rc = drive(conn, threadlocalReadOp) catch |err| switch (err) {
+    conn.read_target = buf;
+    const rc = drive(conn, connReadOp) catch |err| switch (err) {
         error.EndOfStream => return 0,
         else => return err,
     };
@@ -558,8 +572,8 @@ pub fn tlsRead(conn: *TlsConn, buf: []u8) !usize {
 }
 
 pub fn tlsWrite(conn: *TlsConn, buf: []const u8) !usize {
-    tl_write_source = buf;
-    const rc = try drive(conn, threadlocalWriteOp);
+    conn.write_source = buf;
+    const rc = try drive(conn, connWriteOp);
     return @intCast(rc);
 }
 

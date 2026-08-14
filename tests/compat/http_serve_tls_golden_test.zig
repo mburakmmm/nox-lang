@@ -168,6 +168,82 @@ fn tlsRequestAndRead(io: std.Io, port: u16, out: []u8) !usize {
     }
 }
 
+/// `tlsRequestAndRead`nin İKİ-parçalı sürümü — isteği `part1`/`part2`ye
+/// böler, ARADA `delay_ms` bekler (`http_serve_golden_test.zig`nin AYNI
+/// gerekçeli "yavaş istemci" desenidir — bkz. onun "iki eşzamanlı bağlantı"
+/// testi — AMA burada TLS katmanı ÜZERİNDEN, `tls_server.zig`nin `drive()`
+/// döngüsünün `fillRbioOnce` yield noktasında ASKIYA ALINMASINI ZORLAMAK
+/// İçİn). `part2` boşsa (`""`) tek-parçalı bir istek gibi davranır (`delay_ms`
+/// = 0 İLE birlikte kullanılır).
+fn tlsRequestSplitAndRead(io: std.Io, port: u16, part1: []const u8, part2: []const u8, delay_ms: u32, out: []u8) !usize {
+    var bundle: std.crypto.Certificate.Bundle = .empty;
+    defer bundle.deinit(std.heap.page_allocator);
+    const now = std.Io.Timestamp.now(io, .real);
+    try bundle.addCertsFromFilePath(std.heap.page_allocator, io, now, std.Io.Dir.cwd(), cert_path);
+
+    var attempt: usize = 0;
+    var addr = try std.Io.net.IpAddress.resolve(io, "127.0.0.1", port);
+    while (true) : (attempt += 1) {
+        const stream = addr.connect(io, .{ .mode = .stream }) catch |err| {
+            if (attempt >= 200) return err;
+            const ts: posix.timespec = .{ .sec = 0, .nsec = 10 * std.time.ns_per_ms };
+            _ = std.c.nanosleep(&ts, null);
+            continue;
+        };
+        defer stream.close(io);
+
+        var sock_read_buf: [std.crypto.tls.Client.min_buffer_len]u8 = undefined;
+        var sock_write_buf: [std.crypto.tls.Client.min_buffer_len]u8 = undefined;
+        var stream_reader = stream.reader(io, &sock_read_buf);
+        var stream_writer = stream.writer(io, &sock_write_buf);
+
+        var tls_read_buf: [std.crypto.tls.Client.min_buffer_len]u8 = undefined;
+        var tls_write_buf: [std.crypto.tls.Client.min_buffer_len]u8 = undefined;
+        var random_buffer: [std.crypto.tls.Client.Options.entropy_len]u8 = undefined;
+        io.random(&random_buffer);
+
+        var lock: std.Io.RwLock = .init;
+        var client = try std.crypto.tls.Client.init(&stream_reader.interface, &stream_writer.interface, .{
+            .host = .{ .explicit = "localhost" },
+            .ca = .{ .bundle = .{
+                .gpa = std.heap.page_allocator,
+                .io = io,
+                .lock = &lock,
+                .bundle = &bundle,
+            } },
+            .ssl_key_log = null,
+            .read_buffer = &tls_read_buf,
+            .write_buffer = &tls_write_buf,
+            .entropy = &random_buffer,
+            .realtime_now = now,
+            .allow_truncation_attacks = false,
+        });
+
+        try client.writer.writeAll(part1);
+        try client.writer.flush();
+        try stream_writer.interface.flush();
+
+        if (delay_ms != 0) {
+            const ts: posix.timespec = .{ .sec = 0, .nsec = @as(isize, delay_ms) * std.time.ns_per_ms };
+            _ = std.c.nanosleep(&ts, null);
+        }
+
+        if (part2.len != 0) {
+            try client.writer.writeAll(part2);
+            try client.writer.flush();
+            try stream_writer.interface.flush();
+        }
+
+        var total: usize = 0;
+        while (total < out.len) {
+            const n = client.reader.readSliceShort(out[total..]) catch break;
+            if (n == 0) break;
+            total += n;
+        }
+        return total;
+    }
+}
+
 test "nox.http.serve_tls: uctan uca, GERCEK bir std.crypto.tls.Client ile el sikisma + istek/yanit" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
@@ -222,4 +298,103 @@ test "nox.http.serve_tls: uctan uca, GERCEK bir std.crypto.tls.Client ile el sik
     const resp = resp_buf[0..resp_len];
     try std.testing.expect(std.mem.indexOf(u8, resp, "200") != null);
     try std.testing.expect(std.mem.indexOf(u8, resp, "ok-tls") != null);
+}
+
+// **Regresyon testi — `tls_server.zig`nin eski `threadlocal var tl_read_
+// target`/`tl_write_source` tasarımının GERÇEK arabellek-karışması hatası.**
+// Sunucu TEK worker'lı (M:1 fiber modeli, TÜM bağlantılar AYNI OS iş
+// parçacığında kooperatif olarak zamanlanır). "yavaş" istemci TLS el
+// sıkışmasını TAMAMLAR, isteğinin başlıklarını İKİ parçaya böler (aradaki
+// `\r\n\r\n` bitiş satırını 150ms GECİKTİRİR) — bu, sunucunun bu bağlantı
+// İÇİN `tlsRead`nin `drive()` döngüsü İÇİNDE (`fillRbioOnce` →
+// `suspendForIoOrTimeout` yield noktasında) ASKIYA ALINMASINI ZORLAR. Bu
+// ASKI SÜRESİNCE "hızlı" istemci TAMAMEN AYRI bir bağlantı üzerinden TAM
+// bir el sıkışma + istek/yanıt döngüsünü BAŞTAN SONA tamamlar. ESKİ
+// (threadlocal) tasarımda bu, "yavaş" bağlantının askıdan DÖNÜŞÜNDE
+// `drive()`nin BİR SONRAKİ `op(conn.ssl)` çağrısının ARTIK "hızlı"nın
+// (ÇOKTAN TAMAMLANMIŞ, potansiyel olarak serbest bırakılmış) arabelleğine
+// İŞARET EDEN `tl_read_target`ı KULLANMASINA — yani "yavaş"ın yanıtının
+// BOZULMASINA/karışmasına YA DA `stderr`e bir UAF/sızıntı belirtisi
+// yazılmasına — yol açardı. Düzeltmeyle (`TlsConn.read_target`/`write_
+// source`, threadlocal DEĞİL, bağlantı-yerel) HER bağlantı YALNIZCA
+// KENDİ arabelleğini kullanır — bu test BUNU, HER istemcinin YALNIZCA
+// KENDİ yanıtını (DİĞERİNİNKİNİ DEĞİL) aldığını doğrudan kontrol ederek
+// kanıtlar.
+test "nox.http.serve_tls: AYNI OS is parcaciginda ic ice gecen IKI TLS baglantisi BIRBIRINE KARISMAZ (threadlocal arabellek yarisi duzeltmesi)" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const port = try probeFreePort();
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const source = try std.fmt.allocPrint(a,
+        \\import nox.http
+        \\
+        \\def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    return nox_http_HttpResponse(200, "resp:" + req.target, {{"x": "x"}})
+        \\
+        \\nox.http.serve_tls({d}, handle, "{s}", "{s}", 2)
+        \\
+    , .{ port, cert_path, key_path });
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const bin_path = try compileToBinary(a, &tmp, source);
+
+    var child = try std.process.spawn(io, .{
+        .argv = &.{bin_path},
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+
+    var slow_buf: [1024]u8 = undefined;
+    var slow_len: usize = 0;
+    var fast_buf: [1024]u8 = undefined;
+    var fast_len: usize = 0;
+
+    const slow_thread = try std.Thread.spawn(.{}, struct {
+        fn run(p: u16, out: []u8, out_len: *usize) void {
+            out_len.* = tlsRequestSplitAndRead(std.testing.io, p, "GET /slow HTTP/1.1\r\nHost: localhost\r\n", "Connection: close\r\n\r\n", 150, out) catch 0;
+        }
+    }.run, .{ port, &slow_buf, &slow_len });
+
+    const fast_thread = try std.Thread.spawn(.{}, struct {
+        fn run(p: u16, out: []u8, out_len: *usize) void {
+            // "yavaş"ın bağlanıp İLK parçasını GÖNDERMESİ İçİn kısa bir
+            // baş payı — çakışma penceresinin GERÇEKTEN "yavaş" askıdayken
+            // açılmasını sağlar.
+            const ts: posix.timespec = .{ .sec = 0, .nsec = 30 * std.time.ns_per_ms };
+            _ = std.c.nanosleep(&ts, null);
+            out_len.* = tlsRequestSplitAndRead(std.testing.io, p, "GET /fast HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n", "", 0, out) catch 0;
+        }
+    }.run, .{ port, &fast_buf, &fast_len });
+
+    slow_thread.join();
+    fast_thread.join();
+
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
+    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stderr_data);
+
+    const term = try child.wait(io);
+    try std.testing.expect(term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), term.exited);
+
+    if (stderr_data.len != 0) {
+        std.debug.print("program stderr'e beklenmeyen bir çıktı yazdı (olası bellek sızıntısı/UAF): {s}\n", .{stderr_data});
+        return error.UnexpectedStderrOutput;
+    }
+
+    const slow_resp = slow_buf[0..slow_len];
+    const fast_resp = fast_buf[0..fast_len];
+    try std.testing.expect(std.mem.indexOf(u8, slow_resp, "resp:/slow") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fast_resp, "resp:/fast") != null);
+    // Çapraz-bulaşma OLMADIĞININ ek kanıtı: hiçbiri DİĞERİNİN yanıtını
+    // TAŞIMIYOR.
+    try std.testing.expect(std.mem.indexOf(u8, slow_resp, "resp:/fast") == null);
+    try std.testing.expect(std.mem.indexOf(u8, fast_resp, "resp:/slow") == null);
 }
