@@ -15074,6 +15074,93 @@ edildiginde...`) GEÇİCİ bir kaynak-çekişmesi TAKILMASI olduğu, TEMİZ bir
 yeniden çalıştırmada ORTADAN KALKTIĞI DOĞRULANDI — bu FAZLA İLGİSİZ,
 GERÇEK bir regresyon DEĞİL.
 
+## 3.91 `nox.http.serve()`nin ECONNRESET çökmesi/askıya-düşmesi + fiber-bağlamında `unexpectedErrno`nin GERÇEK segfault riski (v1.29.9)
+
+Kullanıcı `ping.nox` ile `wrk` yük testi SIRASINDA `runtime/async_rt/io.
+zig`nin `nonBlockingReadWithTimeout`ından "unexpected errno: 54"
+(`ECONNRESET`) İLE çöken/askıya düşen bir sunucu bildirdi. Kök neden:
+`nonBlockingRead`/`nonBlockingReadWithTimeout`/`nonBlockingWrite`/
+`nonBlockingAccept`(`WithTimeout`)in `errno` `switch`i `.AGAIN` DIŞINDAKİ
+HER ŞEYİ (`ECONNRESET` DAHİL — `wrk` GİBİ yük-test araçlarının zaman
+aşımında/koşum sonunda RUTİN olarak yaptığı TAMAMEN NORMAL bir istemci
+davranışı) `posix.unexpectedErrno`nin "beklenmeyen hata" yoluna
+düşürüyordu.
+
+**Doğrulama SIRASINDA bulunan, ÇOK DAHA CİDDİ bir GERÇEK hata**:
+düzeltmeyi (`.CONNRESET` switch kolu) GEÇİCİ olarak GERİ ALIP YENİ
+regresyon testini çalıştırdığımda, süreç KALICI olarak ASKIYA DÜŞTÜ.
+`sample` İLE incelendi:
+
+```
+posix.unexpectedErrno → std.debug.dumpCurrentStackTrace()
+  → debug.StackIterator.next → MachO.unwindFrame/unwindFrameInner
+    → Dwarf.SelfUnwinder.next → GERÇEK SIGSEGV
+      → _sigtramp → debug.handleSegfaultPosix → debug.handleSegfault
+        → debug.defaultHandleSegfault → debug.writeCurrentStackTrace (TEKRAR)
+```
+
+Nox'un fiber sistemi (`runtime/async_rt/fiber.zig`nin trampoline/
+`callEntryPad*`/`swap_aarch64` mekanizması) HER fiber'ı KENDİ ÖZEL,
+ayrıca tahsis edilmiş bir yığın ÜZERİNDE çalıştırır — Zig'in yerleşik
+`std.debug` unwind'ı NORMAL, bitişik bir yerel (native) yığın VARSAYAR
+(DWARF/Mach-O çerçeve bilgisini BUNA göre yürür); bir fiber'ın YIĞININI
+unwind ETMEYE ÇALIŞMAK GERÇEK bir SEGFAULT'a yol açıyor, ARDINDAN o
+segfault'un KENDİ handler'ı AYNI bozuk unwind yolunu TEKRAR ÇAĞIRARAK
+süreci SONSUZA KADAR askıda BIRAKIYOR (neredeyse SIFIR CPU kullanımıyla,
+kendi kendine TOPARLANMADAN/temiz bir şekilde ÇÖKMEDEN). Yani `nox.http.
+serve()` çalıştıran HER program, ANİ bir istemci bağlantı sıfırlamasıyla
+(VEYA `.AGAIN` DIŞINDAKİ HERHANGİ bir "beklenmeyen" errno'yla) ÇÖKERTİLEBİLİR
+bir durumda İDİ — bu SADECE gürültülü `stderr` çıktısı DEĞİL, GERÇEK bir
+güvenilirlik açığıydı.
+
+**Düzeltme** (`runtime/async_rt/io.zig`, TEK değişen dosya):
+- Okuma tarafı (`nonBlockingRead`/`nonBlockingReadWithTimeout`): `.CONNRESET
+  => return 0,` — EOF (`0`) İLE AYNI ele alınır, `http_server.zig`nin
+  MEVCUT `FiberReader.stream`inin `if (n == 0) return error.EndOfStream`
+  yolu HİÇBİR değişiklik GEREKMEDEN devreye girer.
+- Yazma tarafı (`nonBlockingWrite`): `.CONNRESET => return error.
+  ConnectionResetByPeer,` / `.PIPE => return error.BrokenPipe,` — Zig'in
+  KENDİ `std.posix.read`inin `ECONNRESET` İçin kullandığı (`posix.zig:426`)
+  VE `std.Io.zig`nin `EPIPE` İçin kullandığı (`Io.zig:313`) AYNI idiomatik
+  isimler — `http_server.zig`nin `FiberWriter.drain`inin ZATEN GENEL
+  `catch return error.WriteFailed`i İLE yakalanır, HİÇBİR değişiklik
+  GEREKMEZ.
+- `accept()` tarafı (`nonBlockingAccept`/`nonBlockingAcceptWithTimeout`):
+  `.CONNABORTED => {},` — POSIX'in AÇIKÇA İZİN VERDİĞİ (`accept(2)`) bir
+  durum, istemci kuyruğa alınmış bir bağlantıyı `accept()` İŞLENMEDEN
+  ÖNCE İPTAL/RESET edebilir — dinleme soketinin KENDİSİ hâlâ GEÇERLİDİR,
+  TEK bu bağlantı adayı YOK SAYILIP döngü TEKRARLANIR.
+- Windows (Winsock) yolu AYNI mantıkla `WSAECONNRESET`/`WSAECONNABORTED`
+  İçin PARALEL olarak GÜNCELLENDİ (platformlar arası DAVRANIŞ tutarlılığı).
+
+**Doğrulama**: `runtime/async_rt/io.zig`ye YENİ bir regresyon testi
+eklendi — GERÇEK bir TCP bağlantısını `SO_LINGER{onoff=1,linger=0}` İLE
+(normal FIN DEĞİL, GERÇEK bir RST üreten) kapatıp: (1) okuma çağrısının
+HATA/panik OLMADAN `0` döndürdüğünü, (2) AYNI `scheduler.run()` çağrısı
+İÇİNDE ÇALIŞAN, TAMAMEN BAĞIMSIZ BAŞKA bir soket-çifti fiber'ının da doğru
+tamamlandığını (zamanlayıcının/reaktörün BOZULMADIĞININ kanıtı) doğrular.
+Düzeltme GEÇİCİ GERİ ALINIP test çalıştırıldığında GERÇEKTEN askıya
+düştüğü (yukarıdaki `sample` analiziyle), GERİ UYGULANDIKTAN SONRA 4
+ardışık `zig build async-rt-test` çalıştırmasının HER birinin ~1.6-3
+saniyede TEMİZ tamamlandığı DOĞRULANDI. Tam `zig build test`: TEK bilinen
+İLİŞKİSİZ fuzz çökmesi HARİÇ temiz (835/836), IR-diff DEĞİŞMEDİ (`runtime/`
+e SINIRLI). **Gerçek `wrk` yükü altında** (ORİJİNAL bildirimin AYNI
+senaryosu): 5 ardışık koşum (`wrk -t4 -c40 -d3s`, koşum başına ~750
+gerçek `Socket errors: read` — TAM DA ECONNRESET koşulu), sunucunun
+HİÇBİR çökme/askıya düşme/`stderr` çıktısı OLMADAN, TÜM koşumlar BOYUNCA
+HAYATTA kaldığı doğrulandı.
+
+**Kapsam DIŞI (AYRI bir göreve BIRAKILDI)**: `posix.unexpectedErrno`nin
+FİBER-bağlamındaki genel segfault riski, `io.zig`deki `.AGAIN` DIŞINDAKİ
+KALAN `else => posix.unexpectedErrno(e)` dallarının (VE bu dosyanın
+DIŞINDA, AYNI deseni kullanan olası BAŞKA kod yollarının) HEPSİ İçİn
+GEÇERLİDİR — bu turda SADECE ECONNRESET/EPIPE/ECONNABORTED AİLESİ ele
+alındı (kullanıcının ORİJİNAL, somut bildirdiği/reprodükte ettiği durum).
+Kapsamlı bir çözüm (ör. fiber bağlamında `std.options.unexpected_error_
+tracing`i devre dışı bırakmak, YA DA fiber trampoline'ının yığın
+düzenini Zig'in unwind'ının ANLAYABİLECEĞİ hale getirmek) AYRI, DAHA
+BÜYÜK bir görev olarak İŞARETLENDİ.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

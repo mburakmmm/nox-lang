@@ -50,6 +50,11 @@ pub const WinSock = if (builtin.os.tag == .windows) struct {
     pub const FIONBIO: i32 = -2147195266; // 0x8004667e (i32 olarak imzalı bit deseni)
     pub const INVALID_SOCKET: usize = ~@as(usize, 0);
     pub const WSAEWOULDBLOCK: i32 = 10035;
+    /// Bir istemcinin bağlantıyı ANİDEN sıfırlaması (TCP RST) — POSIX'in
+    /// `ECONNRESET`/`ECONNABORTED`sinin Winsock eşleniği. Bkz. aşağıdaki
+    /// `.CONNRESET`/`.CONNABORTED` işleme notu (POSIX yolu).
+    pub const WSAECONNRESET: i32 = 10054;
+    pub const WSAECONNABORTED: i32 = 10053;
     pub const AF_INET: i32 = 2;
     pub const SOCK_STREAM: i32 = 1;
     pub const SOL_SOCKET: i32 = 0xffff;
@@ -114,6 +119,11 @@ pub fn nonBlockingAccept(scheduler: *Scheduler, listen_fd: posix.fd_t) !posix.fd
                 scheduler.suspendForIo(listen_fd, .read);
                 continue;
             }
+            // Bkz. POSIX yolunun `.CONNABORTED` notu — İstemci, kuyruğa
+            // alınmış bir bağlantıyı `accept()` İŞLENMEDEN İPTAL/RESET
+            // ETMİŞ olabilir; dinleme soketinin KENDİSİ hâlâ GEÇERLİDİR,
+            // BASİTÇE TEKRAR denenir.
+            if (WinSock.WSAGetLastError() == WinSock.WSAECONNABORTED or WinSock.WSAGetLastError() == WinSock.WSAECONNRESET) continue;
             return error.Unexpected;
         }
         const rc = std.c.accept(listen_fd, null, null);
@@ -123,6 +133,13 @@ pub fn nonBlockingAccept(scheduler: *Scheduler, listen_fd: posix.fd_t) !posix.fd
         }
         switch (posix.errno(rc)) {
             .AGAIN => scheduler.suspendForIo(listen_fd, .read),
+            // POSIX bunu AÇIKÇA İZİN VERİR (bkz. `accept(2)`): istemci,
+            // kuyruğa alınmış bir bağlantıyı `accept()` onu İŞLEMEDEN
+            // ÖNCE RST İLE İPTAL ederse `ECONNABORTED` dönebilir —
+            // dinleme soketinin KENDİSİ hâlâ GEÇERLİDİR, bu TEK bağlantı
+            // adayı YOK SAYILIP döngü TEKRARLANIR (`unexpectedErrno`nin
+            // gürültülü/panik-BENZERİ yoluna DÜŞMEDEN).
+            .CONNABORTED => {},
             else => |e| return posix.unexpectedErrno(e),
         }
     }
@@ -152,6 +169,7 @@ pub fn nonBlockingAcceptWithTimeout(scheduler: *Scheduler, listen_fd: posix.fd_t
                 if (scheduler.suspendForIoOrTimeout(listen_fd, .read, timeout_ms) == .timed_out) return error.Timeout;
                 continue;
             }
+            if (WinSock.WSAGetLastError() == WinSock.WSAECONNABORTED or WinSock.WSAGetLastError() == WinSock.WSAECONNRESET) continue;
             return error.Unexpected;
         }
         const rc = std.c.accept(listen_fd, null, null);
@@ -161,6 +179,8 @@ pub fn nonBlockingAcceptWithTimeout(scheduler: *Scheduler, listen_fd: posix.fd_t
         }
         switch (posix.errno(rc)) {
             .AGAIN => if (scheduler.suspendForIoOrTimeout(listen_fd, .read, timeout_ms) == .timed_out) return error.Timeout,
+            // Bkz. `nonBlockingAccept`in AYNI notu.
+            .CONNABORTED => {},
             else => |e| return posix.unexpectedErrno(e),
         }
     }
@@ -169,7 +189,18 @@ pub fn nonBlockingAcceptWithTimeout(scheduler: *Scheduler, listen_fd: posix.fd_t
 /// `fd`den `buf`a okur — veri hazır olana kadar askıya alıp TEKRAR dener.
 /// `read()`in `0` dönmesi (EOF/bağlantı kapandı) GEÇERLİ bir sonuçtur,
 /// hata SAYILMAZ (çağıran bunu ayırt eder — `strlen`/döngü sonlandırma
-/// mantığı `nox.http`in (D.1) kendi sorumluluğudur).
+/// mantığı `nox.http`in (D.1) kendi sorumluluğudur). **`ECONNRESET`
+/// (istemci TCP RST İLE bağlantıyı ANİDEN kapattı — `wrk` GİBİ yük-test
+/// araçlarının zaman aşımında/koşum sonunda RUTİN olarak yaptığı bir şey)
+/// AYNI şekilde `0` (EOF) OLARAK ele alınır**: pratik sonuç AYNIDIR ("bu
+/// bağlantıdan artık KULLANILABİLİR veri gelmeyecek"), bu yüzden `.AGAIN`
+/// DIŞINDAKİ HER şeyi `posix.unexpectedErrno`nin gürültülü (`stderr`e iz
+/// düşüren) YOLUNA düşüren ESKİ `switch`, TAMAMEN NORMAL/beklenen bu
+/// durumu YANLIŞLIKLA bir "beklenmeyen hata" gibi ele alıyordu (GERÇEK,
+/// yeniden üretilebilir bir hata — `wrk` yükü ALTINDA gözlemlenip
+/// düzeltildi). Bu sayede `FiberReader.stream`in MEVCUT `if (n == 0)
+/// return error.EndOfStream` yolu (bkz. `http_server.zig`) HİÇBİR ek
+/// değişiklik GEREKMEDEN doğru şekilde devreye girer.
 pub fn nonBlockingRead(scheduler: *Scheduler, fd: posix.fd_t, buf: []u8) !usize {
     setNonBlocking(fd);
     while (true) {
@@ -180,12 +211,14 @@ pub fn nonBlockingRead(scheduler: *Scheduler, fd: posix.fd_t, buf: []u8) !usize 
                 scheduler.suspendForIo(fd, .read);
                 continue;
             }
+            if (WinSock.WSAGetLastError() == WinSock.WSAECONNRESET) return 0;
             return error.Unexpected;
         }
         const rc = std.c.read(fd, buf.ptr, buf.len);
         if (rc >= 0) return @intCast(rc);
         switch (posix.errno(rc)) {
             .AGAIN => scheduler.suspendForIo(fd, .read),
+            .CONNRESET => return 0,
             else => |e| return posix.unexpectedErrno(e),
         }
     }
@@ -217,12 +250,33 @@ pub fn nonBlockingReadWithTimeout(scheduler: *Scheduler, fd: posix.fd_t, buf: []
                 if (scheduler.suspendForIoOrTimeout(fd, .read, timeout_ms) == .timed_out) return error.Timeout;
                 continue;
             }
+            // Bkz. `nonBlockingRead`in AYNI notu — `ECONNRESET` EOF (`0`)
+            // GİBİ ele alınır.
+            if (WinSock.WSAGetLastError() == WinSock.WSAECONNRESET) return 0;
             return error.Unexpected;
         }
         const rc = std.c.read(fd, buf.ptr, buf.len);
         if (rc >= 0) return @intCast(rc);
         switch (posix.errno(rc)) {
             .AGAIN => if (scheduler.suspendForIoOrTimeout(fd, .read, timeout_ms) == .timed_out) return error.Timeout,
+            // Bkz. `nonBlockingRead`in AYNI notu — `wrk` GİBİ istemcilerin
+            // yük-testi SIRASINDA/SONUNDA RUTİN olarak yaptığı bir TCP RST,
+            // `posix.unexpectedErrno`nin gürültülü YOLUNA DÜŞMEDEN, EOF
+            // İLE AYNI (`0`) şekilde ele alınır. **BULUNAN, ÇOK DAHA CİDDİ
+            // bir GERÇEK hata (bkz. AYRI görev): `posix.unexpectedErrno`nin
+            // `debug.dumpCurrentStackTrace()`si bir Nox FİBER'ının (ÖZEL,
+            // OS iş parçacığı yığınından FARKLI) yığınını unwind ETMEYE
+            // ÇALIŞTIĞINDA GERÇEK bir SEGFAULT'a (Zig'in yerel unwind'ı
+            // fiber'ın YIĞIN düzenini ANLAMAZ), ARDINDAN o segfault'un
+            // KENDİ handler'ının AYNI bozuk yolu TEKRAR ÇAĞIRMASIYLA
+            // (`debug.handleSegfault` → `writeCurrentStackTrace` →
+            // TEKRAR) SÜRECİ ASKIYA DÜŞÜRÜYOR — BU switch koluna GERÇEKTEN
+            // bu düzeltme GERİ ALINIP test ÇALIŞTIRILARAK DOĞRUDAN
+            // GÖZLEMLENDİ. Yani `.CONNRESET`i BURADA yakalamak SADECE
+            // gürültüyü ÖNLEMİYOR, `nonBlockingReadWithTimeout`ı ÇAĞIRAN
+            // HER fiber İçİn GERÇEK bir askıya-düşme/çökme riskini de
+            // ORTADAN KALDIRIYOR.
+            .CONNRESET => return 0,
             else => |e| return posix.unexpectedErrno(e),
         }
     }
@@ -242,12 +296,31 @@ pub fn nonBlockingWrite(scheduler: *Scheduler, fd: posix.fd_t, buf: []const u8) 
                 scheduler.suspendForIo(fd, .write);
                 continue;
             }
+            // Bkz. POSIX yolunun `.CONNRESET`/`.PIPE` notu — YAZMA'da (okumanın
+            // AKSİNE) `0` dönmenin YERLEŞİK bir "bağlantı kapandı" ANLAMI
+            // YOKTUR, bu YÜZDEN EOF'a benzetmek YERİNE `std.posix.read`in
+            // KENDİ `ECONNRESET` İçin kullandığı (`posix.zig:426`) AYNI
+            // isimli, `FiberWriter.drain`in (bkz. `http_server.zig`) ZATEN
+            // GENEL olarak `catch return error.WriteFailed` İLE yakaladığı
+            // ADLANDIRILMIŞ bir hata döner.
+            if (WinSock.WSAGetLastError() == WinSock.WSAECONNRESET) return error.ConnectionResetByPeer;
             return error.Unexpected;
         }
         const rc = std.c.write(fd, buf.ptr, buf.len);
         if (rc >= 0) return @intCast(rc);
         switch (posix.errno(rc)) {
             .AGAIN => scheduler.suspendForIo(fd, .write),
+            // İstemci bağlantıyı bir TCP RST İLE ANİDEN kapattı (`wrk`
+            // GİBİ yük-test araçlarının zaman aşımında/koşum sonunda
+            // RUTİN olarak yaptığı bir şey) — `Zig`in KENDİ `std.posix.
+            // read`inin `ECONNRESET` İçin kullandığı AYNI isimli hata
+            // (`error.ConnectionResetByPeer`, `posix.zig:426`), NOKTALI
+            // `posix.unexpectedErrno`nin gürültülü YOLU YERİNE.
+            .CONNRESET => return error.ConnectionResetByPeer,
+            // `EPIPE`: karşı taraf ZATEN okuma ucunu kapatmış bir soket/
+            // borsağa yazma denemesi — `std.Io.zig`nin (`Io.zig:313`)
+            // KENDİ `BrokenPipe` adını taşır, AYNI gerekçeyle.
+            .PIPE => return error.BrokenPipe,
             else => |e| return posix.unexpectedErrno(e),
         }
     }
@@ -318,4 +391,117 @@ test "nonBlockingRead: bir fiber G/Ç beklerken BAŞKA bir hazır fiber çalış
     try std.testing.expectEqualStrings("writer calisti", Shared.log.items[0]);
     try std.testing.expectEqualStrings("reader tamamlandi", Shared.log.items[1]);
     try std.testing.expectEqualStrings("merhaba", Shared.got[0..Shared.got_len]);
+}
+
+// **GERÇEK, `wrk` yük-testi ALTINDA yakalanan bir hata**: bir istemci
+// bağlantısını `SO_LINGER{onoff=1, linger=0}` İLE (TCP RST — ANİ
+// sıfırlama, normal FIN DEĞİL) kapattığında, sunucu tarafındaki fd'de
+// bekleyen bir `nonBlockingReadWithTimeout`/`nonBlockingRead` çağrısı
+// `ECONNRESET` alıyordu — ESKİ `switch`in `.AGAIN` DIŞINDAKİ HER ŞEYİ
+// `posix.unexpectedErrno`nin gürültülü (`stderr`e iz düşüren) YOLUNA
+// düşürmesi YÜZÜNDEN. Bu test, GERÇEK bir TCP soket ÇİFTİ (AF_UNIX
+// `socketpair` DEĞİL — `SO_LINGER`nin RST-ÜRETME semantiği YALNIZCA
+// GERÇEK TCP'de ANLAMLIDIR) İLE bu KOŞULU DETERMİNİSTİK olarak üretip:
+// (1) okuma çağrısının bir HATA/panik OLMADAN, EOF İLE AYNI (`0`) sonucu
+// döndürdüğünü, (2) BUNUN, zamanlayıcının/reaktörün KENDİSİNİ BOZMADIĞINI
+// (AYNI `scheduler.run()` çağrısı İÇİNDE ÇALIŞAN, TAMAMEN AYRI BAŞKA bir
+// fiber'ın normal G/Ç'sinin de doğru tamamlandığını doğrulayarak) kanıtlar.
+test "nonBlockingReadWithTimeout: istemci TCP RST ile ANİ kapatınca ECONNRESET EOF gibi (panik OLMADAN) ele alınır, zamanlayıcı BOZULMAZ" {
+    // Bkz. yukarıdaki testin AYNI "Windows'ta HENÜZ Winsock'a taşınmadı"
+    // gerekçesi (LL.5 kapsamı) — `SO_LINGER`nin KENDİSİ de platforma özgü
+    // BSD-soket API'sidir.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    // Dinleme soketi: 127.0.0.1'de OS'un ATADIĞI bir port (`bind(0)` +
+    // `getsockname`) — `tests/compat/http_serve_golden_test.zig`nin AYNI
+    // `probeFreePort` desenine PARALEL, ama BURADA tek bir soket
+    // KULLANILARAK (dinle → BAĞLAN → kabul et, HEPSİ TEK testte).
+    const listen_fd = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
+    if (listen_fd < 0) return error.SocketFailed;
+    defer _ = std.c.close(listen_fd);
+    var reuse: c_int = 1;
+    _ = std.c.setsockopt(listen_fd, std.c.SOL.SOCKET, std.c.SO.REUSEADDR, &reuse, @sizeOf(c_int));
+    var bind_addr: std.c.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
+    if (std.c.bind(listen_fd, @ptrCast(&bind_addr), @sizeOf(std.c.sockaddr.in)) != 0) return error.BindFailed;
+    if (std.c.listen(listen_fd, 4) != 0) return error.ListenFailed;
+    var got_addr: std.c.sockaddr.in = undefined;
+    var got_len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
+    if (std.c.getsockname(listen_fd, @ptrCast(&got_addr), &got_len) != 0) return error.GetsocknameFailed;
+    const port = std.mem.bigToNative(u16, got_addr.port);
+
+    const client_fd = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
+    if (client_fd < 0) return error.SocketFailed;
+    var connect_addr: std.c.sockaddr.in = .{ .port = std.mem.nativeToBig(u16, port), .addr = std.mem.nativeToBig(u32, 0x7f000001) };
+    if (std.c.connect(client_fd, @ptrCast(&connect_addr), @sizeOf(std.c.sockaddr.in)) != 0) return error.ConnectFailed;
+
+    const server_fd = std.c.accept(listen_fd, null, null);
+    if (server_fd < 0) return error.AcceptFailed;
+
+    // `SO_LINGER{onoff=1, linger=0}` + `close()`: OS'a bu bağlantıyı
+    // NORMAL bir FIN İLE DEĞİL, ANİ bir RST İLE sonlandırmasını SÖYLER —
+    // karşı tarafın (sunucu, `server_fd`) BİR SONRAKİ `read()`i `ECONNRESET`
+    // alır (GERÇEK `wrk` DAVRANIŞININ, KENDİ testimizde DETERMİNİSTİK
+    // ÜRETİMİ).
+    const lopt: std.c.linger = .{ .onoff = 1, .linger = 0 };
+    _ = std.c.setsockopt(client_fd, std.c.SOL.SOCKET, std.c.SO.LINGER, &lopt, @sizeOf(std.c.linger));
+    _ = std.c.close(client_fd);
+
+    // İKİNCİ, TAMAMEN BAĞIMSIZ bir soket çifti (`socketpair`, İLK testle
+    // AYNI desen) — reset-tetikleyen okuma İLE AYNI `scheduler.run()`
+    // çağrısı İÇİNDE ÇALIŞTIRILIR: zamanlayıcının/reaktörün RESET
+    // OLAYINDAN SONRA da BAŞKA fiber'lara doğru hizmet vermeye devam
+    // ETTİĞİNİN kanıtı (kullanıcının "sunucu ... BAŞKA bağlantılara
+    // hizmet vermeye devam eder" gerekçesi).
+    var pair_fds: [2]posix.fd_t = undefined;
+    if (std.c.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &pair_fds) != 0) return error.SocketPairFailed;
+    defer _ = std.c.close(pair_fds[0]);
+    defer _ = std.c.close(pair_fds[1]);
+
+    const spawn = @import("scheduler.zig").spawn;
+    var scheduler = try Scheduler.init(std.heap.page_allocator);
+    defer scheduler.deinit();
+
+    const Shared = struct {
+        var reset_result: ?(anyerror!usize) = null;
+        var scheduler_ptr: *Scheduler = undefined;
+        var reset_fd: posix.fd_t = undefined;
+        var pair_read_fd: posix.fd_t = undefined;
+        var pair_write_fd: posix.fd_t = undefined;
+        var pair_got: [16]u8 = undefined;
+        var pair_got_len: usize = 0;
+
+        fn resetReaderFn(_: *anyopaque) callconv(.c) void {
+            var buf: [64]u8 = undefined;
+            reset_result = nonBlockingReadWithTimeout(scheduler_ptr, reset_fd, &buf, 2000);
+        }
+        fn pairReaderFn(_: *anyopaque) callconv(.c) void {
+            pair_got_len = nonBlockingRead(scheduler_ptr, pair_read_fd, &pair_got) catch unreachable;
+        }
+        fn pairWriterFn(_: *anyopaque) callconv(.c) void {
+            _ = nonBlockingWrite(scheduler_ptr, pair_write_fd, "hala-canli") catch unreachable;
+        }
+    };
+    Shared.scheduler_ptr = &scheduler;
+    Shared.reset_fd = server_fd;
+    Shared.pair_read_fd = pair_fds[0];
+    Shared.pair_write_fd = pair_fds[1];
+
+    var dummy: u8 = 0;
+    const reset_task = try spawn(&scheduler, void, Shared.resetReaderFn, &dummy);
+    defer scheduler.allocator.destroy(reset_task);
+    const pair_reader_task = try spawn(&scheduler, void, Shared.pairReaderFn, &dummy);
+    defer scheduler.allocator.destroy(pair_reader_task);
+    const pair_writer_task = try spawn(&scheduler, void, Shared.pairWriterFn, &dummy);
+    defer scheduler.allocator.destroy(pair_writer_task);
+
+    try scheduler.run();
+    _ = std.c.close(server_fd);
+
+    // (1) RST-tetikleyen okuma bir HATA/panik DEĞİL, `0` (EOF İLE AYNI)
+    // döndürdü.
+    const rr = Shared.reset_result orelse return error.ReaderNeverRan;
+    try std.testing.expectEqual(@as(usize, 0), try rr);
+    // (2) Zamanlayıcı/reaktör BOZULMADI — TAMAMEN BAĞIMSIZ soket çifti
+    // AYNI koşumda doğru tamamlandı.
+    try std.testing.expectEqualStrings("hala-canli", Shared.pair_got[0..Shared.pair_got_len]);
 }

@@ -14,7 +14,45 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
-## [1.29.8]
+## [1.29.9]
+
+### Düzeltildi
+- **`nox.http.serve()` sunucuları, bir istemcinin TCP bağlantısını ANİDEN
+  sıfırlamasıyla (`ECONNRESET` — `wrk` GİBİ yük-test araçlarının zaman
+  aşımında/koşum sonunda RUTİN olarak yaptığı bir şey) ÇÖKEBİLİYORDU/
+  ASKIYA DÜŞEBİLİYORDU.** `runtime/async_rt/io.zig`nin `nonBlockingRead`/
+  `nonBlockingReadWithTimeout`/`nonBlockingWrite`/`nonBlockingAccept`(WithTimeout)
+  fonksiyonlarının `errno` `switch`i `.AGAIN` DIŞINDAKİ HER ŞEYİ (ECONNRESET
+  DAHİL — TAMAMEN NORMAL, BEKLENEN bir istemci davranışı) `posix.
+  unexpectedErrno`nin "beklenmeyen hata" yoluna düşürüyordu. **Doğrulama
+  SIRASINDA BULUNAN, ÇOK DAHA CİDDİ bir GERÇEK hata**: `posix.
+  unexpectedErrno`nin çağırdığı `std.debug.dumpCurrentStackTrace()`, bir
+  Nox FİBER'ının (ÖZEL, OS iş parçacığı yığınından FARKLI bir yığın
+  üzerinde çalışan) bağlamından ÇAĞRILDIĞINDA Zig'in yerel unwind'ının
+  fiber yığın düzenini ANLAMAMASI YÜZÜNDEN GERÇEK bir SEGFAULT'a yol
+  açıyor, ARDINDAN o segfault'un KENDİ handler'ı AYNI bozuk unwind yolunu
+  TEKRAR ÇAĞIRARAK süreci KALICI olarak ASKIYA düşürüyordu (doğrudan
+  gözlemlendi: düzeltme geçici olarak GERİ ALINIP YENİ regresyon testi
+  çalıştırıldığında). Yani BU, yalnızca gürültülü `stderr` çıktısı DEĞİL,
+  `nox.http.serve()` KULLANAN HER programı ANİ bir istemci bağlantı
+  sıfırlamasıyla ÇÖKERTEBİLECEK GERÇEK bir güvenilirlik açığıydı. Düzeltme:
+  okuma tarafında `ECONNRESET`, EOF (`0`) İLE AYNI şekilde ele alınır
+  (`FiberReader.stream`in MEVCUT `error.EndOfStream` yolu, `http_server.
+  zig`de HİÇBİR değişiklik GEREKMEDEN devreye girer); yazma tarafında
+  `ECONNRESET`/`EPIPE` Zig'in KENDİ idiomatik isimleriyle (`error.
+  ConnectionResetByPeer`/`error.BrokenPipe`, `std.posix.read`/`std.Io.
+  zig`İLE AYNI adlandırma) döner; `accept()`te olası `ECONNABORTED`
+  (istemci, kuyruğa alınmış bir bağlantıyı işlenmeden İPTAL edebilir)
+  dinleme soketini BOZMADAN sessizce TEKRAR denenir. GERÇEK bir TCP
+  bağlantısını `SO_LINGER{onoff=1,linger=0}` İLE (RST üreten) kapatan YENİ
+  bir regresyon testiyle (`runtime/async_rt/io.zig`) hem düzeltmenin
+  çalıştığı hem zamanlayıcının/reaktörün RESET SONRASI da BAŞKA
+  bağlantılara doğru hizmet vermeye devam ettiği kanıtlandı. Gerçek `wrk`
+  yükü altında (5 ardışık koşum, koşum başına ~750 gerçek okuma hatası)
+  sunucunun HİÇBİR çökme/askıya düşme/`stderr` çıktısı OLMADAN hayatta
+  kaldığı doğrulandı.
+
+
 
 ### Düzeltildi
 - **`nox.json.decode()`nin ASIL darboğazı bulunup düzeltildi: HER çağrıda
