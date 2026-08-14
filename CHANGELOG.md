@@ -14,6 +14,38 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.29.5]
+
+### Düzeltildi
+- **`nox.http.serve_multicore`nin `--release` (LLVM M:N havuzu) yolunda
+  bağlantı fiber'ları ARTIK çapraz-worker ÇALINABİLİR** — v1.29.4'ün
+  `SO_REUSEPORT` düzeltmesinin (her worker KENDİ bağımsız soketini açar)
+  KENDİSİNİN yol açtığı, kullanıcının GERÇEK Aether çerçevesinde (routing+
+  JSON dispatch maliyeti olan bir handler'da) DOĞRULANAN yeni bir
+  darboğaz: `SO_REUSEPORT`nin kernel bağlantı-dağılım hash'i worker'lar
+  ARASINDA dengesiz olabiliyordu, VE (ÖNCEDEN Faz MN.7b'de belgelenmiş)
+  kabul edilen HER bağlantı fiber'ı `Scheduler.markReady()` İLE DOĞRUDAN
+  kabul eden worker'ın KENDİ `ready` listesine ekleniyordu — Chase-Lev
+  work-stealing deque'ine DEĞİL. Yani bir worker'a fazla bağlantı düşerse,
+  O worker TÜM bu bağlantıları TEK BAŞINA işliyordu, hiçbir boşta kardeş
+  YARDIM EDEMİYORDU. Saf/ucuz handler'larda (bare ping) görünmezdi;
+  Aether'in GERÇEK dispatch maliyetinde 8-worker'ı 1-worker'DAN DAHA
+  YAVAŞ yapan (~209k→~56k req/s, -%73) bir darboğaza dönüşüyordu — Aether
+  bunu KENDİ tarafında `--release`de `serve_multicore`u hiç KULLANMAYARAK
+  atlatmıştı. Düzeltme: bağlantı fiber'ları `Scheduler.spawn()`nin Task[T]
+  fiber'ları İçİN ZATEN kullandığı AYNI "deque'e it, İLK-çalıştırmadan
+  SONRA sabitlen" desenine taşındı — `Scheduler.ownDeque()` havuzsuz
+  durumda (QBE'nin bağımsız worker'ları, tek-worker `nox.http.serve()`)
+  `null` döndüğünden SIFIR davranış değişikliğiyle. Tek gerçek yan-etki:
+  `ConnCtx.active_connections` (eşzamanlı-bağlantı sayacı) ARTIK atomik
+  (`std.atomic.Value(usize)`) — ÖNCEDEN "aynı OS iş parçacığında çalışır"
+  varsayımına dayanıyordu, bu bağlantı fiber'ları çalınabilir olunca
+  ARTIK GEÇERSİZDİ. Kullanıcının GERÇEK Aether handler'ıyla, `serve_
+  multicore`u DOĞRUDAN çağıran bir test harness'ıyla (Aether'in KENDİ
+  atlatması BYPASS edilerek) 2 bağımsız ölçümde 8-worker'ın ARTIK HİÇBİR
+  ZAMAN 1-worker'ın ALTINA düşmediği (+%6 İLA +%25 arası kazanç)
+  DOĞRULANDI.
+
 ## [1.29.4]
 
 ### Düzeltildi

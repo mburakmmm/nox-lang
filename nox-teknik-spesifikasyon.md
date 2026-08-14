@@ -14811,6 +14811,67 @@ call site'lar (`genHttpServe`) da AYRICA taranmalıdır; `grep -rn
 fonksiyon-isim TABANLI bir aramadan (`emitServeAndClose`'nin ÇAĞRILDIĞI
 yerler) DAHA GÜVENİLİRDİR.
 
+**6. (Faz MN.12, v1.29.5) `--release`de bağlantı fiber'ları ARTIK çapraz-
+worker ÇALINABİLİR — Madde 5'in (SO_REUSEPORT) KENDİSİNİN yol açtığı YENİ
+bir darboğaz.** Kullanıcı, GERÇEK Aether çerçevesinde (routing+JSON
+dispatch maliyeti olan bir handler'da) `--release` altında 8-worker'ın
+1-worker'DAN DAHA YAVAŞ (~209k→~56k req/s, -%73) OLDUĞUNU raporladı —
+Aether bunu KENDİ tarafında `server.nox`nin `use_os_workers()`u ÜZERİNDEN
+`--release`de `serve_multicore`u HİÇ KULLANMAYARAK (`serve()`e düşerek)
+ATLATMIŞTI. Kök neden: SAF/ucuz bir `ping` handler'ıyla (`nox.http.
+serve_multicore(port, handle, 8, 0)`) BU çöküş REPRODUCE EDİLEMEDİ (248k
+req/s, N=1'in ÜSTÜNDE) — AMA `SO_REUSEPORT`nin kernel bağlantı-dağılım
+hash'i worker'lar ARASINDA dengesiz OLABİLİYORDU, VE (Faz MN.7b'de ZATEN
+belgelenmiş) kabul edilen HER bağlantı fiber'ı `Scheduler.markReady()`
+İLE DOĞRUDAN kabul eden worker'ın KENDİ `ready` listesine EKLENİYORDU —
+Chase-Lev work-stealing deque'ine DEĞİL. Ucuz handler'da GÖRÜNMEZ (her
+istek çok ucuz); Aether'in GERÇEK dispatch maliyetinde bir worker fazla
+bağlantı alırsa O worker TÜM bunları TEK BAŞINA işliyordu, hiçbir boşta
+kardeş YARDIM EDEMİYORDU — ciddi bir darboğaz.
+
+Düzeltme (`runtime/stdlib_shims/http_server.zig`nin `serveImpl`i, `runtime/
+async_rt/scheduler.zig`): bağlantı fiber'ları `Scheduler.spawn()`nin
+Task[T] fiber'ları İçİN ZATEN kullandığı AYNI "deque'e it, İLK-
+çalıştırmadan SONRA sabitlen" desenine taşındı (`s.ownDeque()) |d| { d.
+pushBottom(fiber) catch s.markReady(fiber); ... } else { s.markReady
+(fiber); }`) — `ownDeque()` havuzsuz durumda (`sibling_deques.len == 0`,
+QBE'nin bağımsız worker'ları, tek-worker `nox.http.serve()`) `null`
+döndüğünden SIFIR davranış değişikliğiyle (`ownDeque`, `fn`den `pub fn`e
+çevrildi, TEK görünürlük değişikliği). Tek gerçek yan-etki: `ConnCtx.
+active_connections` (eşzamanlı-bağlantı sayacı) `*usize`den `*std.atomic.
+Value(usize)`e çevrildi — ÖNCEDEN "artırma/azaltma AYNI OS iş
+parçacığında" varsayımına dayanıyordu (kod yorumunda AÇIKÇA yazılıydı),
+bu bağlantı fiber'ları çalınabilir olunca ARTIK GEÇERSİZDİ (azaltma,
+`connectionEntry`nin temizlik `defer`ı, ÇALINMIŞ bir fiber İçİN FARKLI
+bir worker'da çalışabilir).
+
+Bir Plan agent doğrulaması `connectionEntry`/TLS/WebSocket upgrade
+kodunun TAMAMINI taradı — TEK gerçek İLGİLİ hazard `active_connections`
+İDİ (diğerleri: `FiberReader`/`FiberWriter`nin `scheduler` alanı BİR KEZ,
+göç SONRASI yakalanır, GÜVENLİ; WebSocket kodu HİÇ worker-yerel durum
+TAŞIMAZ; ARC serbest-listeleri HER ZAMAN `asap.currentWorkerSlot()`e
+TAZE anahtarlanır, GÜVENLİ). Ayrıca, BU değişiklikle İLGİSİZ, ÖNCEDEN VAR
+OLAN GERÇEK bir hazard bulundu (`tls_server.zig`nin `threadlocal var
+tl_read_target`/`tl_write_source`u — AYNI OS iş parçacığında AYNI ANDA
+BİRDEN FAZLA TLS bağlantısı İç İçe geçtiğinde YANLIŞ/serbest-bırakılmış
+bir arabelleğe okuma/yazma riski) — AYRI bir göreve BIRAKILDI, BU FAZIN
+kapsamı DIŞINDA.
+
+Doğrulama: YENİ bir Zig-seviyesi test (`http_server.zig`nin KENDİ test
+bölümü) — 3 worker'lı bir `WorkerPool`, slot 0'da TEK, `SO_REUSEPORT`SUZ
+bir soket (dengesizliği kernel hash'ine BAĞIMLI OLMADAN DETERMİNİSTİK
+üretir), K eşzamanlı istemci — `stolen_by_sibling_count > 0` DOĞRUDAN
+kanıtlar (`worker_pool.zig`nin KANITLANMIŞ `stolen_count > 0` desenini
+İZLER, AMA GERÇEK `serveImpl`/`connectionEntry` üretim yolu ÜZERİNDEN).
+7+ ardışık çalıştırmada TEMİZ. `zig build test` TEK bilinen İLİŞKİSİZ
+fuzz çökmesi HARİÇ TEMİZ, IR-diff 204/0/3-atlandı DEĞİŞMEDİ (`runtime/`e
+SINIRLI, HİÇBİR codegen dosyasına DOKUNMADI). **Asıl kanıt**: kullanıcının
+GERÇEK Aether handler'ıyla, `serve_multicore`u DOĞRUDAN çağıran (Aether'in
+KENDİ atlatması BYPASS edilerek) bir test harness'ıyla, 2 bağımsız
+eşleştirilmiş `wrk` ölçümünde 8-worker'ın ARTIK HİÇBİR ZAMAN 1-worker'ın
+ALTINA düşmediği (+%6 İLA +%25 arası kazanç, ÖNCEKİ -%73'ün TAM TERSİ)
+DOĞRULANDI.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

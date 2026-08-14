@@ -253,8 +253,19 @@ pub const Scheduler = struct {
     }
 
     /// Faz MN.4/5.8: `sibling_deques[own_slot]` — BU worker'ın KENDİ
-    /// deque'i (spawn/pop İçİn).
-    fn ownDeque(self: *Scheduler) ?*Deque {
+    /// deque'i (spawn/pop İçİn). `sibling_deques.len == 0` (havuzsuz —
+    /// QBE'nin bağımsız worker'ları, tek-worker `nox.http.serve()`) İKEN
+    /// `null` döner.
+    /// Faz MN.12: `pub` — `runtime/stdlib_shims/http_server.zig`nin
+    /// `serveImpl`i de (`acquireStack`/`releaseStack` GİBİ, bkz. onların
+    /// AYNI gerekçeli belge notu) ARTIK bunu ÇAĞIRIYOR: kabul edilen
+    /// bağlantı fiber'larını `spawn()`İLE BİREBİR AYNI "deque'e it, İLK-
+    /// çalıştırmadan SONRA sabitlen" desenine taşıyıp `SO_REUSEPORT`nin
+    /// (Faz MN.11) worker'lar arası dengesiz bağlantı dağılımını work-
+    /// stealing İLE KENDİLİĞİNDEN düzeltilebilir hale getirmek İçİn
+    /// (havuzsuz durumda `null` dönmesi SAYESİNDE QBE/tek-worker yolunda
+    /// SIFIR davranış değişikliği).
+    pub fn ownDeque(self: *Scheduler) ?*Deque {
         if (self.sibling_deques.len == 0) return null;
         return self.sibling_deques[self.own_slot];
     }

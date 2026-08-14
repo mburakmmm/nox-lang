@@ -43,6 +43,7 @@ const posix = std.posix;
 const asap = @import("../alloc/asap.zig");
 const arc = @import("../alloc/arc.zig");
 const dict_mod = @import("../collections/dict.zig");
+const worker_pool_mod = @import("../async_rt/worker_pool.zig");
 const bridge = @import("../async_rt/bridge.zig");
 const io_mod = @import("../async_rt/io.zig");
 const scheduler_mod = @import("../async_rt/scheduler.zig");
@@ -804,7 +805,9 @@ const ConnCtx = struct {
     handler: HandlerFn,
     handler_ctx: ?*anyopaque,
     max_body_bytes: usize,
-    active_connections: *usize,
+    /// Faz MN.12: `*std.atomic.Value(usize)` (ÖNCEDEN çıplak `*usize`) —
+    /// bkz. `serveImpl`nin YEREL `active_connections`ının belge notu.
+    active_connections: *std.atomic.Value(usize),
     /// Faz HH.7: bkz. `READ_TIMEOUT_MS`in belge notu — `serveImpl`nin
     /// `max_body_bytes`/`max_concurrent`İYLE AYNI "gerçekçi varsayılanı
     /// BEKLEMEDEN testlerin KÜÇÜK/HIZLI değerlerle sınırı EGZERSİZ
@@ -1004,7 +1007,10 @@ fn connectionEntry(arg: *anyopaque) void {
     const rt = conn.rt;
     defer gpa.destroy(conn);
     defer _ = closeSocket(conn.fd);
-    defer conn.active_connections.* -= 1;
+    // Faz MN.12: bu ARTIK atomik — bkz. `ConnCtx.active_connections`'ın
+    // belge notu (`serveImpl`) — bağlantı fiber'ı ÇALINMIŞSA bu `defer`
+    // KABUL EDEN worker'DAN FARKLI bir OS iş parçacığında çalışabilir.
+    defer _ = conn.active_connections.fetchSub(1, .monotonic);
 
     const scheduler = bridge.currentFiberScheduler();
 
@@ -1238,11 +1244,19 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
     const h: *ServerHandle = @ptrCast(@alignCast(server orelse return));
     const gpa = state.allocator();
 
-    // Faz Q.5: eşzamanlı bağlantı SAYACI — kabul döngüsü VE bağlantı
-    // fiber'ları AYNI OS iş parçacığında (tek `Scheduler`, kooperatif
-    // zamanlama) çalıştığından, GERÇEK paralel erişim ASLA olmaz — atomik
-    // olmayan sıradan bir `usize` GÜVENLİDİR.
-    var active_connections: usize = 0;
+    // Faz Q.5 (bkz. Faz MN.12'nin DÜZELTMESİ, aşağı): eşzamanlı bağlantı
+    // SAYACI. **ESKİ varsayım (ARTIK YANLIŞ)**: "kabul döngüsü VE bağlantı
+    // fiber'ları AYNI OS iş parçacığında çalıştığından atomik olmayan
+    // sıradan bir `usize` GÜVENLİDİR" — Faz MN.11.1 SONRASI bağlantı
+    // fiber'ları `--release`/M:N havuzunda ÇALINABİLİR hale geldiğinden
+    // (bkz. aşağıdaki `s.ownDeque()` dalı) bu ARTIK DOĞRU DEĞİL: ARTIRMA/
+    // OKUMA HÂLÂ tek iş parçacıklıdır (HER ZAMAN kabul eden worker'ın
+    // KENDİ döngüsü), AMA AZALTMA (`connectionEntry`nin temizlik `defer`ı)
+    // bir fiber ÇALINDIYSA TAMAMEN FARKLI bir worker'da çalışabilir —
+    // bu YÜZDEN `std.atomic.Value(usize)` (`.monotonic` yeterli, BU sayaç
+    // BAŞKA hiçbir belleği senkronize ETMİYOR, salt kabul-kontrolü
+    // muhasebesi).
+    var active_connections: std.atomic.Value(usize) = .init(0);
 
     var served: i64 = 0;
     accept_loop: while (true) {
@@ -1287,7 +1301,7 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
         // ÖNLER. Bağlantı DAHA `receiveHead`i bile ÇAĞIRMADAN reddedilir
         // (fd sessizce kapatılır, hiçbir HTTP yanıtı YAZILMAZ — reddetmenin
         // KENDİSİNİN ek kaynak tüketmemesi İÇİN en ucuz tepki).
-        if (active_connections >= max_concurrent) {
+        if (active_connections.load(.monotonic) >= max_concurrent) {
             _ = closeSocket(conn_fd);
             continue :accept_loop;
         }
@@ -1327,11 +1341,11 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
         // CANLI kalır.
         if (conn.tls_ctx) |ctx| tls_server.ctxTakeExtraRef(ctx);
         // `connectionEntry`nin (fiber İÇİNDE YA DA senkron çağrıldığında
-        // AYNI şekilde) `defer conn.active_connections.* -= 1`i bunu HER
-        // ZAMAN dengeler — spawn/çağrı BAŞARISIZ OLURSA (aşağıdaki `catch`
+        // AYNI şekilde) `defer ... active_connections.fetchSub(1, ...)`i
+        // bunu HER ZAMAN dengeler — spawn/çağrı BAŞARISIZ OLURSA (aşağıdaki `catch`
         // dalları) `connectionEntry` HİÇ ÇALIŞMAZ, bu yüzden O durumlarda
         // sayaç ELLE geri alınır (bkz. aşağı).
-        active_connections += 1;
+        _ = active_connections.fetchAdd(1, .monotonic);
 
         if (scheduler) |s| {
             // Dil stabilizasyonu fazı §M.4: ÖNCEDEN `Fiber.create` DOĞRUDAN
@@ -1354,14 +1368,14 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
                 // ASLA GERÇEKTEN sıfır referansa DÜŞMEZ (kalıcı bir "referans
                 // sızıntısı", çökme DEĞİL ama YİNE DE bir kaynak sızıntısı).
                 if (conn.tls_ctx) |ctx| tls_server.ctxReleaseExtraRef(ctx);
-                active_connections -= 1;
+                _ = active_connections.fetchSub(1, .monotonic);
                 gpa.destroy(conn);
                 _ = closeSocket(conn_fd);
                 continue;
             };
             const fiber = fiber_mod.Fiber.createWithStack(gpa, connectionEntry, conn, stack) catch {
                 if (conn.tls_ctx) |ctx| tls_server.ctxReleaseExtraRef(ctx);
-                active_connections -= 1;
+                _ = active_connections.fetchSub(1, .monotonic);
                 s.releaseStack(stack);
                 gpa.destroy(conn);
                 _ = closeSocket(conn_fd);
@@ -1397,7 +1411,33 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
             } else {
                 s.live_count += 1;
             }
-            s.markReady(fiber);
+            // Faz MN.12 (bkz. proje planı — SO_REUSEPORT'un [Faz MN.11]
+            // worker'lar arası dengesiz bağlantı dağılımının, Aether'in
+            // GERÇEK per-istek maliyetli handler'ında `--release` altında
+            // 8 worker'ı 1 worker'DAN DAHA YAVAŞ hale getirmesinin
+            // düzeltmesi): ÖNCEDEN bu fiber KOŞULSUZ `s.markReady(fiber)`
+            // İLE DOĞRUDAN `s`nin KENDİ `ready` listesine ekleniyordu —
+            // Chase-Lev work-stealing deque'ine ASLA GİRMİYORDU (bkz.
+            // Faz MN.7b'nin BULDUĞU, ARTIK ESKİMİŞ "bağlantılar worker'lar
+            // arası ÇALINAMAZ" notu, `tests/compat/http_serve_multicore_
+            // pool_golden_test.zig`). Bu, `SO_REUSEPORT`nin bir worker'a
+            // FAZLA bağlantı yönlendirdiği durumda O worker'ın TÜM bu
+            // bağlantıları TEK BAŞINA, SONSUZA KADAR işlemesi (hiçbir boşta
+            // kardeş YARDIM EDEMEMESİ) demekti — ucuz handler'larda (bare
+            // ping) görünmez, GERÇEK dispatch maliyetinde (Aether: routing+
+            // JSON) ciddi bir darboğaz. Düzeltme: `scheduler_mod.spawn`nin
+            // (bkz. onun belge notu) AYNI "deque'e it, İLK-çalıştırmadan
+            // SONRA sabitlen" desenini BİREBİR izle — `s.ownDeque()`
+            // `sibling_deques.len == 0` İKEN (QBE'nin bağımsız worker'ları,
+            // tek-worker `nox.http.serve()`) `null` döndüğünden, BU SADECE
+            // `--release`/M:N havuzu yolunu etkiler, QBE'de SIFIR davranış
+            // değişikliği.
+            if (s.ownDeque()) |d| {
+                d.pushBottom(fiber) catch s.markReady(fiber);
+                if (s.pool_activity_epoch) |epoch| _ = epoch.fetchAdd(1, .release);
+            } else {
+                s.markReady(fiber);
+            }
         } else {
             connectionEntry(conn);
         }
@@ -2021,4 +2061,125 @@ test "Güvenlik M-1: nox_http_response_new normal (CR/LF'siz) başlıklarda HÂL
     try std.testing.expectEqual(@as(usize, 1), r.headers.len);
     try std.testing.expectEqualStrings("X-Normal", r.headers[0].name);
     try std.testing.expectEqualStrings("deger1", r.headers[0].value);
+}
+
+// ---- Faz MN.12: bağlantı fiber'larının çapraz-worker ÇALINABİLİR olduğunun
+// kanıtı — `tests/compat/http_serve_multicore_pool_golden_test.zig`nin
+// ARTIK YANLIŞ olan "bağlantılar worker'lar arası ÇALINAMAZ" iddiasını
+// DOĞRUDAN çürütür. `worker_pool.zig`nin KANITLANMIŞ "GERÇEK spawn/await...
+// çapraz-worker çalma" deseni (`stolen_count > 0`, bkz. o dosyanın AYNI
+// isimli testi) İZLENİR, AMA GERÇEK `serveImpl`/`connectionEntry` üretim
+// yolu ÜZERİNDEN — sentetik bir `scheduler_mod.spawn` DEĞİL.
+
+const StealProofCtx = struct {
+    mutex: asap.SpinLock = .{},
+    slots_seen: std.ArrayListUnmanaged(usize) = .empty,
+    rt: ?*anyopaque = null,
+};
+
+fn stealProofHandle(handler_ctx: ?*anyopaque, req: ?*anyopaque) callconv(.c) ?*anyopaque {
+    _ = req;
+    const ctx: *StealProofCtx = @ptrCast(@alignCast(handler_ctx.?));
+    // `asap.currentWorkerSlot()` — HANGİ worker'ın BU isteği GERÇEKTEN
+    // işlediğini belirler; slot 0 DIŞINDA bir değer, bağlantı fiber'ının
+    // KABUL EDEN worker'DAN (HER ZAMAN slot 0, aşağıdaki tek-soket
+    // kurulumu SAYESİNDE) BAŞKA bir worker'a ÇALINDIĞININ doğrudan kanıtıdır.
+    const slot = asap.currentWorkerSlot();
+    ctx.mutex.lock();
+    ctx.slots_seen.append(std.heap.page_allocator, slot) catch {};
+    ctx.mutex.unlock();
+    const body = http_client.dupeToNoxStr(ctx.rt, "ok") orelse return null;
+    defer str_mod.nox_str_release(ctx.rt, body);
+    return nox_http_response_new(ctx.rt, 200, body, null);
+}
+
+const StealProofServeArgs = struct {
+    rt: ?*anyopaque,
+    server: ?*anyopaque,
+    max_connections: i64,
+    ctx: *StealProofCtx,
+};
+
+fn stealProofServeEntry(arg: *anyopaque) callconv(.c) i64 {
+    const args: *StealProofServeArgs = @ptrCast(@alignCast(arg));
+    serveImpl(args.rt, args.server, stealProofHandle, args.ctx, null, args.max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS, true, null);
+    return 0;
+}
+
+/// `runtime/async_rt/pool_bridge.zig`nin `poolWorkerMain`iyle AYNI desen
+/// (o fonksiyon `pub` DEĞİL, BU YÜZDEN BURADA YİNELENİR) — KENDİLERİNE AİT
+/// HİÇBİR İŞİ OLMAYAN, SADECE `run()` çağırıp ÇALINABİLİR hale gelen
+/// kardeş worker'lar. `worker_pool.zig`nin `stealTestWorkerEntry`sindeki
+/// AYNI "slot 0 ENTRY'yi spawn ETMEDEN ÖNCE run()a ULAŞMA" yarışını
+/// ÖNLEMEK İçİn `ready` bayrağını bekler.
+fn stealProofSiblingEntry(rt: *anyopaque, slot: usize, ready: *std.atomic.Value(bool)) void {
+    _ = slot;
+    bridge.nox_async_init(rt);
+    while (!ready.load(.acquire)) std.Thread.yield() catch {};
+    _ = bridge.nox_async_run_to_completion(rt);
+    bridge.nox_async_deinit(rt);
+}
+
+fn stealProofClientRun(port: u16) void {
+    const fd = testConnect(port) catch return;
+    testSendGet(fd, "/x");
+    testReadAll(fd);
+    _ = closeSocket(fd);
+}
+
+test "serveImpl: GERÇEK çapraz-worker bağlantı çalma — SO_REUSEPORT dengesizliğinde idle worker'lar YARDIM EDEBİLİYOR (Faz MN.12)" {
+    const testing = std.testing;
+    const pool = try worker_pool_mod.WorkerPool.create(std.heap.page_allocator, 3);
+    defer pool.destroy();
+
+    var ready: std.atomic.Value(bool) = .init(false);
+    try pool.spawnWorkers(*std.atomic.Value(bool), stealProofSiblingEntry, &ready);
+
+    // Slot 0 (çağıran iş parçacığı, `WorkerPool.create` TARAFINDAN ZATEN
+    // slot 0 OLARAK bağlandı) — TEK, `SO_REUSEPORT`SUZ soket: kernel
+    // hash'ine BAĞIMLI OLMADAN "bir worker TÜM bağlantıları aldı" en-kötü
+    // senaryosunu DETERMİNİSTİK olarak üretir (bkz. `nox_http_server_
+    // listen`, port=0 → OS otomatik atar).
+    bridge.nox_async_init(pool.rt);
+    const server = nox_http_server_listen(pool.rt, 0) orelse return error.ListenFailed;
+    defer nox_http_server_close(pool.rt, server);
+    const port: u16 = @intCast(nox_http_server_port(server));
+
+    var ctx = StealProofCtx{ .rt = pool.rt };
+    const k = 24;
+    var args = StealProofServeArgs{ .rt = pool.rt, .server = server, .max_connections = k, .ctx = &ctx };
+    const entry_task = bridge.nox_async_spawn(pool.rt, stealProofServeEntry, &args) orelse return error.SpawnFailed;
+    // `entry_task` spawn EDİLDİKTEN SONRA `ready`i AYARLA (`pool_live_
+    // count` ARTIK >= 1 — kardeşlerin `poolWorkerMain`ın KENDİ belgelediği
+    // "run()'a slot 0'DAN ÖNCE ULAŞMA" yarışı YAPISAL olarak KAPANIR).
+    ready.store(true, .release);
+
+    // K istemci iş parçacığı EŞZAMANLI bağlanıp GET gönderir — accept
+    // backlog'unu doldurup ARDIŞIK non-blocking `accept()` çağrılarının
+    // ARADA yield ETMEDEN BİRDEN FAZLA bağlantıyı deque'e İTMESİNİ sağlar,
+    // kardeşlerin ÇALABİLECEĞİ bir pencere açar.
+    var threads: [k]std.Thread = undefined;
+    var i: usize = 0;
+    while (i < k) : (i += 1) {
+        threads[i] = try std.Thread.spawn(.{}, stealProofClientRun, .{port});
+    }
+    for (threads) |t| t.join();
+
+    const rc = bridge.nox_async_run_to_completion(pool.rt);
+    try testing.expectEqual(@as(i32, 0), rc);
+    bridge.nox_async_destroy_task(pool.rt, entry_task);
+    bridge.nox_async_deinit(pool.rt);
+
+    pool.joinAll();
+
+    try testing.expectEqual(@as(usize, k), ctx.slots_seen.items.len);
+    var stolen: usize = 0;
+    for (ctx.slots_seen.items) |s| {
+        if (s != 0) stolen += 1;
+    }
+    // Kanıt: EN AZ bir bağlantı, KABUL EDEN worker (slot 0) DIŞINDA bir
+    // worker TARAFINDAN işlendi — ÖNCEDEN (Faz MN.11'e kadar) bu SIFIR
+    // olmak ZORUNDAYDI (`s.markReady(fiber)` koşulsuz KENDİ `ready`
+    // listesine EKLERDİ, hiçbir kardeş bunu GÖREMEZDİ).
+    try testing.expect(stolen > 0);
 }

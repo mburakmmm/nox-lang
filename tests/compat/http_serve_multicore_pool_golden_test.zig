@@ -16,20 +16,28 @@
 //! fiber'ında senkron çalışır") — bu YÜZDEN `handle` İçİNDEN `spawn`/`await`
 //! KULLANILAMAZ, "handler İçİNDE spawn edilen bir alt-görevin BAŞKA worker'a
 //! ÇALINDIĞI" DOĞRUDAN bir Nox-seviyesi ispatı MÜMKÜN DEĞİLDİR (planın İLK
-//! taslağının BU noktadaki beklentisi YANLIŞTI). AYRICA: kabul edilen HER
-//! bağlantı `serveImpl`nin `s.markReady(fiber)` çağrısıyla (bkz. `http_
-//! server.zig`) DOĞRUDAN o worker'ın KENDİ `ready` listesine eklenir —
-//! `nox_async_spawn`ın havuz-farkındalıklı deque-yönlendirmesinden GEÇMEZ,
-//! bu YÜZDEN bağlantılar da worker'lar ARASI ÇALINAMAZ (bağlantı-seviyesi
-//! dengeleme ZATEN paylaşılan-fd üzerindeki OS-seviyesi `accept()`
-//! yarışıyla sağlanıyor — bu MN.7b'DEN BAĞIMSIZ, DEĞİŞMEDİ). MN.7b'nin
-//! GERÇEK, BU testin kanıtladığı kazanımı: TÜM worker'lar ARTIK TEK bir
-//! paylaşılan `RuntimeState`/ARC havuzu/STW döngü-çözücüyü PAYLAŞIYOR
-//! (`nox_thread_spawn`nin ESKİ, N-BAĞIMSIZ-runtime modeli YERİNE) — bu
-//! test BUNUN GERÇEK bir HTTP sunucusunda ÇÖKMEDEN/SIZMADAN çalıştığını
-//! doğrular. Çapraz-worker GÖREV çalmanın KENDİSİ `pool_bridge.zig`nin
-//! `nox_pool_serve`/`nox_pool_run` Zig-seviyesi testlerinde ZATEN (`stolen_
-//! count > 0` İLE) KANITLANMIŞTIR (bkz. MN.7a.7/MN.7b.1).
+//! taslağının BU noktadaki beklentisi YANLIŞTI). MN.7b'nin GERÇEK, BU testin
+//! kanıtladığı kazanımı: TÜM worker'lar ARTIK TEK bir paylaşılan `RuntimeState`/
+//! ARC havuzu/STW döngü-çözücüyü PAYLAŞIYOR (`nox_thread_spawn`nin ESKİ,
+//! N-BAĞIMSIZ-runtime modeli YERİNE) — bu test BUNUN GERÇEK bir HTTP
+//! sunucusunda ÇÖKMEDEN/SIZMADAN çalıştığını doğrular. Çapraz-worker GÖREV
+//! çalmanın KENDİSİ `pool_bridge.zig`nin `nox_pool_serve`/`nox_pool_run`
+//! Zig-seviyesi testlerinde ZATEN (`stolen_count > 0` İLE) KANITLANMIŞTIR
+//! (bkz. MN.7a.7/MN.7b.1).
+//!
+//! **DÜZELTME (Faz MN.12) — AŞAĞIDAKİ iddia ARTIK YANLIŞ, TARİHSEL kayıt
+//! olarak bırakılıyor:** ÖNCEDEN burada "kabul edilen HER bağlantı `serveImpl`nin
+//! `s.markReady(fiber)` çağrısıyla DOĞRUDAN o worker'ın KENDİ `ready`
+//! listesine eklenir... bu YÜZDEN bağlantılar da worker'lar ARASI ÇALINAMAZ"
+//! yazıyordu. Bu, `SO_REUSEPORT`nin (Faz MN.11) worker'lar arası dengesiz
+//! bağlantı dağılımıyla BİRLEŞİP Aether'in GERÇEK per-istek maliyetli
+//! handler'ında `--release` altında 8 worker'ı 1 worker'DAN DAHA YAVAŞ hale
+//! getiren KÖK NEDENDİ — Faz MN.12, bağlantı fiber'larını `scheduler_mod.
+//! spawn`nin AYNI "deque'e it, İLK-çalıştırmadan SONRA sabitlen" desenine
+//! taşıyarak BUNU DÜZELTTİ (bkz. `http_server.zig`nin `serveImpl`i,
+//! `s.ownDeque()` dalı) — bağlantılar ARTIK worker'lar ARASI ÇALINABİLİR,
+//! `runtime/stdlib_shims/http_server.zig`nin KENDİ test bölümündeki
+//! "GERÇEK çapraz-worker bağlantı çalma" testi BUNU DOĞRUDAN kanıtlar.
 //!
 //! Önkoşul: `clang` PATH üzerinde bulunmalıdır (bkz. `llvm_golden_test.
 //! zig`nin AYNI notu).
