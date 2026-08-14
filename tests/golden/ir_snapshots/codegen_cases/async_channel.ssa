@@ -1039,6 +1039,7 @@ export function $main_task(l %rt) {
     %t6 =l loadl %t0
     %t7 =l call $nox_alloc(l %rt, l 16)
     storel %rt, %t7
+    call $nox_channel_retain(l %t6)
     %t8 =l add %t7, 8
     storel %t6, %t8
     %t9 =l call $nox_async_spawn(l %rt, l $spawn_wrap_0, l %t7)
@@ -1272,6 +1273,7 @@ export function l $spawn_wrap_0(l %argp) {
     %t0 =l add %argp, 8
     %t1 =l loadl %t0
     call $producer(l %rt, l %t1)
+    call $nox_channel_destroy(l %rt, l %t1)
     call $nox_free(l %rt, l %argp, l 16)
     ret 0
 }

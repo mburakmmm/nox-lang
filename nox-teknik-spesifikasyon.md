@@ -15318,6 +15318,111 @@ IR-diff DEĞİŞMEDİ. Gerçek `nox.thread`+`Task[T]`+`spawn`/`await`
 kullanan) uçtan uca bir sağlık kontrolüyle DE doğrulandı — normal (Task'ın
 BAŞKA bir fiber'e HİÇ geçmediği) `spawn`/`await` akışı DEĞİŞMEDEN çalışır.
 
+## 3.94 `Task[T]`/`Channel[T]`ye GERÇEK atomik referans sayımı (v1.29.12)
+
+§3.93'te (v1.29.11) `Task.detached` yarışı çözüldükten SONRA, ChatGPT
+incelemesinin İKİNCİ iddiasını (Task/Channel'ın spawn'a "borrow" edilmesi,
+ARC-yönetimli OLMAMASI) — v1.29.11'in "Kapsam DIŞI" bıraktığı KONU —
+DOĞRUDAN bir kod reprodüksiyonuyla test ettim:
+
+```python
+async def slow_consumer(ch: Channel[int]) -> None:
+    x: int = await ch.recv()
+    print(x)
+
+async def owner() -> None:
+    ch: Channel[int] = Channel[int](0)
+    t: Task[None] = spawn slow_consumer(ch)
+    # owner() BURADA döner, ch kapsam dışına çıkar, destroy() tetiklenir —
+    # slow_consumer HENÜZ HİÇ ÇALIŞMADI
+
+t2: Task[None] = spawn owner()
+await t2
+```
+
+**Gerçek, canlı bir SIGSEGV ürettim** (exit code 139). `lldb` backtrace
+KESİN: `slow_consumer`in fiber'ı `nox_channel_recv` → `Channel(i64).recv`
+→ `self.mutex.lock()` çağırırken `owner()`nin ÇOKTAN `nox_channel_destroy`
+İLE serbest bıraktığı belleğe erişiyor.
+
+**Kök neden**: `Task[T]`/`Channel[T]` (`compiler/codegen_qbe/types.zig:
+14-21`) BİLEREK `isHeapManaged`in DIŞINDA tutulur. `checker.zig:959-973`
+nin `isSpawnParamSafeType`i `.task`/`.channel`i HER İKİ backend'de de bir
+`spawn`e argüman OLARAK İZİN VERİR, AMA `compiler/codegen_qbe/ownership.
+zig:836-860`teki (`retainIfAliasing`) TEK retain-enjeksiyon noktası
+`isHeapManaged(v0.heap)` İLE GATED OLDUĞUNDAN Task/Channel bir değişkenden
+spawn'a (VEYA BAŞKA bir değişkene) HER kopyalandığında SESSİZCE HİÇBİR
+retain OLMAZ — ham işaretçi kopyası. Sahip kapsamı bittiğinde tek referans
+SANILIP KOŞULSUZ serbest bırakılır (`destroyNonArcValue`), spawn edilen
+çocuk HENÜZ BAŞLAMAMIŞ/BİTMEMİŞ olsa BİLE.
+
+**Task İçİn DAHA SİNSİ, ayrı bir sonuç bulundu**: `Task.await_()`
+(`scheduler.zig`), `state`i `PENDING` DIŞINDA (COMPLETED DE DEĞİL — yani
+`DETACHED`) bulursa CAS BAŞARISIZ olur AMA `sched.suspendCurrent()`
+ÇAĞRILMADAN doğrudan `return self.result;`e DÜŞER — `self.result` HENÜZ
+HİÇ YAZILMAMIŞ (görev TAMAMLANMADI) TANIMSIZ bellektir. Yani: bir Task
+BİRDEN FAZLA tarafa spawn edilip BİR taraf ERKEN `destroy()` çağırırsa
+(task'ı `DETACHED`ye geçirip), BAŞKA bir MEŞRU tüketici DAHA SONRA `.
+await_()` çağırırsa ÇÖKMEZ ama SESSİZCE ÇÖP VERİ döner — Channel'ın
+çökmesinden DAHA SİNSİ bir hata sınıfı.
+
+**Düzeltme**: `ThreadHandle`nin (`runtime/async_rt/thread_bridge.zig:
+105-116`) ZATEN KANITLANMIŞ "atomik referans sayacı, sıfıra inince SON
+düşüren taraf serbest bırakır" desenini `Task[T]`/`Channel[T]`ye
+GETİRDİM — AMA `ThreadHandle`nin SABİT "2'den başlar" (parent+child)
+modeli DEĞİL, GERÇEK bir sayaç (`1`den başlar, HER kopyada artar):
+
+- `runtime/async_rt/scheduler.zig`nin `Task(T)`una VE `runtime/async_rt/
+  channel.zig`nin `Channel(T)`una `refcount: std.atomic.Value(u32) =
+  .init(1)` eklendi.
+- `bridge.zig`ye YENİ `nox_task_retain`/`nox_channel_retain` (basit
+  atomik artırma).
+- `nox_async_destroy_task`/`nox_channel_destroy` artık ÖNCE `refcount.
+  fetchSub(1, .acq_rel)` yapıp SONUÇ `1` DEĞİLSE (BAŞKA sahip(ler) VAR)
+  HEMEN döner — SADECE SON sahip (v1.29.11'in `state`-protokolüne/
+  `Channel.deinit`e) devam eder.
+- **Derleyici**: `ownership.zig`ye `isSpawnRefcountedType`/
+  `retainNonArcValue`/`releaseNonArcIfTemporary` — `retainIfAliasing`
+  (İKİ `stmt.zig` return-retain SİTESİ DAHİL) VE `async_thread.zig`nin
+  `genSpawnExpr`/`genSpawnWrapper`ı (list/class/dict'in `--release`e
+  ÖZGÜ retain'inin AKSİNE BACKEND-BAĞIMSIZ, ÇÜNKÜ `isSpawnParamSafeType`
+  Task/Channel'ı HER İKİ backend'de de İZİN VERİR) genişletildi.
+  `.thread_handle`/`.thread_channel` de (`--release` altında GERÇEKTEN
+  Task/Channel OLDUKLARINDAN, `destroyNonArcValue`nin KENDİ switch'inin
+  ZATEN yaptığı gibi) TUTARLILIK İçİn DAHİL edildi — `.qbe` altındaki
+  AYRI `ThreadHandle`/`ThreadChannel` struct'ları DOKUNULMADAN kaldı
+  (`isSpawnRefcountedType`, `.qbe`de bunlar İçİn `false` döner).
+
+**Neden EK bir kilit GEREKMİYOR**: bir fiber'ın KENDİ referansı YALNIZCA
+fiber Channel/Task'ı kullanmayı TAMAMEN BİTİRDİKTEN SONRA (kapsam-sonu /
+`genSpawnWrapper`nin `target_fn` DÖNDÜKTEN SONRAKİ serbest bırakması)
+azaltılır — bu YÜZDEN "refcount 0'a inerken BAŞKA biri hâlâ `.send()`/
+`.recv()` İÇİNDE" senaryosu YAPISAL olarak İMKANSIZDIR.
+
+**Doğrulama**: reprodüksiyon KENDİSİ YENİ bir golden teste dönüştürüldü
+(`tests/golden/codegen_cases/channel_spawn_outlives_owner.nox` — owner
+`ch.send(99)` de yapıp `t`yi `await` ederek TAMAMLANIR, "99\ndone" DOĞRU
+çıktısı BEKLENİR — ARTIK ÇÖKMEZ). `Task`in "sessiz çöp veri" senaryosunu
+DOĞRUDAN doğrulayan YENİ bir birim testi (`scheduler.zig`, `refcount=2`
+simülasyonu: owner ERKEN destroy() çağırır, `state`e HİÇ DOKUNMADIĞI,
+DAHA SONRA GERÇEK bir tüketicinin `state`i HÂLÂ `PENDING` BULUP DOĞRU
+askıya ALINDIĞI kanıtlanır). Reprodüksiyonun `.ssa` DİFF'İ İNCELENDİ
+(`git diff`) — HER fixture'da SADECE beklenen İKİ satır EKLENMİŞ (`call
+$nox_channel_retain(...)` paketleme ÖNCESİ, `call $nox_channel_destroy
+(...)` sarmalayıcının `target_fn`i ÇAĞIRMASINDAN SONRA), HİÇBİR
+BEKLENMEYEN değişiklik YOK. Tam `zig build test`: 3 ardışık koşumda TEK
+bilinen İLİŞKİSİZ fuzz çökmesi HARİÇ temiz (848/849, IR-diff 206/0-yeni/
+3-atlandı SABİT) — ARADA gözlemlenen İKİ farklı "başarısızlık" (bir
+`InputOutput` link hatası, bir `http_serve_tls` ECONNREFUSED) HER İKİSİ
+de tekrar-çalıştırmada YENİDEN ÜRETİLEMEDİ, ağır paralel `zig build test`
+yüküne bağlı TESADÜFİ araç/kaynak-çekişmesi FLAKE'İ olduğu (BU oturumun
+DAHA ÖNCE de gördüğü AYNI desen) doğrulandı.
+
+**Kapsam DIŞI (BİLİNÇLİ)**: `list`/`class`/`dict`nin `--release`e özgü,
+senkronizasyonsuz cross-worker MUTATION riski (bu Task/Channel HANDLE'ININ
+ömrüyle DEĞİL, İÇERİĞİN eşzamanlı DEĞİŞTİRİLMESİYLE İLGİLİ, tamamen AYRI
+bir problem) — AYRI bir görev.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

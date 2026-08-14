@@ -369,6 +369,13 @@ pub fn genSpawnExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
         // ÇALIŞMAZ (checker list/class/dict'i `.qbe`de HİÇ GEÇİRMEZ).
         if (self.backend == .llvm and (av.heap == .list or av.heap == .class or av.heap == .dict)) {
             try self.emitInlineRetain(av.text, av.heap);
+        } else if (self.isSpawnRefcountedType(av.heap)) {
+            // v1.29.12: `Task[T]`/`Channel[T]` (bkz. `ownership.zig`nin
+            // `isSpawnRefcountedType`sinin belge notu — GERÇEK, canlı bir
+            // SIGSEGV reprodüksiyonuyla bulunan bir hata İçİn) — list/
+            // class/dict'in AKSİNE BACKEND-BAĞIMSIZ (`isSpawnParamSafeType`
+            // BUNLARI HER İKİ backend'de de İZİN VERİR).
+            try self.retainNonArcValue(av.text, av.heap);
         }
         const off = 8 + 8 * i;
         const addr = try self.newTemp();
@@ -386,6 +393,11 @@ pub fn genSpawnExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
                 try self.releaseIfTemporary(a, arg_values[i]);
             }
         }
+    }
+    // v1.29.12: YUKARIDAKİ `Task[T]`/`Channel[T]` retain'inin EŞLEŞEN
+    // yarısı — BACKEND-BAĞIMSIZ (bkz. YUKARIDAKİ retain'in AYNI notu).
+    for (call.args, 0..) |a, i| {
+        try self.releaseNonArcIfTemporary(a, arg_values[i]);
     }
 
     const wrapper_name = try std.fmt.allocPrint(self.allocator, "spawn_wrap_{d}", .{self.spawn_wrapper_counter});
@@ -481,6 +493,16 @@ pub fn genSpawnWrapper(self: *Codegen, spec: SpawnWrapperSpec) CodegenError!void
             if (p.heap == .list or p.heap == .class or p.heap == .dict) {
                 try self.releaseValueIfSet(at, p.heap, p.elem_qtype, p.class_name, p.elem_heap_info, p.dict_info);
             }
+        }
+    }
+    // v1.29.12: YUKARIDAKİ İLE AYNI, `Task[T]`/`Channel[T]` İçİn (bkz.
+    // `ownership.zig`nin `isSpawnRefcountedType`sinin belge notu) —
+    // BACKEND-BAĞIMSIZ, sarmalayıcının KENDİ retain edilmiş referansını
+    // `target_fn` (ÖDÜNÇ ALAN taraf) İŞİNİ BİTİRDİKTEN SONRA serbest
+    // bırakır.
+    for (spec.sig.params, arg_texts) |p, at| {
+        if (self.isSpawnRefcountedType(p.heap)) {
+            try self.destroyNonArcValue(at, p.heap);
         }
     }
 

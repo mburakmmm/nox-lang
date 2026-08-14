@@ -1740,6 +1740,24 @@ test "codegen(çalıştır): async — Channel[T] (rendezvous) iki görev arası
     );
 }
 
+// v1.29.12 — GERÇEK, canlı bir SIGSEGV reprodüksiyonuyla bulunan bir hata
+// İçİn eklendi: `Channel[T]` bir sahipten `spawn` İLE BAŞKA bir fiber'a
+// GEÇİLİP sahip HENÜZ çocuk fiber ÇALIŞMADAN dönerse, ESKİDEN (Task[T]/
+// Channel[T] ARC-yönetimli OLMADIĞINDAN, retain/refcount YOKKEN)
+// `nox_channel_destroy` KOŞULSUZ serbest bırakırdı — çocuk DAHA SONRA
+// `.recv()` çağırdığında `self.mutex.lock()` SERBEST BIRAKILMIŞ belleğe
+// erişip GERÇEK bir SIGSEGV verirdi (`lldb` İLE DOĞRULANDI). `owner()`nin
+// KENDİSİ `t`yi (`slow_consumer`nin Task'ını) HİÇ `await` ETMEDEN döner —
+// `ch`nin (Channel) refcount'u sahibin `destroy()`u SIRASINDA HÂLÂ `2`
+// (owner + spawn edilen closure) OLDUĞUNDAN struct HAYATTA KALIR,
+// `slow_consumer` DAHA SONRA GÜVENLE `.recv()` çağırıp doğru veriyi alır.
+test "codegen(çalıştır): v1.29.12 — Channel[T] bir spawn'a geçilip sahip erken dönse BİLE çökmez, refcount ile hayatta kalır" {
+    try expectGolden(
+        @embedFile("codegen_cases/channel_spawn_outlives_owner.nox"),
+        @embedFile("codegen_cases/channel_spawn_outlives_owner.expected"),
+    );
+}
+
 test "codegen(çalıştır): Faz BB.4 — nox.thread.start/ThreadHandle[int]/.join(), gerçek OS iş parçacığı, sızıntı yok" {
     try expectGolden(
         @embedFile("codegen_cases/thread_spawn_join_int.nox"),

@@ -1457,8 +1457,10 @@ export function $main_task(l %rt) {
     storel %t17, %t22
     %t23 =l add %t21, 16
     storel %t18, %t23
+    call $nox_channel_retain(l %t19)
     %t24 =l add %t21, 24
     storel %t19, %t24
+    call $nox_channel_retain(l %t20)
     %t25 =l add %t21, 32
     storel %t20, %t25
     %t26 =l call $nox_async_spawn(l %rt, l $spawn_wrap_0, l %t21)
@@ -1476,8 +1478,10 @@ export function $main_task(l %rt) {
     storel %t28, %t33
     %t34 =l add %t32, 16
     storel %t29, %t34
+    call $nox_channel_retain(l %t30)
     %t35 =l add %t32, 24
     storel %t30, %t35
+    call $nox_channel_retain(l %t31)
     %t36 =l add %t32, 32
     storel %t31, %t36
     %t37 =l call $nox_async_spawn(l %rt, l $spawn_wrap_1, l %t32)
@@ -1732,6 +1736,8 @@ export function l $spawn_wrap_1(l %argp) {
     %t6 =l add %argp, 32
     %t7 =l loadl %t6
     call $worker(l %rt, l %t1, l %t3, l %t5, l %t7)
+    call $nox_channel_destroy(l %rt, l %t5)
+    call $nox_channel_destroy(l %rt, l %t7)
     call $nox_free(l %rt, l %argp, l 40)
     ret 0
 }
@@ -1747,6 +1753,8 @@ export function l $spawn_wrap_0(l %argp) {
     %t6 =l add %argp, 32
     %t7 =l loadl %t6
     call $worker(l %rt, l %t1, l %t3, l %t5, l %t7)
+    call $nox_channel_destroy(l %rt, l %t5)
+    call $nox_channel_destroy(l %rt, l %t7)
     call $nox_free(l %rt, l %argp, l 40)
     ret 0
 }

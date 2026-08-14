@@ -787,6 +787,29 @@ pub fn Task(comptime T: type) type {
         /// — bkz. MN.4/5'in "GERÇEK çapraz-worker fiber çalma" tasarımı).
         state: std.atomic.Value(usize) = .init(PENDING),
 
+        /// **v1.29.12 — GERÇEK, DIŞARIDAN bulunup DOĞRULANMIŞ (canlı bir
+        /// SIGSEGV reprodüksiyonuyla) bir hata İçİn eklendi.** `Task[T]`
+        /// (`Channel[T]` İLE AYNI) `isHeapManaged`in DIŞINDA tutulduğundan
+        /// (bkz. `compiler/codegen_qbe/types.zig`) bir `spawn`e argüman
+        /// olarak GEÇİLDİĞİNDE (`checker.zig`nin `isSpawnParamSafeType`i
+        /// BUNA İZİN VERİR) SESSİZCE HİÇBİR retain OLMAZDI — ham işaretçi
+        /// kopyası. Sahip kapsamı bittiğinde `nox_async_destroy_task` TEK
+        /// referans SANIP (v1.29.11'in `state`-protokolü İLE) temizlerdi,
+        /// spawn edilen çocuk HENÜZ `self`i KULLANMAMIŞ/BİTİRMEMİŞ olsa
+        /// BİLE — `entryTrampoline`nin `DETACHED`ye ERKEN geçmesi, o
+        /// çocuğun DAHA SONRA `await_()` çağırdığında `state`in `PENDING`
+        /// OLMAMASI YÜZÜNDEN `sched.suspendCurrent()` HİÇ ÇAĞRILMADAN
+        /// `self.result`in (HENÜZ YAZILMAMIŞ, TANIMSIZ) değerini SESSİZCE
+        /// döndürmesine yol AÇARDI. `1`den BAŞLAYAN GERÇEK bir sayaç
+        /// (`ThreadHandle`nin `owners`ıYLA AYNI ilke, `runtime/async_rt/
+        /// thread_bridge.zig`, ama SABİT "2" DEĞİL) — derleyicinin YENİ
+        /// enjekte ettiği `retainIfAliasing`/`genSpawnExpr` çağrıları (bkz.
+        /// `compiler/codegen_qbe/ownership.zig`/`async_thread.zig`) HER
+        /// kopyada artırır; `nox_async_destroy_task` HER `destroy()`de
+        /// azaltır — SIFIRA İNDİĞİNDE (SON sahip) v1.29.11'in `state`-
+        /// protokolü DEVREYE girer (AYNEN KORUNDU, DEĞİŞMEDİ).
+        refcount: std.atomic.Value(u32) = .init(1),
+
         /// **v1.29.11 — GERÇEK, DIŞARIDAN bulunup DOĞRULANMIŞ bir hata
         /// İçİn eklendi.** ESKİDEN `detached: bool` (Faz S.1) `state`in
         /// AYNI atomik protokolünün DIŞINDA, DÜZ, senkronize-OLMAYAN AYRI
@@ -1174,6 +1197,78 @@ test "v1.29.11: destroy() ZATEN KAYITLI bir waiter'ı ASLA sallandırmaz — ent
     // `self`e HİÇ DOKUNMAZ) — bu YÜZDEN burada elle serbest bırakmak
     // GÜVENLİDİR (double-free OLSAYDI `std.testing.allocator`
     // YAKALARDI).
+    scheduler.allocator.destroy(task);
+}
+
+// **v1.29.12 — GERÇEK, canlı bir SIGSEGV reprodüksiyonuyla bulunan bir
+// hata İçİn eklendi.** `Task[T]` bir `spawn`e argüman olarak GEÇİLİP
+// sahip HENÜZ görev tamamlanmadan `destroy()` çağırdığında, v1.29.11'in
+// (refcount OLMADAN) `state`i KOŞULSUZ `PENDING`den `DETACHED`ye CAS eden
+// mantığı, DAHA SONRA GERÇEKTEN `await_()` çağıran (spawn edilen
+// kapanışın KENDİSİ GİBİ) bir tüketicinin `state`i ARTIK `PENDING`
+// BULAMAMASINA (CAS BAŞARISIZ, `suspendCurrent()` HİÇ ÇAĞRILMADAN
+// `self.result`in HENÜZ YAZILMAMIŞ ÇÖP değerinin SESSİZCE dönmesine) yol
+// AÇARDI — Channel'ın çökmesinden DAHA SİNSİ bir hata sınıfı (ÇÖKMEZ,
+// SESSİZCE YANLIŞ VERİ döner). Bu test `refcount=2` (owner + spawn edilen
+// kapanışın KENDİ referansı) durumunda: (1) owner'ın ERKEN `destroy()`u
+// `state`e HİÇ DOKUNMADIĞINI (SADECE refcount azaltıldığını), (2) DAHA
+// SONRA GERÇEK tüketicinin `await_()`ının `state`i HÂLÂ `PENDING` BULUP
+// DOĞRU şekilde askıya ALINDIĞINI, (3) görev tamamlandığında DOĞRU
+// sonucu ALDIĞINI kanıtlar.
+test "v1.29.12: refcount=2 iken ERKEN destroy() state'e DOKUNMAZ — GERÇEK bir tüketici DAHA SONRA çöp veri YERİNE doğru sonucu alır" {
+    const Fn = struct {
+        fn triple(arg: *anyopaque) callconv(.c) i64 {
+            const x: *i64 = @ptrCast(@alignCast(arg));
+            return x.* * 3;
+        }
+    };
+
+    var scheduler = try Scheduler.init(std.testing.allocator);
+    defer scheduler.deinit();
+
+    const TaskI64 = Task(i64);
+    const task = try scheduler.allocator.create(TaskI64);
+    var input: i64 = 7;
+    task.* = .{ .scheduler = &scheduler, .func = Fn.triple, .arg = &input };
+    // İKİ sahip VAR: owner (İLK, `refcount` `1`den BAŞLAR) + spawn edilen
+    // kapanışın KENDİ retain edilmiş referansı (bkz. `compiler/codegen_qbe/
+    // ownership.zig`nin `retainNonArcValue`i, `async_thread.zig`nin
+    // `genSpawnExpr`inin ÇAĞIRDIĞI) — TOPLAM 2.
+    _ = task.refcount.fetchAdd(1, .acq_rel);
+    try std.testing.expectEqual(@as(u32, 2), task.refcount.load(.acquire));
+
+    // (1) Sahip (owner) ERKEN `destroy()` çağırır (`nox_async_destroy_task`
+    // nin GERÇEK mantığının BİREBİR SİMÜLASYONU: ÖNCE refcount azalt) —
+    // BAŞKA bir sahip (spawn edilen kapanış) VAR OLDUĞUNDAN `state`e HİÇ
+    // DOKUNULMAMALI.
+    try std.testing.expectEqual(@as(u32, 2), task.refcount.fetchSub(1, .acq_rel));
+    try std.testing.expectEqual(TaskI64.PENDING, task.state.load(.acquire));
+
+    // (2) GERÇEK bir tüketici (spawn edilen kapanışın KENDİSİ) ŞİMDİ
+    // `await_()` çağırır — `state` HÂLÂ `PENDING` OLDUĞUNDAN (refcount
+    // SAYESİNDE ERKEN `DETACHED`ye GEÇMEDİĞİNDEN) CAS BAŞARILI olmalı VE
+    // GERÇEKTEN askıya ALINMALI (v1.29.11 ÖNCESİ bu AŞAMADA `state` ZATEN
+    // `DETACHED` OLACAĞINDAN CAS BAŞARISIZ olur, `suspendCurrent()` HİÇ
+    // ÇAĞRILMADAN ÇÖP `self.result` SESSİZCE dönerdi).
+    var fake_fiber: Fiber = undefined;
+    var waiter_scheduler = try Scheduler.init(std.testing.allocator);
+    defer waiter_scheduler.deinit();
+    var waiter = TaskI64.Waiter{ .fiber = &fake_fiber, .scheduler = &waiter_scheduler };
+    try std.testing.expectEqual(@as(?usize, null), task.state.cmpxchgStrong(TaskI64.PENDING, @intFromPtr(&waiter), .acq_rel, .acquire));
+
+    // (3) Görev TAMAMLANIR — tüketici GERÇEKTEN uyandırılır, DOĞRU
+    // sonucu alır.
+    TaskI64.entryTrampoline(task);
+    try std.testing.expectEqual(@as(usize, 1), waiter_scheduler.ready.items.len);
+    try std.testing.expectEqual(TaskI64.COMPLETED, task.state.load(.acquire));
+    try std.testing.expectEqual(@as(i64, 21), task.result);
+
+    // (4) Tüketicinin KENDİ `destroy()`u (`nox_async_destroy_task`nin
+    // GERÇEK mantığının BİREBİR SİMÜLASYONU) — refcount SON kez azaltılır
+    // (1→0), `state` ZATEN `COMPLETED` OLDUĞUNDAN GERÇEK temizlik
+    // tetiklenir.
+    try std.testing.expectEqual(@as(u32, 1), task.refcount.fetchSub(1, .acq_rel));
+    try std.testing.expect(task.state.cmpxchgStrong(TaskI64.PENDING, TaskI64.DETACHED, .acq_rel, .acquire) != null);
     scheduler.allocator.destroy(task);
 }
 

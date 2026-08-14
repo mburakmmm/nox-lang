@@ -1,0 +1,13 @@
+async def slow_consumer(ch: Channel[int]) -> None:
+    x: int = await ch.recv()
+    print(x)
+
+async def owner() -> None:
+    ch: Channel[int] = Channel[int](0)
+    t: Task[None] = spawn slow_consumer(ch)
+    await ch.send(99)
+    await t
+
+t2: Task[None] = spawn owner()
+await t2
+print("done")

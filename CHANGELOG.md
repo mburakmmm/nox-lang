@@ -14,7 +14,57 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
-## [1.29.11]
+## [1.29.12]
+
+### Düzeltildi
+- **`Task[T]`/`Channel[T]`ye GERÇEK atomik referans sayımı eklendi —
+  ChatGPT'nin M:N incelemesindeki İKİNCİ (v1.29.11'in kapsam dışı
+  bıraktığı) bulgunun canlı bir SIGSEGV REPRODÜKSİYONUYLA doğrulanıp
+  düzeltilmesi.** `Task[T]`/`Channel[T]` (`isHeapManaged`in DIŞINDA,
+  ARC/refcount başlığı YOK) bir `spawn`e argüman olarak GEÇİLDİĞİNDE
+  (checker HER İKİ backend'de de İZİN VERİR) SESSİZCE HİÇBİR retain
+  OLMUYORDU — sahip kapsamı bittiğinde spawn edilen çocuk HENÜZ
+  BAŞLAMAMIŞ/BİTMEMİŞ olsa BİLE `nox_channel_destroy`/`nox_async_destroy_
+  task` KOŞULSUZ (Task İçİn v1.29.11'in `state`-protokolü ÜZERİNDEN)
+  serbest bırakıyordu. **`Channel[T]` İçİn GERÇEK bir SIGSEGV canlı olarak
+  üretilip `lldb` İLE DOĞRULANDI**: bir sahip, `Channel`i BAŞKA bir spawn
+  edilen fonksiyona geçirip HENÜZ o fonksiyon HİÇ ÇALIŞMADAN kendi kapsamı
+  bitince, çocuk fiber DAHA SONRA `.recv()` çağırdığında `self.mutex.
+  lock()` SERBEST BIRAKILMIŞ belleğe erişip ÇÖKÜYORDU. **`Task[T]` İçİn
+  DAHA SİNSİ, farklı bir sonuç bulundu**: v1.29.11'in `state`-protokolü
+  ÇÖKMEYİ önlese BİLE, sahip erken `destroy()` çağırdığında `state`
+  KOŞULSUZ `DETACHED`ye geçtiğinden, DAHA SONRA GERÇEKTEN `await_()`
+  çağıran meşru bir tüketici `state`i `PENDING` BULAMAYIP
+  `suspendCurrent()` HİÇ ÇAĞRILMADAN HENÜZ YAZILMAMIŞ (TANIMSIZ) `self.
+  result`ı SESSİZCE döndürüyordu — ÇÖKME YOK ama SESSİZCE YANLIŞ VERİ.
+  Düzeltme: `ThreadHandle`nin (`thread_bridge.zig`) ZATEN KANITLANMIŞ
+  atomik-referans-sayacı desenini (AMA SABİT "2'den başlar" DEĞİL, `1`den
+  başlayıp HER kopyada artan GERÇEK bir sayaç) `Task(T)`/`Channel(T)`ye
+  ekledim; derleyicinin TEK retain-enjeksiyon noktasını (`ownership.zig`
+  nin `retainIfAliasing`ı) VE `spawn`ın KENDİ kapanış-paketleme/açma
+  kodunu (`async_thread.zig`nin `genSpawnExpr`/`genSpawnWrapper`ı) BACKEND-
+  BAĞIMSIZ (list/class/dict'in `--release`e ÖZGÜ retain'inin AKSİNE)
+  genişlettim. `nox_task_retain`/`nox_channel_retain` (YENİ) HER kopyada
+  artırır; `nox_async_destroy_task`/`nox_channel_destroy` HER `destroy()`
+  de azaltır — SADECE SON sahip (refcount SIFIRA İNDİĞİNDE) GERÇEK
+  temizliği (v1.29.11'in `state`-protokolü/`Channel.deinit`) tetikler. Bir
+  fiber'ın KENDİ payı YALNIZCA `.send()`/`.recv()`i TAMAMEN BİTİRDİKTEN
+  SONRA azaltıldığından EK bir kilit GEREKMEZ (refcount 0'a inerken BAŞKA
+  birinin AKTİF kullanımda olması YAPISAL olarak İMKANSIZ). Reprodüksiyon
+  KENDİSİ YENİ bir golden teste dönüştürüldü (`channel_spawn_outlives_
+  owner.nox`) VE `Task`in "sessiz çöp veri" senaryosunu doğrulayan YENİ
+  bir birim testi eklendi (`scheduler.zig`). Tam `zig build test`: TEK
+  bilinen İLİŞKİSİZ fuzz çökmesi HARİÇ temiz (848/849), IR-diff'in 3
+  fixture'ı (`async_channel.nox`, `async_deadlock.nox`, `task_local_basic.
+  nox` — HEPSİ Channel'ı spawn'a GEÇİRİYOR) BEKLENEN, İNCELENEN (yalnızca
+  YENİ `nox_channel_retain`/`nox_channel_destroy` çağrıları EKLENMİŞ)
+  şekilde DEĞİŞTİ, snapshot'ları YENİLENDİ. **Kapsam DIŞI (BİLİNÇLİ)**:
+  `list`/`class`/`dict`nin `--release`e özgü, senkronizasyonsuz cross-
+  worker MUTATION riski (bu Task/Channel HANDLE'ININ ömrüyle DEĞİL,
+  İÇERİĞİN eşzamanlı DEĞİŞTİRİLMESİYLE İLGİLİ, tamamen AYRI bir problem)
+  — AYRI bir görev.
+
+
 
 ### Düzeltildi
 - **`Task[T].detached` veri yarışı, atomik `state` protokolüne taşındı —

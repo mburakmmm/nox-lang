@@ -204,12 +204,30 @@ pub export fn nox_async_await(rt: ?*anyopaque, task: ?*anyopaque) i64 {
 /// TEK bir atomik CAS (`PENDING`→`DETACHED`) kullanılır: CAS SADECE HİÇBİR
 /// GERÇEK waiter HENÜZ KAYITLI DEĞİLKEN başarılı olur — bu YÜZDEN ZATEN
 /// KAYITLI bir waiter ASLA çiğnenemez.
+/// **v1.29.12 — GERÇEK, canlı bir SIGSEGV reprodüksiyonuyla bulunan bir
+/// hata İçİn eklendi**: `Task[T]` bir `spawn`e argüman olarak GEÇİLİP
+/// BAŞKA bir fiber'ın KENDİ (yeni) referansını ALDIĞI durumu (bkz. `Task.
+/// refcount`un belge notu, `scheduler.zig`) işaretler — derleyici bunu
+/// (`compiler/codegen_qbe/ownership.zig`nin `retainIfAliasing`ı VE
+/// `async_thread.zig`nin `genSpawnExpr`i) bir Task-tipli değer HER
+/// KOPYALANDIĞINDA (değişkene atama, `spawn` kapanışına paketleme) çağırır.
+pub export fn nox_task_retain(task: ?*anyopaque) void {
+    const t: *TaskI64 = @ptrCast(@alignCast(task orelse return));
+    _ = t.refcount.fetchAdd(1, .acq_rel);
+}
+
 pub export fn nox_async_destroy_task(rt: ?*anyopaque, task: ?*anyopaque) void {
     // `nox_tasklocal_destroy`/`nox_threadchannel_destroy`/`nox_thread_destroy`
     // İLE AYNI `orelse return` null-koruması — codegen'in `.var_decl` dalı
     // (bkz. `stmt.zig`) ARTIK bir slotun İLK yazımında (henüz `null` İKEN)
     // BİLE "üzerine yazmadan ÖNCE eskiyi yok et" çağrısı yapıyor.
     const t: *TaskI64 = @ptrCast(@alignCast(task orelse return));
+    // v1.29.12: REFCOUNT ÖNCE — `t.refcount`un belge notuna bkz. `1`den
+    // FAZLA sahip VARSA (`spawn`e de geçilmiş bir Task) SADECE azalt,
+    // AŞAĞIDAKİ (v1.29.11'in AYNEN KORUNAN) `state`-protokolü SADECE SON
+    // sahip (`fetchSub`ın döndürdüğü ESKİ değer `1` İKEN, yani BU çağrı
+    // sayacı SIFIRA indirdiğinde) çalışır.
+    if (t.refcount.fetchSub(1, .acq_rel) != 1) return;
     if (t.state.cmpxchgStrong(TaskI64.PENDING, TaskI64.DETACHED, .acq_rel, .acquire) == null) {
         // CAS BAŞARILI: HİÇBİR GERÇEK waiter HENÜZ KAYITLI DEĞİLDİ —
         // `entryTrampoline` görevi tamamladığında `self`i serbest bırakacak.
@@ -258,15 +276,34 @@ export fn nox_channel_new(rt: ?*anyopaque, capacity: i64) ?*anyopaque {
     return ch;
 }
 
+/// **v1.29.12** — `nox_task_retain`İLE AYNI ilke/gerekçe (bkz. onun belge
+/// notu), `Channel[T]` İçİn.
+export fn nox_channel_retain(ch: ?*anyopaque) void {
+    const c: *ChannelI64 = @ptrCast(@alignCast(ch orelse return));
+    _ = c.refcount.fetchAdd(1, .acq_rel);
+}
+
 /// Bir `Channel`i (iç tampon/bekleyen kuyrukları + kendisi) serbest bırakır —
 /// codegen, `Channel[T]` tipli bir yerel değişkenin kapsam sonunda çağırır
 /// (bkz. `HeapKind.channel`, `releaseAllLocalsExcept`).
+///
+/// **v1.29.12 — GERÇEK, canlı bir SIGSEGV reprodüksiyonuyla bulunan bir
+/// hata İçİn düzeltildi**: ESKİDEN bu fonksiyon KOŞULSUZ serbest
+/// bırakıyordu — `Channel[T]` bir sahipten `spawn` İLE BAŞKA bir fiber'a
+/// GEÇİLİP sahip HENÜZ çocuk fiber ÇALIŞMADAN dönerse, çocuk DAHA SONRA
+/// `.recv()`/`.send()` çağırdığında `self.mutex.lock()` SERBEST
+/// BIRAKILMIŞ belleğe erişip GERÇEK bir SIGSEGV verirdi (`Channel(i64).
+/// recv` → `SpinLock.lock` → `EXC_BAD_ACCESS`, `lldb` İLE DOĞRULANDI).
+/// Şimdi `Channel.refcount`un belge notundaki (`channel.zig`) İLKEYLE:
+/// SADECE SON sahip (`fetchSub`ın döndürdüğü ESKİ değer `1` İKEN) GERÇEKTEN
+/// serbest bırakır.
 export fn nox_channel_destroy(rt: ?*anyopaque, ch: ?*anyopaque) void {
     // `nox_tasklocal_destroy`/`nox_threadchannel_destroy`/`nox_thread_destroy`
     // İLE AYNI `orelse return` null-koruması — codegen'in `.var_decl` dalı
     // (bkz. `stmt.zig`) ARTIK bir slotun İLK yazımında (henüz `null` İKEN)
     // BİLE "üzerine yazmadan ÖNCE eskiyi yok et" çağrısı yapıyor.
     const c: *ChannelI64 = @ptrCast(@alignCast(ch orelse return));
+    if (c.refcount.fetchSub(1, .acq_rel) != 1) return;
     c.deinit();
     allocatorFromRt(rt).destroy(c);
 }

@@ -85,6 +85,25 @@ pub fn Channel(comptime T: type) type {
         buffer: std.ArrayListUnmanaged(T) = .empty,
         send_waiters: std.ArrayListUnmanaged(*SendSlot) = .empty,
         recv_waiters: std.ArrayListUnmanaged(*RecvSlot) = .empty,
+        /// **v1.29.12 — GERÇEK, DIŞARIDAN bulunup DOĞRULANMIŞ bir hata İçİn
+        /// eklendi (canlı bir SIGSEGV reprodüksiyonuyla): bir `Channel[T]`
+        /// bir sahipten `spawn` İLE BAŞKA bir fiber'a GEÇİLİP sahip HENÜZ
+        /// çocuk fiber ÇALIŞMADAN dönerse, `nox_channel_destroy` KOŞULSUZ
+        /// serbest bırakır; çocuk DAHA SONRA `.recv()`/`.send()` çağırdığında
+        /// `self.mutex.lock()` SERBEST BIRAKILMIŞ belleğe erişip GERÇEK bir
+        /// SIGSEGV verirdi (`Channel(i64).recv` → `SpinLock.lock` →
+        /// `EXC_BAD_ACCESS`, `lldb` İLE DOĞRULANDI).** `runtime/async_rt/
+        /// scheduler.zig`nin `Task(T).refcount`uYLA AYNI ilke — `1`den
+        /// BAŞLAYAN GERÇEK bir sayaç, derleyicinin YENİ enjekte ettiği
+        /// retain çağrıları HER kopyada artırır, `nox_channel_destroy` HER
+        /// `destroy()`de azaltır, SIFIRA İNDİĞİNDE (SON sahip) GERÇEK
+        /// `deinit`/serbest bırakma tetiklenir. Bir fiber'ın KENDİ payı
+        /// YALNIZCA `.send()`/`.recv()`i TAMAMEN BİTİRDİKTEN SONRA (kapsam-
+        /// sonu / `genSpawnWrapper`nin `target_fn` DÖNDÜKTEN SONRAKİ
+        /// serbest bırakması) azaltıldığından, "refcount 0'a inerken BAŞKA
+        /// biri hâlâ AKTİF `.send()`/`.recv()` İÇİNDE" senaryosu YAPISAL
+        /// olarak İMKANSIZDIR — EK bir kilit GEREKMEZ.
+        refcount: std.atomic.Value(u32) = .init(1),
 
         pub fn init(scheduler: *Scheduler, capacity: usize) Self {
             return .{ .scheduler = scheduler, .capacity = capacity };

@@ -602,6 +602,66 @@ pub fn destroyNonArcValue(self: *Codegen, ptr: []const u8, heap: HeapKind) Codeg
     }
 }
 
+/// **v1.29.12 — GERÇEK, canlı bir SIGSEGV reprodüksiyonuyla bulunan bir
+/// hata İçİn eklendi.** `Task[T]`/`Channel[T]` (VE `--release` altında
+/// GERÇEKTEN Task/Channel OLAN `ThreadHandle[T]`/`ThreadChannel[T]`, bkz.
+/// `destroyNonArcValue`nin AYNI backend-farkındalı switch'i) BİR `spawn`e
+/// argüman olarak GEÇİLDİĞİNDE VEYA BAŞKA bir değişkene atandığında,
+/// `isHeapManaged`in DIŞINDA OLDUKLARI İçİn (`types.zig`) SESSİZCE HİÇBİR
+/// retain OLMUYORDU — sahip kapsamı bittiğinde spawn edilen çocuk HENÜZ
+/// KULLANMAMIŞ olsa BİLE `nox_async_destroy_task`/`nox_channel_destroy`
+/// KOŞULSUZ serbest bırakıyordu (`Channel` İçİn GERÇEK bir SIGSEGV,
+/// `lldb` İLE DOĞRULANDI — bkz. `runtime/async_rt/channel.zig`nin
+/// `refcount` alanının belge notu). Şimdi bu TÜRLER İçİn `runtime/async_
+/// rt/scheduler.zig`nin `Task.refcount`u/`channel.zig`nin `Channel.
+/// refcount`uyla EŞLEŞEN bir atomik `retain` ÇAĞRISI emit edilir —
+/// `destroyNonArcValue`nin AYNI kalıbı, TEK fark ARC'ın `emitInlineRetain`i
+/// (ARC başlığı GEREKTİRİR) YERİNE düz bir fonksiyon çağrısı (BU türlerin
+/// refcount'u ARC başlığı DEĞİL, struct'ın KENDİ bir alanıdır).
+pub fn isSpawnRefcountedType(self: *const Codegen, heap: HeapKind) bool {
+    return switch (heap) {
+        .task, .channel => true,
+        // `--release` DIŞINDA (`.qbe`), `.thread_handle`/`.thread_channel`
+        // TAMAMEN AYRI (`ThreadHandle`/`ThreadChannel`) struct'lardır —
+        // KENDİ (BU FAZIN kapsamı DIŞINDAKİ, `thread_bridge.zig`nin SABİT
+        // "2'den başlar" deseni) yaşam döngülerine SAHİPTİRLER, BURADAKİ
+        // `refcount` alanına SAHİP DEĞİLLERDİR — retain'i ÇAĞIRMAK YANLIŞ
+        // TİPTE bir işaretçi üzerinde ÇALIŞIRDI. AYRICA `.thread_handle`
+        // ZATEN `isSpawnParamSafeType`nin `.qbe` dalında HİÇ İZİN
+        // VERİLMEZ.
+        .thread_handle, .thread_channel => self.backend == .llvm,
+        else => false,
+    };
+}
+
+/// `retainIfAliasing`/`genSpawnExpr`nin `isSpawnRefcountedType` DOĞRUYSA
+/// çağırdığı retain — `destroyNonArcValue`nin AYNI kalıbı (backend-
+/// farkındalı fn_name seçimi HARİÇ: `isSpawnRefcountedType` ZATEN `.thread_
+/// handle`/`.thread_channel`i SADECE `.llvm`de (GERÇEKTEN Task/Channel
+/// İKEN) doğru döndürdüğünden, BURAYA ULAŞILDIĞINDA fn_name seçimi HER
+/// ZAMAN GÜVENLİDİR).
+pub fn retainNonArcValue(self: *Codegen, ptr: []const u8, heap: HeapKind) CodegenError!void {
+    const fn_name = switch (heap) {
+        .task, .thread_handle => "nox_task_retain",
+        .channel, .thread_channel => "nox_channel_retain",
+        else => unreachable,
+    };
+    const fn_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{fn_name});
+    try self.qbeCall(null, fn_sym, &.{.{ .ty = .l, .text = ptr }});
+}
+
+/// **v1.29.12** — `calls.zig`nin `releaseIfTemporary`sinin AYNI kalıbı
+/// (`isHeapManaged`/`releaseValueIfSet` YERİNE `isSpawnRefcountedType`/
+/// `destroyNonArcValue`), `genSpawnExpr`nin retain-öncesi bir Task[T]/
+/// Channel[T] argümanı GERÇEKTEN geçici (`Channel[int](0)` GİBİ, bir
+/// DEĞİŞKEN DEĞİL) İSE — kapanış KENDİ retain edilmiş referansını
+/// ALDIKTAN SONRA, ÇAĞIRANIN İNŞA-ANI referansını SERBEST BIRAKMAK İçİn.
+pub fn releaseNonArcIfTemporary(self: *Codegen, e: ast.Expr, v: Value) CodegenError!void {
+    if (!v.is_pinned and !v.is_stack_slot and self.isSpawnRefcountedType(v.heap) and (v.always_fresh or abi.isTemporaryExpr(e))) {
+        try self.destroyNonArcValue(v.text, v.heap);
+    }
+}
+
 /// `destroyNonArcValue` ile AYNI, yalnızca bir yerel değişkenin (henüz
 /// ÜZERİNE yazılmamış) MEVCUT slot değerini önce yükleyip sonra yok eder
 /// — `releaseSlotIfSet`in `Task`/`Channel`/`ThreadHandle`/`ThreadChannel`
@@ -855,6 +915,11 @@ pub fn retainIfAliasing(self: *Codegen, value: ast.Expr, v0: Value) CodegenError
     if (!v0.always_fresh and isAliasingExpr(value) and isHeapManaged(v0.heap)) {
         try self.checkNoLowlevelEscape(v0);
         try self.emitInlineRetain(v0.text, v0.heap);
+    } else if (!v0.always_fresh and isAliasingExpr(value) and self.isSpawnRefcountedType(v0.heap)) {
+        // v1.29.12: bkz. `isSpawnRefcountedType`nin belge notu — `Task[T]`/
+        // `Channel[T]` ARC-yönetimli OLMADIĞINDAN `checkNoLowlevelEscape`
+        // (ARC'a özgü) BURADA UYGULANMAZ, DOĞRUDAN `retainNonArcValue`.
+        try self.retainNonArcValue(v0.text, v0.heap);
     }
     return v0;
 }

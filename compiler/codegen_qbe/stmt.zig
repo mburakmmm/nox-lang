@@ -57,6 +57,13 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
                         try self.checkNoLowlevelEscape(v0);
                         if (isHeapManaged(v0.heap) and self.returnNeedsRetain(e)) {
                             try self.emitInlineRetain(v0.text, v0.heap);
+                        } else if (self.isSpawnRefcountedType(v0.heap) and self.returnNeedsRetain(e)) {
+                            // v1.29.12: bkz. `ownership.zig`nin `isSpawnRefcountedType`
+                            // belge notu — `Task[T]`/`Channel[T]`nin
+                            // (VE `--release`de Task/Channel OLAN thread_handle/
+                            // thread_channel'ın) `return`den de KOPYALANABİLDİĞİ
+                            // (`return some_task_param` GİBİ) durum.
+                            try self.retainNonArcValue(v0.text, v0.heap);
                         }
                         const v = try self.convert(v0, ret_qtype);
                         const except_name: ?[]const u8 = if (e == .identifier) e.identifier else null;
@@ -87,6 +94,10 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
                     // başka bir yerel) onu erken sıfıra indirebilirdi.
                     if (isHeapManaged(v0.heap) and self.returnNeedsRetain(e)) {
                         try self.emitInlineRetain(v0.text, v0.heap);
+                    } else if (self.isSpawnRefcountedType(v0.heap) and self.returnNeedsRetain(e)) {
+                        // v1.29.12: bkz. yukarıdaki inline-return dalının
+                        // AYNI notu.
+                        try self.retainNonArcValue(v0.text, v0.heap);
                     }
                     const v = try self.convert(v0, ret_qtype);
                     // Sıra önemli: finally/arena yıkımı, yereller hâlâ
