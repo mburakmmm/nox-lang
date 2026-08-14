@@ -14,7 +14,31 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
-## [1.29.7]
+## [1.29.8]
+
+### Düzeltildi
+- **`nox.json.decode()`nin ASIL darboğazı bulunup düzeltildi: HER çağrıda
+  taze `mmap`/`munmap` syscall çifti.** v1.29.7'nin "dürüst negatif sonuç"
+  bulgusu üzerine `sample` (macOS) ile profil çıkarıldı — `nox_json_decode_
+  raw`nin (`runtime/stdlib_shims/json.zig`) HER çağrıda `std.heap.
+  ArenaAllocator.init(std.heap.page_allocator)` yapıp fonksiyon dönmeden
+  `arena.deinit()` ile tamamen kapatması, TOPLAM maliyetin **~%62**sini
+  (mmap ~%21 + munmap ~%41) oluşturuyordu — `std.heap.page_allocator`
+  HİÇBİR önbellekleme yapmadığından, ayrıştırılan JSON'un boyutundan
+  TAMAMEN BAĞIMSIZ olarak HER `decode()` çağrısı bir mmap+munmap syscall
+  çifti ödüyordu (`runtime/alloc/lowlevel.zig`nin `nox_arena_create`/
+  `nox_arena_destroy`sının Faz M.7'de ZATEN çözdüğü AYNI sorun — farklı
+  bir arena için). Düzeltme: arena artık `threadlocal` olarak BİR KEZ
+  oluşturulup Zig'in KENDİ `ArenaAllocator.reset(.retain_with_limit(64
+  KB))`ı İLE YENİDEN kullanılıyor (mmap/munmap YOK, `nox_rc_alloc`/ARC'a
+  HİÇ dokunmadığından `lowlevel.zig`nin Debug-modu kısıtlamasına GEREK
+  YOK). **Ölçülen sonuç** (ReleaseFast): sıkı-döngü 300k `decode()` çağrısı
+  84ms (ÖNCEDEN 522ms, **6.2x**); `wrk` echo-decode-only 225 670 req/s
+  (ÖNCEDEN 137 589, **1.64x**) — `echo raw passthrough`a (239 513 req/s)
+  olan yakınlık %57'den **%94**e çıktı. Tüm golden/IR-diff testleri
+  değişmeden geçti (833/834, tek bilinen ilişkisiz fuzz çökmesi hariç).
+
+
 
 ### Değiştirildi
 - **`nox.json.decode()`nin düğüm-başına derlenmiş Nox koduna geri dönmesi

@@ -14996,6 +14996,84 @@ altında GERÇEK ölçümle DOĞRULANMADAN güvenilir DEĞİLDİR — LLVM'in in
 optimizasyonu bu tür "küçük ama sık" maliyetleri BEKLENENDEN çok daha ucuza
 İNDİREBİLİR.
 
+## 3.90 `nox.json.decode()`nin ASIL darboğazı: her çağrıda taze `mmap`/`munmap` (v1.29.8)
+
+§3.89'un dürüst negatif sonucundan sonra kullanıcı "derinlemesine devam
+et" dedi — macOS `sample` ile `nox_json_decode_raw`nin (ReleaseFast, 8M
+çağrı) profili çıkarıldı:
+
+| Kaynak | Örnek | % |
+|---|---|---|
+| `ArenaAllocator.alloc` → `mmap` (arenanın İLK tahsisi) | 1387 | ~%21 |
+| `ArenaAllocator` teardown → `munmap` (`arena.deinit()`) | 2739 | ~%41 |
+| **mmap+munmap TOPLAM** | **4126/6699** | **~%62** |
+| `json.Scanner` (GERÇEK JSON ayrıştırma) | 373 | ~%6 |
+| `buildNodeFast` (§3.89'un hızlı yolu) | 255 | ~%4 |
+
+Kök neden: `json.zig:433-435` (Faz M.6, GEÇMİŞTE "çok sayıda küçük tahsisi
+TEK bir arenaya indirme" amacıyla eklenmişti) HER çağrıda `std.heap.
+ArenaAllocator.init(std.heap.page_allocator)` yapıp fonksiyon dönmeden
+`arena.deinit()` İLE TAMAMEN kapatıyordu — `std.heap.page_allocator`
+(Zig 0.16 `std/heap/PageAllocator.zig`) HİÇBİR önbellekleme YAPMAZ, HER
+`alloc`/`free` ham bir `mmap`/`munmap` syscall'ıdır — bu YÜZDEN HER
+`decode()` çağrısı, ayrıştırılan JSON'un boyutundan TAMAMEN BAĞIMSIZ bir
+syscall çifti ödüyordu.
+
+**Doğrudan bir precedent**: `runtime/alloc/lowlevel.zig`nin `nox_arena_
+create`/`nox_arena_destroy`sı (Faz M.7) AYNI sorunu (farklı bir arena
+İçİn) ZATEN çözmüştü — `arena.deinit()` YERİNE Zig'in KENDİ `ArenaAllocator.
+reset(mode)`ı (`std/heap/ArenaAllocator.zig:86-98`nin `ResetMode` union'ı:
+`.free_all`/`.retain_capacity`/`.retain_with_limit: usize`) + arenayı bir
+HAVUZA geri koymak.
+
+**Düzeltme**: `json.zig`'e `threadlocal var g_decode_arena: ?std.heap.
+ArenaAllocator = null;` eklendi — `nox_json_decode_raw` artık arenayı BİR
+KEZ (bu OS iş parçacığında) oluşturup HER çağrının SONUNDA `deinit()`
+YERİNE `reset(.{ .retain_with_limit = 64 * 1024 })` çağırıyor (64KB'ın
+ALTINDAKİ, TİPİK payload'lar İçİn mmap/munmap OLMADAN yeniden kullanılır;
+nadir büyük payload'larda fazlalık serbest bırakılır, thread-yerel
+belleğin SINIRSIZ şişmesi ÖNLENİR). `lowlevel.zig`nin `builtin.mode !=
+.Debug` KOŞULUNA (o havuzun ÇALIŞMA-ZAMANI DebugAllocator'ını sarmasından
+dolayı) GEREK YOK — BU arena `std.heap.page_allocator`ı DOĞRUDAN
+sardığından ARC'ın leak-izleme muhasebesiyle HİÇBİR etkileşimi YOK, HER
+build modunda güvenli. Güvenlik: `buildNode`/`buildNodeFast`nin arena-
+tahsisli geçici dizileri (`items`/`key_items`/`val_items`) `buildPtrList`
+ONLARI GERÇEK (`nox_rc_alloc` tabanlı, arenadan TAMAMEN AYRI) bir `list[T]`
+ye KOPYALADIKTAN SONRA BİR DAHA kullanılmaz — dönen `JsonValue` ağacının
+HİÇBİR PARÇASI arena belleğine işaret ETMEDİĞİNDEN, `reset` HER ZAMAN
+GÜVENLİDİR.
+
+**Ölçülen sonuç** (ReleaseFast, DÜZELTME SONRASI `sample` profili: mmap/
+munmap TAMAMEN KAYBOLDU, kalan maliyet `json.Scanner`/`buildNodeFast`nin
+GERÇEK işi):
+
+| Ölçüm | v1.29.7 (öncesi) | v1.29.8 (bu düzeltme) | Kazanç |
+|---|---|---|---|
+| Sıkı döngü, 300k `decode()` | 522ms | 84ms | **6.2x** |
+| Sıkı döngü, 8M `decode()` | 13 635ms | 1 549ms | **8.8x** |
+| `wrk`, echo decode-only | 137 589 req/s | 225 670 req/s | **1.64x** |
+| `wrk`, echo full (decode+encode) | 134 063 req/s | 218 613 req/s | **1.63x** |
+
+`echo decode-only`nin `echo raw passthrough`a (239 513 req/s, JSON'suz
+referans) YAKINLIĞI %57'den **%94**e çıktı — ORİJİNAL kullanıcı sorusunun
+(ping ~207k vs echo ~91k, Aether seviyesinde) motive ettiği farkın BÜYÜK
+KISMI artık `nox.json`nin KENDİSİNDE ÇÖZÜLDÜ (Aether'in KENDİ DTO/dispatch
+katmanının kalan payı AYRI, bu görevin kapsamı DIŞINDA).
+
+Doğrulama: tam `zig build test` — TEK bilinen İLİŞKİSİZ fuzz çökmesi
+HARİÇ temiz (833/834), IR-diff 205/0-yeni/3-atlandı DEĞİŞMEDİ (`v1.29.7`
+İLE 204→205 ZATEN artmıştı, `json_decode_repeated_calls`in KENDİ
+snapshot'ı — BU turda YENİ bir snapshot OLUŞMADI). Doğrulama turu SIRASINDA
+`http_serve_golden_test.zig`nin (nox.json İLE İLGİSİZ) bir testi TEK bir
+çalıştırmada askıda kaldı (`build` sürecinin CPU zamanı 5 saniye boyunca
+İLERLEMEDİ) — `sample` İLE HEM sunucu ikilisi (normal `kevent` beklemesi)
+HEM test ikilisinin KENDİSİ (`stderr_reader.interface.allocRemaining`nin
+child-exit BEKLEYİŞİ) doğrudan incelenip, JSON'la HİÇ İLGİSİ OLMAYAN BU
+testin (`nox.http.serve: yanit govdesi/basliklari DINAMIK insa
+edildiginde...`) GEÇİCİ bir kaynak-çekişmesi TAKILMASI olduğu, TEMİZ bir
+yeniden çalıştırmada ORTADAN KALKTIĞI DOĞRULANDI — bu FAZLA İLGİSİZ,
+GERÇEK bir regresyon DEĞİL.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

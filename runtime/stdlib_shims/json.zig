@@ -413,6 +413,28 @@ fn buildNodeFast(rt: ?*anyopaque, allocator: std.mem.Allocator, shared: SharedEm
 /// resolved`İLE AYNI `threadlocal` gerekçesi (Faz BB.1, satır 81-88).
 threadlocal var g_json_value_class_id: ?i64 = null;
 
+/// `decode()`nin GEÇİCİ ayrıştırma-ağacı arabelleği İçİn kullandığı arena
+/// — `lowlevel.zig`nin `nox_arena_create`/`nox_arena_destroy`sıYLA AYNI
+/// ilke (Faz M.7: `reset` fresh init/deinit'in mmap/munmap syscall
+/// ÇİFTİNDEN KURTARIR — `sample` İLE ÖLÇÜLDÜ: bu ÇİFT, `nox_json_decode_
+/// raw`nin TOPLAM maliyetinin ~%62'sini oluşturuyordu, JSON'un boyutundan
+/// TAMAMEN BAĞIMSIZ, `std.heap.page_allocator` HİÇBİR önbellekleme
+/// YAPMADIĞINDAN HER init/deinit'in KENDİSİ ham bir syscall ÇİFTİYDİ),
+/// AMA `threadlocal` (`g_json_value_class_id`İLE AYNI desen) —
+/// `lowlevel.zig`nin ÇALIŞMA-ZAMANI DebugAllocator'ını SARMASININ AKSİNE
+/// bu arena `std.heap.page_allocator`ı DOĞRUDAN SARDIĞINDAN (ARC'ın KENDİ
+/// leak-izleme muhasebesiyle HİÇBİR etkileşimi YOK), `lowlevel.zig`nin
+/// `builtin.mode != .Debug` KOŞULUNA GEREK YOK — HER build modunda
+/// güvenli.
+threadlocal var g_decode_arena: ?std.heap.ArenaAllocator = null;
+
+/// Nadir/büyük bir payload'ın thread-yerel arenayı KALICI olarak
+/// şişirmesini ÖNLEMEK İçİn üst sınır (`reset`in KENDİ `.retain_with_
+/// limit` modu) — TİPİK (küçük) payload'lar İçİn arena mmap/munmap
+/// OLMADAN yeniden kullanılır, bunu AŞAN nadir isteklerde fazlalık
+/// serbest bırakılır.
+const DECODE_ARENA_RETAIN_LIMIT: usize = 64 * 1024;
+
 export fn nox_json_decode_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?*anyopaque {
     // NOT: `s`in null olduğu dal İçin `str_mod.nox_str_slice`e DÜŞMEYİZ —
     // o yol yalnızca GERÇEK bir Nox `str` (görünmez başlıklı) BEKLER, boş
@@ -424,14 +446,27 @@ export fn nox_json_decode_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?
     // (HER JSON düğümü/liste KENDİ AYRI tahsisini alarak) çok sayıda küçük
     // tahsis yapıyordu. ARTIK TEK bir `ArenaAllocator` (page_allocator'ı
     // SARAN) kullanılıyor — TÜM ayrıştırma + geçici Zig-taraflı dilimler
-    // BU arena ÜZERİNDEN yapılır, fonksiyon DÖNMEDEN ÖNCE `arena.deinit()`
-    // TEK seferde HEPSİNİ serbest bırakır (`rt`/ARC'a GEÇEN `dupeToNoxStr`/
+    // BU arena ÜZERİNDEN yapılır (`rt`/ARC'a GEÇEN `dupeToNoxStr`/
     // `buildPtrList` çıktıları ETKİLENMEZ, onlar ZATEN AYRI/`nox_rc_alloc`
     // tabanlı). `std.json.parseFromSlice`nin KENDİ `Parsed(T).deinit()`ı
-    // (kendi İÇ arenasını serbest bırakan) ARTIK ayrıca ÇAĞRILMIYOR — dış
-    // arena zaten HER ŞEYİ (iç içe olsa BİLE) tek seferde temizliyor.
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
+    // (kendi İÇ arenasını serbest bırakan) ayrıca ÇAĞRILMAZ — dış arena
+    // zaten HER ŞEYİ (iç içe olsa BİLE) tek seferde temizler.
+    //
+    // Performans fazı (bkz. yukarıdaki `g_decode_arena`nin belge notu):
+    // arena artık HER ÇAĞRIDA taze `init`/`deinit` (mmap/munmap) YERİNE
+    // thread-yerel olarak BİR KEZ oluşturulup `reset` İLE YENİDEN
+    // kullanılır — dönen `JsonValue` ağacının TAMAMI (`nox_rc_alloc`/
+    // `dupeToNoxStr`/`buildPtrList` ÜZERİNDEN, ARENADAN TAMAMEN AYRI)
+    // kalıcı ARC belleğinde OLDUĞUNDAN, fonksiyon dönmeden HEMEN ÖNCE
+    // arenayı `reset` etmek (`defer`) GÜVENLİDİR — `items`/`key_items`/
+    // `val_items` gibi arena-tahsisli geçici diziler `buildPtrList`nin
+    // ONLARI GERÇEK bir `list[T]`ye KOPYALAMASINDAN SONRA BİR DAHA
+    // kullanılmaz.
+    if (g_decode_arena == null) {
+        g_decode_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    }
+    const arena = &g_decode_arena.?;
+    defer _ = arena.reset(.{ .retain_with_limit = DECODE_ARENA_RETAIN_LIMIT });
     const allocator = arena.allocator();
 
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, slice, .{}) catch {
