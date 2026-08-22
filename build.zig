@@ -881,4 +881,21 @@ pub fn build(b: *std.Build) void {
     const worker_pool_test_step = b.step("worker-pool-test", "Yalnızca Faz MN.3b'nin worker_pool.zig testini çalıştırır (hızlı yineleme İçİn)");
     worker_pool_test_step.dependOn(&b.addRunArtifact(worker_pool_test).step);
     test_step.dependOn(&b.addRunArtifact(worker_pool_test).step);
+
+    // v1.31.0 (bkz. plan dosyası "Eşzamanlılık stres-test altyapısı"):
+    // `worker_pool.zig`nin ZATEN kanıtlanmış İKİ 20-tekrarlı çapraz-worker
+    // stres testini (Channel/Task await_()) ÇOK DAHA FAZLA tur İLE
+    // çalıştıran, GERÇEKTEN opt-in bir hedef — AYNI `worker_pool_test`
+    // ikilisini (YUKARIDA ZATEN derlenmiş) YENİDEN KULLANIR, SADECE
+    // `NOX_STRESS_ROUNDS` ortam değişkenini `worker_pool.zig`nin
+    // `stressRoundsFromEnv`inin okuyacağı ŞEKİLDE AYARLAR. BİLİNÇLİ:
+    // `test_step.dependOn(...)` YOK — bu, deponun İLK GERÇEKTEN opt-in
+    // (varsayılan `zig build test`in PARÇASI OLMAYAN) test hedefidir; HER
+    // push'ta çalışan hızlı paketi YAVAŞLATMADAN, gecelik bir CI cron
+    // işinin (`.github/workflows/stress.yml`) çağırması İçİndir.
+    const stress_rounds = b.option(usize, "stress-rounds", "stress-test adımının çapraz-worker Channel/Task stres tur sayısı (varsayılan: 2000)") orelse 2000;
+    const stress_run = b.addRunArtifact(worker_pool_test);
+    stress_run.setEnvironmentVariable("NOX_STRESS_ROUNDS", b.fmt("{d}", .{stress_rounds}));
+    const stress_test_step = b.step("stress-test", "worker_pool.zig'in çapraz-worker Channel/Task stres testlerini ÇOK DAHA FAZLA tur (-Dstress-rounds, varsayılan 2000) İLE çalıştırır — opt-in, YAVAŞ, 'test' adımının PARÇASI DEĞİL");
+    stress_test_step.dependOn(&stress_run.step);
 }

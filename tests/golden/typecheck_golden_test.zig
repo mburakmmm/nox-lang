@@ -5,6 +5,46 @@
 const std = @import("std");
 const nox = @import("nox");
 
+/// v1.30.0: `expectGolden`in AYNISI, AMA `Checker.backend`i `.llvm`
+/// olarak AYARLAR — `isSpawnParamSafeType`nin `list`/`dict`/`class`ı
+/// spawn-parametresi olarak yalnızca `.llvm` (`--release`) altında
+/// İZİN VERMESİ yüzünden (bkz. `checker.zig`nin `isSpawnParamSafeType`
+/// belge notu), spawn-paylaşımlı mutasyon kontrolünün fixture'ları
+/// (`err_spawn_shared_*`/`ok_spawn_shared_*`) BU backend'i GEREKTİRİR —
+/// `.qbe`de (varsayılan `check()` yolu) bu tipler zaten `isSpawnParamSafeType`
+/// TARAFINDAN `spawn`a argüman olarak REDDEDİLDİĞİNDEN, YENİ mutasyon
+/// kontrolüne HİÇ ULAŞILMAZ. `llvm_golden_test.zig`nin `compileAndRunLlvm`ı
+/// İLE AYNI `checker_state.backend = .llvm` deseni, AMA kodgen/`clang`
+/// OLMADAN — SAF tip denetimi (`nox.checker.check`in KENDİ `.ok`/`.err`
+/// seçim mantığının BİREBİR AYNISI, backend'i AYARLAYABİLMEK İçİn burada
+/// yeniden üretilir).
+fn expectGoldenLlvm(comptime source: []const u8, comptime expected: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+
+    var checker_state = nox.checker.Checker.init(allocator);
+    checker_state.backend = .llvm;
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+    checker_state.checkModule(module) catch |e| {
+        try aw.writer.print("HATA {t}: {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
+        try std.testing.expectEqualStrings(expected, aw.written());
+        return;
+    };
+    if (checker_state.diagnostics.items.len > 0) {
+        const first = checker_state.diagnostics.items[0];
+        try aw.writer.print("HATA {t}: {s}\n", .{ first.code, first.message });
+    } else {
+        try aw.writer.writeAll("OK\n");
+    }
+    try std.testing.expectEqualStrings(expected, aw.written());
+}
+
 fn expectGolden(comptime source: []const u8, comptime expected: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -651,5 +691,79 @@ test "golden(decorator): bir sınıf üzerindeki decorator v1'de AÇIKÇA redded
     try expectGolden(
         @embedFile("typecheck_cases/err_decorator_on_class.nox"),
         @embedFile("typecheck_cases/err_decorator_on_class.expected"),
+    );
+}
+
+// v1.30.0 (bkz. plan dosyası "list[T]/dict[K,V]/class — spawn-paylaşımlı
+// mutasyonun DERLEME-ZAMANINDA reddi"): bir `spawn` hedefi fonksiyonun
+// `list`/`dict`/`class` tipli paylaşılan parametresinin kendi gövdesinde
+// mutasyona uğratılması derleme zamanında reddedilir.
+
+test "golden(spawn-shared-mutation): 'spawn' hedefinin list parametresine .append() reddedilir" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_list_append.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_list_append.expected"),
+    );
+}
+
+test "golden(spawn-shared-mutation): 'spawn' hedefinin list parametresine index-atama (xs[i]=) reddedilir" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_list_index_assign.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_list_index_assign.expected"),
+    );
+}
+
+test "golden(spawn-shared-mutation): 'spawn' hedefinin dict parametresine index-atama (d[k]=) reddedilir" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_dict_mutation.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_dict_mutation.expected"),
+    );
+}
+
+test "golden(spawn-shared-mutation): 'spawn' hedefinin class parametresine alan-atama (obj.alan=) reddedilir" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_class_mutation.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_class_mutation.expected"),
+    );
+}
+
+test "golden(spawn-shared-mutation): spawn-hedefi tespiti METİNSEL sıradan bağımsızdır (fonksiyon çağrıdan SONRA tanımlansa bile yakalanır)" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_target_defined_after_call.nox"),
+        @embedFile("typecheck_cases/err_spawn_target_defined_after_call.expected"),
+    );
+}
+
+test "golden(spawn-shared-mutation): 'spawn' hedefi OLMAYAN sıradan fonksiyonların kendi list/dict/class parametrelerini mutasyona uğratması ETKİLENMEZ (regresyon yok)" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/ok_spawn_shared_mutation_no_spawn_target.nox"),
+        @embedFile("typecheck_cases/ok_spawn_shared_mutation_no_spawn_target.expected"),
+    );
+}
+
+test "golden(spawn-shared-mutation): TRANSİTİF (iç içe alan üzerinden) mutasyon v1 kapsamı DIŞINDA — bilinçli olarak yakalanmaz" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/ok_spawn_shared_transitive_field_not_caught.nox"),
+        @embedFile("typecheck_cases/ok_spawn_shared_transitive_field_not_caught.expected"),
+    );
+}
+
+// v1.30.1 (bkz. plan dosyası "Checker'a ifade-derinliği koruması"):
+// `checkExpr`/`checkBinary`nin GERÇEK bir yığın-taşması SIGABRT'ına yol
+// açan (`tests/fuzz/lexer_parser_checker_fuzz.zig`nin 2000-derin
+// `1+1+1+...` regresyon testi) sınırsız özyinelemesi artık `MAX_EXPR_DEPTH`
+// (500) ile derleme-zamanında TEMİZ bir `TooDeeplyNested` hatasına dönüşür.
+
+test "golden(expr-depth): MAX_EXPR_DEPTH'i aşan bir ifade TooDeeplyNested ile temiz reddedilir (çökmez)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_expr_too_deeply_nested.nox"),
+        @embedFile("typecheck_cases/err_expr_too_deeply_nested.expected"),
+    );
+}
+
+test "golden(expr-depth): MAX_EXPR_DEPTH'in ALTINDA, gerçekçi derecede derin bir ifade ETKİLENMEDEN derlenir (regresyon yok)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_expr_nested_within_depth_limit.nox"),
+        @embedFile("typecheck_cases/ok_expr_nested_within_depth_limit.expected"),
     );
 }

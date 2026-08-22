@@ -511,6 +511,87 @@ test "nox.http.serve: req HIC referans alinmayan handler'da tembel alan insasi d
     try std.testing.expect(std.mem.indexOf(u8, resp, "ok") != null);
 }
 
+// v1.32.0 (bkz. nox-teknik-spesifikasyon.md §3.98): checker'ın `nox.http.
+// serve` eşleştirmesi (`matchesNoxHttpCall`/`matchesNoxAttrCall`)
+// `substituteAlias` ÜZERİNDEN modül TAKMA ADLARINI (`import nox.http as h`)
+// çözer — AMA codegen'in KENDİ intrinsic sınıflandırıcısı (`matchesNoxAttr`,
+// async_thread.zig) alias-FARKINDA DEĞİL, callee'nin KELİMESİ KELİMESİNE
+// `nox.<modül>.<ad>` OLMASINI şart koşar. Araştırma SIRASINDA bulunan GERÇEK
+// bir bug: takma-ad İLE yazılan bir `serve` çağrısı checker'dan GEÇERDİ ama
+// codegen'de SIRADAN bir metod çağrısı SANILIP YANLIŞ/çökme İLE
+// SONUÇLANIRDI. Düzeltme: checker artık eşleşen bir intrinsic çağrısının
+// callee'sini (takma ad NE olursa olsun) KANONİK `nox.http.serve` şekline
+// YENİDEN YAZAR (`rewriteIntrinsicCalleeToCanonical`) — BU test, `import
+// nox.http as h; h.serve(...)`nin (yukarıdaki, alias'sız testle AYNI temel
+// senaryo) UÇTAN UCA doğru derlendiğini/çalıştığını/doğru yanıt verdiğini
+// kanıtlar.
+test "nox.http.serve: modul takma adiyla (`import nox.http as h; h.serve(...)`) da dogru derlenir/calisir" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const port = try probeFreePort();
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const source = try std.fmt.allocPrint(a,
+        \\import nox.http as h
+        \\
+        \\def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    return nox_http_HttpResponse(200, "ok-alias", {{}})
+        \\
+        \\h.serve({d}, handle, 1)
+        \\
+    , .{port});
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const bin_path = try compileToBinary(a, &tmp, source);
+
+    var child = try std.process.spawn(io, .{
+        .argv = &.{bin_path},
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+
+    var resp_buf: [256]u8 = undefined;
+    var resp_len: usize = 0;
+    const client_thread = try std.Thread.spawn(.{}, struct {
+        fn run(p: u16, out: []u8, out_len: *usize) void {
+            const fd = testConnect(p) catch return;
+            defer _ = std.c.close(fd);
+            testSendGet(fd, "/");
+            var total: usize = 0;
+            while (total < out.len) {
+                const n = std.c.read(fd, out[total..].ptr, out.len - total);
+                if (n <= 0) break;
+                total += @intCast(n);
+            }
+            out_len.* = total;
+        }
+    }.run, .{ port, &resp_buf, &resp_len });
+    client_thread.join();
+
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
+    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stderr_data);
+
+    const term = try child.wait(io);
+    try std.testing.expect(term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), term.exited);
+
+    if (stderr_data.len != 0) {
+        std.debug.print("program stderr'e beklenmeyen bir çıktı yazdı (olası bellek sızıntısı/UAF): {s}\n", .{stderr_data});
+        return error.UnexpectedStderrOutput;
+    }
+
+    const resp = resp_buf[0..resp_len];
+    try std.testing.expect(std.mem.indexOf(u8, resp, "200") != null);
+    try std.testing.expect(std.mem.indexOf(u8, resp, "ok-alias") != null);
+}
+
 // Faz HH.6 (bkz. nox-teknik-spesifikasyon.md §3.68): `nox.http.serve`nin
 // keep-alive DESTEĞİNİ uçtan uca doğrular — `max_connections=1` (yalnızca
 // TEK bir `accept()` İZİN VERİLİR) OLMASINA RAĞMEN, `Connection: close`

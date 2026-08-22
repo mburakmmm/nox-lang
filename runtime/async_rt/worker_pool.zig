@@ -585,6 +585,19 @@ const ChanStress = channel_mod.Channel(i64);
 const CHAN_STRESS_N_PRODUCERS = 64;
 const CHAN_STRESS_ROUNDS = 20;
 
+/// v1.31.0 (bkz. plan dosyası "Eşzamanlılık stres-test altyapısı"): tur
+/// sayısını `NOX_STRESS_ROUNDS` ortam değişkeninden OKUR (varsayılan,
+/// AYARLANMAMIŞSA/ayrıştırılamıyorsa, `default_rounds`e DÜŞER — BÖYLECE
+/// bu değişiklik `zig build test`in KENDİ, ZATEN geçen davranışını SIFIR
+/// ETKİLER: env değişkeni YOKSA bu fonksiyonu kullanan HER İKİ test de
+/// ÖNCEKİ GİBİ TAM 20 tur çalışır). `zig build stress-test`in YENİ
+/// `RunArtifact` adımı BU değişkeni ÇOK DAHA BÜYÜK bir değere AYARLAR
+/// (bkz. `build.zig`nin `stress-test` adımı).
+fn stressRoundsFromEnv(default_rounds: usize) usize {
+    const v = std.c.getenv("NOX_STRESS_ROUNDS") orelse return default_rounds;
+    return std.fmt.parseInt(usize, std.mem.span(v), 10) catch default_rounds;
+}
+
 const ChanStressProducerArg = struct {
     chan: *ChanStress,
     value: i64,
@@ -687,8 +700,9 @@ test "WorkerPool: Channel[T] çapraz-worker paylaşımı — GERÇEK çalma alt�
     // `page_allocator` kullanıyor — BURADA da AYNI, KANITLANMIŞ desen.
     const allocator = std.heap.page_allocator;
 
+    const rounds = stressRoundsFromEnv(CHAN_STRESS_ROUNDS);
     var round: usize = 0;
-    while (round < CHAN_STRESS_ROUNDS) : (round += 1) {
+    while (round < rounds) : (round += 1) {
         const pool = try WorkerPool.create(allocator, 4);
         defer pool.destroy();
 
@@ -826,8 +840,9 @@ test "WorkerPool: Task[T] çapraz-worker await_() — GERÇEK çalma altında so
     // markReady`nin İçİNDEN, `fiber.trampoline`den ÇAĞRILAN bir fiber
     // GÖVDESİ İçİNDE).
     const allocator = std.heap.page_allocator;
+    const rounds = stressRoundsFromEnv(CHAN_STRESS_ROUNDS);
     var round: usize = 0;
-    while (round < CHAN_STRESS_ROUNDS) : (round += 1) {
+    while (round < rounds) : (round += 1) {
         const pool = try WorkerPool.create(allocator, 4);
         defer pool.destroy();
 

@@ -1,0 +1,11 @@
+class Box:
+    def __init__(self: Box, xs: list[int]) -> None:
+        self.xs = xs
+
+async def worker(b: Box) -> None:
+    b.xs[0] = 99
+
+async def entry() -> None:
+    b: Box = Box([1, 2, 3])
+    t: Task[None] = spawn worker(b)
+    await t

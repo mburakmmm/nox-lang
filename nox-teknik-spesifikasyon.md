@@ -15423,6 +15423,352 @@ senkronizasyonsuz cross-worker MUTATION riski (bu Task/Channel HANDLE'ININ
 ömrüyle DEĞİL, İÇERİĞİN eşzamanlı DEĞİŞTİRİLMESİYLE İLGİLİ, tamamen AYRI
 bir problem) — AYRI bir görev.
 
+## 3.95 `list[T]`/`dict[K,V]`/`class`ın spawn-paylaşımlı mutasyon riski — DERLEME-ZAMANI reddi (v1.30.0)
+
+§3.94'ün (v1.29.12) BİLİNÇLİ olarak kapsam dışı bıraktığı problem: `list`/
+`dict`/`class` örnekleri `--release` (LLVM backend) altında bir `spawn`
+çağrısına argüman olarak GEÇİLEBİLİYOR (`checker.zig`nin
+`isSpawnParamSafeType`i buna izin verir, `.qbe`de İSE ZATEN reddedilir) —
+AMA bu tiplerin mutasyon operasyonlarının (`list.append`/`.pop`/`.sort`,
+`xs[i]=`/`d[k]=` index-atama, `obj.alan=` sınıf-alan-atama) HİÇBİRİ
+senkronizasyon TAŞIMIYOR. M:N zamanlayıcının work-stealing'i yüzünden İKİ
+fiber (potansiyel olarak İKİ ayrı OS iş parçacığında) AYNI nesneye
+EŞZAMANLI yazarsa bu GERÇEK bir veri yarışı — `list.append`in realloc'u
+SIRASINDA başka bir fiber'ın eski işaretçi üzerinden okuma/yazma yapması
+DAHİL bellek bozulması riski taşır.
+
+**Tasarım seçimi**: iki yaklaşım değerlendirildi — (a) çalışma-zamanı
+kilidi (`dict`/`class` İçİn UCUZ — `dict`in ZATEN opak Zig struct'ı
+OLMASI, `class`ın has_vtable GİBİ opt-in ek-slot PRESEDENTİ SAYESİNDE;
+`list[T]` İçİn İSE `LIST_HEADER_SIZE=16`nın SIFIR boş bayt bırakması
+yüzünden ABI göçü GEREKTİRDİĞİNDEN AYRI bir tura ERTELENECEKTİ) VE (b)
+derleme-zamanında REDDETME (sıfır çalışma-zamanı maliyeti, list/dict/
+class'ta TEK TİP davranış, ABI DEĞİŞİKLİĞİ YOK). **(b) seçildi** — bölüm
+4'ün "Katman 1: Görünmez Borrow Checker" felsefesiyle (statik güvenlik
+ÖNCE, çalışma zamanı maliyeti YOK) doğal olarak TUTARLI.
+
+**Uygulama**: `checker.zig`ye YENİ bir pre-pass, `collectSpawnTargets`
+— `checkModule`nin DİĞER pre-pass'larıyla (`collectImports` vb.) AYNI
+aşamada, HERHANGİ bir fonksiyon gövdesi denetlenmeden ÖNCE çalışır.
+Modülün TAMAMINI (üst-düzey deyimler, TÜM iç içe if/while/for/try/with/
+lowlevel gövdeleri, iç içe `def`ler — Faz U.4.2, asenkron OLAMAZLAR ama
+İÇLERİNDE `spawn` çağrısı OLABİLİR — VE sınıf metodları DAHİL) tarayıp HER
+`spawn f(...)` çağrısının `f` adını `spawn_target_functions` kümesine
+ekler — METİNSEL sıradan TAMAMEN BAĞIMSIZDIR (bir fonksiyon KENDİ `spawn`
+çağrısından SONRA tanımlanmış olsa BİLE yakalanır, ÇÜNKÜ pre-pass HERHANGİ
+bir fonksiyon gövdesi denetlenmeden ÖNCE TÜM modülü tarar).
+
+`checkFunctionBody`, bir fonksiyon `spawn_target_functions`e ÜYEYSE, HER
+`list`/`dict`/`class` tipli parametresi İçİn YENİ `checkNoSpawnSharedMutation`
+fonksiyonunu çağırır — fonksiyonun KENDİ gövdesini (iç içe kontrol-akışı
+bloklarına recursive AMA iç içe `func_def`/`class_def` gövdelerine İNMEDEN
+— bunlar AYRI çağrılabilir birimlerdir) tarayıp `.assign`in `target`ının
+`xs[i]=`/`d[k]=` (`.index{obj: .identifier(parametre)}`, list/dict kind'ı)
+YA DA `obj.alan=` (`.attribute{obj: .identifier(parametre)}`, class kind'ı)
+OLUP OLMADIĞINI, VE `.expr_stmt` İçİndeki bir `.call`ın `.append`/`.pop`/
+`.sort`den birini bir `.identifier` parametre üzerinde çağırıp
+ÇAĞIRMADIĞINI kontrol eder. Eşleşme bulunursa YENİ bir `TypeError` varyantı
+`SpawnSharedMutation` (`UnassignedField`/`OptionalNotNarrowed` İLE AYNI
+ilke — grep-lenebilir AYRI tanı kodu) İLE reddedilir.
+
+**v1 BİLİNÇLİ kapsam sınırları**:
+- **Yalnızca DOĞRUDAN parametre** — `b.xs.append(1)`/`b.xs[0]=` GİBİ
+  TRANSİTİF/iç içe erişimler (parametrenin KENDİSİ değil, bir ALANININ
+  içeriği mutasyona uğruyor) YAKALANMAZ. `retainIfAliasing`/
+  `isAliasingExpr`in KENDİ "doğrudan takma ad" sınırıyla TUTARLI bir
+  basitleştirme.
+- **Transitif ÇAĞRI TAKİBİ YOK** — spawn-hedefi fonksiyon BAŞKA bir
+  fonksiyonu çağırıp O fonksiyon parametreyi mutasyona uğratırsa
+  YAKALANMAZ (checker.zig'de call-graph analizi YOK, bu projedeki DİĞER
+  "v1 sınırlaması" kararlarıyla TUTARLI).
+
+**Doğrulama**: 7 YENİ typecheck golden test fixture'ı (`tests/golden/
+typecheck_cases/`) — 4 pozitif (list `.append()`, list `xs[i]=`, dict
+`d[k]=`, class `obj.alan=`, HEPSİ `SpawnSharedMutation` İLE reddedilir),
+1 metinsel-sıra-bağımsızlığı kanıtı (`err_spawn_target_defined_after_call`
+— spawn çağrısı hedef fonksiyonun KENDİ tanımından ÖNCE yazılıyor, YİNE
+DE yakalanıyor), 1 negatif kontrol (`ok_spawn_shared_mutation_no_spawn_
+target` — spawn-hedefi OLMAYAN sıradan bir fonksiyonun KENDİ list/dict/
+class parametrelerini mutasyona uğratması, ÇOK yaygın/güvenli mevcut
+davranış, ETKİLENMEDİĞİNİ kanıtlar), 1 kapsam-sınırı kanıtı
+(`ok_spawn_shared_transitive_field_not_caught` — `b.xs[0]=99` GİBİ
+transitif bir mutasyon BİLİNÇLİ olarak yakalanmaz, derlenir). Bu tipler
+`isSpawnParamSafeType`nin `.qbe` dalında ZATEN spawn-parametresi olarak
+reddedildiğinden, fixture'lar `Checker.backend = .llvm` ayarlayan YENİ bir
+`expectGoldenLlvm` test yardımcısı (`llvm_golden_test.zig`nin `checker_
+state.backend = .llvm` deseniyle AYNI, ama kodgen/`clang` OLMADAN SAF tip
+denetimi) kullanır. Tam `zig build test`: TÜM MEVCUT fixture'lar
+DEĞİŞMEDEN geçti — SAF bir EKLEME.
+
+## 3.96 Checker'a ifade-derinliği koruması — GERÇEK bir yığın-taşması SIGABRT'ının düzeltilmesi (v1.30.1)
+
+`tests/fuzz/lexer_parser_checker_fuzz.zig`nin "cok uzun tek satirlik ifade"
+regresyon testi (2000 kez `+ 1` eklenen TEK satırlık bir ifade, `x: int =
+1 + 1 + 1 + ... + 1`) Debug modda GERÇEK bir SIGABRT'la çöküyordu —
+`git stash` İLE TEMİZ `main` dalında da (bu düzeltmeden BAĞIMSIZ) aynen
+üretildiği doğrulandı — pre-existing, GERÇEK bir stabilite açığıydı:
+yeterince uzun bir kullanıcı ifadesi `noxc`nin KENDİSİNİ çökertebiliyordu.
+
+**Kök neden**: `compiler/parser/parser.zig`nin GÜVENLİK bulgusu H-3
+düzeltmesi (`depth`/`enterRecursion`/`exitRecursion`/`MAX_EXPR_DEPTH=500`)
+YALNIZCA parantez İÇ İÇE geçmesini (`(...)`) VE önek-operatör zincirlerini
+(`not not ...`, `- - ...`, `await await ...`, `spawn spawn ...`) kapsıyor
+— bunlar parser'da GERÇEKTEN özyineliyor. AMA ikili-operatör zincirleri
+(`parseOr`/`parseAnd`/`parseComparison`/`parseAddSub`/`parseMulDiv`)
+YİNELEMELİ (`while`) döngülerle işleniyor — özyineleme derinliğini
+ARTIRMIYORLAR, ama YİNE DE N-derin (`1+1+1+...` İçİn 2000-derin) SOL-
+çarpık bir AST üretiyorlar. Parser'ın guard'ı bu YÜZDEN bu girdiyi HİÇ
+YAKALAMIYORDU. Sonraki aşamada `checker.zig`nin `checkExpr` ⇄
+`checkBinary` çifti (HER `.binary` düğümünde `checkExpr` İKİ KEZ —
+`b.left`/`b.right` İçİn — çağrılıyor) bu 2000-derin AST'yi GERÇEKTEN
+özyinelemeli geziyordu VE HİÇBİR derinlik sınırı YOKTU (çeken YER
+BURASIYDI). Checker'ın KENDİSİ zaten BENZER bir yığın-çerçevesi tuzağını
+İKİ KEZ belgelemiş durumdaydı (`resolveIdentifierAsFunctionValue`/
+`checkGenericConstruct` — HER İKİSİ de "switch kollarının TÜMÜ AYNI
+çerçeveyi paylaşıyor" nedeniyle `checkExpr`in switch'İNDEN `noinline`
+fonksiyonlara ÇIKARILMIŞTI) — ama BU, `.binary` dalının KENDİ
+özyinelemesini SINIRLAMIYORDU.
+
+**Düzeltme**: parser'ın KENDİ, ZATEN kanıtlanmış desenini (`enterRecursion`/
+`exitRecursion`/sabit `MAX_EXPR_DEPTH`/`defer`-tabanlı KENDİLİĞİNDEN
+sıfırlanma) checker'a AYNEN taşıdım — AMA checker'ın özyineleme şekli
+FARKLI (parser'da BAZI YOLLAR yinelemeli, checker'da HER AST düğümü
+GERÇEKTEN `checkExpr`den geçiyor), bu YÜZDEN guard'ı TEK bir noktaya —
+`checkExpr`in KENDİSİNE — koymak YETERLİ oldu (`checkBinary`nin AYRICA
+KENDİ guard'ına gerek YOK — `checkExpr`in guard'ı ZATEN HER seviyede
+tetiklenir). Yeni `Checker.expr_depth: usize` alanı + `MAX_EXPR_DEPTH:
+usize = 500` sabiti + `enterExprRecursion`/`exitExprRecursion` çifti +
+YENİ bir `TooDeeplyNested` `TypeError` varyantı. `checkExpr`in gövdesi
+`try self.enterExprRecursion(); defer self.exitExprRecursion();` İKİ
+satırıyla genişletildi — switch'in HERHANGİ bir KOLUNA yerel değişken
+EKLEMEDİĞİNDEN, checker.zig'in KENDİ belgelediği "switch kolları AYNI
+çerçeveyi paylaşır" tuzağına GİRMİYOR.
+
+**Codegen'in KENDİ durumu**: `codegen_qbe/expr.zig`nin `genExpr`/
+`genBinary`si de AYNI şekle sahip VE guard'sız, AMA `main.zig`nin
+`cmdBuild`ı `checkModule` BAŞARISIZ olan (VEYA `diagnostics` dolu olan)
+bir AST'yi codegen'e HİÇ GEÇİRMEDEN `process.exit(1)` yaptığından, bu
+checker-taraflı guard GERÇEK `noxc build` hattında codegen'i de dolaylı
+olarak KORUYOR — codegen'in KENDİ guard'sızlığı, checker'dan BAĞIMSIZ bir
+giriş noktasından çağrılırsa GEÇERLİ olabilecek AYRI, kapsam dışı bir
+savunma-derinliği notu olarak bırakıldı.
+
+**Doğrulama**: önceden ÇÖKEN fuzz testi ARTIK temiz geçiyor. 2 yeni
+typecheck golden test fixture'ı (`err_expr_too_deeply_nested`/`ok_expr_
+nested_within_depth_limit`) — biri sınırı aşan bir ifadenin `TooDeeplyNested`
+İLE TEMİZ reddedildiğini, diğeri sınırın ÇOK ALTINDA (100 seviye)
+GERÇEKÇİ bir ifadenin ETKİLENMEDEN derlendiğini kanıtlıyor. Tam `zig
+build test`: TEK bilinen İLİŞKİSİZ `fiber.zig` "Faz MN.8, Bulgu C" flake'i
+HARİÇ temiz — `git stash` İLE clean `main`de de AYNEN üretildiği (İKİ
+ayrı çalıştırmada) doğrulanarak bu değişiklikten TAMAMEN BAĞIMSIZ,
+önceden var olan bir kaynak-çekişmesi flake'i olduğu KANITLANDI.
+
+## 3.97 Eşzamanlılık stres-test altyapısı — opt-in `zig build stress-test` + gecelik CI (v1.31.0)
+
+M:N zamanlayıcı/async runtime'ında bulunan HER GERÇEK veri yarışı
+(`Task.detached` yarışı — §3.93, `Channel`/`Task`ın sarkan-işaretçi
+SIGSEGV'i — §3.94, work-stealing livelock'ları, ECONNRESET çökmesi —
+§3.91, fiber-bağlamlı segfault-döngüsü riski — §3.92) **AD-HOC bir
+yöntemle** bulundu: kullanıcının KENDİ `wrk` yük testi, harici bir ChatGPT
+incelemesi, ya da manuel `lldb` reprodüksiyonları. HİÇBİRİ `zig build
+test`in KENDİ, HER push'ta çalışan hızlı test paketinden YAKALANMADI VE
+olamazdı da: `runtime/async_rt/worker_pool.zig`nin KENDİ, kanıtlanmış
+"çapraz-worker çalma"yı zorlayan İKİ 20-tekrarlı stres testi (`"...
+Channel[T]... (20 tekrar)"`, `"...Task[T]... (20 tekrar)"`) ZATEN VAR VE
+ZATEN doğru race'i tetikleme MEKANİZMASINI (TÜM görevleri worker 0'ın
+deque'ine PUSH edip kardeşlerin ÇALMASINI beklemek) kanıtlamış durumda
+— ama SABİT 20 tur, HER push'ta Debug+ReleaseFast İKİ KEZ çalıştığından,
+MAKUL bir CI süresi İçİn tur sayısı DÜŞÜK tutulmak ZORUNDA. Nadir
+zamanlamaya-bağlı race'ler İçİn 20 tur İSTATİSTİKSEL olarak YETERSİZ
+olabilir.
+
+**Amaç**: bu İKİ, ZATEN kanıtlanmış race-yakalayan testin tur sayısını
+çalışma-zamanında YAPILANDIRILABİLİR hale getirip, YENİ bir opt-in `zig
+build stress-test` adımıyla ÇOK DAHA FAZLA tur (varsayılan CI push
+akışını YAVAŞLATMADAN) çalıştırabilmek — VE bunu gecelik bir GitHub
+Actions cron işiyle OTOMATİKLEŞTİRMEK.
+
+**Uygulama**: `runtime/async_rt/worker_pool.zig`ye YENİ `stressRoundsFromEnv(
+default_rounds: usize) usize` yardımcısı — `NOX_STRESS_ROUNDS` ortam
+değişkenini `std.c.getenv` İLE OKUR (Zig 0.16'da `std.process.
+getEnvVarOwned` YOK — bu depodaki DİĞER dosyaların (`runtime/stdlib_
+shims/os.zig` VB.) ZATEN kullandığı `std.c.getenv` deseni İZLENDİ),
+AYARLANMAMIŞSA/ayrıştırılamıyorsa `default_rounds`e DÜŞER. İKİ MEVCUT
+stres testinin (`"...Channel[T]..."`/`"...Task[T]..."`) döngü sınırı
+`CHAN_STRESS_ROUNDS` (sabit, HÂLÂ 20) sabit kalarak, BU fonksiyonun
+`default_rounds` argümanı OLARAK kullanılıyor — env değişkeni YOKSA SIFIR
+davranış değişikliği. `build.zig`ye YENİ `-Dstress-rounds` seçeneği
+(varsayılan 2000) + YENİ `stress-test` adımı — ZATEN derlenmiş
+`worker_pool_test` ikilisini `std.Build.Step.Run.setEnvironmentVariable`
+İLE FARKLI bir `NOX_STRESS_ROUNDS` değeriyle YENİDEN çalıştırır (YENİ bir
+derleme hedefi GEREKMEZ). **KRİTİK tasarım kararı**: bu adım BİLİNÇLİ
+olarak `test_step`e EKLENMEZ — bu depodaki İLK "varsayılan `test`
+adımının PARÇASI OLMAYAN, GERÇEKTEN opt-in" test hedefi (mevcut
+`frontend-test`/`noxrt-test`/`async-rt-test`/`worker-pool-test`nin HEPSİ
+SADECE `test_step`e ZATEN eklenmiş ikililerin bir ALT KÜMESİNİ çalıştıran
+kısayollardı).
+
+YENİ `.github/workflows/stress.yml` — `ci.yml`nin AYNI 3-platform
+matrisini (macOS/aarch64, Linux/x86-64, Linux/aarch64) VE AYNI Zig-kurulum
+desenini (resmi URL'den elle indirme) BİREBİR KOPYALAR, `schedule:` (cron
+`0 3 * * *`) + `workflow_dispatch:` İLE tetiklenir, `zig build stress-test
+-Doptimize=ReleaseFast -Dstress-rounds=3000` çalıştırır. `ci.yml`nin
+KENDİSİNE BİLİNÇLİ olarak DOKUNULMADI (paylaşılan, ZATEN çalışan bir CI
+yapılandırmasına dokunmamak İçİn DAHA DÜŞÜK riskli yol) — `qbe` kurulumu
+GEREKMEZ (`worker_pool_test` `noxc`/`noxc build`a BAĞIMLI DEĞİL, SADECE
+`runtime/async_rt` + `abi_layout`).
+
+**Doğrulama**: `zig build worker-pool-test` (varsayılan, env AYARLANMADAN)
+~2.2 saniyede DEĞİŞMEDEN geçiyor (43/43 test). Derlenen ikili DOĞRUDAN
+`NOX_STRESS_ROUNDS=500` İLE çalıştırıldığında ~5.0 saniyede (43/43 test,
+HÂLÂ geçiyor) — ölçekleme DOĞRULANDI. `zig build stress-test -Dstress-
+rounds=500` DA AYNI ~5.0 saniyede TAMAMLANDI — build-seçeneği → ortam
+değişkeni → test-ikilisi ZİNCİRİNİN UÇTAN UCA ÇALIŞTIĞI KANITLANDI. YENİ
+`stress.yml`nin YAML söz dizimi `python3 -c "import yaml; yaml.safe_load(...)"`
+İLE doğrulandı. Tam `zig build test`: bu değişiklikten SONRA da DEĞİŞMEDEN
+temiz (exit 0).
+
+**Kapsam DIŞI (BİLİNÇLİ)**: `"4 worker eş zamanlı ARC/arena/cycle-gc/
+globals izolasyonu"`/`"...STW bariyeri..."` testlerinin tur sayıları
+BÜYÜTÜLMEDİ — BİLİNÇLİ, belgelenmiş bir eşik-güvenliği sınırına
+(`nox_cycle_possible_root`un PAYLAŞILAN sayacı 700'ü aşarsa OTOMATİK/
+güvensiz eş zamanlı bir collect tetiklenir) bağlı, AYRI/dikkatli bir
+yeniden tasarım gerektirir. `nox.http.serve`/`serve_multicore`e özgü,
+GERÇEK derlenmiş ikili + GERÇEK eşzamanlı istemcilerle çalışan bir HTTP-
+seviyesi soak testi de AYRI bir görev — `tests/compat/http_serve_
+multicore_pool_golden_test.zig`nin ŞU AN yalnızca 2 eşzamanlı istemciyle
+"temel çalışıyor" testi yaptığı, GERÇEK bir yük/süre testi YAPMADIĞI
+DOĞRULANDI, ama BU DAHA BÜYÜK bir iş (ayrı bir derlenmiş-ikili+soket-
+istemcisi altyapısı gerektirir). ThreadSanitizer/Valgrind entegrasyonu da
+kapsam dışı — Zig 0.16'da olgun destek YOK, VE bu projenin fiber'ları
+KENDİ ham register/yığın değiş-tokuşunu yaptığından TSan'ın normal
+iş-parçacığı modelini muhtemelen KARIŞTIRIR.
+
+## 3.98 Checker-taraflı intrinsics registry konsolidasyonu + alias-uyuşmazlığı düzeltmesi (v1.32.0)
+
+Eski bir yol haritası notu ("FF.7 — intrinsics registry") `checker.zig`/
+`codegen_qbe`ye dağılmış `nox.http.serve*`/`nox.thread.start`/`pool_run`
+GİBİ stdlib "intrinsic" çağrılarının özel-durum dispatch'ini merkezi bir
+`(modül, ad) -> handler` tablosuna toplamayı öneriyordu. Araştırma
+BUNUN codegen tarafının ZATEN Faz P1.6'da yapıldığını gösterdi
+(`compiler/codegen_qbe/async_thread.zig:96-175`teki `matchesNoxAttr` +
+`IntrinsicKind` enum'u + `intrinsic_table` + `matchIntrinsicKind` — 4 eski
+`isXCallee` fonksiyonunun yerine geçen, ZATEN merkezi bir tablo). SADECE
+checker tarafı (`compiler/typecheck/checker.zig`) hiç bu geçişi YAPMAMIŞTI
+— HÂLÂ 9 fonksiyon + 3 KOPYA eşleştirme algoritması (`matchesNoxHttpCall`,
+VE `tryResolveThreadSpawnCall`/`tryResolvePoolRunCall`nin İÇİNE AYRI AYRI
+İNLİNE edilmiş İKİ KOPYASI) + `checkCall`nin `.attribute` kolunda 14
+sıralı `if (try self.tryResolveX(...)) |t| return t;` çağrısı.
+
+**Araştırma SIRASINDA bulunan AYRI, GERÇEK bir bug**: checker'ın eşleştirme
+mantığı (`matchesNoxHttpCall`) `self.substituteAlias`i (modül takma adı
+genişletmesi) kullanıyor — yani `import nox.http as h; h.serve(...)`
+checker'DA GEÇERLİ kabul ediliyor. AMA codegen'in KENDİ eşleştiricisi
+(`matchesNoxAttr`) SAF YAPISAL — callee'nin TAM OLARAK `nox.<modül>.<ad>`
+(üç seviyeli `Attribute`/`Attribute`/`identifier`, temel tanımlayıcı
+KELİMESİ KELİMESİNE `"nox"`) OLMASINI şart koşar, TAKMA AD FARKINDALIĞI
+YOK. Sonuç: takma-adlı bir `serve` çağrısı checker'dan GEÇER (tip-doğru
+kabul edilir) AMA codegen'in `matchIntrinsicKind`i callee'yi `nox` DEĞİL
+`h` gördüğünden EŞLEŞTİREMEZ, `genCall` bunu SIRADAN bir metod çağrısı
+SANIP `genMethodCall`e düşer — GERÇEK bir "checker geçerli diyor,
+derleyici YANLIŞ/çökme İLE SONUÇLANIYOR" hatası.
+
+**Tasarım kararı — codegen'e DOKUNULMADI**: `compiler/codegen_qbe/
+decorators.zig:36`nın `checker.zig`yi DOĞRUDAN import etmesi YÜZÜNDEN
+(`checker.zig`nin KENDİSİ `codegen_qbe`ye import EDEMEYECEĞİNDEN — GERÇEK
+bir döngüsel bağımlılık olurdu), checker VE codegen'in `IntrinsicKind`/
+`intrinsic_table`sini TEK bir PAYLAŞILAN yapıya BİRLEŞTİRMEK mümkün DEĞİL
+(handler fonksiyonlarının İMZALARI da KÖKTEN farklı: `TypeError!?Type` vs
+`CodegenError!Value`). Bu YÜZDEN checker KENDİ, AYRI bir `IntrinsicKind`/
+`intrinsic_table` kopyasını ALDI (codegen'in ZATEN kanıtlanmış ŞEKLİNİ
+AYNEN taşıyarak, AMA import EDİLMEDEN). Alias-uyuşmazlığı bug'ı İSE
+codegen'e HİÇ DOKUNMADAN, SADECE checker'ın eşleşen bir intrinsic
+çağrısını (`tryResolveQualifiedCall`in ZATEN yaptığı GİBİ) callee'yi
+KANONİK `nox.<modül>.<ad>` şekline YENİDEN YAZARAK çözüldü.
+
+**Uygulama**: `matchesNoxHttpCall`in gövdesi genelleştirilip `matchesNoxAttrCall(
+self, c, module, name)`e dönüştürüldü (modül parametre OLDU) — `matchesNoxHttpCall`
+KORUNDU, TEK satırlık bir sarmalayıcıya İNDİRGENDİ. `tryResolveThreadSpawnCall`/
+`tryResolvePoolRunCall`nin İNLİNE eşleştirme blokları TEK satıra indirgendi.
+YENİ `IntrinsicKind`/`IntrinsicEntry`/`intrinsic_table`/`matchIntrinsicKind`
+(codegen'in `async_thread.zig:128-174`üyle YAPISAL olarak BİREBİR AYNI, 14
+satır). YENİ `rewriteIntrinsicCalleeToCanonical` — eşleşen bir çağrının
+callee'sini `nox.<modül>.<ad>` üç-seviyeli `Attribute` zincirine YENİDEN
+YAZAR. `checkCall`nin `.attribute` kolundaki 14 sıralı if-çağrısı TEK bir
+`matchIntrinsicKind` + `switch`e indirgendi — `tryResolveHttpServeCall`/
+`FdCall`/`MulticoreCall`/`Generic`/`ThreadSpawnCall`/`PoolRunCall`nin
+KENDİLERİ HİÇ DEĞİŞTİRİLMEDİ, SADECE ARTIK doğrudan (sıralı deneme YERİNE)
+hedefli çağrılıyorlar.
+
+**Doğrulama**: `tests/compat/http_serve_golden_test.zig`ye YENİ bir uçtan
+uca golden test eklendi — `import nox.http as h; h.serve(port, handle, 1)`
+GERÇEKTEN derlenip, ARKA PLANDA çalıştırılıp, GERÇEK bir TCP istemcisiyle
+bağlanılıp doğru `200`/`ok-alias` yanıtının alındığını VE sıfır stderr
+çıktısı (sızıntı/UAF yok) olduğunu kanıtlıyor. Tam `zig build test`: TÜM
+MEVCUT `nox.http.serve`/`serve_fd`/`serve_multicore`/9 TLS-WS varyantı/
+`nox.thread.start`/`pool_run` testleri DEĞİŞMEDEN geçti — SAF bir iç-
+yeniden-düzenleme + BİR davranış düzeltmesi, codegen'in KENDİSİNE
+dokunulmadı.
+
+## 3.99 "FF.8 — modül sistemi mimarisi" değerlendirildi, ERTELENDİ (v1.32.1)
+
+Kullanıcının 4 maddelik stabilite turunun SON maddesi, eski bir bellek
+notundan: *"Whole-program AST birleştirmesi + isim mangling YERİNE
+`ModuleIR`/ayrı sembol tabloları. EN BÜYÜK/EN RİSKLİ değişiklik, EN SON
+yapılmalı."* Derinlemesine araştırma SONUCUNDA bu maddenin **kod
+DEĞİŞİKLİĞİ OLMADAN ertelenmesine** karar verildi — bulgular kalıcı olarak
+BURAYA belgeleniyor (Faz P.7'nin, §3.6.8, "GEREKSİZ karmaşıklık
+EKLENMEDEN dürüstçe raporlandı" ÜSLUBUYLA AYNI) ki GELECEKTE biri AYNI
+soruyu tekrar SORARSA yeniden araştırmaya GEREK KALMASIN.
+
+**"ModuleIR" bu depoda HİÇ VAR OLMAYAN, TAMAMEN dışarıdan gelen bir
+hedeftir** — repo'nun KENDİ spesifikasyonunda/CHANGELOG'unda "FF.8"/
+"ModuleIR" SIFIR kez geçiyor (grep doğrulandı). Mevcut mekanizma
+GERÇEKTEN `module_loader.zig`nin `resolveImportsImpl`i (Alt-Faz A, §3.26)
+— TÜM stdlib+kullanıcı AST'sini TEK bir `ast.Module`e `@memcpy` İLE
+birleştirip, üst-düzey isimleri `mangleWith` İLE `nox_http_get` TARZI
+düzleştirir. Bu, KAZARA bir eksiklik DEĞİL, BİLİNÇLİ bir v1 kararıydı:
+*"gerçek ayrı derleme birimi/nesne dosyası bağlama YOK, yalnızca AST
+seviyesinde birleştirme (AGENTS.md'nin 'tek derleme birimi' modeliyle
+TUTARLI)"* (§3.26).
+
+**Mevcut mekanizmanın İKİ GERÇEK, KAYITLI çakışma tuzağı VAR — AMA HER
+İKİSİ de ZATEN ÇÖZÜLMÜŞ**:
+1. `nox_path_join` isim çakışması (§3.61, Faz EE.1): bir extern shim adı
+   KENDİ modülünün otomatik-mangled adıyla ÇAKIŞTI — SESSİZCE yanlış
+   davranmadı, `DuplicateDefinition` SERT hatasıyla YAKALANDI, `_raw`
+   son-ekli bir isimlendirme KURALIYLA çözüldü.
+2. 3.-taraf paket adı çakışması (§3.6.8, Faz P.7): BAŞLANGIÇTA hash-
+   prefiksli bir mangling şeması GEREKLİ sanıldı — GERÇEKTEN uygulanıp
+   test EDİLDİKTEN SONRA, `validateManifest`nin ZATEN var olan "alias
+   proje İçİnde BENZERSİZ olmalı" kısıtının + alias-KAPSAYICI mangling'in
+   BU sorunu KENDİLİĞİNDEN çözdüğü keşfedildi.
+
+**GERÇEKTEN açık kalan TEK somut sınırlama**: `codegen_qbe/codegen.zig:
+170-183`ün KENDİ belgelediği bir hata-ayıklama (debugger) KOZMETİĞİ —
+birden çok dosyadan birleştirilen program İçİn TEK bir DWARF `dbgfile`
+yönergesi üretildiğinden, bir stdlib fonksiyonuna debugger'da ADIM
+ATILDIĞINDA satır DOĞRU ama dosya YANLIŞ gösteriliyor. Bu, ÇÖKME/veri-
+bozulması/YANLIŞ derlenmiş program ÜRETMİYOR — SADECE bir geliştirici
+deneyimi kozmetiği (gerçek düzeltmesi `ast.Stmt.origin_file` alanı
+EKLEMEK olurdu, codegen.zig'in KENDİ notu — bu turda BİLİNÇLİ olarak
+YAPILMADI, kullanıcı "tam yeniden yazımı ATLA" seçeneğini seçerken bu
+DAR düzeltmeyi de İÇERMEYEN bir kapsam belirledi).
+
+**Blast radius kanıtı**: tam bir `ModuleIR`/ayrı sembol tabloları yeniden
+yazımı `checker.zig`de **56**, `codegen_qbe/*.zig`de (8+ dosya) **85**
+çağrı sitesini AYNI ANDA değiştirmeyi GEREKTİRİR (`checkModule`/
+`generateModule`nin İKİSİ de HÂLÂ "TEK, ÖNCEDEN birleştirilmiş
+`ast.Module`" varsayımını TAŞIR — modül sınırı kavramı HİÇBİR imzada
+YOK).
+
+**Karar**: hiçbir SOMUT, ÇÖZÜLMEMİŞ stabilite hatası bulunamadığından VE
+blast radius'u projenin KENDİ istikrar hedefiyle DOĞRUDAN ÇELİŞTİĞİNDEN
+(repo'nun KENDİ, TEKRARLANAN kurumsal davranışı — P.7 DAHİL — spekülatif
+büyük yeniden yapılandırmadan KAÇINMAK, önce mevcut GÜVENCELERİN yeterli
+olup olmadığını KANITLAMAK), tam yeniden yazım BU turda UYGULANMADI. Kod
+DEĞİŞİKLİĞİ YOK — SADECE bu belge girdisi.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

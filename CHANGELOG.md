@@ -14,6 +14,196 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.32.1]
+
+### Dokümantasyon
+- **"FF.8 — modül sistemi mimarisi" değerlendirildi ve KOD DEĞİŞİKLİĞİ
+  OLMADAN ertelendi.** Kullanıcının 4 maddelik stabilite turunun son
+  maddesi — eski bir bellek notu whole-program AST birleştirmesi + isim
+  mangling YERİNE bir "ModuleIR"/ayrı sembol tabloları öneriyordu.
+  Derinlemesine araştırma "ModuleIR"nin bu depoda HİÇ VAR OLMAYAN,
+  tamamen dışarıdan gelen bir hedef OLDUĞUNU gösterdi. Mevcut mekanizmanın
+  İKİ GERÇEK, kayıtlı çakışma tuzağı (`nox_path_join` isim çakışması —
+  Faz EE.1; 3.-taraf paket adı çakışması — Faz P.7) HER İKİSİ de ZATEN
+  ÇÖZÜLMÜŞ (biri sert `DuplicateDefinition` hatası + isimlendirme
+  kuralıyla, diğeri ZATEN var olan bir alias-benzersizliği değişmeziyle).
+  GERÇEKTEN açık kalan TEK sınırlama, birden çok dosyadan derlenen bir
+  programda DWARF hata-ayıklama bilgisinin yanlış dosyayı göstermesi
+  (satır DOĞRU, dosya YANLIŞ) — çökme/veri-bozulması ÜRETMEYEN, saf bir
+  geliştirici-deneyimi kozmetiği. Tam bir ModuleIR yeniden yazımı
+  `checker.zig`de 56, `codegen_qbe/*`de 85 çağrı sitesini AYNI ANDA
+  değiştirmeyi gerektirir — hiçbir somut hatayı çözmeden, projenin
+  KENDİ istikrar hedefiyle DOĞRUDAN çelişen bir blast radius. Kullanıcıya
+  sunulup "tam yeniden yazımı ATLA" kararı ONAYLANDI — bulgular
+  `nox-teknik-spesifikasyon.md` §3.99'a kalıcı olarak belgelendi. Kod
+  DEĞİŞİKLİĞİ YOK.
+
+## [1.32.0]
+
+### Değiştirildi
+- **Checker-taraflı intrinsics registry konsolidasyonu + GERÇEK bir alias-
+  uyuşmazlığı bug'ının düzeltilmesi.** Eski bir yol haritası notu ("FF.7 —
+  intrinsics registry") `checker.zig`/`codegen_qbe`ye dağılmış `nox.http.
+  serve`/`nox.thread.start` gibi stdlib "intrinsic" çağrılarının özel-durum
+  dispatch'ini merkezi bir tabloya toplamayı öneriyordu. Araştırma bunun
+  codegen tarafının ZATEN Faz P1.6'da yapıldığını gösterdi (`async_thread.
+  zig`nin `IntrinsicKind`/`intrinsic_table`/`matchIntrinsicKind`ü) — SADECE
+  checker tarafı (9 fonksiyon, `matchesNoxHttpCall` + `tryResolveThreadSpawnCall`/
+  `tryResolvePoolRunCall`nin İÇİNE AYRI AYRI inline edilmiş İKİ KOPYA eşleştirme
+  algoritması, `checkCall`nin `.attribute` kolunda 14 sıralı if-çağrısı) hiç
+  bu geçişi yapmamıştı. **Ayrıca araştırma SIRASINDA GERÇEK, ayrı bir bug
+  bulundu**: checker'ın eşleştirmesi (`substituteAlias` üzerinden) modül
+  takma adlarını (`import nox.http as h; h.serve(...)`) kabul ediyordu, AMA
+  codegen'in KENDİ eşleştiricisi (`matchesNoxAttr`) SAF yapısal — callee'nin
+  kelimesi kelimesine `nox.<modül>.<ad>` olmasını şart koşuyor, takma ad
+  farkındalığı YOK. Sonuç: takma-adlı bir `serve` çağrısı checker'dan
+  GEÇERdi ama codegen'de sıradan bir metod çağrısı sanılıp yanlış/çökme ile
+  sonuçlanırdı. Düzeltme: checker'a codegen'in ZATEN kanıtlanmış `IntrinsicKind`/
+  `intrinsic_table`/`matchIntrinsicKind` şeklinin KENDİ, bağımsız bir kopyası
+  eklendi (checker→codegen import'u `decorators.zig`nin checker'ı ZATEN
+  import etmesi yüzünden gerçek bir döngüsel bağımlılık olurdu — paylaşılamaz,
+  yapısal bir benzerlik olarak taşındı); 3 kopya eşleştirme algoritması TEK
+  bir `matchesNoxAttrCall`e birleşti; `checkCall`nin 14 sıralı dispatch'i TEK
+  bir sınıflandırma + switch'e indirgendi; VE eşleşen bir çağrının callee'si
+  (takma ad ne olursa olsun) codegen'in HER ZAMAN tanıyacağı kanonik
+  `nox.<modül>.<ad>` şekline YENİDEN YAZILIYOR (`tryResolveQualifiedCall`in
+  ZATEN kullandığı AST-yeniden-yazma desenini izleyerek). Yeni bir uçtan uca
+  golden test (`http_serve_golden_test.zig`) `import nox.http as h; h.serve(...)`
+  desenini GERÇEKTEN derleyip çalıştırıp doğru yanıt aldığını kanıtlıyor. Tam
+  `zig build test`: TÜM MEVCUT http/thread intrinsic testleri DEĞİŞMEDEN
+  geçti (SAF bir iç-yeniden-düzenleme + bir davranış düzeltmesi, codegen'in
+  KENDİSİNE dokunulmadı).
+
+## [1.31.0]
+
+### Eklendi
+- **Eşzamanlılık stres-test altyapısı: opt-in `zig build stress-test` +
+  gecelik CI cron işi.** Bu oturumun (ve önceki oturumların) M:N
+  zamanlayıcı/async runtime'ında bulduğu HER GERÇEK veri yarışı
+  (`Task.detached` yarışı, `Channel`/`Task`ın sarkan-işaretçi SIGSEGV'i,
+  work-stealing livelock'ları, ECONNRESET çökmesi, fiber-bağlamlı
+  segfault-döngüsü riski) AD-HOC bir yöntemle bulunmuştu (kullanıcının
+  KENDİ `wrk` yük testi, harici bir ChatGPT incelemesi, ya da manuel
+  `lldb` reprodüksiyonları) — HİÇBİRİ `zig build test`in KENDİ, HER
+  push'ta çalışan hızlı test paketinden yakalanmamıştı VE olamazdı da:
+  `runtime/async_rt/worker_pool.zig`nin KENDİ, kanıtlanmış "çapraz-worker
+  çalma"yı zorlayan İKİ 20-tekrarlı stres testi (Channel/Task `await_()`)
+  ZATEN VAR VE doğru race'i tetikleme mekanizmasını (TÜM görevleri worker
+  0'ın deque'ine PUSH edip kardeşlerin ÇALMASINI beklemek) kanıtlamış
+  durumdaydı — ama SABİT 20 tur, HER push'ta Debug+ReleaseFast İKİ KEZ
+  çalıştığından, MAKUL bir CI süresi İçİn tur sayısı DÜŞÜK tutulmak
+  ZORUNDAYDI. Düzeltme: bu İKİ testin tur sayısı artık `NOX_STRESS_ROUNDS`
+  ortam değişkeninden okunuyor (YENİ `stressRoundsFromEnv` yardımcısı —
+  AYARLANMAMIŞSA ÖNCEKİ GİBİ TAM 20 tur, SIFIR davranış değişikliği).
+  `build.zig`ye YENİ, GERÇEKTEN opt-in bir `stress-test` adımı eklendi
+  (`-Dstress-rounds`, varsayılan 2000) — bu depodaki İLK "varsayılan
+  `test` adımının PARÇASI OLMAYAN" test hedefi (`worker_pool_test`
+  ikilisini YENİDEN kullanır, `test_step`e EKLENMEZ). YENİ `.github/
+  workflows/stress.yml` bunu gecelik (cron `0 3 * * *`) + `workflow_
+  dispatch` İLE, `ci.yml`nin AYNI 3-platform matrisinde (macOS/aarch64,
+  Linux/x86-64, Linux/aarch64) 3000 tur İLE çalıştırıyor — `ci.yml`nin
+  KENDİSİNE DOKUNULMADI (paylaşılan, ZATEN çalışan bir yapılandırmaya
+  dokunmamak İçİn). Doğrulandı: varsayılan `zig build test`/`worker-pool-
+  test` (20 tur) ~2.2s'de değişmeden geçiyor; `zig build stress-test
+  -Dstress-rounds=500` ~5.0s'de (aynı ölçek, doğrudan ikili üzerinde de
+  DOĞRULANDI) 43/43 test geçiyor — mekanizma uçtan uca çalışıyor.
+  **Kapsam DIŞI (BİLİNÇLİ)**: diğer İKİ stres testi (ARC/globals
+  izolasyonu, STW bariyeri) BÜYÜTÜLMEDİ — tur sayıları BİLİNÇLİ,
+  belgelenmiş bir eşik-güvenliği sınırına (`nox_cycle_possible_root`un
+  paylaşılan sayacı 700) bağlı, ayrı bir yeniden tasarım gerektirir.
+  `nox.http.serve`/`serve_multicore`e özgü bir HTTP-seviyesi soak testi
+  de AYRI bir görev olarak bırakıldı.
+
+## [1.30.1]
+
+### Düzeltildi
+- **`checker.zig`nin `checkExpr`/`checkBinary` özyinelemesi artık derinlik
+  sınırlı — GERÇEK, pre-existing bir yığın-taşması SIGABRT'ı düzeltildi.**
+  `tests/fuzz/lexer_parser_checker_fuzz.zig`nin "cok uzun tek satirlik
+  ifade" regresyon testi (2000 kez `+ 1` eklenen TEK satırlık bir ifade,
+  `x: int = 1 + 1 + 1 + ... + 1`) Debug modda GERÇEK bir SIGABRT'la
+  çöküyordu — TEMİZ `main` dalında da (bu düzeltmeden BAĞIMSIZ) aynen
+  üretildiği doğrulandı. Kök neden: `parser.zig`nin GÜVENLİK bulgusu
+  H-3 düzeltmesi (`enterRecursion`/`exitRecursion`/`MAX_EXPR_DEPTH=500`)
+  YALNIZCA parantez İÇ İÇE geçmesini VE önek-operatör zincirlerini (`not
+  not ...`, `- - ...`, `await await ...`, `spawn spawn ...`) kapsıyor —
+  bunlar parser'da GERÇEKTEN özyineliyor. AMA ikili-operatör zincirleri
+  (`parseOr`/`parseAnd`/.../`parseMulDiv`) YİNELEMELİ (`while`) döngülerle
+  işleniyor — özyineleme derinliğini ARTIRMIYORLAR, ama YİNE DE N-derin
+  (`1+1+1+...` İçİn 2000-derin) SOL-çarpık bir AST üretiyorlar. Parser'ın
+  guard'ı bu YÜZDEN bu girdiyi HİÇ YAKALAMIYORDU — `checker.zig`nin
+  `checkExpr` (HER `.binary` düğümünde İKİ KEZ özyineleyen `checkBinary`
+  İLE) bu AST'yi GERÇEKTEN özyinelemeli geziyordu VE HİÇBİR derinlik
+  sınırı YOKTU. Düzeltme: parser'ın KENDİ, ZATEN kanıtlanmış desenini
+  (`enterRecursion`/`exitRecursion`/sabit `MAX_EXPR_DEPTH`/`defer`-tabanlı
+  KENDİLİĞİNDEN sıfırlanma) `checker.zig`ye AYNEN taşıdım — AMA checker'ın
+  ÖZYİNELEME şekli farklı OLDUĞUNDAN (HER AST düğümü GERÇEKTEN
+  `checkExpr`den geçiyor), guard'ı TEK bir noktaya, `checkExpr`in
+  KENDİSİNE koymak YETERLİ oldu (yeni `expr_depth` alanı + `MAX_EXPR_
+  DEPTH=500` + `enterExprRecursion`/`exitExprRecursion` + YENİ bir
+  `TooDeeplyNested` tanı kodu). Bu, switch'in HERHANGİ bir KOLUNA yerel
+  değişken EKLEMEDİĞİNDEN, checker.zig'in KENDİ belgelediği "switch
+  kolları AYNI çerçeveyi paylaşır" tuzağına da GİRMİYOR. `codegen_qbe/
+  expr.zig`nin `genExpr`/`genBinary`si de AYNI şekle sahip VE guard'sız,
+  AMA `main.zig`nin `cmdBuild`ı `checkModule` BAŞARISIZ olan bir AST'yi
+  codegen'e HİÇ GEÇİRMEDİĞİNDEN, checker-taraflı guard PRATİKTE codegen'i
+  de dolaylı olarak KORUYOR. 2 yeni typecheck golden test fixture'ı: biri
+  `MAX_EXPR_DEPTH`i aşan bir ifadenin `TooDeeplyNested` İLE TEMİZ
+  reddedildiğini, diğeri sınırın ÇOK ALTINDA (100 seviye) GERÇEKÇİ bir
+  ifadenin ETKİLENMEDEN derlendiğini kanıtlıyor. Önceden ÇÖKEN fuzz testi
+  ARTIK temiz geçiyor (`zig test ... --test-filter "cok uzun"`). Tam
+  `zig build test`: TEK bilinen İLİŞKİSİZ `fiber.zig` "Bulgu C" flake'i
+  HARİÇ temiz (`git stash` İLE clean `main`de de AYNEN üretildiği ayrıca
+  doğrulandı — bu değişiklikten BAĞIMSIZ, önceden var olan bir kaynak-
+  çekişmesi flake'i).
+
+## [1.30.0]
+
+### Eklendi
+- **`list[T]`/`dict[K,V]`/`class`ın `spawn`-paylaşımlı, senkronizasyonsuz
+  cross-worker MUTASYON riski artık DERLEME ZAMANINDA reddediliyor** —
+  v1.29.12'nin CHANGELOG girdisinin BİLİNÇLİ olarak kapsam dışı bıraktığı
+  problem. `list`/`dict`/`class` örnekleri `--release` (LLVM backend)
+  altında bir `spawn` çağrısına argüman olarak GEÇİLEBİLİYORDU (`checker.
+  zig`nin `isSpawnParamSafeType`i buna izin verir) AMA bu tiplerin
+  `.append()`/`.pop()`/`.sort()`/`xs[i]=`/`d[k]=`/`obj.alan=` mutasyon
+  operasyonlarının HİÇBİRİ senkronizasyon TAŞIMIYOR (ne kilit ne
+  atomiklik) — İKİ ayrı fiber (M:N zamanlayıcının work-stealing'i
+  yüzünden potansiyel olarak İKİ ayrı OS iş parçacığında) AYNI listeye/
+  sözlüğe/nesneye EŞZAMANLI yazarsa bu GERÇEK bir veri yarışıydı (`list.
+  append`in realloc'u SIRASINDA başka bir fiber'ın AYNI ANDA eski
+  işaretçi üzerinden okuma/yazma yapması DAHİL bellek bozulması riski).
+  Kullanıcıya çalışma-zamanı kilidi (dict+class İçİn ucuz, `list[T]`
+  İçİn ABI göçü gerektirdiğinden AYRI bir tura ertelenecekti) VE derleme-
+  zamanı reddi (sıfır çalışma-zamanı maliyeti, list/dict/class'ta TEK
+  TİP, ABI DEĞİŞİKLİĞİ YOK) seçenekleri sunuldu — **derleme-zamanı
+  reddi** seçildi (Nox'un KENDİ "Katman 1: Görünmez Borrow Checker"
+  felsefesiyle TUTARLI). Yeni bir `checker.zig` pre-pass'ı
+  (`collectSpawnTargets`) modülün TAMAMINI (TÜM iç içe kontrol-akışı
+  gövdeleri, iç içe `def`ler, sınıf metodları DAHİL, METİNSEL sıradan
+  BAĞIMSIZ) tarayıp HER `spawn f(...)` çağrısının hedef fonksiyon adını
+  toplar; `checkFunctionBody` artık bir spawn-hedefi fonksiyonun
+  `list`/`dict`/`class` tipli HER parametresi İçİn kendi gövdesini
+  (`checkNoSpawnSharedMutation`) tarayıp DOĞRUDAN mutasyonu (transitif/
+  iç içe erişim VE başka fonksiyonlara transitif çağrı-takibi BİLİNÇLİ
+  olarak v1 kapsamı DIŞINDA — call-graph analizi YOK) yeni bir
+  `SpawnSharedMutation` tanı koduyla reddediyor. 7 yeni typecheck golden
+  test fixture'ı: 4 pozitif (list `.append()`, list `xs[i]=`, dict
+  `d[k]=`, class `obj.alan=`), 1 metinsel-sıra-bağımsızlığı kanıtı (spawn
+  çağrısı hedef fonksiyonun KENDİ tanımından ÖNCE yazılsa BİLE yakalanır),
+  1 negatif kontrol (spawn-hedefi OLMAYAN sıradan fonksiyonların KENDİ
+  list/dict/class parametrelerini mutasyona uğratması — ÇOK yaygın, GÜVENLİ
+  mevcut davranış — ETKİLENMEDİĞİNİ kanıtlar), 1 kapsam-sınırı kanıtı
+  (`b.xs[0]=` gibi transitif/iç-içe bir alan üzerinden mutasyon BİLİNÇLİ
+  olarak yakalanmaz, derlenir). Bu tipler `isSpawnParamSafeType`nin
+  `.qbe` dalında ZATEN spawn-parametresi olarak reddedildiğinden, yeni
+  fixture'lar `Checker.backend = .llvm` ayarlayan YENİ bir `expectGoldenLlvm`
+  test yardımcısı (`llvm_golden_test.zig`nin KENDİ `checker_state.backend
+  = .llvm` deseniyle AYNI, ama SAF tip denetimi — kodgen/`clang` YOK)
+  kullanır. `zig build test`: TÜM MEVCUT fixture'lar (spawn İçEREN
+  HERHANGİ bir `codegen_cases`/`typecheck_cases` fixture'ı DAHİL)
+  DEĞİŞMEDEN geçti — SAF bir EKLEME, hiçbir mevcut davranış değişmedi.
+
 ## [1.29.12]
 
 ### Düzeltildi

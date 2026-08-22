@@ -1,0 +1,51 @@
+name: Eşzamanlılık stres testi (gecelik)
+
+# v1.31.0 (bkz. nox-teknik-spesifikasyon.md §3.97): `ci.yml`nin HER push/
+# PR'da çalışan hızlı test paketi, `worker_pool.zig`nin ZATEN kanıtlanmış
+# İKİ çapraz-worker stres testini (Channel/Task `await_()`) yalnızca SABİT
+# 20 tur çalıştırabilir (daha fazlası HER push'u yavaşlatırdı). Bu iş,
+# AYNI testleri `build.zig`nin YENİ `stress-test` adımıyla ÇOK DAHA FAZLA
+# tur çalıştırarak, nadir zamanlamaya-bağlı race'leri "birinin production'da
+# fark etmesini" BEKLEMEDEN, düzenli/otomatik olarak yakalamayı hedefler.
+# `ci.yml`ye BİLİNÇLİ olarak DOKUNULMADI (paylaşılan, zaten çalışan bir CI
+# yapılandırmasına dokunmamak İçİn) — AYNI 3-platform matrisi VE AYNI Zig-
+# kurulum deseni BURADA birebir kopyalanır.
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  stress:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            name: macOS (aarch64)
+            zig_arch: aarch64-macos
+          - os: ubuntu-latest
+            name: Linux (x86-64)
+            zig_arch: x86_64-linux
+          - os: ubuntu-24.04-arm
+            name: Linux (aarch64)
+            zig_arch: aarch64-linux
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Zig kur
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-${{ matrix.zig_arch }}-0.16.0.tar.xz"
+          tar xf /tmp/zig.tar.xz -C /tmp
+          echo "/tmp/zig-${{ matrix.zig_arch }}-0.16.0" >>"$GITHUB_PATH"
+
+      - name: zig build (ReleaseFast)
+        run: zig build -Doptimize=ReleaseFast
+
+      - name: zig build stress-test (ReleaseFast, 3000 tur)
+        run: zig build stress-test -Doptimize=ReleaseFast -Dstress-rounds=3000

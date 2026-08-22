@@ -71,6 +71,16 @@ pub const TypeError = error{
     /// AŞIRI YÜKLEMEK yerine ayrı, grep-lenebilir bir tanı kodu (FF.5'in
     /// `UnassignedField`iyle AYNI gerekçe).
     OptionalNotNarrowed,
+    /// v1.30.0 (bkz. nox-teknik-spesifikasyon.md §3.95): bir `spawn` HEDEFİ
+    /// fonksiyonun `list`/`dict`/`class` tipli bir parametresi kendi
+    /// gövdesinde mutasyona uğratıldı — `TypeMismatch`e AŞIRI YÜKLEMEK
+    /// yerine ayrı, grep-lenebilir bir tanı kodu (`UnassignedField`/
+    /// `OptionalNotNarrowed` İLE AYNI gerekçe).
+    SpawnSharedMutation,
+    /// v1.30.1 (bkz. nox-teknik-spesifikasyon.md §3.96): `checkExpr`in canlı
+    /// özyineleme derinliği `MAX_EXPR_DEPTH`i aştı (parser'ın
+    /// `RecursionLimitExceeded`iyle AYNI ilke, checker tarafı İçİn).
+    TooDeeplyNested,
     OutOfMemory,
 };
 
@@ -282,6 +292,30 @@ pub const Checker = struct {
     /// bunlar `spawn` ile başlatılabilir (bkz. `checkExpr`in `.spawn_expr`
     /// dalı, nox-teknik-spesifikasyon.md §3.21).
     async_functions: std.StringHashMapUnmanaged(void) = .{},
+    /// v1.30.0: `spawn f(...)` İLE HERHANGİ bir yerde HEDEF alınan TÜM
+    /// üst-düzey `async def` fonksiyon adlarının kümesi — `checkModule`nin
+    /// diğer pre-pass'larıyla AYNI aşamada, `checkFunctionBody` HERHANGİ
+    /// bir fonksiyonu denetlemeden ÖNCE (`collectSpawnTargets`) doldurulur
+    /// (METİNSEL sıradan BAĞIMSIZ olması İÇİN). `checkFunctionBody`
+    /// bunu kullanarak `list`/`dict`/`class` tipli parametrelerin
+    /// spawn-hedefi fonksiyonun KENDİ gövdesinde mutasyona
+    /// uğratılmadığını doğrular (bkz. `checkNoSpawnSharedMutation`) —
+    /// çalışma zamanında senkronizasyonsuz cross-worker mutasyon
+    /// riskine karşı derleme-zamanı reddi.
+    spawn_target_functions: std.StringHashMapUnmanaged(void) = .{},
+    /// v1.30.1 (bkz. nox-teknik-spesifikasyon.md §3.96): `parser.zig`nin
+    /// GÜVENLİK bulgusu H-3 düzeltmesiyle (`enterRecursion`/
+    /// `MAX_EXPR_DEPTH`) AYNI mekanizma — AMA parser'ın guard'ı YALNIZCA
+    /// parantez/önek-operatör iç içe geçmesini kapsar; DÜZ bir ikili-
+    /// operatör zinciri (`1+1+1+...`) parser'da YİNELEMELİ İŞLENİP
+    /// ÖZYİNELEME DERİNLİĞİNİ ARTIRMAZ AMA YİNE DE N-derin bir AST üretir
+    /// — `checkExpr`/`checkBinary` bu AST'yi GERÇEKTEN özyinelemeli
+    /// gezdiğinden (GERÇEK, 2000-derin bir fuzz testiyle KANITLANMIŞ
+    /// SIGABRT — `tests/fuzz/lexer_parser_checker_fuzz.zig`), AYNI sınır
+    /// BURADA checker'ın KENDİ canlı özyineleme derinliğine uygulanır.
+    /// `enterExprRecursion`/`exitExprRecursion` İLE `defer` üzerinden
+    /// otomatik sıfırlanır (parser'ın KENDİ deseniyle BİREBİR AYNI).
+    expr_depth: usize = 0,
     /// Faz U.4.5 (bkz. `checkExpr`nin `.identifier` dalı): üst-düzey
     /// (non-generic) bir `def`in BARE adı, ÇAĞRI DIŞINDA bir bağlamda
     /// (bir değişkene atama, bir listeye/alana KOYMA) kullanıldığında bu
@@ -410,6 +444,26 @@ pub const Checker = struct {
         else
             msg;
         return err;
+    }
+
+    /// v1.30.1 (bkz. `expr_depth`in belge notu): `compiler/parser/parser.zig`
+    /// nin `MAX_EXPR_DEPTH`iyle AYNI sabit/gerekçe — GERÇEKÇİ HİÇBİR Nox
+    /// programının asla yaklaşmayacağı ama macOS'un varsayılan 8MB
+    /// yığınında GÜVENLE bol pay bırakan bir sınır.
+    const MAX_EXPR_DEPTH: usize = 500;
+
+    /// v1.30.1: `parser.zig`nin `enterRecursion`iyle AYNI desen —
+    /// `checkExpr`in HER çağrısında (switch'TEN ÖNCE) çağrılır, `defer
+    /// exitExprRecursion()` İLE eşleştirilir.
+    fn enterExprRecursion(self: *Checker) TypeError!void {
+        self.expr_depth += 1;
+        if (self.expr_depth > MAX_EXPR_DEPTH) {
+            return self.fail(error.TooDeeplyNested, "ifade çok derin iç içe geçmiş (izin verilen en fazla derinlik: {d})", .{MAX_EXPR_DEPTH});
+        }
+    }
+
+    fn exitExprRecursion(self: *Checker) void {
+        self.expr_depth -= 1;
     }
 
     /// Faz T.2: bir bağımsız birimin (fonksiyon/sınıf/metod/gevşek deyim)
@@ -1512,19 +1566,106 @@ pub const Checker = struct {
         return .none;
     }
 
-    /// `matchIntrinsicKind`in (codegen_qbe/async_thread.zig, Faz P1.6) çekirdek
-    /// çözümleme mantığı — callee TAM OLARAK `nox.http.<name>` şeklinde (üç
-    /// segmentli, `nox`/`http`/`name`) VE `nox.http` İTHAL edilmişse `true`.
-    fn matchesNoxHttpCall(self: *Checker, c: ast.Call, name: []const u8) TypeError!bool {
+    /// v1.32.0 (bkz. nox-teknik-spesifikasyon.md §3.98): `matchesNoxHttpCall`
+    /// (aşağıda) VE eskiden `tryResolveThreadSpawnCall`/`tryResolvePoolRunCall`
+    /// İÇİNE AYRI AYRI İNLİNE edilmiş İKİ KOPYASININ birleştiği TEK, alias-
+    /// farkında (`substituteAlias` ÜZERİNDEN) eşleştirici — callee TAM OLARAK
+    /// `nox.<module>.<name>` şeklinde (üç segmentli) VE `nox.<module>` İTHAL
+    /// edilmişse `true`. Codegen'in KENDİ `matchesNoxAttr`i (async_thread.zig,
+    /// Faz P1.6) İLE AYNI ROLÜ oynar AMA (checker/codegen'in AYRI modül
+    /// grafikleri OLMASI yüzünden — bkz. `types.zig`nin `Backend` notu)
+    /// PAYLAŞILAMAZ; BURADAKİ alias-farkındalığı codegen'İN sürümünde YOK
+    /// (`checkCall`in `.attribute` kolu bu YÜZDEN eşleşen bir çağrının
+    /// callee'sini KANONİK forma yeniden yazar, bkz. `rewriteIntrinsicCalleeToCanonical`).
+    fn matchesNoxAttrCall(self: *Checker, c: ast.Call, module: []const u8, name: []const u8) TypeError!bool {
         var raw_segments: std.ArrayListUnmanaged([]const u8) = .empty;
         if (!(try self.flattenDottedPath(c.callee.*, &raw_segments))) return false;
         if (raw_segments.items.len < 2) return false;
         const segments = try self.substituteAlias(raw_segments.items);
         if (segments.len != 3) return false;
         if (!std.mem.eql(u8, segments[0], "nox")) return false;
-        if (!std.mem.eql(u8, segments[1], "http")) return false;
+        if (!std.mem.eql(u8, segments[1], module)) return false;
         if (!std.mem.eql(u8, segments[2], name)) return false;
-        return self.imported_modules.contains("nox.http");
+        const module_path = try self.joinSegments(segments[0..2], '.');
+        return self.imported_modules.contains(module_path);
+    }
+
+    /// `matchIntrinsicKind`in (codegen_qbe/async_thread.zig, Faz P1.6) çekirdek
+    /// çözümleme mantığı — callee TAM OLARAK `nox.http.<name>` şeklinde (üç
+    /// segmentli, `nox`/`http`/`name`) VE `nox.http` İTHAL edilmişse `true`.
+    fn matchesNoxHttpCall(self: *Checker, c: ast.Call, name: []const u8) TypeError!bool {
+        return self.matchesNoxAttrCall(c, "http", name);
+    }
+
+    /// v1.32.0: codegen'in `IntrinsicKind`/`intrinsic_table`/`matchIntrinsicKind`
+    /// üçlüsünün (async_thread.zig:128-174) checker'a ÖZEL, BAĞIMSIZ kopyası
+    /// — `checker.zig`nin `codegen_qbe`ye import EDİLEMEMESİ yüzünden (gerçek
+    /// bir döngüsel bağımlılık olurdu, bkz. plan dosyası "Tasarım kararı")
+    /// PAYLAŞILAMAZ, YAPISAL olarak birebir aynı tutulur. ESKİDEN `checkCall`
+    /// (satır ~3163) `.attribute` kolunda 14 sıralı `tryResolveX` çağrısı
+    /// vardı (3 çıplak + 9 generic + thread_start + pool_run) — ARTIK TEK bir
+    /// `matchIntrinsicKind` çağrısı + switch.
+    const IntrinsicKind = enum {
+        http_serve,
+        http_serve_fd,
+        http_serve_multicore,
+        http_serve_tls,
+        http_serve_ws,
+        http_serve_ws_tls,
+        http_serve_fd_tls,
+        http_serve_fd_ws,
+        http_serve_fd_ws_tls,
+        http_serve_multicore_tls,
+        http_serve_multicore_ws,
+        http_serve_multicore_ws_tls,
+        thread_start,
+        pool_run,
+    };
+
+    const IntrinsicEntry = struct { module: []const u8, name: []const u8, kind: IntrinsicKind };
+
+    const intrinsic_table = [_]IntrinsicEntry{
+        .{ .module = "http", .name = "serve", .kind = .http_serve },
+        .{ .module = "http", .name = "serve_fd", .kind = .http_serve_fd },
+        .{ .module = "http", .name = "serve_multicore", .kind = .http_serve_multicore },
+        .{ .module = "http", .name = "serve_tls", .kind = .http_serve_tls },
+        .{ .module = "http", .name = "serve_ws", .kind = .http_serve_ws },
+        .{ .module = "http", .name = "serve_ws_tls", .kind = .http_serve_ws_tls },
+        .{ .module = "http", .name = "serve_fd_tls", .kind = .http_serve_fd_tls },
+        .{ .module = "http", .name = "serve_fd_ws", .kind = .http_serve_fd_ws },
+        .{ .module = "http", .name = "serve_fd_ws_tls", .kind = .http_serve_fd_ws_tls },
+        .{ .module = "http", .name = "serve_multicore_tls", .kind = .http_serve_multicore_tls },
+        .{ .module = "http", .name = "serve_multicore_ws", .kind = .http_serve_multicore_ws },
+        .{ .module = "http", .name = "serve_multicore_ws_tls", .kind = .http_serve_multicore_ws_tls },
+        .{ .module = "thread", .name = "start", .kind = .thread_start },
+        .{ .module = "thread", .name = "pool_run", .kind = .pool_run },
+    };
+
+    fn matchIntrinsicKind(self: *Checker, c: ast.Call) TypeError!?IntrinsicEntry {
+        for (intrinsic_table) |entry| {
+            if (try self.matchesNoxAttrCall(c, entry.module, entry.name)) return entry;
+        }
+        return null;
+    }
+
+    /// v1.32.0 (bkz. nox-teknik-spesifikasyon.md §3.98, "alias-uyuşmazlığı
+    /// düzeltmesi"): `matchIntrinsicKind` bir eşleşme bulduğunda (ALIAS
+    /// ÜZERİNDEN de olsa, ör. `import nox.http as h; h.serve(...)`) callee'yi
+    /// KANONİK `nox.<module>.<name>` üç-seviyeli `Attribute` zincirine
+    /// YENİDEN YAZAR — `tryResolveQualifiedCall`in `c.callee.* = .{
+    /// .identifier = mangled }` desenİYLE AYNI ilke. Codegen'in KENDİ
+    /// `matchesNoxAttr`i (async_thread.zig) alias-FARKINDA DEĞİL (temel
+    /// tanımlayıcının KELİMESİ KELİMESİNE `"nox"` olmasını şart koşar) —
+    /// BU rewrite OLMADAN, bir takma-ad İLE yazılan bir intrinsic çağrısı
+    /// checker'dan GEÇER ama codegen'de SIRADAN bir metod çağrısı SANILIP
+    /// YANLIŞ/çökme İLE SONUÇLANIRDI (GERÇEK, ayrı bir bug — araştırma
+    /// SIRASINDA bulundu).
+    fn rewriteIntrinsicCalleeToCanonical(self: *Checker, c: ast.Call, module: []const u8, name: []const u8) TypeError!void {
+        const nox_ident = try self.allocator.create(ast.Expr);
+        nox_ident.* = .{ .identifier = "nox" };
+        const mod_attr = try self.allocator.create(ast.Expr);
+        mod_attr.* = .{ .attribute = .{ .obj = nox_ident, .attr = module } };
+        c.callee.* = .{ .attribute = .{ .obj = mod_attr, .attr = name } };
     }
 
     /// `nox.thread.start(entry, arg) -> ThreadHandle[T]` — Faz BB.3 (bkz.
@@ -1553,15 +1694,7 @@ pub const Checker = struct {
     /// GEÇMELİDİR (paylaşımsız modelin GÜVENLE taşıyabileceği küme —
     /// `class`/`list`/`dict`/`Task`/`Channel`/`ThreadHandle` HARİÇ).
     fn tryResolveThreadSpawnCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!?Type {
-        var raw_segments: std.ArrayListUnmanaged([]const u8) = .empty;
-        if (!(try self.flattenDottedPath(c.callee.*, &raw_segments))) return null;
-        if (raw_segments.items.len < 2) return null;
-        const segments = try self.substituteAlias(raw_segments.items);
-        if (segments.len != 3) return null;
-        if (!std.mem.eql(u8, segments[0], "nox")) return null;
-        if (!std.mem.eql(u8, segments[1], "thread")) return null;
-        if (!std.mem.eql(u8, segments[2], "start")) return null;
-        if (!self.imported_modules.contains("nox.thread")) return null;
+        if (!(try self.matchesNoxAttrCall(c, "thread", "start"))) return null;
 
         if (c.args.len != 2) {
             return self.fail(error.ArgumentCountMismatch, "'nox.thread.start' tam olarak 2 argüman alır: (entry, arg)", .{});
@@ -1611,15 +1744,7 @@ pub const Checker = struct {
     /// DERLEME-ZAMANI SABİTİ OLMAK ZORUNDA DEĞİLDİR — DOĞRUDAN çalışma-
     /// zamanı değeri olarak `nox_pool_run`e GEÇER.
     fn tryResolvePoolRunCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!?Type {
-        var raw_segments: std.ArrayListUnmanaged([]const u8) = .empty;
-        if (!(try self.flattenDottedPath(c.callee.*, &raw_segments))) return null;
-        if (raw_segments.items.len < 2) return null;
-        const segments = try self.substituteAlias(raw_segments.items);
-        if (segments.len != 3) return null;
-        if (!std.mem.eql(u8, segments[0], "nox")) return null;
-        if (!std.mem.eql(u8, segments[1], "thread")) return null;
-        if (!std.mem.eql(u8, segments[2], "pool_run")) return null;
-        if (!self.imported_modules.contains("nox.thread")) return null;
+        if (!(try self.matchesNoxAttrCall(c, "thread", "pool_run"))) return null;
 
         if (c.args.len != 2) {
             return self.fail(error.ArgumentCountMismatch, "'nox.thread.pool_run' tam olarak 2 argüman alır: (num_workers, entry)", .{});
@@ -1755,6 +1880,7 @@ pub const Checker = struct {
         try self.collectProtocols(module);
         try self.registerSignatures(module);
         try self.collectModuleGlobals(module);
+        try self.collectSpawnTargets(module);
 
         var top_scope: Scope = .{};
         // `in_async = true`: Nox'ta açık bir `def main()` sözleşmesi YOK —
@@ -1862,11 +1988,207 @@ pub const Checker = struct {
         }
     }
 
+    /// v1.30.0: `checkModule`nin diğer pre-pass'larıyla (`collectImports`
+    /// vb.) AYNI aşamada, HERHANGİ bir fonksiyon gövdesi denetlenmeden
+    /// ÖNCE çalışır — modülün TAMAMINI (üst-düzey deyimler, TÜM iç içe
+    /// kontrol-akışı gövdeleri, iç içe `def`ler, sınıf metodları DAHİL)
+    /// tarayıp HER `spawn f(...)` çağrısının `f` adını `spawn_target_
+    /// functions`e ekler. METİNSEL sıradan BAĞIMSIZDIR (bir fonksiyon
+    /// kendi `spawn` çağrısından SONRA tanımlanmış olsa BİLE yakalanır).
+    fn collectSpawnTargets(self: *Checker, module: ast.Module) TypeError!void {
+        try self.collectSpawnTargetsStmts(module.body);
+    }
+
+    fn collectSpawnTargetsStmts(self: *Checker, stmts: []const ast.Stmt) TypeError!void {
+        for (stmts) |stmt| {
+            switch (stmt.kind) {
+                .expr_stmt => |e| try self.collectSpawnTargetsExpr(e),
+                .var_decl => |v| try self.collectSpawnTargetsExpr(v.value),
+                .assign => |a| {
+                    try self.collectSpawnTargetsExpr(a.target);
+                    try self.collectSpawnTargetsExpr(a.value);
+                },
+                .if_stmt => |i| {
+                    try self.collectSpawnTargetsExpr(i.cond);
+                    try self.collectSpawnTargetsStmts(i.then_body);
+                    for (i.elif_clauses) |ec| {
+                        try self.collectSpawnTargetsExpr(ec.cond);
+                        try self.collectSpawnTargetsStmts(ec.body);
+                    }
+                    if (i.else_body) |eb| try self.collectSpawnTargetsStmts(eb);
+                },
+                .while_stmt => |w| {
+                    try self.collectSpawnTargetsExpr(w.cond);
+                    try self.collectSpawnTargetsStmts(w.body);
+                },
+                .for_stmt => |f| {
+                    try self.collectSpawnTargetsExpr(f.iterable);
+                    try self.collectSpawnTargetsStmts(f.body);
+                },
+                // İç içe `def` (Faz U.4.2) asla spawn HEDEFİ olamaz
+                // (asenkron olamaz, satır ~2098) ama İÇİNDE bir `spawn`
+                // çağrısı OLABİLİR.
+                .func_def => |fd| try self.collectSpawnTargetsStmts(fd.body),
+                .class_def => |cd| for (cd.methods) |m| try self.collectSpawnTargetsStmts(m.body),
+                .return_stmt => |maybe_e| if (maybe_e) |e| try self.collectSpawnTargetsExpr(e),
+                .raise_stmt => |e| try self.collectSpawnTargetsExpr(e),
+                .try_stmt => |t| {
+                    try self.collectSpawnTargetsStmts(t.try_body);
+                    for (t.except_clauses) |ec| try self.collectSpawnTargetsStmts(ec.body);
+                    if (t.finally_body) |fb| try self.collectSpawnTargetsStmts(fb);
+                },
+                .lowlevel_stmt => |ll| try self.collectSpawnTargetsStmts(ll.body),
+                .with_stmt => |w| {
+                    try self.collectSpawnTargetsExpr(w.ctx_expr);
+                    try self.collectSpawnTargetsStmts(w.body);
+                },
+                .defer_stmt => |d| {
+                    try self.collectSpawnTargetsExpr(d.call.callee.*);
+                    for (d.call.args) |a| try self.collectSpawnTargetsExpr(a);
+                },
+                .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt => {},
+            }
+        }
+    }
+
+    fn collectSpawnTargetsExpr(self: *Checker, e: ast.Expr) TypeError!void {
+        switch (e) {
+            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+            .unary => |u| try self.collectSpawnTargetsExpr(u.operand.*),
+            .binary => |b| {
+                try self.collectSpawnTargetsExpr(b.left.*);
+                try self.collectSpawnTargetsExpr(b.right.*);
+            },
+            .call => |c| {
+                try self.collectSpawnTargetsExpr(c.callee.*);
+                for (c.args) |a| try self.collectSpawnTargetsExpr(a);
+            },
+            .attribute => |a| try self.collectSpawnTargetsExpr(a.obj.*),
+            .index => |ix| {
+                try self.collectSpawnTargetsExpr(ix.obj.*);
+                try self.collectSpawnTargetsExpr(ix.index.*);
+            },
+            .list_lit => |items| for (items) |it| try self.collectSpawnTargetsExpr(it),
+            .dict_lit => |pairs| for (pairs) |p| {
+                try self.collectSpawnTargetsExpr(p.key);
+                try self.collectSpawnTargetsExpr(p.value);
+            },
+            .await_expr => |operand_ptr| try self.collectSpawnTargetsExpr(operand_ptr.*),
+            .generic_construct => |g| for (g.args) |a| try self.collectSpawnTargetsExpr(a),
+            .spawn_expr => |operand_ptr| {
+                // `spawn`ın operandı TİP kontrolünde `.call` VE `callee =
+                // .identifier` OLMAK ZORUNDA (bkz. `checkExpr`in
+                // `.spawn_expr` dalı) — ama BU pre-pass tip kontrolünden
+                // ÖNCE çalıştığından, geçersiz şekiller SESSİZCE ATLANIR
+                // (asıl hata zaten normal akışta `checkExpr` tarafından
+                // raporlanır).
+                if (operand_ptr.* == .call) {
+                    const c = operand_ptr.*.call;
+                    if (c.callee.* == .identifier) {
+                        try self.spawn_target_functions.put(self.allocator, c.callee.*.identifier, {});
+                    }
+                    for (c.args) |a| try self.collectSpawnTargetsExpr(a);
+                }
+            },
+        }
+    }
+
+    /// v1.30.0: bir `spawn` hedefi fonksiyonun `list`/`dict`/`class` tipli
+    /// bir parametresi (`params`), fonksiyonun KENDİ gövdesi (`stmts`)
+    /// İÇİNDE mutasyona uğratılıyor mu diye tarar — `xs[i]=`/`d[k]=`
+    /// (index-atama), `obj.alan=` (tek-seviye attribute-atama) VE
+    /// `list[T]`in mutasyon metodları (`.append`/`.pop`/`.sort`).
+    /// Yalnızca DOĞRUDAN parametre (transitif İÇ içe erişim DEĞİL) VE
+    /// yalnızca fonksiyonun KENDİ gövdesi (BAŞKA fonksiyonlara transitif
+    /// TAKİP YOK, iç içe `func_def`/`class_def` gövdelerine İNMEZ —
+    /// bunlar AYRI çağrılabilir birimlerdir) — bkz. plan dosyasının
+    /// "Kapsam" bölümü.
+    fn checkNoSpawnSharedMutation(self: *Checker, fd_name: []const u8, stmts: []const ast.Stmt, params: []const SharedParam) TypeError!void {
+        for (stmts) |stmt| {
+            self.current_line = stmt.line;
+            self.current_span = stmt.span;
+            switch (stmt.kind) {
+                .assign => |a| {
+                    switch (a.target) {
+                        .index => |ix| if (ix.obj.* == .identifier) {
+                            if (findSharedParam(params, ix.obj.*.identifier, &.{ .list, .dict })) |sp| {
+                                return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, sp.name });
+                            }
+                        },
+                        .attribute => |at| if (at.obj.* == .identifier) {
+                            if (findSharedParam(params, at.obj.*.identifier, &.{.class})) |sp| {
+                                return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, sp.name });
+                            }
+                        },
+                        else => {},
+                    }
+                },
+                .expr_stmt => |e| if (e == .call) {
+                    const c = e.call;
+                    if (c.callee.* == .attribute) {
+                        const at = c.callee.*.attribute;
+                        if (at.obj.* == .identifier and
+                            (std.mem.eql(u8, at.attr, "append") or std.mem.eql(u8, at.attr, "pop") or std.mem.eql(u8, at.attr, "sort")))
+                        {
+                            if (findSharedParam(params, at.obj.*.identifier, &.{.list})) |sp| {
+                                return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, sp.name });
+                            }
+                        }
+                    }
+                },
+                .if_stmt => |i| {
+                    try self.checkNoSpawnSharedMutation(fd_name, i.then_body, params);
+                    for (i.elif_clauses) |ec| try self.checkNoSpawnSharedMutation(fd_name, ec.body, params);
+                    if (i.else_body) |eb| try self.checkNoSpawnSharedMutation(fd_name, eb, params);
+                },
+                .while_stmt => |w| try self.checkNoSpawnSharedMutation(fd_name, w.body, params),
+                .for_stmt => |f| try self.checkNoSpawnSharedMutation(fd_name, f.body, params),
+                .try_stmt => |t| {
+                    try self.checkNoSpawnSharedMutation(fd_name, t.try_body, params);
+                    for (t.except_clauses) |ec| try self.checkNoSpawnSharedMutation(fd_name, ec.body, params);
+                    if (t.finally_body) |fb| try self.checkNoSpawnSharedMutation(fd_name, fb, params);
+                },
+                .with_stmt => |w| try self.checkNoSpawnSharedMutation(fd_name, w.body, params),
+                .lowlevel_stmt => |ll| try self.checkNoSpawnSharedMutation(fd_name, ll.body, params),
+                // İç içe `func_def`/`class_def`: AYRI çağrılabilir birimler
+                // — "transitif takip yok" kararıyla TUTARLI, İNİLMEZ.
+                else => {},
+            }
+        }
+    }
+
+    const SharedParamKind = enum { list, dict, class };
+    const SharedParam = struct { name: []const u8, kind: SharedParamKind };
+
+    fn findSharedParam(params: []const SharedParam, name: []const u8, kinds: []const SharedParamKind) ?SharedParam {
+        for (params) |sp| {
+            if (std.mem.eql(u8, sp.name, name)) {
+                for (kinds) |k| if (sp.kind == k) return sp;
+            }
+        }
+        return null;
+    }
+
     fn checkFunctionBody(self: *Checker, fd: ast.FuncDef) TypeError!void {
         var scope: Scope = .{};
+        const is_spawn_target = self.spawn_target_functions.contains(fd.name);
+        var shared_params: std.ArrayListUnmanaged(SharedParam) = .empty;
+        defer shared_params.deinit(self.allocator);
         for (fd.params) |p| {
             const pt = try self.typeExprToType(p.type_expr);
             try scope.declare(self.allocator, p.name, pt);
+            if (is_spawn_target) {
+                const kind: ?SharedParamKind = switch (pt) {
+                    .list => .list,
+                    .dict => .dict,
+                    .class => .class,
+                    else => null,
+                };
+                if (kind) |k| try shared_params.append(self.allocator, .{ .name = p.name, .kind = k });
+            }
+        }
+        if (shared_params.items.len > 0) {
+            try self.checkNoSpawnSharedMutation(fd.name, fd.body, shared_params.items);
         }
         const ret = try self.typeExprToType(fd.return_type);
         var ctx: FnCtx = .{ .scope = &scope, .expected_return = ret, .in_async = fd.is_async, .path = fd.name };
@@ -2536,6 +2858,8 @@ pub const Checker = struct {
     }
 
     fn checkExpr(self: *Checker, ctx: *FnCtx, expr: ast.Expr) TypeError!Type {
+        try self.enterExprRecursion();
+        defer self.exitExprRecursion();
         return switch (expr) {
             .int_lit => .int,
             .float_lit => .float,
@@ -3176,42 +3500,43 @@ pub const Checker = struct {
                 return self.fail(error.UndefinedFunction, "tanımsız fonksiyon veya sınıf: {s}", .{name});
             },
             .attribute => |a| {
-                // `nox.http.serve(port, handle[, max_connections])` — D.1.6'nın
-                // özel yerleşiği (bkz. `checkHttpServeCall`in belge notu).
-                // `tryResolveQualifiedCall`DAN ÖNCE denenir: `handle` çıplak
-                // bir fonksiyon ADI olduğundan (`spawn`ınkiyle AYNI kısıt,
-                // bkz. `.spawn_expr` dalı) normal argüman tipi denetiminden
-                // (`checkArgs`/`checkExpr`) GEÇİRİLEMEZ — fonksiyonlar Nox'ta
-                // birinci sınıf DEĞER DEĞİLDİR.
-                if (try self.tryResolveHttpServeCall(ctx, c)) |t| return t;
-                // Faz DD.1: `nox.http.serve_fd`/`nox.http.serve_multicore`
-                // — `serve`nin AYNI "handle çıplak bir isim" kısıtına
-                // sahip iki KARDEŞ formu (bkz. `tryResolveHttpServeCall`in
-                // belge notu, AYNI gerekçe).
-                if (try self.tryResolveHttpServeFdCall(ctx, c)) |t| return t;
-                if (try self.tryResolveHttpServeMulticoreCall(ctx, c)) |t| return t;
-                // Faz "sunucu-tarafı TLS + WebSocket Upgrade" — 9 YENİ
-                // varyant (bkz. plan dosyası §6, TAM 12'lik isim matrisi),
-                // ÜÇÜ ZATEN YUKARIDA çözümlenen çıplak formların (`serve`/
-                // `serve_fd`/`serve_multicore`) `_tls`/`_ws`/`_ws_tls`
-                // eklentileri — hepsi PAYLAŞILAN `tryResolveHttpServeGeneric`
-                // İLE çözümlenir.
-                if (try self.tryResolveHttpServeGeneric(ctx, c, "serve_tls", false, false, true)) |t| return t;
-                if (try self.tryResolveHttpServeGeneric(ctx, c, "serve_ws", false, true, false)) |t| return t;
-                if (try self.tryResolveHttpServeGeneric(ctx, c, "serve_ws_tls", false, true, true)) |t| return t;
-                if (try self.tryResolveHttpServeGeneric(ctx, c, "serve_fd_tls", false, false, true)) |t| return t;
-                if (try self.tryResolveHttpServeGeneric(ctx, c, "serve_fd_ws", false, true, false)) |t| return t;
-                if (try self.tryResolveHttpServeGeneric(ctx, c, "serve_fd_ws_tls", false, true, true)) |t| return t;
-                if (try self.tryResolveHttpServeGeneric(ctx, c, "serve_multicore_tls", true, false, true)) |t| return t;
-                if (try self.tryResolveHttpServeGeneric(ctx, c, "serve_multicore_ws", true, true, false)) |t| return t;
-                if (try self.tryResolveHttpServeGeneric(ctx, c, "serve_multicore_ws_tls", true, true, true)) |t| return t;
-                // `nox.thread.start(entry, arg)` — Faz BB.3'ün AYNI
-                // gerekçesi (`entry` ÇIPLAK bir fonksiyon adı, birinci
-                // sınıf DEĞER OLARAK GEÇİRİLEMEZ).
-                if (try self.tryResolveThreadSpawnCall(ctx, c)) |t| return t;
-                // `nox.thread.pool_run(num_workers, entry)` — Faz MN.7a
-                // (bkz. `tryResolvePoolRunCall`nin belge notu).
-                if (try self.tryResolvePoolRunCall(ctx, c)) |t| return t;
+                // v1.32.0 (bkz. nox-teknik-spesifikasyon.md §3.98): ESKİDEN
+                // BURADA `nox.http.serve`/`serve_fd`/`serve_multicore`/9 TLS-
+                // WS varyantı/`nox.thread.start`/`pool_run` İçİn 14 SIRALI
+                // `tryResolveX` çağrısı vardı (`handle`/`entry` çıplak bir
+                // fonksiyon ADI olduğundan — Nox'ta fonksiyonlar birinci
+                // sınıf DEĞER OLMADIĞINDAN — normal argüman tipi denetiminden
+                // GEÇİRİLEMEDİĞİ İçİn `tryResolveQualifiedCall`DAN ÖNCE
+                // denenmesi GEREKİYORDU). ARTIK TEK bir `matchIntrinsicKind`
+                // sınıflandırması + switch — codegen'in `IntrinsicKind`/
+                // `intrinsic_table`/`matchIntrinsicKind`ünün (Faz P1.6,
+                // async_thread.zig) checker'a ÖZEL kopyası (bkz. onun belge
+                // notu, PAYLAŞILAMAMA gerekçesi). `rewriteIntrinsicCalleeToCanonical`
+                // çağrısı, eşleşen bir çağrı bir modül TAKMA ADI ÜZERİNDEN
+                // yazılmış olsa BİLE (`import nox.http as h; h.serve(...)`)
+                // codegen'in alias-farkında OLMAYAN `matchesNoxAttr`inin
+                // HER ZAMAN tanıyacağı kanonik `nox.<module>.<name>` şeklini
+                // GARANTİ EDER (GERÇEK bir bug'ın düzeltmesi — bkz. plan
+                // dosyası).
+                if (try self.matchIntrinsicKind(c)) |entry| {
+                    try self.rewriteIntrinsicCalleeToCanonical(c, entry.module, entry.name);
+                    return switch (entry.kind) {
+                        .http_serve => (try self.tryResolveHttpServeCall(ctx, c)).?,
+                        .http_serve_fd => (try self.tryResolveHttpServeFdCall(ctx, c)).?,
+                        .http_serve_multicore => (try self.tryResolveHttpServeMulticoreCall(ctx, c)).?,
+                        .http_serve_tls => (try self.tryResolveHttpServeGeneric(ctx, c, "serve_tls", false, false, true)).?,
+                        .http_serve_ws => (try self.tryResolveHttpServeGeneric(ctx, c, "serve_ws", false, true, false)).?,
+                        .http_serve_ws_tls => (try self.tryResolveHttpServeGeneric(ctx, c, "serve_ws_tls", false, true, true)).?,
+                        .http_serve_fd_tls => (try self.tryResolveHttpServeGeneric(ctx, c, "serve_fd_tls", false, false, true)).?,
+                        .http_serve_fd_ws => (try self.tryResolveHttpServeGeneric(ctx, c, "serve_fd_ws", false, true, false)).?,
+                        .http_serve_fd_ws_tls => (try self.tryResolveHttpServeGeneric(ctx, c, "serve_fd_ws_tls", false, true, true)).?,
+                        .http_serve_multicore_tls => (try self.tryResolveHttpServeGeneric(ctx, c, "serve_multicore_tls", true, false, true)).?,
+                        .http_serve_multicore_ws => (try self.tryResolveHttpServeGeneric(ctx, c, "serve_multicore_ws", true, true, false)).?,
+                        .http_serve_multicore_ws_tls => (try self.tryResolveHttpServeGeneric(ctx, c, "serve_multicore_ws_tls", true, true, true)).?,
+                        .thread_start => (try self.tryResolveThreadSpawnCall(ctx, c)).?,
+                        .pool_run => (try self.tryResolvePoolRunCall(ctx, c)).?,
+                    };
+                }
                 // `nox.http.get(url)` gibi bir stdlib modülüne nitelikli
                 // erişimi dener (bkz. `tryResolveQualifiedCall`in belge
                 // notu) — bu, ASAĞIDAKİ `checkExpr(ctx, a.obj.*)`DEN ÖNCE

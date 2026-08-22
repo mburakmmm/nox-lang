@@ -1,0 +1,11 @@
+class Counter:
+    def __init__(self: Counter, n: int) -> None:
+        self.n = n
+
+async def worker(c: Counter) -> None:
+    c.n = 99
+
+async def entry() -> None:
+    c: Counter = Counter(0)
+    t: Task[None] = spawn worker(c)
+    await t
