@@ -15769,6 +15769,66 @@ büyük yeniden yapılandırmadan KAÇINMAK, önce mevcut GÜVENCELERİN yeterli
 olup olmadığını KANITLAMAK), tam yeniden yazım BU turda UYGULANMADI. Kod
 DEĞİŞİKLİĞİ YOK — SADECE bu belge girdisi.
 
+## 3.100 `noxc refresh [paket]` — GLOBAL kurulu paketleri güncelleme komutu (v1.33.0)
+
+Kullanıcı gerçek bir eksikliği fark etti: `noxc upgrade` `noxc`nin KENDİ
+derleyici ikilisini günceller (GitHub Release'den), ama SİSTEME GLOBAL
+olarak kurulmuş bir Nox paketini (`noxc install <paket>` İLE kurulan,
+§3.6.x'in "GLOBAL paket kurulumu" mekanizması) güncellemek İçİn AYRI bir
+komut YOKTU.
+
+**Araştırma SIRASINDA bulunan İNCE nokta**: `noxc install <paket>` ZATEN
+HER çalıştırıldığında uzak repoyu YENİDEN `git clone` EDİYOR (`compiler/
+pkg/fetch.zig`nin `fetchToCache`ı — önbellek SADECE çözümlenen SHA ZATEN
+yerel diskteyse devreye girer, YOKSA GERÇEK bir ağ isteği YAPILIR),
+YENİDEN DERLİYOR VE `installed.json`daki kaydı `upsertInstalled` İLE
+GÜNCELLİYOR — yani `noxc install nyx`i TEKRAR çalıştırmak ZATEN nyx'i
+günceller. GERÇEK eksik SADECE: (a) bunun İçİn AYRI, keşfedilebilir bir
+komut YOK (kullanıcı "install'ı tekrar çalıştır" diye BİLMEK ZORUNDA) VE
+(b) TÜM kurulu paketleri TEK seferde güncelleyen bir yol YOK.
+
+**İSİM ÇAKIŞMASI bulundu VE kullanıcıya sunuldu**: `noxc update` VE
+`noxc upgrade` İSİMLERİNİN İKİSİ de ZATEN BAŞKA, ÇALIŞAN özellikler İçİn
+KULLANILIYORDU — `update` (`compiler/main.zig`nin `cmdUpdate`ı) mevcut
+PROJENİN `nox.json` `requires[]`ini `nox.lock`ta günceller (proje-seviyesi
+bağımlılık kilidi, GLOBAL kurulu paketlerle İLGİLİ DEĞİL); `upgrade`
+`noxc`nin KENDİ ikilisini günceller. Kullanıcı BU çakışmayı GÖRDÜKTEN
+SONRA YENİ, benzersiz bir fiil seçti: **`noxc refresh [paket]`**.
+
+**Uygulama**: `cmdInstall`nin (repo/ref ZATEN çözüldükten SONRAKİ)
+fetch+derle+yerleştir+kayıt gövdesi, YENİ, PAYLAŞILAN bir
+`installOrUpdatePackage` fonksiyonuna ÇIKARILDI. HER başarısızlık noktası
+KENDİ `printErr` mesajını YAZAR VE hatayı ÇAĞIRANA `return` EDER
+(`std.process.exit` ÇAĞIRMAZ) — TEK-paket çağıranlar (`cmdInstall`,
+`cmdRefresh`nin tekli modu) bunu KENDİLERİ `exit(1)`e çevirir. YENİ
+`cmdRefresh`: paket adı VERİLİRSE `project.findInstalled` İLE KAYITLI
+`repo`/`ref`ini bulup SADECE onu günceller; VERİLMEZSE `installed.json`daki
+TÜM paketleri günceller — TOPLU modda TEK bir paketin başarısızlığı
+DİĞERLERİNİ ENGELLEMEZ (pip/cargo/apt'nin "toplu güncelleme"
+konvansiyonuyla TUTARLI, HER paket KENDİ hata mesajını yazdırır, döngü
+DEVAM eder), SONUNDA en az bir başarısızlık VARSA `exit(1)` yapılır
+(CI/script'lerin başarısızlığı TESPİT EDEBİLMESİ İçİn). `installOrUpdatePackage`
+ayrıca `findInstalled` İLE kaydın upsert'TEN ÖNCE ZATEN var olup
+OLMADIĞINA bakıp "kuruldu"/"guncellendi" mesajını DOĞRU seçer.
+
+**KAYITLI `ref`in OLDUĞU GİBİ yeniden kullanılması DOĞRU**: `installed.
+json` ZATEN kurulum ANINDA ÇÖZÜLMÜŞ SOMUT bir dal/etiket adı SAKLAR
+(`--ref` AÇIKÇA verildiyse O, VERİLMEDİYSE `resolveDefaultRef`in bulduğu
+GERÇEK varsayılan dal) — BU adı TEKRAR fetch etmek dal İSE yeni commit'leri
+GETİRİR (istenen "güncelleme" davranışı), etiket İSE ZATEN SABİT KALIR
+(istenen "pinned" davranışı) — `resolveDefaultRef`i TEKRAR ÇAĞIRMAYA
+gerek YOK.
+
+**Doğrulama**: `tests/cli/install_test.zig`ye 4 YENİ uçtan uca test
+eklendi (yerel git-fixture deseni, GERÇEK `github.com`a DOKUNMADAN) —
+tekli `refresh`in bir fixture'a eklenen İKİNCİ bir commit'i GERÇEKTEN
+çektiğini (derlenen ikilinin YENİ davranışı gösterdiğini) kanıtlayan,
+argümansız `refresh`in BİRDEN FAZLA paketi TEK seferde güncellediğini
+kanıtlayan, kurulu-olmayan bir ad İçİn temiz `exit(1)` VEREN, VE toplu
+modda BİR paketin (fixture dizini SİLİNEREK simüle edilen) başarısızlığının
+DİĞER paketin GÜNCELLENMESİNİ ENGELLEMEDİĞİNİ kanıtlayan testler. MEVCUT
+`install`/`uninstall`/`list` testleri DEĞİŞMEDEN geçti.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

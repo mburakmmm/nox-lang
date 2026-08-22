@@ -14,6 +14,34 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.33.0]
+
+### Eklendi
+- **`noxc refresh [paket]` — GLOBAL kurulu paketleri güncelleme komutu.**
+  Kullanıcı gerçek bir eksikliği fark etti: `noxc upgrade` sadece `noxc`nin
+  KENDİ derleyici ikilisini günceller, `noxc install <paket>` İLE GLOBAL
+  kurulmuş bir Nox paketini (ör. "nyx") güncellemek İçİn AYRI, keşfedilebilir
+  bir komut YOKTU. Araştırma `noxc install <paket>`in ZATEN HER
+  çalıştırıldığında uzak repoyu YENİDEN klonlayıp (`fetchToCache` HER ZAMAN
+  gerçek bir `git clone` yapar, önbellek SADECE çözümlenen SHA ZATEN
+  yerelse devreye girer), YENİDEN derleyip, `installed.json`daki kaydı
+  `upsert` İLE güncellediğini gösterdi — GERÇEK eksik SADECE bunun İçİn
+  AYRI bir komut VE TÜM kurulu paketleri TEK seferde güncelleyen bir yol
+  olmamasıydı. `update`/`upgrade` isimleri ZATEN BAŞKA, İLİŞKİSİZ
+  özellikler tarafından kullanıldığından (`update`: proje-seviyesi
+  `nox.json`/`nox.lock` bağımlılık kilidi; `upgrade`: `noxc`nin KENDİ
+  ikilisi) YENİ bir fiil, `refresh`, seçildi. `cmdInstall`nin fetch+derle+
+  yerleştir+kayıt gövdesi paylaşılan bir `installOrUpdatePackage`
+  fonksiyonuna çıkarıldı; `noxc refresh <paket>` SADECE onu, `noxc refresh`
+  (argümansız) `installed.json`daki TÜM paketleri günceller — toplu modda
+  TEK bir paketin başarısızlığı DİĞERLERİNİ ENGELLEMEZ (pip/cargo/apt'nin
+  konvansiyonuyla TUTARLI), sadece SONUNDA (en az bir başarısızlık VARSA)
+  `exit(1)` yapılır. 4 yeni uçtan uca test (`tests/cli/install_test.zig`):
+  tekli güncelleme (yeni bir commit'in GERÇEKTEN çekildiğini kanıtlar),
+  toplu güncelleme, kurulu-olmayan bir ad İçİn temiz hata, VE toplu modda
+  kısmi başarısızlığın diğer paketi ENGELLEMEDİĞİ. Mevcut `install`/
+  `uninstall`/`list` testleri DEĞİŞMEDEN geçti.
+
 ## [1.32.1]
 
 ### Dokümantasyon
