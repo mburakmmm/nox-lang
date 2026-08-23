@@ -15829,6 +15829,184 @@ modda BİR paketin (fixture dizini SİLİNEREK simüle edilen) başarısızlığ
 DİĞER paketin GÜNCELLENMESİNİ ENGELLEMEDİĞİNİ kanıtlayan testler. MEVCUT
 `install`/`uninstall`/`list` testleri DEĞİŞMEDEN geçti.
 
+## 3.101 `SpawnSharedMutation`ı iç içe (nested) alan erişimine genelleştirme (v1.34.0)
+
+Harici bir kod incelemesinin ("Nox'a dair GPT-5.6 analizi" — kullanıcının
+paylaştığı, bağımsızca doğrulanan bir değerlendirme) önerdiği 6 maddelik
+takip listesinin İLKİ. v1.30.0'ın (§3.95) `SpawnSharedMutation` kontrolü
+BİLİNÇLİ olarak SADECE doğrudan parametre mutasyonunu yakalıyordu —
+`tests/golden/typecheck_cases/ok_spawn_shared_transitive_field_not_caught.
+nox` BUNU AÇIKÇA belgeleyip TEST ETMİŞTİ: `b: Box` (paylaşımlı, `Box.xs:
+list[int]`) İçİn `b.xs[0] = 99` DERLENİYORDU (hata YOK). İncelemenin
+"nested mutation ❌" bulgusu TAM OLARAK BUNU işaret ediyordu — DOĞRU bir
+tespit.
+
+**Kök neden VE çözüm KOLAYLIĞI**: mevcut `checkNoSpawnSharedMutation`
+sadece `obj.* == .identifier` kontrolü yapıyordu (TEK seviye). AMA
+checker'ın ZATEN sahip olduğu bilgi (`ClassInfo.fields: std.
+StringHashMapUnmanaged(Type)`, HER sınıf alanının ÇÖZÜLMÜŞ `Type`ını
+TUTAR — `registerClassSignatures` TARAFINDAN ZATEN doldurulur) bir
+attribute ZİNCİRİNİ (`b.inner.xs`) ARBİTRER derinlikte ÖZYİNELEMELİ
+olarak "bu ifade HANGİ paylaşılan parametreden, HANGİ TİPE ÇÖZÜLÜYOR"
+diye ÇÖZMEK İçİn YETERLİYDİ — YENİ bir call-graph/whole-program analiz
+GEREKMEDİ, SADECE mevcut `.class` alan-tipi haritasının kullanılmadığı
+bir boşluktu.
+
+**Uygulama**: `SharedParam` basitleştirilmiş bir `kind` enum'u YERİNE TAM
+`Type` taşıyacak şekilde DEĞİŞTİRİLDİ (`ty.class`nin sınıf ADINI
+taşıması, İÇ İÇE alan çözümlemesi İçİn GEREKLİ). YENİ, ÖZYİNELEMELİ
+`resolveExprSharedType(self, expr, params) ?SharedTypeResolution`:
+`.identifier` TABAN durumunda `params`da eşleşen bir paylaşılan
+parametre arar; `.attribute` durumunda ÖNCE `a.obj.*`yi ÖZYİNELEMELİ
+çözüp (`parent`), `parent.ty`nin `.class` OLUP OLMADIĞINA bakıp,
+`self.classes.get(parent.ty.class).fields.get(a.attr)` İLE bir SONRAKİ
+adımın tipini bulur — `root_param` zincir BOYUNCA TAŞINIR (hata mesajı
+HÂLÂ KÖK parametreyi gösterir). `checkNoSpawnSharedMutation`nin ÜÇ
+kontrol sitesi (index-atama, attribute-atama, `.append`/`.pop`/`.sort`
+metod-çağrısı) `obj.* == .identifier` + `findSharedParam` YERİNE
+`self.resolveExprSharedType(obj.*, params)` çağırır.
+
+**Kapsam DIŞI KALMAYA DEVAM ETTİ** (İncelemenin KENDİSİNİN de AYRI madde
+olarak işaretlediği, GERÇEKTEN daha büyük bir problem): bir helper
+fonksiyonun ÇAĞRILMASI YOLUYLA transitif mutasyon (`worker(xs)` →
+`helper(xs)` → `xs.append()`) — bu GERÇEK bir çağrı-grafiği analizi
+GEREKTİRİR (checker.zig'de HİÇBİR yerde YOK), AYRI ve DAHA BÜYÜK bir
+görev. Bir kullanıcı sınıfının KENDİ metodunun (`b.counter.increment()`
+GİBİ) `self` mutasyonu da AYNI nedenle kapsam DIŞI.
+
+**Doğrulama**: `ok_spawn_shared_transitive_field_not_caught.nox`
+`err_spawn_shared_nested_field_mutation.nox` OLARAK YENİDEN ADLANDIRILIP
+davranışı (BİLİNÇLİ olarak) tersine ÇEVRİLDİ — ARTIK `SpawnSharedMutation`
+İLE reddediliyor. YENİ İKİ-seviyeli bir sınıf zinciri fixture'ı
+(`o.inner.xs.append()`) arbitrer derinliğin GERÇEKTEN çalıştığını
+kanıtlıyor. YENİ bir "hâlâ kapsam dışı" fixture'ı (`ok_spawn_shared_via_
+helper_call_not_caught.nox`) çağrı-grafiği SINIRININ AÇIKÇA belgelenip
+test edildiğini gösteriyor. Tam `zig build test`: TÜM MEVCUT fixture'lar
+(biri HARİÇ — KASITLI davranış değişikliği) DEĞİŞMEDEN geçti.
+
+## 3.102 Bilinen iki test flake'ini kalıcı olarak düzeltme (v1.35.0)
+
+Harici bir kod incelemesinin 6 maddelik listesinin 5. maddesi ("fuzzing'deki
+bilinen flake/crash kalıntılarını sıfırla"). Bu oturum boyunca `zig build
+test`nin HER TAM koşusunda tekrar tekrar karşılaşılan, `git stash` İLE
+clean `main`de de aynen üretildiği (pre-existing, bu oturumun
+değişikliklerinden bağımsız) doğrulanan İKİ bilinen flake vardı. Derinlemesine
+araştırma HER İKİSİNİN de GERÇEK, düzeltilebilir kök nedenlerini buldu.
+
+**Flake 1 — `fiber.zig`nin guard-page testi ("Faz MN.8, Bulgu C")**: SABİT
+bir `/tmp` yolu (`/tmp/nox_guard_overflow_repro_bin`) kullanıyordu. Bu test
+`fiber.zig`nin transitively import edilmesi yüzünden `scheduler_test`/
+`channel_test`/`io_test`/`noxrt_test`de de AYRI AYRI çalışıyor — AYNI test
+5 farklı ikilide bağımsız olarak çalıştırılıyor — VE `zig build test` bu
+ikilileri (`build.zig`de hiçbir `-j`/thread-count sınırlaması olmadığından)
+PARALEL çalıştırıyor. Sonuç: birden fazla süreç aynı anda `zig build-exe
+... -femit-bin=/tmp/nox_guard_overflow_repro_bin` çalıştırıp aynı yolu
+çalıştırmaya çalışabiliyordu — gerçek bir TOCTOU yarışı (bir sürecin
+derleme çıktısı, başka bir sürecin `execve`sini yarım/bozuk bir ikili
+üzerinde yakalayabilir), gözlemlenen `processSpawnPosix` başarısızlıklarının
+tam açıklaması. Düzeltme: `tests/cli/install_test.zig`/`tests/compat/
+http_serve_golden_test.zig`nin ZATEN kurulu `std.testing.tmpDir`
+konvansiyonuna geçiş — her çalıştırma kendi izole dizinini alır.
+
+(Ayrıca doğrulandı: bazen görülen "beklenmeyen errno... 6" Türkçe satırı
+BU testin KENDİ çıktısı değildi — `guard_overflow_repro.zig` `io.zig`yi
+hiç import etmiyor, `fiberSafeUnexpectedErrno`yi çağıramaz. Bu, PARALEL
+çalışan başka bir async_rt testinin (io.zig'in EBADF regresyon testi —
+KENDİSİ BAŞARIYLA geçen ama stderr'e yazan bir test) çıktısının konsol
+interleaving'i yüzünden bu testin hata mesajıyla karışmasıydı — iki ayrı
+semptom, aynı kök nedenden — ağır paralel yük.)
+
+**Flake 2 — `worker_pool.zig`nin 20-turlu Task-await stres testi**:
+`stolen_waiter_count > 0` iddiası HER turdan bağımsız olarak (20 kez)
+kontrol ediliyordu. Zorlama mekanizması (sabit 8 `std.Thread.yield()`)
+iyi niyetli ama garantisizdi — kardeş worker'ların GERÇEKTEN OS tarafından
+zamanlandığını doğrulayan bir bariyer yoktu. Kardeş `ChanStressCtx` testi
+hiçbir çalma iddiasında bulunmadığından (sadece doğruluk kontrol eder) AYNI
+zayıf mekanizmaya rağmen hiç flaky raporlanmadı. `StealTestCtx`nin (AYRI,
+tek-turlu) testinin belge notu bu aynı yarışı zaten kabul ediyordu ("nadir
+bir zamanlama yarışı") — ama o test TEK bir tur, BU test İSE 20 bağımsız
+tur — küçük bir tur-başına başarısızlık olasılığı 20 kez bileşip gözlenen
+aralıklı başarısızlıkları üretiyordu. Düzeltme: sayaç döngü DIŞINA
+taşındı, 20 tur boyunca birikir; iddia döngü bittikten SONRA TEK sefer
+kontrol edilir — testin KENDİ amacı (`await_()`nin çapraz-worker
+doğruluğunu kanıtlamak), HER turun kendi başına bunu yeniden kanıtlamasını
+gerektirmez, tüm 20 tur boyunca en az bir kanıt yeterlidir.
+
+**Doğrulama**: `zig build async-rt-test` 5+ ardışık temiz koşu, `zig build
+worker-pool-test` 10 ardışık temiz koşu, VE `NOX_STRESS_ROUNDS=500 zig
+build stress-test` (v1.31.0'ın stres altyapısı yeniden kullanılarak) temiz
+geçti. Tam `zig build test`: birden çok ardışık koşuda sıfır flake.
+
+## 3.103 HTTP/TLS için gecelik soak (sürdürülebilir yük) testi (v1.36.0)
+
+Harici bir kod incelemesinin listesinin 2. maddesi. v1.31.0'ın CHANGELOG'u
+BUNU AÇIKÇA "kapsam DIŞI, ayrı ve daha büyük bir görev" diye BIRAKMIŞTI:
+`tests/compat/http_serve_multicore_pool_golden_test.zig` (o ANA kadar
+varolan TEK "çoklu istemci" testi) YALNIZCA 2 eşzamanlı istemci (tek istek)
+VEYA 20 ARDIŞIK (eşzamanlı DEĞİL) istek yapıyordu — GERÇEK bir
+sürdürülebilir-yük testi YOKTU.
+
+**Temel/model seçimi**: `tests/compat/http_serve_*_golden_test.zig`nin
+(checker/codegen İç API'lerini DOĞRUDAN çağıran `compileToBinary`
+yardımcısı) YERİNE, `benchmarks/http_bench.zig`nin (GERÇEK `zig-out/bin/
+noxc`yi bir alt süreç OLARAK çağıran, CI'den TAMAMEN BAĞIMSIZ) deseni
+TEMEL alındı — GERÇEK kullanıcı yolunu (qbe+cc DAHİL) egzersiz eder.
+
+**Uygulama**: YENİ `tests/compat/http_soak_test.zig` — 8 SÜREKLİ istemci
+iş parçacığı, `NOX_SOAK_SECONDS` ortam değişkeniyle (`worker_pool.zig`nin
+`stressRoundsFromEnv`iyle AYNI desen, SÜRE İçİn) yapılandırılabilir bir
+süre boyunca HEM düz HTTP (`nox.http.serve_multicore`) HEM TLS
+(`nox.http.serve_tls`, GERÇEK `std.crypto.tls.Client` el sıkışmasıyla)
+üzerinden kesintisiz istek atar. `build.zig`ye YENİ, opt-in `http-soak-test`
+adımı (`-Dsoak-seconds`, v1.31.0'ın `stress-test`iyle AYNI "`test_step`in
+PARÇASI DEĞİL" ilkesi) VE `.github/workflows/stress.yml`ye (worker-pool
+stresinin AKSİNE GERÇEKTEN `qbe`+`cc` gerektirdiğinden) AYRI bir `http-soak`
+işi eklendi.
+
+**Geliştirme SIRASINDA İKİ GERÇEK bug bulunup düzeltildi** (canlı test
+sırasında GÖZLEMLENDİ, standalone reprodüksiyonlarla DOĞRULANDI):
+
+1. **`std.Io.Clock.Timestamp.now(io, .awake)` manuel `std.Thread.spawn`
+   İLE başlatılan bir iş parçacığından GÜVENİLİR DEĞİL.** `benchmarks/
+   http_bench.zig`nin KENDİSİ de BU YÜZDEN `Timestamp.now`ı SADECE ana iş
+   parçacığında çağırır, spawn edilen `clientWorker`in İçİNDE HİÇ `Io`
+   KULLANMAZ (yalnızca ham `std.c.*`). Süre-sınırı döngüsü bu YÜZDEN HİÇ
+   SONLANMADI — canlı test SIRASINDA 17+ dakika boyunca GERÇEK, başarılı
+   istekler ATARAK sonsuza dek çalıştığı doğrulandı (sunucunun KENDİSİ
+   sağlıklıydı — ayrı manuel `curl` testleriyle 20 SEKANSİYEL VE 20×8
+   eşzamanlı round doğrulandı, HİÇ sorun YOK). Düzeltme: worker iş
+   parçacıkları İçİndeki süre ölçümü `Io`dan TAMAMEN BAĞIMSIZ, ham
+   `clock_gettime(CLOCK.MONOTONIC)` İLE yapılır — standalone bir
+   reprodüksiyonla (aynı desende) sorunun KENDİSİ VE düzeltmenin ÇALIŞTIĞI
+   doğrulandı.
+2. **`std.Io.net.IpAddress.connect`, TEK-seferlik kullanımda güvenilir
+   olsa da (`http_serve_tls_golden_test.zig`nin KENDİ "slow/fast" İKİ-
+   istemcili testi GİBİ), SÜRDÜRÜLEBİLİR/yoğun TEKRARLI kullanım ALTINDA
+   (8 iş parçacığı, saniyede yüzlerce bağlantı) ARALIKLI `error.Unexpected`
+   (errno 22/EINVAL) ÜRETTİ.** `std.testing.io`nun altındaki `Io.Threaded`
+   reaktörünün `netConnectIp` yolunun BU yoğunlukta güvenilir OLMADIĞI
+   sonucuna varıldı. Düzeltme: TLS soak'ın bağlantısı ham `std.c.connect`
+   İLE (`testConnect`, düz-HTTP tarafının ZATEN kullandığı YARDIMCI) kurulup
+   `std.Io.File`e (`.handle = fd, .flags = .{ .nonblocking = false }`)
+   SARILIR — `std.crypto.tls.Client`ın ihtiyaç duyduğu `Reader`/`Writer`
+   arayüzü BU SAYEDE, sorunlu `Io.net` bağlantı-kurma yolundan TAMAMEN
+   KAÇINARAK elde edilir. Standalone bir reprodüksiyonla 2000+ başarılı
+   istekte SIFIR hata doğrulandı (ÖNCEDEN `Io.net` İLE ARALIKLI hata veren
+   AYNI senaryo).
+
+**Ayrıca düzeltilen ÜÇÜNCÜ, daha KÜÇÜK bir sorun**: `max_connections=0`
+(sınırsız) senaryosunda `child.kill(io)`DAN SONRA `child.stderr`/`stdout`a
+erişmeye ÇALIŞMAK (`Child.kill`in KENDİSİ BUNLARI `null`a ÇEVİRDİĞİNDEN)
+`null`-unwrap PANİĞİNE yol AÇARDI; `kill`DEN ÖNCE denemek İSE süreç HÂLÂ
+CANLIYKEN pipe'ı hiç KAPATMADIĞINDAN SONSUZA KADAR BLOKE OLURDU —
+`http_serve_multicore_pool_golden_test.zig`nin KENDİ "test 2"sinin
+(sınırsız bağlantı senaryosu) ZATEN İZLEDİĞİ desen (`stderr`/`stdout`
+drenajı YAPMADAN sadece `kill` çağırmak) AYNEN izlendi.
+
+**Doğrulama**: `zig build http-soak-test` (varsayılan 5 saniye) VE
+`-Dsoak-seconds=15` HER İKİSİ de TEMİZ geçti. `zig build test`in
+SÜRESİ/davranışı DEĞİŞMEDİ (`http-soak-test` `test_step`e EKLENMEDİĞİNDEN).
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

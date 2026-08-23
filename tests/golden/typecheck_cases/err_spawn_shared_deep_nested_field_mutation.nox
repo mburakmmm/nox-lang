@@ -1,0 +1,16 @@
+class Inner:
+    def __init__(self: Inner, xs: list[int]) -> None:
+        self.xs = xs
+
+class Outer:
+    def __init__(self: Outer, inner: Inner) -> None:
+        self.inner = inner
+
+async def worker(o: Outer) -> None:
+    o.inner.xs.append(1)
+
+async def entry() -> None:
+    inner: Inner = Inner([1, 2, 3])
+    o: Outer = Outer(inner)
+    t: Task[None] = spawn worker(o)
+    await t

@@ -2093,16 +2093,50 @@ pub const Checker = struct {
         }
     }
 
-    /// v1.30.0: bir `spawn` hedefi fonksiyonun `list`/`dict`/`class` tipli
-    /// bir parametresi (`params`), fonksiyonun KENDİ gövdesi (`stmts`)
-    /// İÇİNDE mutasyona uğratılıyor mu diye tarar — `xs[i]=`/`d[k]=`
-    /// (index-atama), `obj.alan=` (tek-seviye attribute-atama) VE
-    /// `list[T]`in mutasyon metodları (`.append`/`.pop`/`.sort`).
-    /// Yalnızca DOĞRUDAN parametre (transitif İÇ içe erişim DEĞİL) VE
-    /// yalnızca fonksiyonun KENDİ gövdesi (BAŞKA fonksiyonlara transitif
-    /// TAKİP YOK, iç içe `func_def`/`class_def` gövdelerine İNMEZ —
-    /// bunlar AYRI çağrılabilir birimlerdir) — bkz. plan dosyasının
-    /// "Kapsam" bölümü.
+    /// v1.34.0 (bkz. nox-teknik-spesifikasyon.md §3.101): `resolveExprSharedType`nin
+    /// dönüşü — bir ifadenin (`b`/`b.xs`/`b.inner.xs` GİBİ HERHANGİ derinlikte
+    /// bir attribute zinciri) HANGİ paylaşılan parametreden (`root_param`)
+    /// türediğini VE ifadenin KENDİ ÇÖZÜLMÜŞ tipini (`ty`) taşır.
+    const SharedTypeResolution = struct { root_param: []const u8, ty: Type };
+
+    /// v1.34.0: `b`/`b.xs`/`b.inner.xs`/`b.inner.deep.xs` GİBİ HERHANGİ bir
+    /// derinlikteki attribute zincirinin, `params`daki paylaşılan
+    /// parametrelerden BİRİNE kadar İZLENİP İZLENEMEDİĞİNİ, İZLENEBİLİYORSA
+    /// zincirin SONUNDAKİ (`self.classes`nin ZATEN kayıtlı alan-tip
+    /// haritasından ÇÖZÜLEN) tipi ÖZYİNELEMELİ olarak bulur. YENİ bir call-
+    /// graph/whole-program analiz DEĞİLDİR — SADECE `registerClassSignatures`nin
+    /// ZATEN doldurduğu `ClassInfo.fields` haritasının, TEK seviye YERİNE
+    /// ARBİTRER derinlikte kullanılmasıdır (bkz. plan dosyası "Kök neden").
+    fn resolveExprSharedType(self: *Checker, expr: ast.Expr, params: []const SharedParam) ?SharedTypeResolution {
+        return switch (expr) {
+            .identifier => |name| blk: {
+                for (params) |p| {
+                    if (std.mem.eql(u8, p.name, name)) break :blk .{ .root_param = name, .ty = p.ty };
+                }
+                break :blk null;
+            },
+            .attribute => |a| blk: {
+                const parent = self.resolveExprSharedType(a.obj.*, params) orelse break :blk null;
+                if (parent.ty != .class) break :blk null;
+                const info = self.classes.get(parent.ty.class) orelse break :blk null;
+                const field_ty = info.fields.get(a.attr) orelse break :blk null;
+                break :blk .{ .root_param = parent.root_param, .ty = field_ty };
+            },
+            else => null,
+        };
+    }
+
+    /// v1.30.0/v1.34.0: bir `spawn` hedefi fonksiyonun `list`/`dict`/`class`
+    /// tipli bir parametresinin (`params`) — DOĞRUDAN VEYA (v1.34.0'DAN
+    /// İTİBAREN) HERHANGİ bir derinlikte İÇ İÇE bir alan erişimi ÜZERİNDEN
+    /// (`b.xs.append()`, `b.inner.xs[i]=` GİBİ) — fonksiyonun KENDİ gövdesi
+    /// (`stmts`) İÇİNDE mutasyona uğratılıp uğratılmadığını tarar —
+    /// `xs[i]=`/`d[k]=` (index-atama), `obj.alan=` (attribute-atama) VE
+    /// `list[T]`in mutasyon metodları (`.append`/`.pop`/`.sort`). Yalnızca
+    /// fonksiyonun KENDİ gövdesi (BAŞKA fonksiyonlara transitif ÇAĞRI-GRAFİĞİ
+    /// TAKİBİ YOK, iç içe `func_def`/`class_def` gövdelerine İNMEZ — bunlar
+    /// AYRI çağrılabilir birimlerdir) — bkz. plan dosyasının "Kapsam DIŞI"
+    /// bölümü.
     fn checkNoSpawnSharedMutation(self: *Checker, fd_name: []const u8, stmts: []const ast.Stmt, params: []const SharedParam) TypeError!void {
         for (stmts) |stmt| {
             self.current_line = stmt.line;
@@ -2110,14 +2144,14 @@ pub const Checker = struct {
             switch (stmt.kind) {
                 .assign => |a| {
                     switch (a.target) {
-                        .index => |ix| if (ix.obj.* == .identifier) {
-                            if (findSharedParam(params, ix.obj.*.identifier, &.{ .list, .dict })) |sp| {
-                                return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, sp.name });
+                        .index => |ix| if (self.resolveExprSharedType(ix.obj.*, params)) |r| {
+                            if (r.ty == .list or r.ty == .dict) {
+                                return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, r.root_param });
                             }
                         },
-                        .attribute => |at| if (at.obj.* == .identifier) {
-                            if (findSharedParam(params, at.obj.*.identifier, &.{.class})) |sp| {
-                                return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, sp.name });
+                        .attribute => |at| if (self.resolveExprSharedType(at.obj.*, params)) |r| {
+                            if (r.ty == .class) {
+                                return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, r.root_param });
                             }
                         },
                         else => {},
@@ -2127,11 +2161,11 @@ pub const Checker = struct {
                     const c = e.call;
                     if (c.callee.* == .attribute) {
                         const at = c.callee.*.attribute;
-                        if (at.obj.* == .identifier and
-                            (std.mem.eql(u8, at.attr, "append") or std.mem.eql(u8, at.attr, "pop") or std.mem.eql(u8, at.attr, "sort")))
-                        {
-                            if (findSharedParam(params, at.obj.*.identifier, &.{.list})) |sp| {
-                                return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, sp.name });
+                        if (std.mem.eql(u8, at.attr, "append") or std.mem.eql(u8, at.attr, "pop") or std.mem.eql(u8, at.attr, "sort")) {
+                            if (self.resolveExprSharedType(at.obj.*, params)) |r| {
+                                if (r.ty == .list) {
+                                    return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, r.root_param });
+                                }
                             }
                         }
                     }
@@ -2157,17 +2191,13 @@ pub const Checker = struct {
         }
     }
 
-    const SharedParamKind = enum { list, dict, class };
-    const SharedParam = struct { name: []const u8, kind: SharedParamKind };
-
-    fn findSharedParam(params: []const SharedParam, name: []const u8, kinds: []const SharedParamKind) ?SharedParam {
-        for (params) |sp| {
-            if (std.mem.eql(u8, sp.name, name)) {
-                for (kinds) |k| if (sp.kind == k) return sp;
-            }
-        }
-        return null;
-    }
+    /// v1.30.0/v1.34.0: `checkNoSpawnSharedMutation`/`resolveExprSharedType`
+    /// tarafından paylaşılan bir "spawn-hedefi fonksiyonun `list`/`dict`/
+    /// `class` tipli parametresi" kaydı — `ty` ARTIK (v1.34.0'dan İTİBAREN)
+    /// TAM `Type` taşır (basitleştirilmiş bir enum DEĞİL), ÇÜNKÜ `.class`
+    /// varyantının KENDİ sınıf ADINI (`ty.class`) taşıması `resolveExprSharedType`nin
+    /// iç içe alan ÇÖZÜMLEMESİ İçİn GEREKLİDİR.
+    const SharedParam = struct { name: []const u8, ty: Type };
 
     fn checkFunctionBody(self: *Checker, fd: ast.FuncDef) TypeError!void {
         var scope: Scope = .{};
@@ -2178,13 +2208,11 @@ pub const Checker = struct {
             const pt = try self.typeExprToType(p.type_expr);
             try scope.declare(self.allocator, p.name, pt);
             if (is_spawn_target) {
-                const kind: ?SharedParamKind = switch (pt) {
-                    .list => .list,
-                    .dict => .dict,
-                    .class => .class,
-                    else => null,
+                const is_shared_kind = switch (pt) {
+                    .list, .dict, .class => true,
+                    else => false,
                 };
-                if (kind) |k| try shared_params.append(self.allocator, .{ .name = p.name, .kind = k });
+                if (is_shared_kind) try shared_params.append(self.allocator, .{ .name = p.name, .ty = pt });
             }
         }
         if (shared_params.items.len > 0) {

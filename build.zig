@@ -898,4 +898,28 @@ pub fn build(b: *std.Build) void {
     stress_run.setEnvironmentVariable("NOX_STRESS_ROUNDS", b.fmt("{d}", .{stress_rounds}));
     const stress_test_step = b.step("stress-test", "worker_pool.zig'in çapraz-worker Channel/Task stres testlerini ÇOK DAHA FAZLA tur (-Dstress-rounds, varsayılan 2000) İLE çalıştırır — opt-in, YAVAŞ, 'test' adımının PARÇASI DEĞİL");
     stress_test_step.dependOn(&stress_run.step);
+
+    // v1.36.0 (bkz. plan dosyası "HTTP/TLS için gecelik soak testi"):
+    // `stress-test`in (v1.31.0) AYNI "gerçekten opt-in" ilkesi — GERÇEK
+    // `zig-out/bin/noxc`yi çağıran (`benchmarks/http_bench.zig`nin AYNI
+    // deseni, checker/codegen İç API'lerine bağımlı DEĞİL) bir soak testi.
+    // `b.getInstallStep()`e bağımlı (GERÇEK `noxc`/`noxrt.o`nin İNŞA
+    // EDİLDİĞİNDEN emin olmak İçİn — `bench_http_step`in AYNI deseni).
+    // BİLİNÇLİ: `test_step.dependOn(...)` YOK — GERÇEK ağ I/O + BİRDEN
+    // FAZLA saniye süren bir test, HER push'ta çalışan hızlı paketi
+    // YAVAŞLATMAMALI.
+    const http_soak_test_mod = b.createModule(.{
+        .root_source_file = b.path("tests/compat/http_soak_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const http_soak_test = b.addTest(.{ .root_module = http_soak_test_mod });
+    http_soak_test.step.dependOn(b.getInstallStep());
+
+    const soak_seconds = b.option(u32, "soak-seconds", "http-soak-test adımının süresi (saniye, varsayılan: 5)") orelse 5;
+    const soak_run = b.addRunArtifact(http_soak_test);
+    soak_run.setEnvironmentVariable("NOX_SOAK_SECONDS", b.fmt("{d}", .{soak_seconds}));
+    const http_soak_test_step = b.step("http-soak-test", "nox.http.serve_multicore/serve_tls soak testi (-Dsoak-seconds, varsayılan 5) — opt-in, YAVAŞ, 'test' adımının PARÇASI DEĞİL");
+    http_soak_test_step.dependOn(&soak_run.step);
 }

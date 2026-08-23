@@ -536,16 +536,31 @@ test "Faz MN.8, Bulgu C: yığın taşması guard page İLE BELİRLİ bir çökm
         .x86_64 => "runtime/async_rt/swap_x86_64.o",
         else => return error.SkipZigTest,
     };
-    // `swap_o_path` KENDİ İçİNDE ÇALIŞTIĞIMIZ `noxrt_test` binary'sinin
-    // KENDİSİ TARAFINDAN ZATEN bağlandığından (bkz. build.zig'nin
-    // `compile_swap_asm` adımı), var OLDUĞU GARANTİDİR — AYRICA bir
-    // varlık kontrolüne GEREK YOK (`std.fs.cwd()` BU Zig sürümünde
-    // KALDIRILMIŞ, bkz. `runtime/stdlib_shims/fs.zig`nin AYNI notu).
-    const bin_path = "/tmp/nox_guard_overflow_repro_bin";
+    // v1.35.0 (bkz. plan dosyası "Bilinen iki test flake'ini kalıcı olarak
+    // düzeltme"): BU test (`fiber.zig`nin KENDİSİ transitively import
+    // edildiğinden) `scheduler_test`/`channel_test`/`io_test`/`noxrt_test`de
+    // de AYRI AYRI çalışır — `zig build test` bu ikilileri PARALEL
+    // çalıştırdığından, SABİT bir `/tmp` yolu (`"/tmp/nox_guard_overflow_
+    // repro_bin"`) BİRDEN FAZLA sürecin AYNI ANDA AYNI dosyaya `zig build-exe`
+    // ÇIKTISI yazıp AYNI dosyayı ÇALIŞTIRMAYA çalışmasına (GERÇEK bir TOCTOU
+    // yarışı — `processSpawnPosix`nin ARALIKLI başarısızlıklarının KÖK
+    // NEDENİ, GERÇEKTEN GÖZLEMLENDİ) yol AÇIYORDU. `tests/cli/install_test.
+    // zig`/`tests/compat/http_serve_golden_test.zig`nin ZATEN kurulu
+    // `std.testing.tmpDir` konvansiyonuna GEÇİLDİ — HER çalıştırma KENDİ
+    // İZOLE dizinini alır, çakışma YAPISAL olarak İMKANSIZ hale gelir.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir_len = try tmp.dir.realPath(io, &path_buf);
+    const dir_path = path_buf[0..dir_len];
+    const bin_path = try std.fmt.allocPrint(allocator, "{s}/nox_guard_overflow_repro_bin", .{dir_path});
+    defer allocator.free(bin_path);
+    const femit_arg = try std.fmt.allocPrint(allocator, "-femit-bin={s}", .{bin_path});
+    defer allocator.free(femit_arg);
 
     {
         const build_result = try std.process.run(allocator, io, .{
-            .argv = &.{ "zig", "build-exe", "runtime/async_rt/guard_overflow_repro.zig", swap_o_path, "-lc", "-femit-bin=" ++ bin_path },
+            .argv = &.{ "zig", "build-exe", "runtime/async_rt/guard_overflow_repro.zig", swap_o_path, "-lc", femit_arg },
         });
         defer allocator.free(build_result.stdout);
         defer allocator.free(build_result.stderr);

@@ -841,6 +841,22 @@ test "WorkerPool: Task[T] çapraz-worker await_() — GERÇEK çalma altında so
     // GÖVDESİ İçİNDE).
     const allocator = std.heap.page_allocator;
     const rounds = stressRoundsFromEnv(CHAN_STRESS_ROUNDS);
+    // v1.35.0 (bkz. plan dosyası "Bilinen iki test flake'ini kalıcı olarak
+    // düzeltme"): ESKİDEN bu sayaç HER turun İÇİNDE yerel değişkendi VE
+    // `stolen_waiter_count > 0` iddiası HER turdan BAĞIMSIZ olarak (20 KEZ)
+    // kontrol ediliyordu — zorlama mekanizması (satır ~800 civarı, SABİT 8
+    // `std.Thread.yield()`) İYİ NİYETLİ AMA GARANTİSİZ olduğundan (kardeş
+    // worker'ların `std.Thread.spawn` SONRASI GERÇEKTEN OS TARAFINDAN
+    // zamanlandığını doğrulayan bir bariyer YOK), KÜÇÜK bir tur-başına
+    // başarısızlık olasılığı 20 KEZ bileşip ARALIKLI GERÇEK test
+    // başarısızlıklarına yol AÇIYORDU (`stolen_waiter_count == 0` bazı
+    // turlarda). Testin KENDİ belgelenmiş amacı ("await_()'in çapraz-worker
+    // DOĞRULUĞUNU kanıtlamak") HER turun KENDİ başına BUNU YENİDEN
+    // kanıtlamasını GEREKTİRMEZ — TÜM 20 tur BOYUNCA EN AZ BİR çalma
+    // yeterlidir (KARDEŞ `ChanStressCtx` testinin HİÇ çalma İDDİA
+    // ETMEMESİYLE AYNI ilke — bkz. onun belge notu). Sayaç ARTIK döngü
+    // DIŞINDA BİRİKİR, iddia döngü BİTTİKTEN SONRA TEK SEFER kontrol edilir.
+    var total_stolen: usize = 0;
     var round: usize = 0;
     while (round < rounds) : (round += 1) {
         const pool = try WorkerPool.create(allocator, 4);
@@ -851,7 +867,6 @@ test "WorkerPool: Task[T] çapraz-worker await_() — GERÇEK çalma altında so
         taskAwaitStressWorkerEntry(pool.rt, 0, &ctx);
         pool.joinAll();
 
-        var stolen_waiter_count: usize = 0;
         var i: usize = 0;
         while (i < TASK_AWAIT_STRESS_N) : (i += 1) {
             try testing.expectEqual(scheduler_mod.Task(i64).COMPLETED, ctx.originals[i].state.load(.acquire));
@@ -859,12 +874,13 @@ test "WorkerPool: Task[T] çapraz-worker await_() — GERÇEK çalma altında so
             try testing.expectEqual(@as(i64, @intCast(i * 2 + 1)), ctx.waiters[i].result);
             const by = ctx.waiter_ran_on[i].load(.seq_cst);
             try testing.expect(by != STEAL_TEST_NOT_RUN);
-            if (by != 0) stolen_waiter_count += 1;
+            if (by != 0) total_stolen += 1;
             allocator.destroy(ctx.originals[i]);
             allocator.destroy(ctx.waiters[i]);
         }
-        // Kanıt: EN AZ bir waiter worker 0 DIŞINDA ÇALIŞTI — o waiter'ın
-        // `original.await_()` çağrısı BU YÜZDEN GERÇEKTEN çapraz-worker'dı.
-        try testing.expect(stolen_waiter_count > 0);
     }
+    // Kanıt: 20 tur BOYUNCA EN AZ bir waiter worker 0 DIŞINDA ÇALIŞTI —
+    // o waiter'ın `original.await_()` çağrısı BU YÜZDEN GERÇEKTEN
+    // çapraz-worker'dı.
+    try testing.expect(total_stolen > 0);
 }

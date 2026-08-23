@@ -741,10 +741,34 @@ test "golden(spawn-shared-mutation): 'spawn' hedefi OLMAYAN sıradan fonksiyonla
     );
 }
 
-test "golden(spawn-shared-mutation): TRANSİTİF (iç içe alan üzerinden) mutasyon v1 kapsamı DIŞINDA — bilinçli olarak yakalanmaz" {
+// v1.34.0 (bkz. plan dosyası "SpawnSharedMutation'ı iç içe (nested) alan
+// erişimine genelleştirme"): `resolveExprSharedType`nin ARBİTRER derinlikte
+// bir attribute zincirini (`b.xs`, `o.inner.xs`, ...) çözebildiğini
+// kanıtlayan testler — ESKİDEN "v1 kapsamı DIŞINDA, bilinçli olarak
+// yakalanmaz" diye test edilen `b.xs[0]=` deseni ARTIK YAKALANIR (bkz.
+// `err_spawn_shared_nested_field_mutation`, YENİDEN ADLANDIRILDI/davranışı
+// TERSİNE DÖNDÜ). Çağrı-grafiği tabanlı transitif analiz (bir helper
+// fonksiyon ÇAĞRISI ÜZERİNDEN mutasyon) HÂLÂ kapsam DIŞI — AYRI bir test
+// bunu KANITLAR.
+
+test "golden(spawn-shared-mutation): TEK seviye iç içe alan (`b.xs[i]=`) ARTIK yakalanır (v1.34.0)" {
     try expectGoldenLlvm(
-        @embedFile("typecheck_cases/ok_spawn_shared_transitive_field_not_caught.nox"),
-        @embedFile("typecheck_cases/ok_spawn_shared_transitive_field_not_caught.expected"),
+        @embedFile("typecheck_cases/err_spawn_shared_nested_field_mutation.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_nested_field_mutation.expected"),
+    );
+}
+
+test "golden(spawn-shared-mutation): İKİ seviye iç içe sınıf zinciri (`o.inner.xs.append()`) de yakalanır — arbitrer derinlik" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_deep_nested_field_mutation.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_deep_nested_field_mutation.expected"),
+    );
+}
+
+test "golden(spawn-shared-mutation): bir HELPER FONKSİYONU üzerinden mutasyon HÂLÂ kapsam DIŞI — çağrı-grafiği analizi YOK" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/ok_spawn_shared_via_helper_call_not_caught.nox"),
+        @embedFile("typecheck_cases/ok_spawn_shared_via_helper_call_not_caught.expected"),
     );
 }
 
