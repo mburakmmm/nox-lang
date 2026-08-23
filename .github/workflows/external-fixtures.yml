@@ -1,0 +1,164 @@
+name: Harici entegrasyon fixture'ları (Aether + Nyx)
+
+# bkz. nox-teknik-spesifikasyon.md §3.104: GPT-5.6 incelemesinin 4.
+# maddesi. `tests/golden/`nin sentetik fixture'ları DIŞINDA, GERÇEK,
+# üretim-benzeri iki Nox web-framework'ünün (kullanıcının KENDİ
+# github.com/mburakmmm/aether + github.com/mburakmmm/nyx repo'ları)
+# KENDİ test paketini, KAYNAKTAN derlenen GÜNCEL noxc'ye karşı çalıştırır.
+# `ci.yml`ye BİLİNÇLİ olarak DOKUNULMADI (stress.yml/http-soak'ın AYNI
+# "paylaşılan CI dosyasına dokunma" ilkesi). Etiketler (Aether v0.6.5,
+# Nyx v0.17.0) BİLİNÇLİ olarak PINNED — framework'lerin KENDİ GELECEKTEKİ
+# değişiklikleri bu CI'yi BEKLENMEDİK KIRMASIN diye, İHTİYAÇ olduğunda
+# ELLE güncellenir. Aether/Nyx'in KENDİ bash "smoke_*.sh" script'leri
+# (HTTP/multicore/release/shutdown/package smoke) + Nyx'in postgres-
+# smoke işi BİLİNÇLİ olarak KAPSAM DIŞI (bu deponun KENDİ HTTP/TLS soak
+# testiyle çakışıyor + postgres servis-konteyneri ek karmaşıklığı) —
+# yalnızca framework'lerin KENDİ `tests/*.nox` paketi çalıştırılır.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  aether:
+    name: Aether (v0.6.5) — gerçek framework test paketi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: nox-lang
+
+      - uses: actions/checkout@v4
+        with:
+          repository: mburakmmm/aether
+          ref: v0.6.5
+          path: aether
+
+      - name: Zig kur
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
+          tar xf /tmp/zig.tar.xz -C /tmp
+          echo "/tmp/zig-x86_64-linux-0.16.0" >>"$GITHUB_PATH"
+
+      - name: qbe kur (kaynaktan derle)
+        run: |
+          curl -sSL -o /tmp/qbe.tar.xz https://c9x.me/compile/release/qbe-1.3.tar.xz
+          tar xf /tmp/qbe.tar.xz -C /tmp
+          make -C /tmp/qbe-1.3 -j"$(nproc)"
+          sudo cp /tmp/qbe-1.3/qbe /usr/local/bin/qbe
+
+      - name: noxc'yi kaynaktan derle (ReleaseFast)
+        working-directory: nox-lang
+        run: |
+          zig build -Doptimize=ReleaseFast
+          echo "$GITHUB_WORKSPACE/nox-lang/zig-out/bin" >>"$GITHUB_PATH"
+
+      - name: Paketi yerel checkout'a işaret ettir
+        working-directory: aether
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          ws = os.path.join(os.environ["GITHUB_WORKSPACE"], "aether")
+          sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ws).decode().strip()
+          data = {
+            "name": "aether",
+            "entry": "examples/hello_api/main.nox",
+            "bin": {"name": "aether", "path": "cli.nox"},
+            "requires": [{"alias": "aether", "repo": ws, "ref": "master"}],
+          }
+          with open("nox.json", "w") as f:
+              json.dump(data, f, indent=2)
+              f.write("\n")
+          lock = {"packages": [{"alias": "aether", "repo": ws, "ref": "master", "resolved": sha}]}
+          with open("nox.lock", "w") as f:
+              json.dump(lock, f, indent=2)
+              f.write("\n")
+          PY
+
+      - name: Fetch & test (aether'in KENDİ 20 test dosyası)
+        working-directory: aether
+        run: |
+          noxc --version
+          noxc fetch
+          fail=0
+          for t in tests/*.nox; do
+            echo "==> $t"
+            if ! noxc test "$t"; then
+              echo "FAILED: $t"
+              fail=1
+            fi
+          done
+          exit "$fail"
+
+  nyx:
+    name: Nyx (v0.17.0) — gerçek framework test paketi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: nox-lang
+
+      - uses: actions/checkout@v4
+        with:
+          repository: mburakmmm/nyx
+          ref: v0.17.0
+          path: nyx
+
+      - name: Zig kur
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
+          tar xf /tmp/zig.tar.xz -C /tmp
+          echo "/tmp/zig-x86_64-linux-0.16.0" >>"$GITHUB_PATH"
+
+      - name: qbe kur (kaynaktan derle)
+        run: |
+          curl -sSL -o /tmp/qbe.tar.xz https://c9x.me/compile/release/qbe-1.3.tar.xz
+          tar xf /tmp/qbe.tar.xz -C /tmp
+          make -C /tmp/qbe-1.3 -j"$(nproc)"
+          sudo cp /tmp/qbe-1.3/qbe /usr/local/bin/qbe
+
+      - name: noxc'yi kaynaktan derle (ReleaseFast)
+        working-directory: nox-lang
+        run: |
+          zig build -Doptimize=ReleaseFast
+          echo "$GITHUB_WORKSPACE/nox-lang/zig-out/bin" >>"$GITHUB_PATH"
+
+      - name: Paketi yerel checkout'a işaret ettir
+        working-directory: nyx
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          ws = os.path.join(os.environ["GITHUB_WORKSPACE"], "nyx")
+          sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ws).decode().strip()
+          data = {
+            "name": "nyx",
+            "entry": "examples/blog/main.nox",
+            "bin": {"name": "nyx", "path": "cli.nox"},
+            "requires": [{"alias": "nyx", "repo": ws, "ref": "master"}],
+          }
+          with open("nox.json", "w") as f:
+              json.dump(data, f, indent=2)
+              f.write("\n")
+          lock = {"packages": [{"alias": "nyx", "repo": ws, "ref": "master", "resolved": sha}]}
+          with open("nox.lock", "w") as f:
+              json.dump(lock, f, indent=2)
+              f.write("\n")
+          PY
+
+      - name: Fetch & test (nyx'in KENDİ 45 test dosyası — postgres-gerektiren pg_smoke HARİÇ)
+        working-directory: nyx
+        run: |
+          noxc --version
+          noxc fetch
+          fail=0
+          for t in tests/*.nox; do
+            echo "==> $t"
+            if ! noxc test "$t"; then
+              echo "FAILED: $t"
+              fail=1
+            fi
+          done
+          exit "$fail"

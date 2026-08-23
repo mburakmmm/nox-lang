@@ -16007,6 +16007,61 @@ drenajı YAPMADAN sadece `kill` çağırmak) AYNEN izlendi.
 `-Dsoak-seconds=15` HER İKİSİ de TEMİZ geçti. `zig build test`in
 SÜRESİ/davranışı DEĞİŞMEDİ (`http-soak-test` `test_step`e EKLENMEDİĞİNDEN).
 
+## 3.104 Aether + Nyx'i GERÇEK harici entegrasyon fixture'ı olarak compiler CI'ye ekleme (v1.37.0)
+
+Harici bir kod incelemesinin listesinin 4. maddesi. Kullanıcının KENDİ
+yazdığı, GERÇEK, üretim-benzeri iki Nox web-framework'ü (`github.com/
+mburakmmm/aether`, "Backend framework for Nox Language" — 20 test dosyası;
+`github.com/mburakmmm/nyx`, "Rails-style batteries-included web framework"
+— 45 test dosyası). O ANA kadar noxc'nin dil/stdlib regresyonları SADECE
+`tests/golden/`nin sentetik fixture'larıyla (VE Faz II'nin Rust stdlib
+karşılaştırmasıyla) yakalanıyordu — GERÇEK, BÜYÜK bir üretim-benzeri Nox
+programının noxc'nin YENİ bir sürümüyle HÂLÂ doğru çalıştığını kanıtlayan
+HİÇBİR mekanizma YOKTU.
+
+**Bulgu**: HER İKİ framework'ün de KENDİ `.github/workflows/ci.yml`si
+ZATEN ŞU deseni izliyordu: `install.sh`'tan SABİT, ESKİ bir noxc sürümü
+kurup (Aether v1.29.8, Nyx v1.29.11 — bu güncellemeye kıyasla ÇOK GERİDE),
+`nox.json`/`nox.lock`'u Python İLE ÜZERİNE YAZIP `requires[0].repo`yu
+GITHUB_WORKSPACE'in YEREL yoluna çevirerek ("kendi kendini yerel checkout'a
+işaret ettirme" hilesi — framework KENDİ published paket-alias'ını
+üzerinden kendi kodunu import edip test ediyor) `noxc fetch` + `for t in
+tests/*.nox; do noxc test "$t"; done` çalıştırıyordu. `compiler/pkg/
+fetch.zig:218`ün (`fetchToCache`) `repo`nun MUTLAK bir yerel dosya yolu
+OLABİLECEĞİNİ ZATEN desteklediği (testlerde gerçek ağa dokunmama İçİn ZATEN
+VAR OLAN bir yetenek) doğrulandı — framework'lerin KENDİ CI hilesi BU
+depoda da DOĞRUDAN çalışıyor, YENİ bir mekanizma GEREKMEDİ.
+
+**Uygulama**: YENİ, AYRI `.github/workflows/external-fixtures.yml`
+(`stress.yml`/`http-soak`'ın AYNI "paylaşılan `ci.yml`ye dokunma" ilkesi)
+— HER push/PR'da (main/master) çalışan İKİ BAĞIMSIZ iş (`aether`, `nyx`),
+HER BİRİ: kaynaktan `zig build -Doptimize=ReleaseFast` İLE GÜNCEL noxc'yi
+derler, framework'ü KENDİ PINNED etiketinde (Aether `v0.6.5`, Nyx
+`v0.17.0` — HER İKİSİNİN de KENDİ `nox.json`/`VERSION`ında ZATEN
+belgelenen "kendi kendine referans verdiği" güncel sürüm) checkout eder,
+"yerel checkout'a işaret ettirme" hilesini AYNEN uygular, `noxc fetch` +
+`tests/*.nox` döngüsünü çalıştırır. Nightly DEĞİL, HER push/PR'da
+(incelemenin KENDİ "compiler CI" ifadesiyle TUTARLI) — toplam 65 test
+dosyası (20+45) küçük/hızlı olduğundan maliyet DÜŞÜK. Tek platform
+(Linux/x86-64) — framework'lerin İKİSİ de zaten SADECE Linux CI'de test
+ediliyor KENDİ repo'larında, 3-platform'a çıkarmak maliyeti 3 KAT artırır.
+Etiketler BİLİNÇLİ olarak PINNED — framework'lerin KENDİ GELECEKTEKİ
+değişiklikleri nox-lang'ın CI'sini BEKLENMEDİK şekilde KIRMASIN diye.
+
+**Kapsam dışı bırakılan**: Aether/Nyx'in KENDİ bash "smoke_*.sh"
+script'leri (HTTP/multicore/release/shutdown/package smoke — bu deponun
+KENDİ HTTP/TLS soak testiyle ÇAKIŞIYOR) VE Nyx'in postgres-smoke işi
+(EK servis-konteyneri karmaşıklığı) — yalnızca framework'lerin KENDİ
+`tests/*.nox` birim/entegrasyon paketi çalıştırılıyor.
+
+**Doğrulama**: CI'ye eklemeden ÖNCE, workflow'un TÜM adımları YEREL olarak
+ELLE taklit edildi (güncel `zig-out/bin/noxc` (v1.36.0) İLE, KLONLANMIŞ
+gerçek Aether/Nyx checkout'larına karşı) — Aether'in 20 test dosyasının
+TAMAMI VE Nyx'in 45 test dosyasının TAMAMI (toplam 65/65) SIFIR
+regresyonla GEÇTİ — HİÇBİR gerçek dil/stdlib uyumsuzluğu bulunmadı (bu,
+v1.29.8/v1.29.11'den v1.36.0'a kadarki TÜM ara sürümlerin geriye-dönük
+uyumlu KALDIĞININ olumlu bir kanıtı).
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

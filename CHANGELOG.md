@@ -14,6 +14,27 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.37.0]
+
+### Eklendi
+- **Aether + Nyx'i GERÇEK harici entegrasyon fixture'ı olarak compiler
+  CI'ye ekleme.** Harici bir kod incelemesinin listesinin 4. maddesi.
+  O ANA kadar noxc'nin dil/stdlib regresyonları SADECE `tests/golden/`nin
+  sentetik fixture'larıyla yakalanıyordu — GERÇEK, büyük, üretim-benzeri
+  bir Nox programının noxc'nin YENİ bir sürümüyle hâlâ doğru çalıştığını
+  kanıtlayan hiçbir mekanizma yoktu. Kullanıcının KENDİ yazdığı iki GERÇEK
+  Nox web-framework'ü (`github.com/mburakmmm/aether`, 20 test dosyası;
+  `github.com/mburakmmm/nyx`, 45 test dosyası) KENDİ CI'lerinde ZATEN
+  kullandığı "yerel checkout'a işaret ettirme" hilesini (`compiler/pkg/
+  fetch.zig`nin ZATEN desteklediği mutlak-yerel-yol `repo` alanı) temel
+  alarak, YENİ, AYRI `.github/workflows/external-fixtures.yml` HER push/
+  PR'da kaynaktan derlenen GÜNCEL noxc'yi framework'lerin KENDİ PINNED
+  sürümüne (Aether v0.6.5, Nyx v0.17.0) karşı `noxc fetch` + `tests/*.nox`
+  döngüsüyle çalıştırıyor. CI'ye eklemeden önce yerel olarak doğrulandı:
+  65/65 test (20+45) sıfır regresyonla geçti — v1.29.8/v1.29.11'den
+  v1.36.0'a kadarki tüm ara sürümlerin geriye-dönük uyumlu kaldığının
+  olumlu bir kanıtı.
+
 ## [1.36.0]
 
 ### Eklendi
