@@ -146,6 +146,12 @@ pub const WorkerPool = struct {
         // `bridge.zig`nin `nox_async_init`i BUNU görüp `Scheduler.
         // attachToPool`ı OTOMATİK çağırır (bkz. onun belge notu).
         state.worker_pool = self;
+        // Faz [YENİ] (bkz. plan dosyası "İki gerçek performans regresyonunu
+        // düzeltme"): `asap.RuntimeState.pool_ever_active`nin belge notu —
+        // TAM OLARAK BURADA işaretlenir (`nox_async_init`in İÇİNDE DEĞİL),
+        // ÇÜNKÜ bir havuz `main`in BAŞINDAN SONRA, program ÇALIŞIRKEN de
+        // yaratılabilir (`pool_run`/`serve_multicore`).
+        state.pool_ever_active.store(true, .monotonic);
         return self;
     }
 

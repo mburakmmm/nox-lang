@@ -14,6 +14,53 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.38.0]
+
+### Düzeltildi
+- **`nox_exception_pending`/`nox_rc_alloc`/`nox_rc_free_payload`'ın
+  gereksiz `threadlocal` (TLV) erişimi düzeltildi — iki GERÇEK, hiç
+  fark edilmemiş performans regresyonu kapatıldı.** Derin bir bottleneck
+  incelemesi (kullanıcının isteğiyle) `benchmarks/RESULTS.md`nin EN SON
+  taban çizgisi (`noxc 1.26.6`) İLE ŞU ANKİ arasında `zig build bench`i
+  YENİDEN çalıştırıp KARŞILAŞTIRDI VE M:N zamanlayıcı işinin (Faz MN.1-
+  MN.10, v1.27.0-v1.29.0) SADECE "stdout doğru mu" diye doğrulanmış,
+  ZAMANLAMA HİÇ yeniden ölçülmemiş olduğunu bulup İKİ regresyonu `git
+  worktree` İLE KESİN bisect etti: `exception_check_overhead` (450.9ms
+  → ~617ms, +37%) VE `list_release_overhead` (158.8ms → ~230ms, +29%).
+  Kök neden HER İKİSİNDE de AYNI: `bridge.currentFiber()`/`asap.
+  currentWorkerSlot()` (macOS'ta TLV thunk'ına GERÇEK bir `blr` ÜRETEN
+  threadlocal'lar) HER TEK çağrıda YENİDEN hesaplanıyordu — HÂLBUKİ
+  `async`/`spawn`/`Task`/`Channel`/`pool_run` HİÇ KULLANMAYAN (EZİCİ
+  ÇOĞUNLUKTAKİ) programlarda bu HER ZAMAN `null`/`0`e çözülüyordu. `asap.
+  RuntimeState`ya İKİ yeni bayrak (`fiber_ever_active`, `pool_ever_active`
+  — HER İKİSİ de doğru, TEK bir NOKTADA işaretlenip program-sırası
+  garantisiyle thread-güvenli) eklenip `pendingException()`/`nox_rc_
+  alloc`/`nox_rc_free_payload` BU bayrakları kontrol ederek pahalı
+  threadlocal erişimini ATLIYOR. **Break→red→fix ritüeli**: `pool_ever_
+  active` GEÇİCİ olarak devre dışı bırakılınca `worker_pool.zig`nin
+  4-worker eş zamanlı testi GERÇEK bir SIGBUS İLE ÇÖKTÜ (kontrolün
+  load-bearing olduğu kanıtlandı); geri eklenince TAMAMEN yeşil.
+  **Bulunan bir optimizasyon tuzağı**: `nox_rc_alloc`/`free_payload`de
+  BASİT bir üçlü ifade (`if (cond) call() else 0`) YAZILDIĞINDA, `otool
+  -tV` İLE derlenmiş binary OKUNDUĞUNDA LLVM'in çağrıyı dallanmadan ÖNCE
+  KOŞULSUZ yürütüp SONUCU bir `csel` İLE seçtiği (if-dönüştürme) GÖZLEMLENDİ
+  — düzeltmeyi TAMAMEN etkisiz kılıyordu; `@branchHint(.unlikely)` İLE
+  GERÇEK bir dallanma zorlanıp `otool -tV` İLE TEKRAR doğrulandı.
+  **Sonuçlar** (aynı makinede arka arkaya ölçüldü): `exception_check_
+  overhead` ~617ms → ~549-580ms (GERÇEK, yapısal bir kazanım); `async_
+  task_churn` ~59ms → ~44-46ms (MN.1/2'nin payı GERİ alındı, v1.29.12'nin
+  GEREKLİ Task/Channel atomik-refcount maliyeti KORUNDU — bu KASITLI
+  bir regresyon, düzeltilmedi); `list_release_overhead` ~230ms → ~211-
+  216ms (TLV maliyeti YAPISAL olarak KANITLANDI/kaldırıldı — `nm`/`sample`
+  İLE alloc/free'nin KENDİ payının %59'dan %13'e DÜŞTÜĞÜ doğrulandı —
+  AMA toplam süre BEKLENDİĞİ kadar toparlanmadı: AYRI bir araştırma
+  `RuntimeState`in `v1.26.6`den bugüne **120 bayttan 9600 bayta (80x)**
+  büyüdüğünü buldu — M:N havuzunun 64-worker'a kadar sabit-boyutlu
+  durumunu (deque'ler/free-list'ler/STW bariyerleri) HER `RuntimeState`e
+  gömmesi, TEK-worker'lı bir programda bile `pool_free_lists`e erişimin
+  önbellek-yerelliğini bozuyor — bu YAPISAL, DAHA BÜYÜK bir mimari
+  bulgu, AYRI bir görev olarak KAPSAM DIŞI bırakıldı.
+
 ## [1.37.0]
 
 ### Eklendi

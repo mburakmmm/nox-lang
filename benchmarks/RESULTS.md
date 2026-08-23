@@ -548,6 +548,36 @@ Gerçek SONUÇLAR (her biri ÖLÇÜLEREK doğrulandı — bkz. AGENTS.md İlke #
    kalitesi/talimat-sayısı iyileştirmesidir (modern OoO CPU'larda TEK bir
    kritik-yol-DIŞI store neredeyse ücretsiz özümsenir).
 
+### 2026-08 — Faz MN.1-MN.10 sonrası regresyon avı (bkz. nox-teknik-spesifikasyon.md §3.105)
+
+Bu bölümün YUKARIDAKİ tabloları `noxc 1.26.6`den beri YENİDEN
+ÇALIŞTIRILIP eski taban çizgisiyle KARŞILAŞTIRILMAMIŞTI — M:N zamanlayıcı
+işi (Faz MN.1-MN.10, v1.27.0-v1.29.0) SADECE "stdout doğru mu" diye
+doğrulanmıştı, ZAMANLAMA HİÇ değil. Kullanıcının "derin bir bottleneck
+çalışması" isteğiyle bu TEKRAR ölçülüp `git worktree` İLE bisect edildi:
+
+| Benchmark | v1.26.6 | v1.37.0 (düzeltme ÖNCESİ) | Kök neden | v1.38.0 (düzeltme SONRASI) |
+|---|---|---|---|---|
+| `exception_check_overhead` | 450.9ms | ~617ms (+37%) | `c0bf8e5` (MN.1+MN.2): `pending_exception` fiber-affine oldu, HER çağrıda TLV `blr` | ~549-580ms (%6-11 toparlandı) |
+| `list_release_overhead` | 158.8ms | ~230ms (+29%, zirve 321ms) | `b766bda` (MN.3b): `pool_free_lists[currentWorkerSlot()]`, AYNI TLV maliyeti | ~211-216ms (mütevazı toparlanma — bkz. aşağıdaki mimari bulgu) |
+| `async_task_churn` | 32.2ms | ~59ms (+83%) | Yukarıdaki İKİSİ (~6%) + `0f179f1`/v1.29.12'nin GEREKLİ atomik Task/Channel refcount'u (~18%, GERİ ALINMADI) | ~44-46ms |
+
+Düzeltme: `asap.RuntimeState`ya `fiber_ever_active`/`pool_ever_active`
+(HER İKİSİ de doğru, TEK NOKTADA işaretlenen, `.monotonic` atomik) —
+HİÇ async/pool KULLANMAYAN programlarda pahalı TLV threadlocal erişimi
+ATLANIYOR. `otool -tV` İLE İKİ KEZ GERÇEK bir optimizasyon tuzağı
+bulundu: basit bir üçlü ifade LLVM tarafından "çağrıyı koşulsuz yürüt,
+sonucu `csel` İLE seç"e dönüştürülüyordu (`noinline` bile YETMEDİ) —
+`@branchHint(.unlikely)` İLE gerçek bir dallanma zorlandı.
+
+**Ayrı, DAHA BÜYÜK bir mimari bulgu** (bu turun kapsamı DIŞINDA):
+`list_release_overhead`nin kalan farkı araştırılırken `@sizeOf(RuntimeState)`nin
+v1.26.6'dan bugüne **120 bayttan 9600 bayta (80x)** büyüdüğü bulundu (QBE
+IR'nin `run` İçİn BAYT-BİREBİR AYNI kaldığı `diff` İLE doğrulanmışken) —
+M:N havuzunun 64-worker'a kadar sabit-boyutlu durumunu HER `RuntimeState`e
+gömmesi, tek-worker'lı programlarda BİLE önbellek-yerelliğini bozuyor
+gibi görünüyor. AYRI, gelecekteki bir görev.
+
 ## Bölüm 3 — HTTP verim (throughput) karşılaştırması: Nox / Go / Zig / FastAPI
 
 **Kaynak/tekrarlanabilirlik:** `benchmarks/http_compare/run_compare.sh` —

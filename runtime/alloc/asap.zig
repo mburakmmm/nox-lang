@@ -290,6 +290,33 @@ pub const RuntimeState = struct {
     /// BUGÜNKÜ, DEĞİŞMEMİŞ mantığı izler. `WorkerPool.create` BUNU
     /// kendine işaret edecek şekilde AYARLAR.
     worker_pool: ?*anyopaque = null,
+    /// Faz [YENİ] (bkz. plan dosyası "İki gerçek performans regresyonunu
+    /// düzeltme"): BU süreçte `nox_async_init` EN AZ BİR KEZ çağrıldı MI —
+    /// `errors/handle.zig`nin `pendingException()`i, `bridge.currentFiber()`
+    /// (threadlocal, macOS'ta TLV thunk'ına GERÇEK bir `blr` üreten — bkz.
+    /// onun belge notu) ÇAĞRISINI, HİÇ async/spawn KULLANMAYAN (EZİCİ
+    /// ÇOĞUNLUKTAKİ) programlarda TAMAMEN ATLAMAK İçİn kullanır. `nox_
+    /// async_init`in BAŞINDA KOŞULSUZ işaretlenir — doğruluk kanıtı: bir
+    /// iş parçacığının `currentFiber()`ı hiç `null`-dışı dönebilmesi İçİn
+    /// KENDİSİNİN ÖNCE `nox_async_init`i (AYNI iş parçacığında, `g_scheduler`
+    /// threadlocal OLDUĞUNDAN) çağırmış OLMASI GEREKİR — program-sırası
+    /// (program order) garantisi BU bayrağı sıralama-modundan BAĞIMSIZ
+    /// güvenli kılar (yalnızca KENDİ geçmişi önemlidir).
+    fiber_ever_active: std.atomic.Value(bool) = .init(false),
+    /// AYNI gerekçe — `alloc/arc.zig`nin `nox_rc_alloc`/`nox_rc_free_payload`ı
+    /// `asap.currentWorkerSlot()` (AYNI TLV maliyeti) çağırmak yerine, HİÇ
+    /// bir `WorkerPool` YARATILMAMIŞ programlarda DOĞRUDAN slot 0 kullanır.
+    /// `worker_pool.zig`nin `WorkerPool.create()`ında işaretlenir (`nox_
+    /// async_init`in İÇİNDE DEĞİL — `nox_async_init` `main`in BAŞINDA,
+    /// HAVUZ henüz YOKKEN çalışır; `pool_run`/`serve_multicore` havuzu
+    /// SONRADAN, program çalışırken yaratır). Doğruluk kanıtı: `setWorkerSlot`
+    /// YALNIZCA `create()`nin KENDİSİ (çağıran iş parçacığını slot 0'a
+    /// bağlar) VE `spawnWorkers`in trambolini (slot 1..n) TARAFINDAN
+    /// çağrılır — HER İKİSİ de bu bayrağın `create()`ta işaretlendiği
+    /// NOKTADAN KRONOLOJİK olarak SONRA çalışır; YENİ `std.Thread.spawn`
+    /// edilen worker'lar `spawn()`DAN ÖNCEKİ HER ŞEYİ (Zig/C11 iş parçacığı
+    /// modelinin garantisi) GÖRÜR.
+    pool_ever_active: std.atomic.Value(bool) = .init(false),
     /// Faz MN.9.2: `$main`in (`--release` altında) OTOMATİK kurduğu
     /// havuzun `PoolRunCtx`si (`pool_bridge.zig`, `nox_pool_main_spawn_
     /// workers` TARAFINDAN AYARLANIR) — `nox_pool_main_join_and_destroy`

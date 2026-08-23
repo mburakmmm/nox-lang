@@ -16062,6 +16062,96 @@ regresyonla GEÇTİ — HİÇBİR gerçek dil/stdlib uyumsuzluğu bulunmadı (bu
 v1.29.8/v1.29.11'den v1.36.0'a kadarki TÜM ara sürümlerin geriye-dönük
 uyumlu KALDIĞININ olumlu bir kanıtı).
 
+## 3.105 İki gerçek performans regresyonunu düzeltme — M:N zamanlayıcının fiber/pool-slot threadlocal maliyeti (v1.38.0)
+
+Kullanıcının "dilin genel benchmarklarını incele, bottleneckler açısından
+derin bir çalışma yapalım" isteği ÜZERİNE `zig build bench -Doptimize=
+ReleaseFast` (v1.37.0) `benchmarks/RESULTS.md`nin EN SON kayıtlı taban
+çizgisiyle (`noxc 1.26.6`) KARŞILAŞTIRILDI — M:N zamanlayıcı işinin (Faz
+MN.1-MN.10) HİÇBİR turda ZAMANLAMASI yeniden ölçülmediği (sadece "stdout
+doğru mu" doğrulandığı) bulundu VE ÜÇ regresyon `git worktree` İLE (AYNI
+makinede, arka arkaya, gürültüden ARINDIRILMIŞ) KESİN bisect edildi:
+
+1. **`exception_check_overhead`: 450.9ms → ~617ms (+37%).** Kök neden
+   `c0bf8e5` (MN.1+MN.2) — `pending_exception`/`pending_exception_line`
+   "fiber-affine" depolamaya (`Fiber.pending_exception` + fiber-DIŞI
+   yedek, `runtime/errors/handle.zig`nin `pendingException()`i) taşındı.
+   `otool -tV` İLE derlenmiş binary'nin GERÇEK ARM64 assembly'si okunarak
+   DOĞRULANDI: `bridge.currentFiber()`nin `g_scheduler` (threadlocal)
+   erişimi, macOS'un TLV (Thread-Local Variable) ABI'sİ YÜZÜNDEN GERÇEK
+   bir `blr` (dolaylı ÇAĞRI, TLV thunk'ına) ÜRETİYOR — SIRADAN bir alan
+   okumasından ÇOK daha pahalı, VE `nox_exception_pending`/`nox_raise`/
+   `nox_exception_take`nin HER ÇAĞRISINDA (300M kez) tekrarlanıyor.
+2. **`list_release_overhead`: 158.8ms → ~230ms (+29%).** Kök neden
+   `b766bda` (MN.3b) — `nox_rc_alloc`/`nox_rc_free_payload` (`runtime/
+   alloc/arc.zig`), sabit sınıf serbest-liste havuzuna erişirken `asap.
+   currentWorkerSlot()` (AYNI TLV maliyeti) çağırmaya BAŞLADI. Zirve
+   noktası (MN.3b SONRASI, MN.10 ÖNCESİ) 321ms İDİ; MN.10 `pool_free_
+   lists_lock` mutex'ini KALDIRDIĞINDA KISMEN toparlandı.
+3. **`async_task_churn`: 32.2ms → ~59ms (+83%, İKİ ayrı adımda).** İlk
+   ~6% (`c0bf8e5`) YUKARIDAKİ İKİ mekanizmayla AYNI kaynaktan; KALAN ~18%
+   KESİN olarak `0f179f1` (v1.29.12: "Task[T]/Channel[T]'ye GERÇEK atomik
+   referans sayımı ekle") — BU madde 1/2'DEN FARKLI: GERÇEK bir veri-
+   yarışı hatasını düzelten, BİLİNÇLİ/GEREKLİ bir maliyet (geri ALINAMAZ).
+
+**Doğruluk analizi**: `fiber_ever_active` (`nox_async_init`in BAŞINDA
+KOŞULSUZ işaretlenir) VE `pool_ever_active` (`WorkerPool.create()`ta
+işaretlenir — `nox_async_init`in İÇİNDE DEĞİL, ÇÜNKÜ bir havuz `main`in
+BAŞINDAN SONRA, program ÇALIŞIRKEN de yaratılabilir) — HER İKİSİ de
+`std.atomic.Value(bool)` (`.monotonic`). Doğruluk kanıtı program-sırası
+garantisine dayanır: BİR iş parçacığının `currentFiber()`ı hiç `null`-
+dışı dönebilmesi/`currentWorkerSlot()`nun sıfır-dışı olabilmesi İçİn
+KENDİSİNİN ÖNCE, AYNI iş parçacığında, İLGİLİ kurulum fonksiyonunu (`nox_
+async_init`/`WorkerPool.create`+`spawnWorkers`) ÇAĞIRMIŞ OLMASI GEREKİR —
+bu YÜZDEN "başka bir iş parçacığı henüz görmedi" senaryosu bu bayraklar
+İçİn ASLA sorun YARATMAZ (yalnızca KENDİ geçmişi önemlidir); `spawnWorkers`
+İLE başlatılan worker'lar İSE `std.Thread.spawn`ın KENDİ happens-before
+garantisiyle bayrağı GÖRÜR.
+
+**Break→red→fix ritüeli**: `pool_ever_active` GEÇİCİ olarak devre dışı
+bırakılınca `worker_pool.zig`nin "4 worker eş zamanlı ARC/arena/cycle-gc/
+globals izolasyonu" testi GERÇEK bir SIGBUS İLE ÇÖKTÜ — kontrolün
+load-bearing olduğu KANITLANDI. `fiber_ever_active`nin BOZULMASI HİÇBİR
+testi kırmadı — bu, PROJEDE fiber-başına GERÇEKTEN eşzamanlı `raise`/
+`except` senaryosunu test eden bir kapsam BOŞLUĞU olduğunu ORTAYA
+ÇIKARDI (AYRI, GELECEKTEKİ bir görev — bu düzeltmenin KENDİ doğruluğu
+program-sırası ARGÜMANINA dayanır, test kapsamına DEĞİL).
+
+**Bulunan bir optimizasyon tuzağı**: `nox_rc_alloc`/`free_payload`ın
+worker-slot kısmı İLK olarak BASİT bir üçlü ifadeyle (`if (cond) asap.
+currentWorkerSlot() else 0`) yazıldı — `otool -tV` İLE derlenmiş binary
+OKUNDUĞUNDA LLVM'in `currentWorkerSlot()` çağrısını dallanmadan ÖNCE
+KOŞULSUZ yürütüp SONUCU bir `csel` İLE 0 İLE SEÇTİĞİ (if-dönüştürme/
+dallanma-yerine-seçme optimizasyonu) GÖZLEMLENDİ — düzeltmeyi TAMAMEN
+etkisiz kılıyordu (`noinline` bir yardımcı fonksiyona TAŞIMAK BİLE
+YETMEDİ — LLVM AYNI dönüşümü fonksiyonun KENDİ İÇİNDE de uyguladı).
+`@branchHint(.unlikely)` İLE GERÇEK bir dallanma ZORLANDI, `otool -tV`
+İLE TEKRAR doğrulandı (`csel`/koşulsuz `blr` ORTADAN KALKTI).
+
+**Sonuçlar** (aynı makinede arka arkaya ölçüldü): `exception_check_
+overhead` ~617ms → ~549-580ms (GERÇEK, yapısal bir kazanım — %6-11
+toparlanma); `async_task_churn` ~59ms → ~44-46ms (MN.1/2'nin payı GERİ
+alındı, v1.29.12'nin GEREKLİ maliyeti KORUNDU); `list_release_overhead`
+~230ms → ~211-216ms (mütevazı bir toparlanma — `nm`/`sample` (macOS'un
+KENDİ profil aracı) İLE `nox_rc_alloc`/`free_payload`nin ÖRNEK payının
+%59'dan %13'e DÜŞTÜĞÜ doğrulandı, TLV maliyeti YAPISAL olarak
+kaldırıldığı KANITLANDI — AMA toplam süre BEKLENENDEN AZ toparlandı).
+
+**GERÇEK, DAHA BÜYÜK bir mimari bulgu (bu turun kapsamı DIŞINDA
+bırakıldı):** `list_release_overhead`nin kalan farkını araştırırken,
+`@sizeOf(RuntimeState)`nin v1.26.6'dan bugüne **120 bayttan 9600 bayta
+(80x)** büyüdüğü BULUNDU (interleaved back-to-back ölçümle DOĞRULANDI —
+gürültü DEĞİL) — M:N havuzunun 64-worker'a kadar SABİT-boyutlu durumunu
+(deque'ler/`pool_free_lists`/STW bariyer atomikleri/scheduler işaretçileri)
+HER `RuntimeState`e GÖMMESİ, TEK-worker'lı (havuzsuz) bir programda BİLE
+`pool_free_lists[0]`e erişimin önbellek-yerelliğini bozuyor GİBİ
+GÖRÜNÜYOR — QBE IR'nin `run` fonksiyonu İçİn v1.26.6'dan bugüne BAYT-
+BİREBİR AYNI kaldığı (`diff` İLE doğrulandı) göz önüne alındığında, bu
+BÜYÜME EN olası açıklamadır. Kesin bir profil/düzeltme (ör. per-worker
+havuz durumunu `RuntimeState`in "çekirdek" kısmından AYRI, SADECE bir
+havuz GERÇEKTEN yaratıldığında tahsis edilen İKİNCİL bir yapıya taşımak)
+BU turun kapsamı DIŞINDA — AYRI, DAHA BÜYÜK/riskli bir mimari görev.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

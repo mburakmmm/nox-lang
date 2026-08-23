@@ -32,7 +32,17 @@ const bridge = @import("../async_rt/bridge.zig");
 const PendingException = struct { obj: *?*anyopaque, line: *i64 };
 
 fn pendingException(state: *asap.RuntimeState) PendingException {
-    if (bridge.currentFiber()) |f| return .{ .obj = &f.pending_exception, .line = &f.pending_exception_line };
+    // Faz [YENİ] (bkz. plan dosyası "İki gerçek performans regresyonunu
+    // düzeltme"): `bridge.currentFiber()` bir `threadlocal` (`g_scheduler`)
+    // okur — macOS'ta bu GERÇEK bir TLV thunk çağrısıdır (`otool -tV` İLE
+    // DOĞRULANDI: bir `blr`), SIRADAN bir alan okumasından ÇOK daha pahalı.
+    // HİÇ async/spawn KULLANMAYAN (EZİCİ ÇOĞUNLUKTAKİ) programlarda BU
+    // TAMAMEN GEREKSİZDİR — `state.fiber_ever_active` (bkz. onun belge
+    // notu) `false` İKEN `currentFiber()` zaten HER ZAMAN `null` dönerdi,
+    // bu YÜZDEN o çağrıyı TAMAMEN ATLAMAK davranışı DEĞİŞTİRMEZ.
+    if (state.fiber_ever_active.load(.monotonic)) {
+        if (bridge.currentFiber()) |f| return .{ .obj = &f.pending_exception, .line = &f.pending_exception_line };
+    }
     return .{ .obj = &state.pending_exception, .line = &state.pending_exception_line };
 }
 

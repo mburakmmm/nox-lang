@@ -114,6 +114,12 @@ pub export fn nox_async_init(rt: ?*anyopaque) void {
     // BURADA (HEM `scheduler_mod` HEM `worker_pool_mod`u SERBESTÇE
     // ithal edebilen `bridge.zig`de) yapılır.
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));
+    // Faz [YENİ] (bkz. plan dosyası "İki gerçek performans regresyonunu
+    // düzeltme"): `asap.RuntimeState.fiber_ever_active`nin belge notu —
+    // BU çağrının KENDİSİ, BU iş parçacığının bir fiber'ı hiç çalıştırıp
+    // çalıştırmayacağının (`g_scheduler` threadlocal'ının doldurulduğu)
+    // TEK noktasıdır, bu YÜZDEN KOŞULSUZ işaretlenir.
+    state.fiber_ever_active.store(true, .monotonic);
     if (state.worker_pool) |wp_ptr| {
         const pool: *worker_pool_mod.WorkerPool = @ptrCast(@alignCast(wp_ptr));
         const slot = asap.currentWorkerSlot();

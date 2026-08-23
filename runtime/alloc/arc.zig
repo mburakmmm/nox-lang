@@ -75,6 +75,30 @@ fn poolClassSize(idx: usize) usize {
     return @as(usize, 16) << @intCast(idx);
 }
 
+/// Faz [YENİ] (bkz. plan dosyası "İki gerçek performans regresyonunu
+/// düzeltme"): `nox_rc_alloc`/`nox_rc_free_payload`nin İKİSİ de kullanır.
+/// **`noinline` OLARAK İŞARETLENMESİ BİLİNÇLİDİR VE LOAD-BEARING'DİR** —
+/// İLK denemede BU basit bir üçlü ifade OLARAK (`if (cond) asap.
+/// currentWorkerSlot() else 0`) YAZILDIĞINDA, `otool -tV` İLE derlenmiş
+/// binary'nin GERÇEK assembly'si okunduğunda LLVM'in `currentWorkerSlot()`
+/// (SAF/yan-etkisiz göründüğü İçİn) çağrısını dallanmadan ÖNCE KOŞULSUZ
+/// yürütüp (`blr`, TLV thunk'ına) SONUCU bir `csel` İLE 0 İLE SEÇTİĞİ
+/// (if-dönüştürme/dallanma-yerine-seçme optimizasyonu) GÖZLEMLENDİ — TAM
+/// OLARAK önlemek istediğimiz pahalı TLV erişimini HÂLÂ HER ÇAĞRIDA
+/// ÇALIŞTIRIYORDU, düzeltmeyi TAMAMEN etkisiz kılıyordu (`list_release_
+/// overhead` ölçümünde SIFIR iyileşme İLE DOĞRULANDI). `noinline`, GERÇEK
+/// bir çağrı SINIRI (opak, LLVM'in içini GÖREMEYECEĞİ) kurarak BUNU
+/// ÖNLER — düzeltme SONRASI `csel` ORTADAN KALKTI, `blr` YALNIZCA
+/// `pool_ever_active == true` dalında ÜRETİLDİ (TEKRAR `otool -tV` İLE
+/// doğrulandı).
+noinline fn poolSlotFor(state: *asap.RuntimeState) usize {
+    if (state.pool_ever_active.load(.monotonic)) {
+        @branchHint(.unlikely);
+        return asap.currentWorkerSlot();
+    }
+    return 0;
+}
+
 /// `payload_size` baytlık bir nesne + görünmez 8 baytlık refcount başlığı
 /// tahsis eder; refcount 1 ile başlar. Döndürülen işaretçi PAYLOAD'ın
 /// başlangıcıdır. Başarısızlıkta `null` döner. Release modunda önce havuzdan
@@ -98,8 +122,14 @@ pub export fn nox_rc_alloc(rt: ?*anyopaque, payload_size: usize) ?*anyopaque {
             // `setWorkerSlot` çağrı siteleriyle GARANTİ edilir) — SADECE
             // BU iş parçacığı BU satıra YAZAR, kilit GEREKMEZ (`globals_
             // blocks`İLE AYNI desen, bkz. `asap.zig`nin `pool_free_lists`
-            // belge notu).
-            const row = &state.pool_free_lists[asap.currentWorkerSlot()].classes;
+            // belge notu). Faz [YENİ] (bkz. plan dosyası "İki gerçek
+            // performans regresyonunu düzeltme"): `asap.currentWorkerSlot()`
+            // (threadlocal, macOS'ta pahalı bir TLV thunk çağrısı) HİÇ
+            // `WorkerPool` YARATILMAMIŞ (`state.pool_ever_active == false`)
+            // programlarda TAMAMEN ATLANIR — BÖYLE bir programda slot
+            // ZATEN HER ZAMAN 0'dır (bkz. `pool_ever_active`nin belge notu).
+            const slot = poolSlotFor(state);
+            const row = &state.pool_free_lists[slot].classes;
             const popped = row[idx];
             if (popped) |node| row[idx] = node.next;
             const base: *anyopaque = if (popped) |node| @ptrCast(node) else (asap.nox_alloc(rt, poolClassSize(idx)) orelse return null);
@@ -180,8 +210,10 @@ pub export fn nox_rc_free_payload(rt: ?*anyopaque, ptr: ?*anyopaque, payload_siz
         if (poolClassIndex(total)) |idx| {
             const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
             const node: *asap.PoolNode = @ptrCast(@alignCast(base));
-            // Faz MN.10 — bkz. `nox_rc_alloc`nin AYNI notu.
-            const row = &state.pool_free_lists[asap.currentWorkerSlot()].classes;
+            // Faz MN.10 — bkz. `nox_rc_alloc`nin AYNI notu. Faz [YENİ] —
+            // bkz. `nox_rc_alloc`nin AYNI `pool_ever_active` kısa-yolu notu.
+            const slot = poolSlotFor(state);
+            const row = &state.pool_free_lists[slot].classes;
             node.* = .{ .next = row[idx] };
             row[idx] = node;
             return;
