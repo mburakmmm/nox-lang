@@ -16152,6 +16152,66 @@ havuz durumunu `RuntimeState`in "çekirdek" kısmından AYRI, SADECE bir
 havuz GERÇEKTEN yaratıldığında tahsis edilen İKİNCİL bir yapıya taşımak)
 BU turun kapsamı DIŞINDA — AYRI, DAHA BÜYÜK/riskli bir mimari görev.
 
+## 3.106 RuntimeState'in 80x büyümesini düzeltme — havuz-özgü durumu lazy bir uzantıya taşıma (v1.39.0)
+
+§3.105'in "AYRI, DAHA BÜYÜK bir mimari görev" olarak bıraktığı bulgunun
+DOĞRUDAN takibi — kullanıcı BUNU şimdi çözmeyi seçti.
+
+**Kök neden kesinleştirildi**: `@sizeOf`/`std.atomic.cache_line`
+DOĞRUDAN ölçülerek `RuntimeState`nin 9600 baytının **~%85'inin TEK
+BAŞINA** `pool_free_lists: [MAX_POOL_WORKERS]PoolFreeListRow` (satır
+175) olduğu doğrulandı — `PoolFreeListRow.classes`in `align(std.atomic.
+cache_line)` işareti (MN.10'un cache-line ping-pong düzeltmesi) macOS
+aarch64'te `cache_line = 128` bayt olduğundan HER satırı (gerçek veri
+80 bayt) 128 bayta yuvarlıyor → 64 × 128 = 8192 bayt, HAVUZSUZ bir
+programda BİLE gömülü. Kalan ~%15 `globals_blocks`/`pool_wake_fds`/
+`pool_scheduler_ptrs` + birkaç atomikti.
+
+**Uygulama**: `runtime/alloc/asap.zig`ye YENİ, lazy tahsis edilen bir
+`PoolExtension` struct'ı eklendi (`arena_pool`/`cycle_gc` İLE AYNI "opak
+tutamaç" deseni) — havuz-özgü TÜM durum (`pool_free_lists`/`globals_
+blocks`nin slot 1..63'ü + `pool_wake_fds`/`pool_scheduler_ptrs`/`pool_
+live_count`/vb. TAMAMI) BURAYA taşındı, `RuntimeState`nin KENDİSİ SADECE
+`pool_free_lists_slot0`/`globals_block_slot0` (slot 0, HAVUZLU/HAVUZSUZ
+FARK ETMEKSİZİN HER ZAMAN kullanılan) VE `pool_ext: ?*PoolExtension`
+(SADECE `WorkerPool.create()` GERÇEKTEN çağrıldığında tahsis edilir)
+taşır. YENİ `poolFreeListsRow`/`globalsBlockSlot` yardımcıları slot 0
+İçİn inline alana, slot >= 1 İçİn `pool_ext.?`e yönlendirir — doğruluk
+AYNI "program-sırası + `std.Thread.spawn`nin happens-before garantisi"
+argümanına dayanır (`pool_ext`, `pool_ever_active`YLA TAM AYNI ANDA,
+`WorkerPool.create()`da işaretlenir).
+
+**YENİ bulunan üçüncü bir TLV sıcak-yol sorunu**: `nox_globals_get`/
+`nox_globals_set` (HER modül-global okuma/yazma) `g_worker_slot`
+(threadlocal) OKUYORDU — §3.105'in `arc.zig`ye uyguladığı `pool_ever_
+active` kısayolu BURAYA hiç UYGULANMAMIŞTI. BU tur AYNI `noinline`+
+`@branchHint(.unlikely)` desenini (`poolSlotForGlobals`) buraya da
+uyguladı.
+
+**Sonuç**: `@sizeOf(RuntimeState)` **9600 → 256 bayt (~%97 azalma)**,
+GEÇİCİ bir test İLE DOĞRUDAN ölçülerek doğrulandı. `zig build test`
+(Debug+ReleaseFast), `NOX_STRESS_ROUNDS=2000 zig build stress-test`,
+`zig build http-soak-test -Dsoak-seconds=15` (GERÇEK çok-worker'lı HTTP
+yükü, `pool_ext`i UÇTAN UCA egzersiz eder) HEPSİ TEMİZ.
+
+**DÜRÜST bir olumsuz sonuç**: `list_release_overhead`/`oop_arc_churn`/
+`dict_bench`/`json_bench`nin interleaved (arka arkaya, gürültüden
+arındırılmış, 3+ tur) ÖNCESİ/SONRASI ölçümü **HİÇBİR ÖLÇÜLEBİLİR fark
+göstermedi** — §3.105'in "RuntimeState büyümesi önbellek-yerelliğini
+bozuyor GİBİ GÖRÜNÜYOR" hipotezi YANLIŞ ÇIKTI (VEYA en azından BU
+benchmark'larda ÖLÇÜLEMEYECEK kadar küçük): TEK bir ~9.6KB tahsisin
+(modern CPU'ların L2/L3 önbelleğine kıyasla KÜÇÜK) bir sıkı döngünün
+GERÇEK çalışma kümesiyle (bir kaç değişken + TEK bir liste nesnesi)
+REKABET ETMEMESİ MANTIKLI. `list_release_overhead`nin v1.26.6'nın
+~159ms'sine göre kalan farkının GERÇEK kaynağı HÂLÂ BİLİNMİYOR (QBE
+IR'nin `run` İçİn BAYT-BİREBİR AYNI kaldığı ZATEN §3.105'te doğrulanmıştı).
+Kullanıcıya SUNULUP `RuntimeState`nin küçülmesinin (GERÇEK, doğrulanmış
+bir mimari/bellek-ayak-izi kazancı — ÖZELLİKLE çok sayıda `RuntimeState`
+örneği yaratan senaryolarda DEĞERLİ) YİNE DE TUTULMASI seçildi — "list_
+release_overhead'i hızlandırma" hedefi bu turda BAŞARILAMADI, bu
+DÜRÜSTÇE böyle kayda geçiriliyor (Faz GG.4'ün "ölçülüp [beklenen
+kazanç bulunamadığında] dürüstçe raporlanır" ilkesiyle TUTARLI).
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

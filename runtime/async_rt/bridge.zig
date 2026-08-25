@@ -142,7 +142,7 @@ pub export fn nox_async_init(rt: ?*anyopaque) void {
         // İLE HEDEFLEYEBİLMESİ İçİn KENDİ `*Scheduler`ını (`attachToPool`
         // BAŞARILI OLDUKTAN SONRA, ARTIK GÜVENLE ÇALINABİLİR/uyandırılabilir
         // OLDUĞUNDA) yayınlar.
-        state.pool_scheduler_ptrs[slot].store(&g_scheduler.?, .release);
+        state.pool_ext.?.pool_scheduler_ptrs[slot].store(&g_scheduler.?, .release);
     }
 }
 

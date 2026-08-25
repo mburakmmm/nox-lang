@@ -570,13 +570,42 @@ bulundu: basit bir üçlü ifade LLVM tarafından "çağrıyı koşulsuz yürüt
 sonucu `csel` İLE seç"e dönüştürülüyordu (`noinline` bile YETMEDİ) —
 `@branchHint(.unlikely)` İLE gerçek bir dallanma zorlandı.
 
-**Ayrı, DAHA BÜYÜK bir mimari bulgu** (bu turun kapsamı DIŞINDA):
+**Ayrı, DAHA BÜYÜK bir mimari bulgu** (v1.38.0'da kapsam dışı bırakılmış,
+v1.39.0'da ele alındı — bkz. nox-teknik-spesifikasyon.md §3.106):
 `list_release_overhead`nin kalan farkı araştırılırken `@sizeOf(RuntimeState)`nin
-v1.26.6'dan bugüne **120 bayttan 9600 bayta (80x)** büyüdüğü bulundu (QBE
-IR'nin `run` İçİn BAYT-BİREBİR AYNI kaldığı `diff` İLE doğrulanmışken) —
-M:N havuzunun 64-worker'a kadar sabit-boyutlu durumunu HER `RuntimeState`e
-gömmesi, tek-worker'lı programlarda BİLE önbellek-yerelliğini bozuyor
-gibi görünüyor. AYRI, gelecekteki bir görev.
+v1.26.6'dan bugüne **120 bayttan 9600 bayta (80x)** büyüdüğü bulunmuştu —
+`pool_free_lists`in (`align(std.atomic.cache_line)` = 128 bayt/satır ×
+64 worker = 8192 bayt) TEK BAŞINA ~%85'i oluşturduğu doğrulandı.
+
+### v1.39.0 — RuntimeState'i küçültme (havuz-özgü durum → lazy `PoolExtension`)
+
+Havuz-özgü TÜM durum (`pool_free_lists`/`globals_blocks`nin slot 1-63'ü
++ `pool_wake_fds`/`pool_scheduler_ptrs`/vb.), SADECE `WorkerPool.create()`
+GERÇEKTEN çağrıldığında tahsis edilen YENİ bir `PoolExtension`e taşındı;
+`RuntimeState` SADECE slot 0 İçİn inline alanlar + bir `pool_ext`
+işaretçisi taşır. **Sonuç**: `@sizeOf(RuntimeState)` **9600 → 256 bayt
+(~%97 azalma)**, doğrudan ölçülerek doğrulandı. `zig build test`
+(Debug+ReleaseFast)/`stress-test`/`http-soak-test` HEPSİ temiz.
+
+**DÜRÜST bir olumsuz sonuç**: `list_release_overhead`/`oop_arc_churn`/
+`dict_bench`/`json_bench`nin interleaved (arka arkaya, gürültüden
+arındırılmış, 3+ tur) ÖNCESİ/SONRASI ölçümü **HİÇBİR ölçülebilir fark
+göstermedi**:
+
+| Benchmark | RuntimeState 9600B (ÖNCE) | RuntimeState 256B (SONRA) |
+|---|---|---|
+| `list_release_overhead` | ~227-237ms | ~236-240ms (fark YOK) |
+| `oop_arc_churn` | ~17-19ms | ~17ms (fark YOK) |
+| `dict_bench` | ~17-19ms | ~17ms (fark YOK) |
+| `json_bench` | ~27ms | ~27ms (fark YOK) |
+
+Yukarıdaki "önbellek-yerelliğini bozuyor gibi görünüyor" hipotezi bu
+benchmark'larda YANLIŞ çıktı — TEK bir ~9.6KB tahsis, modern CPU'ların
+L2/L3 önbelleğine kıyasla KÜÇÜK olduğundan, bir sıkı döngünün GERÇEK
+çalışma kümesiyle REKABET ETMİYOR. `list_release_overhead`nin v1.26.6'nın
+~159ms'sine göre kalan farkının GERÇEK kaynağı HÂLÂ BİLİNMİYOR. Kullanıcıya
+sunulup `RuntimeState`nin küçülmesinin (GERÇEK, doğrulanmış bir mimari/
+bellek-ayak-izi kazancı) YİNE DE TUTULMASI seçildi.
 
 ## Bölüm 3 — HTTP verim (throughput) karşılaştırması: Nox / Go / Zig / FastAPI
 

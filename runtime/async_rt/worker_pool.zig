@@ -125,6 +125,18 @@ pub const WorkerPool = struct {
         const threads = try allocator.alloc(std.Thread, n_workers - 1);
         errdefer allocator.free(threads);
 
+        // Faz [YENİ] (bkz. plan dosyası "RuntimeState'in 80x büyümesini
+        // düzeltme"): havuz-özgü, worker-slotlu TÜM durum (`pool_live_
+        // count`/`pool_wake_fds`/vb.) `PoolExtension`e taşındı — SADECE
+        // BURADA, bir havuz GERÇEKTEN kurulurken, `state.allocator()` İLE
+        // (Debug'da `debug_gpa`, Release'de `smp_allocator` — `nox_
+        // runtime_deinit`in AYNI allocator'ı KULLANARAK serbest BIRAKACAĞI
+        // GARANTİ edilir) tahsis edilir.
+        const pool_ext = try state.allocator().create(asap.PoolExtension);
+        errdefer state.allocator().destroy(pool_ext);
+        pool_ext.* = .{};
+        state.pool_ext = pool_ext;
+
         // Çağıran iş parçacığı HER ZAMAN slot 0'dır.
         asap.setWorkerSlot(0);
 
@@ -133,15 +145,15 @@ pub const WorkerPool = struct {
             .workers = workers,
             .threads = threads,
             .allocator = allocator,
-            .pool_live_count = &state.pool_live_count,
-            .pool_waiting_on_io = &state.pool_waiting_on_io,
-            .pool_idle_workers = &state.pool_idle_workers,
-            .pool_activity_epoch = &state.pool_activity_epoch,
+            .pool_live_count = &pool_ext.pool_live_count,
+            .pool_waiting_on_io = &pool_ext.pool_waiting_on_io,
+            .pool_idle_workers = &pool_ext.pool_idle_workers,
+            .pool_activity_epoch = &pool_ext.pool_activity_epoch,
             .deque_list = deque_list,
-            .pool_stw_requested = &state.pool_stw_requested,
-            .pool_stw_arrived = &state.pool_stw_arrived,
-            .pool_stw_sense = &state.pool_stw_sense,
-            .wake_fds = state.pool_wake_fds[0..],
+            .pool_stw_requested = &pool_ext.pool_stw_requested,
+            .pool_stw_arrived = &pool_ext.pool_stw_arrived,
+            .pool_stw_sense = &pool_ext.pool_stw_sense,
+            .wake_fds = pool_ext.pool_wake_fds[0..],
         };
         // `bridge.zig`nin `nox_async_init`i BUNU görüp `Scheduler.
         // attachToPool`ı OTOMATİK çağırır (bkz. onun belge notu).

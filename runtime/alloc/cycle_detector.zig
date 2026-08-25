@@ -294,9 +294,9 @@ pub export fn nox_cycle_possible_root(rt: ?*anyopaque, p: ?*anyopaque) void {
     if (gc.possible_roots_since_collect >= gc.collect_threshold) {
         if (state.worker_pool == null) {
             collectLocked(rt, state, gc);
-        } else if (state.pool_stw_requested.cmpxchgStrong(false, true, .acq_rel, .monotonic) == null) {
+        } else if (state.pool_ext.?.pool_stw_requested.cmpxchgStrong(false, true, .acq_rel, .monotonic) == null) {
             if (builtin.os.tag != .windows) {
-                for (&state.pool_wake_fds) |*fd_atomic| {
+                for (&state.pool_ext.?.pool_wake_fds) |*fd_atomic| {
                     const fd = fd_atomic.load(.monotonic);
                     if (fd >= 0) self_pipe.signalWakeFd(@intCast(fd));
                 }

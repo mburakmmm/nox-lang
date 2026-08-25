@@ -601,7 +601,7 @@ fn poolServeFlattened(rt_ptr: *anyopaque, num_workers: i64, entry_fn: *const fn 
         // GEREKİR.
         var sched_ptr: ?*anyopaque = null;
         while (sched_ptr == null) {
-            sched_ptr = state.pool_scheduler_ptrs[i].load(.acquire);
+            sched_ptr = state.pool_ext.?.pool_scheduler_ptrs[i].load(.acquire);
             if (sched_ptr == null) sleepOneMs();
         }
         const sched: *scheduler_mod.Scheduler = @ptrCast(@alignCast(sched_ptr.?));

@@ -172,7 +172,16 @@ pub const RuntimeState = struct {
     /// OLAMAYACAĞINI ZORUNLU kılar — bağlantı handler'ı SENKRONDUR,
     /// HİÇBİR `await` NOKTASI TAŞIMAZ, bu YÜZDEN BİR isteğin TAMAMI
     /// (JSON decode+encode DAHİL) HER ZAMAN AYNI worker'da çalışır.
-    pool_free_lists: [MAX_POOL_WORKERS]PoolFreeListRow = @splat(.{}),
+    ///
+    /// Faz [YENİ] (bkz. plan dosyası "RuntimeState'in 80x büyümesini
+    /// düzeltme"): eskiden `[MAX_POOL_WORKERS]PoolFreeListRow` (64×128
+    /// bayt = 8192 bayt, `RuntimeState`nin toplam boyutunun ~%85'i —
+    /// HAVUZSUZ, tek-worker'lı bir programda BİLE gömülüydü). Slot 0
+    /// (HAVUZLU/HAVUZSUZ FARK ETMEKSİZİN HER ZAMAN kullanılan) ARTIK
+    /// BURADA, inline; slot 1..MAX_POOL_WORKERS-1 SADECE bir `WorkerPool`
+    /// GERÇEKTEN kurulduğunda tahsis edilen `pool_ext`e taşındı (bkz.
+    /// `poolFreeListsRow`).
+    pool_free_lists_slot0: PoolFreeListRow = .{},
     /// Dil stabilizasyonu fazı §M.7: `lowlevel` arena TUTAMAÇLARININ (bkz.
     /// `runtime/alloc/lowlevel.zig`, `ArenaHandle`) LIFO serbest liste BAŞI
     /// — `pool_free_lists`in AYNI Release-only prensibi (`lowlevel.zig`nin
@@ -278,7 +287,11 @@ pub const RuntimeState = struct {
     /// DEĞİŞMEZ, SIFIR codegen etkisi. Paylaşımsız (tek-iş-parçacıklı,
     /// BUGÜNKÜ) kullanım HER ZAMAN slot 0'ı kullanır — davranış BİREBİR
     /// aynı kalır.
-    globals_blocks: [MAX_POOL_WORKERS]?*anyopaque = @splat(null),
+    ///
+    /// Faz [YENİ] (bkz. plan dosyası "RuntimeState'in 80x büyümesini
+    /// düzeltme"): `pool_free_lists_slot0`İLE AYNI gerekçe — slot 0
+    /// BURADA inline, slot 1..MAX_POOL_WORKERS-1 `pool_ext`e taşındı.
+    globals_block_slot0: ?*anyopaque = null,
     /// Faz MN.4/5: BU `rt`nin BİR `worker_pool.WorkerPool`e AİT olup
     /// OLMADIĞINI (VE öyleyse HANGİSİNE) İŞARET EDER — `arena_pool`/
     /// `cycle_gc` İLE AYNI OPAK-işaretçi gerekçesiyle (`asap.zig`,
@@ -335,13 +348,53 @@ pub const RuntimeState = struct {
     /// gelir — TEK bir `rt` İçİNDE TÜM worker'lar AYNI tohumu PAYLAŞIR.
     dict_hash_seed: u64 = 0,
     dict_hash_seed_init: bool = false,
+    /// Faz [YENİ] (bkz. plan dosyası "RuntimeState'in 80x büyümesini
+    /// düzeltme"): eskiden BURADA doğrudan taşınan 9 havuz-özgü alan
+    /// (`pool_live_count`, `pool_waiting_on_io`, `pool_idle_workers`,
+    /// `pool_activity_epoch`, `pool_stw_requested`, `pool_stw_arrived`,
+    /// `pool_stw_sense`, `pool_wake_fds`, `pool_scheduler_ptrs` —
+    /// TAMAMI `PoolExtension`e taşındı, bkz. onun belge notu) `@sizeOf
+    /// (RuntimeState)`nin v1.26.6'dan bugüne 120 bayttan 9600 bayta (80x)
+    /// büyümesinin geri kalanını (`pool_free_lists_slot0`nun ZATEN
+    /// kapattığı ~%85 DIŞINDAKİ ~%15'i) oluşturuyordu — HİÇBİRİ
+    /// `state.worker_pool == null` (havuzsuz, EZİCİ ÇOĞUNLUKTAKİ
+    /// kullanım) İKEN DOKUNULMUYORDU (HER kullanım sitesi ZATEN `worker_
+    /// pool != null` dalıyla KOŞULLANDIRILMIŞTI), bu YÜZDEN `pool_ext`e
+    /// taşımak SIFIR davranış değişikliği + `RuntimeState`nin çekirdeğini
+    /// küçültme kazancı sağlıyor. `null` = HİÇ `WorkerPool.create()`
+    /// çağrılmadı; `WorkerPool.create()` TARAFINDAN `pool_ever_active`YLA
+    /// AYNI ANDA tahsis edilip atanır — bu YÜZDEN `state.pool_ever_active
+    /// == true` (VEYA `state.worker_pool != null`) OLAN HER kod yolunda
+    /// `pool_ext.?` GÜVENLE zorla açılabilir (AYNI program-sırası kanıtı,
+    /// bkz. `pool_ever_active`nin belge notu).
+    pool_ext: ?*PoolExtension = null,
+
+    pub fn allocator(self: *RuntimeState) std.mem.Allocator {
+        if (use_debug_allocator) return self.debug_gpa.allocator();
+        return std.heap.smp_allocator;
+    }
+};
+
+/// Faz [YENİ] (bkz. plan dosyası "RuntimeState'in 80x büyümesini
+/// düzeltme"): bir `WorkerPool` GERÇEKTEN kurulduğunda (`worker_pool.
+/// zig`nin `WorkerPool.create()`ı) LAZY olarak tahsis edilen, worker-
+/// slotlu TÜM durumu barındıran ikincil yapı — `RuntimeState`nin
+/// çekirdeğini (HAVUZSUZ kullanımda BİLE tahsis edilen kısmı) küçük/
+/// önbellek-dostu TUTMAK İçİn `arena_pool`/`cycle_gc` İLE AYNI "lazy,
+/// opak tutamaç" desenini TAKİP EDER. Slot 0 BURADA YOKTUR — HER ZAMAN
+/// `RuntimeState.pool_free_lists_slot0`/`globals_block_slot0` kullanılır
+/// (havuzlu/havuzsuz FARK ETMEKSİZİN, `WorkerPool.create()`nin ÇAĞIRANI
+/// HER ZAMAN slot 0'a bağlaması yüzünden) — bu dizilerin uzunluğu bu
+/// YÜZDEN `MAX_POOL_WORKERS - 1` (slot 1..MAX_POOL_WORKERS-1, `[i]`
+/// aslında slot `i+1`i temsil eder, bkz. `poolFreeListsRow`/
+/// `globalsBlockSlot`).
+pub const PoolExtension = struct {
+    pool_free_lists: [MAX_POOL_WORKERS - 1]PoolFreeListRow = @splat(.{}),
+    globals_blocks: [MAX_POOL_WORKERS - 1]?*anyopaque = @splat(null),
     /// Faz MN.5: havuz-çapında YAKLAŞIK deadlock tespiti İçİn (bkz.
     /// proje planı, "Go'nun checkdead()'inin BASİTLEŞTİRİLMİŞ hali") —
     /// HER worker'ın `spawn`/fiber-bitişi KENDİ YEREL `Scheduler.
     /// live_count`uYLA BİRLİKTE BUNU da atomik olarak GÜNCELLER.
-    /// `worker_pool == null` İKEN KULLANILMAZ (tek-worker'lı kullanım
-    /// KENDİ YEREL `Scheduler.run()` kontrolüne GÜVENMEYE DEVAM eder,
-    /// SIFIR davranış değişikliği).
     pool_live_count: std.atomic.Value(usize) = .init(0),
     /// Faz MN.5: AYNI gerekçe — HER worker'ın KENDİ YEREL `waiting_on_io`
     /// sayacıYLA BİRLİKTE günceller.
@@ -396,7 +449,10 @@ pub const RuntimeState = struct {
     /// göndererek `self.reactor.poll()`de bloke olmuş worker'ları DERHAL
     /// uyandırır — AKSİ HALDE (`io_reactor.zig`nin `poll()`ü NULL/-1
     /// zaman aşımıyla SONSUZA KADAR bloklar) bir worker `stw_requested`i
-    /// ASLA FARK ETMEZDİ.
+    /// ASLA FARK ETMEZDİ. BURADA HÂLÂ TAM `[MAX_POOL_WORKERS]` uzunlukta
+    /// (slot 0 DAHİL) — `worker_pool.zig`nin `wake_fds` dilimi TÜM
+    /// worker'ları (0 DAHİL) kapsaması GEREKTİĞİNDEN, `pool_free_lists`/
+    /// `globals_blocks`nin AKSİNE off-by-one KAYDIRMASI YAPILMAZ.
     pool_wake_fds: [MAX_POOL_WORKERS]std.atomic.Value(i32) = @splat(.init(-1)),
     /// Faz MN.9.3: HER worker slotunun KENDİ `*Scheduler`ı (`bridge.zig`nin
     /// `nox_async_init`i, havuzlu dalında, `attachToPool` SONRASI, KENDİ
@@ -406,14 +462,29 @@ pub const RuntimeState = struct {
     /// ULAŞABİLMESİ İçİn — `null` = O slot HENÜZ `nox_async_init`
     /// ÇAĞIRMADI (`spawnWorkers`nin TRAMPOLİNİ İLE `attachToPool` ARASINDAKİ
     /// KISA pencerede TEORİK olarak mümkün, `broadcastRunOnEachWorker`
-    /// BUNU KISA bir "hazır olana KADAR bekle" DÖNGÜSÜYLE ele alır).
+    /// BUNU KISA bir "hazır olana KADAR bekle" DÖNGÜSÜYLE ele alır). AYNI
+    /// gerekçeyle `pool_wake_fds` GİBİ TAM `[MAX_POOL_WORKERS]` uzunlukta
+    /// (slot 0 DAHİL) — `pool_bridge.zig`nin `broadcastRunOnEachWorker`ı
+    /// slot 0'ı DA (`i` DOĞRUDAN slot indeksidir) İNDEKSLER.
     pool_scheduler_ptrs: [MAX_POOL_WORKERS]std.atomic.Value(?*anyopaque) = @splat(.init(null)),
-
-    pub fn allocator(self: *RuntimeState) std.mem.Allocator {
-        if (use_debug_allocator) return self.debug_gpa.allocator();
-        return std.heap.smp_allocator;
-    }
 };
+
+/// Faz [YENİ]: `nox_rc_alloc`/`nox_rc_free_payload`nin (`arc.zig`)
+/// `pool_free_lists`e erişimi İçİn TEK doğruluk kaynağı — slot 0 İçİn
+/// `RuntimeState`nin KENDİ inline alanını, slot >= 1 İçİn `pool_ext`i
+/// (ÇAĞIRAN, `slot >= 1` İSE `pool_ext`nin non-null OLDUĞUNU ZATEN
+/// `pool_ever_active`/`worker_pool != null` üzerinden GARANTİ etmelidir —
+/// bkz. `pool_ext`nin belge notu) döner.
+pub fn poolFreeListsRow(state: *RuntimeState, slot: usize) *PoolFreeListRow {
+    if (slot == 0) return &state.pool_free_lists_slot0;
+    return &state.pool_ext.?.pool_free_lists[slot - 1];
+}
+
+/// AYNI desen — `nox_globals_get`/`nox_globals_set` İçİn.
+pub fn globalsBlockSlot(state: *RuntimeState, slot: usize) *?*anyopaque {
+    if (slot == 0) return &state.globals_block_slot0;
+    return &state.pool_ext.?.globals_blocks[slot - 1];
+}
 
 /// Faz MN.3b: bu OS iş parçacığının BİR worker havuzu İÇİNDEKİ konumu
 /// (`RuntimeState.globals_blocks`e bkz.) — varsayılan 0, tek-iş-parçacıklı
@@ -496,6 +567,12 @@ pub export fn nox_runtime_deinit(rt: ?*anyopaque) void {
     // serbest-bırakma yazımı olurdu).
     nox_cycle_collect(rt);
     nox_cycle_deinit(rt);
+    // Faz [YENİ] (bkz. plan dosyası "RuntimeState'in 80x büyümesini
+    // düzeltme"): `pool_ext` (VARSA) `state.allocator()` İLE (`WorkerPool.
+    // create()`ın KULLANDIĞI AYNI allocator — bkz. onun belge notu)
+    // tahsis edilmişti; `debug_gpa.deinit()`DEN ÖNCE serbest bırakılmalı
+    // (aksi halde Debug modunda deinit SONRASI bir kullanım olurdu).
+    if (state.pool_ext) |ext| state.allocator().destroy(ext);
     if (use_debug_allocator) {
         if (state.debug_gpa.deinit() == .leak) {
             std.debug.print("nox runtime: bellek sızıntısı tespit edildi\n", .{});
@@ -532,14 +609,32 @@ pub export fn nox_free(rt: ?*anyopaque, ptr: ?*anyopaque, size: usize) void {
 /// işaretçiyi taşır, hiçbir yorum yapmaz. Faz MN.3b: `g_worker_slot`e
 /// göre dizinin İLGİLİ hücresine erişir — ABI DEĞİŞMEDİ (bkz. `globals_
 /// blocks`in KENDİ belge notu).
+///
+/// Faz [YENİ] (bkz. plan dosyası "RuntimeState'in 80x büyümesini
+/// düzeltme"): eskiden `g_worker_slot`u (threadlocal) KOŞULSUZ okurdu —
+/// HER modül-global okuma/yazma HİÇ havuz KULLANMAYAN (EZİCİ ÇOĞUNLUKTAKİ)
+/// programlarda BİLE macOS'un pahalı TLV mekanizmasını ÖDÜYORDU (bkz.
+/// `arc.zig`nin `poolSlotFor`sinin AYNI bulgusu — ÖNCEKİ turda BURAYA
+/// UYGULANMAMIŞTI). `poolSlotForGlobals` AYNI `pool_ever_active` kısayolunu
+/// (VE AYNI `noinline`+`@branchHint(.unlikely)` ihtiyatını — basit bir
+/// üçlü ifadenin LLVM tarafından koşulsuz-çağır+`csel`e DÖNÜŞTÜRÜLDÜĞÜ
+/// `otool -tV` İLE DAHA ÖNCE KANITLANMIŞTI) kullanır.
+noinline fn poolSlotForGlobals(state: *RuntimeState) usize {
+    if (state.pool_ever_active.load(.monotonic)) {
+        @branchHint(.unlikely);
+        return currentWorkerSlot();
+    }
+    return 0;
+}
+
 pub export fn nox_globals_get(rt: ?*anyopaque) ?*anyopaque {
     const state: *RuntimeState = @ptrCast(@alignCast(rt orelse return null));
-    return state.globals_blocks[g_worker_slot];
+    return globalsBlockSlot(state, poolSlotForGlobals(state)).*;
 }
 
 pub export fn nox_globals_set(rt: ?*anyopaque, block: ?*anyopaque) void {
     const state: *RuntimeState = @ptrCast(@alignCast(rt orelse return));
-    state.globals_blocks[g_worker_slot] = block;
+    globalsBlockSlot(state, poolSlotForGlobals(state)).* = block;
 }
 
 test "tahsis edilen bellek yazılabilir/okunabilir ve serbest bırakılabilir" {

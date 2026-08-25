@@ -129,7 +129,7 @@ pub export fn nox_rc_alloc(rt: ?*anyopaque, payload_size: usize) ?*anyopaque {
             // programlarda TAMAMEN ATLANIR — BÖYLE bir programda slot
             // ZATEN HER ZAMAN 0'dır (bkz. `pool_ever_active`nin belge notu).
             const slot = poolSlotFor(state);
-            const row = &state.pool_free_lists[slot].classes;
+            const row = &asap.poolFreeListsRow(state, slot).classes;
             const popped = row[idx];
             if (popped) |node| row[idx] = node.next;
             const base: *anyopaque = if (popped) |node| @ptrCast(node) else (asap.nox_alloc(rt, poolClassSize(idx)) orelse return null);
@@ -213,7 +213,7 @@ pub export fn nox_rc_free_payload(rt: ?*anyopaque, ptr: ?*anyopaque, payload_siz
             // Faz MN.10 — bkz. `nox_rc_alloc`nin AYNI notu. Faz [YENİ] —
             // bkz. `nox_rc_alloc`nin AYNI `pool_ever_active` kısa-yolu notu.
             const slot = poolSlotFor(state);
-            const row = &state.pool_free_lists[slot].classes;
+            const row = &asap.poolFreeListsRow(state, slot).classes;
             node.* = .{ .next = row[idx] };
             row[idx] = node;
             return;

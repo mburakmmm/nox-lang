@@ -14,6 +14,38 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.39.0]
+
+### Düzeltildi
+- **`RuntimeState`nin 9600 bayta (v1.26.6'da 120 bayt, ~80x) büyümesi
+  düzeltildi — havuz-özgü durum lazy bir uzantıya taşındı.** v1.38.0'ın
+  bulduğu, kapsam dışı bıraktığı mimari bulgunun takibi. `@sizeOf`/
+  `std.atomic.cache_line` doğrudan ölçülerek kök neden kesinleştirildi:
+  `pool_free_lists: [MAX_POOL_WORKERS]PoolFreeListRow` TEK BAŞINA
+  büyümenin ~%85'iydi (`align(std.atomic.cache_line)` — 128 bayt macOS
+  aarch64'te — her satırı, gerçek veri 80 bayt olmasına rağmen, 128 bayta
+  yuvarlıyordu → 64×128=8192 bayt, havuzsuz bir programda BİLE gömülü).
+  `runtime/alloc/asap.zig`ye YENİ, lazy tahsis edilen bir `PoolExtension`
+  eklendi (`arena_pool`/`cycle_gc` İLE AYNI "opak tutamaç" deseni) —
+  havuz-özgü TÜM durum (`pool_free_lists`/`globals_blocks`nin slot 1-63'ü
+  + `pool_wake_fds`/`pool_scheduler_ptrs`/`pool_live_count`/vb.) BURAYA
+  taşındı; `RuntimeState` SADECE slot 0 İçİn inline alanlar + `WorkerPool.
+  create()` GERÇEKTEN çağrıldığında tahsis edilen bir `pool_ext` işaretçisi
+  taşır. YENİ bulunan üçüncü bir TLV sıcak-yol sorunu (`nox_globals_get`/
+  `nox_globals_set`, v1.38.0'ın `pool_ever_active` kısayolunun hiç
+  uygulanmadığı bir yer) de AYNI turda düzeltildi. **Sonuç**: `@sizeOf
+  (RuntimeState)` 9600 → 256 bayt (~%97 azalma), `zig build test`
+  (Debug+ReleaseFast)/`stress-test`/`http-soak-test` HEPSİ temiz. **DÜRÜST
+  bir olumsuz sonuç**: `list_release_overhead`/`oop_arc_churn`/`dict_
+  bench`/`json_bench`nin interleaved ölçümü HİÇBİR ölçülebilir performans
+  farkı GÖSTERMEDİ — v1.38.0'ın "büyüme önbellek-yerelliğini bozuyor gibi
+  görünüyor" hipotezi bu benchmark'larda YANLIŞ çıktı (tek bir ~9.6KB
+  tahsis modern CPU önbelleğiyle rekabet etmiyor). `list_release_overhead`nin
+  kalan farkının GERÇEK kaynağı HÂLÂ bilinmiyor — YİNE DE `RuntimeState`nin
+  küçülmesi GERÇEK, doğrulanmış bir mimari/bellek-ayak-izi kazancı
+  olduğundan (özellikle çok sayıda `RuntimeState` örneği yaratan
+  senaryolarda) kullanıcı KARARIYLA tutuldu.
+
 ## [1.38.0]
 
 ### Düzeltildi
