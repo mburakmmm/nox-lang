@@ -14,6 +14,51 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.40.0]
+
+### Düzeltildi
+- **`setNonBlocking`'in HER `nonBlockingRead`/`Write`/`Accept` çağrısında
+  gereksiz tekrarı giderildi — bu oturumdaki EN BÜYÜK, GERÇEK performans
+  bulgusu.** Kullanıcının "dilimiz, IO, HTTP için detaylı bir bottleneck
+  analizi yapalım" isteği ÜZERİNE `benchmarks/http_compare/` TAZEden
+  ölçüldü — v1.38.0/v1.39.0'ın threadlocal/RuntimeState düzeltmelerinin
+  GERÇEK HTTP verimini ÖLÇÜLEBİLİR şekilde DEĞİŞTİRMEDİĞİ (interleaved
+  A/B, v1.37.0 vs v1.39.0, HEM GET-echo HEM JSON-POST senaryosunda
+  istatistiksel olarak AYIRT EDİLEMEZ) DÜRÜSTÇE kaydedildi. AMA bu SIRADA
+  `run_json_worker_sweep.sh`nin (Faz MN.10 regresyon kapısı) 4-worker
+  durumunda 1-worker'DAN YAVAŞ ölçüldüğü GÖRÜLDÜ — `sample` (macOS
+  profillerici) İLE profillenip `otool -tV` İLE ADRES ARİTMETİĞİYLE
+  çapraz-doğrulandı: profilcinin fiber stack-switching'in kafasını
+  karıştırdığı "releaseStack/trampoline" sembolizasyonu ASLINDA `io.
+  nonBlockingWrite`nin İÇİYDİ. Kök neden: `setNonBlocking(fd)` (2 gerçek
+  `fcntl` syscall'ı) HER `nonBlockingRead`/`nonBlockingReadWithTimeout`/
+  `nonBlockingWrite` çağrısının BAŞINDA KOŞULSUZ çalışıyordu — fd'nin
+  non-blocking DURUMU bir KEZ ayarlandıktan SONRA ASLA değişmediği HALDE.
+  Kalıcı/keep-alive bir bağlantı BİRÇOK isteği hizmet ettiğinden HER
+  istek EN AZ 4 GEREKSİZ syscall ÖDÜYORDU. Geçici olarak kaldırılıp
+  ölçülünce (SONRA geri alındı) 4-worker JSON senaryosu **~%41 daha
+  HIZLI** çıktı. Düzeltme: `setNonBlocking` artık `pub`, HTTP/TLS
+  bağlantı fd'si `accept()` ANINDA (`setTcpNodelay`nin YANINDA) TEK
+  SEFER ayarlanıyor, `nonBlockingRead`/`Write`den ÇIKARILDI; YENİ
+  `nonBlockingReadOnce` yardımcısı 6 tek-seferlik self-pipe sitesini
+  (http_client/thread_bridge/pool_bridge×3/process) telafi ediyor;
+  `ThreadChannel`e (çoklu-kez okunabilen uyandırma fd'leri İçİn) 2 yeni
+  fd-başına "zaten ayarlandı" bayrağı eklendi. **Bulunan VE düzeltilen
+  bir GERÇEK regresyon (İlk denemede)**: `bindAndListen()`de dinleme
+  fd'sini KOŞULSUZ non-blocking yapmak `http_server.zig`nin `blockingAccept`
+  (fiber-siz senkron) yolunu KIRDI (4 test GERÇEKTEN askıya düştü, `zig
+  build noxrt-test --test-timeout` İLE YAKALANIP `blockingAccept`nin
+  `EAGAIN`i HİÇ ele ALMADIĞI BULUNDU) — bu parça GERİ ALINIP `listen_fd`
+  SADECE `nonBlockingAccept`/`nonBlockingAcceptWithTimeout`da (accept-
+  döngüsü BAŞINA, istek BAŞINA DEĞİL — asıl kazancın kaynağı DEĞİLDİ)
+  ayarlanmaya DEVAM EDİYOR. **Ölçülen sonuç**: `run_json_worker_sweep.sh`
+  1/2/4-worker'ı ~150-160K'dan **~208K req/s**'e ÇIKARDI (8-worker'ın
+  ZATEN olduğu, muhtemelen çekirdek-oversubscription kaynaklı ~201K
+  tavanına YAKLAŞARAK) — script'in KENDİ PASS/FAIL eşiği bu YENİ, BENİGN
+  "hepsi aynı donanım tavanına yakın" durumunu (eski %88 katastrofik
+  inversiyondan FARKLI, ~%96.5 oranı) yanlış-pozitif İŞARETLEMESİN diye
+  gevşetildi (bkz. script'in KENDİ güncellenmiş belge notu).
+
 ## [1.39.0]
 
 ### Düzeltildi

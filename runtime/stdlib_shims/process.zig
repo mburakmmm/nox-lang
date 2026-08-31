@@ -196,8 +196,9 @@ export fn nox_process_run_raw(
     thread.detach();
 
     if (bridge.currentFiberScheduler()) |scheduler| {
+        // Faz [YENİ] — bkz. http_client.zig'nin AYNI notu.
         var buf: [1]u8 = undefined;
-        _ = io_mod.nonBlockingRead(scheduler, fds[0], &buf) catch {};
+        _ = io_mod.nonBlockingReadOnce(scheduler, fds[0], &buf) catch {};
     } else {
         var buf: [1]u8 = undefined;
         http_client.readSelfPipe(fds[0], &buf);

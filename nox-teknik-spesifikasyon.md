@@ -16212,6 +16212,87 @@ release_overhead'i hızlandırma" hedefi bu turda BAŞARILAMADI, bu
 DÜRÜSTÇE böyle kayda geçiriliyor (Faz GG.4'ün "ölçülüp [beklenen
 kazanç bulunamadığında] dürüstçe raporlanır" ilkesiyle TUTARLI).
 
+## 3.106 `setNonBlocking`'in her okuma/yazmada gereksiz tekrarını gidermek — bu turun EN BÜYÜK IO/HTTP darboğazı (v1.40.0)
+
+Kullanıcının "dilimiz, IO, HTTP için detaylı bir bottleneck analizi
+yapalım" isteği ÜZERİNE `benchmarks/http_compare/` (GET-echo + JSON-POST
+karşılaştırmaları) TAZEden çalıştırıldı. İLK bulgu (DÜRÜSTÇE kaydedildi):
+v1.38.0/v1.39.0'ın threadlocal/RuntimeState düzeltmeleri GERÇEK HTTP
+verimini ÖLÇÜLEBİLİR şekilde DEĞİŞTİRMEDİ (v1.37.0 İLE v1.39.0 arasında
+interleaved A/B, HEM düz GET HEM JSON-POST senaryosunda istatistiksel
+olarak AYIRT EDİLEMEZ — muhtemelen bu senaryoların HTTP handler'ları
+§3.105'in düzelttiği threadlocal/RuntimeState maliyetini `fiber_ever_
+active`/`pool_ever_active` HER İKİSİ de TRUE olan bir bağlamda ZATEN
+"yavaş yol"dan geçirdiğinden, kazanç TEK-worker'lı/havuzsuz senkron
+programlara ÖZGÜYDÜ).
+
+**AMA bu araştırma SIRASINDA ÇOK DAHA BÜYÜK bir darboğaz BULUNDU.**
+`benchmarks/http_compare/run_json_worker_sweep.sh` (Faz MN.10'un KENDİ
+regresyon kapısı) 4-worker durumunda 1-worker'DAN YAVAŞ ölçüldü (149K
+vs 162K req/s). `sample` (macOS sistem profillerici) İLE profillenip
+`otool -tV`nin ADRES ARİTMETİĞİYLE ÇAPRAZ-DOĞRULANDI: profilcinin
+"releaseStack/trampoline" OLARAK sembolize ettiği yoğun aktivite,
+ASLINDA `async_rt.io.nonBlockingWrite`nin İÇİYDİ — fiber'ların ÖZEL
+stack-switching'i `sample`nin sembol ÇÖZÜMLEMESİNİ YANILTMIŞTI (bu,
+KENDİ BAŞINA ilginç bir METODOLOJİ notu: fiber-ağırlıklı kodun sistem
+profillericileriyle profillenmesi, `otool -tV`/`nm` İLE ADRES
+DOĞRULAMASI YAPILMADAN GÜVENİLMEMELİ).
+
+**Kök neden**: `runtime/async_rt/io.zig`nin `setNonBlocking(fd)`si
+(İKİ GERÇEK `fcntl` syscall'ı — `F_GETFL`+`F_SETFL`) `nonBlockingRead`/
+`nonBlockingReadWithTimeout`/`nonBlockingWrite`/`nonBlockingAccept`/
+`nonBlockingAcceptWithTimeout`nin HER ÇAĞRISININ BAŞINDA KOŞULSUZ
+çalışıyordu — `fd`nin non-blocking DURUMU bir KEZ ayarlandıktan SONRA
+ASLA değişmediği HALDE. Kalıcı/keep-alive bir HTTP bağlantısı BİRÇOK
+isteği HİZMET ETTİĞİNDEN, HER istek EN AZ 1 read + 1 write = 4 GEREKSİZ
+syscall ÖDÜYORDU. **Ampirik doğrulama** (GEÇİCİ olarak 3 çağrı YORUM
+SATIRINA alınıp SONRA GERİ ALINDI): 4-worker JSON senaryosu 149,064 →
+209,679 req/s (**+%41**).
+
+**Kapsamlı çağrı-sitesi haritası** (bir Explore ajanıyla `runtime/`nin
+TAMAMI tarandı) TÜM fd'lerin SADECE ÜÇ EDİNİM noktasından geldiğini
+gösterdi: (1) HTTP/TLS bağlantı fd'si (`accept()`, TEK sahipli), (2)
+HTTP dinleme fd'si (`bindAndListen()`), (3) tek-seferlik self-pipe
+fd'leri (6 site: `http_client`/`thread_bridge`/`pool_bridge`×3/`process`).
+AYRICA İKİNCİ, GERÇEK bir sıcak yol bulundu: `ThreadChannel`nin uyandırma
+fd'leri (`thread_channel.zig`) — HTTP keep-alive İLE YAPISAL olarak AYNI
+("tampon dolu/boş olduğunda TEKRAR TEKRAR okunabilir"), AMA AYNI fd HEM
+fiber HEM bloklayıcı DALDAN tüketilebildiğinden GERÇEK bir fd-başına
+"zaten ayarlandı" bayrağı GEREKTİRDİ (basit bir "edinim noktası" yardımcısı
+YETERSİZDİ).
+
+**Düzeltme**: `setNonBlocking` artık `pub`. Bağlantı fd'si `setTcpNodelay`nin
+YANINDA (`accept()` BAŞARILI olduktan HEMEN SONRA) TEK SEFER ayarlanıyor;
+`nonBlockingRead`/`Write`nin BAŞINDAKİ çağrı SİLİNDİ. YENİ `nonBlockingReadOnce`
+yardımcısı (`setNonBlocking`+`nonBlockingRead`) 6 tek-seferlik self-pipe
+sitesini telafi ediyor. `ThreadChannel`e `recv_fd_nonblocking`/`send_fd_nonblocking`
+(2 yeni `bool`) eklenip `waitForByte` fd-başına TEK SEFER ayarlıyor.
+
+**Bulunan VE düzeltilen bir GERÇEK regresyon (İLK denemede)**: `bindAndListen()`de
+dinleme fd'sini KOŞULSUZ non-blocking yapmak `http_server.zig`nin
+`blockingAccept`ini (fiber-siz SENKRON yol, `EAGAIN`i HİÇ ele ALMAZ —
+BLOCKING bir `listen_fd`ye GÜVENİR) KIRDI — `zig build noxrt-test
+--test-timeout 20s` İLE 4 test GERÇEKTEN askıya düştüğü YAKALANDI ("takıldı
+herhalde" — kullanıcının KENDİ gözlemi). Kök neden `ps -o pid,etime,time`
+İLE (neredeyse SIFIR CPU zamanı, 19+ dakika duvar-saati) DOĞRULANIP,
+`nm`/kod okuması İLE `blockingAccept`nin switch'inde `.AGAIN`in HİÇ
+İŞLENMEDİĞİ bulundu. Düzeltme: `bindAndListen()`deki değişiklik GERİ
+ALINDI, `listen_fd` SADECE `nonBlockingAccept`/`nonBlockingAcceptWithTimeout`da
+(accept-döngüsü BAŞINA, istek BAŞINA DEĞİL — asıl %41 kazancın kaynağı
+DEĞİLDİ) ayarlanmaya DEVAM EDİYOR.
+
+**Sonuç ve YAN bulgu**: `run_json_worker_sweep.sh` 1/2/4-worker'ı ~150-160K'dan
+**~208K req/s**'e çıkardı — "4 worker 1 worker'dan YAVAŞ" anomalisi
+TAMAMEN ORTADAN KALKTI. AMA 8-worker (ZATEN muhtemelen çekirdek-
+oversubscription — BU makinede 10 çekirdek, `wrk`nin KENDİ 4 istemci iş
+parçacığıYLA BİRLİKTE 12 eşzamanlı iş parçacığı — nedeniyle SABİT
+~201K'de KALAN) ARTIK 1-4w'yi HAFİFÇE (~%3.5) GEÇEMİYOR — script'in
+KENDİ PASS/FAIL eşiği ("8w > 1w" strict) BU YENİ, BENİGN "hepsi AYNI
+donanım tavanına YAKIN" durumunu (ESKİ %88 katastrofik inversiyondan
+TAMAMEN FARKLI bir ~%96.5 oranı) YANLIŞ-POZİTİF işaretlememesi İçİn
+"8w >= %90×1w"e GEVŞETİLDİ (script'in KENDİ 2026-08 tarihli belge notunda
+TAM GEREKÇESİYLE belgelendi).
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

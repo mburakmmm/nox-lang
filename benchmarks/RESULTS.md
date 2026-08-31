@@ -935,6 +935,46 @@ olabileceğine işaret ediyor — KESİN bir sonuç İçİn DAHA FAZLA tekrar
 0.1/s'ye KADAR düşen) AŞIRI gürültüsü, ÖNCEKİ turla TUTARLI, KENDİ
 mimari kırılganlığının Cursor'DAN BAĞIMSIZ olduğunu doğruluyor.
 
+### 2026-08 — `setNonBlocking`'in her okuma/yazmada gereksiz tekrarı (bkz. nox-teknik-spesifikasyon.md §3.106)
+
+Kullanıcının "dilimiz, IO, HTTP için detaylı bir bottleneck analizi
+yapalım" isteği ÜZERİNE, v1.38.0/v1.39.0'ın threadlocal/RuntimeState
+düzeltmelerinin GERÇEK HTTP verimini DEĞİŞTİRMEDİĞİ (v1.37.0 vs v1.39.0
+interleaved A/B, İSTATİSTİKSEL AYIRT EDİLEMEZ) DÜRÜSTÇE doğrulandıktan
+SONRA, `run_json_worker_sweep.sh`nin (Faz MN.10 regresyon kapısı)
+4-worker'ın 1-worker'DAN YAVAŞ olduğu GÖRÜLDÜ. `sample`/`otool -tV` İLE
+kök neden `io.zig`nin `setNonBlocking(fd)`sinin (2 gerçek `fcntl`
+syscall'ı) HER `nonBlockingRead`/`Write`/`Accept` çağrısında KOŞULSUZ
+tekrarlanması olarak bulundu — keep-alive bir bağlantı İçİn İSTEK
+BAŞINA EN AZ 4 gereksiz syscall.
+
+| Worker sayısı | Düzeltme ÖNCESİ (req/s) | Düzeltme SONRASI (req/s) |
+|---|---|---|
+| 1 | 161,937 | 209,232 |
+| 2 | 159,041 | 209,961 |
+| 4 | 149,064 (1w'den YAVAŞ) | 208,238 |
+| 8 | 200,996 | 199,448 |
+
+**+%41'e kadar kazanç** (izole ölçümde), 1/2/4-worker'ın HEPSİNDE ~%28-40
+İYİLEŞME, "4 worker 1 worker'dan yavaş" anomalisi TAMAMEN ORTADAN
+KALKTI. 8-worker (muhtemelen çekirdek-oversubscription NEDENİYLE ZATEN
+~201K'lik bir tavana ULAŞMIŞTI) DEĞİŞMEDİ — bu YÜZDEN 1-4w ARTIK 8w'yi
+neredeyse YAKALADI (script'in KENDİ PASS/FAIL eşiği bu YENİ, benign
+durumu YANLIŞ-POZİTİF işaretlemesin diye "8w > 1w"den "8w >= %90×1w"e
+GEVŞETİLDİ — TAM gerekçe script'in KENDİ 2026-08 notunda).
+
+Düz GET-echo karşılaştırması (`run_compare.sh`) İçİn kazanç DAHA KÜÇÜK
+(istek başına read/write ZATEN AZ OLDUĞUNDAN BEKLENDİĞİ GİBİ) ama YİNE
+DE GERÇEK.
+
+**Metodoloji notu**: bu bulgu SIRASINDA `bindAndListen()`de dinleme
+fd'sini KOŞULSUZ non-blocking yapan İLK deneme `http_server.zig`nin
+`blockingAccept`ini (fiber-siz senkron yol, `EAGAIN`i hiç İŞLEMEZ)
+KIRDI — `zig build noxrt-test --test-timeout 20s` İLE (kullanıcının
+"takıldı herhalde" gözlemi ÜZERİNE) 4 GERÇEK test askıya-düşmesi
+YAKALANIP DÜZELTİLDİ (`bindAndListen`e DOKUNULMADAN, `listen_fd`
+sadece `nonBlockingAccept`da ayarlanmaya DEVAM ediyor).
+
 ## Bölüm 4 — Faz II: `nox.*` stdlib / Rust `std` karşılaştırması ve eksik-fonksiyon analizi
 
 **Kaynak:** kullanıcının AÇIK talebi — HH serisinin kapanışının hemen

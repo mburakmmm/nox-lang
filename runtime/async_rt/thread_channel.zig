@@ -87,6 +87,19 @@ pub const ThreadChannel = struct {
     recv_wakeup_write_fd: posix.fd_t,
     send_wakeup_read_fd: posix.fd_t,
     send_wakeup_write_fd: posix.fd_t,
+    /// Faz [YENİ] (bkz. plan dosyası "setNonBlocking'in her okuma/yazmada
+    /// gereksiz tekrarını gidermek"): `waitForByte`nin BU fd'yi ARTIK
+    /// ÇAĞRI-BAŞINA DEĞİL, TEK SEFER non-blocking yapıp yapmadığını
+    /// izler. BURADA (self-pipe sitelerinin AKSİNE) bir GERÇEK "TEK
+    /// SEFERLİK" garanti YOK — `recv_wakeup_read_fd`/`send_wakeup_read_fd`
+    /// tampon DOLU/BOŞ olduğu SÜRECE TEKRAR TEKRAR okunabilir (HTTP keep-
+    /// alive İLE YAPISAL olarak AYNI, sık/küçük-kapasiteli kanallarda
+    /// HER işlemde OLABİLİR) VE AYNI fd HEM fiber HEM bloklayıcı DALDAN
+    /// (farklı çağrılarda) tüketilebildiğinden, bir "acquisition noktası"
+    /// yardımcısı (`nonBlockingReadOnce`) YETERSİZDİR — bu YÜZDEN gerçek,
+    /// fd-başına bir "zaten ayarlandı" bayrağı GEREKİR.
+    recv_fd_nonblocking: bool = false,
+    send_fd_nonblocking: bool = false,
     /// Bkz. modül üstü not — `ThreadHandle.owners` İLE AYNI GEREKÇE/desen.
     owners: std.atomic.Value(u32) = .init(2),
 
@@ -107,9 +120,17 @@ pub const ThreadChannel = struct {
 /// askıya alınır (BAŞKA fiber'lar bu SIRADA GERÇEKTEN ilerleyebilir),
 /// DEĞİLSE sıradan bloklayan bir `read()` YETERLİDİR — `nox_thread_join`
 /// İLE AYNI iki-modlu desen.
-fn waitForByte(fd: posix.fd_t) void {
+fn waitForByte(fd: posix.fd_t, already_nonblocking: *bool) void {
     var buf: [1]u8 = undefined;
     if (bridge.currentFiberScheduler()) |scheduler| {
+        // Faz [YENİ] (bkz. `ThreadChannel.recv_fd_nonblocking`in belge
+        // notu): BU fd ÇOKLU KEZ okunabildiğinden `nonBlockingReadOnce`
+        // (HER çağrıda YENİDEN ayarlardı) YERİNE fd-başına bayrakla
+        // TEK SEFER ayarlanır.
+        if (!already_nonblocking.*) {
+            io_mod.setNonBlocking(fd);
+            already_nonblocking.* = true;
+        }
         _ = io_mod.nonBlockingRead(scheduler, fd, &buf) catch {};
     } else {
         http_client.readSelfPipe(fd, &buf);
@@ -152,7 +173,7 @@ fn sendPayload(tc: *ThreadChannel, payload: i64) void {
     tc.mutex.lock();
     while (tc.buffer.items.len >= tc.capacity) {
         tc.mutex.unlock();
-        waitForByte(tc.send_wakeup_read_fd);
+        waitForByte(tc.send_wakeup_read_fd, &tc.send_fd_nonblocking);
         tc.mutex.lock();
     }
     tc.buffer.append(std.heap.page_allocator, payload) catch @panic("OOM: ThreadChannel tamponu");
@@ -168,7 +189,7 @@ fn recvPayload(tc: *ThreadChannel) i64 {
     tc.mutex.lock();
     while (tc.buffer.items.len == 0) {
         tc.mutex.unlock();
-        waitForByte(tc.recv_wakeup_read_fd);
+        waitForByte(tc.recv_wakeup_read_fd, &tc.recv_fd_nonblocking);
         tc.mutex.lock();
     }
     const value = tc.buffer.orderedRemove(0);

@@ -419,7 +419,7 @@ pub export fn nox_pool_run(
     // sıradan bloklayan bir `read()` YETERLİDİR.
     if (bridge.currentFiberScheduler()) |scheduler| {
         var buf: [1]u8 = undefined;
-        _ = io_mod.nonBlockingRead(scheduler, fds[0], &buf) catch {};
+        _ = io_mod.nonBlockingReadOnce(scheduler, fds[0], &buf) catch {}; // Faz [YENİ] — bkz. http_client.zig'nin AYNI notu.
     } else {
         var buf: [1]u8 = undefined;
         http_client.readSelfPipe(fds[0], &buf);
@@ -610,7 +610,7 @@ fn poolServeFlattened(rt_ptr: *anyopaque, num_workers: i64, entry_fn: *const fn 
 
     if (bridge.currentFiberScheduler()) |scheduler| {
         var buf: [1]u8 = undefined;
-        _ = io_mod.nonBlockingRead(scheduler, fds[0], &buf) catch {};
+        _ = io_mod.nonBlockingReadOnce(scheduler, fds[0], &buf) catch {}; // Faz [YENİ] — bkz. http_client.zig'nin AYNI notu.
     } else {
         var buf: [1]u8 = undefined;
         http_client.readSelfPipe(fds[0], &buf);
@@ -675,7 +675,7 @@ pub export fn nox_pool_serve(
 
     if (bridge.currentFiberScheduler()) |scheduler| {
         var buf: [1]u8 = undefined;
-        _ = io_mod.nonBlockingRead(scheduler, fds[0], &buf) catch {};
+        _ = io_mod.nonBlockingReadOnce(scheduler, fds[0], &buf) catch {}; // Faz [YENİ] — bkz. http_client.zig'nin AYNI notu.
     } else {
         var buf: [1]u8 = undefined;
         http_client.readSelfPipe(fds[0], &buf);

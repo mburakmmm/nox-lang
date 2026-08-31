@@ -456,8 +456,13 @@ fn doRequest(
     thread.detach();
 
     if (bridge.currentFiberScheduler()) |scheduler| {
+        // Faz [YENİ] (bkz. plan dosyası "setNonBlocking'in her okuma/
+        // yazmada gereksiz tekrarını gidermek"): bu self-pipe fd'si
+        // `nonBlockingAccept`/`bindAndListen`den GEÇMEDEN doğrudan
+        // `makeSelfPipe()`den geldiğinden, `nonBlockingReadOnce` İLE
+        // TEK SEFERLİK non-blocking ayarı YAPILIR.
         var buf: [1]u8 = undefined;
-        _ = io_mod.nonBlockingRead(scheduler, fds[0], &buf) catch {};
+        _ = io_mod.nonBlockingReadOnce(scheduler, fds[0], &buf) catch {};
     } else {
         var buf: [1]u8 = undefined;
         readSelfPipe(fds[0], &buf);

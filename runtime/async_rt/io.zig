@@ -67,9 +67,22 @@ pub const WinSock = if (builtin.os.tag == .windows) struct {
 } else struct {};
 
 /// Bir soketi non-blocking yapar — idempotenttir (zaten non-blocking olan
-/// bir fd üzerinde tekrar çağrılması güvenlidir), bu yüzden HER
-/// `nonBlockingAccept`/`Read`/`Write` çağrısının başında koşulsuz çağrılır.
-fn setNonBlocking(fd: posix.fd_t) void {
+/// bir fd üzerinde tekrar çağrılması güvenlidir).
+///
+/// Faz [YENİ] (bkz. plan dosyası "setNonBlocking'in her okuma/yazmada
+/// gereksiz tekrarını gidermek"): ÖNCEDEN HER `nonBlockingAccept`/`Read`/
+/// `Write` çağrısının BAŞINDA KOŞULSUZ çağrılıyordu — bir fd'nin non-
+/// blocking DURUMU BİR KEZ ayarlandıktan SONRA ASLA değişmediği HALDE,
+/// HER çağrı İKİ GERÇEK `fcntl` syscall'ı (`F_GETFL`+`F_SETFL`) ÖDÜYORDU.
+/// Kalıcı/keep-alive bir HTTP bağlantısı BİRÇOK isteği hizmet ettiğinden
+/// bu, İSTEK başına EN AZ 4 GEREKSİZ syscall demekti — `sample`/`otool
+/// -tV` İLE profillenip (`nox.json` işleyen bir HTTP yükünde) DOĞRULANDI:
+/// GEÇİCİ olarak kaldırılınca 4-worker senaryosu ~%41 daha HIZLI ölçüldü.
+/// ARTIK `pub` — TEK doğruluk kaynağı OLARAK, fd'nin İLK edinildiği
+/// NOKTADA (bkz. `nonBlockingAccept`/`nonBlockingAcceptWithTimeout`nin
+/// `setTcpNodelay`in YANINDAKİ çağrısı, `http_server.zig`nin
+/// `bindAndListen`ı, `nonBlockingReadOnce`) TEK SEFER çağrılır.
+pub fn setNonBlocking(fd: posix.fd_t) void {
     if (builtin.os.tag == .windows) {
         var mode: u32 = 1;
         _ = WinSock.ioctlsocket(@intFromPtr(fd), WinSock.FIONBIO, &mode);
@@ -141,6 +154,19 @@ fn fiberSafeUnexpectedErrno(e: posix.E) error{Unexpected} {
 /// (bkz. `Scheduler.suspendForIo`) askıya alır — GERÇEK sonuç alınana ya
 /// da gerçek bir hataya kadar TEKRAR dener.
 pub fn nonBlockingAccept(scheduler: *Scheduler, listen_fd: posix.fd_t) !posix.fd_t {
+    // Faz [YENİ] (bkz. plan dosyası "setNonBlocking'in her okuma/yazmada
+    // gereksiz tekrarını gidermek"): BİLİNÇLİ olarak `bindAndListen()`e
+    // TAŞINMADI — `http_server.zig`nin `blockingAccept`i (fiber-siz senkron
+    // yol) AYNI `bindAndListen()` çıktısını kullanır VE `listen_fd`nin
+    // BLOCKING kalmasına GÜVENİR (`EAGAIN`i HİÇ ele ALMAZ) — `bindAndListen`
+    // seviyesinde KOŞULSUZ non-blocking yapmak DENENDİ, `blockingAccept`i
+    // KIRDIĞI (GERÇEK bir test askıya-düşmesiyle) DOĞRUDAN GÖZLEMLENDİ.
+    // Bu YÜZDEN `listen_fd`, SADECE `nonBlockingAccept`/`nonBlockingAcceptWithTimeout`
+    // ÇAĞRILDIĞINDA (yani ÇAĞIRAN GERÇEKTEN non-blocking/fiber-tabanlı
+    // semantik İSTEDİĞİNDE) BURADA ayarlanmaya DEVAM EDER — `setTcpNodelay`nin
+    // YANINA taşınan `conn_fd`/istek-başına `read`/`write`nin AKSİNE, BU
+    // maliyet accept-DÖNGÜSÜ başınadır (istek başına DEĞİL), bu YÜZDEN
+    // ölçülen ~%41 kazancın KAYNAĞI DEĞİLDİ.
     setNonBlocking(listen_fd);
     while (true) {
         if (builtin.os.tag == .windows) {
@@ -148,6 +174,7 @@ pub fn nonBlockingAccept(scheduler: *Scheduler, listen_fd: posix.fd_t) !posix.fd
             if (rc != WinSock.INVALID_SOCKET) {
                 const conn_fd: posix.fd_t = @ptrFromInt(rc);
                 setTcpNodelay(conn_fd);
+                setNonBlocking(conn_fd);
                 return conn_fd;
             }
             if (WinSock.WSAGetLastError() == WinSock.WSAEWOULDBLOCK) {
@@ -164,6 +191,7 @@ pub fn nonBlockingAccept(scheduler: *Scheduler, listen_fd: posix.fd_t) !posix.fd
         const rc = std.c.accept(listen_fd, null, null);
         if (rc >= 0) {
             setTcpNodelay(rc);
+            setNonBlocking(rc);
             return rc;
         }
         switch (posix.errno(rc)) {
@@ -191,6 +219,7 @@ pub fn nonBlockingAccept(scheduler: *Scheduler, listen_fd: posix.fd_t) !posix.fd
 /// `SO_REUSEPORT`nin kernel-seviyesi bağlantı dağılımının kendisine
 /// HİÇBİR ŞEY yönlendirmediği durumda `accept()`te SONSUZA KADAR bekler.
 pub fn nonBlockingAcceptWithTimeout(scheduler: *Scheduler, listen_fd: posix.fd_t, timeout_ms: u32) !posix.fd_t {
+    // Faz [YENİ] — bkz. `nonBlockingAccept`in AYNI notu.
     setNonBlocking(listen_fd);
     while (true) {
         if (builtin.os.tag == .windows) {
@@ -198,6 +227,7 @@ pub fn nonBlockingAcceptWithTimeout(scheduler: *Scheduler, listen_fd: posix.fd_t
             if (rc != WinSock.INVALID_SOCKET) {
                 const conn_fd: posix.fd_t = @ptrFromInt(rc);
                 setTcpNodelay(conn_fd);
+                setNonBlocking(conn_fd);
                 return conn_fd;
             }
             if (WinSock.WSAGetLastError() == WinSock.WSAEWOULDBLOCK) {
@@ -210,6 +240,7 @@ pub fn nonBlockingAcceptWithTimeout(scheduler: *Scheduler, listen_fd: posix.fd_t
         const rc = std.c.accept(listen_fd, null, null);
         if (rc >= 0) {
             setTcpNodelay(rc);
+            setNonBlocking(rc);
             return rc;
         }
         switch (posix.errno(rc)) {
@@ -236,8 +267,13 @@ pub fn nonBlockingAcceptWithTimeout(scheduler: *Scheduler, listen_fd: posix.fd_t
 /// düzeltildi). Bu sayede `FiberReader.stream`in MEVCUT `if (n == 0)
 /// return error.EndOfStream` yolu (bkz. `http_server.zig`) HİÇBİR ek
 /// değişiklik GEREKMEDEN doğru şekilde devreye girer.
+///
+/// Faz [YENİ] (bkz. plan dosyası "setNonBlocking'in her okuma/yazmada
+/// gereksiz tekrarını gidermek"): `fd`nin ZATEN non-blocking OLDUĞU
+/// VARSAYILIR (çağıran, `fd`yi EDİNDİĞİ NOKTADA — `nonBlockingAccept`/
+/// `bindAndListen`/`nonBlockingReadOnce` — BUNU BİR KEZ ayarlamış
+/// OLMALIDIR) — bkz. `setNonBlocking`in belge notu.
 pub fn nonBlockingRead(scheduler: *Scheduler, fd: posix.fd_t, buf: []u8) !usize {
-    setNonBlocking(fd);
     while (true) {
         if (builtin.os.tag == .windows) {
             const rc = WinSock.recv(@intFromPtr(fd), buf.ptr, @intCast(buf.len), 0);
@@ -259,6 +295,18 @@ pub fn nonBlockingRead(scheduler: *Scheduler, fd: posix.fd_t, buf: []u8) !usize 
     }
 }
 
+/// Faz [YENİ] (bkz. plan dosyası "setNonBlocking'in her okuma/yazmada
+/// gereksiz tekrarını gidermek"): `nonBlockingRead`in "fd ZATEN non-
+/// blocking" varsayımını KARŞILAMAYAN, TEK-SEFERLİK fd'ler İçİn (ör.
+/// bir self-pipe'ın okuma ucu, ÖMRÜ boyunca EN FAZLA bir kez okunur) —
+/// isimden AÇIKÇA "bu fd'ye DAHA ÖNCE HİÇ dokunulmadı" niyetini taşır.
+/// TEKRARLI/kalıcı fd'ler (HTTP bağlantıları GİBİ) İçİn KULLANILMAMALIDIR
+/// — onlar `nonBlockingAccept`/`bindAndListen`de ZATEN BİR KEZ ayarlanır.
+pub fn nonBlockingReadOnce(scheduler: *Scheduler, fd: posix.fd_t, buf: []u8) !usize {
+    setNonBlocking(fd);
+    return nonBlockingRead(scheduler, fd, buf);
+}
+
 /// Faz HH.7 (bkz. nox-teknik-spesifikasyon.md §3.68): `nonBlockingRead`
 /// İLE AYNI, ama `fd` OKUNABİLİR olmadan `timeout_ms` GEÇERSE `error.
 /// Timeout` döner — okuma zaman aşımı/slowloris korumasının (bkz.
@@ -275,8 +323,9 @@ pub fn nonBlockingRead(scheduler: *Scheduler, fd: posix.fd_t, buf: []u8) !usize 
 /// — TOPLAM-süre tabanlı bir mutlak son tarih (deadline), her `EAGAIN`
 /// SONRASI KALAN süreyi YENİDEN hesaplamayı gerektirirdi (ek karmaşıklık,
 /// bu turun kapsamı DIŞINDA).
+/// Faz [YENİ] — bkz. `nonBlockingRead`in AYNI notu: `fd`nin ZATEN
+/// non-blocking olduğu VARSAYILIR.
 pub fn nonBlockingReadWithTimeout(scheduler: *Scheduler, fd: posix.fd_t, buf: []u8, timeout_ms: u32) !usize {
-    setNonBlocking(fd);
     while (true) {
         if (builtin.os.tag == .windows) {
             const rc = WinSock.recv(@intFromPtr(fd), buf.ptr, @intCast(buf.len), 0);
@@ -321,8 +370,10 @@ pub fn nonBlockingReadWithTimeout(scheduler: *Scheduler, fd: posix.fd_t, buf: []
 /// dener. Kısmi yazmalar (`rc < buf.len`) OLABİLİR — çağıran (`nox.http`in
 /// D.1'i) kalan baytlar İÇİN tekrar çağırmalıdır (POSIX `write`in normal
 /// sözleşmesi, bu fonksiyon bunu GİZLEMEZ).
+///
+/// Faz [YENİ] — bkz. `nonBlockingRead`in AYNI notu: `fd`nin ZATEN
+/// non-blocking olduğu VARSAYILIR.
 pub fn nonBlockingWrite(scheduler: *Scheduler, fd: posix.fd_t, buf: []const u8) !usize {
-    setNonBlocking(fd);
     while (true) {
         if (builtin.os.tag == .windows) {
             const rc = WinSock.send(@intFromPtr(fd), buf.ptr, @intCast(buf.len), 0);
@@ -378,6 +429,15 @@ test "nonBlockingRead: bir fiber G/Ç beklerken BAŞKA bir hazır fiber çalış
     if (std.c.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &fds) != 0) return error.SocketPairFailed;
     defer _ = std.c.close(fds[0]);
     defer _ = std.c.close(fds[1]);
+    // Faz [YENİ] (bkz. plan dosyası "setNonBlocking'in her okuma/yazmada
+    // gereksiz tekrarını gidermek"): `nonBlockingRead`/`Write` ARTIK
+    // `fd`nin ZATEN non-blocking olduğunu VARSAYAR (`nonBlockingAccept`/
+    // `bindAndListen`in KENDİ sorumluluğu) — BU test HAM bir `socketpair`
+    // kullandığından (bu edinim yollarının HİÇBİRİNDEN GEÇMEDEN) BURADA
+    // AÇIKÇA ayarlanması GEREKİR, aksi halde reader/writer fiber'ları
+    // BLOKLAYICI bir `read`/`write`de ASILI KALIRDI.
+    setNonBlocking(fds[0]);
+    setNonBlocking(fds[1]);
 
     var scheduler = try Scheduler.init(std.heap.page_allocator);
     defer scheduler.deinit();
@@ -471,6 +531,10 @@ test "nonBlockingReadWithTimeout: istemci TCP RST ile ANİ kapatınca ECONNRESET
 
     const server_fd = std.c.accept(listen_fd, null, null);
     if (server_fd < 0) return error.AcceptFailed;
+    // Faz [YENİ] — bkz. yukarıdaki testin AYNI notu: HAM `accept()`
+    // (`nonBlockingAccept`DEN GEÇMEDEN) KULLANILDIĞINDAN BURADA AÇIKÇA
+    // ayarlanması GEREKİR.
+    setNonBlocking(server_fd);
 
     // `SO_LINGER{onoff=1, linger=0}` + `close()`: OS'a bu bağlantıyı
     // NORMAL bir FIN İLE DEĞİL, ANİ bir RST İLE sonlandırmasını SÖYLER —
@@ -491,6 +555,8 @@ test "nonBlockingReadWithTimeout: istemci TCP RST ile ANİ kapatınca ECONNRESET
     if (std.c.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &pair_fds) != 0) return error.SocketPairFailed;
     defer _ = std.c.close(pair_fds[0]);
     defer _ = std.c.close(pair_fds[1]);
+    setNonBlocking(pair_fds[0]);
+    setNonBlocking(pair_fds[1]);
 
     const spawn = @import("scheduler.zig").spawn;
     var scheduler = try Scheduler.init(std.heap.page_allocator);

@@ -252,8 +252,9 @@ export fn nox_thread_join(rt: ?*anyopaque, handle: ?*anyopaque) callconv(.c) i64
     const h: *ThreadHandle = @ptrCast(@alignCast(handle orelse return 0));
 
     if (bridge.currentFiberScheduler()) |scheduler| {
+        // Faz [YENİ] — bkz. `http_client.zig`nin AYNI notu.
         var buf: [1]u8 = undefined;
-        _ = io_mod.nonBlockingRead(scheduler, h.done_read_fd, &buf) catch {};
+        _ = io_mod.nonBlockingReadOnce(scheduler, h.done_read_fd, &buf) catch {};
     } else {
         var buf: [1]u8 = undefined;
         http_client.readSelfPipe(h.done_read_fd, &buf);
