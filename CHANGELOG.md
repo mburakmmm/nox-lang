@@ -14,6 +14,28 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.41.0]
+
+### Eklendi
+- **GG.17 — sıradan yerel değişkenler İçİn genel kaçış analizi (ASAP
+  güçlendirmesi, Tur 1)**: bir fonksiyon gövdesinin ÜST DÜZEYİNDEKİ bir
+  `var_decl` (`p: Point = Point(1,2)` YA DA `xs: list[int] = [1,2,3]`,
+  ne `lowlevel:` İçİnde ne bir çağrı-argümanı) derleme-zamanında boyutu
+  bilindiği VE geri kalan gövdede HİÇ kaçmadığı (`return`/argüman/alan-
+  ataması/takma-ad/metod-çağrısı OLARAK kullanılmadığı) KANITLANDIĞINDA
+  ARTIK `nox_rc_alloc` YERİNE gerçek bir QBE stack `alloc8`'i kullanıyor
+  — retain/release/refcount başlığı TAMAMEN ORTADAN KALKIYOR (C'nin
+  KENDİ stack-allocation maliyetiyle eşdeğer). Mevcut GG.15 (`lowlevel:`
+  blokları)/GG.16 (çağrı-argümanları) üreticileriyle AYNI, paylaşılan
+  tüketim mekanizmasını (`Codegen.stack_construct_sites`) kullanır —
+  tüketim tarafına SIFIR değişiklik gerekti. YENİ, ORTAK bir boyut tavanı
+  (`MAX_STACK_ALLOC_SIZE = 4096` bayt, bir fiber'ın 256 KiB stack'ini
+  korumak İçİn) GG.15/16'ya da RETROAKTİF uygulandı (öncesinde İKİSİ de
+  SINIRSIZDI). Kullanıcının "ASAP'i (Katman 1) güçlendirebilir miyiz"
+  hipotezinin doğrudan sonucu — bkz. nox-teknik-spesifikasyon.md §3.107
+  (İKİ GERÇEK, break→red→fix İLE bulunan hatanın — sıralama hatası VE
+  sınıf-alan-release atlaması — TAM hikayesi).
+
 ## [1.40.0]
 
 ### Düzeltildi

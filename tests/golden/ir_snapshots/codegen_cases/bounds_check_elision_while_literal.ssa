@@ -1014,132 +1014,57 @@ export function d $sum_float(l %rt, l %p_xs) {
 }
 export function l $sum_fixed(l %rt) {
 @start
-    %t0 =l alloc8 8
-    storel 0, %t0
+    %t0 =l alloc8 80
     %t1 =l alloc8 8
-    %t2 =l alloc8 8
-    %t3 =l call $nox_rc_alloc(l %rt, l 80)
-    storel 8, %t3
-    %t4 =l add %t3, 8
-    storel 8, %t4
-    %t5 =l add %t3, 16
-    storel 1, %t5
-    %t6 =l add %t3, 24
-    storel 2, %t6
-    %t7 =l add %t3, 32
-    storel 3, %t7
-    %t8 =l add %t3, 40
-    storel 4, %t8
-    %t9 =l add %t3, 48
-    storel 5, %t9
-    %t10 =l add %t3, 56
-    storel 6, %t10
-    %t11 =l add %t3, 64
-    storel 7, %t11
-    %t12 =l add %t3, 72
-    storel 8, %t12
-    %t13 =l loadl %t0
-    %t14 =w ceql %t13, 0
-    jnz %t14, @release_skip1, @release0
-@release0
-    %t15 =l add %t13, 8
-    %t16 =l loadl %t15
-    %t17 =l mul %t16, 8
-    %t18 =l add %t17, 16
-    %t19 =l sub %t13, 8
-    %t20 =l loadl %t19
-    %t21 =l sub %t20, 1
-    storel %t21, %t19
-    %t22 =w cslel %t21, 0
-    jnz %t22, @list_free3, @list_free_skip4
-@list_free3
-    call $nox_rc_free_payload(l %rt, l %t13, l %t18)
-    jmp @list_free_done5
-@list_free_skip4
-    jmp @list_free_done5
-@list_free_done5
-    jmp @release_done2
-@release_skip1
-    jmp @release_done2
-@release_done2
-    storel 0, %t0
-    storel %t3, %t0
     storel 0, %t1
+    %t2 =l alloc8 8
+    %t3 =l alloc8 8
+    storel 8, %t0
+    %t4 =l add %t0, 8
+    storel 8, %t4
+    %t5 =l add %t0, 16
+    storel 1, %t5
+    %t6 =l add %t0, 24
+    storel 2, %t6
+    %t7 =l add %t0, 32
+    storel 3, %t7
+    %t8 =l add %t0, 40
+    storel 4, %t8
+    %t9 =l add %t0, 48
+    storel 5, %t9
+    %t10 =l add %t0, 56
+    storel 6, %t10
+    %t11 =l add %t0, 64
+    storel 7, %t11
+    %t12 =l add %t0, 72
+    storel 8, %t12
+    storel %t0, %t1
     storel 0, %t2
-    jmp @while_cond6
-@while_cond6
-    %t23 =l loadl %t1
-    %t24 =w csltl %t23, 8
-    jnz %t24, @while_body7, @while_end8
-@while_body7
-    %t25 =l loadl %t2
-    %t26 =l loadl %t0
-    %t27 =l loadl %t1
-    %t28 =l mul %t27, 8
-    %t29 =l add %t28, 16
-    %t30 =l add %t26, %t29
-    %t31 =l loadl %t30
-    %t32 =l add %t25, %t31
-    storel %t32, %t2
-    %t33 =l loadl %t1
-    %t34 =l add %t33, 1
-    storel %t34, %t1
-    jmp @while_cond6
-@while_end8
-    %t35 =l loadl %t2
-    %t36 =l loadl %t0
-    %t37 =w ceql %t36, 0
-    jnz %t37, @release_skip10, @release9
-@release9
-    %t38 =l add %t36, 8
-    %t39 =l loadl %t38
-    %t40 =l mul %t39, 8
-    %t41 =l add %t40, 16
-    %t42 =l sub %t36, 8
-    %t43 =l loadl %t42
-    %t44 =l sub %t43, 1
-    storel %t44, %t42
-    %t45 =w cslel %t44, 0
-    jnz %t45, @list_free12, @list_free_skip13
-@list_free12
-    call $nox_rc_free_payload(l %rt, l %t36, l %t41)
-    jmp @list_free_done14
-@list_free_skip13
-    jmp @list_free_done14
-@list_free_done14
-    jmp @release_done11
-@release_skip10
-    jmp @release_done11
-@release_done11
-    storel 0, %t0
-    ret %t35
-@after_return15
-    %t46 =l loadl %t0
-    %t47 =w ceql %t46, 0
-    jnz %t47, @release_skip17, @release16
-@release16
-    %t48 =l add %t46, 8
-    %t49 =l loadl %t48
-    %t50 =l mul %t49, 8
-    %t51 =l add %t50, 16
-    %t52 =l sub %t46, 8
-    %t53 =l loadl %t52
-    %t54 =l sub %t53, 1
-    storel %t54, %t52
-    %t55 =w cslel %t54, 0
-    jnz %t55, @list_free19, @list_free_skip20
-@list_free19
-    call $nox_rc_free_payload(l %rt, l %t46, l %t51)
-    jmp @list_free_done21
-@list_free_skip20
-    jmp @list_free_done21
-@list_free_done21
-    jmp @release_done18
-@release_skip17
-    jmp @release_done18
-@release_done18
-    storel 0, %t0
-@fn_end22
+    storel 0, %t3
+    jmp @while_cond0
+@while_cond0
+    %t13 =l loadl %t2
+    %t14 =w csltl %t13, 8
+    jnz %t14, @while_body1, @while_end2
+@while_body1
+    %t15 =l loadl %t3
+    %t16 =l loadl %t1
+    %t17 =l loadl %t2
+    %t18 =l mul %t17, 8
+    %t19 =l add %t18, 16
+    %t20 =l add %t16, %t19
+    %t21 =l loadl %t20
+    %t22 =l add %t15, %t21
+    storel %t22, %t3
+    %t23 =l loadl %t2
+    %t24 =l add %t23, 1
+    storel %t24, %t2
+    jmp @while_cond0
+@while_end2
+    %t25 =l loadl %t3
+    ret %t25
+@after_return3
+@fn_end4
     ret 0
 }
 export function w $main(w %argc, l %argv) {

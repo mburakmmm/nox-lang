@@ -16293,6 +16293,93 @@ TAMAMEN FARKLI bir ~%96.5 oranı) YANLIŞ-POZİTİF işaretlememesi İçİn
 "8w >= %90×1w"e GEVŞETİLDİ (script'in KENDİ 2026-08 tarihli belge notunda
 TAM GEREKÇESİYLE belgelendi).
 
+---
+
+## 3.107 GG.17 — sıradan yerel değişkenler İçİn genel kaçış analizi (ASAP güçlendirmesi, Tur 1) (v1.41.0)
+
+Kullanıcının "dilimizin C'ye göre performans açığının çoğu, sahiplik
+piramidinin çok fazla yerde ARC'a düşmesinden kaynaklanıyor — ASAP'i
+(Katman 1) güçlendirebilir miyiz?" hipotezi ÜZERİNE yapılan derin
+araştırma (bu oturumun kendisi) ŞUNU doğruladı: kullanıcı verisi (list/
+dict/class) İçİn AYRI bir Katman-1 tahsis stratejisi bugün fiilen YOK —
+Faz 5'te vardı (her kaçışı derleme hatasıyla REDDEDEN katı bir model),
+Faz 6'da ARC evrenselleşince BİLİNÇLİ olarak TERK EDİLDİ.
+
+**Ama tamamen boş değildi.** İKİ DAR, önceden var olan "kanıtla → stack
+`alloc8`" üreticisi bulundu: **GG.15** (`lowlevel:` blok gövdeleri,
+`scanStackConstructSites`) VE **GG.16** (bir çağrının argümanı olarak
+geçen, `paramNeverEscapes`in kanıtladığı bir dönüş değeri,
+`tryRegisterCrossCallStackSlots`) — HER İKİSİ de AYNI paylaşılan tüketim
+tablosuna (`Codegen.stack_construct_sites`) yazıyordu, `genListLit`/
+`genConstructFromValues` bunu `nox_rc_alloc`a düşmeden ÖNCE kontrol
+ediyordu.
+
+**GG.17, bu paylaşılan tüketim mekanizmasına DOKUNMADAN ÜÇÜNCÜ bir
+üretici ekler**: sıradan (ne `lowlevel:` İçİnde ne bir çağrı-argümanı
+olan) bir fonksiyon gövdesinin ÜST DÜZEYİNDEKİ `var_decl`ler — `p: Point
+= Point(1,2)` (derleme-zamanında boyutu bilinen bir sınıf kurucusu) YA
+DA `xs: list[int] = [1,2,3]` (tüm elemanları AYNI türden basit literal
+olan bir liste). `paramNeverEscapes`in AYNI muhafazakâr disiplini
+(ŞÜPHEDE HER ZAMAN "kaçıyor" varsay) `local_escape.zig`nin YENİ
+`localNeverEscapes`ına retargeting edildi — İKİ EK güvenli şekille
+(salt-okunur/in-place-yazılan alan erişimi `name.field`/`name.field=...`)
+AMA metod çağrıları (`name.method(...)`) VE argüman-olarak-geçiş HER
+ZAMAN kaçış SAYILARAK (v1'de interprocedural kanıt YOK).
+
+**GERÇEK, break→red→fix İLE bulunan İKİ hata**:
+1. **Sıralama hatası**: `registerLocalStackSlots` (kaçış-tarama +
+   slot-kaydı) `allocSlot` döngüsünden SONRA çağrılıyordu, ama
+   `allocSlotEx` `VarInfo.is_stack_local`i `self.stack_local_names`e
+   BAKARAK ayarlıyordu — bayrak HER ZAMAN `false` kalıyor, `.var_decl`nin
+   KENDİ scope-sonu release'i BİR STACK ADRESİNİ `nox_rc_free_payload`e
+   geçirip GERÇEK bir SIGBUS üretiyordu (`list_build_index_iterate.nox`
+   İLE yakalandı). Düzeltme: 5 çağrı sitesinin (registration.zig×4,
+   closures.zig×1) HEPSİNDE `registerLocalStackSlots` `allocSlot`
+   döngüsünden ÖNCEYE taşındı.
+2. **Alan-release atlaması**: bir sınıf örneğini stack'e almak,
+   `releaseOneLocalIfManaged`in `is_stack_local` kısayolu YÜZÜNDEN o
+   örneğin KENDİ heap-yönetimli ALANLARININ (`A(B(42))` gibi, `self.b =
+   b`nin retain ettiği `B` örneği) release'ini de TAMAMEN atlatıyordu —
+   GERÇEK bir sızıntı/çift-serbest-bırakma (`class_field_forward_ref.
+   nox`/`dict_shared_across_two_class_instances.nox`/`attr_index_read_
+   into_local_retain.nox`/`empty_list_lit_contextual_inference.nox` İLE
+   yakalandı). `arena`/lowlevel yerelleri İçİn bu kısayol GÜVENLİDİR
+   (TÜM alt-inşalar AYNI arenaya/stack'e gider, TEK bir bulk `nox_arena_
+   destroy` hepsini kapsar) — GG.17'de İSE SADECE en dıştaki `var_decl`
+   stack'e alınıyor, İÇ İÇE argüman ifadeleri (`B(42)`) TAMAMEN NORMAL
+   ARC yolunda KALIYOR. Düzeltme: v1'de bu optimizasyon SADECE HİÇBİR
+   alanı heap-yönetimli (list/dict/class/str/closure/boxed_scalar)
+   OLMAYAN sınıflara UYGULANIR (`classSafeForStackAlloc`) — böyle bir
+   sınıfın HİÇBİR alanı release GEREKTİRMEDİĞİNDEN tüm release'i atlamak
+   GÜVENLİDİR. Liste literalleri BU sorunu YAŞAMAZ (`simpleLiteralListQtype`
+   ZATEN TÜM elemanların basit skaler literal olmasını ŞART koşuyor, heap-
+   yönetimli bir eleman YAPISAL olarak İMKANSIZ).
+
+**YENİ boyut tavanı**: `MAX_STACK_ALLOC_SIZE = 4096` bayt — bir fiber'ın
+SABİT 256 KiB stack'i (guard-page İLE korunan) İçİn muhafazakâr bir üst
+sınır, NE GG.15 NE GG.16'nın bugüne kadar HİÇBİR boyut kontrolü
+YAPMADIĞI (araştırma SIRASINDA bulunan AYRI bir önceden-var-olan boşluk)
+İKİSİNE de RETROAKTİF olarak uygulandı.
+
+**Doğrulama**: 6 YENİ golden fixture (`stack_local_*` — pozitif sınıf+
+liste birlikte, büyük-döngü güvenliği, 4 negatif: return/argüman/takma-
+ad/boyut-tavanı kaçışı), 9 MEVCUT fixture'ın (3'ü GERÇEK SIGBUS/sızıntı
+İLE ÇÖKEREK bulundu, `classSafeForStackAlloc` düzeltmesi SONRASI 5'i
+davranışsal olarak DEĞİŞMEDEN eski yoluna DÖNDÜ, 4'ü YENİ, doğru bir
+`alloc8` dönüşümü GÖSTERECEK şekilde `codegen_ir_diff_test`in anlık
+görüntüsü YENİDEN oluşturuldu) TAM paket `zig build test` (Debug) —
+TAMAMEN yeşil (bilinen İKİ İLİŞKİSİZ flake — fiber guard-page /tmp
+yol çakışması VE 2M-yinelemeli GG.14 testinin Debug-modu YAVAŞLIĞI —
+HARİÇ, HER İKİSİ de BU değişiklikten BAĞIMSIZ, pre-existing).
+
+## Kapsam DIŞI (Tur 2'ye bırakılan)
+- Çalışma-zamanı boyutlu (`.append()` İLE büyüyen) listeler — arena-
+  tabanlı bir mekanizma gerektirir (`calls.zig:1037`'nin `if (obj.arena)
+  return error.Unsupported;` guard'ının kaldırılması DAHİL).
+- İnterprocedural kaçış kanıtı (bir yerelin BAŞKA bir fonksiyona argüman
+  olarak geçmesi) VE metod çağrıları — `paramNeverEscapes`in KENDİ
+  uyarısıyla TUTARLI, bilinçli takip işleri OLMADAN GENİŞLETİLMEZ.
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

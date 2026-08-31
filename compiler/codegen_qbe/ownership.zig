@@ -60,8 +60,12 @@ pub fn releaseAllLocalsExcept(self: *Codegen, except_name: ?[]const u8) CodegenE
 pub fn releaseOneLocalIfManaged(self: *Codegen, entry: VarInfo) CodegenError!void {
     // Arena tipli bağlamalar hiçbir zaman bireysel release edilmez —
     // refcount başlıkları yoktur, yaşam süreleri yalnızca kendi
-    // `lowlevel` bloğunun `nox_arena_destroy`'una bağlıdır.
-    if (entry.is_param or entry.arena or entry.borrowed_field) return;
+    // `lowlevel` bloğunun `nox_arena_destroy`'una bağlıdır. GG.17
+    // (`is_stack_local`) AYNI gerekçeyle: `alloc8` yığın slotunun REFCOUNT
+    // BAŞLIĞI YOK, ömrü FONKSİYON çıkışına kadar (stack frame'in KENDİSİ)
+    // sınırlı — bireysel release ÇAĞRISI, GEÇERSİZ bir stack adresini
+    // `nox_rc_release`e geçirirdi.
+    if (entry.is_param or entry.arena or entry.borrowed_field or entry.is_stack_local) return;
     if (isHeapManaged(entry.heap)) {
         try self.releaseSlotIfSet(entry);
     } else if (entry.heap == .task or entry.heap == .channel or entry.heap == .thread_handle or entry.heap == .thread_channel or entry.heap == .task_local) {

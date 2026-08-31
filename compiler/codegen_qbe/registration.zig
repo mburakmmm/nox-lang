@@ -974,6 +974,11 @@ pub fn allocSlotEx(self: *Codegen, name: []const u8, info: TypeInfo, is_param: b
         .is_param = is_param,
         .arena = arena,
         .borrowed_field = borrowed_field,
+        // GG.17: `registerLocalStackSlots`in (local_escape.zig) BU isim İçin
+        // ÖNCEDEN (`prepareInlineSites`in YANINDA, AYNI fonksiyon-girişi
+        // ön-taramasında) verdiği kanıt — bkz. `VarInfo.is_stack_local`in
+        // belge notu.
+        .is_stack_local = self.stack_local_names.contains(name),
     });
 }
 
@@ -1036,6 +1041,14 @@ pub fn genFunction(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
     }
     try self.qbeFuncHeaderEnd();
 
+    // GG.17: `allocSlotEx`nin (aşağıdaki `allocSlot` döngüsü İÇİNDE)
+    // `VarInfo.is_stack_local`i DOĞRU okuyabilmesi İçİn `self.stack_local_
+    // names` BU döngüden ÖNCE doldurulmuş OLMALIDIR — SIRA TERSİYSE
+    // (`allocSlot` ÖNCE çalışırsa) bayrak HER ZAMAN `false` kalır VE
+    // `releaseOneLocalIfManaged`/`.var_decl` kapsam-sonu release'i bir
+    // STACK adresini `nox_rc_free_payload`e geçirip GERÇEK bir SIGBUS'a
+    // yol açar (GERÇEKTEN denenip gözlemlendi, break→red→fix).
+    try self.registerLocalStackSlots(fd.body);
     for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
     try self.prepareInlineSites(fd.body);
     for (fd.params) |p| {
@@ -1112,6 +1125,7 @@ pub fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) Codegen
     }
     try self.qbeFuncHeaderEnd();
 
+    try self.registerLocalStackSlots(m.body);
     for (locals.items) |l| try self.allocSlotEx(l.name, l.info, l.is_param, l.arena, l.borrowed_field);
     try self.prepareInlineSites(m.body);
     {
@@ -1193,6 +1207,7 @@ pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool, wants_m
     // true` ile işaretleyebiliyor; bu bilgiyi burada YOK SAYMAK
     // (eskiden olduğu gibi sabit `false`) kapsam-sonu otomatik release'i
     // yanlışlıkla tetikleyip listenin sahipliğini bozardı.
+    try self.registerLocalStackSlots(stmts);
     for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
     try self.prepareInlineSites(stmts);
     try self.genStmts(stmts, .w);
@@ -1244,6 +1259,7 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_poo
     try self.qbeFuncParam(.l, "%argp", true);
     try self.qbeFuncHeaderEnd();
     try self.qbeLoadL(RT_PARAM, "%argp");
+    try self.registerLocalStackSlots(stmts);
     for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
     try self.prepareInlineSites(stmts);
     try self.genStmts(stmts, .l);

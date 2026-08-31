@@ -66,6 +66,17 @@ pub const InlineReturnTarget = struct {
 const MAX_INLINE_TOP_STMTS: usize = 8;
 const MAX_INLINE_TOTAL_STMTS: usize = 20;
 
+/// GG.17 (bkz. nox-teknik-spesifikasyon.md §3.10X): bir fiber'ın SABİT
+/// 256 KiB stack'i (`runtime/async_rt/fiber.zig`'in `STACK_SIZE`i, guard-
+/// page İLE korunan) İçİn GÜVENLİ bir üst sınır — İÇ İÇE çağrı çerçeveleri/
+/// BİRDEN FAZLA eşzamanlı stack-yerelin PAYINI da bırakacak ŞEKİLDE
+/// MUHAFAZAKÂR seçildi (256 KiB'nin ~%1.5'i). GG.15/GG.16'nın (bu sabitten
+/// ÖNCE SINIRSIZ olan) İKİ üreticisine VE GG.17'nin YENİ `local_escape.
+/// zig`sine ORTAK uygulanır — hiçbiri BUNU AŞAN bir `alloc8` üretmez,
+/// aşan durumlar SESSİZCE normal ARC/arena yoluna DÜŞER (davranış
+/// DEĞİŞMEZ, sadece optimizasyon uygulanmaz).
+pub const MAX_STACK_ALLOC_SIZE: usize = 4096;
+
 /// Bir inline-adayı gövdenin (özyinelemeli, `if`/`elif`/`else` İÇİNE de
 /// uygulanır) YALNIZCA `var_decl`/`assign`/`expr_stmt`/`if_stmt`/
 /// `return_stmt`/`pass_stmt` İÇERDİĞİNİ doğrular VE TOPLAM deyim sayısını
@@ -345,7 +356,7 @@ fn scanStackConstructsStmts(self: *Codegen, stmts: []const ast.Stmt, all_ok: *bo
 /// (boyutun ÇALIŞMA ZAMANI DEĞERLENDİRMESİ OLMADAN, SADECE AST'den
 /// bilindiği TEK durum) o türün QBE karşılığını döner; AKSİ HALDE `null`
 /// (identifier/çağrı İÇEREN HERHANGİ bir eleman, KARIŞIK türler, boş liste).
-fn simpleLiteralListQtype(elems: []const ast.Expr) ?QbeType {
+pub fn simpleLiteralListQtype(elems: []const ast.Expr) ?QbeType {
     if (elems.len == 0) return null;
     const elem_qtype: QbeType = switch (elems[0]) {
         .int_lit => .l,
@@ -385,9 +396,13 @@ fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *
             if (c.callee.* == .identifier) {
                 if (self.classes.get(c.callee.identifier)) |cinfo| {
                     any.* = true;
-                    const slot = try self.newTemp();
-                    try self.qbeAlloc(slot, .eight, cinfo.total_size);
-                    try self.stack_construct_sites.put(self.allocator, @intFromPtr(c.callee), .{ .slot = slot });
+                    if (cinfo.total_size <= MAX_STACK_ALLOC_SIZE) {
+                        const slot = try self.newTemp();
+                        try self.qbeAlloc(slot, .eight, cinfo.total_size);
+                        try self.stack_construct_sites.put(self.allocator, @intFromPtr(c.callee), .{ .slot = slot });
+                    } else {
+                        all_ok.* = false;
+                    }
                 }
             }
         },
@@ -401,9 +416,13 @@ fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *
             if (simpleLiteralListQtype(elems)) |elem_qtype| {
                 const elem_size = qbeSizeOf(elem_qtype);
                 const payload_size = LIST_HEADER_SIZE + elem_size * elems.len;
-                const slot = try self.newTemp();
-                try self.qbeAlloc(slot, .eight, payload_size);
-                try self.stack_construct_sites.put(self.allocator, @intFromPtr(elems.ptr), .{ .slot = slot });
+                if (payload_size <= MAX_STACK_ALLOC_SIZE) {
+                    const slot = try self.newTemp();
+                    try self.qbeAlloc(slot, .eight, payload_size);
+                    try self.stack_construct_sites.put(self.allocator, @intFromPtr(elems.ptr), .{ .slot = slot });
+                } else {
+                    all_ok.* = false;
+                }
             } else {
                 all_ok.* = false;
             }
@@ -564,6 +583,7 @@ pub fn tryRegisterCrossCallStackSlots(self: *Codegen, outer_callee: ast.FuncDef,
         const elem_qtype = simpleLiteralListQtype(elems) orelse continue;
         if (!paramNeverEscapes(outer_callee, outer_callee.params[i].name)) continue;
         const payload_size = LIST_HEADER_SIZE + qbeSizeOf(elem_qtype) * elems.len;
+        if (payload_size > MAX_STACK_ALLOC_SIZE) continue; // GG.17: ortak boyut tavanı.
         const slot = try self.newTemp();
         try self.qbeAlloc(slot, .eight, payload_size);
         // `genInlinedCall`, BU SPESİFİK çağrı sitesini (`c.callee ==

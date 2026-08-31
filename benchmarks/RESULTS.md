@@ -430,6 +430,29 @@ Her satır üç dilde **aynı algoritmayı** çalıştırır (Python/C, o dilin 
   inlining'inin VE GG.1'in string optimizasyonlarının YOĞUN kullandığı
   kod yollarını temsil eder.
 
+### GG.17 SONRASI koşu (2026-08-31, bkz. §3.107) — ASAP güçlendirmesi Tur 1
+
+Kullanıcının "ASAP'i (Katman 1) güçlendirebilir miyiz" hipotezi ÜZERİNE
+eklenen GG.17 (sıradan yerel değişkenler İçİn genel kaçış analizi,
+`nox_rc_alloc` → stack `alloc8`) SONRASI `zig build bench -Doptimize=
+ReleaseFast` yeniden çalıştırıldı (`noxc 1.41.0`, AYNI makine). **30/30
+stres + 10/10 Python/C + 8/8 Rust-stdlib + 4/4 Rust-crate çifti geçti.**
+
+**Dürüst not**: `list_traversal`'ın C-karşı yavaşlaması bu koşuda 35.62x
+ölçüldü (önceki kayıt: 30.2x) — BU bir regresyon DEĞİL, saf ÖLÇÜM
+GÜRÜLTÜSÜ: `list_traversal.nox`nin KENDİSİ GG.17'nin DEĞİL, ÖNCEDEN VAR
+OLAN GG.16'nın (çağrı-argümanı) kapsamına giriyor — DOĞRUDAN `.ssa`
+karşılaştırmasıyla doğrulandı, GG.17 ÖNCESİ/SONRASI ÜRETİLEN IR BİREBİR
+AYNI. GG.17'nin KENDİ hedef deseni (sıradan, üst-düzey `var_decl`) BU
+30 stres benchmarkının HİÇBİRİNDE (`oop_arc_churn` DAHİL — `Car.engine`
+alanı heap-yönetimli OLDUĞUNDAN `classSafeForStackAlloc` tarafından
+BİLİNÇLİ olarak dışlanıyor) doğal olarak OLUŞMUYOR — bu YÜZDEN mevcut
+benchmark paketinde ÖLÇÜLEBİLİR bir kazanç GÖRÜNMÜYOR (beklenen: yeni
+fixture'lar `tests/golden/codegen_cases/stack_local_*` İLE doğrulandı,
+bkz. §3.107). Gelecekteki bir benchmark turu, GG.17'nin desenini
+(fonksiyon-üstü `var_decl`, ne `lowlevel:` ne çağrı-argümanı) DOĞRUDAN
+egzersiz eden YENİ bir stres senaryosu ekleyebilir.
+
 ### Darboğaz analizi (2026-07-22) — C'ye karşı en yavaş 5 benchmark'ın ürettiği makine kodu okunarak
 
 Kullanıcının "yavaş kalan benchmarkları analiz edip darboğazları raporlayalım"

@@ -2643,3 +2643,68 @@ test "codegen(çalıştır): dict[int, class] — inşa+oku+üzerine-yaz+values(
         @embedFile("codegen_cases/dict_int_key_class_value.expected"),
     );
 }
+
+// GG.17 (bkz. nox-teknik-spesifikasyon.md §3.10X, plan dosyası "ASAP
+// güçlendirmesi — Tur 1"): sıradan (ne `lowlevel:` bloğu İÇİNDE ne bir
+// çağrı-argümanı olan) bir üst-düzey `var_decl`in sabit-boyutlu bir sınıf
+// örneği/basit-literal liste OLDUĞU VE geri kalan gövdede HİÇ kaçmadığı
+// KANITLANDIĞINDA `nox_rc_alloc` YERİNE bir `alloc8` yığın slotuna
+// dönüştüğünü — HEM sınıf HEM liste İçin, İKİSİ AYNI fonksiyonda BİRLİKTE
+// — kanıtlar (`expectGolden`nin boş-stderr kontrolü sızıntı YOK'u
+// GARANTİ eder).
+test "codegen(çalıştır): GG.17 — sınıf ÖRNEĞİ + liste literali BİRLİKTE stack yereline dönüşür, sızıntı yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/stack_local_class_and_list_positive.nox"),
+        @embedFile("codegen_cases/stack_local_class_and_list_positive.expected"),
+    );
+}
+
+// GG.17: dönüştürülen stack slotunun fonksiyon GİRİŞİNDE TEK SEFER
+// ayrılıp BÜYÜK bir döngü BOYUNCA (200.000 tur) TEKRAR TEKRAR GÜVENLE
+// yeniden kullanıldığını (döngü İçİNDE taze bir `alloc8` YAPILSAYDI
+// yığın taşardı — bkz. `ownership.zig`nin "döngü İçİnde taze alloc8"
+// uyarısı) kanıtlar.
+test "codegen(çalıştır): GG.17 — stack yereli BÜYÜK bir döngü boyunca TEK slotla güvenle yeniden kullanılır" {
+    try expectGolden(
+        @embedFile("codegen_cases/stack_local_loop_safety.nox"),
+        @embedFile("codegen_cases/stack_local_loop_safety.expected"),
+    );
+}
+
+// GG.17 — NEGATİF (regresyon-yok) kanıtı: bir yerel `return` edilirse
+// (kaçış) `nox_rc_alloc`ta KALIR, dönüştürülmez — davranış DEĞİŞMEZ.
+test "codegen(çalıştır): GG.17 — return edilen bir yerel stack'e dönüştürülmez (kaçış)" {
+    try expectGolden(
+        @embedFile("codegen_cases/stack_local_return_escape.nox"),
+        @embedFile("codegen_cases/stack_local_return_escape.expected"),
+    );
+}
+
+// GG.17 — NEGATİF: bir yerel BAŞKA bir fonksiyona ARGÜMAN olarak
+// geçerse (v1'de interprocedural kanıt YOK) `nox_rc_alloc`ta KALIR.
+test "codegen(çalıştır): GG.17 — başka bir fonksiyona argüman olarak geçen yerel stack'e dönüştürülmez (kaçış)" {
+    try expectGolden(
+        @embedFile("codegen_cases/stack_local_arg_escape.nox"),
+        @embedFile("codegen_cases/stack_local_arg_escape.expected"),
+    );
+}
+
+// GG.17 — NEGATİF: bir yerel BAŞKA bir isme atanırsa (takma ad, `ys =
+// xs`) HER İKİSİ de `nox_rc_alloc`ta KALIR — `ownership/analysis.zig`nin
+// "İlke #8" muhafazakârlığıyla TUTARLI.
+test "codegen(çalıştır): GG.17 — takma ad verilen bir yerel stack'e dönüştürülmez (kaçış)" {
+    try expectGolden(
+        @embedFile("codegen_cases/stack_local_alias_escape.nox"),
+        @embedFile("codegen_cases/stack_local_alias_escape.expected"),
+    );
+}
+
+// GG.17 — NEGATİF: `MAX_STACK_ALLOC_SIZE`i (4096 bayt) AŞAN bir literal
+// liste, gerisinde HİÇ kaçmasa BİLE `nox_rc_alloc`ta KALIR (bir fiber'ın
+// SABİT 256 KiB stack'ini korumak İçİn bilinçli boyut tavanı).
+test "codegen(çalıştır): GG.17 — boyut tavanını aşan bir liste stack'e dönüştürülmez" {
+    try expectGolden(
+        @embedFile("codegen_cases/stack_local_size_cap.nox"),
+        @embedFile("codegen_cases/stack_local_size_cap.expected"),
+    );
+}

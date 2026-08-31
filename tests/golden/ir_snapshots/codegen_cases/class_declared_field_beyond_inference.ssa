@@ -1100,72 +1100,32 @@ export function w $main(w %argc, l %argv) {
 @start
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
-    %t0 =l alloc8 8
-    storel 0, %t0
-    %t1 =l alloc8 8
-    storel 0, %t1
-    %t2 =l call $nox_rc_alloc(l %rt, l 16)
-    storel 2, %t2
-    %t3 =l add %t2, 8
+    %t0 =l alloc8 16
+    %t1 =l alloc8 16
+    %t2 =l alloc8 8
+    storel 0, %t2
+    %t3 =l alloc8 8
     storel 0, %t3
-    call $Box___init__(l %rt, l %t2, w 1)
-    %t4 =l loadl %t0
-    %t5 =w ceql %t4, 0
-    jnz %t5, @release_skip1, @release0
-@release0
-    call $Box_release(l %rt, l %t4)
-    jmp @release_done2
-@release_skip1
-    jmp @release_done2
-@release_done2
-    storel 0, %t0
-    storel %t2, %t0
-    %t6 =l call $nox_rc_alloc(l %rt, l 16)
-    storel 2, %t6
+    storel 2, %t0
+    %t4 =l add %t0, 8
+    storel 0, %t4
+    call $Box___init__(l %rt, l %t0, w 1)
+    storel %t0, %t2
+    storel 2, %t1
+    %t5 =l add %t1, 8
+    storel 0, %t5
+    call $Box___init__(l %rt, l %t1, w 0)
+    storel %t1, %t3
+    %t6 =l loadl %t2
     %t7 =l add %t6, 8
-    storel 0, %t7
-    call $Box___init__(l %rt, l %t6, w 0)
-    %t8 =l loadl %t1
-    %t9 =w ceql %t8, 0
-    jnz %t9, @release_skip4, @release3
-@release3
-    call $Box_release(l %rt, l %t8)
-    jmp @release_done5
-@release_skip4
-    jmp @release_done5
-@release_done5
-    storel 0, %t1
-    storel %t6, %t1
-    %t10 =l loadl %t0
-    %t11 =l add %t10, 8
-    %t12 =l loadl %t11
-    call $printf(l $fmt_int, ..., l %t12)
-    %t13 =l loadl %t1
-    %t14 =l add %t13, 8
-    %t15 =l loadl %t14
-    call $printf(l $fmt_int, ..., l %t15)
-    %t16 =l loadl %t0
-    %t17 =w ceql %t16, 0
-    jnz %t17, @release_skip7, @release6
-@release6
-    call $Box_release(l %rt, l %t16)
-    jmp @release_done8
-@release_skip7
-    jmp @release_done8
-@release_done8
-    storel 0, %t0
-    %t18 =l loadl %t1
-    %t19 =w ceql %t18, 0
-    jnz %t19, @release_skip10, @release9
-@release9
-    call $Box_release(l %rt, l %t18)
-    jmp @release_done11
-@release_skip10
-    jmp @release_done11
-@release_done11
-    storel 0, %t1
+    %t8 =l loadl %t7
+    call $printf(l $fmt_int, ..., l %t8)
+    %t9 =l loadl %t3
+    %t10 =l add %t9, 8
+    %t11 =l loadl %t10
+    call $printf(l $fmt_int, ..., l %t11)
     call $nox_runtime_deinit(l %rt)
-@fn_end12
+@fn_end0
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

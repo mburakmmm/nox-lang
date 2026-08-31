@@ -277,6 +277,13 @@ pub const VarInfo = struct {
     func_sig: ?*const FuncSigInfo = null,
     is_param: bool = false,
     arena: bool = false,
+    /// GG.17 (bkz. nox-teknik-spesifikasyon.md §3.10X): `local_escape.zig`nin
+    /// `registerLocalStackSlots`ı, BU yerelin İLK (VE TEK) atamasının bir
+    /// `alloc8` yığın slotuna GİTTİĞİNİ (`nox_rc_alloc` DEĞİL) KANITLADI —
+    /// `arena` İLE AYNI release-atlama gerekçesi (refcount başlığı YOK,
+    /// ömür fonksiyon çıkışına kadar SINIRLI) ama LEXICAL konumdan DEĞİL,
+    /// GERÇEK bir kaçış-kanıtından gelir.
+    is_stack_local: bool = false,
     /// GG.12: `self.<alan>`in salt-okunur, HİÇBİR yere aktarılmayan bir
     /// kopyası (ör. sadece bir `for` döngüsünün iterable'ı) — `self`in
     /// KENDİSİ metodun tüm aktivasyonu boyunca CANLI olduğundan retain/

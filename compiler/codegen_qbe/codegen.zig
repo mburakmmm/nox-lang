@@ -207,6 +207,7 @@ const async_thread_mod = @import("async_thread.zig");
 const optimizations = @import("optimizations.zig");
 const http_intrinsics = @import("http_intrinsics.zig");
 const inlining = @import("inlining.zig");
+const local_escape = @import("local_escape.zig");
 const closures = @import("closures.zig");
 const layout = @import("layout.zig");
 const globals_mod = @import("globals.zig");
@@ -317,6 +318,8 @@ pub const Codegen = struct {
     pub const collectInlineSitesStmt = inlining.collectInlineSitesStmt;
     pub const collectInlineSitesExpr = inlining.collectInlineSitesExpr;
     pub const prepareInlineSites = inlining.prepareInlineSites;
+    /// GG.17: bkz. `local_escape.zig`nin modül belge notu.
+    pub const registerLocalStackSlots = local_escape.registerLocalStackSlots;
     pub const genInlinedCall = inlining.genInlinedCall;
     pub const scanStackConstructSites = inlining.scanStackConstructSites;
     pub const tryRegisterCrossCallStackSlots = inlining.tryRegisterCrossCallStackSlots;
@@ -1110,6 +1113,14 @@ pub const Codegen = struct {
     /// TURUNDA KAYBOLURDU — GG.14'ün `is_pinned`de ÖNCEDEN gözlemlediği
     /// AYNI boşluk).
     stack_slot_call_sites: std.AutoHashMapUnmanaged(usize, []const u8) = .empty,
+    /// GG.17 (bkz. `local_escape.zig`): `registerLocalStackSlots`in BU
+    /// fonksiyon-girişi taramasında "kaçmıyor" KANITLADIĞI üst-düzey
+    /// `var_decl` isimlerinin kümesi — `allocSlotEx` BUNU okuyup `VarInfo.
+    /// is_stack_local`i AYARLAR. `inline_sites`/`stack_construct_sites`
+    /// İLE AYNI zamanlamada, HER fonksiyon-girişinde `registerLocalStackSlots`
+    /// TARAFINDAN TEMİZLENİR (isimler fonksiyonlar arasında ÇAKIŞABİLİR,
+    /// AST-POINTER-anahtarlı `stack_construct_sites`in AKSİNE).
+    stack_local_names: std.StringHashMapUnmanaged(void) = .empty,
     /// Faz GG.2: `genInlinedCall` bir splice ÜRETİRKEN AYARLANIR (splice
     /// SONRASI eski değerine GERİ YÜKLENİR) — `genStmts`in `.return_stmt`
     /// dalı bu DOLUYSA gerçek bir `ret` YERİNE sonuç slotuna YAZIP `jmp`

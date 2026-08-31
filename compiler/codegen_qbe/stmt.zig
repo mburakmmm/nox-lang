@@ -144,9 +144,9 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
                 // heap-yönetimli yerellerde `storel 0` İLE başlatır),
                 // bu YÜZDEN `releaseSlotIfSet` burada ÇAĞRILMASA da
                 // ZARARSIZDIR — ama tutarlılık İçin AÇIKÇA atlanır.
-                if (isHeapManaged(info.heap) and !info.arena and !info.borrowed_field) {
+                if (isHeapManaged(info.heap) and !info.arena and !info.borrowed_field and !info.is_stack_local) {
                     try self.releaseSlotIfSet(info);
-                } else if ((info.heap == .task or info.heap == .channel or info.heap == .thread_handle or info.heap == .thread_channel or info.heap == .task_local) and !info.arena and !info.borrowed_field) {
+                } else if ((info.heap == .task or info.heap == .channel or info.heap == .thread_handle or info.heap == .thread_channel or info.heap == .task_local) and !info.arena and !info.borrowed_field and !info.is_stack_local) {
                     // **GERÇEK, DENEYEREK BULUNAN sızıntı**: `genAssign`nin
                     // `.identifier` dalı (BURADAN AŞAĞIDA) `Task[T]`/
                     // `Channel[T]`/vb. tipli bir DEĞİŞKENE yeniden atama
