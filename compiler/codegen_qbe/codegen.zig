@@ -1411,7 +1411,7 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     // İHTİYAÇ DUYAR VE bunlar HERHANGİ bir gövde codegen'İNDEN ÖNCE
     // çağrılabilir) VE `self.func_defs` DOLU OLDUKTAN SONRA (yukarıdaki
     // `registerFunc` geçişleri).
-    try gen.computeParamEscapes(module, extra_functions);
+    try gen.computeParamEscapes(module, extra_functions, extra_classes);
 
     // Faz GG.2 (bkz. nox-teknik-spesifikasyon.md §3.67): `computeMustNotRaise`DEN
     // SONRA (bağımlılık — bkz. `isFuncInlineEligible`) VE HERHANGİ bir gövde

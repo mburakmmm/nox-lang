@@ -430,6 +430,39 @@ Her satır üç dilde **aynı algoritmayı** çalıştırır (Python/C, o dilin 
   inlining'inin VE GG.1'in string optimizasyonlarının YOĞUN kullandığı
   kod yollarını temsil eder.
 
+### GG.21 SONRASI ölçüm (2026-08-31, bkz. §3.111) — ASAP güçlendirmesi Tur 5 (metod çağrıları için interprocedural genişletme)
+
+GG.20'nin interprocedural kanıtı SADECE serbest fonksiyon çağrılarını
+kapsıyordu — GG.21 BUNU (SADECE receiver'ın statik tipinin HİÇBİR bilinen
+alt sınıfı O metodu override ETMEDİĞİ, "final" metod çağrılarına) METOD
+çağrılarına da genişletti.
+
+`point_sum`nin AYNI ailesinden, AMA bir METOD üzerinden argüman-geçişini
+hedefleyen YENİ bir desen (`Helper.peek(self, xs): return xs[0]+xs[1]+xs[2]`,
+`point_sum(h): xs = [1,2,3]; return h.peek(xs)`, `h` `point_sum`nin KENDİ
+parametresi) İLE `git worktree` KULLANILARAK v1.44.0 (metod-çağrısı HER
+ZAMAN kaçış, `nox_rc_alloc`) vs BU tur (GG.21, final-metoda salt-okunur
+yönlendirme İSPATLANDIĞINDAN stack) arasında GERÇEK bir A/B ölçüldü —
+200.000.000 çağrı:
+
+| | v1.44.0 (metod-çağrısı = kaçış, ARC) | BU tur (GG.21, final-metod kanıtı, stack) | Kazanç |
+|---|---:|---:|---|
+| `point_sum(h)` × 200M çağrı (kullanıcı süresi, min 2 koşu) | 1.18s | 0.42s | **~%64 (~2.8x)** |
+
+GG.20'nin serbest-fonksiyon kazancıyla (~2.9x) AYNI SINIFTA — BEKLENDİĞİ
+GİBİ, İKİSİ de AYNI kategoriden (allocation stratejisi değişikliği) bir
+kazanç, SADECE ÖNCEDEN dokunulamayan YENİ bir desen sınıfına (metod-
+çağrısı-argümanı-olarak-geçen yereller) UYGULANIYOR.
+
+**Geliştirme sırasında bulunan GERÇEK bir hata (break→red→fix'ten ÖNCE,
+YAZI SIRASINDA)**: ilk uygulamada `method_owner_symbol` İçİn `msig.owner`
+(SADECE sınıf adı) YANLIŞLIKLA `NodeKey.func` olarak kullanılmıştı
+(doğrusu `"{sınıf}_{metod}"` sembolüydü) — bu, GERÇEKTEN mutasyona
+uğratan bir metodun bile "güvenli" sayılmasına, İLK negatif-mutasyon
+fixture'ı ÇALIŞTIRILDIĞINDA GERÇEK bir SIGSEGV (kullanım-sonrası-serbest-
+bırakma) ÜRETMESİNE yol açtı — kırmızı-takım/negatif test disiplininin
+TAM OLARAK BUNU YAKALAMASI amaçlanan senaryo, VE gerçekten yakaladı.
+
 ### GG.20 SONRASI ölçüm (2026-08-31, bkz. §3.110) — ASAP güçlendirmesi Tur 4 (interprocedural escape/mutasyon analizi)
 
 Harici bir (GPT-5.6) incelemenin işaret ettiği ORTAK kök neden (checker'ın

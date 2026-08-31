@@ -1,0 +1,14 @@
+class Helper:
+    def __init__(self: Helper) -> None:
+        self.n = 0
+    def mutate(self: Helper, xs: list[int]) -> None:
+        xs.append(1)
+
+async def worker(h: Helper, xs: list[int]) -> None:
+    h.mutate(xs)
+
+async def entry() -> None:
+    h: Helper = Helper()
+    xs: list[int] = [1, 2, 3]
+    t: Task[None] = spawn worker(h, xs)
+    await t

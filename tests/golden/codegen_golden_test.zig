@@ -1649,6 +1649,110 @@ test "codegen: GG.20 — iki seviyeli TRANSİTİF kanıtın ÜRETTİĞİ IR'da c
 // SADECE `--release`de İZİN VERİR), BU test `llvm_golden_test.zig`ye
 // TAŞINDI (bkz. "GG.20 KIRMIZI-TAKIM" testi orada).
 
+// GG.21 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 5"): interprocedural
+// escape kanıtının METOD çağrılarına GENİŞLETİLMİŞ hali — `Helper.peek`
+// override EDİLMEYEN (final) bir metod olduğundan VE receiver `h`
+// `compute()`nin KENDİ (sibling) parametresi OLDUĞUNDAN, `compute()`nin
+// yereli `xs` ARTIK stack'e dönüşür.
+test "codegen(çalıştır): GG.21 — final bir metoda sibling-parametre üzerinden geçen yerel ARTIK stack'e dönüşür" {
+    try expectGolden(
+        @embedFile("codegen_cases/gg21_local_forwarded_to_final_method_read_only.nox"),
+        @embedFile("codegen_cases/gg21_local_forwarded_to_final_method_read_only.expected"),
+    );
+}
+
+test "codegen: GG.21 — final metoda yönlendirmenin ÜRETTİĞİ IR'da compute() İçİnde nox_rc_alloc GERÇEKTEN YOK" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/gg21_local_forwarded_to_final_method_read_only.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const user_module = try nox.parser.parseModule(allocator, tokens);
+    const module = try nox.module_loader.resolveImports(allocator, std.testing.io, user_module);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+
+    const compute_start = std.mem.indexOf(u8, ir, "$compute(") orelse return error.ComputeNotFound;
+    const compute_end = std.mem.indexOfPos(u8, ir, compute_start, "\n}\n") orelse ir.len;
+    const compute_ir = ir[compute_start..compute_end];
+
+    try std.testing.expect(std.mem.indexOf(u8, compute_ir, "nox_rc_alloc") == null);
+}
+
+// GG.21 NEGATİF: `Helper.store_it` (final) `xs`i BAŞKA bir container'a
+// (modül-global `sink`) YAZIYOR — `computeParamEscapes`nin metod-gövdesi
+// taraması BUNU tohum olarak İŞARETLER, `compute()`nin `xs`i HÂLÂ
+// `nox_rc_alloc`ta KALIR (metod final OLMASI TEK BAŞINA yeterli DEĞİL —
+// metodun KENDİ gövdesi de GERÇEKTEN güvenli OLMALI).
+test "codegen(çalıştır): GG.21 — final AMA mutasyona uğratan bir metoda geçen yerel HÂLÂ nox_rc_alloc'ta kalır" {
+    try expectGolden(
+        @embedFile("codegen_cases/gg21_local_forwarded_to_final_method_mutating_stays_arc.nox"),
+        @embedFile("codegen_cases/gg21_local_forwarded_to_final_method_mutating_stays_arc.expected"),
+    );
+}
+
+test "codegen: GG.21 — mutasyona uğratan final metodun ÜRETTİĞİ IR'da compute() İçİnde nox_rc_alloc HÂLÂ VAR" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/gg21_local_forwarded_to_final_method_mutating_stays_arc.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const user_module = try nox.parser.parseModule(allocator, tokens);
+    const module = try nox.module_loader.resolveImports(allocator, std.testing.io, user_module);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+
+    const compute_start = std.mem.indexOf(u8, ir, "$compute(") orelse return error.ComputeNotFound;
+    const compute_end = std.mem.indexOfPos(u8, ir, compute_start, "\n}\n") orelse ir.len;
+    const compute_ir = ir[compute_start..compute_end];
+
+    try std.testing.expect(std.mem.indexOf(u8, compute_ir, "nox_rc_alloc") != null);
+}
+
+// GG.21 KIRMIZI-TAKIM/KRİTİK GÜVENLİK testi: `Helper.peek` KENDİSİ salt-
+// okunur AMA `SubHelper` ONU override EDİP `xs`i BAŞKA bir yere (`sink`)
+// KAYDEDİYOR — `peek` bu YÜZDEN final DEĞİL (`methodIsFinal` `false`
+// DÖNMELİ), `compute(h: Helper)`nin `h.peek(xs)` çağrısı (h BAZ-tipli
+// olduğundan runtime'da HERHANGİ bir alt sınıf OLABİLİR) MUHAFAZAKÂR
+// KALMALI — `xs` HÂLÂ `nox_rc_alloc`ta kalmalı. Yanlış bir "final" kanıtı
+// burada GERÇEK bir kullanım-sonrası-serbest-bırakmaya yol AÇARDI.
+test "codegen(çalıştır): GG.21 — KIRMIZI-TAKIM — override edilen bir metoda geçen yerel muhafazakâr kalır" {
+    try expectGolden(
+        @embedFile("codegen_cases/gg21_overridden_method_stays_conservative.nox"),
+        @embedFile("codegen_cases/gg21_overridden_method_stays_conservative.expected"),
+    );
+}
+
+test "codegen: GG.21 — KIRMIZI-TAKIM — override edilen metodun ÜRETTİĞİ IR'da nox_rc_alloc HÂLÂ VAR" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/gg21_overridden_method_stays_conservative.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const user_module = try nox.parser.parseModule(allocator, tokens);
+    const module = try nox.module_loader.resolveImports(allocator, std.testing.io, user_module);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+
+    const compute_start = std.mem.indexOf(u8, ir, "$compute(") orelse return error.ComputeNotFound;
+    const compute_end = std.mem.indexOfPos(u8, ir, compute_start, "\n}\n") orelse ir.len;
+    const compute_ir = ir[compute_start..compute_end];
+
+    try std.testing.expect(std.mem.indexOf(u8, compute_ir, "nox_rc_alloc") != null);
+}
+
 test "codegen(çalıştır): zincirlenmiş alan okuması bir çağrı sonucu üzerinde — ara nesne sızmaz" {
     try expectGolden(
         @embedFile("codegen_cases/chained_attr_temporary_release.nox"),

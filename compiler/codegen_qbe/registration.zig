@@ -1056,7 +1056,7 @@ pub fn genFunction(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
     // `releaseOneLocalIfManaged`/`.var_decl` kapsam-sonu release'i bir
     // STACK adresini `nox_rc_free_payload`e geçirip GERÇEK bir SIGBUS'a
     // yol açar (GERÇEKTEN denenip gözlemlendi, break→red→fix).
-    try self.registerLocalStackSlots(fd.body);
+    try self.registerLocalStackSlots(fd.body, fd.params);
     for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
     try self.prepareInlineSites(fd.body);
     for (fd.params) |p| {
@@ -1133,7 +1133,7 @@ pub fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) Codegen
     }
     try self.qbeFuncHeaderEnd();
 
-    try self.registerLocalStackSlots(m.body);
+    try self.registerLocalStackSlots(m.body, m.params);
     for (locals.items) |l| try self.allocSlotEx(l.name, l.info, l.is_param, l.arena, l.borrowed_field);
     try self.prepareInlineSites(m.body);
     {
@@ -1215,7 +1215,7 @@ pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool, wants_m
     // true` ile işaretleyebiliyor; bu bilgiyi burada YOK SAYMAK
     // (eskiden olduğu gibi sabit `false`) kapsam-sonu otomatik release'i
     // yanlışlıkla tetikleyip listenin sahipliğini bozardı.
-    try self.registerLocalStackSlots(stmts);
+    try self.registerLocalStackSlots(stmts, &.{});
     for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
     try self.prepareInlineSites(stmts);
     try self.genStmts(stmts, .w);
@@ -1267,7 +1267,7 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_poo
     try self.qbeFuncParam(.l, "%argp", true);
     try self.qbeFuncHeaderEnd();
     try self.qbeLoadL(RT_PARAM, "%argp");
-    try self.registerLocalStackSlots(stmts);
+    try self.registerLocalStackSlots(stmts, &.{});
     for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
     try self.prepareInlineSites(stmts);
     try self.genStmts(stmts, .l);

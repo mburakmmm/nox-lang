@@ -1,0 +1,22 @@
+class Helper:
+    def __init__(self: Helper) -> None:
+        self.n = 0
+    def peek(self: Helper, xs: list[int]) -> int:
+        return len(xs)
+
+class SubHelper(Helper):
+    def peek(self: SubHelper, xs: list[int]) -> int:
+        xs.append(1)
+        return len(xs)
+
+def forward(h: Helper, xs: list[int]) -> None:
+    h.peek(xs)
+
+async def worker(h: Helper, xs: list[int]) -> None:
+    forward(h, xs)
+
+async def entry() -> None:
+    h: Helper = Helper()
+    xs: list[int] = [1, 2, 3]
+    t: Task[None] = spawn worker(h, xs)
+    await t

@@ -252,7 +252,7 @@ pub fn genClosureFunc(self: *Codegen, spec: ClosureFuncSpec) CodegenError!void {
     }
     try self.qbeFuncHeaderEnd();
 
-    try self.registerLocalStackSlots(spec.fd.body);
+    try self.registerLocalStackSlots(spec.fd.body, spec.fd.params);
     for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
     try self.prepareInlineSites(spec.fd.body);
     for (spec.captures, 0..) |c, i| {

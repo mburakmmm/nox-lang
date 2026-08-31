@@ -793,6 +793,37 @@ test "golden(spawn-shared-mutation): SALT-OKUNUR bir yardımcı (len() ÇAĞIRAN
     );
 }
 
+// GG.21 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 5"): salt-okunur,
+// override EDİLMEYEN (final) bir METOD üzerinden argüman-yönlendirme
+// ARTIK yakalanmıyor (v1.44.0'da HER metod çağrısı koşulsuz kaçış/mutasyon
+// sayılırdı).
+test "golden(spawn-shared-mutation): final (override-suz) bir metoda argüman olarak geçen paylaşılan parametre yakalanmaz" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/ok_spawn_shared_final_method_read_only_not_caught.nox"),
+        @embedFile("typecheck_cases/ok_spawn_shared_final_method_read_only_not_caught.expected"),
+    );
+}
+
+test "golden(spawn-shared-mutation): final bir metodun KENDİSİ mutasyona uğratıyorsa HÂLÂ yakalanır" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_final_method_mutation_caught.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_final_method_mutation_caught.expected"),
+    );
+}
+
+// KIRMIZI-TAKIM (KRİTİK): `Helper.peek` KENDİSİ salt-okunur AMA `SubHelper`
+// ONU override EDİP mutasyona uğratıyor — `peek` bu YÜZDEN final DEĞİL,
+// muhafazakâr kalınmalı. `forward(h, xs): h.peek(xs)`nin KENDİSİ bu
+// YÜZDEN (metod polimorfik OLDUĞUNDAN) `computeMutatesGraph`nin "çözülemeyen
+// çağrı" tohum-yoluna düşer — `worker`nin `forward`u ÇAĞIRMASI ÜZERİNDEN
+// BU tohum transitif olarak yayılıp YİNE DE yakalanır.
+test "golden(spawn-shared-mutation): KIRMIZI-TAKIM — override edilen bir metot üzerinden yönlendirme muhafazakâr kalır (final YANLIŞ kanıtlanmaz)" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_overridden_method_stays_conservative.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_overridden_method_stays_conservative.expected"),
+    );
+}
+
 // v1.30.1 (bkz. plan dosyası "Checker'a ifade-derinliği koruması"):
 // `checkExpr`/`checkBinary`nin GERÇEK bir yığın-taşması SIGABRT'ına yol
 // açan (`tests/fuzz/lexer_parser_checker_fuzz.zig`nin 2000-derin

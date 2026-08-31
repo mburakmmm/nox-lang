@@ -189,20 +189,56 @@ pub fn isFuncInlineEligible(self: *Codegen, fd: ast.FuncDef, generic_template_na
 /// çağrıları KAPSAM DIŞI) bir KENAR ekler. `effect_graph.propagateBad`
 /// İLE `self.escaping_params`i doldurur — `exprHasUnsafeParamUse`/
 /// `local_escape.zig`nin escape-kontrol fonksiyonları BUNU KULLANIR.
-pub fn computeParamEscapes(self: *Codegen, module: ast.Module, extra_functions: []const ast.FuncDef) CodegenError!void {
+pub fn computeParamEscapes(self: *Codegen, module: ast.Module, extra_functions: []const ast.FuncDef, extra_classes: []const ast.ClassDef) CodegenError!void {
     var seeds: std.ArrayListUnmanaged(effect_graph.NodeKey) = .empty;
     defer seeds.deinit(self.allocator);
     var reverse_edges: effect_graph.ReverseEdges = .empty;
     for (module.body) |stmt| {
         if (stmt.kind == .func_def) try scanParamEscapesFunc(self, stmt.kind.func_def, &seeds, &reverse_edges);
+        // GG.21 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 5"): sınıf
+        // metodları da (`ClassMethodInfo.owner`nin AYNI "{sınıf}_{metod}"
+        // sembol şemasıyla) taranır — bunlar OLMADAN `escaping_params`
+        // HİÇBİR metod-anahtarlı tohum İÇERMEZ, bu da `methodIsFinal`nin
+        // KENDİSİ DOĞRU çalışsa BİLE HER final-metod çağrısını YANLIŞLIKLA
+        // "güvenli" (kontrol edilecek HİÇBİR şey bulunamadığından) sayardı.
+        if (stmt.kind == .class_def) {
+            const cd = stmt.kind.class_def;
+            for (cd.methods) |m| {
+                const sym = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ cd.name, m.name });
+                try scanParamEscapesFunc(self, ast.FuncDef{
+                    .name = sym,
+                    .params = m.params,
+                    .return_type = m.return_type,
+                    .body = m.body,
+                    .type_params = m.type_params,
+                    .is_async = false,
+                    .decorators = &.{},
+                }, &seeds, &reverse_edges);
+            }
+        }
     }
     for (extra_functions) |fd| try scanParamEscapesFunc(self, fd, &seeds, &reverse_edges);
+    for (extra_classes) |cd| {
+        for (cd.methods) |m| {
+            const sym = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ cd.name, m.name });
+            try scanParamEscapesFunc(self, ast.FuncDef{
+                .name = sym,
+                .params = m.params,
+                .return_type = m.return_type,
+                .body = m.body,
+                .type_params = m.type_params,
+                .is_async = false,
+                .decorators = &.{},
+            }, &seeds, &reverse_edges);
+        }
+    }
     self.escaping_params = try effect_graph.propagateBad(self.allocator, &reverse_edges, seeds.items);
 }
 
 fn scanParamEscapesFunc(self: *Codegen, fd: ast.FuncDef, seeds: *std.ArrayListUnmanaged(effect_graph.NodeKey), reverse_edges: *effect_graph.ReverseEdges) CodegenError!void {
+    const class_params = try collectClassParams(self, self.allocator, fd.params);
     for (fd.params, 0..) |p, idx| {
-        try scanParamEscapesStmts(self, fd.name, @intCast(idx), p.name, fd.body, seeds, reverse_edges);
+        try scanParamEscapesStmts(self, fd.name, @intCast(idx), p.name, fd.body, class_params, seeds, reverse_edges);
     }
 }
 
@@ -217,7 +253,58 @@ fn addEscapeEdge(self: *Codegen, target_func: []const u8, target_index: u32, fna
     try gop.value_ptr.append(self.allocator, .{ .func = fname, .index = param_idx });
 }
 
-fn scanParamEscapesStmts(self: *Codegen, fname: []const u8, param_idx: u32, name: []const u8, stmts: []const ast.Stmt, seeds: *std.ArrayListUnmanaged(effect_graph.NodeKey), reverse_edges: *effect_graph.ReverseEdges) CodegenError!void {
+/// GG.21 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 5"): bir fonksiyonun
+/// `class`-tipli parametrelerinin (isim, sınıf-adı) çiftleri — receiver'ı
+/// BU fonksiyonun KENDİ (sibling) bir parametresi OLAN metod çağrılarını
+/// (`obj.method(...)`) ÇÖZEBİLMEK İçİn. **v1 BİLİNÇLİ sınırı**: SADECE
+/// DOĞRUDAN parametreler kapsanır — bir YEREL değişken YA DA bir alan-
+/// zinciri (`self.other.method()`) receiver İSE ÇÖZÜLMEZ (checker'ın
+/// `resolveExprSharedType`si bunu ÜCRETSİZ kapsar, codegen'in BU saf-
+/// sözdizimsel taraması KAPSAMAZ — bkz. plan dosyasının "Kapsam DIŞI").
+pub const ClassParam = struct { name: []const u8, class_name: []const u8 };
+
+pub fn collectClassParams(self: *Codegen, allocator: std.mem.Allocator, params: []const ast.Param) CodegenError![]const ClassParam {
+    var out: std.ArrayListUnmanaged(ClassParam) = .empty;
+    for (params) |p| {
+        // GENERİC şablon parametreleri (`T` GİBİ, HENÜZ somut bir tipe
+        // ÇÖZÜLEMEYEN) İçİn `resolveType` `error.Unsupported` döner —
+        // bu PARAM sadece "class değil" SAYILIR (GÜVENLİ/muhafazakâr:
+        // KAÇIŞ carve-out'u BASİTÇE uygulanmaz), HATA PROPAGATE EDİLMEZ.
+        const info = self.resolveType(p.type_expr) catch continue;
+        if (info.heap == .class and info.class_name != null) {
+            try out.append(allocator, .{ .name = p.name, .class_name = info.class_name.? });
+        }
+    }
+    return out.toOwnedSlice(allocator);
+}
+
+/// GG.21: checker'ın AYNI-isimli `methodIsFinal`inin codegen-tarafı
+/// eşdeğeri — `ClassInfo.descendant_class_ids`/`ClassMethodInfo.owner`
+/// (ZATEN VAR OLAN, `computeMustNotRaise`/exception-hiyerarşisi İçİn
+/// hesaplanmış bilgi) KULLANILIR, YENİ bir alan GEREKMEZ. `false` dönmesi
+/// (polimorfik OLABİLİR/bilinmiyor) HER ZAMAN GÜVENLİ/muhafazakâr taraftır.
+pub fn methodIsFinal(self: *const Codegen, class_name: []const u8, method_name: []const u8) bool {
+    const cinfo = self.classes.get(class_name) orelse return false;
+    const owner_msig = cinfo.methods.get(method_name) orelse return false;
+    var it = self.classes.iterator();
+    while (it.next()) |entry| {
+        if (entry.value_ptr.class_id == cinfo.class_id) continue;
+        var is_descendant = false;
+        for (cinfo.descendant_class_ids) |did| {
+            if (did == entry.value_ptr.class_id) {
+                is_descendant = true;
+                break;
+            }
+        }
+        if (!is_descendant) continue;
+        if (entry.value_ptr.methods.get(method_name)) |m| {
+            if (!std.mem.eql(u8, m.owner, owner_msig.owner)) return false;
+        }
+    }
+    return true;
+}
+
+fn scanParamEscapesStmts(self: *Codegen, fname: []const u8, param_idx: u32, name: []const u8, stmts: []const ast.Stmt, class_params: []const ClassParam, seeds: *std.ArrayListUnmanaged(effect_graph.NodeKey), reverse_edges: *effect_graph.ReverseEdges) CodegenError!void {
     for (stmts) |stmt| {
         switch (stmt.kind) {
             .var_decl => |v| {
@@ -225,29 +312,29 @@ fn scanParamEscapesStmts(self: *Codegen, fname: []const u8, param_idx: u32, name
                     try addEscapeSeed(self, fname, param_idx, seeds);
                     return;
                 }
-                try scanParamEscapesExpr(self, fname, param_idx, name, v.value, seeds, reverse_edges);
+                try scanParamEscapesExpr(self, fname, param_idx, name, v.value, class_params, seeds, reverse_edges);
             },
             .assign => |a| {
                 if (a.target == .identifier and std.mem.eql(u8, a.target.identifier, name)) {
                     try addEscapeSeed(self, fname, param_idx, seeds);
                     return;
                 }
-                try scanParamEscapesExpr(self, fname, param_idx, name, a.target, seeds, reverse_edges);
-                try scanParamEscapesExpr(self, fname, param_idx, name, a.value, seeds, reverse_edges);
+                try scanParamEscapesExpr(self, fname, param_idx, name, a.target, class_params, seeds, reverse_edges);
+                try scanParamEscapesExpr(self, fname, param_idx, name, a.value, class_params, seeds, reverse_edges);
             },
-            .expr_stmt => |e| try scanParamEscapesExpr(self, fname, param_idx, name, e, seeds, reverse_edges),
+            .expr_stmt => |e| try scanParamEscapesExpr(self, fname, param_idx, name, e, class_params, seeds, reverse_edges),
             .if_stmt => |f| {
-                try scanParamEscapesExpr(self, fname, param_idx, name, f.cond, seeds, reverse_edges);
-                try scanParamEscapesStmts(self, fname, param_idx, name, f.then_body, seeds, reverse_edges);
+                try scanParamEscapesExpr(self, fname, param_idx, name, f.cond, class_params, seeds, reverse_edges);
+                try scanParamEscapesStmts(self, fname, param_idx, name, f.then_body, class_params, seeds, reverse_edges);
                 for (f.elif_clauses) |ec| {
-                    try scanParamEscapesExpr(self, fname, param_idx, name, ec.cond, seeds, reverse_edges);
-                    try scanParamEscapesStmts(self, fname, param_idx, name, ec.body, seeds, reverse_edges);
+                    try scanParamEscapesExpr(self, fname, param_idx, name, ec.cond, class_params, seeds, reverse_edges);
+                    try scanParamEscapesStmts(self, fname, param_idx, name, ec.body, class_params, seeds, reverse_edges);
                 }
-                if (f.else_body) |eb| try scanParamEscapesStmts(self, fname, param_idx, name, eb, seeds, reverse_edges);
+                if (f.else_body) |eb| try scanParamEscapesStmts(self, fname, param_idx, name, eb, class_params, seeds, reverse_edges);
             },
             .while_stmt => |w| {
-                try scanParamEscapesExpr(self, fname, param_idx, name, w.cond, seeds, reverse_edges);
-                try scanParamEscapesStmts(self, fname, param_idx, name, w.body, seeds, reverse_edges);
+                try scanParamEscapesExpr(self, fname, param_idx, name, w.cond, class_params, seeds, reverse_edges);
+                try scanParamEscapesStmts(self, fname, param_idx, name, w.body, class_params, seeds, reverse_edges);
             },
             .for_stmt => |f| {
                 if (std.mem.eql(u8, f.var_name, name)) {
@@ -255,11 +342,11 @@ fn scanParamEscapesStmts(self: *Codegen, fname: []const u8, param_idx: u32, name
                     return;
                 }
                 const iterable_is_direct = f.iterable == .identifier and std.mem.eql(u8, f.iterable.identifier, name);
-                if (!iterable_is_direct) try scanParamEscapesExpr(self, fname, param_idx, name, f.iterable, seeds, reverse_edges);
-                try scanParamEscapesStmts(self, fname, param_idx, name, f.body, seeds, reverse_edges);
+                if (!iterable_is_direct) try scanParamEscapesExpr(self, fname, param_idx, name, f.iterable, class_params, seeds, reverse_edges);
+                try scanParamEscapesStmts(self, fname, param_idx, name, f.body, class_params, seeds, reverse_edges);
             },
-            .return_stmt => |r| if (r) |e| try scanParamEscapesExpr(self, fname, param_idx, name, e, seeds, reverse_edges),
-            .raise_stmt => |e| try scanParamEscapesExpr(self, fname, param_idx, name, e, seeds, reverse_edges),
+            .return_stmt => |r| if (r) |e| try scanParamEscapesExpr(self, fname, param_idx, name, e, class_params, seeds, reverse_edges),
+            .raise_stmt => |e| try scanParamEscapesExpr(self, fname, param_idx, name, e, class_params, seeds, reverse_edges),
             // `try`/İç İçe `lowlevel`/`with`/`func_def`/`defer` — BİLİNMEYEN/
             // riskli bölge, `exprHasUnsafeParamUse`in AYNI muhafazakârlığı.
             .try_stmt, .lowlevel_stmt, .with_stmt, .func_def, .defer_stmt => try addEscapeSeed(self, fname, param_idx, seeds),
@@ -268,20 +355,37 @@ fn scanParamEscapesStmts(self: *Codegen, fname: []const u8, param_idx: u32, name
     }
 }
 
+/// GG.21'in receiver-çözümleme yardımcısı: `expr`in `class_params`de
+/// bilinen bir sibling-parametreye DOĞRUDAN eşleşip eşleşmediğini kontrol
+/// eder (alan-zincirleri/yerel değişkenler KAPSAM DIŞI — bkz. `ClassParam`nin
+/// belge notu).
+pub fn resolveClassParamReceiver(expr: ast.Expr, class_params: []const ClassParam) ?[]const u8 {
+    if (expr != .identifier) return null;
+    for (class_params) |cp| {
+        if (std.mem.eql(u8, cp.name, expr.identifier)) return cp.class_name;
+    }
+    return null;
+}
+
 /// GG.20: `exprHasUnsafeParamUse`nin (YUKARIDA) AYNI 3-güvenli-şekil +
 /// salt-okunur `.attribute` carve-out'u disiplini — AMA bool DÖNMEK
 /// YERİNE tohum/kenar TOPLAR. `spawn`ın SARDIĞI çağrı YİNE ÖZEL/HER ZAMAN
 /// tohum olarak ele alınır (bkz. `exprHasUnsafeParamUse`nin AYNI kritik
 /// güvenlik notu — spawn'ın ASENKRON/çapraz-fiber doğası, "callee kendi
-/// gövdesinde kaçırmıyor" kanıtını GEÇERSİZ kılar).
-fn scanParamEscapesExpr(self: *Codegen, fname: []const u8, param_idx: u32, name: []const u8, expr: ast.Expr, seeds: *std.ArrayListUnmanaged(effect_graph.NodeKey), reverse_edges: *effect_graph.ReverseEdges) CodegenError!void {
+/// gövdesinde kaçırmıyor" kanıtını GEÇERSİZ kılar). GG.21: `.call` dalı
+/// ARTIK receiver `class_params`de bilinen bir sibling-parametreyse VE
+/// metod PROVABLY final İSE (`methodIsFinal`) bunu da bir KENAR olarak
+/// ele alır (`self` metodun KENDİ NodeKey indekslemesinde HER ZAMAN 0'DA
+/// olduğundan çağrı-sitesi `arg_idx`i +1 KAYDIRILIR — checker'ın AYNI
+/// düzeltmesiyle TUTARLI).
+fn scanParamEscapesExpr(self: *Codegen, fname: []const u8, param_idx: u32, name: []const u8, expr: ast.Expr, class_params: []const ClassParam, seeds: *std.ArrayListUnmanaged(effect_graph.NodeKey), reverse_edges: *effect_graph.ReverseEdges) CodegenError!void {
     switch (expr) {
         .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => {},
         .identifier => |n| if (std.mem.eql(u8, n, name)) try addEscapeSeed(self, fname, param_idx, seeds),
-        .unary => |u| try scanParamEscapesExpr(self, fname, param_idx, name, u.operand.*, seeds, reverse_edges),
+        .unary => |u| try scanParamEscapesExpr(self, fname, param_idx, name, u.operand.*, class_params, seeds, reverse_edges),
         .binary => |b| {
-            try scanParamEscapesExpr(self, fname, param_idx, name, b.left.*, seeds, reverse_edges);
-            try scanParamEscapesExpr(self, fname, param_idx, name, b.right.*, seeds, reverse_edges);
+            try scanParamEscapesExpr(self, fname, param_idx, name, b.left.*, class_params, seeds, reverse_edges);
+            try scanParamEscapesExpr(self, fname, param_idx, name, b.right.*, class_params, seeds, reverse_edges);
         },
         .call => |c| {
             if (c.callee.* == .identifier and std.mem.eql(u8, c.callee.identifier, "len") and
@@ -289,53 +393,69 @@ fn scanParamEscapesExpr(self: *Codegen, fname: []const u8, param_idx: u32, name:
             {
                 return; // `len(name)` TEK BAŞINA GÜVENLİDİR.
             }
+            var method_owner_symbol: ?[]const u8 = null;
             if (c.callee.* == .attribute) {
-                const recv = c.callee.attribute.obj;
-                if (recv.* == .identifier and std.mem.eql(u8, recv.identifier, name)) {
-                    try addEscapeSeed(self, fname, param_idx, seeds);
+                const at = c.callee.attribute;
+                if (recv: {
+                    if (at.obj.* == .identifier and std.mem.eql(u8, at.obj.identifier, name)) {
+                        try addEscapeSeed(self, fname, param_idx, seeds);
+                    }
+                    break :recv resolveClassParamReceiver(at.obj.*, class_params);
+                }) |recv_class| {
+                    if (self.classes.get(recv_class)) |cinfo| {
+                        if (cinfo.methods.get(at.attr)) |msig| {
+                            if (methodIsFinal(self, recv_class, at.attr)) {
+                                method_owner_symbol = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ msig.owner, at.attr });
+                            }
+                        }
+                    }
                 }
             }
-            try scanParamEscapesExpr(self, fname, param_idx, name, c.callee.*, seeds, reverse_edges);
+            try scanParamEscapesExpr(self, fname, param_idx, name, c.callee.*, class_params, seeds, reverse_edges);
             const callee_is_resolvable_free_fn = c.callee.* == .identifier and self.func_defs.contains(c.callee.identifier);
             for (c.args, 0..) |a, arg_idx| {
                 if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_resolvable_free_fn) {
                     try addEscapeEdge(self, c.callee.identifier, @intCast(arg_idx), fname, param_idx, reverse_edges);
                     continue;
                 }
-                try scanParamEscapesExpr(self, fname, param_idx, name, a, seeds, reverse_edges);
+                if (a == .identifier and std.mem.eql(u8, a.identifier, name) and method_owner_symbol != null) {
+                    try addEscapeEdge(self, method_owner_symbol.?, @intCast(arg_idx + 1), fname, param_idx, reverse_edges);
+                    continue;
+                }
+                try scanParamEscapesExpr(self, fname, param_idx, name, a, class_params, seeds, reverse_edges);
             }
         },
         .attribute => |a| {
             if (a.obj.* == .identifier and std.mem.eql(u8, a.obj.identifier, name)) return;
-            try scanParamEscapesExpr(self, fname, param_idx, name, a.obj.*, seeds, reverse_edges);
+            try scanParamEscapesExpr(self, fname, param_idx, name, a.obj.*, class_params, seeds, reverse_edges);
         },
         .index => |idx| {
             const obj_is_direct = idx.obj.* == .identifier and std.mem.eql(u8, idx.obj.identifier, name);
-            if (!obj_is_direct) try scanParamEscapesExpr(self, fname, param_idx, name, idx.obj.*, seeds, reverse_edges);
-            try scanParamEscapesExpr(self, fname, param_idx, name, idx.index.*, seeds, reverse_edges);
+            if (!obj_is_direct) try scanParamEscapesExpr(self, fname, param_idx, name, idx.obj.*, class_params, seeds, reverse_edges);
+            try scanParamEscapesExpr(self, fname, param_idx, name, idx.index.*, class_params, seeds, reverse_edges);
         },
-        .list_lit => |elems| for (elems) |el| try scanParamEscapesExpr(self, fname, param_idx, name, el, seeds, reverse_edges),
+        .list_lit => |elems| for (elems) |el| try scanParamEscapesExpr(self, fname, param_idx, name, el, class_params, seeds, reverse_edges),
         .dict_lit => |pairs| for (pairs) |p| {
-            try scanParamEscapesExpr(self, fname, param_idx, name, p.key, seeds, reverse_edges);
-            try scanParamEscapesExpr(self, fname, param_idx, name, p.value, seeds, reverse_edges);
+            try scanParamEscapesExpr(self, fname, param_idx, name, p.key, class_params, seeds, reverse_edges);
+            try scanParamEscapesExpr(self, fname, param_idx, name, p.value, class_params, seeds, reverse_edges);
         },
-        .await_expr => |op| try scanParamEscapesExpr(self, fname, param_idx, name, op.*, seeds, reverse_edges),
+        .await_expr => |op| try scanParamEscapesExpr(self, fname, param_idx, name, op.*, class_params, seeds, reverse_edges),
         .spawn_expr => |op| {
             if (op.* == .call) {
                 const c = op.*.call;
-                try scanParamEscapesExpr(self, fname, param_idx, name, c.callee.*, seeds, reverse_edges);
+                try scanParamEscapesExpr(self, fname, param_idx, name, c.callee.*, class_params, seeds, reverse_edges);
                 for (c.args) |a| {
                     if (a == .identifier and std.mem.eql(u8, a.identifier, name)) {
                         try addEscapeSeed(self, fname, param_idx, seeds);
                         continue;
                     }
-                    try scanParamEscapesExpr(self, fname, param_idx, name, a, seeds, reverse_edges);
+                    try scanParamEscapesExpr(self, fname, param_idx, name, a, class_params, seeds, reverse_edges);
                 }
             } else {
-                try scanParamEscapesExpr(self, fname, param_idx, name, op.*, seeds, reverse_edges);
+                try scanParamEscapesExpr(self, fname, param_idx, name, op.*, class_params, seeds, reverse_edges);
             }
         },
-        .generic_construct => |g| for (g.args) |a| try scanParamEscapesExpr(self, fname, param_idx, name, a, seeds, reverse_edges),
+        .generic_construct => |g| for (g.args) |a| try scanParamEscapesExpr(self, fname, param_idx, name, a, class_params, seeds, reverse_edges),
     }
 }
 
@@ -397,10 +517,11 @@ pub fn registerInlineSite(self: *Codegen, call_ptr: usize, callee: ast.FuncDef) 
     // SONUÇTA AYNI fiziksel QBE çerçevesine `alloc8` ekliyor, bu YÜZDEN
     // AYNI aggregate bütçeyi PAYLAŞMALILAR.
     var construct_sites: std.ArrayListUnmanaged(InlineConstructSite) = .empty;
+    const callee_class_params = try collectClassParams(self, self.allocator, callee.params);
     for (callee.body, 0..) |stmt, i| {
         if (stmt.kind != .var_decl) continue;
         const v = stmt.kind.var_decl;
-        const candidate = try local_escape.classifyVarDecl(self, callee.body, i, v, &self.promoted_stack_total) orelse continue;
+        const candidate = try local_escape.classifyVarDecl(self, callee.body, i, v, &self.promoted_stack_total, callee_class_params) orelse continue;
         const handle = try local_escape.materializeConstructSite(self, candidate);
         const is_empty_list = v.value == .list_lit and v.value.list_lit.len == 0;
         try construct_sites.append(self.allocator, .{
@@ -696,46 +817,46 @@ fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *
 /// yol açabilir) BİLİNÇLİ bir GÜVENLİK ilkesidir, sadece bir kolaylık
 /// DEĞİL — güvenli-şekiller listesini BURADAN AYRI, bilinçli takip
 /// işleri/YENİ golden testler OLMADAN GENİŞLETME.
-fn paramNeverEscapes(self: *const Codegen, fd: ast.FuncDef, param_name: []const u8) bool {
-    return stmtsSafeForParam(self, fd.body, param_name);
+fn paramNeverEscapes(self: *const Codegen, fd: ast.FuncDef, param_name: []const u8, class_params: []const ClassParam) bool {
+    return stmtsSafeForParam(self, fd.body, param_name, class_params);
 }
 
-fn stmtsSafeForParam(self: *const Codegen, stmts: []const ast.Stmt, name: []const u8) bool {
+fn stmtsSafeForParam(self: *const Codegen, stmts: []const ast.Stmt, name: []const u8, class_params: []const ClassParam) bool {
     for (stmts) |stmt| {
         switch (stmt.kind) {
             .var_decl => |v| {
                 if (std.mem.eql(u8, v.name, name)) return false;
-                if (exprHasUnsafeParamUse(self, v.value, name)) return false;
+                if (exprHasUnsafeParamUse(self, v.value, name, class_params)) return false;
             },
             .assign => |a| {
                 if (a.target == .identifier and std.mem.eql(u8, a.target.identifier, name)) return false;
-                if (exprHasUnsafeParamUse(self, a.target, name)) return false;
-                if (exprHasUnsafeParamUse(self, a.value, name)) return false;
+                if (exprHasUnsafeParamUse(self, a.target, name, class_params)) return false;
+                if (exprHasUnsafeParamUse(self, a.value, name, class_params)) return false;
             },
-            .expr_stmt => |e| if (exprHasUnsafeParamUse(self, e, name)) return false,
+            .expr_stmt => |e| if (exprHasUnsafeParamUse(self, e, name, class_params)) return false,
             .if_stmt => |f| {
-                if (exprHasUnsafeParamUse(self, f.cond, name)) return false;
-                if (!stmtsSafeForParam(self, f.then_body, name)) return false;
+                if (exprHasUnsafeParamUse(self, f.cond, name, class_params)) return false;
+                if (!stmtsSafeForParam(self, f.then_body, name, class_params)) return false;
                 for (f.elif_clauses) |ec| {
-                    if (exprHasUnsafeParamUse(self, ec.cond, name)) return false;
-                    if (!stmtsSafeForParam(self, ec.body, name)) return false;
+                    if (exprHasUnsafeParamUse(self, ec.cond, name, class_params)) return false;
+                    if (!stmtsSafeForParam(self, ec.body, name, class_params)) return false;
                 }
-                if (f.else_body) |eb| if (!stmtsSafeForParam(self, eb, name)) return false;
+                if (f.else_body) |eb| if (!stmtsSafeForParam(self, eb, name, class_params)) return false;
             },
             .while_stmt => |w| {
-                if (exprHasUnsafeParamUse(self, w.cond, name)) return false;
-                if (!stmtsSafeForParam(self, w.body, name)) return false;
+                if (exprHasUnsafeParamUse(self, w.cond, name, class_params)) return false;
+                if (!stmtsSafeForParam(self, w.body, name, class_params)) return false;
             },
             .for_stmt => |f| {
                 if (std.mem.eql(u8, f.var_name, name)) return false;
                 const iterable_is_direct = f.iterable == .identifier and std.mem.eql(u8, f.iterable.identifier, name);
-                if (!iterable_is_direct and exprHasUnsafeParamUse(self, f.iterable, name)) return false;
-                if (!stmtsSafeForParam(self, f.body, name)) return false;
+                if (!iterable_is_direct and exprHasUnsafeParamUse(self, f.iterable, name, class_params)) return false;
+                if (!stmtsSafeForParam(self, f.body, name, class_params)) return false;
             },
             .return_stmt => |r| {
-                if (r) |e| if (exprHasUnsafeParamUse(self, e, name)) return false;
+                if (r) |e| if (exprHasUnsafeParamUse(self, e, name, class_params)) return false;
             },
-            .raise_stmt => |e| if (exprHasUnsafeParamUse(self, e, name)) return false,
+            .raise_stmt => |e| if (exprHasUnsafeParamUse(self, e, name, class_params)) return false,
             // `try`/İç İçe `lowlevel`/`with`/`func_def`/`defer` — BİLİNMEYEN/
             // riskli bölge, TÜM analiz GÜVENLİ tarafta kalmak İçin İPTAL edilir.
             .try_stmt, .lowlevel_stmt, .with_stmt, .func_def, .defer_stmt => return false,
@@ -765,65 +886,87 @@ fn stmtsSafeForParam(self: *const Codegen, stmts: []const ast.Stmt, name: []cons
 /// edilen görev HÂLÂ çalışırken YOK EDİLEBİLİR — BU, `computeMustNotRaise`
 /// TARZI "aynı çerçeve İçİnde senkron" akıl yürütmesinin GEÇERLİ OLMADIĞI,
 /// TAMAMEN FARKLI bir kaçış sınıfıdır.
-fn exprHasUnsafeParamUse(self: *const Codegen, expr: ast.Expr, name: []const u8) bool {
+fn exprHasUnsafeParamUse(self: *const Codegen, expr: ast.Expr, name: []const u8, class_params: []const ClassParam) bool {
     return switch (expr) {
         .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => false,
         .identifier => |n| std.mem.eql(u8, n, name),
-        .unary => |u| exprHasUnsafeParamUse(self, u.operand.*, name),
-        .binary => |b| exprHasUnsafeParamUse(self, b.left.*, name) or exprHasUnsafeParamUse(self, b.right.*, name),
+        .unary => |u| exprHasUnsafeParamUse(self, u.operand.*, name, class_params),
+        .binary => |b| exprHasUnsafeParamUse(self, b.left.*, name, class_params) or exprHasUnsafeParamUse(self, b.right.*, name, class_params),
         .call => |c| blk: {
             if (c.callee.* == .identifier and std.mem.eql(u8, c.callee.identifier, "len") and
                 c.args.len == 1 and c.args[0] == .identifier and std.mem.eql(u8, c.args[0].identifier, name))
             {
                 break :blk false; // `len(name)` TEK BAŞINA GÜVENLİDİR.
             }
-            if (exprHasUnsafeParamUse(self, c.callee.*, name)) break :blk true;
+            if (exprHasUnsafeParamUse(self, c.callee.*, name, class_params)) break :blk true;
             const callee_is_resolvable_free_fn = c.callee.* == .identifier and self.func_defs.contains(c.callee.identifier);
+            // GG.21: receiver `class_params`de bilinen bir sibling-parametreyse
+            // VE metod PROVABLY final İSE, AYNI carve-out'u UYGULA (`self`
+            // metodun KENDİ NodeKey indekslemesinde HER ZAMAN 0'DA olduğundan
+            // `arg_idx` +1 KAYDIRILIR).
+            var method_owner: ?[]const u8 = null;
+            if (c.callee.* == .attribute) {
+                const at = c.callee.attribute;
+                if (resolveClassParamReceiver(at.obj.*, class_params)) |recv_class| {
+                    if (self.classes.get(recv_class)) |cinfo| {
+                        if (cinfo.methods.get(at.attr)) |msig| {
+                            if (methodIsFinal(self, recv_class, at.attr)) {
+                                method_owner = std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ msig.owner, at.attr }) catch null;
+                            }
+                        }
+                    }
+                }
+            }
             for (c.args, 0..) |a, arg_idx| {
                 if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_resolvable_free_fn) {
                     if (!self.escaping_params.contains(.{ .func = c.callee.identifier, .index = @intCast(arg_idx) })) {
                         continue; // İSPATLANMIŞ güvenli yönlendirme.
                     }
                 }
-                if (exprHasUnsafeParamUse(self, a, name)) break :blk true;
+                if (a == .identifier and std.mem.eql(u8, a.identifier, name) and method_owner != null) {
+                    if (!self.escaping_params.contains(.{ .func = method_owner.?, .index = @intCast(arg_idx + 1) })) {
+                        continue; // İSPATLANMIŞ güvenli yönlendirme (final metod).
+                    }
+                }
+                if (exprHasUnsafeParamUse(self, a, name, class_params)) break :blk true;
             }
             break :blk false;
         },
-        .attribute => |a| exprHasUnsafeParamUse(self, a.obj.*, name),
+        .attribute => |a| exprHasUnsafeParamUse(self, a.obj.*, name, class_params),
         .index => |idx| blk: {
             const obj_is_direct = idx.obj.* == .identifier and std.mem.eql(u8, idx.obj.identifier, name);
-            if (!obj_is_direct and exprHasUnsafeParamUse(self, idx.obj.*, name)) break :blk true;
-            break :blk exprHasUnsafeParamUse(self, idx.index.*, name);
+            if (!obj_is_direct and exprHasUnsafeParamUse(self, idx.obj.*, name, class_params)) break :blk true;
+            break :blk exprHasUnsafeParamUse(self, idx.index.*, name, class_params);
         },
         .list_lit => |elems| blk: {
-            for (elems) |el| if (exprHasUnsafeParamUse(self, el, name)) break :blk true;
+            for (elems) |el| if (exprHasUnsafeParamUse(self, el, name, class_params)) break :blk true;
             break :blk false;
         },
         .dict_lit => |pairs| blk: {
             for (pairs) |p| {
-                if (exprHasUnsafeParamUse(self, p.key, name)) break :blk true;
-                if (exprHasUnsafeParamUse(self, p.value, name)) break :blk true;
+                if (exprHasUnsafeParamUse(self, p.key, name, class_params)) break :blk true;
+                if (exprHasUnsafeParamUse(self, p.value, name, class_params)) break :blk true;
             }
             break :blk false;
         },
-        .await_expr => |op| exprHasUnsafeParamUse(self, op.*, name),
+        .await_expr => |op| exprHasUnsafeParamUse(self, op.*, name, class_params),
         .spawn_expr => |op| blk: {
             // KRİTİK: `spawn`ın SARDIĞI çağrının argümanları HER ZAMAN
-            // (yukarıdaki carve-out'tan BAĞIMSIZ olarak) `name` İLE
+            // (yukarıdaki carve-out'lardan BAĞIMSIZ olarak) `name` İLE
             // doğrudan eşleşirse kaçış SAYILIR — bkz. belge notu.
             if (op.* == .call) {
                 const c = op.*.call;
-                if (exprHasUnsafeParamUse(self, c.callee.*, name)) break :blk true;
+                if (exprHasUnsafeParamUse(self, c.callee.*, name, class_params)) break :blk true;
                 for (c.args) |a| {
                     if (a == .identifier and std.mem.eql(u8, a.identifier, name)) break :blk true;
-                    if (exprHasUnsafeParamUse(self, a, name)) break :blk true;
+                    if (exprHasUnsafeParamUse(self, a, name, class_params)) break :blk true;
                 }
                 break :blk false;
             }
-            break :blk exprHasUnsafeParamUse(self, op.*, name);
+            break :blk exprHasUnsafeParamUse(self, op.*, name, class_params);
         },
         .generic_construct => |g| blk: {
-            for (g.args) |a| if (exprHasUnsafeParamUse(self, a, name)) break :blk true;
+            for (g.args) |a| if (exprHasUnsafeParamUse(self, a, name, class_params)) break :blk true;
             break :blk false;
         },
     };
@@ -840,6 +983,7 @@ fn exprHasUnsafeParamUse(self: *const Codegen, expr: ast.Expr, name: []const u8)
 /// İLE anahtarlanır — AYNI `list_lit` gövdesinin BAŞKA, güvensiz bir çağrı
 /// sitesinden — ör. bir isme atanarak — de çağrılabileceği İçin).
 pub fn tryRegisterCrossCallStackSlots(self: *Codegen, outer_callee: ast.FuncDef, args: []const ast.Expr) CodegenError!void {
+    const class_params = try collectClassParams(self, self.allocator, outer_callee.params);
     const n = @min(outer_callee.params.len, args.len);
     for (0..n) |i| {
         if (args[i] != .call) continue;
@@ -853,7 +997,7 @@ pub fn tryRegisterCrossCallStackSlots(self: *Codegen, outer_callee: ast.FuncDef,
         const elems = ret_expr.list_lit;
         if (self.stack_construct_sites.contains(@intFromPtr(elems.ptr))) continue;
         const elem_qtype = simpleLiteralListQtype(elems) orelse continue;
-        if (!paramNeverEscapes(self, outer_callee, outer_callee.params[i].name)) continue;
+        if (!paramNeverEscapes(self, outer_callee, outer_callee.params[i].name, class_params)) continue;
         const payload_size = LIST_HEADER_SIZE + qbeSizeOf(elem_qtype) * elems.len;
         if (payload_size > MAX_STACK_ALLOC_SIZE) continue; // GG.17: ortak boyut tavanı.
         const slot = try self.newTemp();

@@ -16670,6 +16670,104 @@ düşmemesinden (bkz. `benchmarks/RESULTS.md`).
 
 ---
 
+## 3.111 GG.21 — metod çağrıları için interprocedural escape/mutasyon genişletmesi (final-metod tespiti) (ASAP güçlendirmesi, Tur 5) (v1.45.0)
+
+v1.44.0 (GG.20) SADECE ÇÖZÜLEBİLİR SERBEST fonksiyon çağrılarını
+interprocedural kanıta DAHİL ETMİŞTİ — HER METOD çağrısı (`obj.method(...)`)
+BİLİNÇLİ olarak KOŞULSUZ kaçış/mutasyon sayılmaya DEVAM ETMİŞTİ. v1.44.0
+SONRASI kullanıcı harici bir (GPT-5.6) incelemeyi PAYLAŞTI — inceleme BUNU
+"sonraki doğal expansion" olarak İŞARET ETTİ (KENDİ ÖNCELİK önerisi fiber
+stack ayak izi deneyleri OLSA da), kullanıcı sunulan seçeneklerden "Method/
+dolaylı-çağrı effect genişletmesi"NI seçti.
+
+**Altyapı zaten VARDI**: hem checker.zig (`ClassInfo.base`/`isSubclassOf`/
+`resolveExprSharedType`) hem codegen_qbe (`ClassInfo.descendant_class_ids`/
+`ClassMethodInfo.owner` — Faz 7'nin tekli-kalıtım/exception-hiyerarşisi
+İçİn ZATEN hesaplanmış bilgisi) BU genişletmeyi GÜVENLE mümkün kılan TÜM
+parçalara SAHİPTİ — TEK gerçek boşluk: checker tarafında "bu metod
+HERHANGİ bir yerde override EDİLİYOR MU" sorusuna CEVAP VEREN bir
+mekanizma YOKTU (codegen tarafında `descendant_class_ids`+`owner`
+karşılaştırmasıyla ZATEN CEVAPLANABİLİYORDU).
+
+**Kritik güvenlik ilkesi (GG.20'nin AYNI disiplini)**: bir metod çağrısı
+SADECE VE SADECE metod PROVABLY "final" İSE (receiver'ın STATİK tipinin
+HİÇBİR BİLİNEN alt sınıfı O metodu override ETMİYORSA) interprocedural
+kanıta DAHİL EDİLİR — AKSİ HALDE (polimorfik OLABİLECEK HERHANGİ bir
+durum) KOŞULSUZ kaçış/mutasyon SAYILMAYA DEVAM EDER.
+
+**checker.zig**: YENİ `ClassInfo.method_owners` (`methods`İLE PARALEL
+doldurulan, HER metod adı İçİn O metodun GÖVDESİNİ GERÇEKTEN TAŞIYAN
+sınıfın adı — codegen'in `ClassMethodInfo.owner`ıyla AYNI kavram, checker
+tarafında EKSİKTİ). YENİ `methodIsFinal(class_name, method_name)`
+(`isSubclassOf`nin ZATEN VAR OLAN taban-zinciri yürüyüşünü TERSİNE
+çevirerek TÜM kayıtlı sınıfları tarar). `computeMutatesGraph`nin
+`scanMutatesGraphExpr`si (`.call` dalı): receiver `resolveExprSharedType`
+İLE bir SINIFA çözülüyorsa VE metod final İSE, `"{owner}_{metod}"`
+sembolünü hedefleyen bir KENAR eklenir (ÇÖZÜLEBİLİR bir SERBEST fonksiyon
+GİBİ). `checkTransitiveSpawnSharedMutationExpr` AYNI şekilde genişletildi.
+
+**codegen_qbe**: YENİ `methodIsFinal` (inlining.zig) — `ClassInfo.
+descendant_class_ids`/`ClassMethodInfo.owner`, YENİ bir alan GEREKMEDEN,
+DOĞRUDAN kullanılır. YENİ `ClassParam`/`collectClassParams` — bir
+fonksiyonun `class`-tipli parametrelerinin (isim, sınıf-adı) çiftleri,
+receiver'ı BU fonksiyonun KENDİ (sibling) bir parametresi OLAN metod
+çağrılarını çözebilmek İçİn. `computeParamEscapes`, `exprHasUnsafeParamUse`
+(GG.16), `exprHasUnsafeLocalUse` (GG.17/19 — SADECE `.fixed_stack` yolu)
+`class_params`i alacak şekilde THREAD EDİLDİ (mekanik, 4-6 fonksiyonluk
+bir zincir, `self`in GG.20'de AYNI şekilde THREAD EDİLMESİYLE TUTARLI).
+`computeParamEscapes`nin KENDİSİ de artık `.class_def`nin metodlarını
+tarıyor (`"{sınıf}_{metod}"` NodeKey'i İLE) — BU OLMADAN `escaping_params`
+HİÇBİR metod-anahtarlı tohum İçERMEZDİ.
+
+**KRİTİK, break→red→fix İLE bulunan İKİ gerçek tuzak**:
+(1) **GERÇEK bir bug, GELİŞTİRME SIRASINDA bulunup DÜZELTİLDİ**:
+`method_owner_symbol` İçİn `msig.owner` (SADECE sınıf adı, ör. `"Helper"`)
+DOĞRUDAN kullanılmıştı — DOĞRUSU `"{sınıf}_{metod}"` (ör. `"Helper_
+store_it"`) sembolüydü. Bu YANLIŞ anahtar YÜZÜNDEN `escaping_params.
+contains(...)` sorgusu HİÇBİR ZAMAN GERÇEK seed'le eşleşmiyordu — yani
+GERÇEKTEN mutasyona uğratan (`sink.append(xs)`) bir metot bile YANLIŞLIKLA
+"güvenli" sayılıp argümanı stack'e taşıyordu — ilk yazılan kırmızı-takım/
+negatif fixture'ı ÇALIŞTIRILDIĞINDA GERÇEK bir SIGSEGV (kullanım-sonrası-
+serbest-bırakma) ÜRETTİ, hatanın KENDİSİ BUNU YAKALADI (yazı YAZILIRKEN,
+yayımlanmadan ÖNCE). (2) `self` metodun KENDİ NodeKey indekslemesinde
+HER ZAMAN 0'DADIR AMA çağrı-sitesinin `c.args`ı receiver'ı İçERMEZ — bu
+YÜZDEN çağrı-sitesi argüman-indeksi HER YERDE (checker VE codegen, seed
+VE tüketim tarafı) +1 KAYDIRILIR (SEEDLERİN yanlış indekste ARANMASI,
+`.append()`in KENDİ mutasyon-seed'iyle AYNI hizada OLMAMASI, AYNI kategori
+bir hata olurdu).
+
+**BİLİNÇLİ, DAR kapsam (v1)**: SADECE "receiver, İZLENEN fonksiyonun
+KENDİ (checker: HERHANGİ bir derinlikte alan-zinciri İLE — `resolveExprSharedType`
+ÜCRETSİZ sağlar; codegen: SADECE DOĞRUDAN, alan-zinciri DEĞİL — tip-
+farkında bir yerel-değişken sembol tablosu GEREKTİRİRDİ) parametresidir"
+şekli KAPSANIR. Receiver bir YEREL DEĞİŞKEN/bir ÇAĞRININ dönüş değeri
+İSE, YA DA dolaylı/fonksiyon-değeri çağrılarıysa (`f = obj.method; f(xs)`)
+KAPSAM DIŞI (KOŞULSUZ kaçış/mutasyon, DEĞİŞMEDEN). Devirtualization/
+performans (metodun `$owner_method`e DOĞRUDAN çağrı OLARAK üretilmesi)
+TAMAMEN AYRI bir codegen-performans işi — BU tur SADECE etki-ANALİZİNİ
+genişletir, çağrının KENDİSİNİN NASIL ÜRETİLDİĞİNE dokunmaz (vtable
+dispatch DEĞİŞMEDEN kalır).
+
+**Doğrulama**: break→red→fix ritüeli — checker'ın kırmızı-takım testi VE
+codegen'in negatif-mutasyon testi DOĞRU şekilde KIRMIZIYA döndü (codegen
+tarafında GERÇEK bir program çökmesiyle), polimorfizm-kırmızı-takım
+testleri (checker+codegen) İSE (yapısal bir değişmez OLDUĞUNDAN, graf
+doğruluğundan BAĞIMSIZ) DEĞİŞMEDEN yeşil kaldı. 3 YENİ checker fixture'ı
+(pozitif final-metod + negatif final-mutasyon + kırmızı-takım-override) +
+3 YENİ codegen fixture'ı (AYNI desen). 226 MEVCUT codegen fixture'ının
+`.ssa` anlık görüntüsü DEĞİŞMEDİ (BU turun DAR kapsamı — sadece sibling-
+parametre receiver'ları — mevcut HİÇBİR fixture'da tetiklenmiyor). Tam
+regresyon paketi (`zig build test`) + `NOX_STRESS_ROUNDS=800 zig build
+stress-test` (ReleaseFast) TEMİZ.
+
+**Ölçülen kazanç**: `git worktree` İLE v1.44.0 karşısında `point_sum`-
+benzeri bir METOD-yönlendirme deseni (200M çağrı): ~1.19s → ~0.42s
+(kullanıcı süresi, **~2.8x hızlanma**) — GG.20'nin serbest-fonksiyon
+kazancıyla AYNI sınıfta/mertebede (İKİSİ de BİR allocation-stratejisi
+değişikliği, Tur 3'ün SADECE çağrı-mekaniği kazancından FARKLI).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

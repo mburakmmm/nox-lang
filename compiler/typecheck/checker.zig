@@ -138,6 +138,14 @@ const ClassInfo = struct {
     base: ?[]const u8 = null,
     fields: std.StringHashMapUnmanaged(Type) = .{},
     methods: std.StringHashMapUnmanaged(FuncSig) = .{},
+    /// GG.21 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 5"): `methods`
+    /// İLE PARALEL doldurulur — HER metod adı İçİn O metodun GÖVDESİNİ
+    /// GERÇEKTEN TAŞIYAN sınıfın adı (KENDİSİ — YENİ bir metod YA DA bir
+    /// override — YA DA bir atası, override EDİLMEMİŞSE). `computeMutatesGraph`nin
+    /// metod-çağrısı `NodeKey`ini (`"{owner}_{metod}"`) VE `methodIsFinal`in
+    /// override-tespitini besler — codegen'in ZATEN VAR OLAN `ClassMethodInfo.
+    /// owner`ıyla AYNI KAVRAM, checker tarafında EKSİKTİ.
+    method_owners: std.StringHashMapUnmanaged([]const u8) = .{},
     init_sig: ?FuncSig = null,
     /// Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): AÇIKÇA bildirilen
     /// (`ast.FieldDecl`) ama HENÜZ `__init__` içinde `self.<ad> = ...` İLE
@@ -682,6 +690,26 @@ pub const Checker = struct {
             cur = info.base;
         }
         return false;
+    }
+
+    /// GG.21 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 5"): `class_name`
+    /// (VEYA HERHANGİ bir BİLİNEN alt sınıfı) `method_name` adlı metodu
+    /// HİÇBİR YERDE override ETMİYOR MU — `isSubclassOf`nin (YUKARIDA)
+    /// taban-zinciri yürüyüşünü TERSİNE çevirerek TÜM kayıtlı sınıfları
+    /// tarar (program-boyu sınıf sayısı TİPİK olarak küçük, önbelleğe
+    /// GEREK YOK). `false` dönmesi (polimorfik OLABİLİR) HER ZAMAN
+    /// GÜVENLİ/muhafazakâr taraftır — `method_owners`in henüz doldurulmadığı
+    /// bir sınıf İçİn de (bulunamazsa) `false`a düşer.
+    fn methodIsFinal(self: *Checker, class_name: []const u8, method_name: []const u8) bool {
+        var it = self.classes.iterator();
+        while (it.next()) |entry| {
+            if (std.mem.eql(u8, entry.key_ptr.*, class_name)) continue;
+            if (!self.isSubclassOf(entry.key_ptr.*, class_name)) continue;
+            if (entry.value_ptr.method_owners.get(method_name)) |owner| {
+                if (std.mem.eql(u8, owner, entry.key_ptr.*)) return false;
+            }
+        }
+        return true;
     }
 
     /// Faz 7 (tekli kalıtım): `e` TAM OLARAK `super()` (argümansız,
@@ -1815,6 +1843,8 @@ pub const Checker = struct {
             while (field_it.next()) |e| try info.fields.put(self.allocator, e.key_ptr.*, e.value_ptr.*);
             var method_it = base_info.methods.iterator();
             while (method_it.next()) |e| try info.methods.put(self.allocator, e.key_ptr.*, e.value_ptr.*);
+            var owner_it = base_info.method_owners.iterator();
+            while (owner_it.next()) |e| try info.method_owners.put(self.allocator, e.key_ptr.*, e.value_ptr.*);
             info.init_sig = base_info.init_sig;
         }
         // Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): AÇIKÇA
@@ -1867,6 +1897,7 @@ pub const Checker = struct {
                     }
                 }
                 try info.methods.put(self.allocator, m.name, sig);
+                try info.method_owners.put(self.allocator, m.name, cd.name);
             }
         }
     }
@@ -2265,11 +2296,38 @@ pub const Checker = struct {
                 // isim) DOĞRUDAN bir tohum EKLENİR (muhafazakâr).
                 const callee_is_resolvable_free_fn = c.callee.* == .identifier and self.functions.contains(c.callee.identifier);
                 const callee_is_known_safe_builtin = c.callee.* == .identifier and isKnownSafeBuiltinCallee(c.callee.identifier);
+                // GG.21 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 5"):
+                // receiver PAYLAŞILAN bir parametreye ÇÖZÜLÜYORSA VE metod
+                // PROVABLY final İSE (`methodIsFinal`), metodu ÇÖZÜLEBİLİR
+                // bir SERBEST fonksiyon GİBİ ele al (kenar) — AKSİ HALDE
+                // (receiver çözülemiyor/final DEĞİL) MEVCUT (tohum) davranış
+                // KORUNUR.
+                var method_owner_symbol: ?[]const u8 = null;
+                if (c.callee.* == .attribute) {
+                    const at = c.callee.attribute;
+                    if (self.resolveExprSharedType(at.obj.*, shared)) |recv| {
+                        if (recv.ty == .class) {
+                            if (self.classes.get(recv.ty.class)) |cinfo| {
+                                if (cinfo.method_owners.get(at.attr)) |owner| {
+                                    if (self.methodIsFinal(recv.ty.class, at.attr)) {
+                                        method_owner_symbol = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ owner, at.attr });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 for (c.args, 0..) |a, arg_index| {
                     if (self.resolveExprSharedType(a, shared)) |r| {
                         if (r.ty == .list or r.ty == .dict or r.ty == .class) {
                             if (callee_is_resolvable_free_fn) {
                                 try self.addMutatesEdge(c.callee.identifier, @intCast(arg_index), fname, params, r.root_param, reverse_edges);
+                            } else if (method_owner_symbol) |owner_symbol| {
+                                // `self` metodun KENDİ NodeKey indekslemesinde
+                                // HER ZAMAN 0'DADIR (`m.params[0]`) — çağrı
+                                // sitesinin `c.args`ı İSE receiver'ı (self)
+                                // İÇERMEZ, bu YÜZDEN +1 KAYDIRILIR.
+                                try self.addMutatesEdge(owner_symbol, @intCast(arg_index + 1), fname, params, r.root_param, reverse_edges);
                             } else if (!callee_is_known_safe_builtin) {
                                 try self.addMutatesSeed(fname, params, r.root_param, seeds);
                             }
@@ -2355,12 +2413,43 @@ pub const Checker = struct {
             },
             .call => |c| {
                 const callee_is_resolvable_free_fn = c.callee.* == .identifier and self.functions.contains(c.callee.identifier);
+                // GG.21: metod çağrısı — receiver paylaşılan bir parametreye
+                // çözülüyorsa VE metod PROVABLY final İSE (`methodIsFinal`),
+                // `mutates_params`e karşı AYNI şekilde kontrol edilir.
+                var method_owner_symbol: ?[]const u8 = null;
+                var method_name_for_msg: []const u8 = "";
+                if (c.callee.* == .attribute) {
+                    const at = c.callee.attribute;
+                    if (self.resolveExprSharedType(at.obj.*, params)) |recv| {
+                        if (recv.ty == .class) {
+                            if (self.classes.get(recv.ty.class)) |cinfo| {
+                                if (cinfo.method_owners.get(at.attr)) |owner| {
+                                    if (self.methodIsFinal(recv.ty.class, at.attr)) {
+                                        method_owner_symbol = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ owner, at.attr });
+                                        method_name_for_msg = at.attr;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 for (c.args, 0..) |a, idx| {
                     if (callee_is_resolvable_free_fn) {
                         if (self.resolveExprSharedType(a, params)) |r| {
                             if (r.ty == .list or r.ty == .dict or r.ty == .class) {
                                 if (self.mutates_params.contains(.{ .func = c.callee.identifier, .index = @intCast(idx) })) {
                                     return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada '{s}' üzerinden transitif olarak değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, r.root_param, c.callee.identifier });
+                                }
+                            }
+                        }
+                    } else if (method_owner_symbol) |owner_symbol| {
+                        if (self.resolveExprSharedType(a, params)) |r| {
+                            if (r.ty == .list or r.ty == .dict or r.ty == .class) {
+                                // `self` metodun KENDİ NodeKey indekslemesinde
+                                // HER ZAMAN 0'DADIR — bkz. scanMutatesGraphExpr'in
+                                // AYNI +1 KAYDIRMASININ belge notu.
+                                if (self.mutates_params.contains(.{ .func = owner_symbol, .index = @intCast(idx + 1) })) {
+                                    return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada '{s}' metodu üzerinden transitif olarak değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, r.root_param, method_name_for_msg });
                                 }
                             }
                         }

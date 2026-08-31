@@ -14,6 +14,36 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.45.0]
+
+### Eklendi
+- **GG.21 — metod çağrıları için interprocedural escape/mutasyon
+  genişletmesi (ASAP güçlendirmesi, Tur 5)**: v1.44.0'ın (GG.20) SADECE
+  serbest fonksiyon çağrılarını kapsayan interprocedural kanıtı ARTIK
+  METOD çağrılarını (`obj.method(...)`) da kapsıyor — AMA SADECE metod
+  PROVABLY "final" (receiver'ın statik tipinin HİÇBİR bilinen alt sınıfı
+  O metodu override ETMİYORSA) İSE VE receiver İZLENEN fonksiyonun KENDİ
+  (sibling) bir parametresiyse (checker tarafında `resolveExprSharedType`
+  SAYESİNDE alan-zincirleri de DAHİL). `checker.zig`ye YENİ `ClassInfo.
+  method_owners` + `methodIsFinal`; `codegen_qbe`ye YENİ `methodIsFinal`
+  (`ClassInfo.descendant_class_ids`/`ClassMethodInfo.owner` — ZATEN VAR
+  OLAN exception-hiyerarşisi bilgisini YENİDEN KULLANIR) + `ClassParam`/
+  `collectClassParams`. Override EDİLEN bir metot (polimorfik olabilir)
+  HÂLÂ koşulsuz kaçış/mutasyon SAYILIR — `inheritance_polymorphism.nox`nin
+  AYNI deseniyle kanıtlanan KIRMIZI-TAKIM testleri BUNU doğrular.
+  Geliştirme SIRASINDA break→red→fix İLE GERÇEK bir hata bulundu VE
+  düzeltildi: `msig.owner` (SADECE sınıf adı) `NodeKey.func` OLARAK
+  YANLIŞLIKLA KULLANILMIŞTI (doğrusu `"{sınıf}_{metod}"` sembolü) — bu,
+  final bir metodun GERÇEKTEN mutasyona uğrattığı bir argümanın
+  YANLIŞLIKLA "güvenli" sayılıp stack'e taşınmasına, GERÇEK bir
+  kullanım-sonrası-serbest-bırakma çökmesine (SIGSEGV, red-team fixture'ı
+  İLE ÜRETİLEN) yol açıyordu — kırmızı-takım testleri TAM OLARAK BUNU
+  yakaladı. `point_sum`-benzeri bir metod-yönlendirme deseni İçİn `git
+  worktree` İLE ~2.8x ölçülen kazanç (bkz. `benchmarks/RESULTS.md`).
+  3 YENİ checker fixture'ı + 3 YENİ codegen fixture'ı (pozitif + negatif-
+  mutasyon + kırmızı-takım-polimorfizm, HER İKİ tarafta da), tam
+  regresyon paketi + stress-test tamamen yeşil.
+
 ## [1.44.0]
 
 ### Eklendi

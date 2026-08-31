@@ -114,12 +114,12 @@ pub const Candidate = union(enum) {
 /// AYNI KATI kaçış-kontrolü — sınıflar HİÇ büyümediğinden `.append()`
 /// carve-out'una gerek YOK, SADECE boyut/bütçe aşımı YÜZÜNDEN stack
 /// yerine arenaya düşer).
-pub fn classifyVarDecl(self: *Codegen, body: []const ast.Stmt, i: usize, v: ast.VarDecl, running_total: *usize) CodegenError!?Candidate {
+pub fn classifyVarDecl(self: *Codegen, body: []const ast.Stmt, i: usize, v: ast.VarDecl, running_total: *usize, class_params: []const inlining.ClassParam) CodegenError!?Candidate {
     switch (v.value) {
         .list_lit => |elems| {
             if (simpleLiteralListQtype(elems)) |qt| {
                 const size = LIST_HEADER_SIZE + qbeSizeOf(qt) * elems.len;
-                if (size <= MAX_STACK_ALLOC_SIZE and running_total.* + size <= MAX_PROMOTED_FRAME_SIZE and localNeverEscapes(self, body, v.name, i + 1)) {
+                if (size <= MAX_STACK_ALLOC_SIZE and running_total.* + size <= MAX_PROMOTED_FRAME_SIZE and localNeverEscapes(self, body, v.name, i + 1, class_params)) {
                     running_total.* += size;
                     return .{ .fixed_stack = size };
                 }
@@ -132,7 +132,7 @@ pub fn classifyVarDecl(self: *Codegen, body: []const ast.Stmt, i: usize, v: ast.
             if (c.callee.* != .identifier) return null;
             const cinfo = self.classes.get(c.callee.identifier) orelse return null;
             if (!classSafeForStackAlloc(&cinfo)) return null;
-            if (!localNeverEscapes(self, body, v.name, i + 1)) return null;
+            if (!localNeverEscapes(self, body, v.name, i + 1, class_params)) return null;
             if (cinfo.total_size <= MAX_STACK_ALLOC_SIZE and running_total.* + cinfo.total_size <= MAX_PROMOTED_FRAME_SIZE) {
                 running_total.* += cinfo.total_size;
                 return .{ .fixed_stack = cinfo.total_size };
@@ -163,12 +163,14 @@ fn elemTypeIsScalar(self: *Codegen, type_expr: ast.TypeExpr) CodegenError!bool {
 
 /// `stmtsSafeForLocal`in TEK giriş noktası — `body[from_index..]`i
 /// (bildirimden SONRAKİ TÜM deyimler, AYNI üst-düzey gövdede) tarar.
-fn localNeverEscapes(self: *const Codegen, body: []const ast.Stmt, name: []const u8, from_index: usize) bool {
-    return stmtsSafeForLocal(self, body[from_index..], name);
+fn localNeverEscapes(self: *const Codegen, body: []const ast.Stmt, name: []const u8, from_index: usize, class_params: []const inlining.ClassParam) bool {
+    return stmtsSafeForLocal(self, body[from_index..], name, class_params);
 }
 
 /// GG.18: `localNeverEscapes`in AYNISI, AMA `stmtsSafeForGrowableLocal`ya
-/// (aşağıda, `.append()`e İZİN VEREN) delege eder.
+/// (aşağıda, `.append()`e İZİN VEREN) delege eder. GG.21'in `class_params`
+/// carve-out'unu ALMAZ — bkz. `exprHasUnsafeGrowableLocalUse`nin belge notu
+/// (arena değerleri HİÇBİR çağrı sınırını aşamaz, metod dahil).
 fn localNeverEscapesGrowable(self: *const Codegen, body: []const ast.Stmt, name: []const u8, from_index: usize) bool {
     return stmtsSafeForGrowableLocal(self, body[from_index..], name);
 }
@@ -176,42 +178,42 @@ fn localNeverEscapesGrowable(self: *const Codegen, body: []const ast.Stmt, name:
 /// `inlining.zig`'in `stmtsSafeForParam`iyle AYNI yapı/AYNI muhafazakârlık
 /// (ŞÜPHEDE `false`) — SADECE `exprHasUnsafeLocalUse`ya (aşağıda, `.attribute`
 /// salt-okunur okuma İçİn EK bir güvenli şekil TAŞIR) delege eder.
-fn stmtsSafeForLocal(self: *const Codegen, stmts: []const ast.Stmt, name: []const u8) bool {
+fn stmtsSafeForLocal(self: *const Codegen, stmts: []const ast.Stmt, name: []const u8, class_params: []const inlining.ClassParam) bool {
     for (stmts) |stmt| {
         switch (stmt.kind) {
             .var_decl => |v| {
                 if (std.mem.eql(u8, v.name, name)) return false;
-                if (exprHasUnsafeLocalUse(self, v.value, name)) return false;
+                if (exprHasUnsafeLocalUse(self, v.value, name, class_params)) return false;
             },
             .assign => |a| {
                 if (a.target == .identifier and std.mem.eql(u8, a.target.identifier, name)) return false;
-                if (exprHasUnsafeLocalUse(self, a.target, name)) return false;
-                if (exprHasUnsafeLocalUse(self, a.value, name)) return false;
+                if (exprHasUnsafeLocalUse(self, a.target, name, class_params)) return false;
+                if (exprHasUnsafeLocalUse(self, a.value, name, class_params)) return false;
             },
-            .expr_stmt => |e| if (exprHasUnsafeLocalUse(self, e, name)) return false,
+            .expr_stmt => |e| if (exprHasUnsafeLocalUse(self, e, name, class_params)) return false,
             .if_stmt => |f| {
-                if (exprHasUnsafeLocalUse(self, f.cond, name)) return false;
-                if (!stmtsSafeForLocal(self, f.then_body, name)) return false;
+                if (exprHasUnsafeLocalUse(self, f.cond, name, class_params)) return false;
+                if (!stmtsSafeForLocal(self, f.then_body, name, class_params)) return false;
                 for (f.elif_clauses) |ec| {
-                    if (exprHasUnsafeLocalUse(self, ec.cond, name)) return false;
-                    if (!stmtsSafeForLocal(self, ec.body, name)) return false;
+                    if (exprHasUnsafeLocalUse(self, ec.cond, name, class_params)) return false;
+                    if (!stmtsSafeForLocal(self, ec.body, name, class_params)) return false;
                 }
-                if (f.else_body) |eb| if (!stmtsSafeForLocal(self, eb, name)) return false;
+                if (f.else_body) |eb| if (!stmtsSafeForLocal(self, eb, name, class_params)) return false;
             },
             .while_stmt => |w| {
-                if (exprHasUnsafeLocalUse(self, w.cond, name)) return false;
-                if (!stmtsSafeForLocal(self, w.body, name)) return false;
+                if (exprHasUnsafeLocalUse(self, w.cond, name, class_params)) return false;
+                if (!stmtsSafeForLocal(self, w.body, name, class_params)) return false;
             },
             .for_stmt => |f| {
                 if (std.mem.eql(u8, f.var_name, name)) return false;
                 const iterable_is_direct = f.iterable == .identifier and std.mem.eql(u8, f.iterable.identifier, name);
-                if (!iterable_is_direct and exprHasUnsafeLocalUse(self, f.iterable, name)) return false;
-                if (!stmtsSafeForLocal(self, f.body, name)) return false;
+                if (!iterable_is_direct and exprHasUnsafeLocalUse(self, f.iterable, name, class_params)) return false;
+                if (!stmtsSafeForLocal(self, f.body, name, class_params)) return false;
             },
             .return_stmt => |r| {
-                if (r) |e| if (exprHasUnsafeLocalUse(self, e, name)) return false;
+                if (r) |e| if (exprHasUnsafeLocalUse(self, e, name, class_params)) return false;
             },
-            .raise_stmt => |e| if (exprHasUnsafeLocalUse(self, e, name)) return false,
+            .raise_stmt => |e| if (exprHasUnsafeLocalUse(self, e, name, class_params)) return false,
             // `try`/İç İçe `lowlevel`/`with`/`func_def`/`defer` — BİLİNMEYEN/
             // riskli bölge, TÜM analiz GÜVENLİ tarafta kalmak İçin İPTAL edilir.
             .try_stmt, .lowlevel_stmt, .with_stmt, .func_def, .defer_stmt => return false,
@@ -241,12 +243,12 @@ fn stmtsSafeForLocal(self: *const Codegen, stmts: []const ast.Stmt, name: []cons
 /// KULLANMAZ, spawn'ın SARDIĞI çağrının argümanları HER ZAMAN doğrudan
 /// kontrol edilir (spawn'ın asenkron/çapraz-fiber doğası "callee kendi
 /// gövdesinde kaçırmıyor" kanıtını GEÇERSİZ kılar).
-fn exprHasUnsafeLocalUse(self: *const Codegen, expr: ast.Expr, name: []const u8) bool {
+fn exprHasUnsafeLocalUse(self: *const Codegen, expr: ast.Expr, name: []const u8, class_params: []const inlining.ClassParam) bool {
     return switch (expr) {
         .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => false,
         .identifier => |n| std.mem.eql(u8, n, name),
-        .unary => |u| exprHasUnsafeLocalUse(self, u.operand.*, name),
-        .binary => |b| exprHasUnsafeLocalUse(self, b.left.*, name) or exprHasUnsafeLocalUse(self, b.right.*, name),
+        .unary => |u| exprHasUnsafeLocalUse(self, u.operand.*, name, class_params),
+        .binary => |b| exprHasUnsafeLocalUse(self, b.left.*, name, class_params) or exprHasUnsafeLocalUse(self, b.right.*, name, class_params),
         .call => |c| blk: {
             if (c.callee.* == .identifier and std.mem.eql(u8, c.callee.identifier, "len") and
                 c.args.len == 1 and c.args[0] == .identifier and std.mem.eql(u8, c.args[0].identifier, name))
@@ -260,15 +262,37 @@ fn exprHasUnsafeLocalUse(self: *const Codegen, expr: ast.Expr, name: []const u8)
                 const recv = c.callee.attribute.obj;
                 if (recv.* == .identifier and std.mem.eql(u8, recv.identifier, name)) break :blk true;
             }
-            if (exprHasUnsafeLocalUse(self, c.callee.*, name)) break :blk true;
+            if (exprHasUnsafeLocalUse(self, c.callee.*, name, class_params)) break :blk true;
             const callee_is_resolvable_free_fn = c.callee.* == .identifier and self.func_defs.contains(c.callee.identifier);
+            // GG.21: receiver `class_params`de bilinen bir sibling-parametreyse
+            // VE metod PROVABLY final İSE, AYNI carve-out'u UYGULA (`self`
+            // metodun KENDİ NodeKey indekslemesinde HER ZAMAN 0'DA olduğundan
+            // `arg_idx` +1 KAYDIRILIR).
+            var method_owner: ?[]const u8 = null;
+            if (c.callee.* == .attribute) {
+                const at = c.callee.attribute;
+                if (inlining.resolveClassParamReceiver(at.obj.*, class_params)) |recv_class| {
+                    if (self.classes.get(recv_class)) |cinfo| {
+                        if (cinfo.methods.get(at.attr)) |msig| {
+                            if (inlining.methodIsFinal(self, recv_class, at.attr)) {
+                                method_owner = std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ msig.owner, at.attr }) catch null;
+                            }
+                        }
+                    }
+                }
+            }
             for (c.args, 0..) |a, arg_idx| {
                 if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_resolvable_free_fn) {
                     if (!self.escaping_params.contains(.{ .func = c.callee.identifier, .index = @intCast(arg_idx) })) {
                         continue; // İSPATLANMIŞ güvenli yönlendirme.
                     }
                 }
-                if (exprHasUnsafeLocalUse(self, a, name)) break :blk true;
+                if (a == .identifier and std.mem.eql(u8, a.identifier, name) and method_owner != null) {
+                    if (!self.escaping_params.contains(.{ .func = method_owner.?, .index = @intCast(arg_idx + 1) })) {
+                        continue; // İSPATLANMIŞ güvenli yönlendirme (final metod).
+                    }
+                }
+                if (exprHasUnsafeLocalUse(self, a, name, class_params)) break :blk true;
             }
             break :blk false;
         },
@@ -279,39 +303,39 @@ fn exprHasUnsafeLocalUse(self: *const Codegen, expr: ast.Expr, name: []const u8)
             // dala hiç ULAŞMAZ (`.call`in `c.callee.*` kontrolü BU `.attribute`
             // dalını hiç ÇAĞIRMAZ).
             if (a.obj.* == .identifier and std.mem.eql(u8, a.obj.identifier, name)) break :blk false;
-            break :blk exprHasUnsafeLocalUse(self, a.obj.*, name);
+            break :blk exprHasUnsafeLocalUse(self, a.obj.*, name, class_params);
         },
         .index => |idx| blk: {
             const obj_is_direct = idx.obj.* == .identifier and std.mem.eql(u8, idx.obj.identifier, name);
-            if (!obj_is_direct and exprHasUnsafeLocalUse(self, idx.obj.*, name)) break :blk true;
-            break :blk exprHasUnsafeLocalUse(self, idx.index.*, name);
+            if (!obj_is_direct and exprHasUnsafeLocalUse(self, idx.obj.*, name, class_params)) break :blk true;
+            break :blk exprHasUnsafeLocalUse(self, idx.index.*, name, class_params);
         },
         .list_lit => |elems| blk: {
-            for (elems) |el| if (exprHasUnsafeLocalUse(self, el, name)) break :blk true;
+            for (elems) |el| if (exprHasUnsafeLocalUse(self, el, name, class_params)) break :blk true;
             break :blk false;
         },
         .dict_lit => |pairs| blk: {
             for (pairs) |p| {
-                if (exprHasUnsafeLocalUse(self, p.key, name)) break :blk true;
-                if (exprHasUnsafeLocalUse(self, p.value, name)) break :blk true;
+                if (exprHasUnsafeLocalUse(self, p.key, name, class_params)) break :blk true;
+                if (exprHasUnsafeLocalUse(self, p.value, name, class_params)) break :blk true;
             }
             break :blk false;
         },
-        .await_expr => |op| exprHasUnsafeLocalUse(self, op.*, name),
+        .await_expr => |op| exprHasUnsafeLocalUse(self, op.*, name, class_params),
         .spawn_expr => |op| blk: {
             if (op.* == .call) {
                 const c = op.*.call;
-                if (exprHasUnsafeLocalUse(self, c.callee.*, name)) break :blk true;
+                if (exprHasUnsafeLocalUse(self, c.callee.*, name, class_params)) break :blk true;
                 for (c.args) |a| {
                     if (a == .identifier and std.mem.eql(u8, a.identifier, name)) break :blk true;
-                    if (exprHasUnsafeLocalUse(self, a, name)) break :blk true;
+                    if (exprHasUnsafeLocalUse(self, a, name, class_params)) break :blk true;
                 }
                 break :blk false;
             }
-            break :blk exprHasUnsafeLocalUse(self, op.*, name);
+            break :blk exprHasUnsafeLocalUse(self, op.*, name, class_params);
         },
         .generic_construct => |g| blk: {
-            for (g.args) |a| if (exprHasUnsafeLocalUse(self, a, name)) break :blk true;
+            for (g.args) |a| if (exprHasUnsafeLocalUse(self, a, name, class_params)) break :blk true;
             break :blk false;
         },
     };
@@ -497,7 +521,7 @@ pub fn constructNodeKey(v: ast.VarDecl) usize {
 /// `self.stack_construct_sites`e (GG.15/16 İLE PAYLAŞILAN tüketim
 /// tablosu) bir `alloc8` slotu, `.growable_arena` DÖNERSE (GG.18)
 /// `self.arena_local_construct_sites`e bir arena-tutamağı KAYDEDER.
-pub fn registerLocalStackSlots(self: *Codegen, body: []const ast.Stmt) CodegenError!void {
+pub fn registerLocalStackSlots(self: *Codegen, body: []const ast.Stmt, params: []const ast.Param) CodegenError!void {
     self.stack_local_names.clearRetainingCapacity();
     self.growable_arena_names.clearRetainingCapacity();
     // GG.18/19: BİR ÖNCEKİ fonksiyondan kalan bir arena tutamağı/aggregate
@@ -505,10 +529,15 @@ pub fn registerLocalStackSlots(self: *Codegen, body: []const ast.Stmt) CodegenEr
     // local_names` İLE AYNI zamanlamada (HER fonksiyon-girişinde) sıfırlanır.
     self.function_arena = null;
     self.promoted_stack_total = 0;
+    // GG.21 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 5"): BU fonksiyonun
+    // KENDİ `class`-tipli parametreleri — `obj.method(xs)` şeklindeki
+    // metod-çağrısı receiver'larını (SADECE DOĞRUDAN sibling-parametre
+    // şekli, bkz. `ClassParam`nin belge notu) çözebilmek İçİn.
+    const class_params = try inlining.collectClassParams(self, self.allocator, params);
     for (body, 0..) |stmt, i| {
         if (stmt.kind != .var_decl) continue;
         const v = stmt.kind.var_decl;
-        const candidate = try classifyVarDecl(self, body, i, v, &self.promoted_stack_total) orelse continue;
+        const candidate = try classifyVarDecl(self, body, i, v, &self.promoted_stack_total, class_params) orelse continue;
         const handle = try materializeConstructSite(self, candidate);
         switch (candidate) {
             .fixed_stack => {
