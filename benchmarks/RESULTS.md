@@ -430,6 +430,34 @@ Her satır üç dilde **aynı algoritmayı** çalıştırır (Python/C, o dilin 
   inlining'inin VE GG.1'in string optimizasyonlarının YOĞUN kullandığı
   kod yollarını temsil eder.
 
+### GG.19 SONRASI ölçüm (2026-08-31, bkz. §3.109) — ASAP güçlendirmesi Tur 3 (aggregate bütçe + inline/ASAP birlikte çalışması)
+
+Harici bir (GPT-5.6) incelemenin bulduğu, kullanıcının seçtiği İKİ
+madde: (1) aggregate stack-promotion bütçesi (`MAX_PROMOTED_FRAME_SIZE`,
+32 KiB) — SAF bir correctness/güvenlik düzeltmesi, performans kazancı
+BEKLENMEZ (SADECE ÖNCEDEN teorik olarak fiber stack'ini AŞABİLECEK bir
+senaryoyu ARENA'YA yönlendirir); (2) inline + ASAP'in BİRLİKTE çalışması
+— v1.42.0'ın `helper()`-gibi fonksiyonları GG.2 inline-edilebilirliğinden
+TAMAMEN dışlayan KABA hotfix'ini kaldırıp yerine splice-başına TAZE
+tutamak veren bir mekanizma koyar.
+
+İncelemenin KENDİ önerdiği `point_sum(x): p = Point(x,2); return
+p.x+p.y` deseni (döngüsüz, GERÇEKTEN inline-edilebilir) İLE `git
+worktree` KULLANILARAK v1.42.0 (stack-promotion VAR ama inline YOK,
+hotfix YÜZÜNDEN) vs BU tur (İKİSİ BİRLİKTE) arasında GERÇEK bir A/B
+ölçüldü — 200.000.000 çağrı:
+
+| | v1.42.0 (stack-SADECE) | BU tur (GG.19, stack+inline) | Kazanç |
+|---|---:|---:|---|
+| `point_sum(x)` × 200M çağrı (min, 3 koşu) | 0.306s | 0.251s | **~%18** |
+
+**Dürüst not**: bu, SADECE çağrı-overhead'inin (parametre geçişi/dallanma/
+`ret`) ORTADAN KALKMASINDAN gelen bir kazanç — `point_sum`nin KENDİSİ
+v1.42.0'da ZATEN `nox_rc_alloc`SIZ (stack-promotion SAYESİNDE) ÇALIŞIYORDU,
+bu YÜZDEN Tur 1/2'nin KENDİ ~2.1-2.3x'lik kazançlarıyla KIYASLANAMAZ
+(o kazançlar ALLOCATION stratejisini DEĞİŞTİRİYORDU, BU kazanç SADECE
+fonksiyon-çağrısı MEKANİĞİNİ ORTADAN KALDIRIYOR).
+
 ### GG.18 SONRASI ölçüm (2026-08-31, bkz. §3.108) — ASAP güçlendirmesi Tur 2 (değişken-boyutlu listeler)
 
 GG.17'nin ölçüm dersi (mevcut 30 benchmark'ın hedeflenen deseni doğal

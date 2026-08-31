@@ -29,21 +29,23 @@
 //! başlığı YERİNE). `classifyVarDecl` HER İKİ Turu da TEK, PAYLAŞILAN bir
 //! sınıflandırıcıda BİRLEŞTİRİR.
 //!
-//! **GG.17 hotfix (bkz. plan dosyası, "Tur 2"nin İLK maddesi)**: bu
-//! dosyanın kaydettiği HER düğüm (`stack_construct_sites`/`arena_local_
-//! construct_sites`), AST-düğüm-POINTER'ı anahtarlı VE HİÇ TEMİZLENMEYEN
-//! GLOBAL tablolara yazıldığından, kaydı yapan fonksiyonun KENDİSİ GG.2
-//! TARAFINDAN BAŞKA bir çağrı sitesine inline-SPLICE edilirse, splice
-//! SIRASINDA AYNI düğüm YENİDEN işlenir VE ESKİ (kayıt ANINDAKİ fonksiyonun
-//! KENDİ temp-numaralandırmasına ÖZGÜ) bir QBE geçici adı BULUNUP
-//! KULLANILIR — bu, SPLICE edilen fonksiyonda (`caller`) O isim BAŞKA
-//! bir yerele AİTSE GERÇEK bir çapraz-fonksiyon bellek bozulmasıdır
-//! (doğrudan derlenip ÇALIŞTIRILARAK KANITLANDI). Düzeltme: `computeFuncsWithLocalConstructSites`
-//! (whole-program, `computeInlinableFunctions`'DAN ÖNCE çalışan SAF bir
-//! ön-tarama) BU dosyanın kaydedeceği HER fonksiyonu ÖNCEDEN belirleyip
-//! `isFuncInlineEligible`'ın bu fonksiyonları GG.2 inline-edilebilirliğinden
-//! TAMAMEN DIŞLAMASINI sağlar — `lowlevel_stmt` İÇEREn bir gövdenin ZATEN
-//! aynı gerekçeyle dışlanmasıyla TUTARLI (bkz. `inlining.zig`).
+//! GG.19 (plan dosyası "ASAP güçlendirmesi — Tur 3"): İKİ EK madde.
+//! (1) **Aggregate stack-promotion bütçesi**: `MAX_STACK_ALLOC_SIZE`
+//! (nesne-başına) YETERSİZDİ — bir fonksiyonun TÜM stack-promotable
+//! yerellerinin TOPLAMI da `MAX_PROMOTED_FRAME_SIZE`i (32 KiB) AŞAMAZ;
+//! aşarsa (boyut/escape/basit-literal ŞARTLARI HÂLÂ geçse BİLE) aday
+//! arenaya DÜŞER — `classifyVarDecl`nin `running_total: *usize` parametresi
+//! BUNU sağlar. Sınıflar İçİn de (ÖNCEDEN SADECE `fixed_stack`/`null`
+//! olabiliyordu) BİR arena-fallback EKLENDİ (`.call` dalı).
+//! (2) **Inline + ASAP birlikte çalışabilir**: `stack_construct_sites`/
+//! `arena_local_construct_sites`in inline-splice SIRASINDA ÇAPRAZ-
+//! FONKSİYON çakışması artık `genInlinedCall`nin (inlining.zig) KENDİ
+//! `self.vars` gölgeleme desenini TEKRARLAYAN bir üçüncü gölgeleme İLE
+//! çözülüyor (bkz. `InlineConstructSite`/`materializeConstructSite`,
+//! `inlining.zig`nin `registerInlineSite`/`genInlinedCall`ı) — bu YÜZDEN
+//! GG.17/18 adayı İçEREN bir fonksiyonun GG.2 inline-edilebilirliğinden
+//! TAMAMEN dışlanması (v1.42.0'ın hotfix'i) ARTIK GEREKMİYOR VE
+//! KALDIRILDI.
 
 const std = @import("std");
 const ast = @import("../parser/ast.zig");
@@ -59,6 +61,7 @@ const CodegenError = abi.CodegenError;
 const qbeSizeOf = abi.qbeSizeOf;
 const simpleLiteralListQtype = inlining.simpleLiteralListQtype;
 const MAX_STACK_ALLOC_SIZE = inlining.MAX_STACK_ALLOC_SIZE;
+const MAX_PROMOTED_FRAME_SIZE = inlining.MAX_PROMOTED_FRAME_SIZE;
 const isHeapManaged = abi.isHeapManaged;
 
 /// **GERÇEK, DENEYEREK BULUNAN hata (break→red→fix)**: bir sınıf örneğini
@@ -91,22 +94,33 @@ pub const Candidate = union(enum) {
     growable_arena,
 };
 
-/// TEK, SAF (HİÇBİR `newTemp`/`qbeAlloc`/tablo-yazma YAN ETKİSİ OLMAYAN,
-/// deterministik) sınıflandırıcı — HEM whole-program ön-tarama
-/// (`computeFuncsWithLocalConstructSites`, sadece SINIFLANDIRIR) HEM
-/// GERÇEK kayıt (`registerLocalStackSlots`, SINIFLANDIRIP GERÇEKTEN
-/// tahsis eder) TARAFINDAN çağrılır. ÖNCE Tur 1'i (sabit-boyutlu, basit-
-/// literal, boyut tavanı İçİnde) dener; BAŞARISIZSA (boş `[]`, KARIŞIK/
-/// literal-olmayan elemanlar, boyut AŞIMI, YA DA `.append()` KULLANIMI
-/// yüzünden KATI kaçış-kontrolü başarısız olduysa) Tur 2'yi (SKALER
-/// eleman tipi + `.append()`ye İZİN VEREN daha GEVŞEK kaçış-kontrolü)
-/// dener.
-pub fn classifyVarDecl(self: *Codegen, body: []const ast.Stmt, i: usize, v: ast.VarDecl) CodegenError!?Candidate {
+/// GG.19: TEK, SAF (HİÇBİR `newTemp`/`qbeAlloc`/tablo-yazma YAN ETKİSİ
+/// OLMAYAN, deterministik) sınıflandırıcı — HEM `registerLocalStackSlots`
+/// (standalone-derlenen bir fonksiyonun KENDİ üst-düzey adayları) HEM
+/// `registerInlineSite` (inlining.zig, İNLİNE edilen bir callee'nin
+/// adayları) TARAFINDAN çağrılır. `running_total`, ÇAĞIRANIN (AYNI
+/// fiziksel QBE fonksiyon çerçevesini PAYLAŞAN — bir caller'ın KENDİ
+/// yerelleri VE İÇİNE splice edilen HER callee'nin yerelleri TEK bir
+/// çerçevede TOPLANIR) o ana kadar stack'e SÖZ VERDİĞİ toplam bayt
+/// sayısıdır — ÇAĞIRAN BUNU sıfırdan başlatıp HER başarılı `fixed_stack`
+/// kararından SONRA artırır.
+///
+/// ÖNCE Tur 1'i (sabit-boyutlu, basit-literal/sınıf, nesne-başına VE
+/// aggregate boyut tavanı İçİnde) dener; BAŞARISIZSA (boş `[]`, KARIŞIK/
+/// literal-olmayan elemanlar, nesne-başına/aggregate boyut AŞIMI, YA DA
+/// `.append()` KULLANIMI yüzünden KATI kaçış-kontrolü başarısız olduysa)
+/// Tur 2'nin arena yolunu dener (liste İçİn: SKALER eleman tipi +
+/// `.append()`ye İZİN VEREN daha GEVŞEK kaçış-kontrolü; sınıf İçİn:
+/// AYNI KATI kaçış-kontrolü — sınıflar HİÇ büyümediğinden `.append()`
+/// carve-out'una gerek YOK, SADECE boyut/bütçe aşımı YÜZÜNDEN stack
+/// yerine arenaya düşer).
+pub fn classifyVarDecl(self: *Codegen, body: []const ast.Stmt, i: usize, v: ast.VarDecl, running_total: *usize) CodegenError!?Candidate {
     switch (v.value) {
         .list_lit => |elems| {
             if (simpleLiteralListQtype(elems)) |qt| {
                 const size = LIST_HEADER_SIZE + qbeSizeOf(qt) * elems.len;
-                if (size <= MAX_STACK_ALLOC_SIZE and localNeverEscapes(body, v.name, i + 1)) {
+                if (size <= MAX_STACK_ALLOC_SIZE and running_total.* + size <= MAX_PROMOTED_FRAME_SIZE and localNeverEscapes(body, v.name, i + 1)) {
+                    running_total.* += size;
                     return .{ .fixed_stack = size };
                 }
             }
@@ -118,9 +132,17 @@ pub fn classifyVarDecl(self: *Codegen, body: []const ast.Stmt, i: usize, v: ast.
             if (c.callee.* != .identifier) return null;
             const cinfo = self.classes.get(c.callee.identifier) orelse return null;
             if (!classSafeForStackAlloc(&cinfo)) return null;
-            if (cinfo.total_size > MAX_STACK_ALLOC_SIZE) return null;
             if (!localNeverEscapes(body, v.name, i + 1)) return null;
-            return .{ .fixed_stack = cinfo.total_size };
+            if (cinfo.total_size <= MAX_STACK_ALLOC_SIZE and running_total.* + cinfo.total_size <= MAX_PROMOTED_FRAME_SIZE) {
+                running_total.* += cinfo.total_size;
+                return .{ .fixed_stack = cinfo.total_size };
+            }
+            // GG.19: nesne-başına YA DA aggregate tavanı AŞAN (ama HÂLÂ
+            // escape-güvenli/heap-yönetimli-alansız) bir sınıf örneği —
+            // ÖNCEDEN (Tur 1/2) tek seçenek tam ARC'tı, ARTIK arenaya
+            // düşer (arena fiber'ın KENDİ stack'ini KULLANMADIĞINDAN
+            // boyut riski TAŞIMAZ).
+            return .growable_arena;
         },
         else => return null,
     }
@@ -374,48 +396,74 @@ fn exprHasUnsafeGrowableLocalUse(expr: ast.Expr, name: []const u8) bool {
     };
 }
 
+/// GG.19: `classifyVarDecl`nin DÖNDÜĞÜ SAF `Candidate` sonucunu GERÇEK
+/// bir yaşayan tutamağa (stack slotu YA DA arena tutamağı) çevirir —
+/// `registerLocalStackSlots` VE `registerInlineSite`nin (inlining.zig)
+/// İKİSİ de bunu çağırır, TEK kaynak (emisyon mantığı İKİ YERDE
+/// TEKRARLANMAZ). `.growable_arena` İçİn `self.function_arena`yı
+/// (fonksiyon-çapında, GEREKİYORSA BURADA İLK KEZ yaratılan, PAYLAŞILAN
+/// TEK arena — bir caller'ın KENDİ adayları VE İçİNE splice edilen HER
+/// callee'nin adayları AYNI arenayı PAYLAŞIR, ÇÜNKÜ SONUÇTA AYNI fiziksel
+/// fonksiyon çıkışında yıkılırlar) kullanır/yaratır.
+pub fn materializeConstructSite(self: *Codegen, candidate: Candidate) CodegenError![]const u8 {
+    return switch (candidate) {
+        .fixed_stack => |size| blk: {
+            const slot = try self.newTemp();
+            try self.qbeAlloc(slot, .eight, size);
+            break :blk slot;
+        },
+        .growable_arena => blk: {
+            if (self.function_arena == null) {
+                const arena_temp = try self.newTemp();
+                try self.qbeCall(.{ .name = arena_temp, .ty = .l }, "$nox_arena_create", &.{.{ .ty = .l, .text = types.RT_PARAM }});
+                self.function_arena = arena_temp;
+            }
+            break :blk self.function_arena.?;
+        },
+    };
+}
+
+/// `classifyVarDecl`nin `.list_lit`/`.call` dallarının KENDİ anahtarlama
+/// deseni — `registerLocalStackSlots`/`registerInlineSite`nin İKİSİ de
+/// `stack_construct_sites`/`arena_local_construct_sites`e (VEYA inline
+/// İçİn `InlineConstructSite.node_key`e) YAZARKEN AYNI anahtarı ÜRETMESİ
+/// GEREKİR (`genListLit`/`genConstructFromValues`nin TÜKETİM tarafı BU
+/// anahtarla SORGULAR) — TEK kaynak, iki yerde birbirinden BAĞIMSIZ
+/// yanlış yazılma riskini ELER.
+pub fn constructNodeKey(v: ast.VarDecl) usize {
+    return switch (v.value) {
+        .list_lit => |elems| @intFromPtr(elems.ptr),
+        .call => |c| @intFromPtr(c.callee),
+        else => unreachable,
+    };
+}
+
 /// `prepareInlineSites`in (inlining.zig) HER çağrı sitesinin YANINDA
 /// (`registration.zig`/`closures.zig`, AYNI fonksiyon-girişi ön-tarama
 /// noktasında) çağrılır. `body`nin ÜST DÜZEYİNDEKİ HER `var_decl`i
 /// `classifyVarDecl` İLE sınıflandırır — `.fixed_stack(size)` DÖNERSE
 /// `self.stack_construct_sites`e (GG.15/16 İLE PAYLAŞILAN tüketim
 /// tablosu) bir `alloc8` slotu, `.growable_arena` DÖNERSE (GG.18)
-/// `self.arena_local_construct_sites`e bir arena-tutamağı KAYDEDER
-/// (fonksiyonun KENDİ `function_arena`sı, GEREKİYORSA BURADA İLK KEZ
-/// `nox_arena_create` İLE yaratılır — birden fazla GG.18 yereli AYNI
-/// arenayı PAYLAŞIR).
+/// `self.arena_local_construct_sites`e bir arena-tutamağı KAYDEDER.
 pub fn registerLocalStackSlots(self: *Codegen, body: []const ast.Stmt) CodegenError!void {
     self.stack_local_names.clearRetainingCapacity();
     self.growable_arena_names.clearRetainingCapacity();
-    // GG.18: BİR ÖNCEKİ fonksiyondan kalan bir arena tutamağı, BURADA
-    // sıfırlanmazsa, BU fonksiyonun (kendi `.growable_arena` yereli
-    // OLMASA BİLE hâlâ null OLMAYAN eski değer yüzünden) YANLIŞLIKLA
-    // "zaten bir arenam var" SANMASINA yol açardı — `stack_local_names`
-    // İLE AYNI zamanlamada (HER fonksiyon-girişinde, TEK bu fonksiyon
-    // ÜZERİNDEN) sıfırlanır.
+    // GG.18/19: BİR ÖNCEKİ fonksiyondan kalan bir arena tutamağı/aggregate
+    // sayaç, BURADA sıfırlanmazsa YANLIŞ sonuçlara yol açardı — `stack_
+    // local_names` İLE AYNI zamanlamada (HER fonksiyon-girişinde) sıfırlanır.
     self.function_arena = null;
+    self.promoted_stack_total = 0;
     for (body, 0..) |stmt, i| {
         if (stmt.kind != .var_decl) continue;
         const v = stmt.kind.var_decl;
-        const candidate = try classifyVarDecl(self, body, i, v) orelse continue;
+        const candidate = try classifyVarDecl(self, body, i, v, &self.promoted_stack_total) orelse continue;
+        const handle = try materializeConstructSite(self, candidate);
         switch (candidate) {
-            .fixed_stack => |size| {
-                const slot = try self.newTemp();
-                try self.qbeAlloc(slot, .eight, size);
-                const key: usize = switch (v.value) {
-                    .list_lit => |elems| @intFromPtr(elems.ptr),
-                    .call => |c| @intFromPtr(c.callee),
-                    else => unreachable,
-                };
-                try self.stack_construct_sites.put(self.allocator, key, .{ .slot = slot });
+            .fixed_stack => {
+                try self.stack_construct_sites.put(self.allocator, constructNodeKey(v), .{ .slot = handle });
                 try self.stack_local_names.put(self.allocator, v.name, {});
             },
             .growable_arena => {
-                if (self.function_arena == null) {
-                    const arena_temp = try self.newTemp();
-                    try self.qbeCall(.{ .name = arena_temp, .ty = .l }, "$nox_arena_create", &.{.{ .ty = .l, .text = types.RT_PARAM }});
-                    self.function_arena = arena_temp;
-                }
                 // NOT: boş `[]` literalleri BURADA `arena_local_construct_
                 // sites`e KAYDEDİLMEZ — Zig'İN sıfır-boyutlu tahsislerin
                 // HEPSİNE AYNI (bir kanonik "boş") işaretçiyi verdiği
@@ -424,45 +472,15 @@ pub fn registerLocalStackSlots(self: *Codegen, body: []const ast.Stmt) CodegenEr
                 // `genEmptyListLit` bunun YERİNE `target.growable_arena`yı
                 // (`VarInfo`den, `allocSlotEx` ÜZERİNDEN) DOĞRUDAN okur —
                 // AST-düğüm anahtarlamaya HİÇ GEREK YOK (`target` ZATEN
-                // BU SPESİFİK `var_decl`e AİT).
-                if (v.value.list_lit.len > 0) {
-                    const key: usize = @intFromPtr(v.value.list_lit.ptr);
-                    try self.arena_local_construct_sites.put(self.allocator, key, self.function_arena.?);
+                // BU SPESİFİK `var_decl`e AİT). Sınıf kurucusu YOLUNDA
+                // (GG.19'un YENİ arena-fallback'i) BU sorun YOK — `c.callee`
+                // HER ZAMAN benzersizdir, KOŞULSUZ kaydedilir.
+                const is_empty_list = v.value == .list_lit and v.value.list_lit.len == 0;
+                if (!is_empty_list) {
+                    try self.arena_local_construct_sites.put(self.allocator, constructNodeKey(v), handle);
                 }
-                try self.growable_arena_names.put(self.allocator, v.name, self.function_arena.?);
+                try self.growable_arena_names.put(self.allocator, v.name, handle);
             },
-        }
-    }
-}
-
-/// GG.17 hotfix: whole-program ön-tarama — `computeInlinableFunctions`'DAN
-/// ÖNCE (`codegen.zig`nin `generateModule`'ı, TEK çağrı sitesi) çağrılır.
-/// `computeInlinableFunctions`nin AYNI iterasyon desenini (module.body'nin
-/// üst-düzey `.func_def`leri + `extra_functions` — SADECE serbest
-/// fonksiyonlar, METODLAR GG.2 TARAFINDAN ZATEN HİÇ inline EDİLMEDİĞİNDEN
-/// bu taramaya DAHİL EDİLMEZ) TEKRARLAR, HER fonksiyonun gövdesini
-/// `classifyVarDecl` İLE (SAF, `newTemp`/`qbeAlloc`/tablo-yazma YAN
-/// ETKİSİ OLMADAN) tarar — EN AZ bir üst-düzey `var_decl` `null`-DIŞI
-/// dönerse `fd.name`i `self.funcs_with_local_construct_sites`e EKLER
-/// (`isFuncInlineEligible` BUNU KONTROL EDİP fonksiyonu inline-edilebilirlikten
-/// DIŞLAR — bkz. bu dosyanın modül belge notu, "GG.17 hotfix").
-pub fn computeFuncsWithLocalConstructSites(self: *Codegen, module: ast.Module, extra_functions: []const ast.FuncDef) CodegenError!void {
-    for (module.body) |stmt| {
-        switch (stmt.kind) {
-            .func_def => |fd| try scanFuncForLocalConstructSites(self, fd),
-            else => {},
-        }
-    }
-    for (extra_functions) |fd| try scanFuncForLocalConstructSites(self, fd);
-}
-
-fn scanFuncForLocalConstructSites(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
-    for (fd.body, 0..) |stmt, i| {
-        if (stmt.kind != .var_decl) continue;
-        const v = stmt.kind.var_decl;
-        if (try classifyVarDecl(self, fd.body, i, v)) |_| {
-            try self.funcs_with_local_construct_sites.put(self.allocator, fd.name, {});
-            return;
         }
     }
 }

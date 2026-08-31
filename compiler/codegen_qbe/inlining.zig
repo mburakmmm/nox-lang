@@ -10,6 +10,7 @@ const types = @import("types.zig");
 const abi = @import("abi.zig");
 const codegen = @import("codegen.zig");
 const optimizations = @import("optimizations.zig");
+const local_escape = @import("local_escape.zig");
 
 const Codegen = codegen.Codegen;
 const Value = types.Value;
@@ -41,6 +42,38 @@ pub const InlineSiteInfo = struct {
     locals: []const NamedSlot,
     /// `null` İSE callee'nin dönüş tipi `None` (sonuç YOK).
     result: ?NamedSlot,
+    /// GG.19 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 3"): callee'nin
+    /// gövdesindeki GG.17/18-kalifiye üst-düzey `var_decl`ler İçİn, BU
+    /// SPESİFİK splice sitesine ÖZGÜ, TAZE (`registerInlineSite`de
+    /// caller'ın KENDİ giriş bloğunda tahsis edilmiş) tutamaklar — bkz.
+    /// `InlineConstructSite`nin belge notu.
+    construct_sites: []const InlineConstructSite = &.{},
+};
+
+/// GG.19: `registerInlineSite`in callee gövdesinde bulduğu HER GG.17/18
+/// adayı İçİn TAZE bir tutamak (stack slotu YA DA arena tutamağı) —
+/// `genInlinedCall` bunu `genStmts(site.callee.body, ...)`DAN HEMEN ÖNCE
+/// `self.stack_construct_sites`/`self.arena_local_construct_sites`e
+/// GEÇİCİ olarak YÜKLER (AYNI AST düğümünün standalone-derlenmiş `callee`
+/// İçİNDEKİ ESKİ kaydını GEÇİCİ olarak GÖLGELEYEREK) VE splice
+/// BİTTİĞİNDE SİLER — `helper()` AYNI caller İçİnde BİRDEN FAZLA
+/// çağrılırsa HER splice KENDİ TAZE tutamağını alır (bu YÜZDEN "eski
+/// değeri geri yükle" DEĞİL "bu splice'a ÖZGÜ girdiyi SİL" — AYNI düğüm
+/// İçİn kalıcı bir "önceki" değer YOKTUR, sadece standalone `callee`
+/// derlemesinin KENDİ, İLGİSİZ kaydı VARDIR ki O da bu splice'tan
+/// TAMAMEN BAĞIMSIZDIR).
+pub const InlineConstructSite = struct {
+    node_key: usize,
+    /// `false`: boş `[]` literali (Tur 2'nin GERÇEK, break→red→fix İLE
+    /// bulunan tuzağı — Zig'in TÜM sıfır-boyutlu tahsislere AYNI kanonik
+    /// işaretçiyi vermesi YÜZÜNDEN `node_key` GÜVENİLMEZ) — `node_key`
+    /// KULLANILMAZ/tabloya HİÇ YAZILMAZ, `genEmptyListLit` `target.
+    /// growable_arena`yı (`genInlinedCall`nin shadowed `VarInfo`ye
+    /// YAZDIĞI) DOĞRUDAN okur.
+    needs_node_registration: bool,
+    var_name: []const u8,
+    candidate: local_escape.Candidate,
+    handle: []const u8,
 };
 
 /// GG.15 (bkz. nox-teknik-spesifikasyon.md §3.66): bkz. `Codegen.
@@ -76,6 +109,18 @@ const MAX_INLINE_TOTAL_STMTS: usize = 20;
 /// aşan durumlar SESSİZCE normal ARC/arena yoluna DÜŞER (davranış
 /// DEĞİŞMEZ, sadece optimizasyon uygulanmaz).
 pub const MAX_STACK_ALLOC_SIZE: usize = 4096;
+
+/// GG.19 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 3"): `MAX_STACK_
+/// ALLOC_SIZE` SADECE nesne-BAŞINA — bir fonksiyonun (VE İçİNE splice
+/// edilen HER GG.2-inline callee'nin, AYNI fiziksel çerçeveyi PAYLAŞAN)
+/// TÜM stack-promotable yerellerinin TOPLAMI da BU tavanı AŞAMAZ (32
+/// KiB — fiber'ın 256 KiB stack'inin ~%12.5'i, İÇ İÇE çağrı çerçeveleri/
+/// GG.15/16'nın KENDİ stack sitelerinin PAYINI da bırakacak ŞEKİLDE
+/// muhafazakâr). `classifyVarDecl`nin (`local_escape.zig`) `running_
+/// total` parametresi BUNU uygular — aşan bir aday (boyut/escape ŞARTLARI
+/// HÂLÂ geçse BİLE) `nox_rc_alloc`a DEĞİL, arena yoluna DÜŞER (davranış
+/// DEĞİŞMEZ — SADECE stack yerine arena — sızıntı/çökme RİSKİ YOK).
+pub const MAX_PROMOTED_FRAME_SIZE: usize = 32768;
 
 /// Bir inline-adayı gövdenin (özyinelemeli, `if`/`elif`/`else` İÇİNE de
 /// uygulanır) YALNIZCA `var_decl`/`assign`/`expr_stmt`/`if_stmt`/
@@ -119,17 +164,12 @@ pub fn isFuncInlineEligible(self: *Codegen, fd: ast.FuncDef, generic_template_na
     }
     if (self.recursive_funcs.contains(fd.name)) return false;
     if (!self.must_not_raise.contains(fd.name)) return false;
-    // GG.17 hotfix (bkz. `local_escape.zig`nin modül belge notu): bu
-    // fonksiyonun gövdesi `registerLocalStackSlots` TARAFINDAN EN AZ bir
-    // AST-düğümü kaydedecek (GG.17/GG.18'in AST-POINTER-anahtarlı, HİÇ
-    // TEMİZLENMEYEN tablolarına) — böyle bir gövde SPLICE edilirse KAYIT,
-    // KAYIT ANINDAKİ fonksiyonun (BURADA) KENDİ temp-numaralandırmasına
-    // ÖZGÜ kalır VE splice edilen bağlamda (caller) GERÇEK bir çapraz-
-    // fonksiyon bellek bozulmasına yol açar (GERÇEKTEN denenip
-    // gözlemlendi) — `lowlevel_stmt` İÇEREn bir gövdenin ZATEN AYNI
-    // gerekçeyle (kendi AST-düğüm-anahtarlı tabloları İçİn) dışlanmasıyla
-    // TUTARLI.
-    if (self.funcs_with_local_construct_sites.contains(fd.name)) return false;
+    // GG.19 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 3"): v1.42.0'ın
+    // KABA "GG.17/18 adayı İçEREN HER fonksiyonu TAMAMEN dışla" hotfix'i
+    // BURADAN KALDIRILDI — `registerInlineSite` ARTIK callee gövdesindeki
+    // HER adayı, BU SPESİFİK splice sitesine ÖZGÜ TAZE bir tutamakla
+    // (bkz. `InlineConstructSite`) YENİDEN kaydediyor, bu YÜZDEN inline+
+    // ASAP ARTIK GÜVENLE BİRLİKTE çalışabiliyor.
     if (fd.body.len > MAX_INLINE_TOP_STMTS) return false;
     const total = inlineBodyStmtCount(fd.body) orelse return false;
     if (total > MAX_INLINE_TOTAL_STMTS) return false;
@@ -187,11 +227,34 @@ pub fn registerInlineSite(self: *Codegen, call_ptr: usize, callee: ast.FuncDef) 
     const ret_info = try self.resolveType(callee.return_type);
     const result: ?NamedSlot = if (ret_info.qtype == .none) null else try self.allocInlineSlot("__inline_result", ret_info, false);
 
+    // GG.19: callee gövdesinin ÜST-DÜZEYİNDEKİ GG.17/18 adaylarını,
+    // caller'ın KENDİ (`registerLocalStackSlots`in ÇOKTAN doldurduğu)
+    // `self.promoted_stack_total` sayacını PAYLAŞARAK tara — caller'ın
+    // KENDİ yerelleri VE BURADAN splice edilecek callee'nin yerelleri
+    // SONUÇTA AYNI fiziksel QBE çerçevesine `alloc8` ekliyor, bu YÜZDEN
+    // AYNI aggregate bütçeyi PAYLAŞMALILAR.
+    var construct_sites: std.ArrayListUnmanaged(InlineConstructSite) = .empty;
+    for (callee.body, 0..) |stmt, i| {
+        if (stmt.kind != .var_decl) continue;
+        const v = stmt.kind.var_decl;
+        const candidate = try local_escape.classifyVarDecl(self, callee.body, i, v, &self.promoted_stack_total) orelse continue;
+        const handle = try local_escape.materializeConstructSite(self, candidate);
+        const is_empty_list = v.value == .list_lit and v.value.list_lit.len == 0;
+        try construct_sites.append(self.allocator, .{
+            .node_key = if (is_empty_list) undefined else local_escape.constructNodeKey(v),
+            .needs_node_registration = !is_empty_list,
+            .var_name = v.name,
+            .candidate = candidate,
+            .handle = handle,
+        });
+    }
+
     try self.inline_sites.put(self.allocator, call_ptr, .{
         .callee = callee,
         .params = try params.toOwnedSlice(self.allocator),
         .locals = try locals.toOwnedSlice(self.allocator),
         .result = result,
+        .construct_sites = try construct_sites.toOwnedSlice(self.allocator),
     });
 }
 
@@ -796,6 +859,22 @@ pub fn genInlinedCall(self: *Codegen, c: ast.Call, site: InlineSiteInfo) Codegen
     for (site.locals) |l| {
         owned_names[idx] = l.orig_name;
         saved[idx] = self.vars.get(l.orig_name);
+        // GG.19: BU isim `registerInlineSite`nin GG.17/18 taramasında BİR
+        // aday olarak KAYDEDİLDİYSE (`site.construct_sites`), shadowed
+        // `VarInfo`ye `is_stack_local`/`growable_arena`yı DOĞRUDAN YAZ —
+        // `allocSlotEx`nin normal (standalone-derleme) name-keyed tablo
+        // OKUMASINA burada HİÇ GEREK YOK (genInlinedCall ZATEN VarInfo'yu
+        // elle inşa ediyor).
+        var is_stack_local = false;
+        var growable_arena: ?[]const u8 = null;
+        for (site.construct_sites) |cs| {
+            if (!std.mem.eql(u8, cs.var_name, l.orig_name)) continue;
+            switch (cs.candidate) {
+                .fixed_stack => is_stack_local = true,
+                .growable_arena => growable_arena = cs.handle,
+            }
+            break;
+        }
         try self.vars.put(self.allocator, l.orig_name, .{
             .slot = l.slot,
             .qtype = l.info.qtype,
@@ -807,7 +886,9 @@ pub fn genInlinedCall(self: *Codegen, c: ast.Call, site: InlineSiteInfo) Codegen
             .dict_info = l.info.dict_info,
             .func_sig = l.info.func_sig,
             .is_param = false,
-            .arena = false,
+            .arena = growable_arena != null,
+            .is_stack_local = is_stack_local,
+            .growable_arena = growable_arena,
         });
         idx += 1;
     }
@@ -849,10 +930,34 @@ pub fn genInlinedCall(self: *Codegen, c: ast.Call, site: InlineSiteInfo) Codegen
     // ATLAR. Kapsamı BU tek splice'a sıkı tutmak (SAKLA/GERİ-YÜKLE), AYNI
     // `list_lit` gövdesinin BAŞKA bir splice sitesinde (bu tabloda YOK)
     // yanlışlıkla yığın-slotlu ÜRETİLMESİNİ ÖNLER.
+    // GG.19: BU splice'a ÖZGÜ, TAZE GG.17/18 tutamaklarını `genStmts`DAN
+    // HEMEN ÖNCE `stack_construct_sites`/`arena_local_construct_sites`e
+    // GEÇİCİ olarak YÜKLE — `genListLit`/`genConstructFromValues` (callee
+    // gövdesi İÇİNDEKİ AYNI AST düğümlerini BURADA YENİDEN işlerken) BU
+    // TAZE, caller'a ÖZGÜ tutamakları BULUR (standalone-derlenmiş `callee`nin
+    // KENDİ, TAMAMEN İLGİSİZ kaydını DEĞİL).
+    for (site.construct_sites) |cs| {
+        if (!cs.needs_node_registration) continue;
+        switch (cs.candidate) {
+            .fixed_stack => try self.stack_construct_sites.put(self.allocator, cs.node_key, .{ .slot = cs.handle }),
+            .growable_arena => try self.arena_local_construct_sites.put(self.allocator, cs.node_key, cs.handle),
+        }
+    }
     const saved_pending_stack_slot = self.pending_stack_slot;
     self.pending_stack_slot = self.stack_slot_call_sites.get(@intFromPtr(c.callee));
     try self.genStmts(site.callee.body, callee_ret_info.qtype);
     self.pending_stack_slot = saved_pending_stack_slot;
+    // GG.19: splice BİTTİĞİNDE bu GEÇİCİ girdileri SİL — `helper()` AYNI
+    // caller İçİnde BİRDEN FAZLA çağrılırsa HER splice KENDİ TAZE
+    // tutamağını İSTER (bkz. `InlineConstructSite`nin belge notu, "save/
+    // restore DEĞİL SİL" gerekçesi).
+    for (site.construct_sites) |cs| {
+        if (!cs.needs_node_registration) continue;
+        switch (cs.candidate) {
+            .fixed_stack => _ = self.stack_construct_sites.remove(cs.node_key),
+            .growable_arena => _ = self.arena_local_construct_sites.remove(cs.node_key),
+        }
+    }
     try self.releaseNamedLocalsExcept(owned_names, null);
     try self.qbeJmp(done_label);
     try self.qbeLabel(done_label);

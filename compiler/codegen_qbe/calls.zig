@@ -306,6 +306,12 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 // girişinde ÖNCEDEN ayrılmış bu yığın slotunu KULLANIR.
                 if (self.stack_construct_sites.get(@intFromPtr(c.callee))) |site| {
                     self.pending_stack_slot = site.slot;
+                } else if (self.arena_local_construct_sites.get(@intFromPtr(c.callee))) |handle| {
+                    // GG.19: `classifyVarDecl`nin sınıflar İçİn YENİ arena-
+                    // fallback'i (boyut/aggregate-bütçe AŞAN AMA escape-
+                    // güvenli bir sınıf örneği) — bkz. `genConstructFromValues`nin
+                    // `pending_arena_handle` tüketimi.
+                    self.pending_arena_handle = handle;
                 }
                 return self.genConstruct(name, cinfo, c.args);
             }
@@ -633,10 +639,24 @@ pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: Cla
     // slot` her zaman `self.currentArena() != null` İKEN (BU splice sitesi
     // ZATEN bir `lowlevel:` bloğu İÇİNDE) ayarlandığından, `arena != null`
     // AŞAĞIDAKİ dönüş değerinde de doğru KALIR.
+    // GG.19 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 3"): `genCall`in
+    // `.identifier` dalı, BU inşa sitesini `arena_local_construct_sites`de
+    // (`classifyVarDecl`nin sınıflar İçİn YENİ arena-fallback'i — boyut/
+    // aggregate-bütçe AŞAN AMA escape-güvenli bir sınıf örneği) BULURSA
+    // `self.pending_arena_handle`i GEÇİCİ olarak İŞARETLER — `currentArena()`
+    // (`lowlevel:` kapsamı) İLE KARIŞTIRILMAZ, TAMAMEN AYRI bir kanal.
+    var growable_arena: ?[]const u8 = null;
     const t: []const u8 = blk: {
         if (self.pending_stack_slot) |slot| {
             self.pending_stack_slot = null;
             break :blk slot;
+        }
+        if (self.pending_arena_handle) |ap| {
+            self.pending_arena_handle = null;
+            growable_arena = ap;
+            const temp = try self.newTemp();
+            try self.qbeCall(.{ .name = temp, .ty = .l }, "$nox_arena_alloc", &.{ .{ .ty = .l, .text = ap }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{cinfo.total_size}) } });
+            break :blk temp;
         }
         const temp = try self.newTemp();
         if (arena) |ap| {
@@ -715,7 +735,7 @@ pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: Cla
             // YANLIŞ olur) — `t` istisna durumunda `$ClassName_release`
             // İLE (alanları ÖNCEDEN sıfırlandığından, henüz atanmamış
             // alanlar GÜVENLE atlanır) serbest bırakılır.
-            if (arena == null) {
+            if (arena == null and growable_arena == null) {
                 const pending = try self.newTemp();
                 try self.qbeCall(.{ .name = pending, .ty = .w }, "$nox_exception_pending", &.{.{ .ty = .l, .text = RT_PARAM }});
                 const release_label = try self.newLabel("ctor_init_failed");
@@ -729,7 +749,7 @@ pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: Cla
             try self.emitExceptionCheck();
         }
     }
-    return .{ .text = t, .qtype = .l, .heap = .class, .class_name = class_name, .arena = arena != null };
+    return .{ .text = t, .qtype = .l, .heap = .class, .class_name = class_name, .arena = arena != null or growable_arena != null, .growable_arena = growable_arena };
 }
 
 /// Faz 7 (tekli kalıtım): `e` TAM OLARAK `super()` MI — checker.zig'in

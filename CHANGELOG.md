@@ -14,6 +14,28 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.43.0]
+
+### Eklendi
+- **GG.19 — aggregate stack-promotion bütçesi + inline/ASAP'in birlikte
+  çalışması**: harici bir (GPT-5.6) incelemenin bulduğu İKİ maddenin
+  düzeltmesi. (1) `MAX_STACK_ALLOC_SIZE` (4096 bayt) ARTIK SADECE nesne-
+  başına DEĞİL — YENİ `MAX_PROMOTED_FRAME_SIZE` (32 KiB) bir fonksiyonun
+  TÜM stack-promotable yerellerinin TOPLAMINI da sınırlıyor (aşan bir
+  aday arenaya DÜŞÜYOR — sınıflar İçİn de artık bir arena-fallback VAR,
+  ÖNCEDEN tek seçenek tam ARC'tı). (2) v1.42.0'ın "GG.17/18 adayı
+  İçEREN HER fonksiyonu GG.2 inline-edilebilirliğinden TAMAMEN dışla"
+  KABA hotfix'i KALDIRILDI — `registerInlineSite` ARTIK callee gövdesindeki
+  HER adayı, GG.2'nin KENDİ `self.vars` gölgeleme desenini TEKRARLAYAN
+  bir mekanizmayla (`InlineConstructSite`), BU SPESİFİK splice sitesine
+  ÖZGÜ TAZE bir tutamakla YENİDEN kaydediyor — inline + ASAP ARTIK
+  GÜVENLE BİRLİKTE çalışıyor. İncelemenin KENDİ önerdiği `point_sum(x)`
+  deseni İçİn `git worktree` İLE v1.42.0 (stack-SADECE) karşısında EK
+  bir kazanç ölçüldü (bkz. `benchmarks/RESULTS.md`). 4 YENİ golden
+  fixture (aynı-helper-birden-fazla-çağrı-sitesi, aynı-helper-iki-farklı-
+  caller, inline+stack birlikte, aggregate bütçe aşımı) + tam regresyon
+  paketi, `zig build test` 106/106 adım 882/882 test tamamen yeşil.
+
 ## [1.42.0]
 
 ### Düzeltildi

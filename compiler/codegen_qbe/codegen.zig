@@ -320,8 +320,6 @@ pub const Codegen = struct {
     pub const prepareInlineSites = inlining.prepareInlineSites;
     /// GG.17: bkz. `local_escape.zig`nin modül belge notu.
     pub const registerLocalStackSlots = local_escape.registerLocalStackSlots;
-    /// GG.17 hotfix: bkz. `local_escape.zig`nin modül belge notu.
-    pub const computeFuncsWithLocalConstructSites = local_escape.computeFuncsWithLocalConstructSites;
     pub const genInlinedCall = inlining.genInlinedCall;
     pub const scanStackConstructSites = inlining.scanStackConstructSites;
     pub const tryRegisterCrossCallStackSlots = inlining.tryRegisterCrossCallStackSlots;
@@ -1091,6 +1089,13 @@ pub const Codegen = struct {
     /// (`null`a sıfırlayıp) KULLANIR. `genListLit` BUNA İHTİYAÇ DUYMAZ
     /// (`elems.ptr`i DOĞRUDAN kendisi sorgular).
     pending_stack_slot: ?[]const u8 = null,
+    /// GG.19 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 3"): `pending_
+    /// stack_slot`in arena KARDEŞİ — `genCall`in `.identifier` dalı
+    /// `arena_local_construct_sites`de BU inşa sitesi İçin bir tutamak
+    /// BULURSA GEÇİCİ olarak İŞARETLER, `genConstructFromValues` TÜKETİP
+    /// (`null`a sıfırlayıp) `nox_arena_alloc`ı BU tutamakla ÇAĞIRIR —
+    /// `currentArena()` (`lowlevel:` kapsamı) İLE KARIŞTIRILMAZ.
+    pending_arena_handle: ?[]const u8 = null,
     /// GG.16 (bkz. nox-teknik-spesifikasyon.md §3.66): `tryRegisterCrossCallStackSlots`
     /// TARAFINDAN, BAŞARIYLA bir yığın slotuna dönüştürülen HER inşanın
     /// KENDİ (ARGÜMAN sitesindeki, ör. `make_data()`nin) `@intFromPtr(c.callee)`
@@ -1147,15 +1152,14 @@ pub const Codegen = struct {
     /// çapraz-fonksiyon çakışması BURADA YAPISAL olarak İMKANSIZDIR —
     /// bu YÜZDEN (GG.15/16 GİBİ) HİÇ TEMİZLENMEZ.
     arena_local_construct_sites: std.AutoHashMapUnmanaged(usize, []const u8) = .empty,
-    /// GG.17 hotfix (bkz. `local_escape.zig`nin modül belge notu):
-    /// `computeFuncsWithLocalConstructSites`in (whole-program, `computeInlinableFunctions`DAN
-    /// ÖNCE) doldurduğu, "bu fonksiyonun gövdesi `registerLocalStackSlots`
-    /// TARAFINDAN EN AZ bir düğüm kaydedecek" kümesi — `isFuncInlineEligible`
-    /// bunu kontrol edip fonksiyonu GG.2 inline-edilebilirliğinden DIŞLAR
-    /// (`lowlevel_stmt` İÇEREn bir gövdenin ZATEN aynı gerekçeyle
-    /// dışlanmasıyla TUTARLI — AST-düğüm-anahtarlı, hiç temizlenmeyen bir
-    /// tabloya kayıt yapan bir gövde ASLA başka bir yere splice EDİLEMEZ).
-    funcs_with_local_construct_sites: std.StringHashMapUnmanaged(void) = .empty,
+    /// GG.19 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 3"): bir
+    /// fonksiyonun (VE İçİNE splice edilen HER GG.2-inline callee'nin,
+    /// bkz. `inlining.zig`nin `registerInlineSite`ı) o ana kadar stack'e
+    /// SÖZ VERDİĞİ TOPLAM bayt sayısı — `classifyVarDecl`nin (`local_
+    /// escape.zig`) `MAX_PROMOTED_FRAME_SIZE` kontrolü İçİn. `stack_local_
+    /// names` İLE AYNI zamanlamada (HER fonksiyon-girişinde,
+    /// `registerLocalStackSlots` İçİNDE) sıfırlanır.
+    promoted_stack_total: usize = 0,
     /// Faz GG.2: `genInlinedCall` bir splice ÜRETİRKEN AYARLANIR (splice
     /// SONRASI eski değerine GERİ YÜKLENİR) — `genStmts`in `.return_stmt`
     /// dalı bu DOLUYSA gerçek bir `ret` YERİNE sonuç slotuna YAZIP `jmp`
@@ -1387,11 +1391,6 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     // için — bkz. `computeMustNotRaise`in belge notu. `self.classes`/
     // `self.functions` (yukarıdaki register* döngüleri) DOLU olmalı.
     try gen.computeMustNotRaise(module, extra_functions, extra_classes);
-
-    // GG.17 hotfix (bkz. `local_escape.zig`nin modül belge notu):
-    // `computeInlinableFunctions`DAN ÖNCE — `isFuncInlineEligible`nin
-    // `funcs_with_local_construct_sites`e İHTİYACI VAR.
-    try gen.computeFuncsWithLocalConstructSites(module, extra_functions);
 
     // Faz GG.2 (bkz. nox-teknik-spesifikasyon.md §3.67): `computeMustNotRaise`DEN
     // SONRA (bağımlılık — bkz. `isFuncInlineEligible`) VE HERHANGİ bir gövde

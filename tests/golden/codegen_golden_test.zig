@@ -2714,17 +2714,19 @@ test "codegen(çalıştır): GG.17/18 — boyut tavanını aşan bir liste stack
     );
 }
 
-// GG.17 hotfix (bkz. plan dosyası "ASAP güçlendirmesi — Tur 2"): bir
-// GG.17-kalifiye YEREL İÇEREN VE AYRICA GG.2 inline-edilebilirlik
-// şartlarını KARŞILAYAN bir fonksiyon (`helper`), GERÇEK bir çapraz-
-// fonksiyon temp-adı çakışmasına (`stack_construct_sites`'in AST-düğüm-
-// anahtarlı, hiç temizlenmeyen kaydı, `caller`e SPLICE edilince ESKİ bir
-// temp adı BULUP KULLANIYORDU) yol açıyordu — GERÇEKTEN derlenip
-// ÇALIŞTIRILARAK bulundu (SIGBUS riski, bu spesifik test şans eseri
-// doğru sonuç veriyordu ama farklı bir slot düzeninde ÇÖKEBİLİRDİ).
-// Düzeltme SONRASI `helper()` ARTIK inline edilmiyor (`isFuncInlineEligible`
-// dışlıyor) — `.ssa`da GERÇEK bir `call $helper` görünmesi BEKLENİR.
-test "codegen(çalıştır): GG.17 hotfix — yerel-inşa içeren fonksiyon artık inline edilmiyor, çapraz-fonksiyon çakışması yok" {
+// GG.17 hotfix (v1.42.0) + GG.19 (bkz. plan dosyası "ASAP güçlendirmesi
+// — Tur 3"): bir GG.17-kalifiye YEREL İÇEREN VE AYRICA GG.2 inline-
+// edilebilirlik şartlarını KARŞILAYAN bir fonksiyon (`helper`), GERÇEK
+// bir çapraz-fonksiyon temp-adı çakışmasına (`stack_construct_sites`'in
+// AST-düğüm-anahtarlı, hiç temizlenmeyen kaydı, `caller`e SPLICE
+// edilince ESKİ bir temp adı BULUP KULLANIYORDU) yol açıyordu —
+// GERÇEKTEN derlenip ÇALIŞTIRILARAK bulundu (SIGBUS riski). v1.42.0'ın
+// KABA düzeltmesi `helper()`i inline-edilebilirlikten TAMAMEN
+// dışlıyordu; GG.19 BUNU `registerInlineSite`in HER splice sitesi İçİn
+// TAZE, çakışmayan bir tutamak ÜRETMESİYLE değiştirdi — `helper()` ARTIK
+// GÜVENLE inline EDİLİYOR (`.ssa`da GERÇEK bir `call $helper` YOK,
+// splice edilmiş bir gövde VAR), çıktı DEĞİŞMEDEN `13`.
+test "codegen(çalıştır): GG.17 hotfix + GG.19 — yerel-inşa içeren fonksiyon artık GÜVENLE inline ediliyor" {
     try expectGolden(
         @embedFile("codegen_cases/gg17_hotfix_no_inline_local_construct.nox"),
         @embedFile("codegen_cases/gg17_hotfix_no_inline_local_construct.expected"),
@@ -2787,5 +2789,49 @@ test "codegen(çalıştır): GG.18 — heap-yönetimli eleman tipi (list[str]) a
     try expectGolden(
         @embedFile("codegen_cases/growable_arena_heap_element_excluded.nox"),
         @embedFile("codegen_cases/growable_arena_heap_element_excluded.expected"),
+    );
+}
+
+// GG.19 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 3"): incelemenin
+// KENDİ önerdiği `point_sum(x)` deseni — v1.42.0'da (v1.41.0'ın hotfix'i
+// SAYESİNDE) GÜVENLİ ama inline-EDİLEMEZDİ; GG.19 SONRASI ARTIK HEM
+// stack-promotion HEM inlining BİRLİKTE çalışıyor (`.ssa`da GERÇEK bir
+// `call $point_sum` YOK).
+test "codegen(çalıştır): GG.19 — inline + stack-promotion BİRLİKTE çalışır" {
+    try expectGolden(
+        @embedFile("codegen_cases/gg19_inline_and_stack_together.nox"),
+        @embedFile("codegen_cases/gg19_inline_and_stack_together.expected"),
+    );
+}
+
+// GG.19: AYNI GG.17-kalifiye `helper()` fonksiyonu AYNI `caller` İçİnde
+// 3 KEZ çağrılıyor — HER splice'ın KENDİ TAZE, ÇAKIŞMAYAN tutamağını
+// aldığını (`.ssa`da 3 AYRI `alloc8`) kanıtlar.
+test "codegen(çalıştır): GG.19 — aynı helper'ın birden fazla çağrı sitesi çakışmadan inline edilir" {
+    try expectGolden(
+        @embedFile("codegen_cases/gg19_same_helper_multiple_callsites.nox"),
+        @embedFile("codegen_cases/gg19_same_helper_multiple_callsites.expected"),
+    );
+}
+
+// GG.19: AYNI `helper()` HEM `caller_a` HEM `caller_b`DEN (HEM DE
+// STANDALONE) çağrılıyor — HER splice VE `helper`'IN KENDİ standalone
+// derlemesinin (üçü de AYNI AST düğümlerini kullanıyor) BİRBİRİNE
+// ÇAKIŞMADIĞINI kanıtlar.
+test "codegen(çalıştır): GG.19 — aynı helper'ın iki farklı caller'dan çağrılması çakışmadan çalışır" {
+    try expectGolden(
+        @embedFile("codegen_cases/gg19_same_helper_two_callers.nox"),
+        @embedFile("codegen_cases/gg19_same_helper_two_callers.expected"),
+    );
+}
+
+// GG.19: 10 ayrı, KENDİ BAŞINA `MAX_STACK_ALLOC_SIZE` (4096 bayt)
+// İçİnde kalan (4008 bayt, 500 int alanlı) sınıf örneği — TOPLAMDA
+// `MAX_PROMOTED_FRAME_SIZE`i (32 KiB) AŞIYOR. İLK 8'i (8×4008=32064 ≤
+// 32768) stack'e, KALAN 2'si (9×4008=36072 > 32768) arenaya DÜŞMELİ.
+test "codegen(çalıştır): GG.19 — aggregate stack bütçesini aşan sınıf örnekleri arenaya düşer" {
+    try expectGolden(
+        @embedFile("codegen_cases/gg19_aggregate_stack_budget.nox"),
+        @embedFile("codegen_cases/gg19_aggregate_stack_budget.expected"),
     );
 }

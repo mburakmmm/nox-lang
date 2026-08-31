@@ -723,6 +723,70 @@ export function $JsonValue_gc_free(l %rt, l %p) {
     call $nox_rc_free_payload(l %rt, l %p, l 64)
     ret
 }
+export function $Point___init__(l %rt, l %p_self, l %p_x, l %p_y) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    %t2 =l alloc8 8
+    storel %p_self, %t0
+    storel %p_x, %t1
+    storel %p_y, %t2
+    %t3 =l loadl %t0
+    %t4 =l loadl %t1
+    %t5 =l add %t3, 8
+    storel %t4, %t5
+    %t6 =l loadl %t0
+    %t7 =l loadl %t2
+    %t8 =l add %t6, 16
+    storel %t7, %t8
+@fn_end0
+    ret
+}
+export function $Point_release(l %rt, l %p) {
+@start
+    %t0 =l sub %p, 8
+    %t1 =l loadl %t0
+    %t2 =l sub %t1, 1
+    storel %t2, %t0
+    %t3 =w cslel %t2, 0
+    jnz %t3, @release_free0, @release_done1
+@release_free0
+    call $nox_rc_free_payload(l %rt, l %p, l 24)
+    jmp @release_done1
+@release_done1
+    ret
+}
+export function w $Point_eq(l %rt, l %a, l %b) {
+@start
+    %t0 =l add %a, 8
+    %t1 =l add %b, 8
+    %t2 =l loadl %t0
+    %t3 =l loadl %t1
+    %t4 =w ceql %t2, %t3
+    jnz %t4, @eqcmp_cont1, @classeq_mismatch0
+@eqcmp_cont1
+    %t5 =l add %a, 16
+    %t6 =l add %b, 16
+    %t7 =l loadl %t5
+    %t8 =l loadl %t6
+    %t9 =w ceql %t7, %t8
+    jnz %t9, @eqcmp_cont2, @classeq_mismatch0
+@eqcmp_cont2
+    ret 1
+@classeq_mismatch0
+    ret 0
+}
+export function l $Point_trace(l %rt, l %p) {
+@start
+    %t0 =l call $nox_alloc(l %rt, l 8)
+    storel 0, %t0
+    ret %t0
+}
+export function $Point_gc_free(l %rt, l %p) {
+@start
+    call $nox_rc_free_payload(l %rt, l %p, l 24)
+    ret
+}
 export function l $nox_trace_dispatch(l %rt, l %tag, l %p) {
 @start
     %t0 =w ceql %tag, 1
@@ -731,33 +795,39 @@ export function l $nox_trace_dispatch(l %rt, l %tag, l %p) {
     %t1 =l call $Exception_trace(l %rt, l %p)
     ret %t1
 @trace_next1
-    %t2 =w ceql %tag, 5
+    %t2 =w ceql %tag, 6
     jnz %t2, @trace_case2, @trace_next3
 @trace_case2
     %t3 =l call $ValueError_trace(l %rt, l %p)
     ret %t3
 @trace_next3
-    %t4 =w ceql %tag, 4
+    %t4 =w ceql %tag, 5
     jnz %t4, @trace_case4, @trace_next5
 @trace_case4
     %t5 =l call $IndexError_trace(l %rt, l %p)
     ret %t5
 @trace_next5
-    %t6 =w ceql %tag, 3
+    %t6 =w ceql %tag, 4
     jnz %t6, @trace_case6, @trace_next7
 @trace_case6
     %t7 =l call $KeyError_trace(l %rt, l %p)
     ret %t7
 @trace_next7
-    %t8 =w ceql %tag, 2
+    %t8 =w ceql %tag, 3
     jnz %t8, @trace_case8, @trace_next9
 @trace_case8
     %t9 =l call $JsonValue_trace(l %rt, l %p)
     ret %t9
 @trace_next9
-    %t10 =l call $nox_alloc(l %rt, l 8)
-    storel 0, %t10
-    ret %t10
+    %t10 =w ceql %tag, 2
+    jnz %t10, @trace_case10, @trace_next11
+@trace_case10
+    %t11 =l call $Point_trace(l %rt, l %p)
+    ret %t11
+@trace_next11
+    %t12 =l call $nox_alloc(l %rt, l 8)
+    storel 0, %t12
+    ret %t12
 }
 export function $nox_gc_free_dispatch(l %rt, l %tag, l %p) {
 @start
@@ -767,30 +837,36 @@ export function $nox_gc_free_dispatch(l %rt, l %tag, l %p) {
     call $Exception_gc_free(l %rt, l %p)
     ret
 @gc_free_next1
-    %t1 =w ceql %tag, 5
+    %t1 =w ceql %tag, 6
     jnz %t1, @gc_free_case2, @gc_free_next3
 @gc_free_case2
     call $ValueError_gc_free(l %rt, l %p)
     ret
 @gc_free_next3
-    %t2 =w ceql %tag, 4
+    %t2 =w ceql %tag, 5
     jnz %t2, @gc_free_case4, @gc_free_next5
 @gc_free_case4
     call $IndexError_gc_free(l %rt, l %p)
     ret
 @gc_free_next5
-    %t3 =w ceql %tag, 3
+    %t3 =w ceql %tag, 4
     jnz %t3, @gc_free_case6, @gc_free_next7
 @gc_free_case6
     call $KeyError_gc_free(l %rt, l %p)
     ret
 @gc_free_next7
-    %t4 =w ceql %tag, 2
+    %t4 =w ceql %tag, 3
     jnz %t4, @gc_free_case8, @gc_free_next9
 @gc_free_case8
     call $JsonValue_gc_free(l %rt, l %p)
     ret
 @gc_free_next9
+    %t5 =w ceql %tag, 2
+    jnz %t5, @gc_free_case10, @gc_free_next11
+@gc_free_case10
+    call $Point_gc_free(l %rt, l %p)
+    ret
+@gc_free_next11
     ret
 }
 export function $nox_class_release_dispatch(l %rt, l %tag, l %p) {
@@ -801,30 +877,36 @@ export function $nox_class_release_dispatch(l %rt, l %tag, l %p) {
     call $Exception_release(l %rt, l %p)
     ret
 @class_release_next1
-    %t1 =w ceql %tag, 5
+    %t1 =w ceql %tag, 6
     jnz %t1, @class_release_case2, @class_release_next3
 @class_release_case2
     call $ValueError_release(l %rt, l %p)
     ret
 @class_release_next3
-    %t2 =w ceql %tag, 4
+    %t2 =w ceql %tag, 5
     jnz %t2, @class_release_case4, @class_release_next5
 @class_release_case4
     call $IndexError_release(l %rt, l %p)
     ret
 @class_release_next5
-    %t3 =w ceql %tag, 3
+    %t3 =w ceql %tag, 4
     jnz %t3, @class_release_case6, @class_release_next7
 @class_release_case6
     call $KeyError_release(l %rt, l %p)
     ret
 @class_release_next7
-    %t4 =w ceql %tag, 2
+    %t4 =w ceql %tag, 3
     jnz %t4, @class_release_case8, @class_release_next9
 @class_release_case8
     call $JsonValue_release(l %rt, l %p)
     ret
 @class_release_next9
+    %t5 =w ceql %tag, 2
+    jnz %t5, @class_release_case10, @class_release_next11
+@class_release_case10
+    call $Point_release(l %rt, l %p)
+    ret
+@class_release_next11
     ret
 }
 data $__nox_classname_unknown = { b "bilinmeyen sinif", b 0 }
@@ -833,6 +915,7 @@ data $__nox_classname_ValueError = { b "ValueError", b 0 }
 data $__nox_classname_IndexError = { b "IndexError", b 0 }
 data $__nox_classname_KeyError = { b "KeyError", b 0 }
 data $__nox_classname_JsonValue = { b "JsonValue", b 0 }
+data $__nox_classname_Point = { b "Point", b 0 }
 export function l $nox_class_name_dispatch(l %rt, l %tag, l %p) {
 @start
     %t0 =w ceql %tag, 1
@@ -840,26 +923,31 @@ export function l $nox_class_name_dispatch(l %rt, l %tag, l %p) {
 @class_name_case0
     ret $__nox_classname_Exception
 @class_name_next1
-    %t1 =w ceql %tag, 5
+    %t1 =w ceql %tag, 6
     jnz %t1, @class_name_case2, @class_name_next3
 @class_name_case2
     ret $__nox_classname_ValueError
 @class_name_next3
-    %t2 =w ceql %tag, 4
+    %t2 =w ceql %tag, 5
     jnz %t2, @class_name_case4, @class_name_next5
 @class_name_case4
     ret $__nox_classname_IndexError
 @class_name_next5
-    %t3 =w ceql %tag, 3
+    %t3 =w ceql %tag, 4
     jnz %t3, @class_name_case6, @class_name_next7
 @class_name_case6
     ret $__nox_classname_KeyError
 @class_name_next7
-    %t4 =w ceql %tag, 2
+    %t4 =w ceql %tag, 3
     jnz %t4, @class_name_case8, @class_name_next9
 @class_name_case8
     ret $__nox_classname_JsonValue
 @class_name_next9
+    %t5 =w ceql %tag, 2
+    jnz %t5, @class_name_case10, @class_name_next11
+@class_name_case10
+    ret $__nox_classname_Point
+@class_name_next11
     ret $__nox_classname_unknown
 }
 export function l $nox_json_make_json_value(l %rt, l %p_kind, w %p_b, d %p_n, l %p_s, l %p_arr, l %p_keys, l %p_vals) {
@@ -886,7 +974,7 @@ export function l $nox_json_make_json_value(l %rt, l %p_kind, w %p_b, d %p_n, l 
     %t12 =l loadl %t5
     %t13 =l loadl %t6
     %t14 =l call $nox_rc_alloc(l %rt, l 64)
-    storel 2, %t14
+    storel 3, %t14
     %t15 =l add %t14, 8
     storel 0, %t15
     %t16 =l add %t14, 16
@@ -1012,57 +1100,111 @@ export function d $sum_float(l %rt, l %p_xs) {
 @fn_end4
     ret d_0
 }
-export function l $helper(l %rt) {
+export function l $helper(l %rt, l %p_x) {
 @start
-    %t0 =l alloc8 40
+    %t0 =l alloc8 24
     %t1 =l alloc8 8
-    storel 0, %t1
-    storel 3, %t0
-    %t2 =l add %t0, 8
-    storel 3, %t2
-    %t3 =l add %t0, 16
-    storel 1, %t3
-    %t4 =l add %t0, 24
-    storel 2, %t4
-    %t5 =l add %t0, 32
-    storel 3, %t5
-    storel %t0, %t1
-    %t6 =l loadl %t1
-    %t7 =l loadl %t6
-    ret %t7
+    %t2 =l alloc8 8
+    storel 0, %t2
+    storel %p_x, %t1
+    %t3 =l loadl %t1
+    %t4 =l loadl %t1
+    %t5 =l add %t4, 1
+    storel 2, %t0
+    %t6 =l add %t0, 8
+    storel 0, %t6
+    %t7 =l add %t0, 16
+    storel 0, %t7
+    call $Point___init__(l %rt, l %t0, l %t3, l %t5)
+    storel %t0, %t2
+    %t8 =l loadl %t2
+    %t9 =l add %t8, 8
+    %t10 =l loadl %t9
+    %t11 =l loadl %t2
+    %t12 =l add %t11, 16
+    %t13 =l loadl %t12
+    %t14 =l add %t10, %t13
+    ret %t14
 @after_return0
 @fn_end1
     ret 0
 }
-export function l $caller(l %rt, l %p_n) {
+export function l $caller_a(l %rt, l %p_n) {
 @start
     %t0 =l alloc8 8
     %t1 =l alloc8 8
-    storel 0, %t1
     %t2 =l alloc8 8
-    %t3 =l alloc8 40
+    storel 0, %t2
+    %t3 =l alloc8 8
+    %t4 =l alloc8 24
     storel %p_n, %t0
-    storel 3, %t3
-    %t4 =l add %t3, 8
-    storel 3, %t4
-    %t5 =l add %t3, 16
-    storel 1, %t5
-    %t6 =l add %t3, 24
-    storel 2, %t6
-    %t7 =l add %t3, 32
-    storel 3, %t7
-    storel %t3, %t1
-    %t8 =l loadl %t1
-    %t9 =l loadl %t8
-    storel %t9, %t2
+    %t5 =l loadl %t0
+    storel %t5, %t1
+    %t6 =l loadl %t1
+    %t7 =l loadl %t1
+    %t8 =l add %t7, 1
+    storel 2, %t4
+    %t9 =l add %t4, 8
+    storel 0, %t9
+    %t10 =l add %t4, 16
+    storel 0, %t10
+    call $Point___init__(l %rt, l %t4, l %t6, l %t8)
+    storel %t4, %t2
+    %t11 =l loadl %t2
+    %t12 =l add %t11, 8
+    %t13 =l loadl %t12
+    %t14 =l loadl %t2
+    %t15 =l add %t14, 16
+    %t16 =l loadl %t15
+    %t17 =l add %t13, %t16
+    storel %t17, %t3
     jmp @inline_done0
 @after_inline_return1
     jmp @inline_done0
 @inline_done0
-    %t10 =l loadl %t2
-    %t11 =l loadl %t0
-    %t12 =l add %t10, %t11
-    ret %t12
+    %t18 =l loadl %t3
+    %t19 =l mul %t18, 2
+    ret %t19
+@after_return2
+@fn_end3
+    ret 0
+}
+export function l $caller_b(l %rt, l %p_n) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    %t2 =l alloc8 8
+    storel 0, %t2
+    %t3 =l alloc8 8
+    %t4 =l alloc8 24
+    storel %p_n, %t0
+    %t5 =l loadl %t0
+    storel %t5, %t1
+    %t6 =l loadl %t1
+    %t7 =l loadl %t1
+    %t8 =l add %t7, 1
+    storel 2, %t4
+    %t9 =l add %t4, 8
+    storel 0, %t9
+    %t10 =l add %t4, 16
+    storel 0, %t10
+    call $Point___init__(l %rt, l %t4, l %t6, l %t8)
+    storel %t4, %t2
+    %t11 =l loadl %t2
+    %t12 =l add %t11, 8
+    %t13 =l loadl %t12
+    %t14 =l loadl %t2
+    %t15 =l add %t14, 16
+    %t16 =l loadl %t15
+    %t17 =l add %t13, %t16
+    storel %t17, %t3
+    jmp @inline_done0
+@after_inline_return1
+    jmp @inline_done0
+@inline_done0
+    %t18 =l loadl %t3
+    %t19 =l add %t18, 100
+    ret %t19
 @after_return2
 @fn_end3
     ret 0
@@ -1073,19 +1215,62 @@ export function w $main(w %argc, l %argv) {
     call $nox_os_init(w %argc, l %argv)
     %t0 =l alloc8 8
     %t1 =l alloc8 8
-    storel 10, %t0
-    %t2 =l call $helper(l %rt)
-    %t3 =l loadl %t0
-    %t4 =l add %t2, %t3
-    storel %t4, %t1
+    %t2 =l alloc8 8
+    %t3 =l alloc8 8
+    %t4 =l alloc8 8
+    %t5 =l alloc8 8
+    storel 0, %t5
+    %t6 =l alloc8 8
+    %t7 =l alloc8 24
+    storel 5, %t0
+    %t8 =l loadl %t0
+    %t9 =l call $helper(l %rt, l %t8)
+    %t10 =l mul %t9, 2
+    storel %t10, %t1
     jmp @inline_done0
 @after_inline_return1
     jmp @inline_done0
 @inline_done0
-    %t5 =l loadl %t1
-    call $printf(l $fmt_int, ..., l %t5)
+    %t11 =l loadl %t1
+    call $printf(l $fmt_int, ..., l %t11)
+    storel 5, %t2
+    %t12 =l loadl %t2
+    %t13 =l call $helper(l %rt, l %t12)
+    %t14 =l add %t13, 100
+    storel %t14, %t3
+    jmp @inline_done2
+@after_inline_return3
+    jmp @inline_done2
+@inline_done2
+    %t15 =l loadl %t3
+    call $printf(l $fmt_int, ..., l %t15)
+    storel 5, %t4
+    %t16 =l loadl %t4
+    %t17 =l loadl %t4
+    %t18 =l add %t17, 1
+    storel 2, %t7
+    %t19 =l add %t7, 8
+    storel 0, %t19
+    %t20 =l add %t7, 16
+    storel 0, %t20
+    call $Point___init__(l %rt, l %t7, l %t16, l %t18)
+    storel %t7, %t5
+    %t21 =l loadl %t5
+    %t22 =l add %t21, 8
+    %t23 =l loadl %t22
+    %t24 =l loadl %t5
+    %t25 =l add %t24, 16
+    %t26 =l loadl %t25
+    %t27 =l add %t23, %t26
+    storel %t27, %t6
+    jmp @inline_done4
+@after_inline_return5
+    jmp @inline_done4
+@inline_done4
+    %t28 =l loadl %t6
+    call $printf(l $fmt_int, ..., l %t28)
     call $nox_runtime_deinit(l %rt)
-@fn_end2
+@fn_end6
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

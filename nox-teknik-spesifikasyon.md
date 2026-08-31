@@ -16472,6 +16472,79 @@ RESULTS.md`).
 
 ---
 
+## 3.109 GG.19 — aggregate stack bütçesi + inline/ASAP'in birlikte çalışması (ASAP güçlendirmesi, Tur 3) (v1.43.0)
+
+v1.42.0 SONRASI kullanıcı harici bir (GPT-5.6) incelemeyi paylaştı.
+İncelemenin ÇOĞU teknik gözlemi DOĞRU/isabetliydi — kendi doğrulamamla
+(`git worktree` İLE İKİ AYRI ölçüm) TEYİT edildi: GG.17'nin KENDİ Tur-1
+benchmark'ı v1.42.0'ın hotfix'inden HİÇ ETKİLENMEMİŞTİ (`helper()`'ın
+KENDİ `for` döngüsü ZATEN inline-edilebilirliği bağımsız olarak
+dışladığından); AMA incelemenin KENDİ önerdiği `point_sum(x)` (döngüsüz,
+GERÇEKTEN inline-edilebilir küçük bir fonksiyon) ÖRNEĞİ v1.41.0'da
+(hotfix'ten ÖNCE) GERÇEK bir "Invalid free" ÇÖKMESİYLE sonuçlanıyordu —
+incelemenin "kaybedilen kazanç" endişesi YERSİZDİ, orada ZATEN gizli bir
+double-free VARDI. Kullanıcı incelemenin listesinden İKİ maddeyi seçti.
+
+**Madde 1 — aggregate stack-promotion bütçesi**: `MAX_STACK_ALLOC_SIZE`
+(4096 bayt) SADECE nesne-BAŞINA kontrol ediliyordu — bir fonksiyonun
+TOPLAM promotable yerel BOYUTU HİÇ sınırlanmıyordu (teorik: 70+ ayrı
+~4KB'lık yerel İçEREN bir fonksiyon fiber'ın 256 KiB stack'ini AŞABİLİRDİ).
+YENİ `MAX_PROMOTED_FRAME_SIZE = 32768` (32 KiB) — `classifyVarDecl`nin
+YENİ `running_total: *usize` parametresiyle uygulanır; bir caller'ın
+KENDİ yerelleri VE İçİNE splice edilen HER GG.2-inline callee'nin
+yerelleri (SONUÇTA AYNI fiziksel QBE çerçevesine `alloc8` ekledikleri
+İçİn) AYNI sayacı PAYLAŞIR. AŞAN bir aday (boyut/escape ŞARTLARI HÂLÂ
+geçse BİLE) `nox_rc_alloc`a DEĞİL, arena yoluna DÜŞER. SINIFLAR İçİn
+de (ÖNCEDEN SADECE `fixed_stack`/tam-ARC arasında seçim yapabiliyordu)
+YENİ bir arena-fallback EKLENDİ — `classifyVarDecl`nin `.call` dalı,
+`classSafeForStackAlloc` geçip boyut/bütçe AŞAN bir sınıfı ARTIK
+`.growable_arena` OLARAK sınıflandırıyor; `genConstructFromValues`
+(calls.zig) YENİ bir `pending_arena_handle` kanalıyla (`pending_stack_
+slot`nin arena kardeşi) BUNU tüketiyor. **Doğrulandı**: 500 int alanlı
+(4008 bayt, tavan İçİnde) bir sınıftan 10 örnek — İLK 8'i (8×4008=32064
+≤ 32768) stack'e, KALAN 2'si (9×4008=36072 > 32768) arenaya DÜŞTÜĞÜ
+`.ssa` üzerinden KANITLANDI.
+
+**Madde 2 — inline + ASAP'in birlikte çalışması**: v1.42.0'ın hotfix'i
+(bir GG.17/18 adayı İçEREN HER fonksiyonu GG.2 inline-edilebilirliğinden
+TAMAMEN dışlamak) GÜVENLİ ama KABAYDI. Derin bir Explore araştırması
+(`registerInlineSite`/`genInlinedCall`nin TAM mekaniği), BUNUN GG.2'nin
+KENDİ ZATEN kanıtlanmış "callee'nin parametre+yerellerini `self.vars`a
+GEÇİCİ olarak GÖLGELE" desenine (`genInlinedCall`nin `self.vars`
+gölgeleme/geri-yükleme bloğu) BİREBİR AYNI ilkeyle ÇÖZÜLEBİLECEĞİNİ
+DOĞRULADI. **Uygulama**: YENİ `InlineConstructSite` (`node_key`/`var_
+name`/`candidate`/`handle`) — `registerInlineSite`, callee gövdesinin
+ÜST-DÜZEYİNİ (Madde 1'in PAYLAŞILAN `running_total` sayacıyla) TARAYIP
+HER aday İçİn caller'ın KENDİ giriş bloğunda TAZE bir tutamak
+(`materializeConstructSite` — `registerLocalStackSlots` İLE PAYLAŞILAN
+TEK emisyon kaynağı) ayırır. `genInlinedCall`, `genStmts(site.callee.
+body, ...)`DAN HEMEN ÖNCE bu TAZE tutamakları `stack_construct_sites`/
+`arena_local_construct_sites`e GEÇİCİ olarak YÜKLER VE splice BİTTİĞİNDE
+SİLER (SAVE/RESTORE DEĞİL — `helper()` AYNI caller İçİnde BİRDEN FAZLA
+çağrılırsa HER splice KENDİ TAZE tutamağını İSTER). Shadowed `VarInfo`ye
+`is_stack_local`/`growable_arena` DOĞRUDAN yazılır (name-keyed tablolara
+gerek YOK, `genInlinedCall` ZATEN `VarInfo`yu elle İNŞA ediyor).
+`isFuncInlineEligible`nin KABA dışlaması VE `computeFuncsWithLocalConstructSites`/
+`funcs_with_local_construct_sites` (ARTIK GEREKSİZ) TAMAMEN KALDIRILDI.
+**Doğrulandı**: AYNI `helper()` AYNI caller İçİnde 3 KEZ çağrıldığında
+HER splice'ın KENDİ, ÇAKIŞMAYAN `alloc8`'ini aldığı; AYNI `helper()`
+HEM İKİ FARKLI caller'DAN HEM DE standalone çağrıldığında HİÇBİRİNİN
+BİRBİRİNE KARIŞMADIĞI; `point_sum(x)` ÖRNEĞİNİN ARTIK HEM inline
+edildiği HEM DOĞRU sonuç verdiği (ÖNCEDEN, hotfix'ten ÖNCE, GERÇEK bir
+"Invalid free" İLE ÇÖKÜYORDU) — HEPSİ doğrudan derlenip ÇALIŞTIRILARAK
+kanıtlandı.
+
+**Ölçülen kazanç**: `git worktree` İLE v1.42.0 (stack-SADECE, inline
+YOK) karşısında `point_sum(x)` benchmark'ı (200M çağrı): 0.306s → 0.251s,
+**~%18 EK kazanç** (SADECE stack-promotion'ın ÜZERİNE inline'ın da
+eklenmesinden — çağrı overhead'inin TAMAMEN ORTADAN KALKMASI).
+
+**Doğrulama**: 4 YENİ golden fixture + tam regresyon paketi (`zig build
+test`, 106/106 adım 882/882 test), `NOX_STRESS_ROUNDS=2000 zig build
+stress-test` (ReleaseFast) TEMİZ.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.
