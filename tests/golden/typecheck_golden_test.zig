@@ -765,10 +765,31 @@ test "golden(spawn-shared-mutation): İKİ seviye iç içe sınıf zinciri (`o.i
     );
 }
 
-test "golden(spawn-shared-mutation): bir HELPER FONKSİYONU üzerinden mutasyon HÂLÂ kapsam DIŞI — çağrı-grafiği analizi YOK" {
+// GG.20 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 4"): `computeMutatesGraph`
+// artık BİR yardımcı fonksiyon ÇAĞRISI üzerinden mutasyonu da (worklist/
+// ters-grafik yayılımıyla, ARBİTRER derinlikte) yakalıyor — YUKARIDAKİ
+// eski "hâlâ kapsam dışı" testinin SENARYOSU AYNI kaldı, AMA davranışı
+// TERSİNE DÖNDÜ (dosya YENİDEN ADLANDIRILDI: err_spawn_shared_transitive_
+// mutation_now_caught). Metod çağrıları/dolaylı çağrılar HÂLÂ kapsam
+// DIŞI (bkz. plan).
+test "golden(spawn-shared-mutation): BİR yardımcı fonksiyon çağrısı üzerinden mutasyon ARTIK yakalanır (v1.44.0, GG.20)" {
     try expectGoldenLlvm(
-        @embedFile("typecheck_cases/ok_spawn_shared_via_helper_call_not_caught.nox"),
-        @embedFile("typecheck_cases/ok_spawn_shared_via_helper_call_not_caught.expected"),
+        @embedFile("typecheck_cases/err_spawn_shared_transitive_mutation_now_caught.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_transitive_mutation_now_caught.expected"),
+    );
+}
+
+test "golden(spawn-shared-mutation): İKİ SEVİYELİ yardımcı fonksiyon zinciri üzerinden mutasyon da yakalanır (transitif kanıt)" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_two_level_transitive_mutation.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_two_level_transitive_mutation.expected"),
+    );
+}
+
+test "golden(spawn-shared-mutation): SALT-OKUNUR bir yardımcı (len() ÇAĞIRAN) hâlâ yakalanmaz — regresyon-yok kanıtı" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/ok_spawn_shared_read_only_helper_not_caught.nox"),
+        @embedFile("typecheck_cases/ok_spawn_shared_read_only_helper_not_caught.expected"),
     );
 }
 

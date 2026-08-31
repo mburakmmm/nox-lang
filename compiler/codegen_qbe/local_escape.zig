@@ -119,20 +119,20 @@ pub fn classifyVarDecl(self: *Codegen, body: []const ast.Stmt, i: usize, v: ast.
         .list_lit => |elems| {
             if (simpleLiteralListQtype(elems)) |qt| {
                 const size = LIST_HEADER_SIZE + qbeSizeOf(qt) * elems.len;
-                if (size <= MAX_STACK_ALLOC_SIZE and running_total.* + size <= MAX_PROMOTED_FRAME_SIZE and localNeverEscapes(body, v.name, i + 1)) {
+                if (size <= MAX_STACK_ALLOC_SIZE and running_total.* + size <= MAX_PROMOTED_FRAME_SIZE and localNeverEscapes(self, body, v.name, i + 1)) {
                     running_total.* += size;
                     return .{ .fixed_stack = size };
                 }
             }
             if (!try elemTypeIsScalar(self, v.type_expr)) return null;
-            if (!localNeverEscapesGrowable(body, v.name, i + 1)) return null;
+            if (!localNeverEscapesGrowable(self, body, v.name, i + 1)) return null;
             return .growable_arena;
         },
         .call => |c| {
             if (c.callee.* != .identifier) return null;
             const cinfo = self.classes.get(c.callee.identifier) orelse return null;
             if (!classSafeForStackAlloc(&cinfo)) return null;
-            if (!localNeverEscapes(body, v.name, i + 1)) return null;
+            if (!localNeverEscapes(self, body, v.name, i + 1)) return null;
             if (cinfo.total_size <= MAX_STACK_ALLOC_SIZE and running_total.* + cinfo.total_size <= MAX_PROMOTED_FRAME_SIZE) {
                 running_total.* += cinfo.total_size;
                 return .{ .fixed_stack = cinfo.total_size };
@@ -163,55 +163,55 @@ fn elemTypeIsScalar(self: *Codegen, type_expr: ast.TypeExpr) CodegenError!bool {
 
 /// `stmtsSafeForLocal`in TEK giriş noktası — `body[from_index..]`i
 /// (bildirimden SONRAKİ TÜM deyimler, AYNI üst-düzey gövdede) tarar.
-fn localNeverEscapes(body: []const ast.Stmt, name: []const u8, from_index: usize) bool {
-    return stmtsSafeForLocal(body[from_index..], name);
+fn localNeverEscapes(self: *const Codegen, body: []const ast.Stmt, name: []const u8, from_index: usize) bool {
+    return stmtsSafeForLocal(self, body[from_index..], name);
 }
 
 /// GG.18: `localNeverEscapes`in AYNISI, AMA `stmtsSafeForGrowableLocal`ya
 /// (aşağıda, `.append()`e İZİN VEREN) delege eder.
-fn localNeverEscapesGrowable(body: []const ast.Stmt, name: []const u8, from_index: usize) bool {
-    return stmtsSafeForGrowableLocal(body[from_index..], name);
+fn localNeverEscapesGrowable(self: *const Codegen, body: []const ast.Stmt, name: []const u8, from_index: usize) bool {
+    return stmtsSafeForGrowableLocal(self, body[from_index..], name);
 }
 
 /// `inlining.zig`'in `stmtsSafeForParam`iyle AYNI yapı/AYNI muhafazakârlık
 /// (ŞÜPHEDE `false`) — SADECE `exprHasUnsafeLocalUse`ya (aşağıda, `.attribute`
 /// salt-okunur okuma İçİn EK bir güvenli şekil TAŞIR) delege eder.
-fn stmtsSafeForLocal(stmts: []const ast.Stmt, name: []const u8) bool {
+fn stmtsSafeForLocal(self: *const Codegen, stmts: []const ast.Stmt, name: []const u8) bool {
     for (stmts) |stmt| {
         switch (stmt.kind) {
             .var_decl => |v| {
                 if (std.mem.eql(u8, v.name, name)) return false;
-                if (exprHasUnsafeLocalUse(v.value, name)) return false;
+                if (exprHasUnsafeLocalUse(self, v.value, name)) return false;
             },
             .assign => |a| {
                 if (a.target == .identifier and std.mem.eql(u8, a.target.identifier, name)) return false;
-                if (exprHasUnsafeLocalUse(a.target, name)) return false;
-                if (exprHasUnsafeLocalUse(a.value, name)) return false;
+                if (exprHasUnsafeLocalUse(self, a.target, name)) return false;
+                if (exprHasUnsafeLocalUse(self, a.value, name)) return false;
             },
-            .expr_stmt => |e| if (exprHasUnsafeLocalUse(e, name)) return false,
+            .expr_stmt => |e| if (exprHasUnsafeLocalUse(self, e, name)) return false,
             .if_stmt => |f| {
-                if (exprHasUnsafeLocalUse(f.cond, name)) return false;
-                if (!stmtsSafeForLocal(f.then_body, name)) return false;
+                if (exprHasUnsafeLocalUse(self, f.cond, name)) return false;
+                if (!stmtsSafeForLocal(self, f.then_body, name)) return false;
                 for (f.elif_clauses) |ec| {
-                    if (exprHasUnsafeLocalUse(ec.cond, name)) return false;
-                    if (!stmtsSafeForLocal(ec.body, name)) return false;
+                    if (exprHasUnsafeLocalUse(self, ec.cond, name)) return false;
+                    if (!stmtsSafeForLocal(self, ec.body, name)) return false;
                 }
-                if (f.else_body) |eb| if (!stmtsSafeForLocal(eb, name)) return false;
+                if (f.else_body) |eb| if (!stmtsSafeForLocal(self, eb, name)) return false;
             },
             .while_stmt => |w| {
-                if (exprHasUnsafeLocalUse(w.cond, name)) return false;
-                if (!stmtsSafeForLocal(w.body, name)) return false;
+                if (exprHasUnsafeLocalUse(self, w.cond, name)) return false;
+                if (!stmtsSafeForLocal(self, w.body, name)) return false;
             },
             .for_stmt => |f| {
                 if (std.mem.eql(u8, f.var_name, name)) return false;
                 const iterable_is_direct = f.iterable == .identifier and std.mem.eql(u8, f.iterable.identifier, name);
-                if (!iterable_is_direct and exprHasUnsafeLocalUse(f.iterable, name)) return false;
-                if (!stmtsSafeForLocal(f.body, name)) return false;
+                if (!iterable_is_direct and exprHasUnsafeLocalUse(self, f.iterable, name)) return false;
+                if (!stmtsSafeForLocal(self, f.body, name)) return false;
             },
             .return_stmt => |r| {
-                if (r) |e| if (exprHasUnsafeLocalUse(e, name)) return false;
+                if (r) |e| if (exprHasUnsafeLocalUse(self, e, name)) return false;
             },
-            .raise_stmt => |e| if (exprHasUnsafeLocalUse(e, name)) return false,
+            .raise_stmt => |e| if (exprHasUnsafeLocalUse(self, e, name)) return false,
             // `try`/İç İçe `lowlevel`/`with`/`func_def`/`defer` — BİLİNMEYEN/
             // riskli bölge, TÜM analiz GÜVENLİ tarafta kalmak İçin İPTAL edilir.
             .try_stmt, .lowlevel_stmt, .with_stmt, .func_def, .defer_stmt => return false,
@@ -232,12 +232,21 @@ fn stmtsSafeForLocal(stmts: []const ast.Stmt, name: []const u8) bool {
 /// YASAKLANIR (v1'de HER metod çağrısı kaçış sayılır, `.append()` GİBİ
 /// BÜYÜYEBİLEN bir mutasyonun sabit-boyutlu bir stack slotunu TAŞIRMASINI
 /// ÖNLEMEK İçİn — bu KIRMIZI ÇİZGİ, sadece bir basitleştirme DEĞİL).
-fn exprHasUnsafeLocalUse(expr: ast.Expr, name: []const u8) bool {
+/// GG.20 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 4"): `.call` dalı
+/// ARTIK `self.escaping_params`e (`inlining.zig`nin `computeParamEscapes`i)
+/// bakarak — argüman ÇÖZÜLEBİLİR bir SERBEST fonksiyona geçiyorsa VE
+/// hedef parametre KANITLANMIŞ olarak KAÇMIYORSA — bunu GÜVENLİ sayar.
+/// **`spawn` İSTİSNASI**: `inlining.zig`nin `exprHasUnsafeParamUse`iyle
+/// AYNI kritik güvenlik notu — `.spawn_expr` dalı BU carve-out'u HİÇ
+/// KULLANMAZ, spawn'ın SARDIĞI çağrının argümanları HER ZAMAN doğrudan
+/// kontrol edilir (spawn'ın asenkron/çapraz-fiber doğası "callee kendi
+/// gövdesinde kaçırmıyor" kanıtını GEÇERSİZ kılar).
+fn exprHasUnsafeLocalUse(self: *const Codegen, expr: ast.Expr, name: []const u8) bool {
     return switch (expr) {
         .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => false,
         .identifier => |n| std.mem.eql(u8, n, name),
-        .unary => |u| exprHasUnsafeLocalUse(u.operand.*, name),
-        .binary => |b| exprHasUnsafeLocalUse(b.left.*, name) or exprHasUnsafeLocalUse(b.right.*, name),
+        .unary => |u| exprHasUnsafeLocalUse(self, u.operand.*, name),
+        .binary => |b| exprHasUnsafeLocalUse(self, b.left.*, name) or exprHasUnsafeLocalUse(self, b.right.*, name),
         .call => |c| blk: {
             if (c.callee.* == .identifier and std.mem.eql(u8, c.callee.identifier, "len") and
                 c.args.len == 1 and c.args[0] == .identifier and std.mem.eql(u8, c.args[0].identifier, name))
@@ -246,14 +255,21 @@ fn exprHasUnsafeLocalUse(expr: ast.Expr, name: []const u8) bool {
             }
             // KIRMIZI ÇİZGİ: `name.method(...)` HER ZAMAN kaçış sayılır —
             // aşağıdaki `.attribute` dalının salt-okunur carve-out'undan
-            // ÖNCE, açıkça kontrol edilir (v1'de interprocedural/metod-
-            // gövdesi analizi YOK).
+            // ÖNCE, açıkça kontrol edilir (v1'de metod-gövdesi analizi YOK).
             if (c.callee.* == .attribute) {
                 const recv = c.callee.attribute.obj;
                 if (recv.* == .identifier and std.mem.eql(u8, recv.identifier, name)) break :blk true;
             }
-            if (exprHasUnsafeLocalUse(c.callee.*, name)) break :blk true;
-            for (c.args) |a| if (exprHasUnsafeLocalUse(a, name)) break :blk true;
+            if (exprHasUnsafeLocalUse(self, c.callee.*, name)) break :blk true;
+            const callee_is_resolvable_free_fn = c.callee.* == .identifier and self.func_defs.contains(c.callee.identifier);
+            for (c.args, 0..) |a, arg_idx| {
+                if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_resolvable_free_fn) {
+                    if (!self.escaping_params.contains(.{ .func = c.callee.identifier, .index = @intCast(arg_idx) })) {
+                        continue; // İSPATLANMIŞ güvenli yönlendirme.
+                    }
+                }
+                if (exprHasUnsafeLocalUse(self, a, name)) break :blk true;
+            }
             break :blk false;
         },
         .attribute => |a| blk: {
@@ -263,28 +279,39 @@ fn exprHasUnsafeLocalUse(expr: ast.Expr, name: []const u8) bool {
             // dala hiç ULAŞMAZ (`.call`in `c.callee.*` kontrolü BU `.attribute`
             // dalını hiç ÇAĞIRMAZ).
             if (a.obj.* == .identifier and std.mem.eql(u8, a.obj.identifier, name)) break :blk false;
-            break :blk exprHasUnsafeLocalUse(a.obj.*, name);
+            break :blk exprHasUnsafeLocalUse(self, a.obj.*, name);
         },
         .index => |idx| blk: {
             const obj_is_direct = idx.obj.* == .identifier and std.mem.eql(u8, idx.obj.identifier, name);
-            if (!obj_is_direct and exprHasUnsafeLocalUse(idx.obj.*, name)) break :blk true;
-            break :blk exprHasUnsafeLocalUse(idx.index.*, name);
+            if (!obj_is_direct and exprHasUnsafeLocalUse(self, idx.obj.*, name)) break :blk true;
+            break :blk exprHasUnsafeLocalUse(self, idx.index.*, name);
         },
         .list_lit => |elems| blk: {
-            for (elems) |el| if (exprHasUnsafeLocalUse(el, name)) break :blk true;
+            for (elems) |el| if (exprHasUnsafeLocalUse(self, el, name)) break :blk true;
             break :blk false;
         },
         .dict_lit => |pairs| blk: {
             for (pairs) |p| {
-                if (exprHasUnsafeLocalUse(p.key, name)) break :blk true;
-                if (exprHasUnsafeLocalUse(p.value, name)) break :blk true;
+                if (exprHasUnsafeLocalUse(self, p.key, name)) break :blk true;
+                if (exprHasUnsafeLocalUse(self, p.value, name)) break :blk true;
             }
             break :blk false;
         },
-        .await_expr => |op| exprHasUnsafeLocalUse(op.*, name),
-        .spawn_expr => |op| exprHasUnsafeLocalUse(op.*, name),
+        .await_expr => |op| exprHasUnsafeLocalUse(self, op.*, name),
+        .spawn_expr => |op| blk: {
+            if (op.* == .call) {
+                const c = op.*.call;
+                if (exprHasUnsafeLocalUse(self, c.callee.*, name)) break :blk true;
+                for (c.args) |a| {
+                    if (a == .identifier and std.mem.eql(u8, a.identifier, name)) break :blk true;
+                    if (exprHasUnsafeLocalUse(self, a, name)) break :blk true;
+                }
+                break :blk false;
+            }
+            break :blk exprHasUnsafeLocalUse(self, op.*, name);
+        },
         .generic_construct => |g| blk: {
-            for (g.args) |a| if (exprHasUnsafeLocalUse(a, name)) break :blk true;
+            for (g.args) |a| if (exprHasUnsafeLocalUse(self, a, name)) break :blk true;
             break :blk false;
         },
     };
@@ -292,42 +319,42 @@ fn exprHasUnsafeLocalUse(expr: ast.Expr, name: []const u8) bool {
 
 /// GG.18: `stmtsSafeForLocal`in BİREBİR AYNISI — SADECE `exprHasUnsafeGrowableLocalUse`ya
 /// delege eder (`.append()`e İZİN VEREN EK carve-out İçİn).
-fn stmtsSafeForGrowableLocal(stmts: []const ast.Stmt, name: []const u8) bool {
+fn stmtsSafeForGrowableLocal(self: *const Codegen, stmts: []const ast.Stmt, name: []const u8) bool {
     for (stmts) |stmt| {
         switch (stmt.kind) {
             .var_decl => |v| {
                 if (std.mem.eql(u8, v.name, name)) return false;
-                if (exprHasUnsafeGrowableLocalUse(v.value, name)) return false;
+                if (exprHasUnsafeGrowableLocalUse(self, v.value, name)) return false;
             },
             .assign => |a| {
                 if (a.target == .identifier and std.mem.eql(u8, a.target.identifier, name)) return false;
-                if (exprHasUnsafeGrowableLocalUse(a.target, name)) return false;
-                if (exprHasUnsafeGrowableLocalUse(a.value, name)) return false;
+                if (exprHasUnsafeGrowableLocalUse(self, a.target, name)) return false;
+                if (exprHasUnsafeGrowableLocalUse(self, a.value, name)) return false;
             },
-            .expr_stmt => |e| if (exprHasUnsafeGrowableLocalUse(e, name)) return false,
+            .expr_stmt => |e| if (exprHasUnsafeGrowableLocalUse(self, e, name)) return false,
             .if_stmt => |f| {
-                if (exprHasUnsafeGrowableLocalUse(f.cond, name)) return false;
-                if (!stmtsSafeForGrowableLocal(f.then_body, name)) return false;
+                if (exprHasUnsafeGrowableLocalUse(self, f.cond, name)) return false;
+                if (!stmtsSafeForGrowableLocal(self, f.then_body, name)) return false;
                 for (f.elif_clauses) |ec| {
-                    if (exprHasUnsafeGrowableLocalUse(ec.cond, name)) return false;
-                    if (!stmtsSafeForGrowableLocal(ec.body, name)) return false;
+                    if (exprHasUnsafeGrowableLocalUse(self, ec.cond, name)) return false;
+                    if (!stmtsSafeForGrowableLocal(self, ec.body, name)) return false;
                 }
-                if (f.else_body) |eb| if (!stmtsSafeForGrowableLocal(eb, name)) return false;
+                if (f.else_body) |eb| if (!stmtsSafeForGrowableLocal(self, eb, name)) return false;
             },
             .while_stmt => |w| {
-                if (exprHasUnsafeGrowableLocalUse(w.cond, name)) return false;
-                if (!stmtsSafeForGrowableLocal(w.body, name)) return false;
+                if (exprHasUnsafeGrowableLocalUse(self, w.cond, name)) return false;
+                if (!stmtsSafeForGrowableLocal(self, w.body, name)) return false;
             },
             .for_stmt => |f| {
                 if (std.mem.eql(u8, f.var_name, name)) return false;
                 const iterable_is_direct = f.iterable == .identifier and std.mem.eql(u8, f.iterable.identifier, name);
-                if (!iterable_is_direct and exprHasUnsafeGrowableLocalUse(f.iterable, name)) return false;
-                if (!stmtsSafeForGrowableLocal(f.body, name)) return false;
+                if (!iterable_is_direct and exprHasUnsafeGrowableLocalUse(self, f.iterable, name)) return false;
+                if (!stmtsSafeForGrowableLocal(self, f.body, name)) return false;
             },
             .return_stmt => |r| {
-                if (r) |e| if (exprHasUnsafeGrowableLocalUse(e, name)) return false;
+                if (r) |e| if (exprHasUnsafeGrowableLocalUse(self, e, name)) return false;
             },
-            .raise_stmt => |e| if (exprHasUnsafeGrowableLocalUse(e, name)) return false,
+            .raise_stmt => |e| if (exprHasUnsafeGrowableLocalUse(self, e, name)) return false,
             .try_stmt, .lowlevel_stmt, .with_stmt, .func_def, .defer_stmt => return false,
             .pass_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
         }
@@ -342,12 +369,26 @@ fn stmtsSafeForGrowableLocal(stmts: []const ast.Stmt, name: []const u8) bool {
 /// AMA `.append`in KENDİSİ artık İZİN VERİLİR. `.pop()`/`.sort()`/BAŞKA
 /// HERHANGİ bir metod HÂLÂ YASAKTIR (v1 BİLİNÇLİ olarak SADECE `.append()`
 /// destekler).
-fn exprHasUnsafeGrowableLocalUse(expr: ast.Expr, name: []const u8) bool {
+/// GG.20 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 4"): **BİLİNÇLİ
+/// olarak `exprHasUnsafeLocalUse`nin AYNI "İSPATLANMIŞ güvenli yönlendirme"
+/// carve-out'unu KULLANMAZ** — GERÇEK, break→red→fix İLE bulunan bir
+/// hata (`growable_arena_arg_escape.nox` fixture'ı, `checkNoLowlevelEscape`
+/// TARAFINDAN `error.Unsupported` İLE YAKALANAN bir derleyici İÇİ hata,
+/// TESTİ ÇÖKERTMEDEN ÖNCE) KANITLADI: bir arena-yönetimli değerin bir
+/// ÇAĞRI SINIRINI (normal argüman-geçişi YOLUYLA) AŞMASI codegen'İN
+/// HİÇBİR YERİNDE DESTEKLENMİYOR (`checkNoLowlevelEscape`nin `v.arena`
+/// kontrolü BUNU AÇIKÇA YASAKLIYOR) — GG.16'nın `fixed_stack` mekanizmasının
+/// AKSİNE (`cross_call_stack_slot.nox`nin ZATEN KANITLADIĞI GİBİ, sabit-
+/// boyutlu bir stack slotu GÜVENLE bir çağrı sınırını AŞABİLİR), arena
+/// değerleri İçİn BU YOL HİÇ AÇILMAMIŞTIR. Bu YÜZDEN argüman-olarak-geçiş
+/// arena-adayları İçİn HÂLÂ (v1.42.0'dan BERİ olduğu GİBİ) KOŞULSUZ
+/// kaçış SAYILIR.
+fn exprHasUnsafeGrowableLocalUse(self: *const Codegen, expr: ast.Expr, name: []const u8) bool {
     return switch (expr) {
         .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => false,
         .identifier => |n| std.mem.eql(u8, n, name),
-        .unary => |u| exprHasUnsafeGrowableLocalUse(u.operand.*, name),
-        .binary => |b| exprHasUnsafeGrowableLocalUse(b.left.*, name) or exprHasUnsafeGrowableLocalUse(b.right.*, name),
+        .unary => |u| exprHasUnsafeGrowableLocalUse(self, u.operand.*, name),
+        .binary => |b| exprHasUnsafeGrowableLocalUse(self, b.left.*, name) or exprHasUnsafeGrowableLocalUse(self, b.right.*, name),
         .call => |c| blk: {
             if (c.callee.* == .identifier and std.mem.eql(u8, c.callee.identifier, "len") and
                 c.args.len == 1 and c.args[0] == .identifier and std.mem.eql(u8, c.args[0].identifier, name))
@@ -358,39 +399,50 @@ fn exprHasUnsafeGrowableLocalUse(expr: ast.Expr, name: []const u8) bool {
                 const recv = c.callee.attribute.obj;
                 if (recv.* == .identifier and std.mem.eql(u8, recv.identifier, name)) {
                     if (std.mem.eql(u8, c.callee.attribute.attr, "append") and c.args.len == 1) {
-                        break :blk exprHasUnsafeGrowableLocalUse(c.args[0], name);
+                        break :blk exprHasUnsafeGrowableLocalUse(self, c.args[0], name);
                     }
                     break :blk true;
                 }
             }
-            if (exprHasUnsafeGrowableLocalUse(c.callee.*, name)) break :blk true;
-            for (c.args) |a| if (exprHasUnsafeGrowableLocalUse(a, name)) break :blk true;
+            if (exprHasUnsafeGrowableLocalUse(self, c.callee.*, name)) break :blk true;
+            for (c.args) |a| if (exprHasUnsafeGrowableLocalUse(self, a, name)) break :blk true;
             break :blk false;
         },
         .attribute => |a| blk: {
             if (a.obj.* == .identifier and std.mem.eql(u8, a.obj.identifier, name)) break :blk false;
-            break :blk exprHasUnsafeGrowableLocalUse(a.obj.*, name);
+            break :blk exprHasUnsafeGrowableLocalUse(self, a.obj.*, name);
         },
         .index => |idx| blk: {
             const obj_is_direct = idx.obj.* == .identifier and std.mem.eql(u8, idx.obj.identifier, name);
-            if (!obj_is_direct and exprHasUnsafeGrowableLocalUse(idx.obj.*, name)) break :blk true;
-            break :blk exprHasUnsafeGrowableLocalUse(idx.index.*, name);
+            if (!obj_is_direct and exprHasUnsafeGrowableLocalUse(self, idx.obj.*, name)) break :blk true;
+            break :blk exprHasUnsafeGrowableLocalUse(self, idx.index.*, name);
         },
         .list_lit => |elems| blk: {
-            for (elems) |el| if (exprHasUnsafeGrowableLocalUse(el, name)) break :blk true;
+            for (elems) |el| if (exprHasUnsafeGrowableLocalUse(self, el, name)) break :blk true;
             break :blk false;
         },
         .dict_lit => |pairs| blk: {
             for (pairs) |p| {
-                if (exprHasUnsafeGrowableLocalUse(p.key, name)) break :blk true;
-                if (exprHasUnsafeGrowableLocalUse(p.value, name)) break :blk true;
+                if (exprHasUnsafeGrowableLocalUse(self, p.key, name)) break :blk true;
+                if (exprHasUnsafeGrowableLocalUse(self, p.value, name)) break :blk true;
             }
             break :blk false;
         },
-        .await_expr => |op| exprHasUnsafeGrowableLocalUse(op.*, name),
-        .spawn_expr => |op| exprHasUnsafeGrowableLocalUse(op.*, name),
+        .await_expr => |op| exprHasUnsafeGrowableLocalUse(self, op.*, name),
+        .spawn_expr => |op| blk: {
+            if (op.* == .call) {
+                const c = op.*.call;
+                if (exprHasUnsafeGrowableLocalUse(self, c.callee.*, name)) break :blk true;
+                for (c.args) |a| {
+                    if (a == .identifier and std.mem.eql(u8, a.identifier, name)) break :blk true;
+                    if (exprHasUnsafeGrowableLocalUse(self, a, name)) break :blk true;
+                }
+                break :blk false;
+            }
+            break :blk exprHasUnsafeGrowableLocalUse(self, op.*, name);
+        },
         .generic_construct => |g| blk: {
-            for (g.args) |a| if (exprHasUnsafeGrowableLocalUse(a, name)) break :blk true;
+            for (g.args) |a| if (exprHasUnsafeGrowableLocalUse(self, a, name)) break :blk true;
             break :blk false;
         },
     };

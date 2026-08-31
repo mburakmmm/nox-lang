@@ -220,6 +220,7 @@ const registration = @import("registration.zig");
 const decorators_mod = @import("decorators.zig");
 const qbe_emit = @import("qbe_emit.zig");
 const llvm_emit = @import("llvm_emit.zig");
+const effect_graph = @import("../effect_graph.zig");
 
 pub const CodegenError = abi.CodegenError;
 
@@ -313,6 +314,7 @@ pub const Backend = @import("../typecheck/types.zig").Backend;
 pub const Codegen = struct {
     pub const isFuncInlineEligible = inlining.isFuncInlineEligible;
     pub const computeInlinableFunctions = inlining.computeInlinableFunctions;
+    pub const computeParamEscapes = inlining.computeParamEscapes;
     pub const registerInlineSite = inlining.registerInlineSite;
     pub const collectInlineSitesStmts = inlining.collectInlineSitesStmts;
     pub const collectInlineSitesStmt = inlining.collectInlineSitesStmt;
@@ -781,6 +783,17 @@ pub const Codegen = struct {
     /// inlinable_funcs`in (yalnızca GG.2'nin inline UYGUN BULDUĞU bir ALT
     /// KÜME) AKSİNE, BURADA TÜM serbest fonksiyonlar saklanır.
     func_defs: std.StringHashMapUnmanaged(ast.FuncDef) = .empty,
+    /// GG.20 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 4"): `computeParamEscapes`
+    /// (inlining.zig) TARAFINDAN, HERHANGİ bir gövde codegen'İNDEN ÖNCE
+    /// BİR KEZ doldurulan `(fonksiyon_adı, parametre_indeksi)` çiftlerinin —
+    /// bir SERBEST fonksiyonun O parametresinin, KENDİ gövdesinde DOĞRUDAN
+    /// YA DA (YENİ) BAŞKA bir serbest fonksiyona argüman olarak geçip
+    /// ONUN karşılık gelen parametresinin (transitif olarak) KAÇMASI
+    /// YOLUYLA — KAÇTIĞI KANITLANMIŞ kümesi. `exprHasUnsafeParamUse`
+    /// (inlining.zig, GG.16) VE `local_escape.zig`nin escape-kontrol
+    /// fonksiyonları (GG.17/18/19) BUNU KULLANARAK "argüman-olarak-geçiş
+    /// HER ZAMAN kaçış" katı kuralını İLK KEZ gevşetir.
+    escaping_params: effect_graph.NodeSet = .{},
     /// `extern def` bildirimleri — AYRI bir tablo (normal `functions`dan
     /// bağımsız): çağrı sitesi kodgen'i temelde farklıdır (bkz. `genCall`) —
     /// extern fonksiyonlar Nox'un `rt` bağlamını (İlke #6'nın gerektirdiği
@@ -1391,6 +1404,14 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     // için — bkz. `computeMustNotRaise`in belge notu. `self.classes`/
     // `self.functions` (yukarıdaki register* döngüleri) DOLU olmalı.
     try gen.computeMustNotRaise(module, extra_functions, extra_classes);
+
+    // GG.20 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 4"): `computeInlinableFunctions`DAN
+    // ÖNCE (`isFuncInlineEligible`e bağımlılık YOK, AMA `exprHasUnsafeParamUse`/
+    // `local_escape.zig`nin escape-kontrolleri `self.escaping_params`e
+    // İHTİYAÇ DUYAR VE bunlar HERHANGİ bir gövde codegen'İNDEN ÖNCE
+    // çağrılabilir) VE `self.func_defs` DOLU OLDUKTAN SONRA (yukarıdaki
+    // `registerFunc` geçişleri).
+    try gen.computeParamEscapes(module, extra_functions);
 
     // Faz GG.2 (bkz. nox-teknik-spesifikasyon.md §3.67): `computeMustNotRaise`DEN
     // SONRA (bağımlılık — bkz. `isFuncInlineEligible`) VE HERHANGİ bir gövde

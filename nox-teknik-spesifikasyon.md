@@ -16545,6 +16545,131 @@ stress-test` (ReleaseFast) TEMİZ.
 
 ---
 
+## 3.110 GG.20 — interprocedural escape/mutasyon analizi: PAYLAŞILAN bir "fonksiyon etkisi" motoru (ASAP güçlendirmesi, Tur 4) (v1.44.0)
+
+v1.43.0 SONRASI kullanıcı harici bir (GPT-5.6) incelemeyi PAYLAŞTI —
+inceleme, `checker.zig`nin `SpawnSharedMutation`ının (bir `spawn` hedefi
+fonksiyonun paylaşılan parametresini BAŞKA bir yardımcı fonksiyon
+ÜZERİNDEN — `mutate(xs)` gibi — mutasyona uğratmasını YAKALAYAMAMASI)
+HEM ASAP'in (GG.17/18/19) KENDİ "argüman-olarak-geçiş HER ZAMAN kaçış
+sayılır" KATI kısıtlamasının AYNI kök nedenden (interprocedural/call-
+graph analizi YOK) geldiğini işaret etti — VE bu ikisinin TEK bir
+"fonksiyon etkisi özet sistemi" PAYLAŞABİLECEĞİNİ ÖNERDİ. Kullanıcı BU
+paylaşılan yaklaşımı seçti (dar/SADECE-ASAP alternatifi YERİNE).
+
+**Mimari kısıt**: `checker.zig` `codegen_qbe`yi HİÇ İMPORT EDEMEZ
+(`codegen_qbe/decorators.zig` ZATEN TERS yönde import ediyor — GERÇEK
+bir döngüsel bağımlılık olurdu). Bu YÜZDEN "paylaşım", checker'dan
+codegen'e SOMUT VERİ aktarmak anlamına GELEMEZ. Çözüm: HER iki tarafın
+da BAĞIMSIZ OLARAK kendi whole-program kaydı ÜZERİNDE ÇALIŞTIRACAĞI,
+PAYLAŞILAN, NÖTR bir ALGORİTMA MOTORU — YENİ `compiler/effect_graph.zig`
+(checker/codegen ARASINDA HİÇBİR bağımlılık KURMAZ, İKİSİ de bağımsız
+import eder) — `computeMustNotRaise`in (exceptions.zig) ZATEN kanıtlanmış
+"ters-çağrı-grafiği + worklist" algoritmasının GENELLEŞTİRİLMİŞ hali:
+`NodeKey{func, index}` (fonksiyon adı + parametre indeksi çifti),
+`propagateBad(reverse_edges, seeds)` — `computeMustNotRaise`nin `callers_
+of`/`direct_unsafe` desenini BİREBİR TEKRARLAR, O(düğüm+kenar).
+
+**Kritik matematik**: HEM "mutasyon" (checker'ın İLGİLENDİĞİ) HEM "kaçış"
+(ASAP'in İLGİLENDİĞİ) AYNI şekilde davranan özellikler — (a) bir
+parametrenin KENDİ fonksiyonu İÇİNDE DOĞRUDAN bir "kötü" kullanımı VARSA
+KÖTÜ, (b) O parametre BAŞKA bir çağrıya ARGÜMAN olarak geçiyorsa VE O
+çağrının KARŞILIK GELEN parametresi (TRANSİTİF olarak) KÖTÜyse YİNE
+KÖTÜ, (c) AKSİ HALDE İYİ — AMA "mutasyon" ≠ "kaçış": `p.field = x`
+(KENDİ alanına in-place YAZMA) ASAP İçİn GÜVENLİDİR AMA SpawnSharedMutation
+İçİn TAM OLARAK yakalanması GEREKEN ŞEYDİR — bu YÜZDEN İKİ AYRI seed/
+kullanım kümesi İNŞA edilir (PAYLAŞILAN SADECE `propagateBad` motoru).
+
+**checker.zig tarafı**: YENİ whole-program pre-pass `computeMutatesGraph`
+(`collectSpawnTargets`İLE AYNI aşamada) — `Checker.functions`daki (VE
+class metodlarındaki) HER fonksiyonun HER `list`/`dict`/`class` tipli
+parametresi İçİn: **tohum** (DOĞRUDAN mutasyon — `xs[i]=`/`d[k]=`/
+`obj.alan=`/`.append`/`.pop`/`.sort`, `checkNoSpawnSharedMutation`nin
+ZATEN tanıdığı şekiller); **kenar** (parametre ÇÖZÜLEBİLİR bir SERBEST
+fonksiyona argüman olarak geçerse — metod çağrıları/dolaylı çağrılar
+KAPSAM DIŞI, `self.functions.contains(...)` İLE ÇÖZÜLEMEYEN HERHANGİ
+bir çağrı DOĞRUDAN tohum sayılır — `len`/`print`/`str`/`int`/`float`/
+`bool`/`super`/`hpy_call*`/`wasm_call`/`__nox_reflect_*` gibi ÖZEL-
+işlenen yerleşikler İSTİSNA, `isKnownSafeBuiltinCallee` İLE HARİÇ
+tutulur — AKSİ HALDE `len(xs)` İçEREN salt-okunur bir yardımcı bile
+YANLIŞ-pozitif tohum SAYILIRDI). `self.mutates_params: effect_graph.
+NodeSet` DOLDURULUR; `checkNoSpawnSharedMutation` YENİ `checkTransitiveSpawnSharedMutationExpr`
+İLE genişletilir — bir `.call`in HER argümanı `resolveExprSharedType`
+İLE çözülüp `{callee, arg_index}` `mutates_params`DAYSA "transitif
+olarak `{helper}` üzerinden" mesajıyla AYNI `SpawnSharedMutation`
+hatasını verir.
+
+**codegen_qbe tarafı**: YENİ whole-program pre-pass `computeParamEscapes`
+(inlining.zig, `computeMustNotRaise`/`computeInlinableFunctions`İLE AYNI
+aşamada) — `self.func_defs`teki (SADECE SERBEST fonksiyonlar — `registerFunc`
+metodları KAYDETMEZ) HER fonksiyonun HER parametresi İçİn: **tohum**
+(`paramNeverEscapes`in TANIDIĞI 3 güvenli şekil — for-iterable/index-
+tabanı/`len()` argümanı — + `local_escape.zig`nin salt-okunur `.attribute`
+carve-out'u DIŞINDAKİ HER kullanım: `return`, başka bir isme atama/alias,
+başka bir container'a yazma, `spawn` yakalaması, `try`/`with`/`lowlevel`/
+nested-`def` İçİnde kullanım); **kenar** (parametre BAŞKA bir ÇÖZÜLEBİLİR
+SERBEST fonksiyona argüman olarak geçerse — metod çağrıları KAPSAM DIŞI,
+GG.16'nın KENDİ "sadece serbest fonksiyon" sınırlamasıyla TUTARLI).
+`self.escaping_params: effect_graph.NodeSet` (YENİ `Codegen` alanı)
+DOLDURULUR. `exprHasUnsafeParamUse` (GG.16, inlining.zig) VE `local_
+escape.zig`nin `exprHasUnsafeLocalUse`si (GG.17/19 — `.fixed_stack`
+YOLU) GÜNCELLENİR: `.call` dalında, argüman ÇÖZÜLEBİLİR bir SERBEST
+fonksiyona geçiyorsa VE hedef parametre `escaping_params`DE DEĞİLSE
+(İSPATLANMIŞ güvenli) → artık GÜVENLİ sayılır (Tur 1-3'ün "argüman-
+olarak-geçiş HER ZAMAN kaçış" KATI kuralının İLK GERÇEK gevşetilmesi).
+
+**KRİTİK, break→red→fix İLE bulunan İKİ gerçek tuzak**:
+(1) `exprHasUnsafeGrowableLocalUse` (GG.18, `.growable_arena` yolu)
+**BİLİNÇLİ olarak BU carve-out'u KULLANMAZ** — `checkNoLowlevelEscape`nin
+`v.arena` kontrolünün `error.Unsupported` İLE YAKALADIĞI GERÇEK bir
+derleyici-içi çökme KANITLADI: bir arena-yönetimli değerin normal bir
+ÇAĞRI SINIRINI (argüman-geçişi YOLUYLA) AŞMASı codegen'İN HİÇBİR
+YERİNDE DESTEKLENMİYOR (GG.16'nın `fixed_stack` mekanizmasının AKSİNE,
+`cross_call_stack_slot.nox`nin ZATEN KANITLADIĞI GİBİ). Arena-adayları
+İçİn argüman-olarak-geçiş HÂLÂ (v1.42.0'dan BERİ olduğu GİBİ) KOŞULSUZ
+kaçış SAYILIR.
+(2) `spawn`ın SARDIĞI çağrının argümanları BU carve-out'u HİÇ KULLANMAZ
+(`.spawn_expr` dalı AYRI/ÖNCELİKLİ ele alınır, HEM `exprHasUnsafeParamUse`
+HEM `exprHasUnsafeLocalUse`/`exprHasUnsafeGrowableLocalUse`de) — callee'nin
+KENDİ gövdesi "kaçmıyor" KANITLANSA BİLE, `spawn` ASENKRON/OLASI ÇAPRAZ-
+fiber bir çağrı olduğundan caller'ın stack/arena çerçevesi görev HÂLÂ
+çalışırken YOK EDİLEBİLİR — `computeMustNotRaise` TARZI "aynı çerçeve
+İçİnde senkron" akıl yürütmesi BURADA GEÇERSİZDİR. `llvm_golden_test.zig`ye
+eklenen KIRMIZI-TAKIM testi (`async def worker(xs: list[int])` `.qbe`de
+ÇÖZÜMLENEMEDİĞİNDEN `--release`/`.llvm` GEREKTİRİR) BUNU uçtan-uca
+kanıtlar — spawn'a geçen bir yerel, `worker`nin KENDİSİ "kaçmıyor"
+KANITLANSA BİLE HÂLÂ `nox_rc_alloc`ta KALIR.
+
+**Doğrulama**: break→red→fix ritüeli (`propagateBad`i GEÇİCİ olarak HER
+ZAMAN boş küme DÖNDÜRECEK şekilde bozup) İKİ AYRI, ANLAMLI sonuç verdi —
+checker tarafında 2 transitif-mutasyon testi doğru şekilde KIRMIZIYA
+döndü (`typecheck_golden_test.zig`); codegen tarafında `mutasyona
+uğratan bir SERBEST fonksiyona geçen yerel` testi GERÇEKTEN ÇÖKTÜ
+(program crash — yanlış bir "güvenli" kanıtının GERÇEK bellek
+bozulmasına yol AÇTIĞININ SOMUT kanıtı), `spawn` testi İSE (TASARIM
+GEREĞİ, escaping_params'DAN BAĞIMSIZ bir SABİT güvenlik İLKESİ
+olduğundan) DEĞİŞMEDEN yeşil kaldı. 3 YENİ checker fixture'ı (İKİ
+seviyeli transitif mutasyon, salt-okunur negatif kontrol, + `ok_spawn_
+shared_via_helper_call_not_caught` → `err_spawn_shared_transitive_
+mutation_now_caught` DAVRANIŞ TERSİNE DÖNMESİ), 3 YENİ codegen fixture'ı
+(salt-okunur pozitif, mutasyona-uğratan negatif, iki-seviyeli transitif
+pozitif) + 2 LLVM kırmızı-takım testi. 5 MEVCUT, İLİŞKİSİZ fixture'ın
+(`stack_local_arg_escape` — İÇERİĞİ metod-çağrısına GÜNCELLENDİ, orijinal
+"escapes" davranışını KORUR — + `random_normal_exponential_shuffle`/
+`bounds_check_elision_while_len`/`attr_assign_external`/`generic_functions`,
+YAN etki olarak ARTIK stack'e dönüşen yerel İçEREN) `.ssa` anlık görüntüsü
+GÜNCELLENDİ (tümü `expectGolden` çıktı-tabanlı testleriyle DEĞİŞMEDEN
+GEÇTİĞİ AYRICA doğrulandı). Tam regresyon paketi (`zig build test`) +
+`NOX_STRESS_ROUNDS=800 zig build stress-test` (ReleaseFast) TEMİZ.
+
+**Ölçülen kazanç**: `git worktree` İLE v1.43.0 karşısında `point_sum`-
+benzeri bir desen (küçük bir yerel liste, salt-okunur bir yardımcıya
+argüman olarak geçiyor, 200M çağrı): ~1.20s → ~0.41s (kullanıcı süresi,
+**~%65 azalma, ~2.9x hızlanma**) — argüman-geçişinin ARTIK ARC'a HİÇ
+düşmemesinden (bkz. `benchmarks/RESULTS.md`).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

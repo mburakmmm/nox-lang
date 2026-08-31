@@ -175,3 +175,81 @@ test "llvm(çalıştır): nox.thread.start list[int] argüman/dönüş taşır, 
         "20\n",
     );
 }
+
+// GG.20 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 4") KIRMIZI-TAKIM/
+// KRİTİK GÜVENLİK testi: `worker`nin KENDİ gövdesi (`read_only(xs)`
+// çağırarak) "kaçmıyor" KANITLANSA BİLE, `spawn worker(xs)` ASENKRON/OLASI
+// ÇAPRAZ-fiber bir çağrı olduğundan `xs` HÂLÂ `nox_rc_alloc`ta KALMALIDIR —
+// `exprHasUnsafeLocalUse`/`exprHasUnsafeGrowableLocalUse`nin `.spawn_expr`
+// dalının, YENİ "İSPATLANMIŞ güvenli yönlendirme" carve-out'unu KASITLI
+// olarak ATLADIĞINI kanıtlar (spawn'ın çapraz-fiber doğası "callee kendi
+// gövdesinde kaçırmıyor" kanıtını GEÇERSİZ kılar — yanlış bir "güvenli"
+// burada GERÇEK bir sarkan-işaretçi riski TAŞIRDI). `async def worker(xs:
+// list[int])` `.qbe` altında ÇÖZÜMLENEMEDİĞİNDEN (`isSpawnParamSafeType`
+// list/dict/class parametreleri SADECE `--release`de İZİN VERİR) BU test
+// `--release`/`.llvm` backend'i GEREKTİRİR.
+test "llvm(çalıştır): GG.20 — spawn'a geçen yerel, callee kendi gövdesinde kaçmasa BİLE HÂLÂ nox_rc_alloc'ta kalır (KRİTİK güvenlik)" {
+    try expectGoldenLlvm(
+        \\def read_only(xs: list[int]) -> int:
+        \\    return len(xs)
+        \\
+        \\async def worker(xs: list[int]) -> int:
+        \\    return read_only(xs)
+        \\
+        \\xs: list[int] = [1, 2, 3, 4, 5]
+        \\t: Task[int] = spawn worker(xs)
+        \\print(await t)
+        \\
+    ,
+        "5\n",
+    );
+}
+
+test "llvm: GG.20 — spawn'a geçen yerelin ÜRETTİĞİ IR'da nox_rc_alloc HÂLÂ VAR (KRİTİK güvenlik)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const io = std.testing.io;
+    const source =
+        \\def read_only(xs: list[int]) -> int:
+        \\    return len(xs)
+        \\
+        \\async def worker(xs: list[int]) -> int:
+        \\    return read_only(xs)
+        \\
+        \\xs: list[int] = [1, 2, 3, 4, 5]
+        \\t: Task[int] = spawn worker(xs)
+        \\print(await t)
+        \\
+    ;
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const user_module = try nox.parser.parseModule(allocator, tokens);
+    const module = try nox.module_loader.resolveImports(allocator, io, user_module);
+
+    var checker_state = nox.checker.Checker.init(allocator);
+    checker_state.backend = .llvm;
+    checker_state.checkModule(module) catch return error.FixtureNotWellTyped;
+    if (checker_state.diagnostics.items.len > 0) return error.FixtureNotWellTyped;
+
+    var generic_names: std.ArrayListUnmanaged([]const u8) = .empty;
+    var generic_it = checker_state.generic_functions.keyIterator();
+    while (generic_it.next()) |k| try generic_names.append(allocator, k.*);
+    var generic_class_names: std.ArrayListUnmanaged([]const u8) = .empty;
+    var generic_class_it = checker_state.generic_classes.keyIterator();
+    while (generic_class_it.next()) |k| try generic_class_names.append(allocator, k.*);
+    var closure_infos: std.StringHashMapUnmanaged([]const []const u8) = .empty;
+    var closure_it = checker_state.closure_infos.iterator();
+    while (closure_it.next()) |entry| {
+        const names = try allocator.alloc([]const u8, entry.value_ptr.captures.len);
+        for (entry.value_ptr.captures, 0..) |c, i| names[i] = c.name;
+        try closure_infos.put(allocator, entry.key_ptr.*, names);
+    }
+    var functions_used_as_value: std.ArrayListUnmanaged([]const u8) = .empty;
+    var fn_value_it = checker_state.functions_used_as_value.keyIterator();
+    while (fn_value_it.next()) |k| try functions_used_as_value.append(allocator, k.*);
+
+    const ir = try nox.codegen.generateModule(allocator, module, checker_state.instantiations.items, generic_names.items, checker_state.class_instantiations.items, generic_class_names.items, null, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, .llvm);
+
+    try std.testing.expect(std.mem.indexOf(u8, ir, "nox_rc_alloc") != null);
+}

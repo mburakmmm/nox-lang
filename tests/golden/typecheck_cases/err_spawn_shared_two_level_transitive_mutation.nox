@@ -1,0 +1,13 @@
+def mutate(xs: list[int]) -> None:
+    xs.append(1)
+
+def forward(xs: list[int]) -> None:
+    mutate(xs)
+
+async def worker(xs: list[int]) -> None:
+    forward(xs)
+
+async def entry() -> None:
+    xs: list[int] = [1, 2, 3]
+    t: Task[None] = spawn worker(xs)
+    await t

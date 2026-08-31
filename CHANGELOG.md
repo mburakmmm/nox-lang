@@ -14,6 +14,32 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.44.0]
+
+### Eklendi
+- **GG.20 — interprocedural escape/mutasyon analizi (ASAP güçlendirmesi,
+  Tur 4)**: harici bir (GPT-5.6) incelemenin işaret ettiği ORTAK kök
+  neden (`checker.zig`nin `SpawnSharedMutation`ı bir yardımcı fonksiyon
+  ÜZERİNDEN mutasyonu yakalayamıyordu; ASAP'in KENDİ "argüman-olarak-
+  geçiş HER ZAMAN kaçış" katı kuralı AYNI nedenden geliyordu) İçİn TEK,
+  PAYLAŞILAN bir "fonksiyon etkisi" motoru: YENİ `compiler/effect_graph.zig`
+  (`computeMustNotRaise`in ters-çağrı-grafiği/worklist algoritmasının
+  GENELLEŞTİRİLMİŞ, checker/codegen ARASINDA bağımlılık KURMAYAN, NÖTR
+  hali). `checker.zig`nin `SpawnSharedMutation`ı ARTIK bir yardımcı
+  fonksiyon ÜZERİNDEN (arbitrer derinlikte, transitif olarak) mutasyonu
+  YAKALAR. `codegen_qbe`nin ASAP'i (GG.17/19) ARTIK salt-okunur bir
+  SERBEST fonksiyona argüman olarak geçen bir yereli stack'e dönüştürebilir
+  (ÖNCEDEN HER argüman-geçişi koşulsuz kaçış SAYILIYORDU) — GG.18'in
+  arena-yolu VE `spawn`a geçen değerler BU gevşetmenin BİLİNÇLİ olarak
+  DIŞINDA bırakıldı (İKİSİ de break→red→fix İLE doğrulanan GERÇEK
+  güvenlik sınırları: arena değerleri çağrı sınırını AŞAMAZ, spawn
+  ASENKRON/çapraz-fiber olduğundan callee'nin KENDİ kaçış-kanıtı
+  GEÇERSİZDİR). `point_sum`-benzeri bir desen İçİn `git worktree` İLE
+  ~2.9x ölçülen bir kazanç (bkz. `benchmarks/RESULTS.md`). 6 YENİ golden
+  fixture (3 checker + 3 codegen) + 2 LLVM kırmızı-takım testi, tam
+  regresyon paketi + `NOX_STRESS_ROUNDS=800 zig build stress-test`
+  tamamen yeşil.
+
 ## [1.43.0]
 
 ### Eklendi

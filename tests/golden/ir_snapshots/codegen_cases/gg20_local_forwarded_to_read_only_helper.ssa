@@ -1012,74 +1012,106 @@ export function d $sum_float(l %rt, l %p_xs) {
 @fn_end4
     ret d_0
 }
-export function l $sum_while(l %rt, l %p_xs) {
+export function l $read_only(l %rt, l %p_xs) {
 @start
     %t0 =l alloc8 8
-    %t1 =l alloc8 8
-    %t2 =l alloc8 8
     storel %p_xs, %t0
+    %t1 =l loadl %t0
+    %t2 =l loadl %t1
+    ret %t2
+@after_return0
+@fn_end1
+    ret 0
+}
+export function l $compute(l %rt) {
+@start
+    %t0 =l alloc8 96
+    %t1 =l alloc8 8
     storel 0, %t1
-    storel 0, %t2
-    jmp @while_cond0
-@while_cond0
-    %t3 =l loadl %t2
-    %t4 =l loadl %t0
-    %t5 =l loadl %t4
-    %t6 =w csltl %t3, %t5
-    jnz %t6, @while_body1, @while_end2
-@while_body1
-    %t7 =l loadl %t1
-    %t8 =l loadl %t0
-    %t9 =l loadl %t2
-    %t10 =l mul %t9, 8
-    %t11 =l add %t10, 16
-    %t12 =l add %t8, %t11
-    %t13 =l loadl %t12
-    %t14 =l add %t7, %t13
-    storel %t14, %t1
-    %t15 =l loadl %t2
-    %t16 =l add %t15, 1
-    storel %t16, %t2
-    jmp @while_cond0
-@while_end2
-    %t17 =l loadl %t1
-    ret %t17
-@after_return3
-@fn_end4
+    %t2 =l alloc8 8
+    %t3 =l alloc8 8
+    storel 10, %t0
+    %t4 =l add %t0, 8
+    storel 10, %t4
+    %t5 =l add %t0, 16
+    storel 3, %t5
+    %t6 =l add %t0, 24
+    storel 1, %t6
+    %t7 =l add %t0, 32
+    storel 4, %t7
+    %t8 =l add %t0, 40
+    storel 1, %t8
+    %t9 =l add %t0, 48
+    storel 5, %t9
+    %t10 =l add %t0, 56
+    storel 9, %t10
+    %t11 =l add %t0, 64
+    storel 2, %t11
+    %t12 =l add %t0, 72
+    storel 6, %t12
+    %t13 =l add %t0, 80
+    storel 5, %t13
+    %t14 =l add %t0, 88
+    storel 3, %t14
+    storel %t0, %t1
+    %t15 =l loadl %t1
+    storel %t15, %t2
+    %t16 =l loadl %t2
+    %t17 =l loadl %t16
+    storel %t17, %t3
+    jmp @inline_done0
+@after_inline_return1
+    jmp @inline_done0
+@inline_done0
+    %t18 =l loadl %t3
+    ret %t18
+@after_return2
+@fn_end3
     ret 0
 }
 export function w $main(w %argc, l %argv) {
 @start
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
-    %t0 =l alloc8 80
+    %t0 =l alloc8 8
+    storel 0, %t0
     %t1 =l alloc8 8
-    storel 0, %t1
-    storel 8, %t0
-    %t2 =l add %t0, 8
-    storel 8, %t2
-    %t3 =l add %t0, 16
-    storel 3, %t3
-    %t4 =l add %t0, 24
-    storel 1, %t4
-    %t5 =l add %t0, 32
-    storel 4, %t5
-    %t6 =l add %t0, 40
-    storel 1, %t6
-    %t7 =l add %t0, 48
-    storel 5, %t7
-    %t8 =l add %t0, 56
-    storel 9, %t8
-    %t9 =l add %t0, 64
-    storel 2, %t9
-    %t10 =l add %t0, 72
-    storel 6, %t10
-    storel %t0, %t1
-    %t11 =l loadl %t1
-    %t12 =l call $sum_while(l %rt, l %t11)
-    call $printf(l $fmt_int, ..., l %t12)
+    %t2 =l alloc8 96
+    storel 10, %t2
+    %t3 =l add %t2, 8
+    storel 10, %t3
+    %t4 =l add %t2, 16
+    storel 3, %t4
+    %t5 =l add %t2, 24
+    storel 1, %t5
+    %t6 =l add %t2, 32
+    storel 4, %t6
+    %t7 =l add %t2, 40
+    storel 1, %t7
+    %t8 =l add %t2, 48
+    storel 5, %t8
+    %t9 =l add %t2, 56
+    storel 9, %t9
+    %t10 =l add %t2, 64
+    storel 2, %t10
+    %t11 =l add %t2, 72
+    storel 6, %t11
+    %t12 =l add %t2, 80
+    storel 5, %t12
+    %t13 =l add %t2, 88
+    storel 3, %t13
+    storel %t2, %t0
+    %t14 =l loadl %t0
+    %t15 =l call $read_only(l %rt, l %t14)
+    storel %t15, %t1
+    jmp @inline_done0
+@after_inline_return1
+    jmp @inline_done0
+@inline_done0
+    %t16 =l loadl %t1
+    call $printf(l $fmt_int, ..., l %t16)
     call $nox_runtime_deinit(l %rt)
-@fn_end0
+@fn_end2
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

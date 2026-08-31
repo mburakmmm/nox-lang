@@ -46,6 +46,7 @@ const types = @import("types.zig");
 const Type = types.Type;
 const span_mod = @import("../span.zig");
 const Span = span_mod.Span;
+const effect_graph = @import("../effect_graph.zig");
 
 pub const TypeError = error{
     TypeMismatch,
@@ -303,6 +304,17 @@ pub const Checker = struct {
     /// çalışma zamanında senkronizasyonsuz cross-worker mutasyon
     /// riskine karşı derleme-zamanı reddi.
     spawn_target_functions: std.StringHashMapUnmanaged(void) = .{},
+    /// GG.20 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 4"): whole-program
+    /// `(fonksiyon_adı, parametre_indeksi)` çiftlerinin — `list`/`dict`/
+    /// `class` tipli bir parametrenin, O fonksiyonun KENDİ gövdesinde
+    /// DOĞRUDAN YA DA (YENİ) bir yardımcı SERBEST fonksiyona argüman
+    /// olarak geçip O fonksiyonun KARŞILIK GELEN parametresinde mutasyona
+    /// uğraması YOLUYLA — mutasyona UĞRADIĞI KANITLANMIŞ kümesi.
+    /// `computeMutatesGraph` TARAFINDAN (`collectSpawnTargets`İLE AYNI
+    /// aşamada) doldurulur; `checkNoSpawnSharedMutation` bunu kullanarak
+    /// `helper(xs)` GİBİ TRANSİTİF mutasyonları da YAKALAR (v1.30.0'ın
+    /// "yalnızca KENDİ gövde" sınırlamasının GENELLEMESİ).
+    mutates_params: effect_graph.NodeSet = .{},
     /// v1.30.1 (bkz. nox-teknik-spesifikasyon.md §3.96): `parser.zig`nin
     /// GÜVENLİK bulgusu H-3 düzeltmesiyle (`enterRecursion`/
     /// `MAX_EXPR_DEPTH`) AYNI mekanizma — AMA parser'ın guard'ı YALNIZCA
@@ -1881,6 +1893,7 @@ pub const Checker = struct {
         try self.registerSignatures(module);
         try self.collectModuleGlobals(module);
         try self.collectSpawnTargets(module);
+        try self.computeMutatesGraph(module);
 
         var top_scope: Scope = .{};
         // `in_async = true`: Nox'ta açık bir `def main()` sözleşmesi YOK —
@@ -2093,6 +2106,195 @@ pub const Checker = struct {
         }
     }
 
+    /// GG.20 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 4"): whole-program
+    /// pre-pass — `module.body`nin ÜST-DÜZEY `.func_def`leri VE `.class_def`
+    /// metodlarının HER `list`/`dict`/`class` tipli parametresi İçİn, O
+    /// parametrenin (a) fonksiyonun KENDİ gövdesinde DOĞRUDAN mutasyona
+    /// UĞRADIĞINI (tohum) VEYA (b) BAŞKA bir SERBEST fonksiyona argüman
+    /// olarak GEÇTİĞİNİ (kenar — hedef fonksiyonun KARŞILIK GELEN
+    /// parametresi kötüyse BU parametre de kötü olur) tarar. `effect_graph.propagateBad`
+    /// (`computeMustNotRaise`in ZATEN kanıtlanmış ters-grafik/worklist
+    /// algoritmasının PAYLAŞILAN çekirdeği) İLE `self.mutates_params`i
+    /// doldurur.
+    fn computeMutatesGraph(self: *Checker, module: ast.Module) TypeError!void {
+        var seeds: std.ArrayListUnmanaged(effect_graph.NodeKey) = .empty;
+        defer seeds.deinit(self.allocator);
+        var reverse_edges: effect_graph.ReverseEdges = .empty;
+        for (module.body) |stmt| {
+            switch (stmt.kind) {
+                .func_def => |fd| try self.scanMutatesGraphFunc(fd.name, fd.params, fd.body, &seeds, &reverse_edges),
+                .class_def => |cd| for (cd.methods) |m| {
+                    const sym = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ cd.name, m.name });
+                    try self.scanMutatesGraphFunc(sym, m.params, m.body, &seeds, &reverse_edges);
+                },
+                else => {},
+            }
+        }
+        self.mutates_params = try effect_graph.propagateBad(self.allocator, &reverse_edges, seeds.items);
+    }
+
+    /// GG.20: `len`/`str`/`int`/`float`/`print`/vb. — `checkCall`in `.attribute`
+    /// DIŞINDAKİ `.identifier` dalının ÖZEL işlediği, KULLANICI TARAFINDAN
+    /// yeniden tanımlanamayan, `self.functions`E ASLA KAYDEDİLMEYEN sabit
+    /// yerleşikler — HİÇBİRİ argümanını mutasyona UĞRATMAZ (`len`/`print`
+    /// salt-okunur, DİĞERLERİ list/dict/class argüman KABUL ETMEZ zaten).
+    /// BUNLAR OLMADAN "callee `self.functions`DA YOK" kontrolü BUNLARI da
+    /// (YANLIŞLIKLA) "çözülemeyen çağrı" sayıp GEREKSİZ yere tohum
+    /// olarak İŞARETLERDİ (ör. `len(xs)` İçEREN salt-okunur bir yardımcı
+    /// bile YAKALANIRDI — GERÇEK bir yanlış-pozitif).
+    fn isKnownSafeBuiltinCallee(name: []const u8) bool {
+        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "wasm_call" };
+        for (safe) |s| {
+            if (std.mem.eql(u8, name, s)) return true;
+        }
+        return std.mem.startsWith(u8, name, "__nox_reflect_");
+    }
+
+    fn paramIndexByName(params: []const ast.Param, name: []const u8) ?u32 {
+        for (params, 0..) |p, i| {
+            if (std.mem.eql(u8, p.name, name)) return @intCast(i);
+        }
+        return null;
+    }
+
+    fn scanMutatesGraphFunc(self: *Checker, fname: []const u8, params: []const ast.Param, body: []const ast.Stmt, seeds: *std.ArrayListUnmanaged(effect_graph.NodeKey), reverse_edges: *effect_graph.ReverseEdges) TypeError!void {
+        var shared: std.ArrayListUnmanaged(SharedParam) = .empty;
+        defer shared.deinit(self.allocator);
+        for (params) |p| {
+            const pt = self.typeExprToType(p.type_expr) catch continue;
+            switch (pt) {
+                .list, .dict, .class => try shared.append(self.allocator, .{ .name = p.name, .ty = pt }),
+                else => {},
+            }
+        }
+        if (shared.items.len == 0) return;
+        try self.scanMutatesGraphStmts(fname, params, body, shared.items, seeds, reverse_edges);
+    }
+
+    fn addMutatesSeed(self: *Checker, fname: []const u8, params: []const ast.Param, root_param: []const u8, seeds: *std.ArrayListUnmanaged(effect_graph.NodeKey)) TypeError!void {
+        const idx = paramIndexByName(params, root_param) orelse return;
+        try seeds.append(self.allocator, .{ .func = fname, .index = idx });
+    }
+
+    fn addMutatesEdge(self: *Checker, target_func: []const u8, target_index: u32, fname: []const u8, params: []const ast.Param, root_param: []const u8, reverse_edges: *effect_graph.ReverseEdges) TypeError!void {
+        const idx = paramIndexByName(params, root_param) orelse return;
+        const key: effect_graph.NodeKey = .{ .func = target_func, .index = target_index };
+        const gop = try reverse_edges.getOrPut(self.allocator, key);
+        if (!gop.found_existing) gop.value_ptr.* = .empty;
+        try gop.value_ptr.append(self.allocator, .{ .func = fname, .index = idx });
+    }
+
+    fn scanMutatesGraphStmts(self: *Checker, fname: []const u8, params: []const ast.Param, stmts: []const ast.Stmt, shared: []const SharedParam, seeds: *std.ArrayListUnmanaged(effect_graph.NodeKey), reverse_edges: *effect_graph.ReverseEdges) TypeError!void {
+        for (stmts) |stmt| {
+            switch (stmt.kind) {
+                .assign => |a| {
+                    switch (a.target) {
+                        .index => |ix| if (self.resolveExprSharedType(ix.obj.*, shared)) |r| {
+                            if (r.ty == .list or r.ty == .dict) try self.addMutatesSeed(fname, params, r.root_param, seeds);
+                        },
+                        .attribute => |at| if (self.resolveExprSharedType(at.obj.*, shared)) |r| {
+                            if (r.ty == .class) try self.addMutatesSeed(fname, params, r.root_param, seeds);
+                        },
+                        else => {},
+                    }
+                    try self.scanMutatesGraphExpr(fname, params, a.value, shared, seeds, reverse_edges);
+                },
+                .expr_stmt => |e| {
+                    if (e == .call and e.call.callee.* == .attribute) {
+                        const at = e.call.callee.*.attribute;
+                        if (std.mem.eql(u8, at.attr, "append") or std.mem.eql(u8, at.attr, "pop") or std.mem.eql(u8, at.attr, "sort")) {
+                            if (self.resolveExprSharedType(at.obj.*, shared)) |r| {
+                                if (r.ty == .list) try self.addMutatesSeed(fname, params, r.root_param, seeds);
+                            }
+                        }
+                    }
+                    try self.scanMutatesGraphExpr(fname, params, e, shared, seeds, reverse_edges);
+                },
+                .var_decl => |v| try self.scanMutatesGraphExpr(fname, params, v.value, shared, seeds, reverse_edges),
+                .return_stmt => |maybe_e| if (maybe_e) |e| try self.scanMutatesGraphExpr(fname, params, e, shared, seeds, reverse_edges),
+                .raise_stmt => |e| try self.scanMutatesGraphExpr(fname, params, e, shared, seeds, reverse_edges),
+                .if_stmt => |i| {
+                    try self.scanMutatesGraphExpr(fname, params, i.cond, shared, seeds, reverse_edges);
+                    try self.scanMutatesGraphStmts(fname, params, i.then_body, shared, seeds, reverse_edges);
+                    for (i.elif_clauses) |ec| {
+                        try self.scanMutatesGraphExpr(fname, params, ec.cond, shared, seeds, reverse_edges);
+                        try self.scanMutatesGraphStmts(fname, params, ec.body, shared, seeds, reverse_edges);
+                    }
+                    if (i.else_body) |eb| try self.scanMutatesGraphStmts(fname, params, eb, shared, seeds, reverse_edges);
+                },
+                .while_stmt => |w| {
+                    try self.scanMutatesGraphExpr(fname, params, w.cond, shared, seeds, reverse_edges);
+                    try self.scanMutatesGraphStmts(fname, params, w.body, shared, seeds, reverse_edges);
+                },
+                .for_stmt => |f| {
+                    try self.scanMutatesGraphExpr(fname, params, f.iterable, shared, seeds, reverse_edges);
+                    try self.scanMutatesGraphStmts(fname, params, f.body, shared, seeds, reverse_edges);
+                },
+                .try_stmt => |t| {
+                    try self.scanMutatesGraphStmts(fname, params, t.try_body, shared, seeds, reverse_edges);
+                    for (t.except_clauses) |ec| try self.scanMutatesGraphStmts(fname, params, ec.body, shared, seeds, reverse_edges);
+                    if (t.finally_body) |fb| try self.scanMutatesGraphStmts(fname, params, fb, shared, seeds, reverse_edges);
+                },
+                .with_stmt => |w| {
+                    try self.scanMutatesGraphExpr(fname, params, w.ctx_expr, shared, seeds, reverse_edges);
+                    try self.scanMutatesGraphStmts(fname, params, w.body, shared, seeds, reverse_edges);
+                },
+                .lowlevel_stmt => |ll| try self.scanMutatesGraphStmts(fname, params, ll.body, shared, seeds, reverse_edges),
+                // İç içe `func_def`/`class_def`/`defer`: AYRI çağrılabilir
+                // birimler — v1.30.0'ın "transitif takip yok" kararıyla
+                // TUTARLI (BU graf SADECE üst-düzey fonksiyon/metod
+                // ÇAĞRILARINI kapsar).
+                .func_def, .class_def, .defer_stmt, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt => {},
+            }
+        }
+    }
+
+    fn scanMutatesGraphExpr(self: *Checker, fname: []const u8, params: []const ast.Param, expr: ast.Expr, shared: []const SharedParam, seeds: *std.ArrayListUnmanaged(effect_graph.NodeKey), reverse_edges: *effect_graph.ReverseEdges) TypeError!void {
+        switch (expr) {
+            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+            .unary => |u| try self.scanMutatesGraphExpr(fname, params, u.operand.*, shared, seeds, reverse_edges),
+            .binary => |b| {
+                try self.scanMutatesGraphExpr(fname, params, b.left.*, shared, seeds, reverse_edges);
+                try self.scanMutatesGraphExpr(fname, params, b.right.*, shared, seeds, reverse_edges);
+            },
+            .call => |c| {
+                // YENİ: argümanların HERHANGİ BİRİ paylaşılan bir parametreye
+                // ÇÖZÜLÜYORSA — callee ÇÖZÜLEBİLİR bir SERBEST fonksiyon
+                // İSE (`self.functions`de, METODLAR/kurucular HARİÇ) bir
+                // KENAR, AKSİ HALDE (metod çağrısı/dolaylı/çözülemeyen
+                // isim) DOĞRUDAN bir tohum EKLENİR (muhafazakâr).
+                const callee_is_resolvable_free_fn = c.callee.* == .identifier and self.functions.contains(c.callee.identifier);
+                const callee_is_known_safe_builtin = c.callee.* == .identifier and isKnownSafeBuiltinCallee(c.callee.identifier);
+                for (c.args, 0..) |a, arg_index| {
+                    if (self.resolveExprSharedType(a, shared)) |r| {
+                        if (r.ty == .list or r.ty == .dict or r.ty == .class) {
+                            if (callee_is_resolvable_free_fn) {
+                                try self.addMutatesEdge(c.callee.identifier, @intCast(arg_index), fname, params, r.root_param, reverse_edges);
+                            } else if (!callee_is_known_safe_builtin) {
+                                try self.addMutatesSeed(fname, params, r.root_param, seeds);
+                            }
+                        }
+                    }
+                    try self.scanMutatesGraphExpr(fname, params, a, shared, seeds, reverse_edges);
+                }
+                try self.scanMutatesGraphExpr(fname, params, c.callee.*, shared, seeds, reverse_edges);
+            },
+            .attribute => |a| try self.scanMutatesGraphExpr(fname, params, a.obj.*, shared, seeds, reverse_edges),
+            .index => |ix| {
+                try self.scanMutatesGraphExpr(fname, params, ix.obj.*, shared, seeds, reverse_edges);
+                try self.scanMutatesGraphExpr(fname, params, ix.index.*, shared, seeds, reverse_edges);
+            },
+            .list_lit => |items| for (items) |it| try self.scanMutatesGraphExpr(fname, params, it, shared, seeds, reverse_edges),
+            .dict_lit => |pairs| for (pairs) |p| {
+                try self.scanMutatesGraphExpr(fname, params, p.key, shared, seeds, reverse_edges);
+                try self.scanMutatesGraphExpr(fname, params, p.value, shared, seeds, reverse_edges);
+            },
+            .await_expr => |op| try self.scanMutatesGraphExpr(fname, params, op.*, shared, seeds, reverse_edges),
+            .spawn_expr => |op| try self.scanMutatesGraphExpr(fname, params, op.*, shared, seeds, reverse_edges),
+            .generic_construct => |g| for (g.args) |a| try self.scanMutatesGraphExpr(fname, params, a, shared, seeds, reverse_edges),
+        }
+    }
+
     /// v1.34.0 (bkz. nox-teknik-spesifikasyon.md §3.101): `resolveExprSharedType`nin
     /// dönüşü — bir ifadenin (`b`/`b.xs`/`b.inner.xs` GİBİ HERHANGİ derinlikte
     /// bir attribute zinciri) HANGİ paylaşılan parametreden (`root_param`)
@@ -2137,6 +2339,53 @@ pub const Checker = struct {
     /// TAKİBİ YOK, iç içe `func_def`/`class_def` gövdelerine İNMEZ — bunlar
     /// AYRI çağrılabilir birimlerdir) — bkz. plan dosyasının "Kapsam DIŞI"
     /// bölümü.
+    /// GG.20: `computeMutatesGraph`nin doldurduğu `self.mutates_params`e
+    /// karşı BİR `.call` ifadesindeki HER argümanı kontrol eder — argüman
+    /// paylaşılan bir parametreye ÇÖZÜLÜYORSA VE callee ÇÖZÜLEBİLİR bir
+    /// SERBEST fonksiyon İSE VE `{callee, arg_index}` `mutates_params`DAYSA,
+    /// TRANSİTİF mutasyon hatası verir (v1.30.0'ın "yalnızca KENDİ gövde"
+    /// sınırlamasının GENELLEMESİ). ARGÜMANLARIN KENDİSİ de özyinelemeli
+    /// olarak taranır (iç içe çağrılar İçİn).
+    fn checkTransitiveSpawnSharedMutationExpr(self: *Checker, fd_name: []const u8, expr: ast.Expr, params: []const SharedParam) TypeError!void {
+        switch (expr) {
+            .unary => |u| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, u.operand.*, params),
+            .binary => |b| {
+                try self.checkTransitiveSpawnSharedMutationExpr(fd_name, b.left.*, params);
+                try self.checkTransitiveSpawnSharedMutationExpr(fd_name, b.right.*, params);
+            },
+            .call => |c| {
+                const callee_is_resolvable_free_fn = c.callee.* == .identifier and self.functions.contains(c.callee.identifier);
+                for (c.args, 0..) |a, idx| {
+                    if (callee_is_resolvable_free_fn) {
+                        if (self.resolveExprSharedType(a, params)) |r| {
+                            if (r.ty == .list or r.ty == .dict or r.ty == .class) {
+                                if (self.mutates_params.contains(.{ .func = c.callee.identifier, .index = @intCast(idx) })) {
+                                    return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada '{s}' üzerinden transitif olarak değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, r.root_param, c.callee.identifier });
+                                }
+                            }
+                        }
+                    }
+                    try self.checkTransitiveSpawnSharedMutationExpr(fd_name, a, params);
+                }
+                try self.checkTransitiveSpawnSharedMutationExpr(fd_name, c.callee.*, params);
+            },
+            .attribute => |a| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, a.obj.*, params),
+            .index => |ix| {
+                try self.checkTransitiveSpawnSharedMutationExpr(fd_name, ix.obj.*, params);
+                try self.checkTransitiveSpawnSharedMutationExpr(fd_name, ix.index.*, params);
+            },
+            .list_lit => |items| for (items) |it| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, it, params),
+            .dict_lit => |pairs| for (pairs) |p| {
+                try self.checkTransitiveSpawnSharedMutationExpr(fd_name, p.key, params);
+                try self.checkTransitiveSpawnSharedMutationExpr(fd_name, p.value, params);
+            },
+            .await_expr => |op| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, op.*, params),
+            .spawn_expr => |op| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, op.*, params),
+            .generic_construct => |g| for (g.args) |a| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, a, params),
+            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+        }
+    }
+
     fn checkNoSpawnSharedMutation(self: *Checker, fd_name: []const u8, stmts: []const ast.Stmt, params: []const SharedParam) TypeError!void {
         for (stmts) |stmt| {
             self.current_line = stmt.line;
@@ -2156,19 +2405,26 @@ pub const Checker = struct {
                         },
                         else => {},
                     }
+                    try self.checkTransitiveSpawnSharedMutationExpr(fd_name, a.value, params);
                 },
-                .expr_stmt => |e| if (e == .call) {
-                    const c = e.call;
-                    if (c.callee.* == .attribute) {
-                        const at = c.callee.*.attribute;
-                        if (std.mem.eql(u8, at.attr, "append") or std.mem.eql(u8, at.attr, "pop") or std.mem.eql(u8, at.attr, "sort")) {
-                            if (self.resolveExprSharedType(at.obj.*, params)) |r| {
-                                if (r.ty == .list) {
-                                    return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, r.root_param });
+                .var_decl => |v| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, v.value, params),
+                .return_stmt => |maybe_e| if (maybe_e) |e| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, e, params),
+                .raise_stmt => |e| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, e, params),
+                .expr_stmt => |e| {
+                    if (e == .call) {
+                        const c = e.call;
+                        if (c.callee.* == .attribute) {
+                            const at = c.callee.*.attribute;
+                            if (std.mem.eql(u8, at.attr, "append") or std.mem.eql(u8, at.attr, "pop") or std.mem.eql(u8, at.attr, "sort")) {
+                                if (self.resolveExprSharedType(at.obj.*, params)) |r| {
+                                    if (r.ty == .list) {
+                                        return self.fail(error.SpawnSharedMutation, "'{s}' fonksiyonu bir 'spawn' hedefi olduğundan, paylaşılan parametresi '{s}' burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce yerel bir kopya oluşturun", .{ fd_name, r.root_param });
+                                    }
                                 }
                             }
                         }
                     }
+                    try self.checkTransitiveSpawnSharedMutationExpr(fd_name, e, params);
                 },
                 .if_stmt => |i| {
                     try self.checkNoSpawnSharedMutation(fd_name, i.then_body, params);

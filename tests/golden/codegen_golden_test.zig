@@ -1540,6 +1540,115 @@ test "codegen: GG.16 — kaçan parametrenin ÜRETTİĞİ IR'da nox_rc_alloc HÂ
     try std.testing.expect(std.mem.indexOf(u8, ir, "nox_rc_alloc") != null);
 }
 
+// GG.20 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 4"): interprocedural
+// escape kanıtının İLK POZİTİF sonucu — `read_only(xs): return len(xs)`
+// SADECE `len()`in ZATEN GÜVENLİ saydığı şekilde `xs`i kullanıyor, bu
+// YÜZDEN `computeParamEscapes` onu `escaping_params`E EKLEMEZ — `compute()`nin
+// KENDİ yereli `xs` (fixed_stack adayı) BUNA argüman olarak GEÇTİĞİNDE
+// ARTIK stack'e DÖNÜŞÜR (ÖNCEDEN, Tur 1/2/3'te, HER argüman-geçişi
+// KOŞULSUZ kaçış SAYILDIĞINDAN `nox_rc_alloc`TA KALIRDI).
+test "codegen(çalıştır): GG.20 — salt-okunur bir SERBEST fonksiyona geçen yerel ARTIK stack'e dönüşür" {
+    try expectGolden(
+        @embedFile("codegen_cases/gg20_local_forwarded_to_read_only_helper.nox"),
+        @embedFile("codegen_cases/gg20_local_forwarded_to_read_only_helper.expected"),
+    );
+}
+
+test "codegen: GG.20 — salt-okunur yönlendirmenin ÜRETTİĞİ IR'da compute() İçİnde nox_rc_alloc GERÇEKTEN YOK" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/gg20_local_forwarded_to_read_only_helper.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+
+    const compute_start = std.mem.indexOf(u8, ir, "$compute(") orelse return error.ComputeNotFound;
+    const compute_end = std.mem.indexOfPos(u8, ir, compute_start, "\n}\n") orelse ir.len;
+    const compute_ir = ir[compute_start..compute_end];
+
+    try std.testing.expect(std.mem.indexOf(u8, compute_ir, "nox_rc_alloc") == null);
+}
+
+// GG.20 NEGATİF: `store_it(box, xs): box.xs = xs` — `xs`, KENDİ parametresi
+// OLMAYAN BAŞKA bir nesnenin (`box`) alanına YAZILDIĞINDAN (bir container'a
+// "yazma" — `computeParamEscapes`in tanıdığı KAÇIŞ şekillerinden biri)
+// `store_it`in KENDİ parametresi `escaping_params`E EKLENİR VE `compute()`nin
+// `xs`i (`store_it(b, xs)` İLE forward edildiğinden) HÂLÂ `nox_rc_alloc`TA
+// KALIR — BAŞKA bir container'a yazma HER ZAMAN kaçış sayılır İlkesi
+// GG.20 SONRASI da KORUNUR.
+test "codegen(çalıştır): GG.20 — mutasyona uğratan bir SERBEST fonksiyona geçen yerel HÂLÂ nox_rc_alloc'ta kalır" {
+    try expectGolden(
+        @embedFile("codegen_cases/gg20_local_forwarded_to_mutating_helper_stays_arc.nox"),
+        @embedFile("codegen_cases/gg20_local_forwarded_to_mutating_helper_stays_arc.expected"),
+    );
+}
+
+test "codegen: GG.20 — mutasyona uğratan yönlendirmenin ÜRETTİĞİ IR'da compute() İçİnde nox_rc_alloc HÂLÂ VAR" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/gg20_local_forwarded_to_mutating_helper_stays_arc.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+
+    const compute_start = std.mem.indexOf(u8, ir, "$compute(") orelse return error.ComputeNotFound;
+    const compute_end = std.mem.indexOfPos(u8, ir, compute_start, "\n}\n") orelse ir.len;
+    const compute_ir = ir[compute_start..compute_end];
+
+    try std.testing.expect(std.mem.indexOf(u8, compute_ir, "nox_rc_alloc") != null);
+}
+
+// GG.20 — İKİ SEVİYELİ TRANSİTİF kanıt: `a_forward(xs): return b_read(xs)`,
+// `b_read(xs): return len(xs)` — worklist'in `{b_read,0}`nin GÜVENLİ
+// OLDUĞUNU `{a_forward,0}`YE de YAYDIĞINI (ARBİTRER derinlikte, TEK-
+// seviyeli bir kanıtla SINIRLI KALMADIĞINI) kanıtlar.
+test "codegen(çalıştır): GG.20 — İKİ SEVİYELİ güvenli yönlendirme zinciri de yerel'i stack'e dönüştürür" {
+    try expectGolden(
+        @embedFile("codegen_cases/gg20_two_level_safe_forwarding.nox"),
+        @embedFile("codegen_cases/gg20_two_level_safe_forwarding.expected"),
+    );
+}
+
+test "codegen: GG.20 — iki seviyeli TRANSİTİF kanıtın ÜRETTİĞİ IR'da compute() İçİnde nox_rc_alloc GERÇEKTEN YOK" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/gg20_two_level_safe_forwarding.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+
+    const compute_start = std.mem.indexOf(u8, ir, "$compute(") orelse return error.ComputeNotFound;
+    const compute_end = std.mem.indexOfPos(u8, ir, compute_start, "\n}\n") orelse ir.len;
+    const compute_ir = ir[compute_start..compute_end];
+
+    try std.testing.expect(std.mem.indexOf(u8, compute_ir, "nox_rc_alloc") == null);
+}
+
+// GG.20 KIRMIZI-TAKIM/KRİTİK GÜVENLİK testi: `spawn`'a geçen bir yerelin,
+// callee'nin KENDİ gövdesi "kaçmıyor" KANITLANSA BİLE HÂLÂ ARC'ta KALDIĞI —
+// `async def worker(xs: list[int])` `.qbe` altında ÇÖZÜMLENEMEDİĞİNDEN
+// (checker'ın `isSpawnParamSafeType`si list/dict/class parametreleri
+// SADECE `--release`de İZİN VERİR), BU test `llvm_golden_test.zig`ye
+// TAŞINDI (bkz. "GG.20 KIRMIZI-TAKIM" testi orada).
+
 test "codegen(çalıştır): zincirlenmiş alan okuması bir çağrı sonucu üzerinde — ara nesne sızmaz" {
     try expectGolden(
         @embedFile("codegen_cases/chained_attr_temporary_release.nox"),
@@ -2680,8 +2789,15 @@ test "codegen(çalıştır): GG.17 — return edilen bir yerel stack'e dönüşt
     );
 }
 
-// GG.17 — NEGATİF: bir yerel BAŞKA bir fonksiyona ARGÜMAN olarak
-// geçerse (v1'de interprocedural kanıt YOK) `nox_rc_alloc`ta KALIR.
+// GG.17 — NEGATİF: bir yerel BAŞKA bir fonksiyona ARGÜMAN olarak geçerse
+// `nox_rc_alloc`ta KALIR. GG.20 (bkz. plan dosyası "ASAP güçlendirmesi —
+// Tur 4") SONRASI: BU ÖZEL fixture `read_box`'ın KENDİSİNİN bir METOD
+// ÇAĞRISI (`b.get_n()`) kullanmasını SAĞLAR — metod çağrıları GG.20'nin
+// interprocedural kanıtının KAPSAMI DIŞINDA (KOŞULSUZ kaçış SAYILMAYA
+// devam eder), bu YÜZDEN BU senaryo HÂLÂ (v1.44.0'dan SONRA da)
+// `nox_rc_alloc`ta KALIR — `.ssa` anlık görüntüsü DEĞİŞMEDEN geçerliliğini
+// korur. Salt-okunur bir SERBEST fonksiyona (metod DEĞİL) yönlendirmenin
+// ARTIK GÜVENLİ sayıldığı YENİ pozitif durum İçİn bkz. `gg20_*` fixture'ları.
 test "codegen(çalıştır): GG.17 — başka bir fonksiyona argüman olarak geçen yerel stack'e dönüştürülmez (kaçış)" {
     try expectGolden(
         @embedFile("codegen_cases/stack_local_arg_escape.nox"),

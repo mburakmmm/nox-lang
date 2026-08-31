@@ -736,6 +736,18 @@ export function $Box___init__(l %rt, l %p_self, l %p_n) {
 @fn_end0
     ret
 }
+export function l $Box_get_n(l %rt, l %p_self) {
+@start
+    %t0 =l alloc8 8
+    storel %p_self, %t0
+    %t1 =l loadl %t0
+    %t2 =l add %t1, 8
+    %t3 =l loadl %t2
+    ret %t3
+@after_return0
+@fn_end1
+    ret 0
+}
 export function $Box_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -1092,9 +1104,8 @@ export function l $read_box(l %rt, l %p_b) {
     %t0 =l alloc8 8
     storel %p_b, %t0
     %t1 =l loadl %t0
-    %t2 =l add %t1, 8
-    %t3 =l loadl %t2
-    ret %t3
+    %t2 =l call $Box_get_n(l %rt, l %t1)
+    ret %t2
 @after_return0
 @fn_end1
     ret 0
@@ -1124,31 +1135,30 @@ export function l $compute(l %rt) {
     %t7 =l loadl %t0
     storel %t7, %t1
     %t8 =l loadl %t1
-    %t9 =l add %t8, 8
-    %t10 =l loadl %t9
-    storel %t10, %t2
+    %t9 =l call $Box_get_n(l %rt, l %t8)
+    storel %t9, %t2
     jmp @inline_done3
 @after_inline_return4
     jmp @inline_done3
 @inline_done3
-    %t11 =l loadl %t2
-    %t12 =l loadl %t0
-    %t13 =w ceql %t12, 0
-    jnz %t13, @release_skip6, @release5
+    %t10 =l loadl %t2
+    %t11 =l loadl %t0
+    %t12 =w ceql %t11, 0
+    jnz %t12, @release_skip6, @release5
 @release5
-    call $Box_release(l %rt, l %t12)
+    call $Box_release(l %rt, l %t11)
     jmp @release_done7
 @release_skip6
     jmp @release_done7
 @release_done7
     storel 0, %t0
-    ret %t11
+    ret %t10
 @after_return8
-    %t14 =l loadl %t0
-    %t15 =w ceql %t14, 0
-    jnz %t15, @release_skip10, @release9
+    %t13 =l loadl %t0
+    %t14 =w ceql %t13, 0
+    jnz %t14, @release_skip10, @release9
 @release9
-    call $Box_release(l %rt, l %t14)
+    call $Box_release(l %rt, l %t13)
     jmp @release_done11
 @release_skip10
     jmp @release_done11

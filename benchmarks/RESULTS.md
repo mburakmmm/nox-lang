@@ -430,6 +430,42 @@ Her satır üç dilde **aynı algoritmayı** çalıştırır (Python/C, o dilin 
   inlining'inin VE GG.1'in string optimizasyonlarının YOĞUN kullandığı
   kod yollarını temsil eder.
 
+### GG.20 SONRASI ölçüm (2026-08-31, bkz. §3.110) — ASAP güçlendirmesi Tur 4 (interprocedural escape/mutasyon analizi)
+
+Harici bir (GPT-5.6) incelemenin işaret ettiği ORTAK kök neden (checker'ın
+SpawnSharedMutation'ı VE ASAP'in "argüman-geçişi = kaçış" katı kuralı
+İKİSİ de interprocedural analiz EKSİKLİĞİNDEN geliyordu) İçİn PAYLAŞILAN
+bir motor (`compiler/effect_graph.zig`) eklendi — Tur 1-3'ün İLK KEZ,
+salt-okunur bir SERBEST fonksiyona argüman olarak geçen bir yerelin de
+(callee'nin KENDİ gövdesinde kaçmadığı KANITLANDIĞINDA) stack'e/arenaya
+dönüşebilmesini sağladı.
+
+`point_sum(x)`nin AYNI ailesinden, AMA argüman-geçişini hedefleyen YENİ
+bir desen (`read_only(xs): return xs[0]+xs[1]+xs[2]`, `point_sum(): xs =
+[1,2,3]; return read_only(xs)`) İLE `git worktree` KULLANILARAK v1.43.0
+(argüman-geçişi HER ZAMAN kaçış, `nox_rc_alloc`) vs BU tur (GG.20,
+salt-okunur yönlendirme İSPATLANDIĞINDAN stack) arasında GERÇEK bir A/B
+ölçüldü — 200.000.000 çağrı:
+
+| | v1.43.0 (argüman-geçişi = kaçış, ARC) | BU tur (GG.20, ispatlanmış-güvenli yönlendirme, stack) | Kazanç |
+|---|---:|---:|---|
+| `point_sum()` × 200M çağrı (kullanıcı süresi, min 2 koşu) | 1.19s | 0.40s | **~%66 (~2.9x)** |
+
+Bu kazanç Tur 1/2'nin KENDİ ~2.1-2.3x'lik kazançlarıyla AYNI SINIFTA —
+BEKLENDİĞİ GİBİ, çünkü GG.20 de (Tur 1/2 GİBİ) BİR ALLOCATION stratejisi
+değişikliği (`nox_rc_alloc` → `alloc8`), Tur 3'ün SADECE çağrı-mekaniği
+kazancından FARKLI bir kategoridir — SADECE ÖNCEDEN dokunulamayan YENİ
+bir desen sınıfına (argüman-olarak-geçen yereller) UYGULANIYOR.
+
+**Bilinçli sınır (GERÇEK bir güvenlik riskini ÖNLEMEK İçİn, performans
+KAYBI DEĞİL)**: GG.18'in arena-yolu VE `spawn`a geçen değerler BU
+gevşetmenin DIŞINDA bırakıldı — break→red→fix İLE İKİSİ de GERÇEK birer
+tuzak olarak DOĞRULANDI (bkz. §3.110): arena değerleri normal bir çağrı
+sınırını AŞAMAZ (codegen'in `checkNoLowlevelEscape`si BUNU zaten
+YASAKLIYORDU, bir ÖNCEKİ hâliyle BİLE), `spawn` İSE asenkron/çapraz-fiber
+olduğundan callee'nin KENDİ kaçış-kanıtı GEÇERSİZDİR (caller'ın stack/
+arena çerçevesi görev HÂLÂ ÇALIŞIRKEN yok edilebilir).
+
 ### GG.19 SONRASI ölçüm (2026-08-31, bkz. §3.109) — ASAP güçlendirmesi Tur 3 (aggregate bütçe + inline/ASAP birlikte çalışması)
 
 Harici bir (GPT-5.6) incelemenin bulduğu, kullanıcının seçtiği İKİ
