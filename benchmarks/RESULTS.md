@@ -449,9 +449,26 @@ alanı heap-yönetimli OLDUĞUNDAN `classSafeForStackAlloc` tarafından
 BİLİNÇLİ olarak dışlanıyor) doğal olarak OLUŞMUYOR — bu YÜZDEN mevcut
 benchmark paketinde ÖLÇÜLEBİLİR bir kazanç GÖRÜNMÜYOR (beklenen: yeni
 fixture'lar `tests/golden/codegen_cases/stack_local_*` İLE doğrulandı,
-bkz. §3.107). Gelecekteki bir benchmark turu, GG.17'nin desenini
-(fonksiyon-üstü `var_decl`, ne `lowlevel:` ne çağrı-argümanı) DOĞRUDAN
-egzersiz eden YENİ bir stres senaryosu ekleyebilir.
+bkz. §3.107). **Düzeltme (kullanıcının doğrudan sorusu ÜZERİNE, AYNI gün)**: mevcut 30
+benchmark'ın HİÇBİRİNİN GG.17'yi ÖLÇMEMESİNİN nedeni netleşti — hepsindeki
+İLGİLİ `var_decl`'ler döngü DIŞINDA, TEK SEFER çalışıyor; TEK bir alloc+
+free'nin maliyeti milyonlarca iterasyona karşı zaten İHMAL EDİLEBİLİR.
+GG.17'nin GERÇEK kazancı, böyle bir `var_decl`'i İÇEREN bir fonksiyonun
+KENDİSİ SIK ÇAĞRILDIĞINDA ortaya çıkar. `git worktree` İLE v1.40.0
+(ÖNCESİ) vs v1.41.0 (SONRASI) GERÇEK bir A/B ölçüldü — bir `helper(x)`
+fonksiyonu (İÇİNDE bir sınıf örneği + basit-literal liste inşa edip
+SADECE okuyan) 100M kez çağrılan bir dış döngüden:
+
+| | v1.40.0 (ARC) | v1.41.0 (GG.17, stack) | Kazanç |
+|---|---:|---:|---|
+| `helper()` 100M çağrı | 1.28-1.30s (3 koşu) | 0.555-0.556s (3 koşu) | **~2.3x** |
+
+Bu, GG.17'nin hedeflediği desen İçİn (sık çağrılan, sabit-boyutlu-
+yerel-inşa eden fonksiyonlar) GERÇEK/SUBSTANTIAL bir kazanç — SADECE
+mevcut 30 stres benchmark'ının HİÇBİRİNİN bu deseni İçERMEMESİ yüzünden
+GÖRÜNMÜYORDU. Gelecekteki bir benchmark turu, BU deseni (fonksiyon-üstü
+`var_decl`, SIK çağrılan bir fonksiyonun İÇİNDE) DOĞRUDAN egzersiz eden
+kalıcı bir stres senaryosu ekleyebilir.
 
 ### Darboğaz analizi (2026-07-22) — C'ye karşı en yavaş 5 benchmark'ın ürettiği makine kodu okunarak
 
