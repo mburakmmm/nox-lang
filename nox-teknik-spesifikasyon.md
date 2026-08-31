@@ -16380,6 +16380,79 @@ HARİÇ, HER İKİSİ de BU değişiklikten BAĞIMSIZ, pre-existing).
   olarak geçmesi) VE metod çağrıları — `paramNeverEscapes`in KENDİ
   uyarısıyla TUTARLI, bilinçli takip işleri OLMADAN GENİŞLETİLMEZ.
 
+---
+
+## 3.108 GG.17 hotfix + GG.18 — değişken-boyutlu listeler İçİn fonksiyon-kapsamlı arena (ASAP güçlendirmesi, Tur 2) (v1.42.0)
+
+Tur 2'nin araştırması SIRASINDA (`currentArena()`/`arena_stack`/
+`drainArenas`/`genListAppend`/`nox_list_grow` derinlemesine incelenirken)
+**GG.17'de GERÇEK, canlı bir hata bulundu**: `helper()` (bir GG.17-kalifiye
+yerel İÇEREN, AYRICA GG.2-inline-edilebilir bir fonksiyon) `caller()`'a
+inline edildiğinde, `stack_construct_sites`in AST-düğüm-anahtarlı, hiç
+temizlenmeyen kaydı `helper`'ın KENDİ temp-numaralandırmasına ÖZGÜ bir
+dizeyi TAŞIYIP splice SIRASINDA YENİDEN kullanılıyordu — `caller`'da AYNI
+dizeyi taşıyan TAMAMEN FARKLI bir yerelin (ör. bir parametre) ÜZERİNE
+liste payload'ı TAŞARAK yazılıyordu (doğrudan derlenip ÇALIŞTIRILARAK
+KANITLANDI, farklı slot düzenlerinde GERÇEK bir çökme/yanlış sonuç
+üretebilirdi). GG.15/16 bu sorunu YAŞAMAZ (GG.15'in kayıtları SADECE
+`lowlevel:` İçİndir — ki `lowlevel_stmt` ZATEN inline-edilebilirlikten
+DIŞLANIR; GG.16'nın kaydı bir ÇAĞRI-SİTESİ kimliğiyle anahtarlanır, o
+SİTENİN KENDİSİ splice EDİLMEZ) — GG.17 İLK KEZ bir fonksiyonun KENDİ
+gövdesi İÇİNDEKİ (dolayısıyla splice edilince YENİDEN İŞLENECEK) düğümleri
+kaydeden bir üretici oldu. **Düzeltme**: `computeFuncsWithLocalConstructSites`
+(whole-program, `computeInlinableFunctions`'DAN ÖNCE çalışan SAF bir ön-
+tarama) HER fonksiyonu (`classifyVarDecl`nin YAN-ETKİSİZ sınıflandırma
+sonucuna göre) `self.funcs_with_local_construct_sites`e ekler —
+`isFuncInlineEligible` bunu kontrol edip fonksiyonu GG.2 inline-
+edilebilirliğinden TAMAMEN DIŞLAR (`lowlevel_stmt` İçEREn bir gövdenin
+ZATEN AYNI gerekçeyle dışlanmasıyla TUTARLI).
+
+**GG.18**: GG.17'nin `simpleLiteralListQtype`+boyut-tavanı kapsamının
+DIŞINDA kalan — boş `[]` literali, `.append()` İLE büyüyen, YA DA
+elemanları literal OLMAYAN — bir `list[T]` (`T` SKALER: int/float/bool)
+yereli İçİn, AYNI muhafazakâr escape-disipliniyle (`stmtsSafeForGrowableLocal`/
+`exprHasUnsafeGrowableLocalUse` — `.append(x)` TEK argümanla İZİN VERİLİR,
+`.pop()`/`.sort()`/BAŞKA HERHANGİ bir metod ÇAĞRISI HÂLÂ YASAKTIR),
+fonksiyon-kapsamlı, ÖZEL bir arena kullanır. **KRİTİK mimari karar**:
+`currentArena()`/`self.arena_stack` (`lowlevel:`e ÖZGÜ, KOŞULSUZ TÜM
+inşaları etkileyen bir mekanizma) KESİNLİKLE YENİDEN KULLANILMADI — bir
+Explore ajanının DOĞRULADIĞI GİBİ, `arena_stack`'e YENİ bir girdi PUSH
+etmek, o an derlenen fonksiyondaki TÜM DİĞER, İLGİSİZ sınıf/liste
+inşalarını da YANLIŞLIKLA aynı arenaya YÖNLENDİRİRDİ — bunun yerine
+TAMAMEN AYRI, ÖZEL-değer-anahtarlı bir mekanizma (`Codegen.function_arena`/
+`arena_local_construct_sites`/`growable_arena_names`) kullanıldı. YENİ
+runtime primitifi `nox_arena_list_grow` (`nox_list_grow`nin arena-farkında
+ikizi — `runtime/alloc/arc.zig`) ESKİ bloğa (arenaların per-object free
+DESTEKLEMEMESİ YÜZÜNDEN) HİÇ DOKUNMAZ (predecrement/free/retain-telafi
+TAMAMEN ATLANIR — arenanın DOĞAL "toplu yıkım" modeliyle TUTARLI). Fonksiyon-
+kapsamlı arena HER çıkış yolunda (`drainArenas`in AYNI 4 çağrı sitesinin
+YANINA EKLENEN YENİ `drainFunctionArena`) yıkılır.
+
+**GERÇEK, break→red→fix İLE bulunan İKİNCİ bir tuzak**: boş `[]`
+literallerinin AST-düğüm-anahtarlaması GÜVENSİZDİR — Zig'in TÜM sıfır-
+boyutlu tahsislere AYNI kanonik "boş" işaretçiyi (`0xffffffffffffffff`)
+verdiği DOĞRUDAN bir mikro-testle DOĞRULANDI (iki AYRI `[]` literali AYNI
+`elems.ptr`e SAHİP OLURDU — GERÇEK bir çapraz-değişken çakışması, GG.17'nin
+hotfix'iyle AYNI RİSK SINIFI). Düzeltme: `genEmptyListLit` (`target`
+parametresi ZATEN BU SPESİFİK `var_decl`in KENDİ `VarInfo`sini taşıdığından)
+arena tutamağını `arena_local_construct_sites`den DEĞİL DOĞRUDAN `target.
+growable_arena`dan okur — AST-düğüm anahtarlamaya HİÇ GEREK YOK. DOLU
+listeler (`elems.ptr` GERÇEKTEN BENZERSİZ) İçİn `arena_local_construct_sites`
+(AST-düğüm-anahtarlı) GÜVENLE kullanılmaya DEVAM eder.
+
+**Kapsam (v1, bilinçli sınırlar)**: SADECE `.append()` (`.pop()`/`.sort()`
+HÂLÂ kaçış); SADECE skaler elemanlar (heap-yönetimli elemanlar — `list[str]`
+GİBİ — arenanın per-object free desteklememesi elemanların HİÇ release
+edilmemesi anlamına gelirdi, GG.17'nin class-alan-release hatasının AYNISI
+BAŞTAN elendi); interprocedural kaçış kanıtı YOK (argüman-olarak-geçiş HÂLÂ
+kaçış).
+
+**Doğrulama**: 8 YENİ golden fixture (GG.17 hotfix regresyonu + GG.18
+pozitif/büyük-N-döngü-güvenliği/4 negatif), `zig build test` TAM paket
+106/106 adım 878/878 test TAMAMEN yeşil, `git worktree` İLE v1.41.1
+(ÖNCESİ) vs BU tur (SONRASI) GERÇEK bir A/B ölçümü (bkz. `benchmarks/
+RESULTS.md`).
+
 ### Katman 1: Görünmez Borrow Checker + ASAP Destructor (Sıfır Maliyet)
 - Varsayılan katman. Zorunlu statik tipleme sayesinde derleyici, sahipliği ve yaşam ömrü net olan nesneler için (tahmini kodun %80-90'ı) QBE IR'ına doğrudan ASAP destructor ekler.
 - Referans sayacı yok; nesne kapsamdan çıktığı an sıfır maliyetle temizlenir.

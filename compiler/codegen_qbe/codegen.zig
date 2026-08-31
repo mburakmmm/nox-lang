@@ -320,6 +320,8 @@ pub const Codegen = struct {
     pub const prepareInlineSites = inlining.prepareInlineSites;
     /// GG.17: bkz. `local_escape.zig`nin modül belge notu.
     pub const registerLocalStackSlots = local_escape.registerLocalStackSlots;
+    /// GG.17 hotfix: bkz. `local_escape.zig`nin modül belge notu.
+    pub const computeFuncsWithLocalConstructSites = local_escape.computeFuncsWithLocalConstructSites;
     pub const genInlinedCall = inlining.genInlinedCall;
     pub const scanStackConstructSites = inlining.scanStackConstructSites;
     pub const tryRegisterCrossCallStackSlots = inlining.tryRegisterCrossCallStackSlots;
@@ -377,6 +379,8 @@ pub const Codegen = struct {
     pub const genRaise = exceptions.genRaise;
     pub const drainFinally = exceptions.drainFinally;
     pub const drainArenas = exceptions.drainArenas;
+    /// GG.18: bkz. `exceptions.zig`nin `drainFunctionArena`sının belge notu.
+    pub const drainFunctionArena = exceptions.drainFunctionArena;
     pub const runDetachedFinally = exceptions.runDetachedFinally;
     pub const genTry = exceptions.genTry;
     pub const genWith = exceptions.genWith;
@@ -1121,6 +1125,37 @@ pub const Codegen = struct {
     /// TARAFINDAN TEMİZLENİR (isimler fonksiyonlar arasında ÇAKIŞABİLİR,
     /// AST-POINTER-anahtarlı `stack_construct_sites`in AKSİNE).
     stack_local_names: std.StringHashMapUnmanaged(void) = .empty,
+    /// GG.18 (bkz. `local_escape.zig`): bu fonksiyonun TEK, PAYLAŞILAN
+    /// arena-tutamağı — SADECE ≥1 `.growable_arena` yereli VARSA
+    /// `registerLocalStackSlots` TARAFINDAN (İLK KEZ ihtiyaç duyulduğunda)
+    /// yaratılır. `arena_stack`/`currentArena()`DAN TAMAMEN BAĞIMSIZDIR
+    /// (o ikisi SADECE `lowlevel:` bloklarına AİTTİR — bkz. bu alanın
+    /// KENDİ mekanizmasının `lowlevel:`e HİÇ dokunmadığının belge notu,
+    /// `local_escape.zig`). HER fonksiyon-girişinde (`stack_local_names`
+    /// İLE AYNI 5 çağrı sitesi) `null`a SIFIRLANIR, HER çıkış yolunda
+    /// (`drainFunctionArena`, `exceptions.zig`) yıkılır.
+    function_arena: ?[]const u8 = null,
+    /// GG.18: isim → o ismin BAĞLI OLDUĞU arena-tutamağı METNİ (`allocSlotEx`
+    /// BUNU `VarInfo.growable_arena`e AKTARIR). `stack_local_names`
+    /// İLE AYNI zamanlamada TEMİZLENİR.
+    growable_arena_names: std.StringHashMapUnmanaged([]const u8) = .empty,
+    /// GG.18: `stack_construct_sites`in Tur-2 KARDEŞİ — AST-düğümü
+    /// (`@intFromPtr(elems.ptr)`) → arena-tutamağı METNİ. GG.17 hotfix'i
+    /// SAYESİNDE bu düğümlerin AİT OLDUĞU fonksiyonlar ARTIK ASLA GG.2
+    /// TARAFINDAN başka bir yere SPLICE edilemeyeceğinden (bkz. `funcs_
+    /// with_local_construct_sites`), `stack_construct_sites`in YAŞADIĞI
+    /// çapraz-fonksiyon çakışması BURADA YAPISAL olarak İMKANSIZDIR —
+    /// bu YÜZDEN (GG.15/16 GİBİ) HİÇ TEMİZLENMEZ.
+    arena_local_construct_sites: std.AutoHashMapUnmanaged(usize, []const u8) = .empty,
+    /// GG.17 hotfix (bkz. `local_escape.zig`nin modül belge notu):
+    /// `computeFuncsWithLocalConstructSites`in (whole-program, `computeInlinableFunctions`DAN
+    /// ÖNCE) doldurduğu, "bu fonksiyonun gövdesi `registerLocalStackSlots`
+    /// TARAFINDAN EN AZ bir düğüm kaydedecek" kümesi — `isFuncInlineEligible`
+    /// bunu kontrol edip fonksiyonu GG.2 inline-edilebilirliğinden DIŞLAR
+    /// (`lowlevel_stmt` İÇEREn bir gövdenin ZATEN aynı gerekçeyle
+    /// dışlanmasıyla TUTARLI — AST-düğüm-anahtarlı, hiç temizlenmeyen bir
+    /// tabloya kayıt yapan bir gövde ASLA başka bir yere splice EDİLEMEZ).
+    funcs_with_local_construct_sites: std.StringHashMapUnmanaged(void) = .empty,
     /// Faz GG.2: `genInlinedCall` bir splice ÜRETİRKEN AYARLANIR (splice
     /// SONRASI eski değerine GERİ YÜKLENİR) — `genStmts`in `.return_stmt`
     /// dalı bu DOLUYSA gerçek bir `ret` YERİNE sonuç slotuna YAZIP `jmp`
@@ -1352,6 +1387,11 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     // için — bkz. `computeMustNotRaise`in belge notu. `self.classes`/
     // `self.functions` (yukarıdaki register* döngüleri) DOLU olmalı.
     try gen.computeMustNotRaise(module, extra_functions, extra_classes);
+
+    // GG.17 hotfix (bkz. `local_escape.zig`nin modül belge notu):
+    // `computeInlinableFunctions`DAN ÖNCE — `isFuncInlineEligible`nin
+    // `funcs_with_local_construct_sites`e İHTİYACI VAR.
+    try gen.computeFuncsWithLocalConstructSites(module, extra_functions);
 
     // Faz GG.2 (bkz. nox-teknik-spesifikasyon.md §3.67): `computeMustNotRaise`DEN
     // SONRA (bağımlılık — bkz. `isFuncInlineEligible`) VE HERHANGİ bir gövde

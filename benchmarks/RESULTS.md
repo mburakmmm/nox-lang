@@ -430,6 +430,27 @@ Her satır üç dilde **aynı algoritmayı** çalıştırır (Python/C, o dilin 
   inlining'inin VE GG.1'in string optimizasyonlarının YOĞUN kullandığı
   kod yollarını temsil eder.
 
+### GG.18 SONRASI ölçüm (2026-08-31, bkz. §3.108) — ASAP güçlendirmesi Tur 2 (değişken-boyutlu listeler)
+
+GG.17'nin ölçüm dersi (mevcut 30 benchmark'ın hedeflenen deseni doğal
+olarak İÇERMEMESİ) GÖZ ÖNÜNE ALINARAK, GG.18 İçİn (`.append()` İLE
+büyüyen bir liste, SIK çağrılan bir fonksiyon İçİnde) BAŞTAN ÖZEL bir
+mikro-benchmark İLE, `git worktree` KULLANILARAK v1.41.1 (ÖNCESİ) vs
+BU tur (SONRASI) arasında GERÇEK bir A/B ölçüldü — `build_sum(50)`
+(boş `[]`'ten `.append()` İLE 50 elemana büyüyen, SADECE okunan bir
+liste) 200.000 kez çağrılan bir dış döngüden:
+
+| | v1.41.1 (ARC, `nox_rc_alloc`+`nox_list_grow`) | BU tur (GG.18, arena) | Kazanç |
+|---|---:|---:|---|
+| `build_sum(50)` × 200.000 çağrı (min, 3 koşu) | 67.6s | 32.0s | **~2.1x** |
+
+`zig build bench -Doptimize=ReleaseFast`in KENDİSİ de (30/30 stres + 10/10
+Python/C + 8/8 Rust-stdlib + 4/4 Rust-crate) TEMİZ geçti — MEVCUT 30
+benchmark'ın HİÇBİRİ GG.18'in hedeflediği deseni (Tur 1'İN AYNI dersi)
+DOĞAL olarak İÇERMEDİĞİNDEN orada AYRICA ölçülebilir bir fark
+BEKLENMİYOR/GÖZLENMEDİ — GERÇEK kazanç YUKARIDAKİ ÖZEL mikro-benchmark
+İLE gösterildi.
+
 ### GG.17 SONRASI koşu (2026-08-31, bkz. §3.107) — ASAP güçlendirmesi Tur 1
 
 Kullanıcının "ASAP'i (Katman 1) güçlendirebilir miyiz" hipotezi ÜZERİNE

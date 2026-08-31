@@ -106,6 +106,7 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
                     // serbest-bırakma (use-after-free) olurdu.
                     try self.drainFinally(ret_qtype);
                     try self.drainArenas();
+                    try self.drainFunctionArena();
                     try self.drainDeferIfSet();
                     const except_name: ?[]const u8 = if (e == .identifier) e.identifier else null;
                     try self.releaseAllLocalsExcept(except_name);
@@ -113,6 +114,7 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
                 } else {
                     try self.drainFinally(ret_qtype);
                     try self.drainArenas();
+                    try self.drainFunctionArena();
                     try self.drainDeferIfSet();
                     try self.releaseAllLocalsExcept(null);
                     try self.qbeRet(null);

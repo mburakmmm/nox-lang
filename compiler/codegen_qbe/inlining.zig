@@ -119,6 +119,17 @@ pub fn isFuncInlineEligible(self: *Codegen, fd: ast.FuncDef, generic_template_na
     }
     if (self.recursive_funcs.contains(fd.name)) return false;
     if (!self.must_not_raise.contains(fd.name)) return false;
+    // GG.17 hotfix (bkz. `local_escape.zig`nin modül belge notu): bu
+    // fonksiyonun gövdesi `registerLocalStackSlots` TARAFINDAN EN AZ bir
+    // AST-düğümü kaydedecek (GG.17/GG.18'in AST-POINTER-anahtarlı, HİÇ
+    // TEMİZLENMEYEN tablolarına) — böyle bir gövde SPLICE edilirse KAYIT,
+    // KAYIT ANINDAKİ fonksiyonun (BURADA) KENDİ temp-numaralandırmasına
+    // ÖZGÜ kalır VE splice edilen bağlamda (caller) GERÇEK bir çapraz-
+    // fonksiyon bellek bozulmasına yol açar (GERÇEKTEN denenip
+    // gözlemlendi) — `lowlevel_stmt` İÇEREn bir gövdenin ZATEN AYNI
+    // gerekçeyle (kendi AST-düğüm-anahtarlı tabloları İçİn) dışlanmasıyla
+    // TUTARLI.
+    if (self.funcs_with_local_construct_sites.contains(fd.name)) return false;
     if (fd.body.len > MAX_INLINE_TOP_STMTS) return false;
     const total = inlineBodyStmtCount(fd.body) orelse return false;
     if (total > MAX_INLINE_TOTAL_STMTS) return false;

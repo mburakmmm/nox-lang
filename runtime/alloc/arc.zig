@@ -48,6 +48,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const asap = @import("asap.zig");
+const lowlevel = @import("lowlevel.zig");
 const abi_layout = @import("abi_layout");
 
 /// Faz P1.2: `../../shared/abi_layout.zig`den RE-EXPORT (derleyiciyle
@@ -242,6 +243,27 @@ fn refcountOf(ptr: *anyopaque) *i64 {
 /// KENDİ ham belleği serbest bırakılmalıdır).
 pub export fn nox_list_grow(rt: ?*anyopaque, old_ptr: ?*anyopaque, copy_bytes: usize, new_payload_size: usize) ?*anyopaque {
     const new_ptr = nox_rc_alloc(rt, new_payload_size) orelse return null;
+    if (old_ptr) |op| {
+        const src: [*]const u8 = @ptrCast(op);
+        const dst: [*]u8 = @ptrCast(new_ptr);
+        @memcpy(dst[0..copy_bytes], src[0..copy_bytes]);
+    }
+    return new_ptr;
+}
+
+/// GG.18 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 2"): `nox_list_grow`nin
+/// arena-farkında ikizi — bir fonksiyon-kapsamlı arenaya (`compiler/
+/// codegen_qbe/local_escape.zig`nin kanıtladığı, SKALER-elemanlı, kaçmayan
+/// bir `list[T]` yereli İçİn) büyüyen listelerin TEK çalışma zamanı
+/// primitifi. `nox_list_grow`DAN TEK FARKI: YENİ blok `nox_rc_alloc`
+/// YERİNE `nox_arena_alloc` İLE tahsis edilir. `old_ptr`e (`nox_list_grow`
+/// İLE AYNI gerekçeyle) HİÇ DOKUNULMAZ — AMA BURADA çağıran TARAFINDAN
+/// `nox_rc_predecrement`/`nox_rc_free_payload` de HİÇ ÇAĞRILMAZ (arenalar
+/// per-object free DESTEKLEMEZ; ESKİ chunk, fonksiyonun KENDİ arenası
+/// TOPLU `nox_arena_destroy` İLE yıkılana kadar SADECE "çöp" olarak
+/// yaşar — bu, arenaların DOĞAL/beklenen MODELİDİR).
+pub export fn nox_arena_list_grow(arena_ptr: ?*anyopaque, old_ptr: ?*anyopaque, copy_bytes: usize, new_payload_size: usize) ?*anyopaque {
+    const new_ptr = lowlevel.nox_arena_alloc(arena_ptr, new_payload_size) orelse return null;
     if (old_ptr) |op| {
         const src: [*]const u8 = @ptrCast(op);
         const dst: [*]u8 = @ptrCast(new_ptr);

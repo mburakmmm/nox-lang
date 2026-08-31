@@ -297,7 +297,7 @@ pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
                     try self.qbeLoad(payload, info.elem_qtype, info.elem_qtype, t);
                     break :blk .{ .text = payload, .qtype = info.elem_qtype };
                 }
-                break :blk .{ .text = t, .qtype = info.qtype, .heap = info.heap, .elem_qtype = info.elem_qtype, .class_name = info.class_name, .elem_heap_info = info.elem_heap_info, .elem_is_str = info.elem_is_str, .dict_info = info.dict_info, .func_sig = info.func_sig, .arena = info.arena };
+                break :blk .{ .text = t, .qtype = info.qtype, .heap = info.heap, .elem_qtype = info.elem_qtype, .class_name = info.class_name, .elem_heap_info = info.elem_heap_info, .elem_is_str = info.elem_is_str, .dict_info = info.dict_info, .func_sig = info.func_sig, .arena = info.arena, .growable_arena = info.growable_arena };
             }
             // Bulundu (bkz. proje belleği "modül-seviyesi global durum"
             // planı): yerel/parametre BAŞARISIZ olursa — `buildFunctionValueForIdentifier`
@@ -604,7 +604,16 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
 /// yazma deseni, yalnızca eleman döngüsü YOK).
 fn genEmptyListLit(self: *Codegen, target: anytype) CodegenError!Value {
     const t = try self.newTemp();
-    const arena = self.currentArena();
+    // GG.18 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 2", `local_escape.
+    // zig`nin `registerLocalStackSlots`ı): `target.growable_arena` (bir
+    // `VarInfo`den geliyorsa) `allocSlotEx` TARAFINDAN ZATEN doldurulmuş
+    // olabilir — boş `[]` literalleri İçin AST-düğüm-anahtarlı bir tabloya
+    // GÜVENİLEMEZ (Zig'in TÜM sıfır-boyutlu tahsislere AYNI kanonik
+    // işaretçiyi vermesi YÜZÜNDEN — DOĞRUDAN doğrulandı), bu YÜZDEN BURADA
+    // `target`den DOĞRUDAN okunur. `currentArena()`DAN (`lowlevel:` kapsamı)
+    // ÖNCELİKLİDİR.
+    const growable_arena: ?[]const u8 = if (@hasField(@TypeOf(target), "growable_arena")) target.growable_arena else null;
+    const arena = growable_arena orelse self.currentArena();
     const list_header_size_text = comptime std.fmt.comptimePrint("{d}", .{LIST_HEADER_SIZE});
     if (arena) |ap| {
         try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_arena_alloc", &.{ .{ .ty = .l, .text = ap }, .{ .ty = .l, .text = list_header_size_text } });
@@ -623,6 +632,7 @@ fn genEmptyListLit(self: *Codegen, target: anytype) CodegenError!Value {
         .elem_heap_info = target.elem_heap_info,
         .elem_is_str = target.elem_is_str,
         .arena = arena != null,
+        .growable_arena = growable_arena,
     };
 }
 
@@ -695,6 +705,7 @@ pub fn genListLit(self: *Codegen, elems: []const ast.Expr) CodegenError!Value {
     // DOĞRUDAN bir `lowlevel:` gövdesi İÇİNDEKİ (fonksiyon-çağrısı SINIRI
     // OLMAYAN, bu YÜZDEN AST-düğüm-kimliği GÜVENLİ olan) inşaları İçin.
     var from_stack_site = false;
+    var growable_arena: ?[]const u8 = null;
     const t: []const u8 = blk: {
         if (self.pending_stack_slot) |slot| {
             self.pending_stack_slot = null;
@@ -704,6 +715,17 @@ pub fn genListLit(self: *Codegen, elems: []const ast.Expr) CodegenError!Value {
         if (self.stack_construct_sites.get(@intFromPtr(elems.ptr))) |site| {
             from_stack_site = true;
             break :blk site.slot;
+        }
+        // GG.18 (bkz. `local_escape.zig`nin `registerLocalStackSlots`ı):
+        // BU DOLU `list_lit`in (boş `[]` DEĞİL — o `genEmptyListLit`den
+        // GEÇER) ÖNCEDEN bir fonksiyon-kapsamlı arenaya kaydedilip
+        // kaydedilmediğini kontrol eder. `currentArena()`DAN (`lowlevel:`
+        // kapsamı) ÖNCELİKLİDİR.
+        if (self.arena_local_construct_sites.get(@intFromPtr(elems.ptr))) |ap| {
+            growable_arena = ap;
+            const temp = try self.newTemp();
+            try self.qbeCall(.{ .name = temp, .ty = .l }, "$nox_arena_alloc", &.{ .{ .ty = .l, .text = ap }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{payload_size}) } });
+            break :blk temp;
         }
         const temp = try self.newTemp();
         if (arena) |ap| {
@@ -726,7 +748,7 @@ pub fn genListLit(self: *Codegen, elems: []const ast.Expr) CodegenError!Value {
         try self.qbeOp2Imm(addr, .l, "add", t, @intCast(off));
         try self.qbeStore(elem_qtype, v.text, addr);
     }
-    return .{ .text = t, .qtype = .l, .heap = .list, .elem_qtype = elem_qtype, .elem_heap_info = elem_heap_info, .elem_is_str = elem_is_str, .arena = arena != null, .is_stack_slot = from_stack_site and arena == null };
+    return .{ .text = t, .qtype = .l, .heap = .list, .elem_qtype = elem_qtype, .elem_heap_info = elem_heap_info, .elem_is_str = elem_is_str, .arena = arena != null or growable_arena != null, .is_stack_slot = from_stack_site and arena == null, .growable_arena = growable_arena };
 }
 
 /// `genEmptyListLit`in AYNISI, `{}` (boş dict) İÇİN — `nox_dict_new`nin

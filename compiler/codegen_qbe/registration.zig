@@ -940,6 +940,13 @@ pub fn allocSlot(self: *Codegen, name: []const u8, info: TypeInfo, is_param: boo
 /// `allocSlot` çağıranlarının (self'i OLMAYAN fonksiyonlar/inline-splice
 /// siteleri DAHİL, HİÇBİRİ bu bayrağı KULLANMIYOR) imzasını DEĞİŞTİRMEDEN.
 pub fn allocSlotEx(self: *Codegen, name: []const u8, info: TypeInfo, is_param: bool, arena: bool, borrowed_field: bool) CodegenError!void {
+    // GG.18: `registerLocalStackSlots`in (local_escape.zig) BU isim İçin
+    // ÖNCEDEN verdiği kanıt — bkz. `VarInfo.growable_arena`nın belge notu.
+    // Non-null İSE `.arena` DA `true` OLUR (release-atlama MEVCUT
+    // `entry.arena` mantığı KULLANSIN DİYE — `releaseOneLocalIfManaged`e
+    // HİÇBİR YENİ DEĞİŞİKLİK GEREKMEZ).
+    const growable_arena = self.growable_arena_names.get(name);
+    const effective_arena = arena or (growable_arena != null);
     const slot = try self.newTemp();
     const size: usize = if (info.qtype == .w) 4 else 8;
     try self.qbeAlloc(slot, if (info.qtype == .w) .four else .eight, size);
@@ -972,13 +979,14 @@ pub fn allocSlotEx(self: *Codegen, name: []const u8, info: TypeInfo, is_param: b
         .dict_info = info.dict_info,
         .func_sig = info.func_sig,
         .is_param = is_param,
-        .arena = arena,
+        .arena = effective_arena,
         .borrowed_field = borrowed_field,
         // GG.17: `registerLocalStackSlots`in (local_escape.zig) BU isim İçin
         // ÖNCEDEN (`prepareInlineSites`in YANINDA, AYNI fonksiyon-girişi
         // ön-taramasında) verdiği kanıt — bkz. `VarInfo.is_stack_local`in
         // belge notu.
         .is_stack_local = self.stack_local_names.contains(name),
+        .growable_arena = growable_arena,
     });
 }
 

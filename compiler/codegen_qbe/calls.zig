@@ -1034,7 +1034,12 @@ pub fn genDictMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
 /// uygulanır" ÖNCEDEN kabul edilmiş desenle AYNI).
 pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
     if (args.len != 1) return error.Unsupported;
-    if (obj.arena) return error.Unsupported; // arena listeleri büyütülemez (v1 sınırlaması)
+    // GG.18: `obj.growable_arena` VARSA (bkz. plan dosyası "ASAP
+    // güçlendirmesi — Tur 2") `lowlevel:` kapsamının KATI kısıtlamasının
+    // (arena listeleri büyütülemez, v1 sınırlaması) BİR İSTİSNASIdır —
+    // BU spesifik arena, `local_escape.zig`nin KANITLADIĞI, SKALER-elemanlı
+    // bir yerel İçİn ÖZEL olarak yaratıldı.
+    if (obj.arena and obj.growable_arena == null) return error.Unsupported;
     // checker `a.obj.*`in bir `.identifier` OLMASINI ZORUNLU kıldı
     // (bkz. checker.zig'in `.list` dalı) — codegen bu ŞEKLE GÜVENİR.
     const recv_name = a.obj.identifier;
@@ -1112,7 +1117,13 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         try self.qbeOp2Imm(copy_bytes, .l, "add", sz, @intCast(LIST_HEADER_SIZE));
     }
     const new_ptr = try self.newTemp();
-    try self.qbeCall(.{ .name = new_ptr, .ty = .l }, "$nox_list_grow", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = copy_bytes }, .{ .ty = .l, .text = new_payload_size } });
+    if (obj.growable_arena) |arena_handle| {
+        // GG.18: `nox_list_grow`nin arena-farkında ikizi — bkz. `runtime/
+        // alloc/arc.zig`nin `nox_arena_list_grow`ının belge notu.
+        try self.qbeCall(.{ .name = new_ptr, .ty = .l }, "$nox_arena_list_grow", &.{ .{ .ty = .l, .text = arena_handle }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = copy_bytes }, .{ .ty = .l, .text = new_payload_size } });
+    } else {
+        try self.qbeCall(.{ .name = new_ptr, .ty = .l }, "$nox_list_grow", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = copy_bytes }, .{ .ty = .l, .text = new_payload_size } });
+    }
 
     // **Bulundu, GERÇEK bir çift-serbest-bırakma/erken-serbest-bırakma
     // hatası** (`self.attr` alanı `list[T]`i büyüten "yerel değişkene
@@ -1143,7 +1154,13 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     // decrement İLE dengeler — böylece HER İKİ olası kaderde (ESKİ blok
     // HEMEN ölür / DAHA SONRA bir alias üzerinden ölür) net refcount
     // DEĞİŞİMİ doğru kalır.
-    if (obj.elem_heap_info != null) {
+    // GG.18: arena-büyümesinde bu retain-telafi dansı hiç GEREKMEZ (ESKİ
+    // blok ASLA bireysel serbest BIRAKILMAYACAĞINDAN — bkz. aşağıdaki
+    // `should_free` bloğunun ATLANMASI) — ZATEN `obj.growable_arena != null`
+    // İKEN `elem_heap_info` HER ZAMAN `null`dır (`local_escape.zig`nin
+    // SKALER-eleman-tipi KISITLAMASI, bkz. `elemTypeIsScalar`), bu kontrol
+    // SADECE netlik İçİn açıkça eklenir.
+    if (obj.elem_heap_info != null and obj.growable_arena == null) {
         try self.emitListElemRetainLoop(new_ptr, len_t, obj.elem_heap_info.?.heap);
     }
 
@@ -1166,30 +1183,37 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
 
     // ESKİ bloğu (yalnızca KENDİ ham belleğini — elemanlar TAŞINDI,
     // özyinelemeli release EDİLMEZ) refcount'u sıfıra düşerse serbest
-    // bırak (bkz. bu fonksiyonun belge notu, "büyüme yolu").
-    const should_free = try self.emitInlinePredecrement(obj.text, .list);
-    const free_label = try self.newLabel("append_free_old");
-    const skip_free_label = try self.newLabel("append_skip_free");
-    try self.qbeJnz(should_free, free_label, skip_free_label);
-    try self.qbeLabel(free_label);
-    if (obj.elem_heap_info != null) {
-        // ESKİ blok BU çağrıda gerçekten ölüyor (`self.attr` GİBİ başka
-        // bir alias YOK) — yukarıdaki retain döngüsünün eklediği "fazladan"
-        // payı DÜZ bir decrement İLE dengele (TAM özyinelemeli release
-        // DEĞİL: bu decrement ASLA sıfıra/altına düşemez, çünkü elemanın
-        // ÖNCEKİ, GEÇERLİ sahipliği HÂLÂ duruyor — bkz. `genListAppend`nin
-        // büyüme-retain notunun tam gerekçesi).
-        try self.emitListElemPlainDecrementLoop(obj.text, len_t, obj.elem_heap_info.?.heap);
+    // bırak (bkz. bu fonksiyonun belge notu, "büyüme yolu"). GG.18:
+    // `obj.growable_arena` VARSA bu TÜM blok ATLANIR — ESKİ chunk'ın
+    // REFCOUNT BAŞLIĞI YOK (predecrement/free ANLAMSIZ/GÜVENSİZ olurdu),
+    // arenanın KENDİSİ per-object free DESTEKLEMEZ (ESKİ chunk SADECE
+    // "çöp" olarak, fonksiyonun `function_arena`sı TOPLU yıkılana kadar
+    // yaşar — bu, arenaların DOĞAL/beklenen MODELİDİR).
+    if (obj.growable_arena == null) {
+        const should_free = try self.emitInlinePredecrement(obj.text, .list);
+        const free_label = try self.newLabel("append_free_old");
+        const skip_free_label = try self.newLabel("append_skip_free");
+        try self.qbeJnz(should_free, free_label, skip_free_label);
+        try self.qbeLabel(free_label);
+        if (obj.elem_heap_info != null) {
+            // ESKİ blok BU çağrıda gerçekten ölüyor (`self.attr` GİBİ başka
+            // bir alias YOK) — yukarıdaki retain döngüsünün eklediği "fazladan"
+            // payı DÜZ bir decrement İLE dengele (TAM özyinelemeli release
+            // DEĞİL: bu decrement ASLA sıfıra/altına düşemez, çünkü elemanın
+            // ÖNCEKİ, GEÇERLİ sahipliği HÂLÂ duruyor — bkz. `genListAppend`nin
+            // büyüme-retain notunun tam gerekçesi).
+            try self.emitListElemPlainDecrementLoop(obj.text, len_t, obj.elem_heap_info.?.heap);
+        }
+        const old_size = try self.newTemp();
+        {
+            const sz = try self.newTemp();
+            try self.qbeOp2Imm(sz, .l, "mul", cap_t, @intCast(elem_size));
+            try self.qbeOp2Imm(old_size, .l, "add", sz, @intCast(LIST_HEADER_SIZE));
+        }
+        try self.qbeCall(null, "$nox_rc_free_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = old_size } });
+        try self.qbeJmp(skip_free_label);
+        try self.qbeLabel(skip_free_label);
     }
-    const old_size = try self.newTemp();
-    {
-        const sz = try self.newTemp();
-        try self.qbeOp2Imm(sz, .l, "mul", cap_t, @intCast(elem_size));
-        try self.qbeOp2Imm(old_size, .l, "add", sz, @intCast(LIST_HEADER_SIZE));
-    }
-    try self.qbeCall(null, "$nox_rc_free_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = old_size } });
-    try self.qbeJmp(skip_free_label);
-    try self.qbeLabel(skip_free_label);
 
     // Alıcının KENDİ slotuna/global ofsetine YENİ işaretçiyi geri yaz —
     // TEK yerde (hızlı yol bloğun adresini HİÇ değiştirmediğinden

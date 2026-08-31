@@ -14,6 +14,44 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.42.0]
+
+### Düzeltildi
+- **GG.17'nin `stack_construct_sites` kaydı, inline edilince ÇAPRAZ-
+  FONKSİYON temp adı çakışmasına yol açıyordu (GERÇEK, canlı bir hata —
+  v1.41.0/v1.41.1'de)**: bir GG.17-kalifiye yerel İÇEREN VE AYRICA GG.2
+  inline-edilebilirlik şartlarını da KARŞILAYAN bir fonksiyon (`helper()`),
+  başka bir fonksiyona (`caller()`) inline edildiğinde, `stack_construct_
+  sites`in AST-düğüm-anahtarlı, hiç temizlenmeyen kaydı `helper`'ın KENDİ
+  temp-numaralandırmasına ÖZGÜ bir dizeyi TAŞIYIP splice SIRASINDA
+  YENİDEN kullanıyordu — `caller`'ın AYNI dizeyi taşıyan TAMAMEN FARKLI
+  bir yerelinin (ör. bir parametre) ÜZERİNE liste payload'ı TAŞARAK
+  yazılıyordu (sessiz bir stack bozulması, farklı slot düzenlerinde GERÇEK
+  bir çökme/yanlış sonuç üretebilirdi). Doğrudan derlenip ÇALIŞTIRILARAK
+  bulundu. Düzeltme: bir fonksiyonun gövdesi GG.17/18 TARAFINDAN EN AZ bir
+  düğüm kaydedecekse, o fonksiyon ARTIK GG.2 inline-edilebilirliğinden
+  TAMAMEN DIŞLANIYOR (`lowlevel_stmt` İÇEREn bir gövdenin ZATEN AYNI
+  gerekçeyle dışlanmasıyla TUTARLI).
+
+### Eklendi
+- **GG.18 — değişken-boyutlu (`.append()` ile büyüyen) listeler İçİn
+  fonksiyon-kapsamlı arena**: GG.17'nin sabit-boyutlu kapsamının DIŞINDA
+  kalan bir `list[T]` (`T` SKALER: int/float/bool) yereli — boş `[]`
+  literalinden `.append()` İLE büyüyen, gerisinde HİÇ kaçmadığı KANITLANAN
+  — ARTIK `nox_rc_alloc`+refcount başlığı YERİNE fonksiyon-kapsamlı, ÖZEL
+  bir arena (`nox_arena_create`/`nox_arena_alloc`/YENİ `nox_arena_list_
+  grow`/`nox_arena_destroy`) kullanıyor — `.append()` içeren ARC yolunda
+  daha önce ölçülemeyen bir kazanç (sık çağrılan bir fonksiyon İçİnde
+  büyüyen bir liste deseni İçİn `git worktree` İLE ölçüldü, bkz.
+  `benchmarks/RESULTS.md`). v1'de BİLİNÇLİ olarak SADECE `.append()`
+  desteklenir (`.pop()`/`.sort()`/argüman-olarak-geçiş/`return` HÂLÂ kaçış
+  sayılır), heap-yönetimli eleman tipleri (`list[str]` GİBİ) ARENA'YA
+  dönüştürülmez (arenanın per-object free desteklememesi, elemanların
+  release edilmemesi anlamına gelirdi — GG.17'nin class-alan-release
+  hatasının AYNISı BAŞTAN elendi). Kullanıcının "ASAP'i (Katman 1)
+  güçlendirebilir miyiz" hipotezinin Tur 2'si — bkz. nox-teknik-
+  spesifikasyon.md §3.108.
+
 ## [1.41.0]
 
 ### Eklendi

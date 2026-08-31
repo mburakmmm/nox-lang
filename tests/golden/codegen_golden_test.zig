@@ -2700,11 +2700,92 @@ test "codegen(çalıştır): GG.17 — takma ad verilen bir yerel stack'e dönü
 }
 
 // GG.17 — NEGATİF: `MAX_STACK_ALLOC_SIZE`i (4096 bayt) AŞAN bir literal
-// liste, gerisinde HİÇ kaçmasa BİLE `nox_rc_alloc`ta KALIR (bir fiber'ın
-// SABİT 256 KiB stack'ini korumak İçİn bilinçli boyut tavanı).
-test "codegen(çalıştır): GG.17 — boyut tavanını aşan bir liste stack'e dönüştürülmez" {
+// liste, gerisinde HİÇ kaçmasa BİLE stack `alloc8`'e DÖNÜŞMEZ (bir
+// fiber'ın SABİT 256 KiB stack'ini korumak İçİn bilinçli boyut tavanı).
+// GG.18 EKLENDİKTEN SONRA (bkz. plan dosyası "Tur 2"): elemanları
+// SKALER OLDUĞUNDAN VE kaçmadığından `classifyVarDecl` BUNU ARTIK
+// fonksiyon-kapsamlı bir arenaya (`nox_rc_alloc` DEĞİL) DÖNÜŞTÜRÜYOR —
+// bu, Tur 1'in stack-boyutu tavanının BİLİNÇLİ, GÜVENLİ bir GENELLEMESİ
+// (arena, fiber stack'i KULLANMADIĞINDAN AYNI boyut riski TAŞIMAZ).
+test "codegen(çalıştır): GG.17/18 — boyut tavanını aşan bir liste stack'e DEĞİL ama arenaya dönüşür" {
     try expectGolden(
         @embedFile("codegen_cases/stack_local_size_cap.nox"),
         @embedFile("codegen_cases/stack_local_size_cap.expected"),
+    );
+}
+
+// GG.17 hotfix (bkz. plan dosyası "ASAP güçlendirmesi — Tur 2"): bir
+// GG.17-kalifiye YEREL İÇEREN VE AYRICA GG.2 inline-edilebilirlik
+// şartlarını KARŞILAYAN bir fonksiyon (`helper`), GERÇEK bir çapraz-
+// fonksiyon temp-adı çakışmasına (`stack_construct_sites`'in AST-düğüm-
+// anahtarlı, hiç temizlenmeyen kaydı, `caller`e SPLICE edilince ESKİ bir
+// temp adı BULUP KULLANIYORDU) yol açıyordu — GERÇEKTEN derlenip
+// ÇALIŞTIRILARAK bulundu (SIGBUS riski, bu spesifik test şans eseri
+// doğru sonuç veriyordu ama farklı bir slot düzeninde ÇÖKEBİLİRDİ).
+// Düzeltme SONRASI `helper()` ARTIK inline edilmiyor (`isFuncInlineEligible`
+// dışlıyor) — `.ssa`da GERÇEK bir `call $helper` görünmesi BEKLENİR.
+test "codegen(çalıştır): GG.17 hotfix — yerel-inşa içeren fonksiyon artık inline edilmiyor, çapraz-fonksiyon çakışması yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/gg17_hotfix_no_inline_local_construct.nox"),
+        @embedFile("codegen_cases/gg17_hotfix_no_inline_local_construct.expected"),
+    );
+}
+
+// GG.18 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 2"): boş `[]`
+// literalinden `.append()` İLE büyüyen, SADECE okunan (kaçmayan) bir
+// `list[int]` yereli — `nox_rc_alloc`/`nox_rc_release` YERİNE fonksiyon-
+// kapsamlı bir arena (`nox_arena_create`/`nox_arena_alloc`/`nox_arena_
+// list_grow`/`nox_arena_destroy`) kullanır, sızıntı YOK.
+test "codegen(çalıştır): GG.18 — boş listeden .append() ile büyüyen yerel, fonksiyon-kapsamlı arenaya dönüşür" {
+    try expectGolden(
+        @embedFile("codegen_cases/growable_arena_positive.nox"),
+        @embedFile("codegen_cases/growable_arena_positive.expected"),
+    );
+}
+
+// GG.18: BÜYÜK bir N (2000 tur × 50 `.append()`) İLE, arenanın Release-
+// modu HAVUZLAMASININ (`lowlevel.zig`nin `arena_pool`ı) SIK create/destroy
+// döngüsü ALTINDA da doğru/sızıntısız çalıştığını kanıtlar.
+test "codegen(çalıştır): GG.18 — büyük N'de sık create/destroy döngüsü güvenle çalışır" {
+    try expectGolden(
+        @embedFile("codegen_cases/growable_arena_loop_safety.nox"),
+        @embedFile("codegen_cases/growable_arena_loop_safety.expected"),
+    );
+}
+
+// GG.18 — NEGATİF: `return`le kaçan bir büyüyen-liste yereli ARC'ta KALIR.
+test "codegen(çalıştır): GG.18 — return edilen büyüyen bir liste arenaya dönüştürülmez (kaçış)" {
+    try expectGolden(
+        @embedFile("codegen_cases/growable_arena_return_escape.nox"),
+        @embedFile("codegen_cases/growable_arena_return_escape.expected"),
+    );
+}
+
+// GG.18 — NEGATİF: başka bir fonksiyona argüman olarak geçen büyüyen bir
+// liste arenaya dönüştürülmez (v1'de interprocedural kanıt YOK).
+test "codegen(çalıştır): GG.18 — argüman olarak geçen büyüyen bir liste arenaya dönüştürülmez (kaçış)" {
+    try expectGolden(
+        @embedFile("codegen_cases/growable_arena_arg_escape.nox"),
+        @embedFile("codegen_cases/growable_arena_arg_escape.expected"),
+    );
+}
+
+// GG.18 — NEGATİF: `.pop()` (v1'de SADECE `.append()` desteklenir,
+// `.pop()`/`.sort()`/BAŞKA metodlar HÂLÂ kaçış sayılır) arenaya dönüştürülmez.
+test "codegen(çalıştır): GG.18 — .pop() kullanan bir liste arenaya dönüştürülmez (kaçış)" {
+    try expectGolden(
+        @embedFile("codegen_cases/growable_arena_pop_escape.nox"),
+        @embedFile("codegen_cases/growable_arena_pop_escape.expected"),
+    );
+}
+
+// GG.18 — NEGATİF: heap-yönetimli eleman tipi (`list[str]`, v1 SADECE
+// skaler int/float/bool destekler) arenaya dönüştürülmez (Tur 1'in
+// class-alan-release hatasının AYNISINI — elemanların HİÇ release
+// edilmemesini — baştan eler).
+test "codegen(çalıştır): GG.18 — heap-yönetimli eleman tipi (list[str]) arenaya dönüştürülmez" {
+    try expectGolden(
+        @embedFile("codegen_cases/growable_arena_heap_element_excluded.nox"),
+        @embedFile("codegen_cases/growable_arena_heap_element_excluded.expected"),
     );
 }

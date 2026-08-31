@@ -151,6 +151,13 @@ pub const Value = struct {
     /// `releaseTemporaryArgs` BUNU görüp release'İ atlar; `checkNoLowlevelEscape`
     /// BUNU HİÇ GÖRMEZ (kasıtlı — bu bayrak ONUN kontrolüne DAHİL DEĞİL).
     is_stack_slot: bool = false,
+    /// GG.18 (bkz. `local_escape.zig`): BU değer, `registerLocalStackSlots`nin
+    /// kanıtladığı fonksiyon-kapsamlı, ÖZEL bir arenadan tahsis EDİLDİ —
+    /// `.arena=true` de AYRICA AYARLANIR (release-atlama MEVCUT mantığı
+    /// KULLANSIN DİYE), AMA BU alan `genListAppend`nin HANGİ arenaya
+    /// büyüteceğini bilmesi İçİn GEREKLİ (yalnızca `.arena: bool`
+    /// KENDİSİ bir tutamak TAŞIMAZ).
+    growable_arena: ?[]const u8 = null,
 };
 
 pub const FuncSig = struct {
@@ -284,6 +291,13 @@ pub const VarInfo = struct {
     /// ömür fonksiyon çıkışına kadar SINIRLI) ama LEXICAL konumdan DEĞİL,
     /// GERÇEK bir kaçış-kanıtından gelir.
     is_stack_local: bool = false,
+    /// GG.18 (bkz. `local_escape.zig`): BU yerelin İLK (VE TEK) atamasının
+    /// fonksiyon-kapsamlı, ÖZEL bir arenaya GİTTİĞİNİ (`nox_rc_alloc`
+    /// DEĞİL) — `Value.growable_arena`nın AYNISI, KALICI (`VarInfo`)
+    /// tarafı. `allocSlotEx` BUNU `self.growable_arena_names`den okur;
+    /// non-null İSE `.arena` DA `true` OLUR (release-atlama MEVCUT
+    /// mantığı KULLANSIN DİYE).
+    growable_arena: ?[]const u8 = null,
     /// GG.12: `self.<alan>`in salt-okunur, HİÇBİR yere aktarılmayan bir
     /// kopyası (ör. sadece bir `for` döngüsünün iterable'ı) — `self`in
     /// KENDİSİ metodun tüm aktivasyonu boyunca CANLI olduğundan retain/

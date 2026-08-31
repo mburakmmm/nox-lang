@@ -67,7 +67,10 @@ export fn nox_arena_create(rt: ?*anyopaque) ?*anyopaque {
 
 /// Arenadan `size` bayt tahsis eder. Başarısızlıkta `null` döner. Bireysel
 /// olarak serbest bırakılmaz — yalnızca `nox_arena_destroy` ile toplu olarak.
-export fn nox_arena_alloc(arena_ptr: ?*anyopaque, size: usize) ?*anyopaque {
+/// GG.18 (bkz. `runtime/alloc/arc.zig`nin `nox_arena_list_grow`ı): `pub`
+/// — QBE'nin `$nox_arena_alloc` C-ABI çağrısına EK olarak, `arc.zig`nin
+/// KENDİ Zig-seviyesi çağrısına da İHTİYACI VAR.
+pub export fn nox_arena_alloc(arena_ptr: ?*anyopaque, size: usize) ?*anyopaque {
     const handle: *ArenaHandle = @ptrCast(@alignCast(arena_ptr orelse return null));
     const mem = handle.arena.allocator().alloc(u8, size) catch return null;
     return mem.ptr;

@@ -53,6 +53,19 @@ pub fn drainArenas(self: *Codegen) CodegenError!void {
     }
 }
 
+/// GG.18 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 2"): `drainArenas`nin
+/// KARDEŞİ — AMA `arena_stack`e (`lowlevel:`e ÖZGÜ, LIFO) HİÇ DOKUNMAZ,
+/// TAMAMEN BAĞIMSIZ `self.function_arena`yı (VARSA, TEK/nested-OLMAYAN)
+/// yıkar. `drainArenas`in AYNI 4 çağrı sitesinin (`stmt.zig`nin `.return_
+/// stmt`i, `emitExceptionCheck`nin İKİ dalı) YANINA EKLENİR — böylece
+/// GG.18-kalifiye bir fonksiyonun HER çıkış yolu (açık `return` + örtük
+/// istisna-çıkışı) arenayı GÜVENLE yıkar.
+pub fn drainFunctionArena(self: *Codegen) CodegenError!void {
+    if (self.function_arena) |ap| {
+        try self.qbeCall(null, "$nox_arena_destroy", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ap } });
+    }
+}
+
 /// `genTry`nin KENDİ `finally_body`sini (`fb`) "gerçek", KORUNMASIZ bir
 /// çıkış eylemi OLARAK çalıştırır — `fb`, ÇAĞRILDIĞI ANDA `finally_stack`in
 /// EN ÜSTÜNDEDİR (genTry'nin push'u SAYESİNDE, bkz. `finally_stack`in
@@ -822,6 +835,7 @@ pub fn emitExceptionCheck(self: *Codegen) CodegenError!void {
         // sonlanmadan ÖNCE çalışmalıdır/yıkılmalıdır.
         try self.drainFinally(self.current_ret_qtype);
         try self.drainArenas();
+        try self.drainFunctionArena();
         try self.drainDeferIfSet();
         // `nox_unhandled_exception` `noreturn`dur (process.exit çağırır),
         // ama QBE bunu bilmez — bloğun bir sonlandırıcıyla bitmesi için
@@ -831,6 +845,7 @@ pub fn emitExceptionCheck(self: *Codegen) CodegenError!void {
     } else {
         try self.drainFinally(self.current_ret_qtype);
         try self.drainArenas();
+        try self.drainFunctionArena();
         try self.drainDeferIfSet();
         try self.releaseAllLocals();
         try self.emitDefaultReturn(self.current_ret_qtype);
