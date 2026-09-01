@@ -113,6 +113,44 @@ fn expectGoldenLlvm(comptime source: []const u8, comptime expected: []const u8) 
     try std.testing.expectEqualStrings(expected, run_result.stdout);
 }
 
+/// GG.22 (bkz. plan dosyası "checkCall gölgeleme-çözümleme düzeltmesi +
+/// spawn-sonrası çağıran-tarafı mutasyon koruması"): `checkNoPostSpawnCallerMutation`nin
+/// (checker.zig) list/dict/class spawn-argümanları SADECE `--release`/`.llvm`
+/// altında geçerli OLDUĞUNDAN, bu YENİ kontrolün fixture'ları `.llvm`
+/// backend'i (`compileAndRunLlvm`İLE AYNI checker kurulumu) gerektirir —
+/// AMA burada codegen'e HİÇ GEÇİLMEZ, SADECE `checkModule`nin verdiği
+/// `expected_code` hatasının GERÇEKTEN üretildiği doğrulanır.
+fn expectCheckerErrorLlvm(comptime source: []const u8, expected_code: nox.checker.TypeError) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const io = std.testing.io;
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const user_module = try nox.parser.parseModule(allocator, tokens);
+    const module = try nox.module_loader.resolveImports(allocator, io, user_module);
+
+    var checker_state = nox.checker.Checker.init(allocator);
+    checker_state.backend = .llvm;
+    const result = checker_state.checkModule(module);
+    if (result) |_| {
+        if (checker_state.diagnostics.items.len == 0) {
+            return error.ExpectedTypeErrorButNoneOccurred;
+        }
+        for (checker_state.diagnostics.items) |d| {
+            if (d.code == expected_code) return;
+        }
+        std.debug.print("beklenen hata kodu ({t}) bulunamadi, bulunanlar:\n", .{expected_code});
+        for (checker_state.diagnostics.items) |d| std.debug.print("  {t}: {s}\n", .{ d.code, d.message });
+        return error.ExpectedTypeErrorNotFound;
+    } else |e| {
+        if (e != expected_code) {
+            std.debug.print("beklenmeyen hata kodu: {t} (mesaj: {s})\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
+            return error.UnexpectedTypeError;
+        }
+    }
+}
+
 test "llvm(çalıştır): aritmetik + karşılaştırma + if + print(int)" {
     try expectGoldenLlvm(
         \\x: int = 1
@@ -252,4 +290,63 @@ test "llvm: GG.20 — spawn'a geçen yerelin ÜRETTİĞİ IR'da nox_rc_alloc HÂ
     const ir = try nox.codegen.generateModule(allocator, module, checker_state.instantiations.items, generic_names.items, checker_state.class_instantiations.items, generic_class_names.items, null, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, .llvm);
 
     try std.testing.expect(std.mem.indexOf(u8, ir, "nox_rc_alloc") != null);
+}
+
+// GG.22 (bkz. plan dosyası "checkCall gölgeleme-çözümleme düzeltmesi +
+// spawn-sonrası çağıran-tarafı mutasyon koruması", Madde B): `checkNoSpawnSharedMutation`
+// SADECE spawn-HEDEFİ fonksiyonun KENDİ gövdesini kontrol ediyordu —
+// çağıranın `spawn`dan SONRA KENDİ paylaştığı yereli `await` edilmeden
+// ÖNCE mutasyona uğratmasını HİÇBİR ŞEY KISITLAMIYORDU. Bu, GERÇEK bir
+// veri-yarışı boşluğuydu (`worker`nin KENDİSİ salt-okunur OLSA BİLE).
+test "llvm: GG.22 — spawn'a geçen paylaşılan yerel, await'ten ÖNCE mutasyona uğratılırsa REDDEDİLİR" {
+    try expectCheckerErrorLlvm(
+        \\async def worker(xs: list[int]) -> int:
+        \\    return len(xs)
+        \\
+        \\xs: list[int] = [1, 2, 3]
+        \\t: Task[int] = spawn worker(xs)
+        \\xs.append(4)
+        \\print(await t)
+        \\
+    ,
+        error.SpawnSharedMutation,
+    );
+}
+
+// Regresyon-yok/negatif kanıt: AYNI desen AMA mutasyon `await`TEN SONRA —
+// Task tamamlandıktan SONRA mutasyon GÜVENLİDİR, ARTIK YAKALANMAMALI.
+test "llvm(çalıştır): GG.22 — spawn'a geçen paylaşılan yerel, await'TEN SONRA mutasyona uğratılabilir" {
+    try expectGoldenLlvm(
+        \\async def worker(xs: list[int]) -> int:
+        \\    return len(xs)
+        \\
+        \\xs: list[int] = [1, 2, 3]
+        \\t: Task[int] = spawn worker(xs)
+        \\result: int = await t
+        \\xs.append(4)
+        \\print(result)
+        \\print(len(xs))
+        \\
+    ,
+        "3\n4\n",
+    );
+}
+
+// Fire-and-forget (`spawn worker(xs)`, isimsiz — Task'a HİÇBİR İSİM
+// VERİLMİYOR) — bu isimler HİÇBİR ZAMAN `await` İLE TEMİZLENEMEZ, bu
+// YÜZDEN sonrasındaki mutasyon HÂLÂ (fonksiyonun/modülün KALANI boyunca,
+// KONSERVATİF olarak) reddedilmelidir.
+test "llvm: GG.22 — fire-and-forget spawn (isimsiz Task) sonrası mutasyon HÂLÂ REDDEDİLİR" {
+    try expectCheckerErrorLlvm(
+        \\async def worker(xs: list[int]) -> int:
+        \\    return len(xs)
+        \\
+        \\xs: list[int] = [1, 2, 3]
+        \\spawn worker(xs)
+        \\xs.append(4)
+        \\print(len(xs))
+        \\
+    ,
+        error.SpawnSharedMutation,
+    );
 }

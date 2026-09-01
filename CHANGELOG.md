@@ -14,6 +14,43 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.46.0]
+
+### Düzeltildi
+- **GG.22.A — `checkCall`nin `.identifier` dalındaki gölgeleme-çözümleme
+  sırası hatası**: `checkCall`nin çözümleme sırası ÖNCEDEN `generic_functions`/
+  `self.functions`/`self.classes`'ı `ctx.scope.lookup`dan (yerel değişken/
+  parametre) ÖNCE kontrol ediyordu — codegen'in `genCall`ı İSE HER ZAMAN
+  yereli ÖNCE kontrol eder. Bir yerel func-tipli değişken GERÇEK bir
+  global fonksiyonla AYNI adı AMA FARKLI bir imza TAŞIDIĞINDA (`mutate:
+  (int) -> int = other`, global `mutate` 2 parametreli), checker
+  YANLIŞLIKLA global'in imzasına göre doğrulayıp GEÇERLİ bir programı
+  `ArgumentCountMismatch` İLE reddediyordu — checker/codegen ANLAŞMAZLIĞI.
+  `ctx.scope.lookup` ARTIK generic/global/sınıf kontrollerinin HEMEN
+  ÖNÜNE taşındı (codegen'İN önceliklendirmesiyle TAM eşleşiyor,
+  `from_imports` YİNE EN SONDA). YENİ bir codegen golden fixture'ı
+  (`local_func_value_shadows_global_diff_arity`) düzeltmeden ÖNCE
+  reddedilen, SONRA doğru derlenip çalışan programı kanıtlar.
+
+### Eklendi
+- **GG.22.B — spawn-sonrası çağıran-tarafı mutasyon koruması**:
+  `checkNoSpawnSharedMutation` SADECE spawn-HEDEFİ fonksiyonun KENDİ
+  gövdesini kontrol ediyordu — bir `spawn` çağrısına paylaşılan bir
+  `list`/`dict`/`class` yerel GEÇTİKTEN SONRA, çağıranın KENDİSİNİN bu
+  değişkeni `await` edilmeden ÖNCE mutasyona uğratmasını HİÇBİR ŞEY
+  KISITLAMIYORDU (`--release`/LLVM'de yapısal olarak İFADE edilebilen
+  GERÇEK bir veri-yarışı boşluğu). YENİ `checkNoPostSpawnCallerMutation`
+  (checker.zig) — ÜST-DÜZEY deyimleri (if/while/for/try/with gövdelerine
+  İNMEDEN, v1 BİLİNÇLİ sınırı) forward tek-geçişle tarayıp bir `spawn`a
+  paylaşılan argüman olarak geçen isimleri "uçuşta" işaretler, karşılık
+  gelen `await`te temizler; `await` edilmeden (VEYA fire-and-forget —
+  isimsiz spawn — HİÇBİR ZAMAN) önce bu isimlerin mutasyona uğratılması
+  ARTIK `SpawnSharedMutation` İLE reddedilir. `checkFunctionBody` VE
+  `checkModule`nin üst-düzey taramasına kanca eklendi. 3 YENİ LLVM golden
+  fixture'ı (`llvm_golden_test.zig`): hata — await'ten ÖNCE mutasyon;
+  regresyon-yok — await'TEN SONRA mutasyon SERBEST; hata — fire-and-forget
+  spawn SONRASI mutasyon HÂLÂ REDDEDİLİR.
+
 ## [1.45.0]
 
 ### Eklendi

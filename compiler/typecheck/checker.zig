@@ -1988,6 +1988,11 @@ pub const Checker = struct {
                 else => self.checkStmt(&top_ctx, stmt) catch |e| try self.recordDiagnostic(e),
             }
         }
+        // GG.22: modülün üst-düzey deyimleri de ("main"in kendisi, bkz.
+        // yukarıdaki `in_async = true` notu) bir `spawn` çağırabilir —
+        // `checkFunctionBody`nin AYNI YENİ kontrolü, BOŞ bir parametre
+        // dilimiyle (üst-düzeyin parametresi YOK).
+        self.checkNoPostSpawnCallerMutation(module.body, &.{}) catch |e| try self.recordDiagnostic(e);
     }
 
     /// Modüldeki tüm `protocol_def`leri kaydeder (`self.protocols`). Her
@@ -2544,6 +2549,176 @@ pub const Checker = struct {
     /// iç içe alan ÇÖZÜMLEMESİ İçİn GEREKLİDİR.
     const SharedParam = struct { name: []const u8, ty: Type };
 
+    /// GG.22 (bkz. plan dosyası "spawn-sonrası çağıran-tarafı mutasyon
+    /// boşluğu"): `checkDirectSharedMutationStmt`'nin AYNI DOĞRUDAN-mutasyon
+    /// şekilleri (`checkNoSpawnSharedMutation`nin KENDİ şekilleriyle AYNI —
+    /// index-atama/attribute-atama/`.append`/`.pop`/`.sort`) — AMA hedef
+    /// `resolveExprSharedType`nin GÜCÜNÜ KULLANMAZ, SADECE ÇIPLAK bir
+    /// `identifier`in `shared_in_flight`te olup OLMADIĞINI kontrol eder
+    /// (v1 BİLİNÇLİ sınırı — bkz. plan dosyasının "Kapsam DIŞI" bölümü).
+    fn checkDirectSharedMutationStmt(self: *Checker, stmt: ast.Stmt, shared_in_flight: *const std.StringHashMapUnmanaged(void)) TypeError!void {
+        switch (stmt.kind) {
+            .assign => |a| switch (a.target) {
+                .index => |ix| if (ix.obj.* == .identifier and shared_in_flight.contains(ix.obj.identifier)) {
+                    return self.fail(error.SpawnSharedMutation, "'{s}' bir 'spawn' çağrısına paylaşılan argüman olarak geçtikten sonra, 'await' edilmeden önce burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce 'await' edin ya da bir yerel kopya kullanın", .{ix.obj.identifier});
+                },
+                .attribute => |at| if (at.obj.* == .identifier and shared_in_flight.contains(at.obj.identifier)) {
+                    return self.fail(error.SpawnSharedMutation, "'{s}' bir 'spawn' çağrısına paylaşılan argüman olarak geçtikten sonra, 'await' edilmeden önce burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce 'await' edin ya da bir yerel kopya kullanın", .{at.obj.identifier});
+                },
+                else => {},
+            },
+            .expr_stmt => |e| if (e == .call) {
+                const c = e.call;
+                if (c.callee.* == .attribute) {
+                    const at = c.callee.attribute;
+                    if (at.obj.* == .identifier and shared_in_flight.contains(at.obj.identifier)) {
+                        if (std.mem.eql(u8, at.attr, "append") or std.mem.eql(u8, at.attr, "pop") or std.mem.eql(u8, at.attr, "sort")) {
+                            return self.fail(error.SpawnSharedMutation, "'{s}' bir 'spawn' çağrısına paylaşılan argüman olarak geçtikten sonra, 'await' edilmeden önce burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce 'await' edin ya da bir yerel kopya kullanın", .{at.obj.identifier});
+                        }
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+
+    /// GG.22: `checkTransitiveSpawnSharedMutationExpr`nin AYNI gezinme
+    /// şekli — AMA HERHANGİ bir `.await_expr` bulduğunda, operandı
+    /// `task_to_shared`teki BİR Task adına ÇÖZÜLÜYORSA O Task'ın paylaştığı
+    /// isimleri `shared_in_flight`ten SİLER (hata VERMEZ — bu SADECE bir
+    /// durum-güncelleme gezinmesidir).
+    fn removeAwaitedTaskSharing(self: *Checker, expr: ast.Expr, task_to_shared: *const std.StringHashMapUnmanaged([]const []const u8), shared_in_flight: *std.StringHashMapUnmanaged(void)) void {
+        switch (expr) {
+            .await_expr => |op| {
+                if (op.* == .identifier) {
+                    if (task_to_shared.get(op.identifier)) |names| {
+                        for (names) |n| _ = shared_in_flight.remove(n);
+                    }
+                }
+                self.removeAwaitedTaskSharing(op.*, task_to_shared, shared_in_flight);
+            },
+            .unary => |u| self.removeAwaitedTaskSharing(u.operand.*, task_to_shared, shared_in_flight),
+            .binary => |b| {
+                self.removeAwaitedTaskSharing(b.left.*, task_to_shared, shared_in_flight);
+                self.removeAwaitedTaskSharing(b.right.*, task_to_shared, shared_in_flight);
+            },
+            .call => |c| {
+                self.removeAwaitedTaskSharing(c.callee.*, task_to_shared, shared_in_flight);
+                for (c.args) |a| self.removeAwaitedTaskSharing(a, task_to_shared, shared_in_flight);
+            },
+            .attribute => |a| self.removeAwaitedTaskSharing(a.obj.*, task_to_shared, shared_in_flight),
+            .index => |ix| {
+                self.removeAwaitedTaskSharing(ix.obj.*, task_to_shared, shared_in_flight);
+                self.removeAwaitedTaskSharing(ix.index.*, task_to_shared, shared_in_flight);
+            },
+            .list_lit => |items| for (items) |it| self.removeAwaitedTaskSharing(it, task_to_shared, shared_in_flight),
+            .dict_lit => |pairs| for (pairs) |p| {
+                self.removeAwaitedTaskSharing(p.key, task_to_shared, shared_in_flight);
+                self.removeAwaitedTaskSharing(p.value, task_to_shared, shared_in_flight);
+            },
+            .spawn_expr => |op| self.removeAwaitedTaskSharing(op.*, task_to_shared, shared_in_flight),
+            .generic_construct => |g| for (g.args) |a| self.removeAwaitedTaskSharing(a, task_to_shared, shared_in_flight),
+            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+        }
+    }
+
+    /// GG.22 (bkz. plan dosyası "spawn-sonrası çağıran-tarafı mutasyon
+    /// boşluğu"): `checkNoSpawnSharedMutation` SADECE spawn-HEDEFİ
+    /// fonksiyonun KENDİ gövdesini kontrol eder — bir `spawn` çağrısına
+    /// paylaşılan bir `list`/`dict`/`class` yerel GEÇTİKTEN SONRA, çağıranın
+    /// KENDİSİNİN bu değişkeni `await` edilmeden ÖNCE mutasyona uğratmasını
+    /// HİÇBİR ŞEY KISITLAMIYORDU (`--release`/LLVM'de yapısal olarak İFADE
+    /// edilebilen GERÇEK bir veri-yarışı boşluğu, çünkü list/dict/class
+    /// SADECE `isSpawnParamSafeType`nin LLVM-gevşetmesiyle spawn-argümanı
+    /// olabiliyor). Bu YENİ, forward tek-geçiş kontrol BUNU kapatır — v1
+    /// BİLİNÇLİ sınırı: SADECE ÜST-DÜZEY deyimler taranır (if/while/for/
+    /// try/with gövdelerine İNİLMEZ — GG.17-21'in AYNI "muhafazakâr
+    /// davranışı KORU, kapsamı dar TUT" ilkesi, MEVCUT SIFIR korumadan
+    /// DAHA KÖTÜ bir şey YAPMAZ). `params`, `checkFunctionBody` İçİn
+    /// `fd.params`, `checkModule`nin üst-düzey taraması İçİn BOŞ dilim
+    /// olarak geçirilir.
+    fn checkNoPostSpawnCallerMutation(self: *Checker, stmts: []const ast.Stmt, params: []const ast.Param) TypeError!void {
+        var known_types: std.StringHashMapUnmanaged(Type) = .empty;
+        defer known_types.deinit(self.allocator);
+        for (params) |p| {
+            try known_types.put(self.allocator, p.name, try self.typeExprToType(p.type_expr));
+        }
+
+        var shared_in_flight: std.StringHashMapUnmanaged(void) = .empty;
+        defer shared_in_flight.deinit(self.allocator);
+        var task_to_shared: std.StringHashMapUnmanaged([]const []const u8) = .empty;
+        defer {
+            var it = task_to_shared.valueIterator();
+            while (it.next()) |names| self.allocator.free(names.*);
+            task_to_shared.deinit(self.allocator);
+        }
+
+        for (stmts) |stmt| {
+            self.current_line = stmt.line;
+            self.current_span = stmt.span;
+
+            // (1) Mutasyon kontrolü — BU deyimin KENDİ (2)/(3) işlemlerinden
+            // ÖNCEKİ `shared_in_flight` durumuna göre.
+            try self.checkDirectSharedMutationStmt(stmt, &shared_in_flight);
+
+            if (stmt.kind == .var_decl) {
+                const v = stmt.kind.var_decl;
+                try known_types.put(self.allocator, v.name, self.typeExprToType(v.type_expr) catch .none);
+            }
+
+            // (2) `spawn` tespiti — bu deyimin DEĞERİ (var_decl/assign) VEYA
+            // `expr_stmt`in KENDİSİ doğrudan bir `spawn_expr` İSE.
+            var spawn_value: ?ast.Expr = null;
+            var decl_name: ?[]const u8 = null;
+            switch (stmt.kind) {
+                .var_decl => |v| {
+                    spawn_value = v.value;
+                    decl_name = v.name;
+                },
+                .assign => |a| spawn_value = a.value,
+                .expr_stmt => |e| spawn_value = e,
+                else => {},
+            }
+            if (spawn_value) |sv| {
+                if (sv == .spawn_expr and sv.spawn_expr.* == .call) {
+                    const c = sv.spawn_expr.*.call;
+                    var added: std.ArrayListUnmanaged([]const u8) = .empty;
+                    for (c.args) |arg| {
+                        if (arg == .identifier) {
+                            if (known_types.get(arg.identifier)) |t| {
+                                if (t == .list or t == .dict or t == .class) {
+                                    try shared_in_flight.put(self.allocator, arg.identifier, {});
+                                    try added.append(self.allocator, arg.identifier);
+                                }
+                            }
+                        }
+                    }
+                    if (decl_name) |dn| {
+                        try task_to_shared.put(self.allocator, dn, try added.toOwnedSlice(self.allocator));
+                    } else {
+                        // Fire-and-forget (`spawn worker(xs)`, isimsiz) —
+                        // BİLİNÇLİ olarak `task_to_shared`e HİÇ KAYDEDİLMEZ,
+                        // bu YÜZDEN bu isimler HİÇBİR ZAMAN `await` İLE
+                        // TEMİZLENEMEZ (fonksiyonun KALANI BOYUNCA "uçuşta"
+                        // kalır — muhafazakâr, KASITLI davranış).
+                        added.deinit(self.allocator);
+                    }
+                }
+            }
+
+            // (3) `await` tespiti — deyimin İLGİLİ ifadesinin HERHANGİ bir
+            // YERİNDE (genel gezinme İLE).
+            switch (stmt.kind) {
+                .var_decl => |v| self.removeAwaitedTaskSharing(v.value, &task_to_shared, &shared_in_flight),
+                .assign => |a| self.removeAwaitedTaskSharing(a.value, &task_to_shared, &shared_in_flight),
+                .expr_stmt => |e| self.removeAwaitedTaskSharing(e, &task_to_shared, &shared_in_flight),
+                .return_stmt => |maybe_e| if (maybe_e) |e| self.removeAwaitedTaskSharing(e, &task_to_shared, &shared_in_flight),
+                .raise_stmt => |e| self.removeAwaitedTaskSharing(e, &task_to_shared, &shared_in_flight),
+                else => {},
+            }
+        }
+    }
+
     fn checkFunctionBody(self: *Checker, fd: ast.FuncDef) TypeError!void {
         var scope: Scope = .{};
         const is_spawn_target = self.spawn_target_functions.contains(fd.name);
@@ -2563,6 +2738,11 @@ pub const Checker = struct {
         if (shared_params.items.len > 0) {
             try self.checkNoSpawnSharedMutation(fd.name, fd.body, shared_params.items);
         }
+        // GG.22: bu, `is_spawn_target`den BAĞIMSIZDIR — HERHANGİ bir
+        // fonksiyon bir `spawn` çağırabilir (spawn'ın HEDEFİ olmasına GEREK
+        // YOK), bu YÜZDEN her fonksiyon gövdesi bu YENİ, AYRI kontrolden
+        // geçirilir (bkz. `checkNoPostSpawnCallerMutation`nin belge notu).
+        try self.checkNoPostSpawnCallerMutation(fd.body, fd.params);
         const ret = try self.typeExprToType(fd.return_type);
         var ctx: FnCtx = .{ .scope = &scope, .expected_return = ret, .in_async = fd.is_async, .path = fd.name };
         for (fd.body) |s| try self.checkStmt(&ctx, s);
@@ -3825,6 +4005,29 @@ pub const Checker = struct {
                     if (try self.checkExpr(ctx, c.args[2]) != .int) return self.fail(error.TypeMismatch, "'wasm_call' argümanı 3 (argüman) int olmalıdır", .{});
                     return .int;
                 }
+                // GG.22 (bkz. plan dosyası "checkCall gölgeleme-çözümleme
+                // düzeltmesi"): yerel bir değişken/parametre (`ctx.scope`,
+                // Faz U.4.2'nin capture-farkında `Scope`u) GERÇEK bir global
+                // fonksiyon/sınıf/generic fonksiyonla AYNI adı taşıdığında,
+                // codegen'in `genCall`ı (calls.zig) HER ZAMAN `self.vars`
+                // (yerel/closure) TABLOSUNU `self.functions`den ÖNCE kontrol
+                // ediyor — yani YEREL HER ZAMAN kazanıyor. Bu kontrol ÖNCEDEN
+                // `generic_functions`/`functions`/`classes`DEN SONRA
+                // geliyordu (SADECE `from_imports`e göre öncelikliydi) —
+                // checker/codegen ANLAŞMAZLIĞI: bir yerel değişken global BİR
+                // fonksiyonla AYNI adı AMA FARKLI bir imza TAŞIDIĞINDA,
+                // checker YANLIŞLIKLA global'in imzasına göre doğrulardı,
+                // codegen İSE GERÇEKTEN yerelin tuttuğu değeri ÇAĞIRIRDI.
+                // Şimdi codegen'İN ÖNCELİK SIRASIYLA TAM eşleşiyor: yerel
+                // BULUNURSA (VE `.func` İSE) BURADA sonuçlanır, generic/
+                // global/sınıf/from-import'A HİÇ DÜŞMEZ.
+                if (try ctx.scope.lookup(self.allocator, name)) |vt| {
+                    if (vt == .func) {
+                        try self.checkArgs(ctx, vt.func.params, c.args, name);
+                        return vt.func.return_type.*;
+                    }
+                    return self.fail(error.TypeMismatch, "'{s}' bir fonksiyon değildir, çağrılamaz", .{name});
+                }
                 if (self.generic_functions.get(name)) |gfd| {
                     return try self.instantiateGeneric(ctx, gfd, c);
                 }
@@ -3844,23 +4047,6 @@ pub const Checker = struct {
                     const init_sig = info.init_sig orelse FuncSig{ .params = &.{}, .return_type = .none };
                     try self.checkArgs(ctx, init_sig.params, c.args, name);
                     return .{ .class = name };
-                }
-                // Faz U.4.4: `name` yerel bir değişken/parametre OLUP
-                // (bkz. `ctx.scope`, Faz U.4.2'nin capture-farkında `Scope`u)
-                // func-tipli bir DEĞER taşıyorsa (bir iç içe `def`den gelen
-                // closure, bkz. Faz U.4.3) bu bir DOLAYLI çağrıdır — hangi
-                // SOMUT closure çağrıldığı derleme zamanında bilinmez, ama
-                // STATİK imza (`Type.func.params`/`return_type`) argüman
-                // denetimi için YETERLİDİR (`checkArgs`, normal fonksiyon
-                // çağrılarıyla PAYLAŞILAN AYNI mekanizma). Yerel bir isim
-                // HER ZAMAN from-import çözümlemesinden ÖNCELİKLİDİR (bkz.
-                // aşağıdaki `from_imports` dalının belge notu, AYNI ilke).
-                if (try ctx.scope.lookup(self.allocator, name)) |vt| {
-                    if (vt == .func) {
-                        try self.checkArgs(ctx, vt.func.params, c.args, name);
-                        return vt.func.return_type.*;
-                    }
-                    return self.fail(error.TypeMismatch, "'{s}' bir fonksiyon değildir, çağrılamaz", .{name});
                 }
                 // Faz U.3: `from X.Y import foo[as bar]` ile bağlanan ÇIPLAK
                 // bir çağrı (`bar(...)`) — yerel bir fonksiyon/sınıf tanımı

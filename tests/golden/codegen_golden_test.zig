@@ -3055,3 +3055,21 @@ test "codegen(çalıştır): GG.19 — aggregate stack bütçesini aşan sınıf
         @embedFile("codegen_cases/gg19_aggregate_stack_budget.expected"),
     );
 }
+
+// GG.22 (bkz. plan dosyası "checkCall gölgeleme-çözümleme düzeltmesi",
+// Madde A): `checkCall`nin `.identifier` dalı ÖNCEDEN `ctx.scope.lookup`u
+// (yerel değişken/parametre) `self.functions`den SONRA kontrol ediyordu
+// — bir yerel func-tipli değişken GERÇEK bir global fonksiyonla AYNI adı
+// AMA FARKLI bir imza TAŞIDIĞINDA (`mutate: (int) -> int = other`, global
+// `mutate` 2 parametreli, `other` 1 parametreli), checker YANLIŞLIKLA
+// global'in imzasına göre doğrulayıp GEÇERLİ bir programı `ArgumentCountMismatch`
+// İLE reddediyordu (codegen'in `genCall`ı İSE HER ZAMAN yereli önceliklendirdiği
+// İçİn GERÇEKTEN `other`yi ÇAĞIRIRDI — checker/codegen ANLAŞMAZLIĞI).
+// Düzeltmeden ÖNCE bu fixture reddedilirdi; düzeltmeden SONRA doğru
+// şekilde derlenip `other`yi çağırır (21 * 2 = 42).
+test "codegen(çalıştır): GG.22 — yerel bir func-değeri, FARKLI imzalı aynı-adlı bir global fonksiyonu gölgeler" {
+    try expectGolden(
+        @embedFile("codegen_cases/local_func_value_shadows_global_diff_arity.nox"),
+        @embedFile("codegen_cases/local_func_value_shadows_global_diff_arity.expected"),
+    );
+}

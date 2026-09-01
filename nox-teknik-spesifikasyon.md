@@ -16766,6 +16766,99 @@ benzeri bir METOD-yönlendirme deseni (200M çağrı): ~1.19s → ~0.42s
 kazancıyla AYNI sınıfta/mertebede (İKİSİ de BİR allocation-stratejisi
 değişikliği, Tur 3'ün SADECE çağrı-mekaniği kazancından FARKLI).
 
+## 3.112 GG.22 — checkCall gölgeleme-çözümleme düzeltmesi + spawn-sonrası çağıran-tarafı mutasyon koruması (v1.46.0)
+
+v1.45.0 (GG.21) SONRASI harici bir (GPT-5.6) incelemesi TEKRAR paylaşıldı
+(bir versiyon GERİDE, v1.44.0 dönemine ait) — kullanıcı bu incelemenin
+KENDİ önerdiği fiber-stack-ayak-izi yönünü SEÇMEDİ, bunun YERİNE ÜÇ aday
+alanı (fiber stack ayak izi, closure/function-value effect genişletmesi,
+QBE/LLVM concurrency paritesi) ÖNCE ARAŞTIRMAYI seçti (3 paralel Explore
+ajanı). Araştırma SIRASINDA, aranan sorulardan BAĞIMSIZ, İKİ GERÇEK,
+BAĞIMSIZ hata/boşluk bulundu — kullanıcı İKİSİNİN de DÜZELTİLMESİNİ seçti
+(fiber-stack-telemetri VE closure-effect-genişletmesi turları BU turun
+kapsamı DIŞINDA bırakıldı).
+
+**Madde A — `checkCall`nin `.identifier` dalının gölgeleme SIRASI hatası**:
+çözümleme sırası ÖNCEDEN `generic_functions` → `self.functions` →
+`self.classes` → `ctx.scope.lookup` (YEREL değişken/parametre) →
+`from_imports` İDİ. Codegen'in `genCall`ı (`calls.zig`) İSE `self.vars.get(name)`
+(YEREL/closure) → `self.functions.get(name)` — YANİ YEREL HER ZAMAN ÖNCE
+kontrol ediyor. `checker.zig`nin KENDİ yorum satırı BİLE "Yerel bir isim
+HER ZAMAN... ÖNCELİKLİDİR" diyordu AMA kod BUNU SADECE `from_imports`e
+göre garanti ediyordu. Somut sonuç: bir YEREL değişken GERÇEK bir global
+fonksiyonla AYNI adı taşıdığında (`mutate: (int) -> int = other`, global
+`mutate` 2 parametreli, `other` 1 parametreli), checker çağrıyı GLOBAL
+`mutate`nin İMZASINA göre doğruluyor, codegen İSE GERÇEKTEN yerelin
+tuttuğu `other`yi ÇAĞIRIYORDU — checker/codegen ANLAŞMAZLIĞI, GEÇERLİ bir
+programın yanlış bir `ArgumentCountMismatch` İLE reddedilmesine yol
+açıyordu. **Düzeltme**: `ctx.scope.lookup` kontrolü `generic_functions`/
+`self.functions`/`self.classes` kontrollerinin HEMEN ÖNÜNE taşındı —
+codegen'in `genCall`ıyla AYNI önceliklendirme (yerel HER ZAMAN kazanır,
+generic/global/sınıf/from-import'a HİÇ DÜŞMEZ; özel-işlenen yerleşikler —
+`print`/`len`/`str`/`int`/`float`/`hpy_call`/`wasm_call` — HÂLÂ İLK
+kontrol edilir, gölgelenemez). YENİ, GERÇEKTEN derlenip çalıştırılan bir
+codegen golden fixture'ı (`local_func_value_shadows_global_diff_arity`)
+düzeltmeden ÖNCE reddedildiğini, SONRA doğru çalıştığını kanıtlar.
+
+**Madde B — spawn-sonrası çağıran-tarafı mutasyon boşluğu**:
+`checkNoSpawnSharedMutation` SADECE spawn-HEDEFİ fonksiyonun KENDİ
+gövdesini kontrol eder — `spawn_expr`in KENDİSİNİN type-checkinde HİÇBİR
+ŞEY, çağıranın spawn'dan SONRA KENDİ paylaştığı değişkeni mutasyona
+uğratmasını KISITLAMIYORDU. `--release` (LLVM) altında (list/dict/class
+SADECE `isSpawnParamSafeType`nin LLVM-gevşetmesiyle spawn-argümanı
+OLABİLDİĞİNDEN, bu boşluk YAPISAL olarak SADECE LLVM'DE ifade
+edilebiliyordu):
+```nox
+async def worker(xs: list[int]) -> None:
+    print(xs[0])          # salt-okunur -> checkNoSpawnSharedMutation'ı GEÇER
+
+async def entry() -> None:
+    xs: list[int] = [1, 2, 3]
+    t: Task[None] = spawn worker(xs)   # xs ARTIK paylaşılan/uçuşta
+    xs.append(4)                       # KORUMASIZ, gerçek veri yarışı
+    await t
+```
+**Düzeltme**: YENİ, forward tek-geçişli `checkNoPostSpawnCallerMutation`
+(checker.zig) — `stmts`i (v1 BİLİNÇLİ sınırı: SADECE ÜST-DÜZEY, if/while/
+for/try/with gövdelerine İNİLMEZ) SIRAYLA tarar, İKİ durum taşır:
+`shared_in_flight` (ŞU AN "uçuşta" paylaşılan isimler) VE `task_to_shared`
+(bir Task değişkeninin adını, ONUNLA spawn edilen paylaşılan isimlere
+eşler). HER deyim İçİn: (1) `checkDirectSharedMutationStmt` İLE mevcut
+`shared_in_flight` durumuna göre doğrudan-mutasyon kontrolü (index-atama/
+attribute-atama/`.append`/`.pop`/`.sort` — `checkNoSpawnSharedMutation`nin
+AYNI şekilleri, AMA `resolveExprSharedType`nin GÜCÜ KULLANILMAZ, SADECE
+ÇIPLAK bir `identifier` kontrol edilir); (2) deyimin DEĞERİ (var_decl/
+assign) VEYA `expr_stmt`in KENDİSİ doğrudan bir `spawn_expr` İSE, `call.args`ın
+HER `identifier` olanı İçİn (bilinen tipi list/dict/class İSE) `shared_in_flight`e
+eklenir, Task'a bir İSİM VERİLDİYSE `task_to_shared`e kaydedilir (İSİM
+VERİLMEDİYSE — fire-and-forget — BU isimler HİÇBİR ZAMAN temizlenemez,
+fonksiyonun KALANI BOYUNCA "uçuşta" kalır, BİLİNÇLİ/muhafazakâr); (3)
+`removeAwaitedTaskSharing` İLE deyimin İLGİLİ ifadesinin HERHANGİ bir
+YERİNDEKİ (`checkTransitiveSpawnSharedMutationExpr`nin AYNI gezinme şekli)
+HER `await_expr`, operandı `task_to_shared`teki bir Task adına
+ÇÖZÜLÜYORSA O Task'ın paylaştığı isimleri `shared_in_flight`ten SİLER.
+Hem `checkFunctionBody` (fd.params'tan başlatılır) HEM `checkModule`nin
+üst-düzey taraması (BOŞ parametre dilimiyle) BU YENİ kontrolden geçirilir
+— ikinci durum, `is_spawn_target`den BAĞIMSIZDIR (HERHANGİ bir fonksiyon
+bir `spawn` çağırabilir). Aynı `SpawnSharedMutation` hata kodu, YENİ bir
+mesajla kullanılır. 3 YENİ LLVM golden fixture'ı (`llvm_golden_test.zig`,
+`expectCheckerErrorLlvm` — YENİ bir yardımcı, `checkModule`nin BEKLENEN
+hata kodunu ürettiğini doğrular): hata — await'ten ÖNCE mutasyon;
+regresyon-yok — await'TEN SONRA mutasyon SERBEST; hata — fire-and-forget
+spawn SONRASI mutasyon HÂLÂ REDDEDİLİR.
+
+**Kapsam DIŞI (v1, BİLİNÇLİ, madde B)**: iç içe if/while/for/try/with
+gövdeleri; attribute-zinciri spawn-argümanları (SADECE ÇIPLAK identifier);
+BİRDEN FAZLA spawn'ın AYNI değişkeni PAYLAŞMASI (ikinci bir spawn, İLK'in
+durumunu değiştirmez/gözden geçirmez).
+
+**Doğrulama**: tam regresyon paketi (`zig build test`, 97 typecheck +
+248 codegen + 8 LLVM golden fixture'ı DAHİL) + `NOX_STRESS_ROUNDS=800
+zig build stress-test` (ReleaseFast) TEMİZ. İki pre-existing/İLİŞKİSİZ
+flake (`fiber.zig`nin errno-6 uyarısı, `codegen_ir_diff_test.zig`nin "3
+atlandı" IR-diff sayısı) clean `main` üzerinde de AYNEN üretilip BU turun
+değişikliklerinden BAĞIMSIZ OLDUĞU doğrulandı.
+
 ---
 
 ## 5. Hata Yönetimi
