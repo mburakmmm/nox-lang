@@ -189,6 +189,19 @@ pub const RuntimeState = struct {
     /// GERÇEKTEN kurulduğunda tahsis edilen `pool_ext`e taşındı (bkz.
     /// `poolFreeListsRow`).
     pool_free_lists_slot0: PoolFreeListRow = .{},
+    /// GG.24 (bkz. plan dosyası "genClassRelease'in özyineleme derinliği
+    /// sertleştirmesi"): `arc.zig`nin derinlik-eşiği release worklist'i —
+    /// `pool_free_lists_slot0` İLE AYNI gerekçeyle BURADA (RuntimeState'in
+    /// KENDİSİNDE, `poolSlotFor`nin AYNI slot-BAŞINA hiç-kilit-gerekmeyen
+    /// deseniyle) — Zig `threadlocal var` OLARAK tanımlanan İLK sürüm,
+    /// `oop_arc_churn` benchmark'ında GERÇEK bir ~2x YAVAŞLAMA gösterdi
+    /// (`otool -tV` İLE doğrulandı: macOS'un TLV thunk'ı, `rs = releaseState()`
+    /// İLE "TEK KEZ" alınmış bir POINTER olsa BİLE, HER `rs.field` erişiminde
+    /// AYRI bir thunk-çağrısı ÜRETİYORDU — Zig/LLVM BUNU CSE ETMİYOR).
+    /// `RuntimeState`nin (ZATEN `rt` PARAMETRESİ olarak elde bulunan) bir
+    /// ALANI olarak taşımak SIFIR TLV maliyeti getirir (SIRADAN bir bellek
+    /// yükü).
+    release_state_slot0: ReleaseState = .{},
     /// Dil stabilizasyonu fazı §M.7: `lowlevel` arena TUTAMAÇLARININ (bkz.
     /// `runtime/alloc/lowlevel.zig`, `ArenaHandle`) LIFO serbest liste BAŞI
     /// — `pool_free_lists`in AYNI Release-only prensibi (`lowlevel.zig`nin
@@ -398,6 +411,9 @@ pub const RuntimeState = struct {
 pub const PoolExtension = struct {
     pool_free_lists: [MAX_POOL_WORKERS - 1]PoolFreeListRow = @splat(.{}),
     globals_blocks: [MAX_POOL_WORKERS - 1]?*anyopaque = @splat(null),
+    /// GG.24: `release_state_slot0` İLE AYNI gerekçe — slot 1..MAX_POOL_
+    /// WORKERS-1 İçİn (bkz. `releaseStateFor`).
+    release_states: [MAX_POOL_WORKERS - 1]ReleaseState = @splat(.{}),
     /// Faz MN.5: havuz-çapında YAKLAŞIK deadlock tespiti İçİn (bkz.
     /// proje planı, "Go'nun checkdead()'inin BASİTLEŞTİRİLMİŞ hali") —
     /// HER worker'ın `spawn`/fiber-bitişi KENDİ YEREL `Scheduler.
@@ -492,6 +508,31 @@ pub fn globalsBlockSlot(state: *RuntimeState, slot: usize) *?*anyopaque {
     if (slot == 0) return &state.globals_block_slot0;
     return &state.pool_ext.?.globals_blocks[slot - 1];
 }
+
+/// GG.24: AYNI desen — `arc.zig`nin `nox_rc_release_enqueue_fixed`/
+/// `_dynamic`si İçİn. `slot`, `arc.zig`nin ZATEN VAR OLAN `poolSlotFor`ı
+/// İLE hesaplanır (`pool_free_lists`nin AYNI slot-numaralandırması).
+pub fn releaseStateFor(state: *RuntimeState, slot: usize) *ReleaseState {
+    if (slot == 0) return &state.release_state_slot0;
+    return &state.pool_ext.?.release_states[slot - 1];
+}
+
+/// GG.24 (bkz. plan dosyası "genClassRelease'in özyineleme derinliği
+/// sertleştirmesi", `arc.zig`nin `nox_rc_release_enqueue_fixed`/`_dynamic`
+/// belge notu): bir sınıf-tipli alanı serbest bırakırken, alan KENDİSİ de
+/// sınıf-tipliyse `$FieldClass_release`e GERÇEK bir QBE çağrısı ÜRETİLİR
+/// — bir bağlı-liste/ağaç ZİNCİRİNİ serbest bırakırken HER halka İçİn
+/// yığın çerçevesi TÜKETİR. `MAX_DIRECT_RELEASE_DEPTH`in ALTINDA (İLK
+/// yaklaşım, threadlocal `var`larla) BUGÜNKÜ GİBİ DOĞRUDAN çağrılır,
+/// eşik AŞILDIĞINDA `worklist`e düşülür.
+pub const ReleaseWorklistItem = struct { tag: i64, ptr: *anyopaque };
+pub const ReleaseState = struct {
+    depth: usize = 0,
+    pump_active: bool = false,
+    worklist: std.ArrayListUnmanaged(ReleaseWorklistItem) = .empty,
+    class_release_dispatch_resolved: bool = false,
+    class_release_dispatch_fn: ?*const fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) void = null,
+};
 
 /// Faz MN.3b: bu OS iş parçacığının BİR worker havuzu İÇİNDEKİ konumu
 /// (`RuntimeState.globals_blocks`e bkz.) — varsayılan 0, tek-iş-parçacıklı

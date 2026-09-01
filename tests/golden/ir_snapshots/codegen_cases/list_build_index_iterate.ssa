@@ -1081,83 +1081,81 @@ export function w $main(w %argc, l %argv) {
     %t34 =w ceql %t30, 0
     jnz %t34, @release_skip8, @release7
 @release7
-    %t35 =l loadl %t30
-    call $nox_class_release_dispatch(l %rt, l %t35, l %t30)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t30)
     jmp @release_done9
 @release_skip8
     jmp @release_done9
 @release_done9
     jmp @ctor_init_cont6
 @ctor_init_cont6
-    %t36 =w call $nox_exception_pending(l %rt)
-    jnz %t36, @exc_propagate10, @exc_continue11
+    %t35 =w call $nox_exception_pending(l %rt)
+    jnz %t35, @exc_propagate10, @exc_continue11
 @exc_propagate10
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue11
     call $nox_raise(l %rt, l %t30, l 6)
-    %t37 =w call $nox_exception_pending(l %rt)
-    jnz %t37, @exc_propagate12, @exc_continue13
+    %t36 =w call $nox_exception_pending(l %rt)
+    jnz %t36, @exc_propagate12, @exc_continue13
 @exc_propagate12
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue13
     jmp @list_idx_ok4
 @list_idx_ok4
-    %t38 =l mul 0, 8
-    %t39 =l add %t38, 16
-    %t40 =l add %t24, %t39
-    %t41 =l loadl %t40
-    call $printf(l $fmt_int, ..., l %t41)
-    %t42 =l loadl %t1
-    %t43 =l loadl %t42
-    %t44 =w csltl 3, 0
-    %t45 =w csgel 3, %t43
-    %t46 =w or %t44, %t45
-    jnz %t46, @list_idx_err14, @list_idx_ok15
+    %t37 =l mul 0, 8
+    %t38 =l add %t37, 16
+    %t39 =l add %t24, %t38
+    %t40 =l loadl %t39
+    call $printf(l $fmt_int, ..., l %t40)
+    %t41 =l loadl %t1
+    %t42 =l loadl %t41
+    %t43 =w csltl 3, 0
+    %t44 =w csgel 3, %t42
+    %t45 =w or %t43, %t44
+    jnz %t45, @list_idx_err14, @list_idx_ok15
 @list_idx_err14
-    %t47 =l add $str1, 16
-    %t48 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 4, %t48
-    %t49 =l add %t48, 8
+    %t46 =l add $str1, 16
+    %t47 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 4, %t47
+    %t48 =l add %t47, 8
+    storel 0, %t48
+    %t49 =l add %t47, 16
     storel 0, %t49
-    %t50 =l add %t48, 16
-    storel 0, %t50
-    call $Exception___init__(l %rt, l %t48, l %t47)
-    %t51 =w call $nox_exception_pending(l %rt)
-    jnz %t51, @ctor_init_failed16, @ctor_init_cont17
+    call $Exception___init__(l %rt, l %t47, l %t46)
+    %t50 =w call $nox_exception_pending(l %rt)
+    jnz %t50, @ctor_init_failed16, @ctor_init_cont17
 @ctor_init_failed16
-    %t52 =w ceql %t48, 0
-    jnz %t52, @release_skip19, @release18
+    %t51 =w ceql %t47, 0
+    jnz %t51, @release_skip19, @release18
 @release18
-    %t53 =l loadl %t48
-    call $nox_class_release_dispatch(l %rt, l %t53, l %t48)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t47)
     jmp @release_done20
 @release_skip19
     jmp @release_done20
 @release_done20
     jmp @ctor_init_cont17
 @ctor_init_cont17
-    %t54 =w call $nox_exception_pending(l %rt)
-    jnz %t54, @exc_propagate21, @exc_continue22
+    %t52 =w call $nox_exception_pending(l %rt)
+    jnz %t52, @exc_propagate21, @exc_continue22
 @exc_propagate21
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue22
-    call $nox_raise(l %rt, l %t48, l 7)
-    %t55 =w call $nox_exception_pending(l %rt)
-    jnz %t55, @exc_propagate23, @exc_continue24
+    call $nox_raise(l %rt, l %t47, l 7)
+    %t53 =w call $nox_exception_pending(l %rt)
+    jnz %t53, @exc_propagate23, @exc_continue24
 @exc_propagate23
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue24
     jmp @list_idx_ok15
 @list_idx_ok15
-    %t56 =l mul 3, 8
-    %t57 =l add %t56, 16
-    %t58 =l add %t42, %t57
-    %t59 =l loadl %t58
-    call $printf(l $fmt_int, ..., l %t59)
+    %t54 =l mul 3, 8
+    %t55 =l add %t54, 16
+    %t56 =l add %t41, %t55
+    %t57 =l loadl %t56
+    call $printf(l $fmt_int, ..., l %t57)
     call $nox_runtime_deinit(l %rt)
 @fn_end25
     ret 0
@@ -1230,7 +1228,7 @@ export function $List_JsonValue_release(l %rt, l %p) {
     %t14 =w ceql %t13, 0
     jnz %t14, @list_release_skip5, @list_release_elem6
 @list_release_elem6
-    call $JsonValue_release(l %rt, l %t13)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t13, l $JsonValue_release)
     jmp @list_release_skip5
 @list_release_skip5
     %t15 =l add %t8, 1

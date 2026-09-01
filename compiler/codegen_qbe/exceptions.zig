@@ -207,7 +207,14 @@ pub fn genTry(self: *Codegen, t: ast.TryStmt, ret_qtype: QbeType) CodegenError!v
             // ÇALIŞMA ZAMANINDA doğru release'e dal açan `nox_class_
             // release_dispatch`e (bkz. `layout.zig`nin `genClassReleaseDispatch`ı)
             // BAŞVURULUR.
-            try self.qbeCall(null, "$nox_class_release_dispatch", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = tag }, .{ .ty = .l, .text = exc_ptr } });
+            //
+            // GG.24 (bkz. plan dosyası "genClassRelease'in özyineleme
+            // derinliği sertleştirmesi"): `nox_class_release_dispatch`in
+            // DOĞRUDAN çağrılması YERİNE `arc.zig`nin derinlik-eşiği
+            // worklist'İ ÜZERİNDEN — yakalanan istisna nesnesinin KENDİ
+            // derin bir zinciri OLSA BİLE (nadir AMA olası) yığın taşması
+            // riski taşımaz.
+            try self.qbeCall(null, "$nox_rc_release_enqueue_dynamic", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = exc_ptr } });
         }
         try self.genStmts(ec.body, ret_qtype);
         if (t.finally_body) |fb| try self.runDetachedFinally(fb, ret_qtype);

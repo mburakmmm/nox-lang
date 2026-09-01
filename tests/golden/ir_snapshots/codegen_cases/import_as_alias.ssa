@@ -1213,7 +1213,7 @@ export function w $main(w %argc, l %argv) {
     %t18 =w ceql %t16, 0
     jnz %t18, @release_skip7, @release6
 @release6
-    call $nox_testmod_Counter_release(l %rt, l %t16)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t16, l $nox_testmod_Counter_release)
     jmp @release_done8
 @release_skip7
     jmp @release_done8
@@ -1291,7 +1291,7 @@ export function $List_JsonValue_release(l %rt, l %p) {
     %t14 =w ceql %t13, 0
     jnz %t14, @list_release_skip5, @list_release_elem6
 @list_release_elem6
-    call $JsonValue_release(l %rt, l %t13)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t13, l $JsonValue_release)
     jmp @list_release_skip5
 @list_release_skip5
     %t15 =l add %t8, 1

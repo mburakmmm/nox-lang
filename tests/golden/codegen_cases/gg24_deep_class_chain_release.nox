@@ -1,0 +1,32 @@
+# GG.24 (bkz. plan dosyası "genClassRelease'in özyineleme derinliği
+# sertleştirmesi"): ÖNCEDEN (derinlik-eşiği worklist'İ OLMADAN) ~7.300
+# düğümde ÇÖKERDİ — ARTIK `MAX_DIRECT_RELEASE_DEPTH` (200) eşiğinin ÇOK
+# ÜZERİNDE bir zincir bile GÜVENLE serbest bırakılır. (Bulundu: Debug
+# modunda — HAVUZSUZ, `DebugAllocator`nin TAM bookkeeping'i AKTİF —
+# ÇOK BÜYÜK N'ler O(n) YERİNE gözle görülür ŞEKİLDE daha yavaş bir profil
+# sergiliyor — BU, `zig-out/lib/noxrt.o`nun `--release` OLMADAN Debug
+# modunda derlenmiş OLMASININ BİLİNEN/beklenen bir maliyeti, GG.24'ün
+# KENDİ mekanizmasıyla İLGİSİZ — ReleaseFast'te n=50.000 BİLE ~0.3 saniyede
+# TAMAMLANIYOR, `NOX_STRESS_ROUNDS`/stress-test'in KENDİ "ReleaseFast'te
+# çalıştır" disiplinine UYGUN. Bu YÜZDEN BU golden fixture — Debug modunda
+# HIZLI test paketinin BİR PARÇASI olduğundan — eşiği RAHATÇA AŞAN AMA
+# Debug modunda da HIZLI kalan bir N kullanır.)
+class Node:
+    next: Node | None
+    def __init__(self, next: Node | None) -> None:
+        self.next = next
+
+def build_chain(n: int) -> Node | None:
+    head: Node | None = None
+    i: int = 0
+    while i < n:
+        head = Node(head)
+        i = i + 1
+    return head
+
+def run() -> None:
+    head: Node | None = build_chain(2000)
+    head = None
+    print("tamamlandi")
+
+run()

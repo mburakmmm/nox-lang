@@ -760,32 +760,31 @@ export function l $Helper_peek(l %rt, l %p_self, l %p_xs) {
     %t12 =w ceql %t8, 0
     jnz %t12, @release_skip5, @release4
 @release4
-    %t13 =l loadl %t8
-    call $nox_class_release_dispatch(l %rt, l %t13, l %t8)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t8)
     jmp @release_done6
 @release_skip5
     jmp @release_done6
 @release_done6
     jmp @ctor_init_cont3
 @ctor_init_cont3
-    %t14 =w call $nox_exception_pending(l %rt)
-    jnz %t14, @exc_propagate7, @exc_continue8
+    %t13 =w call $nox_exception_pending(l %rt)
+    jnz %t13, @exc_propagate7, @exc_continue8
 @exc_propagate7
     ret 0
 @exc_continue8
     call $nox_raise(l %rt, l %t8, l 7)
-    %t15 =w call $nox_exception_pending(l %rt)
-    jnz %t15, @exc_propagate9, @exc_continue10
+    %t14 =w call $nox_exception_pending(l %rt)
+    jnz %t14, @exc_propagate9, @exc_continue10
 @exc_propagate9
     ret 0
 @exc_continue10
     jmp @list_idx_ok1
 @list_idx_ok1
-    %t16 =l mul 0, 8
-    %t17 =l add %t16, 16
-    %t18 =l add %t2, %t17
-    %t19 =l loadl %t18
-    ret %t19
+    %t15 =l mul 0, 8
+    %t16 =l add %t15, 16
+    %t17 =l add %t2, %t16
+    %t18 =l loadl %t17
+    ret %t18
 @after_return11
 @fn_end12
     ret 0
@@ -980,32 +979,31 @@ export function l $SubHelper_peek(l %rt, l %p_self, l %p_xs) {
     %t75 =w ceql %t71, 0
     jnz %t75, @release_skip27, @release26
 @release26
-    %t76 =l loadl %t71
-    call $nox_class_release_dispatch(l %rt, l %t76, l %t71)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t71)
     jmp @release_done28
 @release_skip27
     jmp @release_done28
 @release_done28
     jmp @ctor_init_cont25
 @ctor_init_cont25
-    %t77 =w call $nox_exception_pending(l %rt)
-    jnz %t77, @exc_propagate29, @exc_continue30
+    %t76 =w call $nox_exception_pending(l %rt)
+    jnz %t76, @exc_propagate29, @exc_continue30
 @exc_propagate29
     ret 0
 @exc_continue30
     call $nox_raise(l %rt, l %t71, l 12)
-    %t78 =w call $nox_exception_pending(l %rt)
-    jnz %t78, @exc_propagate31, @exc_continue32
+    %t77 =w call $nox_exception_pending(l %rt)
+    jnz %t77, @exc_propagate31, @exc_continue32
 @exc_propagate31
     ret 0
 @exc_continue32
     jmp @list_idx_ok23
 @list_idx_ok23
-    %t79 =l mul 0, 8
-    %t80 =l add %t79, 16
-    %t81 =l add %t65, %t80
-    %t82 =l loadl %t81
-    ret %t82
+    %t78 =l mul 0, 8
+    %t79 =l add %t78, 16
+    %t80 =l add %t65, %t79
+    %t81 =l loadl %t80
+    ret %t81
 @after_return33
 @fn_end34
     ret 0
@@ -1672,14 +1670,13 @@ export function w $main(w %argc, l %argv) {
     %t49 =w ceql %t3, 0
     jnz %t49, @release_skip23, @release22
 @release22
-    %t50 =l loadl %t3
-    call $nox_class_release_dispatch(l %rt, l %t50, l %t3)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t3)
     jmp @release_done24
 @release_skip23
     jmp @release_done24
 @release_done24
-    %t51 =l loadl %t2
-    call $printf(l $fmt_int, ..., l %t51)
+    %t50 =l loadl %t2
+    call $printf(l $fmt_int, ..., l %t50)
     call $nox_deinit_globals(l %rt)
     call $nox_runtime_deinit(l %rt)
 @fn_end25
@@ -1813,7 +1810,7 @@ export function $List_JsonValue_release(l %rt, l %p) {
     %t14 =w ceql %t13, 0
     jnz %t14, @list_release_skip5, @list_release_elem6
 @list_release_elem6
-    call $JsonValue_release(l %rt, l %t13)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t13, l $JsonValue_release)
     jmp @list_release_skip5
 @list_release_skip5
     %t15 =l add %t8, 1

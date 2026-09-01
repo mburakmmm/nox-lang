@@ -1,0 +1,26 @@
+# GG.24: `exceptions.zig`nin bare-`except:` (`as e:` bağlaması OLMAYAN)
+# dispatch dalını, DERİN bir zincir taşıyan bir istisna nesnesiyle
+# egzersiz eder.
+class Node:
+    next: Node | None
+    def __init__(self: Node, next: Node | None) -> None:
+        self.next = next
+
+class ChainError(Exception):
+    head: Node | None
+    def __init__(self: ChainError, message: str, head: Node | None) -> None:
+        super().__init__(message)
+        self.head = head
+
+def run() -> None:
+    head: Node | None = None
+    i: int = 0
+    while i < 2000:
+        head = Node(head)
+        i = i + 1
+    try:
+        raise ChainError("boom", head)
+    except:
+        print("tamamlandi")
+
+run()

@@ -1179,30 +1179,29 @@ export function l $nox_os_getenv(l %rt, l %p_name) {
     %t16 =w ceql %t7, 0
     jnz %t16, @release_skip11, @release10
 @release10
-    %t17 =l loadl %t7
-    call $nox_class_release_dispatch(l %rt, l %t17, l %t7)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t7)
     jmp @release_done12
 @release_skip11
     jmp @release_done12
 @release_done12
     jmp @ctor_init_cont9
 @ctor_init_cont9
-    %t18 =w call $nox_exception_pending(l %rt)
-    jnz %t18, @exc_propagate13, @exc_continue14
+    %t17 =w call $nox_exception_pending(l %rt)
+    jnz %t17, @exc_propagate13, @exc_continue14
 @exc_propagate13
     ret 0
 @exc_continue14
     call $nox_raise(l %rt, l %t7, l 33)
-    %t19 =w call $nox_exception_pending(l %rt)
-    jnz %t19, @exc_propagate15, @exc_continue16
+    %t18 =w call $nox_exception_pending(l %rt)
+    jnz %t18, @exc_propagate15, @exc_continue16
 @exc_propagate15
     ret 0
 @exc_continue16
     jmp @if_end0
 @if_end0
-    %t20 =l loadl %t0
-    %t21 =l call $nox_os_getenv_raw(l %rt, l %t20)
-    ret %t21
+    %t19 =l loadl %t0
+    %t20 =l call $nox_os_getenv_raw(l %rt, l %t19)
+    ret %t20
 @after_return17
 @fn_end18
     ret 0
@@ -1402,7 +1401,7 @@ export function $List_JsonValue_release(l %rt, l %p) {
     %t14 =w ceql %t13, 0
     jnz %t14, @list_release_skip5, @list_release_elem6
 @list_release_elem6
-    call $JsonValue_release(l %rt, l %t13)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t13, l $JsonValue_release)
     jmp @list_release_skip5
 @list_release_skip5
     %t15 =l add %t8, 1

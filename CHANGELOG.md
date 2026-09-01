@@ -14,6 +14,69 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.48.0]
+
+### Düzeltildi
+- **GG.24 — `genClassRelease`'in özyineleme derinliği sertleştirmesi**:
+  GG.23'ün ERTELEDİĞİ 4. risk (bkz. `[1.47.0]`nin "Notlar"ı) çözüldü —
+  `compiler/codegen_qbe/ownership.zig`nin `releaseValueIfSet`i/
+  `genListElemRelease`i VE `exceptions.zig`nin bare-`except:` dispatch'i,
+  bir sınıf-tipli alanı (`Node.next: Node | None` gibi) serbest bırakırken
+  ÖNCEDEN DOĞRUDAN `call $ClassName_release`/`$nox_class_release_dispatch`
+  üretiyordu — bir bağlı-liste/ağaç ZİNCİRİNİ serbest bırakırken HER
+  halka İçİn GERÇEK bir yığın çerçevesi tüketiyordu. YENİ, derinlik-eşiği
+  KARMA mekanizma (`runtime/alloc/arc.zig`nin `nox_rc_release_enqueue_
+  fixed`/`_dynamic`i): İLK `MAX_DIRECT_RELEASE_DEPTH` (50) seviye BUGÜNKÜ
+  GİBİ doğrudan çağrı (ölçülemeyecek KADAR küçük ek yük), SADECE bunu
+  aşan patolojik zincirlerde `cycle_detector.zig`nin `markGray`/
+  `scanBlack`İYLE AYNI iteratif, heap-tabanlı worklist'e düşülür — TOPLAM
+  en-kötü-durum yığın derinliği ARTIK zincir uzunluğundan TAMAMEN
+  BAĞIMSIZ (`NOX_STACK_PAINT`İLE ÖLÇÜLDÜ: 2.000/7.000/50.000 düğümlük
+  zincirlerin ÜÇÜ de AYNI 5.936 baytlık sabit tavanda).
+- **`--release` (LLVM) — `await` edilen bir `bool` sonucu HİÇ derlenemiyordu
+  (GG.24'ün araştırması SIRASINDA bulundu, TAMAMEN AYRI bir hata)**:
+  `compiler/codegen_qbe/llvm_emit.zig`nin `qbeOp1`si, `w`-hedefli bir
+  `copy`yi HER ZAMAN `add i32 <kaynak>, 0` olarak üretiyordu — AMA bu kod
+  tabanında `w`-hedefli `copy`nin TEK kullanımı (`expr.zig`nin
+  `fromPayload`si, `await`in `i64` payload'ını bir `bool`e DARALTIRKEN)
+  kaynağı HER ZAMAN `l` (i64) tipindeydi, bu YÜZDEN LLVM operand-tipi
+  uyuşmazlığı YÜZÜNDEN GEÇERSİZ IR üretiliyordu. Sonuç: `--release`
+  altında `Task[bool]`/`Channel[bool]` await eden HERHANGİ bir program
+  (`nox.regex.is_match`in KENDİSİ DAHİL, `bool` döndürdüğünden) `clang
+  basarisiz` İLE derlenemiyordu. Düzeltme: `qbeOp1`e AÇIK bir `trunc i64
+  ... to i32` dalı eklendi.
+
+### Değişti
+- **`STACK_SIZE` 256 KiB'den 128 KiB'e küçültüldü** (`runtime/async_rt/
+  fiber.zig`) — GG.24'ün düzeltmesi SONRASI GG.23'ün DÖRT sentetik en-
+  kötü-durum senaryosu + GERÇEK-dünya (Aether v0.6.5/Nyx v0.17.0)
+  `NOX_STACK_PAINT`İLE YENİDEN ölçüldü: regex 1.312 B, JSON (30 seviye)
+  17.760 B (EN YÜKSEK sentetik senaryo, hedefin SADECE ~%13.6'sı), sınıf-
+  zinciri release'i (HERHANGİ bir uzunlukta) 5.936 B, Aether 4.928 B, Nyx
+  13.952 B — HEPSİ 128 KiB'in ÇOK RAHAT altında. `compiler/codegen_qbe/
+  inlining.zig`nin `MAX_STACK_ALLOC_SIZE`(4096→2048)/`MAX_PROMOTED_
+  FRAME_SIZE`(32768→16384) sabitleri AYNI oranda (YARIYA) küçültüldü.
+  `MAX_DIRECT_RELEASE_DEPTH` (yukarıdaki GG.24 düzeltmesi) 200'DEN 50'YE
+  düşürüldü — 200'ün KENDİSİ ZATEN güvenliydi (gerçek tavan ~17.936 B),
+  AMA 50 EK bir güvenlik payı sağlıyor VE GERÇEK-dünya zincirleri
+  PRATİKTE asla 50 seviyeye BİLE yaklaşmadığından davranış/performans
+  SIFIR etkilenir.
+
+### Notlar
+- **Ölçüm metodolojisi dersi**: bu turun ARA bir aşamasında, `zig build
+  test`in (Debug modu, `-Doptimize` VERİLMEDEN) `zig-out/lib/noxrt.o`yu
+  SESSİZCE Debug-modu bir sürümle EZDİĞİ fark edilmeden birkaç `--release`
+  ölçümü (chain-release/Aether/Nyx) alındı — Debug modu ARC havuzlamasını
+  DEVRE DIŞI bıraktığından (`use_pool = builtin.mode != .Debug`) bu
+  ölçümler GERÇEK sayılardan ~3-8× ŞİŞİRİLMİŞTİ (ör. chain-release tavanı
+  YANLIŞLIKLA 137.904 B GİBİ görünmüştü, GERÇEĞİ 5.936 B). Hata, `git
+  stash` İLE TEMİZ `v1.47.0` HEAD'e karşı AYNI ölçümün TEKRARLANMASIYLA
+  yakalanıp (AYNI şişirilmiş sayılar YENİDEN üretildi) düzeltildi — TÜM
+  yukarıdaki sayılar `zig build -Doptimize=ReleaseFast`in HEMEN SONRASINDA,
+  ARADA HİÇBİR Debug derlemesi OLMADAN alınmış TEMİZ ölçümlerdir.
+- Gerçek-dünya doğrulaması: Aether (20 test) + Nyx (45 test) TAM test
+  paketleri YENİ noxc İLE (128 KiB `STACK_SIZE`İLE) 65/65 yeşil.
+
 ## [1.47.0]
 
 ### Düzeltildi

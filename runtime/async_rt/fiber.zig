@@ -68,7 +68,17 @@ pub const Context = switch (builtin.cpu.arch) {
 
 extern fn nox_swap_context(old: *Context, new: *Context) void;
 
-pub const STACK_SIZE: usize = 256 * 1024;
+// GG.25 (bkz. plan dosyası "STACK_SIZE küçültmesi"): GG.23/GG.24'ün DÖRT
+// sentetik en-kötü-durum senaryosu + GERÇEK-dünya (Aether v0.6.5/Nyx
+// v0.17.0, `NOX_STACK_PAINT`İLE) TEMİZ bir ReleaseFast derlemesiyle
+// YENİDEN ölçüldü: regex (400 karakter literal) 1.312 B, JSON (30 seviye
+// iç-içe) 17.760 B (EN YÜKSEK sentetik senaryo), sınıf-zinciri release'i
+// (`MAX_DIRECT_RELEASE_DEPTH=50`İLE, HERHANGİ bir zincir uzunluğunda SABİT)
+// 5.936 B, Aether 4.928 B, Nyx 13.952 B — HEPSİ 128 KiB'in (131.072 B)
+// ÇOK RAHAT altında (en yüksek/JSON: hedefin SADECE ~%13.6'sı). ÖNCEKİ
+// 256 KiB (v1.47.0'IN GG.23 kararı — o zamanki zincir-release riski O
+// TURDA DÜZELTİLMEMİŞTİ) ARTIK GEREKSİZ CÖMERT.
+pub const STACK_SIZE: usize = 128 * 1024;
 pub const STACK_ALIGN: usize = 16;
 
 /// Faz MN.8, Bulgu C — GÜVENLİK AĞI: fiber yığınları ARTIK düz `std.mem.

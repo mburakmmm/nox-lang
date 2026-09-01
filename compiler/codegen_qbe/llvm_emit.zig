@@ -280,6 +280,15 @@ pub fn qbeOp1(self: *Codegen, dst: []const u8, ty: QbeType, mnemonic: []const u8
     if (std.mem.eql(u8, mnemonic, "copy")) {
         if (ty == .d) {
             try self.out.writer.print("    {s} = fadd double {s}, 0.0\n", .{ dst, a });
+        } else if (ty == .w) {
+            // `w` hedefli `copy` BU projede YALNIZCA `l` (i64) kaynaktan
+            // DARALTMA İçİn kullanılır (bkz. `expr.zig`nin `fromPayload`si
+            // + `decorators.zig`nin `genReflectDecoratorIsHandler`i — İKİSİ
+            // de QBE'nin "l->w copy = düşük 32 bit" idyomunu kullanır).
+            // QBE'nin KENDİSİ İçİn bu GEÇERLİ (temps statik tipsiz), AMA
+            // LLVM `add i32 <i64-değer>, 0` KABUL ETMEZ (operand tipi TAM
+            // eşleşmeli) — doğru LLVM karşılığı AÇIK bir `trunc`tur.
+            try self.out.writer.print("    {s} = trunc i64 {s} to i32\n", .{ dst, a });
         } else {
             try self.out.writer.print("    {s} = add {s} {s}, 0\n", .{ dst, llvmTypeName(ty), a });
         }

@@ -16952,6 +16952,94 @@ LLVM golden fixture'ı DAHİL) + `NOX_STRESS_ROUNDS=800 zig build stress-test`
 
 ---
 
+## 3.114 GG.24/GG.25 — `genClassRelease`'in özyineleme derinliği sertleştirmesi + STACK_SIZE küçültmesi (v1.48.0)
+
+§3.113'ün (GG.23) ERTELEDİĞİ 4. risk BU turda çözüldü — kullanıcı
+`genClassRelease`'in KENDİ özyinelemeli release-kademesini sertleştirmeyi
+onayladı, İKİ yaklaşımdan (her zaman worklist vs derinlik-eşiği KARMA)
+**derinlik-eşiği KARMA yaklaşımı** seçildi (tipik/sığ kod İçİn NEREDEYSE
+sıfır ek yük öncelikli).
+
+**GG.24 — mekanizma**: `runtime/alloc/arc.zig`ye YENİ `nox_rc_release_
+enqueue_fixed`/`_dynamic` (parser.zig'in `enterRecursion`/`exitRecursion`
+İLE AYNI ilke) — İLK `MAX_DIRECT_RELEASE_DEPTH` seviye SIFIR ek yükle
+(bugünkü GİBİ) doğrudan çağrı, aşan durumlarda `cycle_detector.zig`nin
+`markGray`/`scanBlack`İYLE AYNI heap-tabanlı iteratif worklist'e düşülür.
+`compiler/codegen_qbe/ownership.zig`nin `releaseValueIfSet`i/
+`genListElemRelease`i VE `exceptions.zig`nin bare-`except:` dispatch'i
+(3 çağrı sitesi) DOĞRUDAN `$ClassName_release`/`$nox_class_release_
+dispatch` çağrısı YERİNE BUNLARI çağıracak şekilde güncellendi.
+`genListElemRelease`nin `list[T]` (T=class) İLE `list[list[T]]` (nested-
+list) dalları BİLİNÇLİ olarak AYRILDI — bir listenin İLK 8 baytı bir
+UZUNLUK alanıdır, sınıf-etiketi DEĞİL, bu YÜZDEN nested-list dalı ESKİ
+doğrudan çağrı yolunda BIRAKILDI (`nox_rc_release_enqueue_dynamic`e
+GEÇİRİLSEYDİ uzunluğu YANLIŞLIKLA bir sınıf etiketi olarak OKURDU).
+
+**Performans araştırması (İKİ optimizasyon turu)**: macOS TLV (Thread-
+Local Variable) erişimi HER AYRI alan erişiminde (`rs.depth`/`rs.
+pump_active`) AYRI bir thunk-çağrısı ürettiğinden (Zig/LLVM bunu TEK bir
+blokta BİLE CSE ETMEZ — `arc.zig`nin `poolSlotFor`nin AYNI, ÖNCEDEN
+bulunmuş dersi), durum `asap.RuntimeState`nin KENDİSİNE (`pool_free_
+lists_slot0`/`poolFreeListsRow` İLE AYNI slot-BAŞINA desen) taşındı —
+`otool -tV` İLE `oop_arc_churn` benchmark'ında ÖLÇÜLEN ~2x'lik BİR
+regresyon ~1.47x'e indirildi. ÜÇÜNCÜ bir tur (derinlik-sayımını
+DOĞRUDAN codegen'e gömmek) çağıran ARAŞTIRILDI AMA compiler↔runtime ABI
+bağlaşması (raw struct offset'leri, `checker.zig`↔`codegen_qbe` döngüsel-
+bağımlılık-önleme disipliniyle ÇELİŞEN bir yön) riski ölçülemeyen bir
+kazanç İçİn ORANTISIZ bulunup KULLANICI KARARIYLA TERK edildi.
+
+**GG.25 — STACK_SIZE küçültmesi**: GG.24 SONRASI GG.23'ün DÖRT senaryosu
++ Aether/Nyx `NOX_STACK_PAINT`İLE YENİDEN ölçüldü. **Ölçüm metodolojisi
+tuzağı** (önce yakalanıp DÜZELTİLDİ): ARA bir aşamada `zig build test`
+(Debug modu) `zig-out/lib/noxrt.o`yu SESSİZCE Debug-modu bir sürümle
+ezdi (`use_pool = builtin.mode != .Debug` — Debug'da ARC havuzlaması
+KAPALI) — BU YÜZDEN bir dizi `--release` ölçümü (chain-release/Aether/
+Nyx) ~3-8× ŞİŞİRİLMİŞ rakamlar üretti (ör. chain-release tavanı
+YANLIŞLIKLA 137.904 B — GERÇEĞİ 5.936 B). Hata `git stash` İLE TEMİZ
+`v1.47.0` HEAD'e karşı AYNI ölçümün TEKRARLANMASIYLA (AYNI şişirilmiş
+sayılar YENİDEN üretildi) yakalandı — TÜM NİHAİ sayılar `zig build
+-Doptimize=ReleaseFast`in HEMEN SONRASINDA, ARADA HİÇBİR Debug derlemesi
+OLMADAN alınmıştır.
+
+**Nihai, doğrulanmış sayılar** (128 KiB = 131.072 B bütçesine göre):
+regex (400 karakter) 1.312 B (~%1), JSON (30 seviye) 17.760 B (EN
+YÜKSEK sentetik senaryo, ~%13.6), sınıf-zinciri release'i (HERHANGİ bir
+uzunlukta, `MAX_DIRECT_RELEASE_DEPTH=50`İLE) 5.936 B (~%4.5), Aether
+4.928 B (~%3.8), Nyx 13.952 B (~%10.6). `STACK_SIZE` (`runtime/async_rt/
+fiber.zig`) 256 KiB'DEN 128 KiB'e küçültüldü; `MAX_STACK_ALLOC_SIZE`
+(4096→2048)/`MAX_PROMOTED_FRAME_SIZE` (32768→16384) AYNI oranda
+(`compiler/codegen_qbe/inlining.zig`). `MAX_DIRECT_RELEASE_DEPTH` 200'DEN
+50'YE düşürüldü — 200'ün KENDİSİ ZATEN güvenliydi (gerçek tavan ~17.936
+B), AMA GERÇEK-dünya zincirlerinin PRATİKTE asla 50 seviyeye BİLE
+yaklaşmadığı (davranış/performans SIFIR etkilenir) düşünülerek EK bir
+güvenlik payı İçİn küçültüldü.
+
+**Yan-bulgu (GG.24'ün araştırması SIRASINDA bulundu, TAMAMEN AYRI bir
+hata)**: `compiler/codegen_qbe/llvm_emit.zig`nin `qbeOp1`si, `w`-hedefli
+bir `copy`yi HER ZAMAN `add i32 <kaynak>, 0` OLARAK üretiyordu — AMA
+BU kod tabanında `w`-hedefli `copy`nin TEK kullanımı (`expr.zig`nin
+`fromPayload`si, `await`'in i64 payload'ını `bool`e DARALTIRKEN)
+kaynağı HER ZAMAN `l` (i64) tipindeydi — LLVM operand-tipi uyuşmazlığı
+YÜZÜNDEN GEÇERSİZ IR üretiyordu. Sonuç: `--release` altında `Task[bool]`
+await eden HERHANGİ bir program (`nox.regex.is_match` DAHİL, `bool`
+döndürdüğünden) `clang basarisiz` İLE DERLENEMİYORDU — GG.24'ün KENDİ
+regex/JSON yeniden-ölçümü SIRASINDA bulundu, `qbeOp1`e AÇIK bir `trunc
+i64 ... to i32` dalı eklenerek düzeltildi.
+
+**Doğrulama**: `zig build test` (Debug+ReleaseFast, YENİ 5 GG.24 codegen
+fixture'ı + 1 YENİ LLVM golden fixture DAHİL) + `NOX_STRESS_ROUNDS=800
+zig build stress-test -Doptimize=ReleaseFast` TEMİZ (bilinen 3 ARIZALI-
+AMA-İLGİSİZ harness flake'i HARİÇ — `beklenmeyen errno...6` fiber-bağlamı
+konsol-interleaving'i × 2 + `codegen_ir_diff_test`nin kendisi standalone
+TEMİZ geçen ama `zig build test`nin özet çıktısında "failed command"
+GÖSTERDİĞİ bir zig-build-runner ARTEFAKTI — HER İKİSİ de TEMİZ `v1.47.0`
+HEAD'de de AYNEN ÜRETİLDİĞİ DOĞRULANARAK bu turla İLGİSİZ OLDUĞU
+KANITLANDI). Gerçek-dünya son doğrulama: Aether (20 test) + Nyx (45
+test, postgres-gerektiren HARİÇ) TAM test paketleri YENİ noxc İLE
+(128 KiB `STACK_SIZE`İLE) 65/65 yeşil.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

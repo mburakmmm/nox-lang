@@ -1166,7 +1166,7 @@ export function l $make_box(l %rt) {
     %t11 =w ceql %t10, 0
     jnz %t11, @release_skip4, @release3
 @release3
-    call $Box_release(l %rt, l %t10)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t10, l $Box_release)
     jmp @release_done5
 @release_skip4
     jmp @release_done5
@@ -1200,7 +1200,7 @@ export function l $make_box(l %rt) {
     %t18 =w ceql %t17, 0
     jnz %t18, @release_skip14, @release13
 @release13
-    call $Box_release(l %rt, l %t17)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t17, l $Box_release)
     jmp @release_done15
 @release_skip14
     jmp @release_done15
@@ -1246,7 +1246,7 @@ export function w $main(w %argc, l %argv) {
     %t13 =w ceql %t12, 0
     jnz %t13, @release_skip5, @release4
 @release4
-    call $Box_release(l %rt, l %t12)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t12, l $Box_release)
     jmp @release_done6
 @release_skip5
     jmp @release_done6
@@ -1282,7 +1282,7 @@ export function w $main(w %argc, l %argv) {
     %t20 =w ceql %t19, 0
     jnz %t20, @release_skip15, @release14
 @release14
-    call $Box_release(l %rt, l %t19)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t19, l $Box_release)
     jmp @release_done16
 @release_skip15
     jmp @release_done16
@@ -1295,7 +1295,7 @@ export function w $main(w %argc, l %argv) {
     %t23 =w ceql %t22, 0
     jnz %t23, @release_skip18, @release17
 @release17
-    call $Box_release(l %rt, l %t22)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t22, l $Box_release)
     jmp @release_done19
 @release_skip18
     jmp @release_done19
@@ -1323,36 +1323,35 @@ export function w $main(w %argc, l %argv) {
     %t34 =w ceql %t30, 0
     jnz %t34, @release_skip25, @release24
 @release24
-    %t35 =l loadl %t30
-    call $nox_class_release_dispatch(l %rt, l %t35, l %t30)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t30)
     jmp @release_done26
 @release_skip25
     jmp @release_done26
 @release_done26
     jmp @ctor_init_cont23
 @ctor_init_cont23
-    %t36 =w call $nox_exception_pending(l %rt)
-    jnz %t36, @exc_propagate27, @exc_continue28
+    %t35 =w call $nox_exception_pending(l %rt)
+    jnz %t35, @exc_propagate27, @exc_continue28
 @exc_propagate27
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue28
     call $nox_raise(l %rt, l %t30, l 11)
-    %t37 =w call $nox_exception_pending(l %rt)
-    jnz %t37, @exc_propagate29, @exc_continue30
+    %t36 =w call $nox_exception_pending(l %rt)
+    jnz %t36, @exc_propagate29, @exc_continue30
 @exc_propagate29
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue30
     jmp @dict_get_ok21
 @dict_get_ok21
-    %t38 =l call $nox_dict_get(l %rt, l %t26, w 1, l %t27)
-    call $printf(l $fmt_str, ..., l %t38)
-    %t39 =l loadl %t0
-    %t40 =w ceql %t39, 0
-    jnz %t40, @release_skip32, @release31
+    %t37 =l call $nox_dict_get(l %rt, l %t26, w 1, l %t27)
+    call $printf(l $fmt_str, ..., l %t37)
+    %t38 =l loadl %t0
+    %t39 =w ceql %t38, 0
+    jnz %t39, @release_skip32, @release31
 @release31
-    call $Box_release(l %rt, l %t39)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t38, l $Box_release)
     jmp @release_done33
 @release_skip32
     jmp @release_done33
@@ -1430,7 +1429,7 @@ export function $List_JsonValue_release(l %rt, l %p) {
     %t14 =w ceql %t13, 0
     jnz %t14, @list_release_skip5, @list_release_elem6
 @list_release_elem6
-    call $JsonValue_release(l %rt, l %t13)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t13, l $JsonValue_release)
     jmp @list_release_skip5
 @list_release_skip5
     %t15 =l add %t8, 1

@@ -747,31 +747,30 @@ export function $Box__int___init__(l %rt, l %p_self, l %p_value) {
     %t9 =w ceql %t5, 0
     jnz %t9, @release_skip5, @release4
 @release4
-    %t10 =l loadl %t5
-    call $nox_class_release_dispatch(l %rt, l %t10, l %t5)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t5)
     jmp @release_done6
 @release_skip5
     jmp @release_done6
 @release_done6
     jmp @ctor_init_cont3
 @ctor_init_cont3
-    %t11 =w call $nox_exception_pending(l %rt)
-    jnz %t11, @exc_propagate7, @exc_continue8
+    %t10 =w call $nox_exception_pending(l %rt)
+    jnz %t10, @exc_propagate7, @exc_continue8
 @exc_propagate7
     ret
 @exc_continue8
     call $nox_raise(l %rt, l %t5, l 5)
-    %t12 =w call $nox_exception_pending(l %rt)
-    jnz %t12, @exc_propagate9, @exc_continue10
+    %t11 =w call $nox_exception_pending(l %rt)
+    jnz %t11, @exc_propagate9, @exc_continue10
 @exc_propagate9
     ret
 @exc_continue10
     jmp @if_end0
 @if_end0
-    %t13 =l loadl %t0
-    %t14 =l loadl %t1
-    %t15 =l add %t13, 8
-    storel %t14, %t15
+    %t12 =l loadl %t0
+    %t13 =l loadl %t1
+    %t14 =l add %t12, 8
+    storel %t13, %t14
 @fn_end11
     ret
 }
@@ -1144,7 +1143,7 @@ export function l $make_box(l %rt, l %p_x) {
     %t6 =w ceql %t3, 0
     jnz %t6, @release_skip3, @release2
 @release2
-    call $Box__int_release(l %rt, l %t3)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t3, l $Box__int_release)
     jmp @release_done4
 @release_skip3
     jmp @release_done4
@@ -1174,7 +1173,7 @@ export function l $main_body(l %argp) {
     %t2 =w ceql %t0, 0
     jnz %t2, @release_skip3, @release2
 @release2
-    call $Box__int_release(l %rt, l %t0)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t0, l $Box__int_release)
     jmp @release_done4
 @release_skip3
     jmp @release_done4
@@ -1270,7 +1269,7 @@ export function $List_JsonValue_release(l %rt, l %p) {
     %t14 =w ceql %t13, 0
     jnz %t14, @list_release_skip5, @list_release_elem6
 @list_release_elem6
-    call $JsonValue_release(l %rt, l %t13)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t13, l $JsonValue_release)
     jmp @list_release_skip5
 @list_release_skip5
     %t15 =l add %t8, 1

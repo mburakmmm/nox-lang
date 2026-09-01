@@ -1273,29 +1273,28 @@ export function l $nox_fs_read_to_string(l %rt, l %p_path) {
     %t24 =w ceql %t15, 0
     jnz %t24, @release_skip17, @release16
 @release16
-    %t25 =l loadl %t15
-    call $nox_class_release_dispatch(l %rt, l %t25, l %t15)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t15)
     jmp @release_done18
 @release_skip17
     jmp @release_done18
 @release_done18
     jmp @ctor_init_cont15
 @ctor_init_cont15
-    %t26 =w call $nox_exception_pending(l %rt)
-    jnz %t26, @exc_propagate19, @exc_continue20
+    %t25 =w call $nox_exception_pending(l %rt)
+    jnz %t25, @exc_propagate19, @exc_continue20
 @exc_propagate19
-    %t27 =l loadl %t1
-    %t28 =w ceql %t27, 0
-    jnz %t28, @release_skip22, @release21
+    %t26 =l loadl %t1
+    %t27 =w ceql %t26, 0
+    jnz %t27, @release_skip22, @release21
 @release21
-    %t29 =l sub %t27, 16
-    %t30 =l loadl %t29
-    %t31 =l sub %t30, 1
-    storel %t31, %t29
-    %t32 =w cslel %t31, 0
-    jnz %t32, @str_free24, @str_free_skip25
+    %t28 =l sub %t26, 16
+    %t29 =l loadl %t28
+    %t30 =l sub %t29, 1
+    storel %t30, %t28
+    %t31 =w cslel %t30, 0
+    jnz %t31, @str_free24, @str_free_skip25
 @str_free24
-    call $nox_str_free_now(l %rt, l %t27)
+    call $nox_str_free_now(l %rt, l %t26)
     jmp @str_free_done26
 @str_free_skip25
     jmp @str_free_done26
@@ -1308,21 +1307,21 @@ export function l $nox_fs_read_to_string(l %rt, l %p_path) {
     ret 0
 @exc_continue20
     call $nox_raise(l %rt, l %t15, l 40)
-    %t33 =w call $nox_exception_pending(l %rt)
-    jnz %t33, @exc_propagate27, @exc_continue28
+    %t32 =w call $nox_exception_pending(l %rt)
+    jnz %t32, @exc_propagate27, @exc_continue28
 @exc_propagate27
-    %t34 =l loadl %t1
-    %t35 =w ceql %t34, 0
-    jnz %t35, @release_skip30, @release29
+    %t33 =l loadl %t1
+    %t34 =w ceql %t33, 0
+    jnz %t34, @release_skip30, @release29
 @release29
-    %t36 =l sub %t34, 16
-    %t37 =l loadl %t36
-    %t38 =l sub %t37, 1
-    storel %t38, %t36
-    %t39 =w cslel %t38, 0
-    jnz %t39, @str_free32, @str_free_skip33
+    %t35 =l sub %t33, 16
+    %t36 =l loadl %t35
+    %t37 =l sub %t36, 1
+    storel %t37, %t35
+    %t38 =w cslel %t37, 0
+    jnz %t38, @str_free32, @str_free_skip33
 @str_free32
-    call $nox_str_free_now(l %rt, l %t34)
+    call $nox_str_free_now(l %rt, l %t33)
     jmp @str_free_done34
 @str_free_skip33
     jmp @str_free_done34
@@ -1336,21 +1335,21 @@ export function l $nox_fs_read_to_string(l %rt, l %p_path) {
 @exc_continue28
     jmp @if_end6
 @if_end6
-    %t40 =l loadl %t1
-    ret %t40
+    %t39 =l loadl %t1
+    ret %t39
 @after_return35
-    %t41 =l loadl %t1
-    %t42 =w ceql %t41, 0
-    jnz %t42, @release_skip37, @release36
+    %t40 =l loadl %t1
+    %t41 =w ceql %t40, 0
+    jnz %t41, @release_skip37, @release36
 @release36
-    %t43 =l sub %t41, 16
-    %t44 =l loadl %t43
-    %t45 =l sub %t44, 1
-    storel %t45, %t43
-    %t46 =w cslel %t45, 0
-    jnz %t46, @str_free39, @str_free_skip40
+    %t42 =l sub %t40, 16
+    %t43 =l loadl %t42
+    %t44 =l sub %t43, 1
+    storel %t44, %t42
+    %t45 =w cslel %t44, 0
+    jnz %t45, @str_free39, @str_free_skip40
 @str_free39
-    call $nox_str_free_now(l %rt, l %t41)
+    call $nox_str_free_now(l %rt, l %t40)
     jmp @str_free_done41
 @str_free_skip40
     jmp @str_free_done41
@@ -1411,22 +1410,21 @@ export function $nox_fs_write_string(l %rt, l %p_path, l %p_content) {
     %t18 =w ceql %t9, 0
     jnz %t18, @release_skip11, @release10
 @release10
-    %t19 =l loadl %t9
-    call $nox_class_release_dispatch(l %rt, l %t19, l %t9)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t9)
     jmp @release_done12
 @release_skip11
     jmp @release_done12
 @release_done12
     jmp @ctor_init_cont9
 @ctor_init_cont9
-    %t20 =w call $nox_exception_pending(l %rt)
-    jnz %t20, @exc_propagate13, @exc_continue14
+    %t19 =w call $nox_exception_pending(l %rt)
+    jnz %t19, @exc_propagate13, @exc_continue14
 @exc_propagate13
     ret
 @exc_continue14
     call $nox_raise(l %rt, l %t9, l 46)
-    %t21 =w call $nox_exception_pending(l %rt)
-    jnz %t21, @exc_propagate15, @exc_continue16
+    %t20 =w call $nox_exception_pending(l %rt)
+    jnz %t20, @exc_propagate15, @exc_continue16
 @exc_propagate15
     ret
 @exc_continue16
@@ -1483,22 +1481,21 @@ export function $nox_fs_append_string(l %rt, l %p_path, l %p_content) {
     %t18 =w ceql %t9, 0
     jnz %t18, @release_skip11, @release10
 @release10
-    %t19 =l loadl %t9
-    call $nox_class_release_dispatch(l %rt, l %t19, l %t9)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t9)
     jmp @release_done12
 @release_skip11
     jmp @release_done12
 @release_done12
     jmp @ctor_init_cont9
 @ctor_init_cont9
-    %t20 =w call $nox_exception_pending(l %rt)
-    jnz %t20, @exc_propagate13, @exc_continue14
+    %t19 =w call $nox_exception_pending(l %rt)
+    jnz %t19, @exc_propagate13, @exc_continue14
 @exc_propagate13
     ret
 @exc_continue14
     call $nox_raise(l %rt, l %t9, l 53)
-    %t21 =w call $nox_exception_pending(l %rt)
-    jnz %t21, @exc_propagate15, @exc_continue16
+    %t20 =w call $nox_exception_pending(l %rt)
+    jnz %t20, @exc_propagate15, @exc_continue16
 @exc_propagate15
     ret
 @exc_continue16
@@ -1588,37 +1585,36 @@ export function l $nox_fs_metadata(l %rt, l %p_path) {
     %t16 =w ceql %t7, 0
     jnz %t16, @release_skip11, @release10
 @release10
-    %t17 =l loadl %t7
-    call $nox_class_release_dispatch(l %rt, l %t17, l %t7)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t7)
     jmp @release_done12
 @release_skip11
     jmp @release_done12
 @release_done12
     jmp @ctor_init_cont9
 @ctor_init_cont9
-    %t18 =w call $nox_exception_pending(l %rt)
-    jnz %t18, @exc_propagate13, @exc_continue14
+    %t17 =w call $nox_exception_pending(l %rt)
+    jnz %t17, @exc_propagate13, @exc_continue14
 @exc_propagate13
     ret 0
 @exc_continue14
     call $nox_raise(l %rt, l %t7, l 76)
-    %t19 =w call $nox_exception_pending(l %rt)
-    jnz %t19, @exc_propagate15, @exc_continue16
+    %t18 =w call $nox_exception_pending(l %rt)
+    jnz %t18, @exc_propagate15, @exc_continue16
 @exc_propagate15
     ret 0
 @exc_continue16
     jmp @if_end0
 @if_end0
-    %t20 =l call $nox_fs_stat_size_raw()
-    %t21 =l call $nox_fs_stat_mtime_ms_raw()
-    %t22 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 2, %t22
-    %t23 =l add %t22, 8
+    %t19 =l call $nox_fs_stat_size_raw()
+    %t20 =l call $nox_fs_stat_mtime_ms_raw()
+    %t21 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 2, %t21
+    %t22 =l add %t21, 8
+    storel 0, %t22
+    %t23 =l add %t21, 16
     storel 0, %t23
-    %t24 =l add %t22, 16
-    storel 0, %t24
-    call $nox_fs_FileMetadata___init__(l %rt, l %t22, l %t20, l %t21)
-    ret %t22
+    call $nox_fs_FileMetadata___init__(l %rt, l %t21, l %t19, l %t20)
+    ret %t21
 @after_return17
 @fn_end18
     ret 0
@@ -1681,22 +1677,21 @@ export function l $nox_fs_read_dir(l %rt, l %p_path) {
     %t20 =w ceql %t11, 0
     jnz %t20, @release_skip14, @release13
 @release13
-    %t21 =l loadl %t11
-    call $nox_class_release_dispatch(l %rt, l %t21, l %t11)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t11)
     jmp @release_done15
 @release_skip14
     jmp @release_done15
 @release_done15
     jmp @ctor_init_cont12
 @ctor_init_cont12
-    %t22 =w call $nox_exception_pending(l %rt)
-    jnz %t22, @exc_propagate16, @exc_continue17
+    %t21 =w call $nox_exception_pending(l %rt)
+    jnz %t21, @exc_propagate16, @exc_continue17
 @exc_propagate16
-    %t23 =l loadl %t1
-    %t24 =w ceql %t23, 0
-    jnz %t24, @release_skip19, @release18
+    %t22 =l loadl %t1
+    %t23 =w ceql %t22, 0
+    jnz %t23, @release_skip19, @release18
 @release18
-    call $List_str_release(l %rt, l %t23)
+    call $List_str_release(l %rt, l %t22)
     jmp @release_done20
 @release_skip19
     jmp @release_done20
@@ -1705,14 +1700,14 @@ export function l $nox_fs_read_dir(l %rt, l %p_path) {
     ret 0
 @exc_continue17
     call $nox_raise(l %rt, l %t11, l 84)
-    %t25 =w call $nox_exception_pending(l %rt)
-    jnz %t25, @exc_propagate21, @exc_continue22
+    %t24 =w call $nox_exception_pending(l %rt)
+    jnz %t24, @exc_propagate21, @exc_continue22
 @exc_propagate21
-    %t26 =l loadl %t1
-    %t27 =w ceql %t26, 0
-    jnz %t27, @release_skip24, @release23
+    %t25 =l loadl %t1
+    %t26 =w ceql %t25, 0
+    jnz %t26, @release_skip24, @release23
 @release23
-    call $List_str_release(l %rt, l %t26)
+    call $List_str_release(l %rt, l %t25)
     jmp @release_done25
 @release_skip24
     jmp @release_done25
@@ -1722,14 +1717,14 @@ export function l $nox_fs_read_dir(l %rt, l %p_path) {
 @exc_continue22
     jmp @if_end3
 @if_end3
-    %t28 =l loadl %t1
-    ret %t28
+    %t27 =l loadl %t1
+    ret %t27
 @after_return26
-    %t29 =l loadl %t1
-    %t30 =w ceql %t29, 0
-    jnz %t30, @release_skip28, @release27
+    %t28 =l loadl %t1
+    %t29 =w ceql %t28, 0
+    jnz %t29, @release_skip28, @release27
 @release27
-    call $List_str_release(l %rt, l %t29)
+    call $List_str_release(l %rt, l %t28)
     jmp @release_done29
 @release_skip28
     jmp @release_done29
@@ -1828,22 +1823,21 @@ export function $nox_fs_copy(l %rt, l %p_src, l %p_dst) {
     %t32 =w ceql %t23, 0
     jnz %t32, @release_skip23, @release22
 @release22
-    %t33 =l loadl %t23
-    call $nox_class_release_dispatch(l %rt, l %t33, l %t23)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t23)
     jmp @release_done24
 @release_skip23
     jmp @release_done24
 @release_done24
     jmp @ctor_init_cont21
 @ctor_init_cont21
-    %t34 =w call $nox_exception_pending(l %rt)
-    jnz %t34, @exc_propagate25, @exc_continue26
+    %t33 =w call $nox_exception_pending(l %rt)
+    jnz %t33, @exc_propagate25, @exc_continue26
 @exc_propagate25
     ret
 @exc_continue26
     call $nox_raise(l %rt, l %t23, l 90)
-    %t35 =w call $nox_exception_pending(l %rt)
-    jnz %t35, @exc_propagate27, @exc_continue28
+    %t34 =w call $nox_exception_pending(l %rt)
+    jnz %t34, @exc_propagate27, @exc_continue28
 @exc_propagate27
     ret
 @exc_continue28
@@ -1942,22 +1936,21 @@ export function $nox_fs_rename(l %rt, l %p_old, l %p_new) {
     %t32 =w ceql %t23, 0
     jnz %t32, @release_skip23, @release22
 @release22
-    %t33 =l loadl %t23
-    call $nox_class_release_dispatch(l %rt, l %t33, l %t23)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t23)
     jmp @release_done24
 @release_skip23
     jmp @release_done24
 @release_done24
     jmp @ctor_init_cont21
 @ctor_init_cont21
-    %t34 =w call $nox_exception_pending(l %rt)
-    jnz %t34, @exc_propagate25, @exc_continue26
+    %t33 =w call $nox_exception_pending(l %rt)
+    jnz %t33, @exc_propagate25, @exc_continue26
 @exc_propagate25
     ret
 @exc_continue26
     call $nox_raise(l %rt, l %t23, l 95)
-    %t35 =w call $nox_exception_pending(l %rt)
-    jnz %t35, @exc_propagate27, @exc_continue28
+    %t34 =w call $nox_exception_pending(l %rt)
+    jnz %t34, @exc_propagate27, @exc_continue28
 @exc_propagate27
     ret
 @exc_continue28
@@ -2011,22 +2004,21 @@ export function $nox_fs_remove_file(l %rt, l %p_path) {
     %t16 =w ceql %t7, 0
     jnz %t16, @release_skip11, @release10
 @release10
-    %t17 =l loadl %t7
-    call $nox_class_release_dispatch(l %rt, l %t17, l %t7)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t7)
     jmp @release_done12
 @release_skip11
     jmp @release_done12
 @release_done12
     jmp @ctor_init_cont9
 @ctor_init_cont9
-    %t18 =w call $nox_exception_pending(l %rt)
-    jnz %t18, @exc_propagate13, @exc_continue14
+    %t17 =w call $nox_exception_pending(l %rt)
+    jnz %t17, @exc_propagate13, @exc_continue14
 @exc_propagate13
     ret
 @exc_continue14
     call $nox_raise(l %rt, l %t7, l 100)
-    %t19 =w call $nox_exception_pending(l %rt)
-    jnz %t19, @exc_propagate15, @exc_continue16
+    %t18 =w call $nox_exception_pending(l %rt)
+    jnz %t18, @exc_propagate15, @exc_continue16
 @exc_propagate15
     ret
 @exc_continue16
@@ -2080,22 +2072,21 @@ export function $nox_fs_create_dir(l %rt, l %p_path) {
     %t16 =w ceql %t7, 0
     jnz %t16, @release_skip11, @release10
 @release10
-    %t17 =l loadl %t7
-    call $nox_class_release_dispatch(l %rt, l %t17, l %t7)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t7)
     jmp @release_done12
 @release_skip11
     jmp @release_done12
 @release_done12
     jmp @ctor_init_cont9
 @ctor_init_cont9
-    %t18 =w call $nox_exception_pending(l %rt)
-    jnz %t18, @exc_propagate13, @exc_continue14
+    %t17 =w call $nox_exception_pending(l %rt)
+    jnz %t17, @exc_propagate13, @exc_continue14
 @exc_propagate13
     ret
 @exc_continue14
     call $nox_raise(l %rt, l %t7, l 105)
-    %t19 =w call $nox_exception_pending(l %rt)
-    jnz %t19, @exc_propagate15, @exc_continue16
+    %t18 =w call $nox_exception_pending(l %rt)
+    jnz %t18, @exc_propagate15, @exc_continue16
 @exc_propagate15
     ret
 @exc_continue16
@@ -2178,7 +2169,7 @@ export function w $main(w %argc, l %argv) {
     %t28 =w ceql %t27, 0
     jnz %t28, @release_skip15, @release14
 @release14
-    call $nox_fs_FileMetadata_release(l %rt, l %t27)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t27, l $nox_fs_FileMetadata_release)
     jmp @release_done16
 @release_skip15
     jmp @release_done16
@@ -2390,7 +2381,7 @@ export function w $main(w %argc, l %argv) {
     %t91 =w ceql %t90, 0
     jnz %t91, @release_skip68, @release67
 @release67
-    call $nox_fs_FileMetadata_release(l %rt, l %t90)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t90, l $nox_fs_FileMetadata_release)
     jmp @release_done69
 @release_skip68
     jmp @release_done69
@@ -2468,7 +2459,7 @@ export function $List_JsonValue_release(l %rt, l %p) {
     %t14 =w ceql %t13, 0
     jnz %t14, @list_release_skip5, @list_release_elem6
 @list_release_elem6
-    call $JsonValue_release(l %rt, l %t13)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t13, l $JsonValue_release)
     jmp @list_release_skip5
 @list_release_skip5
     %t15 =l add %t8, 1

@@ -3083,3 +3083,50 @@ test "codegen(çalıştır): GG.22 — yerel bir func-değeri, FARKLI imzalı ay
         @embedFile("codegen_cases/local_func_value_shadows_global_diff_arity.expected"),
     );
 }
+
+// GG.24 (bkz. plan dosyası "genClassRelease'in özyineleme derinliği
+// sertleştirmesi"): `MAX_DIRECT_RELEASE_DEPTH`i (200) AŞAN bir sınıf-
+// zinciri ÖNCEDEN (worklist YOKKEN) ~7.300 düğümde çökerdi — ARTIK
+// `arc.zig`nin derinlik-eşiği worklist'i sayesinde GÜVENLE tamamlanır.
+test "codegen(çalıştır): GG.24 — eşiği aşan derin bir sınıf-zinciri release'i çökmeden tamamlanır" {
+    try expectGolden(
+        @embedFile("codegen_cases/gg24_deep_class_chain_release.nox"),
+        @embedFile("codegen_cases/gg24_deep_class_chain_release.expected"),
+    );
+}
+
+// GG.24: eşiğin ÇOK ALTINDA bir zincir — davranış/çıktı ÖNCEKİYLE
+// BİREBİR AYNI kalmalı (doğrudan-çağrı hızlı yolu, SIFIR ek yük).
+test "codegen(çalıştır): GG.24 — eşiğin altında sığ bir sınıf-zinciri regresyonsuz çalışır" {
+    try expectGolden(
+        @embedFile("codegen_cases/gg24_shallow_class_chain_release.nox"),
+        @embedFile("codegen_cases/gg24_shallow_class_chain_release.expected"),
+    );
+}
+
+// GG.24: `genListElemRelease`nin sınıf-dispatch dalı — `list[Node]`nin
+// TEK bir elemanının KENDİ derin zinciri.
+test "codegen(çalıştır): GG.24 — list[Node] elemanının derin zinciri çökmeden release edilir" {
+    try expectGolden(
+        @embedFile("codegen_cases/gg24_list_of_class_deep_chain_release.nox"),
+        @embedFile("codegen_cases/gg24_list_of_class_deep_chain_release.expected"),
+    );
+}
+
+// GG.24: `nox_rc_release_enqueue_dynamic` yolu — polimorfik (`has_vtable`)
+// bir sınıfın derin zinciri.
+test "codegen(çalıştır): GG.24 — polimorfik bir sınıfın derin zinciri çökmeden release edilir" {
+    try expectGolden(
+        @embedFile("codegen_cases/gg24_polymorphic_deep_chain_release.nox"),
+        @embedFile("codegen_cases/gg24_polymorphic_deep_chain_release.expected"),
+    );
+}
+
+// GG.24: `exceptions.zig`nin bare-`except:` dispatch dalı — derin bir
+// zincir taşıyan bir istisna nesnesi.
+test "codegen(çalıştır): GG.24 — bare except ile yakalanan derin zincirli bir istisna çökmeden release edilir" {
+    try expectGolden(
+        @embedFile("codegen_cases/gg24_bare_except_deep_chain_release.nox"),
+        @embedFile("codegen_cases/gg24_bare_except_deep_chain_release.expected"),
+    );
+}

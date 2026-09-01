@@ -350,3 +350,31 @@ test "llvm: GG.22 — fire-and-forget spawn (isimsiz Task) sonrası mutasyon HÂ
         error.SpawnSharedMutation,
     );
 }
+
+// GG.24 yan-bulgusu (kapsam DIŞI AMA çözülmüş): `llvm_emit.zig`nin
+// `qbeOp1`si, `w`-hedefli bir `copy`yi HER ZAMAN `add i32 <kaynak>, 0`
+// olarak üretiyordu — AMA bu kod tabanında `w`-hedefli `copy`nin TEK
+// kullanımı (`expr.zig`nin `fromPayload`si, `await`in `i64` payload'ını
+// bir `bool`e DARALTIRKEN) kaynağı HER ZAMAN `l` (i64) tipindeydi — LLVM
+// operand tipi UYUŞMAZLIĞI YÜZÜNDEN GEÇERSİZ IR üretiyordu (`add i32`
+// bir `i64` operandı KABUL ETMEZ). Sonuç: `--release` altında `Task[bool]`/
+// `Channel[bool]` await eden HERHANGİ bir program (regex_long_literal.nox
+// dahil, `nox.regex.is_match`in KENDİSİ `bool` döndürdüğü İçİn) `clang
+// basarisiz` İLE DERLENEMİYORDU — GG.24'ün KENDİ regex/JSON yeniden-
+// ölçümü SIRASINDA bulundu, `qbeOp1`e AÇIK bir `trunc i64 ... to i32`
+// dalı eklenerek düzeltildi (bkz. commit/CHANGELOG). Bu test, `await`
+// edilen bir `bool` sonucunun `--release`de ARTIK doğru derlenip
+// çalıştığını kanıtlar (düzeltmeden ÖNCE bu program `ClangFailed` ile
+// başarısız olurdu).
+test "llvm(çalıştır): GG.24 yan-bulgusu — await edilen bool sonucu artık derlenir (w-copy trunc düzeltmesi)" {
+    try expectGoldenLlvm(
+        \\async def worker() -> bool:
+        \\    return True
+        \\
+        \\t: Task[bool] = spawn worker()
+        \\print(await t)
+        \\
+    ,
+        "True\n",
+    );
+}

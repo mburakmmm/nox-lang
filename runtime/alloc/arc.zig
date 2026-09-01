@@ -272,6 +272,199 @@ pub export fn nox_arena_list_grow(arena_ptr: ?*anyopaque, old_ptr: ?*anyopaque, 
     return new_ptr;
 }
 
+// GG.24 (bkz. plan dosyası "genClassRelease'in özyineleme derinliği
+// sertleştirmesi"): derinlik-eşiği KARMA yaklaşımı — `compiler/codegen_qbe/
+// layout.zig`nin `genClassRelease`i, bir sınıf-tipli alanı serbest
+// bırakırken (alan KENDİSİ de sınıf-tipliyse) ÖNCEDEN DOĞRUDAN `call
+// $FieldClass_release` üretiyordu — bir bağlı-liste/ağaç ZİNCİRİNİ serbest
+// bırakırken HER halka İçİn GERÇEK bir QBE çağrısı/yığın çerçevesi
+// tüketiyordu (GG.23'ün ARAŞTIRMASININ bulduğu, cycle_detector.zig'DEN
+// TAMAMEN AYRI bir risk — bkz. plan dosyası). Aşağıdaki İKİ fonksiyon,
+// `ownership.zig`/`exceptions.zig`nin ÜÇ çağrı sitesi TARAFINDAN, DOĞRUDAN
+// `$ClassName_release`/`$nox_class_release_dispatch` çağrısının YERİNE
+// çağrılır — `compiler/parser/parser.zig`nin `enterRecursion`/`exitRecursion`
+// VE `compiler/typecheck/checker.zig`nin `enterExprRecursion`/
+// `exitExprRecursion`iyle AYNI ilke: bir derinlik sayacı İLK `MAX_DIRECT_
+// RELEASE_DEPTH` seviye İçİn BUGÜNKÜ GİBİ (SIFIR ek yük) DOĞRUDAN
+// çağırmaya İZİN VERİR, SADECE bunu GERÇEKTEN aşan patolojik zincirlerde
+// yığın-tabanlı (heap, pratikte SINIRSIZ) bir worklist'e düşer —
+// `cycle_detector.zig`nin `markGray`/`scanBlack`İYLE AYNI iteratif-
+// worklist deseni.
+//
+// **Bulundu, GERÇEK bir performans regresyonu (git worktree A/B, `oop_
+// arc_churn` mikro-benchmarkıyla ÖLÇÜLDÜ — ~2x YAVAŞLAMA)**: durum
+// (`depth`/`pump_active`/`worklist`/dlsym önbelleği) İLK sürümde Zig
+// `threadlocal var`larla tutuluyordu — TEK bir struct'a/TEK bir
+// threadlocal DEĞİŞKENE birleştirilse BİLE, `otool -tV` İLE derlenmiş
+// ARM64 kodun DOĞRUDAN okunmasıyla KANITLANDI: macOS'un TLV (Thread-
+// Local Variable) thunk'ı, `rs = releaseState()` İLE elde edilen bir
+// POINTER olsa BİLE, `rs.depth`/`rs.pump_active` GİBİ HER AYRI ALAN
+// erişiminde AYRI bir thunk-çağrısı ÜRETİYORDU (Zig/LLVM bunu TEK bir
+// bloğun İÇİNDE BİLE CSE ETMİYOR) — `arc.zig`nin ZATEN VAR OLAN
+// `poolSlotFor`nin AYNI, DAHA ÖNCE bulunmuş "TLV erişimi HOT path'te"
+// dersiyle AYNI KÖK NEDEN. **Düzeltme**: durumu `asap.RuntimeState`nin
+// KENDİSİNE (ZATEN `rt` PARAMETRESİ olarak elde bulunan, `pool_free_
+// lists_slot0`/`poolFreeListsRow` İLE AYNI slot-BAŞINA hiç-kilit-
+// gerekmeyen desen) TAŞIMAK — `asap.releaseStateFor(state, poolSlotFor(
+// state))`, SIRADAN bir bellek erişimi (TLV YOK). Release cascade'i
+// (`_release`/`_gc_free` fonksiyonları TAMAMEN mekanik/üretilmiş, Nox'ta
+// kullanıcı-tanımlı yıkıcı/`__del__` YOK) ASLA bir `await`/fiber-yield
+// NOKTASI İÇERMEDİĞİNDEN, bir OS iş parçacığının KENDİ slotuna SADECE O
+// iş parçacığı yazdığından (bkz. `poolFreeListsRow`nin AYNI gerekçesi)
+// kilit GEREKMEZ.
+// GG.25 (bkz. plan dosyası "STACK_SIZE küçültmesi — MAX_DIRECT_RELEASE_
+// DEPTH ayarı"): GG.24'ün İLK tahmini (200 seviye × ~32 B/seviye ≈ 6,4 KB)
+// GERÇEK ölçümle DOĞRULANDI (`nox_rc_release_enqueue_fixed`/`_dynamic`
+// SARMALAYICILARIYLA BİRLİKTE bile ~75 B/seviye — 200 seviyede tavan
+// SADECE ~17.936 B, `NOX_STACK_PAINT`İLE TEMİZ bir ReleaseFast derlemesiyle
+// ÖLÇÜLDÜ; ARADA BİR turda YANLIŞLIKLA Debug-modu `noxrt.o` İLE ÖLÇÜLÜP
+// ~520 B/seviye/137.904 B GİBİ ÇOK ŞİŞİRİLMİŞ bir rakam elde EDİLMİŞTİ —
+// o rakam GEÇERSİZDİ, YANLIŞ ölçüm metodolojisinden kaynaklanıyordu).
+// BU sabit YİNE de 200'DEN 50'YE düşürüldü (200'ün KENDİSİ ZATEN GÜVENLİYDİ,
+// AMA 50 EK bir güvenlik payı sağlıyor VE GERÇEK-dünya — Aether/Nyx —
+// zincirleri PRATİKTE asla 50 seviyeye BİLE YAKLAŞMADIĞINDAN davranış/
+// performans SIFIR etkilenir) — 128 KiB'e küçültülen `STACK_SIZE`nin
+// (bkz. `fiber.zig`) ÇOK RAHAT altında kalan bir tavan (~5.936 B, ÖLÇÜLDÜ,
+// hedefin SADECE ~%4.5'i) sağlar.
+const MAX_DIRECT_RELEASE_DEPTH: usize = 50;
+
+/// Sınıf örneğinin (refcount başlığından SONRA) İLK `TAG_SIZE` baytındaki
+/// çalışma-zamanı sınıf etiketi — `cycle_detector.zig`nin `readTag`ıyla
+/// AYNI, KÜÇÜK bir bağımsız kopya (`arc.zig` `cycle_detector.zig`yi
+/// import EDEMEZ — TERS yönde ZATEN bir bağımlılık var: `cycle_detector.
+/// zig` `arc.zig`yi import ediyor, döngüsel olurdu).
+fn releaseWorklistReadTag(p: *anyopaque) i64 {
+    const tag_ptr: *const i64 = @ptrCast(@alignCast(p));
+    return tag_ptr.*;
+}
+
+const WinDlSelf = if (builtin.os.tag == .windows) struct {
+    extern "kernel32" fn GetModuleHandleA(name: ?[*:0]const u8) callconv(.c) ?*anyopaque;
+    extern "kernel32" fn GetProcAddress(module: *anyopaque, name: [*:0]const u8) callconv(.c) ?*anyopaque;
+} else struct {};
+
+/// `$nox_class_release_dispatch(rt, tag, p)`e (bkz. `layout.zig`nin
+/// `genClassReleaseDispatch`ı) `dlsym` İLE ÇALIŞMA ZAMANINDA dağıtır —
+/// `cycle_detector.zig`nin `resolveTraceDispatch`/`resolveGcFreeDispatch`
+/// İLE AYNI gerekçe (BAĞIMSIZ, KÜÇÜK bir kopya): bu sembol SADECE sınıf
+/// İÇEREN programlarda üretilir (`class_ids.items.len > 0` koşulu), sabit
+/// bir `extern fn` sınıfSIZ bir programda/`noxrt_test`te bağlama adımını
+/// çökertirdi.
+fn resolveClassReleaseDispatch(rs: *asap.ReleaseState) ?*const fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) void {
+    if (rs.class_release_dispatch_resolved) return rs.class_release_dispatch_fn;
+    rs.class_release_dispatch_resolved = true;
+    if (builtin.os.tag == .windows) {
+        const module = WinDlSelf.GetModuleHandleA(null) orelse return null;
+        const sym = WinDlSelf.GetProcAddress(module, "nox_class_release_dispatch") orelse return null;
+        rs.class_release_dispatch_fn = @ptrCast(@alignCast(sym));
+        return rs.class_release_dispatch_fn;
+    }
+    const handle = std.c.dlopen(null, .{ .NOW = true }) orelse return null;
+    const sym = std.c.dlsym(handle, "nox_class_release_dispatch") orelse return null;
+    rs.class_release_dispatch_fn = @ptrCast(@alignCast(sym));
+    return rs.class_release_dispatch_fn;
+}
+
+fn dispatchClassRelease(rt: ?*anyopaque, tag: i64, p: *anyopaque, rs: *asap.ReleaseState) void {
+    const f = resolveClassReleaseDispatch(rs) orelse return;
+    f(rt, tag, p);
+}
+
+/// `rt`den (`RuntimeState`) BU OS iş parçacığının KENDİ release-durumunu
+/// (`asap.ReleaseState`) döner — `arc.zig`nin ZATEN VAR OLAN `poolSlotFor`ı
+/// İLE AYNI slot (`pool_free_lists` İLE PAYLAŞILAN numaralandırma).
+/// `rt == null` OLAN (İZOLE Zig birim testleri, GERÇEK Nox programlarında
+/// ASLA olmaz) NADİR durumda `null` döner — çağıran BUNU "SADECE doğrudan
+/// çağır, derinlik/worklist İZLEME YOK" OLARAK yorumlar (bu durumda
+/// GERÇEK bir RuntimeState/slot YOK, izlenecek bir ŞEY de yok).
+fn releaseStateForRt(rt: ?*anyopaque) ?*asap.ReleaseState {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    // `poolSlotFor(state)`i KOŞULSUZ ÇAĞIRMAK YERİNE — bir `oop_arc_churn`
+    // A/B ölçümü, `poolSlotFor`nin `noinline` çağrı MALİYETİNİN (COMMON,
+    // havuzsuz durumda BİLE ÖDENEN prologue/epilogue+dal) HÂLÂ ÖLÇÜLEBİLİR
+    // olduğunu gösterdi — `pool_ever_active`nin KENDİSİ (`state`nin SIRADAN
+    // bir alanı, TLV DEĞİL) BURADA DOĞRUDAN kontrol edilip HAVUZSUZ (BÜYÜK
+    // ÇOĞUNLUK) durumda `poolSlotFor`e HİÇ GİRİLMEZ. GÜVENLİ: `poolSlotFor`nin
+    // KENDİ `noinline`+`@branchHint(.unlikely)` bariyeri SADECE "havuz VARSA"
+    // dalında (aşağıda) korunuyor — `poolSlotFor`nin ÖNLEDİĞİ if-dönüştürme
+    // hatası (bkz. onun belge notu) SADECE "KÜÇÜK/inline-EDİLEBİLİR bir
+    // threadlocal erişimini KOŞULLU sarmalamak" durumunda oluşur; BURADAKİ
+    // koşul (`pool_ever_active`) TLV DEĞİL, VE `poolSlotFor`nin KENDİSİ
+    // (`.unlikely` dalda) HÂLÂ GERÇEK bir çağrı SINIRI olarak KALIYOR.
+    if (!state.pool_ever_active.load(.monotonic)) {
+        return &state.release_state_slot0;
+    }
+    return asap.releaseStateFor(state, poolSlotFor(state));
+}
+
+/// `MAX_DIRECT_RELEASE_DEPTH`i AŞAN (VEYA worklist ZATEN drenajda olan,
+/// İÇ İÇE bir çağrı) durumlarda düşülen yol — `ptr`i (tag'İYLE birlikte)
+/// worklist'e EKLER; bir pompa ZATEN AKTİF DEĞİLSE ("dıştan" İLK çağrı)
+/// worklist BOŞALANA kadar POP+dispatch eder (`cycle_detector.zig`nin
+/// `markGray`/`scanBlack`İYLE AYNI heap-tabanlı worklist deseni — TOPLAM
+/// en kötü-durum yığın derinliği ARTIK zincir uzunluğundan BAĞIMSIZ,
+/// SADECE `MAX_DIRECT_RELEASE_DEPTH` + BU pompanın KENDİ SABİT birkaç
+/// çerçevesiyle sınırlıdır).
+fn enqueueAndMaybePump(rt: ?*anyopaque, tag: i64, ptr: *anyopaque, rs: *asap.ReleaseState) void {
+    rs.worklist.append(std.heap.page_allocator, .{ .tag = tag, .ptr = ptr }) catch {
+        // OOM: BEST-EFFORT — doğrudan dispatch et (astronomik derecede
+        // NADİR bir yedek yol, whatever kalan yığın riskini KABUL eder).
+        dispatchClassRelease(rt, tag, ptr, rs);
+        return;
+    };
+    if (rs.pump_active) return; // DIŞ bir pompa BUNU er geç işleyecek.
+    rs.pump_active = true;
+    defer rs.pump_active = false;
+    while (rs.worklist.pop()) |item| dispatchClassRelease(rt, item.tag, item.ptr, rs);
+}
+
+/// Sabit (non-polymorphic, `has_vtable == false`) sınıflar İçİn — `release_fn`,
+/// GERÇEK `$ClassName_release` sembolünün ADRESİDİR (codegen, sembol
+/// ADINI bir `l`-tipi ARGÜMAN olarak GEÇİRİR — `closures.zig`nin
+/// `qbeStoreL(mangled_release_sym, ...)` İLE AYNI, ZATEN kanıtlanmış
+/// "QBE sembol-adı = geçerli `l` değeri" mekaniği). İLK `MAX_DIRECT_
+/// RELEASE_DEPTH` seviye İçİn (worklist pompası ZATEN aktif DEĞİLSE)
+/// BUGÜNKÜ GİBİ DOĞRUDAN çağırır (SIFIR ek yük) — SADECE eşik AŞILDIĞINDA
+/// (VEYA worklist ZATEN drenajdaysa) `enqueueAndMaybePump`e düşer.
+pub export fn nox_rc_release_enqueue_fixed(rt: ?*anyopaque, ptr: ?*anyopaque, release_fn: ?*const fn (?*anyopaque, ?*anyopaque) callconv(.c) void) void {
+    const p = ptr orelse return;
+    const f = release_fn orelse return;
+    const rs = releaseStateForRt(rt) orelse {
+        f(rt, p); // rt=null (izole test) — izleme YOK, doğrudan çağır.
+        return;
+    };
+    if (!rs.pump_active and rs.depth < MAX_DIRECT_RELEASE_DEPTH) {
+        rs.depth += 1;
+        defer rs.depth -= 1;
+        f(rt, p);
+        return;
+    }
+    enqueueAndMaybePump(rt, releaseWorklistReadTag(p), p, rs);
+}
+
+/// Polimorfik (`has_vtable`) sınıflar VE çalışma-zamanı sınıfı derleme
+/// zamanında BİLİNMEYEN durumlar (bare `except:`) İçİn — HER ZAMAN tag-
+/// dispatch (BUGÜNKÜ `$nox_class_release_dispatch` çağrısıyla AYNI),
+/// `nox_rc_release_enqueue_fixed`İLE AYNI derinlik-eşiği mantığı.
+pub export fn nox_rc_release_enqueue_dynamic(rt: ?*anyopaque, ptr: ?*anyopaque) void {
+    const p = ptr orelse return;
+    const tag = releaseWorklistReadTag(p);
+    const rs = releaseStateForRt(rt) orelse {
+        // rt=null (izole test) — dlsym önbelleği OLMADAN TEK SEFERLİK
+        // bir dispatch, izleme YOK.
+        var scratch: asap.ReleaseState = .{};
+        dispatchClassRelease(rt, tag, p, &scratch);
+        return;
+    };
+    if (!rs.pump_active and rs.depth < MAX_DIRECT_RELEASE_DEPTH) {
+        rs.depth += 1;
+        defer rs.depth -= 1;
+        dispatchClassRelease(rt, tag, p, rs);
+        return;
+    }
+    enqueueAndMaybePump(rt, tag, p, rs);
+}
+
 test "rc_alloc 1 ile başlar, retain artırır, release azaltır ve sıfırda serbest bırakır" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);

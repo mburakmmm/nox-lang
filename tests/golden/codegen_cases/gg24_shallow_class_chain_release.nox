@@ -1,0 +1,30 @@
+# GG.24: eşiğin (MAX_DIRECT_RELEASE_DEPTH=200) ÇOK ALTINDA bir zincir —
+# davranış/çıktı ÖNCEKİYLE BİREBİR AYNI kalmalı (doğrudan-çağrı hızlı
+# yolu kullanılır, worklist HİÇ devreye girmez).
+class Node:
+    next: Node | None
+    def __init__(self, next: Node | None) -> None:
+        self.next = next
+
+def build_chain(n: int) -> Node | None:
+    head: Node | None = None
+    i: int = 0
+    while i < n:
+        head = Node(head)
+        i = i + 1
+    return head
+
+def count_chain(head: Node | None) -> int:
+    n: int = 0
+    cur: Node | None = head
+    while cur != None:
+        n = n + 1
+        cur = cur.next
+    return n
+
+def run() -> None:
+    head: Node | None = build_chain(10)
+    print(count_chain(head))
+    head = None
+
+run()

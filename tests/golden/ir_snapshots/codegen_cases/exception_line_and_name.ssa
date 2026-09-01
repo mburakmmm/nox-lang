@@ -1138,22 +1138,21 @@ export function $check_stock(l %rt, l %p_qty) {
     %t8 =w ceql %t4, 0
     jnz %t8, @release_skip5, @release4
 @release4
-    %t9 =l loadl %t4
-    call $nox_class_release_dispatch(l %rt, l %t9, l %t4)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t4)
     jmp @release_done6
 @release_skip5
     jmp @release_done6
 @release_done6
     jmp @ctor_init_cont3
 @ctor_init_cont3
-    %t10 =w call $nox_exception_pending(l %rt)
-    jnz %t10, @exc_propagate7, @exc_continue8
+    %t9 =w call $nox_exception_pending(l %rt)
+    jnz %t9, @exc_propagate7, @exc_continue8
 @exc_propagate7
     ret
 @exc_continue8
     call $nox_raise(l %rt, l %t4, l 6)
-    %t11 =w call $nox_exception_pending(l %rt)
-    jnz %t11, @exc_propagate9, @exc_continue10
+    %t10 =w call $nox_exception_pending(l %rt)
+    jnz %t10, @exc_propagate9, @exc_continue10
 @exc_propagate9
     ret
 @exc_continue10
@@ -1248,7 +1247,7 @@ export function $List_JsonValue_release(l %rt, l %p) {
     %t14 =w ceql %t13, 0
     jnz %t14, @list_release_skip5, @list_release_elem6
 @list_release_elem6
-    call $JsonValue_release(l %rt, l %t13)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t13, l $JsonValue_release)
     jmp @list_release_skip5
 @list_release_skip5
     %t15 =l add %t8, 1

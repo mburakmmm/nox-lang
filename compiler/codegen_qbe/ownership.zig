@@ -307,10 +307,27 @@ pub fn genListElemRelease(self: *Codegen, fn_name: []const u8, info: ElemHeapInf
                 const ci = self.classes.get(c) orelse break :blk false;
                 break :blk ci.has_vtable;
             } else false;
-            if (dispatch_dynamic) {
-                const tag = try self.newTemp();
-                try self.qbeLoadL(tag, elem);
-                try self.qbeCall(null, "$nox_class_release_dispatch", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = tag }, .{ .ty = .l, .text = elem } });
+            // GG.24 (bkz. plan dosyası "genClassRelease'in özyineleme
+            // derinliği sertleştirmesi"): `n.heap == .class` İSE — bir
+            // `list[Node]`nin ELEMANLARININ KENDİ derin zincirleri OLABİLİR
+            // (`releaseValueIfSet`nin `.class` dalıYLA AYNI risk) — `arc.
+            // zig`nin derinlik-eşiği worklist'İ ÜZERİNDEN. `n.heap == .list`
+            // İSE (İÇ İÇE liste, ör. `list[list[int]]`) BU YENİ mekanizma
+            // KULLANILMAZ — worklist'in drenaj yolu `$nox_class_release_
+            // dispatch`e (SINIF-tag'İNE göre dağıtır) gider, AMA bir liste
+            // POINTER'ININ İLK 8 baytı bir sınıf TAG'İ DEĞİL uzunluk
+            // alanıdır — YANLIŞLIKLA bir sınıf dağıtımına BESLENMESİ GERÇEK
+            // bir bozulma olurdu. İÇ İÇE liste-TİPİ derinliği (VERİ boyutu
+            // DEĞİL) BU turun BİLİNÇLİ kapsam DIŞI bıraktığı, ÇOK daha
+            // nadir bir risktir (bkz. planın "Kapsam DIŞI" bölümü) — eski,
+            // DOĞRUDAN çağrı davranışı DEĞİŞMEDEN korunur.
+            if (n.heap == .class) {
+                if (dispatch_dynamic) {
+                    try self.qbeCall(null, "$nox_rc_release_enqueue_dynamic", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = elem } });
+                } else {
+                    const c_sym = try std.fmt.allocPrint(self.allocator, "${s}_release", .{c});
+                    try self.qbeCall(null, "$nox_rc_release_enqueue_fixed", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = elem }, .{ .ty = .l, .text = c_sym } });
+                }
             } else {
                 const c_sym = try std.fmt.allocPrint(self.allocator, "${s}_release", .{c});
                 try self.qbeCall(null, c_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = elem } });
@@ -401,18 +418,26 @@ pub fn releaseValueIfSet(self: *Codegen, ptr: []const u8, heap: HeapKind, elem_q
         // (GERÇEK, çalışma-zamanı) sınıfın `_release`ine dal açılır.
         // Kalıtıma KATILMAYAN sınıflar İçin (`has_vtable == false`, BÜYÜK
         // ÇOĞUNLUK) davranış BİREBİR ÖNCEKİ GİBİ (sabit çağrı) kalır.
+        //
+        // GG.24 (bkz. plan dosyası "genClassRelease'in özyineleme derinliği
+        // sertleştirmesi"): ÖNCEDEN doğrudan `$nox_class_release_dispatch`/
+        // `$<cn>_release` ÇAĞRILIYORDU — bir bağlı-liste/ağaç ZİNCİRİNİ
+        // serbest bırakırken HER halka İçİn GERÇEK bir yığın çerçevesi
+        // TÜKETİYORDU. ARTIK `arc.zig`nin derinlik-eşiği KARMA worklist'İ
+        // (`nox_rc_release_enqueue_fixed`/`_dynamic`) ÜZERİNDEN — İLK
+        // `MAX_DIRECT_RELEASE_DEPTH` seviye İçİn (arc.zig'de) BUGÜNKÜ GİBİ
+        // DOĞRUDAN çağrılır (SIFIR ek yük), SADECE eşiği AŞAN patolojik
+        // zincirlerde yığın-tabanlı bir worklist'e düşülür.
         if (self.classes.get(cn)) |cinfo| {
             if (cinfo.has_vtable) {
-                const tag = try self.newTemp();
-                try self.qbeLoadL(tag, ptr);
-                try self.qbeCall(null, "$nox_class_release_dispatch", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = tag }, .{ .ty = .l, .text = ptr } });
+                try self.qbeCall(null, "$nox_rc_release_enqueue_dynamic", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr } });
             } else {
                 const cn_sym = try std.fmt.allocPrint(self.allocator, "${s}_release", .{cn});
-                try self.qbeCall(null, cn_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr } });
+                try self.qbeCall(null, "$nox_rc_release_enqueue_fixed", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr }, .{ .ty = .l, .text = cn_sym } });
             }
         } else {
             const cn_sym = try std.fmt.allocPrint(self.allocator, "${s}_release", .{cn});
-            try self.qbeCall(null, cn_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr } });
+            try self.qbeCall(null, "$nox_rc_release_enqueue_fixed", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr }, .{ .ty = .l, .text = cn_sym } });
         }
     } else if (heap == .closure) {
         // Faz U.4.4: bir `.closure` değerinin SOMUT release fonksiyonu

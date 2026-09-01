@@ -430,6 +430,43 @@ Her satır üç dilde **aynı algoritmayı** çalıştırır (Python/C, o dilin 
   inlining'inin VE GG.1'in string optimizasyonlarının YOĞUN kullandığı
   kod yollarını temsil eder.
 
+### GG.24/GG.25 — fiber-stack sertleştirmesi + STACK_SIZE küçültmesi (2026-09-01, bkz. §3.114)
+
+`NOX_STACK_PAINT`İLE (`v1.47.0`'un kalıcı aracı) ölçülen, TEMİZ bir
+`zig build -Doptimize=ReleaseFast`in HEMEN SONRASINDA alınan (ARADA
+HİÇBİR Debug derlemesi OLMADAN — bkz. aşağıdaki "ölçüm tuzağı" notu)
+nihai sayılar, 128 KiB'lik (131.072 bayt) YENİ `STACK_SIZE` bütçesine
+göre:
+
+| Senaryo | HWM (bayt) | Bütçenin % |
+|---|---:|---:|
+| regex (400 karakter literal) | 1.312 | ~%1.0 |
+| JSON (30 seviye iç-içe) | 17.760 | ~%13.6 |
+| sınıf-zinciri release'i (HERHANGİ bir uzunlukta, `MAX_DIRECT_RELEASE_DEPTH=50`) | 5.936 | ~%4.5 |
+| Aether (v0.6.5, 20 test) | 4.928 | ~%3.8 |
+| Nyx (v0.17.0, 45 test) | 13.952 | ~%10.6 |
+
+En yüksek senaryo (JSON) HEDEFİN SADECE ~%13.6'sı — 256 KiB'İN YARIYA
+küçültülmesi (128 KiB) RAHATÇA güvenli.
+
+**`oop_arc_churn` A/B (GG.24'ün release-enqueue sarmalayıcı ek yükü,
+50 milyon yineleme, `git stash` İLE ÖNCESİ/SONRASI)**: threadlocal
+durumdan `RuntimeState`-slot'una taşıma + `poolSlotFor`nin gereksiz
+çağrısını eleme SONRASI ~%47 (~1.47x) kalıcı ek yük ÖLÇÜLDÜ (İLK,
+optimize-edilmemiş sürüm ~2x idi) — standart ölçek (N=10.000) benchmark'ında
+İSE (`zig build bench`) ÖLÇÜLEMEYECEK KADAR küçük (~0.00s fark), eşiğin
+(200, sonra 50) ÇOK ALTINDA kalan HERHANGİ bir gerçek programda BEKLENEN
+sonuç.
+
+**Ölçüm tuzağı (dürüstçe kaydedilir)**: bu turun ARA bir aşamasında
+`zig build test`in (Debug modu) `zig-out/lib/noxrt.o`yu SESSİZCE Debug-
+modu bir sürümle ezmesi YÜZÜNDEN (`use_pool = builtin.mode != .Debug`)
+BİR DİZİ `--release` ölçümü ~3-8× ŞİŞİRİLMİŞ rakamlar üretti (chain-
+release tavanı YANLIŞLIKLA 137.904 B görünmüştü — GERÇEĞİ 5.936 B).
+Hata `git stash` İLE TEMİZ `v1.47.0` HEAD'e karşı AYNI ölçümün AYNI
+şişirilmiş sayıları YENİDEN üretmesiyle yakalanıp düzeltildi — YUKARIDAKİ
+tablo TAMAMEN TEMİZ, doğrulanmış ölçümlerdir.
+
 ### GG.21 SONRASI ölçüm (2026-08-31, bkz. §3.111) — ASAP güçlendirmesi Tur 5 (metod çağrıları için interprocedural genişletme)
 
 GG.20'nin interprocedural kanıtı SADECE serbest fonksiyon çağrılarını

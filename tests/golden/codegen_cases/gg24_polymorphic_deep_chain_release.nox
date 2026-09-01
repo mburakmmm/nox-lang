@@ -1,0 +1,24 @@
+# GG.24: `nox_rc_release_enqueue_dynamic` yolunu (polimorfik/`has_vtable`
+# sınıflar, `releaseValueIfSet`nin çalışma-zamanı etiket-dağıtımı dalı)
+# eşiğin ÇOK ÜZERİNDE bir zincirle egzersiz eder.
+class Node:
+    next: Node | None
+    def __init__(self: Node, next: Node | None) -> None:
+        self.next = next
+    def label(self: Node) -> str:
+        return "base"
+
+class SpecialNode(Node):
+    def label(self: SpecialNode) -> str:
+        return "special"
+
+def run() -> None:
+    head: Node | None = None
+    i: int = 0
+    while i < 2000:
+        head = SpecialNode(head)
+        i = i + 1
+    head = None
+    print("tamamlandi")
+
+run()
