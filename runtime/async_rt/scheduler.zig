@@ -282,13 +282,23 @@ pub const Scheduler = struct {
     /// GİBİ) havuzu KULLANABİLMESİ için (bkz. onun belge notu — ÖNCEDEN
     /// `Fiber.create`yi DOĞRUDAN çağırıp havuzu HİÇ KULLANMIYORDU).
     pub fn acquireStack(self: *Scheduler) ![]align(fiber_mod.STACK_ALIGN) u8 {
-        if (self.stack_pool.pop()) |stack| return stack;
+        if (self.stack_pool.pop()) |stack| {
+            // GG.23: `NOX_STACK_PAINT` AYARLIYSA (varsayılan: HAYIR, SIFIR
+            // maliyet) — bkz. `fiber_mod.paintStackForResearch`in belge
+            // notu. Havuzdan geri kazanılan yığın da (taze tahsis GİBİ)
+            // her EDİNİMDE YENİDEN boyanır (bir ÖNCEKİ kullanımın kalıntı
+            // izlerini SİLER).
+            fiber_mod.paintStackForResearch(stack);
+            return stack;
+        }
         // Faz MN.8, Bulgu C: TAZE yığınlar ARTIK `self.allocator.alignedAlloc`
         // YERİNE koruma-sayfalı `fiber_mod.allocGuardedStack()` İLE tahsis
         // edilir (bkz. onun belge notu) — havuzdan GERİ KAZANILAN yığınlar
         // (yukarıdaki `pop()` dalı) zaten koruma-sayfalı OLARAK kuruldu,
         // BURADA tekrar dokunulmaz.
-        return fiber_mod.allocGuardedStack();
+        const stack = try fiber_mod.allocGuardedStack();
+        fiber_mod.paintStackForResearch(stack);
+        return stack;
     }
 
     /// Bir yığını (artık kullanılmayan) genel ayırıcıya GERİ VERMEK yerine
@@ -297,6 +307,11 @@ pub const Scheduler = struct {
     /// akışı bozmamak için bloğu doğrudan serbest bırakır. `pub` — bkz.
     /// `acquireStack`in AYNI gerekçesi.
     pub fn releaseStack(self: *Scheduler, stack: []align(fiber_mod.STACK_ALIGN) u8) void {
+        // GG.23: `NOX_STACK_PAINT` AYARLIYSA — bkz. `fiber_mod.
+        // measureStackHwmForResearch`in belge notu. Yığın havuza/genel
+        // ayırıcıya GERİ VERİLMEDEN HEMEN ÖNCE (BU kullanımın yüksek-su-
+        // işaretinin HÂLÂ okunabilir OLDUĞU SON an).
+        fiber_mod.measureStackHwmForResearch(stack);
         self.stack_pool.append(self.allocator, stack) catch {
             fiber_mod.freeGuardedStack(stack);
         };

@@ -435,11 +435,69 @@ threadlocal var g_decode_arena: ?std.heap.ArenaAllocator = null;
 /// serbest bırakılır.
 const DECODE_ARENA_RETAIN_LIMIT: usize = 64 * 1024;
 
+/// GG.23 (bkz. plan dosyası "fiber-stack sertleştirmesi", Madde 2):
+/// `std.json.parseFromSlice`nin KENDİ İÇ özyinelemesi (Zig std'sinin
+/// KENDİSİ, DEĞİŞTİRİLEMEZ) VE `buildNode`/`buildNodeFast`nin (aşağıda,
+/// ZATEN AYRIŞTIRILMIŞ ağacı GEZEN AYRI bir özyineleme geçişi) İKİSİ DE
+/// SINIRSIZ derinlikte iç-içe geçmiş `[`/`{` girdisinde fiber'ın SABİT
+/// yığınını AŞABİLİR (bkz. plan dosyasının araştırma bulguları — ~137
+/// seviyede 256 KiB AŞILIYORDU). Bu SAF/yan-etkisiz ön-tarama, `slice`i
+/// TEK GEÇİŞTE (string literalleri/escape'leri ATLAYARAK, SADECE metin-
+/// DIŞI `[`/`{`/`]`/`}` karakterlerini SAYARAK) tarar — HERHANGİ bir
+/// noktada derinlik `max_depth`i AŞARSA `true` döner (çağıran, `std.json.
+/// parseFromSlice`ı HİÇ ÇAĞIRMADAN, MEVCUT "geçersiz JSON" hata yoluna
+/// düşer — bkz. `nox_json_decode_raw`nin çağrı sitesi).
+fn jsonNestingDepthExceeds(s: []const u8, max_depth: usize) bool {
+    var depth: usize = 0;
+    var in_string = false;
+    var escaped = false;
+    for (s) |c| {
+        if (in_string) {
+            if (escaped) {
+                escaped = false;
+            } else if (c == '\\') {
+                escaped = true;
+            } else if (c == '"') {
+                in_string = false;
+            }
+            continue;
+        }
+        switch (c) {
+            '"' => in_string = true,
+            '[', '{' => {
+                depth += 1;
+                if (depth > max_depth) return true;
+            },
+            ']', '}' => {
+                if (depth > 0) depth -= 1;
+            },
+            else => {},
+        }
+    }
+    return false;
+}
+
+/// GG.23: gerçek HİÇBİR API/konfigürasyon formatının İHTİYAÇ DUYMADIĞI
+/// kadar CÖMERT bir sınır (bkz. plan dosyasının Madde 4 — yeniden-ölçüm
+/// SONRASI STACK_SIZE hedefine göre KALİBRE edilir, bu İLK değer bir
+/// başlangıç noktasıdır).
+const MAX_JSON_NESTING_DEPTH: usize = 32;
+
 export fn nox_json_decode_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?*anyopaque {
     // NOT: `s`in null olduğu dal İçin `str_mod.nox_str_slice`e DÜŞMEYİZ —
     // o yol yalnızca GERÇEK bir Nox `str` (görünmez başlıklı) BEKLER, boş
     // Zig dize literal'i "" BUNU SAĞLAMAZ (başlıksız bellek okunması OLURDU).
     const slice = if (s) |sp| str_mod.nox_str_slice(sp) else "";
+
+    // GG.23: `std.json.parseFromSlice`ı HİÇ ÇAĞIRMADAN ÖNCE — bkz.
+    // `jsonNestingDepthExceeds`in belge notu. Sözdizimi-hatasıyla AYNI
+    // hata-yüzeyi (MEVCUT `stdlib/nox/json.nox`nin `decode`si ZATEN
+    // `nox_json_last_op_ok() == 0` İSE `JsonError` fırlatıyor) — YENİ bir
+    // istisna türü/mekanizma GEREKMEZ.
+    if (jsonNestingDepthExceeds(slice, MAX_JSON_NESTING_DEPTH)) {
+        jsonLastOpOkPtr().* = false;
+        return makeLeafUnshared(rt, 0, false, 0.0, "");
+    }
 
     // Dil stabilizasyonu fazı §M.6: ÖNCEDEN `std.json.parseFromSlice` VE
     // `buildNode`nin dizi/obje dalları `std.heap.page_allocator`a DOĞRUDAN
@@ -558,4 +616,63 @@ test "g_last_op_ok threadlocal: iki gerçek OS iş parçacığı bağımsız bay
 
     try std.testing.expect(all_false);
     try std.testing.expect(all_true);
+}
+
+// GG.23 (bkz. plan dosyası "fiber-stack sertleştirmesi", Madde 2):
+// `jsonNestingDepthExceeds`nin SAF/yan-etkisiz saf-fonksiyon davranışı —
+// string literalleri/escape'leri İçİndeki `[`/`{` karakterlerini DOĞRU
+// ŞEKİLDE ATLADIĞINI da kanıtlar (aksi halde bir string DEĞERİ İçİndeki
+// alakasız parantez/küme ayracı YANLIŞLIKLA derinliğe SAYILIRDI).
+test "GG.23: jsonNestingDepthExceeds derinliği dogru sayar, string icerigini atlar" {
+    try std.testing.expect(!jsonNestingDepthExceeds("{\"a\": 1}", 32));
+    try std.testing.expect(!jsonNestingDepthExceeds("[1, 2, [3, 4]]", 32));
+    // String DEĞERİ İçİndeki `[`/`{`/kaçış tırnağı derinliğe SAYILMAMALI.
+    try std.testing.expect(!jsonNestingDepthExceeds("{\"a\": \"[[[[[\\\"]]]]]\"}", 2));
+    try std.testing.expect(!jsonNestingDepthExceeds("[]", 1));
+    try std.testing.expect(jsonNestingDepthExceeds("[[]]", 1));
+    try std.testing.expect(!jsonNestingDepthExceeds("[[]]", 2));
+}
+
+// GG.23: `nox_json_decode_raw`ın uçtan-uca davranışı — sınırın ALTINDA
+// BAŞARIYLA decode EDER, sınırı AŞAN girdi ÇÖKMEDEN (`nox_json_last_op_ok
+// () == 0`) TEMİZ reddedilir.
+test "GG.23: nox_json_decode_raw derinlik sinirini asan girdiyi cokmeden reddeder" {
+    const asap = @import("../alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    const allocator = std.testing.allocator;
+
+    // `MAX_JSON_NESTING_DEPTH` seviye `[` + kapanışları + İÇ değer.
+    const under_src = try buildNestedArrayJson(allocator, MAX_JSON_NESTING_DEPTH);
+    defer allocator.free(under_src);
+    const over_src = try buildNestedArrayJson(allocator, MAX_JSON_NESTING_DEPTH + 1);
+    defer allocator.free(over_src);
+
+    const under_str = str_mod.nox_str_from_bytes(rt, under_src) orelse return error.AllocFailed;
+    defer str_mod.nox_str_release(rt, under_str);
+    const over_str = str_mod.nox_str_from_bytes(rt, over_src) orelse return error.AllocFailed;
+    defer str_mod.nox_str_release(rt, over_str);
+
+    // `rt=null` İLE çağrılır — `g_last_op_ok threadlocal` testinin AYNI
+    // deseni (bkz. yukarısı): `nox_json_decode_raw`nin İZOLE test
+    // bağlamları İçİn desteklediği, dönen `JsonValue`nin GERÇEK bir ARC
+    // ağacı OLMADIĞI (dolayısıyla manuel serbest bırakma GEREKMEYEN) yol.
+    _ = nox_json_decode_raw(null, under_str);
+    try std.testing.expect(nox_json_last_op_ok() != 0);
+
+    _ = nox_json_decode_raw(null, over_str);
+    try std.testing.expect(nox_json_last_op_ok() == 0);
+}
+
+/// `depth` seviye iç-içe `[1]` üretir (ör. depth=2 -> "[[1]]").
+fn buildNestedArrayJson(allocator: std.mem.Allocator, depth: usize) ![:0]u8 {
+    const buf = try allocator.alloc(u8, depth * 2 + 1 + 1);
+    var i: usize = 0;
+    while (i < depth) : (i += 1) buf[i] = '[';
+    buf[depth] = '1';
+    i = 0;
+    while (i < depth) : (i += 1) buf[depth + 1 + i] = ']';
+    buf[buf.len - 1] = 0;
+    return buf[0 .. buf.len - 1 :0];
 }

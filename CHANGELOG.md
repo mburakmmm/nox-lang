@@ -14,6 +14,61 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.47.0]
+
+### Düzeltildi
+- **GG.23 — fiber-stack sertleştirmesi (cycle-collector/JSON/regex
+  özyinelemesi)**: fiber'ın sabit 256 KiB yığınını AŞABİLECEK üç ayrı
+  özyineleme riski sertleştirildi. (1) `runtime/alloc/cycle_detector.zig`nin
+  Bacon-Rajan `markGray`/`scan`/`scanBlack`/`collectWhite`si (kullanıcı
+  hiçbir şey yapmadan `possible_roots_since_collect` 700'ü aştığında
+  OTOMATİK tetiklenen döngü-çöpçüsü) Zig-çağrı-yığını YERİNE yığın
+  (heap) tabanlı bir worklist kullanacak şekilde ITERATİF hale getirildi
+  — artık binlerce/milyonlarca nesnelik meşru veri yapıları (bağlı-liste/
+  ağaç/önbellek) BU tarama YÜZÜNDEN çökmez. Dönüşüm SIRASINDA GERÇEK, ince
+  bir doğruluk noktası bulunup düzeltildi: iteratif `scanBlack`nin LIFO
+  sırası, paylaşılan/"elmas" bir çocuğun (iki ayrı ebeveynden erişilen)
+  İKİ KEZ işlenmesine (çift refcount artışına) yol açabiliyordu — YENİ
+  bir POP-anı "zaten siyah mı" kontrolüyle (VE bunu kanıtlayan YENİ bir
+  "elmas" kırmızı-takım testiyle) düzeltildi. (2) `nox.json.decode`ye
+  YENİ bir iç-içe-geçme derinlik sınırı (32 seviye) — hem `std.json.
+  parseFromSlice`nin KENDİ sınırsız iç özyinelemesini HEM `buildNode`/
+  `buildNodeFast`nin ayrı geçişini korur; sınırı aşan girdi MEVCUT
+  "geçersiz JSON" (`JsonError`) hata yoluyla temiz reddedilir. (3)
+  `nox.regex`in `matchHere`si — düz-literal/karakter-sınıfı eşleşme dalı
+  (nicelik işaretçisi GEREKMEDEN) HER KARAKTER İçİn bir yığın çerçevesi
+  üreten bir kuyruk-çağrısıydı (ölçüldü: ~688 B/karakter, ~378 karakterlik
+  SIRADAN bir metinde ZATEN 256 KiB'i aşıyordu) — bir döngüye çevrildi
+  (SIFIR yığın büyümesi); kalan risk (bir PATERNİN kendisinin adversarial
+  olarak çok sayıda nicelik işaretçisi taşıması) İçİn 500 derinlikli bir
+  savunma sınırı eklendi (aşılırsa sessizce "eşleşme yok" döner, `is_match`/
+  `find`in TOTAL fonksiyon sözleşmesi korunur).
+
+### Eklendi
+- **Kalıcı `NOX_STACK_PAINT` fiber-stack ölçüm aracı**: bir "stack-painting"
+  tekniğiyle (fiber yığınını imzalı bir desenle boyayıp, kullanım
+  sonunda ne kadarının bozulduğunu tarayarak) GERÇEK yüksek-su-işaretini
+  ölçen, `NOX_STACK_PAINT` ortam değişkeniyle KAPILI (varsayılan: SIFIR
+  maliyet) kalıcı bir araç — `NOX_STRESS_ROUNDS`/`NOX_SOAK_SECONDS`nin
+  AYNI deseni. `nox_runtime_deinit` süreç-çapında ölçülen maksimumu
+  `NOX_STACK_HWM_BYTES=<n>` olarak stderr'e yazar.
+
+### Notlar
+- Derin bir araştırma (stack-painting İLE GERÇEK ölçüm) `STACK_SIZE`i
+  (256 KiB) küçültmenin GÜVENLİ olup OLMADIĞINI da araştırdı — bu turun
+  3 düzeltmesi SONRASI regex/JSON senaryoları ÇOK güvenli hale geldi
+  (400 karakterlik regex: 1.312 B; 30 seviye JSON: 17.696 B) AMA GERÇEK
+  bir 4. risk bulundu: uzun bir bağlı-liste zincirinin release'i,
+  BAMBAŞKA bir mekanizmadan (codegen'in KENDİ ürettiği `genClassRelease`/
+  `releaseValueIfSet` özyinelemeli release zinciri, `compiler/codegen_qbe/
+  layout.zig`/`ownership.zig` — bu turun kapsamı DIŞINDA) kaynaklanıyor
+  VE hâlâ ~32 B/düğüm maliyetli (256 KiB'de ~7.300 düğümde sınırda).
+  Bu YÜZDEN **`STACK_SIZE` bu turda 256 KiB'DE KALDI** — küçültme, bu
+  4. riskin (`genClassRelease`nin KENDİ özyinelemesinin iteratif hale
+  getirilmesi) çözülmesini bekleyen AYRI, gelecekteki bir tura bırakıldı.
+  Gerçek-dünya doğrulaması: Aether (v0.6.5, 20 test) + Nyx (v0.17.0, 45
+  test) TAM test paketleri YENİ noxc İLE 65/65 yeşil.
+
 ## [1.46.0]
 
 ### Düzeltildi

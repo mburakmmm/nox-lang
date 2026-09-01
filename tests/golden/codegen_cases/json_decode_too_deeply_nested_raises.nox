@@ -1,0 +1,12 @@
+import nox.json
+
+# GG.23 (bkz. plan dosyası "fiber-stack sertleştirmesi", Madde 2):
+# MAX_JSON_NESTING_DEPTH (32) AŞAN bir girdi — std.json.parseFromSlice'a
+# HİÇ GEÇİLMEDEN, ayni "gecersiz JSON" hata yoluyla TEMİZ reddedilir.
+deeply_nested: str = "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]"
+
+try:
+    v: JsonValue = nox.json.decode(deeply_nested)
+    print("ulasilmamali")
+except nox_json_JsonError as e:
+    print(e.message)

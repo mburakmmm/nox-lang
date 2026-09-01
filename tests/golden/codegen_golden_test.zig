@@ -2621,6 +2621,16 @@ test "codegen(çalıştır): nox.json.decode bozuk JSON JsonError raise eder" {
     );
 }
 
+// GG.23 (bkz. plan dosyası "fiber-stack sertleştirmesi", Madde 2):
+// MAX_JSON_NESTING_DEPTH (32) AŞAN bir girdi, `std.json.parseFromSlice`ye
+// HİÇ GEÇİLMEDEN, ÇÖKMEDEN (`JsonError` İLE) reddedilir.
+test "codegen(çalıştır): nox.json.decode derinlik sinirini asan girdiyi cokmeden reddeder" {
+    try expectGolden(
+        @embedFile("codegen_cases/json_decode_too_deeply_nested_raises.nox"),
+        @embedFile("codegen_cases/json_decode_too_deeply_nested_raises.expected"),
+    );
+}
+
 test "codegen(çalıştır): Faz II devamı — nox.json string encode'da \\t/CR escape (GERÇEK düzeltilen boşluk)" {
     try expectGolden(
         @embedFile("codegen_cases/json_string_control_char_escaping.nox"),

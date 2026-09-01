@@ -163,6 +163,91 @@ pub fn freeGuardedStack(stack: []align(STACK_ALIGN) u8) void {
     freeGuardedStackPosix(stack);
 }
 
+// GG.23 (bkz. plan dosyası "fiber-stack sertleştirmesi", Madde 4): fiber
+// yığınlarının GERÇEK yüksek-su-işaretini (high-water-mark) ölçen KALICI,
+// SIFIR-varsayılan-maliyetli bir "stack-painting" aracı — `NOX_STRESS_
+// ROUNDS`/`NOX_SOAK_SECONDS`nin AYNI "env-değişkeniyle KAPILI, VARSAYILAN
+// SIFIR maliyet" deseni (bkz. `worker_pool.zig`nin `stressRoundsFromEnv`ı),
+// `fiber_ever_active`/`pool_ever_active`nin AYNI "bir kez çözülüp atomik'e
+// önbelleğe alınan bayrak" deseni (bkz. `asap.zig`). ARAŞTIRMA turunun
+// GEÇİCİ/worktree'ye özel enstrümantasyonunun KALICI sürümü — bu turun
+// KENDİSİ bir STACK_SIZE kararı ALDIĞINDAN VE gelecekte YENİ özyinelemeli
+// runtime kodu eklenebileceğinden, bu KÜÇÜK aracı KALICI TUTMAK gelecekteki
+// benzer araştırmaları SIFIRDAN İNŞA ETMEKTEN daha İYİdir.
+//
+// Teknik: `NOX_STACK_PAINT` AYARLIYSA, bir yığın havuzdan/tazeden
+// EDİNİLDİĞİNDE (`Scheduler.acquireStack`) KULLANILABİLİR TÜM bölge
+// imzalı bir 8-baytlık desenle (`0xDEADBEEFCAFEBABE`) BOYANIR; yığın
+// GERİ VERİLDİĞİNDE (`Scheduler.releaseStack`) GUARD SAYFASINA en yakın
+// (DÜŞÜK adresli, yığın AŞAĞI büyüdüğünden EN DERİN kullanım noktası)
+// UÇTAN taranıp desenin İLK bozulduğu nokta bulunur — `STACK_SIZE - o
+// nokta` GERÇEK yüksek-su-işaretidir. Süreç-çapında bir atomik MAX'a
+// katkıda bulunur, `nox_runtime_deinit` (bkz. `asap.zig`) BUNU stderr'e
+// `NOX_STACK_HWM_BYTES=<n>` OLARAK (kolay `grep`lenebilir TEK bir satır)
+// yazar.
+const STACK_PAINT_MAGIC: u64 = 0xDEADBEEFCAFEBABE;
+
+var g_stack_paint_resolved = std.atomic.Value(bool).init(false);
+var g_stack_paint_enabled = std.atomic.Value(bool).init(false);
+var g_stack_hwm_max = std.atomic.Value(usize).init(0);
+
+/// Süreç-genelinde BİR KEZ `NOX_STACK_PAINT` env-değişkenini okuyup
+/// atomik bir bayrağa önbelleğe alır — AYARLANMAMIŞSA (varsayılan,
+/// GERÇEK `noxc` derlemelerinin/testlerin EZİCİ ÇOĞUNLUĞU) `acquireStack`/
+/// `releaseStack`in her çağrısında SADECE İKİ ATOMİK OKUMA maliyeti
+/// (paint/measure gövdelerinin KENDİSİ HİÇ ÇALIŞMAZ). Birden fazla iş
+/// parçacığının AYNI ANDA çözmesi ZARARSIZDIR (env-değişkeni SÜREÇ BOYUNCA
+/// SABİTTİR, HER iş parçacığı AYNI değeri hesaplar — `cycle_detector.zig`nin
+/// `resolveSymbol`ıyla AYNI "idempotent redundant-write" gerekçesi).
+fn stackPaintEnabled() bool {
+    if (!g_stack_paint_resolved.load(.monotonic)) {
+        const enabled = std.c.getenv("NOX_STACK_PAINT") != null;
+        g_stack_paint_enabled.store(enabled, .monotonic);
+        g_stack_paint_resolved.store(true, .monotonic);
+    }
+    return g_stack_paint_enabled.load(.monotonic);
+}
+
+/// `stack`in KULLANILABİLİR TÜM bölgesini imzalı desenle boyar —
+/// `Scheduler.acquireStack`nin HER dönüşünde (havuzdan geri kazanılan VE
+/// taze tahsis edilen, İKİSİ de) çağrılır.
+pub fn paintStackForResearch(stack: []align(STACK_ALIGN) u8) void {
+    if (!stackPaintEnabled()) return;
+    const n_words = stack.len / @sizeOf(u64);
+    const words: [*]u64 = @ptrCast(@alignCast(stack.ptr));
+    var i: usize = 0;
+    while (i < n_words) : (i += 1) words[i] = STACK_PAINT_MAGIC;
+}
+
+/// `stack`i GUARD SAYFASINA en yakın (DÜŞÜK adresli) UÇTAN tarayıp
+/// deseni bozan İLK 8-baytlık kelimeyi bulur — bu, BU fiber-kullanımının
+/// yüksek-su-işaretidir. Süreç-çapında atomik MAX'a katkıda bulunur.
+/// `Scheduler.releaseStack`nin HER çağrısında (yığın havuza/genel
+/// ayırıcıya GERİ VERİLMEDEN HEMEN ÖNCE) çağrılır.
+pub fn measureStackHwmForResearch(stack: []align(STACK_ALIGN) u8) void {
+    if (!stackPaintEnabled()) return;
+    const n_words = stack.len / @sizeOf(u64);
+    const words: [*]const u64 = @ptrCast(@alignCast(stack.ptr));
+    var i: usize = 0;
+    while (i < n_words) : (i += 1) {
+        if (words[i] != STACK_PAINT_MAGIC) break;
+    }
+    const hwm = (n_words - i) * @sizeOf(u64);
+    var cur = g_stack_hwm_max.load(.monotonic);
+    while (hwm > cur) {
+        cur = g_stack_hwm_max.cmpxchgWeak(cur, hwm, .monotonic, .monotonic) orelse break;
+    }
+}
+
+/// Süreç-çapında ölçülen maksimumu stderr'e yazar — `nox_runtime_deinit`
+/// (bkz. `asap.zig`) TARAFINDAN çağrılır. `NOX_STACK_PAINT` AYARLANMADIYSA
+/// (varsayılan) HİÇBİR ŞEY YAZMAZ (SESSİZ, mevcut sızıntı-denetimi "boş
+/// stderr" varsayımını BOZMAZ — bkz. `codegen_golden_test.zig`nin `expectGolden`ı).
+pub fn printStackHwmMaxForResearch() void {
+    if (!stackPaintEnabled()) return;
+    std.debug.print("NOX_STACK_HWM_BYTES={d}\n", .{g_stack_hwm_max.load(.monotonic)});
+}
+
 pub const FiberFn = *const fn (*anyopaque) void;
 
 pub const Fiber = struct {

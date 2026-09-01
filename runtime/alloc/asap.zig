@@ -30,6 +30,13 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+/// GG.23 (bkz. plan dosyası "fiber-stack sertleştirmesi"): `nox_runtime_
+/// deinit`in süreç-çapında ölçülen fiber-stack yüksek-su-işaretini
+/// yazdırabilmesi İçİn — `cycle_detector.zig`nin `self_pipe.zig`yi AYNI
+/// yönde (`runtime/alloc/`den `runtime/async_rt/`e) import ETMESİYLE AYNI
+/// gerekçe, SORUNSUZ (`fiber.zig`nin KENDİSİ SIFIR-bağımlılıklı, `asap.
+/// zig`ye/`alloc/`e HİÇ BAKMIYOR — TERSİ yön YASAK olurdu, BU DEĞİL).
+const fiber_mod = @import("../async_rt/fiber.zig");
 
 const use_debug_allocator = builtin.mode == .Debug;
 
@@ -573,6 +580,9 @@ pub export fn nox_runtime_deinit(rt: ?*anyopaque) void {
     // tahsis edilmişti; `debug_gpa.deinit()`DEN ÖNCE serbest bırakılmalı
     // (aksi halde Debug modunda deinit SONRASI bir kullanım olurdu).
     if (state.pool_ext) |ext| state.allocator().destroy(ext);
+    // GG.23: `NOX_STACK_PAINT` AYARLANMADIYSA (varsayılan) HİÇBİR ŞEY
+    // YAZMAZ — bkz. `fiber_mod.printStackHwmMaxForResearch`in belge notu.
+    fiber_mod.printStackHwmMaxForResearch();
     if (use_debug_allocator) {
         if (state.debug_gpa.deinit() == .leak) {
             std.debug.print("nox runtime: bellek sızıntısı tespit edildi\n", .{});

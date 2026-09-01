@@ -16859,6 +16859,97 @@ flake (`fiber.zig`nin errno-6 uyarısı, `codegen_ir_diff_test.zig`nin "3
 atlandı" IR-diff sayısı) clean `main` üzerinde de AYNEN üretilip BU turun
 değişikliklerinden BAĞIMSIZ OLDUĞU doğrulandı.
 
+## 3.113 GG.23 — fiber-stack sertleştirmesi (cycle-collector/JSON/regex özyinelemesi) (v1.47.0)
+
+GG.22 SONRASI kullanıcı "fiber stack ayak izi konusunu araştıralım"
+dedi (§3.111'in incelemesinin önerdiği AMA daha önce seçilmeyen bir
+aday). Derin bir araştırma (izole worktree'de çalışan bir ajan, GERÇEK
+bir "stack-painting" tekniğiyle — fiber'ın 256 KiB mmap bölgesini
+imzalı bir desenle boyayıp, fiber TAMAMLANDIĞINDA ne kadarının bozulduğunu
+tarayarak GERÇEK yüksek-su-işareti ölçen bir yöntem) HEM sentetik en-
+kötü-durum senaryolarını HEM GERÇEK Aether (v0.6.5)/Nyx (v0.17.0) test
+paketlerini (65 test, TAMAMI geçti, ≤35.648 bayt kullanım) ölçtü. Gerçek-
+dünya kullanımı 256 KiB'in SADECE ~%13-14'ünü kullanıyordu — AMA ÜÇ
+sentetik, HİÇ patolojik OLMAYAN senaryo BUGÜN ZATEN 256 KiB'e ÇOK
+yakın/onu AŞIYORDU: `nox.regex.is_match` (düz literal eşleşmede BİLE
+~688 B/karakter, ~378 karakterde aşıyor), `nox.json.decode` (~1.696
+B/seviye, ~137 seviyede aşıyor), VE **BEKLENMEYEN, EN ÖNEMLİ bulgu**:
+`runtime/alloc/cycle_detector.zig`nin Bacon-Rajan döngü-çöpçüsünün
+KENDİ otomatik taraması (`possible_roots_since_collect` 700'ü aştığında
+KULLANICI HİÇBİR ŞEY YAPMADAN tetiklenir, ~7.000-7.500 düğümlük SIRADAN
+bir bağlı-liste/ağaç BUGÜN ZATEN çöker).
+
+**Üç düzeltme** (STACK_SIZE'ın KENDİSİ DEĞİŞMEDEN — bkz. aşağıdaki
+"Sonuç" bölümü):
+
+1. **Cycle-collector iteratif** — `markGray`/`scan`/`scanBlack`/
+   `collectWhite` Zig-çağrı-yığını YERİNE heap-tabanlı bir worklist
+   kullanır (derinlik ARTIK fiber'ın SABİT yığınına DEĞİL, pratikte
+   SINIRSIZ heap'e bağımlı). Dönüşüm SIRASINDA GERÇEK, ince bir doğruluk
+   noktası bulundu: orijinal `scanBlack` GİRİŞTE "zaten işlendi mi"
+   kontrolü YAPMIYORDU (tekrar-işleme koruması SADECE ÇAĞIRANIN
+   tarafındaydı) — SAF özyinelemede GÜVENLİYDİ (çağrı-yığını SAYESİNDE
+   HER dal TAMAMEN biter) AMA LIFO bir worklist'te paylaşılan/"elmas"
+   bir çocuk İKİ KEZ push EDİLİP çift-sayılabilirdi. YENİ bir POP-anı
+   `if (meta.color == .black) continue;` kontrolüyle düzeltildi — bunu
+   kanıtlayan YENİ bir "elmas" testi (`cycle_detector.zig`, sahte test
+   harness'ine 2-alanlı bir nesne türü — `newFakeObject2`/`wireFieldAt`/
+   `fakeTraceDispatchDiamond` — eklenerek) DOĞRUDAN `scanBlack`i (beyaz-
+   kutu, tüm keşif hattı ATLANARAK) çağırıp `d`nin TEK çocuğu `e`nin
+   refcount'unun TAM OLARAK 1 arttığını (2 DEĞİL) doğrular.
+2. **JSON derinlik sınırı** — `nox_json_decode_raw`a, `std.json.
+   parseFromSlice` ÇAĞRILMADAN ÖNCE, YENİ bir SAF `jsonNestingDepthExceeds`
+   ön-taraması (string literalleri/escape'leri ATLAYARAK `[`/`{`
+   derinliğini sayar) — `MAX_JSON_NESTING_DEPTH=32`'yi AŞAN girdi
+   MEVCUT "geçersiz JSON" (`JsonError`) hata yoluyla reddedilir. TEK
+   sınır HEM `std.json`nin KENDİ İÇ özyinelemesini HEM `buildNode`/
+   `buildNodeFast`nin AYRI geçişini korur (SIRALI çalıştıklarından,
+   toplanmazlar).
+3. **Regex kuyruk-çağrısı → döngü** — `matchHere`nin düz-literal/`.`/
+   karakter-sınıfı/`$`-çapası dalı (nicelik işaretçisi YOK) SAF bir
+   KUYRUK ÇAĞRISIYDI (Zig TCO GARANTİ ETMEZ) — bir `while(true)`
+   döngüsüne çevrildi (SIFIR yığın büyümesi, PATERN uzunluğundaki
+   HERHANGİ bir literal koşum İçİn). Özyineleme ARTIK SADECE PATERNDEKİ
+   nicelik-işaretçisi SAYISINA bağımlı (metin uzunluğundan TAMAMEN
+   BAĞIMSIZ). Kalan risk (bir PATERNİN adversarial olarak ÇOK SAYIDA
+   nicelik işaretçisi taşıması) İçİn `MAX_REGEX_QUANTIFIER_DEPTH=500`
+   savunma sınırı eklendi — aşılırsa KOŞULSUZ `false` (nox.regex'in
+   TOTAL fonksiyon sözleşmesi KORUNUR, kullanıcı "sessizce eşleşme yok
+   say"ı SEÇTİ).
+
+**Kalıcı `NOX_STACK_PAINT` aracı**: araştırmanın GEÇİCİ/worktree'ye
+özel enstrümantasyonunun KALICI, SIFIR-varsayılan-maliyetli sürümü —
+`Scheduler.acquireStack`/`releaseStack`e paint/measure kancaları,
+`nox_runtime_deinit`e `NOX_STACK_HWM_BYTES=<n>` yazdırma. `NOX_STRESS_
+ROUNDS`/`NOX_SOAK_SECONDS`nin AYNI "env-değişkeniyle KAPILI" deseni.
+
+**SONUÇ — STACK_SIZE 256 KiB'DE KALDI (BEKLENMEYEN bir 4. bulgu)**:
+3 düzeltme SONRASI kalıcı araçla YENİDEN ölçüldüğünde, regex/JSON
+senaryoları ARTIK ÇOK GÜVENLİ (400 karakterlik regex: 1.312 bayt — ÖNCEKİ
+~275.200 tahmininin ~%0.5'i; 30 seviye JSON: 17.696 bayt) — AMA uzun bir
+bağlı-liste ZİNCİRİNİN release'i (`head = None`), `cycle_detector.zig`DAN
+TAMAMEN AYRI bir mekanizmadan (codegen'in KENDİ ürettiği `genClassRelease`/
+`releaseValueIfSet` özyinelemeli release zinciri, `compiler/codegen_qbe/
+layout.zig`/`ownership.zig` — BU tur HİÇ DOKUNMADI) kaynaklanıp HÂLÂ
+~32 B/düğüm + ~192 B taban maliyetli ÖLÇÜLDÜ (n=2000→64.192 B, n=7000→
+224.192 B) — 256 KiB'de ZATEN ~7.300 düğümde sınırda; 128 KiB'e
+küçültülseydi GÜVENLİ sınır ~3.000 düğüme (YARISINA) DÜŞERDİ. Kullanıcıya
+BU GERÇEK bulgu sunulup **"STACK_SIZE'ı bu turda küçültme"** SEÇİLDİ —
+`fiber.zig`nin `STACK_SIZE`i 256*1024 OLARAK KALDI, `inlining.zig`nin
+`MAX_STACK_ALLOC_SIZE`/`MAX_PROMOTED_FRAME_SIZE`si DEĞİŞMEDİ. Kalıcı
+`NOX_STACK_PAINT` aracı YİNE DE KALICI TUTULDU (gelecekteki bir tur İçİn
+hazır). `genClassRelease`/`releaseValueIfSet`nin KENDİ özyinelemeli
+release-kademesini iteratif hale getirmek (Madde 1'in AYNI tedavisi)
+GELECEKTEKİ, AYRI bir tur İçİn AÇIKÇA not edildi — BU, STACK_SIZE'ın
+GÜVENLE küçültülebilmesi İçİn GEREKLİ bir ÖN-KOŞUL.
+
+**Doğrulama**: `zig build test` (TAM paket, cycle_detector.zig'e YENİ
+"elmas" testi + json.zig/regex.zig'e YENİ birim testleri + 2 YENİ codegen/
+LLVM golden fixture'ı DAHİL) + `NOX_STRESS_ROUNDS=800 zig build stress-test`
+(ReleaseFast) TEMİZ. Gerçek-dünya son doğrulama: Aether (20 test) + Nyx
+(45 test, postgres-gerektiren HARİÇ) TAM test paketleri YENİ noxc İLE
+65/65 yeşil.
+
 ---
 
 ## 5. Hata Yönetimi

@@ -359,19 +359,32 @@ fn markRoots(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
     }
 }
 
-fn markGray(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, ptr: *anyopaque) void {
-    const meta = gc.meta.getPtr(ptr) orelse return;
-    if (meta.color == .gray) return;
-    meta.color = .gray;
+/// GG.23 (bkz. plan dosyası "fiber-stack sertleştirmesi"): ÖNCEDEN Zig-
+/// çağrı-yığını (dolayısıyla fiber'ın SABİT 256/128 KiB yığını) ÜZERİNDE
+/// ÖZYİNELEMELİYDİ — GERÇEK bir programın binlerce/milyonlarca nesnelik
+/// bir bağlı-liste/ağaç/önbelleği ARTIK bunu ÇÖKERTEMEZ (worklist HEAP'te,
+/// pratikte SINIRSIZ). "İşlendi mi" kontrolü (`meta.color == .gray`) POP
+/// ANINDA yapıldığından LIFO sırasından TAMAMEN BAĞIMSIZ doğru kalır
+/// (renk-yayılımı SIRADAN bağımsızdır — TÜM erişilebilir düğümler ziyaret
+/// edildiği sürece sıra ÖNEMSİZDİR).
+fn markGray(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: *anyopaque) void {
+    var stack: std.ArrayListUnmanaged(*anyopaque) = .empty;
+    defer stack.deinit(state.allocator());
+    stack.append(state.allocator(), root) catch return;
+    while (stack.pop()) |ptr| {
+        const meta = gc.meta.getPtr(ptr) orelse continue;
+        if (meta.color == .gray) continue;
+        meta.color = .gray;
 
-    var children = traceChildren(rt, ptr);
-    defer children.deinit(state);
-    for (children.items) |maybe_child| {
-        const child = maybe_child orelse continue;
-        refcountOf(child).* -= 1;
-        const centry = gc.meta.getOrPut(state.allocator(), child) catch continue;
-        if (!centry.found_existing) centry.value_ptr.* = .{};
-        markGray(rt, state, gc, child);
+        var children = traceChildren(rt, ptr);
+        defer children.deinit(state);
+        for (children.items) |maybe_child| {
+            const child = maybe_child orelse continue;
+            refcountOf(child).* -= 1;
+            const centry = gc.meta.getOrPut(state.allocator(), child) catch continue;
+            if (!centry.found_existing) centry.value_ptr.* = .{};
+            stack.append(state.allocator(), child) catch continue;
+        }
     }
 }
 
@@ -382,34 +395,67 @@ fn scanRoots(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
     }
 }
 
-fn scan(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, ptr: *anyopaque) void {
-    const meta = gc.meta.getPtr(ptr) orelse return;
-    if (meta.color != .gray) return;
-    if (refcountOf(ptr).* > 0) {
-        scanBlack(rt, state, gc, ptr);
-        return;
-    }
-    meta.color = .white;
-    var children = traceChildren(rt, ptr);
-    defer children.deinit(state);
-    for (children.items) |maybe_child| {
-        const child = maybe_child orelse continue;
-        scan(rt, state, gc, child);
+/// GG.23: `markGray`İLE AYNI iteratif dönüşüm — `scanBlack`e devretme
+/// (`refcountOf(ptr).* > 0`) dalı `scanBlack`i (ARTIK KENDİSİ de iteratif,
+/// aşağıya bkz.) DOĞRUDAN çağırır, BU worklist'ten TAMAMEN BAĞIMSIZ
+/// (İKİSİ SIRALI ÇALIŞIR, AYNI ANDA DEĞİL).
+fn scan(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: *anyopaque) void {
+    var stack: std.ArrayListUnmanaged(*anyopaque) = .empty;
+    defer stack.deinit(state.allocator());
+    stack.append(state.allocator(), root) catch return;
+    while (stack.pop()) |ptr| {
+        const meta = gc.meta.getPtr(ptr) orelse continue;
+        if (meta.color != .gray) continue;
+        if (refcountOf(ptr).* > 0) {
+            scanBlack(rt, state, gc, ptr);
+            continue;
+        }
+        meta.color = .white;
+        var children = traceChildren(rt, ptr);
+        defer children.deinit(state);
+        for (children.items) |maybe_child| {
+            const child = maybe_child orelse continue;
+            stack.append(state.allocator(), child) catch continue;
+        }
     }
 }
 
-fn scanBlack(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, ptr: *anyopaque) void {
-    const meta = gc.meta.getPtr(ptr) orelse return;
-    meta.color = .black;
-    var children = traceChildren(rt, ptr);
-    defer children.deinit(state);
-    for (children.items) |maybe_child| {
-        const child = maybe_child orelse continue;
-        refcountOf(child).* += 1;
-        const centry = gc.meta.getOrPut(state.allocator(), child) catch continue;
-        if (!centry.found_existing) centry.value_ptr.* = .{};
-        if (centry.value_ptr.color != .black) {
-            scanBlack(rt, state, gc, child);
+/// GG.23 — KRİTİK, İNCE bir doğruluk noktası (bkz. plan dosyasının Madde 1
+/// belge notu): orijinal ÖZYİNELEMELİ `scanBlack` GİRİŞTE "zaten işlendi
+/// mi" KONTROLÜ YAPMIYORDU (`meta.color = .black;` KOŞULSUZ İLK satırdı) —
+/// tekrar-işleme koruması SADECE ÇAĞIRANIN tarafında (`if (centry.value_
+/// ptr.color != .black) scanBlack(child);`) yaşıyordu. Bu, SAF özyinelemede
+/// GÜVENLİYDİ (HER çağrı ÇAĞRI-YIĞINI SAYESİNDE TAMAMEN tamamlanıp GERİ
+/// DÖNDÜKTEN SONRA bir SONRAKİ kardeş kontrol edilir — paylaşılan/"elmas"
+/// bir çocuk İKİNCİ ebeveyn tarafından kontrol edildiğinde ZATEN kesin
+/// olarak siyahtır). **LIFO bir worklist'te BU GARANTİ YOKTUR** — belirli
+/// bir çocuk-sıralamasında AYNI pointer İKİ KEZ push EDİLEBİLİR (HER iki
+/// push de "henüz siyah değil" kontrolünü GEÇER, ÇÜNKÜ HİÇBİRİ henüz
+/// İŞLENMEDİ), İKİNCİ pop'ta TEKRAR işlenirse çocuklarının refcount'u
+/// YANLIŞLIKLA İKİNCİ KEZ artırılırdı. Bu YÜZDEN — orijinal kodda YAZILI
+/// OLMAYAN AMA semantik olarak GEREKLİ bir ek — POP ANINDA `if (meta.color
+/// == .black) continue;` EKLENİR (refcount artışının KENDİSİ HER ZAMAN
+/// ebeveynin çocuk-döngüsünde, push'TAN ÖNCE KOŞULSUZ olduğundan "kaç KEZ
+/// push edildiği"NDEN ETKİLENMEZ — SADECE çocuğun KENDİ alt-ağacının
+/// TEKRAR işlenmesi bu kontrolle ÖNLENİR).
+fn scanBlack(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: *anyopaque) void {
+    var stack: std.ArrayListUnmanaged(*anyopaque) = .empty;
+    defer stack.deinit(state.allocator());
+    stack.append(state.allocator(), root) catch return;
+    while (stack.pop()) |ptr| {
+        const meta = gc.meta.getPtr(ptr) orelse continue;
+        if (meta.color == .black) continue;
+        meta.color = .black;
+        var children = traceChildren(rt, ptr);
+        defer children.deinit(state);
+        for (children.items) |maybe_child| {
+            const child = maybe_child orelse continue;
+            refcountOf(child).* += 1;
+            const centry = gc.meta.getOrPut(state.allocator(), child) catch continue;
+            if (!centry.found_existing) centry.value_ptr.* = .{};
+            if (centry.value_ptr.color != .black) {
+                stack.append(state.allocator(), child) catch continue;
+            }
         }
     }
 }
@@ -432,21 +478,34 @@ fn collectRoots(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
     gc.roots.clearRetainingCapacity();
 }
 
-fn collectWhite(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, ptr: *anyopaque) void {
-    const meta = gc.meta.getPtr(ptr) orelse return;
-    if (meta.color != .white) return;
-    meta.color = .black;
+/// GG.23: `markGray`İLE AYNI iteratif dönüşüm — orijinal ÖZYİNELEMELİ
+/// sürüm çocukları ÖNCE (post-order) serbest BIRAKIYORDU, BU iteratif
+/// sürüm ebeveyni HEMEN serbest BIRAKIP çocukları SONRA POP EDER (pre-
+/// order'a YAKIN) — GÜVENLİDİR, ÇÜNKÜ `nox_gc_free_dispatch` (`$ClassName_
+/// gc_free`) SINIF-TİPLİ ALANLARA HİÇ DOKUNMAZ (bkz. modül üstü not),
+/// SADECE `ptr`nin KENDİ belleğini/sınıf-OLMAYAN alanlarını serbest
+/// bırakır — `child` pointer'ları `ptr` serbest bırakıldıktan SONRA da
+/// GEÇERLİ kalır, SIRA serbest-bırakma GÜVENLİĞİNİ ETKİLEMEZ.
+fn collectWhite(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: *anyopaque) void {
+    var stack: std.ArrayListUnmanaged(*anyopaque) = .empty;
+    defer stack.deinit(state.allocator());
+    stack.append(state.allocator(), root) catch return;
+    while (stack.pop()) |ptr| {
+        const meta = gc.meta.getPtr(ptr) orelse continue;
+        if (meta.color != .white) continue;
+        meta.color = .black;
 
-    var children = traceChildren(rt, ptr);
-    defer children.deinit(state);
-    for (children.items) |maybe_child| {
-        const child = maybe_child orelse continue;
-        collectWhite(rt, state, gc, child);
+        var children = traceChildren(rt, ptr);
+        defer children.deinit(state);
+        for (children.items) |maybe_child| {
+            const child = maybe_child orelse continue;
+            stack.append(state.allocator(), child) catch continue;
+        }
+
+        _ = gc.meta.remove(ptr);
+        const tag = readTag(ptr);
+        nox_gc_free_dispatch(rt, tag, ptr);
     }
-
-    _ = gc.meta.remove(ptr);
-    const tag = readTag(ptr);
-    nox_gc_free_dispatch(rt, tag, ptr);
 }
 
 // ---- Testler ----
@@ -530,6 +589,76 @@ pub fn newFakeObject(rt: ?*anyopaque) *anyopaque {
     const field_addr: *?*anyopaque = @ptrFromInt(@intFromPtr(p) + TAG_SIZE);
     field_addr.* = null;
     return p;
+}
+
+// GG.23 (bkz. plan dosyası "fiber-stack sertleştirmesi"): `scanBlack`nin
+// iteratif dönüşümünün KRİTİK doğruluk noktasını (paylaşılan/"elmas" bir
+// çocuğun İKİ AYRI ebeveynden erişildiğinde TAM OLARAK BİR KEZ işlenmesi)
+// kanıtlayabilmek İçİn `newFakeObject`/`fakeTraceDispatch`in TEK-alanlı
+// (1 çocuk) sınırını AŞAN, 2-alanlı (2 çocuk) bir sahte nesne türü.
+
+/// `TAG=2` OLAN nesneler İçİn payload boyutu — `fakeTraceDispatchDiamond`/
+/// `fakeGcFreeDispatchDiamond` BU etikete göre 2-alanlı düzeni SEÇER.
+pub const FAKE_PAYLOAD_SIZE_2: usize = TAG_SIZE + 2 * FIELD_SLOT_SIZE;
+
+/// `wireField`in İNDEKSLİ genellemesi — `p`nin `slot`'ıncı (0-tabanlı)
+/// alanına `child`i yazar (retain EDEREK).
+fn wireFieldAt(p: *anyopaque, slot: usize, child: *anyopaque) void {
+    arc.nox_rc_retain(child);
+    const field_addr: *?*anyopaque = @ptrFromInt(@intFromPtr(p) + TAG_SIZE + slot * FIELD_SLOT_SIZE);
+    field_addr.* = child;
+}
+
+/// `newFakeObject`in 2-alanlı kardeşi — `tag=2` (aşağıdaki `fakeTraceDispatchDiamond`/
+/// `fakeGcFreeDispatchDiamond`nin AYIRT ETMESİ İçİn, `newFakeObject`in
+/// `tag=99`sundan FARKLI).
+fn newFakeObject2(rt: ?*anyopaque) *anyopaque {
+    const p = arc.nox_rc_alloc(rt, FAKE_PAYLOAD_SIZE_2).?;
+    const tag_ptr: *i64 = @ptrCast(@alignCast(p));
+    tag_ptr.* = 2;
+    var i: usize = 0;
+    while (i < 2) : (i += 1) {
+        const field_addr: *?*anyopaque = @ptrFromInt(@intFromPtr(p) + TAG_SIZE + i * FIELD_SLOT_SIZE);
+        field_addr.* = null;
+    }
+    return p;
+}
+
+/// `fakeTraceDispatch`in TAG-FARKINDA genellemesi: `tag==2` İSE 2 alanı,
+/// AKSİ HALDE (`fakeTraceDispatch`İLE AYNI, tag=99) TEK alanı raporlar —
+/// TEK bir enjekte edilmiş dispatch fonksiyonuyla HEM 1-alanlı HEM
+/// 2-alanlı sahte nesnelerin AYNI ANDA (elmas testinde OLDUĞU GİBİ)
+/// KARIŞTIRILABİLMESİ İçİn.
+fn fakeTraceDispatchDiamond(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) callconv(.c) ?*anyopaque {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));
+    const n_fields: usize = if (tag == 2) 2 else 1;
+    const buf = state.allocator().alloc(u8, TRACE_BUF_LEN_SIZE + n_fields * TRACE_BUF_SLOT_SIZE) catch return null;
+    const len_ptr: *i64 = @ptrCast(@alignCast(buf.ptr));
+    len_ptr.* = @intCast(n_fields);
+    const children_ptr: [*]?*anyopaque = @ptrFromInt(@intFromPtr(buf.ptr) + TRACE_BUF_LEN_SIZE);
+    var i: usize = 0;
+    while (i < n_fields) : (i += 1) {
+        const field_addr: *const ?*anyopaque = @ptrFromInt(@intFromPtr(p.?) + TAG_SIZE + i * FIELD_SLOT_SIZE);
+        children_ptr[i] = field_addr.*;
+    }
+    return buf.ptr;
+}
+
+fn fakeGcFreeDispatchDiamond(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) callconv(.c) void {
+    if (g_fake_freed_count < g_fake_freed_buf.len) {
+        g_fake_freed_buf[g_fake_freed_count] = p.?;
+        g_fake_freed_count += 1;
+    }
+    const size: usize = if (tag == 2) FAKE_PAYLOAD_SIZE_2 else FAKE_PAYLOAD_SIZE;
+    arc.nox_rc_free_payload(rt, p, size);
+}
+
+fn injectFakeDispatchDiamond() void {
+    g_trace_dispatch_resolved = true;
+    g_trace_dispatch_fn = &fakeTraceDispatchDiamond;
+    g_gc_free_dispatch_resolved = true;
+    g_gc_free_dispatch_fn = &fakeGcFreeDispatchDiamond;
+    g_fake_freed_count = 0;
 }
 
 /// `genClassRelease`nin ÇALIŞMA ZAMANI davranışının SİMÜLASYONU: predecrement
@@ -638,6 +767,66 @@ test "Faz S.3: bir döngü İÇİNDEKİ nesne dışarıdan da canlıysa (survivi
     try deinitRuntimeExpectNoLeak(rt);
 }
 
+// GG.23 (bkz. plan dosyası "fiber-stack sertleştirmesi", Madde 1): bu
+// test, iteratif `scanBlack`nin (bkz. onun KENDİ belge notu) POP-anı
+// "zaten siyah mı" kontrolünün GERÇEKTEN load-bearing olduğunu kanıtlar
+// — `root -> [d, b]` VE `b -> d` (yani `d`, `root`TAN HEM DOĞRUDAN HEM
+// `b` ÜZERİNDEN erişilen PAYLAŞILAN/"elmas" bir çocuk) yapısı KURULUP
+// `scanBlack` DOĞRUDAN (possible_root/markGray/scan boru hattı
+// ATLANARAK — BEYAZ-KUTU bir birim testi, SADECE bu fonksiyonun KENDİ
+// döngü-güvenliğini hedefler) çağrılır. `d`nin TEK çocuğu `e`nin
+// refcount'unun TAM OLARAK 1 ARTMASI beklenir (`d`nin traceChildren'ı
+// TAM OLARAK BİR KEZ çalışmalı, `root`+`b`nin İKİSİ de `d`yi "henüz
+// siyah değil" olarak GÖRÜP push ETSE BİLE).
+test "GG.23: scanBlack paylaşılan (elmas) bir çocuğun kendi alt-ağacını TAM OLARAK bir kez işler" {
+    injectFakeDispatchDiamond();
+
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
+
+    const e = newFakeObject(rt); // d'nin TEK gerçek çocuğu
+    const d = newFakeObject(rt);
+    wireField(d, e); // d -> e
+    const b = newFakeObject(rt);
+    wireField(b, d); // b -> d (d'ye İKİNCİ bir gerçek kenar)
+    const root = newFakeObject2(rt);
+    wireFieldAt(root, 0, d); // root -> d (DOĞRUDAN)
+    wireFieldAt(root, 1, b); // root -> b
+
+    // `markGray`/`scan`nin BU üç düğümü ZATEN gri işaretlediği bir ANI
+    // simüle eder — `scanBlack`nin KENDİSİ `nox_cycle_possible_root`/
+    // `markGray`/`scan` ÇAĞRILMADAN doğrudan test edilir (beyaz-kutu).
+    const gc = getGc(state);
+    try gc.meta.put(state.allocator(), root, .{ .color = .gray });
+    try gc.meta.put(state.allocator(), d, .{ .color = .gray });
+    try gc.meta.put(state.allocator(), b, .{ .color = .gray });
+
+    const e_refcount_before = refcountOf(e).*;
+
+    scanBlack(rt, state, gc, root);
+
+    // ANA İDDİA: `d`nin traceChildren'ı TAM OLARAK BİR KEZ çalıştı —
+    // POP-anı "zaten siyah mı" kontrolü KALDIRILSAYDI (orijinal, GÜVENSİZ
+    // davranış) `e`nin refcount'u BURADA +2 OLURDU (d, HEM root'un HEM
+    // b'nin push'ları YÜZÜNDEN İKİ KEZ işlenirdi).
+    try testing.expectEqual(e_refcount_before + 1, refcountOf(e).*);
+    try testing.expectEqual(Color.black, gc.meta.get(root).?.color);
+    try testing.expectEqual(Color.black, gc.meta.get(d).?.color);
+    try testing.expectEqual(Color.black, gc.meta.get(b).?.color);
+
+    // Temizlik: BU test `nox_cycle_collect`i (VE dolayısıyla GERÇEK
+    // serbest-bırakmayı) hiç ÇAĞIRMADI — 4 nesnenin payload'ları DOĞRUDAN
+    // serbest bırakılır (SAF test temizliği, gerçek program semantiği
+    // SİMÜLE EDİLMEZ — bu testin KENDİSİ zaten `scanBlack`in yığın
+    // güvenliğini kanıtladı).
+    arc.nox_rc_free_payload(rt, root, FAKE_PAYLOAD_SIZE_2);
+    arc.nox_rc_free_payload(rt, d, FAKE_PAYLOAD_SIZE);
+    arc.nox_rc_free_payload(rt, b, FAKE_PAYLOAD_SIZE);
+    arc.nox_rc_free_payload(rt, e, FAKE_PAYLOAD_SIZE);
+
+    try deinitRuntimeExpectNoLeak(rt);
+}
+
 // Faz BB.1: `g_trace_dispatch_fn`/`g_gc_free_dispatch_fn` (+ `_resolved`
 // bayrakları) `threadlocal` OLMASININ, bir OS iş parçacığındaki
 // `injectFakeDispatch` çağrısının BAŞKA bir iş parçacığının KENDİ (henüz
@@ -668,10 +857,10 @@ test "g_trace_dispatch_fn threadlocal: bir iş parçacığındaki enjeksiyon di�
         try testing.expect(g_trace_dispatch_fn == null);
     } else {
         // Bu test dosyasında BAŞKA testler ZATEN bu iş parçacığında
-        // `injectFakeDispatch` çağırmış OLABİLİR (testler AYNI iş
-        // parçacığında SIRAYLA koşar) — o durumda hedef fonksiyon HER
-        // ZAMAN `fakeTraceDispatch` OLMALI, yeni thread'in enjeksiyonundan
-        // ETKİLENMEMİŞ olmalı.
-        try testing.expect(g_trace_dispatch_fn == &fakeTraceDispatch);
+        // `injectFakeDispatch` YA DA (GG.23'ten İTİBAREN) `injectFakeDispatchDiamond`
+        // çağırmış OLABİLİR (testler AYNI iş parçacığında SIRAYLA koşar) —
+        // o durumda hedef fonksiyon HER ZAMAN BU İKİSİNDEN BİRİ OLMALI,
+        // yeni thread'in enjeksiyonundan ETKİLENMEMİŞ olmalı.
+        try testing.expect(g_trace_dispatch_fn == &fakeTraceDispatch or g_trace_dispatch_fn == &fakeTraceDispatchDiamond);
     }
 }

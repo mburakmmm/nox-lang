@@ -67,41 +67,83 @@ fn atomMatches(atom: []const u8, ch: u8) bool {
     return atom[0] == ch;
 }
 
+/// GG.23 (bkz. plan dosyası "fiber-stack sertleştirmesi", Madde 3): bir
+/// PATERNİN adversarial olarak ÇOK SAYIDA nicelik işaretçisi (`*`/`+`/`?`)
+/// taşıması İçİn savunma-derinliği sınırı — GERÇEK/makul kullanımda
+/// NEREDEYSE HİÇ tetiklenmez (bir regex'te ONLARCA nicelik işaretçisi
+/// BİLE AŞIRI karmaşık sayılır). Aşılırsa `matchHereDepth` KOŞULSUZ
+/// `false` döner — backtracking'in "hiçbir dal eşleşmedi" doğal
+/// SONUCUYLA AYNI (kullanıcı "sessizce eşleşme yok say"ı SEÇTİ — nox.regex'in
+/// `is_match`/`find`i HİÇBİR ZAMAN istisna fırlatmayan TOTAL fonksiyonlar
+/// olarak KALIR).
+const MAX_REGEX_QUANTIFIER_DEPTH: usize = 500;
+
 /// `pat`in `text`in TAM BAŞINDAN eşleştiğini (bir ÖN EK olarak) dener —
 /// Kernighan'ın `matchhere`si, `*`/`+`/`?` + karakter sınıfı DESTEĞİYLE
-/// GENİŞLETİLDİ.
+/// GENİŞLETİLDİ. `matchHereDepth`e `depth=0` İLE DELEGE eder (bkz. onun
+/// belge notu).
 fn matchHere(pat: []const u8, text: []const u8) bool {
-    if (pat.len == 0) return true;
-    if (pat[0] == '$' and pat.len == 1) return text.len == 0;
+    return matchHereDepth(pat, text, 0);
+}
 
-    const alen = atomLen(pat);
-    const atom = pat[0..alen];
-    const rest = pat[alen..];
+/// GG.23: ÖNCEDEN düz-literal/`.`/karakter-sınıfı/`$`-çapası dalı
+/// (nicelik işaretçisi YOK) `return matchHere(rest, text[1..]);` — SAF
+/// bir KUYRUK ÇAĞRISI — İDİ; Zig KUYRUK-ÇAĞRISI optimizasyonunu GARANTİ
+/// ETMEDİĞİNDEN, bu HER KARAKTER İçİn GERÇEK bir yığın çerçevesi
+/// üretiyordu (ölçüldü: ~688 B/karakter, ~378 karakterlik SIRADAN bir
+/// literal eşleşmede 256 KiB'i AŞIYORDU). ARTIK bir `while (true)`
+/// DÖNGÜSÜ İLE SARILI — düz-literal koşumu (VE `?`nin "hiç tüketme"
+/// yedek dalı, KENDİSİ de SAF bir kuyruk çağrısıydı) `pat`/`text`i YEREL
+/// DEĞİŞKENLER olarak GÜNCELLEYİP döngü başına DÖNER (SIFIR yığın
+/// büyümesi). GERÇEK özyineleme SADECE İKİ yerde KALIR (backtracking'in
+/// KAÇINILMAZ olduğu dallar): `?`nin "DENE" dalı VE `*`/`+`nin geri-sayım
+/// İÇİNDEKİ çağrısı — HER İKİSİ de `depth+1` GEÇİRİR (LOOP-continuation'lar
+/// depth'i ARTIRMAZ, ÇÜNKÜ GERÇEK bir yığın çerçevesi ÜRETMEZLER).
+/// Sonuç: özyineleme derinliği ARTIK METİN uzunluğundan TAMAMEN BAĞIMSIZ —
+/// SADECE PATERNDEKİ nicelik-işaretçisi SAYISINA bağımlı.
+fn matchHereDepth(pat_in: []const u8, text_in: []const u8, depth_in: usize) bool {
+    var pat = pat_in;
+    var text = text_in;
+    const depth = depth_in;
+    while (true) {
+        if (pat.len == 0) return true;
+        if (pat[0] == '$' and pat.len == 1) return text.len == 0;
 
-    if (rest.len > 0 and (rest[0] == '*' or rest[0] == '+' or rest[0] == '?')) {
-        const quant = rest[0];
-        const after = rest[1..];
-        if (quant == '?') {
-            if (text.len > 0 and atomMatches(atom, text[0]) and matchHere(after, text[1..])) return true;
-            return matchHere(after, text);
+        const alen = atomLen(pat);
+        const atom = pat[0..alen];
+        const rest = pat[alen..];
+
+        if (rest.len > 0 and (rest[0] == '*' or rest[0] == '+' or rest[0] == '?')) {
+            if (depth >= MAX_REGEX_QUANTIFIER_DEPTH) return false;
+            const quant = rest[0];
+            const after = rest[1..];
+            if (quant == '?') {
+                if (text.len > 0 and atomMatches(atom, text[0]) and matchHereDepth(after, text[1..], depth + 1)) return true;
+                pat = after;
+                continue;
+            }
+            // '*'/'+': ÖNCE AÇGÖZLÜCE mümkün olduğunca çok atomu TÜKET, SONRA
+            // eşleşme bulunana KADAR TEK TEK geri ÇEKİL (klasik backtracking) —
+            // BU geri-sayım DÖNGÜSÜ zaten YİNELEMELİYDİ (özyineleme DEĞİL),
+            // DEĞİŞMEZ.
+            var count: usize = 0;
+            while (count < text.len and atomMatches(atom, text[count])) count += 1;
+            const min: usize = if (quant == '+') 1 else 0;
+            while (count + 1 > min) {
+                if (matchHereDepth(after, text[count..], depth + 1)) return true;
+                if (count == 0) break;
+                count -= 1;
+            }
+            return false;
         }
-        // '*'/'+': ÖNCE AÇGÖZLÜCE mümkün olduğunca çok atomu TÜKET, SONRA
-        // eşleşme bulunana KADAR TEK TEK geri ÇEKİL (klasik backtracking).
-        var count: usize = 0;
-        while (count < text.len and atomMatches(atom, text[count])) count += 1;
-        const min: usize = if (quant == '+') 1 else 0;
-        while (count + 1 > min) {
-            if (matchHere(after, text[count..])) return true;
-            if (count == 0) break;
-            count -= 1;
+
+        if (text.len > 0 and atomMatches(atom, text[0])) {
+            pat = rest;
+            text = text[1..];
+            continue;
         }
         return false;
     }
-
-    if (text.len > 0 and atomMatches(atom, text[0])) {
-        return matchHere(rest, text[1..]);
-    }
-    return false;
 }
 
 /// `pat`in `text` İÇİNDE HERHANGİ bir yerde eşleşip eşleşmediğini
@@ -276,4 +318,65 @@ test "bos desen/metin kenar durumlari" {
     try std.testing.expectEqual(@as(i32, 0), nox_regex_is_match_raw(a_pat, empty));
     // Ama `a*` (sifir-veya-fazla) bos metinde de eslesir.
     try std.testing.expectEqual(@as(i32, 1), nox_regex_is_match_raw(a_star, empty));
+}
+
+// GG.23 (bkz. plan dosyası "fiber-stack sertleştirmesi", Madde 3): ÖNCEDEN
+// (~688 B/karakter İLE) BİLE bu uzunlukta bir metin — nicelik işaretçisi
+// GEREKMEDEN, SADECE DÜZ literal eşleşme — 256 KiB'i ÇOKTAN AŞARDI
+// (~378 karakterde). `matchHereDepth`nin döngüye çevrilmesi SONRASI
+// özyineleme derinliği METİN uzunluğundan TAMAMEN BAĞIMSIZ olduğundan,
+// BU test (Zig'in KENDİ, fiber'DAN ÇOK DAHA BÜYÜK OS-iş-parçacığı
+// yığınında çalışsa da) matching SEMANTİĞİNİN DEĞİŞMEDİĞİNİ kanıtlar —
+// fiber bağlamında GERÇEK yığın-güvenliği KANITI Madde 4'ün yeniden-
+// ölçümündedir (bu test SEVİYESİ bunu ÖLÇEMEZ, `std.testing`nin KENDİSİ
+// bir fiber İÇİNDE ÇALIŞMAZ).
+test "GG.23: uzun bir literal metin karsi COK uzun bir literal desenle (nicelik isaretcisi OLMADAN) dogru eslesir" {
+    const allocator = std.testing.allocator;
+    const n = 10_000;
+    const long_text = try allocator.alloc(u8, n);
+    defer allocator.free(long_text);
+    @memset(long_text, 'a');
+    long_text[n - 1] = 'b'; // desenin SONUNDAKİ 'b' İLE eslesme, TAM SONDA
+
+    const pattern = try allocator.alloc(u8, n);
+    defer allocator.free(pattern);
+    @memset(pattern, 'a');
+    pattern[n - 1] = 'b';
+
+    try std.testing.expect(matchFrom(pattern, long_text));
+
+    // TEK bir karakter FARKLI olursa (SON karakter 'b' yerine 'c') eslesme
+    // BAŞARISIZ olmalı — matching SEMANTİĞİNİN DOĞRU KALDIĞININ kanıtı
+    // (SADECE "çökmedi" DEĞİL, "doğru sonuç verdi").
+    long_text[n - 1] = 'c';
+    try std.testing.expect(!matchFrom(pattern, long_text));
+}
+
+// GG.23: bir PATERNİN (METNİN DEĞİL) `MAX_REGEX_QUANTIFIER_DEPTH`i AŞAN
+// sayıda ART ARDA nicelik işaretçisi taşıması — KOŞULSUZ `false` döner
+// (ÇÖKMEZ, `matchFrom`in KENDİ TOTAL fonksiyon sözleşmesi KORUNUR).
+// BİLİNÇLİ tasarım: `x*` (METİNDE HİÇ GEÇMEYEN bir karakter) kullanılır —
+// HER `x*` İçİn TEK bir GEÇERLİ sayım (0) olduğundan (metinde 'x' YOK,
+// backtracking'in ARAYACAĞI birden fazla ALTERNATİF sayım YOK) bu test
+// DOĞRUSAL kalır; `a*a*a*...` (AYNI karakterle ÇOKLU nicelik işaretçisi)
+// GERÇEK bir ÜSTEL-zaman backtracking'e (bu motorun ÖNCEDEN VAR OLAN,
+// KENDİ BAŞINA AYRI bir sorun olan klasik ReDoS özelliği — bkz. plan
+// dosyasının "Kapsam DIŞI" bölümü) yol AÇARDI — BU testin AMACI SADECE
+// derinlik SINIRININ ÇÖKMEDEN devreye girdiğini kanıtlamak, ÜSTEL-zaman
+// karmaşıklığını test ETMEK DEĞİL.
+test "GG.23: MAX_REGEX_QUANTIFIER_DEPTH'i asan sayida nicelik isaretcili bir patern cokmeden 'eslesme yok' doner" {
+    const allocator = std.testing.allocator;
+    const n = MAX_REGEX_QUANTIFIER_DEPTH + 50;
+    const pattern = try allocator.alloc(u8, n * 2);
+    defer allocator.free(pattern);
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        pattern[i * 2] = 'x';
+        pattern[i * 2 + 1] = '*';
+    }
+    const text = try allocator.alloc(u8, n);
+    defer allocator.free(text);
+    @memset(text, 'a');
+
+    try std.testing.expect(!matchFrom(pattern, text));
 }
