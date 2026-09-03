@@ -14,6 +14,46 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.56.0]
+
+### Düzeltildi
+- **HH.7 — v1.55.0'ın (HH.6) post-spawn checker'ında GERÇEK bir üçüncü
+  false-negative düzeltildi**: harici bir inceleme, bir `spawn` çağrısının
+  spawn-ID'sinin (HER `spawn` çağrısının KENDİ AST-düğüm pointer'ı) döngü
+  fixpoint'inin HER iterasyonunda AYNI KALDIĞINI, bu YÜZDEN bir döngünün
+  gerçekte BİRDEN FAZLA AYRI runtime Task ürettiği HALLERDE bunun TEK bir
+  owner olarak dedup edildiğini GÖSTERDİ. Somut, GERÇEKTEN DERLENEN repro
+  (v1.55.0'a karşı doğrulandı, EL İLE fixpoint mekaniği de İZLENEREK):
+  ```nox
+  while i < 2:
+      t: Task[None] = spawn worker(xs)
+      i = i + 1
+  await t          # SADECE SON iterasyonun task'ını joinler
+  xs.append(42)    # v1.55.0: SESSİZCE derleniyordu
+  ```
+  Döngü SONRASI TEK bir `await t` (`t` SADECE SON iterasyonun task'ını
+  TUTAR) DAHA ÖNCEKİ iterasyonların (HİÇBİR ZAMAN await edilmemiş)
+  task'larını joinlemiyordu. KONTROL testi (HER iterasyon KENDİ task'ını
+  döngü İÇİNDE join ediyor) HÂLÂ DOĞRU çalışıyordu — mekanizma GENEL
+  olarak SAĞLAMDI, SADECE "döngü sonrası tek bir await, HER iterasyonu
+  joinler" varsayımı YANLIŞTI. Düzeltme (`compiler/typecheck/checker.zig`):
+  incelemenin ÖNERDİĞİ TAM zero/one/many cardinality lattice'i YERİNE
+  (incelemenin KENDİSİ de "İLK implementasyon İçİn DAHA GÜVENLİ" olarak
+  BASİT modeli işaret etti), DAHA BASİT VE AYNI DERECEDE SAĞLAM bir kural:
+  bir döngünün fixpoint'i YAKINSADIKTAN SONRA, döngüye GİRİŞTEKİ duruma
+  GÖRE YENİ olan (döngünün KENDİ gövdesinde ÜRETİLEN) VE hâlâ `resource_owners`de
+  KALAN (yani her iterasyonda KENDİ içinde joinlenmediği KANITLANAN) HER
+  isim, `SpawnFlowState`nin YENİ `locked_resources` kümesine eklenerek
+  KALICI olarak kilitleniyor — bu isimler ARTIK HİÇBİR SONRAKİ `await` İLE
+  temizlenemiyor (fire-and-forget'in AYNI "sonsuza kadar uçuşta" disipliniyle
+  tutarlı). Güvenli desen (spawn+await AYNI iterasyon İçİnde eşleşiyor)
+  İçİn fixpoint yakınsadığında `resource_owners` ZATEN boş olduğundan,
+  hiçbir şey yanlışlıkla kilitlenmiyor. 4 yeni golden fixture eklendi (ana
+  repro + aynı-iterasyon-join negatifi + döngü-içi-koşullu-await + `for`
+  döngüsü varyantı); MEVCUT TÜM HH.2/HH.5/HH.6 fixture'ları DEĞİŞMEDEN
+  geçiyor. `v1.55.0`nin KENDİ CHANGELOG/spec girişi TARİHSEL bir kayıt
+  olarak DEĞİŞTİRİLMEDİ — düzeltme dürüstçe burada belgeleniyor.
+
 ## [1.55.0]
 
 ### Düzeltildi

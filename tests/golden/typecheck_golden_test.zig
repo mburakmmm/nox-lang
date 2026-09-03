@@ -920,6 +920,39 @@ test "golden(post-spawn-caller-mutation): HH.6 — fire-and-forget + isimli task
     );
 }
 
+// HH.7 (bkz. plan dosyası "post-spawn checker'ına döngü-tekrarlı spawn-
+// site kilitlemesi"): harici bir incelemenin BULDUĞU, v1.55.0'da (HH.6)
+// SESSİZCE derlenen GERÇEK bir false-negative — döngü GÖVDESİ HER
+// iterasyonda AYNI (STATİK) AST-düğümünden spawn ediyor, döngü SONRASI
+// TEK bir await SADECE SON iterasyonun task'ını joinliyor.
+test "golden(post-spawn-caller-mutation): HH.7 — döngü içinde tekrarlanan spawn-site, döngü sonrası tek bir await ile TEMİZLENEMEZ" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_loop_repeated_site_await_after.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_loop_repeated_site_await_after.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): HH.7 — her iterasyon KENDİ task'ını döngü İÇİNDE join ederse regresyon yok" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/ok_spawn_shared_loop_repeated_site_await_inside_iteration.nox"),
+        @embedFile("typecheck_cases/ok_spawn_shared_loop_repeated_site_await_inside_iteration.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): HH.7 — döngü içinde koşullu await hâlâ yakalanır" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_loop_conditional_await.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_loop_conditional_await.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): HH.7 — for döngüsü varyantı da yakalanır" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_for_loop_repeated_site.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_for_loop_repeated_site.expected"),
+    );
+}
+
 // v1.30.1 (bkz. plan dosyası "Checker'a ifade-derinliği koruması"):
 // `checkExpr`/`checkBinary`nin GERÇEK bir yığın-taşması SIGABRT'ına yol
 // açan (`tests/fuzz/lexer_parser_checker_fuzz.zig`nin 2000-derin

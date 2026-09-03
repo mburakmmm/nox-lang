@@ -1,0 +1,10 @@
+# HH.7: `for` döngüsü varyantı — mekanizmanın `while`e ÖZEL OLMADIĞINI,
+# `for_stmt`in AYNI `iterateLoopToFixpoint`i PAYLAŞTIĞINI kanıtlar.
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+for i in [1, 2]:
+    t: Task[None] = spawn worker(xs)
+await t
+xs.append(42)

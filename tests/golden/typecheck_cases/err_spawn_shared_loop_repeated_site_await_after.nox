@@ -1,0 +1,18 @@
+# HH.7 (bkz. plan dosyası "post-spawn checker'ına döngü-tekrarlı spawn-
+# site kilitlemesi"): harici bir incelemenin BULDUĞU, v1.55.0'da (HH.6)
+# SESSİZCE derlenen GERÇEK bir false-negative — döngü GÖVDESİ HER
+# iterasyonda AYNI (STATİK) AST-düğümünden spawn ediyor, GERÇEKTE İSE
+# BİRDEN FAZLA AYRI runtime Task'ı ÜRETİYOR. Döngü SONRASI TEK bir
+# `await t` (`t` SADECE SON iterasyonun task'ını TUTAR) DAHA ÖNCEKİ
+# iterasyonların (HİÇBİR ZAMAN await edilmemiş) task'larını joinlemez —
+# döngü-tekrarlı spawn-site kilitlemesi BUNU ARTIK YAKALAR.
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+i: int = 0
+while i < 2:
+    t: Task[None] = spawn worker(xs)
+    i = i + 1
+await t
+xs.append(42)

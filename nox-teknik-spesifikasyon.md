@@ -17558,6 +17558,85 @@ dürüstçe BU sürümün KENDİ girişinde belgelendi.
 
 ---
 
+## 3.122 HH.7 — post-spawn checker'ına döngü-tekrarlı spawn-site kilitlemesi (v1.56.0)
+
+v1.55.0 (HH.6) SONRASI harici bir inceleme, bir `spawn` çağrısının spawn-
+ID'sinin (HER `spawn` çağrısının KENDİ AST-düğüm pointer'ı) döngü
+fixpoint'inin HER iterasyonunda AYNI KALDIĞINI, bu YÜZDEN bir döngünün
+GERÇEKTE BİRDEN FAZLA AYRI runtime Task ÜRETTİĞİ hallerde bunun TEK bir
+owner OLARAK dedup edildiğini GÖSTERDİ. Bu bulgu DOĞRUDAN, GERÇEK bir
+repro İLE (v1.55.0'ın `zig-out/debug/bin/noxc`sine karşı, EL İLE fixpoint
+mekaniği de İZLENEREK) DOĞRULANDI:
+
+```nox
+while i < 2:
+    t: Task[None] = spawn worker(xs)
+    i = i + 1
+await t          # SADECE SON iterasyonun task'ını joinler
+xs.append(42)    # SESSİZCE derleniyordu
+```
+
+Döngü SONRASI TEK bir `await t` (`t` SADECE SON iterasyonun task'ını
+TUTAR) DAHA ÖNCEKİ iterasyonların (HİÇBİR ZAMAN await edilmemiş) task'larını
+joinlemiyordu. KONTROL testi (HER iterasyon KENDİ task'ını döngü İÇİNDE
+join ediyor) HÂLÂ DOĞRU çalışıyordu — mekanizma GENEL olarak SAĞLAMDI,
+SADECE "döngü sonrası tek bir await, HER iterasyonu joinler" varsayımı
+YANLIŞTI.
+
+**Düzeltme — "içeride joinlenmeyen HER YENİ sahiplik, döngü SONRASI kalıcı
+olarak kilitlenir"**: incelemenin ÖNERDİĞİ TAM zero/one/many cardinality
+lattice'i YERİNE (incelemenin KENDİSİ de "İLK implementasyon İçİn DAHA
+GÜVENLİ" olarak BASİT modeli işaret etti), `SpawnFlowState`ye YENİ bir
+`locked_resources: StringHashMapUnmanaged(void)` alanı eklendi. YENİ
+`lockRecurrentLoopOwnership`, `iterateLoopToFixpoint`nin fixpoint'i
+YAKINSADIKTAN HEMEN SONRA çağrılır: döngüye GİRİŞTEKİ duruma (`pre_loop`,
+döngü BAŞLAMADAN ÖNCE klonlanır) GÖRE YENİ olan VE fixpoint SONRASI HÂLÂ
+`resource_owners`de KALAN (yani HER iterasyonda KENDİ içinde joinlenmediği
+KANITLANAN) HER isim, `locked_resources`e EKLENEREK KALICI olarak
+kilitlenir — bu isimler ARTIK HİÇBİR SONRAKİ `await` İLE (fonksiyonun
+KALANI BOYUNCA) TEMİZLENEMEZ (fire-and-forget'in AYNI "sonsuza kadar
+uçuşta" disipliniyle TUTARLI). `removeAwaitedTaskSharing`nin `await`
+işleme bloğu, `locked_resources`de OLAN isimleri çıkarma işleminden
+TAMAMEN MUAF TUTAR.
+
+**Neden bu YETERLİ (EL İLE İZLENEREK doğrulandı)**: güvenli desende
+(spawn+await AYNI iterasyon İçİnde eşleşiyor) HER iterasyonun KENDİ
+body-walk'ı İÇİNDE spawn EKLENİP await İLE HEMEN ÇIKARILDIĞINDAN, döngünün
+fixpoint'i YAKINSADIĞINDA `resource_owners` O isim İçİn ZATEN BOŞtur —
+`lockRecurrentLoopOwnership` HİÇBİR ŞEYİ kilitlemez. Hatalı desende
+(repro) spawn HER iterasyonda EKLENİYOR AMA HİÇBİR iterasyon İÇİNDE
+await EDİLMİYOR — fixpoint YAKINSADIĞINDA `resource_owners["xs"]` HÂLÂ
+spawn-ID'yi TAŞIR (pre_loop'ta YOKTU, YENİ) → KİLİTLENİR. İç içe
+döngüler/`for` İçİn: `iterateLoopToFixpoint` ÖZYİNELEMELİ olarak
+ÇAĞRILDIĞINDAN (HER `while`/`for` KENDİ çağrısını YAPAR), mekanizma
+HİÇBİR ÖZEL kod GEREKMEDEN doğal olarak GENELLEŞİR.
+
+**Doğrulama**: harici incelemenin TAM repro'su (`err_spawn_shared_loop_repeated_site_await_after.nox`)
++ aynı-iterasyon-join negatifi (`ok_spawn_shared_loop_repeated_site_await_inside_iteration.nox`)
++ döngü-içi-koşullu-await (`err_spawn_shared_loop_conditional_await.nox`,
+HH.5'in fork/merge'ünün ZATEN "eksik/koşullu await = hâlâ owned" ürettiğinin
+kanıtı) + `for` döngüsü varyantı (`err_spawn_shared_for_loop_repeated_site.nox`,
+mekanizmanın `while`e ÖZEL OLMADIĞININ kanıtı) YENİ golden fixture olarak
+eklendi; MEVCUT TÜM HH.2/HH.5/HH.6 fixture'ları DEĞİŞMEDEN geçti. `zig
+build test` (TAM paket) + `NOX_STRESS_ROUNDS=800 zig build stress-test
+-Doptimize=ReleaseFast` TEMİZ (BİLİNEN, İLGİSİZ 4 harness flake'i HARİÇ —
+bir 5. TLS-bağlantı flake'i BİR KEZ gözlemlenip TEKRAR çalıştırıldığında
+ÜRETİLEMEDİĞİ doğrulanarak ortam-kaynaklı olduğu doğrulandı). `v1.55.0`nin
+KENDİ CHANGELOG/spec girişi TARİHSEL bir kayıt olarak DEĞİŞTİRİLMEDİ —
+düzeltme dürüstçe BU sürümün KENDİ girişinde belgelendi.
+
+## Kapsam DIŞI (bu turda)
+- İncelemenin TAM zero/one/many cardinality lattice'i — incelemenin
+  KENDİSİ de "İLK implementasyon İçİn DAHA GÜVENLİ" olarak BASİT modeli
+  ÖNERDİ; TAM cardinality AYRI/gelecekteki bir iyileştirme.
+- İç içe ÇOK KATMANLI döngülerin (nested loop repeated spawn) KENDİ AYRI
+  bir fixture'ı — mekanizma TASARIM GEREĞİ genelleşir, ayrı bir fixture'a
+  GEREK duyulmadı.
+- `try`/`except`/`finally`/`with`/`lowlevel`/İÇ İÇE `func_def`/`class_def`
+  gövdeleri — HH.2/HH.5/HH.6'nın AYNI, DEĞİŞMEYEN v1 sınırı olarak KALIR.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

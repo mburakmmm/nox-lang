@@ -2582,17 +2582,19 @@ pub const Checker = struct {
         }
     }
 
-    /// HH.6 (bkz. plan dosyası "post-spawn checker'ına çoklu-sahip [multi-
-    /// owner] kaynak takibi"): `checkTransitiveSpawnSharedMutationExpr`nin
+    /// HH.6/HH.7 (bkz. plan dosyaları): `checkTransitiveSpawnSharedMutationExpr`nin
     /// AYNI gezinme şekli — AMA HERHANGİ bir `.await_expr` bulduğunda,
     /// operandı `task_spawn_ids`teki BİR Task adına ÇÖZÜLÜYORSA, O Task'ın
     /// KENDİ spawn-ID'lerini `resource_owners`nin HER girdisinden ÇIKARIR
     /// (koşulsuz TÜM anahtarı SİLMEK YERİNE — v1.54.0/HH.5'in GERÇEK
     /// false-negative'i: `xs`i AYNI ANDA paylaşan İKİNCİ bir task VARSA,
-    /// SADECE `t1`in await'i `xs`i "temiz" saymamalı). Hashmap İTERASYONU
-    /// SIRASINDA anahtar SİLİNEMEDİĞİNDEN, boşalan anahtarlar AYRI bir
-    /// listede toplanıp gezinti BİTTİKTEN SONRA kaldırılır.
-    fn removeAwaitedTaskSharing(self: *Checker, aa: std.mem.Allocator, expr: ast.Expr, task_spawn_ids: *const std.StringHashMapUnmanaged([]const usize), resource_owners: *std.StringHashMapUnmanaged([]const usize)) TypeError!void {
+    /// SADECE `t1`in await'i `xs`i "temiz" saymamalı). HH.7: `locked_resources`de
+    /// OLAN isimler BU çıkarma işleminden TAMAMEN MUAF (döngü-tekrarlı
+    /// spawn-site'ların KALICI kilidi — bkz. `lockRecurrentLoopOwnership`).
+    /// Hashmap İTERASYONU SIRASINDA anahtar SİLİNEMEDİĞİNDEN, boşalan
+    /// anahtarlar AYRI bir listede toplanıp gezinti BİTTİKTEN SONRA
+    /// kaldırılır.
+    fn removeAwaitedTaskSharing(self: *Checker, aa: std.mem.Allocator, expr: ast.Expr, task_spawn_ids: *const std.StringHashMapUnmanaged([]const usize), resource_owners: *std.StringHashMapUnmanaged([]const usize), locked_resources: *const std.StringHashMapUnmanaged(void)) TypeError!void {
         switch (expr) {
             .await_expr => |op| {
                 if (op.* == .identifier) {
@@ -2600,6 +2602,7 @@ pub const Checker = struct {
                         var keys_to_remove: std.ArrayListUnmanaged([]const u8) = .empty;
                         var it = resource_owners.iterator();
                         while (it.next()) |entry| {
+                            if (locked_resources.contains(entry.key_ptr.*)) continue;
                             var remaining: std.ArrayListUnmanaged(usize) = .empty;
                             for (entry.value_ptr.*) |owner_id| {
                                 var still_owned = true;
@@ -2620,29 +2623,29 @@ pub const Checker = struct {
                         for (keys_to_remove.items) |k| _ = resource_owners.remove(k);
                     }
                 }
-                try self.removeAwaitedTaskSharing(aa, op.*, task_spawn_ids, resource_owners);
+                try self.removeAwaitedTaskSharing(aa, op.*, task_spawn_ids, resource_owners, locked_resources);
             },
-            .unary => |u| try self.removeAwaitedTaskSharing(aa, u.operand.*, task_spawn_ids, resource_owners),
+            .unary => |u| try self.removeAwaitedTaskSharing(aa, u.operand.*, task_spawn_ids, resource_owners, locked_resources),
             .binary => |b| {
-                try self.removeAwaitedTaskSharing(aa, b.left.*, task_spawn_ids, resource_owners);
-                try self.removeAwaitedTaskSharing(aa, b.right.*, task_spawn_ids, resource_owners);
+                try self.removeAwaitedTaskSharing(aa, b.left.*, task_spawn_ids, resource_owners, locked_resources);
+                try self.removeAwaitedTaskSharing(aa, b.right.*, task_spawn_ids, resource_owners, locked_resources);
             },
             .call => |c| {
-                try self.removeAwaitedTaskSharing(aa, c.callee.*, task_spawn_ids, resource_owners);
-                for (c.args) |a| try self.removeAwaitedTaskSharing(aa, a, task_spawn_ids, resource_owners);
+                try self.removeAwaitedTaskSharing(aa, c.callee.*, task_spawn_ids, resource_owners, locked_resources);
+                for (c.args) |a| try self.removeAwaitedTaskSharing(aa, a, task_spawn_ids, resource_owners, locked_resources);
             },
-            .attribute => |a| try self.removeAwaitedTaskSharing(aa, a.obj.*, task_spawn_ids, resource_owners),
+            .attribute => |a| try self.removeAwaitedTaskSharing(aa, a.obj.*, task_spawn_ids, resource_owners, locked_resources),
             .index => |ix| {
-                try self.removeAwaitedTaskSharing(aa, ix.obj.*, task_spawn_ids, resource_owners);
-                try self.removeAwaitedTaskSharing(aa, ix.index.*, task_spawn_ids, resource_owners);
+                try self.removeAwaitedTaskSharing(aa, ix.obj.*, task_spawn_ids, resource_owners, locked_resources);
+                try self.removeAwaitedTaskSharing(aa, ix.index.*, task_spawn_ids, resource_owners, locked_resources);
             },
-            .list_lit => |items| for (items) |it| try self.removeAwaitedTaskSharing(aa, it, task_spawn_ids, resource_owners),
+            .list_lit => |items| for (items) |it| try self.removeAwaitedTaskSharing(aa, it, task_spawn_ids, resource_owners, locked_resources),
             .dict_lit => |pairs| for (pairs) |p| {
-                try self.removeAwaitedTaskSharing(aa, p.key, task_spawn_ids, resource_owners);
-                try self.removeAwaitedTaskSharing(aa, p.value, task_spawn_ids, resource_owners);
+                try self.removeAwaitedTaskSharing(aa, p.key, task_spawn_ids, resource_owners, locked_resources);
+                try self.removeAwaitedTaskSharing(aa, p.value, task_spawn_ids, resource_owners, locked_resources);
             },
-            .spawn_expr => |op| try self.removeAwaitedTaskSharing(aa, op.*, task_spawn_ids, resource_owners),
-            .generic_construct => |g| for (g.args) |a| try self.removeAwaitedTaskSharing(aa, a, task_spawn_ids, resource_owners),
+            .spawn_expr => |op| try self.removeAwaitedTaskSharing(aa, op.*, task_spawn_ids, resource_owners, locked_resources),
+            .generic_construct => |g| for (g.args) |a| try self.removeAwaitedTaskSharing(aa, a, task_spawn_ids, resource_owners, locked_resources),
             .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
         }
     }
@@ -2698,6 +2701,20 @@ pub const Checker = struct {
         /// (NORMALDE tek elemanlı — TEK bir `spawn` TEK bir task üretir —
         /// AMA dal-birleştirme SONUCU birden fazla OLABİLİR).
         task_spawn_ids: std.StringHashMapUnmanaged([]const usize) = .empty,
+        /// HH.7 (bkz. plan dosyası "post-spawn checker'ına döngü-tekrarlı
+        /// spawn-site kilitlemesi"): bir döngü GÖVDESİNİN KENDİ İÇİNDE
+        /// joinlemediği (fixpoint YAKINSADIKTAN SONRA HÂLÂ `resource_owners`de
+        /// KALAN) HER YENİ sahiplik İçİn KALICI olarak KİLİTLENEN isimler —
+        /// bu isimler ARTIK HİÇBİR SONRAKİ `await` İLE (fonksiyonun KALANI
+        /// BOYUNCA) TEMİZLENEMEZ (fire-and-forget'in AYNI "SONSUZA KADAR
+        /// uçuşta" disipliniyle TUTARLI — bkz. `lockRecurrentLoopOwnership`).
+        /// KÖK NEDEN: bir `spawn` çağrısının `spawn_id`si (AST-düğüm
+        /// pointer'ı) HER fixpoint iterasyonunda AYNIDIR — döngü GERÇEKTE
+        /// N AYRI runtime Task'ı ÜRETSE de, TEK bir owner OLARAK dedup
+        /// edilir; döngü SONRASI TEK bir `await`, SADECE SON iterasyonun
+        /// task'ını joinler, ÖNCEKİ iterasyonların task'ları HÂLÂ ÇALIŞIYOR
+        /// OLABİLİR.
+        locked_resources: std.StringHashMapUnmanaged(void) = .empty,
 
         fn clone(self: SpawnFlowState, aa: std.mem.Allocator) !SpawnFlowState {
             var out: SpawnFlowState = .{};
@@ -2705,17 +2722,25 @@ pub const Checker = struct {
             while (it1.next()) |e| try out.resource_owners.put(aa, e.key_ptr.*, e.value_ptr.*);
             var it2 = self.task_spawn_ids.iterator();
             while (it2.next()) |e| try out.task_spawn_ids.put(aa, e.key_ptr.*, e.value_ptr.*);
+            var it3 = self.locked_resources.keyIterator();
+            while (it3.next()) |k| try out.locked_resources.put(aa, k.*, {});
             return out;
         }
 
         /// "May" (union) birleştirme — `other`daki HERHANGİ bir owner/task-
-        /// eşlemesi SONUÇTA da (HANGİ dal GERÇEKTEN çalışırsa çalışsın)
+        /// eşlemesi/kilit SONUÇTA da (HANGİ dal GERÇEKTEN çalışırsa çalışsın)
         /// olası sayılır. DEĞİŞİKLİK olduysa `true` döner (döngü fixpoint'i
         /// İçİn).
         fn mergeFrom(self: *SpawnFlowState, aa: std.mem.Allocator, other: SpawnFlowState) !bool {
             const c1 = try mergeUsizeListMap(aa, &self.resource_owners, other.resource_owners);
             const c2 = try mergeUsizeListMap(aa, &self.task_spawn_ids, other.task_spawn_ids);
-            return c1 or c2;
+            var c3 = false;
+            var it3 = other.locked_resources.keyIterator();
+            while (it3.next()) |k| {
+                const gop = try self.locked_resources.getOrPut(aa, k.*);
+                if (!gop.found_existing) c3 = true;
+            }
+            return c1 or c2 or c3;
         }
     };
 
@@ -2805,6 +2830,34 @@ pub const Checker = struct {
     /// tarafta KALINIR.
     const MAX_LOOP_FIXPOINT_ITERATIONS: usize = 64;
 
+    /// HH.7: fixpoint YAKINSADIKTAN SONRA çağrılır — `pre_loop` (döngü
+    /// BAŞLAMADAN ÖNCEKİ durum) İLE KARŞILAŞTIRIP, `state.resource_owners`de
+    /// HÂLÂ KALAN (yani gövdenin KENDİ İÇİNDE joinlenmediği KANITLANAN) HER
+    /// YENİ (pre_loop'ta OLMAYAN) sahiplik İçİn O ismi KALICI olarak
+    /// KİLİTLER. Güvenli desen (spawn+await AYNI iterasyon İçİnde eşleşiyor)
+    /// İçİn `resource_owners` fixpoint SONUNDA ZATEN BOŞ olduğundan, BU
+    /// fonksiyon HİÇBİR ŞEYİ YANLIŞLIKLA kilitlemez.
+    fn lockRecurrentLoopOwnership(self: *Checker, aa: std.mem.Allocator, pre_loop: SpawnFlowState, state: *SpawnFlowState) !void {
+        _ = self;
+        var it = state.resource_owners.iterator();
+        while (it.next()) |entry| {
+            const pre_ids = pre_loop.resource_owners.get(entry.key_ptr.*) orelse &.{};
+            for (entry.value_ptr.*) |id| {
+                var was_pre_existing = false;
+                for (pre_ids) |p| {
+                    if (p == id) {
+                        was_pre_existing = true;
+                        break;
+                    }
+                }
+                if (!was_pre_existing) {
+                    try state.locked_resources.put(aa, entry.key_ptr.*, {});
+                    break;
+                }
+            }
+        }
+    }
+
     fn iterateLoopToFixpoint(
         self: *Checker,
         aa: std.mem.Allocator,
@@ -2812,13 +2865,17 @@ pub const Checker = struct {
         known_types: *std.StringHashMapUnmanaged(Type),
         state: *SpawnFlowState,
     ) TypeError!void {
+        const pre_loop = try state.clone(aa);
         var iterations: usize = 0;
         while (true) {
             iterations += 1;
             var body_state = try state.clone(aa);
             try self.walkPostSpawnCallerMutation(aa, body, known_types, &body_state);
             const changed = try state.mergeFrom(aa, body_state);
-            if (!changed) return;
+            if (!changed) {
+                try self.lockRecurrentLoopOwnership(aa, pre_loop, state);
+                return;
+            }
             if (iterations >= MAX_LOOP_FIXPOINT_ITERATIONS) {
                 try self.forceConservativeState(aa, known_types, state);
                 return;
@@ -2904,11 +2961,11 @@ pub const Checker = struct {
             // (3) `await` tespiti — deyimin İLGİLİ ifadesinin HERHANGİ bir
             // YERİNDE (genel gezinme İLE).
             switch (stmt.kind) {
-                .var_decl => |v| try self.removeAwaitedTaskSharing(aa, v.value, &state.task_spawn_ids, &state.resource_owners),
-                .assign => |a| try self.removeAwaitedTaskSharing(aa, a.value, &state.task_spawn_ids, &state.resource_owners),
-                .expr_stmt => |e| try self.removeAwaitedTaskSharing(aa, e, &state.task_spawn_ids, &state.resource_owners),
-                .return_stmt => |maybe_e| if (maybe_e) |e| try self.removeAwaitedTaskSharing(aa, e, &state.task_spawn_ids, &state.resource_owners),
-                .raise_stmt => |e| try self.removeAwaitedTaskSharing(aa, e, &state.task_spawn_ids, &state.resource_owners),
+                .var_decl => |v| try self.removeAwaitedTaskSharing(aa, v.value, &state.task_spawn_ids, &state.resource_owners, &state.locked_resources),
+                .assign => |a| try self.removeAwaitedTaskSharing(aa, a.value, &state.task_spawn_ids, &state.resource_owners, &state.locked_resources),
+                .expr_stmt => |e| try self.removeAwaitedTaskSharing(aa, e, &state.task_spawn_ids, &state.resource_owners, &state.locked_resources),
+                .return_stmt => |maybe_e| if (maybe_e) |e| try self.removeAwaitedTaskSharing(aa, e, &state.task_spawn_ids, &state.resource_owners, &state.locked_resources),
+                .raise_stmt => |e| try self.removeAwaitedTaskSharing(aa, e, &state.task_spawn_ids, &state.resource_owners, &state.locked_resources),
                 else => {},
             }
 

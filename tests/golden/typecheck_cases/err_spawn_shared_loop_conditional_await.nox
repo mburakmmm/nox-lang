@@ -1,0 +1,15 @@
+# HH.7: döngü gövdesi İÇİNDE bir await VAR AMA HER iterasyonda GARANTİLİ
+# DEĞİL (koşullu) — HH.5'in fork/merge'ü (eksik/koşullu `else` = "hâlâ
+# owned" birleşimi) BUNU ZATEN muhafazakâr tutuyor, HH.7'nin kilidiyle
+# BİRLEŞİK olarak döngü SONRASI da reddedilmeye DEVAM etmeli.
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+i: int = 0
+while i < 2:
+    t: Task[None] = spawn worker(xs)
+    if i == 0:
+        await t
+    i = i + 1
+xs.append(42)

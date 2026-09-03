@@ -1,0 +1,14 @@
+# HH.7: aynı desen AMA HER iterasyon KENDİ task'ını (döngü gövdesinin
+# İÇİNDE) join ediyor — güvenli, regresyon-yok kontrolü.
+# `lockRecurrentLoopOwnership` bu durumda HİÇBİR ŞEYİ kilitlememelidir
+# (fixpoint yakınsadığında `resource_owners` bu isim İçİn ZATEN boştur).
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+i: int = 0
+while i < 2:
+    t: Task[None] = spawn worker(xs)
+    await t
+    i = i + 1
+xs.append(42)
