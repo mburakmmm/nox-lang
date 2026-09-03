@@ -1,0 +1,22 @@
+class PayloadError(Exception):
+    code: int
+    ok: bool
+    ratio: float
+    label: str
+    def __init__(self: PayloadError, message: str, code: int, ok: bool, ratio: float, label: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.ok = ok
+        self.ratio = ratio
+        self.label = label
+
+def trigger() -> None:
+    raise PayloadError("boom", 7, True, 2.5, "tag")
+
+try:
+    trigger()
+except PayloadError as e:
+    print(e.code)
+    print(e.ok)
+    print(e.ratio)
+    print(e.label)

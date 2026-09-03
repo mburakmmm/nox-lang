@@ -14,6 +14,49 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.50.0]
+
+### Eklendi
+- **HH.1 — QBE↔LLVM backend conformance suite**: kullanıcının paylaştığı
+  bir harici incelemenin önerisi — GG.24'ün araştırması SIRASINDA
+  (v1.48.0) TAMAMEN İLGİSİZ bir stack-size ölçümü YAPARKEN `await`
+  edilen HERHANGİ bir `bool` sonucunun `--release` altında HİÇ
+  DERLENEMEDİĞİ (LLVM emisyon hatası, QBE yolu HİÇBİR ZAMAN göstermedi)
+  bulunmuştu — sistematik bir karşılaştırma OLMADAN bu tür hatalar
+  AYLARCA gizli kalabilirdi. YENİ `tests/golden/backend_conformance_test.zig`,
+  AYNI Nox kaynağını HEM QBE HEM LLVM İLE derleyip çalıştırır, stdout'ların
+  BİREBİR eşleştiğini doğrular — 6 "uyum" testi (fonksiyon dönüşü/
+  istisna-yükü/closure-yakalaması/sınıf-alanı/liste-elemanı/tek spawn+await,
+  int/bool/float/str/class tiplerini KAPSAR) + 5 "belgelenmiş sapma"
+  testi (`checker.zig`nin `isSpawnParamSafeType`/`isThreadTransferSafeType`si
+  — `list`/`class` spawn/`nox.thread.start` parametresi SADECE `--release`de
+  geçerli; `nox.thread.pool_run` SADECE `--release`de derlenir; decorator'lar
+  İSE TERSİNE SADECE `.qbe`de çalışır, `--release`de reddedilir — HER
+  İKİ backend'in de KENDİ KABUL/RED sınırını AÇIKÇA doğrular). Kırmızı-
+  takım kanıtı: `llvm_emit.zig`nin `trunc` düzeltmesi GEÇİCİ olarak GERİ
+  ALINIP conformance paketinin GERÇEKTEN bunu YAKALADIĞI doğrulandı.
+
+### Değişti
+- `tests/golden/codegen_golden_test.zig`nin `compileAndRun`ı VE
+  `tests/golden/llvm_golden_test.zig`nin `compileAndRunLlvm`ı YENİ,
+  paylaşılan `tests/golden/compile_helpers.zig`ye TAŞINDI (DAVRANIŞ
+  SIFIR değişti — AYNI fonksiyon gövdesi, SADECE YERİ değişti) — ÜÇÜNCÜ
+  bir bağımsız kopya (YENİ conformance testi İçİn) çıkarılmadı, TAM
+  OLARAK bu paketin ÖNLEMEYE ÇALIŞTIĞI "iki implementasyon SESSİZCE
+  birbirinden SAPAR" hata SINIFININ KENDİSİNE düşülmemesi İçİn.
+
+### Notlar
+- Bu turda `zig build test`in (Debug/ReleaseFast) TAM koşularında YENİ,
+  4. bir "zararsız ama TANIDIK" harness artefaktı GÖZLEMLENDİ: YENİ
+  conformance testi (11 test, HER biri HEM QBE HEM LLVM İçİn AYRI
+  alt-süreçler — TOPLAM ~44 harici süreç çağrısı) `zig build test`in
+  `--listen=-` IPC protokolüyle ARADA SIRADA `EndOfStream` panikleriyle
+  "başarısız" GÖRÜNÜYOR — AYNI test ikilisi `--listen` OLMADAN DOĞRUDAN
+  çalıştırıldığında (VE standalone `zig test` İLE tekrarlanan koşularda)
+  HER ZAMAN 11/11 TEMİZ geçiyor. Bu, projenin ÖNCEDEN belgelediği 3
+  bilinen flake'le (paralel test yükü altında OS-seviyesi kaynak baskısı)
+  AYNI KÖKTEN — GERÇEK bir mantık hatası DEĞİL.
+
 ## [1.49.0]
 
 ### Düzeltildi

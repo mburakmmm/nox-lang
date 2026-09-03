@@ -1,0 +1,14 @@
+import nox.thread
+
+async def sum_list(xs: list[int]) -> int:
+    total: int = 0
+    i: int = 0
+    while i < len(xs):
+        total = total + xs[i]
+        i = i + 1
+    return total
+
+xs: list[int] = [10, 20, 30]
+h: ThreadHandle[int] = nox.thread.start(sum_list, xs)
+result: int = await h.join()
+print(result)

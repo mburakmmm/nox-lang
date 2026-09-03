@@ -17108,6 +17108,104 @@ YÜKSEK/JSON: hedefin SADECE ~%9'u). Gerçek-dünya son doğrulama: Aether
 
 ---
 
+## 3.116 HH.1 — QBE↔LLVM backend conformance suite (v1.50.0)
+
+v1.49.0 (GG.25.1) SONRASI kullanıcı harici bir (GPT-5.6) incelemeyi
+PAYLAŞTI — 6 maddelik bir öneri listesi, kullanıcı "hepsini sırayla
+yapalım" DEDİ. Bu, listenin İLK maddesi.
+
+**Neden**: `codegen_golden_test.zig` (QBE) VE `llvm_golden_test.zig`
+(LLVM) İKİSİ de KENDİ backend'lerinin AYRI AYRI "doğru" olduğunu
+kanıtlar — AMA HİÇBİRİ İKİSİNİN AYNI davrandığını kanıtlamaz. GG.24'ün
+(v1.48.0) araştırması SIRASINDA (TAMAMEN İLGİSİZ bir stack-size
+ölçümü YAPARKEN) `llvm_emit.zig`nin `qbeOp1`sinin `await` edilen
+HERHANGİ bir `bool` sonucunu HER ZAMAN geçersiz LLVM IR'a çevirdiği
+(QBE yolu HİÇBİR ZAMAN bu hatayı GÖSTERMEDİ) BULUNMUŞTU — SOMUT bir
+kanıt: sistematik bir karşılaştırma OLMADAN bu tür hatalar AYLARCA
+gizli kalabilir.
+
+**Araştırma bulguları** (bir Explore ajanıyla `checker.zig`/`codegen_qbe/`
+TARANDI — TÜM backend-asimetrilerin TAM listesi):
+1. **Checker-seviyesi (SADECE 2 gerçek yer)**: `isSpawnParamSafeType`
+   (checker.zig:1053) VE `isThreadTransferSafeType` (checker.zig:1101)
+   — İKİSİ de `.llvm` altında `list`/`class`/`dict`i `spawn`/`nox.thread.
+   start` parametre tipi OLARAK İZİN VERİR (MN.9.4'ün LLVM-only atomik
+   retain/release-farkındalı kapanış paketlemesi GEREKTİRİR), `.qbe`
+   altında BUNLAR bir TİP HATASIDIR (`async def`in KENDİ TANIM ANINDA,
+   `spawn`ın ÇAĞRILIP ÇAĞRILMADIĞINDAN BAĞIMSIZ).
+2. **Codegen-seviyesi — 2 DAHA**: `nox.thread.pool_run`
+   (`async_thread.zig:717`) SADECE `--release` altında DERLENEBİLİR
+   (`if (self.backend == .qbe) return error.Unsupported;` — paylaşılan
+   `WorkerPool`nin atomik ARC'ı GEREKTİRİR). **TERS yönde**:
+   decorator'lar (`@decorator`, `codegen.zig:1595-1599`) SADECE `.qbe`
+   altında ÇALIŞIR — `--release`de `decorated_functions.len > 0` İSE
+   `error.Unsupported` (Faz LLVM.4'ün BİLİNÇLİ kapsam-dışı bırakması,
+   HİÇ LLVM'e taşınmadı — TEK "LLVM daha KISITLI" örneği).
+3. **Runtime-seviyesi, KASITLI bir mimari fark**: `.qbe` KATI M:1 (TEK
+   OS iş parçacığı, atomik OLMAYAN inline ARC); `--release` (LLVM) İSE
+   SIRADAN `spawn`/`Task[T]`/`Channel[T]` DAHİL HER ŞEY OTOMATİK
+   OLUŞTURULAN paylaşılan `WorkerPool`de (GERÇEK M:N work-stealing)
+   çalışır (§3.87). **Sonuç**: İKİ+ eşzamanlı görevin KENDİ `print()`
+   yaptığı bir fixture'da çıktı SIRASI backend'ler ARASINDA GARANTİLİ
+   AYNI DEĞİLDİR — conformance fixture'ları BU YÜZDEN SADECE deterministik-
+   sıralı senaryolarla (senkron KOD, YA DA HER görev SIRADAKİ
+   BAŞLAMADAN ÖNCE `await` edilen TEK spawn'lar) sınırlı KALDI.
+
+**Tasarım**: `compileAndRun`/`compileAndRunLlvm` (`codegen_golden_test.zig`/
+`llvm_golden_test.zig`) YENİ, paylaşılan `tests/golden/compile_helpers.zig`ye
+TAŞINDI — bu projenin GENELDE kullandığı "kasıtlı tekrar" konvansiyonundan
+(küçük, DURAĞAN yardımcılar İçİn) BİLİNÇLİ bir SAPMA: bu İKİ fonksiyon
+KÜÇÜK DEĞİL (~90 satır, ÇOK ADIMLI harici-süreç boru hattı) VE AKTİF
+olarak EVRİLİYOR — ÜÇÜNCÜ bir bağımsız kopya TAM OLARAK bu paketin
+ÖNLEMEYE ÇALIŞTIĞI hata SINIFININ (İKİ implementasyonun SESSİZCE
+birbirinden SAPMASI) KENDİSİNE düşerdi. `compile_helpers.zig`nin HİÇBİR
+`test` bloğu YOKTUR (Zig'in test-keşfi `@import` edilen `test` bloklarını
+da TOPLAR — aksi halde YENİ conformance dosyası, İKİ MEVCUT dosyanın
+TÜM testlerini de İKİNCİ KEZ çalıştırırdı).
+
+`tests/golden/backend_conformance_test.zig`: `expectConformant` (HER
+İKİ backend de ÇALIŞTIRILIR, stdout HEM `expected`e HEM BİRBİRİNE eşit
+olmalı — 6 test, int/bool/float/str/class/list tiplerini fonksiyon-
+dönüşü/istisna-yükü/closure-yakalaması/sınıf-alanı/liste-elemanı/TEK
+spawn+await ÜZERİNDEN KAPSAR) + `expectDivergence` (BİLİNÇLİ, BELGELENMİŞ
+bir asimetri — HANGİ backend'in kabul/red ettiğini VE kabul eden tarafın
+beklenen çıktısını DOĞRUDAN İDDİA eder — incelemenin önerdiği "expected_
+backend_divergence.toml" fikrinin TİP-GÜVENLİ, KOD-İÇİ eşdeğeri, 5 test:
+yukarıdaki 4 asimetrinin HER BİRİ İçİn EN AZ 1).
+
+**Kırmızı-takım kanıtı**: `llvm_emit.zig`nin `trunc i64 ... to i32`
+düzeltmesi GEÇİCİ olarak GERİ ALINIP (`add i32`nin hatalı sürümüne
+DÖNDÜRÜLÜP) `conformance_spawn_await_scalar.nox` (Task[bool] İçEREN)
+testinin GERÇEKTEN `ClangFailed`İLE başarısız OLDUĞU (`compile_helpers.
+zig:175`'in `error.ClangFailed`i, `%t21 = add i32 %t20, 0` — `%t20`
+`i64` tipinde tanımlı AMA `i32` bekleniyor hatasıyla) doğrulandı — SONRA
+düzeltme GERİ getirilip TEKRAR yeşil olduğu görüldü. Bu, paketin GG.24'te
+GERÇEKTEN YAŞANMIŞ hatayı YAKALAYABİLECEĞİNİN SOMUT kanıtıdır.
+
+**Yeni harness artefaktı (dürüstçe kaydedilir)**: `zig build test`in TAM
+koşularında YENİ conformance testi (11 test, HER biri HEM QBE HEM LLVM
+İçİn AYRI alt-süreçler — TOPLAM ~44 harici süreç çağrısı) ARADA SIRADA
+`--listen=-` IPC protokolünde `EndOfStream` panikleriyle "başarısız"
+GÖRÜNÜYOR — AYNI test ikilisi `--listen` OLMADAN DOĞRUDAN çalıştırıldığında
+(VE standalone `zig test` İLE TEKRARLANAN koşularda) HER ZAMAN 11/11
+TEMİZ geçiyor (doğrulandı: `.zig-cache/o/<hash>/test` binary'si DOĞRUDAN
+çalıştırılıp exit 0/tam çıktı GÖZLENDİ). Bu, projenin ÖNCEDEN belgelediği
+3 bilinen flake'le (paralel test yükü altında OS-seviyesi kaynak baskısı)
+AYNI KÖKTEN — GERÇEK bir mantık hatası DEĞİL, `zig build test`in `--listen`
+protokolünün BU kadar çok alt-süreç ÜRETEN bir test ikilisiyle ARADA
+SIRADA YAŞADIĞI bir senkronizasyon SORUNU.
+
+**Doğrulama**: `zig test` İLE `backend_conformance_test.zig` TEK BAŞINA
+(3+ tekrar) 11/11 TEMİZ. `codegen_golden_test.zig`/`llvm_golden_test.zig`
+`compile_helpers`e taşınmadan ÖNCEKİYLE BİREBİR AYNI (255/255, 9/9).
+`zig build test` (Debug+ReleaseFast) + `NOX_STRESS_ROUNDS=800 zig build
+stress-test -Doptimize=ReleaseFast` TEMİZ (yukarıdaki YENİ harness
+artefaktı + 3 ÖNCEDEN bilinen flake + `pool_bridge.zig`nin AYRICA
+ÖNCEDEN işaretlenmiş, İLGİSİZ aralıklı flake'i HARİÇ — HEPSİ standalone
+tekrar-koşumla İLGİSİZLİKLERİ doğrulandı).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

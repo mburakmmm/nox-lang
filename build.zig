@@ -379,6 +379,7 @@ pub fn build(b: *std.Build) void {
         "tests/golden/fmt_golden_test.zig",
         "tests/golden/codegen_ir_diff_test.zig",
         "tests/golden/llvm_golden_test.zig",
+        "tests/golden/backend_conformance_test.zig",
     };
 
     for (external_test_files) |path| {
