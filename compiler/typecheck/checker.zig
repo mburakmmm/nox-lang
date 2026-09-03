@@ -2998,6 +2998,37 @@ pub const Checker = struct {
     /// HH.2'nin "tek, threading edilen durum" tasarımı harici bir
     /// incelemeyle GERÇEK bir false-negative İÇERDİĞİ BULUNUP BU sürümde
     /// düzeltildi (bkz. plan dosyası "HH.5" bölümünün Context'i).
+    /// HH.9 (bkz. plan dosyası "post-spawn checker'ının alias-takibindeki
+    /// 2 boşluk"): `points_to` güncelleme mantığı — HEM `.var_decl` HEM
+    /// `.assign`(identifier-hedefli) TARAFINDAN PAYLAŞILIR. `stmt_id`
+    /// (ÇAĞIRAN TARAFTAN, DEYİMİN KENDİ STABİL AST-adresinden — `@intFromPtr(&stmts[i])`
+    /// — türetilir) HH.8'in `elems.ptr`/`pairs.ptr` TÜRETMESİNİN YERİNE
+    /// geçer: RHS'İN İÇİNE BAKMAK YERİNE DEYİMİN KENDİSİNİN kimliğini
+    /// kullanmak, BOŞ `[]`/`{}` literallerinin (Zig'in allocator'ı sıfır-
+    /// uzunluklu dilimler İçİn AYNI sentinel adresi DÖNDÜREBİLDİĞİNDEN)
+    /// YANLIŞLIKLA AYNI kaynak-kimliğine ÇAKIŞMASINI YAPISAL olarak
+    /// ORTADAN KALDIRIR (HER deyim, İÇERİĞİ BOŞ OLSA BİLE, KENDİ benzersiz
+    /// konumuna sahiptir).
+    fn updatePointsToForTarget(aa: std.mem.Allocator, state: *SpawnFlowState, target_name: []const u8, target_type: Type, rhs: ast.Expr, stmt_id: usize) !void {
+        switch (target_type) {
+            .list, .dict, .class => switch (rhs) {
+                .list_lit, .dict_lit => {
+                    const one = try aa.dupe(usize, &.{stmt_id});
+                    try state.points_to.put(aa, target_name, one);
+                },
+                .call => |c| if (c.callee.* == .identifier) {
+                    const one = try aa.dupe(usize, &.{stmt_id});
+                    try state.points_to.put(aa, target_name, one);
+                },
+                .identifier => |src_name| if (state.points_to.get(src_name)) |src_ids| {
+                    try state.points_to.put(aa, target_name, src_ids);
+                },
+                else => {},
+            },
+            else => {},
+        }
+    }
+
     fn walkPostSpawnCallerMutation(
         self: *Checker,
         aa: std.mem.Allocator,
@@ -3005,7 +3036,7 @@ pub const Checker = struct {
         known_types: *std.StringHashMapUnmanaged(Type),
         state: *SpawnFlowState,
     ) TypeError!void {
-        for (stmts) |stmt| {
+        for (stmts, 0..) |stmt, stmt_index| {
             self.current_line = stmt.line;
             self.current_span = stmt.span;
 
@@ -3013,41 +3044,23 @@ pub const Checker = struct {
             // ÖNCEKİ `points_to`/`resource_owners` durumuna göre.
             try self.checkDirectSharedMutationStmt(stmt, &state.points_to, &state.resource_owners);
 
+            // HH.9: bu deyimin KENDİ, STABİL AST-adresi — `stmts` parametresi
+            // HER ZAMAN AYNI, ORİJİNAL AST-dilimine İŞARET ETTİĞİNDEN,
+            // fixpoint İTERASYONLARI ARASINDA da STABİL kalır (spawn_id'nin
+            // AYNI garanti şekli).
+            const stmt_id: usize = @intFromPtr(&stmts[stmt_index]);
+
             if (stmt.kind == .var_decl) {
                 const v = stmt.kind.var_decl;
                 const vt = self.typeExprToType(v.type_expr) catch .none;
                 try known_types.put(aa, v.name, vt);
-                // HH.8: `points_to` güncellemesi — SADECE list/dict/class
-                // tipli yerellerde ANLAMLI. `ys = xs` (ÇIPLAK isim-den-isme
-                // atama) ALIAS'tır: `points_to[ys]`, `points_to[xs]`nin
-                // AYNI dizi REFERANSINI PAYLAŞIR. Bir literal/sınıf-kurucusu
-                // İSE YENİ, tek-elemanlı bir kaynak-kimliği ATANIR (GG.15/
-                // HH.5'in AYNI "AST-düğüm pointer/slice.ptr = benzersiz
-                // kimlik" deseni). BAŞKA HERHANGİ bir RHS şekli (fonksiyon-
-                // çağrısı dönüşü, attribute erişimi, vb.) İçİn HİÇBİR
-                // kaynak-kimliği ATANMAZ (v1 BİLİNÇLİ sınırı).
-                switch (vt) {
-                    .list, .dict, .class => {
-                        switch (v.value) {
-                            .list_lit => |elems| {
-                                const one = try aa.dupe(usize, &.{@intFromPtr(elems.ptr)});
-                                try state.points_to.put(aa, v.name, one);
-                            },
-                            .dict_lit => |pairs| {
-                                const one = try aa.dupe(usize, &.{@intFromPtr(pairs.ptr)});
-                                try state.points_to.put(aa, v.name, one);
-                            },
-                            .call => |c| if (c.callee.* == .identifier) {
-                                const one = try aa.dupe(usize, &.{@intFromPtr(c.callee)});
-                                try state.points_to.put(aa, v.name, one);
-                            },
-                            .identifier => |src_name| if (state.points_to.get(src_name)) |src_ids| {
-                                try state.points_to.put(aa, v.name, src_ids);
-                            },
-                            else => {},
-                        }
-                    },
-                    else => {},
+                try updatePointsToForTarget(aa, state, v.name, vt, v.value, stmt_id);
+            } else if (stmt.kind == .assign) {
+                const a = stmt.kind.assign;
+                if (a.target == .identifier) {
+                    if (known_types.get(a.target.identifier)) |t| {
+                        try updatePointsToForTarget(aa, state, a.target.identifier, t, a.value, stmt_id);
+                    }
                 }
             }
 

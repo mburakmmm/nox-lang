@@ -1,0 +1,14 @@
+# HH.9 (bkz. plan dosyası "post-spawn checker'ının alias-takibindeki 2
+# boşluk"): harici bir incelemenin BULDUĞU, v1.57.0'da (HH.8) SESSİZCE
+# derlenen GERÇEK bir false-negative — `points_to` güncellemesi SADECE
+# `.var_decl`de yapılıyordu, DÜZ bir YENİDEN-ATAMA (`ys = xs`) HİÇ
+# İŞLENMİYORDU.
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+ys: list[int] = [7, 8, 9]
+ys = xs
+t: Task[None] = spawn worker(xs)
+ys[0] = 42
+await t

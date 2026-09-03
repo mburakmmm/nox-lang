@@ -1,0 +1,10 @@
+# HH.9: AYNI boş-literal çakışma-yok kontrolü, `dict[K,V]` İçİn.
+async def worker(a: dict[str, int]) -> None:
+    print(a["x"])
+
+a: dict[str, int] = {}
+b: dict[str, int] = {}
+a["x"] = 1
+t: Task[None] = spawn worker(a)
+b["y"] = 1
+await t

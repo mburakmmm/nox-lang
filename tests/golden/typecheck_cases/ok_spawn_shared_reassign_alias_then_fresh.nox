@@ -1,0 +1,13 @@
+# HH.9: `ys = xs` (alias) SONRASI `ys = [10, 11, 12]` (YENİ, BAĞIMSIZ bir
+# kaynak) — `ys` ARTIK `xs`YLE alias DEĞİL, `points_to`nun ÜZERİNE-YAZMA
+# semantiğinin DOĞRU çalıştığının kanıtı (regresyon-yok).
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+ys: list[int] = [7, 8, 9]
+ys = xs
+ys = [10, 11, 12]
+t: Task[None] = spawn worker(xs)
+ys[0] = 42
+await t

@@ -14,6 +14,44 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.58.0]
+
+### Düzeltildi
+- **HH.9 — v1.57.0'ın (HH.8) alias-takibindeki İKİ boşluk düzeltildi**:
+  harici bir inceleme, HH.8'in ANA yön değişikliğini (isim yerine soyut
+  kaynak kimliği) DOĞRU BULDU AMA UYGULAMADA İKİ AYRI, GERÇEK boşluk
+  TESPİT ETTİ — HER İKİSİ de GERÇEK repro'larla DOĞRULANDI. **Boşluk 1
+  (YENİ false-negative)**: `points_to` güncellemesi SADECE `.var_decl`de
+  yapılıyordu, DÜZ bir yeniden-atama (`ys = xs`, `.assign`) HİÇ
+  İŞLENMİYORDU — `ys: list[int] = [7,8,9]; ys = xs; t = spawn worker(xs);
+  ys[0] = 42; await t` v1.57.0'da SESSİZCE derleniyordu. **Boşluk 2
+  (BENİM KENDİ hatam — YENİ false-positive)**: `.list_lit`/`.dict_lit`
+  İçİn kaynak-kimliği `elems.ptr`/`pairs.ptr`den türetiliyordu — Zig'in
+  allocator'ı sıfır-uzunluklu dilimler İçİn (boş `[]`/`{}` literalleri)
+  AYNI sentinel adresi döndürebiliyor, bu YÜZDEN İKİ TAMAMEN BAĞIMSIZ boş
+  liste ÇAKIŞABİLİYORDU (`a: list[int] = []; b: list[int] = []; spawn
+  worker(a); b.append(1)` YANLIŞLIKLA reddediliyordu). Düzeltme
+  (`compiler/typecheck/checker.zig`): kaynak-kimliği ARTIK RHS ifadesinin
+  İÇİNE BAKMAK YERİNE DEYİMİN (`var_decl`/`assign`) KENDİ, stabil AST-
+  adresinden (`@intFromPtr(&stmts[i])`, GG.15/HH.5-8'in AYNI "AST-düğüm
+  pointer'ı = benzersiz kimlik" deseni) türetiliyor — HER deyim, İÇERİĞİ
+  BOŞ olsa BİLE KENDİ benzersiz konumuna sahip olduğundan Boşluk 2 YAPISAL
+  olarak KAPANIYOR; VE points_to güncelleme mantığı YENİ, PAYLAŞILAN bir
+  `updatePointsToForTarget` yardımcısına ÇIKARILIP HEM `.var_decl` HEM
+  (YENİ) `.assign`(identifier-hedefli) TARAFINDAN çağrılabildiğinden
+  Boşluk 1 de KAPANIYOR — TEK bir tasarım değişikliği İKİ boşluğu da
+  kapattı. 4 yeni golden fixture eklendi (yeniden-atama repro'su +
+  bağımsız-boş-liste + bağımsız-boş-dict + alias-sonrası-yeniden-atama
+  regresyon-yok); MEVCUT TÜM HH.2/HH.5/HH.6/HH.7/HH.8 fixture'ları
+  DEĞİŞMEDEN geçiyor. Kırmızı-takım kanıtı: HER İKİ düzeltme AYRI AYRI
+  GEÇİCİ olarak geri alınıp İLGİLİ repro'nun TEKRAR YANLIŞ davrandığı,
+  SONRA GERİ eklenip TEKRAR DOĞRU davrandığı doğrulandı. İncelemenin
+  ÜÇÜNCÜ notu (fonksiyon-çağrısı dönüşü üzerinden aliasing, `ys =
+  identity(xs)`) HH.8'in KENDİ, önceden yazılmış "Kapsam DIŞI" bölümünde
+  ZATEN belgeliydi — YENİ bir sürpriz değil, BİLİNÇLİ bir v1 sınırı
+  olarak KALIYOR. `v1.57.0`nin KENDİ CHANGELOG/spec girişi TARİHSEL bir
+  kayıt olarak DEĞİŞTİRİLMEDİ.
+
 ## [1.57.0]
 
 ### Düzeltildi

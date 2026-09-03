@@ -17720,6 +17720,81 @@ bir kayıt olarak DEĞİŞTİRİLMEDİ.
 
 ---
 
+## 3.124 HH.9 — post-spawn checker'ının alias-takibindeki 2 boşluk: düz yeniden-atama + boş-literal kaynak-kimliği çakışması (v1.58.0)
+
+v1.57.0 (HH.8) SONRASI harici bir inceleme, HH.8'in ANA yön değişikliğini
+DOĞRU BULDU AMA UYGULAMADA İKİ AYRI, GERÇEK boşluk TESPİT ETTİ — HER
+İKİSİ de GERÇEK repro'larla DOĞRULANDI.
+
+**Boşluk 1 (YENİ false-negative)**: `points_to` güncellemesi SADECE
+`.var_decl`de yapılıyordu — DÜZ bir yeniden-atama (`ys = xs`, `.assign`,
+`a.target == .identifier`) HİÇ İŞLENMİYORDU:
+```nox
+ys: list[int] = [7, 8, 9]
+ys = xs                    # YENİDEN-ATAMA — points_to GÜNCELLENMİYORDU
+t: Task[None] = spawn worker(xs)
+ys[0] = 42                 # SESSİZCE derleniyordu
+await t
+```
+
+**Boşluk 2 (BENİM KENDİ hatam — YENİ false-positive)**: `.list_lit`/
+`.dict_lit` İçİn kaynak-kimliği `elems.ptr`/`pairs.ptr`den TÜRETİLİYORDU
+— Zig'in allocator'ı SIFIR-UZUNLUKLU dilimler İçİn (boş `[]`/`{}`
+literalleri) AYNI SENTİNEL adresi DÖNDÜREBİLDİĞİNDEN, İKİ TAMAMEN
+BAĞIMSIZ boş liste ÇAKIŞABİLİYORDU:
+```nox
+a: list[int] = []
+b: list[int] = []           # BAĞIMSIZ AMA a İLE AYNI kaynak-kimliğine
+t: Task[None] = spawn worker(a)
+b.append(1)                  # YANLIŞLIKLA reddediliyordu
+await t
+```
+(EL İLE doğrulandı — `a`/`b` TAMAMEN BAĞIMSIZ olmasına RAĞMEN
+`b.append(1)` `SpawnSharedMutation` İLE REDDEDİLDİ.)
+
+**Düzeltme — TEK bir değişiklik İKİ boşluğu da kapattı**: kaynak-kimliği
+ARTIK RHS ifadesinin İÇİNE BAKMAK YERİNE DEYİMİN (`var_decl`/`assign`)
+KENDİ, STABİL AST-adresinden (`@intFromPtr(&stmts[i])` — `stmts: []const
+ast.Stmt` parametresinin İÇİNE İNDEKSLEYEREK, GG.15/HH.5-8'in AYNI "AST-
+düğüm pointer'ı = bu derleme-geçişi İçİn benzersiz kimlik" deseni)
+türetiliyor — HER deyim (İÇERİĞİ BOŞ olsa BİLE) KENDİ benzersiz konumuna
+sahip olduğundan Boşluk 2 YAPISAL olarak KAPANDI. `points_to` güncelleme
+mantığı YENİ, PAYLAŞILAN `updatePointsToForTarget` yardımcısına ÇIKARILIP
+HEM `.var_decl` HEM (YENİ) `.assign` (identifier-hedefli) TARAFINDAN
+çağrılabilir hale GELDİĞİNDEN Boşluk 1 de KAPANDI. `walkPostSpawnCallerMutation`nin
+`for (stmts) |stmt|` döngüsü `for (stmts, 0..) |stmt, i|` OLDU (`stmts`
+parametresi HER ZAMAN AYNI, orijinal AST-dilimine İŞARET ETTİĞİNDEN,
+`&stmts[i]` fixpoint iterasyonları ARASINDA da STABİL kalır — spawn_id'nin
+AYNI garanti şekli).
+
+**Kapsam**: incelemenin ÜÇÜNCÜ notu (fonksiyon-çağrısı dönüşü üzerinden
+aliasing, `ys = identity(xs)`) HH.8'in KENDİ, önceden yazılmış "Kapsam
+DIŞI" bölümünde ZATEN belgeliydi — YENİ bir sürpriz DEĞİL, BİLİNÇLİ bir
+v1 sınırı olarak KALDI.
+
+**Doğrulama**: yeniden-atama repro'su (`err_spawn_shared_alias_reassignment.nox`)
++ bağımsız-boş-liste (`ok_spawn_shared_independent_empty_lists.nox`) +
+bağımsız-boş-dict (`ok_spawn_shared_independent_empty_dicts.nox`) + alias-
+sonrası-yeniden-atama regresyon-yok kontrolü (`ok_spawn_shared_reassign_alias_then_fresh.nox`)
+YENİ golden fixture olarak eklendi; MEVCUT TÜM HH.2/HH.5/HH.6/HH.7/HH.8
+fixture'ları DEĞİŞMEDEN geçti. Kırmızı-takım kanıtı: HER İKİ düzeltme
+AYRI AYRI GEÇİCİ olarak geri alınıp İLGİLİ repro'nun TEKRAR YANLIŞ
+davrandığı, SONRA GERİ eklenip TEKRAR DOĞRU davrandığı doğrulandı. `zig
+build test` (TAM paket) + `NOX_STRESS_ROUNDS=800 zig build stress-test
+-Doptimize=ReleaseFast` TEMİZ (BİLİNEN, İLGİSİZ 4 harness flake'i
+HARİÇ). `v1.57.0`nin KENDİ CHANGELOG/spec girişi TARİHSEL bir kayıt
+olarak DEĞİŞTİRİLMEDİ.
+
+## Kapsam DIŞI (bu turda)
+- Fonksiyon-çağrısı dönüşü ÜZERİNDEN aliasing (`ys = identity(xs)`) —
+  HH.8'in AYNI, DEĞİŞMEYEN v1 sınırı olarak KALIR.
+- `checkNoSpawnSharedMutation`/`try`/`except`/`finally`/`with` — AYNI,
+  DEĞİŞMEYEN v1 sınırları.
+- Concurrency checker'ı `checker.zig`den AYRI bir modüle taşımak —
+  incelemenin ÖNERİSİ, AYRI/büyük bir yeniden-yapılandırma görevi.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

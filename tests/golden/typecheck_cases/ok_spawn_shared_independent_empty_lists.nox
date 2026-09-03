@@ -1,0 +1,13 @@
+# HH.9: BENİM KENDİ hatam olarak bulunan bir false-positive — İKİ
+# BAĞIMSIZ boş `list` literali, kaynak-kimliği (Zig'in allocator'ı sıfır-
+# uzunluklu dilimler İçİn AYNI sentinel adresi DÖNDÜREBİLDİĞİNDEN) SADECE
+# `elems.ptr`den türetilseydi ÇAKIŞABİLİRDİ — deyimin KENDİ AST-adresinden
+# türetme bunu YAPISAL olarak ÖNLER. Regresyon-yok kontrolü.
+async def worker(a: list[int]) -> None:
+    print(len(a))
+
+a: list[int] = []
+b: list[int] = []
+t: Task[None] = spawn worker(a)
+b.append(1)
+await t

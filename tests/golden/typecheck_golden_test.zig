@@ -987,6 +987,39 @@ test "golden(post-spawn-caller-mutation): HH.8 — bağımsız (alias OLMAYAN) i
     );
 }
 
+// HH.9 (bkz. plan dosyası "post-spawn checker'ının alias-takibindeki 2
+// boşluk"): harici bir incelemenin BULDUĞU İKİ boşluk — (1) düz yeniden-
+// atama (`ys = xs`, `.var_decl` DEĞİL) alias olarak izlenmiyordu, (2)
+// BOŞ liste/dict literalleri kaynak-kimliği ÇAKIŞABİLİYORDU (BENİM KENDİ
+// HH.8 hatam — YENİ bir false-positive).
+test "golden(post-spawn-caller-mutation): HH.9 — düz yeniden-atama (ys = xs) İLE alias mutasyonu YAKALANIR" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_alias_reassignment.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_alias_reassignment.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): HH.9 — bağımsız BOŞ listeler yanlışlıkla reddedilmez (kaynak-kimliği çakışması DÜZELTİLDİ)" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/ok_spawn_shared_independent_empty_lists.nox"),
+        @embedFile("typecheck_cases/ok_spawn_shared_independent_empty_lists.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): HH.9 — bağımsız BOŞ dict'ler yanlışlıkla reddedilmez" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/ok_spawn_shared_independent_empty_dicts.nox"),
+        @embedFile("typecheck_cases/ok_spawn_shared_independent_empty_dicts.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): HH.9 — alias SONRASI YENİ bir kaynağa yeniden-atama artık BAĞIMSIZDIR" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/ok_spawn_shared_reassign_alias_then_fresh.nox"),
+        @embedFile("typecheck_cases/ok_spawn_shared_reassign_alias_then_fresh.expected"),
+    );
+}
+
 // v1.30.1 (bkz. plan dosyası "Checker'a ifade-derinliği koruması"):
 // `checkExpr`/`checkBinary`nin GERÇEK bir yığın-taşması SIGABRT'ına yol
 // açan (`tests/fuzz/lexer_parser_checker_fuzz.zig`nin 2000-derin
