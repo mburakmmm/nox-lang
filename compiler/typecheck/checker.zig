@@ -2556,7 +2556,7 @@ pub const Checker = struct {
     /// `resolveExprSharedType`nin GÜCÜNÜ KULLANMAZ, SADECE ÇIPLAK bir
     /// `identifier`in `shared_in_flight`te olup OLMADIĞINI kontrol eder
     /// (v1 BİLİNÇLİ sınırı — bkz. plan dosyasının "Kapsam DIŞI" bölümü).
-    fn checkDirectSharedMutationStmt(self: *Checker, stmt: ast.Stmt, shared_in_flight: *const std.StringHashMapUnmanaged(void)) TypeError!void {
+    fn checkDirectSharedMutationStmt(self: *Checker, stmt: ast.Stmt, shared_in_flight: *const std.StringHashMapUnmanaged([]const usize)) TypeError!void {
         switch (stmt.kind) {
             .assign => |a| switch (a.target) {
                 .index => |ix| if (ix.obj.* == .identifier and shared_in_flight.contains(ix.obj.identifier)) {
@@ -2582,42 +2582,67 @@ pub const Checker = struct {
         }
     }
 
-    /// GG.22: `checkTransitiveSpawnSharedMutationExpr`nin AYNI gezinme
-    /// şekli — AMA HERHANGİ bir `.await_expr` bulduğunda, operandı
-    /// `task_to_shared`teki BİR Task adına ÇÖZÜLÜYORSA O Task'ın paylaştığı
-    /// isimleri `shared_in_flight`ten SİLER (hata VERMEZ — bu SADECE bir
-    /// durum-güncelleme gezinmesidir).
-    fn removeAwaitedTaskSharing(self: *Checker, expr: ast.Expr, task_to_shared: *const std.StringHashMapUnmanaged([]const []const u8), shared_in_flight: *std.StringHashMapUnmanaged(void)) void {
+    /// HH.6 (bkz. plan dosyası "post-spawn checker'ına çoklu-sahip [multi-
+    /// owner] kaynak takibi"): `checkTransitiveSpawnSharedMutationExpr`nin
+    /// AYNI gezinme şekli — AMA HERHANGİ bir `.await_expr` bulduğunda,
+    /// operandı `task_spawn_ids`teki BİR Task adına ÇÖZÜLÜYORSA, O Task'ın
+    /// KENDİ spawn-ID'lerini `resource_owners`nin HER girdisinden ÇIKARIR
+    /// (koşulsuz TÜM anahtarı SİLMEK YERİNE — v1.54.0/HH.5'in GERÇEK
+    /// false-negative'i: `xs`i AYNI ANDA paylaşan İKİNCİ bir task VARSA,
+    /// SADECE `t1`in await'i `xs`i "temiz" saymamalı). Hashmap İTERASYONU
+    /// SIRASINDA anahtar SİLİNEMEDİĞİNDEN, boşalan anahtarlar AYRI bir
+    /// listede toplanıp gezinti BİTTİKTEN SONRA kaldırılır.
+    fn removeAwaitedTaskSharing(self: *Checker, aa: std.mem.Allocator, expr: ast.Expr, task_spawn_ids: *const std.StringHashMapUnmanaged([]const usize), resource_owners: *std.StringHashMapUnmanaged([]const usize)) TypeError!void {
         switch (expr) {
             .await_expr => |op| {
                 if (op.* == .identifier) {
-                    if (task_to_shared.get(op.identifier)) |names| {
-                        for (names) |n| _ = shared_in_flight.remove(n);
+                    if (task_spawn_ids.get(op.identifier)) |awaited_ids| {
+                        var keys_to_remove: std.ArrayListUnmanaged([]const u8) = .empty;
+                        var it = resource_owners.iterator();
+                        while (it.next()) |entry| {
+                            var remaining: std.ArrayListUnmanaged(usize) = .empty;
+                            for (entry.value_ptr.*) |owner_id| {
+                                var still_owned = true;
+                                for (awaited_ids) |aid| {
+                                    if (owner_id == aid) {
+                                        still_owned = false;
+                                        break;
+                                    }
+                                }
+                                if (still_owned) try remaining.append(aa, owner_id);
+                            }
+                            if (remaining.items.len == 0) {
+                                try keys_to_remove.append(aa, entry.key_ptr.*);
+                            } else {
+                                entry.value_ptr.* = try remaining.toOwnedSlice(aa);
+                            }
+                        }
+                        for (keys_to_remove.items) |k| _ = resource_owners.remove(k);
                     }
                 }
-                self.removeAwaitedTaskSharing(op.*, task_to_shared, shared_in_flight);
+                try self.removeAwaitedTaskSharing(aa, op.*, task_spawn_ids, resource_owners);
             },
-            .unary => |u| self.removeAwaitedTaskSharing(u.operand.*, task_to_shared, shared_in_flight),
+            .unary => |u| try self.removeAwaitedTaskSharing(aa, u.operand.*, task_spawn_ids, resource_owners),
             .binary => |b| {
-                self.removeAwaitedTaskSharing(b.left.*, task_to_shared, shared_in_flight);
-                self.removeAwaitedTaskSharing(b.right.*, task_to_shared, shared_in_flight);
+                try self.removeAwaitedTaskSharing(aa, b.left.*, task_spawn_ids, resource_owners);
+                try self.removeAwaitedTaskSharing(aa, b.right.*, task_spawn_ids, resource_owners);
             },
             .call => |c| {
-                self.removeAwaitedTaskSharing(c.callee.*, task_to_shared, shared_in_flight);
-                for (c.args) |a| self.removeAwaitedTaskSharing(a, task_to_shared, shared_in_flight);
+                try self.removeAwaitedTaskSharing(aa, c.callee.*, task_spawn_ids, resource_owners);
+                for (c.args) |a| try self.removeAwaitedTaskSharing(aa, a, task_spawn_ids, resource_owners);
             },
-            .attribute => |a| self.removeAwaitedTaskSharing(a.obj.*, task_to_shared, shared_in_flight),
+            .attribute => |a| try self.removeAwaitedTaskSharing(aa, a.obj.*, task_spawn_ids, resource_owners),
             .index => |ix| {
-                self.removeAwaitedTaskSharing(ix.obj.*, task_to_shared, shared_in_flight);
-                self.removeAwaitedTaskSharing(ix.index.*, task_to_shared, shared_in_flight);
+                try self.removeAwaitedTaskSharing(aa, ix.obj.*, task_spawn_ids, resource_owners);
+                try self.removeAwaitedTaskSharing(aa, ix.index.*, task_spawn_ids, resource_owners);
             },
-            .list_lit => |items| for (items) |it| self.removeAwaitedTaskSharing(it, task_to_shared, shared_in_flight),
+            .list_lit => |items| for (items) |it| try self.removeAwaitedTaskSharing(aa, it, task_spawn_ids, resource_owners),
             .dict_lit => |pairs| for (pairs) |p| {
-                self.removeAwaitedTaskSharing(p.key, task_to_shared, shared_in_flight);
-                self.removeAwaitedTaskSharing(p.value, task_to_shared, shared_in_flight);
+                try self.removeAwaitedTaskSharing(aa, p.key, task_spawn_ids, resource_owners);
+                try self.removeAwaitedTaskSharing(aa, p.value, task_spawn_ids, resource_owners);
             },
-            .spawn_expr => |op| self.removeAwaitedTaskSharing(op.*, task_to_shared, shared_in_flight),
-            .generic_construct => |g| for (g.args) |a| self.removeAwaitedTaskSharing(a, task_to_shared, shared_in_flight),
+            .spawn_expr => |op| try self.removeAwaitedTaskSharing(aa, op.*, task_spawn_ids, resource_owners),
+            .generic_construct => |g| for (g.args) |a| try self.removeAwaitedTaskSharing(aa, a, task_spawn_ids, resource_owners),
             .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
         }
     }
@@ -2649,71 +2674,122 @@ pub const Checker = struct {
         try self.walkPostSpawnCallerMutation(aa, stmts, &known_types, &state);
     }
 
-    /// HH.5 (bkz. plan dosyası "v1.51'in [HH.2] post-spawn checker'ında
-    /// fork/merge soundness düzeltmesi"): `if`/`elif`/`else` dallarının
-    /// HER BİRİ, GİRİŞTEKİ durumun KENDİ (bağımsız) KOPYASINDAN başlar —
-    /// dallar ARASI SIZINTI (bir daldaki `await`in KARDEŞ dalın mutasyon
-    /// kontrolünü YANLIŞLIKLA "temizlemesi", harici bir inceleme
-    /// TARAFINDAN BULUNAN GERÇEK bir false-negative) BU YÜZDEN YAPISAL
-    /// olarak İMKANSIZDIR. `mergeFrom`, ÇIKIŞTA "may" (union) anlamıyla
-    /// birleştirir — bkz. `SpawnFlowState`nin belge notu.
+    /// HH.6 (bkz. plan dosyası "post-spawn checker'ına çoklu-sahip [multi-
+    /// owner] kaynak takibi"): `resource_owners`/`task_spawn_ids`in İKİSİ
+    /// de AYNI şekle sahiptir (isim → spawn-site KİMLİK KÜMESİ, "isim →
+    /// BOOLEAN" DEĞİL) — bu YÜZDEN TEK, PAYLAŞILAN `mergeUsizeListMap`
+    /// yardımcısı İKİSİNİ de klonlayıp birleştirir. `spawn_id`, HER `spawn`
+    /// ÇAĞRISININ KENDİ AST-düğüm POINTER'IDIR (`@intFromPtr(sv.spawn_expr)` —
+    /// GG.15-18/HH.3'ün ZATEN kullandığı "AST düğüm-pointer = bu derleme-
+    /// geçişi İçİn benzersiz kimlik" deseni, YENİ bir kimlik şeması GEREKMEZ).
+    ///
+    /// **HH.5'in "isim → BOOLEAN" temsili GERÇEK bir İKİNCİ false-negative
+    /// İÇERİYORDU** (harici bir inceleme TARAFINDAN BULUNDU): `xs`i İKİ
+    /// AYRI `spawn` PAYLAŞTIĞINDA, `await t1` `xs`i TAMAMEN "temiz" sayıyordu
+    /// — `t2` HÂLÂ ÇALIŞIYOR olsa BİLE. `resource_owners["xs"] = [id1, id2]`
+    /// İLE `await t1` SADECE `id1`i ÇIKARIR, `id2` (t2'nin sahipliği) KALIR,
+    /// mutasyon HÂLÂ DOĞRU REDDEDİLİR.
     const SpawnFlowState = struct {
-        shared_in_flight: std.StringHashMapUnmanaged(void) = .empty,
-        task_to_shared: std.StringHashMapUnmanaged([]const []const u8) = .empty,
+        /// isim → HÂLÂ O ismi PAYLAŞAN spawn-site kimliklerinin listesi.
+        /// Liste BOŞALDIĞINDA anahtar TAMAMEN kaldırılır (`contains` HÂLÂ
+        /// "hiçbir owner yok" anlamına DOĞRU gelsin diye).
+        resource_owners: std.StringHashMapUnmanaged([]const usize) = .empty,
+        /// task-değişkeni adı → O DEĞİŞKENE atanmış spawn-site kimlikleri
+        /// (NORMALDE tek elemanlı — TEK bir `spawn` TEK bir task üretir —
+        /// AMA dal-birleştirme SONUCU birden fazla OLABİLİR).
+        task_spawn_ids: std.StringHashMapUnmanaged([]const usize) = .empty,
 
         fn clone(self: SpawnFlowState, aa: std.mem.Allocator) !SpawnFlowState {
             var out: SpawnFlowState = .{};
-            var it1 = self.shared_in_flight.keyIterator();
-            while (it1.next()) |k| try out.shared_in_flight.put(aa, k.*, {});
-            var it2 = self.task_to_shared.iterator();
-            while (it2.next()) |e| try out.task_to_shared.put(aa, e.key_ptr.*, e.value_ptr.*);
+            var it1 = self.resource_owners.iterator();
+            while (it1.next()) |e| try out.resource_owners.put(aa, e.key_ptr.*, e.value_ptr.*);
+            var it2 = self.task_spawn_ids.iterator();
+            while (it2.next()) |e| try out.task_spawn_ids.put(aa, e.key_ptr.*, e.value_ptr.*);
             return out;
         }
 
-        /// "May" (union) birleştirme — `other`daki HERHANGİ bir in-flight
-        /// isim/task-eşlemesi SONUÇTA da (HANGİ dal GERÇEKTEN çalışırsa
-        /// çalışsın) olası sayılır — bu, HERHANGİ bir GERÇEK yarışın
-        /// (dallardan HANGİSİ runtime'da GERÇEKLEŞİRSE gerçekleşsin)
-        /// KESİNLİKLE flag'lenmesini GARANTİ eder (sağlam üst-yaklaşım).
-        /// DEĞİŞİKLİK olduysa `true` döner (döngü fixpoint'i İçİn).
+        /// "May" (union) birleştirme — `other`daki HERHANGİ bir owner/task-
+        /// eşlemesi SONUÇTA da (HANGİ dal GERÇEKTEN çalışırsa çalışsın)
+        /// olası sayılır. DEĞİŞİKLİK olduysa `true` döner (döngü fixpoint'i
+        /// İçİn).
         fn mergeFrom(self: *SpawnFlowState, aa: std.mem.Allocator, other: SpawnFlowState) !bool {
-            var changed = false;
-            var it1 = other.shared_in_flight.keyIterator();
-            while (it1.next()) |k| {
-                const gop = try self.shared_in_flight.getOrPut(aa, k.*);
-                if (!gop.found_existing) changed = true;
-            }
-            var it2 = other.task_to_shared.iterator();
-            while (it2.next()) |e| {
-                if (self.task_to_shared.getPtr(e.key_ptr.*)) |existing| {
-                    var merged_list: std.ArrayListUnmanaged([]const u8) = .empty;
-                    try merged_list.appendSlice(aa, existing.*);
-                    var grew = false;
-                    for (e.value_ptr.*) |n| {
-                        var found = false;
-                        for (existing.*) |m| {
-                            if (std.mem.eql(u8, m, n)) {
-                                found = true;
-                                break;
-                            }
-                        }
-                        if (!found) {
-                            try merged_list.append(aa, n);
-                            grew = true;
-                        }
-                    }
-                    if (grew) {
-                        existing.* = try merged_list.toOwnedSlice(aa);
-                        changed = true;
-                    }
-                } else {
-                    try self.task_to_shared.put(aa, e.key_ptr.*, e.value_ptr.*);
-                    changed = true;
-                }
-            }
-            return changed;
+            const c1 = try mergeUsizeListMap(aa, &self.resource_owners, other.resource_owners);
+            const c2 = try mergeUsizeListMap(aa, &self.task_spawn_ids, other.task_spawn_ids);
+            return c1 or c2;
         }
     };
+
+    /// HH.6: `SpawnFlowState`nin İKİ alanının da PAYLAŞTIĞI, dedup-union
+    /// birleştirme mantığı — TEK generic fonksiyon (HH.5'in İKİ AYRI el-
+    /// yazımı bloğu YERİNE).
+    fn mergeUsizeListMap(aa: std.mem.Allocator, self_map: *std.StringHashMapUnmanaged([]const usize), other_map: std.StringHashMapUnmanaged([]const usize)) !bool {
+        var changed = false;
+        var it = other_map.iterator();
+        while (it.next()) |e| {
+            if (self_map.getPtr(e.key_ptr.*)) |existing| {
+                var merged_list: std.ArrayListUnmanaged(usize) = .empty;
+                try merged_list.appendSlice(aa, existing.*);
+                var grew = false;
+                for (e.value_ptr.*) |id| {
+                    var found = false;
+                    for (existing.*) |m| {
+                        if (m == id) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        try merged_list.append(aa, id);
+                        grew = true;
+                    }
+                }
+                if (grew) {
+                    existing.* = try merged_list.toOwnedSlice(aa);
+                    changed = true;
+                }
+            } else {
+                try self_map.put(aa, e.key_ptr.*, e.value_ptr.*);
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    /// HH.6: `map[name]`e `id`i dedup-ederek EKLER (yoksa YENİ, tek-elemanlı
+    /// bir girdi oluşturur).
+    fn addSpawnOwner(aa: std.mem.Allocator, map: *std.StringHashMapUnmanaged([]const usize), name: []const u8, id: usize) !void {
+        if (map.getPtr(name)) |existing| {
+            for (existing.*) |e| if (e == id) return;
+            var list: std.ArrayListUnmanaged(usize) = .empty;
+            try list.appendSlice(aa, existing.*);
+            try list.append(aa, id);
+            existing.* = try list.toOwnedSlice(aa);
+        } else {
+            const one = try aa.dupe(usize, &.{id});
+            try map.put(aa, name, one);
+        }
+    }
+
+    /// HH.6: fixpoint cap'i (`MAX_LOOP_FIXPOINT_ITERATIONS`) AŞILDIĞINDA
+    /// (VE state HÂLÂ değişiyorsa) SAVUNMA-DERİNLİĞİ olarak — `known_types`teki
+    /// HER `list`/`dict`/`class` tipli ismi, HİÇBİR `await`in ASLA
+    /// KALDIRAMAYACAĞI bir SENTİNEL kimlikle `resource_owners`e EKLER
+    /// (harici bir incelemenin önerisi: "cap'e ulaşıldığında GÜVENLİ
+    /// tarafta kal" — TEORİK olarak erken durmak ALT-yaklaşım OLABİLİR,
+    /// GERÇEKÇİ HİÇBİR fonksiyon 64 iterasyonu AŞMAYACAĞINDAN pratikte HİÇ
+    /// tetiklenmez).
+    const CONSERVATIVE_FALLBACK_SPAWN_ID: usize = std.math.maxInt(usize);
+
+    fn forceConservativeState(self: *Checker, aa: std.mem.Allocator, known_types: *const std.StringHashMapUnmanaged(Type), state: *SpawnFlowState) !void {
+        _ = self;
+        var it = known_types.iterator();
+        while (it.next()) |e| {
+            switch (e.value_ptr.*) {
+                .list, .dict, .class => try addSpawnOwner(aa, &state.resource_owners, e.key_ptr.*, CONSERVATIVE_FALLBACK_SPAWN_ID),
+                else => {},
+            }
+        }
+    }
 
     /// HH.5: `state`in tükenene KADAR (`mergeFrom` `false` DÖNENE KADAR)
     /// döngü gövdesini TEKRAR TEKRAR analiz eden GERÇEK bir fixpoint —
@@ -2724,7 +2800,9 @@ pub const Checker = struct {
     /// olduğundan, dizi EN FAZLA "toplam DİSTİNCT isim sayısı" KADAR
     /// iterasyonda `changed=false`e ULAŞIP SONLANIR — `MAX_LOOP_FIXPOINT_ITERATIONS`
     /// SADECE bir SAVUNMA-DERİNLİĞİ sınırı (GERÇEKÇİ HİÇBİR fonksiyonun
-    /// bu kadar DİSTİNCT paylaşılan-isim İçERMESİ BEKLENMEZ).
+    /// bu kadar DİSTİNCT paylaşılan-isim İçERMESİ BEKLENMEZ) — cap'e
+    /// GERÇEKTEN ulaşılırsa (HH.6) `forceConservativeState` İLE GÜVENLİ
+    /// tarafta KALINIR.
     const MAX_LOOP_FIXPOINT_ITERATIONS: usize = 64;
 
     fn iterateLoopToFixpoint(
@@ -2740,7 +2818,11 @@ pub const Checker = struct {
             var body_state = try state.clone(aa);
             try self.walkPostSpawnCallerMutation(aa, body, known_types, &body_state);
             const changed = try state.mergeFrom(aa, body_state);
-            if (!changed or iterations >= MAX_LOOP_FIXPOINT_ITERATIONS) return;
+            if (!changed) return;
+            if (iterations >= MAX_LOOP_FIXPOINT_ITERATIONS) {
+                try self.forceConservativeState(aa, known_types, state);
+                return;
+            }
         }
     }
 
@@ -2768,8 +2850,8 @@ pub const Checker = struct {
             self.current_span = stmt.span;
 
             // (1) Mutasyon kontrolü — BU deyimin KENDİ (2)/(3) işlemlerinden
-            // ÖNCEKİ `shared_in_flight` durumuna göre.
-            try self.checkDirectSharedMutationStmt(stmt, &state.shared_in_flight);
+            // ÖNCEKİ `resource_owners` durumuna göre.
+            try self.checkDirectSharedMutationStmt(stmt, &state.resource_owners);
 
             if (stmt.kind == .var_decl) {
                 const v = stmt.kind.var_decl;
@@ -2792,26 +2874,29 @@ pub const Checker = struct {
             if (spawn_value) |sv| {
                 if (sv == .spawn_expr and sv.spawn_expr.* == .call) {
                     const c = sv.spawn_expr.*.call;
-                    var added: std.ArrayListUnmanaged([]const u8) = .empty;
+                    // HH.6: HER spawn ÇAĞRISININ KENDİ AST-düğüm pointer'ı
+                    // — bu derleme-geçişi İçİn benzersiz "spawn-site kimliği"
+                    // (GG.15-18/HH.3'ün AYNI `@intFromPtr(...)` deseni).
+                    const spawn_id: usize = @intFromPtr(sv.spawn_expr);
+                    var any_shared = false;
                     for (c.args) |arg| {
                         if (arg == .identifier) {
                             if (known_types.get(arg.identifier)) |t| {
                                 if (t == .list or t == .dict or t == .class) {
-                                    try state.shared_in_flight.put(aa, arg.identifier, {});
-                                    try added.append(aa, arg.identifier);
+                                    try addSpawnOwner(aa, &state.resource_owners, arg.identifier, spawn_id);
+                                    any_shared = true;
                                 }
                             }
                         }
                     }
                     if (decl_name) |dn| {
-                        try state.task_to_shared.put(aa, dn, try added.toOwnedSlice(aa));
+                        if (any_shared) try addSpawnOwner(aa, &state.task_spawn_ids, dn, spawn_id);
                     } else {
                         // Fire-and-forget (`spawn worker(xs)`, isimsiz) —
-                        // BİLİNÇLİ olarak `task_to_shared`e HİÇ KAYDEDİLMEZ,
-                        // bu YÜZDEN bu isimler HİÇBİR ZAMAN `await` İLE
+                        // BİLİNÇLİ olarak `task_spawn_ids`e HİÇ KAYDEDİLMEZ,
+                        // bu YÜZDEN bu spawn-ID'si HİÇBİR ZAMAN `await` İLE
                         // TEMİZLENEMEZ (fonksiyonun KALANI BOYUNCA "uçuşta"
                         // kalır — muhafazakâr, KASITLI davranış).
-                        added.deinit(aa);
                     }
                 }
             }
@@ -2819,11 +2904,11 @@ pub const Checker = struct {
             // (3) `await` tespiti — deyimin İLGİLİ ifadesinin HERHANGİ bir
             // YERİNDE (genel gezinme İLE).
             switch (stmt.kind) {
-                .var_decl => |v| self.removeAwaitedTaskSharing(v.value, &state.task_to_shared, &state.shared_in_flight),
-                .assign => |a| self.removeAwaitedTaskSharing(a.value, &state.task_to_shared, &state.shared_in_flight),
-                .expr_stmt => |e| self.removeAwaitedTaskSharing(e, &state.task_to_shared, &state.shared_in_flight),
-                .return_stmt => |maybe_e| if (maybe_e) |e| self.removeAwaitedTaskSharing(e, &state.task_to_shared, &state.shared_in_flight),
-                .raise_stmt => |e| self.removeAwaitedTaskSharing(e, &state.task_to_shared, &state.shared_in_flight),
+                .var_decl => |v| try self.removeAwaitedTaskSharing(aa, v.value, &state.task_spawn_ids, &state.resource_owners),
+                .assign => |a| try self.removeAwaitedTaskSharing(aa, a.value, &state.task_spawn_ids, &state.resource_owners),
+                .expr_stmt => |e| try self.removeAwaitedTaskSharing(aa, e, &state.task_spawn_ids, &state.resource_owners),
+                .return_stmt => |maybe_e| if (maybe_e) |e| try self.removeAwaitedTaskSharing(aa, e, &state.task_spawn_ids, &state.resource_owners),
+                .raise_stmt => |e| try self.removeAwaitedTaskSharing(aa, e, &state.task_spawn_ids, &state.resource_owners),
                 else => {},
             }
 

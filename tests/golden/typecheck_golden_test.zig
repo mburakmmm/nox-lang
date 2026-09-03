@@ -894,6 +894,32 @@ test "golden(post-spawn-caller-mutation): HH.5 — hiçbir dalda mutasyon yoksa 
     );
 }
 
+// HH.6 (bkz. plan dosyası "post-spawn checker'ına çoklu-sahip [multi-
+// owner] kaynak takibi"): harici bir incelemenin BULDUĞU, v1.54.0'da
+// (HH.5) SESSİZCE derlenen GERÇEK bir false-negative — bir kaynağı İKİ
+// AYRI spawn PAYLAŞTIĞINDA, BİRİNİN await edilmesi kaynağı TAMAMEN
+// "temiz" saymamalı (DİĞER spawn HÂLÂ ÇALIŞIYOR olabilir).
+test "golden(post-spawn-caller-mutation): HH.6 — iki task aynı kaynağı paylaşıyor, birini await etmek diğerinin sahipliğini SİLMEZ" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_multi_owner_await_one_mutate.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_multi_owner_await_one_mutate.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): HH.6 — her iki task da await edildikten sonra mutasyon güvenlidir" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/ok_spawn_shared_multi_owner_await_both_mutate.nox"),
+        @embedFile("typecheck_cases/ok_spawn_shared_multi_owner_await_both_mutate.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): HH.6 — fire-and-forget + isimli task aynı kaynağı paylaşırsa isimli task await edilse de HÂLÂ reddedilir" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_fire_and_forget_plus_named_task.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_fire_and_forget_plus_named_task.expected"),
+    );
+}
+
 // v1.30.1 (bkz. plan dosyası "Checker'a ifade-derinliği koruması"):
 // `checkExpr`/`checkBinary`nin GERÇEK bir yığın-taşması SIGABRT'ına yol
 // açan (`tests/fuzz/lexer_parser_checker_fuzz.zig`nin 2000-derin

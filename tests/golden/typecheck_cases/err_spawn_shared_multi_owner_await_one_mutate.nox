@@ -1,0 +1,16 @@
+# HH.6 (bkz. plan dosyası "post-spawn checker'ına çoklu-sahip [multi-
+# owner] kaynak takibi"): harici bir incelemenin BULDUĞU, v1.54.0'da
+# (HH.5) SESSİZCE derlenen GERÇEK bir false-negative — `xs`i İKİ AYRI
+# `spawn` PAYLAŞIYOR, `await t1` `xs`i TAMAMEN "temiz" SAYIYORDU (`t2`
+# HÂLÂ ÇALIŞIYOR olsa BİLE). Çoklu-sahip (spawn-site kimlik kümesi)
+# takibi BUNU ARTIK YAKALAR: `await t1` SADECE `t1`in KENDİ sahipliğini
+# kaldırır, `t2`nin sahipliği KALIR.
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+t1: Task[None] = spawn worker(xs)
+t2: Task[None] = spawn worker(xs)
+await t1
+xs.append(42)
+await t2

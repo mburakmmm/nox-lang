@@ -17483,6 +17483,81 @@ dürüstçe BU sürümün KENDİ girişinde belgelendi.
 
 ---
 
+## 3.121 HH.6 — post-spawn checker'ına çoklu-sahip (multi-owner) kaynak takibi (v1.55.0)
+
+v1.54.0 (HH.5) SONRASI harici bir inceleme, `SpawnFlowState`nin HER
+kaynağı SADECE bir BOOLEAN ("uçuşta mı DEĞİL Mİ") olarak takip ettiğini,
+KAÇ AYRI task'ın O kaynağı paylaştığını (multiplicity) HİÇ BİLMEDİĞİNİ
+GÖSTERDİ. Bu bulgu DOĞRUDAN, GERÇEK bir repro İLE (v1.54.0'ın `zig-out/debug/
+bin/noxc`sine karşı) DOĞRULANDI:
+
+```nox
+t1: Task[None] = spawn worker(xs)
+t2: Task[None] = spawn worker(xs)
+await t1
+xs.append(42)   # SESSİZCE derleniyordu — t2 HÂLÂ xs'i OKUYOR OLABİLİR
+await t2
+```
+
+`await t1`, `xs`i TAMAMEN "temiz" sayıyordu — `t2` HÂLÂ ÇALIŞIYOR olsa
+BİLE. Kök neden: `removeAwaitedTaskSharing`, `await t1` gördüğünde
+`task_to_shared["t1"]`nin İŞARET ETTİĞİ HER ismi (`xs` DAHİL) `shared_in_flight`ten
+KOŞULSUZ SİLİYORDU — `t2`nin AYNI `xs`i BAĞIMSIZ olarak PAYLAŞTIĞI bilgisi
+HİÇ YOKTU.
+
+**Düzeltme — isim→BOOLEAN yerine isim→spawn-site kimlik KÜMESİ**:
+`SpawnFlowState`nin HER İKİ alanı da (`resource_owners`/`task_spawn_ids`)
+ARTIK `StringHashMapUnmanaged([]const usize)` — isim → HÂLÂ O ismi
+paylaşan/O DEĞİŞKENE atanmış spawn-site KİMLİKLERİNİN listesi. HER `spawn`
+çağrısının KENDİ AST-düğüm pointer'ı (`@intFromPtr(sv.spawn_expr)` — GG.15-18/
+HH.3'ün ZATEN kullandığı "AST düğüm-pointer = bu derleme-geçişi İçİn
+benzersiz kimlik" deseni, YENİ bir kimlik şeması GEREKMEDİ) spawn-ID olarak
+kullanılır. `await t1` ARTIK SADECE `t1`in KENDİ spawn-ID'sini `resource_owners["xs"]`
+listesinden ÇIKARIR (liste BOŞALIRSA anahtar TAMAMEN kaldırılır) — `t2`nin
+spawn-ID'si KALIR, `resource_owners["xs"]` HÂLÂ NON-EMPTY olduğundan
+`xs.append(42)` DOĞRU şekilde REDDEDİLİR. HER İKİ alan da AYNI şekle sahip
+olduğundan, TEK PAYLAŞILAN `mergeUsizeListMap` yardımcısı HH.5'in İKİ AYRI
+el-yazımı birleştirme bloğunun YERİNİ ALDI (kod tekrarı AZALDI).
+
+**Fixpoint cap'i İçİn savunma-derinliği**: incelemenin (TEORİK AMA GERÇEKÇİ
+olmayan) notu — `state` `MAX_LOOP_FIXPOINT_ITERATIONS=64`e ULAŞMADAN
+YAKINSAMAZSA, erken durmak TEORİK olarak bir ALT-yaklaşımdır (TAM "may"
+fixpoint'inin GARANTİ ettiği üst-sınırdan DAHA AZ olabilir). `iterateLoopToFixpoint`
+ARTIK cap AŞILDIĞINDA (VE HÂLÂ değişiyorsa) `forceConservativeState`
+çağırır — `known_types`teki HER `list`/`dict`/`class` tipli ismi, HİÇBİR
+`await`in ASLA KALDIRAMAYACAĞI bir SENTİNEL spawn-ID (`std.math.maxInt(usize)`)
+İLE `resource_owners`e EKLEYİP KALAN analiz boyunca O isimlerin HER
+mutasyonunu KOŞULSUZ reddeder (GERÇEKÇİ HİÇBİR fonksiyon 64 iterasyonu
+AŞMAYACAĞINDAN pratikte HİÇ tetiklenmez, AMA FORMEL olarak "cap'e
+ulaşıldığında GÜVENLİ tarafta kal" ilkesini SAĞLAR).
+
+**Doğrulama**: harici incelemenin TAM repro'su (`err_spawn_shared_multi_owner_await_one_mutate.nox`)
++ her-iki-task-da-await-edildikten-sonra-mutasyon negatifi (`ok_spawn_shared_multi_owner_await_both_mutate.nox`)
++ fire-and-forget+isimli-task-karışık fixture'ı (`err_spawn_shared_fire_and_forget_plus_named_task.nox`,
+isimli task'ın await'i isimsiz spawn'ın sahipliğini KALDIRAMADIĞINI kanıtlar)
+YENİ golden fixture olarak eklendi; MEVCUT TÜM HH.2/HH.5 fixture'ları
+(branch-leak/ters-yön/güvenli-dallanma/if-içi/elif/loop-geri-kenarı/aşırı-
+muhafazakâr-sonrası DAHİL) DEĞİŞMEDEN geçti (YENİ temsil, TEK-owner'lı
+senaryolarda ESKİ BOOLEAN temsille AYNI sonucu üretir). `zig build test`
+(TAM paket) + `NOX_STRESS_ROUNDS=800 zig build stress-test -Doptimize=ReleaseFast`
+TEMİZ (BİLİNEN, İLGİSİZ 4 harness flake'i HARİÇ). `v1.54.0`nin KENDİ
+CHANGELOG/spec girişi TARİHSEL bir kayıt olarak DEĞİŞTİRİLMEDİ — düzeltme
+dürüstçe BU sürümün KENDİ girişinde belgelendi.
+
+## Kapsam DIŞI (bu turda)
+- `try`/`except`/`finally`/`with`/`lowlevel`/İÇ İÇE `func_def`/`class_def`
+  gövdeleri — HH.2/HH.5'in AYNI, DEĞİŞMEYEN v1 sınırı olarak KALIR.
+- Task-değişkeni YENİDEN ATAMASI (`t = spawn A(xs); t = spawn B(xs)`) İçİn
+  TAM bir çözüm — MEVCUT `.put()`-benzeri (`addSpawnOwner`in İLK-girdi dalı)
+  semantiği KORUNUR (YENİDEN atanan bir task'ın ESKİ spawn-ID'si
+  `task_spawn_ids`ten KAYBOLMAZ AMA BİRİKİR — bu SADECE o kaynağın DAHA
+  UZUN süre "uçuşta" sayılması gibi KONSERVATİF bir sonuç doğurur, YANLIŞ-
+  NEGATİF DEĞİL).
+- İncelemenin `SpawnId{function_id, ast_site_id}` önerisi — AST-düğüm
+  POINTER kimliği BU projenin ZATEN kullandığı, YETERLİ bir eşdeğerdir.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

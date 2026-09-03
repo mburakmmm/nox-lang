@@ -1,0 +1,12 @@
+# HH.6: bir kaynak, HEM isimsiz (fire-and-forget) HEM isimli bir spawn
+# tarafından paylaşılıyor — isimli task `await` edilse BİLE, isimsiz
+# spawn'ın sahipliği HİÇBİR ZAMAN kaldırılamaz (KASITLI, HH.2'nin AYNI
+# muhafazakâr davranışı), bu YÜZDEN mutasyon HÂLÂ reddedilmeli.
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+spawn worker(xs)
+t: Task[None] = spawn worker(xs)
+await t
+xs.append(1)

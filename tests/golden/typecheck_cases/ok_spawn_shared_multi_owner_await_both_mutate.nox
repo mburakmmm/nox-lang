@@ -1,0 +1,11 @@
+# HH.6: aynı desen AMA HER İKİ task da mutasyondan ÖNCE await edildi —
+# GÜVENLİ, regresyon-yok kontrolü.
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+t1: Task[None] = spawn worker(xs)
+t2: Task[None] = spawn worker(xs)
+await t1
+await t2
+xs.append(42)

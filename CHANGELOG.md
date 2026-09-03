@@ -14,6 +14,43 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.55.0]
+
+### Düzeltildi
+- **HH.6 — v1.54.0'ın (HH.5) post-spawn checker'ında GERÇEK bir ikinci
+  false-negative düzeltildi**: harici bir inceleme, `SpawnFlowState`nin
+  HER kaynağı SADECE bir BOOLEAN ("uçuşta mı DEĞİL Mİ") olarak takip
+  ettiğini, KAÇ AYRI task'ın O kaynağı paylaştığını (multiplicity) HİÇ
+  BİLMEDİĞİNİ GÖSTERDİ. Somut, GERÇEKTEN DERLENEN repro (v1.54.0'a karşı
+  doğrulandı):
+  ```nox
+  t1: Task[None] = spawn worker(xs)
+  t2: Task[None] = spawn worker(xs)
+  await t1
+  xs.append(42)   # v1.54.0: SESSİZCE derleniyordu — t2 HÂLÂ xs'i OKUYOR OLABİLİR
+  await t2
+  ```
+  `await t1`, `xs`i TAMAMEN "temiz" sayıyordu — `t2` HÂLÂ ÇALIŞIYOR olsa
+  BİLE. Düzeltme (`compiler/typecheck/checker.zig`): `SpawnFlowState`nin
+  HER İKİ alanı da ARTIK "isim → BOOLEAN" YERİNE "isim → HÂLÂ O kaynağı
+  paylaşan spawn-site KİMLİK KÜMESİ" taşıyor (`resource_owners`/`task_spawn_ids`,
+  İKİSİ de `StringHashMapUnmanaged([]const usize)`, TEK PAYLAŞILAN
+  `mergeUsizeListMap` yardımcısıyla klonlanıp birleştiriliyor). HER `spawn`
+  çağrısı KENDİ AST-düğüm pointer'ını (`@intFromPtr(...)`, GG.15-18/HH.3'ün
+  ZATEN kullandığı "AST-pointer = benzersiz kimlik" deseni) spawn-ID olarak
+  taşıyor — `await t1` ARTIK SADECE `t1`in KENDİ spawn-ID'sini `resource_owners["xs"]`
+  listesinden ÇIKARIYOR, `t2`nin spawn-ID'si KALIYOR, `resource_owners["xs"]`
+  HÂLÂ NON-EMPTY olduğundan `xs.append(42)` DOĞRU şekilde REDDEDİLİYOR.
+  Fixpoint cap'i (`MAX_LOOP_FIXPOINT_ITERATIONS=64`) İçİn de savunma-derinliği
+  eklendi: cap GERÇEKTEN aşılırsa (GERÇEKÇİ HİÇBİR fonksiyon YAKLAŞMAZ)
+  `forceConservativeState` TÜM bilinen paylaşılabilir isimleri SENTİNEL
+  bir spawn-ID İLE "sonsuza kadar uçuşta" işaretleyerek GÜVENLİ tarafta
+  kalıyor (incelemenin önerisi). 3 yeni golden fixture eklendi (çoklu-
+  owner repro + her-ikisi-de-await negatifi + fire-and-forget+isimli-karışık);
+  MEVCUT TÜM HH.2/HH.5 fixture'ları (branch-leak DAHİL) DEĞİŞMEDEN geçiyor.
+  `v1.54.0`nin KENDİ CHANGELOG/spec girişi TARİHSEL bir kayıt olarak
+  DEĞİŞTİRİLMEDİ — düzeltme dürüstçe burada belgeleniyor.
+
 ## [1.54.0]
 
 ### Düzeltildi
