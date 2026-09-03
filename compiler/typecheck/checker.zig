@@ -2630,13 +2630,11 @@ pub const Checker = struct {
     /// HİÇBİR ŞEY KISITLAMIYORDU (`--release`/LLVM'de yapısal olarak İFADE
     /// edilebilen GERÇEK bir veri-yarışı boşluğu, çünkü list/dict/class
     /// SADECE `isSpawnParamSafeType`nin LLVM-gevşetmesiyle spawn-argümanı
-    /// olabiliyor). Bu YENİ, forward tek-geçiş kontrol BUNU kapatır — v1
-    /// BİLİNÇLİ sınırı: SADECE ÜST-DÜZEY deyimler taranır (if/while/for/
-    /// try/with gövdelerine İNİLMEZ — GG.17-21'in AYNI "muhafazakâr
-    /// davranışı KORU, kapsamı dar TUT" ilkesi, MEVCUT SIFIR korumadan
-    /// DAHA KÖTÜ bir şey YAPMAZ). `params`, `checkFunctionBody` İçİn
-    /// `fd.params`, `checkModule`nin üst-düzey taraması İçİn BOŞ dilim
-    /// olarak geçirilir.
+    /// olabiliyor). Bu forward kontrol BUNU kapatır. `params`, `checkFunctionBody`
+    /// İçİn `fd.params`, `checkModule`nin üst-düzey taraması İçİn BOŞ
+    /// dilim olarak geçirilir — durumu (`known_types`/`shared_in_flight`/
+    /// `task_to_shared`) KURUP `walkPostSpawnCallerMutation`e (aşağıda)
+    /// devreder.
     fn checkNoPostSpawnCallerMutation(self: *Checker, stmts: []const ast.Stmt, params: []const ast.Param) TypeError!void {
         var known_types: std.StringHashMapUnmanaged(Type) = .empty;
         defer known_types.deinit(self.allocator);
@@ -2653,13 +2651,52 @@ pub const Checker = struct {
             task_to_shared.deinit(self.allocator);
         }
 
+        try self.walkPostSpawnCallerMutation(stmts, &known_types, &shared_in_flight, &task_to_shared);
+    }
+
+    /// GG.HH.2 (bkz. plan dosyası "post-spawn çağıran-tarafı mutasyon
+    /// denetleyicisini CFG-farkındalı yapma"): `checkNoPostSpawnCallerMutation`nin
+    /// ÖZYİNELEMELİ çekirdeği — `if`/`elif`/`else` VE `while`/`for`
+    /// gövdelerine İNER (`checkNoSpawnSharedMutation`nin AYNI switch-kolu
+    /// şekli, checker.zig:2483). `try`/`except`/`finally`/`with`/`lowlevel`/
+    /// İÇ İÇE `func_def`/`class_def` BİLİNÇLİ olarak KAPSAM DIŞI KALIR
+    /// (AYRI, gelecekteki bir tur).
+    ///
+    /// **Fork/merge GEREKMEZ — TEK, threading edilen durum yeterli VE
+    /// AYNI DERECEDE SAĞLAM** (bkz. plan dosyasının "Tasarım" bölümü):
+    /// dallara AYRI birer KOPYA yerine AYNI `shared_in_flight`/`task_to_shared`
+    /// pointer'ları geçirilir. Bir `spawn`, bir dalın İÇİNDE olsa BİLE,
+    /// dal KAPANDIKTAN SONRA da paylaşımı "uçuşta" TUTMAYA DEVAM eder
+    /// (dal koşulunun runtime'da GERÇEKTEN gerçekleşip GERÇEKLEŞMEDİĞİ
+    /// derleme-zamanında BİLİNEMEZ) — bu bazı GÜVENLİ programları
+    /// GEREKSİZ YERE reddedebilir (yanlış-pozitif) AMA ASLA GERÇEK bir
+    /// yarışı KAÇIRMAZ (yanlış-negatif SIFIR) — `paramNeverEscapes`nin
+    /// AYNI "şüphede güvensiz varsay" disipliniyle TUTARLI.
+    ///
+    /// **Döngüler — "iki-geçiş" yaklaşımı**: `while`/`for` gövdesi TEK
+    /// SEFER YERİNE İKİ KEZ İŞLENİR (AYNI threading edilen durumla) —
+    /// TEK geçiş bir döngünün "geri-kenarını" (gövdenin SONUNDA spawn
+    /// edilip gövdenin BAŞINDA — bir SONRAKİ mantıksal iterasyonda —
+    /// mutasyona uğrayan bir paylaşım) KAÇIRIRDI; İKİNCİ geçiş, BİRİNCİ
+    /// geçişin SONUNDA BİRİKEN durumla gövdenin BAŞINI TEKRAR kontrol
+    /// ederek BUNU yakalar. TAM bir fixpoint DEĞİLDİR (İÇ İÇE ÇOK
+    /// KATMANLI döngülerin egzotik "çoklu-sıçrama" senaryoları KAPSAM
+    /// DIŞI, GERÇEKÇİ kodda AŞIRI NADİR) — TEK bir döngünün KENDİ geri-
+    /// kenarını kapsayan, ölçülü bir yaklaşım.
+    fn walkPostSpawnCallerMutation(
+        self: *Checker,
+        stmts: []const ast.Stmt,
+        known_types: *std.StringHashMapUnmanaged(Type),
+        shared_in_flight: *std.StringHashMapUnmanaged(void),
+        task_to_shared: *std.StringHashMapUnmanaged([]const []const u8),
+    ) TypeError!void {
         for (stmts) |stmt| {
             self.current_line = stmt.line;
             self.current_span = stmt.span;
 
             // (1) Mutasyon kontrolü — BU deyimin KENDİ (2)/(3) işlemlerinden
             // ÖNCEKİ `shared_in_flight` durumuna göre.
-            try self.checkDirectSharedMutationStmt(stmt, &shared_in_flight);
+            try self.checkDirectSharedMutationStmt(stmt, shared_in_flight);
 
             if (stmt.kind == .var_decl) {
                 const v = stmt.kind.var_decl;
@@ -2709,11 +2746,29 @@ pub const Checker = struct {
             // (3) `await` tespiti — deyimin İLGİLİ ifadesinin HERHANGİ bir
             // YERİNDE (genel gezinme İLE).
             switch (stmt.kind) {
-                .var_decl => |v| self.removeAwaitedTaskSharing(v.value, &task_to_shared, &shared_in_flight),
-                .assign => |a| self.removeAwaitedTaskSharing(a.value, &task_to_shared, &shared_in_flight),
-                .expr_stmt => |e| self.removeAwaitedTaskSharing(e, &task_to_shared, &shared_in_flight),
-                .return_stmt => |maybe_e| if (maybe_e) |e| self.removeAwaitedTaskSharing(e, &task_to_shared, &shared_in_flight),
-                .raise_stmt => |e| self.removeAwaitedTaskSharing(e, &task_to_shared, &shared_in_flight),
+                .var_decl => |v| self.removeAwaitedTaskSharing(v.value, task_to_shared, shared_in_flight),
+                .assign => |a| self.removeAwaitedTaskSharing(a.value, task_to_shared, shared_in_flight),
+                .expr_stmt => |e| self.removeAwaitedTaskSharing(e, task_to_shared, shared_in_flight),
+                .return_stmt => |maybe_e| if (maybe_e) |e| self.removeAwaitedTaskSharing(e, task_to_shared, shared_in_flight),
+                .raise_stmt => |e| self.removeAwaitedTaskSharing(e, task_to_shared, shared_in_flight),
+                else => {},
+            }
+
+            // (4) CFG'ye özyineleme — if/elif/else VE while/for gövdeleri.
+            switch (stmt.kind) {
+                .if_stmt => |i| {
+                    try self.walkPostSpawnCallerMutation(i.then_body, known_types, shared_in_flight, task_to_shared);
+                    for (i.elif_clauses) |ec| try self.walkPostSpawnCallerMutation(ec.body, known_types, shared_in_flight, task_to_shared);
+                    if (i.else_body) |eb| try self.walkPostSpawnCallerMutation(eb, known_types, shared_in_flight, task_to_shared);
+                },
+                .while_stmt => |w| {
+                    try self.walkPostSpawnCallerMutation(w.body, known_types, shared_in_flight, task_to_shared);
+                    try self.walkPostSpawnCallerMutation(w.body, known_types, shared_in_flight, task_to_shared);
+                },
+                .for_stmt => |f| {
+                    try self.walkPostSpawnCallerMutation(f.body, known_types, shared_in_flight, task_to_shared);
+                    try self.walkPostSpawnCallerMutation(f.body, known_types, shared_in_flight, task_to_shared);
+                },
                 else => {},
             }
         }

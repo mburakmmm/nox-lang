@@ -14,6 +14,36 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.51.0]
+
+### Düzeltildi
+- **HH.2 — post-spawn çağıran-tarafı mutasyon denetleyicisi artık CFG-
+  farkındalı**: GG.22.B'nin (v1.46.0) `checkNoPostSpawnCallerMutation`i
+  BİLİNÇLİ olarak SADECE üst-düzey deyimleri tarıyordu — bir harici
+  incelemenin işaret ettiği somut boşluk:
+  ```nox
+  xs: list[int] = [1, 2, 3]
+  t: Task[int] = spawn worker(xs)
+  if condition:
+      xs.append(42)   # ÖNCEDEN yakalanmıyordu
+  await t
+  ```
+  `condition` runtime'da `True` olursa `xs`, `worker`nin (`--release`
+  altında BAŞKA bir OS iş parçacığında ÇALIŞABİLEN) HÂLÂ İŞLEDİĞİ SIRADA
+  senkronizasyonsuz mutasyona uğrardı. `checkNoPostSpawnCallerMutation`
+  ARTIK `if`/`elif`/`else` VE `while`/`for` gövdelerine ÖZYİNELER —
+  FORK/MERGE gerektiren tam bir dataflow-lattice modeli YERİNE, TEK bir
+  threading edilen durumla (dallara AYRI kopyalar yerine AYNI pointer'lar
+  geçirilir) AYNI güvenlik garantisini (SIFIR yanlış-negatif) daha az
+  mühendislik riskiyle sağlayan bir tasarım. Döngüler İçİn "iki-geçiş"
+  yaklaşımı (gövde İKİ KEZ İşlenir) bir döngünün KENDİ "geri-kenarını"
+  (gövde SONUNDA spawn edilip gövde BAŞINDA mutasyona uğrayan bir
+  paylaşım) da yakalar. `try`/`except`/`finally`/`with`/`lowlevel`/
+  İÇ İÇE `func_def`/`class_def` HÂLÂ kapsam DIŞI (AYRI, gelecekteki bir
+  tur). Kırmızı-takım kanıtı: HEM if/while/for özyinelemesi HEM iki-
+  geçiş mekanizması AYRI AYRI GEÇİCİ olarak KALDIRILIP YENİ testlerin
+  DOĞRU şekilde başarısız olduğu doğrulandı.
+
 ## [1.50.0]
 
 ### Eklendi

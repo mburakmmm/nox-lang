@@ -1,0 +1,18 @@
+# BİLİNÇLİ, kabul edilen bir aşırı-muhafazakârlık (yanlış-pozitif) örneği
+# — bkz. plan dosyası "post-spawn çağıran-tarafı mutasyon denetleyicisini
+# CFG-farkındalı yapma", Tasarım #2: `spawn` bir `if` dalının İÇİNDE
+# olduğunda, dal KAPANDIKTAN SONRA da paylaşım "uçuşta" sayılmaya DEVAM
+# eder (derleme-zamanında `flag == 1`in runtime'da GERÇEKLEŞİP
+# GERÇEKLEŞMEYECEĞİ BİLİNEMEZ) — bu YÜZDEN aşağıdaki mutasyon, `flag`
+# GERÇEKTE HANGİ DEĞERİ ALIRSA ALSIN, KOŞULSUZ reddedilir. Bu ASLA bir
+# GERÇEK yarışı KAÇIRMAZ (yanlış-negatif SIFIR), sadece bazı GÜVENLİ
+# programları GEREKSİZ YERE reddedebilir — `paramNeverEscapes`nin AYNI
+# "şüphede güvensiz varsay" disipliniyle TUTARLI.
+async def worker(xs: list[int]) -> None:
+    pass
+
+xs: list[int] = [1, 2, 3]
+flag: int = 1
+if flag == 1:
+    t: Task[None] = spawn worker(xs)
+xs.append(1)

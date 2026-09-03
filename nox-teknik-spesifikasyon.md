@@ -17206,6 +17206,70 @@ tekrar-koşumla İLGİSİZLİKLERİ doğrulandı).
 
 ---
 
+## 3.117 HH.2 — post-spawn çağıran-tarafı mutasyon denetleyicisini CFG-farkındalı yapma (v1.51.0)
+
+Kullanıcının onayladığı 4 maddelik listenin 2. maddesi. GG.22.B'nin
+(v1.46.0) `checkNoPostSpawnCallerMutation`i BİLİNÇLİ bir v1 sınırı
+taşıyordu (KENDİ belge notu): "SADECE ÜST-DÜZEY deyimler taranır (if/
+while/for/try/with gövdelerine İNİLMEZ". Harici bir inceleme BUNU en
+somut kalan concurrency-safety boşluğu OLARAK işaret etti:
+
+```nox
+xs: list[int] = [1, 2, 3]
+t: Task[int] = spawn worker(xs)
+if condition:
+    xs.append(42)   # ÖNCEDEN yakalanmıyordu
+await t
+```
+
+`condition` runtime'da `True` olursa `xs`, `worker`nin (`--release`
+altında BAŞKA bir OS iş parçacığında ÇALIŞABİLEN) HÂLÂ İŞLEDİĞİ SIRADA
+senkronizasyonsuz mutasyona uğrar — GERÇEK bir veri yarışı.
+
+**Tasarım — fork/merge GEREKTİRMEYEN, AYNI DERECEDE SAĞLAM bir
+genişletme**: incelemenin önerdiği TAM dataflow-lattice modeli (branch-
+merge + fixpoint) YERİNE, TEK bir threading edilen durum (`shared_
+in_flight`/`task_to_shared`) if/elif/else dallarının HER BİRİNE AYRI
+birer KOPYA yerine AYNI pointer OLARAK geçirilir — bu, KARMAŞIK bir
+birleştirme algoritması OLMADAN İSTENEN ÜÇ özelliği DOĞAL olarak sağlar:
+(1) dıştan-içe sızma DOĞRU (spawn if'TEN ÖNCEYSE, if gövdesindeki
+mutasyon doğru YAKALANIR); (2) içten-dışa sızma AŞIRI-muhafazakâr AMA
+SAĞLAM (spawn if'İN İÇİNDEYSE, if KAPANDIKTAN SONRA da paylaşım "uçuşta"
+sayılmaya DEVAM eder — bazı GÜVENLİ programları GEREKSİZ YERE reddedebilir
+AMA ASLA GERÇEK bir yarışı KAÇIRMAZ, `paramNeverEscapes`nin AYNI "şüphede
+güvensiz varsay" disipliniyle TUTARLI); (3) döngüler İçİn "iki-geçiş"
+yaklaşımı (TAM fixpoint DEĞİL) — gövde İKİ KEZ İşlenerek bir döngünün
+KENDİ "geri-kenarı" (gövde SONUNDA spawn edilip gövde BAŞINDA — bir
+SONRAKİ mantıksal iterasyonda — mutasyona uğrayan bir paylaşım) da
+yakalanır (İÇ İÇE ÇOK KATMANLI döngülerin egzotik "çoklu-sıçrama"
+senaryoları KAPSAM DIŞI, GERÇEKÇİ kodda AŞIRI NADİR).
+
+**Uygulama**: `checkNoPostSpawnCallerMutation`nin (checker.zig) gövdesi
+YENİ, ÖZYİNELEMELİ `walkPostSpawnCallerMutation`e ÇIKARILDI — MEVCUT
+tek-geçişli mantık (mutasyon kontrolü + spawn tespiti + await tespiti)
+BİREBİR AYNI KALDI, SADECE `checkNoSpawnSharedMutation`nin (spawn-HEDEFİ
+tarafı) AYNI switch-kolu şekliyle `if_stmt`/`while_stmt`/`for_stmt`e
+özyineleme EKLENDİ. **KAPSAM DIŞI KALMAYA DEVAM EDEN** (`checkNoSpawnSharedMutation`nin
+ZATEN kapsadığı AMA BU fonksiyonun HÂLÂ İNMEDİĞİ): `try`/`except`/
+`finally`/`with`/`lowlevel`/İÇ İÇE `func_def`/`class_def` — AYRI,
+gelecekteki bir tur.
+
+**Kırmızı-takım kanıtı (İKİ AYRI mekanizma)**: (1) if/while/for
+özyinelemesi GEÇİCİ olarak KALDIRILIP YENİ 4 pozitif fixture'ın (5.
+"if içinde"/"elif"/"içten-dışa" + döngü fixture'ı) DOĞRU şekilde
+BAŞARISIZ olduğu (negatif/salt-okunur fixture HÂLÂ geçerken) doğrulandı;
+(2) döngü için "iki-geçiş" mekanizması TEK geçişe İNDİRİLİP SADECE
+döngü-geri-kenarı fixture'ının (diğer 4'ü ETKİLENMEDEN) BAŞARISIZ
+OLDUĞU doğrulandı — HER İKİ mekanizma da AYRI AYRI GERÇEKTEN load-
+bearing.
+
+**Doğrulama**: `zig test` İLE `typecheck_golden_test.zig` TEK BAŞINA
+102/102 TEMİZ (5 YENİ fixture DAHİL). `zig build test` (Debug+ReleaseFast)
++ `NOX_STRESS_ROUNDS=800 zig build stress-test -Doptimize=ReleaseFast`
+TEMİZ (BİLİNEN, İLGİSİZ harness flake'leri HARİÇ).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

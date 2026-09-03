@@ -824,6 +824,49 @@ test "golden(spawn-shared-mutation): KIRMIZI-TAKIM — override edilen bir metot
     );
 }
 
+// HH.2 (bkz. plan dosyası "post-spawn çağıran-tarafı mutasyon
+// denetleyicisini CFG-farkındalı yapma"): `checkNoPostSpawnCallerMutation`
+// ARTIK `if`/`elif`/`else` VE `while`/`for` gövdelerine ÖZYİNELER —
+// harici bir incelemenin işaret ettiği, ÖNCEDEN yakalanmayan TAM örnek.
+test "golden(post-spawn-caller-mutation): spawn'dan SONRA bir if gövdesi İÇİNDEKİ mutasyon ARTIK yakalanır" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_mutation_inside_if.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_mutation_inside_if.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): if gövdesi SADECE okuyorsa regresyon yok" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/ok_spawn_shared_mutation_if_read_only.nox"),
+        @embedFile("typecheck_cases/ok_spawn_shared_mutation_if_read_only.expected"),
+    );
+}
+
+// "İki-geçiş" yaklaşımı: mutasyon döngü gövdesinin BAŞINDA, spawn AYNI
+// gövdenin SONUNDA — TEK geçiş bu geri-kenarı KAÇIRIRDI.
+test "golden(post-spawn-caller-mutation): döngü geri-kenarındaki mutasyon (gövde başı, spawn gövde sonu) yakalanır" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_mutation_loop_back_edge.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_mutation_loop_back_edge.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): elif dalındaki mutasyon da yakalanır" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_mutation_in_elif.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_mutation_in_elif.expected"),
+    );
+}
+
+// Tasarımın BİLİNÇLİ, kabul edilen aşırı-muhafazakârlığı — bkz. fixture'ın
+// KENDİ belge notu.
+test "golden(post-spawn-caller-mutation): if İÇİNDE spawn edilen bir paylaşım, if KAPANDIKTAN SONRA da uçuşta sayılır (bilinçli aşırı-muhafazakârlık)" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_mutation_after_if_conservative.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_mutation_after_if_conservative.expected"),
+    );
+}
+
 // v1.30.1 (bkz. plan dosyası "Checker'a ifade-derinliği koruması"):
 // `checkExpr`/`checkBinary`nin GERÇEK bir yığın-taşması SIGABRT'ına yol
 // açan (`tests/fuzz/lexer_parser_checker_fuzz.zig`nin 2000-derin
