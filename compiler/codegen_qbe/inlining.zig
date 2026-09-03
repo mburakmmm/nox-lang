@@ -101,30 +101,31 @@ const MAX_INLINE_TOP_STMTS: usize = 8;
 const MAX_INLINE_TOTAL_STMTS: usize = 20;
 
 /// GG.17 (bkz. nox-teknik-spesifikasyon.md §3.10X): bir fiber'ın SABİT
-/// 128 KiB stack'i (`runtime/async_rt/fiber.zig`'in `STACK_SIZE`i, guard-
-/// page İLE korunan — GG.25'te 256 KiB'DEN küçültüldü, bkz. plan dosyası
-/// "STACK_SIZE küçültmesi") İçİn GÜVENLİ bir üst sınır — İÇ İÇE çağrı
-/// çerçeveleri/BİRDEN FAZLA eşzamanlı stack-yerelin PAYINI da bırakacak
-/// ŞEKİLDE MUHAFAZAKÂR seçildi (128 KiB'nin ~%1.5'i, ESKİ 256 KiB'İN AYNI
-/// ORANI — GG.25 STACK_SIZE'ı YARIYA indirirken BU sabiti de AYNI oranda
-/// küçülttü). GG.15/GG.16'nın (bu sabitten ÖNCE SINIRSIZ olan) İKİ
-/// üreticisine VE GG.17'nin YENİ `local_escape.zig`sine ORTAK uygulanır —
-/// hiçbiri BUNU AŞAN bir `alloc8` üretmez, aşan durumlar SESSİZCE normal
-/// ARC/arena yoluna DÜŞER (davranış DEĞİŞMEZ, sadece optimizasyon
-/// uygulanmaz).
-pub const MAX_STACK_ALLOC_SIZE: usize = 2048;
+/// 192 KiB stack'i (`runtime/async_rt/fiber.zig`'in `STACK_SIZE`i, guard-
+/// page İLE korunan — GG.25'te 256 KiB'DEN 128 KiB'e, SONRA GG.25.1'de
+/// (kullanıcı-kodu özyineleme payı İçİn) 192 KiB'e AYARLANDI, bkz. plan
+/// dosyası "STACK_SIZE küçültmesi") İçİn GÜVENLİ bir üst sınır — İÇ İÇE
+/// çağrı çerçeveleri/BİRDEN FAZLA eşzamanlı stack-yerelin PAYINI da
+/// bırakacak ŞEKİLDE MUHAFAZAKÂR seçildi (192 KiB'nin ~%1.5'i, ORİJİNAL
+/// 256 KiB'İN AYNI ORANI — STACK_SIZE HER değiştiğinde BU sabit de AYNI
+/// oranda ölçeklenir). GG.15/GG.16'nın (bu sabitten ÖNCE SINIRSIZ olan)
+/// İKİ üreticisine VE GG.17'nin YENİ `local_escape.zig`sine ORTAK
+/// uygulanır — hiçbiri BUNU AŞAN bir `alloc8` üretmez, aşan durumlar
+/// SESSİZCE normal ARC/arena yoluna DÜŞER (davranış DEĞİŞMEZ, sadece
+/// optimizasyon uygulanmaz).
+pub const MAX_STACK_ALLOC_SIZE: usize = 3072;
 
 /// GG.19 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 3"): `MAX_STACK_
 /// ALLOC_SIZE` SADECE nesne-BAŞINA — bir fonksiyonun (VE İçİNE splice
 /// edilen HER GG.2-inline callee'nin, AYNI fiziksel çerçeveyi PAYLAŞAN)
-/// TÜM stack-promotable yerellerinin TOPLAMI da BU tavanı AŞAMAZ (16
-/// KiB — fiber'ın 128 KiB stack'inin ~%12.5'i, ESKİ 256 KiB'İN AYNI oranı
-/// — GG.25'te YARIYA küçültüldü, bkz. `MAX_STACK_ALLOC_SIZE`nin AYNI
-/// güncelleme notu). `classifyVarDecl`nin (`local_escape.zig`) `running_
-/// total` parametresi BUNU uygular — aşan bir aday (boyut/escape ŞARTLARI
-/// HÂLÂ geçse BİLE) `nox_rc_alloc`a DEĞİL, arena yoluna DÜŞER (davranış
-/// DEĞİŞMEZ — SADECE stack yerine arena — sızıntı/çökme RİSKİ YOK).
-pub const MAX_PROMOTED_FRAME_SIZE: usize = 16384;
+/// TÜM stack-promotable yerellerinin TOPLAMI da BU tavanı AŞAMAZ (24
+/// KiB — fiber'ın 192 KiB stack'inin ~%12.5'i, ORİJİNAL 256 KiB'İN AYNI
+/// oranı — `MAX_STACK_ALLOC_SIZE`nin AYNI güncelleme notu). `classifyVarDecl`nin
+/// (`local_escape.zig`) `running_total` parametresi BUNU uygular — aşan
+/// bir aday (boyut/escape ŞARTLARI HÂLÂ geçse BİLE) `nox_rc_alloc`a
+/// DEĞİL, arena yoluna DÜŞER (davranış DEĞİŞMEZ — SADECE stack yerine
+/// arena — sızıntı/çökme RİSKİ YOK).
+pub const MAX_PROMOTED_FRAME_SIZE: usize = 24576;
 
 /// Bir inline-adayı gövdenin (özyinelemeli, `if`/`elif`/`else` İÇİNE de
 /// uygulanır) YALNIZCA `var_decl`/`assign`/`expr_stmt`/`if_stmt`/

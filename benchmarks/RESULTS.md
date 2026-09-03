@@ -467,6 +467,32 @@ Hata `git stash` İLE TEMİZ `v1.47.0` HEAD'e karşı AYNI ölçümün AYNI
 şişirilmiş sayıları YENİDEN üretmesiyle yakalanıp düzeltildi — YUKARIDAKİ
 tablo TAMAMEN TEMİZ, doğrulanmış ölçümlerdir.
 
+### GG.25.1 — STACK_SIZE'ın gözden kaçan riski: kullanıcı özyinelemesi (2026-09-01, bkz. §3.115)
+
+Yukarıdaki `GG.24/GG.25` tablosunun DÖRT senaryosu (regex/JSON/sınıf-
+zinciri/Aether-Nyx) HEPSİ çalışma-zamanının KENDİ İÇ özyinelemesiydi —
+HİÇBİRİ SIRADAN bir Nox kullanıcı fonksiyonunun (`def f(n): return
+f(n-1)` GİBİ) GERÇEK özyinelemesini ÖLÇMEDİ. Bir harici incelemenin
+işaret ettiği BU boşluk doğrulandı:
+
+**Metodoloji uyarısı**: KUYRUK-özyinelemeli desenler (`return f(n-1)`,
+hatta bir accumulator-toplama deseni) LLVM'in KENDİ optimize edicisi
+TARAFINDAN SESSİZCE bir döngüye çevrildiğinden n=500.000'e KADAR BİLE
+SIFIR yığın büyümesi gösterdi — YANILTICI. GERÇEK riski görmek İçİn
+LLVM'in DÖNÜŞTÜREMEYECEĞİ bir desen (her seviyede GERÇEK heap tahsisi
+yapan, KUYRUK-OLMAYAN bir özyineleme) gerekti:
+
+| STACK_SIZE | Basit desen (~48 B/seviye) | Orta-karmaşık desen (~80 B/seviye) |
+|---|---:|---:|
+| 256 KiB (orijinal) | ~5.400 seviye | ~3.200 seviye |
+| 128 KiB (v1.48.0) | ~2.700 seviye | ~1.600 seviye |
+| 192 KiB (v1.49.0) | ~4.000 seviye | ~2.400 seviye |
+
+Python'un varsayılan özyineleme sınırı (1.000) referans alınarak
+`STACK_SIZE` 128 KiB'DEN 192 KiB'e YÜKSELTİLDİ — orta-karmaşık desen
+İçİn ~2.400 seviye (Python'un ~%140 fazlası), ORİJİNAL 256 KiB'e göre
+YİNE DE adres-alanında ~%25 kazanım BIRAKARAK.
+
 ### GG.21 SONRASI ölçüm (2026-08-31, bkz. §3.111) — ASAP güçlendirmesi Tur 5 (metod çağrıları için interprocedural genişletme)
 
 GG.20'nin interprocedural kanıtı SADECE serbest fonksiyon çağrılarını

@@ -1,0 +1,24 @@
+# GG.25.1: sıradan, KUYRUK-OLMAYAN (LLVM'in döngüye ÇEVİREMEYECEĞİ —
+# her seviyede GERÇEK bir heap tahsisi/string birleştirmesi yapan) bir
+# kullanıcı özyinelemesi, Python'un KENDİ varsayılan özyineleme sınırıyla
+# (1000) AYNI derinlikte — STACK_SIZE (`runtime/async_rt/fiber.zig`)
+# GELECEKTE tekrar küçültülürse BU testin ÇÖKMESİ, o değişikliğin
+# sıradan kullanıcı özyinelemesi İçİn GÜVENLİ olmadığının KANITIDIR (bkz.
+# harici bir incelemenin işaret ettiği, GG.25'in İLK turunun (128 KiB)
+# ÖLÇMEDİĞİ risk — o zamanki dört senaryonun HEPSİ çalışma-zamanının
+# KENDİ İÇ özyinelemesiydi, sıradan kullanıcı kodu DEĞİL). `spawn`/`await`
+# BİLİNÇLİ olarak kullanılır — SPAWN EDİLMEYEN, DÜZ top-level bir program
+# ana OS iş parçacığının KENDİ (fiber DEĞİL, çok daha büyük) yığınında
+# çalışır (`NOX_STACK_PAINT` BÖYLE bir programda HER ZAMAN 0 raporlar) —
+# BU testin AMACI TAM OLARAK fiber'ın SINIRLI yığınını EGZERSİZ ETMEK.
+def build(n: int) -> str:
+    if n == 0:
+        return ""
+    return build(n - 1) + "a"
+
+async def worker() -> int:
+    s: str = build(1000)
+    return len(s)
+
+t: Task[int] = spawn worker()
+print(await t)

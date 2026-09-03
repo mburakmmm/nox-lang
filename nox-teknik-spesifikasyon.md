@@ -17040,6 +17040,74 @@ test, postgres-gerektiren HARİÇ) TAM test paketleri YENİ noxc İLE
 
 ---
 
+## 3.115 GG.25.1 — STACK_SIZE'ın gözden kaçan riski: sıradan kullanıcı özyinelemesi (v1.49.0)
+
+§3.114'ün (v1.48.0) YAYIMLANMASINDAN HEMEN SONRA, harici bir inceleme
+(kullanıcının paylaştığı bir GPT-5.6 değerlendirmesi) "kullanıcı-kodu
+özyineleme İçİn AYRI bir stack-overflow regresyon paketi eksik" bulgusunu
+işaret etti. Bu, DOĞRUDAN TEST EDİLİP DOĞRULANDI — §3.114'ün ÖLÇTÜĞÜ
+DÖRT senaryonun (regex/JSON/sınıf-zinciri release'i/Aether-Nyx) HEPSİ
+çalışma-zamanının KENDİ İÇ özyinelemesiydi, HİÇBİRİ SIRADAN bir Nox
+kullanıcı fonksiyonunun (`def f(n): return f(n-1)` GİBİ) GERÇEK
+özyinelemesini ÖLÇMEDİ.
+
+**Ölçüm metodolojisi (KRİTİK bir yan-bulgu içeriyor)**: İKİ "kuyruk-
+özyinelemeli" desen (`return f(n-1)`/accumulator-tarzı) İLK denendiğinde
+YANILTICI olarak SIFIR yığın büyümesi gösterdi (n=500.000'e kadar BİLE)
+— çünkü LLVM'in KENDİ optimize edicisi (clang `-O`) BUNLARI SESSİZCE
+bir döngüye ÇEVİRİYOR (tail-recursion elimination, hatta basit bir
+accumulator-toplama desenini BİLE). GERÇEK riski görmek İçİn LLVM'in
+DÖNÜŞTÜREMEYECEĞİ bir desen (her seviyede GERÇEK bir heap tahsisi/string
+birleştirmesi yapan, KUYRUK-OLMAYAN bir özyineleme — `return build(n-1)
++ "a"`) DENENDİ — BU seviye-başına ~48-80 bayt (fonksiyon karmaşıklığına
+göre; basit string-inşası ~48 B/seviye, sınıf-örneği+birkaç yerel
+İçEREN "orta karmaşıklıkta" bir fonksiyon ~80 B/seviye) GERÇEK yığın
+tüketiyor.
+
+**Sayılar (`NOX_STACK_PAINT` İLE, TEMİZ ReleaseFast derlemesiyle)**:
+
+| STACK_SIZE | Basit desen (48 B/sv) güvenli derinlik | Orta-karmaşık desen (80 B/sv) güvenli derinlik |
+|---|---:|---:|
+| 256 KiB (orijinal) | ~5.400 | ~3.200 |
+| 128 KiB (v1.48.0) | ~2.700 | ~1.600 |
+| 192 KiB (v1.49.0) | ~4.000 | ~2.400 |
+
+Python'un KENDİ varsayılan özyineleme sınırı (`sys.getrecursionlimit()`)
+**1.000**'dir — 128 KiB'in orta-karmaşık desen İçİn verdiği ~1.600
+seviye BUNUN ~1.6 katıydı (DAR bir pay); 192 KiB'in verdiği ~2.400
+seviye ~2.4 kat (DAHA RAHAT bir pay) sağlarken, ORİJİNAL 256 KiB'e göre
+YİNE DE adres-alanında ~%25 kazanım BIRAKIYOR.
+
+**Karar (kullanıcıya İKİ seçenek — 256 KiB'e TAM geri dönüş VEYA 192
+KiB ara değeri — sunulup ARA DEĞER seçildi)**: `STACK_SIZE` (`runtime/
+async_rt/fiber.zig`) 128 KiB'DEN **192 KiB**'e YÜKSELTİLDİ.
+`MAX_STACK_ALLOC_SIZE`(2048→3072)/`MAX_PROMOTED_FRAME_SIZE`(16384→24576)
+AYNI oranda (256 KiB'in orijinal ~%1.5/~%12.5 oranları KORUNARAK)
+ölçeklendi. `MAX_DIRECT_RELEASE_DEPTH` (50) DEĞİŞMEDİ — sınıf-zinciri
+release'inin KENDİ tavanı (5.936 B) HERHANGİ bir STACK_SIZE hedefinin
+ZATEN ÇOK ALTINDA.
+
+**YENİ, kalıcı regresyon testi**: `tests/golden/codegen_cases/
+gg25_user_recursion_depth_1000.nox` — Python'un varsayılan sınırıyla
+AYNI derinlikte (1000), KUYRUK-OLMAYAN, `spawn`/`await` İLE fiber'ın
+KENDİ yığınında ÇALIŞTIRILAN bir özyineleme (BİLİNÇLİ: `spawn` OLMADAN
+DÜZ bir top-level program ana OS iş parçacığının KENDİ — ÇOK DAHA BÜYÜK
+— yığınında çalışır, `NOX_STACK_PAINT` HER ZAMAN 0 raporlar — bu YÜZDEN
+BU testin fiber'ın SINIRLI yığınını GERÇEKTEN egzersiz etmesi İçİn
+`spawn`/`await` ŞARTTIR). `STACK_SIZE` GELECEKTE tekrar küçültülürse BU
+testin ÇÖKMESİ (SIGBUS), o değişikliğin sıradan kullanıcı özyinelemesi
+İçİn GÜVENLİ OLMADIĞININ KANITIDIR.
+
+**Doğrulama**: `zig build test` (Debug+ReleaseFast, YENİ fixture DAHİL)
++ `NOX_STRESS_ROUNDS=800 zig build stress-test -Doptimize=ReleaseFast`
+TEMİZ (AYNI 3 bilinen, İLGİSİZ harness flake'i HARİÇ). §3.114'ün DÖRT
+senaryosu 192 KiB'İN de ÇOK RAHAT altında kalmaya DEVAM ediyor (EN
+YÜKSEK/JSON: hedefin SADECE ~%9'u). Gerçek-dünya son doğrulama: Aether
+(20 test) + Nyx (45 test) TAM test paketleri YENİ noxc İLE (192 KiB
+`STACK_SIZE`İLE) 65/65 yeşil.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

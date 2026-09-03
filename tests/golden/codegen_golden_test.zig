@@ -3130,3 +3130,18 @@ test "codegen(çalıştır): GG.24 — bare except ile yakalanan derin zincirli 
         @embedFile("codegen_cases/gg24_bare_except_deep_chain_release.expected"),
     );
 }
+
+// GG.25.1: sıradan, KUYRUK-OLMAYAN bir KULLANICI özyinelemesi (bkz.
+// fixture'ın KENDİ belge notu) — Python'un varsayılan özyineleme
+// sınırıyla (1000) AYNI derinlikte, `spawn`/`await` İLE fiber'ın
+// KENDİ (GÜVENLE 128 KiB'e küçültülüp SONRA 192 KiB'e AYARLANAN)
+// yığınında çalıştırılır. STACK_SIZE GELECEKTE tekrar küçültülürse
+// BU testin ÇÖKMESİ (SIGBUS/SIGSEGV) o değişikliğin GÜVENLİ olmadığının
+// KANITIDIR — GG.24/GG.25'in İLK turunun ÖLÇMEDİĞİ, harici bir
+// incelemenin işaret ettiği riski KALICI olarak kapatır.
+test "codegen(çalıştır): GG.25.1 — 1000 seviyelik sıradan kullanıcı özyinelemesi fiber yığınında çökmeden tamamlanır" {
+    try expectGolden(
+        @embedFile("codegen_cases/gg25_user_recursion_depth_1000.nox"),
+        @embedFile("codegen_cases/gg25_user_recursion_depth_1000.expected"),
+    );
+}

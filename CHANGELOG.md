@@ -14,6 +14,47 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.49.0]
+
+### Düzeltildi
+- **GG.25.1 — `STACK_SIZE`'ın (v1.48.0) gözden kaçan riski: sıradan
+  KULLANICI özyinelemesi**: bir harici incelemenin işaret ettiği,
+  GG.24/GG.25'in (v1.48.0) ölçtüğü DÖRT senaryonun (regex/JSON/sınıf-
+  zinciri release'i/Aether-Nyx) HEPSİNİN çalışma-zamanının KENDİ İÇ
+  özyinelemesi olduğu, HİÇBİRİNİN SIRADAN bir Nox kullanıcı fonksiyonunun
+  GERÇEK özyinelemesini (`def f(n): return f(n-1)` gibi) ÖLÇMEDİĞİ
+  bulgusu doğrulandı. Ölçüm: KUYRUK-özyinelemeli desenler LLVM
+  TARAFINDAN SESSİZCE döngüye çevrildiğinden (yığın büyümesi SIFIR
+  görünür, YANILTICI test), AMA GERÇEK (kuyruk-OLMAYAN, her seviyede
+  heap tahsisi yapan — LLVM'in döngüye ÇEVİREMEYECEĞİ) bir özyineleme
+  seviye-başına ~48-80 bayt (fonksiyon karmaşıklığına göre) GERÇEK
+  yığın tüketiyor — 128 KiB'de bu SADECE ~1.600-2.700 seviye (Python'un
+  varsayılan 1.000 özyineleme sınırının ~1.6-2.7 katı, AMA DAR bir pay)
+  güvenli demekti (256 KiB'DEKİ ~3.200-5.400 seviyenin YARISI).
+  `STACK_SIZE` (`runtime/async_rt/fiber.zig`) 128 KiB'DEN **192 KiB**'e
+  yükseltildi — orta-karmaşıklıkta bir fonksiyon İçİn ~2.400 seviye
+  (Python'un ~%140 FAZLASI, DAHA RAHAT bir pay) sağlarken, ORİJİNAL
+  256 KiB'e göre YİNE DE adres-alanında ~%25 kazanım BIRAKIR.
+  `MAX_STACK_ALLOC_SIZE`(2048→3072)/`MAX_PROMOTED_FRAME_SIZE`(16384→24576)
+  AYNI oranda ölçeklendi. GG.24/GG.25'in DÖRT senaryosu 192 KiB'İN de
+  ÇOK RAHAT altında kalmaya DEVAM ediyor (EN YÜKSEK/JSON: hedefin
+  SADECE ~%9'u).
+
+### Eklendi
+- **YENİ, kalıcı regresyon testi** (`gg25_user_recursion_depth_1000.nox`):
+  Python'un varsayılan özyineleme sınırıyla (1000) AYNI derinlikte,
+  KUYRUK-OLMAYAN bir kullanıcı özyinelemesi, `spawn`/`await` İLE fiber'ın
+  KENDİ (sınırlı) yığınında çalıştırılır — `STACK_SIZE` GELECEKTE tekrar
+  küçültülürse BU testin ÇÖKMESİ (SIGBUS), o değişikliğin sıradan
+  kullanıcı özyinelemesi İçİn GÜVENLİ OLMADIĞININ KANITI olur.
+
+### Notlar
+- Bu düzeltme, `v1.48.0`nin YAYIMLANMASINDAN HEMEN SONRA, bir harici
+  incelemenin ("kullanıcı-kodu özyineleme için ayrı bir stack-overflow
+  regresyon paketi eksik") doğrudan doğrulanmasıyla bulundu — dürüstçe
+  AYRI bir sürüm OLARAK kaydedilir (`v1.48.0`nin KENDİSİ geri ALINMADI/
+  amend EDİLMEDİ, SADECE bu YENİ bulgu SONRASINDA düzeltildi).
+
 ## [1.48.0]
 
 ### Düzeltildi

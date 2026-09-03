@@ -74,11 +74,26 @@ extern fn nox_swap_context(old: *Context, new: *Context) void;
 // YENİDEN ölçüldü: regex (400 karakter literal) 1.312 B, JSON (30 seviye
 // iç-içe) 17.760 B (EN YÜKSEK sentetik senaryo), sınıf-zinciri release'i
 // (`MAX_DIRECT_RELEASE_DEPTH=50`İLE, HERHANGİ bir zincir uzunluğunda SABİT)
-// 5.936 B, Aether 4.928 B, Nyx 13.952 B — HEPSİ 128 KiB'in (131.072 B)
-// ÇOK RAHAT altında (en yüksek/JSON: hedefin SADECE ~%13.6'sı). ÖNCEKİ
-// 256 KiB (v1.47.0'IN GG.23 kararı — o zamanki zincir-release riski O
-// TURDA DÜZELTİLMEMİŞTİ) ARTIK GEREKSİZ CÖMERT.
-pub const STACK_SIZE: usize = 128 * 1024;
+// 5.936 B, Aether 4.928 B, Nyx 13.952 B — HEPSİ ÖNCE 128 KiB'e küçültülmüştü.
+//
+// **GG.25.1 (SONRADAN, AYNI oturumda düzeltme) — 128 KiB'İN GÖZDEN KAÇAN
+// riski**: yukarıdaki DÖRT senaryonun HEPSİ çalışma-zamanının KENDİ İÇ
+// özyinelemesiydi — HİÇBİRİ SIRADAN bir KULLANICI Nox fonksiyonunun
+// GERÇEK özyinelemesini (`def f(n): ... return f(n-1)` gibi) ÖLÇMEDİ.
+// Harici bir incelemenin işaret ettiği BU boşluk SONRADAN test edildi:
+// KUYRUK-özyinelemeli desenler LLVM TARAFINDAN SESSİZCE döngüye
+// çevrildiğinden (yığın büyümesi SIFIR görünür, YANILTICI), AMA GERÇEK
+// (kuyruk-OLMAYAN, heap-tahsisi İÇEREN — LLVM'in döngüye ÇEVİREMEYECEĞİ)
+// bir özyineleme SEVİYE-BAŞINA ~48-80 B (fonksiyon karmaşıklığına göre)
+// GERÇEK yığın tüketiyor — 128 KiB'de bu SADECE ~1.600-2.700 seviye
+// (Python'un varsayılan 1.000 özyineleme sınırının ~1.6-2.7 katı, AMA
+// DAR bir pay) güvenli DEMEKTİ. **192 KiB'e YÜKSELTİLDİ** — orta-
+// karmaşıklıkta bir fonksiyon İçİn ~2.400 seviye (Python'un ~%140 FAZLASI,
+// DAHA RAHAT bir pay) sağlarken, 256 KiB'e göre YİNE DE adres-alanında
+// ~%25 kazanım BIRAKIR. Yukarıdaki DÖRT senaryonun HEPSİ 192 KiB'İN de
+// ÇOK RAHAT altında kalmaya DEVAM eder (EN YÜKSEK/JSON: hedefin SADECE
+// ~%9'u).
+pub const STACK_SIZE: usize = 192 * 1024;
 pub const STACK_ALIGN: usize = 16;
 
 /// Faz MN.8, Bulgu C — GÜVENLİK AĞI: fiber yığınları ARTIK düz `std.mem.
