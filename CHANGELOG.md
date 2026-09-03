@@ -14,6 +14,42 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.59.0]
+
+### Eklendi
+- **HH.10 — post-spawn checker'ına dönüş-alias etkileri (return-alias
+  effects)**: harici bir inceleme HH.8/HH.9'un KENDİ, bilinçli olarak
+  ertelenmiş "Kapsam DIŞI" maddesini (fonksiyon-çağrısı dönüşü üzerinden
+  aliasing) önerdi. `def identity(xs: list[int]) -> list[int]: return xs`
+  gibi bir fonksiyonun dönüş değeri, kendi parametresiyle GERÇEKTEN alias'tır
+  — `ys = identity(xs); t = spawn worker(xs); ys[0] = 42` v1.58.0'da
+  sessizce derleniyordu. Düzeltme (`compiler/typecheck/checker.zig`):
+  YENİ bir whole-program pre-pass (`computeReturnAliasEffects`,
+  `computeMutatesGraph`ile AYNI aşamada) her üst-düzey, generic-olmayan
+  fonksiyon için tek-geçişli bir `ReturnAliasEffect` (`fresh` / bir SET
+  parametre indeksiyle `alias_params` / `unknown`) hesaplıyor — fonksiyonun
+  KENDİ `return` ifadelerini (if/while/for'a özyineleyerek, ama BAŞKA bir
+  fonksiyona transitif ÇÖZÜMLEME yapmadan — bu SINIRLAMA özyineleme/karşılıklı
+  özyineleme risk sınıfını tamamen ortadan kaldırıyor) tarayıp: bir parametreyi
+  DOĞRUDAN döndüren yollar o parametrenin indeksini `alias_params` kümesine
+  ekliyor (`if flag: return a else: return b` gibi İKİ farklı parametre
+  union'lanabiliyor — `choose(a,b,flag)` örneği), literal/sınıf-kurucusu
+  dönüşleri katkı SAĞLAMIYOR (kesin fresh), `try`/`with` içeren VEYA başka
+  bir fonksiyon çağıran dönüşler `unknown`a düşüyor (konservatif, transitif
+  zincirler v1'de KAPSAM DIŞI). `updatePointsToForTarget`'ın `.call` dalı
+  bu etkiyi tüketiyor: `.fresh`/bulunamayan-callee MEVCUT "taze kaynak-
+  kimliği" davranışını KORUYOR (sınıf kurucuları/extern/generic/metodlar
+  değişmedi), `.alias_params` ilgili argümanları points_to üzerinden çözüp
+  hedefe UNION'LUYOR, `.unknown` HİÇBİR points_to girdisi eklemiyor (HH.9-
+  öncesi davranışla BİREBİR AYNI — SIFIR yeni false-positive riski). 4 yeni
+  golden fixture eklendi (identity repro'su + choose union + fresh
+  regresyon-yok + transitif-unknown regresyon-yok); MEVCUT TÜM HH.2-HH.9
+  fixture'ları DEĞİŞMEDEN geçiyor. İncelemenin AYRICA öne sürdüğü "döngü-
+  içi tekrar-tahsis hassasiyeti" (allocation-site vs allocation-instance)
+  EL İLE incelendi — HH.7'nin ZATEN belgelenmiş "recurrent lock" ödünleşiminin
+  farklı bir ifadesi olduğu, kilidin SADECE AYNI statik deyime sızdığı
+  (bağımsız deyimlere SIZMADIĞI) doğrulandı — AYRI bir düzeltme GEREKMEDİ.
+
 ## [1.58.0]
 
 ### Düzeltildi

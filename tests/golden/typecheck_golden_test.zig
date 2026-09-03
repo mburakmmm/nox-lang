@@ -1020,6 +1020,40 @@ test "golden(post-spawn-caller-mutation): HH.9 — alias SONRASI YENİ bir kayna
     );
 }
 
+// HH.10 (bkz. plan dosyası "post-spawn checker'ına dönüş-alias etkileri"):
+// bir fonksiyonun dönüş değerinin KENDİ parametrelerinden hangileriyle
+// alias OLABİLECEĞİNİN analizi — `identity(xs): return xs` GİBİ bir
+// fonksiyonun dönüş değerinin ARTIK KENDİ parametresiyle alias
+// SAYILDIĞININ kanıtı (HH.8/HH.9'un KENDİ "Kapsam DIŞI" bölümünde
+// BİLİNÇLİ olarak ERTELENMİŞTİ).
+test "golden(post-spawn-caller-mutation): HH.10 — identity(xs) dönüşü xs İLE alias, mutasyon YAKALANIR" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_return_alias_identity.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_return_alias_identity.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): HH.10 — choose(a,b,flag) İKİ parametrenin UNION'ı, HER İKİSİ de yakalanır" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_return_alias_choose_union.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_return_alias_choose_union.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): HH.10 — make() fresh döner, mutasyon GÜVENLİDİR (regresyon-yok)" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/ok_spawn_shared_return_alias_fresh.nox"),
+        @embedFile("typecheck_cases/ok_spawn_shared_return_alias_fresh.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): HH.10 — transitif çağrı (wrapper->helper) unknown sayılır, YENİ false-positive YOK" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/ok_spawn_shared_return_alias_transitive_unknown.nox"),
+        @embedFile("typecheck_cases/ok_spawn_shared_return_alias_transitive_unknown.expected"),
+    );
+}
+
 // v1.30.1 (bkz. plan dosyası "Checker'a ifade-derinliği koruması"):
 // `checkExpr`/`checkBinary`nin GERÇEK bir yığın-taşması SIGABRT'ına yol
 // açan (`tests/fuzz/lexer_parser_checker_fuzz.zig`nin 2000-derin

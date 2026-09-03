@@ -1,0 +1,18 @@
+# HH.10: `choose(a, b, flag)` İKİ FARKLI parametreden BİRİNİ döndürür —
+# `ReturnAliasEffect.alias_params` bir KÜME (union) OLDUĞUNDAN, HER İKİ
+# parametrenin de HANGİSİ spawn'a paylaşılırsa paylaşılsın YAKALANMALI.
+# Burada `b` (İKİNCİ parametre, `other`) spawn'a paylaşılıyor.
+def choose(a: list[int], b: list[int], flag: bool) -> list[int]:
+    if flag:
+        return a
+    return b
+
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+other: list[int] = [4, 5, 6]
+ys: list[int] = choose(xs, other, True)
+t: Task[None] = spawn worker(other)
+ys[0] = 42
+await t

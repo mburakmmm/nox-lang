@@ -1,0 +1,19 @@
+# HH.10: `wrapper(xs)` KENDİ dönüşünde BAŞKA bir fonksiyonu (`helper`)
+# çağırıyor — v1 BİLİNÇLİ sınırı gereği BU TRANSİTİF OLARAK çözülmez
+# (`.unknown`), bu YÜZDEN `ys` HİÇBİR points_to girdisi ALMAZ — HH.9-
+# ÖNCESİ, MEVCUT "izlenemeyen çağrı" davranışıyla BİREBİR AYNI (YENİ bir
+# false-positive EKLENMEDİĞİNİN regresyon-yok kanıtı).
+def helper(xs: list[int]) -> list[int]:
+    return xs
+
+def wrapper(xs: list[int]) -> list[int]:
+    return helper(xs)
+
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+ys: list[int] = wrapper(xs)
+t: Task[None] = spawn worker(xs)
+ys[0] = 42
+await t

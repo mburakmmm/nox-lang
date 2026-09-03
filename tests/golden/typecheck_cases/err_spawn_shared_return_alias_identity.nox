@@ -1,0 +1,17 @@
+# HH.10 (bkz. plan dosyası "post-spawn checker'ına dönüş-alias
+# etkileri"): harici bir incelemenin BULDUĞU, HH.8/HH.9'un KENDİ
+# "Kapsam DIŞI" bölümünde BİLİNÇLİ olarak ERTELENMİŞ boşluk —
+# `identity(xs): return xs` GİBİ bir fonksiyonun dönüş değeri, KENDİ
+# parametresiyle GERÇEKTEN alias'tır. Dönüş-alias etkisi analizi
+# BUNU ARTIK KANITLAYIP `points_to`ya YANSITIYOR.
+def identity(xs: list[int]) -> list[int]:
+    return xs
+
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+ys: list[int] = identity(xs)
+t: Task[None] = spawn worker(xs)
+ys[0] = 42
+await t

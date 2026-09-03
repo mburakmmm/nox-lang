@@ -1,0 +1,14 @@
+# HH.10: `make()` HER ZAMAN YENİ bir liste literali döndürür (`.fresh`) —
+# dönüş değeri HİÇBİR parametreyle alias DEĞİLDİR, mutasyon GÜVENLİDİR.
+# Regresyon-yok kontrolü.
+def make() -> list[int]:
+    return [7, 8, 9]
+
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+ys: list[int] = make()
+t: Task[None] = spawn worker(xs)
+ys[0] = 42
+await t

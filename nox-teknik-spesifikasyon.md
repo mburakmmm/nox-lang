@@ -17795,6 +17795,73 @@ olarak DEĞİŞTİRİLMEDİ.
 
 ---
 
+## 3.125 HH.10 — post-spawn checker'ına dönüş-alias etkileri (v1.59.0)
+
+v1.58.0 (HH.9) SONRASI harici bir inceleme, HH.8/HH.9'un KENDİ, BİLİNÇLİ
+olarak ertelenmiş "Kapsam DIŞI" maddesini (fonksiyon-çağrısı dönüşü
+ÜZERİNDEN aliasing) önerdi — `def identity(xs: list[int]) -> list[int]:
+return xs` GİBİ bir fonksiyonun dönüş değeri, KENDİ parametresiyle
+GERÇEKTEN alias'tır, AMA checker BUNU HİÇ BİLMİYORDU. AYRICA sunulan
+İKİNCİ öneri (döngü-İçİ tekrar-tahsis hassasiyeti) EL İLE İNCELENİP HH.7'nin
+ZATEN belgelenmiş "recurrent lock" ödünleşiminin FARKLI bir ifadesi
+OLDUĞU, KİLİDİN SADECE AYNI statik deyime — döngünün KENDİ İÇİNDE —
+sızdığı (BAĞIMSIZ/farklı deyimlere SIZMADIĞI) DOĞRULANDI — AYRI bir
+düzeltme GEREKTİRMEDİ.
+
+**Tasarım — TEK-geçişli, GENELLEŞTİRİLMİŞ "may" analizi**: YENİ
+`ReturnAliasEffect = union(enum) { fresh, alias_params: []const u32,
+unknown }`. YENİ whole-program pre-pass `computeReturnAliasEffects`
+(`computeMutatesGraph`İLE AYNI aşamada, `checkModule`de), HER üst-düzey,
+generic-OLMAYAN fonksiyon İçİn KENDİ `return` ifadelerini (`if`/`elif`/
+`else`/`while`/`for`e ÖZYİNELEYEREK — fork/merge GEREKMEZ, SADECE TÜM
+erişilebilir dönüşlerin UNION'ı toplanır) tarar: bir parametreyi
+DOĞRUDAN döndüren yollar O parametrenin indeksini `alias_params` kümesine
+EKLER (`if flag: return a else: return b` GİBİ İKİ farklı parametre
+union'lanabilir); literal/sınıf-kurucusu dönüşleri KATKI SAĞLAMAZ (kesin
+fresh); `try`/`with` İÇEREN VEYA BAŞKA bir fonksiyon ÇAĞIRAN dönüşler
+`unknown`a DÜŞER (KONSERVATİF — v1 TRANSİTİF zincirleri ÇÖZMEZ). **KRİTİK
+basitleştirme**: BU v1 sınırı (transitif çözümleme YOK) ÖZYİNELEME/
+karşılıklı-özyineleme risk sınıfını TAMAMEN ORTADAN KALDIRIR —
+`exceptions.zig`nin `markRecursiveFuncs`ının DFS-tabanlı döngü-tespiti
+BU turda HİÇ GEREKMEZ (bir fonksiyonun `return`i BAŞKA bir fonksiyon
+ÇAĞIRIYORSA — KENDİSİ DAHİL — HER ZAMAN `unknown`, döngü ARANMASINA
+gerek YOK).
+
+**Tüketim**: `updatePointsToForTarget`nin `.call` dalı `self.return_alias_effects.get(callee_name)`i
+sorgular — BULUNAMAZSA (sınıf kurucusu/extern/generic/metod) MEVCUT
+"taze kaynak-kimliği" davranışı DEĞİŞMEDEN KORUNUR (geriye dönük uyumlu);
+`.fresh` AYNI dalı izler; `.alias_params` İLGİLİ argümanları (ÇIPLAK
+identifier İSELER) points_to ÜZERİNDEN çözüp hedefe UNION'LAR; `.unknown`
+HİÇBİR points_to girdisi EKLEMEZ (HH.9-ÖNCESİ, MEVCUT "izlenemeyen çağrı"
+davranışıyla BİREBİR AYNI — SIFIR YENİ false-positive riski).
+
+**Doğrulama**: `identity` repro'su (`err_spawn_shared_return_alias_identity.nox`)
++ `choose(a,b,flag)` İKİ-parametreli union'ı (`err_spawn_shared_return_alias_choose_union.nox`,
+HER İKİ parametre İçİn AYRI AYRI doğrulandı) + `make()` fresh regresyon-
+yok (`ok_spawn_shared_return_alias_fresh.nox`) + `wrapper→helper`
+transitif-unknown regresyon-yok (`ok_spawn_shared_return_alias_transitive_unknown.nox`)
+YENİ golden fixture olarak eklendi; MEVCUT TÜM HH.2-HH.9 fixture'ları
+DEĞİŞMEDEN geçti. Kırmızı-takım kanıtı: `.alias_params` çözümlemesi
+GEÇİCİ olarak DEVRE DIŞI bırakılıp HER İKİ repro'nun (identity+choose)
+TEKRAR SESSİZCE derlendiği, SONRA GERİ eklenip TEKRAR YAKALANDIĞI
+doğrulandı. `zig build test` (TAM paket) + `NOX_STRESS_ROUNDS=800 zig
+build stress-test -Doptimize=ReleaseFast` TEMİZ (BİLİNEN, İLGİSİZ 4
+harness flake'i HARİÇ). `v1.58.0`nin KENDİ CHANGELOG/spec girişi
+TARİHSEL bir kayıt olarak DEĞİŞTİRİLMEDİ.
+
+## Kapsam DIŞI (bu turda)
+- Transitif çözümleme (BAŞKA bir fonksiyonu ÇAĞIRAN bir dönüş ifadesinin
+  O fonksiyonun KENDİ, ÖNCEDEN hesaplanmış etkisinden yararlanması) —
+  özyineleme/karşılıklı-özyineleme risk sınıfını ORTADAN KALDIRAN v1'in
+  KENDİ basitleştirmesiyle DOĞRUDAN ÇELİŞİR, AYRI/gelecekteki bir tur.
+- Sınıf METODLARININ dönüş-alias etkisi (`self.method()`) — `self`in
+  HANGİ SINIF olduğu belirsizliği + metod-özel karmaşıklık.
+- Generic fonksiyonlar — `computeMutatesGraph`nin AYNI sınırı.
+- `try`/`except`/`finally`/`with`/`lowlevel` gövdeleri (post-spawn
+  checker'ın KENDİSİ İçİn) — HH.2'den BERİ AYNI, DEĞİŞMEYEN v1 sınırı.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

@@ -323,6 +323,16 @@ pub const Checker = struct {
     /// `helper(xs)` GİBİ TRANSİTİF mutasyonları da YAKALAR (v1.30.0'ın
     /// "yalnızca KENDİ gövde" sınırlamasının GENELLEMESİ).
     mutates_params: effect_graph.NodeSet = .{},
+    /// HH.10 (bkz. plan dosyası "post-spawn checker'ına dönüş-alias
+    /// etkileri"): fonksiyon adı → dönüş değerinin parametrelerinden
+    /// hangileriyle alias OLABİLECEĞİ (`ReturnAliasEffect`, aşağıda) —
+    /// `computeReturnAliasEffects` TARAFINDAN (`computeMutatesGraph`İLE
+    /// AYNI pre-pass aşamasında) doldurulur; `updatePointsToForTarget`
+    /// bunu `ys = f(xs)` GİBİ çağrıların `ys`i `xs`YLE (`f`nin KENDİ
+    /// dönüş-alias etkisi KANITLANABİLDİĞİ ÖLÇÜDE) aliaslamak İçİn
+    /// kullanır. SADECE ÜST-DÜZEY, generic-OLMAYAN fonksiyonlar İçİn
+    /// hesaplanır (v1 sınırı — metodlar/generic'ler KAPSAM DIŞI).
+    return_alias_effects: std.StringHashMapUnmanaged(ReturnAliasEffect) = .{},
     /// v1.30.1 (bkz. nox-teknik-spesifikasyon.md §3.96): `parser.zig`nin
     /// GÜVENLİK bulgusu H-3 düzeltmesiyle (`enterRecursion`/
     /// `MAX_EXPR_DEPTH`) AYNI mekanizma — AMA parser'ın guard'ı YALNIZCA
@@ -1925,6 +1935,7 @@ pub const Checker = struct {
         try self.collectModuleGlobals(module);
         try self.collectSpawnTargets(module);
         try self.computeMutatesGraph(module);
+        try self.computeReturnAliasEffects(module);
 
         var top_scope: Scope = .{};
         // `in_async = true`: Nox'ta açık bir `def main()` sözleşmesi YOK —
@@ -2167,6 +2178,96 @@ pub const Checker = struct {
             }
         }
         self.mutates_params = try effect_graph.propagateBad(self.allocator, &reverse_edges, seeds.items);
+    }
+
+    /// HH.10 (bkz. plan dosyası "post-spawn checker'ına dönüş-alias
+    /// etkileri"): bir fonksiyonun dönüş değerinin, KENDİ parametrelerinden
+    /// hangileriyle alias OLABİLECEĞİNE dair "may" (üst-yaklaşım) bilgisi.
+    const ReturnAliasEffect = union(enum) {
+        /// HER dönüş yolu KESİNLİKLE YENİ/BAĞIMSIZ bir değer üretir
+        /// (literal/sınıf-kurucusu, VEYA HİÇ dönüş yoksa).
+        fresh,
+        /// HER dönüş yolu BU parametre indekslerinden BİRİNİ döndürür
+        /// (`if flag: return a else: return b` GİBİ İKİ+ farklı parametre
+        /// İçİn "may" union'ı).
+        alias_params: []const u32,
+        /// GERİ KALAN HER ŞEY (BAŞKA bir fonksiyon çağrısı, attribute/
+        /// index erişimi, yerel değişken, `try`/`with` İÇİndeki bir
+        /// dönüş, vb.) — KONSERVATİF üst-sınır, v1 BUNU TRANSİTİF
+        /// ÇÖZMEZ.
+        unknown,
+    };
+
+    /// SADECE ÜST-DÜZEY, generic-OLMAYAN `func_def`ler İçİn hesaplanır
+    /// (`computeMutatesGraph`nin AYNI `module.body` iterasyon deseni,
+    /// AMA sınıf metodları v1 KAPSAM DIŞI — `self`in HANGİ SINIF olduğu
+    /// belirsizliği + metod-özel karmaşıklık, AYRI bir tur).
+    fn computeReturnAliasEffects(self: *Checker, module: ast.Module) TypeError!void {
+        for (module.body) |stmt| {
+            if (stmt.kind == .func_def) {
+                const fd = stmt.kind.func_def;
+                if (fd.type_params.len == 0 and !self.generic_functions.contains(fd.name)) {
+                    const eff = try self.computeSingleReturnAliasEffect(fd.params, fd.body);
+                    try self.return_alias_effects.put(self.allocator, fd.name, eff);
+                }
+            }
+        }
+    }
+
+    fn computeSingleReturnAliasEffect(self: *Checker, params: []const ast.Param, body: []const ast.Stmt) TypeError!ReturnAliasEffect {
+        var alias_indices: std.ArrayListUnmanaged(u32) = .empty;
+        defer alias_indices.deinit(self.allocator);
+        var saw_unknown = false;
+        try self.scanReturnsForAliasEffect(body, params, &alias_indices, &saw_unknown);
+        if (saw_unknown) return .unknown;
+        if (alias_indices.items.len == 0) return .fresh;
+        return .{ .alias_params = try alias_indices.toOwnedSlice(self.allocator) };
+    }
+
+    /// `if`/`elif`/`else`/`while`/`for`e ÖZYİNELER (HH.2'nin AYNI "may"
+    /// gezinme deseni — AMA fork/merge GEREKMEZ, SADECE TÜM erişilebilir
+    /// `return`lerin UNION'ı toplanır). `try`/`with` İLE KARŞILAŞILIRSA
+    /// İÇİNE BAKMADAN `saw_unknown = true` işaretlenir (İÇİNDE bir
+    /// `return <param>`in SESSİZCE KAÇIRILMASI UNSOUND olurdu). İç içe
+    /// `func_def`/`class_def` DOKUNULMAZ (KENDİ `return`leri BU
+    /// fonksiyona AİT DEĞİL).
+    fn scanReturnsForAliasEffect(self: *Checker, stmts: []const ast.Stmt, params: []const ast.Param, alias_indices: *std.ArrayListUnmanaged(u32), saw_unknown: *bool) TypeError!void {
+        for (stmts) |stmt| {
+            switch (stmt.kind) {
+                .return_stmt => |maybe_e| if (maybe_e) |e| {
+                    switch (e) {
+                        .identifier => |name| {
+                            if (paramIndexByName(params, name)) |idx| {
+                                var found = false;
+                                for (alias_indices.items) |x| {
+                                    if (x == idx) {
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                                if (!found) try alias_indices.append(self.allocator, idx);
+                            } else {
+                                saw_unknown.* = true; // yerel değişken/BAŞKA bir isim
+                            }
+                        },
+                        .list_lit, .dict_lit => {}, // kesin fresh, katkı yok
+                        .call => |c| if (!(c.callee.* == .identifier and self.classes.contains(c.callee.identifier))) {
+                            saw_unknown.* = true; // sınıf-kurucusu DEĞİLSE bilinmeyen
+                        },
+                        else => saw_unknown.* = true, // attribute/index/binary/vb.
+                    }
+                },
+                .if_stmt => |i| {
+                    try self.scanReturnsForAliasEffect(i.then_body, params, alias_indices, saw_unknown);
+                    for (i.elif_clauses) |ec| try self.scanReturnsForAliasEffect(ec.body, params, alias_indices, saw_unknown);
+                    if (i.else_body) |eb| try self.scanReturnsForAliasEffect(eb, params, alias_indices, saw_unknown);
+                },
+                .while_stmt => |w| try self.scanReturnsForAliasEffect(w.body, params, alias_indices, saw_unknown),
+                .for_stmt => |f| try self.scanReturnsForAliasEffect(f.body, params, alias_indices, saw_unknown),
+                .try_stmt, .with_stmt => saw_unknown.* = true,
+                else => {},
+            }
+        }
     }
 
     /// GG.20: `len`/`str`/`int`/`float`/`print`/vb. — `checkCall`in `.attribute`
@@ -3009,7 +3110,16 @@ pub const Checker = struct {
     /// YANLIŞLIKLA AYNI kaynak-kimliğine ÇAKIŞMASINI YAPISAL olarak
     /// ORTADAN KALDIRIR (HER deyim, İÇERİĞİ BOŞ OLSA BİLE, KENDİ benzersiz
     /// konumuna sahiptir).
-    fn updatePointsToForTarget(aa: std.mem.Allocator, state: *SpawnFlowState, target_name: []const u8, target_type: Type, rhs: ast.Expr, stmt_id: usize) !void {
+    /// HH.10 (bkz. plan dosyası "post-spawn checker'ına dönüş-alias
+    /// etkileri"): `.call` dalı — callee `self.return_alias_effects`de
+    /// BULUNAMAZSA (sınıf kurucusu/extern/generic/metod/vb.) MEVCUT
+    /// "taze kaynak-kimliği" davranışı DEĞİŞMEDEN KORUNUR (geriye dönük
+    /// uyumlu). BULUNURSA: `.fresh` AYNI taze-kimlik dalını izler;
+    /// `.alias_params` İLGİLİ argümanları (ÇIPLAK identifier İSELER)
+    /// points_to ÜZERİNDEN çözüp UNION'LAR; `.unknown` HİÇBİR points_to
+    /// girdisi EKLEMEZ (HH.9-ÖNCESİ, MEVCUT "izlenemeyen çağrı"
+    /// davranışıyla BİREBİR AYNI — SIFIR regresyon riski).
+    fn updatePointsToForTarget(self: *Checker, aa: std.mem.Allocator, state: *SpawnFlowState, target_name: []const u8, target_type: Type, rhs: ast.Expr, stmt_id: usize) !void {
         switch (target_type) {
             .list, .dict, .class => switch (rhs) {
                 .list_lit, .dict_lit => {
@@ -3017,8 +3127,40 @@ pub const Checker = struct {
                     try state.points_to.put(aa, target_name, one);
                 },
                 .call => |c| if (c.callee.* == .identifier) {
-                    const one = try aa.dupe(usize, &.{stmt_id});
-                    try state.points_to.put(aa, target_name, one);
+                    if (self.return_alias_effects.get(c.callee.identifier)) |effect| {
+                        switch (effect) {
+                            .fresh => {
+                                const one = try aa.dupe(usize, &.{stmt_id});
+                                try state.points_to.put(aa, target_name, one);
+                            },
+                            .alias_params => |indices| {
+                                var collected: std.ArrayListUnmanaged(usize) = .empty;
+                                for (indices) |idx| {
+                                    if (idx < c.args.len and c.args[idx] == .identifier) {
+                                        if (state.points_to.get(c.args[idx].identifier)) |src_ids| {
+                                            for (src_ids) |sid| {
+                                                var found = false;
+                                                for (collected.items) |x| {
+                                                    if (x == sid) {
+                                                        found = true;
+                                                        break;
+                                                    }
+                                                }
+                                                if (!found) try collected.append(aa, sid);
+                                            }
+                                        }
+                                    }
+                                }
+                                if (collected.items.len > 0) {
+                                    try state.points_to.put(aa, target_name, try collected.toOwnedSlice(aa));
+                                }
+                            },
+                            .unknown => {},
+                        }
+                    } else {
+                        const one = try aa.dupe(usize, &.{stmt_id});
+                        try state.points_to.put(aa, target_name, one);
+                    }
                 },
                 .identifier => |src_name| if (state.points_to.get(src_name)) |src_ids| {
                     try state.points_to.put(aa, target_name, src_ids);
@@ -3054,12 +3196,12 @@ pub const Checker = struct {
                 const v = stmt.kind.var_decl;
                 const vt = self.typeExprToType(v.type_expr) catch .none;
                 try known_types.put(aa, v.name, vt);
-                try updatePointsToForTarget(aa, state, v.name, vt, v.value, stmt_id);
+                try self.updatePointsToForTarget(aa, state, v.name, vt, v.value, stmt_id);
             } else if (stmt.kind == .assign) {
                 const a = stmt.kind.assign;
                 if (a.target == .identifier) {
                     if (known_types.get(a.target.identifier)) |t| {
-                        try updatePointsToForTarget(aa, state, a.target.identifier, t, a.value, stmt_id);
+                        try self.updatePointsToForTarget(aa, state, a.target.identifier, t, a.value, stmt_id);
                     }
                 }
             }
