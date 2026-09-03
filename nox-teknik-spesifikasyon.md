@@ -17350,6 +17350,62 @@ doğrulandı.
 
 ---
 
+## 3.119 HH.4 — build artifact izolasyonu: optimize-moduna göre etiketli, KALICI EK kopyalar (v1.53.0)
+
+Kullanıcının onayladığı 4 maddelik listenin SON maddesi (HH.1→HH.2→HH.3
+yayımlandı). DOĞRUDAN bu OTURUMDA İKİ KEZ yaşanan GERÇEK bir hatadan
+doğdu: `zig-out/bin/noxc`/`zig-out/lib/noxrt.o` PAYLAŞILAN, TEK yollardır
+— `zig build` (Debug, varsayılan) VE `zig build -Doptimize=ReleaseFast`
+İKİSİ de AYNI yola YAZAR, HANGİSİ EN SON çalıştıysa O KAZANIR. Somut
+hasar: elle bir ReleaseFast ölçümü YAPILIP SONRA İLGİSİZ bir regresyon-
+testi amacıyla `zig build test` (VARSAYILAN Debug) çalıştırıldığında,
+PAYLAŞILAN `noxc`/`noxrt.o` SESSİZCE Debug moduna DÖNÜYOR — bir SONRAKİ
+"ReleaseFast" ölçümü, FARKINDA OLUNMADAN, ASLINDA Debug ikilisine karşı
+yapılmış oluyor (v1.48.0 döneminde BİRKAÇ sayının 3-8× ŞİŞMİŞ olarak
+yanlışlıkla raporlanmasına yol açmıştı, GG.24/GG.25 SIRASINDA clean-HEAD
+A/B karşılaştırmasıyla YAKALANDI).
+
+**Araştırma bulgusu (KRİTİK, tasarımı BASİTLEŞTİREN)**: `compiler/
+project.zig`nin `ResourceDirs`i (`stdlib_dir`/`noxrt_path`/`swap_asm_path`)
+ZATEN, TAMAMEN BAĞIMSIZ bir `NOX_RESOURCE_DIR` ortam değişkeniyle
+(`main.zig`, `resolveResourceDirs`) YENİDEN KÖKLENEBİLİYOR. Bu YÜZDEN
+`noxc`nin KENDİSİNE/`main.zig`e/`project.zig`ye HİÇBİR DOKUNUŞ GEREKMEDİ
+— SADECE `build.zig`nin HER `-Doptimize` modu İçİn TAM bir kaynak-kökü
+(`bin/noxc` + `lib/noxrt.o` + `lib/nox/stdlib/`, Windows'ta AYRICA
+`lib/swap_asm.o`) DAHA üretmesi YETERLİ oldu.
+
+**Tasarım — TAMAMEN EK (additive), PAYLAŞILAN yollara SIFIR dokunuş**:
+`zig-out/bin/noxc`/`zig-out/lib/noxrt.o`yu literal string OLARAK
+REFERANS ALAN 15+ dosyayı (TÜM `tests/golden/*.zig`/`tests/compat/*.zig`
+VB.) optimize-moduna göre parametreleştirmek YÜKSEK risk/DÜŞÜK katma
+değer olurdu — PAYLAŞILAN yollara HİÇ DOKUNMADAN, `build.zig`ye YENİ
+`optimizeModeSlug(mode)` yardımcısı (`.Debug`→`"debug"`, `.ReleaseSafe`→
+`"release-safe"`, `.ReleaseFast`→`"release-fast"`, `.ReleaseSmall`→
+`"release-small"`) + HER `-Doptimize` modu İçİn AYRI, KALICI bir EK
+kopya (`zig-out/<mod>/{bin/noxc, lib/noxrt.o, lib/nox/stdlib/}`) üreten
+YENİ `install_noxc_tagged`/`install_noxrt_tagged`/`install_stdlib_tagged`
+adımları eklendi — `b.getInstallStep()` (bare `zig build`) VE `test_step`
+(`zig build test`, `b.getInstallStep()`den BAĞIMSIZ KENDİ bağımlılıklarını
+taşıdığından AYRICA gerekliydi — kontaminasyon senaryosunun İKİNCİ
+YARISI TAM OLARAK `zig build test`nin KENDİSİYDİ) İKİSİNE de bağlandı.
+Sonuç: `NOX_RESOURCE_DIR=$PWD/zig-out/release-fast zig-out/release-fast/
+bin/noxc build --release foo.nox -o /tmp/foo` HER ZAMAN o ANDA derlenmiş
+ReleaseFast noxc/noxrt.o çiftini kullanır — SONRAKİ hiçbir Debug/farklı-
+modlu `zig build`/`zig build test` çağrısı bunu BOZAMAZ.
+
+**Doğrulama**: `zig build -Doptimize=ReleaseFast` SONRASI `zig build
+test` (Debug, bayraksız) çalıştırılıp PAYLAŞILAN `zig-out/bin/noxc`nin
+Debug boyutuna (9.7 MB) DÖNDÜĞÜ, AMA `zig-out/release-fast/bin/noxc`nin
+(2.7 MB) DOSYA-BOYUTU/ZAMAN-DAMGASI DEĞİŞMEDEN kaldığı doğrulandı; UÇTAN-
+UCA kanıt olarak `NOX_RESOURCE_DIR=$PWD/zig-out/release-fast zig-out/
+release-fast/bin/noxc build --release ...` bu kontaminasyon SONRASI BİLE
+GERÇEKTEN derlenip ÇALIŞTIRILARAK doğru çıktı ürettiği kanıtlandı. `zig
+build test` (TAM paket) + `NOX_STRESS_ROUNDS=800 zig build stress-test
+-Doptimize=ReleaseFast` TEMİZ (BİLİNEN, İLGİSİZ 4 harness flake'i HARİÇ
+— bu değişiklik `build.zig` DIŞINDA HİÇBİR `.zig` dosyasını değiştirmedi).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

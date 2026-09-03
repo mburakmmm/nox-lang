@@ -14,6 +14,35 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.53.0]
+
+### Eklendi
+- **HH.4 — build artifact izolasyonu**: `zig-out/bin/noxc`/`zig-out/lib/
+  noxrt.o`/`zig-out/lib/nox/stdlib` PAYLAŞILAN, TEK yollardı — `zig build`
+  (Debug, varsayılan) VE `zig build -Doptimize=ReleaseFast` İKİSİ de AYNI
+  yola YAZIYORDU, HANGİSİ EN SON çalıştıysa O KAZANIYORDU. Bu OTURUMDA
+  İKİ KEZ yaşanan GERÇEK bir kontaminasyon hatasının (elle yapılan bir
+  ReleaseFast ölçümünün, SONRADAN İLGİSİZ bir `zig build test` [Debug]
+  çağrısıyla SESSİZCE bozulması — v1.48.0 döneminde BİRKAÇ sayının 3-8×
+  ŞİŞMİŞ olarak yanlışlıkla raporlanmasına yol açmıştı) KALICI çözümü.
+  HER `zig build`/`zig build test` çağrısı ARTIK KENDİ `-Doptimize`
+  moduna göre adlandırılmış, PAYLAŞILAN yola HİÇ DOKUNMAYAN EK bir kopya
+  bırakır: `zig-out/<mod>/{bin/noxc, lib/noxrt.o, lib/nox/stdlib/}`
+  (`<mod>` ∈ `debug`/`release-safe`/`release-fast`/`release-small`,
+  Windows'ta AYRICA `lib/swap_asm.o`). `compiler/project.zig`nin ZATEN
+  VAR OLAN `NOX_RESOURCE_DIR` ortam değişkeni (bkz. `resolveResourceDirs`)
+  bu dizini DOĞRUDAN bir kaynak-kökü olarak kabul eder — ör.
+  `NOX_RESOURCE_DIR=$PWD/zig-out/release-fast zig-out/release-fast/bin/
+  noxc build --release foo.nox -o /tmp/foo` HER ZAMAN o ANDA derlenmiş
+  ReleaseFast noxc/noxrt.o çiftini kullanır, SONRAKİ hiçbir Debug/farklı-
+  modlu `zig build`/`zig build test` çağrısı bunu bozamaz. Tasarım
+  TAMAMEN EK (additive) — PAYLAŞILAN yollara/`noxc`nin KENDİSİNE/
+  `main.zig`e/`project.zig`ye HİÇBİR DOKUNUŞ yok, SIFIR mevcut-tüketici
+  riski. Uçtan-uca doğrulandı: `zig build -Doptimize=ReleaseFast` SONRASI
+  `zig build test` (Debug) çalıştırılıp PAYLAŞILAN yolun Debug'a
+  DÖNDÜĞÜ, AMA `NOX_RESOURCE_DIR` İLE etiketli release-fast kökünün
+  DEĞİŞMEDEN doğru çalıştığı GERÇEKTEN derlenip çalıştırılarak kanıtlandı.
+
 ## [1.52.0]
 
 ### Eklendi

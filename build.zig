@@ -18,6 +18,19 @@ const builtin = @import("builtin");
 /// sürümleri (ör. 0.16.1) çoğunlukla GERİYE UYUMLUDUR).
 const EXPECTED_ZIG_VERSION = std.SemanticVersion{ .major = 0, .minor = 16, .patch = 0 };
 
+/// Faz HH.4 (bkz. nox-teknik-spesifikasyon.md, "build artifact izolasyonu"):
+/// `-Doptimize` moduna göre dosya-sistemi-güvenli bir etiket — `zig-out/
+/// <slug>/` altında HER modun KENDİ, izole kaynak-kökünü adlandırmak İçİn
+/// (bkz. `pub fn build`in `install_*_tagged` adımları).
+fn optimizeModeSlug(mode: std.builtin.OptimizeMode) []const u8 {
+    return switch (mode) {
+        .Debug => "debug",
+        .ReleaseSafe => "release-safe",
+        .ReleaseFast => "release-fast",
+        .ReleaseSmall => "release-small",
+    };
+}
+
 pub fn build(b: *std.Build) void {
     if (builtin.zig_version.order(EXPECTED_ZIG_VERSION) != .eq) {
         std.debug.print(
@@ -262,6 +275,37 @@ pub fn build(b: *std.Build) void {
     // Faz LL.1: bkz. `noxc_only_step`in yukarıdaki belge notu.
     noxc_only_step.dependOn(&install_stdlib.step);
 
+    // Faz HH.4 (bkz. plan dosyası "build artifact izolasyonu"): PAYLAŞILAN
+    // `zig-out/bin/noxc`/`zig-out/lib/noxrt.o`/`zig-out/lib/nox/stdlib`
+    // yollarına HİÇ DOKUNMADAN (mevcut TÜM tüketiciler SIFIR değişiklikle
+    // çalışmaya devam eder), HER `zig build` çağrısının KENDİ `-Doptimize`
+    // moduna göre adlandırılmış, KALICI bir EK kopyası bırakılır —
+    // `compiler/project.zig`nin ZATEN VAR OLAN `NOX_RESOURCE_DIR` ortam
+    // değişkeni (bkz. `resolveResourceDirs`) bu dizini DOĞRUDAN bir
+    // kaynak-kökü olarak kabul eder (ör. `NOX_RESOURCE_DIR=$PWD/zig-out/
+    // release-fast zig-out/release-fast/bin/noxc build --release ...`).
+    // Bu, BU OTURUMDA İKİ KEZ yaşanan GERÇEK bir kontaminasyon hatasını
+    // (bir ReleaseFast ölçümünün SONRADAN, İLGİSİZ bir `zig build test`
+    // [Debug] çağrısıyla SESSİZCE bozulması) kalıcı olarak çözer.
+    const mode_slug = optimizeModeSlug(optimize);
+    const install_noxc_tagged = b.addInstallFile(noxc.getEmittedBin(), b.fmt("{s}/bin/noxc", .{mode_slug}));
+    const install_noxrt_tagged = b.addInstallFile(noxrt.getEmittedBin(), b.fmt("{s}/lib/noxrt.o", .{mode_slug}));
+    const install_stdlib_tagged = b.addInstallDirectory(.{
+        .source_dir = b.path("stdlib"),
+        .install_dir = .prefix,
+        .install_subdir = b.fmt("{s}/lib/nox/stdlib", .{mode_slug}),
+    });
+    b.getInstallStep().dependOn(&install_noxc_tagged.step);
+    b.getInstallStep().dependOn(&install_noxrt_tagged.step);
+    b.getInstallStep().dependOn(&install_stdlib_tagged.step);
+    noxc_only_step.dependOn(&install_noxc_tagged.step);
+    noxc_only_step.dependOn(&install_stdlib_tagged.step);
+    if (target.result.os.tag == .windows) {
+        const install_swap_asm_tagged = b.addInstallFile(b.path(swap_asm_o_path), b.fmt("{s}/lib/swap_asm.o", .{mode_slug}));
+        install_swap_asm_tagged.step.dependOn(&compile_swap_asm.step);
+        b.getInstallStep().dependOn(&install_swap_asm_tagged.step);
+    }
+
     const run_noxc = b.addRunArtifact(noxc);
     run_noxc.step.dependOn(b.getInstallStep());
     if (b.args) |args| run_noxc.addArgs(args);
@@ -310,6 +354,13 @@ pub fn build(b: *std.Build) void {
     // codegen golden testleri, üretilen binary'leri `zig-out/lib/noxrt.o`'ya
     // karşı linklemek için bu adımın önceden tamamlanmış olmasına ihtiyaç duyar.
     test_step.dependOn(&install_noxrt.step);
+    // Faz HH.4: `zig build test`nin KENDİSİ de PAYLAŞILAN yolları YENİDEN
+    // KURDUĞUNDAN (test_step, `b.getInstallStep()`DEN BAĞIMSIZ KENDİ
+    // bağımlılıklarını taşır) — kontaminasyon senaryosunun İKİNCİ YARISINI
+    // (`zig build test` çağrısının KENDİSİ) da kapsamak İçİn, YUKARIDAKİ
+    // etiketli adımlar BURAYA da bağlanır (bkz. plan dosyası "build
+    // artifact izolasyonu").
+    test_step.dependOn(&install_noxrt_tagged.step);
     // Faz R.3 (bkz. docs/uretim-hazirlik-analizi.md): `install_stdlib`
     // ÖNCEDEN yalnızca `b.getInstallStep()`e (varsayılan `zig build` hedefi)
     // bağlıydı, `test_step`e DEĞİL — `zig build test`, `zig-out/lib/nox/
@@ -319,6 +370,8 @@ pub fn build(b: *std.Build) void {
     // `stdlib/nox/core.nox: FileNotFound` ile ORTAYA ÇIKAR — Faz R.3'ün
     // Docker doğrulaması SIRASINDA GERÇEKTEN yakalandı).
     test_step.dependOn(&install_stdlib.step);
+    // Faz HH.4: bkz. yukarıdaki `install_noxrt_tagged`in belge notu.
+    test_step.dependOn(&install_stdlib_tagged.step);
     // Faz O §P.2: `tests/cli/subcommand_test.zig`, kurulu `zig-out/bin/noxc`yi
     // BİR ALT SÜREÇ olarak çalıştırıyor — `test_step`in bu adıma da bağımlı
     // olması GEREKİR, aksi halde `zig build test` `noxc`yi YENİDEN KURMADAN
@@ -326,6 +379,8 @@ pub fn build(b: *std.Build) void {
     // regresyonu SESSİZCE KAÇIRABİLİR (bu eksiklik, tam da bu senaryoyu
     // sınayan bir kasıtlı-boz-restore ile keşfedildi).
     test_step.dependOn(&install_noxc.step);
+    // Faz HH.4: bkz. yukarıdaki `install_noxrt_tagged`in belge notu.
+    test_step.dependOn(&install_noxc_tagged.step);
     // Faz W.2: `noxlsp`nin KENDİSİ İÇİN AYRI bir golden/entegrasyon test
     // hedefi YOK (bkz. `tests/cli/lsp_test.zig`nin belge notu — protokol
     // seviyesinde stdio üzerinden ALT SÜREÇ olarak çalıştırılıp doğrulanır),
