@@ -867,6 +867,33 @@ test "golden(post-spawn-caller-mutation): if İÇİNDE spawn edilen bir paylaş�
     );
 }
 
+// HH.5 (bkz. plan dosyası "v1.51'in [HH.2] post-spawn checker'ında
+// fork/merge soundness düzeltmesi"): harici bir incelemenin BULDUĞU,
+// v1.51.0/v1.53.0'da SESSİZCE derlenen GERÇEK bir false-negative — bir
+// daldaki `await`, TEK, paylaşılan bir durum YÜZÜNDEN KARDEŞ dalın
+// mutasyon kontrolünü YANLIŞLIKLA "temizliyordu". Branch-başına klon +
+// çıkışta union-birleştirme BUNU ARTIK YAKALAR.
+test "golden(post-spawn-caller-mutation): HH.5 — bir daldaki await, kardeş dalın mutasyonunu GİZLEYEMEZ (branch-leak false-negative düzeltmesi)" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_mutation_branch_leak.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_mutation_branch_leak.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): HH.5 — TERS yönde de (mutasyon then, await else) yakalanır" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_mutation_branch_leak_reverse.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_mutation_branch_leak_reverse.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): HH.5 — hiçbir dalda mutasyon yoksa regresyon yok" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/ok_spawn_shared_mutation_branch_no_leak.nox"),
+        @embedFile("typecheck_cases/ok_spawn_shared_mutation_branch_no_leak.expected"),
+    );
+}
+
 // v1.30.1 (bkz. plan dosyası "Checker'a ifade-derinliği koruması"):
 // `checkExpr`/`checkBinary`nin GERÇEK bir yığın-taşması SIGABRT'ına yol
 // açan (`tests/fuzz/lexer_parser_checker_fuzz.zig`nin 2000-derin

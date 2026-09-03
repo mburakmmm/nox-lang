@@ -1,0 +1,18 @@
+# HH.5 (bkz. plan dosyası "v1.51'in [HH.2] post-spawn checker'ında
+# fork/merge soundness düzeltmesi"): harici bir incelemenin BULDUĞU,
+# BAŞLANGIÇTA (v1.51.0/v1.53.0) SESSİZCE derlenen GERÇEK bir false-
+# negative — `then` dalındaki bir `await`, TEK, paylaşılan bir durum
+# YÜZÜNDEN `else` dalının (KARDEŞ, KARŞILIKLI-DIŞLAYAN bir dalın)
+# mutasyon kontrolünü YANLIŞLIKLA "temizliyordu". `condition == false`
+# olduğunda `worker(xs)` HÂLÂ ÇALIŞIRKEN `xs.append(42)` senkronizasyonsuz
+# bir mutasyondur — branch-başına klon + çıkışta union-birleştirme
+# (HH.5) BUNU ARTIK YAKALAR.
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+t: Task[None] = spawn worker(xs)
+if xs[0] == 1:
+    await t
+else:
+    xs.append(42)

@@ -1,0 +1,13 @@
+# HH.5: madde `err_spawn_shared_mutation_branch_leak.nox`in TERS YÖNÜ —
+# mutasyon `then` dalında, `await` `else` dalında. Fork/merge modelinin
+# YÖN-BAĞIMSIZ (hangi dal ÖNCE analiz edilirse edilsin, sızıntı YOK)
+# olduğunu kanıtlar.
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+t: Task[None] = spawn worker(xs)
+if xs[0] == 1:
+    xs.append(42)
+else:
+    await t

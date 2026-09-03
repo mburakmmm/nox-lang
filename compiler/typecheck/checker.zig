@@ -2636,59 +2636,132 @@ pub const Checker = struct {
     /// `task_to_shared`) KURUP `walkPostSpawnCallerMutation`e (aşağıda)
     /// devreder.
     fn checkNoPostSpawnCallerMutation(self: *Checker, stmts: []const ast.Stmt, params: []const ast.Param) TypeError!void {
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        const aa = arena.allocator();
+
         var known_types: std.StringHashMapUnmanaged(Type) = .empty;
-        defer known_types.deinit(self.allocator);
         for (params) |p| {
-            try known_types.put(self.allocator, p.name, try self.typeExprToType(p.type_expr));
+            try known_types.put(aa, p.name, try self.typeExprToType(p.type_expr));
         }
 
-        var shared_in_flight: std.StringHashMapUnmanaged(void) = .empty;
-        defer shared_in_flight.deinit(self.allocator);
-        var task_to_shared: std.StringHashMapUnmanaged([]const []const u8) = .empty;
-        defer {
-            var it = task_to_shared.valueIterator();
-            while (it.next()) |names| self.allocator.free(names.*);
-            task_to_shared.deinit(self.allocator);
-        }
-
-        try self.walkPostSpawnCallerMutation(stmts, &known_types, &shared_in_flight, &task_to_shared);
+        var state: SpawnFlowState = .{};
+        try self.walkPostSpawnCallerMutation(aa, stmts, &known_types, &state);
     }
 
-    /// GG.HH.2 (bkz. plan dosyası "post-spawn çağıran-tarafı mutasyon
-    /// denetleyicisini CFG-farkındalı yapma"): `checkNoPostSpawnCallerMutation`nin
+    /// HH.5 (bkz. plan dosyası "v1.51'in [HH.2] post-spawn checker'ında
+    /// fork/merge soundness düzeltmesi"): `if`/`elif`/`else` dallarının
+    /// HER BİRİ, GİRİŞTEKİ durumun KENDİ (bağımsız) KOPYASINDAN başlar —
+    /// dallar ARASI SIZINTI (bir daldaki `await`in KARDEŞ dalın mutasyon
+    /// kontrolünü YANLIŞLIKLA "temizlemesi", harici bir inceleme
+    /// TARAFINDAN BULUNAN GERÇEK bir false-negative) BU YÜZDEN YAPISAL
+    /// olarak İMKANSIZDIR. `mergeFrom`, ÇIKIŞTA "may" (union) anlamıyla
+    /// birleştirir — bkz. `SpawnFlowState`nin belge notu.
+    const SpawnFlowState = struct {
+        shared_in_flight: std.StringHashMapUnmanaged(void) = .empty,
+        task_to_shared: std.StringHashMapUnmanaged([]const []const u8) = .empty,
+
+        fn clone(self: SpawnFlowState, aa: std.mem.Allocator) !SpawnFlowState {
+            var out: SpawnFlowState = .{};
+            var it1 = self.shared_in_flight.keyIterator();
+            while (it1.next()) |k| try out.shared_in_flight.put(aa, k.*, {});
+            var it2 = self.task_to_shared.iterator();
+            while (it2.next()) |e| try out.task_to_shared.put(aa, e.key_ptr.*, e.value_ptr.*);
+            return out;
+        }
+
+        /// "May" (union) birleştirme — `other`daki HERHANGİ bir in-flight
+        /// isim/task-eşlemesi SONUÇTA da (HANGİ dal GERÇEKTEN çalışırsa
+        /// çalışsın) olası sayılır — bu, HERHANGİ bir GERÇEK yarışın
+        /// (dallardan HANGİSİ runtime'da GERÇEKLEŞİRSE gerçekleşsin)
+        /// KESİNLİKLE flag'lenmesini GARANTİ eder (sağlam üst-yaklaşım).
+        /// DEĞİŞİKLİK olduysa `true` döner (döngü fixpoint'i İçİn).
+        fn mergeFrom(self: *SpawnFlowState, aa: std.mem.Allocator, other: SpawnFlowState) !bool {
+            var changed = false;
+            var it1 = other.shared_in_flight.keyIterator();
+            while (it1.next()) |k| {
+                const gop = try self.shared_in_flight.getOrPut(aa, k.*);
+                if (!gop.found_existing) changed = true;
+            }
+            var it2 = other.task_to_shared.iterator();
+            while (it2.next()) |e| {
+                if (self.task_to_shared.getPtr(e.key_ptr.*)) |existing| {
+                    var merged_list: std.ArrayListUnmanaged([]const u8) = .empty;
+                    try merged_list.appendSlice(aa, existing.*);
+                    var grew = false;
+                    for (e.value_ptr.*) |n| {
+                        var found = false;
+                        for (existing.*) |m| {
+                            if (std.mem.eql(u8, m, n)) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            try merged_list.append(aa, n);
+                            grew = true;
+                        }
+                    }
+                    if (grew) {
+                        existing.* = try merged_list.toOwnedSlice(aa);
+                        changed = true;
+                    }
+                } else {
+                    try self.task_to_shared.put(aa, e.key_ptr.*, e.value_ptr.*);
+                    changed = true;
+                }
+            }
+            return changed;
+        }
+    };
+
+    /// HH.5: `state`in tükenene KADAR (`mergeFrom` `false` DÖNENE KADAR)
+    /// döngü gövdesini TEKRAR TEKRAR analiz eden GERÇEK bir fixpoint —
+    /// v1.51.0'ın (HH.2) "iki-geçiş" yaklaşımının YERİNE (harici incelemenin
+    /// önerisi). **Sonlanma KANITI**: `state` HER iterasyonda SADECE
+    /// BÜYÜYEBİLİR (`mergeFrom` ASLA bir anahtarı SİLMEZ, SADECE EKLER) —
+    /// İSİM UZAYI (fonksiyondaki BELİRLİ değişken/task adları) SONLU
+    /// olduğundan, dizi EN FAZLA "toplam DİSTİNCT isim sayısı" KADAR
+    /// iterasyonda `changed=false`e ULAŞIP SONLANIR — `MAX_LOOP_FIXPOINT_ITERATIONS`
+    /// SADECE bir SAVUNMA-DERİNLİĞİ sınırı (GERÇEKÇİ HİÇBİR fonksiyonun
+    /// bu kadar DİSTİNCT paylaşılan-isim İçERMESİ BEKLENMEZ).
+    const MAX_LOOP_FIXPOINT_ITERATIONS: usize = 64;
+
+    fn iterateLoopToFixpoint(
+        self: *Checker,
+        aa: std.mem.Allocator,
+        body: []const ast.Stmt,
+        known_types: *std.StringHashMapUnmanaged(Type),
+        state: *SpawnFlowState,
+    ) TypeError!void {
+        var iterations: usize = 0;
+        while (true) {
+            iterations += 1;
+            var body_state = try state.clone(aa);
+            try self.walkPostSpawnCallerMutation(aa, body, known_types, &body_state);
+            const changed = try state.mergeFrom(aa, body_state);
+            if (!changed or iterations >= MAX_LOOP_FIXPOINT_ITERATIONS) return;
+        }
+    }
+
+    /// GG.HH.2/HH.5 (bkz. plan dosyaları): `checkNoPostSpawnCallerMutation`nin
     /// ÖZYİNELEMELİ çekirdeği — `if`/`elif`/`else` VE `while`/`for`
     /// gövdelerine İNER (`checkNoSpawnSharedMutation`nin AYNI switch-kolu
     /// şekli, checker.zig:2483). `try`/`except`/`finally`/`with`/`lowlevel`/
     /// İÇ İÇE `func_def`/`class_def` BİLİNÇLİ olarak KAPSAM DIŞI KALIR
     /// (AYRI, gelecekteki bir tur).
     ///
-    /// **Fork/merge GEREKMEZ — TEK, threading edilen durum yeterli VE
-    /// AYNI DERECEDE SAĞLAM** (bkz. plan dosyasının "Tasarım" bölümü):
-    /// dallara AYRI birer KOPYA yerine AYNI `shared_in_flight`/`task_to_shared`
-    /// pointer'ları geçirilir. Bir `spawn`, bir dalın İÇİNDE olsa BİLE,
-    /// dal KAPANDIKTAN SONRA da paylaşımı "uçuşta" TUTMAYA DEVAM eder
-    /// (dal koşulunun runtime'da GERÇEKTEN gerçekleşip GERÇEKLEŞMEDİĞİ
-    /// derleme-zamanında BİLİNEMEZ) — bu bazı GÜVENLİ programları
-    /// GEREKSİZ YERE reddedebilir (yanlış-pozitif) AMA ASLA GERÇEK bir
-    /// yarışı KAÇIRMAZ (yanlış-negatif SIFIR) — `paramNeverEscapes`nin
-    /// AYNI "şüphede güvensiz varsay" disipliniyle TUTARLI.
-    ///
-    /// **Döngüler — "iki-geçiş" yaklaşımı**: `while`/`for` gövdesi TEK
-    /// SEFER YERİNE İKİ KEZ İŞLENİR (AYNI threading edilen durumla) —
-    /// TEK geçiş bir döngünün "geri-kenarını" (gövdenin SONUNDA spawn
-    /// edilip gövdenin BAŞINDA — bir SONRAKİ mantıksal iterasyonda —
-    /// mutasyona uğrayan bir paylaşım) KAÇIRIRDI; İKİNCİ geçiş, BİRİNCİ
-    /// geçişin SONUNDA BİRİKEN durumla gövdenin BAŞINI TEKRAR kontrol
-    /// ederek BUNU yakalar. TAM bir fixpoint DEĞİLDİR (İÇ İÇE ÇOK
-    /// KATMANLI döngülerin egzotik "çoklu-sıçrama" senaryoları KAPSAM
-    /// DIŞI, GERÇEKÇİ kodda AŞIRI NADİR) — TEK bir döngünün KENDİ geri-
-    /// kenarını kapsayan, ölçülü bir yaklaşım.
+    /// **HH.5: branch-başına KLON + çıkışta UNION-birleştirme** (bkz.
+    /// `SpawnFlowState`/`iterateLoopToFixpoint`nin belge notları) —
+    /// HH.2'nin "tek, threading edilen durum" tasarımı harici bir
+    /// incelemeyle GERÇEK bir false-negative İÇERDİĞİ BULUNUP BU sürümde
+    /// düzeltildi (bkz. plan dosyası "HH.5" bölümünün Context'i).
     fn walkPostSpawnCallerMutation(
         self: *Checker,
+        aa: std.mem.Allocator,
         stmts: []const ast.Stmt,
         known_types: *std.StringHashMapUnmanaged(Type),
-        shared_in_flight: *std.StringHashMapUnmanaged(void),
-        task_to_shared: *std.StringHashMapUnmanaged([]const []const u8),
+        state: *SpawnFlowState,
     ) TypeError!void {
         for (stmts) |stmt| {
             self.current_line = stmt.line;
@@ -2696,11 +2769,11 @@ pub const Checker = struct {
 
             // (1) Mutasyon kontrolü — BU deyimin KENDİ (2)/(3) işlemlerinden
             // ÖNCEKİ `shared_in_flight` durumuna göre.
-            try self.checkDirectSharedMutationStmt(stmt, shared_in_flight);
+            try self.checkDirectSharedMutationStmt(stmt, &state.shared_in_flight);
 
             if (stmt.kind == .var_decl) {
                 const v = stmt.kind.var_decl;
-                try known_types.put(self.allocator, v.name, self.typeExprToType(v.type_expr) catch .none);
+                try known_types.put(aa, v.name, self.typeExprToType(v.type_expr) catch .none);
             }
 
             // (2) `spawn` tespiti — bu deyimin DEĞERİ (var_decl/assign) VEYA
@@ -2724,21 +2797,21 @@ pub const Checker = struct {
                         if (arg == .identifier) {
                             if (known_types.get(arg.identifier)) |t| {
                                 if (t == .list or t == .dict or t == .class) {
-                                    try shared_in_flight.put(self.allocator, arg.identifier, {});
-                                    try added.append(self.allocator, arg.identifier);
+                                    try state.shared_in_flight.put(aa, arg.identifier, {});
+                                    try added.append(aa, arg.identifier);
                                 }
                             }
                         }
                     }
                     if (decl_name) |dn| {
-                        try task_to_shared.put(self.allocator, dn, try added.toOwnedSlice(self.allocator));
+                        try state.task_to_shared.put(aa, dn, try added.toOwnedSlice(aa));
                     } else {
                         // Fire-and-forget (`spawn worker(xs)`, isimsiz) —
                         // BİLİNÇLİ olarak `task_to_shared`e HİÇ KAYDEDİLMEZ,
                         // bu YÜZDEN bu isimler HİÇBİR ZAMAN `await` İLE
                         // TEMİZLENEMEZ (fonksiyonun KALANI BOYUNCA "uçuşta"
                         // kalır — muhafazakâr, KASITLI davranış).
-                        added.deinit(self.allocator);
+                        added.deinit(aa);
                     }
                 }
             }
@@ -2746,29 +2819,41 @@ pub const Checker = struct {
             // (3) `await` tespiti — deyimin İLGİLİ ifadesinin HERHANGİ bir
             // YERİNDE (genel gezinme İLE).
             switch (stmt.kind) {
-                .var_decl => |v| self.removeAwaitedTaskSharing(v.value, task_to_shared, shared_in_flight),
-                .assign => |a| self.removeAwaitedTaskSharing(a.value, task_to_shared, shared_in_flight),
-                .expr_stmt => |e| self.removeAwaitedTaskSharing(e, task_to_shared, shared_in_flight),
-                .return_stmt => |maybe_e| if (maybe_e) |e| self.removeAwaitedTaskSharing(e, task_to_shared, shared_in_flight),
-                .raise_stmt => |e| self.removeAwaitedTaskSharing(e, task_to_shared, shared_in_flight),
+                .var_decl => |v| self.removeAwaitedTaskSharing(v.value, &state.task_to_shared, &state.shared_in_flight),
+                .assign => |a| self.removeAwaitedTaskSharing(a.value, &state.task_to_shared, &state.shared_in_flight),
+                .expr_stmt => |e| self.removeAwaitedTaskSharing(e, &state.task_to_shared, &state.shared_in_flight),
+                .return_stmt => |maybe_e| if (maybe_e) |e| self.removeAwaitedTaskSharing(e, &state.task_to_shared, &state.shared_in_flight),
+                .raise_stmt => |e| self.removeAwaitedTaskSharing(e, &state.task_to_shared, &state.shared_in_flight),
                 else => {},
             }
 
             // (4) CFG'ye özyineleme — if/elif/else VE while/for gövdeleri.
             switch (stmt.kind) {
                 .if_stmt => |i| {
-                    try self.walkPostSpawnCallerMutation(i.then_body, known_types, shared_in_flight, task_to_shared);
-                    for (i.elif_clauses) |ec| try self.walkPostSpawnCallerMutation(ec.body, known_types, shared_in_flight, task_to_shared);
-                    if (i.else_body) |eb| try self.walkPostSpawnCallerMutation(eb, known_types, shared_in_flight, task_to_shared);
+                    var then_state = try state.clone(aa);
+                    try self.walkPostSpawnCallerMutation(aa, i.then_body, known_types, &then_state);
+                    var merged = then_state;
+                    for (i.elif_clauses) |ec| {
+                        var ec_state = try state.clone(aa);
+                        try self.walkPostSpawnCallerMutation(aa, ec.body, known_types, &ec_state);
+                        _ = try merged.mergeFrom(aa, ec_state);
+                    }
+                    if (i.else_body) |eb| {
+                        var else_state = try state.clone(aa);
+                        try self.walkPostSpawnCallerMutation(aa, eb, known_types, &else_state);
+                        _ = try merged.mergeFrom(aa, else_state);
+                    } else {
+                        // Zımni "else: pass" dalı — GİRİŞ durumu (state.*,
+                        // HENÜZ DEĞİŞTİRİLMEDİ) birleşime KATILIR (spawn
+                        // bir dalın İÇİNDE olduysa, if KAPANDIKTAN SONRA da
+                        // "hâlâ uçuşta" sayılmaya DEVAM eder — HH.2'nin
+                        // KASITLI, aşırı-muhafazakâr davranışı KORUNUR).
+                        _ = try merged.mergeFrom(aa, state.*);
+                    }
+                    state.* = merged;
                 },
-                .while_stmt => |w| {
-                    try self.walkPostSpawnCallerMutation(w.body, known_types, shared_in_flight, task_to_shared);
-                    try self.walkPostSpawnCallerMutation(w.body, known_types, shared_in_flight, task_to_shared);
-                },
-                .for_stmt => |f| {
-                    try self.walkPostSpawnCallerMutation(f.body, known_types, shared_in_flight, task_to_shared);
-                    try self.walkPostSpawnCallerMutation(f.body, known_types, shared_in_flight, task_to_shared);
-                },
+                .while_stmt => |w| try self.iterateLoopToFixpoint(aa, w.body, known_types, state),
+                .for_stmt => |f| try self.iterateLoopToFixpoint(aa, f.body, known_types, state),
                 else => {},
             }
         }

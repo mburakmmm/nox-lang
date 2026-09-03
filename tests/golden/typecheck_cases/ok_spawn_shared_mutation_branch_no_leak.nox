@@ -1,0 +1,12 @@
+# HH.5: hiçbir dalda mutasyon YOK (biri await, diğeri salt-okunur) —
+# fork/merge modelinin, güvenli dallanmayı hâlâ SORUNSUZ kabul ettiğinin
+# regresyon-yok kanıtı.
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+t: Task[None] = spawn worker(xs)
+if xs[0] == 1:
+    await t
+else:
+    print("hicbir mutasyon yok")

@@ -14,6 +14,46 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.54.0]
+
+### Düzeltildi
+- **HH.5 — v1.51.0'ın (HH.2) post-spawn checker'ında GERÇEK bir false-
+  negative düzeltildi**: harici bir inceleme, `checkNoPostSpawnCallerMutation`nin
+  `if`/`elif`/`else` dallarına AYNI (TEK, paylaşılan) `shared_in_flight`/
+  `task_to_shared` durumunu SIRAYLA (`then`→`elif`→`else`) geçirdiğini,
+  bu YÜZDEN bir daldaki `await`in KARDEŞ (karşılıklı-dışlayan) bir dalın
+  mutasyon kontrolünü YANLIŞLIKLA "temizleyebildiğini" GÖSTERDİ. Somut,
+  GERÇEKTEN DERLENEN repro (v1.53.0'a karşı doğrulandı):
+  ```nox
+  t: Task[None] = spawn worker(xs)
+  if condition:
+      await t
+  else:
+      xs.append(42)   # v1.51.0-v1.53.0: SESSİZCE derleniyordu
+  ```
+  `condition == false` olduğunda `worker(xs)` HÂLÂ ÇALIŞIRKEN `xs.append(42)`
+  senkronizasyonsuz bir mutasyondur — v1.51.0'ın CHANGELOG/spec metninin
+  "sıfır yanlış-negatif" iddiası **YANLIŞTI**. Düzeltme (`compiler/typecheck/
+  checker.zig`): `if`/`elif`/`else` dallarının HER BİRİ artık GİRİŞ durumunun
+  KENDİ, BAĞIMSIZ bir KOPYASINDAN (`SpawnFlowState.clone`) başlar, ÇIKIŞTA
+  "may" (union) anlamıyla birleştirilir (`SpawnFlowState.mergeFrom` —
+  eksik bir `else`, GİRİŞ durumunu DEĞİŞTİRMEDEN birleşime katan zımni bir
+  no-op dal gibi ele alınır, HH.2'nin KASITLI aşırı-muhafazakâr "spawn bir
+  dalda ise if kapandıktan sonra da uçuşta say" davranışı KORUNUR). `while`/
+  `for` döngüleri de artık HH.2'nin "iki-geçiş" yaklaşımı YERİNE GERÇEK bir
+  fixpoint (`iterateLoopToFixpoint`, `state` monoton büyüdüğünden sonlu
+  iterasyonda YAKINSAR, `MAX_LOOP_FIXPOINT_ITERATIONS=64` savunma sınırı)
+  kullanıyor. Bellek yönetimi basitleştirildi: `checkNoPostSpawnCallerMutation`
+  artık fonksiyon-ömürlü BİR `ArenaAllocator` kullanıyor (branch-başına
+  klonlamanın ürettiği çok sayıda küçük tahsisi TEK bir `deinit()`le
+  serbest bırakır — ÖNCEKİ kırılgan elle-serbest-bırakma döngüsü KALDIRILDI).
+  3 yeni golden fixture eklendi (harici incelemenin TAM repro'su + ters
+  yön + güvenli-dallanma regresyon-yok kontrolü); MEVCUT TÜM HH.2 fixture'ları
+  (dahil `err_spawn_shared_mutation_after_if_conservative`, İÇTEN-DIŞA
+  aşırı-muhafazakâr davranışın YENİ modelde de KORUNDUĞUNUN kanıtı)
+  değişmeden geçiyor. `v1.51.0`nin KENDİ CHANGELOG/spec girişi TARİHSEL
+  bir kayıt olarak DEĞİŞTİRİLMEDİ — düzeltme dürüstçe burada belgeleniyor.
+
 ## [1.53.0]
 
 ### Eklendi

@@ -17406,6 +17406,83 @@ build test` (TAM paket) + `NOX_STRESS_ROUNDS=800 zig build stress-test
 
 ---
 
+## 3.120 HH.5 — v1.51'in (HH.2) post-spawn checker'ında fork/merge soundness düzeltmesi (v1.54.0)
+
+v1.53.0 (HH.4) SONRASI harici bir inceleme, `checkNoPostSpawnCallerMutation`nin
+(HH.2, v1.51.0) `if`/`elif`/`else` dallarına AYNI (TEK, paylaşılan)
+`shared_in_flight`/`task_to_shared` durumunu SIRAYLA geçirdiğini VE bu
+YÜZDEN bir daldaki `await`in KARDEŞ (karşılıklı-dışlayan) bir dalın
+mutasyon kontrolünü YANLIŞLIKLA "temizleyebildiğini" GÖSTERDİ. Bu bulgu
+DOĞRUDAN, GERÇEK bir repro İLE (v1.53.0'ın `zig-out/release-fast/bin/noxc`sine
+karşı) DOĞRULANDI:
+
+```nox
+t: Task[None] = spawn worker(xs)
+if condition:
+    await t
+else:
+    xs.append(42)   # SESSİZCE derleniyordu
+```
+
+`condition == false` olduğunda `worker(xs)` HÂLÂ ÇALIŞIRKEN `xs.append(42)`
+senkronizasyonsuz bir mutasyondur — HH.2'nin "sıfır yanlış-negatif" iddiası
+YANLIŞTI. KONTROL testi (`await t` `if`TEN SONRA) HÂLÂ DOĞRU yakalanıyordu
+— mekanizma GENEL olarak ÇALIŞIYORDU, SADECE dallar-arası durum sızıntısı
+hatalıydı.
+
+**Düzeltme — branch-başına klon + çıkışta union-birleştirme**:
+`compiler/typecheck/checker.zig`ye YENİ `SpawnFlowState` struct'ı
+(`shared_in_flight`+`task_to_shared`i TEK bir DEĞER olarak taşır,
+`clone`/`mergeFrom` metotlarıyla). `walkPostSpawnCallerMutation`nin `if_stmt`
+dalı ARTIK: `then`/HER `elif`/`else`nin HER BİRİNİ GİRİŞ durumunun KENDİ
+BAĞIMSIZ KOPYASINDAN başlatıp AYRI AYRI analiz eder, SONRA TÜM çıkış
+durumlarını "may" (union) anlamıyla BİRLEŞTİRİR (`mergeFrom` — HERHANGİ bir
+daldaki in-flight/task-eşlemesi SONUÇTA da olası SAYILIR, HANGİ dal GERÇEKTEN
+çalışırsa çalışsın GERÇEK bir yarış KESİNLİKLE yakalanır). Eksik bir `else`,
+GİRİŞ durumunu DEĞİŞTİRMEDEN birleşime KATAN zımni bir no-op dal gibi ele
+alınır — bu, HH.2'nin KASITLI aşırı-muhafazakâr davranışını (spawn bir dalın
+İÇİNDEYSE, `if` KAPANDIKTAN SONRA da paylaşım "uçuşta" sayılmaya DEVAM eder)
+KORUR (regresyon-yok, MEVCUT `err_spawn_shared_mutation_after_if_conservative`
+fixture'ıyla doğrulandı).
+
+**Döngüler — GERÇEK fixpoint**: `while`/`for`, HH.2'nin "iki-geçiş" pragmatik
+yaklaşımı YERİNE `iterateLoopToFixpoint` İLE `state` ARTIK DEĞİŞMEYENE KADAR
+(`mergeFrom` `false` dönene KADAR) TEKRAR TEKRAR analiz edilir — `state` HER
+iterasyonda SADECE BÜYÜYEBİLDİĞİNDEN (SONLU isim uzayı) SONLU bir iterasyonda
+YAKINSAR, `MAX_LOOP_FIXPOINT_ITERATIONS=64` SADECE bir SAVUNMA sınırıdır
+(GERÇEKÇİ hiçbir fonksiyon YAKLAŞMAZ).
+
+**Bellek yönetimi basitleştirildi**: `checkNoPostSpawnCallerMutation` ARTIK
+fonksiyon-ömürlü BİR `std.heap.ArenaAllocator` kullanır — branch-başına
+klonlamanın ürettiği ÇOK sayıda küçük, KISA-ömürlü tahsisi TEK BİR
+`deinit()` çağrısıyla TOPLU serbest bırakır (HH.2'nin `task_to_shared`
+İçİn taşıdığı KIRILGAN, elle-serbest-bırakma `defer` döngüsü BU YÜZDEN
+TAMAMEN KALDIRILDI — double-free/leak riski YAPISAL olarak ORTADAN KALKTI).
+
+**Doğrulama**: harici incelemenin TAM repro'su (`err_spawn_shared_mutation_branch_leak.nox`)
++ TERS yönü (`err_spawn_shared_mutation_branch_leak_reverse.nox`, mutasyon
+`then`de/`await` `else`de) + güvenli-dallanma negatifi (`ok_spawn_shared_mutation_branch_no_leak.nox`)
+YENİ golden fixture olarak eklendi; MEVCUT TÜM HH.2/GG.20-22 spawn-shared-
+mutation fixture'ları (`err_spawn_shared_mutation_after_if_conservative`/
+`err_spawn_shared_mutation_loop_back_edge`/`err_spawn_shared_mutation_in_elif`/
+`ok_spawn_shared_mutation_if_read_only` DAHİL) DEĞİŞMEDEN geçti. Kırmızı-
+takım kanıtı: v1.53.0'ın (DÜZELTME ÖNCESİ) shared release-fast ikilisi
+repro'yu SESSİZCE KABUL EDİYORDU, YENİ (DÜZELTME SONRASI) Debug+ReleaseFast
+ikilileri İKİSİ de TUTARLI şekilde `SpawnSharedMutation` İLE REDDEDİYOR.
+`zig build test` (TAM paket) + `NOX_STRESS_ROUNDS=800 zig build stress-test
+-Doptimize=ReleaseFast` TEMİZ (BİLİNEN, İLGİSİZ 4 harness flake'i HARİÇ).
+`v1.51.0`nin KENDİ CHANGELOG/spec girişi ("her commit bir sürümdür"
+politikası gereği) TARİHSEL bir kayıt olarak DEĞİŞTİRİLMEDİ — düzeltme
+dürüstçe BU sürümün KENDİ girişinde belgelendi.
+
+## Kapsam DIŞI (bu turda)
+- `try`/`except`/`finally`/`with`/`lowlevel`/İÇ İÇE `func_def`/`class_def`
+  gövdeleri — HH.2'nin AYNI, DEĞİŞMEYEN v1 sınırı olarak KALIR.
+- `known_types`in branch-başına forklanması — mutasyon-tespitinin
+  doğruluğunu ETKİLEMEYEN, AYRI/küçük bir hassasiyet konusu.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.
