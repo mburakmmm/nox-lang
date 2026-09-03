@@ -14,6 +14,42 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.57.0]
+
+### Düzeltildi
+- **HH.8 — v1.56.0'ın (HH.7) post-spawn checker'ında GERÇEK bir dördüncü
+  false-negative düzeltildi**: harici bir inceleme, checker'ın paylaşılan
+  kaynağı DEĞİŞKEN İSMİYLE takip ettiğini, `ys: list[int] = xs` Nox'ta
+  GERÇEK bir referans/alias oluşturuyorsa `ys` ÜZERİNDEN yapılan bir
+  mutasyonun `xs`i spawn'a paylaşan checker'ı atlatabileceğini GÖSTERDİ.
+  İncelemenin KENDİ örneği (`.append()`in bir realloc'ta aliasing'i
+  kırdığını GÖSTEREN bir senaryo) yanlış çıktı, ama SAF indeks-ataması
+  (realloc gerektirmeyen mutasyon) İLE aliasing GERÇEKTEN doğrulandı
+  (`xs[0]=100` sonrası `ys[0]` de 100 okuyor) — VE bu DAR AMA GERÇEK
+  aliasing'le BİRLEŞTİRİLEN bir repro (`ys = xs; t = spawn worker(xs);
+  ys[0] = 42; await t`) v1.56.0'da SESSİZCE derleniyordu. Düzeltme
+  (`compiler/typecheck/checker.zig`): `SpawnFlowState`ye YENİ bir
+  `points_to: StringHashMapUnmanaged([]const usize)` alanı eklendi —
+  isim → o ismin referans verdiği soyut kaynak-kimlik(ler)i (list/dict/class
+  literalleri/sınıf-kurucuları İçİn AST-düğüm pointer'ı, `ys = xs` GİBİ
+  ÇIPLAK isim-den-isme atamalar İçİn KAYNAK ismin AYNI kimlik-kümesini
+  KOPYALAYAN bir alias). `resource_owners`/`locked_resources` ARTIK İSİMLE
+  DEĞİL bu soyut kaynak-kimliğiyle keyleniyor — spawn-tespiti/mutasyon-
+  kontrolü/`await`/döngü-kilidi mekanizmalarının HEPSİ artık HANGİ İSİM
+  kullanılırsa kullanılsın AYNI kaynağa çözülüyor. `points_to`,
+  `resource_owners`/`task_spawn_ids`İLE AYNI şekle sahip olduğundan MEVCUT
+  `mergeUsizeListMap` branch/loop birleştirmesini HİÇBİR DEĞİŞİKLİK
+  GEREKMEDEN kapsıyor. Fonksiyon-çağrısı dönüşü/attribute-erişimi ÜZERİNDEN
+  aliasing (`ys = f(xs)`) BİLİNÇLİ olarak kapsam dışı bırakıldı (SADECE
+  ÇIPLAK isim-den-isme atama kapsanıyor — dilde `&`/pointer sözdizimi
+  olmadığından bu aliasing'in TEK gerçek kaynağı). 4 yeni golden fixture
+  eklendi (ana repro + ters yön + sınıf-attribute-alias + bağımsız-listeler
+  regresyon-yok kontrolü); MEVCUT TÜM HH.2/HH.5/HH.6/HH.7 fixture'ları
+  DEĞİŞMEDEN geçiyor. Kırmızı-takım kanıtı: `isResourceOwned`i GEÇİCİ
+  olarak devre dışı bırakıp repro'nun TEKRAR sessizce derlendiği, SONRA
+  geri eklenip TEKRAR yakalandığı doğrulandı. `v1.56.0`nin KENDİ
+  CHANGELOG/spec girişi TARİHSEL bir kayıt olarak DEĞİŞTİRİLMEDİ.
+
 ## [1.56.0]
 
 ### Düzeltildi

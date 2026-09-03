@@ -1,0 +1,10 @@
+# HH.8: TERS yön — spawn'a `ys` (alias) geçiyor, mutasyon KAYNAK isim
+# `xs` üzerinden yapılıyor. Yön-bağımsızlığın kanıtı.
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+ys: list[int] = xs
+t: Task[None] = spawn worker(ys)
+xs[0] = 42
+await t

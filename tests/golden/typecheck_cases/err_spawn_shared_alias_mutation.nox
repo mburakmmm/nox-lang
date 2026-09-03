@@ -1,0 +1,16 @@
+# HH.8 (bkz. plan dosyası "post-spawn checker'ına takma-ad [alias]
+# farkındalığı"): harici bir incelemenin BULDUĞU, v1.56.0'da (HH.7)
+# SESSİZCE derlenen GERÇEK bir false-negative — checker paylaşılan
+# kaynağı DEĞİŞKEN İSMİYLE takip ediyordu, `ys: list[int] = xs` (Nox'ta
+# GERÇEK bir referans/alias — DOĞRULANDI: saf indeks-ataması İLE `xs[0]=100`
+# SONRASI `ys[0]` DE 100 okuyor) SONRASI `ys` ÜZERİNDEN yapılan bir
+# mutasyon `xs`i spawn'a paylaşan checker'ı ATLATABİLİYORDU. Soyut-kaynak-
+# kimliği takibi BUNU ARTIK YAKALAR.
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+ys: list[int] = xs
+t: Task[None] = spawn worker(xs)
+ys[0] = 42
+await t

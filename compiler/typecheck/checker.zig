@@ -2556,13 +2556,29 @@ pub const Checker = struct {
     /// `resolveExprSharedType`nin GÜCÜNÜ KULLANMAZ, SADECE ÇIPLAK bir
     /// `identifier`in `shared_in_flight`te olup OLMADIĞINI kontrol eder
     /// (v1 BİLİNÇLİ sınırı — bkz. plan dosyasının "Kapsam DIŞI" bölümü).
-    fn checkDirectSharedMutationStmt(self: *Checker, stmt: ast.Stmt, shared_in_flight: *const std.StringHashMapUnmanaged([]const usize)) TypeError!void {
+    /// HH.8 (bkz. plan dosyası "post-spawn checker'ına takma-ad [alias]
+    /// farkındalığı"): `name`nin ÇIPLAK KENDİSİ DEĞİL, `points_to`den
+    /// ÇÖZÜLEN soyut kaynak-kimlik(ler)i `resource_owners`de sahipli
+    /// (non-empty) mi diye bakar — `ys = xs` (GERÇEK aliasing) SONRASI
+    /// `ys` ÜZERİNDEN yapılan bir mutasyon da, `xs` spawn'a paylaşıldıysa,
+    /// AYNI kaynak-kimliğine ÇÖZÜLDÜĞÜNDEN YAKALANIR.
+    fn isResourceOwned(points_to: *const std.StringHashMapUnmanaged([]const usize), resource_owners: *const std.AutoHashMapUnmanaged(usize, []const usize), name: []const u8) bool {
+        const rids = points_to.get(name) orelse return false;
+        for (rids) |rid| {
+            if (resource_owners.get(rid)) |owners| {
+                if (owners.len > 0) return true;
+            }
+        }
+        return false;
+    }
+
+    fn checkDirectSharedMutationStmt(self: *Checker, stmt: ast.Stmt, points_to: *const std.StringHashMapUnmanaged([]const usize), resource_owners: *const std.AutoHashMapUnmanaged(usize, []const usize)) TypeError!void {
         switch (stmt.kind) {
             .assign => |a| switch (a.target) {
-                .index => |ix| if (ix.obj.* == .identifier and shared_in_flight.contains(ix.obj.identifier)) {
+                .index => |ix| if (ix.obj.* == .identifier and isResourceOwned(points_to, resource_owners, ix.obj.identifier)) {
                     return self.fail(error.SpawnSharedMutation, "'{s}' bir 'spawn' çağrısına paylaşılan argüman olarak geçtikten sonra, 'await' edilmeden önce burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce 'await' edin ya da bir yerel kopya kullanın", .{ix.obj.identifier});
                 },
-                .attribute => |at| if (at.obj.* == .identifier and shared_in_flight.contains(at.obj.identifier)) {
+                .attribute => |at| if (at.obj.* == .identifier and isResourceOwned(points_to, resource_owners, at.obj.identifier)) {
                     return self.fail(error.SpawnSharedMutation, "'{s}' bir 'spawn' çağrısına paylaşılan argüman olarak geçtikten sonra, 'await' edilmeden önce burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce 'await' edin ya da bir yerel kopya kullanın", .{at.obj.identifier});
                 },
                 else => {},
@@ -2571,7 +2587,7 @@ pub const Checker = struct {
                 const c = e.call;
                 if (c.callee.* == .attribute) {
                     const at = c.callee.attribute;
-                    if (at.obj.* == .identifier and shared_in_flight.contains(at.obj.identifier)) {
+                    if (at.obj.* == .identifier and isResourceOwned(points_to, resource_owners, at.obj.identifier)) {
                         if (std.mem.eql(u8, at.attr, "append") or std.mem.eql(u8, at.attr, "pop") or std.mem.eql(u8, at.attr, "sort")) {
                             return self.fail(error.SpawnSharedMutation, "'{s}' bir 'spawn' çağrısına paylaşılan argüman olarak geçtikten sonra, 'await' edilmeden önce burada değiştirilemez (eşzamanlı worker'lar arasında senkronizasyonsuz mutasyon veri yarışına yol açar) — önce 'await' edin ya da bir yerel kopya kullanın", .{at.obj.identifier});
                         }
@@ -2594,12 +2610,12 @@ pub const Checker = struct {
     /// Hashmap İTERASYONU SIRASINDA anahtar SİLİNEMEDİĞİNDEN, boşalan
     /// anahtarlar AYRI bir listede toplanıp gezinti BİTTİKTEN SONRA
     /// kaldırılır.
-    fn removeAwaitedTaskSharing(self: *Checker, aa: std.mem.Allocator, expr: ast.Expr, task_spawn_ids: *const std.StringHashMapUnmanaged([]const usize), resource_owners: *std.StringHashMapUnmanaged([]const usize), locked_resources: *const std.StringHashMapUnmanaged(void)) TypeError!void {
+    fn removeAwaitedTaskSharing(self: *Checker, aa: std.mem.Allocator, expr: ast.Expr, task_spawn_ids: *const std.StringHashMapUnmanaged([]const usize), resource_owners: *std.AutoHashMapUnmanaged(usize, []const usize), locked_resources: *const std.AutoHashMapUnmanaged(usize, void)) TypeError!void {
         switch (expr) {
             .await_expr => |op| {
                 if (op.* == .identifier) {
                     if (task_spawn_ids.get(op.identifier)) |awaited_ids| {
-                        var keys_to_remove: std.ArrayListUnmanaged([]const u8) = .empty;
+                        var keys_to_remove: std.ArrayListUnmanaged(usize) = .empty;
                         var it = resource_owners.iterator();
                         while (it.next()) |entry| {
                             if (locked_resources.contains(entry.key_ptr.*)) continue;
@@ -2669,11 +2685,23 @@ pub const Checker = struct {
         const aa = arena.allocator();
 
         var known_types: std.StringHashMapUnmanaged(Type) = .empty;
-        for (params) |p| {
-            try known_types.put(aa, p.name, try self.typeExprToType(p.type_expr));
-        }
-
         var state: SpawnFlowState = .{};
+        for (params) |p| {
+            const pt = try self.typeExprToType(p.type_expr);
+            try known_types.put(aa, p.name, pt);
+            // HH.8: parametrenin KENDİ soyut kaynak-kimliği — `p.name.ptr`
+            // (lexeme-slice, HERHANGİ bir global intern OLMADAN, DOĞRULANDI
+            // stabil) — BU parametrenin BAŞKA bir isme ALIAS OLARAK
+            // atanabilmesi İçİn (`ys: list[int] = xs`) gereken BAŞLANGIÇ
+            // kimliği.
+            switch (pt) {
+                .list, .dict, .class => {
+                    const one = try aa.dupe(usize, &.{@intFromPtr(p.name.ptr)});
+                    try state.points_to.put(aa, p.name, one);
+                },
+                else => {},
+            }
+        }
         try self.walkPostSpawnCallerMutation(aa, stmts, &known_types, &state);
     }
 
@@ -2693,31 +2721,48 @@ pub const Checker = struct {
     /// İLE `await t1` SADECE `id1`i ÇIKARIR, `id2` (t2'nin sahipliği) KALIR,
     /// mutasyon HÂLÂ DOĞRU REDDEDİLİR.
     const SpawnFlowState = struct {
-        /// isim → HÂLÂ O ismi PAYLAŞAN spawn-site kimliklerinin listesi.
-        /// Liste BOŞALDIĞINDA anahtar TAMAMEN kaldırılır (`contains` HÂLÂ
-        /// "hiçbir owner yok" anlamına DOĞRU gelsin diye).
-        resource_owners: std.StringHashMapUnmanaged([]const usize) = .empty,
+        /// HH.8 (bkz. plan dosyası "post-spawn checker'ına takma-ad [alias]
+        /// farkındalığı"): isim → O ismin HÂLÂ referans VEREBİLECEĞİ soyut
+        /// kaynak-kimlik(ler)i (`list`/`dict`/`class` tipli yereller/
+        /// parametreler İçİn — bkz. `checkNoPostSpawnCallerMutation`nin
+        /// parametre-seed'i VE `walkPostSpawnCallerMutation`nin `.var_decl`
+        /// bloğu). `ys: list[int] = xs` (ÇIPLAK isim-den-isme atama — Nox'ta
+        /// GERÇEK aliasing'in TEK kaynağı) `points_to["ys"] = points_to["xs"]`
+        /// YAPARAK `ys`i `xs`YLE AYNI kaynağa BAĞLAR — spawn/mutasyon artık
+        /// HANGİ İSİM kullanılırsa kullanılsın AYNI kaynağa ÇÖZÜLÜR.
+        points_to: std.StringHashMapUnmanaged([]const usize) = .empty,
+        /// kaynak-kimliği → HÂLÂ O kaynağı PAYLAŞAN spawn-site kimliklerinin
+        /// listesi. Liste BOŞALDIĞINDA anahtar TAMAMEN kaldırılır (`get`
+        /// HÂLÂ "hiçbir owner yok" anlamına DOĞRU gelsin diye). HH.8'DEN
+        /// İTİBAREN İSİMLE DEĞİL kaynak-kimliğiyle KEYLENİR (alias-farkında
+        /// takip İçİn ŞART).
+        resource_owners: std.AutoHashMapUnmanaged(usize, []const usize) = .empty,
         /// task-değişkeni adı → O DEĞİŞKENE atanmış spawn-site kimlikleri
         /// (NORMALDE tek elemanlı — TEK bir `spawn` TEK bir task üretir —
-        /// AMA dal-birleştirme SONUCU birden fazla OLABİLİR).
+        /// AMA dal-birleştirme SONUCU birden fazla OLABİLİR). Task
+        /// değişkenleri list/dict/class DEĞİLDİR, alias-takibi GEREKMEZ —
+        /// İSİMLE keylenmeye DEVAM eder.
         task_spawn_ids: std.StringHashMapUnmanaged([]const usize) = .empty,
         /// HH.7 (bkz. plan dosyası "post-spawn checker'ına döngü-tekrarlı
         /// spawn-site kilitlemesi"): bir döngü GÖVDESİNİN KENDİ İÇİNDE
         /// joinlemediği (fixpoint YAKINSADIKTAN SONRA HÂLÂ `resource_owners`de
-        /// KALAN) HER YENİ sahiplik İçİn KALICI olarak KİLİTLENEN isimler —
-        /// bu isimler ARTIK HİÇBİR SONRAKİ `await` İLE (fonksiyonun KALANI
-        /// BOYUNCA) TEMİZLENEMEZ (fire-and-forget'in AYNI "SONSUZA KADAR
-        /// uçuşta" disipliniyle TUTARLI — bkz. `lockRecurrentLoopOwnership`).
-        /// KÖK NEDEN: bir `spawn` çağrısının `spawn_id`si (AST-düğüm
-        /// pointer'ı) HER fixpoint iterasyonunda AYNIDIR — döngü GERÇEKTE
-        /// N AYRI runtime Task'ı ÜRETSE de, TEK bir owner OLARAK dedup
-        /// edilir; döngü SONRASI TEK bir `await`, SADECE SON iterasyonun
-        /// task'ını joinler, ÖNCEKİ iterasyonların task'ları HÂLÂ ÇALIŞIYOR
-        /// OLABİLİR.
-        locked_resources: std.StringHashMapUnmanaged(void) = .empty,
+        /// KALAN) HER YENİ sahiplik İçİn KALICI olarak KİLİTLENEN kaynak-
+        /// kimlikleri — bu kaynaklar ARTIK HİÇBİR SONRAKİ `await` İLE
+        /// (fonksiyonun KALANI BOYUNCA) TEMİZLENEMEZ (fire-and-forget'in
+        /// AYNI "SONSUZA KADAR uçuşta" disipliniyle TUTARLI — bkz.
+        /// `lockRecurrentLoopOwnership`). HH.8'DEN İTİBAREN İSİMLE DEĞİL
+        /// kaynak-kimliğiyle KEYLENİR. KÖK NEDEN: bir `spawn` çağrısının
+        /// `spawn_id`si (AST-düğüm pointer'ı) HER fixpoint iterasyonunda
+        /// AYNIDIR — döngü GERÇEKTE N AYRI runtime Task'ı ÜRETSE de, TEK
+        /// bir owner OLARAK dedup edilir; döngü SONRASI TEK bir `await`,
+        /// SADECE SON iterasyonun task'ını joinler, ÖNCEKİ iterasyonların
+        /// task'ları HÂLÂ ÇALIŞIYOR OLABİLİR.
+        locked_resources: std.AutoHashMapUnmanaged(usize, void) = .empty,
 
         fn clone(self: SpawnFlowState, aa: std.mem.Allocator) !SpawnFlowState {
             var out: SpawnFlowState = .{};
+            var it0 = self.points_to.iterator();
+            while (it0.next()) |e| try out.points_to.put(aa, e.key_ptr.*, e.value_ptr.*);
             var it1 = self.resource_owners.iterator();
             while (it1.next()) |e| try out.resource_owners.put(aa, e.key_ptr.*, e.value_ptr.*);
             var it2 = self.task_spawn_ids.iterator();
@@ -2727,12 +2772,13 @@ pub const Checker = struct {
             return out;
         }
 
-        /// "May" (union) birleştirme — `other`daki HERHANGİ bir owner/task-
-        /// eşlemesi/kilit SONUÇTA da (HANGİ dal GERÇEKTEN çalışırsa çalışsın)
-        /// olası sayılır. DEĞİŞİKLİK olduysa `true` döner (döngü fixpoint'i
-        /// İçİn).
+        /// "May" (union) birleştirme — `other`daki HERHANGİ bir points-to/
+        /// owner/task-eşlemesi/kilit SONUÇTA da (HANGİ dal GERÇEKTEN
+        /// çalışırsa çalışsın) olası sayılır. DEĞİŞİKLİK olduysa `true`
+        /// döner (döngü fixpoint'i İçİn).
         fn mergeFrom(self: *SpawnFlowState, aa: std.mem.Allocator, other: SpawnFlowState) !bool {
-            const c1 = try mergeUsizeListMap(aa, &self.resource_owners, other.resource_owners);
+            const c0 = try mergeUsizeListMap(aa, &self.points_to, other.points_to);
+            const c1 = try mergeResourceOwnersMap(aa, &self.resource_owners, other.resource_owners);
             const c2 = try mergeUsizeListMap(aa, &self.task_spawn_ids, other.task_spawn_ids);
             var c3 = false;
             var it3 = other.locked_resources.keyIterator();
@@ -2740,7 +2786,7 @@ pub const Checker = struct {
                 const gop = try self.locked_resources.getOrPut(aa, k.*);
                 if (!gop.found_existing) c3 = true;
             }
-            return c1 or c2 or c3;
+            return c0 or c1 or c2 or c3;
         }
     };
 
@@ -2748,6 +2794,43 @@ pub const Checker = struct {
     /// birleştirme mantığı — TEK generic fonksiyon (HH.5'in İKİ AYRI el-
     /// yazımı bloğu YERİNE).
     fn mergeUsizeListMap(aa: std.mem.Allocator, self_map: *std.StringHashMapUnmanaged([]const usize), other_map: std.StringHashMapUnmanaged([]const usize)) !bool {
+        var changed = false;
+        var it = other_map.iterator();
+        while (it.next()) |e| {
+            if (self_map.getPtr(e.key_ptr.*)) |existing| {
+                var merged_list: std.ArrayListUnmanaged(usize) = .empty;
+                try merged_list.appendSlice(aa, existing.*);
+                var grew = false;
+                for (e.value_ptr.*) |id| {
+                    var found = false;
+                    for (existing.*) |m| {
+                        if (m == id) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        try merged_list.append(aa, id);
+                        grew = true;
+                    }
+                }
+                if (grew) {
+                    existing.* = try merged_list.toOwnedSlice(aa);
+                    changed = true;
+                }
+            } else {
+                try self_map.put(aa, e.key_ptr.*, e.value_ptr.*);
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    /// HH.8: `mergeUsizeListMap`nin AYNI dedup-union mantığı — SADECE
+    /// anahtar tipi `usize` (kaynak-kimliği, `resource_owners`/`locked_resources`
+    /// İçİn) — Zig'in generic-OLMAYAN HashMap türleri arası KOD paylaşımı
+    /// PRATİK olmadığından KASITLI, küçük bir tekrar (HH.6'nın AYNI kararı).
+    fn mergeResourceOwnersMap(aa: std.mem.Allocator, self_map: *std.AutoHashMapUnmanaged(usize, []const usize), other_map: std.AutoHashMapUnmanaged(usize, []const usize)) !bool {
         var changed = false;
         var it = other_map.iterator();
         while (it.next()) |e| {
@@ -2795,6 +2878,22 @@ pub const Checker = struct {
         }
     }
 
+    /// HH.8: `addSpawnOwner`nin AYNI dedup-ekleme mantığı — SADECE anahtar
+    /// tipi `usize` (kaynak-kimliği) — `resource_owners`nin spawn-tespiti
+    /// yazma noktası İçİn.
+    fn addSpawnOwnerUsize(aa: std.mem.Allocator, map: *std.AutoHashMapUnmanaged(usize, []const usize), key: usize, id: usize) !void {
+        if (map.getPtr(key)) |existing| {
+            for (existing.*) |e| if (e == id) return;
+            var list: std.ArrayListUnmanaged(usize) = .empty;
+            try list.appendSlice(aa, existing.*);
+            try list.append(aa, id);
+            existing.* = try list.toOwnedSlice(aa);
+        } else {
+            const one = try aa.dupe(usize, &.{id});
+            try map.put(aa, key, one);
+        }
+    }
+
     /// HH.6: fixpoint cap'i (`MAX_LOOP_FIXPOINT_ITERATIONS`) AŞILDIĞINDA
     /// (VE state HÂLÂ değişiyorsa) SAVUNMA-DERİNLİĞİ olarak — `known_types`teki
     /// HER `list`/`dict`/`class` tipli ismi, HİÇBİR `await`in ASLA
@@ -2810,7 +2909,11 @@ pub const Checker = struct {
         var it = known_types.iterator();
         while (it.next()) |e| {
             switch (e.value_ptr.*) {
-                .list, .dict, .class => try addSpawnOwner(aa, &state.resource_owners, e.key_ptr.*, CONSERVATIVE_FALLBACK_SPAWN_ID),
+                .list, .dict, .class => {
+                    if (state.points_to.get(e.key_ptr.*)) |rids| {
+                        for (rids) |rid| try addSpawnOwnerUsize(aa, &state.resource_owners, rid, CONSERVATIVE_FALLBACK_SPAWN_ID);
+                    }
+                },
                 else => {},
             }
         }
@@ -2907,12 +3010,45 @@ pub const Checker = struct {
             self.current_span = stmt.span;
 
             // (1) Mutasyon kontrolü — BU deyimin KENDİ (2)/(3) işlemlerinden
-            // ÖNCEKİ `resource_owners` durumuna göre.
-            try self.checkDirectSharedMutationStmt(stmt, &state.resource_owners);
+            // ÖNCEKİ `points_to`/`resource_owners` durumuna göre.
+            try self.checkDirectSharedMutationStmt(stmt, &state.points_to, &state.resource_owners);
 
             if (stmt.kind == .var_decl) {
                 const v = stmt.kind.var_decl;
-                try known_types.put(aa, v.name, self.typeExprToType(v.type_expr) catch .none);
+                const vt = self.typeExprToType(v.type_expr) catch .none;
+                try known_types.put(aa, v.name, vt);
+                // HH.8: `points_to` güncellemesi — SADECE list/dict/class
+                // tipli yerellerde ANLAMLI. `ys = xs` (ÇIPLAK isim-den-isme
+                // atama) ALIAS'tır: `points_to[ys]`, `points_to[xs]`nin
+                // AYNI dizi REFERANSINI PAYLAŞIR. Bir literal/sınıf-kurucusu
+                // İSE YENİ, tek-elemanlı bir kaynak-kimliği ATANIR (GG.15/
+                // HH.5'in AYNI "AST-düğüm pointer/slice.ptr = benzersiz
+                // kimlik" deseni). BAŞKA HERHANGİ bir RHS şekli (fonksiyon-
+                // çağrısı dönüşü, attribute erişimi, vb.) İçİn HİÇBİR
+                // kaynak-kimliği ATANMAZ (v1 BİLİNÇLİ sınırı).
+                switch (vt) {
+                    .list, .dict, .class => {
+                        switch (v.value) {
+                            .list_lit => |elems| {
+                                const one = try aa.dupe(usize, &.{@intFromPtr(elems.ptr)});
+                                try state.points_to.put(aa, v.name, one);
+                            },
+                            .dict_lit => |pairs| {
+                                const one = try aa.dupe(usize, &.{@intFromPtr(pairs.ptr)});
+                                try state.points_to.put(aa, v.name, one);
+                            },
+                            .call => |c| if (c.callee.* == .identifier) {
+                                const one = try aa.dupe(usize, &.{@intFromPtr(c.callee)});
+                                try state.points_to.put(aa, v.name, one);
+                            },
+                            .identifier => |src_name| if (state.points_to.get(src_name)) |src_ids| {
+                                try state.points_to.put(aa, v.name, src_ids);
+                            },
+                            else => {},
+                        }
+                    },
+                    else => {},
+                }
             }
 
             // (2) `spawn` tespiti — bu deyimin DEĞERİ (var_decl/assign) VEYA
@@ -2940,8 +3076,15 @@ pub const Checker = struct {
                         if (arg == .identifier) {
                             if (known_types.get(arg.identifier)) |t| {
                                 if (t == .list or t == .dict or t == .class) {
-                                    try addSpawnOwner(aa, &state.resource_owners, arg.identifier, spawn_id);
                                     any_shared = true;
+                                    // HH.8: `arg.identifier`in ÇIPLAK KENDİSİ
+                                    // DEĞİL, `points_to`den ÇÖZÜLEN kaynak-
+                                    // kimlik(ler)i owned İŞARETLENİR — BÖYLECE
+                                    // BAŞKA bir isim (`ys`) AYNI kaynağa ALIAS
+                                    // OLDUĞUNDA da AYNI owner kaydını GÖRÜR.
+                                    if (state.points_to.get(arg.identifier)) |rids| {
+                                        for (rids) |rid| try addSpawnOwnerUsize(aa, &state.resource_owners, rid, spawn_id);
+                                    }
                                 }
                             }
                         }

@@ -1,0 +1,15 @@
+# HH.8: sınıf örnekleri İçİn de AYNI alias-farkındalığı — `c2 = c1`
+# SONRASI `c2.n = 42` (attribute-atama), `c1`i spawn'a paylaşan checker'ı
+# YAKALAMALI.
+class Counter:
+    def __init__(self: Counter) -> None:
+        self.n = 0
+
+async def worker(c: Counter) -> None:
+    print(c.n)
+
+c1: Counter = Counter()
+c2: Counter = c1
+t: Task[None] = spawn worker(c1)
+c2.n = 42
+await t

@@ -1,0 +1,11 @@
+# HH.8: BAĞIMSIZ iki liste (`ys` AYRI bir literalden geliyor, `xs`in
+# ALIAS'ı DEĞİL) — `ys` mutasyonu, `xs`i spawn eden checker'ı YANLIŞLIKLA
+# reddetmemeli. Regresyon-yok kontrolü.
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+ys: list[int] = [4, 5, 6]
+t: Task[None] = spawn worker(xs)
+ys.append(1)
+await t

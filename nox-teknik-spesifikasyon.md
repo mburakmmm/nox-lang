@@ -17637,6 +17637,89 @@ düzeltme dürüstçe BU sürümün KENDİ girişinde belgelendi.
 
 ---
 
+## 3.123 HH.8 — post-spawn checker'ına takma-ad (alias) farkındalığı: isim yerine soyut kaynak kimliği (v1.57.0)
+
+v1.56.0 (HH.7) SONRASI harici bir inceleme, checker'ın paylaşılan kaynağı
+DEĞİŞKEN İSMİYLE takip ettiğini, Nox'ta `ys: list[int] = xs`nin GERÇEK
+bir referans/alias oluşturduğunu (kopya DEĞİL) VE bu YÜZDEN `ys` ÜZERİNDEN
+yapılan bir mutasyonun `xs`i spawn'a paylaşan checker'ı ATLATABİLECEĞİNİ
+GÖSTERDİ.
+
+**Doğrulama (İKİ aşamalı, incelemenin KENDİ örneğinin YANLIŞ olduğu
+bulundu)**: incelemenin verdiği örnek (`xs.append(8)` SONRASI `ys[7]`
+okuması İLE "kalıcı alias" kanıtlamaya çalışıyordu) GERÇEKTE `IndexError`
+İLE ÇÖKTÜ — `.append()` bir REALLOC tetikleyince SADECE mutasyona uğrayan
+İSMİN KENDİ yerel slotu YENİ bloğa güncelleniyor, `ys` ESKİ/KISA bloğa
+bakmaya DEVAM ediyor (aliasing REALLOC'ta KOPUYOR — ARC'ın var olan
+tasarımının doğal bir sonucu, bir hata DEĞİL). AMA saf İNDEKS-ataması
+(realloc GEREKTİRMEYEN mutasyon) İLE TEKRAR test edildiğinde GERÇEK,
+kalıcı aliasing DOĞRULANDI (`xs[0]=100` SONRASI `ys[0]` DE 100 okuyor).
+VE bu DAR AMA GERÇEK aliasing İLE BİRLEŞTİRİLEN bir spawn-repro (`ys =
+xs; t = spawn worker(xs); ys[0] = 42; await t`) v1.56.0'da SESSİZCE
+derleniyordu — checker `ys`i HİÇ BİLMİYORDU.
+
+**Düzeltme — isim→BOOLEAN/isim→OWNER YERİNE, isim→SOYUT-KAYNAK-KİMLİĞİ +
+kaynak→owner**: incelemenin ÖNERDİĞİ TAM points-to modeli uygulandı —
+HH.5-7'nin ZATEN kanıtlanmış "AST-düğüm pointer'ı = bu derleme-geçişi
+İçİn benzersiz kimlik" deseni (spawn_id İLE AYNI ilke) BURADA da
+kullanıldı. `SpawnFlowState`ye YENİ `points_to: StringHashMapUnmanaged([]const usize)`
+alanı eklendi (isim → o ismin referans verdiği kaynak-kimlik(ler)i) —
+`.list_lit`/`.dict_lit` İçİn `elems.ptr`/`pairs.ptr`, sınıf-kurucusu İçİn
+`c.callee` pointer'ı (GG.15'in AYNI deseni); `ys = xs` (ÇIPLAK isim-den-
+isme atama, Nox'ta aliasing'in TEK gerçek kaynağı — dilde `&`/pointer
+sözdizimi YOK) İçİn `points_to[ys] = points_to[xs]` (AYNI kimlik-kümesinin
+kopyalanması). `resource_owners`/`locked_resources` ARTIK İSİMLE DEĞİL bu
+soyut kaynak-kimliğiyle (`std.AutoHashMapUnmanaged(usize, ...)`) keyleniyor
+— spawn-tespiti (`points_to` ÜZERİNDEN çözülüp `addSpawnOwnerUsize` İLE
+yazılıyor), mutasyon-kontrolü (YENİ `isResourceOwned` — `points_to.get(name)`teki
+HERHANGİ bir kimliğin `resource_owners`de non-empty owner'ı VARSA `true`),
+`removeAwaitedTaskSharing`, `forceConservativeState`, `lockRecurrentLoopOwnership`
+HEPSİ artık HANGİ İSİM kullanılırsa kullanılsın AYNI kaynağa çözülüyor.
+`points_to`, `resource_owners`/`task_spawn_ids`İLE AYNI şekle sahip
+olduğundan MEVCUT `mergeUsizeListMap` branch/loop birleştirmesini HİÇBİR
+DEĞİŞİKLİK GEREKMEDEN kapsadı (dal-bağımlı `if cond: ys=a else: ys=b`
+SONRASI `points_to[ys]` DOĞAL olarak union oluyor). `resource_owners`/
+`locked_resources`nin usize-anahtarlı KARDEŞ birleştirme/ekleme yardımcıları
+(`mergeResourceOwnersMap`/`addSpawnOwnerUsize`) HH.6'nın "kasıtlı, küçük
+tekrar" kararıyla TUTARLI olarak eklendi (Zig'in generic-OLMAYAN HashMap
+türleri arası kod paylaşımı PRATİK DEĞİL).
+
+**Kapsam (BİLİNÇLİ sınırlı)**: fonksiyon-çağrısı dönüşü/attribute-erişimi
+ÜZERİNDEN aliasing (`ys = f(xs)`, `ys = obj.field`) KAPSAM DIŞI — SADECE
+ÇIPLAK isim-den-isme atama kapsanıyor (GG.16'nın AYNI "3 dar güvenli
+şekil, ötesi kapsam dışı" disipliniyle TUTARLI — BU YENİ bir unsoundness
+DEĞİL, ZATEN var olan bir sınırın DEVAMI). `checkNoSpawnSharedMutation`
+(spawn-HEDEFİNİN KENDİ gövdesindeki mutasyon kontrolü, TAMAMEN AYRI bir
+fonksiyon) İçİn AYNI alias-farkındalığı AYRI/gelecekteki bir tur.
+
+**Doğrulama**: harici incelemenin (düzeltilmiş, GERÇEK aliasing'i
+kullanan) repro'su (`err_spawn_shared_alias_mutation.nox`) + TERS yön
+(`err_spawn_shared_alias_mutation_reverse.nox`) + sınıf-attribute-alias
+(`err_spawn_shared_alias_class_attribute_mutation.nox`) + bağımsız-
+listeler regresyon-yok kontrolü (`ok_spawn_shared_no_alias_independent_lists.nox`)
+YENİ golden fixture olarak eklendi; MEVCUT TÜM HH.2/HH.5/HH.6/HH.7
+fixture'ları DEĞİŞMEDEN geçti. Kırmızı-takım kanıtı: `isResourceOwned`i
+GEÇİCİ olarak KOŞULSUZ `false` DÖNDÜRECEK şekilde DEVRE DIŞI bırakıp
+repro'nun TEKRAR SESSİZCE derlendiği, SONRA GERİ eklenip TEKRAR YAKALANDIĞI
+doğrulandı. `zig build test` (TAM paket) + `NOX_STRESS_ROUNDS=800 zig
+build stress-test -Doptimize=ReleaseFast` TEMİZ (BİLİNEN, İLGİSİZ 4
+harness flake'i HARİÇ). `v1.56.0`nin KENDİ CHANGELOG/spec girişi TARİHSEL
+bir kayıt olarak DEĞİŞTİRİLMEDİ.
+
+## Kapsam DIŞI (bu turda)
+- Fonksiyon-çağrısı dönüşü/attribute-erişimi/index-erişimi ÜZERİNDEN
+  aliasing (`ys = f(xs)`, `ys = obj.field`) — SADECE ÇIPLAK isim-den-isme
+  atama (`ys = xs`) kapsandı.
+- `checkNoSpawnSharedMutation` İçİn AYNI alias-farkındalığı — AYRI/
+  gelecekteki bir tur.
+- `try`/`except`/`finally`/`with`/`lowlevel`/İÇ İÇE `func_def`/`class_def`
+  gövdeleri — HH.2/HH.5/HH.6/HH.7'nin AYNI, DEĞİŞMEYEN v1 sınırı olarak
+  KALIR.
+- Concurrency checker'ı `checker.zig`den AYRI bir modüle taşımak —
+  incelemenin ÖNERİSİ, AYRI/büyük bir yeniden-yapılandırma görevi.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

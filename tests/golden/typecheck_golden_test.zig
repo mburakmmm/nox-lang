@@ -953,6 +953,40 @@ test "golden(post-spawn-caller-mutation): HH.7 — for döngüsü varyantı da y
     );
 }
 
+// HH.8 (bkz. plan dosyası "post-spawn checker'ına takma-ad [alias]
+// farkındalığı"): harici bir incelemenin BULDUĞU, v1.56.0'da (HH.7)
+// SESSİZCE derlenen GERÇEK bir false-negative — checker paylaşılan
+// kaynağı DEĞİŞKEN İSMİYLE takip ediyordu, `ys = xs` (GERÇEK aliasing)
+// SONRASI `ys` ÜZERİNDEN yapılan bir mutasyon `xs`i spawn'a paylaşan
+// checker'ı ATLATABİLİYORDU.
+test "golden(post-spawn-caller-mutation): HH.8 — alias (ys=xs) ÜZERİNDEN mutasyon YAKALANIR" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_alias_mutation.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_alias_mutation.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): HH.8 — TERS yönde de (spawn alias ile, mutasyon kaynak isimle) yakalanır" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_alias_mutation_reverse.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_alias_mutation_reverse.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): HH.8 — sınıf örneği alias'ı ÜZERİNDEN attribute-atama yakalanır" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_alias_class_attribute_mutation.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_alias_class_attribute_mutation.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): HH.8 — bağımsız (alias OLMAYAN) iki liste yanlışlıkla reddedilmez" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/ok_spawn_shared_no_alias_independent_lists.nox"),
+        @embedFile("typecheck_cases/ok_spawn_shared_no_alias_independent_lists.expected"),
+    );
+}
+
 // v1.30.1 (bkz. plan dosyası "Checker'a ifade-derinliği koruması"):
 // `checkExpr`/`checkBinary`nin GERÇEK bir yığın-taşması SIGABRT'ına yol
 // açan (`tests/fuzz/lexer_parser_checker_fuzz.zig`nin 2000-derin
