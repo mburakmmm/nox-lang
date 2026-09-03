@@ -148,6 +148,112 @@ pub fn classifyVarDecl(self: *Codegen, body: []const ast.Stmt, i: usize, v: ast.
     }
 }
 
+/// HH.3 (bkz. plan dosyası "`noxc explain` — derleyicinin ARC/stack/
+/// arena tahsis kararlarını insan-okunur biçimde yüzeye çıkarma"):
+/// `classifyVarDecl`nin İNSAN-OKUNUR "neden" karşılığı — `noxc explain`in
+/// TEK veri kaynağı.
+pub const ExplainVerdict = enum { stack, arena, arc };
+
+pub const ExplainRecord = struct {
+    line: usize,
+    name: []const u8,
+    verdict: ExplainVerdict,
+    size: ?usize,
+    reasons: []const []const u8,
+    budget_before: usize,
+    budget_after: usize,
+};
+
+/// `classifyVarDecl`i ÇAĞIRIR (OTORİTER/GERÇEK karar — SIFIR sapma
+/// riski, BU fonksiyon `classifyVarDecl`in KENDİSİNE HİÇBİR DEĞİŞİKLİK
+/// YAPMAZ) — SONRA, SADECE İNSAN-OKUNUR "neden" METNİ İçİn, AYNI
+/// dosyadaki SAF/yan-etkisiz sub-predicate'leri (`simpleLiteralListQtype`/
+/// `elemTypeIsScalar`/`localNeverEscapes`/`localNeverEscapesGrowable`/
+/// `classSafeForStackAlloc`) TEKRAR çağırarak HANGİ adımın geçtiğini/
+/// başarısız olduğunu BELİRLER — bu tekrar-çağrı SAF fonksiyonlar
+/// ÜZERİNDE olduğundan (yan etki YOK) HERHANGİ bir risk TAŞIMAZ, SADECE
+/// hesaplama tekrarı (ucuz, bir kerelik bir `explain` çağrısı İçİn
+/// önemsiz).
+pub fn explainVarDecl(self: *Codegen, allocator: std.mem.Allocator, body: []const ast.Stmt, i: usize, v: ast.VarDecl, running_total: *usize, class_params: []const inlining.ClassParam) CodegenError!ExplainRecord {
+    const budget_before = running_total.*;
+    var reasons: std.ArrayListUnmanaged([]const u8) = .empty;
+
+    const candidate = try classifyVarDecl(self, body, i, v, running_total, class_params);
+
+    switch (v.value) {
+        .list_lit => |elems| {
+            if (simpleLiteralListQtype(elems)) |qt| {
+                const size = LIST_HEADER_SIZE + qbeSizeOf(qt) * elems.len;
+                try reasons.append(allocator, try std.fmt.allocPrint(allocator, "sabit-boyutlu literal liste ({d} bayt)", .{size}));
+                if (size > MAX_STACK_ALLOC_SIZE) {
+                    try reasons.append(allocator, try std.fmt.allocPrint(allocator, "nesne-başına tavanı aşıyor ({d} > {d} bayt)", .{ size, MAX_STACK_ALLOC_SIZE }));
+                } else if (budget_before + size > MAX_PROMOTED_FRAME_SIZE) {
+                    try reasons.append(allocator, try std.fmt.allocPrint(allocator, "çerçeve bütçesini aşıyor ({d} + {d} > {d} bayt)", .{ budget_before, size, MAX_PROMOTED_FRAME_SIZE }));
+                } else if (!localNeverEscapes(self, body, v.name, i + 1, class_params)) {
+                    try reasons.append(allocator, "kaçıyor (yerel, bildirimden SONRA güvensiz bir şekilde kullanılıyor)");
+                } else {
+                    try reasons.append(allocator, "kaçmıyor, boyut/bütçe İçinde -> stack");
+                }
+            } else {
+                try reasons.append(allocator, "literal olmayan/karışık elemanlı liste (basit-literal DEĞİL)");
+            }
+            if (candidate == null or candidate.? != .fixed_stack) {
+                if (!(try elemTypeIsScalar(self, v.type_expr))) {
+                    try reasons.append(allocator, "eleman tipi skaler değil (büyüyebilir-arena YALNIZCA int/float/bool eleman tipini destekler)");
+                } else if (!localNeverEscapesGrowable(self, body, v.name, i + 1)) {
+                    try reasons.append(allocator, "büyüyebilir-arena yolu İçİn de kaçıyor -> ARC");
+                } else {
+                    try reasons.append(allocator, "büyüyebilir-arena adayı (skaler eleman, .append() güvenli) -> arena");
+                }
+            }
+        },
+        .call => |c| {
+            if (c.callee.* == .identifier) {
+                if (self.classes.get(c.callee.identifier)) |cinfo| {
+                    try reasons.append(allocator, try std.fmt.allocPrint(allocator, "sınıf kurucusu çağrısı ({s}, {d} bayt)", .{ c.callee.identifier, cinfo.total_size }));
+                    if (!classSafeForStackAlloc(&cinfo)) {
+                        try reasons.append(allocator, "heap-yönetimli (str/list/dict/class) bir alan İçeriyor -> stack/arena GÜVENLİ DEĞİL, ARC");
+                    } else if (!localNeverEscapes(self, body, v.name, i + 1, class_params)) {
+                        try reasons.append(allocator, "kaçıyor (yerel, bildirimden SONRA güvensiz bir şekilde kullanılıyor) -> ARC");
+                    } else if (cinfo.total_size > MAX_STACK_ALLOC_SIZE) {
+                        try reasons.append(allocator, try std.fmt.allocPrint(allocator, "nesne-başına tavanı aşıyor ({d} > {d} bayt) -> arena", .{ cinfo.total_size, MAX_STACK_ALLOC_SIZE }));
+                    } else if (budget_before + cinfo.total_size > MAX_PROMOTED_FRAME_SIZE) {
+                        try reasons.append(allocator, try std.fmt.allocPrint(allocator, "çerçeve bütçesini aşıyor ({d} + {d} > {d} bayt) -> arena", .{ budget_before, cinfo.total_size, MAX_PROMOTED_FRAME_SIZE }));
+                    } else {
+                        try reasons.append(allocator, "kaçmıyor, boyut/bütçe İçinde -> stack");
+                    }
+                } else {
+                    try reasons.append(allocator, "bilinmeyen çağrı hedefi (sınıf kurucusu DEĞİL) -> ARC");
+                }
+            } else {
+                try reasons.append(allocator, "doğrudan bir isim olmayan çağrı hedefi -> ARC");
+            }
+        },
+        else => {
+            try reasons.append(allocator, "yalnızca liste literalleri VE sınıf kurucu çağrıları stack/arena adayı olabilir -> ARC");
+        },
+    }
+
+    const verdict: ExplainVerdict = if (candidate) |cand| switch (cand) {
+        .fixed_stack => .stack,
+        .growable_arena => .arena,
+    } else .arc;
+    const size: ?usize = if (candidate) |cand| switch (cand) {
+        .fixed_stack => |s| s,
+        .growable_arena => null,
+    } else null;
+
+    return .{
+        .line = body[i].line,
+        .name = v.name,
+        .verdict = verdict,
+        .size = size,
+        .reasons = try reasons.toOwnedSlice(allocator),
+        .budget_before = budget_before,
+        .budget_after = running_total.*,
+    };
+}
+
 /// GG.18: `type_expr`nin (bir `var_decl`in TİP ANOTASYONU — `[]` gibi
 /// KENDİ başına tipsiz bir literalin eleman tipini TAŞIMADIĞI durumlar
 /// İçİn TEK kaynak) `list[T]` OLDUĞUNU VE `T`nin heap-yönetimli

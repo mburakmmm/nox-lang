@@ -82,6 +82,7 @@ fn generateIr(allocator: std.mem.Allocator, io: std.Io, source: []const u8) !?[]
         checker_state.module_aliases,
         checker_state.decorated_functions.items,
         .qbe,
+        null,
     ) catch return null;
 
     return ir;

@@ -372,6 +372,7 @@ pub fn build(b: *std.Build) void {
         "tests/cli/shared_mem_test.zig",
         "tests/cli/install_test.zig",
         "tests/cli/help_screen_test.zig",
+        "tests/cli/explain_test.zig",
         "tests/fuzz/lexer_parser_checker_fuzz.zig",
         "tests/golden/golden_test.zig",
         "tests/golden/typecheck_golden_test.zig",

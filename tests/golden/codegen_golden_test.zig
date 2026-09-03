@@ -328,7 +328,7 @@ test "codegen: Faz M.8 — provably-safe metod çağrılarının ÜRETTİĞİ IR
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
     // `Adder`in ne `__init__`i ne `inc`i ne `double_inc`i HİÇBİR ZAMAN raise
     // ETMEZ (kod içinde tek bir `raise` bile YOK) — bu yüzden bu programın
     // ÜRETTİĞİ IR'da `nox_exception_pending`e TEK bir çağrı bile
@@ -364,7 +364,7 @@ test "codegen: Faz GG.3 — for-loop içindeki provably-safe metod çağrısın�
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
     // GG.3 ÖNCESİ: `for_stmt` HER ZAMAN döngü değişkeninin sınıfını `null`
     // olarak bildirirdi, bu yüzden `b.get()` ÇÖZÜMLENEMEZ sayılıp
     // `sum_boxes`u zehirlerdi VE bu IR'da `nox_exception_pending` çağrısı
@@ -408,7 +408,7 @@ test "codegen: Faz GG.5 — döngü içinde AYNI str için TEK bir strlen çağr
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
     // `count_two`nun gövdesinde `s[i]` İKİ AYRI ifade konumunda GÖRÜNÜR
     // (`== "a"` VE `== "n"` karşılaştırmaları) — GG.5 ÖNCESİ bu İKİ AYRI
     // `call $strlen` ÜRETİRDİ (döngünün HER yinelemesinde İKİ KEZ
@@ -521,7 +521,7 @@ test "codegen: Faz GG.9 — kanıtlanabilir sınır-içi erişimde IndexError da
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
     // `sum_list`in `xs[i]`si VE `count_char`in `s[i]`si İKİSİ de TAM OLARAK
     // GG.9'un hedeflediği desendedir — bu programın ÜRETTİĞİ IR'da NE
     // `list_idx_err` NE DE `str_idx_err` (sınır-DIŞI dalının etiket
@@ -556,7 +556,7 @@ test "codegen: Faz GG.9 — döngü içinde yeniden atanan liste İçin IndexErr
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
     // `xs` döngü İÇİNDE yeniden atandığından `bounds_elide_ctx` BU döngü
     // İçin HİÇ KURULMAMALIDIR — `list_idx_err` dalı NORMAL şekilde
     // ÜRETİLMELİDİR (elenmenin GERÇEKLEŞMEDİĞİNİN doğrudan kanıtı).
@@ -915,7 +915,7 @@ test "codegen: Faz GG.9 (while genellemesi) — while j < len(xs): xs[j] IR'ınd
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
     try std.testing.expect(std.mem.indexOf(u8, ir, "list_idx_err") == null);
 }
 
@@ -944,7 +944,7 @@ test "codegen: Faz GG.9 (while genellemesi) — while j < SABİT: xs[j] IR'ında
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
     try std.testing.expect(std.mem.indexOf(u8, ir, "list_idx_err") == null);
 }
 
@@ -966,7 +966,7 @@ test "codegen: Faz GG.9 (while genellemesi) — döngü içinde yeniden atanan l
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
     try std.testing.expect(std.mem.indexOf(u8, ir, "list_idx_err") != null);
 }
 
@@ -997,7 +997,7 @@ test "codegen: darboğaz #3 — `tally` IR'ında `i % 3` TEK bir `rem` talimatı
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
     // `$classify` (bağımsız/standalone sürüm, HER ZAMAN üretilir) KENDİ
     // TEK `rem`ini tutar — bu YÜZDEN modül GENELİNDE tam olarak 2 `rem`
     // BEKLENİR (1 standalone `$classify` + 1 `$tally`nin İÇİNDE, ÜÇ
@@ -1074,7 +1074,7 @@ test "codegen: lowlevel arenasından bir değeri bloktan return etmek reddedilir
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    try std.testing.expectError(error.Unsupported, nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe));
+    try std.testing.expectError(error.Unsupported, nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null));
 }
 
 test "codegen(çalıştır): Faz U.4.3 — iç içe def bir int'i yakalar (capture), inşa+release döngüsü sızıntısız" {
@@ -1170,7 +1170,7 @@ test "codegen: Faz T.3 — debug_source_path VERİLMEDEN dbgfile/dbgloc HİÇ ü
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
     try std.testing.expect(std.mem.indexOf(u8, ir, "dbgfile") == null);
     try std.testing.expect(std.mem.indexOf(u8, ir, "dbgloc") == null);
 }
@@ -1187,7 +1187,7 @@ test "codegen: Faz T.3 — debug_source_path VERİLİRSE dbgfile + doğru satır
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, "fibonacci.nox", .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, "fibonacci.nox", .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
     try std.testing.expect(std.mem.indexOf(u8, ir, "dbgfile \"fibonacci.nox\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, ir, "dbgloc") != null);
 }
@@ -1248,7 +1248,7 @@ test "codegen: GG.13 — küçük sınıf '=='inin ÜRETTİĞİ IR'da call \\$Po
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
 
     try std.testing.expect(std.mem.indexOf(u8, ir, "call $Point_eq") == null);
     try std.testing.expect(std.mem.indexOf(u8, ir, "call $List_priml_eq") != null);
@@ -1293,7 +1293,7 @@ test "codegen: GG.14 — pinned passthrough'un ÜRETTİĞİ IR'da SADECE dinamik
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
 
     const start_marker = "function l $compute(l %rt, l %p_n) {\n";
     const start = std.mem.indexOf(u8, ir, start_marker) orelse return error.MarkerNotFound;
@@ -1341,7 +1341,7 @@ test "codegen: GG.15 — lowlevel bloğunun ÜRETTİĞİ IR'da nox_arena_create/
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
 
     try std.testing.expect(std.mem.indexOf(u8, ir, "nox_arena_create") == null);
     try std.testing.expect(std.mem.indexOf(u8, ir, "nox_arena_alloc") == null);
@@ -1373,7 +1373,7 @@ test "codegen: GG.15 — karışık lowlevel bloğunun ÜRETTİĞİ IR'da nox_ar
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
 
     try std.testing.expect(std.mem.indexOf(u8, ir, "nox_arena_create") != null);
     try std.testing.expect(std.mem.indexOf(u8, ir, "nox_arena_destroy") != null);
@@ -1406,7 +1406,7 @@ test "codegen: GG.16 — compute() ÜRETTİĞİ IR'da nox_rc_alloc/nox_arena_all
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
 
     const compute_start = std.mem.indexOf(u8, ir, "$compute(") orelse return error.ComputeNotFound;
     const compute_end = std.mem.indexOfPos(u8, ir, compute_start, "\n}\n") orelse ir.len;
@@ -1448,7 +1448,7 @@ test "codegen: GG.16 — kaçan parametrenin ÜRETTİĞİ IR'da nox_rc_alloc HÂ
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
 
     try std.testing.expect(std.mem.indexOf(u8, ir, "nox_rc_alloc") != null);
 }
@@ -1479,7 +1479,7 @@ test "codegen: GG.20 — salt-okunur yönlendirmenin ÜRETTİĞİ IR'da compute(
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
 
     const compute_start = std.mem.indexOf(u8, ir, "$compute(") orelse return error.ComputeNotFound;
     const compute_end = std.mem.indexOfPos(u8, ir, compute_start, "\n}\n") orelse ir.len;
@@ -1514,7 +1514,7 @@ test "codegen: GG.20 — mutasyona uğratan yönlendirmenin ÜRETTİĞİ IR'da c
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
 
     const compute_start = std.mem.indexOf(u8, ir, "$compute(") orelse return error.ComputeNotFound;
     const compute_end = std.mem.indexOfPos(u8, ir, compute_start, "\n}\n") orelse ir.len;
@@ -1546,7 +1546,7 @@ test "codegen: GG.20 — iki seviyeli TRANSİTİF kanıtın ÜRETTİĞİ IR'da c
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
 
     const compute_start = std.mem.indexOf(u8, ir, "$compute(") orelse return error.ComputeNotFound;
     const compute_end = std.mem.indexOfPos(u8, ir, compute_start, "\n}\n") orelse ir.len;
@@ -1587,7 +1587,7 @@ test "codegen: GG.21 — final metoda yönlendirmenin ÜRETTİĞİ IR'da compute
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
 
     const compute_start = std.mem.indexOf(u8, ir, "$compute(") orelse return error.ComputeNotFound;
     const compute_end = std.mem.indexOfPos(u8, ir, compute_start, "\n}\n") orelse ir.len;
@@ -1621,7 +1621,7 @@ test "codegen: GG.21 — mutasyona uğratan final metodun ÜRETTİĞİ IR'da com
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
 
     const compute_start = std.mem.indexOf(u8, ir, "$compute(") orelse return error.ComputeNotFound;
     const compute_end = std.mem.indexOfPos(u8, ir, compute_start, "\n}\n") orelse ir.len;
@@ -1657,7 +1657,7 @@ test "codegen: GG.21 — KIRMIZI-TAKIM — override edilen metodun ÜRETTİĞİ 
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
 
     const compute_start = std.mem.indexOf(u8, ir, "$compute(") orelse return error.ComputeNotFound;
     const compute_end = std.mem.indexOfPos(u8, ir, compute_start, "\n}\n") orelse ir.len;
@@ -1716,7 +1716,7 @@ test "codegen: GG.12 — self.<alan> salt-okunur kopyasının ÜRETTİĞİ IR'da
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
 
     // `$Box_sum`in KENDİ gövdesini (bir SONRAKİ "export function"a KADAR)
     // izole et — modülün BAŞKA yerlerinde (ör. `c: Box = b` takma adı,
@@ -2011,7 +2011,7 @@ test "codegen: darboğaz #4 — `List_priml_eq`nin gövdesinde ARTIK `alloc8` (�
         .ok => {},
         .err => return error.FixtureNotWellTyped,
     }
-    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe);
+    const ir = try nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, null);
     const fn_start = std.mem.indexOf(u8, ir, "export function w $List_priml_eq(") orelse return error.FunctionNotFound;
     const after_start = ir[fn_start..];
     const fn_end = std.mem.indexOf(u8, after_start, "\nexport function") orelse after_start.len;

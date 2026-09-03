@@ -25,6 +25,8 @@ const ast_dump = @import("parser/ast_dump.zig");
 const checker = @import("typecheck/checker.zig");
 const ownership = @import("ownership/analysis.zig");
 const codegen = @import("codegen_qbe/codegen.zig");
+const local_escape = @import("codegen_qbe/local_escape.zig");
+const inlining_mod = @import("codegen_qbe/inlining.zig");
 const module_loader = @import("module_loader.zig");
 const project = @import("project.zig");
 const qbe_target = @import("qbe_target.zig");
@@ -111,6 +113,7 @@ fn printHelp(is_tr: bool) void {
             \\  test                  CWD altındaki tüm *_test.nox dosyalarını keşfedip çalıştırır
             \\  check <dosya.nox>     yalnızca tip denetimi yapar (codegen/qbe/cc yok, hızlı)
             \\  expand <dosya.nox>    decorator metadata'sını (isim/argümanlar) yazdırır
+            \\  explain [--release] <dosya.nox>  yerel değişkenlerin stack/arena/ARC tahsis kararını ve nedenini yazdırır
             \\  fmt <dosya.nox>       dosyayı standart biçimde yeniden yazar
             \\  init [ad]             yeni bir proje iskeleti oluşturur (nox.json + main.nox)
             \\  fetch                 nox.json'daki bağımlılıkları önbelleğe doldurur
@@ -154,6 +157,7 @@ fn printHelp(is_tr: bool) void {
             \\  test                  discover and run all *_test.nox files under the CWD
             \\  check <file.nox>      type-check only (no codegen/qbe/cc, fast feedback)
             \\  expand <file.nox>     print decorator metadata (name/args) extracted from the file
+            \\  explain [--release] <file.nox>  print each local variable's stack/arena/ARC allocation decision and why
             \\  fmt <file.nox>        rewrite the file in the standard format
             \\  init [name]           scaffold a new project (nox.json + main.nox)
             \\  fetch                 populate the dependency cache from nox.json
@@ -282,7 +286,7 @@ pub fn main(init: std.process.Init) !void {
     if (init.environ_map.get("NOX_INDEX_URL")) |v| registry_policy.index_url = try a.dupe(u8, v);
     if (init.environ_map.get("NOX_PUBLISH_API_BASE")) |v| registry_policy.publish_api_base = try a.dupe(u8, v);
 
-    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, init, check, expand, version, help, upgrade, install, uninstall, list_installed, refresh, legacy };
+    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, init, check, expand, explain, version, help, upgrade, install, uninstall, list_installed, refresh, legacy };
     const sub: Subcommand = blk: {
         // Bulundu (kullanıcı geri bildirimi): çıplak `noxc` ÖNCEDEN `.legacy`ye
         // düşüp `cmdBuild`i argümansız çağırıyordu — tek satırlık bir
@@ -305,6 +309,7 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.eql(u8, first, "init")) break :blk .init;
         if (std.mem.eql(u8, first, "check")) break :blk .check;
         if (std.mem.eql(u8, first, "expand")) break :blk .expand;
+        if (std.mem.eql(u8, first, "explain")) break :blk .explain;
         // `-v`/`--dump` ZATEN `build`in AYRINTILI-döküm bayrağı olduğundan
         // (bkz. modül üstü not), sürüm İÇİN `-V` (büyük harf, `-v` İLE
         // ÇAKIŞMAZ) VE `--version`/`version` KULLANILIR — `rustc`/`go`/`node`
@@ -337,6 +342,7 @@ pub fn main(init: std.process.Init) !void {
         .init => try cmdInit(io, a, rest),
         .check => try cmdCheck(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
         .expand => try cmdExpand(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
+        .explain => try cmdExplain(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
         .upgrade => try cmdUpgrade(a, io, rest, resource_dir_override, upgrade_policy, fetch_policy, is_tr),
         .install => try cmdInstall(gpa, io, a, rest, nox_home, resource_dirs, registry_policy, fetch_policy, init.environ_map, is_tr),
         .uninstall => try cmdUninstall(io, a, rest, nox_home),
@@ -1642,6 +1648,105 @@ fn cmdExpand(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []c
     try w.flush();
 }
 
+/// HH.3 (bkz. plan dosyası "`noxc explain`"): `cmdCheck`/`cmdExpand`nin
+/// AYNI lexer→parser→resolveImports→checker İSKELETİNİ İZLER, AMA
+/// `checkModule` BAŞARILI OLDUKTAN SONRA `buildOne`nin (satır ~1701-1775)
+/// AYNI argüman-türetme mantığını TEKRARLAYIP `codegen.generateModule`i
+/// `explain_sink` DOLU olarak çağırır — HİÇBİR `.ssa`/`.ll` YAZILMAZ,
+/// `qbe`/`cc`/`clang` HİÇ ÇAĞRILMAZ (bu YÜZDEN `noxc explain` GERÇEK bir
+/// `noxc build`DAN DAHA UCUZDUR). `--release` bayrağı, SADECE `list`/
+/// `class`/`dict` spawn-parametreli bir programın TİP-KONTROLÜNDEN
+/// GEÇEBİLMESİ İçİn isteğe bağlı olarak sağlanır — `classifyVarDecl`nin
+/// KENDİSİ backend'DEN BAĞIMSIZDIR (tahsis kararı HER İKİ backend İçİn
+/// de AYNIDIR).
+fn cmdExplain(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy) !void {
+    const opts = parseBuildOpts(args);
+    const path_arg = opts.path orelse {
+        std.debug.print("kullanim: noxc explain [--release] <dosya.nox>\n", .{});
+        std.process.exit(1);
+    };
+
+    const source = try std.Io.Dir.cwd().readFileAlloc(io, path_arg, gpa, .limited(1024 * 1024));
+    defer gpa.free(source);
+
+    const tokens = try lexer.tokenize(a, source);
+    const user_module = try parser.parseModule(a, tokens);
+    const module = try resolveImportsForBuild(io, a, user_module, path_arg, nox_home, resource_dirs, fetch_policy);
+
+    const backend: codegen.Backend = if (opts.release) .llvm else .qbe;
+    var checker_state = checker.Checker.init(a);
+    checker_state.backend = backend;
+    checker_state.checkModule(module) catch |e| {
+        printErr("tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
+        std.process.exit(1);
+    };
+    if (checker_state.diagnostics.items.len > 0) {
+        for (checker_state.diagnostics.items) |d| {
+            printErr("tip hatasi ({t}): {s}\n", .{ d.code, d.message });
+        }
+        std.process.exit(1);
+    }
+
+    var generic_names: std.ArrayListUnmanaged([]const u8) = .empty;
+    var generic_it = checker_state.generic_functions.keyIterator();
+    while (generic_it.next()) |k| try generic_names.append(a, k.*);
+
+    var functions_used_as_value: std.ArrayListUnmanaged([]const u8) = .empty;
+    var fn_value_it = checker_state.functions_used_as_value.keyIterator();
+    while (fn_value_it.next()) |k| try functions_used_as_value.append(a, k.*);
+
+    var generic_class_names: std.ArrayListUnmanaged([]const u8) = .empty;
+    var generic_class_it = checker_state.generic_classes.keyIterator();
+    while (generic_class_it.next()) |k| try generic_class_names.append(a, k.*);
+
+    var closure_infos: std.StringHashMapUnmanaged([]const []const u8) = .empty;
+    var closure_it = checker_state.closure_infos.iterator();
+    while (closure_it.next()) |entry| {
+        const names = try a.alloc([]const u8, entry.value_ptr.captures.len);
+        for (entry.value_ptr.captures, 0..) |c, i| names[i] = c.name;
+        try closure_infos.put(a, entry.key_ptr.*, names);
+    }
+
+    // `module`, `core.nox`/import edilen TÜM stdlib dosyalarını KULLANICININ
+    // KENDİ `user_module.body`sinin ÖNÜNE EKLENMİŞ olarak taşır (bkz.
+    // `codegen.ExplainOptions`nin belge notu) — kullanıcının KENDİ dosyasının
+    // BAŞLADIĞI İNDEKS, sondaki `user_module.body.len` uzunluğundan geri
+    // hesaplanır.
+    const user_stmt_start = module.body.len - user_module.body.len;
+    var explain_sink: std.ArrayListUnmanaged(local_escape.ExplainRecord) = .empty;
+    _ = codegen.generateModule(a, module, checker_state.instantiations.items, generic_names.items, checker_state.class_instantiations.items, generic_class_names.items, null, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend, .{ .sink = &explain_sink, .user_stmt_start = user_stmt_start }) catch |err| {
+        printErr("explain: kod uretimi basarisiz ({t})\n", .{err});
+        std.process.exit(1);
+    };
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
+    const w = &stdout_writer.interface;
+    if (explain_sink.items.len == 0) {
+        try w.print("tahsis kararı gerektiren bir yerel değişken bulunamadı: {s}\n", .{path_arg});
+    } else {
+        for (explain_sink.items) |r| {
+            const verdict_label = switch (r.verdict) {
+                .stack => "stack",
+                .arena => "arena",
+                .arc => "ARC (heap, referans-sayımlı)",
+            };
+            try w.print("{s}:{d}  {s}\n", .{ path_arg, r.line, r.name });
+            if (r.size) |sz| {
+                try w.print("  tahsis: {s} ({d} bayt)\n", .{ verdict_label, sz });
+            } else {
+                try w.print("  tahsis: {s}\n", .{verdict_label});
+            }
+            try w.writeAll("  gerekce:\n");
+            for (r.reasons) |reason| try w.print("    - {s}\n", .{reason});
+            if (r.verdict == .stack) {
+                try w.print("  çerçeve bütçesi: {d} / {d} bayt (önce: {d})\n", .{ r.budget_after, inlining_mod.MAX_PROMOTED_FRAME_SIZE, r.budget_before });
+            }
+        }
+    }
+    try w.flush();
+}
+
 /// Tek bir `.nox` dosyasını uçtan uca derler (lex→parse→import çözümü→tip
 /// denetimi→[isteğe bağlı döküm]→codegen→qbe→cc) ve üretilen binary'nin
 /// yolunu döner. Hata durumlarında (mevcut davranışla BİREBİR aynı mesaj/
@@ -1772,7 +1877,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // sınırlaması bilinçli olarak KABUL EDİLDİ).
     const debug_source_path: ?[]const u8 = if (debug_info) path_arg else null;
 
-    const ir = codegen.generateModule(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend) catch |err| switch (err) {
+    const ir = codegen.generateModule(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend, null) catch |err| switch (err) {
         error.Unsupported => {
             std.debug.print(
                 "codegen: bu program şu an desteklenmeyen bir yapı içeriyor " ++

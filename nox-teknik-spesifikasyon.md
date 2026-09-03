@@ -17270,6 +17270,86 @@ TEMİZ (BİLİNEN, İLGİSİZ harness flake'leri HARİÇ).
 
 ---
 
+## 3.118 HH.3 — `noxc explain`: ARC/stack/arena tahsis kararlarını insan-okunur biçimde yüzeye çıkarma (v1.52.0)
+
+Kullanıcının onayladığı 4 maddelik listenin 3. maddesi. İncelemenin
+ÖNERİSİ: derleyici HER yerel değişken İçİn "stack mi/arena mı/ARC mı"
+kararını ZATEN veriyor (`compiler/codegen_qbe/local_escape.zig`nin
+`classifyVarDecl`i) AMA bu bilgi SADECE `.ssa` metnini OKUYARAK (bu
+OTURUM boyunca GG.16'dan GG.25'e KADAR TEKRAR TEKRAR yapılan İŞ)
+ÇIKARILABİLİYORDU — kullanıcıya İNSAN-OKUNUR bir "neden" raporu
+SUNULMUYORDU.
+
+**Mimari karar — `classifyVarDecl`e (SAFETY-KRİTİK, ARC doğruluğunu
+kontrol eden kod) HİÇBİR DEĞİŞİKLİK YAPILMADAN**: bir Explore ajanının
+araştırması ÜÇ KRİTİK bulgu ORTAYA ÇIKARDI: (1) `classifyVarDecl`in
+KENDİSİ SAF/yan-etkisiz — AMA onu ÇAĞIRAN `registerLocalStackSlots`
+DEĞİL, `materializeConstructSite` ÜZERİNDEN GERÇEK QBE IR (`alloc8`/
+`nox_arena_create` çağrısı) ÜRETİR; (2) `generateModule`, `computeInlinableFunctions`
+çağrısına KADAR TÜM kurulumu (`self.classes`/`self.func_defs`/`self.
+escaping_params`) TAMAMLAR — HİÇBİR gövde emisyonu BU noktaya KADAR
+BAŞLAMAZ (TEMİZ bir ara-nokta); (3) İKİNCİ bir `classifyVarDecl` çağrı
+sitesi VAR (`registerInlineSite`, İNLİNE edilen callee'lerin KENDİ
+yerelleri İçİn) — v1 KAPSAMI BUNU KAPSAMAZ.
+
+Bu YÜZDEN: **YENİ `pub fn explainVarDecl`** (local_escape.zig)
+`classifyVarDecl`i ÇAĞIRIR (OTORİTER/GERÇEK karar — SIFIR sapma riski),
+SONRA (SADECE İNSAN-OKUNUR "neden" METNİ İçİn) AYNI dosyadaki SAF/yan-
+etkisiz sub-predicate'leri (`simpleLiteralListQtype`/`elemTypeIsScalar`/
+`localNeverEscapes`/`localNeverEscapesGrowable`/`classSafeForStackAlloc`)
+TEKRAR (salt-okunur, HİÇBİR risk TAŞIMAYAN) çağırarak HANGİ adımın
+geçtiğini/başarısız olduğunu BELİRLER. `generateModule`e YENİ, SONDAKİ
+opsiyonel `explain_opts: ?ExplainOptions` parametresi eklendi —
+VARSAYILAN `null` (MEVCUT TÜM ~40 çağrı sitesi DAVRANIŞ SIFIR değişecek
+şekilde güncellendi — `codegen_ir_diff_test.zig`nin 237 fixture'ı BİREBİR
+AYNI kaldığı doğrulanarak KANITLANDI); `explain_opts != null` İSE,
+kurulum tamamlandığı NOKTADA TÜM fonksiyonların (üst-düzey + sınıf
+metodları + modül gövdesi) ÜST-DÜZEY `var_decl`lerini gezip HER biri
+İçİn `explainVarDecl`i çağırıp SONUCU biriktirip, HİÇBİR emisyon
+YAPMADAN ERKEN ÇIKAR — "explain" modu BU YÜZDEN GERÇEK bir build'DEN
+DAHA UCUZDUR.
+
+**GERÇEK bir hata bulunup düzeltildi (geliştirme SIRASINDA)**:
+`module_loader.resolveImports`nin `core.nox`/import edilen TÜM stdlib
+dosyalarını KULLANICININ KENDİ `module.body`sinin ÖNÜNE EKLEMESİ
+(`combined[0..extra.len]` = kütüphane, `combined[extra.len..]` =
+kullanıcı) YÜZÜNDEN, İLK sürüm stdlib'in KENDİ değişkenlerini
+kullanıcının dosyasına AİTMİŞ GİBİ (YANLIŞ satır numarasıyla —
+ör. `app.nox:108 total` GİBİ, kullanıcının 13 satırlık dosyasında HİÇ
+OLMAYAN bir satır) raporluyordu. Düzeltme: `ExplainOptions.user_stmt_start`
+(`main.zig`nin `cmdExplain`ı, `module.body.len - user_module.body.len`
+İLE hesaplar — `user_module`, birleştirmeden ÖNCEKİ HAM ayrıştırma
+sonucudur) — kurulum/sınıf/fonksiyon TARAMALARININ HEPSİ `module.body[user_
+stmt_start..]`e SINIRLANDIRILDI.
+
+**`noxc explain [--release] <dosya.nox>`** (`main.zig`, `cmdCheck`/
+`cmdExpand`nin AYNI lexer→parser→resolveImports→checker İSKELETİNİ
+İZLER): `--release` bayrağı, SADECE `list`/`class`/`dict` spawn-
+parametreli bir programın TİP-KONTROLÜNDEN GEÇEBİLMESİ İçİn isteğe
+bağlıdır — `classifyVarDecl`nin KENDİSİ backend'DEN BAĞIMSIZDIR (tahsis
+kararı HER İKİ backend İçİn de AYNIDIR). Örnek çıktı:
+```
+app.nox:12  xs: list[int]
+  tahsis: stack (40 bayt)
+  gerekce:
+    - sabit-boyutlu literal liste (40 bayt)
+    - kaçmıyor, boyut/bütçe İçinde -> stack
+  çerçeve bütçesi: 40 / 24576 bayt (önce: 0)
+```
+
+**Doğrulama**: YENİ `tests/cli/explain_test.zig` (5 senaryo — sabit-
+boyutlu/kaçmayan sınıf → stack; heap-alanlı sınıf → ARC; kaçan/döndürülen
+bir yerel → ARC; `.append()`li büyüyen liste → arena; core.nox/stdlib
+SIZMAZ regresyon kanıtı) GERÇEK `noxc` alt süreciyle 5/5 TEMİZ. `zig
+build test` (Debug+ReleaseFast, `codegen_ir_diff_test.zig`nin 237
+fixture'ı BİREBİR AYNI DAHİL) + `NOX_STRESS_ROUNDS=800 zig build
+stress-test -Doptimize=ReleaseFast` TEMİZ (BİLİNEN, İLGİSİZ harness
+flake'leri HARİÇ). Gerçek-dünya doğrulaması: Aether'in KENDİ (`config.nox`)
+kaynak dosyasında ÇALIŞTIRILIP TEMİZ/DOĞRU bir rapor ÜRETTİĞİ ELLE
+doğrulandı.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

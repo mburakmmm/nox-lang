@@ -1238,7 +1238,37 @@ pub const Codegen = struct {
 /// `debug_source_path`: Faz T.3, `null` DIŞINDA VERİLİRSE (bkz. modül üstü
 /// not) `dbgfile`/`dbgloc` yönergeleri yayınlanır — `null` İKEN çıktı
 /// ÖNCEKİYLE BİREBİR AYNI kalır (opt-in, sıfır davranış değişikliği).
-pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo, backend: Backend) CodegenError![]u8 {
+/// HH.3 (bkz. plan dosyası "`noxc explain`"): `module_loader.resolveImports`
+/// (bkz. onun belge notu) `core.nox` + `import`lanan TÜM stdlib dosyalarını
+/// KULLANICININ KENDİ `module.body`sinin ÖNÜNE EKLER (`combined[0..extra.len]`
+/// = kütüphane, `combined[extra.len..]` = kullanıcı) — bu YÜZDEN `explain_opts`
+/// KULLANICININ KENDİ dosyasının BAŞLADIĞI İNDEKSİ (`user_stmt_start`)
+/// TAŞIR, `main.zig`nin `cmdExplain`ı BUNU `module.body.len - user_module.
+/// body.len` OLARAK hesaplar (`user_module`, `resolveImportsForBuild`
+/// ÇAĞRILMADAN ÖNCEKİ, HAM/birleştirilmemiş ayrıştırma sonucu) — BUNUN
+/// OLMADAN `noxc explain`, core.nox/stdlib İçİndeki değişkenleri KULLANICININ
+/// KENDİ dosyasına AİTMİŞ GİBİ (YANLIŞ satır numarasıyla) raporlardı.
+pub const ExplainOptions = struct {
+    sink: *std.ArrayListUnmanaged(local_escape.ExplainRecord),
+    user_stmt_start: usize,
+};
+
+/// `explain_opts != null` İKEN, satır 1420'nin (`computeInlinableFunctions`)
+/// HEMEN SONRASINDA, HERHANGİ bir emisyon BAŞLAMADAN ÖNCE çağırılan
+/// TOPLAYICI — `registerLocalStackSlots`nin (local_escape.zig) KENDİ
+/// gövde-tarama deseninin AYNISI (üst-düzey `var_decl`ler), AMA GERÇEK
+/// `alloc8`/`nox_arena_create` YERİNE `local_escape.explainVarDecl`nin
+/// SALT-OKUNUR raporunu SINK'e EKLER.
+fn collectExplainForBody(gen: *Codegen, allocator: std.mem.Allocator, sink: *std.ArrayListUnmanaged(local_escape.ExplainRecord), body: []const ast.Stmt, params: []const ast.Param, running_total: *usize) CodegenError!void {
+    const class_params = try inlining.collectClassParams(gen, allocator, params);
+    for (body, 0..) |stmt, i| {
+        if (stmt.kind != .var_decl) continue;
+        const record = try local_escape.explainVarDecl(gen, allocator, body, i, stmt.kind.var_decl, running_total, class_params);
+        try sink.append(allocator, record);
+    }
+}
+
+pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo, backend: Backend, explain_opts: ?ExplainOptions) CodegenError![]u8 {
     var gen: Codegen = .{ .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos, .defer_synthetic_names = defer_synthetic_names, .from_imports = from_imports, .module_aliases = module_aliases, .backend = backend };
 
     if (debug_source_path) |path| {
@@ -1418,6 +1448,39 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     // codegen'İNDEN ÖNCE (`genMethod`/`genFunction`/`genMain`/`genMainAsync`
     // İçin AŞAĞIDAKİ döngüler `self.inlinable_funcs`e İHTİYAÇ DUYAR).
     try gen.computeInlinableFunctions(module, extra_functions, generic_template_names, extra_classes);
+
+    // HH.3 (bkz. plan dosyası "`noxc explain`"): `explain_opts != null`
+    // İSE, kurulum BURADA (self.classes/self.func_defs/self.escaping_params
+    // TAMAMEN DOLU, AMA HİÇBİR gövde emisyonu HENÜZ BAŞLAMADI) TAMAMLANMIŞ
+    // sayılır — HİÇBİR emisyon YAPMADAN ERKEN ÇIKILIR (bir `explain`
+    // çağrısı BU YÜZDEN GERÇEK bir build'DEN DAHA UCUZDUR). `user_stmt_start`
+    // İLE `module.body`nin BAŞINA BİRLEŞTİRİLEN core.nox/stdlib deyimleri
+    // (bkz. `ExplainOptions`nin belge notu) ATLANIR.
+    if (explain_opts) |opts| {
+        const sink = opts.sink;
+        var running_total: usize = 0;
+        for (module.body[opts.user_stmt_start..]) |stmt| {
+            if (stmt.kind == .func_def and stmt.kind.func_def.type_params.len == 0 and !containsName(generic_template_names, stmt.kind.func_def.name)) {
+                running_total = 0;
+                try collectExplainForBody(&gen, allocator, sink, stmt.kind.func_def.body, stmt.kind.func_def.params, &running_total);
+            }
+        }
+        for (extra_functions) |fd| {
+            running_total = 0;
+            try collectExplainForBody(&gen, allocator, sink, fd.body, fd.params, &running_total);
+        }
+        for (module.body[opts.user_stmt_start..]) |stmt| {
+            if (stmt.kind == .class_def and stmt.kind.class_def.type_params.len == 0 and !containsName(generic_class_template_names, stmt.kind.class_def.name)) {
+                for (stmt.kind.class_def.methods) |m| {
+                    running_total = 0;
+                    try collectExplainForBody(&gen, allocator, sink, m.body, m.params, &running_total);
+                }
+            }
+        }
+        running_total = 0;
+        try collectExplainForBody(&gen, allocator, sink, module.body[opts.user_stmt_start..], &.{}, &running_total);
+        return try allocator.dupe(u8, "");
+    }
 
     // Faz S.3: `$nox_trace_dispatch`/`$nox_gc_free_dispatch`in (bkz.
     // `genTraceDispatch`) hangi (`class_id`, isim) çiftlerine dal açacağını

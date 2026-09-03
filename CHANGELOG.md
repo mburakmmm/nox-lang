@@ -14,6 +14,43 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.52.0]
+
+### Eklendi
+- **HH.3 — `noxc explain <dosya.nox>`**: derleyicinin HER yerel değişken
+  İçİn ZATEN verdiği "stack mi/arena mı/ARC mı" tahsis kararını (`compiler/
+  codegen_qbe/local_escape.zig`nin `classifyVarDecl`i) İNSAN-OKUNUR bir
+  raporla YÜZEYE ÇIKARIR — ÖNCEDEN bu bilgi SADECE `.ssa` metnini
+  okuyarak çıkarılabiliyordu (bu OTURUM boyunca GG.16'dan GG.25'e KADAR
+  TEKRAR TEKRAR yapılan İŞ). Örnek çıktı:
+  ```
+  app.nox:12  xs: list[int]
+    tahsis: stack (40 bayt)
+    gerekce:
+      - sabit-boyutlu literal liste (40 bayt)
+      - kaçmıyor, boyut/bütçe İçinde -> stack
+    çerçeve bütçesi: 40 / 24576 bayt (önce: 0)
+  ```
+  Tasarım: `classifyVarDecl`nin (SAFETY-KRİTİK, ARC doğruluğunu kontrol
+  eden kod) KENDİSİNE HİÇBİR DEĞİŞİKLİK YAPILMADI — YENİ `explainVarDecl`
+  bu fonksiyonu ÇAĞIRIR (OTORİTER/GERÇEK karar, SIFIR sapma riski), SONRA
+  SADECE "neden" METNİ İçİn AYNI dosyadaki SAF sub-predicate'leri (salt-
+  okunur, yan-etkisiz) TEKRAR çağırır. `noxc explain` `--release` bayrağını
+  da destekler (`list`/`class`/`dict` spawn-parametreli programların TİP-
+  KONTROLÜNDEN geçebilmesi İçİn — tahsis kararının KENDİSİ backend'DEN
+  BAĞIMSIZDIR). **GERÇEK bir hata bulunup düzeltildi** (geliştirme
+  sırasında): `module_loader.resolveImports`nin `core.nox`/import edilen
+  stdlib dosyalarını kullanıcının KENDİ `module.body`sinin ÖNÜNE EKLEMESİ
+  YÜZÜNDEN, İLK sürüm stdlib'in KENDİ değişkenlerini kullanıcının dosyasına
+  AİTMİŞ GİBİ (YANLIŞ satır numarasıyla) raporluyordu — `codegen.
+  ExplainOptions`nin `user_stmt_start` alanıyla düzeltildi.
+
+### Değişti
+- `codegen.generateModule`e YENİ, SONDAKİ opsiyonel `explain_opts`
+  parametresi eklendi (VARSAYILAN `null` — TÜM MEVCUT çağrı siteleri
+  DAVRANIŞ SIFIR değişecek şekilde güncellendi; `codegen_ir_diff_test.zig`nin
+  237 fixture'ı BİREBİR AYNI kaldığı doğrulanarak KANITLANDI).
+
 ## [1.51.0]
 
 ### Düzeltildi
