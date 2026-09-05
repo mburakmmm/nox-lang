@@ -18078,6 +18078,104 @@ TEMİZ (BİLİNEN, İLGİSİZ harness flake'leri HARİÇ).
 
 ---
 
+## 3.128 Faz 18 — HPy köprüsünü Nox'un istisna mekanizmasına entegre etme (aHPy entegrasyonu, 3/5) (v1.62.0)
+
+Faz 16/17'nin (v1.60.0/v1.61.0) belgelediği 5 maddelik listenin 4.
+maddesi: `hpy_call`/`hpy_call_str`/`hpy_open`/`hpy_call_on`/`hpy_call_str_on`/
+`hpy_call_float_on`/`hpy_call_bool_on`nin TÜMÜ, HERHANGİ bir hata
+durumunda (dosya/sembol/metod bulunamadı, VEYA çağrılan HPy C
+fonksiyonunun KENDİSİ bir istisna fırlattı — `ctx_Err_Occurred`)
+SESSİZCE `0`/boş `str` DÖNÜYORDU — kullanıcının BİR HPy fonksiyonunun
+BAŞARISIZ olduğunu AYIRT edemediği (`0` HEM GERÇEK bir sonuç HEM bir
+hata OLABİLİR) GERÇEK bir güvenlik/kullanılabilirlik boşluğuydu.
+
+**Araştırma bulgusu (kritik)**: `nox_raise(rt, obj, line)` (`runtime/
+errors/handle.zig`) SADECE ÖNCEDEN İNŞA EDİLMİŞ bir istisna nesnesini
+pending-exception yuvasına yazar, KENDİSİ HİÇBİR NESNE İNŞA ETMEZ.
+TÜM MEVCUT tipli `raise` örnekleri (ValueError/IndexError/KeyError)
+CODEGEN TARAFINDAN üretilir (`compiler/codegen_qbe/calls.zig`nin
+`genParseOrRaise`i EN YAKIN ŞABLON) — HİÇBİR runtime `.zig` modülü
+`nox_raise`ı DOĞRUDAN kendi inşa ettiği bir nesneyle ÇAĞIRMIYORDU. Desen
+HER ZAMAN AYNI: (1) runtime bir "başarısız mı" SİNYALİ döner, (2)
+codegen bunu KONTROL EDİP hata dalında mesaj+`self.classes.get(...)`+
+`genConstructFromValues`+`$nox_raise`+`emitExceptionCheck` ZİNCİRİNİ
+üretir.
+
+**Tasarım**: `stdlib/nox/core.nox`ye YENİ `class HPyError(Exception): pass`
+(`ValueError`/`IndexError`/`KeyError`YLA AYNI "alt sınıf KENDİ `__init__`ini
+tanımlamaz" deseni). `runtime/foreign_bridge.zig`ye YENİ, threadlocal bir
+"son HPy hatası" yuvası — `g_hpy_last_error: ?[:0]u8` + `setHpyError(fmt,
+args)` yardımcısı (`std.heap.page_allocator` KULLANIR — `cycle_detector.
+zig`nin worklist'inin AYNI "geçici scratch İçİn page_allocator" deseni,
+threadlocal GÜVENLİDİR ÇÜNKÜ fiber migrasyonu SADECE `await` NOKTALARINDA
+olur, HPy çağrısı+HEMEN SONRASINDAKİ kontrol ARASINDA YOK). YENİ `nox_hpy_
+take_error(rt) -> ?[*:0]u8` yuvayı GERÇEK bir Nox `str`ine çevirip TÜKETİR
+(`nox_exception_take`nin AYNI "bir kez tüket" deseni). HER `hpy_*`
+fonksiyonunun HER hata dalı (yükleme/context-oluşturma/bellek-yetersiz/
+metod-bulunamadı) `setHpyError` çağırır; `invokeHpyMethod` (Faz 17'nin
+paylaşılan yardımcısı) BAŞARILI bir çağrı SONRASI `ctx_Err_Occurred`i
+de kontrol edip (varsa) sonucu kapatıp `ctx_Err_Clear` + `setHpyError`
+çağırır — TÜM bu dallarda dönüş DEĞERİ DEĞİŞMEZ (`0`/boş/null DEVAM
+eder, SADECE yuvaya bir metin YAZILIR).
+
+**Codegen** (`compiler/codegen_qbe/calls.zig`nin YENİ `emitHpyErrorCheckOrRaise`i,
+`genParseOrRaise`in AYNI err/ok-etiket şablonu): `nox_hpy_take_error`i
+çağırıp null-DIŞIYSA bir `HPyError` inşa edip `$nox_raise`+`emitExceptionCheck`
+çağırır. `err_t` (fresh, PINNED OLMAYAN bir str) `genConstructFromValues`in
+İÇİNDEKİ `__init__`in `self.message = message` atamasıyla (aliasing→
+retain) BAĞIMSIZ bir KOPYA daha kazandığından, inşadan HEMEN SONRA
+`err_t`nin KENDİ referansı `nox_str_release` İLE bırakılır (`temp_release`in
+AST-BAĞIMLI mekanizması `err_t`nin karşılık geldiği bir `ast.Expr` OLMADIĞINDAN
+kullanılamaz, doğrudan elle bir release ÇAĞRISI YAPILDI). HER `hpy_call`/
+`hpy_call_str`/`hpy_open`/`hpy_call_{on,str_on,float_on,bool_on}`
+çağrısından HEMEN SONRA (return'DEN ÖNCE) çağrılır — 6 site TOPLAM
+(`hpy_close` HARİÇ, bkz. Kapsam DIŞI). `exceptions.zig`nin `computeMustNotRaise`sinin
+"asla raise etmez" whitelist'inden `hpy_call`/`hpy_call_str` ÇIKARILDI
+(`wasm_call` BU FAZIN kapsamı DIŞINDA, whitelist'te KALDI).
+
+**Yan-etki — 237 IR anlık görüntüsünün TAMAMI yeniden üretildi**: `HPyError`nin
+core.nox'a EKLENMESİ, whole-program AST birleştirmesinin (§3.99'un
+BİLİNÇLİ tasarımı) DOĞAL bir sonucu olarak TÜM programların class_id
+numaralandırmasını KAYDIRDI — `tests/golden/ir_snapshots/`nin TÜMÜ
+(237 fixture, class KULLANMAYAN programlar DAHİL — merge edilen TÜM
+stdlib sınıfları HER programın IR'ına DAHİL EDİLİYOR) `codegen_ir_diff_
+test.zig`nin KENDİ belgelenen prosedürüyle ("kasıtlı bir codegen
+değişikliğiyse İLGİLİ .ssa dosyaları ELLE silinip test YENİDEN
+çalıştırılmalıdır") yeniden ÜRETİLDİ — DAVRANIŞ SIFIR değişmedi, SADECE
+sabit class-id DEĞERLERİ kaydı.
+
+**Test-altyapısı düzeltmesi**: `tests/compat/hpy_call_golden_test.zig`nin
+KENDİ `compileAndRun`ı ÖNCEDEN `resolveImports` ÇAĞIRMIYORDU (9 MEVCUT
+testin HİÇBİRİ core.nox'un bir sınıfına İHTİYAÇ DUYMADIĞINDAN bu HİÇ
+GEREKMEMİŞTİ) — ARTIK `emitHpyErrorCheckOrRaise`nin `self.classes.get(
+"HPyError")` ARAMASI GEREKTİĞİNDEN, `codegen_golden_test.zig`nin
+`str_index_loop_licm_positive` testindeki AYNI `IndexError` notuyla
+TUTARLI olarak `resolveImports` çağrısı EKLENDİ.
+
+**Doğrulama**: 3 yeni golden test (`hpy_open` kötü yol, `hpy_call_on`
+bulunamayan fonksiyon adı, `raise_value_error` — MEVCUT, `HPyErr_
+SetString` çağıran C test fonksiyonu — ÜZERİNDEN `ctx_Err_Occurred`
+yolu) — HEPSİ `try`/`except HPyError as e:` İLE yakalanıp doğrulandı.
+Break→red→fix: `hpy_open`in `emitHpyErrorCheckOrRaise` çağrısı GEÇİCİ
+KALDIRILIP İLK testin GERÇEKTEN başarısız olduğu (istisna YAKALANMADAN
+"hata yakalanmadi" bastığı) doğrulandı, SONRA GERİ eklenip TEKRAR
+YAKALANDIĞI görüldü. `zig build test` (TAM paket, Debug+ReleaseFast) +
+`NOX_STRESS_ROUNDS=800 zig build stress-test -Doptimize=ReleaseFast`
+TEMİZ (BİLİNEN, İLGİSİZ harness flake'leri HARİÇ).
+
+## Kapsam DIŞI (bu turda)
+- `hpy_close`nin KENDİSİ — sessiz `void` davranışı KORUNDU (kapatma
+  hatası ÇOK NADİR/actionable DEĞİL).
+- `wasm_call` — kullanıcının BU FAZ İçİn seçtiği kapsam SADECE HPy
+  köprüsü, `wasm_call`nin KENDİ "asla raise etmez" whitelist'i DEĞİŞMEDİ.
+- HPy istisnasının TAM tipini/mesajını `ctx`nin İÇ durumundan ÇIKARMAK —
+  jenerik bir mesajla YETİNİLDİ ("'{s}' bir istisna fırlattı"), TAM
+  çıkarım (`ctx_Err_Fetch`-benzeri bir mekanizma gerektirir) gelecekteki
+  bir iyileştirme.
+- `HPyType_FromSpec`/extension type desteği — Faz 19.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

@@ -14,6 +14,45 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.62.0]
+
+### Eklendi
+- **Faz 18 — HPy köprüsünü Nox'un istisna mekanizmasına entegre etme
+  (aHPy entegrasyonu, 3/5)**: `hpy_call`/`hpy_call_str`/`hpy_open`/
+  `hpy_call_on`/`hpy_call_str_on`/`hpy_call_float_on`/`hpy_call_bool_on`nin
+  TÜM hata durumları (dosya/sembol/metod bulunamadı, VEYA çağrılan HPy C
+  fonksiyonunun KENDİSİ bir istisna fırlattı — `ctx_Err_Occurred`)
+  SESSİZCE `0`/boş `str` DÖNME YERİNE ARTIK GERÇEK bir `HPyError`
+  (YENİ, `stdlib/nox/core.nox`ye eklenen bir `Exception` alt sınıfı)
+  `raise` eder — `try`/`except HPyError as e: print(e.message)` İLE
+  GERÇEKTEN yakalanabilir. Tasarım: `runtime/foreign_bridge.zig`ye YENİ,
+  threadlocal bir "son HPy hatası" yuvası (`g_hpy_last_error`/`setHpyError`) —
+  HER `hpy_*` fonksiyonunun HER hata dalı (yükleme/context-oluşturma/
+  metod-bulunamadı/HPy istisnası) BU yuvaya bir hata METNİ YAZAR (dönüş
+  DEĞERİ DEĞİŞMEZ — `0`/boş/null DEVAM eder); YENİ `nox_hpy_take_error`
+  BU yuvayı GERÇEK bir Nox `str`ine çevirip TÜKETİR. Codegen (`compiler/
+  codegen_qbe/calls.zig`nin YENİ `emitHpyErrorCheckOrRaise`i, `genParseOrRaise`in
+  AYNI err/ok-etiket şablonu) HER `hpy_*` çağrısından HEMEN SONRA BU
+  yuvayı kontrol edip (VARSA) bir `HPyError` inşa edip `$nox_raise` +
+  `emitExceptionCheck` çağırır. `compiler/codegen_qbe/exceptions.zig`nin
+  `computeMustNotRaise`sinin "asla raise etmez" whitelist'İNDEN `hpy_call`/
+  `hpy_call_str` ÇIKARILDI (ARTIK GERÇEKTEN raise EDEBİLİYORLAR —
+  `wasm_call` BU FAZIN kapsamı DIŞINDA, DEĞİŞMEDİ). `HPyError`nin
+  `stdlib/nox/core.nox`ye EKLENMESİ TÜM programların class_id
+  numaralandırmasını KAYDIRDIĞINDAN (whole-program AST birleştirmesi,
+  §3.99'un BİLİNÇLİ tasarımı), `tests/golden/ir_snapshots/`nin TÜMÜ
+  (237 fixture) BEKLENDİĞİ GİBİ yeniden ÜRETİLDİ — DAVRANIŞ SIFIR
+  değişmedi, SADECE sabit class-id DEĞERLERİ kaydı. 3 yeni golden test
+  (`tests/compat/hpy_call_golden_test.zig`) — kötü yol, bulunamayan
+  fonksiyon adı, VE `raise_value_error` (MEVCUT, `HPyErr_SetString`
+  çağıran C test fonksiyonu) ÜZERİNDEN `ctx_Err_Occurred` yolunun
+  GERÇEKTEN egzersiz edildiğini kanıtlıyor — HEPSİ `try`/`except HPyError:`
+  İLE yakalanıyor. `hpy_call_golden_test.zig`nin KENDİ `compileAndRun`ı
+  (ÖNCEDEN `resolveImports` çağırmıyordu — 9 MEVCUT testin HİÇBİRİ
+  core.nox'un bir sınıfına İHTİYAÇ DUYMADIĞINDAN) `resolveImports`
+  çağıracak şekilde GÜNCELLENDİ (`codegen_golden_test.zig`nin
+  `IndexError` İçİn ZATEN kullandığı AYNI desen).
+
 ## [1.61.0]
 
 ### Eklendi

@@ -42,6 +42,37 @@ fn hpyElemKindLit(qtype: QbeType, is_str: bool) []const u8 {
     };
 }
 
+/// Faz 18 (bkz. plan dosyası "HPy köprüsünü Nox'un istisna mekanizmasına
+/// entegre etme"): `genParseOrRaise`in (bkz. onun belge notu) AYNI err/
+/// ok-etiket şablonu — `$nox_hpy_take_error`in dönüşü null-DIŞIYSA
+/// (GERÇEK bir Nox `str`, hata metni) bir `HPyError` inşa edip `raise`
+/// eder. HER `hpy_call`/`hpy_call_str`/`hpy_open`/`hpy_call_{on,str_on,
+/// float_on,bool_on}` çağrısından HEMEN SONRA çağrılır.
+///
+/// `err_t` (fresh, PINNED OLMAYAN bir str) `genConstructFromValues`in
+/// İÇİNDEKİ `__init__`in `self.message = message` atamasıyla (aliasing→
+/// retain, bkz. `retainIfAliasing`) BAĞIMSIZ bir KOPYA daha kazanır — bu
+/// YÜZDEN inşadan HEMEN SONRA `err_t`nin KENDİ (çağıranın) referansı
+/// `nox_str_release` İLE bırakılır (`temp_release`in AST-BAĞIMLI
+/// mekanizması BURADA kullanılamaz — `err_t`nin karşılık geldiği bir
+/// `ast.Expr` YOK, bu YÜZDEN doğrudan, elle bir release ÇAĞRISI YAPILIR).
+pub fn emitHpyErrorCheckOrRaise(self: *Codegen) CodegenError!void {
+    const err_t = try self.newTemp();
+    try self.qbeCall(.{ .name = err_t, .ty = .l }, "$nox_hpy_take_error", &.{.{ .ty = .l, .text = RT_PARAM }});
+    const err_label = try self.newLabel("hpy_err");
+    const ok_label = try self.newLabel("hpy_ok");
+    try self.qbeJnz(err_t, err_label, ok_label);
+    try self.qbeLabel(err_label);
+    const he_cinfo = self.classes.get("HPyError") orelse return error.Unsupported;
+    const msg_value: Value = .{ .text = err_t, .qtype = .l, .heap = .str };
+    const he_obj = try self.genConstructFromValues("HPyError", he_cinfo, &.{msg_value}, null);
+    try self.qbeCall(null, "$nox_str_release", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = err_t } });
+    try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = he_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
+    try self.emitExceptionCheck();
+    try self.qbeJmp(ok_label);
+    try self.qbeLabel(ok_label);
+}
+
 /// Faz U.4.5: `closure_ptr`in (ZATEN yüklenmiş/değerlendirilmiş bir QBE
 /// geçici/işaretçi metni — bir DEĞİŞKEN slotundan (`.identifier` dalı),
 /// bir sınıf alanından (`genMethodCall`nin alan-fallback'ı), YA DA bir
@@ -224,6 +255,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 const arg_v = try self.genExpr(c.args[3]);
                 const result_temp = try self.newTemp();
                 try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = path_v.text }, .{ .ty = .l, .text = ext_v.text }, .{ .ty = .l, .text = func_v.text }, .{ .ty = .l, .text = arg_v.text } });
+                try self.emitHpyErrorCheckOrRaise();
                 return .{ .text = result_temp, .qtype = .l };
             }
             // Faz 15 (bkz. checker.zig'deki eşdeğer not): `hpy_call`in
@@ -241,6 +273,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 const arg_v = try self.genExpr(c.args[3]);
                 const result_temp = try self.newTemp();
                 try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = path_v.text }, .{ .ty = .l, .text = ext_v.text }, .{ .ty = .l, .text = func_v.text }, .{ .ty = .l, .text = arg_v.text } });
+                try self.emitHpyErrorCheckOrRaise();
                 return .{ .text = result_temp, .qtype = .l, .heap = .str };
             }
             // Faz 16 (bkz. checker.zig'deki eşdeğer not): `hpy_call`in
@@ -256,6 +289,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 const ext_v = try self.genExpr(c.args[1]);
                 const result_temp = try self.newTemp();
                 try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_open", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = path_v.text }, .{ .ty = .l, .text = ext_v.text } });
+                try self.emitHpyErrorCheckOrRaise();
                 return .{ .text = result_temp, .qtype = .l };
             }
             // Faz 17 (bkz. plan dosyası "kalıcı tutamaçlı HPy çağrılarına
@@ -321,17 +355,21 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 const result_temp = try self.newTemp();
                 if (std.mem.eql(u8, name, "hpy_call_on")) {
                     try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call_int_finish", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = func_v.text } });
+                    try self.emitHpyErrorCheckOrRaise();
                     return .{ .text = result_temp, .qtype = .l };
                 }
                 if (std.mem.eql(u8, name, "hpy_call_float_on")) {
                     try self.qbeCall(.{ .name = result_temp, .ty = .d }, "$nox_hpy_call_float_finish", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = func_v.text } });
+                    try self.emitHpyErrorCheckOrRaise();
                     return .{ .text = result_temp, .qtype = .d };
                 }
                 if (std.mem.eql(u8, name, "hpy_call_bool_on")) {
                     try self.qbeCall(.{ .name = result_temp, .ty = .w }, "$nox_hpy_call_bool_finish", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = func_v.text } });
+                    try self.emitHpyErrorCheckOrRaise();
                     return .{ .text = result_temp, .qtype = .w };
                 }
                 try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call_str_finish", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = func_v.text } });
+                try self.emitHpyErrorCheckOrRaise();
                 return .{ .text = result_temp, .qtype = .l, .heap = .str };
             }
             if (std.mem.eql(u8, name, "hpy_close")) {

@@ -17,7 +17,17 @@ const nox = @import("nox");
 
 fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.RunResult {
     const tokens = try nox.lexer.tokenize(allocator, source);
-    const module = try nox.parser.parseModule(allocator, tokens);
+    const user_module = try nox.parser.parseModule(allocator, tokens);
+    // Faz 18 (bkz. plan dosyası "HPy köprüsünü Nox'un istisna mekanizmasına
+    // entegre etme"): `emitHpyErrorCheckOrRaise` HER `hpy_*` çağrısından
+    // SONRA `self.classes.get("HPyError")`ı (bir `nox.core` yerleşiği,
+    // bkz. `stdlib/nox/core.nox`) ARAR — `codegen_golden_test.zig`nin
+    // `str_index_loop_licm_positive` testindeki AYNI `IndexError` notuyla
+    // TUTARLI: `resolveImports` ÇAĞRILMAZSA `self.classes` BOŞ kalır,
+    // `error.Unsupported` fırlar (BU dosyanın 9 MEVCUT testi ÖNCEDEN
+    // HİÇBİR core.nox sınıfına İHTİYAÇ DUYMADIĞINDAN bu adım HİÇ
+    // GEREKMEMİŞTİ).
+    const module = try nox.module_loader.resolveImports(allocator, std.testing.io, user_module);
 
     var checker_state = nox.checker.Checker.init(allocator);
     checker_state.checkModule(module) catch |e| {
@@ -206,5 +216,50 @@ test "hpy_call_on: class örneği alan-adı->değer HPy dict'i olarak (surrogate
         \\
     ,
         "7\n",
+    );
+}
+
+// Faz 18 (bkz. plan dosyası "HPy köprüsünü Nox'un istisna mekanizmasına
+// entegre etme"): `hpy_*`nin TÜM hata durumları ARTIK GERÇEK bir `HPyError`
+// (bkz. `stdlib/nox/core.nox`) raise eder — `try`/`except HPyError as e:`
+// İLE yakalanabilir.
+test "hpy_open: olmayan bir dosya yolu HPyError raise eder" {
+    try expectGolden(
+        \\try:
+        \\    h: ptr = hpy_open("tests/compat/hpy_ext/olmayan_dosya.so", "noxtest")
+        \\    print("hata yakalanmadi")
+        \\except HPyError as e:
+        \\    print("yakalandi")
+        \\
+    ,
+        "yakalandi\n",
+    );
+}
+
+test "hpy_call_on: olmayan bir fonksiyon adı HPyError raise eder" {
+    try expectGolden(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\try:
+        \\    print(hpy_call_on(h, "olmayan_fonksiyon", 1))
+        \\except HPyError as e:
+        \\    print("yakalandi")
+        \\hpy_close(h)
+        \\
+    ,
+        "yakalandi\n",
+    );
+}
+
+test "hpy_call_on: çağrılan HPy C fonksiyonunun KENDİSİ bir istisna fırlattığında HPyError raise eder" {
+    try expectGolden(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\try:
+        \\    print(hpy_call_on(h, "raise_value_error", 5))
+        \\except HPyError as e:
+        \\    print("yakalandi")
+        \\hpy_close(h)
+        \\
+    ,
+        "yakalandi\n",
     );
 }

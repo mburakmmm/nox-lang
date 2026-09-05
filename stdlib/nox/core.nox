@@ -33,6 +33,16 @@ class IndexError(Exception):
 class KeyError(Exception):
     pass
 
+# Faz 18 (bkz. plan dosyası "HPy köprüsünü Nox'un istisna mekanizmasına
+# entegre etme"): `hpy_call`/`hpy_open`/`hpy_call_on`/vb.nin (bkz.
+# runtime/foreign_bridge.zig'in `setHpyError`/`nox_hpy_take_error`si)
+# TÜM hata durumları (dosya/sembol/metod bulunamadı, çağrılan HPy C
+# fonksiyonunun KENDİSİ bir istisna fırlattı) İçİn — `ValueError`/
+# `IndexError`/`KeyError`YLA AYNI "alt sınıf KENDİ `__init__`ini
+# tanımlamaz" deseni.
+class HPyError(Exception):
+    pass
+
 # Stdlib fazı §L (`nox.json`, bkz. nox-teknik-spesifikasyon.md) — `JsonValue`
 # ve onun fabrika fonksiyonu BİLİNÇLİ OLARAK burada, `stdlib/nox/json.nox`
 # YERİNE, ÇEKİRDEKTE tanımlanır: `runtime/stdlib_shims/json.zig`nin

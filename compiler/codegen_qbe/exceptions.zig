@@ -498,8 +498,7 @@ pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInf
                         // `extern def`: Nox'un istisna mekanizmasına HİÇ
                         // katılmaz (bkz. `genCall`in extern dalı) — güvenli.
                     } else if (std.mem.eql(u8, name, "print") or std.mem.eql(u8, name, "len") or
-                        std.mem.eql(u8, name, "str") or std.mem.eql(u8, name, "hpy_call") or
-                        std.mem.eql(u8, name, "hpy_call_str") or std.mem.eql(u8, name, "wasm_call"))
+                        std.mem.eql(u8, name, "str") or std.mem.eql(u8, name, "wasm_call"))
                     {
                         // `genCall`in KENDİ özel dispatch'iyle (satır ~4258
                         // civarı) TUTARLI, AÇIKÇA belgelenmiş "asla raise
@@ -507,7 +506,15 @@ pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInf
                         // listede DEĞİL (`genParseOrRaise` ile GERÇEKTEN
                         // `ValueError` raise EDEBİLİRLER, bkz. checker.zig'in
                         // eşdeğer notu) — o ikisi AŞAĞIDAKİ `else` dalına
-                        // düşüp MUHAFAZAKAR şekilde güvensiz sayılır.
+                        // düşüp MUHAFAZAKAR şekilde güvensiz sayılır. Faz 18
+                        // (bkz. plan dosyası "HPy köprüsünü Nox'un istisna
+                        // mekanizmasına entegre etme"): `hpy_call`/`hpy_call_str`
+                        // AYNI GEREKÇEYLE BU LİSTEDEN ÇIKARILDI — ARTIK
+                        // GERÇEKTEN bir `HPyError` raise EDEBİLİYORLAR
+                        // (`emitHpyErrorCheckOrRaise`, bkz. calls.zig), bu
+                        // YÜZDEN `else` dalına düşüp güvensiz sayılmaları
+                        // GEREKİR (`wasm_call` BU FAZIN kapsamı DIŞINDA,
+                        // DEĞİŞMEDİ).
                     } else {
                         // Faz M.8 (yeniden ele alındı, bkz. nox-teknik-
                         // spesifikasyon.md §3.59): BURASI ÖNCEDEN (bu

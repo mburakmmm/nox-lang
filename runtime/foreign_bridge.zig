@@ -34,6 +34,16 @@
 //! argüman) BURADA `nox_hpy_args_begin`/`nox_hpy_args_add_*`/`nox_hpy_
 //! call_{int,float,bool,str}_finish` "builder" zincirine YERİNİ BIRAKTI —
 //! bkz. `MarshalCtx`nin belge notu (aşağıda) TAM tasarım İçİn.
+//!
+//! **Faz 18 — istisna entegrasyonu** (bkz. plan dosyası "HPy köprüsünü
+//! Nox'un istisna mekanizmasına entegre etme"): yukarıdaki "Kapsam"
+//! notunun "Nox'un genel istisna mekanizmasıyla entegre bir hata sinyali
+//! HENÜZ yok" cümlesi ARTIK GEÇERLİ DEĞİL — `g_hpy_last_error`/`nox_hpy_
+//! take_error` (aşağıda) bir hata METNİ TAŞIR, `compiler/codegen_qbe/
+//! calls.zig`nin `emitHpyErrorCheckOrRaise`i HER `hpy_*` çağrısından
+//! HEMEN SONRA BUNU okuyup (VARSA) bir `HPyError` (bkz. `stdlib/nox/
+//! core.nox`) inşa edip `raise` eder — `try`/`except HPyError:` İLE
+//! GERÇEKTEN yakalanabilir.
 
 const std = @import("std");
 const asap = @import("alloc/asap.zig");
@@ -70,6 +80,37 @@ fn readFileAll(allocator: std.mem.Allocator, path: [*:0]const u8) ![]u8 {
     return buf[0..n];
 }
 
+/// Faz 18: `hpy_*` fonksiyonlarının HERHANGİ birinin GERÇEKLEŞTİRDİĞİ
+/// son hatanın METNİ — codegen'in `nox_hpy_take_error`sı İLE HEMEN
+/// SONRA (senkron, AYNI fiber, AYNI çağrı zincirinin İÇİNDE — fiber
+/// migrasyonu SADECE `await` NOKTALARINDA olur, BURADA YOK) okunup
+/// TÜKETİLİR — bu YÜZDEN threadlocal GÜVENLİDİR (bkz. `g_scheduler`nin
+/// AYNI güvenlik gerekçesi). `std.heap.page_allocator` KULLANILIR (bu
+/// SADECE bir hata METNİ, `rt`nin KENDİ, sızıntı-tespit eden allocator'ına
+/// İHTİYAÇ YOK — `cycle_detector.zig`nin worklist'inin AYNI "geçici
+/// scratch İçİn page_allocator" deseni).
+threadlocal var g_hpy_last_error: ?[:0]u8 = null;
+
+fn setHpyError(comptime fmt: []const u8, args: anytype) void {
+    if (g_hpy_last_error) |old| std.heap.page_allocator.free(old);
+    g_hpy_last_error = null;
+    const msg = std.fmt.allocPrint(std.heap.page_allocator, fmt, args) catch return;
+    defer std.heap.page_allocator.free(msg);
+    g_hpy_last_error = std.heap.page_allocator.dupeZ(u8, msg) catch null;
+}
+
+/// `g_hpy_last_error`i (VARSA) GERÇEK bir Nox `str`ine (`nox_str_from_bytes`)
+/// çevirip DÖNER VE yuvayı TEMİZLER (`nox_exception_take`nin AYNI "bir kez
+/// tüket" deseni); hata YOKSA `null`. Codegen HER `hpy_*` çağrısından
+/// HEMEN SONRA BUNU çağırıp `null`-DIŞI dönerse bir `HPyError` inşa edip
+/// `raise` eder (bkz. `compiler/codegen_qbe/calls.zig`nin `emitHpyErrorCheckOrRaise`i).
+pub export fn nox_hpy_take_error(rt: ?*anyopaque) ?[*:0]u8 {
+    const msg = g_hpy_last_error orelse return null;
+    defer std.heap.page_allocator.free(msg);
+    g_hpy_last_error = null;
+    return str_mod.nox_str_from_bytes(rt, msg);
+}
+
 /// `path`teki paylaşımlı kütüphaneyi (gerçek bir `HPY_ABI_UNIVERSAL`
 /// eklentisi) yükler, `ext_name` giriş noktasını çağırır, `func_name`
 /// adlı (`HPyFunc_O` imzalı) metodu `arg` ile çağırıp sonucu döner.
@@ -86,18 +127,32 @@ pub export fn nox_hpy_call(
     const en = ext_name orelse return 0;
     const fnm = func_name orelse return 0;
 
-    var mod = hpy_bridge.loader.load(std.mem.span(p), std.mem.span(en)) catch return 0;
+    var mod = hpy_bridge.loader.load(std.mem.span(p), std.mem.span(en)) catch |e| {
+        setHpyError("HPy modülü açılamadı: {s} ({s}): {t}", .{ std.mem.span(p), std.mem.span(en), e });
+        return 0;
+    };
     defer mod.deinit();
 
-    const method = mod.findMethodO(std.mem.span(fnm)) orelse return 0;
+    const method = mod.findMethodO(std.mem.span(fnm)) orelse {
+        setHpyError("'{s}' bulunamadı", .{std.mem.span(fnm)});
+        return 0;
+    };
 
-    const ctx = hpy_bridge.context.createContext(allocator) catch return 0;
+    const ctx = hpy_bridge.context.createContext(allocator) catch {
+        setHpyError("HPy context oluşturulamadı", .{});
+        return 0;
+    };
     defer hpy_bridge.context.destroyContext(allocator, ctx);
 
     const h_arg = ctx.ctx_Long_FromInt64_t.?(ctx, arg);
     defer ctx.ctx_Close.?(ctx, h_arg);
     const h_result = method(ctx, hpy_bridge.context.HPy_NULL, h_arg);
     defer ctx.ctx_Close.?(ctx, h_result);
+    if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
+        ctx.ctx_Err_Clear.?(ctx);
+        setHpyError("'{s}' bir istisna fırlattı", .{std.mem.span(fnm)});
+        return 0;
+    }
     return ctx.ctx_Long_AsInt64_t.?(ctx, h_result);
 }
 
@@ -128,12 +183,21 @@ pub export fn nox_hpy_call_str(
     const fnm = func_name orelse return str_mod.nox_str_from_bytes(rt, "");
     const arg_h = arg orelse return str_mod.nox_str_from_bytes(rt, "");
 
-    var mod = hpy_bridge.loader.load(std.mem.span(p), std.mem.span(en)) catch return str_mod.nox_str_from_bytes(rt, "");
+    var mod = hpy_bridge.loader.load(std.mem.span(p), std.mem.span(en)) catch |e| {
+        setHpyError("HPy modülü açılamadı: {s} ({s}): {t}", .{ std.mem.span(p), std.mem.span(en), e });
+        return str_mod.nox_str_from_bytes(rt, "");
+    };
     defer mod.deinit();
 
-    const method = mod.findMethodKeywords(std.mem.span(fnm)) orelse return str_mod.nox_str_from_bytes(rt, "");
+    const method = mod.findMethodKeywords(std.mem.span(fnm)) orelse {
+        setHpyError("'{s}' bulunamadı", .{std.mem.span(fnm)});
+        return str_mod.nox_str_from_bytes(rt, "");
+    };
 
-    const ctx = hpy_bridge.context.createContext(allocator) catch return str_mod.nox_str_from_bytes(rt, "");
+    const ctx = hpy_bridge.context.createContext(allocator) catch {
+        setHpyError("HPy context oluşturulamadı", .{});
+        return str_mod.nox_str_from_bytes(rt, "");
+    };
     defer hpy_bridge.context.destroyContext(allocator, ctx);
 
     const arg_slice = str_mod.nox_str_slice(arg_h);
@@ -148,6 +212,7 @@ pub export fn nox_hpy_call_str(
 
     if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
         ctx.ctx_Err_Clear.?(ctx);
+        setHpyError("'{s}' bir istisna fırlattı", .{std.mem.span(fnm)});
         return str_mod.nox_str_from_bytes(rt, "");
     }
 
@@ -181,14 +246,19 @@ pub export fn nox_hpy_open(
     const p = path orelse return null;
     const en = ext_name orelse return null;
 
-    var mod = hpy_bridge.loader.load(std.mem.span(p), std.mem.span(en)) catch return null;
+    var mod = hpy_bridge.loader.load(std.mem.span(p), std.mem.span(en)) catch |e| {
+        setHpyError("HPy modülü açılamadı: {s} ({s}): {t}", .{ std.mem.span(p), std.mem.span(en), e });
+        return null;
+    };
     const ctx = hpy_bridge.context.createContext(allocator) catch {
         mod.deinit();
+        setHpyError("HPy context oluşturulamadı", .{});
         return null;
     };
     const handle = allocator.create(PersistentHpyHandle) catch {
         hpy_bridge.context.destroyContext(allocator, ctx);
         mod.deinit();
+        setHpyError("bellek yetersiz", .{});
         return null;
     };
     handle.* = .{ .mod = mod, .ctx = ctx };
@@ -320,7 +390,11 @@ fn freeTempScalarList(rt: ?*anyopaque, list_ptr: ?*anyopaque, elem_size: i64, is
 pub export fn nox_hpy_args_begin(rt: ?*anyopaque, handle_ptr: ?*anyopaque) ?*anyopaque {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
     const allocator = state.allocator();
-    const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return null));
+    const hp = handle_ptr orelse {
+        setHpyError("geçersiz (açılamamış) HPy tutamacı", .{});
+        return null;
+    };
+    const handle: *PersistentHpyHandle = @ptrCast(@alignCast(hp));
     const mc = allocator.create(MarshalCtx) catch return null;
     mc.* = .{ .handle = handle, .allocator = allocator };
     return mc;
@@ -495,25 +569,41 @@ pub export fn nox_hpy_class_arg_end(mc_ptr: ?*anyopaque) void {
 /// (ör. Faz 16'nın `get_call_count`/`add_one` GİBİ ESKİ, `HPyFunc_O`
 /// imzalı test fonksiyonları — GERİYE DÖNÜK uyumluluk İçİn) VE TAM
 /// OLARAK 1 argüman VARSA `HPyFunc_O` imzasına DÜŞER. HİÇBİRİ
-/// BULUNAMAZSA `null` döner (çağıran `0`/`0.0`/boş `str` İLE karşılar).
+/// BULUNAMAZSA (Faz 18) `setHpyError` çağırıp `null` döner. BAŞARILI
+/// bir çağrı SONRASI `ctx_Err_Occurred` İSE (çağrılan HPy C fonksiyonunun
+/// KENDİSİ bir istisna fırlattı) SONUCU kapatıp HPy'nin KENDİ hata
+/// durumunu temizleyip (`ctx_Err_Clear`) `setHpyError` çağırıp `null`
+/// döner — çağıran (4 `_finish` fonksiyonu) `null`ı `0`/`0.0`/boş `str`
+/// İLE karşılar, `compiler/codegen_qbe/calls.zig`nin `emitHpyErrorCheckOrRaise`i
+/// bunu GERÇEK bir `HPyError`e çevirir.
 fn invokeHpyMethod(mc: *MarshalCtx, func_name: []const u8) ?hpy_bridge.context.HPy {
     const ctx = mc.handle.ctx;
-    if (mc.handle.mod.findMethodKeywords(func_name)) |method| {
-        const args_ptr: ?[*]const hpy_bridge.context.HPy = if (mc.args.items.len > 0) mc.args.items.ptr else null;
-        return method(ctx, hpy_bridge.context.HPy_NULL, args_ptr, mc.args.items.len, hpy_bridge.context.HPy_NULL);
-    }
-    if (mc.args.items.len == 1) {
-        if (mc.handle.mod.findMethodO(func_name)) |method| {
-            return method(ctx, hpy_bridge.context.HPy_NULL, mc.args.items[0]);
+    const h_result: hpy_bridge.context.HPy = blk: {
+        if (mc.handle.mod.findMethodKeywords(func_name)) |method| {
+            const args_ptr: ?[*]const hpy_bridge.context.HPy = if (mc.args.items.len > 0) mc.args.items.ptr else null;
+            break :blk method(ctx, hpy_bridge.context.HPy_NULL, args_ptr, mc.args.items.len, hpy_bridge.context.HPy_NULL);
         }
+        if (mc.args.items.len == 1) {
+            if (mc.handle.mod.findMethodO(func_name)) |method| {
+                break :blk method(ctx, hpy_bridge.context.HPy_NULL, mc.args.items[0]);
+            }
+        }
+        setHpyError("'{s}' bulunamadı", .{func_name});
+        return null;
+    };
+    if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
+        ctx.ctx_Close.?(ctx, h_result);
+        ctx.ctx_Err_Clear.?(ctx);
+        setHpyError("'{s}' bir istisna fırlattı", .{func_name});
+        return null;
     }
-    return null;
+    return h_result;
 }
 
 /// `func_name` adlı metodu `mc.args`la çağırıp `int` sonucu unmarshal
-/// eder, `mc`yi TAMAMEN serbest bırakır. `hpy_call_on`nin ESKİ (Faz 16,
-/// TEK-`int`-argümanlı) davranışıyla `Err_Occurred` KONTROLÜ AÇISINDAN
-/// TUTARLI — KONTROL ETMEZ (istisna entegrasyonu Faz 18'in işi).
+/// eder, `mc`yi TAMAMEN serbest bırakır. `Err_Occurred`/"bulunamadı"
+/// kontrolü `invokeHpyMethod`nin İÇİNDE yapılır (Faz 18) — BURADA
+/// SADECE `null` (hata OLDU) İçin varsayılan `0` döner.
 pub export fn nox_hpy_call_int_finish(mc_ptr: ?*anyopaque, func_name: ?[*:0]const u8) i64 {
     const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return 0));
     defer freeMarshalCtx(mc);
@@ -547,8 +637,8 @@ pub export fn nox_hpy_call_bool_finish(mc_ptr: ?*anyopaque, func_name: ?[*:0]con
     return if (ctx.ctx_IsTrue.?(ctx, h_result) != 0) 1 else 0;
 }
 
-/// `nox_hpy_call_str_on`nin ESKİ (Faz 16, TEK-`str`-argümanlı) davranışıyla
-/// TUTARLI — `Err_Occurred` KONTROL EDİLİR (o davranış BURADA KORUNUR).
+/// `nox_hpy_call_int_finish`nin AYNISı, `str` dönüşle — `Err_Occurred`/
+/// "bulunamadı" kontrolü AYNI şekilde `invokeHpyMethod`nin İÇİNDE.
 pub export fn nox_hpy_call_str_finish(rt: ?*anyopaque, mc_ptr: ?*anyopaque, func_name: ?[*:0]const u8) ?[*:0]u8 {
     const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return null));
     defer freeMarshalCtx(mc);
@@ -556,10 +646,6 @@ pub export fn nox_hpy_call_str_finish(rt: ?*anyopaque, mc_ptr: ?*anyopaque, func
     const ctx = mc.handle.ctx;
     const h_result = invokeHpyMethod(mc, std.mem.span(fnm)) orelse return str_mod.nox_str_from_bytes(rt, "");
     defer ctx.ctx_Close.?(ctx, h_result);
-    if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
-        ctx.ctx_Err_Clear.?(ctx);
-        return str_mod.nox_str_from_bytes(rt, "");
-    }
     var size: isize = 0;
     const result_str = ctx.ctx_Unicode_AsUTF8AndSize.?(ctx, h_result, &size) orelse return str_mod.nox_str_from_bytes(rt, "");
     return str_mod.nox_str_from_bytes(rt, result_str[0..@intCast(size)]);
