@@ -13,6 +13,20 @@
 //! sembol/metod/export eksik, ...) `0` döner — Nox'un genel istisna
 //! mekanizmasıyla (bkz. errors/handle.zig) entegre bir hata sinyali HENÜZ
 //! yok (bkz. nox-teknik-spesifikasyon.md §3.14, bilinen sınırlamalar).
+//!
+//! **Faz 16 — kalıcı tutamaç** (bkz. plan dosyası "hpy_call'e kalıcı
+//! modül+context"): `hpy_call`/`hpy_call_str`nin "her çağrıda baştan aç/
+//! kapat" modeli, TEKRARLANAN çağrılar İçİn (a) her seferinde YENİDEN
+//! dlopen/`HPyInit_*` çalıştırma maliyetini VE (b) modül-seviyeli C
+//! durumunun (bkz. `tests/compat/hpy_ext/noxtest.c`nin `call_count`
+//! sayacı) HER çağrıda kaybolmasını (paylaşımlı kütüphane YENİDEN
+//! eşlendiğinde `static` C global'leri SIFIRLANIR) getiriyordu. `hpy_open`
+//! modülü VE `HPyContext`i BİR KEZ yaratıp `PersistentHpyHandle` İçİnde
+//! saklar; `hpy_call_on`/`hpy_call_str_on` bu İKİSİNİ YENİDEN KULLANIR
+//! (SIFIR yeniden-yükleme); `hpy_close` İKİSİNİ de yok eder. Tutamaç,
+//! Nox'un `extern def`in ZATEN kullandığı opak `ptr` tipiyle temsil edilir
+//! (bkz. checker.zig'deki eşdeğer not) — `hpy_call`in AYNI "path/ext_name/
+//! func_name SADECE string LİTERALİ" güvenlik kısıtı BURADA da GEÇERLİDİR.
 
 const std = @import("std");
 const asap = @import("alloc/asap.zig");
@@ -130,6 +144,114 @@ pub export fn nox_hpy_call_str(
     var size: isize = 0;
     const result_str = ctx.ctx_Unicode_AsUTF8AndSize.?(ctx, h_result, &size) orelse return str_mod.nox_str_from_bytes(rt, "");
     return str_mod.nox_str_from_bytes(rt, result_str[0..@intCast(size)]);
+}
+
+/// Faz 16: `hpy_open`/`hpy_call_on`/`hpy_call_str_on`/`hpy_close`nin
+/// paylaştığı, `rt`nin allocator'ında yaşayan opak tutamaç — `nox_hpy_open`
+/// TARAFINDAN yaratılır, Nox tarafında `ptr` OLARAK taşınır (İçİNE
+/// BAKILMAZ), `nox_hpy_close` TARAFINDAN yok edilir.
+const PersistentHpyHandle = struct {
+    mod: hpy_bridge.loader.LoadedModule,
+    ctx: *hpy_bridge.context.HPyContext,
+};
+
+/// `path`teki paylaşımlı kütüphaneyi (`ext_name` giriş noktasıyla) BİR
+/// KEZ yükler VE BİR KEZ bir `HPyContext` yaratıp `PersistentHpyHandle`
+/// İçİnde saklar. Herhangi bir adım BAŞARISIZ olursa (dosya bulunamadı,
+/// giriş noktası eksik, context yaratma başarısız) KISMİ olarak açılmış
+/// kaynaklar TEMİZLENİP `null` DÖNER — `hpy_call`nin AYNI "hata sinyali
+/// HENÜZ yok, güvenli-varsayılan dön" ilkesiyle TUTARLI.
+pub export fn nox_hpy_open(
+    rt: ?*anyopaque,
+    path: ?[*:0]const u8,
+    ext_name: ?[*:0]const u8,
+) ?*anyopaque {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    const allocator = state.allocator();
+    const p = path orelse return null;
+    const en = ext_name orelse return null;
+
+    var mod = hpy_bridge.loader.load(std.mem.span(p), std.mem.span(en)) catch return null;
+    const ctx = hpy_bridge.context.createContext(allocator) catch {
+        mod.deinit();
+        return null;
+    };
+    const handle = allocator.create(PersistentHpyHandle) catch {
+        hpy_bridge.context.destroyContext(allocator, ctx);
+        mod.deinit();
+        return null;
+    };
+    handle.* = .{ .mod = mod, .ctx = ctx };
+    return handle;
+}
+
+/// `nox_hpy_call`nin AYNI marshal/çağrı/unmarshal gövdesi — SADECE modül/
+/// context KURULUMU (`handle`den ZATEN AÇIK olarak alınır) ATLANMIŞTIR.
+pub export fn nox_hpy_call_on(
+    rt: ?*anyopaque,
+    handle_ptr: ?*anyopaque,
+    func_name: ?[*:0]const u8,
+    arg: i64,
+) i64 {
+    _ = rt;
+    const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return 0));
+    const fnm = func_name orelse return 0;
+    const method = handle.mod.findMethodO(std.mem.span(fnm)) orelse return 0;
+    const ctx = handle.ctx;
+
+    const h_arg = ctx.ctx_Long_FromInt64_t.?(ctx, arg);
+    defer ctx.ctx_Close.?(ctx, h_arg);
+    const h_result = method(ctx, hpy_bridge.context.HPy_NULL, h_arg);
+    defer ctx.ctx_Close.?(ctx, h_result);
+    return ctx.ctx_Long_AsInt64_t.?(ctx, h_result);
+}
+
+/// `nox_hpy_call_str`nin AYNI marshal/çağrı/unmarshal gövdesi — `nox_hpy_
+/// call_on`nin AYNI "modül/context ZATEN AÇIK" farkıyla.
+pub export fn nox_hpy_call_str_on(
+    rt: ?*anyopaque,
+    handle_ptr: ?*anyopaque,
+    func_name: ?[*:0]const u8,
+    arg: ?[*:0]const u8,
+) ?[*:0]u8 {
+    const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return null));
+    const fnm = func_name orelse return str_mod.nox_str_from_bytes(rt, "");
+    const arg_h = arg orelse return str_mod.nox_str_from_bytes(rt, "");
+    const method = handle.mod.findMethodKeywords(std.mem.span(fnm)) orelse return str_mod.nox_str_from_bytes(rt, "");
+    const ctx = handle.ctx;
+
+    const arg_slice = str_mod.nox_str_slice(arg_h);
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    const allocator = state.allocator();
+    const arg_z = allocator.dupeZ(u8, arg_slice) catch return str_mod.nox_str_from_bytes(rt, "");
+    defer allocator.free(arg_z);
+    const h_arg = ctx.ctx_Unicode_FromString.?(ctx, arg_z);
+    defer ctx.ctx_Close.?(ctx, h_arg);
+
+    const args = [_]hpy_bridge.context.HPy{h_arg};
+    const h_result = method(ctx, hpy_bridge.context.HPy_NULL, &args, 1, hpy_bridge.context.HPy_NULL);
+    defer ctx.ctx_Close.?(ctx, h_result);
+
+    if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
+        ctx.ctx_Err_Clear.?(ctx);
+        return str_mod.nox_str_from_bytes(rt, "");
+    }
+
+    var size: isize = 0;
+    const result_str = ctx.ctx_Unicode_AsUTF8AndSize.?(ctx, h_result, &size) orelse return str_mod.nox_str_from_bytes(rt, "");
+    return str_mod.nox_str_from_bytes(rt, result_str[0..@intCast(size)]);
+}
+
+/// `handle`nin context'ini yok eder, kütüphaneyi kapatır, tutamaç
+/// struct'ının KENDİSİNİ serbest bırakır. `handle_ptr == null` İSE (ör.
+/// `hpy_open` BAŞARISIZ olduysa) SESSİZCE hiçbir şey yapmaz.
+pub export fn nox_hpy_close(rt: ?*anyopaque, handle_ptr: ?*anyopaque) void {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
+    const allocator = state.allocator();
+    const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return));
+    hpy_bridge.context.destroyContext(allocator, handle.ctx);
+    handle.mod.deinit();
+    allocator.destroy(handle);
 }
 
 /// `path`teki `.wasm` ikilisini yükler, `func_name` adlı (yalnızca `i32`

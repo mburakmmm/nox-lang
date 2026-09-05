@@ -230,6 +230,45 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = path_v.text }, .{ .ty = .l, .text = ext_v.text }, .{ .ty = .l, .text = func_v.text }, .{ .ty = .l, .text = arg_v.text } });
                 return .{ .text = result_temp, .qtype = .l, .heap = .str };
             }
+            // Faz 16 (bkz. checker.zig'deki eşdeğer not): `hpy_call`in
+            // kalıcı-tutamaçlı 4 kardeşi — `$nox_hpy_open`/`$nox_hpy_call_on`/
+            // `$nox_hpy_call_str_on`/`$nox_hpy_close`e (bkz. runtime/
+            // foreign_bridge.zig) DOĞRUDAN çağrıya çevrilir. `ptr` tutamacı
+            // `int` İLE AYNI QBE temsiline (`l`) sahiptir (opak, ARC-yönetimli
+            // DEĞİL — `hpy_call_str_on`nin dönüşü HARİÇ, o `hpy_call_str`İLE
+            // AYNI gerekçeyle `.heap = .str` işaretlenir).
+            if (std.mem.eql(u8, name, "hpy_open")) {
+                if (c.args.len != 2) return error.Unsupported;
+                const path_v = try self.genExpr(c.args[0]);
+                const ext_v = try self.genExpr(c.args[1]);
+                const result_temp = try self.newTemp();
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_open", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = path_v.text }, .{ .ty = .l, .text = ext_v.text } });
+                return .{ .text = result_temp, .qtype = .l };
+            }
+            if (std.mem.eql(u8, name, "hpy_call_on")) {
+                if (c.args.len != 3) return error.Unsupported;
+                const handle_v = try self.genExpr(c.args[0]);
+                const func_v = try self.genExpr(c.args[1]);
+                const arg_v = try self.genExpr(c.args[2]);
+                const result_temp = try self.newTemp();
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call_on", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handle_v.text }, .{ .ty = .l, .text = func_v.text }, .{ .ty = .l, .text = arg_v.text } });
+                return .{ .text = result_temp, .qtype = .l };
+            }
+            if (std.mem.eql(u8, name, "hpy_call_str_on")) {
+                if (c.args.len != 3) return error.Unsupported;
+                const handle_v = try self.genExpr(c.args[0]);
+                const func_v = try self.genExpr(c.args[1]);
+                const arg_v = try self.genExpr(c.args[2]);
+                const result_temp = try self.newTemp();
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call_str_on", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handle_v.text }, .{ .ty = .l, .text = func_v.text }, .{ .ty = .l, .text = arg_v.text } });
+                return .{ .text = result_temp, .qtype = .l, .heap = .str };
+            }
+            if (std.mem.eql(u8, name, "hpy_close")) {
+                if (c.args.len != 1) return error.Unsupported;
+                const handle_v = try self.genExpr(c.args[0]);
+                try self.qbeCall(null, "$nox_hpy_close", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handle_v.text } });
+                return .{ .text = "0", .qtype = .w };
+            }
             // Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi +
             // metadata-tabanlı metaprogramming", `checker.zig`deki eşdeğer
             // not): `stdlib/nox/reflect.nox`nin sardığı 6 SABİT-imzalı

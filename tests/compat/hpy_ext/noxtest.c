@@ -8,6 +8,10 @@
  * Tüm fonksiyonlar `HPyFunc_O` imzasıyla (tek argüman) — Nox'un yükleyicisi
  * (bkz. runtime/hpy_bridge/loader.zig) şu an yalnızca bunu destekliyor:
  *   - add_one(x) -> x + 1                      (Tier 0: Long aritmetiği)
+ *   - get_call_count(_) -> HER çağrıda artan   (Faz 16: `hpy_open`/
+ *                          bir static sayaç      `hpy_call_on`nin kalıcılık
+ *                                                 kanıtı — bkz. modül üstü
+ *                                                 belge notu)
  *   - str_length(s) -> len(s)                  (Tier 1: Unicode + Length)
  *   - negate(x) -> -x                           (Tier 1: sayı protokolü)
  *   - raise_value_error(x) -> HER ZAMAN hata    (Tier 0: hata yönetimi)
@@ -931,6 +935,23 @@ static HPy add_one_impl(HPyContext *ctx, HPy self, HPy arg)
     return HPyLong_FromLong(ctx, value + 1);
 }
 
+/* Faz 16 (Nox tarafı: `hpy_open`/`hpy_call_on` kalıcılık kanıtı): bu
+ * `static` C global'i, paylaşımlı kütüphane BİR KEZ dlopen edildiğinde
+ * SIFIRLANIR VE HER `dlopen` (yeniden-yükleme) İLE TEKRAR SIFIRLANIR
+ * (paylaşımlı kütüphane YENİDEN eşlenir, BSS/data SIFIRLANIR). `hpy_call_
+ * on` GERÇEKTEN kalıcıysa (modülü YENİDEN yüklemiyorsa), AYNI tutamaçla
+ * ARDIŞIK çağrılar 1/2/3/... DÖNMELİDİR — `hpy_call`nin (HER seferinde
+ * YENİDEN yükleyen) AKSİNE, O HER ZAMAN 1 DÖNERDİ. */
+static long noxtest_call_count = 0;
+
+HPyDef_METH(get_call_count, "get_call_count", HPyFunc_O)
+static HPy get_call_count_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)arg;
+    noxtest_call_count++;
+    return HPyLong_FromLong(ctx, noxtest_call_count);
+}
+
 HPyDef_METH(str_length, "str_length", HPyFunc_O)
 static HPy str_length_impl(HPyContext *ctx, HPy self, HPy arg)
 {
@@ -1122,6 +1143,7 @@ static HPyDef *module_defines[] = {
     &eval_code_via_c,
     &import_module_via_c,
     &add_one,
+    &get_call_count,
     &str_length,
     &negate,
     &raise_value_error,

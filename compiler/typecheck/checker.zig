@@ -2280,7 +2280,7 @@ pub const Checker = struct {
     /// olarak İŞARETLERDİ (ör. `len(xs)` İçEREN salt-okunur bir yardımcı
     /// bile YAKALANIRDI — GERÇEK bir yanlış-pozitif).
     fn isKnownSafeBuiltinCallee(name: []const u8) bool {
-        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "wasm_call" };
+        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_close", "wasm_call" };
         for (safe) |s| {
             if (std.mem.eql(u8, name, s)) return true;
         }
@@ -4508,6 +4508,62 @@ pub const Checker = struct {
                         return self.fail(error.TypeMismatch, "'hpy_call_str' argümanı 3 (fonksiyon adı) yalnızca bir string LİTERALİ olabilir", .{});
                     }
                     return .str;
+                }
+                // Faz 16 (bkz. plan dosyası "hpy_call'e kalıcı modül+context"):
+                // `hpy_call`/`hpy_call_str`nin HER ÇAĞRIDA modülü/context'i
+                // BAŞTAN yaratıp HEMEN yok eden "v0.1, bilinçli dar" modeli
+                // YERİNE — `hpy_open` BİR KEZ açıp opak bir `ptr` tutamacı
+                // (Nox'un `extern def`in ZATEN kullandığı AYNI opak-handle
+                // tipi, bkz. `ok_extern_ptr.nox`) döner, `hpy_call_on`/
+                // `hpy_call_str_on` BU tutamacı YENİDEN KULLANIR (SIFIR
+                // yeniden-yükleme/yeniden-yaratma), `hpy_close` serbest
+                // bırakır. `hpy_call`nin AYNI Güvenlik bulgusu H-1 kısıtı
+                // (yol/uzantı-adı/fonksiyon-adı SADECE string LİTERALİ)
+                // BURADA da GEÇERLİDİR.
+                if (std.mem.eql(u8, name, "hpy_open")) {
+                    if (c.args.len != 2) {
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_open' tam olarak 2 argüman alır (yol: str, uzantı_adı: str)", .{});
+                    }
+                    if (try self.checkExpr(ctx, c.args[0]) != .str) return self.fail(error.TypeMismatch, "'hpy_open' argümanı 1 (yol) str olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "'hpy_open' argümanı 2 (uzantı adı) str olmalıdır", .{});
+                    if (c.args[0] != .string_lit) {
+                        return self.fail(error.TypeMismatch, "'hpy_open' argümanı 1 (yol) yalnızca bir string LİTERALİ olabilir (güvenlik: çalışma-zamanı hesaplı bir yoldan keyfi native kütüphane yüklenmesi önlenir)", .{});
+                    }
+                    if (c.args[1] != .string_lit) {
+                        return self.fail(error.TypeMismatch, "'hpy_open' argümanı 2 (uzantı adı) yalnızca bir string LİTERALİ olabilir", .{});
+                    }
+                    return .ptr;
+                }
+                if (std.mem.eql(u8, name, "hpy_call_on")) {
+                    if (c.args.len != 3) {
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_call_on' tam olarak 3 argüman alır (tutamac: ptr, fonksiyon_adı: str, argüman: int)", .{});
+                    }
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_call_on' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "'hpy_call_on' argümanı 2 (fonksiyon adı) str olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[2]) != .int) return self.fail(error.TypeMismatch, "'hpy_call_on' argümanı 3 (argüman) int olmalıdır", .{});
+                    if (c.args[1] != .string_lit) {
+                        return self.fail(error.TypeMismatch, "'hpy_call_on' argümanı 2 (fonksiyon adı) yalnızca bir string LİTERALİ olabilir", .{});
+                    }
+                    return .int;
+                }
+                if (std.mem.eql(u8, name, "hpy_call_str_on")) {
+                    if (c.args.len != 3) {
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_call_str_on' tam olarak 3 argüman alır (tutamac: ptr, fonksiyon_adı: str, argüman: str)", .{});
+                    }
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_call_str_on' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "'hpy_call_str_on' argümanı 2 (fonksiyon adı) str olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "'hpy_call_str_on' argümanı 3 (argüman) str olmalıdır", .{});
+                    if (c.args[1] != .string_lit) {
+                        return self.fail(error.TypeMismatch, "'hpy_call_str_on' argümanı 2 (fonksiyon adı) yalnızca bir string LİTERALİ olabilir", .{});
+                    }
+                    return .str;
+                }
+                if (std.mem.eql(u8, name, "hpy_close")) {
+                    if (c.args.len != 1) {
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_close' tam olarak 1 argüman alır (tutamac: ptr)", .{});
+                    }
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_close' argümanı (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
+                    return .none;
                 }
                 // Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi +
                 // metadata-tabanlı metaprogramming"): `stdlib/nox/reflect.

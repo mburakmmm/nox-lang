@@ -2189,6 +2189,45 @@ test "codegen: Güvenlik H-1 — hpy_call'ın yol argümanı çalışma-zamanı 
     }
 }
 
+// Faz 16 (bkz. plan dosyası "hpy_call'e kalıcı modül+context"): `hpy_call`nin
+// AYNI Güvenlik bulgusu H-1 kısıtı `hpy_open`nin `yol` argümanı İçİn de
+// GEÇERLİDİR.
+test "codegen: Güvenlik H-1 — hpy_open'ın yol argümanı çalışma-zamanı değişkeniyse REDDEDİLİR (yalnızca string literali)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/hpy_open_nonliteral_path_rejected.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => return error.ExpectedTypeErrorButGotOk,
+        .err => |e| {
+            try std.testing.expectEqual(error.TypeMismatch, e.code);
+            try std.testing.expect(std.mem.indexOf(u8, e.message, "string LİTERALİ") != null);
+        },
+    }
+}
+
+// Faz 16: `hpy_call_on`nin `fonksiyon_adı` argümanı da (`hpy_call`nin AYNI
+// TUTARLILIK kararıyla) SADECE string LİTERALİ olabilir.
+test "codegen: hpy_call_on'ın fonksiyon_adı argümanı çalışma-zamanı değişkeniyse REDDEDİLİR (yalnızca string literali)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/hpy_call_on_nonliteral_funcname_rejected.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => return error.ExpectedTypeErrorButGotOk,
+        .err => |e| {
+            try std.testing.expectEqual(error.TypeMismatch, e.code);
+            try std.testing.expect(std.mem.indexOf(u8, e.message, "string LİTERALİ") != null);
+        },
+    }
+}
+
 // Faz FF.4 (bkz. nox-teknik-spesifikasyon.md §3.63): çıplak `self`li bir
 // metodun (`bump`) bir ALANI GERÇEKTEN okuyup/YAZDIĞI uçtan uca kanıt —
 // codegen'in çıplak self İÇİN GERÇEKTEN sıfır değişiklik gerektirdiğinin

@@ -14,7 +14,41 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
-## [1.59.0]
+## [1.60.0]
+
+### Eklendi
+- **Faz 16 — `hpy_open`/`hpy_call_on`/`hpy_call_str_on`/`hpy_close`:
+  kalıcı HPy modül+context tutamacı (aHPy entegrasyonu, 1/5)**: kullanıcının
+  kendi `aHPy` projesini (Cython'dan CPython-bağımsız HPy Universal ABI
+  C'ye derleyen bir backend) Nox'a entegre etme planının İLK maddesi.
+  Araştırma sırasında, `runtime/hpy_bridge/`nin (180/180 `ctx_*` alanı
+  dolu) GERÇEK `.nox` programlarına HİÇ bağlanmadığı ÖNCÜLÜ YANLIŞ
+  bulundu — `hpy_call`/`hpy_call_str` (Faz 14/15) ZATEN çalışıyordu.
+  GERÇEK kalan boşluk, `runtime/foreign_bridge.zig`nin KENDİ belgelediği
+  "v0.1, bilinçli olarak dar" sınırlarından BİRİYDİ: her `hpy_call` HER
+  ÇAĞRIDA modülü baştan `dlopen` edip yeni bir `HPyContext` yaratıp HEMEN
+  kapatıyordu — kalıcılık yoktu. Bu sürüm 4 yeni yerleşik ekliyor
+  (mevcut `hpy_call`/`hpy_call_str` DEĞİŞMEDEN, geriye dönük uyumlu
+  kalıyor): `hpy_open(path: str, ext_name: str) -> ptr` modülü/context'i
+  BİR KEZ açıp ikisini de heap'te bir `PersistentHpyHandle` struct'ında
+  saklayıp opak bir `ptr` (mevcut, `extern def`in de kullandığı tip)
+  döner; `hpy_call_on(handle, func_name, arg: int) -> int` VE
+  `hpy_call_str_on(handle, func_name, arg: str) -> str` AYNI, ZATEN AÇIK
+  modül/context'i (SIFIR yeniden-yükleme) yeniden kullanır; `hpy_close(handle)`
+  context'i yok edip kütüphaneyi kapatıp handle'ı serbest bırakır.
+  Kalıcılığın GERÇEKTEN çalıştığı (silinen bir false-positive DEĞİL),
+  `tests/compat/hpy_ext/noxtest.c`ye eklenen YENİ, stateful bir test
+  fonksiyonuyla (`get_call_count` — her çağrıda artan bir `static long`
+  C globali döndürür) KANITLANDI: aynı handle'la 3 ardışık `hpy_call_on`
+  çağrısı `1`/`2`/`3` bastı (silent reload olsaydı `1`/`1`/`1` olurdu,
+  çünkü dlopen paylaşımlı kütüphaneyi yeniden eşleyip `static` globali
+  sıfırlardı). `hpy_open`/`hpy_call_on`nin `path`/`func_name` argümanları
+  `hpy_call`İLE AYNI Güvenlik bulgusu H-1 kısıtına tabi (sadece string
+  LİTERALİ — çalışma-zamanı hesaplı bir yoldan/adından keyfi native kod
+  yüklenmesini/çağrılmasını önlemek İçİn), 2 yeni negatif codegen
+  fixture'ıyla doğrulandı.
+
+
 
 ### Eklendi
 - **HH.10 — post-spawn checker'ına dönüş-alias etkileri (return-alias

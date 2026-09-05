@@ -111,3 +111,33 @@ test "hpy_call_str: HPyFunc_KEYWORDS imzalı bir HPy metodu str argüman/dönü�
         "MERHABA DUNYA\n",
     );
 }
+
+// Faz 16 (bkz. plan dosyası "hpy_call'e kalıcı modül+context"): `hpy_open`
+// BİR KEZ açar, `hpy_call_on` AYNI tutamaçla ÜÇ KEZ çağrılır — `noxtest.c`nin
+// `get_call_count`i HER çağrıda ARTAN bir `static` C global'i döndürdüğünden
+// (bkz. onun modül üstü belge notu), `1`/`2`/`3` basılması `hpy_call_on`nin
+// modülü/context'i YENİDEN YÜKLEMEDİĞİNİN (paylaşımlı kütüphane YENİDEN
+// eşlenirse `static` global SIFIRLANIRDI) SOMUT kanıtıdır.
+test "hpy_open/hpy_call_on: kalıcı tutamaç, ardışık çağrılar modül-seviyeli durumu KORUR" {
+    try expectGolden(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\print(hpy_call_on(h, "get_call_count", 0))
+        \\print(hpy_call_on(h, "get_call_count", 0))
+        \\print(hpy_call_on(h, "get_call_count", 0))
+        \\hpy_close(h)
+        \\
+    ,
+        "1\n2\n3\n",
+    );
+}
+
+test "hpy_call_str_on: kalıcı tutamaçla HPyFunc_KEYWORDS imzalı bir metod str argüman/dönüşle çağrılır" {
+    try expectGolden(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\print(hpy_call_str_on(h, "upper_str_via_c", "merhaba dunya"))
+        \\hpy_close(h)
+        \\
+    ,
+        "MERHABA DUNYA\n",
+    );
+}

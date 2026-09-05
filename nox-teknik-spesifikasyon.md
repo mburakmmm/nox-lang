@@ -17862,6 +17862,113 @@ TARİHSEL bir kayıt olarak DEĞİŞTİRİLMEDİ.
 
 ---
 
+## 3.126 Faz 16 — `hpy_open`/`hpy_call_on`/`hpy_call_str_on`/`hpy_close`: kalıcı HPy modül+context tutamacı (aHPy entegrasyonu, 1/5) (v1.60.0)
+
+Kullanıcı, kendi `aHPy` projesini (Cython'dan gerçek CPython-bağımsız HPy
+Universal ABI C'ye derleyen bir backend) Nox'a entegre etmeyi düşündü —
+"Python C-extension kütüphanelerini tüm dillerden, ÖZELLİKLE Nox'tan
+kullanılabilir kılmak" amacı çerçevesinde. Üç entegrasyon modeli
+değerlendirilip kullanıcı 1. modeli (Nox'un ZATEN VAR olan `runtime/
+hpy_bridge/` köprüsü ÜZERİNDEN prebuilt HPy-Universal `.so` dosyalarının
+SAF bir tüketicisi olması) seçti — "hepsini sırayla yapalım" onayıyla
+`foreign_bridge.zig`nin KENDİ, "v0.1, bilinçli olarak dar" belgelenmiş
+sınırlarındaki 5 GERÇEK boşluk sırayla ele alınmaya BAŞLADI.
+
+**Araştırma sırasında ÖNEMLİ bir öncül düzeltmesi ortaya çıktı**:
+`runtime/hpy_bridge/`nin (180/180 `ctx_*` alanı dolu, GERÇEK bir HPy
+Universal ABI "ana bilgisayarı") GERÇEK `.nox` programlarına HİÇ
+bağlanmadığı varsayımı YANLIŞTI — `hpy_call`/`hpy_call_str` (Faz 14/15)
+`runtime/foreign_bridge.zig` ÜZERİNDEN ZATEN çalışıyor VE `tests/compat/
+hpy_call_golden_test.zig` İLE uçtan-uca doğrulanmış durumda. GERÇEK
+kalan boşluk, `foreign_bridge.zig`nin KENDİ belge notunun AÇIKÇA
+belirttiği 5 dar sınırdı: (1, BU FAZ) kalıcılık yok — her çağrı modülü
+baştan dlopen edip YENİ bir `HPyContext` yaratıp HEMEN kapatıyor;
+(2) sadece TEK `int`/TEK `str` parametre; (3) list/dict/class marshalling
+yok; (4) hata sessizce `0`/boş string oluyor; (5) `HPyType_FromSpec`
+(extension type) desteği YOK.
+
+**Tasarım — mevcut `hpy_call`/`hpy_call_str`e DOKUNMADAN, 4 EK
+yerleşik**: `hpy_open(path: str, ext_name: str) -> ptr` (`path`/`ext_name`
+`hpy_call`YLA AYNI Güvenlik bulgusu H-1 kısıtına tabi — sadece string
+LİTERALİ) modülü/context'i BİR KEZ açıp `PersistentHpyHandle{ mod:
+LoadedModule, ctx: *HPyContext }` struct'ını heap'te saklayıp POINTER'ını
+Nox'un MEVCUT `ptr` tipi olarak döner (YENİ bir tip İCAT EDİLMEDİ);
+`hpy_call_on(handle: ptr, func_name: str, arg: int) -> int` VE
+`hpy_call_str_on(handle: ptr, func_name: str, arg: str) -> str` AYNI,
+ZATEN AÇIK modül/context'i (SIFIR yeniden-yükleme/yeniden-yaratma)
+yeniden kullanır (`func_name` da TUTARLILIK İçİn sadece string LİTERALİ);
+`hpy_close(handle: ptr) -> None` context'i yok edip kütüphaneyi kapatıp
+handle struct'ını serbest bırakır.
+
+**Runtime** (`runtime/foreign_bridge.zig`): `nox_hpy_open` load+
+createContext+`allocator.create(PersistentHpyHandle)` yapıp HATADA
+kısmi kaynakları temizleyip null döner; `nox_hpy_call_on`/
+`nox_hpy_call_str_on` `handle.mod.findMethodO`/`findMethodKeywords` +
+`handle.ctx` üzerinden `nox_hpy_call`/`nox_hpy_call_str`in AYNI marshal/
+çağrı/unmarshal gövdesini (SADECE modül/context kurulumu atlanmış)
+çalıştırır; `nox_hpy_close` destroyContext+mod.deinit+allocator.destroy
+yapar. Derleyici tarafı `hpy_call`/`hpy_call_str`in AYNI 3 dokunuş
+noktasını (checker.zig'in arg-sayısı/tip + literal-string kontrolü +
+`isKnownSafeBuiltinCallee`, calls.zig'in `$nox_hpy_open`/
+`$nox_hpy_call_on`/`$nox_hpy_call_str_on`/`$nox_hpy_close` lowering'i,
+her biri `RT_PARAM`ı ilk argüman olarak geçirir) 4 kez tekrarlar.
+
+**Kalıcılık kanıtı**: `tests/compat/hpy_ext/noxtest.c`ye YENİ, stateful
+bir test fonksiyonu eklendi — `get_call_count` (`HPyFunc_O`), her
+çağrıda artan bir `static long noxtest_call_count` C globalini döndürür.
+Stateless bir test fonksiyonu (`add_one` gibi) "gerçekten kalıcı, hiç
+yeniden yükleme yok" ile "sessizce her çağrıda yeniden yüklüyor"
+durumlarını DIŞARIDAN ayırt EDEMEZ (ikisi de pür fonksiyonlar İçİn AYNI
+sonucu üretir) — GERÇEK bir kanıt STATEFUL bir C-tarafı test fonksiyonu
+gerektirir: sessiz bir yeniden yükleme bu `static` C globalini SIFIRLAR
+(dlopen paylaşımlı kütüphaneyi yeniden eşleyip BSS/data'yı sıfırlar), bu
+YÜZDEN AYNI handle'la 3 ardışık çağrının `1`/`2`/`3` (`1`/`1`/`1` DEĞİL)
+döndürmesi somut, çürütülebilir bir kalıcılık kanıtıdır — `tests/compat/
+hpy_call_golden_test.zig`ye eklenen `"hpy_open/hpy_call_on: kalıcı
+tutamaç, ardışık çağrılar modül-seviyeli durumu KORUR"` testiyle BU
+SIRALAMA DOĞRULANDI (`--listen=-` harness'i altında derlenmiş test
+binary'sini DOĞRUDAN çalıştırarak — bilinen, dokümante edilmiş harness
+kırılganlığının 6. örneği bu turda da GÖRÜLDÜ, gerçek başarısızlık
+DEĞİL). AYNI dosyaya `hpy_call_str_on` İçİn de bir test eklendi
+(`upper_str_via_c` üzerinden, `HPyFunc_KEYWORDS` imzalı bir metodun
+kalıcı tutamaçla çalıştığı doğrulandı).
+
+**Güvenlik regresyonu-yok kanıtı**: `hpy_open`nin `path` argümanı VE
+`hpy_call_on`nin `func_name` argümanı, `hpy_call`YLA AYNI Güvenlik
+bulgusu H-1 kısıtına (sadece string LİTERALİ) tabi olduğu 2 yeni negatif
+codegen fixture'ıyla (`hpy_open_nonliteral_path_rejected.nox`,
+`hpy_call_on_nonliteral_funcname_rejected.nox`, mevcut `hpy_call_
+nonliteral_path_rejected.nox` fixture'ının AYNI deseni) doğrulandı —
+her ikisi de `error.TypeMismatch` + "string LİTERALİ" mesajıyla
+reddediliyor.
+
+`.hpy-venv` yerel geliştirme ortamında BU turda İLK KEZ KURULDU
+(`python3 -m venv .hpy-venv && .hpy-venv/bin/pip install hpy`,
+`hpy-0.9.0`, Python 3.14.6) — `build.zig`nin ZATEN dokümante ettiği,
+koşullu HPy-test-derleme mekanizması (§3.12'nin "sessizce atlanır"
+ilkesi) BU sayede İLK KEZ bu checkout'ta AKTİF hale geldi, TÜM Faz
+12-16 HPy testleri (62 test, `hpy_tier0_test.zig`) DOĞRULANDI.
+
+**Doğrulama**: `zig build test` (TAM paket, Debug+ReleaseFast) — TÜM
+MEVCUT testler DEĞİŞMEDEN geçti (BİLİNEN, İLGİSİZ `--listen=-` harness
+artefaktları HARİÇ — HER BİRİ derlenmiş test binary'sini DOĞRUDAN
+çalıştırarak GERÇEKTEN geçtiği doğrulandı: 62/62 hpy_tier0, 1/1 IR-diff,
+23/23 chase_lev_deque, 11/11 backend_conformance, 172/172 async_rt, VE
+ReleaseFast'te 44/44 worker_pool — bu SONUNCUSU 6. bilinen flake
+örneğiydi, Faz 16'nın DEĞİŞTİRDİĞİ HİÇBİR dosyayla İLGİSİZ). `NOX_
+STRESS_ROUNDS=800 zig build stress-test -Doptimize=ReleaseFast` TEMİZ.
+
+## Kapsam DIŞI (bu turda — sıradaki fazların konusu)
+- Çoklu-argüman/çoklu-tip marshalling (list/dict/class) — Faz 17.
+- İstisna mekanizmasına entegrasyon (`hpy_call`nin AYNI "sessizce 0/boş
+  dön" sınırı BU fazda da KORUNUR) — Faz 18.
+- `HPyType_FromSpec`/extension type desteği `loader.zig`de — Faz 19.
+- `func_name`nin literal-OLMAYAN (çalışma-zamanı hesaplı) OLABİLMESİ —
+  MEVCUT `hpy_call` güvenlik politikasıyla TUTARLILIK İçİn BU fazda
+  DEĞİŞTİRİLMEDİ.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.
