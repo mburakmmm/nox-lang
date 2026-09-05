@@ -14,6 +14,49 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.61.0]
+
+### Eklendi
+- **Faz 17 — kalıcı tutamaçlı HPy çağrılarına çoklu-argüman + list/dict/
+  class marshalling (aHPy entegrasyonu, 2/5)**: Faz 16'nın `hpy_call_on`/
+  `hpy_call_str_on`sının SADECE TEK bir `int`/`str` argüman kabul etmesi
+  VE list/dict/class değer marshalling'inin hiç olmaması — orijinal 5
+  maddelik listenin 2. VE 3. maddesi — BİRLİKTE çözüldü. `hpy_call_on`/
+  `hpy_call_str_on` ARTIK `handle`/`func_name`den SONRA SIFIR VEYA DAHA
+  FAZLA, HETEROJEN tipli (int/float/bool/str/list[T]/dict[K,V]/class —
+  HEPSİ skaler eleman/alan tipleriyle) trailing argüman kabul eder; YENİ
+  `hpy_call_float_on`/`hpy_call_bool_on` (float/bool dönüşlü kardeşler)
+  eklendi. Tasarım: `runtime/foreign_bridge.zig`ye YENİ bir "builder"
+  API'si — `nox_hpy_args_begin` bir `MarshalCtx` yaratır, codegen HER
+  argümanın STATİK tipine göre tip-başına bir `nox_hpy_args_add_*`
+  (int/float/bool/str/list[T]/dict[K,V]) VEYA (class İçİn) `nox_hpy_
+  class_arg_begin/set_*/end` üçlüsünü çağırır, SONUNDA dönüş-tipine özel
+  bir `nox_hpy_call_{int,float,bool,str}_finish` GERÇEK çağrıyı yapıp
+  `MarshalCtx`i serbest bırakır. Bir `class` örneği yalnızca TÜM alanları
+  skalerse marshalling'e KATILIR VE yalnızca alan-adı→değer bir HPy
+  `dict`i OLARAK ("surrogate" temsil — `HPyType_FromSpec` HENÜZ yok, Faz
+  19'un işi) geçirilebilir; BU SADECE GİDEN yönde çalışır (HPy'den GERİ
+  bir `class`a dönüştürme bu fazın kapsamı DIŞINDA — kullanıcıya SORULUP
+  onaylandı). Dönüş tipi bu fazda yalnızca int/float/bool/str KALIR
+  (geriye-dönük tip çıkarımı olmadığından list/dict/class dönüş tipi
+  AYRI/gelecekteki bir iş). GERİYE DÖNÜK uyumluluk: `invokeHpyMethod`
+  ÖNCE `HPyFunc_KEYWORDS` (N-argümanlı YENİ yol) dener, BULUNAMAZSA VE
+  TAM 1 argüman VARSA `HPyFunc_O` (Faz 14-16'nın ESKİ tek-argümanlı test
+  fonksiyonları — `get_call_count`/`add_one` — İçİn) imzasına düşer; BU
+  düzeltme olmadan Faz 16'nın KENDİ persistence testi (`get_call_count`,
+  `HPyFunc_O` imzalı) SESSİZCE `0` dönmeye başlıyordu — geliştirme
+  sırasında YAKALANIP DÜZELTİLDİ. `tests/compat/hpy_ext/noxtest.c`ye 5
+  yeni `HPyFunc_KEYWORDS` test fonksiyonu (`sum_two_ints`, `concat_three_
+  strs`, `sum_list_of_ints`, `dict_value_sum`, `class_field_sum`) VE
+  `tests/compat/hpy_call_golden_test.zig`ye 5 yeni golden test eklendi —
+  hepsi GERÇEKTEN derlenip çalıştırılan `.nox` programlarıyla, list[int]/
+  dict[str,int]/class-as-dict marshalling'inin HER BİRİNİN GERÇEK bir HPy
+  eklentisine karşı doğru çalıştığını kanıtlıyor. 2 yeni negatif codegen
+  fixture'ı (`hpy_call_on_nested_list_arg_rejected.nox`, `hpy_call_on_
+  class_with_nested_field_rejected.nox`) İÇ İÇE konteynerlerin (`list[
+  list[int]]`, nested-alanlı bir sınıf) `TypeMismatch` İLE reddedildiğini
+  doğruluyor.
+
 ## [1.60.0]
 
 ### Eklendi

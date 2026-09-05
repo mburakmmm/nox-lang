@@ -17969,6 +17969,115 @@ STRESS_ROUNDS=800 zig build stress-test -Doptimize=ReleaseFast` TEMİZ.
 
 ---
 
+## 3.127 Faz 17 — kalıcı tutamaçlı HPy çağrılarına çoklu-argüman + list/dict/class marshalling (aHPy entegrasyonu, 2/5) (v1.61.0)
+
+Faz 16'nın (v1.60.0) belgelediği 5 maddelik listenin 2. VE 3. maddesi
+BİRLİKTE ele alındı — aralarında GERÇEK bir bağımlılık VAR: "çoklu
+argüman" desteği "list/dict/class marshalling" olmadan neredeyse
+değersiz (GERÇEK Python C-extension fonksiyonları TİPİK olarak skaler-
+DIŞI veri alır/döner). Kullanıcıya sorulup ONAYLANAN kapsam kararı:
+`class` örnekleri de argüman olarak marshalling'e DAHİL EDİLDİ — AMA
+`HPyType_FromSpec` (Faz 19'un işi) HENÜZ olmadığından, bir `class`
+örneği yalnızca alan-adı→değer bir HPy `dict`i OLARAK ("surrogate"
+temsil) geçirilebilir, SADECE GİDEN yönde (HPy'den GERİ bir `class`a
+dönüştürme AYRI/gelecekteki bir iş).
+
+**RETURN tipi tasarım kararı**: argüman tarafında STATİK tip HER ZAMAN
+biliniyor (checker `c.args[i]`nin tipini ZATEN hesaplıyor) — AMA dönüş
+tipi İçİn list/dict/class desteklemek çağrı sitesinde HEDEF elemanı/alan
+şemasını bilmeyi gerektirir, Nox'ta builtin çağrılar İçİn GERİYE-DÖNÜK
+(assignment-hedefinden) tip çıkarımı YOK. Bu YÜZDEN dönüş tipi bu fazda
+SKALER (int/float/bool/str) İLE SINIRLI KALDI.
+
+**`hpy_call_on`/`hpy_call_str_on`nin GENELLEŞTİRİLMESİ + 2 YENİ kardeş**:
+İkisi de ARTIK `handle`/`func_name`den SONRA SIFIR VEYA DAHA FAZLA,
+HETEROJEN tipli (int/float/bool/str/list[T]/dict[K,V]/class — HEPSİ
+skaler eleman/alan tipleriyle) trailing argüman kabul eder (`c.args.len
+< 2` KOŞULUYLA, `checkExpr`+YENİ `isHpyMarshalableArgType` HER trailing
+argümanı doğrular). YENİ `hpy_call_float_on`/`hpy_call_bool_on` (float/
+bool dönüşlü kardeşler, AYNI arg-doğrulama şeklini paylaşır) eklendi.
+`isHpyMarshalableArgType`: `int`/`float`/`boolean`/`str` HER ZAMAN true;
+`list[T]` yalnızca `T` skalerse; `dict[K,V]` yalnızca `V` skalerse
+(`K` zaten Dict'in KENDİ v1 kısıtıyla int/bool/str — Faz OO.4 `V`nin
+`class` da OLABİLECEĞİNİ genişletmişti, BU fazın kapsamı `dict[K, class]`ı
+KAPSAMAZ, açıkça reddedilir); `class` yalnızca `self.classes.get(name).
+?.fields`in TÜM değerleri skalerse (nested list/dict/class/task/vb.
+alan varsa reddedilir).
+
+**Runtime — "builder" deseni** (`runtime/foreign_bridge.zig`): YENİ
+`MarshalCtx{ handle, allocator, args: ArrayListUnmanaged(HPy),
+current_class_dict: ?HPy }`. `nox_hpy_args_begin(rt, handle_ptr)`
+yaratır; `nox_hpy_args_add_int/float/bool/str` skaler argümanları
+`mc.args`e ekler; `nox_hpy_args_add_list_scalar(mc, list_ptr, elem_kind)`
+Nox listesinin (opak, `len@0`/elemanlar `offset16`'dan İTİBAREN — int/
+float/str 8 bayt, bool 4 bayt) HER elemanını marshal edip TAZE bir HPy
+list'ine (`ctx_List_Append`) ekleyip TEK bir argüman olarak ekler;
+`nox_hpy_args_add_dict_scalar(rt, mc, dict_ptr, key_kind, value_kind)`
+`nox_dict_keys`/`nox_dict_values`i (ZATEN VAR olan runtime fonksiyonları,
+AYNI dict üzerinde İKİ ardışık çağrı AYNI SIRAYI üretir) ÇAĞIRIP ZIP'leyerek
+bir HPy `dict`i (`ctx_SetItem`) doldurur; `nox_hpy_class_arg_begin/set_*/
+end` bir `class` argümanını alan-alan bir HPy dict'ine ("surrogate")
+dönüştürür. `elem_kind`/`key_kind`/`value_kind` kodlaması: 0=int,
+1=float, 2=bool, 3=str. HPy handle yaşam döngüsü kuralı: bir handle bir
+KONTEYNERE yerleştirildiği anda HEMEN `ctx_Close` İLE kapatılır (GEÇİCİ
+kullanım); SADECE `mc.args`e DOĞRUDAN eklenen ÜST-DÜZEY argüman
+handle'ları çağrı SONRASINA (finish fonksiyonlarının İÇİNE) kadar açık
+kalır.
+
+**Dönüş — 4 "finish" varyantı + GERİYE DÖNÜK uyumluluk düzeltmesi**:
+`nox_hpy_call_{int,float,bool,str}_finish(mc, func_name)` `mc.args`i
+`func_name`e geçirip sonucu unmarshal edip `mc`yi TAMAMEN serbest
+bırakır. **Geliştirme sırasında YAKALANIP DÜZELTİLEN GERÇEK bir
+regresyon**: ilk taslak HER ZAMAN `HPyFunc_KEYWORDS` imzasını (`find
+MethodKeywords`) deniyordu — AMA Faz 16'nın KENDİ persistence testinin
+kullandığı `get_call_count` (VE `add_one`) `HPyFunc_O` İLE KAYITLI,
+bu YÜZDEN `findMethodKeywords` bunları BULAMIYOR, `finish` sessizce `0`
+dönüyordu (Faz 16'nın persistence testi `1\n2\n3\n` YERİNE `0\n0\n0\n`
+üretmeye BAŞLADI — TAM test paketiyle YAKALANDI). Düzeltme: YENİ
+`invokeHpyMethod(mc, func_name)` yardımcısı ÖNCE `findMethodKeywords`i
+dener, BULUNAMAZSA VE TAM 1 argüman VARSA `findMethodO`ya (TEK-argümanlı
+`HPyFunc_O` çağrı biçimiyle) düşer — BU, Faz 14-16'nın TÜM ESKİ test
+fonksiyonlarının (`add_one`/`get_call_count`/`negate`/vb.) SIFIR
+değişiklikle çalışmaya DEVAM ettiğini garanti eder.
+
+**Codegen** (`compiler/codegen_qbe/calls.zig`): TEK bir ORTAK `if` bloğu
+4 builtin ismini de kapsar — `nox_hpy_args_begin` çağrısından SONRA HER
+trailing argüman İçİn `av.heap`/`av.qtype`e göre DOĞRU `add_*`/`class_arg_*`
+çağrısı seçilir (`genPrint`in AYNI "tip-başına dispatch" ilkesi — TEK,
+genel bir "heterojen değer" temsili İCAT EDİLMEDİ); `class` argümanları
+İçİn `self.classes.get(class_name).fields.items` (ZATEN DEKLARASYON
+SIRASINDA tutulan bir `ArrayList`, EK bir sıralamaya GEREK YOK) gezilip
+HER alan `genFieldReadFromValue` (MEVCUT, `nox.http`in KENDİ yanıt-
+okuma sarmalayıcısının da kullandığı AST-BAĞIMSIZ yardımcı) İLE okunup
+`emitStringLiteral(f.name)` (alan-adı İçİn) İLE eşleştirilir. Trailing
+argümanlar `releaseTemporaryArgs` İLE (TÜM marshal çağrılarından SONRA,
+TEK SEFER) serbest bırakılır — MEVCUT ARC disipliniyle TUTARLI.
+
+**Doğrulama**: `tests/compat/hpy_ext/noxtest.c`ye 5 yeni `HPyFunc_
+KEYWORDS` test fonksiyonu + `tests/compat/hpy_call_golden_test.zig`ye
+5 yeni golden test (int×2, str×3, list[int], dict[str,int], class-as-
+dict — HEPSİ GERÇEKTEN derlenip çalıştırılan `.nox` programlarıyla). 2
+yeni negatif codegen fixture'ı (İÇ İÇE `list[list[int]]` argümanı VE
+nested-alanlı bir `class`) `TypeMismatch` + "marshal EDİLEMEZ" mesajıyla
+reddedildiğini doğruluyor. `zig build test` (TAM paket, Debug+ReleaseFast)
++ `NOX_STRESS_ROUNDS=800 zig build stress-test -Doptimize=ReleaseFast`
+TEMİZ (BİLİNEN, İLGİSİZ harness flake'leri HARİÇ).
+
+## Kapsam DIŞI (bu turda — sıradaki fazların konusu)
+- list/dict/class'ın DÖNÜŞ tipi olarak desteklenmesi — geriye-dönük tip
+  çıkarımı YOK, AYRI/gelecekteki bir iş (muhtemelen Faz 19'un generic-tip
+  çalışmasıyla BİRLİKTE).
+- HPy dict'ini GERİ bir Nox `class`ına dönüştürme (class-as-dict'in TERS
+  yönü) — kullanıcının KENDİ onayladığı "sadece giden yön" sınırı.
+- `dict[K, class]` (Faz OO.4'ün genişlettiği dict-değer-olarak-sınıf) —
+  nested class-değer marshalling'i, AYRI/gelecekteki bir iş.
+- Nested container'lar (list[list[T]], vb.) — v1 SADECE skaler eleman/
+  alan tiplerini kapsar, AÇIKÇA reddedilir (checker).
+- İstisna mekanizmasına entegrasyon — Faz 18.
+- `HPyType_FromSpec`/extension type desteği — Faz 19.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

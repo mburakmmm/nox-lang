@@ -141,3 +141,70 @@ test "hpy_call_str_on: kalıcı tutamaçla HPyFunc_KEYWORDS imzalı bir metod st
         "MERHABA DUNYA\n",
     );
 }
+
+// Faz 17 (bkz. plan dosyası "kalıcı tutamaçlı HPy çağrılarına çoklu-
+// argüman + list/dict/class marshalling"): `hpy_call_on`/`hpy_call_str_on`
+// ARTIK SIFIR VEYA DAHA FAZLA, HETEROJEN tipli (int/float/bool/str/
+// list[T]/dict[K,V]/class) trailing argüman kabul eder.
+test "hpy_call_on: iki int argümanla çoklu-argüman çağrısı" {
+    try expectGolden(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\print(hpy_call_on(h, "sum_two_ints", 3, 4))
+        \\hpy_close(h)
+        \\
+    ,
+        "7\n",
+    );
+}
+
+test "hpy_call_str_on: üç str argümanla çoklu-argüman çağrısı" {
+    try expectGolden(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\print(hpy_call_str_on(h, "concat_three_strs", "a", "b", "c"))
+        \\hpy_close(h)
+        \\
+    ,
+        "abc\n",
+    );
+}
+
+test "hpy_call_on: list[int] argüman marshalling'i" {
+    try expectGolden(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\xs: list[int] = [1, 2, 3, 4]
+        \\print(hpy_call_on(h, "sum_list_of_ints", xs))
+        \\hpy_close(h)
+        \\
+    ,
+        "10\n",
+    );
+}
+
+test "hpy_call_on: dict[str,int] argüman marshalling'i" {
+    try expectGolden(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\d: dict[str, int] = {"a": 1, "b": 2}
+        \\print(hpy_call_on(h, "dict_value_sum", d))
+        \\hpy_close(h)
+        \\
+    ,
+        "3\n",
+    );
+}
+
+test "hpy_call_on: class örneği alan-adı->değer HPy dict'i olarak (surrogate) marshal edilir" {
+    try expectGolden(
+        \\class Point:
+        \\    def __init__(self: Point, x: int, y: int) -> None:
+        \\        self.x = x
+        \\        self.y = y
+        \\
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\p: Point = Point(3, 4)
+        \\print(hpy_call_on(h, "class_field_sum", p))
+        \\hpy_close(h)
+        \\
+    ,
+        "7\n",
+    );
+}

@@ -27,12 +27,22 @@
 //! Nox'un `extern def`in ZATEN kullandığı opak `ptr` tipiyle temsil edilir
 //! (bkz. checker.zig'deki eşdeğer not) — `hpy_call`in AYNI "path/ext_name/
 //! func_name SADECE string LİTERALİ" güvenlik kısıtı BURADA da GEÇERLİDİR.
+//!
+//! **Faz 17 — çoklu-argüman + list/dict/class marshalling** (bkz. plan
+//! dosyası "kalıcı tutamaçlı HPy çağrılarına çoklu-argüman..."): Faz 16'nın
+//! `nox_hpy_call_on`/`nox_hpy_call_str_on`sı (SADECE TEK bir `int`/`str`
+//! argüman) BURADA `nox_hpy_args_begin`/`nox_hpy_args_add_*`/`nox_hpy_
+//! call_{int,float,bool,str}_finish` "builder" zincirine YERİNİ BIRAKTI —
+//! bkz. `MarshalCtx`nin belge notu (aşağıda) TAM tasarım İçİn.
 
 const std = @import("std");
 const asap = @import("alloc/asap.zig");
 const hpy_bridge = @import("hpy_bridge");
 const wasm_bridge = @import("wasm_bridge");
 const str_mod = @import("str.zig");
+const abi_layout = @import("abi_layout");
+const arc_mod = @import("alloc/arc.zig");
+const dict_mod = @import("collections/dict.zig");
 
 /// Doğrudan libc bağlamaları — bu dosya `std.Io`nun (uygulama düzeyi,
 /// başlatma gerektiren) soyutlamasını KULLANMAZ; runtime zaten sistem
@@ -185,63 +195,6 @@ pub export fn nox_hpy_open(
     return handle;
 }
 
-/// `nox_hpy_call`nin AYNI marshal/çağrı/unmarshal gövdesi — SADECE modül/
-/// context KURULUMU (`handle`den ZATEN AÇIK olarak alınır) ATLANMIŞTIR.
-pub export fn nox_hpy_call_on(
-    rt: ?*anyopaque,
-    handle_ptr: ?*anyopaque,
-    func_name: ?[*:0]const u8,
-    arg: i64,
-) i64 {
-    _ = rt;
-    const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return 0));
-    const fnm = func_name orelse return 0;
-    const method = handle.mod.findMethodO(std.mem.span(fnm)) orelse return 0;
-    const ctx = handle.ctx;
-
-    const h_arg = ctx.ctx_Long_FromInt64_t.?(ctx, arg);
-    defer ctx.ctx_Close.?(ctx, h_arg);
-    const h_result = method(ctx, hpy_bridge.context.HPy_NULL, h_arg);
-    defer ctx.ctx_Close.?(ctx, h_result);
-    return ctx.ctx_Long_AsInt64_t.?(ctx, h_result);
-}
-
-/// `nox_hpy_call_str`nin AYNI marshal/çağrı/unmarshal gövdesi — `nox_hpy_
-/// call_on`nin AYNI "modül/context ZATEN AÇIK" farkıyla.
-pub export fn nox_hpy_call_str_on(
-    rt: ?*anyopaque,
-    handle_ptr: ?*anyopaque,
-    func_name: ?[*:0]const u8,
-    arg: ?[*:0]const u8,
-) ?[*:0]u8 {
-    const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return null));
-    const fnm = func_name orelse return str_mod.nox_str_from_bytes(rt, "");
-    const arg_h = arg orelse return str_mod.nox_str_from_bytes(rt, "");
-    const method = handle.mod.findMethodKeywords(std.mem.span(fnm)) orelse return str_mod.nox_str_from_bytes(rt, "");
-    const ctx = handle.ctx;
-
-    const arg_slice = str_mod.nox_str_slice(arg_h);
-    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
-    const allocator = state.allocator();
-    const arg_z = allocator.dupeZ(u8, arg_slice) catch return str_mod.nox_str_from_bytes(rt, "");
-    defer allocator.free(arg_z);
-    const h_arg = ctx.ctx_Unicode_FromString.?(ctx, arg_z);
-    defer ctx.ctx_Close.?(ctx, h_arg);
-
-    const args = [_]hpy_bridge.context.HPy{h_arg};
-    const h_result = method(ctx, hpy_bridge.context.HPy_NULL, &args, 1, hpy_bridge.context.HPy_NULL);
-    defer ctx.ctx_Close.?(ctx, h_result);
-
-    if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
-        ctx.ctx_Err_Clear.?(ctx);
-        return str_mod.nox_str_from_bytes(rt, "");
-    }
-
-    var size: isize = 0;
-    const result_str = ctx.ctx_Unicode_AsUTF8AndSize.?(ctx, h_result, &size) orelse return str_mod.nox_str_from_bytes(rt, "");
-    return str_mod.nox_str_from_bytes(rt, result_str[0..@intCast(size)]);
-}
-
 /// `handle`nin context'ini yok eder, kütüphaneyi kapatır, tutamaç
 /// struct'ının KENDİSİNİ serbest bırakır. `handle_ptr == null` İSE (ör.
 /// `hpy_open` BAŞARISIZ olduysa) SESSİZCE hiçbir şey yapmaz.
@@ -252,6 +205,364 @@ pub export fn nox_hpy_close(rt: ?*anyopaque, handle_ptr: ?*anyopaque) void {
     hpy_bridge.context.destroyContext(allocator, handle.ctx);
     handle.mod.deinit();
     allocator.destroy(handle);
+}
+
+/// Faz 17 (bkz. plan dosyası "kalıcı tutamaçlı HPy çağrılarına çoklu-
+/// argüman + list/dict/class marshalling"): `hpy_call_on`/`hpy_call_str_on`
+/// (VE YENİ `hpy_call_float_on`/`hpy_call_bool_on`) ARTIK SIFIR VEYA DAHA
+/// FAZLA, HETEROJEN tipli (int/float/bool/str/list[T]/dict[K,V]/class)
+/// argüman kabul eder. Tasarım: "builder" deseni — codegen HER argümanın
+/// STATİK tipine göre (checker ZATEN biliyor) tip-başına KÜÇÜK bir marshal
+/// fonksiyonu çağırır (`nox_hpy_args_add_*`), HEPSİ paylaşılan bir
+/// `MarshalCtx`e (aşağıda) EKLER; SONUNDA dönüş-tipine özel bir
+/// `nox_hpy_call_{int,float,bool,str}_finish` GERÇEK çağrıyı yapıp sonucu
+/// unmarshal eder VE `MarshalCtx`i TAMAMEN serbest bırakır.
+///
+/// **Yaşam döngüsü kuralı**: bir HPy handle'ı bir KONTEYNERE (liste/dict)
+/// YERLEŞTİRİLDİĞİ ANDA (append/setitem SONRASI) HEMEN `ctx_Close` İLE
+/// kapatılır (GEÇİCİ kullanım, `hpy_call_str`nin ZATEN kanıtladığı
+/// `defer ctx.ctx_Close` disiplininin GENELLEŞTİRİLMİŞ hali) — SADECE
+/// `mc.args`e DOĞRUDAN eklenen ÜST-DÜZEY (positional) argüman handle'ları,
+/// GERÇEK çağrı YAPILANA kadar açık kalır ve çağrı SONRASI (`_finish`
+/// fonksiyonlarının İÇİNDE) toplu kapatılır.
+///
+/// **Kapsam (v1, bilinçli olarak dar)**: `list[T]`/`dict[K,V]` yalnızca
+/// SKALER `T`/`K`/`V` (int/float/bool/str, `dict`in KENDİ v1 kısıtıyla
+/// ZATEN TUTARLI) — İÇ İÇE konteynerler DESTEKLENMEZ (checker reddeder).
+/// `class` örnekleri yalnızca TÜM alanları skaler İSE marshalling'e
+/// KATILIR VE yalnızca alan-adı→değer bir HPy `dict`i OLARAK ("surrogate"
+/// temsil, GERÇEK bir HPy özel tipi DEĞİL — bkz. `HPyType_FromSpec`nin
+/// HENÜZ desteklenmediği, gelecekteki bir faz) — bu SADECE GİDEN yönde
+/// çalışır, DÖNÜŞ tipi (bu fazda) yalnızca int/float/bool/str olabilir
+/// (geriye-dönük tip çıkarımı olmadığından list/dict/class dönüş tipi
+/// AYRI/gelecekteki bir iştir).
+const MarshalCtx = struct {
+    handle: *PersistentHpyHandle,
+    allocator: std.mem.Allocator,
+    args: std.ArrayListUnmanaged(hpy_bridge.context.HPy) = .empty,
+    /// Bir `class` argümanı alan-alan İNŞA EDİLİRKEN kullanılan GEÇİCİ
+    /// "şu an inşa edilen dict" — sınıf alanları İÇ İÇE OLAMAYACAĞINDAN
+    /// (checker reddeder) AYNI ANDA SADECE TEK bir class-dict'in inşa
+    /// halinde olması GARANTİdir.
+    current_class_dict: ?hpy_bridge.context.HPy = null,
+};
+
+fn freeMarshalCtx(mc: *MarshalCtx) void {
+    const ctx = mc.handle.ctx;
+    for (mc.args.items) |h| ctx.ctx_Close.?(ctx, h);
+    mc.args.deinit(mc.allocator);
+    mc.allocator.destroy(mc);
+}
+
+/// `list_ptr`nin (opak, ARC başlığından SONRAKİ `len@0`/`elemler@16`
+/// düzenine sahip) `index`teki elemanını `elem_kind`e (0=int,1=float,
+/// 2=bool,3=str) göre TAZE bir HPy handle'ına marshal eder — ÇAĞIRAN,
+/// bu handle'ı kullanımı BİTER BİTMEZ `ctx_Close` İLE kapatmalıdır.
+fn readListElemAsHpy(mc: *MarshalCtx, list_ptr: ?*anyopaque, index: usize, elem_kind: i32) hpy_bridge.context.HPy {
+    const ctx = mc.handle.ctx;
+    const base: [*]const u8 = @ptrCast(@alignCast(list_ptr orelse return hpy_bridge.context.HPy_NULL));
+    switch (elem_kind) {
+        0 => {
+            const slot: *align(1) const i64 = @ptrCast(base + abi_layout.LIST_HEADER_SIZE + index * 8);
+            return ctx.ctx_Long_FromInt64_t.?(ctx, slot.*);
+        },
+        1 => {
+            const slot: *align(1) const i64 = @ptrCast(base + abi_layout.LIST_HEADER_SIZE + index * 8);
+            const f: f64 = @bitCast(slot.*);
+            return ctx.ctx_Float_FromDouble.?(ctx, f);
+        },
+        2 => {
+            const slot: *align(1) const i32 = @ptrCast(base + abi_layout.LIST_HEADER_SIZE + index * 4);
+            return ctx.ctx_Bool_FromBool.?(ctx, slot.* != 0);
+        },
+        3 => {
+            const slot: *align(1) const i64 = @ptrCast(base + abi_layout.LIST_HEADER_SIZE + index * 8);
+            const raw: usize = @intCast(slot.*);
+            if (raw == 0) return ctx.ctx_Unicode_FromString.?(ctx, "");
+            const sp: [*:0]const u8 = @ptrFromInt(raw);
+            const s = str_mod.nox_str_slice(sp);
+            const z = mc.allocator.dupeZ(u8, s) catch return hpy_bridge.context.HPy_NULL;
+            defer mc.allocator.free(z);
+            return ctx.ctx_Unicode_FromString.?(ctx, z);
+        },
+        else => return hpy_bridge.context.HPy_NULL,
+    }
+}
+
+/// `nox_hpy_args_add_dict_scalar`nin `nox_dict_keys`/`nox_dict_values`ten
+/// aldığı GEÇİCİ tarama listelerini serbest bırakır — `str` elemanlıysa
+/// (`buildEntryList`in HER `str` elemanı retain ettiği İçin) ÖNCE HER
+/// elemanın KENDİ referansını `nox_str_release` İLE bırakır, SONRA
+/// listenin KENDİ ARC başlığını `nox_rc_release` İLE.
+fn freeTempScalarList(rt: ?*anyopaque, list_ptr: ?*anyopaque, elem_size: i64, is_str: bool) void {
+    const lp = list_ptr orelse return;
+    const base: [*]const u8 = @ptrCast(@alignCast(lp));
+    const len_ptr: *align(1) const i64 = @ptrCast(base);
+    const len: usize = @intCast(len_ptr.*);
+    if (is_str) {
+        var i: usize = 0;
+        while (i < len) : (i += 1) {
+            const slot: *align(1) const i64 = @ptrCast(base + abi_layout.LIST_HEADER_SIZE + i * 8);
+            const raw: usize = @intCast(slot.*);
+            if (raw != 0) {
+                const sp: [*:0]u8 = @ptrFromInt(raw);
+                str_mod.nox_str_release(rt, sp);
+            }
+        }
+    }
+    const payload_size = abi_layout.LIST_HEADER_SIZE + @as(usize, @intCast(elem_size)) * len;
+    arc_mod.nox_rc_release(rt, lp, payload_size);
+}
+
+/// `handle`nin `ctx`iyle YENİ bir `MarshalCtx` yaratır — `handle_ptr`
+/// `null`sa (ör. `hpy_open` başarısız olduysa) `null` döner, TÜM sonraki
+/// `add_*`/`finish` fonksiyonları BUNU sessizce yok sayar.
+pub export fn nox_hpy_args_begin(rt: ?*anyopaque, handle_ptr: ?*anyopaque) ?*anyopaque {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    const allocator = state.allocator();
+    const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return null));
+    const mc = allocator.create(MarshalCtx) catch return null;
+    mc.* = .{ .handle = handle, .allocator = allocator };
+    return mc;
+}
+
+pub export fn nox_hpy_args_add_int(mc_ptr: ?*anyopaque, value: i64) void {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return));
+    const ctx = mc.handle.ctx;
+    const h = ctx.ctx_Long_FromInt64_t.?(ctx, value);
+    mc.args.append(mc.allocator, h) catch ctx.ctx_Close.?(ctx, h);
+}
+
+pub export fn nox_hpy_args_add_float(mc_ptr: ?*anyopaque, value: f64) void {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return));
+    const ctx = mc.handle.ctx;
+    const h = ctx.ctx_Float_FromDouble.?(ctx, value);
+    mc.args.append(mc.allocator, h) catch ctx.ctx_Close.?(ctx, h);
+}
+
+pub export fn nox_hpy_args_add_bool(mc_ptr: ?*anyopaque, value: i32) void {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return));
+    const ctx = mc.handle.ctx;
+    const h = ctx.ctx_Bool_FromBool.?(ctx, value != 0);
+    mc.args.append(mc.allocator, h) catch ctx.ctx_Close.?(ctx, h);
+}
+
+pub export fn nox_hpy_args_add_str(mc_ptr: ?*anyopaque, value: ?[*:0]const u8) void {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return));
+    const ctx = mc.handle.ctx;
+    const v = value orelse "";
+    const s = str_mod.nox_str_slice(v);
+    const z = mc.allocator.dupeZ(u8, s) catch return;
+    defer mc.allocator.free(z);
+    const h = ctx.ctx_Unicode_FromString.?(ctx, z);
+    mc.args.append(mc.allocator, h) catch ctx.ctx_Close.?(ctx, h);
+}
+
+/// `list_ptr`i (skaler elemanlı, `elem_kind` 0=int/1=float/2=bool/3=str)
+/// gezip HER elemanı marshal edip TAZE bir HPy list'ine (`ctx_List_
+/// Append`) ekler, SONRA bu list'i (tek bir üst-düzey argüman olarak)
+/// `mc.args`e ekler. `list_ptr == null` (BAŞLANGIÇ DEĞERİ verilmemiş bir
+/// list yereli — Nox tipçekleyicisi BUNU normalde ENGELLER, savunmacı dal)
+/// İSE boş bir HPy listesi geçirilir.
+pub export fn nox_hpy_args_add_list_scalar(mc_ptr: ?*anyopaque, list_ptr: ?*anyopaque, elem_kind: i32) void {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return));
+    const ctx = mc.handle.ctx;
+    const h_list = ctx.ctx_List_New.?(ctx, 0);
+    const lp = list_ptr orelse {
+        mc.args.append(mc.allocator, h_list) catch ctx.ctx_Close.?(ctx, h_list);
+        return;
+    };
+    const base: [*]const u8 = @ptrCast(@alignCast(lp));
+    const len_ptr: *align(1) const i64 = @ptrCast(base);
+    const len: usize = @intCast(len_ptr.*);
+    var i: usize = 0;
+    while (i < len) : (i += 1) {
+        const h_elem = readListElemAsHpy(mc, lp, i, elem_kind);
+        _ = ctx.ctx_List_Append.?(ctx, h_list, h_elem);
+        ctx.ctx_Close.?(ctx, h_elem);
+    }
+    mc.args.append(mc.allocator, h_list) catch ctx.ctx_Close.?(ctx, h_list);
+}
+
+/// `dict_ptr`i (skaler anahtar/değerli, `key_kind`/`value_kind` AYNI
+/// 0=int/1=float/2=bool/3=str kodlaması) `nox_dict_keys`/`nox_dict_values`
+/// (ZATEN VAR olan runtime fonksiyonları) İLE İKİ Nox list'ine (AYNI SIRAYLA
+/// — dict değişmeden İKİ ardışık çağrı) çözüp ZIP'leyerek TAZE bir HPy
+/// dict'ine (`ctx_SetItem`) doldurur, SONRA bunu `mc.args`e ekler.
+pub export fn nox_hpy_args_add_dict_scalar(rt: ?*anyopaque, mc_ptr: ?*anyopaque, dict_ptr: ?*anyopaque, key_kind: i32, value_kind: i32) void {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return));
+    const ctx = mc.handle.ctx;
+    const h_dict = ctx.ctx_Dict_New.?(ctx);
+    const dp = dict_ptr orelse {
+        mc.args.append(mc.allocator, h_dict) catch ctx.ctx_Close.?(ctx, h_dict);
+        return;
+    };
+    const key_is_str: i32 = if (key_kind == 3) 1 else 0;
+    const value_is_str: i32 = if (value_kind == 3) 1 else 0;
+    const key_elem_size: i64 = if (key_kind == 2) 4 else 8;
+    const value_elem_size: i64 = if (value_kind == 2) 4 else 8;
+    const keys_list = dict_mod.nox_dict_keys(rt, dp, key_is_str, key_elem_size);
+    const values_list = dict_mod.nox_dict_values(rt, dp, value_is_str, 0, value_elem_size);
+    defer freeTempScalarList(rt, keys_list, key_elem_size, key_is_str != 0);
+    defer freeTempScalarList(rt, values_list, value_elem_size, value_is_str != 0);
+    if (keys_list != null and values_list != null) {
+        const klp: [*]const u8 = @ptrCast(@alignCast(keys_list.?));
+        const len_ptr: *align(1) const i64 = @ptrCast(klp);
+        const len: usize = @intCast(len_ptr.*);
+        var i: usize = 0;
+        while (i < len) : (i += 1) {
+            const h_key = readListElemAsHpy(mc, keys_list, i, key_kind);
+            const h_val = readListElemAsHpy(mc, values_list, i, value_kind);
+            _ = ctx.ctx_SetItem.?(ctx, h_dict, h_key, h_val);
+            ctx.ctx_Close.?(ctx, h_key);
+            ctx.ctx_Close.?(ctx, h_val);
+        }
+    }
+    mc.args.append(mc.allocator, h_dict) catch ctx.ctx_Close.?(ctx, h_dict);
+}
+
+/// Bir `class` argümanının marshalling'İNE BAŞLAR — YENİ, boş bir HPy
+/// `dict`i (alan-adı→değer "surrogate" temsili) `mc.current_class_dict`e
+/// atar. Codegen, sınıfın HER skaler alanı İçİn `nox_hpy_class_arg_set_*`i
+/// SIRAYLA çağırır, SONRA `nox_hpy_class_arg_end`i çağırır.
+pub export fn nox_hpy_class_arg_begin(mc_ptr: ?*anyopaque) void {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return));
+    const ctx = mc.handle.ctx;
+    mc.current_class_dict = ctx.ctx_Dict_New.?(ctx);
+}
+
+fn classArgSetKeyValue(mc: *MarshalCtx, field_name: ?[*:0]const u8, h_value: hpy_bridge.context.HPy) void {
+    const ctx = mc.handle.ctx;
+    const dict_h = mc.current_class_dict orelse return;
+    const fname = field_name orelse return;
+    const s = std.mem.span(fname);
+    const z = mc.allocator.dupeZ(u8, s) catch return;
+    defer mc.allocator.free(z);
+    const h_key = ctx.ctx_Unicode_FromString.?(ctx, z);
+    defer ctx.ctx_Close.?(ctx, h_key);
+    _ = ctx.ctx_SetItem.?(ctx, dict_h, h_key, h_value);
+}
+
+pub export fn nox_hpy_class_arg_set_int(mc_ptr: ?*anyopaque, field_name: ?[*:0]const u8, value: i64) void {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return));
+    const ctx = mc.handle.ctx;
+    const h = ctx.ctx_Long_FromInt64_t.?(ctx, value);
+    defer ctx.ctx_Close.?(ctx, h);
+    classArgSetKeyValue(mc, field_name, h);
+}
+
+pub export fn nox_hpy_class_arg_set_float(mc_ptr: ?*anyopaque, field_name: ?[*:0]const u8, value: f64) void {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return));
+    const ctx = mc.handle.ctx;
+    const h = ctx.ctx_Float_FromDouble.?(ctx, value);
+    defer ctx.ctx_Close.?(ctx, h);
+    classArgSetKeyValue(mc, field_name, h);
+}
+
+pub export fn nox_hpy_class_arg_set_bool(mc_ptr: ?*anyopaque, field_name: ?[*:0]const u8, value: i32) void {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return));
+    const ctx = mc.handle.ctx;
+    const h = ctx.ctx_Bool_FromBool.?(ctx, value != 0);
+    defer ctx.ctx_Close.?(ctx, h);
+    classArgSetKeyValue(mc, field_name, h);
+}
+
+pub export fn nox_hpy_class_arg_set_str(mc_ptr: ?*anyopaque, field_name: ?[*:0]const u8, value: ?[*:0]const u8) void {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return));
+    const ctx = mc.handle.ctx;
+    const v = value orelse "";
+    const s = str_mod.nox_str_slice(v);
+    const z = mc.allocator.dupeZ(u8, s) catch return;
+    defer mc.allocator.free(z);
+    const h = ctx.ctx_Unicode_FromString.?(ctx, z);
+    defer ctx.ctx_Close.?(ctx, h);
+    classArgSetKeyValue(mc, field_name, h);
+}
+
+/// `mc.current_class_dict`i (tamamlanmış "surrogate" dict) TEK bir
+/// üst-düzey argüman olarak `mc.args`e ekleyip GEÇİCİ alanı temizler.
+pub export fn nox_hpy_class_arg_end(mc_ptr: ?*anyopaque) void {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return));
+    const ctx = mc.handle.ctx;
+    const dict_h = mc.current_class_dict orelse return;
+    mc.current_class_dict = null;
+    mc.args.append(mc.allocator, dict_h) catch ctx.ctx_Close.?(ctx, dict_h);
+}
+
+/// `mc.args`i `func_name` adlı metoda geçirip GERÇEK çağrıyı yapar —
+/// ÖNCE `HPyFunc_KEYWORDS` imzasını dener (`nargs = mc.args.items.len`,
+/// `nargs == 0` İçin `args = null`, GEÇERLİ bir çağrı biçimi); BULUNAMAZSA
+/// (ör. Faz 16'nın `get_call_count`/`add_one` GİBİ ESKİ, `HPyFunc_O`
+/// imzalı test fonksiyonları — GERİYE DÖNÜK uyumluluk İçİn) VE TAM
+/// OLARAK 1 argüman VARSA `HPyFunc_O` imzasına DÜŞER. HİÇBİRİ
+/// BULUNAMAZSA `null` döner (çağıran `0`/`0.0`/boş `str` İLE karşılar).
+fn invokeHpyMethod(mc: *MarshalCtx, func_name: []const u8) ?hpy_bridge.context.HPy {
+    const ctx = mc.handle.ctx;
+    if (mc.handle.mod.findMethodKeywords(func_name)) |method| {
+        const args_ptr: ?[*]const hpy_bridge.context.HPy = if (mc.args.items.len > 0) mc.args.items.ptr else null;
+        return method(ctx, hpy_bridge.context.HPy_NULL, args_ptr, mc.args.items.len, hpy_bridge.context.HPy_NULL);
+    }
+    if (mc.args.items.len == 1) {
+        if (mc.handle.mod.findMethodO(func_name)) |method| {
+            return method(ctx, hpy_bridge.context.HPy_NULL, mc.args.items[0]);
+        }
+    }
+    return null;
+}
+
+/// `func_name` adlı metodu `mc.args`la çağırıp `int` sonucu unmarshal
+/// eder, `mc`yi TAMAMEN serbest bırakır. `hpy_call_on`nin ESKİ (Faz 16,
+/// TEK-`int`-argümanlı) davranışıyla `Err_Occurred` KONTROLÜ AÇISINDAN
+/// TUTARLI — KONTROL ETMEZ (istisna entegrasyonu Faz 18'in işi).
+pub export fn nox_hpy_call_int_finish(mc_ptr: ?*anyopaque, func_name: ?[*:0]const u8) i64 {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return 0));
+    defer freeMarshalCtx(mc);
+    const fnm = func_name orelse return 0;
+    const ctx = mc.handle.ctx;
+    const h_result = invokeHpyMethod(mc, std.mem.span(fnm)) orelse return 0;
+    defer ctx.ctx_Close.?(ctx, h_result);
+    return ctx.ctx_Long_AsInt64_t.?(ctx, h_result);
+}
+
+/// `nox_hpy_call_int_finish`nin AYNISI, `float` dönüşle.
+pub export fn nox_hpy_call_float_finish(mc_ptr: ?*anyopaque, func_name: ?[*:0]const u8) f64 {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return 0));
+    defer freeMarshalCtx(mc);
+    const fnm = func_name orelse return 0;
+    const ctx = mc.handle.ctx;
+    const h_result = invokeHpyMethod(mc, std.mem.span(fnm)) orelse return 0;
+    defer ctx.ctx_Close.?(ctx, h_result);
+    return ctx.ctx_Float_AsDouble.?(ctx, h_result);
+}
+
+/// `nox_hpy_call_int_finish`nin AYNISI, `bool` (0/1) dönüşle — genel
+/// `ctx_IsTrue` (truthiness) İLE unmarshal eder.
+pub export fn nox_hpy_call_bool_finish(mc_ptr: ?*anyopaque, func_name: ?[*:0]const u8) i32 {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return 0));
+    defer freeMarshalCtx(mc);
+    const fnm = func_name orelse return 0;
+    const ctx = mc.handle.ctx;
+    const h_result = invokeHpyMethod(mc, std.mem.span(fnm)) orelse return 0;
+    defer ctx.ctx_Close.?(ctx, h_result);
+    return if (ctx.ctx_IsTrue.?(ctx, h_result) != 0) 1 else 0;
+}
+
+/// `nox_hpy_call_str_on`nin ESKİ (Faz 16, TEK-`str`-argümanlı) davranışıyla
+/// TUTARLI — `Err_Occurred` KONTROL EDİLİR (o davranış BURADA KORUNUR).
+pub export fn nox_hpy_call_str_finish(rt: ?*anyopaque, mc_ptr: ?*anyopaque, func_name: ?[*:0]const u8) ?[*:0]u8 {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return null));
+    defer freeMarshalCtx(mc);
+    const fnm = func_name orelse return str_mod.nox_str_from_bytes(rt, "");
+    const ctx = mc.handle.ctx;
+    const h_result = invokeHpyMethod(mc, std.mem.span(fnm)) orelse return str_mod.nox_str_from_bytes(rt, "");
+    defer ctx.ctx_Close.?(ctx, h_result);
+    if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
+        ctx.ctx_Err_Clear.?(ctx);
+        return str_mod.nox_str_from_bytes(rt, "");
+    }
+    var size: isize = 0;
+    const result_str = ctx.ctx_Unicode_AsUTF8AndSize.?(ctx, h_result, &size) orelse return str_mod.nox_str_from_bytes(rt, "");
+    return str_mod.nox_str_from_bytes(rt, result_str[0..@intCast(size)]);
 }
 
 /// `path`teki `.wasm` ikilisini yükler, `func_name` adlı (yalnızca `i32`

@@ -29,6 +29,19 @@ const isTemporaryExpr = abi.isTemporaryExpr;
 const matchIntrinsicKind = async_thread_mod.matchIntrinsicKind;
 const IntrinsicKind = async_thread_mod.IntrinsicKind;
 
+/// Faz 17: `runtime/foreign_bridge.zig`nin `elem_kind`/`key_kind`/`value_kind`
+/// kodlaması (0=int,1=float,2=bool,3=str) — bir skaler `QbeType`+`is_str`
+/// çiftinden BU kod'un QBE İçİN metinsel (`w`-tipi immediate) temsili.
+fn hpyElemKindLit(qtype: QbeType, is_str: bool) []const u8 {
+    if (is_str) return "3";
+    return switch (qtype) {
+        .l => "0", // int
+        .d => "1", // float
+        .w => "2", // bool
+        .none => "0",
+    };
+}
+
 /// Faz U.4.5: `closure_ptr`in (ZATEN yüklenmiş/değerlendirilmiş bir QBE
 /// geçici/işaretçi metni — bir DEĞİŞKEN slotundan (`.identifier` dalı),
 /// bir sınıf alanından (`genMethodCall`nin alan-fallback'ı), YA DA bir
@@ -245,22 +258,80 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_open", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = path_v.text }, .{ .ty = .l, .text = ext_v.text } });
                 return .{ .text = result_temp, .qtype = .l };
             }
-            if (std.mem.eql(u8, name, "hpy_call_on")) {
-                if (c.args.len != 3) return error.Unsupported;
+            // Faz 17 (bkz. plan dosyası "kalıcı tutamaçlı HPy çağrılarına
+            // çoklu-argüman + list/dict/class marshalling"): `hpy_call_on`/
+            // `hpy_call_str_on`/`hpy_call_float_on`/`hpy_call_bool_on`
+            // ARTIK `$nox_hpy_args_begin`+HER trailing argüman İçİn TİP-
+            // BAŞINA bir `$nox_hpy_args_add_*`/`$nox_hpy_class_arg_*`
+            // çağrısı+dönüş-tipine özel bir `$nox_hpy_call_*_finish`
+            // ZİNCİRİNE çevrilir — checker `isHpyMarshalableArgType` İLE
+            // HER argümanın MARSHAL EDİLEBİLİR olduğunu ZATEN kanıtladı,
+            // bu YÜZDEN aşağıdaki `else => unreachable` dalları GÜVENLİDİR.
+            if (std.mem.eql(u8, name, "hpy_call_on") or std.mem.eql(u8, name, "hpy_call_str_on") or std.mem.eql(u8, name, "hpy_call_float_on") or std.mem.eql(u8, name, "hpy_call_bool_on")) {
+                if (c.args.len < 2) return error.Unsupported;
                 const handle_v = try self.genExpr(c.args[0]);
                 const func_v = try self.genExpr(c.args[1]);
-                const arg_v = try self.genExpr(c.args[2]);
+                const mc_temp = try self.newTemp();
+                try self.qbeCall(.{ .name = mc_temp, .ty = .l }, "$nox_hpy_args_begin", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handle_v.text } });
+
+                const trailing = c.args[2..];
+                var arg_values: std.ArrayListUnmanaged(Value) = .empty;
+                for (trailing) |arg_expr| {
+                    const av = try self.genExpr(arg_expr);
+                    try arg_values.append(self.allocator, av);
+                    switch (av.heap) {
+                        .str => try self.qbeCall(null, "$nox_hpy_args_add_str", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = av.text } }),
+                        .list => {
+                            const elem_kind = hpyElemKindLit(av.elem_qtype, av.elem_is_str);
+                            try self.qbeCall(null, "$nox_hpy_args_add_list_scalar", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = av.text }, .{ .ty = .w, .text = elem_kind } });
+                        },
+                        .dict => {
+                            const di = av.dict_info.?;
+                            const key_kind = hpyElemKindLit(di.key_qtype, di.key_is_str);
+                            const value_kind = hpyElemKindLit(di.value_qtype, di.value_is_str);
+                            try self.qbeCall(null, "$nox_hpy_args_add_dict_scalar", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = av.text }, .{ .ty = .w, .text = key_kind }, .{ .ty = .w, .text = value_kind } });
+                        },
+                        .class => {
+                            try self.qbeCall(null, "$nox_hpy_class_arg_begin", &.{.{ .ty = .l, .text = mc_temp }});
+                            const cinfo = self.classes.get(av.class_name.?).?;
+                            for (cinfo.fields.items) |f| {
+                                const fv = try self.genFieldReadFromValue(av, f.name);
+                                const fname_v = try self.emitStringLiteral(f.name);
+                                const setter: []const u8 = switch (f.info.qtype) {
+                                    .l => if (f.info.heap == .str) "$nox_hpy_class_arg_set_str" else "$nox_hpy_class_arg_set_int",
+                                    .d => "$nox_hpy_class_arg_set_float",
+                                    .w => "$nox_hpy_class_arg_set_bool",
+                                    .none => return error.Unsupported,
+                                };
+                                try self.qbeCall(null, setter, &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = fname_v.text }, .{ .ty = f.info.qtype, .text = fv.text } });
+                            }
+                            try self.qbeCall(null, "$nox_hpy_class_arg_end", &.{.{ .ty = .l, .text = mc_temp }});
+                        },
+                        .none => switch (av.qtype) {
+                            .l => try self.qbeCall(null, "$nox_hpy_args_add_int", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = av.text } }),
+                            .d => try self.qbeCall(null, "$nox_hpy_args_add_float", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .d, .text = av.text } }),
+                            .w => try self.qbeCall(null, "$nox_hpy_args_add_bool", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .w, .text = av.text } }),
+                            .none => return error.Unsupported,
+                        },
+                        else => return error.Unsupported,
+                    }
+                }
+                try self.releaseTemporaryArgs(trailing, arg_values.items);
+
                 const result_temp = try self.newTemp();
-                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call_on", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handle_v.text }, .{ .ty = .l, .text = func_v.text }, .{ .ty = .l, .text = arg_v.text } });
-                return .{ .text = result_temp, .qtype = .l };
-            }
-            if (std.mem.eql(u8, name, "hpy_call_str_on")) {
-                if (c.args.len != 3) return error.Unsupported;
-                const handle_v = try self.genExpr(c.args[0]);
-                const func_v = try self.genExpr(c.args[1]);
-                const arg_v = try self.genExpr(c.args[2]);
-                const result_temp = try self.newTemp();
-                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call_str_on", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handle_v.text }, .{ .ty = .l, .text = func_v.text }, .{ .ty = .l, .text = arg_v.text } });
+                if (std.mem.eql(u8, name, "hpy_call_on")) {
+                    try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call_int_finish", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = func_v.text } });
+                    return .{ .text = result_temp, .qtype = .l };
+                }
+                if (std.mem.eql(u8, name, "hpy_call_float_on")) {
+                    try self.qbeCall(.{ .name = result_temp, .ty = .d }, "$nox_hpy_call_float_finish", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = func_v.text } });
+                    return .{ .text = result_temp, .qtype = .d };
+                }
+                if (std.mem.eql(u8, name, "hpy_call_bool_on")) {
+                    try self.qbeCall(.{ .name = result_temp, .ty = .w }, "$nox_hpy_call_bool_finish", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = func_v.text } });
+                    return .{ .text = result_temp, .qtype = .w };
+                }
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call_str_finish", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = func_v.text } });
                 return .{ .text = result_temp, .qtype = .l, .heap = .str };
             }
             if (std.mem.eql(u8, name, "hpy_close")) {

@@ -2228,6 +2228,48 @@ test "codegen: hpy_call_on'ın fonksiyon_adı argümanı çalışma-zamanı değ
     }
 }
 
+// Faz 17 (bkz. plan dosyası "kalıcı tutamaçlı HPy çağrılarına çoklu-
+// argüman + list/dict/class marshalling"): `list[list[int]]` (İÇ İÇE
+// konteyner) `hpy_call_on`a DOĞRUDAN argüman olarak geçilirse REDDEDİLİR
+// — v1 SADECE skaler elemanlı list/dict marshal eder.
+test "codegen: hpy_call_on'a list[list[int]] (iç içe konteyner) argümanı REDDEDİLİR" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/hpy_call_on_nested_list_arg_rejected.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => return error.ExpectedTypeErrorButGotOk,
+        .err => |e| {
+            try std.testing.expectEqual(error.TypeMismatch, e.code);
+            try std.testing.expect(std.mem.indexOf(u8, e.message, "marshal EDİLEMEZ") != null);
+        },
+    }
+}
+
+// Faz 17: TÜM alanları skaler OLMAYAN (nested list/dict/class taşıyan)
+// bir sınıf örneği de `hpy_call_on`a argüman olarak geçilirse REDDEDİLİR
+// — class-as-dict "surrogate" marshalling'i SADECE skaler alanları
+// destekler.
+test "codegen: hpy_call_on'a nested-alanlı bir class argümanı REDDEDİLİR" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @embedFile("codegen_cases/hpy_call_on_class_with_nested_field_rejected.nox");
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => return error.ExpectedTypeErrorButGotOk,
+        .err => |e| {
+            try std.testing.expectEqual(error.TypeMismatch, e.code);
+            try std.testing.expect(std.mem.indexOf(u8, e.message, "marshal EDİLEMEZ") != null);
+        },
+    }
+}
+
 // Faz FF.4 (bkz. nox-teknik-spesifikasyon.md §3.63): çıplak `self`li bir
 // metodun (`bump`) bir ALANI GERÇEKTEN okuyup/YAZDIĞI uçtan uca kanıt —
 // codegen'in çıplak self İÇİN GERÇEKTEN sıfır değişiklik gerektirdiğinin

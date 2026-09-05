@@ -1082,6 +1082,118 @@ static HPy upper_str_via_c_impl(HPyContext *ctx, HPy self, const HPy *args, size
     return result;
 }
 
+/* Faz 17 (bkz. runtime/foreign_bridge.zig'in "builder" tasarımı): çoklu-
+ * argüman + list/dict/class(-as-dict) marshalling'inin GERÇEK bir HPy
+ * eklentisine karşı doğrulanması — HEPSİ `HPyFunc_KEYWORDS` imzalı,
+ * `nargs`i GERÇEKTEN OKUYAN fonksiyonlar (upper_str_via_c'nin AKSİNE,
+ * nargs > 1). */
+HPyDef_METH(sum_two_ints, "sum_two_ints", HPyFunc_KEYWORDS)
+static HPy sum_two_ints_impl(HPyContext *ctx, HPy self, const HPy *args, size_t nargs, HPy kwnames)
+{
+    (void)self;
+    (void)kwnames;
+    if (nargs != 2) {
+        HPyErr_SetString(ctx, ctx->h_TypeError, "sum_two_ints tam olarak 2 argüman bekler");
+        return HPy_NULL;
+    }
+    int64_t a = HPyLong_AsInt64_t(ctx, args[0]);
+    int64_t b = HPyLong_AsInt64_t(ctx, args[1]);
+    return HPyLong_FromInt64_t(ctx, a + b);
+}
+
+HPyDef_METH(concat_three_strs, "concat_three_strs", HPyFunc_KEYWORDS)
+static HPy concat_three_strs_impl(HPyContext *ctx, HPy self, const HPy *args, size_t nargs, HPy kwnames)
+{
+    (void)self;
+    (void)kwnames;
+    if (nargs != 3) {
+        HPyErr_SetString(ctx, ctx->h_TypeError, "concat_three_strs tam olarak 3 argüman bekler");
+        return HPy_NULL;
+    }
+    HPy_ssize_t sa = 0, sb = 0, sc = 0;
+    const char *a = HPyUnicode_AsUTF8AndSize(ctx, args[0], &sa);
+    const char *b = HPyUnicode_AsUTF8AndSize(ctx, args[1], &sb);
+    const char *c = HPyUnicode_AsUTF8AndSize(ctx, args[2], &sc);
+    if (!a || !b || !c) {
+        return HPy_NULL;
+    }
+    size_t total = (size_t)sa + (size_t)sb + (size_t)sc;
+    char *buf = (char *)malloc(total + 1);
+    memcpy(buf, a, (size_t)sa);
+    memcpy(buf + sa, b, (size_t)sb);
+    memcpy(buf + sa + sb, c, (size_t)sc);
+    buf[total] = '\0';
+    HPy result = HPyUnicode_FromString(ctx, buf);
+    free(buf);
+    return result;
+}
+
+HPyDef_METH(sum_list_of_ints, "sum_list_of_ints", HPyFunc_KEYWORDS)
+static HPy sum_list_of_ints_impl(HPyContext *ctx, HPy self, const HPy *args, size_t nargs, HPy kwnames)
+{
+    (void)self;
+    (void)kwnames;
+    if (nargs != 1) {
+        HPyErr_SetString(ctx, ctx->h_TypeError, "sum_list_of_ints tam olarak 1 argüman bekler");
+        return HPy_NULL;
+    }
+    HPy_ssize_t n = HPy_Length(ctx, args[0]);
+    int64_t total = 0;
+    for (HPy_ssize_t i = 0; i < n; i++) {
+        HPy item = HPy_GetItem_i(ctx, args[0], i);
+        total += HPyLong_AsInt64_t(ctx, item);
+        HPy_Close(ctx, item);
+    }
+    return HPyLong_FromInt64_t(ctx, total);
+}
+
+HPyDef_METH(dict_value_sum, "dict_value_sum", HPyFunc_KEYWORDS)
+static HPy dict_value_sum_impl(HPyContext *ctx, HPy self, const HPy *args, size_t nargs, HPy kwnames)
+{
+    (void)self;
+    (void)kwnames;
+    if (nargs != 1) {
+        HPyErr_SetString(ctx, ctx->h_TypeError, "dict_value_sum tam olarak 1 argüman bekler");
+        return HPy_NULL;
+    }
+    HPy keys = HPyDict_Keys(ctx, args[0]);
+    HPy_ssize_t n = HPy_Length(ctx, keys);
+    int64_t total = 0;
+    for (HPy_ssize_t i = 0; i < n; i++) {
+        HPy k = HPy_GetItem_i(ctx, keys, i);
+        HPy v = HPy_GetItem(ctx, args[0], k);
+        total += HPyLong_AsInt64_t(ctx, v);
+        HPy_Close(ctx, v);
+        HPy_Close(ctx, k);
+    }
+    HPy_Close(ctx, keys);
+    return HPyLong_FromInt64_t(ctx, total);
+}
+
+/* Faz 17: `class`-as-dict "surrogate" — Nox tarafında bir `Point{x,y}`
+ * örneği, alan-adı->değer bir HPy dict'i OLARAK geçirilir; BU fonksiyon
+ * `x`/`y` anahtarlarını `HPy_GetItem` İLE OKUYUP toplar. */
+HPyDef_METH(class_field_sum, "class_field_sum", HPyFunc_KEYWORDS)
+static HPy class_field_sum_impl(HPyContext *ctx, HPy self, const HPy *args, size_t nargs, HPy kwnames)
+{
+    (void)self;
+    (void)kwnames;
+    if (nargs != 1) {
+        HPyErr_SetString(ctx, ctx->h_TypeError, "class_field_sum tam olarak 1 argüman bekler");
+        return HPy_NULL;
+    }
+    HPy hx = HPyUnicode_FromString(ctx, "x");
+    HPy hy = HPyUnicode_FromString(ctx, "y");
+    HPy vx = HPy_GetItem(ctx, args[0], hx);
+    HPy vy = HPy_GetItem(ctx, args[0], hy);
+    int64_t total = HPyLong_AsInt64_t(ctx, vx) + HPyLong_AsInt64_t(ctx, vy);
+    HPy_Close(ctx, vx);
+    HPy_Close(ctx, vy);
+    HPy_Close(ctx, hx);
+    HPy_Close(ctx, hy);
+    return HPyLong_FromInt64_t(ctx, total);
+}
+
 static HPyDef *module_defines[] = {
     &long_conv_roundtrip,
     &long_as_double_via_c,
@@ -1157,6 +1269,11 @@ static HPyDef *module_defines[] = {
     &get_attr_via_c,
     &call_add_value_via_c,
     &upper_str_via_c,
+    &sum_two_ints,
+    &concat_three_strs,
+    &sum_list_of_ints,
+    &dict_value_sum,
+    &class_field_sum,
     NULL
 };
 

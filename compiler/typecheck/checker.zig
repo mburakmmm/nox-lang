@@ -2280,11 +2280,54 @@ pub const Checker = struct {
     /// olarak İŞARETLERDİ (ör. `len(xs)` İçEREN salt-okunur bir yardımcı
     /// bile YAKALANIRDI — GERÇEK bir yanlış-pozitif).
     fn isKnownSafeBuiltinCallee(name: []const u8) bool {
-        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_close", "wasm_call" };
+        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_close", "wasm_call" };
         for (safe) |s| {
             if (std.mem.eql(u8, name, s)) return true;
         }
         return std.mem.startsWith(u8, name, "__nox_reflect_");
+    }
+
+    /// Faz 17 (bkz. plan dosyası "kalıcı tutamaçlı HPy çağrılarına çoklu-
+    /// argüman + list/dict/class marshalling"): `hpy_call_on`/`hpy_call_
+    /// str_on`/`hpy_call_float_on`/`hpy_call_bool_on`nin TRAILING (2.
+    /// argümandan SONRAKİ) argümanları BU tipteyse marshal EDİLEBİLİR —
+    /// `list[T]`/`dict[K,V]` yalnızca SKALER `T`/`K`/`V` (`dict`in KENDİ
+    /// v1 kısıtı — `K`/`V` yalnızca int/bool/str — BUNU zaten sağlıyor,
+    /// EK bir kontrol GEREKMEZ), `class` yalnızca TÜM alanları skalerse
+    /// (nested list/dict/class/task/vb. alan VARSA reddedilir — HPy'de
+    /// GERÇEK bir özel tip henüz YOK, `HPyType_FromSpec` Faz 19'un işi,
+    /// bu YÜZDEN bir sınıf ancak alan-adı→değer bir HPy `dict`i OLARAK
+    /// "surrogate" temsil edilebilir, bkz. `foreign_bridge.zig`nin `nox_
+    /// hpy_class_arg_*` ailesi).
+    fn isHpyMarshalableArgType(self: *Checker, ty: Type) bool {
+        return switch (ty) {
+            .int, .float, .boolean, .str => true,
+            .list => |elem| switch (elem.*) {
+                .int, .float, .boolean, .str => true,
+                else => false,
+            },
+            // Dict'in KENDİ anahtar kısıtı (int/bool/str) ZATEN yeterli —
+            // AMA değer tipi Faz OO.4'ten BERİ `class`ı da KABUL EDİYOR
+            // (bkz. `typeExprToType`'ın `"dict"` dalı) — BU fazın kapsamı
+            // dict[K, class]'ı KAPSAMAZ (nested class-değer marshalling,
+            // her elemanın KENDİ surrogate dict'ini gerektirirdi).
+            .dict => |d| switch (d.value.*) {
+                .int, .float, .boolean, .str => true,
+                else => false,
+            },
+            .class => |cname| blk: {
+                const info = self.classes.get(cname) orelse break :blk false;
+                var it = info.fields.valueIterator();
+                while (it.next()) |fty| {
+                    switch (fty.*) {
+                        .int, .float, .boolean, .str => {},
+                        else => break :blk false,
+                    }
+                }
+                break :blk true;
+            },
+            else => false,
+        };
     }
 
     fn paramIndexByName(params: []const ast.Param, name: []const u8) ?u32 {
@@ -4534,29 +4577,35 @@ pub const Checker = struct {
                     }
                     return .ptr;
                 }
-                if (std.mem.eql(u8, name, "hpy_call_on")) {
-                    if (c.args.len != 3) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_call_on' tam olarak 3 argüman alır (tutamac: ptr, fonksiyon_adı: str, argüman: int)", .{});
+                // Faz 17 (bkz. plan dosyası "kalıcı tutamaçlı HPy çağrılarına
+                // çoklu-argüman + list/dict/class marshalling"): `hpy_call_on`/
+                // `hpy_call_str_on`nin SADECE TEK bir `int`/`str` argüman kabul
+                // ettiği v1 sınırı KALDIRILDI — dördü de ARTIK `handle`/
+                // `func_name`den SONRA SIFIR VEYA DAHA FAZLA, HETEROJEN tipli
+                // (int/float/bool/str/list[T]/dict[K,V]/class — HEPSİ SKALER,
+                // bkz. `isHpyMarshalableArgType`) trailing argüman kabul eder;
+                // dönüş tipi (int/float/bool/str) HALA her birinin KENDİ,
+                // SABİT tipi (geriye-dönük tip çıkarımı OLMADIĞINDAN list/dict/
+                // class dönüş tipi bu fazda DESTEKLENMEZ).
+                if (std.mem.eql(u8, name, "hpy_call_on") or std.mem.eql(u8, name, "hpy_call_str_on") or std.mem.eql(u8, name, "hpy_call_float_on") or std.mem.eql(u8, name, "hpy_call_bool_on")) {
+                    if (c.args.len < 2) {
+                        return self.fail(error.ArgumentCountMismatch, "'{s}' en az 2 argüman alır (tutamac: ptr, fonksiyon_adı: str, [argüman, ...])", .{name});
                     }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_call_on' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "'hpy_call_on' argümanı 2 (fonksiyon adı) str olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[2]) != .int) return self.fail(error.TypeMismatch, "'hpy_call_on' argümanı 3 (argüman) int olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'{s}' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{name});
+                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "'{s}' argümanı 2 (fonksiyon adı) str olmalıdır", .{name});
                     if (c.args[1] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "'hpy_call_on' argümanı 2 (fonksiyon adı) yalnızca bir string LİTERALİ olabilir", .{});
+                        return self.fail(error.TypeMismatch, "'{s}' argümanı 2 (fonksiyon adı) yalnızca bir string LİTERALİ olabilir", .{name});
                     }
-                    return .int;
-                }
-                if (std.mem.eql(u8, name, "hpy_call_str_on")) {
-                    if (c.args.len != 3) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_call_str_on' tam olarak 3 argüman alır (tutamac: ptr, fonksiyon_adı: str, argüman: str)", .{});
+                    for (c.args[2..], 2..) |arg_expr, idx| {
+                        const arg_ty = try self.checkExpr(ctx, arg_expr);
+                        if (!self.isHpyMarshalableArgType(arg_ty)) {
+                            return self.fail(error.TypeMismatch, "'{s}' argümanı {d} marshal EDİLEMEZ — yalnızca int/float/bool/str, SKALER elemanlı list[T]/dict[K,V], VE TÜM alanları skaler olan sınıflar HPy'ye geçirilebilir", .{ name, idx + 1 });
+                        }
                     }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_call_str_on' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "'hpy_call_str_on' argümanı 2 (fonksiyon adı) str olmalıdır", .{});
-                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "'hpy_call_str_on' argümanı 3 (argüman) str olmalıdır", .{});
-                    if (c.args[1] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "'hpy_call_str_on' argümanı 2 (fonksiyon adı) yalnızca bir string LİTERALİ olabilir", .{});
-                    }
-                    return .str;
+                    if (std.mem.eql(u8, name, "hpy_call_on")) return .int;
+                    if (std.mem.eql(u8, name, "hpy_call_str_on")) return .str;
+                    if (std.mem.eql(u8, name, "hpy_call_float_on")) return .float;
+                    return .boolean;
                 }
                 if (std.mem.eql(u8, name, "hpy_close")) {
                     if (c.args.len != 1) {
