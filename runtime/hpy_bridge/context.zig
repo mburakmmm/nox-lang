@@ -160,6 +160,15 @@ pub const Obj = struct {
     type_tp_init: ?*const fn (ctx: *HPyContext, self: HPy, args: ?[*]const HPy, nargs: isize, kw: HPy) callconv(.c) c_int = null,
     type_tp_call: ?*const fn (ctx: *HPyContext, self: HPy, args: ?[*]const HPy, nargs: usize, kwnames: HPy) callconv(.c) HPy = null,
     type_methods: std.ArrayListUnmanaged(TypeMethod) = .empty,
+    /// Yalnızca `tag == .type_` (Faz 20 — bkz. plan dosyası "HPy modül
+    /// nesnesi + HPy_mod_exec desteği"nin GERÇEK aHPy doğrulaması SIRASINDA
+    /// bulunan boşluk): GERÇEK Cython-üretimi kod, `HPy_mod_exec` İçİnde
+    /// `HPyType_FromSpec`in DÖNDÜRDÜĞÜ TİP nesnesinin KENDİSİNE
+    /// (`HPy_SetAttr_s(ctx, tip, "__pyx_hpy_slot_owner_...", ...)` GİBİ,
+    /// `.instance_` DEĞİL) doğrudan attribute YAZAR — `instance_dict`in
+    /// AYNI `DictEntry` yapısını YENİDEN kullanan, tip-seviyesi bir
+    /// KARŞILIĞI.
+    type_dict: std.ArrayListUnmanaged(DictEntry) = .empty,
     /// Yalnızca `tag == .instance_` — `ctx_New` ile inşa edilmiş bir
     /// `type_` örneği: kendi tipine (retained) bir referans + ham,
     /// sıfırlanmış `basicsize` baytlık, SAHİPLENİLEN bir tampon (bkz.
@@ -261,6 +270,13 @@ fn ctxClose(ctx: *HPyContext, h: HPy) callconv(.c) void {
             .type_ => {
                 obj.type_methods.deinit(allocator);
                 if (obj.type_name.len > 0) allocator.free(obj.type_name);
+                // Faz 20: `type_dict`in AYNI `.instance_dict` deseni — bkz.
+                // `type_dict`in belge notu.
+                for (obj.type_dict.items) |entry| {
+                    ctxClose(ctx, entry.key);
+                    ctxClose(ctx, entry.value);
+                }
+                obj.type_dict.deinit(allocator);
             },
             .bytes_ => allocator.free(obj.bytes_data),
             .capsule_ => {
@@ -2343,6 +2359,15 @@ fn findDictEntryStr(list: *std.ArrayListUnmanaged(Obj.DictEntry), name: []const 
 /// bulunan bir `type_methods` girişini bir `.bound_method_` nesnesine
 /// SARARKEN `self` OLARAK retain etmek İçin GEREKİR.
 fn attrLookup(ctx: *HPyContext, obj_h: HPy, obj: *Obj, name: []const u8) ?HPy {
+    // Faz 20: `.type_` (bkz. `Obj.type_dict`in belge notu) — bir tip
+    // nesnesinin KENDİ attribute'ları, `type_methods`nin (BOUND METHOD
+    // arama) TAMAMEN AYRI bir mekanizma OLDUĞUNDAN SADECE `type_dict`e bakılır.
+    if (obj.tag == .type_) {
+        if (findDictEntryStr(&obj.type_dict, name)) |i| {
+            return ctxDup(ctx, obj.type_dict.items[i].value);
+        }
+        return null;
+    }
     if (obj.tag != .instance_) return null;
     if (findDictEntryStr(&obj.instance_dict, name)) |i| {
         return ctxDup(ctx, obj.instance_dict.items[i].value);
@@ -2408,7 +2433,7 @@ fn ctxHasAttrS(ctx: *HPyContext, obj_h: HPy, utf8_name: ?[*:0]const u8) callconv
 /// DE `ctxDup` ile SAKLANIR (çağıranın kendi tutamacından BAĞIMSIZ).
 fn ctxSetAttr(ctx: *HPyContext, obj_h: HPy, name_h: HPy, value: HPy) callconv(.c) c_int {
     const obj = objOf(obj_h) orelse return -1;
-    if (obj.tag != .instance_) {
+    if (obj.tag != .instance_ and obj.tag != .type_) {
         ctxErrSetString(ctx, ctx.h_TypeError, "bu tip attribute atamasını desteklemiyor");
         return -1;
     }
@@ -2417,13 +2442,17 @@ fn ctxSetAttr(ctx: *HPyContext, obj_h: HPy, name_h: HPy, value: HPy) callconv(.c
         ctxErrSetString(ctx, ctx.h_TypeError, "attribute adı str olmalı");
         return -1;
     }
-    if (findDictEntryStr(&obj.instance_dict, name_obj.str_data)) |i| {
-        const old_value = obj.instance_dict.items[i].value;
-        obj.instance_dict.items[i].value = ctxDup(ctx, value);
+    // Faz 20: `.type_` (bkz. `Obj.type_dict`in belge notu) — GERÇEK
+    // Cython-üretimi kod `HPy_mod_exec` İçİnde bir TİP nesnesine (`Box`
+    // GİBİ, `HPyType_FromSpec`in KENDİ dönüşüne) doğrudan attribute yazar.
+    const dict: *std.ArrayListUnmanaged(Obj.DictEntry) = if (obj.tag == .type_) &obj.type_dict else &obj.instance_dict;
+    if (findDictEntryStr(dict, name_obj.str_data)) |i| {
+        const old_value = dict.items[i].value;
+        dict.items[i].value = ctxDup(ctx, value);
         ctxClose(ctx, old_value);
         return 0;
     }
-    obj.instance_dict.append(contextAllocator(ctx), .{ .key = ctxDup(ctx, name_h), .value = ctxDup(ctx, value) }) catch {
+    dict.append(contextAllocator(ctx), .{ .key = ctxDup(ctx, name_h), .value = ctxDup(ctx, value) }) catch {
         ctxErrNoMemory(ctx);
         return -1;
     };
@@ -3598,6 +3627,25 @@ fn pinnedExcType(allocator: std.mem.Allocator) !HPy {
 fn pinnedBuiltinType(allocator: std.mem.Allocator, name: [:0]const u8) !HPy {
     const obj = try allocator.create(Obj);
     obj.* = .{ .refcount = PINNED_REFCOUNT, .tag = .type_, .payload = .{ .l = 0 }, .type_name = name };
+    return .{ ._i = @intCast(@intFromPtr(obj)) };
+}
+
+/// Faz 20 (bkz. plan dosyası "HPy modül nesnesi + HPy_mod_exec desteği"):
+/// bir modülün "kendi nesnesi" — GERÇEK HPy'nin `ctx_Module_Create`inin
+/// BASİTLEŞTİRİLMİŞ bir karşılığı (`HPy_mod_create` slot'u DESTEKLENMİYOR
+/// — `hpy_bridge`nin KENDİ modülleri HER ZAMAN BU VARSAYILAN, BOŞ örneği
+/// alır). `ctxGetAttr`/`ctxSetAttr`nin ZATEN HERHANGİ bir `.instance_`
+/// etiketli `Obj` ÜZERİNDE çalışması SAYESİNDE (bkz. `attrLookup`),
+/// `instance_type = HPy_NULL` (varsayılan) İLE BİLE modülün KENDİ
+/// attribute'larını (Cython'ın derleme-zamanı sabitleri GİBİ) saklayabilir
+/// bir "boş, tipsiz" örnek YETERLİDİR — `objOf(HPy_NULL) == null` olduğundan
+/// `attrLookup`nin `findTypeMethodO` dalı GÜVENLE atlanır, `ctxClose`nin
+/// `.instance_` dalı da BUNU (varsayılan `instance_data = &.{}`, boş bir
+/// slice'ı free etmek ZARARSIZ) GÜVENLE temizler.
+pub fn createModuleObject(ctx: *HPyContext) !HPy {
+    const allocator = contextAllocator(ctx);
+    const obj = try allocator.create(Obj);
+    obj.* = .{ .refcount = 1, .tag = .instance_, .payload = .{ .l = 0 } };
     return .{ ._i = @intCast(@intFromPtr(obj)) };
 }
 

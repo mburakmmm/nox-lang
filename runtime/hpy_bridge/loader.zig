@@ -116,7 +116,39 @@ pub const HPyModuleDef = extern struct {
 };
 
 const InitFn = *const fn () callconv(.c) ?*const HPyModuleDef;
+/// Faz 19'un devamı (bkz. plan dosyası "aHPy — GERÇEK Cython/aHPy
+/// çıktısıyla uçtan-uca deneme"): GERÇEK Cython-üretimi (aHPy'nin
+/// `hpy-universal` arka ucu) kod `HPyFunc_O`/`HPyFunc_KEYWORDS`nin
+/// YANINDA `HPyFunc_NOARGS` (argümansız fonksiyonlar, ör. `def answer():
+/// return 42`) VE `HPyFunc_VARARGS`i (pozisyonel-ÇOKLU argüman, kwnames
+/// OLMADAN) da SIK kullanır — `noxtest.c`nin ELLE yazılmış test
+/// fonksiyonları BUNLARI HİÇ egzersiz ETMEDİĞİNDEN bu boşluk daha ÖNCE
+/// FARK EDİLMEMİŞTİ.
+const MethNoArgs = *const fn (ctx: *HPyContext, self: HPy) callconv(.c) HPy;
 const MethO = *const fn (ctx: *HPyContext, self: HPy, arg: HPy) callconv(.c) HPy;
+/// `HPyFunc_VARARGS` imzası — `HPyFunc_KEYWORDS`nin AYNISI, SADECE
+/// `kwnames` parametresi YOK.
+const MethVarargs = *const fn (ctx: *HPyContext, self: HPy, args: ?[*]const HPy, nargs: usize) callconv(.c) HPy;
+
+/// Faz 20 (bkz. plan dosyası "HPy modül nesnesi + HPy_mod_exec desteği"):
+/// `HPyDef`in C tarafındaki adsız union'unun `HPySlot` OLARAK yeniden
+/// yorumu — `context.zig`nin `ctxTypeFromSpec`inin (bkz. `HPySlotLocal`/
+/// `slotOfLocal`) AYNI, DOĞRULANMIŞ bayt-düzeni tekniği (`.meth`in adresi
+/// C'deki adsız union'ın başlangıç ofsetiyle AYNIDIR — HER İKİ struct'ın
+/// da `impl` alanı offset 8'dedir).
+pub const HPySlot = extern struct {
+    slot: c_int = 0,
+    impl: ?*const anyopaque = null,
+    cpy_trampoline: ?*const anyopaque = null,
+};
+fn slotOf(d: *const HPyDef) *const HPySlot {
+    return @ptrCast(@alignCast(&d.meth));
+}
+/// Gerçek HPy'nin (`hpy/devel/include/hpy/autogen_hpyslot.h`) `HPy_mod_
+/// exec` slot numarası — `HPyFunc_INQUIRY` imzalı: `int (*)(HPyContext
+/// *ctx, HPy module) -> int` (`0`=başarı, `!=0`=hata).
+const HPY_SLOT_MOD_EXEC: c_int = 2001;
+const ModExecFn = *const fn (ctx: *HPyContext, module: HPy) callconv(.c) c_int;
 /// Faz 15: `HPyFunc_KEYWORDS` imzası — gerçek HPy'de `fn(ctx, self, args:
 /// *const HPy, nargs: usize, kwnames: HPy) -> HPy` (`args`in İLK `nargs`
 /// öğesi POZİSYONEL argümanlar, `kwnames` bir tuple/`HPy_NULL` — anahtar
@@ -163,6 +195,56 @@ pub const LoadedModule = struct {
             if (!std.mem.eql(u8, std.mem.sliceTo(meth_name, 0), name)) continue;
             if (d.meth.signature != @intFromEnum(HPyFuncSignature.keywords)) return null;
             const impl = d.meth.impl orelse return null;
+            return @ptrCast(@alignCast(impl));
+        }
+        return null;
+    }
+
+    /// `findMethodO` İLE AYNI arama, YALNIZCA `HPyFunc_NOARGS` imzalı
+    /// metodlar İçin (bkz. `MethNoArgs`nin belge notu).
+    pub fn findMethodNoArgs(self: *const LoadedModule, name: []const u8) ?MethNoArgs {
+        const defines = self.def.defines orelse return null;
+        var i: usize = 0;
+        while (defines[i]) |d| : (i += 1) {
+            if (d.kind != @intFromEnum(HPyDefKind.meth)) continue;
+            const meth_name = d.meth.name orelse continue;
+            if (!std.mem.eql(u8, std.mem.sliceTo(meth_name, 0), name)) continue;
+            if (d.meth.signature != @intFromEnum(HPyFuncSignature.noargs)) return null;
+            const impl = d.meth.impl orelse return null;
+            return @ptrCast(@alignCast(impl));
+        }
+        return null;
+    }
+
+    /// `findMethodO` İLE AYNI arama, YALNIZCA `HPyFunc_VARARGS` imzalı
+    /// metodlar İçin (bkz. `MethVarargs`nin belge notu).
+    pub fn findMethodVarargs(self: *const LoadedModule, name: []const u8) ?MethVarargs {
+        const defines = self.def.defines orelse return null;
+        var i: usize = 0;
+        while (defines[i]) |d| : (i += 1) {
+            if (d.kind != @intFromEnum(HPyDefKind.meth)) continue;
+            const meth_name = d.meth.name orelse continue;
+            if (!std.mem.eql(u8, std.mem.sliceTo(meth_name, 0), name)) continue;
+            if (d.meth.signature != @intFromEnum(HPyFuncSignature.varargs)) return null;
+            const impl = d.meth.impl orelse return null;
+            return @ptrCast(@alignCast(impl));
+        }
+        return null;
+    }
+
+    /// `HPyDef_Kind_Slot` girdileri arasında `slot == HPy_mod_exec` (2001)
+    /// olanı arar — bulunursa modülün KENDİ örneği (`context.createModuleObject`nin
+    /// döndürdüğü) İLE ÇAĞRILIP derleme-zamanı sabitlerini/globallerini
+    /// populate ETMESİ İçİn kullanılır (GERÇEK HPy host'larının import
+    /// zamanında OTOMATİK yaptığı, `hpy_bridge`nin ARTIK TAKLİT ettiği adım).
+    pub fn findModExecSlot(self: *const LoadedModule) ?ModExecFn {
+        const defines = self.def.defines orelse return null;
+        var i: usize = 0;
+        while (defines[i]) |d| : (i += 1) {
+            if (d.kind != @intFromEnum(HPyDefKind.slot)) continue;
+            const sl = slotOf(d);
+            if (sl.slot != HPY_SLOT_MOD_EXEC) continue;
+            const impl = sl.impl orelse return null;
             return @ptrCast(@alignCast(impl));
         }
         return null;

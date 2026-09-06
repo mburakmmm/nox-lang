@@ -133,10 +133,16 @@ pub export fn nox_hpy_call(
     };
     defer mod.deinit();
 
-    const method = mod.findMethodO(std.mem.span(fnm)) orelse {
+    // Faz 20: `mod.findMethodO` (HPyFunc_O, TEK arg) BULUNAMAZSA `mod.
+    // findMethodNoArgs`e (HPyFunc_NOARGS) DÜŞÜLÜR — GERÇEK Cython-üretimi
+    // kod `HPy_mod_exec` İçİnde populate ettiği modül attribute'larını
+    // OKUYAN fonksiyonlar TİPİK olarak argümansızdır (`answer()` GİBİ).
+    const method_o = mod.findMethodO(std.mem.span(fnm));
+    const method_noargs = if (method_o == null) mod.findMethodNoArgs(std.mem.span(fnm)) else null;
+    if (method_o == null and method_noargs == null) {
         setHpyError("'{s}' bulunamadı", .{std.mem.span(fnm)});
         return 0;
-    };
+    }
 
     const ctx = hpy_bridge.context.createContext(allocator) catch {
         setHpyError("HPy context oluşturulamadı", .{});
@@ -144,9 +150,21 @@ pub export fn nox_hpy_call(
     };
     defer hpy_bridge.context.destroyContext(allocator, ctx);
 
-    const h_arg = ctx.ctx_Long_FromInt64_t.?(ctx, arg);
-    defer ctx.ctx_Close.?(ctx, h_arg);
-    const h_result = method(ctx, hpy_bridge.context.HPy_NULL, h_arg);
+    // Faz 20 (bkz. plan dosyası "HPy modül nesnesi + HPy_mod_exec desteği"):
+    // GERÇEK Cython-üretimi kod `self`in GERÇEK modül nesnesi OLMASINI
+    // BEKLER (derleme-zamanı sabitlerini `self`in attribute'u OLARAK okur)
+    // — `HPy_NULL` GEÇİRMEK ARTIK YETERSİZ.
+    const module_obj = setupModuleObject(ctx, &mod) orelse return 0;
+    defer ctx.ctx_Close.?(ctx, module_obj);
+
+    const h_result: hpy_bridge.context.HPy = blk: {
+        if (method_o) |method| {
+            const h_arg = ctx.ctx_Long_FromInt64_t.?(ctx, arg);
+            defer ctx.ctx_Close.?(ctx, h_arg);
+            break :blk method(ctx, module_obj, h_arg);
+        }
+        break :blk method_noargs.?(ctx, module_obj);
+    };
     defer ctx.ctx_Close.?(ctx, h_result);
     if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
         ctx.ctx_Err_Clear.?(ctx);
@@ -200,6 +218,9 @@ pub export fn nox_hpy_call_str(
     };
     defer hpy_bridge.context.destroyContext(allocator, ctx);
 
+    const module_obj = setupModuleObject(ctx, &mod) orelse return str_mod.nox_str_from_bytes(rt, "");
+    defer ctx.ctx_Close.?(ctx, module_obj);
+
     const arg_slice = str_mod.nox_str_slice(arg_h);
     const arg_z = allocator.dupeZ(u8, arg_slice) catch return str_mod.nox_str_from_bytes(rt, "");
     defer allocator.free(arg_z);
@@ -207,7 +228,7 @@ pub export fn nox_hpy_call_str(
     defer ctx.ctx_Close.?(ctx, h_arg);
 
     const args = [_]hpy_bridge.context.HPy{h_arg};
-    const h_result = method(ctx, hpy_bridge.context.HPy_NULL, &args, 1, hpy_bridge.context.HPy_NULL);
+    const h_result = method(ctx, module_obj, &args, 1, hpy_bridge.context.HPy_NULL);
     defer ctx.ctx_Close.?(ctx, h_result);
 
     if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
@@ -228,7 +249,40 @@ pub export fn nox_hpy_call_str(
 const PersistentHpyHandle = struct {
     mod: hpy_bridge.loader.LoadedModule,
     ctx: *hpy_bridge.context.HPyContext,
+    /// Faz 20 (bkz. plan dosyası "HPy modül nesnesi + HPy_mod_exec desteği"):
+    /// modülün KENDİ nesnesi — GERÇEK HPy host'larının import ANINDA
+    /// oluşturup `HPy_mod_exec` slot'una geçirdiği (`self` OLARAK KULLANILAN)
+    /// nesnenin AYNISI. `noxtest.c`nin HİÇ KULLANMADIĞI (`self`i HER ZAMAN
+    /// yok sayan) test fonksiyonlarının AKSİNE, GERÇEK Cython-üretimi kod
+    /// (`answer()` GİBİ) derleme-zamanı sabitlerini BU nesnenin attribute'u
+    /// OLARAK saklar — `self = HPy_NULL` GEÇİRİLİRSE `HPy_GetAttr_s`
+    /// BAŞARISIZ olur.
+    module_obj: hpy_bridge.context.HPy,
 };
+
+/// Faz 20: `mod`nin KENDİ modül nesnesini (`context.createModuleObject`)
+/// yaratıp, VARSA `HPy_mod_exec` slot'unu BU nesneyle ÇAĞIRIR (derleme-
+/// zamanı sabitlerini/globallerini populate ETMESİ İçİn) — HEM `nox_hpy_
+/// open` (kalıcı tutamaç) HEM `nox_hpy_call`/`nox_hpy_call_str` (Faz
+/// 14/15'in ESKİ, tek-seferlik fonksiyonları) TARAFINDAN PAYLAŞILIR.
+/// `HPy_mod_exec` BAŞARISIZ olursa (`!= 0` döner — GERÇEK HPy sözleşmesi,
+/// hata durumu ZATEN `ctx`e YAZILMIŞTIR) modül nesnesi kapatılıp `null`
+/// döner.
+fn setupModuleObject(ctx: *hpy_bridge.context.HPyContext, mod: *const hpy_bridge.loader.LoadedModule) ?hpy_bridge.context.HPy {
+    const m = hpy_bridge.context.createModuleObject(ctx) catch {
+        setHpyError("modül nesnesi oluşturulamadı", .{});
+        return null;
+    };
+    if (mod.findModExecSlot()) |exec_fn| {
+        if (exec_fn(ctx, m) != 0) {
+            ctx.ctx_Err_Clear.?(ctx);
+            setHpyError("modül exec (HPy_mod_exec) başarısız oldu", .{});
+            ctx.ctx_Close.?(ctx, m);
+            return null;
+        }
+    }
+    return m;
+}
 
 /// `path`teki paylaşımlı kütüphaneyi (`ext_name` giriş noktasıyla) BİR
 /// KEZ yükler VE BİR KEZ bir `HPyContext` yaratıp `PersistentHpyHandle`
@@ -255,23 +309,31 @@ pub export fn nox_hpy_open(
         setHpyError("HPy context oluşturulamadı", .{});
         return null;
     };
+    const module_obj = setupModuleObject(ctx, &mod) orelse {
+        hpy_bridge.context.destroyContext(allocator, ctx);
+        mod.deinit();
+        return null;
+    };
     const handle = allocator.create(PersistentHpyHandle) catch {
+        ctx.ctx_Close.?(ctx, module_obj);
         hpy_bridge.context.destroyContext(allocator, ctx);
         mod.deinit();
         setHpyError("bellek yetersiz", .{});
         return null;
     };
-    handle.* = .{ .mod = mod, .ctx = ctx };
+    handle.* = .{ .mod = mod, .ctx = ctx, .module_obj = module_obj };
     return handle;
 }
 
-/// `handle`nin context'ini yok eder, kütüphaneyi kapatır, tutamaç
-/// struct'ının KENDİSİNİ serbest bırakır. `handle_ptr == null` İSE (ör.
-/// `hpy_open` BAŞARISIZ olduysa) SESSİZCE hiçbir şey yapmaz.
+/// `handle`nin modül nesnesini VE context'ini yok eder, kütüphaneyi
+/// kapatır, tutamaç struct'ının KENDİSİNİ serbest bırakır. `handle_ptr
+/// == null` İSE (ör. `hpy_open` BAŞARISIZ olduysa) SESSİZCE hiçbir şey
+/// yapmaz.
 pub export fn nox_hpy_close(rt: ?*anyopaque, handle_ptr: ?*anyopaque) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const allocator = state.allocator();
     const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return));
+    handle.ctx.ctx_Close.?(handle.ctx, handle.module_obj);
     hpy_bridge.context.destroyContext(allocator, handle.ctx);
     handle.mod.deinit();
     allocator.destroy(handle);
@@ -616,14 +678,35 @@ fn invokeHpyMethod(mc: *MarshalCtx, func_name: []const u8) ?hpy_bridge.context.H
     };
     defer mc.allocator.free(packed_args);
     for (mc.args.items, 0..) |e, i| packed_args[i] = e.h;
+    // Faz 20 (bkz. plan dosyası "HPy modül nesnesi + HPy_mod_exec desteği"):
+    // `self` ARTIK `HPy_NULL` DEĞİL, `mc.handle.module_obj` — GERÇEK
+    // Cython-üretimi kod derleme-zamanı sabitlerini `self`in attribute'u
+    // OLARAK okur (`HPy_GetAttr_s(ctx, self, ...)`), `HPy_NULL` GEÇİLİRSE
+    // BAŞARISIZ olur.
+    const module_obj = mc.handle.module_obj;
     const h_result: hpy_bridge.context.HPy = blk: {
         if (mc.handle.mod.findMethodKeywords(func_name)) |method| {
             const args_ptr: ?[*]const hpy_bridge.context.HPy = if (n > 0) packed_args.ptr else null;
-            break :blk method(ctx, hpy_bridge.context.HPy_NULL, args_ptr, n, hpy_bridge.context.HPy_NULL);
+            break :blk method(ctx, module_obj, args_ptr, n, hpy_bridge.context.HPy_NULL);
+        }
+        // GERÇEK Cython-üretimi (aHPy `hpy-universal` arka ucu) kod
+        // `HPyFunc_VARARGS`i (KEYWORDS'ün AYNISI, `kwnames` HARİÇ) VE
+        // `HPyFunc_NOARGS`i (argümansız fonksiyonlar) de SIK kullanır —
+        // `noxtest.c`nin ELLE yazılmış test fonksiyonları BUNLARI HİÇ
+        // egzersiz ETMEDİĞİNDEN bu boşluk `hpy_tier0_test.zig`de HİÇ
+        // fark edilmemişti.
+        if (mc.handle.mod.findMethodVarargs(func_name)) |method| {
+            const args_ptr: ?[*]const hpy_bridge.context.HPy = if (n > 0) packed_args.ptr else null;
+            break :blk method(ctx, module_obj, args_ptr, n);
         }
         if (n == 1) {
             if (mc.handle.mod.findMethodO(func_name)) |method| {
-                break :blk method(ctx, hpy_bridge.context.HPy_NULL, packed_args[0]);
+                break :blk method(ctx, module_obj, packed_args[0]);
+            }
+        }
+        if (n == 0) {
+            if (mc.handle.mod.findMethodNoArgs(func_name)) |method| {
+                break :blk method(ctx, module_obj);
             }
         }
         setHpyError("'{s}' bulunamadı", .{func_name});

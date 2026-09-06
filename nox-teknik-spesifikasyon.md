@@ -18279,6 +18279,121 @@ TEMİZ (BİLİNEN, İLGİSİZ harness flake'leri HARİÇ).
 
 ---
 
+## 3.130 Faz 20 — HPy modül nesnesi + `HPy_mod_exec` desteği (aHPy ile GERÇEK dünya doğrulaması) (v1.64.0)
+
+Faz 16-19 (v1.60.0-v1.63.0) HPy köprüsünün 5 maddelik listesini TAMAMLADI
+— kullanıcı BUNUN ÜZERİNE kendi GERÇEK `aHPy` projesini (Cython'dan HPy
+Universal ABI'ye derleyen bir backend) Nox İLE DENEMEK istedi. GERÇEK
+aHPy toolchain'iyle derlenmiş `ahpy_setuptools_example.hpy0.so`ya karşı
+(`nm -gU` İLE `HPyInit_ahpy_setuptools_example` sembolü DOĞRULANARAK)
+bir Nox programından çağrı yapılmaya ÇALIŞILDI — İKİ GERÇEK boşluk
+BULUNDU.
+
+**Boşluk 1 — `HPyFunc_NOARGS`/`HPyFunc_VARARGS` desteği YOK**: `hpy_call_on(h,
+"answer")` (argümansız) `"'answer' bulunamadı"` HATASIYLA reddediliyordu
+— `runtime/hpy_bridge/loader.zig` SADECE `HPyFunc_O`/`HPyFunc_KEYWORDS`
+imzalarını tanıyordu, GERÇEK Cython-üretimi kod (`grep -n "HPyDef_METH("`
+İLE DOĞRULANDI) TÜM 4 imzayı (`NOARGS`/`O`/`KEYWORDS`/`VARARGS`) kullanıyor
+— `noxtest.c`nin ELLE yazılmış test fonksiyonları BUNLARI HİÇ egzersiz
+ETMEDİĞİNDEN bu boşluk daha ÖNCE HİÇ fark edilmemişti. YENİ `loader.
+findMethodNoArgs`/`findMethodVarargs` (`findMethodO`/`findMethodKeywords`nin
+AYNI deseni). `foreign_bridge.zig`nin `invokeHpyMethod`i (persistent-handle
+çağrı ailesi) VE (bu sürümde AYRICA GÜNCELLENEN) `nox_hpy_call` (Faz
+14'ün ESKİ tek-seferlik fonksiyonu) ARTIK KEYWORDS→VARARGS→O(n=1)→
+NOARGS(n=0) zincirini dener.
+
+**Boşluk 2 (bu FAZIN ASIL konusu) — modül nesnesi/`HPy_mod_exec` YOK**:
+Gap 1 düzeltildikten SONRA `answer()` ARTIK BULUNUYOR AMA çağrıldığında
+`ctx_Err_Occurred` oluyordu. Üretilen C koduna bakıldığında: `HPy_GetAttr_s(
+ctx, self, "__pyx_hpy_const_0")` çağırıyor — Cython, derleme-zamanı
+sabitlerini (42 GİBİ) MODÜL NESNESİNİN KENDİ attribute'u OLARAK saklıyor
+(`HPyDef_SLOT(..., HPy_mod_exec)`, slot `2001`, `HPyFunc_INQUIRY` imzalı
+— gerçek HPy import zamanında OTOMATİK çalıştırır), `self`in GERÇEK MODÜL
+NESNESİ OLMASINI BEKLİYOR. Nox'un köprüsü İSE `self`i HER ZAMAN `HPy_NULL`
+geçiriyordu (`nox_hpy_open`/`nox_hpy_call`/`invokeHpyMethod`nin HİÇBİRİ
+`ctx_Module_Create`/`HPy_mod_exec`i HİÇ ÇALIŞTIRMIYORDU) — `noxtest.c`
+HİÇBİR fonksiyonda `self`i KULLANMADIĞINDAN bu boşluk daha ÖNCE HİÇ fark
+edilmemişti.
+
+**KRİTİK, işi basitleştiren araştırma bulgusu**: `context.zig`nin `ctxGetAttr`/
+`ctxSetAttr`i ZATEN HERHANGİ bir `.instance_` etiketli `Obj` ÜZERİNDE,
+`instance_dict`e (bir `ArrayListUnmanaged(DictEntry)`) okuyup/yazarak
+ÇALIŞIYOR — `instance_type = HPy_NULL` (varsayılan) İKEN BİLE `objOf(HPy_
+NULL) == null` GÜVENLE ele alınıyor. Bu YÜZDEN bir "modül nesnesi" İçİn
+YENİ bir `Obj` etiketi/YENİ bir attribute-depolama mekanizması İCAT
+ETMEYE GEREK YOK — SADECE `tag=.instance_, instance_type=HPy_NULL
+(varsayılan), instance_dict=.empty (varsayılan)` İLE BOŞ bir örnek
+YARATMAK YETERLİ (`ctxClose`nin `.instance_` dalı da BUNU ZATEN GÜVENLE
+temizler). YENİ `context.createModuleObject(ctx) !HPy`.
+
+`HPySlot`in bayt-düzeni (`slot: c_int`/`impl: ?*const anyopaque`/
+`cpy_trampoline`) `HPyDef`in `.meth` alanının AYNI bellek bölgesinin
+YENİDEN yorumlanmasıdır — `context.zig`nin `ctxTypeFromSpec`i BUNU ZATEN
+`slotOfLocal`/`HPySlotLocal` İLE yapıyor (İÇ, ÖZEL) — `loader.zig` AYNI
+TEKNİĞİ (KENDİ, PUBLIC `HPySlot`/`slotOf`i ÜZERİNDEN) TEKRARLAR. YENİ
+`loader.findModExecSlot` — `defines[]`i tarayıp `slot == HPy_mod_exec
+(2001)` olan girdiyi bulur.
+
+YENİ, PAYLAŞILAN `foreign_bridge.setupModuleObject(ctx, mod)`: `createModuleObject`i
+çağırır, `mod.findModExecSlot()` VARSA çalıştırıp başarısızlık durumunda
+(`!= 0`) `ctx_Err_Clear` + `HPyError` ile temizler. `PersistentHpyHandle`ye
+YENİ `module_obj: HPy` alanı — `nox_hpy_open` `setupModuleObject`i ÇAĞIRIP
+handle'a KAYDEDER, `nox_hpy_close` `module_obj`i `ctx_Close` İLE serbest
+bırakır (context yok edilmeden ÖNCE). `invokeHpyMethod`nin 4 çağrı
+şeklinin (KEYWORDS/VARARGS/O/NOARGS) HEPSİNDE `HPy_NULL` YERİNE `mc.handle.
+module_obj` `self` OLARAK geçirilir. `nox_hpy_call`/`nox_hpy_call_str`
+(Faz 14/15'in ESKİ, tek-seferlik fonksiyonları) DA AYNI `setupModuleObject`i
+çağırıp dönen `m`yi `self` OLARAK kullanır, çağrı SONRASI (context yok
+edilmeden ÖNCE, Zig'in `defer`nin LIFO sırasıyla) `ctx_Close` İLE serbest
+bırakır.
+
+**GERÇEK aHPy doğrulaması (elle, kalıcı bir test OLARAK COMMIT EDİLMEDİ
+— aHPy AYRI bir repo)**: `hpy_call_on(h, "answer")` → `42`, `hpy_call_on(h,
+"external_add", 20, 22)` → `42` — HER İKİSİ de GERÇEK, harici Cython-
+üretimi kodla DOĞRU çalıştı.
+
+**Yan-bulgu (AYNI doğrulama SIRASINDA bulunan, AYRI bir GERÇEK boşluk —
+`HPyType_FromSpec`in KENDİ sınırlarına AİT, bu FAZIN "kapsam dışı" bölümü
+İLE İLGİSİZ, PRATİK bir kısıtlama)**: aHPy'nin `mod_exec`i AYRICA bir
+`HPyType_FromSpec` tipini (`Box`, bir Cython `cdef class`ı) inşa edip O
+TİP nesnesinin KENDİSİNE (`__pyx_hpy_slot_owner_...` attribute'u İçİn,
+`.instance_` DEĞİL `.type_` etiketli bir `Obj`) `HPy_SetAttr_s` İLE
+attribute yazıyordu — `ctxSetAttr` BUNU (SADECE `.instance_` desteklediğinden)
+`TypeError` İLE reddediyordu, bu YÜZDEN Box İçEREN `mod_exec` TAMAMEN
+BAŞARISIZ oluyordu (TÜM diğer sabitler de İPTAL EDİLİYORDU — `mod_exec`
+TEK BİR başarısızlıkta HEPSİNİ geri alıyor). Bu, HER Cython-derlenmiş
+SINIF İçEREN bir modülün `mod_exec`inin BAŞARISIZ olması anlamına gelen
+GERÇEK, PRATİK bir sınırdı. YENİ `Obj.type_dict` (`instance_dict`in AYNI
+`DictEntry` deseni, SADECE `.type_` etiketli nesneler İçİn) — `ctxSetAttr`/
+`attrLookup` ARTIK `.type_` nesnelerini de destekler (`ctxClose`nin `.type_`
+dalı da BUNU serbest bırakır).
+
+**Doğrulama**: YENİ, self-contained C test fixture'ı (`tests/compat/hpy_ext/
+noxtest.c`): `HPyDef_SLOT(module_exec_marker, HPy_mod_exec)` (modülün
+KENDİSİNE `"faz20_marker"` = `99` YAZAN bir `HPyFunc_INQUIRY`) +
+`HPyDef_METH(get_faz20_marker, ..., HPyFunc_NOARGS)` (`self` üzerinden
+OKUYAN). YENİ golden testler (`tests/compat/hpy_call_golden_test.zig`):
+`hpy_call_on(h, "get_faz20_marker")` → `99` (kalıcı-tutamaç yolu, `nox
+test` İLE DOĞRUDAN çalıştırılıp DOĞRULANDI) VE `hpy_call(..., "get_faz20_marker",
+0)` → `99` (ESKİ tek-seferlik yol). Faz 14-19'un TÜM MEVCUT hpy golden
+testleri (16/16) DEĞİŞMEDEN geçmeye DEVAM ETTİ. `zig build test` (TAM
+paket, Debug+ReleaseFast) — TEMİZ (BİLİNEN, İLGİSİZ `--listen=-` harness
+misreport'ları HARİÇ, HER BİRİ doğrudan çalıştırılarak GERÇEKTEN geçtiği
+DOĞRULANDI).
+
+## Kapsam DIŞI (bu turda)
+- `HPy_mod_create` slot'u (özel modül-inşası) — GERÇEK test modülümüzde
+  İhtiyaç YOK, AYRI/gelecekteki bir iş.
+- Modülün KENDİ `HPyDef_Kind_Meth` girdilerini modül nesnesinin ATTRIBUTE'ları
+  OLARAK (`module.answer` GİBİ) expose ETMEK — `loader.zig` DOĞRUDAN
+  `defines[]`i tarayarak fonksiyonları bulmaya DEVAM EDER (v1 sınırı,
+  DEĞİŞMEDİ).
+- `aHPy`nin `Box` (cdef class) örneğinin Nox'tan İNŞA EDİLMESİ — Faz 19'un
+  opak-tutamaç mekanizmasıyla TEORİK olarak MÜMKÜN olabilir, AYRI bir
+  araştırma gerektirir.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

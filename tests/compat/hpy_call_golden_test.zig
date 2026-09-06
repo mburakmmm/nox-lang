@@ -325,3 +325,32 @@ test "hpy_close_obj: Counter_destroy (tp_destroy) GERÇEKTEN tetiklenir" {
         "1\n",
     );
 }
+
+// Faz 20 (bkz. plan dosyası "HPy modül nesnesi + HPy_mod_exec desteği"):
+// GERÇEK Cython-üretimi kod (aHPy `hpy-universal` arka ucu), import
+// anındaki `HPy_mod_exec` slot'unu, derleme-zamanı sabitlerini `self`
+// (modülün KENDİ nesnesi) üzerinde `HPy_SetAttr_s` İLE yazmak İçİn
+// kullanır — `module_exec_marker`/`get_faz20_marker` (bkz. `noxtest.c`)
+// TAM OLARAK bu deseni taklit eder. HEM kalıcı-tutamaç yolu (`hpy_open`+
+// `hpy_call_on`) HEM ESKİ tek-seferlik yol (`hpy_call`) İçİn AYRI testler
+// — `nox_hpy_open`/`nox_hpy_call`/`nox_hpy_call_str`nin ÜÇÜ de ARTIK
+// `setupModuleObject`i çağırıp `HPy_mod_exec`i ÇALIŞTIRIR.
+test "hpy_call_on: kalıcı tutamaç yoluyla HPy_mod_exec'in yazdığı modül attribute'u okunur" {
+    try expectGolden(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\print(hpy_call_on(h, "get_faz20_marker"))
+        \\hpy_close(h)
+        \\
+    ,
+        "99\n",
+    );
+}
+
+test "hpy_call: eski tek-seferlik yoluyla HPy_mod_exec'in yazdığı modül attribute'u okunur" {
+    try expectGolden(
+        \\print(hpy_call("tests/compat/hpy_ext/noxtest.so", "noxtest", "get_faz20_marker", 0))
+        \\
+    ,
+        "99\n",
+    );
+}

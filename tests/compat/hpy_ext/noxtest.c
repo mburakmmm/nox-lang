@@ -1194,6 +1194,30 @@ static HPy class_field_sum_impl(HPyContext *ctx, HPy self, const HPy *args, size
     return HPyLong_FromInt64_t(ctx, total);
 }
 
+/* Faz 20 (bkz. plan dosyası "HPy modül nesnesi + HPy_mod_exec desteği"):
+ * GERÇEK Cython-üretimi (aHPy `hpy-universal` arka ucu) kod import
+ * anındaki `HPy_mod_exec` slot'unu, derleme-zamanı sabitlerini `self`
+ * (modülün KENDİ nesnesi) üzerinde SetAttr ile YAZMAK İçİn kullanıyor —
+ * Nox'un köprüsü ÖNCEDEN `self`i HER ZAMAN `HPy_NULL` geçiriyordu, bu
+ * YÜZDEN bu desen HİÇ ÇALIŞMIYORDU. Bu KÜÇÜK, ELLE yazılmış çift (bir
+ * `HPy_mod_exec` slot'u + BUNUN yazdığı attribute'u OKUYAN bir metod)
+ * TAM OLARAK O deseni taklit eder. */
+HPyDef_SLOT(module_exec_marker, HPy_mod_exec)
+static int module_exec_marker_impl(HPyContext *ctx, HPy module)
+{
+    HPy v = HPyLong_FromLong(ctx, 99);
+    if (HPy_IsNull(v)) return -1;
+    int status = HPy_SetAttr_s(ctx, module, "faz20_marker", v);
+    HPy_Close(ctx, v);
+    return status;
+}
+
+HPyDef_METH(get_faz20_marker, "get_faz20_marker", HPyFunc_NOARGS)
+static HPy get_faz20_marker_impl(HPyContext *ctx, HPy self)
+{
+    return HPy_GetAttr_s(ctx, self, "faz20_marker");
+}
+
 static HPyDef *module_defines[] = {
     &long_conv_roundtrip,
     &long_as_double_via_c,
@@ -1274,6 +1298,8 @@ static HPyDef *module_defines[] = {
     &sum_list_of_ints,
     &dict_value_sum,
     &class_field_sum,
+    &module_exec_marker,
+    &get_faz20_marker,
     NULL
 };
 
