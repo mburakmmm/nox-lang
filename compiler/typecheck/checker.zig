@@ -2280,7 +2280,7 @@ pub const Checker = struct {
     /// olarak İŞARETLERDİ (ör. `len(xs)` İçEREN salt-okunur bir yardımcı
     /// bile YAKALANIRDI — GERÇEK bir yanlış-pozitif).
     fn isKnownSafeBuiltinCallee(name: []const u8) bool {
-        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "hpy_new_on", "hpy_getattr_int_on", "hpy_setattr_int_on", "hpy_call_attr_on", "wasm_call" };
+        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "hpy_new_on", "hpy_getattr_int_on", "hpy_setattr_int_on", "hpy_call_attr_on", "hpy_new_object_on", "hpy_getitem_int_on", "wasm_call" };
         for (safe) |s| {
             if (std.mem.eql(u8, name, s)) return true;
         }
@@ -4746,6 +4746,30 @@ pub const Checker = struct {
                             arg_expr.* = .{ .call = .{ .callee = callee, .args = wrapped_args } };
                         }
                     }
+                    return .int;
+                }
+                // Faz 22 (bkz. plan dosyası "bare attribute-nesnesi +
+                // gerçek slice tipi + numpy-tarzı skaler-broadcast slice
+                // ataması"): `hpy_new_object_on` — boş, TİPSİZ bir örnek
+                // İNŞA eder (`hpy_setattr_int_on` İLE SONRADAN attribute
+                // eklenebilir) — SADECE `handle:ptr` alır.
+                if (std.mem.eql(u8, name, "hpy_new_object_on")) {
+                    if (c.args.len != 1) {
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_new_object_on' tam olarak 1 argüman alır (tutamac: ptr)", .{});
+                    }
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_new_object_on' argümanı (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
+                    return .ptr;
+                }
+                // Faz 22: `hpy_getitem_int_on` — bir opak `.list_`/`.tuple_`
+                // tutamacının (ör. `hpy_call_obj_on`dan alınan bir dönüş
+                // tuple'ının) `index`teki elemanını `int` olarak okur.
+                if (std.mem.eql(u8, name, "hpy_getitem_int_on")) {
+                    if (c.args.len != 3) {
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_getitem_int_on' tam olarak 3 argüman alır (tutamac: ptr, nesne: ptr, index: int)", .{});
+                    }
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_getitem_int_on' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_getitem_int_on' argümanı 2 (nesne) ptr olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[2]) != .int) return self.fail(error.TypeMismatch, "'hpy_getitem_int_on' argümanı 3 (index) int olmalıdır", .{});
                     return .int;
                 }
                 // Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi +

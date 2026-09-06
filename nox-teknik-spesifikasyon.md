@@ -18509,6 +18509,104 @@ zig build stress-test -Doptimize=ReleaseFast` TEMİZ (BİLİNEN, İLGİSİZ
 
 ---
 
+## 3.132 Faz 22 — bare attribute-nesnesi + gerçek `slice` tipi + numpy-tarzı skaler-broadcast slice ataması (aHPy `external_nogil_targets` ile GERÇEK dünya doğrulaması) (v1.66.0)
+
+Faz 21 (v1.65.0) Box'ı bitirdikten SONRA kullanıcı, Faz 20'de "hibrit
+attribute+subscript nesnesi gerektiriyor, orantısız" DİYE ERTELENEN
+`external_nogil_targets`e DÖNMEK istedi. BU turun KENDİ araştırması,
+aHPy'nin GERÇEK Python kaynağını (`ahpy_setuptools_example.pyx:85-98`)
+okuyarak ÖNCEKİ teşhisin YANLIŞ olduğunu buldu:
+
+```python
+def external_nogil_targets(obj, mapping, /):
+    global nogil_stored_result
+    with nogil:
+        nogil_stored_result = ahpy_external_nogil_advance(obj.amount)
+        obj.value = ahpy_external_nogil_advance(mapping[0])
+        mapping[0] = ahpy_external_nogil_advance(3)
+        mapping[1:2] = ahpy_external_nogil_advance(4)
+    return (nogil_stored_result, obj.value, mapping[0], mapping[1:2],
+            ahpy_external_nogil_probe_calls())
+```
+
+`obj` SADECE attribute'lu (GetAttr `amount`, SetAttr `value`) basit bir
+nesne — HİÇBİR subscript KULLANMAZ. `mapping` İSE SADECE sıralı
+(sequence) bir nesne — TAM SAYI indeksle (`mapping[0]`) VE slice'la
+(`mapping[1:2]`) erişiliyor, HİÇBİR attribute KULLANMAZ. Yani "hibrit"
+bir nesne HİÇ GEREKMİYOR — İKİ AYRI, BASİT nesne YETERLİ. TEK gerçek
+zorluk: `mapping[1:2] = 4` GERÇEK Python `list` semantiğinde GEÇERSİZDİR
+(slice ataması bir ITERABLE bekler, TypeError verir) — kullanıcı BUNU
+NUMPY-tarzı bir SKALER-broadcast (`arr[1:2]=4`nin aralıktaki HER elemana
+`4`yü yazması) OLARAK, Nox'un KENDİ `list[T]` temsiline GENELLEŞTİRİLMİŞ,
+BİLİNÇLİ bir v1 uzantısı OLARAK istedi.
+
+**Araştırma bulguları**: `h_SliceType` (`Obj` struct'ında `HPy_NULL`
+varsayılanıyla VAR AMA `createContext`nin BÜYÜK struct-literal'ında
+(`h_LongType`/vb.nin AKSİNE) HİÇ ATANMIYORDU — GERÇEK aHPy kodunun
+`HPy_Call(ctx, ctx->h_SliceType, [a,b,c], 3, ...)` çağrısı HER ZAMAN
+"çağrılabilir değil" TypeError verirdi. Nox'un v1'i "slice"ı ZATEN 3
+elemanlı bir `.tuple_` (start, stop, step) OLARAK temsil ediyor
+(`ctxSliceUnpack`nin — Faz XX, `HPySlice_Unpack` — ÖNCEDEN belgelenmiş
+tasarımı) — BU, `h_SliceType`i inşa etmeyi ÇOK BASİTLEŞTİRDİ: YENİ bir
+`Obj` etiketi GEREKMEDİ, SADECE `type_tp_new`i (`ctxSliceTypeNew`) 3
+argümanı `ctxDup`layıp YENİ bir `.tuple_` OLARAK paketleyecek şekilde
+AYARLAMAK yeterliydi. `ctxGetItem`/`ctxSetItem`nin `.list_` dalı SADECE
+`.long` anahtar kabul ediyordu — slice-anahtarlı erişim TAMAMEN YOKTU.
+`objEquals`in `.tuple_` İçİn KİMLİK karşılaştırması kullanması bu tasarımda
+SORUN DEĞİL — slice bir DICT anahtarı OLARAK KULLANILMIYOR (`mapping`in
+bir SEQUENCE olduğu doğrulandı), SADECE `.list_`nin GetItem/SetItem'inde
+DOĞRUDAN aralık-matematiği İçİn OKUNUYOR.
+
+**Uygulama**: `runtime/hpy_bridge/context.zig`ye YENİ `ctxSliceTypeNew`
+(`h_SliceType`nin `type_tp_new`i) + `createContext`e `h_SliceType`
+ataması (+ `destroyContext`nin `singletons` DİZİSİNE eklenmesi — İLK
+denemede BU EKSİK OLUP HER context için bir SIZINTI raporlanmıştı,
+DÜZELTİLDİ). YENİ `resolveSliceRange` (Python'un `slice.indices(len)`inin
+AYNI standart algoritması, `ctxSliceUnpack`nin ham değerlerini `len`e göre
+KENETLER) + `keyIsSlice` (3 elemanlı `.tuple_` = slice). `ctxGetItem`/
+`ctxSetItem`nin `.list_` dalı GENİŞLER: `ctxListGetSlice` (alt-liste
+kopyası döner), `ctxListSetSlice` (sıralı DEĞER İçİn GERÇEK Python
+semantiği — `step==1` büyütüp/küçültebilir, `step!=1` uzunluklar TAM
+eşit olmalı; SKALER DEĞER İçİn YENİ numpy-tarzı broadcast). YENİ Nox
+builtinleri: `hpy_new_object_on(handle) -> ptr` (Faz 20'nin
+`createModuleObject`ini YENİDEN kullanan bare attribute-nesnesi),
+`hpy_getitem_int_on(handle, container, index) -> int` (`ctx_GetItem_i`i
+DOĞRUDAN çağırır — opak `.list_`/`.tuple_` tutamaçlarının elemanlarını
+okumak İçİn, ör. `hpy_call_obj_on`dan alınan bir tuple dönüşünü
+doğrulamak).
+
+**Doğrulama**: 6 YENİ dahili Zig testi (`runtime/hpy_bridge/context.zig`)
+— `h_SliceType`in çağrılabilirliği + `ctx_Slice_Unpack` round-trip, slice
+GET (alt-liste kopyası, orijinal DEĞİŞMEZ), slice SET skaler (broadcast,
+uzunluk DEĞİŞMEZ), slice SET sıralı-değer step=1 (büyüme/küçülme), slice
+SET step!=1 uzunluk-uyuşmazlığı (`ValueError`), bare-nesne attribute
+round-trip — HEPSİ sızıntısız GEÇTİ. YENİ, self-contained C test
+fonksiyonu (`tests/compat/hpy_ext/noxtest.c`): `attr_and_seq_roundtrip`
+(aHPy'nin GERÇEK desenin KÜÇÜLTÜLMÜŞ bir kopyası, `HPyFunc_VARARGS`) +
+YENİ golden test (`tests/compat/hpy_call_golden_test.zig`, `219` beklenen
+sonuç). **GERÇEK aHPy `external_nogil_targets`ına karşı ELLE doğrulandı**:
+`hpy_new_object_on`+`hpy_setattr_int_on(amount=7)`+`mapping=[10,20]` İLE
+çağrılıp dönen tuple'ın İLK 4 elemanı `7`/`17`/`20`/`24` OLARAK (GERÇEK
+C-tarafı paylaşılan sayaç mantığıyla BİREBİR eşleşerek: 0+7=7, 7+10=17,
+17+3=20, 20+4=24) doğrulandı — ÖNCEDEN TAMAMEN çağrılamayan bu fonksiyon
+ARTIK uçtan uca ÇALIŞIYOR. `zig build test` (TAM paket, Debug+ReleaseFast)
++ `NOX_STRESS_ROUNDS=800 zig build stress-test -Doptimize=ReleaseFast`
+TEMİZ (BİLİNEN, İLGİSİZ `--listen=-` harness misreport'ları HARİÇ).
+
+## Kapsam DIŞI (bu turda)
+- `.tuple_` İçİn slice-anahtarlı GetItem (SADECE `.list_` kapsanır) —
+  Python'da tuple'lar da slice edilebilir AMA aHPy'nin GERÇEK kullanım
+  deseni SADECE `mapping` (bir liste) İçİn slice kullanıyor.
+- `.list_` slice SetItem'ının `step != 1` VE FARKLI uzunluk durumundaki
+  TAM CPython hata mesajı sadakati — davranışsal doğruluk ÖNCELİKLİDİR.
+- `hpy_getitem_float_on`/`_bool_on`/`_str_on`/`_obj_on` — v1 SADECE `int`
+  VARYANTINI kapsar (aHPy'nin dönüş tuple'ının TÜM elemanları int),
+  DİĞER TİPLER Faz 17'nin AYNI desenle GELECEKTE eklenebilir.
+- `objEquals`in `.tuple_` İçİn derin/yapısal eşitliği — slice bir DICT
+  anahtarı OLARAK KULLANILMADIĞINDAN GEREKMEDİ.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

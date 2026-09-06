@@ -418,3 +418,27 @@ test "hpy_close_obj: Boxed_destroy (tp_destroy) GERÇEKTEN tetiklenir" {
         "1\n",
     );
 }
+
+// Faz 22 (bkz. plan dosyası "bare attribute-nesnesi + gerçek slice tipi
+// + numpy-tarzı skaler-broadcast slice ataması"): aHPy'nin GERÇEK
+// `external_nogil_targets`ının (ÖNCEDEN "hibrit attribute+subscript
+// nesnesi gerektiriyor" SANILAN, AMA GERÇEKTE İKİ AYRI BASİT nesne —
+// bir attribute-nesnesi + bir sıralı nesne — yeterli OLAN) küçültülmüş
+// bir kopyası, `attr_and_seq_roundtrip` (bkz. `noxtest.c`), GERÇEKTEN
+// ÇALIŞTIRILIP DOĞRULANIR: `hpy_new_object_on` (bare attribute-nesnesi)
+// + `hpy_setattr_int_on` + `h_SliceType`in GERÇEKTEN çağrılabilir olması
+// + `.list_`nin SLICE GET/SET'i (SKALER broadcast DAHİL) HEPSİ BİRLİKTE.
+test "hpy_new_object_on + h_SliceType + list slice broadcast: aHPy'nin external_nogil_targets deseni" {
+    try expectGolden(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\obj: ptr = hpy_new_object_on(h)
+        \\hpy_setattr_int_on(h, obj, "amount", 5)
+        \\mapping: list[int] = [10, 20, 30, 40]
+        \\print(hpy_call_on(h, "attr_and_seq_roundtrip", obj, mapping))
+        \\hpy_close_obj(h, obj)
+        \\hpy_close(h)
+        \\
+    ,
+        "219\n",
+    );
+}

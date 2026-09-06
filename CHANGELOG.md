@@ -14,6 +14,59 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.66.0]
+
+### Eklendi
+- **Faz 22 — bare attribute-nesnesi + gerçek `slice` tipi + numpy-tarzı
+  skaler-broadcast slice ataması (aHPy `external_nogil_targets` ile
+  GERÇEK dünya doğrulaması)**: Faz 20'de "hibrit attribute+subscript
+  nesnesi gerektiriyor, orantısız" diye ERTELENEN `external_nogil_targets`
+  yeniden ele alındı — aHPy'nin GERÇEK Python kaynağı (`ahpy_setuptools_
+  example.pyx:85-98`) okunarak ÖNCEKİ teşhisin YANLIŞ olduğu bulundu:
+  `obj` SADECE attribute'lu (`amount`/`value`) basit bir nesne, `mapping`
+  İSE SADECE sıralı (int-indeks + slice) bir nesne — hibrit bir şey HİÇ
+  GEREKMİYOR. TEK gerçek engel: `mapping[1:2] = 4` (GERÇEK Python
+  `list`inde GEÇERSİZ, ValueError verir) — kullanıcı BUNU numpy-tarzı bir
+  SKALER-broadcast (aralıktaki HER elemana AYNI değeri yazma) OLARAK
+  Nox'un `list[T]`ine GENELLEŞTİRİLMİŞ, bilinçli bir v1 uzantısı OLARAK
+  istedi.
+- **`h_SliceType` artık GERÇEKTEN çağrılabilir**: `Obj`de `h_SliceType:
+  HPy = HPy_NULL` alanı VARDI ama `createContext` HİÇ ATAMIYORDU — GERÇEK
+  aHPy kodunun `HPy_Call(ctx, ctx->h_SliceType, [a,b,c], 3, ...)` çağrısı
+  HER ZAMAN "çağrılabilir değil" TypeError verirdi. Nox'un v1'i "slice"ı
+  ZATEN 3 elemanlı bir `.tuple_` (start,stop,step) olarak temsil ettiğinden
+  (`ctxSliceUnpack`nin ÖNCEDEN belgelenmiş tasarımı), YENİ `ctxSliceTypeNew`
+  (`h_SliceType`nin `type_tp_new`i) SADECE 3 argümanı bu temsile paketler
+  — YENİ bir `Obj` etiketi GEREKMEDİ.
+- **`.list_`nin GetItem/SetItem'i artık slice-anahtarlı erişimi de
+  destekliyor**: slice GET bir alt-liste KOPYASI döner; slice SET İKİ dal
+  — sıralı bir değer (`list`/`tuple`) İSE GERÇEK Python semantiği (`step==1`
+  aralığı büyütüp/küçültebilir, `step!=1` uzunluklar TAM eşit olmalı,
+  aksi halde `ValueError`); SKALER bir değer İSE **YENİ, numpy-tarzı bir
+  genelleme**: aralıktaki HER indekse AYNI değer yazılır (`arr[1:2]=4`nin
+  numpy'daki broadcast davranışı).
+- **YENİ Nox builtinleri**: `hpy_new_object_on(handle) -> ptr` (Faz 20'nin
+  `createModuleObject`ini YENİDEN KULLANAN, boş/tipsiz bir attribute-nesnesi
+  inşa eder), `hpy_getitem_int_on(handle, container, index) -> int`
+  (`ctx_GetItem_i`i DOĞRUDAN çağırır — opak bir `.list_`/`.tuple_`
+  tutamacının elemanlarını okur, ör. `hpy_call_obj_on`dan alınan bir
+  dönüş tuple'ını doğrulamak İçİn).
+- GERÇEK aHPy `external_nogil_targets`ına karşı ELLE doğrulandı:
+  `hpy_new_object_on`+`hpy_setattr_int_on(amount=7)` + `mapping=[10,20]`
+  İLE çağrılıp dönen 5 elemanlı tuple'ın İLK 4 elemanı (`nogil_stored_result`,
+  `obj.value`, `mapping[0]`, `probe_calls`) `7`/`17`/`20`/`24` OLARAK
+  (GERÇEK C-tarafı sayaç mantığıyla BİREBİR eşleşerek) doğrulandı —
+  ÖNCEDEN TAMAMEN çağrılamayan bu fonksiyon ARTIK uçtan uca ÇALIŞIYOR.
+- **YENİ, self-contained C test fonksiyonu** (`tests/compat/hpy_ext/
+  noxtest.c`): `attr_and_seq_roundtrip` (aHPy'nin GERÇEK desenin KÜÇÜLTÜLMÜŞ
+  bir kopyası — `HPyFunc_VARARGS`, attribute get/set + int-indeks get/set
+  + slice get/set skaler-broadcast HEPSİNİ egzersiz eder, TEK bir int
+  toplamı döner). YENİ golden test (`tests/compat/hpy_call_golden_test.
+  zig`) + 6 YENİ dahili Zig testi (`runtime/hpy_bridge/context.zig`:
+  `h_SliceType` çağrılabilirliği, slice GET, skaler-broadcast SET, sıralı-
+  değer SET (büyüme/küçülme), step!=1 uzunluk-uyuşmazlığı ValueError'ı,
+  bare-nesne attribute round-trip).
+
 ## [1.65.0]
 
 ### Eklendi

@@ -950,6 +950,45 @@ pub export fn nox_hpy_call_attr_int_finish(mc_ptr: ?*anyopaque, attr_name: ?[*:0
     return ctx.ctx_Long_AsInt64_t.?(ctx, h_result);
 }
 
+/// Faz 22 (bkz. plan dosyası "bare attribute-nesnesi + gerçek slice tipi
+/// + numpy-tarzı skaler-broadcast slice ataması"): `context.createModuleObject`i
+/// (Faz 20) YENİDEN KULLANIR — boş, TİPSİZ bir `.instance_` örneği (attribute'ları
+/// SONRADAN `hpy_setattr_int_on` İLE EKLENEBİLİR). `hpy_new_object_on`,
+/// aHPy'nin `external_nogil_targets`inin `obj.amount`/`obj.value` GİBİ
+/// SADECE attribute'lu (subscript İSTEMEYEN) bir "target" argümanı
+/// beklediği durumlar İçİndir.
+pub export fn nox_hpy_new_object(handle_ptr: ?*anyopaque) ?*anyopaque {
+    const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return null));
+    const h = hpy_bridge.context.createModuleObject(handle.ctx) catch {
+        setHpyError("bellek yetersiz", .{});
+        return null;
+    };
+    const raw: usize = @bitCast(h._i);
+    if (raw == 0) return null;
+    return @ptrFromInt(raw);
+}
+
+/// Faz 22: `container`in (bir opak `.list_`/`.tuple_` tutamacı — ör.
+/// `hpy_call_obj_on`dan alınmış bir dönüş değeri) `index`teki elemanını
+/// `ctx_GetItem_i` İLE OKUYUP `int` OLARAK unmarshal eder.
+pub export fn nox_hpy_getitem_int(handle_ptr: ?*anyopaque, container_ptr: ?*anyopaque, index: i64) i64 {
+    const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return 0));
+    const op = container_ptr orelse {
+        setHpyError("geçersiz nesne", .{});
+        return 0;
+    };
+    const ctx = handle.ctx;
+    const container_h: hpy_bridge.context.HPy = .{ ._i = @bitCast(@intFromPtr(op)) };
+    const h_result = ctx.ctx_GetItem_i.?(ctx, container_h, @intCast(index));
+    if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
+        ctx.ctx_Err_Clear.?(ctx);
+        setHpyError("indeks {d} okunamadı", .{index});
+        return 0;
+    }
+    defer ctx.ctx_Close.?(ctx, h_result);
+    return ctx.ctx_Long_AsInt64_t.?(ctx, h_result);
+}
+
 /// `path`teki `.wasm` ikilisini yükler, `func_name` adlı (yalnızca `i32`
 /// parametre/dönüşlü) export'u `arg` ile çağırıp sonucu döner.
 pub export fn nox_wasm_call(

@@ -1272,6 +1272,97 @@ static HPy class_field_sum_impl(HPyContext *ctx, HPy self, const HPy *args, size
     return HPyLong_FromInt64_t(ctx, total);
 }
 
+/* Faz 22 (bkz. plan dosyası "bare attribute-nesnesi + gerçek slice tipi
+ * + numpy-tarzı skaler-broadcast slice ataması"): aHPy'nin GERÇEK
+ * `external_nogil_targets`inin (`obj.amount`/`obj.value` — SADECE
+ * attribute; `mapping[0]`/`mapping[1:2]` — SADECE int/slice subscript)
+ * KÜÇÜLTÜLMÜŞ bir kopyası. `HPyFunc_VARARGS` (aHPy'nin KENDİ imzası) —
+ * `obj`nin `amount`ını okuyup `value`sini YAZAR, `mapping[0]`ı okuyup
+ * YAZAR, `mapping[1:3]`e (GERÇEK `ctx->h_SliceType` İLE İNŞA EDİLMİŞ bir
+ * slice) SKALER `99` broadcast eder VE bu aralığı GERİ OKUR — TÜM
+ * sonuçların TOPLAMINI (TEK bir int) döner (tuple-inşası KARMAŞIKLIĞINA
+ * GEREK KALMADAN, GERÇEK aHPy'ya karşı manuel doğrulama BUNU ZATEN
+ * kanıtladı — bkz. plan dosyasının doğrulama notu). */
+HPyDef_METH(attr_and_seq_roundtrip, "attr_and_seq_roundtrip", HPyFunc_VARARGS)
+static HPy attr_and_seq_roundtrip_impl(HPyContext *ctx, HPy self, const HPy *args, size_t nargs)
+{
+    (void)self;
+    if (nargs != 2) {
+        HPyErr_SetString(ctx, ctx->h_TypeError, "attr_and_seq_roundtrip() tam olarak 2 argüman alır");
+        return HPy_NULL;
+    }
+    HPy obj = args[0];
+    HPy mapping = args[1];
+
+    HPy amount = HPy_GetAttr_s(ctx, obj, "amount");
+    if (HPy_IsNull(amount)) return HPy_NULL;
+    long long amount_v = HPyLong_AsLongLong(ctx, amount);
+    HPy_Close(ctx, amount);
+    if ((amount_v == -1) && HPyErr_Occurred(ctx)) return HPy_NULL;
+
+    HPy value = HPyLong_FromLongLong(ctx, amount_v * 2);
+    if (HPy_IsNull(value)) return HPy_NULL;
+    int st = HPy_SetAttr_s(ctx, obj, "value", value);
+    HPy_Close(ctx, value);
+    if (st < 0) return HPy_NULL;
+
+    HPy m0 = HPy_GetItem_i(ctx, mapping, 0);
+    if (HPy_IsNull(m0)) return HPy_NULL;
+    long long m0_v = HPyLong_AsLongLong(ctx, m0);
+    HPy_Close(ctx, m0);
+    if ((m0_v == -1) && HPyErr_Occurred(ctx)) return HPy_NULL;
+
+    HPy new_m0 = HPyLong_FromLongLong(ctx, m0_v + 1);
+    if (HPy_IsNull(new_m0)) return HPy_NULL;
+    st = HPy_SetItem_i(ctx, mapping, 0, new_m0);
+    HPy_Close(ctx, new_m0);
+    if (st < 0) return HPy_NULL;
+
+    HPy one = HPyLong_FromLongLong(ctx, 1);
+    HPy three = HPyLong_FromLongLong(ctx, 3);
+    if (HPy_IsNull(one) || HPy_IsNull(three)) {
+        if (!HPy_IsNull(one)) HPy_Close(ctx, one);
+        if (!HPy_IsNull(three)) HPy_Close(ctx, three);
+        return HPy_NULL;
+    }
+    HPy slice_args[] = { one, three, ctx->h_None };
+    HPy slice = HPy_Call(ctx, ctx->h_SliceType, slice_args, 3, HPy_NULL);
+    HPy_Close(ctx, one);
+    HPy_Close(ctx, three);
+    if (HPy_IsNull(slice)) return HPy_NULL;
+
+    HPy ninetynine = HPyLong_FromLongLong(ctx, 99);
+    if (HPy_IsNull(ninetynine)) {
+        HPy_Close(ctx, slice);
+        return HPy_NULL;
+    }
+    st = HPy_SetItem(ctx, mapping, slice, ninetynine);
+    HPy_Close(ctx, ninetynine);
+    if (st < 0) {
+        HPy_Close(ctx, slice);
+        return HPy_NULL;
+    }
+
+    HPy sub = HPy_GetItem(ctx, mapping, slice);
+    HPy_Close(ctx, slice);
+    if (HPy_IsNull(sub)) return HPy_NULL;
+
+    HPy_ssize_t sub_len = HPy_Length(ctx, sub);
+    long long sub_sum = 0;
+    for (HPy_ssize_t i = 0; i < sub_len; i++) {
+        HPy e = HPy_GetItem_i(ctx, sub, i);
+        if (HPy_IsNull(e)) {
+            HPy_Close(ctx, sub);
+            return HPy_NULL;
+        }
+        sub_sum += HPyLong_AsLongLong(ctx, e);
+        HPy_Close(ctx, e);
+    }
+    HPy_Close(ctx, sub);
+
+    return HPyLong_FromLongLong(ctx, (amount_v * 2) + (m0_v + 1) + sub_sum);
+}
+
 /* Faz 20 (bkz. plan dosyası "HPy modül nesnesi + HPy_mod_exec desteği"):
  * GERÇEK Cython-üretimi (aHPy `hpy-universal` arka ucu) kod import
  * anındaki `HPy_mod_exec` slot'unu, derleme-zamanı sabitlerini `self`
@@ -1389,6 +1480,7 @@ static HPyDef *module_defines[] = {
     &module_exec_marker,
     &get_faz20_marker,
     &get_boxed_destroy_count,
+    &attr_and_seq_roundtrip,
     NULL
 };
 

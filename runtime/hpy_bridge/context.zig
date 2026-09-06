@@ -1709,10 +1709,27 @@ fn ctxDelItemI(ctx: *HPyContext, obj_h: HPy, idx: isize) callconv(.c) c_int {
 fn ctxGetItem(ctx: *HPyContext, obj_h: HPy, key_h: HPy) callconv(.c) HPy {
     const obj = objOf(obj_h) orelse return HPy_NULL;
     switch (obj.tag) {
-        .list_, .tuple_ => {
+        // Faz 22 (bkz. plan dosyası "bare attribute-nesnesi + gerçek
+        // slice tipi..."): `.list_` ARTIK slice-anahtarlı (3 elemanlı
+        // `.tuple_`) GetItem'i de destekler — `.tuple_`nin KENDİSİ v1'de
+        // SADECE `.long` indeksi destekler (aHPy'nin GERÇEK kullanım
+        // deseni slice'ı SADECE `.list_` İçİn kullanıyor, bkz. plan
+        // dosyasının "Kapsam DIŞI" notu).
+        .list_ => {
+            const key = objOf(key_h) orelse return HPy_NULL;
+            if (keyIsSlice(key)) {
+                return ctxListGetSlice(ctx, obj, key_h);
+            }
+            if (key.tag != .long) {
+                ctxErrSetString(ctx, ctx.h_TypeError, "liste indeksi int olmalı");
+                return HPy_NULL;
+            }
+            return ctxGetItemI(ctx, obj_h, key.payload.l);
+        },
+        .tuple_ => {
             const key = objOf(key_h) orelse return HPy_NULL;
             if (key.tag != .long) {
-                ctxErrSetString(ctx, ctx.h_TypeError, "liste/tuple indeksleri int olmalı");
+                ctxErrSetString(ctx, ctx.h_TypeError, "tuple indeksi int olmalı");
                 return HPy_NULL;
             }
             return ctxGetItemI(ctx, obj_h, key.payload.l);
@@ -1735,13 +1752,24 @@ fn ctxGetItem(ctx: *HPyContext, obj_h: HPy, key_h: HPy) callconv(.c) HPy {
 fn ctxSetItem(ctx: *HPyContext, obj_h: HPy, key_h: HPy, value: HPy) callconv(.c) c_int {
     const obj = objOf(obj_h) orelse return -1;
     switch (obj.tag) {
-        .list_, .tuple_ => {
+        // Faz 22: `.list_` ARTIK slice-anahtarlı SetItem'i de destekler
+        // (bkz. `ctxListSetSlice`in belge notu — sıralı DEĞER=gerçek
+        // Python semantiği, SKALER=numpy-tarzı broadcast).
+        .list_ => {
             const key = objOf(key_h) orelse return -1;
+            if (keyIsSlice(key)) {
+                return ctxListSetSlice(ctx, obj, key_h, value);
+            }
             if (key.tag != .long) {
-                ctxErrSetString(ctx, ctx.h_TypeError, "liste/tuple indeksleri int olmalı");
+                ctxErrSetString(ctx, ctx.h_TypeError, "liste indeksi int olmalı");
                 return -1;
             }
             return ctxSetItemI(ctx, obj_h, key.payload.l, value);
+        },
+        .tuple_ => {
+            // Tuple'lar DEĞİŞMEZDİR (bkz. `ctxSetItemI`nin AYNI notu).
+            ctxErrSetString(ctx, ctx.h_TypeError, "bu tip öğe atamasını desteklemiyor");
+            return -1;
         },
         .dict_ => {
             const key = objOf(key_h) orelse return -1;
@@ -2244,6 +2272,135 @@ fn ctxSliceUnpack(ctx: *HPyContext, slice: HPy, start: ?*isize, stop: ?*isize, s
     if (start) |s| s.* = start_v;
     if (stop) |s| s.* = stop_v;
     if (step) |s| s.* = step_v;
+    return 0;
+}
+
+/// Faz 22: `ctxSliceUnpack`nin (yukarıda) ham, KENETLENMEMİŞ start/stop/
+/// step değerlerini, `len` uzunluğuna göre GERÇEK Python'ın `slice.
+/// indices(len)`inin AYNI standart algoritmasıyla KENETLER (negatif
+/// indeksleri `len` İLE telafi eder, aralığı `[0,len]`/`[-1,len-1]`e
+/// SIKIŞTIRIR — `step`in İŞARETİNE göre). `key_h` GEÇERLİ bir slice (3
+/// elemanlı `.tuple_`) DEĞİLSE (VEYA `ctxSliceUnpack` hata verirse) `null`
+/// döner (ÇAĞIRAN, `.list_` GetItem/SetItem'in `.long` DALINA düşer).
+const SliceRange = struct { start: isize, stop: isize, step: isize };
+
+fn resolveSliceRange(ctx: *HPyContext, key_h: HPy, len: usize) ?SliceRange {
+    var start: isize = 0;
+    var stop: isize = 0;
+    var step: isize = 0;
+    if (ctxSliceUnpack(ctx, key_h, &start, &stop, &step) < 0) return null;
+    const l: isize = @intCast(len);
+    if (step > 0) {
+        start = std.math.clamp(if (start < 0) start + l else start, 0, l);
+        stop = std.math.clamp(if (stop < 0) stop + l else stop, 0, l);
+    } else {
+        start = std.math.clamp(if (start < 0) start + l else start, -1, l - 1);
+        stop = std.math.clamp(if (stop < 0) stop + l else stop, -1, l - 1);
+    }
+    return .{ .start = start, .stop = stop, .step = step };
+}
+
+/// Faz 22: `key_h`in "slice" olarak TANINMASI İçİn — `.tuple_` etiketli
+/// VE tam 3 elemanlı OLMASI YETERLİ (v1'in KENDİ "slice = 3 elemanlı
+/// tuple" temsili, bkz. `ctxSliceUnpack`nin belge notu). GERÇEK bir 3
+/// elemanlı KULLANICI tuple'ının slice SANILMASI riski (Nox'un KENDİSİ
+/// hiçbir zaman bir tuple'ı DOĞRUDAN inşa edip HPy'ye argüman OLARAK
+/// geçiremediğinden — bkz. plan dosyası) v1'de teorik/PRATİKTE karşılaşılmaz.
+fn keyIsSlice(key: *Obj) bool {
+    return key.tag == .tuple_ and key.tuple_data.len == 3;
+}
+
+/// Faz 22: `obj[slice]` (GET) — GERÇEK Python liste-dilimlemesinin AYNI
+/// semantiği: aralıktaki HER elemanın `ctxDup`lanmış bir KOPYASINI taşıyan
+/// YENİ bir `.list_` döner (`obj`nin KENDİSİ DEĞİŞMEZ).
+fn ctxListGetSlice(ctx: *HPyContext, obj: *Obj, key_h: HPy) HPy {
+    const range = resolveSliceRange(ctx, key_h, obj.list_data.items.len) orelse return HPy_NULL;
+    const allocator = contextAllocator(ctx);
+    var out: std.ArrayListUnmanaged(HPy) = .empty;
+    var i = range.start;
+    while (if (range.step > 0) i < range.stop else i > range.stop) : (i += range.step) {
+        out.append(allocator, ctxDup(ctx, obj.list_data.items[@intCast(i)])) catch {
+            for (out.items) |h| ctxClose(ctx, h);
+            out.deinit(allocator);
+            ctxErrNoMemory(ctx);
+            return HPy_NULL;
+        };
+    }
+    const new_obj = allocator.create(Obj) catch {
+        for (out.items) |h| ctxClose(ctx, h);
+        out.deinit(allocator);
+        ctxErrNoMemory(ctx);
+        return HPy_NULL;
+    };
+    new_obj.* = .{ .refcount = 1, .tag = .list_, .payload = .{ .l = 0 }, .list_data = out };
+    return .{ ._i = @intCast(@intFromPtr(new_obj)) };
+}
+
+/// Faz 22: `obj[slice] = value` (SET) — İKİ dal: `value` bir SIRALI
+/// nesne (`.list_`/`.tuple_`) İSE GERÇEK Python slice-atama semantiği
+/// (`step==1` aralığı BÜYÜTÜP/KÜÇÜLTEBİLİR, `step!=1` uzunluklar TAM
+/// EŞİT olmalı); AKSİ HALDE (SKALER) — KULLANICININ AÇIKÇA İSTEDİĞİ,
+/// GERÇEK Python `list`inde OLMAYAN NUMPY-tarzı bir genelleme: aralıktaki
+/// HER indekse AYNI değerin KENDİ `ctxDup`lanmış bir kopyası YAZILIR
+/// (`arr[1:2] = 4`nin numpy'daki skaler-broadcast davranışı).
+fn ctxListSetSlice(ctx: *HPyContext, obj: *Obj, key_h: HPy, value: HPy) c_int {
+    const range = resolveSliceRange(ctx, key_h, obj.list_data.items.len) orelse return -1;
+    const value_obj = objOf(value);
+    const is_sequence = if (value_obj) |vo| (vo.tag == .list_ or vo.tag == .tuple_) else false;
+
+    if (!is_sequence) {
+        var i = range.start;
+        while (if (range.step > 0) i < range.stop else i > range.stop) : (i += range.step) {
+            const idx: usize = @intCast(i);
+            const old = obj.list_data.items[idx];
+            obj.list_data.items[idx] = ctxDup(ctx, value);
+            ctxClose(ctx, old);
+        }
+        return 0;
+    }
+
+    const vo = value_obj.?;
+    const src: []const HPy = if (vo.tag == .list_) vo.list_data.items else vo.tuple_data;
+    const allocator = contextAllocator(ctx);
+
+    if (range.step == 1) {
+        const start_u: usize = @intCast(range.start);
+        const stop_u: usize = @intCast(@max(range.start, range.stop));
+        for (obj.list_data.items[start_u..stop_u]) |h| ctxClose(ctx, h);
+        const new_items = allocator.alloc(HPy, src.len) catch {
+            ctxErrNoMemory(ctx);
+            return -1;
+        };
+        defer allocator.free(new_items);
+        for (src, 0..) |h, i| new_items[i] = ctxDup(ctx, h);
+        obj.list_data.replaceRange(allocator, start_u, stop_u - start_u, new_items) catch {
+            for (new_items) |h| ctxClose(ctx, h);
+            ctxErrNoMemory(ctx);
+            return -1;
+        };
+        return 0;
+    }
+
+    var count: usize = 0;
+    {
+        var i = range.start;
+        while (if (range.step > 0) i < range.stop else i > range.stop) : (i += range.step) count += 1;
+    }
+    if (count != src.len) {
+        ctxErrSetString(ctx, ctx.h_ValueError, "genişletilmiş dilime atanan değerin uzunluğu aralıkla eşleşmiyor");
+        return -1;
+    }
+    var i = range.start;
+    var si: usize = 0;
+    while (if (range.step > 0) i < range.stop else i > range.stop) : ({
+        i += range.step;
+        si += 1;
+    }) {
+        const idx: usize = @intCast(i);
+        const old = obj.list_data.items[idx];
+        obj.list_data.items[idx] = ctxDup(ctx, src[si]);
+        ctxClose(ctx, old);
+    }
     return 0;
 }
 
@@ -3772,6 +3929,38 @@ fn pinnedBuiltinType(allocator: std.mem.Allocator, name: [:0]const u8) !HPy {
     return .{ ._i = @intCast(@intFromPtr(obj)) };
 }
 
+/// Faz 22 (bkz. plan dosyası "bare attribute-nesnesi + gerçek slice tipi
+/// + numpy-tarzı skaler-broadcast slice ataması"): `h_SliceType`in
+/// `type_tp_new`i — GERÇEK Python'ın `slice(a, b, c)` yapıcısının
+/// BASİTLEŞTİRİLMİŞ karşılığı. `ctxSliceUnpack`nin (bkz. onun belge notu)
+/// ZATEN VARSAYDIĞI temsili (3 elemanlı `.tuple_`, start/stop/step) ÜRETİR
+/// — YENİ bir `Obj` etiketi/depolama biçimi GEREKMEZ, `ctxSliceUnpack`
+/// bu dönen tuple'ı OLDUĞU GİBİ tüketebilir.
+fn ctxSliceTypeNew(ctx: *HPyContext, h_type: HPy, args: ?[*]const HPy, nargs: isize, kw: HPy) callconv(.c) HPy {
+    _ = h_type;
+    _ = kw;
+    if (nargs != 3) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "slice() tam olarak 3 argüman alır (start, stop, step)");
+        return HPy_NULL;
+    }
+    const a = args orelse return HPy_NULL;
+    const allocator = contextAllocator(ctx);
+    const data = allocator.alloc(HPy, 3) catch {
+        ctxErrNoMemory(ctx);
+        return HPy_NULL;
+    };
+    data[0] = ctxDup(ctx, a[0]);
+    data[1] = ctxDup(ctx, a[1]);
+    data[2] = ctxDup(ctx, a[2]);
+    const obj = allocator.create(Obj) catch {
+        allocator.free(data);
+        ctxErrNoMemory(ctx);
+        return HPy_NULL;
+    };
+    obj.* = .{ .refcount = 1, .tag = .tuple_, .payload = .{ .l = 0 }, .tuple_data = data };
+    return .{ ._i = @intCast(@intFromPtr(obj)) };
+}
+
 /// Faz 20 (bkz. plan dosyası "HPy modül nesnesi + HPy_mod_exec desteği"):
 /// bir modülün "kendi nesnesi" — GERÇEK HPy'nin `ctx_Module_Create`inin
 /// BASİTLEŞTİRİLMİŞ bir karşılığı (`HPy_mod_create` slot'u DESTEKLENMİYOR
@@ -3844,6 +4033,15 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
     const h_tuple_type = try pinnedBuiltinType(allocator, "tuple");
     const h_list_type = try pinnedBuiltinType(allocator, "list");
     const h_bytes_type = try pinnedBuiltinType(allocator, "bytes");
+    // Faz 22: `h_LongType`/vb.nin AKSİNE, `h_SliceType`in ÇAĞRILABİLİR
+    // (`HPy_Call(ctx, ctx->h_SliceType, [a,b,c], 3, ...)`) OLMASI GEREKİR
+    // — bu YÜZDEN `pinnedBuiltinType` YERİNE `type_tp_new`i AYRICA
+    // AYARLANAN, KÜÇÜK bir yerel blok kullanılır.
+    const h_slice_type = blk: {
+        const obj = try allocator.create(Obj);
+        obj.* = .{ .refcount = PINNED_REFCOUNT, .tag = .type_, .payload = .{ .l = 0 }, .type_name = "slice", .type_tp_new = ctxSliceTypeNew };
+        break :blk HPy{ ._i = @intCast(@intFromPtr(obj)) };
+    };
 
     state.* = .{ .allocator = allocator, .h_true_obj = h_true, .h_false_obj = h_false };
 
@@ -3879,6 +4077,7 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
         .h_TupleType = h_tuple_type,
         .h_ListType = h_list_type,
         .h_BytesType = h_bytes_type,
+        .h_SliceType = h_slice_type,
         .ctx_Dup = ctxDup,
         .ctx_Close = ctxClose,
         .ctx_Long_FromInt32_t = ctxLongFromInt32,
@@ -4080,7 +4279,7 @@ pub fn destroyContext(allocator: std.mem.Allocator, ctx: *HPyContext) void {
         ctx.h_LookupError,         ctx.h_UnicodeEncodeError, ctx.h_UnicodeDecodeError,
         ctx.h_LongType,            ctx.h_FloatType,      ctx.h_BoolType,
         ctx.h_UnicodeType,         ctx.h_TupleType,      ctx.h_ListType,
-        ctx.h_BytesType,
+        ctx.h_BytesType,           ctx.h_SliceType,
     };
     for (singletons) |h| allocator.destroy(objOf(h).?);
 
@@ -4475,4 +4674,201 @@ test "type_ nesnesinin HPyFunc_O metodları findTypeMethod ile bulunabilir" {
     try std.testing.expectEqual(@as(i64, 42), ctxLongAsInt64(ctx, result));
 
     try std.testing.expectEqual(@as(?TypeMethod, null), findTypeMethod(type_h, "nope"));
+}
+
+/// Faz 22 (bkz. plan dosyası "bare attribute-nesnesi + gerçek slice tipi
+/// + numpy-tarzı skaler-broadcast slice ataması"): `ctx.h_SliceType(a,
+/// b, c)` çağrısı GERÇEKTEN 3 elemanlı bir `.tuple_` döner MI VE `ctx_
+/// Slice_Unpack` bunu DOĞRU okur MU.
+fn makeSlice(ctx: *HPyContext, start: HPy, stop: HPy, step: HPy) HPy {
+    const args = [_]HPy{ start, stop, step };
+    return ctx.ctx_Call.?(ctx, ctx.h_SliceType, &args, 3, HPy_NULL);
+}
+
+test "h_SliceType: çağrılabilir, 3 elemanlı tuple inşa eder, ctx_Slice_Unpack doğru okur" {
+    const ctx = try createContext(std.testing.allocator);
+    defer destroyContext(std.testing.allocator, ctx);
+
+    const one = ctxLongFromInt64(ctx, 1);
+    defer ctxClose(ctx, one);
+    const two = ctxLongFromInt64(ctx, 2);
+    defer ctxClose(ctx, two);
+
+    const slice = makeSlice(ctx, one, two, ctx.h_None);
+    defer ctxClose(ctx, slice);
+    try std.testing.expect(slice._i != 0);
+    try std.testing.expectEqual(@as(c_int, 0), ctxErrOccurred(ctx));
+
+    var start: isize = 0;
+    var stop: isize = 0;
+    var step: isize = 0;
+    try std.testing.expectEqual(@as(c_int, 0), ctxSliceUnpack(ctx, slice, &start, &stop, &step));
+    try std.testing.expectEqual(@as(isize, 1), start);
+    try std.testing.expectEqual(@as(isize, 2), stop);
+    try std.testing.expectEqual(@as(isize, 1), step); // step=None -> 1
+
+    // Yanlış argüman sayısı → TypeError.
+    const args2 = [_]HPy{ one, two };
+    const bad = ctx.ctx_Call.?(ctx, ctx.h_SliceType, &args2, 2, HPy_NULL);
+    try std.testing.expectEqual(HPy_NULL._i, bad._i);
+    try std.testing.expectEqual(@as(c_int, 1), ctxErrExceptionMatches(ctx, ctx.h_TypeError));
+    ctxErrClear(ctx);
+}
+
+test "list: slice GetItem — alt-liste kopyası döner, orijinal DEĞİŞMEZ" {
+    const ctx = try createContext(std.testing.allocator);
+    defer destroyContext(std.testing.allocator, ctx);
+
+    const list = ctxListNew(ctx, 0);
+    defer ctxClose(ctx, list);
+    for ([_]i64{ 10, 20, 30, 40 }) |v| {
+        const h = ctxLongFromInt64(ctx, v);
+        defer ctxClose(ctx, h);
+        try std.testing.expectEqual(@as(c_int, 0), ctxListAppend(ctx, list, h));
+    }
+
+    const one = ctxLongFromInt64(ctx, 1);
+    defer ctxClose(ctx, one);
+    const three = ctxLongFromInt64(ctx, 3);
+    defer ctxClose(ctx, three);
+    const slice = makeSlice(ctx, one, three, ctx.h_None);
+    defer ctxClose(ctx, slice);
+
+    const sub = ctxGetItem(ctx, list, slice);
+    defer ctxClose(ctx, sub);
+    try std.testing.expectEqual(@as(isize, 2), ctxLength(ctx, sub));
+    const e0 = ctxGetItemI(ctx, sub, 0);
+    defer ctxClose(ctx, e0);
+    try std.testing.expectEqual(@as(i64, 20), ctxLongAsInt64(ctx, e0));
+    const e1 = ctxGetItemI(ctx, sub, 1);
+    defer ctxClose(ctx, e1);
+    try std.testing.expectEqual(@as(i64, 30), ctxLongAsInt64(ctx, e1));
+
+    // Orijinal liste DEĞİŞMEDİ.
+    try std.testing.expectEqual(@as(isize, 4), ctxLength(ctx, list));
+    const orig0 = ctxGetItemI(ctx, list, 0);
+    defer ctxClose(ctx, orig0);
+    try std.testing.expectEqual(@as(i64, 10), ctxLongAsInt64(ctx, orig0));
+}
+
+test "list: slice SetItem — SKALER değer aralığa NUMPY-tarzı broadcast edilir" {
+    const ctx = try createContext(std.testing.allocator);
+    defer destroyContext(std.testing.allocator, ctx);
+
+    const list = ctxListNew(ctx, 0);
+    defer ctxClose(ctx, list);
+    for ([_]i64{ 10, 20, 30, 40 }) |v| {
+        const h = ctxLongFromInt64(ctx, v);
+        defer ctxClose(ctx, h);
+        try std.testing.expectEqual(@as(c_int, 0), ctxListAppend(ctx, list, h));
+    }
+
+    const one = ctxLongFromInt64(ctx, 1);
+    defer ctxClose(ctx, one);
+    const three = ctxLongFromInt64(ctx, 3);
+    defer ctxClose(ctx, three);
+    const slice = makeSlice(ctx, one, three, ctx.h_None);
+    defer ctxClose(ctx, slice);
+
+    const ninetynine = ctxLongFromInt64(ctx, 99);
+    defer ctxClose(ctx, ninetynine);
+    try std.testing.expectEqual(@as(c_int, 0), ctxSetItem(ctx, list, slice, ninetynine));
+
+    try std.testing.expectEqual(@as(isize, 4), ctxLength(ctx, list)); // uzunluk DEĞİŞMEDİ (skaler broadcast)
+    const got1 = ctxGetItemI(ctx, list, 1);
+    defer ctxClose(ctx, got1);
+    try std.testing.expectEqual(@as(i64, 99), ctxLongAsInt64(ctx, got1));
+    const got2 = ctxGetItemI(ctx, list, 2);
+    defer ctxClose(ctx, got2);
+    try std.testing.expectEqual(@as(i64, 99), ctxLongAsInt64(ctx, got2));
+    const got0 = ctxGetItemI(ctx, list, 0);
+    defer ctxClose(ctx, got0);
+    try std.testing.expectEqual(@as(i64, 10), ctxLongAsInt64(ctx, got0)); // aralık DIŞI DEĞİŞMEDİ
+}
+
+test "list: slice SetItem — SIRALI değer (step=1) aralığı BÜYÜTEBİLİR/KÜÇÜLTEBİLİR" {
+    const ctx = try createContext(std.testing.allocator);
+    defer destroyContext(std.testing.allocator, ctx);
+
+    const list = ctxListNew(ctx, 0);
+    defer ctxClose(ctx, list);
+    for ([_]i64{ 10, 20, 30 }) |v| {
+        const h = ctxLongFromInt64(ctx, v);
+        defer ctxClose(ctx, h);
+        try std.testing.expectEqual(@as(c_int, 0), ctxListAppend(ctx, list, h));
+    }
+
+    const one = ctxLongFromInt64(ctx, 1);
+    defer ctxClose(ctx, one);
+    const two = ctxLongFromInt64(ctx, 2);
+    defer ctxClose(ctx, two);
+    const slice = makeSlice(ctx, one, two, ctx.h_None); // [1:2] — TEK eleman (20)
+
+    const replacement = ctxListNew(ctx, 0);
+    defer ctxClose(ctx, replacement);
+    for ([_]i64{ 7, 8, 9 }) |v| {
+        const h = ctxLongFromInt64(ctx, v);
+        defer ctxClose(ctx, h);
+        try std.testing.expectEqual(@as(c_int, 0), ctxListAppend(ctx, replacement, h));
+    }
+
+    try std.testing.expectEqual(@as(c_int, 0), ctxSetItem(ctx, list, slice, replacement));
+    ctxClose(ctx, slice);
+
+    // 3 - 1 + 3 = 5 eleman: [10, 7, 8, 9, 30]
+    try std.testing.expectEqual(@as(isize, 5), ctxLength(ctx, list));
+    const expected = [_]i64{ 10, 7, 8, 9, 30 };
+    for (expected, 0..) |want, i| {
+        const got = ctxGetItemI(ctx, list, @intCast(i));
+        defer ctxClose(ctx, got);
+        try std.testing.expectEqual(want, ctxLongAsInt64(ctx, got));
+    }
+}
+
+test "list: slice SetItem — step != 1 uzunluk uyuşmazlığında ValueError verir" {
+    const ctx = try createContext(std.testing.allocator);
+    defer destroyContext(std.testing.allocator, ctx);
+
+    const list = ctxListNew(ctx, 0);
+    defer ctxClose(ctx, list);
+    for ([_]i64{ 10, 20, 30, 40 }) |v| {
+        const h = ctxLongFromInt64(ctx, v);
+        defer ctxClose(ctx, h);
+        try std.testing.expectEqual(@as(c_int, 0), ctxListAppend(ctx, list, h));
+    }
+
+    const zero = ctxLongFromInt64(ctx, 0);
+    defer ctxClose(ctx, zero);
+    const four = ctxLongFromInt64(ctx, 4);
+    defer ctxClose(ctx, four);
+    const two_step = ctxLongFromInt64(ctx, 2);
+    defer ctxClose(ctx, two_step);
+    const slice = makeSlice(ctx, zero, four, two_step); // [0:4:2] — 2 eleman (indeks 0, 2)
+    defer ctxClose(ctx, slice);
+
+    const replacement = ctxListNew(ctx, 0);
+    defer ctxClose(ctx, replacement);
+    const only = ctxLongFromInt64(ctx, 1);
+    defer ctxClose(ctx, only);
+    try std.testing.expectEqual(@as(c_int, 0), ctxListAppend(ctx, replacement, only)); // 1 eleman, 2 BEKLENİYOR
+
+    try std.testing.expectEqual(@as(c_int, -1), ctxSetItem(ctx, list, slice, replacement));
+    try std.testing.expectEqual(@as(c_int, 1), ctxErrExceptionMatches(ctx, ctx.h_ValueError));
+    ctxErrClear(ctx);
+}
+
+test "bare nesne: createModuleObject üzerinden GetAttr/SetAttr ile TİP-siz attribute erişimi" {
+    const ctx = try createContext(std.testing.allocator);
+    defer destroyContext(std.testing.allocator, ctx);
+
+    const obj = try createModuleObject(ctx);
+    defer ctxClose(ctx, obj);
+
+    const seven = ctxLongFromInt64(ctx, 7);
+    defer ctxClose(ctx, seven);
+    try std.testing.expectEqual(@as(c_int, 0), ctxSetAttrS(ctx, obj, "amount", seven));
+
+    const got = ctxGetAttrS(ctx, obj, "amount");
+    defer ctxClose(ctx, got);
+    try std.testing.expectEqual(@as(i64, 7), ctxLongAsInt64(ctx, got));
 }

@@ -473,6 +473,28 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 try self.emitHpyErrorCheckOrRaise();
                 return .{ .text = result_temp, .qtype = .l };
             }
+            // Faz 22 (bkz. plan dosyası "bare attribute-nesnesi + gerçek
+            // slice tipi + numpy-tarzı skaler-broadcast slice ataması"):
+            // `hpy_new_object_on`/`hpy_getitem_int_on` — İKİSİ de SABİT
+            // arity, marshal zinciri GEREKMEZ, DOĞRUDAN çağrıya çevrilir.
+            if (std.mem.eql(u8, name, "hpy_new_object_on")) {
+                if (c.args.len != 1) return error.Unsupported;
+                const handle_v = try self.genExpr(c.args[0]);
+                const result_temp = try self.newTemp();
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_new_object", &.{.{ .ty = .l, .text = handle_v.text }});
+                try self.emitHpyErrorCheckOrRaise();
+                return .{ .text = result_temp, .qtype = .l };
+            }
+            if (std.mem.eql(u8, name, "hpy_getitem_int_on")) {
+                if (c.args.len != 3) return error.Unsupported;
+                const handle_v = try self.genExpr(c.args[0]);
+                const obj_v = try self.genExpr(c.args[1]);
+                const index_v = try self.genExpr(c.args[2]);
+                const result_temp = try self.newTemp();
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_getitem_int", &.{ .{ .ty = .l, .text = handle_v.text }, .{ .ty = .l, .text = obj_v.text }, .{ .ty = .l, .text = index_v.text } });
+                try self.emitHpyErrorCheckOrRaise();
+                return .{ .text = result_temp, .qtype = .l };
+            }
             // Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi +
             // metadata-tabanlı metaprogramming", `checker.zig`deki eşdeğer
             // not): `stdlib/nox/reflect.nox`nin sardığı 6 SABİT-imzalı
