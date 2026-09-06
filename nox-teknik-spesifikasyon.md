@@ -18607,6 +18607,98 @@ TEMİZ (BİLİNEN, İLGİSİZ `--listen=-` harness misreport'ları HARİÇ).
 
 ---
 
+## 3.133 Faz 23 — `HPy_TypeCheck`nin yerleşik tipler İçİn dispatch hatası + `HPyGlobal` sızıntısı düzeltmesi (GERÇEK `hpy-ujson` — UltraJSON'ın HPy portu — İLE bulundu) (v1.67.0)
+
+Faz 16-22 (v1.60.0-v1.66.0) aHPy karşısında kapsamlı doğrulamadan
+GEÇTİKTEN SONRA kullanıcı "daha büyük bir iş yapalım, bir C extension
+kütüphane çalıştıralım (ujson GİBİ)" isteğinde bulundu. Grep İLE
+kullanıcının KENDİSİNİN önceden entegre ettiği, GERÇEK bir HPy Universal
+ABI UltraJSON portu (`github.com/mburakmmm/hpy-ujson`, YEREL olarak
+`/Users/melihburakmemis/Documents/ujson-hpy`da klonlanmış, ÖNCEDEN
+DERLENMİŞ bir `ujson_hpy.hpy0.so` İLE) BULUNDU — `nox-teknik-
+spesifikasyon.md`nin §3.77/§3.78'inin (BU OTURUM ÖNCESİ bir FAZDA) BU
+KÜTÜPHANEYİ zaten HEDEF ALDIĞI (`h_LongType`/vb. pinned tekilleri +
+`hpy_call_str`) doğrulandı.
+
+**Bulunan hata**: kapsamlı bir Nox test betiği (`dumps()`/`loads()`nin
+int/float/bool/str/list[int]/dict[str,int] İçİn HER İKİ yönü) yazılıp
+GERÇEK `.so`ya karşı ÇALIŞTIRILDIĞINDA, `dumps()` `int`/`list[int]`/
+`dict[str,int]` argümanları İçİn HER ZAMAN "'dumps' bir istisna fırlattı"
+İLE BAŞARISIZ oluyordu — `float`/`bool`/`str` İSE BAŞARIYLA çalışıyordu.
+`ujson_hpy.c`nin GERÇEK encoder'ı (`hpy_encoder_begin_type_context`,
+`objToJSON.c`nin AYRI/KULLANILMAYAN bir eski-CPython-API kopyası
+OLMADIĞI, GERÇEK dispatch'in `ujson_hpy.c`nin KENDİSİNDE olduğu
+DOĞRULANDI) int TESPİTİ İçİn `HPy_TypeCheck(ctx, value, ctx->h_LongType)`
+KULLANIYOR — `runtime/hpy_bridge/context.zig`nin `ctxTypeCheck`i
+(`ctx_TypeCheck`) SADECE `obj.tag == .instance_` (kullanıcı-tanımlı
+`HPyType_FromSpec` örnekleri) durumunu KONTROL EDİYORDU, `.long`/
+`.list_`/`.dict_`/`.tuple_`/`.bytes_` GİBİ yerleşik-etiketli HERHANGİ
+bir nesne İçİn KOŞULSUZ `0` DÖNÜYORDU — bu YÜZDEN `HPy_TypeCheck(ctx,
+42_handle, ctx->h_LongType)` HER ZAMAN yanlış dönüyordu. `float`/`bool`/
+`str`nin BAŞARILI olmasının nedeni: `ujson_hpy`nin encoder'ı bunlar İçİn
+FARKLI bir yol kullanıyor — bool `HPy_Is(ctx, value, ctx->h_True/h_False)`
+(KİMLİK karşılaştırması), float `HPy_Type(ctx, obj)` + `HPyType_IsSubtype`
+(`ctxType`/`HPy_Type`, §3.77'de ZATEN düzeltilmişti — AMA `ctxTypeCheck`e
+AYNI düzeltme UYGULANMAMIŞTI), str `HPyUnicode_Check` (DOĞRUDAN `ctx_
+Unicode_Check` etiket-kontrolü). List/dict `dumps()`sinin BAŞARISIZ
+olmasının nedeni İSE KONTEYNERİN KENDİ tespitinin (`HPyList_Check`/
+`HPyDict_Check`, DOĞRU çalışıyordu) DEĞİL — elemanlarının (İçlerindeki
+int'lerin) AYNI `HPy_TypeCheck` bug'ına ÇARPMASIYDI.
+
+**Düzeltme**: `ctxTypeCheck`, `ctxType`nin (`HPy_Type`, §3.77) AYNI
+yerleşik-tip switch'ini (`.long`→`h_LongType`, `.float_`→`h_FloatType`,
+`.bool_`→`h_BoolType`, `.str_`→`h_UnicodeType`, `.tuple_`→`h_TupleType`,
+`.list_`→`h_ListType`, `.bytes_`→`h_BytesType`, `.instance_`→KENDİ
+`instance_type`i) PAYLAŞIR — HER dalda `type_h` İLE KİMLİK karşılaştırması
+YAPAR. `float`/`bool`/`str`nin ZATEN BAŞARILI olduğu MEVCUT davranışlar
+BU değişiklikten ETKİLENMEZ (`ctxTypeCheck` O yollarda hiç kullanılmıyordu).
+
+**İKİNCİ, BAĞIMSIZ bir sızıntı bulundu**: yukarıdaki düzeltme SONRASI
+GERÇEK betik `hpy_close(h)` çağrıldıktan SONRA `DebugAllocator`nin GERÇEK
+bir sızıntı RAPORLADIĞI görüldü — `ctxErrNewException`in (module-exec
+SIRASINDA `ujson_hpy.JSONDecodeError` istisna sınıfını oluşturan)
+DÖNDÜRDÜĞÜ nesne HİÇ SERBEST BIRAKILMIYORDU. Kök neden: `module_exec_
+impl` bu nesneyi `HPyGlobal_Store(ctx, &g_json_decode_error, ...)` İLE
+(kütüphanenin KENDİ, `static HPyGlobal g_json_decode_error = {0};` GİBİ
+statik değişkeninde) SAKLIYOR — bu bellek KONUMU Nox'un `HPyContext`
+struct'ının HİÇBİR alanına İŞARET ETMEDİĞİNDEN, `destroyContext` bunu
+HİÇBİR ZAMAN İZLEYEMİYORDU (module'ün KENDİ `instance_dict`i ÜZERİNDEN
+tutulan İKİNCİ bir referans — `HPy_SetAttr_s(module, "JSONDecodeError",
+...)` — `hpy_close`'un `module_obj`u kapatmasıyla ZATEN doğru serbest
+bırakılıyordu, AMA `HPyGlobal`in KENDİ referansı BAĞIMSIZ VE İZLENMEMİŞTİ).
+Düzeltme: `ctxGlobalStore` (`ctx_Global_Store`) ARTIK dup'ladığı değeri,
+`PrivateState`in YENİ `tracked_globals: std.AutoHashMapUnmanaged(usize,
+HPy)` haritasına da (anahtar: `*HPyGlobal`nin adresi, DEĞER: SON dup'lanan
+`HPy`) KAYDEDER (bir slot ÜZERİNE YENİDEN yazıldığında ESKİ değer ZATEN
+`ctxGlobalStore`nin KENDİ, MEVCUT `ctxClose(old)` satırı TARAFINDAN
+kapatılıyor — double-free RİSKİ YOK, harita SADECE EN SON değeri TUTAR);
+`destroyContext` BU haritayı TÜKETİP kalan TÜM globalleri kapatır, SONRA
+haritayı `deinit` eder.
+
+**Doğrulama**: GERÇEK `.so`ya karşı ELLE yazılmış bir Nox betiği (`hpy_
+open`+`hpy_call_str_on(h,"dumps",...)`/`hpy_call_on`/`hpy_call_float_on`/
+`hpy_call_bool_on`/`hpy_call_obj_on`+`hpy_getitem_int_on` — TAMAMI Faz
+16-22'nin ZATEN VAR OLAN builtin'leri, YENİ hiçbir builtin GEREKMEDİ):
+`dumps()` int/float/bool/str/list[int]/dict[str,int] argümanlarının
+HEPSİ İçİn DOĞRU JSON metni üretiyor; `loads()` HER dönüş tipi İçİn
+DOĞRU çalışıyor; `hpy_close(h)` SONRASI `DebugAllocator` HİÇBİR sızıntı
+raporlamıyor. 2 YENİ internal Zig testi (`context.zig`): `ctxTypeCheck`nin
+7 yerleşik tipin HEPSİYLE (VE yanlış-tiplerle eşleşMEDİĞİNİ) doğru
+eşleştiği; `ctxGlobalStore`nin İKİ ARDIŞIK yazımdan (üzerine-yazma)
+SONRA `destroyContext`in double-free OLMADAN TEK/SON değeri kapattığı.
+`zig build test` (Debug+ReleaseFast, TAM paket) + `NOX_STRESS_ROUNDS=800
+zig build stress-test -Doptimize=ReleaseFast` TEMİZ geçti.
+
+**Kapsam DIŞI (bu turda)**: `dump`/`load` (dosya-tabanlı varyantlar) VE
+`encode`/`decode` takma adları — `dumps`/`loads`in KENDİSİ TEMSİLİ VE
+YETERLİ bir ilk tur; `module_exec_impl`nin `bytearray`/`memoryview`/
+`Decimal` OPSİYONEL destek ARAMASI (GRACEFUL şekilde `ImportError` İLE
+BAŞARISIZ olup DEVAM eder — Nox `ctx_Import_ImportModule`nin ZATEN
+belgelenmiş davranışıyla TUTARLI, GERÇEK bir engel DEĞİL) test EDİLMEDİ,
+kullanıcının KENDİ Nox verisi HİÇBİRİNİ KULLANMIYOR.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

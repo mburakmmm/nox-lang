@@ -14,6 +14,56 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.67.0]
+
+### Düzeltildi
+- **Faz 23 — `HPy_TypeCheck`nin yerleşik tipler İçİn HER ZAMAN yanlış
+  dönmesi (GERÇEK `hpy-ujson` — UltraJSON'ın HPy portu — İLE bulundu)**:
+  kullanıcının kendi, önceden entegre ettiği `hpy-ujson` projesi (Faz 16-22
+  SONRASI çok daha yetenekli hâle gelen HPy köprüsüne karşı) kapsamlı
+  şekilde YENİDEN test edilirken, `dumps()`nin `int`/`list[int]`/
+  `dict[str,int]` argümanları İçİn HER ZAMAN başarısız olduğu (`float`/
+  `bool`/`str` İSE BAŞARILI olduğu) bulundu. Kök neden: `ctxTypeCheck`
+  (`ctx_TypeCheck`, `HPy_TypeCheck`nin karşılığı) SADECE `.instance_`
+  etiketli (kullanıcı-tanımlı `HPyType_FromSpec` örnekleri) nesneleri
+  tanıyordu — `ujson_hpy`nin encoder'ı int TESPİTİ İçİn TAM OLARAK
+  `HPy_TypeCheck(ctx, value, ctx->h_LongType)` KULLANDIĞINDAN (`§3.77`nin
+  `ctxType`/`HPy_Type` İçİn ZATEN düzelttiği AMA `ctxTypeCheck`e HİÇ
+  UYGULANMAMIŞ AYNI yerleşik-tip eşlemesi), bir `.long`-etiketli GERÇEK
+  int HİÇBİR ZAMAN eşleşmiyordu — encoder "JSON serializable değil"
+  İSTİSNASINA düşüyordu (list/dict İçİn de AYNI kök neden: HER ikisinin
+  elemanları GEZİLİRKEN İçlerindeki int'ler AYNI bug'a çarpıyordu — konteynerlerin
+  KENDİ tip-tespiti — `HPyList_Check`/`HPyDict_Check` — ZATEN doğruydu).
+  Düzeltme: `ctxTypeCheck`, `ctxType`nin AYNI switch'ini (uzun/float/bool/
+  str/tuple/list/bytes → KENDİ pinned tekiliyle KİMLİK karşılaştırması)
+  PAYLAŞIR.
+- **`ctx_Global_Store` (`HPyGlobal`) sızıntısı**: bir C eklentisinin KENDİ
+  statik `HPyGlobal` değişkeninde (`static HPyGlobal g_x = {0};` GİBİ,
+  Nox'un HİÇBİR ZAMAN görmediği bir bellek konumu) sakladığı DEĞER
+  (`ujson_hpy`nin `module_exec`inin oluşturduğu `JSONDecodeError` istisna
+  tekili GİBİ) `destroyContext`de HİÇ İZLENMİYOR/kapatılmıyordu — GERÇEK
+  `hpy-ujson`ye karşı `hpy_open`+`hpy_close` çalıştırılırken `DebugAllocator`
+  BUNU GERÇEK bir sızıntı OLARAK yakaladı. Düzeltme: `ctxGlobalStore`
+  ARTIK dup'ladığı DEĞERİ `PrivateState`in YENİ `tracked_globals` haritasına
+  da (adres → SON değer) KAYDEDER; `destroyContext` BUNU TÜKETİP kalan
+  TÜM globalleri kapatır.
+
+### Doğrulandı
+- GERÇEK, kullanıcının `/Users/melihburakmemis/Documents/ujson-hpy`sindeki
+  (önceden derlenmiş `ujson_hpy.hpy0.so`, Universal ABI) `dumps`/`loads`
+  fonksiyonlarına karşı ELLE yazılmış bir Nox betiği: `dumps()` ARTIK
+  int/float/bool/str/list[int]/dict[str,int] argümanlarının HEPSİ İçİn
+  DOĞRU JSON metni ÜRETİYOR (`42`, `3.14`, `true`, `"hello"`, `[1,2,3]`,
+  `{"a":1,"b":2}`), `loads()` HER dönüş tipi İçİn (int/float/bool/str/
+  list, `hpy_getitem_int_on` İLE eleman-eleman DOĞRULANARAK) DOĞRU çalışıyor
+  — VE `hpy_close(h)` SONRASI HİÇBİR sızıntı raporlanmıyor (`DebugAllocator`
+  temiz).
+- 2 YENİ internal Zig testi (`runtime/hpy_bridge/context.zig`): `ctxTypeCheck`nin
+  yerleşik-tip tekilleriyle DOĞRU eşleştiğini (VE yanlış-tiplerle
+  eşleşMEDİĞİNİ) kanıtlayan bir test; `ctxGlobalStore`nin İKİ ARDIŞIK
+  yazımdan (üzerine-yazma) SONRA `destroyContext`in TEK, SON değeri
+  double-free OLMADAN kapattığını kanıtlayan bir test.
+
 ## [1.66.0]
 
 ### Eklendi

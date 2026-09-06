@@ -1536,11 +1536,21 @@ fn ctxFieldLoad(ctx: *HPyContext, source_object: HPy, source_field: HPyField) ca
     return ctxDup(ctx, .{ ._i = source_field._i });
 }
 
+/// Gerçek `HPyGlobal` bir C eklentisinin KENDİ statik değişkeninde
+/// (`global`) yaşar — Nox bunu `destroyContext`de OTOMATİK KAPATAMAZ
+/// (`ctx`in HİÇBİR alanı BU adrese işaret ETMEZ). Bu YÜZDEN, dup'lanan
+/// DEĞERİ (ESKİ değeri kapattıktan SONRA) `contextState`in `tracked_
+/// globals` haritasına da KAYDEDER — `destroyContext` bunu TÜKETİP TÜM
+/// hâlâ-canlı globalleri kapatır (aksi halde `hpy-ujson` GİBİ eklentilerin
+/// `JSONDecodeError`/vb. tekilleri HER `hpy_close`de sızardı).
 fn ctxGlobalStore(ctx: *HPyContext, global: ?*HPyGlobal, h: HPy) callconv(.c) void {
     const g = global orelse return;
     const old: HPy = .{ ._i = g._i };
     if (old._i != 0) ctxClose(ctx, old);
-    g.* = .{ ._i = ctxDup(ctx, h)._i };
+    const new_h = ctxDup(ctx, h);
+    g.* = .{ ._i = new_h._i };
+    const state = contextState(ctx);
+    state.tracked_globals.put(contextAllocator(ctx), @intFromPtr(g), new_h) catch {};
 }
 
 fn ctxGlobalLoad(ctx: *HPyContext, global: HPyGlobal) callconv(.c) HPy {
@@ -2113,12 +2123,26 @@ fn ctxType(ctx: *HPyContext, obj_h: HPy) callconv(.c) HPy {
 }
 
 /// `obj`nin TAM OLARAK `type` tipinde (alt sınıflama YOK, bkz. kapsam notu)
-/// bir örnek olup olmadığını denetler.
+/// bir örnek olup olmadığını denetler. `ctxType`nin (`HPy_Type`) AYNI
+/// yerleşik-tip eşlemesini PAYLAŞIR (hpy-ujson entegrasyonu araştırması
+/// SIRASINDA bulundu: `HPy_TypeCheck(ctx, value, ctx->h_LongType)` GİBİ
+/// çağrılar — gerçek ujson_hpy kodunun int/list/dict/tuple/bytes TESPİTİ
+/// İçİn kullandığı YOL — `obj.tag != .instance_` İKEN HER ZAMAN `0`
+/// dönüyordu, `.long`/`.list_`/vb. yerleşik-etiketli nesneler HİÇBİR ZAMAN
+/// eşleşemiyordu).
 fn ctxTypeCheck(ctx: *HPyContext, obj_h: HPy, type_h: HPy) callconv(.c) c_int {
-    _ = ctx;
     const obj = objOf(obj_h) orelse return 0;
-    if (obj.tag != .instance_) return 0;
-    return @intFromBool(obj.instance_type._i == type_h._i);
+    return switch (obj.tag) {
+        .instance_ => @intFromBool(obj.instance_type._i == type_h._i),
+        .long => @intFromBool(ctx.h_LongType._i == type_h._i),
+        .float_ => @intFromBool(ctx.h_FloatType._i == type_h._i),
+        .bool_ => @intFromBool(ctx.h_BoolType._i == type_h._i),
+        .str_ => @intFromBool(ctx.h_UnicodeType._i == type_h._i),
+        .tuple_ => @intFromBool(ctx.h_TupleType._i == type_h._i),
+        .list_ => @intFromBool(ctx.h_ListType._i == type_h._i),
+        .bytes_ => @intFromBool(ctx.h_BytesType._i == type_h._i),
+        else => 0,
+    };
 }
 
 // ---- Tip içgözlemi + çeşitli (Faz XX) ----
@@ -3610,6 +3634,15 @@ const PrivateState = struct {
     h_true_obj: HPy,
     h_false_obj: HPy,
     pending_error: ?PendingError = null,
+    /// hpy-ujson entegrasyonu araştırması SIRASINDA bulunan bir sızıntı
+    /// düzeltmesi: `ctx_Global_Store` (`HPyGlobal`) dup'ladığı değeri bir
+    /// C eklentisinin KENDİ statik değişkenine (`static HPyGlobal g_x = {0};`
+    /// GİBİ, Nox'un HİÇBİR ZAMAN görmediği bir bellek konumu) yazar —
+    /// `destroyContext` BUNU izlemeden TÜM bu değerler sonsuza kadar
+    /// sızardı (`ctxGlobalStore`nin belge notuna bkz.). Anahtar: `*HPyGlobal`
+    /// adresinin `usize`i (aynı slot ÜZERİNE yazma GÜVENLE üzerine yazar,
+    /// ESKİ değer `ctxGlobalStore`nin KENDİSİ TARAFINDAN zaten kapatılmıştır).
+    tracked_globals: std.AutoHashMapUnmanaged(usize, HPy) = .empty,
 
     const PendingError = struct {
         h_type: HPy,
@@ -4269,6 +4302,14 @@ pub fn destroyContext(allocator: std.mem.Allocator, ctx: *HPyContext) void {
     const state = contextState(ctx);
     if (state.pending_error) |pe| allocator.free(pe.message);
 
+    // `ctxGlobalStore`nin belge notuna bkz.: bir C eklentisinin KENDİ
+    // statik `HPyGlobal` değişkenlerinde tuttuğu, HÂLÂ canlı değerleri
+    // kapat — aksi halde bu bellek KONUMU Nox'un HİÇBİR yerinde
+    // İZLENMEDİĞİNDEN sonsuza kadar sızar.
+    var tracked_globals_it = state.tracked_globals.valueIterator();
+    while (tracked_globals_it.next()) |h| ctxClose(ctx, h.*);
+    state.tracked_globals.deinit(allocator);
+
     const singletons = [_]HPy{
         ctx.h_None,                ctx.h_True,           ctx.h_False,
         ctx.h_Exception,           ctx.h_BaseException,  ctx.h_TypeError,
@@ -4871,4 +4912,71 @@ test "bare nesne: createModuleObject üzerinden GetAttr/SetAttr ile TİP-siz att
     const got = ctxGetAttrS(ctx, obj, "amount");
     defer ctxClose(ctx, got);
     try std.testing.expectEqual(@as(i64, 7), ctxLongAsInt64(ctx, got));
+}
+
+// hpy-ujson entegrasyonu araştırması (bkz. bu turun plan/CHANGELOG
+// girdisi): `HPy_TypeCheck(ctx, value, ctx->h_LongType)` GİBİ çağrılar
+// (gerçek `ujson_hpy`nin int/list/dict eleman tespitinde KULLANDIĞI
+// TAM desen) `ctxTypeCheck`in SADECE `.instance_` etiketli nesneleri
+// tanıması YÜZÜNDEN HER ZAMAN `0` dönüyordu — `dumps(42)`/`dumps([1,2,3])`/
+// `dumps({"a":1})` HEPSİ "JSON serializable değil" İSTİSNASIYLA
+// BAŞARISIZ oluyordu. Düzeltme: `ctxType`nin (`HPy_Type`) AYNI yerleşik-
+// tip eşlemesini (uzun/float/bool/str/tuple/list/bytes) PAYLAŞIR.
+test "ctxTypeCheck: yerleşik skaler/konteyner tipleri KENDİ pinned tekiliyle eşleşir" {
+    const ctx = try createContext(std.testing.allocator);
+    defer destroyContext(std.testing.allocator, ctx);
+
+    const n = ctxLongFromInt64(ctx, 42);
+    defer ctxClose(ctx, n);
+    try std.testing.expectEqual(@as(c_int, 1), ctxTypeCheck(ctx, n, ctx.h_LongType));
+    // Yanlış-pozitif YOK: int, list/float tipiyle EŞLEŞMEMELİ.
+    try std.testing.expectEqual(@as(c_int, 0), ctxTypeCheck(ctx, n, ctx.h_ListType));
+    try std.testing.expectEqual(@as(c_int, 0), ctxTypeCheck(ctx, n, ctx.h_FloatType));
+
+    const f = ctxFloatFromDouble(ctx, 3.14);
+    defer ctxClose(ctx, f);
+    try std.testing.expectEqual(@as(c_int, 1), ctxTypeCheck(ctx, f, ctx.h_FloatType));
+
+    const s = ctxUnicodeFromString(ctx, "merhaba");
+    defer ctxClose(ctx, s);
+    try std.testing.expectEqual(@as(c_int, 1), ctxTypeCheck(ctx, s, ctx.h_UnicodeType));
+
+    const list = ctxListNew(ctx, 0);
+    defer ctxClose(ctx, list);
+    try std.testing.expectEqual(@as(c_int, 1), ctxTypeCheck(ctx, list, ctx.h_ListType));
+    try std.testing.expectEqual(@as(c_int, 0), ctxTypeCheck(ctx, list, ctx.h_LongType));
+}
+
+// `ctxGlobalStore`nin belge notuna bkz.: bir C eklentisinin KENDİ statik
+// `HPyGlobal` değişkeni (Nox'un HİÇBİR ZAMAN görmediği bir bellek konumu)
+// ARACILIĞIYLA saklanan bir değerin, `destroyContext` TARAFINDAN GERÇEKTEN
+// serbest bırakıldığını (`DebugAllocator`nin, GERÇEK `hpy-ujson` testinde
+// bulduğu GİBİ, bir sızıntı RAPORLAMADIĞINI) kanıtlar.
+test "ctxGlobalStore: destroyContext izlenen globalleri kapatır (sızıntı yok)" {
+    const ctx = try createContext(std.testing.allocator);
+
+    var g: HPyGlobal = .{};
+    const stored = ctxLongFromInt64(ctx, 99);
+    // `ctxGlobalStore` KENDİ dup'ını alır — orijinal `stored` tutamacımızı
+    // (gerçek `HPyErr_NewException`+`HPyGlobal_Store`+`HPy_Close` üçlüsünün
+    // AYNI şekli) burada kapatıyoruz, TAKİP edilen kopya `destroyContext`e
+    // KADAR HAYATTA kalmalı.
+    ctxGlobalStore(ctx, &g, stored);
+    ctxClose(ctx, stored);
+
+    // İKİNCİ bir store AYNI slotu ÜZERİNE yazar — ESKİ değer HEMEN
+    // kapatılır (double-free YOK), sadece SON değer `destroyContext`e
+    // kadar İZLENMEYE devam eder.
+    const stored2 = ctxLongFromInt64(ctx, 100);
+    ctxGlobalStore(ctx, &g, stored2);
+    ctxClose(ctx, stored2);
+
+    const loaded = ctxGlobalLoad(ctx, g);
+    try std.testing.expectEqual(@as(i64, 100), ctxLongAsInt64(ctx, loaded));
+    ctxClose(ctx, loaded);
+
+    // `std.testing.allocator`nin KENDİSİ (DebugAllocator) `destroyContext`
+    // TAMAMLANDIKTAN SONRA HERHANGİ bir sızıntı TESPİT EDERSE testin
+    // KENDİSİ BAŞARISIZ OLUR — bu YÜZDEN AYRI bir `expect` GEREKMEZ.
+    destroyContext(std.testing.allocator, ctx);
 }
