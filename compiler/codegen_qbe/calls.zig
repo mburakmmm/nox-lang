@@ -301,7 +301,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             // ZİNCİRİNE çevrilir — checker `isHpyMarshalableArgType` İLE
             // HER argümanın MARSHAL EDİLEBİLİR olduğunu ZATEN kanıtladı,
             // bu YÜZDEN aşağıdaki `else => unreachable` dalları GÜVENLİDİR.
-            if (std.mem.eql(u8, name, "hpy_call_on") or std.mem.eql(u8, name, "hpy_call_str_on") or std.mem.eql(u8, name, "hpy_call_float_on") or std.mem.eql(u8, name, "hpy_call_bool_on")) {
+            if (std.mem.eql(u8, name, "hpy_call_on") or std.mem.eql(u8, name, "hpy_call_str_on") or std.mem.eql(u8, name, "hpy_call_float_on") or std.mem.eql(u8, name, "hpy_call_bool_on") or std.mem.eql(u8, name, "hpy_call_obj_on")) {
                 if (c.args.len < 2) return error.Unsupported;
                 const handle_v = try self.genExpr(c.args[0]);
                 const func_v = try self.genExpr(c.args[1]);
@@ -311,6 +311,21 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 const trailing = c.args[2..];
                 var arg_values: std.ArrayListUnmanaged(Value) = .empty;
                 for (trailing) |arg_expr| {
+                    // Faz 19 (bkz. plan dosyası "opak HPy nesne tutamaçları"):
+                    // checker'ın `__nox_hpy_obj_arg` İŞARETLEYİCİSİ (`ptr`-
+                    // tipli argümanlar İçİn, `isHpyMarshalableArgType`nin
+                    // çağrıldığı yerdeki AST-rewrite) — İÇ ifadeyi normal
+                    // `genExpr` İLE değerlendirip `$nox_hpy_args_add_handle`e
+                    // YÖNLENDİRİR, AŞAĞIDAKİ `av.heap`/`av.qtype` dispatch'İNE
+                    // HİÇ GİRMEDEN (`ptr` codegen'de `int` İLE BİREBİR AYNI
+                    // temsile sahip OLDUĞUNDAN, o dala düşerse YANLIŞLIKLA
+                    // `nox_hpy_args_add_int` İLE marshal EDİLİRDİ).
+                    if (arg_expr == .call and arg_expr.call.callee.* == .identifier and std.mem.eql(u8, arg_expr.call.callee.identifier, "__nox_hpy_obj_arg")) {
+                        const inner_v = try self.genExpr(arg_expr.call.args[0]);
+                        try arg_values.append(self.allocator, inner_v);
+                        try self.qbeCall(null, "$nox_hpy_args_add_handle", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = inner_v.text } });
+                        continue;
+                    }
                     const av = try self.genExpr(arg_expr);
                     try arg_values.append(self.allocator, av);
                     switch (av.heap) {
@@ -368,6 +383,11 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     try self.emitHpyErrorCheckOrRaise();
                     return .{ .text = result_temp, .qtype = .w };
                 }
+                if (std.mem.eql(u8, name, "hpy_call_obj_on")) {
+                    try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call_obj_finish", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = func_v.text } });
+                    try self.emitHpyErrorCheckOrRaise();
+                    return .{ .text = result_temp, .qtype = .l };
+                }
                 try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call_str_finish", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = func_v.text } });
                 try self.emitHpyErrorCheckOrRaise();
                 return .{ .text = result_temp, .qtype = .l, .heap = .str };
@@ -376,6 +396,15 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 if (c.args.len != 1) return error.Unsupported;
                 const handle_v = try self.genExpr(c.args[0]);
                 try self.qbeCall(null, "$nox_hpy_close", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handle_v.text } });
+                return .{ .text = "0", .qtype = .w };
+            }
+            // Faz 19: `hpy_close_obj` — `hpy_call_obj_on`nin döndürdüğü opak
+            // örnek tutamacını serbest bırakır.
+            if (std.mem.eql(u8, name, "hpy_close_obj")) {
+                if (c.args.len != 2) return error.Unsupported;
+                const handle_v = try self.genExpr(c.args[0]);
+                const obj_v = try self.genExpr(c.args[1]);
+                try self.qbeCall(null, "$nox_hpy_close_obj", &.{ .{ .ty = .l, .text = handle_v.text }, .{ .ty = .l, .text = obj_v.text } });
                 return .{ .text = "0", .qtype = .w };
             }
             // Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi +

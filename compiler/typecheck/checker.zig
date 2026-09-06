@@ -2280,7 +2280,7 @@ pub const Checker = struct {
     /// olarak İŞARETLERDİ (ör. `len(xs)` İçEREN salt-okunur bir yardımcı
     /// bile YAKALANIRDI — GERÇEK bir yanlış-pozitif).
     fn isKnownSafeBuiltinCallee(name: []const u8) bool {
-        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_close", "wasm_call" };
+        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "wasm_call" };
         for (safe) |s| {
             if (std.mem.eql(u8, name, s)) return true;
         }
@@ -2301,7 +2301,12 @@ pub const Checker = struct {
     /// hpy_class_arg_*` ailesi).
     fn isHpyMarshalableArgType(self: *Checker, ty: Type) bool {
         return switch (ty) {
-            .int, .float, .boolean, .str => true,
+            // Faz 19: `ptr` — DAHA ÖNCE `hpy_call_obj_on`dan alınmış OPAK
+            // bir HPy nesne tutamacı (`HPyType_FromSpec` İLE tanımlanmış
+            // bir C eklenti tipinin ÖRNEĞİ) — codegen'in `__nox_hpy_obj_arg`
+            // AST-işaretleyicisi ÜZERİNDEN `nox_hpy_args_add_handle`e
+            // yönlendirilir (bkz. bu checker'ın çağırdığı yer).
+            .int, .float, .boolean, .str, .ptr => true,
             .list => |elem| switch (elem.*) {
                 .int, .float, .boolean, .str => true,
                 else => false,
@@ -4587,7 +4592,12 @@ pub const Checker = struct {
                 // dönüş tipi (int/float/bool/str) HALA her birinin KENDİ,
                 // SABİT tipi (geriye-dönük tip çıkarımı OLMADIĞINDAN list/dict/
                 // class dönüş tipi bu fazda DESTEKLENMEZ).
-                if (std.mem.eql(u8, name, "hpy_call_on") or std.mem.eql(u8, name, "hpy_call_str_on") or std.mem.eql(u8, name, "hpy_call_float_on") or std.mem.eql(u8, name, "hpy_call_bool_on")) {
+                // Faz 19 (bkz. plan dosyası "opak HPy nesne tutamaçları"):
+                // `hpy_call_obj_on` — DÖNÜŞ tipi `ptr` (bir `HPyType_
+                // FromSpec` İLE tanımlanmış C eklenti tipinin OPAK bir
+                // örnek tutamacı, ör. `make_counter`nin döndürdüğü) —
+                // AYNI arg-doğrulama şeklini paylaşır.
+                if (std.mem.eql(u8, name, "hpy_call_on") or std.mem.eql(u8, name, "hpy_call_str_on") or std.mem.eql(u8, name, "hpy_call_float_on") or std.mem.eql(u8, name, "hpy_call_bool_on") or std.mem.eql(u8, name, "hpy_call_obj_on")) {
                     if (c.args.len < 2) {
                         return self.fail(error.ArgumentCountMismatch, "'{s}' en az 2 argüman alır (tutamac: ptr, fonksiyon_adı: str, [argüman, ...])", .{name});
                     }
@@ -4596,15 +4606,36 @@ pub const Checker = struct {
                     if (c.args[1] != .string_lit) {
                         return self.fail(error.TypeMismatch, "'{s}' argümanı 2 (fonksiyon adı) yalnızca bir string LİTERALİ olabilir", .{name});
                     }
-                    for (c.args[2..], 2..) |arg_expr, idx| {
-                        const arg_ty = try self.checkExpr(ctx, arg_expr);
+                    for (c.args[2..], 2..) |*arg_expr, idx| {
+                        const arg_ty = try self.checkExpr(ctx, arg_expr.*);
                         if (!self.isHpyMarshalableArgType(arg_ty)) {
-                            return self.fail(error.TypeMismatch, "'{s}' argümanı {d} marshal EDİLEMEZ — yalnızca int/float/bool/str, SKALER elemanlı list[T]/dict[K,V], VE TÜM alanları skaler olan sınıflar HPy'ye geçirilebilir", .{ name, idx + 1 });
+                            return self.fail(error.TypeMismatch, "'{s}' argümanı {d} marshal EDİLEMEZ — yalnızca int/float/bool/str, SKALER elemanlı list[T]/dict[K,V], TÜM alanları skaler olan sınıflar, VE (BAŞKA bir 'hpy_call_obj_on'dan alınan) opak 'ptr' tutamaçları HPy'ye geçirilebilir", .{ name, idx + 1 });
+                        }
+                        // Faz 19: `ptr`-tipli bir argüman, codegen'in HİÇBİR
+                        // `Value` alanından (`.ptr` `int` İLE BİREBİR AYNI
+                        // QBE temsiline sahiptir, ayırt edici bir HeapKind
+                        // YOK) STATİK olarak AYIRT edilemez — bu YÜZDEN
+                        // checker (TEK, `Type` bilgisine sahip taraf) BU
+                        // argümanı, doğrulama TAMAMLANDIKTAN SONRA, gizli/
+                        // derleyici-dahili bir işaretleyici çağrıya SARAR
+                        // (`__nox_reflect_*`nin AYNI "kullanıcı asla
+                        // DOĞRUDAN çağırmaz" deseni) — codegen'in per-
+                        // argüman döngüsü BU ŞEKLİ (AST-YAPISAL olarak)
+                        // tanıyıp `$nox_hpy_args_add_handle`e YÖNLENDİRİR.
+                        if (arg_ty == .ptr) {
+                            const inner = try self.allocator.create(ast.Expr);
+                            inner.* = arg_expr.*;
+                            const callee = try self.allocator.create(ast.Expr);
+                            callee.* = .{ .identifier = "__nox_hpy_obj_arg" };
+                            const wrapped_args = try self.allocator.alloc(ast.Expr, 1);
+                            wrapped_args[0] = inner.*;
+                            arg_expr.* = .{ .call = .{ .callee = callee, .args = wrapped_args } };
                         }
                     }
                     if (std.mem.eql(u8, name, "hpy_call_on")) return .int;
                     if (std.mem.eql(u8, name, "hpy_call_str_on")) return .str;
                     if (std.mem.eql(u8, name, "hpy_call_float_on")) return .float;
+                    if (std.mem.eql(u8, name, "hpy_call_obj_on")) return .ptr;
                     return .boolean;
                 }
                 if (std.mem.eql(u8, name, "hpy_close")) {
@@ -4612,6 +4643,17 @@ pub const Checker = struct {
                         return self.fail(error.ArgumentCountMismatch, "'hpy_close' tam olarak 1 argüman alır (tutamac: ptr)", .{});
                     }
                     if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_close' argümanı (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
+                    return .none;
+                }
+                // Faz 19: `hpy_close_obj` — `hpy_call_obj_on`nin döndürdüğü
+                // opak bir örnek tutamacını serbest bırakır (C eklentisinin
+                // KENDİ `tp_destroy`sunu tetikleyebilir).
+                if (std.mem.eql(u8, name, "hpy_close_obj")) {
+                    if (c.args.len != 2) {
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_close_obj' tam olarak 2 argüman alır (tutamac: ptr, nesne: ptr)", .{});
+                    }
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_close_obj' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_close_obj' argümanı 2 (nesne) ptr olmalıdır ('hpy_call_obj_on'ın dönüş değeri)", .{});
                     return .none;
                 }
                 // Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi +

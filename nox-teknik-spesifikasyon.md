@@ -18176,6 +18176,109 @@ TEMİZ (BİLİNEN, İLGİSİZ harness flake'leri HARİÇ).
 
 ---
 
+## 3.129 Faz 19 — opak HPy nesne tutamaçları: `HPyType_FromSpec` ile tanımlanan özel tiplerin GEÇİŞİ (aHPy entegrasyonu, 4/5) (v1.63.0)
+
+Faz 16-18'in (v1.60.0-v1.62.0) belgelediği 5 maddelik listenin SON KALAN
+maddesi: `runtime/hpy_bridge/loader.zig`nin `HPyType_FromSpec` İLE
+tanımlanan özel tipleri (bir C eklentisinin KENDİ `Counter`/`Widget`
+GİBİ) HİÇ desteklememesi.
+
+**Araştırma bulgusu (kritik)**: `runtime/hpy_bridge/context.zig` (Nox'un
+KENDİ, GERÇEK HPyContext implementasyonu) `ctx_Type_FromSpec`/`ctx_New`/
+`_HPy_AsStruct_Object`/`tp_new`/`tp_init`/`tp_call` slotlarını ZATEN TAM
+destekliyor — GERÇEK boşluk SADECE `loader.zig`/`foreign_bridge.zig`nin
+BUNU bir Nox programına bağlayamamasında. Tip-spesifik davranışın
+TAMAMI C eklentisinin KENDİ kodunda yaşar (`make_counter`in `HPyType_
+FromSpec`i BİR KEZ çağırıp SONUCU kendi `static` global'inde önbelleğe
+alması, `HPy_New` İLE örnek yaratması) — ÇAĞIRAN taraf (Nox) bu örneğin
+dönen `HPy` tutamacını TAMAMEN OPAK bir değer olarak taşıyabilir
+(`make_counter`in DÖNDÜRDÜĞÜ tutamaç `get_counter_x`e DOĞRUDAN argüman
+olarak geçirilebilir, HİÇBİR ARA kod tutamacın tipini/etiketini incelemez).
+`HPy._i` Nox'un KENDİ `Obj` struct'ının adresinin cast'idir — `ctx_Close`
+refcount'u sıfıra düşürene kadar bu adres GEÇERLİ/SABİT kalır, bu YÜZDEN
+bir opak tutamacı Nox tarafında İKİ AYRI çağrı ARASINDA TUTMAK GÜVENLİDİR
+(`PersistentHpyHandle`in KENDİSİNİN AYNI context'i İKİ çağrı ARASINDA
+tutması İLE BİREBİR AYNI güvenlik gerekçesiyle).
+
+**Kapsam kararı (dar/gerçekçi bir v1)**: sınıf-alanı okuma (`obj.field`)/
+isimle metod çağırma (`obj.method()`) GİBİ Nox sözdizimsel şeker, GENİŞ
+bir "yabancı nesne tipi + GC/ARC entegrasyonu" tasarımı gerektirir — AYRI/
+gelecekteki bir iş. Bu faz SADECE "bir opak tutamaç al, İSTEĞE BAĞLI
+BAŞKA bir `hpy_call`a GERİ argüman olarak GEÇİR (C eklentisinin KENDİ
+'getter' fonksiyonlarını ÇAĞIRMAK İçİn — `make_counter`+`get_counter_x`
+deseni), SONRA kapat" yeteneğini sağlar.
+
+**KRİTİK bir codegen sınırlaması**: `ptr` codegen'de `int` İLE BİREBİR
+AYNI temsile sahiptir (`qtype=.l, heap=.none`, ayırt edici bir `HeapKind`
+YOK) — bu YÜZDEN codegen, bir argümanın (`Value`sinden) STATİK olarak
+`ptr` mi `int` mi olduğunu AYIRT EDEMEZ. YENİ bir `HeapKind` varyantı
+EKLEMEK `HeapKind` üzerindeki HER switch'i (düzinelerce site) GÜNCELLEMEYİ
+gerektirirdi — bu fazın kapsamına göre ORANSIZ bir blast radius.
+
+**Çözüm (checker.zig'in ZATEN kanıtlanmış "post-validation AST rewrite"
+deseni)**: `hpy_call_on`/vb.nin trailing argüman doğrulama döngüsünde,
+bir argümanın STATİK tipi `.ptr` İSE, checker O argüman ifadesini
+DOĞRULAMA TAMAMLANDIKTAN SONRA, gizli/derleyici-dahili bir işaretleyici
+çağrıya SARAR: `c.args[idx] = .{ .call = .{ .callee = identifier("__nox_
+hpy_obj_arg"), .args = [ESKİ c.args[idx]] } }` (`__nox_reflect_*`nin AYNI
+"kullanıcı asla DOĞRUDAN çağırmaz" adlandırma deseni). Codegen'in per-
+argüman döngüsü, `genExpr` ÇAĞIRMADAN ÖNCE bu ŞEKLİ (AST-YAPISAL olarak)
+tanır — VARSA İÇ ifadeyi NORMAL `genExpr` İLE değerlendirip `$nox_hpy_
+args_add_handle`e YÖNLENDİRİR (int/float/bool/str/list/dict/class'ın
+NORMAL tip-başına dispatch'İNE HİÇ GİRMEDEN).
+
+**YENİ builtinler**: `hpy_call_obj_on(handle: ptr, func_name: str,
+args...) -> ptr` (Faz 17'nin AYNI çoklu-argüman marshalling'ini
+paylaşır, 5. isim olarak birleşik `hpy_call_on`/vb. bloğuna eklendi),
+`hpy_close_obj(handle: ptr, obj: ptr) -> None`. `isHpyMarshalableArgType`ye
+`.ptr => true` eklendi (TÜM 5 çağrı varyantı ARTIK bir ÖNCEDEN alınmış
+opak tutamacı argüman olarak kabul eder).
+
+**Runtime** (`runtime/foreign_bridge.zig`): `MarshalCtx.args`nin eleman
+tipi `ArgEntry{h: HPy, owned: bool}`e genişledi — skaler/list/dict/
+class-dict argümanları (`owned=true`) DEĞİŞMEDEN çağrı SONRASI otomatik
+kapatılır; bir opak tutamaç argümanı (`owned=false`, `nox_hpy_args_add_
+handle` İLE eklenir) Nox'un ZATEN sahip olduğu, ÖDÜNÇ verilen bir
+referanstır — kapatılmaz (Nox `hpy_close_obj` İLE KENDİSİ AÇIKÇA
+kapatacaktır). `invokeHpyMethod` gerçek çağrı İçİn `mc.args`ten geçici,
+yoğun bir `[]HPy` dizisi inşa eder. YENİ `nox_hpy_call_obj_finish` SONUCU
+unmarshal ETMEZ (`ctx_Close` ETMEZ) — `._i`yi DOĞRUDAN bir Nox `ptr`
+olarak döner, sahiplik Nox'a GEÇER. YENİ `nox_hpy_close_obj` `handle.ctx`
+ÜZERİNDEN `ctx_Close`ü çağırır.
+
+**Doğrulama**: 2 yeni golden test (MEVCUT `Counter` C tipini kullanır,
+YENİ bir C tip GEREKMEDİ) — round-trip (`make_counter`+`get_counter_x`)
+VE `hpy_close_obj`nin GERÇEKTEN `Counter_destroy` (tp_destroy) slot'unu
+tetiklediği kanıtlandı. **Yan-bulgu**: `ctxTypeFromSpec`nin (context.zig)
+inşa ettiği `.type_` etiketli `Obj`, `noxtest.c`nin `make_counter`ının
+KENDİ `Counter_type`i (bir C `static` global) SONSUZA KADAR önbelleğe
+alıp `ctx_Close` HİÇ çağırmaması YÜZÜNDEN, GERÇEK bir derlenmiş ikili+
+`RuntimeState` allocator'ı ÜZERİNDEN çalıştırıldığında (bu 2 test, İLK
+KEZ) bir "sızıntı" olarak raporlanıyor — BU, `tests/compat/hpy_tier0_
+test.zig`nin ZATEN kabul ettiği "tip nesneleri BİLİNÇLİ olarak sızıyor"
+v1 ödünleşiminin AYNISI (o dosya BUNU `page_allocator` İLE, leak-tespit
+eden allocator'ı TAMAMEN ATLAYARAK gizliyordu — BURADA aynı atlama
+YAPILAMAZ). YENİ `expectGoldenAllowTypeLeak` (stderr'i KONTROL ETMEYEN
+bir `expectGolden` varyantı) BU 2 testte kullanıldı — BOUNDED (tip-
+sayısı KADAR, çağrı-sayısı KADAR DEĞİL) bir sızıntı, GERÇEK bir Faz 19
+regresyonu DEĞİL. `zig build test` (TAM paket, Debug+ReleaseFast) +
+`NOX_STRESS_ROUNDS=800 zig build stress-test -Doptimize=ReleaseFast`
+TEMİZ (BİLİNEN, İLGİSİZ harness flake'leri HARİÇ).
+
+## Kapsam DIŞI (bu turda)
+- Nox sözdizimsel şekeri — `obj.field`/`obj.method()`nin bir opak HPy
+  tutamacı ÜZERİNDE ÇALIŞMASI — GENİŞ bir "yabancı nesne tipi" tasarımı
+  gerektirir, AYRI/gelecekteki bir iş.
+- GC/ARC entegrasyonu — kullanıcı AÇIKÇA `hpy_close_obj` çağırmalıdır
+  (ÇAĞIRMAZSA sızar — BİLİNÇLİ bir v1 ödünleşimi).
+- `HPyType_FromSpec`in KENDİSİNİN Nox tarafında (bir Nox `class`ından
+  bir HPy tipi ÜRETMEK) desteklenmesi — TERS yön, kapsam DIŞI.
+- `ctxTypeFromSpec`nin (context.zig) KENDİ tip-nesnesi sızıntısını
+  DÜZELTMEK (ör. gerçek bir module-state/type-registry ömür yönetimi
+  eklemek) — AYRI, DAHA BÜYÜK bir mimari iş, BU FAZIN kapsamı DIŞINDA.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

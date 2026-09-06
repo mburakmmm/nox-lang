@@ -14,6 +14,53 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.63.0]
+
+### Eklendi
+- **Faz 19 — opak HPy nesne tutamaçları: `HPyType_FromSpec` ile
+  tanımlanan özel tiplerin GEÇİŞİ (aHPy entegrasyonu, 4/5)**: aHPy
+  entegrasyonu listesinin SON KALAN maddesi — `runtime/hpy_bridge/
+  loader.zig`nin bir C eklentisinin KENDİ `HPyType_FromSpec` İLE
+  tanımladığı özel tipleri (`tests/compat/hpy_ext/noxtest.c`nin `Counter`
+  örneği GİBİ) HİÇ desteklememesi. Araştırma, `runtime/hpy_bridge/
+  context.zig`nin (Nox'un KENDİ, GERÇEK HPyContext implementasyonu)
+  `ctx_Type_FromSpec`/`ctx_New`/`tp_destroy` GİBİ mekanizmaları ZATEN TAM
+  desteklediğini, GERÇEK boşluğun SADECE loader/foreign_bridge'in BUNU
+  bir Nox programına BAĞLAYAMAMASINDA olduğunu buldu — bir C eklentisi
+  bir özel-tip örneğini DÖNDÜRDÜĞÜNDE, ÇAĞIRAN taraf (Nox) bu tutamacı
+  TAMAMEN OPAK bir değer olarak taşıyabiliyor (tip-spesifik davranışın
+  TAMAMI C eklentisinin KENDİ kodunda yaşıyor). YENİ builtinler: `hpy_call_
+  obj_on(handle: ptr, func_name: str, args...) -> ptr` (bir opak nesne
+  tutamacı döner — Faz 17'nin AYNI çoklu-argüman marshalling'ini
+  paylaşır), `hpy_close_obj(handle: ptr, obj: ptr) -> None` (tutamacı
+  serbest bırakır, C eklentisinin KENDİ `tp_destroy`sunu tetikleyebilir).
+  `isHpyMarshalableArgType`ye `ptr` eklendi — TÜM 5 çağrı varyantı ARTIK
+  DAHA ÖNCE `hpy_call_obj_on`dan alınmış bir tutamacı argüman olarak
+  KABUL EDER (`make_counter`+`get_counter_x` deseninin TAM round-trip'i).
+  **Tasarım — codegen sınırlamasını AST-rewrite İLE çözme**: `ptr`
+  codegen'de `int` İLE BİREBİR AYNI temsile sahip olduğundan (ayırt
+  edici bir `HeapKind` YOK, YENİ bir tane EKLEMEK düzinelerce switch'i
+  etkilerdi), checker bir argümanın STATİK tipi `.ptr` İSE O argümanı
+  (doğrulama TAMAMLANDIKTAN SONRA) gizli bir `__nox_hpy_obj_arg` işaretleyici
+  çağrıya SARAR (`__nox_reflect_*`nin AYNI deseni) — codegen'in per-
+  argüman döngüsü bu AST ŞEKLİNİ (yapısal olarak) tanıyıp `nox_hpy_args_
+  add_handle`e yönlendirir, int/float/bool/str/list/dict/class'ın normal
+  dispatch'ine HİÇ girmeden. Runtime tarafında `MarshalCtx.args`nin eleman
+  tipi `ArgEntry{h, owned}`e genişledi — bir opak tutamaç argümanı
+  (`owned=false`) çağrı SONRASI OTOMATİK kapatılmaz (Nox'un ZATEN sahip
+  olduğu, ödünç verilen bir referanstır), skaler/list/dict/class-dict
+  argümanları (`owned=true`) DEĞİŞMEDEN otomatik kapatılmaya devam eder.
+  2 yeni golden test (`tests/compat/hpy_call_golden_test.zig`, MEVCUT
+  `Counter` C tipini kullanır) — round-trip VE `tp_destroy`nin GERÇEKTEN
+  tetiklendiği kanıtlandı. `HPyType_FromSpec`in kendisinin (context.zig)
+  tip nesnesini KASITLI olarak KALICI/hiç-kapatılmayan bırakması (`Counter_
+  type`in C eklentisinin KENDİ `static` global'inde sonsuza dek önbelleğe
+  alınması) bilinen, `tests/compat/hpy_tier0_test.zig`nin ZATEN kabul
+  ettiği bir v1 ödünleşimi — bu 2 yeni test BUNU (page_allocator YERİNE
+  GERÇEK bir derlenmiş ikili+RuntimeState allocator'ı kullandıklarından)
+  `expectGoldenAllowTypeLeak` (YENİ, stderr'i kontrol etmeyen bir
+  `expectGolden` varyantı) İLE doğru şekilde karşılıyor.
+
 ## [1.62.0]
 
 ### Eklendi

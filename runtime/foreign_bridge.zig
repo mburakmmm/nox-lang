@@ -306,10 +306,19 @@ pub export fn nox_hpy_close(rt: ?*anyopaque, handle_ptr: ?*anyopaque) void {
 /// çalışır, DÖNÜŞ tipi (bu fazda) yalnızca int/float/bool/str olabilir
 /// (geriye-dönük tip çıkarımı olmadığından list/dict/class dönüş tipi
 /// AYRI/gelecekteki bir iştir).
+/// Faz 19 (bkz. plan dosyası "opak HPy nesne tutamaçları"): HER argüman
+/// girdisi ARTIK "bu handle ÇAĞRI SONRASI OTOMATİK kapatılsın mı" bilgisini
+/// de taşır — TAZE inşa edilen skaler/list/dict/class-dict argümanları
+/// (`owned=true`) ÇAĞRI SONRASI kapatılır; `nox_hpy_args_add_handle` İLE
+/// eklenen bir OPAK tutamaç argümanı (`owned=false`) İSE Nox'un ZATEN
+/// SAHİP OLDUĞU, ÖDÜNÇ verilen bir referanstır — kapatılmaz (Nox `hpy_
+/// close_obj` İLE KENDİSİ AÇIKÇA kapatacaktır).
+const ArgEntry = struct { h: hpy_bridge.context.HPy, owned: bool };
+
 const MarshalCtx = struct {
     handle: *PersistentHpyHandle,
     allocator: std.mem.Allocator,
-    args: std.ArrayListUnmanaged(hpy_bridge.context.HPy) = .empty,
+    args: std.ArrayListUnmanaged(ArgEntry) = .empty,
     /// Bir `class` argümanı alan-alan İNŞA EDİLİRKEN kullanılan GEÇİCİ
     /// "şu an inşa edilen dict" — sınıf alanları İÇ İÇE OLAMAYACAĞINDAN
     /// (checker reddeder) AYNI ANDA SADECE TEK bir class-dict'in inşa
@@ -319,7 +328,7 @@ const MarshalCtx = struct {
 
 fn freeMarshalCtx(mc: *MarshalCtx) void {
     const ctx = mc.handle.ctx;
-    for (mc.args.items) |h| ctx.ctx_Close.?(ctx, h);
+    for (mc.args.items) |e| if (e.owned) ctx.ctx_Close.?(ctx, e.h);
     mc.args.deinit(mc.allocator);
     mc.allocator.destroy(mc);
 }
@@ -404,21 +413,21 @@ pub export fn nox_hpy_args_add_int(mc_ptr: ?*anyopaque, value: i64) void {
     const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return));
     const ctx = mc.handle.ctx;
     const h = ctx.ctx_Long_FromInt64_t.?(ctx, value);
-    mc.args.append(mc.allocator, h) catch ctx.ctx_Close.?(ctx, h);
+    mc.args.append(mc.allocator, .{ .h = h, .owned = true }) catch ctx.ctx_Close.?(ctx, h);
 }
 
 pub export fn nox_hpy_args_add_float(mc_ptr: ?*anyopaque, value: f64) void {
     const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return));
     const ctx = mc.handle.ctx;
     const h = ctx.ctx_Float_FromDouble.?(ctx, value);
-    mc.args.append(mc.allocator, h) catch ctx.ctx_Close.?(ctx, h);
+    mc.args.append(mc.allocator, .{ .h = h, .owned = true }) catch ctx.ctx_Close.?(ctx, h);
 }
 
 pub export fn nox_hpy_args_add_bool(mc_ptr: ?*anyopaque, value: i32) void {
     const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return));
     const ctx = mc.handle.ctx;
     const h = ctx.ctx_Bool_FromBool.?(ctx, value != 0);
-    mc.args.append(mc.allocator, h) catch ctx.ctx_Close.?(ctx, h);
+    mc.args.append(mc.allocator, .{ .h = h, .owned = true }) catch ctx.ctx_Close.?(ctx, h);
 }
 
 pub export fn nox_hpy_args_add_str(mc_ptr: ?*anyopaque, value: ?[*:0]const u8) void {
@@ -429,7 +438,7 @@ pub export fn nox_hpy_args_add_str(mc_ptr: ?*anyopaque, value: ?[*:0]const u8) v
     const z = mc.allocator.dupeZ(u8, s) catch return;
     defer mc.allocator.free(z);
     const h = ctx.ctx_Unicode_FromString.?(ctx, z);
-    mc.args.append(mc.allocator, h) catch ctx.ctx_Close.?(ctx, h);
+    mc.args.append(mc.allocator, .{ .h = h, .owned = true }) catch ctx.ctx_Close.?(ctx, h);
 }
 
 /// `list_ptr`i (skaler elemanlı, `elem_kind` 0=int/1=float/2=bool/3=str)
@@ -443,7 +452,7 @@ pub export fn nox_hpy_args_add_list_scalar(mc_ptr: ?*anyopaque, list_ptr: ?*anyo
     const ctx = mc.handle.ctx;
     const h_list = ctx.ctx_List_New.?(ctx, 0);
     const lp = list_ptr orelse {
-        mc.args.append(mc.allocator, h_list) catch ctx.ctx_Close.?(ctx, h_list);
+        mc.args.append(mc.allocator, .{ .h = h_list, .owned = true }) catch ctx.ctx_Close.?(ctx, h_list);
         return;
     };
     const base: [*]const u8 = @ptrCast(@alignCast(lp));
@@ -455,7 +464,7 @@ pub export fn nox_hpy_args_add_list_scalar(mc_ptr: ?*anyopaque, list_ptr: ?*anyo
         _ = ctx.ctx_List_Append.?(ctx, h_list, h_elem);
         ctx.ctx_Close.?(ctx, h_elem);
     }
-    mc.args.append(mc.allocator, h_list) catch ctx.ctx_Close.?(ctx, h_list);
+    mc.args.append(mc.allocator, .{ .h = h_list, .owned = true }) catch ctx.ctx_Close.?(ctx, h_list);
 }
 
 /// `dict_ptr`i (skaler anahtar/değerli, `key_kind`/`value_kind` AYNI
@@ -468,7 +477,7 @@ pub export fn nox_hpy_args_add_dict_scalar(rt: ?*anyopaque, mc_ptr: ?*anyopaque,
     const ctx = mc.handle.ctx;
     const h_dict = ctx.ctx_Dict_New.?(ctx);
     const dp = dict_ptr orelse {
-        mc.args.append(mc.allocator, h_dict) catch ctx.ctx_Close.?(ctx, h_dict);
+        mc.args.append(mc.allocator, .{ .h = h_dict, .owned = true }) catch ctx.ctx_Close.?(ctx, h_dict);
         return;
     };
     const key_is_str: i32 = if (key_kind == 3) 1 else 0;
@@ -492,7 +501,7 @@ pub export fn nox_hpy_args_add_dict_scalar(rt: ?*anyopaque, mc_ptr: ?*anyopaque,
             ctx.ctx_Close.?(ctx, h_val);
         }
     }
-    mc.args.append(mc.allocator, h_dict) catch ctx.ctx_Close.?(ctx, h_dict);
+    mc.args.append(mc.allocator, .{ .h = h_dict, .owned = true }) catch ctx.ctx_Close.?(ctx, h_dict);
 }
 
 /// Bir `class` argümanının marshalling'İNE BAŞLAR — YENİ, boş bir HPy
@@ -560,7 +569,25 @@ pub export fn nox_hpy_class_arg_end(mc_ptr: ?*anyopaque) void {
     const ctx = mc.handle.ctx;
     const dict_h = mc.current_class_dict orelse return;
     mc.current_class_dict = null;
-    mc.args.append(mc.allocator, dict_h) catch ctx.ctx_Close.?(ctx, dict_h);
+    mc.args.append(mc.allocator, .{ .h = dict_h, .owned = true }) catch ctx.ctx_Close.?(ctx, dict_h);
+}
+
+/// Faz 19 (bkz. plan dosyası "opak HPy nesne tutamaçları"): `obj_ptr`
+/// (Nox `ptr` DEĞERİ — `hpy_call_obj_on`nin DAHA ÖNCE döndürdüğü, bir
+/// `HPyType_FromSpec` İLE tanımlanmış bir C eklenti tipinin ÖRNEĞİNE
+/// işaret eden OPAK bir tutamaç) bir `HPy{._i=...}` OLARAK yeniden
+/// yorumlanıp `mc.args`e `owned=false` OLARAK eklenir — Nox'un ZATEN
+/// SAHİP olduğu, ÇAĞRI SONRASI kapatılMAYACAK, ÖDÜNÇ verilen bir
+/// referanstır (kullanıcı, KENDİSİ bitirdiğinde `hpy_close_obj` İLE
+/// AÇIKÇA kapatmalıdır). `compiler/codegen_qbe/calls.zig`nin `__nox_
+/// hpy_obj_arg` İŞARETLEYİCİSİ TARAFINDAN, DİĞER `add_*` fonksiyonlarının
+/// YERİNE (int/float/bool/str/list/dict/class-dict'in NORMAL tip-başına
+/// dispatch'İNE HİÇ girmeden) çağrılır.
+pub export fn nox_hpy_args_add_handle(mc_ptr: ?*anyopaque, obj_ptr: ?*anyopaque) void {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return));
+    const op = obj_ptr orelse return;
+    const h: hpy_bridge.context.HPy = .{ ._i = @bitCast(@intFromPtr(op)) };
+    mc.args.append(mc.allocator, .{ .h = h, .owned = false }) catch {};
 }
 
 /// `mc.args`i `func_name` adlı metoda geçirip GERÇEK çağrıyı yapar —
@@ -578,14 +605,25 @@ pub export fn nox_hpy_class_arg_end(mc_ptr: ?*anyopaque) void {
 /// bunu GERÇEK bir `HPyError`e çevirir.
 fn invokeHpyMethod(mc: *MarshalCtx, func_name: []const u8) ?hpy_bridge.context.HPy {
     const ctx = mc.handle.ctx;
+    // Faz 19: `mc.args` ARTIK `ArgEntry{h, owned}` TAŞIDIĞINDAN (opak
+    // tutamaç argümanlarının `owned=false` OLABİLMESİ İçİn), GERÇEK
+    // çağrı İçİn (`?[*]const HPy` bekleyen HPy imzasına UYMAK İçİn)
+    // KISA ömürlü, YOĞUN bir `[]HPy` dizisi İNŞA EDİLİR.
+    const n = mc.args.items.len;
+    const packed_args = mc.allocator.alloc(hpy_bridge.context.HPy, n) catch {
+        setHpyError("bellek yetersiz", .{});
+        return null;
+    };
+    defer mc.allocator.free(packed_args);
+    for (mc.args.items, 0..) |e, i| packed_args[i] = e.h;
     const h_result: hpy_bridge.context.HPy = blk: {
         if (mc.handle.mod.findMethodKeywords(func_name)) |method| {
-            const args_ptr: ?[*]const hpy_bridge.context.HPy = if (mc.args.items.len > 0) mc.args.items.ptr else null;
-            break :blk method(ctx, hpy_bridge.context.HPy_NULL, args_ptr, mc.args.items.len, hpy_bridge.context.HPy_NULL);
+            const args_ptr: ?[*]const hpy_bridge.context.HPy = if (n > 0) packed_args.ptr else null;
+            break :blk method(ctx, hpy_bridge.context.HPy_NULL, args_ptr, n, hpy_bridge.context.HPy_NULL);
         }
-        if (mc.args.items.len == 1) {
+        if (n == 1) {
             if (mc.handle.mod.findMethodO(func_name)) |method| {
-                break :blk method(ctx, hpy_bridge.context.HPy_NULL, mc.args.items[0]);
+                break :blk method(ctx, hpy_bridge.context.HPy_NULL, packed_args[0]);
             }
         }
         setHpyError("'{s}' bulunamadı", .{func_name});
@@ -649,6 +687,36 @@ pub export fn nox_hpy_call_str_finish(rt: ?*anyopaque, mc_ptr: ?*anyopaque, func
     var size: isize = 0;
     const result_str = ctx.ctx_Unicode_AsUTF8AndSize.?(ctx, h_result, &size) orelse return str_mod.nox_str_from_bytes(rt, "");
     return str_mod.nox_str_from_bytes(rt, result_str[0..@intCast(size)]);
+}
+
+/// Faz 19: `func_name` adlı metodu `mc.args`la çağırıp SONUCU unmarshal
+/// ETMEDEN (ctx_Close ETMEDEN) DOĞRUDAN bir Nox `ptr` (`*anyopaque`)
+/// OLARAK döner — GENELLİKLE bir `HPyType_FromSpec` İLE tanımlanmış
+/// örnek (`make_counter`in ÖRNEĞİ GİBİ). Sahiplik Nox'a GEÇER — kullanıcı
+/// SONUNDA `hpy_close_obj` İLE AÇIKÇA kapatmalıdır (KAPATMAZSA sızar,
+/// `hpy_tier0_test.zig`nin KENDİ, ZATEN kabul ettiği "tip nesneleri
+/// bilinçli olarak sızıyor" v1 ödünleşimiyle TUTARLI).
+pub export fn nox_hpy_call_obj_finish(mc_ptr: ?*anyopaque, func_name: ?[*:0]const u8) ?*anyopaque {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return null));
+    defer freeMarshalCtx(mc);
+    const fnm = func_name orelse return null;
+    const h_result = invokeHpyMethod(mc, std.mem.span(fnm)) orelse return null;
+    const raw: usize = @bitCast(h_result._i);
+    if (raw == 0) return null;
+    return @ptrFromInt(raw);
+}
+
+/// Faz 19: `obj_ptr`nin (`hpy_call_obj_on`nin DAHA ÖNCE döndürdüğü opak
+/// tutamaç) `handle.ctx` ÜZERİNDEN `ctx_Close`ünü çağırır — refcount
+/// sıfıra düşerse C eklentisinin KENDİ `tp_destroy`sunu tetikler.
+/// `obj_ptr == null` İSE (ör. `hpy_call_obj_on` BAŞARISIZ olduysa)
+/// SESSİZCE hiçbir şey yapmaz.
+pub export fn nox_hpy_close_obj(handle_ptr: ?*anyopaque, obj_ptr: ?*anyopaque) void {
+    const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return));
+    const op = obj_ptr orelse return;
+    const ctx = handle.ctx;
+    const h: hpy_bridge.context.HPy = .{ ._i = @bitCast(@intFromPtr(op)) };
+    ctx.ctx_Close.?(ctx, h);
 }
 
 /// `path`teki `.wasm` ikilisini yükler, `func_name` adlı (yalnızca `i32`

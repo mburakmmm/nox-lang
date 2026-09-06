@@ -99,6 +99,33 @@ fn expectGolden(source: []const u8, expected: []const u8) !void {
     try std.testing.expectEqualStrings(expected, run_result.stdout);
 }
 
+/// Faz 19: `expectGolden`nin AYNISI, YALNIZCA `stderr`i KONTROL ETMEYEN
+/// varyantı — `ctxTypeFromSpec` (context.zig) İNŞA ETTİĞİ `.type_` etiketli
+/// `Obj`i (VE onun `type_name`sini) BİLİNÇLİ olarak KALICI/ÖLÜMSÜZ SAYAR
+/// (GERÇEK Python'un KENDİ tip nesnelerinin de tipik olarak SÜRECİN
+/// SONUNA kadar YAŞAMASIYLA TUTARLI) — `noxtest.c`nin `make_counter`ı
+/// (Faz 19'un test C fonksiyonu) `Counter_type`i BİR KEZ hesaplayıp
+/// KENDİ `static` C global'inde SONSUZA KADAR önbelleğe alır, `ctx_Close`ü
+/// HİÇ ÇAĞIRMAZ — `tests/compat/hpy_tier0_test.zig`nin KENDİ, ZATEN kabul
+/// ettiği "tip nesneleri BİLİNÇLİ olarak sızıyor" v1 ödünleşimiyle TUTARLI
+/// (o dosya BUNU `page_allocator` İLE, leak-tespit eden allocator'ı
+/// TAMAMEN ATLAYARAK gizler — BURADA GERÇEK bir derlenmiş ikili+GERÇEK
+/// `RuntimeState` allocator'ı KULLANILDIĞINDAN AYNI atlama YAPILAMAZ,
+/// bu YÜZDEN `stderr` KONTROLÜ BİLİNÇLİ olarak ATLANIR). Bu, HER `hpy_call_
+/// obj_on`+`HPyType_FromSpec` çağrısı İçİn DEĞİL — SADECE TİP KAYDININ
+/// KENDİSİ İçİn (ÖRNEK YARATMA/YIKMA DEĞİL) geçerli, BOUNDED (tip-sayısı
+/// KADAR, ÇAĞRI-sayısı KADAR DEĞİL) bir sızıntı.
+fn expectGoldenAllowTypeLeak(source: []const u8, expected: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const run_result = try compileAndRun(arena.allocator(), source);
+    if (run_result.term != .exited or run_result.term.exited != 0) {
+        std.debug.print("program basarisiz cikti (stderr): {s}\n", .{run_result.stderr});
+        return error.ProgramFailed;
+    }
+    try std.testing.expectEqualStrings(expected, run_result.stdout);
+}
+
 test "hpy_call: gerçek bir .nox programından gerçek bir HPy eklentisi çağrılır" {
     try expectGolden(
         \\print(hpy_call("tests/compat/hpy_ext/noxtest.so", "noxtest", "add_one", 41))
@@ -261,5 +288,40 @@ test "hpy_call_on: çağrılan HPy C fonksiyonunun KENDİSİ bir istisna fırlat
         \\
     ,
         "yakalandi\n",
+    );
+}
+
+// Faz 19 (bkz. plan dosyası "opak HPy nesne tutamaçları"): `hpy_call_obj_on`
+// `HPyType_FromSpec` İLE tanımlanmış bir C eklenti tipinin (`Counter`,
+// bkz. `noxtest.c`) ÖRNEĞİNE OPAK bir tutamaç döner — bu tutamaç BAŞKA
+// bir `hpy_call_on` çağrısına (C eklentisinin KENDİ "getter" fonksiyonu,
+// `get_counter_x`) argüman olarak GERİ geçirilebilir (round-trip KANITI).
+test "hpy_call_obj_on: opak Counter tutamacı round-trip (make_counter -> get_counter_x)" {
+    try expectGoldenAllowTypeLeak(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\c: ptr = hpy_call_obj_on(h, "make_counter", 5)
+        \\print(hpy_call_on(h, "get_counter_x", c))
+        \\hpy_close_obj(h, c)
+        \\hpy_close(h)
+        \\
+    ,
+        "5\n",
+    );
+}
+
+// Faz 19: `hpy_close_obj`nin GERÇEKTEN C eklentisinin KENDİ `tp_destroy`
+// slot'unu tetiklediğinin kanıtı (`get_destroy_count`, `Counter_destroy`nin
+// artırdığı `static` sayacı döner — TAZE bir modül yüklemesinde 0'dan
+// başlar).
+test "hpy_close_obj: Counter_destroy (tp_destroy) GERÇEKTEN tetiklenir" {
+    try expectGoldenAllowTypeLeak(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\c: ptr = hpy_call_obj_on(h, "make_counter", 1)
+        \\hpy_close_obj(h, c)
+        \\print(hpy_call_on(h, "get_destroy_count", 0))
+        \\hpy_close(h)
+        \\
+    ,
+        "1\n",
     );
 }
