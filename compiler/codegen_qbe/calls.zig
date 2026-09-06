@@ -130,6 +130,72 @@ pub fn genIndirectCallThroughClosurePtr(self: *Codegen, closure_ptr: []const u8,
     return .{ .text = "0", .qtype = .w };
 }
 
+/// Faz 21 (bkz. plan dosyası "modül-seviyesi tip inşası + GETSET + NOARGS
+/// tip metodları"): `hpy_call_on`/vb.nin per-argüman marshal DÖNGÜSÜNÜN
+/// PAYLAŞILAN gövdesi — Faz 17-19'un ORİJİNAL, tek-siteli implementasyonu,
+/// `hpy_new_on`/`hpy_call_attr_on`nin İKİSİ de AYNI zinciri (`__nox_hpy_obj_arg`
+/// işaretleyicisi DAHİL) İhtiyaç duyduğundan BURAYA ÇIKARILDI (davranış
+/// DEĞİŞMEDEN, SAF bir kod-taşıma).
+pub fn genHpyMarshalTrailingArgs(self: *Codegen, mc_temp: []const u8, trailing: []const ast.Expr) CodegenError!void {
+    var arg_values: std.ArrayListUnmanaged(Value) = .empty;
+    for (trailing) |arg_expr| {
+        // Faz 19 (bkz. plan dosyası "opak HPy nesne tutamaçları"):
+        // checker'ın `__nox_hpy_obj_arg` İŞARETLEYİCİSİ (`ptr`-
+        // tipli argümanlar İçİn, `isHpyMarshalableArgType`nin
+        // çağrıldığı yerdeki AST-rewrite) — İÇ ifadeyi normal
+        // `genExpr` İLE değerlendirip `$nox_hpy_args_add_handle`e
+        // YÖNLENDİRİR, AŞAĞIDAKİ `av.heap`/`av.qtype` dispatch'İNE
+        // HİÇ GİRMEDEN (`ptr` codegen'de `int` İLE BİREBİR AYNI
+        // temsile sahip OLDUĞUNDAN, o dala düşerse YANLIŞLIKLA
+        // `nox_hpy_args_add_int` İLE marshal EDİLİRDİ).
+        if (arg_expr == .call and arg_expr.call.callee.* == .identifier and std.mem.eql(u8, arg_expr.call.callee.identifier, "__nox_hpy_obj_arg")) {
+            const inner_v = try self.genExpr(arg_expr.call.args[0]);
+            try arg_values.append(self.allocator, inner_v);
+            try self.qbeCall(null, "$nox_hpy_args_add_handle", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = inner_v.text } });
+            continue;
+        }
+        const av = try self.genExpr(arg_expr);
+        try arg_values.append(self.allocator, av);
+        switch (av.heap) {
+            .str => try self.qbeCall(null, "$nox_hpy_args_add_str", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = av.text } }),
+            .list => {
+                const elem_kind = hpyElemKindLit(av.elem_qtype, av.elem_is_str);
+                try self.qbeCall(null, "$nox_hpy_args_add_list_scalar", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = av.text }, .{ .ty = .w, .text = elem_kind } });
+            },
+            .dict => {
+                const di = av.dict_info.?;
+                const key_kind = hpyElemKindLit(di.key_qtype, di.key_is_str);
+                const value_kind = hpyElemKindLit(di.value_qtype, di.value_is_str);
+                try self.qbeCall(null, "$nox_hpy_args_add_dict_scalar", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = av.text }, .{ .ty = .w, .text = key_kind }, .{ .ty = .w, .text = value_kind } });
+            },
+            .class => {
+                try self.qbeCall(null, "$nox_hpy_class_arg_begin", &.{.{ .ty = .l, .text = mc_temp }});
+                const cinfo = self.classes.get(av.class_name.?).?;
+                for (cinfo.fields.items) |f| {
+                    const fv = try self.genFieldReadFromValue(av, f.name);
+                    const fname_v = try self.emitStringLiteral(f.name);
+                    const setter: []const u8 = switch (f.info.qtype) {
+                        .l => if (f.info.heap == .str) "$nox_hpy_class_arg_set_str" else "$nox_hpy_class_arg_set_int",
+                        .d => "$nox_hpy_class_arg_set_float",
+                        .w => "$nox_hpy_class_arg_set_bool",
+                        .none => return error.Unsupported,
+                    };
+                    try self.qbeCall(null, setter, &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = fname_v.text }, .{ .ty = f.info.qtype, .text = fv.text } });
+                }
+                try self.qbeCall(null, "$nox_hpy_class_arg_end", &.{.{ .ty = .l, .text = mc_temp }});
+            },
+            .none => switch (av.qtype) {
+                .l => try self.qbeCall(null, "$nox_hpy_args_add_int", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = av.text } }),
+                .d => try self.qbeCall(null, "$nox_hpy_args_add_float", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .d, .text = av.text } }),
+                .w => try self.qbeCall(null, "$nox_hpy_args_add_bool", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .w, .text = av.text } }),
+                .none => return error.Unsupported,
+            },
+            else => return error.Unsupported,
+        }
+    }
+    try self.releaseTemporaryArgs(trailing, arg_values.items);
+}
+
 pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
     switch (c.callee.*) {
         .identifier => |name| {
@@ -309,63 +375,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 try self.qbeCall(.{ .name = mc_temp, .ty = .l }, "$nox_hpy_args_begin", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handle_v.text } });
 
                 const trailing = c.args[2..];
-                var arg_values: std.ArrayListUnmanaged(Value) = .empty;
-                for (trailing) |arg_expr| {
-                    // Faz 19 (bkz. plan dosyası "opak HPy nesne tutamaçları"):
-                    // checker'ın `__nox_hpy_obj_arg` İŞARETLEYİCİSİ (`ptr`-
-                    // tipli argümanlar İçİn, `isHpyMarshalableArgType`nin
-                    // çağrıldığı yerdeki AST-rewrite) — İÇ ifadeyi normal
-                    // `genExpr` İLE değerlendirip `$nox_hpy_args_add_handle`e
-                    // YÖNLENDİRİR, AŞAĞIDAKİ `av.heap`/`av.qtype` dispatch'İNE
-                    // HİÇ GİRMEDEN (`ptr` codegen'de `int` İLE BİREBİR AYNI
-                    // temsile sahip OLDUĞUNDAN, o dala düşerse YANLIŞLIKLA
-                    // `nox_hpy_args_add_int` İLE marshal EDİLİRDİ).
-                    if (arg_expr == .call and arg_expr.call.callee.* == .identifier and std.mem.eql(u8, arg_expr.call.callee.identifier, "__nox_hpy_obj_arg")) {
-                        const inner_v = try self.genExpr(arg_expr.call.args[0]);
-                        try arg_values.append(self.allocator, inner_v);
-                        try self.qbeCall(null, "$nox_hpy_args_add_handle", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = inner_v.text } });
-                        continue;
-                    }
-                    const av = try self.genExpr(arg_expr);
-                    try arg_values.append(self.allocator, av);
-                    switch (av.heap) {
-                        .str => try self.qbeCall(null, "$nox_hpy_args_add_str", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = av.text } }),
-                        .list => {
-                            const elem_kind = hpyElemKindLit(av.elem_qtype, av.elem_is_str);
-                            try self.qbeCall(null, "$nox_hpy_args_add_list_scalar", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = av.text }, .{ .ty = .w, .text = elem_kind } });
-                        },
-                        .dict => {
-                            const di = av.dict_info.?;
-                            const key_kind = hpyElemKindLit(di.key_qtype, di.key_is_str);
-                            const value_kind = hpyElemKindLit(di.value_qtype, di.value_is_str);
-                            try self.qbeCall(null, "$nox_hpy_args_add_dict_scalar", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = av.text }, .{ .ty = .w, .text = key_kind }, .{ .ty = .w, .text = value_kind } });
-                        },
-                        .class => {
-                            try self.qbeCall(null, "$nox_hpy_class_arg_begin", &.{.{ .ty = .l, .text = mc_temp }});
-                            const cinfo = self.classes.get(av.class_name.?).?;
-                            for (cinfo.fields.items) |f| {
-                                const fv = try self.genFieldReadFromValue(av, f.name);
-                                const fname_v = try self.emitStringLiteral(f.name);
-                                const setter: []const u8 = switch (f.info.qtype) {
-                                    .l => if (f.info.heap == .str) "$nox_hpy_class_arg_set_str" else "$nox_hpy_class_arg_set_int",
-                                    .d => "$nox_hpy_class_arg_set_float",
-                                    .w => "$nox_hpy_class_arg_set_bool",
-                                    .none => return error.Unsupported,
-                                };
-                                try self.qbeCall(null, setter, &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = fname_v.text }, .{ .ty = f.info.qtype, .text = fv.text } });
-                            }
-                            try self.qbeCall(null, "$nox_hpy_class_arg_end", &.{.{ .ty = .l, .text = mc_temp }});
-                        },
-                        .none => switch (av.qtype) {
-                            .l => try self.qbeCall(null, "$nox_hpy_args_add_int", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = av.text } }),
-                            .d => try self.qbeCall(null, "$nox_hpy_args_add_float", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .d, .text = av.text } }),
-                            .w => try self.qbeCall(null, "$nox_hpy_args_add_bool", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .w, .text = av.text } }),
-                            .none => return error.Unsupported,
-                        },
-                        else => return error.Unsupported,
-                    }
-                }
-                try self.releaseTemporaryArgs(trailing, arg_values.items);
+                try self.genHpyMarshalTrailingArgs(mc_temp, trailing);
 
                 const result_temp = try self.newTemp();
                 if (std.mem.eql(u8, name, "hpy_call_on")) {
@@ -406,6 +416,62 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 const obj_v = try self.genExpr(c.args[1]);
                 try self.qbeCall(null, "$nox_hpy_close_obj", &.{ .{ .ty = .l, .text = handle_v.text }, .{ .ty = .l, .text = obj_v.text } });
                 return .{ .text = "0", .qtype = .w };
+            }
+            // Faz 21 (bkz. plan dosyası "modül-seviyesi tip inşası + GETSET
+            // + NOARGS tip metodları"): `hpy_new_on` — `hpy_call_on`nin AYNI
+            // `$nox_hpy_args_begin`+marshal ZİNCİRİNİ paylaşır, SADECE
+            // "finish" adımı FARKLI (`$nox_hpy_new_finish`, `GetAttr`+`Call`
+            // İLE İNŞA eder), dönüş `ptr`.
+            if (std.mem.eql(u8, name, "hpy_new_on")) {
+                if (c.args.len < 2) return error.Unsupported;
+                const handle_v = try self.genExpr(c.args[0]);
+                const class_v = try self.genExpr(c.args[1]);
+                const mc_temp = try self.newTemp();
+                try self.qbeCall(.{ .name = mc_temp, .ty = .l }, "$nox_hpy_args_begin", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handle_v.text } });
+                try self.genHpyMarshalTrailingArgs(mc_temp, c.args[2..]);
+                const result_temp = try self.newTemp();
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_new_finish", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = class_v.text } });
+                try self.emitHpyErrorCheckOrRaise();
+                return .{ .text = result_temp, .qtype = .l };
+            }
+            // Faz 21: `hpy_getattr_int_on`/`hpy_setattr_int_on` — SABİT
+            // arity, DOĞRUDAN çağrı (marshal zinciri GEREKMEZ).
+            if (std.mem.eql(u8, name, "hpy_getattr_int_on")) {
+                if (c.args.len != 3) return error.Unsupported;
+                const handle_v = try self.genExpr(c.args[0]);
+                const obj_v = try self.genExpr(c.args[1]);
+                const attr_v = try self.genExpr(c.args[2]);
+                const result_temp = try self.newTemp();
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_getattr_int", &.{ .{ .ty = .l, .text = handle_v.text }, .{ .ty = .l, .text = obj_v.text }, .{ .ty = .l, .text = attr_v.text } });
+                try self.emitHpyErrorCheckOrRaise();
+                return .{ .text = result_temp, .qtype = .l };
+            }
+            if (std.mem.eql(u8, name, "hpy_setattr_int_on")) {
+                if (c.args.len != 4) return error.Unsupported;
+                const handle_v = try self.genExpr(c.args[0]);
+                const obj_v = try self.genExpr(c.args[1]);
+                const attr_v = try self.genExpr(c.args[2]);
+                const value_v = try self.genExpr(c.args[3]);
+                try self.qbeCall(null, "$nox_hpy_setattr_int", &.{ .{ .ty = .l, .text = handle_v.text }, .{ .ty = .l, .text = obj_v.text }, .{ .ty = .l, .text = attr_v.text }, .{ .ty = .l, .text = value_v.text } });
+                try self.emitHpyErrorCheckOrRaise();
+                return .{ .text = "0", .qtype = .w };
+            }
+            // Faz 21: `hpy_call_attr_on` — `hpy_call_on`nin AYNI marshal
+            // zincirini paylaşır, SADECE başlangıç (`$nox_hpy_args_begin_
+            // for_obj`, `obj`i de hedef olarak taşır) VE bitiş (`$nox_hpy_
+            // call_attr_int_finish`) FARKLI.
+            if (std.mem.eql(u8, name, "hpy_call_attr_on")) {
+                if (c.args.len < 3) return error.Unsupported;
+                const handle_v = try self.genExpr(c.args[0]);
+                const obj_v = try self.genExpr(c.args[1]);
+                const attr_v = try self.genExpr(c.args[2]);
+                const mc_temp = try self.newTemp();
+                try self.qbeCall(.{ .name = mc_temp, .ty = .l }, "$nox_hpy_args_begin_for_obj", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handle_v.text }, .{ .ty = .l, .text = obj_v.text } });
+                try self.genHpyMarshalTrailingArgs(mc_temp, c.args[3..]);
+                const result_temp = try self.newTemp();
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_call_attr_int_finish", &.{ .{ .ty = .l, .text = mc_temp }, .{ .ty = .l, .text = attr_v.text } });
+                try self.emitHpyErrorCheckOrRaise();
+                return .{ .text = result_temp, .qtype = .l };
             }
             // Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi +
             // metadata-tabanlı metaprogramming", `checker.zig`deki eşdeğer

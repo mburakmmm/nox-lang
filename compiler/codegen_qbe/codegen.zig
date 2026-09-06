@@ -399,6 +399,7 @@ pub const Codegen = struct {
     pub const genCall = calls.genCall;
     pub const genParseOrRaise = calls.genParseOrRaise;
     pub const emitHpyErrorCheckOrRaise = calls.emitHpyErrorCheckOrRaise;
+    pub const genHpyMarshalTrailingArgs = calls.genHpyMarshalTrailingArgs;
     pub const releaseTemporaryArgs = calls.releaseTemporaryArgs;
     pub const releaseIfTemporary = calls.releaseIfTemporary;
     pub const currentArena = calls.currentArena;

@@ -2280,7 +2280,7 @@ pub const Checker = struct {
     /// olarak İŞARETLERDİ (ör. `len(xs)` İçEREN salt-okunur bir yardımcı
     /// bile YAKALANIRDI — GERÇEK bir yanlış-pozitif).
     fn isKnownSafeBuiltinCallee(name: []const u8) bool {
-        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "wasm_call" };
+        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "hpy_new_on", "hpy_getattr_int_on", "hpy_setattr_int_on", "hpy_call_attr_on", "wasm_call" };
         for (safe) |s| {
             if (std.mem.eql(u8, name, s)) return true;
         }
@@ -4655,6 +4655,98 @@ pub const Checker = struct {
                     if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_close_obj' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
                     if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_close_obj' argümanı 2 (nesne) ptr olmalıdır ('hpy_call_obj_on'ın dönüş değeri)", .{});
                     return .none;
+                }
+                // Faz 21 (bkz. plan dosyası "modül-seviyesi tip inşası +
+                // GETSET + NOARGS tip metodları"): `hpy_new_on` — `HPyType_
+                // FromSpec` İLE tanımlanmış, MODÜL nesnesinin KENDİ bir
+                // attribute'u OLAN bir tipi (ör. aHPy'nin `Box`u) İNŞA eder
+                // (`ctx_GetAttr_s(module, class_name)` + `ctx_Call`). `hpy_
+                // call_on`nin AYNI arg-doğrulama+marshalling şeklini
+                // PAYLAŞIR (AYRI bir `if` bloğu — mesajların "fonksiyon
+                // adı" YERİNE "sınıf adı" DEMESİ İçİn), dönüş `.ptr`.
+                if (std.mem.eql(u8, name, "hpy_new_on")) {
+                    if (c.args.len < 2) {
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_new_on' en az 2 argüman alır (tutamac: ptr, sınıf_adı: str, [argüman, ...])", .{});
+                    }
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_new_on' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "'hpy_new_on' argümanı 2 (sınıf adı) str olmalıdır", .{});
+                    if (c.args[1] != .string_lit) {
+                        return self.fail(error.TypeMismatch, "'hpy_new_on' argümanı 2 (sınıf adı) yalnızca bir string LİTERALİ olabilir", .{});
+                    }
+                    for (c.args[2..], 2..) |*arg_expr, idx| {
+                        const arg_ty = try self.checkExpr(ctx, arg_expr.*);
+                        if (!self.isHpyMarshalableArgType(arg_ty)) {
+                            return self.fail(error.TypeMismatch, "'hpy_new_on' argümanı {d} marshal EDİLEMEZ — yalnızca int/float/bool/str, SKALER elemanlı list[T]/dict[K,V], TÜM alanları skaler olan sınıflar, VE (BAŞKA bir 'hpy_call_obj_on'dan alınan) opak 'ptr' tutamaçları HPy'ye geçirilebilir", .{idx + 1});
+                        }
+                        if (arg_ty == .ptr) {
+                            const inner = try self.allocator.create(ast.Expr);
+                            inner.* = arg_expr.*;
+                            const callee = try self.allocator.create(ast.Expr);
+                            callee.* = .{ .identifier = "__nox_hpy_obj_arg" };
+                            const wrapped_args = try self.allocator.alloc(ast.Expr, 1);
+                            wrapped_args[0] = inner.*;
+                            arg_expr.* = .{ .call = .{ .callee = callee, .args = wrapped_args } };
+                        }
+                    }
+                    return .ptr;
+                }
+                // Faz 21: `hpy_getattr_int_on`/`hpy_setattr_int_on` — SABİT
+                // arity, DEĞİŞKEN argüman YOK (marshalling zinciri gerekmez).
+                if (std.mem.eql(u8, name, "hpy_getattr_int_on")) {
+                    if (c.args.len != 3) {
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_getattr_int_on' tam olarak 3 argüman alır (tutamac: ptr, nesne: ptr, attribute_adı: str)", .{});
+                    }
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_getattr_int_on' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_getattr_int_on' argümanı 2 (nesne) ptr olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "'hpy_getattr_int_on' argümanı 3 (attribute adı) str olmalıdır", .{});
+                    if (c.args[2] != .string_lit) {
+                        return self.fail(error.TypeMismatch, "'hpy_getattr_int_on' argümanı 3 (attribute adı) yalnızca bir string LİTERALİ olabilir", .{});
+                    }
+                    return .int;
+                }
+                if (std.mem.eql(u8, name, "hpy_setattr_int_on")) {
+                    if (c.args.len != 4) {
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_setattr_int_on' tam olarak 4 argüman alır (tutamac: ptr, nesne: ptr, attribute_adı: str, değer: int)", .{});
+                    }
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_setattr_int_on' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_setattr_int_on' argümanı 2 (nesne) ptr olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "'hpy_setattr_int_on' argümanı 3 (attribute adı) str olmalıdır", .{});
+                    if (c.args[2] != .string_lit) {
+                        return self.fail(error.TypeMismatch, "'hpy_setattr_int_on' argümanı 3 (attribute adı) yalnızca bir string LİTERALİ olabilir", .{});
+                    }
+                    if (try self.checkExpr(ctx, c.args[3]) != .int) return self.fail(error.TypeMismatch, "'hpy_setattr_int_on' argümanı 4 (değer) int olmalıdır", .{});
+                    return .none;
+                }
+                // Faz 21: `hpy_call_attr_on` — `obj`nin (bir örnek tutamacı)
+                // `attr_name` adlı BAĞLI METODUNU (`ctx_GetAttr_s`+`ctx_Call`)
+                // çağırır — `hpy_call_on`nin AYNI trailing-argüman marshalling
+                // ŞEKLİNİ paylaşır (SIFIR VEYA DAHA FAZLA argüman).
+                if (std.mem.eql(u8, name, "hpy_call_attr_on")) {
+                    if (c.args.len < 3) {
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_call_attr_on' en az 3 argüman alır (tutamac: ptr, nesne: ptr, attribute_adı: str, [argüman, ...])", .{});
+                    }
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_call_attr_on' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_call_attr_on' argümanı 2 (nesne) ptr olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "'hpy_call_attr_on' argümanı 3 (attribute adı) str olmalıdır", .{});
+                    if (c.args[2] != .string_lit) {
+                        return self.fail(error.TypeMismatch, "'hpy_call_attr_on' argümanı 3 (attribute adı) yalnızca bir string LİTERALİ olabilir", .{});
+                    }
+                    for (c.args[3..], 3..) |*arg_expr, idx| {
+                        const arg_ty = try self.checkExpr(ctx, arg_expr.*);
+                        if (!self.isHpyMarshalableArgType(arg_ty)) {
+                            return self.fail(error.TypeMismatch, "'hpy_call_attr_on' argümanı {d} marshal EDİLEMEZ — yalnızca int/float/bool/str, SKALER elemanlı list[T]/dict[K,V], TÜM alanları skaler olan sınıflar, VE (BAŞKA bir 'hpy_call_obj_on'dan alınan) opak 'ptr' tutamaçları HPy'ye geçirilebilir", .{idx + 1});
+                        }
+                        if (arg_ty == .ptr) {
+                            const inner = try self.allocator.create(ast.Expr);
+                            inner.* = arg_expr.*;
+                            const callee = try self.allocator.create(ast.Expr);
+                            callee.* = .{ .identifier = "__nox_hpy_obj_arg" };
+                            const wrapped_args = try self.allocator.alloc(ast.Expr, 1);
+                            wrapped_args[0] = inner.*;
+                            arg_expr.* = .{ .call = .{ .callee = callee, .args = wrapped_args } };
+                        }
+                    }
+                    return .int;
                 }
                 // Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi +
                 // metadata-tabanlı metaprogramming"): `stdlib/nox/reflect.

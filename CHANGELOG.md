@@ -14,6 +14,52 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.65.0]
+
+### Eklendi
+- **Faz 21 — modül-seviyesi tip inşası + GETSET + NOARGS tip metodları
+  (aHPy `Box` ile GERÇEK dünya doğrulaması)**: Faz 20 sonrası kullanıcı
+  aHPy'nin `ahpy_setuptools_example.hpy0.so`sunu 17 fonksiyonla DAHA GENİŞ
+  test etti (hepsi doğru çalıştı) — sıradaki hedef, aHPy'nin `Box`
+  (`HPyType_FromSpec` İLE tanımlı bir Cython `cdef class`ı) sınıfını
+  Nox'tan İNŞA EDİP KULLANMAKTI. Araştırma ÜÇ GERÇEK boşluk buldu: (1)
+  `constructInstance` `tp_new` KAYITLI OLMAYAN tipleri (Box'ın KENDİSİ
+  GİBİ — Cython, GERÇEK HPy/CPython'ın "object.__new__" VARSAYILANINA
+  GÜVENİR) TypeError İLE reddediyordu — YENİ `genericNew` (`ctxNew`in AYNI
+  zeroed-buffer mantığı) `tp_new` EKSİKKEN düşülen bir varsayılan olarak
+  eklendi. (2) `HPyDef_Kind_GetSet` (Box'ın `value` özelliği) TAMAMEN
+  desteklenmiyordu — GERÇEK `cc`/`offsetof` İLE (`sizeof(HPyDef)=64`,
+  `offsetof(HPyDef,getset)=8`, `sizeof(HPyGetSet)=56`) doğrulanan bir
+  bayt-yeniden-yorumlama tekniğiyle (`slotOfLocal`nin AYNI ilkesi) YENİ
+  `Obj.type_getsets`/`TypeGetSet` eklendi, `attrLookup`/`ctxSetAttr`
+  GETSET getter/setter'larını (VARSA) ÖNCELİKLE ÇAĞIRIR hale getirildi
+  (`instance_dict`e SESSİZCE genel bir girdi EKLEMEK YERİNE). (3)
+  `TypeMethod`/`type_methods` SADECE `HPyFunc_O` metodları kaydediyordu —
+  Box'ın `identity()`si (`HPyFunc_NOARGS`) HİÇ bulunamıyordu — `TypeMethod`
+  HER İKİ imzayı da destekleyecek şekilde genelleştirildi (`bound_method_`
+  VE `callDispatch` de AYNI şekilde).
+- **YENİ Nox builtinleri**: `hpy_new_on(handle, class_name, args...) ->
+  ptr` (bir MODÜL attribute'u OLAN tipi `ctx_GetAttr_s`+`ctx_Call` İLE
+  İNŞA eder — `hpy_call_on`nin AYNI marshal zincirini paylaşır, YENİ,
+  PAYLAŞILAN `genHpyMarshalTrailingArgs`e ÇIKARILDI), `hpy_getattr_int_on`/
+  `hpy_setattr_int_on(handle, obj, attr_adı, [value]) -> int/None` (SABİT
+  arity, GETSET/instance_dict'i şeffafça kullanır), `hpy_call_attr_on(handle,
+  obj, attr_adı, args...) -> int` (bir opak örneğin BAĞLI METODUNU çağırır
+  — `nox_hpy_args_begin_for_obj`in YENİ `target_obj` alanı İLE).
+- GERÇEK aHPy `Box`ına karşı ELLE doğrulandı: `hpy_new_on(h, "Box", 5)` →
+  `hpy_getattr_int_on(..., "value")` → `5`, `hpy_setattr_int_on(..., "value",
+  42)` SONRASI `hpy_call_attr_on(..., "identity")` → `42` (GETSET setter'ın
+  YAZDIĞI AYNI alanı `identity()`nin `HPyField_Load` İLE OKUDUĞUNU — İKİ
+  AYRI mekanizmanın TUTARLI çalıştığını — KANITLAR).
+- **YENİ, self-contained C test fixture'ı** (`tests/compat/hpy_ext/
+  noxtest.c`): `Boxed` (aHPy'nin `Box`ının KÜÇÜLTÜLMÜŞ bir kopyası — `tp_new`
+  YOK, `HPyDef_GETSET` (`"n"`), `HPyFunc_NOARGS` bir tip metodu (`double_n`),
+  `tp_destroy`). YENİ golden testler (`tests/compat/hpy_call_golden_test.
+  zig`, 4 yeni) — jenerik `tp_new` düşüşü, GETSET getter/setter round-trip,
+  NOARGS bound-method çağrısı, `tp_destroy` tetiklemesi. `hpy_tier0_test.
+  zig`nin `ctx_Call — tp_new'i olmayan bir tipte TypeError` testi, YENİ
+  (doğru) davranışı (BAŞARILI jenerik inşa) yansıtacak şekilde güncellendi.
+
 ## [1.64.0]
 
 ### Eklendi

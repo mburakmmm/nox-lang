@@ -263,7 +263,7 @@ test "gerçek HPy eklentisi: ctx_Call ile Widget(5)(3) == 13 — tp_new+tp_init+
     try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Callable_Check.?(ctx, five)); // düz long çağrılabilir değil
 }
 
-test "gerçek HPy eklentisi: ctx_Call — tp_new'i olmayan bir tipte TypeError (çağrılabilir nesne protokolü)" {
+test "gerçek HPy eklentisi: ctx_Call — tp_new'i olmayan bir tipte jenerik düşüş BAŞARIYLA inşa eder (Faz 21)" {
     const so_path = @import("build_options").noxtest_so_path;
 
     var mod = try hpy.loader.load(so_path, "noxtest");
@@ -274,9 +274,10 @@ test "gerçek HPy eklentisi: ctx_Call — tp_new'i olmayan bir tipte TypeError (
     const ctx = try hpy.context.createContext(std.heap.page_allocator);
     defer hpy.context.destroyContext(std.heap.page_allocator, ctx);
 
-    // `Counter` yalnızca `tp_destroy` kaydeder — `Counter_type`i elde etmek
-    // İçin `make_counter`ı BİR KEZ çağırıp (bu, tipi TEMBEL ilklendirir),
-    // döndürdüğü örneğin KENDİ tipini `ctx_Type` İLE oku.
+    // `Counter` yalnızca `tp_destroy` kaydeder (`tp_new`/`tp_init` YOK) —
+    // `Counter_type`i elde etmek İçin `make_counter`ı BİR KEZ çağırıp (bu,
+    // tipi TEMBEL ilklendirir), döndürdüğü örneğin KENDİ tipini `ctx_Type`
+    // İLE oku.
     const seed = ctx.ctx_Long_FromInt64_t.?(ctx, 1);
     defer ctx.ctx_Close.?(ctx, seed);
     const counter_instance = make_counter(ctx, hpy.context.HPy_NULL, seed);
@@ -284,12 +285,17 @@ test "gerçek HPy eklentisi: ctx_Call — tp_new'i olmayan bir tipte TypeError (
     const counter_type = ctx.ctx_Type.?(ctx, counter_instance);
     defer ctx.ctx_Close.?(ctx, counter_type);
 
+    // Faz 21 (bkz. plan dosyası "modül-seviyesi tip inşası + GETSET +
+    // NOARGS tip metodları"): `constructInstance`, `tp_new` KAYITLI
+    // DEĞİLKEN ARTIK `genericNew`e (GERÇEK HPy/CPython'ın `object.__new__`
+    // VARSAYILANININ karşılığı) düşüyor — bu YÜZDEN `Counter_type()` (`tp_new`
+    // YOK, `tp_init` de YOK) ARTIK bir TypeError İLE DEĞİL, GEÇERLİ, sıfırlanmış
+    // BİR örnekle BAŞARIYLA döner.
     try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Err_Occurred.?(ctx));
     const result = ctx.ctx_Call.?(ctx, counter_type, null, 0, hpy.context.HPy_NULL);
-    try std.testing.expectEqual(hpy.context.HPy_NULL._i, result._i);
-    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_Occurred.?(ctx));
-    try std.testing.expectEqual(@as(c_int, 1), ctx.ctx_Err_ExceptionMatches.?(ctx, ctx.h_TypeError));
-    ctx.ctx_Err_Clear.?(ctx);
+    defer ctx.ctx_Close.?(ctx, result);
+    try std.testing.expect(result._i != 0);
+    try std.testing.expectEqual(@as(c_int, 0), ctx.ctx_Err_Occurred.?(ctx));
 }
 
 test "gerçek HPy eklentisi: ctx_Call/ctx_CallTupleDict — boş olmayan kwargs TypeError verir (v1 sınırlaması)" {

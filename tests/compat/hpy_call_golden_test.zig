@@ -354,3 +354,67 @@ test "hpy_call: eski tek-seferlik yoluyla HPy_mod_exec'in yazdığı modül attr
         "99\n",
     );
 }
+
+// Faz 21 (bkz. plan dosyası "modül-seviyesi tip inşası + GETSET + NOARGS
+// tip metodları"): `Boxed` (bkz. `noxtest.c`) — aHPy'nin GERÇEK `Box`
+// sınıfının KÜÇÜLTÜLMÜŞ bir kopyası: `HPy_tp_new` KAYITLI DEĞİL (jenerik
+// `constructInstance` düşüşünü egzersiz eder), `HPyDef_GETSET` (`"n"`)
+// VE `HPyFunc_NOARGS` bir tip metodu (`double_n`) taşır. `Boxed`, GERÇEK
+// aHPy'nin `Box`ından FARKLI olarak, KENDİ tipini HER `hpy_open` çağrısında
+// TAZE inşa edip modülün instance_dict'ine KAYDEDER (Counter/Widget'ın
+// AKSİNE, `hpy_close` SONRASI tip nesnesi de DÜZGÜNCE serbest bırakılır —
+// BU YÜZDEN aşağıdaki testler `expectGoldenAllowTypeLeak` DEĞİL, KATI
+// `expectGolden` KULLANIR).
+test "hpy_new_on: jenerik tp_new düşüşü + tp_init + GETSET getter round-trip" {
+    try expectGolden(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\boxed: ptr = hpy_new_on(h, "Boxed", 5)
+        \\print(hpy_getattr_int_on(h, boxed, "n"))
+        \\hpy_close_obj(h, boxed)
+        \\hpy_close(h)
+        \\
+    ,
+        "5\n",
+    );
+}
+
+test "hpy_setattr_int_on: GETSET setter GERÇEKTEN çağrılır" {
+    try expectGolden(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\boxed: ptr = hpy_new_on(h, "Boxed", 5)
+        \\hpy_setattr_int_on(h, boxed, "n", 42)
+        \\print(hpy_getattr_int_on(h, boxed, "n"))
+        \\hpy_close_obj(h, boxed)
+        \\hpy_close(h)
+        \\
+    ,
+        "42\n",
+    );
+}
+
+test "hpy_call_attr_on: HPyFunc_NOARGS tip metodu + bound-method dispatch" {
+    try expectGolden(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\boxed: ptr = hpy_new_on(h, "Boxed", 5)
+        \\hpy_setattr_int_on(h, boxed, "n", 42)
+        \\print(hpy_call_attr_on(h, boxed, "double_n"))
+        \\hpy_close_obj(h, boxed)
+        \\hpy_close(h)
+        \\
+    ,
+        "84\n",
+    );
+}
+
+test "hpy_close_obj: Boxed_destroy (tp_destroy) GERÇEKTEN tetiklenir" {
+    try expectGolden(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\boxed: ptr = hpy_new_on(h, "Boxed", 1)
+        \\hpy_close_obj(h, boxed)
+        \\print(hpy_call_on(h, "get_boxed_destroy_count"))
+        \\hpy_close(h)
+        \\
+    ,
+        "1\n",
+    );
+}

@@ -18394,6 +18394,121 @@ DOĞRULANDI).
 
 ---
 
+## 3.131 Faz 21 — modül-seviyesi tip inşası + GETSET + NOARGS tip metodları (aHPy `Box` ile GERÇEK dünya doğrulaması) (v1.65.0)
+
+Faz 20 (v1.64.0) sonrası kullanıcı aHPy'nin `ahpy_setuptools_example.
+hpy0.so`sunu 17 fonksiyonla DAHA GENİŞ test etti (HEPSİ doğru çalıştı,
+TEK bir gerçek eksik BULUNAMADI) — kullanıcı SONRA `Box` (bir `HPyType_
+FromSpec` İLE tanımlı Cython `cdef class`ı) sınıfını Nox'tan İNŞA EDİP
+KULLANMAYI seçti. Araştırma AYRICA `external_nogil_targets`in İhtiyaç
+duyduğu, HEM attribute HEM subscript erişimi AYNI ANDA destekleyen hibrit
+bir nesnenin TAMAMEN FARKLI VE ÇOK DAHA BÜYÜK bir sorun (Nox'un KENDİ
+sınıf sistemine `__getitem__`-benzeri bir operatör-yükleme protokolü
+EKLEMEYİ, YA DA TAMAMEN YENİ bir marshalling şekli İCAT ETMEYİ gerektirir)
+OLDUĞUNU buldu — kullanıcı BUNU "Box'ı ÖNCE bitirelim, hibrit nesneyi AYRI
+araştıralım" DİYEREK ERTELEDİ; BU FAZ SADECE Box'ı kapsar.
+
+**Araştırma bulguları (DOĞRUDAN kod okuması + GERÇEK `cc`/`offsetof`
+doğrulaması)**:
+- `constructInstance`nin (context.zig) KATI `tp_new`-ZORUNLU sınırı: Box'ın
+  KENDİ spec'i SADECE `HPy_tp_init` KAYDEDİYOR, `HPy_tp_new` YOK — GERÇEK
+  HPy/CPython host'ları `tp_new` KAYITLI DEĞİLSE OTOMATİK bir jenerik
+  `tp_new`e (`object.__new__`) DÜŞER, Cython BUNU asla KENDİ ÜRETMEZ. Nox'un
+  KENDİ `ctxNew`i ZATEN TAM OLARAK bu jenerik davranışı UYGULUYORDU — SADECE
+  `constructInstance`nin `tp_new` EKSİKKEN BUNA DÜŞMESİ GEREKİYORDU. YENİ
+  `genericNew(ctx, type_h, type_obj)` — `constructInstance`nin İLK adımı
+  `type_obj.type_tp_new` VARSA ONU, YOKSA `genericNew`i çağırır.
+- **GETSET (`HPyDef_Kind_GetSet`) TAMAMEN desteklenmiyordu.** GERÇEK `cc`+
+  `offsetof` İLE DOĞRULANDI: `sizeof(HPyDef)=64`, `offsetof(HPyDef,getset)=8`,
+  `sizeof(HPyGetSet)=56` (alanlar: `name@0`, `getter_impl@8`, `setter_impl@16`,
+  `getter_cpy_trampoline@24`, `setter_cpy_trampoline@32`, `doc@40`,
+  `closure@48`) — `context.zig`nin `HPyDefLocal`sinin MEVCUT `meth`
+  (40 bayt, offset 8) + `_pad_tail` (16 bayt) alanlarının TOPLAM 56 baytlık
+  rezerve alanı `HPyGetSet`i TAM OLARAK KAPSAR — `slotOfLocal`nin AYNI
+  bayt-yeniden-yorumlama tekniği (`getsetOfLocal`) YAPISAL bir değişiklik
+  GEREKMEDEN uygulanabildi. YENİ `Obj.type_getsets: ArrayListUnmanaged(
+  TypeGetSet)` (`.type_` etiketli nesneler İçİn) — `ctxTypeFromSpec`nin
+  `HPY_DEF_KIND_GETSET` (=4) dalı doldurur; `attrLookup` (`.instance_`
+  dalı, `instance_dict` MİSSİNDEN SONRA AMA bound-method aramasından ÖNCE)
+  VE `ctxSetAttr` (`.instance_` dalı, `instance_dict` yazma mantığından
+  ÖNCE) GETSET getter/setter'ını (VARSA) ÖNCELİKLE ÇAĞIRIR — `instance_dict`e
+  SESSİZCE genel bir girdi EKLEMEK YERİNE (BU, GERÇEK C alanını HİÇ
+  GÜNCELLEMEZDİ, sessiz bir doğruluk hatası olurdu).
+- `TypeMethod`/`type_methods` SADECE `HPyFunc_O` (sig=4) metodları kaydediyordu
+  — Box'ın `identity()`si `HPyFunc_NOARGS` (sig=3, GERÇEK `hpyfunc.h`
+  İLE doğrulandı) OLDUĞUNDAN HİÇ bulunamıyordu. `TypeMethod` HER İKİ imzayı
+  destekleyecek şekilde genelleştirildi (`TypeMethodSig` enum'u, `impl_o`/
+  `impl_noargs`); `Obj.bound_method_` (`bound_method_sig`/`bound_method_
+  impl_o`/`bound_method_impl_noargs`) VE `callDispatch`nin `.bound_method_`
+  dalı AYNI şekilde genelleştirildi. `findTypeMethodO` → `findTypeMethod`
+  OLARAK yeniden adlandırıldı.
+
+**YENİ Nox builtinleri** (`runtime/foreign_bridge.zig` + `compiler/typecheck/
+checker.zig` + `compiler/codegen_qbe/calls.zig`):
+- `hpy_new_on(handle: ptr, class_name: str, args...) -> ptr` — `class_name`
+  adlı, MODÜLÜN KENDİ bir attribute'u OLAN bir tipi (`ctx_GetAttr_s(module_
+  obj, class_name)` + `ctx_Call`) İNŞA eder — `hpy_call_on`nin AYNI
+  arg-doğrulama+marshalling şeklini PAYLAŞIR (`class_name` da SADECE
+  string LİTERALİ). Runtime: YENİ `nox_hpy_new_finish` (`nox_hpy_call_
+  obj_finish`in AYNI "unmarshal YOK, ham ptr döner" deseni).
+- `hpy_getattr_int_on(handle: ptr, obj: ptr, attr_adı: str) -> int` /
+  `hpy_setattr_int_on(handle: ptr, obj: ptr, attr_adı: str, value: int) ->
+  None` — SABİT arity (marshalling zinciri GEREKMEZ), `ctx_GetAttr_s`/
+  `ctx_SetAttr_s`i DOĞRUDAN çağırır (GETSET kayıtlıysa GERÇEK C getter/
+  setter'ı TETİKLENİR).
+- `hpy_call_attr_on(handle: ptr, obj: ptr, attr_adı: str, args...) -> int`
+  — bir örnek tutamacının KENDİ BAĞLI METODUNU (`ctx_GetAttr_s`+`ctx_Call`)
+  çağırır — `hpy_call_on`nin AYNI trailing-argüman marshalling şeklini
+  paylaşır. YENİ `MarshalCtx.target_obj` alanı + `nox_hpy_args_begin_
+  for_obj` (hedef `mc.handle.module_obj` DEĞİL, KEYFİ bir opak örnek).
+- **Kod-tekrarını AZALTAN yeniden-düzenleme**: `hpy_call_on` ailesinin
+  per-argüman marshal DÖNGÜSÜ, YENİ, PAYLAŞILAN `genHpyMarshalTrailingArgs`e
+  ÇIKARILDI (`hpy_new_on`/`hpy_call_attr_on`nin İKİSİ de BUNU YENİDEN
+  kullanır).
+
+**Doğrulama**: YENİ, self-contained C test tipi (`tests/compat/hpy_ext/
+noxtest.c`): `Boxed` (Box'ın KÜÇÜLTÜLMÜŞ bir kopyası, İSİM ÇAKIŞMASINI
+ÖNLEMEK İçİn FARKLI adlandırıldı) — `tp_new` YOK (jenerik düşüşü egzersiz
+eder), `HPyDef_GETSET` (`"n"`, BASİT bir `long` alanı — Box'ın HPyField'ı
+GEREKMEZ), `HPyFunc_NOARGS` bir tip metodu (`double_n`), `tp_destroy`.
+`module_exec_marker_impl`nin (Faz 20) SONUNA `Boxed`i modülün KENDİSİNE
+"Boxed" attribute'u OLARAK kaydeden `HPyType_FromSpec`+`SetAttr_s` çağrıları
+EKLENDİ (Cython'ın `Box`ı `HPy_mod_exec` İçİnde `m`ye KAYDETMESİYLE AYNI
+desen — GERÇEK HPy SADECE BİR `HPy_mod_exec` slotunu TANIDIĞINDAN, İKİNCİ
+bir slot YERİNE MEVCUT olana EKLENDİ). YENİ golden testler (`tests/compat/
+hpy_call_golden_test.zig`, 4 yeni — jenerik `tp_new` düşüşü+GETSET getter,
+GETSET setter, NOARGS bound-method çağrısı, `tp_destroy`). `hpy_tier0_test.
+zig`nin ÖNCEDEN VAR OLAN "ctx_Call — tp_new'i olmayan bir tipte TypeError"
+testi (`tp_new`SİZ bir tipi çağırmanın HATA vermesini doğruluyordu) BU
+FAZIN semantik değişikliğiyle ARTIK YANLIŞ bir premise TAŞIDIĞINDAN, YENİ
+davranışı (BAŞARILI jenerik inşa) doğrulayacak şekilde GÜNCELLENDİ. GERÇEK
+aHPy `Box`ına karşı ELLE doğrulandı: `hpy_new_on(h, "Box", 5)` → `hpy_
+getattr_int_on(..., "value")` → `5`, `hpy_setattr_int_on(..., "value", 42)`
+SONRASI `hpy_call_attr_on(..., "identity")` → `42` (GETSET setter'ın
+YAZDIĞI AYNI alanı `identity()`nin `HPyField_Load` İLE OKUDUĞUNU KANITLAR).
+`zig build test` (TAM paket, Debug+ReleaseFast) + `NOX_STRESS_ROUNDS=800
+zig build stress-test -Doptimize=ReleaseFast` TEMİZ (BİLİNEN, İLGİSİZ
+`--listen=-` harness misreport'ları HARİÇ).
+
+## Kapsam DIŞI (bu turda)
+- **Hibrit attribute+subscript nesne desteği** (`external_nogil_targets`in
+  İhtiyacı) — kullanıcıyla ÜZERİNDE ANLAŞILDIĞI GİBİ AYRI bir araştırma/
+  plan turu. GERÇEK boyutu (Nox sınıf sistemine `__getitem__`-benzeri bir
+  operatör-yükleme protokolü EKLEMEK, YA DA TAMAMEN YENİ bir marshalling
+  şekli İCAT ETMEK) BU turda netleştirilmedi.
+- `HPyDef_MEMBER` (`HPyDef_Kind_Member`, `HPyDef_GETSET`in DAHA BASİT
+  KARDEŞİ) — Box BUNU KULLANMIYOR, AYRI bir gelecekteki genişletme.
+- `hpy_getattr_float_on`/`_bool_on`/`_str_on`/`_obj_on` VE `hpy_setattr_
+  float_on`/vb. VE `hpy_call_attr_float_on`/vb. — v1 SADECE `int` VARYANTINI
+  kapsar, DİĞER TİPLER Faz 17'nin AYNI, KANITLANMIŞ desenle GELECEKTE
+  eklenebilir.
+- `HPy_tp_new`+`HPy_tp_init`in İKİSİNİN de KAYITLI OLDUĞU bir tip İçİn
+  davranış — jenerik düşüş SADECE `tp_new` TAMAMEN YOKSA devreye girer.
+- `HPyType_FromSpec`in taban sınıf/metaclass desteği — Faz 19'un AYNI,
+  DEĞİŞMEYEN v1 sınırı.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

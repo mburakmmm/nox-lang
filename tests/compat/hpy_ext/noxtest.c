@@ -147,6 +147,84 @@ static HPyType_Spec Counter_spec = {
     .defines = Counter_defines,
 };
 
+/* Faz 21 (bkz. plan dosyası "modül-seviyesi tip inşası + GETSET + NOARGS
+ * tip metodları"): aHPy'nin GERÇEK `Box` sınıfının KÜÇÜLTÜLMÜŞ bir kopyası
+ * — `HPy_tp_new` KAYITLI DEĞİL (jenerik `constructInstance` düşüşünü
+ * egzersiz eder), `HPyDef_GETSET` (BASİT bir `long` alanına okuyup/yazan,
+ * `Box`ın HPyField'ı GEREKMEZ) VE `HPyFunc_NOARGS` bir tip metodu
+ * (`double_n`) taşır. `Boxed` (İSİM ÇAKIŞMASINI ÖNLEMEK İçİn GERÇEK
+ * `Box`tan FARKLI adlandırıldı) `hpy_new_on`nin `ctx_GetAttr_s(module_obj,
+ * "Boxed")` İLE bulabilmesi İçİn, MEVCUT `module_exec_marker_impl`nin
+ * (Faz 20, TEK BİR `HPy_mod_exec` slotu — GERÇEK HPy SADECE BİRİNİ tanır,
+ * `loader.findModExecSlot` İLK eşleşende DURUR) SONUNA `HPyType_FromSpec`+
+ * `SetAttr_s` çağrıları EKLENEREK modülün KENDİSİNE KAYDEDİLİR (aşağıya
+ * bkz.). */
+typedef struct {
+    long n;
+} BoxedObject;
+
+static long boxed_destroy_count = 0;
+
+HPyDef_SLOT(Boxed_destroy, HPy_tp_destroy)
+static void Boxed_destroy_impl(void *data)
+{
+    (void)data;
+    boxed_destroy_count++;
+}
+
+HPyDef_SLOT(Boxed_init, HPy_tp_init)
+static int Boxed_init_impl(HPyContext *ctx, HPy self, const HPy *args, HPy_ssize_t nargs, HPy kw)
+{
+    (void)kw;
+    BoxedObject *data = (BoxedObject *)_HPy_AsStruct_Object(ctx, self);
+    data->n = (nargs > 0) ? HPyLong_AsLong(ctx, args[0]) : 0;
+    return 0;
+}
+
+HPyDef_GETSET(Boxed_n, "n")
+static HPy Boxed_n_get(HPyContext *ctx, HPy self, void *closure)
+{
+    (void)closure;
+    BoxedObject *data = (BoxedObject *)_HPy_AsStruct_Object(ctx, self);
+    return HPyLong_FromLong(ctx, data->n);
+}
+static int Boxed_n_set(HPyContext *ctx, HPy self, HPy value, void *closure)
+{
+    (void)closure;
+    BoxedObject *data = (BoxedObject *)_HPy_AsStruct_Object(ctx, self);
+    data->n = HPyLong_AsLong(ctx, value);
+    return 0;
+}
+
+HPyDef_METH(Boxed_double_n, "double_n", HPyFunc_NOARGS)
+static HPy Boxed_double_n_impl(HPyContext *ctx, HPy self)
+{
+    BoxedObject *data = (BoxedObject *)_HPy_AsStruct_Object(ctx, self);
+    return HPyLong_FromLong(ctx, data->n * 2);
+}
+
+static HPyDef *Boxed_defines[] = {
+    &Boxed_destroy,
+    &Boxed_init,
+    &Boxed_n,
+    &Boxed_double_n,
+    NULL
+};
+
+static HPyType_Spec Boxed_spec = {
+    .name = "noxtest.Boxed",
+    .basicsize = sizeof(BoxedObject),
+    .defines = Boxed_defines,
+};
+
+HPyDef_METH(get_boxed_destroy_count, "get_boxed_destroy_count", HPyFunc_NOARGS)
+static HPy get_boxed_destroy_count_impl(HPyContext *ctx, HPy self)
+{
+    (void)self;
+    return HPyLong_FromLong(ctx, boxed_destroy_count);
+}
+
+
 /* Eklentinin kendi statik `HPy` tutamacı — gerçek HPy'de tipik olarak modül
  * durumunda (`HPyModuleDef.size` + `HPy_GetModuleState`) tutulur; burada
  * basitlik için (Nox'un modül durumu desteği henüz yok) tembel/statik bir
@@ -1209,6 +1287,16 @@ static int module_exec_marker_impl(HPyContext *ctx, HPy module)
     if (HPy_IsNull(v)) return -1;
     int status = HPy_SetAttr_s(ctx, module, "faz20_marker", v);
     HPy_Close(ctx, v);
+    if (status < 0) return status;
+
+    /* Faz 21: `Boxed`i (GERÇEK aHPy'nin `Box`ının KENDİ `HPy_mod_exec`
+     * İçİnde `Box`ı `m`ye KAYDETMESİYLE AYNI desen) modülün KENDİ
+     * nesnesine "Boxed" attribute'u OLARAK kaydeder — `hpy_new_on`nin
+     * `ctx_GetAttr_s(module_obj, "Boxed")` İLE bulabilmesi İçİn. */
+    HPy boxed_type = HPyType_FromSpec(ctx, &Boxed_spec, NULL);
+    if (HPy_IsNull(boxed_type)) return -1;
+    status = HPy_SetAttr_s(ctx, module, "Boxed", boxed_type);
+    HPy_Close(ctx, boxed_type);
     return status;
 }
 
@@ -1300,6 +1388,7 @@ static HPyDef *module_defines[] = {
     &class_field_sum,
     &module_exec_marker,
     &get_faz20_marker,
+    &get_boxed_destroy_count,
     NULL
 };
 

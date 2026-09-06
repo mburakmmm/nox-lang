@@ -386,6 +386,12 @@ const MarshalCtx = struct {
     /// (checker reddeder) AYNI ANDA SADECE TEK bir class-dict'in inşa
     /// halinde olması GARANTİdir.
     current_class_dict: ?hpy_bridge.context.HPy = null,
+    /// Faz 21 (bkz. plan dosyası "modül-seviyesi tip inşası + GETSET +
+    /// NOARGS tip metodları"): `hpy_call_attr_on`nin hedefi — `mc.handle.
+    /// module_obj` DEĞİL, KEYFİ bir opak örnek tutamacı (`nox_hpy_args_
+    /// begin_for_obj` TARAFINDAN doldurulur; `nox_hpy_args_begin`nin
+    /// (module-seviyesi çağrılar İçİn) doldurduğu YOL BUNU `null` BIRAKIR).
+    target_obj: ?hpy_bridge.context.HPy = null,
 };
 
 fn freeMarshalCtx(mc: *MarshalCtx) void {
@@ -468,6 +474,27 @@ pub export fn nox_hpy_args_begin(rt: ?*anyopaque, handle_ptr: ?*anyopaque) ?*any
     const handle: *PersistentHpyHandle = @ptrCast(@alignCast(hp));
     const mc = allocator.create(MarshalCtx) catch return null;
     mc.* = .{ .handle = handle, .allocator = allocator };
+    return mc;
+}
+
+/// Faz 21: `nox_hpy_args_begin`nin AYNI karşılığı — `hpy_call_attr_on`
+/// İçİn, hedef `mc.handle.module_obj` DEĞİL, `obj_ptr`nin İŞARET ETTİĞİ
+/// KEYFİ bir opak örnek tutamacıdır (ör. `hpy_new_on`nin DAHA ÖNCE
+/// döndürdüğü bir Box örneği).
+pub export fn nox_hpy_args_begin_for_obj(rt: ?*anyopaque, handle_ptr: ?*anyopaque, obj_ptr: ?*anyopaque) ?*anyopaque {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    const allocator = state.allocator();
+    const hp = handle_ptr orelse {
+        setHpyError("geçersiz (açılamamış) HPy tutamacı", .{});
+        return null;
+    };
+    const op = obj_ptr orelse {
+        setHpyError("geçersiz nesne", .{});
+        return null;
+    };
+    const handle: *PersistentHpyHandle = @ptrCast(@alignCast(hp));
+    const mc = allocator.create(MarshalCtx) catch return null;
+    mc.* = .{ .handle = handle, .allocator = allocator, .target_obj = .{ ._i = @bitCast(@intFromPtr(op)) } };
     return mc;
 }
 
@@ -800,6 +827,127 @@ pub export fn nox_hpy_close_obj(handle_ptr: ?*anyopaque, obj_ptr: ?*anyopaque) v
     const ctx = handle.ctx;
     const h: hpy_bridge.context.HPy = .{ ._i = @bitCast(@intFromPtr(op)) };
     ctx.ctx_Close.?(ctx, h);
+}
+
+/// Faz 21 (bkz. plan dosyası "modül-seviyesi tip inşası + GETSET + NOARGS
+/// tip metodları"): `mc.args`i `class_name` adlı, MODÜL nesnesinin KENDİ
+/// bir attribute'u OLAN bir TİP nesnesine (`HPyType_FromSpec`in dönüşü,
+/// ör. aHPy'nin `Box`u) `ctx_Call` İLE geçirir — GERÇEK HPy'nin `Type(...)`
+/// çağrısının karşılığı (`ctx_GetAttr_s` + `ctx_Call`, İKİSİ de ZATEN VAR
+/// OLAN, genel HPy operasyonları — YENİ bir "inşa" mekanizması GEREKMEZ).
+/// Sonuç, `nox_hpy_call_obj_finish`in AYNI "unmarshal YOK, ham ptr döner"
+/// deseniyle döner — sahiplik Nox'a GEÇER, kullanıcı SONUNDA `hpy_close_obj`
+/// İLE AÇIKÇA kapatmalıdır.
+pub export fn nox_hpy_new_finish(mc_ptr: ?*anyopaque, class_name: ?[*:0]const u8) ?*anyopaque {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return null));
+    defer freeMarshalCtx(mc);
+    const cn = class_name orelse return null;
+    const ctx = mc.handle.ctx;
+    const cls_h = ctx.ctx_GetAttr_s.?(ctx, mc.handle.module_obj, cn);
+    if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
+        ctx.ctx_Err_Clear.?(ctx);
+        setHpyError("'{s}' modülde bulunamadı", .{cn});
+        return null;
+    }
+    defer ctx.ctx_Close.?(ctx, cls_h);
+    const n = mc.args.items.len;
+    const packed_args = mc.allocator.alloc(hpy_bridge.context.HPy, n) catch {
+        setHpyError("bellek yetersiz", .{});
+        return null;
+    };
+    defer mc.allocator.free(packed_args);
+    for (mc.args.items, 0..) |e, i| packed_args[i] = e.h;
+    const args_ptr: ?[*]const hpy_bridge.context.HPy = if (n > 0) packed_args.ptr else null;
+    const h_result = ctx.ctx_Call.?(ctx, cls_h, args_ptr, n, hpy_bridge.context.HPy_NULL);
+    if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
+        ctx.ctx_Close.?(ctx, h_result);
+        ctx.ctx_Err_Clear.?(ctx);
+        setHpyError("'{s}' inşa edilemedi", .{cn});
+        return null;
+    }
+    const raw: usize = @bitCast(h_result._i);
+    if (raw == 0) return null;
+    return @ptrFromInt(raw);
+}
+
+/// Faz 21: `obj_ptr`nin (bir örnek tutamacı — GETSET/HPyField'a sahip bir
+/// tip örneği, ör. `Box`) `attr_name` adlı attribute'unu (`ctx_GetAttr_s`
+/// İLE — GETSET kayıtlıysa GERÇEK C getter'ı ÇAĞRILIR) OKUYUP `int` OLARAK
+/// unmarshal eder.
+pub export fn nox_hpy_getattr_int(handle_ptr: ?*anyopaque, obj_ptr: ?*anyopaque, attr_name: ?[*:0]const u8) i64 {
+    const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return 0));
+    const op = obj_ptr orelse {
+        setHpyError("geçersiz nesne", .{});
+        return 0;
+    };
+    const an = attr_name orelse return 0;
+    const ctx = handle.ctx;
+    const obj_h: hpy_bridge.context.HPy = .{ ._i = @bitCast(@intFromPtr(op)) };
+    const h_result = ctx.ctx_GetAttr_s.?(ctx, obj_h, an);
+    if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
+        ctx.ctx_Err_Clear.?(ctx);
+        setHpyError("'{s}' attribute'u bulunamadı", .{an});
+        return 0;
+    }
+    defer ctx.ctx_Close.?(ctx, h_result);
+    return ctx.ctx_Long_AsInt64_t.?(ctx, h_result);
+}
+
+/// Faz 21: `obj_ptr`nin `attr_name` adlı attribute'unu `value`ya AYARLAR
+/// (`ctx_SetAttr_s` İLE — GETSET kayıtlıysa GERÇEK C setter'ı ÇAĞRILIR,
+/// `instance_dict`e SESSİZCE bir girdi EKLENMEZ).
+pub export fn nox_hpy_setattr_int(handle_ptr: ?*anyopaque, obj_ptr: ?*anyopaque, attr_name: ?[*:0]const u8, value: i64) void {
+    const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return));
+    const op = obj_ptr orelse {
+        setHpyError("geçersiz nesne", .{});
+        return;
+    };
+    const an = attr_name orelse return;
+    const ctx = handle.ctx;
+    const obj_h: hpy_bridge.context.HPy = .{ ._i = @bitCast(@intFromPtr(op)) };
+    const h_val = ctx.ctx_Long_FromInt64_t.?(ctx, value);
+    defer ctx.ctx_Close.?(ctx, h_val);
+    if (ctx.ctx_SetAttr_s.?(ctx, obj_h, an, h_val) < 0) {
+        ctx.ctx_Err_Clear.?(ctx);
+        setHpyError("'{s}' attribute'u ayarlanamadı", .{an});
+    }
+}
+
+/// Faz 21: `mc.target_obj`nin (bir örnek tutamacı) `attr_name` adlı BAĞLI
+/// METODUNU (`ctx_GetAttr_s`, `attrLookup`nin `.bound_method_` sarmalaması
+/// — bkz. context.zig) `mc.args`la `ctx_Call` İLE çağırıp SONUCU `int`
+/// OLARAK unmarshal eder — Box'ın `identity()`si GİBİ `HPyFunc_NOARGS`
+/// tip metodlarının Nox'tan ÇAĞRILABİLMESİNİ sağlar.
+pub export fn nox_hpy_call_attr_int_finish(mc_ptr: ?*anyopaque, attr_name: ?[*:0]const u8) i64 {
+    const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return 0));
+    defer freeMarshalCtx(mc);
+    const an = attr_name orelse return 0;
+    const ctx = mc.handle.ctx;
+    const target = mc.target_obj orelse return 0;
+    const method_h = ctx.ctx_GetAttr_s.?(ctx, target, an);
+    if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
+        ctx.ctx_Err_Clear.?(ctx);
+        setHpyError("'{s}' bulunamadı", .{an});
+        return 0;
+    }
+    defer ctx.ctx_Close.?(ctx, method_h);
+    const n = mc.args.items.len;
+    const packed_args = mc.allocator.alloc(hpy_bridge.context.HPy, n) catch {
+        setHpyError("bellek yetersiz", .{});
+        return 0;
+    };
+    defer mc.allocator.free(packed_args);
+    for (mc.args.items, 0..) |e, i| packed_args[i] = e.h;
+    const args_ptr: ?[*]const hpy_bridge.context.HPy = if (n > 0) packed_args.ptr else null;
+    const h_result = ctx.ctx_Call.?(ctx, method_h, args_ptr, n, hpy_bridge.context.HPy_NULL);
+    if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
+        ctx.ctx_Close.?(ctx, h_result);
+        ctx.ctx_Err_Clear.?(ctx);
+        setHpyError("'{s}' bir istisna fırlattı", .{an});
+        return 0;
+    }
+    defer ctx.ctx_Close.?(ctx, h_result);
+    return ctx.ctx_Long_AsInt64_t.?(ctx, h_result);
 }
 
 /// `path`teki `.wasm` ikilisini yükler, `func_name` adlı (yalnızca `i32`

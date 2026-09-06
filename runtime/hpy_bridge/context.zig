@@ -82,14 +82,28 @@ pub const HPyThreadState = extern struct { _i: isize = 0 };
 pub const ObjTag = enum(u8) { none, bool_, long, float_, str_, exc_type, list_, tuple_, dict_, type_, instance_, bound_method_, bytes_, capsule_, contextvar_ };
 
 /// `HPyType_FromSpec`in bir `type_` nesnesine kaydettiği tek bir örnek
-/// metodu (`HPyDef_Kind_Meth` + `HPyFunc_O` — Tier 0'ın modül metodu
-/// desteğiyle AYNI kısıt). `name`/`impl`, EKLENTİNİN kendi statik
-/// belleğine (bkz. `HPyDef` dizisi, `static` C global'i) işaret eder —
-/// kopyalanmaz, çünkü bu bellek `.so` yüklü kaldığı sürece geçerlidir
-/// (module-level `findMethodO` ile aynı varsayım).
+/// metodu (`HPyDef_Kind_Meth`, `HPyFunc_O` VEYA `HPyFunc_NOARGS` — Faz 21
+/// İKİSİNİ de destekler, bkz. plan dosyası "modül-seviyesi tip inşası +
+/// GETSET + NOARGS tip metodları"). `name`/`impl_*`, EKLENTİNİN kendi
+/// statik belleğine (bkz. `HPyDef` dizisi, `static` C global'i) işaret
+/// eder — kopyalanmaz, çünkü bu bellek `.so` yüklü kaldığı sürece
+/// geçerlidir (module-level `findMethodO` ile aynı varsayım).
+pub const TypeMethodSig = enum { o, noargs };
 pub const TypeMethod = struct {
     name: [*:0]const u8,
-    impl: *const fn (ctx: *HPyContext, self: HPy, arg: HPy) callconv(.c) HPy,
+    sig: TypeMethodSig,
+    impl_o: ?*const fn (ctx: *HPyContext, self: HPy, arg: HPy) callconv(.c) HPy = null,
+    impl_noargs: ?*const fn (ctx: *HPyContext, self: HPy) callconv(.c) HPy = null,
+};
+
+/// `HPyType_FromSpec`in bir `type_` nesnesine kaydettiği tek bir GETSET
+/// tanımlayıcı (Faz 21) — `name`/`closure`, `TypeMethod`in AYNI "kopyasız,
+/// eklentinin statik belleğine işaret eder" varsayımını paylaşır.
+pub const TypeGetSet = struct {
+    name: [*:0]const u8,
+    getter: ?*const fn (ctx: *HPyContext, self: HPy, closure: ?*anyopaque) callconv(.c) HPy = null,
+    setter: ?*const fn (ctx: *HPyContext, self: HPy, value: HPy, closure: ?*anyopaque) callconv(.c) c_int = null,
+    closure: ?*anyopaque = null,
 };
 
 pub const Obj = struct {
@@ -169,6 +183,15 @@ pub const Obj = struct {
     /// AYNI `DictEntry` yapısını YENİDEN kullanan, tip-seviyesi bir
     /// KARŞILIĞI.
     type_dict: std.ArrayListUnmanaged(DictEntry) = .empty,
+    /// Yalnızca `tag == .type_` (Faz 21 — bkz. plan dosyası "modül-seviyesi
+    /// tip inşası + GETSET + NOARGS tip metodları"): `HPyType_FromSpec`in
+    /// `HPyDef_Kind_GetSet` girdileri (`HPyDef_GETSET`/`HPyDef_GET`/
+    /// `HPyDef_SET`) — Python'ın veri-tanımlayıcı (data descriptor)
+    /// özelliklerinin GERÇEK C getter/setter fonksiyonlarına GİDEN
+    /// karşılığı (`aHPy`nin `Box.value`si GİBİ, GENELDE bir `HPyField`i
+    /// OKUYUP/YAZAN). `name`/`closure`, eklentinin KENDİ statik belleğine
+    /// İŞARET EDER (`type_name`/`type_methods`İN AYNI kopyasız varsayımı).
+    type_getsets: std.ArrayListUnmanaged(TypeGetSet) = .empty,
     /// Yalnızca `tag == .instance_` — `ctx_New` ile inşa edilmiş bir
     /// `type_` örneği: kendi tipine (retained) bir referans + ham,
     /// sıfırlanmış `basicsize` baytlık, SAHİPLENİLEN bir tampon (bkz.
@@ -187,11 +210,13 @@ pub const Obj = struct {
     /// ÜZERİNDEN `type_methods`teki bir metodu BULDUĞUNDA sardığı nesne
     /// (Python'ın `instance.method`inin `self`i TAŞIYAN bağlı metoduyla
     /// AYNI fikir). `bound_method_self` RETAINED (bkz. `ctxDup`),
-    /// `bound_method_impl` `TypeMethod.impl` İLE AYNI `HPyFunc_O` imzalı
-    /// — `callDispatch` (çağrılabilir nesne protokolü) BUNU tek argümanlı
-    /// bir çağrıya DAĞITIR.
+    /// `bound_method_sig` `TypeMethod.sig`İN (Faz 21) AYNI kopyası —
+    /// `callDispatch` (çağrılabilir nesne protokolü) BUNA göre `impl_o`
+    /// (tek argümanlı) VEYA `impl_noargs`i (argümansız) ÇAĞIRIR.
     bound_method_self: HPy = HPy_NULL,
-    bound_method_impl: ?*const fn (ctx: *HPyContext, self: HPy, arg: HPy) callconv(.c) HPy = null,
+    bound_method_sig: TypeMethodSig = .o,
+    bound_method_impl_o: ?*const fn (ctx: *HPyContext, self: HPy, arg: HPy) callconv(.c) HPy = null,
+    bound_method_impl_noargs: ?*const fn (ctx: *HPyContext, self: HPy) callconv(.c) HPy = null,
     /// Yalnızca `tag == .capsule_` (Faz YY) — gerçek Python `PyCapsule`in
     /// BİREBİR karşılığı: opak bir işaretçi + BORÇ ALINMIŞ (kopyalanmayan,
     /// çağıranın statik/kalıcı bellekte tutması BEKLENEN — gerçek
@@ -277,6 +302,10 @@ fn ctxClose(ctx: *HPyContext, h: HPy) callconv(.c) void {
                     ctxClose(ctx, entry.value);
                 }
                 obj.type_dict.deinit(allocator);
+                // Faz 21: `type_getsets` HİÇBİR OWNED `HPy` TAŞIMAZ (`name`/
+                // `closure` eklentinin statik belleğine işaret eder) —
+                // SADECE listenin KENDİSİ serbest bırakılır.
+                obj.type_getsets.deinit(allocator);
             },
             .bytes_ => allocator.free(obj.bytes_data),
             .capsule_ => {
@@ -1875,8 +1904,30 @@ fn slotOfLocal(d: *const HPyDefLocal) *const HPySlotLocal {
     return @ptrCast(@alignCast(&d.meth));
 }
 
+/// Faz 21 (bkz. plan dosyası "modül-seviyesi tip inşası + GETSET + NOARGS
+/// tip metodları"): `slotOfLocal`in AYNI bayt-yeniden-yorumlama tekniği —
+/// GERÇEK `cc`/`offsetof` İLE DOĞRULANDI (`sizeof(HPyDef)=64`, `offsetof(
+/// HPyDef, getset)=8`, `sizeof(HPyGetSet)=56` — `HPyDefLocal`nin `meth`
+/// (40 bayt, offset 8) + `_pad_tail` (16 bayt) alanlarının TOPLAM 56
+/// baytlık rezerve alanı `HPyGetSet`i TAM OLARAK KAPSAR, YAPISAL bir
+/// DEĞİŞİKLİK GEREKMEZ).
+const HPyGetSetLocal = extern struct {
+    name: ?[*:0]const u8 = null,
+    getter_impl: ?*const anyopaque = null,
+    setter_impl: ?*const anyopaque = null,
+    getter_cpy_trampoline: ?*const anyopaque = null,
+    setter_cpy_trampoline: ?*const anyopaque = null,
+    doc: ?[*:0]const u8 = null,
+    closure: ?*anyopaque = null,
+};
+fn getsetOfLocal(d: *const HPyDefLocal) *const HPyGetSetLocal {
+    return @ptrCast(@alignCast(&d.meth));
+}
+
 const HPY_DEF_KIND_SLOT: c_int = 1;
 const HPY_DEF_KIND_METH: c_int = 2;
+const HPY_DEF_KIND_GETSET: c_int = 4;
+const HPY_FUNC_SIG_NOARGS: c_int = 3;
 const HPY_FUNC_SIG_O: c_int = 4;
 const HPY_SLOT_TP_DESTROY: c_int = 1000; // bkz. autogen_hpyslot.h
 // Çağrılabilir nesne protokolü (bkz. `Obj.type_tp_call`ın belge notu) —
@@ -1936,9 +1987,32 @@ fn ctxTypeFromSpec(ctx: *HPyContext, spec: ?*HPyType_Spec, params: ?*HPyType_Spe
                     if (d.meth.name != null and d.meth.impl != null) {
                         obj.type_methods.append(allocator, .{
                             .name = d.meth.name.?,
-                            .impl = @ptrCast(@alignCast(d.meth.impl.?)),
+                            .sig = .o,
+                            .impl_o = @ptrCast(@alignCast(d.meth.impl.?)),
                         }) catch {};
                     }
+                } else if (d.meth.signature == HPY_FUNC_SIG_NOARGS) {
+                    if (d.meth.name != null and d.meth.impl != null) {
+                        obj.type_methods.append(allocator, .{
+                            .name = d.meth.name.?,
+                            .sig = .noargs,
+                            .impl_noargs = @ptrCast(@alignCast(d.meth.impl.?)),
+                        }) catch {};
+                    }
+                }
+            } else if (d.kind == HPY_DEF_KIND_GETSET) {
+                // Faz 21: `HPyDef_GETSET`/`HPyDef_GET`/`HPyDef_SET` —
+                // `getter_impl`/`setter_impl`den BİRİ (VEYA HER İKİSİ)
+                // `null` OLABİLİR (SADECE-GET/SADECE-SET tanımlayıcıları
+                // İçİn), bkz. `attrLookup`/`ctxSetAttr`nin BUNU ele alışı.
+                const gs = getsetOfLocal(d);
+                if (gs.name) |n| {
+                    obj.type_getsets.append(allocator, .{
+                        .name = n,
+                        .getter = if (gs.getter_impl) |g| @ptrCast(@alignCast(g)) else null,
+                        .setter = if (gs.setter_impl) |sfn| @ptrCast(@alignCast(sfn)) else null,
+                        .closure = gs.closure,
+                    }) catch {};
                 }
             }
         }
@@ -2372,7 +2446,21 @@ fn attrLookup(ctx: *HPyContext, obj_h: HPy, obj: *Obj, name: []const u8) ?HPy {
     if (findDictEntryStr(&obj.instance_dict, name)) |i| {
         return ctxDup(ctx, obj.instance_dict.items[i].value);
     }
-    if (findTypeMethodO(obj.instance_type, name)) |method| {
+    // Faz 21 (bkz. plan dosyası "modül-seviyesi tip inşası + GETSET +
+    // NOARGS tip metodları"): `instance_dict` MİSSİNDEN SONRA, bound-
+    // method aramasından ÖNCE — GETSET'in bir veri-tanımlayıcı (data
+    // descriptor) OLMASI, `instance_dict`in ARKASINDAN kontrol edilmesini
+    // GEREKTİRİR (Nox'un KENDİ, BASİTLEŞTİRİLMİŞ v1 önceliği — TAM Python
+    // önceliği DEĞİL, ama GERÇEK dünyada HİÇBİR çakışma OLUŞTURMAZ).
+    if (objOf(obj.instance_type)) |type_obj| {
+        for (type_obj.type_getsets.items) |gs| {
+            if (std.mem.eql(u8, std.mem.sliceTo(gs.name, 0), name)) {
+                if (gs.getter) |getter| return getter(ctx, obj_h, gs.closure);
+                return null; // yalnızca-yazılabilir özellik — v1'de OKUNAMAZ sayılır
+            }
+        }
+    }
+    if (findTypeMethod(obj.instance_type, name)) |method| {
         const allocator = contextAllocator(ctx);
         const bm = allocator.create(Obj) catch return null;
         bm.* = .{
@@ -2380,7 +2468,9 @@ fn attrLookup(ctx: *HPyContext, obj_h: HPy, obj: *Obj, name: []const u8) ?HPy {
             .tag = .bound_method_,
             .payload = .{ .l = 0 },
             .bound_method_self = ctxDup(ctx, obj_h),
-            .bound_method_impl = method.impl,
+            .bound_method_sig = method.sig,
+            .bound_method_impl_o = method.impl_o,
+            .bound_method_impl_noargs = method.impl_noargs,
         };
         return .{ ._i = @intCast(@intFromPtr(bm)) };
     }
@@ -2441,6 +2531,22 @@ fn ctxSetAttr(ctx: *HPyContext, obj_h: HPy, name_h: HPy, value: HPy) callconv(.c
     if (name_obj.tag != .str_) {
         ctxErrSetString(ctx, ctx.h_TypeError, "attribute adı str olmalı");
         return -1;
+    }
+    // Faz 21: `.instance_` İçİn, GETSET (bir veri-tanımlayıcı) `instance_
+    // dict`ten ÖNCE ELE ALINIR — `box.value = X` GERÇEK C setter'ını
+    // ÇAĞIRMALI (`aHPy`nin `HPyField_Store`sini TETİKLEMELİ), `instance_
+    // dict`e SESSİZCE genel bir girdi EKLEMEMELİ (BU, C alanını HİÇ
+    // GÜNCELLEMEZDİ — sessiz bir doğruluk hatası olurdu).
+    if (obj.tag == .instance_) {
+        if (objOf(obj.instance_type)) |type_obj| {
+            for (type_obj.type_getsets.items) |gs| {
+                if (std.mem.eql(u8, std.mem.sliceTo(gs.name, 0), name_obj.str_data)) {
+                    if (gs.setter) |setter| return setter(ctx, obj_h, value, gs.closure);
+                    ctxErrSetString(ctx, ctx.h_AttributeError, "attribute salt-okunur (setter yok)");
+                    return -1;
+                }
+            }
+        }
     }
     // Faz 20: `.type_` (bkz. `Obj.type_dict`in belge notu) — GERÇEK
     // Cython-üretimi kod `HPy_mod_exec` İçİnde bir TİP nesnesine (`Box`
@@ -2507,19 +2613,32 @@ fn callDispatch(ctx: *HPyContext, callable: HPy, args: ?[*]const HPy, nargs: usi
             };
             return call_fn(ctx, callable, args, nargs, HPy_NULL);
         },
-        .bound_method_ => {
-            // `attrLookup`in sardığı metodlar HER ZAMAN `HPyFunc_O`
-            // imzalı (bkz. `TypeMethod`in belge notu) — tam olarak BİR
-            // argüman gerektirir.
-            if (nargs != 1 or args == null) {
-                ctxErrSetString(ctx, ctx.h_TypeError, "bu yöntem tam olarak bir argüman alır");
-                return HPy_NULL;
-            }
-            const impl = obj.bound_method_impl orelse {
-                ctxErrSetString(ctx, ctx.h_TypeError, "çağrılabilir değil");
-                return HPy_NULL;
-            };
-            return impl(ctx, obj.bound_method_self, args.?[0]);
+        .bound_method_ => switch (obj.bound_method_sig) {
+            // Faz 21: `attrLookup`in sardığı metodlar `HPyFunc_O` (tam
+            // olarak BİR argüman) VEYA `HPyFunc_NOARGS` (SIFIR argüman)
+            // imzalı OLABİLİR (bkz. `TypeMethod`in belge notu).
+            .o => {
+                if (nargs != 1 or args == null) {
+                    ctxErrSetString(ctx, ctx.h_TypeError, "bu yöntem tam olarak bir argüman alır");
+                    return HPy_NULL;
+                }
+                const impl = obj.bound_method_impl_o orelse {
+                    ctxErrSetString(ctx, ctx.h_TypeError, "çağrılabilir değil");
+                    return HPy_NULL;
+                };
+                return impl(ctx, obj.bound_method_self, args.?[0]);
+            },
+            .noargs => {
+                if (nargs != 0) {
+                    ctxErrSetString(ctx, ctx.h_TypeError, "bu yöntem hiçbir argüman almaz");
+                    return HPy_NULL;
+                }
+                const impl = obj.bound_method_impl_noargs orelse {
+                    ctxErrSetString(ctx, ctx.h_TypeError, "çağrılabilir değil");
+                    return HPy_NULL;
+                };
+                return impl(ctx, obj.bound_method_self);
+            },
         },
         else => {
             ctxErrSetString(ctx, ctx.h_TypeError, "çağrılabilir değil");
@@ -2528,16 +2647,39 @@ fn callDispatch(ctx: *HPyContext, callable: HPy, args: ?[*]const HPy, nargs: usi
     }
 }
 
-/// CPython'ın `type.__call__`ının karşılığı: `tp_new` (varsa) ile inşa
-/// eder, ARDINDAN `tp_init` (varsa) ile ilklendirir — İKİSİ DE eklentinin
-/// KENDİ C kodu (bkz. modül üstü not, bu fonksiyon `ctxNew`i ÇAĞIRMAZ).
-fn constructInstance(ctx: *HPyContext, type_h: HPy, type_obj: *Obj, args: ?[*]const HPy, nargs: usize) HPy {
-    const new_fn = type_obj.type_tp_new orelse {
-        ctxErrSetString(ctx, ctx.h_TypeError, "tip inşa edilemiyor: tp_new yok");
+/// Faz 21: GERÇEK HPy/CPython'ın `object.__new__` VARSAYILANININ karşılığı
+/// — `ctxNew`in (aşağıda) AYNI "zeroed-buffer + tip referansı" mantığı,
+/// `constructInstance`nin `tp_new` EKSİKKEN düşeceği bir yardımcı olarak
+/// (Cython, `tp_new` KAYDETMEDEN `HPy_tp_init` KAYDEDEN tipler ÜRETİR —
+/// gerçek HPy/CPython host'larının KENDİ jenerik `tp_new`ine GÜVENİR).
+fn genericNew(ctx: *HPyContext, type_h: HPy, type_obj: *Obj) HPy {
+    const allocator = contextAllocator(ctx);
+    const buf = allocator.alloc(u8, type_obj.type_basicsize) catch return HPy_NULL;
+    @memset(buf, 0);
+    const obj = allocator.create(Obj) catch {
+        allocator.free(buf);
         return HPy_NULL;
     };
-    const instance = new_fn(ctx, type_h, args, @intCast(nargs), HPy_NULL);
-    if (instance._i == 0) return HPy_NULL; // tp_new zaten hata ayarladı (ya da NULL döndü)
+    obj.* = .{
+        .refcount = 1,
+        .tag = .instance_,
+        .payload = .{ .l = 0 },
+        .instance_type = ctxDup(ctx, type_h),
+        .instance_data = buf,
+    };
+    return .{ ._i = @intCast(@intFromPtr(obj)) };
+}
+
+/// CPython'ın `type.__call__`ının karşılığı: `tp_new` (varsa) ile inşa
+/// eder (YOKSA — Faz 21 — `genericNew`e düşer), ARDINDAN `tp_init`
+/// (varsa) ile ilklendirir — İKİSİ DE eklentinin KENDİ C kodu (bkz. modül
+/// üstü not, bu fonksiyon `ctxNew`i ÇAĞIRMAZ).
+fn constructInstance(ctx: *HPyContext, type_h: HPy, type_obj: *Obj, args: ?[*]const HPy, nargs: usize) HPy {
+    const instance = if (type_obj.type_tp_new) |new_fn|
+        new_fn(ctx, type_h, args, @intCast(nargs), HPy_NULL)
+    else
+        genericNew(ctx, type_h, type_obj);
+    if (instance._i == 0) return HPy_NULL; // tp_new/genericNew zaten hata ayarladı (ya da NULL döndü)
 
     if (type_obj.type_tp_init) |init_fn| {
         const rc = init_fn(ctx, instance, args, @intCast(nargs), HPy_NULL);
@@ -2759,11 +2901,11 @@ fn ctxAsPyObject(ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque {
 }
 
 /// Nox-özel (HPy ABI'sinin bir parçası DEĞİL) bir yardımcı: bir `type_`
-/// nesnesinin `HPyFunc_O` imzalı örnek metodlarından adı `name` olanı
-/// bulur. Gerçek HPy'de bu, genel `GetAttr`/çağrı protokolü (henüz
-/// desteklenmiyor) üzerinden dolaylı olarak olur — bu, doğrudan test/
+/// nesnesinin `HPyFunc_O` VEYA `HPyFunc_NOARGS` (Faz 21) imzalı örnek
+/// metodlarından adı `name` olanı bulur. Gerçek HPy'de bu, genel `GetAttr`/
+/// çağrı protokolü üzerinden dolaylı olarak olur — bu, doğrudan test/
 /// tanılama amaçlı bir kısayoldur (bkz. `tests/compat/hpy_tier0_test.zig`).
-pub fn findTypeMethodO(h_type: HPy, name: []const u8) ?TypeMethod {
+pub fn findTypeMethod(h_type: HPy, name: []const u8) ?TypeMethod {
     const obj = objOf(h_type) orelse return null;
     if (obj.tag != .type_) return null;
     for (obj.type_methods.items) |m| {
@@ -3639,7 +3781,7 @@ fn pinnedBuiltinType(allocator: std.mem.Allocator, name: [:0]const u8) !HPy {
 /// `instance_type = HPy_NULL` (varsayılan) İLE BİLE modülün KENDİ
 /// attribute'larını (Cython'ın derleme-zamanı sabitleri GİBİ) saklayabilir
 /// bir "boş, tipsiz" örnek YETERLİDİR — `objOf(HPy_NULL) == null` olduğundan
-/// `attrLookup`nin `findTypeMethodO` dalı GÜVENLE atlanır, `ctxClose`nin
+/// `attrLookup`nin `findTypeMethod` dalı GÜVENLE atlanır, `ctxClose`nin
 /// `.instance_` dalı da BUNU (varsayılan `instance_data = &.{}`, boş bir
 /// slice'ı free etmek ZARARSIZ) GÜVENLE temizler.
 pub fn createModuleObject(ctx: *HPyContext) !HPy {
@@ -4306,7 +4448,7 @@ test "HPyType_FromSpec + ctx_New + AsStruct_Object: örnek inşası, alan okuma/
     try std.testing.expectEqual(@as(usize, 1), Destroyed.count);
 }
 
-test "type_ nesnesinin HPyFunc_O metodları findTypeMethodO ile bulunabilir" {
+test "type_ nesnesinin HPyFunc_O metodları findTypeMethod ile bulunabilir" {
     const ctx = try createContext(std.testing.allocator);
     defer destroyContext(std.testing.allocator, ctx);
 
@@ -4325,12 +4467,12 @@ test "type_ nesnesinin HPyFunc_O metodları findTypeMethodO ile bulunabilir" {
     const type_h = ctxTypeFromSpec(ctx, &spec, null);
     defer ctxClose(ctx, type_h);
 
-    const m = findTypeMethodO(type_h, "double_it") orelse return error.MethodNotFound;
+    const m = findTypeMethod(type_h, "double_it") orelse return error.MethodNotFound;
     const arg = ctxLongFromInt64(ctx, 21);
     defer ctxClose(ctx, arg);
-    const result = m.impl(ctx, HPy_NULL, arg);
+    const result = m.impl_o.?(ctx, HPy_NULL, arg);
     defer ctxClose(ctx, result);
     try std.testing.expectEqual(@as(i64, 42), ctxLongAsInt64(ctx, result));
 
-    try std.testing.expectEqual(@as(?TypeMethod, null), findTypeMethodO(type_h, "nope"));
+    try std.testing.expectEqual(@as(?TypeMethod, null), findTypeMethod(type_h, "nope"));
 }
