@@ -442,3 +442,93 @@ test "hpy_new_object_on + h_SliceType + list slice broadcast: aHPy'nin external_
         "219\n",
     );
 }
+
+// Faz 24 (bkz. plan dosyası "bellek-içi file-like writer/reader
+// nesneleri"): `hpy-ujson`nin `dump()`unun (GERÇEK bir "file-like"
+// nesne — çağrılabilir `.write(str) -> int` attribute'u OLAN bir nesne —
+// bekleyen HPy fonksiyonlarının HEPSİNİN) İhtiyaç duyduğu TAM protokolü
+// `call_write_method` (bkz. `noxtest.c`) İLE doğrular.
+test "hpy_new_string_writer_on: write() çağrılabilir, sonucu (yazılan bayt sayısı) + biriken içerik doğru" {
+    try expectGolden(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\w: ptr = hpy_new_string_writer_on(h)
+        \\print(hpy_call_on(h, "call_write_method", w, "merhaba"))
+        \\print(hpy_writer_get_str_on(h, w))
+        \\hpy_close_obj(h, w)
+        \\hpy_close(h)
+        \\
+    ,
+        "7\nmerhaba\n",
+    );
+}
+
+test "hpy_new_string_writer_on: BİRDEN FAZLA write() çağrısı biriktirir" {
+    try expectGolden(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\w: ptr = hpy_new_string_writer_on(h)
+        \\print(hpy_call_on(h, "call_write_method", w, "abc"))
+        \\print(hpy_call_on(h, "call_write_method", w, "def"))
+        \\print(hpy_writer_get_str_on(h, w))
+        \\hpy_close_obj(h, w)
+        \\hpy_close(h)
+        \\
+    ,
+        "3\n3\nabcdef\n",
+    );
+}
+
+test "hpy_new_string_reader_on: read() çağrılabilir, TÜM içeriği döner, İKİNCİ çağrıda boş (EOF)" {
+    try expectGolden(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\r: ptr = hpy_new_string_reader_on(h, "dunya")
+        \\print(hpy_call_str_on(h, "call_read_method", r))
+        \\print(hpy_call_str_on(h, "call_read_method", r))
+        \\hpy_close_obj(h, r)
+        \\hpy_close(h)
+        \\
+    ,
+        "dunya\n\n",
+    );
+}
+
+test "hpy_new_string_writer_on: write()e str-DIŞI bir argüman geçilirse HPyError raise edilir" {
+    try expectGolden(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\w: ptr = hpy_new_string_writer_on(h)
+        \\try:
+        \\    print(hpy_call_on(h, "call_write_method", w, 42))
+        \\except HPyError as e:
+        \\    print("yakalandi")
+        \\hpy_close_obj(h, w)
+        \\hpy_close(h)
+        \\
+    ,
+        "yakalandi\n",
+    );
+}
+
+// Faz 24 (bkz. plan dosyası "bellek-içi file-like writer/reader
+// nesneleri", "Kritik dosyalar" bölümündeki `foreign_bridge.zig`
+// notu): GERÇEK `hpy-ujson`nin `dump()`u ELLE test EDİLİRKEN bulunan,
+// writer/reader özelliğiyle İLİŞKİSİZ AYRI bir hata — `nox_hpy_call_int_
+// finish`/vb. ÖNCEDEN unmarshal (`ctx_Long_AsInt64_t`) BAŞARISIZ
+// olduğunda (`None` DÖNEN bir fonksiyon YANLIŞLIKLA `hpy_call_on` İLE —
+// int bekleyerek — çağrıldığında) `ctx`nin İÇ hata durumunu ASLA kontrol/
+// TEMİZLEMİYORDU — bu SESSİZCE "başarılı" (garbage `0`) dönerdi VE `ctx`nin
+// İÇ hata durumu KİRLİ KALIP AYNI `h` üzerindeki BAŞKA, TAMAMEN İLİŞKİSİZ
+// bir SONRAKİ çağrıyı GİZEMLİ şekilde BOZARDI (`HPyArg_ParseKeywords`nin
+// KENDİSİ BİLE bir PENDING hatayla karşılaştığında BAŞARISIZ olabiliyordu).
+test "nox_hpy_call_int_finish: yanlış dönüş tipi (None) HPyError raise eder VE ctx'in iç hata durumunu KİRLETMEZ" {
+    try expectGolden(
+        \\h: ptr = hpy_open("tests/compat/hpy_ext/noxtest.so", "noxtest")
+        \\try:
+        \\    print(hpy_call_on(h, "returns_none_via_o", 1))
+        \\except HPyError as e:
+        \\    print("yakalandi")
+        \\print(hpy_call_on(h, "sum_two_ints", 3, 4))
+        \\hpy_close(h)
+        \\
+    ,
+        "yakalandi\n7\n",
+    );
+}

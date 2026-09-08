@@ -2280,7 +2280,7 @@ pub const Checker = struct {
     /// olarak İŞARETLERDİ (ör. `len(xs)` İçEREN salt-okunur bir yardımcı
     /// bile YAKALANIRDI — GERÇEK bir yanlış-pozitif).
     fn isKnownSafeBuiltinCallee(name: []const u8) bool {
-        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "hpy_new_on", "hpy_getattr_int_on", "hpy_setattr_int_on", "hpy_call_attr_on", "hpy_new_object_on", "hpy_getitem_int_on", "wasm_call" };
+        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "hpy_new_on", "hpy_getattr_int_on", "hpy_setattr_int_on", "hpy_call_attr_on", "hpy_new_object_on", "hpy_getitem_int_on", "hpy_new_string_writer_on", "hpy_writer_get_str_on", "hpy_new_string_reader_on", "wasm_call" };
         for (safe) |s| {
             if (std.mem.eql(u8, name, s)) return true;
         }
@@ -4771,6 +4771,40 @@ pub const Checker = struct {
                     if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_getitem_int_on' argümanı 2 (nesne) ptr olmalıdır", .{});
                     if (try self.checkExpr(ctx, c.args[2]) != .int) return self.fail(error.TypeMismatch, "'hpy_getitem_int_on' argümanı 3 (index) int olmalıdır", .{});
                     return .int;
+                }
+                // Faz 24 (bkz. plan dosyası "bellek-içi file-like writer/
+                // reader nesneleri"): `hpy_new_string_writer_on` —
+                // `hpy_new_object_on` İLE BİREBİR AYNI ŞEKİL (1 argüman,
+                // handle:ptr), SADECE `.io_writer_` İNŞA eder.
+                if (std.mem.eql(u8, name, "hpy_new_string_writer_on")) {
+                    if (c.args.len != 1) {
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_new_string_writer_on' tam olarak 1 argüman alır (tutamac: ptr)", .{});
+                    }
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_new_string_writer_on' argümanı (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
+                    return .ptr;
+                }
+                // Faz 24: `hpy_writer_get_str_on` — bir `.io_writer_`
+                // tutamacının BİRİKMİŞ İÇERİĞİNİ `str` olarak okur.
+                if (std.mem.eql(u8, name, "hpy_writer_get_str_on")) {
+                    if (c.args.len != 2) {
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_writer_get_str_on' tam olarak 2 argüman alır (tutamac: ptr, writer: ptr)", .{});
+                    }
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_writer_get_str_on' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_writer_get_str_on' argümanı 2 (writer) ptr olmalıdır", .{});
+                    return .str;
+                }
+                // Faz 24: `hpy_new_string_reader_on` — `content`i (HERHANGİ
+                // bir ÇALIŞMA-ZAMANI `str` değeri, LİTERAL ZORUNLULUĞU
+                // YOK — `isHpyMarshalableArgType`nin `.str` kontrolüyle
+                // AYNI gevşeklik) SAHİPLENİLEN bir kopyayla `.io_reader_`
+                // İnşa eder.
+                if (std.mem.eql(u8, name, "hpy_new_string_reader_on")) {
+                    if (c.args.len != 2) {
+                        return self.fail(error.ArgumentCountMismatch, "'hpy_new_string_reader_on' tam olarak 2 argüman alır (tutamac: ptr, content: str)", .{});
+                    }
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_new_string_reader_on' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "'hpy_new_string_reader_on' argümanı 2 (content) str olmalıdır", .{});
+                    return .ptr;
                 }
                 // Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi +
                 // metadata-tabanlı metaprogramming"): `stdlib/nox/reflect.

@@ -79,7 +79,7 @@ pub const HPyThreadState = extern struct { _i: isize = 0 };
 /// korunur (bkz. `PINNED_REFCOUNT`) — bu, gerçek CPython'ın `Py_None`/
 /// `Py_True`/`Py_False` tekillerinin de asla serbest bırakılmamasıyla aynı
 /// ruhta bir basitleştirmedir.
-pub const ObjTag = enum(u8) { none, bool_, long, float_, str_, exc_type, list_, tuple_, dict_, type_, instance_, bound_method_, bytes_, capsule_, contextvar_ };
+pub const ObjTag = enum(u8) { none, bool_, long, float_, str_, exc_type, list_, tuple_, dict_, type_, instance_, bound_method_, bytes_, capsule_, contextvar_, io_writer_, io_reader_ };
 
 /// `HPyType_FromSpec`in bir `type_` nesnesine kaydettiği tek bir örnek
 /// metodu (`HPyDef_Kind_Meth`, `HPyFunc_O` VEYA `HPyFunc_NOARGS` — Faz 21
@@ -123,6 +123,19 @@ pub const Obj = struct {
     /// baytların ARASINDA `\0` OLABİLİR (gerçek `bytes`teki gibi) —
     /// yalnızca `.len` KONUMUNDAKİ (sondaki) bayt GARANTİLİ sıfırdır.
     bytes_data: [:0]u8 = @constCast(""),
+    /// Yalnızca `tag == .io_writer_` (Faz 24 — bkz. plan dosyası "bellek-
+    /// içi file-like writer/reader nesneleri"): GERÇEK bir dosya
+    /// nesnesinin `.write(str) -> int` protokolünü TAKLİT eden, bellek-
+    /// İçİ, BÜYÜYEBİLEN bir tampon — `ujson_hpy`nin `dump()`u GİBİ
+    /// "file-like" bir nesne BEKLEYEN HPy fonksiyonlarını Nox'tan
+    /// çağırabilmek İçİn.
+    io_writer_buf: std.ArrayListUnmanaged(u8) = .empty,
+    /// Yalnızca `tag == .io_reader_` (Faz 24) — `.read() -> str`
+    /// protokolünü TAKLİT eden, SAHİPLENİLEN (dupeZ'lenmiş) bir içerik
+    /// kopyası + "bir kez tüketildi mi" bayrağı (GERÇEK dosya
+    /// nesnelerinin "EOF'tan SONRA boş döner" davranışıyla TUTARLI).
+    io_reader_data: [:0]const u8 = "",
+    io_reader_consumed: bool = false,
     /// Yalnızca `tag == .list_` — büyüyebilir, SAHİPLENİLEN bir tutamaç
     /// dizisi (her eleman `ctxDup` ile retain edilmiş kendi referansımız,
     /// çağıranın kendi tutamacından BAĞIMSIZ — bkz. `ctxListAppend`).
@@ -308,6 +321,11 @@ fn ctxClose(ctx: *HPyContext, h: HPy) callconv(.c) void {
                 obj.type_getsets.deinit(allocator);
             },
             .bytes_ => allocator.free(obj.bytes_data),
+            // Faz 24 (bkz. plan dosyası "bellek-içi file-like writer/
+            // reader nesneleri"): `.io_writer_`nin BÜYÜYEBİLEN tamponu +
+            // `.io_reader_`nin SAHİPLENİLEN (dupeZ'lenmiş) içerik kopyası.
+            .io_writer_ => obj.io_writer_buf.deinit(allocator),
+            .io_reader_ => if (obj.io_reader_data.len > 0) allocator.free(obj.io_reader_data),
             .capsule_ => {
                 if (obj.capsule_destructor) |destroy_fn| {
                     destroy_fn(obj.capsule_name, obj.capsule_pointer, obj.capsule_context);
@@ -352,7 +370,7 @@ fn ctxLongAsInt64(ctx: *HPyContext, h: HPy) callconv(.c) i64 {
         .long => obj.payload.l,
         .bool_ => if (obj.payload.b) 1 else 0,
         .float_ => @intFromFloat(obj.payload.f),
-        .none, .str_, .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_, .bytes_, .capsule_, .contextvar_ => blk: {
+        .none, .str_, .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_, .bytes_, .capsule_, .contextvar_, .io_writer_, .io_reader_ => blk: {
             ctxErrSetString(ctx, ctx.h_TypeError, "int'e dönüştürülemez");
             break :blk -1;
         },
@@ -476,7 +494,7 @@ fn ctxFloatAsDouble(ctx: *HPyContext, h: HPy) callconv(.c) f64 {
         .float_ => obj.payload.f,
         .long => @floatFromInt(obj.payload.l),
         .bool_ => if (obj.payload.b) 1 else 0,
-        .none, .str_, .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_, .bytes_, .capsule_, .contextvar_ => blk: {
+        .none, .str_, .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_, .bytes_, .capsule_, .contextvar_, .io_writer_, .io_reader_ => blk: {
             ctxErrSetString(ctx, ctx.h_TypeError, "float'a dönüştürülemez");
             break :blk 0;
         },
@@ -864,7 +882,7 @@ fn ctxLength(ctx: *HPyContext, h: HPy) callconv(.c) isize {
         .list_ => @intCast(obj.list_data.items.len),
         .tuple_ => @intCast(obj.tuple_data.len),
         .dict_ => @intCast(obj.dict_data.items.len),
-        .none, .bool_, .long, .float_, .exc_type, .type_, .instance_, .bound_method_, .capsule_, .contextvar_ => blk: {
+        .none, .bool_, .long, .float_, .exc_type, .type_, .instance_, .bound_method_, .capsule_, .contextvar_, .io_writer_, .io_reader_ => blk: {
             ctxErrSetString(ctx, ctx.h_TypeError, "bu tipin bir uzunluğu yok");
             break :blk -1;
         },
@@ -884,7 +902,7 @@ fn ctxIsTrue(ctx: *HPyContext, h: HPy) callconv(.c) c_int {
         .list_ => @intFromBool(obj.list_data.items.len != 0),
         .tuple_ => @intFromBool(obj.tuple_data.len != 0),
         .dict_ => @intFromBool(obj.dict_data.items.len != 0),
-        .exc_type, .type_, .instance_, .bound_method_, .capsule_, .contextvar_ => 1,
+        .exc_type, .type_, .instance_, .bound_method_, .capsule_, .contextvar_, .io_writer_, .io_reader_ => 1,
     };
 }
 
@@ -902,7 +920,7 @@ fn objEquals(a: *Obj, b: *Obj) bool {
         .str_ => std.mem.eql(u8, a.str_data, b.str_data),
         .bytes_ => std.mem.eql(u8, a.bytes_data, b.bytes_data),
         .bool_, .long, .float_ => unreachable, // isNumericTag zaten yakaladı
-        .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_, .capsule_, .contextvar_ => a == b,
+        .exc_type, .list_, .tuple_, .dict_, .type_, .instance_, .bound_method_, .capsule_, .contextvar_, .io_writer_, .io_reader_ => a == b,
     };
 }
 
@@ -1086,6 +1104,11 @@ fn reprInto(ctx: *HPyContext, allocator: std.mem.Allocator, buf: *std.ArrayListU
             try buf.appendSlice(allocator, obj.contextvar_name);
             try buf.appendSlice(allocator, "'>");
         },
+        // Faz 24: `.io_writer_`/`.io_reader_` (bkz. plan dosyası "bellek-
+        // içi file-like writer/reader nesneleri") — jenerik, GERÇEK
+        // Python file nesnelerinin repr'ine RUHÇA yakın bir yer tutucu.
+        .io_writer_ => try buf.appendSlice(allocator, "<io.StringWriter object>"),
+        .io_reader_ => try buf.appendSlice(allocator, "<io.StringReader object>"),
     }
 }
 
@@ -1274,7 +1297,7 @@ fn ctxHash(ctx: *HPyContext, obj_h: HPy) callconv(.c) isize {
             }
             break :blk normalizeHash(@bitCast(acc));
         },
-        .exc_type, .type_, .instance_, .bound_method_, .capsule_, .contextvar_ => normalizeHash(@intCast(obj_h._i)),
+        .exc_type, .type_, .instance_, .bound_method_, .capsule_, .contextvar_, .io_writer_, .io_reader_ => normalizeHash(@intCast(obj_h._i)),
         .list_, .dict_ => blk: {
             ctxErrSetString(ctx, ctx.h_TypeError, "hashlanabilir değil");
             break :blk -1;
@@ -2613,6 +2636,31 @@ fn findDictEntryStr(list: *std.ArrayListUnmanaged(Obj.DictEntry), name: []const 
 /// TUTARLI, bkz. çağıranların KENDİ hata ayarlama sorumluluğu). `obj_h`,
 /// bulunan bir `type_methods` girişini bir `.bound_method_` nesnesine
 /// SARARKEN `self` OLARAK retain etmek İçin GEREKİR.
+/// Faz 21'in `type_methods` bulma dalından ÇIKARILDI (Faz 24) — TAZE bir
+/// `.bound_method_` nesnesi İNŞA edip `self`i (`obj_h`) `ctxDup` İLE
+/// retain eder. `.io_writer_`/`.io_reader_`nin (Faz 24) `write`/`read`
+/// dispatch'i İLE `type_methods`in KENDİSİ AYNI bu yardımcıyı PAYLAŞIR.
+fn wrapBoundMethod(
+    ctx: *HPyContext,
+    obj_h: HPy,
+    sig: TypeMethodSig,
+    impl_o: ?*const fn (ctx: *HPyContext, self: HPy, arg: HPy) callconv(.c) HPy,
+    impl_noargs: ?*const fn (ctx: *HPyContext, self: HPy) callconv(.c) HPy,
+) ?HPy {
+    const allocator = contextAllocator(ctx);
+    const bm = allocator.create(Obj) catch return null;
+    bm.* = .{
+        .refcount = 1,
+        .tag = .bound_method_,
+        .payload = .{ .l = 0 },
+        .bound_method_self = ctxDup(ctx, obj_h),
+        .bound_method_sig = sig,
+        .bound_method_impl_o = impl_o,
+        .bound_method_impl_noargs = impl_noargs,
+    };
+    return .{ ._i = @intCast(@intFromPtr(bm)) };
+}
+
 fn attrLookup(ctx: *HPyContext, obj_h: HPy, obj: *Obj, name: []const u8) ?HPy {
     // Faz 20: `.type_` (bkz. `Obj.type_dict`in belge notu) — bir tip
     // nesnesinin KENDİ attribute'ları, `type_methods`nin (BOUND METHOD
@@ -2621,6 +2669,18 @@ fn attrLookup(ctx: *HPyContext, obj_h: HPy, obj: *Obj, name: []const u8) ?HPy {
         if (findDictEntryStr(&obj.type_dict, name)) |i| {
             return ctxDup(ctx, obj.type_dict.items[i].value);
         }
+        return null;
+    }
+    // Faz 24 (bkz. plan dosyası "bellek-içi file-like writer/reader
+    // nesneleri"): `.io_writer_`/`.io_reader_` — `HPyType_FromSpec`
+    // GEREKMEYEN, Nox'un KENDİ dahili "file-like" nesneleri. `write`/
+    // `read` DIŞINDA HİÇBİR attribute TANIMAZLAR.
+    if (obj.tag == .io_writer_) {
+        if (std.mem.eql(u8, name, "write")) return wrapBoundMethod(ctx, obj_h, .o, ioWriterWriteImpl, null);
+        return null;
+    }
+    if (obj.tag == .io_reader_) {
+        if (std.mem.eql(u8, name, "read")) return wrapBoundMethod(ctx, obj_h, .noargs, null, ioReaderReadImpl);
         return null;
     }
     if (obj.tag != .instance_) return null;
@@ -2642,20 +2702,68 @@ fn attrLookup(ctx: *HPyContext, obj_h: HPy, obj: *Obj, name: []const u8) ?HPy {
         }
     }
     if (findTypeMethod(obj.instance_type, name)) |method| {
-        const allocator = contextAllocator(ctx);
-        const bm = allocator.create(Obj) catch return null;
-        bm.* = .{
-            .refcount = 1,
-            .tag = .bound_method_,
-            .payload = .{ .l = 0 },
-            .bound_method_self = ctxDup(ctx, obj_h),
-            .bound_method_sig = method.sig,
-            .bound_method_impl_o = method.impl_o,
-            .bound_method_impl_noargs = method.impl_noargs,
-        };
-        return .{ ._i = @intCast(@intFromPtr(bm)) };
+        return wrapBoundMethod(ctx, obj_h, method.sig, method.impl_o, method.impl_noargs);
     }
     return null;
+}
+
+/// Faz 24: `.io_writer_`nin `write` bound-method implementasyonu —
+/// `arg`in (bir Nox `str`) baytlarını tampona EKLER, GERÇEK `file.
+/// write()` İLE TUTARLI olarak yazılan KARAKTER SAYISINI (int) döner.
+fn ioWriterWriteImpl(ctx: *HPyContext, self: HPy, arg: HPy) callconv(.c) HPy {
+    const obj = objOf(self) orelse return HPy_NULL;
+    const s = objOf(arg) orelse {
+        ctxErrSetString(ctx, ctx.h_TypeError, "write() bir str bekler");
+        return HPy_NULL;
+    };
+    if (s.tag != .str_) {
+        ctxErrSetString(ctx, ctx.h_TypeError, "write() bir str bekler");
+        return HPy_NULL;
+    }
+    obj.io_writer_buf.appendSlice(contextAllocator(ctx), s.str_data) catch {
+        ctxErrNoMemory(ctx);
+        return HPy_NULL;
+    };
+    return ctxLongFromInt64(ctx, @intCast(s.str_data.len));
+}
+
+/// Faz 24: `.io_reader_`nin `read` bound-method implementasyonu — İLK
+/// çağrıda TÜM SAHİPLENİLEN içeriği (GERÇEK bir Nox `str`i OLARAK) döner,
+/// SONRAKİ HER çağrıda boş `str` (GERÇEK dosya nesnelerinin "EOF'tan
+/// SONRA boş döner" davranışıyla TUTARLI).
+fn ioReaderReadImpl(ctx: *HPyContext, self: HPy) callconv(.c) HPy {
+    const obj = objOf(self) orelse return HPy_NULL;
+    if (obj.io_reader_consumed) return ctxUnicodeFromString(ctx, "");
+    obj.io_reader_consumed = true;
+    return ctxUnicodeFromString(ctx, obj.io_reader_data.ptr);
+}
+
+/// Faz 24: `.io_writer_` İçİn BOŞ bir tampon İLE — `hpy_new_string_
+/// writer_on`in Zig-tarafı karşılığı (`createModuleObject`nin AYNI
+/// deseni).
+pub fn createStringWriter(ctx: *HPyContext) !HPy {
+    const obj = try contextAllocator(ctx).create(Obj);
+    obj.* = .{ .refcount = 1, .tag = .io_writer_, .payload = .{ .l = 0 } };
+    return .{ ._i = @intCast(@intFromPtr(obj)) };
+}
+
+/// Faz 24: `.io_reader_` İçİn `content`in SAHİPLENİLEN (dupeZ'lenmiş) bir
+/// kopyasıyla — `hpy_new_string_reader_on`in Zig-tarafı karşılığı.
+pub fn createStringReader(ctx: *HPyContext, content: []const u8) !HPy {
+    const allocator = contextAllocator(ctx);
+    const copy = try allocator.dupeZ(u8, content);
+    const obj = try allocator.create(Obj);
+    obj.* = .{ .refcount = 1, .tag = .io_reader_, .payload = .{ .l = 0 }, .io_reader_data = copy };
+    return .{ ._i = @intCast(@intFromPtr(obj)) };
+}
+
+/// Faz 24: `foreign_bridge.zig`nin `ctx`e HİÇ İHTİYAÇ DUYMADAN (Obj
+/// erişimi tag/işaretçi-tabanlı) writer'ın BİRİKMİŞ içeriğini
+/// okuyabilmesi İçİn.
+pub fn getStringWriterContent(h: HPy) ?[]const u8 {
+    const obj = objOf(h) orelse return null;
+    if (obj.tag != .io_writer_) return null;
+    return obj.io_writer_buf.items;
 }
 
 fn ctxGetAttr(ctx: *HPyContext, obj_h: HPy, name_h: HPy) callconv(.c) HPy {

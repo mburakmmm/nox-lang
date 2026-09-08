@@ -18699,6 +18699,84 @@ kullanıcının KENDİ Nox verisi HİÇBİRİNİ KULLANMIYOR.
 
 ---
 
+## 3.134 Faz 24 — bellek-içi "file-like" writer/reader nesneleri + `nox_hpy_call_*_finish`nin unmarshal-sonrası hata durumu kirletmesi düzeltmesi (v1.68.0)
+
+§3.133'ün (Faz 23) "kapsam dışı" bıraktığı `dump()`/`load()` (dosya-
+tabanlı varyantlar) kullanıcı TARAFINDAN sorulunca, GERÇEK C kodunun
+(`ujson_hpy.c:2541-2654`/`:2679-2732`) `file`nin ÇAĞRILABİLİR bir
+`.write`/`.read` attribute'una sahip OLMASINI ŞART koştuğu, VE Nox'un
+BUGÜNE KADAR "Nox'tan İNŞA EDİLİP C'ye geri ÇAĞRILABİLEN bir nesne"
+mekanizması İÇERMEDİĞİ bulundu. Kullanıcı Plan Mode İLE dar/GERÇEKÇİ bir
+v1 çözümü SEÇTİ: GERÇEK bir Nox closure'ını KEYFİ bir HPy-çağrılabilir
+nesneye dönüştüren GENEL bir reverse-FFI mekanizması (derlenmiş QBE
+fonksiyon işaretçilerini/closure ortamlarını HPy çağrı protokolüne
+bağlamayı VE Nox-içi istisnaların C'nin hata durumuna GERİ çevrilmesini
+gerektirirdi — ORANTISIZ büyük) YERİNE, Nox'un KENDİ, TAMAMEN Zig'de
+implemente edilmiş, bellek-İçİ (StringIO-benzeri) bir writer/reader
+nesnesi.
+
+**Tasarım**: YENİ `ObjTag` varyantları `.io_writer_` (büyüyebilen bir
+`std.ArrayListUnmanaged(u8)` tamponu) / `.io_reader_` (SAHİPLENİLEN bir
+içerik kopyası + "tüketildi mi" bayrağı). `attrLookup`nin `type_methods`
+bulma dalından ÇIKARILAN PAYLAŞILAN `wrapBoundMethod` yardımcısı, `write`/
+`read` isimlerini TAZE bir `.bound_method_` nesnesine SARAR (Faz 21'in
+callDispatch'in `.o`/`.noargs` dispatch'İNİ AYNEN yeniden KULLANIR — YENİ
+bir dispatch mekanizması GEREKMEDİ). `ctxCallableCheck`nin `.bound_method_`
+İçİn ZATEN KOŞULSUZ `1` dönmesi SAYESİNDE `HPyCallable_Check` de HİÇ
+DEĞİŞİKLİK GEREKMEDEN doğru çalıştı.
+
+**YENİ builtinler**: `hpy_new_string_writer_on(handle: ptr) -> ptr`,
+`hpy_writer_get_str_on(handle: ptr, writer: ptr) -> str`, `hpy_new_string_
+reader_on(handle: ptr, content: str) -> ptr` — ÜÇÜ de Faz 22'nin
+`hpy_new_object_on`/`hpy_getitem_int_on`sinin AYNI "SABİT arity, marshal
+zinciri GEREKMEZ" ŞEKLİNİ takip eder. **KRİTİK, işi basitleştiren
+bulgu**: Faz 19'un `.ptr` argüman marshalanabilirliği (`isHpyMarshalableArgType`,
+`__nox_hpy_obj_arg` AST-sarmalaması) SAYESİNDE writer/reader nesneleri
+HİÇBİR YENİ codegen/checker değişikliği GEREKMEDEN MEVCUT `hpy_call_on`/
+`hpy_call_obj_on`e argüman OLARAK geçirilebiliyor — BU FAZ SADECE (a)
+nesneyi İNŞA ETMEK VE (b) writer'ın içeriğini GERİ OKUMAK İçİn builtin
+EKLEDİ.
+
+**GERÇEK `hpy-ujson` doğrulaması SIRASINDA bulunan, writer/reader
+özelliğiyle İLİŞKİSİZ AYRI bir hata**: `dump()`/`load()`yu elle test
+ederken, `dump()`nin (`None` DÖNER) YANLIŞLIKLA `hpy_call_on` (int BEKLER)
+İLE çağrılması BEKLENDİĞİ GİBİ İLK çağrıda başarısız OLMADI — AKSİNE
+SESSİZCE "başarılı" göründü, AMA SONRAKİ, TAMAMEN İLİŞKİSİZ İKİNCİ bir
+`hpy_call_on` çağrısı (AYNI `h` üzerinde, FARKLI bir fonksiyona) GİZEMLİCE
+başarısız oldu. Kök neden: `nox_hpy_call_int_finish`/`_float_finish`/
+`_str_finish` unmarshal (`ctx_Long_AsInt64_t`/vb.) BAŞARISIZ olduğunda
+`ctx`nin KENDİ İÇ hata durumuna (`ctxErrSetString`, Nox'un `g_hpy_last_error`
+kanalından TAMAMEN BAĞIMSIZ) bir `TypeError` YAZIYOR AMA BUNU HİÇ KONTROL/
+TEMİZLEMİYORDU — bu KİRLİ durum, `HPyArg_ParseKeywords`nin KENDİSİNİN
+BİLE bir PENDING hatayla karşılaştığında BAŞARISIZ olmasına yol AÇARAK
+SONRAKİ HERHANGİ bir çağrıyı BOZUYORDU. Düzeltme: YENİ paylaşılan
+`checkUnmarshalErr` yardımcısı unmarshal ADIMLARININ HEPSİNİN (`bool`
+unmarshal'ı — `ctxIsTrue` — HARİÇ, o ASLA başarısız OLAMAZ, bkz. `ctxIsTrue`nin
+KENDİ switch'i) SONRASINDA da `ctx_Err_Occurred`i kontrol EDER — VARSA
+temizleyip GERÇEK bir `HPyError` OLARAK yüzeye ÇIKARIR (Faz 18'in
+`emitHpyErrorCheckOrRaise`sinin ZATEN kontrol ettiği `g_hpy_last_error`
+kanalına yazarak).
+
+**Doğrulama**: GERÇEK `hpy-ujson`nin `dump()`/`load()`si (DOĞRU çağrı
+yerleşiği — `hpy_call_obj_on`, `hpy_call_on` DEĞİL, ÇÜNKÜ `dump()`/`load()`
+KENDİ dönüş tipleri int DEĞİL) İLE uçtan uca DOĞRULANDI: int/list
+argümanları İçİn `dump()` DOĞRU JSON metni üretiyor, `load()` DOĞRU liste
+elemanlarını DÖNÜYOR. 5 YENİ golden test (writer round-trip, BİRDEN FAZLA
+`.write()` birikmesi, reader round-trip + EOF davranışı, str-DIŞI argüman
+İçİn `HPyError`, unmarshal-tip-uyuşmazlığı düzeltmesinin `ctx`nin İÇ
+durumunu KİRLETMEDİĞİNİN kanıtı). `zig build test` (Debug+ReleaseFast,
+TAM paket) + `NOX_STRESS_ROUNDS=800 zig build stress-test -Doptimize=ReleaseFast`
+TEMİZ geçti.
+
+**Kapsam DIŞI (bu turda)**: TAM bir "Nox closure/fonksiyonunu KEYFİ bir
+HPy-çağrılabilir NESNEYE dönüştür" (genel reverse-FFI) mekanizması;
+`.write()`in `bytes`/`bytearray` argümanları KABUL ETMESİ (v1 SADECE
+`str`); `.read(size)`nin İSTEĞE BAĞLI `size` argümanı (v1 SADECE
+argümansız `.read()`); writer/reader nesnelerinin GERÇEK bir Nox
+dosyasına/`nox.io`ya BAĞLANMASI (v1 SAF bellek-İçİ, GERÇEK disk I/O YOK).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

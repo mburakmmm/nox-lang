@@ -1363,6 +1363,89 @@ static HPy attr_and_seq_roundtrip_impl(HPyContext *ctx, HPy self, const HPy *arg
     return HPyLong_FromLongLong(ctx, (amount_v * 2) + (m0_v + 1) + sub_sum);
 }
 
+/* Faz 24 (bkz. plan dosyası "bellek-içi file-like writer/reader
+ * nesneleri"): gerçek `ujson_hpy`nin `dump()`unun İZLEDİĞİ TAM protokolün
+ * (`HPy_HasAttr_s`+`HPy_GetAttr_s`+`HPyCallable_Check`+`HPy_CallTupleDict`,
+ * `ujson_hpy.c:2541-2654`) KÜÇÜLTÜLMÜŞ bir kopyası — `obj`nin `write`
+ * attribute'unu bulup TEK bir `msg` argümanıyla ÇAĞIRIR, dönen (int)
+ * sonucu GERİ döner. */
+HPyDef_METH(call_write_method, "call_write_method", HPyFunc_VARARGS)
+static HPy call_write_method_impl(HPyContext *ctx, HPy self, const HPy *args, size_t nargs)
+{
+    (void)self;
+    if (nargs != 2) {
+        HPyErr_SetString(ctx, ctx->h_TypeError, "call_write_method() tam olarak 2 argüman alır");
+        return HPy_NULL;
+    }
+    HPy obj = args[0];
+    HPy msg = args[1];
+
+    int has_write = HPy_HasAttr_s(ctx, obj, "write");
+    if (has_write < 0) return HPy_NULL;
+    if (!has_write) {
+        HPyErr_SetString(ctx, ctx->h_TypeError, "beklenen file-like nesne (write yok)");
+        return HPy_NULL;
+    }
+
+    HPy write = HPy_GetAttr_s(ctx, obj, "write");
+    if (HPy_IsNull(write)) return HPy_NULL;
+    if (!HPyCallable_Check(ctx, write)) {
+        HPy_Close(ctx, write);
+        HPyErr_SetString(ctx, ctx->h_TypeError, "beklenen file-like nesne (write çağrılabilir değil)");
+        return HPy_NULL;
+    }
+
+    HPy write_args[] = { msg };
+    HPy result = HPy_Call(ctx, write, write_args, 1, HPy_NULL);
+    HPy_Close(ctx, write);
+    return result;
+}
+
+/* Faz 24: `ujson_hpy`nin `load()`unun İZLEDİĞİ TAM protokolün (`HPy_
+ * HasAttr_s`+`HPy_GetAttr_s`+`HPyCallable_Check`+`HPy_CallTupleDict`,
+ * ARGÜMANSIZ, `ujson_hpy.c:2679-2732`) KÜÇÜLTÜLMÜŞ bir kopyası — `obj`nin
+ * `read` attribute'unu bulup ARGÜMANSIZ ÇAĞIRIR, dönen (str) sonucu GERİ
+ * döner. */
+HPyDef_METH(call_read_method, "call_read_method", HPyFunc_O)
+static HPy call_read_method_impl(HPyContext *ctx, HPy self, HPy obj)
+{
+    (void)self;
+    int has_read = HPy_HasAttr_s(ctx, obj, "read");
+    if (has_read < 0) return HPy_NULL;
+    if (!has_read) {
+        HPyErr_SetString(ctx, ctx->h_TypeError, "beklenen file-like nesne (read yok)");
+        return HPy_NULL;
+    }
+
+    HPy read = HPy_GetAttr_s(ctx, obj, "read");
+    if (HPy_IsNull(read)) return HPy_NULL;
+    if (!HPyCallable_Check(ctx, read)) {
+        HPy_Close(ctx, read);
+        HPyErr_SetString(ctx, ctx->h_TypeError, "beklenen file-like nesne (read çağrılabilir değil)");
+        return HPy_NULL;
+    }
+
+    HPy result = HPy_Call(ctx, read, NULL, 0, HPy_NULL);
+    HPy_Close(ctx, read);
+    return result;
+}
+
+/* Faz 24 (bkz. plan dosyası "bellek-içi file-like writer/reader
+ * nesneleri"): GERÇEK `hpy-ujson`nin `dump()`u ELLE test EDİLİRKEN
+ * bulunan, writer/reader özelliğiyle İLİŞKİSİZ AYRI bir hatanın
+ * (`nox_hpy_call_int_finish`/vb.nin unmarshal SONRASI `ctx_Err_Occurred`
+ * KONTROL ETMEMESİ — bkz. `runtime/foreign_bridge.zig`nin `checkUnmarshalErr`
+ * belge notu) KANITI: `None` DÖNER, `HPyFunc_O` (argparse/tracker HİÇ
+ * KARIŞMAZ — hatanın KENDİSİNİN unmarshal ADIMININ KENDİSİNDEN geldiğini,
+ * argparse'la İLİŞKİSİZ olduğunu KANITLAR). */
+HPyDef_METH(returns_none_via_o, "returns_none_via_o", HPyFunc_O)
+static HPy returns_none_via_o_impl(HPyContext *ctx, HPy self, HPy arg)
+{
+    (void)self;
+    (void)arg;
+    return HPy_Dup(ctx, ctx->h_None);
+}
+
 /* Faz 20 (bkz. plan dosyası "HPy modül nesnesi + HPy_mod_exec desteği"):
  * GERÇEK Cython-üretimi (aHPy `hpy-universal` arka ucu) kod import
  * anındaki `HPy_mod_exec` slot'unu, derleme-zamanı sabitlerini `self`
@@ -1481,6 +1564,9 @@ static HPyDef *module_defines[] = {
     &get_faz20_marker,
     &get_boxed_destroy_count,
     &attr_and_seq_roundtrip,
+    &call_write_method,
+    &call_read_method,
+    &returns_none_via_o,
     NULL
 };
 

@@ -495,6 +495,39 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 try self.emitHpyErrorCheckOrRaise();
                 return .{ .text = result_temp, .qtype = .l };
             }
+            // Faz 24 (bkz. plan dosyası "bellek-içi file-like writer/
+            // reader nesneleri"): `hpy_new_string_writer_on`/`hpy_writer_
+            // get_str_on`/`hpy_new_string_reader_on` — ÜÇÜ de SABİT arity,
+            // marshal zinciri GEREKMEZ, DOĞRUDAN çağrıya çevrilir.
+            if (std.mem.eql(u8, name, "hpy_new_string_writer_on")) {
+                if (c.args.len != 1) return error.Unsupported;
+                const handle_v = try self.genExpr(c.args[0]);
+                const result_temp = try self.newTemp();
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_new_string_writer", &.{.{ .ty = .l, .text = handle_v.text }});
+                try self.emitHpyErrorCheckOrRaise();
+                return .{ .text = result_temp, .qtype = .l };
+            }
+            if (std.mem.eql(u8, name, "hpy_writer_get_str_on")) {
+                if (c.args.len != 2) return error.Unsupported;
+                const handle_v = try self.genExpr(c.args[0]);
+                const writer_v = try self.genExpr(c.args[1]);
+                const result_temp = try self.newTemp();
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_writer_get_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handle_v.text }, .{ .ty = .l, .text = writer_v.text } });
+                // Not: BU çağrı ASLA HPy hatası ÜRETMEZ (`hpy_close_obj`in
+                // AYNI "sessiz" muamelesi) — `emitHpyErrorCheckOrRaise`
+                // GEREKMEZ.
+                return .{ .text = result_temp, .qtype = .l, .heap = .str };
+            }
+            if (std.mem.eql(u8, name, "hpy_new_string_reader_on")) {
+                if (c.args.len != 2) return error.Unsupported;
+                const handle_v = try self.genExpr(c.args[0]);
+                const content_v = try self.genExpr(c.args[1]);
+                const result_temp = try self.newTemp();
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_hpy_new_string_reader", &.{ .{ .ty = .l, .text = handle_v.text }, .{ .ty = .l, .text = content_v.text } });
+                try self.releaseIfTemporary(c.args[1], content_v);
+                try self.emitHpyErrorCheckOrRaise();
+                return .{ .text = result_temp, .qtype = .l };
+            }
             // Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi +
             // metadata-tabanlı metaprogramming", `checker.zig`deki eşdeğer
             // not): `stdlib/nox/reflect.nox`nin sardığı 6 SABİT-imzalı

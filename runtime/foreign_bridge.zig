@@ -748,6 +748,30 @@ fn invokeHpyMethod(mc: *MarshalCtx, func_name: []const u8) ?hpy_bridge.context.H
     return h_result;
 }
 
+/// Faz 24 (bkz. plan dosyası "bellek-içi file-like writer/reader
+/// nesneleri" — GERÇEK `hpy-ujson`nin `dump()`u ELLE test EDİLİRKEN
+/// bulunan, YAZAR/OKUYUCU özelliğiyle İLİŞKİSİZ, AYRI bir hata):
+/// `nox_hpy_call_int_finish`/`_float_finish`/`_bool_finish`/`_str_finish`
+/// ÖNCEDEN unmarshal (`ctx_Long_AsInt64_t`/vb.) BAŞARISIZ olduğunda
+/// (ör. `dump()` GİBİ `None` DÖNEN bir fonksiyon YANLIŞLIKLA `hpy_call_on`
+/// İLE — int bekleyerek — çağrıldığında) `ctx`nin KENDİ İÇ hata durumuna
+/// (`ctxErrSetString`, Nox'un AYRI `g_hpy_last_error` KANALINDAN TAMAMEN
+/// BAĞIMSIZ) bir `TypeError` YAZIP ASLA KONTROL/TEMİZLEMİYORDU — bu
+/// SESSİZCE "başarılı" (garbage `0`/`0.0`/`false`/`""`) dönerdi VE
+/// `ctx`nin İÇ hata durumu KİRLİ KALIRDI, AYNI `h` üzerindeki BAŞKA,
+/// TAMAMEN İLİŞKİSİZ bir SONRAKİ çağrıyı (`HPyArg_ParseKeywords`nin
+/// KENDİSİ BİLE bir PENDING hatayla karşılaştığında BAŞARISIZ OLABİLİR)
+/// GİZEMLİ şekilde BOZARDI. Düzeltme: unmarshal SONRASI da `ctx_Err_
+/// Occurred` KONTROL EDİLİR — VARSA temizlenip GERÇEK bir `HPyError`
+/// OLARAK yüzeye ÇIKARILIR (`emitHpyErrorCheckOrRaise`nin ZATEN kontrol
+/// ettiği KANALA yazılarak).
+fn checkUnmarshalErr(ctx: *hpy_bridge.context.HPyContext, func_name: []const u8) bool {
+    if (ctx.ctx_Err_Occurred.?(ctx) == 0) return false;
+    ctx.ctx_Err_Clear.?(ctx);
+    setHpyError("'{s}' beklenen tipte bir değer döndürmedi", .{func_name});
+    return true;
+}
+
 /// `func_name` adlı metodu `mc.args`la çağırıp `int` sonucu unmarshal
 /// eder, `mc`yi TAMAMEN serbest bırakır. `Err_Occurred`/"bulunamadı"
 /// kontrolü `invokeHpyMethod`nin İÇİNDE yapılır (Faz 18) — BURADA
@@ -759,7 +783,9 @@ pub export fn nox_hpy_call_int_finish(mc_ptr: ?*anyopaque, func_name: ?[*:0]cons
     const ctx = mc.handle.ctx;
     const h_result = invokeHpyMethod(mc, std.mem.span(fnm)) orelse return 0;
     defer ctx.ctx_Close.?(ctx, h_result);
-    return ctx.ctx_Long_AsInt64_t.?(ctx, h_result);
+    const v = ctx.ctx_Long_AsInt64_t.?(ctx, h_result);
+    if (checkUnmarshalErr(ctx, std.mem.span(fnm))) return 0;
+    return v;
 }
 
 /// `nox_hpy_call_int_finish`nin AYNISI, `float` dönüşle.
@@ -770,11 +796,18 @@ pub export fn nox_hpy_call_float_finish(mc_ptr: ?*anyopaque, func_name: ?[*:0]co
     const ctx = mc.handle.ctx;
     const h_result = invokeHpyMethod(mc, std.mem.span(fnm)) orelse return 0;
     defer ctx.ctx_Close.?(ctx, h_result);
-    return ctx.ctx_Float_AsDouble.?(ctx, h_result);
+    const v = ctx.ctx_Float_AsDouble.?(ctx, h_result);
+    if (checkUnmarshalErr(ctx, std.mem.span(fnm))) return 0;
+    return v;
 }
 
 /// `nox_hpy_call_int_finish`nin AYNISI, `bool` (0/1) dönüşle — genel
-/// `ctx_IsTrue` (truthiness) İLE unmarshal eder.
+/// `ctx_IsTrue` (truthiness) İLE unmarshal eder. Not: `ctx_IsTrue`
+/// GERÇEK HPy'de HERHANGİ bir nesne İçİn (Nox'un `.none`/`.exc_type`/
+/// `.io_writer_`/vb. tagli TÜM nesneler DAHİL, bkz. `ctxIsTrue`nin KENDİ
+/// switch'i) her zaman BAŞARIYLA bir 0/1 döner (`TypeError` fırlatmaz) —
+/// bu YÜZDEN diğer üçünün AKSİNE bu unmarshal ADIMI ASLA başarısız
+/// olamaz, `checkUnmarshalErr` GEREKMEZ (netlik İçİn AÇIKÇA belirtildi).
 pub export fn nox_hpy_call_bool_finish(mc_ptr: ?*anyopaque, func_name: ?[*:0]const u8) i32 {
     const mc: *MarshalCtx = @ptrCast(@alignCast(mc_ptr orelse return 0));
     defer freeMarshalCtx(mc);
@@ -795,8 +828,10 @@ pub export fn nox_hpy_call_str_finish(rt: ?*anyopaque, mc_ptr: ?*anyopaque, func
     const h_result = invokeHpyMethod(mc, std.mem.span(fnm)) orelse return str_mod.nox_str_from_bytes(rt, "");
     defer ctx.ctx_Close.?(ctx, h_result);
     var size: isize = 0;
-    const result_str = ctx.ctx_Unicode_AsUTF8AndSize.?(ctx, h_result, &size) orelse return str_mod.nox_str_from_bytes(rt, "");
-    return str_mod.nox_str_from_bytes(rt, result_str[0..@intCast(size)]);
+    const result_str = ctx.ctx_Unicode_AsUTF8AndSize.?(ctx, h_result, &size);
+    if (checkUnmarshalErr(ctx, std.mem.span(fnm))) return str_mod.nox_str_from_bytes(rt, "");
+    const rs = result_str orelse return str_mod.nox_str_from_bytes(rt, "");
+    return str_mod.nox_str_from_bytes(rt, rs[0..@intCast(size)]);
 }
 
 /// Faz 19: `func_name` adlı metodu `mc.args`la çağırıp SONUCU unmarshal
@@ -987,6 +1022,52 @@ pub export fn nox_hpy_getitem_int(handle_ptr: ?*anyopaque, container_ptr: ?*anyo
     }
     defer ctx.ctx_Close.?(ctx, h_result);
     return ctx.ctx_Long_AsInt64_t.?(ctx, h_result);
+}
+
+/// Faz 24 (bkz. plan dosyası "bellek-içi file-like writer/reader
+/// nesneleri"): boş bir `.io_writer_` (`context.createStringWriter`)
+/// İNŞA EDER — GERÇEK bir `.write(str) -> int`-çağrılabilir attribute'a
+/// sahip, bellek-İçİ bir "dosya" nesnesi (`ujson_hpy`nin `dump()`u GİBİ
+/// file-like bir nesne BEKLEYEN HPy fonksiyonlarına argüman olarak
+/// GEÇİLEBİLİR — Faz 19'un `.ptr` argüman marshalanabilirliği SAYESİNDE).
+pub export fn nox_hpy_new_string_writer(handle_ptr: ?*anyopaque) ?*anyopaque {
+    const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return null));
+    const h = hpy_bridge.context.createStringWriter(handle.ctx) catch {
+        setHpyError("bellek yetersiz", .{});
+        return null;
+    };
+    const raw: usize = @bitCast(h._i);
+    if (raw == 0) return null;
+    return @ptrFromInt(raw);
+}
+
+/// Faz 24: `writer_ptr`nin (`nox_hpy_new_string_writer`den alınmış bir
+/// tutamaç) BİRİKMİŞ İÇERİĞİNİ (TÜM `.write()` çağrılarının birleşimi)
+/// GERÇEK bir Nox `str`i OLARAK döner — `context.getStringWriterContent`
+/// `ctx`e HİÇ İHTİYAÇ DUYMADAN (Obj erişimi tag/işaretçi-tabanlı) çalışır.
+pub export fn nox_hpy_writer_get_str(rt: ?*anyopaque, handle_ptr: ?*anyopaque, writer_ptr: ?*anyopaque) ?[*:0]u8 {
+    if (handle_ptr == null) return str_mod.nox_str_from_bytes(rt, "");
+    const wp = writer_ptr orelse return str_mod.nox_str_from_bytes(rt, "");
+    const h: hpy_bridge.context.HPy = .{ ._i = @bitCast(@intFromPtr(wp)) };
+    const slice = hpy_bridge.context.getStringWriterContent(h) orelse "";
+    return str_mod.nox_str_from_bytes(rt, slice);
+}
+
+/// Faz 24: `content`in (bir Nox `str`i) SAHİPLENİLEN bir kopyasıyla YENİ
+/// bir `.io_reader_` (`context.createStringReader`) İNŞA EDER — GERÇEK
+/// bir `.read() -> str`-çağrılabilir attribute'a sahip, bellek-İçİ bir
+/// "dosya" nesnesi (`ujson_hpy`nin `load()`u GİBİ file-like bir nesne
+/// BEKLEYEN HPy fonksiyonlarına argüman olarak GEÇİLEBİLİR).
+pub export fn nox_hpy_new_string_reader(handle_ptr: ?*anyopaque, content: ?[*:0]const u8) ?*anyopaque {
+    const handle: *PersistentHpyHandle = @ptrCast(@alignCast(handle_ptr orelse return null));
+    const slice = str_mod.nox_str_slice(content orelse "");
+    const h = hpy_bridge.context.createStringReader(handle.ctx, slice) catch {
+        setHpyError("bellek yetersiz", .{});
+        return null;
+    };
+    const raw: usize = @bitCast(h._i);
+    if (raw == 0) return null;
+    return @ptrFromInt(raw);
 }
 
 /// `path`teki `.wasm` ikilisini yükler, `func_name` adlı (yalnızca `i32`

@@ -14,6 +14,68 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.68.0]
+
+### Eklendi
+- **Faz 24 — bellek-içi "file-like" writer/reader nesneleri**: `hpy-ujson`nin
+  `dump()`/`load()`si (VE genel olarak çağrılabilir bir `.write(str)`/
+  `.read()` attribute'una sahip bir "file-like" nesne BEKLEYEN HERHANGİ
+  bir HPy fonksiyonu) artık Nox'tan çağrılabiliyor. Nox'un KENDİ, dahili
+  (TAMAMEN Zig'de implemente edilmiş) BASİT bir bellek-İçİ (string) writer/
+  reader nesnesi İNŞA EDİLDİ — GERÇEK bir Nox closure'ını KEYFİ bir HPy-
+  çağrılabilir NESNEYE dönüştüren GENEL bir reverse-FFI mekanizması
+  İCAT ETMEK YERİNE (orantısız büyük bir iş), `dump`/`load`ın İhtiyaç
+  duyduğu TAM protokolü (`.write(str) -> int`, `.read() -> str`) karşılayan
+  DAR/GERÇEKÇİ bir v1.
+- YENİ `ObjTag` varyantları `.io_writer_`/`.io_reader_` (`runtime/hpy_bridge/
+  context.zig`) — `attrLookup`nin PAYLAŞILAN `wrapBoundMethod` yardımcısı
+  (Faz 21'in `type_methods` bulma dalından ÇIKARILDI) İLE `write`/`read`
+  attribute'larını TAZE bir `.bound_method_` nesnesine SARAR.
+- YENİ builtinler: `hpy_new_string_writer_on(handle: ptr) -> ptr`,
+  `hpy_writer_get_str_on(handle: ptr, writer: ptr) -> str` (writer'ın
+  BİRİKMİŞ TÜM `.write()` çağrılarının birleşimini okur), `hpy_new_string_
+  reader_on(handle: ptr, content: str) -> ptr` (`.read()` İLK çağrıda
+  TÜM içeriği, SONRAKİ çağrılarda boş — GERÇEK dosya nesnelerinin "EOF'tan
+  SONRA boş döner" davranışıyla TUTARLI). `hpy_close_obj` (Faz 19) AYNEN
+  yeniden KULLANILIR — YENİ bir "close" builtin'İNE GEREK YOK.
+- Faz 19'un `.ptr` argüman marshalanabilirliği (`isHpyMarshalableArgType`)
+  SAYESİNDE writer/reader nesneleri, HİÇBİR YENİ codegen/checker değişikliği
+  GEREKMEDEN `hpy_call_on`/`hpy_call_obj_on` GİBİ MEVCUT çağrı yerleşiklerine
+  argüman OLARAK geçirilebiliyor.
+
+### Düzeltildi
+- **`nox_hpy_call_int_finish`/`_float_finish`/`_str_finish`nin unmarshal
+  SONRASI `ctx_Err_Occurred`i HİÇ kontrol etmemesi (GERÇEK `hpy-ujson`nin
+  `dump()`u ELLE test EDİLİRKEN bulundu, writer/reader özelliğiyle
+  İLİŞKİSİZ AYRI bir hata)**: bir C fonksiyonu `None` (VEYA beklenenden
+  FARKLI bir tip) DÖNDÜĞÜNDE VE `hpy_call_on` (int BEKLER) GİBİ YANLIŞ
+  bir tipli çağrı yerleşiğiyle çağrıldığında, unmarshal (`ctx_Long_
+  AsInt64_t`/vb.) `ctx`nin KENDİ İÇ hata durumuna (Nox'un AYRI `g_hpy_
+  last_error` kanalından TAMAMEN BAĞIMSIZ) bir `TypeError` YAZIYOR AMA
+  BUNU HİÇ KONTROL/TEMİZLEMİYORDU — bu SESSİZCE "başarılı" (garbage `0`/
+  `0.0`/`""`) dönüyor VE `ctx`nin İÇ hata durumu KİRLİ KALIYORDU. AYNI
+  `h` üzerindeki BAŞKA, TAMAMEN İLİŞKİSİZ bir SONRAKİ çağrı (`HPyArg_
+  ParseKeywords`nin KENDİSİ BİLE bir PENDING hatayla karşılaştığında
+  BAŞARISIZ olabiliyordu) BU YÜZDEN GİZEMLİ şekilde BOZULUYORDU. Düzeltme:
+  YENİ paylaşılan `checkUnmarshalErr` yardımcısı unmarshal SONRASI da
+  `ctx_Err_Occurred`i kontrol EDER — VARSA temizleyip GERÇEK bir `HPyError`
+  OLARAK yüzeye ÇIKARIR.
+
+### Doğrulandı
+- GERÇEK `hpy-ujson`nin `dump()`/`load()`si (`hpy_new_string_writer_on`+
+  `hpy_call_obj_on(h, "dump", ..., w)`+`hpy_writer_get_str_on`;
+  `hpy_new_string_reader_on`+`hpy_call_obj_on(h, "load", r)`+`hpy_getitem_
+  int_on`) uçtan uca DOĞRU çalışıyor — int/list argümanları İçİn `dump()`
+  DOĞRU JSON metni üretiyor, `load()` DOĞRU liste elemanlarını DÖNÜYOR,
+  BİRDEN FAZLA ardışık çağrı SIZINTISIZ/BOZULMADAN çalışıyor.
+- 5 YENİ golden test (`tests/compat/hpy_call_golden_test.zig`): writer
+  round-trip (yazılan bayt sayısı + biriken içerik), BİRDEN FAZLA `.write()`
+  çağrısının birikmesi, reader round-trip + "EOF'tan sonra boş" davranışı,
+  `write()`e str-DIŞI argüman İçİn `HPyError`, VE unmarshal-tipi-uyuşmazlığı
+  düzeltmesinin (`ctx`nin İÇ durumunun KİRLENMEDİĞİNİN) kanıtı.
+- `zig build test` (Debug+ReleaseFast, TAM paket) + `NOX_STRESS_ROUNDS=800
+  zig build stress-test -Doptimize=ReleaseFast` TEMİZ geçti.
+
 ## [1.67.0]
 
 ### Düzeltildi
