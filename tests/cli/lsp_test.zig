@@ -207,6 +207,73 @@ test "uctan uca: hover/definition/completion ayni-dosya sembolleri gercekten coz
     try std.testing.expect(term == .exited and term.exited == 0);
 }
 
+// Faz ÜH.1: `textDocument/formatting` — `compiler/main.zig`nin `cmdFmt`ıyla
+// AYNI zincirin (`formatter.formatModule`) beklendiği gibi TEK bir tam-
+// belge `TextEdit` olarak dönüp döndürmediğini doğrular. Beklenen çıktı
+// `tests/cli/subcommand_test.zig`nin AYNI "messy.nox" girdisiyle KANITLANMIŞ
+// biçimlendirme sonucudur ("x:int=1+2\nprint(x)\n" -> "x: int = 1 + 2\nprint(x)\n").
+test "uctan uca: textDocument/formatting kotu bicimli AMA gecerli bir kaynagi yeniden bicimlendirir" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var child = try std.process.spawn(io, .{
+        .argv = &.{noxlspPath()},
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    });
+
+    var stdin_buf: [4096]u8 = undefined;
+    var stdin_writer = child.stdin.?.writer(io, &stdin_buf);
+    const w = &stdin_writer.interface;
+
+    var stdout_buf: [1 << 16]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
+    const r = &stdout_reader.interface;
+
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}");
+    const init_resp = try readMessage(a, r);
+    try std.testing.expect(std.mem.indexOf(u8, init_resp, "\"documentFormattingProvider\":true") != null);
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}");
+
+    const uri = "file:///tmp/noxlsp_fmt_test.nox";
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":" ++
+        "{\"textDocument\":{\"uri\":\"" ++ uri ++ "\",\"languageId\":\"nox\",\"version\":1," ++
+        "\"text\":\"x:int=1+2\\nprint(x)\\n\"}}}");
+    const diag = try readMessage(a, r);
+    try std.testing.expect(std.mem.indexOf(u8, diag, "publishDiagnostics") != null);
+
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/formatting\",\"params\":" ++
+        "{\"textDocument\":{\"uri\":\"" ++ uri ++ "\"},\"options\":{\"tabSize\":4,\"insertSpaces\":true}}}");
+    const fmt_resp = try readMessage(a, r);
+    try std.testing.expect(std.mem.indexOf(u8, fmt_resp, "\"id\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fmt_resp, "x: int = 1 + 2\\nprint(x)\\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fmt_resp, "\"start\":{\"line\":0,\"character\":0}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fmt_resp, "\"end\":{\"line\":2,\"character\":0}") != null);
+
+    // GEÇERSİZ (sözdizimi hatalı) bir kaynağa güncellenince `formatting`
+    // BOŞ bir edit dizisi dönmeli (arabelleği ASLA bozmaz) — bkz.
+    // `formatSource`nin belge notu.
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":" ++
+        "{\"textDocument\":{\"uri\":\"" ++ uri ++ "\",\"version\":2}," ++
+        "\"contentChanges\":[{\"text\":\"x = \\\"abc\\n\"}]}}");
+    _ = try readMessage(a, r);
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/formatting\",\"params\":" ++
+        "{\"textDocument\":{\"uri\":\"" ++ uri ++ "\"}}}");
+    const fmt_resp2 = try readMessage(a, r);
+    try std.testing.expect(std.mem.indexOf(u8, fmt_resp2, "\"id\":3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fmt_resp2, "\"result\":[]") != null);
+
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"shutdown\",\"params\":null}");
+    _ = try readMessage(a, r);
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
+
+    const term = try child.wait(io);
+    try std.testing.expect(term == .exited and term.exited == 0);
+}
+
 fn absPath(io: std.Io, dir: std.Io.Dir, buf: []u8) ![]const u8 {
     const len = try dir.realPath(io, buf);
     return buf[0..len];

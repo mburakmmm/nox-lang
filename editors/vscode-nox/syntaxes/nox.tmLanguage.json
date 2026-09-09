@@ -1,0 +1,152 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Nox",
+  "scopeName": "source.nox",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#decorators" },
+    { "include": "#keywords-coroutine" },
+    { "include": "#keywords-control" },
+    { "include": "#keywords" },
+    { "include": "#keywords-operator" },
+    { "include": "#constants" },
+    { "include": "#def-name" },
+    { "include": "#class-name" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.nox",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.fstring.nox",
+          "begin": "[fF]\"",
+          "end": "\"",
+          "patterns": [
+            { "name": "constant.character.escape.nox", "match": "\\\\." },
+            {
+              "name": "meta.embedded.expression.nox",
+              "begin": "\\{",
+              "end": "\\}",
+              "patterns": [{ "include": "$self" }]
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.double.nox",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [{ "name": "constant.character.escape.nox", "match": "\\\\." }]
+        },
+        {
+          "name": "string.quoted.single.nox",
+          "begin": "'",
+          "end": "'",
+          "patterns": [{ "name": "constant.character.escape.nox", "match": "\\\\." }]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.nox",
+          "match": "\\b\\d+(\\.\\d+)?\\b"
+        }
+      ]
+    },
+    "decorators": {
+      "patterns": [
+        {
+          "name": "entity.name.function.decorator.nox",
+          "match": "^\\s*(@[A-Za-z_][A-Za-z0-9_.]*)"
+        }
+      ]
+    },
+    "keywords-coroutine": {
+      "patterns": [
+        {
+          "name": "keyword.control.coroutine.nox",
+          "match": "\\b(async|await|spawn)\\b"
+        }
+      ]
+    },
+    "keywords-control": {
+      "patterns": [
+        {
+          "name": "keyword.control.conditional.nox",
+          "match": "\\b(if|elif|else|while|for|in)\\b"
+        },
+        {
+          "name": "keyword.control.exception.nox",
+          "match": "\\b(try|except|finally|raise)\\b"
+        },
+        {
+          "name": "keyword.control.return.nox",
+          "match": "\\breturn\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.other.nox",
+          "match": "\\b(def|class|protocol|extern|lowlevel|import|from|as|with|with_rt|defer|pass)\\b"
+        }
+      ]
+    },
+    "keywords-operator": {
+      "patterns": [
+        {
+          "name": "keyword.operator.logical.nox",
+          "match": "\\b(and|or|not)\\b"
+        },
+        {
+          "name": "keyword.operator.nox",
+          "match": "(\\+|-|\\*\\*|\\*|//|/|%|==|!=|<=|>=|<|>|=|->)"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.nox",
+          "match": "\\b(True|False)\\b"
+        },
+        {
+          "name": "constant.language.none.nox",
+          "match": "\\bNone\\b"
+        }
+      ]
+    },
+    "def-name": {
+      "patterns": [
+        {
+          "match": "\\b(def)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.other.nox" },
+            "2": { "name": "entity.name.function.nox" }
+          }
+        }
+      ]
+    },
+    "class-name": {
+      "patterns": [
+        {
+          "match": "\\b(class)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.other.nox" },
+            "2": { "name": "entity.name.type.class.nox" }
+          }
+        }
+      ]
+    }
+  }
+}

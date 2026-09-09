@@ -1,3 +1,52 @@
+# Nox VS Code eklentisi (sözdizimi vurgulama + LSP istemcisi) — Faz ÜH.1
+
+Bu dizin, `noxc` ile birlikte kurulan `noxlsp`nin (bkz. `../../compiler/
+lsp_main.zig`) `textDocument/completion`/`definition`/`hover`/
+`publishDiagnostics`/`formatting`sını GERÇEKTEN kullanabilen, kurulabilir
+bir VS Code uzantısı İçERİR — `noxlsp` sunucu-tarafında ZATEN tam
+çalışıyordu, eksik olan SADECE bu paketlemeydi.
+
+## Kurulum (geliştirme/deneme)
+
+```bash
+cd editors/vscode-nox
+npm install
+npm run compile
+```
+
+Sonra VS Code'da bu dizini açıp **F5**'e basın — bir "Extension
+Development Host" penceresi açılır, İÇİNDE bir `.nox` dosyası açtığınızda
+sözdizimi vurgulama, tanılama, tamamlama, üzerine gelme (hover), "Go to
+Definition" VE "Format Document" komutlarının HEPSİ çalışır (`noxlsp`
+binary'sinin PATH'te olması GEREKİR — `noxc` kurulumunun bir PARÇASIdır;
+farklı bir yoldaysa `nox.languageServerPath` ayarını kullanın).
+
+`.vsix` üretmek İçİn (Marketplace'e YAYIMLAMAK bu kapsamda DEĞİL, SADECE
+paket üretimi):
+
+```bash
+npx @vscode/vsce package
+```
+
+## Kapsam
+
+- **Sözdizimi vurgulama**: `syntaxes/nox.tmLanguage.json` (elle yazılmış
+  bir TextMate grameri — `editors/tree-sitter-nox/queries/highlights.scm`nin
+  KENDİ token kategori isimlendirmesiyle TUTARLI, ama KOD PAYLAŞILMAZ —
+  TextMate regex-tabanlı, tree-sitter grameri-tabanlı OLDUĞUNDAN).
+- **LSP istemcisi**: `src/extension.ts`, standart `vscode-languageclient`
+  paketiyle `noxlsp`yi stdio üzerinden başlatır — noxlsp ZATEN gerçek
+  JSON-RPC konuştuğundan sunucu tarafında SIFIR değişiklik gerekmedi.
+- **Biçimlendirme**: `noxlsp`nin `textDocument/formatting`i (bkz.
+  `compiler/lsp_main.zig`nin `handleFormatting`ı), `compiler/fmt/
+  formatter.zig`nin AYNI `formatModule`ini (`noxc fmt` İLE BİREBİR AYNI
+  mantık) kullanır.
+- **Kapsam DIŞI (bu turda)**: çapraz-dosya/import-tabanlı goto-definition
+  (`lsp_nav.zig`nin KENDİ, BİLİNÇLİ "yalnızca aynı-dosya" v1 sınırı),
+  `rename`, semantic tokens, VS Code Marketplace'e GERÇEKTEN yayımlamak.
+
+---
+
 # Nox için DAP/hata ayıklama entegrasyonu (Faz W.3)
 
 ## Neden özel bir DAP sunucusu YOK

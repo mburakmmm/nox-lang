@@ -14,6 +14,50 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.69.0]
+
+### Eklendi
+- **Faz ÜH.1 — gerçek, kurulabilir bir VS Code Nox eklentisi + `noxlsp`ye
+  `textDocument/formatting`**: `noxlsp` (bkz. `compiler/lsp_main.zig`)
+  sunucu tarafında ZATEN `completion`/`definition`/`hover`/tanılama
+  destekliyordu (P1.3/P1.4), AMA `editors/vscode-nox/` bugüne kadar
+  YALNIZCA debugger (DAP) yapılandırma örnekleri İçEREN bir klasördü —
+  GERÇEK, kurulabilir bir VS Code UZANTISI (package.json/sözdizimi
+  grameri/LSP istemcisi) HİÇ YOKTU. `editors/tree-sitter-nox`nin KENDİ
+  grameri de VS Code'un DOĞRUDAN KULLANAMAYACAĞI bir format (VS Code
+  sözdizimi vurgulama İçİn TextMate grameri BEKLER). Sonuç: `noxlsp`
+  binary'si TAM çalışır durumda olsa BİLE HİÇBİR kullanıcı VS Code'da
+  bir `.nox` dosyası açıp TEK BİR LSP özelliğini (VEYA sözdizimi
+  vurgulamayı) GÖREMİYORDU — eksik olan SUNUCU DEĞİL, PAKETLEME idi.
+- YENİ `editors/vscode-nox/package.json` (uzantı manifestosu — `contributes.
+  languages`/`contributes.grammars`/`nox.languageServerPath` ayarı),
+  `language-configuration.json` (yorum/parantez/girinti kuralları),
+  `syntaxes/nox.tmLanguage.json` (elle yazılmış TextMate grameri,
+  `editors/tree-sitter-nox/queries/highlights.scm`nin token kategori
+  isimlendirmesiyle TUTARLI), `src/extension.ts` (`vscode-languageclient`
+  ile `noxlsp`yi stdio üzerinden başlatan istemci — `noxlsp` ZATEN gerçek
+  JSON-RPC konuştuğundan sunucu-tarafında SIFIR değişiklik gerekmedi),
+  `tsconfig.json`/`.vscodeignore` (`.vsix` üretim ayarları — Marketplace'e
+  YAYIMLAMAK bu kapsamda DEĞİL). Mevcut `.vscode/launch.json.example`/
+  `tasks.json.example` (DAP örnekleri) DEĞİŞMEDEN KORUNDU.
+- YENİ `noxlsp` yeteneği: `textDocument/formatting` — `compiler/lsp_main.
+  zig`nin `handleFormatting`ı, `compiler/main.zig`nin `cmdFmt`ıyla AYNI
+  `lexer.tokenizeWithTrivia`→`parser.parseModule`→`formatter.formatModule`
+  zincirini yeniden kullanarak (SIFIR yeni biçimlendirme mantığı) tek bir
+  tam-belge `TextEdit` döner; `respondInitialize`nin `Capabilities`sine
+  `documentFormattingProvider: true` eklendi. Kaynak GEÇERSİZ sözdizimine
+  sahipse (kullanıcı O AN yazıyor olabilir) BOŞ bir edit dizisi döner —
+  arabelleği ASLA bozmaz.
+- `tests/cli/lsp_test.zig`ye YENİ, uçtan uca test: kötü biçimli AMA
+  geçerli bir kaynağın `textDocument/formatting` İLE doğru şekilde
+  yeniden biçimlendirildiğini VE geçersiz sözdizimli bir kaynakta BOŞ
+  bir edit dizisi döndüğünü doğrular (gerçek `noxlsp` alt-süreci +
+  gerçek JSON-RPC teli üzerinden, mevcut 3 testin AYNI deseni).
+
+### Kapsam DIŞI (gelecekteki LSP turlarına bırakıldı)
+- Çapraz-dosya/import-tabanlı goto-definition/hover, `textDocument/rename`,
+  semantic tokens, VS Code Marketplace'e gerçekten yayımlamak.
+
 ## [1.68.0]
 
 ### Eklendi

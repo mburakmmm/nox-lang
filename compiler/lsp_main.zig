@@ -59,6 +59,7 @@ const module_loader = @import("module_loader.zig");
 const project = @import("project.zig");
 const fetch = @import("pkg/fetch.zig");
 const nav = @import("lsp_nav.zig");
+const formatter = @import("fmt/formatter.zig");
 const span_mod = @import("span.zig");
 const Span = span_mod.Span;
 
@@ -230,6 +231,8 @@ fn handleMessage(server: *Server, ma: std.mem.Allocator, body: []const u8, w: *s
         try handleHover(server, ma, params_opt, id_opt, w);
     } else if (std.mem.eql(u8, method, "textDocument/didClose")) {
         try handleDidClose(server, ma, params_opt, w);
+    } else if (std.mem.eql(u8, method, "textDocument/formatting")) {
+        try handleFormatting(server, ma, params_opt, id_opt, w);
     } else if (id_opt) |id| {
         // Tanınmayan bir İSTEK (bildirim DEĞİL — "initialized" DAHİL diğer
         // TÜM bildirimler burada sessizce yok sayılır) — JSON-RPC 2.0
@@ -268,6 +271,77 @@ fn handleDidClose(server: *Server, ma: std.mem.Allocator, params_opt: ?std.json.
     const uri = getStrField(td, "uri") orelse return;
     server.removeDocument(uri);
     try sendPublishDiagnostics(ma, w, uri, &.{});
+}
+
+// ---- Faz ÜH.1: `textDocument/formatting` ----
+
+/// `textDocument/formatting`in `{textDocument: {uri}}` gövdesi — `options`
+/// (tabSize/insertSpaces) OKUNMAZ, `formatter.formatModule` KENDİ, SABİT
+/// biçimlendirme kurallarını uygular (istemcinin girinti tercihi v1 kapsamı
+/// DIŞINDA — `compiler/fmt/formatter.zig`nin KENDİSİ de HİÇBİR seçenek
+/// PARAMETRESİ almıyor).
+fn parseFormattingQuery(params_opt: ?std.json.Value) ?[]const u8 {
+    const params = params_opt orelse return null;
+    const td = getObjField(params, "textDocument") orelse return null;
+    return getStrField(td, "uri");
+}
+
+/// `compiler/main.zig`nin `cmdFmt`ıyla BİREBİR AYNI zincir (lex→parse→
+/// format) — SADECE dosyaya YAZMAK yerine sonucu DÖNER. `source` GEÇERSİZ
+/// sözdizimine sahipse (kullanıcı O AN yazıyor olabilir) `null` döner —
+/// ÇAĞIRAN taraf BUNU "hiçbir değişiklik yok" olarak yorumlar, kullanıcının
+/// arabelleğini ASLA bozmaz.
+fn formatSource(a: std.mem.Allocator, source: []const u8) ?[]const u8 {
+    const result = lexer.tokenizeWithTrivia(a, source) catch return null;
+    const module = parser.parseModule(a, result.tokens) catch return null;
+    return formatter.formatModule(a, module, result.trivia) catch null;
+}
+
+/// `source`un TAMAMINI kapsayan GERÇEK (0-tabanlı) bir LSP `Range`i —
+/// `\n` sayısı + SON satırın uzunluğu SAYILARAK hesaplanır (keyfi BÜYÜK
+/// bir sentinel YERİNE — bkz. `wholeLineDiagnostic`nin AYNI, KASITLI
+/// olarak burada TEKRARLANMAYAN "10000 sütun" kısayolu, BU dönüş değeri
+/// bir `TextEdit.range`e gittiğinden bazı istemciler AŞIRI-BÜYÜK
+/// aralıklara KARŞI HASSAS olabilir).
+fn wholeDocumentRange(source: []const u8) Range {
+    var end_line: u32 = 0;
+    var last_newline: ?usize = null;
+    for (source, 0..) |c, i| {
+        if (c == '\n') {
+            end_line += 1;
+            last_newline = i;
+        }
+    }
+    const line_start = if (last_newline) |idx| idx + 1 else 0;
+    const end_char: u32 = @intCast(source.len - line_start);
+    return .{
+        .start = .{ .line = 0, .character = 0 },
+        .end = .{ .line = end_line, .character = end_char },
+    };
+}
+
+fn handleFormatting(server: *Server, ma: std.mem.Allocator, params_opt: ?std.json.Value, id_opt: ?std.json.Value, w: *std.Io.Writer) !void {
+    const id = id_opt orelse return;
+    var arena = std.heap.ArenaAllocator.init(server.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const TextEdit = struct { range: Range, newText: []const u8 };
+    var edits: []const TextEdit = &.{};
+    if (parseFormattingQuery(params_opt)) |uri| {
+        if (server.documents.get(uri)) |source| {
+            if (formatSource(a, source)) |formatted| {
+                edits = &.{.{ .range = wholeDocumentRange(source), .newText = formatted }};
+            }
+        }
+    }
+
+    const Msg = struct {
+        jsonrpc: []const u8 = "2.0",
+        id: std.json.Value,
+        result: []const TextEdit,
+    };
+    try sendJson(ma, w, Msg{ .id = id, .result = edits });
 }
 
 // ---- P1.4: gezinme (bkz. `lsp_nav.zig`nin modül üstü notu) ----
@@ -616,6 +690,10 @@ fn respondInitialize(ma: std.mem.Allocator, w: *std.Io.Writer, id_opt: ?std.json
         completionProvider: EmptyObj = .{},
         definitionProvider: bool = true,
         hoverProvider: bool = true,
+        // Faz ÜH.1: `compiler/main.zig`nin `cmdFmt`ıyla AYNI, MEVCUT
+        // `formatter.formatModule` zincirini (lex→parse→format) yeniden
+        // kullanır — bkz. `handleFormatting`.
+        documentFormattingProvider: bool = true,
     };
     const ServerInfo = struct {
         name: []const u8 = "noxlsp",

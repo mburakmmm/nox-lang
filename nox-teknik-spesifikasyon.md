@@ -18777,6 +18777,71 @@ dosyasına/`nox.io`ya BAĞLANMASI (v1 SAF bellek-İçİ, GERÇEK disk I/O YOK).
 
 ---
 
+## 3.135 Faz ÜH.1 — gerçek, kurulabilir bir VS Code Nox eklentisi + `noxlsp`ye `textDocument/formatting` (v1.69.0)
+
+Kullanıcı "Nox'un GERÇEK kullanım İçİn eksikleri" konusunda beş maddelik
+bir yol haritası ÜZERİNDE ANLAŞTI (LSP, structured concurrency, stdlib
+boşlukları, `fmt` olgunluğu, dış güvenlik) — BU BÖLÜM o beş maddenin
+İLKİNİN (LSP) İLK turudur.
+
+Araştırma (`compiler/lsp_main.zig`/`compiler/lsp_nav.zig`/`build.zig`/
+`tests/cli/lsp_test.zig`/`editors/`) BEKLENENDEN ÇOK DAHA İYİ bir durum
+ortaya çıkardı: `noxlsp` (P1.3/P1.4 fazlarında, §3.36'DAN SONRA) ZATEN
+`textDocument/completion`/`definition`/`hover`yı UYGULUYOR (`lsp_nav.zig`,
+KASITLI olarak AYNI-dosya sembolleriyle SINIRLI) VE proje/bağımlılık-
+farkında (`nox.json`+`nox.lock`) import çözümlemesi yapıyor. `tests/
+cli/lsp_test.zig` GERÇEK bir alt-süreç OLARAK `noxlsp`yi çalıştırıp
+JSON-RPC teli üzerinden BUNU zaten doğruluyordu (3 uçtan-uca test).
+
+GERÇEK, hâlâ açık olan boşluk BAŞKA bir yerdeydi: `editors/vscode-nox/`
+YALNIZCA debugger (DAP/lldb) launch.json ÖRNEKLERİ içeren bir klasördü —
+GERÇEK, kurulabilir bir VS Code UZANTISI (package.json/sözdizimi grameri/
+LSP istemcisi) HİÇ YOKTU. `editors/tree-sitter-nox` SADECE bir tree-sitter
+grameri (Neovim/Zed/GitHub İçİn), VS Code'un KENDİSİ BUNU DOĞRUDAN
+kullanamaz (VS Code uzantıları sözdizimi vurgulama İçİn TextMate grameri
+BEKLER). Sonuç: `noxlsp` binary'si TAM ÇALIŞIR durumda olsa BİLE, BU
+FAZDAN ÖNCE HİÇBİR kullanıcı VS Code'da bir `.nox` dosyası açıp TEK BİR
+LSP özelliğini (VEYA sözdizimi vurgulamayı) GÖREMİYORDU.
+
+**İKİNCİ, küçük ama GERÇEK bir sunucu-tarafı boşluk**: `noxlsp`
+`textDocument/formatting`i HİÇ implemente ETMİYORDU — AMA `compiler/
+main.zig`nin `cmdFmt`ı ZATEN TAMAMEN yeniden kullanılabilir bir
+`formatter.formatModule(a, module, trivia)` (bkz. `compiler/fmt/
+formatter.zig`, dosya G/Ç'DEN TAMAMEN bağımsız) üzerine KURULUYDU.
+
+**Çözüm**:
+1. YENİ `editors/vscode-nox/package.json`/`language-configuration.json`/
+   `syntaxes/nox.tmLanguage.json`/`src/extension.ts`/`tsconfig.json`/
+   `.vscodeignore` — `vscode-languageclient` (standart, resmi LSP
+   istemci kütüphanesi) `noxlsp`yi stdio üzerinden başlatır, `noxlsp`
+   ZATEN gerçek JSON-RPC konuştuğundan sunucu-tarafında SIFIR değişiklik
+   gerekmedi. Mevcut `.vscode/launch.json.example`/`tasks.json.example`
+   (DAP örnekleri) DEĞİŞMEDEN korundu.
+2. `compiler/lsp_main.zig`ye YENİ `handleFormatting`/`formatSource`/
+   `wholeDocumentRange`/`parseFormattingQuery` — `formatter.formatModule`i
+   `cmdFmt`nin AYNI `lexer.tokenizeWithTrivia`→`parser.parseModule`
+   zinciriyle çağırıp TEK bir tam-belge `TextEdit` döner; kaynak GEÇERSİZ
+   sözdizimine sahipse (kullanıcı O AN yazıyor olabilir) BOŞ bir edit
+   dizisi döner (arabelleği ASLA bozmaz). `respondInitialize`nin
+   `Capabilities`sine `documentFormattingProvider: true` eklendi.
+
+**Doğrulama**: `tests/cli/lsp_test.zig`ye YENİ, 4. uçtan-uca test (kötü
+biçimli AMA geçerli bir kaynağın doğru biçimlendirildiğini VE geçersiz
+sözdizimli bir kaynakta boş bir edit dizisi döndüğünü doğrular); `cd
+editors/vscode-nox && npm install && npm run compile` SIFIR TypeScript
+hatasıyla tamamlandı; `zig build test` (Debug+ReleaseFast) TÜM mevcut +
+yeni testlerle TEMİZ geçti.
+
+**Kapsam DIŞI (SONRAKİ LSP turlarına/AYRI maddelere bırakıldı)**: çapraz-
+dosya/import-tabanlı goto-definition/hover (checker'ın TAM tip-çıkarım
+motorunu gerektirir), `textDocument/rename`, semantic tokens, VS Code
+Marketplace'e GERÇEKTEN yayımlamak (yalnızca `.vsix` üretimi bu kapsamda),
+`noxc fmt`nin KENDİ biçimlendirme kalitesi (kullanıcının AYRI 4. maddesi —
+bu tur SADECE mevcut formatlayıcıyı LSP'ye telden bağladı), Neovim/Zed/
+Helix İçİn ayrı paketleme (tree-sitter-nox ZATEN çalışıyor, gerek YOK).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.
