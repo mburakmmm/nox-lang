@@ -18910,6 +18910,76 @@ problem); `nox.thread.pool_run` İçİndeki İSTİSNA/İPTAL davranışı.
 
 ---
 
+## 3.137 Faz SC.2 — `Task[T].cancel()` + `CancelledError` (kooperatif görev iptali) (v1.71.0)
+
+Kullanıcının 5 maddelik yol haritasının 2. maddesinin ("structured
+concurrency") İKİNCİ turu — Faz SC.1'in (v1.70.0) onardığı `spawn`/`await`
+istisna-yayılım kanalını KULLANARAK, kullanıcının ASIL istediği özellik
+inşa edildi: `t.cancel()` + `CancelledError`.
+
+**Kapsam (BİLİNÇLİ, dar bir v1 — kooperatif/checkpoint-tabanlı)**: bir
+task ÇALIŞIRKEN ORTASINDAN KESİLEMEZ (fiber'lar KOOPERATİF zamanlandığından
+preemptive iptal ZATEN İMKANSIZ) — `t.cancel()` SADECE bir bayrak
+İşaretler; iptal, cancel edilen task'ın KENDİ kodu BİR SONRAKİ KEZ
+`await <başka bir Task>` yaptığında (Faz SC.1'in AYNI genel `Task[T]`
+`await` yolu) DEVREYE girer: O anda `CancelledError` fırlatılır, task'ın
+KENDİ `try`/`except`i BUNU yakalayabilir; yakalamazsa Faz SC.1'in
+kanalıyla `await` eden dış tarafa ulaşır. Python'un `asyncio.Task.cancel()`ıyla
+AYNI temel felsefe ("iptal bir SONRAKİ checkpoint'te fırlatılır, anlık
+kesme DEĞİLDİR").
+
+**Tasarım**: `runtime/async_rt/fiber.zig`nin `Fiber`ine YENİ `cancel_flag:
+?*std.atomic.Value(bool)` — BU fiber (spawn edilmişse) KENDİ Task'ının
+`cancel_requested` bayrağına İŞARETÇİ, `scheduler.zig`nin `spawn`ı
+TARAFINDAN BİR KEZ ayarlanır. `runtime/async_rt/scheduler.zig`nin
+`Task(T)`sine YENİ `cancel_requested: std.atomic.Value(bool)` — Task'ın
+KENDİ hayat döngüsü (refcount/state) İLE TAMAMEN BAĞIMSIZ, HER ZAMAN
+GÜVENLE yazılabilir/okunabilir bir bayrak (`t.fiber`e HİÇ DOKUNULMAZ).
+`runtime/async_rt/bridge.zig`ye YENİ `nox_task_cancel` (SADECE bayrağı
+yazar) VE `nox_task_check_cancelled` (ŞU AN çalışan fiber'ın KENDİ
+Task'ının cancel_flag'ini okur). `compiler/codegen_qbe/async_thread.zig`nin
+`genAwaitExpr`ının genel yoluna, GERÇEK `$nox_async_await` çağrısından
+ÖNCE, `genConstructFromValues`+`$nox_raise`+`emitExceptionCheck`in AYNI,
+ZATEN kanıtlanmış zinciriyle `CancelledError` fırlatan bir kontrol
+eklendi. `t.cancel()`in KENDİSİ (`await` GEREKMEYEN, senkron bir çağrı)
+checker'ın `.attribute` koluna YENİ bir `.task` bloğu (`Channel`/
+`ThreadHandle`/`TaskLocal`nin AYNI deseni) VE codegen'in `genMethodCall`ına
+YENİ bir dispatch (`.task_local`nin AYNI "await gerektirmeyen, senkron
+Task-ilişkili işlem" ilkesi) İLE tanındı. `stdlib/nox/core.nox`ya YENİ
+`CancelledError(Exception)` (`ValueError`/`IndexError`/`KeyError`/
+`HPyError`YLA AYNI, "alt sınıf KENDİ `__init__`ini tanımlamaz" deseni).
+
+**Beklenmedik, GERÇEK VE dikkatli doğrulanan bir yan-etki**: `stdlib/
+nox/core.nox`ya YENİ bir sınıf EKLEMEK, TÜM Nox programlarına (`module_
+loader.resolveImports` HER programı core.nox İLE BİRLEŞTİRDİĞİNDEN)
+class_id numaralandırmasını KAYDIRDI — bu, `codegen_ir_diff_test`nin
+246 fixture'dan 241'İNİN `.ssa` anlık görüntüsünün DEĞİŞMESİNE yol AÇTI
+(class_id GENELLİKLE üretilen IR metninde LİTERAL bir sabit OLARAK
+görünür). `git log` İLE DOĞRULANDI: BU, YENİ bir hata DEĞİL — AYNI
+mekanizma GEÇMİŞTE de yaşanmıştı (`fibonacci.ssa`nın SON değişikliği
+v1.62.0'da `HPyError` eklendiğinde OLMUŞTU) — 241 anlık görüntü GÜVENLE
+silinip YENİDEN oluşturuldu.
+
+**Doğrulama**: `tests/golden/codegen_cases/task_cancel_*.nox` (5 YENİ
+fixture — bağlı except, cancel-hiç-çağrılmadı regresyonu, idempotent
+`cancel()`, main'e kadar yakalanmamış yayılma, task ZATEN tamamlandıktan
+SONRA `cancel()` çağırmanın güvenli no-op olduğu) GERÇEKTEN derlenip
+ÇALIŞTIRILARAK (HEM tam test paketi İÇİNDE HEM elle, TEK TEK `noxc
+build`+doğrudan çalıştırma İLE) doğrulandı. `zig build test` (Debug+
+ReleaseFast, 241+5 YENİ `.ssa` anlık görüntüsü oluşturuldu, 0 mismatch)
+VE `NOX_STRESS_ROUNDS=800 zig build stress-test -Doptimize=ReleaseFast`
+TEMİZ geçti.
+
+**Kapsam DIŞI (gelecekteki turların konusu)**: `Channel[T]`/`ThreadChannel[T]`nin
+`.send`/`.recv`i VE `ThreadHandle[T].join()` İçİn AYNI iptal-kontrolü
+(Faz SC.1'İN AYNI sınırı); task HİÇ `await` YAPMIYORSA (SAF CPU-bağımlı
+kod) iptalin HİÇ etkili OLMAMASI (kooperatif modelin doğal sınırı);
+`.cancel()`in bir dönüş değeri OLMASI (Python'un `bool` dönüşü GİBİ);
+preemptive/gerçek-OS-sinyali TABANLI iptal (`ThreadHandle`/`pool_run`nın
+GERÇEK OS iş parçacıkları İçİn — TAMAMEN FARKLI/DAHA ZOR bir problem).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

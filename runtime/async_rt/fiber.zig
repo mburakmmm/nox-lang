@@ -304,6 +304,17 @@ pub const Fiber = struct {
     /// "BİLİNÇLİ taşınmadı" durumu DEĞİL).
     pending_exception: ?*anyopaque = null,
     pending_exception_line: i64 = 0,
+    /// Faz SC.2 (bkz. plan dosyası "Task[T].cancel() + CancelledError"):
+    /// BU fiber (spawn edilmişse) KENDİ Task'ının `cancel_requested`
+    /// bayrağına İŞARETÇİ — `scheduler.zig`nin `spawn`ı TARAFINDAN BİR
+    /// KEZ ayarlanır. `null` = BU fiber bir Task'a AİT DEĞİL (main/
+    /// senkron top-level kod). `Task` struct'ının KENDİSİ (fiber DEĞİL)
+    /// BU alanın YAŞAM SÜRESİNİ GARANTİ eder: fiber ÇALIŞIRKEN
+    /// (`entryTrampoline`nin `self.func(...)` dönene KADAR) Task ASLA
+    /// serbest bırakılamaz (bkz. `nox_async_destroy_task`nin DETACHED/
+    /// refcount protokolü) — bu YÜZDEN BU işaretçi fiber'ın KENDİ, TÜM
+    /// çalışma ömrü BOYUNCA GÜVENLE geçerlidir.
+    cancel_flag: ?*std.atomic.Value(bool) = null,
     /// Faz OO.2 (bkz. nox-teknik-spesifikasyon.md §3.83, `TaskLocal[T]`):
     /// bu fiber'a ÖZGÜ, `TaskLocal` tutamacı işaretçisiyle ANAHTARLANMIŞ
     /// depolama — `runtime/async_rt/task_local.zig`nin `nox_tasklocal_

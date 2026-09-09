@@ -246,6 +246,28 @@ pub export fn nox_task_retain(task: ?*anyopaque) void {
     _ = t.refcount.fetchAdd(1, .acq_rel);
 }
 
+/// Faz SC.2 (bkz. plan dosyası "Task[T].cancel() + CancelledError"):
+/// `t.cancel()`in runtime karşılığı — SADECE bir bayrak YAZAR, `t.fiber`e
+/// HİÇ DOKUNMAZ (Task'ın KENDİ ömrü BOYUNCA — refcount/state NE OLURSA
+/// OLSUN — HER ZAMAN GÜVENLİ). Gerçek iptal (CancelledError fırlatma),
+/// cancel edilen task'ın KENDİ kodu bir sonraki `await` yaptığında
+/// (`genAwaitExpr`, bkz. `nox_task_check_cancelled`) devreye girer.
+pub export fn nox_task_cancel(task: ?*anyopaque) void {
+    const t: *TaskI64 = @ptrCast(@alignCast(task orelse return));
+    t.cancel_requested.store(true, .release);
+}
+
+/// ŞU AN çalışan fiber'ın (`bridge.currentFiber()`) KENDİ Task'ı iptal
+/// istendi Mİ — `genAwaitExpr`nin, KENDİ `await`ini gerçekleştirmeden
+/// ÖNCE çağırdığı kontrol. Fiber YOKSA (main/senkron kod) VEYA `cancel_flag`
+/// atanmamışsa `0` döner — iptal EDİLEMEZ bir bağlamda SESSİZCE devam eder.
+pub export fn nox_task_check_cancelled(rt: ?*anyopaque) i32 {
+    _ = rt;
+    const f = currentFiber() orelse return 0;
+    const flag = f.cancel_flag orelse return 0;
+    return if (flag.load(.acquire)) 1 else 0;
+}
+
 pub export fn nox_async_destroy_task(rt: ?*anyopaque, task: ?*anyopaque) void {
     // `nox_tasklocal_destroy`/`nox_threadchannel_destroy`/`nox_thread_destroy`
     // İLE AYNI `orelse return` null-koruması — codegen'in `.var_decl` dalı

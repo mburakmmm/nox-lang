@@ -899,6 +899,27 @@ pub fn genAwaitExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
         }
     }
     const task_val = try self.genExpr(operand);
+    // Faz SC.2 (bkz. plan dosyası "Task[T].cancel() + CancelledError"):
+    // BU await'i GERÇEKLEŞTİRMEDEN ÖNCE, ŞU AN çalışan fiber'ın (yani BU
+    // `await`i YAZAN KODUN KENDİ task'ının) iptal İSTENİP İSTENMEDİĞİNİ
+    // kontrol et — v1 kooperatif sınırı: HÂLİHAZIRDA sürmekte olan BU
+    // await KESİLMEZ (henüz BAŞLAMADI), AMA bu task'ın kodu `CancelledError`
+    // fırlatır (kendi `try`/`except`i yakalayabilir; yakalamazsa Faz SC.1'in
+    // kanalıyla dış `await` edene ulaşır).
+    const cancelled_t = try self.newTemp();
+    try self.qbeCall(.{ .name = cancelled_t, .ty = .w }, "$nox_task_check_cancelled", &.{.{ .ty = .l, .text = RT_PARAM }});
+    const cancel_label = try self.newLabel("task_cancelled");
+    const proceed_label = try self.newLabel("task_not_cancelled");
+    try self.qbeJnz(cancelled_t, cancel_label, proceed_label);
+    try self.qbeLabel(cancel_label);
+    {
+        const msg_value = try self.emitStringLiteral("gorev iptal edildi");
+        const ce_cinfo = self.classes.get("CancelledError") orelse return error.Unsupported;
+        const ce_obj = try self.genConstructFromValues("CancelledError", ce_cinfo, &.{msg_value}, null);
+        try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ce_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
+        try self.emitExceptionCheck();
+    }
+    try self.qbeLabel(proceed_label);
     const payload_t = try self.newTemp();
     try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_async_await", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = task_val.text } });
     // Faz SC.1: `nox_async_await` (bkz. `runtime/async_rt/bridge.zig`)
@@ -911,6 +932,17 @@ pub fn genAwaitExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
     try self.emitExceptionCheck();
     const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, task_val.elem_qtype);
     return valueFromElemDescriptor(converted.text, converted.qtype, task_val.elem_heap_info, task_val.elem_is_str);
+}
+
+/// `t.cancel()` — Faz SC.2 (bkz. plan dosyası "Task[T].cancel() +
+/// CancelledError"): `genMethodCall` TARAFINDAN (NORMAL metod-çağrısı
+/// yolunda, `await` GEREKMEDEN) çağrılır — `genTaskLocalOp`nin AYNI
+/// "await gerektirmeyen, senkron Task-ilişkili işlem" ilkesi. Gerçek
+/// iptal (CancelledError fırlatma) BURADA DEĞİL, `genAwaitExpr`nin
+/// iptal-kontrolünde gerçekleşir.
+pub fn genTaskCancel(self: *Codegen, task_val: Value) CodegenError!Value {
+    try self.qbeCall(null, "$nox_task_cancel", &.{.{ .ty = .l, .text = task_val.text }});
+    return .{ .text = "0", .qtype = .none };
 }
 
 /// `ch.send(v)`/`ch.recv()` — YALNIZCA `await` üzerinden (bkz.

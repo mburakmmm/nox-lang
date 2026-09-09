@@ -1899,6 +1899,47 @@ test "codegen(çalıştır): Faz SC.1 — aynı Task'ı İKİNCİ kez await etme
     );
 }
 
+// Faz SC.2 (bkz. plan dosyası "Task[T].cancel() + CancelledError"):
+// kooperatif görev iptali — `t.cancel()` bir bayrak İşaretler, GERÇEK
+// iptal (CancelledError fırlatma) cancel edilen task'ın KENDİ kodu bir
+// SONRAKİ `await` yaptığında devreye girer (v1 kooperatif/checkpoint
+// sınırı — bkz. plan dosyasının "Kapsam DIŞI" notu, HİÇ await YAPMAYAN
+// bir task ASLA kesilemez).
+test "codegen(çalıştır): Faz SC.2 — t.cancel() SONRASI task'ın KENDİ await checkpoint'inde CancelledError fırlatılır, bağlı except yakalar" {
+    try expectGolden(
+        @embedFile("codegen_cases/task_cancel_caught.nox"),
+        @embedFile("codegen_cases/task_cancel_caught.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz SC.2 — cancel HİÇ çağrılmazsa normal sonuç döner (regresyon-yok)" {
+    try expectGolden(
+        @embedFile("codegen_cases/task_cancel_not_requested_regression.nox"),
+        @embedFile("codegen_cases/task_cancel_not_requested_regression.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz SC.2 — t.cancel() birden fazla kez çağrılabilir (idempotent bayrak)" {
+    try expectGolden(
+        @embedFile("codegen_cases/task_cancel_idempotent.nox"),
+        @embedFile("codegen_cases/task_cancel_idempotent.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz SC.2 — hiçbir try içinde olmayan iptal, yakalanmamış istisnayla (main'e kadar) net sonlanır" {
+    try expectUncaughtException(
+        @embedFile("codegen_cases/task_cancel_unhandled.nox"),
+        @embedFile("codegen_cases/task_cancel_unhandled.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz SC.2 — task ZATEN tamamlandıktan SONRA t.cancel() çağırmak güvenli bir no-op'tur" {
+    try expectGolden(
+        @embedFile("codegen_cases/task_cancel_after_completed_noop.nox"),
+        @embedFile("codegen_cases/task_cancel_after_completed_noop.expected"),
+    );
+}
+
 test "codegen(çalıştır): async — Channel[T] (rendezvous) iki görev arasında, sızıntı yok" {
     try expectGolden(
         @embedFile("codegen_cases/async_channel.nox"),

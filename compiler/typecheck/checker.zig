@@ -5018,6 +5018,19 @@ pub const Checker = struct {
                 // olarak işlenir (bkz. nox-teknik-spesifikasyon.md §3.21).
                 // İkisi de `await` ile sarmalanmalıdır — bu kısıt burada
                 // DEĞİL, `.await_expr` dalında denetlenir.
+                // `Task[T]`in yerleşik `cancel`i — Faz SC.2 (bkz. nox-
+                // teknik-spesifikasyon.md, "Task[T].cancel()"): `await`
+                // GEREKTİRMEZ (SENKRON bir "iptal İSTE" bayrağı) —
+                // kooperatif iptalin KENDİSİ (CancelledError'ın GERÇEKTEN
+                // fırlatılması) `await`in KENDİSİNDE gerçekleşir (bkz.
+                // `.await_expr` dalı/`genAwaitExpr`).
+                if (obj_t == .task) {
+                    if (std.mem.eql(u8, a.attr, "cancel")) {
+                        if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'cancel' hiç argüman almaz", .{});
+                        return .none;
+                    }
+                    return self.fail(error.UndefinedMethod, "Task'ın '{s}' metodu yok (yalnızca cancel)", .{a.attr});
+                }
                 if (obj_t == .channel) {
                     const elem_t = obj_t.channel.*;
                     if (std.mem.eql(u8, a.attr, "send")) {

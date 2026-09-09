@@ -1,0 +1,13 @@
+async def sub() -> int:
+    return 1
+
+async def worker() -> int:
+    inner: Task[int] = spawn sub()
+    x: int = await inner
+    return x
+
+print("before")
+t: Task[int] = spawn worker()
+t.cancel()
+y: int = await t
+print("after")

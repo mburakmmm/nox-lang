@@ -14,6 +14,42 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.71.0]
+
+### Eklendi
+- **Faz SC.2 — `Task[T].cancel()` + `CancelledError` (kooperatif görev
+  iptali)**: kullanıcının 5 maddelik yol haritasının 2. maddesi
+  ("structured concurrency")nin İKİNCİ turu — Faz SC.1'in (v1.70.0)
+  onardığı `spawn`/`await` istisna-yayılım kanalını KULLANARAK GERÇEK
+  bir Task iptal mekanizması eklendi.
+- YENİ `stdlib/nox/core.nox`: `CancelledError(Exception)` — `ValueError`/
+  `IndexError`/`KeyError`/`HPyError`YLA AYNI desen.
+- `t.cancel()` — bir `Task[T]` değeri üzerinde ÇAĞRILABİLEN, senkron
+  bir "iptal İSTE" bayrağı (`runtime/async_rt/scheduler.zig`nin `Task(T)`sine
+  YENİ `cancel_requested` atomiği, `runtime/async_rt/bridge.zig`nin
+  YENİ `nox_task_cancel`ı). `t.fiber`e HİÇ DOKUNMAZ — Task'ın KENDİ ömrü
+  BOYUNCA (COMPLETED/DETACHED FARK ETMEKSİZİN) HER ZAMAN GÜVENLİ.
+- **Kooperatif iptalin KENDİSİ**: cancel edilen task'ın KENDİ kodu bir
+  SONRAKİ `await <Task>` yaptığında (Faz SC.1'in AYNI genel yolu)
+  `CancelledError` fırlatılır — kendi `try`/`except`i yakalayabilir;
+  yakalamazsa Faz SC.1'in kanalıyla dış `await` edene ulaşır. `runtime/
+  async_rt/fiber.zig`ye YENİ `cancel_flag` (fiber'ın KENDİ Task'ının
+  bayrağına işaretçi), `bridge.zig`ye YENİ `nox_task_check_cancelled`,
+  `compiler/codegen_qbe/async_thread.zig`nin `genAwaitExpr`ına iptal-
+  kontrolü (`genConstructFromValues`+`nox_raise`+`emitExceptionCheck`in
+  AYNI, ZATEN kanıtlanmış zinciri).
+- `t.cancel()`in checker/codegen tanınması: `compiler/typecheck/checker.zig`nin
+  `.attribute` koluna YENİ `.task` bloğu, `compiler/codegen_qbe/calls.zig`nin
+  `genMethodCall`ına YENİ dispatch, YENİ `genTaskCancel`.
+
+### v1 bilinçli sınırlar
+- Task hiç `await` YAPMIYORSA (SAF CPU-bağımlı kod) iptal HİÇ etkili
+  OLMAZ — kooperatif modelin doğal sınırı (Python'un `asyncio`suyla AYNI).
+- `Channel[T]`/`ThreadChannel[T]`/`ThreadHandle[T]` İçİn AYNI iptal-
+  kontrolü BU turun kapsamı DIŞINDA (SADECE genel `Task[T]` `await`i).
+- `t.cancel()` `None` döner (Python'un `bool` dönüşü GİBİ "iptal EDİLEBİLİR
+  miydi" bilgisi YOK, BASİTLİK İçİn).
+
 ## [1.70.0]
 
 ### Düzeltildi

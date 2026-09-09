@@ -838,6 +838,13 @@ pub fn Task(comptime T: type) type {
         exc_obj: ?*anyopaque = null,
         exc_line: i64 = 0,
 
+        /// Faz SC.2 (bkz. plan dosyası "Task[T].cancel() + CancelledError"):
+        /// `nox_task_cancel` (bkz. `bridge.zig`) TARAFINDAN AYARLANIR —
+        /// Task'ın KENDİ hayat döngüsü (refcount/state) İLE TAMAMEN
+        /// BAĞIMSIZ, HER ZAMAN GÜVENLE yazılabilir/okunabilir bir bayrak
+        /// (Task struct'ı canlı olduğu SÜRECE — `t.fiber`e HİÇ DOKUNMAZ).
+        cancel_requested: std.atomic.Value(bool) = .init(false),
+
         /// **v1.29.11 — GERÇEK, DIŞARIDAN bulunup DOĞRULANMIŞ bir hata
         /// İçİn eklendi.** ESKİDEN `detached: bool` (Faz S.1) `state`in
         /// AYNI atomik protokolünün DIŞINDA, DÜZ, senkronize-OLMAYAN AYRI
@@ -952,6 +959,11 @@ pub fn spawn(scheduler: *Scheduler, comptime T: type, func: *const fn (*anyopaqu
         scheduler.releaseStack(stack);
         return e;
     };
+    // Faz SC.2: fiber'ın KENDİ, GÜVENLİ (bkz. `cancel_flag`in belge notu)
+    // geri-işaretçisi — `t.cancel()`in KENDİSİ BUNA HİÇ DOKUNMAZ (SADECE
+    // `task.cancel_requested`i yazar), SADECE bu fiber'ın KENDİ kodu
+    // (`genAwaitExpr`nin iptal-kontrolü) OKUR.
+    task.fiber.cancel_flag = &task.cancel_requested;
     // Faz MN.4/5: havuzluysa YEREL `live_count` YERİNE (bkz. `run()`nin
     // tamamlanma dalındaki AYNI "KRİTİK" not) SADECE PAYLAŞILAN `pool_
     // live_count` artırılır — bir fiber BAŞKA bir worker TARAFINDAN

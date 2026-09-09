@@ -1086,6 +1086,10 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
     // classes`de YOK OLMASINA RAĞMEN) `genAwaitExpr` YERİNE BURADA,
     // NORMAL metod-çağrısı yolunda ele alınır.
     if (obj.heap == .task_local) return async_thread_mod.genTaskLocalOp(self, obj, a, args);
+    // Faz SC.2: `t.cancel()` — checker ZATEN 0-argümanlı `cancel`i
+    // doğruladı, `await` GEREKMEDEN NORMAL metod-çağrısı yolunda ele
+    // alınır (`.task_local`nin AYNI ilkesi).
+    if (obj.heap == .task) return async_thread_mod.genTaskCancel(self, obj);
     if (obj.heap != .class) return error.Unsupported;
     try self.checkNoLowlevelEscape(obj);
     const cinfo = self.classes.get(obj.class_name.?).?;

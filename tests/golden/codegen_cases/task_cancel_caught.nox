@@ -1,0 +1,15 @@
+async def sub() -> int:
+    return 1
+
+async def worker() -> int:
+    inner: Task[int] = spawn sub()
+    x: int = await inner
+    return x
+
+t: Task[int] = spawn worker()
+t.cancel()
+try:
+    y: int = await t
+    print(y)
+except CancelledError as e:
+    print(e.message)
