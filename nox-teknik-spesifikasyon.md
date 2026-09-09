@@ -19089,6 +19089,83 @@ container'ları (v1 SADECE `gzip`); sıkıştırma seviyesi seçimi (SABİT
 
 ---
 
+## 3.140 Faz STD.3 — `nox.toml` (v1.74.0)
+
+Kullanıcının 5 maddelik yol haritasının 3. maddesinin ("stdlib eksikleri")
+3. alt-parçası (Faz STD.1'in `nox.csv`si + Faz STD.2'nin `nox.gzip`i
+SONRASI). TOML, CSV'DEN daha karmaşık (İç İçe tablolar/tipli değerler/
+diziler) AMA YİNE de SAF Nox'ta (YENİ bir runtime ilkeli GEREKMEDEN)
+yazıldı — `stdlib/nox/toml.nox`.
+
+`TomlValue` (`kind`: 0=string, 1=int, 2=float, 3=bool, 4=array, 5=tablo)
+SIRADAN bir kullanıcı sınıfıdır — `nox.json`nin `JsonValue`sinden FARKLI
+olarak (o, Zig'in reverse-FFI'ı İLE geri-çağrıldığından core.nox'ta
+YAŞAMAK VE parallel `keys`/`vals` listeleri kullanmak ZORUNDAYDı) TOML
+SAF Nox'ta olduğundan `TomlValue.tbl` GERÇEK bir `dict[str, TomlValue]`dir.
+
+`parse(text: str) -> TomlValue` tek-geçişli, karakter-karakter bir durum
+makinesi (`pos: list[int]`, `nox.csv`nin AYNI "mutable int kutusu"
+deseni) — yorumlar, `[tablo]` başlıkları (noktalı İç İçe: `[a.b.c]`),
+çıplak/tırnaklı anahtarlı `key = value` çiftleri, string (kaçış
+dizileriyle)/integer (alt çizgi ayraçlı)/float (üstel)/bool/dizi (TEK-
+VE ÇOK-satırlık, köşeli parantez İçİnde boşluk/satır-sonu/yorum
+ÖNEMSİZ) destekler. `get(root, "a.b.c")` dotted-path yardımcısı VE
+`TomlError` (array-of-tables/sonlandırılmamış string/dizi/geçersiz
+sayı İçİn) tamamlar.
+
+**Kapsam DIŞI (BİLİNÇLİ v1)**: array-of-tables (`[[...]]`, AÇIKÇA
+`TomlError` İLE reddedilir), inline table (`{k=v}`), çok-satırlı/literal
+string, tarih/saat, hex/octal/binary sayılar, `key=value` satırlarında
+noktalı anahtar.
+
+**BU turda KEŞFEDİLEN, İKİ GERÇEK dil/runtime bulgusu (DÜZELTİLMEDEN,
+belgelenerek atlatıldı)**:
+
+1. **Nox'ta `and`/`or` KISA-DEVRE YAPMAZ** — `compiler/codegen_qbe/
+   expr.zig:893` HER İKİ operandı da KOŞULSUZ, dallanmasız bir QBE
+   `and`/`or` bit-işlemine çevirir. İLK yazımda `pos[0] < n and
+   text[pos[0]] == "X"` GİBİ bir desen, `pos[0] >= n` OLSA BİLE
+   `text[pos[0]]`i DENİYORDU — VE bir `str`i TAM UZUNLUĞUNA denk (`len(s)`)
+   VEYA onu AŞAN bir indeksle erişmek (bu spesifik durumda) İSTİSNA
+   FIRLATMAK YERİNE SESSİZCE null/bozuk bir sonuç ÜRETİP `strcmp`nin
+   NULL pointer'la ÇÖKMESİNE yol AÇTI (GERÇEK bir SIGSEGV İLE
+   doğrulandı, `lldb`nin backtrace'i `nox_toml__parse_value`i
+   İŞARET ETTİ). Düzeltme: `_char_at_or_empty(s, pos, n)`/`_safe_substr(
+   s, start, end, n)` — bounds kontrolünü İçİNE ALAN AYRI yardımcı
+   fonksiyonlar — TÜM "guard+index" desenlerinin YERİNE geçti. **Dilin
+   KENDİSİ BU turda DEĞİŞTİRİLMEDİ** (kısa-devre semantiği eklemek TÜM
+   `and`/`or` codegen'ini VE olası binlerce mevcut Nox programının
+   davranışını etkileyecek BÜYÜK bir karar — AYRI bir değerlendirme/tur
+   gerektirir).
+2. **Bir fonksiyondan ÇIPLAK `return s[i]` (string-indeksleme SONUCUNUN
+   DOĞRUDAN dönüşü) bir ARC sızıntısına yol açıyor** — dönen tek-karakter
+   string, fonksiyon SINIRINI GEÇERKEN retain EDİLMİYOR (elle izole
+   edilmiş bir repro İLE doğrulandı: `def f(s,i): return s[i]` bir
+   döngüde çağrılıp SONUCU KARŞILAŞTIRILDIĞINDA/bir yerele ATANDIĞINDA
+   HER çağrıda BİR bellek sızıntısı raporlanıyor; AYNI fonksiyon `return
+   "" + s[i]` OLARAK YENİDEN yazılınca — bir BİRLEŞTİRME operasyonu
+   ÜZERİNDEN GEÇİRİLİNCE — sızıntı ORTADAN KALKIYOR). `toml.nox`nin
+   `_char_at_or_empty`si BU ELLE-önlenmiş deseni kullanıyor. **Kök neden
+   (codegen'in fonksiyon-dönüşü retain/release zinciri) BU turda
+   İNCELENMEDİ/DÜZELTİLMEDİ** — AYRI, gelecekteki bir araştırma/düzeltme
+   turu gerektirir.
+
+**Doğrulama**: `tests/golden/codegen_cases/toml_*.nox` (7 YENİ fixture
+— temel key=value, İç İçe tablolar, dizi (tek+çok-satırlık), yorum/boş
+satır, `get()` yardımcısı, array-of-tables reddi, sonlandırılmamış
+string reddi) HEM tam test paketi İçİnde HEM elle (`lldb` İLE kırmızı-
+takım doğrulaması DAHİL) doğrulandı. `zig build test` (Debug+ReleaseFast,
+`-j4`) — `stdlib/nox/core.nox`a DOKUNULMADIĞINDAN SADECE 7 YENİ `.ssa`
+oluştu, GENEL IR kayması YOK.
+
+**Kapsam DIŞI**: `nox.smtp` (YENİ bir ham TCP soket ilkeli gerektirir),
+`nox.yaml` (daraltılmış bir v1 alt-kümesi gerektirir), ORM (`stdlib/nox/
+db.nox`nin `DbConnection`/`Row`u üzerine İnşa edilecek, EN büyük tasarım
+kararı) — kullanıcının 5 maddelik yol haritasının kalan alt-parçaları,
+AYRI Plan Mode turlarında.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

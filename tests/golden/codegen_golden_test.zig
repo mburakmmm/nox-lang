@@ -2028,6 +2028,61 @@ test "codegen(çalıştır): nox.gzip — 255'i aşan bir bayt değeri GzipError
     );
 }
 
+// Faz STD.3 (nox.toml) — kullanıcının 5 maddelik yol haritasının 3.
+// maddesinin ("stdlib eksikleri") 3. alt-parçası. Saf Nox'ta yazıldı
+// (csv.nox'un aynı deseni) — TEK gerçek keşif: Nox'ta `and`/`or` KISA-
+// DEVRE YAPMAZ (her iki operand da her zaman değerlendirilir), bu
+// yüzden toml.nox'un TÜM "pos[0] < n and text[pos[0]] == X" desenleri
+// `_char_at_or_empty`/`_safe_substr` yardımcılarına taşındı.
+test "codegen(çalıştır): nox.toml — temel key=value (str/int/float/bool)" {
+    try expectGolden(
+        @embedFile("codegen_cases/toml_parse_basic_key_value.nox"),
+        @embedFile("codegen_cases/toml_parse_basic_key_value.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.toml — iç içe [a]/[a.b]/[a.b.c] tabloları" {
+    try expectGolden(
+        @embedFile("codegen_cases/toml_parse_nested_tables.nox"),
+        @embedFile("codegen_cases/toml_parse_nested_tables.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.toml — tek-satırlık ve çok-satırlık dizi" {
+    try expectGolden(
+        @embedFile("codegen_cases/toml_parse_array.nox"),
+        @embedFile("codegen_cases/toml_parse_array.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.toml — yorum/boş satır arasına serpiştirilmiş değerler" {
+    try expectGolden(
+        @embedFile("codegen_cases/toml_parse_comments_and_blank_lines.nox"),
+        @embedFile("codegen_cases/toml_parse_comments_and_blank_lines.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.toml — get() dotted-path yardımcısı" {
+    try expectGolden(
+        @embedFile("codegen_cases/toml_get_dotted_path_helper.nox"),
+        @embedFile("codegen_cases/toml_get_dotted_path_helper.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.toml — array-of-tables ([[...]]) TomlError fırlatır" {
+    try expectGolden(
+        @embedFile("codegen_cases/toml_array_of_tables_raises.nox"),
+        @embedFile("codegen_cases/toml_array_of_tables_raises.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.toml — sonlandırılmamış string TomlError fırlatır" {
+    try expectGolden(
+        @embedFile("codegen_cases/toml_unterminated_string_raises.nox"),
+        @embedFile("codegen_cases/toml_unterminated_string_raises.expected"),
+    );
+}
+
 test "codegen(çalıştır): async — Channel[T] (rendezvous) iki görev arasında, sızıntı yok" {
     try expectGolden(
         @embedFile("codegen_cases/async_channel.nox"),

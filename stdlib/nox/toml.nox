@@ -1,0 +1,357 @@
+# nox.toml — TOML (Tom's Obvious Minimal Language) ayrıştırma. Saf Nox'ta
+# yazıldı (yeni bir runtime ilkeli GEREKMEDİ) — `nox.csv`nin AYNI
+# "tek-geçişli, karakter-karakter durum makinesi" deseni. Karakter
+# sınıflandırması İçİn `nox.strings.byte_at` (ham ASCII bayt değeri)
+# kullanılır — Nox'ta `str` İçİn sıralama operatörleri (`<`/`>=`) YOK.
+#
+# Kapsam (BİLİNÇLİ v1): yorumlar (#...), [tablo] başlıkları (noktalı
+# İç İçe: [a.b.c]), çıplak/tırnaklı anahtarlı key = value çiftleri,
+# değer tipleri: temel string ("...", kaçış dizileriyle), integer (alt
+# çizgi ayraçlı, 1_000 DAHİL), float (üstel gösterim DAHİL), bool
+# (true/false), dizi ([1, 2, 3] — köşeli parantez İçİnde boşluk/satır-
+# sonu/yorum ÖNEMSİZ olduğundan ÇOK-satırlı diziler DOĞAL desteklenir).
+#
+# Kapsam DIŞI: array-of-tables ([[...]], AÇIKÇA TomlError İLE
+# reddedilir), inline table ({k = v}), çok-satırlı string ("""..."""),
+# literal string ('...'), tarih/saat, hex/octal/binary sayı biçimleri,
+# key=value satırlarında noktalı anahtar (a.b = 1).
+
+import nox.strings
+
+class TomlError(Exception):
+    pass
+
+# kind: 0=string, 1=int, 2=float, 3=bool, 4=array, 5=tablo
+class TomlValue:
+    def __init__(self: TomlValue, kind: int, b: bool, i: int, f: float, s: str, arr: list[TomlValue], tbl: dict[str, TomlValue]) -> None:
+        self.kind = kind
+        self.b = b
+        self.i = i
+        self.f = f
+        self.s = s
+        self.arr = arr
+        self.tbl = tbl
+
+def _make_string(s: str) -> TomlValue:
+    return TomlValue(0, False, 0, 0.0, s, [], {})
+
+def _make_int(i: int) -> TomlValue:
+    return TomlValue(1, False, i, 0.0, "", [], {})
+
+def _make_float(f: float) -> TomlValue:
+    return TomlValue(2, False, 0, f, "", [], {})
+
+def _make_bool(b: bool) -> TomlValue:
+    return TomlValue(3, b, 0, 0.0, "", [], {})
+
+def _make_array(arr: list[TomlValue]) -> TomlValue:
+    return TomlValue(4, False, 0, 0.0, "", arr, {})
+
+def _make_table() -> TomlValue:
+    return TomlValue(5, False, 0, 0.0, "", [], {})
+
+def is_string(v: TomlValue) -> bool:
+    return v.kind == 0
+
+def is_int(v: TomlValue) -> bool:
+    return v.kind == 1
+
+def is_float(v: TomlValue) -> bool:
+    return v.kind == 2
+
+def is_bool(v: TomlValue) -> bool:
+    return v.kind == 3
+
+def is_array(v: TomlValue) -> bool:
+    return v.kind == 4
+
+def is_table(v: TomlValue) -> bool:
+    return v.kind == 5
+
+def _is_digit(c: str) -> bool:
+    b: int = nox.strings.byte_at(c, 0)
+    return b >= 48 and b <= 57
+
+def _is_key_char(c: str) -> bool:
+    b: int = nox.strings.byte_at(c, 0)
+    return (b >= 97 and b <= 122) or (b >= 65 and b <= 90) or (b >= 48 and b <= 57) or b == 95 or b == 45
+
+def _substr(s: str, start: int, end: int) -> str:
+    result: str = ""
+    i: int = start
+    while i < end:
+        result = result + s[i]
+        i = i + 1
+    return result
+
+# Nox'ta `and`/`or` KISA-DEVRE YAPMAZ (HER İKİ operand da HER ZAMAN
+# değerlendirilir) — bu YÜZDEN "pos[0] < n and text[pos[0]] == X" GİBİ
+# bir desen, pos[0] >= n OLSA BİLE text[pos[0]]'i DENER (sınır-dışı
+# erişim, GÜVENSİZ). Bu İKİ yardımcı, bounds-kontrolünü İçİNE ALARAK
+# TÜM ayrıştırıcının GÜVENLİ, TEK bir karşılaştırmayla (`and`/`or`
+# GEREKMEDEN) çalışmasını sağlar.
+def _char_at_or_empty(s: str, pos: int, n: int) -> str:
+    if pos < n:
+        # NOT: `return s[pos]` (ÇIPLAK indeksleme DÖNÜŞÜ) bir ARC
+        # sızıntısına yol AÇIYOR (bir fonksiyon SINIRINI GEÇEN, DOĞRUDAN
+        # döndürülen bir tek-karakter string'in retain edilmemesi) —
+        # `"" + s[pos]` (BİR birleştirme operasyonu ÜZERİNDEN GEÇİRMEK)
+        # BU sızıntıyı ORTADAN KALDIRIYOR, GERÇEK bir derleyici hatasının
+        # ELLE önlenmiş hali.
+        return "" + s[pos]
+    return ""
+
+def _safe_substr(s: str, start: int, end: int, n: int) -> str:
+    real_end: int = end
+    if real_end > n:
+        real_end = n
+    return _substr(s, start, real_end)
+
+def _skip_inline_ws(text: str, pos: list[int]) -> None:
+    n: int = len(text)
+    scanning: bool = True
+    while scanning:
+        if pos[0] >= n:
+            scanning = False
+        elif text[pos[0]] == " " or text[pos[0]] == "\t":
+            pos[0] = pos[0] + 1
+        else:
+            scanning = False
+
+def _skip_to_eol(text: str, pos: list[int]) -> None:
+    n: int = len(text)
+    scanning: bool = True
+    while scanning:
+        if pos[0] >= n:
+            scanning = False
+        elif text[pos[0]] == "\n":
+            pos[0] = pos[0] + 1
+            scanning = False
+        else:
+            pos[0] = pos[0] + 1
+
+def _skip_ws_newlines_comments(text: str, pos: list[int]) -> None:
+    n: int = len(text)
+    scanning: bool = True
+    while scanning:
+        if pos[0] >= n:
+            scanning = False
+        elif text[pos[0]] == " " or text[pos[0]] == "\t" or text[pos[0]] == "\n" or text[pos[0]] == "\r":
+            pos[0] = pos[0] + 1
+        elif text[pos[0]] == "#":
+            _skip_to_eol(text, pos)
+        else:
+            scanning = False
+
+def _parse_basic_string(text: str, pos: list[int]) -> str:
+    n: int = len(text)
+    pos[0] = pos[0] + 1
+    result: str = ""
+    closed: bool = False
+    while not closed:
+        if pos[0] >= n:
+            raise TomlError("sonlandirilmamis string")
+        c: str = text[pos[0]]
+        if c == "\"":
+            pos[0] = pos[0] + 1
+            closed = True
+        elif c == "\\":
+            if pos[0] + 1 >= n:
+                raise TomlError("sonlandirilmamis kacis dizisi")
+            esc: str = text[pos[0] + 1]
+            if esc == "n":
+                result = result + "\n"
+            elif esc == "t":
+                result = result + "\t"
+            elif esc == "r":
+                result = result + "\r"
+            elif esc == "\"":
+                result = result + "\""
+            elif esc == "\\":
+                result = result + "\\"
+            else:
+                result = result + esc
+            pos[0] = pos[0] + 2
+        else:
+            result = result + c
+            pos[0] = pos[0] + 1
+    return result
+
+def _parse_key(text: str, pos: list[int]) -> str:
+    n: int = len(text)
+    if _char_at_or_empty(text, pos[0], n) == "\"":
+        return _parse_basic_string(text, pos)
+    result: str = ""
+    scanning: bool = True
+    while scanning:
+        if pos[0] >= n:
+            scanning = False
+        elif _is_key_char(text[pos[0]]):
+            result = result + text[pos[0]]
+            pos[0] = pos[0] + 1
+        else:
+            scanning = False
+    if result == "":
+        raise TomlError("gecersiz (bos) anahtar")
+    return result
+
+def _parse_number(text: str, pos: list[int]) -> TomlValue:
+    n: int = len(text)
+    start: int = pos[0]
+    raw: str = ""
+    is_float_val: bool = False
+    scanning: bool = True
+    while scanning:
+        if pos[0] >= n:
+            scanning = False
+        else:
+            c: str = text[pos[0]]
+            if c == "." or c == "e" or c == "E":
+                is_float_val = True
+                raw = raw + c
+                pos[0] = pos[0] + 1
+            elif _is_digit(c) or c == "-" or c == "+" or c == "_":
+                if c != "_":
+                    raw = raw + c
+                pos[0] = pos[0] + 1
+            else:
+                scanning = False
+    if pos[0] == start:
+        raise TomlError("gecersiz sayi")
+    if is_float_val:
+        try:
+            return _make_float(float(raw))
+        except ValueError as e:
+            raise TomlError("gecersiz float: " + raw)
+    try:
+        return _make_int(int(raw))
+    except ValueError as e:
+        raise TomlError("gecersiz integer: " + raw)
+
+def _parse_value(text: str, pos: list[int]) -> TomlValue:
+    n: int = len(text)
+    if pos[0] >= n:
+        raise TomlError("beklenmeyen dosya sonu (deger bekleniyordu)")
+    c: str = text[pos[0]]
+    if c == "\"":
+        return _make_string(_parse_basic_string(text, pos))
+    elif c == "[":
+        return _parse_array(text, pos)
+    elif _safe_substr(text, pos[0], pos[0] + 4, n) == "true":
+        pos[0] = pos[0] + 4
+        return _make_bool(True)
+    elif _safe_substr(text, pos[0], pos[0] + 5, n) == "false":
+        pos[0] = pos[0] + 5
+        return _make_bool(False)
+    elif _is_digit(c) or c == "-" or c == "+":
+        return _parse_number(text, pos)
+    else:
+        raise TomlError("gecersiz deger")
+
+def _parse_array(text: str, pos: list[int]) -> TomlValue:
+    n: int = len(text)
+    pos[0] = pos[0] + 1
+    items: list[TomlValue] = []
+    done: bool = False
+    while not done:
+        _skip_ws_newlines_comments(text, pos)
+        if pos[0] >= n:
+            raise TomlError("sonlandirilmamis dizi")
+        if text[pos[0]] == "]":
+            pos[0] = pos[0] + 1
+            done = True
+        else:
+            items.append(_parse_value(text, pos))
+            _skip_ws_newlines_comments(text, pos)
+            if _char_at_or_empty(text, pos[0], n) == ",":
+                pos[0] = pos[0] + 1
+            elif _char_at_or_empty(text, pos[0], n) == "]":
+                pos[0] = pos[0] + 1
+                done = True
+            else:
+                raise TomlError("dizi icinde ',' ya da ']' bekleniyordu")
+    return _make_array(items)
+
+def _parse_table_header(text: str, pos: list[int], root: TomlValue) -> TomlValue:
+    n: int = len(text)
+    pos[0] = pos[0] + 1
+    if _char_at_or_empty(text, pos[0], n) == "[":
+        raise TomlError("array-tablolari ([[...]]) v1'de desteklenmiyor")
+    current: TomlValue = root
+    done: bool = False
+    while not done:
+        _skip_inline_ws(text, pos)
+        key: str = _parse_key(text, pos)
+        if not current.tbl.contains(key):
+            current.tbl[key] = _make_table()
+        next_val: TomlValue = current.tbl[key]
+        if next_val.kind != 5:
+            raise TomlError("'" + key + "' zaten bir tablo degil")
+        current = next_val
+        _skip_inline_ws(text, pos)
+        if _char_at_or_empty(text, pos[0], n) == ".":
+            pos[0] = pos[0] + 1
+        else:
+            done = True
+    _skip_inline_ws(text, pos)
+    if _char_at_or_empty(text, pos[0], n) != "]":
+        raise TomlError("']' bekleniyordu")
+    pos[0] = pos[0] + 1
+    _skip_inline_ws(text, pos)
+    if _char_at_or_empty(text, pos[0], n) == "#":
+        _skip_to_eol(text, pos)
+    elif _char_at_or_empty(text, pos[0], n) == "\n":
+        pos[0] = pos[0] + 1
+    return current
+
+def _parse_key_value(text: str, pos: list[int], current: TomlValue) -> None:
+    n: int = len(text)
+    key: str = _parse_key(text, pos)
+    _skip_inline_ws(text, pos)
+    if _char_at_or_empty(text, pos[0], n) != "=":
+        raise TomlError("'=' bekleniyordu")
+    pos[0] = pos[0] + 1
+    _skip_inline_ws(text, pos)
+    value: TomlValue = _parse_value(text, pos)
+    current.tbl[key] = value
+    _skip_inline_ws(text, pos)
+    if _char_at_or_empty(text, pos[0], n) == "#":
+        _skip_to_eol(text, pos)
+    elif _char_at_or_empty(text, pos[0], n) == "\n":
+        pos[0] = pos[0] + 1
+    elif pos[0] < n:
+        raise TomlError("satir sonunda beklenmeyen karakter")
+
+def parse(text: str) -> TomlValue:
+    root: TomlValue = _make_table()
+    current: TomlValue = root
+    pos: list[int] = [0]
+    n: int = len(text)
+    while pos[0] < n:
+        _skip_inline_ws(text, pos)
+        if pos[0] >= n:
+            pass
+        elif text[pos[0]] == "\n" or text[pos[0]] == "\r":
+            pos[0] = pos[0] + 1
+        elif text[pos[0]] == "#":
+            _skip_to_eol(text, pos)
+        elif text[pos[0]] == "[":
+            current = _parse_table_header(text, pos, root)
+        else:
+            _parse_key_value(text, pos, current)
+    return root
+
+# "a.b.c" gibi noktalı bir yolu KÖKTEN itibaren çözer — ARA yolu okumak
+# İçİn `.tbl[...]` zincirlemeye bir kolaylık.
+def get(root: TomlValue, dotted_path: str) -> TomlValue:
+    parts: list[str] = nox.strings.split(dotted_path, ".")
+    current: TomlValue = root
+    i: int = 0
+    n: int = len(parts)
+    while i < n:
+        key: str = parts[i]
+        if current.kind != 5 or not current.tbl.contains(key):
+            raise TomlError("yol bulunamadi: " + dotted_path)
+        current = current.tbl[key]
+        i = i + 1
+    return current

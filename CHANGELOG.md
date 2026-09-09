@@ -14,6 +14,50 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.74.0]
+
+### Eklendi
+- **Faz STD.3 — `nox.toml`**: kullanıcının 5 maddelik yol haritasının 3.
+  maddesinin ("stdlib eksikleri") 3. alt-parçası. Saf Nox'ta yazıldı
+  (`nox.csv`nin AYNI "tek-geçişli, karakter-karakter durum makinesi"
+  deseni) — YENİ bir runtime ilkeli GEREKMEDİ.
+- `nox.toml.parse(text: str) -> TomlValue` — yorumlar (`#...`), `[tablo]`
+  başlıkları (noktalı İç İçe: `[a.b.c]`), çıplak/tırnaklı anahtarlı
+  `key = value` çiftleri, değer tipleri: temel string (kaçış dizileriyle),
+  integer (alt çizgi ayraçlı, `1_000` DAHİL), float (üstel gösterim
+  DAHİL), bool, dizi (`[1, 2, 3]` — TEK-satırlık VE ÇOK-satırlık, köşeli
+  parantez İçİnde boşluk/satır-sonu/yorum ÖNEMSİZ).
+- `nox.toml.TomlValue` — SAF (core.nox'a BAĞIMLI OLMAYAN, `json.nox`nin
+  reverse-FFI zorunluluğu BURADA GEREKMEDİĞİNDEN) bir kullanıcı sınıfı,
+  tablolar İçİn GERÇEK bir `dict[str, TomlValue]` kullanır. `is_string`/
+  `is_int`/`is_float`/`is_bool`/`is_array`/`is_table` tip-sorgu yardımcıları.
+- `nox.toml.get(root: TomlValue, dotted_path: str) -> TomlValue` — `"a.b.c"`
+  GİBİ noktalı bir yolu KÖKTEN itibaren çözer.
+- `nox.toml.TomlError` — array-of-tables (`[[...]]`, v1'de desteklenmiyor),
+  sonlandırılmamış string/dizi, GEÇERSİZ sayı/anahtar İçİn fırlatılır.
+- **Kapsam DIŞI (BİLİNÇLİ v1)**: array-of-tables, inline table (`{k=v}`),
+  çok-satırlı/literal string, tarih/saat, hex/octal/binary sayılar,
+  `key=value` satırlarında noktalı anahtar.
+
+### Bulundu (dil-seviyesi, BU turda KEŞFEDİLEN, DÜZELTİLMEDEN belgelenen)
+- **Nox'ta `and`/`or` KISA-DEVRE YAPMAZ** — `compiler/codegen_qbe/expr.zig`
+  HER İKİ operandı da KOŞULSUZ QBE `and`/`or` bit-işlemine ÇEVİRİR
+  (dallanma/erken-çıkış YOK). Bu YÜZDEN `pos < n and text[pos] == "X"`
+  GİBİ bir desen, `pos >= n` OLSA BİLE `text[pos]`i DENER — Python/JS/
+  C'nin AKSİNE, YAYGIN bir varsayım İHLAL EDİLİYOR. `toml.nox` TÜM
+  bounds-guard+index desenlerini `_char_at_or_empty`/`_safe_substr`
+  yardımcılarıyla (bounds kontrolünü İçİNE ALAN AYRI fonksiyonlar)
+  YENİDEN yazarak BUNU atlatıyor — dilin KENDİSİ BU turda DEĞİŞTİRİLMEDİ
+  (blast radius'u ÇOK BÜYÜK bir semantik değişiklik olurdu, AYRI bir
+  karar/tur gerektirir).
+- **Bir fonksiyondan DOĞRUDAN `return s[i]` (çıplak string-indeksleme
+  dönüşü) bir ARC sızıntısına yol açıyor** — tek-karakter sonucu fonksiyon
+  SINIRINI GEÇERKEN retain edilmiyor (`nox_str_char_at` sonrası). `return
+  "" + s[i]` (bir birleştirme operasyonu ÜZERİNDEN geçirmek) sızıntıyı
+  ORTADAN KALDIRIYOR — `toml.nox`nin `_char_at_or_empty`si BU ELLE-
+  ÖNLENMİŞ deseni kullanıyor. Kök neden (codegen'in fonksiyon-dönüşü
+  release/retain zinciri) BU turda İNCELENMEDİ/DÜZELTİLMEDİ.
+
 ## [1.73.0]
 
 ### Eklendi

@@ -1,0 +1,10 @@
+import nox.toml
+
+text: str = "[a]\nx = 1\n\n[a.b]\ny = 2\n\n[a.b.c]\nz = 3\n"
+root: nox.toml.TomlValue = nox.toml.parse(text)
+a: nox.toml.TomlValue = root.tbl["a"]
+b: nox.toml.TomlValue = a.tbl["b"]
+c: nox.toml.TomlValue = b.tbl["c"]
+print(a.tbl["x"].i)
+print(b.tbl["y"].i)
+print(c.tbl["z"].i)

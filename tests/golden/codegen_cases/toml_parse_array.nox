@@ -1,0 +1,18 @@
+import nox.toml
+
+text: str = "single = [1, 2, 3]\nmulti = [\n  10,\n  20, # trailing comment\n  30,\n]\n"
+root: nox.toml.TomlValue = nox.toml.parse(text)
+single: nox.toml.TomlValue = root.tbl["single"]
+multi: nox.toml.TomlValue = root.tbl["multi"]
+print(len(single.arr))
+i: int = 0
+while i < len(single.arr):
+    v: nox.toml.TomlValue = single.arr[i]
+    print(v.i)
+    i = i + 1
+print(len(multi.arr))
+j: int = 0
+while j < len(multi.arr):
+    v2: nox.toml.TomlValue = multi.arr[j]
+    print(v2.i)
+    j = j + 1
