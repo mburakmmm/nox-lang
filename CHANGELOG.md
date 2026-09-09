@@ -14,6 +14,36 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.73.0]
+
+### Eklendi
+- **Faz STD.2 — `nox.gzip`**: kullanıcının 5 maddelik yol haritasının 3.
+  maddesinin ("stdlib eksikleri") 2. alt-parçası. Zig'in `std.compress.
+  flate`si (`compiler/pkg/upgrade.zig`nin `.tar.gz` paket indirmede
+  İçSEL kullandığı, KANITLANMIŞ API) Nox programlarına dışa açıldı.
+- `nox.gzip.compress(text: str) -> list[int]` / `decompress(data:
+  list[int]) -> str` — bir metni gzip formatında sıkıştırır/açar.
+- `nox.gzip.compress_bytes`/`decompress_bytes(data: list[int]) ->
+  list[int]` — keyfi ikili veri İçİn genel ilkel.
+- `nox.gzip.GzipError` — geçersiz gzip verisi/geçersiz bayt listesi
+  (0-255 dışı) İçİn fırlatılır; `decompress` AYRICA açılan verinin
+  gömülü NUL bayt İÇERMEDİĞİNİ (Nox'un NUL-sonlandırmalı `str`
+  temsili İçİn GÜVENLİ olduğunu) doğrular.
+- **KRİTİK tasarım kararı**: sıkıştırılmış veri ASLA `str` OLARAK
+  taşınmaz — Nox'un `str`i NUL-sonlandırmalı OLDUĞUNDAN VE gzip çıktısı
+  neredeyse HER ZAMAN gömülü `0x00` bayt İÇERDİĞİNDEN, `list[int]`
+  (HER eleman 0-255) kullanılır (`stdlib/nox/sharedmem.nox`nin AYNI,
+  önceden belgelenmiş kısıtı).
+- `compiler/typecheck/checker.zig`nin `isFfiSafeListType`ına `list[int]`
+  eklendi — `extern def`in C ABI sınırında artık `list[str]`e EK olarak
+  `list[int]` de parametre/dönüş tipi olarak geçirilebiliyor (`list[str]`in
+  AYNI, ZATEN kanıtlanmış ARC-list temsili gerekçesiyle).
+
+### Sıradaki alt-parçalar (AYRI Plan Mode turlarında)
+- `nox.zip` (arşiv okuma — Zig'in `std.zip`si BU sürümde SADECE okuma
+  destekliyor, yazma/oluşturma YOK), `nox.toml`, `nox.smtp`, `nox.yaml`,
+  ORM.
+
 ## [1.72.0]
 
 ### Eklendi

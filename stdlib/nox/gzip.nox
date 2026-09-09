@@ -1,0 +1,48 @@
+# nox.gzip — gzip sıkıştırma/açma. Zig'in `std.compress.flate`si (bkz.
+# `compiler/pkg/upgrade.zig`nin `.tar.gz` paket indirmede İçSEL kullanımı)
+# burada Nox'a dışa açılıyor.
+#
+# Nox'un `str`i NUL-sonlandırmalı (C-tarzı) OLDUĞUNDAN VE gzip çıktısı
+# KEYFİ ikili veri OLDUĞUNDAN (neredeyse HER ZAMAN gömülü NUL bayt
+# İçerir), sıkıştırılmış veri ASLA `str` olarak TAŞINMAZ — `list[int]`
+# (HER eleman 0-255 aralığında TEK bir bayt) kullanılır.
+
+class GzipError(Exception):
+    pass
+
+extern def nox_gzip_compress_bytes_raw(data: list[int]) -> list[int] from "zig-out/lib/noxrt.o" with_rt
+extern def nox_gzip_decompress_bytes_raw(data: list[int]) -> list[int] from "zig-out/lib/noxrt.o" with_rt
+extern def nox_gzip_compress_str_raw(s: str) -> list[int] from "zig-out/lib/noxrt.o" with_rt
+extern def nox_gzip_decompress_to_str_raw(data: list[int]) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_gzip_last_op_ok() -> int from "zig-out/lib/noxrt.o"
+
+# Keyfi ikili veriyi (`list[int]`, HER eleman 0-255) gzip formatında
+# sıkıştırır.
+def compress_bytes(data: list[int]) -> list[int]:
+    result: list[int] = nox_gzip_compress_bytes_raw(data)
+    if nox_gzip_last_op_ok() == 0:
+        raise GzipError("sikistirma basarisiz (gecersiz bayt listesi ya da bellek yetersiz)")
+    return result
+
+# gzip-sıkıştırılmış `list[int]`i ORİJİNAL (keyfi ikili) baytlara açar.
+def decompress_bytes(data: list[int]) -> list[int]:
+    result: list[int] = nox_gzip_decompress_bytes_raw(data)
+    if nox_gzip_last_op_ok() == 0:
+        raise GzipError("gecersiz gzip verisi")
+    return result
+
+# Bir metni gzip formatında sıkıştırıp `list[int]` olarak döner.
+def compress(text: str) -> list[int]:
+    result: list[int] = nox_gzip_compress_str_raw(text)
+    if nox_gzip_last_op_ok() == 0:
+        raise GzipError("sikistirma basarisiz (bellek yetersiz olabilir)")
+    return result
+
+# gzip-sıkıştırılmış `list[int]`i AÇIP bir `str`e çevirir — açılan verinin
+# gömülü NUL bayt İçERMEDİĞİ (Nox'un NUL-sonlandırmalı `str` temsili İçİn
+# GÜVENLİ olduğu) DOĞRULANIR, aksi halde `GzipError` fırlatılır.
+def decompress(data: list[int]) -> str:
+    result: str = nox_gzip_decompress_to_str_raw(data)
+    if nox_gzip_last_op_ok() == 0:
+        raise GzipError("gecersiz gzip verisi veya sonuc metin-guvenli degil (gomulu NUL bayt icerebilir)")
+    return result

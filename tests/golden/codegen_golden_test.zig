@@ -1985,6 +1985,49 @@ test "codegen(çalıştır): nox.csv — sonlandırılmamış tırnak CsvError f
     );
 }
 
+// Faz STD.2 (bkz. plan dosyası "nox.gzip"): Zig'in `std.compress.flate`
+// sini Nox'a dışa açan gzip sıkıştırma/açma — kullanıcının 5 maddelik
+// yol haritasının 3. maddesinin ("stdlib eksikleri") 2. alt-parçası.
+// Sıkıştırılmış veri `str`in NUL-sonlandırmalı temsiliyle GÜVENSİZ
+// olduğundan (bkz. plan dosyasının kritik güvenlik bulgusu) `list[int]`
+// olarak taşınır — bu ayrıca `extern def`in FFI-güvenli tip listesine
+// `list[int]`in eklenmesini gerektirdi (`compiler/typecheck/checker.zig`
+// `isFfiSafeListType`).
+test "codegen(çalıştır): nox.gzip — compress/decompress (str), bir tur" {
+    try expectGolden(
+        @embedFile("codegen_cases/gzip_compress_decompress_str_roundtrip.nox"),
+        @embedFile("codegen_cases/gzip_compress_decompress_str_roundtrip.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.gzip — compress_bytes/decompress_bytes, 0 ve 255 dahil keyfi baytlar" {
+    try expectGolden(
+        @embedFile("codegen_cases/gzip_compress_bytes_roundtrip.nox"),
+        @embedFile("codegen_cases/gzip_compress_bytes_roundtrip.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.gzip — tekrarlayan metin GERÇEKTEN daha küçük sıkıştırılır" {
+    try expectGolden(
+        @embedFile("codegen_cases/gzip_output_smaller_for_repetitive_text.nox"),
+        @embedFile("codegen_cases/gzip_output_smaller_for_repetitive_text.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.gzip — geçersiz (gzip olmayan) veri GzipError fırlatır" {
+    try expectGolden(
+        @embedFile("codegen_cases/gzip_decompress_invalid_data_raises.nox"),
+        @embedFile("codegen_cases/gzip_decompress_invalid_data_raises.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.gzip — 255'i aşan bir bayt değeri GzipError fırlatır" {
+    try expectGolden(
+        @embedFile("codegen_cases/gzip_compress_bytes_invalid_value_raises.nox"),
+        @embedFile("codegen_cases/gzip_compress_bytes_invalid_value_raises.expected"),
+    );
+}
+
 test "codegen(çalıştır): async — Channel[T] (rendezvous) iki görev arasında, sızıntı yok" {
     try expectGolden(
         @embedFile("codegen_cases/async_channel.nox"),

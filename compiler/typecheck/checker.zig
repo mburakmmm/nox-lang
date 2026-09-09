@@ -954,13 +954,13 @@ pub const Checker = struct {
             // DOĞRUDAN OKUYABİLİR, İNŞA ETMEK ZORUNDA DEĞİL) PARAMETRE
             // yönünde de AYNEN geçerlidir.
             if (!isFfiSafeType(pt) and !isFfiSafeListType(pt)) {
-                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': parametre '{s}' desteklenmeyen bir tipte (yalnızca int/float/bool/str/None/list[str] v0.1'de C ABI sınırında geçirilebilir)", .{ ed.name, p.name });
+                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': parametre '{s}' desteklenmeyen bir tipte (yalnızca int/float/bool/str/None/list[str]/list[int] v0.1'de C ABI sınırında geçirilebilir)", .{ ed.name, p.name });
             }
             params[i] = pt;
         }
         const ret = try self.typeExprToType(ed.return_type);
         if (!isFfiSafeType(ret) and !isFfiSafeListType(ret) and !isFfiSafeClassReturnType(ret)) {
-            return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': dönüş tipi desteklenmeyen bir tipte (yalnızca int/float/bool/str/None/list[str]/sınıf v0.1'de C ABI sınırında geçirilebilir)", .{ed.name});
+            return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': dönüş tipi desteklenmeyen bir tipte (yalnızca int/float/bool/str/None/list[str]/list[int]/sınıf v0.1'de C ABI sınırında geçirilebilir)", .{ed.name});
         }
         try self.functions.put(self.allocator, ed.name, .{ .params = params, .return_type = ret });
     }
@@ -980,7 +980,13 @@ pub const Checker = struct {
     /// kısıt KALDIRILDI).
     fn isFfiSafeListType(t: Type) bool {
         return switch (t) {
-            .list => |elem| elem.* == .str,
+            // Faz STD.2 (bkz. nox-teknik-spesifikasyon.md, "nox.gzip"):
+            // `list[int]` de EKLENDİ — `list[str]`in AYNI gerekçesi (çalışma
+            // zamanı temsili ZATEN ARC'lı bir `list[T]` payload'ı, 8 bayt
+            // uzunluk başlığı + 8 baytlık slotlar) `int` İçİn DAHA da
+            // BASİTTİR (`int` heap-yönetimli OLMADIĞINDAN slotlar HAM bit
+            // deseni taşır, pointer-takip/ARC retain GEREKMEZ).
+            .list => |elem| elem.* == .str or elem.* == .int,
             else => false,
         };
     }

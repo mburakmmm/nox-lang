@@ -19028,6 +19028,67 @@ TAM metin (dosyadan okuma `nox.fs`nin İŞİ, BU modül SADECE METİN alır).
 
 ---
 
+## 3.139 Faz STD.2 — `nox.gzip` (v1.73.0)
+
+Kullanıcının 5 maddelik yol haritasının 3. maddesinin ("stdlib eksikleri")
+2. alt-parçası (Faz STD.1'in `nox.csv`sinden SONRA). Zig'in `std.compress.
+flate`si (gzip/deflate/zlib) ZATEN VAR VE `compiler/pkg/upgrade.zig`/
+`index.zig`/`registry.zig` TARAFINDAN İçSEL olarak KULLANILIYOR (paket
+indirme/HTTP yanıt açma) — BU FAZ, AYNI, KANITLANMIŞ API'yi Nox
+programlarına dışa açtı.
+
+**KRİTİK GÜVENLİK bulgusu (tasarımı BELİRLEDİ)**: Nox'un `str`i NUL-
+sonlandırmalı (C-tarzı, `runtime/str.zig`) — gzip çıktısı KEYFİ ikili
+veridir VE neredeyse HER ZAMAN gömülü `0x00` bayt İÇERİR. `stdlib/nox/
+sharedmem.nox`nin KENDİ belge notu BUNU AÇIKÇA uyarıyordu ("ham ikili
+veri İçİn read_int/write_int KULLANIN, str ARA KATMANINI ATLAYIN") VE
+`runtime/stdlib_shims/http_client.zig` gömülü-NUL İçEREN HTTP gövdelerini
+`str`e ÇEVİRMEDEN ÖNCE REDDEDİYOR — bu YÜZDEN sıkıştırılmış veri ASLA
+doğrudan `str` OLARAK taşınmadı, `list[int]` (HER eleman 0-255) KULLANILDI.
+
+**GERÇEK, uygulama SIRASINDA bulunan 3 sorun (hepsi düzeltildi)**:
+1. `std.compress.flate.Compress.init`nin GİZLİ bir ön-koşulu VAR:
+   `assert(output.buffer.len > 8);` — `std.Io.Writer.Allocating.init`
+   BOŞ bir `buffer` İLE başladığından BU assertion BAŞARISIZ OLURDU;
+   `initCapacity(allocator, 4096)` KULLANILARAK düzeltildi.
+2. **`extern def`in `list[int]`i REDDETMESİ**: `compiler/typecheck/
+   checker.zig`nin `isFfiSafeListType`ı YALNIZCA `list[str]`i C ABI
+   sınırında GEÇERLİ SAYIYORDU — `list[int]`in çalışma zamanı temsili
+   `list[str]`İN AYNISI (8 bayt uzunluk başlığı + 8 baytlık slotlar,
+   AMA int heap-yönetimli OLMADIĞINDAN slotlar HAM bit deseni taşır,
+   pointer-takip/ARC retain HİÇ GEREKMEZ) OLDUĞUNDAN, `isFfiSafeListType`ya
+   `list[int]` EKLENDİ (additive bir genişletme — codegen'in kendisi
+   ZATEN element-tipinden BAĞIMSIZ, GENEL bir şekilde `list[T]`nin
+   `elem_qtype`/`elem_is_str`sini extern imzadan KOPYALIYORDU, YENİ bir
+   codegen değişikliği GEREKMEDİ).
+3. `runtime/lib.zig`ye YENİ bir shim EKLEMEK İçİn `pub const gzip_shim =
+   @import(...)` TEK BAŞINA YETERSİZDİ — dosyanın KENDİ, ikinci bir
+   `comptime { _ = X; }` BLOĞU (Zig'in tembel analiz modelinde `export
+   fn`lerin GERÇEKTEN nesne çıktısına alınmasını GARANTİ eden mekanizma)
+   VARDI, `gzip_shim` BURAYA da EKLENMEDİĞİ SÜRECE sembol linkleme
+   HATASI (`Undefined symbols`) veriyordu.
+
+**Regresyon**: `isFfiSafeListType`nin genişletilmesi, `list[int]`i
+"güvensiz" örnek OLARAK kullanan MEVCUT bir negatif fixture'ı (`tests/
+golden/typecheck_cases/err_extern_unsafe_param.nox`) ARTIK KABUL EDİLİR
+hale getirdi — fixture `list[float]` (HÂLÂ FFI-güvensiz) kullanacak
+şekilde GÜNCELLENDİ, testin KENDİ AMACI (BAZI `list[T]`lerin HÂLÂ
+reddedildiğini kanıtlamak) KORUNDU.
+
+**Doğrulama**: `tests/golden/codegen_cases/gzip_*.nox` (5 YENİ fixture
+— str round-trip, keyfi bayt round-trip (0/255 DAHİL), tekrarlayan
+metnin GERÇEKTEN küçüldüğü, geçersiz gzip verisinin/geçersiz bayt
+değerinin `GzipError` fırlattığı) HEM tam test paketi İçİnde HEM elle
+doğrulandı. `zig build test` (Debug+ReleaseFast) — `stdlib/nox/core.nox`a
+DOKUNULMADIĞINDAN SADECE 5 YENİ `.ssa` oluştu.
+
+**Kapsam DIŞI**: `nox.zip` (Zig'in `std.zip`si BU sürümde SADECE okuma/
+çıkarma destekler, yazma/oluşturma API'si YOK); `zlib`/ham `deflate`
+container'ları (v1 SADECE `gzip`); sıkıştırma seviyesi seçimi (SABİT
+`Options.default`); `nox.toml`/`nox.smtp`/`nox.yaml`/ORM.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.
