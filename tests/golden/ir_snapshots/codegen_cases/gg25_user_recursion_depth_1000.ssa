@@ -1248,12 +1248,18 @@ export function l $main_body(l %argp) {
     storel %t2, %t0
     %t4 =l loadl %t0
     %t5 =l call $nox_async_await(l %rt, l %t4)
+    %t6 =w call $nox_exception_pending(l %rt)
+    jnz %t6, @exc_propagate0, @exc_continue1
+@exc_propagate0
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue1
     call $printf(l $fmt_int, ..., l %t5)
-    %t6 =l loadl %t0
-    call $nox_async_destroy_task(l %rt, l %t6)
+    %t7 =l loadl %t0
+    call $nox_async_destroy_task(l %rt, l %t7)
     storel 0, %t0
     call $nox_free(l %rt, l %argp, l 8)
-@fn_end0
+@fn_end2
     ret 0
 }
 export function w $main(w %argc, l %argv) {

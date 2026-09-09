@@ -825,6 +825,19 @@ pub fn Task(comptime T: type) type {
         /// protokolü DEVREYE girer (AYNEN KORUNDU, DEĞİŞMEDİ).
         refcount: std.atomic.Value(u32) = .init(1),
 
+        /// Faz SC.1 (bkz. plan dosyası "spawn/await sınırında istisna
+        /// yayılımı düzeltmesi"): `entryTrampoline`nin, sarmalanan `async
+        /// def` gövdesi YAKALANMAMIŞ bir istisna BIRAKTIYSA (bkz. `Fiber.
+        /// pending_exception`) BURAYA taşıdığı, TEK-sahiplikli (move
+        /// semantiği, retain/release YOK) bir istisna nesnesi işaretçisi.
+        /// `nox_async_await` TARAFINDAN EN FAZLA BİR KEZ tüketilir — AYNI,
+        /// tamamlanmış bir `Task`ı TEKRAR `await` etmek istisnayı BİR DAHA
+        /// FIRLATMAZ (v1 BİLİNÇLİ sınırı — ARC'ın tek-sahiplikli referans
+        /// modeliyle TUTARLI, AYNI nesneyi İKİ KEZ `raise` etmek GÜVENSİZ
+        /// olurdu).
+        exc_obj: ?*anyopaque = null,
+        exc_line: i64 = 0,
+
         /// **v1.29.11 — GERÇEK, DIŞARIDAN bulunup DOĞRULANMIŞ bir hata
         /// İçİn eklendi.** ESKİDEN `detached: bool` (Faz S.1) `state`in
         /// AYNI atomik protokolünün DIŞINDA, DÜZ, senkronize-OLMAYAN AYRI
@@ -855,6 +868,26 @@ pub fn Task(comptime T: type) type {
         fn entryTrampoline(arg_erased: *anyopaque) void {
             const self: *Self = @ptrCast(@alignCast(arg_erased));
             self.result = self.func(self.arg);
+            // Faz SC.1: `self.func` (`spec.target_fn`i saran, codegen'in
+            // ürettiği C-ABI sarmalayıcı) sıradan bir fonksiyon olarak
+            // `emitExceptionCheck`e TABİDİR — YAKALANMAMIŞ bir `raise`
+            // sarmalayıcıyı ERKEN, VARSAYILAN bir değerle döndürür VE
+            // `self.fiber.pending_exception`i AYNEN BIRAKIR (bkz. `compiler/
+            // codegen_qbe/async_thread.zig`nin `genSpawnWrapper`ı — BURADA
+            // hiçbir değişikliğe GEREK YOK). `entryTrampoline` KENDİSİ BU
+            // fiber'ın (`self.fiber`) trambolini OLARAK çalıştığından
+            // (`bridge.currentFiber()` ŞU AN `self.fiber`e çözülür) BU
+            // istisnayı DOĞRUDAN alan erişimiyle (rt'ye GEREK DUYMADAN)
+            // yakalayıp `Task`in KENDİ, kalıcı `exc_obj`/`exc_line`
+            // alanlarına TAŞIRIZ (move semantiği) — `nox_async_await`
+            // (bkz. `bridge.zig`) bunu await eden tarafın bağlamına
+            // YENİDEN fırlatır.
+            if (self.fiber.pending_exception) |exc| {
+                self.exc_obj = exc;
+                self.exc_line = self.fiber.pending_exception_line;
+                self.fiber.pending_exception = null;
+                self.fiber.pending_exception_line = 0;
+            }
             // TEK bir atomik `swap` — `DETACHED`in belge notundaki ESKİ
             // "önce `detached`i OKU, SONRA AYRICA `state`i swap et" İKİ-
             // ADIMLI (senkronize-olmayan) desenin YERİNE geçer. `old`nin
@@ -1131,6 +1164,14 @@ test "Faz S.1: tamamlanmadan (fire-and-forget) 'destroy' edilen görev sızmadan
     const task = try scheduler.allocator.create(TaskI64);
     var input: i64 = 7;
     task.* = .{ .scheduler = &scheduler, .func = Fn.triple, .arg = &input };
+    // Faz SC.1: `entryTrampoline` ARTIK `self.fiber.pending_exception`i
+    // OKUYOR — `task.fiber` bu YÜZDEN GEÇERLİ (`.pending_exception` alanı
+    // BAŞLATILMIŞ) bir işaretçi OLMALI, `undefined` DEĞİL (DİĞER alanlar
+    // hiç DOKUNULMADIĞINDAN `undefined` KALABİLİR — `wireField`in AYNI
+    // "sadece dokunulan alanı başlat" ilkesi).
+    var task_fiber: Fiber = undefined;
+    task_fiber.pending_exception = null;
+    task.fiber = &task_fiber;
 
     try std.testing.expect(task.state.load(.acquire) == TaskI64.PENDING);
     // `nox_async_destroy_task`nin GERÇEK CAS mantığının SİMÜLASYONU —
@@ -1175,6 +1216,11 @@ test "v1.29.11: destroy() ZATEN KAYITLI bir waiter'ı ASLA sallandırmaz — ent
     const task = try scheduler.allocator.create(TaskI64);
     var input: i64 = 7;
     task.* = .{ .scheduler = &scheduler, .func = Fn.triple, .arg = &input };
+    // Faz SC.1: bkz. yukarıdaki AYNI notun kopyası — `entryTrampoline`
+    // `task.fiber.pending_exception`i okuyor.
+    var task_fiber: Fiber = undefined;
+    task_fiber.pending_exception = null;
+    task.fiber = &task_fiber;
 
     // (1) BAŞKA bir fiber `await_()` çağırmış GİBİ manuel bir `Waiter`
     // KAYDEDİLİR — `await_()`nin KENDİ CAS'ının BİREBİR SİMÜLASYONU.
@@ -1245,6 +1291,11 @@ test "v1.29.12: refcount=2 iken ERKEN destroy() state'e DOKUNMAZ — GERÇEK bir
     const task = try scheduler.allocator.create(TaskI64);
     var input: i64 = 7;
     task.* = .{ .scheduler = &scheduler, .func = Fn.triple, .arg = &input };
+    // Faz SC.1: bkz. yukarıdaki AYNI notun kopyası — `entryTrampoline`
+    // `task.fiber.pending_exception`i okuyor.
+    var task_fiber: Fiber = undefined;
+    task_fiber.pending_exception = null;
+    task.fiber = &task_fiber;
     // İKİ sahip VAR: owner (İLK, `refcount` `1`den BAŞLAR) + spawn edilen
     // kapanışın KENDİ retain edilmiş referansı (bkz. `compiler/codegen_qbe/
     // ownership.zig`nin `retainNonArcValue`i, `async_thread.zig`nin

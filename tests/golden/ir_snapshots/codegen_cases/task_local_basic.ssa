@@ -1603,30 +1603,82 @@ export function $main_task(l %rt) {
     call $nox_channel_send(l %rt, l %t44, l 1)
     %t45 =l loadl %t5
     %t46 =l call $nox_async_await(l %rt, l %t45)
-    %t47 =l loadl %t6
-    %t48 =l call $nox_async_await(l %rt, l %t47)
-    %t49 =l loadl %t3
-    call $nox_channel_destroy(l %rt, l %t49)
+    %t47 =w call $nox_exception_pending(l %rt)
+    jnz %t47, @exc_propagate0, @exc_continue1
+@exc_propagate0
+    %t48 =l loadl %t3
+    call $nox_channel_destroy(l %rt, l %t48)
     storel 0, %t3
-    %t50 =l loadl %t5
-    call $nox_async_destroy_task(l %rt, l %t50)
+    %t49 =l loadl %t5
+    call $nox_async_destroy_task(l %rt, l %t49)
     storel 0, %t5
-    %t51 =l loadl %t0
-    call $nox_tasklocal_destroy(l %rt, l %t51)
+    %t50 =l loadl %t0
+    call $nox_tasklocal_destroy(l %rt, l %t50)
     storel 0, %t0
-    %t52 =l loadl %t6
-    call $nox_async_destroy_task(l %rt, l %t52)
+    %t51 =l loadl %t6
+    call $nox_async_destroy_task(l %rt, l %t51)
     storel 0, %t6
-    %t53 =l loadl %t1
-    call $nox_channel_destroy(l %rt, l %t53)
+    %t52 =l loadl %t1
+    call $nox_channel_destroy(l %rt, l %t52)
     storel 0, %t1
-    %t54 =l loadl %t4
-    call $nox_channel_destroy(l %rt, l %t54)
+    %t53 =l loadl %t4
+    call $nox_channel_destroy(l %rt, l %t53)
     storel 0, %t4
-    %t55 =l loadl %t2
-    call $nox_channel_destroy(l %rt, l %t55)
+    %t54 =l loadl %t2
+    call $nox_channel_destroy(l %rt, l %t54)
     storel 0, %t2
-@fn_end0
+    ret
+@exc_continue1
+    %t55 =l loadl %t6
+    %t56 =l call $nox_async_await(l %rt, l %t55)
+    %t57 =w call $nox_exception_pending(l %rt)
+    jnz %t57, @exc_propagate2, @exc_continue3
+@exc_propagate2
+    %t58 =l loadl %t3
+    call $nox_channel_destroy(l %rt, l %t58)
+    storel 0, %t3
+    %t59 =l loadl %t5
+    call $nox_async_destroy_task(l %rt, l %t59)
+    storel 0, %t5
+    %t60 =l loadl %t0
+    call $nox_tasklocal_destroy(l %rt, l %t60)
+    storel 0, %t0
+    %t61 =l loadl %t6
+    call $nox_async_destroy_task(l %rt, l %t61)
+    storel 0, %t6
+    %t62 =l loadl %t1
+    call $nox_channel_destroy(l %rt, l %t62)
+    storel 0, %t1
+    %t63 =l loadl %t4
+    call $nox_channel_destroy(l %rt, l %t63)
+    storel 0, %t4
+    %t64 =l loadl %t2
+    call $nox_channel_destroy(l %rt, l %t64)
+    storel 0, %t2
+    ret
+@exc_continue3
+    %t65 =l loadl %t3
+    call $nox_channel_destroy(l %rt, l %t65)
+    storel 0, %t3
+    %t66 =l loadl %t5
+    call $nox_async_destroy_task(l %rt, l %t66)
+    storel 0, %t5
+    %t67 =l loadl %t0
+    call $nox_tasklocal_destroy(l %rt, l %t67)
+    storel 0, %t0
+    %t68 =l loadl %t6
+    call $nox_async_destroy_task(l %rt, l %t68)
+    storel 0, %t6
+    %t69 =l loadl %t1
+    call $nox_channel_destroy(l %rt, l %t69)
+    storel 0, %t1
+    %t70 =l loadl %t4
+    call $nox_channel_destroy(l %rt, l %t70)
+    storel 0, %t4
+    %t71 =l loadl %t2
+    call $nox_channel_destroy(l %rt, l %t71)
+    storel 0, %t2
+@fn_end4
     ret
 }
 export function l $main_body(l %argp) {
@@ -1643,11 +1695,17 @@ export function l $main_body(l %argp) {
     storel %t2, %t0
     %t4 =l loadl %t0
     %t5 =l call $nox_async_await(l %rt, l %t4)
-    %t6 =l loadl %t0
-    call $nox_async_destroy_task(l %rt, l %t6)
+    %t6 =w call $nox_exception_pending(l %rt)
+    jnz %t6, @exc_propagate0, @exc_continue1
+@exc_propagate0
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue1
+    %t7 =l loadl %t0
+    call $nox_async_destroy_task(l %rt, l %t7)
     storel 0, %t0
     call $nox_free(l %rt, l %argp, l 8)
-@fn_end0
+@fn_end2
     ret 0
 }
 export function w $main(w %argc, l %argv) {

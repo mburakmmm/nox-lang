@@ -18842,6 +18842,74 @@ Helix İçİn ayrı paketleme (tree-sitter-nox ZATEN çalışıyor, gerek YOK).
 
 ---
 
+## 3.136 Faz SC.1 — `spawn`/`await` sınırında istisna yayılımı düzeltmesi (v1.70.0)
+
+Kullanıcının 5 maddelik yol haritasının 2. maddesi ("structured
+concurrency") ele alındı. Derin araştırma (`runtime/async_rt/*.zig`,
+`compiler/codegen_qbe/async_thread.zig`, `runtime/errors/handle.zig`),
+kullanıcının ASIL istediği "Task iptali" (`.cancel()`/`CancelledError`)
+özelliğinden ÖNCE onarılması GEREKEN, GERÇEK VE bugüne kadar SESSİZCE
+var olan bir hata BULDU: `spawn` edilen bir `async def`nin gövdesinde
+YAKALANMAMIŞ bir istisna oluştuğunda, bu istisna SESSİZCE KAYBOLUYORDU
+— `await` eden taraf istisnayı ASLA görmüyordu, `try`/`except` HİÇBİR
+ZAMAN tetiklenmiyordu, `await` SADECE (çöp/varsayılan) bir değer
+döndürüyordu (`compiler/codegen_qbe/async_thread.zig`nin `genSpawnWrapper`ı
+BUNU KENDİ yorum notunda AÇIKÇA belgeliyordu: "Bilinçli v0.1 sınırlaması...
+BURADA denetlenmez/temizlenmez").
+
+**Neden BU, "Task iptali"nin ÖNKOŞULU**: kullanıcının istediği `.cancel()`/
+`CancelledError` mekanizması, çalışan bir task'ın İçİNE bir istisna
+enjekte edip `await` eden tarafın BUNU YAKALAYABİLMESİNİ GEREKTİRİR —
+bu TEMEL kanal (spawn→await istisna yayılımı) DÜZELTİLMEDEN, `.cancel()`
+İnşa EDİLSE BİLE `CancelledError` `await`e HİÇ ULAŞMAZDI.
+
+**Tasarım**: `runtime/async_rt/scheduler.zig`nin `Task(comptime T: type)`sine
+YENİ `exc_obj: ?*anyopaque`/`exc_line: i64` alanları eklendi. `entryTrampoline`
+(sarmalanan `async def` gövdesini çağıran fiber trambolini), `self.func(self.
+arg)` çağrısından HEMEN SONRA `self.fiber.pending_exception`i (fiber-affine
+istisna durumu, Faz MN.2) KONTROL EDER — VARSA MOVE semantiğiyle (retain/
+release YOK, TEK sahiplikli referans) `Task`in KENDİ `exc_obj`/`exc_line`
+alanlarına TAŞIR VE `Fiber`in slotunu temizler. `runtime/async_rt/bridge.zig`nin
+`nox_async_await`ı ARTIK `t.await_()` SONRASI `t.exc_obj`i kontrol edip
+VARSA (`handle.zig`nin `nox_raise`ını `extern fn` bildirimiyle — `worker_pool.
+zig`nin `nox_arena_create`/vb. İçİn ZATEN kullandığı AYNI, döngüsel-import'tan
+KAÇINAN desen — çağırarak) await eden tarafın bağlamına YENİDEN fırlatır.
+`compiler/codegen_qbe/async_thread.zig`nin `genAwaitExpr`ına, sıradan
+fonksiyon/metod/kurucu çağrılarıyla AYNI, ZATEN kanıtlanmış `emitExceptionCheck`
+zincirine bağlanan TEK bir çağrı eklendi (`exceptions.zig`, YENİ bir dispatch/
+label mantığı İCAT EDİLMEDİ — `genSpawnWrapper`nin KENDİSİNE HİÇBİR
+değişiklik GEREKMEDİ, `spec.target_fn`nin KENDİSİ ZATEN sıradan bir
+fonksiyon olarak BU zincire tabidir).
+
+**v1 bilinçli sınırı**: aynı, tamamlanmış bir `Task`ı İKİNCİ kez `await`
+etmek istisnayı BİR DAHA fırlatmaz (`exc_obj` EN FAZLA BİR KEZ tüketilir)
+— ARC'ın tek-sahiplikli referans modeliyle TUTARLI, AYNI nesneyi İKİ KEZ
+`raise` etmek GÜVENSİZ olurdu.
+
+**Doğrulama**: `tests/golden/codegen_cases/spawn_await_exception_*.nox`
+(4 YENİ fixture — bağlı `except`, bağlanmamış `except:`, main'e kadar
+yakalanmamış yayılma, ikinci-await-tekrarlamaz) GERÇEKTEN derlenip
+çalıştırılarak doğrulandı; `runtime/async_rt/scheduler.zig`nin 3 MEVCUT
+`entryTrampoline`i DOĞRUDAN çağıran birim testi, `task.fiber`i ARTIK
+GEÇERLİ (`.pending_exception` alanı başlatılmış) bir `Fiber`e işaret
+edecek şekilde güncellendi (`entryTrampoline` ARTIK BU alanı okuyor).
+`zig build test` (Debug+ReleaseFast, 10 mevcut `.ssa` IR anlık görüntüsü
+— HEPSİ `await` KULLANAN fixture'lar — BU değişiklikle beklenen şekilde
+yeniden oluşturuldu) VE `NOX_STRESS_ROUNDS=800 zig build stress-test
+-Doptimize=ReleaseFast` TEMİZ geçti.
+
+**Kapsam DIŞI (Round 2'nin/gelecekteki turların konusu)**: `Task[T].cancel()`
++ `CancelledError`nin KENDİSİ (kullanıcının ASIL istediği özellik);
+`Channel[T]`/`ThreadChannel[T]`nin `.send`/`.recv`i VE `ThreadHandle[T].
+join()` İçİn AYNI istisna-yayılım boşluğu (`genAwaitExpr`nin BU üç
+ERKEN-dönüş dalı AYRI runtime fonksiyonlarına gider, BU FAZ SADECE genel
+`Task[T]` `await`ini kapsar); QBE'nin `nox.thread.start`ı (GERÇEK,
+BAĞIMSIZ `RuntimeState`li bir OS iş parçacığı) İçİn istisna-yayılımı
+(ARC domain'leri ARASI nesne-transferi, TAMAMEN FARKLI/DAHA ZOR bir
+problem); `nox.thread.pool_run` İçİndeki İSTİSNA/İPTAL davranışı.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

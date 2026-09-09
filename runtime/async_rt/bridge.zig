@@ -44,6 +44,14 @@ const cycle_detector = @import("../alloc/cycle_detector.zig");
 const TaskI64 = scheduler_mod.Task(i64);
 const ChannelI64 = channel_mod.Channel(i64);
 
+/// Faz SC.1: `runtime/errors/handle.zig`nin `nox_raise`ı — `handle.zig`
+/// ZATEN `bridge.zig`yi import ETTİĞİNDEN (`bridge.currentFiber()` İçİn)
+/// TERS yönde bir `@import` GERÇEK bir döngüsel bağımlılık OLURDU;
+/// `worker_pool.zig`nin `nox_arena_create`/vb. İçİn ZATEN kullandığı AYNI
+/// "export edilmiş C-ABI sembolünü `extern fn` OLARAK bildir" deseni
+/// KULLANILIR (bağlayıcı SEMBOL adını çözer, HİÇBİR `@import` GEREKMEZ).
+extern fn nox_raise(rt: ?*anyopaque, obj: ?*anyopaque, line: i64) callconv(.c) void;
+
 threadlocal var g_scheduler: ?scheduler_mod.Scheduler = null;
 
 /// Stdlib fazı §D.1.3 (bkz. nox-teknik-spesifikasyon.md) — `nox.http`in
@@ -179,9 +187,25 @@ pub export fn nox_async_spawn(rt: ?*anyopaque, func: *const fn (*anyopaque) call
 /// Bir `Task`ı bekler — tamamlanmışsa sonucu hemen, değilse çağıran fiber'ı
 /// askıya alıp döner (bkz. `Task.await_`).
 pub export fn nox_async_await(rt: ?*anyopaque, task: ?*anyopaque) i64 {
-    _ = rt;
     const t: *TaskI64 = @ptrCast(@alignCast(task.?));
-    return t.await_();
+    const result = t.await_();
+    // Faz SC.1: `t.exc_obj` (bkz. `scheduler.zig`nin `entryTrampoline`ı)
+    // sarmalanan `async def` gövdesinde YAKALANMAMIŞ bir istisna VARSA
+    // dolar — `t.await_()` (yukarıda) HÂLÂ SUSPEND/RESUME'DAN HEMEN SONRA
+    // döndüğünden, ŞU AN çalışan fiber (`bridge.currentFiber()`) TAM
+    // OLARAK `await`i ÇAĞIRANIN KENDİSİDİR — `nox_raise` bu YÜZDEN
+    // istisnayı DOĞRU (çağıranın) bağlamına yazar; `compiler/codegen_qbe/
+    // async_thread.zig`nin `genAwaitExpr`ı BU çağrının HEMEN ARDINDAN
+    // `emitExceptionCheck()` çağırıp sıradan çağrılarla AYNI (try'a atla/
+    // erken dön/`nox_unhandled_exception`) zincire BAĞLAR. En fazla BİR
+    // KEZ tüketilir (`exc_obj = null`) — AYNI, tamamlanmış `Task`ı TEKRAR
+    // `await` etmek istisnayı BİR DAHA fırlatmaz (bkz. `exc_obj`in
+    // belge notu, `scheduler.zig`).
+    if (t.exc_obj) |exc| {
+        t.exc_obj = null;
+        nox_raise(rt, exc, t.exc_line);
+    }
+    return result;
 }
 
 /// Bir `Task` tutamacını yok eder (yalnızca `Task` struct'ının kendisini —

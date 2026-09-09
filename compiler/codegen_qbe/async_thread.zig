@@ -901,6 +901,14 @@ pub fn genAwaitExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
     const task_val = try self.genExpr(operand);
     const payload_t = try self.newTemp();
     try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_async_await", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = task_val.text } });
+    // Faz SC.1: `nox_async_await` (bkz. `runtime/async_rt/bridge.zig`)
+    // ARTIK sarmalanan `async def` gövdesinde YAKALANMAMIŞ bir istisna
+    // VARSA çağıranın bağlamına YENİDEN fırlatır (`nox_raise`) — sıradan
+    // fonksiyon/metod/kurucu çağrılarıyla AYNI, ZATEN kanıtlanmış zincire
+    // (`emitExceptionCheck`, bkz. `exceptions.zig`) BAĞLANIR: TRY'a atla/
+    // erken dön/`nox_unhandled_exception`. İstisna YOKSA (EZİCİ ÇOĞUNLUK)
+    // `nox_exception_pending` `0` döner, akış NORMAL devam eder.
+    try self.emitExceptionCheck();
     const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, task_val.elem_qtype);
     return valueFromElemDescriptor(converted.text, converted.qtype, task_val.elem_heap_info, task_val.elem_is_str);
 }

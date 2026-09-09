@@ -1859,6 +1859,46 @@ test "codegen(çalıştır): async — spawn + await, i64 payload, sızıntı yo
     );
 }
 
+// Faz SC.1 (bkz. plan dosyası "spawn/await sınırında istisna yayılımı
+// düzeltmesi"): `spawn` edilen bir `async def`nin gövdesinde YAKALANMAMIŞ
+// bir istisna DÜZELTMEDEN ÖNCE sessizce KAYBOLUYORDU — `await` `try`/
+// `except` HİÇBİR ZAMAN tetiklenmeden (çöp/varsayılan) bir değer
+// döndürüyordu. Bu 4 test, DÜZELTMEYİ (`runtime/async_rt/scheduler.zig`nin
+// `entryTrampoline`ı + `bridge.zig`nin `nox_async_await`ı + `compiler/
+// codegen_qbe/async_thread.zig`nin `genAwaitExpr`ına eklenen
+// `emitExceptionCheck()`) doğrular. "Mutlu yol" (istisna YOK) regresyonu
+// İçİn AYRI bir fixture EKLENMEDİ — HEMEN YUKARIDAKİ `async_spawn_await`
+// testi ZATEN bu yolu (spawn+await, istisnasız) egzersiz ediyor VE bu
+// FAZIN `genAwaitExpr` değişikliğinin `continue_label` dalını (istisna
+// YOKSA normal akış) DOĞRUDAN regresyon-test ediyor.
+test "codegen(çalıştır): Faz SC.1 — spawn edilen görevdeki YAKALANMAMIŞ istisna, bağlı except İLE await'te yakalanır" {
+    try expectGolden(
+        @embedFile("codegen_cases/spawn_await_exception_caught.nox"),
+        @embedFile("codegen_cases/spawn_await_exception_caught.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz SC.1 — aynı, BAĞLANMAMIŞ (bare) except İLE, sızıntı/double-free yok" {
+    try expectGolden(
+        @embedFile("codegen_cases/spawn_await_exception_bare_except.nox"),
+        @embedFile("codegen_cases/spawn_await_exception_bare_except.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz SC.1 — hiçbir try içinde olmayan await, yakalanmamış istisnayla (main'e kadar) net sonlanır" {
+    try expectUncaughtException(
+        @embedFile("codegen_cases/spawn_await_exception_unhandled.nox"),
+        @embedFile("codegen_cases/spawn_await_exception_unhandled.expected"),
+    );
+}
+
+test "codegen(çalıştır): Faz SC.1 — aynı Task'ı İKİNCİ kez await etmek istisnayı TEKRARLAMAZ (v1 bilinçli sınırı)" {
+    try expectGolden(
+        @embedFile("codegen_cases/spawn_await_exception_second_await_no_reraise.nox"),
+        @embedFile("codegen_cases/spawn_await_exception_second_await_no_reraise.expected"),
+    );
+}
+
 test "codegen(çalıştır): async — Channel[T] (rendezvous) iki görev arasında, sızıntı yok" {
     try expectGolden(
         @embedFile("codegen_cases/async_channel.nox"),

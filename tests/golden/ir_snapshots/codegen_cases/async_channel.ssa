@@ -1163,13 +1163,24 @@ export function $main_task(l %rt) {
     call $printf(l $fmt_int, ..., l %t16)
     %t17 =l loadl %t1
     %t18 =l call $nox_async_await(l %rt, l %t17)
-    %t19 =l loadl %t1
-    call $nox_async_destroy_task(l %rt, l %t19)
+    %t19 =w call $nox_exception_pending(l %rt)
+    jnz %t19, @exc_propagate0, @exc_continue1
+@exc_propagate0
+    %t20 =l loadl %t1
+    call $nox_async_destroy_task(l %rt, l %t20)
     storel 0, %t1
-    %t20 =l loadl %t0
-    call $nox_channel_destroy(l %rt, l %t20)
+    %t21 =l loadl %t0
+    call $nox_channel_destroy(l %rt, l %t21)
     storel 0, %t0
-@fn_end0
+    ret
+@exc_continue1
+    %t22 =l loadl %t1
+    call $nox_async_destroy_task(l %rt, l %t22)
+    storel 0, %t1
+    %t23 =l loadl %t0
+    call $nox_channel_destroy(l %rt, l %t23)
+    storel 0, %t0
+@fn_end2
     ret
 }
 export function l $main_body(l %argp) {
@@ -1186,11 +1197,17 @@ export function l $main_body(l %argp) {
     storel %t2, %t0
     %t4 =l loadl %t0
     %t5 =l call $nox_async_await(l %rt, l %t4)
-    %t6 =l loadl %t0
-    call $nox_async_destroy_task(l %rt, l %t6)
+    %t6 =w call $nox_exception_pending(l %rt)
+    jnz %t6, @exc_propagate0, @exc_continue1
+@exc_propagate0
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue1
+    %t7 =l loadl %t0
+    call $nox_async_destroy_task(l %rt, l %t7)
     storel 0, %t0
     call $nox_free(l %rt, l %argp, l 8)
-@fn_end0
+@fn_end2
     ret 0
 }
 export function w $main(w %argc, l %argv) {

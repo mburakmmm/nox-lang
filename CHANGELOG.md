@@ -14,6 +14,38 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.70.0]
+
+### Düzeltildi
+- **Faz SC.1 — `spawn`/`await` sınırında istisna yayılımı düzeltmesi**:
+  bir `spawn` edilen `async def`nin gövdesinde YAKALANMAMIŞ bir istisna
+  oluştuğunda, BUGÜNE KADAR bu istisna SESSİZCE KAYBOLUYORDU — `await`
+  eden taraf istisnayı ASLA görmüyordu, `try`/`except` HİÇBİR ZAMAN
+  tetiklenmiyordu, `await` SADECE (çöp/varsayılan) bir değer
+  döndürüyordu. Bu, `nox-teknik-spesifikasyon.md`nin ("`async def`
+  gövdesinde oluşan bir istisnanın... TAM entegrasyonu yok") AÇIKÇA
+  belgelenmiş, BİLİNEN bir eksiklikti — GERÇEK, test edilebilir bir
+  sessiz-yutma hatası olduğu bu turda netleşti VE düzeltildi.
+- `runtime/async_rt/scheduler.zig`nin `Task(T)`sine YENİ `exc_obj`/
+  `exc_line` alanları — `entryTrampoline`, sarmalanan gövde bir istisna
+  BIRAKTIYSA (`Fiber.pending_exception`) bunu BURAYA (move semantiğiyle)
+  taşır. `runtime/async_rt/bridge.zig`nin `nox_async_await`ı ARTIK bunu
+  await eden tarafın bağlamına `nox_raise` İLE YENİDEN fırlatır.
+  `compiler/codegen_qbe/async_thread.zig`nin `genAwaitExpr`ına, sıradan
+  fonksiyon/metod/kurucu çağrılarıyla AYNI, ZATEN kanıtlanmış
+  `emitExceptionCheck()` zincirine bağlanan TEK bir çağrı eklendi —
+  YENİ bir dispatch/label mantığı İCAT EDİLMEDİ.
+- Aynı, tamamlanmış bir `Task`ı İKİNCİ kez `await` etmek istisnayı BİR
+  DAHA fırlatmaz (v1 BİLİNÇLİ sınırı — ARC'ın tek-sahiplikli referans
+  modeliyle TUTARLI).
+
+### Kapsam DIŞI (Round 2'nin/gelecekteki turların konusu)
+- `Task[T].cancel()` + `CancelledError`nin KENDİSİ (kullanıcının ASIL
+  istediği özellik — BU FAZ onun ÖNKOŞULU olan istisna-yayılım kanalını
+  onardı).
+- `Channel[T]`/`ThreadChannel[T]`nin `.send`/`.recv`i VE
+  `ThreadHandle[T].join()` İçİn AYNI istisna-yayılım boşluğu.
+
 ## [1.69.0]
 
 ### Eklendi

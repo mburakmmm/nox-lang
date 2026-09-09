@@ -1,0 +1,12 @@
+async def worker() -> int:
+    raise ValueError("boom")
+
+t: Task[int] = spawn worker()
+try:
+    x: int = await t
+    print(x)
+except ValueError as e:
+    print(e.message)
+
+y: int = await t
+print(y)
