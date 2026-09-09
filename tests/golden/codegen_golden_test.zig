@@ -1940,6 +1940,51 @@ test "codegen(çalıştır): Faz SC.2 — task ZATEN tamamlandıktan SONRA t.can
     );
 }
 
+// Faz STD.1 (bkz. plan dosyası "nox.csv"): saf Nox'ta yazılmış RFC 4180
+// uyumlu CSV ayrıştırma/yazma — kullanıcının 5 maddelik yol haritasının
+// 3. maddesinin ("stdlib eksikleri") İLK alt-parçası.
+test "codegen(çalıştır): nox.csv — basit, tırnaksız satırların ayrıştırılması" {
+    try expectGolden(
+        @embedFile("codegen_cases/csv_parse_basic.nox"),
+        @embedFile("codegen_cases/csv_parse_basic.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.csv — alıntılı alanlar (virgül/kaçırılmış tırnak/gömülü satır-sonu)" {
+    try expectGolden(
+        @embedFile("codegen_cases/csv_parse_quoted.nox"),
+        @embedFile("codegen_cases/csv_parse_quoted.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.csv — CRLF satır sonları + sondaki temiz satır-sonu sahte satır ÜRETMEZ" {
+    try expectGolden(
+        @embedFile("codegen_cases/csv_parse_crlf_and_trailing_newline.nox"),
+        @embedFile("codegen_cases/csv_parse_crlf_and_trailing_newline.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.csv — parse_dicts, başlık satırından isimle erişim" {
+    try expectGolden(
+        @embedFile("codegen_cases/csv_parse_dicts.nox"),
+        @embedFile("codegen_cases/csv_parse_dicts.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.csv — write+parse bir tur, özel karakterli alanlar dahil" {
+    try expectGolden(
+        @embedFile("codegen_cases/csv_write_roundtrip.nox"),
+        @embedFile("codegen_cases/csv_write_roundtrip.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.csv — sonlandırılmamış tırnak CsvError fırlatır" {
+    try expectGolden(
+        @embedFile("codegen_cases/csv_unterminated_quote_raises.nox"),
+        @embedFile("codegen_cases/csv_unterminated_quote_raises.expected"),
+    );
+}
+
 test "codegen(çalıştır): async — Channel[T] (rendezvous) iki görev arasında, sızıntı yok" {
     try expectGolden(
         @embedFile("codegen_cases/async_channel.nox"),

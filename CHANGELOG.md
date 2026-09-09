@@ -14,6 +14,31 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.72.0]
+
+### Eklendi
+- **Faz STD.1 — `nox.csv`**: kullanıcının 5 maddelik yol haritasının 3.
+  maddesinin ("stdlib eksikleri — csv/yaml/toml/eposta/sıkıştırma/orm")
+  İLK alt-parçası. RFC 4180 uyumlu CSV ayrıştırma/yazma, SAF Nox'ta
+  yazıldı (`stdlib/nox/csv.nox`) — YENİ bir runtime ilkeli/Zig değişikliği
+  GEREKMEDİ.
+- `nox.csv.parse(text: str) -> list[list[str]]` — virgülle ayrılmış,
+  çift-tırnak İLE alıntılanabilen alanlar (alıntılı bir alan virgül/
+  tırnak/satır-sonu İÇEREBİLİR, kaçış İçİn `""`). HEM `\n` HEM `\r\n`
+  satır sonu KABUL edilir; sondaki temiz bir satır-sonu SAHTE bir ek
+  satır ÜRETMEZ.
+- `nox.csv.parse_dicts(text: str) -> list[dict[str, str]]` — İLK satırı
+  başlık olarak kullanıp isimle erişim SAĞLAR.
+- `nox.csv.write_row`/`write` — özel karakter İçEREN alanları OTOMATİK
+  tırnaklar/kaçırır.
+- `nox.csv.CsvError` — SADECE sonlandırılmamış tırnak İçİn fırlatılır.
+
+### Sıradaki alt-parçalar (AYRI Plan Mode turlarında)
+- Sıkıştırma (`nox.gzip`/`nox.zip` — Zig'in `std.compress.flate`/`std.zip`sini
+  dışa açmak), `nox.toml`, `nox.smtp` (YENİ bir ham TCP soket ilkeli
+  GEREKTİRİYOR), `nox.yaml`, ORM (`stdlib/nox/db.nox`nin `DbConnection`
+  protokolü üzerine İNŞA edilecek).
+
 ## [1.71.0]
 
 ### Eklendi

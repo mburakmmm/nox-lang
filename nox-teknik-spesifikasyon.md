@@ -18980,6 +18980,54 @@ GERÇEK OS iş parçacıkları İçİn — TAMAMEN FARKLI/DAHA ZOR bir problem).
 
 ---
 
+## 3.138 Faz STD.1 — `nox.csv` (v1.72.0)
+
+Kullanıcının 5 maddelik yol haritasının 3. maddesi ("stdlib eksikleri —
+csv/yaml/toml/eposta/sıkıştırma/orm")nin İLK turu. Bu madde 6 AYRI alt-
+parça İçeriyor — HER BİRİ KENDİ Plan Mode turunda ele alınacak. Önerilen
+sıra (basitten karmaşığa/riskliye): (1) `nox.csv` (BU FAZ, saf Nox, SIFIR
+bağımlılık), (2) sıkıştırma (`nox.gzip`/`nox.zip` — Zig'in `std.compress.
+flate`/`std.zip`si ZATEN VAR, `compiler/pkg/upgrade.zig` İÇSEL olarak
+KULLANIYOR, "dışa açmak" işi), (3) `nox.toml` (saf Nox, CSV'DEN daha
+karmaşık), (4) `nox.smtp` (YENİ bir HAM TCP soket ilkeli GEREKTİRİYOR —
+bugün `nox.net`/`nox.socket` YOK), (5) `nox.yaml` (TAM speki AŞIRI
+karmaşık, daraltılmış bir v1 alt-kümesi gerektirir), (6) ORM (EN açık
+uçlu, `stdlib/nox/db.nox`nin `DbConnection` protokolü üzerine İNŞA
+edilecek).
+
+**Tasarım**: `stdlib/nox/csv.nox` — `stdlib/nox/uuid.nox`nin AYNI "saf
+Nox, YENİ runtime ilkeli YOK" desenİ (`runtime/stdlib_shims/`de KARŞILIĞI
+YOK). Nox'ta dilim sözdizimi (`s[a:b]`) OLMADIĞINDAN VE `continue`/`break`
+anahtar kelimeleri YOK OLDUĞUNDAN (`compiler/lexer/token.zig`nin
+`keyword_table`sinden DOĞRULANDI), tek-geçişli bir durum makinesi SAF
+if/elif zinciriyle yazıldı — HER dal KENDİ `i`sini günceleyip döngü
+koşulunun DOĞAL yeniden değerlendirilmesine GÜVENİR. `parse(text: str)
+-> list[list[str]]` virgülle ayrılmış, çift-tırnak İLE alıntılanabilen
+alanları (kaçış İçİn `""`) ayrıştırır; HEM `\n` HEM `\r\n` KABUL edilir;
+sondaki temiz bir satır-sonu SAHTE bir ek satır ÜRETMEZ. `parse_dicts`
+İLK satırı başlık OLARAK kullanıp isimle erişim sağlar. `write_row`/
+`write` özel karakter İçEREN alanları OTOMATİK tırnaklar. `CsvError`
+SADECE sonlandırılmamış tırnak İçİn fırlatılır (CSV doğal olarak
+`nox.json`/`nox.regex`den DAHA hoşgörülü bir format).
+
+**YENİ bir stdlib modülü eklemek İçİn HİÇBİR merkezi kayıt GEREKMEDİĞİ
+DOĞRULANDI**: `module_loader.zig`nin `resolveImportsImpl`i `import nox.X`i
+DOĞRUDAN `{stdlib_root}/X.nox` dosya yoluna çevirir — sadece dosyayı
+YARATMAK yeterli.
+
+**Doğrulama**: `tests/golden/codegen_cases/csv_*.nox` (6 YENİ fixture —
+basit ayrıştırma, alıntılı/kaçırılmış alanlar, CRLF+sondaki-temiz-satır,
+`parse_dicts`, write+parse turu, sonlandırılmamış-tırnak hatası) HEM tam
+test paketi İÇİNDE HEM elle (`noxc build`+doğrudan çalıştırma) doğrulandı.
+`zig build test` (Debug+ReleaseFast) — `stdlib/nox/core.nox`a HİÇ
+DOKUNULMADIĞINDAN (Faz SC.2'nin AKSİNE) SADECE 6 YENİ `.ssa` oluştu,
+BAŞKA HİÇBİR anlık görüntü ETKİLENMEDİ.
+
+**Kapsam DIŞI**: özel ayraç (`;`/TAB)/BOM/streaming — v1 SADECE virgül,
+TAM metin (dosyadan okuma `nox.fs`nin İŞİ, BU modül SADECE METİN alır).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

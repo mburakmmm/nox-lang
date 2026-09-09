@@ -1,0 +1,141 @@
+# nox.csv — RFC 4180 uyumlu CSV ayrıştırma/yazma. Saf Nox'ta yazıldı
+# (yeni bir runtime ilkeli GEREKMEDİ) — Nox'ta dilim sözdizimi (`s[a:b]`)
+# olmadığından tek-geçişli, karakter-karakter bir durum makinesi
+# (`s[i]` ile) kullanılır. `continue`/`break` Nox'ta YOK — döngü gövdesi
+# SAF bir if/elif zinciri, HER dal KENDİ `i`sini günceller.
+#
+# Kapsam (BİLİNÇLİ v1): virgülle ayrılmış, çift-tırnak İLE alıntılanabilen
+# alanlar — alıntılı bir alan virgül/tırnak/satır-sonu İÇEREBİLİR, kaçış
+# İçİn `""` (iki ardışık çift tırnak = BİR tırnak karakteri). Okurken HEM
+# `\n` HEM `\r\n` satır sonu KABUL edilir, YAZARKEN SADECE `\n` üretilir.
+# Özel ayraç (`;`/TAB), BOM, dosyadan-doğrudan-okuma (bu modül METİN
+# alır, dosya AÇMAZ — bkz. `nox.fs`) kapsam DIŞI.
+
+class CsvError(Exception):
+    pass
+
+def _field_needs_quoting(field: str) -> bool:
+    i: int = 0
+    n: int = len(field)
+    while i < n:
+        c: str = field[i]
+        if c == "," or c == "\"" or c == "\n" or c == "\r":
+            return True
+        i = i + 1
+    return False
+
+def _quote_field(field: str) -> str:
+    result: str = "\""
+    i: int = 0
+    n: int = len(field)
+    while i < n:
+        c: str = field[i]
+        if c == "\"":
+            result = result + "\"\""
+        else:
+            result = result + c
+        i = i + 1
+    return result + "\""
+
+# `text`i satır/sütunlara ayırır — HER satır `list[str]`, tüm satırlar
+# `list[list[str]]`. Boş metin `[]` döner; sondaki temiz bir `\n`
+# SAHTE bir ek (boş) satır ÜRETMEZ.
+def parse(text: str) -> list[list[str]]:
+    rows: list[list[str]] = []
+    row: list[str] = []
+    field: str = ""
+    in_quotes: bool = False
+    field_started: bool = False
+    i: int = 0
+    n: int = len(text)
+    while i < n:
+        c: str = text[i]
+        if in_quotes:
+            if c == "\"":
+                if i + 1 < n and text[i + 1] == "\"":
+                    field = field + "\""
+                    i = i + 2
+                else:
+                    in_quotes = False
+                    i = i + 1
+            else:
+                field = field + c
+                i = i + 1
+        elif c == "\"":
+            in_quotes = True
+            field_started = True
+            i = i + 1
+        elif c == ",":
+            row.append(field)
+            field = ""
+            field_started = False
+            i = i + 1
+        elif c == "\r":
+            i = i + 1
+        elif c == "\n":
+            row.append(field)
+            rows.append(row)
+            row = []
+            field = ""
+            field_started = False
+            i = i + 1
+        else:
+            field = field + c
+            field_started = True
+            i = i + 1
+    if in_quotes:
+        raise CsvError("sonlandirilmamis tirnak icindeki alan")
+    if field != "" or field_started or len(row) > 0:
+        row.append(field)
+        rows.append(row)
+    return rows
+
+# İLK satırı başlık olarak kullanıp SONRAKİ HER satırı `dict[str,str]`e
+# çevirir (eksik sütunlar İçİn `""`) — pratik kullanım İçİn bir kolaylık
+# katmanı.
+def parse_dicts(text: str) -> list[dict[str, str]]:
+    rows: list[list[str]] = parse(text)
+    result: list[dict[str, str]] = []
+    if len(rows) == 0:
+        return result
+    header: list[str] = rows[0]
+    i: int = 1
+    n: int = len(rows)
+    while i < n:
+        row: list[str] = rows[i]
+        d: dict[str, str] = {}
+        j: int = 0
+        m: int = len(header)
+        while j < m:
+            if j < len(row):
+                d[header[j]] = row[j]
+            else:
+                d[header[j]] = ""
+            j = j + 1
+        result.append(d)
+        i = i + 1
+    return result
+
+def write_row(fields: list[str]) -> str:
+    result: str = ""
+    i: int = 0
+    n: int = len(fields)
+    while i < n:
+        f: str = fields[i]
+        if _field_needs_quoting(f):
+            result = result + _quote_field(f)
+        else:
+            result = result + f
+        if i < n - 1:
+            result = result + ","
+        i = i + 1
+    return result
+
+def write(rows: list[list[str]]) -> str:
+    result: str = ""
+    i: int = 0
+    n: int = len(rows)
+    while i < n:
+        result = result + write_row(rows[i]) + "\n"
+        i = i + 1
+    return result
