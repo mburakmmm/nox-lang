@@ -19158,11 +19158,85 @@ takım doğrulaması DAHİL) doğrulandı. `zig build test` (Debug+ReleaseFast,
 `-j4`) — `stdlib/nox/core.nox`a DOKUNULMADIĞINDAN SADECE 7 YENİ `.ssa`
 oluştu, GENEL IR kayması YOK.
 
-**Kapsam DIŞI**: `nox.smtp` (YENİ bir ham TCP soket ilkeli gerektirir),
+**Kapsam DIŞI**: `nox.smtp` (§3.141'İN KENDİSİ bu VARSAYIMIN — "YENİ bir
+ham TCP soket ilkeli gerektirir" — YANLIŞ olduğunu buldu, bkz. AŞAĞI),
 `nox.yaml` (daraltılmış bir v1 alt-kümesi gerektirir), ORM (`stdlib/nox/
 db.nox`nin `DbConnection`/`Row`u üzerine İnşa edilecek, EN büyük tasarım
 kararı) — kullanıcının 5 maddelik yol haritasının kalan alt-parçaları,
 AYRI Plan Mode turlarında.
+
+---
+
+## 3.141 Faz STD.4 — `nox.smtp` (v1.75.0)
+
+Kullanıcının 5 maddelik yol haritasının 3. maddesinin ("stdlib eksikleri")
+4. alt-parçası. §3.140'ın (Faz STD.3) KENDİ "Kapsam DIŞI" notu VE
+roadmap'in KENDİ ÖNCEDEN yazılmış varsayımı "nox.smtp YENİ bir ham TCP
+soket ilkeli GEREKTİRİYOR" diyordu — **bu araştırma turu BU VARSAYIMIN
+YANLIŞ olduğunu buldu**: `runtime/stdlib_shims/tls.zig`/`websocket.zig`
+(Faz NN.5, ZATEN VAR) plain-TCP connect (`std.Io.net.HostName.init(host).
+connect(...)`) + satır-tamponlu CRLF okuma (`reader().takeDelimiterInclusive(
+'\n')`) + koşullu TLS katmanlama (`websocket.zig`nin `use_tls` bayrağı
+dispatch'i) ZATEN İçEREN, DOĞRUDAN yeniden kullanılabilir bir şablon
+sağlıyordu — `nox.smtp` (`runtime/stdlib_shims/smtp.zig`, `TlsConn`+
+`WsConn`nin BİRLEŞİMİ) SIFIR yeni soket ilkeli VE SIFIR checker/codegen
+değişikliği İLE yazıldı.
+
+`stdlib/nox/smtp.nox` (SAF Nox) TÜM EHLO/AUTH LOGIN/AUTH PLAIN/MAIL FROM/
+RCPT TO/DATA (RFC 5321 §4.5.2 dot-stuffing DAHİL)/QUIT protokol mantığını
+taşır — Zig kabuğu SADECE ham bağlantı/satır-okuma/yazma/TLS-yükseltme
+İLKELLERİNİ sağlar (`tls.zig`nin BİREBİR ŞABLONU). `AUTH PLAIN`nin ham
+payload'u (`\0kullanıcı\0şifre`) İKİ GÖMÜLÜ NUL bayt İçerdiğinden Nox'un
+NUL-sonlandırmalı `str`inde İNŞA EDİLEMEZ (`sharedmem.nox`/`gzip.zig`nin
+AYNI, ÖNCEDEN belgelenmiş kısıtı) — Zig kabuğu `username`/`password`yi
+AYRI argüman OLARAK alıp payload'u KENDİ `[]u8` dilimi İçİNDE İNŞA edip
+SADECE base64-KODLANMIŞ (NUL-SUZ) sonucu döner.
+
+**STARTTLS** (mevcut düz-metin bağlantıyı SONRADAN TLS'e yükseltme, bu
+fazın EN YENİ/EN RİSKLİ parçası): `std.crypto.tls.Client.init` GENEL
+reader/writer arayüz işaretçileri aldığından, ÇAĞRILMA ANI/ÖNCESİNDE KAÇ
+bayt düz-metin AKTIĞI ÖNEMSİZDİR — `nox_smtp_starttls_raw`, `.nox`
+tarafının `STARTTLS` komutunu GÖNDERİP "220" yanıtını OKUDUKTAN SONRA
+ÇAĞIRDIĞI, `upgradeToTls`i (`tls.zig`/`websocket.zig`nin AYNI ÇAĞRISI,
+SADECE ERTELENMİŞ) çalıştırır.
+
+**Doğrulama** (`nox.tls`/`nox.websocket`nin AYNI, ZATEN kanıtlanmış
+konvansiyonu — CI-otomatik test SADECE `connect("127.0.0.1", 1, False)`
+İçİn temiz bir `SmtpError` fırlatıldığını doğrular, GERÇEK bir uzak
+sunucuya karşı TAM el sıkışma ELLE yapılır, harici İnternet erişimine
+bağımlı OLMAMASI İçİn):
+- TAM protokol durum makinesi (EHLO/AUTH LOGIN/BİRDEN FAZLA alıcı İLE
+  MAIL FROM+RCPT TO/DATA dot-stuffing DAHİL/QUIT) YEREL, kendi-yazdığım
+  bir Python sahte SMTP sunucusuna karşı BYTE-BYTE doğrulandı (dot-
+  stuffing'in `".Bu satir nokta ile basliyor"` → tel üzerinde `"..Bu
+  satir..."` OLARAK GÖNDERİLDİĞİ DOĞRULANDI). AUTH PLAIN'in NUL-ayraçlı
+  payload'u da (`decoded: b'\x00dave\x00p@ss'`) AYRICA doğrulandı.
+- **STARTTLS'in KENDİ mekanizması** YEREL, kendinden-imzalı bir sertifika
+  İLE test edildi — hata `TlsCertificateNotVerified` (bir SERTİFİKA-
+  GÜVEN hatası, `TlsUnexpectedMessage`-tarzı bir PROTOKOL karışıklığı
+  DEĞİL) İLE sonuçlandı — bu, el sıkışmanın DOĞRU sırayla başlayıp
+  sertifika-doğrulama aşamasına KADAR ULAŞTIĞININ (yani ERTELEME
+  mekanizmasının KENDİSİNİN doğru çalıştığının) kanıtıdır.
+
+**Bulundu (`nox.tls`ye AİT, ÖNCEDEN VAR OLAN bir sınırlama — BU fazın
+kendi hatası DEĞİL, AYRI bir takip görevi olarak flaglendi)**:
+`smtp.gmail.com:465` (ANINDAN TLS) VE `smtp.gmail.com:587`/`smtp.office365.
+com:587` (STARTTLS) — ÜÇÜ de `nox.tls`nin PAYLAŞTIĞI `std.crypto.tls.
+Client`la `TlsUnexpectedMessage` İLE BAŞARISIZ oluyor — AYNI ZAMANDA
+`www.google.com:443`/`example.com:443` (SIRADAN HTTPS) `nox.tls` İLE
+SORUNSUZ çalışıyor. Bu, SORUNUN `nox.smtp`nin STARTTLS-ERTELEME
+mantığında DEĞİL, `nox.tls`nin ZATEN paylaştığı, Zig'in `std.crypto.tls.
+Client`ında (muhtemelen mail sunucularının GÖNDERDİĞİ, isteğe bağlı bir
+`CertificateRequest` mesajını TLS 1.3 durum makinesinin `HandshakeState`
+enum'unun TANIMAMASI — `hello`/`encrypted_extensions`/`certificate`/
+`trust_chain_established`/`server_hello_done`/`finished` durumları
+ARASINDA BÖYLE bir mesaj İçİn AYRI bir durum YOK) OLDUĞUNU gösteriyor.
+
+**Kapsam DIŞI**: `HELO` geri-düşüşü (v1 SADECE `EHLO`), `AUTH CRAM-MD5`/
+`AUTH XOAUTH2`, MIME çok-parçalı gövde/`Date` başlığı (Nox'ta henüz bir
+`nox.datetime` YOK), bağlantı zaman-aşımı (`nox.tls`/`nox.websocket`nin
+AYNI v1 sınırı), SMTP SUNUCUSU (SADECE İSTEMCİ). `nox.yaml`/ORM —
+roadmap'in kalan 2 alt-parçası, AYRI Plan Mode turlarında.
 
 ---
 

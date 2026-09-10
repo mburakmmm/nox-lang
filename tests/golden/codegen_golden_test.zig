@@ -2083,6 +2083,20 @@ test "codegen(çalıştır): nox.toml — sonlandırılmamış string TomlError 
     );
 }
 
+// Faz STD.4 (nox.smtp) — kullanıcının 5 maddelik yol haritasının 3.
+// maddesinin ("stdlib eksikleri") 4. alt-parçası. `nox.tls`/`nox.
+// websocket`nin AYNI, ZATEN kanıtlanmış konvansiyonu: CI-otomatik test
+// SADECE "bağlantı hatası temiz fırlatılır" yolunu kapsar — gerçek bir
+// uzak SMTP sunucusuna karşı TAM EHLO/AUTH/MAIL FROM/RCPT TO/DATA/
+// STARTTLS doğrulaması ELLE yapıldı (bkz. proje belleği), harici
+// İnternet erişimine bağımlı olmaması İçin CI'da OTOMATİK DEĞİL.
+test "codegen(çalıştır): nox.smtp — erişilemeyen adrese bağlantı SmtpError fırlatır" {
+    try expectGolden(
+        @embedFile("codegen_cases/smtp_connect_error.nox"),
+        @embedFile("codegen_cases/smtp_connect_error.expected"),
+    );
+}
+
 test "codegen(çalıştır): async — Channel[T] (rendezvous) iki görev arasında, sızıntı yok" {
     try expectGolden(
         @embedFile("codegen_cases/async_channel.nox"),

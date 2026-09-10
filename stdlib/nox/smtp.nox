@@ -1,0 +1,208 @@
+# nox.smtp — Faz STD.4 (bkz. plan dosyası "nox.smtp"): SMTP istemcisi.
+# Ham bağlantı/satır-okuma/yazma/TLS-yükseltme `runtime/stdlib_shims/
+# smtp.zig`dedir (nox.tls/nox.websocket'in AYNI "plain-TCP connect +
+# satır-tamponlu CRLF okuma + koşullu TLS katmanlama" şablonu) — TÜM
+# EHLO/AUTH/MAIL FROM/RCPT TO/DATA protokol mantığı BURADA, saf Nox'ta.
+#
+# **Bilinçli v1 kapsamı**: SADECE İSTEMCİ, SADECE EHLO (HELO geri-düşüşü
+# YOK), SADECE `AUTH LOGIN`/`AUTH PLAIN`, SADECE düz-metin gövde (MIME
+# çok-parçalı/ek dosya YOK, `Date` başlığı YOK — Nox'ta henüz bir
+# `nox.datetime` modülü YOK).
+#
+# **Senkron/bloklayan**: `nox.tls`/`nox.websocket`in AYNI v1
+# basitleştirmesi — tüm metodlar ÇAĞIRAN iş parçacığını DOĞRUDAN BLOKLAR.
+
+extern def nox_smtp_connect_raw(host: str, port: int, use_tls: int) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_smtp_ok_raw(handle: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_smtp_errmsg_raw(handle: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_smtp_write_raw(handle: ptr, data: str, len: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_smtp_read_line_raw(handle: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_smtp_starttls_raw(handle: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_smtp_base64_encode_raw(s: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_smtp_base64_auth_plain_raw(username: str, password: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_smtp_close_raw(handle: ptr) -> None from "zig-out/lib/noxrt.o"
+extern def nox_smtp_is_null_ptr(p: ptr) -> int from "zig-out/lib/noxrt.o"
+
+class SmtpError(Exception):
+    pass
+
+def _starts_with_dot(line: str) -> bool:
+    if len(line) == 0:
+        return False
+    return line[0] == "."
+
+def _join_addrs(addrs: list[str]) -> str:
+    result: str = ""
+    i: int = 0
+    while i < len(addrs):
+        if i > 0:
+            result = result + ", "
+        result = result + addrs[i]
+        i = i + 1
+    return result
+
+class SmtpClient:
+    def __init__(self: SmtpClient, handle: ptr) -> None:
+        self.handle = handle
+
+    def _send_line(self: SmtpClient, line: str) -> None:
+        full: str = line + "\r\n"
+        n: int = nox_smtp_write_raw(self.handle, full, len(full))
+        if n < 0:
+            raise SmtpError("yazma basarisiz: " + nox_smtp_errmsg_raw(self.handle))
+
+    def _read_line(self: SmtpClient) -> str:
+        line: str = nox_smtp_read_line_raw(self.handle)
+        if line == "":
+            raise SmtpError("okuma basarisiz: " + nox_smtp_errmsg_raw(self.handle))
+        return line
+
+    # Tek VEYA çok-satırlı bir yanıtı okur, SON satırın 3 haneli kodunu
+    # int olarak döner ("250-..." devam satırı, "250 ..." SON satır —
+    # RFC 5321 §4.2.1). Bounds-kontrolü İLE indeksleme HER ZAMAN AYRI
+    # if/else dallarında tutulur (Nox'ta `and`/`or` KISA-DEVRE YAPMAZ —
+    # bkz. nox.toml'un AYNI güvenlik disiplini).
+    def _read_response(self: SmtpClient) -> int:
+        done: bool = False
+        code: int = 0
+        while not done:
+            line: str = self._read_line()
+            if len(line) < 3:
+                raise SmtpError("gecersiz SMTP yaniti: " + line)
+            code = int(line[0] + line[1] + line[2])
+            if len(line) >= 4:
+                if line[3] == "-":
+                    done = False
+                else:
+                    done = True
+            else:
+                done = True
+        return code
+
+    def _expect(self: SmtpClient, wanted: int) -> None:
+        code: int = self._read_response()
+        if code != wanted:
+            raise SmtpError("beklenmeyen SMTP kodu: " + str(code) + " (beklenen: " + str(wanted) + ")")
+
+    def ehlo(self: SmtpClient, domain: str) -> None:
+        self._send_line("EHLO " + domain)
+        self._expect(250)
+
+    # MEVCUT (önceden düz-metin olarak bağlanmış) bağlantıyı TLS'e
+    # yükseltir — RFC 3207: `STARTTLS` komutu GÖNDERİLİP "220" yanıtı
+    # OKUNDUKTAN SONRA TLS el sıkışması BAŞLAR.
+    def starttls(self: SmtpClient) -> None:
+        self._send_line("STARTTLS")
+        self._expect(220)
+        if nox_smtp_starttls_raw(self.handle) == 0:
+            raise SmtpError("TLS yukseltme basarisiz: " + nox_smtp_errmsg_raw(self.handle))
+
+    def auth_login(self: SmtpClient, username: str, password: str) -> None:
+        self._send_line("AUTH LOGIN")
+        self._expect(334)
+        self._send_line(nox_smtp_base64_encode_raw(username))
+        self._expect(334)
+        self._send_line(nox_smtp_base64_encode_raw(password))
+        self._expect(235)
+
+    def auth_plain(self: SmtpClient, username: str, password: str) -> None:
+        payload_b64: str = nox_smtp_base64_auth_plain_raw(username, password)
+        self._send_line("AUTH PLAIN " + payload_b64)
+        self._expect(235)
+
+    # `text`i RFC 5321 §4.5.2 dot-stuffing İLE (satır başında "." olan
+    # satırlara EK bir "." eklenir) VE CRLF satır-sonlarıyla gönderir —
+    # gömülü "\r" baytları ATLANIR (KENDİ "\r\n"imiz `_send_line` ZATEN
+    # ekliyor), bu YÜZDEN gerek bare "\n" gerek ONCEDEN "\r\n" İçEREN
+    # girdi AYNI ŞEKİLDE DOĞRU işlenir.
+    def _send_dot_stuffed(self: SmtpClient, text: str) -> None:
+        line: str = ""
+        i: int = 0
+        n: int = len(text)
+        while i < n:
+            c: str = text[i]
+            if c == "\r":
+                pass
+            elif c == "\n":
+                if _starts_with_dot(line):
+                    self._send_line("." + line)
+                else:
+                    self._send_line(line)
+                line = ""
+            else:
+                line = line + c
+            i = i + 1
+        if line != "":
+            if _starts_with_dot(line):
+                self._send_line("." + line)
+            else:
+                self._send_line(line)
+
+    # `from_addr`ten `to_addrs`in HER BİRİNE, `subject`/`body` İLE basit
+    # bir düz-metin e-posta gönderir (`From`/`To`/`Subject` başlıkları —
+    # `Date` DAHİL DEĞİL, Nox'ta henüz bir nox.datetime YOK).
+    def send(self: SmtpClient, from_addr: str, to_addrs: list[str], subject: str, body: str) -> None:
+        self._send_line("MAIL FROM:<" + from_addr + ">")
+        self._expect(250)
+        i: int = 0
+        while i < len(to_addrs):
+            self._send_line("RCPT TO:<" + to_addrs[i] + ">")
+            self._expect(250)
+            i = i + 1
+        self._send_line("DATA")
+        self._expect(354)
+        headers: str = "From: " + from_addr + "\r\nTo: " + _join_addrs(to_addrs) + "\r\nSubject: " + subject + "\r\n\r\n"
+        self._send_dot_stuffed(headers + body)
+        self._send_line(".")
+        self._expect(250)
+
+    def quit(self: SmtpClient) -> None:
+        self._send_line("QUIT")
+        # Sunucunun "221" yanıtı beklenir AMA göz ardı etmek güvenlidir —
+        # bağlantı zaten kapatılacak.
+        try:
+            self._read_response()
+        except SmtpError as e:
+            pass
+
+    def close(self: SmtpClient) -> None:
+        nox_smtp_close_raw(self.handle)
+
+# `host`e bağlanır; `use_tls=True` ise bağlantı ANINDA TLS (SMTPS, port
+# 465 tipik); `use_tls=False` ise düz-metin (port 25/587, SONRADAN
+# `.starttls()` ile yükseltilebilir). Bağlandıktan HEMEN SONRA sunucunun
+# kendiliğinden gönderdiği "220 ..." karşılama banner'ini OKUR/DOĞRULAR.
+def connect(host: str, port: int, use_tls: bool) -> SmtpClient:
+    use_tls_int: int = 0
+    if use_tls:
+        use_tls_int = 1
+    handle: ptr = nox_smtp_connect_raw(host, port, use_tls_int)
+    if nox_smtp_is_null_ptr(handle) != 0:
+        raise SmtpError("bellek yetersiz")
+    if nox_smtp_ok_raw(handle) == 0:
+        msg: str = nox_smtp_errmsg_raw(handle)
+        nox_smtp_close_raw(handle)
+        raise SmtpError("baglanti basarisiz: " + msg)
+    client: SmtpClient = SmtpClient(handle)
+    code: int = client._read_response()
+    if code != 220:
+        client.close()
+        raise SmtpError("karsilama banner'i gecersiz, kod: " + str(code))
+    return client
+
+# Tek bir e-postayı baştan sona gönderen kolaylık fonksiyonu — connect →
+# ehlo → (starttls) → (auth_login) → send → quit → close. `username`
+# boş ("") ise kimlik doğrulama ATLANIR. Daha karmaşık senaryolar
+# (AUTH PLAIN, çoklu-mesaj oturumu, vb.) `SmtpClient`i DOĞRUDAN
+# KULLANMALIDIR.
+def send_mail(host: str, port: int, use_tls: bool, use_starttls: bool, ehlo_domain: str, username: str, password: str, from_addr: str, to_addrs: list[str], subject: str, body: str) -> None:
+    client: SmtpClient = connect(host, port, use_tls)
+    client.ehlo(ehlo_domain)
+    if use_starttls:
+        client.starttls()
+        client.ehlo(ehlo_domain)
+    if username != "":
+        client.auth_login(username, password)
+    client.send(from_addr, to_addrs, subject, body)
+    client.quit()
+    client.close()

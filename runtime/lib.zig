@@ -51,6 +51,7 @@ pub const websocket_shim = @import("stdlib_shims/websocket.zig");
 pub const websocket_server_shim = @import("stdlib_shims/websocket_server.zig");
 pub const shared_mem_shim = @import("stdlib_shims/shared_mem.zig");
 pub const gzip_shim = @import("stdlib_shims/gzip.zig");
+pub const smtp_shim = @import("stdlib_shims/smtp.zig");
 
 // Bu modüllerin yalnızca isim üzerinden yeniden dışa aktarılması, Zig'in
 // tembel (lazy) analiz modelinde `export fn` bildirimlerinin nesne çıktısına
@@ -96,4 +97,5 @@ comptime {
     _ = websocket_server_shim;
     _ = shared_mem_shim;
     _ = gzip_shim;
+    _ = smtp_shim;
 }

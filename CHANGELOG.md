@@ -14,6 +14,64 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.75.0]
+
+### Eklendi
+- **Faz STD.4 — `nox.smtp`**: kullanıcının 5 maddelik yol haritasının 3.
+  maddesinin ("stdlib eksikleri") 4. alt-parçası. Roadmap'in KENDİ
+  ÖNCEDEN yazılmış notu "YENİ bir ham TCP soket ilkeli GEREKTİRİYOR"
+  diyordu — bu VARSAYIM YANLIŞTI: `nox.tls`/`nox.websocket` (Faz NN.5,
+  ZATEN VAR) plain-TCP connect + satır-tamponlu CRLF okuma + koşullu TLS
+  katmanlamayı ZATEN İçEREN bir şablon sağlıyordu — `nox.smtp` SIFIR
+  yeni soket ilkeli VE SIFIR checker/codegen değişikliği İLE yazıldı.
+- `nox.smtp.connect(host, port, use_tls) -> SmtpClient` — `use_tls=True`
+  ANINDAN TLS (SMTPS), `use_tls=False` düz-metin (SONRADAN `.starttls()`
+  İLE yükseltilebilir). Bağlandıktan HEMEN SONRA "220" karşılama
+  banner'ini OKUR/DOĞRULAR.
+- `SmtpClient.ehlo`/`.starttls`/`.auth_login`/`.auth_plain`/`.send`
+  (BİRDEN FAZLA alıcı + RFC 5321 §4.5.2 dot-stuffing DAHİL)/`.quit`/
+  `.close` — TÜM EHLO/AUTH/MAIL FROM/RCPT TO/DATA protokol mantığı SAF
+  Nox'ta (`stdlib/nox/smtp.nox`), Zig kabuğu (`runtime/stdlib_shims/
+  smtp.zig`) SADECE ham bağlantı/satır-okuma/yazma/TLS-yükseltme sağlar.
+- `nox.smtp.send_mail(...)` — TEK bir e-postayı connect→ehlo→(starttls)→
+  (auth)→send→quit→close İLE baştan sona gönderen kolaylık fonksiyonu.
+- `SmtpError` — bağlantı/yazma/okuma/protokol hatalarında fırlatılır.
+- **AUTH PLAIN'in NUL-güvenlik çözümü**: ham payload'u (`\0kullanıcı\0şifre`)
+  İKİ GÖMÜLÜ NUL bayt İçerdiğinden Nox'un NUL-sonlandırmalı `str`inde HİÇ
+  İNŞA EDİLEMEZ (`sharedmem.nox`/`gzip.zig`'in AYNI kısıtı) — Zig kabuğu
+  `username`/`password`yi AYRI argüman olarak alıp payload'u KENDİ `[]u8`
+  dilimi İçİNDE inşa edip SADECE base64-KODLANMIŞ (NUL-SUZ) sonucu döner.
+
+### Doğrulandı, ELLE (harici İnternet erişimine bağımlı olmaması İçin
+### CI'da OTOMATİK DEĞİL — `nox.tls`/`nox.websocket`nin AYNI konvansiyonu)
+- TAM protokol durum makinesi (EHLO, AUTH LOGIN, BİRDEN FAZLA alıcı İLE
+  MAIL FROM/RCPT TO, DATA — dot-stuffing DAHİL, doğru şekilde ".."ye
+  çevrilen bir "." satırıyla — QUIT) YEREL bir sahte SMTP sunucusuna
+  (kendi yazdığım bir Python soket script'i) karşı byte-byte doğrulandı.
+  AUTH PLAIN'in NUL-ayraçlı payload'u da AYRICA doğrulandı (`decoded:
+  b'\x00dave\x00p@ss'`).
+- **STARTTLS'in KENDİ mekanizması** (mevcut bir düz-metin bağlantıyı
+  SONRADAN TLS'e yükseltme — bu fazın EN YENİ/EN RİSKLİ kısmı) YEREL,
+  kendinden-imzalı sertifikalı bir test sunucusuna karşı doğrulandı:
+  hata `TlsCertificateNotVerified` (bir SERTİFİKA-GÜVEN hatası, protokol
+  karışıklığı DEĞİL) İLE sonuçlandı — bu, el sıkışmanın DOĞRU sırayla
+  başlayıp sertifika-doğrulama aşamasına KADAR ULAŞTIĞININ kanıtıdır.
+
+### Bulundu (BU turda keşfedilen, `nox.tls`ye AİT, ÖNCEDEN VAR OLAN
+### bir sınırlama — `nox.smtp`nin KENDİ hatası DEĞİL)
+- **`nox.tls` (VE dolayısıyla `nox.smtp`nin STARTTLS'i), BAZI GERÇEK
+  mail-sunucusu TLS uç noktalarıyla `TlsUnexpectedMessage` İLE
+  BAŞARISIZ oluyor** — `smtp.gmail.com:465` (ANINDAN TLS) VE
+  `smtp.gmail.com:587`/`smtp.office365.com:587` (STARTTLS) İKİSİ de BU
+  hatayla BAŞARISIZ OLDU, AMA `www.google.com:443`/`example.com:443`
+  (SIRADAN HTTPS) `nox.tls` İLE SORUNSUZ ÇALIŞIYOR — bu YÜZDEN SORUN
+  `nox.smtp`nin STARTTLS-ERTELEME mantığında DEĞİL, `nox.tls`nin ZATEN
+  paylaştığı `std.crypto.tls.Client`in KENDİSİNDE (muhtemelen mail
+  sunucularının GÖNDERDİĞİ, isteğe bağlı bir `CertificateRequest`
+  mesajını Zig'in TLS 1.3 durum makinesinin TANIMAMASI — `Handshake
+  State` enum'unda BÖYLE bir durum YOK) — AYRI bir araştırma/düzeltme
+  görevi olarak flaglendi (bu turun kapsamı DIŞINDA).
+
 ## [1.74.0]
 
 ### Eklendi

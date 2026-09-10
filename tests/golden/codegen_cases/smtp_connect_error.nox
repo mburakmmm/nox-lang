@@ -1,0 +1,22 @@
+# Faz STD.4 (bkz. plan dosyası "nox.smtp"): `nox.tls`/`nox.websocket`nin
+# AYNI, ZATEN KANITLANMIŞ konvansiyonu (bkz. `tls_websocket_connect_error.
+# nox`) — ULAŞILAMAYAN bir adrese karşı `connect`in HER ZAMAN temiz bir
+# SmtpError fırlattığını (çökme YOK, sızıntı YOK) doğrular. GERÇEK bir
+# uzak SMTP sunucusuna karşı TAM el sıkışma + EHLO/AUTH/MAIL FROM/RCPT
+# TO/DATA (dot-stuffing DAHİL) round-trip doğrulaması ELLE yapıldı (bir
+# yerel sahte SMTP sunucusuna karşı) — bkz. proje belleği. STARTTLS'in
+# KENDİSİ de ELLE doğrulandı (yerel, kendinden-imzalı bir sertifikayla —
+# TLS el sıkışmasının DOĞRU sırada/DOĞRU şekilde başladığı, sertifika
+# DOĞRULAMA aşamasına kadar ulaştığı kanıtlandı); GERÇEK, genel-internet
+# SMTP STARTTLS sunucularına (Gmail/Office365) karşı test edildiğinde
+# `nox.tls`nin (bu modülün ÜZERİNE KURULDUĞU, ÖNCEDEN VAR OLAN TLS
+# istemcisinin) bazı mail-sunucusu TLS yapılandırmalarıyla (HTTPS web
+# sunucularından FARKLI olarak) bilinen bir uyumsuzluğu BULUNDU — bu
+# modülün KENDİ hatası DEĞİL (bkz. CHANGELOG'un "Bulundu" notu), CI'da
+# OTOMATİK test EDİLMEZ (harici İnternet erişimine bağımlı olmaması İçin).
+from nox.smtp import connect, SmtpError
+
+try:
+    connect("127.0.0.1", 1, False)
+except SmtpError:
+    print("SmtpError yakalandi")
