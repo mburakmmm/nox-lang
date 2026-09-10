@@ -3377,3 +3377,14 @@ test "codegen(çalıştır): GG.25.1 — 1000 seviyelik sıradan kullanıcı öz
         @embedFile("codegen_cases/gg25_user_recursion_depth_1000.expected"),
     );
 }
+
+// Bulundu: `[1, 2,]` gibi sondaki virgüllü bir liste literali (çok satırlı
+// VEYA tek satırlı) `parser.zig`nin `.l_bracket` dalında `UnexpectedToken`
+// hatasıyla çöküyordu — virgülden SONRA HER ZAMAN yeni bir `parseExpr()`
+// bekleniyordu, `]`nin kendisi kontrol edilmiyordu.
+test "codegen(çalıştır): liste literali sondaki virgülü kabul eder (çok satırlı ve tek satırlı)" {
+    try expectGolden(
+        @embedFile("codegen_cases/list_lit_trailing_comma.nox"),
+        @embedFile("codegen_cases/list_lit_trailing_comma.expected"),
+    );
+}

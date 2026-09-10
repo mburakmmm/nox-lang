@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.75.1]
+
+### Düzeltildi
+- **Liste literalinde sondaki virgül `UnexpectedToken`la reddediliyordu**:
+  `cols: list[int] = [1,\n2,\n]` gibi sondaki virgüllü bir liste literali
+  (çok satırlı ya da tek satırlık — `[1, 2,]`) `noxc build`i çökertiyordu.
+  Kök neden: `parser.zig`nin liste-literali döngüsü virgülü yuttuktan
+  SONRA `]`yi kontrol etmeden HER ZAMAN yeni bir eleman bekliyordu. Bkz.
+  `nox-teknik-spesifikasyon.md` §3.142.
+
 ## [1.75.0]
 
 ### Eklendi

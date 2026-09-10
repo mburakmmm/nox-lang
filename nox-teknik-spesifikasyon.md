@@ -265,10 +265,15 @@ runtime'ıyla birlikte ele alınacak).
   Zig runtime'ı yok); `bool` "True"/"False" olarak, `float` `%g` ile basılır
   (Python'ın tam `repr`'ı ile birebir eşleşmeyebilir — bilinen kozmetik
   sınırlama, hesaplanan değerin doğruluğunu etkilemez).
-- `and`/`or` **kısa devre yapmaz** (her iki operand da her zaman
-  değerlendirilir) — v0.1'de yan etkili bool ifadeler nadir olduğundan
-  (fonksiyon çağrıları hariç) bilinçli bir basitleştirme; ileride kısa devre
-  eklenmesi küçük/geri alınabilir bir iyileştirmedir.
+- `and`/`or` **kısa devre yapar** (standart soldan-sağa semantik): `and`ın
+  sol operandı yanlışsa, `or`ın sol operandı doğruysa sağ operand HİÇ
+  değerlendirilmez. (v0.1'de bunun tersi — her iki operandın da her zaman
+  değerlendirilmesi — "yan etkili bool ifadeler nadir" varsayımıyla bilinçli
+  bir basitleştirme olarak belgelenmişti; `pos < n and text[pos] == "X"` gibi
+  yaygın bir koruma örüntüsünde bu varsayımın YANLIŞ olduğu VE `pos >= n`
+  iken `text[pos]`in yine de değerlendirilip bir IndexError'a/NULL-işaretçi
+  çökmesine yol açtığı GERÇEK bir hatayla kanıtlandığı için kısa devre
+  eklendi.)
 
 **Bu geçişte ortaya çıkan ve giderilen bir Faz 2 eksikliği:** Codegen, QBE'nin
 her temel bloğun bir sonlandırıcıyla bitmesini şart koştuğunu ortaya çıkardı;
@@ -19237,6 +19242,44 @@ ARASINDA BÖYLE bir mesaj İçİn AYRI bir durum YOK) OLDUĞUNU gösteriyor.
 `nox.datetime` YOK), bağlantı zaman-aşımı (`nox.tls`/`nox.websocket`nin
 AYNI v1 sınırı), SMTP SUNUCUSU (SADECE İSTEMCİ). `nox.yaml`/ORM —
 roadmap'in kalan 2 alt-parçası, AYRI Plan Mode turlarında.
+
+---
+
+## 3.142 Liste literalinde sondaki virgül `UnexpectedToken`la reddediliyordu (v1.75.1)
+
+Kullanıcı raporu: `cols: list[int] = [1,\n2,\n]` gibi ÇOK satırlı, sondaki
+virgüllü bir liste literali `noxc build`de `UnexpectedToken` İLE
+ÇÖKÜYORDU (`compiler/parser/parser.zig:1123`, `parsePrimary`den). AYNI
+liste sondaki virgül OLMADAN sorunsuz derleniyordu — bu YÜZDEN hata
+çok-satırlılıktan DEĞİL, SADECE sondaki virgülden kaynaklanıyordu.
+
+**Kök neden**: `parsePrimary`nin `.l_bracket` dalı, İLK elemandan SONRA
+`while (self.match(.comma)) { try elems.append(..., try self.parseExpr()); }`
+döngüsüyle elemanları topluyordu — virgülü YUTTUKTAN SONRA HER ZAMAN YENİ
+bir `parseExpr()` çağrısı BEKLİYORDU, `]`nin KENDİSİ hiç KONTROL
+EDİLMİYORDU. Kod tabanındaki DİĞER TÜM virgülle-ayrılmış listeler
+(fonksiyon çağrısı argümanları, `def` parametreleri, `dict` literali,
+generic tip parametreleri/argümanları) AYNI deseni KULLANIYOR — sondaki
+virgül desteği hiçbirinde YOKTU, bu YÜZDEN bu ORTAK bir sınırlamaydı;
+BU tur SADECE kullanıcının bildirdiği liste-literali durumunu kapsıyor.
+
+**Düzeltme**: virgülü yuttuktan SONRA, YENİ bir eleman ayrıştırmadan
+ÖNCE `if (self.check(.r_bracket)) break;` eklendi — sondaki virgülü
+kapatan `]` ile karşılaşınca döngü sessizce sonlanır. Tek satırlık
+(`[1, 2,]`) VE çok satırlık liste literalleri AYNI kod yolundan geçtiği
+İçİn (lexer parantez İçİNDE satır-sonlarını ZATEN elediğinden) TEK bir
+değişiklik İKİSİNİ de kapsıyor.
+
+**Doğrulama**: `tests/golden/codegen_cases/list_lit_trailing_comma.nox`
+(çok satırlı + tek satırlık sondaki virgüllü liste, `len`/indeksleme İLE
+doğrulanan) YENİ golden test. Tam `zig build test` (Debug + ReleaseFast)
+TEMİZ — bu turda RASTGELE (ASLR'e BAĞLI, koddan BAĞIMSIZ) bazı QBE `phi`
+düğümü flake'leri gözlemlendi, AMA `compiler/parser/parser.zig`nin BU
+değişikliği İZOLE edilip (parser değişikliği GERİ ALINIP AYNI ağaçta)
+tekrar çalıştırıldığında bu flake'lerin BU düzeltmeden TAMAMEN BAĞIMSIZ
+olduğu (SADECE bu düzeltmenin EKLEDİĞİ yeni test, düzeltme geri
+alındığında beklenen `UnexpectedToken` İLE başarısız oluyordu, diğer
+HİÇBİR test etkilenmiyordu) doğrulandı.
 
 ---
 

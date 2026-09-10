@@ -1090,6 +1090,7 @@ pub const Parser = struct {
                 if (!self.check(.r_bracket)) {
                     try elems.append(self.allocator, try self.parseExpr());
                     while (self.match(.comma)) {
+                        if (self.check(.r_bracket)) break;
                         try elems.append(self.allocator, try self.parseExpr());
                     }
                 }
