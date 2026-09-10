@@ -27,8 +27,8 @@ test "nox.sqlite: tablo olustur + parametreli INSERT (int/float/str/NULL) + SELE
     defer gpa.free(db_path);
 
     const source = try std.fmt.allocPrint(gpa,
-        \\from nox.sqlite import open, Connection, Statement
-        \\from nox.db import Row
+        \\from nox.sqlite import open, Connection
+        \\from nox.db import Row, Statement
         \\
         \\conn: Connection = open("{s}")
         \\conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, score REAL, bio TEXT)")

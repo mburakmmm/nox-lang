@@ -887,11 +887,54 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
             }
         }
     }
+    // `and`/`or` KISA DEVRE yapar (bkz. nox-teknik-spesifikasyon.md §"Bilinen
+    // sınırlamalar" — ESKİDEN "v0.1'de bilinçli bir basitleştirme" olarak
+    // belgelenen bu davranış GERÇEK bir çökmeye yol açtığı İÇİN düzeltildi:
+    // `pos < n and text[pos] == "X"` gibi bir koruma örüntüsünde `pos >= n`
+    // İKEN `text[pos]`in HÂLÂ değerlendirilmesi bir IndexError'a, sınırın
+    // TAM ÜZERİNDE İSE bir NULL-işaretçi SIGSEGV'e yol açıyordu). Checker
+    // (`checkBinary`in `.and_, .or_` dalı) HER İKİ operandın da `.boolean`
+    // OLMASINI ZORUNLU KILAR — bu yüzden birleştirilmiş değer HER ZAMAN `.w`
+    // (0/1) olur VE `and`/`or`ın KENDİ operandları HİÇBİR ZAMAN heap-yönetimli
+    // DEĞİLDİR (retain/release GEREKMEZ) — SADECE kontrol akışı değişir.
+    // Örüntü, `calls.zig`deki `str(bool)`nin AYNI jnz+phi şablonuyla BİREBİR
+    // AYNIDIR.
     if (b.op == .and_ or b.op == .or_) {
         const l = try self.genExpr(b.left.*);
+        const rhs_label = try self.newLabel("logic_rhs");
+        const short_label = try self.newLabel("logic_short");
+        const done_label = try self.newLabel("logic_done");
+        if (b.op == .and_) {
+            try self.qbeJnz(l.text, rhs_label, short_label);
+        } else {
+            try self.qbeJnz(l.text, short_label, rhs_label);
+        }
+        try self.qbeLabel(short_label);
+        const short_value: []const u8 = if (b.op == .and_) "0" else "1";
+        // `short_label`den `qbeJmp`e KADAR HİÇBİR şey dallanmadığından
+        // (`short_value` SABİT bir literal) `self.current_label` HÂLÂ
+        // `short_label`dir — YİNE DE `self.current_label`i KULLANMAK
+        // (`short_label`i DOĞRUDAN KULLANMAK YERİNE) BURADAKİ VE aşağıdaki
+        // `rhs` dalıyla AYNI, TEK bir doğruluk İLKESİNİ (phi'nin önceli
+        // HER ZAMAN "en son yazılan etiket"tir) KORUR.
+        const short_pred = self.current_label;
+        try self.qbeJmp(done_label);
+        try self.qbeLabel(rhs_label);
         const r = try self.genExpr(b.right.*);
-        const mnemonic: []const u8 = if (b.op == .and_) "and" else "or";
-        return self.emitBin(mnemonic, l, r, .w);
+        // KRİTİK: `b.right` KEYFİ bir ifadedir — KENDİ İçİNDE BAŞKA bir
+        // `and`/`or`/istisna-kontrolü/vb. İçEREBİLİR, bu YÜZDEN `genExpr`
+        // döndüğünde "şu anki blok" ARTIK `rhs_label` OLMAYABİLİR (o alt-
+        // ifadenin KENDİ ÜRETTİĞİ EN SON etiket OLABİLİR) — `qbePhi`nin
+        // önceli OLARAK `rhs_label`i SABİT varsaymak "predecessors not
+        // matched in phi" hatasına yol açar (GERÇEK bir regresyonla
+        // KANITLANDI). `self.current_label` (bkz. `qbeLabel`in belge
+        // notu) HER ZAMAN GERÇEK, GÜNCEL bloğu taşır.
+        const rhs_pred = self.current_label;
+        try self.qbeJmp(done_label);
+        try self.qbeLabel(done_label);
+        const result_t = try self.newTemp();
+        try self.qbePhi(result_t, .w, short_pred, short_value, rhs_pred, r.text);
+        return .{ .text = result_t, .qtype = .w };
     }
 
     // Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `x != None` /

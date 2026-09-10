@@ -27,7 +27,10 @@
 #
 # Faz OO: `Row` ARTIK `nox.db`den PAYLAŞILAN — bkz. `db.nox`nin belge
 # notu (`DbConnection` protokolünün `query`yi KAPSAYABİLMESİNİN nedeni).
-from nox.db import Row
+# Faz STD.6: `Statement` de AYNI şekilde `nox.db`den PAYLAŞILAN (BİRLEŞİK,
+# fonksiyon-değeri alanlarıyla ENJEKTE EDİLEN bir sınıf) — bkz. `db.nox`nin
+# belge notu.
+from nox.db import Row, Statement
 
 extern def nox_sqlite_open_raw(path: str) -> ptr from "zig-out/lib/noxrt.o"
 extern def nox_sqlite_errmsg_raw(db: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
@@ -75,64 +78,52 @@ def _read_row(stmt: ptr) -> Row:
         i = i + 1
     return Row(values, is_null_flags, names)
 
-class Statement:
-    def __init__(self: Statement, handle: ptr, db: ptr) -> None:
-        self.handle = handle
-        self.db = db
+# Faz STD.6: `Statement` artık `nox.db`den PAYLAŞILAN, BİRLEŞİK bir sınıf
+# (bkz. `db.nox`nin belge notu) — bu ALTI fonksiyon O sınıfın `bind_int_fn`/
+# `bind_float_fn`/`bind_str_fn`/`bind_null_fn`/`execute_fn`/`query_fn`
+# alanlarına `prepare()` TARAFINDAN ENJEKTE EDİLİR (aşağıya bkz.). Gövdeler
+# ÖNCEKİ `Statement` METODLARIYLA BİREBİR AYNI — SADECE `self.handle`/
+# `self.db` → `stmt.handle`/`stmt.db_handle` OLARAK yeniden adlandırıldı.
+#
+# Bulundu (GERÇEK bir hata, test sırasında YAKALANDI): SQLite'ın KENDİ
+# `sqlite3_bind_*` API'si parametreleri 1-TABANLI indeksler (`?`nin İLKİ
+# indeks 1'dir, 0 DEĞİL) — ama Nox'un GERİ KALANI (list/str indeksleme)
+# HER YERDE 0-tabanlıdır. Nox kullanıcılarının BEKLEYECEĞİ 0-tabanlı
+# sözleşmeyi KORUMAK İçin burada +1 uygulanır — aksi halde `bind_int(0,
+# ...)` SQLite'ın KENDİSİNDE geçersiz bir indekse (0) denk gelip SESSİZCE
+# hiçbir şeyi BAĞLAMAZ (parametre bağlanmamış kalır, NULL olarak davranır).
+def _sqlite_bind_int(stmt: Statement, idx: int, value: int) -> None:
+    nox_sqlite_bind_int_raw(stmt.handle, idx + 1, value)
 
-    # Bulundu (GERÇEK bir hata, test sırasında YAKALANDI): SQLite'ın KENDİ
-    # `sqlite3_bind_*` API'si parametreleri 1-TABANLI indeksler (`?`nin
-    # İLKİ indeks 1'dir, 0 DEĞİL) — ama Nox'un GERİ KALANI (list/str
-    # indeksleme) HER YERDE 0-tabanlıdır. Nox kullanıcılarının BEKLEYECEĞİ
-    # 0-tabanlı sözleşmeyi KORUMAK İçin burada +1 uygulanır — aksi halde
-    # `bind_int(0, ...)` SQLite'ın KENDİSİNDE geçersiz bir indekse (0)
-    # denk gelip SESSİZCE hiçbir şeyi BAĞLAMAZ (parametre bağlanmamış
-    # kalır, NULL olarak davranır).
-    def bind_int(self: Statement, idx: int, value: int) -> None:
-        nox_sqlite_bind_int_raw(self.handle, idx + 1, value)
+def _sqlite_bind_float(stmt: Statement, idx: int, value: float) -> None:
+    nox_sqlite_bind_double_raw(stmt.handle, idx + 1, value)
 
-    def bind_float(self: Statement, idx: int, value: float) -> None:
-        nox_sqlite_bind_double_raw(self.handle, idx + 1, value)
+def _sqlite_bind_str(stmt: Statement, idx: int, value: str) -> None:
+    nox_sqlite_bind_text_raw(stmt.handle, idx + 1, value)
 
-    def bind_str(self: Statement, idx: int, value: str) -> None:
-        nox_sqlite_bind_text_raw(self.handle, idx + 1, value)
+def _sqlite_bind_null(stmt: Statement, idx: int) -> None:
+    nox_sqlite_bind_null_raw(stmt.handle, idx + 1)
 
-    def bind_null(self: Statement, idx: int) -> None:
-        nox_sqlite_bind_null_raw(self.handle, idx + 1)
+# Parametreleri bağladıktan SONRA parametresiz bir deyimi (INSERT/UPDATE/
+# DELETE/DDL) sonuna kadar çalıştırır, ardından finalize eder — `http.nox`nin
+# "free-before-return" disipliniyle AYNI, `Statement` TEK KULLANIMLIKTIR.
+def _sqlite_execute(stmt: Statement) -> int:
+    rc: int = nox_sqlite_step_raw(stmt.handle)
+    nox_sqlite_finalize_raw(stmt.handle)
+    if rc != 101:
+        raise SqliteError("adim basarisiz: " + nox_sqlite_errmsg_raw(stmt.db_handle))
+    return nox_sqlite_changes_raw(stmt.db_handle)
 
-    # Parametreleri bağladıktan SONRA parametresiz bir deyimi (INSERT/
-    # UPDATE/DELETE/DDL) sonuna kadar çalıştırır, ardından finalize eder —
-    # `http.nox`nin "free-before-return" disipliniyle AYNI, `Statement`
-    # TEK KULLANIMLIKTIR.
-    #
-    # Bulundu (kullanıcının `nyx` framework'ünde farkedilen bir Nox
-    # eksikliği): ÖNCEDEN `None` dönüyordu, `nox.postgres`/`nox.mysql`nin
-    # `execute`i İSE (SIFIRDAN, aynı ismi PAYLAŞTIKLARI HALDE) etkilenen
-    # satır sayısını (`int`) döndürüyordu — bu tutarsızlık, `nox.db`nin
-    # `DbConnection` protokolüne `execute`i EKLEMEYİ engelliyordu (protokol
-    # eşleştirmesi dönüş tipini TAM eşleştirir). `nox_sqlite_changes_raw`
-    # (ZATEN `Connection.changes()`in kullandığı AYNI birincil işlem, bkz.
-    # `sqlite3_changes()`) BURADA da çağrılıp SONUÇ döndürülerek üç
-    # sürücü ARASINDA tutarlı hale getirildi — `self.db` (bağlantı
-    # tanıtıcısı) `Statement`nin KENDİSİNDE ZATEN saklı olduğundan EK bir
-    # parametre GEREKMEDİ.
-    def execute(self: Statement) -> int:
-        rc: int = nox_sqlite_step_raw(self.handle)
-        nox_sqlite_finalize_raw(self.handle)
-        if rc != 101:
-            raise SqliteError("adim basarisiz: " + nox_sqlite_errmsg_raw(self.db))
-        return nox_sqlite_changes_raw(self.db)
-
-    def query(self: Statement) -> list[Row]:
-        rows: list[Row] = []
-        rc: int = nox_sqlite_step_raw(self.handle)
-        while rc == 100:
-            rows.append(_read_row(self.handle))
-            rc = nox_sqlite_step_raw(self.handle)
-        nox_sqlite_finalize_raw(self.handle)
-        if rc != 101:
-            raise SqliteError("sorgu basarisiz: " + nox_sqlite_errmsg_raw(self.db))
-        return rows
+def _sqlite_query(stmt: Statement) -> list[Row]:
+    rows: list[Row] = []
+    rc: int = nox_sqlite_step_raw(stmt.handle)
+    while rc == 100:
+        rows.append(_read_row(stmt.handle))
+        rc = nox_sqlite_step_raw(stmt.handle)
+    nox_sqlite_finalize_raw(stmt.handle)
+    if rc != 101:
+        raise SqliteError("sorgu basarisiz: " + nox_sqlite_errmsg_raw(stmt.db_handle))
+    return rows
 
 class Connection:
     def __init__(self: Connection, handle: ptr) -> None:
@@ -142,7 +133,7 @@ class Connection:
         stmt: ptr = nox_sqlite_prepare_raw(self.handle, sql)
         if nox_sqlite_is_null_ptr(stmt) != 0:
             raise SqliteError("hazirlama basarisiz: " + nox_sqlite_errmsg_raw(self.handle))
-        return Statement(stmt, self.handle)
+        return Statement(stmt, self.handle, sql, _sqlite_bind_int, _sqlite_bind_float, _sqlite_bind_str, _sqlite_bind_null, _sqlite_execute, _sqlite_query)
 
     def execute(self: Connection, sql: str) -> int:
         return self.prepare(sql).execute()

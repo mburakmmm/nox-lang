@@ -5335,13 +5335,35 @@ pub const Checker = struct {
                 }
             },
             .generic => |g| {
-                if (!std.mem.eql(u8, g.name, "list") or g.args.len != 1) {
-                    return self.fail(error.UnknownType, "bilinmeyen generic tip: {s}", .{g.name});
+                if (std.mem.eql(u8, g.name, "list") and g.args.len == 1) {
+                    switch (actual) {
+                        .list => |elem| try self.unifyTypeExpr(g.args[0], elem.*, type_params, bindings, fn_name),
+                        else => return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{fn_name}),
+                    }
+                    return;
                 }
-                switch (actual) {
-                    .list => |elem| try self.unifyTypeExpr(g.args[0], elem.*, type_params, bindings, fn_name),
-                    else => return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{fn_name}),
+                // v1.76.0 (bkz. proje belleği "nox.orm" görevi): protokol-
+                // tipli bir parametreye (ör. `conn: DbConnection`) SAHİP
+                // OLDUĞU İçİn ÖRTÜK olarak generic sayılan bir fonksiyonun
+                // (`registerFunc`in `computeEffectiveTypeParams`i) BAŞKA
+                // bir parametresi `dict[K, V]` İSE, `unifyTypeExpr` BUNU
+                // ÖNCEDEN HİÇ TANIMIYORDU (SADECE "list" destekleniyordu) —
+                // `K`/`V`nin İKİSİ de (dict'in v1 kısıtı GEREĞİ) HER ZAMAN
+                // SOMUT tipler OLDUĞUNDAN (tip parametresi OLAMAZLAR,
+                // `dict`in KENDİ tanımı K/V'yi int/bool/str/float/class İLE
+                // SINIRLAR) burada SADECE `actual`ın bir `.dict` OLDUĞUNU VE
+                // K/V'nin BEKLENENLE eşleştiğini doğrulamak YETERLİDİR.
+                if (std.mem.eql(u8, g.name, "dict") and g.args.len == 2) {
+                    switch (actual) {
+                        .dict => |d| {
+                            try self.unifyTypeExpr(g.args[0], d.key.*, type_params, bindings, fn_name);
+                            try self.unifyTypeExpr(g.args[1], d.value.*, type_params, bindings, fn_name);
+                        },
+                        else => return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{fn_name}),
+                    }
+                    return;
                 }
+                return self.fail(error.UnknownType, "bilinmeyen generic tip: {s}", .{g.name});
             },
             // Faz U.4.1: generic fonksiyonlarda fonksiyon-tipi parametreler
             // v1 kapsamı DIŞI (closure'lar generics'in monomorphization
@@ -5730,7 +5752,25 @@ pub const Checker = struct {
         var bindings: std.StringHashMapUnmanaged(Type) = .{};
         defer bindings.deinit(self.allocator);
         for (gfd.params, c.args) |p, arg| {
-            const at = try self.checkExpr(ctx, arg);
+            // v1.76.0 (bkz. proje belleği "nox.orm" görevi): `checkExpr`
+            // TEK BAŞINA BOŞ `[]`/`{}` literallerinin tipini ASLA çıkaramaz
+            // (bkz. `checkExprExpected`in belge notu) — bir fonksiyon SADECE
+            // protokol-tipli bir parametresi (`conn: DbConnection`) OLDUĞU
+            // İçİn ÖRTÜK generic sayılıyorsa (`nox.orm`nin TÜM CRUD
+            // fonksiyonları GİBİ) BAŞKA bir parametresinin `where_params:
+            // list[Value]` GİBİ BOŞ bir listeyle çağrılması burada aynı
+            // hataya düşerdi. Parametrenin BİLDİRİLEN tipi (ör. `list[Value]`)
+            // tip parametresi İçERMEDİĞİNDEN (Value SOMUT bir tip),
+            // doğrudan `typeExprToType` İLE çözülüp `checkExpr` YERİNE
+            // KULLANILABİLİR — çözülemezse (GERÇEKTEN bir tip parametresi
+            // İçEREN bir liste/dict GİBİ) NORMAL `checkExpr` yoluna DÜŞÜLÜR
+            // (MEVCUT davranış, DEĞİŞMEDEN).
+            const at: Type = blk: {
+                if ((arg == .list_lit and arg.list_lit.len == 0) or (arg == .dict_lit and arg.dict_lit.len == 0)) {
+                    if (self.typeExprToType(p.type_expr)) |resolved| break :blk resolved else |_| {}
+                }
+                break :blk try self.checkExpr(ctx, arg);
+            };
             try self.unifyTypeExpr(p.type_expr, at, gfd.type_params, &bindings, gfd.name);
         }
 

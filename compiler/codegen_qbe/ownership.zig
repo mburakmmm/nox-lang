@@ -972,7 +972,17 @@ pub fn retainIfAliasing(self: *Codegen, value: ast.Expr, v0: Value) CodegenError
 ///     serbest bırakılması) doğru dengeye ulaşır; bu ikisi birlikte
 ///     "passthrough" fonksiyonları (ör. `def identity(p): return p`)
 ///     bile güvenli kılar.
-pub fn returnNeedsRetain(self: *Codegen, e: ast.Expr) bool {
+pub fn returnNeedsRetain(self: *Codegen, e: ast.Expr, v0: Value) bool {
+    // `v0.always_fresh` (bkz. `retainIfAliasing`nin AYNI notu, satır 938):
+    // `s[i]` (str char-at) gibi TABANDAN BAĞIMSIZ TAZE bir tahsis üreten
+    // ifadeler ASLA retain GEREKTİRMEZ — aşağıdaki `.index` dalının AST-
+    // tabanlı sezgisi (tabanı temporary DEĞİLSE aliasing SAYAR) `list[i]`/
+    // `dict[k]` (GERÇEKTEN ödünç alınmış bir takma ad) İÇİN doğrudur ama
+    // `str` char-at'i (her zaman taze, refcount 1) İÇİN GEÇERSİZDİR — tip
+    // bilgisi olmadan `.index`in hangisi olduğunu AYIRT EDEMEZ. Düzeltme:
+    // `retainIfAliasing`nin ZATEN yaptığı gibi, üretici tarafın (`genStrIndex`,
+    // `expr.zig`) `always_fresh = true` işaretine BURADA da güven.
+    if (v0.always_fresh) return false;
     return switch (e) {
         .identifier => |name| blk: {
             const info = self.vars.get(name) orelse break :blk false;

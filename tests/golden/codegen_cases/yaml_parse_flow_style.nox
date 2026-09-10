@@ -1,0 +1,24 @@
+import nox.yaml
+
+text: str = "simple: [1, 2, 3]\nnested: [a, [b, c]]\nobj: {a: 1, b: 2}\ntags: [x, y, {k: 1}]\n"
+root: nox.yaml.YamlValue = nox.yaml.parse(text)
+simple: nox.yaml.YamlValue = root.mapping["simple"]
+print(len(simple.arr))
+print(simple.arr[0].i)
+print(simple.arr[1].i)
+print(simple.arr[2].i)
+
+nested: nox.yaml.YamlValue = root.mapping["nested"]
+print(nested.arr[0].s)
+inner: nox.yaml.YamlValue = nested.arr[1]
+print(inner.arr[0].s)
+print(inner.arr[1].s)
+
+obj: nox.yaml.YamlValue = root.mapping["obj"]
+print(obj.mapping["a"].i)
+print(obj.mapping["b"].i)
+
+tags: nox.yaml.YamlValue = root.mapping["tags"]
+print(tags.arr[0].s)
+print(tags.arr[1].s)
+print(tags.arr[2].mapping["k"].i)

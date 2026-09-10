@@ -30,7 +30,7 @@
 
 # Faz OO: `Row` ARTIK `nox.db`den PAYLAŞILAN — bkz. `db.nox`nin belge
 # notu (`DbConnection` protokolünün `query`yi KAPSAYABİLMESİNİN nedeni).
-from nox.db import Row
+from nox.db import Row, Statement
 
 extern def nox_pg_connect_raw(conninfo: str) -> ptr from "zig-out/lib/noxrt.o"
 extern def nox_pg_status_ok_raw(conn: ptr) -> int from "zig-out/lib/noxrt.o"
@@ -79,74 +79,98 @@ def _read_rows(res: ptr) -> list[Row]:
         r = r + 1
     return rows
 
-# `sqlite.nox`nin `Statement`iyle AYNI KULLANICI API'si (`bind_int(idx,
-# val)` sonra `execute()`/`query()`), ama İÇ MEKANİZMA FARKLI: `bind_*`
-# çağrıları sadece `self.params`/`self.null_flags`e EKLER (libpq'nun
-# `PQexecParams`i TÜM parametreleri TEK çağrıda istediğinden gerçek
-# artımlı bind YOK) — `idx` parametresi bu YÜZDEN KULLANILMAZ (sqlite'ın
-# 0/1-tabanlı indeks çevirisinin AKSİNE, burada SADECE eklenme SIRASI
-# ÖNEMLİDİR — çağıranın `bind_*`i `$1, $2, ...` sırasıyla ÇAĞIRDIĞI
-# VARSAYILIR, `sqlite.nox`nin `Statement`iyle AYNI sözleşme).
-class Statement:
-    params: list[str]
-    null_flags: list[str]
+# Faz STD.6: `Statement` artık `nox.db`den PAYLAŞILAN, BİRLEŞİK bir sınıf
+# (bkz. `db.nox`nin belge notu) — bu dispatch fonksiyonları ONUN
+# `bind_int_fn`/vb. alanlarına `prepare()` TARAFINDAN ENJEKTE EDİLİR. İÇ
+# MEKANİZMA DEĞİŞMEDİ: `bind_*` çağrıları sadece `stmt.params`/`stmt.
+# null_flags`e EKLER (libpq'nun `PQexecParams`i TÜM parametreleri TEK
+# çağrıda istediğinden gerçek artımlı bind YOK) — `idx` parametresi bu
+# YÜZDEN KULLANILMAZ (SADECE eklenme SIRASI ÖNEMLİDİR).
+def _pg_push(stmt: Statement, value: str, is_null: bool) -> None:
+    params: list[str] = stmt.params
+    params.append(value)
+    stmt.params = params
+    null_flags: list[bool] = stmt.null_flags
+    null_flags.append(is_null)
+    stmt.null_flags = null_flags
 
-    def __init__(self: Statement, conn_handle: ptr, sql: str) -> None:
-        self.conn_handle = conn_handle
-        self.sql = sql
-        self.params = []
-        self.null_flags = []
+def _pg_bind_int(stmt: Statement, idx: int, value: int) -> None:
+    _pg_push(stmt, str(value), False)
 
-    # `is_null_flag`: `"1"` (NULL) ya da `"0"` (NULL değil) — checker'ın
-    # FFI sınırı `list[str]` DIŞINDA HİÇBİR `list[T]`ye (ör. `list[bool]`e)
-    # PARAMETRE olarak İZİN VERMEDİĞİNDEN metin olarak kodlanır (bkz.
-    # `nox_pg_exec_params_raw`in belge notu).
-    def _push(self: Statement, value: str, is_null_flag: str) -> None:
-        params: list[str] = self.params
-        params.append(value)
-        self.params = params
-        null_flags: list[str] = self.null_flags
-        null_flags.append(is_null_flag)
-        self.null_flags = null_flags
+def _pg_bind_float(stmt: Statement, idx: int, value: float) -> None:
+    _pg_push(stmt, str(value), False)
 
-    def bind_int(self: Statement, idx: int, value: int) -> None:
-        self._push(str(value), "0")
+def _pg_bind_str(stmt: Statement, idx: int, value: str) -> None:
+    _pg_push(stmt, value, False)
 
-    def bind_float(self: Statement, idx: int, value: float) -> None:
-        self._push(str(value), "0")
+def _pg_bind_null(stmt: Statement, idx: int) -> None:
+    _pg_push(stmt, "", True)
 
-    def bind_str(self: Statement, idx: int, value: str) -> None:
-        self._push(value, "0")
+# `nox_pg_exec_params_raw`nin `null_flags` parametresi `list[str]`
+# ("1"/"0") BEKLER (checker'ın FFI sınırı `list[bool]`e İZİN VERMEZ,
+# bkz. o extern def'in belge notu) — `stmt.null_flags: list[bool]`
+# (PAYLAŞILAN `Statement`in KENDİ tipi) BURADA metne ÇEVRİLİR.
+def _pg_exec_params(stmt: Statement) -> ptr:
+    str_flags: list[str] = []
+    i: int = 0
+    while i < len(stmt.null_flags):
+        if stmt.null_flags[i]:
+            str_flags.append("1")
+        else:
+            str_flags.append("0")
+        i = i + 1
+    return nox_pg_exec_params_raw(stmt.handle, stmt.sql, stmt.params, str_flags)
 
-    def bind_null(self: Statement, idx: int) -> None:
-        self._push("", "1")
-
-    def execute(self: Statement) -> int:
-        res: ptr = nox_pg_exec_params_raw(self.conn_handle, self.sql, self.params, self.null_flags)
-        if nox_pg_result_ok_raw(res) == 0:
-            msg: str = nox_pg_result_errmsg_raw(res)
-            nox_pg_clear_raw(res)
-            raise PostgresError("deyim basarisiz: " + msg)
-        n: int = nox_pg_changes_raw(res)
+def _pg_execute(stmt: Statement) -> int:
+    res: ptr = _pg_exec_params(stmt)
+    if nox_pg_result_ok_raw(res) == 0:
+        msg: str = nox_pg_result_errmsg_raw(res)
         nox_pg_clear_raw(res)
-        return n
+        raise PostgresError("deyim basarisiz: " + msg)
+    n: int = nox_pg_changes_raw(res)
+    nox_pg_clear_raw(res)
+    return n
 
-    def query(self: Statement) -> list[Row]:
-        res: ptr = nox_pg_exec_params_raw(self.conn_handle, self.sql, self.params, self.null_flags)
-        if nox_pg_result_ok_raw(res) == 0:
-            msg: str = nox_pg_result_errmsg_raw(res)
-            nox_pg_clear_raw(res)
-            raise PostgresError("sorgu basarisiz: " + msg)
-        rows: list[Row] = _read_rows(res)
+def _pg_query(stmt: Statement) -> list[Row]:
+    res: ptr = _pg_exec_params(stmt)
+    if nox_pg_result_ok_raw(res) == 0:
+        msg: str = nox_pg_result_errmsg_raw(res)
         nox_pg_clear_raw(res)
-        return rows
+        raise PostgresError("sorgu basarisiz: " + msg)
+    rows: list[Row] = _read_rows(res)
+    nox_pg_clear_raw(res)
+    return rows
+
+# Faz STD.6: Postgres (mysql/sqlite'ın AKSİNE) YALNIZCA numaralı `$1,
+# $2, ...` placeholder KABUL EDER — `nox.orm`/kullanıcıların TÜM sürücüler
+# İçİn TEK, TUTARLI bir "?" sözdizimi yazabilmesi İçİn `prepare()` HER
+# `?`yi SIRAYLA `$1`,`$2`,... İLE DEĞİŞTİRİR. `mysql.nox`nin `_build_sql`ı
+# İLE AYNI, naif/tırnak-farkında OLMAYAN karakter-karakter yaklaşım
+# (BİLİNÇLİ tutarlılık — bir string LİTERALİ İçİNDEKİ "?" de değişir).
+# MEVCUT, `$1`-tarzı NATİF SQL yazan çağrı siteleri ETKİLENMEZ (metinde
+# HİÇ "?" karakteri OLMADIĞINDAN bu fonksiyon bir NO-OP'tur).
+def _translate_placeholders_to_dollar(sql: str) -> str:
+    result: str = ""
+    param_num: int = 0
+    i: int = 0
+    n: int = len(sql)
+    while i < n:
+        c: str = sql[i]
+        if c == "?":
+            param_num = param_num + 1
+            result = result + "$" + str(param_num)
+        else:
+            result = result + c
+        i = i + 1
+    return result
 
 class Connection:
     def __init__(self: Connection, handle: ptr) -> None:
         self.handle = handle
 
     def prepare(self: Connection, sql: str) -> Statement:
-        return Statement(self.handle, sql)
+        translated: str = _translate_placeholders_to_dollar(sql)
+        return Statement(self.handle, self.handle, translated, _pg_bind_int, _pg_bind_float, _pg_bind_str, _pg_bind_null, _pg_execute, _pg_query)
 
     # Etkilenen satır sayısını döner (`INSERT`/`UPDATE`/`DELETE`/DDL İçin
     # `0`) — Postgres'te bu bir SONUÇ özelliğidir (sqlite'ın `sqlite3_

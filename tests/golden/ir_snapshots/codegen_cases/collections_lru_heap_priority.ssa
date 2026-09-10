@@ -4471,8 +4471,14 @@ export function $nox_collections_Heap__int__sift_up(l %rt, l %p_self, l %p_idx) 
 @while_cond0
     %t6 =l loadl %t2
     %t7 =w csgtl %t6, 0
+    jnz %t7, @logic_rhs3, @logic_short4
+@logic_short4
+    jmp @logic_done5
+@logic_rhs3
     %t8 =w loadw %t3
-    %t9 =w and %t7, %t8
+    jmp @logic_done5
+@logic_done5
+    %t9 =w phi @logic_short4 0, @logic_rhs3 %t8
     jnz %t9, @while_body1, @while_end2
 @while_body1
     %t10 =l loadl %t2
@@ -4495,8 +4501,8 @@ export function $nox_collections_Heap__int__sift_up(l %rt, l %p_self, l %p_idx) 
     %t26 =w csltl %t24, 0
     %t27 =w csgel %t24, %t25
     %t28 =w or %t26, %t27
-    jnz %t28, @list_idx_err4, @list_idx_ok5
-@list_idx_err4
+    jnz %t28, @list_idx_err7, @list_idx_ok8
+@list_idx_err7
     %t29 =l add $str14, 16
     %t30 =l call $nox_rc_alloc(l %rt, l 24)
     storel 9, %t30
@@ -4506,31 +4512,31 @@ export function $nox_collections_Heap__int__sift_up(l %rt, l %p_self, l %p_idx) 
     storel 0, %t32
     call $Exception___init__(l %rt, l %t30, l %t29)
     %t33 =w call $nox_exception_pending(l %rt)
-    jnz %t33, @ctor_init_failed6, @ctor_init_cont7
-@ctor_init_failed6
+    jnz %t33, @ctor_init_failed9, @ctor_init_cont10
+@ctor_init_failed9
     %t34 =w ceql %t30, 0
-    jnz %t34, @release_skip9, @release8
-@release8
+    jnz %t34, @release_skip12, @release11
+@release11
     call $nox_rc_release_enqueue_dynamic(l %rt, l %t30)
-    jmp @release_done10
-@release_skip9
-    jmp @release_done10
-@release_done10
-    jmp @ctor_init_cont7
-@ctor_init_cont7
+    jmp @release_done13
+@release_skip12
+    jmp @release_done13
+@release_done13
+    jmp @ctor_init_cont10
+@ctor_init_cont10
     %t35 =w call $nox_exception_pending(l %rt)
-    jnz %t35, @exc_propagate11, @exc_continue12
-@exc_propagate11
+    jnz %t35, @exc_propagate14, @exc_continue15
+@exc_propagate14
     ret
-@exc_continue12
+@exc_continue15
     call $nox_raise(l %rt, l %t30, l 436)
     %t36 =w call $nox_exception_pending(l %rt)
-    jnz %t36, @exc_propagate13, @exc_continue14
-@exc_propagate13
+    jnz %t36, @exc_propagate16, @exc_continue17
+@exc_propagate16
     ret
-@exc_continue14
-    jmp @list_idx_ok5
-@list_idx_ok5
+@exc_continue17
+    jmp @list_idx_ok8
+@list_idx_ok8
     %t37 =l mul %t24, 8
     %t38 =l add %t37, 16
     %t39 =l add %t23, %t38
@@ -4543,8 +4549,8 @@ export function $nox_collections_Heap__int__sift_up(l %rt, l %p_self, l %p_idx) 
     %t46 =w csltl %t44, 0
     %t47 =w csgel %t44, %t45
     %t48 =w or %t46, %t47
-    jnz %t48, @list_idx_err15, @list_idx_ok16
-@list_idx_err15
+    jnz %t48, @list_idx_err18, @list_idx_ok19
+@list_idx_err18
     %t49 =l add $str15, 16
     %t50 =l call $nox_rc_alloc(l %rt, l 24)
     storel 9, %t50
@@ -4554,52 +4560,52 @@ export function $nox_collections_Heap__int__sift_up(l %rt, l %p_self, l %p_idx) 
     storel 0, %t52
     call $Exception___init__(l %rt, l %t50, l %t49)
     %t53 =w call $nox_exception_pending(l %rt)
-    jnz %t53, @ctor_init_failed17, @ctor_init_cont18
-@ctor_init_failed17
+    jnz %t53, @ctor_init_failed20, @ctor_init_cont21
+@ctor_init_failed20
     %t54 =w ceql %t50, 0
-    jnz %t54, @release_skip20, @release19
-@release19
+    jnz %t54, @release_skip23, @release22
+@release22
     call $nox_rc_release_enqueue_dynamic(l %rt, l %t50)
-    jmp @release_done21
-@release_skip20
-    jmp @release_done21
-@release_done21
-    jmp @ctor_init_cont18
-@ctor_init_cont18
+    jmp @release_done24
+@release_skip23
+    jmp @release_done24
+@release_done24
+    jmp @ctor_init_cont21
+@ctor_init_cont21
     %t55 =w call $nox_exception_pending(l %rt)
-    jnz %t55, @exc_propagate22, @exc_continue23
-@exc_propagate22
+    jnz %t55, @exc_propagate25, @exc_continue26
+@exc_propagate25
     ret
-@exc_continue23
+@exc_continue26
     call $nox_raise(l %rt, l %t50, l 436)
     %t56 =w call $nox_exception_pending(l %rt)
-    jnz %t56, @exc_propagate24, @exc_continue25
-@exc_propagate24
+    jnz %t56, @exc_propagate27, @exc_continue28
+@exc_propagate27
     ret
-@exc_continue25
-    jmp @list_idx_ok16
-@list_idx_ok16
+@exc_continue28
+    jmp @list_idx_ok19
+@list_idx_ok19
     %t57 =l mul %t44, 8
     %t58 =l add %t57, 16
     %t59 =l add %t43, %t58
     %t60 =l loadl %t59
     %t61 =w csltl %t40, %t60
-    jnz %t61, @if_then26, @if_else27
-@if_then26
+    jnz %t61, @if_then29, @if_else30
+@if_then29
     %t62 =l loadl %t0
     %t63 =l loadl %t2
     %t64 =l loadl %t4
     call $nox_collections_Heap__int__swap(l %rt, l %t62, l %t63, l %t64)
     %t65 =l loadl %t4
     storel %t65, %t2
-    jmp @if_end3
-@if_else27
+    jmp @if_end6
+@if_else30
     storew 0, %t3
-    jmp @if_end3
-@if_end3
+    jmp @if_end6
+@if_end6
     jmp @while_cond0
 @while_end2
-@fn_end28
+@fn_end31
     ret
 }
 export function $nox_collections_Heap__int__sift_down(l %rt, l %p_self, l %p_idx) {
@@ -6776,8 +6782,14 @@ export function $nox_collections_PriorityQueue__str__sift_up(l %rt, l %p_self, l
 @while_cond0
     %t6 =l loadl %t2
     %t7 =w csgtl %t6, 0
+    jnz %t7, @logic_rhs3, @logic_short4
+@logic_short4
+    jmp @logic_done5
+@logic_rhs3
     %t8 =w loadw %t3
-    %t9 =w and %t7, %t8
+    jmp @logic_done5
+@logic_done5
+    %t9 =w phi @logic_short4 0, @logic_rhs3 %t8
     jnz %t9, @while_body1, @while_end2
 @while_body1
     %t10 =l loadl %t2
@@ -6800,8 +6812,8 @@ export function $nox_collections_PriorityQueue__str__sift_up(l %rt, l %p_self, l
     %t26 =w csltl %t24, 0
     %t27 =w csgel %t24, %t25
     %t28 =w or %t26, %t27
-    jnz %t28, @list_idx_err4, @list_idx_ok5
-@list_idx_err4
+    jnz %t28, @list_idx_err7, @list_idx_ok8
+@list_idx_err7
     %t29 =l add $str34, 16
     %t30 =l call $nox_rc_alloc(l %rt, l 24)
     storel 9, %t30
@@ -6811,31 +6823,31 @@ export function $nox_collections_PriorityQueue__str__sift_up(l %rt, l %p_self, l
     storel 0, %t32
     call $Exception___init__(l %rt, l %t30, l %t29)
     %t33 =w call $nox_exception_pending(l %rt)
-    jnz %t33, @ctor_init_failed6, @ctor_init_cont7
-@ctor_init_failed6
+    jnz %t33, @ctor_init_failed9, @ctor_init_cont10
+@ctor_init_failed9
     %t34 =w ceql %t30, 0
-    jnz %t34, @release_skip9, @release8
-@release8
+    jnz %t34, @release_skip12, @release11
+@release11
     call $nox_rc_release_enqueue_dynamic(l %rt, l %t30)
-    jmp @release_done10
-@release_skip9
-    jmp @release_done10
-@release_done10
-    jmp @ctor_init_cont7
-@ctor_init_cont7
+    jmp @release_done13
+@release_skip12
+    jmp @release_done13
+@release_done13
+    jmp @ctor_init_cont10
+@ctor_init_cont10
     %t35 =w call $nox_exception_pending(l %rt)
-    jnz %t35, @exc_propagate11, @exc_continue12
-@exc_propagate11
+    jnz %t35, @exc_propagate14, @exc_continue15
+@exc_propagate14
     ret
-@exc_continue12
+@exc_continue15
     call $nox_raise(l %rt, l %t30, l 524)
     %t36 =w call $nox_exception_pending(l %rt)
-    jnz %t36, @exc_propagate13, @exc_continue14
-@exc_propagate13
+    jnz %t36, @exc_propagate16, @exc_continue17
+@exc_propagate16
     ret
-@exc_continue14
-    jmp @list_idx_ok5
-@list_idx_ok5
+@exc_continue17
+    jmp @list_idx_ok8
+@list_idx_ok8
     %t37 =l mul %t24, 8
     %t38 =l add %t37, 16
     %t39 =l add %t23, %t38
@@ -6848,8 +6860,8 @@ export function $nox_collections_PriorityQueue__str__sift_up(l %rt, l %p_self, l
     %t46 =w csltl %t44, 0
     %t47 =w csgel %t44, %t45
     %t48 =w or %t46, %t47
-    jnz %t48, @list_idx_err15, @list_idx_ok16
-@list_idx_err15
+    jnz %t48, @list_idx_err18, @list_idx_ok19
+@list_idx_err18
     %t49 =l add $str35, 16
     %t50 =l call $nox_rc_alloc(l %rt, l 24)
     storel 9, %t50
@@ -6859,52 +6871,52 @@ export function $nox_collections_PriorityQueue__str__sift_up(l %rt, l %p_self, l
     storel 0, %t52
     call $Exception___init__(l %rt, l %t50, l %t49)
     %t53 =w call $nox_exception_pending(l %rt)
-    jnz %t53, @ctor_init_failed17, @ctor_init_cont18
-@ctor_init_failed17
+    jnz %t53, @ctor_init_failed20, @ctor_init_cont21
+@ctor_init_failed20
     %t54 =w ceql %t50, 0
-    jnz %t54, @release_skip20, @release19
-@release19
+    jnz %t54, @release_skip23, @release22
+@release22
     call $nox_rc_release_enqueue_dynamic(l %rt, l %t50)
-    jmp @release_done21
-@release_skip20
-    jmp @release_done21
-@release_done21
-    jmp @ctor_init_cont18
-@ctor_init_cont18
+    jmp @release_done24
+@release_skip23
+    jmp @release_done24
+@release_done24
+    jmp @ctor_init_cont21
+@ctor_init_cont21
     %t55 =w call $nox_exception_pending(l %rt)
-    jnz %t55, @exc_propagate22, @exc_continue23
-@exc_propagate22
+    jnz %t55, @exc_propagate25, @exc_continue26
+@exc_propagate25
     ret
-@exc_continue23
+@exc_continue26
     call $nox_raise(l %rt, l %t50, l 524)
     %t56 =w call $nox_exception_pending(l %rt)
-    jnz %t56, @exc_propagate24, @exc_continue25
-@exc_propagate24
+    jnz %t56, @exc_propagate27, @exc_continue28
+@exc_propagate27
     ret
-@exc_continue25
-    jmp @list_idx_ok16
-@list_idx_ok16
+@exc_continue28
+    jmp @list_idx_ok19
+@list_idx_ok19
     %t57 =l mul %t44, 8
     %t58 =l add %t57, 16
     %t59 =l add %t43, %t58
     %t60 =l loadl %t59
     %t61 =w csltl %t40, %t60
-    jnz %t61, @if_then26, @if_else27
-@if_then26
+    jnz %t61, @if_then29, @if_else30
+@if_then29
     %t62 =l loadl %t0
     %t63 =l loadl %t2
     %t64 =l loadl %t4
     call $nox_collections_PriorityQueue__str__swap(l %rt, l %t62, l %t63, l %t64)
     %t65 =l loadl %t4
     storel %t65, %t2
-    jmp @if_end3
-@if_else27
+    jmp @if_end6
+@if_else30
     storew 0, %t3
-    jmp @if_end3
-@if_end3
+    jmp @if_end6
+@if_end6
     jmp @while_cond0
 @while_end2
-@fn_end28
+@fn_end31
     ret
 }
 export function $nox_collections_PriorityQueue__str__sift_down(l %rt, l %p_self, l %p_idx) {

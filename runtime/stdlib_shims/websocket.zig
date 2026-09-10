@@ -19,6 +19,9 @@ const std = @import("std");
 const arc = @import("../alloc/arc.zig");
 const str_mod = @import("../str.zig");
 const http_client = @import("http_client.zig");
+/// `std.crypto.tls.Client` DEĞİL — `certificate_request` düzeltmesi İçEREN
+/// yamalı kopya (bkz. `runtime/vendor/tls_client.zig`nin başlık yorumu).
+const TlsClient = @import("../vendor/tls_client.zig");
 
 fn dupeToNoxStr(rt: ?*anyopaque, bytes: []const u8) ?[*:0]u8 {
     return str_mod.nox_str_from_bytes(rt, bytes);
@@ -48,7 +51,7 @@ fn ensureCaBundle(io: std.Io) bool {
     return g_ca_state.load(.acquire) == .ready;
 }
 
-const BUF: usize = std.crypto.tls.Client.min_buffer_len;
+const BUF: usize = TlsClient.min_buffer_len;
 const websocket_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 /// RFC 6455 `Sec-WebSocket-Accept` hesaplaması (`SHA1(key_b64 ++ GUID)`
@@ -80,7 +83,7 @@ const WsConn = struct {
     tls_write_buf: [BUF]u8 = undefined,
     stream_reader: std.Io.net.Stream.Reader = undefined,
     stream_writer: std.Io.net.Stream.Writer = undefined,
-    tls_client: std.crypto.tls.Client = undefined,
+    tls_client: TlsClient = undefined,
     use_tls: bool = false,
     connected: bool = false,
     errmsg: []const u8 = "",
@@ -108,10 +111,10 @@ fn connectInner(conn: *WsConn, host: []const u8, port: i64, path: []const u8, us
 
     if (use_tls) {
         if (!ensureCaBundle(io)) return error.CaBundleLoadFailed;
-        var random_buffer: [std.crypto.tls.Client.Options.entropy_len]u8 = undefined;
+        var random_buffer: [TlsClient.Options.entropy_len]u8 = undefined;
         io.random(&random_buffer);
         const now = std.Io.Timestamp.now(io, .real);
-        conn.tls_client = try std.crypto.tls.Client.init(&conn.stream_reader.interface, &conn.stream_writer.interface, .{
+        conn.tls_client = try TlsClient.init(&conn.stream_reader.interface, &conn.stream_writer.interface, .{
             .host = .{ .explicit = host },
             .ca = .{ .bundle = .{
                 .gpa = std.heap.page_allocator,

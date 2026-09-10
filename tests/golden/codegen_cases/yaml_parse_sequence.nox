@@ -1,0 +1,17 @@
+import nox.yaml
+
+text: str = "items:\n  - name: foo\n    value: 1\n  - name: bar\n    value: 2\nnums:\n  - 10\n  - 20\n  - 30\n"
+root: nox.yaml.YamlValue = nox.yaml.parse(text)
+items: nox.yaml.YamlValue = root.mapping["items"]
+print(len(items.arr))
+i: int = 0
+while i < len(items.arr):
+    item: nox.yaml.YamlValue = items.arr[i]
+    print(item.mapping["name"].s)
+    print(item.mapping["value"].i)
+    i = i + 1
+nums: nox.yaml.YamlValue = root.mapping["nums"]
+j: int = 0
+while j < len(nums.arr):
+    print(nums.arr[j].i)
+    j = j + 1

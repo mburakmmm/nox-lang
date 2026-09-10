@@ -33,6 +33,16 @@
 //! dosyası). `containsNul`, DIŞARIDAN gelen HERHANGİ bir gövdenin (ör.
 //! standart-dışı bir sunucunun `identity` kodlamalı ama ikili içerik
 //! döndürmesi) AYNI çökmeyi tetiklememesi İÇİN son bir savunma hattıdır.
+//!
+//! **BİLİNÇLİ kapsam dışı (ziglang/zig#19521):** bu dosya `std.http.Client`ı
+//! (dolayısıyla Zig'in KENDİ, orijinal `std.crypto.tls.Client`ını, `nox.tls`/
+//! `nox.smtp`/`nox.websocket`nin AKSİNE) DOĞRUDAN kullanır — `runtime/
+//! vendor/tls_client.zig`nin `certificate_request` düzeltmesi BURAYA
+//! UYGULANMADI. Yani teorik olarak, istemci sertifikası İSTEYEN (mTLS) NADİR
+//! bir HTTPS sunucusuna karşı `https://` istekleri YİNE `TlsUnexpectedMessage`
+//! İLE başarısız olabilir (sıradan HTTPS sunucuları — google.com/example.com
+//! DAHİL — ETKİLENMEZ). Düzeltme BİLİNÇLİ olarak buraya UYGULANMADI: `std.
+//! http.Client`ın TAMAMINI forklamayı gerektirir, fayda/risk oranı düşük.
 
 const std = @import("std");
 const builtin = @import("builtin");

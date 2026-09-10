@@ -19283,6 +19283,194 @@ HİÇBİR test etkilenmiyordu) doğrulandı.
 
 ---
 
+## 3.143 `and`/`or` artık GERÇEKTEN kısa devre yapıyor + `return s[i]` ARC sızıntısı düzeltmesi (v1.76.0)
+
+Faz STD.3'ün (v1.74.0, `nox.toml`) VE Faz STD.5'in (aşağıda, `nox.yaml`)
+İKİSİNİN de "and/or kısa-devre yapmaz" BULGUSU (o modüllerde nested-`if`
+İLE ELLE atlatılmıştı) ARTIK KÖK NEDENİNDEN düzeltildi.
+
+**Kök neden**: `compiler/codegen_qbe/expr.zig`nin `genBinary`'si `and`/`or`'u
+KOŞULSUZ QBE `and`/`or` bit işlemlerine derliyordu — HER İKİ operand da
+HER ZAMAN değerlendiriliyordu. `pos < n and text[pos] == "X"` GİBİ bir
+koruma deseninde `pos >= n` İKEN `text[pos]` YİNE de değerlendirilip bir
+IndexError'a (VEYA sınırın TAM üzerindeyse bir NULL-işaretçi SIGSEGV'ine)
+yol AÇIYORDU.
+
+**Düzeltme**: `genBinary` artık GERÇEK bir jnz+phi kontrol akışı üretir —
+sol operand `and` İçİn `false`/`or` İçİn `true` İSE sağ operand HİÇ
+değerlendirilmez, birleştirilmiş değer bir `phi` düğümüyle SEÇİLİR
+(`calls.zig`nin `str(bool)` şablonuyla AYNI ilke). Checker'ın `checkBinary`'si
+HER İKİ operandın da `.boolean` OLMASINI ZATEN ZORUNLU KILDIĞINDAN
+birleştirilmiş değer HER ZAMAN `.w` (0/1) olur VE operandlar HİÇBİR ZAMAN
+heap-yönetimli DEĞİLDİR (retain/release GEREKMEZ).
+
+**İKİNCİ, AYRI bir codegen hatası (bu düzeltmenin GELİŞTİRİLMESİ SIRASINDA
+bulundu)**: `genBinary`nin İLK uygulaması phi düğümünün öncüllerini
+(`short_label`/`rhs_label`) SABİT VARSAYIYORDU — AMA sağ operand KEYFİ bir
+ifadedir VE KENDİ İçİNDE BAŞKA bir dallanma İçEREBİLİR (iç içe bir
+`and`/`or`, bir istisna kontrolü, vb.) — bu YÜZDEN `genExpr(b.right.*)`
+DÖNDÜĞÜNDE "şu anki blok" ARTIK O sabit etiket OLMAYABİLİYORDU. QBE bunu
+`"predecessors not matched in phi"` hatasıyla REDDEDİYORDU — `nox.csv`/
+`nox.toml`/`nox.random`nin shuffle testinde/decorator router testinde
+GÖZLEMLENEN, GERÇEK bir regresyon (bu modüllerin KENDİLERİ DEĞİŞMEDİĞİ
+HALDE, `genBinary`nin ÖNCEKİ, KARARSIZ hâli YÜZÜNDEN derlenemez hâle
+GELMİŞLERDİ). **Düzeltme**: `Codegen`e YENİ bir `current_label: []const u8`
+alanı EKLENDİ — `qbeLabel`nin (TÜM codegen'in TEK, merkezi etiket-emisyon
+noktası, 148 çağrı sitesi) HER çağrısında GÜNCELLENİR. `genBinary` ARTIK
+phi'nin öncüllerini `short_label`/`rhs_label` SABİTLERİ YERİNE, HER alt-
+ifade ÜRETİLDİKTEN HEMEN SONRAKİ `self.current_label` DEĞERİYLE okur —
+bu, "phi'nin öncülü HER ZAMAN en son yazılan GERÇEK blok'tur" ilkesini
+GENEL/DOĞRU şekilde SAĞLAR (`calls.zig`nin `str(bool)`/`layout.zig`nin
+diğer `phi` sitelerinin İSE `label`den `jmp`e KADAR branch-FREE OLDUĞU
+— SADECE bir string literali/sabit İNŞA ettikleri — doğrulanıp bu
+düzeltmeye İhtiyaç DUYMADIKLARI onaylandı).
+
+**ÜÇÜNCÜ, İLİŞKİLİ bir düzeltme**: bir fonksiyondan ÇIPLAK `return s[i]`
+(str karakter-erişimi) ifadesi bir ARC sızıntısına yol açıyordu —
+`ownership.zig`nin `returnNeedsRetain`i, `.index` dalında TABANI sızdıran
+(`list[i]`/`dict[k]`, GERÇEKTEN ödünç alınmış bir takma ad) İLE TABANDAN
+BAĞIMSIZ TAZE bir tahsis üreten (`str` char-at, HER ZAMAN refcount=1) AST
+şeklini AYIRT EDEMİYORDU. Düzeltme: üretici tarafın (`genStrIndex`, ZATEN
+işaretlediği) `Value.always_fresh` bayrağına GÜVENİLİR — `true` İSE
+`returnNeedsRetain` KOŞULSUZ `false` döner.
+
+**Doğrulama**: `short_circuit_and_or.nox` (yan-etkili bir sağ operandın
+GERÇEKTEN çalışıp/ÇALIŞMADIĞINI VE birleştirilen değerin bir sentinel
+DEĞİL sağ operandın KENDİ değeri OLDUĞUNU doğrular), `str_index_guard_
+short_circuit.nox` (orijinal çökme örüntüsünün AYNISI — sınırda/boş
+dizede ÇÖKMEZ), `str_index_return_no_leak.nox` (50.000 çağrılık sıkı bir
+döngüde `return s[i]`, DebugAllocator'ın sızıntı raporunu TETİKLEMEZ).
+Tam `zig build test` (Debug+ReleaseFast) — `nox.csv`/`nox.toml`/
+`nox.random`/decorator router testleri DAHİL TÜM MEVCUT testler
+DEĞİŞMEDEN geçti.
+
+---
+
+## 3.144 Faz STD.5 — `nox.yaml` (v1.76.0)
+
+Kullanıcının 5 maddelik yol haritasının 3. maddesinin ("stdlib eksikleri")
+5. (SONUNCU stdlib-gap) alt-parçası. `nox.toml`nin (Faz STD.3) AYNI "saf
+Nox, kendi elle-yazılmış ayrıştırıcı" felsefesi, AMA YAML'ın (TOML'DAN
+FARKLI olarak) GİRİNTİ-DUYARLI/SATIR-TABANLI yapısına UYARLANMIŞ,
+BİLİNÇLİ olarak DAR bir v1.
+
+**Kapsam**: blok-stili eşlemeler (`key: value`, girintiyle iç içe), blok-
+stili diziler (`- item`, `- key: value` GİBİ satır-içi eşleme-başlatan
+dizi elemanları DAHİL), akış-stili diziler/eşlemeler (`[1, 2, 3]`/
+`{a: 1, b: 2}`, iç içe geçebilir), skalerler (düz/çift-tırnaklı/tek-
+tırnaklı), TAM-SATIR yorumlar, boş satırlar, TEK bir opsiyonel baştaki
+`---`. **Kapsam DIŞI**: satır-içi yorumlar, çapa/takma-ad, etiketler,
+birleştirme anahtarları, blok skalerleri, ÇOKLU-belge YAML (`YamlError`
+İLE reddedilir), string-DIŞI eşleme anahtarları, açık anahtar sözdizimi.
+
+**`nox.toml`den devralınan İKİ güvenlik dersi**: (1) `and`/`or`nun (Faz
+STD.3 zamanında) kısa-devre YAPMAMASI (§3.143 İLE ARTIK kök nedeninden
+düzeltildi, AMA `yaml.nox` YAZILDIĞI ANDA bu düzeltme henüz YOKTU, bu
+YÜZDEN kod hâlâ nested-`if` desenini KULLANIYOR — GÜVENLİ AMA ARTIK
+GEREKSİZ, gelecekte sadeleştirilebilir); (2) `return s[i]`nin ARC
+sızıntısı (AYNI durum).
+
+**YENİ, bu turda bulunan bir codegen hatası**: `s[0] == X and <inlinable_
+fonksiyon_çağrısı>(...)` deseni (raw bir indeks-karşılaştırması İLE
+inline-edilebilir bir fonksiyon çağrısının AYNI `and` İFADESİNDE
+birleşmesi) bir QBE `"predecessors not matched in phi"` hatasına yol
+açıyordu — bu, §3.143'ün DÜZELTTİĞİ AYNI kök-neden sınıfının BAŞKA bir
+tetikleyicisiydi (`_strip_quotes_if_present`teki İKİ site + `_has_deeper_
+next_line` yardımcısına ÇIKARILAN İKİ tekrar + `parse()`nin triple-`and`
+koşulu, HEPSİ nested-`if`lerle atlatıldı) — §3.143'ün düzeltmesiyle KÖK
+NEDENİ de ORTADAN KALKTI.
+
+**Doğrulama**: 9 golden fixture (`yaml_parse_basic_mapping`/`nested_
+mapping`/`sequence`/`flow_style`/`quoted_strings`/`comments_and_blank_
+lines`/`get_dotted_path_helper`/`tab_indent_raises`/`multi_document_
+raises`), HER biri YAZMADAN ÖNCE `noxc build`+doğrudan çalıştırmayla ELLE
+doğrulandı. Tam `zig build test` (Debug+ReleaseFast) TEMİZ.
+
+---
+
+## 3.145 Faz STD.6 — `nox.orm` (v1.76.0)
+
+Kullanıcının 5 maddelik yol haritasının 3. maddesinin ("stdlib eksikleri")
+6. VE SON alt-parçası — roadmap'in KENDİ notu ORM'u "EN açık uçlu/EN
+büyük tasarım kararı" OLARAK işaretlemişti. `nox.db`nin `DbConnection`
+protokolü (`close`/`execute`/`query`, ARTIK `prepare` de EKLENDİ) ÜZERİNE
+İnşa edilen bir "mikro-ORM": `Table`/`Column` şeması + GERÇEK parametre
+bağlamasıyla (`Statement.bind_*`, SQL metnine ham DEĞER GÖMÜLMEZ) CRUD
+yardımcıları.
+
+**Kritik mimari kısıt (doğrudan derleme İLE doğrulandı)**: Nox'ta protokol
+tipleri SADECE PARAMETRE tipi OLARAK kullanılabilir, DÖNÜŞ/yerel-değişken
+tipi OLARAK KULLANILAMAZ. Bu YÜZDEN `prepare(self, sql: str) -> Statement`nin
+protokole EKLENEBİLMESİ İçİn `Statement`in de (`Row` GİBİ, Faz OO) TEK,
+SOMUT/PAYLAŞILAN bir sınıf OLMASI GEREKTİ — sqlite/postgres/mysql'in
+ÜÇÜNÜN de YAPISAL OLARAK BİREBİR AYNI (`bind_int/float/str/null` +
+`execute()->int` + `query()->list[Row]`) AMA KÖKTEN FARKLI İÇ mekanizmaları
+(sqlite GERÇEK artımlı `sqlite3_bind_*`; postgres/mysql `bind_*`i SADECE
+BİRİKTİRİR, GERÇEK gönderim `execute()`/`query()` ANINDA olur), Nox'un
+BİRİNCİ-sınıf fonksiyonlarının bir SINIFIN ALANI OLARAK saklanıp SONRADAN
+ÇAĞRILABİLMESİ (DOĞRUDAN derlenip test edilerek doğrulandı) SAYESİNDE TEK
+bir `stdlib/nox/db.nox`daki `Statement` sınıfına BİRLEŞTİRİLDİ (HER
+sürücünün KENDİ bind/execute/query mantığı fonksiyon-DEĞERİ alanları
+OLARAK ENJEKTE edilir). Postgres'in SADECE `$1, $2, ...` (numaralı)
+placeholder KABUL ETMESİ YÜZÜNDEN `postgres.nox`nin `prepare()`si YENİ bir
+`_translate_placeholders_to_dollar` çeviri adımı KAZANDI (mysql.nox'un
+ZATEN kullandığı naif/tırnak-farkında-olmayan karakter-karakter YAKLAŞIM).
+
+`stdlib/nox/orm.nox`: `Value` (kind: string/int/float/bool/null) +
+`Column`/`Table` şeması + `create_table`/`insert`/`update`/`delete`/
+`select` — HEPSİ `conn.prepare(sql)` ÜZERİNDEN TAM parametreli (`where_sql`e
+"?" placeholder'ları YAZILIR, `where_params` bunlara KARŞILIK gelen
+`Value`leri SIRAYLA taşır — DEĞERLER ASLA ham metne GÖMÜLMEZ).
+
+**Geliştirme SIRASINDA bulunup düzeltilen İKİ, AYRI checker hatası**
+(`nox.orm`nin TÜM CRUD fonksiyonlarının `conn: DbConnection` — bir
+PROTOKOL tipi — parametresi TAŞIMASI YÜZÜNDEN `registerFunc`nin
+`computeEffectiveTypeParams`i tarafından ÖRTÜK olarak GENERIC sayılması,
+bu YÜZDEN HER çağrının `instantiateGeneric`/`unifyTypeExpr` YOLUNDAN
+geçmesi SONUCU AÇIĞA ÇIKTI):
+1. `unifyTypeExpr`nin `.generic` dalı SADECE `list[T]`yi tanıyordu,
+   `dict[K,V]`yi HİÇ desteklemiyordu — `dict[str, Value]` tipli BAŞKA bir
+   parametre "bilinmeyen generic tip: dict" hatasıyla REDDEDİLİYORDU.
+   Düzeltme: `dict`in K/V'si de (list GİBİ) özyinelemeli olarak
+   birleştirilir (K/V SOMUT tipler OLDUĞUNDAN — dict'in v1 kısıtı GEREĞİ
+   — tip-parametresi BAĞLAMASI GEREKMEZ, SADECE ŞEKİL doğrulaması yeterli).
+2. AYNI yolda, BOŞ bir `[]`/`{}` literalinin argüman OLARAK geçmesi (ör.
+   `where_params: list[Value] = []`) İçİn tip çıkarımı YAPILAMIYORDU
+   (`checkExpr` TEK BAŞINA boş literal tipini ÇIKARAMAZ — `checkExprExpected`
+   BUNU DÖRT ÖZEL çağrı sitesinde ÇÖZER AMA `instantiateGeneric` bunlardan
+   BİRİ DEĞİLDİ). Düzeltme: parametrenin BİLDİRİLEN tipi (`list[Value]`
+   GİBİ) tip parametresi İçERMİYORSA (`Value` SOMUT), argüman BOŞ bir
+   literal İSE `typeExprToType(p.type_expr)` DOĞRUDAN kullanılır —
+   çözülemezse (GERÇEKTEN bir tip parametresi İçEREN bir liste/dict GİBİ)
+   NORMAL `checkExpr` yoluna DÜŞÜLÜR (MEVCUT davranış, DEĞİŞMEDEN).
+
+**Doğrulama**: `tests/cli/orm_test.zig` (GERÇEK bir SQLite'a karşı,
+`sqlite_test.zig`nin AYNI "gerçek `noxc` alt-süreci" deseniyle) —
+Table/Column tanımla → create_table → insert (int/float/str/null
+KARIŞIK) → select (parametreli `where_sql`) → update → delete, HEPSİ
+TEK bir uçtan-uca test AKIŞINDA. AYRICA ELLE, GERÇEK Docker Postgres 16
+VE MySQL 8 konteynerlerine karşı (`nox.orm`nin KENDİSİ DAHİL) TAM CRUD
+doğrulandı — HER İKİ sürücüde de AYNI (SQLite'la BİREBİR eşleşen)
+sonuçlar ÜRETTİ; konteynerler doğrulama SONRASI DURDURULUP KALDIRILDI.
+`postgres_mysql_connect_error.nox` (Faz NN.4'ün `Statement`/`prepare`
+protokol-uyumu testi) DEĞİŞMEDEN geçti. Tam `zig build test`
+(Debug+ReleaseFast) TEMİZ.
+
+**Kapsam DIŞI**: JOIN'ler, migration/şema-diff, transaction yönetimi
+(ZATEN `conn.execute("BEGIN")`/`"COMMIT"` İLE MÜMKÜN), driver-bağımsız
+`last_insert_rowid()`, rastgele KULLANICI sınıflarına alan-eşleme/
+reflection (`select`/`query` HER ZAMAN `list[Row]` döner), sürücüler-
+ARASI PORTATİF bir "otomatik-artan birincil anahtar" soyutlaması (SQLite'ın
+`INTEGER PRIMARY KEY`si ROWID'e takma ad OLDUĞUNDAN OTOMATİK artar,
+Postgres/MySQL'in AYNI sözdizimi İSE SADECE NOT NULL+UNIQUE ekler,
+`SERIAL`/`AUTO_INCREMENT` GEREKTİRİR — v1'in `_column_type_sql`si BUNU
+ÇÖZMEZ, ÇAĞIRAN birincil anahtar değerini KENDİSİ SAĞLAMALIDIR).
+
+Kullanıcının 5 maddelik yol haritasının 3. maddesi ("stdlib eksikleri" —
+csv/gzip/toml/smtp/yaml/orm) BU FAZLA TAMAMEN BİTTİ.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

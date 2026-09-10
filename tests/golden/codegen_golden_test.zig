@@ -94,6 +94,43 @@ test "codegen(çalıştır): bool yazdırma ve mantıksal operatörler" {
     );
 }
 
+// `and`/`or`ın artık GERÇEKTEN kısa devre yaptığını doğrular (bkz.
+// nox-teknik-spesifikasyon.md'nin güncellenen notu) — yan etkili (print
+// eden) bir sağ operand, sol operand sonucu ZATEN belirliyorsa HİÇ
+// çalıştırılmamalı; belirlemiyorsa çalışmalı VE `and`/`or`ın birleştirdiği
+// DEĞER sağ operandın KENDİ değeri olmalı (sadece bir kısa-devre
+// sentinel'i değil).
+test "codegen(çalıştır): and/or gerçekten kısa devre yapar (yan etkili sağ operand)" {
+    try expectGolden(
+        @embedFile("codegen_cases/short_circuit_and_or.nox"),
+        @embedFile("codegen_cases/short_circuit_and_or.expected"),
+    );
+}
+
+// Orijinal hata raporundaki çökme örüntüsünün AYNISI: `pos < n and
+// text[pos] != "X"` — `and` kısa devre YAPMIYORSA `pos == n`/`pos > n`
+// iken `text[pos]` yine de değerlendirilir (boş dizede ya da dizenin TAM
+// SONUNDA bir IndexError'a/NULL-işaretçi çökmesine yol açardı).
+test "codegen(çalıştır): str[pos] sınır koruması and ile kısa devre — sınırda/boş dizede çökmez" {
+    try expectGolden(
+        @embedFile("codegen_cases/str_index_guard_short_circuit.nox"),
+        @embedFile("codegen_cases/str_index_guard_short_circuit.expected"),
+    );
+}
+
+// `return s[i]` (bir str char-at ifadesini DOĞRUDAN döndürmek) artık
+// sızdırmıyor — `returnNeedsRetain`in `.index` dalı ARTIK `Value.always_fresh`i
+// kontrol ediyor (bkz. ownership.zig). Sıkı bir döngüde 50000 çağrı —
+// düzeltme ÖNCESİ her çağrı başına 1 tahsis sızdırırdı, bu da
+// `expectGolden`in "stderr boş olmalı" kontrolünü (DebugAllocator'ın
+// sızıntı raporu) tetiklerdi.
+test "codegen(çalıştır): return s[i] (str char-at) sızdırmaz" {
+    try expectGolden(
+        @embedFile("codegen_cases/str_index_return_no_leak.nox"),
+        @embedFile("codegen_cases/str_index_return_no_leak.expected"),
+    );
+}
+
 test "codegen(çalıştır): for-range ve if/elif/else" {
     try expectGolden(
         @embedFile("codegen_cases/for_range_and_if.nox"),
@@ -2094,6 +2131,77 @@ test "codegen(çalıştır): nox.smtp — erişilemeyen adrese bağlantı SmtpEr
     try expectGolden(
         @embedFile("codegen_cases/smtp_connect_error.nox"),
         @embedFile("codegen_cases/smtp_connect_error.expected"),
+    );
+}
+
+// Faz STD.5 (nox.yaml) — kullanıcının 5 maddelik yol haritasının 3.
+// maddesinin ("stdlib eksikleri") 5. (SONUNCU stdlib-gap) alt-parçası.
+// `nox.toml`nin (Faz STD.3) AYNI "and/or kısa-devre yapmaz" + "fonksiyon-
+// dönüşünde çıplak str-indeksleme ARC sızdırır" güvenlik dersleri BURADA
+// da uygulandı. AYRICA BU turda YENİ, GERÇEK bir codegen hatası bulundu:
+// `s[0] == X and <inlinable_fonksiyon_cagrisi>(...)` deseni bir QBE
+// "predecessors not matched in phi" derleme hatasına yol açıyor (bkz.
+// flaglenen takip görevi) — TÜM benzer siteler İç İçe `if`lerle atlatıldı.
+test "codegen(çalıştır): nox.yaml — temel esleme (str/int/float/bool/null)" {
+    try expectGolden(
+        @embedFile("codegen_cases/yaml_parse_basic_mapping.nox"),
+        @embedFile("codegen_cases/yaml_parse_basic_mapping.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.yaml — girintiyle ic ice eslemeler" {
+    try expectGolden(
+        @embedFile("codegen_cases/yaml_parse_nested_mapping.nox"),
+        @embedFile("codegen_cases/yaml_parse_nested_mapping.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.yaml — skaler VE nesne-listesi dizileri" {
+    try expectGolden(
+        @embedFile("codegen_cases/yaml_parse_sequence.nox"),
+        @embedFile("codegen_cases/yaml_parse_sequence.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.yaml — akis-stili dizi/esleme (ic ice DAHIL)" {
+    try expectGolden(
+        @embedFile("codegen_cases/yaml_parse_flow_style.nox"),
+        @embedFile("codegen_cases/yaml_parse_flow_style.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.yaml — cift-tirnakli (kacis) VE tek-tirnakli string'ler" {
+    try expectGolden(
+        @embedFile("codegen_cases/yaml_parse_quoted_strings.nox"),
+        @embedFile("codegen_cases/yaml_parse_quoted_strings.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.yaml — yorum/bos satirlar + bastaki '---'" {
+    try expectGolden(
+        @embedFile("codegen_cases/yaml_parse_comments_and_blank_lines.nox"),
+        @embedFile("codegen_cases/yaml_parse_comments_and_blank_lines.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.yaml — get() dotted-path yardimcisi" {
+    try expectGolden(
+        @embedFile("codegen_cases/yaml_get_dotted_path_helper.nox"),
+        @embedFile("codegen_cases/yaml_get_dotted_path_helper.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.yaml — TAB girintisi YamlError firlatir" {
+    try expectGolden(
+        @embedFile("codegen_cases/yaml_tab_indent_raises.nox"),
+        @embedFile("codegen_cases/yaml_tab_indent_raises.expected"),
+    );
+}
+
+test "codegen(çalıştır): nox.yaml — ikinci bir '---' (coklu-belge) YamlError firlatir" {
+    try expectGolden(
+        @embedFile("codegen_cases/yaml_multi_document_raises.nox"),
+        @embedFile("codegen_cases/yaml_multi_document_raises.expected"),
     );
 }
 

@@ -1,0 +1,442 @@
+# nox.yaml — Faz STD.5 (bkz. plan dosyası "nox.yaml"): daraltılmış bir v1
+# alt-kümesiyle SAF Nox'ta YAML ayrıştırma. `nox.toml`nin AYNI "saf Nox,
+# kendi elle-yazılmış ayrıştırıcı" felsefesi, AMA YAML'ın (TOML'DAN
+# FARKLI olarak) GİRİNTİ-DUYARLI/SATIR-TABANLI yapısına UYARLANMIŞ.
+#
+# **Kapsam (BİLİNÇLİ, DAR bir v1)**: blok-stili eşlemeler (`key: value`,
+# girintiyle iç içe), blok-stili diziler (`- item`, girintiyle iç içe,
+# `- key: value` gibi satır-içi eşleme-başlatan dizi elemanları DAHİL),
+# akış-stili diziler/eşlemeler (`[1, 2, 3]`/`{a: 1, b: 2}`, iç içe
+# geçebilir), skalerler: düz (tırnaksız, int/float/bool/null'a otomatik
+# dönüştürülmeye çalışılır, aksi halde düz string), çift-tırnaklı (kaçış
+# dizileriyle), tek-tırnaklı, TAM-SATIR yorumlar (#...), boş satırlar,
+# TEK bir opsiyonel baştaki "---".
+#
+# **Kapsam DIŞI**: satır-içi (trailing) yorumlar, çapa/takma-ad (&/*),
+# etiketler (!!str), birleştirme anahtarları (<<), blok skalerleri
+# (|/>), ÇOKLU-belge YAML (İKİNCİ bir "---"/HERHANGİ bir "..." AÇIKÇA
+# YamlError ile reddedilir), string-DIŞI eşleme anahtarları (anahtarlar
+# HER ZAMAN str olarak saklanır), açık anahtar sözdizimi (? key).
+#
+# **KRİTİK, `nox.toml`den (Faz STD.3) devralınan İKİ güvenlik dersi**:
+# (1) Nox'ta `and`/`or` KISA-DEVRE YAPMAZ — bir bounds-kontrolü İLE bir
+# indeksleme AYNI ifadede BİRLEŞTİRİLMEZ; (2) bir fonksiyondan ÇIPLAK
+# `return s[i]` bir ARC sızıntısına yol açar — `_char_at_or_empty`
+# `return "" + s[pos]` desenini kullanır.
+
+import nox.strings
+
+class YamlError(Exception):
+    pass
+
+# kind: 0=string, 1=int, 2=float, 3=bool, 4=null, 5=sequence, 6=mapping
+class YamlValue:
+    def __init__(self: YamlValue, kind: int, b: bool, i: int, f: float, s: str, arr: list[YamlValue], mapping: dict[str, YamlValue]) -> None:
+        self.kind = kind
+        self.b = b
+        self.i = i
+        self.f = f
+        self.s = s
+        self.arr = arr
+        self.mapping = mapping
+
+def _make_string(s: str) -> YamlValue:
+    return YamlValue(0, False, 0, 0.0, s, [], {})
+
+def _make_int(i: int) -> YamlValue:
+    return YamlValue(1, False, i, 0.0, "", [], {})
+
+def _make_float(f: float) -> YamlValue:
+    return YamlValue(2, False, 0, f, "", [], {})
+
+def _make_bool(b: bool) -> YamlValue:
+    return YamlValue(3, b, 0, 0.0, "", [], {})
+
+def _make_null() -> YamlValue:
+    return YamlValue(4, False, 0, 0.0, "", [], {})
+
+def _make_sequence(arr: list[YamlValue]) -> YamlValue:
+    return YamlValue(5, False, 0, 0.0, "", arr, {})
+
+def _make_mapping() -> YamlValue:
+    return YamlValue(6, False, 0, 0.0, "", [], {})
+
+def is_string(v: YamlValue) -> bool:
+    return v.kind == 0
+
+def is_int(v: YamlValue) -> bool:
+    return v.kind == 1
+
+def is_float(v: YamlValue) -> bool:
+    return v.kind == 2
+
+def is_bool(v: YamlValue) -> bool:
+    return v.kind == 3
+
+def is_null(v: YamlValue) -> bool:
+    return v.kind == 4
+
+def is_sequence(v: YamlValue) -> bool:
+    return v.kind == 5
+
+def is_mapping(v: YamlValue) -> bool:
+    return v.kind == 6
+
+class _Line:
+    def __init__(self: _Line, indent: int, content: str) -> None:
+        self.indent = indent
+        self.content = content
+
+def _char_at_or_empty(s: str, pos: int, n: int) -> str:
+    if pos < n:
+        return "" + s[pos]
+    return ""
+
+def _substr(s: str, start: int, end: int) -> str:
+    result: str = ""
+    i: int = start
+    while i < end:
+        result = result + s[i]
+        i = i + 1
+    return result
+
+def _is_sequence_line(content: str) -> bool:
+    if len(content) == 0:
+        return False
+    if content[0] != "-":
+        return False
+    if len(content) == 1:
+        return True
+    return content[1] == " "
+
+def _is_mapping_line(content: str) -> bool:
+    if nox.strings.index_of(content, ": ") >= 0:
+        return True
+    return nox.strings.ends_with(content, ":")
+
+def _count_leading_spaces_or_raise(raw: str) -> int:
+    count: int = 0
+    n: int = len(raw)
+    scanning: bool = True
+    while scanning:
+        if count >= n:
+            scanning = False
+        elif raw[count] == " ":
+            count = count + 1
+        elif raw[count] == "\t":
+            raise YamlError("YAML girintisinde TAB kullanilamaz")
+        else:
+            scanning = False
+    return count
+
+def _tokenize(text: str) -> list[_Line]:
+    raw_lines: list[str] = nox.strings.split(text, "\n")
+    result: list[_Line] = []
+    i: int = 0
+    doc_marker_allowed: bool = True
+    while i < len(raw_lines):
+        raw: str = nox.strings.trim_end(raw_lines[i])
+        trimmed_content: str = nox.strings.trim(raw)
+        if trimmed_content == "":
+            i = i + 1
+        elif nox.strings.starts_with(trimmed_content, "#"):
+            i = i + 1
+        elif trimmed_content == "---":
+            if doc_marker_allowed:
+                doc_marker_allowed = False
+                i = i + 1
+            else:
+                raise YamlError("coklu-belge YAML ('---' ile ayrilan) v1'de desteklenmiyor")
+        elif trimmed_content == "...":
+            raise YamlError("coklu-belge YAML ('...' ile biten) v1'de desteklenmiyor")
+        else:
+            doc_marker_allowed = False
+            indent: int = _count_leading_spaces_or_raise(raw)
+            content: str = _substr(raw, indent, len(raw))
+            result.append(_Line(indent, content))
+            i = i + 1
+    return result
+
+def _strip_quotes_if_present(s: str) -> str:
+    # NOT: `s[0] == X and nox.strings.ends_with(...)` GİBİ, HAM bir string
+    # indekslemeyi (`s[0]`) İNLİNE EDİLEBİLİR bir fonksiyon çağrısıyla
+    # (`nox.strings.ends_with`) TEK bir `and` ifadesinde BİRLEŞTİRMEK,
+    # GERÇEK bir QBE codegen hatasına (`predecessors not matched in phi`)
+    # yol AÇIYOR — `and`in kısa-devre dalının, ÇAĞRI İNLİNE EDİLDİĞİNDE
+    # YANLIŞ bir phi-öncülü ÜRETMESİ (bir derleyici hatası, bkz. flaglenen
+    # takip görevi). BU YÜZDEN İç İçe `if`lerle AYRI tutulur.
+    if len(s) >= 2:
+        if s[0] == "\"":
+            if nox.strings.ends_with(s, "\""):
+                return _parse_double_quoted(s)
+        if s[0] == "'":
+            if nox.strings.ends_with(s, "'"):
+                return _parse_single_quoted(s)
+    return s
+
+def _parse_double_quoted(s: str) -> str:
+    inner: str = _substr(s, 1, len(s) - 1)
+    result: str = ""
+    i: int = 0
+    n: int = len(inner)
+    while i < n:
+        c: str = inner[i]
+        if c == "\\":
+            nxt: str = _char_at_or_empty(inner, i + 1, n)
+            if nxt == "n":
+                result = result + "\n"
+            elif nxt == "t":
+                result = result + "\t"
+            elif nxt == "\"":
+                result = result + "\""
+            elif nxt == "\\":
+                result = result + "\\"
+            else:
+                result = result + nxt
+            i = i + 2
+        else:
+            result = result + c
+            i = i + 1
+    return result
+
+def _parse_single_quoted(s: str) -> str:
+    # YAML tek-tirnak kacisi: '' -> tek bir literal tirnak (backslash
+    # kacis dizisi YOK).
+    inner: str = _substr(s, 1, len(s) - 1)
+    result: str = ""
+    i: int = 0
+    n: int = len(inner)
+    while i < n:
+        c: str = inner[i]
+        if c == "'":
+            nxt: str = _char_at_or_empty(inner, i + 1, n)
+            if nxt == "'":
+                result = result + "'"
+                i = i + 2
+            else:
+                result = result + c
+                i = i + 1
+        else:
+            result = result + c
+            i = i + 1
+    return result
+
+def _parse_plain_scalar(s: str) -> YamlValue:
+    if s == "null" or s == "Null" or s == "NULL" or s == "~":
+        return _make_null()
+    if s == "true" or s == "True" or s == "TRUE":
+        return _make_bool(True)
+    if s == "false" or s == "False" or s == "FALSE":
+        return _make_bool(False)
+    try:
+        return _make_int(int(s))
+    except ValueError as e:
+        pass
+    try:
+        return _make_float(float(s))
+    except ValueError as e:
+        pass
+    return _make_string(s)
+
+def _split_flow_items(inner: str) -> list[str]:
+    if nox.strings.trim(inner) == "":
+        return []
+    parts: list[str] = []
+    current: str = ""
+    depth: int = 0
+    in_single: bool = False
+    in_double: bool = False
+    i: int = 0
+    n: int = len(inner)
+    while i < n:
+        c: str = inner[i]
+        if in_double:
+            current = current + c
+            if c == "\\":
+                nxt: str = _char_at_or_empty(inner, i + 1, n)
+                current = current + nxt
+                i = i + 1
+            elif c == "\"":
+                in_double = False
+        elif in_single:
+            current = current + c
+            if c == "'":
+                in_single = False
+        elif c == "\"":
+            in_double = True
+            current = current + c
+        elif c == "'":
+            in_single = True
+            current = current + c
+        elif c == "[" or c == "{":
+            depth = depth + 1
+            current = current + c
+        elif c == "]" or c == "}":
+            depth = depth - 1
+            current = current + c
+        elif c == "," and depth == 0:
+            parts.append(nox.strings.trim(current))
+            current = ""
+        else:
+            current = current + c
+        i = i + 1
+    parts.append(nox.strings.trim(current))
+    return parts
+
+def _parse_flow_sequence(s: str) -> YamlValue:
+    if not nox.strings.ends_with(s, "]"):
+        raise YamlError("gecersiz akis dizisi (']' eksik): " + s)
+    inner: str = _substr(s, 1, len(s) - 1)
+    parts: list[str] = _split_flow_items(inner)
+    items: list[YamlValue] = []
+    i: int = 0
+    while i < len(parts):
+        items.append(_parse_scalar_or_flow(parts[i]))
+        i = i + 1
+    return _make_sequence(items)
+
+def _parse_flow_mapping(s: str) -> YamlValue:
+    if not nox.strings.ends_with(s, "}"):
+        raise YamlError("gecersiz akis eslemesi ('}' eksik): " + s)
+    inner: str = _substr(s, 1, len(s) - 1)
+    parts: list[str] = _split_flow_items(inner)
+    result: YamlValue = _make_mapping()
+    i: int = 0
+    while i < len(parts):
+        part: str = parts[i]
+        sep_idx: int = nox.strings.index_of(part, ":")
+        if sep_idx < 0:
+            raise YamlError("gecersiz akis eslemesi girdisi: " + part)
+        key: str = _strip_quotes_if_present(nox.strings.trim(_substr(part, 0, sep_idx)))
+        val_raw: str = nox.strings.trim(_substr(part, sep_idx + 1, len(part)))
+        result.mapping[key] = _parse_scalar_or_flow(val_raw)
+        i = i + 1
+    return result
+
+def _parse_scalar_or_flow(raw: str) -> YamlValue:
+    trimmed: str = nox.strings.trim(raw)
+    if trimmed == "":
+        return _make_null()
+    first: str = _char_at_or_empty(trimmed, 0, len(trimmed))
+    if first == "[":
+        return _parse_flow_sequence(trimmed)
+    if first == "{":
+        return _parse_flow_mapping(trimmed)
+    if first == "\"":
+        return _make_string(_parse_double_quoted(trimmed))
+    if first == "'":
+        return _make_string(_parse_single_quoted(trimmed))
+    return _parse_plain_scalar(trimmed)
+
+# `pos[0] < len(lines) and lines[pos[0]].indent > indent` GİBİ bir
+# ifadeyi TEK bir `and`da BİRLEŞTİRMEK YERİNE ayrı bir yardımcıya
+# ÇIKARILDI — HEM DRY (2 çağrı sitesi) HEM `and`/`or`in HAM bir liste-
+# indekslemesiyle (`lines[pos[0]]`) BİRLEŞTİRİLDİĞİNDE bulunan GERÇEK
+# QBE codegen hatasından (`predecessors not matched in phi`, bkz.
+# flaglenen takip görevi) KAÇINMAK İçİn.
+def _has_deeper_next_line(lines: list[_Line], pos: list[int], indent: int) -> bool:
+    if pos[0] >= len(lines):
+        return False
+    return lines[pos[0]].indent > indent
+
+def _parse_block(lines: list[_Line], pos: list[int], indent: int) -> YamlValue:
+    if pos[0] >= len(lines):
+        return _make_null()
+    line: _Line = lines[pos[0]]
+    if _is_sequence_line(line.content):
+        return _parse_sequence(lines, pos, indent)
+    return _parse_mapping(lines, pos, indent)
+
+def _parse_mapping(lines: list[_Line], pos: list[int], indent: int) -> YamlValue:
+    result: YamlValue = _make_mapping()
+    scanning: bool = True
+    while scanning:
+        if pos[0] >= len(lines):
+            scanning = False
+        elif lines[pos[0]].indent != indent:
+            scanning = False
+        else:
+            line: _Line = lines[pos[0]]
+            key: str = ""
+            raw_value: str = ""
+            sep_idx: int = nox.strings.index_of(line.content, ": ")
+            if sep_idx >= 0:
+                key = nox.strings.trim(_substr(line.content, 0, sep_idx))
+                raw_value = nox.strings.trim(_substr(line.content, sep_idx + 2, len(line.content)))
+            elif nox.strings.ends_with(line.content, ":"):
+                key = nox.strings.trim(_substr(line.content, 0, len(line.content) - 1))
+                raw_value = ""
+            else:
+                raise YamlError("gecersiz esleme satiri: " + line.content)
+            key = _strip_quotes_if_present(key)
+            pos[0] = pos[0] + 1
+            if raw_value == "":
+                if _has_deeper_next_line(lines, pos, indent):
+                    result.mapping[key] = _parse_block(lines, pos, lines[pos[0]].indent)
+                else:
+                    result.mapping[key] = _make_null()
+            else:
+                result.mapping[key] = _parse_scalar_or_flow(raw_value)
+    return result
+
+def _parse_sequence(lines: list[_Line], pos: list[int], indent: int) -> YamlValue:
+    items: list[YamlValue] = []
+    scanning: bool = True
+    while scanning:
+        if pos[0] >= len(lines):
+            scanning = False
+        elif lines[pos[0]].indent != indent:
+            scanning = False
+        else:
+            line: _Line = lines[pos[0]]
+            after_dash: str = nox.strings.trim_start(_substr(line.content, 1, len(line.content)))
+            if after_dash == "":
+                pos[0] = pos[0] + 1
+                if _has_deeper_next_line(lines, pos, indent):
+                    items.append(_parse_block(lines, pos, lines[pos[0]].indent))
+                else:
+                    items.append(_make_null())
+            elif _is_mapping_line(after_dash):
+                item_indent: int = indent + (len(line.content) - len(after_dash))
+                lines[pos[0]] = _Line(item_indent, after_dash)
+                items.append(_parse_mapping(lines, pos, item_indent))
+            else:
+                items.append(_parse_scalar_or_flow(after_dash))
+                pos[0] = pos[0] + 1
+    return _make_sequence(items)
+
+def parse(text: str) -> YamlValue:
+    lines: list[_Line] = _tokenize(text)
+    if len(lines) == 0:
+        return _make_null()
+    pos: list[int] = [0]
+    first: _Line = lines[0]
+    value: YamlValue = _make_null()
+    is_single_bare_scalar: bool = False
+    if len(lines) == 1:
+        if not _is_mapping_line(first.content):
+            if not _is_sequence_line(first.content):
+                is_single_bare_scalar = True
+    if is_single_bare_scalar:
+        value = _parse_scalar_or_flow(first.content)
+        pos[0] = 1
+    else:
+        value = _parse_block(lines, pos, first.indent)
+    if pos[0] != len(lines):
+        raise YamlError("beklenmeyen/hatali girintili satir: " + lines[pos[0]].content)
+    return value
+
+# "a.b.c" gibi noktali bir yolu, SADECE ESLEME anahtarlari ÜZERİNDEN
+# (nox.toml'un get()'i İLE AYNI ilke — dizi-indeksleme BU yardimcinin
+# KAPSAMI DIŞINDA, `.arr[i]` DOĞRUDAN kullanilmalidir) çözer.
+def get(root: YamlValue, dotted_path: str) -> YamlValue:
+    parts: list[str] = nox.strings.split(dotted_path, ".")
+    current: YamlValue = root
+    i: int = 0
+    while i < len(parts):
+        key: str = parts[i]
+        if current.kind != 6 or not current.mapping.contains(key):
+            raise YamlError("yol bulunamadi: " + dotted_path)
+        current = current.mapping[key]
+        i = i + 1
+    return current

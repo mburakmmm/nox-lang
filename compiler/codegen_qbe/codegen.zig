@@ -539,6 +539,11 @@ pub const Codegen = struct {
     // (15 sibling dosyanın `*Codegen` imzalarına dokunmayı GEREKTİRİRDİ).
     // `.qbe` dalı DAVRANIŞ olarak ESKİ takma-ad İLE BYTE-BİREBİR AYNI.
     pub fn qbeLabel(self: *Codegen, label: []const u8) CodegenError!void {
+        // `self.current_label`i (bkz. onun belge notu) GÜNCELLER — TÜM
+        // codegen'in TEK, merkezi etiket-emisyon noktası BURASI olduğundan
+        // (148 çağrı sitesi), bu HERHANGİ bir alt-ifadenin (istisna kontrolü/
+        // iç içe `and`/`or`/vb.) ürettiği YENİ bloğu OTOMATİK yakalar.
+        self.current_label = label;
         return switch (self.backend) {
             .qbe => qbe_emit.qbeLabel(self, label),
             .llvm => llvm_emit.qbeLabel(self, label),
@@ -933,6 +938,14 @@ pub const Codegen = struct {
     mod_cache: std.StringHashMapUnmanaged(ModCacheEntry) = .empty,
     temp_counter: usize = 0,
     label_counter: usize = 0,
+    /// (bkz. `qbeLabel`in belge notu): en son `self.qbeLabel(...)` çağrısına
+    /// geçirilen etiket — bir alt-ifadenin (ör. `genExpr(b.right.*)`)
+    /// KENDİSİ ek dallanma/etiket üretebileceğinden (iç içe bir `and`/`or`,
+    /// bir istisna kontrolü, vb.), o alt-ifadeyi ÜRETMEYE BAŞLARKEN
+    /// yazılan etiketin, ÜRETİM BİTTİĞİNDE HÂLÂ "şu anki blok" OLDUĞU asla
+    /// VARSAYILAMAZ — bir `phi`nin GERÇEK önceli DAİMA bu alanın, o alt-
+    /// ifade üretildikten HEMEN SONRAKİ değeridir.
+    current_label: []const u8 = "",
     string_counter: usize = 0,
     string_data: std.ArrayListUnmanaged(StringDatum) = .empty,
     next_class_id: usize = 1,

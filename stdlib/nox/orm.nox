@@ -1,0 +1,181 @@
+# nox.orm — Faz STD.6 (bkz. plan dosyası "nox.orm"): kullanıcının 5
+# maddelik yol haritasının 3. maddesinin ("stdlib eksikleri") 6. VE SON
+# alt-parçası. `nox.db`nin `DbConnection` protokolü (`close`/`execute`/
+# `query`/`prepare` — SON İKİSİ Faz STD.6'nın KENDİSİNDE `Row`/`Statement`
+# BİRLEŞTİRİLEREK protokole EKLENDİ) ÜZERİNE İnşa edilen bir "mikro-ORM":
+# `Table`/`Column` şeması + GERÇEK parametre bağlamasıyla (`Statement.
+# bind_*`, SQL metnine ham DEĞER gömme YOK) CRUD yardımcıları.
+#
+# **Bilinçli v1 kapsamı**: sorgu-oluşturucu + parametreli CRUD — TAM bir
+# alan-eşlemeli (active-record) ORM DEĞİL (Nox'ta reflection/generics
+# YOK, rastgele bir KULLANICI sınıfına otomatik alan doldurma MÜMKÜN
+# DEĞİL) — `select`/`query` HER ZAMAN `nox.db.Row` döner, ARAYAN kendi
+# tipine dönüştürmekten sorumludur.
+
+import nox.strings
+from nox.db import DbConnection, Row, Statement
+
+class OrmError(Exception):
+    pass
+
+# kind: 0=string, 1=int, 2=float, 3=bool, 4=null
+class Value:
+    def __init__(self: Value, kind: int, b: bool, i: int, f: float, s: str) -> None:
+        self.kind = kind
+        self.b = b
+        self.i = i
+        self.f = f
+        self.s = s
+
+def val_str(s: str) -> Value:
+    return Value(0, False, 0, 0.0, s)
+
+def val_int(i: int) -> Value:
+    return Value(1, False, i, 0.0, "")
+
+def val_float(f: float) -> Value:
+    return Value(2, False, 0, f, "")
+
+def val_bool(b: bool) -> Value:
+    return Value(3, b, 0, 0.0, "")
+
+def val_null() -> Value:
+    return Value(4, False, 0, 0.0, "")
+
+def _bind(stmt: Statement, idx: int, v: Value) -> None:
+    if v.kind == 0:
+        stmt.bind_str(idx, v.s)
+    elif v.kind == 1:
+        stmt.bind_int(idx, v.i)
+    elif v.kind == 2:
+        stmt.bind_float(idx, v.f)
+    elif v.kind == 3:
+        int_val: int = 0
+        if v.b:
+            int_val = 1
+        stmt.bind_int(idx, int_val)
+    else:
+        stmt.bind_null(idx)
+
+# col_kind: 0=INTEGER, 1=TEXT, 2=REAL
+class Column:
+    def __init__(self: Column, name: str, kind: int, is_primary_key: bool) -> None:
+        self.name = name
+        self.kind = kind
+        self.is_primary_key = is_primary_key
+
+class Table:
+    def __init__(self: Table, name: str, columns: list[Column]) -> None:
+        self.name = name
+        self.columns = columns
+
+def _column_type_sql(kind: int) -> str:
+    if kind == 0:
+        return "INTEGER"
+    if kind == 2:
+        return "REAL"
+    return "TEXT"
+
+def create_table_sql(table: Table) -> str:
+    result: str = "CREATE TABLE IF NOT EXISTS " + table.name + " ("
+    i: int = 0
+    while i < len(table.columns):
+        col: Column = table.columns[i]
+        if i > 0:
+            result = result + ", "
+        result = result + col.name + " " + _column_type_sql(col.kind)
+        if col.is_primary_key:
+            result = result + " PRIMARY KEY"
+        i = i + 1
+    return result + ")"
+
+def create_table(conn: DbConnection, table: Table) -> None:
+    try:
+        conn.execute(create_table_sql(table))
+    except Exception as e:
+        raise OrmError("tablo olusturulamadi: " + e.message)
+
+# `values`de BULUNMAYAN sütunlar (ör. otomatik-artan birincil anahtar)
+# ATLANIR — INSERT ifadesine hiç dahil edilmez.
+def insert(conn: DbConnection, table: Table, values: dict[str, Value]) -> int:
+    names: list[str] = []
+    placeholders: list[str] = []
+    vals: list[Value] = []
+    i: int = 0
+    while i < len(table.columns):
+        col: Column = table.columns[i]
+        if values.contains(col.name):
+            names.append(col.name)
+            placeholders.append("?")
+            vals.append(values[col.name])
+        i = i + 1
+    sql: str = "INSERT INTO " + table.name + " (" + nox.strings.join(names, ", ") + ") VALUES (" + nox.strings.join(placeholders, ", ") + ")"
+    try:
+        stmt: Statement = conn.prepare(sql)
+        j: int = 0
+        while j < len(vals):
+            _bind(stmt, j, vals[j])
+            j = j + 1
+        return stmt.execute()
+    except Exception as e:
+        raise OrmError("ekleme basarisiz: " + e.message)
+
+# `where_sql`e "?" placeholder'ları YAZILIR, `where_params` bunlara
+# KARŞILIK gelen `Value`leri SIRAYLA taşır (ör. `update(conn, t, vals,
+# "id = ?", [orm.val_int(5)])`) — TAMAMEN PARAMETRELİ, DEĞERLER ASLA ham
+# metne GÖMÜLMEZ. `where_sql`in KENDİ sözdizimsel YAPISI (ör. `age > ?
+# AND active = ?`) çağıranın sorumluluğundadır.
+def update(conn: DbConnection, table: Table, values: dict[str, Value], where_sql: str, where_params: list[Value]) -> int:
+    sets: list[str] = []
+    vals: list[Value] = []
+    i: int = 0
+    while i < len(table.columns):
+        col: Column = table.columns[i]
+        if values.contains(col.name):
+            sets.append(col.name + " = ?")
+            vals.append(values[col.name])
+        i = i + 1
+    sql: str = "UPDATE " + table.name + " SET " + nox.strings.join(sets, ", ")
+    if where_sql != "":
+        sql = sql + " WHERE " + where_sql
+    try:
+        stmt: Statement = conn.prepare(sql)
+        j: int = 0
+        while j < len(vals):
+            _bind(stmt, j, vals[j])
+            j = j + 1
+        k: int = 0
+        while k < len(where_params):
+            _bind(stmt, len(vals) + k, where_params[k])
+            k = k + 1
+        return stmt.execute()
+    except Exception as e:
+        raise OrmError("guncelleme basarisiz: " + e.message)
+
+def delete(conn: DbConnection, table: Table, where_sql: str, where_params: list[Value]) -> int:
+    sql: str = "DELETE FROM " + table.name
+    if where_sql != "":
+        sql = sql + " WHERE " + where_sql
+    try:
+        stmt: Statement = conn.prepare(sql)
+        i: int = 0
+        while i < len(where_params):
+            _bind(stmt, i, where_params[i])
+            i = i + 1
+        return stmt.execute()
+    except Exception as e:
+        raise OrmError("silme basarisiz: " + e.message)
+
+def select(conn: DbConnection, table: Table, where_sql: str, where_params: list[Value]) -> list[Row]:
+    sql: str = "SELECT * FROM " + table.name
+    if where_sql != "":
+        sql = sql + " WHERE " + where_sql
+    try:
+        stmt: Statement = conn.prepare(sql)
+        i: int = 0
+        while i < len(where_params):
+            _bind(stmt, i, where_params[i])
+            i = i + 1
+        return stmt.query()
+    except Exception as e:
+        raise OrmError("sorgu basarisiz: " + e.message)

@@ -1229,20 +1229,15 @@ export function w $main(w %argc, l %argv) {
     storew 1, %t0
     storew 0, %t1
     %t2 =w loadw %t0
+    jnz %t2, @logic_rhs0, @logic_short1
+@logic_short1
+    jmp @logic_done2
+@logic_rhs0
     %t3 =w loadw %t1
-    %t4 =w and %t2, %t3
-    jnz %t4, @print_true0, @print_false1
-@print_true0
-    call $printf(l $fmt_bool_true)
-    jmp @print_done2
-@print_false1
-    call $printf(l $fmt_bool_false)
-    jmp @print_done2
-@print_done2
-    %t5 =w loadw %t0
-    %t6 =w loadw %t1
-    %t7 =w or %t5, %t6
-    jnz %t7, @print_true3, @print_false4
+    jmp @logic_done2
+@logic_done2
+    %t4 =w phi @logic_short1 0, @logic_rhs0 %t3
+    jnz %t4, @print_true3, @print_false4
 @print_true3
     call $printf(l $fmt_bool_true)
     jmp @print_done5
@@ -1250,20 +1245,16 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_bool_false)
     jmp @print_done5
 @print_done5
-    %t8 =w loadw %t0
-    %t9 =w xor %t8, 1
-    jnz %t9, @print_true6, @print_false7
-@print_true6
-    call $printf(l $fmt_bool_true)
-    jmp @print_done8
-@print_false7
-    call $printf(l $fmt_bool_false)
-    jmp @print_done8
-@print_done8
-    %t10 =w loadw %t0
-    %t11 =w loadw %t1
-    %t12 =w ceqw %t10, %t11
-    jnz %t12, @print_true9, @print_false10
+    %t5 =w loadw %t0
+    jnz %t5, @logic_short7, @logic_rhs6
+@logic_short7
+    jmp @logic_done8
+@logic_rhs6
+    %t6 =w loadw %t1
+    jmp @logic_done8
+@logic_done8
+    %t7 =w phi @logic_short7 1, @logic_rhs6 %t6
+    jnz %t7, @print_true9, @print_false10
 @print_true9
     call $printf(l $fmt_bool_true)
     jmp @print_done11
@@ -1271,8 +1262,29 @@ export function w $main(w %argc, l %argv) {
     call $printf(l $fmt_bool_false)
     jmp @print_done11
 @print_done11
+    %t8 =w loadw %t0
+    %t9 =w xor %t8, 1
+    jnz %t9, @print_true12, @print_false13
+@print_true12
+    call $printf(l $fmt_bool_true)
+    jmp @print_done14
+@print_false13
+    call $printf(l $fmt_bool_false)
+    jmp @print_done14
+@print_done14
+    %t10 =w loadw %t0
+    %t11 =w loadw %t1
+    %t12 =w ceqw %t10, %t11
+    jnz %t12, @print_true15, @print_false16
+@print_true15
+    call $printf(l $fmt_bool_true)
+    jmp @print_done17
+@print_false16
+    call $printf(l $fmt_bool_false)
+    jmp @print_done17
+@print_done17
     call $nox_runtime_deinit(l %rt)
-@fn_end12
+@fn_end18
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

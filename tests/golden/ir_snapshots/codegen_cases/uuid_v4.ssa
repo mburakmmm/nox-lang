@@ -2740,30 +2740,60 @@ export function w $nox_uuid__is_hex_digit(l %rt, l %p_s, l %p_idx) {
     storel %t14, %t2
     %t15 =l loadl %t2
     %t16 =w csgel %t15, 48
+    jnz %t16, @logic_rhs2, @logic_short3
+@logic_short3
+    jmp @logic_done4
+@logic_rhs2
     %t17 =l loadl %t2
     %t18 =w cslel %t17, 57
-    %t19 =w and %t16, %t18
+    jmp @logic_done4
+@logic_done4
+    %t19 =w phi @logic_short3 0, @logic_rhs2 %t18
     storew %t19, %t3
     %t20 =l loadl %t2
     %t21 =w csgel %t20, 97
+    jnz %t21, @logic_rhs5, @logic_short6
+@logic_short6
+    jmp @logic_done7
+@logic_rhs5
     %t22 =l loadl %t2
     %t23 =w cslel %t22, 102
-    %t24 =w and %t21, %t23
+    jmp @logic_done7
+@logic_done7
+    %t24 =w phi @logic_short6 0, @logic_rhs5 %t23
     storew %t24, %t4
     %t25 =l loadl %t2
     %t26 =w csgel %t25, 65
+    jnz %t26, @logic_rhs8, @logic_short9
+@logic_short9
+    jmp @logic_done10
+@logic_rhs8
     %t27 =l loadl %t2
     %t28 =w cslel %t27, 70
-    %t29 =w and %t26, %t28
+    jmp @logic_done10
+@logic_done10
+    %t29 =w phi @logic_short9 0, @logic_rhs8 %t28
     storew %t29, %t5
     %t30 =w loadw %t3
+    jnz %t30, @logic_short12, @logic_rhs11
+@logic_short12
+    jmp @logic_done13
+@logic_rhs11
     %t31 =w loadw %t4
-    %t32 =w or %t30, %t31
+    jmp @logic_done13
+@logic_done13
+    %t32 =w phi @logic_short12 1, @logic_rhs11 %t31
+    jnz %t32, @logic_short15, @logic_rhs14
+@logic_short15
+    jmp @logic_done16
+@logic_rhs14
     %t33 =w loadw %t5
-    %t34 =w or %t32, %t33
+    jmp @logic_done16
+@logic_done16
+    %t34 =w phi @logic_short15 1, @logic_rhs14 %t33
     ret %t34
-@after_return2
-@fn_end3
+@after_return17
+@fn_end18
     ret 0
 }
 export function w $nox_uuid_is_valid(l %rt, l %p_s) {
@@ -2799,24 +2829,42 @@ export function w $nox_uuid_is_valid(l %rt, l %p_s) {
 @while_body4
     %t17 =l loadl %t1
     %t18 =w ceql %t17, 8
+    jnz %t18, @logic_short8, @logic_rhs7
+@logic_short8
+    jmp @logic_done9
+@logic_rhs7
     %t19 =l loadl %t1
     %t20 =w ceql %t19, 13
-    %t21 =w or %t18, %t20
+    jmp @logic_done9
+@logic_done9
+    %t21 =w phi @logic_short8 1, @logic_rhs7 %t20
+    jnz %t21, @logic_short11, @logic_rhs10
+@logic_short11
+    jmp @logic_done12
+@logic_rhs10
     %t22 =l loadl %t1
     %t23 =w ceql %t22, 18
-    %t24 =w or %t21, %t23
+    jmp @logic_done12
+@logic_done12
+    %t24 =w phi @logic_short11 1, @logic_rhs10 %t23
+    jnz %t24, @logic_short14, @logic_rhs13
+@logic_short14
+    jmp @logic_done15
+@logic_rhs13
     %t25 =l loadl %t1
     %t26 =w ceql %t25, 23
-    %t27 =w or %t24, %t26
-    jnz %t27, @if_then7, @if_else8
-@if_then7
+    jmp @logic_done15
+@logic_done15
+    %t27 =w phi @logic_short14 1, @logic_rhs13 %t26
+    jnz %t27, @if_then16, @if_else17
+@if_then16
     %t28 =l loadl %t0
     %t29 =l loadl %t1
     %t30 =w csltl %t29, 0
     %t31 =w csgel %t29, %t13
     %t32 =w or %t30, %t31
-    jnz %t32, @str_idx_err10, @str_idx_ok11
-@str_idx_err10
+    jnz %t32, @str_idx_err19, @str_idx_ok20
+@str_idx_err19
     %t33 =l add $str11, 16
     %t34 =l call $nox_rc_alloc(l %rt, l 24)
     storel 6, %t34
@@ -2826,33 +2874,33 @@ export function w $nox_uuid_is_valid(l %rt, l %p_s) {
     storel 0, %t36
     call $Exception___init__(l %rt, l %t34, l %t33)
     %t37 =w call $nox_exception_pending(l %rt)
-    jnz %t37, @ctor_init_failed12, @ctor_init_cont13
-@ctor_init_failed12
+    jnz %t37, @ctor_init_failed21, @ctor_init_cont22
+@ctor_init_failed21
     %t38 =w ceql %t34, 0
-    jnz %t38, @release_skip15, @release14
-@release14
+    jnz %t38, @release_skip24, @release23
+@release23
     call $nox_rc_release_enqueue_dynamic(l %rt, l %t34)
-    jmp @release_done16
-@release_skip15
-    jmp @release_done16
-@release_done16
-    jmp @ctor_init_cont13
-@ctor_init_cont13
+    jmp @release_done25
+@release_skip24
+    jmp @release_done25
+@release_done25
+    jmp @ctor_init_cont22
+@ctor_init_cont22
     %t39 =w call $nox_exception_pending(l %rt)
-    jnz %t39, @exc_propagate17, @exc_continue18
-@exc_propagate17
+    jnz %t39, @exc_propagate26, @exc_continue27
+@exc_propagate26
     ret 0
-@exc_continue18
+@exc_continue27
     call $nox_raise(l %rt, l %t34, l 60)
     %t40 =w call $nox_exception_pending(l %rt)
-    jnz %t40, @exc_propagate19, @exc_continue20
-@exc_propagate19
+    jnz %t40, @exc_propagate28, @exc_continue29
+@exc_propagate28
     ret 0
-@exc_continue20
-    jmp @str_idx_ok11
-@str_idx_ok11
-    jnz %t14, @str_idx_ascii21, @str_idx_unicode22
-@str_idx_ascii21
+@exc_continue29
+    jmp @str_idx_ok20
+@str_idx_ok20
+    jnz %t14, @str_idx_ascii30, @str_idx_unicode31
+@str_idx_ascii30
     %t42 =l add %t28, %t29
     %t43 =w loadub %t42
     %t44 =l call $nox_rc_alloc(l %rt, l 10)
@@ -2861,42 +2909,42 @@ export function w $nox_uuid_is_valid(l %rt, l %p_s) {
     storeb %t43, %t45
     %t46 =l add %t45, 1
     storeb 0, %t46
-    jmp @str_idx_done23
-@str_idx_unicode22
+    jmp @str_idx_done32
+@str_idx_unicode31
     %t47 =l call $nox_str_char_at(l %rt, l %t28, l %t29)
-    jmp @str_idx_done23
-@str_idx_done23
-    %t41 =l phi @str_idx_ascii21 %t45, @str_idx_unicode22 %t47
+    jmp @str_idx_done32
+@str_idx_done32
+    %t41 =l phi @str_idx_ascii30 %t45, @str_idx_unicode31 %t47
     %t48 =l add $str12, 16
     %t49 =w call $strcmp(l %t41, l %t48)
     %t50 =w cnew %t49, 0
     %t51 =w ceql %t41, 0
-    jnz %t51, @release_skip25, @release24
-@release24
+    jnz %t51, @release_skip34, @release33
+@release33
     %t52 =l sub %t41, 16
     %t53 =l loadl %t52
     %t54 =l sub %t53, 1
     storel %t54, %t52
     %t55 =w cslel %t54, 0
-    jnz %t55, @str_free27, @str_free_skip28
-@str_free27
+    jnz %t55, @str_free36, @str_free_skip37
+@str_free36
     call $nox_str_free_now(l %rt, l %t41)
-    jmp @str_free_done29
-@str_free_skip28
-    jmp @str_free_done29
-@str_free_done29
-    jmp @release_done26
-@release_skip25
-    jmp @release_done26
-@release_done26
-    jnz %t50, @if_then30, @if_end9
-@if_then30
+    jmp @str_free_done38
+@str_free_skip37
+    jmp @str_free_done38
+@str_free_done38
+    jmp @release_done35
+@release_skip34
+    jmp @release_done35
+@release_done35
+    jnz %t50, @if_then39, @if_end18
+@if_then39
     ret 0
-@after_return31
-    jmp @if_end9
-@if_end9
+@after_return40
+    jmp @if_end18
+@if_end18
     jmp @if_end6
-@if_else8
+@if_else17
     %t56 =l loadl %t0
     storel %t56, %t2
     %t57 =l loadl %t1
@@ -2907,40 +2955,70 @@ export function w $nox_uuid_is_valid(l %rt, l %p_s) {
     storel %t60, %t4
     %t61 =l loadl %t4
     %t62 =w csgel %t61, 48
+    jnz %t62, @logic_rhs43, @logic_short44
+@logic_short44
+    jmp @logic_done45
+@logic_rhs43
     %t63 =l loadl %t4
     %t64 =w cslel %t63, 57
-    %t65 =w and %t62, %t64
+    jmp @logic_done45
+@logic_done45
+    %t65 =w phi @logic_short44 0, @logic_rhs43 %t64
     storew %t65, %t5
     %t66 =l loadl %t4
     %t67 =w csgel %t66, 97
+    jnz %t67, @logic_rhs46, @logic_short47
+@logic_short47
+    jmp @logic_done48
+@logic_rhs46
     %t68 =l loadl %t4
     %t69 =w cslel %t68, 102
-    %t70 =w and %t67, %t69
+    jmp @logic_done48
+@logic_done48
+    %t70 =w phi @logic_short47 0, @logic_rhs46 %t69
     storew %t70, %t6
     %t71 =l loadl %t4
     %t72 =w csgel %t71, 65
+    jnz %t72, @logic_rhs49, @logic_short50
+@logic_short50
+    jmp @logic_done51
+@logic_rhs49
     %t73 =l loadl %t4
     %t74 =w cslel %t73, 70
-    %t75 =w and %t72, %t74
+    jmp @logic_done51
+@logic_done51
+    %t75 =w phi @logic_short50 0, @logic_rhs49 %t74
     storew %t75, %t7
     %t76 =w loadw %t5
+    jnz %t76, @logic_short53, @logic_rhs52
+@logic_short53
+    jmp @logic_done54
+@logic_rhs52
     %t77 =w loadw %t6
-    %t78 =w or %t76, %t77
+    jmp @logic_done54
+@logic_done54
+    %t78 =w phi @logic_short53 1, @logic_rhs52 %t77
+    jnz %t78, @logic_short56, @logic_rhs55
+@logic_short56
+    jmp @logic_done57
+@logic_rhs55
     %t79 =w loadw %t7
-    %t80 =w or %t78, %t79
+    jmp @logic_done57
+@logic_done57
+    %t80 =w phi @logic_short56 1, @logic_rhs55 %t79
     storew %t80, %t8
-    jmp @inline_done33
-@after_inline_return34
-    jmp @inline_done33
-@inline_done33
+    jmp @inline_done42
+@after_inline_return58
+    jmp @inline_done42
+@inline_done42
     %t81 =w loadw %t8
     %t82 =w xor %t81, 1
-    jnz %t82, @if_then35, @if_end32
-@if_then35
+    jnz %t82, @if_then59, @if_end41
+@if_then59
     ret 0
-@after_return36
-    jmp @if_end32
-@if_end32
+@after_return60
+    jmp @if_end41
+@if_end41
     jmp @if_end6
 @if_end6
     %t83 =l loadl %t1
@@ -2949,8 +3027,8 @@ export function w $nox_uuid_is_valid(l %rt, l %p_s) {
     jmp @while_cond3
 @while_end5
     ret 1
-@after_return37
-@fn_end38
+@after_return61
+@fn_end62
     ret 0
 }
 export function w $main(w %argc, l %argv) {

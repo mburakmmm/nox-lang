@@ -14,6 +14,62 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.76.0]
+
+### Düzeltildi (KRİTİK compiler hatası)
+- **`and`/`or` artık GERÇEKTEN kısa devre yapıyor**: ÖNCEDEN `and`/`or`
+  KOŞULSUZ QBE bit-işlemlerine (HER İKİ operandı da HER ZAMAN
+  değerlendiren) derleniyordu — `pos < n and text[pos] == "X"` gibi bir
+  koruma deseni `pos >= n` İKEN BİLE `text[pos]`i değerlendirip bir
+  IndexError'a/SIGSEGV'e yol açabiliyordu (Faz STD.3/STD.5'in `nox.toml`/
+  `nox.yaml`sinde nested-`if` İLE ELLE atlatılmıştı). ARTIK gerçek jnz+phi
+  kontrol akışıyla derleniyor. Bu düzeltme SIRASINDA, phi düğümünün
+  öncüllerini SABİT VARSAYAN (sağ operandın KENDİSİ BAŞKA bir dallanma
+  İçEREBİLECEĞİNİ HESABA KATMAYAN) İKİNCİ, AYRI bir codegen hatası da
+  bulunup düzeltildi — `Codegen`e YENİ bir `current_label` alanı eklendi.
+  Bkz. `nox-teknik-spesifikasyon.md` §3.143.
+- **`return s[i]` (str char-at) fonksiyondan dönerken ARC sızdırıyordu**:
+  `returnNeedsRetain`nin `.index` dalı TABANI SIZDIRAN (list/dict) İLE
+  TABANDAN BAĞIMSIZ TAZE bir değer üreten (str char-at) durumu AYIRT
+  EDEMİYORDU — `Value.always_fresh` bayrağına güvenilerek düzeltildi.
+- **Checker: `dict[K,V]`, protokol-tipli bir parametreye SAHİP OLDUĞU
+  İçİn örtük generic sayılan fonksiyonlarda TANINMIYORDU** (`unifyTypeExpr`
+  SADECE `list[T]`yi destekliyordu) — `conn: DbConnection` GİBİ bir
+  parametre taşıyan HERHANGİ bir fonksiyonun `dict[K,V]` tipli BAŞKA bir
+  parametresi "bilinmeyen generic tip: dict" hatasıyla REDDEDİLİYORDU.
+- **AYNI yolda, boş `[]`/`{}` literalinin argüman olarak geçmesi tip
+  çıkarımını BAŞARISIZ kılıyordu** (`where_params: list[Value] = []`
+  gibi) — parametrenin bildirilen (tip-parametresi İçERMEYEN) tipi
+  doğrudan kullanılacak şekilde düzeltildi.
+
+### Eklendi
+- **Faz STD.5 — `nox.yaml`**: kullanıcının 5 maddelik yol haritasının 3.
+  maddesinin ("stdlib eksikleri") 5. (SONUNCU stdlib-gap) alt-parçası.
+  `nox.toml`nin AYNI "saf Nox, kendi elle-yazılmış ayrıştırıcı" felsefesi,
+  YAML'ın girinti-duyarlı/satır-tabanlı yapısına uyarlanmış, BİLİNÇLİ
+  olarak DAR bir v1: blok/akış-stili eşleme+dizi, üç skaler tırnak biçimi,
+  yorumlar, TEK bir opsiyonel baştaki `---` (İKİNCİ bir belge işareti
+  `YamlError` İLE reddedilir). Bkz. `nox-teknik-spesifikasyon.md` §3.144.
+- **Faz STD.6 — `nox.orm`**: roadmap'in 3. maddesinin SON alt-parçası.
+  `nox.db`nin `DbConnection` protokolü ÜZERİNE İnşa edilen, `Table`/
+  `Column` şeması + GERÇEK parametre bağlamasıyla (`Statement.bind_*`,
+  SQL metnine ham DEĞER GÖMÜLMEZ) `create_table`/`insert`/`update`/
+  `delete`/`select` CRUD yardımcıları sağlayan bir mikro-ORM. `Statement`
+  (Row GİBİ) sqlite/postgres/mysql'in ÜÇÜNÜN de PAYLAŞTIĞI TEK, SOMUT bir
+  sınıf oldu (protokol tipleri Nox'ta dönüş-tipi OLAMADIĞINDAN) — HER
+  sürücünün KENDİ bind/execute/query mantığı fonksiyon-DEĞERİ alanları
+  OLARAK enjekte edilir. Bkz. `nox-teknik-spesifikasyon.md` §3.145.
+- Kullanıcının 5 maddelik yol haritasının 3. maddesi ("stdlib eksikleri" —
+  csv/gzip/toml/smtp/yaml/orm) BU sürümle TAMAMEN BİTTİ.
+
+### Doğrulandı
+- `tests/cli/orm_test.zig`: GERÇEK bir SQLite'a karşı uçtan-uca CRUD akışı.
+- ELLE, GERÇEK Docker Postgres 16 + MySQL 8 konteynerlerine karşı
+  `nox.orm`nin KENDİSİ DAHİL tam CRUD doğrulandı — üçü de (sqlite dahil)
+  AYNI sonuçları üretti; konteynerler doğrulama sonrası kaldırıldı.
+- Tam `zig build test` (Debug+ReleaseFast) — TÜM MEVCUT testler (`nox.csv`/
+  `nox.toml`/`nox.random`/decorator router testleri DAHİL) DEĞİŞMEDEN geçti.
+
 ## [1.75.1]
 
 ### Düzeltildi

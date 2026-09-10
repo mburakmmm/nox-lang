@@ -55,9 +55,9 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
                     if (r) |e| {
                         const v0 = try self.genExprForTarget(e, self.current_ret_info);
                         try self.checkNoLowlevelEscape(v0);
-                        if (isHeapManaged(v0.heap) and self.returnNeedsRetain(e)) {
+                        if (isHeapManaged(v0.heap) and self.returnNeedsRetain(e, v0)) {
                             try self.emitInlineRetain(v0.text, v0.heap);
-                        } else if (self.isSpawnRefcountedType(v0.heap) and self.returnNeedsRetain(e)) {
+                        } else if (self.isSpawnRefcountedType(v0.heap) and self.returnNeedsRetain(e, v0)) {
                             // v1.29.12: bkz. `ownership.zig`nin `isSpawnRefcountedType`
                             // belge notu — `Task[T]`/`Channel[T]`nin
                             // (VE `--release`de Task/Channel OLAN thread_handle/
@@ -92,9 +92,9 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
                     // aksi halde bu fonksiyonun kendi yerel temizliği
                     // (ör. döndürülen değere daha önce takma ad olmuş
                     // başka bir yerel) onu erken sıfıra indirebilirdi.
-                    if (isHeapManaged(v0.heap) and self.returnNeedsRetain(e)) {
+                    if (isHeapManaged(v0.heap) and self.returnNeedsRetain(e, v0)) {
                         try self.emitInlineRetain(v0.text, v0.heap);
-                    } else if (self.isSpawnRefcountedType(v0.heap) and self.returnNeedsRetain(e)) {
+                    } else if (self.isSpawnRefcountedType(v0.heap) and self.returnNeedsRetain(e, v0)) {
                         // v1.29.12: bkz. yukarıdaki inline-return dalının
                         // AYNI notu.
                         try self.retainNonArcValue(v0.text, v0.heap);
