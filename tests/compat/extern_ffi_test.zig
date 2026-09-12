@@ -181,6 +181,48 @@ test "extern def: dict[str, str] argüman olarak geçirilebilir (FFI-güvenli), 
     try expectGolden(source, "merhaba nox\n");
 }
 
+test "extern def: geçici (taze) str argümanı, çağrı sonrası sızdırmaz (Faz FFI.1)" {
+    // Bkz. nox-teknik-spesifikasyon.md §3.146 — `extern def` çağrı yolu
+    // ÖNCEDEN (Faz FFI.1'den ÖNCE) `releaseTemporaryArgs`ı HİÇ çağırmıyordu,
+    // bu YÜZDEN her `+` birleştirmesinin (HER ZAMAN taze bir tahsis) SONUCU
+    // BİR extern def'e argüman olarak geçirildiğinde SONSUZA KADAR sızardı.
+    // 50.000 tekrarlı SIKI bir döngü, DebugAllocator'ın (Debug modda,
+    // `zig build test`in VARSAYILANI) BUNU KESİNLİKLE yakalayacağı KADAR
+    // büyük bir toplam sızıntı üretir — `expectGolden`in "stderr BOŞ olmalı"
+    // kontrolü BUNU (Faz FFI.1'DEN ÖNCE) TETİKLERDİ.
+    const allocator = std.testing.allocator;
+    const source = try std.fmt.allocPrint(allocator,
+        \\extern def nox_test_make_greeting(name: str) -> str from "{s}" with_rt
+        \\
+        \\i: int = 0
+        \\total: int = 0
+        \\while i < 50000:
+        \\    g: str = nox_test_make_greeting("kisi_" + str(i))
+        \\    total = total + len(g)
+        \\    i = i + 1
+        \\print(total)
+        \\
+    , .{build_options.util_o_path});
+    defer allocator.free(source);
+
+    // `"merhaba, kisi_" + str(i)` uzunluğu — `str(i)` 0..49999 İçİn 1-5
+    // hane sürer, toplam DOĞRU/BEKLENEN toplamı ELLE hesaplamak yerine
+    // program KENDİ toplamını yazdırıp SADECE ÇÖKMEDİĞİNİ/sızdırmadığını
+    // (expectGolden'ın stderr kontrolü) doğrulamak yeterli — TAM sayı
+    // DEĞERİ bu testin KONUSU DEĞİL, yalnızca sıfır sızıntı/çökme.
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const run_result = try compileAndRun(arena.allocator(), source);
+    if (run_result.term != .exited or run_result.term.exited != 0) {
+        std.debug.print("program basarisiz cikti (stderr): {s}\n", .{run_result.stderr});
+        return error.ProgramFailed;
+    }
+    if (run_result.stderr.len != 0) {
+        std.debug.print("program stderr'e beklenmeyen bir çıktı yazdı (olası bellek sızıntısı): {s}\n", .{run_result.stderr});
+        return error.UnexpectedStderrOutput;
+    }
+}
+
 test "extern def: list[str] dönüş tipi FFI-güvenli — indeksleme/ARC serbest bırakma doğru çalışır (sızıntı yok)" {
     // Not: `len(list[str])` DESTEKLENMİYOR (Alt-Faz B'nin bilinçli dar
     // kapsamı — `len` yalnızca `str` üzerinde çalışır, `list[T].len()`

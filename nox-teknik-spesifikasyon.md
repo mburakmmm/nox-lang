@@ -19469,6 +19469,100 @@ Postgres/MySQL'in AYNI sözdizimi İSE SADECE NOT NULL+UNIQUE ekler,
 Kullanıcının 5 maddelik yol haritasının 3. maddesi ("stdlib eksikleri" —
 csv/gzip/toml/smtp/yaml/orm) BU FAZLA TAMAMEN BİTTİ.
 
+## 3.146 Faz FFI.1 — `extern def` çağrı yolu: ARC sızıntısı düzeltmesi + escape-analysis genişletmesi (v1.77.0)
+
+Kullanıcının "tüm FFI maliyetlerini azaltacak bir çalışma" isteğinin
+(C FFI/HPy/WASM/AOT derleme araştırması, 4 paralel araştırma turuyla
+taranıp öncelik sırasına göre AYRI turlara BÖLÜNMESİNE karar verildi)
+ÖNCELİKLENDİRİLEN listesinin İLK maddesi — hem EN GENİŞ etki alanına
+sahip (`nox.sqlite`/`nox.postgres`/`nox.mysql`/`nox.tls`/`nox.smtp`/
+`nox.websocket`/`nox.http` — TÜM stdlib sürücüleri kaputun altında
+`extern def` kullanıyor) HEM DE GERÇEK bir doğruluk sorusu (sızıntı mı,
+kasıtlı mı) İçerdiğinden ÖNCELİKLİ seçildi.
+
+**Sorun 1 — GERÇEK bir ARC sızıntısı**: `compiler/codegen_qbe/calls.zig`nin
+`genCall`ının SIRADAN bir Nox fonksiyon çağrısı dalı, argümanları
+hesapladıktan SONRA `releaseTemporaryArgs`ı ÇAĞIRIR (GEÇİCİ/taze bir
+`str`/`list`/`dict`/`class` argümanının çağrı-SONRASI refcount'unu
+DOĞRU dengeler) — AMA `extern def` çağrı dalı BU çağrıyı HİÇ YAPMIYORDU,
+yani `extern_def(bir_birlestirme())` GİBİ HER çağrı BİR tahsisi SONSUZA
+KADAR sızdırıyordu. Düzeltme: `qbeCall` emisyonundan HEMEN SONRA, dönüş-
+değeri paketlemeden ÖNCE, sıradan çağrı yolunun AYNI, KANITLANMIŞ
+`releaseTemporaryArgs` çağrısı EKLENDİ — sıralama ÖNEMSİZ (extern def
+`emitExceptionCheck` HİÇ ÇAĞIRMAZ, dönüş-değeri paketleme SADECE
+`esig.ret.*` alanlarını OKUR, `arg_values`a HİÇ dokunmaz).
+
+**Sorun 2 — geniş etki alanlı, kaçırılmış bir optimizasyon fırsatı**:
+`local_escape.zig`nin `exprHasUnsafeLocalUse`i (GG.16-21'in ASAP/stack-
+promotion analizinin ÇEKİRDEĞİ) VE `inlining.zig`nin AYNI mantıklı
+`exprHasUnsafeParamUse`i + `scanParamEscapesExpr`i, bir yerel/parametrenin
+BAŞKA bir fonksiyona argüman olarak geçip GEÇMEDİĞİNİ kanıtlarken SADECE
+`self.func_defs.contains(...)` İSE İNCE-TANELİ bir analiz YAPABİLİYORDU —
+`extern def`ler AYRI bir tabloda (`self.extern_functions`) OLDUĞUNDAN bu
+carve-out extern def çağrılarına HİÇ UYGULANAMIYORDU — extern def'e
+argüman geçen HER yerel/parametre HER ZAMAN KONSERVATİF olarak "kaçıyor"
+sayılıyor, GG.16-19'un stack/arena promotion optimizasyonları BU
+argümanlar İçİn ASLA tetiklenmiyordu.
+
+**Bağımsız bir güvenlik denetimi**: `stdlib/nox/` altındaki `str`/
+`list[...]` parametre alan TÜM 82 `extern def` (17 dosyada), KARŞILIK
+GELEN Zig implementasyonuna kadar TEK TEK İZLENEREK, HİÇBİRİNİN
+argümanının HAM işaretçisini çağrı SONRASI kullanım İçİn SAKLAMADIĞI
+doğrulandı — HEPSİ ya (a) çağrı SIRASINDA senkron OKUYUP/kopyalayıp
+DÖNÜYOR, ya (b) alt-seviye kütüphanenin KENDİSİ senkron bir İÇ kopya
+yapıyor (sqlite'ın `SQLITE_TRANSIENT`i), ya da (c) extern fonksiyonun
+KENDİSİ argümanı KENDİ BAĞIMSIZ belleğine KOPYALIYOR (smtp.nox'un
+`connectInner`i, http.nox'un `doRequest`i arka-plan thread'e geçmeden
+ÖNCE `gpa.dupeZ`/`gpa.dupe` İLE kopyalıyor).
+
+**Tasarım kararı — TÜM `extern def`leri (mevcut VE gelecekteki) KOŞULSUZ
+güvenli SAY** (isim-listesi/allowlist YOK): extern def'lerin gövdesi
+(Zig kodu) analiz EDİLEMEYECEĞİNDEN, gerçek seçenek per-parametre kanıt
+DEĞİL, per-mekanizma bir karardır — bir isim-listesi bu ikiliği ORTADAN
+KALDIRMAZ, SADECE varsayılan tarafı DEĞİŞTİRİR. Koşulsuz güven,
+`exceptions.zig`nin `computeMustNotRaise`inin ZATEN kurduğu emsalle
+(TÜM extern def'leri isim-listesi OLMADAN "asla raise etmez" sınıfına
+sokması) TUTARLI. **Formel dil kontratı**: bir `extern def`in Zig/C
+implementasyonu, `str`/`list`/`dict`/`class` tipinde bir argümanın ham
+işaretçisini çağrı SONRASI kullanım İçİn SAKLAYAMAZ — ihlal eden bir
+implementasyon, escape-analysis'in ARTIK stack/arena-promotion UYGULADIĞI
+bir değerin, çağrı SIRASINDA serbest bırakılmasından SONRA kullanılan bir
+use-after-free'ye yol açar.
+
+`local_escape.zig`nin `exprHasUnsafeLocalUse`i VE `inlining.zig`nin
+`exprHasUnsafeParamUse`i/`scanParamEscapesExpr`i (HER üç site), MEVCUT
+`callee_is_resolvable_free_fn` carve-out'unun YANINA `callee_is_extern_fn
+= c.callee.* == .identifier and self.extern_functions.contains(...)`
+kontrolü + argüman döngüsüne KOŞULSUZ bir `continue` dalı EKLENEREK
+genişletildi — `spawn` istisnası (`.spawn_expr` dalı BU carve-out'u HİÇ
+KULLANMAZ, AYRI bir switch dalında ele alınır) OTOMATİK korunur.
+
+**Doğrulama**: `tests/compat/extern_ffi_test.zig`ye 50.000 iterasyonlu
+sıkı bir döngü İçİnde (HER iterasyonda TAZE bir `str` birleştirmesi)
+`nox_test_make_greeting`e argüman geçen bir sızıntı-regresyon testi
+eklendi — break→red→fix İLE (Bölüm A'nın çağrısı GEÇİCİ olarak
+kaldırılıp) GERÇEKTEN bir DebugAllocator sızıntısı yakaladığı, geri
+eklenince TEMİZ geçtiği kanıtlandı. `tests/golden/codegen_cases/
+extern_arg_stack_promotion.nox`/`extern_arg_returned_no_promotion.nox`
+(+ `.ssa` anlık görüntüleri) — İLKİ, sabit-boyutlu bir `list[int]`
+yerelinin bir extern def'e argüman geçip `alloc8`e (stack) dönüştüğünü;
+İKİNCİSİ, AYNI yerel AYRICA `return` edildiğinde (extern-def carve-out'un
+`return` yolunu KAPSAMADIĞI) `nox_rc_alloc`ta (tam ARC) KALDIĞINI
+kanıtlıyor. Tam regresyon (`zig build test`, Debug) — `stdlib/nox/
+gzip.nox`nin `compress_bytes`/`decompress_bytes`i (extern def'e argüman
+geçen TEK MEVCUT stdlib fonksiyonu) İçEREN `gzip_compress_bytes_roundtrip.
+nox`nin `.ssa` anlık görüntüsü Bölüm A'nın YENİ `releaseTemporaryArgs`
+çağrısını yansıtacak şekilde YENİDEN oluşturuldu — TÜM MEVCUT GG.16-21
+ASAP/stack-promotion testleri DEĞİŞMEDEN geçti.
+
+**Kapsam DIŞI (bu turda)**: HPy `Obj` struct'ının 456 bayta şişmesi/
+havuzlama eksikliği (EN BÜYÜK tekil kazanım noktası); binary şişmesi
+(HPy/WASM köprü kodunun HER programa koşulsuz bağlanması + `-rdynamic`);
+WASM köprüsü (SIFIR gerçek `.nox` kullanımı); küçük HPy kazanımları
+(`hpy_open`nin path-bazlı önbellek eksikliği); QBE varsayılan yolunun
+`cc`yi optimizasyonsuz çağırması — HEPSİ AYRI, gelecekteki Plan Mode
+turlarının konusu.
+
 ---
 
 ## 5. Hata Yönetimi

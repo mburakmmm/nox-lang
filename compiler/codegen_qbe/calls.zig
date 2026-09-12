@@ -652,6 +652,17 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 } else {
                     try self.qbeCall(null, extern_sym, extern_args);
                 }
+                // Faz FFI.1 (bkz. nox-teknik-spesifikasyon.md §3.146): sıradan
+                // fonksiyon çağrı yolunun (satır ~743) AYNI, KANITLANMIŞ
+                // çağrısı — extern def çağrısı da GEÇİCİ (taze/fresh) bir
+                // str/list/dict/class argümanının refcount'unu ÇAĞRI SONRASI
+                // DOĞRU dengeler (`releaseTemporaryArgs`in KENDİ `is_pinned`/
+                // `is_stack_slot`/`always_fresh`/`isTemporaryExpr` korumaları
+                // OLDUĞU GİBİ devreye girer). Sıralama ÖNEMSİZ: extern def
+                // `emitExceptionCheck` HİÇ ÇAĞIRMAZ, dönüş-değeri paketleme
+                // SADECE `esig.ret.*` alanlarını okur, `arg_values`a HİÇ
+                // dokunmaz.
+                try self.releaseTemporaryArgs(c.args, arg_values);
                 // Stdlib fazı §F: `elem_qtype`/`elem_heap_info`/
                 // `elem_is_str` ÖNCEDEN eksikti (yalnızca `qtype`/`heap`
                 // kopyalanıyordu) — D.1.5'in `genFieldRead`de bulunan

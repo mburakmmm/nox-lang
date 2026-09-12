@@ -14,6 +14,35 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.77.0]
+
+### Düzeltildi (KRİTİK ARC sızıntısı) + Eklendi (performans)
+- **Faz FFI.1 — `extern def` çağrı yolunun ARC sızıntısı düzeltildi**:
+  `compiler/codegen_qbe/calls.zig`nin `extern def` çağrı yolu (`genCall`nin
+  `self.extern_functions.get(name)` dalı), sıradan Nox fonksiyon çağrılarının
+  AKSİNE, `releaseTemporaryArgs`ı HİÇ ÇAĞIRMIYORDU — GEÇİCİ (taze) bir
+  `str`/`list`/`dict`/`class` argümanı (ör. bir string birleştirmesinin
+  SONUCU) bir `extern def`e geçirildiğinde refcount'u ASLA düşürülmüyordu,
+  yani `extern_def(bir_birlestirme())` GİBİ HER çağrı bir tahsisi
+  SONSUZA KADAR sızdırıyordu. Sıradan çağrı yolunun AYNI, ZATEN
+  kanıtlanmış `releaseTemporaryArgs` çağrısı EKLENEREK düzeltildi.
+- **Escape-analysis genişletmesi (asıl performans kazanımı)**: `local_
+  escape.zig`/`inlining.zig`'in ASAP (GG.16-21) escape-analysis'i,
+  `extern def`lere argüman GEÇEN yerel değişkenleri/parametreleri HER
+  ZAMAN KOŞULSUZ "kaçıyor" sayıyordu — çünkü `extern def`ler AYRI bir
+  tabloda (`self.extern_functions`) kayıtlı olduğundan, serbest fonksiyon
+  çağrıları İçİn ZATEN var olan "kanıtlanmış güvenli yönlendirme"
+  carve-out'una HİÇ girmiyorlardı. TÜM `extern def`ler (isim-listesi
+  OLMADAN, `computeMustNotRaise`nin AYNI KOŞULSUZ-güven emsaliyle
+  TUTARLI) escape-analysis İçİn KOŞULSUZ güvenli sayılacak şekilde
+  genişletildi — bu, `nox.sqlite`/`nox.postgres`/`nox.mysql`/`nox.tls`/
+  `nox.smtp`/`nox.websocket`/`nox.http` GİBİ TÜM stdlib sürücülerinin
+  extern def'e geçen argümanlarının ARTIK stack/arena'ya promote
+  edilebilmesini sağlıyor (ÖNCEDEN HER ZAMAN tam ARC'a düşüyordu).
+  Bağımsız bir güvenlik denetimi, `str`/`list` argüman alan TÜM 82
+  `extern def`in HİÇBİRİNİN çağrı-sonrası ham işaretçiyi SAKLAMADIĞINI
+  doğruladı. Bkz. `nox-teknik-spesifikasyon.md` §3.146.
+
 ## [1.76.0]
 
 ### Düzeltildi (KRİTİK compiler hatası)

@@ -417,7 +417,15 @@ fn scanParamEscapesExpr(self: *Codegen, fname: []const u8, param_idx: u32, name:
             }
             try scanParamEscapesExpr(self, fname, param_idx, name, c.callee.*, class_params, seeds, reverse_edges);
             const callee_is_resolvable_free_fn = c.callee.* == .identifier and self.func_defs.contains(c.callee.identifier);
+            // Faz FFI.1 (bkz. nox-teknik-spesifikasyon.md §3.146): `extern
+            // def`ler `escaping_params` GRAFİĞİNİN DIŞINDA olduğundan (bağlanacak
+            // bir "hedef parametre indeksi" YOK) — `addEscapeEdge`/`addEscapeSeed`
+            // HİÇ ÇAĞRILMADAN bir SONRAKİ argümana geçilir (KOŞULSUZ güvenli).
+            const callee_is_extern_fn = c.callee.* == .identifier and self.extern_functions.contains(c.callee.identifier);
             for (c.args, 0..) |a, arg_idx| {
+                if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_extern_fn) {
+                    continue; // Faz FFI.1: extern def kontratı — argüman ASLA çağrı-sonrası saklanmaz.
+                }
                 if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_resolvable_free_fn) {
                     try addEscapeEdge(self, c.callee.identifier, @intCast(arg_idx), fname, param_idx, reverse_edges);
                     continue;
@@ -904,6 +912,12 @@ fn exprHasUnsafeParamUse(self: *const Codegen, expr: ast.Expr, name: []const u8,
             }
             if (exprHasUnsafeParamUse(self, c.callee.*, name, class_params)) break :blk true;
             const callee_is_resolvable_free_fn = c.callee.* == .identifier and self.func_defs.contains(c.callee.identifier);
+            // Faz FFI.1 (bkz. nox-teknik-spesifikasyon.md §3.146): `extern
+            // def`ler `self.func_defs`ten AYRI bir tabloda (`self.extern_
+            // functions`) olduğundan yukarıdaki carve-out'a hiç girmiyordu —
+            // dil kontratı GEREĞİ (argümanın ham işaretçisi ÇAĞRI SONRASI HİÇ
+            // saklanmaz) KOŞULSUZ güvenli sayılır.
+            const callee_is_extern_fn = c.callee.* == .identifier and self.extern_functions.contains(c.callee.identifier);
             // GG.21: receiver `class_params`de bilinen bir sibling-parametreyse
             // VE metod PROVABLY final İSE, AYNI carve-out'u UYGULA (`self`
             // metodun KENDİ NodeKey indekslemesinde HER ZAMAN 0'DA olduğundan
@@ -922,6 +936,9 @@ fn exprHasUnsafeParamUse(self: *const Codegen, expr: ast.Expr, name: []const u8,
                 }
             }
             for (c.args, 0..) |a, arg_idx| {
+                if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_extern_fn) {
+                    continue; // Faz FFI.1: extern def kontratı — argüman ASLA çağrı-sonrası saklanmaz.
+                }
                 if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_resolvable_free_fn) {
                     if (!self.escaping_params.contains(.{ .func = c.callee.identifier, .index = @intCast(arg_idx) })) {
                         continue; // İSPATLANMIŞ güvenli yönlendirme.
