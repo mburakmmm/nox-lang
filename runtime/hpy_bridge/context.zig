@@ -262,8 +262,38 @@ pub const Obj = struct {
 
 const PINNED_REFCOUNT: i64 = 1 << 30;
 
-fn allocObj(allocator: std.mem.Allocator, tag: ObjTag, payload: Obj.Payload, refcount: i64) HPy {
-    const obj = allocator.create(Obj) catch return HPy_NULL;
+/// Faz FFI.2 (bkz. plan dosyası "HPy `Obj` havuzlama..."): `runtime/alloc/
+/// arc.zig`/`runtime/alloc/lowlevel.zig`nin AYNI, ZATEN kanıtlanmış
+/// `use_pool` deseni — havuzlama SADECE Release modlarında AKTİF, Debug'da
+/// (`zig build test`nin VARSAYILANI) `DebugAllocator`nin TAM sızıntı/UAF
+/// güvenlik ağı KORUNUR (`objCreate`/`objDestroy`nin belge notuna bkz.).
+const use_pool = builtin.mode != .Debug;
+
+/// Faz FFI.2: `Obj` SABİT 456 bayt (`@sizeOf`, TÜM tag'lerin alanları YAN
+/// YANA — GERÇEK bir union DEĞİL) — `PrivateState.obj_pool` (aşağıda) BU
+/// SABİT boyutlu bloğu, HER `Obj` inşası/yıkımında GERÇEK bir allocator
+/// gidiş-dönüşü (`--release`de `std.heap.smp_allocator`) YERİNE, context
+/// başına bir free-list ÜZERİNDEN TEKRAR KULLANIR — bkz. `objCreate`/
+/// `objDestroy`.
+fn objCreate(ctx: *HPyContext) !*Obj {
+    const state = contextState(ctx);
+    if (use_pool) return state.obj_pool.create(state.allocator);
+    return state.allocator.create(Obj);
+}
+
+/// `ctxClose`nin SON adımı (VE `ctxListNew`/`ctxDictKeys`/`ctxDictCopy`/
+/// `ctxContextVarNew`nin KENDİ rollback yolları) BUNU çağırır — `objCreate`
+/// İLE ÜRETİLMİŞ HER pointer MUTLAKA `objDestroy` İLE (ASLA doğrudan
+/// `allocator.destroy` İLE DEĞİL) serbest bırakılmalıdır, aksi halde
+/// havuzlu/ham allocator arasında bir create/destroy uyumsuzluğu oluşur.
+fn objDestroy(ctx: *HPyContext, obj: *Obj) void {
+    const state = contextState(ctx);
+    if (use_pool) return state.obj_pool.destroy(obj);
+    state.allocator.destroy(obj);
+}
+
+fn allocObj(ctx: *HPyContext, tag: ObjTag, payload: Obj.Payload, refcount: i64) HPy {
+    const obj = objCreate(ctx) catch return HPy_NULL;
     obj.* = .{ .refcount = refcount, .tag = tag, .payload = payload };
     return .{ ._i = @intCast(@intFromPtr(obj)) };
 }
@@ -356,12 +386,12 @@ fn ctxClose(ctx: *HPyContext, h: HPy) callconv(.c) void {
             .bound_method_ => ctxClose(ctx, obj.bound_method_self),
             .none, .bool_, .long, .float_, .exc_type => {},
         }
-        allocator.destroy(obj);
+        objDestroy(ctx, obj);
     }
 }
 
 fn ctxLongFromInt64(ctx: *HPyContext, v: i64) callconv(.c) HPy {
-    return allocObj(contextAllocator(ctx), .long, .{ .l = v }, 1);
+    return allocObj(ctx, .long, .{ .l = v }, 1);
 }
 
 fn ctxLongAsInt64(ctx: *HPyContext, h: HPy) callconv(.c) i64 {
@@ -485,7 +515,7 @@ fn ctxLongAsDouble(ctx: *HPyContext, h: HPy) callconv(.c) f64 {
 }
 
 fn ctxFloatFromDouble(ctx: *HPyContext, v: f64) callconv(.c) HPy {
-    return allocObj(contextAllocator(ctx), .float_, .{ .f = v }, 1);
+    return allocObj(ctx, .float_, .{ .f = v }, 1);
 }
 
 fn ctxFloatAsDouble(ctx: *HPyContext, h: HPy) callconv(.c) f64 {
@@ -512,7 +542,7 @@ fn ctxUnicodeFromString(ctx: *HPyContext, utf8: ?[*:0]const u8) callconv(.c) HPy
     const s = utf8 orelse return HPy_NULL;
     const allocator = contextAllocator(ctx);
     const copy = allocator.dupeZ(u8, std.mem.sliceTo(s, 0)) catch return HPy_NULL;
-    const obj = allocator.create(Obj) catch {
+    const obj = objCreate(ctx) catch {
         allocator.free(copy);
         return HPy_NULL;
     };
@@ -555,7 +585,7 @@ fn ctxBytesFromStringAndSize(ctx: *HPyContext, bytes: ?[*]const u8, len: isize) 
     const allocator = contextAllocator(ctx);
     const src: []const u8 = if (bytes) |b| b[0..@intCast(len)] else &.{};
     const copy = allocator.dupeZ(u8, src) catch return HPy_NULL;
-    const obj = allocator.create(Obj) catch {
+    const obj = objCreate(ctx) catch {
         allocator.free(copy);
         return HPy_NULL;
     };
@@ -946,7 +976,7 @@ fn makeStrFromSlice(ctx: *HPyContext, s: []const u8) HPy {
         ctxErrNoMemory(ctx);
         return HPy_NULL;
     };
-    const obj = allocator.create(Obj) catch {
+    const obj = objCreate(ctx) catch {
         allocator.free(copy);
         ctxErrNoMemory(ctx);
         return HPy_NULL;
@@ -1403,7 +1433,7 @@ fn ctxListNew(ctx: *HPyContext, len: isize) callconv(.c) HPy {
         return HPy_NULL;
     }
     const allocator = contextAllocator(ctx);
-    const obj = allocator.create(Obj) catch return HPy_NULL;
+    const obj = objCreate(ctx) catch return HPy_NULL;
     obj.* = .{ .refcount = 1, .tag = .list_, .payload = .{ .l = 0 } };
     var i: isize = 0;
     while (i < len) : (i += 1) {
@@ -1412,7 +1442,7 @@ fn ctxListNew(ctx: *HPyContext, len: isize) callconv(.c) HPy {
         obj.list_data.append(allocator, ctxDup(ctx, ctx.h_None)) catch {
             for (obj.list_data.items) |h2| ctxClose(ctx, h2);
             obj.list_data.deinit(allocator);
-            allocator.destroy(obj);
+            objDestroy(ctx, obj);
             return HPy_NULL;
         };
     }
@@ -1597,7 +1627,7 @@ fn ctxTupleFromArray(ctx: *HPyContext, items: ?[*]HPy, n: isize) callconv(.c) HP
     const src = items orelse (&[_]HPy{}).ptr;
     for (arr, 0..) |*slot, i| slot.* = ctxDup(ctx, src[i]);
 
-    const obj = allocator.create(Obj) catch {
+    const obj = objCreate(ctx) catch {
         for (arr) |h2| ctxClose(ctx, h2);
         allocator.free(arr);
         return HPy_NULL;
@@ -1613,7 +1643,7 @@ fn ctxDictCheck(ctx: *HPyContext, h: HPy) callconv(.c) c_int {
 }
 
 fn ctxDictNew(ctx: *HPyContext) callconv(.c) HPy {
-    const obj = contextAllocator(ctx).create(Obj) catch return HPy_NULL;
+    const obj = objCreate(ctx) catch return HPy_NULL;
     obj.* = .{ .refcount = 1, .tag = .dict_, .payload = .{ .l = 0 } };
     return .{ ._i = @intCast(@intFromPtr(obj)) };
 }
@@ -1625,13 +1655,20 @@ fn ctxDictKeys(ctx: *HPyContext, h: HPy) callconv(.c) HPy {
         return HPy_NULL;
     }
     const allocator = contextAllocator(ctx);
-    const result = allocator.create(Obj) catch return HPy_NULL;
+    const result = objCreate(ctx) catch return HPy_NULL;
     result.* = .{ .refcount = 1, .tag = .list_, .payload = .{ .l = 0 } };
     for (obj.dict_data.items) |entry| {
-        result.list_data.append(allocator, ctxDup(ctx, entry.key)) catch {
+        // Faz FFI.2: ÖNCE dup'la, SONRA append'i dene — `append` BAŞARISIZ
+        // olursa BU iterasyonun dup'ı da (ÖNCEKİ iterasyonların ZATEN
+        // `result.list_data.items`e EKLENMİŞ olanlarına EK olarak) kapatılır
+        // (`ctxListAppend`in ZATEN doğru olan deseniyle AYNI — bkz. onun
+        // belge notu).
+        const dup_key = ctxDup(ctx, entry.key);
+        result.list_data.append(allocator, dup_key) catch {
+            ctxClose(ctx, dup_key);
             for (result.list_data.items) |h2| ctxClose(ctx, h2);
             result.list_data.deinit(allocator);
-            allocator.destroy(result);
+            objDestroy(ctx, result);
             return HPy_NULL;
         };
     }
@@ -1645,16 +1682,22 @@ fn ctxDictCopy(ctx: *HPyContext, h: HPy) callconv(.c) HPy {
         return HPy_NULL;
     }
     const allocator = contextAllocator(ctx);
-    const result = allocator.create(Obj) catch return HPy_NULL;
+    const result = objCreate(ctx) catch return HPy_NULL;
     result.* = .{ .refcount = 1, .tag = .dict_, .payload = .{ .l = 0 } };
     for (obj.dict_data.items) |entry| {
-        result.dict_data.append(allocator, .{ .key = ctxDup(ctx, entry.key), .value = ctxDup(ctx, entry.value) }) catch {
+        // Faz FFI.2: bkz. `ctxDictKeys`in AYNI notu — ÖNCE dup'la, SONRA
+        // append'i dene, BAŞARISIZ olursa BU iterasyonun İKİ dup'ını da kapat.
+        const dup_key = ctxDup(ctx, entry.key);
+        const dup_value = ctxDup(ctx, entry.value);
+        result.dict_data.append(allocator, .{ .key = dup_key, .value = dup_value }) catch {
+            ctxClose(ctx, dup_key);
+            ctxClose(ctx, dup_value);
             for (result.dict_data.items) |e2| {
                 ctxClose(ctx, e2.key);
                 ctxClose(ctx, e2.value);
             }
             result.dict_data.deinit(allocator);
-            allocator.destroy(result);
+            objDestroy(ctx, result);
             return HPy_NULL;
         };
     }
@@ -1812,7 +1855,19 @@ fn ctxSetItem(ctx: *HPyContext, obj_h: HPy, key_h: HPy, value: HPy) callconv(.c)
                 ctxClose(ctx, old_value);
                 return 0;
             }
-            obj.dict_data.append(contextAllocator(ctx), .{ .key = ctxDup(ctx, key_h), .value = ctxDup(ctx, value) }) catch {
+            // Faz FFI.2 (bkz. plan dosyası "HPy `Obj` havuzlama..."):
+            // BULUNAN, ÖNCEDEN VAR OLAN bir sızıntı düzeltmesi —
+            // `ctxDup` çağrıları ÖNCEDEN `append`in argüman İFADESİNİN
+            // İÇİNDE DOĞRUDAN yapılıyordu (refcount HEMEN artırılıyordu),
+            // `append` SONRADAN BAŞARISIZ olursa (OOM) bu İKİ retain
+            // ASLA geri alınmıyordu — `ctxListAppend`nin (satır ~1458-1463)
+            // ZATEN doğru olan "ÖNCE dup'la, SONRA append'i dene, BAŞARISIZ
+            // olursa dup'ı kapat" deseniyle AYNI şekle getirildi.
+            const dup_key = ctxDup(ctx, key_h);
+            const dup_value = ctxDup(ctx, value);
+            obj.dict_data.append(contextAllocator(ctx), .{ .key = dup_key, .value = dup_value }) catch {
+                ctxClose(ctx, dup_key);
+                ctxClose(ctx, dup_value);
                 ctxErrNoMemory(ctx);
                 return -1;
             };
@@ -2013,7 +2068,7 @@ fn ctxTypeFromSpec(ctx: *HPyContext, spec: ?*HPyType_Spec, params: ?*HPyType_Spe
         return HPy_NULL;
     }
     const allocator = contextAllocator(ctx);
-    const obj = allocator.create(Obj) catch return HPy_NULL;
+    const obj = objCreate(ctx) catch return HPy_NULL;
     obj.* = .{ .refcount = 1, .tag = .type_, .payload = .{ .l = 0 } };
     obj.type_basicsize = @intCast(s.basicsize);
     obj.type_builtin_shape = s.builtin_shape;
@@ -2094,7 +2149,7 @@ fn ctxNew(ctx: *HPyContext, h_type: HPy, data: ?*?*anyopaque) callconv(.c) HPy {
     const allocator = contextAllocator(ctx);
     const buf = allocator.alloc(u8, type_obj.type_basicsize) catch return HPy_NULL;
     @memset(buf, 0);
-    const obj = allocator.create(Obj) catch {
+    const obj = objCreate(ctx) catch {
         allocator.free(buf);
         return HPy_NULL;
     };
@@ -2366,14 +2421,17 @@ fn ctxListGetSlice(ctx: *HPyContext, obj: *Obj, key_h: HPy) HPy {
     var out: std.ArrayListUnmanaged(HPy) = .empty;
     var i = range.start;
     while (if (range.step > 0) i < range.stop else i > range.stop) : (i += range.step) {
-        out.append(allocator, ctxDup(ctx, obj.list_data.items[@intCast(i)])) catch {
+        // Faz FFI.2: bkz. `ctxDictKeys`in AYNI notu.
+        const dup_h = ctxDup(ctx, obj.list_data.items[@intCast(i)]);
+        out.append(allocator, dup_h) catch {
+            ctxClose(ctx, dup_h);
             for (out.items) |h| ctxClose(ctx, h);
             out.deinit(allocator);
             ctxErrNoMemory(ctx);
             return HPy_NULL;
         };
     }
-    const new_obj = allocator.create(Obj) catch {
+    const new_obj = objCreate(ctx) catch {
         for (out.items) |h| ctxClose(ctx, h);
         out.deinit(allocator);
         ctxErrNoMemory(ctx);
@@ -2481,8 +2539,7 @@ fn capsuleNameMatches(obj: *Obj, utf8_name: ?[*:0]const u8) bool {
 }
 
 fn ctxCapsuleNew(ctx: *HPyContext, pointer: ?*anyopaque, utf8_name: ?[*:0]const u8, destructor: ?*HPyCapsuleDestructorLocal) callconv(.c) HPy {
-    const allocator = contextAllocator(ctx);
-    const obj = allocator.create(Obj) catch {
+    const obj = objCreate(ctx) catch {
         ctxErrNoMemory(ctx);
         return HPy_NULL;
     };
@@ -2553,12 +2610,12 @@ fn ctxCapsuleSet(ctx: *HPyContext, capsule: HPy, key: c_int, value: ?*anyopaque)
 
 fn ctxContextVarNew(ctx: *HPyContext, name: ?[*:0]const u8, default_value: HPy) callconv(.c) HPy {
     const allocator = contextAllocator(ctx);
-    const obj = allocator.create(Obj) catch {
+    const obj = objCreate(ctx) catch {
         ctxErrNoMemory(ctx);
         return HPy_NULL;
     };
     const name_copy = allocator.dupeZ(u8, std.mem.sliceTo(name orelse "", 0)) catch {
-        allocator.destroy(obj);
+        objDestroy(ctx, obj);
         ctxErrNoMemory(ctx);
         return HPy_NULL;
     };
@@ -2647,8 +2704,7 @@ fn wrapBoundMethod(
     impl_o: ?*const fn (ctx: *HPyContext, self: HPy, arg: HPy) callconv(.c) HPy,
     impl_noargs: ?*const fn (ctx: *HPyContext, self: HPy) callconv(.c) HPy,
 ) ?HPy {
-    const allocator = contextAllocator(ctx);
-    const bm = allocator.create(Obj) catch return null;
+    const bm = objCreate(ctx) catch return null;
     bm.* = .{
         .refcount = 1,
         .tag = .bound_method_,
@@ -2742,7 +2798,7 @@ fn ioReaderReadImpl(ctx: *HPyContext, self: HPy) callconv(.c) HPy {
 /// writer_on`in Zig-tarafı karşılığı (`createModuleObject`nin AYNI
 /// deseni).
 pub fn createStringWriter(ctx: *HPyContext) !HPy {
-    const obj = try contextAllocator(ctx).create(Obj);
+    const obj = try objCreate(ctx);
     obj.* = .{ .refcount = 1, .tag = .io_writer_, .payload = .{ .l = 0 } };
     return .{ ._i = @intCast(@intFromPtr(obj)) };
 }
@@ -2752,7 +2808,7 @@ pub fn createStringWriter(ctx: *HPyContext) !HPy {
 pub fn createStringReader(ctx: *HPyContext, content: []const u8) !HPy {
     const allocator = contextAllocator(ctx);
     const copy = try allocator.dupeZ(u8, content);
-    const obj = try allocator.create(Obj);
+    const obj = try objCreate(ctx);
     obj.* = .{ .refcount = 1, .tag = .io_reader_, .payload = .{ .l = 0 }, .io_reader_data = copy };
     return .{ ._i = @intCast(@intFromPtr(obj)) };
 }
@@ -2847,7 +2903,13 @@ fn ctxSetAttr(ctx: *HPyContext, obj_h: HPy, name_h: HPy, value: HPy) callconv(.c
         ctxClose(ctx, old_value);
         return 0;
     }
-    dict.append(contextAllocator(ctx), .{ .key = ctxDup(ctx, name_h), .value = ctxDup(ctx, value) }) catch {
+    // Faz FFI.2: bkz. `ctxSetItem`in AYNI notu — ÖNCE dup'la, SONRA append'i
+    // dene, BAŞARISIZ olursa İKİ dup'ı da kapat.
+    const dup_key = ctxDup(ctx, name_h);
+    const dup_value = ctxDup(ctx, value);
+    dict.append(contextAllocator(ctx), .{ .key = dup_key, .value = dup_value }) catch {
+        ctxClose(ctx, dup_key);
+        ctxClose(ctx, dup_value);
         ctxErrNoMemory(ctx);
         return -1;
     };
@@ -2945,7 +3007,7 @@ fn genericNew(ctx: *HPyContext, type_h: HPy, type_obj: *Obj) HPy {
     const allocator = contextAllocator(ctx);
     const buf = allocator.alloc(u8, type_obj.type_basicsize) catch return HPy_NULL;
     @memset(buf, 0);
-    const obj = allocator.create(Obj) catch {
+    const obj = objCreate(ctx) catch {
         allocator.free(buf);
         return HPy_NULL;
     };
@@ -3694,8 +3756,7 @@ fn ctxErrNewException(ctx: *HPyContext, utf8_name: ?[*:0]const u8, base: HPy, di
     _ = utf8_name;
     _ = base;
     _ = dict;
-    const allocator = contextAllocator(ctx);
-    const obj = allocator.create(Obj) catch {
+    const obj = objCreate(ctx) catch {
         ctxErrNoMemory(ctx);
         return HPy_NULL;
     };
@@ -3751,6 +3812,11 @@ const PrivateState = struct {
     /// adresinin `usize`i (aynı slot ÜZERİNE yazma GÜVENLE üzerine yazar,
     /// ESKİ değer `ctxGlobalStore`nin KENDİSİ TARAFINDAN zaten kapatılmıştır).
     tracked_globals: std.AutoHashMapUnmanaged(usize, HPy) = .empty,
+    /// Faz FFI.2 (bkz. plan dosyası "HPy `Obj` havuzlama..."): `objCreate`/
+    /// `objDestroy`nin `use_pool`ken KULLANDIĞI free-list-üzerinde-arena
+    /// havuzu — `Obj`nin SABİT 456 baytlık boyutuna ÖZEL, `destroyContext`de
+    /// `deinit` edilir.
+    obj_pool: std.heap.MemoryPool(Obj) = .empty,
 
     const PendingError = struct {
         h_type: HPy,
@@ -4093,7 +4159,7 @@ fn ctxSliceTypeNew(ctx: *HPyContext, h_type: HPy, args: ?[*]const HPy, nargs: is
     data[0] = ctxDup(ctx, a[0]);
     data[1] = ctxDup(ctx, a[1]);
     data[2] = ctxDup(ctx, a[2]);
-    const obj = allocator.create(Obj) catch {
+    const obj = objCreate(ctx) catch {
         allocator.free(data);
         ctxErrNoMemory(ctx);
         return HPy_NULL;
@@ -4115,25 +4181,45 @@ fn ctxSliceTypeNew(ctx: *HPyContext, h_type: HPy, args: ?[*]const HPy, nargs: is
 /// `.instance_` dalı da BUNU (varsayılan `instance_data = &.{}`, boş bir
 /// slice'ı free etmek ZARARSIZ) GÜVENLE temizler.
 pub fn createModuleObject(ctx: *HPyContext) !HPy {
-    const allocator = contextAllocator(ctx);
-    const obj = try allocator.create(Obj);
+    const obj = try objCreate(ctx);
     obj.* = .{ .refcount = 1, .tag = .instance_, .payload = .{ .l = 0 } };
     return .{ ._i = @intCast(@intFromPtr(obj)) };
 }
 
 pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
     const state = try allocator.create(PrivateState);
+    errdefer allocator.destroy(state);
     const ctx = try allocator.create(HPyContext);
+    errdefer allocator.destroy(ctx);
 
+    // Faz FFI.2 (bkz. plan dosyası "HPy `Obj` havuzlama..."): BULUNAN,
+    // ÖNCEDEN VAR OLAN bir sızıntı düzeltmesi — ~28 `try allocator.create`/
+    // `try pinnedExcType`/`try pinnedBuiltinType` çağrısının HİÇBİRİ
+    // ÖNCEDEN rollback YAPMIYORDU: aralarından HERHANGİ biri (ör. OOM)
+    // BAŞARISIZ olsaydı, O ANA KADAR yaratılmış TÜM tekiller SONSUZA KADAR
+    // sızardı (`std.testing.checkAllAllocationFailures` İLE, `Obj`
+    // havuzlamasının YENİ OOM-fuzz testi YAZILIRKEN yakalandı — havuzlamanın
+    // KENDİSİYLE İLGİSİZ, DAHA ÖNCE hiç test edilmemiş bir yol). Düzeltme:
+    // HER tekilin HEMEN ARDINDAN bir `errdefer allocator.destroy(...)`
+    // KAYDEDİLİR — bir `errdefer` HİÇBİR tahsis YAPMADIĞINDAN (SAF, inline
+    // temizlik kodu) KENDİSİ ASLA BAŞARISIZ OLAMAZ (bir side-list'e `append`
+    // etmenin — İLK denenen yaklaşımın — KENDİSİNİN de BAŞARISIZ olabilmesi
+    // riskinden TAMAMEN kaçınır). SONRAKİ HERHANGİ bir `try` BAŞARISIZ
+    // olursa TÜM önceki `errdefer`ler TERS SIRAYLA çalışıp O ANA KADAR
+    // yaratılmış HER ŞEYİ (HAM `allocator.destroy` İLE — BU tekiller ASLA
+    // havuzdan geçmediğinden `objDestroy` GEREKMEZ) geri alır.
     const none_obj = try allocator.create(Obj);
+    errdefer allocator.destroy(none_obj);
     none_obj.* = .{ .refcount = PINNED_REFCOUNT, .tag = .none, .payload = .{ .l = 0 } };
     const h_none: HPy = .{ ._i = @intCast(@intFromPtr(none_obj)) };
 
     const true_obj = try allocator.create(Obj);
+    errdefer allocator.destroy(true_obj);
     true_obj.* = .{ .refcount = PINNED_REFCOUNT, .tag = .bool_, .payload = .{ .b = true } };
     const h_true: HPy = .{ ._i = @intCast(@intFromPtr(true_obj)) };
 
     const false_obj = try allocator.create(Obj);
+    errdefer allocator.destroy(false_obj);
     false_obj.* = .{ .refcount = PINNED_REFCOUNT, .tag = .bool_, .payload = .{ .b = false } };
     const h_false: HPy = .{ ._i = @intCast(@intFromPtr(false_obj)) };
 
@@ -4142,23 +4228,41 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
     // kullanılan alt kümesi (kapsam bilinçli olarak dar tutuldu; genişletmek
     // yalnızca bu listeye eklemek kadar basit).
     const h_exception = try pinnedExcType(allocator);
+    errdefer allocator.destroy(objOf(h_exception).?);
     const h_base_exception = try pinnedExcType(allocator);
+    errdefer allocator.destroy(objOf(h_base_exception).?);
     const h_type_error = try pinnedExcType(allocator);
+    errdefer allocator.destroy(objOf(h_type_error).?);
     const h_value_error = try pinnedExcType(allocator);
+    errdefer allocator.destroy(objOf(h_value_error).?);
     const h_runtime_error = try pinnedExcType(allocator);
+    errdefer allocator.destroy(objOf(h_runtime_error).?);
     const h_index_error = try pinnedExcType(allocator);
+    errdefer allocator.destroy(objOf(h_index_error).?);
     const h_key_error = try pinnedExcType(allocator);
+    errdefer allocator.destroy(objOf(h_key_error).?);
     const h_attribute_error = try pinnedExcType(allocator);
+    errdefer allocator.destroy(objOf(h_attribute_error).?);
     const h_overflow_error = try pinnedExcType(allocator);
+    errdefer allocator.destroy(objOf(h_overflow_error).?);
     const h_zero_division_error = try pinnedExcType(allocator);
+    errdefer allocator.destroy(objOf(h_zero_division_error).?);
     const h_memory_error = try pinnedExcType(allocator);
+    errdefer allocator.destroy(objOf(h_memory_error).?);
     const h_stop_iteration = try pinnedExcType(allocator);
+    errdefer allocator.destroy(objOf(h_stop_iteration).?);
     const h_not_implemented_error = try pinnedExcType(allocator);
+    errdefer allocator.destroy(objOf(h_not_implemented_error).?);
     const h_import_error = try pinnedExcType(allocator);
+    errdefer allocator.destroy(objOf(h_import_error).?);
     const h_os_error = try pinnedExcType(allocator);
+    errdefer allocator.destroy(objOf(h_os_error).?);
     const h_lookup_error = try pinnedExcType(allocator);
+    errdefer allocator.destroy(objOf(h_lookup_error).?);
     const h_unicode_encode_error = try pinnedExcType(allocator);
+    errdefer allocator.destroy(objOf(h_unicode_encode_error).?);
     const h_unicode_decode_error = try pinnedExcType(allocator);
+    errdefer allocator.destroy(objOf(h_unicode_decode_error).?);
 
     // Bulundu (kullanıcının kendi `hpy-ujson` portu İçin araştırma sırasında):
     // yerleşik tiplerin (`long`/`float`/`bool`/`str`/`tuple`/`list`/`bytes`)
@@ -4168,12 +4272,19 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
     // bu HER ZAMAN yanlış dönerdi (`HPy_Type` de bu tiplerde `HPy_NULL`
     // döndürüyordu — bkz. `ctxType`in AŞAĞIDAKİ güncellenmiş belge notu).
     const h_long_type = try pinnedBuiltinType(allocator, "int");
+    errdefer allocator.destroy(objOf(h_long_type).?);
     const h_float_type = try pinnedBuiltinType(allocator, "float");
+    errdefer allocator.destroy(objOf(h_float_type).?);
     const h_bool_type = try pinnedBuiltinType(allocator, "bool");
+    errdefer allocator.destroy(objOf(h_bool_type).?);
     const h_unicode_type = try pinnedBuiltinType(allocator, "str");
+    errdefer allocator.destroy(objOf(h_unicode_type).?);
     const h_tuple_type = try pinnedBuiltinType(allocator, "tuple");
+    errdefer allocator.destroy(objOf(h_tuple_type).?);
     const h_list_type = try pinnedBuiltinType(allocator, "list");
+    errdefer allocator.destroy(objOf(h_list_type).?);
     const h_bytes_type = try pinnedBuiltinType(allocator, "bytes");
+    errdefer allocator.destroy(objOf(h_bytes_type).?);
     // Faz 22: `h_LongType`/vb.nin AKSİNE, `h_SliceType`in ÇAĞRILABİLİR
     // (`HPy_Call(ctx, ctx->h_SliceType, [a,b,c], 3, ...)`) OLMASI GEREKİR
     // — bu YÜZDEN `pinnedBuiltinType` YERİNE `type_tp_new`i AYRICA
@@ -4183,6 +4294,7 @@ pub fn createContext(allocator: std.mem.Allocator) !*HPyContext {
         obj.* = .{ .refcount = PINNED_REFCOUNT, .tag = .type_, .payload = .{ .l = 0 }, .type_name = "slice", .type_tp_new = ctxSliceTypeNew };
         break :blk HPy{ ._i = @intCast(@intFromPtr(obj)) };
     };
+    errdefer allocator.destroy(objOf(h_slice_type).?);
 
     state.* = .{ .allocator = allocator, .h_true_obj = h_true, .h_false_obj = h_false };
 
@@ -4431,6 +4543,11 @@ pub fn destroyContext(allocator: std.mem.Allocator, ctx: *HPyContext) void {
         ctx.h_BytesType,           ctx.h_SliceType,
     };
     for (singletons) |h| allocator.destroy(objOf(h).?);
+
+    // Faz FFI.2: havuzun İÇSEL arenasını TOPLU serbest bırakır — `objCreate`
+    // İLE üretilip HİÇ `objDestroy` edilmemiş (çağıranın unuttuğu) nesneler
+    // İçİn de GÜVENLİ, arena TÜM belleği bulk olarak geri alır.
+    if (use_pool) state.obj_pool.deinit(allocator);
 
     allocator.destroy(state);
     allocator.destroy(ctx);
@@ -5087,4 +5204,115 @@ test "ctxGlobalStore: destroyContext izlenen globalleri kapatır (sızıntı yok
     // TAMAMLANDIKTAN SONRA HERHANGİ bir sızıntı TESPİT EDERSE testin
     // KENDİSİ BAŞARISIZ OLUR — bu YÜZDEN AYRI bir `expect` GEREKMEZ.
     destroyContext(std.testing.allocator, ctx);
+}
+
+// Faz FFI.2 (bkz. plan dosyası "HPy `Obj` havuzlama..."): `objCreate`/
+// `objDestroy`nin GERÇEKTEN devrede olduğunu (SESSİZCE ham `allocator.
+// create`e düşmediğini) kanıtlayan bir stres testi — çeşitli tag'lerden
+// (long/str/list/dict/`.instance_`/bound-method) binlerce nesne TEK bir
+// context İçİnde yaratılıp `ctxClose` edilir; `std.testing.allocator`nin
+// (DebugAllocator) `destroyContext` SONRASI HİÇBİR sızıntı/UAF RAPORLAMAMASI
+// TEK BAŞINA yeterli bir kanıttır (havuzlama YANLIŞ yapılsaydı bir create/
+// destroy uyumsuzluğu BURADA KESİNLİKLE yakalanırdı). AYRICA, create→close→
+// create döngüsü SONRASI adresin TEKRAR KULLANILDIĞI (havuzun GERÇEKTEN
+// devrede olduğunun POZİTİF kanıtı) doğrulanır.
+test "Faz FFI.2: Obj havuzlama — binlerce çeşitli-tag nesne create/close, sızıntı yok + adres tekrar kullanımı" {
+    const ctx = try createContext(std.testing.allocator);
+    defer destroyContext(std.testing.allocator, ctx);
+
+    var i: usize = 0;
+    while (i < 3000) : (i += 1) {
+        const l = ctxLongFromInt64(ctx, @intCast(i));
+        ctxClose(ctx, l);
+        const f = ctxFloatFromDouble(ctx, @floatFromInt(i));
+        ctxClose(ctx, f);
+        const s = ctxUnicodeFromString(ctx, "havuz-testi");
+        ctxClose(ctx, s);
+        const lst = ctxListNew(ctx, 2);
+        ctxClose(ctx, lst);
+        const d = ctxDictNew(ctx);
+        ctxClose(ctx, d);
+    }
+
+    // Pozitif kanıt: `use_pool` AKTİFKEN, ARDIŞIK bir create→close→create
+    // döngüsü AYNI adresi GERİ vermelidir (havuzun free-list'i TEK elemanlı
+    // kaldığından — başka HİÇBİR pooled tahsis ARADA OLMADIĞI SÜRECE).
+    if (use_pool) {
+        const a = ctxLongFromInt64(ctx, 1);
+        const addr_a = @intFromPtr(objOf(a).?);
+        ctxClose(ctx, a);
+        const b = ctxLongFromInt64(ctx, 2);
+        const addr_b = @intFromPtr(objOf(b).?);
+        ctxClose(ctx, b);
+        try std.testing.expectEqual(addr_a, addr_b);
+    }
+}
+
+fn ffi2RollbackOomFuzzImpl(allocator: std.mem.Allocator) !void {
+    const ctx = try createContext(allocator);
+    defer destroyContext(allocator, ctx);
+
+    // NOT: `ctxListNew`/`ctxDictNew`/vb. `callconv(.c)` C-ABI fonksiyonları
+    // OLDUĞUNDAN bir Zig hatasını PROPAGATE EDEMEZLER — OOM'u `HPy_NULL`
+    // sentinel'ine ÇEVİRİRLER (`checkAllAllocationFailures`in "hatayı
+    // yuttu" tespiti İçİn BEKLENEN/KASITLI bir davranış). BU KONTROLLÜ
+    // fuzz testinde TÜM girdiler GEÇERLİ olduğundan, HERHANGİ bir `HPy_NULL`
+    // SADECE İNDÜKLENMİŞ OOM anlamına gelir — bu YÜZDEN `error.OutOfMemory`
+    // OLARAK AÇIKÇA yeniden fırlatılır (harness'in "hata yutuldu" YANLIŞ-
+    // POZİTİFİNİ ÖNLEMEK İçİn), GERÇEK doğruluk kontrolü (sızıntı/uyumsuzluk
+    // YOK) YİNE DE `destroyContext`in DebugAllocator TARAFINDAN doğrulanır.
+
+    // `ctxListNew`nin KENDİ rollback yolu (satır ~1443-1446): `len > 0`
+    // OLDUĞUNDA `list_data.append`in BÜYÜME tahsisi HERHANGİ bir turda
+    // BAŞARISIZ OLABİLİR.
+    const list = ctxListNew(ctx, 5);
+    if (list._i == 0) return error.OutOfMemory;
+    defer ctxClose(ctx, list);
+
+    // `ctxDictKeys`/`ctxDictCopy`nin KENDİ rollback yolları — DOLU bir
+    // dict ÜZERİNDE ÇAĞRILMALARI gerekir (BOŞ bir dict'te İç döngü hiç
+    // ÇALIŞMAZ, rollback yolu TETİKLENMEZ). HER handle İçİn `defer`
+    // (`errdefer` DEĞİL — BAŞARI/HATA HER İKİ yolda da TAM OLARAK BİR KEZ
+    // çalışmalı, aksi halde manuel bir kapatma + `errdefer`nin İKİSİ
+    // BİRDEN tetiklenip ÇİFT-KAPAMA riski oluşur) kullanılır — testin
+    // KENDİ (`createContext`'inkinden AYRI) erken-dönüş yollarının bir
+    // SONRAKİ adımda OOM İNDÜKLENDİĞİNDE ÖNCEKİ, BAŞARIYLA yaratılmış
+    // handle'ları sızdırmamasını sağlar (BU context.zig'in KENDİ hatası
+    // DEĞİL, bu test yardımcısının KENDİ doğru temizlik disiplinidir).
+    const d = ctxDictNew(ctx);
+    if (d._i == 0) return error.OutOfMemory;
+    defer ctxClose(ctx, d);
+    const key = ctxUnicodeFromString(ctx, "k");
+    if (key._i == 0) return error.OutOfMemory;
+    defer ctxClose(ctx, key);
+    const val = ctxLongFromInt64(ctx, 7);
+    if (val._i == 0) return error.OutOfMemory;
+    defer ctxClose(ctx, val);
+    _ = ctxSetItem(ctx, d, key, val);
+    const keys = ctxDictKeys(ctx, d);
+    if (keys._i == 0) return error.OutOfMemory;
+    defer ctxClose(ctx, keys);
+    const copy = ctxDictCopy(ctx, d);
+    if (copy._i == 0) return error.OutOfMemory;
+    defer ctxClose(ctx, copy);
+
+    // `ctxContextVarNew`nin KENDİ rollback yolu (satır ~2589-2593):
+    // `name_copy`nin `dupeZ`si BAŞARISIZ olursa `objCreate` İLE üretilmiş
+    // `obj`nin `objDestroy` İLE (HAM `allocator.destroy` İLE DEĞİL) doğru
+    // şekilde serbest bırakıldığını kanıtlar.
+    const cv = ctxContextVarNew(ctx, "test-degiskeni", HPy_NULL);
+    if (cv._i == 0) return error.OutOfMemory;
+    defer ctxClose(ctx, cv);
+}
+
+// Faz FFI.2: `std.testing.checkAllAllocationFailures` — `ffi2RollbackOomFuzzImpl`nin
+// İÇİNDEKİ HER OLASI tahsis noktasında (createContext'in KENDİ tekil/pinned
+// kurulumu DAHİL, `ctxListNew`/`ctxDictKeys`/`ctxDictCopy`/`ctxContextVarNew`nin
+// ÜÇÜ de) OOM ZORLANIR — `DebugAllocator` HERHANGİ bir create/destroy
+// uyumsuzluğu (havuzlu bir pointer'ın HAM allocator'a YANLIŞLIKLA verilmesi)
+// YA DA sızıntı YAKALARSA test BAŞARISIZ olur. Bu, havuzlamanın 4 rollback
+// sitesinin (bkz. plan dosyası "HPy `Obj` havuzlama...") HEPSİNİN doğru
+// `objDestroy` KULLANDIĞININ EN YÜKSEK-değerli kanıtıdır.
+test "Faz FFI.2: rollback yolları (list/dict-keys/dict-copy/contextvar) HİÇBİR OOM noktasında sızıntı/uyumsuzluk yaratmaz" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, ffi2RollbackOomFuzzImpl, .{});
 }

@@ -14,6 +14,42 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.78.0]
+
+### Eklendi (performans) + Düzeltildi (5 GERÇEK, öncesi var olan sızıntı)
+- **Faz FFI.2 — HPy `Obj` havuzlama + marshal-yolu tahsis azaltması**:
+  `runtime/hpy_bridge/context.zig`nin `Obj` struct'ı (456 bayt — `Obj`
+  gerçek bir union DEĞİL, TÜM tag'lerin alanları YAN YANA) artık `--release`de
+  (`std.heap.MemoryPool(Obj)`, `runtime/alloc/arc.zig`/`lowlevel.zig`nin
+  AYNI, ZATEN kanıtlanmış `use_pool = builtin.mode != .Debug` deseni)
+  context-başına bir free-list ÜZERİNDEN TEKRAR KULLANILIYOR — Debug'da
+  (`zig build test`nin VARSAYILANI) `DebugAllocator`nin TAM güvenlik ağı
+  DEĞİŞMEDEN KORUNUYOR. `runtime/foreign_bridge.zig`nin `MarshalCtx`
+  zincirindeki 3 tekrarlanan `packed_args` tahsisi (`invokeHpyMethod`/
+  `nox_hpy_new_finish`/`nox_hpy_call_attr_int_finish`) TEK, paylaşılan bir
+  `packArgs` yardımcısına ÇIKARILDI — tipik (≤8 argümanlı) HER `hpy_call_on`
+  çağrısı ARTIK bu adımda SIFIR heap tahsisi yapıyor (ÖNCEDEN HER ZAMAN 1
+  tahsis). Gerçek A/B ölçümü (`git worktree`, YENİ `zig build bench-hpy`,
+  `sum_two_ints` İLE 2M tekrarlı kalıcı-tutamaç çağrısı, 6 kesişimli koşu):
+  çağrı başına ortalama ~314ns → ~297ns (~%5.6 daha hızlı).
+- **BULUNAN, ÖNCEDEN VAR OLAN 5 GERÇEK sızıntı** (havuzlamanın YENİ
+  `checkAllAllocationFailures` OOM-fuzz testi YAZILIRKEN yakalandı,
+  havuzlamanın KENDİSİYLE İLGİSİZ, DAHA ÖNCE hiç test edilmemiş yollar):
+  1. `createContext`nin ~28 tekil (None/True/False/istisna tipleri/yerleşik
+     tipler/`h_SliceType`) inşası HİÇBİR rollback YAPMIYORDU — aralarından
+     HERHANGİ biri (OOM) başarısız olsaydı ÖNCEKİLER SONSUZA KADAR sızardı;
+     artık HER biri kendi `errdefer allocator.destroy(...)`ını alıyor.
+  2. `ctxSetItem`/`ctxSetAttr`nin dict-ekleme dalları, `ctxDup`ı `append`in
+     argüman ifadesinin İÇİNDE DOĞRUDAN çağırıyordu — `append` SONRADAN
+     BAŞARISIZ olursa BU retain'ler asla geri alınmıyordu; `ctxListAppend`in
+     ZATEN doğru olan "ÖNCE dup'la, SONRA dene, başarısızsa kapat" desenine
+     getirildi.
+  3. `ctxDictKeys`/`ctxDictCopy`/`ctxListGetSlice` (slice-GetItem) de AYNI
+     kategoriden bir eksiklik taşıyordu (önceki iterasyonların dup'larını
+     rollback'te kapatıyorlardı AMA BAŞARISIZ olan İTERASYONUN KENDİ dup'ını
+     DEĞİL) — aynı şekilde düzeltildi.
+  Bkz. `nox-teknik-spesifikasyon.md` §3.147.
+
 ## [1.77.0]
 
 ### Düzeltildi (KRİTİK ARC sızıntısı) + Eklendi (performans)

@@ -350,6 +350,27 @@ pub fn build(b: *std.Build) void {
     const bench_http_step = b.step("bench-http", "nox.http.serve verim ölçümünü çalıştır");
     bench_http_step.dependOn(&run_http_bench.step);
 
+    // ---- `hpy_call_on` verim (throughput) ölçümü (bkz. benchmarks/
+    // hpy_call_bench.zig) — Faz FFI.2'nin Obj havuzlama + MarshalCtx/
+    // packed_args tahsis azaltmasının GERÇEK etkisini ölçmek İçİn — `bench_
+    // http_step`in AYNI deseni. `tests/compat/hpy_ext/noxtest.so`ya bağımlı
+    // olduğundan (`.hpy-venv` KURULUYSA `zig build test` SIRASINDA derlenir)
+    // bu adım `b.getInstallStep()`e BAĞLIDIR AMA `noxtest.so`nun KENDİSİNİ
+    // ZORUNLU KILMAZ — program KENDİSİ eksikse AÇIK bir hatayla ÇIKAR ----
+    const hpy_call_bench_mod = b.createModule(.{
+        .root_source_file = b.path("benchmarks/hpy_call_bench.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const hpy_call_bench = b.addExecutable(.{
+        .name = "noxhpycallbench",
+        .root_module = hpy_call_bench_mod,
+    });
+    const run_hpy_call_bench = b.addRunArtifact(hpy_call_bench);
+    run_hpy_call_bench.step.dependOn(b.getInstallStep());
+    const bench_hpy_step = b.step("bench-hpy", "hpy_call_on verim ölçümünü çalıştır (Faz FFI.2)");
+    bench_hpy_step.dependOn(&run_hpy_call_bench.step);
+
     const test_step = b.step("test", "Tüm unit ve golden testleri çalıştır");
     // codegen golden testleri, üretilen binary'leri `zig-out/lib/noxrt.o`'ya
     // karşı linklemek için bu adımın önceden tamamlanmış olmasına ihtiyaç duyar.

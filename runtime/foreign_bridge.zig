@@ -401,6 +401,29 @@ fn freeMarshalCtx(mc: *MarshalCtx) void {
     mc.allocator.destroy(mc);
 }
 
+/// Faz FFI.2 (bkz. plan dosyası "HPy `Obj` havuzlama..."): `invokeHpyMethod`/
+/// `nox_hpy_new_finish`/`nox_hpy_call_attr_int_finish`nin ÜÇÜNÜN de AYRI AYRI
+/// tekrarladığı "gerçek HPy çağrısı İçİn `mc.args`i YOĞUN bir `[]HPy` dizisine
+/// paketle" deseninin TEK, PAYLAŞILAN karşılığı — GERÇEK dünyadaki NEREDEYSE
+/// TÜM çağrılar (`PACKED_ARGS_INLINE_CAP`in ALTINDaki argüman sayısı) İçİn
+/// `stack_buf`in KENDİSİNİ (SIFIR heap tahsisi) kullanır, SADECE bu SINIRI
+/// AŞAN (nadir) çağrılarda `mc.allocator.alloc`e DÜŞER (`heap` alanı DOLU
+/// döner — çağıran `defer if (packed_result.heap) |h| mc.allocator.free(h);` İLE
+/// serbest bırakmalıdır).
+const PACKED_ARGS_INLINE_CAP = 8;
+const PackedArgs = struct { items: []const hpy_bridge.context.HPy, heap: ?[]hpy_bridge.context.HPy };
+
+fn packArgs(mc: *MarshalCtx, stack_buf: *[PACKED_ARGS_INLINE_CAP]hpy_bridge.context.HPy) error{OutOfMemory}!PackedArgs {
+    const n = mc.args.items.len;
+    if (n <= PACKED_ARGS_INLINE_CAP) {
+        for (mc.args.items, 0..) |e, i| stack_buf[i] = e.h;
+        return .{ .items = stack_buf[0..n], .heap = null };
+    }
+    const heap = try mc.allocator.alloc(hpy_bridge.context.HPy, n);
+    for (mc.args.items, 0..) |e, i| heap[i] = e.h;
+    return .{ .items = heap, .heap = heap };
+}
+
 /// `list_ptr`nin (opak, ARC başlığından SONRAKİ `len@0`/`elemler@16`
 /// düzenine sahip) `index`teki elemanını `elem_kind`e (0=int,1=float,
 /// 2=bool,3=str) göre TAZE bir HPy handle'ına marshal eder — ÇAĞIRAN,
@@ -474,6 +497,11 @@ pub export fn nox_hpy_args_begin(rt: ?*anyopaque, handle_ptr: ?*anyopaque) ?*any
     const handle: *PersistentHpyHandle = @ptrCast(@alignCast(hp));
     const mc = allocator.create(MarshalCtx) catch return null;
     mc.* = .{ .handle = handle, .allocator = allocator };
+    // Faz FFI.2: tipik 0-4 argümanlı çağrılar İçİn `args`in KENDİ büyüme
+    // tahsisini TEK bir ön-tahsise İNDİRİR (bkz. plan dosyası "HPy `Obj`
+    // havuzlama...") — YAPISAL bir değişiklik GEREKMEZ, başarısız olursa
+    // sessizce yok sayılır (`append` YİNE DE gerektiğinde büyütecektir).
+    mc.args.ensureTotalCapacityPrecise(allocator, 4) catch {};
     return mc;
 }
 
@@ -495,6 +523,7 @@ pub export fn nox_hpy_args_begin_for_obj(rt: ?*anyopaque, handle_ptr: ?*anyopaqu
     const handle: *PersistentHpyHandle = @ptrCast(@alignCast(hp));
     const mc = allocator.create(MarshalCtx) catch return null;
     mc.* = .{ .handle = handle, .allocator = allocator, .target_obj = .{ ._i = @bitCast(@intFromPtr(op)) } };
+    mc.args.ensureTotalCapacityPrecise(allocator, 4) catch {};
     return mc;
 }
 
@@ -699,12 +728,13 @@ fn invokeHpyMethod(mc: *MarshalCtx, func_name: []const u8) ?hpy_bridge.context.H
     // çağrı İçİn (`?[*]const HPy` bekleyen HPy imzasına UYMAK İçİn)
     // KISA ömürlü, YOĞUN bir `[]HPy` dizisi İNŞA EDİLİR.
     const n = mc.args.items.len;
-    const packed_args = mc.allocator.alloc(hpy_bridge.context.HPy, n) catch {
+    var stack_buf: [PACKED_ARGS_INLINE_CAP]hpy_bridge.context.HPy = undefined;
+    const packed_result = packArgs(mc, &stack_buf) catch {
         setHpyError("bellek yetersiz", .{});
         return null;
     };
-    defer mc.allocator.free(packed_args);
-    for (mc.args.items, 0..) |e, i| packed_args[i] = e.h;
+    defer if (packed_result.heap) |h| mc.allocator.free(h);
+    const packed_args = packed_result.items;
     // Faz 20 (bkz. plan dosyası "HPy modül nesnesi + HPy_mod_exec desteği"):
     // `self` ARTIK `HPy_NULL` DEĞİL, `mc.handle.module_obj` — GERÇEK
     // Cython-üretimi kod derleme-zamanı sabitlerini `self`in attribute'u
@@ -886,13 +916,13 @@ pub export fn nox_hpy_new_finish(mc_ptr: ?*anyopaque, class_name: ?[*:0]const u8
     }
     defer ctx.ctx_Close.?(ctx, cls_h);
     const n = mc.args.items.len;
-    const packed_args = mc.allocator.alloc(hpy_bridge.context.HPy, n) catch {
+    var stack_buf: [PACKED_ARGS_INLINE_CAP]hpy_bridge.context.HPy = undefined;
+    const packed_result = packArgs(mc, &stack_buf) catch {
         setHpyError("bellek yetersiz", .{});
         return null;
     };
-    defer mc.allocator.free(packed_args);
-    for (mc.args.items, 0..) |e, i| packed_args[i] = e.h;
-    const args_ptr: ?[*]const hpy_bridge.context.HPy = if (n > 0) packed_args.ptr else null;
+    defer if (packed_result.heap) |h| mc.allocator.free(h);
+    const args_ptr: ?[*]const hpy_bridge.context.HPy = if (n > 0) packed_result.items.ptr else null;
     const h_result = ctx.ctx_Call.?(ctx, cls_h, args_ptr, n, hpy_bridge.context.HPy_NULL);
     if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
         ctx.ctx_Close.?(ctx, h_result);
@@ -967,13 +997,13 @@ pub export fn nox_hpy_call_attr_int_finish(mc_ptr: ?*anyopaque, attr_name: ?[*:0
     }
     defer ctx.ctx_Close.?(ctx, method_h);
     const n = mc.args.items.len;
-    const packed_args = mc.allocator.alloc(hpy_bridge.context.HPy, n) catch {
+    var stack_buf: [PACKED_ARGS_INLINE_CAP]hpy_bridge.context.HPy = undefined;
+    const packed_result = packArgs(mc, &stack_buf) catch {
         setHpyError("bellek yetersiz", .{});
         return 0;
     };
-    defer mc.allocator.free(packed_args);
-    for (mc.args.items, 0..) |e, i| packed_args[i] = e.h;
-    const args_ptr: ?[*]const hpy_bridge.context.HPy = if (n > 0) packed_args.ptr else null;
+    defer if (packed_result.heap) |h| mc.allocator.free(h);
+    const args_ptr: ?[*]const hpy_bridge.context.HPy = if (n > 0) packed_result.items.ptr else null;
     const h_result = ctx.ctx_Call.?(ctx, method_h, args_ptr, n, hpy_bridge.context.HPy_NULL);
     if (ctx.ctx_Err_Occurred.?(ctx) != 0) {
         ctx.ctx_Close.?(ctx, h_result);

@@ -19563,6 +19563,108 @@ WASM köprüsü (SIFIR gerçek `.nox` kullanımı); küçük HPy kazanımları
 `cc`yi optimizasyonsuz çağırması — HEPSİ AYRI, gelecekteki Plan Mode
 turlarının konusu.
 
+## 3.147 Faz FFI.2 — HPy `Obj` havuzlama + marshal-yolu tahsis azaltması (v1.78.0)
+
+Faz FFI.1'in (v1.77.0) "FFI maliyetlerini azaltma" listesinin İKİNCİ
+maddesi — HPy `Obj` struct'ının 456 bayta şişmesi (§3.146'nın KENDİ
+"Kapsam DIŞI" notunda "EN BÜYÜK tekil kazanım noktası" OLARAK işaretlenmişti)
+VE skaler argümanlar İçİn havuzlama eksikliği.
+
+**Araştırma** (doğrudan kod okuması + geçici bir `@compileLog` İLE
+DOĞRULANDI): `Obj` (`runtime/hpy_bridge/context.zig`) BUGÜN HÂLÂ 456 bayt
+(`@alignOf(Obj)==8`) — Faz 20-24'ün TÜM eklemelerine RAĞMEN sayı
+DEĞİŞMEDİ. `contextAllocator(ctx)` (`--release`de `std.heap.smp_allocator`,
+GERÇEK bir genel-amaçlı allocator) üzerinden HER `Obj` inşası TAM 456
+baytlık GERÇEK bir heap tahsisi/serbest bırakması yapıyordu — BASİT bir
+`Long`/`Bool`/`Float` sarmalayıcısı BİLE. `hpy_call_on(h, "sum_two_ints",
+3, 4)` GİBİ TİPİK bir çağrı ≈5-6 heap tahsisi yapıyordu (`MarshalCtx`
++ HER argüman İçİn bir `Obj` + `mc.args`in büyüme tahsisi + `invokeHpyMethod`in
+GEÇİCİ `packed_args` dizisi).
+
+**Bölüm A — `Obj` havuzlama**: Zig 0.16'nın `std.heap.MemoryPool(Obj)`i
+(ZATEN TEST EDİLMİŞ, tam-BU-iş İçİn var olan bir stdlib primitifi — free-
+list-üzerinde-arena) `PrivateState`e `obj_pool` alanı olarak EKLENDİ.
+`objCreate(ctx)`/`objDestroy(ctx, obj)` YENİ, PAYLAŞILAN yardımcıları,
+`runtime/alloc/arc.zig`/`lowlevel.zig`nin AYNI, ZATEN kanıtlanmış
+`use_pool = builtin.mode != .Debug` deseniyle (Debug'da `DebugAllocator`nin
+TAM güvenlik ağı KORUNUR, havuzlama SADECE Release'de AKTİFTİR) HER İKİ
+YOLU da (havuzlu/ham) kapsar. 21 "sıradan" (havuzlanabilir) `Obj` inşa
+sitesi + `ctxClose`'un ana yıkım satırı + 4 iç rollback-yolu destroy
+sitesi `objCreate`/`objDestroy`e YÖNLENDİRİLDİ; `createContext`nin PINNED
+tekilleri (None/True/False/istisna tipleri/yerleşik tipler/`h_SliceType`
+— hepsi `pinnedExcType`/`pinnedBuiltinType` VE `createContext`nin KENDİ
+İçİNDEKİ inşalar) BİLİNÇLİ olarak HARİÇ TUTULDU (context-başına TEK SEFER,
+hiç sıcak olmayan bir yol + `ctx._private` HENÜZ AYARLANMAMIŞKEN
+`objCreate`in `contextState(ctx)`e erişemeyeceği bir bootstrapping kısıtı).
+
+**Bölüm A SIRASINDA bulunup düzeltilen 6 GERÇEK, ÖNCEDEN VAR OLAN sızıntı**
+(havuzlamanın YENİ `std.testing.checkAllAllocationFailures` OOM-fuzz
+testi YAZILIRKEN yakalandı — havuzlamanın KENDİSİYLE İLGİSİZ, DAHA ÖNCE
+hiç test edilmemiş yollar):
+1. `createContext`nin ~28 sıralı tekil-inşası (None/True/False/18 istisna
+   tipi/7 yerleşik tip/`h_SliceType`) HİÇBİR rollback YAPMIYORDU —
+   aralarından HERHANGİ biri (OOM) BAŞARISIZ olsaydı ÖNCEKİLER SONSUZA
+   KADAR sızardı. Düzeltme: HER tekilin HEMEN ARDINDAN bir `errdefer
+   allocator.destroy(...)` KAYDEDİLİR (bir side-list'e `append` etmenin
+   — İLK denenen yaklaşımın — KENDİSİNİN de BAŞARISIZ olabileceği
+   BULUNUP TERK EDİLDİ — `errdefer` HİÇBİR tahsis YAPMADIĞINDAN kendisi
+   ASLA başarısız OLAMAZ).
+2. `ctxSetItem`/`ctxSetAttr`nin dict-ekleme dalları `ctxDup`ı `append`in
+   argüman İFADESİNİN İÇİNDE DOĞRUDAN çağırıyordu (refcount HEMEN
+   artırılıyordu) — `append` SONRADAN BAŞARISIZ olursa BU retain'ler
+   ASLA geri alınmıyordu. `ctxListAppend`in ZATEN doğru olan "ÖNCE
+   dup'la, SONRA append'i dene, BAŞARISIZ olursa dup'ı kapat" desenine
+   getirildi.
+3. `ctxDictKeys`/`ctxDictCopy`/`ctxListGetSlice` (slice-GetItem) AYNI
+   kategoriden bir eksiklik taşıyordu — rollback blokları ÖNCEKİ
+   iterasyonların ZATEN listeye eklenmiş dup'larını kapatıyordu AMA
+   BAŞARISIZ olan İTERASYONUN KENDİ (henüz depolanmamış) dup'ını
+   KAPATMIYORDU. Aynı şekilde düzeltildi.
+
+**Bölüm B — marshal-yolu tahsis azaltması** (`runtime/foreign_bridge.zig`):
+bir Plan ajanının BAĞIMSIZ doğrulaması, `MarshalCtx.args`in KENDİSİNİ
+(inline-buffer+overflow) yeniden yapılandırmanın fayda/risk oranının
+KÖTÜ olduğunu (argümanlar AYRI C-ABI çağrılarıyla tek tek eklendiğinden
+büyüme ZATEN küçük/ucuz) VE BUNUN YERİNE 3 TEKRARLANAN `packed_args`
+inşa bloğunun (`invokeHpyMethod`/`nox_hpy_new_finish`/`nox_hpy_call_attr_
+int_finish` — İLK araştırma turu SADECE BİRİNİ bulmuştu) TEK, paylaşılan
+bir `packArgs` yardımcısına ÇIKARILMASININ daha İYİ bir ödünleşim
+OLDUĞUNU BULDU. `packArgs`, `PACKED_ARGS_INLINE_CAP=8` slotluk bir
+STACK arabelleği kullanır (GERÇEK dünyadaki NEREDEYSE TÜM çağrılar İçİn
+SIFIR heap tahsisi), SADECE bu sınırı AŞAN (nadir) çağrılarda heap'e
+düşer. `nox_hpy_args_begin`/`_for_obj`ye AYRICA `mc.args.
+ensureTotalCapacityPrecise(allocator, 4)` (TEK satır, tipik 0-4 argümanlı
+çağrılar İçİn `ArrayListUnmanaged`in büyüme tahsisini TEK bir ön-tahsise
+İNDİRİR) EKLENDİ.
+
+**Doğrulama**: havuzlama Debug'da GEÇİCİ olarak ZORLA açılıp (`use_pool
+= true`) TÜM 112+ MEVCUT HPy testi (`context.zig`nin 24→26 dahili testi,
+`hpy_tier0_test.zig`nin 62'si, `hpy_call_golden_test.zig`nin 26'sı) +
+YENİ İKİ test — (a) binlerce çeşitli-tag nesnenin create/close edildiği
+bir stres testi (sızıntı yok + adres-tekrar-kullanımı POZİTİF kanıtı) VE
+(b) `std.testing.checkAllAllocationFailures` İLE createContext/ctxListNew/
+ctxDictKeys/ctxDictCopy/ctxContextVarNew'in HER OLASI tahsis noktasında
+OOM zorlayan, KAPSAMLI bir rollback-doğruluğu testi (Bölüm A'nın 6
+düzeltmesinin KANITI) — `DebugAllocator` ALTINDA TEMİZ geçti, SONRA
+`use_pool` GERİ `builtin.mode != .Debug`e DÖNDÜRÜLDÜ. Tam `zig build test`
+(Debug+ReleaseFast): 1108/1108 TEMİZ. GERÇEK A/B ölçümü (`git worktree`,
+YENİ `zig build bench-hpy` — `tests/compat/hpy_ext/noxtest.c`nin MEVCUT
+`sum_two_ints`i, TEK bir kalıcı tutamaç ÜZERİNDEN 2 milyon TUR, 6
+kesişimli koşu): çağrı başına ortalama ~314ns (ÖNCESİ) → ~297ns (SONRASI),
+~%5.6 daha hızlı — MÜTEVAZI AMA GERÇEK/tekrarlanabilir bir kazanım (İLK,
+soğuk-çalıştırmalı ölçümün İŞARET ETTİĞİ ~%20'lik farkın çoğu, sistem
+önbelleği/ısınma GÜRÜLTÜSÜ olduğu, ısınmış/kesişimli koşularla ORTAYA
+ÇIKTI — "ölç, varsayma" disiplininin BİR ÖRNEĞİ daha).
+
+**Kapsam DIŞI (bu turda — SONRAKİ Plan Mode turlarının konusu)**: `Obj`nin
+KENDİSİNİN GERÇEK bir `union(enum)`e dönüştürülüp 456 bayttan
+KÜÇÜLTÜLMESİ (~150+ alan-erişim sitesi gerektiren, ÇOK DAHA BÜYÜK/riskli
+bir refactor); `MarshalCtx`in KENDİSİNİN (`allocator.create(MarshalCtx)`)
+AYNI havuzlama muamelesini görmesi (`PersistentHpyHandle` başına bir
+`std.heap.MemoryPool(MarshalCtx)`); binary şişmesi/WASM köprüsü/QBE'nin
+`-O` bayrağı eksikliği — Faz FFI.1'in KENDİ, ÖNCEDEN belirlenmiş kapsam-
+dışı listesi, DEĞİŞMEDEN KALIR.
+
 ---
 
 ## 5. Hata Yönetimi
