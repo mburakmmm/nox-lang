@@ -19774,7 +19774,19 @@ bölümüydü, `--gc-sections`in silecek HİÇBİR granülerliği YOKTU (macOS't
 Mach-O ZATEN per-fonksiyon bölüm ürettiğinden bu HİÇ fark edilmemişti) —
 `build.zig`'in `noxrt` adımına `link_function_sections`/`link_data_
 sections = true` EKLENEREK düzeltildi (v1.79.2, AYNI konteynerde 11.092
-`.text.*` bölümü + dead-stripping + fonksiyonel doğruluk İLE doğrulandı).
+`.text.*` bölümü + dead-stripping + fonksiyonel doğruluk İLE doğrulandı);
+(3) BU İKİSİ SONRASI Windows CI `runtime/async_rt/pool_bridge.zig:554`de
+`"expected type 'void', found 'comptime_int'"` derleme hatasıyla
+BAŞARISIZ oldu — `std.c.timespec`nin `.sec` alanının tipi `std.c.time_t`ye
+bağlı, VE Zig 0.16.0'nın `time_t`si Windows İçİn TANIMSIZ (`else => void`e
+düşüyor) — `runtime/async_rt/scheduler.zig`nin ZATEN kanıtlanmış
+`kernel32.Sleep` guard deseni (`if (builtin.os.tag == .windows) {...;
+return;}`) BURAYA da uygulanarak düzeltildi (v1.79.3) — kapsamlı bir
+tarama, AYNI desenin DİĞER TÜM sitelerinin (`time.zig`/`random.zig`/
+`http_client.zig`/`io_reactor.zig`) ZATEN doğru guard'landığını, KALANLARIN
+(`thread_channel.zig`/`thread_bridge.zig`/`http_server.zig`) İSE SADECE
+`test` bloklarının İÇİNDE (Windows CI'nin BUGÜN çalıştırmadığı bir yol)
+OLDUĞUNU doğruladı.
 
 ---
 

@@ -14,6 +14,27 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.79.3]
+
+### Düzeltildi (Windows derleme hatası — GERÇEK bir CI koşusuyla bulundu)
+- **`runtime/async_rt/pool_bridge.zig`nin `sleepOneMs`ı Windows'ta HİÇ
+  DERLENMİYORDU**: `std.c.timespec`nin `.sec` alanının tipi `std.c.time_t`ye
+  bağlı, VE Zig 0.16.0'nın KENDİ `std/c.zig`si `time_t`nin switch'inde
+  `.windows`i HİÇ LİSTELEMİYOR (`else => void`e düşüyor) — `.sec = 0`
+  ataması BU YÜZDEN `"expected type 'void', found 'comptime_int'"` derleme
+  hatasıyla BAŞARISIZ oluyordu, `nox.http.serve_multicore`/`nox.thread.
+  pool_run` GİBİ `--release` yollarına GİREN HER Windows `zig build` bunu
+  HİÇ GEÇEMİYORDU. `runtime/async_rt/scheduler.zig`nin `sleepMs`ının
+  ZATEN kanıtlanmış `kernel32.Sleep` guard'ı (`if (builtin.os.tag ==
+  .windows) { ...; return; }`) BURAYA da AYNEN uygulandı. Kapsamlı bir
+  tarama (`std.c.timespec`/`posix.timespec` KULLANAN TÜM DİĞER siteler:
+  `thread_channel.zig`/`thread_bridge.zig`/`http_server.zig`nin 4
+  örneği) BUNLARIN HEPSİNİN ya ZATEN doğru guard'landığını (`time.zig`/
+  `random.zig`/`http_client.zig`/`io_reactor.zig`) ya da SADECE `test`
+  bloklarının İÇİNDE (Windows CI'nin ŞU AN çalıştırmadığı bir yol)
+  OLDUĞUNU doğruladı — TEK genuine, ungarded, PRODUCTION-yolu boşluğu
+  `pool_bridge.zig`ydi.
+
 ## [1.79.2]
 
 ### Düzeltildi (KRİTİK — Linux'ta dead-code-stripping HİÇ ÇALIŞMIYORDU)

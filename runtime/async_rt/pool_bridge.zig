@@ -56,6 +56,7 @@
 //! GÜVENLİDİR.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const posix = std.posix;
 const asap = @import("../alloc/asap.zig");
 const bridge = @import("bridge.zig");
@@ -549,8 +550,22 @@ const BroadcastCtx = struct {
 /// `scheduler.zig`nin ÖZEL `sleepMs`iyle AYNI desen (`std.Thread`da bir
 /// `sleep` metodu YOK, bkz. Zig 0.16.0 — `std.c.nanosleep` DOĞRUDAN
 /// kullanılır) — `poolServeFlattened`nin KISA "worker ZATEN hazır mı"
-/// bekleme döngüsü İçİn.
+/// bekleme döngüsü İçİn. **Windows dalı ZORUNLUDUR** (GERÇEK bir Windows
+/// CI koşusuyla BULUNDU): `std.c.timespec`nin `.sec` alanı `std.c.time_t`
+/// tipini kullanır, VE `std.c.time_t` Windows İçİn `void` OLARAK
+/// TANIMLIDIR (Zig 0.16.0'nın KENDİ `std/c.zig`si, `time_t`nin switch'i
+/// `.windows`i HİÇ LİSTELEMİYOR, `else => void`e DÜŞÜYOR) — `.sec = 0`
+/// bu YÜZDEN "expected type 'void', found 'comptime_int'" derleme
+/// hatası veriyordu. `scheduler.zig`nin `sleepMs`inin ZATEN kanıtlanmış
+/// `kernel32.Sleep` düzeltmesi BURAYA da AYNEN uygulanır.
+const WinSleep = if (builtin.os.tag == .windows) struct {
+    extern "kernel32" fn Sleep(ms: u32) callconv(.c) void;
+} else struct {};
 fn sleepOneMs() void {
+    if (builtin.os.tag == .windows) {
+        WinSleep.Sleep(1);
+        return;
+    }
     const ts: std.c.timespec = .{ .sec = 0, .nsec = 1 * std.time.ns_per_ms };
     _ = std.c.nanosleep(&ts, null);
 }
