@@ -14,6 +14,29 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.79.1]
+
+### Düzeltildi (KRİTİK — fresh checkout/CI/release build hatası)
+- **`runtime/vendor/tls_client.zig` git'e HİÇ eklenmemiş olarak kalmıştı**:
+  bu dosya (`std.crypto.tls.Client`'ın gmail/office365 SMTP TLS el
+  sıkışması İçİn yamalı forku — `nox.tls`/`nox.smtp`/`nox.websocket`'in
+  ORTAK kaynağı, RFC 8446 §4.3.2 `certificate_request` mesajı İçİn İKİ
+  GERÇEK yama İçEREN, tekrar-üretimle DOĞRULANMIŞ bir düzeltme) v1.76.0'dan
+  (bu dosyayı İLK KEZ import eden commit) BERİ SADECE yerel diskte VARDI —
+  git'e HİÇ eklenmemişti, `git status`ta "pre-existing untracked stray
+  dosya" OLARAK YANLIŞLIKLA HER commit'te dışlanıyordu. **Sonuç**: HER
+  FRESH checkout (GitHub Actions'ın `actions/checkout@v4`'ü DAHİL) `zig
+  build` `runtime/vendor/tls_client.zig: FileNotFound` İLE BAŞARISIZ
+  oluyordu — bu, v1.76.0'dan BU YANA (v1.76.0/v1.77.0/v1.78.0/v1.79.0)
+  HİÇBİR GitHub Release'in oluşturulamamasının KÖK NEDENİYDİ (`.github/
+  workflows/release.yml`, `v*` tag push'unda TÜM 4 platformda AYNI hatayla
+  başarısız oluyordu — `gh run list` İLE doğrulandı). Dosya artık git'e
+  EKLENDİ; GERÇEK bir FRESH `git clone` + `zig build -Doptimize=ReleaseFast`
+  İLE (bu turda) doğrulandı. AYRICA `v1.75.1` (commit `4147fc0`, "Liste
+  literalinde sondaki virgül düzeltmesi") git tag'i HİÇ oluşturulmamıştı —
+  eklendi (BU commit `v1.76.0`'dan ÖNCE olduğundan `vendor/tls_client.zig`ye
+  bağımlı DEĞİL, etkilenmez).
+
 ## [1.79.0]
 
 ### Düzeltildi (binary şişmesi) — Faz FFI.3
