@@ -14,6 +14,32 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.79.2]
+
+### Düzeltildi (KRİTİK — Linux'ta dead-code-stripping HİÇ ÇALIŞMIYORDU)
+- **Faz FFI.3'ün `--gc-sections`i, Zig'in `Compile.link_function_sections`i
+  VARSAYILAN OLARAK `false` OLDUĞUNDAN Linux/ELF hedeflerinde HİÇBİR ŞEYİ
+  SİLEMİYORDU**: v1.79.1'in vendor-dosyası düzeltmesinden SONRA, GERÇEK bir
+  GitHub Actions CI koşusu (`ubuntu-latest`/`ubuntu-24.04-arm`) `tests/cli/
+  binary_size_test.zig`'in KENDİ negatif-sembol kontrolünü BAŞARISIZ VERDİ
+  (`nox_smtp_connect_raw` HÂLÂ ikilide BULUNUYORDU) — macOS'ta AYNI test
+  GEÇERKEN. Bir Docker/aarch64 konteynerinde (`readelf -SW`) DOĞRUDAN
+  doğrulandı: `noxrt.o` (ELF) TEK, MONOLİTİK bir `.text` bölümü OLARAK
+  üretiliyordu (Mach-O'da Zig ZATEN per-fonksiyon bölüm ürettiğinden macOS
+  hiç ETKİLENMEMİŞTİ) — `Compile.link_function_sections`in (Zig 0.16'nın
+  KENDİ derleme-zamanı seçeneği, "her fonksiyonu KENDİ bölümüne koy ki
+  linker güvenle GC edebilsin") VARSAYILANI `false` OLDUĞUNDAN, `-Wl,--gc-
+  sections`in silecek HİÇBİR bölüm-granülerliği YOKTU. `build.zig`'in
+  `noxrt` (`b.addObject`) adımına `link_function_sections = true` +
+  `link_data_sections = true` EKLENDİ — AYNI konteynerde YENİDEN doğrulandı:
+  `noxrt.o` ARTIK 11.092 `.text.*` bölümü İçeriyor, `nox_smtp_connect_raw`
+  ARTIK ikilide HİÇ BULUNMUYOR, `nox.json.decode`+sınıf+cycle-collector
+  fonksiyonel testi DOĞRU çalışıyor. `tests/cli/binary_size_test.zig`'in
+  boyut eşiği (3 MB → 10 MB) platformlar-arası GERÇEK bir varyansı (Linux/
+  ELF Debug derleme bilgisi macOS/Mach-O'nunkinden ~4 kat BÜYÜK ölçüldü)
+  tolere edecek şekilde GEVŞETİLDİ — asıl/KESİN kanıt negatif-sembol
+  kontrolüdür, boyut eşiği SADECE bir savunma-derinliği regresyon bekçisi.
+
 ## [1.79.1]
 
 ### Düzeltildi (KRİTİK — fresh checkout/CI/release build hatası)

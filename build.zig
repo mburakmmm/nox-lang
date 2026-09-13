@@ -249,6 +249,19 @@ pub fn build(b: *std.Build) void {
         .name = "noxrt",
         .root_module = noxrt_mod,
     });
+    // Faz FFI.3 (bkz. plan dosyası "-rdynamic'in dead-code-stripping'i
+    // engellemesi"): GERÇEK bir Linux (aarch64 VE x86-64) CI koşusunda
+    // BULUNAN bir ek boşluk — `Compile.link_function_sections`/`link_data_
+    // sections`in VARSAYILANI `false` OLDUĞUNDAN, `noxrt.o` (ELF hedeflerinde)
+    // TEK, MONOLİTİK bir `.text` bölümü OLARAK üretiliyordu (`readelf -SW`
+    // İLE doğrulandı) — bu YÜZDEN linker'ın `--gc-sections`/`-dead_strip`ı
+    // (`compiler/main.zig`nin `computeLinkerVisibilityArgs`ı) HİÇBİR ŞEYİ
+    // silemiyordu (BÖLÜM-seviyesi granülerlik YOKTU). macOS'ta (Mach-O)
+    // Zig ZATEN per-fonksiyon bölüm ÜRETİYOR (BU YÜZDEN macOS'ta `-dead_
+    // strip` ÖNCEDEN ÖLÇÜLDÜĞÜ GİBİ ÇALIŞIYORDU) — ELF hedefleri İçİn BU
+    // AÇIKÇA İSTENMELİDİR.
+    noxrt.link_function_sections = true;
+    noxrt.link_data_sections = true;
     noxrt.step.dependOn(&compile_swap_asm.step);
     const install_noxrt = b.addInstallFile(noxrt.getEmittedBin(), "lib/noxrt.o");
     b.getInstallStep().dependOn(&install_noxrt.step);

@@ -19760,6 +19760,22 @@ dllexport)` — GERÇEK Windows CI/makine erişimi gerektirir); WASM köprüsü
 boyutunu daha da küçültecek DİĞER teknikler (`-Os`, sıkıştırma); QBE'nin
 `-O` bayrağı eksikliği (Faz FFI.1'in KENDİ, ayrı kapsam-dışı maddesi).
 
+**Takip düzeltmesi (v1.79.1/v1.79.2, GERÇEK bir CI koşusuyla bulundu)**:
+`v1.79.0` yayımlandıktan SONRA, GitHub Actions'ın `release.yml`/`ci.yml`si
+`v1.76.0`'dan BERİ HİÇ BAŞARILI olmamıştı — İKİ AYRI, GERÇEK sebep BULUNDU:
+(1) `runtime/vendor/tls_client.zig` (nox.tls/nox.smtp/nox.websocket'in
+ORTAK, yamalı `std.crypto.tls.Client` forku) HİÇ git'e EKLENMEMİŞTİ, HER
+fresh checkout'ta `FileNotFound` VERİYORDU — düzeltildi (v1.79.1); (2) BU
+düzeltme SONRASI Linux CI'de `tests/cli/binary_size_test.zig`'in negatif-
+sembol kontrolü BAŞARISIZ oldu — bir Docker/aarch64 konteynerinde `readelf
+-SW` İLE doğrulandı: Zig'in `Compile.link_function_sections`i (VARSAYILANI
+`false`) OLMADIĞINDAN `noxrt.o` ELF hedeflerinde TEK monolitik bir `.text`
+bölümüydü, `--gc-sections`in silecek HİÇBİR granülerliği YOKTU (macOS'ta
+Mach-O ZATEN per-fonksiyon bölüm ürettiğinden bu HİÇ fark edilmemişti) —
+`build.zig`'in `noxrt` adımına `link_function_sections`/`link_data_
+sections = true` EKLENEREK düzeltildi (v1.79.2, AYNI konteynerde 11.092
+`.text.*` bölümü + dead-stripping + fonksiyonel doğruluk İLE doğrulandı).
+
 ---
 
 ## 5. Hata Yönetimi
