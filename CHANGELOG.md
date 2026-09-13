@@ -14,6 +14,44 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.79.0]
+
+### Düzeltildi (binary şişmesi) — Faz FFI.3
+- **`-rdynamic`/`--export-all-symbols`in dead-code-stripping'i engellemesi
+  düzeltildi**: "FFI maliyetlerini azaltma" listesinin 3. maddesi (`Faz
+  FFI.1`/`FFI.2`den sonra). Araştırma, sorunun İLK varsayılandan (SADECE
+  HPy/WASM köprüsü) ÇOK DAHA GENİŞ olduğunu ORTAYA ÇIKARDI: `runtime/
+  lib.zig`nin `comptime { _ = X; }` deseni ~25 stdlib shim'inin HEPSİNİ
+  koşulsuz zorla-analiz ediyor, bu YÜZDEN `noxrt.o` HER ZAMAN TÜM stdlib
+  runtime kodunu İçeriyordu. **Ölçülen etki**: `print("hi")` GİBİ HİÇBİR
+  stdlib modülü kullanmayan bir program BİLE 7.68 MB üretiyordu — kök
+  neden `-rdynamic`nin (POSIX'te `nox.json`nin `dlopen(null,...)+dlsym`
+  desenini desteklemek İçİn ZORUNLU, bkz. §3.71/Faz LL.6/R.3) TÜM global
+  sembolleri dinamik tabloya koyup linker'ın dead-code-stripping mantığını
+  FİİLEN devre dışı bırakması (macOS'ta `-rdynamic` OLMADAN + `-dead_strip`
+  İLE AYNI program 1.52 MB'a İNİYOR, ama `-rdynamic`+`-dead_strip` BİRLİKTE
+  7.44 MB'ta KALIYOR — sorun `-rdynamic`nin KENDİSİ, `-dead_strip`in
+  eksikliği DEĞİL). **Çözüm**: taranıp, dlsym İLE GERÇEKTEN erişilen TAM
+  5 sembolün (`nox_json_make_json_value`/`nox_class_release_dispatch`/
+  `nox_trace_dispatch`/`nox_gc_free_dispatch`/`nox_class_name_dispatch` —
+  HEPSİ `stdlib/nox/core.nox`nin HER programa otomatik birleştirilen
+  sınıfları YÜZÜNDEN HER ZAMAN üretiliyor) SABİT bir listesi çıkarıldı;
+  `compiler/main.zig`ye YENİ `computeLinkerVisibilityArgs`/`NOX_DLSYM_
+  SYMBOLS` — macOS `-Wl,-exported_symbol,_<isim>` ×5 + `-Wl,-dead_strip`,
+  Linux `-Wl,--export-dynamic-symbol=<isim>` ×5 (binutils ≥2.35, GERÇEK
+  bir Docker/Ubuntu 24.04 konteynerinde bağımsız doğrulandı) + `-Wl,
+  --gc-sections`, Windows BİLİNÇLİ olarak DEĞİŞTİRİLMEDİ (blanket
+  `--export-all-symbols`, PE'nin narrow-export mekanizması AYRI bir tur
+  gerektiriyor, gerçek Windows CI erişimi YOK). **Ölçülen sonuç**:
+  `print("hi")` ARTIK 1.51 MB (~%80 küçülme). Fonksiyonel doğruluk
+  `nox.json.decode` + sınıf örnekleri + cycle-collector'ı tetikleyen 800
+  örneklik bir programla kanıtlandı; break→red→fix (`nox_trace_dispatch`
+  GEÇİCİ olarak listeden çıkarılıp cycle-collector'ın GERÇEKTEN sızıntı
+  verdiği, GERİ eklenince temiz kaldığı) İLE 5-sembol listesinin GERÇEKTEN
+  GEREKLİ/EKSİKSİZ olduğu doğrulandı. YENİ `tests/cli/binary_size_test.zig`
+  (negatif-sembol-yokluğu + boyut-üst-sınırı + fonksiyonel kanıt). Bkz.
+  `nox-teknik-spesifikasyon.md` §3.148.
+
 ## [1.78.0]
 
 ### Eklendi (performans) + Düzeltildi (5 GERÇEK, öncesi var olan sızıntı)

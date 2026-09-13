@@ -19665,6 +19665,101 @@ AYNI havuzlama muamelesini görmesi (`PersistentHpyHandle` başına bir
 `-O` bayrağı eksikliği — Faz FFI.1'in KENDİ, ÖNCEDEN belirlenmiş kapsam-
 dışı listesi, DEĞİŞMEDEN KALIR.
 
+## 3.148 Faz FFI.3 — `-rdynamic`in dead-code-stripping'i engellemesi: binary şişmesi düzeltmesi (v1.79.0)
+
+Faz FFI.1 (v1.77.0) + FFI.2 (v1.78.0)'den SONRA "FFI maliyetlerini
+azaltma" listesinin 3. maddesi — asıl roadmap notu "HPy/WASM köprü kodunun
+HER Nox programına koşulsuz bağlanması + `-rdynamic`in dead-stripping'i
+muhtemelen ENGELLEMESİ" idi. Derin araştırma asıl kapsamın İLK
+varsayılandan ÇOK DAHA GENİŞ olduğunu ORTAYA ÇIKARDI: sorun SADECE HPy/
+WASM köprüsüne ÖZGÜ DEĞİL — `runtime/lib.zig`, HER TEK stdlib shim'ini
+(`sqlite`/`postgres`/`mysql`/`tls`/`tls_server`/`websocket`/`websocket_
+server`/`shared_mem`/`gzip`/`smtp`/`http_client`/`http_server`/`crypto`/
+`regex`/`json`/vb. — TOPLAM ~25 modül) `comptime { _ = X; }` İLE
+KOŞULSUZ zorla-analiz ediyor (Zig'in tembel analiz modelinde `export
+fn`lerin nesne çıktısına DAHİL olması İçİN GEREKLİ, `lib.zig`nin KENDİ
+yorumu) — YANİ `noxrt.o` HER ZAMAN TÜM stdlib runtime kodunu İçeriyor,
+kullanıcı programı HANGİ modülleri import ETTİĞİNDEN TAMAMEN BAĞIMSIZ.
+
+**Ölçülen etki**: `print("hi")` GİBİ tek satırlık, HİÇBİR stdlib modülü
+kullanmayan bir program BİLE **7.68 MB** bir ikili ÜRETİYORDU. `strip`
+SADECE ~570 KB kazandırıyordu (7.68→7.11 MB) — şişmenin EZİCİ çoğunluğu
+(6.9 MB `__TEXT`) `strip`le İLGİSİZ, LİNK-ZAMANI dead-code-stripping'in
+HİÇ ÇALIŞMAMASINDAN kaynaklanıyordu.
+
+**Kök neden (doğrudan ölçülerek KANITLANDI)**: `compiler/main.zig`nin
+`buildOne`ı (HEM `--release`/clang yolu HEM normal qbe+cc yolu) HER
+ZAMAN `-rdynamic` (macOS/Linux) / `-Wl,--export-all-symbols` (Windows)
+EKLİYORDU — bu bayrak `nox.json`nin `dlopen(null,...)+dlsym(...)`
+desenini (Zig kodu, QBE'nin SONRADAN üreteceği bir sembolü ÇALIŞMA
+ZAMANINDA arar, bkz. §3.71/Faz LL.6/R.3) DESTEKLEMEK İçİN GEREKLİYDİ —
+AMA blanket `-rdynamic`, TÜM global sembolleri dinamik sembol tablosuna
+KOYDUĞUNDAN, linker'ın "hiçbir yerden erişilemeyen kodu ele"
+(`--gc-sections`/`-dead_strip`) mantığını FİİLEN devre dışı bırakıyordu.
+Bu, macOS'ta DOĞRUDAN ÖLÇÜLEREK kanıtlandı: `-rdynamic` OLMADAN +
+`-Wl,-dead_strip` İLE AYNI program **1.52 MB**'a İNİYOR (~%80 küçülme);
+AMA `-rdynamic` + `-dead_strip` BİRLİKTE HİÇBİR fark YARATMIYOR (7.44
+MB) — `-rdynamic`nin KENDİSİ sorun, `-dead_strip`in eksikliği DEĞİL.
+
+**Çözümün anahtarı — SADECE 5 SABİT sembol GERÇEKTEN dlsym-ile-erişilebilir
+olmak zorunda**: `runtime/`nin tamamı (`hpy_bridge`/`wasm_bridge` DAHİL,
+HER İKİSİ de `dlopen(null,...)` KULLANMIYOR) taranarak (`grep -rn
+"dlopen(null\|GetProcAddress(module"`) TAM OLARAK 5 benzersiz sembol adı
+bulundu: `nox_json_make_json_value` (json.zig), `nox_class_release_
+dispatch` (arc.zig + collections/dict.zig, AYNI isim İKİ site),
+`nox_trace_dispatch`/`nox_gc_free_dispatch` (cycle_detector.zig),
+`nox_class_name_dispatch` (errors/handle.zig) — HEPSİ `stdlib/nox/core.
+nox`nin (HER programa OTOMATİK/KOŞULSUZ birleştirilen, `Exception`/
+`JsonValue`/vb. sınıfları İçEREN) sınıf-varlığına bağlı olarak
+üretilen dispatch fonksiyonları — `class_ids.items.len > 0` HER ZAMAN
+DOĞRU olduğundan (core.nox'un KENDİ sınıfları YÜZÜNDEN) bu 5 sembol HER
+TEK derlenen programda, KULLANICININ HERHANGİ bir sınıf/JSON KULLANIP
+KULLANMADIĞINDAN BAĞIMSIZ olarak HER ZAMAN üretiliyor — YANİ bu 5 ismi
+SABİT/koşulsuz bir liste OLARAK KODLAMAK GÜVENLİDİR.
+
+**Linux'ta AYNI mekanizma, AYRI bir KAP TEKNİĞİYLE (Docker/OrbStack,
+Ubuntu 24.04, GERÇEK `gcc`+`binutils` 2.42) BAĞIMSIZ olarak DOĞRULANDI**:
+`--export-dynamic-symbol=<isim>` (binutils ≥2.35) + `--gc-sections`
+BİRLİKTE, HEM `nm -D` HEM GERÇEK bir çalışma-zamanı `dlopen(NULL)+dlsym`
+TESTİYLE doğrulandı: sembol BULUNUYOR, GERİ KALAN KOD strip ediliyor.
+
+**Tasarım**: `compiler/main.zig`ye YENİ `computeLinkerVisibilityArgs`/
+`NOX_DLSYM_SYMBOLS` — eski TEK, paylaşılan `dynamic_export_flag: []const
+u8`in yerine, HEM `--release`/clang yolu HEM normal qbe/cc yolunun İKİSİ
+de kullandığı `[]const []const u8` DÖNEN bir fonksiyon: macOS
+`-Wl,-exported_symbol,_<isim>` ×5 + `-Wl,-dead_strip`; Linux
+`-Wl,--export-dynamic-symbol=<isim>` ×5 + `-Wl,--gc-sections`; Windows
+BİLİNÇLİ olarak DEĞİŞTİRİLMEDİ (blanket `--export-all-symbols`, dead-
+stripping YOK — PE'nin export tablosu ELF'in dinamik sembol tablosundan
+YAPISAL olarak farklı, GERÇEK Windows CI erişimi olmadan doğrulanamaz,
+AYRI/gelecekteki bir tur).
+
+**Doğrulama (GERÇEKTEN yapıldı)**: `zig build test` (Debug+ReleaseFast) —
+1109/1110 test yeşil, TEK bilinen/ayrı işaretlenmiş `nox_pool_run`
+çapraz-worker stealing flake'i (task_66e267b4, bu değişiklikle İLİŞKİSİZ
+— değiştirilen dosyalar SADECE `compiler/main.zig`/`build.zig`, HİÇBİR
+`runtime/async_rt/` dosyası dokunulmadı) HARİÇ. YENİ `tests/cli/binary_
+size_test.zig`: (1) negatif kanıt — `nox.smtp`/`nox.postgres` KULLANMAYAN
+basit bir program derlenip `nm` çıktısında bu modüllere AİT sembollerin
+HİÇ bulunmadığı; (2) boyut kanıtı — aynı ikilinin < 3 MB olduğu; (3)
+fonksiyonel kanıt (KRİTİK) — `nox.json.decode` + sınıf + cycle-collector'ı
+tetikleyen (800 örnek) bir program `nm` doğru çıktı ürettiği VE stderr'in
+boş kaldığı (sızıntı-yok). **Break→red→fix**: `nox_trace_dispatch`
+GEÇİCİ olarak listeden çıkarılıp, DÖNGÜ-oluşturan bir sınıf-zincirinin
+(`Node.other = self`, 750 örnek) `DebugAllocator` TARAFINDAN sızıntı
+İLE YAKALANDIĞI (cycle-collector'ın `dlsym`in `null` dönmesi YÜZÜNDEN
+SESSİZCE atlandığı), SONRA sembol GERİ eklenince TEMİZ (sıfır sızıntı)
+kaldığı doğrulandı — 5-sembol listesinin GERÇEKTEN GEREKLİ/EKSİKSİZ
+olduğunun somut kanıtı. `NOX_STRESS_ROUNDS=800 zig build stress-test
+-Doptimize=ReleaseFast` temiz.
+
+**Kapsam DIŞI (bu turda — SONRAKİ Plan Mode turlarının konusu)**:
+Windows'un KENDİ narrow-export mekanizması (`.def` dosyası/`__declspec(
+dllexport)` — GERÇEK Windows CI/makine erişimi gerektirir); WASM köprüsü
+(SIFIR gerçek `.nox` kullanımı, ZATEN `dlopen(null)` KULLANMIYOR); binary
+boyutunu daha da küçültecek DİĞER teknikler (`-Os`, sıkıştırma); QBE'nin
+`-O` bayrağı eksikliği (Faz FFI.1'in KENDİ, ayrı kapsam-dışı maddesi).
+
 ---
 
 ## 5. Hata Yönetimi
