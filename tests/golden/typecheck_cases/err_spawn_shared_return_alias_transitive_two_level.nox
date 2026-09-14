@@ -1,0 +1,22 @@
+# HH.11 (bkz. plan dosyası "return-alias etkilerinin TRANSİTİF/fixpoint
+# çözümlenmesi"): `wrapper(xs)` KENDİ dönüşünde BAŞKA bir fonksiyonu
+# (`helper`) çağırıyor — HH.10'un v1 SINIRI gereği bu ARTIK sadece
+# `unknown` sayılmıyor: `helper`nin KENDİ dönüş-alias etkisi (`.alias_
+# params=[0]`) ÖNCE hesaplanıp, `wrapper`nin KENDİ etkisine TRANSİTİF
+# olarak TAŞINIYOR (Gauss-Seidel fixpoint, `computeReturnAliasEffects`).
+# Bu YÜZDEN `ys` artık `xs`in TRANSİTİF bir takma adı OLARAK TANINIYOR
+# VE `ys[0] = 42` — `worker(xs)` HÂLÂ ÇALIŞIRKEN — YAKALANIYOR.
+def helper(xs: list[int]) -> list[int]:
+    return xs
+
+def wrapper(xs: list[int]) -> list[int]:
+    return helper(xs)
+
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+ys: list[int] = wrapper(xs)
+t: Task[None] = spawn worker(xs)
+ys[0] = 42
+await t

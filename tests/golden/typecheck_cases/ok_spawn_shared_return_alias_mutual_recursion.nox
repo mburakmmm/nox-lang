@@ -1,0 +1,19 @@
+# HH.11: karşılıklı özyineleme (`m` `n`yi çağırır, `n` `m`yi çağırır) —
+# `unknown` bir ÇEKİCİ (absorbing) durum OLDUĞUNDAN fixpoint BUNU
+# GÜVENLE `unknown`da KİLİTLER (sonsuz döngüye GİRMEZ, hatasız derlenir)
+# — ARTIK "transitif çözümleme" olduğu İçİn YANLIŞLIKLA `.alias_params`a
+# TERFİ ETMEDİĞİNİN (YENİ bir false-positive OLUŞTURMADIĞININ) kanıtı.
+def m(x: list[int]) -> list[int]:
+    return n(x)
+
+def n(y: list[int]) -> list[int]:
+    return m(y)
+
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+ys: list[int] = m(xs)
+t: Task[None] = spawn worker(xs)
+ys[0] = 42
+await t

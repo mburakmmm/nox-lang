@@ -1,0 +1,23 @@
+# HH.11: 3 seviyeli bir dönüş-alias zinciri, callee'ler ÇAĞIRANLARINDAN
+# ÖNCE tanımlanmış (c, b, a metinsel sırayla) — bu YÜZDEN TEK bir
+# `computeReturnAliasEffects` geçişinde bile (module.body iterasyonu bu
+# sırayı izlediğinden) c→b→a zinciri TAMAMEN çözülür: c işlenirken
+# `.alias_params=[0]` hesaplanır, b işlenirken c'nin BU turdaki (ZATEN
+# GÜNCEL) girdisi kullanılır, a işlenirken de b'ninki kullanılır.
+def c(xs: list[int]) -> list[int]:
+    return xs
+
+def b(xs: list[int]) -> list[int]:
+    return c(xs)
+
+def a(xs: list[int]) -> list[int]:
+    return b(xs)
+
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+ys: list[int] = a(xs)
+t: Task[None] = spawn worker(xs)
+ys[0] = 42
+await t

@@ -14,6 +14,38 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.79.4]
+
+### Düzeltildi (checker soundness — HH.10'un KENDİ v1 sınırı, transitif return-alias zinciri artık çözülüyor)
+- **Faz HH.11**: v1.59.0'ın (HH.10) return-alias etkileri analizi
+  (`compiler/typecheck/checker.zig`nin `computeReturnAliasEffects`/
+  `scanReturnsForAliasEffect`i) BİLİNÇLİ olarak "BAŞKA bir fonksiyonu
+  çağıran bir `return` HER ZAMAN `unknown`" diyordu — `wrapper(xs):
+  return helper(xs)` GİBİ TEK bir dolaylı katman BİLE `ys = wrapper(xs)`nin
+  `xs`in TRANSİTİF bir takma adı OLDUĞUNU YAKALAYAMIYORDU (`spawn
+  worker(xs)` SONRASI `ys[0] = 42` SESSİZCE derleniyordu — GERÇEK bir
+  veri-yarışı senaryosu). Harici bir (GPT-5.6) inceleme BU açığı YENİDEN
+  gündeme getirdi VE bu turda GERÇEK bir repro İLE (doğrudan `noxc`ye
+  karşı derlenip) DOĞRULANDI. **Düzeltme**: `computeReturnAliasEffects`
+  TEK-geçişten Gauss-Seidel bir fixpoint döngüsüne (`MAX_RETURN_ALIAS_
+  FIXPOINT_ITERATIONS=64`, `returnAliasEffectEql`) DÖNÜŞTÜRÜLDÜ —
+  `scanReturnsForAliasEffect`nin `.call` dalı ARTIK callee'nin KENDİ
+  (bu turda ZATEN hesaplanmış) `return_alias_effects` girdisine bakıp
+  TRANSİTİF olarak `.alias_params`a TERFİ EDEBİLİYOR. `unknown`un
+  tüketici tarafta (`updatePointsToForTarget`) `.fresh`/"haritada YOK"
+  İLE BİREBİR AYNI (HİÇBİR `points_to` girdisi EKLEMEYEN) davranışı
+  TAŞIMASI, fixpoint'in ERKEN kesilmesinin (cap'e ulaşılması) BİLE YENİ
+  bir false-negative ÜRETEMEYECEĞİNİN (SADECE bazı fonksiyonların DAHA
+  GEÇ terfi edeceğinin) matematiksel garantisidir — SIFIR regresyon
+  riski. `tests/golden/typecheck_cases/ok_spawn_shared_return_alias_
+  transitive_unknown.nox` (BU açığı "bilinçli sınır" OLARAK belgeleyip
+  `OK` bekleyen ESKİ fixture) `err_spawn_shared_return_alias_transitive_
+  two_level.nox` OLARAK TERSİNE ÇEVRİLDİ; YENİ 4 fixture EKLENDİ:
+  3-seviyeli İLERİ-sıra zincir, 3-seviyeli TERS-sıra zincir (fixpoint'in
+  metinsel sıradan BAĞIMSIZ olduğunun kanıtı), karşılıklı özyineleme VE
+  öz-özyineleme (İKİSİ de `unknown`da GÜVENLE KİLİTLENİP sonsuz döngüye
+  GİRMEDİĞİNİN/YENİ false-positive ÜRETMEDİĞİNİN regresyon-yok kanıtı).
+
 ## [1.79.3]
 
 ### Düzeltildi (Windows derleme hatası — GERÇEK bir CI koşusuyla bulundu)

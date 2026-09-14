@@ -1,0 +1,24 @@
+# HH.11: AYNI 3 seviyeli zincir, AMA TERS metinsel sırayla tanımlanmış
+# (a, b, c) — a KENDİ TANIMINDAN SONRA gelen b'yi, b de KENDİSİNDEN SONRA
+# gelen c'yi çağırıyor. TEK bir geçişte a işlenirken b HENÜZ bu turda
+# hesaplanmamış olabilir (İLERİ-referans) — bu YÜZDEN fixpoint'in
+# BİRDEN FAZLA tur GEREKTİRDİĞİNİ VE sonucun metinsel sıradan BAĞIMSIZ
+# olduğunu kanıtlar (`err_spawn_target_defined_after_call`nin AYNI
+# "sıra-bağımsızlığı" ruhuyla).
+def a(xs: list[int]) -> list[int]:
+    return b(xs)
+
+def b(xs: list[int]) -> list[int]:
+    return c(xs)
+
+def c(xs: list[int]) -> list[int]:
+    return xs
+
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+ys: list[int] = a(xs)
+t: Task[None] = spawn worker(xs)
+ys[0] = 42
+await t

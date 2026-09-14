@@ -2204,19 +2204,69 @@ pub const Checker = struct {
         unknown,
     };
 
+    /// HH.11 (bkz. plan dosyası "return-alias etkilerinin TRANSİTİF/
+    /// fixpoint çözümlenmesi"): Gauss-Seidel fixpoint'in savunma-derinliği
+    /// iterasyon üst-sınırı — `iterateLoopToFixpoint`nin AYNI, kanıtlanmış
+    /// "monoton büyüme + cap" deseni. `unknown` ÇEKİCİ (absorbing) bir
+    /// durum olduğundan (bkz. `.call` dalının belge notu) cap'e ULAŞILMASI
+    /// YENİ bir soundness sorunu YARATMAZ — SADECE bazı fonksiyonlar
+    /// bir/birkaç tur DAHA GEÇ `.alias_params`a "terfi eder".
+    const MAX_RETURN_ALIAS_FIXPOINT_ITERATIONS: usize = 64;
+
+    /// `ReturnAliasEffect` bir `union(enum)` OLDUĞUNDAN (VE `.alias_params`
+    /// bir DİLİM taşıdığından) doğrudan `==` İLE karşılaştırılamaz — HH.11'in
+    /// fixpoint döngüsünün "değişti mi" kontrolü İçİn.
+    fn returnAliasEffectEql(a: ReturnAliasEffect, b: ReturnAliasEffect) bool {
+        return switch (a) {
+            .fresh => b == .fresh,
+            .unknown => b == .unknown,
+            .alias_params => |ai| switch (b) {
+                .alias_params => |bi| blk: {
+                    if (ai.len != bi.len) break :blk false;
+                    for (ai) |x| {
+                        var found = false;
+                        for (bi) |y| {
+                            if (x == y) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) break :blk false;
+                    }
+                    break :blk true;
+                },
+                else => false,
+            },
+        };
+    }
+
     /// SADECE ÜST-DÜZEY, generic-OLMAYAN `func_def`ler İçİn hesaplanır
     /// (`computeMutatesGraph`nin AYNI `module.body` iterasyon deseni,
     /// AMA sınıf metodları v1 KAPSAM DIŞI — `self`in HANGİ SINIF olduğu
     /// belirsizliği + metod-özel karmaşıklık, AYRI bir tur).
+    /// HH.11: Gauss-Seidel fixpoint — `scanReturnsForAliasEffect`nin YENİ
+    /// `.call` dalı BAŞKA bir fonksiyonun (BU turda ZATEN hesaplanmış)
+    /// `return_alias_effects` girdisine BAKABİLDİĞİNDEN, TEK bir geçiş
+    /// artık YETERLİ DEĞİL — `wrapper(xs): return helper(xs)` GİBİ transitif
+    /// zincirlerin ÇÖZÜLEBİLMESİ İçİn `module.body` üzerinde `changed`
+    /// KALMAYANA (VEYA cap'e ulaşılana) kadar TEKRAR TEKRAR geçilir.
     fn computeReturnAliasEffects(self: *Checker, module: ast.Module) TypeError!void {
-        for (module.body) |stmt| {
-            if (stmt.kind == .func_def) {
-                const fd = stmt.kind.func_def;
-                if (fd.type_params.len == 0 and !self.generic_functions.contains(fd.name)) {
-                    const eff = try self.computeSingleReturnAliasEffect(fd.params, fd.body);
-                    try self.return_alias_effects.put(self.allocator, fd.name, eff);
+        var iterations: usize = 0;
+        while (true) {
+            iterations += 1;
+            var changed = false;
+            for (module.body) |stmt| {
+                if (stmt.kind == .func_def) {
+                    const fd = stmt.kind.func_def;
+                    if (fd.type_params.len == 0 and !self.generic_functions.contains(fd.name)) {
+                        const eff = try self.computeSingleReturnAliasEffect(fd.params, fd.body);
+                        const prev = self.return_alias_effects.get(fd.name);
+                        if (prev == null or !returnAliasEffectEql(prev.?, eff)) changed = true;
+                        try self.return_alias_effects.put(self.allocator, fd.name, eff);
+                    }
                 }
             }
+            if (!changed or iterations >= MAX_RETURN_ALIAS_FIXPOINT_ITERATIONS) return;
         }
     }
 
@@ -2257,8 +2307,53 @@ pub const Checker = struct {
                             }
                         },
                         .list_lit, .dict_lit => {}, // kesin fresh, katkı yok
-                        .call => |c| if (!(c.callee.* == .identifier and self.classes.contains(c.callee.identifier))) {
-                            saw_unknown.* = true; // sınıf-kurucusu DEĞİLSE bilinmeyen
+                        // HH.11: sınıf-kurucusu KISAYOLU ÖNCE kalır (`self.
+                        // return_alias_effects`e sınıf ADLARI HİÇ YAZILMAZ,
+                        // lookup HER ZAMAN `null` dönerdi, bu YÜZDEN kontrol
+                        // SIRASI ÖNEMLİ — aksi halde MEVCUT "kurucu = fresh"
+                        // davranışı KIRILIRDI). Callee BAŞKA bir KULLANICI
+                        // fonksiyonuysa, O fonksiyonun (BU turda ŞİMDİYE
+                        // kadar hesaplanmış) KENDİ `return_alias_effects`
+                        // girdisine bakılarak TRANSİTİF olarak çözülür —
+                        // `wrapper(xs): return helper(xs)` GİBİ zincirler
+                        // Gauss-Seidel fixpoint'in birkaç turunda `.alias_
+                        // params`a terfi eder.
+                        .call => |c| blk: {
+                            if (c.callee.* == .identifier and self.classes.contains(c.callee.identifier)) {
+                                break :blk; // sınıf kurucusu — katkı yok, MEVCUT davranış
+                            }
+                            if (c.callee.* == .identifier) {
+                                if (self.return_alias_effects.get(c.callee.identifier)) |callee_eff| {
+                                    switch (callee_eff) {
+                                        .fresh => break :blk,
+                                        .alias_params => |callee_indices| {
+                                            for (callee_indices) |callee_idx| {
+                                                if (callee_idx < c.args.len and c.args[callee_idx] == .identifier) {
+                                                    if (paramIndexByName(params, c.args[callee_idx].identifier)) |my_idx| {
+                                                        var found = false;
+                                                        for (alias_indices.items) |x| {
+                                                            if (x == my_idx) {
+                                                                found = true;
+                                                                break;
+                                                            }
+                                                        }
+                                                        if (!found) try alias_indices.append(self.allocator, my_idx);
+                                                        continue;
+                                                    }
+                                                }
+                                                saw_unknown.* = true; // argüman F'in KENDİ parametresi DEĞİL
+                                            }
+                                        },
+                                        .unknown => saw_unknown.* = true,
+                                    }
+                                    break :blk;
+                                }
+                            }
+                            // haritada YOK — kalıcı dışlama (metod/generic/
+                            // extern/builtin) YA DA bu turda HENÜZ
+                            // hesaplanmamış İLERİ-referans; İKİ durumda da
+                            // konservatif.
+                            saw_unknown.* = true;
                         },
                         else => saw_unknown.* = true, // attribute/index/binary/vb.
                     }

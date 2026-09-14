@@ -1047,10 +1047,44 @@ test "golden(post-spawn-caller-mutation): HH.10 — make() fresh döner, mutasyo
     );
 }
 
-test "golden(post-spawn-caller-mutation): HH.10 — transitif çağrı (wrapper->helper) unknown sayılır, YENİ false-positive YOK" {
+// HH.11 (bkz. plan dosyası "return-alias etkilerinin TRANSİTİF/fixpoint
+// çözümlenmesi"): HH.10'un KENDİ, BİLİNÇLİ v1 sınırı (transitif çağrı
+// çözümlemesi YOK) burada bir Gauss-Seidel fixpoint'e genişletiliyor —
+// `wrapper(xs): return helper(xs)` GİBİ zincirler ARTIK unknown YERİNE
+// TRANSİTİF olarak `.alias_params` OLARAK çözülüyor.
+
+test "golden(post-spawn-caller-mutation): HH.11 — transitif çağrı (wrapper->helper) ARTIK ÇÖZÜLÜR, mutasyon YAKALANIR" {
     try expectGoldenLlvm(
-        @embedFile("typecheck_cases/ok_spawn_shared_return_alias_transitive_unknown.nox"),
-        @embedFile("typecheck_cases/ok_spawn_shared_return_alias_transitive_unknown.expected"),
+        @embedFile("typecheck_cases/err_spawn_shared_return_alias_transitive_two_level.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_return_alias_transitive_two_level.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): HH.11 — 3 seviyeli zincir (c,b,a METİNSEL sırayla TANIMLANIR), mutasyon YAKALANIR" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_return_alias_chain3_forward.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_return_alias_chain3_forward.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): HH.11 — 3 seviyeli zincir (a,b,c TERS METİNSEL sırayla), fixpoint SIRADAN BAĞIMSIZ, mutasyon YAKALANIR" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/err_spawn_shared_return_alias_chain3_reverse.nox"),
+        @embedFile("typecheck_cases/err_spawn_shared_return_alias_chain3_reverse.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): HH.11 — karşılıklı özyineleme unknown'da KİLİTLENİR, YENİ false-positive YOK (regresyon-yok)" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/ok_spawn_shared_return_alias_mutual_recursion.nox"),
+        @embedFile("typecheck_cases/ok_spawn_shared_return_alias_mutual_recursion.expected"),
+    );
+}
+
+test "golden(post-spawn-caller-mutation): HH.11 — öz-özyineleme unknown'da KİLİTLENİR, sonsuz döngü YOK (regresyon-yok)" {
+    try expectGoldenLlvm(
+        @embedFile("typecheck_cases/ok_spawn_shared_return_alias_self_recursion.nox"),
+        @embedFile("typecheck_cases/ok_spawn_shared_return_alias_self_recursion.expected"),
     );
 }
 

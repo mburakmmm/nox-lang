@@ -1,0 +1,14 @@
+# HH.11: DOĞRUDAN öz-özyineleme (`f` KENDİSİNİ çağırır) — AYNI "unknown
+# ÇEKİCİ durum" garantisiyle fixpoint GÜVENLE `unknown`da KİLİTLENİR
+# (sonsuz döngüye GİRMEZ), hatasız derlenir — regresyon-yok kanıtı.
+def f(x: list[int]) -> list[int]:
+    return f(x)
+
+async def worker(xs: list[int]) -> None:
+    print(xs[0])
+
+xs: list[int] = [1, 2, 3]
+ys: list[int] = f(xs)
+t: Task[None] = spawn worker(xs)
+ys[0] = 42
+await t

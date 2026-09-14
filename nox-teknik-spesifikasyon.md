@@ -19788,6 +19788,78 @@ tarama, AYNI desenin DİĞER TÜM sitelerinin (`time.zig`/`random.zig`/
 `test` bloklarının İÇİNDE (Windows CI'nin BUGÜN çalıştırmadığı bir yol)
 OLDUĞUNU doğruladı.
 
+## 3.149 Faz HH.11 — return-alias etkilerinin TRANSİTİF/fixpoint çözümlenmesi (v1.79.4)
+
+Harici bir (GPT-5.6) inceleme, v1.59.0'ın (HH.10) KENDİSİNİN BİLİNÇLİ
+olarak ERTELEDİĞİ bir soundness açığını YENİDEN gündeme getirdi: bir
+fonksiyonun dönüş değeri BAŞKA bir fonksiyonu ÇAĞIRARAK (transitif
+olarak) BİR spawn-paylaşımlı kaynağın takma adı olabiliyor, AMA
+`checkNoPostSpawnCallerMutation` BUNU YAKALAMIYORDU. Doğrudan bir repro
+İLE (`wrapper(xs): return helper(xs)`, `helper(xs): return xs`)
+DOĞRULANDI: `ys = wrapper(xs)` SONRASI `spawn worker(xs)` + `ys[0] = 42`
+HİÇBİR hata VERMEDEN derleniyordu — `ys`, `xs`in TRANSİTİF bir takma adı
+OLMASINA RAĞMEN. **DAHA ÖNEMLİSİ**: BU açık `tests/golden/typecheck_cases/
+ok_spawn_shared_return_alias_transitive_unknown.nox` TARAFINDAN AÇIKÇA
+"bilinçli sınır" OLARAK belgelenip `OK` OLARAK ONAYLANIYORDU.
+
+**Kök neden**: `scanReturnsForAliasEffect`nin `.call` dalı, callee bir
+sınıf kurucusu DEĞİLSE (yani BAŞKA bir KULLANICI FONKSİYONU İSE)
+KOŞULSUZ `.unknown` işaretliyordu — callee'nin KENDİ `return_alias_
+effects` girdisine HİÇ BAKMIYORDU. Tüketici taraf (`updatePointsToForTarget`)
+İSE ZATEN GENEL bir switch YAPIYORDU — `self.return_alias_effects.get(
+c.callee.identifier)` üzerinden `.fresh`/`.alias_params`/`.unknown`/
+bulunamadı durumlarını AYNI kod yoluyla İŞLİYORDU. Eksik olan TAMAMEN
+ÜRETİCİ tarafın (`computeReturnAliasEffects`/`scanReturnsForAliasEffect`)
+transitif çözümleme YAPMAMASIYDI.
+
+**Tasarım — Gauss-Seidel fixpoint**: `computeReturnAliasEffects` TEK bir
+geçişten, `module.body` üzerinde `changed` KALMAYANA (VEYA `MAX_RETURN_
+ALIAS_FIXPOINT_ITERATIONS=64` cap'ine ulaşılana) kadar TEKRAR eden bir
+Gauss-Seidel döngüsüne DÖNÜŞTÜRÜLDÜ. `scanReturnsForAliasEffect`nin YENİ
+`.call` dalı: callee bir sınıf kurucusuysa (`self.classes.contains(...)`)
+ÖNCE kontrol edilip katkı YOK sayılır (MEVCUT davranış KORUNUR); AKSİ
+HALDE callee'nin `self.return_alias_effects`teki (BU turda ZATEN
+hesaplanmış OLABİLECEK) girdisine bakılır — `.fresh` katkı YOK, `.alias_
+params` İLGİLİ argümanların KENDİ parametremize eşlenip `alias_indices`e
+EKLENMESİ, `.unknown` `saw_unknown=true`; callee HARİTADA HİÇ YOKSA
+(metod/generic/extern/builtin YA DA BU turda HENÜZ hesaplanmamış İLERİ-
+referans) KONSERVATİF `saw_unknown=true`.
+
+**Kritik soundness gözlemi**: tüketici tarafta `.fresh`, `.unknown` VE
+"haritada YOK" durumlarının ÜÇÜ de AYNI davranışa sahiptir — HİÇBİRİ
+`points_to`ya bir girdi EKLEMEZ (SADECE `.alias_params` GERÇEK bir girdi
+üretir). `unknown` bu YÜZDEN bir "ÇEKİCİ" (absorbing) durumdur —
+sınıflandırmalar SADECE `unknown` → DAHA KESİN bir şeye İLERLEYEBİLİR,
+ASLA GERİYE dönmez. Bu, fixpoint'in ERKEN kesilmesinin (cap'e ulaşılması)
+YENİ bir false-negative ÜRETEMEYECEĞİNİN matematiksel garantisidir —
+SADECE bazı fonksiyonlar `.alias_params`a DAHA GEÇ terfi eder, cap'ten
+SONRA hâlâ terfi ETMEMİŞLERSE KALICI olarak HH.10-ÖNCESİ boşluğa GERİ
+düşerler (MEVCUT durumdan DAHA KÖTÜ DEĞİL). Gauss-Seidel (Jacobi
+YERİNE) seçildi: MEVCUT tek-geçişli kodun EN KÜÇÜK diff'i VE monoton
+sistemlerde Jacobi'DEN ASLA daha YAVAŞ yakınsamaz.
+
+**Doğrulama**: `ok_spawn_shared_return_alias_transitive_unknown.nox`
+`err_spawn_shared_return_alias_transitive_two_level.nox` OLARAK TERSİNE
+ÇEVRİLDİ (AYNI helper→wrapper→spawn deseni, ARTIK `HATA
+SpawnSharedMutation` BEKLENİYOR). 4 YENİ fixture EKLENDİ: 3-seviyeli
+İLERİ-sıra zincir (c,b,a metinsel sırayla — TEK geçişte çözülür),
+3-seviyeli TERS-sıra zincir (a,b,c metinsel sırayla — fixpoint'in BİRDEN
+FAZLA tur GEREKTİRDİĞİNİN VE sonucun metinsel sıradan BAĞIMSIZ olduğunun
+kanıtı), karşılıklı özyineleme (`m`↔`n`, GÜVENLE `unknown`da KİLİTLENİR,
+sonsuz döngüye GİRMEZ) VE öz-özyineleme (`f(x): return f(x)`, AYNI
+garanti). MEVCUT TÜM `err_spawn_shared_*`/`ok_spawn_shared_*` fixture'ları
+(HH.2-HH.10'un TAMAMI) DEĞİŞMEDEN geçti. `zig build test` (Debug+
+ReleaseFast) TAM paket temiz.
+
+**Kapsam DIŞI**: sınıf metodlarının dönüş-alias etkisi (`computeReturnAliasEffects`
+HH.10'dan BERİ SADECE üst-düzey, generic-OLMAYAN `func_def`leri tarar);
+attribute-zinciri/index argümanları (`wrapper(obj.xs)` GİBİ — `c.args[idx]
+== .identifier` kontrolü BUNLARI ELEMEYE DEVAM eder); generic/extern/
+builtin çağrılar; fixpoint cap'i AŞILDIĞINDA AGRESİF "downgrade to
+unknown" (soundness AÇISINDAN GEREK YOK, YUKARIDAKİ gözlem gereği);
+`try`/`with` İçEREN dönüşlerin İçİNE bakmak (MEVCUT `saw_unknown=true`
+kısayolu KORUNUR).
+
 ---
 
 ## 5. Hata Yönetimi
