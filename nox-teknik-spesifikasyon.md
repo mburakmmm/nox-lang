@@ -19860,6 +19860,68 @@ unknown" (soundness AÇISINDAN GEREK YOK, YUKARIDAKİ gözlem gereği);
 `try`/`with` İçEREN dönüşlerin İçİNE bakmak (MEVCUT `saw_unknown=true`
 kısayolu KORUNUR).
 
+## 3.150 Faz FFI.4 — `extern def`e `retains(...)`: escape sözleşmesini KONTROL EDİLEBİLİR bir dil kontratı yapma (v1.80.0)
+
+Faz FFI.1'in (v1.77.0) escape-analysis carve-out'u — `compiler/codegen_
+qbe/local_escape.zig`/`inlining.zig`nin ÜÇ call-site'ı, HER `extern def`
+çağrısının argümanını KOŞULSUZ "çağrı-sonrası HİÇ saklanmaz" (dolayısıyla
+stack/arena promotion'a UYGUN) SAYAN bir mekanizma — 82 MEVCUT extern
+def'in (17 stdlib dosyasında) ELLE denetlenmesiyle DOĞRULANMIŞ, AMA
+HİÇBİR ŞEKİLDE ZORLANMAYAN bir varsayımdı: HİÇBİR extern def'in "aslında
+BEN argümanımı SAKLARIM" DEMESİNİN bir YOLU YOKTU. Gelecekte (VEYA bir
+hatayla) argümanını GERÇEKTEN saklayan bir extern def yazılırsa,
+escape-analysis BUNU HİÇBİR ZAMAN ÖĞRENEMEZ, derleyici SESSİZCE YANLIŞ
+bir kullanım-sonrası-serbest-bırakma hatası ÜRETİRDİ.
+
+**Tasarım — "sessiz varsayılan güvenli, AÇIKÇA bildirilen istisna"**:
+`extern def`e YENİ, OPSİYONEL bir `retains(param1, param2, ...)` yan
+tümcesi eklendi — `with_rt`İLE AYNI konumda (`from "lib"`DEN SONRA,
+`newline`DEN ÖNCE), AYNI `.kw_with_rt` desenini İZLEYEN YENİ bir
+`.kw_retains` rezerve anahtar kelimesiyle ayrıştırılır. `ast.ExternDef`e
+YENİ `retains: []const []const u8 = &.{}` alanı (İSİM listesi) EKLENDİ.
+Checker'ın `registerExternFunc`ı BU isimlerin GERÇEK bir `ed.params[i].
+name`ıyla eşleştiğini DOĞRULAR — eşleşmezse YENİ `UnknownRetainedParam`
+tanı kodu İLE HATA verilir (kontratın "checked" tarafı — ÖNCEDEN bu
+beyan İçİn HİÇBİR sözdizimi/doğrulama YOKTU, SADECE bir yorum/spec
+paragrafı vardı). Codegen'in `types.FuncSig`ına YENİ `retains: []const
+bool = &.{}` alanı (params İLE AYNI UZUNLUKTA, İNDEKS-hizalı) EKLENDİ —
+`registerExternFunc` (registration.zig) isim listesini BU bool dilimine
+ÇÖZER.
+
+Escape-analysis'in 3 call-site'ı (`local_escape.zig:398`, `inlining.
+zig:426,939`) `retains(...)` İLE İşaretlenen HER argüman İçİn carve-out'u
+DEVRE DIŞI bırakır — YENİ `inlining.externRetainsArg(sig, arg_idx)`
+yardımcısı (`callee_is_extern_fn`İLE AYNI YERDE, döngü DIŞINDA TEK SEFER
+çözülen bir `?types.FuncSig` ALIR — HER argüman İçİn TEKRAR hashmap
+sorgusu YAPMAMAK İçİn) BU kontrolü sağlar. `retains` İLE İşaretlenMEYEN
+(VARSAYILAN) argümanlar İçİn davranış BİREBİR AYNI kalır — MEVCUT 196
+extern def'in TAMAMI SIFIR değişiklikle ÇALIŞMAYA devam eder.
+
+**Doğrulama (GERÇEKTEN yapıldı)**: `zig build test` (Debug+ReleaseFast)
+tam paket temiz — YENİ `extern_arg_retains_forces_arc.nox` (IR-diff
+snapshot fixture'ı) `retains(xs)` İşaretlenen bir listenin `.ssa`da
+ARTIK `alloc8` (stack) YERİNE `call $nox_rc_alloc(l %rt, l 56)` (heap
+ARC) ürettiğini DOĞRUDAN kanıtlıyor — davranışın GERÇEKTEN değiştiğinin
+somut kanıtı. YENİ typecheck fixture'ları (`ok_extern_retains_valid_
+param.nox`/`err_extern_retains_unknown_param.nox`) checker doğrulamasının
+İKİ yönünü de (geçerli isim `OK`, bilinmeyen isim `UnknownRetainedParam`)
+kanıtlıyor. AST-dump (`extern_def_retains.nox`) VE formatter idempotency
+testleri `retains(...)`in dump/round-trip'inin DOĞRU olduğunu kanıtlıyor.
+MEVCUT TÜM extern-def testleri (196 mevcut extern def, `extern_ffi_test.
+zig`, `extern_arg_stack_promotion.nox`/`extern_arg_returned_no_promotion.
+nox`) DEĞİŞMEDEN geçti. `NOX_STRESS_ROUNDS=800 zig build stress-test
+-Doptimize=ReleaseFast` temiz.
+
+**Kapsam DIŞI**: TÜM extern def'lerin retains/no-retain'i AÇIKÇA
+bildirmesini ZORUNLU kılmak (196-site migrasyon, BİLİNÇLİ olarak
+REDDEDİLDİ — SEÇİLEN tasarım DAHA AZ blast radius İLE AYNI güvenlik
+kazanımını sağlıyor); çalışma-zamanı doğrulama/poison mekanizması
+(extern def'ler DERLENMİŞ Zig/C kodu OLDUĞUNDAN Nox'un checker'ı BUNLARIN
+GÖVDESİNİ analiz EDEMEZ — AYRI/DAHA BÜYÜK bir altyapı işi); decoratör-
+tabanlı sözdizimi (`parseDecoratedDef`nin switch'i extern def'i KABUL
+ETMİYOR, GENİŞLETMEK AYRI bir parser değişikliği gerektirirdi);
+`retains(...)`in DÖNÜŞ tipi İçİn bir KARŞILIĞI.
+
 ---
 
 ## 5. Hata Yönetimi

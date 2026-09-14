@@ -14,6 +14,32 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.80.0]
+
+### Eklendi (dil özelliği — `extern def`in escape sözleşmesi artık KONTROL EDİLEBİLİR)
+- **Faz FFI.4**: v1.77.0'ın (FFI.1) escape-analysis carve-out'u, HER
+  `extern def` çağrısının argümanını KOŞULSUZ "çağrı-sonrası HİÇ saklanmaz"
+  SAYIYORDU — bu, 82 MEVCUT extern def'in ELLE denetlenmesiyle
+  DOĞRULANMIŞ AMA HİÇBİR ŞEKİLDE ZORLANMAYAN bir varsayımdı: gelecekte
+  (VEYA bir hatayla) argümanını GERÇEKTEN saklayan bir extern def
+  yazılırsa, escape-analysis BUNU HİÇ ÖĞRENEMEZ, derleyici SESSİZCE
+  YANLIŞ (stack/arena'ya promote edip) bir kullanım-sonrası-serbest-
+  bırakma hatası ÜRETİRDİ. `extern def`e YENİ, OPSİYONEL bir `retains(
+  param1, param2, ...)` yan tümcesi eklendi (`with_rt`İLE AYNI konumda/
+  desende) — İSİMLENDİRİLEN parametrelerin ham işaretçisinin ÇAĞRI
+  SONRASI SAKLANDIĞINI AÇIKÇA bildirir. Checker BU isimlerin GERÇEK
+  parametre adlarıyla eşleştiğini DOĞRULAR (YENİ `UnknownRetainedParam`
+  tanı kodu — typo/yanlış isim ARTIK derleme-zamanında YAKALANIR, bu
+  kontratın "checked" tarafıdır). Escape-analysis'in 3 call-site'ı
+  (`compiler/codegen_qbe/local_escape.zig`/`inlining.zig`) `retains(...)`
+  İLE işaretlenen argümanları ARTIK "kaçıyor" SAYAR (normal ARC'a düşer,
+  stack/arena promotion'a UYGUN SAYILMAZ). VARSAYILAN (yan tümce YOKSA):
+  HİÇBİRİ saklanmaz — MEVCUT 196 extern def'in TAMAMI SIFIR değişiklikle
+  ÇALIŞMAYA devam eder (SIFIR migrasyon). YENİ bir IR-diff fixture
+  (`extern_arg_retains_forces_arc.nox`) `retains(xs)`in GERÇEKTEN
+  `alloc8`i `nox_rc_alloc`e ÇEVİRDİĞİNİ (davranışı DEĞİŞTİRDİĞİNİN somut
+  kanıtı) doğruluyor.
+
 ## [1.79.4]
 
 ### Düzeltildi (checker soundness — HH.10'un KENDİ v1 sınırı, transitif return-alias zinciri artık çözülüyor)

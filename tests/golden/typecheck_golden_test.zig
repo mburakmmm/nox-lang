@@ -291,6 +291,25 @@ test "golden(typecheck): extern def — opak ptr tipi (Faz 20 ikinci artım)" {
     );
 }
 
+// Faz FFI.4 (bkz. plan dosyası "extern def'e retains(...): escape
+// sözleşmesini kontrol edilebilir bir dil kontratı yapma"): `retains(...)`
+// yan tümcesinin isimlerinin GERÇEK parametre adlarıyla eşleştiğinin
+// checker TARAFINDAN doğrulandığının kanıtı.
+
+test "golden(typecheck): extern def — retains(xs) GERÇEK bir parametreyi gösteriyor, OK" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_extern_retains_valid_param.nox"),
+        @embedFile("typecheck_cases/ok_extern_retains_valid_param.expected"),
+    );
+}
+
+test "golden(typecheck): extern def — retains(bilinmeyen) UnknownRetainedParam ile reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_extern_retains_unknown_param.nox"),
+        @embedFile("typecheck_cases/err_extern_retains_unknown_param.expected"),
+    );
+}
+
 test "golden(typecheck): __init__ içermeyen sınıf (alansız, yalnızca metod)" {
     try expectGolden(
         @embedFile("typecheck_cases/ok_class_no_init.nox"),

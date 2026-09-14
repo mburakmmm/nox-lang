@@ -43,6 +43,19 @@ test "fmt: gerekli parens KORUNUR, gereksiz parens ATILIR (precedence)" {
     }
 }
 
+// Faz FFI.4: `extern def`nin YENİ `retains(...)` yan tümcesinin
+// formatlayıcı TARAFINDAN İDEMPOTENT/KAYIPSIZ yeniden ÜRETİLDİĞİNİN kanıtı
+// (`with_rt`nin AYNI, MEVCUT davranışıyla TUTARLI).
+test "fmt: extern def retains(...) yan tümcesi İDEMPOTENT round-trip" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const src = "extern def foo(x: list[int]) -> None from \"lib\" retains(x)\n";
+    const got = try formatSource(allocator, src);
+    try std.testing.expectEqualStrings(src, got);
+}
+
 fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.RunResult {
     const io = std.testing.io;
 

@@ -297,6 +297,14 @@ const Printer = struct {
                 try self.printType(ed.return_type);
                 try self.writer.print(" from \"{s}\"", .{ed.from_lib});
                 if (ed.needs_rt) try self.writer.writeAll(" with_rt");
+                if (ed.retains.len > 0) {
+                    try self.writer.writeAll(" retains(");
+                    for (ed.retains, 0..) |r, idx| {
+                        if (idx != 0) try self.writer.writeAll(", ");
+                        try self.writer.writeAll(r);
+                    }
+                    try self.writer.writeAll(")");
+                }
                 try self.line(stmt.line);
             },
             .return_stmt => |r| {

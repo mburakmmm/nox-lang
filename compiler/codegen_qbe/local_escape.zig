@@ -375,8 +375,12 @@ fn exprHasUnsafeLocalUse(self: *const Codegen, expr: ast.Expr, name: []const u8,
             // işaretçisini çağrı-sonrası kullanım İçİn ASLA saklamaz (dil
             // kontratı) — `self.func_defs`ten AYRI bir tabloda (`self.
             // extern_functions`) OLDUĞUNDAN yukarıdaki carve-out'a HİÇ
-            // GİRMİYORDU, bu YÜZDEN AYRI, KOŞULSUZ bir carve-out EKLENİR.
+            // GİRMİYORDU, bu YÜZDEN AYRI, KOŞULSUZ bir carve-out EKLENİR —
+            // Faz FFI.4'ten BERİ, BU fonksiyonun KENDİ `retains(...)` yan
+            // tümcesiyle AÇIKÇA İŞARETLENMEDİĞİ SÜRECE (bkz. `inlining.
+            // externRetainsArg`).
             const callee_is_extern_fn = c.callee.* == .identifier and self.extern_functions.contains(c.callee.identifier);
+            const extern_sig: ?types.FuncSig = if (callee_is_extern_fn) self.extern_functions.get(c.callee.identifier) else null;
             // GG.21: receiver `class_params`de bilinen bir sibling-parametreyse
             // VE metod PROVABLY final İSE, AYNI carve-out'u UYGULA (`self`
             // metodun KENDİ NodeKey indekslemesinde HER ZAMAN 0'DA olduğundan
@@ -395,8 +399,8 @@ fn exprHasUnsafeLocalUse(self: *const Codegen, expr: ast.Expr, name: []const u8,
                 }
             }
             for (c.args, 0..) |a, arg_idx| {
-                if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_extern_fn) {
-                    continue; // Faz FFI.1: extern def kontratı — argüman ASLA çağrı-sonrası saklanmaz.
+                if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_extern_fn and !inlining.externRetainsArg(extern_sig, arg_idx)) {
+                    continue; // Faz FFI.1/FFI.4: extern def kontratı — retains(...) İLE İŞARETLENMEDİĞİ SÜRECE argüman ÇAĞRI-SONRASI saklanmaz.
                 }
                 if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_resolvable_free_fn) {
                     if (!self.escaping_params.contains(.{ .func = c.callee.identifier, .index = @intCast(arg_idx) })) {

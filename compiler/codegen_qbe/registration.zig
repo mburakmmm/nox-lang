@@ -773,7 +773,20 @@ pub fn registerExternFunc(self: *Codegen, ed: ast.ExternDef) CodegenError!void {
     const params = try self.allocator.alloc(TypeInfo, ed.params.len);
     for (ed.params, 0..) |p, i| params[i] = try self.resolveType(p.type_expr);
     const ret = try self.resolveType(ed.return_type);
-    try self.extern_functions.put(self.allocator, ed.name, .{ .params = params, .ret = ret, .needs_rt = ed.needs_rt });
+    // Faz FFI.4: `ed.retains` (isim listesi, checker TARAFINDAN ZATEN
+    // doğrulanmış — bkz. `checker.zig`nin `registerExternFunc`ı) `ed.params`a
+    // KARŞI çözülüp İNDEKS-hizalı bir `[]bool`e ÇEVRİLİR.
+    const retains = try self.allocator.alloc(bool, ed.params.len);
+    @memset(retains, false);
+    for (ed.retains) |rname| {
+        for (ed.params, 0..) |p, i| {
+            if (std.mem.eql(u8, p.name, rname)) {
+                retains[i] = true;
+                break;
+            }
+        }
+    }
+    try self.extern_functions.put(self.allocator, ed.name, .{ .params = params, .ret = ret, .needs_rt = ed.needs_rt, .retains = retains });
 }
 
 pub fn collectLocals(self: *Codegen, locals: *std.ArrayListUnmanaged(LocalDecl), stmts: []const ast.Stmt, in_lowlevel: bool) CodegenError!void {

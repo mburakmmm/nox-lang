@@ -274,6 +274,14 @@ pub const ExternDef = struct {
     /// gibi ARC/allocator erişimi gerektiren DEĞERLER üreten stdlib
     /// kabuklarının (ör. `nox.http`) `rt`ye erişebilmesi İÇİNDİR.
     needs_rt: bool = false,
+    /// Faz FFI.4 (bkz. nox-teknik-spesifikasyon.md §3.150): `retains(...)`
+    /// yan tümcesinde AÇIKÇA İSİMLENDİRİLEN parametre adları — BU extern
+    /// def'in Zig/C implementasyonu, İSİMLENDİRİLEN parametrenin HAM
+    /// işaretçisini ÇAĞRI SONRASI kullanım İçİn SAKLAR (dil kontratının
+    /// v1.77.0'daki KOŞULSUZ "asla saklamaz" varsayımına AÇIKÇA bir
+    /// istisna). VARSAYILAN (boş dilim): HİÇBİRİ saklanmaz (MEVCUT,
+    /// DEĞİŞMEYEN davranış — 196 mevcut extern def'in TAMAMI).
+    retains: []const []const u8 = &.{},
 };
 
 pub const VarDecl = struct {

@@ -466,6 +466,19 @@ pub const Parser = struct {
         // `with_rt` — bkz. `ast.ExternDef.needs_rt`in belge notu (stdlib
         // fazı §D.1, Keşif 3). Opsiyonel, `from "lib"`den SONRA gelir.
         const needs_rt = self.match(.kw_with_rt);
+        // `retains(...)` — Faz FFI.4 (bkz. `ast.ExternDef.retains`in belge
+        // notu). Opsiyonel, `with_rt`den SONRA/`newline`den ÖNCE gelir.
+        var retains_list = std.ArrayList([]const u8).empty;
+        if (self.match(.kw_retains)) {
+            _ = try self.expect(.l_paren);
+            if (!self.check(.r_paren)) {
+                try retains_list.append(self.allocator, (try self.expect(.identifier)).lexeme);
+                while (self.match(.comma)) {
+                    try retains_list.append(self.allocator, (try self.expect(.identifier)).lexeme);
+                }
+            }
+            _ = try self.expect(.r_paren);
+        }
         _ = try self.expect(.newline);
 
         return .{ .extern_def = .{
@@ -474,6 +487,7 @@ pub const Parser = struct {
             .return_type = return_type,
             .from_lib = from_lib,
             .needs_rt = needs_rt,
+            .retains = try retains_list.toOwnedSlice(self.allocator),
         } };
     }
 

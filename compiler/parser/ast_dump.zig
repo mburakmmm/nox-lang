@@ -120,6 +120,14 @@ fn dumpStmt(writer: *std.Io.Writer, stmt: ast.Stmt, depth: usize) std.Io.Writer.
             try dumpType(writer, e.return_type);
             try writer.print(" from \"{s}\"", .{e.from_lib});
             if (e.needs_rt) try writer.writeAll(" with_rt");
+            if (e.retains.len > 0) {
+                try writer.writeAll(" retains(");
+                for (e.retains, 0..) |r, idx| {
+                    if (idx != 0) try writer.writeAll(" ");
+                    try writer.writeAll(r);
+                }
+                try writer.writeAll(")");
+            }
             try writer.writeAll(")\n");
         },
         .return_stmt => |r| {

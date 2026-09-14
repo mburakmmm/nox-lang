@@ -282,6 +282,23 @@ pub fn collectClassParams(self: *Codegen, allocator: std.mem.Allocator, params: 
     return out.toOwnedSlice(allocator);
 }
 
+/// Faz FFI.4 (bkz. nox-teknik-spesifikasyon.md §3.150): `sig` (ÇAĞIRANIN
+/// KENDİ call-site'ında, `callee_is_extern_fn`İLE AYNI YERDE — döngü
+/// DIŞINDA, TEK SEFER — ÖNCEDEN `self.extern_functions.get(callee_name)`
+/// İLE çözülmüş) VARSA VE `arg_idx`'İNCİ parametresi `retains(...)` İLE
+/// AÇIKÇA İŞARETLENMİŞSE `true` döner — İŞARETLENMEMİŞSE (VARSAYILAN,
+/// v1.77.0'ın MEVCUT davranışı) escape-analysis'in 3 call-site'ı BU
+/// argümanı KOŞULSUZ güvenli SAYMAYA DEVAM eder. `sig == null` (extern
+/// DEĞİL) İSE HER ZAMAN `false`. Bu fonksiyon KENDİSİ HİÇBİR hashmap
+/// sorgusu YAPMAZ (ÇAĞIRAN, ÖNCEDEN çözülmüş `sig`i geçirir — HER argüman
+/// İçİn TEKRAR `self.extern_functions.get(...)` çağırmaktan KAÇINMAK
+/// İçİn).
+pub fn externRetainsArg(sig: ?types.FuncSig, arg_idx: usize) bool {
+    const s = sig orelse return false;
+    if (arg_idx >= s.retains.len) return false;
+    return s.retains[arg_idx];
+}
+
 /// GG.21: checker'ın AYNI-isimli `methodIsFinal`inin codegen-tarafı
 /// eşdeğeri — `ClassInfo.descendant_class_ids`/`ClassMethodInfo.owner`
 /// (ZATEN VAR OLAN, `computeMustNotRaise`/exception-hiyerarşisi İçİn
@@ -420,11 +437,14 @@ fn scanParamEscapesExpr(self: *Codegen, fname: []const u8, param_idx: u32, name:
             // Faz FFI.1 (bkz. nox-teknik-spesifikasyon.md §3.146): `extern
             // def`ler `escaping_params` GRAFİĞİNİN DIŞINDA olduğundan (bağlanacak
             // bir "hedef parametre indeksi" YOK) — `addEscapeEdge`/`addEscapeSeed`
-            // HİÇ ÇAĞRILMADAN bir SONRAKİ argümana geçilir (KOŞULSUZ güvenli).
+            // HİÇ ÇAĞRILMADAN bir SONRAKİ argümana geçilir (KOŞULSUZ güvenli) —
+            // Faz FFI.4'ten BERİ, `retains(...)` İLE AÇIKÇA İŞARETLENMEDİĞİ
+            // SÜRECE.
             const callee_is_extern_fn = c.callee.* == .identifier and self.extern_functions.contains(c.callee.identifier);
+            const extern_sig: ?types.FuncSig = if (callee_is_extern_fn) self.extern_functions.get(c.callee.identifier) else null;
             for (c.args, 0..) |a, arg_idx| {
-                if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_extern_fn) {
-                    continue; // Faz FFI.1: extern def kontratı — argüman ASLA çağrı-sonrası saklanmaz.
+                if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_extern_fn and !externRetainsArg(extern_sig, arg_idx)) {
+                    continue; // Faz FFI.1/FFI.4: extern def kontratı — retains(...) İLE İŞARETLENMEDİĞİ SÜRECE argüman ÇAĞRI-SONRASI saklanmaz.
                 }
                 if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_resolvable_free_fn) {
                     try addEscapeEdge(self, c.callee.identifier, @intCast(arg_idx), fname, param_idx, reverse_edges);
@@ -916,8 +936,11 @@ fn exprHasUnsafeParamUse(self: *const Codegen, expr: ast.Expr, name: []const u8,
             // def`ler `self.func_defs`ten AYRI bir tabloda (`self.extern_
             // functions`) olduğundan yukarıdaki carve-out'a hiç girmiyordu —
             // dil kontratı GEREĞİ (argümanın ham işaretçisi ÇAĞRI SONRASI HİÇ
-            // saklanmaz) KOŞULSUZ güvenli sayılır.
+            // saklanmaz) KOŞULSUZ güvenli sayılır — Faz FFI.4'ten BERİ, BU
+            // fonksiyonun KENDİ `retains(...)` yan tümcesiyle AÇIKÇA
+            // İŞARETLENMEDİĞİ SÜRECE.
             const callee_is_extern_fn = c.callee.* == .identifier and self.extern_functions.contains(c.callee.identifier);
+            const extern_sig: ?types.FuncSig = if (callee_is_extern_fn) self.extern_functions.get(c.callee.identifier) else null;
             // GG.21: receiver `class_params`de bilinen bir sibling-parametreyse
             // VE metod PROVABLY final İSE, AYNI carve-out'u UYGULA (`self`
             // metodun KENDİ NodeKey indekslemesinde HER ZAMAN 0'DA olduğundan
@@ -936,8 +959,8 @@ fn exprHasUnsafeParamUse(self: *const Codegen, expr: ast.Expr, name: []const u8,
                 }
             }
             for (c.args, 0..) |a, arg_idx| {
-                if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_extern_fn) {
-                    continue; // Faz FFI.1: extern def kontratı — argüman ASLA çağrı-sonrası saklanmaz.
+                if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_extern_fn and !externRetainsArg(extern_sig, arg_idx)) {
+                    continue; // Faz FFI.1/FFI.4: extern def kontratı — retains(...) İLE İŞARETLENMEDİĞİ SÜRECE argüman ÇAĞRI-SONRASI saklanmaz.
                 }
                 if (a == .identifier and std.mem.eql(u8, a.identifier, name) and callee_is_resolvable_free_fn) {
                     if (!self.escaping_params.contains(.{ .func = c.callee.identifier, .index = @intCast(arg_idx) })) {

@@ -1,0 +1,10 @@
+# Faz FFI.4: `retains(xs)` GERÇEK bir parametre adını (`xs`) gösteriyor —
+# checker'ın YENİ doğrulaması GEÇMELİ, `OK` beklenir.
+extern def nox_ffi4_take_list(xs: list[int]) -> None from "fake_ffi4.o" retains(xs)
+
+def compute() -> int:
+    xs: list[int] = [1, 2, 3]
+    nox_ffi4_take_list(xs)
+    return len(xs)
+
+print(compute())

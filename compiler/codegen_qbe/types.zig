@@ -165,6 +165,13 @@ pub const FuncSig = struct {
     ret: TypeInfo,
     /// Yalnızca `extern def`ler İÇİN anlamlıdır — bkz. `ast.ExternDef.needs_rt`.
     needs_rt: bool = false,
+    /// Faz FFI.4 (bkz. nox-teknik-spesifikasyon.md §3.150): Yalnızca
+    /// `extern def`ler İÇİN anlamlıdır — `params`İLE AYNI UZUNLUKTA,
+    /// İNDEKS-hizalı — `retains[i] == true` İSE `i`'İNCİ parametrenin ham
+    /// işaretçisi çağrı SONRASI SAKLANIR (escape-analysis carve-out'u BU
+    /// İNDEKS İçİn DEVRE DIŞI kalır). VARSAYILAN (boş dilim): HİÇBİRİ
+    /// saklanmaz (MEVCUT davranış).
+    retains: []const bool = &.{},
 };
 
 /// Faz HH.4: `handle` fonksiyonu gövdesinin `req` parametresinin HANGİ

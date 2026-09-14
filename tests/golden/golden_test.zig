@@ -80,6 +80,15 @@ test "golden: extern def (C ABI FFI bildirimi)" {
     );
 }
 
+// Faz FFI.4: `retains(...)` yan tümcesinin AST-dump çıktısına DOĞRU
+// yansıdığının kanıtı.
+test "golden: extern def — retains(...) yan tümcesi" {
+    try expectGolden(
+        @embedFile("cases/extern_def_retains.nox"),
+        @embedFile("cases/extern_def_retains.ast.expected"),
+    );
+}
+
 test "golden: async def + spawn + await + Channel[T](...) inşası + .send" {
     try expectGolden(
         @embedFile("cases/async_spawn_await_channel.nox"),

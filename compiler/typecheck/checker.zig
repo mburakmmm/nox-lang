@@ -82,6 +82,12 @@ pub const TypeError = error{
     /// özyineleme derinliği `MAX_EXPR_DEPTH`i aştı (parser'ın
     /// `RecursionLimitExceeded`iyle AYNI ilke, checker tarafı İçİn).
     TooDeeplyNested,
+    /// Faz FFI.4 (bkz. nox-teknik-spesifikasyon.md §3.150): `extern def`in
+    /// `retains(...)` yan tümcesi, GERÇEK bir parametre adıyla EŞLEŞMEYEN
+    /// bir isim İçERİYOR — `TypeMismatch`e AŞIRI YÜKLEMEK yerine ayrı,
+    /// grep-lenebilir bir tanı kodu (`UnassignedField`/`SpawnSharedMutation`
+    /// İLE AYNI gerekçe).
+    UnknownRetainedParam,
     OutOfMemory,
 };
 
@@ -961,6 +967,22 @@ pub const Checker = struct {
         const ret = try self.typeExprToType(ed.return_type);
         if (!isFfiSafeType(ret) and !isFfiSafeListType(ret) and !isFfiSafeClassReturnType(ret)) {
             return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': dönüş tipi desteklenmeyen bir tipte (yalnızca int/float/bool/str/None/list[str]/list[int]/sınıf v0.1'de C ABI sınırında geçirilebilir)", .{ed.name});
+        }
+        // Faz FFI.4 (bkz. nox-teknik-spesifikasyon.md §3.150): `retains(...)`
+        // yan tümcesindeki HER isim GERÇEK bir parametre adıyla EŞLEŞMELİDİR
+        // — bu, kontratın "checked" tarafıdır (ÖNCEDEN bu beyan İçİn HİÇBİR
+        // sözdizimi/doğrulama YOKTU).
+        for (ed.retains) |rname| {
+            var found = false;
+            for (ed.params) |p| {
+                if (std.mem.eql(u8, p.name, rname)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                return self.fail(error.UnknownRetainedParam, "extern fonksiyon '{s}': 'retains({s})' bilinmeyen bir parametre adı içeriyor", .{ ed.name, rname });
+            }
         }
         try self.functions.put(self.allocator, ed.name, .{ .params = params, .return_type = ret });
     }
