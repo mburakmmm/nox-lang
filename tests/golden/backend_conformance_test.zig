@@ -9,6 +9,18 @@
 //! sistematik bir karşılaştırma OLMADAN bu tür hatalar AYLARCA gizli
 //! kalabilir.
 //!
+//! Faz HH.1.2 (bkz. plan dosyası "QBE↔LLVM conformance suite'ini GÜNCEL
+//! özellik yüzeyine genişletme"): v1.50.0'dan v1.80.0'a KADAR EKLENEN 6
+//! büyük özellik AYRI AYRI değerlendirildi — 3'ü (Task istisna yayılımı,
+//! Task iptali, `and`/`or` kısa-devre) TAMAMEN backend-agnostik, TEK bir
+//! codegen yolu paylaştıkları KANITLANDIĞINDAN AŞAĞIYA `expectConformant`
+//! fixture'ı OLARAK EKLENDİ. KALAN 3'ü (HPy çağrı yüzeyi — harici
+//! `.hpy-venv`/`.so` bağımlılığı GEREKTİRİR; extern geçici sahiplik —
+//! `codegen_ir_diff_test.zig`de ZATEN IR-seviyesinde doğrulanıyor;
+//! ORM/generic çıkarım — SAF derleme-zamanı, generic'ler codegen'e
+//! ULAŞMADAN monomorfize edilir) BİLİNÇLİ olarak KAPSAM DIŞI bırakıldı —
+//! ÜÇÜ de backend-özel bir çalışma-zamanı sapma yüzeyi TAŞIMIYOR.
+//!
 //! **İKİ test kategorisi**:
 //! - `expectConformant`: HER İKİ backend de ÇALIŞTIRILIR, stdout'ları
 //!   HEM `expected`e HEM BİRBİRİNE eşit olmalı. SADECE deterministik-
@@ -158,6 +170,35 @@ test "conformance: TEK spawn+await (int/bool/float/str), sıralı — her iki ba
     try expectConformant(
         @embedFile("conformance_cases/conformance_spawn_await_scalar.nox"),
         @embedFile("conformance_cases/conformance_spawn_await_scalar.expected"),
+    );
+}
+
+// Faz HH.1.2: Faz SC.1 (v1.70.0) — spawn edilen bir Task'ın yakalanmamış
+// istisnası, `await` eden tarafın `try`/`except`ine PAYLAŞILAN `bridge.
+// zig`/`genAwaitExpr` yolu üzerinden ulaşır (backend-özel dallanma YOK).
+test "conformance: Task istisna yayılımı (spawn+await+try/except) her iki backend'de aynı" {
+    try expectConformant(
+        @embedFile("conformance_cases/conformance_task_exception_propagation.nox"),
+        @embedFile("conformance_cases/conformance_task_exception_propagation.expected"),
+    );
+}
+
+// Faz SC.2 (v1.71.0) — `t.cancel()` + kooperatif `CancelledError`,
+// `nox_task_cancel`/`nox_task_check_cancelled`nin İKİSİ de backend-özel
+// dallanma TAŞIMIYOR (senkron/deterministik kontrol noktası).
+test "conformance: Task iptali (t.cancel() + CancelledError) her iki backend'de aynı" {
+    try expectConformant(
+        @embedFile("conformance_cases/conformance_task_cancellation.nox"),
+        @embedFile("conformance_cases/conformance_task_cancellation.expected"),
+    );
+}
+
+// Faz FF.5 (v1.76.0, §3.143) — `and`/`or`'un GERÇEK kısa-devresi TEK,
+// paylaşılan bir codegen yolunda (backend-agnostik) yaşıyor.
+test "conformance: and/or kısa-devre (RHS'in yan-etkisi ÇALIŞMAZ) her iki backend'de aynı" {
+    try expectConformant(
+        @embedFile("conformance_cases/conformance_short_circuit_and_or.nox"),
+        @embedFile("conformance_cases/conformance_short_circuit_and_or.expected"),
     );
 }
 

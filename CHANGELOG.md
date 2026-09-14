@@ -14,6 +14,24 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.80.1]
+
+### Test altyapısı (QBE↔LLVM conformance suite'i güncel özellik yüzeyine genişletildi)
+- **Faz HH.1.2**: `tests/golden/backend_conformance_test.zig` (Faz HH.1,
+  v1.50.0) v1.50.0'dan v1.80.0'a KADAR eklenen 6 büyük özellik İçİn
+  YENİDEN değerlendirildi. 3'ü — Task istisna yayılımı (SC.1, v1.70.0),
+  Task iptali (SC.2, v1.71.0), `and`/`or`nun GERÇEK kısa-devresi (FF.5,
+  v1.76.0) — TAMAMEN backend-agnostik (TEK, PAYLAŞILAN codegen yolu,
+  `self.backend` dallanması YOK) OLDUĞU doğrudan kod okumasıyla
+  DOĞRULANIP YENİ `expectConformant` fixture'ları OLARAK EKLENDİ — ÜÇÜ
+  de HEM QBE HEM LLVM'de BİREBİR AYNI stdout'u ÜRETTİ (BEKLENDİĞİ GİBİ,
+  YENİ bir sapma BULUNMADI). KALAN 3'ü (HPy çağrı yüzeyi — harici
+  `.hpy-venv`/`.so` bağımlılığı; extern geçici sahiplik/`retains(...)`
+  — `codegen_ir_diff_test.zig`de ZATEN IR-seviyesinde doğrulanıyor; ORM/
+  generic çıkarım — SAF derleme-zamanı, generic'ler codegen'e ULAŞMADAN
+  monomorfize edilir) BİLİNÇLİ olarak KAPSAM DIŞI bırakıldı, GEREKÇESİ
+  test dosyasının KENDİ belge notuna eklendi.
+
 ## [1.80.0]
 
 ### Eklendi (dil özelliği — `extern def`in escape sözleşmesi artık KONTROL EDİLEBİLİR)

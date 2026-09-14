@@ -19922,6 +19922,34 @@ tabanlı sözdizimi (`parseDecoratedDef`nin switch'i extern def'i KABUL
 ETMİYOR, GENİŞLETMEK AYRI bir parser değişikliği gerektirirdi);
 `retains(...)`in DÖNÜŞ tipi İçİn bir KARŞILIĞI.
 
+## 3.151 Faz HH.1.2 — QBE↔LLVM conformance suite'ini GÜNCEL özellik yüzeyine genişletme (v1.80.1)
+
+`tests/golden/backend_conformance_test.zig` (Faz HH.1, v1.50.0) v1.50.0'dan
+v1.80.0'a KADAR eklenen 6 büyük özellik İçİn (Task istisna yayılımı, Task
+iptali, `and`/`or` kısa-devre, HPy çağrı yüzeyi, extern geçici sahiplik,
+ORM/generic çıkarım değişiklikleri) YENİDEN değerlendirildi.
+
+**EKLENEN 3 (backend-agnostik, doğrudan kod okumasıyla DOĞRULANDI)**:
+Task istisna yayılımı (SC.1, v1.70.0 — `bridge.zig`nin `exc_obj`/`exc_line`
+taşıyan Task struct'ı + `async_thread.zig`nin `genAwaitExpr`ı, `self.
+backend` dallanması YOK); Task iptali (SC.2, v1.71.0 — `nox_task_cancel`/
+`nox_task_check_cancelled`, İKİ çağrı sitesinde de `self.backend` kontrolü
+YOK, kooperatif/senkron mekanizma); `and`/`or` kısa-devre (FF.5, v1.76.0
+— `expr.zig`nin TEK, paylaşılan jnz/label codegen yolu). ÜÇÜ de YENİ
+`expectConformant` fixture'ı OLARAK eklendi (MEVCUT, ZATEN kanıtlanmış
+`codegen_cases/spawn_await_exception_caught.nox`/`task_cancel_caught.nox`
+fixture'larının BİREBİR kopyası + YENİ bir `conformance_short_circuit_
+and_or.nox`), HEM QBE HEM LLVM'de BİREBİR AYNI stdout'u ÜRETTİ.
+
+**KAPSAM DIŞI bırakılan 3 (GEREKÇELİ)**: HPy çağrı yüzeyi (harici
+`.hpy-venv`/`.so` kurulum bağımlılığı, suite'in SAF-kaynak modeliyle
+UYUMSUZ, `tests/compat/hpy_*` ZATEN AYRI kapsıyor); extern geçici
+sahiplik/`retains(...)` (Faz FFI.1/FFI.4 — escape-analysis TAMAMEN
+backend-agnostik, `codegen_ir_diff_test.zig`nin IR-diff snapshot'ları
+ZATEN doğruluyor, program-çıktısı seviyesinde TEKRARLAYICI olurdu); ORM/
+generic çıkarım değişiklikleri (SAF derleme-zamanı, generic'ler codegen'e
+ULAŞMADAN monomorfize edilir, `nox.orm` SIRADAN stdlib kodu).
+
 ---
 
 ## 5. Hata Yönetimi
