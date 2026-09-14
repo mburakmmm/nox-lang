@@ -665,7 +665,26 @@ pub const Scheduler = struct {
                         _ = self.reactor.poll(self) catch @panic("kqueue poll basarisiz");
                         continue;
                     }
-                    if (self.poolWideDeadlockCheck()) return error.Deadlock;
+                    if (self.poolWideDeadlockCheck()) {
+                        // Faz MN.11 (bkz. plan dosyası "poolWideDeadlockCheck'in
+                        // kaçırdığı STW-katılım yolu"): satır ~650-658'in
+                        // `plc==0` düzeltmesiyle AYNI hata SINIFI, AYNI çözüm
+                        // — bu worker KALICI olarak `run()`dan ÇIKMADAN ÖNCE,
+                        // TAM O ANDA bir STW round'u TALEP EDİLMİŞ Mİ diye
+                        // kontrol eder; EDİLDİYSE ÖNCE katılır (round'un `n`
+                        // katılımcı SAYISI EKSİK KALMASIN diye — aksi halde
+                        // KALAN worker'lar `stwParticipate`nin bekleme
+                        // döngüsünde SONSUZA KADAR beklerdi), SONRA (round
+                        // KAPANDIKTAN SONRA) deadlock durumu YENİDEN
+                        // değerlendirilir.
+                        if (self.stw_requested) |reqp| {
+                            if (reqp.load(.acquire)) {
+                                self.stwParticipate();
+                                continue;
+                            }
+                        }
+                        return error.Deadlock;
+                    }
                     continue;
                 }
                 // Havuzsuz kullanım — BİREBİR ESKİ (Faz MN.4/5 ÖNCESİ)

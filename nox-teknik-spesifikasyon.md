@@ -19991,6 +19991,42 @@ sunulup ONAYLANDI: BU planı OLDUĞU GİBİ yayımla, pool-hang'ini SIRADAKİ,
 AYRI VE ACİL bir Plan Mode turunda kök nedenine kadar araştırıp düzelt
 (bkz. sıradaki faz).
 
+## 3.153 Faz MN.11 — `poolWideDeadlockCheck`'in kaçırdığı STW-katılım yolu + CI job zaman-aşımı (v1.80.3)
+
+CI.1'in doğrulaması SIRASINDA bulunan, ACİL bir ARA görev. `gh run list
+--workflow=ci.yml` incelendiğinde `ci.yml`nin v1.71.0'dan (2026-09-09)
+BERİ NEREDEYSE HİÇ yeşil olmadığı, VE bir KISMININ Linux (x86-64) job'unda
+TAM 6 SAAT (GitHub'ın job-zaman-aşımı tavanı) ASILI KALDIĞI keşfedildi
+(`gh run view 34396549180`).
+
+**Kök neden (doğrudan kod okumasıyla KANITLANDI)**: `runtime/async_rt/
+scheduler.zig`nin `Scheduler.run()`ı, pool'lu YOLDA KALICI çıkış İçİn
+İKİ AYRI nokta TAŞIYOR — `plc==0` yolu (Faz MN.8'in, 37+ dakikalık
+GERÇEK bir hang İLE bulup DÜZELTTİĞİ) `stw_requested`e bakıp, TALEP
+VARSA ÖNCE `stwParticipate()`e katılıyor; AMA `poolWideDeadlockCheck()`
+`true` döndüğünde `return error.Deadlock` eden İKİNCİ yol BU KORUMAYI
+TAŞIMIYORDU. Worker BU yoldan KALICI çıkarken TAM O ANDA BAŞKA bir
+worker BİR STW round'u TALEP ETTİYSE, bariyerin gerektirdiği katılımcı
+sayısı KALICI EKSİK KALIYOR, KALAN worker'lar `stwParticipate`nin bekleme
+döngüsünde SONSUZA KADAR bekliyordu — `nox_pool_serve`/`nox_pool_run`nin
+`readSelfPipe`i (zaman-aşımı OLMAYAN düz bir bloklayan `read()`) de
+dolayısıyla SONSUZA KADAR bloklanıyordu.
+
+**Düzeltme**: `plc==0` yolunun AYNI koruması (`stw_requested`i kontrol
+et, TALEP VARSA ÖNCE katıl, SONRA yeniden değerlendir) İKİNCİ çıkış
+noktasına da UYGULANDI — YENİ bir mekanizma İCAT EDİLMEDİ, ZATEN
+KANITLANMIŞ bir desen GENELLEŞTİRİLDİ. AYRICA `.github/workflows/ci.yml`ye
+`timeout-minutes: 30` EKLENDİ (savunma-derinliği — GELECEKTEKİ FARKLI
+bir hang de ARTIK 6 saat DEĞİL, EN FAZLA 30 dakikada AÇIKÇA kırmızı
+olur, `ci-gate`i PRATİKTE kullanılabilir kılan TAMAMLAYICI parça).
+
+**Doğrulama**: race PENCERESİ dar OLDUĞUNDAN determinist bir tekrar-
+üretim YAZILAMADI — düzeltmenin geçerliliği, AYNI fonksiyonun
+İÇİNDEKİ, ZATEN GERÇEK bir hang İLE KANITLANMIŞ bir düzeltme desenini
+İKİNCİ bir çıkış noktasına BİREBİR UYGULAMAKTAN gelir. `zig build test`
+(Debug+ReleaseFast) TAM paket temiz; `NOX_STRESS_ROUNDS=3000 zig build
+stress-test -Doptimize=ReleaseFast` (MEVCUT 800'den ARTIRILMIŞ) temiz.
+
 ---
 
 ## 5. Hata Yönetimi

@@ -14,6 +14,30 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.80.3]
+
+### Düzeltildi (GERÇEK bir CI koşusuyla bulunan concurrency deadlock'u — Linux CI'de 6 saatlik askıda kalmalara yol açıyordu)
+- **Faz MN.11**: Faz CI.1'in doğrulaması SIRASINDA `gh run list` İLE
+  `ci.yml`nin v1.71.0'dan BERİ NEREDEYSE HİÇ yeşil OLMADIĞI, VE bazı
+  koşuların Linux (x86-64)'te TAM 6 SAAT (GitHub'ın job-zaman-aşımı
+  tavanı) ASILI KALDIĞI keşfedildi. Kök neden: `runtime/async_rt/
+  scheduler.zig`nin `Scheduler.run()`ı, pool'lu YOLDA `poolWideDeadlockCheck()`
+  `true` döndüğünde worker'ı `stw_requested`e HİÇ BAKMADAN KALICI olarak
+  `run()`dan `return error.Deadlock` İLE ÇIKARIYORDU — Faz MN.8'in
+  ZATEN düzelttiği (`plc==0` yolu İçİn, 37+ dakikalık GERÇEK bir hang
+  İLE bulunan) AYNI hata sınıfının, AYNI fonksiyonun İKİNCİ bir çıkış
+  noktasındaki DÜZELTİLMEMİŞ bir varyantıydı: worker bu YOLDAN KALICI
+  ÇIKARKEN TAM O ANDA BAŞKA bir worker BİR STW round'u TALEP ETTİYSE
+  (ör. cycle-collector eşiği), BU worker O round'a ASLA KATILMAZ —
+  bariyerin gerektirdiği katılımcı SAYISI KALICI EKSİK KALIR, KALAN
+  worker'lar SONSUZA KADAR bekler (`nox_pool_serve`/`nox_pool_run`nin
+  `readSelfPipe`i de dolayısıyla SONSUZA KADAR bloklar). Düzeltme:
+  `plc==0` yolunun AYNI koruması (`stw_requested`e bak, TALEP VARSA
+  ÖNCE KATIL, SONRA yeniden değerlendir) BU İKİNCİ çıkış noktasına da
+  UYGULANDI. AYRICA, `.github/workflows/ci.yml`ye `timeout-minutes: 30`
+  EKLENDİ (savunma-derinliği — GELECEKTEKİ FARKLI bir hang de ARTIK
+  6 saat DEĞİL, EN FAZLA 30 dakikada AÇIKÇA kırmızı olur).
+
 ## [1.80.2]
 
 ### CI/altyapı (release'ler artık CI durumuna GÖRE kapanıyor)

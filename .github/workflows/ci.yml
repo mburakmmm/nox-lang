@@ -104,6 +104,13 @@ jobs:
             zig_arch: aarch64-linux
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    # Faz MN.11 (bkz. plan dosyası "poolWideDeadlockCheck'in kaçırdığı
+    # STW-katılım yolu"): GitHub'ın VARSAYILAN 6 saatlik job-zaman-aşımı
+    # tavanı, `nox_pool_serve` testinin GEÇMİŞTE Linux (x86-64)'te
+    # TAM 6 SAAT ASILI KALMASINA (`gh run view 34396549180`) İZİN
+    # VERDİ — savunma-derinliği: HERHANGİ bir GELECEKTEKİ hang (BU YA
+    # DA FARKLI bir hata) ARTIK EN FAZLA 30 dakikada AÇIKÇA kırmızı olur.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -154,6 +161,7 @@ jobs:
   windows-frontend:
     name: Windows (yalnızca derleyici ön-ucu — Faz LL.1)
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
