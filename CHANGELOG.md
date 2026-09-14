@@ -14,6 +14,25 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.80.2]
+
+### CI/altyapı (release'ler artık CI durumuna GÖRE kapanıyor)
+- **Faz CI.1**: `v1.76.0`'dan `v1.79.0`'a KADAR (4 sürüm, 3 gün) `ci.yml`
+  HER TEK pushta `runtime/vendor/tls_client.zig: FileNotFound` İLE
+  KIRMIZIYDI — AMA `release.yml`, etiketlenen commit'in CI durumuna
+  HİÇ BAKMADAN GERÇEK GitHub Release'ler yayımlıyordu (`main`de HİÇBİR
+  branch protection/required status check OLMADIĞI `gh api .../branches/
+  main/protection` İLE DOĞRULANDI — `404 Branch not protected`).
+  `release.yml`ye YENİ `ci-gate` job'u EKLENDİ: `build`/`windows-x64`
+  ÇALIŞMADAN ÖNCE, etiketlenen commit İçİn `ci.yml`nin GERÇEKTEN
+  `success` İLE tamamlandığını `gh api` İLE doğrular — DEĞİLSE release'i
+  DURDURUR. `ci.yml`ye AYRICA YENİ, HIZLI (Zig GEREKTİRMEZ) bir
+  `tracked-files-check` job'u EKLENDİ — `build.zig`nin `b.path(...)` İLE
+  referans verdiği HER yolun git'te GERÇEKTEN İZLENDİĞİNİ doğrular
+  (v1.79.1'in AYNI hata sınıfının BİR DAHA SESSİZCE OLUŞMASINI ÖNLER).
+  `main`e DOĞRUDAN push YETKİSİNE/GitHub repo ayarlarına (GERÇEK branch
+  protection) BİLİNÇLİ olarak DOKUNULMADI — DAR, SAF kod-seviyesi kapsam.
+
 ## [1.80.1]
 
 ### Test altyapısı (QBE↔LLVM conformance suite'i güncel özellik yüzeyine genişletildi)

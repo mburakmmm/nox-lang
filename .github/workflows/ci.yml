@@ -59,6 +59,35 @@ on:
   pull_request:
 
 jobs:
+  # Faz CI.1 (bkz. plan dosyası "release.yml'i CI durumuna göre kapatma"):
+  # v1.79.1'in KENDİ hata sınıfının (`runtime/vendor/tls_client.zig`
+  # `build.zig`den REFERANS VERİLİYOR AMA git'e HİÇ EKLENMEMİŞTİ,
+  # `v1.76.0`'dan `v1.79.0`'a KADAR 4 sürüm boyunca SESSİZCE) YENİDEN
+  # OLUŞMASINI ÖNLEYEN, HIZLI (Zig GEREKTİRMEZ) bir mekanik bekçi —
+  # `build.zig`nin `b.path(...)` İLE referans verdiği HER yolun git'te
+  # GERÇEKTEN İZLENDİĞİNİ doğrular.
+  tracked-files-check:
+    name: build.zig referansları git'te izleniyor mu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build.zig'in b.path(...) referans verdiği HER yol git'te İZLENİYOR mu
+        run: |
+          set -euo pipefail
+          fail=0
+          for p in $(grep -oE 'b\.path\("[^"]+"\)' build.zig | sed -E 's/b\.path\("([^"]+)"\)/\1/' | sort -u); do
+            if [ -d "$p" ]; then
+              if [ -z "$(git ls-files -- "$p")" ]; then
+                echo "::error::build.zig şu dizine referans veriyor ama git'te İZLENEN HİÇBİR dosya yok: $p"
+                fail=1
+              fi
+            elif ! git ls-files --error-unmatch -- "$p" >/dev/null 2>&1; then
+              echo "::error::build.zig şu dosyaya referans veriyor ama git'te TAKİP EDİLMİYOR (v1.79.1'in AYNI hata sınıfı): $p"
+              fail=1
+            fi
+          done
+          exit $fail
+
   test:
     strategy:
       fail-fast: false

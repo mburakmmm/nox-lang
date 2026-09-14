@@ -19950,6 +19950,47 @@ ZATEN doğruluyor, program-çıktısı seviyesinde TEKRARLAYICI olurdu); ORM/
 generic çıkarım değişiklikleri (SAF derleme-zamanı, generic'ler codegen'e
 ULAŞMADAN monomorfize edilir, `nox.orm` SIRADAN stdlib kodu).
 
+## 3.152 Faz CI.1 — release.yml'i CI durumuna göre kapatma + git-izlenen-dosya koruması (v1.80.2)
+
+"CI'yi fresh-checkout-first yap" isteğinin araştırması BEKLENENDEN
+TAMAMEN FARKLI bir kök neden ORTAYA ÇIKARDI: `ci.yml`/`release.yml` HER
+İKİSİ de ZATEN `actions/checkout@v4` İLE GERÇEK, taze bir checkout
+yapıyordu — "checkout taze DEĞİL" HİÇBİR ZAMAN GERÇEK sorun DEĞİLDİ.
+GERÇEK sorun: `v1.76.0`'dan `v1.79.0`'a KADAR (4 sürüm, 3 gün) `ci.yml`
+HER TEK pushta `runtime/vendor/tls_client.zig: FileNotFound` İLE
+KIRMIZIYDI (TÜM 4 platform job'unda, ~1 dakika İçİnde) — AMA `main`de
+HİÇBİR branch protection/required status check YOK (`gh api repos/.../
+branches/main/protection` → `404 Branch not protected`), VE `release.
+yml` `v*` etiketi PUSH edildiğinde `ci.yml`nin DURUMUNA HİÇ BAKMADAN
+ÇALIŞIYORDU — 4 GERÇEK GitHub Release, CI KIRMIZIYKEN yayımlandı.
+
+**Tasarım (kullanıcının SEÇTİĞİ, DAR kapsam — GERÇEK GitHub branch-
+protection'a DOKUNULMADI, main'e doğrudan push iş akışı KORUNDU)**:
+`release.yml`ye YENİ `ci-gate` job'u — `build`/`windows-x64` ÇALIŞMADAN
+ÖNCE (`needs: ci-gate`), etiketlenen commit'in `ci.yml` çalışmasının
+sonucunu `gh api repos/.../actions/workflows/ci.yml/runs?head_sha=...`
+İLE sorgular, `status != completed` VEYA `conclusion != success` İSE
+release'i `exit 1` İLE DURDURUR (`permissions`e `actions: read`
+EKLENDİ, `gh api`nin Actions API'sine erişebilmesi İçİn). `ci.yml`ye
+AYRICA YENİ, HIZLI (Zig GEREKTİRMEZ) bir `tracked-files-check` job'u —
+`build.zig`nin `b.path(...)` İLE referans verdiği HER yolun git'te
+GERÇEKTEN İZLENDİĞİNİ (`git ls-files --error-unmatch`) doğrular — bu,
+v1.79.1'in AYNI hata sınıfının (referans verilen bir dosyanın git'e HİÇ
+eklenmemesi) BİR DAHA SESSİZCE OLUŞMASINI ÖNLEYEN mekanik bir bekçidir.
+
+**Doğrulama SIRASINDA bulunan, AYRI/DAHA BÜYÜK bir bulgu**: `gh run
+list --workflow=ci.yml` incelendiğinde `ci.yml`nin ASLINDA v1.71.0'dan
+(2026-09-09) BERİ HEMEN HEMEN HİÇ yeşil olmadığı, VE bazı "başarısızlık"
+larının ASLINDA Linux (x86-64) job'unun `nox_pool_run`/HTTP-multicore
+çapraz-worker stealing flake'inde (bu OTURUMUN KENDİSİNİN de YEREL
+olarak TEKRAR TEKRAR karşılaştığı, elle process kill'i gerektiren AYNI
+sorun) TAM 6 SAAT (GitHub Actions'ın job-zaman-aşımı sınırı) ASILI
+KALDIĞI keşfedildi — bu, `ci-gate`in PRATİKTE HER releaseyi
+tıkayacağı/6 saat GECİKTİRECEĞİ anlamına geliyordu. Kullanıcıya
+sunulup ONAYLANDI: BU planı OLDUĞU GİBİ yayımla, pool-hang'ini SIRADAKİ,
+AYRI VE ACİL bir Plan Mode turunda kök nedenine kadar araştırıp düzelt
+(bkz. sıradaki faz).
+
 ---
 
 ## 5. Hata Yönetimi

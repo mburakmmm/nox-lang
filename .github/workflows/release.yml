@@ -20,6 +20,16 @@ name: Release
 # başarısız oluyordu (bu tag'in İLK denemesinde GERÇEKTEN GÖZLEMLENDİ,
 # tüm platformlar `Zig kur` adımında ~1 dakikada çöktü). Düzeltme: doğru
 # `ziglang.org/download/<sürüm>/...` URL'sinden DOĞRUDAN indirmek.
+#
+# **Faz CI.1 (bkz. plan dosyası "release.yml'i CI durumuna göre kapatma"):**
+# `v1.76.0`'dan `v1.79.0`'a KADAR (4 sürüm, 3 gün) `ci.yml` HER TEK pushta
+# `runtime/vendor/tls_client.zig: FileNotFound` İLE KIRMIZIYDI — AMA bu
+# workflow, etiketlenen commit'in CI durumuna HİÇ BAKMADAN release
+# yayımlıyordu. `ci-gate` job'u BUNU bir daha OLANAKSIZ kılar: `build`/
+# `windows-x64`, etiketlenen commit İçİn `ci.yml`nin GERÇEKTEN `success`
+# İLE tamamlandığı DOĞRULANMADAN ÇALIŞMAZ. `main`e DOĞRUDAN push YETKİSİNE/
+# GitHub repo ayarlarına (branch protection) BİLİNÇLİ olarak DOKUNULMADI —
+# kullanıcının SEÇTİĞİ, DAR/kod-seviyesi kapsam.
 
 on:
   push:
@@ -28,9 +38,40 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
+  ci-gate:
+    name: CI durumu kontrolü (tag'lenen commit için)
+    runs-on: ubuntu-latest
+    steps:
+      - name: main'deki ci.yml sonucunu doğrula
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha="${{ github.sha }}"
+          echo "Etiketlenen commit: $sha"
+          run_json=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=1" --jq '.workflow_runs[0]')
+          if [ -z "$run_json" ] || [ "$run_json" = "null" ]; then
+            echo "::error::Bu commit için HİÇBİR ci.yml çalışması bulunamadı — CI HENÜZ tetiklenmemiş/tamamlanmamış olabilir. Release DURDURULUYOR."
+            exit 1
+          fi
+          status=$(echo "$run_json" | jq -r '.status')
+          conclusion=$(echo "$run_json" | jq -r '.conclusion')
+          echo "ci.yml durumu: status=$status conclusion=$conclusion"
+          if [ "$status" != "completed" ]; then
+            echo "::error::ci.yml HENÜZ tamamlanmadı (status=$status) — release'in bitmiş bir CI koşusunu beklemesi GEREKİR. Release DURDURULUYOR."
+            exit 1
+          fi
+          if [ "$conclusion" != "success" ]; then
+            echo "::error::ci.yml BU commit İçİn BAŞARISIZ (conclusion=$conclusion) — v1.79.0'ın KENDİ hatasının TEKRARI olmaması İçİn release DURDURULUYOR."
+            exit 1
+          fi
+          echo "ci.yml YEŞİL — release'e devam ediliyor."
+
   build:
+    needs: ci-gate
     strategy:
       fail-fast: false
       matrix:
@@ -113,6 +154,7 @@ jobs:
   # GÜVENDİĞİ AYNI ilkeyle, bu paket MinGW'i GETİRMEZ (kullanıcının KENDİ
   # kurması gerekir — `install.ps1` bunu KONTROL EDİP UYARIR).
   windows-x64:
+    needs: ci-gate
     name: windows-x64
     runs-on: windows-latest
     steps:
