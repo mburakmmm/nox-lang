@@ -951,6 +951,21 @@ test "nox_pool_run: Faz MN.8 Bulgu A - sibling worker'lar globals_init_fn ile KE
             while (i < N_TASKS) : (i += 1) {
                 tasks[i] = bridge.nox_async_spawn(rt, childFn, rt).?;
             }
+            // v1.80.4 (bkz. plan dosyası "CI hang + stolen_count flake
+            // araştırması"): `worker_pool.zig`nin `stealTestWorkerEntry`sinin
+            // AYNI, KANITLANMIŞ deseni — TÜM görevler spawn edildikten
+            // SONRA, ilk `await`e (ve dolayısıyla driver'ın KENDİ deque'ini
+            // tüketmeye BAŞLAMASINA) geçmeden ÖNCE, OS zamanlayıcısına
+            // kardeş worker'ları GERÇEKTEN ÇALIŞTIRMASI İçİn adil bir
+            // fırsat tanınır — AKSİ HALDE (ÖZELLİKLE kaynak-kısıtlı/paylaşımlı
+            // CI runner'larında) driver'ın KENDİ OS iş parçacığı 30 görevin
+            // TAMAMINI hiçbir kardeş ÇALIŞMAYA BAŞLAMADAN tüketebilir —
+            // `stolen_count`in KENDİSİ HİÇ artmaz (test'in AMACI olan
+            // çapraz-worker çalmayı KANITLAMAK BAŞARISIZ olur, GERÇEK CI'de
+            // GÖZLEMLENDİ) — bu bir zamanlayıcı hatası DEĞİL, TESTİN KENDİ
+            // zorlama mekanizmasının EKSİKLİĞİYDİ.
+            var y: usize = 0;
+            while (y < 8) : (y += 1) std.Thread.yield() catch {};
             i = 0;
             while (i < N_TASKS) : (i += 1) {
                 _ = bridge.nox_async_await(rt, tasks[i]);

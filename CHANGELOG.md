@@ -14,6 +14,44 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.80.4]
+
+### Düzeltildi (v1.80.3'ün GERÇEK CI koşusunda bulunan bir test-flake'i)
+- **Faz MN.12**: v1.80.3 push edildikten SONRA GERÇEK CI'de (`gh run view`
+  ile doğrulandı) `pool_bridge.zig`'in "Faz MN.8 Bulgu A - sibling
+  worker'lar globals_init_fn ile KENDİ slotu İçİn ilklendirilir, ÇALINAN
+  bir görev doğru bloğu okur" testi HEM macOS (aarch64) HEM Linux
+  (x86-64) koşularında `stolen_count > 0` iddiasında BAŞARISIZ oldu —
+  test GERÇEKTEN ÇÖKMEDİ/ASILI KALMADI, sadece kanıtlamak İSTEDİĞİ
+  "en az bir görev BAŞKA bir worker'a çalındı" olgusunu KANITLAYAMADI.
+  Kök neden: bu test, `realEntry`'nin 30 görevi spawn ETTİKTEN HEMEN
+  SONRA, kardeş worker'ların OS iş parçacıklarının GERÇEKTEN
+  ZAMANLANMASINI beklemeden, İLK görevi `await` ETMEYE (dolayısıyla
+  driver'ın KENDİ deque'ini TÜKETMEYE) BAŞLIYORDU — `worker_pool.zig`'in
+  KENDİ, ZATEN kanıtlanmış `stealTestWorkerEntry`si (Faz MN.4/5.8) TAM
+  OLARAK BU riski (`std.Thread.yield()`'i 8 tur ÇAĞIRIP OS'a kardeşleri
+  ÇALIŞTIRMASI İçİn adil bir şans VERMEK) ZATEN çözmüştü, AMA bu ÇÖZÜM
+  `pool_bridge.zig`'in TESTİNE HİÇ UYGULANMAMIŞTI. Düzeltme: AYNI
+  yield-döngüsü `realEntry`'nin spawn-SONRASI/await-ÖNCESİ noktasına
+  EKLENDİ — 10/10 yerel koşuda (`zig build noxrt-test`) VE TAM paket
+  (`zig build test`, 1121/1121) TEMİZ.
+- **Ayrıca analiz edildi, DÜZELTME GEREKTİRMEDİĞİ DÜŞÜNÜLÜYOR (SONUÇ AYRI
+  bir sürümde doğrulanacak)**: v1.80.3'ün push'u SONRASI GERÇEK CI'de
+  Linux (aarch64) job'u yeniden 30-dakikalık zaman-aşımına (MN.11'in
+  KENDİ savunma-derinliği önlemi) TAKILDI — DERİN bir bellek-modeli
+  analizi (release-sequence kuralı, `plc`'nin TÜM RMW mutasyonlarının
+  TEK bir zincir oluşturduğu) `plc==0` çıkış yolunun (MN.11'in düzelttiği)
+  GERÇEKTEN sağlam OLDUĞUNU, VE `poolWideDeadlockCheck`'in GERÇEKTEN
+  tetiklenirse SESSİZCE ASILI KALMAK YERİNE `std.process.exit(1)` İLE
+  GÜRÜLTÜLÜ bir şekilde ÇÖKECEĞİNİ (CI'de GÖZLENEN "sıfır çıktı, 30
+  dakika sessizlik" deseniyle UYUŞMADIĞINI) gösterdi — bu YÜZDEN
+  gözlenen hang'in bir zamanlayıcı MANTIK hatası OLMAYIP `ubuntu-24.04-arm`
+  runner FİLOSUNUN (x86-64'ten DAHA YENİ/muhtemelen DAHA fazla paylaşımlı)
+  kaynak-kısıtlılığından kaynaklanan GENEL bir YAVAŞLIK OLABİLECEĞİ
+  HİPOTEZİ ile job YENİDEN tetiklendi — SONUÇ (geçti/tekrar hang) BU
+  CHANGELOG YAZILDIĞI ANDA HENÜZ BİLİNMİYORDU, AYRI bir sürümde/notta
+  raporlanacak.
+
 ## [1.80.3]
 
 ### Düzeltildi (GERÇEK bir CI koşusuyla bulunan concurrency deadlock'u — Linux CI'de 6 saatlik askıda kalmalara yol açıyordu)

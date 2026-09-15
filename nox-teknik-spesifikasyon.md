@@ -20027,6 +20027,53 @@ olur, `ci-gate`i PRATİKTE kullanılabilir kılan TAMAMLAYICI parça).
 (Debug+ReleaseFast) TAM paket temiz; `NOX_STRESS_ROUNDS=3000 zig build
 stress-test -Doptimize=ReleaseFast` (MEVCUT 800'den ARTIRILMIŞ) temiz.
 
+## 3.154 Faz MN.12 — `pool_bridge.zig`'in `stolen_count` testi: yield-öncesi-await zorlama eksikliği (v1.80.4)
+
+v1.80.3 push edildikten SONRA GERÇEK CI'de `pool_bridge.zig`'in "Faz
+MN.8 Bulgu A" testi (30 görev spawn edip SIRAYLA `await` eden, EN AZ
+birinin BAŞKA bir worker'a ÇALINMASINI kanıtlamaya çalışan) HEM macOS
+(aarch64) HEM Linux (x86-64) koşularında `stolen_count > 0` iddiasında
+BAŞARISIZ oldu — GERÇEK bir çökme/hang DEĞİL, testin KENDİ kanıtlamak
+İSTEDİĞİ olguyu ÜRETEMEMESİ.
+
+**Kök neden**: `realEntry`, 30 görevi spawn ETTİKTEN HEMEN SONRA, kardeş
+worker'ların OS iş parçacıklarının GERÇEKTEN zamanlanmasını BEKLEMEDEN
+İLK göreve `await` çağırıyordu — bu, driver'ın KENDİ deque'ini (`Scheduler.
+run()`nün "kendi deque'i BOŞ olduğunda kardeşlerden çal" YOLUNDAN ÖNCE
+KENDİ deque'inden POP EDEN dalı) 3 kardeş HİÇBİR ŞEY çalmadan TAMAMEN
+tüketmesine İZİN veriyordu — ÖZELLİKLE kaynak-kısıtlı/paylaşımlı CI
+runner'larında GERÇEKÇİ bir sonuç.
+
+`worker_pool.zig`nin KENDİ, ZATEN kanıtlanmış `stealTestWorkerEntry`si
+(Faz MN.4/5.8) BU AYNI riski (kardeş worker'ların `std.Thread.spawn`ı
+HENÜZ ZAMANLANMAMIŞSA HİÇBİR ŞEY çalamadan test yanlışlıkla BAŞARISIZ
+olması) ZATEN belgeleyip 8-turlu bir `std.Thread.yield()` döngüsüyle
+ÇÖZMÜŞTÜ — AMA `pool_bridge.zig`'in testine bu ÇÖZÜM HİÇ UYGULANMAMIŞTI.
+
+**Düzeltme**: AYNI 8-turlu `std.Thread.yield()` döngüsü, `realEntry`'nin
+30 görevi spawn ETTİKTEN SONRA, İLK `await`DEN ÖNCE EKLENDİ — YENİ bir
+mekanizma İCAT EDİLMEDİ, ZATEN KANITLANMIŞ bir desen (`worker_pool.zig`)
+`pool_bridge.zig`'e de UYGULANDI.
+
+**AYRICA, GERÇEK bir CI hang'inin daha derin analizi**: v1.80.3'ün
+push'u SONRASI Linux (aarch64) job'u YENİDEN 30-dakikalık zaman-aşımına
+takıldı. Release-sequence kuralının (`plc`'nin TÜM RMW mutasyonlarının
+TEK bir zincir OLUŞTURDUĞU, bu YÜZDEN `plc==0` gören HERHANGİ bir
+worker'ın, plc'yi 0'a İNDİREN fiber'DAN BAĞIMSIZ, DAHA ÖNCEKİ HERHANGİ
+bir fiber'ın `stw_requested` yazımını da GÖRDÜĞÜNÜN GARANTİLİ OLDUĞU)
+derin bir uygulanmasıyla `plc==0` çıkış yolunun (MN.11'in düzelttiği)
+GERÇEKTEN sağlam OLDUĞU, VE `poolWideDeadlockCheck` GERÇEKTEN tetiklenirse
+SESSİZCE ASILI KALMAK YERİNE `std.process.exit(1)` İLE GÜRÜLTÜLÜ bir
+şekilde ÇÖKECEĞİ (CI'de GÖZLENEN "sıfır çıktı, 30 dakika sessizlik"
+deseniyle UYUŞMADIĞI) DOĞRULANDI — bu YÜZDEN gözlenen hang'in bir
+zamanlayıcı MANTIK hatası OLMAYIP, `ubuntu-24.04-arm` runner filosunun
+kaynak-kısıtlılığından kaynaklanan bir YAVAŞLIK OLABİLECEĞİ hipoteziyle
+job YENİDEN tetiklendi (bkz. CHANGELOG.md'nin bu sürüme AİT girişi —
+sonuç AYRI bir notta/sürümde raporlanır).
+
+**Doğrulama**: `zig build noxrt-test` 10/10 ardışık koşuda TEMİZ; TAM
+paket `zig build test` 1121/1121 test TEMİZ.
+
 ---
 
 ## 5. Hata Yönetimi
