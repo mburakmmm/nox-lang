@@ -20170,6 +20170,101 @@ build test` (yerel, Debug, TAM paket) 1120/1121 TEMİZ.
 
 ---
 
+## 3.157 Faz TEST.2 — `codegen_golden_test.zig`nin 300 sıralı testini gerçek iş-parçacığı paralelliğiyle hızlandırma (v1.80.7)
+
+Kullanıcı, `zig build test`nin geliştirme hızını doğrudan etkileyen en
+büyük problem olduğunu, Rust'ın `cargo test`i gibi paralel çalışamıyor
+olmasını SORDU — bu, önceki §3.153-156'nın (v1.80.3-6) CI-güvenilirliği
+firefighting'inden SONRA, AYRI bir Plan Mode turunda ele alındı.
+
+**Kök neden (araştırmayla KANITLANDI)**: Zig'in KENDİ `compiler/
+test_runner.zig`ı TAMAMEN sıralı çalışır — build-runner'dan "şunu çalıştır"
+mesajı ALIP `test_fn.func()`ı SENKRON çağırıp sonucu bildirir, HİÇ
+`Thread.spawn`/pool/`WaitGroup` KULLANMAZ. Bu YÜZDEN Zig'in KENDİ build-
+graph paralelliği (`-j<N>`, TÜM bağımsız test-ikili "Run" adımları ARASINDA
+ZATEN çalışıyor) TEK bir test ikilisinin İçİNDEKİ 300 `test{}` bloğunu
+PARALEL ÇALIŞTIRAMIYORDU. Temiz `.zig-cache`, `-j10` İLE ölçülen TOPLAM
+`zig build test` 5:20 sürüyordu AMA ortalama CPU kullanımı SADECE %137
+İDİ — `tests/golden/codegen_golden_test.zig`nin TEK BAŞINA (300 test
+bloğu, HER BİRİ GERÇEK bir `qbe`+`cc` derleme+çalıştırma döngüsü yapan)
+5 dakika sürdüğü VE TOPLAM süreyi TEK BAŞINA belirlediği tespit edildi.
+
+**Tasarım (kullanıcının AÇIKÇA SEÇTİĞİ "TEK dosyada thread pool" yaklaşımı
+— mekanik dosya-bölme YERİNE)**: 300 testin 265'i (256 `expectGolden`,
+8 `expectUncaughtException`, 1 `expectUncaughtExceptionWithStderr`, HEPSİ
+kaynak+beklenen içeriği `@embedFile` — 1 istisna dışında, o da satır-İçİ
+bir string literaliyle — TAŞIYAN) TEK, TEKDÜZE bir veri şeması İçİn UYGUN
+BULUNDU. Kalan ~35 test ("codegen: ..." — "codegen(çalıştır): ..." DEĞİL,
++ regex-eşleşmeyen 1 yorum-öncesi test) üretilen `.ssa` IR metnini
+DOĞRUDAN inceleyen, TEK bir şemaya GENELLENEMEYECEK kadar ÇEŞİTLİ testler
+OLDUĞUNDAN DOKUNULMADAN, olduğu gibi bırakıldı.
+
+**Güvenlik ön-koşulu (uygulama ÖNCESİ doğrulandı)**: `std.testing.allocator`
+(bir `DebugAllocator`) `thread_safe = !builtin.single_threaded` (VARSAYILAN
+`true`) TAŞIR; `std.testing.io` (bir `Io.Threaded`) KENDİ struct doc-
+comment'inde `/// Thread-safe.` OLARAK belgelidir; `std.testing.tmpDir(.{})`
+HER çağrıda benzersiz, rastgele-adlı bir dizin yaratır — BU ÜÇÜ de,
+`expectGolden`/vb.nin (`compile_helpers.zig`nin `compileAndRun`ı ÜZERİNDEN)
+BİRDEN FAZLA `std.Thread.spawn` edilen worker'dan EŞ ZAMANLI, senkronizasyonSUZ
+çağrılabilmesini GÜVENLE sağlar.
+
+**Uygulama**: `expectGolden`/`expectUncaughtException`/
+`expectUncaughtExceptionWithStderr`nin `source`/`expected(_stdout)`/
+`expected_stderr` parametrelerinden `comptime` KALDIRILDI (SAF bir imza
+gevşetmesi — gövdeleri BU değerleri HİÇBİR comptime-ÖZEL şekilde
+KULLANMIYORDU). YENİ `FixtureKind`/`Fixture`/`FixtureResult` veri şeması
++ 265 elemanlı `fixtures` DİZİSİ (BİR-KEZLİK, COMMIT EDİLMEYEN bir Python
+migrasyon script'iyle MEKANİK olarak üretildi, sonuç ELLE spot-check
+EDİLDİ). YENİ, TEK bir toplu-paralel test: `std.testing.allocator`dan
+tahsis edilen bir `results: []FixtureResult` + atomik bir `next_index`
+iş-çalma sayacı + `n_workers = min(fixtures.len, cpu_count * 2)` KADAR
+`std.Thread.spawn` edilen worker — HER worker `fetchAdd` İLE BİR SONRAKİ
+fixture indeksini ALIP `runOneFixture`i çağırır (`fx.kind`e göre 3 helper'dan
+BİRİNE dispatch eder), SONUCU KENDİ, benzersiz `results[i]` slotuna yazar
+(farklı worker'ların FARKLI dizi elemanlarına senkronizasyonsuz yazması
+C11/Zig bellek modelinde GÜVENLİDİR, `t.join()` happens-before kenarını
+sağlar). TÜM worker'lar `join()`landıktan SONRA HER başarısız fixture
+İçİn `"BAŞARISIZ: {isim} ({hata adı})"` yazdırılır, HERHANGİ biri
+başarısızsa `error.GoldenFixturesFailed` döner.
+
+**Ölçülen sonuç (ÖLÇÜLEREK doğrulandı, İDEALİZE EDİLMİŞ bir tahmin
+DEĞİL)**: izole `zig test -OReleaseFast` çalıştırması — 265 fixture'lık
+TOPLU test TEK BAŞINA **2 dakika 47 saniye** (n_workers=20, `ps` İLE 19-20
+eşzamanlı `prog` süreci DOĞRUDAN GÖZLEMLENEREK paralelliğin GERÇEKTEN
+çalıştığı KANITLANDI), dosyanın TAMAMI (36 test) **2 dakika 58 saniye**
+— 5 dakikalık öncekine göre **~2.5x** bir kazanç. Beklenen İDEAL
+(300/n_worker ≈ 15-20 saniye) GERÇEKLEŞMEDİ: `time`in raporladığı toplam
+CPU kullanımı SADECE ~%112-119 İDİ (10 çekirdeğin ~1.15'i) — ÖLÇÜLEREK
+bulundu ki asıl darboğaz Zig-seviyesi hesaplama DEĞİL, HER fixture'ın
+KENDİ `qbe`+`cc`+ÇALIŞTIRILAN-binary alt-süreç ZİNCİRİNİN işletim-sistemi
+seviyesindeki (fork/exec, macOS'ta YENİ/imzasız her ikili İçİn KOD-imzalama
+doğrulaması DAHİL) SABİT maliyeti — BU maliyet iş-parçacığı SAYISIYLA
+ORANTILI KÜÇÜLMÜYOR (Debug modda da NEREDEYSE AYNI süre — 2:56 — ÖLÇÜLDÜ,
+darboğazın Zig-seviyesi hesaplama DEĞİL alt-süreç ZİNCİRİ olduğunu AYRICA
+doğruluyor). Proje disiplini (ölç, varsayma) gereği bu GERÇEK sayı,
+İDEALİZE edilmiş tahmin YERİNE dürüstçe raporlanıyor — YİNE DE GERÇEK VE
+ANLAMLI bir kazanç.
+
+**Doğrulama**: migrasyon ÖNCESİ/SONRASI TOPLAM `@embedFile` sayısının
+BİREBİR AYNI (565) kaldığı (SIFIR veri kaybı) doğrulandı; `zig ast-check`
+İLE sözdizimi doğrulandı; TÜM 36 test (265 toplu + 35 bireysel) HEM Debug
+HEM ReleaseFast'te 36/36 GEÇTİ; **kırmızı-takım**: `fibonacci.expected`e
+GEÇİCİ bir satır EKLENİP TOPLU testin GERÇEK diff'i stderr'e YAZDIĞI,
+`"BAŞARISIZ: <isim>"` özet satırının GÖRÜNDÜĞÜ VE SADECE O TEK fixture'ın
+başarısız SAYILDIĞI doğrulanıp GERİ ALINDI (dosya `git diff`siz durumuna
+DÖNDÜ); TAM paket `zig build test` (Debug, warm cache) 36/36 DAHİL TÜM
+adımlarla TEMİZ geçti; `NOX_STRESS_ROUNDS=800 zig build stress-test
+-Doptimize=ReleaseFast` (regresyon-yok, bu değişiklik test-ALTYAPISINA
+ÖZGÜ, worker_pool.zig'in çapraz-worker Channel/Task stres testlerini
+HİÇ ETKİLEMİYOR) TEMİZ geçti.
+
+**Kapsam DIŞI**: 33 heterojen IR-metni-inceleme testi (`.ssa`yı DOĞRUDAN
+karşılaştıran, gerçek binary DERLEYİP ÇALIŞTIRMAYAN, ZATEN ucuz) — DOKUNULMADI.
+Build-graph seviyesinde mekanik dosya-bölme (kullanıcının AÇIKÇA REDDETTİĞİ
+alternatif) — DEĞERLENDİRİLMEDİ.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

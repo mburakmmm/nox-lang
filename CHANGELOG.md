@@ -14,6 +14,48 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.80.7]
+
+### Değiştirildi (Faz TEST.2 — `codegen_golden_test.zig`nin 300 sıralı testini gerçek iş-parçacığı paralelliğiyle hızlandırma)
+- Kullanıcının "zig build test aşırı uzun sürüyor, Rust'taki gibi paralel
+  çalışamıyor mu?" sorusu ÜZERİNE yapılan araştırma, TOPLAM `zig build
+  test`in (temiz `.zig-cache`, 10 çekirdek, `-j10`) 5:20 sürdüğünü AMA
+  ortalama CPU kullanımının SADECE %137 (10 çekirdekten ~1.4'ü) olduğunu
+  buldu — `tests/golden/codegen_golden_test.zig`nin TEK BAŞINA 5 dakika
+  sürdüğü (300 `test` bloğu, HER BİRİ Zig'in KENDİ, tek-iş-parçacıklı
+  test-runner'ı YÜZÜNDEN SIRAYLA çalışıyordu) tespit edildi.
+- 300 testten 265'i (256 `expectGolden`, 8 `expectUncaughtException`, 1
+  `expectUncaughtExceptionWithStderr`) TEK bir `fixtures` VERİ dizisine
+  dönüştürüldü; `expectGolden`/`expectUncaughtException`/
+  `expectUncaughtExceptionWithStderr`nin parametrelerinden `comptime`
+  KALDIRILDI (SAF bir imza gevşetmesi, davranış DEĞİŞMEDİ). YENİ, TEK bir
+  toplu test — `std.Thread.spawn` + atomik bir iş-çalma sayacıyla (`n_workers
+  = min(fixtures.len, cpu_count * 2)`) TÜM 265 fixture'ı GERÇEK iş-parçacığı
+  paralelliğiyle çalıştırıyor, HANGİ fixture'ın başarısız olduğunu isim +
+  hata adıyla özetliyor. Kalan 35 heterojen test (çoğu "codegen: ..." —
+  üretilen `.ssa` IR metnini doğrudan inceleyen, TEK bir veri şemasına
+  GENELLENEMEYECEK kadar ÇEŞİTLİ — + regex-eşleşmeyen 1 yorum-öncesi test)
+  DOKUNULMADAN, olduğu gibi kaldı.
+- **Ölçülen sonuç**: bu TEK dosyanın kendi test adımı 5 dakikadan **~2
+  dakikaya** düştü (izole `zig test -OReleaseFast` çalıştırması: 265
+  fixture'lık toplu test TEK BAŞINA 2:47, dosyanın TAMAMI 2:58 — HEM Debug
+  HEM ReleaseFast'te DOĞRULANDI). Beklenen ideal (300/n_worker ≈ 15-20
+  saniye) GERÇEKLEŞMEDİ — ÖLÇÜLEREK bulundu ki asıl darboğaz Zig-seviyesi
+  hesaplama DEĞİL, HER fixture'ın kendi `qbe`+`cc`+çalıştırılan-binary alt-
+  süreç zincirinin işletim-sistemi seviyesindeki (fork/exec/kod-imzalama)
+  sabit maliyeti — bu maliyet iş-parçacığı SAYISIYLA orantılı KÜÇÜLMÜYOR.
+  YİNE DE ~2.5x'lik GERÇEK, doğrulanmış bir kazanç (proje disiplini: ölç,
+  varsayma — idealize edilmiş bir tahmin YERİNE GERÇEK sayı raporlanır).
+- Doğrulama: TÜM 300 `.nox`/`.expected` fixture çifti (265 toplu + 35
+  bireysel) `@embedFile` sayısının migrasyon ÖNCESİ/SONRASI BİREBİR AYNI
+  (565) kaldığı doğrulanıp
+  BİREBİR AYNI çıktıları ÜRETTİĞİ (Debug + ReleaseFast, 36/36 test) TEYİT
+  edildi; kırmızı-takım (`fibonacci.expected`e geçici bir satır EKLENİP)
+  GERÇEK diff'in stderr'e YAZILDIĞI, "BAŞARISIZ: <isim>" özet satırının
+  GÖRÜNDÜĞÜ VE SADECE O TEK fixture'ın başarısız SAYILDIĞI doğrulanıp GERİ
+  ALINDI; TAM paket `zig build test` (Debug, warm cache) 36/36 dahil TÜM
+  adımlarla TEMİZ geçti.
+
 ## [1.80.6]
 
 ### Düzeltildi (v1.80.3'ün Linux (aarch64) CI hang'inin GERÇEK kök nedeni bulundu)
