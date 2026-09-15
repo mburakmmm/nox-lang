@@ -5,6 +5,7 @@
 pub const asap = @import("alloc/asap.zig");
 pub const arc = @import("alloc/arc.zig");
 pub const dispatch_registry = @import("alloc/dispatch_registry.zig");
+pub const diag_sink = @import("diag_sink");
 pub const lowlevel = @import("alloc/lowlevel.zig");
 pub const cycle_detector = @import("alloc/cycle_detector.zig");
 pub const defer_stack = @import("alloc/defer_stack.zig");
@@ -63,6 +64,7 @@ comptime {
     _ = asap;
     _ = arc;
     _ = dispatch_registry;
+    _ = diag_sink;
     _ = lowlevel;
     _ = cycle_detector;
     _ = defer_stack;

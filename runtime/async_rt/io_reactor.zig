@@ -70,11 +70,28 @@ const std = @import("std");
 const builtin = @import("builtin");
 const posix = std.posix;
 const Fiber = @import("fiber.zig").Fiber;
+/// Faz F.0.3: `unexpectedErrnoSafe`nin tanı mesajının enjekte edilebilir
+/// olması İçİn. Named-module olarak import edilir — `io.zig`nin AYNI
+/// belge notundaki gerekçe (`scheduler_test_mod` ÜZERİNDEN, transitif
+/// olarak, KENDİ BAŞINA bir standalone modül OLARAK da derleniyor).
+const diag_sink = @import("diag_sink");
 
 comptime {
     if (builtin.os.tag != .macos and builtin.os.tag != .linux and builtin.os.tag != .windows) {
         @compileError("io_reactor.zig şu an yalnızca macOS (kqueue), Linux (epoll) ve Windows (WSAPoll) için uygulandı (bkz. modül üstü not)");
     }
+}
+
+/// Faz F.0.3 (bkz. plan dosyası "Panik/tanı çıktısı enjeksiyonu"): `io.zig`nin
+/// `fiberSafeUnexpectedErrno`sıyla AYNI "stack-trace dökümünü ATLA" ilkesi
+/// — AMA `rt` BURADA YAPISAL olarak MEVCUT DEĞİL (`IoReactor.init()`/
+/// `sysKqueue()`/`sysKevent()` SIFIR argüman alır), bu YÜZDEN `null`
+/// geçirilir. Bu dosya fiber-yığınında ÇALIŞMAZ (`io.zig`nin belge notunun
+/// AÇIKÇA belirttiği ayrım) — `dumpCurrentStackTrace()` YOKLUĞU BURADA
+/// güvenlik İçİn DEĞİL, SADECE freestanding-uyumluluğu İçİndir.
+fn unexpectedErrnoSafe(e: posix.E) error{Unexpected} {
+    diag_sink.report(null, "beklenmeyen errno (reactor baglaminda): {d}\n", .{@intFromEnum(e)});
+    return error.Unexpected;
 }
 
 pub const Filter = enum { read, write };
@@ -136,7 +153,7 @@ const KqueueReactor = if (builtin.os.tag == .macos) struct {
             .SUCCESS => @intCast(rc),
             .MFILE => error.ProcessFdQuotaExceeded,
             .NFILE => error.SystemFdQuotaExceeded,
-            else => |err| posix.unexpectedErrno(err),
+            else => |err| unexpectedErrnoSafe(err),
         };
     }
 
@@ -160,7 +177,7 @@ const KqueueReactor = if (builtin.os.tag == .macos) struct {
                 .INTR => continue,
                 .ACCES => error.AccessDenied,
                 .NOMEM => error.SystemResources,
-                else => |err| posix.unexpectedErrno(err),
+                else => |err| unexpectedErrnoSafe(err),
             };
         }
     }
@@ -296,7 +313,7 @@ const EpollReactor = if (builtin.os.tag == .linux) struct {
             .MFILE => error.ProcessFdQuotaExceeded,
             .NFILE => error.SystemFdQuotaExceeded,
             .NOMEM => error.SystemResources,
-            else => |err| posix.unexpectedErrno(err),
+            else => |err| unexpectedErrnoSafe(err),
         };
     }
 
@@ -310,7 +327,7 @@ const EpollReactor = if (builtin.os.tag == .linux) struct {
             .EXIST => error.AlreadyRegistered,
             .NOMEM => error.SystemResources,
             .NOSPC => error.SystemResources,
-            else => |err| posix.unexpectedErrno(err),
+            else => |err| unexpectedErrnoSafe(err),
         };
     }
 
@@ -320,7 +337,7 @@ const EpollReactor = if (builtin.os.tag == .linux) struct {
             return switch (posix.errno(rc)) {
                 .SUCCESS => @intCast(rc),
                 .INTR => continue,
-                else => |err| posix.unexpectedErrno(err),
+                else => |err| unexpectedErrnoSafe(err),
             };
         }
     }
@@ -337,7 +354,7 @@ const EpollReactor = if (builtin.os.tag == .linux) struct {
             .NFILE => error.SystemFdQuotaExceeded,
             .NODEV => error.SystemResources,
             .NOMEM => error.SystemResources,
-            else => |err| posix.unexpectedErrno(err),
+            else => |err| unexpectedErrnoSafe(err),
         };
     }
 
@@ -354,7 +371,7 @@ const EpollReactor = if (builtin.os.tag == .linux) struct {
         const rc = posix.system.timerfd_settime(fd, 0, &spec, null);
         return switch (posix.errno(rc)) {
             .SUCCESS => {},
-            else => |err| posix.unexpectedErrno(err),
+            else => |err| unexpectedErrnoSafe(err),
         };
     }
 

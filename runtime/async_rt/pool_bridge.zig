@@ -64,6 +64,8 @@ const io_mod = @import("io.zig");
 const http_client = @import("../stdlib_shims/http_client.zig");
 const worker_pool_mod = @import("worker_pool.zig");
 const scheduler_mod = @import("scheduler.zig");
+/// Faz F.0.3: OOM/doğrulama tanı mesajlarının enjekte edilebilir olması İçİn.
+const diag_sink = @import("diag_sink");
 
 /// Faz MN.7a: `poolWorkerMain`nin (aşağıda) SADECE slot 0'da ÇAĞIRACAĞI,
 /// codegen'in SENTEZLEDİĞİ `entry()` sarmalayıcısı (bkz. `compiler/
@@ -98,14 +100,9 @@ const PoolRunCtx = struct {
 /// SONRASI, görev KESİNLİKLE tamamlanmışken, AÇIKÇA yok EDİLMELİDİR).
 fn poolWorkerRunAndCleanup(rt: *anyopaque, entry_task: ?*anyopaque) void {
     const rc = bridge.nox_async_run_to_completion(rt);
-    if (rc != 0) {
-        // `bridge.zig`nin `nox_async_deadlock_abort`ıyla AYNI mesaj/çıkış
-        // kodu — BURADAN DOĞRUDAN ÇAĞRILAMAZ (o fonksiyon `pub` DEĞİL,
-        // SADECE codegen'in `$nox_async_deadlock_abort` C-ABI çağrısı
-        // İçİndir) — bu YÜZDEN AYNI davranış BURADA YİNELENİR.
-        std.debug.print("nox: kilitlenme (deadlock) tespit edildi — tüm görevler bloke, hiçbiri ilerleyemiyor\n", .{});
-        std.process.exit(1);
-    }
+    // Faz F.0.3: `bridge.nox_async_deadlock_abort` ARTIK `pub` — AYNI
+    // mesaj/çıkış kodunun BURADA yinelenmesine GEREK KALMADI.
+    if (rc != 0) bridge.nox_async_deadlock_abort(rt);
     if (entry_task) |t| bridge.nox_async_destroy_task(rt, t);
     // HER worker (sürücü DAHİL) KENDİ threadlocal `Scheduler`ını (ready
     // dizisi, kqueue fd) BURADA temizler — `nox_runtime_deinit`DEN AYRI,
@@ -358,7 +355,7 @@ fn poolRunDriverThreadMain(args: *PoolRunDriverArgs) void {
 /// bulundu).
 fn poolRunFlattened(rt_ptr: *anyopaque, entry_fn: *const fn (*anyopaque) callconv(.c) i64) i32 {
     const t = bridge.nox_async_spawn(rt_ptr, entry_fn, rt_ptr) orelse {
-        std.debug.print("nox: nox.thread.pool_run: OOM (ic-ice cagri)\n", .{});
+        diag_sink.report(rt_ptr, "nox: nox.thread.pool_run: OOM (ic-ice cagri)\n", .{});
         std.process.exit(1);
     };
     _ = bridge.nox_async_await(rt_ptr, t);
@@ -388,7 +385,7 @@ pub export fn nox_pool_run(
     // programının ÇALIŞMA-ZAMANI değeri) bir `num_workers` ALDIĞINDAN,
     // `assert`e GÜVENİLEMEZ, GERÇEK bir çalışma-zamanı doğrulaması GEREKİR.
     if (num_workers < 1 or num_workers > asap.MAX_POOL_WORKERS) {
-        std.debug.print("nox: nox.thread.pool_run: num_workers 1..{d} araliginda olmalidir (verilen: {d})\n", .{ asap.MAX_POOL_WORKERS, num_workers });
+        diag_sink.report(rt, "nox: nox.thread.pool_run: num_workers 1..{d} araliginda olmalidir (verilen: {d})\n", .{ asap.MAX_POOL_WORKERS, num_workers });
         std.process.exit(1);
     }
 
@@ -657,7 +654,7 @@ pub export fn nox_pool_serve(
     payload: ?*anyopaque,
 ) callconv(.c) i32 {
     if (num_workers < 1 or num_workers > asap.MAX_POOL_WORKERS) {
-        std.debug.print("nox: nox.http.serve_multicore: num_workers 1..{d} araliginda olmalidir (verilen: {d})\n", .{ asap.MAX_POOL_WORKERS, num_workers });
+        diag_sink.report(rt, "nox: nox.http.serve_multicore: num_workers 1..{d} araliginda olmalidir (verilen: {d})\n", .{ asap.MAX_POOL_WORKERS, num_workers });
         std.process.exit(1);
     }
 

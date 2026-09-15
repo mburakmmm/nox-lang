@@ -37,6 +37,11 @@ const builtin = @import("builtin");
 /// gerekçe, SORUNSUZ (`fiber.zig`nin KENDİSİ SIFIR-bağımlılıklı, `asap.
 /// zig`ye/`alloc/`e HİÇ BAKMIYOR — TERSİ yön YASAK olurdu, BU DEĞİL).
 const fiber_mod = @import("../async_rt/fiber.zig");
+/// Faz F.0.3 (bkz. plan dosyası "Panik/tanı çıktısı enjeksiyonu"): sızıntı
+/// raporunun (aşağıdaki `nox_runtime_deinit`) enjekte edilebilir bir "diag
+/// sink" üzerinden yazdırılabilmesi İçİn — sıfır-bağımlılıklı bir yaprak
+/// dosya, döngüsel bağımlılık riski YOK.
+const diag_sink = @import("diag_sink");
 
 const use_debug_allocator = builtin.mode == .Debug;
 
@@ -703,7 +708,7 @@ pub export fn nox_runtime_deinit(rt: ?*anyopaque) void {
     nox_arena_pool_drain(rt);
     // GG.23: `NOX_STACK_PAINT` AYARLANMADIYSA (varsayılan) HİÇBİR ŞEY
     // YAZMAZ — bkz. `fiber_mod.printStackHwmMaxForResearch`in belge notu.
-    fiber_mod.printStackHwmMaxForResearch();
+    fiber_mod.printStackHwmMaxForResearch(rt);
     // Faz F.0.2: `bootstrap_allocator`ı `debug_gpa.deinit()`DEN ÖNCE YAKALA —
     // `debug_gpa` bu alandan TAMAMEN AYRI OLDUĞUNDAN `deinit()`in `state`in
     // KENDİ belleğine bir etkisi YOK, AMA netlik İçİn erken yakalama TERCİH
@@ -714,7 +719,7 @@ pub export fn nox_runtime_deinit(rt: ?*anyopaque) void {
     const bootstrap_allocator = state.bootstrap_allocator;
     if (use_debug_allocator) {
         if (state.debug_gpa.deinit() == .leak) {
-            std.debug.print("nox runtime: bellek sızıntısı tespit edildi\n", .{});
+            diag_sink.report(rt, "nox runtime: bellek sızıntısı tespit edildi\n", .{});
         }
     }
     bootstrap_allocator.destroy(state);
@@ -825,6 +830,51 @@ test "nox_free(null) güvenli bir hiçbir şey yapmama işlemidir" {
     const rt = nox_runtime_init() orelse return error.InitFailed;
     defer nox_runtime_deinit(rt);
     nox_free(rt, null, 0);
+}
+
+// Faz F.0.3 (bkz. plan dosyası "Panik/tanı çıktısı enjeksiyonu"): `diag_sink`
+// KENDİ modülünde `test` bloğu TAŞIYAMADIĞINDAN (bkz. onun belge notu —
+// `abi_layout.zig`nin AYNI, sıfır-test konvansiyonu), GERÇEK doğrulama
+// BURADA yapılır — ZATEN noxrt_mod'un PARÇASI olan (test-keşfi ÇALIŞAN)
+// `asap.zig`de. **NOT**: `nox_runtime_deinit`in sızıntı raporunu (GERÇEK
+// bir `nox_alloc`+free-etmeme İLE) TETİKLEYEREK test etmek DENENDİ AMA
+// `DebugAllocator`nin KENDİ, BAĞIMSIZ leak-log mekanizması (`std.log.err`
+// ÜZERİNDEN) Zig test-runner'ının "N errors were logged" SAYACINI
+// TETİKLEYİP TÜM `zig build test` adımını BAŞARISIZ ediyor (test'in KENDİ
+// `try std.testing.expect(...)` iddiaları GEÇSE BİLE) — bu YÜZDEN BURADA
+// `diag_sink.report`in KENDİSİ DOĞRUDAN çağrılır (TÜM GERÇEK çağrı
+// sitelerinin — `nox_unhandled_exception`/leak-print/`nox_async_deadlock_
+// abort`/OOM mesajları — KULLANDIĞI AYNI, TEK fonksiyon) — sitelerin
+// KENDİSİ (`nox_runtime_deinit`in `diag_sink.report(rt, ...)` çağrısı)
+// AYRICA doğrudan kod okumasıyla doğrulanmıştır.
+threadlocal var g_test_diag_buf: [256]u8 = undefined;
+threadlocal var g_test_diag_len: usize = 0;
+
+fn fakeDiagSinkForTest(rt: ?*anyopaque, bytes: [*]const u8, len: usize) callconv(.c) void {
+    _ = rt;
+    const n = @min(len, g_test_diag_buf.len);
+    @memcpy(g_test_diag_buf[0..n], bytes[0..n]);
+    g_test_diag_len = n;
+}
+
+test "Faz F.0.3: kayıtlı bir sahte diag sink, diag_sink.report'un GERÇEK hedefi olur" {
+    g_test_diag_len = 0;
+    diag_sink.nox_register_diag_sink(fakeDiagSinkForTest);
+    defer diag_sink.nox_register_diag_sink(null); // test-yalıtımı — SONRAKİ testleri ETKİLEMESİN.
+
+    diag_sink.report(null, "test tani mesaji {d}\n", .{7});
+
+    try std.testing.expect(g_test_diag_len > 0);
+    try std.testing.expect(std.mem.indexOf(u8, g_test_diag_buf[0..g_test_diag_len], "test tani mesaji 7") != null);
+}
+
+test "Faz F.0.3 — kırmızı-takım: kayıt YAPILMAZSA sahte sink BOŞ kalır (VARSAYILAN stderr'e gider)" {
+    g_test_diag_len = 0;
+    // BİLİNÇLİ olarak `nox_register_diag_sink` ÇAĞRILMAZ — kaydın GERÇEKTEN
+    // load-bearing OLDUĞUNUN kanıtı (yukarıdaki testin AKSİNE) — mesaj
+    // GERÇEK stderr'e gider (`defaultStderrSink`), sahte tampona DEĞİL.
+    diag_sink.report(null, "bu mesaj varsayilan stderr'e gitmeli\n", .{});
+    try std.testing.expectEqual(@as(usize, 0), g_test_diag_len);
 }
 
 test "arcOwnerThreadOk: aynı iş parçacığından tekrarlanan çağrılar hep true döner" {

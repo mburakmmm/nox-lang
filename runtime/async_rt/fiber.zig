@@ -25,6 +25,13 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+/// Faz F.0.3: `printStackHwmMaxForResearch`in tanı çıktısının enjekte
+/// edilebilir olması İçİn — Named-module olarak import edilir (`io.zig`nin
+/// AYNI belge notundaki gerekçe): bu dosya `noxrt_mod`dan BAĞIMSIZ olarak
+/// da (`build.zig`nin `fiber_test_mod`u, kökü `runtime/async_rt/`) ayrı bir
+/// standalone modül OLARAK derleniyor — relative bir `../errors/...` yolu
+/// O bağlamda modül sınırını AŞARDI.
+const diag_sink = @import("diag_sink");
 
 comptime {
     if (builtin.cpu.arch != .aarch64 and builtin.cpu.arch != .x86_64) {
@@ -268,9 +275,9 @@ pub fn measureStackHwmForResearch(stack: []align(STACK_ALIGN) u8) void {
 /// (bkz. `asap.zig`) TARAFINDAN çağrılır. `NOX_STACK_PAINT` AYARLANMADIYSA
 /// (varsayılan) HİÇBİR ŞEY YAZMAZ (SESSİZ, mevcut sızıntı-denetimi "boş
 /// stderr" varsayımını BOZMAZ — bkz. `codegen_golden_test.zig`nin `expectGolden`ı).
-pub fn printStackHwmMaxForResearch() void {
+pub fn printStackHwmMaxForResearch(rt: ?*anyopaque) void {
     if (!stackPaintEnabled()) return;
-    std.debug.print("NOX_STACK_HWM_BYTES={d}\n", .{g_stack_hwm_max.load(.monotonic)});
+    diag_sink.report(rt, "NOX_STACK_HWM_BYTES={d}\n", .{g_stack_hwm_max.load(.monotonic)});
 }
 
 pub const FiberFn = *const fn (*anyopaque) void;
@@ -680,8 +687,13 @@ test "Faz MN.8, Bulgu C: yığın taşması guard page İLE BELİRLİ bir çökm
     defer allocator.free(femit_arg);
 
     {
+        // Faz F.0.3: `fiber.zig` ARTIK `@import("diag_sink")` (named-module,
+        // bkz. onun belge notu) KULLANDIĞINDAN, BU ad-hoc `zig build-exe`
+        // çağrısına da (`build.zig`nin `fiber_test_mod`uyla AYNI gerekçe)
+        // `--dep diag_sink`/`-Mdiag_sink=...` eklenmesi GEREKİR — AKSİ
+        // HALDE "diag_sink" isimli bir modül BULUNAMAZ hatası verirdi.
         const build_result = try std.process.run(allocator, io, .{
-            .argv = &.{ "zig", "build-exe", "runtime/async_rt/guard_overflow_repro.zig", swap_o_path, "-lc", femit_arg },
+            .argv = &.{ "zig", "build-exe", "--dep", "diag_sink", "-Mmain=runtime/async_rt/guard_overflow_repro.zig", "-Mdiag_sink=runtime/errors/diag_sink.zig", swap_o_path, "-lc", femit_arg },
         });
         defer allocator.free(build_result.stdout);
         defer allocator.free(build_result.stderr);

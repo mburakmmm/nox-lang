@@ -35,6 +35,9 @@ const fiber_mod = @import("fiber.zig");
 const scheduler_mod = @import("scheduler.zig");
 const channel_mod = @import("channel.zig");
 const worker_pool_mod = @import("worker_pool.zig");
+/// Faz F.0.3: `nox_async_deadlock_abort`ın tanı mesajını enjekte
+/// edilebilir hâle getirmek İçİn (bkz. onun belge notu).
+const diag_sink = @import("diag_sink");
 /// Faz MN.6: `nox_async_init`in havuzlu dalının `PoolLink.collect_fn`e
 /// GERÇEK `nox_cycle_collect`i BAĞLAYABİLMESİ İçİn — `scheduler.zig`nin
 /// KENDİSİ BUNU YAPAMAZ (bkz. onun belge notu, "runtime/alloc/den
@@ -316,9 +319,8 @@ pub export fn nox_async_run_to_completion(rt: ?*anyopaque) i32 {
 /// `nox_unhandled_exception` (bkz. `runtime/errors/handle.zig`) ile AYNI
 /// desen: net bir mesaj basıp sıfırdan farklı bir kodla sonlandırır (Nox'un
 /// TAM istisna mekanizmasına entegrasyon bu fazın kapsamı DIŞI, bkz. spec).
-export fn nox_async_deadlock_abort(rt: ?*anyopaque) noreturn {
-    _ = rt;
-    std.debug.print("nox: kilitlenme (deadlock) tespit edildi — tüm görevler bloke, hiçbiri ilerleyemiyor\n", .{});
+pub export fn nox_async_deadlock_abort(rt: ?*anyopaque) noreturn {
+    diag_sink.report(rt, "nox: kilitlenme (deadlock) tespit edildi — tüm görevler bloke, hiçbiri ilerleyemiyor\n", .{});
     std.process.exit(1);
 }
 

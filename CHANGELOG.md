@@ -14,6 +14,60 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.83.0]
+
+### Eklendi/Değiştirildi (Faz F.0.3 — Panik/tanı çıktısı enjeksiyonu)
+- Freestanding Nox çerçevesinin F.0.1/F.0.2'den SONRAKİ üçüncü alt-fazı:
+  runtime'ın TÜM tanı/hata çıktısı (yakalanmamış istisna mesajı, bellek-
+  sızıntısı raporu, deadlock tanısı, beklenmeyen errno uyarıları)
+  `std.debug.print` İLE KOŞULSUZ stderr'e yazıyordu — bir freestanding
+  hedefte stderr/OS dosya tanımlayıcıları HİÇ YOK.
+- YENİ `runtime/errors/diag_sink.zig`: `dispatch_registry.zig`nin (F.0.1)
+  AYNI "program-genelinde, atomik, `.monotonic`" deseni — `nox_register_
+  diag_sink(sink)` (Zig-seviyesi, `pub fn`, HENÜZ codegen'den ÇAĞRILMIYOR)
+  + paylaşılan `report(rt, fmt, args)` yardımcısı (512 baytlık yığın
+  arabelleği). VARSAYILAN (kayıt yapılmazsa) BUGÜNKÜ stderr davranışıyla
+  BİREBİR AYNI, SIFIR davranış değişikliği.
+- `errors/handle.zig`nin `nox_unhandled_exception`i, `alloc/asap.zig`nin
+  sızıntı-raporu, `async_rt/bridge.zig`nin `nox_async_deadlock_abort`ı
+  (ARTIK `pub` — `async_rt/pool_bridge.zig`nin KENDİ, tekrarlanan
+  deadlock mesajı KALDIRILIP DOĞRUDAN bu fonksiyona YÖNLENDİRİLDİ, GERÇEK
+  bir küçük temizlik), `pool_bridge.zig`nin 3 OOM/doğrulama sitesi,
+  `async_rt/io.zig`nin `fiberSafeUnexpectedErrno`sı (imzasına `scheduler`
+  eklendi) ve `async_rt/io_reactor.zig`nin YENİ, dosya-yerel
+  `unexpectedErrnoSafe` yardımcısı (7 çağrı sitesi) hepsi `diag_sink.
+  report`e geçirildi — mesaj metinleri BİREBİR AYNI kaldı.
+- `async_rt/fiber.zig`nin `printStackHwmMaxForResearch`ı (GG.23'ün
+  `NOX_STACK_PAINT` aracı) da `rt` parametresi alıp `diag_sink.report`
+  kullanacak şekilde güncellendi.
+- **Doğrulama SIRASINDA bulunan, DÜZELTİLEN bir build-sistemi boşluğu**:
+  `runtime/async_rt/fiber.zig`/`io.zig`/`io_reactor.zig`, `noxrt_mod`
+  (kökü `runtime/lib.zig`) DIŞINDA, KENDİ BAŞLARINA AYRI, DAR test
+  modülleri (`fiber_test_mod`/`scheduler_test_mod`/`channel_test_mod`/
+  `io_test_mod`, `build.zig`) OLARAK da derleniyordu — bu dosyaların
+  `diag_sink.zig`ye YENİ, relative-path importu bu modüllerin kökünü
+  (`runtime/async_rt/`) YUKARI aşıp "import of file outside module path"
+  hatası veriyordu. `shared/abi_layout.zig`nin ZATEN kanıtlanmış "named-
+  module" desenini İZLEYEN YENİ bir `diag_sink` modülü (`build.zig`)
+  eklenip TÜM tüketiciler (`noxrt_mod`, 4 standalone test modülü, VE
+  `worker_pool_test_root.zig`) BUNU named-import OLARAK ALDI —
+  `fiber.zig`nin KENDİ guard-page repro testinin `zig build-exe` çağrısı
+  da AYNI `-M`/`--dep` deseniyle güncellendi.
+- **Doğrulama SIRASINDA bulunan, DÜZELTİLEN bir test-tasarımı hatası**:
+  `nox_runtime_deinit`in sızıntı-raporu sitesini GERÇEK bir kasıtlı
+  sızıntıyla (nox_alloc + free-etmeme) tetiklemek, Zig'in KENDİ
+  `DebugAllocator`ının BAĞIMSIZ leak-log mekanizmasını (`std.log.err`)
+  da tetikleyip test-runner'ın "N errors were logged" sayacını
+  BAŞARISIZ ediyordu (test'in KENDİ iddiaları GEÇSE BİLE) — YENİ
+  testler `diag_sink.report`i DOĞRUDAN (gerçek bir sızıntı ÜRETMEDEN)
+  çağıracak şekilde tasarlandı, `asap.zig`ye eklendi (kayıtlı sahte
+  sink'in GERÇEKTEN hedef olduğu + kayıt YOKSA sahte sink'in BOŞ
+  kaldığı/kırmızı-takım kanıtı).
+- `zig build test` (Debug+ReleaseFast) + `NOX_STRESS_ROUNDS=800 zig
+  build stress-test -Doptimize=ReleaseFast` TEMİZ (bilinen, pre-existing
+  `-j` paralel-yük HTTP test flake'leri HARİÇ, izole çalıştırmayla
+  regresyon OLMADIĞI doğrulandı).
+
 ## [1.82.0]
 
 ### Eklendi/Değiştirildi (Faz F.0.2 — Allocator enjeksiyonu)

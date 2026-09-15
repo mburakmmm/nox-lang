@@ -20752,6 +20752,94 @@ enjeksiyon mekanizması; `nox_runtime_init_with_allocator`i codegen'DEN
 
 ---
 
+## 3.163 Faz F.0.3 — Panik/tanı çıktısı enjeksiyonu (v1.83.0)
+
+Freestanding Nox çerçevesinin F.0.1/F.0.2'DEN SONRAKİ üçüncü alt-fazı.
+Runtime'ın TÜM tanı/hata çıktısı (yakalanmamış istisna mesajı, bellek-
+sızıntısı raporu, deadlock tanısı, beklenmeyen errno uyarıları)
+`std.debug.print` İLE KOŞULSUZ stderr'e yazılıyordu — bir freestanding
+(kernel/embedded) hedefte stderr/OS dosya tanımlayıcıları HİÇ YOK.
+
+**Tasarım**: YENİ `runtime/errors/diag_sink.zig` — `dispatch_registry.
+zig`nin (F.0.1) AYNI "program-genelinde, atomik, `.monotonic`" deseni,
+AMA codegen tarafından KAYIT EDİLMEZ (F.0.2'nin `nox_runtime_init_with_
+allocator`i GİBİ SAF bir Zig-seviyesi/opsiyonel host-override API'si).
+`DiagSinkFn = *const fn (rt: ?*anyopaque, bytes: [*]const u8, len:
+usize) callconv(.c) void`; `nox_register_diag_sink(sink)` kaydeder;
+`diagSink()` HER ZAMAN GEÇERLİ bir fonksiyon döner (kayıt YOKSA
+`defaultStderrSink`); paylaşılan `report(rt, comptime fmt, args)`
+yardımcısı `comptime fmt`i 512 baytlık bir YIĞIN arabelleğine (`hpy_
+bridge/context.zig`nin `ctxErrSetFromErrnoWithFilename`ıyla AYNI boyut)
+biçimlendirip `diagSink()`i çağırır — taşma DURUMUNDA SESSİZCE düşer.
+
+**Geçirilen çekirdek çağrı siteleri** (mesaj METİNLERİ BİREBİR AYNI
+kaldı, SADECE `std.debug.print(fmt, args)` → `diag_sink.report(rt_veya_
+null, fmt, args)`): `errors/handle.zig`nin `nox_unhandled_exception`i (2
+site); `alloc/asap.zig`nin `nox_runtime_deinit`inin sızıntı-raporu;
+`async_rt/bridge.zig`nin `nox_async_deadlock_abort`ı (ARTIK `pub export
+fn` — `async_rt/pool_bridge.zig`nin `poolWorkerRunAndCleanup`ının KENDİ,
+tekrarlanan deadlock mesajı KALDIRILIP DOĞRUDAN bu fonksiyona
+YÖNLENDİRİLDİ, GERÇEK bir küçük temizlik, YAN ÜRÜN); `pool_bridge.zig`nin
+3 OOM/doğrulama sitesi; `async_rt/io.zig`nin `fiberSafeUnexpectedErrno`sı
+(İMZASI `fn(scheduler: *Scheduler, e: posix.E) error{Unexpected}` OLDU —
+`scheduler.rt` `diag_sink.report`e geçirilir, 5 çağrı sitesi güncellendi);
+`async_rt/io_reactor.zig`nin YENİ, dosya-yerel `unexpectedErrnoSafe`
+yardımcısı (`rt` YAPISAL olarak MEVCUT OLMADIĞINDAN `null` geçirir, 7
+çağrı sitesi `posix.unexpectedErrno(err)`den değiştirildi);
+`async_rt/fiber.zig`nin `printStackHwmMaxForResearch`ı (GG.23'ün `NOX_
+STACK_PAINT` aracı) YENİ bir `rt: ?*anyopaque` parametresi ALIR.
+`runtime/lib.zig`ye `dispatch_registry`yle AYNI iki-satırlık desen
+(`pub const diag_sink = @import(...)` + force-reference).
+
+**Doğrulama SIRASINDA bulunan, DÜZELTİLEN bir build-sistemi boşluğu**:
+`fiber.zig`/`io.zig`/`io_reactor.zig`, `noxrt_mod`dan (kökü `runtime/
+lib.zig`) BAĞIMSIZ olarak, KENDİ BAŞLARINA AYRI, DAR test modülleri
+(`build.zig`nin `fiber_test_mod`/`scheduler_test_mod`/`channel_test_mod`/
+`io_test_mod`u, kökleri `runtime/async_rt/`) OLARAK da derleniyordu —
+bu dosyaların `diag_sink.zig`ye relative-path importu (`../errors/diag_
+sink.zig`) bu modüllerin kökünü YUKARI aşıp "import of file outside
+module path" hatası veriyordu (`fiber.zig`nin KENDİ guard-page repro
+testinin AYRI `zig build-exe` çağrısı DA aynı sebeple etkilendi).
+Çözüm: `shared/abi_layout.zig`nin ZATEN kanıtlanmış "named-module"
+deseni İZLENEREK YENİ bir `diag_sink` modülü (`build.zig`, `b.addModule`)
+eklendi; TÜM tüketiciler (`noxrt_mod`, 4 standalone test modülü, `worker_
+pool_test_root.zig`, VE guard-page reprosunun `-M`/`--dep` bayraklı
+`zig build-exe` çağrısı) `diag_sink.zig`yi relative path YERİNE
+`@import("diag_sink")` (named-module) OLARAK ALDI — bu, dosyanın TEK BİR
+Zig modülüne AİT OLABİLECEĞİ kısıtına (bir dosya HEM relative-path HEM
+named-module ÜZERİNDEN AYNI ANDA erişilemez) uyan TEK tutarlı çözümdü.
+
+**Doğrulama SIRASINDA bulunan, DÜZELTİLEN bir test-tasarımı hatası**:
+`nox_runtime_deinit`in sızıntı-raporu sitesini GERÇEK bir kasıtlı
+sızıntıyla (`nox_alloc` + free-ETMEME) tetiklemek, Zig'in KENDİ
+`DebugAllocator`ının BAĞIMSIZ leak-log mekanizmasını (`std.log.err`
+ÜZERİNDEN) DA tetikleyip, test-runner'ın "N errors were logged"
+sayacını BAŞARISIZ ediyordu (test'in KENDİ `std.testing.expect` iddiaları
+GEÇSE BİLE — DOĞRUDAN çalıştırılan ikili `exit=1` veriyordu). Düzeltme:
+YENİ testler (`asap.zig`) `diag_sink.report`i DOĞRUDAN (GERÇEK bir sızıntı
+ÜRETMEDEN) çağırır — (1) kayıtlı bir sahte sink'in `report`un GERÇEK
+hedefi OLDUĞU, (2) kayıt YAPILMAZSA sahte sink'in BOŞ KALDIĞI (mesajın
+VARSAYILAN stderr sink'ine gittiği) — kırmızı-takım kanıtı.
+
+**Doğrulama**: `zig ast-check` TÜM değiştirilen dosyalarda; `zig build
+test` (Debug+ReleaseFast, TAM paket) — TÜM MEVCUT testler DEĞİŞMEDEN
+geçti (izole/`-j2` çalıştırmayla doğrulandı; `-j`-yüksek paralel-yükte
+GÖZLEMLENEN HTTP test başarısızlıkları izole çalıştırıldığında TEMİZ
+geçti — bilinen, ÖNCEDEN belgelenmiş `-j` kaynak-çekişmesi flake'i,
+GERÇEK bir regresyon DEĞİL); `NOX_STRESS_ROUNDS=800 zig build stress-
+test -Doptimize=ReleaseFast` TEMİZ.
+
+**Kapsam DIŞI**: `hpy_bridge/context.zig`nin 6 tanı sitesi, `stdlib_
+shims/tls_server.zig`nin 7 + `http_server.zig`nin 4 sitesi (HPy/TLS-dlopen
+freestanding'e hiç taşınmayacak); `@panic(...)` tabanlı OOM/invariant
+koruma siteleri (Zig'in KENDİ panik işleyicisi ÜZERİNDEN gider, AYRI bir
+gelecekteki faz); `nox_pool_main_init`nin KENDİ `@panic("OOM: $main
+havuzu")`su (yapısal olarak sink mekanizmasının KAPSAYAMAYACAĞI bir site
+— gözlem, düzeltme DEĞİL); `std.process.exit`/`abort` çağrılarının
+KENDİSİ (çıkış/sonlandırma semantiği AYRI bir gelecekteki faz).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

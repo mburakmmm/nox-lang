@@ -23,6 +23,7 @@ const asap = @import("../alloc/asap.zig");
 const abi_layout = @import("abi_layout");
 const bridge = @import("../async_rt/bridge.zig");
 const dispatch_registry = @import("../alloc/dispatch_registry.zig");
+const diag_sink = @import("diag_sink");
 
 /// Faz MN.2 (bkz. `fiber.zig`nin `pending_exception` belge notu): fiber
 /// İÇİNDE `Fiber.pending_exception`/`pending_exception_line`e, DIŞINDA
@@ -97,7 +98,7 @@ export fn nox_exception_take(rt: ?*anyopaque) ?*anyopaque {
 /// SABİT OFSETTE taşıdığı GARANTİ edildiğinde) EKLENECEK.
 export fn nox_unhandled_exception(rt: ?*anyopaque) noreturn {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse {
-        std.debug.print("nox: yakalanmamış istisna — program sonlandırılıyor\n", .{});
+        diag_sink.report(null, "nox: yakalanmamış istisna — program sonlandırılıyor\n", .{});
         std.process.exit(1);
     }));
     const pe = pendingException(state);
@@ -109,7 +110,7 @@ export fn nox_unhandled_exception(rt: ?*anyopaque) noreturn {
             class_name = f(rt, tag.*, obj);
         }
     }
-    std.debug.print("nox: yakalanmamış istisna: {s} (satır {d}) — program sonlandırılıyor\n", .{ class_name, line });
+    diag_sink.report(rt, "nox: yakalanmamış istisna: {s} (satır {d}) — program sonlandırılıyor\n", .{ class_name, line });
     std.process.exit(1);
 }
 

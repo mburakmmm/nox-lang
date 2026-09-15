@@ -91,6 +91,23 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // Faz F.0.3 (bkz. plan dosyası "Panik/tanı çıktısı enjeksiyonu"):
+    // `abi_layout_mod` İLE AYNI gerekçe — `runtime/errors/diag_sink.zig`
+    // (SIFIR bağımlılıklı, `runtime/`nin İÇİNDE yaşıyor OLSA da) `runtime/
+    // async_rt/fiber.zig`/`io.zig`/`io_reactor.zig` TARAFINDAN import
+    // ediliyor VE bu üç dosya, `noxrt_mod` (kökü `runtime/lib.zig`) DIŞINDA,
+    // KENDİ BAŞLARINA AYRI modül kökleri OLARAK da derleniyor (`fiber_test_
+    // mod`/`scheduler_test_mod`/`channel_test_mod`/`io_test_mod`, aşağıda —
+    // kökleri `runtime/async_rt/`, `runtime/errors/`in BİR ÜST DİZİNİ) —
+    // relative bir import (`../errors/diag_sink.zig`) bu YÜZDEN o AYRI
+    // modül köklerinde SINIRI aşardı ("import of file outside module
+    // path"). Named-module olarak PAYLAŞMAK bu sınırı ORTADAN KALDIRIR.
+    const diag_sink_mod = b.addModule("diag_sink", .{
+        .root_source_file = b.path("runtime/errors/diag_sink.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const nox_mod = b.addModule("nox", .{
         .root_source_file = b.path("compiler/lib.zig"),
         .target = target,
@@ -213,6 +230,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
             .{ .name = "wasm_bridge", .module = wasm_bridge_mod },
             .{ .name = "abi_layout", .module = abi_layout_mod },
+            .{ .name = "diag_sink", .module = diag_sink_mod },
         },
     });
     // Faz 21: `runtime/async_rt/bridge.zig` (Faz 21 aşama 4, `runtime/lib.zig`
@@ -887,6 +905,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .imports = &.{
+            .{ .name = "diag_sink", .module = diag_sink_mod },
+        },
     });
     fiber_test_mod.addObjectFile(b.path(swap_asm_o_path));
     const fiber_test = b.addTest(.{ .root_module = fiber_test_mod });
@@ -903,6 +924,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .imports = &.{
+            .{ .name = "diag_sink", .module = diag_sink_mod },
+        },
     });
     scheduler_test_mod.addObjectFile(b.path(swap_asm_o_path));
     const scheduler_test = b.addTest(.{ .root_module = scheduler_test_mod });
@@ -915,6 +939,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .imports = &.{
+            .{ .name = "diag_sink", .module = diag_sink_mod },
+        },
     });
     channel_test_mod.addObjectFile(b.path(swap_asm_o_path));
     const channel_test = b.addTest(.{ .root_module = channel_test_mod });
@@ -933,6 +960,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .imports = &.{
+            .{ .name = "diag_sink", .module = diag_sink_mod },
+        },
     });
     io_test_mod.addObjectFile(b.path(swap_asm_o_path));
     const io_test = b.addTest(.{ .root_module = io_test_mod });
@@ -966,6 +996,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .imports = &.{
             .{ .name = "abi_layout", .module = abi_layout_mod },
+            .{ .name = "diag_sink", .module = diag_sink_mod },
         },
     });
     worker_pool_test_mod.addObjectFile(b.path(swap_asm_o_path));

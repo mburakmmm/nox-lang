@@ -16,6 +16,14 @@ const std = @import("std");
 const builtin = @import("builtin");
 const posix = std.posix;
 const Scheduler = @import("scheduler.zig").Scheduler;
+/// Faz F.0.3: `fiberSafeUnexpectedErrno`nun tanı mesajının enjekte
+/// edilebilir olması İçİn. Named-module olarak import edilir (relative
+/// path DEĞİL) — bu dosya `noxrt_mod` (kökü `runtime/lib.zig`) DIŞINDA,
+/// KENDİ BAŞINA bir standalone modül OLARAK da derleniyor (`build.zig`nin
+/// `io_test_mod`u, kökü `runtime/async_rt/`) — relative `../errors/...`
+/// yolu O bağlamda modül sınırını AŞARDI (bkz. `build.zig`nin `diag_sink_
+/// mod` belge notu).
+const diag_sink = @import("diag_sink");
 
 /// Faz LL.4/LL.5 (bkz. nox-teknik-spesifikasyon.md §3.71): `fcntl`/
 /// `std.c.O` (bu Zig sürümünde Windows İçin `void`, bkz. `fs.zig`nin
@@ -150,9 +158,9 @@ pub fn setTcpNodelay(fd: posix.fd_t) void {
 /// bağlamlı çağrı siteleriyle SINIRLI tutuldu). Bu fonksiyon AYNI hata
 /// numarasını (geliştirici tanısı İçİn hâlâ değerli) YAZDIRIR AMA
 /// `dumpCurrentStackTrace()`i ASLA çağırmaz.
-fn fiberSafeUnexpectedErrno(e: posix.E) error{Unexpected} {
+fn fiberSafeUnexpectedErrno(scheduler: *Scheduler, e: posix.E) error{Unexpected} {
     if (std.options.unexpected_error_tracing) {
-        std.debug.print("beklenmeyen errno (fiber baglaminda, yigin izi GUVENLIK icin ATLANDI): {d}\n", .{@intFromEnum(e)});
+        diag_sink.report(scheduler.rt, "beklenmeyen errno (fiber baglaminda, yigin izi GUVENLIK icin ATLANDI): {d}\n", .{@intFromEnum(e)});
     }
     return error.Unexpected;
 }
@@ -210,7 +218,7 @@ pub fn nonBlockingAccept(scheduler: *Scheduler, listen_fd: posix.fd_t) !posix.fd
             // adayı YOK SAYILIP döngü TEKRARLANIR (`unexpectedErrno`nin
             // gürültülü/panik-BENZERİ yoluna DÜŞMEDEN).
             .CONNABORTED => {},
-            else => |e| return fiberSafeUnexpectedErrno(e),
+            else => |e| return fiberSafeUnexpectedErrno(scheduler, e),
         }
     }
 }
@@ -254,7 +262,7 @@ pub fn nonBlockingAcceptWithTimeout(scheduler: *Scheduler, listen_fd: posix.fd_t
             .AGAIN => if (scheduler.suspendForIoOrTimeout(listen_fd, .read, timeout_ms) == .timed_out) return error.Timeout,
             // Bkz. `nonBlockingAccept`in AYNI notu.
             .CONNABORTED => {},
-            else => |e| return fiberSafeUnexpectedErrno(e),
+            else => |e| return fiberSafeUnexpectedErrno(scheduler, e),
         }
     }
 }
@@ -297,7 +305,7 @@ pub fn nonBlockingRead(scheduler: *Scheduler, fd: posix.fd_t, buf: []u8) !usize 
         switch (posix.errno(rc)) {
             .AGAIN => scheduler.suspendForIo(fd, .read),
             .CONNRESET => return 0,
-            else => |e| return fiberSafeUnexpectedErrno(e),
+            else => |e| return fiberSafeUnexpectedErrno(scheduler, e),
         }
     }
 }
@@ -368,7 +376,7 @@ pub fn nonBlockingReadWithTimeout(scheduler: *Scheduler, fd: posix.fd_t, buf: []
             // HER fiber İçİn GERÇEK bir askıya-düşme/çökme riskini de
             // ORTADAN KALDIRIYOR.
             .CONNRESET => return 0,
-            else => |e| return fiberSafeUnexpectedErrno(e),
+            else => |e| return fiberSafeUnexpectedErrno(scheduler, e),
         }
     }
 }
@@ -414,7 +422,7 @@ pub fn nonBlockingWrite(scheduler: *Scheduler, fd: posix.fd_t, buf: []const u8) 
             // borsağa yazma denemesi — `std.Io.zig`nin (`Io.zig:313`)
             // KENDİ `BrokenPipe` adını taşır, AYNI gerekçeyle.
             .PIPE => return error.BrokenPipe,
-            else => |e| return fiberSafeUnexpectedErrno(e),
+            else => |e| return fiberSafeUnexpectedErrno(scheduler, e),
         }
     }
 }
