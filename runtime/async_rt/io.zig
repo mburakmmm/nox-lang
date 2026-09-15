@@ -89,6 +89,13 @@ pub fn setNonBlocking(fd: posix.fd_t) void {
         return;
     }
     const current = std.c.fcntl(fd, std.c.F.GETFL);
+    // Faz TEST.5: `fd` DIŞARIDAN (ör. bir test watchdogu/`nox_http_server_
+    // close`) ZATEN KAPATILMIŞSA `fcntl` NEGATİF (`EBADF` vb.) döner —
+    // KOŞULSUZ `@intCast` bunu (imzasız u32'ye SIĞMADIĞINDAN) PANİKLE
+    // SONLANDIRIRDI. Sessizce ATLA — ÇAĞIRANIN HEMEN SONRAKİ `accept()`/
+    // `read()`/`write()` çağrısı GEÇERSİZ fd üzerinde GERÇEK, catch'lenebilir
+    // bir hata (`EBADF`) döner, panik DEĞİL.
+    if (current < 0) return;
     var flags: std.c.O = @bitCast(@as(u32, @intCast(current)));
     flags.NONBLOCK = true;
     _ = std.c.fcntl(fd, std.c.F.SETFL, @as(u32, @bitCast(flags)));

@@ -20448,6 +20448,125 @@ BAŞARISIZLIĞI DEĞİL.
 
 ---
 
+## 3.160 Faz TEST.5 — `http_server.zig`nin KENDİ iç testlerindeki fiber-tabanlı + senkron askı risklerini kapatma (v1.80.10)
+
+**Context**: v1.80.9 (Faz TEST.4) push edildikten SONRA GERÇEK CI'de
+doğrulama yapıldı (`gh run view 34964587230`). İYİ HABER: Linux
+(aarch64) — son 5 push boyunca 30 dakikaya TAKILAN platform — BU SEFER
+**4m5s'de TAMAMLANDI** (TEST.3+TEST.4'ün GERÇEKTEN işe yaradığının
+KANITI). AMA AYNI koşuda Linux (x86-64) (önceki İKİ push'ta ~2 dakikada,
+bilinen `pool_bridge` flake'iyle HIZLICA başarısız oluyordu) BU SEFER
+**30 dakikalık zaman aşımına TAKILDI** — loglarda SON test-ilerleme
+satırından SONRA ~20 dakika TAMAMEN SESSİZ, cleanup logu `zig`/`build`/
+`test` süreçlerinin HÂLÂ ÇALIŞTIĞINI gösterdi — GERÇEK, YENİ bir askı.
+
+**Kök neden**: `noxrt_test` (TÜM `runtime/`'ın Zig-seviyesi testlerini
+TEK bir ikilide TOPLAYAN, `zig build test`in KENDİ parçası) `runtime/
+stdlib_shims/http_server.zig`nin KENDİ ~15 İÇ Zig testini de İçERİR —
+bunlar `tests/compat/http_serve_*_golden_test.zig` (Faz TEST.3'ün ZATEN
+`ChildWatchdog`la KORUDUĞU, HARİCİ bir Nox ikilisini `std.process.spawn`
+İLE başlatan testler) İLE TAMAMEN AYRI, DENETLENMEMİŞ bir yüzeydir —
+BUNLAR sunucuyu HİÇ bir alt-süreç olarak BAŞLATMAZ, `serveImpl`i
+(GERÇEK üretim fonksiyonu) DOĞRUDAN, AYNI süreç İçİNDE çağırır. İKİ AYRI,
+zaman-aşımsız mekanizma bulundu:
+
+- **Mekanizma A** (senkron/scheduler'sız yol, `blockingAccept`):
+  `bridge.currentFiberScheduler()` `null` DÖNDÜĞÜNDE (test `bridge.
+  nox_async_init` HİÇ ÇAĞIRMADIĞINDA) `serveImpl` HAM, zaman-aşımsız
+  `std.c.accept(listen_fd, null, null)` çağırır — Faz TEST.1'in
+  düzelttiği AYNI hata sınıfı, burada hiç denetlenmemiş.
+- **Mekanizma B** (fiber/reaktör yolu, `io_mod.nonBlockingAccept`):
+  `scheduler != null` VE `shared_budget == null` İKEN `serveImpl`
+  ZAMAN-AŞIMSIZ `io_mod.nonBlockingAccept`i çağırır — `reactor.poll()`
+  `epoll_wait`/`kevent`/`WSAPoll`i HİÇBİR zaman-aşımı OLMADAN çağırır.
+  Linux'ta (`epoll`) BU KRİTİK bir soruna yol açar: `listen_fd` BAŞKA
+  bir iş parçacığından `close()` edilse BİLE, ZATEN BAŞLAMIŞ bir `epoll_
+  wait()` çağrısı BUNU FARK ETMEZ (Linux'un KENDİ, belgelenmiş epoll
+  davranışı) — YANİ dışarıdan bir "fd'yi kapat" watchdogu BU yolda
+  GÜVENİLİR ÇALIŞMAZ.
+
+**Çözümü BASİTLEŞTİREN kritik bulgu**: `io_mod.nonBlockingAcceptWithTimeout`
+ZATEN VAR VE ZATEN ÜRETİMDE KULLANILIYOR — SADECE `shared_budget != null`
+(`serve_multicore`nin paylaşılan-bütçe yolu) İKEN, `SHARED_BUDGET_POLL_MS
+= 25`ms İLE. `EAGAIN` alınca `scheduler.suspendForIoOrTimeout`i (reaktöre
+AYRI bir zamanlayıcı kaydeden — Linux'ta GERÇEK bir `timerfd`) çağırır:
+`epoll_wait`/`kevent` ARTIK İKİ kayıt İçİn AYNI ANDA bekler, zamanlayıcı
+ateşlenirse `error.Timeout` DÖNER. `serveImpl`nin `shared_budget` dalı
+BUNU `if (e == error.Timeout) continue :accept_loop;` İLE YAKALAYIP
+döngüyü TEKRARLAR — VE her tekrar TAZE bir `std.c.accept(listen_fd, ...)`
+denemesiyle BAŞLAR — `listen_fd` bu ARADA `close()` edilmişse, BU TAZE
+deneme ANINDA `EBADF` alıp GERÇEK bir hata DÖNER.
+
+**Tasarım — İKİ PARÇA, BİRLİKTE ZORUNLU**:
+1. `serveImpl`nin accept-döngüsü GENELLEŞTİRİLDİ: `SHARED_BUDGET_POLL_
+   MS`in YANINA YENİ `DEFAULT_ACCEPT_POLL_MS = 2000` (2 saniye) EKLENDİ,
+   `shared_budget != null and scheduler != null` KOŞULLU dalı + AYRI
+   `else if (scheduler) |s| io_mod.nonBlockingAccept(...)` dalı TEK bir
+   dala BİRLEŞTİRİLDİ — `shared_budget`e göre SADECE poll ARALIĞI
+   değişir, mantık AYNI kalır (`shared_budget != null` İSE 25ms, AKSİ
+   HALDE 2000ms). GERÇEK sunucular İçİn SIFIR davranış değişikliği:
+   bağlantı ZATEN hazırsa `accept()` HER ZAMAN OLDUĞU GİBİ ANINDA döner
+   (periyodik poll SADECE hiçbir şey BEKLENMİYORKEN devreye girer).
+   `io_mod.nonBlockingAccept` (io.zig) BU değişiklikten SONRA TEK çağrı
+   sitesini KAYBEDER — BİLİNÇLİ olarak SİLİNMEDİ (gereksiz churn).
+2. `http_server.zig`nin KENDİ "---- Birim testleri ----" bölümüne, `tests/
+   compat/child_watchdog.zig`nin `ChildWatchdog`ıyla AYNI ilkeli (arm/
+   disarm, arka-plan iş parçacığı, zaman-aşımında zorla müdahale) YENİ
+   bir `FdWatchdog` EKLENDİ — bir `std.process.Child` YERİNE HAM bir
+   POSIX fd üzerinde çalışır, `timeout_ms` İçİnde `disarm()` ÇAĞRILMAZSA
+   `listen_fd`yi `closeSocket` İLE kapatır. 9 iç teste (`nox_http_serve_
+   raw`/`Performans` (needs_headers, İKİ tur — TEK arm)/fiber-eşzamanlılık/
+   `Faz DD.1` (paylaşılan listen_fd, İKİ ServeArgs — TEK arm PAYLAŞILAN
+   fd üzerinde)/`Faz Q.5` (gövde boyutu sınırı + eşzamanlı bağlantı
+   sınırı)/`Faz HH.7` (okuma zaman aşımı, İKİ test)/`Faz MN.12`
+   (çapraz-worker çalma)) `var watchdog: FdWatchdog = .{}; try watchdog.
+   arm(listen_fd, 15_000); defer watchdog.disarm();` MEKANİK olarak
+   EKLENDİ.
+
+**Kırmızı-takım SIRASINDA bulunan, BAĞIMSIZ bir GERÇEK hata**: `runtime/
+async_rt/io.zig`nin `setNonBlocking`ı (BİR ÖNCEKİ oturumun "HER okuma/
+yazmada gereksiz `fcntl` tekrarını gider" optimizasyonu SIRASINDA
+eklenen, `nonBlockingAcceptWithTimeout`nin HER çağrısının BAŞINDA
+KOŞULSUZ çalışan `setNonBlocking(listen_fd)`), `fd` dışarıdan (watchdog
+TARAFINDAN) ZATEN kapatılmışken `fcntl(fd, F_GETFL)` NEGATİF (`EBADF`)
+döndüğünde, KOŞULSUZ `@intCast` (negatif bir `c_int`i imzasız `u32`e
+SIĞDIRAMADIĞINDAN) bir PANİKLE SONLANIYORDU — Mekanizma B'nin kırmızı-takım
+testi SIRASINDA GERÇEKTEN tetiklendi. Düzeltme: `current < 0` İSE
+sessizce ATLAYIP çağıranın HEMEN SONRAKİ `accept()` çağrısına GERÇEK/
+catch'lenebilir bir hata BIRAKACAK şekilde (dışarıdan kapatılan HERHANGİ
+bir fd, sadece TEST.5'in KENDİ mekanizması İçİn DEĞİL, genel olarak
+panik YERİNE NORMAL bir hata yolundan geçer).
+
+**Doğrulama**: `zig ast-check`; İKİ AYRI kırmızı-takım turu (Mekanizma B
+— fiber-tabanlı bir testte istemci thread'leri GEÇİCİ kaldırılıp
+watchdog zaman aşımı 3 saniyeye İNDİRİLEREK, DÜZELTMEDEN ÖNCE 60 saniyelik
+bir TIMEOUT'a UĞRADIĞI, DÜZELTMEYLE ~3-5 saniyede HIZLI/AÇIK BAŞARISIZ
+OLDUĞU kanıtlandı; Mekanizma A — AYNI teknik senkron bir testte,
+`blockingAccept`in GERÇEKTEN kesildiği AYNI şekilde kanıtlandı) — HER
+İKİ değişiklik de SONRASINDA GERİ ALINDI; `zig build noxrt-test` (Debug
+172/172, ReleaseFast 172/172); TAM paket `zig build test` (Debug
+855/857 + ReleaseFast 855/857 — `http_serve_tls_golden_test.zig`nin İKİ
+testi `-j10` kaynak-çekişmesi ALTINDA BAŞARISIZ oldu, İZOLE (`zig test`
+DOĞRUDAN, Debug+ReleaseFast İKİSİNDE de) çalıştırıldığında TEMİZ geçip
+Faz TEST.3/4'ün AYNI, ÖNCEDEN belgelenmiş `-j10` flake'i OLDUĞU teyit
+edildi, GERÇEK bir regresyon DEĞİL); `NOX_STRESS_ROUNDS=800 zig build
+stress-test -Doptimize=ReleaseFast` (44/44); `zig build http-soak-test
+-Doptimize=ReleaseFast -Dsoak-seconds=15` (2/2 — Parça 1'in periyodik-poll
+değişikliğinin sürdürülebilir yük altında throughput'u ETKİLEMEDİĞİNİN
+kanıtı).
+
+**Kapsam DIŞI**: `async_rt.pool_bridge`/`worker_pool`nin KENDİ İÇ çapraz-worker
+çalma yarışı (task_66e267b4, GERÇEK CI'de TEKRARLANAN, AYRI/ÖNCEDEN
+İŞARETLENMİŞ bir flake) — `Faz MN.12` testi BU AYNI ailenin bir PARÇASI
+olabilir; watchdog EKLENDİ (defans-derinliği) AMA eğer bu test `pool.
+joinAll()` İçİnde (soket/accept İLE İLGİSİZ, İş parçacığı-senkronizasyonu
+düzeyinde) askıda KALIRSA `FdWatchdog` BUNU ÇÖZMEZ; KABUL EDİLMİŞ bir
+bağlantı SONRASI bir OKUMA/YAZMANIN ORTASINDA askıda kalma; Windows kod
+yolu (bu iç testler Windows CI'de HİÇ ÇALIŞMIYOR); `io_mod.
+nonBlockingAccept`in (io.zig) KENDİSİNİN SİLİNMESİ.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

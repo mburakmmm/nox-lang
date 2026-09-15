@@ -601,6 +601,19 @@ pub const SharedServeBudget = struct {
 /// ETKİLEMEZ).
 const SHARED_BUDGET_POLL_MS: u32 = 25;
 
+/// Faz TEST.5: `shared_budget == null` İKEN (yani TEK-worker `nox.http.
+/// serve`/`serve_tls`/`serve_ws`, `serve_multicore`nin PAYLAŞILAN-bütçe
+/// YOLU DEĞİL) accept-döngüsünün periyodik yeniden-kontrol aralığı.
+/// `SHARED_BUDGET_POLL_MS`nin (25ms, ÇOK worker arası paylaşılan sayaç
+/// İçİn agresif) AKSİNE, BURADA amaç SADECE `listen_fd`nin dışarıdan
+/// (`nox_http_server_close`/bir test watchdogu İLE) kapatılmasını MAKUL
+/// bir gecikmeyle TESPİT ETMEK — 2 saniye, GERÇEK bir üretim sunucusunun
+/// boşta İKEN (bağlantı YOKKEN) katlanacağı EK uyanma MALİYETİNİ (`timerfd`
+/// oluştur/ayarla/kapat döngüsü) İHMAL EDİLEBİLİR tutarken, testlerin
+/// (15-20 saniyelik watchdog zaman aşımlarına göre) HÂLÂ HIZLI/AÇIK
+/// başarısız olmasını SAĞLAR.
+const DEFAULT_ACCEPT_POLL_MS: u32 = 2000;
+
 /// `max_connections_per_worker`, `nox.http.serve_multicore`nin `max_
 /// connections` argümanının ORİJİNAL, HER ZAMAN VAR OLAN anlamıdır —
 /// "HER worker'ın KENDİ bağımsız sayacı" (paylaşımsız, thundering-herd
@@ -1272,13 +1285,16 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
         }
 
         const scheduler = bridge.currentFiberScheduler();
-        const conn_fd = if (shared_budget != null and scheduler != null)
-            (io_mod.nonBlockingAcceptWithTimeout(scheduler.?, h.listen_fd, SHARED_BUDGET_POLL_MS) catch |e| {
+        // Faz TEST.5: `shared_budget`e göre SADECE poll ARALIĞI değişir,
+        // mantık aynı kalır — `io_mod.nonBlockingAccept` (zaman-aşımsız)
+        // ARTIK HİÇ kullanılmıyor (unused ama ZARARSIZ, bilinçli olarak
+        // SİLİNMEDİ, bkz. plan dosyası).
+        const accept_poll_ms: u32 = if (shared_budget != null) SHARED_BUDGET_POLL_MS else DEFAULT_ACCEPT_POLL_MS;
+        const conn_fd = if (scheduler) |s|
+            (io_mod.nonBlockingAcceptWithTimeout(s, h.listen_fd, accept_poll_ms) catch |e| {
                 if (e == error.Timeout) continue :accept_loop;
                 break :accept_loop;
             })
-        else if (scheduler) |s|
-            io_mod.nonBlockingAccept(s, h.listen_fd) catch break :accept_loop
         else
             blockingAccept(h.listen_fd) catch break :accept_loop;
         served += 1;
@@ -1460,6 +1476,56 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
 // görünüyor — yine de bu KIRILGAN bir denge olduğundan, GELECEKTE bu testte
 // bir "asılı kalma"/segfault gözlemlenirse ÖNCE bu notu OKUYUN.
 
+/// Faz TEST.5: `tests/compat/child_watchdog.zig`nin `ChildWatchdog`ıyla
+/// AYNI ilke (arm/disarm, arka-plan iş parçacığı, zaman-aşımında zorla
+/// müdahale) — AMA bir `std.process.Child` YERİNE HAM bir POSIX fd
+/// üzerinde çalışır (bu dosyanın İÇ testleri GERÇEK bir alt-süreç DEĞİL,
+/// AYNI süreç İçİNDE bir `listen_fd` kullanır). `timeout_ms` İçİnde
+/// `disarm()` ÇAĞRILMAZSA `listen_fd`yi `closeSocket` İLE kapatır — bu,
+/// (a) senkron `blockingAccept`i DOĞRUDAN kesintiye uğratır (POSIX'te
+/// BAŞKA bir iş parçacığının bloke ETTİĞİ bir `accept()`/`read()`
+/// çağrısını `close()` GÜVENİLİR şekilde `EBADF`YLE SONLANDIRIR), (b)
+/// fiber/reaktör yolunda İSE Parça 1'in periyodik yeniden-denemesinin
+/// BİR SONRAKİ turunda (en fazla `DEFAULT_ACCEPT_POLL_MS` SONRA) TESPİT
+/// EDİLİR. Bu dosyanın KENDİ İÇ testleri DIŞINDA HİÇ KULLANILMADIĞINDAN
+/// (paylaşılan bir dosyaya ÇIKARILMASI GEREKMEZ).
+const FdWatchdog = struct {
+    done: std.atomic.Value(bool) = .init(false),
+    thread: std.Thread = undefined,
+    active: bool = false,
+
+    fn arm(self: *FdWatchdog, fd: posix.fd_t, timeout_ms: u32) !void {
+        if (builtin.os.tag == .windows) return; // bu ic testler zaten Windows CI'de calismiyor
+        self.thread = try std.Thread.spawn(.{}, run, .{ self, fd, timeout_ms });
+        self.active = true;
+    }
+
+    fn run(self: *FdWatchdog, fd: posix.fd_t, timeout_ms: u32) void {
+        const step_ms: i64 = 200;
+        var waited: i64 = 0;
+        while (waited < timeout_ms) : (waited += step_ms) {
+            if (self.done.load(.acquire)) return;
+            sleepMs(step_ms);
+        }
+        if (self.done.load(.acquire)) return;
+        _ = closeSocket(fd);
+    }
+
+    fn disarm(self: *FdWatchdog) void {
+        if (!self.active) return;
+        self.done.store(true, .release);
+        self.thread.join();
+    }
+};
+
+fn sleepMs(ms: i64) void {
+    const ts: posix.timespec = .{
+        .sec = @divTrunc(ms, std.time.ms_per_s),
+        .nsec = @mod(ms, std.time.ms_per_s) * std.time.ns_per_ms,
+    };
+    _ = std.c.nanosleep(&ts, null);
+}
+
 fn testConnect(port: u16) !posix.fd_t {
     if (builtin.os.tag == .windows) {
         const ws = io_mod.WinSock;
@@ -1586,6 +1652,11 @@ test "nox_http_serve_raw: GERÇEK bir TCP bağlantısı kabul edip std.http.Serv
     defer nox_http_server_close(rt, server);
     const port: u16 = @intCast(nox_http_server_port(server));
 
+    const h: *ServerHandle = @ptrCast(@alignCast(server));
+    var watchdog: FdWatchdog = .{};
+    try watchdog.arm(h.listen_fd, 15_000);
+    defer watchdog.disarm();
+
     TestHandlerLog.log.clearRetainingCapacity();
     TestHandlerLog.rt_ptr = rt;
 
@@ -1613,6 +1684,11 @@ test "Performans: needs_headers=false iken header kopyalama döngüsü GERÇEKTE
     const server = nox_http_server_listen(rt, 0) orelse return error.ListenFailed;
     defer nox_http_server_close(rt, server);
     const port: u16 = @intCast(nox_http_server_port(server));
+
+    const h: *ServerHandle = @ptrCast(@alignCast(server));
+    var watchdog: FdWatchdog = .{};
+    try watchdog.arm(h.listen_fd, 15_000);
+    defer watchdog.disarm();
 
     const sendWithHeaders = struct {
         fn run(p: u16) void {
@@ -1675,6 +1751,11 @@ test "nox_http_serve_raw: bir fiber İÇİNDEN çalıştırıldığında eşzama
     const server = nox_http_server_listen(rt, 0) orelse return error.ListenFailed;
     defer nox_http_server_close(rt, server);
     const port: u16 = @intCast(nox_http_server_port(server));
+
+    const h: *ServerHandle = @ptrCast(@alignCast(server));
+    var watchdog: FdWatchdog = .{};
+    try watchdog.arm(h.listen_fd, 15_000);
+    defer watchdog.disarm();
 
     TestHandlerLog.log.clearRetainingCapacity();
     TestHandlerLog.rt_ptr = rt;
@@ -1799,6 +1880,10 @@ test "Faz DD.1: PAYLAŞILAN bir listen_fd üzerinde İKİ BAĞIMSIZ iş parçac�
         port = std.mem.bigToNative(u16, addr.port);
     }
 
+    var watchdog: FdWatchdog = .{};
+    try watchdog.arm(fd, 15_000);
+    defer watchdog.disarm();
+
     const rt1 = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt1);
     const rt2 = asap.nox_runtime_init() orelse return error.InitFailed;
@@ -1854,6 +1939,11 @@ test "Faz Q.5: govde boyutu siniri asilirsa 413 Payload Too Large doner, handler
     defer nox_http_server_close(rt, server);
     const port: u16 = @intCast(nox_http_server_port(server));
 
+    const h: *ServerHandle = @ptrCast(@alignCast(server));
+    var watchdog: FdWatchdog = .{};
+    try watchdog.arm(h.listen_fd, 15_000);
+    defer watchdog.disarm();
+
     TestHandlerLog.log.clearRetainingCapacity();
     TestHandlerLog.rt_ptr = rt;
 
@@ -1888,6 +1978,11 @@ test "Faz Q.5: esizamanli baglanti siniri asilinca fazla baglanti hicbir HTTP ya
     const server = nox_http_server_listen(rt, 0) orelse return error.ListenFailed;
     defer nox_http_server_close(rt, server);
     const port: u16 = @intCast(nox_http_server_port(server));
+
+    const h: *ServerHandle = @ptrCast(@alignCast(server));
+    var watchdog: FdWatchdog = .{};
+    try watchdog.arm(h.listen_fd, 15_000);
+    defer watchdog.disarm();
 
     TestHandlerLog.log.clearRetainingCapacity();
     TestHandlerLog.rt_ptr = rt;
@@ -1957,6 +2052,11 @@ test "Faz HH.7: baglanti HICBIR sey gondermezse okuma zaman asimiyla sessizce ka
     defer nox_http_server_close(rt, server);
     const port: u16 = @intCast(nox_http_server_port(server));
 
+    const h: *ServerHandle = @ptrCast(@alignCast(server));
+    var watchdog: FdWatchdog = .{};
+    try watchdog.arm(h.listen_fd, 15_000);
+    defer watchdog.disarm();
+
     TestHandlerLog.log.clearRetainingCapacity();
     TestHandlerLog.rt_ptr = rt;
 
@@ -1997,6 +2097,11 @@ test "Faz HH.7: zaman asimi ICINDE tamamlanan normal bir istek YANLIS-POZITIF ol
     const server = nox_http_server_listen(rt, 0) orelse return error.ListenFailed;
     defer nox_http_server_close(rt, server);
     const port: u16 = @intCast(nox_http_server_port(server));
+
+    const h: *ServerHandle = @ptrCast(@alignCast(server));
+    var watchdog: FdWatchdog = .{};
+    try watchdog.arm(h.listen_fd, 15_000);
+    defer watchdog.disarm();
 
     TestHandlerLog.log.clearRetainingCapacity();
     TestHandlerLog.rt_ptr = rt;
@@ -2144,6 +2249,11 @@ test "serveImpl: GERÇEK çapraz-worker bağlantı çalma — SO_REUSEPORT denge
     const server = nox_http_server_listen(pool.rt, 0) orelse return error.ListenFailed;
     defer nox_http_server_close(pool.rt, server);
     const port: u16 = @intCast(nox_http_server_port(server));
+
+    const h: *ServerHandle = @ptrCast(@alignCast(server));
+    var watchdog: FdWatchdog = .{};
+    try watchdog.arm(h.listen_fd, 15_000);
+    defer watchdog.disarm();
 
     var ctx = StealProofCtx{ .rt = pool.rt };
     const k = 24;
