@@ -601,6 +601,21 @@ fn testListenerOn127001(port_out: *u16) !posix.fd_t {
     return fd;
 }
 
+/// Faz TEST.4 (bkz. plan dosyası): `tests/cli/search_test.zig`/`publish_
+/// test.zig`/`upgrade_test.zig`/`tests/compat/http_stdlib_golden_test.zig`nin
+/// (Faz TEST.1, v1.80.6) AYNI, ZATEN kanıtlanmış `acceptWithTimeout`
+/// yardımcısının BİREBİR bir kopyası — o dört dosya düzeltilirken BU dosyanın
+/// KENDİ iç testlerinin (`nox_http_get_raw`) AYNI zaman-aşımsız `std.c.
+/// accept()` hatasını taşıdığı GÖZDEN KAÇMIŞTI (istemci bağlantısı
+/// KURULAMAZSA `accept()` SONSUZA KADAR bekler, `defer server_thread.
+/// join()` de test sürecini SONSUZA KADAR askıda bırakır).
+fn acceptWithTimeout(listen_fd: posix.fd_t, timeout_ms: i32) posix.fd_t {
+    var pfd = [1]std.c.pollfd{.{ .fd = listen_fd, .events = std.c.POLL.IN, .revents = 0 }};
+    const n = std.c.poll(&pfd, 1, timeout_ms);
+    if (n <= 0) return -1;
+    return std.c.accept(listen_fd, null, null);
+}
+
 /// Bir bağlantı kabul eder, isteği (yalnızca `\r\n\r\n`e kadar) okur, SABİT
 /// bir HTTP/1.1 yanıtı (durum 200, `X-Nox-Test: merhaba` başlığı, `"hello"`
 /// gövdesi) yazar, bağlantıyı kapatır.
@@ -647,7 +662,7 @@ fn testServeOnceDelayed(listen_fd: posix.fd_t, delay_ms: i64) void {
         }
         return;
     }
-    const conn = std.c.accept(listen_fd, null, null);
+    const conn = acceptWithTimeout(listen_fd, 15_000);
     if (conn < 0) return;
     defer _ = std.c.close(conn);
 

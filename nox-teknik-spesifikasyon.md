@@ -20377,6 +20377,77 @@ araştırma bunların İçİNDE bir hata BULMADI.
 
 ---
 
+## 3.159 Faz TEST.4 — `http_client.zig`nin KENDİ iç testlerindeki AYNI zaman-aşımsız `accept()` boşluğunu kapatma (v1.80.9)
+
+**Context**: v1.80.8 (Faz TEST.3) push edildikten SONRA GERÇEK CI
+doğrulaması yapıldı (`gh run view 34960504078`) — Linux (aarch64) job'u
+**HÂLÂ** 30 dakikalık zaman aşımına TAKILDI (`The job has exceeded the
+maximum execution time of 30m0s`). Loglar İncelendiğinde: `http_serve_
+multicore_golden_test.zig`nin bir testi (`nox.http.listen + nox.thread.
+start + nox.http.serve_fd: ...`) `"failed without output"` İLE HIZLI
+BAŞARISIZ OLDU (TEST.3'ün watchdog'unun ÇALIŞTIĞININ kanıtı — SIGKILL
+sonrası panik izi OLMADAN "failed" raporlanması BEKLENEN davranıştır) —
+AMA `zig build`nin KENDİ ANA süreci, BU başarısızlıktan 11 DAKİKA SONRA
+BİLE HÂLÂ çalışıyordu (Post-job cleanup: `"Terminate orphan process: pid
+(zig), pid (build), pid (test)"`) — YANİ TEST.3'ün DÜZELTTİĞİ yüzeyin
+DIŞINDA, PARALEL çalışan BAŞKA bir test ikilisi HÂLÂ GERÇEKTEN askıdaydı.
+
+**Kök neden**: Faz TEST.3'ün ARAŞTIRMASI SIRASINDA (bkz. §3.158) BULUNUP
+BİLİNÇLİ olarak O turun kapsamına ALINMAYAN bir boşluk — `runtime/
+stdlib_shims/http_client.zig`nin İKİ İÇ testi (`nox_http_get_raw: gerçek
+yerel HTTP sunucusuna GET isteği...` / `...bir fiber İÇİNDEN çağrıldığında
+...`), `testServeOnceDelayed`i `std.Thread.spawn` İLE arka planda
+başlatıp `defer server_thread.join()` İLE (zaman aşımsız) BEKLİYORDU.
+`testServeOnceDelayed`nin KENDİSİ (POSIX dalında) ZAMAN-AŞIMSIZ, HAM
+`std.c.accept(listen_fd, null, null)` çağırıyordu — Faz TEST.1'in (v1.80.6)
+DÜZELTTİĞİ, `search_test.zig`/`publish_test.zig`/`upgrade_test.zig`/
+`http_stdlib_golden_test.zig`deki AYNI hata sınıfının, o turda GÖZDEN
+KAÇAN BEŞİNCİ (VE SON) bir örneğiydi: `nox_http_get_raw`nin (bu
+TESTLERİN İSTEMCİSİ) bağlanamaması durumunda sunucu iş parçacığı
+`accept()`te SONSUZA KADAR bekler, `join()` de test SÜRECİNİ SONSUZA
+KADAR askıda bırakır. Bu, `std.process.Child` bir ALT SÜREÇLE İLGİLİ
+DEĞİL — `std.Thread` İLE aynı süreç İÇİNDE spawn edilen bir iş
+parçacığıyla İLGİLİ olduğundan, TEST.3'ün `child_watchdog.zig`si
+(SIGKILL-tabanlı) BURAYA UYGULANAMAZDI — DOĞRU çözüm, TEST.1'in KENDİ
+`acceptWithTimeout` desenini (BLOKLAYICI ÇAĞRININ KENDİSİNE bir zaman
+aşımı EKLEMEK) TEKRAR KULLANMAKTI.
+
+**Düzeltme**: `runtime/stdlib_shims/http_client.zig`ye, TEST.1'in KENDİ,
+ZATEN kanıtlanmış `acceptWithTimeout(listen_fd, timeout_ms)` yardımcısının
+(`std.c.poll` İLE `accept()`TEN ÖNCE bir zaman aşımı BEKLEYEN, `n <= 0`
+İSE `-1` DÖNEN) BİREBİR bir kopyası EKLENDİ; `testServeOnceDelayed`nin
+POSIX dalındaki `const conn = std.c.accept(listen_fd, null, null);`
+satırı `const conn = acceptWithTimeout(listen_fd, 15_000);` OLARAK
+DEĞİŞTİRİLDİ (Windows dalına DOKUNULMADI — bu iç testler `windows-
+frontend` CI job'unun SADECE `zig build frontend-test` çalıştırması
+YÜZÜNDEN Windows'ta HİÇ ÇALIŞMIYOR).
+
+**Doğrulama**: `zig ast-check`; **kırmızı-takım** (GEÇİCİ bir test —
+hiçbir istemci BAĞLANMADAN `testServeOnce`i çağırıp `acceptWithTimeout`in
+GERÇEKTEN ~15 saniye SONRA döndüğünü, SONSUZA KADAR beklemediğini
+kanıtladı, SONRA KALDIRILDI); `zig build noxrt-test` (Debug: 172/172,
+ReleaseFast: 172/172) TEMİZ geçti; TAM paket `zig build test` (Debug,
+`-j10`) çalıştırıldığında BU MAKİNENİN KENDİ, ağır paralel-yük kaynak-
+çekişmesi ALTINDA (BU turun değişikliğinden BAĞIMSIZ) BİRDEN FAZLA HTTP
+golden testi `term == .exited` beklentisiyle başarısız OLDU — İncelendiğinde
+BUNLARIN HEPSİ Faz TEST.3'ün watchdog'unun TAM OLARAK TASARLANDIĞI GİBİ
+çalışıp (istemci bağlanamayınca 20 saniye SONRA süreci ÖLDÜRÜP) HIZLI/AÇIK
+bir şekilde başarısız OLMASIYDI (öncesinde SESSİZCE sonsuza kadar askıda
+kalırlardı) — HER BİRİ İZOLE (`zig test` DOĞRUDAN, paralel yük OLMADAN)
+çalıştırıldığında TEMİZ geçti, GERÇEK bir regresyon OLMADIĞI doğrulandı;
+`NOX_STRESS_ROUNDS=800 zig build stress-test -Doptimize=ReleaseFast`
+temiz.
+
+**Kapsam DIŞI**: bu makinenin KENDİ `-j10` ağır-paralel-yük kaynak-
+çekişmesi (Debug+ReleaseFast'i AYNI ANDA derleyip TÜM `.qbe`+`cc`-ağırlıklı
+HTTP golden testlerini AYNI ANDA çalıştırırken GÖZLENEN bağlantı
+başarısızlıkları) — BU, watchdog'ların (TEST.3+TEST.4) ARTIK sessizce
+GİZLEMEDEN HIZLI/AÇIK biçimde raporladığı, ÖNCEDEN de VAR OLAN AMA GÖRÜNMEZ
+olan bir kaynak-baskısı durumu, bu turun/mekanizmanın KENDİSİNİN bir
+BAŞARISIZLIĞI DEĞİL.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

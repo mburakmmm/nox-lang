@@ -14,6 +14,51 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.80.9]
+
+### Değiştirildi (Faz TEST.4 — `http_client.zig`nin KENDİ iç testlerindeki AYNI zaman-aşımsız `accept()` boşluğunu kapatma)
+- v1.80.8 (Faz TEST.3) push edildikten SONRA GERÇEK CI'de doğrulama
+  yapıldığında, Linux (aarch64) job'unun HÂLÂ 30 dakikalık zaman aşımına
+  TAKILDIĞI görüldü — `http_serve_multicore_golden_test.zig`nin (Faz
+  TEST.3'ün KENDİ watchdog'unun ZATEN korduğu) bir testi HIZLI şekilde
+  başarısız oldu (watchdog ÇALIŞTI), AMA `zig build`nin KENDİ ana süreci
+  30 dakika SONRA hâlâ orphan `zig`/`build`/`test` süreçleriyle askıda
+  kalmaya DEVAM ETTİ — TEST.3'ün kapsamı DIŞINDA bırakılan, ÖNCEDEN
+  belgelenen bir boşluk GERÇEKTEN tetiklenmişti.
+- Kök neden: `runtime/stdlib_shims/http_client.zig`nin İKİ İÇ testi
+  (`nox_http_get_raw: gerçek yerel HTTP sunucusuna GET isteği...` /
+  `...bir fiber İÇİNDEN çağrıldığında...`), `testServeOnceDelayed`i
+  `std.Thread.spawn` İLE arka planda başlatıp `defer server_thread.
+  join()` İLE (zaman aşımsız) bekliyordu — `testServeOnceDelayed`nin
+  KENDİSİ İSE (POSIX dalında) zaman-aşımsız, HAM `std.c.accept(listen_fd,
+  null, null)` çağırıyordu. Bu, Faz TEST.1'in (v1.80.6) `tests/cli/
+  search_test.zig`/`publish_test.zig`/`upgrade_test.zig`/`tests/compat/
+  http_stdlib_golden_test.zig`de DÜZELTTİĞİ AYNI hata sınıfının, o
+  turda GÖZDEN KAÇAN BEŞİNCİ bir örneğiydi — istemci (`nox_http_get_raw`)
+  bağlanamazsa sunucu iş parçacığı `accept()`te SONSUZA KADAR bekler,
+  `join()` de test sürecini SONSUZA KADAR askıda bırakır.
+- Düzeltme: TEST.1'in KENDİ, ZATEN kanıtlanmış `acceptWithTimeout(listen_
+  fd, timeout_ms)` yardımcısının (bir `poll()` çağrısıyla `accept()`e bir
+  15 saniyelik zaman aşımı ekleyen) BİREBİR bir kopyası `http_client.zig`ye
+  eklendi, `testServeOnceDelayed`nin POSIX dalındaki ham `std.c.accept`
+  çağrısı BUNUNLA DEĞİŞTİRİLDİ (Windows dalına DOKUNULMADI — bu iç
+  testler Windows CI'de HİÇ ÇALIŞMIYOR).
+- Doğrulama: `zig ast-check`; kırmızı-takım (GEÇİCİ bir test, hiçbir
+  istemci BAĞLANMADAN `testServeOnce`i çağırıp `acceptWithTimeout`in
+  GERÇEKTEN 15 saniye SONRA döndüğünü, SONSUZA KADAR beklemediğini
+  kanıtladı, SONRA KALDIRILDI); `zig build noxrt-test` (Debug: 172/172,
+  ReleaseFast: 172/172) TEMİZ geçti; TAM paket `zig build test` (Debug)
+  çalıştırıldığında `-j10`nin AĞIR paralel yükü ALTINDA (bu MAKİNENİN
+  KENDİ, BU turun değişikliğinden BAĞIMSIZ kaynak-çekişmesi) BİRDEN FAZLA
+  HTTP golden testi `term == .exited` beklentisiyle başarısız oldu —
+  BUNLARIN HEPSİ Faz TEST.3'ün watchdog'unun TAM OLARAK TASARLANDIĞI GİBİ
+  çalışıp (istemci bağlanamayınca 20 saniye SONRA süreci ÖLDÜRÜP) HIZLI/
+  AÇIK bir şekilde başarısız OLMASIYDI (öncesinde SESSİZCE sonsuza kadar
+  askıda kalırlardı) — HER BİRİ İZOLE (`zig test` DOĞRUDAN, paralel yük
+  OLMADAN) çalıştırıldığında TEMİZ geçti, GERÇEK bir regresyon OLMADIĞI
+  doğrulandı; `NOX_STRESS_ROUNDS=800 zig build stress-test -Doptimize=
+  ReleaseFast` temiz.
+
 ## [1.80.8]
 
 ### Değiştirildi (Faz TEST.3 — HTTP golden testlerindeki `child.wait()`/`allocRemaining()` askı riskini bir watchdog ile kapatma)
