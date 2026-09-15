@@ -20109,6 +20109,65 @@ test); `-Doptimize=ReleaseFast` → 1121/1121 (test GERÇEKTEN çalışıp
 GEÇTİ) — v1.79.2'nin dead-stripping düzeltmesinin KENDİSİ hâlâ DOĞRU,
 SADECE testin Debug-modunda ÇALIŞTIRILMASI YANLIŞTI.
 
+## 3.156 Faz TEST.1 — v1.80.3'ün Linux (aarch64) CI hang'inin GERÇEK kök nedeni: zaman-aşımsız `accept()` test yardımcıları (v1.80.6)
+
+v1.80.3/v1.80.4'ün push'ları SONRASI Linux (aarch64) job'u İKİ KEZ ART
+ARDA (v1.80.3'ün §3.153/§3.154 girdilerinin "muhtemelen runner-kaynaklı
+yavaşlık" hipotezini test etmek İçİn AYNI commit'e karşı yapılan bir
+rerun DAHİL) TAM 30-dakikalık CI zaman-aşımına takıldı — İKİNCİ hang
+BU hipotezi ÇÜRÜTTÜ, GERÇEK/tekrarlanabilir bir sorun OLDUĞUNU KANITLADI.
+
+**Reprodüksiyon metodolojisi**: native (emülasyonsuz) bir aarch64 Linux/
+Docker konteynerinde (bu makine Apple Silicon OLDUĞUNDAN qemu GEREKMEDİ)
+`docker run --init` (tini'yi PID 1 yaparak GERÇEKÇİ bir zombi-reaping
+ortamı KURARAK — İLK, `--init` OLMAYAN deneme GERÇEK sinyali 165 asla-
+reap-edilmeyen zombi süreciyle GÜRÜLTÜYE boğmuştu) VE GERÇEK bir clang/
+LLVM kurulumuyla (İLK denemede EKSİKTİ, `llvm_golden_test.zig`nin
+TAMAMININ anlamsızca fail-fast olmasına yol AÇMIŞTI) `zig build test`
+(Debug) GERÇEKTEN reprodüklendi — 3 test ikilisi 25+ dakika BOYUNCA
+`%0.0 CPU`da SABİT kaldı, `gdb -p <pid> -batch -ex 'thread apply all bt'`
+İLE CANLI yığın izleri alındı.
+
+**Kök neden (KANITLANDI, ÖNCEKİ M:N zamanlayıcı/STW-bariyeri teorisiyle
+HİÇ İLGİLİ DEĞİL)**: `tests/cli/search_test.zig`/`publish_test.zig`/
+`upgrade_test.zig` VE `tests/compat/http_stdlib_golden_test.zig`'in
+KENDİ, ham-soket sahte-sunucu test yardımcıları (`testServeGzipIndex`/
+`serveOnePublishResponse`/`serveFixtureRoutes`/`testServeOnce`/
+`testServeOnceRaw`) `std.c.accept(listen_fd, null, null)`i ZAMAN-AŞIMSIZ,
+BLOKLAYICI olarak çağırıyordu. HER İKİ`gdb` yığın izi de (SADECE
+`search_test.zig`/`publish_test.zig`/`upgrade_test.zig`'e AİT 3 stuck
+süreç İçİn, İKİ AYRI reprodüksiyon turunda TUTARLI olarak) `Thread.join()`
+İçİnde askıda olduklarını gösterdi (`accept()`i çağıran sunucu iş
+parçacığı GERİ dönmediğinden). GERÇEK `noxc` alt-süreci (istemci) HERHANGİ
+bir nedenle (`zig build test`nin TAM paralel paketi ALTINDA ağır kaynak-
+çekişmesi — KESİN tetikleyici mekanizma İZOLE EDİLEMEDİ, saf CPU-yükü
+altında TEK BAŞINA (izole `zig test` çağrısıyla, 10/10 ardışık deneme)
+tekrar-ÜRETİLEMEDİ, SADECE `zig build test`nin TAM paralel bağlamında
+ortaya ÇIKTI) bağlanmadan ERKEN çıkarsa/başarısız olursa, sunucu iş
+parçacığı `accept()` İçİNDE SONSUZA KADAR bekliyor, `defer server_thread.
+join()` de dolayısıyla TÜM test SÜRECİNİ SONSUZA KADAR askıda bırakıyordu
+— bu da `zig build test`nin KENDİSİNİN HİÇBİR ÇIKTI ÜRETMEDEN sonsuza
+kadar askıda kalmasına (CI'DE gözlenen "sıfır çıktı, 30 dakika sessizlik"
+deseninin BİREBİR AÇIKLAMASI) yol açıyordu.
+
+**Düzeltme (MN.11'in CI `timeout-minutes`iyle AYNI savunma-derinliği
+ilkesi — kök neden TAM olarak izole edilemese de, HANGİSİ olursa olsun
+SINIRLI bir sürede geri dönmeye ZORLANIR)**: 4 dosyanın HER BİRİNE (KASITLI
+tekrar konvansiyonuyla, AYRI birer kopya OLARAK) `poll()` tabanlı bir
+`acceptWithTimeout(listen_fd, timeout_ms)` yardımcısı EKLENDİ — 15 saniye
+İçİnde bir bağlantı GELMEZSE `-1` döner, MEVCUT `if (conn < 0) return;`
+koruması BUNU zaten GÜVENLE ele alır (sunucu iş parçacığı TEMİZ döner,
+`join()` TAMAMLANIR, test KENDİ assertion'larıyla HIZLI/AÇIK bir şekilde
+BAŞARISIZ olur — sessiz sonsuz askı YERİNE).
+
+**Doğrulama**: Native aarch64 Docker'da (ÖNCEDEN 18-30 dakikada zaman-
+aşımına TAKILAN AYNI senaryo, AYNI konteyner kurulumu) düzeltme SONRASI
+test süreci **2 dakikada** temiz tamamlandı — hang TAMAMEN ORTADAN
+KALKTI (konteynerin KENDİ, tekrarlanan yeniden-kullanımdan kaynaklanan
+BAĞIMSIZ/İLİŞKİSİZ bir `noxrt.o` eksikliği GÜRÜLTÜSÜ HARİÇ — TEMİZ bir
+YEREL Mac koşusuyla, 1120/1121, 1 atlandı, AYRICA doğrulandı). `zig
+build test` (yerel, Debug, TAM paket) 1120/1121 TEMİZ.
+
 ---
 
 ## 5. Hata Yönetimi

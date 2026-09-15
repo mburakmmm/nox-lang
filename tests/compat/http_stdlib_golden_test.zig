@@ -106,8 +106,18 @@ fn testListenerOn127001(port_out: *u16) !posix.fd_t {
     return fd;
 }
 
+/// v1.80.6 (bkz. `tests/cli/search_test.zig`nin AYNI adlı yardımcısının
+/// belge notu — BİREBİR AYNI gerekçe/savunma-derinliği ilkesi, BU dosyaya
+/// AYRI bir kopya olarak uygulanır).
+fn acceptWithTimeout(listen_fd: posix.fd_t, timeout_ms: i32) posix.fd_t {
+    var pfd = [1]std.c.pollfd{.{ .fd = listen_fd, .events = std.c.POLL.IN, .revents = 0 }};
+    const n = std.c.poll(&pfd, 1, timeout_ms);
+    if (n <= 0) return -1;
+    return std.c.accept(listen_fd, null, null);
+}
+
 fn testServeOnce(listen_fd: posix.fd_t) void {
-    const conn = std.c.accept(listen_fd, null, null);
+    const conn = acceptWithTimeout(listen_fd, 15_000);
     if (conn < 0) return;
     defer _ = std.c.close(conn);
 
@@ -136,7 +146,7 @@ fn testServeOnce(listen_fd: posix.fd_t) void {
 /// gövdeyi taşıyacağı ÇAĞIRAN tarafından (gzip fixture'ı VEYA gömülü-NUL
 /// fixture'ı İÇİN) BELİRLENİR.
 fn testServeOnceRaw(listen_fd: posix.fd_t, headers: []const u8, body: []const u8) void {
-    const conn = std.c.accept(listen_fd, null, null);
+    const conn = acceptWithTimeout(listen_fd, 15_000);
     if (conn < 0) return;
     defer _ = std.c.close(conn);
 

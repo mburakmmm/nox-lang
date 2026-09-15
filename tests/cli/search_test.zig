@@ -173,11 +173,31 @@ fn testListenerOn127001(port_out: *u16) !posix.fd_t {
     return fd;
 }
 
+/// v1.80.6 (bkz. CHANGELOG.md/nox-teknik-spesifikasyon.md §3.156):
+/// `std.c.accept`in ÇIPLAK (zaman-aşımsız) hâli, GERÇEK bir CI koşusunda
+/// (Linux aarch64, `zig build test`nin TAM paralel paketi İÇİNDE, bir
+/// Docker/aarch64 konteynerinde GERÇEKTEN reprodüklenip `gdb`yle KANITLANDI)
+/// istemci alt-süreci (GERÇEK `noxc` çağrısı) BEKLENEN bağlantıyı HİÇ
+/// KURMADAN döndüğünde (ağır kaynak-çekişmesi ALTINDA, KESİN kök neden
+/// henüz İZOLE EDİLEMEDİ — AMA semptom KESİN: sunucu iş parçacığı `accept()`
+/// içinde SONSUZA KADAR bekliyor, `defer server_thread.join()` de dolayısıyla
+/// SONSUZA KADAR bloklanıyor) test sürecini SONSUZA KADAR ASKIDA bırakıyordu
+/// — `MN.11`in CI `timeout-minutes` düzeltmesiyle AYNI savunma-derinliği
+/// ilkesi: kök neden TAM olarak KANITLANAMASA da, HANGİSİ olursa olsun
+/// `accept()`i SINIRLI bir sürede GERİ dönmeye ZORLAYIP (`poll()` İLE)
+/// sessiz bir sonsuz askıyı HIZLI/AÇIK bir test BAŞARISIZLIĞINA çevirir.
+fn acceptWithTimeout(listen_fd: posix.fd_t, timeout_ms: i32) posix.fd_t {
+    var pfd = [1]std.c.pollfd{.{ .fd = listen_fd, .events = std.c.POLL.IN, .revents = 0 }};
+    const n = std.c.poll(&pfd, 1, timeout_ms);
+    if (n <= 0) return -1;
+    return std.c.accept(listen_fd, null, null);
+}
+
 /// Bir bağlantı kabul eder, isteği okur, `gzip_body`yi (ZATEN gzip
 /// sıkıştırılmış baytlar — çağıran hazırlar) `Content-Encoding: gzip` İLE
 /// yanıtlar.
 fn testServeGzipIndex(listen_fd: posix.fd_t, gzip_body: []const u8) void {
-    const conn = std.c.accept(listen_fd, null, null);
+    const conn = acceptWithTimeout(listen_fd, 15_000);
     if (conn < 0) return;
     defer _ = std.c.close(conn);
 

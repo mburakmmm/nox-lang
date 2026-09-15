@@ -14,6 +14,41 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.80.6]
+
+### Düzeltildi (v1.80.3'ün Linux (aarch64) CI hang'inin GERÇEK kök nedeni bulundu)
+- **Faz TEST.1**: v1.80.3/v1.80.4'ün push'ları SONRASI Linux (aarch64) job'u
+  İKİ KEZ ART ARDA (aynı commit'e karşı rerun DAHİL) TAM 30-dakikalık CI
+  zaman-aşımına takıldı — v1.80.3'ün CHANGELOG girdisinde önerilen
+  "muhtemelen runner-kaynaklı yavaşlık" hipotezi, İKİNCİ hang İLE
+  ÇÜRÜTÜLDÜ. Native (emülasyonsuz) bir aarch64 Linux/Docker konteynerinde
+  (bu makine Apple Silicon olduğundan qemu gerekmedi), `docker run --init`
+  (tini'yi PID 1 yaparak GERÇEKÇİ bir zombi-reaping ortamı kurarak) VE
+  GERÇEK bir clang/LLVM kurulumuyla GERÇEKTEN reprodüklendi, VE `gdb -p`
+  İLE stuck süreçlerin CANLI yığın izleri ALINDI. **Kök neden, ÖNCEKİ
+  M:N zamanlayıcı/STW-bariyeri teorisiyle HİÇ İLGİLİ DEĞİL**: `tests/
+  cli/search_test.zig`/`publish_test.zig`/`upgrade_test.zig` VE `tests/
+  compat/http_stdlib_golden_test.zig`'in KENDİ, ham-soket sahte-sunucu
+  test yardımcıları (`std.c.accept(listen_fd, null, null)`) ZAMAN-AŞIMSIZ
+  BLOKLAYICI bir çağrıydı — GERÇEK `noxc` alt-süreci (istemci) HERHANGİ
+  bir nedenle (`zig build test`nin TAM paralel paketi ALTINDA ağır kaynak-
+  çekişmesi, KESİN tetikleyici İZOLE EDİLEMEDİ AMA semptom GDB İLE KANITLANDI)
+  bağlanmadan/erken çıkarsa, sunucu iş parçacığı `accept()` İçİNDE SONSUZA
+  KADAR bekliyor, `defer server_thread.join()` de dolayısıyla TÜM test
+  SÜRECİNİ SONSUZA KADAR askıda bırakıyordu.
+- **Düzeltme**: 4 dosyanın HER BİRİNE (`search_test.zig`/`publish_test.
+  zig`/`upgrade_test.zig`/`http_stdlib_golden_test.zig`), MN.11'in CI
+  `timeout-minutes`iyle AYNI savunma-derinliği ilkesiyle, `poll()` tabanlı
+  bir `acceptWithTimeout(listen_fd, 15_000)` yardımcısı EKLENDİ — kök
+  neden TAM olarak izole edilemese de, `accept()`i 15 saniyede GERİ
+  dönmeye ZORLAYARAK sessiz bir sonsuz askıyı HIZLI/AÇIK bir test
+  BAŞARISIZLIĞINA çevirir.
+- **Doğrulama**: Native aarch64 Docker'da (ÖNCEDEN 18-30 dakikada zaman-
+  aşımına TAKILAN AYNI senaryo) düzeltme SONRASI test süreci **2 dakikada**
+  temiz tamamlandı — hang TAMAMEN ORTADAN KALKTI. `zig build test`
+  (yerel, Debug) 1120/1121 (1 atlandı — v1.80.5'in dead-stripping testi)
+  TEMİZ.
+
 ## [1.80.5]
 
 ### Düzeltildi (GERÇEK bir Linux (x86-64) CI koşusuyla bulunan, KESİN/tekrarlanabilir bir dead-stripping test hatası)

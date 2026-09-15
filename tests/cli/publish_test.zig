@@ -49,11 +49,22 @@ fn contentLengthOf(headers: []const u8) usize {
     return 0;
 }
 
+/// v1.80.6 (bkz. `search_test.zig`nin AYNI adlı yardımcısının belge notu —
+/// BİREBİR AYNI gerekçe/savunma-derinliği ilkesi, BU dosyaya AYRI bir
+/// kopya olarak uygulanır, `testListenerOn127001`nin ZATEN KURULU "kasıtlı
+/// tekrar" konvansiyonuyla TUTARLI).
+fn acceptWithTimeout(listen_fd: posix.fd_t, timeout_ms: i32) posix.fd_t {
+    var pfd = [1]std.c.pollfd{.{ .fd = listen_fd, .events = std.c.POLL.IN, .revents = 0 }};
+    const n = std.c.poll(&pfd, 1, timeout_ms);
+    if (n <= 0) return -1;
+    return std.c.accept(listen_fd, null, null);
+}
+
 /// Tek bir bağlantı kabul eder, isteği (başlıklar + gövde, TAMAMEN
 /// drenaj edilir) okur, `response_body`yi `Content-Type: application/
 /// json` İLE yanıtlar.
 fn serveOnePublishResponse(listen_fd: posix.fd_t, response_body: []const u8) void {
-    const conn = std.c.accept(listen_fd, null, null);
+    const conn = acceptWithTimeout(listen_fd, 15_000);
     if (conn < 0) return;
     defer _ = std.c.close(conn);
 

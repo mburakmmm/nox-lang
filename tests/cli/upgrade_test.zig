@@ -65,6 +65,16 @@ fn extractPath(req: []const u8) []const u8 {
     return it.next() orelse "";
 }
 
+/// v1.80.6 (bkz. `search_test.zig`nin AYNI adlı yardımcısının belge notu —
+/// BİREBİR AYNI gerekçe/savunma-derinliği ilkesi, BU dosyaya AYRI bir
+/// kopya olarak uygulanır).
+fn acceptWithTimeout(listen_fd: posix.fd_t, timeout_ms: i32) posix.fd_t {
+    var pfd = [1]std.c.pollfd{.{ .fd = listen_fd, .events = std.c.POLL.IN, .revents = 0 }};
+    const n = std.c.poll(&pfd, 1, timeout_ms);
+    if (n <= 0) return -1;
+    return std.c.accept(listen_fd, null, null);
+}
+
 /// `routes`teki İLK EŞLEŞEN rotayı bulup yanıtlar; hiçbiri EŞLEŞMEZSE 404
 /// döner. `num_requests` bağlantı KABUL EDİLİR (HER biri TEK bir istek/
 /// yanıt) — `noxc upgrade`nin YAPACAĞI TOPLAM HTTP çağrısı sayısıyla AYNI
@@ -72,7 +82,7 @@ fn extractPath(req: []const u8) []const u8 {
 fn serveFixtureRoutes(listen_fd: posix.fd_t, routes: []const Route, num_requests: usize) void {
     var handled: usize = 0;
     while (handled < num_requests) : (handled += 1) {
-        const conn = std.c.accept(listen_fd, null, null);
+        const conn = acceptWithTimeout(listen_fd, 15_000);
         if (conn < 0) return;
         defer _ = std.c.close(conn);
 
