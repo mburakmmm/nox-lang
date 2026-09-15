@@ -14,7 +14,69 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
-## [1.80.7]
+## [1.80.8]
+
+### Değiştirildi (Faz TEST.3 — HTTP golden testlerindeki `child.wait()`/`allocRemaining()` askı riskini bir watchdog ile kapatma)
+- v1.80.7'nin (Faz TEST.2) doğrulaması SIRASINDA kullanıcının daha önce
+  istediği CI kontrolü yapıldığında (`gh run list --workflow=ci.yml`),
+  v1.80.3'ten (Faz MN.11, "CI hang'ini düzelttiği" iddia edilen commit)
+  v1.80.6'ya (Faz TEST.1) KADAR SON DÖRT push'un DA Linux (aarch64) job'unda
+  TAM OLARAK 30 dakikada (MN.11'in eklediği `timeout-minutes: 30`) zaman
+  aşımına uğrayıp BAŞARISIZ OLDUĞU görüldü — YANİ TEST.1'in düzeltmesi
+  ASIL hang'i ÇÖZMEMİŞTİ, sadece 6 saatlik sessiz bir askıyı 30 dakikalık
+  açık bir başarısızlığa ÇEVİRMİŞTİ.
+- Kök neden: TEST.1 (v1.80.6) SADECE 4 dosyadaki mock-sunucu test
+  yardımcılarının (`std.c.accept()`'i DOĞRUDAN çağıran) çağrı sitelerini
+  düzeltmişti — AMA `tests/compat/` altındaki `nox.http.serve*`/`Router`
+  golden testlerinin BÜYÜK ÇOĞUNLUĞU (GERÇEK, derlenmiş bir Nox HTTP-
+  sunucusu ikilisini `std.process.spawn` İLE arka planda başlatıp,
+  istemci bağlantıları AYRI iş parçacıklarında test eden) TAMAMEN AYRI
+  bir yüzey taşıyordu: istemci bağlantılarından HERHANGİ biri (`zig build
+  test -j10`nin ağır kaynak çekişmesi ALTINDA) bağlanamazsa, sunucu ASLA
+  `max_connections`e ulaşmaz, `accept()`te SONSUZA KADAR bekler — test
+  süreci `allocRemaining()`/`child.wait()`te (İKİSİ de zaman aşımsız)
+  SONSUZA KADAR bloke olur. Bu, bu oturumun KENDİSİNİN Faz TEST.2
+  doğrulaması SIRASINDA yerel olarak GÖZLEMLEDİĞİ, "takılmış gibi"
+  görünen askıyla BİREBİR aynı semptomdu.
+- Doğrulama: İKİ izole `zig run` smoke testiyle (bir `sleep 30` alt-
+  süreci `std.process.spawn` İLE başlatılıp, AYRI bir "watchdog" iş
+  parçacığının 500ms sonra `std.posix.kill(pid, .KILL)` (HAM PID
+  üzerinden, `Child` struct'ına HİÇ dokunmadan) ÇAĞIRMASIYLA) hem
+  `allocRemaining` hem `child.wait()`in NEREDEYSE ANINDA (~500ms İçİnde)
+  döndüğü KANITLANDI.
+- `tests/compat/child_watchdog.zig` (YENİ, HİÇBİR `test` bloğu İçERMEYEN
+  paylaşılan yardımcı dosya): `ChildWatchdog` struct'ı, `arm(child,
+  timeout_ms)` (bir izleyici iş parçacığı BAŞLATIR) + `disarm()` (izleyiciyi
+  DURDURUP joinler). Watchdog, `timeout_ms` içinde `disarm()` çağrılmazsa
+  `std.posix.kill(pid, .KILL)` GÖNDERİR — HAM PID üzerinden, `std.process.
+  Child` struct'ının KENDİSİNE HİÇ dokunmadan (İKİ farklı iş parçacığının
+  AYNI `Child` struct'ını eş zamanlı DEĞİŞTİRMESİNİ önleyen BİLİNÇLİ bir
+  tasarım kararı — `Child.kill(io)` YERİNE ham `std.posix.kill` kullanılması
+  BUNDAN dolayı).
+- 6 dosyadaki 16 çağrı sitesine (`tests/compat/http_serve_golden_test.zig`
+  — 6, `http_serve_multicore_golden_test.zig` — 3, `http_serve_tls_golden_
+  test.zig` — 2, `http_serve_ws_golden_test.zig` — 2, `router_module_state_
+  golden_test.zig` — 2, `http_serve_multicore_pool_golden_test.zig` —
+  SADECE İLK test, 1) `std.process.spawn` SONRASI 3 satırlık bir `arm`/
+  `defer disarm()` bloğu EKLENDİ (20 saniyelik bir zaman aşımıyla —
+  mutlu-yol testleri <1-2 saniyede bittiğinden bol bir pay). `http_serve_
+  multicore_pool_golden_test.zig`nin İKİNCİ testi (zaten `child.kill(io)`
+  İLE biten, `child.wait()` HİÇ çağırmayan) VE `http_soak_test.zig` (AYNI
+  şekilde ZATEN güvenli) BİLİNÇLİ olarak DOKUNULMADI.
+- Kırmızı-takım doğrulaması: bir testte `max_connections`i istemcilerin
+  ASLA ulaşamayacağı bir sayıya GEÇİCİ olarak çekilip, sunucunun artık
+  SONSUZA KADAR asılı KALMADIĞI, watchdog'un ~3 saniye (test amaçlı
+  kısaltılmış zaman aşımıyla) SONRA süreci ÖLDÜRÜP testin `term ==
+  .exited` iddiasında HIZLI/AÇIK bir hatayla BAŞARISIZ OLDUĞU doğrulanıp
+  GERİ ALINDI.
+- Doğrulama: `zig ast-check` (6 dosya + yeni dosya), TAM paket `zig build
+  test` (Debug: 854/857 geçti, 2 BİLİNEN/ilişkisiz `-j10` çekişme flake'i
+  — `http_serve_ws`/`router_module_state` — İZOLE çalıştırıldığında TEMİZ
+  geçtiği doğrulandı; ReleaseFast: BENZER şekilde İZOLE doğrulandı, artı
+  ZATEN ayrı izlenen `pool_bridge` flake'i), `NOX_STRESS_ROUNDS=800 zig
+  build stress-test -Doptimize=ReleaseFast` temiz.
+
+
 
 ### Değiştirildi (Faz TEST.2 — `codegen_golden_test.zig`nin 300 sıralı testini gerçek iş-parçacığı paralelliğiyle hızlandırma)
 - Kullanıcının "zig build test aşırı uzun sürüyor, Rust'taki gibi paralel

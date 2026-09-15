@@ -23,6 +23,7 @@
 const std = @import("std");
 const posix = std.posix;
 const nox = @import("nox");
+const child_watchdog = @import("child_watchdog.zig");
 
 fn compileToBinary(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, source: []const u8) ![]const u8 {
     const io = std.testing.io;
@@ -163,6 +164,10 @@ test "nox.router + nox.http.serve: Router handle'in ICINDE (her istekte yeniden)
         .stderr = .pipe,
     });
 
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 20_000);
+    defer watchdog.disarm();
+
     var resp_buf: [256]u8 = undefined;
     var resp_len: usize = 0;
     const client_thread = try std.Thread.spawn(.{}, struct {
@@ -251,6 +256,10 @@ test "nox.router + nox.http.serve: Router script top-level'da BIR KEZ insa edili
         .stdout = .pipe,
         .stderr = .pipe,
     });
+
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 20_000);
+    defer watchdog.disarm();
 
     var resp_buf: [256]u8 = undefined;
     var resp_len: usize = 0;

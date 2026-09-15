@@ -25,6 +25,7 @@
 const std = @import("std");
 const posix = std.posix;
 const nox = @import("nox");
+const child_watchdog = @import("child_watchdog.zig");
 
 fn compileToBinary(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, source: []const u8) ![]const u8 {
     const io = std.testing.io;
@@ -169,6 +170,10 @@ test "nox.http.serve_multicore: uctan uca, N=2 is parcacigi, iki EZSAMANLI istem
         .stderr = .pipe,
     });
 
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 20_000);
+    defer watchdog.disarm();
+
     var results: [2]bool = .{ false, false };
     const t1 = try std.Thread.spawn(.{}, testSendGetAndExpectOk, .{ port, "/a", &results, 0 });
     const t2 = try std.Thread.spawn(.{}, testSendGetAndExpectOk, .{ port, "/b", &results, 1 });
@@ -235,6 +240,10 @@ test "nox.http.listen + nox.thread.start + nox.http.serve_fd: birlestirilebilir 
         .stderr = .pipe,
     });
 
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 20_000);
+    defer watchdog.disarm();
+
     var results: [2]bool = .{ false, false };
     const t1 = try std.Thread.spawn(.{}, testSendGetAndExpectOk, .{ port, "/a", &results, 0 });
     const t2 = try std.Thread.spawn(.{}, testSendGetAndExpectOk, .{ port, "/b", &results, 1 });
@@ -297,6 +306,10 @@ test "nox.http.serve_multicore: num_threads=1 sıradan tek-iş-parçacıklı sun
         .stdout = .pipe,
         .stderr = .pipe,
     });
+
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 20_000);
+    defer watchdog.disarm();
 
     var results: [1]bool = .{false};
     const fd = try testConnect(port);

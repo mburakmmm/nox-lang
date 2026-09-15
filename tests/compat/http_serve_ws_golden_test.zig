@@ -10,6 +10,7 @@
 const std = @import("std");
 const posix = std.posix;
 const nox = @import("nox");
+const child_watchdog = @import("child_watchdog.zig");
 
 const websocket_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
@@ -229,6 +230,10 @@ test "nox.http.serve_ws: uctan uca, RFC 6455 el sikismasi + maskeli metin frame 
         .stderr = .pipe,
     });
 
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 20_000);
+    defer watchdog.disarm();
+
     const fd = try testConnect(port);
     defer _ = std.c.close(fd);
 
@@ -307,6 +312,10 @@ test "nox.http.serve_ws: maskesiz gelen bir istemci frame'i RFC 6455 geregi redd
         .stdout = .pipe,
         .stderr = .pipe,
     });
+
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 20_000);
+    defer watchdog.disarm();
 
     const fd = try testConnect(port);
     defer _ = std.c.close(fd);

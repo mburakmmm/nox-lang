@@ -20265,6 +20265,118 @@ alternatif) — DEĞERLENDİRİLMEDİ.
 
 ---
 
+## 3.158 Faz TEST.3 — HTTP golden testlerindeki `child.wait()`/`allocRemaining()` askı riskini bir watchdog ile kapatma (v1.80.8)
+
+**Context**: v1.80.7'nin (Faz TEST.2) doğrulaması SIRASINDA, kullanıcının
+DAHA ÖNCEDEN İSTEDİĞİ GERÇEK CI kontrolü ("ondan sonra ci kontrolü
+yaparsın") yapıldığında, `gh run list --workflow=ci.yml` İncelendiğinde
+**v1.80.3'ten (Faz MN.11) v1.80.6'ya (Faz TEST.1) KADAR SON DÖRT push'un
+DA** Linux (aarch64) job'unda TAM OLARAK 30 dakikada (MN.11'in EKLEDİĞİ
+`timeout-minutes: 30`) zaman-aşımına UĞRAYIP BAŞARISIZ OLDUĞU görüldü —
+YANİ **TEST.1'in `acceptWithTimeout` düzeltmesi hang'i ÇÖZMEMİŞTİ**, sadece
+(MN.11'in `timeout-minutes`i SAYESİNDE) 6 saatlik sessiz bir askıyı 30
+dakikalık AÇIK bir başarısızlığa ÇEVİRMİŞTİ.
+
+v1.80.6'nın (run `34945868442`) GERÇEK loglarına bakıldığında: `zig build
+test -Doptimize=ReleaseFast` 08:32:09'da SON çıktısını verdi, SONRA 12+
+DAKİKA BOYUNCA SIFIR çıktı ÜRETMEDEN 30-dakikalık job zaman-aşımına
+TAKILDI, CI'nin KENDİ "orphan process" temizliği İKİ askıda kalan süreç
+GÖSTERDİ: bir `test` (pid 11095) VE bir `prog` (pid 11123) — bir Zig test
+ikilisinin DERLEDİĞİ/ÇALIŞTIRDIĞI bir Nox programı HÂLÂ ÇALIŞIYORDU. Bu,
+BU OTURUMUN KENDİSİNİN de (Faz TEST.2'nin doğrulaması SIRASINDA, `rm -rf
+.zig-cache && zig build test -j10` TAM temiz bir koşuda) YEREL olarak
+CANLI GÖZLEMLEDİĞİ AYNI semptomla (bir `prog` süreci bir TCP portunda
+LISTEN durumunda, SIFIRA yakın CPU İLE dakikalarca askıda) BİREBİR
+ÖRTÜŞÜYORDU.
+
+**Kök neden**: TEST.1 (v1.80.6) SADECE 4 dosyadaki ("MOCK sunucu" test
+yardımcılarının, `std.c.accept`'i DOĞRUDAN çağıran) 5 çağrı sitesini
+düzeltmişti (`search_test.zig`/`publish_test.zig`/`upgrade_test.zig`/
+`http_stdlib_golden_test.zig`). AMA **AYNI hata SINIFININ, ÇOK DAHA GENİŞ
+bir YÜZEYİ** gözden KAÇMIŞTI: `tests/compat/` altındaki `nox.http.serve*`/
+`Router` golden testlerinin BÜYÜK ÇOĞUNLUĞU, GERÇEK bir NOX PROGRAMINI
+(`qbe`+`cc` İLE derlenmiş bir `prog` ikilisini) `std.process.spawn` İLE
+ARKA PLANDA BAŞLATIP, TEST'İN KENDİSİ istemci ROLÜNDE bağlanıp (AYRI
+iş parçacıklarında), SONRA (a) `child.stdout`/`stderr`'ı `reader.interface.
+allocRemaining(...)` İLE (KENDİ belge notunun AÇIKÇA söylediği GİBİ: "çocuk
+süreç stdout'unu KAPATANA — yani SONLANANA — KADAR bloklar") VE (b) `child.
+wait(io)` İLE (AYNI şekilde, HİÇBİR zaman-aşımı OLMADAN) BEKLİYORDU.
+
+**Risk**: istemci iş parçacıklarından HERHANGİ BİRİ (`zig build test -j10`nin
+AĞIR kaynak-çekişmesi ALTINDA) bağlantıyı GERÇEKTEN KURAMAZSA, sunucu
+(`nox.http.serve`'in `max_connections` sayacı) HİÇBİR ZAMAN hedefine
+ULAŞMAZ, `accept()` İçİnde SONSUZA KADAR bekler, İKİLİ ASLA ÇIKMAZ/stdout'unu
+KAPATMAZ — bu YÜZDEN (a) VE (b) İKİSİ de SONSUZA KADAR BLOKE OLUR, TEST
+SÜRECİNİN TAMAMINI ASKIYA alır.
+
+**Doğrulama (izole `zig run` smoke-testleriyle KANITLANDI)**: bir `sleep
+30` alt-süreci `std.process.spawn` İLE başlatılıp `child.stdout` üzerinde
+`allocRemaining` + ARDINDAN `child.wait(io)` ÇAĞRILDI; AYRI bir "watchdog"
+iş parçacığı 500ms SONRA `std.posix.kill(child.id.?, .KILL)` (HAM PID
+ÜZERİNDEN, `Child` struct'ına HİÇ DOKUNMADAN) ÇAĞIRDIĞINDA, HEM
+`allocRemaining` HEM `child.wait()` NEREDEYSE ANINDA (~500ms İçİnde)
+döndü — `term = .{ .signal = .KILL }`.
+
+**Tasarım**: `tests/compat/child_watchdog.zig` (YENİ, HİÇBİR `test` bloğu
+İçERMEYEN paylaşılan dosya — Zig'in test-keşfinin bunu İçE AKTARAN HER
+dosyada TEKRAR ÇALIŞTIRMAMASI İçİn ZORUNLU): `ChildWatchdog` struct'ı,
+`arm(self, child: *const std.process.Child, timeout_ms: u32) !void`
+(`timeout_ms` SÜRESİNCE `disarm()` ÇAĞRILMAZSA `std.posix.kill(pid,
+.KILL)` GÖNDEREN bir iş parçacığı BAŞLATIR) + `disarm(self) void` (bir
+`done` atomiğini set edip iş parçacığını joinler). Windows'ta (bu testler
+ZATEN Windows CI'de ÇALIŞMIYOR — `windows-frontend` işi SADECE `zig build
+frontend-test` çalıştırır) `arm()` SESSİZCE no-op.
+
+**Neden ham `std.posix.kill` (`Child.kill(io)` DEĞİL)**: `Child.kill`,
+`Child` struct'ının KENDİ alanlarını (`id`/`stdin`/`stdout`/`stderr`)
+DEĞİŞTİRİR — bunu watchdog iş parçacığından ÇAĞIRMAK, ANA iş parçacığının
+AYNI ANDA `child.wait(io)`/`allocRemaining` İçİnde AYNI struct'a ERİŞMESİYLE
+GERÇEK bir VERİ YARIŞI olurdu. Ham `std.posix.kill(pid, .KILL)` İSE `Child`
+struct'ına HİÇ DOKUNMAZ — `pid` (`arm()` ÇAĞRILIRKEN TEK SEFER kopyalanan
+DÜZ bir tamsayı) sayesinde VERİ YARIŞI YAPISAL olarak İMKANSIZDIR.
+
+**Etkilenen dosyalar (6 dosya, 16 çağrı sitesi)** — HER birine `var child
+= try std.process.spawn(...)`nin HEMEN ALTINA `var watchdog: child_watchdog.
+ChildWatchdog = .{}; try watchdog.arm(&child, 20_000); defer watchdog.
+disarm();` (+ `const child_watchdog = @import("child_watchdog.zig");`
+importu) EKLENDİ: `http_serve_golden_test.zig` (6), `http_serve_multicore_
+golden_test.zig` (3), `http_serve_tls_golden_test.zig` (2), `http_serve_ws_
+golden_test.zig` (2), `router_module_state_golden_test.zig` (2),
+`http_serve_multicore_pool_golden_test.zig` (SADECE İLK test, 1 — İKİNCİ
+test `max_connections=0` KULLANIP `child.kill(io)` İLE biter, `child.wait()`
+HİÇ ÇAĞIRMAZ, ZATEN GÜVENLİDİR). `http_soak_test.zig` (2 `child.kill(io)`
+sitesi, `child.wait()` YOK) ZATEN GÜVENLİ, DOKUNULMADI.
+
+**Doğrulama**: `zig ast-check` (6 dosya + yeni dosya); TAM paket `zig build
+test` — Debug'da 854/857 geçti, 2 hata (`http_serve_ws_golden_test.zig`/
+`router_module_state_golden_test.zig`nin BİRER testi) İZOLE çalıştırıldığında
+(`zig test` DOĞRUDAN, paralel-yük OLMADAN) TEMİZ geçti — `-j10`nin AĞIR
+paralel yükü ALTINDA GÖZLENEN, BU değişiklikle İLİŞKİSİZ, ÖNCEDEN bilinen
+bir çekişme flake'i (Faz TEST.2'nin doğrulaması SIRASINDA da AYNI semptom
+GÖZLEMLENMİŞTİ); ReleaseFast'te de BENZER şekilde 2 ilişkisiz test
+(`http_serve_golden_test.zig`/`http_serve_tls_golden_test.zig`, İKİSİ de
+İZOLE çalıştırıldığında TEMİZ) + AYRICA izlenen `pool_bridge` flake'i
+(task_66e267b4) DIŞINDA TEMİZ geçti. **Kırmızı-takım**: bir testte
+`max_connections` istemcilerin ULAŞAMAYACAĞI bir sayıya GEÇİCİ olarak
+çekilip (VE watchdog zaman aşımı test amaçlı 3 saniyeye KISALTILIP),
+sunucunun ARTIK SONSUZA KADAR ASILI KALMADIĞI, watchdog'un süreci ÖLDÜRÜP
+testin `term == .exited` iddiasında HIZLI (~8 saniyede, derleme dahil) VE
+AÇIK bir `TestUnexpectedResult` İLE BAŞARISIZ OLDUĞU doğrulanıp GERİ
+ALINDI. `NOX_STRESS_ROUNDS=800 zig build stress-test -Doptimize=ReleaseFast`
+temiz (12.4 saniye, sıfır hata).
+
+**Kapsam DIŞI**: `http_serve_multicore_pool_golden_test.zig`nin İKİNCİ
+testi (20 ARDIŞIK, DOĞRUDAN `std.c.read` çağrısı yapan bir döngü) — teorik
+olarak da bir okuma-zaman-aşımı gerektirebilir AMA BU turun araştırması
+BUNUN GERÇEKTEN tetiklendiğine dair kanıt BULMADI; `async_rt.pool_bridge`/
+`worker_pool`nin KENDİ İÇ çapraz-worker çalma yarışı flake'i (task_66e267b4,
+soket/`std.process.Child` İLE İLGİSİZ) — AYRI, ÖNCEDEN işaretlenmiş bir
+görev; `runtime/async_rt/io.zig`nin fiber-tabanlı `nonBlockingAccept`
+yollarının KENDİSİ — ZATEN non-blocking + fiber-askıya-alma KULLANIYOR,
+araştırma bunların İçİNDE bir hata BULMADI.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

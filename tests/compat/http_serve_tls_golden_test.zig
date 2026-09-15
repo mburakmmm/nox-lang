@@ -13,6 +13,7 @@
 const std = @import("std");
 const posix = std.posix;
 const nox = @import("nox");
+const child_watchdog = @import("child_watchdog.zig");
 
 const cert_path = "tests/fixtures/tls/test_cert.pem";
 const key_path = "tests/fixtures/tls/test_key.pem";
@@ -278,6 +279,10 @@ test "nox.http.serve_tls: uctan uca, GERCEK bir std.crypto.tls.Client ile el sik
         .stderr = .pipe,
     });
 
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 20_000);
+    defer watchdog.disarm();
+
     var resp_buf: [1024]u8 = undefined;
     const resp_len = try tlsRequestAndRead(io, port, &resp_buf);
 
@@ -349,6 +354,10 @@ test "nox.http.serve_tls: AYNI OS is parcaciginda ic ice gecen IKI TLS baglantis
         .stdout = .pipe,
         .stderr = .pipe,
     });
+
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 20_000);
+    defer watchdog.disarm();
 
     var slow_buf: [1024]u8 = undefined;
     var slow_len: usize = 0;

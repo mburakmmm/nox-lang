@@ -21,6 +21,7 @@
 const std = @import("std");
 const posix = std.posix;
 const nox = @import("nox");
+const child_watchdog = @import("child_watchdog.zig");
 
 fn compileToBinary(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, source: []const u8) ![]const u8 {
     const io = std.testing.io;
@@ -199,6 +200,10 @@ test "nox.http.serve: uctan uca, iki eszamanli baglanti GERCEKTEN cakisir (yavas
         .stderr = .pipe,
     });
 
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 20_000);
+    defer watchdog.disarm();
+
     // "yavaş" istemci: bağlanır ama isteği göndermeden önce 150ms bekler —
     // sunucunun bu bağlantı İÇİN `EAGAIN` alıp `suspendForIo`ya düşmesini
     // ZORLAR. "hızlı" istemci HEMEN gönderir.
@@ -275,6 +280,10 @@ test "nox.http.serve: HttpRequest'in DÖRT alanı da (method/target/body/headers
         .stdout = .pipe,
         .stderr = .pipe,
     });
+
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 20_000);
+    defer watchdog.disarm();
 
     var resp_buf: [512]u8 = undefined;
     var resp_len: usize = 0;
@@ -368,6 +377,10 @@ test "nox.http.serve: yanit govdesi/basliklari DINAMIK insa edildiginde de dogru
         .stderr = .pipe,
     });
 
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 20_000);
+    defer watchdog.disarm();
+
     var resp_buf: [512]u8 = undefined;
     var resp_len: usize = 0;
     const client_thread = try std.Thread.spawn(.{}, struct {
@@ -458,6 +471,10 @@ test "nox.http.serve: req HIC referans alinmayan handler'da tembel alan insasi d
         .stdout = .pipe,
         .stderr = .pipe,
     });
+
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 20_000);
+    defer watchdog.disarm();
 
     var resp_buf: [256]u8 = undefined;
     var resp_len: usize = 0;
@@ -555,6 +572,10 @@ test "nox.http.serve: modul takma adiyla (`import nox.http as h; h.serve(...)`) 
         .stderr = .pipe,
     });
 
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 20_000);
+    defer watchdog.disarm();
+
     var resp_buf: [256]u8 = undefined;
     var resp_len: usize = 0;
     const client_thread = try std.Thread.spawn(.{}, struct {
@@ -631,6 +652,10 @@ test "nox.http.serve: Connection: close GONDERILMEDEN ayni baglanti uzerinden IK
         .stdout = .pipe,
         .stderr = .pipe,
     });
+
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 20_000);
+    defer watchdog.disarm();
 
     var resp1_buf: [256]u8 = undefined;
     var resp1_len: usize = 0;
