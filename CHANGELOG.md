@@ -14,6 +14,63 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.84.0]
+
+### Eklendi/Değiştirildi (Faz F.0.4 — Fiber yığın kaynağı enjeksiyonu)
+- Freestanding Nox çerçevesinin F.0.1/F.0.2/F.0.3'ten SONRAKİ dördüncü
+  alt-fazı: `runtime/async_rt/fiber.zig`nin `allocGuardedStack`/
+  `freeGuardedStack`si HER fiber yığınını KOŞULSUZ olarak `mmap`+
+  `mprotect` (POSIX) / `VirtualAlloc`+`VirtualProtect` (Windows) İLE,
+  GERÇEK bir işletim-sistemi sanal-bellek yöneticisi ÜZERİNDEN tahsis
+  ediyordu — bir freestanding hedefte NE `mmap` NE `VirtualAlloc` VAR.
+- YENİ `StackProviderVTable`/`StackProvider` — `std.mem.Allocator`nin
+  AYNI ptr+vtable şekli (repo'daki TEK kanıtlanmış enjekte-edilebilir-
+  arayüz emsali, YENİ bir desen İCAT EDİLMEDİ) — `alloc(ctx) -> ?[]align
+  (STACK_ALIGN) u8` (TAM `STACK_SIZE` bayt döndürmelidir) + `free(ctx,
+  stack)`.
+- YENİ `nox_register_stack_provider(provider)` — F.0.1'in `dispatch_
+  registry.zig`sıyla AYNI "program-genelinde, TEK, atomik, `.monotonic`"
+  deseni (`pub fn`, HENÜZ codegen'den ÇAĞRILMIYOR — F.0.2/F.0.3'ün AYNI
+  gerekçesi). `Scheduler`in KENDİSİ (dolayısıyla `Fiber`) `RuntimeState`ten
+  BİLİNÇLİ olarak BAĞIMSIZ OLDUĞUNDAN (bkz. `bridge.zig`nin "İlke #6"ı),
+  kayıt RuntimeState-scoped DEĞİL, F.0.1 İLE AYNI program-genelinde bir
+  global.
+- `allocGuardedStack`/`freeGuardedStack` ARTIK ÖNCE `g_stack_provider`i
+  kontrol eder — DOLUYSA sağlayıcıya delege eder, AKSİ HALDE (VARSAYILAN,
+  kayıt YAPILMAMIŞ HER program) BUGÜNKÜ mmap+mprotect/VirtualAlloc+
+  VirtualProtect davranışına BİREBİR AYNI şekilde düşer — `Scheduler.
+  acquireStack`/`releaseStack`, `Fiber.create`/`destroy`, `http_server.
+  zig`nin bağlantı-fiber'ları HİÇBİRİNE DOKUNULMADI (araştırmanın
+  kanıtladığı TEK dispatch noktası SAYESİNDE, TÜM tüketiciler OTOMATİK/
+  ŞEFFAF olarak kapsandı).
+- YENİ iki Zig testi (`fiber.zig`): sahte bir sağlayıcı (`std.testing.
+  allocator.alignedAlloc`/`.free` sarmalayıcısı, sayaçlarla) kaydedilip
+  GERÇEK bir `Fiber.create`/`resume_`/`destroy` çevriminin sağlayıcıyı
+  TAM OLARAK 1/1 (alloc/free) çağırdığı VE fiber'ın entry fonksiyonunun
+  yan etkisinin GERÇEKTEN gözlemlendiği doğrulandı; kırmızı-takım
+  (kayıt YAPILMADAN `allocGuardedStack`/`freeGuardedStack` çağrılırsa
+  sahte sağlayıcının HİÇ ÇAĞRILMADIĞI, VARSAYILAN mmap yolunun
+  kullanıldığı) AYRICA test edildi VE break→red→fix İLE (kayıt çağrısı
+  GEÇİCİ kaldırılıp testin GERÇEKTEN kırmızıya düştüğü görülüp GERİ
+  eklendi) kaydın GERÇEKTEN load-bearing olduğu kanıtlandı.
+- MEVCUT guard-page çökme testi (`fiber.zig`, "Faz MN.8, Bulgu C") —
+  kayıt YAPILMADAN (varsayılan mmap+mprotect yolu) DEĞİŞMEDEN, HÂLÂ
+  GERÇEK bir SIGSEGV/erişim-ihlaliyle çöktüğünü kanıtlamaya DEVAM eder;
+  diğer İKİ mevcut fiber testi (x19 kaçağı/interleaved resume) DEĞİŞMEDEN
+  geçti.
+- `zig build test` (Debug+ReleaseFast, TAM paket) + `NOX_STRESS_ROUNDS=800
+  zig build stress-test -Doptimize=ReleaseFast` TEMİZ (bilinen, pre-
+  existing `-j` paralel-yük HTTP test flake'i izole çalıştırmayla
+  regresyon OLMADIĞI YENİDEN doğrulandı).
+- v1.83.0'ın (Faz F.0.3) GERÇEK CI koşusu (run 35008860150) İNCELENDİ:
+  Windows yeşil; Linux (x86-64)'in bilinen `pool_bridge`/`nox_pool_serve`
+  cross-worker race flake'i (task_66e267b4) İLE, macOS (aarch64) Debug'ın
+  bilinen `-j` paralel-yük HTTP zamanlama flake'i İLE, Linux (aarch64)
+  ReleaseFast'in `binary_size_test`nin (subprocess-tabanlı, paralel yük
+  altında) YENİ AMA AYNI sınıftan bir flake'i İLE BAŞARISIZ oldu —
+  ÜÇÜ de `diag_sink`/F.0.3'ün değiştirdiği HİÇBİR koda DOKUNMUYOR, GERÇEK
+  bir regresyon BULUNMADI.
+
 ## [1.83.0]
 
 ### Eklendi/Değiştirildi (Faz F.0.3 — Panik/tanı çıktısı enjeksiyonu)

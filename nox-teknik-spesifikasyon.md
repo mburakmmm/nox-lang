@@ -20840,6 +20840,109 @@ KENDİSİ (çıkış/sonlandırma semantiği AYRI bir gelecekteki faz).
 
 ---
 
+## 3.164 Faz F.0.4 — Fiber yığın kaynağı enjeksiyonu (v1.84.0)
+
+Freestanding Nox çerçevesinin F.0.1/F.0.2/F.0.3'ten SONRAKİ dördüncü
+alt-fazı. `runtime/async_rt/fiber.zig`nin `allocGuardedStackPosix`/
+`Windows`ı HER fiber yığınını KOŞULSUZ olarak GERÇEK bir işletim-sistemi
+sanal-bellek yöneticisi (`mmap`+`mprotect` / `VirtualAlloc`+
+`VirtualProtect`) ÜZERİNDEN tahsis ediyordu — bir freestanding hedefte
+NE `mmap` NE `VirtualAlloc` VAR, VE MMU sayfa tablosu (guard-page İçİn
+GEREKLİ `mprotect`) HENÜZ KURULMAMIŞ OLABİLİR (F.0 çerçeve-planının
+KENDİ, ÖNCEDEN belirttiği "Açık risk #2").
+
+**Araştırma bulguları**: (1) `Scheduler.acquireStack`/`releaseStack`
+(`scheduler.zig`, `stack_pool`) TEK bir dispatch noktası — TÜM fiber
+yığını tüketicileri (`spawn()`, `http_server.zig`nin bağlantı-fiber'ları,
+`spawnToForeignScheduler` DAHİL — `target.stack_pool`u BİLİNÇLİ olarak
+ATLASA da `Fiber.create`nin KENDİSİ HER ZAMAN `allocGuardedStack()`i
+ÇAĞIRIR) BUNLARIN ÜZERİNDEN `fiber_mod.allocGuardedStack()`/
+`freeGuardedStack()`e ULAŞIR — repo-genelinde BAŞKA HİÇBİR yerde DOĞRUDAN
+`mmap`/`VirtualAlloc`/`mprotect`/`VirtualProtect` ÇAĞRILMIYOR. (2)
+`Scheduler` (dolayısıyla `Fiber`) `RuntimeState`ten KASITLI olarak
+BAĞIMSIZDIR (bkz. `bridge.zig`nin "İlke #6"sı) — bu YÜZDEN F.0.1'in
+`dispatch_registry.zig` deseni (program-genelinde, TEK, atomik bir
+kayıt) BURADA da doğru seçim, F.0.3'ün `diag_sink.zig`sıyla AYNI
+gerekçe. (3) `std.mem.Allocator`nin ptr+vtable şekli repo'daki TEK
+kanıtlanmış "enjekte edilebilir arayüz" örneği (F.0.2'nin de ZATEN
+kullandığı) — BURADA da AYNI şekil TAKLİT EDİLDİ, YENİ bir desen İCAT
+EDİLMEDİ.
+
+**Tasarım**: YENİ `StackProviderVTable`/`StackProvider` (`fiber.zig`,
+`allocGuardedStackPosix/Windows`in HEMEN ÜSTÜNDE) —
+```zig
+pub const StackProviderVTable = struct {
+    alloc: *const fn (ctx: ?*anyopaque) ?[]align(STACK_ALIGN) u8,
+    free: *const fn (ctx: ?*anyopaque, stack: []align(STACK_ALIGN) u8) void,
+};
+pub const StackProvider = struct {
+    ctx: ?*anyopaque = null,
+    vtable: *const StackProviderVTable,
+};
+```
+`alloc`, TAM OLARAK `STACK_SIZE` bayt, `STACK_ALIGN`a hizalı bir dilim
+DÖNMELİDİR (`createWithStack`in yığın-tepesi aritmetiği BUNU VARSAYAR) —
+guard-page/taşma-koruma semantiği TAMAMEN sağlayıcının KENDİ
+SORUMLULUĞUDUR (v1 sınırı, aşağıya bkz.). `g_stack_provider: std.atomic.
+Value(?*const StackProvider)` + `pub fn nox_register_stack_provider(
+provider: ?*const StackProvider) void` (F.0.1'in `dispatch_registry.zig`
+sıyla AYNI "program-genelinde, TEK, atomik, `.monotonic`" deseni — `pub
+fn`, HENÜZ codegen'den ÇAĞRILMIYOR).
+
+`allocGuardedStack()`/`freeGuardedStack()` ÖNCE `g_stack_provider`i
+kontrol eder — DOLUYSA sağlayıcıya delege eder (`p.vtable.alloc(p.ctx)
+orelse error.StackAllocFailed` / `p.vtable.free(p.ctx, stack)`), AKSİ
+HALDE (VARSAYILAN, kayıt YAPILMAMIŞ HER program) BUGÜNKÜ mmap+mprotect/
+VirtualAlloc+VirtualProtect davranışına BİREBİR AYNI şekilde düşer.
+`Scheduler.acquireStack`/`releaseStack`, `Fiber.create`/`destroy`,
+`http_server.zig`nin bağlantı-fiber'ları HİÇBİRİNE DOKUNULMADI —
+araştırmanın kanıtladığı TEK dispatch noktası SAYESİNDE TÜM tüketiciler
+OTOMATİK/ŞEFFAF olarak kapsandı.
+
+**Doğrulama**: YENİ, GERÇEK bir fiber çalıştıran Zig testi (`fiber.zig`):
+sahte bir sağlayıcı (`std.testing.allocator.alignedAlloc`/`.free`
+üzerine İNCE bir sarmalayıcı, HER `alloc`/`free`de artan sayaçlarla)
+`nox_register_stack_provider` İLE kaydedilip GERÇEK bir `Fiber.create`
+ile fiber yaratılıp `resume_`/`yield` İLE ÇALIŞTIRILDI, `destroy()`
+edildi — sayaçların TAM OLARAK 1/1 (alloc/free) OLDUĞU VE fiber'ın
+GERÇEKTEN doğru ÇALIŞTIĞI (entry fonksiyonunun yan etkisi
+gözlemlenerek) doğrulandı. Kırmızı-takım: kayıt YAPILMADAN `alloc
+GuardedStack`/`freeGuardedStack` çağrıldığında sahte sağlayıcının HİÇ
+ÇAĞRILMADIĞI (VARSAYILAN mmap yolunun kullanıldığı) AYRI bir testle
+doğrulandı; break→red→fix İLE (kayıt çağrısı GEÇİCİ kaldırılıp testin
+GERÇEKTEN `expected 1, found 0` İLE kırmızıya düştüğü görülüp GERİ
+eklendi) kaydın GERÇEKTEN load-bearing olduğu kanıtlandı. MEVCUT
+guard-page çökme testi ("Faz MN.8, Bulgu C") — kayıt YAPILMADAN,
+DEĞİŞMEDEN, HÂLÂ GERÇEK bir SIGSEGV/erişim-ihlaliyle çöktüğünü
+kanıtlamaya DEVAM etti; diğer İKİ mevcut fiber testi (x19 kaçağı/
+interleaved resume) DEĞİŞMEDEN geçti. `zig build test` (Debug+
+ReleaseFast, TAM paket, `-j2` İLE de) + `NOX_STRESS_ROUNDS=800 zig
+build stress-test -Doptimize=ReleaseFast` TEMİZ (bilinen, pre-existing
+`-j` paralel-yük HTTP test flake'i izole/`-j2` çalıştırmayla regresyon
+OLMADIĞI YENİDEN doğrulandı).
+
+**v1.83.0'ın (Faz F.0.3) GERÇEK CI koşusu** (run 35008860150) İNCELENDİ:
+Windows yeşil; Linux (x86-64) BİLİNEN `pool_bridge`/`nox_pool_serve`
+cross-worker race flake'iyle (task_66e267b4), macOS (aarch64) Debug
+BİLİNEN `-j` paralel-yük HTTP zamanlama flake'iyle, Linux (aarch64)
+ReleaseFast `binary_size_test`nin (subprocess-tabanlı) YENİ AMA AYNI
+sınıftan bir paralel-yük flake'iyle BAŞARISIZ oldu — ÜÇÜ de `diag_sink`/
+F.0.3'ün değiştirdiği HİÇBİR koda dokunmuyor, GERÇEK bir regresyon
+BULUNMADI.
+
+**Kapsam DIŞI**: guard-page/taşma-koruma semantiğinin GENELLEŞTİRİLMESİ
+(bir ÖZEL sağlayıcının KENDİ taşma-koruması OLUP OLMAMASI TAMAMEN kendi
+sorumluluğu — F.0'ın KENDİ "Açık risk #2"si, v0.1 İçİn BİLİNÇLİ olarak
+ERTELENDİ); `STACK_SIZE`/`STACK_ALIGN`in KENDİSİNİN de enjekte
+edilebilir/yapılandırılabilir OLMASI (SABİT KALIR, GG.25'in ÖLÇÜME-dayalı
+192 KiB kararı DEĞİŞMEZ); `nox_register_stack_provider`i codegen'den
+ÇAĞIRAN bir yol/`--target freestanding` bayrağı (F.1'in kapsamı);
+`spawnToForeignScheduler`nin `target.stack_pool`u BİLİNÇLİ olarak ATLAYAN
+tasarımına DOKUNMAK (yeni sağlayıcı KAYITLIYSA bu yol da OTOMATİK/ŞEFFAF
+olarak onu KULLANIR, tahsis SIKLIĞI/havuzlama DAVRANIŞI DEĞİŞMEZ).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

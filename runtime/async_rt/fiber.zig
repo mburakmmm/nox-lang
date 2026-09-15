@@ -121,6 +121,45 @@ fn guardPageSize() usize {
     return std.heap.pageSize();
 }
 
+/// Faz F.0.4 (bkz. plan dosyası "Fiber yığın kaynağı enjeksiyonu"):
+/// `allocGuardedStack`/`freeGuardedStack`in (aşağıda) KOŞULSUZ mmap/
+/// VirtualAlloc bağımlılığını enjekte edilebilir yapan arayüz —
+/// `std.mem.Allocator`nin AYNI ptr+vtable ŞEKLİ (repo'daki TEK
+/// kanıtlanmış enjekte-edilebilir-arayüz emsali, YENİ bir desen İCAT
+/// EDİLMEDİ). `alloc`, TAM OLARAK `STACK_SIZE` bayt, `STACK_ALIGN`a
+/// hizalı bir dilim DÖNMELİDİR (`createWithStack`in yığın-tepesi
+/// aritmetiği BUNU VARSAYAR) — guard-page/taşma-koruma semantiği
+/// TAMAMEN sağlayıcının KENDİ SORUMLULUĞUDUR (bkz. plan dosyasının
+/// "Kapsam Dışı" bölümü).
+pub const StackProviderVTable = struct {
+    alloc: *const fn (ctx: ?*anyopaque) ?[]align(STACK_ALIGN) u8,
+    free: *const fn (ctx: ?*anyopaque, stack: []align(STACK_ALIGN) u8) void,
+};
+
+pub const StackProvider = struct {
+    ctx: ?*anyopaque = null,
+    vtable: *const StackProviderVTable,
+};
+
+/// Faz F.0.1'in `dispatch_registry.zig`sıyla AYNI "program-genelinde,
+/// TEK, atomik, `.monotonic`" deseni — kayıt HER ZAMAN programın EN
+/// BAŞINDA (herhangi bir fiber/Scheduler yaratılmadan ÖNCE, host'un KENDİ
+/// bootstrap kodu TARAFINDAN) yapılır, bu YÜZDEN `.monotonic` YETERLİDİR
+/// (`pool_ever_active`/`fiber_ever_active`nin AYNI "program-sırası +
+/// happens-before" gerekçesi, bkz. `asap.zig`). Sağlayıcının KENDİSİ
+/// (`*const StackProvider`) çağıranın KENDİ, PROGRAM-ÖMÜRLÜ statik/global
+/// depolamasında YAŞAMALIDIR (`dispatch_registry`nin fonksiyon-işaretçisi
+/// kaydıyla AYNI "host sahiplenir" varsayımı).
+var g_stack_provider: std.atomic.Value(?*const StackProvider) = .init(null);
+
+/// GERÇEK bir freestanding host (VEYA bir test, sahte bir sağlayıcıyla
+/// davranışı doğrulamak İçİn) TARAFINDAN çağrılır. `pub fn` (export
+/// DEĞİL — HENÜZ codegen'DEN ÇAĞRILMIYOR, F.0.2/F.0.3'ün KENDİ
+/// registrasyon fonksiyonlarıyla AYNI gerekçe).
+pub fn nox_register_stack_provider(provider: ?*const StackProvider) void {
+    g_stack_provider.store(provider, .monotonic);
+}
+
 const WinVirtual = if (builtin.os.tag == .windows) struct {
     extern "kernel32" fn VirtualAlloc(lpAddress: ?*anyopaque, dwSize: usize, flAllocationType: u32, flProtect: u32) callconv(.c) ?*anyopaque;
     extern "kernel32" fn VirtualProtect(lpAddress: *anyopaque, dwSize: usize, flNewProtect: u32, lpflOldProtect: *u32) callconv(.c) i32;
@@ -183,11 +222,18 @@ fn freeGuardedStackPosix(stack: []align(STACK_ALIGN) u8) void {
 }
 
 pub fn allocGuardedStack() ![]align(STACK_ALIGN) u8 {
+    if (g_stack_provider.load(.monotonic)) |p| {
+        return p.vtable.alloc(p.ctx) orelse error.StackAllocFailed;
+    }
     if (builtin.os.tag == .windows) return allocGuardedStackWindows();
     return allocGuardedStackPosix();
 }
 
 pub fn freeGuardedStack(stack: []align(STACK_ALIGN) u8) void {
+    if (g_stack_provider.load(.monotonic)) |p| {
+        p.vtable.free(p.ctx, stack);
+        return;
+    }
     if (builtin.os.tag == .windows) {
         freeGuardedStackWindows(stack);
         return;
@@ -713,4 +759,91 @@ test "Faz MN.8, Bulgu C: yığın taşması guard page İLE BELİRLİ bir çökm
         .exited => |code| try std.testing.expect(code != 0),
         .signal, .stopped, .unknown => {},
     }
+}
+
+test "Faz F.0.4: kayıtlı bir sahte stack provider, allocGuardedStack/freeGuardedStack'in GERÇEK hedefi olur" {
+    // `std.testing.allocator.alignedAlloc`/`.free` üzerine İNCE bir
+    // sarmalayıcı — GERÇEK bir guard-page OLMADAN AMA GERÇEKTEN kullanılabilir
+    // bir yığın döner, HER `alloc`/`free` çağrısında BİR sayaç ARTIRAN
+    // threadlocal `usize` değişkenleriyle.
+    const FakeProvider = struct {
+        var alloc_count: usize = 0;
+        var free_count: usize = 0;
+
+        fn alloc(ctx: ?*anyopaque) ?[]align(STACK_ALIGN) u8 {
+            _ = ctx;
+            alloc_count += 1;
+            const mem = std.testing.allocator.alignedAlloc(u8, .fromByteUnits(STACK_ALIGN), STACK_SIZE) catch return null;
+            return mem;
+        }
+
+        fn free(ctx: ?*anyopaque, stack: []align(STACK_ALIGN) u8) void {
+            _ = ctx;
+            free_count += 1;
+            std.testing.allocator.free(stack);
+        }
+    };
+    const vtable: StackProviderVTable = .{ .alloc = FakeProvider.alloc, .free = FakeProvider.free };
+    const provider: StackProvider = .{ .ctx = null, .vtable = &vtable };
+
+    FakeProvider.alloc_count = 0;
+    FakeProvider.free_count = 0;
+    nox_register_stack_provider(&provider);
+    defer nox_register_stack_provider(null);
+
+    const Harness = struct {
+        var side_effect: usize = 0;
+        var main_ctx: Context = .{};
+
+        fn entry(arg: *anyopaque) void {
+            const fiber: *Fiber = @ptrCast(@alignCast(arg));
+            side_effect = 42;
+            fiber.yield();
+        }
+    };
+    Harness.side_effect = 0;
+
+    const fiber = try Fiber.create(std.testing.allocator, Harness.entry, undefined);
+    fiber.arg = fiber;
+    fiber.resume_(&Harness.main_ctx);
+    try std.testing.expect(!fiber.finished);
+    try std.testing.expectEqual(@as(usize, 42), Harness.side_effect);
+    fiber.resume_(&Harness.main_ctx);
+    try std.testing.expect(fiber.finished);
+    fiber.destroy();
+
+    try std.testing.expectEqual(@as(usize, 1), FakeProvider.alloc_count);
+    try std.testing.expectEqual(@as(usize, 1), FakeProvider.free_count);
+}
+
+test "Faz F.0.4 — kırmızı-takım: kayıt YAPILMAZSA sahte sağlayıcı HİÇ ÇAĞRILMAZ (VARSAYILAN mmap yolu kullanılır)" {
+    const FakeProvider = struct {
+        var alloc_count: usize = 0;
+        var free_count: usize = 0;
+
+        fn alloc(ctx: ?*anyopaque) ?[]align(STACK_ALIGN) u8 {
+            _ = ctx;
+            alloc_count += 1;
+            const mem = std.testing.allocator.alignedAlloc(u8, .fromByteUnits(STACK_ALIGN), STACK_SIZE) catch return null;
+            return mem;
+        }
+
+        fn free(ctx: ?*anyopaque, stack: []align(STACK_ALIGN) u8) void {
+            _ = ctx;
+            free_count += 1;
+            std.testing.allocator.free(stack);
+        }
+    };
+    FakeProvider.alloc_count = 0;
+    FakeProvider.free_count = 0;
+    // BİLİNÇLİ olarak `nox_register_stack_provider` HİÇ ÇAĞRILMAZ — bu,
+    // `g_stack_provider`in VARSAYILAN `null` durumunda (VE (VARSA) BAŞKA
+    // bir testin `defer` İLE geri aldığı durumda) `allocGuardedStack`/
+    // `freeGuardedStack`in HÂLÂ MEVCUT mmap+mprotect yoluna DÜŞTÜĞÜNÜN
+    // kanıtıdır (kaydın GERÇEKTEN load-bearing olduğunu, SESSİZCE no-op
+    // OLMADIĞINI kanıtlayan üstteki testle BİRLİKTE).
+    const stack = try allocGuardedStack();
+    freeGuardedStack(stack);
+    try std.testing.expectEqual(@as(usize, 0), FakeProvider.alloc_count);
+    try std.testing.expectEqual(@as(usize, 0), FakeProvider.free_count);
 }
