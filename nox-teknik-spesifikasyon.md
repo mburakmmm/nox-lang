@@ -20055,24 +20055,59 @@ olması) ZATEN belgeleyip 8-turlu bir `std.Thread.yield()` döngüsüyle
 mekanizma İCAT EDİLMEDİ, ZATEN KANITLANMIŞ bir desen (`worker_pool.zig`)
 `pool_bridge.zig`'e de UYGULANDI.
 
-**AYRICA, GERÇEK bir CI hang'inin daha derin analizi**: v1.80.3'ün
-push'u SONRASI Linux (aarch64) job'u YENİDEN 30-dakikalık zaman-aşımına
-takıldı. Release-sequence kuralının (`plc`'nin TÜM RMW mutasyonlarının
-TEK bir zincir OLUŞTURDUĞU, bu YÜZDEN `plc==0` gören HERHANGİ bir
-worker'ın, plc'yi 0'a İNDİREN fiber'DAN BAĞIMSIZ, DAHA ÖNCEKİ HERHANGİ
-bir fiber'ın `stw_requested` yazımını da GÖRDÜĞÜNÜN GARANTİLİ OLDUĞU)
-derin bir uygulanmasıyla `plc==0` çıkış yolunun (MN.11'in düzelttiği)
-GERÇEKTEN sağlam OLDUĞU, VE `poolWideDeadlockCheck` GERÇEKTEN tetiklenirse
-SESSİZCE ASILI KALMAK YERİNE `std.process.exit(1)` İLE GÜRÜLTÜLÜ bir
-şekilde ÇÖKECEĞİ (CI'de GÖZLENEN "sıfır çıktı, 30 dakika sessizlik"
-deseniyle UYUŞMADIĞI) DOĞRULANDI — bu YÜZDEN gözlenen hang'in bir
-zamanlayıcı MANTIK hatası OLMAYIP, `ubuntu-24.04-arm` runner filosunun
-kaynak-kısıtlılığından kaynaklanan bir YAVAŞLIK OLABİLECEĞİ hipoteziyle
-job YENİDEN tetiklendi (bkz. CHANGELOG.md'nin bu sürüme AİT girişi —
-sonuç AYRI bir notta/sürümde raporlanır).
+**AYRICA, GERÇEK bir CI hang'inin daha derin analizi (BULGU ARAŞTIRMASI
+BU SÜRÜMDE HÂLÂ AÇIK/SÜRÜYOR)**: v1.80.3'ün push'u SONRASI Linux (aarch64)
+job'u 30-dakikalık zaman-aşımına takıldı. Release-sequence kuralının
+(`plc`'nin TÜM RMW mutasyonlarının TEK bir zincir OLUŞTURDUĞU, bu YÜZDEN
+`plc==0` gören HERHANGİ bir worker'ın, plc'yi 0'a İNDİREN fiber'DAN
+BAĞIMSIZ, DAHA ÖNCEKİ HERHANGİ bir fiber'ın `stw_requested` yazımını da
+GÖRDÜĞÜNÜN GARANTİLİ OLDUĞU) derin bir uygulanmasıyla `plc==0` çıkış
+yolunun (MN.11'in düzelttiği) TEORİK olarak sağlam OLDUĞU gösterildi, VE
+`poolWideDeadlockCheck` GERÇEKTEN tetiklenirse SESSİZCE ASILI KALMAK
+YERİNE `std.process.exit(1)` İLE GÜRÜLTÜLÜ bir şekilde ÇÖKECEĞİ (CI'de
+GÖZLENEN "sıfır çıktı, sessizlik" deseniyle UYUŞMADIĞI) DOĞRULANDI —
+BU teorik analize dayanarak "muhtemelen runner-kaynaklı bir yavaşlık"
+hipoteziyle job YENİDEN tetiklendi. **AMA rerun da AYNI 30-dakikalık
+zaman-aşımına TAKILDI (05:51:05→06:21:19, `cancelled`)** — İKİ-İKİ,
+bu YÜZDEN "tek seferlik runner yavaşlığı" hipotezi ÇÜRÜTÜLDÜ, Linux
+aarch64'e ÖZGÜ GERÇEK/tekrarlanabilir bir sorun OLDUĞU KANITLANDI. Bu
+sürümün KENDİSİ BU hang'i ÇÖZMÜYOR — SADECE natif (emülasyonsuz) bir
+aarch64 Linux konteynerinde (bu makine Apple Silicon OLDUĞUNDAN qemu
+GEREKMEZ) YEREL tekrar-üretim GİRİŞİMİ BAŞLATILDI, sonuç AYRI bir
+sürümde raporlanacak.
 
 **Doğrulama**: `zig build noxrt-test` 10/10 ardışık koşuda TEMİZ; TAM
 paket `zig build test` 1121/1121 test TEMİZ.
+
+## 3.155 Faz FFI.3.1 — `binary_size_test.zig`nin dead-stripping testi: Debug'da native backend `link_function_sections`i ONURLAMIYOR (v1.80.5)
+
+v1.80.3'ün push'u SONRASI GERÇEK CI'de `binary_size_test.zig`'in dead-
+stripping testi Linux (x86-64)'te `nox_smtp_connect_raw` sembolünü
+BULUP başarısız oldu. Bir Docker/Ubuntu 24.04 (x86-64) konteynerinde
+GERÇEKTEN reprodüklenip KANITLANDI: **bu bir flake DEĞİL, v1.79.2'den
+beri KESİN/tekrarlanabilir bir hatadır**. Kök neden: Zig'in ELF
+hedeflerinde `link_function_sections`i (Faz FFI.3/v1.79.2'nin `--gc-
+sections`/`--export-dynamic-symbol`inin GEREKTİRDİĞİ bölüm-seviyesi
+granülerlik) SADECE LLVM backend'i (Release* modları) ONURLANDIRIYOR —
+`-Doptimize` BAYRAKSIZ (Debug, `ci.yml`'nin İLK `zig build test` çağrısı)
+derlenen `noxrt.o` (native/self-hosted backend KULLANIR) SIFIR `.text.*`
+bölümü ÜRETİYOR (`readelf -SW` İLE doğrulandı) — dead-stripping HİÇBİR
+şeyi elemiyor. `ci.yml`'nin test job'u `zig build test` (Debug)
+başarısız olduğunda `zig build test -Doptimize=ReleaseFast`yi HİÇ
+ÇALIŞTIRMADIĞINDAN, BU test CI'de v1.79.2'den beri HER ZAMAN, KOŞULSUZ
+olarak başarısız oluyordu.
+
+**Düzeltme**: `binary_size_test.zig`, `build.zig`'in TÜM harici test
+modülleriyle AYNI paylaşılan `optimize` değerini KULLANDIĞINDAN, testin
+KENDİ `builtin.mode`i ambient `noxrt.o`nun MODUNU GÜVENİLİR biçimde
+YANSITIYOR — `builtin.mode == .Debug` İKEN dead-stripping'e ÖZGÜ iddialar
+`error.SkipZigTest` İLE ATLANIR (Windows'un KENDİ, ZATEN VAR olan skip-
+deseniyle TUTARLI).
+
+**Doğrulama**: Debug'da `zig build test` → 1120/1121 (1 ATLANDI, DOĞRU
+test); `-Doptimize=ReleaseFast` → 1121/1121 (test GERÇEKTEN çalışıp
+GEÇTİ) — v1.79.2'nin dead-stripping düzeltmesinin KENDİSİ hâlâ DOĞRU,
+SADECE testin Debug-modunda ÇALIŞTIRILMASI YANLIŞTI.
 
 ---
 

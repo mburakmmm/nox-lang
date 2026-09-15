@@ -14,6 +14,41 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.80.5]
+
+### Düzeltildi (GERÇEK bir Linux (x86-64) CI koşusuyla bulunan, KESİN/tekrarlanabilir bir dead-stripping test hatası)
+- **Faz FFI.3.1**: v1.80.3'ün push'u SONRASI GERÇEK CI'de `binary_size_
+  test.zig`'in "smtp/postgres kullanmayan basit bir program dead-stripping
+  ile küçük kalır" testi Linux (x86-64) job'unda `nox_smtp_connect_raw`
+  sembolünü ikilide BULUP başarısız oldu. Bir Docker/Ubuntu 24.04 (x86-64)
+  konteynerinde GERÇEKTEN reprodüklenip KANITLANDI: bu bir flake DEĞİL,
+  KESİN/tekrarlanabilir bir hatadır — Zig'in ELF hedeflerinde `link_
+  function_sections`i (Faz FFI.3/v1.79.2'nin `--gc-sections`/`--export-
+  dynamic-symbol` mekanizmasının GEREKTİRDİĞİ bölüm-seviyesi granülerlik)
+  SADECE LLVM backend'i (Release* modları) ONURLANDIRIYOR — `-Doptimize`
+  BAYRAKSIZ (Debug, `ci.yml`'nin İLK, öntanımlı `zig build test` çağrısı)
+  derlenen `noxrt.o` (native/self-hosted backend KULLANIR) SIFIR `.text.*`
+  bölümü ÜRETİYOR (`readelf -SW` İLE doğrulandı), bu YÜZDEN dead-stripping
+  HİÇBİR şeyi elemiyor — `nox.smtp`/`nox.postgres` GİBİ HİÇ kullanılmayan
+  TÜM stdlib shim kodu HER Debug-derlenen `noxc build` çıktısında KALIR.
+  `ci.yml`'nin test job'u `zig build test` (Debug) İLE `zig build test
+  -Doptimize=ReleaseFast`yi SIRAYLA çalıştırdığından VE İLK adım başarısız
+  olduğunda İKİNCİ adım HİÇ ÇALIŞMADIĞINDAN, BU test CI'de HER ZAMAN,
+  KOŞULSUZ olarak (kaynak-kısıtlılığından/şanstan BAĞIMSIZ) başarısız
+  oluyordu — v1.79.2'den beri.
+- **Düzeltme**: `binary_size_test.zig`, `build.zig`'in TÜM harici test
+  modülleriyle AYNI paylaşılan `optimize` değerini KULLANDIĞINDAN, testin
+  KENDİ `builtin.mode`i ambient `noxrt.o`nun MODUNU GÜVENİLİR biçimde
+  YANSITIYOR — `builtin.mode == .Debug` İKEN dead-stripping'e ÖZGÜ
+  iddialar `error.SkipZigTest` İLE ATLANIR (Windows'un KENDİ, ZATEN VAR
+  olan skip-deseniyle TUTARLI) — `ci.yml`'nin `-Doptimize=ReleaseFast`
+  geçişi AYNI test'i GERÇEKTEN doğrulamaya DEVAM ETTİĞİNDEN kapsam KAYBI
+  YOK.
+- **Doğrulama**: Debug'da `zig build test` → 1120/1121 (1 ATLANDI, DOĞRU
+  test); `-Doptimize=ReleaseFast` → 1121/1121 (test GERÇEKTEN çalışıp
+  GEÇTİ) — dead-stripping'in KENDİSİ (v1.79.2'nin düzeltmesi) hâlâ DOĞRU
+  çalışıyor, SADECE testin Debug-modunda ÇALIŞTIRILMASI YANLIŞTI.
+
 ## [1.80.4]
 
 ### Düzeltildi (v1.80.3'ün GERÇEK CI koşusunda bulunan bir test-flake'i)

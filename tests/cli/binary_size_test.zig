@@ -33,6 +33,23 @@ fn writeTempSource(gpa: std.mem.Allocator, io: std.Io, source: []const u8, tmp: 
 
 test "noxc build: smtp/postgres kullanmayan basit bir program dead-stripping ile küçük kalır" {
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
+    // v1.80.5 (bkz. CHANGELOG.md/nox-teknik-spesifikasyon.md §3.155): GERÇEK
+    // bir Linux (x86-64) CI koşusuyla bulunup, bir Docker/Ubuntu 24.04
+    // konteynerinde HEM Debug HEM ReleaseFast build'leri karşılaştırılarak
+    // KANITLANDI — Zig'in ELF hedeflerinde `link_function_sections`i
+    // SADECE LLVM backend'i (Release* modları) ONURLANDIRIYOR; `-Doptimize`
+    // BAYRAKSIZ (Debug, ci.yml'nin İLK, öntanımlı `zig build test` çağrısı)
+    // derlenen `noxrt.o` (native/self-hosted x86_64 backend'i KULLANIR)
+    // SIFIR `.text.*` bölümü ÜRETİYOR (readelf İLE doğrulandı) — bu YÜZDEN
+    // `--gc-sections`/`--export-dynamic-symbol`in GRANÜLERLİĞİ YOK, HİÇBİR
+    // stdlib shim sembolü (nox_smtp_connect_raw DAHİL) elenmez. Bu test
+    // modülü `build.zig`nin `optimize`iyle AYNI paylaşılan değeri (`.
+    // optimize = optimize`) KULLANDIĞINDAN, `builtin.mode` BURADA ambient
+    // noxrt.o'nun KENDİ modunu GÜVENİLİR biçimde YANSITIR — Debug'da BU
+    // testin dead-stripping'e ÖZGÜ iddiaları ATLANIR (`zig build test
+    // -Doptimize=ReleaseFast`nin AYNI test'i GERÇEKTEN doğrulamaya DEVAM
+    // ETTİĞİNDEN kapsam KAYBI YOK — ci.yml HER İKİ modu da SIRAYLA çalıştırır).
+    if (builtin.mode == .Debug) return error.SkipZigTest;
     const io = std.testing.io;
     const gpa = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
