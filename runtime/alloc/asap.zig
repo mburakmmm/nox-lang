@@ -60,6 +60,18 @@ extern fn nox_cycle_deinit(rt: ?*anyopaque) callconv(.c) void;
 /// programlardaki (ör. testler) döngüler eşiğe HİÇ ULAŞMADAN sessizce
 /// sızardı.
 extern fn nox_cycle_collect(rt: ?*anyopaque) callconv(.c) void;
+/// Faz F.0.2'nin KENDİ testi İçİn (bkz. aşağıdaki "enjekte edilen bir
+/// allocator..." testi) — AYNI `extern fn` gerekçesi: `runtime/alloc/
+/// lowlevel.zig` `asap.zig`yi import EDİYOR, TERSİ yön (asap.zig'in
+/// lowlevel.zig'i import etmesi) döngüsel bağımlılık KURARDI.
+extern fn nox_arena_create(rt: ?*anyopaque) callconv(.c) ?*anyopaque;
+extern fn nox_arena_alloc(arena_ptr: ?*anyopaque, size: usize) callconv(.c) ?*anyopaque;
+extern fn nox_arena_destroy(rt: ?*anyopaque, arena_ptr: ?*anyopaque) callconv(.c) void;
+/// Faz F.0.2 (bkz. `lowlevel.zig`nin `nox_arena_pool_drain`inin belge notu):
+/// `nox_runtime_deinit`in `debug_gpa.deinit()`DEN ÖNCE çağırdığı, Release
+/// modunun arena-havuzunda KALAN (HİÇ yeniden kullanılmadan runtime'ın
+/// KENDİSİ sona eren) `ArenaHandle`leri TOPLU serbest bırakan fonksiyon.
+extern fn nox_arena_pool_drain(rt: ?*anyopaque) callconv(.c) void;
 
 /// ARC nesneleri (bkz. `runtime/alloc/arc.zig`) için sabit büyüklük-sınıflı
 /// serbest liste havuzunun sınıf sayısı — performans fazında (benchmark
@@ -124,6 +136,37 @@ pub const SpinLock = @import("../async_rt/spinlock.zig").SpinLock;
 
 pub const RuntimeState = struct {
     debug_gpa: if (use_debug_allocator) std.heap.DebugAllocator(.{}) else void,
+    /// Faz F.0.2 (bkz. plan dosyası "Allocator enjeksiyonu") — `RuntimeState`in
+    /// KENDİ bootstrap tahsisinde (`backing.create(RuntimeState)`) KULLANILAN
+    /// allocator — `nox_runtime_deinit`in SON `destroy(state)` çağrısı BUNU
+    /// KULLANIR. VARSAYILAN (`nox_runtime_init()`nin argümansız çağrısı)
+    /// KOŞULSUZ `page_allocator`dır (Debug/Release FARK ETMEKSİZİN) — bu,
+    /// F.0.2-ÖNCESİ davranışla BİREBİR AYNI VE KRİTİK bir geriye-dönük-
+    /// uyumluluk gereksinimi: BAZI çağıranlar (ör. `cycle_detector.zig`nin
+    /// `deinitRuntimeExpectNoLeak`ı, `async_rt/bridge.zig`nin İÇ testleri)
+    /// `nox_runtime_deinit`i HİÇ ÇAĞIRMADAN `std.heap.page_allocator.
+    /// destroy(state)`ı DOĞRUDAN çağırıyor — BU turda break→red→fix
+    /// İLE GERÇEKTEN BULUNAN bir tuzak: `injected_allocator`YLA (aşağıya
+    /// bkz. — Release modunda `smp_allocator`) AYNI alanı PAYLAŞTIRMAK
+    /// (yani argümansız çağrıda BİLE bootstrap'ı `smp_allocator`a
+    /// KAYDIRMAK) bu ÇAĞIRANLARIN manuel `page_allocator.destroy`sini
+    /// GERÇEK bir allocator-uyumsuzluğuna (SEGV) DÖNÜŞTÜRÜRDÜ. `nox_
+    /// runtime_init_with_allocator`in KENDİ çağıranı İSE (`nox_runtime_
+    /// deinit`i DOĞRU şekilde ÇAĞIRDIĞI SÜRECE) `backing`i BOTH alana
+    /// EŞİT olarak AYARLATABİLİR (GERÇEK, birleşik enjeksiyon).
+    bootstrap_allocator: std.mem.Allocator = std.heap.page_allocator,
+    /// Faz F.0.2: Release modunda `.allocator()`'ın DÖNDÜRDÜĞÜ değer —
+    /// Debug modunda KULLANILMAZ (orada `.allocator()` HÂLÂ `debug_gpa.
+    /// allocator()`ı döner, leak-checking KORUNUR — AMA `debug_gpa.
+    /// backing_allocator` da `nox_runtime_init_with_allocator` ÇAĞRILDIYSA
+    /// enjekte edilen değere ayarlanır, enjekte edilen bir allocator Debug
+    /// modunda bile "arkada" çalışmaya devam eder). VARSAYILAN (`nox_
+    /// runtime_init()`nin argümansız çağrısı) BUGÜNKÜ davranışı BİREBİR
+    /// KORUR: Debug'da `page_allocator` (KULLANILMAZ AMA `debug_gpa`nın
+    /// KENDİ `.init` varsayılanıyla TUTARLI), Release'de `smp_allocator`
+    /// (`nox_alloc`/dict/arena/vb.nin KULLANDIĞI, ~120x hız kazanımı
+    /// SAĞLAYAN değer — bkz. modül üstü not).
+    injected_allocator: std.mem.Allocator = if (use_debug_allocator) std.heap.page_allocator else std.heap.smp_allocator,
     /// Faz OO.3, Faz MN.2'de fiber-affine hale GETİRİLDİ: birincil depo
     /// ARTIK `Fiber.pending_exception`dir (bkz. onun belge notu) —
     /// BURADAKİ alan SADECE fiber DIŞINDA (senkron üst-düzey kod,
@@ -391,7 +434,7 @@ pub const RuntimeState = struct {
 
     pub fn allocator(self: *RuntimeState) std.mem.Allocator {
         if (use_debug_allocator) return self.debug_gpa.allocator();
-        return std.heap.smp_allocator;
+        return self.injected_allocator;
     }
 };
 
@@ -591,7 +634,42 @@ pub fn setArcOwnerPoolCapacity(state: *RuntimeState, capacity: usize) void {
     state.arc_owner_pool.capacity = capacity;
 }
 
+/// Faz F.0.2: GERÇEK allocator enjeksiyonu İçİn YENİ, AYRI bir giriş
+/// noktası — `backing`i HEM `RuntimeState`in KENDİ bootstrap tahsisi
+/// (`bootstrap_allocator`) HEM `debug_gpa`nın backing'i (Debug) HEM
+/// `injected_allocator` (Release'de `.allocator()`nin döndüreceği değer)
+/// OLARAK KULLANIR — GERÇEK, BİRLEŞİK bir enjeksiyon: TEK bir allocator
+/// HEM struct'ın KENDİSİNİ HEM TÜM SONRAKİ `nox_alloc`/dict/arena/vb.
+/// trafiğini karşılar. `pub fn` (export DEĞİL) — HENÜZ HİÇBİR codegen
+/// çağrı sitesi (QBE/LLVM) BUNU DOĞRUDAN çağırmıyor (freestanding'in KENDİ
+/// codegen entegrasyonu AYRI/gelecekteki bir faz), bu YÜZDEN `std.mem.
+/// Allocator`nin C-ABI sınırını GEÇMESİ gerekmiyor — SAF bir Zig-seviyesi
+/// API. **ÇAĞIRAN, `nox_runtime_deinit`i ÇAĞIRMAKLA (VE state'i MANUEL
+/// yok ETMEMEKLE) YÜKÜMLÜDÜR** — `nox_runtime_init`in argümansız
+/// çağrısının AKSİNE (bkz. onun belge notu), BURADA bootstrap VE
+/// injected_allocator AYNI (potansiyel olarak `page_allocator`DAN FARKLI)
+/// değere ayarlandığından, `state`i BAŞKA bir allocator'la (ör. elle
+/// `std.heap.page_allocator.destroy(state)`) yok etmek GERÇEK bir
+/// uyumsuzluğa yol açar.
+pub fn nox_runtime_init_with_allocator(backing: std.mem.Allocator) ?*anyopaque {
+    const state = backing.create(RuntimeState) catch return null;
+    state.* = .{
+        .debug_gpa = if (use_debug_allocator) .{ .backing_allocator = backing } else {},
+        .bootstrap_allocator = backing,
+        .injected_allocator = backing,
+    };
+    return @ptrCast(state);
+}
+
 /// Yeni bir çalışma zamanı bağlamı oluşturur. Başarısızlıkta `null` döner.
+/// Faz F.0.2: argümansız çağrı BİLİNÇLİ olarak `nox_runtime_init_with_
+/// allocator`e YÖNLENDİRİLMEZ — `bootstrap_allocator`/`injected_allocator`
+/// alanlarının KENDİ VARSAYILAN DEĞERLERİNE (bkz. `RuntimeState`nin alan
+/// tanımları) bırakılır, BÖYLECE F.0.2-ÖNCESİ davranış (bootstrap HER ZAMAN
+/// `page_allocator`, `.allocator()` Debug'da `debug_gpa`/Release'de
+/// `smp_allocator`) BİREBİR KORUNUR (bkz. `bootstrap_allocator`nın belge
+/// notu — BU turda break→red→fix İLE GERÇEKTEN bulunan bir uyumluluk
+/// tuzağının düzeltmesi).
 pub export fn nox_runtime_init() ?*anyopaque {
     const state = std.heap.page_allocator.create(RuntimeState) catch return null;
     state.* = .{ .debug_gpa = if (use_debug_allocator) .init else {} };
@@ -619,15 +697,27 @@ pub export fn nox_runtime_deinit(rt: ?*anyopaque) void {
     // tahsis edilmişti; `debug_gpa.deinit()`DEN ÖNCE serbest bırakılmalı
     // (aksi halde Debug modunda deinit SONRASI bir kullanım olurdu).
     if (state.pool_ext) |ext| state.allocator().destroy(ext);
+    // Faz F.0.2: AYNI gerekçe — Release modunun arena-havuzunda KALAN
+    // `ArenaHandle`ler de `debug_gpa.deinit()`DEN ÖNCE serbest bırakılmalı
+    // (bkz. `nox_arena_pool_drain`in belge notu, `lowlevel.zig`).
+    nox_arena_pool_drain(rt);
     // GG.23: `NOX_STACK_PAINT` AYARLANMADIYSA (varsayılan) HİÇBİR ŞEY
     // YAZMAZ — bkz. `fiber_mod.printStackHwmMaxForResearch`in belge notu.
     fiber_mod.printStackHwmMaxForResearch();
+    // Faz F.0.2: `bootstrap_allocator`ı `debug_gpa.deinit()`DEN ÖNCE YAKALA —
+    // `debug_gpa` bu alandan TAMAMEN AYRI OLDUĞUNDAN `deinit()`in `state`in
+    // KENDİ belleğine bir etkisi YOK, AMA netlik İçİn erken yakalama TERCİH
+    // edildi. `state.bootstrap_allocator`nın KENDİSİ (`injected_allocator`
+    // DEĞİL) KULLANILIR — `nox_runtime_init`in argümansız çağrısında BU
+    // HER ZAMAN `page_allocator`dır (bkz. `bootstrap_allocator`nın belge
+    // notu), `state`i BOOTSTRAP EDEN allocator'IN AYNISIYLA yok etmek İçİn.
+    const bootstrap_allocator = state.bootstrap_allocator;
     if (use_debug_allocator) {
         if (state.debug_gpa.deinit() == .leak) {
             std.debug.print("nox runtime: bellek sızıntısı tespit edildi\n", .{});
         }
     }
-    std.heap.page_allocator.destroy(state);
+    bootstrap_allocator.destroy(state);
 }
 
 /// `size` bayt tahsis eder. Başarısızlıkta `null` döner.
@@ -644,6 +734,40 @@ pub export fn nox_free(rt: ?*anyopaque, ptr: ?*anyopaque, size: usize) void {
     const state: *RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const bytes: [*]u8 = @ptrCast(p);
     state.allocator().free(bytes[0..size]);
+}
+
+// Faz F.0.2 (bkz. plan dosyası "Allocator enjeksiyonu"): `nox_runtime_
+// init_with_allocator(std.testing.allocator)`'ı KULLANIR — `std.testing.
+// allocator`nin KENDİSİ bir leak-dedektörü OLDUĞUNDAN (Zig'in KENDİ
+// `debug_allocator.zig` test paketinin `backing_allocator = std.testing.
+// allocator` deseniyle AYNI, BAĞIMSIZ doğrulanmış teknik), bu test GÜÇLÜ
+// bir kanıt sağlar: `RuntimeState`in KENDİ bootstrap tahsisi + `debug_gpa`nın
+// İÇ sayfa istekleri + arena chunk'ları HEPSİNİN `nox_runtime_deinit`
+// SONRASI DOĞRU şekilde `backing`e GERİ DÖNDÜĞÜNÜN kanıtıdır — TEK BİR
+// sızıntı BİLE bu testi (Zig'in KENDİ test-runner'ının `std.testing.
+// allocator` İçİn OTOMATİK yaptığı sızıntı denetimi YÜZÜNDEN) KIRMIZI
+// yapar.
+test "enjekte edilen bir allocator ile başlatılan runtime, HER şeyi (bootstrap + nox_alloc/free + arena) o allocator'a geri döndürür" {
+    const rt = nox_runtime_init_with_allocator(std.testing.allocator) orelse return error.InitFailed;
+    defer nox_runtime_deinit(rt);
+
+    // nox_alloc/nox_free — Katman 1 yolu.
+    const p1 = nox_alloc(rt, 64) orelse return error.AllocFailed;
+    const bytes1: [*]u8 = @ptrCast(p1);
+    bytes1[0] = 7;
+    try std.testing.expectEqual(@as(u8, 7), bytes1[0]);
+    nox_free(rt, p1, 64);
+
+    // Arena yolu (`lowlevel:`) — `state.allocator()`ı çocuk/backing allocator
+    // OLARAK KULLANIR, enjekte edilen allocator'ı ŞEFFAF olarak devralması
+    // GEREKİR (bkz. `lowlevel.zig`nin belge notu, F.0.2 planının Tasarım
+    // madde 4'ü).
+    const arena = nox_arena_create(rt) orelse return error.ArenaCreateFailed;
+    const p2 = nox_arena_alloc(arena, 128) orelse return error.ArenaAllocFailed;
+    const bytes2: [*]u8 = @ptrCast(p2);
+    bytes2[0] = 9;
+    try std.testing.expectEqual(@as(u8, 9), bytes2[0]);
+    nox_arena_destroy(rt, arena);
 }
 
 /// Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):

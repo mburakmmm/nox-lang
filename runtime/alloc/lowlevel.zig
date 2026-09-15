@@ -94,6 +94,36 @@ export fn nox_arena_destroy(rt: ?*anyopaque, arena_ptr: ?*anyopaque) void {
     state.allocator().destroy(handle);
 }
 
+/// Faz F.0.2 (bkz. plan dosyası "Allocator enjeksiyonu" — bu turun KENDİ
+/// doğrulama testinin, `std.testing.allocator`'ı backing OLARAK KULLANARAK
+/// BULDUĞU, GERÇEK/pre-existing bir Release-modu boşluğunun düzeltmesi):
+/// `nox_runtime_deinit` TARAFINDAN, `debug_gpa.deinit()`DEN ÖNCE çağrılır —
+/// Release modunda (`use_pool`) `nox_arena_destroy`'un HAVUZA GERİ KOYDUĞU,
+/// HİÇ yeniden kullanılmadan runtime'IN KENDİSİ SONA EREN `ArenaHandle`'leri
+/// (VE onların `reset(.retain_capacity)` İLE SAKLADIĞI arka arabellek
+/// parçalarını) TOPLU serbest bırakır — AKSİ HALDE bu bellek runtime
+/// kapandıktan SONRA da `backing`e HİÇ GERİ DÖNMEZ (`smp_allocator`
+/// VARSAYILAN backing İKEN bu SESSİZCE zararsızdı — sızıntı DENETİMİ
+/// OLMAYAN bir allocator'a "geri dönmeyen" bellek gözlemlenemez — AMA
+/// enjekte edilebilir bir backing İLE ARTIK GERÇEK bir sızıntı). Debug
+/// modunda BU SORUN ZATEN YOK (`use_pool=false` İKEN havuz HİÇ KULLANILMAZ,
+/// HER `nox_arena_destroy` GERÇEKTEN `deinit()` eder) — BU YÜZDEN fonksiyon
+/// HER İKİ modda da GÜVENLE ÇAĞRILABİLİR (Debug'da `state.arena_pool` HER
+/// ZAMAN `null`dur, döngü gövdesi HİÇ ÇALIŞMAZ).
+export fn nox_arena_pool_drain(rt: ?*anyopaque) void {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
+    state.arena_pool_lock.lock();
+    var cur = state.arena_pool;
+    state.arena_pool = null;
+    state.arena_pool_lock.unlock();
+    while (cur) |raw| {
+        const handle: *ArenaHandle = @ptrCast(@alignCast(raw));
+        cur = @ptrCast(@alignCast(handle.next));
+        handle.arena.deinit();
+        state.allocator().destroy(handle);
+    }
+}
+
 test "arena tahsisi yazılabilir/okunabilir; destroy sonrası sızıntı yok" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);

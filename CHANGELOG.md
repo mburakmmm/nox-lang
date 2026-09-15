@@ -14,6 +14,46 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.82.0]
+
+### Eklendi/Değiştirildi (Faz F.0.2 — Allocator enjeksiyonu)
+- Freestanding Nox çerçevesinin F.0.1'den (dispatch tablosu statikleştirmesi)
+  SONRAKİ ikinci alt-fazı: `RuntimeState`in çalışma-zamanı allocator'ı
+  GERÇEKTEN enjekte edilebilir hale getirildi — `nox_runtime_init`
+  `RuntimeState`in KENDİSİNİ HERHANGİ bir Nox kodu ÇALIŞMADAN ÖNCE
+  `std.heap.page_allocator.create` İLE tahsis ediyordu; bir freestanding
+  hedefin "heap zorunlu olmasın" hedefi BU tahsisin de enjekte edilebilir
+  olmasını GEREKTİRİYOR.
+- YENİ `RuntimeState.bootstrap_allocator`/`injected_allocator` alanları +
+  YENİ `nox_runtime_init_with_allocator(backing)` (Zig-seviyesi, `pub fn`
+  — HENÜZ codegen'den ÇAĞRILMIYOR). `nox_runtime_init()`nin argümansız
+  çağrısı davranışı BİREBİR KORUR (bootstrap HER ZAMAN `page_allocator`,
+  `.allocator()` Debug'da `debug_gpa`/Release'de `smp_allocator`).
+- `runtime/alloc/lowlevel.zig`nin arena mekanizması (`nox_arena_create`)
+  `state.allocator()` ÜZERİNDEN backing tahsis ettiğinden enjeksiyonu
+  SIFIR kod değişikliğiyle DEVRALIR.
+- **Doğrulama SIRASINDA bulunan VE düzeltilen İKİ GERÇEK, pre-existing
+  hata**: (1) `nox_runtime_init_with_allocator`'ın bootstrap/injected
+  allocator'ı TEK bir alanda BİRLEŞTİRME İLK tasarımı, argümansız
+  `nox_runtime_init()`nin Release modunda bootstrap'ı `smp_allocator`a
+  KAYDIRARAK `cycle_detector.zig`/`async_rt/bridge.zig`nin `nox_runtime_
+  deinit`i ATLAYIP `state`i ELLE `std.heap.page_allocator.destroy` İLE
+  yok eden İç testlerini GERÇEK bir allocator-uyumsuzluğuyla (SEGV)
+  KIRDI — `bootstrap_allocator`/`injected_allocator` AYRI alanlara
+  BÖLÜNEREK düzeltildi (break→red→fix İLE doğrulandı). (2) Release
+  modunun arena-havuzu (`lowlevel.zig`nin `nox_arena_create`/`destroy`ı)
+  `nox_runtime_deinit`de HİÇ DRAIN EDİLMİYORDU — `smp_allocator`
+  (sızıntı-tespiti OLMAYAN) VARSAYILAN backing İKEN BU SESSİZCE
+  zararsızdı, AMA enjekte edilebilir bir backing İLE (BU fazın KENDİ
+  yeni testi, `std.testing.allocator`ı backing OLARAK KULLANARAK)
+  GERÇEK bir sızıntı OLARAK ORTAYA ÇIKTI — YENİ `nox_arena_pool_drain`
+  İLE düzeltildi.
+- YENİ Zig testi (`asap.zig`): `nox_runtime_init_with_allocator(std.
+  testing.allocator)` İLE bootstrap+`nox_alloc`/`free`+arena YAŞAM
+  DÖNGÜSÜNÜN TAMAMININ SIFIR sızıntıyla `backing`e GERİ DÖNDÜĞÜNÜ
+  kanıtlar (leak-tespit eden bir allocator'ı backing OLARAK KULLANMANIN
+  KENDİSİ, yukarıdaki İKİ hatayı BULAN mekanizma).
+
 ## [1.81.0]
 
 ### Eklendi/Değiştirildi (Faz F.0.1 — dlopen/dlsym-tabanlı dispatch'i statik, "push" modeli bir kayıt mekanizmasına çevirme)

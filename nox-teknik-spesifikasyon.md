@@ -20667,6 +20667,91 @@ Mode turunda; `class_ids.items.len > 0` guard'ının "her zaman emit et"e
 
 ---
 
+## 3.162 Faz F.0.2 — Allocator enjeksiyonu (v1.82.0)
+
+**Context**: Freestanding Nox çerçevesinin F.0.1'DEN SONRAKİ ikinci alt-
+fazı. `nox_runtime_init` `RuntimeState`'in KENDİSİNİ `std.heap.page_
+allocator.create` İLE, HERHANGİ bir Nox kodu ÇALIŞMADAN ÖNCE tahsis
+ediyor — `str`in KENDİSİ HER ZAMAN ARC-yönetimli olduğundan (`print
+("hello")` BİLE bir tahsis GEREKTİRİR), bir freestanding hedefin "heap
+zorunlu olmasın" hedefi BU tahsisin de enjekte edilebilir olmasını
+GEREKTİRİYOR.
+
+**Araştırma bulguları**: `std.mem.Allocator` (Zig 0.16) ZATEN bir vtable'dır
+(`ptr`+`vtable: *const VTable{alloc,resize,remap,free}`) — YENİ bir
+soyutlama İCAT ETMEYE GEREK YOK, SADECE `RuntimeState`e BU değeri SAKLAYAN
+bir alan eklemek yeterli (`hpy_bridge/context.zig`'in `PrivateState.
+allocator` alanının AYNI, ZATEN kanıtlanmış deseni). F.0.1'in "push
+registration" deseni BURAYA UYGULANAMAZ — kayıt EDİLECEK "şey"
+(`RuntimeState`'in KENDİSİ) HENÜZ VAR OLMADIĞINDAN, bu YAPISAL olarak bir
+KURUCU-parametresi problemi. `std.heap.DebugAllocator`'ın KENDİ `backing_
+allocator` alanı (VARSAYILAN `page_allocator`, Zig'in KENDİ test paketinde
+`std.testing.allocator` OLARAK override EDİLEBİLDİĞİ doğrulandı) Debug
+modunda "enjekte edilen allocator + KORUNAN leak-checking"i AYNI ANDA
+mümkün kılıyor.
+
+**Tasarım**: `RuntimeState`e İKİ YENİ alan — `bootstrap_allocator`
+(`RuntimeState`in KENDİ tahsisi/`nox_runtime_deinit`'in son `destroy`u
+İçİn, VARSAYILAN KOŞULSUZ `page_allocator`) VE `injected_allocator`
+(Release'de `.allocator()`'ın döndürdüğü değer, VARSAYILAN Debug'da
+`page_allocator`/Release'de `smp_allocator`). YENİ `nox_runtime_init_
+with_allocator(backing)` (`pub fn`, export DEĞİL — HENÜZ codegen'den
+ÇAĞRILMIYOR) `backing`i HER İKİ alana da EŞİT atar (GERÇEK, birleşik
+enjeksiyon) + Debug'da `debug_gpa.backing_allocator`ı da AYARLAR.
+`nox_runtime_init()`'in argümansız çağrısı BU fonksiyona YÖNLENDİRİLMEZ —
+KENDİ, DEĞİŞMEMİŞ gövdesini KORUR (bkz. aşağıdaki break→red→fix bulgusu).
+`lowlevel.zig`'in arena mekanizması `state.allocator()` ÜZERİNDEN backing
+tahsis ettiğinden enjeksiyonu SIFIR kod değişikliğiyle DEVRALIR.
+
+**Doğrulama SIRASINDA bulunan VE düzeltilen İKİ GERÇEK, pre-existing
+hata (bu fazın KENDİ güçlü doğrulama testinin — leak-tespit eden bir
+allocator'ı backing OLARAK KULLANMANIN — bulduğu)**:
+1. **İLK tasarım** (`bootstrap_allocator`/`injected_allocator`'ı TEK bir
+   alanda BİRLEŞTİRME) argümansız `nox_runtime_init()`'in Release
+   modundaki bootstrap'ını `smp_allocator`a KAYDIRDI — `cycle_detector.
+   zig`'in `deinitRuntimeExpectNoLeak`ı VE `async_rt/bridge.zig`'in
+   `g_scheduler threadlocal` testi GİBİ `nox_runtime_deinit`i HİÇ
+   ÇAĞIRMAYIP `state`i ELLE `std.heap.page_allocator.destroy` İLE yok
+   eden ÇAĞIRANLARI GERÇEK bir allocator-uyumsuzluğuyla (SEGV, `zig
+   build noxrt-test -Doptimize=ReleaseFast`'te %100 tekrarlanabilir 2
+   çökme) KIRDI. Break→red→fix İLE (clean main'de 172/172 temiz, DEĞİŞİKLİK
+   İLE 171/173 + 2 SEGV, düzeltme SONRASI 173/173 temiz) doğrulandı —
+   `bootstrap_allocator`/`injected_allocator` AYRI alanlara BÖLÜNEREK
+   çözüldü.
+2. **Release modunun arena-havuzu** (`nox_arena_create`/`nox_arena_
+   destroy`'un `use_pool` dalı) `nox_runtime_deinit`'te HİÇ DRAIN
+   EDİLMİYORDU — `smp_allocator` (sızıntı-tespiti OLMAYAN) VARSAYILAN
+   backing İKEN BU SESSİZCE zararsızdı, AMA `std.testing.allocator`
+   backing OLARAK KULLANILDIĞINDA GERÇEK bir sızıntı OLARAK ORTAYA
+   ÇIKTI. YENİ `lowlevel.zig` fonksiyonu `nox_arena_pool_drain(rt)`
+   (`nox_runtime_deinit`'in `debug_gpa.deinit()`DEN ÖNCE çağırdığı) HAVUZDA
+   KALAN `ArenaHandle`leri TOPLU serbest bırakarak düzeltti.
+
+**Doğrulama**: `zig ast-check`; YENİ Zig testi (`asap.zig`) — `nox_
+runtime_init_with_allocator(std.testing.allocator)` İLE bootstrap+`nox_
+alloc`/`free`+arena YAŞAM DÖNGÜSÜNÜN TAMAMININ SIFIR sızıntıyla `backing`e
+GERİ DÖNDÜĞÜNÜ kanıtlar (break→red→fix İLE de doğrulandı — final `destroy`
+çağrısı KASITLI olarak `page_allocator`a BOZULUP testin GERÇEKTEN 1 sızıntı
+YAKALADIĞI görüldü, SONRA düzeltme GERİ eklenip temiz olduğu doğrulandı);
+`zig build noxrt-test` (Debug+ReleaseFast, HER İKİSİNDE de 173/173, 3+ KEZ
+tekrarlanarak); TAM paket `zig build test` (Debug+ReleaseFast) — ARADAN
+ÇIKAN HTTP golden test başarısızlıkları (birden fazla koşuda FARKLI test
+grupları) HER BİRİ İZOLE çalıştırıldığında TEMİZ geçti (Faz TEST.3-F.0.1'in
+AYNI, ÖNCEDEN belgelenmiş `-j` kaynak-çekişmesi flake'i, GERÇEK bir
+regresyon DEĞİL); `NOX_STRESS_ROUNDS=800 zig build stress-test
+-Doptimize=ReleaseFast` (45/45).
+
+**Kapsam DIŞI**: `WorkerPool.create`'in KENDİ `allocator` parametresini
+`RuntimeState`'in `injected_allocator`ına da AKITMAK (Release modunda
+`smp_allocator`dan `page_allocator`a düşüp GERÇEK bir performans
+regresyonuna yol AÇARDI); `async_rt`/`stdlib_shims`'in `state.allocator()`
+ÜZERİNDEN GEÇMEYEN, DOĞRUDAN `std.heap.page_allocator` kullanan ÇOĞUNLUK
+çağrı siteleri; `hpy_bridge/context.zig`'in KENDİ, ZATEN BAĞIMSIZ allocator-
+enjeksiyon mekanizması; `nox_runtime_init_with_allocator`i codegen'DEN
+ÇAĞIRAN bir yol (F.1'in KENDİ kapsamı).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.
