@@ -49,6 +49,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const asap = @import("asap.zig");
 const lowlevel = @import("lowlevel.zig");
+const dispatch_registry = @import("dispatch_registry.zig");
 const abi_layout = @import("abi_layout");
 
 /// Faz P1.2: `../../shared/abi_layout.zig`den RE-EXPORT (derleyiciyle
@@ -338,35 +339,12 @@ fn releaseWorklistReadTag(p: *anyopaque) i64 {
     return tag_ptr.*;
 }
 
-const WinDlSelf = if (builtin.os.tag == .windows) struct {
-    extern "kernel32" fn GetModuleHandleA(name: ?[*:0]const u8) callconv(.c) ?*anyopaque;
-    extern "kernel32" fn GetProcAddress(module: *anyopaque, name: [*:0]const u8) callconv(.c) ?*anyopaque;
-} else struct {};
-
 /// `$nox_class_release_dispatch(rt, tag, p)`e (bkz. `layout.zig`nin
-/// `genClassReleaseDispatch`ı) `dlsym` İLE ÇALIŞMA ZAMANINDA dağıtır —
-/// `cycle_detector.zig`nin `resolveTraceDispatch`/`resolveGcFreeDispatch`
-/// İLE AYNI gerekçe (BAĞIMSIZ, KÜÇÜK bir kopya): bu sembol SADECE sınıf
-/// İÇEREN programlarda üretilir (`class_ids.items.len > 0` koşulu), sabit
-/// bir `extern fn` sınıfSIZ bir programda/`noxrt_test`te bağlama adımını
-/// çökertirdi.
-fn resolveClassReleaseDispatch(rs: *asap.ReleaseState) ?*const fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) void {
-    if (rs.class_release_dispatch_resolved) return rs.class_release_dispatch_fn;
-    rs.class_release_dispatch_resolved = true;
-    if (builtin.os.tag == .windows) {
-        const module = WinDlSelf.GetModuleHandleA(null) orelse return null;
-        const sym = WinDlSelf.GetProcAddress(module, "nox_class_release_dispatch") orelse return null;
-        rs.class_release_dispatch_fn = @ptrCast(@alignCast(sym));
-        return rs.class_release_dispatch_fn;
-    }
-    const handle = std.c.dlopen(null, .{ .NOW = true }) orelse return null;
-    const sym = std.c.dlsym(handle, "nox_class_release_dispatch") orelse return null;
-    rs.class_release_dispatch_fn = @ptrCast(@alignCast(sym));
-    return rs.class_release_dispatch_fn;
-}
-
-fn dispatchClassRelease(rt: ?*anyopaque, tag: i64, p: *anyopaque, rs: *asap.ReleaseState) void {
-    const f = resolveClassReleaseDispatch(rs) orelse return;
+/// `genClassReleaseDispatch`ı) dağıtır — Faz F.0.1'DEN İTİBAREN `dlsym`
+/// YERİNE `dispatch_registry`nin (bkz. onun modül üstü notu) statik,
+/// program-başlangıcında BİR KEZ kaydedilen tablosu KULLANILIR.
+fn dispatchClassRelease(rt: ?*anyopaque, tag: i64, p: *anyopaque) void {
+    const f = dispatch_registry.classReleaseFn() orelse return;
     f(rt, tag, p);
 }
 
@@ -409,13 +387,13 @@ fn enqueueAndMaybePump(rt: ?*anyopaque, tag: i64, ptr: *anyopaque, rs: *asap.Rel
     rs.worklist.append(std.heap.page_allocator, .{ .tag = tag, .ptr = ptr }) catch {
         // OOM: BEST-EFFORT — doğrudan dispatch et (astronomik derecede
         // NADİR bir yedek yol, whatever kalan yığın riskini KABUL eder).
-        dispatchClassRelease(rt, tag, ptr, rs);
+        dispatchClassRelease(rt, tag, ptr);
         return;
     };
     if (rs.pump_active) return; // DIŞ bir pompa BUNU er geç işleyecek.
     rs.pump_active = true;
     defer rs.pump_active = false;
-    while (rs.worklist.pop()) |item| dispatchClassRelease(rt, item.tag, item.ptr, rs);
+    while (rs.worklist.pop()) |item| dispatchClassRelease(rt, item.tag, item.ptr);
 }
 
 /// Sabit (non-polymorphic, `has_vtable == false`) sınıflar İçİn — `release_fn`,
@@ -450,16 +428,14 @@ pub export fn nox_rc_release_enqueue_dynamic(rt: ?*anyopaque, ptr: ?*anyopaque) 
     const p = ptr orelse return;
     const tag = releaseWorklistReadTag(p);
     const rs = releaseStateForRt(rt) orelse {
-        // rt=null (izole test) — dlsym önbelleği OLMADAN TEK SEFERLİK
-        // bir dispatch, izleme YOK.
-        var scratch: asap.ReleaseState = .{};
-        dispatchClassRelease(rt, tag, p, &scratch);
+        // rt=null (izole test) — izleme YOK, doğrudan tek seferlik dispatch.
+        dispatchClassRelease(rt, tag, p);
         return;
     };
     if (!rs.pump_active and rs.depth < MAX_DIRECT_RELEASE_DEPTH) {
         rs.depth += 1;
         defer rs.depth -= 1;
-        dispatchClassRelease(rt, tag, p, rs);
+        dispatchClassRelease(rt, tag, p);
         return;
     }
     enqueueAndMaybePump(rt, tag, p, rs);

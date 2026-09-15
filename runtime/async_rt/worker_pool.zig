@@ -279,9 +279,11 @@ const StressShared = struct {
 /// `nox_globals_set`/`nox_globals_get` İLE KENDİ slotunun İZOLE kaldığını
 /// doğrulama.
 fn stressWorkerBody(rt: *anyopaque, slot: usize, shared: *StressShared) void {
-    // `g_trace_dispatch_fn`/`g_gc_free_dispatch_fn` THREADLOCAL'DIR — HER
-    // worker KENDİ enjeksiyonunu YAPMALIDIR (bkz. cycle_detector.zig'nin
-    // KENDİ "bir iş parçacığındaki enjeksiyon diğerine SIZMAZ" testi).
+    // Faz F.0.1'den İtibaren `dispatch_registry` PROGRAM-genelinde TEK,
+    // PAYLAŞILAN bir tablodur (bkz. `cycle_detector.zig`'in "bir iş
+    // parçacığındaki kayıt... TÜM iş parçacıklarından GÖRÜNÜR" testi) —
+    // HER worker'ın burada TEKRAR çağırması ARTIK zorunlu DEĞİL (redundant
+    // AMA ZARARSIZ: HEPSİ AYNI sahte fonksiyonları kaydediyor, idempotent).
     cycle_detector.injectFakeDispatch();
 
     var i: usize = 0;

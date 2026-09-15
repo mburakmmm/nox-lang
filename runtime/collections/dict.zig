@@ -56,6 +56,7 @@ const builtin = @import("builtin");
 const asap = @import("../alloc/asap.zig");
 const str_mod = @import("../str.zig");
 const arc = @import("../alloc/arc.zig");
+const dispatch_registry = @import("../alloc/dispatch_registry.zig");
 const abi_layout = @import("abi_layout");
 const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
@@ -64,39 +65,10 @@ const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 /// sınıf DEĞERLİ bir dict'in ESKİ (üzerine yazılan) ya da TÜM (release
 /// sırasında) değerlerini serbest bırakmak İçİn derleyicinin ürettiği
 /// `$nox_class_release_dispatch(rt, tag, p)`e (bkz. `compiler/codegen_qbe/
-/// layout.zig`nin `genClassReleaseDispatch`ı) İHTİYAÇ VAR — Madde 1'in
-/// (`TaskLocal[T]`) `nox_tasklocal_set`iYLE BİREBİR AYNI mekanizma.
-/// **NEDEN sabit bir `extern fn` DEĞİL, `dlsym` İLE ÇALIŞMA ZAMANINDA
-/// aranan bir sembol — `runtime/alloc/cycle_detector.zig`nin
-/// `resolveTraceDispatch`ıYLA BİREBİR AYNI gerekçe (bkz. onun belge
-/// notu):** bu sembol yalnızca EN AZ BİR sınıf İÇEREN bir programda
-/// üretilir; `dict.zig` (`noxrt.o`nun bir PARÇASI) HER programda
-/// (sınıfSIZ olanlar VE `noxrt_test` DAHİL) bağlanır — sabit bir
-/// `extern fn` bu durumlarda bağlama adımını ÇÖKERTİRDİ.
-const ClassReleaseDispatchFn = fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) void;
-threadlocal var g_class_release_dispatch_resolved = false;
-threadlocal var g_class_release_dispatch_fn: ?*const ClassReleaseDispatchFn = null;
-
-const WinSelf = if (builtin.os.tag == .windows) struct {
-    extern "kernel32" fn GetModuleHandleA(name: ?[*:0]const u8) callconv(.c) ?*anyopaque;
-    extern "kernel32" fn GetProcAddress(module: *anyopaque, name: [*:0]const u8) callconv(.c) ?*anyopaque;
-} else struct {};
-
-fn resolveClassReleaseDispatch() ?*const ClassReleaseDispatchFn {
-    if (g_class_release_dispatch_resolved) return g_class_release_dispatch_fn;
-    g_class_release_dispatch_resolved = true;
-    const name = "nox_class_release_dispatch";
-    if (builtin.os.tag == .windows) {
-        const module = WinSelf.GetModuleHandleA(null) orelse return null;
-        const sym = WinSelf.GetProcAddress(module, name) orelse return null;
-        g_class_release_dispatch_fn = @ptrCast(@alignCast(sym));
-        return g_class_release_dispatch_fn;
-    }
-    const handle = std.c.dlopen(null, .{ .NOW = true }) orelse return null;
-    const sym = std.c.dlsym(handle, name) orelse return null;
-    g_class_release_dispatch_fn = @ptrCast(@alignCast(sym));
-    return g_class_release_dispatch_fn;
-}
+/// layout.zig`nin `genClassReleaseDispatch`ı) İHTİYAÇ VAR. Faz F.0.1'DEN
+/// İTİBAREN `dispatch_registry`nin (bkz. onun modül üstü notu) program-
+/// başlangıcında BİR KEZ kaydedilen, statik tablosu KULLANILIR (ÖNCEDEN
+/// `dlsym` İLE ÇALIŞMA ZAMANINDA aranıyordu).
 
 /// `payload`i (`Entry.key`/`.value`) bir sınıf örneği İŞARETÇİSİ olarak
 /// yorumlayıp `nox_class_release_dispatch`e (tag'i KENDİ İLK `TAG_SIZE`
@@ -105,7 +77,7 @@ fn resolveClassReleaseDispatch() ?*const ClassReleaseDispatchFn {
 fn releaseClassPayload(rt: ?*anyopaque, payload: i64) void {
     if (payload == 0) return;
     const p: *anyopaque = @ptrFromInt(@as(usize, @bitCast(payload)));
-    const f = resolveClassReleaseDispatch() orelse return;
+    const f = dispatch_registry.classReleaseFn() orelse return;
     const tag: *const i64 = @ptrCast(@alignCast(p));
     f(rt, tag.*, p);
 }

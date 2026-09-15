@@ -19,10 +19,10 @@
 //! değildir).
 
 const std = @import("std");
-const builtin = @import("builtin");
 const asap = @import("../alloc/asap.zig");
 const abi_layout = @import("abi_layout");
 const bridge = @import("../async_rt/bridge.zig");
+const dispatch_registry = @import("../alloc/dispatch_registry.zig");
 
 /// Faz MN.2 (bkz. `fiber.zig`nin `pending_exception` belge notu): fiber
 /// İÇİNDE `Fiber.pending_exception`/`pending_exception_line`e, DIŞINDA
@@ -75,35 +75,10 @@ export fn nox_exception_take(rt: ?*anyopaque) ?*anyopaque {
 }
 
 /// Faz OO.3 (bkz. `compiler/codegen_qbe/layout.zig`nin `genClassName
-/// Dispatch`ının belge notu): bu sembol yalnızca EN AZ BİR sınıf İÇEREN
-/// bir programda üretilir — `runtime/alloc/cycle_detector.zig`nin
-/// `resolveTraceDispatch`İYLE BİREBİR AYNI `dlsym`/`GetProcAddress`
-/// gerekçesi (sabit bir `extern fn`, sınıfSIZ bir programda YA DA
-/// `noxrt_test`te bağlama adımını ÇÖKERTİRDİ).
-const WinSelf = if (builtin.os.tag == .windows) struct {
-    extern "kernel32" fn GetModuleHandleA(name: ?[*:0]const u8) callconv(.c) ?*anyopaque;
-    extern "kernel32" fn GetProcAddress(module: *anyopaque, name: [*:0]const u8) callconv(.c) ?*anyopaque;
-} else struct {};
-
-const ClassNameDispatchFn = fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) [*:0]const u8;
-threadlocal var g_class_name_dispatch_resolved = false;
-threadlocal var g_class_name_dispatch_fn: ?*const ClassNameDispatchFn = null;
-
-fn resolveClassNameDispatch() ?*const ClassNameDispatchFn {
-    if (g_class_name_dispatch_resolved) return g_class_name_dispatch_fn;
-    g_class_name_dispatch_resolved = true;
-    const name = "nox_class_name_dispatch";
-    if (builtin.os.tag == .windows) {
-        const module = WinSelf.GetModuleHandleA(null) orelse return null;
-        const sym = WinSelf.GetProcAddress(module, name) orelse return null;
-        g_class_name_dispatch_fn = @ptrCast(@alignCast(sym));
-        return g_class_name_dispatch_fn;
-    }
-    const handle = std.c.dlopen(null, .{ .NOW = true }) orelse return null;
-    const sym = std.c.dlsym(handle, name) orelse return null;
-    g_class_name_dispatch_fn = @ptrCast(@alignCast(sym));
-    return g_class_name_dispatch_fn;
-}
+/// Dispatch`ının belge notu): `$nox_class_name_dispatch`e Faz F.0.1'DEN
+/// İTİBAREN `dispatch_registry`nin (bkz. onun modül üstü notu) program-
+/// başlangıcında BİR KEZ kaydedilen, statik tablosu ÜZERİNDEN erişilir
+/// (ÖNCEDEN `dlsym`/`GetProcAddress` İLE ÇALIŞMA ZAMANINDA aranıyordu).
 
 /// `main`'in kendi gövdesinden hiçbir `except` tarafından yakalanmamış bir
 /// istisna sızarsa çağrılır (codegen bunu yalnızca `main` bağlamında,
@@ -130,7 +105,7 @@ export fn nox_unhandled_exception(rt: ?*anyopaque) noreturn {
     var class_name: [*:0]const u8 = "bilinmeyen sinif";
     if (pe.obj.*) |obj| {
         const tag: *const i64 = @ptrCast(@alignCast(obj));
-        if (resolveClassNameDispatch()) |f| {
+        if (dispatch_registry.classNameFn()) |f| {
             class_name = f(rt, tag.*, obj);
         }
     }

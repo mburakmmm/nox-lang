@@ -14,6 +14,64 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.81.0]
+
+### Eklendi/Değiştirildi (Faz F.0.1 — dlopen/dlsym-tabanlı dispatch'i statik, "push" modeli bir kayıt mekanizmasına çevirme)
+- Freestanding Nox çerçevesinin (bkz. proje planı) İLK alt-fazı: 5 çağrı
+  sitesi (`runtime/alloc/arc.zig`, `runtime/alloc/cycle_detector.zig`
+  (İKİ dispatch — trace + gc-free), `runtime/collections/dict.zig`,
+  `runtime/errors/handle.zig`, `runtime/stdlib_shims/json.zig`) codegen'in
+  ürettiği `nox_class_release_dispatch`/`nox_trace_dispatch`/`nox_gc_free_
+  dispatch`/`nox_class_name_dispatch`/`nox_json_make_json_value`
+  sembollerini `dlopen(null,...)+dlsym` (POSIX) / `GetModuleHandleA+
+  GetProcAddress` (Windows) İLE ÇALIŞMA ZAMANINDA ARIYORDU — freestanding'de
+  (dinamik yükleyici YOK) BU KAVRAMSAL olarak İMKANSIZ.
+- Derin araştırma (2 paralel Explore ajanı + doğrudan kod okuması) BUNUN
+  GERÇEK nedeninin "sembol bazen yok" OLMADIĞINI (core.nox'un koşulsuz
+  merge'i YÜZÜNDEN sembol HER ZAMAN üretiliyor) ORTAYA ÇIKARDI — GERÇEK
+  neden `noxrt_test`in (runtime'ın KENDİ Zig birim testlerini, HİÇBİR Nox
+  programı OLMADAN derleyip çalıştıran hedef) bu sembolleri HİÇ ÜRETMEMESİ,
+  bu YÜZDEN sabit bir `extern fn`nin O bağlamda LİNK adımını ÇÖKERTECEK
+  olmasıydı.
+- Çözüm: "pull" (isimle ara) modelinden "push" (codegen'in KENDİSİ, program
+  BAŞLARKEN, sembol ADRESLERİNİ TEK SEFER kaydeder) modeline geçildi — YENİ
+  `runtime/alloc/dispatch_registry.zig` (5 `std.atomic.Value(?fn_ptr)`
+  global + `nox_register_dispatch_table` export'u), `compiler/codegen_qbe/
+  registration.zig`'in `genMain`/`genMainAsync`'ına `$nox_runtime_init`
+  ÇAĞRISININ HEMEN ARDINDAN, KOŞULSUZ, TEK satırlık bir kayıt çağrısı
+  EKLENDİ (`nox_rc_release_enqueue_fixed`nin ZATEN kanıtlanmış "sembol
+  adı = `l`-tipi değer" mekanizmasıyla). `noxrt_test` BAĞLAMINDA kayıt
+  çağrısı HİÇ YAPILMADIĞINDAN TÜM alanlar `null` KALIR — dlsym'in
+  "bulunamadı" durumuyla BİREBİR AYNI, GÜVENLİ varsayılan davranış.
+- Bonus, düşük-riskli sadeleştirme: `compiler/main.zig`'in `NOX_DLSYM_
+  SYMBOLS`/`computeLinkerVisibilityArgs`ı (5 sembolü ÖZEL olarak dinamik
+  sembol tablosuna KOYAN, `-rdynamic`nin dead-stripping'i devre dışı
+  bırakma sorununu ÇÖZEN FFI.3 mekanizması) TAMAMEN KALDIRILDI — dlsym
+  ARTIK HİÇBİR YERDE ÇALIŞTIRILMEDİĞİNDEN bu semboller GENEL dead-
+  stripping'den (`--gc-sections`/`-dead_strip`) MUAF TUTULMAYA GEREK
+  DUYMUYOR (zaten KULLANILAN bir sembolü hiçbir linker STRIP ETMEZ).
+  macOS/Linux'ta SADECE genel dead-stripping bayrağı KALDI; Windows dalı
+  (`--export-all-symbols`) gerçek CI doğrulaması OLMADAN BİLİNÇLİ olarak
+  DOKUNULMADI.
+- Doğrulama: `zig ast-check`; `zig build noxrt-test` (Debug+ReleaseFast,
+  172/172 — `noxrt_test`in HÂLÂ LİNKLENEBİLDİĞİNİN KANITI); kırmızı-takım
+  (registration çağrısı GEÇİCİ kaldırılıp, sınıf-tipli bir uncaught-exception
+  testinde sınıf adının "bilinmeyen sinif"e DÜŞTÜĞÜ, GERİ eklenince DOĞRU
+  ADI ("MyError") gösterdiği doğrulandı); TAM paket `zig build test`
+  (Debug+ReleaseFast — TÜM 281 IR-diff anlık görüntüsü YENİDEN oluşturuldu,
+  `$main`nin YENİ TEK satırlık kaydı YÜZÜNDEN BEKLENEN bir kayma; ARADAN
+  ÇIKAN HTTP golden test başarısızlıkları BU makinenin KENDİ, ÖNCEDEN
+  belgelenmiş `-j10` kaynak-çekişmesi flake'i OLDUĞU, HER BİRİ İZOLE
+  çalıştırılarak TEYİT edildi); `NOX_STRESS_ROUNDS=800 zig build
+  stress-test -Doptimize=ReleaseFast` (44/44); `binary_size_test.zig`
+  (dead-stripping + fonksiyonel JSON/sınıf/cycle-collector kanıtı HÂLÂ
+  GEÇERLİ).
+- Kapsam DIŞI (Faz F.0'ın KALAN 5 alt-maddesi, HER biri KENDİ AYRI Plan
+  Mode turunda): allocator enjeksiyonu, panik/tanı çıktısı enjeksiyonu,
+  fiber stack kaynağı enjeksiyonu, uyandırma mekanizması soyutlaması,
+  `thread_channel`/`thread_bridge`/`pool_bridge`'in `http_client.zig`
+  bağımlılığının kesilmesi.
+
 ## [1.80.10]
 
 ### Değiştirildi (Faz TEST.5 — `http_server.zig`nin KENDİ iç testlerindeki fiber-tabanlı + senkron askı risklerini kapatma)

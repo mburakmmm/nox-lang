@@ -1747,58 +1747,39 @@ fn cmdExplain(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
     try w.flush();
 }
 
-// Faz FFI.3 (bkz. nox-teknik-spesifikasyon.md §3.148): `runtime/`nin TAMAMI
-// (HPy/WASM köprüleri DAHİL) `dlopen(null, ...)` KULLANMIYOR — SADECE bu 5
-// sembol, `nox.json`/sınıf-yaşam-döngüsü/döngü-toplayıcının KENDİ, ÇALIŞMA-
-// ZAMANI dlsym'iyle (bkz. `runtime/stdlib_shims/json.zig`, `runtime/alloc/
-// arc.zig`, `runtime/collections/dict.zig`, `runtime/alloc/cycle_detector.
-// zig`, `runtime/errors/handle.zig`) aranıyor. `stdlib/nox/core.nox`nin HER
-// programa OTOMATİK/KOŞULSUZ birleştirilen sınıfları (`Exception`/`JsonValue`
-// vb.) YÜZÜNDEN bu 5 sembol HER TEK derlenen programda, kullanıcının
-// HERHANGİ bir sınıf/JSON kullanıp kullanmadığından BAĞIMSIZ olarak HER
-// ZAMAN üretiliyor — bu YÜZDEN sabit/koşulsuz bir liste olarak KODLAMAK
-// güvenlidir ("sembol yoksa link hatası" riski YOKTUR).
-const NOX_DLSYM_SYMBOLS = [_][]const u8{
-    "nox_json_make_json_value",
-    "nox_class_release_dispatch",
-    "nox_trace_dispatch",
-    "nox_gc_free_dispatch",
-    "nox_class_name_dispatch",
-};
-
-/// Faz FFI.3: `-rdynamic` (POSIX/ELF) / `-Wl,--export-all-symbols`
-/// (Windows/PE) TÜM global sembolleri dinamik sembol tablosuna koyduğundan,
-/// linker'ın "hiçbir yerden erişilemeyen kodu ele" (`--gc-sections`/
-/// `-dead_strip`) mantığını FİİLEN devre dışı bırakıyordu — BU turda
-/// doğrudan ölçülerek KANITLANDI (macOS'ta `-rdynamic` OLMADAN + `-dead_
-/// strip` İLE aynı program 7.68 MB'tan 1.52 MB'a İNİYOR, ama `-rdynamic`
-/// + `-dead_strip` BİRLİKTE HİÇBİR fark YARATMIYOR — `-rdynamic`nin
-/// KENDİSİ sorun). Çözüm: SADECE `NOX_DLSYM_SYMBOLS`i (5 sabit isim)
-/// dinamik tabloya koy, GERİ KALAN HER ŞEYİN linker tarafından dead-
-/// strip edilmesine İZİN ver. Windows BİLİNÇLİ olarak DEĞİŞTİRİLMEDİ
-/// (`.def`/`__declspec(dllexport)` PE'nin YAPISAL olarak farklı export
-/// tablosunu gerektirir, gerçek Windows CI erişimi olmadan doğrulanamaz
-/// — AYRI, gelecekteki bir tur, bkz. plan dosyasının "Kapsam DIŞI"si).
-fn computeLinkerVisibilityArgs(a: std.mem.Allocator) ![]const []const u8 {
+/// Faz FFI.3 (bkz. nox-teknik-spesifikasyon.md §3.148) `-rdynamic` (POSIX/
+/// ELF) / `-Wl,--export-all-symbols` (Windows/PE) TÜM global sembolleri
+/// dinamik sembol tablosuna koyduğundan, linker'ın "hiçbir yerden
+/// erişilemeyen kodu ele" (`--gc-sections`/`-dead_strip`) mantığını FİİLEN
+/// devre dışı bırakıyordu (macOS'ta `-rdynamic` OLMADAN + `-dead_strip` İLE
+/// aynı program 7.68 MB'tan 1.52 MB'a İNİYOR, ama `-rdynamic`+`-dead_strip`
+/// BİRLİKTE HİÇBİR fark YARATMIYOR). O turda çözüm 5 SABİT sembolü (`nox_
+/// json_make_json_value`/`nox_class_release_dispatch`/`nox_trace_dispatch`/
+/// `nox_gc_free_dispatch`/`nox_class_name_dispatch`) dinamik sembol
+/// tablosuna KOYUP GERİ KALANIN dead-strip edilmesine İZİN vermekti — bu 5
+/// sembol `runtime/`nin KENDİ `dlopen(null,...)+dlsym`iyle ÇALIŞMA ZAMANINDA
+/// ARANIYORDU. Faz F.0.1'DEN İTİBAREN (bkz. proje planı "Freestanding Nox —
+/// dlopen/dlsym-tabanlı dispatch'i statik, 'push' modeli bir kayıt
+/// mekanizmasına çevirme") BU 5 sembol ARTIK dlsym İLE ARANMIYOR —
+/// `compiler/codegen_qbe/registration.zig`'in `emitDispatchTableRegistration`ı
+/// bunları `$nox_register_dispatch_table`e DOĞRUDAN, GERÇEK bir çağrı
+/// argümanı OLARAK REFERANS ALIYOR (statik linkleme) — bu YÜZDEN ARTIK
+/// dinamik sembol tablosuna KOYULMALARINA HİÇ GEREK YOK (zaten kullanılan
+/// bir sembolü `--gc-sections`/`-dead_strip` ASLA silmez). macOS/Linux'ta
+/// `-exported_symbol`/`--export-dynamic-symbol` özel-durumu TAMAMEN
+/// KALDIRILDI, SADECE genel dead-stripping bayrağı KALDI. Windows BİLİNÇLİ
+/// olarak DOKUNULMADI (gerçek Windows CI erişimi/link-davranışı doğrulaması
+/// OLMADAN `--export-all-symbols`i KALDIRMAK riskli — AYRI, gelecekteki bir
+/// tur).
+fn computeLinkerVisibilityArgs() []const []const u8 {
     if (builtin.os.tag == .windows) {
         return &.{"-Wl,--export-all-symbols"};
     }
-    var args: std.ArrayListUnmanaged([]const u8) = .empty;
     if (builtin.os.tag == .macos) {
-        for (NOX_DLSYM_SYMBOLS) |sym| {
-            try args.append(a, try std.fmt.allocPrint(a, "-Wl,-exported_symbol,_{s}", .{sym}));
-        }
-        try args.append(a, "-Wl,-dead_strip");
-    } else {
-        // Linux (ELF/GNU ld) — GERÇEK bir Docker/Ubuntu 24.04 konteynerinde
-        // binutils 2.42 İLE doğrulandı, `--export-dynamic-symbol` ≥2.35'te
-        // MEVCUT.
-        for (NOX_DLSYM_SYMBOLS) |sym| {
-            try args.append(a, try std.fmt.allocPrint(a, "-Wl,--export-dynamic-symbol={s}", .{sym}));
-        }
-        try args.append(a, "-Wl,--gc-sections");
+        return &.{"-Wl,-dead_strip"};
     }
-    return args.items;
+    // Linux (ELF/GNU ld).
+    return &.{"-Wl,--gc-sections"};
 }
 
 /// Tek bir `.nox` dosyasını uçtan uca derler (lex→parse→import çözümü→tip
@@ -1957,11 +1938,10 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     else
         stem;
 
-    // Faz R.3/LL.6/FFI.3 (bkz. YUKARIDAKİ `computeLinkerVisibilityArgs`in
-    // belge notu): `.qbe` VE `.llvm` yollarının İKİSİ de dinamik sembol
-    // dışa-aktarımına İHTİYAÇ DUYAR (`nox.json`nin `dlopen(null,...)`
-    // deseni) — TEK yerde hesaplanır.
-    const linker_visibility_args = try computeLinkerVisibilityArgs(a);
+    // Faz R.3/LL.6/FFI.3/F.0.1 (bkz. YUKARIDAKİ `computeLinkerVisibilityArgs`in
+    // belge notu): `.qbe` VE `.llvm` yollarının İKİSİ de AYNI, genel dead-
+    // stripping bayrağına İHTİYAÇ DUYAR — TEK yerde hesaplanır.
+    const linker_visibility_args = computeLinkerVisibilityArgs();
 
     // Faz LLVM.5 (bkz. plan dosyası "`noxc build --release` için deneysel
     // bir LLVM backend'i"): `--release` İKEN `.ssa`/`qbe`/`cc` boru hattı
@@ -2015,17 +1995,12 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // (bkz. `project.resolveResourceDirs`) — `noxc`nin KENDİ çalıştırılabilir
     // dosya konumuna göre çözülür, CWD'ye (proje köküne) BAĞIMLI DEĞİLDİR.
     //
-    // Faz R.3/FFI.3 (KRİTİK, Linux'ta GERÇEK bir çökme/sızıntıya yol açan
-    // bir hatanın KÖK NEDENİ, sonradan binary şişmesinin de KÖK NEDENİ
-    // olduğu bulundu — bkz. `computeLinkerVisibilityArgs`in belge notu):
-    // `runtime/stdlib_shims/json.zig`nin `dlopen(null, ...)` + `dlsym(...,
-    // "nox_json_make_json_value")` deseni (bkz. o dosyanın belge notu —
-    // Zig kodu, QBE'nin SONRADAN derleyeceği bir Nox sembolünü ÇALIŞMA
-    // ZAMANINDA arar), ana programın KENDİ sembollerini `dlsym` İLE
-    // bulunabilir kılmak İÇİN dinamik sembol tablosuna AÇIKÇA EXPORT
-    // edilmelerini gerektirir — ARTIK blanket `-rdynamic` YERİNE SADECE
-    // GERÇEKTEN gereken 5 sembol (`NOX_DLSYM_SYMBOLS`) dışa aktarılıyor,
-    // GERİ KALAN HER ŞEY linker tarafından dead-strip edilebiliyor.
+    // Faz R.3/FFI.3/F.0.1 (bkz. `computeLinkerVisibilityArgs`in belge
+    // notu): Faz F.0.1'DEN İTİBAREN `runtime/`de dlsym-tabanlı bir sembol
+    // arama KALMADI (`nox_register_dispatch_table` statik linklemeyle
+    // çözülüyor) — bu YÜZDEN ARTIK blanket `-rdynamic`nin YOL AÇTIĞI dead-
+    // stripping sorununu ÇÖZMEK İçİn ÖZEL bir "5 sembolü dinamik tabloya
+    // koy" işlemine GEREK YOK, SADECE genel dead-stripping bayrağı yeterli.
     // Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71): MinGW'in `cc`si
     // `-rdynamic`yi TANIMAZ (`cc: error: unrecognized command-line option
     // '-rdynamic'` — GERÇEK Windows CI'de doğrulandı) — PE bağlayıcısının

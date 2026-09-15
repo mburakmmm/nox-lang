@@ -42,16 +42,16 @@
 //! küçük, `nox_alloc`'lu bir arabelleğe (8 baytlık uzunluk başlığı + N adet
 //! 8 baytlık işaretçi, `list[T]`nin AYNI düzeni) yazıp döner;
 //! `$nox_trace_dispatch(rt, tag, p) -> l` bu fonksiyonları çalışma zamanı
-//! sınıf ETİKETİNE (`tag`, her örneğin İLK 8 baytı) göre DAĞITIR. Bu sembol
-//! `runtime/stdlib_shims/json.zig`nin `nox_json_make_json_value`
-//! çözümlemesiyle AYNI gerekçeyle `dlsym` İLE ÇALIŞMA ZAMANINDA aranır (bkz.
-//! `resolveTraceDispatch`in belge notu) — SINIFSIZ bir programda YA DA
-//! `noxrt.o`yu HİÇ bir Nox programı OLMADAN test eden `noxrt_test`
-//! hedefinde (bkz. `zig build test`) HİÇ ÜRETİLMEZ, sabit bir `extern fn`
-//! bu durumlarda bağlama adımını ÇÖKERTİRDİ.
+//! sınıf ETİKETİNE (`tag`, her örneğin İLK 8 baytı) göre DAĞITIR. Faz F.0.1
+//! (bkz. proje planı "Freestanding Nox — dlopen/dlsym-tabanlı dispatch'i
+//! statik, 'push' modeli bir kayıt mekanizmasına çevirme") ÖNCESİ bu sembol
+//! `dlsym` İLE ÇALIŞMA ZAMANINDA ARANIYORDU — ARTIK `dispatch_registry`nin
+//! (bkz. onun modül üstü notu) program-başlangıcında BİR KEZ kaydedilen,
+//! statik tablosu KULLANILIYOR.
 
 const std = @import("std");
 const asap = @import("asap.zig");
+const dispatch_registry = @import("dispatch_registry.zig");
 const abi_layout = @import("abi_layout");
 /// Faz MN.6: `runtime/alloc/`den `runtime/async_rt/`e — `asap.zig`nin
 /// `spinlock.zig` İçİn ZATEN yaptığı AYNI yön, SORUNSUZ (`self_pipe.zig`
@@ -66,27 +66,13 @@ const self_pipe = @import("../async_rt/self_pipe.zig");
 /// `TAG_SIZE`/`class_id`) okunan sınıf kimliğidir. Dönüş: `nox_alloc`'lu
 /// bir arabellek (8 baytlık `l` uzunluk + N adet `l` çocuk işaretçisi) —
 /// çağıran (`traceChildren`) OKUDUKTAN SONRA `nox_free`lemekle YÜKÜMLÜDÜR.
-///
-/// **NEDEN sabit bir `extern fn` DEĞİL, `dlsym` İLE ÇALIŞMA ZAMANINDA aranan
-/// bir sembol — `runtime/stdlib_shims/json.zig`nin `nox_json_make_json_value`
-/// çözümlemesiyle BİREBİR AYNI gerekçe (bkz. onun belge notu):** bu sembol
-/// yalnızca SINIF İÇEREN bir programda üretilir (`generateModule`, bkz.
-/// `genTraceDispatch`) — sınıfSIZ bir programda YA DA `noxrt.o`yu HİÇ bir
-/// Nox programı OLMADAN test eden `noxrt_test` hedefinde (bkz. `zig build
-/// test`) HİÇ ÜRETİLMEZ. Sabit bir `extern fn` bu durumlarda bağlama
-/// adımını "symbol not found" ile ÇÖKERTİRDİ; `dlsym` bunun yerine sembolü
-/// bulamayınca `null` döner, `traceChildren` bunu "çocuğu yok" olarak GÜVENLE
-/// yorumlar (bu doğrudur: sınıfSIZ bir programda `nox_cycle_possible_root`
-/// zaten HİÇ ÇAĞRILMAZ, çünkü onu tetikleyen `genClassRelease` de YOK).
-fn resolveTraceDispatch() ?*const fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) ?*anyopaque {
-    return resolveSymbol(fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) ?*anyopaque, &g_trace_dispatch_resolved, &g_trace_dispatch_fn, "nox_trace_dispatch");
+/// Faz F.0.1'DEN İTİBAREN `dispatch_registry.traceFn()` (bkz. onun modül
+/// üstü notu) KULLANILIR — `null` İSE (`nox_register_dispatch_table` HİÇ
+/// çağrılmadıysa, ör. `noxrt_test`) "çocuğu yok" OLARAK GÜVENLE yorumlanır.
+fn nox_trace_dispatch(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) ?*anyopaque {
+    const f = dispatch_registry.traceFn() orelse return null;
+    return f(rt, tag, p);
 }
-// Faz BB.1 (bkz. nox-teknik-spesifikasyon.md §3.47): `threadlocal` —
-// `nox.json.zig`nin `g_make_json_value_fn`ıyla AYNI gerekçe (idempotent
-// dlsym önbelleği, ama `nox.thread.spawn` SONRASI eşzamanlı YAZIM artık
-// mümkün olduğundan senkronize-olmayan bir paylaşım TANIMSIZ DAVRANIŞTIR).
-threadlocal var g_trace_dispatch_resolved = false;
-threadlocal var g_trace_dispatch_fn: ?*const fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) ?*anyopaque = null;
 
 /// `$ClassName_gc_free(rt, p)`ye dağıtır (bkz. codegen.zig, `genClassGcFree`)
 /// — sınıf-TİPLİ OLMAYAN alanları (str/list/Task/Channel/dict) normal
@@ -94,50 +80,9 @@ threadlocal var g_trace_dispatch_fn: ?*const fn (?*anyopaque, i64, ?*anyopaque) 
 /// `collectWhite`in KENDİ özyinelemeli çağrısıyla AYRICA ele alınır — iki
 /// kez serbest bırakmayı ÖNLEMEK için), SONRA nesnenin KENDİ belleğini
 /// KOŞULSUZ (predecrement OLMADAN — zaten çöp olduğu KANITLANMIŞTIR) serbest
-/// bırakır. AYNI `dlsym` gerekçesi (bkz. yukarısı).
-fn resolveGcFreeDispatch() ?*const fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) void {
-    return resolveSymbol(fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) void, &g_gc_free_dispatch_resolved, &g_gc_free_dispatch_fn, "nox_gc_free_dispatch");
-}
-threadlocal var g_gc_free_dispatch_resolved = false;
-threadlocal var g_gc_free_dispatch_fn: ?*const fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) void = null;
-
-/// Faz LL.5 (bkz. nox-teknik-spesifikasyon.md §3.71): `std.c.dlopen`nin
-/// `RTLD` parametre tipi Windows İçin `void`dir (`json.zig`nin AYNI
-/// bulgusu) — `dlopen(null, ...)`in "ÇALIŞAN sürecin KENDİ sembollerini
-/// ara" anlamının Windows karşılığı `GetModuleHandleA(null)` (ana .exe
-/// modülünün TUTAMACI) + `GetProcAddress`tir. **Bilinmesi gereken:**
-/// bu, sembolün GERÇEKTEN bulunacağını GARANTİ ETMEZ — MinGW'in
-/// varsayılan bağlayıcı davranışı POSIX'in `dlopen(NULL)`ı GİBİ TÜM
-/// GENEL sembolleri OTOMATİK dışa açmaz; bu, LL.6'nın bağlayıcı
-/// bayrakları (ör. `-Wl,--export-all-symbols`) İÇİN bir KOŞULDUR —
-/// GERÇEK Windows çalıştırılabilirinde doğrulanacak.
-const WinSelf = if (builtin.os.tag == .windows) struct {
-    extern "kernel32" fn GetModuleHandleA(name: ?[*:0]const u8) callconv(.c) ?*anyopaque;
-    extern "kernel32" fn GetProcAddress(module: *anyopaque, name: [*:0]const u8) callconv(.c) ?*anyopaque;
-} else struct {};
-
-fn resolveSymbol(comptime Fn: type, resolved: *bool, cache: *?*const Fn, comptime name: [:0]const u8) ?*const Fn {
-    if (resolved.*) return cache.*;
-    resolved.* = true;
-    if (builtin.os.tag == .windows) {
-        const module = WinSelf.GetModuleHandleA(null) orelse return null;
-        const sym = WinSelf.GetProcAddress(module, name) orelse return null;
-        cache.* = @ptrCast(@alignCast(sym));
-        return cache.*;
-    }
-    const handle = std.c.dlopen(null, .{ .NOW = true }) orelse return null;
-    const sym = std.c.dlsym(handle, name) orelse return null;
-    cache.* = @ptrCast(@alignCast(sym));
-    return cache.*;
-}
-
-fn nox_trace_dispatch(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) ?*anyopaque {
-    const f = resolveTraceDispatch() orelse return null;
-    return f(rt, tag, p);
-}
-
+/// bırakır. AYNI `dispatch_registry` gerekçesi (bkz. yukarısı).
 fn nox_gc_free_dispatch(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) void {
-    const f = resolveGcFreeDispatch() orelse return;
+    const f = dispatch_registry.gcFreeFn() orelse return;
     f(rt, tag, p);
 }
 
@@ -510,11 +455,12 @@ fn collectWhite(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: 
 
 // ---- Testler ----
 //
-// `nox_trace_dispatch`/`nox_gc_free_dispatch` (bkz. `resolveTraceDispatch`in
-// belge notu) GERÇEK bir QBE-derlenmiş programa (`dlsym`) BAĞLIDIR — bu
-// dosyanın SAF Zig birim testleri İÇİN modül-seviyesi `g_trace_dispatch_fn`/
-// `g_gc_free_dispatch_fn` ÖNBELLEĞİ DOĞRUDAN SAHTE bir uygulamayla
-// DOLDURULUR (bkz. `injectFakeDispatch`) — bu, Bacon-Rajan algoritmasının
+// `nox_trace_dispatch`/`nox_gc_free_dispatch` (bkz. `dispatch_registry`nin
+// modül üstü notu) GERÇEK bir QBE-derlenmiş programın `$main`'ının yaptığı
+// `nox_register_dispatch_table` ÇAĞRISINA BAĞLIDIR — bu dosyanın SAF Zig
+// birim testleri İçİn `dispatch_registry`nin PAYLAŞILAN, program-genelindeki
+// tablosu DOĞRUDAN SAHTE bir uygulamayla DOLDURULUR (bkz. `injectFakeDispatch`)
+// — bu, Bacon-Rajan algoritmasının
 // KENDİSİNİ, hiçbir QBE/`noxc` derlemesi OLMADAN, GERÇEK `nox_rc_alloc`'lu
 // nesneler ÜZERİNDE (ve `std.testing.allocator` YERİNE `asap.RuntimeState`in
 // KENDİ `debug_gpa`si ÜZERİNDEN, tam bir sızıntı/çift-serbest-bırakma
@@ -544,9 +490,9 @@ fn fakeTraceDispatch(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) callconv(.c) ?*a
     return buf.ptr;
 }
 
-// Sabit boyutlu bir arabellek — `g_trace_dispatch_fn`/`g_gc_free_dispatch_fn`
-// İLE AYNI modül-seviyesi (TÜM testler arasında PAYLAŞILAN) yaşam süresine
-// sahip olduğundan, testler arası `deinit`/yeniden kullanım karmaşasından
+// Sabit boyutlu bir arabellek — `dispatch_registry`nin KENDİSİ GİBİ modül-
+// seviyesi (TÜM testler arasında PAYLAŞILAN) yaşam süresine sahip olduğundan,
+// testler arası `deinit`/yeniden kullanım karmaşasından
 // (bir `ArrayListUnmanaged`in GEREKTİRECEĞİ) KAÇINMAK için BİLİNÇLİ olarak
 // dinamik değil.
 var g_fake_freed_buf: [8]?*anyopaque = @splat(null);
@@ -561,12 +507,15 @@ fn fakeGcFreeDispatch(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) callconv(.c) vo
     arc.nox_rc_free_payload(rt, p, FAKE_PAYLOAD_SIZE);
 }
 
-/// Faz MN.3b: `pub` — bkz. `FAKE_PAYLOAD_SIZE`in belge notu.
+/// Faz MN.3b: `pub` — bkz. `FAKE_PAYLOAD_SIZE`in belge notu. Faz F.0.1'DEN
+/// İTİBAREN sahte dispatch, `dispatch_registry`nin (bkz. onun modül üstü
+/// notu) TEK, PAYLAŞILAN kayıt tablosuna, GERÇEK bir programın `genMain`/
+/// `genMainAsync`'ının yapacağı AYNI `nox_register_dispatch_table`
+/// çağrısıyla ENJEKTE edilir — testin KENDİSİ HİÇBİR "önbellek"e DOĞRUDAN
+/// dokunmaz (ARTIK böyle bir önbellek YOK, tablo GLOBAL VE HER ZAMAN
+/// GÜNCEL).
 pub fn injectFakeDispatch() void {
-    g_trace_dispatch_resolved = true;
-    g_trace_dispatch_fn = &fakeTraceDispatch;
-    g_gc_free_dispatch_resolved = true;
-    g_gc_free_dispatch_fn = &fakeGcFreeDispatch;
+    dispatch_registry.nox_register_dispatch_table(&fakeTraceDispatch, &fakeGcFreeDispatch, null, null, null);
     g_fake_freed_count = 0;
 }
 
@@ -654,10 +603,7 @@ fn fakeGcFreeDispatchDiamond(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) callconv
 }
 
 fn injectFakeDispatchDiamond() void {
-    g_trace_dispatch_resolved = true;
-    g_trace_dispatch_fn = &fakeTraceDispatchDiamond;
-    g_gc_free_dispatch_resolved = true;
-    g_gc_free_dispatch_fn = &fakeGcFreeDispatchDiamond;
+    dispatch_registry.nox_register_dispatch_table(&fakeTraceDispatchDiamond, &fakeGcFreeDispatchDiamond, null, null, null);
     g_fake_freed_count = 0;
 }
 
@@ -827,40 +773,27 @@ test "GG.23: scanBlack paylaşılan (elmas) bir çocuğun kendi alt-ağacını T
     try deinitRuntimeExpectNoLeak(rt);
 }
 
-// Faz BB.1: `g_trace_dispatch_fn`/`g_gc_free_dispatch_fn` (+ `_resolved`
-// bayrakları) `threadlocal` OLMASININ, bir OS iş parçacığındaki
-// `injectFakeDispatch` çağrısının BAŞKA bir iş parçacığının KENDİ (henüz
-// çözülmemiş) önbelleğine SIZMADIĞINI kanıtlar.
-test "g_trace_dispatch_fn threadlocal: bir iş parçacığındaki enjeksiyon diğerine SIZMAZ" {
+// Faz F.0.1 (bkz. proje planı "Freestanding Nox — dlopen/dlsym-tabanlı
+// dispatch'i statik, 'push' modeli bir kayıt mekanizmasına çevirme"):
+// ÖNCEKİ tasarımda (`threadlocal` dlsym önbelleği) BU test AKSİNE bir OS
+// iş parçacığındaki enjeksiyonun DİĞERİNE SIZMADIĞINI kanıtlıyordu — YENİ
+// tasarımda `dispatch_registry` KASITLI olarak PROGRAM-genelinde TEK, PAYLAŞILAN
+// bir tablo (GERÇEK bir programda `$main`nin EN BAŞINDA, HERHANGİ bir
+// worker/iş parçacığı spawn EDİLMEDEN ÖNCE, TEK SEFER kaydedilir — TÜM
+// worker'ların AYNI, TEK dispatch tablosunu GÖRMESİ TAM OLARAK istenen
+// davranıştır, İZOLASYON DEĞİL). Bu YÜZDEN test TERSİNE ÇEVRİLDİ: BAŞKA
+// bir OS iş parçacığında YAPILAN kayıt, `t.join()`nin (happens-before
+// kenarı) SONRASI BU iş parçacığından da GÖRÜNÜR OLMALIDIR.
+test "dispatch_registry: bir iş parçacığındaki kayıt, join() sonrası TÜM iş parçacıklarından GÖRÜNÜR" {
     const Ctx = struct {
-        resolved_before_inject: bool = undefined,
-        fn injectOnThisThread(self: *@This()) void {
-            self.resolved_before_inject = g_trace_dispatch_resolved;
-            injectFakeDispatch();
+        fn registerOnThisThread(_: *@This()) void {
+            dispatch_registry.nox_register_dispatch_table(&fakeTraceDispatch, &fakeGcFreeDispatch, null, null, null);
         }
     };
     var ctx = Ctx{};
-    const t = try std.Thread.spawn(.{}, Ctx.injectOnThisThread, .{&ctx});
+    const t = try std.Thread.spawn(.{}, Ctx.registerOnThisThread, .{&ctx});
     t.join();
 
-    // Enjeksiyon YAPILAN iş parçacığı BAŞLARKEN kendi threadlocal'ı henüz
-    // çözülmemiş OLMALIYDI (paylaşılan bir global OLSAYDI, AYNI test
-    // ikilisindeki BAŞKA testlerin ÇAĞIRDIĞI `injectFakeDispatch`DEN dolayı
-    // BU ZATEN `true` OLABİLİRDİ — threadlocal'la HER iş parçacığı TAZE
-    // başlar).
-    try testing.expect(!ctx.resolved_before_inject);
-    // Test-çalıştırma iş parçacığının (BU fonksiyonun KENDİSİ) KENDİ
-    // threadlocal önbelleği, DİĞER iş parçacığın enjeksiyonundan
-    // ETKİLENMEMİŞ olmalı (paylaşılan bir global OLSAYDI, `t.join()`
-    // SONRASI burada `true` GÖRÜNÜRDÜ).
-    if (!g_trace_dispatch_resolved) {
-        try testing.expect(g_trace_dispatch_fn == null);
-    } else {
-        // Bu test dosyasında BAŞKA testler ZATEN bu iş parçacığında
-        // `injectFakeDispatch` YA DA (GG.23'ten İTİBAREN) `injectFakeDispatchDiamond`
-        // çağırmış OLABİLİR (testler AYNI iş parçacığında SIRAYLA koşar) —
-        // o durumda hedef fonksiyon HER ZAMAN BU İKİSİNDEN BİRİ OLMALI,
-        // yeni thread'in enjeksiyonundan ETKİLENMEMİŞ olmalı.
-        try testing.expect(g_trace_dispatch_fn == &fakeTraceDispatch or g_trace_dispatch_fn == &fakeTraceDispatchDiamond);
-    }
+    try testing.expect(dispatch_registry.traceFn() == &fakeTraceDispatch);
+    try testing.expect(dispatch_registry.gcFreeFn() == &fakeGcFreeDispatch);
 }

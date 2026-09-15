@@ -20567,6 +20567,106 @@ nonBlockingAccept`in (io.zig) KENDİSİNİN SİLİNMESİ.
 
 ---
 
+## 3.161 Faz F.0.1 — dlopen/dlsym-tabanlı dispatch'i statik, "push" modeli bir kayıt mekanizmasına çevirme (v1.81.0)
+
+**Context**: kullanıcı, Nox'u gerektiğinde kernel/embedded (freestanding)
+seviyesine kadar İNEBİLEN bir dil yapmak İçİn detaylı bir tasarım çerçevesi
+sundu (bkz. proje planı, "Freestanding Nox — Üretim-hazır Tasarım Çerçevesi").
+Derin araştırma (3 paralel Explore ajanı), runtime'ın 6 ayrı yerinde
+(`arc.zig`/`cycle_detector.zig` ×2/`dict.zig`/`handle.zig`/`json.zig`)
+codegen'in ürettiği `nox_class_release_dispatch`/`nox_trace_dispatch`/
+`nox_gc_free_dispatch`/`nox_class_name_dispatch`/`nox_json_make_json_value`
+sembollerinin `dlopen(null,...)+dlsym` İLE ÇALIŞMA ZAMANINDA ARANDIĞINI
+buldu — freestanding'de (dinamik yükleyici YOK) bu **KAVRAMSAL olarak
+İMKANSIZ**. Kullanıcı bu 6 alt-fazlık listenin İLKİNDEN (F.0.1) başlamayı
+seçti.
+
+**Kök neden — İLK varsayım YANLIŞTI**: dlsym'in KULLANILMA nedeni "sembol
+bazen üretilmiyor" DEĞİLDİ — `class_ids.items.len > 0` koşulu `stdlib/
+nox/core.nox`'un (Exception hiyerarşisi + JsonValue) HER programa KOŞULSUZ
+merge'i YÜZÜNDEN HER ZAMAN doğrudur (`compiler/main.zig`'in KENDİ, ZATEN
+VAR OLAN doc-yorumu bunu AÇIKÇA belgeliyordu). GERÇEK neden **`noxrt_test`**
+(runtime'ın KENDİ Zig birim testlerini, HİÇBİR Nox programı OLMADAN
+derleyip çalıştıran hedef, `zig build test`in parçası) — BU bağlamda
+codegen HİÇ ÇALIŞMADIĞINDAN bu semboller HİÇ ÜRETİLMEZ, sabit bir `extern
+fn` bu hedefin KENDİ LİNK adımını ÇÖKERTİRDİ. `cycle_detector.zig`'in
+KENDİ `fakeTraceDispatch`/`fakeTraceDispatchDiamond` test yardımcıları
+BUNU dolaylı olarak ZATEN KANITLIYORDU — dlsym'i HİÇ ÇAĞIRMADAN,
+`threadlocal` önbellek değişkenlerini DOĞRUDAN elle AYARLAYARAK sahte
+dispatch enjekte ediyorlardı.
+
+**Tasarım — "pull"dan "push"a**: YENİ `runtime/alloc/dispatch_registry.zig`
+(sıfır-bağımlılıklı bir yaprak dosya, `self_pipe.zig`nin AYNI konumu) 5
+`std.atomic.Value(?fn_ptr)` global + `pub export fn nox_register_dispatch_
+table(...)` TAŞIR — `pool_ever_active`/`fiber_ever_active`nin (bkz. §3.15X)
+AYNI, ZATEN kanıtlanmış "TEK yazma, HERHANGİ bir spawn'DAN ÖNCE + program-
+sırası happens-before + `.monotonic` YETERLİ" gerekçesiyle. `compiler/
+codegen_qbe/registration.zig`'in `genMain`/`genMainAsync`'ına, `$nox_
+runtime_init`/`$nox_pool_main_init` ÇAĞRISININ HEMEN ARDINDAN, KOŞULSUZ,
+TEK satırlık bir `$nox_register_dispatch_table` çağrısı EKLENDİ — `nox_rc_
+release_enqueue_fixed`nin (Faz GG.24) `$ClassName_release` sembol-adını
+`l`-tipi bir ARGÜMAN olarak geçen AYNI, ZATEN kanıtlanmış mekanizma
+(sembol adları DOĞRUDAN, GERÇEK bir çağrı argümanı OLARAK geçirilir —
+YENİ bir QBE/LLVM emisyon ilkeli GEREKMEZ, `self.qbeCall` ZATEN backend-
+soyutlanmış). 5 tüketici sitesi `resolveXXXDispatch`/`WinSelf`/dlopen/
+dlsym/`threadlocal` önbelleklerinin TAMAMINI KAYBEDİP `dispatch_registry.
+traceFn()`/`gcFreeFn()`/`classReleaseFn()`/`classNameFn()`/
+`makeJsonValueFn()` çağırır — `null` İSE (kayıt HİÇ yapılmadıysa, ör.
+`noxrt_test`) dlsym'in "bulunamadı" durumuyla BİREBİR AYNI, GÜVENLİ
+varsayılan (sessiz no-op/yedek değer) davranışına düşer.
+
+**`cycle_detector.zig`'in KENDİ threadlocal-izolasyon testi TERSİNE
+ÇEVRİLDİ**: ÖNCEKİ tasarımda `threadlocal` önbellek OLDUĞUNDAN bir OS iş
+parçacığındaki enjeksiyonun DİĞERİNE SIZMADIĞINI kanıtlayan bir test
+VARDI — YENİ tasarımda `dispatch_registry` KASITLI olarak PROGRAM-genelinde
+TEK, PAYLAŞILAN bir tablo (TÜM worker'ların AYNI dispatch tablosunu
+GÖRMESİ TAM OLARAK istenen davranıştır) OLDUĞUNDAN bu test'in ÖNERMESİ
+ARTIK GEÇERSİZDİR — YERİNE "bir iş parçacığındaki kayıt, `join()` SONRASI
+TÜM iş parçacıklarından GÖRÜNÜR" testi YAZILDI (happens-before garantisinin
+GERÇEKTEN GEÇERLİ olduğunu, GERÇEK bir `std.Thread.spawn` üzerinden
+kanıtlar).
+
+**Bonus, düşük-riskli sadeleştirme**: `compiler/main.zig`'in `NOX_DLSYM_
+SYMBOLS`/`computeLinkerVisibilityArgs`ı (Faz FFI.3'ün, 5 sembolü ÖZEL
+olarak dinamik sembol tablosuna KOYAN mekanizması) TAMAMEN KALDIRILDI —
+dlsym ARTIK HİÇBİR YERDE ÇALIŞTIRILMEDİĞİNDEN bu semboller GENEL dead-
+stripping'den (`--gc-sections`/`-dead_strip`) MUAF TUTULMAYA GEREK
+DUYMUYOR (zaten `$nox_register_dispatch_table` çağrısı TARAFINDAN
+REFERANS ALINAN bir sembolü HİÇBİR linker STRIP ETMEZ). Fonksiyon artık
+parametre/hata DÖNÜŞÜ TAŞIMAYAN, SABİT bir dizi DÖNEN saf bir yardımcı.
+Windows dalı (`--export-all-symbols`) gerçek CI doğrulaması OLMADAN
+BİLİNÇLİ olarak DOKUNULMADI.
+
+**Doğrulama**: `zig ast-check`; `zig build noxrt-test` (Debug+ReleaseFast,
+172/172 — `noxrt_test`in HÂLÂ LİNKLENEBİLDİĞİNİN, F.0.1'in TÜM riskinin
+YATTIĞI kontrolün KANITI); **kırmızı-takım**: `genMain`/`genMainAsync`'in
+YENİ kayıt çağrısı GEÇİCİ KALDIRILIP, sınıf-tipli bir uncaught-exception
+programının ARTIK "bilinmeyen sinif" YAZDIRDIĞI (GERÇEK sınıf adı YERİNE)
+doğrulandı, GERİ eklenip "MyError" (GERÇEK sınıf adı) doğru şekilde
+YAZDIRDIĞI GÖRÜLDÜ; TAM paket `zig build test` (Debug+ReleaseFast) —
+TÜM 281 IR-diff anlık görüntüsü (`tests/golden/ir_snapshots/`)
+YENİDEN oluşturuldu (`$main`'in KENDİ YENİ TEK satırlık kaydı YÜZÜNDEN
+HER fixture'ın `.ssa`sı BEKLENEN şekilde kaydı — kasıtlı bir codegen
+değişikliği, testin KENDİSİ BUNU AÇIKÇA belirtti); ARADAN ÇIKAN HTTP
+golden test başarısızlıkları (birden fazla koşuda FARKLI test grupları —
+`http_serve_tls`/`_ws`/`_golden`/`_multicore*`) HER BİRİ İZOLE (`zig test`
+DOĞRUDAN) çalıştırıldığında TEMİZ geçti — Faz TEST.3/4/5'in AYNI, ÖNCEDEN
+belgelenmiş `-j10` kaynak-çekişmesi flake'i OLDUĞU teyit edildi, GERÇEK
+bir regresyon DEĞİL; `NOX_STRESS_ROUNDS=800 zig build stress-test
+-Doptimize=ReleaseFast` (44/44); `tests/cli/binary_size_test.zig`
+(dead-stripping + fonksiyonel JSON/sınıf/cycle-collector kanıtı HÂLÂ
+GEÇERLİ, basitleştirilmiş linker bayraklarıyla da).
+
+**Kapsam DIŞI**: Faz F.0'ın KALAN 5 alt-maddesi (allocator enjeksiyonu,
+panik/tanı çıktısı enjeksiyonu, fiber stack kaynağı enjeksiyonu, uyandırma
+mekanizması soyutlaması, `thread_channel`/`thread_bridge`/`pool_bridge`'in
+`http_client.zig` bağımlılığının kesilmesi) — HER biri KENDİ, AYRI Plan
+Mode turunda; `class_ids.items.len > 0` guard'ının "her zaman emit et"e
+çevrilmesi (freestanding'in SIFIR-sınıflı bir `core.nox`u İçİn GEREKECEK)
+— Faz F.2'nin KENDİ kapsamı.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

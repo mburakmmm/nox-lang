@@ -64,8 +64,8 @@
 //! yolunda bir null-pointer çökmesini de ÖNLER.
 
 const std = @import("std");
-const builtin = @import("builtin");
 const arc = @import("../alloc/arc.zig");
+const dispatch_registry = @import("../alloc/dispatch_registry.zig");
 const http_client = @import("http_client.zig");
 const abi_layout = @import("abi_layout");
 const str_mod = @import("../str.zig");
@@ -78,55 +78,13 @@ const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 const TAG_SIZE = abi_layout.TAG_SIZE;
 
 /// `stdlib/nox/core.nox`nin `nox_json_make_json_value` fonksiyonu — ismi
-/// core.nox'ta SABİT (mangle EDİLMEZ) yazıldığından ("nox_json_make_json_value"),
-/// aşağıdaki `resolveMakeJsonValue`nin `dlsym`i BU TAM ismi arar. Her çağrısı
-/// `JsonValue(kind, b, n, s, arr, keys, vals)`i NORMAL bir Nox fonksiyon
-/// çağrısı olarak çalıştırır (`RT_PARAM` İLK argüman — HER top-level Nox
-/// fonksiyonu İÇİN KOŞULSUZ, bkz. `codegen.zig`nin `genFunction`ı).
-const MakeJsonValueFn = fn (
-    rt: ?*anyopaque,
-    kind: i64,
-    b: i32,
-    n: f64,
-    s: ?[*:0]const u8,
-    arr: ?*anyopaque,
-    keys: ?*anyopaque,
-    vals: ?*anyopaque,
-) callconv(.c) ?*anyopaque;
-
-// Faz BB.1 (bkz. nox-teknik-spesifikasyon.md §3.47): `threadlocal` —
-// `resolveMakeJsonValue`nin `dlsym` önbelleği İDEMPOTENT olsa da (HER
-// zaman AYNI sembole çözülür), `nox.thread.spawn`in paylaşımsız modeliyle
-// İKİ GERÇEK OS iş parçacığı AYNI ANDA BU önbelleğe YAZABİLİR — bu TEKNİK
-// olarak TANIMSIZ DAVRANIŞ (senkronize olmayan eşzamanlı yazım) OLDUĞUNDAN,
-// `g_last_op_ok`la AYNI gerekçeyle SIFIR maliyetle DÜZELTİLİR.
-threadlocal var g_make_json_value_fn: ?*const MakeJsonValueFn = null;
-threadlocal var g_make_json_value_resolved = false;
-
-/// Faz LL.5 (bkz. nox-teknik-spesifikasyon.md §3.71): `std.c.dlopen`nin
-/// `RTLD` parametre tipi Windows İçin `void`dir — `cycle_detector.zig`nin
-/// `WinSelf`iYLE AYNI `GetModuleHandleA(null)`+`GetProcAddress` deseni
-/// (o dosyanın belge notundaki "bağlayıcı bayrağı KOŞULU" AYNEN geçerli).
-const WinSelf = if (builtin.os.tag == .windows) struct {
-    extern "kernel32" fn GetModuleHandleA(name: ?[*:0]const u8) callconv(.c) ?*anyopaque;
-    extern "kernel32" fn GetProcAddress(module: *anyopaque, name: [*:0]const u8) callconv(.c) ?*anyopaque;
-} else struct {};
-
-fn resolveMakeJsonValue() ?*const MakeJsonValueFn {
-    if (g_make_json_value_resolved) return g_make_json_value_fn;
-    g_make_json_value_resolved = true;
-    if (builtin.os.tag == .windows) {
-        const module = WinSelf.GetModuleHandleA(null) orelse return null;
-        const sym = WinSelf.GetProcAddress(module, "nox_json_make_json_value") orelse return null;
-        g_make_json_value_fn = @ptrCast(@alignCast(sym));
-        return g_make_json_value_fn;
-    }
-    const handle = std.c.dlopen(null, .{ .NOW = true }) orelse return null;
-    const sym = std.c.dlsym(handle, "nox_json_make_json_value") orelse return null;
-    g_make_json_value_fn = @ptrCast(@alignCast(sym));
-    return g_make_json_value_fn;
-}
-
+/// core.nox'ta SABİT (mangle EDİLMEZ) yazıldığından ("nox_json_make_json_value").
+/// Her çağrısı `JsonValue(kind, b, n, s, arr, keys, vals)`i NORMAL bir Nox
+/// fonksiyon çağrısı olarak çalıştırır (`RT_PARAM` İLK argüman — HER top-level
+/// Nox fonksiyonu İÇİN KOŞULSUZ, bkz. `codegen.zig`nin `genFunction`ı). Faz
+/// F.0.1'DEN İTİBAREN `dispatch_registry`nin (bkz. onun modül üstü notu)
+/// program-başlangıcında BİR KEZ kaydedilen, statik tablosu ÜZERİNDEN
+/// erişilir (ÖNCEDEN `dlsym` İLE ÇALIŞMA ZAMANINDA aranıyordu).
 fn nox_json_make_json_value(
     rt: ?*anyopaque,
     kind: i64,
@@ -137,7 +95,7 @@ fn nox_json_make_json_value(
     keys: ?*anyopaque,
     vals: ?*anyopaque,
 ) ?*anyopaque {
-    const f = resolveMakeJsonValue() orelse return null;
+    const f = dispatch_registry.makeJsonValueFn() orelse return null;
     return f(rt, kind, b, n, s, arr, keys, vals);
 }
 
@@ -182,11 +140,12 @@ fn callMakeJsonValue(
     vals: ?*anyopaque,
 ) ?*anyopaque {
     const result = nox_json_make_json_value(rt, kind, b, n, s, arr, keys, vals);
-    // `result == null` YALNIZCA `resolveMakeJsonValue`nin sembolü BULAMADIĞI
-    // (yukarıdaki belge notundaki izole test bağlamları) DEĞİRDEĞİN bir
-    // senaryoda olur — o durumda `__init__` HİÇ ÇALIŞMADIĞINDAN retain de
-    // HİÇ olmamıştır, telafi edici predecrement'i ATLAMAK GEREKİR (aksi
-    // halde HENÜZ hiç retain edilmemiş taze değerleri ERKEN serbest bırakırdı).
+    // `result == null` YALNIZCA `dispatch_registry.makeJsonValueFn()`in
+    // KAYITLI OLMADIĞI (ör. `noxrt_test` GİBİ, GERÇEK bir Nox programının
+    // `$main`'inin HİÇ ÇALIŞMADIĞI izole test bağlamları) senaryoda olur —
+    // o durumda `__init__` HİÇ ÇALIŞMADIĞINDAN retain de HİÇ olmamıştır,
+    // telafi edici predecrement'i ATLAMAK GEREKİR (aksi halde HENÜZ hiç
+    // retain edilmemiş taze değerleri ERKEN serbest bırakırdı).
     if (result == null) return null;
     _ = str_mod.nox_str_predecrement(s);
     _ = arc.nox_rc_predecrement(arr);
@@ -409,8 +368,10 @@ fn buildNodeFast(rt: ?*anyopaque, allocator: std.mem.Allocator, shared: SharedEm
 /// dönen GERÇEK bir örneğin tag baytından OKUNUP BİR KEZ önbelleğe alınır
 /// (bkz. dosya üstü belge notu — `core.nox`nin HER programda İLK sırada
 /// birleştirilmesi SAYESİNDE bu değer HER programda AYNIDIR, ama YİNE DE
-/// burada SABİT KODLANMAZ). `g_make_json_value_fn`/`g_make_json_value_
-/// resolved`İLE AYNI `threadlocal` gerekçesi (Faz BB.1, satır 81-88).
+/// burada SABİT KODLANMAZ). `g_last_op_ok_fallback`la AYNI `threadlocal`
+/// gerekçesi (Faz BB.1) — İDEMPOTENT bir önbellek OLSA da, `nox.thread.
+/// spawn`in paylaşımsız modeliyle İKİ GERÇEK OS iş parçacığı AYNI ANDA BU
+/// önbelleğe senkronize-olmadan YAZABİLİR.
 threadlocal var g_json_value_class_id: ?i64 = null;
 
 /// `decode()`nin GEÇİCİ ayrıştırma-ağacı arabelleği İçİn kullandığı arena

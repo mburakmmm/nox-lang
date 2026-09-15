@@ -4,6 +4,7 @@
 
 pub const asap = @import("alloc/asap.zig");
 pub const arc = @import("alloc/arc.zig");
+pub const dispatch_registry = @import("alloc/dispatch_registry.zig");
 pub const lowlevel = @import("alloc/lowlevel.zig");
 pub const cycle_detector = @import("alloc/cycle_detector.zig");
 pub const defer_stack = @import("alloc/defer_stack.zig");
@@ -61,6 +62,7 @@ pub const smtp_shim = @import("stdlib_shims/smtp.zig");
 comptime {
     _ = asap;
     _ = arc;
+    _ = dispatch_registry;
     _ = lowlevel;
     _ = cycle_detector;
     _ = defer_stack;

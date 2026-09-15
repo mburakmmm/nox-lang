@@ -1170,6 +1170,28 @@ pub fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) Codegen
     try self.qbeFuncEnd();
 }
 
+/// Faz F.0.1 (bkz. proje planı "Freestanding Nox — dlopen/dlsym-tabanlı
+/// dispatch'i statik, 'push' modeli bir kayıt mekanizmasına çevirme"):
+/// `genMain`/`genMainAsync`'ın `$nox_runtime_init`/`$nox_pool_main_init`
+/// çağrısının HEMEN ARDINDAN, KOŞULSUZ, HER programda TEK SEFER çağrılır —
+/// `runtime/alloc/dispatch_registry.zig`'in `nox_register_dispatch_table`ına
+/// codegen'in KENDİ ürettiği (ÖNCEDEN `dlopen(null,...)+dlsym` İLE ÇALIŞMA
+/// ZAMANINDA aranan) 5 dispatch sembolünün ADRESLERİNİ geçirir —
+/// `nox_rc_release_enqueue_fixed`nin `$ClassName_release` sembol-adını
+/// `l`-tipi bir ARGÜMAN olarak geçen AYNI, ZATEN kanıtlanmış mekanizma
+/// (bkz. `compiler/codegen_qbe/ownership.zig:329,436,440`). `RT_PARAM`
+/// GEREKMEZ — dispatch tablosu PROGRAM-seviyesi bir global, `RuntimeState`e
+/// BAĞLI DEĞİL.
+fn emitDispatchTableRegistration(self: *Codegen) CodegenError!void {
+    try self.qbeCall(null, "$nox_register_dispatch_table", &.{
+        .{ .ty = .l, .text = "$nox_trace_dispatch" },
+        .{ .ty = .l, .text = "$nox_gc_free_dispatch" },
+        .{ .ty = .l, .text = "$nox_class_release_dispatch" },
+        .{ .ty = .l, .text = "$nox_class_name_dispatch" },
+        .{ .ty = .l, .text = "$nox_json_make_json_value" },
+    });
+}
+
 pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool, wants_multicore_pool: bool) CodegenError!void {
     if (use_async) return self.genMainAsync(stmts, wants_multicore_pool);
 
@@ -1215,6 +1237,7 @@ pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool, wants_m
     try self.qbeFuncHeaderEnd();
     try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, "$nox_runtime_init", &.{});
     try self.qbeCall(null, "$nox_os_init", &.{ .{ .ty = .w, .text = "%argc" }, .{ .ty = .l, .text = "%argv" } });
+    try emitDispatchTableRegistration(self);
     // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
     // üst-düzey `var_decl`ların initializer'ları, KALAN gevşek deyimler
     // (`stmts`, artık modül-global `var_decl`ları HARİÇ tutar — bkz.
@@ -1334,6 +1357,7 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_poo
         try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, "$nox_runtime_init", &.{});
     }
     try self.qbeCall(null, "$nox_os_init", &.{ .{ .ty = .w, .text = "%argc" }, .{ .ty = .l, .text = "%argv" } });
+    try emitDispatchTableRegistration(self);
     try self.qbeCall(null, "$nox_async_init", &.{.{ .ty = .l, .text = RT_PARAM }});
     // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
     // `$main_body`nin GERÇEK üst-düzey deyimleri (bkz. `genStmts` çağrısı

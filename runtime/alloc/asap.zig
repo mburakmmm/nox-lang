@@ -530,8 +530,6 @@ pub const ReleaseState = struct {
     depth: usize = 0,
     pump_active: bool = false,
     worklist: std.ArrayListUnmanaged(ReleaseWorklistItem) = .empty,
-    class_release_dispatch_resolved: bool = false,
-    class_release_dispatch_fn: ?*const fn (?*anyopaque, i64, ?*anyopaque) callconv(.c) void = null,
 };
 
 /// Faz MN.3b: bu OS iş parçacığının BİR worker havuzu İÇİNDEKİ konumu
