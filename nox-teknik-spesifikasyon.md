@@ -21204,6 +21204,89 @@ compiler bayrağı (F.2'nin KENDİ kapsamı).
 
 ---
 
+## 3.168 Faz F.2 — Dil seviyesi: capability sistemi (`--profile freestanding` + checker-seviyesi stdlib import allowlist'i, v1.88.0)
+
+Freestanding Nox çerçevesinin F.1'DEN (v1.87.0) SONRAKİ fazı — "capability
+sistemi": HANGİ stdlib modüllerinin HANGİ hedef PROFİLDE İZİN VERİLDİĞİNİ
+derleme-zamanında KİLİTLEYEN bir denetim katmanı.
+
+**Tasarım kararı — TEK stdlib ağacı + checker-seviyesi ALLOWLIST**:
+çerçeve-planının ÖNCEDEN taslak notu ("`stdlib_root`ı AYRI bir `stdlib/
+nox-freestanding/` ağacına YÖNLENDİRİR") BİLİNÇLİ olarak TERK EDİLDİ —
+İKİ PARALEL stdlib ağacı GERÇEK bir BAKIM/DRIFT riski taşırdı;
+`checker.zig`nin `isSpawnParamSafeType`nin ZATEN kanıtlanmış "backend'e
+göre GEVŞETİLEN allowlist" ŞEKLİ (`self.backend == .llvm` İKEN DAHA
+GENİŞ bir küme), `Backend`den TAMAMEN BAĞIMSIZ YENİ bir `Profile` eksenine
+(`.hosted`/`.freestanding`) UYGULANDI (allowlist YÖNÜ TERS — `.freestanding`
+İKEN DAHA DAR bir küme — AMA MEKANİZMA AYNI).
+
+**Kritik mekanizma — transitif bağımlılıkların OTOMATİK yakalanması**:
+`compiler/module_loader.zig`nin `loadImportsRecursive`ı, bir stdlib
+modülünü YÜKLERKEN O modülün KENDİ ÜST-DÜZEY `import`/`from-import`
+deyimlerini de merged AST'ye KOPYALAR (checker'ın `imported_modules`
+kümesinin O modülün İçİNDEKİ nitelikli çağrıları da çözebilmesi İçİn,
+ZATEN VAR OLAN bir davranış) — bu, `collectImports`in `.freestanding`
+kontrolünün, allowlist'te OLMAYAN "yüzeysel temiz görünen" bir modülün
+(`router`/`test`/`reflect`) KENDİ, allowlist'te de OLMAYAN transitif
+bağımlılığını (`nox.http`/`nox.fs`) OTOMATİK/ÜCRETSİZ olarak yakalaması
+anlamına gelir — `import nox.router` DOĞRUDAN de reddedilir (router
+KENDİSİ allowlist'te DEĞİL), AMA merged body'de router'ın KENDİ `from
+nox.http import ...` satırı router'ın KENDİ satırından ÖNCE geldiğinden
+(`resolveImportsImpl`nin "bağımlılıklar ÖNCE, kullanıcının KENDİ body'si
+SONRA" birleştirme sırası), hata mesajı `'nox.http'`yi gösterir —
+`tests/cli/profile_test.zig`nin GERÇEK `noxc` alt süreciyle (module_loader'ın
+GERÇEK birleştirmesinden GEÇEREK) doğruladığı SOMUT bir davranış.
+
+**Allowlist (14 modül — pure-compute, syscall YOK)**: `strings`,
+`collections`, `json`, `regex`, `csv`, `toml`, `yaml`, `url`, `validate`,
+`template`, `path`, `db`, `orm`, `gzip`. HER modül BU turda TEK TEK
+doğrulandı (Zig shim'i + KENDİ iç `import`ları OKUNARAK):
+- `path.zig`nin fonksiyonları SADECE `std.fs.path.*` (SAF string
+  algoritmaları, GERÇEK bir dosya sistemi erişimi YOK) çağırır.
+- `json.zig`nin TEK `std.Thread.spawn` referansı KENDİ `test{}` bloklarının
+  İçİNDE (gerçek runtime koduna HİÇ DAHİL EDİLMEZ).
+
+**REDDEDİLEN — doğrudan (18 modül)**: `fs`, `http`, `tls`, `websocket`,
+`smtp`, `os`, `process`, `sharedmem`, `sqlite`, `postgres`, `mysql`,
+`thread`, `time` (`clock_gettime`), `random` (VARSAYILAN tohumlama
+`clock_gettime` çağırır), `uuid` (`random`e bağımlı), `log` (`time`e
+bağımlı), `crypto` (`std.c.arc4random_buf`), `math` (TÜM trigonometrik/
+kök fonksiyonları LİBM'e bağımlı — freestanding'de libc/libm HİÇ YOK,
+F.1'in KENDİ "Kritik düzeltme #3" bulgusuyla AYNI sınıf).
+
+**REDDEDİLEN — transitif (mekanizma OTOMATİK yakalar)**: `router`
+(`from nox.http import ...`), `test` (`import nox.fs`), `reflect`
+(`from nox.router import ...` + `from nox.http import ...`).
+
+**Uygulama**: `compiler/typecheck/types.zig`nin YENİ `Profile` enum'u
+(`Backend`İLE AYNI yeniden-ihraç deseni, `compiler/codegen_qbe/codegen.
+zig`de); `Checker.profile: types.Profile = .hosted` alanı; YENİ
+`TypeError.FreestandingModuleForbidden`; `FREESTANDING_ALLOWED_MODULES`/
+`isFreestandingAllowedModule`/`checkFreestandingImportAllowed` (checker.
+zig); `collectImports`in HER İKİ kolu (`.import_stmt`/`.from_import_stmt`)
+`self.current_line`/`self.current_span`i AYARLAYIP (`collectClassNames`nin
+AYNI deseni — ÖNCEDEN `collectImports` BUNU HİÇ yapmıyordu, `fail`
+çağırabilmek İçİn EKLENDİ) `checkFreestandingImportAllowed`i çağırır.
+`compiler/main.zig`nin `BuildOpts.profile`/`parseBuildOpts`in YENİ
+`--profile` dalı/`buildOne`nin İMZASINA `profile: codegen.Profile`
+parametresi (5 çağrı sitesi — 4'ü `opts.profile`, İÇ `installOrUpdatePackage`
+çağrısı `.hosted` sabit)/`cmdCheck`in `parseBuildOpts`e geçmesi (SAF bir
+SÜPER-KÜME değişikliği, bayraksız `noxc check <dosya.nox>` davranışı
+DEĞİŞMEZ).
+
+**Kapsam DIŞI (bu turda)**: `core.nox`nin KÜÇÜLTÜLMESİ (`nox_stdin_read_
+line_raw`, `input()`nin backing'i — lazy-analiz/dead-code SAYESİNDE
+`input()` KULLANILMADIĞI SÜRECE sorun YARATMAZ); `--profile freestanding`nin
+GERÇEK bir `-Dtarget=x86_64-freestanding-none` cross-compile AKIŞIYLA
+BİRLEŞTİRİLMESİ (F.1'in "Kritik düzeltme #3" bulgusu ÇÖZÜLMEDEN bu adım
+ANLAMSIZ, AYRI/gelecekteki bir faz — F.4); `nox.thread`/`nox.crypto`/
+`nox.random`in fonksiyon-seviyesi (modül-seviyesi DEĞİL) granülerlikte
+kısmi İZİN VERİLMESİ; `--profile`nin `noxc run`/`noxc test`e AYRICA
+eklenmesi (ZATEN `parseBuildOpts`i kullandıklarından `opts.profile`
+OTOMATİK/ÜCRETSİZ çalışır).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

@@ -45,6 +45,37 @@ fn expectGoldenLlvm(comptime source: []const u8, comptime expected: []const u8) 
     try std.testing.expectEqualStrings(expected, aw.written());
 }
 
+/// Faz F.2 (bkz. plan dosyası "capability sistemi"): `expectGoldenLlvm`nin
+/// AYNI şekli, AMA `Checker.profile`i `.freestanding` OLARAK AYARLAR —
+/// `checkFreestandingImportAllowed`nin (`collectImports`in `.freestanding`
+/// dalı) egzersiz edilmesi İçİn.
+fn expectGoldenFreestanding(comptime source: []const u8, comptime expected: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+
+    var checker_state = nox.checker.Checker.init(allocator);
+    checker_state.profile = .freestanding;
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+    checker_state.checkModule(module) catch |e| {
+        try aw.writer.print("HATA {t}: {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
+        try std.testing.expectEqualStrings(expected, aw.written());
+        return;
+    };
+    if (checker_state.diagnostics.items.len > 0) {
+        const first = checker_state.diagnostics.items[0];
+        try aw.writer.print("HATA {t}: {s}\n", .{ first.code, first.message });
+    } else {
+        try aw.writer.writeAll("OK\n");
+    }
+    try std.testing.expectEqualStrings(expected, aw.written());
+}
+
 fn expectGolden(comptime source: []const u8, comptime expected: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -1124,5 +1155,69 @@ test "golden(expr-depth): MAX_EXPR_DEPTH'in ALTINDA, gerçekçi derecede derin b
     try expectGolden(
         @embedFile("typecheck_cases/ok_expr_nested_within_depth_limit.nox"),
         @embedFile("typecheck_cases/ok_expr_nested_within_depth_limit.expected"),
+    );
+}
+
+// Faz F.2 (bkz. plan dosyası "capability sistemi"): `.freestanding`
+// profilinde stdlib import allowlist'i. Transitif yakalama (`nox.router`
+// gibi allowlist'te OLMAYAN modüllerin KENDİ, allowlist'te de OLMAYAN
+// bağımlılıklarının OTOMATİK yakalanması) BU dosyanın (TEK dosya, HİÇ
+// stdlib birleştirmesi YAPMAYAN) kapsamı DIŞINDA — `tests/cli/profile_
+// test.zig`nin GERÇEK `noxc` alt süreciyle (module_loader'ın GERÇEK
+// birleştirmesinden GEÇEREK) doğruladığı bir senaryo.
+
+test "golden(freestanding-profile): 14 izin verilen stdlib modülü SORUNSUZ import edilir" {
+    try expectGoldenFreestanding(
+        @embedFile("typecheck_cases/ok_freestanding_allowed_imports.nox"),
+        @embedFile("typecheck_cases/ok_freestanding_allowed_imports.expected"),
+    );
+}
+
+test "golden(freestanding-profile): nox.http dogrudan reddedilir" {
+    try expectGoldenFreestanding(
+        @embedFile("typecheck_cases/err_freestanding_http_forbidden.nox"),
+        @embedFile("typecheck_cases/err_freestanding_http_forbidden.expected"),
+    );
+}
+
+test "golden(freestanding-profile): nox.thread dogrudan reddedilir" {
+    try expectGoldenFreestanding(
+        @embedFile("typecheck_cases/err_freestanding_thread_forbidden.nox"),
+        @embedFile("typecheck_cases/err_freestanding_thread_forbidden.expected"),
+    );
+}
+
+test "golden(freestanding-profile): nox.fs dogrudan reddedilir" {
+    try expectGoldenFreestanding(
+        @embedFile("typecheck_cases/err_freestanding_fs_forbidden.nox"),
+        @embedFile("typecheck_cases/err_freestanding_fs_forbidden.expected"),
+    );
+}
+
+test "golden(freestanding-profile): nox.time dogrudan reddedilir" {
+    try expectGoldenFreestanding(
+        @embedFile("typecheck_cases/err_freestanding_time_forbidden.nox"),
+        @embedFile("typecheck_cases/err_freestanding_time_forbidden.expected"),
+    );
+}
+
+test "golden(freestanding-profile): nox.random dogrudan reddedilir" {
+    try expectGoldenFreestanding(
+        @embedFile("typecheck_cases/err_freestanding_random_forbidden.nox"),
+        @embedFile("typecheck_cases/err_freestanding_random_forbidden.expected"),
+    );
+}
+
+test "golden(freestanding-profile): nox.math dogrudan reddedilir (libm bagimliligi)" {
+    try expectGoldenFreestanding(
+        @embedFile("typecheck_cases/err_freestanding_math_forbidden.nox"),
+        @embedFile("typecheck_cases/err_freestanding_math_forbidden.expected"),
+    );
+}
+
+test "golden(freestanding-profile): varsayilan profil (.hosted) nox.http'yi HALA serbestce kabul eder (regresyon-yok)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_freestanding_hosted_default_regression.nox"),
+        @embedFile("typecheck_cases/ok_freestanding_hosted_default_regression.expected"),
     );
 }

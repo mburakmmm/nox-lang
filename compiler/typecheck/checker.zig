@@ -88,6 +88,12 @@ pub const TypeError = error{
     /// grep-lenebilir bir tanı kodu (`UnassignedField`/`SpawnSharedMutation`
     /// İLE AYNI gerekçe).
     UnknownRetainedParam,
+    /// Faz F.2 (bkz. plan dosyası "capability sistemi"): `.freestanding`
+    /// profilinde, `FREESTANDING_ALLOWED_MODULES`de OLMAYAN bir `nox.*`
+    /// stdlib modülü `import` EDİLDİ (DOĞRUDAN VEYA transitif olarak —
+    /// bkz. `checkFreestandingImportAllowed`) — `TypeMismatch`e AŞIRI
+    /// YÜKLEMEK yerine ayrı, grep-lenebilir bir tanı kodu.
+    FreestandingModuleForbidden,
     OutOfMemory,
 };
 
@@ -468,6 +474,16 @@ pub const Checker = struct {
     /// --release` İLE GERÇEKTEN DERLENEBİLİR OLSA BİLE).
     backend: types.Backend = .qbe,
 
+    /// Faz F.2 (bkz. plan dosyası "capability sistemi"): `Backend`den
+    /// TAMAMEN BAĞIMSIZ bir EKSEN — `.freestanding` İKEN `collectImports`
+    /// (bkz. `checkFreestandingImportAllowed`) HANGİ stdlib modüllerinin
+    /// `import` EDİLEBİLECEĞİNİ KISITLAR. VARSAYILAN `.hosted` — SADECE
+    /// `compiler/main.zig`nin `buildOne`si/`cmdCheck`i `--profile
+    /// freestanding` GEÇİLDİĞİNDE BUNU `.freestanding` OLARAK AYARLAR,
+    /// SIFIR davranış değişikliği (MEVCUT TÜM çağrı siteleri/testler
+    /// `.hosted` VARSAYILANINI KULLANIR).
+    profile: types.Profile = .hosted,
+
     pub fn init(allocator: std.mem.Allocator) Checker {
         return .{ .allocator = allocator };
     }
@@ -771,8 +787,35 @@ pub const Checker = struct {
     /// TAMAMEN GÜVENLİDİR (yalnızca AST'nin KENDİSİNDEN okur). Ana Geçiş 3
     /// döngüsü artık bu İKİ deyim türünü NO-OP olarak GEÇER (bkz. AŞAĞIDAKİ
     /// `checkModule`).
+    /// Faz F.2: `collectImports`in `.freestanding` profilinde uyguladığı
+    /// allowlist — HER modül BU turda TEK TEK doğrulandı (Zig shim'i +
+    /// KENDİ iç `import`ları OKUNARAK, bkz. plan dosyası). ŞÜPHEDE HER
+    /// ZAMAN DIŞARIDA BIRAKILDI (`isSpawnParamSafeType`nin AYNI muhafazakâr
+    /// disiplini) — YENİ bir stdlib modülü eklendiğinde BURAYA AÇIKÇA
+    /// EKLENMEDİĞİ SÜRECE freestanding profilinde OTOMATİK REDDEDİLİR.
+    const FREESTANDING_ALLOWED_MODULES = [_][]const u8{
+        "strings", "collections", "json", "regex", "csv", "toml", "yaml",
+        "url",     "validate",    "template", "path", "db", "orm", "gzip",
+    };
+
+    fn isFreestandingAllowedModule(name: []const u8) bool {
+        for (FREESTANDING_ALLOWED_MODULES) |m| {
+            if (std.mem.eql(u8, m, name)) return true;
+        }
+        return false;
+    }
+
+    fn checkFreestandingImportAllowed(self: *Checker, segments: []const []const u8) TypeError!void {
+        if (self.profile != .freestanding) return;
+        if (segments.len < 2 or !std.mem.eql(u8, segments[0], "nox")) return;
+        if (isFreestandingAllowedModule(segments[1])) return;
+        return self.fail(error.FreestandingModuleForbidden, "'nox.{s}' modülü 'freestanding' profilinde kullanılamaz (OS/libc bağımlılığı taşıyor — izin verilenler: strings/collections/json/regex/csv/toml/yaml/url/validate/template/path/db/orm/gzip)", .{segments[1]});
+    }
+
     fn collectImports(self: *Checker, module: ast.Module) TypeError!void {
         for (module.body) |stmt| {
+            self.current_line = stmt.line;
+            self.current_span = stmt.span;
             switch (stmt.kind) {
                 .import_stmt => |imp| {
                     const joined = try self.joinSegments(imp.segments, '.');
@@ -780,6 +823,7 @@ pub const Checker = struct {
                     if (imp.alias) |alias| {
                         try self.module_aliases.put(self.allocator, alias, imp.segments);
                     }
+                    try self.checkFreestandingImportAllowed(imp.segments);
                 },
                 .from_import_stmt => |fi| {
                     const joined = try self.joinSegments(fi.segments, '.');
@@ -792,6 +836,7 @@ pub const Checker = struct {
                         const local_name = nm.alias orelse nm.name;
                         try self.from_imports.put(self.allocator, local_name, mangled);
                     }
+                    try self.checkFreestandingImportAllowed(fi.segments);
                 },
                 else => {},
             }

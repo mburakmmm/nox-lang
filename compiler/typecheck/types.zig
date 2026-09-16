@@ -11,6 +11,17 @@ const std = @import("std");
 /// döngü YARATMADAN paylaşılan TEK doğruluk kaynağıdır).
 pub const Backend = enum { qbe, llvm };
 
+/// Faz F.2 (bkz. plan dosyası "capability sistemi"): `Backend`den
+/// TAMAMEN BAĞIMSIZ bir EKSEN — bir program `.qbe` VEYA `.llvm` backend'de
+/// derlenebilir VE AYNI ANDA `.hosted` VEYA `.freestanding` PROFİLİNDE
+/// olabilir (4 kombinasyonun HEPSİ GEÇERLİ). `.freestanding`, HANGİ
+/// stdlib modüllerinin `import` EDİLEBİLECEĞİNİ KISITLAR (bkz. `Checker.
+/// collectImports`) — HEDEF MİMARİ/OS'TEN (Faz F.1'in `-Dtarget`i) TAMAMEN
+/// AYRI bir kavramdır: BU turda `.freestanding` profili HÂLÂ HOST hedefine
+/// KARŞI derlenip ÇALIŞTIRILABİLİR (dil-seviyesi bir KISITLAMA, henüz bir
+/// cross-compile GARANTİSİ DEĞİL).
+pub const Profile = enum { hosted, freestanding };
+
 pub const Type = union(enum) {
     int,
     float,

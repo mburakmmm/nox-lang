@@ -14,6 +14,41 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.88.0]
+
+### Eklendi (Faz F.2 — Dil seviyesi: capability sistemi, `--profile freestanding`)
+- YENİ `Profile` enum'u (`compiler/typecheck/types.zig`, `Backend`den
+  TAMAMEN BAĞIMSIZ bir EKSEN) + `Checker.profile` alanı (varsayılan
+  `.hosted`, SIFIR davranış değişikliği) — `compiler/codegen_qbe/codegen.zig`
+  `Backend`iyle AYNI şekilde yeniden İHRAÇ eder.
+- `compiler/typecheck/checker.zig`nin `collectImports`ı, `.freestanding`
+  profilinde HANGİ `nox.*` stdlib modüllerinin `import` EDİLEBİLECEĞİNİ
+  KISITLAYAN bir allowlist (`FREESTANDING_ALLOWED_MODULES`, 14 modül:
+  strings/collections/json/regex/csv/toml/yaml/url/validate/template/
+  path/db/orm/gzip) uygular — YENİ `TypeError.FreestandingModuleForbidden`.
+  **Transitif bağımlılıklar OTOMATİK yakalanır**: `module_loader.zig`nin
+  `loadImportsRecursive`ı BİR stdlib modülünün KENDİ İç `import`larını da
+  merged AST'ye KOPYALADIĞINDAN, `nox.router`/`nox.test`/`nox.reflect`
+  GİBİ allowlist'te OLMAYAN modüller (`nox.http`/`nox.fs`'e transitif
+  bağımlı OLDUKLARI İçİn) allowlist'e AÇIKÇA EKLENMEDEN de doğru şekilde
+  reddedilir (bkz. `tests/cli/profile_test.zig`nin `nox.router` testi —
+  hata mesajı `'nox.http'`yi gösterir, `'nox.router'`ü DEĞİL).
+- `noxc build`/`noxc check`e YENİ `--profile <hosted|freestanding>`
+  bayrağı (`compiler/main.zig`nin `BuildOpts`/`parseBuildOpts`/`buildOne`/
+  `cmdCheck`i) — bilinmeyen bir profil adı AÇIK bir hatayla `exit(1)`
+  yapar. **`--profile freestanding` BU turda HÂLÂ HOST hedefine karşı
+  derlenip ÇALIŞTIRILABİLİR** — "capability KISITLAMASI" (dil-seviyesi,
+  HANGİ stdlib modüllerinin KULLANILABİLECEĞİ) İLE "hedef mimari/OS"
+  (Faz F.1'in `is_freestanding` build.zig dalı) BİLİNÇLİ olarak AYRI,
+  BAĞIMSIZ eksenlerdir.
+- `tests/golden/typecheck_cases/`e 8 YENİ fixture (14-modüllük pozitif
+  allowlist testi + 6 doğrudan-negatif [http/thread/fs/time/random/math]
+  + varsayılan `.hosted` profilinin `nox.http`yi HÂLÂ serbestçe kabul
+  ettiği regresyon-yok testi), `tests/cli/profile_test.zig` (YENİ, GERÇEK
+  `noxc` alt süreciyle — pozitif+doğrudan-negatif+**transitif-negatif**+
+  varsayılan-profil-regresyonu+`check --profile`+bilinmeyen-profil-hatası,
+  6 uçtan-uca senaryo).
+
 ## [1.87.0]
 
 ### Eklendi (Faz F.1 — Build sistemi: cross-compile İSKELETİ + QBE-freestanding-link deneyi)

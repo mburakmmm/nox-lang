@@ -311,6 +311,11 @@ pub const QbeAllocSize = qbe_emit.QbeAllocSize;
 /// ADI ÜZERİNDEN ŞEFFAFTIR).
 pub const Backend = @import("../typecheck/types.zig").Backend;
 
+/// Faz F.2: `Backend`nin AYNI yeniden-ihraç deseni — `compiler/main.zig`nin
+/// `codegen.Backend` KULLANDIĞI AYNI DOLAYLI yoldan `codegen.Profile`e
+/// erişebilmesi İçİn (`checker.zig`nin `types` importu `pub` DEĞİL).
+pub const Profile = @import("../typecheck/types.zig").Profile;
+
 pub const Codegen = struct {
     pub const isFuncInlineEligible = inlining.isFuncInlineEligible;
     pub const computeInlinableFunctions = inlining.computeInlinableFunctions;

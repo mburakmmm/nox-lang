@@ -133,6 +133,7 @@ fn printHelp(is_tr: bool) void {
             \\Ortak seçenekler:
             \\  --dump, -v             ayrıntılı/AST dökümü (build/run/check ile)
             \\  -o <çıktı>             çıktı ikilisinin adı (yalnızca build ile)
+            \\  --profile <hosted|freestanding>  stdlib import allowlist'i (build/check ile, varsayılan: hosted)
             \\
             \\Örnekler:
             \\  noxc run main.nox -- a b c
@@ -176,6 +177,7 @@ fn printHelp(is_tr: bool) void {
             \\Common options:
             \\  --dump, -v             verbose/AST dump (with build/run/check)
             \\  -o <output>            output binary name (build only)
+            \\  --profile <hosted|freestanding>  stdlib import allowlist (with build/check, default: hosted)
             \\
             \\Examples:
             \\  noxc run main.nox -- a b c
@@ -796,7 +798,7 @@ fn installOrUpdatePackage(
     defer std.Io.Dir.cwd().deleteTree(io, scratch_dir_path) catch {};
     const scratch_bin_path = try std.fmt.allocPrint(a, "{s}/{s}", .{ scratch_dir_path, bin_spec.name });
 
-    const compiled_path = try buildOne(gpa, io, a, bin_source_path, false, scratch_bin_path, nox_home, resource_dirs, false, false, fetch_policy);
+    const compiled_path = try buildOne(gpa, io, a, bin_source_path, false, scratch_bin_path, nox_home, resource_dirs, false, false, .hosted, fetch_policy);
 
     const bin_dir_path = try project.resolveGlobalBinDir(a, nox_home);
     try std.Io.Dir.cwd().createDirPath(io, bin_dir_path);
@@ -942,6 +944,11 @@ const BuildOpts = struct {
     /// (bkz. planın "Kapsam DIŞI" bölümü) — varsayılan `false`, mevcut QBE
     /// yolu DEĞİŞMEDEN kalır.
     release: bool = false,
+    /// Faz F.2 (bkz. plan dosyası "capability sistemi"): `--profile
+    /// <hosted|freestanding>` — `checker_state.profile`e AKTARILIR
+    /// (bkz. `buildOne`). VARSAYILAN `.hosted` — mevcut TÜM davranış
+    /// DEĞİŞMEDEN kalır.
+    profile: codegen.Profile = .hosted,
 };
 
 fn parseBuildOpts(args: []const []const u8) BuildOpts {
@@ -958,6 +965,18 @@ fn parseBuildOpts(args: []const []const u8) BuildOpts {
         } else if (std.mem.eql(u8, arg, "-o")) {
             i += 1;
             if (i < args.len) opts.output = args[i];
+        } else if (std.mem.eql(u8, arg, "--profile")) {
+            i += 1;
+            if (i < args.len) {
+                if (std.mem.eql(u8, args[i], "hosted")) {
+                    opts.profile = .hosted;
+                } else if (std.mem.eql(u8, args[i], "freestanding")) {
+                    opts.profile = .freestanding;
+                } else {
+                    printErr("bilinmeyen profil: '{s}' (gecerli degerler: hosted, freestanding)\n", .{args[i]});
+                    std.process.exit(1);
+                }
+            }
         } else if (opts.path == null) {
             opts.path = arg;
         }
@@ -982,7 +1001,7 @@ fn cmdBuild(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
         std.debug.print("{s}", .{usage});
         std.process.exit(1);
     };
-    const out = try buildOne(gpa, io, a, path_arg, opts.verbose, opts.output, nox_home, resource_dirs, opts.debug_info, opts.release, fetch_policy);
+    const out = try buildOne(gpa, io, a, path_arg, opts.verbose, opts.output, nox_home, resource_dirs, opts.debug_info, opts.release, opts.profile, fetch_policy);
     printOk("derlendi: {s}\n", .{out});
 }
 
@@ -1002,7 +1021,7 @@ fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
     };
 
     const cache_bin_path = try cacheBinPath(io, a, path_arg);
-    const bin_path = try buildOne(gpa, io, a, path_arg, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.release, fetch_policy);
+    const bin_path = try buildOne(gpa, io, a, path_arg, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.release, opts.profile, fetch_policy);
 
     const code = try runAndWait(io, a, bin_path, split.after);
     std.process.exit(code);
@@ -1047,7 +1066,7 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
     if (opts.path) |t| {
         if (std.mem.endsWith(u8, t, ".nox")) {
             const cache_bin_path = try cacheBinPath(io, a, t);
-            const bin_path = try buildOne(gpa, io, a, t, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.release, fetch_policy);
+            const bin_path = try buildOne(gpa, io, a, t, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.release, opts.profile, fetch_policy);
             const code = try runAndWait(io, a, bin_path, &.{});
             std.process.exit(code);
         }
@@ -1073,7 +1092,7 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
         const fa = file_arena.allocator();
 
         const cache_bin_path = try cacheBinPath(io, fa, file);
-        const bin_path = try buildOne(gpa, io, fa, file, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.release, fetch_policy);
+        const bin_path = try buildOne(gpa, io, fa, file, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.release, opts.profile, fetch_policy);
         const code = runAndWait(io, fa, bin_path, &.{}) catch 1;
         if (code == 0) {
             printOk("GECTI: {s}\n", .{file});
@@ -1563,8 +1582,9 @@ fn cmdInit(io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
 /// gidilsin` bayrağı EKLEMEK yerine, o ZATEN karmaşık fonksiyonu daha da
 /// dallandırmamak İçin).
 fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy) !void {
-    const path_arg = if (args.len > 0) args[0] else {
-        std.debug.print("kullanim: noxc check <dosya.nox>\n", .{});
+    const opts = parseBuildOpts(args);
+    const path_arg = opts.path orelse {
+        std.debug.print("kullanim: noxc check [--profile <hosted|freestanding>] <dosya.nox>\n", .{});
         std.process.exit(1);
     };
 
@@ -1576,6 +1596,7 @@ fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
     const module = try resolveImportsForBuild(io, a, user_module, path_arg, nox_home, resource_dirs, fetch_policy);
 
     var checker_state = checker.Checker.init(a);
+    checker_state.profile = opts.profile;
     checker_state.checkModule(module) catch |e| {
         printErr("tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
         std.process.exit(1);
@@ -1787,7 +1808,7 @@ fn computeLinkerVisibilityArgs() []const []const u8 {
 /// yolunu döner. Hata durumlarında (mevcut davranışla BİREBİR aynı mesaj/
 /// çıkış kodu) doğrudan `std.process.exit(1)` çağırır — `cmdBuild`/`cmdRun`
 /// bu davranışı DEĞİŞTİRMEDEN miras alır.
-fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: []const u8, verbose: bool, output_override: ?[]const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, debug_info: bool, release: bool, fetch_policy: fetch.FetchPolicy) ![]const u8 {
+fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: []const u8, verbose: bool, output_override: ?[]const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, debug_info: bool, release: bool, profile: codegen.Profile, fetch_policy: fetch.FetchPolicy) ![]const u8 {
     // Bulundu (kullanıcı geri bildirimi): `noxc upgrade` gibi mistyped/
     // bilinmeyen bir alt komut, tanınan HİÇBİR anahtar kelimeyle
     // eşleşmediğinden `.legacy`ye (bkz. `main`'in belge notu) düşüp
@@ -1840,6 +1861,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // iletmek için gereklidir (bkz. checker.zig, "Faz 10: generics" notu).
     var checker_state = checker.Checker.init(a);
     checker_state.backend = backend;
+    checker_state.profile = profile;
     checker_state.checkModule(module) catch |e| {
         printErr("tip hatasi ({t}): {s}\n", .{ e, checker_state.diagnostic orelse "(mesaj yok)" });
         std.process.exit(1);
