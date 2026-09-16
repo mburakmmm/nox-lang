@@ -14,6 +14,45 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.85.0]
+
+### Eklendi/Değiştirildi (Faz F.0.5 — Uyandırma mekanizması soyutlaması)
+- Freestanding Nox çerçevesinin F.0.1-F.0.4'ten SONRAKİ beşinci alt-fazı:
+  `runtime/async_rt/self_pipe.zig`nin `makeSelfPipe`/`closeSelfPipeFd`/
+  `signalWakeFd`/`drainWakeFd`si KOŞULSUZ olarak POSIX `pipe()`/`close()`/
+  `write()`/`read()` syscall'larını çağırıyordu — bir freestanding hedefte
+  NE `pipe()` NE herhangi bir dosya-tanımlayıcısı KAVRAMI VAR.
+- YENİ `WakeProviderVTable`/`WakeProvider` — F.0.4'ün `StackProviderVTable`
+  sıyla AYNI ptr+vtable şekli — `create(ctx) -> ?[2]posix.fd_t` (read/
+  write fd çifti) + `close`/`signal`/`drain(ctx, fd)` (MEVCUT dört
+  fonksiyonun İMZALARIYLA BİREBİR AYNI).
+- YENİ `nox_register_wake_provider(provider)` — F.0.1/F.0.4'ün AYNI
+  "program-genelinde, TEK, atomik, `.monotonic`" deseni (`pub fn`, HENÜZ
+  codegen'den ÇAĞRILMIYOR).
+- `makeSelfPipe`/`closeSelfPipeFd`/`signalWakeFd`/`drainWakeFd` ARTIK ÖNCE
+  kayıtlı sağlayıcıyı kontrol eder — DOLUYSA delege eder, AKSİ HALDE
+  (VARSAYILAN, kayıt YAPILMAMIŞ HER program) BUGÜNKÜ POSIX davranışına
+  (Windows'ta `error.Unsupported` DAHİL) BİREBİR AYNI şekilde düşer —
+  `scheduler.zig`nin 5 çağrı sitesi (`deinit`/`attachToPool`/`markReady`)
+  VE `cycle_detector.zig`nin 1 çağrı sitesi (`nox_cycle_possible_root`,
+  STW round wake) HİÇBİRİNE DOKUNULMADI.
+- YENİ, `self_pipe.zig`nin İLK testleri (dosya ÖNCEDEN sıfır test
+  İçERİYORDU): sahte bir sağlayıcı (GERÇEK bir OS pipe'ı KULLANMADAN,
+  sentinel fd değerleri + çağrı sayaçlarıyla) kaydedilip DÖRT fonksiyonun
+  DA sağlayıcıya GERÇEKTEN ULAŞTIĞI doğrulandı; kırmızı-takım (kayıt
+  YAPILMADAN GERÇEK bir OS pipe'ının kullanıldığı, sahte sağlayıcının HİÇ
+  ÇAĞRILMADIĞI) AYRICA test edildi VE break→red→fix İLE (kayıt çağrısı
+  GEÇİCİ kaldırılıp `expected 100, found 3` İLE testin GERÇEKTEN kırmızıya
+  düştüğü görülüp GERİ eklendi) kaydın GERÇEKTEN load-bearing olduğu
+  kanıtlandı.
+- `zig build test` (Debug+ReleaseFast, TAM paket, `-j1` İLE de) + `NOX_
+  STRESS_ROUNDS=800 zig build stress-test -Doptimize=ReleaseFast` TEMİZ
+  (bilinen, pre-existing `-j` paralel-yük HTTP/pool test flake'leri —
+  `http_serve_golden_test.zig`, `http_serve_tls_golden_test.zig`,
+  `http_serve_multicore_pool_golden_test.zig` (N=2 havuzlu, self-pipe
+  yolunu EGZERSİZ EDEN test DAHİL), `router_module_state_golden_test.zig`
+  — İZOLE çalıştırmayla regresyon OLMADIĞI YENİDEN doğrulandı).
+
 ## [1.84.0]
 
 ### Eklendi/Değiştirildi (Faz F.0.4 — Fiber yığın kaynağı enjeksiyonu)

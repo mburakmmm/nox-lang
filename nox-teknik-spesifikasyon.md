@@ -20943,6 +20943,94 @@ olarak onu KULLANIR, tahsis SIKLIĞI/havuzlama DAVRANIŞI DEĞİŞMEZ).
 
 ---
 
+## 3.165 Faz F.0.5 — Uyandırma mekanizması soyutlaması (v1.85.0)
+
+Freestanding Nox çerçevesinin F.0.1-F.0.4'ten SONRAKİ beşinci alt-fazı.
+`runtime/async_rt/self_pipe.zig`nin DÖRT fonksiyonu (`makeSelfPipe`/
+`closeSelfPipeFd`/`signalWakeFd`/`drainWakeFd`) KOŞULSUZ olarak POSIX
+`pipe()`/`close()`/`write()`/`read()` syscall'larını ÇAĞIRIYORDU
+(Windows'ta `makeSelfPipe` ZATEN `error.Unsupported` dönüyordu) — bir
+freestanding hedefte NE `pipe()` NE herhangi bir dosya-tanımlayıcısı
+KAVRAMI VAR (F.0'ın çerçeve-planının KENDİ, ÖNCEDEN belirttiği "1.
+Scheduler'ın uyandırma mekanizması (self-pipe) POSIX-ÖZEL" bulgusu).
+
+**Araştırma bulguları**: (1) TAM OLARAK 6 çağrı sitesi VAR, HEPSİ
+`scheduler.zig` VE `cycle_detector.zig`de — `scheduler.zig`nin `deinit`i
+(2 site, `closeSelfPipeFd` — read/write uçları), `attachToPool`i
+(`makeSelfPipe()`), `markReady`si (`drainWakeFd` — wake_sentinel BYTE'ını
+TÜKETMEK İçİn; `signalWakeFd` — is_foreign bir uyandırma İçİn);
+`cycle_detector.zig`nin `nox_cycle_possible_root`ı (`signalWakeFd` — YENİ
+bir STW round'u BAŞLATILDIĞINDA TÜM worker'ları uyandırmak İçİn).
+Repo-genelinde BAŞKA HİÇBİR yerde bu 4 fonksiyon çağrılmıyor —
+`runtime/stdlib_shims/http_client.zig`nin KENDİ, TAMAMEN AYRI bir
+`makeSelfPipe()`si VAR (`thread_channel.zig`/`pool_bridge.zig`/`thread_
+bridge.zig`/`process.zig` tarafından kullanılıyor) — BU FAZIN KAPSAMI
+DIŞINDA (F.0.6'nın KENDİ, ÖNCEDEN belirlenmiş konusu, İKİSİ TAMAMEN AYRI
+dosyalar/fonksiyonlar). (2) `self_pipe.zig` HİÇBİR YERDE AYRI, isimli bir
+Zig modülü OLARAK KAYITLI DEĞİL — SADECE `scheduler.zig`nin (AYNI dizin)
+relative import'u ÜZERİNDEN erişiliyor, bu YÜZDEN F.0.3'ün `diag_sink.
+zig` ORDEALİ (relative-path/named-module ÇAKIŞMASI) BURADA HİÇ YAŞANMADI.
+(3) KRİTİK bir sınır: `Scheduler.armWakeFd` `self.reactor.register(fd,
+.read, &self.wake_ctx)` çağırır — `io_reactor.zig`nin (kqueue/epoll/
+WSAPoll) `register`i BU `fd`yi GERÇEK bir syscall'a `ident`/fd OLARAK
+GEÇİRİR — YANİ wake-fd'nin KENDİSİ HER ZAMAN GERÇEK, OS-tarafından
+pollanabilir bir tamsayı OLMAK ZORUNDADIR. BU FAZ SADECE self_pipe.zig'in
+"oluştur/kapat/sinyal-gönder/tüket" yöntemlerini enjekte edilebilir
+YAPAR, `io_reactor.zig`nin KENDİSİNİ SOYUTLAMAZ.
+
+**Tasarım**: YENİ `WakeProviderVTable`/`WakeProvider` (`self_pipe.zig`)
+— F.0.4'ün `StackProviderVTable`sıyla AYNI ptr+vtable şekli. Vtable'ın
+DÖRT metodu MEVCUT dört fonksiyonun İMZALARINI BİREBİR YANSITIR: `create(
+ctx) -> ?[2]posix.fd_t` (read/write fd çifti — `Scheduler.armWakeFd`nin
+`io_reactor.zig`ye kaydettiği GERÇEK, pollanabilir tanımlayıcılar OLMAK
+ZORUNDADIR), `close`/`signal`/`drain(ctx, fd)` (HER BİRİ TEK bir `fd`
+alır — `closeSelfPipeFd`in KENDİSİ de İKİ UCU AYRI AYRI, İKİ ÇAĞRIYLA
+kapatıyor). `nox_register_wake_provider(provider)` — F.0.1/F.0.4'ün AYNI
+"program-genelinde, TEK, atomik, `.monotonic`" deseni. DÖRT MEVCUT
+fonksiyon ÖNCE `g_wake_provider`i kontrol eder — DOLUYSA sağlayıcıya
+delege eder, AKSİ HALDE (VARSAYILAN, kayıt YAPILMAMIŞ HER program)
+BUGÜNKÜ POSIX davranışına (Windows'ta `error.Unsupported` DAHİL) BİREBİR
+AYNI şekilde düşer — `scheduler.zig`nin 5 çağrı sitesi VE `cycle_
+detector.zig`nin 1 çağrı sitesi HİÇBİRİNE DOKUNULMADI.
+
+**Doğrulama**: YENİ, `self_pipe.zig`nin İLK testleri (dosya ÖNCEDEN
+sıfır test İçERİYORDU — `scheduler_test_mod`/`channel_test_mod`/`io_
+test_mod`/`worker_pool_test_mod`e OTOMATİK dahil oldu, `fiber_test_mod`e
+SIZMADI, ÇÜNKÜ `fiber.zig` `scheduler.zig`/`self_pipe.zig`yi HİÇ İTHAL
+ETMİYOR): sahte bir sağlayıcı (GERÇEK bir OS pipe'ı KULLANMADAN, sentinel
+fd değerleri `.{100, 101}` + HER metod İçİn AYRI çağrı sayaçlarıyla)
+kaydedilip `makeSelfPipe()`/`signalWakeFd`/`drainWakeFd`/`closeSelfPipeFd`
+çağrılıp DÖRDÜNÜN de sağlayıcıya GERÇEKTEN ULAŞTIĞI (sayaçların DOĞRU
+sayılarda arttığı) doğrulandı. Kırmızı-takım: kayıt YAPILMADAN AYNI
+fonksiyonlar çağrıldığında GERÇEK bir OS pipe çiftinin döndüğü, sahte
+sağlayıcının HİÇ ÇAĞRILMADIĞI (sayaç SIFIR kaldığı) AYRI bir testle
+doğrulandı — YAN ürün olarak `self_pipe.zig`nin MEVCUT, HİÇ test
+EDİLMEMİŞ davranışı İLK KEZ regresyon-testine KAVUŞTU. Break→red→fix İLE
+(kayıt çağrısı GEÇİCİ kaldırılıp `expected 100, found 3` İLE testin
+GERÇEKTEN kırmızıya düştüğü görülüp GERİ eklendi) kaydın GERÇEKTEN
+load-bearing olduğu kanıtlandı. `zig build test` (Debug+ReleaseFast, TAM
+paket, `-j1` İLE de) + `NOX_STRESS_ROUNDS=800 zig build stress-test
+-Doptimize=ReleaseFast` TEMİZ (bilinen, pre-existing `-j` paralel-yük
+HTTP/pool test flake'leri — `http_serve_golden_test.zig`, `http_serve_
+tls_golden_test.zig`, `http_serve_multicore_pool_golden_test.zig` (N=2
+havuzlu, self-pipe yolunu EGZERSİZ EDEN test DAHİL), `router_module_
+state_golden_test.zig` — İZOLE çalıştırmayla regresyon OLMADIĞI YENİDEN
+doğrulandı).
+
+**Kapsam DIŞI**: `io_reactor.zig`nin KENDİSİNİN (kqueue/epoll/WSAPoll)
+soyutlanması — wake-fd'nin GERÇEK, OS-pollanabilir bir tamsayı OLMASI
+ZORUNLUĞU DEVAM EDER, TAM bir freestanding wake mekanizması İçİn AYRICA
+GEREKLİ, ÇOK DAHA BÜYÜK VE AYRI bir gelecekteki faz; `runtime/stdlib_
+shims/http_client.zig`nin KENDİ, AYRI `makeSelfPipe()`si — F.0.6'nın
+KENDİ, ÖNCEDEN belirlenmiş konusu; `nox_register_wake_provider`i
+codegen'den ÇAĞIRAN bir yol/`--target freestanding` bayrağı — F.1'in
+KENDİ kapsamı; Windows İçİn GERÇEK bir wake-provider İMPLEMENTASYONU
+YAZMAK — BU FAZ SADECE enjeksiyon NOKTASINI açar, `io_reactor.zig`nin
+Windows dalının (WSAPoll) KENDİ, AYRI reaktör-soyutlama İhtiyacı OLMADAN
+pratik bir fayda SAĞLAMAZ.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.
