@@ -21116,6 +21116,94 @@ YAPISAL (build-graph'ın `stdlib_shims`i transitif olarak GEREKTİRMEMESİ).
 
 ---
 
+## 3.167 Faz F.1 — Cross-compile İskeleti + QBE-freestanding-link deneyi (OLUMLU) + Kritik düzeltme #3 (v1.87.0)
+
+Freestanding Nox çerçevesinin F.0'DAN (F.0.1-F.0.6, TÜMÜ yayımlandı)
+SONRAKİ fazı. F.1'in KENDİ, ÖNCEDEN tanımlanmış kapsamı: "henüz TAM
+freestanding DEĞİL, SADECE 'QBE çıktısı hiç OS OLMADAN linklenebiliyor
+mu' sorusunun CEVABI" + `build.zig`nin Windows'un AYNI deseniyle bir
+`.freestanding`/`.other` dalı.
+
+**Bulgu #1 — F.1'in KENDİ falsifiable deneyi: OLUMLU CEVAPLANDI.** QBE'nin
+x86_64 SysV (`amd64_sysv`) çıktısı — fonksiyon çağrıları VE veri
+bölümleri DAHİL — GERÇEKTEN, TAM olarak freestanding, statik-bağlı bir
+ELF ikili olarak linklenebiliyor, SIFIR dinamik/libc/PLT bağımlılığıyla.
+DOĞRUDAN deneysel olarak (scratchpad'de) DOĞRULANDI: `qbe -t amd64_sysv`
+TEMİZ x86_64 SysV assembly ÜRETTİ; DÜZ sistem `cc`si (macOS'ta Apple
+clang) `-target x86_64-freestanding-none -ffreestanding -nostdlib
+-static` İLE BAŞARISIZ oldu (`ld: unknown file type` — macOS'un NATİF
+`ld`si ELF nesne dosyalarını HİÇ İŞLEYEMİYOR); `zig cc` (AYNI bayraklarla,
+Zig'in BÜNYESİNE gömülü evrensel LLD linker'ı SAYESİNDE) BAŞARILI oldu
+— sonuç binary `ET_EXEC`, "no dynamic section", SIFIR tanımsız sembol,
+PLT/GOT dolaylı çağrısı YOK. **SONUÇ**: freestanding build hattı, linker
+sürücüsü OLARAK `zig cc` (VEYA `zig build-exe`) KULLANMALIDIR — mevcut
+`buildOne`nin QBE yolunun KULLANDIĞI DÜZ `cc`/`clang` İLE BU İŞ
+YAPILAMAZ. Bu bulgu `tests/golden/freestanding_link_test.zig`de KALICI
+bir teste dönüştürüldü (`qbe` PATH'te YOKSA `SkipZigTest`).
+
+**Bulgu #2 — "Kritik düzeltme #3" (YENİ, ÖNCEDEN BİLİNMEYEN): OS-fallback
+kodu comptime-gate'LENMEMİŞ, F.0.1-F.0.6'nın runtime SOURCE'u freestanding
+İçİn HENÜZ DERLENEMİYOR (LİNK-ÖNCESİ, COMPILE-ZAMANINDA BAŞARISIZ).**
+F.0.1-F.0.5'in TÜM tasarım felsefesi "bir provider KAYDET, AMA ESKİ
+OS-tabanlı fallback kodu (hosted, sıfır-regresyon davranışı İçİn) KORU"
+İDİ — provider `null` İSE fallback ÇALIŞIR, KAYITLIYSA fallback'e HİÇ
+GİRİLMEZ (bir RUNTIME `if` kontrolü İLE). DOĞRUDAN deneysel olarak
+KANITLANDI ki BU TASARIM freestanding COMPILE-ZAMANI İçİn YETERSİZ:
+- `fiber.zig`nin `allocGuardedStack()`ını ÇAĞIRAN, export EDİLMİŞ bir
+  sarmalayıcı `-target x86_64-freestanding-none` İLE derlendiğinde
+  (Zig'in LAZY semantik analizi, `export fn` ARACILIĞIYLA `allocGuardedStackPosix`e
+  GERÇEKTEN ULAŞTIRILARAK) İKİ GERÇEK COMPILE hatası ALINDI: (a)
+  `std.heap.pageSize()` freestanding/"other" hedeflerde `std.options.
+  page_size_max`in AÇIKÇA SAĞLANMASINI ZORUNLU KILAR (`std_options` İLE
+  ÇÖZÜLEBİLİR); (b) **`std.posix.mmap`/`std.posix.PROT`** freestanding/
+  "other" hedef İçİn Zig std'sinde HİÇ TANIMLI DEĞİL — `std_options` İLE
+  ÇÖZÜLEMEZ, GERÇEK/KESİN bir COMPILE hatası.
+- `self_pipe.zig`nin `makeSelfPipe()`ı (AYNI teknikle) `-target x86_64-
+  freestanding-none` İLE derlendiğinde: `std.c.pipe` (LİBC extern
+  fonksiyonu) **"dependency on libc must be explicitly specified"**
+  hatası VERDİ — freestanding hedefte libc HİÇ MEVCUT DEĞİL.
+- **KÖK NEDEN**: `g_stack_provider.load(...)`/`g_wake_provider.load(...)`
+  kontrolleri RUNTIME `if` deyimleridir (provider ÇALIŞMA ZAMANINDA
+  kaydedilir, DERLEME zamanında BİLİNMEZ) — Zig'in derleyicisi RUNTIME
+  bir `if`in HER İKİ dalını da SEMANTİK olarak analiz ETMEK ZORUNDADIR
+  (KOD ÜRETİLMESE de, TİP kontrolü/sembol çözümlemesi YAPILIR) —
+  provider'ın runtime'da KAYITLI olacağı GARANTİSİ, derleyicinin fallback
+  DALINI (mmap/libc-pipe çağrıları İçeren) ANALİZ ETMESİNİ ÖNLEMEZ. Bu
+  HİÇBİR ZAMAN F.0.1-F.0.6'nın KENDİ HATASI DEĞİL — O fazların HEPSİ
+  "hosted davranış SIFIR değişmeli" disipliniyle DOĞRU tasarlandı VE
+  bunu BAŞARDI — SADECE freestanding'in KENDİ, EK bir GEREKSİNİMİ
+  (OS-fallback kodun comptime-gate'lenmesi) O fazların KAPSAMINDA HİÇ
+  ELE ALINMADI (BİLİNÇLİ olarak — HER faz "SADECE runtime-seviyesi
+  API'yi HAZIRLAR... F.1'in KENDİ kapsamı" notunu TAŞIYORDU).
+
+**Bu turda UYGULANAN (dar kapsam)**: `build.zig`ye `is_freestanding`
+bayrağı (Windows'un AYNI deseni) — `noxrt_mod`/`hpy_bridge_mod`/`wasm_bridge_
+mod`nin `link_libc`ı freestanding'de `false`, `hpy_bridge`/`wasm_bridge`
+importları `noxrt_mod`dan HARİÇ TUTULUR (F.0.1'in "HPy/WASM köprüsü
+freestanding'e HİÇ TAŞINMAYACAK" gerekçesiyle TUTARLI) — SADECE İSKELET,
+`noxrt_mod`nin KÖK dosyası HÂLÂ `runtime/lib.zig`DİR (`lib_freestanding.
+zig` HENÜZ YOK — Bulgu #2 YÜZÜNDEN bugün DERLENEMEZ, `zig build noxc
+-Dtarget=x86_64-freestanding-none` — `noxrt`ye bağımlı OLMAYAN `noxc`
+ADIMI — BAŞARIYLA çalıştığı, AMA `noxrt`/`test` HEDEFLERİNİN aynı bayrakla
+BAŞARISIZ OLACAĞI doğrulandı/dokümante edildi).
+
+**Kapsam DIŞI (GELECEKTEKİ, AYRI Plan Mode turlarının konusu)**:
+`runtime/lib_freestanding.zig`nin GERÇEKTEN yazılıp `noxrt_freestanding`
+OLARAK derlenmesi (Bulgu #2 ÇÖZÜLMEDEN İMKANSIZ — comptime-gate'leme
+`fiber.zig`nin mmap/VirtualAlloc çağrılarını, `self_pipe.zig`nin DÖRT
+fonksiyonunu, muhtemelen `io_reactor.zig`/`cycle_detector.zig`nin BENZER
+OS-çağrılı kodunu `if (builtin.os.tag != .freestanding)` İLE SARMAK
+gerektirir — AYRI, DAHA BÜYÜK bir mühendislik İşi, "Kritik düzeltme #3"nin
+KENDİ, gelecekteki ÇÖZÜMÜ); `compiler/main.zig`nin QBE/LLVM link
+adımlarının `zig cc`yi linker sürücüsü OLARAK KULLANACAK şekilde
+DEĞİŞTİRİLMESİ (F.2'nin `--profile freestanding` bayrağıyla BİRLİKTE);
+`build.zig`nin `compile_swap_asm` adımının hardcoded `"cc"` çağrısının
+ÇAPRAZ-mimari düzeltmesi (AYRI/genel bir cross-compile SINIRLAMASI,
+"Faz R.3'e bırakıldı" notuyla TUTARLI); `--target`/`--profile freestanding`
+compiler bayrağı (F.2'nin KENDİ kapsamı).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

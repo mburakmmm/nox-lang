@@ -14,6 +14,47 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.87.0]
+
+### Eklendi (Faz F.1 — Build sistemi: cross-compile İSKELETİ + QBE-freestanding-link deneyi)
+- `build.zig`ye Windows'un KENDİ, ZATEN kanıtlanmış `target.result.os.tag
+  == .windows` deseniyle PARALEL bir `is_freestanding` bayrağı
+  (`.freestanding`/`.other` hedef etiketleri) — `noxrt_mod`/`hpy_bridge_mod`/
+  `wasm_bridge_mod`nin `link_libc`ı freestanding'de `false` olur, `hpy_bridge`/
+  `wasm_bridge` importları `noxrt_mod`dan HARİÇ TUTULUR (F.0.1'in KENDİ
+  "HPy/WASM köprüsü freestanding'e HİÇ TAŞINMAYACAK" gerekçesiyle TUTARLI).
+  `noxrt_mod`nin KÖK dosyası BU turda HÂLÂ `runtime/lib.zig`DİR — SADECE
+  İSKELET, GERÇEK bir `noxrt_freestanding` HEDEFİ OLUŞTURULMADI (aşağıdaki
+  bulgu YÜZÜNDEN bugün DERLENEMEZ).
+- YENİ `tests/golden/freestanding_link_test.zig` — F.1'in KENDİ, ÖNCEDEN
+  tanımlanmış falsifiable deneyini (QBE'nin x86_64 SysV çıktısı hiç OS
+  OLMADAN linklenebiliyor mu) KALICI bir teste ÇEVİRİR: `qbe -t amd64_sysv`
+  İLE (bir veri bölümü + DOĞRUDAN bir fonksiyon çağrısı İçeren) küçük bir
+  `.ssa`yı derler, `zig cc -target x86_64-freestanding-none -ffreestanding
+  -nostdlib -static` İLE (DÜZ `cc`/`clang` İLE DEĞİL — bkz. aşağıdaki
+  bulgu) linkler, sonucun GERÇEKTEN statik/çalıştırılabilir bir ELF (`ET_EXEC`,
+  dinamik bölüm YOK) OLDUĞUNU ELF header'ı ELLE OKUYARAK doğrular. `qbe`
+  PATH'te YOKSA SESSİZCE `SkipZigTest` (harici araç eksikse ana takımı
+  KIRMAMA ilkesi).
+
+### Bulundu (doğrudan deneysel araştırma — İKİ KRİTİK bulgu)
+- **Bulgu #1 (OLUMLU CEVAP)**: QBE'nin x86_64 SysV çıktısı — fonksiyon
+  çağrıları VE veri bölümleri DAHİL — GERÇEKTEN, SIFIR dinamik/libc/PLT
+  bağımlılığıyla freestanding bir ELF olarak linklenebiliyor — AMA SADECE
+  linker sürücüsü OLARAK `zig cc` (Zig'in KENDİ, evrensel LLD'si) KULLANILIRSA.
+  Düz sistem `cc`si (macOS'ta Apple clang) `ld: unknown file type` İLE
+  BAŞARISIZ olur — macOS'un NATİF `ld`si ELF nesne dosyalarını HİÇ İŞLEYEMİYOR.
+- **Bulgu #2 (YENİ, "Kritik düzeltme #3")**: F.0.1-F.0.5'in "provider KAYDET,
+  OS-fallback kodu KORU" tasarımı, freestanding COMPILE-ZAMANI İçİn YETERSİZ
+  — `fiber.zig`nin `allocGuardedStackPosix`ı (`std.posix.mmap`/`PROT`) VE
+  `self_pipe.zig`nin `makeSelfPipe`ı (`std.c.pipe`, libc) freestanding/"other"
+  hedefte Zig std'sinde HİÇ TANIMLI/ÇÖZÜMLENEBİLİR DEĞİL — provider'ın
+  runtime'da KAYITLI OLACAĞI GARANTİSİ, derleyicinin bu fallback dallarını
+  (RUNTIME `if`, comptime DEĞİL) SEMANTİK olarak analiz ETMESİNİ ÖNLEMEZ.
+  Bu, GERÇEK bir COMPILE hatasıdır (link-zamanı DEĞİL) — comptime-gate'leme
+  (`if (builtin.os.tag != .freestanding)`) GEREKTİRİR, AYRI/gelecekteki bir
+  faz olarak `nox-teknik-spesifikasyon.md`ye belgelendi.
+
 ## [1.86.1]
 
 ### Düzeltildi (F.0.5'in `self_pipe.zig` testinde GERÇEK bir Windows derleme hatası)

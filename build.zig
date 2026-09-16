@@ -44,6 +44,16 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // Faz F.1 (bkz. plan dosyası "Cross-compile İSKELETİ"): Windows'un
+    // KENDİ, ZATEN kanıtlanmış `target.result.os.tag == .windows` deseniyle
+    // PARALEL bir kontrol — SADECE İSKELET (link_libc/HPy-WASM hariç tutma),
+    // `noxrt_mod`nin KÖK dosyası BU turda HÂLÂ `runtime/lib.zig`DİR (`lib_
+    // freestanding.zig` HENÜZ YOK — fiber.zig/self_pipe.zig'in OS-fallback
+    // kodu comptime-gate'lenmediğinden, freestanding hedefte `noxrt_mod`
+    // HÂLÂ BAŞARISIZ olur, bu BEKLENEN/belgelenmiş bir durumdur, bkz.
+    // nox-teknik-spesifikasyon.md §3.167).
+    const is_freestanding = target.result.os.tag == .freestanding or target.result.os.tag == .other;
+
     // ---- Faz 21: async çalışma zamanı çekirdeği (`runtime/async_rt`) ----
     //
     // nox-teknik-spesifikasyon.md §3.21: Go tarzı yığınlı (stackful) fiber
@@ -202,13 +212,13 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("runtime/hpy_bridge/lib.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = true,
+        .link_libc = !is_freestanding,
     });
     const wasm_bridge_mod = b.addModule("wasm_bridge", .{
         .root_source_file = b.path("runtime/wasm_bridge/lib.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = true,
+        .link_libc = !is_freestanding,
         .imports = &.{
             .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
         },
@@ -224,9 +234,16 @@ pub fn build(b: *std.Build) void {
         // libSystem'i KOŞULSUZ bağlar), ama Linux'ta `std.c.*` KULLANIMI
         // AÇIKÇA `link_libc` İSTEMEDEN "libc'ye bağımlılık AÇIKÇA belirtilmeli"
         // derleme hatası verir (bkz. Faz R.1'in Docker/aarch64-linux
-        // doğrulaması sırasında keşfedilen gerçek hata).
-        .link_libc = true,
-        .imports = &.{
+        // doğrulaması sırasında keşfedilen gerçek hata). Faz F.1: freestanding
+        // hedefte libc HİÇ YOK — `is_freestanding` İSE `false` (bkz. yukarıdaki
+        // `is_freestanding` notu — bu SADECE `link_libc` YÜZÜNDEN ANLAMSIZ bir
+        // hatayı ÖNLER, `noxrt_mod`nin KENDİSİ YİNE DE fiber.zig/self_pipe.zig'in
+        // comptime-gate'lenmemiş OS-fallback kodu YÜZÜNDEN BAŞARISIZ OLUR).
+        .link_libc = !is_freestanding,
+        .imports = if (is_freestanding) &.{
+            .{ .name = "abi_layout", .module = abi_layout_mod },
+            .{ .name = "diag_sink", .module = diag_sink_mod },
+        } else &.{
             .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
             .{ .name = "wasm_bridge", .module = wasm_bridge_mod },
             .{ .name = "abi_layout", .module = abi_layout_mod },
@@ -1046,4 +1063,24 @@ pub fn build(b: *std.Build) void {
     soak_run.setEnvironmentVariable("NOX_SOAK_SECONDS", b.fmt("{d}", .{soak_seconds}));
     const http_soak_test_step = b.step("http-soak-test", "nox.http.serve_multicore/serve_tls soak testi (-Dsoak-seconds, varsayılan 5) — opt-in, YAVAŞ, 'test' adımının PARÇASI DEĞİL");
     http_soak_test_step.dependOn(&soak_run.step);
+
+    // Faz F.1 (bkz. plan dosyası "Cross-compile İSKELETİ"): QBE'nin çıktısı
+    // freestanding, statik bir ELF olarak linklenebiliyor mu deneyini
+    // (`wasm_build_options`nin AYNI "zig'in KENDİ yolunu build_options
+    // üzerinden testin İçİNE geçir" deseni) kalıcı bir teste çevirir.
+    // `windows-frontend` CI işi `zig build frontend-test` çağırır (bkz.
+    // yukarıdaki `frontend_test_step`) — bu YÜZDEN `test_step`e EKLENEN
+    // bu test Windows'ta HİÇ çalışmaz, AYRI bir hariç-tutma GEREKMEZ.
+    const freestanding_link_options = b.addOptions();
+    freestanding_link_options.addOption([]const u8, "zig_exe_path", b.graph.zig_exe);
+    const freestanding_link_mod = b.createModule(.{
+        .root_source_file = b.path("tests/golden/freestanding_link_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "build_options", .module = freestanding_link_options.createModule() },
+        },
+    });
+    const freestanding_link_test = b.addTest(.{ .root_module = freestanding_link_mod });
+    test_step.dependOn(&b.addRunArtifact(freestanding_link_test).step);
 }
