@@ -14,6 +14,22 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.86.1]
+
+### Düzeltildi (F.0.5'in `self_pipe.zig` testinde GERÇEK bir Windows derleme hatası)
+- v1.85.0'ın GERÇEK Windows CI koşusu (`gh run view` İLE kontrol edilerek
+  YAKALANDI — standing instruction) `self_pipe.zig:114`/`:148`de "expected
+  type '*anyopaque', found 'comptime_int'" İLE BAŞARISIZ oldu: `posix.
+  fd_t` Windows'ta `windows.HANDLE` (`*anyopaque`), POSIX'te `c_int` —
+  F.0.5'in sahte-sağlayıcı testindeki `.{100, 101}` tamsayı literalleri
+  VE `@as(posix.fd_t, 100)` karşılaştırmaları SADECE POSIX'te GEÇERLİYDİ.
+- YENİ `testSentinelFd(comptime n) posix.fd_t` yardımcısı — Windows'ta
+  `@ptrFromInt(n)`, AKSİ HALDE düz tamsayı (`completion_pipe.zig`nin
+  KENDİ `@ptrFromInt(a)`/`@ptrFromInt(b)` Windows-soket-handle deseniyle
+  AYNI) — HER İKİ self_pipe.zig testindeki sentinel değerler VE
+  karşılaştırmalar BUNU KULLANACAK şekilde güncellendi, macOS/Linux'ta
+  davranış SIFIR değişti (yerelde YENİDEN doğrulandı).
+
 ## [1.86.0]
 
 ### Eklendi/Değiştirildi (Faz F.0.6 — gizli http_client.zig bağımlılığının kesilmesi, F.0'ın SON alt-fazı)

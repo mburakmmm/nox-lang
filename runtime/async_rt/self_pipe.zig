@@ -101,6 +101,17 @@ pub fn drainWakeFd(fd: posix.fd_t) void {
     }
 }
 
+/// `posix.fd_t` platforma göre KÖKTEN farklı bir tiptir (POSIX'te `c_int`,
+/// Windows'ta `*anyopaque` — `windows.HANDLE`) — bu YÜZDEN sahte
+/// sağlayıcı testlerinin sentinel "fd" değerleri BURADAN, platforma göre
+/// DOĞRU tipte üretilir (çıplak tamsayı literalleri Windows'ta derleme
+/// hatası verirdi — GERÇEK bir Windows CI hatasıyla YAKALANDI, bkz.
+/// v1.85.0'ın CI koşusu).
+fn testSentinelFd(comptime n: usize) posix.fd_t {
+    if (builtin.os.tag == .windows) return @ptrFromInt(n);
+    return n;
+}
+
 test "Faz F.0.5: kayıtlı bir sahte wake provider, self-pipe fonksiyonlarının GERÇEK hedefi olur" {
     const FakeProvider = struct {
         var create_count: usize = 0;
@@ -111,7 +122,7 @@ test "Faz F.0.5: kayıtlı bir sahte wake provider, self-pipe fonksiyonlarının
         fn create(ctx: ?*anyopaque) ?[2]posix.fd_t {
             _ = ctx;
             create_count += 1;
-            return .{ 100, 101 };
+            return .{ testSentinelFd(100), testSentinelFd(101) };
         }
         fn close(ctx: ?*anyopaque, fd: posix.fd_t) void {
             _ = ctx;
@@ -145,8 +156,8 @@ test "Faz F.0.5: kayıtlı bir sahte wake provider, self-pipe fonksiyonlarının
     defer nox_register_wake_provider(null);
 
     const fds = try makeSelfPipe();
-    try std.testing.expectEqual(@as(posix.fd_t, 100), fds[0]);
-    try std.testing.expectEqual(@as(posix.fd_t, 101), fds[1]);
+    try std.testing.expectEqual(testSentinelFd(100), fds[0]);
+    try std.testing.expectEqual(testSentinelFd(101), fds[1]);
     signalWakeFd(fds[1]);
     drainWakeFd(fds[0]);
     closeSelfPipeFd(fds[0]);
@@ -166,7 +177,7 @@ test "Faz F.0.5 — kırmızı-takım: kayıt YAPILMAZSA GERÇEK bir OS pipe'ı 
         fn create(ctx: ?*anyopaque) ?[2]posix.fd_t {
             _ = ctx;
             create_count += 1;
-            return .{ 100, 101 };
+            return .{ testSentinelFd(100), testSentinelFd(101) };
         }
         fn close(ctx: ?*anyopaque, fd: posix.fd_t) void {
             _ = ctx;
