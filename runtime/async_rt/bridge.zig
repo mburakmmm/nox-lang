@@ -30,11 +30,24 @@
 //! bırakıldı (bkz. spec, "kalan" notu).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const asap = @import("../alloc/asap.zig");
 const fiber_mod = @import("fiber.zig");
 const scheduler_mod = @import("scheduler.zig");
 const channel_mod = @import("channel.zig");
 const worker_pool_mod = @import("worker_pool.zig");
+
+/// Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü): `nox_
+/// async_init`in havuz-bağlama bloğu (aşağıda) `worker_pool_mod.WorkerPool`ı
+/// (VE onun `std.Thread.spawn`ını) KOŞULSUZ referans alıyordu — BU,
+/// `state.worker_pool` bir ÇALIŞMA-ZAMANI kontrolü OLDUĞUNDAN, fiber.zig'in
+/// ORİJİNAL hatasıyla AYNI kök nedenle (Zig HER İKİ dalı da semantik analiz
+/// eder), freestanding'de `worker_pool.zig`nin GERÇEK OS iş parçacığı
+/// spawn'ını ZORLA çekerdi. F.2'nin capability allowlist'i `nox.thread.
+/// pool_run`ı ZATEN reddettiğinden, bu blok freestanding'de HİÇ GEREKMEZ —
+/// dışarıdan bir `if (comptime !is_freestanding)` İLE SARILIR (hosted'da
+/// `is_freestanding` HER ZAMAN `false` OLDUĞUNDAN davranış SIFIR değişir).
+const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
 /// Faz F.0.3: `nox_async_deadlock_abort`ın tanı mesajını enjekte
 /// edilebilir hâle getirmek İçİn (bkz. onun belge notu).
 const diag_sink = @import("diag_sink");
@@ -131,29 +144,31 @@ pub export fn nox_async_init(rt: ?*anyopaque) void {
     // çalıştırmayacağının (`g_scheduler` threadlocal'ının doldurulduğu)
     // TEK noktasıdır, bu YÜZDEN KOŞULSUZ işaretlenir.
     state.fiber_ever_active.store(true, .monotonic);
-    if (state.worker_pool) |wp_ptr| {
-        const pool: *worker_pool_mod.WorkerPool = @ptrCast(@alignCast(wp_ptr));
-        const slot = asap.currentWorkerSlot();
-        g_scheduler.?.attachToPool(.{
-            .own_slot = slot,
-            .sibling_deques = pool.deque_list,
-            .live_count = pool.pool_live_count,
-            .waiting_on_io = pool.pool_waiting_on_io,
-            .idle_workers = pool.pool_idle_workers,
-            .activity_epoch = pool.pool_activity_epoch,
-            .stw_requested = pool.pool_stw_requested,
-            .stw_arrived = pool.pool_stw_arrived,
-            .stw_sense = pool.pool_stw_sense,
-            .wake_fds = pool.wake_fds,
-            .collect_fn = &cycle_detector.nox_cycle_collect,
-            .rt = rt,
-        }) catch {};
-        // Faz MN.9.3: `pool_bridge.zig`nin `broadcastRunOnEachWorker`ının
-        // (bkz. `nox_pool_serve`) BU worker'ı `scheduler.spawnToForeignScheduler`
-        // İLE HEDEFLEYEBİLMESİ İçİn KENDİ `*Scheduler`ını (`attachToPool`
-        // BAŞARILI OLDUKTAN SONRA, ARTIK GÜVENLE ÇALINABİLİR/uyandırılabilir
-        // OLDUĞUNDA) yayınlar.
-        state.pool_ext.?.pool_scheduler_ptrs[slot].store(&g_scheduler.?, .release);
+    if (comptime !is_freestanding) {
+        if (state.worker_pool) |wp_ptr| {
+            const pool: *worker_pool_mod.WorkerPool = @ptrCast(@alignCast(wp_ptr));
+            const slot = asap.currentWorkerSlot();
+            g_scheduler.?.attachToPool(.{
+                .own_slot = slot,
+                .sibling_deques = pool.deque_list,
+                .live_count = pool.pool_live_count,
+                .waiting_on_io = pool.pool_waiting_on_io,
+                .idle_workers = pool.pool_idle_workers,
+                .activity_epoch = pool.pool_activity_epoch,
+                .stw_requested = pool.pool_stw_requested,
+                .stw_arrived = pool.pool_stw_arrived,
+                .stw_sense = pool.pool_stw_sense,
+                .wake_fds = pool.wake_fds,
+                .collect_fn = &cycle_detector.nox_cycle_collect,
+                .rt = rt,
+            }) catch {};
+            // Faz MN.9.3: `pool_bridge.zig`nin `broadcastRunOnEachWorker`ının
+            // (bkz. `nox_pool_serve`) BU worker'ı `scheduler.spawnToForeignScheduler`
+            // İLE HEDEFLEYEBİLMESİ İçİn KENDİ `*Scheduler`ını (`attachToPool`
+            // BAŞARILI OLDUKTAN SONRA, ARTIK GÜVENLE ÇALINABİLİR/uyandırılabilir
+            // OLDUĞUNDA) yayınlar.
+            state.pool_ext.?.pool_scheduler_ptrs[slot].store(&g_scheduler.?, .release);
+        }
     }
 }
 
@@ -321,6 +336,14 @@ pub export fn nox_async_run_to_completion(rt: ?*anyopaque) i32 {
 /// TAM istisna mekanizmasına entegrasyon bu fazın kapsamı DIŞI, bkz. spec).
 pub export fn nox_async_deadlock_abort(rt: ?*anyopaque) noreturn {
     diag_sink.report(rt, "nox: kilitlenme (deadlock) tespit edildi — tüm görevler bloke, hiçbiri ilerleyemiyor\n", .{});
+    // Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü):
+    // `std.process.exit` freestanding'de HİÇ TANIMLI DEĞİL (syscall
+    // KAVRAMI YOK) — `handle.zig`nin `HaltProvider`ıyla AYNI ilke,
+    // BURADA sadece yerel `is_freestanding` bayrağıyla (döngüsel
+    // bağımlılık kurmadan) uygulanır.
+    if (comptime is_freestanding) {
+        while (true) {}
+    }
     std.process.exit(1);
 }
 

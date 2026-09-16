@@ -21482,6 +21482,183 @@ AYNI ANDA (VE daha AZ invaziv biçimde) kapsadığından GEREKMEDİ.
 
 ---
 
+## 3.171 Faz F.0.7 — "Kritik düzeltme #3"ün çözümü: `runtime/lib_freestanding.zig` (scheduler/fiber/Task/Channel DAHİL, GERÇEKTEN derlenen bir freestanding runtime kökü, v1.90.0)
+
+Freestanding Nox çerçevesinin F.1'in (§3.167) KENDİ bulduğu, ÇÖZÜLMEDEN
+BIRAKTIĞI "Kritik düzeltme #3"ün (OS-fallback kodu comptime-gate'lenmediğinden
+`runtime/lib.zig` freestanding hedefte HENÜZ DERLENEMİYOR) NİHAYET
+ÇÖZÜLDÜĞÜ faz. Kullanıcıya "SADECE senkron programlar" (dar) VEYA
+"scheduler'ı da kapsama al" (geniş) SEÇENEKLERİ sunuldu — **kullanıcı
+İKİNCİSİNİ seçti**: `spawn`/`await`/`Task[T]`/`Channel[T]` (ÇEKİRDEK dil
+özelliği) freestanding profilinde TAM olarak derlenebilir olmalı.
+
+**Kapsamın GÖRÜNENDEN KÜÇÜK OLMASININ gerekçesi**: F.2'nin (§3.168)
+capability allowlist'i `nox.thread`/`nox.fs`/`nox.http`/vb. TÜM OS/ağ-
+bağımlı stdlib modüllerini `--profile freestanding` altında ZATEN
+reddediyor — bu YÜZDEN bir freestanding programı `nox.thread.pool_run`/
+`nox.http.serve_multicore` (GERÇEK OS iş parçacığı havuzu) ÇAĞIRAMAZ VE
+GERÇEK bir soket/dosya G/Ç'si YAPAMAZ. Scheduler'ın KENDİ `reactor`/
+havuz-bağlama kodu SADECE bu (capability-gate'li) yollarda dokunulur —
+`spawn`/`await`/`Task.recv`/`Channel.send` gibi ÇIPLAK, tek-worker'lı
+kullanım BUNLARA HİÇ dokunmaz.
+
+### Uygulanan değişiklikler
+
+1. **YENİ, ptr+vtable şeklinde İKİ sağlayıcı** (F.0.1-F.0.5'in AYNI
+   "program-genelinde, TEK, atomik `.monotonic`" deseni):
+   - `collections/dict.zig`e `EntropyProvider`/`nox_register_entropy_
+     provider` — `secureRandomBuf`nin `arc4random_buf`/`SystemFunction036`
+     bağımlılığını değiştirir. Kayıt YOKSA freestanding'de `hashSeed`
+     SABİT bir tohuma (`0xA5A5A5A5A5A5A5A5`) düşer (v0.1 sınırı, hash-
+     flooding'e karşı GÜVENSİZ — gömülü/tek-kullanıcılı bağlamda kabul
+     edilebilir).
+   - `errors/handle.zig`e `HaltProvider`/`nox_register_halt_provider` —
+     `std.process.exit(1)`in yerine geçer. Kayıt YOKSA freestanding'de
+     `while (true) {}`.
+2. **`fiber.zig`/`self_pipe.zig`nin OS-fallback gövdeleri comptime-gate'lendi**
+   — `allocGuardedStack`/`freeGuardedStack`/`makeSelfPipe`/`closeSelfPipeFd`/
+   `signalWakeFd`/`drainWakeFd`nin dispatch zincirine `if (comptime
+   is_freestanding) ... else if (windows) ... else ...` (üçlü, TAM if/else
+   İç İçe — TEK bir `if (comptime cond) return;` YETERLİ olduğu AYRI bir
+   deneyle KANITLANDI, aşağıya bkz., ama BU dosyalarda AÇIKÇA nested
+   if/else TERCİH edildi). İMZALAR (`posix.fd_t` freestanding'de `void`e
+   ÇÖZÜLDÜĞÜNDEN) DEĞİŞMEDİ.
+3. **`spinlock.zig`nin `std.Thread.yield()`ı** `if (comptime !is_freestanding)`
+   İLE SARILDI (freestanding'de OS iş parçacığı YOK, CAS döngüsü İLK
+   denemede HER ZAMAN BAŞARILI olur).
+4. **`io_reactor.zig`ye YENİ `NullReactor`** — `KqueueReactor`/`EpollReactor`/
+   `WindowsReactor`nin 4. kardeşi, `IoReactor` seçimine EKLENDİ. `init`
+   BAŞARILI döner, `register`/`registerWithTimeout`/`poll` `error.
+   Unsupported` (F.2'nin capability sistemi SAYESİNDE ASLA GERÇEKTEN
+   ÇAĞRILAMAZ). Modül-üstü comptime platform kontrolü `.freestanding`/
+   `.other`i de KABUL EDECEK şekilde GENİŞLETİLDİ.
+5. **`scheduler.zig`**: `Scheduler.init`in `std.Thread.getCurrentId()`ı
+   `if (comptime is_freestanding) 0 else ...`e; `markReady`nin `is_foreign`
+   hesabındaki AYNI çağrı (`self.pool_live_count`in freestanding'de HER
+   ZAMAN `null` olacağından) `if (comptime is_freestanding) false else
+   ...`e; `sleepMs`nin `std.c.timespec`/`nanosleep`ı (`stwParticipate`/
+   `poolWideDeadlockCheck`nin bekleme turları) `if (comptime is_freestanding)
+   return;`e gate'lendi.
+6. **`bridge.zig`**: `nox_async_init`in havuz-bağlama bloğu (`worker_pool_
+   mod.WorkerPool`ı KOŞULSUZ referans alıyordu — fiber.zig'in ORİJİNAL
+   hatasıyla AYNI kök neden, çalışma-zamanı `if`in HER İKİ dalının da
+   semantik analiz edilmesi) `if (comptime !is_freestanding) { ... }`
+   İLE dışarıdan SARILDI. `nox_async_deadlock_abort`ın `std.process.exit(1)`i
+   AYNI şekilde gate'lendi.
+7. **`cycle_detector.zig`**: `nox_cycle_possible_root`ın havuz-uyandırma
+   dalı (`state.pool_ext.?.pool_wake_fds`, `posix.fd_t` freestanding'de
+   `void`, `@intCast` İLE koşulsuz analiz ediliyordu) `else if (comptime
+   !is_freestanding)`e taşındı.
+8. **`diag_sink.zig`**: `defaultStderrSink`in `std.debug.print`i (`std.
+   Io.Threaded` ÜZERİNDEN freestanding'de derlenemeyen bir I/O katmanına
+   dayanıyordu) `if (comptime is_freestanding) return;` İLE gate'lendi.
+9. **YENİ `runtime/lib_freestanding.zig`** — `noxrt_mod`nin freestanding
+   hedeflerdeki KÖK modülü (`build.zig`, `is_freestanding ? lib_freestanding.
+   zig : lib.zig`). `lib.zig`nin AYNI "isim-üzerinden yeniden dışa-aktar +
+   comptime force-ref" deseni, AMA SADECE: `alloc/{asap,arc,dispatch_
+   registry,lowlevel,cycle_detector,defer_stack}`, `errors/{handle,diag_
+   sink}`, `async_rt/bridge` (transitif olarak fiber/self_pipe/scheduler/
+   channel/io_reactor/spinlock/chase_lev_deque'yi de ÇEKER), `async_rt/
+   task_local`, `collections/{dict,list_sort}`, `str`. `foreign_bridge.
+   zig`/`stdlib_shims/*`/`pool_bridge.zig`/`thread_bridge.zig`/`thread_
+   channel.zig` HİÇ import EDİLMEZ — Zig'in tembel analiz modeli SAYESİNDE
+   (`lib.zig`nin AYNI belge notu: "hiçbir şey onları başvurmadıkça analiz
+   edilmez") bu SESSİZCE/GÜVENLE dışlanır, YENİ bir derleme hatası RİSKİ
+   TAŞIMAZ.
+
+### Self-discovered, plan dışı bulgular (GERÇEK derleme denemeleriyle bulundu, AYNI fazda düzeltildi)
+
+Gerçek `zig build-obj -target aarch64-freestanding-none` denemeleri, YUKARIDAKİ
+listenin ÖTESİNDE, HİÇ ÖNCEDEN ÖNGÖRÜLMEMİŞ İKİ kategori DAHA GERÇEK derleme
+hatası buldu:
+
+- **`std.heap.page_allocator`/`smp_allocator`, bir struct alanının SADECE
+  VARSAYILAN DEĞERİ olarak BİLE kullanılamaz.** Zig, `Allocator.VTable`nin
+  fonksiyon-işaretçisi alanlarını (`.alloc`/`.resize`/`.remap`/`.free`)
+  doldururken HER BİRİNİN ADRESİNİ (dolayısıyla TAM GÖVDESİNİ, sadece
+  imzasını DEĞİL) semantik olarak analiz eder — `PageAllocator.free`nin
+  gövdesi `unmap`→`pageSize()`→`page_size_max`e (freestanding'de
+  `@compileError`) uzanır. `RuntimeState` TİPİ (asap.zig'in HER YERİNDE
+  `@ptrCast` İLE) referans alındığı ANDA `bootstrap_allocator`/`injected_
+  allocator`nin VARSAYILAN DEĞERİ de HESAPLANIR — `if (is_freestanding)
+  freestanding_unreachable_allocator else ...` (asla GERÇEKTEN ÇAĞRILMAYACAK,
+  derlenebilir bir "sahte" vtable) İLE düzeltildi. `nox_runtime_init()`in
+  (argümansız, hosted-özel giriş noktası) gövdesi de `if (comptime is_
+  freestanding) return null;` İLE gate'lendi (GERÇEK bir freestanding host
+  HER ZAMAN `nox_runtime_init_with_allocator`i KENDİ allocator'ıyla
+  çağırmalıdır). `use_debug_allocator`/`debug_thread_check` (Debug modunda
+  BİLE `std.heap.DebugAllocator`/`arcOwnerThreadOk`nin `std.Thread.
+  getCurrentId()`ı AYNI nedenle derlenemez) `and !is_freestanding` İLE
+  GENİŞLETİLDİ.
+- **Break→red→fix — GERÇEK bir regresyon, AYNI turda bulunup düzeltildi**:
+  `arc.zig`nin `enqueueAndMaybePump`ı (GG.24'ün derinlik-eşiği aşıldığında
+  düşülen yığın-tabanlı worklist pompası) İLK denemede `rt` mevcut
+  OLDUĞUNDA HER ZAMAN `state.allocator()`e (hosted Debug'da GERÇEK, sızıntı-
+  tespit eden `debug_gpa`) geçmişti — `rs.worklist` BİLEREK ÇAĞRILAR ARASI
+  YENİDEN KULLANILAN, HİÇ tek-tek serbest bırakılmayan bir havuzlanmış
+  tampon OLDUĞUNDAN, bu `nox_runtime_deinit`de GERÇEK bir "sızıntı" raporuna
+  yol AÇTI — `codegen_golden_test`in 4 GG.24 fixture'ıyla (`zig build test`
+  Debug'da) YAKALANDI. Düzeltme: hosted tarafı `std.heap.page_allocator`ı
+  (İZLENMEYEN, ÖNCEKİ davranış) BİREBİR KORUR, SADECE freestanding (`rt`nin
+  HER ZAMAN mevcut olduğu TEK yol) `state.allocator()`e geçer.
+
+**Zig'in comptime-if elenmesi ÜZERİNE doğrulanmış bir bulgu**: `if
+(comptime cond) return X;` (ELSE OLMADAN) SONRASI GELEN, AYNI kapsamdaki
+kod, `cond` doğruyken ANALİZ EDİLMEZ (izole bir mikro-testle `zig build-obj`
+İLE DOĞRUDAN kanıtlandı: `if (comptime is_fs) return 0; return std.Thread.
+getCurrentId();` freestanding'de TEMİZ derlendi) — bu, `haltProcess`/
+`nox_runtime_init`/`stackPaintEnabled`/`sleepMs` GİBİ SİTELERDE (TEK
+`return`) GÜVENLE kullanıldı; `allocGuardedStack`/`makeSelfPipe` GİBİ
+DAHA KARMAŞIK (3-yollu, comptime+runtime KARIŞIK) dispatch'lerde İSE
+NETLİK İçİn TAM if/else-if/else İç İçe TERCİH edildi.
+
+### Doğrulama
+
+- GERÇEK `zig build-obj -target aarch64-freestanding-none` (host mimarisiyle
+  eşleşen aarch64, `compile_swap_asm`in host-`cc` sınırlaması nedeniyle —
+  bkz. "Kapsam DIŞI") — `runtime/lib_freestanding.zig`, Debug/ReleaseSafe/
+  ReleaseFast/ReleaseSmall'ın DÖRDÜNDE de SIFIR hatayla derlendi (F.1'in
+  BULDUĞU 79 hatadan 0'a).
+- `zig build -Dtarget=aarch64-freestanding-none -Doptimize=ReleaseSmall`
+  (TAM `build.zig` akışı) `noxrt_mod`nin YENİ root-file seçimini DOĞRU
+  uyguladığını (derleme `runtime/lib_freestanding.zig`yi KÖK olarak
+  KULLANDI, Zig kodu SIFIR hatayla derlendi) doğruladı — KALAN TEK hata
+  `compile_swap_asm`in hardcoded host `cc`sinin (macOS'ta Mach-O ÜRETİR)
+  BİR ELF hedefine (`aarch64-freestanding-none`) linklenememesi (`ld.lld:
+  unknown file type`) — F.1'in KENDİ "Faz R.3'e bırakıldı" notuyla AYNI,
+  ÖNCEDEN belgelenmiş sınırlama (o not ÇAPRAZ-MİMARİYE odaklanıyordu,
+  BURADA AYNI kök neden — `compile_swap_asm`in host `cc`sinin HER ZAMAN
+  HOST'un NATİF nesne formatını ÜRETMESİ — AYNI mimaride BİLE ÇAPRAZ-OS-
+  formatına (Mach-O→ELF) UYGULANIYOR), BU FAZIN kapsamı DIŞINDA bırakıldı.
+- `zig build test` (TAM paket, Debug + ReleaseFast) — SIFIR regresyon
+  (madde 2'nin break→red→fix'i DAHİL).
+
+### Kritik dosyalar
+
+`runtime/collections/dict.zig`, `runtime/errors/handle.zig`, `runtime/
+errors/diag_sink.zig`, `runtime/async_rt/fiber.zig`, `runtime/async_rt/
+self_pipe.zig`, `runtime/async_rt/spinlock.zig`, `runtime/async_rt/
+io_reactor.zig`, `runtime/async_rt/scheduler.zig`, `runtime/async_rt/
+bridge.zig`, `runtime/alloc/asap.zig`, `runtime/alloc/arc.zig`, `runtime/
+alloc/cycle_detector.zig`, `runtime/lib_freestanding.zig` (YENİ),
+`build.zig`.
+
+### Kapsam DIŞI (gelecekteki turların konusu)
+
+`stdlib_shims/*` (14 F.2-allowed modülün — `nox.json`/`nox.regex`/vb. —
+GERÇEKTEN freestanding-hedefte derlenebilir olup OLMADIĞI BU turda
+doğrulanmadı, F.2'nin KENDİ "capability profili HOST hedefinden BAĞIMSIZ
+bir eksen" sınırıyla TUTARLI); `nox.thread.pool_run`/`nox.http.serve_
+multicore` (`worker_pool.zig`/`pool_bridge.zig`/`thread_bridge.zig`/
+`thread_channel.zig`, F.2'nin capability allowlist'i TARAFINDAN ZATEN
+reddedilir, `lib_freestanding.zig`ye HİÇ DAHİL EDİLMEZ); GERÇEK bir
+freestanding IO reaktörü (`NullReactor` SADECE bir STUB); `compile_swap_asm`in
+host-`cc` sınırlaması (Faz R.3'e bırakıldı, DEĞİŞMEDİ — BU turda AYRICA
+Mach-O→ELF varyantıyla da DOĞRULANDI); Faz F.4 (GERÇEK QEMU boot-zinciri,
+BU FAZ SADECE `noxrt_freestanding.o`nun DERLENDİĞİNİ kanıtlar).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

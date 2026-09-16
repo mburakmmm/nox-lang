@@ -131,12 +131,39 @@ fn keysEqual(key_is_str: bool, a: i64, b: i64) bool {
 /// ABI'sine (`rt` parametresi EKLENDİ) VE onu çağıran codegen sitesine
 /// dokunan, Faz MN.4'ün İLK GERÇEK codegen/checker DEĞİŞİKLİĞİDİR.
 
+/// Faz F.0.7 (bkz. nox-teknik-spesifikasyon.md — "Kritik düzeltme #3"):
+/// `secureRandomBuf`nin KOŞULSUZ `std.c.arc4random_buf`/`SystemFunction036`
+/// bağımlılığı freestanding hedeflerde HİÇ mevcut DEĞİLDİR — F.0.1-F.0.5'in
+/// AYNI "program-genelinde, TEK, atomik `.monotonic`" enjeksiyon deseniyle
+/// bir `EntropyProvider` eklenir. VARSAYILAN (kayıt YAPILMAMIŞ HER hosted
+/// program): SIFIR davranış değişikliği.
+pub const EntropyProviderVTable = struct {
+    fill: *const fn (ctx: ?*anyopaque, buf: []u8) void,
+};
+pub const EntropyProvider = struct {
+    ctx: ?*anyopaque = null,
+    vtable: *const EntropyProviderVTable,
+};
+var g_entropy_provider: std.atomic.Value(?*const EntropyProvider) = .init(null);
+pub fn nox_register_entropy_provider(provider: ?*const EntropyProvider) void {
+    g_entropy_provider.store(provider, .monotonic);
+}
+
+const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
+
 /// Faz LL.4 (bkz. nox-teknik-spesifikasyon.md §3.71): `std.c.arc4random_buf`
 /// Windows'ta `.windows => {}` İLE (`.linux`nin `fstat`i GİBİ) void'dir —
 /// `advapi32.dll`nin `RtlGenRandom`i (dışa açık ismi `SystemFunction036`,
 /// Windows 2000'den beri STABİL, GÜVENİLİR bir OS-seviyesi CSPRNG) YERİNE
-/// kullanılır.
+/// kullanılır. Freestanding'de (sağlayıcı KAYITLI DEĞİLSE) HİÇBİR OS
+/// çağrısı YAPILMADAN sessizce döner — `hashSeed` bu durumda SABİT bir
+/// tohuma düşer (v0.1 sınırı, bkz. `hashSeed`nin belge notu).
 fn secureRandomBuf(buf: []u8) void {
+    if (g_entropy_provider.load(.monotonic)) |p| {
+        p.vtable.fill(p.ctx, buf);
+        return;
+    }
+    if (comptime is_freestanding) return;
     if (builtin.os.tag == .windows) {
         _ = SystemFunction036(buf.ptr, @intCast(buf.len));
     } else {
@@ -148,6 +175,18 @@ extern "advapi32" fn SystemFunction036(buf: [*]u8, len: u32) callconv(.c) u8;
 fn hashSeed(rt: ?*anyopaque) u64 {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));
     if (!state.dict_hash_seed_init) {
+        if (comptime is_freestanding) {
+            if (g_entropy_provider.load(.monotonic) == null) {
+                // Faz F.0.7: freestanding'de KAYITLI bir EntropyProvider
+                // YOKSA gerçek rastgelelik kaynağı YOK — SABİT/deterministik
+                // bir tohuma düşülür (hash-flooding DoS'a karşı GÜVENSİZ,
+                // gömülü/tek-kullanıcılı bağlamda kabul edilebilir bir v0.1
+                // sınırı — bkz. plan dosyası).
+                state.dict_hash_seed = 0xA5A5A5A5A5A5A5A5;
+                state.dict_hash_seed_init = true;
+                return state.dict_hash_seed;
+            }
+        }
         var buf: [8]u8 = undefined;
         secureRandomBuf(&buf);
         state.dict_hash_seed = std.mem.readInt(u64, &buf, .little);

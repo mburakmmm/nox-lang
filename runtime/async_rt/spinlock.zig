@@ -21,13 +21,21 @@
 //! değişiklik GÖRÜR).
 
 const std = @import("std");
+const builtin = @import("builtin");
+
+/// Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü): `std.
+/// Thread.yield()` freestanding'de (OS iş parçacığı KAVRAMI YOK) HİÇ
+/// çağrılmamalıdır — freestanding'de HER ZAMAN TEK bir çekirdek/akış
+/// olduğundan CAS döngüsü PRATİKTE HİÇ spin ETMEZ (İLK denemede BAŞARILI
+/// olur), bu YÜZDEN `yield()` çağrısı ATLANDIĞINDA davranış DEĞİŞMEZ.
+const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
 
 pub const SpinLock = struct {
     state: std.atomic.Value(u8) = .init(0),
 
     pub fn lock(self: *SpinLock) void {
         while (self.state.cmpxchgWeak(0, 1, .acquire, .monotonic) != null) {
-            std.Thread.yield() catch {};
+            if (comptime !is_freestanding) std.Thread.yield() catch {};
         }
     }
 

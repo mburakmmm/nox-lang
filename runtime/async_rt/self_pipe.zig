@@ -22,6 +22,15 @@ const std = @import("std");
 const builtin = @import("builtin");
 const posix = std.posix;
 
+/// Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü): `std.c.
+/// pipe`/`write`/`read`/`close` freestanding hedefte libc bağımlılığı
+/// GEREKTİRDİĞİNDEN (F.1'in KENDİ deneyiyle KANITLANMIŞ, "dependency on
+/// libc must be explicitly specified" derleme hatası) KOŞULSUZ çağrılamaz
+/// — VARSAYILAN (sağlayıcı KAYITLI DEĞİLKEN düşülen) gövdeler bu bayrakla
+/// SARILIR (`posix.fd_t`nin KENDİSİ freestanding'de `void`e ÇÖZÜLÜR, bu
+/// YÜZDEN fonksiyon İMZALARININ KENDİSİ DEĞİŞMEZ).
+const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
+
 /// Faz F.0.5 (bkz. plan dosyası "Uyandırma mekanizması soyutlaması"):
 /// `makeSelfPipe`/`closeSelfPipeFd`/`signalWakeFd`/`drainWakeFd`in
 /// (aşağıda) KOŞULSUZ POSIX pipe()/close()/write()/read() bağımlılığını
@@ -65,10 +74,15 @@ pub fn makeSelfPipe() ![2]posix.fd_t {
     if (g_wake_provider.load(.monotonic)) |p| {
         return p.vtable.create(p.ctx) orelse error.PipeFailed;
     }
-    if (builtin.os.tag == .windows) return error.Unsupported;
-    var fds: [2]posix.fd_t = undefined;
-    if (std.c.pipe(&fds) != 0) return error.PipeFailed;
-    return fds;
+    if (comptime is_freestanding) {
+        return error.Unsupported;
+    } else if (builtin.os.tag == .windows) {
+        return error.Unsupported;
+    } else {
+        var fds: [2]posix.fd_t = undefined;
+        if (std.c.pipe(&fds) != 0) return error.PipeFailed;
+        return fds;
+    }
 }
 
 pub fn closeSelfPipeFd(fd: posix.fd_t) void {
@@ -76,7 +90,11 @@ pub fn closeSelfPipeFd(fd: posix.fd_t) void {
         p.vtable.close(p.ctx, fd);
         return;
     }
-    if (builtin.os.tag != .windows) _ = std.c.close(fd);
+    if (comptime is_freestanding) {
+        return;
+    } else if (builtin.os.tag != .windows) {
+        _ = std.c.close(fd);
+    }
 }
 
 pub fn signalWakeFd(fd: posix.fd_t) void {
@@ -84,7 +102,9 @@ pub fn signalWakeFd(fd: posix.fd_t) void {
         p.vtable.signal(p.ctx, fd);
         return;
     }
-    if (builtin.os.tag != .windows) {
+    if (comptime is_freestanding) {
+        return;
+    } else if (builtin.os.tag != .windows) {
         var signal_byte = [_]u8{1};
         _ = std.c.write(fd, &signal_byte, 1);
     }
@@ -95,7 +115,9 @@ pub fn drainWakeFd(fd: posix.fd_t) void {
         p.vtable.drain(p.ctx, fd);
         return;
     }
-    if (builtin.os.tag != .windows) {
+    if (comptime is_freestanding) {
+        return;
+    } else if (builtin.os.tag != .windows) {
         var buf: [1]u8 = undefined;
         _ = std.c.read(fd, &buf, 1);
     }

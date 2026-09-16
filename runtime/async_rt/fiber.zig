@@ -39,6 +39,17 @@ comptime {
     }
 }
 
+/// Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü): `allocGuardedStackPosix`/
+/// `Windows`nin (mmap+mprotect / VirtualAlloc+VirtualProtect) freestanding
+/// hedefte HİÇ TANIMLI OLMAYAN `std.posix`/`kernel32` çağrılarını KOŞULSUZ
+/// çağırdığı, F.1'in KENDİ deneyiyle KANITLANMIŞ (`std.posix.mmap`in
+/// freestanding'de HİÇ MEVCUT OLMADIĞI) gerçek bir derleme hatasıydı —
+/// `allocGuardedStack`/`freeGuardedStack`nin dispatch zincirine bu bayrak
+/// EKLENEREK, bu iki fonksiyonun gövdesi freestanding hedefte HİÇ semantik
+/// analiz EDİLMEZ (`io_reactor.zig`nin `IoReactor` seçim deseniyle AYNI
+/// "comptime-bilinen dal TAMAMEN elenir" ilkesi).
+const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
+
 pub const Context = switch (builtin.cpu.arch) {
     // `swap_aarch64.S`teki alan ofsetleriyle BİRE BİR eşleşmelidir — sıra
     // ya da alan eklemek/çıkarmak montaj dosyasını da güncellemeyi gerektirir.
@@ -225,8 +236,13 @@ pub fn allocGuardedStack() ![]align(STACK_ALIGN) u8 {
     if (g_stack_provider.load(.monotonic)) |p| {
         return p.vtable.alloc(p.ctx) orelse error.StackAllocFailed;
     }
-    if (builtin.os.tag == .windows) return allocGuardedStackWindows();
-    return allocGuardedStackPosix();
+    if (comptime is_freestanding) {
+        return error.StackAllocFailed;
+    } else if (builtin.os.tag == .windows) {
+        return allocGuardedStackWindows();
+    } else {
+        return allocGuardedStackPosix();
+    }
 }
 
 pub fn freeGuardedStack(stack: []align(STACK_ALIGN) u8) void {
@@ -234,11 +250,13 @@ pub fn freeGuardedStack(stack: []align(STACK_ALIGN) u8) void {
         p.vtable.free(p.ctx, stack);
         return;
     }
-    if (builtin.os.tag == .windows) {
-        freeGuardedStackWindows(stack);
+    if (comptime is_freestanding) {
         return;
+    } else if (builtin.os.tag == .windows) {
+        freeGuardedStackWindows(stack);
+    } else {
+        freeGuardedStackPosix(stack);
     }
-    freeGuardedStackPosix(stack);
 }
 
 // GG.23 (bkz. plan dosyası "fiber-stack sertleştirmesi", Madde 4): fiber
@@ -278,6 +296,12 @@ var g_stack_hwm_max = std.atomic.Value(usize).init(0);
 /// SABİTTİR, HER iş parçacığı AYNI değeri hesaplar — `cycle_detector.zig`nin
 /// `resolveSymbol`ıyla AYNI "idempotent redundant-write" gerekçesi).
 fn stackPaintEnabled() bool {
+    // Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü):
+    // `std.c.getenv` freestanding'de libc bağımlılığı GEREKTİRİR
+    // ("dependency on libc must be explicitly specified") — bu ARAŞTIRMA
+    // aracı freestanding'de ANLAMSIZDIR (env değişkeni KAVRAMI YOK),
+    // KOŞULSUZ `false` (kapalı) döner.
+    if (comptime is_freestanding) return false;
     if (!g_stack_paint_resolved.load(.monotonic)) {
         const enabled = std.c.getenv("NOX_STACK_PAINT") != null;
         g_stack_paint_enabled.store(enabled, .monotonic);

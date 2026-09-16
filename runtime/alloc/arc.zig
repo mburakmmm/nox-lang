@@ -52,6 +52,11 @@ const lowlevel = @import("lowlevel.zig");
 const dispatch_registry = @import("dispatch_registry.zig");
 const abi_layout = @import("abi_layout");
 
+/// Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü):
+/// `enqueueAndMaybePump`in `std.heap.page_allocator` yedeğini gate'lemek
+/// İçİn.
+const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
+
 /// Faz P1.2: `../../shared/abi_layout.zig`den RE-EXPORT (derleyiciyle
 /// PAYLAŞILAN TEK doğruluk kaynağı) — yerel alias adı KORUNUR ki bu
 /// dosyanın ~6 kullanım sitesi değişmeden kalsın.
@@ -384,7 +389,23 @@ fn releaseStateForRt(rt: ?*anyopaque) ?*asap.ReleaseState {
 /// SADECE `MAX_DIRECT_RELEASE_DEPTH` + BU pompanın KENDİ SABİT birkaç
 /// çerçevesiyle sınırlıdır).
 fn enqueueAndMaybePump(rt: ?*anyopaque, tag: i64, ptr: *anyopaque, rs: *asap.ReleaseState) void {
-    rs.worklist.append(std.heap.page_allocator, .{ .tag = tag, .ptr = ptr }) catch {
+    // Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü):
+    // `std.heap.page_allocator` freestanding'de DERLENEMEZ. **DİKKAT —
+    // break→red→fix İLE GERÇEKTEN bulunan bir tuzak**: BURADA hosted
+    // tarafı `state.allocator()`e (Debug modda GERÇEK, sızıntı-tespit
+    // eden `debug_gpa`) geçirmek `rs.worklist`in (BİLEREK, çağrılar
+    // ARASI YENİDEN KULLANILAN, ASLA tek-tek serbest bırakılmayan bir
+    // havuzlanmış tampon) `nox_runtime_deinit`de GERÇEK bir "sızıntı"
+    // OLARAK RAPORLANMASINA yol açtı (`codegen_golden_test`in GG.24
+    // fixture'larıyla KANITLANDI) — bu YÜZDEN hosted DAVRANIŞ (`page_
+    // allocator`, İZLENMEYEN) BİREBİR KORUNUR, SADECE freestanding
+    // (page_allocator'ın HİÇ DERLENEMEDİĞİ, `rt` HER ZAMAN mevcut olan
+    // tek yol) `state.allocator()`e geçer.
+    const worklist_allocator: std.mem.Allocator = if (comptime is_freestanding)
+        (if (rt) |r| (@as(*asap.RuntimeState, @ptrCast(@alignCast(r)))).allocator() else unreachable)
+    else
+        std.heap.page_allocator;
+    rs.worklist.append(worklist_allocator, .{ .tag = tag, .ptr = ptr }) catch {
         // OOM: BEST-EFFORT — doğrudan dispatch et (astronomik derecede
         // NADİR bir yedek yol, whatever kalan yığın riskini KABUL eder).
         dispatchClassRelease(rt, tag, ptr);

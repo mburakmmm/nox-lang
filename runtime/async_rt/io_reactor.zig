@@ -77,8 +77,10 @@ const Fiber = @import("fiber.zig").Fiber;
 const diag_sink = @import("diag_sink");
 
 comptime {
-    if (builtin.os.tag != .macos and builtin.os.tag != .linux and builtin.os.tag != .windows) {
-        @compileError("io_reactor.zig şu an yalnızca macOS (kqueue), Linux (epoll) ve Windows (WSAPoll) için uygulandı (bkz. modül üstü not)");
+    if (builtin.os.tag != .macos and builtin.os.tag != .linux and builtin.os.tag != .windows and
+        builtin.os.tag != .freestanding and builtin.os.tag != .other)
+    {
+        @compileError("io_reactor.zig şu an yalnızca macOS (kqueue), Linux (epoll), Windows (WSAPoll) ve freestanding/other (NullReactor stub'ı, bkz. Faz F.0.7) için uygulandı (bkz. modül üstü not)");
     }
 }
 
@@ -690,12 +692,51 @@ const WindowsReactor = if (builtin.os.tag == .windows) struct {
     }
 } else struct {};
 
+/// Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü): freestanding
+/// hedefler İçİn kqueue/epoll/WSAPoll'un YERİNE geçen bir STUB reaktör —
+/// F.2'nin capability allowlist'i `nox.thread`/`nox.fs`/`nox.http`/vb. TÜM
+/// G/Ç-yetenekli modülleri ZATEN reddettiğinden, freestanding profilinde
+/// `register`/`registerWithTimeout`/`poll` HİÇBİR ZAMAN GERÇEKTEN ÇAĞRILAMAZ
+/// (bkz. plan dosyasının "Araştırma bulguları"). `init` BAŞARILI dönmelidir
+/// (`Scheduler.init`in KENDİSİ BAŞARISIZ OLMASIN diye) — diğer TÜM metodlar
+/// `error.Unsupported` döner (asla GERÇEKTEN çağrılamayacakları KANITLANDI).
+const NullReactor = if (builtin.os.tag == .freestanding or builtin.os.tag == .other) struct {
+    pub fn init() !@This() {
+        return .{};
+    }
+    pub fn deinit(self: *@This()) void {
+        _ = self;
+    }
+    pub fn register(self: *@This(), fd: posix.fd_t, filter: Filter, ctx: *WaitCtx) !void {
+        _ = self;
+        _ = fd;
+        _ = filter;
+        _ = ctx;
+        return error.Unsupported;
+    }
+    pub fn registerWithTimeout(self: *@This(), fd: posix.fd_t, filter: Filter, timeout_ms: u32, ctx: *WaitCtx) !void {
+        _ = self;
+        _ = fd;
+        _ = filter;
+        _ = timeout_ms;
+        _ = ctx;
+        return error.Unsupported;
+    }
+    pub fn poll(self: *@This(), scheduler: anytype) !usize {
+        _ = self;
+        _ = scheduler;
+        return error.Unsupported;
+    }
+} else struct {};
+
 pub const IoReactor = if (builtin.os.tag == .macos)
     KqueueReactor
 else if (builtin.os.tag == .linux)
     EpollReactor
 else if (builtin.os.tag == .windows)
     WindowsReactor
+else if (builtin.os.tag == .freestanding or builtin.os.tag == .other)
+    NullReactor
 else
     @compileError("desteklenmeyen platform (bkz. modül üstü comptime denetimi)");
 

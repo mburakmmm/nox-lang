@@ -25,6 +25,11 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const posix = std.posix;
+
+/// Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü): `Scheduler.
+/// init`in `std.Thread.getCurrentId()` çağrısını gate'lemek İçİn.
+const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
+
 const fiber_mod = @import("fiber.zig");
 const Fiber = fiber_mod.Fiber;
 const Context = fiber_mod.Context;
@@ -206,7 +211,16 @@ pub const Scheduler = struct {
     wake_ctx: io_reactor.WaitCtx = undefined,
 
     pub fn init(allocator: std.mem.Allocator) !Scheduler {
-        return .{ .allocator = allocator, .reactor = try IoReactor.init(), .owner_tid = std.Thread.getCurrentId() };
+        // Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü):
+        // `std.Thread.getCurrentId()` freestanding'de (OS iş parçacığı
+        // KAVRAMI YOK, Zig'in KENDİ `UnsupportedImpl`i `@compileError`
+        // verir) HİÇ ÇAĞRILAMAZ — TEK/tek-çekirdekli bir programda "sahibin
+        // kimliği" ANLAMSIZDIR, SABİT `0` YETERLİDİR (`markReady`nin
+        // `owner_tid` karşılaştırması SADECE `pool_live_count != null`
+        // İKEN anlamlı — freestanding'de HİÇBİR ZAMAN GERÇEK bir havuz
+        // OLAMAYACAĞINDAN bu YOL zaten ÇALIŞMAZ).
+        const tid: std.Thread.Id = if (comptime is_freestanding) 0 else std.Thread.getCurrentId();
+        return .{ .allocator = allocator, .reactor = try IoReactor.init(), .owner_tid = tid };
     }
 
     pub fn deinit(self: *Scheduler) void {
@@ -333,7 +347,13 @@ pub const Scheduler = struct {
             self.armWakeFd();
             return;
         }
-        const is_foreign = self.pool_live_count != null and std.Thread.getCurrentId() != self.owner_tid;
+        // Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü):
+        // `std.Thread.getCurrentId()` freestanding'de HİÇ ÇAĞRILAMAZ —
+        // `self.pool_live_count`in KENDİSİ HER ZAMAN `null` OLACAĞINDAN
+        // (F.2'nin capability sistemi GERÇEK bir WorkerPool'u freestanding'de
+        // İMKANSIZ kıldığından) `is_foreign` HER ZAMAN `false` olurdu, bu
+        // YÜZDEN çağrıyı TAMAMEN atlamak DAVRANIŞI DEĞİŞTİRMEZ.
+        const is_foreign = if (comptime is_freestanding) false else self.pool_live_count != null and std.Thread.getCurrentId() != self.owner_tid;
         self.ready_lock.lock();
         self.ready.append(self.allocator, fiber) catch @panic("OOM: zamanlayıcı hazır kuyruğu büyütülemedi");
         self.ready_lock.unlock();
@@ -731,6 +751,13 @@ const WinSleep = if (builtin.os.tag == .windows) struct {
     extern "kernel32" fn Sleep(ms: u32) callconv(.c) void;
 } else struct {};
 fn sleepMs(ms: i64) void {
+    // Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü):
+    // freestanding'de `std.c.timespec`/`std.c.nanosleep` (libc'siz hedefte
+    // `void`e çöker) YOK — `stwParticipate`/`poolWideDeadlockCheck`nin BU
+    // çağrıları F.2'nin capability sistemi ZATEN GERÇEK bir WorkerPool'u
+    // freestanding'de İMKANSIZ kıldığından PRATİKTE hiç tetiklenmez, bu
+    // YÜZDEN no-op GÜVENLİDİR.
+    if (comptime is_freestanding) return;
     if (builtin.os.tag == .windows) {
         WinSleep.Sleep(@intCast(ms));
         return;

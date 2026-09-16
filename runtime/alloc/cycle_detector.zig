@@ -61,6 +61,15 @@ const abi_layout = @import("abi_layout");
 /// cycle_possible_root`) TÜM worker'ların wake-fd'lerini uyandırmak İçİn.
 const self_pipe = @import("../async_rt/self_pipe.zig");
 
+/// Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü): `nox_cycle_
+/// possible_root`nin havuz-uyandırma dalı (aşağıda) `state.pool_ext.?.
+/// pool_wake_fds`'i (`posix.fd_t`, freestanding'de `void`) `@intCast`
+/// İLE koşulsuz analiz ediyordu — `bridge.zig`nin `nox_async_init`indeki
+/// AYNI kök nedenle (`state.worker_pool` bir ÇALIŞMA-ZAMANI kontrolü,
+/// F.2'nin capability allowlist'i freestanding'de GERÇEK bir WorkerPool'u
+/// ZATEN İMKANSIZ kıldığından bu dal PRATİKTE hiç tetiklenmez).
+const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
+
 /// Derleyicinin ÜRETTİĞİ, TÜM sınıflar için tek bir dağıtım noktası —
 /// bkz. modül üstü not. `tag`, `p`nin İLK 8 baytından (bkz. codegen.zig,
 /// `TAG_SIZE`/`class_id`) okunan sınıf kimliğidir. Dönüş: `nox_alloc`'lu
@@ -239,11 +248,13 @@ pub export fn nox_cycle_possible_root(rt: ?*anyopaque, p: ?*anyopaque) void {
     if (gc.possible_roots_since_collect >= gc.collect_threshold) {
         if (state.worker_pool == null) {
             collectLocked(rt, state, gc);
-        } else if (state.pool_ext.?.pool_stw_requested.cmpxchgStrong(false, true, .acq_rel, .monotonic) == null) {
-            if (builtin.os.tag != .windows) {
-                for (&state.pool_ext.?.pool_wake_fds) |*fd_atomic| {
-                    const fd = fd_atomic.load(.monotonic);
-                    if (fd >= 0) self_pipe.signalWakeFd(@intCast(fd));
+        } else if (comptime !is_freestanding) {
+            if (state.pool_ext.?.pool_stw_requested.cmpxchgStrong(false, true, .acq_rel, .monotonic) == null) {
+                if (builtin.os.tag != .windows) {
+                    for (&state.pool_ext.?.pool_wake_fds) |*fd_atomic| {
+                        const fd = fd_atomic.load(.monotonic);
+                        if (fd >= 0) self_pipe.signalWakeFd(@intCast(fd));
+                    }
                 }
             }
         }

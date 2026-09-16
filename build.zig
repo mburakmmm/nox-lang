@@ -225,7 +225,12 @@ pub fn build(b: *std.Build) void {
     });
 
     const noxrt_mod = b.createModule(.{
-        .root_source_file = b.path("runtime/lib.zig"),
+        // Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü):
+        // freestanding hedeflerde `runtime/lib_freestanding.zig` KÖK olarak
+        // kullanılır (SADECE ARC/scheduler/dict/handle çekirdeği — bkz. onun
+        // modül üstü notu) — hosted derlemeler `runtime/lib.zig`yi DEĞİŞMEDEN
+        // kullanmaya DEVAM eder (SIFIR davranış değişikliği).
+        .root_source_file = b.path(if (is_freestanding) "runtime/lib_freestanding.zig" else "runtime/lib.zig"),
         .target = target,
         .optimize = optimize,
         // Faz R.1: `runtime/`nin HER YERİNDE (async_rt, stdlib_shims, alloc)

@@ -43,14 +43,85 @@ const fiber_mod = @import("../async_rt/fiber.zig");
 /// dosya, döngüsel bağımlılık riski YOK.
 const diag_sink = @import("diag_sink");
 
-const use_debug_allocator = builtin.mode == .Debug;
+/// Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü): `nox_
+/// runtime_init`in (argümansız, hosted-özel giriş noktası) `std.heap.
+/// page_allocator` bağımlılığını gate'lemek İçİn.
+const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
+
+/// Faz F.0.7: freestanding'de Debug modunda BİLE `std.heap.DebugAllocator`
+/// (İÇSEL olarak `page_size_max` GEREKTİREN bir `Config` varsayılanı
+/// taşır, GERÇEK bir `zig build-obj -Doptimize=Debug` denemesiyle
+/// KANITLANDI) KULLANILAMAZ — freestanding'in KENDİSİ zaten leak-checking
+/// İçİn bir OS/mmap katmanına SAHİP DEĞİLDİR, bu YÜZDEN `debug_gpa`
+/// (aşağıya bkz.) freestanding'de HER ZAMAN `void`e düşürülür (hosted
+/// davranış — `is_freestanding` HER ZAMAN `false` OLDUĞUNDAN — SIFIR
+/// etkilenir).
+const use_debug_allocator = builtin.mode == .Debug and !is_freestanding;
+
+/// Faz F.0.7 — KRİTİK bulgu: `std.heap.page_allocator`/`smp_allocator`
+/// (İKİSİ de İÇSEL olarak `std.heap.pageSize()`e bağımlı) bir struct
+/// ALANININ SADECE VARSAYILAN DEĞERİ olarak BİLE kullanılamaz — Zig,
+/// `Allocator.VTable`nin fonksiyon-işaretçisi alanlarını (`.alloc`/
+/// `.resize`/`.remap`/`.free`) doldururken HER BİRİNİN ADRESİNİ (dolayısıyla
+/// TAM GÖVDESİNİ, sadece imzasını DEĞİL) semantik olarak analiz eder —
+/// `RuntimeState` TİPİ (asap.zig'in HER YERİNDE, `@ptrCast` İLE) referans
+/// alındığı ANDA `bootstrap_allocator`/`injected_allocator`nin VARSAYILAN
+/// DEĞERİ de HESAPLANIR, bu da `PageAllocator.free`nin GÖVDESİNİ (`unmap`→
+/// `pageSize()`→`page_size_max`, freestanding'de @compileError) ZORLAR —
+/// GERÇEK bir `zig build-obj` denemesiyle KANITLANDI. Çözüm: freestanding'de
+/// (host HER ZAMAN `nox_runtime_init_with_allocator`i KENDİ allocator'ıyla
+/// çağıracağından, bkz. `nox_runtime_init`in belge notu) BU VARSAYILANLAR
+/// ASLA GERÇEKTEN ÇAĞRILMAYACAK — SADECE derlenebilir, "asla çağrılmaması
+/// GEREKEN" bir sahte vtable sağlanır.
+fn freestandingUnreachableAlloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+    _ = ctx;
+    _ = len;
+    _ = alignment;
+    _ = ret_addr;
+    @panic("freestanding: varsayilan bootstrap/injected allocator cagrilmamaliydi (nox_runtime_init_with_allocator kullanin)");
+}
+fn freestandingUnreachableResize(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+    _ = ctx;
+    _ = memory;
+    _ = alignment;
+    _ = new_len;
+    _ = ret_addr;
+    return false;
+}
+fn freestandingUnreachableRemap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+    _ = ctx;
+    _ = memory;
+    _ = alignment;
+    _ = new_len;
+    _ = ret_addr;
+    return null;
+}
+fn freestandingUnreachableFree(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+    _ = ctx;
+    _ = memory;
+    _ = alignment;
+    _ = ret_addr;
+}
+const freestanding_unreachable_vtable: std.mem.Allocator.VTable = .{
+    .alloc = freestandingUnreachableAlloc,
+    .resize = freestandingUnreachableResize,
+    .remap = freestandingUnreachableRemap,
+    .free = freestandingUnreachableFree,
+};
+const freestanding_unreachable_allocator: std.mem.Allocator = .{ .ptr = undefined, .vtable = &freestanding_unreachable_vtable };
 
 /// Faz X.3 (bkz. docs/uretim-hazirlik-analizi.md — "ARC atomikliği/cross-
 /// thread invariant'ını YA gerçek atomiklerle YA DA derleme-zamanı bir
 /// assertion'la RESMİLEŞTİR"). `builtin.mode == .Debug`de AKTİF —
 /// `use_debug_allocator`/`arc.zig`nin `use_pool`u İLE AYNI "Debug =
 /// TAM güvenlik ağı, Release = TAM hız" ilkesi.
-const debug_thread_check = builtin.mode == .Debug;
+/// Faz F.0.7: `use_debug_allocator`nin AYNI gerekçesiyle freestanding'de
+/// (Debug modunda BİLE) KAPALI — `arcOwnerThreadOk`nin `std.Thread.
+/// getCurrentId()` çağrısı freestanding'de HİÇ ÇAĞRILAMAZ (GERÇEK bir
+/// `zig build-obj -target aarch64-freestanding-none` denemesiyle
+/// KANITLANDI), VE OS iş parçacığı KAVRAMI OLMAYAN freestanding'de bu
+/// kontrolün ZATEN hiçbir ANLAMI YOK.
+const debug_thread_check = builtin.mode == .Debug and !is_freestanding;
 
 /// Faz S.3: `runtime/alloc/cycle_detector.zig`de TANIMLI/`export`lu —
 /// `asap.zig`nin O dosyayı IMPORT ETMEDEN (döngüsel bağımlılık kurmadan)
@@ -159,7 +230,7 @@ pub const RuntimeState = struct {
     /// runtime_init_with_allocator`in KENDİ çağıranı İSE (`nox_runtime_
     /// deinit`i DOĞRU şekilde ÇAĞIRDIĞI SÜRECE) `backing`i BOTH alana
     /// EŞİT olarak AYARLATABİLİR (GERÇEK, birleşik enjeksiyon).
-    bootstrap_allocator: std.mem.Allocator = std.heap.page_allocator,
+    bootstrap_allocator: std.mem.Allocator = if (is_freestanding) freestanding_unreachable_allocator else std.heap.page_allocator,
     /// Faz F.0.2: Release modunda `.allocator()`'ın DÖNDÜRDÜĞÜ değer —
     /// Debug modunda KULLANILMAZ (orada `.allocator()` HÂLÂ `debug_gpa.
     /// allocator()`ı döner, leak-checking KORUNUR — AMA `debug_gpa.
@@ -171,7 +242,7 @@ pub const RuntimeState = struct {
     /// KENDİ `.init` varsayılanıyla TUTARLI), Release'de `smp_allocator`
     /// (`nox_alloc`/dict/arena/vb.nin KULLANDIĞI, ~120x hız kazanımı
     /// SAĞLAYAN değer — bkz. modül üstü not).
-    injected_allocator: std.mem.Allocator = if (use_debug_allocator) std.heap.page_allocator else std.heap.smp_allocator,
+    injected_allocator: std.mem.Allocator = if (is_freestanding) freestanding_unreachable_allocator else if (use_debug_allocator) std.heap.page_allocator else std.heap.smp_allocator,
     /// Faz OO.3, Faz MN.2'de fiber-affine hale GETİRİLDİ: birincil depo
     /// ARTIK `Fiber.pending_exception`dir (bkz. onun belge notu) —
     /// BURADAKİ alan SADECE fiber DIŞINDA (senkron üst-düzey kod,
@@ -676,6 +747,14 @@ pub fn nox_runtime_init_with_allocator(backing: std.mem.Allocator) ?*anyopaque {
 /// notu — BU turda break→red→fix İLE GERÇEKTEN bulunan bir uyumluluk
 /// tuzağının düzeltmesi).
 pub export fn nox_runtime_init() ?*anyopaque {
+    // Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü):
+    // `std.heap.page_allocator` freestanding'de GERÇEK bir mmap/syscall
+    // gerektirdiğinden DERLENEMEZ — bu argümansız giriş noktası ZATEN
+    // SADECE hosted kullanım İçİndir (bkz. yukarıdaki belge notu); GERÇEK
+    // bir freestanding host HER ZAMAN `nox_runtime_init_with_allocator`i
+    // (KENDİ allocator'ıyla) çağırmalıdır — BU YÜZDEN freestanding'de
+    // KOŞULSUZ `null` döner (asla GERÇEKTEN çağrılmaması BEKLENİR).
+    if (comptime is_freestanding) return null;
     const state = std.heap.page_allocator.create(RuntimeState) catch return null;
     state.* = .{ .debug_gpa = if (use_debug_allocator) .init else {} };
     return @ptrCast(state);

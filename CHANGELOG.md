@@ -14,6 +14,97 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.90.0]
+
+### Eklendi (Faz F.0.7 — "Kritik düzeltme #3"ün çözümü: `runtime/lib_freestanding.zig`, scheduler/fiber/Task/Channel DAHİL, GERÇEKTEN derlenen bir freestanding runtime kökü)
+- F.1'in bulduğu "OS-fallback kodu comptime-gate'lenmemiş" açığı (fiber.
+  zig/self_pipe.zig'in mmap/libc çağrıları freestanding'de derlenemiyordu)
+  ÇÖZÜLDÜ — kullanıcının "scheduler'ı da kapsama al" kararıyla, `spawn`/
+  `await`/`Task[T]`/`Channel[T]` freestanding profilinde TAM olarak
+  derlenebilir hale geldi (F.2'nin capability sistemi ZATEN `nox.thread.
+  pool_run`/gerçek G/Ç'yi reddettiğinden, bu ÇEKİRDEK dil özelliğinin
+  ötesine geçmeye GEREK YOK).
+- YENİ `runtime/lib_freestanding.zig` — `noxrt_mod`nin freestanding
+  hedeflerdeki KÖK modülü (`build.zig` bunu koşullu seçer): SADECE ARC/
+  scheduler/dict/handle çekirdeği (`alloc/{asap,arc,dispatch_registry,
+  lowlevel,cycle_detector,defer_stack}`, `errors/{handle,diag_sink}`,
+  `async_rt/bridge` [+ transitif olarak fiber/self_pipe/scheduler/channel/
+  io_reactor/spinlock/task_local/chase_lev_deque], `collections/{dict,
+  list_sort}`, `str`) — `foreign_bridge`/`stdlib_shims/*`/`pool_bridge`/
+  `thread_bridge`/`thread_channel` HİÇ import edilmez (lazy analiz
+  SAYESİNDE sessizce dışlanır). Hosted derlemeler `runtime/lib.zig`yi
+  DEĞİŞMEDEN kullanmaya devam eder.
+- `runtime/async_rt/io_reactor.zig`ye YENİ `NullReactor` (kqueue/epoll/
+  WSAPoll'ün 4. kardeşi, freestanding'de `IoReactor` OLARAK seçilir —
+  `init` başarılı döner, diğer metodlar `error.Unsupported`).
+- F.0.1-F.0.5'in AYNI "program-genelinde, atomik `.monotonic` enjeksiyon"
+  deseniyle İKİ YENİ sağlayıcı: `dict.zig`'e `EntropyProvider`
+  (`nox_register_entropy_provider`, `secureRandomBuf`'ın koşulsuz `arc4random_
+  buf`/`SystemFunction036` bağımlılığını değiştirir — kayıt yoksa
+  freestanding'de `hashSeed` sabit bir tohuma düşer, v0.1 sınırı) ve
+  `errors/handle.zig`'e `HaltProvider` (`nox_register_halt_provider`,
+  `std.process.exit(1)`'in yerine geçer — kayıt yoksa freestanding'de
+  `while (true) {}`).
+
+### Düzeltildi (self-discovered — F.1'in tahmininin ÇOK ÖTESİNDE bir kapsam, GERÇEK `zig build-obj -target aarch64-freestanding-none` denemeleriyle bulundu)
+- `fiber.zig`/`self_pipe.zig`nin OS-fallback gövdeleri (mmap+mprotect/
+  VirtualAlloc, POSIX pipe) `allocGuardedStack`/`freeGuardedStack`/
+  `makeSelfPipe`/`closeSelfPipeFd`/`signalWakeFd`/`drainWakeFd`nin dispatch
+  zincirine comptime-gate'lendi.
+- `spinlock.zig`nin `std.Thread.yield()`ı, `scheduler.zig`nin `Scheduler.
+  init`indeki `std.Thread.getCurrentId()`ı VE `markReady`nin `is_foreign`
+  hesabındaki AYNI çağrısı, `sleepMs`in `std.c.timespec`/`nanosleep`ı
+  comptime-gate'lendi (HEPSİ freestanding'de OS iş parçacığı/libc KAVRAMI
+  olmadığından çağrılamaz — GERÇEK derleme hatalarıyla KANITLANDI).
+- `bridge.zig`nin `nox_async_init`indeki havuz-bağlama bloğu (`worker_pool_
+  mod.WorkerPool`ı KOŞULSUZ referans alıyordu — fiber.zig'in ORİJİNAL
+  hatasıyla AYNI kök neden, çalışma-zamanı `if`in HER İKİ dalının da
+  semantik analiz edilmesi) VE `nox_async_deadlock_abort`ın `std.process.
+  exit(1)`i comptime-gate'lendi.
+- `cycle_detector.zig`nin `nox_cycle_possible_root`ının havuz-uyandırma
+  dalı (`posix.fd_t`, freestanding'de `void`, `@intCast` ile koşulsuz
+  analiz ediliyordu) comptime-gate'lendi.
+- `diag_sink.zig`nin `defaultStderrSink`i (`std.debug.print`, `std.Io.
+  Threaded` üzerinden freestanding'de derlenemeyen bir I/O katmanına
+  dayanıyordu) comptime-gate'lendi.
+- **En büyük self-discovered bulgu**: `std.heap.page_allocator`/
+  `smp_allocator`, bir struct alanının SADECE VARSAYILAN DEĞERİ olarak
+  bile kullanılamaz — Zig, `Allocator.VTable`nin fonksiyon-işaretçisi
+  alanlarını doldururken her birinin TAM GÖVDESİNİ (sadece imzasını
+  DEĞİL) semantik olarak analiz eder, bu da `PageAllocator`ın `pageSize()`
+  →`page_size_max` bağımlılığını (freestanding'de `@compileError`) ZORLAR
+  — `asap.zig`nin `RuntimeState.bootstrap_allocator`/`injected_allocator`
+  varsayılanları, `nox_runtime_init()`in gövdesi, `arc.zig`nin `enqueueAndMaybePump`
+  worklist'i, VE (Debug modunda BİLE) `std.heap.DebugAllocator`/
+  `arcOwnerThreadOk`ın `std.Thread.getCurrentId()`ı BUNA göre gate'lendi.
+- **Break→red→fix (GERÇEK bir düzeltme SIRASINDA bulunan GERÇEK bir
+  regresyon)**: `arc.zig`nin `enqueueAndMaybePump`ı İLK denemede `rt`
+  mevcut OLDUĞUNDA HER ZAMAN `state.allocator()`e (hosted Debug'da GERÇEK,
+  sızıntı-tespit eden `debug_gpa`) geçmişti — `rs.worklist` BİLEREK ÇAĞRILAR
+  ARASI YENİDEN KULLANILAN, HİÇ tek-tek serbest bırakılmayan bir havuzlanmış
+  tampon OLDUĞUNDAN, bu `nox_runtime_deinit`de GERÇEK bir "sızıntı"
+  raporuna yol AÇTI (`codegen_golden_test`in 4 GG.24 fixture'ı İLE
+  YAKALANDI). Düzeltildi: hosted tarafı `std.heap.page_allocator`ı (İZLENMEYEN,
+  ÖNCEKİ davranış) BİREBİR KORUR, SADECE freestanding (page_allocator'ın
+  HİÇ derlenemediği, `rt`nin HER ZAMAN mevcut olduğu tek yol) `state.
+  allocator()`e geçer.
+- `runtime/lib.zig` (hosted) HİÇ DEĞİŞMEDİ, TÜM gate'ler `is_freestanding`e
+  (hosted derlemede HER ZAMAN `false`) bağlı olduğundan hosted davranış
+  SIFIR etkilendi.
+
+### Doğrulama
+- GERÇEK `zig build-obj -target aarch64-freestanding-none` (host mimarisiyle
+  eşleşen, `compile_swap_asm`in host-`cc` sınırlaması nedeniyle — Faz R.3'e
+  bırakıldı) — `runtime/lib_freestanding.zig`, Debug/ReleaseSafe/ReleaseFast/
+  ReleaseSmall'ın DÖRDÜNDE de SIFIR hatayla derlendi (F.1'in bulduğu 79
+  hatadan 0'a).
+- `zig build -Dtarget=aarch64-freestanding-none` (TAM build.zig akışı)
+  `build.zig`nin YENİ root-file seçimini DOĞRU uyguladığını doğruladı —
+  KALAN TEK hata `compile_swap_asm`in hardcoded host `cc`sinin (macOS'ta
+  Mach-O üretir) bir ELF hedefine linklenememesi — ÖNCEDEN belgelenmiş,
+  BU FAZIN kapsamı DIŞINDA bırakılan bir R.3 sınırlaması (bkz. spec).
+- `zig build test` (TAM paket, Debug + ReleaseFast) — SIFIR regresyon.
+
 ## [1.89.1]
 
 ### Düzeltildi (§3.170 — `external-fixtures.yml`'in v1.81.0'dan beri HER push'ta başarısız olması: zincirli yeniden-vihraç çözümleme hatası)

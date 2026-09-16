@@ -11,6 +11,13 @@
 //! değişikliği.
 
 const std = @import("std");
+const builtin = @import("builtin");
+
+/// Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü):
+/// `defaultStderrSink`in `std.debug.print` bağımlılığını gate'lemek İçİn
+/// — `std.debug.print`in KENDİSİ (`std.Io.Threaded` ÜZERİNDEN) freestanding'de
+/// DERLENEMEYEN bir I/O katmanına dayanır.
+const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
 
 /// `rt` (VARSA — bazı siteler `null` geçer, ör. reactor/erken-bootstrap
 /// bağlamları), ÖNCEDEN biçimlendirilmiş `bytes[0..len]` bir tanı
@@ -22,6 +29,13 @@ var g_diag_sink: std.atomic.Value(?DiagSinkFn) = .init(null);
 
 fn defaultStderrSink(rt: ?*anyopaque, bytes: [*]const u8, len: usize) callconv(.c) void {
     _ = rt;
+    if (comptime is_freestanding) {
+        // Freestanding'de GERÇEK bir stderr/`std.debug.print` I/O katmanı
+        // YOK — GERÇEK bir freestanding host HER ZAMAN `nox_register_diag_
+        // sink` İLE KENDİ (ör. seri port yazan) bir sink KAYDETMELİDİR;
+        // bu VARSAYILAN, kayıt YOKSA sessizce hiçbir şey YAPMAZ.
+        return;
+    }
     std.debug.print("{s}", .{bytes[0..len]});
 }
 

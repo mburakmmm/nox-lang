@@ -19,11 +19,43 @@
 //! değildir).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const asap = @import("../alloc/asap.zig");
 const abi_layout = @import("abi_layout");
 const bridge = @import("../async_rt/bridge.zig");
 const dispatch_registry = @import("../alloc/dispatch_registry.zig");
 const diag_sink = @import("diag_sink");
+
+const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
+
+/// Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü): `nox_
+/// unhandled_exception`in `std.process.exit(1)` bağımlılığı — freestanding
+/// hedeflerde HİÇ syscall/exit KAVRAMI YOK. F.0.1-F.0.5'in AYNI enjeksiyon
+/// deseni — VARSAYILAN (kayıt YOKSA, hosted): `std.process.exit(1)`,
+/// SIFIR davranış değişikliği.
+pub const HaltProviderVTable = struct {
+    halt: *const fn (ctx: ?*anyopaque) noreturn,
+};
+pub const HaltProvider = struct {
+    ctx: ?*anyopaque = null,
+    vtable: *const HaltProviderVTable,
+};
+var g_halt_provider: std.atomic.Value(?*const HaltProvider) = .init(null);
+pub fn nox_register_halt_provider(provider: ?*const HaltProvider) void {
+    g_halt_provider.store(provider, .monotonic);
+}
+
+fn haltProcess() noreturn {
+    if (g_halt_provider.load(.monotonic)) |p| {
+        p.vtable.halt(p.ctx);
+    }
+    if (comptime is_freestanding) {
+        // Sağlayıcı KAYITLI DEĞİLSE freestanding'de HERHANGİ bir donanıma/
+        // OS'a bağımlı OLMAYAN, HER ZAMAN GEÇERLİ bir "dur" ilkeli.
+        while (true) {}
+    }
+    std.process.exit(1);
+}
 
 /// Faz MN.2 (bkz. `fiber.zig`nin `pending_exception` belge notu): fiber
 /// İÇİNDE `Fiber.pending_exception`/`pending_exception_line`e, DIŞINDA
@@ -99,7 +131,7 @@ export fn nox_exception_take(rt: ?*anyopaque) ?*anyopaque {
 export fn nox_unhandled_exception(rt: ?*anyopaque) noreturn {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse {
         diag_sink.report(null, "nox: yakalanmamış istisna — program sonlandırılıyor\n", .{});
-        std.process.exit(1);
+        haltProcess();
     }));
     const pe = pendingException(state);
     const line = pe.line.*;
@@ -111,7 +143,7 @@ export fn nox_unhandled_exception(rt: ?*anyopaque) noreturn {
         }
     }
     diag_sink.report(rt, "nox: yakalanmamış istisna: {s} (satır {d}) — program sonlandırılıyor\n", .{ class_name, line });
-    std.process.exit(1);
+    haltProcess();
 }
 
 test "raise sonrası pending true olur, take alır ve temizler" {
