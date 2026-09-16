@@ -14,6 +14,29 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.89.1]
+
+### Düzeltildi (§3.170 — `external-fixtures.yml`'in v1.81.0'dan beri HER push'ta başarısız olması: zincirli yeniden-vihraç çözümleme hatası)
+- `.github/workflows/external-fixtures.yml` (Nyx v0.17.0 + Aether v0.6.5'in
+  KENDİ GERÇEK test paketlerini kaynaktan derlenen `noxc`ye karşı
+  çalıştırır) tanıtıldığı v1.81.0'dan bu yana 10/10 çalışmada
+  BAŞARISIZDI — `ci.yml` HER ZAMAN yeşil kaldığından hiç fark edilmemişti.
+- **Kök neden**: `checker.zig`nin `from_imports` mangling'i `from X
+  import Y`nin `Y`sinin `X`TE DOĞRUDAN tanımlı olduğunu varsayıyordu —
+  `nox.sqlite`nin `Statement`i `nox.db`den PAYLAŞMASI (Faz STD.6) GİBİ
+  bir zincirli yeniden-vihraçta (Nyx'in `db.nox`su `from nox.sqlite
+  import Statement` yaptığında) yanlış, hiç var olmayan bir sembole
+  ("nox_sqlite_Statement") işaret ediyor, TEK derleme biriminin
+  PAYLAŞILAN `from_imports` haritası yüzünden `stdlib/nox/sqlite.nox`nin
+  KENDİ (doğru) çözümlemesini bile eziyordu.
+- YENİ `resolveReExportChains` geçişi (+ `from_imports_orig_name`)
+  eklendi — geçerli bir doğrudan-tanım çözümlemesini BULUP zincirdeki
+  geçersiz tahminleri düzeltir, sıfır davranış değişikliği riskiyle.
+- Nyx'in 45 + Aether'in 20 test dosyasının TAMAMI (gerçek pinned tag'lere
+  karşı yerel repro ile) doğrulandı — 0/65 başarısız. YENİ bir regresyon
+  testi eklendi (`tests/cli/local_import_test.zig`).
+- Ayrıntılar için bkz. `nox-teknik-spesifikasyon.md` §3.170.
+
 ## [1.89.0]
 
 ### Eklendi (Faz F.3 — Dil uzantısı: `lowlevel:`'in "manuel katman"a genişletilmesi)

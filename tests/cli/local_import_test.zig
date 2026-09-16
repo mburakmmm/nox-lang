@@ -413,3 +413,100 @@ test "U.2: nox.json olmadan (manifestsiz) proje-ici import ESKI davranisla basar
     try std.testing.expect(result.term == .exited and result.term.exited == 1);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "stdlib modülü bulunamadı") != null);
 }
+
+// Bulundu (bkz. `.github/workflows/external-fixtures.yml`nin Nyx işi, HER
+// push'ta v1.81.0'dan bu yana BAŞARISIZDI — proje belleği "external-fixtures
+// CI hatası" görevi): GERÇEK, önceden keşfedilmemiş bir hata — `checker.zig`nin
+// `from_imports` mangling'i (`collectImports`) `from X import Y`nin `Y`sinin
+// `X`TE DOĞRUDAN tanımlı OLDUĞUNU VARSAYAR (`X_Y`). Bir dosya (`b.nox`)
+// BAŞKA bir modülden (`a.nox`) aldığı bir sınıfı KENDİSİ YENİDEN VİHRAÇ
+// EDİYORSA (`from a import Widget`, `b.nox`nin KENDİSİ `Widget`i TANIMLAMAZ)
+// VE bu YENİDEN vihracı BAŞKA bir dosya (`main.nox`) `from b import Widget`
+// İLE tükettiğinde, naif tahmin ("b_Widget") HİÇ VAR OLMAYAN bir sembole
+// işaret eder — GERÇEK sembol "a_Widget"dir. Daha da KÖTÜSÜ: `b.nox`nin
+// KENDİ İÇİNDEKİ (`touch` GİBİ) bir fonksiyonun `Widget`i PARAMETRE tipi
+// olarak kullanması bile (`b.nox` "Widget"i KENDİSİ hiç mangle ETMEDİĞİNDEN,
+// `module_loader.zig`nin yeniden-adlandırması yalnızca DOĞRUDAN tanımları
+// kapsar) checker'ın (birleştirilmiş TEK derleme birimindeki) PAYLAŞILAN
+// `from_imports` haritasına BAĞIMLIDIR — `stdlib/nox/sqlite.nox`nin
+// `nox.db`den paylaşılan `Statement`i (bkz. proje belleği "nox.sqlite
+// sürücüsü") TAM OLARAK bu deseni sergiler, bu YÜZDEN Nyx'in `nyx.db`si
+// (`nox.sqlite`den `Statement`i YENİDEN vihraç eden) HER derlemede
+// `stdlib/nox/sqlite.nox`nin KENDİ (95. satır) fonksiyon imzasını BOZUYORDU.
+// Düzeltme: `checker.zig`nin YENİ `resolveReExportChains`i (bkz. onun
+// belge notu) — bu test HEM zincirin ORTASINDAKİ dosyanın (`b.nox`) KENDİ
+// iç kullanımını HEM DE zinciri TÜKETEN son dosyanın (`main.nox`, HİÇBİR
+// ZAMAN yeniden adlandırılmayan giriş modülü) kullanımını AYNI ANDA
+// kanıtlar.
+test "bulundu: iki-katmanli YENIDEN VIHRAC zinciri (from a import X; from b import X) HEM b'nin KENDI ICINDE HEM main'de calisir" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var proj = std.testing.tmpDir(.{});
+    defer proj.cleanup();
+    var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const proj_path = try absPath(io, proj.dir, &proj_buf);
+
+    try proj.dir.writeFile(io, .{ .sub_path = "nox.json", .data = "{\"name\":\"proj\",\"entry\":\"main.nox\"}" });
+    try proj.dir.writeFile(io, .{
+        .sub_path = "a.nox",
+        .data =
+        \\class Widget:
+        \\    n: int
+        \\    def __init__(self: Widget, n: int) -> None:
+        \\        self.n = n
+        \\
+        ,
+    });
+    try proj.dir.writeFile(io, .{
+        .sub_path = "b.nox",
+        .data =
+        \\from a import Widget
+        \\
+        \\def touch(w: Widget) -> int:
+        \\    return w.n
+        \\
+        \\def make(n: int) -> Widget:
+        \\    return Widget(n)
+        \\
+        ,
+    });
+    try proj.dir.writeFile(io, .{
+        .sub_path = "main.nox",
+        .data =
+        \\import b
+        \\from b import Widget
+        \\
+        \\x: Widget = b.make(42)
+        \\print(b.touch(x))
+        \\
+        ,
+    });
+
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var env_map = try isolatedNoxHome(io, home.dir, &home_buf);
+    defer env_map.deinit();
+
+    const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{proj_path});
+    const bin_path = try std.fmt.allocPrint(a, "{s}/main", .{proj_path});
+
+    const build_result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxcPath(), "build", main_path },
+        .environ_map = &env_map,
+    });
+    defer std.testing.allocator.free(build_result.stdout);
+    defer std.testing.allocator.free(build_result.stderr);
+    if (build_result.term != .exited or build_result.term.exited != 0) {
+        std.debug.print("build basarisiz, stderr: {s}\n", .{build_result.stderr});
+    }
+    try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
+
+    const run_result = try std.process.run(std.testing.allocator, io, .{ .argv = &.{bin_path} });
+    defer std.testing.allocator.free(run_result.stdout);
+    defer std.testing.allocator.free(run_result.stderr);
+    try std.testing.expectEqualStrings("42\n", run_result.stdout);
+}

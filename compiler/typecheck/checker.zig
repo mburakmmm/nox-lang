@@ -438,6 +438,19 @@ pub const Checker = struct {
     /// yerel bir tanımla ÇAKIŞTIĞINDA yerel tanım HER ZAMAN ÖNCELİKLİDİR
     /// (Python'un gölgeleme davranışına BENZER, ama statik/tek-geçişli).
     from_imports: std.StringHashMapUnmanaged([]const u8) = .{},
+    /// Bulundu (bkz. proje belleği "external-fixtures CI hatası" görevi):
+    /// GERÇEK, önceden keşfedilmemiş bir hata — `from_imports`in naif
+    /// mangling'i (`join(fi.segments,'_') + '_' + name`) YALNIZCA `name`
+    /// DOĞRUDAN `fi.segments`in gösterdiği modülde TANIMLIYSA doğrudur.
+    /// Bir ZİNCİRLİ YENİDEN-VİHRAÇ (`from nox.db import Statement` YAPAN
+    /// `nox.sqlite`, SONRA birinin `from nox.sqlite import Statement`
+    /// YAPMASI) İÇİN naif tahmin YANLIŞ bir sembole ("nox_sqlite_Statement",
+    /// hiç VAR OLMAYAN) işaret eder — GERÇEKTEN sadece "nox_db_Statement"
+    /// vardır. `resolveReExportChains` (bkz. onun belge notu) bunu, HER
+    /// from-import deyiminin KENDİ (alias'sız) ORİJİNAL adını (`nm.name`)
+    /// burada saklayarak, DÜZELTİR — `local_name` (`nm.alias orelse nm.name`)
+    /// → `nm.name` (BU deyimdeki, mangled OLMAYAN kaynak ad).
+    from_imports_orig_name: std.StringHashMapUnmanaged([]const u8) = .{},
     /// Modül-seviyesi global durum (bkz. proje belleği "modül-seviyesi
     /// global durum" planı — `nyx`/`services/noxpkg/` bağımsız olarak
     /// çarptığı, ÖNCEDEN üst-düzey `var_decl`ların HİÇBİR fonksiyon
@@ -835,11 +848,79 @@ pub const Checker = struct {
                         const mangled = try self.joinSegments(mangled_segments.items, '_');
                         const local_name = nm.alias orelse nm.name;
                         try self.from_imports.put(self.allocator, local_name, mangled);
+                        try self.from_imports_orig_name.put(self.allocator, local_name, nm.name);
                     }
                     try self.checkFreestandingImportAllowed(fi.segments);
                 },
                 else => {},
             }
+        }
+    }
+
+    /// Bulundu (bkz. proje belleği "external-fixtures CI hatası" görevi) —
+    /// GERÇEK, önceden keşfedilmemiş bir hata: `collectImports`in
+    /// `from_imports` haritası TÜM birleştirilmiş program boyunca TEK, düz
+    /// bir ad alanıdır — `from X import Y` deyimi Y'nin `X`TE DOĞRUDAN
+    /// tanımlı OLDUĞUNU VARSAYARAK naif bir mangled ad (`X_Y`) hesaplar. Bu,
+    /// Y aslında `X`in KENDİSİ TARAFINDAN BAŞKA bir modülden YENİDEN
+    /// VİHRAÇ EDİLDİĞİNDE (`stdlib/nox/sqlite.nox`nin `from nox.db import
+    /// Statement` İLE `Statement`i paylaşması GİBİ — bkz. `db.nox`nin
+    /// belge notu, Faz STD.6) YANLIŞ bir sembole işaret eder: `nox_sqlite_
+    /// Statement` diye bir şey HİÇ YOKTUR, GERÇEK sembol `nox_db_Statement`dir.
+    /// Bunu daha da kötüleştiren: TEK bir birleştirilmiş modülde BİRDEN
+    /// FAZLA dosya AYNI yerel adı (`"Statement"`) FARKLI `from` yollarından
+    /// içe aktarabilir — `self.from_imports.put`in "SON yazan kazanır"
+    /// semantiği, `nox.sqlite`nin KENDİ (`_sqlite_bind_int` GİBİ fonksiyon
+    /// imzalarındaki) DOĞRU çözümlemesini bile SONRADAN işlenen BAŞKA bir
+    /// dosyanın (ör. `nyx.db`nin `from nox.sqlite import ... Statement`)
+    /// YANLIŞ tahminiyle EZEBİLİR — GERÇEKTEN gözlemlendi (`.github/workflows/
+    /// external-fixtures.yml`nin Nyx işi, `stdlib/nox/sqlite.nox`nin 95.
+    /// satırında "bilinmeyen tip: Statement" İLE HER push'ta BAŞARISIZ
+    /// oluyordu).
+    ///
+    /// **Düzeltme:** `self.classes`/`self.functions` (Geçiş 1/2 TARAFINDAN
+    /// DOLDURULDUKTAN SONRA, bu YÜZDEN `registerSignatures`DEN SONRA
+    /// çağrılır) ARTIK GERÇEĞİN KAYNAĞIDIR. Programdaki HER from-import
+    /// deyimini (dosya sınırı GÖZETMEKSİZİN — birleştirilmiş TEK modül
+    /// ZATEN dosya kimliğini KAYBETMİŞTİR) yeniden tarayıp, naif tahmini
+    /// GERÇEKTEN VAR OLAN bir tanıma karşılık gelenleri `export_table`e
+    /// (ORİJİNAL — alias'sız — ad → GERÇEK mangled ad) kaydeder. Sonra
+    /// `self.from_imports`taki HER girdi (yerel ad → mangled tahmin)
+    /// GEÇERSİZSE (`self.classes`/`self.functions`te YOKSA), `from_imports_
+    /// orig_name` ÜZERİNDEN o deyimin ORİJİNAL adını bulup `export_table`de
+    /// arar — bulursa DÜZELTİLMİŞ (GERÇEK) mangled adla DEĞİŞTİRİR. Bu,
+    /// ZATEN ÇALIŞAN HİÇBİR girdiyi ETKİLEMEZ (yalnızca ZATEN GEÇERSİZ
+    /// olanlar düzeltilir) — sıfır davranış değişikliği riski taşıyan, saf
+    /// bir EK düzeltme geçişidir.
+    fn resolveReExportChains(self: *Checker, module: ast.Module) TypeError!void {
+        var export_table: std.StringHashMapUnmanaged([]const u8) = .{};
+        for (module.body) |stmt| {
+            if (stmt.kind != .from_import_stmt) continue;
+            const fi = stmt.kind.from_import_stmt;
+            for (fi.names) |nm| {
+                if (export_table.contains(nm.name)) continue;
+                var mangled_segments: std.ArrayListUnmanaged([]const u8) = .empty;
+                try mangled_segments.appendSlice(self.allocator, fi.segments);
+                try mangled_segments.append(self.allocator, nm.name);
+                const mangled = try self.joinSegments(mangled_segments.items, '_');
+                if (self.classes.contains(mangled) or self.functions.contains(mangled)) {
+                    try export_table.put(self.allocator, nm.name, mangled);
+                }
+            }
+        }
+
+        const Fixup = struct { key: []const u8, value: []const u8 };
+        var fixups: std.ArrayListUnmanaged(Fixup) = .empty;
+        var it = self.from_imports.iterator();
+        while (it.next()) |entry| {
+            const mangled = entry.value_ptr.*;
+            if (self.classes.contains(mangled) or self.functions.contains(mangled)) continue;
+            const orig_name = self.from_imports_orig_name.get(entry.key_ptr.*) orelse continue;
+            const corrected = export_table.get(orig_name) orelse continue;
+            try fixups.append(self.allocator, .{ .key = entry.key_ptr.*, .value = corrected });
+        }
+        for (fixups.items) |fx| {
+            try self.from_imports.put(self.allocator, fx.key, fx.value);
         }
     }
 
@@ -2003,8 +2084,20 @@ pub const Checker = struct {
         self.module_expr_spans = module.expr_spans;
         try self.collectImports(module);
         try self.collectClassNames(module);
+        // Bulundu (bkz. `resolveReExportChains`in belge notu): sınıf-tabanlı
+        // zincirlerin (BÜYÜK ÇOĞUNLUK — bir TİP konumunda YALNIZCA bir sınıf
+        // geçerlidir) `registerSignatures`DEN (Geçiş 2, fonksiyon parametre/
+        // dönüş tiplerini `typeExprToType` İLE ÇÖZER) ÖNCE düzeltilmiş
+        // OLMASI GEREKİR — aksi halde HATA `registerSignatures`in KENDİSİ
+        // SIRASINDA (bu düzeltme geçişi HENÜZ ÇALIŞMADAN) fırlar. `self.
+        // functions` bu noktada HENÜZ BOŞTUR, bu YÜZDEN fonksiyon-tabanlı
+        // zincirler (ÇAĞRI siteleri, Geçiş 3'te çözülür) İÇİN AŞAĞIDA
+        // `registerSignatures`DEN SONRA TEKRAR çağrılır (idempotent —
+        // ZATEN doğru olan girdileri DOKUNMADAN bırakır).
+        try self.resolveReExportChains(module);
         try self.collectProtocols(module);
         try self.registerSignatures(module);
+        try self.resolveReExportChains(module);
         try self.collectModuleGlobals(module);
         try self.collectSpawnTargets(module);
         try self.computeMutatesGraph(module);

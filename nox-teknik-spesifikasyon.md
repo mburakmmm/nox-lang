@@ -21393,6 +21393,95 @@ KULLANILAMAZ hale getirilmesi — v1 SADECE release-emisyonunu durdurur).
 
 ---
 
+## 3.170 `.github/workflows/external-fixtures.yml`nin v1.81.0'dan bu yana HER push'ta başarısız olması — zincirli yeniden-vihraç (re-export) çözümleme hatası (v1.89.1)
+
+`.github/workflows/external-fixtures.yml` (§3.104'te, GPT-5.6 incelemesinin
+4. maddesi olarak eklenmişti) kaynaktan derlenen GÜNCEL `noxc`ye karşı
+Nyx (v0.17.0) VE Aether (v0.6.5)'in KENDİ GERÇEK test paketlerini
+çalıştırır — TANITILDIĞI v1.81.0'dan (Faz F.0.1) GÜNÜMÜZE (v1.89.0)
+KADAR olan 10 çalışmanın TAMAMI (`gh run list --workflow=external-fixtures.yml`
+İLE doğrulandı) BAŞARISIZ olmuştu, ama Faz F serisinin (F.0.1-F.3)
+KENDİ İŞİ (`ci.yml`) HER ZAMAN yeşil kaldığından hiç FARK EDİLMEMİŞTİ.
+
+**Kök neden (Nyx'in tests/*.nox'unun BÜYÜK ÇOĞUNLUĞUnda "tip hatasi
+(UnknownType): satır 95: bilinmeyen tip: Statement" — 95. satır `stdlib/
+nox/sqlite.nox`nin KENDİSİDİR, HANGİ test dosyası çalıştırılırsa
+çalıştırılsın AYNI kalır):** `checker.zig`nin `collectImports`i, `from X
+import Y` deyimini `Y`nin `X`TE DOĞRUDAN tanımlı OLDUĞUNU VARSAYARAK naif
+bir mangled ad (`join(X.segments,'_') + '_' + Y`) hesaplar. Bu, `nox.
+sqlite`nin `Statement`i `nox.db`den PAYLAŞTIĞI (`from nox.db import Row,
+Statement` — bkz. §3.6x "nox.sqlite sürücüsü"/Faz STD.6, `Statement`in
+sqlite/postgres/mysql arasında YAPISAL olarak BİRLEŞTİRİLDİĞİ) GİBİ bir
+ZİNCİRLİ YENİDEN-VİHRAÇTA çöker: `nox_sqlite_Statement` diye bir sembol
+HİÇ YOKTUR, GERÇEK sembol `nox_db_Statement`dir. Nyx'in KENDİ `db.nox`su
+`from nox.sqlite import Connection, Statement, SqliteError` YAPTIĞINDA
+(TAMAMEN MEŞRU bir kullanım — `nox.sqlite` KAVRAMSAL olarak `Statement`i
+İHRAÇ EDER), checker'ın TEK, birleştirilmiş derleme birimi boyunca
+PAYLAŞILAN, DÜZ `from_imports` haritası bu YANLIŞ tahminle GÜNCELLENİR
+— "SON yazan kazanır" semantiği YÜZÜNDEN bu, `stdlib/nox/sqlite.nox`nin
+KENDİ (`_sqlite_bind_int` GİBİ) fonksiyon imzalarındaki, ÖNCEDEN DOĞRU
+çözümlemeyi de EZER (bkz. `nox.json`nin `tek derleme birimi` — AGENTS.md
+— mimarisi: TÜM dosyalar TEK bir `ast.Module`a birleştirilir, dosya
+SINIRI checker'a ULAŞMADAN KAYBOLUR).
+
+**Araştırma yolu (elenen hipotezler)**: (a) Nyx'in KENDİ `db.nox`sunun bir
+hatası MI? HAYIR — `from nox.sqlite import Statement` TAMAMEN GEÇERLİ bir
+yeniden-vihraç TÜKETİMİDİR, HERHANGİ bir modül sisteminde beklenen
+davranıştır. (b) İş akışının `nox.json` YENİDEN-YAZMASI mı eksik BİR ŞEY
+(ör. TRANSİTİF bir bağımlılığı ÇEKMİYOR)? HAYIR — `noxc fetch` BAŞARIYLA
+tamamlanıyor, sorun ÇÖZÜMLEME (fetch) DEĞİL TİP DENETİMİ aşamasında.
+(c) GERÇEK bir noxc REGRESYONU mu (Faz F.0.1-F.3'TEN biri TARAFINDAN
+İNTRODÜCE EDİLMİŞ)? HAYIR — `git stash` İLE F serisi ÖNCESİ bir commit'e
+(ör. v1.80.10) dönülüp AYNI repro çalıştırıldığında AYNI hata GÖZLEMLENDİ
+— hata `from_imports` mekanizmasının KENDİSİ KADAR ESKİ, workflow'un
+v1.81.0'da EKLENMESİYLE sadece İLK KEZ tespit edilebilir hale geldi.
+
+**Düzeltme**: `checker.zig`e YENİ `from_imports_orig_name` alanı
+(`local_name` → BU deyimdeki mangle-EDİLMEMİŞ, alias'sız kaynak ad) VE
+YENİ `resolveReExportChains` geçişi eklendi — programdaki HER from-import
+deyimini (dosya sınırı ARANMAKSIZIN) yeniden tarayıp, naif tahmini
+`self.classes`/`self.functions`te GERÇEKTEN VAR OLAN bir tanıma karşılık
+gelenleri `export_table`e (orijinal ad → GERÇEK mangled ad) kaydeder;
+`self.from_imports`taki HER GEÇERSİZ girdi (mangled tahmin `self.classes`/
+`self.functions`te YOKSA) `from_imports_orig_name` ÜZERİNDEN düzeltilir.
+Bu geçiş İKİ KEZ çağrılır: `collectClassNames`DEN HEMEN SONRA (`registerSignatures`
+— Geçiş 2 — parametre/dönüş TİP çözümlemesi İçİn `self.classes`e
+İHTİYAÇ DUYAR, bu YÜZDEN ONDAN ÖNCE ÇALIŞMALIDIR — İLK deneme yanlışlıkla
+`registerSignatures`DEN SONRAYA koyup AYNI hatayı tekrar ÜRETMİŞTİ, çünkü
+`_sqlite_bind_int`in imzası ZATEN `registerSignatures` SIRASINDA çözülür)
+VE `registerSignatures`DEN SONRA TEKRAR (fonksiyon-tabanlı zincirler İçİn,
+`self.functions` gerektiren ÇAĞRI-sitesi çözümlemesi, idempotent — ZATEN
+doğru girdileri DOKUNMADAN bırakır). ZATEN ÇALIŞAN HİÇBİR from-import
+girdisini ETKİLEMEZ (yalnızca ZATEN geçersiz OLANLAR düzeltilir).
+
+**Doğrulama**: Nyx v0.17.0'ın 45 test dosyasının TAMAMI VE Aether v0.6.5'in
+20 test dosyasının TAMAMI (workflow'un KENDİ "yerel checkout'a alias
+işaret ettirme" hilesiyle, GERÇEK GitHub'dan ÇEKİLEN pinned tag'lere karşı)
+YEREL olarak yeniden üretilip DOĞRULANDI — 0/65 başarısız. YENİ, dar
+kapsamlı bir regresyon testi (`tests/cli/local_import_test.zig`,
+"iki-katmanli YENIDEN VIHRAC zinciri" — `a.nox`nin tanımladığı bir sınıfı
+`b.nox`nin yeniden-vihraç ETMESİ + HEM `b.nox`nin KENDİ İÇİNDE HEM
+`main.nox`da (giriş modülü, ASLA yeniden adlandırılmayan) KULLANILMASI)
+eklendi — `stdlib/nox/sqlite.nox`nin GERÇEK deseniyle BİREBİR aynı şekli
+TAŞIR. `zig build test` tam takımı (900+ test) — YALNIZCA ÖNCEDEN VAR OLAN,
+İLİŞKİSİZ ağ-tabanlı flaky HTTP golden testleri (`http_serve_multicore*`)
+İLE bir ÖNCEDEN VAR OLAN "async def" `TypeMismatch` testi (İKİSİ de bu
+düzeltme OLMADAN, `git stash` İLE de AYNI ŞEKİLDE BAŞARISIZ — TAMAMEN
+İLİŞKİSİZ) DIŞINDA yeşil.
+
+**Kritik dosyalar**: `compiler/typecheck/checker.zig` (`from_imports_orig_name`
+alanı, `collectImports`in ONU DOLDURMASI, YENİ `resolveReExportChains`,
+`checkModule`nin YENİ ÇAĞRI SIRASI), `tests/cli/local_import_test.zig`
+(YENİ regresyon testi).
+
+**Kapsam DIŞI**: `module_loader.zig`nin KENDİSİ (paket dosyalarının
+KENDİ İÇ referanslarını DOĞRUDAN, mangled AD OLARAK YENİDEN YAZMASI) —
+`checker.zig` düzeyindeki düzeltme, dosya-sınırı BİLGİSİNİ zaten KAYBETMİŞ
+TEK derleme birimi İçİn HEM paket-içi HEM giriş-modülü kullanımlarını
+AYNI ANDA (VE daha AZ invaziv biçimde) kapsadığından GEREKMEDİ.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.
