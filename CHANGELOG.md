@@ -14,6 +14,42 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.86.0]
+
+### Eklendi/Değiştirildi (Faz F.0.6 — gizli http_client.zig bağımlılığının kesilmesi, F.0'ın SON alt-fazı)
+- Freestanding Nox çerçevesinin F.0.1-F.0.5'ten SONRAKİ VE F.0'ın SON alt-
+  fazı: ÇEKİRDEK `runtime/async_rt/thread_channel.zig`/`thread_bridge.
+  zig`/`pool_bridge.zig` (`scheduler.zig`nin KENDİ "İlke #6"sıyla — async_
+  rt'nin stdlib_shims'ten bağımsız kalması — TUTARSIZ bir şekilde)
+  `runtime/stdlib_shims/http_client.zig`yi İTHAL EDİYORDU — HTTP İçİn
+  DEĞİL, SADECE genel self-pipe/string-kopyalama yardımcıları İçİn.
+- YENİ `runtime/async_rt/completion_pipe.zig` — `http_client.zig`nin
+  `makeSelfPipe`/`closeFd`/`signalSelfPipe`/`readSelfPipe`si (Windows UDP-
+  loopback implementasyonu DAHİL, `self_pipe.zig`den — F.0.5, POSIX-only,
+  farklı amaç — KASITLI olarak AYRI) BİREBİR TAŞINDI.
+- `http_client.zig` bu 4 fonksiyonu ARTIK `completion_pipe.zig`den re-
+  export eder (`thread_channel.zig`nin KENDİ, ZATEN kanıtlanmış
+  `dupeToNoxStr` alias deseninin AYNISı, TERS yönde) — `process.zig`
+  (GERÇEK/AYRI bir nedenle — `sharedClientIo()` — http_client.zig'e bağlı
+  kalmaya DEVAM eden, kapsam DIŞI tutulan tek dış tüketici) DAHİL TÜM
+  mevcut çağıranlar SIFIR değişiklikle çalışmaya devam eder.
+- `thread_channel.zig`/`thread_bridge.zig`, `dupeToNoxStr` yerine (ZATEN
+  import edilmiş) `str_mod.nox_str_from_bytes`yi DOĞRUDAN çağırır
+  (`dupeToNoxStr`nin KENDİ gövdesiyle BİREBİR AYNI) — `pool_bridge.zig`
+  bunu HİÇ kullanmıyordu, DOKUNULMADI.
+- Sonuç: `thread_channel.zig`/`thread_bridge.zig`/`pool_bridge.zig` ARTIK
+  `runtime/stdlib_shims/`e HİÇBİR import zinciri TAŞIMIYOR —
+  `scheduler.zig`/`fiber.zig`/`channel.zig`/`io.zig`/`self_pipe.zig` İLE
+  AYNI "stdlib_shims'ten bağımsız" ilkesine BU ÜÇ dosya da artık UYUYOR.
+- YENİ, `completion_pipe.zig`nin İLK testi (dosya taşınmadan ÖNCE HİÇ
+  dedicated unit-testi YOKTU, sadece http_client'in ucuçtan-uca HTTP
+  testleri ÜZERİNDEN DOLAYLI egzersiz ediliyordu): `makeSelfPipe`→
+  `signalSelfPipe`→`readSelfPipe`→`closeFd` TAM bir turu GERÇEKTEN
+  doğrular.
+- `zig build test` (Debug+ReleaseFast, `-j2` İLE) + `NOX_STRESS_ROUNDS=800
+  zig build stress-test -Doptimize=ReleaseFast` TEMİZ (SAF kod-taşıma —
+  davranış SIFIR değişti, bu turda HİÇBİR flake GÖZLENMEDİ).
+
 ## [1.85.0]
 
 ### Eklendi/Değiştirildi (Faz F.0.5 — Uyandırma mekanizması soyutlaması)

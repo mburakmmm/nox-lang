@@ -61,7 +61,7 @@ const posix = std.posix;
 const asap = @import("../alloc/asap.zig");
 const bridge = @import("bridge.zig");
 const io_mod = @import("io.zig");
-const http_client = @import("../stdlib_shims/http_client.zig");
+const completion_pipe = @import("completion_pipe.zig");
 const worker_pool_mod = @import("worker_pool.zig");
 const scheduler_mod = @import("scheduler.zig");
 /// Faz F.0.3: OOM/doğrulama tanı mesajlarının enjekte edilebilir olması İçİn.
@@ -322,8 +322,8 @@ fn poolRunDriverThreadMain(args: *PoolRunDriverArgs) void {
     pool.joinAll();
     pool.destroy();
 
-    http_client.signalSelfPipe(args.done_write_fd);
-    http_client.closeFd(args.done_write_fd);
+    completion_pipe.signalSelfPipe(args.done_write_fd);
+    completion_pipe.closeFd(args.done_write_fd);
 }
 
 /// `nox.thread.pool_run(num_workers, entry)`in çağrı-sitesi ÇAĞIRDIĞI
@@ -389,15 +389,15 @@ pub export fn nox_pool_run(
         std.process.exit(1);
     }
 
-    const fds = http_client.makeSelfPipe() orelse return 1;
+    const fds = completion_pipe.makeSelfPipe() orelse return 1;
 
     const ctx = std.heap.page_allocator.create(PoolRunCtx) catch return 1;
     ctx.* = .{ .entry_fn = entry_fn, .globals_init_fn = globals_init_fn, .globals_deinit_fn = globals_deinit_fn };
 
     const driver_args = std.heap.page_allocator.create(PoolRunDriverArgs) catch {
         std.heap.page_allocator.destroy(ctx);
-        http_client.closeFd(fds[0]);
-        http_client.closeFd(fds[1]);
+        completion_pipe.closeFd(fds[0]);
+        completion_pipe.closeFd(fds[1]);
         return 1;
     };
     driver_args.* = .{ .num_workers = @intCast(num_workers), .ctx = ctx, .done_write_fd = fds[1] };
@@ -405,8 +405,8 @@ pub export fn nox_pool_run(
     const driver_thread = std.Thread.spawn(.{}, poolRunDriverThreadMain, .{driver_args}) catch {
         std.heap.page_allocator.destroy(driver_args);
         std.heap.page_allocator.destroy(ctx);
-        http_client.closeFd(fds[0]);
-        http_client.closeFd(fds[1]);
+        completion_pipe.closeFd(fds[0]);
+        completion_pipe.closeFd(fds[1]);
         return 1;
     };
     driver_thread.detach();
@@ -417,12 +417,12 @@ pub export fn nox_pool_run(
     // sıradan bloklayan bir `read()` YETERLİDİR.
     if (bridge.currentFiberScheduler()) |scheduler| {
         var buf: [1]u8 = undefined;
-        _ = io_mod.nonBlockingReadOnce(scheduler, fds[0], &buf) catch {}; // Faz [YENİ] — bkz. http_client.zig'nin AYNI notu.
+        _ = io_mod.nonBlockingReadOnce(scheduler, fds[0], &buf) catch {}; // Faz [YENİ] — bkz. completion_pipe.zig'nin AYNI notu.
     } else {
         var buf: [1]u8 = undefined;
-        http_client.readSelfPipe(fds[0], &buf);
+        completion_pipe.readSelfPipe(fds[0], &buf);
     }
-    http_client.closeFd(fds[0]);
+    completion_pipe.closeFd(fds[0]);
 
     std.heap.page_allocator.destroy(ctx);
     return 0;
@@ -511,8 +511,8 @@ fn poolServeDriverThreadMain(args: *PoolServeDriverArgs) void {
     pool.destroy();
     std.heap.page_allocator.destroy(closure);
 
-    http_client.signalSelfPipe(args.done_write_fd);
-    http_client.closeFd(args.done_write_fd);
+    completion_pipe.signalSelfPipe(args.done_write_fd);
+    completion_pipe.closeFd(args.done_write_fd);
 }
 
 /// `broadcastRunOnEachWorker`nin KENDİ ("yayın") tamamlanma muhasebesi —
@@ -529,7 +529,7 @@ const BroadcastCtx = struct {
         const self: *BroadcastCtx = @ptrCast(@alignCast(erased));
         _ = self.entry_fn(self.closure);
         if (self.remaining.fetchSub(1, .acq_rel) == 1) {
-            http_client.signalSelfPipe(self.done_write_fd);
+            completion_pipe.signalSelfPipe(self.done_write_fd);
         }
         return 0;
     }
@@ -591,11 +591,11 @@ fn poolServeFlattened(rt_ptr: *anyopaque, num_workers: i64, entry_fn: *const fn 
     defer std.heap.page_allocator.destroy(closure);
     closure.* = .{ .rt = rt_ptr, .payload = payload };
 
-    const fds = http_client.makeSelfPipe() orelse return 1;
-    defer http_client.closeFd(fds[1]);
+    const fds = completion_pipe.makeSelfPipe() orelse return 1;
+    defer completion_pipe.closeFd(fds[1]);
 
     const bctx = std.heap.page_allocator.create(BroadcastCtx) catch {
-        http_client.closeFd(fds[0]);
+        completion_pipe.closeFd(fds[0]);
         return 1;
     };
     defer std.heap.page_allocator.destroy(bctx);
@@ -622,12 +622,12 @@ fn poolServeFlattened(rt_ptr: *anyopaque, num_workers: i64, entry_fn: *const fn 
 
     if (bridge.currentFiberScheduler()) |scheduler| {
         var buf: [1]u8 = undefined;
-        _ = io_mod.nonBlockingReadOnce(scheduler, fds[0], &buf) catch {}; // Faz [YENİ] — bkz. http_client.zig'nin AYNI notu.
+        _ = io_mod.nonBlockingReadOnce(scheduler, fds[0], &buf) catch {}; // Faz [YENİ] — bkz. completion_pipe.zig'nin AYNI notu.
     } else {
         var buf: [1]u8 = undefined;
-        http_client.readSelfPipe(fds[0], &buf);
+        completion_pipe.readSelfPipe(fds[0], &buf);
     }
-    http_client.closeFd(fds[0]);
+    completion_pipe.closeFd(fds[0]);
     return 0;
 }
 
@@ -663,15 +663,15 @@ pub export fn nox_pool_serve(
         if (state.worker_pool != null) return poolServeFlattened(rt_ptr, num_workers, entry_fn, payload);
     }
 
-    const fds = http_client.makeSelfPipe() orelse return 1;
+    const fds = completion_pipe.makeSelfPipe() orelse return 1;
 
     const ctx = std.heap.page_allocator.create(PoolServeCtx) catch return 1;
     ctx.* = .{ .entry_fn = entry_fn, .payload = payload };
 
     const driver_args = std.heap.page_allocator.create(PoolServeDriverArgs) catch {
         std.heap.page_allocator.destroy(ctx);
-        http_client.closeFd(fds[0]);
-        http_client.closeFd(fds[1]);
+        completion_pipe.closeFd(fds[0]);
+        completion_pipe.closeFd(fds[1]);
         return 1;
     };
     driver_args.* = .{ .num_workers = @intCast(num_workers), .ctx = ctx, .done_write_fd = fds[1] };
@@ -679,20 +679,20 @@ pub export fn nox_pool_serve(
     const driver_thread = std.Thread.spawn(.{}, poolServeDriverThreadMain, .{driver_args}) catch {
         std.heap.page_allocator.destroy(driver_args);
         std.heap.page_allocator.destroy(ctx);
-        http_client.closeFd(fds[0]);
-        http_client.closeFd(fds[1]);
+        completion_pipe.closeFd(fds[0]);
+        completion_pipe.closeFd(fds[1]);
         return 1;
     };
     driver_thread.detach();
 
     if (bridge.currentFiberScheduler()) |scheduler| {
         var buf: [1]u8 = undefined;
-        _ = io_mod.nonBlockingReadOnce(scheduler, fds[0], &buf) catch {}; // Faz [YENİ] — bkz. http_client.zig'nin AYNI notu.
+        _ = io_mod.nonBlockingReadOnce(scheduler, fds[0], &buf) catch {}; // Faz [YENİ] — bkz. completion_pipe.zig'nin AYNI notu.
     } else {
         var buf: [1]u8 = undefined;
-        http_client.readSelfPipe(fds[0], &buf);
+        completion_pipe.readSelfPipe(fds[0], &buf);
     }
-    http_client.closeFd(fds[0]);
+    completion_pipe.closeFd(fds[0]);
 
     std.heap.page_allocator.destroy(ctx);
     return 0;

@@ -33,8 +33,8 @@
 //! KOPYALAR (göndericinin KENDİ referansı `send_str` DÖNER DÖNMEZ GÜVENLE
 //! serbest bırakılabilir); tampon İÇİNDE bu düz işaretçi (bit-örtüşmüş bir
 //! `i64` payload olarak) taşınır. `recv_str`, ALICININ KENDİ `rt`si
-//! ÜZERİNDEN bu baytlardan TAZE bir ARC `str` inşa eder (`http_client.zig`nin
-//! `dupeToNoxStr`ı — `thread_bridge.zig` İLE AYNI YENİDEN KULLANIM), düz
+//! ÜZERİNDEN bu baytlardan TAZE bir ARC `str` inşa eder (`str_mod.nox_str_
+//! from_bytes` — `thread_bridge.zig` İLE AYNI YENİDEN KULLANIM), düz
 //! arabelleği serbest bırakır. `int/float/bool/none/ptr` payload'ları
 //! (`_val` varyantları) DOĞRUDAN, dönüşümsüz taşınır — `T`nin `str` OLUP
 //! OLMADIĞI ÇAĞRI SİTESİNDE STATİK olarak BİLİNDİĞİNDEN (bkz. codegen'in
@@ -69,10 +69,8 @@ const posix = std.posix;
 const asap = @import("../alloc/asap.zig");
 const bridge = @import("bridge.zig");
 const io_mod = @import("io.zig");
-const http_client = @import("../stdlib_shims/http_client.zig");
+const completion_pipe = @import("completion_pipe.zig");
 const str_mod = @import("../str.zig");
-
-const dupeToNoxStr = http_client.dupeToNoxStr;
 
 /// Faz MN.3b: BURADA tanımlı bir kopya OLMAK YERİNE `asap.SpinLock`
 /// KULLANILIR (Faz P1.2'nin AYNI "TEK doğruluk kaynağı" ilkesi —
@@ -105,10 +103,10 @@ pub const ThreadChannel = struct {
 
     fn release(self: *ThreadChannel) void {
         if (self.owners.fetchSub(1, .acq_rel) == 1) {
-            http_client.closeFd(self.recv_wakeup_read_fd);
-            http_client.closeFd(self.recv_wakeup_write_fd);
-            http_client.closeFd(self.send_wakeup_read_fd);
-            http_client.closeFd(self.send_wakeup_write_fd);
+            completion_pipe.closeFd(self.recv_wakeup_read_fd);
+            completion_pipe.closeFd(self.recv_wakeup_write_fd);
+            completion_pipe.closeFd(self.send_wakeup_read_fd);
+            completion_pipe.closeFd(self.send_wakeup_write_fd);
             self.buffer.deinit(std.heap.page_allocator);
             std.heap.page_allocator.destroy(self);
         }
@@ -133,12 +131,12 @@ fn waitForByte(fd: posix.fd_t, already_nonblocking: *bool) void {
         }
         _ = io_mod.nonBlockingRead(scheduler, fd, &buf) catch {};
     } else {
-        http_client.readSelfPipe(fd, &buf);
+        completion_pipe.readSelfPipe(fd, &buf);
     }
 }
 
 fn signalByte(fd: posix.fd_t) void {
-    http_client.signalSelfPipe(fd);
+    completion_pipe.signalSelfPipe(fd);
 }
 
 fn ptrToPayload(ptr: anytype) i64 {
@@ -205,18 +203,18 @@ export fn nox_threadchannel_new(rt: ?*anyopaque, capacity: i64) callconv(.c) ?*a
     _ = rt;
     if (capacity < 1) return null;
 
-    const recv_fds = http_client.makeSelfPipe() orelse return null;
-    const send_fds = http_client.makeSelfPipe() orelse {
-        http_client.closeFd(recv_fds[0]);
-        http_client.closeFd(recv_fds[1]);
+    const recv_fds = completion_pipe.makeSelfPipe() orelse return null;
+    const send_fds = completion_pipe.makeSelfPipe() orelse {
+        completion_pipe.closeFd(recv_fds[0]);
+        completion_pipe.closeFd(recv_fds[1]);
         return null;
     };
 
     const tc = std.heap.page_allocator.create(ThreadChannel) catch {
-        http_client.closeFd(recv_fds[0]);
-        http_client.closeFd(recv_fds[1]);
-        http_client.closeFd(send_fds[0]);
-        http_client.closeFd(send_fds[1]);
+        completion_pipe.closeFd(recv_fds[0]);
+        completion_pipe.closeFd(recv_fds[1]);
+        completion_pipe.closeFd(send_fds[0]);
+        completion_pipe.closeFd(send_fds[1]);
         return null;
     };
     tc.* = .{
@@ -253,7 +251,7 @@ export fn nox_threadchannel_recv_str(rt: ?*anyopaque, handle: ?*anyopaque) callc
     const tc: *ThreadChannel = @ptrCast(@alignCast(handle.?));
     const payload = recvPayload(tc);
     const ptr = payloadToPlainCStr(payload);
-    const cloned = dupeToNoxStr(rt, std.mem.span(ptr)) orelse @panic("OOM: ThreadChannel str alim klonu");
+    const cloned = str_mod.nox_str_from_bytes(rt, std.mem.span(ptr)) orelse @panic("OOM: ThreadChannel str alim klonu");
     freePlainCStr(ptr);
     return ptrToPayload(cloned);
 }

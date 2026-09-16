@@ -21031,6 +21031,91 @@ pratik bir fayda SAĞLAMAZ.
 
 ---
 
+## 3.166 Faz F.0.6 — Gizli `http_client.zig` bağımlılığının kesilmesi (v1.86.0, F.0'ın SON alt-fazı)
+
+Freestanding Nox çerçevesinin F.0.1-F.0.5'ten SONRAKİ VE F.0'ın SON
+alt-fazı. Çerçeve-planının KENDİ, ÖNCEDEN belirttiği "Kritik düzeltme
+#2" bulgusu: `runtime/async_rt/thread_channel.zig`/`thread_bridge.zig`/
+`pool_bridge.zig` (ÜÇÜ de ÇEKİRDEK `async_rt` dosyası — `scheduler.zig`
+nin KENDİ modül-üstü notu, "İlke #6": "`fiber.zig`/`scheduler.zig`/
+`channel.zig`/`io.zig` BİLİNÇLİ olarak `runtime/alloc/`den [dolayısıyla
+`runtime/stdlib_shims`den] BAĞIMSIZ kalacak şekilde tasarlanmıştır")
+`runtime/stdlib_shims/http_client.zig`yi İTHAL EDİYORDU — HTTP İçİn
+DEĞİL, SADECE genel self-pipe/string-kopyalama yardımcıları İçİn
+(`makeSelfPipe`/`closeFd`/`signalSelfPipe`/`readSelfPipe`/`dupeToNoxStr`).
+Bu, "`stdlib_shims` TAMAMEN OPSİYONELDİR" varsayımını BOZAN, gizli bir
+ÇEKİRDEK-katman bağımlılığıydı — freestanding'in `runtime/lib.zig` GİBİ
+bir "freestanding kök"ü (SADECE `async_rt`+`alloc`+`errors`+`collections`+
+`str`, TLS/HTTP/vb. OS-ağır `stdlib_shims`i HİÇ İçERMEYEN) İNŞA
+edebilmesi İçİn kesilmesi gerekiyordu.
+
+**Araştırma bulguları**: (1) `http_client.zig`nin 4 self-pipe fonksiyonu
+`self_pipe.zig`den (F.0.5) DAHA YETENEKLİ — `self_pipe.zig` POSIX-ONLY
+(Windows'ta `error.Unsupported`), AMA `http_client.zig`nin `makeSelfPipe`
+/`closeFd`/`signalSelfPipe`/`readSelfPipe`si GERÇEK bir Windows
+implementasyonu (BAĞLANMIŞ UDP-loopback soket ÇİFTİ, `io_reactor.zig`nin
+`WindowsReactor.makeLoopbackPair`ıyla AYNI teknik) TAŞIR — bu YÜZDEN
+BİRLEŞTİRİLMEDİ (FARKLI AMAÇ/YETENEK: `self_pipe.zig` Scheduler'ın
+çapraz-worker "poll()de bloke olanı uyandır" deseni İçİn, `http_client.
+zig`nin fonksiyonları İSE arka-plan bir OS iş parçacığının "işim BİTTİ"
+tek-seferlik tamamlanma sinyali İçİn). (2) `runtime/stdlib_shims/
+process.zig` BİLİNÇLİ olarak KAPSAM DIŞI bırakıldı — `http_client.
+sharedClientIo()`yu da (GERÇEKTEN HTTP-istemcisine-özgü) ÇAĞIRDIĞINDAN
+http_client.zig'e GERÇEK/AYRI bir nedenle bağımlı. (3) `dupeToNoxStr`
+BAŞKA 8+ `stdlib_shims` dosyasında da kullanılıyor (`path.zig`/`json.zig`/
+`fs.zig`/`os.zig`/`crypto.zig`/`strings.zig`/`http_server.zig`/`process.
+zig`) — TÜMÜ `stdlib_shims→stdlib_shims`, SINIR İHLALİ DEĞİL, DOKUNULMADI.
+
+**Tasarım (SAF bir "kodu doğru dosyaya taşı, bağımlılık YÖNÜNÜ düzelt"
+refactor'u — F.0.1-F.0.5'in AKSİNE YENİ bir enjekte-edilebilir "provider"
+İCAT EDİLMEDİ, davranış SIFIR değişmedi)**: YENİ `runtime/async_rt/
+completion_pipe.zig` — `http_client.zig`nin 4 fonksiyonu BİREBİR (Windows
+UDP-loopback dalı DAHİL) BURAYA taşındı, `io.zig`den (sibling, Windows
+`WinSock`ı İçİn) bağımlı. `http_client.zig` bu 4 fonksiyon TANIMI YERİNE
+`completion_pipe`den re-export eder (`pub const makeSelfPipe =
+completion_pipe.makeSelfPipe;` VB. — `thread_channel.zig`nin KENDİ,
+ZATEN kanıtlanmış `dupeToNoxStr` alias deseninin AYNISı, TERS yönde) —
+`process.zig` VE `http_client.zig`nin KENDİ İÇ çağrı siteleri SIFIR
+değişiklikle çalışmaya DEVAM eder. `thread_channel.zig`/`thread_bridge.
+zig`/`pool_bridge.zig`, `const http_client = @import("../stdlib_shims/
+http_client.zig");` YERİNE `const completion_pipe = @import("completion_
+pipe.zig");` kullanır, TÜM çağrı siteleri MEKANİK olarak yeniden
+adlandırılır; `dupeToNoxStr` çağrıları (SADECE `thread_channel.zig`/
+`thread_bridge.zig`de, ZATEN import edilmiş `str_mod` KULLANILARAK)
+DOĞRUDAN `str_mod.nox_str_from_bytes`e dönüştürülür.
+
+**Sonuç**: `thread_channel.zig`/`thread_bridge.zig`/`pool_bridge.zig`
+ARTIK `runtime/stdlib_shims/`e HİÇBİR import zinciri TAŞIMIYOR —
+`scheduler.zig`/`fiber.zig`/`channel.zig`/`io.zig`/`self_pipe.zig` İLE
+AYNI "stdlib_shims'ten bağımsız" ilkesine ARTIK BU ÜÇ dosya da uyuyor.
+**BU, F.0'ın (Faz F.0.1-F.0.6) TAMAMINI TAMAMLAR** — HOSTED kalarak OS
+varsayımlarını enjekte-edilebilir yapma çerçevesinin ALTI alt-fazı da
+(dispatch tablosu statikleştirmesi, allocator enjeksiyonu, panik/tanı
+çıktısı enjeksiyonu, fiber stack kaynağı enjeksiyonu, uyandırma mekanizması
+soyutlaması, gizli http_client.zig bağımlılığının kesilmesi) yayımlandı.
+
+**Doğrulama**: YENİ, `completion_pipe.zig`nin İLK testi (dosya taşınmadan
+ÖNCE HİÇ dedicated unit-testi YOKTU): `makeSelfPipe`→`signalSelfPipe`→
+`readSelfPipe`→`closeFd` TAM bir turu GERÇEKTEN doğrular — `noxrt_test`
+İçİnde (`thread_channel.zig`/`thread_bridge.zig`/`pool_bridge.zig`/
+`http_client.zig` ÜZERİNDEN transitif import EDİLDİĞİNDEN) discover
+edilip GEÇTİĞİ doğrulandı. `zig build test` (Debug+ReleaseFast, `-j2`
+İLE) + `NOX_STRESS_ROUNDS=800 zig build stress-test -Doptimize=
+ReleaseFast` TEMİZ — SAF kod-taşıma OLDUĞUNDAN bu turda HİÇBİR flake
+GÖZLENMEDİ (ÖNCEKİ fazların AKSİNE).
+
+**Kapsam DIŞI**: `dupeToNoxStr`nin `stdlib_shims` İçİNDEKİ 8+ DİĞER
+kullanıcısı — TÜMÜ `stdlib_shims→stdlib_shims`, SINIR İHLALİ DEĞİL,
+`http_client.dupeToNoxStr` YERİNDE KALDIĞINDAN HİÇ ETKİLENMEZ;
+`completion_pipe.zig`i (VEYA `self_pipe.zig`yi) enjekte-edilebilir bir
+"provider" YAPMAK — F.0.4/F.0.5'in KENDİ, AYRI kapsamı, `nox.thread.
+start`/`pool_run`/`ThreadChannel` ZATEN GERÇEK OS iş parçacıkları
+GEREKTİRDİĞİNDEN freestanding'in BUNLARI HİÇ KULLANAMAYACAĞI (F.0'ın
+KENDİ, ÖNCEDEN belirttiği gerçek) DEĞİŞMİYOR — BU FAZIN DEĞERİ SADECE
+YAPISAL (build-graph'ın `stdlib_shims`i transitif olarak GEREKTİRMEMESİ).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

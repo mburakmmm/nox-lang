@@ -9,8 +9,9 @@
 //!
 //! **Paylaşımsız (shared-nothing) protokol — argüman/sonuç GEÇİŞİ:**
 //! `int/float/bool/none/ptr` payload'ları DOĞRUDAN (ARC-dışı, 8 baytlık
-//! bit-örtüşmesi) taşınır. `str` payload'ları İSE `http_client.zig`nin
-//! GERÇEK OS iş parçacığı İÇİN ZATEN AUDIT EDİLMİŞ desenini İZLER:
+//! bit-örtüşmesi) taşınır. `str` payload'ları İSE `stdlib_shims/http_
+//! client.zig`nin GERÇEK OS iş parçacığı İÇİN ZATEN AUDIT EDİLMİŞ
+//! desenini İZLER:
 //! ebeveyn `nox_thread_spawn`da SENKRON olarak (çocuk iş parçacığı DAHİ
 //! BAŞLAMADAN ÖNCE) baytları DÜZ (ARC-dışı, `std.heap.page_allocator`)
 //! bir hazırlık arabelleğine KOPYALAR — bu, ebeveynin ORİJİNAL `str`
@@ -61,10 +62,8 @@ const posix = std.posix;
 const asap = @import("../alloc/asap.zig");
 const bridge = @import("bridge.zig");
 const io_mod = @import("io.zig");
-const http_client = @import("../stdlib_shims/http_client.zig");
+const completion_pipe = @import("completion_pipe.zig");
 const str_mod = @import("../str.zig");
-
-const dupeToNoxStr = http_client.dupeToNoxStr;
 
 /// `nox_thread_spawn`ın `entry`ye geçtiği paket — `rt` (çocuğun TAZE
 /// `RuntimeState`i) + tek argümanın (zaten gerekiyorsa ARC'a KLONLANMIŞ)
@@ -110,7 +109,7 @@ pub const ThreadHandle = struct {
 
     fn release(self: *ThreadHandle) void {
         if (self.owners.fetchSub(1, .acq_rel) == 1) {
-            if (!self.read_fd_closed) http_client.closeFd(self.done_read_fd);
+            if (!self.read_fd_closed) completion_pipe.closeFd(self.done_read_fd);
             if (self.result_is_str_bytes) |bytes| std.heap.page_allocator.free(bytes);
             std.heap.page_allocator.destroy(self);
         }
@@ -147,7 +146,7 @@ fn childThreadMain(ctx: *ChildCtx) void {
     defer std.heap.page_allocator.destroy(closure);
     closure.rt = child_rt;
     if (ctx.arg_is_str_bytes) |bytes| {
-        const cloned = dupeToNoxStr(child_rt, bytes) orelse @panic("OOM: nox.thread arg klonu");
+        const cloned = str_mod.nox_str_from_bytes(child_rt, bytes) orelse @panic("OOM: nox.thread arg klonu");
         std.heap.page_allocator.free(bytes);
         closure.payload = strPtrToPayload(cloned);
     } else {
@@ -174,8 +173,8 @@ fn childThreadMain(ctx: *ChildCtx) void {
     bridge.nox_async_deinit(child_rt);
     asap.nox_runtime_deinit(child_rt);
 
-    http_client.signalSelfPipe(ctx.handle.done_write_fd);
-    http_client.closeFd(ctx.handle.done_write_fd);
+    completion_pipe.signalSelfPipe(ctx.handle.done_write_fd);
+    completion_pipe.closeFd(ctx.handle.done_write_fd);
 
     ctx.handle.release();
 }
@@ -196,29 +195,29 @@ export fn nox_thread_spawn(
     _ = rt; // Bilinçli olarak KULLANILMAZ — bkz. modül üstü not, `ThreadHandle`
     // `page_allocator` üzerinden tahsis edilir, `rt`ye BAĞIMLI DEĞİLDİR.
 
-    const fds = http_client.makeSelfPipe() orelse return null;
+    const fds = completion_pipe.makeSelfPipe() orelse return null;
 
     var arg_bytes: ?[]u8 = null;
     if (arg_is_str != 0) {
         const src = payloadToStrPtr(arg_payload);
         arg_bytes = std.heap.page_allocator.dupe(u8, std.mem.span(src)) catch {
-            http_client.closeFd(fds[0]);
-            http_client.closeFd(fds[1]);
+            completion_pipe.closeFd(fds[0]);
+            completion_pipe.closeFd(fds[1]);
             return null;
         };
     }
 
     const handle = std.heap.page_allocator.create(ThreadHandle) catch {
-        http_client.closeFd(fds[0]);
-        http_client.closeFd(fds[1]);
+        completion_pipe.closeFd(fds[0]);
+        completion_pipe.closeFd(fds[1]);
         return null;
     };
     handle.* = .{ .done_read_fd = fds[0], .done_write_fd = fds[1] };
 
     const ctx = std.heap.page_allocator.create(ChildCtx) catch {
         std.heap.page_allocator.destroy(handle);
-        http_client.closeFd(fds[0]);
-        http_client.closeFd(fds[1]);
+        completion_pipe.closeFd(fds[0]);
+        completion_pipe.closeFd(fds[1]);
         return null;
     };
     ctx.* = .{
@@ -232,8 +231,8 @@ export fn nox_thread_spawn(
     const thread = std.Thread.spawn(.{}, childThreadMain, .{ctx}) catch {
         std.heap.page_allocator.destroy(ctx);
         std.heap.page_allocator.destroy(handle);
-        http_client.closeFd(fds[0]);
-        http_client.closeFd(fds[1]);
+        completion_pipe.closeFd(fds[0]);
+        completion_pipe.closeFd(fds[1]);
         return null;
     };
     thread.detach();
@@ -241,7 +240,7 @@ export fn nox_thread_spawn(
     return handle;
 }
 
-/// Çocuk iş parçacığı TAMAMLANANA kadar bekler — `http_client.zig`nin
+/// Çocuk iş parçacığı TAMAMLANANA kadar bekler — `completion_pipe.zig`nin
 /// `doRequest`ıyla AYNI iki-modlu desen: bir Nox FİBER İÇİNDEYSEK
 /// (`bridge.currentFiberScheduler`), D.0'ın reaktörü ÜZERİNDEN askıya
 /// alınır (BAŞKA fiber'lar bu SIRADA GERÇEKTEN ilerleyebilir); fiber
@@ -252,22 +251,22 @@ export fn nox_thread_join(rt: ?*anyopaque, handle: ?*anyopaque) callconv(.c) i64
     const h: *ThreadHandle = @ptrCast(@alignCast(handle orelse return 0));
 
     if (bridge.currentFiberScheduler()) |scheduler| {
-        // Faz [YENİ] — bkz. `http_client.zig`nin AYNI notu.
+        // Faz [YENİ] — bkz. `completion_pipe.zig`nin AYNI notu.
         var buf: [1]u8 = undefined;
         _ = io_mod.nonBlockingReadOnce(scheduler, h.done_read_fd, &buf) catch {};
     } else {
         var buf: [1]u8 = undefined;
-        http_client.readSelfPipe(h.done_read_fd, &buf);
+        completion_pipe.readSelfPipe(h.done_read_fd, &buf);
     }
     if (!h.read_fd_closed) {
-        http_client.closeFd(h.done_read_fd);
+        completion_pipe.closeFd(h.done_read_fd);
         h.read_fd_closed = true;
     }
 
     if (h.result_is_str_bytes) |bytes| {
         h.result_is_str_bytes = null;
         defer std.heap.page_allocator.free(bytes);
-        const cloned = dupeToNoxStr(rt, bytes) orelse return 0;
+        const cloned = str_mod.nox_str_from_bytes(rt, bytes) orelse return 0;
         return strPtrToPayload(cloned);
     }
     return h.result;
@@ -314,7 +313,7 @@ test "nox_thread_spawn/join: str payload, ebeveynin orijinal str'i HEMEN serbest
             const name = std.mem.span(arg_str);
             var buf: [64]u8 = undefined;
             const greeting = std.fmt.bufPrint(&buf, "merhaba, {s}!", .{name}) catch unreachable;
-            const out = dupeToNoxStr(closure.rt, greeting).?;
+            const out = str_mod.nox_str_from_bytes(closure.rt, greeting).?;
             // Gerçek Nox codegen'inde bir parametrenin kapsam-sonu
             // release'inin KARŞILIĞI — `entry`nin ALDIĞI klonlanmış `str`
             // argümanı BURADA (kullanıldıktan SONRA) serbest bırakılmalıdır,
@@ -325,7 +324,7 @@ test "nox_thread_spawn/join: str payload, ebeveynin orijinal str'i HEMEN serbest
         }
     };
 
-    const original = dupeToNoxStr(rt, "nox").?;
+    const original = str_mod.nox_str_from_bytes(rt, "nox").?;
     const payload = strPtrToPayload(original);
 
     const handle = nox_thread_spawn(rt, Entry.greet, payload, 1, 1).?;
