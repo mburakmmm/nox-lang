@@ -202,6 +202,18 @@ test "conformance: and/or kısa-devre (RHS'in yan-etkisi ÇALIŞMAZ) her iki bac
     );
 }
 
+// Faz F.3 (bkz. plan dosyası "Dil uzantısı: 'lowlevel:'in 'manuel
+// katman'a genişletilmesi") — `ptr_add`/`ptr_read_int`/`ptr_write_int`/
+// `detach`, `qbeOp2Imm`/`qbeLoad`/`qbeStore`'un PAYLAŞILAN, backend-
+// soyutlanmış emitter'larını KULLANDIĞINDAN SIFIR EK kod İLE HER İKİ
+// backend'de de ÇALIŞIR — BU testin SOMUT kanıtı.
+test "conformance: Faz F.3 — detach/ptr_add/ptr_read_int/ptr_write_int her iki backend'de aynı" {
+    try expectConformant(
+        @embedFile("conformance_cases/conformance_lowlevel_ptr_ops.nox"),
+        @embedFile("conformance_cases/conformance_lowlevel_ptr_ops.expected"),
+    );
+}
+
 // --- Belgelenmiş sapma (divergence) testleri: checker.zig'in
 // `isSpawnParamSafeType`/`isThreadTransferSafeType`si + codegen_qbe'nin
 // `pool_run`/decorator KABUL-RED asimetrisi. ---

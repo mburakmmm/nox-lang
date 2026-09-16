@@ -2448,7 +2448,7 @@ pub const Checker = struct {
     /// olarak İŞARETLERDİ (ör. `len(xs)` İçEREN salt-okunur bir yardımcı
     /// bile YAKALANIRDI — GERÇEK bir yanlış-pozitif).
     fn isKnownSafeBuiltinCallee(name: []const u8) bool {
-        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "hpy_new_on", "hpy_getattr_int_on", "hpy_setattr_int_on", "hpy_call_attr_on", "hpy_new_object_on", "hpy_getitem_int_on", "hpy_new_string_writer_on", "hpy_writer_get_str_on", "hpy_new_string_reader_on", "wasm_call" };
+        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "hpy_new_on", "hpy_getattr_int_on", "hpy_setattr_int_on", "hpy_call_attr_on", "hpy_new_object_on", "hpy_getitem_int_on", "hpy_new_string_writer_on", "hpy_writer_get_str_on", "hpy_new_string_reader_on", "wasm_call", "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach" };
         for (safe) |s| {
             if (std.mem.eql(u8, name, s)) return true;
         }
@@ -4141,6 +4141,18 @@ pub const Checker = struct {
                 if (exp == .dict) return exp;
             }
         }
+        // Faz F.3: `adopt(p) -> T` — `T`, Nox'ta tiplerin birinci-sınıf
+        // değer OLMADIĞINDAN bir argüman olarak GEÇİRİLEMEZ; bunun yerine
+        // BU fonksiyonun (`[]`/`{}` boş literallerinin AYNI, ZATEN
+        // kanıtlanmış deseni) HEDEFİN BEKLENEN TİPİNDEN çıkarılır.
+        if (expr == .call and expr.call.callee.* == .identifier and std.mem.eql(u8, expr.call.callee.identifier, "adopt")) {
+            const c = expr.call;
+            if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'adopt' tam olarak 1 argüman alır", .{});
+            const p_t = try self.checkExpr(ctx, c.args[0]);
+            if (p_t != .ptr) return self.fail(error.TypeMismatch, "'adopt' bir ptr alır", .{});
+            const exp = expected orelse return self.fail(error.UnknownType, "'adopt' yalnızca beklenen tipi bilinen bir bağlamda (var_decl/return/atama/argüman) kullanılabilir", .{});
+            return exp;
+        }
         return self.checkExpr(ctx, expr);
     }
 
@@ -4973,6 +4985,86 @@ pub const Checker = struct {
                     if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_new_string_reader_on' argümanı 1 (tutamaç) ptr olmalıdır ('hpy_open'ın dönüş değeri)", .{});
                     if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "'hpy_new_string_reader_on' argümanı 2 (content) str olmalıdır", .{});
                     return .ptr;
+                }
+                // Faz F.3 (bkz. plan dosyası "Dil uzantısı: 'lowlevel:'in
+                // 'manuel katman'a genişletilmesi"): 9 yeni `ptr`
+                // aritmetiği/okuma-yazma + `detach` yerleşiği — HEPSİ
+                // checker'da TÜR olarak KOŞULSUZ kabul edilir ("yalnızca
+                // lowlevel: içinde" kısıtlaması SADECE codegen'de,
+                // `in_lowlevel_depth` sayacı üzerinden uygulanır — bkz.
+                // plan dosyasının "Context" bölümündeki madde 2).
+                if (std.mem.eql(u8, name, "ptr_from_int")) {
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_from_int' tam olarak 1 argüman alır", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'ptr_from_int' bir int alır", .{});
+                    return .ptr;
+                }
+                if (std.mem.eql(u8, name, "ptr_to_int")) {
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_to_int' tam olarak 1 argüman alır", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_to_int' bir ptr alır", .{});
+                    return .int;
+                }
+                if (std.mem.eql(u8, name, "ptr_add")) {
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_add' tam olarak 2 argüman alır (p: ptr, n: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_add' argümanı 1 (p) ptr olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'ptr_add' argümanı 2 (n) int olmalıdır", .{});
+                    return .ptr;
+                }
+                if (std.mem.eql(u8, name, "ptr_read_int")) {
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_read_int' tam olarak 1 argüman alır", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_read_int' bir ptr alır", .{});
+                    return .int;
+                }
+                if (std.mem.eql(u8, name, "ptr_read_float")) {
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_read_float' tam olarak 1 argüman alır", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_read_float' bir ptr alır", .{});
+                    return .float;
+                }
+                if (std.mem.eql(u8, name, "ptr_read_bool")) {
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_read_bool' tam olarak 1 argüman alır", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_read_bool' bir ptr alır", .{});
+                    return .boolean;
+                }
+                if (std.mem.eql(u8, name, "ptr_write_int")) {
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_write_int' tam olarak 2 argüman alır (p: ptr, v: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_write_int' argümanı 1 (p) ptr olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'ptr_write_int' argümanı 2 (v) int olmalıdır", .{});
+                    return .none;
+                }
+                if (std.mem.eql(u8, name, "ptr_write_float")) {
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_write_float' tam olarak 2 argüman alır (p: ptr, v: float)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_write_float' argümanı 1 (p) ptr olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .float) return self.fail(error.TypeMismatch, "'ptr_write_float' argümanı 2 (v) float olmalıdır", .{});
+                    return .none;
+                }
+                if (std.mem.eql(u8, name, "ptr_write_bool")) {
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_write_bool' tam olarak 2 argüman alır (p: ptr, v: bool)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_write_bool' argümanı 1 (p) ptr olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .boolean) return self.fail(error.TypeMismatch, "'ptr_write_bool' argümanı 2 (v) bool olmalıdır", .{});
+                    return .none;
+                }
+                // `detach(x) -> ptr`: `x` ÇIPLAK bir yerel değişken adı
+                // (`.identifier`) OLMAK ZORUNDADIR — bir sınıf alanı/ifade
+                // sonucu DEĞİL (v1 sınırı, "tek-sahiplik" varsayımını basit
+                // tutmak için). Tipi list/dict/class/str olmalıdır.
+                if (std.mem.eql(u8, name, "detach")) {
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'detach' tam olarak 1 argüman alır", .{});
+                    if (c.args[0] != .identifier) {
+                        return self.fail(error.TypeMismatch, "'detach' yalnızca düz bir yerel değişkene uygulanabilir — bir sınıf alanına/ifadenin sonucuna değil", .{});
+                    }
+                    const t = try self.checkExpr(ctx, c.args[0]);
+                    switch (t) {
+                        .list, .dict, .class, .str => {},
+                        else => return self.fail(error.TypeMismatch, "'detach' yalnızca list/dict/class/str tipli bir değişkene uygulanabilir", .{}),
+                    }
+                    return .ptr;
+                }
+                // `adopt(p)` BAĞLAMSIZ (beklenen-tip olmadan) çağrıldığında
+                // BURAYA düşer — `checkExprExpected`in kendi dalı BU
+                // durumu HER ZAMAN ÖNCE ele alır (bkz. onun belge notu),
+                // bu YÜZDEN BURAYA ulaşan bir `adopt` çağrısı HER ZAMAN
+                // "beklenen tipsiz bağlam" anlamına gelir.
+                if (std.mem.eql(u8, name, "adopt")) {
+                    return self.fail(error.UnknownType, "'adopt' yalnızca beklenen tipi bilinen bir bağlamda (var_decl/return/atama/argüman) kullanılabilir", .{});
                 }
                 // Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi +
                 // metadata-tabanlı metaprogramming"): `stdlib/nox/reflect.

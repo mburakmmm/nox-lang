@@ -206,6 +206,27 @@ test "golden(typecheck): lowlevel içinde tanımlanan ad bloktan sonra kapsam d�
     );
 }
 
+test "golden(typecheck): Faz F.3 — 9 ptr_* builtin'i + detach tip olarak kabul edilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_lowlevel_manual_builtins.nox"),
+        @embedFile("typecheck_cases/ok_lowlevel_manual_builtins.expected"),
+    );
+}
+
+test "golden(typecheck): Faz F.3 — detach yalnızca çıplak bir isme uygulanabilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_detach_non_identifier.nox"),
+        @embedFile("typecheck_cases/err_detach_non_identifier.expected"),
+    );
+}
+
+test "golden(typecheck): Faz F.3 — beklenen-tipsiz bağlamda adopt reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_adopt_no_expected_type.nox"),
+        @embedFile("typecheck_cases/err_adopt_no_expected_type.expected"),
+    );
+}
+
 test "golden(typecheck): generic fonksiyon — birden çok somut tiple örnekleme" {
     try expectGolden(
         @embedFile("typecheck_cases/ok_generic_function.nox"),

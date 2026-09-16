@@ -794,7 +794,18 @@ pub fn collectLocals(self: *Codegen, locals: *std.ArrayListUnmanaged(LocalDecl),
         switch (stmt.kind) {
             .var_decl => |v| {
                 const info = try self.resolveType(v.type_expr);
-                try locals.append(self.allocator, .{ .name = v.name, .info = info, .arena = in_lowlevel });
+                // Faz F.3 (bkz. plan dosyası "Dil uzantısı: 'lowlevel:'in
+                // 'manuel katman'a genişletilmesi"): `y: T = adopt(p)`
+                // KOŞULSUZ olarak NORMAL ARC-yönetimli bir yerel OLMAK
+                // ZORUNDADIR — `p`nin işaret ettiği bellek `nox_rc_alloc`
+                // İLE (KENDİ, GERÇEK bir refcount başlığıyla) tahsis
+                // edilmiş olabilir, `lowlevel:`in KENDİ "İçİndeki HER
+                // var_decl arena'ya AİTTİR" varsayılan kuralı (`in_lowlevel`,
+                // ÜSTTEKİ satır) BURADA YANLIŞ olurdu — `y` HİÇBİR ZAMAN
+                // bireysel release EDİLMEZ, `p`nin işaret ettiği nesne
+                // SONSUZA KADAR sızardı.
+                const is_adopt = v.value == .call and v.value.call.callee.* == .identifier and std.mem.eql(u8, v.value.call.callee.identifier, "adopt");
+                try locals.append(self.allocator, .{ .name = v.name, .info = info, .arena = in_lowlevel and !is_adopt });
             },
             .for_stmt => |f| {
                 if (Codegen.isRangeCall(f.iterable)) {

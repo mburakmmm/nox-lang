@@ -319,6 +319,13 @@ pub const VarInfo = struct {
     /// GEÇERSİZ kılar). Argüman-BAĞIMLI olduğundan `LocalDecl`e DEĞİL,
     /// SADECE BURAYA (call-site'a özgü `VarInfo` gölgelemesine) aittir.
     is_pinned_str: bool = false,
+    /// Faz F.3 (bkz. plan dosyası "Dil uzantısı: 'lowlevel:'in 'manuel
+    /// katman'a genişletilmesi"): `detach(x)`in İŞARETLEDİĞİ, KALICI
+    /// release-atlama bayrağı — `x`in scope-sonu RELEASE emisyonunu
+    /// SÜRESİZ durdurur (`x`in bellek sahipliği artık `ptr` üzerinden,
+    /// programcının KENDİ sorumluluğundadır — `arena`/`borrowed_field`
+    /// İLE AYNI release-guard koşuluna eklenen, BAĞIMSIZ bir bayrak).
+    manual: bool = false,
 };
 
 pub const LocalDecl = struct {

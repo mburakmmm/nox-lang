@@ -1,0 +1,17 @@
+def compute() -> int:
+    total: int = 0
+    lowlevel:
+        nums: list[int] = [10, 20, 30]
+        base: ptr = detach(nums)
+        elem0: ptr = ptr_add(base, 16)
+        elem1: ptr = ptr_add(base, 24)
+        elem2: ptr = ptr_add(base, 32)
+        v0: int = ptr_read_int(elem0)
+        v1: int = ptr_read_int(elem1)
+        v2: int = ptr_read_int(elem2)
+        ptr_write_int(elem1, v1 + 100)
+        v1_new: int = ptr_read_int(elem1)
+        total = v0 + v1_new + v2
+    return total
+
+print(compute())

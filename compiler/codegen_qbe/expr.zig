@@ -85,6 +85,26 @@ pub fn genExprForTarget(self: *Codegen, expr: ast.Expr, target: anytype) Codegen
             .dict_info = target.dict_info,
         };
     }
+    // Faz F.3 (bkz. plan dosyası "Dil uzantısı: 'lowlevel:'in 'manuel
+    // katman'a genişletilmesi"): `adopt(p)`nin dönüş DEĞERİ (`.none_lit`in
+    // AYNI, ZATEN kanıtlanmış "hedefin ÇÖZÜLMÜŞ TypeInfo'sunu KULLAN"
+    // deseni) — checker'ın `UnknownType`i BU durumu ZATEN DERLEME-
+    // ZAMANINDA elediğinden, bu dal YALNIZCA savunmacı bir GÜVENLİK
+    // AĞIdır.
+    if (expr == .call and expr.call.callee.* == .identifier and std.mem.eql(u8, expr.call.callee.identifier, "adopt")) {
+        if (self.in_lowlevel_depth == 0) return error.Unsupported;
+        const p = try self.genExpr(expr.call.args[0]);
+        return .{
+            .text = p.text,
+            .qtype = target.qtype,
+            .heap = target.heap,
+            .elem_qtype = target.elem_qtype,
+            .class_name = target.class_name,
+            .elem_heap_info = target.elem_heap_info,
+            .elem_is_str = target.elem_is_str,
+            .dict_info = target.dict_info,
+        };
+    }
     const v0 = try self.genExpr(expr);
     // Faz FF.6.4 (bkz. nox-teknik-spesifikasyon.md §3.65): hedef
     // kutulanmış bir Optional-ilkel (`boxed_scalar`) İSE VE `v0`

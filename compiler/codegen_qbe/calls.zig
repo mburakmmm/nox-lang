@@ -196,6 +196,27 @@ pub fn genHpyMarshalTrailingArgs(self: *Codegen, mc_temp: []const u8, trailing: 
     try self.releaseTemporaryArgs(trailing, arg_values.items);
 }
 
+/// Faz F.3: `ptr_from_int`/`ptr_to_int`/`ptr_add`/`ptr_read_int`/
+/// `ptr_read_float`/`ptr_read_bool`/`ptr_write_int`/`ptr_write_float`/
+/// `ptr_write_bool`/`detach`nin PAYLAŞILAN "yalnızca lowlevel: içinde"
+/// isim-kümesi.
+fn isPtrManualBuiltin(name: []const u8) bool {
+    const names = [_][]const u8{ "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach" };
+    for (names) |n| {
+        if (std.mem.eql(u8, n, name)) return true;
+    }
+    return false;
+}
+
+/// Faz F.3: `checkNoLowlevelEscape`nin (ownership.zig) AYNI "codegen-
+/// seviyesi kısıtlama, genel Unsupported mesajı" ilkesi — `self.in_
+/// lowlevel_depth == 0` İSE (çağrı bir `lowlevel:` bloğunun DIŞINDA)
+/// `main.zig`nin ZATEN karşıladığı genel, temiz bir hata mesajıyla
+/// başarısız olur.
+fn checkInsideLowlevel(self: *Codegen) CodegenError!void {
+    if (self.in_lowlevel_depth == 0) return error.Unsupported;
+}
+
 pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
     switch (c.callee.*) {
         .identifier => |name| {
@@ -593,6 +614,102 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 const result_temp = try self.newTemp();
                 try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$nox_wasm_call", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = path_v.text }, .{ .ty = .l, .text = func_v.text }, .{ .ty = .l, .text = arg_v.text } });
                 return .{ .text = result_temp, .qtype = .l };
+            }
+            // Faz F.3 (bkz. plan dosyası "Dil uzantısı: 'lowlevel:'in
+            // 'manuel katman'a genişletilmesi"): 9 yeni `ptr` aritmetiği/
+            // okuma-yazma + `detach` yerleşiği — HEPSİ SADECE `lowlevel:`
+            // İçİnde geçerli (checker bunu KONTROL ETMEZ, bkz. plan
+            // dosyasının Context bölümü madde 2 — `checkInsideLowlevel`
+            // TÜM 10 site TARAFINDAN paylaşılır). Codegen'i TAMAMEN
+            // backend-SOYUTLANMIŞ `qbeOp2`/`qbeOp2Imm`/`qbeLoad`/`qbeStore`
+            // emitter'larını KULLANIR — HEM QBE HEM LLVM'de SIFIR EK kod
+            // İLE çalışır.
+            if (isPtrManualBuiltin(name)) {
+                try checkInsideLowlevel(self);
+                if (std.mem.eql(u8, name, "ptr_from_int")) {
+                    if (c.args.len != 1) return error.Unsupported;
+                    const v = try self.genExpr(c.args[0]);
+                    return .{ .text = v.text, .qtype = .l, .heap = .none };
+                }
+                if (std.mem.eql(u8, name, "ptr_to_int")) {
+                    if (c.args.len != 1) return error.Unsupported;
+                    const v = try self.genExpr(c.args[0]);
+                    return .{ .text = v.text, .qtype = .l };
+                }
+                if (std.mem.eql(u8, name, "ptr_add")) {
+                    if (c.args.len != 2) return error.Unsupported;
+                    const p = try self.genExpr(c.args[0]);
+                    const n = try self.genExpr(c.args[1]);
+                    const result_temp = try self.newTemp();
+                    try self.qbeOp2(result_temp, .l, "add", p.text, n.text);
+                    return .{ .text = result_temp, .qtype = .l, .heap = .none };
+                }
+                if (std.mem.eql(u8, name, "ptr_read_int")) {
+                    if (c.args.len != 1) return error.Unsupported;
+                    const p = try self.genExpr(c.args[0]);
+                    const result_temp = try self.newTemp();
+                    try self.qbeLoad(result_temp, .l, .l, p.text);
+                    return .{ .text = result_temp, .qtype = .l };
+                }
+                if (std.mem.eql(u8, name, "ptr_read_float")) {
+                    if (c.args.len != 1) return error.Unsupported;
+                    const p = try self.genExpr(c.args[0]);
+                    const result_temp = try self.newTemp();
+                    try self.qbeLoad(result_temp, .d, .d, p.text);
+                    return .{ .text = result_temp, .qtype = .d };
+                }
+                if (std.mem.eql(u8, name, "ptr_read_bool")) {
+                    if (c.args.len != 1) return error.Unsupported;
+                    const p = try self.genExpr(c.args[0]);
+                    const result_temp = try self.newTemp();
+                    try self.qbeLoad(result_temp, .w, .w, p.text);
+                    return .{ .text = result_temp, .qtype = .w };
+                }
+                if (std.mem.eql(u8, name, "ptr_write_int")) {
+                    if (c.args.len != 2) return error.Unsupported;
+                    const p = try self.genExpr(c.args[0]);
+                    const v = try self.genExpr(c.args[1]);
+                    try self.qbeStore(.l, v.text, p.text);
+                    return .{ .text = "0", .qtype = .none };
+                }
+                if (std.mem.eql(u8, name, "ptr_write_float")) {
+                    if (c.args.len != 2) return error.Unsupported;
+                    const p = try self.genExpr(c.args[0]);
+                    const v = try self.genExpr(c.args[1]);
+                    try self.qbeStore(.d, v.text, p.text);
+                    return .{ .text = "0", .qtype = .none };
+                }
+                if (std.mem.eql(u8, name, "ptr_write_bool")) {
+                    if (c.args.len != 2) return error.Unsupported;
+                    const p = try self.genExpr(c.args[0]);
+                    const v = try self.genExpr(c.args[1]);
+                    try self.qbeStore(.w, v.text, p.text);
+                    return .{ .text = "0", .qtype = .none };
+                }
+                // `detach(x) -> ptr` — `x` çıplak bir isim OLMAK ZORUNDADIR
+                // (checker ZATEN GARANTİ ETTİ). `self.vars.getPtr(name)` İLE
+                // BULUNAN `VarInfo`ye `manual = true` YAZILIR (KALICI
+                // release-atlama, bkz. `VarInfo.manual`'ın belge notu) —
+                // bir PARAMETRE (`entry.is_param`) DETACH EDİLEMEZ (çağıran
+                // taraf ZATEN o değerin sahibi/serbest bırakma sorumlusudur).
+                if (std.mem.eql(u8, name, "detach")) {
+                    if (c.args.len != 1 or c.args[0] != .identifier) return error.Unsupported;
+                    const var_name = c.args[0].identifier;
+                    const entry = self.vars.getPtr(var_name) orelse return error.Unsupported;
+                    if (entry.is_param) return error.Unsupported;
+                    entry.manual = true;
+                    const t = try self.newTemp();
+                    try self.qbeLoad(t, entry.qtype, entry.qtype, entry.slot);
+                    return .{ .text = t, .qtype = .l, .heap = .none };
+                }
+                unreachable;
+            }
+            // `adopt(p)`nin BAĞLAMSIZ (bir hedef-tipli çağrı-siteSİNDEN
+            // GEÇMEDEN, ör. `print(adopt(p))`) BURAYA ulaşması — checker'ın
+            // `UnknownType`i BU durumu ZATEN DERLEME-ZAMANINDA elediğinden,
+            // BU dal YALNIZCA savunmacı bir GÜVENLİK AĞIdır.
+            if (std.mem.eql(u8, name, "adopt")) {
+                return error.Unsupported;
             }
 
             if (self.classes.get(name)) |cinfo| {

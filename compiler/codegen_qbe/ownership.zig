@@ -65,7 +65,7 @@ pub fn releaseOneLocalIfManaged(self: *Codegen, entry: VarInfo) CodegenError!voi
     // BAŞLIĞI YOK, ömrü FONKSİYON çıkışına kadar (stack frame'in KENDİSİ)
     // sınırlı — bireysel release ÇAĞRISI, GEÇERSİZ bir stack adresini
     // `nox_rc_release`e geçirirdi.
-    if (entry.is_param or entry.arena or entry.borrowed_field or entry.is_stack_local) return;
+    if (entry.is_param or entry.arena or entry.borrowed_field or entry.is_stack_local or entry.manual) return;
     if (isHeapManaged(entry.heap)) {
         try self.releaseSlotIfSet(entry);
     } else if (entry.heap == .task or entry.heap == .channel or entry.heap == .thread_handle or entry.heap == .thread_channel or entry.heap == .task_local) {

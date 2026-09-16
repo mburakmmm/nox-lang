@@ -1,0 +1,16 @@
+def compute() -> int:
+    total: int = 0
+    lowlevel:
+        xs: list[int] = [1, 2, 3]
+        p: ptr = detach(xs)
+        addr: ptr = ptr_add(p, 16)
+        addr2: ptr = ptr_add(addr, 8)
+        v: int = ptr_read_int(addr2)
+        ptr_write_int(addr2, v + 1)
+        f: ptr = ptr_from_int(ptr_to_int(addr2))
+        b: bool = ptr_read_bool(f)
+        ptr_write_bool(f, not b)
+        ptr_write_float(f, 3.5)
+        r: float = ptr_read_float(f)
+        total = v
+    return total

@@ -21287,6 +21287,112 @@ OTOMATİK/ÜCRETSİZ çalışır).
 
 ---
 
+## 3.169 Faz F.3 — Dil uzantısı: `lowlevel:`'in "manuel katman"a genişletilmesi (`ptr` aritmetiği/okuma-yazma + `detach`/`adopt`, v1.89.0)
+
+Freestanding Nox çerçevesinin F.2'DEN (v1.88.0) SONRAKİ, çerçeve-planının
+KENDİ ÖNCEDEN "EN YÜKSEK tasarım riski taşıdığı İçİn BİLİNÇLİ olarak SON
+BIRAKILAN madde" olarak işaretlediği fazı: `lowlevel:` bloğunun BUGÜNKÜ
+"SADECE tahsis stratejisini gevşetir" (arena vs ARC) rolünü, kullanıcının
+KENDİ orijinal isteğinin ("raw pointer, pointer arithmetic, MMIO") gerektirdiği
+GERÇEK bir "manuel bellek katmanı"na genişletmek.
+
+**Üç kritik araştırma bulgusu (kapsamı NETLEŞTİRDİ)**:
+1. `ptr` BUGÜN TAMAMEN opak, SIFIR operatör taşıyor — `checker.zig`nin
+   `.index`/`.unary`/`checkBinary` dalları `.ptr`i HİÇBİR operatörde kabul
+   etmiyor, KENDİSİ `{ .qtype = .l, .heap = .none }`e çözülüyor
+   (`registration.zig:132`). `HeapKind.none` `isHeapManaged`nin (`abi.
+   zig:152-154`) kapsamına GİRMEDİĞİNDEN, `ptr` `checkNoLowlevelEscape`nin
+   (`ownership.zig:728-730`) escape-kontrolünden ZATEN İSTİSNADIR — bir
+   `ptr` BUGÜN BİLE bir `lowlevel:` bloğundan serbestçe DÖNEBİLİR.
+2. `checkNoLowlevelEscape`/`in_lowlevel_depth` CODEGEN-seviyesindedir,
+   checker'da KARŞILIĞI YOKTUR (`ownership.zig`/`codegen.zig:1239`/
+   `stmt.zig:237-239`) — `nox.thread.pool_run`'ın QBE'de `error.Unsupported`e
+   düşen, checker'ın tür-doğruluğunu KABUL ettiği AMA codegen'in AYRI bir
+   kısıtlama uyguladığı ZATEN kanıtlanmış desenle TUTARLI olarak, F.3'ün
+   10 YENİ builtin'i checker'da TÜR olarak KOŞULSUZ kabul edilir,
+   "yalnızca `lowlevel:` İçİnde" kısıtlaması SADECE codegen'de uygulanır.
+3. QBE'nin GERÇEK inline-assembly YETENEĞİ SIFIRDIR (yerel `qbe` 1.3
+   ikilisi `-h`/`strings` İLE doğrudan İncelenerek doğrulandı — "asm"
+   kelimesinin HİÇBİR biçimi bulunamadı) — inline assembly BU FAZIN
+   kapsamı DIŞINDA bırakıldı, teorik olarak SADECE LLVM backend'inde
+   (gelecekteki, AYRI bir faz) mümkündür.
+
+**Tasarım — SIFIR yeni sözdizimi/gramer/lexer/parser değişikliği**: TÜM
+yeni yetenek, `print`/`len`/`str`/`hpy_call_on` İLE AYNI, ZATEN kanıtlanmış
+"checker.zig'in `checkCall`ında + codegen_qbe/calls.zig'in `genCall`ında
+İSME göre özel-işlenen yerleşik fonksiyon" kalıbıyla sunulur.
+
+**9 `ptr` builtin'i** (`ptr_from_int(addr: int) -> ptr`, `ptr_to_int(p:
+ptr) -> int`, `ptr_add(p: ptr, n: int) -> ptr`, `ptr_read_int/float/bool(p:
+ptr) -> T`, `ptr_write_int/float/bool(p: ptr, v: T) -> None`) — codegen'i
+TAMAMEN `compiler/codegen_qbe/codegen.zig`nin backend-SOYUTLANMIŞ
+`qbeOp2`/`qbeOp2Imm`/`qbeLoad`/`qbeStore` emitter'larını KULLANIR (HER
+İKİSİ de `self.backend`e göre `qbe_emit.zig`/`llvm_emit.zig`e dispatch
+eder) — bu builtin'ler HEM QBE HEM LLVM backend'inde SIFIR EK kod İLE
+ÇALIŞIR (bkz. YENİ `tests/golden/backend_conformance_test.zig` fixture'ı,
+`conformance_lowlevel_ptr_ops.nox`). Byte-seviyeli (`ptr_read_byte`/
+`ptr_write_byte`, TEK bayt MMIO erişimi) BİLİNÇLİ olarak KAPSAM DIŞI
+bırakıldı — `QbeType` (`{l, d, w, none}`) 1-baytlık bir varyant TAŞIMIYOR,
+bu HEM QBE HEM LLVM emitter'ının PAYLAŞILAN soyutlamasının genişletilmesini
+gerektirirdi.
+
+**`detach(x) -> ptr`**: bir yerel değişkeni ARC yönetiminden KALICI olarak
+çıkarır. Checker: `x`nin ÇIPLAK bir `.identifier` olmasını (bir sınıf
+alanı/ifadenin SONUCU DEĞİL) VE tipinin `list`/`dict`/`class`/`str`
+olmasını doğrular. Codegen: `self.vars.getPtr(name)` İLE bulunan `VarInfo`ye
+YENİ bir `manual: bool` bayrağı yazar (`arena`/`borrowed_field`İLE AYNI
+release-atlama gerekçesi, `ownership.zig`nin `releaseOneLocalIfManaged`si
++ `stmt.zig`nin `.var_decl` yeniden-bildirim release koşulu, HER İKİSİ de
+`entry.manual`i kontrol eder) — bir PARAMETRE `detach` EDİLEMEZ (çağıran
+taraf ZATEN o değerin sahibidir).
+
+**`adopt(p: ptr) -> T`**: bir ham işaretçiyi BEKLENEN tipe göre ARC
+yönetimine geri alır. `T` bir ÇAĞRI ARGÜMANI olarak GEÇİRİLMEZ (Nox'ta
+tipler birinci-sınıf değer DEĞİLDİR) — `checker.zig`nin `checkExprExpected`si
+(boş `[]`/`{}` literallerinin AYNI, ZATEN kanıtlanmış "hedefin beklenen
+tipini kullan" mekanizması) `adopt(p)`nin `.call` şeklini ÖZEL olarak
+tanıyıp `expected`i döner; `checkCall`da (BEKLENEN-tip bağlamı OLMADAN
+ulaşılırsa) HER ZAMAN `UnknownType` verir. Codegen'in `genExprForTarget`si
+(`.none_lit`in AYNI deseni) `adopt`u tanıyıp `p`nin değerini HEDEFİN
+`qtype`/`heap`/`class_name` ETİKETLERİYLE (savunmacı bir güvenlik ağı
+olarak `genExpr`nin KENDİSİ de `in_lowlevel_depth == 0` İSE `error.
+Unsupported` döner) DÖNER — sonuç, hedefin `VarInfo`si NORMAL ARC-yönetimli
+olarak (SIFIR yeni bayrak) kaydedilir; `p`nin GERÇEKTEN geçerli bir ARC
+başlığına İŞARET ETTİĞİ KULLANICININ KENDİ garantisidir (Katman-4'ün
+"programcı sorumludur" modeli).
+
+**GERÇEK bir hata bulundu VE düzeltildi (implementasyon SIRASINDA)**:
+`registration.zig`nin `collectLocals`ı, bir `lowlevel:` bloğu İçİndeki
+HER `var_decl`i (nasıl inşa edildiğinden BAĞIMSIZ) `.arena = in_lowlevel`
+İLE koşulsuz İşaretliyordu — `y: T = adopt(p)` İçİn bu YANLIŞTI (`p`nin
+işaret ettiği bellek GERÇEK bir `nox_rc_alloc` başlığı taşıyabilir, `y`
+NORMAL release ALMAZSA nesne KALICI sızar). `v.value`nin `adopt(...)`
+şeklinde OLUP OLMADIĞI kontrol edilip `arena = in_lowlevel and !is_adopt`
+OLARAK düzeltildi — kırmızı-takım kanıtı: `lowlevel_detach_adopt_roundtrip.nox`
+fixture'ı BU düzeltme OLMADAN `expectGolden`'ın "stderr boş olmalı"
+kontrolü TARAFINDAN YAKALANAN GERÇEK bir bellek sızıntısıyla BAŞARISIZ
+oluyordu.
+
+**Kritik dosyalar**: `compiler/typecheck/checker.zig` (10 YENİ builtin
+kontrolü + `checkExprExpected`nin `adopt` dalı + `isKnownSafeBuiltinCallee`
+listesi), `compiler/codegen_qbe/calls.zig` (`isPtrManualBuiltin`/
+`checkInsideLowlevel` + 10 YENİ lowering bloğu), `compiler/codegen_qbe/
+expr.zig` (`genExprForTarget`nin `adopt` dalı), `compiler/codegen_qbe/
+types.zig` (`VarInfo.manual`), `compiler/codegen_qbe/ownership.zig`
+(release-guard), `compiler/codegen_qbe/stmt.zig` (`.var_decl` release
+koşulu), `compiler/codegen_qbe/registration.zig` (`collectLocals`nin
+`adopt` istisnası).
+
+**Kapsam DIŞI (bu turda)**: inline assembly (SADECE LLVM backend'inde
+teorik olarak mümkün, AYRI bir gelecekteki faz); `ptr_read_byte`/
+`ptr_write_byte` (`QbeType`ye 1-baytlık bir varyant EKLEMEYİ gerektirir);
+tipli/generic `ptr[T]`; `detach`nin sınıf ALANLARINA/geçici ifadelere
+UYGULANMASI (v1 SADECE ÇIPLAK yerel değişken isimlerini kapsar);
+linear-typing/move-semantiği (`detach` SONRASI `x`in KENDİSİNİN
+KULLANILAMAZ hale getirilmesi — v1 SADECE release-emisyonunu durdurur).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

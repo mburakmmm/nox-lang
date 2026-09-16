@@ -353,6 +353,9 @@ const fixtures = [_]Fixture{
     .{ .name = "codegen(çalıştır): GG.24 — bare except ile yakalanan derin zincirli bir istisna çökmeden release edilir", .kind = .golden, .source = @embedFile("codegen_cases/gg24_bare_except_deep_chain_release.nox"), .expected_stdout = @embedFile("codegen_cases/gg24_bare_except_deep_chain_release.expected") },
     .{ .name = "codegen(çalıştır): GG.25.1 — 1000 seviyelik sıradan kullanıcı özyinelemesi fiber yığınında çökmeden tamamlanır", .kind = .golden, .source = @embedFile("codegen_cases/gg25_user_recursion_depth_1000.nox"), .expected_stdout = @embedFile("codegen_cases/gg25_user_recursion_depth_1000.expected") },
     .{ .name = "codegen(çalıştır): liste literali sondaki virgülü kabul eder (çok satırlı ve tek satırlı)", .kind = .golden, .source = @embedFile("codegen_cases/list_lit_trailing_comma.nox"), .expected_stdout = @embedFile("codegen_cases/list_lit_trailing_comma.expected") },
+    .{ .name = "codegen(çalıştır): Faz F.3 — ptr_from_int/ptr_to_int round-trip", .kind = .golden, .source = @embedFile("codegen_cases/lowlevel_ptr_from_int_roundtrip.nox"), .expected_stdout = @embedFile("codegen_cases/lowlevel_ptr_from_int_roundtrip.expected") },
+    .{ .name = "codegen(çalıştır): Faz F.3 — detach + ptr_add + ptr_read_int/ptr_write_int ile liste elemanlarına erişim", .kind = .golden, .source = @embedFile("codegen_cases/lowlevel_ptr_arithmetic_and_readwrite.nox"), .expected_stdout = @embedFile("codegen_cases/lowlevel_ptr_arithmetic_and_readwrite.expected") },
+    .{ .name = "codegen(çalıştır): Faz F.3 — detach/adopt round-trip (sınıf örneği), sızıntı/UAF yok", .kind = .golden, .source = @embedFile("codegen_cases/lowlevel_detach_adopt_roundtrip.nox"), .expected_stdout = @embedFile("codegen_cases/lowlevel_detach_adopt_roundtrip.expected") },
 };
 
 fn runOneFixture(fx: *const Fixture, result: *FixtureResult) void {

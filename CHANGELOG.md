@@ -14,6 +14,71 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.89.0]
+
+### Eklendi (Faz F.3 — Dil uzantısı: `lowlevel:`'in "manuel katman"a genişletilmesi)
+- `lowlevel:` bloğunun BUGÜNKÜ "SADECE tahsis stratejisini gevşetir"
+  rolü, GERÇEK bir manuel bellek katmanına genişletildi — SIFIR YENİ
+  sözdizimi/gramer/lexer/parser değişikliği: TÜM yeni yetenek, `print`/
+  `len`/`str` İLE AYNI, ZATEN kanıtlanmış "checker/codegen'in `.identifier`
+  dispatch'inde isme göre özel-işlenen yerleşik fonksiyon" kalıbıyla
+  sunuldu.
+- YENİ 9 `ptr` aritmetiği/okuma-yazma yerleşiği (`ptr_from_int(addr:
+  int) -> ptr`, `ptr_to_int(p: ptr) -> int`, `ptr_add(p: ptr, n: int) ->
+  ptr`, `ptr_read_int`/`ptr_read_float`/`ptr_read_bool(p: ptr) -> T`,
+  `ptr_write_int`/`ptr_write_float`/`ptr_write_bool(p: ptr, v: T) ->
+  None`) — `compiler/codegen_qbe/codegen.zig`nin backend-SOYUTLANMIŞ
+  `qbeOp2`/`qbeOp2Imm`/`qbeLoad`/`qbeStore` emitter'larını KULLANIR,
+  SIFIR EK kod İLE HEM QBE HEM LLVM backend'inde çalışır (bkz. YENİ
+  `backend_conformance_test.zig` fixture'ı).
+- YENİ `detach(x) -> ptr` — çıplak bir yerel değişkeni (list/dict/class/
+  str) ARC yönetiminden KALICI olarak çıkarır (`VarInfo`'ya YENİ `manual`
+  bayrağı — `arena`/`borrowed_field` İLE AYNI release-atlama gerekçesi).
+  Bir parametre `detach` edilemez.
+- YENİ `adopt(p: ptr) -> T` — bir HAM işaretçiyi BEKLENEN tipe göre ARC
+  yönetimine geri alır — `T`, `checkExprExpected`/`genExprForTarget`nin
+  ZATEN VAR OLAN "hedefin beklenen tipini kullan" mekanizmasıyla (boş `[]`/
+  `{}` literallerinin AYNI deseni) çözülür, YENİ bir tipler-birinci-sınıf-
+  değer sözdizimi GEREKMEDEN.
+- 10 yeni yerleşiğin TÜMÜ SADECE `lowlevel:` İçİnde geçerlidir — bu kısıt
+  checker'da DEĞİL (checker TÜR olarak koşulsuz kabul eder — `nox.
+  thread.pool_run`'ın QBE'de `error.Unsupported`e düşen, ZATEN kanıtlanmış
+  "checker tip-doğruluğunu kabul eder, codegen bağlam kısıtlaması uygular"
+  deseniyle TUTARLI), SADECE codegen'de (`in_lowlevel_depth` sayacı
+  üzerinden, `main.zig`nin ZATEN karşıladığı genel `error.Unsupported`
+  mesajıyla) uygulanır.
+
+### Düzeltildi (F.3'ün KENDİ implementasyonu SIRASINDA bulunan gerçek bir hata)
+- `compiler/codegen_qbe/registration.zig`nin `collectLocals`'ı, bir
+  `lowlevel:` bloğu İÇİNDEKİ HER `var_decl`'i (nasıl inşa edildiğinden
+  BAĞIMSIZ) koşulsuz olarak `.arena = true` (bireysel ARC release'i
+  ATLA) İşaretliyordu — `y: T = adopt(p)` İçİn bu YANLIŞTI: `p`'nin
+  işaret ettiği bellek GERÇEK bir `nox_rc_alloc` başlığı taşıyabilir
+  (`detach`'in KENDİ ürettiği KESİN durum) VE `y`'nin normal ARC release
+  ALMASI GEREKİR, aksi halde nesne KALICI olarak sızar. `adopt(...)`
+  değerli bir `var_decl` artık `in_lowlevel` blanket kuralından İSTİSNA
+  tutulur (kırmızı-takım kanıtı: `lowlevel_detach_adopt_roundtrip.nox`
+  fixture'ı BU düzeltme OLMADAN GERÇEK bir bellek sızıntısıyla BAŞARISIZ
+  oluyordu, `zig build test`in `expectGolden`'ının "stderr boş olmalı"
+  kontrolü TARAFINDAN yakalandı).
+
+### Doğrulama
+- YENİ typecheck golden fixture'ları (3): 9 builtin + `detach`'in HEPSİ
+  TÜR olarak kabul edilir; `detach`nin çıplak-olmayan bir argümana
+  uygulanması reddedilir; `adopt`'un beklenen-tipsiz bir bağlamda
+  kullanımı reddedilir.
+- YENİ, GERÇEKTEN derlenip ÇALIŞTIRILAN codegen golden fixture'ları (3):
+  `ptr_from_int`/`ptr_to_int` round-trip; `detach`+`ptr_add`+`ptr_read_
+  int`/`ptr_write_int` İLE bir listenin elemanlarına bireysel erişim;
+  `detach`/`adopt` round-trip (bir sınıf örneği).
+  Kırmızı-takım (`tests/cli/lowlevel_manual_test.zig`, YENİ, GERÇEK
+  `noxc` alt süreciyle): `ptr_read_int`/`detach`/`adopt`'un `lowlevel:`
+  DIŞINDA kullanımı `exit(1)` + genel "desteklenmeyen bir yapı" mesajıyla
+  reddedilir.
+- YENİ backend-conformance fixture'ı (`conformance_lowlevel_ptr_ops.nox`):
+  `detach`/`ptr_add`/`ptr_read_int`/`ptr_write_int`'in HEM QBE HEM LLVM
+  backend'inde BİREBİR AYNI çıktıyı ürettiğinin somut kanıtı.
+
 ## [1.88.0]
 
 ### Eklendi (Faz F.2 — Dil seviyesi: capability sistemi, `--profile freestanding`)
