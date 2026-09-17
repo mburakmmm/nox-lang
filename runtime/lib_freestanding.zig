@@ -19,6 +19,9 @@
 //! `bridge.zig`nin `nox_async_init`indeki `if (comptime !is_freestanding)`
 //! guard'ı (bkz. onun belge notu) bunu GARANTİ eder.
 
+const std = @import("std");
+const builtin = @import("builtin");
+
 pub const asap = @import("alloc/asap.zig");
 pub const arc = @import("alloc/arc.zig");
 pub const dispatch_registry = @import("alloc/dispatch_registry.zig");
@@ -64,6 +67,31 @@ export fn nox_os_init(argc: i32, argv: ?[*]const ?[*:0]const u8) callconv(.c) vo
     g_os_argv = argv;
 }
 
+/// Faz F.4 (bkz. plan dosyası "Gerçek bare-metal boot zinciri"): `genMain`/
+/// `genMainAsync`nin (bkz. `registration.zig`nin `runtimeInitSymbol`ı)
+/// `--profile freestanding` İKEN çağırdığı GERÇEK giriş noktası — SABİT,
+/// program-ömürlü bir `.bss`-yerleşimli 4 MiB tampon ÜZERİNE kurulu bir
+/// `std.heap.FixedBufferAllocator`i (arch-NÖTR — x86_64'e ÖZGÜ bir dosyada
+/// DEĞİL, AKSİ HALDE aarch64 host'ta `noxc build --profile freestanding`
+/// ÇÖZÜLMEMİŞ sembol verirdi) `asap.nox_runtime_init_with_allocator`e
+/// bootstrap+injected allocator OLARAK geçirir — ARC/list/dict/class
+/// tahsisi GERÇEKTEN BU "kernel heap"ten akar (F.0.2'nin enjeksiyon
+/// noktası). ÜRETİLEN `.elf`nin `= undefined` global'in GERÇEKTEN `.bss`e
+/// GİTTİĞİ (dosya boyutunu ŞİŞİRMEDİĞİ), `zig build kernel-boot-test`in
+/// ELF-boyutu iddiasıyla DOLAYLI olarak doğrulanır.
+const KERNEL_HEAP_BYTES: usize = 4 * 1024 * 1024;
+var g_kernel_heap_backing: [KERNEL_HEAP_BYTES]u8 align(16) = undefined;
+var g_kernel_fba: std.heap.FixedBufferAllocator = undefined;
+var g_kernel_fba_ready: bool = false;
+
+pub export fn nox_runtime_init_freestanding() callconv(.c) ?*anyopaque {
+    if (!g_kernel_fba_ready) {
+        g_kernel_fba = std.heap.FixedBufferAllocator.init(&g_kernel_heap_backing);
+        g_kernel_fba_ready = true;
+    }
+    return asap.nox_runtime_init_with_allocator(g_kernel_fba.allocator());
+}
+
 export fn nox_stdin_read_line_raw(rt: ?*anyopaque) callconv(.c) ?[*:0]u8 {
     _ = rt;
     return null;
@@ -90,17 +118,84 @@ export fn strcmp(a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) c_int {
     }
 }
 
-/// Faz R.3+F.1 tamamlama: `print()` builtin'i (bkz. `compiler/codegen_qbe/
-/// expr.zig`) HER ZAMAN, KOŞULSUZ olarak `$printf`e (libc'nin KENDİSİ)
-/// lowerlanıyor — freestanding'de GERÇEK bir konsol/UART olmadığından
-/// (Faz F.4'ün işi) bu SADECE LİNKLEMEYİ sağlayan bir no-op'tur. GERÇEK
-/// çağrı sitesi VARARGS (C ABI) kullanıyor OLSA da, linkleme SEVİYESİNDE
-/// (bu ikili HİÇBİR YERDE ÇALIŞTIRILMADIĞINDAN, bkz. yukarıdaki not)
-/// SEMBOL-adı çözümlemesi YETERLİDİR — ÇAĞRI-SİTESİNİN TAM ABI'siyle
-/// EŞLEŞMESİ bu fazda GEREKMEZ.
-export fn printf(fmt: ?[*:0]const u8) callconv(.c) c_int {
-    _ = fmt;
-    return 0;
+/// Faz F.4 (bkz. plan dosyası "Gerçek bare-metal boot zinciri"): `print()`
+/// builtin'inin (bkz. `compiler/codegen_qbe/expr.zig`nin `genPrint`ı)
+/// KOŞULSUZ lowerlandığı `$printf`nin GERÇEK implementasyonu — R.3+F.1'in
+/// no-op STUB'ı YÜKSELTİLDİ. `genPrint`nin ÜRETTİĞİ TÜM format string'leri
+/// (`$fmt_int`/`$fmt_float`/`$fmt_str`/`$fmt_bool_true`/`$fmt_bool_false`/
+/// `$fmt_newline`/`$fmt_int_frag`/`$fmt_float_frag`/`$fmt_str_frag`/
+/// `$fmt_bool_true_frag`/`$fmt_bool_false_frag`/`$fmt_lbracket`/`$fmt_
+/// rbracket`/`$fmt_rparen`/`$fmt_comma_sp`, VE sınıf-adı/alan-adı literal
+/// string'leri) EN FAZLA TEK bir `%lld`/`%g`/`%s` yer-tutucusu TAŞIR — BU
+/// YÜZDEN genel bir C printf yerine, BU DAR yer-tutucu kümesini `@cVaStart`/
+/// `@cVaArg` İLE okuyan minimal bir yorumlayıcı YETERLİDİR.
+///
+/// **SADECE x86_64'te GERÇEK** (bkz. `printfReal`) — `std.builtin.VaList`
+/// aarch64-freestanding+LLVM backend İçİn `@compileError("disabled due to
+/// miscompilations")` İLE KOŞULSUZ REDDEDİYOR (Zig 0.16'nın KENDİ stdlib'i,
+/// `x86_64`'ün freestanding OS'ta BU KISITTAN MUAF olmasının AKSİNE) —
+/// `runtime/lib_freestanding.zig` HEM x86_64 kernel zincirine (F.4'ün
+/// ASIL hedefi, GERÇEKTEN çalıştırılır) HEM host-mimarisi zincirine
+/// (F.0.7'nin KENDİ, SADECE derleme-regresyonu kanıtlayan — HİÇ ÇALIŞTIRILMAYAN
+/// — zinciri) KÖK olduğundan, `@cVaStart`nin `if (comptime ...)` İLE
+/// TAMAMEN ELENMESİ (aarch64 host'ta printf'in KENDİ gövdesinin HİÇ analiz
+/// EDİLMEMESİ) BU çakışmayı YAPISAL olarak ORTADAN KALDIRIR — `nox_os_init`/
+/// `nox_stdin_read_line_raw`nin AYNI "SADECE linklemeyi sağlayan no-op"
+/// ilkesiyle, aarch64 host'ta printf ARTIK OLDUĞU GİBİ (F.0.7-ÖNCESİ,
+/// SADECE bir linkleme-kanıtı) KALIR.
+const printf_real = builtin.cpu.arch == .x86_64;
+
+fn printfReal(f: [*:0]const u8, ap_ptr: *std.builtin.VaList) usize {
+    var buf: [1024]u8 = undefined;
+    var pos: usize = 0;
+    var i: usize = 0;
+    while (f[i] != 0) : (i += 1) {
+        if (f[i] == '%' and f[i + 1] == 'l' and f[i + 2] == 'l' and f[i + 3] == 'd') {
+            i += 3;
+            const v = @cVaArg(ap_ptr, i64);
+            const written = std.fmt.bufPrint(buf[pos..], "{d}", .{v}) catch break;
+            pos += written.len;
+        } else if (f[i] == '%' and f[i + 1] == 'g') {
+            i += 1;
+            const v = @cVaArg(ap_ptr, f64);
+            const written = std.fmt.bufPrint(buf[pos..], "{d}", .{v}) catch break;
+            pos += written.len;
+        } else if (f[i] == '%' and f[i + 1] == 's') {
+            i += 1;
+            const v = @cVaArg(ap_ptr, ?[*:0]const u8);
+            if (v) |s| {
+                const slen = std.mem.len(s);
+                const copy_len = @min(slen, buf.len - pos);
+                @memcpy(buf[pos..][0..copy_len], s[0..copy_len]);
+                pos += copy_len;
+            }
+        } else if (pos < buf.len) {
+            buf[pos] = f[i];
+            pos += 1;
+        }
+    }
+    diag_sink.diagSink()(null, &buf, pos);
+    return pos;
+}
+
+export fn printf(fmt: ?[*:0]const u8, ...) callconv(.c) c_int {
+    if (comptime !printf_real) return 0;
+    const f = fmt orelse return 0;
+    var ap = @cVaStart();
+    defer @cVaEnd(&ap);
+    return @intCast(printfReal(f, &ap));
+}
+
+/// Faz F.4: x86_64'e ÖZGÜ kernel kodu (boot.S'in `nox_freestanding_early_
+/// init`i ÇAĞIRDIĞI, seri-port/IDT/PIC İçEREN dosya) — SADECE `builtin.cpu.
+/// arch == .x86_64` İKEN force-ref edilir (Zig'in tembel-analiz modeliyle,
+/// bkz. dosya-üstü belge notu) — aarch64 host'un KENDİ freestanding zinciri
+/// (`build.zig:342`, F.1'İN host-arch zinciri) BU dosyayı HİÇ GÖRMEZ, x86-
+/// özel inline-asm'in aarch64'te derleme hatası VERMESİ YAPISAL olarak
+/// İMKANSIZDIR.
+pub const kernel_x86_64 = @import("freestanding/x86_64/kernel.zig");
+comptime {
+    if (builtin.cpu.arch == .x86_64) _ = kernel_x86_64;
 }
 
 // `lib.zig`nin AYNI zorunlu force-ref bloğu — bu modüllerin `export fn`

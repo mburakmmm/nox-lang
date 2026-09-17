@@ -15,6 +15,7 @@
 //! BAĞIMSIZ ÇAĞIRAN her test dosyasının AYNI mantığı TEK bir yerden
 //! paylaşması İÇİN vardır — `compiler/lib.zig` üzerinden dışa açılır.
 
+const std = @import("std");
 const builtin = @import("builtin");
 
 /// Faz R.3+F.1 tamamlama (bkz. plan dosyası): `noxc`nin KENDİ çalıştığı
@@ -47,4 +48,18 @@ pub fn name(is_freestanding: bool) []const u8 {
             else => @compileError("qbe: desteklenmeyen mimari"),
         },
     };
+}
+
+/// Faz F.4 (bkz. plan dosyası "Gerçek bare-metal boot zinciri"): `name()`nin
+/// (yukarıda, DEĞİŞMEDEN) comptime-bilinen `builtin.cpu.arch`ının AKSİNE,
+/// ÇALIŞMA-ZAMANI bir arch-ADI stringinden `qbe -t` hedefini çözer — SADECE
+/// `NOX_FREESTANDING_KERNEL_ARCH` (dâhilî/belgelenmemiş bir test kancası,
+/// bkz. `main.zig`nin `buildOne`ı) SETLENDİĞİNDE kullanılır. Bilinmeyen bir
+/// arch adı İçİn `null` döner (ÇALIŞMA-ZAMANI girdisi OLDUĞUNDAN `@compileError`
+/// KULLANILAMAZ) — çağıran taraf AÇIK bir hatayla `exit(1)` yapar.
+pub fn nameForArch(arch_name: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, arch_name, "x86_64")) return "amd64_sysv";
+    if (std.mem.eql(u8, arch_name, "aarch64")) return "arm64";
+    if (std.mem.eql(u8, arch_name, "riscv64")) return "rv64";
+    return null;
 }

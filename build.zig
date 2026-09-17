@@ -398,9 +398,97 @@ pub fn build(b: *std.Build) void {
     // BU nesneye GÖMÜLMÜYORDU (libc OLMADAN, `-nostdlib` bağlamında BUNLAR
     // BAŞKA HİÇBİR yerden GELMEZ) — AÇIKÇA `true` YAPILMASI GEREKİR.
     noxrt_freestanding.bundle_compiler_rt = true;
+    // Faz F.4 (bkz. plan dosyası "Gerçek bare-metal boot zinciri"): `aarch64`
+    // host'ta BU alana HİÇ DOKUNULMAZ (VARSAYILAN backend seçimi — F.0.7'DEN
+    // BERİ ZATEN kanıtlanmış, DEĞİŞMEYEN davranış; `printf`nin `@cVaStart`ı
+    // ARTIK `builtin.cpu.arch == .x86_64` İLE `comptime`-gate'li OLDUĞUNDAN
+    // — bkz. `lib_freestanding.zig` — aarch64'te HİÇ analiz EDİLMİYOR, bu
+    // YÜZDEN Zig'in `VaList`in aarch64+LLVM İçİn KOŞULSUZ `@compileError`ı
+    // BURADA hiç tetiklenmez). `x86_64` host'ta İSE (kernel_x86_64'ün AYNI
+    // hedefte force-ref edildiği durum) LLVM GEREKİR (aşağıdaki `noxrt_
+    // kernel`in AYNI gerekçesi — self-hosted x86_64 backend'in inline-asm
+    // ayrıştırıcısı `lidt`in bellek-operandı sözdizimini REDDEDİYOR).
+    if (freestanding_swap_arch == .x86_64) noxrt_freestanding.use_llvm = true;
     noxrt_freestanding.step.dependOn(&compile_swap_asm_freestanding.step);
     const install_noxrt_freestanding = b.addInstallFile(noxrt_freestanding.getEmittedBin(), "lib/noxrt-freestanding.o");
     b.getInstallStep().dependOn(&install_noxrt_freestanding.step);
+
+    // Faz F.4 (bkz. plan dosyası "Gerçek bare-metal boot zinciri (x86_64)"):
+    // ÜÇÜNCÜ, SABİT x86_64 freestanding zinciri — İKİNCİ zincirin (yukarıda,
+    // host mimarisine bağlı) AKSİNE, HER ZAMAN x86_64 hedefler (host'tan
+    // BAĞIMSIZ — Zig'in cross-compile'ı BU makinede (aarch64) GERÇEKTEN
+    // denenip DOĞRULANDI, bkz. plan dosyasının "Doğrulanmış zemin" bölümü).
+    // `noxrt_kernel_mod`nin KÖKÜ AYNI, ARCH-NÖTR `runtime/lib_freestanding.
+    // zig` — `kernel_x86_64` (`runtime/freestanding/x86_64/kernel.zig`)
+    // SADECE `builtin.cpu.arch == .x86_64` İKEN force-ref edilir (bkz. o
+    // dosyanın belge notu), bu YÜZDEN İKİNCİ zincirin (aarch64 host'ta)
+    // BU dosyayı HİÇ GÖRMEMESİ YAPISAL olarak garantidir.
+    const kernel_target = b.resolveTargetQuery(.{
+        .cpu_arch = .x86_64,
+        .os_tag = .freestanding,
+        .abi = .none,
+    });
+    const abi_layout_mod_k = b.createModule(.{
+        .root_source_file = b.path("shared/abi_layout.zig"),
+        .target = kernel_target,
+        .optimize = optimize,
+    });
+    const diag_sink_mod_k = b.createModule(.{
+        .root_source_file = b.path("runtime/errors/diag_sink.zig"),
+        .target = kernel_target,
+        .optimize = optimize,
+    });
+    const noxrt_kernel_mod = b.createModule(.{
+        .root_source_file = b.path("runtime/lib_freestanding.zig"),
+        .target = kernel_target,
+        .optimize = optimize,
+        .link_libc = false,
+        .imports = &.{
+            .{ .name = "abi_layout", .module = abi_layout_mod_k },
+            .{ .name = "diag_sink", .module = diag_sink_mod_k },
+        },
+    });
+    // `swap_x86_64.S`nin SABİT x86_64 hedefi İçİn AYRI bir derlemesi
+    // (`compile_swap_asm_freestanding`nin AYNI `zig cc -target ...` deseni,
+    // AMA host mimarisinden BAĞIMSIZ — HER ZAMAN x86_64).
+    const compile_swap_asm_kernel = b.addSystemCommand(&.{
+        b.graph.zig_exe, "cc",
+        "-target", "x86_64-freestanding-none",
+        "-c", "-o", "runtime/async_rt/swap_x86_64_kernel.o", "runtime/async_rt/swap_x86_64.S",
+    });
+    noxrt_kernel_mod.addObjectFile(b.path("runtime/async_rt/swap_x86_64_kernel.o"));
+    const noxrt_kernel = b.addObject(.{
+        .name = "noxrt-freestanding-x86_64",
+        .root_module = noxrt_kernel_mod,
+    });
+    // `noxrt_freestanding.bundle_compiler_rt`in AYNI, ÖLÇÜLMÜŞ gerekçesi
+    // (`b.addObject`nin `.kind == .obj` çıktıları İçİn `bundle_compiler_rt`
+    // VARSAYILAN olarak `false`dır).
+    noxrt_kernel.bundle_compiler_rt = true;
+    // Faz F.4: GERÇEK bir derlemeyle ÖLÇÜLEREK bulundu — `kernel.zig`nin
+    // `idtInstall()`ındaki `lidt (%[p])` inline-asm'i, Zig'in SELF-HOSTED
+    // x86_64 backend'inin (VARSAYILAN, `-fllvm` OLMADAN) inline-asm
+    // ayrıştırıcısı TARAFINDAN "invalid memory operand" İLE REDDEDİLİYOR —
+    // LLVM backend'i (`use_llvm = true`) BU sözdizimini DOĞRU işliyor.
+    // `x86_64`in `VaList`ı (`printf`nin `@cVaStart`ı İçİn) freestanding
+    // OS'ta backend'DEN BAĞIMSIZ ÇALIŞTIĞINDAN (bkz. `std.builtin.VaList`,
+    // KISIT SADECE `.uefi`/`.windows`e ÖZGÜ) BU değişiklik `printf`i ETKİLEMEZ.
+    noxrt_kernel.use_llvm = true;
+    noxrt_kernel.step.dependOn(&compile_swap_asm_kernel.step);
+    const install_noxrt_kernel = b.addInstallFile(noxrt_kernel.getEmittedBin(), "lib/noxrt-freestanding-x86_64.o");
+    b.getInstallStep().dependOn(&install_noxrt_kernel.step);
+
+    // `boot.S` (Multiboot1 header + 32-bit boot stub + long-mode geçişi +
+    // GDT + ISR trambolinleri) — `noxrt_kernel_mod`nin PARÇASI DEĞİL, ayrı
+    // derlenip `kernel_boot_x86_64_test.zig`nin KENDİ, SONRAKİ link adımında
+    // (madde 9) DOĞRUDAN kullanılır (`swap_asm_o_path`nin AYNI, kaynak-
+    // ağacı-İçİ nesne-dosyası konvansiyonu).
+    const compile_boot_x86_64 = b.addSystemCommand(&.{
+        b.graph.zig_exe, "cc",
+        "-target", "x86_64-freestanding-none",
+        "-c", "-o", "runtime/freestanding/x86_64/boot_x86_64.o", "runtime/freestanding/x86_64/boot.S",
+    });
+    b.getInstallStep().dependOn(&compile_boot_x86_64.step);
 
     // Faz O §P.1: `noxc`nin proje kökü DIŞINDAN çalıştırılabilmesi İÇİN
     // `stdlib/` ağacı da (`noxrt.o` İLE AYNI kurulum kökü altına,
@@ -1183,4 +1271,44 @@ pub fn build(b: *std.Build) void {
     });
     const freestanding_link_test = b.addTest(.{ .root_module = freestanding_link_mod });
     test_step.dependOn(&b.addRunArtifact(freestanding_link_test).step);
+
+    // Faz F.4 (bkz. plan dosyası "Gerçek bare-metal boot zinciri (x86_64)"):
+    // `freestanding_link_test`in AYNI `b.addOptions()` deseni — GERÇEK QEMU
+    // boot testinin (`tests/golden/kernel_boot_x86_64_test.zig`) İhtiyaç
+    // duyduğu TÜM yolları (zig'in KENDİ yürütülebilir dosyası + `noxc`/
+    // linker-script/boot-nesnesi/runtime-nesnesi/kernel-kaynağı) TEK bir
+    // yerden (bu dosyadan) geçirir — testin KENDİSİ bu yolları İKİNCİ KEZ
+    // hardcode ETMEZ.
+    const kernel_boot_options = b.addOptions();
+    kernel_boot_options.addOption([]const u8, "zig_exe_path", b.graph.zig_exe);
+    kernel_boot_options.addOption([]const u8, "noxc_path", "zig-out/bin/noxc");
+    kernel_boot_options.addOption([]const u8, "kernel_ld_path", "runtime/freestanding/x86_64/kernel.ld");
+    kernel_boot_options.addOption([]const u8, "boot_obj_path", "runtime/freestanding/x86_64/boot_x86_64.o");
+    kernel_boot_options.addOption([]const u8, "noxrt_kernel_obj_path", "zig-out/lib/noxrt-freestanding-x86_64.o");
+    kernel_boot_options.addOption([]const u8, "kernel_src_path", "runtime/freestanding/x86_64/kernel_demo.nox");
+    const kernel_boot_mod = b.createModule(.{
+        .root_source_file = b.path("tests/golden/kernel_boot_x86_64_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        // `shared_mem_test.zig`'in AYNI gerekçesi — bu dosya `extern "c" fn
+        // setenv` KULLANIR (`NOX_FREESTANDING_KERNEL_ARCH`i alt-sürece
+        // AKTARMAK İçİn, bkz. testin belge notu).
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "build_options", .module = kernel_boot_options.createModule() },
+        },
+    });
+    const kernel_boot_test = b.addTest(.{ .root_module = kernel_boot_mod });
+    kernel_boot_test.step.dependOn(&install_noxc.step);
+    kernel_boot_test.step.dependOn(&install_noxrt_kernel.step);
+    kernel_boot_test.step.dependOn(&compile_boot_x86_64.step);
+    kernel_boot_test.step.dependOn(&install_stdlib.step);
+    const kernel_boot_test_run = b.addRunArtifact(kernel_boot_test);
+    test_step.dependOn(&kernel_boot_test_run.step);
+    // Faz F.5'in (gelecekteki, AYRI bir tur) İhtiyaç duyacağı TEK çağrı
+    // noktası — CI'ye qemu KURULMADAN BU adım ZATEN test_step İçİnde
+    // SESSİZCE atlanıyor (bkz. testin KENDİ "qemu yoksa SkipZigTest" notu),
+    // AMA opt-in bir `zig build kernel-boot-test` de HAZIR bekler.
+    const kernel_boot_test_step = b.step("kernel-boot-test", "Faz F.4'ün x86_64 QEMU boot testini (GERÇEK bare-metal çalıştırma) çalıştırır — qemu/qbe PATH'te olmalı");
+    kernel_boot_test_step.dependOn(&kernel_boot_test_run.step);
 }

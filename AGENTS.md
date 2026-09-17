@@ -72,6 +72,8 @@ Detaylı gerekçeler için: `nox-teknik-spesifikasyon.md` (repo kökünde).
   /cpython_compat     # CPython C-API emülasyon katmanı (bkz. §10)
   /wasm_bridge        # gömülü WASM runtime entegrasyonu (bkz. §11)
   /stdlib_shims       # nox.* stdlib modüllerinin Zig tarafı
+  /freestanding       # bare-metal boot zinciri (Faz F.0-F.5) — /x86_64: linker
+                       # script + boot.S + kernel.zig + kernel_demo.nox
 /stdlib              # .nox ile yazılan standart kütüphane
 /tests
   /unit

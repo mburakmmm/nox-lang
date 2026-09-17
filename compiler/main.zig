@@ -1013,6 +1013,14 @@ fn cmdBuild(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
 /// KAYNAĞIN YANINA DEĞİL) derler, çalıştırılabilir dosyayı stdio'yu
 /// MİRAS ALARAK çalıştırır, çocuğun çıkış kodunu AYNEN yansıtır.
 fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy) !void {
+    // Faz F.4: `NOX_FREESTANDING_KERNEL_ARCH` (bkz. `buildOne`nin belge
+    // notu) DÂHİLÎ bir test kancasıdır — SETLENDİĞİNDE `buildOne` linklenmemiş
+    // BİR `.s` dosyası döner, `runAndWait` BUNU ÇALIŞTIRAMAZ. Bu, kullanıcı
+    // hatası DEĞİL (SADECE dâhilî mekanizma) AMA ucuz bir savunma.
+    if (std.c.getenv("NOX_FREESTANDING_KERNEL_ARCH") != null) {
+        printErr("noxc run: NOX_FREESTANDING_KERNEL_ARCH ayarliyken calistirilamaz (dahili bir test kancasidir, sadece 'noxc build' ile linklenmemis .s uretir)\n", .{});
+        std.process.exit(1);
+    }
     const split = splitOnDoubleDash(args);
     const opts = parseBuildOpts(split.before);
     const path_arg = opts.path orelse {
@@ -1735,7 +1743,7 @@ fn cmdExplain(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
     // hesaplanır.
     const user_stmt_start = module.body.len - user_module.body.len;
     var explain_sink: std.ArrayListUnmanaged(local_escape.ExplainRecord) = .empty;
-    _ = codegen.generateModule(a, module, checker_state.instantiations.items, generic_names.items, checker_state.class_instantiations.items, generic_class_names.items, null, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend, .{ .sink = &explain_sink, .user_stmt_start = user_stmt_start }) catch |err| {
+    _ = codegen.generateModule(a, module, checker_state.instantiations.items, generic_names.items, checker_state.class_instantiations.items, generic_class_names.items, null, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend, opts.profile, .{ .sink = &explain_sink, .user_stmt_start = user_stmt_start }) catch |err| {
         printErr("explain: kod uretimi basarisiz ({t})\n", .{err});
         std.process.exit(1);
     };
@@ -1946,7 +1954,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // sınırlaması bilinçli olarak KABUL EDİLDİ).
     const debug_source_path: ?[]const u8 = if (debug_info) path_arg else null;
 
-    const ir = codegen.generateModule(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend, null) catch |err| switch (err) {
+    const ir = codegen.generateModule(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend, profile, null) catch |err| switch (err) {
         error.Unsupported => {
             std.debug.print(
                 "codegen: bu program şu an desteklenmeyen bir yapı içeriyor " ++
@@ -2015,14 +2023,39 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
 
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ssa_path, .data = ir });
 
+    // Faz F.4 (bkz. plan dosyası "Gerçek bare-metal boot zinciri"): DÂHİLÎ,
+    // belgelenmemiş bir test kancası — genel-amaçlı bir `--target` CLI
+    // bayrağı YERİNE (BU projenin "Kapsam Dışı" disipliniyle TUTARLI), SADECE
+    // `profile == .freestanding` İKEN okunur. VARSAYILAN (AYARLANMAMIŞ)
+    // durumda davranış BİREBİR DEĞİŞMEZ.
+    const kernel_arch: ?[]const u8 = if (profile == .freestanding)
+        (if (std.c.getenv("NOX_FREESTANDING_KERNEL_ARCH")) |v| std.mem.span(v) else null)
+    else
+        null;
+
+    const qbe_arch_name: []const u8 = if (kernel_arch) |ka|
+        qbe_target.nameForArch(ka) orelse {
+            printErr("NOX_FREESTANDING_KERNEL_ARCH: bilinmeyen mimari '{s}'\n", .{ka});
+            std.process.exit(1);
+        }
+    else
+        qbe_target.name(profile == .freestanding);
+
     const qbe_result = try std.process.run(gpa, io, .{
-        .argv = &.{ "qbe", "-t", qbe_target.name(profile == .freestanding), "-o", asm_path, ssa_path },
+        .argv = &.{ "qbe", "-t", qbe_arch_name, "-o", asm_path, ssa_path },
     });
     defer gpa.free(qbe_result.stdout);
     defer gpa.free(qbe_result.stderr);
     if (qbe_result.term != .exited or qbe_result.term.exited != 0) {
         printErr("qbe basarisiz:\n{s}\n", .{qbe_result.stderr});
         std.process.exit(1);
+    }
+
+    // `kernel_arch` VARSA linkleme TAMAMEN ATLANIR — HAM `.s` dosyası
+    // (`asm_path`) çıktı OLARAK DÖNÜLÜR, F.4'ün KENDİ kernel-link adımına
+    // (`tests/golden/kernel_boot_x86_64_test.zig`) girdi olması İçİn.
+    if (kernel_arch != null) {
+        return asm_path;
     }
 
     // Faz R.3+F.1 tamamlama (bkz. plan dosyası): `--profile freestanding`

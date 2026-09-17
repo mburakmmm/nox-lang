@@ -21797,6 +21797,212 @@ GERÇEK bir kernel'i OLMADAN ANLAMSIZ).
 
 ---
 
+## 3.173 Faz F.4 — Gerçek bare-metal boot zinciri, x86_64 (v1.92.0)
+
+§3.172'nin (F.1'in KENDİ) "Kapsam DIŞI" notunun BIRAKTIĞI SIRADAKİ faz:
+bootloader + linker script + kernel entry + serial-üzerinden "Hello Nox"
++ IDT + fiziksel sayfa allocator + kernel heap — GERÇEK bir `qemu-system-
+x86_64` çalıştırmasıyla, TÜM zincirin GERÇEKTEN önyüklendiği kanıtlanır
+(sadece derleme+linklemenin ÇALIŞTIĞI DEĞİL). Kullanıcının İKİ BİLİNÇLİ
+kararı: (1) x86_64 mimarisi (aarch64 TEKNİK olarak daha basit olsa da —
+PL011 UART bellek-eşlemeli, F.3'ün `ptr_*` yerleşikleriyle SIFIR yeni
+codegen gerektirirdi — kullanıcının KENDİ ERKEN tercihiyle TUTARLI); (2)
+TAM kapsam TEK turda (bu projenin KENDİ "büyük işi küçük fazlara böl"
+disiplininden BİLİNÇLİ bir sapma).
+
+### Uygulanan mimari
+
+- **`runtime/freestanding/x86_64/kernel.ld`** — 1MiB fiziksel yükleme,
+  `.multiboot` (`KEEP`, 4-hizalı) → `.text` → `.rodata` → `.data` → `.bss`
+  (4096-hizalı, HER BİRİ) → `_kernel_end`. Yığın/sayfa-tabloları AYRI bir
+  `.stack` bölümü OLMADAN `boot.S`nin KENDİ `.bss` rezervasyonlarında
+  yaşar (`_kernel_end`in allocator aralığıyla ÇAKIŞMASI YAPISAL olarak
+  İMKANSIZ).
+- **`runtime/freestanding/x86_64/boot.S`** — Multiboot1 başlığı; 32-bit
+  `_start`: `.bss`i sıfırlar, identity-map sayfa tabloları (0..32MiB,
+  2MiB huge page) kurar, CR3/CR4.PAE/EFER.LME/CR0.PG SIRAYLA açar, 32-bit
+  `lgdt` (6 baytlık pseudo-descriptor) + uzun-mod GDT'sine (null/64-bit
+  kod/veri, 3 girdi) `ljmp`; 64-bit `long_mode_start`: segment
+  register'ları/RSP/RBP kurar, `nox_freestanding_early_init()` → `main()`
+  (`genMain`nin `$main(w %argc, l %argv)` C-ABI'siyle EŞLEŞİR) →
+  `nox_freestanding_halt()`; 0-31 arası TÜM vektörler İçİn ISR
+  trambolinleri (hata-kodu İTEN vektörler — 8,10,11,12,13,14,17,21,29,30
+  — AYRI ele alınır, ORTAK bir `nox_isr_common` 15 GPR push/pop eder) +
+  `nox_isr_table`.
+- **`runtime/freestanding/x86_64/kernel.zig`** — `outb`/`inb`, 16550 UART
+  (COM1, `serialInit`/`serialPutc`) + `serialDiagSink` (F.0.3'ün diag_sink
+  mekanizmasına `nox_freestanding_early_init` İçİnde KAYDEDİLİR), 256-
+  girdili IDT (`type_attr=0x8E`, `lidt`), 8259 PIC TAM maskeleme, `nox_
+  isr_dispatch` (vektör 3/`#BP` `"IDT_BP_OK vector=3 rip=0x{x}"` raporlayıp
+  GERİ DÖNER — IDT'nin GERÇEKTEN ateşlediğini GÜVENLE kanıtlayan TEK yol;
+  diğer TÜM vektörler `"KERNEL_FAULT vector=..."` raporlayıp `haltForever()`
+  — sonsuz `cli;hlt`), Nox-çağrılabilir `nox_kernel_phys_base/_limit`
+  (`_kernel_end`den 4K'ya yuvarlanmış TABAN, SABİT 32MiB TAVAN) VE `nox_
+  kernel_trigger_breakpoint` (`int3`).
+- **`runtime/freestanding/x86_64/kernel_demo.nox`** — F.3'ün `lowlevel:`+
+  `ptr_from_int`/`ptr_add`/`ptr_read_int`/`ptr_write_int` yerleşikleriyle
+  (YENİ bir builtin EKLENMEDEN) yazılmış, serbest-liste tabanlı bir
+  fiziksel sayfa allocator'ı (durum — head/free_count/total — bölgenin
+  KENDİ İLK sayfasında, "kontrol sayfası"nda tutulur); demo sırası
+  `"Hello Nox"` → `int3` (dönüş kanıtı) → `"IDT_OK"` → `page_init`/
+  `alloc_page`×2/`free_page`/`alloc_page` (`"PAGE_ALLOC_OK"`) → `list.
+  append` (ARC/heap kanıtı, `"HEAP_OK"`) → `"ALL_CHECKPOINTS_OK"`.
+- **`compiler/codegen_qbe/codegen.zig`/`registration.zig`**: `Codegen`e
+  `profile: Profile` alanı + `generateModule`nin YENİ parametresi (SIFIR
+  davranış değişikliği, hosted'da `profile==.hosted` → IR bayt-bayt
+  AYNI); `registration.zig`ye `runtimeInitSymbol` — freestanding'de
+  `$nox_runtime_init` YERİNE `$nox_runtime_init_freestanding` çağrılır.
+- **`runtime/lib_freestanding.zig`**: `nox_runtime_init_freestanding`
+  (4MiB `.bss`-destekli `FixedBufferAllocator`, `asap.nox_runtime_init_
+  with_allocator`e bağlanır — ARC/list/dict/class ARTIK GERÇEK bir heap'e
+  akar); `printf` GERÇEK bir implementasyona (Zig 0.16'nın `@cVaStart`/
+  `@cVaArg`/`@cVaEnd`si İLE, `%lld`/`%g`/`%s`) yükseltildi — TÜM gövde
+  `if (comptime !printf_real) return 0;` İLE x86_64-ÖZEL comptime-
+  gate'lenir (`printf_real = builtin.cpu.arch == .x86_64`) — bu, `std.
+  builtin.VaList`nin aarch64+freestanding+LLVM-backend KISITINA (Zig
+  0.16'nın `@compileError("disabled due to miscompilations")`ı) HİÇ
+  GİRMEDEN, aarch64 host'ta AYNI `printf`in derlenebilmesini sağlar
+  (aarch64'te `@cVaStart` HİÇ analiz EDİLMEZ — comptime `if` dalının
+  KENDİSİ elenir).
+- **`compiler/qbe_target.zig`/`main.zig`**: YENİ `nameForArch(arch_name:
+  []const u8) ?[]const u8` (ÇALIŞMA-ZAMANI mimari-isim dispatch'i, MEVCUT
+  comptime `name(is_freestanding: bool)`e DOKUNMADAN); `NOX_FREESTANDING_
+  KERNEL_ARCH` dâhilî ortam-değişkeni (SADECE `profile==.freestanding`
+  İKEN OKUNUR) — SET İKEN `buildOne` linklemeyi ATLAYIP HAM `.s`yi döner;
+  `cmdRun` BU kancayı `noxc run`da AÇIKÇA REDDEDER (dâhilî mekanizma
+  olduğu YANLIŞLIKLA kullanıcıya SIZMASIN diye).
+- **`build.zig`**: ÜÇÜNCÜ, SABİT `x86_64-freestanding-none` hedefli bir
+  derleme zinciri — `noxrt_kernel` (`use_llvm = true` — `kernel.zig`nin
+  `lidt (%[p])` inline-asm'i Zig'in self-hosted x86_64 backend'inin
+  inline-asm ayrıştırıcısı TARAFINDAN "invalid memory operand" İLE
+  reddediliyordu, LLVM DOĞRU İşliyor) `zig-out/lib/noxrt-freestanding-
+  x86_64.o`ya kurulur; `boot.S` `zig cc -target x86_64-freestanding-none
+  -c` İLE AYRICA derlenir; `kernel-boot-test` ADIMI (`tests/golden/
+  kernel_boot_x86_64_test.zig`) HEM `test_step`e HEM AYRI bir `zig build
+  kernel-boot-test` hedefine bağlıdır (F.5'in KENDİ kancası).
+
+### Düzeltildi — GERÇEK QEMU çalıştırmalarıyla ÖLÇÜLEREK bulunan, planın HİÇ ÖNGÖRMEDİĞİ 4 gerçek bug
+
+Bu faz, ÖNCEKİ TÜM freestanding fazlarının karşılaşmadığı YENİ bir hata
+sınıfı ORTAYA ÇIKARDI — çünkü HİÇBİRİ GERÇEKTEN bir CPU'da/emülatörde
+ÇALIŞTIRILMADI (SADECE derleme/link BAŞARISI kontrol edildi). HEPSİ
+GERÇEK QEMU çalıştırmaları + `-d int`/`-d in_asm` İZLERİYLE (register/
+exception dump + TAM disassembly, `x86_64-elf-readelf`/`objdump -M
+x86-64` İLE ÇAPRAZ doğrulanarak) teşhis edildi — "ölç, varsayma"
+disiplininin BU turda EN ÇOK KARŞILIĞINI verdiği yer:
+
+1. **`.multiboot` bölümü `SHF_ALLOC` bayrağı TAŞIMIYORDU.** `boot.S`nin
+   `.section .multiboot` yönergesi BAYRAKSIZDI — GNU `as`, ADI-tanınmayan
+   (custom) bir bölüm İçİn AÇIKÇA bayrak VERİLMEDİĞİNDE `SHF_ALLOC`
+   VARSAYMAZ. Sonuç: linker BU bölümü HİÇBİR `PT_LOAD` segmentine DAHİL
+   ETMİYORDU (`readelf -S` İLE doğrulandı: adres=0, offset dosyanın
+   SONUNA yakın) — Multiboot1 başlığı çalışma-zamanı imajının TAMAMEN
+   DIŞINDA kalıyordu (`kernel.ld`nin `KEEP()`i bunu ÖNLEYEMEZ, `KEEP` SADECE
+   "linker'ın kullanılmıyor-gibi-görünen bölümleri BUDAMASINI" önler,
+   `SHF_ALLOC` eksikliğini DEĞİL). Düzeltme: `.section .multiboot, "a",
+   @progbits`.
+2. **QEMU'nun dahili Multiboot1 yükleyicisi ELF64 kabul ETMİYOR**
+   ("Cannot load x86-64 image, give a 32bit one" — GERÇEK, harfiyen bir
+   QEMU hata mesajı). Klasik çözüm — linker script'te `OUTPUT_FORMAT(
+   elf32-i386)` + `OUTPUT_ARCH(i386:x86-64)` (64-bit KOD'u 32-bit bir
+   ELF KONTEYNERİNE SARMAK, GNU ld'nin ONLARCA yıllık, kanıtlanmış bare-
+   metal x86_64 hilesi) — `zig cc`nin gömülü LLD'siyle DENENDİĞİNDE
+   KOŞULSUZ reddedildi ("ld.lld: error: ... incompatible with elf32-
+   i386" — LLD, ELF sınıfları ARASINDA mixed-width linklemeyi HİÇ
+   DESTEKLEMİYOR, GNU ld'nin AKSİNE). `x86_64-elf-ld` (Homebrew'in
+   `x86_64-elf-binutils`ı) İLE denendiğinde LİNK BAŞARILI oldu AMA
+   `R_X86_64_REX_GOTPCRELX` relokasyonlarının (extern VERİ referansları
+   İçİn — `kernel.zig`nin `extern const nox_isr_table: [32]usize;`si —
+   derleyicinin ÜRETTİĞİ, linker'ın "relax" ETMESİ GEREKEN GOT-indirect
+   bir kalıp) linker-taraflı relax ADIMI (GOT-indirect `mov`u DOĞRUDAN
+   `lea`ya ÇEVİRME) elf32-i386 ÇIKTISI İçİn YARIM kaldı: `objdump -M
+   x86-64` İLE GERÇEK bytecode incelendiğinde, relokasyonun HEDEF
+   ADRESİ doğru (nox_isr_table'ın KENDİSİ) OLARAK düzeltilmişti AMA
+   OPCODE `mov` (yükle/dereference) OLARAK KALMIŞTI (`lea`ya HİÇ
+   çevrilmemişti) — çalışma zamanında `nox_isr_table[0]`in DEĞERİNİ
+   (bir kod ADRESİ) bir POINTER OLARAK yorumlayıp OKUYORDU, KENDİ ISR
+   stub kodunun BAYTLARINI "IDT girdisi" SANIYORDU. GERÇEK bir QEMU
+   çalıştırmasında BU, `int3`in (KASITLI, GÜVENLE dönmesi GEREKEN TEK
+   trap) `nox_isr_dispatch`e ULAŞMADAN ÖNCE `#GP`e (garbage IDT girdisi
+   İçİn geçersiz bir hedef) düşüp, `#PF`/`#DF`e (double fault) kademeli
+   olarak İLERLEYİP, sonunda triple-fault/reset ÇEVRİMİNE GİRMESİYLE
+   SONUÇLANIYORDU (`-d int` İLE `check_exception old:0xffffffff new:0xd`
+   binlerce kez TEKRARLANARAK gözlemlendi). Çözüm: kernel NORMAL
+   (elf64-x86-64) linklenir — `zig cc`nin LLD'si BU formatta relax'ı
+   DOĞRU yapar (`objdump` İLE `lea nox_isr_table(%rip),%rax` OLARAK
+   doğrulandı) — SONRA `objcopy -O elf32-i386 -S` İLE (TÜM relokasyonlar
+   ZATEN somut adreslere ÇÖZÜLDÜĞÜNDEN relax'a HİÇ GEREK KALMADAN, SAF
+   bir konteyner-format dönüşümü olarak) ELF32/EM_386'ya çevrilir.
+3. **CR4.OSFXSR (bit 9) AYARLANMIYORDU.** `boot.S`nin CR4 kurulumu
+   SADECE `CR4.PAE`yi (bit 5) AÇIYORDU. Zig'in ürettiği HERHANGİ bir SSE
+   talimatı (`movups`, struct-kopyalama İçİn Zig TARAFINDAN SERBESTÇE
+   üretilir) `#UD` (Invalid Opcode, vektör 6) İLE ÇÖKÜYORDU — Intel
+   SDM'nin AÇIKÇA belgelediği bir gereklilik: `CR4.OSFXSR=0` İKEN
+   HERHANGİ bir SSE talimatı KOŞULSUZ `#UD` VERİR (CR0.EM'DEN BAĞIMSIZ
+   olarak). GERÇEK bir QEMU çalıştırmasında BU, `nox_freestanding_early_
+   init()`nin İÇİNDEKİ (`FixedBufferAllocator` KURULUMUNUN — Zig'in KENDİ
+   struct-atama kodu, KULLANICI kodu DEĞİL — İÇİNDEKİ BİR `movups`)
+   İLK SSE talimatında GERÇEK bir çökme OLARAK gözlemlendi ("Hello Nox"
+   BİLE YAZDIRILAMADAN). Düzeltme: `boot.S`nin CR4 kurulumu ARTIK
+   `CR4.PAE | CR4.OSFXSR | CR4.OSXMMEXCPT` (0x620) AÇAR — İKİNCİSİ
+   (bit 10) SSE istisnalarının `#UD` YERİNE `#XM` OLARAK raporlanmasını
+   sağlayan, OSFXSR'nin STANDART EŞLİĞİ.
+4. Test dosyasının KENDİ ELF-header doğrulaması (madde 2'nin SONUCUNA
+   göre) GÜNCELLENDİ: `e_machine` ARTIK `EM_386` (3, `EM_X86_64` — 62 —
+   DEĞİL, konteyner-seviyesi metadata), `e_entry` ARTIK 4 baytlık bir
+   alan olarak OKUNUR (ELF64'ün 8 baytı DEĞİL).
+
+**Önemli bir metodolojik not**: bu 4 hatanın HİÇBİRİ statik analizle/kod
+okumasıyla BULUNAMAZDI — HEPSİ SADECE GERÇEK bir QEMU çalıştırmasının,
+GERÇEK register/exception dump'larının VE disassembly'nin BİRLİKTE
+KULLANILMASIYLA teşhis edildi (`-d int` exception vektörünü/RIP'i
+gösterdi, `-d in_asm` ÖNCEKİ talimatları gösterdi, `x86_64-elf-readelf`/
+`objdump -M x86-64` linker'ın ÜRETTİĞİ GERÇEK bayt DİZİLİMİNİ doğruladı)
+— bu, planın KENDİ "ISR stack alignment SADECE GERÇEK QEMU çalıştırmasıyla
+doğrulanır" öngörüsünün, BEKLENENDEN ÇOK DAHA GENİŞ bir SINIF hataya
+(linker davranışı, CPU özellik-bayrakları, ELF format uyumluluğu) GENELLEDİĞİNİN
+kanıtıdır.
+
+### Doğrulama
+
+- `zig ast-check` TÜM değişen/YENİ dosyalarda.
+- `zig build` (TAM kurulum, `-j1`) — `noxrt-freestanding-x86_64.o`/
+  `boot_x86_64.o` GERÇEKTEN üretildi.
+- `zig build test` (TAM paket, Debug + ReleaseFast, `-j1`) — SIFIR
+  regresyon (`codegen_ir_diff_test.zig`nin 236 fixture'ı BAYT-BAYT AYNI,
+  `profile==.hosted` HİÇBİR IR'ı ETKİLEMEDİ).
+- `zig build frontend-test`.
+- **GERÇEK QEMU boot** (`zig build kernel-boot-test`) — TAMAMEN GEÇTİ:
+  6 checkpoint string'i (`"Hello Nox"`/`"IDT_BP_OK vector=3 rip=0x..."`/
+  `"IDT_OK"`/`"PAGE_ALLOC_OK"`/`"HEAP_OK"`/`"ALL_CHECKPOINTS_OK"`) SIRAYLA
+  BASILDI, `"KERNEL_FAULT"` HİÇ GÖRÜNMEDİ, çıkış kodu TAM OLARAK `33`
+  (`(0x10<<1)|1`, `isa-debug-exit`in KESİN formülü).
+- Hosted duman testi (`print(1); print("x"); print([1,2]); print(1.5)`)
+  — `printf`in x86_64-ÖZEL comptime-gate'lenmesinin HOSTED (aarch64 host,
+  Zig'in GERÇEK libc `printf`ini linkleyen) yolu HİÇ ETKİLEMEDİĞİNİ
+  doğrular.
+- `NOX_STRESS_ROUNDS=800 zig build stress-test -Doptimize=ReleaseFast`.
+
+### Kritik dosyalar
+
+`runtime/freestanding/x86_64/kernel.ld`, `boot.S`, `kernel.zig`,
+`kernel_demo.nox` (HEPSİ YENİ); `compiler/codegen_qbe/codegen.zig`,
+`registration.zig`; `compiler/main.zig`, `compiler/qbe_target.zig`;
+`runtime/lib_freestanding.zig`; `build.zig`; `tests/golden/
+kernel_boot_x86_64_test.zig` (YENİ).
+
+### Kapsam DIŞI (BİLİNÇLİ, plan dosyasının KENDİ notu)
+
+Multiboot bellek-haritası ayrıştırma (`EBX`teki `multiboot_info_t` YOK
+SAYILIR); Nox-yazılı bir allocator'ın ARC'ın LİTERAL backing store'u
+olması (YENİ bir Nox→C-ABI vtable inşa mekanizması GEREKTİRİR); kesme-
+güdümlü/yeniden-girişli G/Ç (`sti` HİÇ ÇAĞRILMAZ); Faz F.5'in CI
+entegrasyonu (`zig build kernel-boot-test` ZATEN O'nun TEK çağrı noktası
+olacak şekilde HAZIR); genel-amaçlı `--target` CLI bayrağı; kullanıcı-
+alanı/syscall/ELF-yükleyici/SMP/gerçek donanım (QEMU DIŞI) doğrulaması.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

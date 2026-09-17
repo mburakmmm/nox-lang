@@ -718,6 +718,12 @@ pub const Codegen = struct {
     /// `qbe_emit.zig`/`llvm_emit.zig` arasında SEÇTİĞİ hedef. Varsayılan
     /// `.qbe` — `--release` VERİLMEDİĞİ SÜRECE davranış SIFIR değişir.
     backend: Backend = .qbe,
+    /// Faz F.4 (bkz. plan dosyası "Gerçek bare-metal boot zinciri"): `Backend`
+    /// İLE AYNI "varsayılanlı alan" deseni — `.hosted` VARSAYILAN, `--profile
+    /// freestanding` VERİLMEDİĞİ SÜRECE davranış SIFIR değişir. SADECE
+    /// `registration.zig`nin `runtimeInitSymbol`ı TARAFINDAN OKUNUR (HANGİ
+    /// `$nox_runtime_init*` sembolünün ÇAĞRILACAĞINI seçmek İçİn).
+    profile: Profile = .hosted,
     /// Faz LLVM.2: `llvm_emit.zig`nin kendi kendini onaran `qbeLabel`i
     /// İçin — `true` İKEN geçerli LLVM temel bloğunun HENÜZ bir terminatör
     /// (`br`/`ret`/`unreachable`) ALMADIĞINI işaretler (bkz. bulgu #4:
@@ -1288,8 +1294,8 @@ fn collectExplainForBody(gen: *Codegen, allocator: std.mem.Allocator, sink: *std
     }
 }
 
-pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo, backend: Backend, explain_opts: ?ExplainOptions) CodegenError![]u8 {
-    var gen: Codegen = .{ .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos, .defer_synthetic_names = defer_synthetic_names, .from_imports = from_imports, .module_aliases = module_aliases, .backend = backend };
+pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo, backend: Backend, profile: Profile, explain_opts: ?ExplainOptions) CodegenError![]u8 {
+    var gen: Codegen = .{ .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos, .defer_synthetic_names = defer_synthetic_names, .from_imports = from_imports, .module_aliases = module_aliases, .backend = backend, .profile = profile };
 
     if (debug_source_path) |path| {
         gen.debug_info = true;

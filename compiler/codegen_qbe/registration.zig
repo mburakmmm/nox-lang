@@ -1193,6 +1193,15 @@ pub fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) Codegen
 /// (bkz. `compiler/codegen_qbe/ownership.zig:329,436,440`). `RT_PARAM`
 /// GEREKMEZ — dispatch tablosu PROGRAM-seviyesi bir global, `RuntimeState`e
 /// BAĞLI DEĞİL.
+/// Faz F.4 (bkz. plan dosyası "Gerçek bare-metal boot zinciri"): `genMain`/
+/// `genMainAsync`'ın HANGİ `$nox_runtime_init*` sembolünü ÇAĞIRACAĞINI seçer
+/// — `self.profile == .freestanding` İKEN `runtime/lib_freestanding.zig`nin
+/// `nox_runtime_init_freestanding`i (FixedBufferAllocator-destekli), AKSİ
+/// HALDE (VARSAYILAN) MEVCUT `nox_runtime_init` (SIFIR davranış değişikliği).
+fn runtimeInitSymbol(self: *const Codegen) []const u8 {
+    return if (self.profile == .freestanding) "$nox_runtime_init_freestanding" else "$nox_runtime_init";
+}
+
 fn emitDispatchTableRegistration(self: *Codegen) CodegenError!void {
     try self.qbeCall(null, "$nox_register_dispatch_table", &.{
         .{ .ty = .l, .text = "$nox_trace_dispatch" },
@@ -1246,7 +1255,7 @@ pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool, wants_m
     try self.qbeFuncParam(.w, "%argc", true);
     try self.qbeFuncParam(.l, "%argv", false);
     try self.qbeFuncHeaderEnd();
-    try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, "$nox_runtime_init", &.{});
+    try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, runtimeInitSymbol(self), &.{});
     try self.qbeCall(null, "$nox_os_init", &.{ .{ .ty = .w, .text = "%argc" }, .{ .ty = .l, .text = "%argv" } });
     try emitDispatchTableRegistration(self);
     // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
@@ -1365,7 +1374,7 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_poo
         const wmp_text: []const u8 = if (wants_multicore_pool) "1" else "0";
         try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, "$nox_pool_main_init", &.{.{ .ty = .w, .text = wmp_text }});
     } else {
-        try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, "$nox_runtime_init", &.{});
+        try self.qbeCall(.{ .name = RT_PARAM, .ty = .l }, runtimeInitSymbol(self), &.{});
     }
     try self.qbeCall(null, "$nox_os_init", &.{ .{ .ty = .w, .text = "%argc" }, .{ .ty = .l, .text = "%argv" } });
     try emitDispatchTableRegistration(self);

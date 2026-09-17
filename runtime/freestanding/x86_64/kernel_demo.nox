@@ -1,0 +1,111 @@
+# Faz F.4 (bkz. plan dosyası "Gerçek bare-metal boot zinciri (x86_64)"):
+# GERÇEK QEMU'da çalıştırılan demo çekirdek — `tests/golden/kernel_boot_
+# x86_64_test.zig`nin `--profile freestanding` (x86_64 kernel-arch) ile
+# derlediği TEK kaynak dosya. `nox_kernel_phys_base`/`_limit`/`_trigger_
+# breakpoint`, `runtime/freestanding/x86_64/kernel.zig`nin (boot.S ile
+# BİRLİKTE `noxrt-freestanding-x86_64.o`ya derlenir) dışa açtığı yardımcılardır.
+extern def nox_kernel_phys_base() -> int from "zig-out/lib/noxrt-freestanding-x86_64.o"
+extern def nox_kernel_phys_limit() -> int from "zig-out/lib/noxrt-freestanding-x86_64.o"
+extern def nox_kernel_trigger_breakpoint() -> None from "zig-out/lib/noxrt-freestanding-x86_64.o"
+
+# Serbest-liste tabanlı fiziksel sayfa allocator — SAF Nox'ta, F.3'ün
+# `lowlevel:`+`ptr_*` yerleşikleriyle (YENİ bir builtin EKLENMEDEN) yazılır.
+# Durum (head/free_count/total) `nox_kernel_phys_base()`nin döndürdüğü
+# SABİT "kontrol sayfası"nın KENDİSİNDE tutulur — modül-global mutasyona
+# bağımlılık YOK (`nox_kernel_phys_base()` HER ÇAĞRIDA AYNI, deterministik
+# adresi döner, bu YÜZDEN kontrol sayfasının adresini AYRICA saklamaya
+# gerek yoktur).
+#
+# Kontrol sayfası düzeni (8 baytlık slotlar):
+#   offset 0:  head        (bir SONRAKİ serbest sayfanın adresi, 0 = yok)
+#   offset 8:  free_count  (şu an serbest olan sayfa sayısı)
+#   offset 16: total       (page_init()'in ayırdığı TOPLAM sayfa sayısı)
+#
+# Serbest sayfaların KENDİSİ İLK 8 baytlarında bir SONRAKİ serbest sayfanın
+# adresini taşır (tek-bağlı liste, ekstra bellek GEREKTİRMEZ).
+
+def page_init() -> int:
+    total: int = 0
+    lowlevel:
+        base: int = nox_kernel_phys_base()
+        limit: int = nox_kernel_phys_limit()
+        control: ptr = ptr_from_int(base)
+        first_page: int = base + 4096
+        count: int = (limit - first_page) // 4096
+        head: int = 0
+        if count > 0:
+            head = first_page
+        i: int = 0
+        while i < count:
+            page_addr: int = first_page + i * 4096
+            next_addr: int = 0
+            if i < count - 1:
+                next_addr = first_page + (i + 1) * 4096
+            page_ptr: ptr = ptr_from_int(page_addr)
+            ptr_write_int(page_ptr, next_addr)
+            i = i + 1
+        ptr_write_int(control, head)
+        count_slot: ptr = ptr_add(control, 8)
+        ptr_write_int(count_slot, count)
+        total_slot: ptr = ptr_add(control, 16)
+        ptr_write_int(total_slot, count)
+        total = count
+    return total
+
+def alloc_page() -> int:
+    result: int = 0
+    lowlevel:
+        base: int = nox_kernel_phys_base()
+        control: ptr = ptr_from_int(base)
+        head: int = ptr_read_int(control)
+        if head != 0:
+            next_ptr: ptr = ptr_from_int(head)
+            next_addr: int = ptr_read_int(next_ptr)
+            ptr_write_int(control, next_addr)
+            count_slot: ptr = ptr_add(control, 8)
+            count: int = ptr_read_int(count_slot)
+            ptr_write_int(count_slot, count - 1)
+            result = head
+    return result
+
+def free_page(addr: int) -> None:
+    lowlevel:
+        base: int = nox_kernel_phys_base()
+        control: ptr = ptr_from_int(base)
+        head: int = ptr_read_int(control)
+        page_ptr: ptr = ptr_from_int(addr)
+        ptr_write_int(page_ptr, head)
+        ptr_write_int(control, addr)
+        count_slot: ptr = ptr_add(control, 8)
+        count: int = ptr_read_int(count_slot)
+        ptr_write_int(count_slot, count + 1)
+
+def free_pages() -> int:
+    result: int = 0
+    lowlevel:
+        base: int = nox_kernel_phys_base()
+        control: ptr = ptr_from_int(base)
+        count_slot: ptr = ptr_add(control, 8)
+        result = ptr_read_int(count_slot)
+    return result
+
+# --- Demo çekirdek: EN GÜVENLİ sıra (bkz. plan dosyasının madde 7'si) ---
+
+print("Hello Nox")
+
+nox_kernel_trigger_breakpoint()
+print("IDT_OK")
+
+total: int = page_init()
+p1: int = alloc_page()
+p2: int = alloc_page()
+free_page(p1)
+p3: int = alloc_page()
+if p1 != 0 and p2 != 0 and p1 != p2 and p3 == p1:
+    print("PAGE_ALLOC_OK")
+
+xs: list[int] = [1, 2, 3]
+xs.append(4)
+print("HEAP_OK")
+
+print("ALL_CHECKPOINTS_OK")

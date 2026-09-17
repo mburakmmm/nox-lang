@@ -14,6 +14,100 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.92.0]
+
+### Eklendi (Faz F.4 — Gerçek bare-metal boot zinciri, x86_64)
+- `runtime/freestanding/x86_64/kernel.ld` (YENİ) — Multiboot1-yüklenebilir,
+  1MiB'e (0x100000) yüklenen bir x86_64 kernel imajı İçİn linker script.
+- `runtime/freestanding/x86_64/boot.S` (YENİ) — Multiboot1 başlığı, 32-bit
+  `_start` (identity-map sayfa tabloları KURAR — 0..32MiB, 2MiB huge
+  page'lerle — CR3/CR4.PAE/EFER.LME/CR0.PG SIRAYLA açılır, 32-bit `lgdt`
+  + uzun-mod GDT'sine `ljmp`), 64-bit `long_mode_start` (`nox_freestanding_
+  early_init()` → `main()` → `nox_freestanding_halt()`), 0-31 arası TÜM
+  vektörler İçİn ISR trambolinleri (hata-kodu İTEN vektörler AYRI ele
+  alınır) + `nox_isr_table`.
+- `runtime/freestanding/x86_64/kernel.zig` (YENİ) — `outb`/`inb`, 16550
+  UART (COM1) + `serialDiagSink` (diag_sink'e KAYITLI), 256-girdili IDT
+  (`idtInstall`), 8259 PIC maskeleme, `nox_isr_dispatch` (`#BP`/vektör 3
+  GERİ DÖNER — diğer TÜM vektörler `KERNEL_FAULT` raporlayıp `haltForever()`),
+  `nox_freestanding_early_init`/`nox_freestanding_halt` (QEMU
+  `isa-debug-exit`) + Nox-çağrılabilir `nox_kernel_phys_base/_limit/_
+  trigger_breakpoint`.
+- `runtime/freestanding/x86_64/kernel_demo.nox` (YENİ) — F.3'ün `lowlevel:`+
+  `ptr_*` yerleşikleriyle SAF Nox'ta yazılmış, serbest-liste tabanlı bir
+  fiziksel sayfa allocator'ı + tam bir doğrulama zinciri (seri port →
+  `int3` breakpoint dönüşü → sayfa ayırma/serbest bırakma → `list.append`
+  İLE ARC/heap → 6 checkpoint string'i).
+- `compiler/codegen_qbe/codegen.zig`/`registration.zig` — `Codegen`e
+  `profile: Profile` alanı (`generateModule`nin YENİ parametresi);
+  `registration.zig`ye `runtimeInitSymbol` — freestanding profilinde
+  `$nox_runtime_init` YERİNE `$nox_runtime_init_freestanding` çağrılır
+  (hosted'ta SIFIR davranış değişikliği).
+- `runtime/lib_freestanding.zig`ye `nox_runtime_init_freestanding`
+  (4MiB `.bss`-destekli `FixedBufferAllocator`, `asap.nox_runtime_init_
+  with_allocator`e bağlanır) — ARC/list/dict/class ARTIK freestanding'de
+  GERÇEK bir heap'e (kernel'in KENDİ `.bss`i) akar.
+- `runtime/lib_freestanding.zig`nin `printf`i GERÇEK bir implementasyona
+  yükseltildi — `@cVaStart`/`@cVaArg`/`@cVaEnd` (Zig 0.16) İLE `%lld`/
+  `%g`/`%s` biçimlerini destekler; TÜM gövde `if (comptime !printf_real)
+  return 0;` İLE x86_64-ÖZEL comptime-gate'lenir (aarch64'te HİÇ analiz
+  EDİLMEZ, `std.builtin.VaList`'in aarch64+freestanding+LLVM-backend
+  kısıtına ASLA GİRMEZ).
+- `compiler/qbe_target.zig`ye `nameForArch(arch_name: []const u8) ?[]const
+  u8` (ÇALIŞMA-ZAMANI mimari-isim dispatch'i, MEVCUT comptime `name()`e
+  DOKUNMADAN) + `compiler/main.zig`ye `NOX_FREESTANDING_KERNEL_ARCH`
+  dâhilî ortam-değişkeni kancası — `noxc build --profile freestanding`
+  bu KOŞULDA linklemeyi ATLAYIP HAM QBE assembly'sini (`.s`) döner.
+- `build.zig`ye ÜÇÜNCÜ, SABİT x86_64 hedefli bir derleme zinciri —
+  `zig-out/lib/noxrt-freestanding-x86_64.o` (`use_llvm = true` —
+  `kernel.zig`nin `lidt` inline-asm'i Zig'in self-hosted x86_64 backend'i
+  TARAFINDAN reddediliyordu) HER `zig build`de üretilir.
+- YENİ `tests/golden/kernel_boot_x86_64_test.zig` — `kernel_demo.nox`'u
+  GERÇEKTEN derleyip linkleyip (bkz. aşağıdaki "Düzeltildi" — link zinciri
+  BEKLENENDEN farklı çıktı) GERÇEK bir `qemu-system-x86_64` çalıştırmasıyla
+  doğrular: 6 checkpoint string'i SIRAYLA + `isa-debug-exit`in KESİN `33`
+  çıkış kodu. `qbe`/`qemu-system-x86_64`/bir GNU `ld`/`objcopy` PATH'te
+  YOKSA SESSİZCE atlanır (CI'de qemu HENÜZ kurulmuyor — F.5'in işi).
+
+### Düzeltildi (GERÇEK QEMU çalıştırmalarıyla ÖLÇÜLEREK bulunan, planın ÖNGÖRMEDİĞİ 4 gerçek bug)
+Bu faz, ÖNCEKİ fazların HİÇBİRİNİN karşılaşmadığı — çünkü HİÇBİRİ GERÇEKTEN
+bir CPU'da/emülatörde ÇALIŞTIRILMADI — yeni bir sınıf hata ORTAYA
+ÇIKARDI. HEPSİ GERÇEK QEMU çalıştırmaları + `-d int`/`-d in_asm` TALEP
+İZLERİYLE (register/exception dump + tam disassembly) teşhis edildi:
+
+1. **`.multiboot` bölümü `SHF_ALLOC` bayrağı TAŞIMIYORDU** — `boot.S`nin
+   `.section .multiboot` yönergesi bayraksızdı, bu YÜZDEN linker BUNU
+   HİÇBİR `PT_LOAD` segmentine DAHİL ETMİYORDU (Multiboot1 başlığı
+   çalışma-zamanı imajının TAMAMEN DIŞINDA kalıyordu). Düzeltme: `.section
+   .multiboot, "a", @progbits`.
+2. **QEMU'nun dahili Multiboot1 yükleyicisi ELF64 kabul ETMİYOR**
+   ("Cannot load x86-64 image, give a 32bit one" — GERÇEK bir QEMU
+   hatası). `zig cc`nin gömülü LLD'si (`ld.lld`) klasik "elf32-i386
+   konteyner + x86_64 kod" hilesini (`OUTPUT_FORMAT(elf32-i386)`) 64-bit
+   girdilerle KOŞULSUZ reddediyor ("incompatible with elf32-i386"). GNU
+   `ld` bunu KABUL EDİYOR AMA `R_X86_64_REX_GOTPCRELX` relokasyonlarının
+   linker-taraflı "relax" (GOT-indirect `mov`u DOĞRUDAN `lea`ya ÇEVİRME)
+   adımını elf32-i386 ÇIKTISI İçİn YARIM bırakıyor (extern veri
+   referansları — `kernel.zig`nin `nox_isr_table[i]`si — ÇALIŞMA
+   ZAMANINDA GARBAGE bir işaretçi okuyup #GP/#PF/#DF zincirine yol
+   AÇIYORDU). Çözüm: kernel NORMAL (elf64-x86-64, `zig cc`nin LLD'si
+   relax'ı DOĞRU yapıyor) linklenir, SONRA `objcopy -O elf32-i386 -S`
+   İLE (TÜM relokasyonlar ZATEN çözüldüğünden GÜVENLİ) ELF32/EM_386
+   konteynerine dönüştürülür.
+3. **CR4.OSFXSR (bit 9) AYARLANMIYORDU** — Zig'in ürettiği HERHANGİ bir
+   SSE talimatı (`movups` GİBİ, struct-kopyalama İçİn SERBESTÇE üretilir)
+   `#UD` (Invalid Opcode) İLE ÇÖKÜYORDU. Düzeltme: `boot.S`nin CR4 kurulumu
+   ARTIK `CR4.PAE | CR4.OSFXSR | CR4.OSXMMEXCPT` (0x620) AÇAR.
+4. Test dosyasının KENDİ ELF-header doğrulaması (`e_machine`/`e_entry`
+   alan-genişliği) ELF64 varsayıyordu — madde 2'nin ELF32-konteyner
+   SONUCUNA göre GÜNCELLENDİ (`e_machine == EM_386`, `e_entry` 4 bayt).
+
+### Kapsam Dışı (BİLİNÇLİ, plan dosyasının KENDİ notu)
+Multiboot bellek-haritası ayrıştırma, Nox-yazılı allocator'ın ARC'ın
+LİTERAL backing store'u olması, kesme-güdümlü/yeniden-girişli G/Ç,
+Faz F.5'in CI entegrasyonu, genel-amaçlı `--target` bayrağı,
+kullanıcı-alanı/SMP/gerçek donanım doğrulaması.
+
 ## [1.91.0]
 
 ### Eklendi (Faz R.3 + F.1'in tamamlanması — GERÇEK `noxc build --profile freestanding` cross-link akışı)
