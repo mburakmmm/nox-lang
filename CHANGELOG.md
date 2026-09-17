@@ -14,6 +14,20 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.92.1]
+
+### Düzeltildi (GERÇEK CI koşusuyla bulunan bir Linux/Windows regresyonu)
+- `build.zig`nin `noxc_mod`ına `.link_libc = true` eklendi — v1.92.0'ın
+  `NOX_FREESTANDING_KERNEL_ARCH` dâhilî kancası (`buildOne`) `std.c.getenv`
+  KULLANIYOR, bu macOS'ta libSystem'in HER ZAMAN örtük olarak linklenmesi
+  yüzünden SESSİZCE çalışıyordu — AMA Linux/Windows'ta (Zig'in VARSAYILANI
+  libc-siz bir derleme) "dependency on libc must be explicitly specified"
+  İLE `noxc`nin KENDİSİNİN DERLENEMEMESİNE yol AÇIYORDU. Bu, `noxc`
+  binary'sinin (freestanding RUNTIME'la KARIŞTIRILMAMALI — SIRADAN bir
+  host CLI aracı) TÜM platformlarda derlenmesini engelleyen, GERÇEK bir
+  CI koşusuyla (Linux aarch64/x86-64 + Windows, ÜÇÜ de) bulunan bir
+  regresyon.
+
 ## [1.92.0]
 
 ### Eklendi (Faz F.4 — Gerçek bare-metal boot zinciri, x86_64)

@@ -145,6 +145,15 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("compiler/main.zig"),
         .target = target,
         .optimize = optimize,
+        // Faz F.4: `buildOne`nin `NOX_FREESTANDING_KERNEL_ARCH` dâhilî
+        // kancası `std.c.getenv` KULLANIR — macOS'ta libSystem HER ZAMAN
+        // ÖRTÜK olarak linklendiğinden BU sessizce çalışıyordu, AMA Linux'ta
+        // (`zig build-exe`nin VARSAYILANI libc-SİZ) "dependency on libc must
+        // be explicitly specified" İLE DERLEME hatasına yol AÇTI — GERÇEK
+        // CI çalışmasıyla BULUNDU. `noxc` SIRADAN bir HOST CLI aracı
+        // OLDUĞUNDAN (freestanding runtime İLE KARIŞTIRILMAMALI) libc'yi
+        // AÇIKÇA istemek GÜVENLİ/standart bir çözümdür.
+        .link_libc = true,
         // Faz P1.2: `noxc_mod`, `nox_mod`dan BAĞIMSIZ bir modül grafiğidir
         // (relative import'larla `compiler/`i KENDİ İÇİNDE yeniden derler,
         // bkz. bu dosyanın modül üstü notu) — bu yüzden `codegen_qbe/
