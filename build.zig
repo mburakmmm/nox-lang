@@ -471,10 +471,14 @@ pub fn build(b: *std.Build) void {
     // (`compile_swap_asm_freestanding`nin AYNI `zig cc -target ...` deseni,
     // AMA host mimarisinden BAĞIMSIZ — HER ZAMAN x86_64). Yol BİLİNÇLİ
     // olarak bir `const` DEĞİŞKENE ÇIKARILIR (`swap_asm_o_path`/`swap_asm_
-    // freestanding_o_path`nin AYNI deseni) — `b.path("literal-string")`
-    // (Faz CI.1'in `tracked-files-check`inin ARADIĞI TAM şekil) BU dosyanın
-    // (ÇALIŞMA-ZAMANINDA üretilen, git'te İZLENMEYEN bir build ARTİFAKTI
-    // OLDUĞUNDAN) YANLIŞLIKLA "izlenmiyor" diye REDDEDİLMESİNİ ÖNLER.
+    // freestanding_o_path`nin AYNI deseni) — b DOT path'e (BU YORUMDA
+    // BİLE, Faz CI.1'in `tracked-files-check`inin grep'inin YAKALAMAMASI
+    // İçİn TIRNAK İÇİNDE bir LİTERAL string OLARAK YAZILAMAZ) DOĞRUDAN
+    // bir string LİTERALİ verilseydi, bu dosyanın (ÇALIŞMA-ZAMANINDA
+    // üretilen, git'te İZLENMEYEN bir build ARTİFAKTI OLDUĞUNDAN)
+    // YANLIŞLIKLA "izlenmiyor" diye REDDEDİLMESİNE yol AÇARDI (bu turda
+    // GERÇEK bir CI koşusuyla KANITLANDI — grep TIRNAK İÇİNDEKİ metni
+    // YORUM/KOD AYRIMI YAPMADAN eşleştirir).
     const swap_asm_kernel_o_path = "runtime/async_rt/swap_x86_64_kernel.o";
     const compile_swap_asm_kernel = b.addSystemCommand(&.{
         b.graph.zig_exe, "cc",

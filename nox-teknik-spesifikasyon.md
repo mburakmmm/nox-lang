@@ -22101,12 +22101,27 @@ ARTIK HİÇ İçERMİYOR; `nm zig-out/lib/noxrt-freestanding-x86_64.o`
 test` (Debug+ReleaseFast, `-j1`) VE `NOX_STRESS_ROUNDS=800 zig build
 stress-test` TEMİZ.
 
+### 4. `tracked-files-check`in KENDİ-KENDİNE-NEDEN-OLUNAN bir yanlış-pozitifi (v1.92.3)
+
+v1.92.2'nin push'u SONRASI `gh run view` İLE kontrol edildiğinde,
+`tracked-files-check`in BİZZAT madde 2'nin düzeltmesinin AÇIKLAYICI
+YORUMU TARAFINDAN tetiklendiği bulundu: yorum, okuyucuya regex'in TAM
+ARADIĞI ŞEKLİ göstermek İçİn `` `b.path("literal-string")` `` METNİNİ
+İçERİYORDU — grep'in KENDİSİ YORUM/KOD AYRIMI YAPMADIĞINDAN, BU METNİ
+GERÇEK bir çağrı SANIP "literal-string" adlı git'te İZLENMEYEN bir
+"dosyaya" referans verildiğini İDDİA ETTİ. **Düzeltme**: yorum, AYNI
+fikri regex'in TAM eşleştirdiği sözdizimini (`b`+`.path(`+tırnak-içi
+metin+`)`) YAZMADAN AKTARACAK şekilde YENİDEN yazıldı — bu, "AÇIKLAYICI
+YORUMLARIN BİLE mekanik bir metin-taramasını TETİKLEYEBİLECEĞİ" GERÇEK
+BİR ders (Faz CI.1'in KENDİ `tracked-files-check`inin İLK KEZ, KENDİ
+belge notu TARAFINDAN tetiklendiği bir örnek).
+
 ### Kritik dosyalar
 
 `build.zig` (`noxc_mod`a `.link_libc`, `swap_asm_kernel_o_path`,
-`noxrt_kernel_mod`nin `root_source_file`ı), `runtime/lib_freestanding.zig`
-(kernel force-ref'i ÇIKARILDI), `runtime/lib_freestanding_kernel.zig`
-(YENİ).
+`noxrt_kernel_mod`nin `root_source_file`ı, madde 4'ün yorum düzeltmesi),
+`runtime/lib_freestanding.zig` (kernel force-ref'i ÇIKARILDI),
+`runtime/lib_freestanding_kernel.zig` (YENİ).
 
 ---
 

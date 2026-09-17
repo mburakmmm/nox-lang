@@ -14,6 +14,20 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.92.3]
+
+### Düzeltildi (v1.92.2'nin push'unun GERÇEK CI koşusuyla bulunan bir kendi-kendine-neden-olunan regresyon)
+
+- `tracked-files-check`in v1.92.2'de KENDİSİ TARAFINDAN tetiklenen bir
+  YANLIŞ-POZİTİF: `build.zig`ye eklenen bir Türkçe AÇIKLAMA yorumu, GERÇEK
+  bir `b.path("...")` çağrısı OLMADAN, `` `b.path("literal-string")` ``
+  METNİNİ SÖZ KONUSU EDİYORDU — Faz CI.1'in `tracked-files-check`
+  script'inin `grep -oE 'b\.path\("[^"]+"\)'` deseni YORUM/KOD AYRIMI
+  YAPMADIĞINDAN, bu METNİ GERÇEK bir kod çağrısı SANIP "literal-string"
+  adlı git'te İZLENMEYEN bir dosyaya referans VERİLDİĞİNİ İDDİA ETTİ.
+  Yorum, AYNI fikri `b.path("...")`in TAM sözdizimini YAZMADAN AKTARACAK
+  şekilde YENİDEN yazıldı (`gh run view` İLE GERÇEK CI'de KANITLANDI).
+
 ## [1.92.2]
 
 ### Düzeltildi (GERÇEK CI koşusuyla bulunan İKİ regresyon — v1.92.1'in push'u)
