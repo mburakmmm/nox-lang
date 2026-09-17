@@ -14,6 +14,61 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.91.0]
+
+### Eklendi (Faz R.3 + F.1'in tamamlanması — GERÇEK `noxc build --profile freestanding` cross-link akışı)
+- `noxc build --profile freestanding <dosya.nox>` ARTIK GERÇEKTEN
+  çalışıyor — DAHA ÖNCE `--profile freestanding` SADECE checker'ın
+  capability allowlist'ini (Faz F.2) etkiliyordu, `buildOne`'ın linker
+  akışı hâlâ hosted `cc`ye/host-OS ABI'sine bağlıydı (Faz R.3'ün "aynı
+  mimaride bile Mach-O→ELF linklenemez" bulgusu ÇÖZÜLMEMİŞTİ).
+- `build.zig`ye HER `zig build`/`zig build test` çağrısında (top-level
+  `-Dtarget`den TAMAMEN BAĞIMSIZ, host mimarisi + freestanding OS İçİn)
+  ÇALIŞAN, KALICI bir ikinci derleme zinciri EKLENDİ — `b.resolveTargetQuery`
+  İLE bağımsız bir hedef İNŞA EDİP `runtime/lib_freestanding.zig`yi
+  `zig-out/lib/noxrt-freestanding.o`ya derler; F.0.7'nin SADECE ELLE
+  `zig build-obj` İLE doğrulanan çalışmasını ARTIK KALICI bir regresyon
+  KORUMASINA çevirir (`test_step`e bağlı).
+- `compile_swap_asm` (fiber bağlam-değişimi assembly'si) `is_freestanding`
+  İKEN HOST `cc` YERİNE `zig cc -target <arch>-freestanding-none` KULLANIR
+  (macOS'un native `ld`si ELF nesnelerini işleyemediğinden, `tests/golden/
+  freestanding_link_test.zig`nin — Faz F.1 — ZATEN kanıtladığı YOL).
+- `compiler/qbe_target.zig`nin `name()`i ARTIK `is_freestanding: bool`
+  parametresi alır — freestanding İKEN HOST OS'tan (macOS/Windows'un
+  ÖZEL ABI'leri) BAĞIMSIZ olarak HER ZAMAN arch-sadece (bare-ABI) hedef
+  adını seçer.
+- `noxc build --release --profile freestanding` AÇIK bir hatayla
+  reddedilir — LLVM backend'inin paylaşılan `WorkerPool`u GERÇEK OS iş
+  parçacıkları GEREKTİRİR, freestanding'de HENÜZ ÇÖZÜLMEMİŞ bir etkileşim.
+- `compiler/project.zig`nin `ResourceDirs`ına YENİ `noxrt_freestanding_path`
+  alanı — `buildOne`nin freestanding linker akışı BUNU (`zig cc -target
+  ... -ffreestanding -nostdlib -static`) KULLANIR.
+- YENİ `tests/cli/freestanding_build_test.zig` — `spawn`/`await`/`Task[int]`
+  KULLANAN GERÇEK bir Nox programının `noxc build --profile freestanding`
+  İLE derlenip GERÇEK bir ELF'e (magic + `e_type == ET_EXEC`) linklendiğini
+  kanıtlar — F.0.7'nin scheduler-DAHİL kapsamının GERÇEK `noxc` CLI'siyle
+  İLK KEZ uçtan-uca doğrulanması.
+
+### Düzeltildi (GERÇEK bir uçtan-uca link denemesiyle ÖLÇÜLEREK bulunan, ÖNCEDEN bilinmeyen boşluklar)
+- `runtime/lib_freestanding.zig`ye YENİ, minimal `nox_os_init` — codegen'in
+  `genMain`/`genMainAsync`i HER programda KOŞULSUZ çağırıyor, F.0.7 bunu
+  hariç tutmuştu.
+- YENİ `strcmp` (GERÇEK/doğru bir implementasyon — SAF bellek karşılaştırması,
+  HİÇBİR OS ilkeli GEREKTİRMEZ) — `core.nox`nin `Exception`/`ValueError`/
+  `IndexError`/`KeyError` sınıfları HER programa OTOMATİK birleştiğinden VE
+  Nox üst-düzey fonksiyonlar İçİn ölü-kod eleme YAPMADIĞINDAN, bu sınıfların
+  otomatik-üretilen `_eq` metodu HER ZAMAN `$strcmp`i çağırır.
+- YENİ `nox_stdin_read_line_raw`/`printf` placeholder'ları — `core.nox`nin
+  `input()`u VE `print()` builtin'i AYNI nedenle HER programda koşulsuz
+  derleniyor; GERÇEK bir konsol/UART HENÜZ olmadığından (Faz F.4'ün işi)
+  bunlar SADECE LİNKLEMEYİ sağlar, ÜRETİLEN ikili bu turda HİÇBİR YERDE
+  ÇALIŞTIRILMAZ.
+- `build.zig`nin YENİ `noxrt-freestanding.o` hedefine `bundle_compiler_rt
+  = true` — `b.addObject`in (yürütülebilir/dinamik kütüphanelerin AKSİNE)
+  Zig'in KENDİ `memcpy`/`memset`/`memmove`/`__udivti3`/`__umodti3` GİBİ
+  derleyici-runtime sembollerini VARSAYILAN olarak GÖMMEMESİ YÜZÜNDEN
+  gerekti (`-nostdlib` bağlamında bunlar BAŞKA hiçbir yerden gelmez).
+
 ## [1.90.0]
 
 ### Eklendi (Faz F.0.7 — "Kritik düzeltme #3"ün çözümü: `runtime/lib_freestanding.zig`, scheduler/fiber/Task/Channel DAHİL, GERÇEKTEN derlenen bir freestanding runtime kökü)

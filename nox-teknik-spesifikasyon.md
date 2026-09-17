@@ -21659,6 +21659,144 @@ BU FAZ SADECE `noxrt_freestanding.o`nun DERLENDİĞİNİ kanıtlar).
 
 ---
 
+## 3.172 Faz R.3 + F.1'in tamamlanması — GERÇEK `noxc build --profile freestanding` cross-link akışı + her-zaman-açık freestanding regresyon koruması (v1.91.0)
+
+F.0.7 (§3.171) `runtime/lib_freestanding.zig`nin GERÇEKTEN derlenebildiğini
+kanıtlamıştı — AMA SADECE ELLE çalıştırılan `zig build-obj -target
+aarch64-freestanding-none` denemeleriyle. BU FAZ, `noxc build --profile
+freestanding <dosya.nox>`ın (Faz R.3'ün "aynı mimaride bile Mach-O→ELF
+linklenemez" bulgusu VE F.1'in "Kritik düzeltme #3'ün ÇÖZÜMÜ" notu YÜZÜNDEN
+BUGÜNE KADAR HİÇ ÇALIŞMAYAN) GERÇEKTEN çalışmasını sağlar — `--profile
+freestanding`, GERÇEK, ARBİTRER çapraz-mimari (host'tan FARKLI bir arch)
+DEĞİL, "host mimarisi + freestanding OS" anlamına gelen DAR bir v1
+sunar (F.1'in KENDİ "x86_64 çapraz-derleme AYRI bir iştir" notuyla
+TUTARLI).
+
+### Uygulanan değişiklikler
+
+1. **`build.zig`ye HER-ZAMAN-AÇIK bir ikinci derleme zinciri** — top-level
+   `-Dtarget`den TAMAMEN BAĞIMSIZ, `b.resolveTargetQuery(.{ .cpu_arch =
+   b.graph.host.result.cpu.arch, .os_tag = .freestanding, .abi = .none })`
+   İLE İNŞA EDİLEN BAĞIMSIZ bir hedef — `abi_layout`/`diag_sink`in İKİNCİ,
+   bu hedefe özel kopyaları + `runtime/lib_freestanding.zig`yi KÖK OLARAK
+   kullanan `noxrt_freestanding_mod` (`link_libc = false`), `zig-out/lib/
+   noxrt-freestanding.o`ya kurulur, HEM `b.getInstallStep()`e HEM `test_
+   step`e bağlıdır (F.0.7'nin manuel doğrulamasını KALICI bir regresyon
+   KORUMASINA çevirir).
+2. **`compile_swap_asm_freestanding`** — `swap_asm_arch`ın AYNI arch-seçme
+   deseni AMA HOST mimarisi İçİn, `b.graph.zig_exe cc -target <arch>-
+   freestanding-none -c ...` İLE (`tests/golden/freestanding_link_test.
+   zig`nin — Faz F.1 — ZATEN kanıtladığı YOL). MEVCUT (top-level `-Dtarget`e
+   bağlı) `compile_swap_asm`nin KENDİSİ DE `is_freestanding` İKEN AYNI `zig
+   cc -target ...` çağrısına geçirilir (hosted derlemede bu dal HİÇ
+   tetiklenmez, SIFIR davranış değişikliği).
+3. **`compiler/qbe_target.zig`nin `name()`i** ARTIK `is_freestanding: bool`
+   parametresi alır — `true` İKEN HOST OS'tan (`builtin.os.tag`) BAĞIMSIZ
+   olarak HER ZAMAN arch-SADECE (bare-ABI) eşlemeyi kullanır (macOS/
+   Windows'un Apple/kendi ÖZEL ABI konvansiyonları freestanding bir hedef
+   İçİn GEÇERSİZDİR). TÜM MEVCUT (hosted) çağrı siteleri `name(false)`e
+   güncellendi — SIFIR davranış değişikliği.
+4. **`compiler/main.zig`nin `buildOne`ı**: `--release` + `--profile
+   freestanding` KOMBİNASYONU KOŞULSUZ reddedilir (LLVM'in paylaşılan
+   `WorkerPool`u GERÇEK OS iş parçacıkları GEREKTİRİR, freestanding'de
+   HENÜZ ÇÖZÜLMEMİŞ). `profile == .freestanding` İKEN linker sürücüsü
+   `zig cc -target <arch>-freestanding-none -ffreestanding -nostdlib
+   -static`dir (`resource_dirs.noxrt_freestanding_path` İLE linklenir) —
+   `linker_visibility_args`/`-lm` BİLİNÇLİ olarak ATLANIR (macOS'un dead-
+   strip bayrakları `zig cc`nin İÇ LLD'sine ÖZGÜ DEĞİL).
+5. **`compiler/project.zig`nin `ResourceDirs`ına** YENİ `noxrt_freestanding_
+   path` alanı (`"{base}/lib/noxrt-freestanding.o"`).
+
+### Self-discovered, plan dışı bulgular (GERÇEK bir uçtan-uca link denemesiyle ÖLÇÜLEREK bulundu)
+
+F.0.7'nin `runtime/lib_freestanding.zig`si SADECE runtime KAYNAĞININ KENDİ
+BAŞINA derlendiğini kanıtlamıştı — kullanıcı KODU (spawn/await/Task[T]
+DAHİL) HİÇ dahil DEĞİLDİ. BU FAZDA, GERÇEK bir `noxc build --profile
+freestanding` denemesi (TEK bir `print()` çağrısı BİLE İçERMEYEN, EN
+minimal program DAHİL) DÖRT, ÖNCEDEN BİLİNMEYEN link-zamanı boşluk buldu:
+
+- **`nox_os_init`** — codegen'in `genMain`/`genMainAsync`i (bkz. §3.6)
+  HER programda KOŞULSUZ `$nox_os_init`i çağırır — F.0.7 bunu (`runtime/
+  stdlib_shims/os.zig`nin, `http_client.zig`ye bağımlı OLDUĞU İçİn)
+  HARİÇ TUTMUŞTU. `lib_freestanding.zig`ye, `os.zig`nin TAMAMINI import
+  ETMEDEN, minimal/GERÇEKTEN kullanışlı bir kopyası (argc/argv'yi saklar)
+  EKLENDİ.
+- **`input()`/`nox_stdin_read_line_raw`** — `stdlib/nox/core.nox`nin
+  `input()`u HER programa OTOMATİK birleştirilen, KULLANILIP KULLANILMADIĞINDAN
+  BAĞIMSIZ olarak QBE IR'ına HER ZAMAN gömülen bir üst-düzey `def`dir
+  (Nox HİÇBİR üst-düzey fonksiyon İçİn ölü-kod eleme YAPMAZ) — F.2'nin
+  "core.nox küçültülmesi bugün gerekmiyor, lazy-analiz sayesinde `input()`
+  kullanılmadığı sürece sorun yaratmıyor" varsayımı, Zig'in KENDİ lazy-
+  analiz modeline dayanıyordu — AMA bu, Nox'un KENDİ codegen'inin (Zig'den
+  TAMAMEN FARKLI bir mekanizma) TÜM üst-düzey fonksiyonları KOŞULSUZ
+  ÜRETMESİNE UYGULANMIYOR. `lib_freestanding.zig`ye GERÇEK bir konsol/
+  UART OLMADIĞINDAN (Faz F.4'ün işi) SADECE linklemeyi sağlayan bir
+  placeholder EKLENDİ.
+- **`print()`/`printf`** — `print()` builtin'i (bkz. `compiler/codegen_qbe/
+  expr.zig`) HER ZAMAN, KOŞULSUZ olarak `$printf`e (libc) lowerlanır —
+  freestanding'de GERÇEK bir konsol OLMADIĞINDAN (YİNE Faz F.4'ün işi)
+  `lib_freestanding.zig`ye SADECE linklemeyi sağlayan bir no-op `printf`
+  EKLENDİ.
+- **`strcmp`** — `core.nox`nin `Exception`/`ValueError`/`IndexError`/
+  `KeyError` sınıfları HER ZAMAN, KOŞULSUZ olarak `str` alanlarını
+  (`message`) `$strcmp` İLE karşılaştıran bir `_eq` metodu ÜRETİR.
+  `printf`/`nox_stdin_read_line_raw`nin AKSİNE `strcmp` HİÇBİR OS ilkeli
+  GEREKTİRMEZ (SAF bellek karşılaştırması) — bu YÜZDEN `lib_freestanding.
+  zig`ye bir PLACEHOLDER DEĞİL, GERÇEK/doğru bir implementasyon olarak
+  EKLENDİ.
+- **`Compile.bundle_compiler_rt`** — `b.addObject`in (`.kind == .obj`)
+  VARSAYILANI (`compile.kind == .exe or compile.isDynamicLibrary()`)
+  SADECE yürütülebilir/dinamik kütüphaneler İçİn `true`dır — Zig'in
+  KENDİ `memcpy`/`memset`/`memmove`/`__udivti3`/`__umodti3` GİBİ
+  derleyici-runtime sembolleri (`-nostdlib` bağlamında BAŞKA HİÇBİR
+  yerden GELMEYEN) BU nesneye VARSAYILAN olarak GÖMÜLMÜYORDU — `noxrt_
+  freestanding`e AÇIKÇA `bundle_compiler_rt = true` EKLENDİ.
+
+**Bu bulguların ORTAK gerekçesi**: `stdlib/nox/core.nox` HER programa
+KOŞULSUZ birleştirilir VE Nox'un KENDİ codegen'i (Zig'in lazy-analiz
+modelinden TAMAMEN FARKLI olarak) ÜRETİLEN her üst-düzey fonksiyon/sınıf-
+metodu İçİn (KULLANILIP KULLANILMADIĞINDAN BAĞIMSIZ) GERÇEK bir çağrı
+ÜRETİR — freestanding profilinin, `core.nox`nin OS-BAĞIMLI HİÇBİR
+PARÇASINI HİÇ İÇERMEMESİ GEREKTİĞİ (`input()` DAHİL) VE `print()` GİBİ
+ÇEKİRDEK dil özelliklerinin de OS'suz bir ortamda GERÇEK bir davranışa
+SAHİP OLAMAYACAĞI, ANCAK GERÇEK bir link denemesiyle KESİN olarak
+ORTAYA ÇIKTI.
+
+### Doğrulama
+
+- YENİ `tests/cli/freestanding_build_test.zig` (4 test, GERÇEK `noxc`
+  alt süreciyle): `spawn`/`await`/`Task[int]` İçEREN bir program GERÇEK
+  bir ELF'e (magic `\x7fELF` + `e_type == ET_EXEC`) derlenip linklenir
+  — F.0.7'nin scheduler-DAHİL kapsamının GERÇEK `noxc` CLI'siyle İLK KEZ
+  uçtan-uca kanıtı; spawn'sız basit bir program AYNI şekilde; `--release
+  --profile freestanding` AÇIK bir hatayla reddedilir; yasaklı bir stdlib
+  modülü (`nox.http`) checker aşamasında reddedilmeye DEVAM eder
+  (regresyon-yok, F.2).
+- `zig build` — `zig-out/lib/noxrt-freestanding.o` GERÇEKTEN üretildi,
+  `file` İLE doğrulandı: `ELF 64-bit LSB relocatable, ARM aarch64`.
+- `zig build test` (TAM paket, Debug + ReleaseFast, `-j1`).
+- `NOX_STRESS_ROUNDS=800 zig build stress-test -Doptimize=ReleaseFast`.
+
+### Kritik dosyalar
+
+`build.zig`, `compiler/qbe_target.zig`, `compiler/main.zig`, `compiler/
+project.zig`, `runtime/lib_freestanding.zig`, `tests/cli/
+freestanding_build_test.zig` (YENİ).
+
+### Kapsam DIŞI (SIRADAKİ, AYRI Plan Mode turlarının konusu)
+
+Gerçek, ARBİTRER çapraz-mimari (`--target <triple>` bayrağı EKLENMEDİ —
+`--profile freestanding` HER ZAMAN "host mimarisi" anlamına GELMEYE
+DEVAM eder); `--release` (LLVM) + freestanding etkileşimi (KOŞULSUZ
+REDDEDİLİR, ÇÖZÜLMEZ); Faz F.4 (GERÇEK boot zinciri — bootloader/linker
+script/kernel entry/serial-üzerinden "Hello Nox"/IDT/fiziksel sayfa
+allocator/kernel heap, QEMU'da ÇALIŞTIRILARAK doğrulanır — BU FAZ SADECE
+derleme+linkleme zincirinin ÇALIŞTIĞINI kanıtlar, ÜRETİLEN ikiliyi HİÇBİR
+YERDE ÇALIŞTIRMAZ); Faz F.5 (CI'ye `qemu-boot-test` EKLENMESİ, F.4'ün
+GERÇEK bir kernel'i OLMADAN ANLAMSIZ).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

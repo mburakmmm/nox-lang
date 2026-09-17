@@ -63,7 +63,7 @@ fn compileToBinary(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, sourc
     try tmp.dir.writeFile(io, .{ .sub_path = "prog.ssa", .data = ir });
 
     const qbe_result = try std.process.run(allocator, io, .{
-        .argv = &.{ "qbe", "-t", nox.qbe_target.name(), "-o", asm_path, ssa_path },
+        .argv = &.{ "qbe", "-t", nox.qbe_target.name(false), "-o", asm_path, ssa_path },
     });
     if (qbe_result.term != .exited or qbe_result.term.exited != 0) {
         std.debug.print("qbe basarisiz: {s}\n", .{qbe_result.stderr});

@@ -17,9 +17,22 @@
 
 const builtin = @import("builtin");
 
-/// `noxc`nin KENDİ çalıştığı platforma göre `qbe -t` İÇİN doğru hedef adını
-/// döner.
-pub fn name() []const u8 {
+/// Faz R.3+F.1 tamamlama (bkz. plan dosyası): `noxc`nin KENDİ çalıştığı
+/// platforma göre `qbe -t` İÇİN doğru hedef adını döner — `is_freestanding
+/// == true` İKEN HOST OS'tan (`builtin.os.tag`) BAĞIMSIZ olarak HER ZAMAN
+/// arch-SADECE (bare-ABI) eşlemeyi kullanır (macOS/Windows'un Apple/kendi
+/// özel ABI konvansiyonları freestanding bir hedef İçİn GEÇERSİZDİR) —
+/// `is_freestanding == false` İKEN (TEK, DEĞİŞMEYEN çağrı sitesi hariç TÜM
+/// mevcut testler) davranış BİREBİR AYNI kalır.
+pub fn name(is_freestanding: bool) []const u8 {
+    if (is_freestanding) {
+        return switch (builtin.cpu.arch) {
+            .aarch64 => "arm64",
+            .x86_64 => "amd64_sysv",
+            .riscv64 => "rv64",
+            else => @compileError("qbe: desteklenmeyen mimari"),
+        };
+    }
     return switch (builtin.os.tag) {
         .macos => switch (builtin.cpu.arch) {
             .aarch64 => "arm64_apple",

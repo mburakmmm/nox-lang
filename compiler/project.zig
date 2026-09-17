@@ -147,6 +147,11 @@ pub const ResourceDirs = struct {
     /// ekler (macOS/Linux'ta `noxrt.o` fiber assembly'sini ZATEN İÇERİR,
     /// bu alan KULLANILMAZ).
     swap_asm_path: []const u8,
+    /// Faz R.3+F.1 tamamlama (bkz. plan dosyası): `build.zig`nin HER-ZAMAN-
+    /// AÇIK, host mimarisi + freestanding OS İçİn derlediği ikinci runtime
+    /// nesnesi — `--profile freestanding` İKEN `buildOne`nin linker çağrısı
+    /// `noxrt_path` YERİNE BUNU kullanır.
+    noxrt_freestanding_path: []const u8,
 };
 
 /// `resource_dir_override` VERİLMİŞSE (`main.zig`de `NOX_RESOURCE_DIR`
@@ -173,6 +178,7 @@ pub fn resolveResourceDirs(a: Allocator, io: Io, resource_dir_override: ?[]const
         .stdlib_dir = try std.fmt.allocPrint(a, "{s}/lib/nox/stdlib", .{base}),
         .noxrt_path = try std.fmt.allocPrint(a, "{s}/lib/noxrt.o", .{base}),
         .swap_asm_path = try std.fmt.allocPrint(a, "{s}/lib/swap_asm.o", .{base}),
+        .noxrt_freestanding_path = try std.fmt.allocPrint(a, "{s}/lib/noxrt-freestanding.o", .{base}),
     };
 }
 

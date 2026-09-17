@@ -21,7 +21,43 @@ fn writeTempSource(gpa: std.mem.Allocator, io: std.Io, source: []const u8, tmp: 
     return std.fmt.allocPrint(gpa, "{s}/prog.nox", .{path_buf[0..len]});
 }
 
-test "noxc build --profile freestanding: izin verilen bir stdlib modülü (nox.strings) BAŞARIYLA derlenir ve ÇALIŞIR" {
+test "noxc check --profile freestanding: izin verilen bir stdlib modülü (nox.strings) checker aşamasında KABUL EDİLİR" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try writeTempSource(gpa, io,
+        \\import nox.strings
+        \\
+        \\parts: list[str] = nox.strings.split("a,b,c", ",")
+        \\print(len(parts))
+        \\
+    , &tmp);
+    defer gpa.free(path);
+
+    const result = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "check", "--profile", "freestanding", path } });
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    try std.testing.expect(result.term == .exited and result.term.exited == 0);
+}
+
+// Faz R.3+F.1 tamamlama (bkz. plan dosyası "Faz R.3 + F.1'in
+// tamamlanması"): `noxc build --profile freestanding` ARTIK (bu fazDAN
+// ÖNCE hiç yapmadığı şekilde) GERÇEKTEN `runtime/lib_freestanding.zig`ye
+// karşı LİNKLER — F.2'nin "izin verilen" (checker-seviyesi) capability
+// allowlist'i İLE "bu modülün Zig runtime'ı GERÇEKTEN freestanding hedefte
+// DERLENİP LİNKLENEBİLİR" SORUSU BİLİNÇLİ olarak AYRI eksenlerdir (bkz.
+// F.2'nin KENDİ "capability profili HOST hedefinden BAĞIMSIZ bir eksen"
+// notu VE BU planın "Kapsam Dışı" bölümü: "stdlib_shims/* GERÇEKTEN
+// freestanding-hedefte derlenebilir olup OLMADIĞI BU turda doğrulanmadı").
+// `nox.strings`nin Zig shim'i (`runtime/stdlib_shims/strings.zig`)
+// `lib_freestanding.zig`ye HİÇ dahil DEĞİLDİR (F.0.7'nin KENDİ, bilinçli
+// dar kapsamı) — bu YÜZDEN checker'ı GEÇEN BU program, linklemede
+// (`nox_strings_split_raw` GİBİ sembollerin `noxrt-freestanding.o`da
+// bulunmaması YÜZÜNDEN) BAŞARISIZ OLMALIDIR — bu, GELECEKTEKİ bir fazın
+// (`stdlib_shims/*`nin freestanding-uyumluluğunu TEK TEK doğrulayıp
+// `lib_freestanding.zig`ye eklemesi) konusudur.
+test "noxc build --profile freestanding: izin verilen bir stdlib modülü (nox.strings) checker'i GEÇER ama linkleme HENÜZ başarısız olur (stdlib_shims/* henüz lib_freestanding.zig'e dahil değil)" {
     const io = std.testing.io;
     const gpa = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
@@ -43,13 +79,8 @@ test "noxc build --profile freestanding: izin verilen bir stdlib modülü (nox.s
     const build_result = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "build", "--profile", "freestanding", path, "-o", out_path } });
     defer gpa.free(build_result.stdout);
     defer gpa.free(build_result.stderr);
-    try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
-
-    const run_result = try std.process.run(gpa, io, .{ .argv = &.{out_path} });
-    defer gpa.free(run_result.stdout);
-    defer gpa.free(run_result.stderr);
-    try std.testing.expect(run_result.term == .exited and run_result.term.exited == 0);
-    try std.testing.expectEqualStrings("3\n", run_result.stdout);
+    try std.testing.expect(build_result.term == .exited and build_result.term.exited == 1);
+    try std.testing.expect(std.mem.indexOf(u8, build_result.stderr, "zig cc basarisiz") != null);
 }
 
 test "noxc build --profile freestanding: dogrudan yasakli bir modul (nox.http) reddedilir" {

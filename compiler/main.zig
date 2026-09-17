@@ -1809,6 +1809,18 @@ fn computeLinkerVisibilityArgs() []const []const u8 {
 /// çıkış kodu) doğrudan `std.process.exit(1)` çağırır — `cmdBuild`/`cmdRun`
 /// bu davranışı DEĞİŞTİRMEDEN miras alır.
 fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: []const u8, verbose: bool, output_override: ?[]const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, debug_info: bool, release: bool, profile: codegen.Profile, fetch_policy: fetch.FetchPolicy) ![]const u8 {
+    // Faz R.3+F.1 tamamlama (bkz. plan dosyası): `--release` (LLVM) yolu
+    // GERÇEK OS iş parçacıklarına dayanan paylaşılan bir `WorkerPool`
+    // kurar (Task[T]/Channel[T] DAHİL, TÜM `spawn`lar İçİn) — freestanding
+    // profilinde (F.0.7'nin `lib_freestanding.zig`si worker_pool.zig'i
+    // BİLİNÇLİ olarak HARİÇ TUTUYOR) BU HENÜZ ÇÖZÜLMEMİŞ bir etkileşimdir,
+    // bu YÜZDEN v1 KOŞULSUZ olarak reddeder — TEK, ÜST-DÜZEY kontrol
+    // NOKTASI (`buildOne`nin KENDİSİ) `cmdBuild`/`cmdRun`/`cmdTest`nin TÜM
+    // çağrı sitelerini otomatik/ücretsiz kapsar.
+    if (release and profile == .freestanding) {
+        printErr("freestanding profili su an SADECE QBE backend'ini destekler (--release ile BIRLIKTE KULLANILAMAZ — LLVM'in KENDI WorkerPool'u GERCEK OS is parcaciklari gerektirir, freestanding'de MEVCUT DEGIL)\n", .{});
+        std.process.exit(1);
+    }
     // Bulundu (kullanıcı geri bildirimi): `noxc upgrade` gibi mistyped/
     // bilinmeyen bir alt komut, tanınan HİÇBİR anahtar kelimeyle
     // eşleşmediğinden `.legacy`ye (bkz. `main`'in belge notu) düşüp
@@ -2004,13 +2016,46 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ssa_path, .data = ir });
 
     const qbe_result = try std.process.run(gpa, io, .{
-        .argv = &.{ "qbe", "-t", qbe_target.name(), "-o", asm_path, ssa_path },
+        .argv = &.{ "qbe", "-t", qbe_target.name(profile == .freestanding), "-o", asm_path, ssa_path },
     });
     defer gpa.free(qbe_result.stdout);
     defer gpa.free(qbe_result.stderr);
     if (qbe_result.term != .exited or qbe_result.term.exited != 0) {
         printErr("qbe basarisiz:\n{s}\n", .{qbe_result.stderr});
         std.process.exit(1);
+    }
+
+    // Faz R.3+F.1 tamamlama (bkz. plan dosyası): `--profile freestanding`
+    // İKEN linker sürücüsü ARTIK host `cc` DEĞİL, `zig cc` (Zig'in KENDİ
+    // evrensel LLD'si) — `tests/golden/freestanding_link_test.zig`nin
+    // (Faz F.1) ZATEN KANITLADIĞI, TEK yol: macOS'un KENDİ NATİF `ld`si
+    // ELF nesne dosyalarını HİÇ işleyemiyor. `linker_visibility_args`/`-lm`
+    // BİLİNÇLİ olarak ATLANIR (dead-strip bayrakları macOS'un native
+    // `ld`sine ÖZGÜ, `zig cc`nin İÇ LLD'si FARKLI bir sözdizimi
+    // bekleyebilir — v1 basitliği İçİn, AYRI bir gelecekteki iyileştirme).
+    if (profile == .freestanding) {
+        const freestanding_triple = try std.fmt.allocPrint(a, "{s}-freestanding-none", .{@tagName(builtin.cpu.arch)});
+        var zig_argv: std.ArrayListUnmanaged([]const u8) = .empty;
+        try zig_argv.appendSlice(a, &.{
+            "zig", "cc", "-target", freestanding_triple, "-ffreestanding", "-nostdlib", "-static",
+            "-o", bin_path, asm_path, resource_dirs.noxrt_freestanding_path,
+        });
+        try appendExternLinkArgs(a, &zig_argv, module);
+
+        const zig_result = std.process.run(gpa, io, .{ .argv = zig_argv.items }) catch |err| {
+            if (err == error.FileNotFound) {
+                printErr("zig bulunamadi: --profile freestanding icin PATH'te bir 'zig' calistirilabilir dosyasi gerekir\n", .{});
+                std.process.exit(1);
+            }
+            return err;
+        };
+        defer gpa.free(zig_result.stdout);
+        defer gpa.free(zig_result.stderr);
+        if (zig_result.term != .exited or zig_result.term.exited != 0) {
+            printErr("zig cc basarisiz:\n{s}\n", .{zig_result.stderr});
+            std.process.exit(1);
+        }
+        return bin_path;
     }
 
     // Faz Q.3: runtime nesne dosyasının yolu artık `resource_dirs.noxrt_path`

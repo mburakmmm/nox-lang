@@ -84,7 +84,21 @@ pub fn build(b: *std.Build) void {
         .aarch64 => .{ "runtime/async_rt/swap_aarch64.S", "runtime/async_rt/swap_aarch64.o" },
         .x86_64 => .{ "runtime/async_rt/swap_x86_64.S", "runtime/async_rt/swap_x86_64.o" },
     };
-    const compile_swap_asm = b.addSystemCommand(&.{
+    // Faz R.3+F.1 tamamlama (bkz. plan dosyası "Faz R.3 + F.1'in
+    // tamamlanması"): `is_freestanding` İKEN (top-level `-Dtarget`
+    // freestanding bir OS'a işaret ediyorsa) HOST `cc` YERİNE `zig cc
+    // -target <arch>-freestanding-none` — `tests/golden/
+    // freestanding_link_test.zig`nin (Faz F.1) ZATEN kanıtladığı, TEK
+    // linker sürücüsü macOS'un native `ld`sinin ELF nesnelerini
+    // işleyemediği İçİn (`compile_swap_asm_freestanding`, aşağıda, AYNI
+    // çağrı şeklini KULLANIR). Hosted derlemede (`is_freestanding ==
+    // false`, EZİCİ ÇOĞUNLUK) bu dal HİÇ tetiklenmez — SIFIR davranış
+    // değişikliği.
+    const compile_swap_asm = if (is_freestanding) b.addSystemCommand(&.{
+        b.graph.zig_exe, "cc",
+        "-target", b.fmt("{s}-freestanding-none", .{@tagName(target.result.cpu.arch)}),
+        "-c", "-o", swap_asm_o_path, swap_asm_src,
+    }) else b.addSystemCommand(&.{
         "cc", "-c", "-o", swap_asm_o_path, swap_asm_src,
     });
 
@@ -315,6 +329,79 @@ pub fn build(b: *std.Build) void {
         b.getInstallStep().dependOn(&install_swap_asm.step);
     }
 
+    // Faz R.3+F.1 tamamlama (bkz. plan dosyası "Faz R.3 + F.1'in
+    // tamamlanması"): host'un KENDİ mimarisi + freestanding OS İçİn,
+    // top-level `-Dtarget`DEN TAMAMEN BAĞIMSIZ, HER `zig build`/`zig build
+    // test` çağrısında (host mimarisi + freestanding OS İçİn) ÇALIŞAN YENİ
+    // bir ikinci derleme zinciri — F.0.7'nin SADECE ELLE `zig build-obj`
+    // İLE doğrulanan çalışmasını KALICI bir regresyon KORUMASINA çevirir,
+    // VE `noxc build --profile freestanding`nin GERÇEKTEN LİNKLEYECEĞİ
+    // STABİL bir `noxrt-freestanding.o` SAĞLAR. (`noxrt_mod`/`noxc_mod`/
+    // `noxlsp_mod`nin MEVCUT `target`i HİÇ DEĞİŞMEZ — BU zincir TAMAMEN
+    // AYRI/PARALEL, SIFIR etkileşim.)
+    const freestanding_target = b.resolveTargetQuery(.{
+        .cpu_arch = b.graph.host.result.cpu.arch,
+        .os_tag = .freestanding,
+        .abi = .none,
+    });
+    const abi_layout_mod_fs = b.createModule(.{
+        .root_source_file = b.path("shared/abi_layout.zig"),
+        .target = freestanding_target,
+        .optimize = optimize,
+    });
+    const diag_sink_mod_fs = b.createModule(.{
+        .root_source_file = b.path("runtime/errors/diag_sink.zig"),
+        .target = freestanding_target,
+        .optimize = optimize,
+    });
+    const noxrt_freestanding_mod = b.createModule(.{
+        .root_source_file = b.path("runtime/lib_freestanding.zig"),
+        .target = freestanding_target,
+        .optimize = optimize,
+        .link_libc = false,
+        .imports = &.{
+            .{ .name = "abi_layout", .module = abi_layout_mod_fs },
+            .{ .name = "diag_sink", .module = diag_sink_mod_fs },
+        },
+    });
+    // `swap_asm_arch`in (yukarıda, TOP-LEVEL `-Dtarget`e bağlı) AYNI arch-
+    // seçme deseni, AMA HOST mimarisi İçİn (BU zincir top-level target'tan
+    // BAĞIMSIZ OLDUĞUNDAN) — `compile_swap_asm_freestanding`nin AYNI `zig
+    // cc -target ...` deseni (`compile_swap_asm`nin `is_freestanding` dalı
+    // İLE AYNI, YENİ bir mekanizma İCAT EDİLMEZ).
+    const freestanding_swap_arch: enum { aarch64, x86_64 } = switch (b.graph.host.result.cpu.arch) {
+        .aarch64 => .aarch64,
+        .x86_64 => .x86_64,
+        else => @panic("runtime/async_rt şu an yalnızca aarch64/x86-64 hedeflerini destekler"),
+    };
+    const swap_asm_freestanding_src, const swap_asm_freestanding_o_path = switch (freestanding_swap_arch) {
+        .aarch64 => .{ "runtime/async_rt/swap_aarch64.S", "runtime/async_rt/swap_aarch64_freestanding.o" },
+        .x86_64 => .{ "runtime/async_rt/swap_x86_64.S", "runtime/async_rt/swap_x86_64_freestanding.o" },
+    };
+    const compile_swap_asm_freestanding = b.addSystemCommand(&.{
+        b.graph.zig_exe, "cc",
+        "-target", b.fmt("{s}-freestanding-none", .{@tagName(b.graph.host.result.cpu.arch)}),
+        "-c", "-o", swap_asm_freestanding_o_path, swap_asm_freestanding_src,
+    });
+    noxrt_freestanding_mod.addObjectFile(b.path(swap_asm_freestanding_o_path));
+    const noxrt_freestanding = b.addObject(.{
+        .name = "noxrt-freestanding",
+        .root_module = noxrt_freestanding_mod,
+    });
+    // Faz R.3+F.1 tamamlama: GERÇEK bir freestanding link denemesiyle
+    // ÖLÇÜLEREK BULUNDU — `Compile.bundle_compiler_rt`in VARSAYILANI
+    // (`compile.kind == .exe or compile.isDynamicLibrary()`) SADECE
+    // yürütülebilir/dinamik kütüphaneler İçİn `true`dır, `b.addObject`nin
+    // (`.kind == .obj`) ÜRETTİĞİ NESNE dosyaları İçİn DEĞİL — bu YÜZDEN
+    // Zig'in `memcpy`/`memset`/`memmove`/`__udivti3`/`__umodti3` GİBİ
+    // KENDİ derleyici-runtime (compiler-rt) sembolleri VARSAYILAN olarak
+    // BU nesneye GÖMÜLMÜYORDU (libc OLMADAN, `-nostdlib` bağlamında BUNLAR
+    // BAŞKA HİÇBİR yerden GELMEZ) — AÇIKÇA `true` YAPILMASI GEREKİR.
+    noxrt_freestanding.bundle_compiler_rt = true;
+    noxrt_freestanding.step.dependOn(&compile_swap_asm_freestanding.step);
+    const install_noxrt_freestanding = b.addInstallFile(noxrt_freestanding.getEmittedBin(), "lib/noxrt-freestanding.o");
+    b.getInstallStep().dependOn(&install_noxrt_freestanding.step);
+
     // Faz O §P.1: `noxc`nin proje kökü DIŞINDAN çalıştırılabilmesi İÇİN
     // `stdlib/` ağacı da (`noxrt.o` İLE AYNI kurulum kökü altına,
     // `compiler/project.zig`nin `ResourceDirs`i İLE EŞLEŞECEK şekilde)
@@ -428,6 +515,11 @@ pub fn build(b: *std.Build) void {
     // codegen golden testleri, üretilen binary'leri `zig-out/lib/noxrt.o`'ya
     // karşı linklemek için bu adımın önceden tamamlanmış olmasına ihtiyaç duyar.
     test_step.dependOn(&install_noxrt.step);
+    // Faz R.3+F.1 tamamlama: `noxrt-freestanding.o`nun HER `zig build test`
+    // çağrısında GERÇEKTEN derlendiğinden emin olmak İçİn (bkz. yukarıdaki
+    // `install_noxrt_freestanding`nin belge notu — F.0.7'nin manuel
+    // doğrulamasını KALICI bir regresyon KORUMASINA çevirir).
+    test_step.dependOn(&install_noxrt_freestanding.step);
     // Faz HH.4: `zig build test`nin KENDİSİ de PAYLAŞILAN yolları YENİDEN
     // KURDUĞUNDAN (test_step, `b.getInstallStep()`DEN BAĞIMSIZ KENDİ
     // bağımlılıklarını taşır) — kontaminasyon senaryosunun İKİNCİ YARISINI
@@ -504,6 +596,7 @@ pub fn build(b: *std.Build) void {
         "tests/cli/help_screen_test.zig",
         "tests/cli/explain_test.zig",
         "tests/cli/profile_test.zig",
+        "tests/cli/freestanding_build_test.zig",
         "tests/cli/binary_size_test.zig",
         "tests/cli/lowlevel_manual_test.zig",
         "tests/fuzz/lexer_parser_checker_fuzz.zig",
