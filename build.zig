@@ -427,11 +427,21 @@ pub fn build(b: *std.Build) void {
     // host mimarisine bağlı) AKSİNE, HER ZAMAN x86_64 hedefler (host'tan
     // BAĞIMSIZ — Zig'in cross-compile'ı BU makinede (aarch64) GERÇEKTEN
     // denenip DOĞRULANDI, bkz. plan dosyasının "Doğrulanmış zemin" bölümü).
-    // `noxrt_kernel_mod`nin KÖKÜ AYNI, ARCH-NÖTR `runtime/lib_freestanding.
-    // zig` — `kernel_x86_64` (`runtime/freestanding/x86_64/kernel.zig`)
-    // SADECE `builtin.cpu.arch == .x86_64` İKEN force-ref edilir (bkz. o
-    // dosyanın belge notu), bu YÜZDEN İKİNCİ zincirin (aarch64 host'ta)
-    // BU dosyayı HİÇ GÖRMEMESİ YAPISAL olarak garantidir.
+    // `noxrt_kernel_mod`nin KÖKÜ artık `runtime/lib_freestanding_kernel.zig`
+    // dir (ARTIK ARCH-NÖTR `lib_freestanding.zig`nin KENDİSİ DEĞİL) — GERÇEK
+    // bir x86_64 Linux CI çalıştırmasıyla BULUNAN bir bug'ın düzeltmesi:
+    // `kernel_x86_64`in force-ref'i ÖNCEDEN `lib_freestanding.zig`nin
+    // KENDİSİNDE `if (builtin.cpu.arch == .x86_64)` KOŞULUYLA yaşıyordu —
+    // BU koşul, HOST mimarisi TESADÜFEN x86_64 OLDUĞUNDA (ör. bir x86_64
+    // Linux runner'ı), İKİNCİ (host-arch, GENEL AMAÇLI) zincirin de AYNI
+    // koşulu SAĞLAMASINA VE `kernel.zig`yi (boot.S'e bağımlı `_kernel_end`/
+    // `nox_isr_table` extern'leriyle) YANLIŞLIKLA force-ref etmesine yol
+    // açıyordu (İKİNCİ zincirin LİNK adımında "undefined symbol" hatası).
+    // Çözüm: force-ref'i `lib_freestanding.zig`nin KENDİSİNDEN tamamen
+    // ÇIKARIP SADECE `lib_freestanding_kernel.zig`ye (noxrt_kernel_mod'un KÖKÜNE, HİÇBİR
+    // ZAMAN İKİNCİ zincir TARAFINDAN kullanılmayan bir dosyaya) taşımak —
+    // `builtin.cpu.arch` TEK BAŞINA "hangi zincir" sorusunu AYIRT EDEMEZ,
+    // AMA "hangi KÖK dosyadan derlendiği" HER ZAMAN AYIRT EDER.
     const kernel_target = b.resolveTargetQuery(.{
         .cpu_arch = .x86_64,
         .os_tag = .freestanding,
@@ -448,7 +458,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const noxrt_kernel_mod = b.createModule(.{
-        .root_source_file = b.path("runtime/lib_freestanding.zig"),
+        .root_source_file = b.path("runtime/lib_freestanding_kernel.zig"),
         .target = kernel_target,
         .optimize = optimize,
         .link_libc = false,
@@ -459,13 +469,19 @@ pub fn build(b: *std.Build) void {
     });
     // `swap_x86_64.S`nin SABİT x86_64 hedefi İçİn AYRI bir derlemesi
     // (`compile_swap_asm_freestanding`nin AYNI `zig cc -target ...` deseni,
-    // AMA host mimarisinden BAĞIMSIZ — HER ZAMAN x86_64).
+    // AMA host mimarisinden BAĞIMSIZ — HER ZAMAN x86_64). Yol BİLİNÇLİ
+    // olarak bir `const` DEĞİŞKENE ÇIKARILIR (`swap_asm_o_path`/`swap_asm_
+    // freestanding_o_path`nin AYNI deseni) — `b.path("literal-string")`
+    // (Faz CI.1'in `tracked-files-check`inin ARADIĞI TAM şekil) BU dosyanın
+    // (ÇALIŞMA-ZAMANINDA üretilen, git'te İZLENMEYEN bir build ARTİFAKTI
+    // OLDUĞUNDAN) YANLIŞLIKLA "izlenmiyor" diye REDDEDİLMESİNİ ÖNLER.
+    const swap_asm_kernel_o_path = "runtime/async_rt/swap_x86_64_kernel.o";
     const compile_swap_asm_kernel = b.addSystemCommand(&.{
         b.graph.zig_exe, "cc",
         "-target", "x86_64-freestanding-none",
-        "-c", "-o", "runtime/async_rt/swap_x86_64_kernel.o", "runtime/async_rt/swap_x86_64.S",
+        "-c", "-o", swap_asm_kernel_o_path, "runtime/async_rt/swap_x86_64.S",
     });
-    noxrt_kernel_mod.addObjectFile(b.path("runtime/async_rt/swap_x86_64_kernel.o"));
+    noxrt_kernel_mod.addObjectFile(b.path(swap_asm_kernel_o_path));
     const noxrt_kernel = b.addObject(.{
         .name = "noxrt-freestanding-x86_64",
         .root_module = noxrt_kernel_mod,

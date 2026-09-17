@@ -14,6 +14,46 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.92.2]
+
+### Düzeltildi (GERÇEK CI koşusuyla bulunan İKİ regresyon — v1.92.1'in push'u)
+
+- **`tracked-files-check`nin YANLIŞLIKLA reddi**: `build.zig`nin
+  `noxrt_kernel_mod`ına `runtime/async_rt/swap_x86_64_kernel.o`yu (bir
+  build-artefaktı, `.gitignore`de) ekleyen satır, Faz CI.1'in
+  `tracked-files-check`inin `grep -oE 'b\.path\("[^"]+"\)'` deseninin
+  YAKALADIĞI bir LİTERAL string kullanıyordu — MEVCUT, ÇALIŞAN İKİ
+  benzer zincirin (`swap_asm_o_path`/`swap_asm_freestanding_o_path`)
+  KENDİ, ÖNCEDEN kanıtlanmış deseni (yolu bir `const` DEĞİŞKENE
+  ÇIKARIP `b.path(değişken)` OLARAK geçirmek — regex'in YAKALAMADIĞI
+  şekil) BURAYA da uygulandı (`swap_asm_kernel_o_path`).
+- **`kernel.zig`nin x86_64 Linux CI host'larında YANLIŞLIKLA İKİNCİ
+  (host-arch, genel-amaçlı) freestanding zincirine force-ref edilmesi**:
+  `runtime/lib_freestanding.zig`'in `kernel_x86_64` force-ref'i
+  `if (builtin.cpu.arch == .x86_64)` KOŞULUNA BAĞLIYDI — bu koşul
+  "SADECE ÜÇÜNCÜ (kernel-özel) zincir x86_64 hedefler" VARSAYIMINA
+  DAYANIYORDU, AMA `builtin.cpu.arch` HANGİ build.zig ZİNCİRİNİN
+  çalıştığını DEĞİL, SADECE derleme HEDEFİNİN mimarisini yansıtır —
+  İKİNCİ (host-arch) zincir de HOST mimarisi TESADÜFEN x86_64 OLDUĞUNDA
+  (ör. bir x86_64 Linux CI runner'ı — bu projenin GELİŞTİRME makinesi
+  aarch64 OLDUĞUNDAN YEREL olarak HİÇ tetiklenmemişti) AYNI koşulu
+  SAĞLAR, `kernel.zig`yi (boot.S'e bağımlı `_kernel_end`/`nox_isr_table`
+  extern'leriyle) YANLIŞLIKLA force-ref eder — `tests/cli/
+  freestanding_build_test.zig`nin İKİ testi (spawn/await + spawn'sız
+  ELF-link testleri) BU YÜZDEN Linux (x86-64) CI job'unda "undefined
+  symbol: _kernel_end" / "undefined symbol: nox_isr_table" İLE
+  BAŞARISIZ OLUYORDU. **Düzeltme**: `kernel_x86_64`in force-ref'i
+  `lib_freestanding.zig`nin KENDİSİNDEN tamamen ÇIKARILIP, YENİ,
+  KÜÇÜK bir kök dosyaya (`runtime/lib_freestanding_kernel.zig`,
+  `noxrt_kernel_mod`nin — build.zig'in ÜÇÜNCÜ zincirinin — YENİ KÖKÜ)
+  taşındı — `builtin.cpu.arch` TEK BAŞINA "hangi zincir" sorusunu
+  AYIRT EDEMESE de, "hangi KÖK dosyadan derlendiği" HER ZAMAN AYIRT
+  eder. (`_ = importedModule;` şeklinde bir dosyanın TAMAMINI discard
+  İLE force-ref etmenin, o dosyanın KENDİ üst-düzey `comptime`
+  bloklarını GERÇEKTEN tetiklediği — Zig'in tembel-analiz modelinin
+  BEKLENEN AMA bu turda GERÇEK bir `zig build-obj`+`nm` deneyiyle
+  DOĞRULANAN bir davranışı — BU çözümün TEMELİDİR.)
+
 ## [1.92.1]
 
 ### Düzeltildi (GERÇEK CI koşusuyla bulunan bir Linux/Windows regresyonu)

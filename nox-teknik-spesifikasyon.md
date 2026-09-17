@@ -22003,6 +22003,113 @@ alanı/syscall/ELF-yükleyici/SMP/gerçek donanım (QEMU DIŞI) doğrulaması.
 
 ---
 
+## 3.174 Faz F.4'ün GERÇEK CI koşusuyla bulunan ÜÇ regresyonu (v1.92.1 + v1.92.2)
+
+v1.92.0'ın (§3.173) push'u SONRASI, standing "her push sonrası GERÇEK
+CI durumunu kontrol et" talimatı gereği `gh run view`/`gh run list` İLE
+kontrol edilen ÜÇ AYRI, GERÇEK regresyon — HİÇBİRİ YEREL (aarch64 macOS)
+geliştirme makinesinde HİÇ tetiklenmedi, ÜÇÜ de SADECE GERÇEK CI
+runner'larında (Linux/Windows, VE bir tanesi ÖZELLİKLE x86_64 Linux
+host'unda) ORTAYA ÇIKTI — bu FAZIN "ölç, varsayma" disiplininin BİR
+KEZ DAHA doğrulanması.
+
+### 1. `noxc`nin KENDİSİ Linux/Windows'ta derlenemiyor (v1.92.1)
+
+`buildOne`nin `NOX_FREESTANDING_KERNEL_ARCH` dâhilî kancası `std.c.getenv`
+KULLANIYOR — macOS'ta libSystem'in HER ZAMAN örtük olarak linklenmesi
+YÜZÜNDEN bu SESSİZCE çalışıyordu, AMA Linux/Windows'ta (Zig'in VARSAYILANI
+libc-siz bir derleme) "dependency on libc must be explicitly specified"
+İLE `noxc`nin KENDİSİNİN (freestanding RUNTIME İLE KARIŞTIRILMAMALI,
+SIRADAN bir host CLI aracı) TÜM platformlarda DERLENEMEMESİNE yol
+AÇIYORDU. **Düzeltme**: `build.zig`nin `noxc_mod`ına `.link_libc = true`
+eklendi — CI-DOĞRULANDI (`external-fixtures.yml`nin v1.92.1 koşusu
+`failure`'dan `success`'e geçti).
+
+### 2. `tracked-files-check`nin YANLIŞLIKLA reddi (v1.92.2)
+
+`noxrt_kernel_mod`ın `runtime/async_rt/swap_x86_64_kernel.o`yu (bir
+build-artefaktı) EKLEYEN satır, Faz CI.1'in `tracked-files-check`inin
+`grep -oE 'b\.path\("[^"]+"\)'` deseninin YAKALADIĞI bir LİTERAL string
+kullanıyordu. MEVCUT, ÇALIŞAN İKİ benzer zincir (`swap_asm_o_path`/
+`swap_asm_freestanding_o_path`) yolu bir `const` DEĞİŞKENE ÇIKARIP
+`b.path(değişken)` OLARAK geçirerek (regex'in YAKALAMADIĞI şekil) BUNU
+ZATEN önlüyordu — AYNI desen `swap_asm_kernel_o_path` OLARAK BURAYA da
+uygulandı.
+
+### 3. `kernel.zig`nin x86_64 Linux CI host'larında YANLIŞLIKLA İKİNCİ
+### zincire force-ref edilmesi (v1.92.2, EN ÖNEMLİ bulgu)
+
+`runtime/lib_freestanding.zig`'in (İKİNCİ — host-arch, genel-amaçlı —
+VE ÜÇÜNCÜ — SABİT x86_64 kernel-özel — zincirlerin İKİSİNİN de KÖKÜ
+İDİ) `kernel_x86_64` force-ref'i `if (builtin.cpu.arch == .x86_64)`
+KOŞULUNA BAĞLIYDI — belge notu "İKİNCİ zincirin (aarch64 host'ta) BU
+dosyayı HİÇ GÖRMEMESİ YAPISAL olarak garantidir" DİYORDU. **Bu YANLIŞTI**:
+`builtin.cpu.arch` HANGİ build.zig ZİNCİRİNİN çalıştığını DEĞİL, SADECE
+derleme HEDEFİNİN mimarisini yansıtır — İKİNCİ zincir de HOST mimarisi
+TESADÜFEN x86_64 OLDUĞUNDA (ör. bir x86_64 Linux CI runner'ı — bu
+projenin GELİŞTİRME makinesi aarch64 OLDUĞUNDAN YEREL olarak HİÇ
+tetiklenmemişti) AYNI koşulu SAĞLAR — `kernel.zig`yi (`boot.S`'e bağımlı
+`_kernel_end`/`nox_isr_table` extern'leriyle) YANLIŞLIKLA force-ref
+eder. `tests/cli/freestanding_build_test.zig`nin İKİ testi (spawn/await
++ spawn'sız ELF-link testleri, Faz R.3+F.1'DEN, BU faza TAMAMEN İLGİSİZ)
+Linux (x86-64) CI job'unda "undefined symbol: _kernel_end"/"undefined
+symbol: nox_isr_table" İLE BAŞARISIZ oluyordu.
+
+**Düzeltme**: `kernel_x86_64`in force-ref'i `lib_freestanding.zig`nin
+KENDİSİNDEN tamamen ÇIKARILIP, YENİ bir kök dosyaya —
+`runtime/lib_freestanding_kernel.zig` — taşındı; `noxrt_kernel_mod`nin
+(`build.zig`nin ÜÇÜNCÜ zinciri) `root_source_file`ı BU YENİ dosyaya
+YÖNLENDİRİLDİ. `runtime/lib_freestanding.zig`nin KENDİSİ ARTIK `kernel.
+zig`ye HİÇ REFERANS VERMEZ — İKİNCİ zincir (HOST mimarisi NE olursa
+olsun) `kernel.zig`yi bir daha HİÇ göremez, `builtin.cpu.arch` yerine
+"hangi KÖK dosyadan derlendiği" (YAPISAL, ARCH'TAN BAĞIMSIZ bir ayrım)
+kullanılır.
+
+`runtime/lib_freestanding_kernel.zig`, Zig 0.16'nın modül-yolu kısıtlaması
+YÜZÜNDEN (`@import`in modül KÖKÜNÜN dışına `..` İLE ÇIKAMAMASI —
+`runtime/freestanding/x86_64/` altına konulan İLK deneme BU YÜZDEN
+`import of file outside module path` hatasıyla BAŞARISIZ oldu, GERÇEK
+bir derleme denemesiyle KEŞFEDİLDİ) BİLİNÇLİ olarak `runtime/` kökünde,
+`lib_freestanding.zig`nin YANINDA tutuldu — HER İKİ hedefine de (
+`lib_freestanding.zig` VE `freestanding/x86_64/kernel.zig`) SADECE
+AŞAĞI-DOĞRU `@import` yeterlidir. Dosyanın gövdesi:
+```zig
+const lib_freestanding = @import("lib_freestanding.zig");
+const kernel_x86_64 = @import("freestanding/x86_64/kernel.zig");
+comptime {
+    _ = lib_freestanding;
+    _ = kernel_x86_64;
+}
+```
+`_ = lib_freestanding;` (İMPORT EDİLEN bir dosyanın TAMAMINI, TEK bir
+üyesi DEĞİL, discard İLE force-ref etmek) `lib_freestanding.zig`nin
+KENDİ üst-düzey `comptime` bloklarını (VE dolayısıyla `asap`/`arc`/vb.
+zincirini) GERÇEKTEN tetikler Mİ sorusu — Zig'in tembel-analiz modelinin
+DAHA ÖNCE HİÇ dokümante edilmemiş bir köşesi — BU turda GERÇEK bir
+`zig build-obj`+`nm` deneyiyle (bir dosyada `export fn` + KENDİ
+`comptime { _ = fn; }`ı, İKİNCİ bir dosyada `_ = ilk_dosya;` VE İKİNCİ
+dosyayı KÖK yapıp `nm` İLE export sembolün ORTAYA ÇIKTIĞI doğrulanarak)
+KANITLANDI: **EVET, tetikler** — bu YÜZDEN `lib_freestanding_kernel.zig`nin
+deseni GÜVENLİDİR, YENİ bir "her üyeyi TEK TEK yeniden-dışa-aktar"
+mekanizmasına GEREK YOKTUR.
+
+**Doğrulama**: `nm zig-out/lib/noxrt-freestanding.o` (İKİNCİ zincir)
+`_kernel_end`/`nox_isr_table`/`nox_freestanding_early_init` sembollerini
+ARTIK HİÇ İçERMİYOR; `nm zig-out/lib/noxrt-freestanding-x86_64.o`
+(ÜÇÜNCÜ zincir) HÂLÂ İçERİYOR (beklenen). `zig build kernel-boot-test`
+(GERÇEK QEMU boot'u) DEĞİŞMEDEN geçmeye devam ediyor; TAM `zig build
+test` (Debug+ReleaseFast, `-j1`) VE `NOX_STRESS_ROUNDS=800 zig build
+stress-test` TEMİZ.
+
+### Kritik dosyalar
+
+`build.zig` (`noxc_mod`a `.link_libc`, `swap_asm_kernel_o_path`,
+`noxrt_kernel_mod`nin `root_source_file`ı), `runtime/lib_freestanding.zig`
+(kernel force-ref'i ÇIKARILDI), `runtime/lib_freestanding_kernel.zig`
+(YENİ).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

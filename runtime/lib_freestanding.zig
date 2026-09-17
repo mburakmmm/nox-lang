@@ -186,18 +186,6 @@ export fn printf(fmt: ?[*:0]const u8, ...) callconv(.c) c_int {
     return @intCast(printfReal(f, &ap));
 }
 
-/// Faz F.4: x86_64'e ÖZGÜ kernel kodu (boot.S'in `nox_freestanding_early_
-/// init`i ÇAĞIRDIĞI, seri-port/IDT/PIC İçEREN dosya) — SADECE `builtin.cpu.
-/// arch == .x86_64` İKEN force-ref edilir (Zig'in tembel-analiz modeliyle,
-/// bkz. dosya-üstü belge notu) — aarch64 host'un KENDİ freestanding zinciri
-/// (`build.zig:342`, F.1'İN host-arch zinciri) BU dosyayı HİÇ GÖRMEZ, x86-
-/// özel inline-asm'in aarch64'te derleme hatası VERMESİ YAPISAL olarak
-/// İMKANSIZDIR.
-pub const kernel_x86_64 = @import("freestanding/x86_64/kernel.zig");
-comptime {
-    if (builtin.cpu.arch == .x86_64) _ = kernel_x86_64;
-}
-
 // `lib.zig`nin AYNI zorunlu force-ref bloğu — bu modüllerin `export fn`
 // bildirimlerinin freestanding `noxrt.o`nun nesne çıktısına DAHİL olması
 // İçİn (hiçbir şey onları başvurmadıkça analiz edilmez).
