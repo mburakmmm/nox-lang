@@ -136,14 +136,32 @@ jobs:
       - name: zig build (Debug)
         run: zig build
 
+      # Faz [YENİ] (bkz. plan dosyası "CI'daki 3 hatayı düzeltme"): `-j4`
+      # eklendi — `zig build test`nin DAHA ÖNCE (bu satır YOKKEN) HİÇBİR
+      # `-j` sınırı OLMADAN, runner'ın raporladığı CPU sayısına göre
+      # OTOMATİK/SINIRSIZ paralellikle çalışması, GERÇEK bir CI koşusuyla
+      # (`gh run view`, v1.92.2/v1.92.3'ün push'ları) ÜÇ AYRI, BAĞIMSIZ
+      # test dosyasında (worker-pool'ın çapraz-worker yarışı HARİÇ — O AYRI,
+      # gerçek bir bug İDİ VE AYRICA düzeltildi — `http_server.zig`'in
+      # zaman-aşımı MARJI testi VE `binary_size_test`'in `noxc build`/`nm`
+      # ALT SÜREÇ çağrıları) "kaynak-çekişmesi" SINIFI hatalarla İLİŞKİLİ
+      # OLDUĞU GÖZLEMLENDİ — bu projenin KENDİ, ZATEN kanıtlanmış "GERÇEK
+      # doğrulama İçİn `-j1` KULLAN" disiplininin (bkz. `tests/compat/
+      # http_serve_golden_test.zig`nin YEREL flake'inin BU AYNI teknikle
+      # DOĞRULANIP ÇÖZÜLDÜĞÜ, BU turda) CI'YE de UYGULANMASI — TAM `-j1`
+      # (30 dakikalık job-zaman-aşımını RİSKE ATABİLECEK KADAR yavaşlatır)
+      # YERİNE, ORTA bir sınır (`-j4`) — runner'ın CPU sayısından BAĞIMSIZ
+      # bir ÜST TAVAN koyup AŞIRI-ABONE (over-subscribed) eşzamanlı
+      # `noxc`/`qbe`/`cc`/`nm` alt-süreç YIĞILMASINI ÖNLER, HÂLÂ ANLAMLI
+      # bir paralellik KORUR.
       - name: zig build test (Debug)
-        run: zig build test
+        run: zig build test -j4
 
       - name: zig build (ReleaseFast)
         run: zig build -Doptimize=ReleaseFast
 
       - name: zig build test (ReleaseFast)
-        run: zig build test -Doptimize=ReleaseFast
+        run: zig build test -Doptimize=ReleaseFast -j4
 
   # Faz LL.1 (bkz. nox-teknik-spesifikasyon.md §3.71): GERÇEK Windows
   # desteği YOK — `runtime/async_rt/io_reactor.zig` şu an yalnızca macOS

@@ -64,9 +64,26 @@ test "noxc build: smtp/postgres kullanmayan basit bir program dead-stripping ile
     const bin_path = try std.fmt.allocPrint(gpa, "{s}/prog_out", .{tmp_dir_path});
     defer gpa.free(bin_path);
 
-    const build_result = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "build", src_path, "-o", bin_path } });
+    // Faz [YENİ] (bkz. plan dosyası "CI'daki 3 hatayı düzeltme"): GERÇEK
+    // bir CI koşusunda bu test "failed without output" İLE (Zig'in test
+    // runner'ı, satır boş bir stderr GÖRDÜĞÜNDE BUNU basar — bkz. `std.
+    // Build.Step.Run`ın `test_results` işleyicisi) BAŞARISIZ OLDU —
+    // ÖNCEDEN HİÇBİR HATA MESAJI YAZDIRMIYORDU. `std.process.run`nin
+    // KENDİSİ (spawn/exec, kaynak-çekişmesi ALTINDA `error.SystemResources`
+    // GİBİ bir hata İLE) BAŞARISIZ OLDUĞUNDA `try` SESSİZCE ÜST-SEVİYEYE
+    // YAYILIYORDU — `catch |err|` İLE AÇIKÇA HANGİ komutun/hangi hatayla
+    // BAŞARISIZ OLDUĞU stderr'e YAZDIRILIR (GELECEKTE benzer bir yarışın
+    // TEŞHİSİNİ kolaylaştırmak İçİn — CI paralelliği AYRICA `-j4`YE
+    // düşürüldü, bkz. `ci.yml`).
+    const build_result = std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "build", src_path, "-o", bin_path } }) catch |err| {
+        std.debug.print("noxc build spawn basarisiz: {t}\n", .{err});
+        return err;
+    };
     defer gpa.free(build_result.stdout);
     defer gpa.free(build_result.stderr);
+    if (!(build_result.term == .exited and build_result.term.exited == 0)) {
+        std.debug.print("noxc build basarisiz, term={any}\nstdout:\n{s}\nstderr:\n{s}\n", .{ build_result.term, build_result.stdout, build_result.stderr });
+    }
     try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
 
     // Negatif kanıt: nox.smtp/nox.postgres'e ait, KESİNLİKLE İLGİSİZ
@@ -74,7 +91,10 @@ test "noxc build: smtp/postgres kullanmayan basit bir program dead-stripping ile
     // stripping GERÇEKTEN çalışıyorsa bu fonksiyonların KODU (ve sembol
     // girdisi) ikiliden TAMAMEN elenir (stripped-out kod, `nm`de HİÇ
     // görünmez — local/`t` sembol olarak bile kalmaz).
-    const nm_result = try std.process.run(gpa, io, .{ .argv = &.{ "nm", bin_path } });
+    const nm_result = std.process.run(gpa, io, .{ .argv = &.{ "nm", bin_path } }) catch |err| {
+        std.debug.print("nm spawn basarisiz: {t}\n", .{err});
+        return err;
+    };
     defer gpa.free(nm_result.stdout);
     defer gpa.free(nm_result.stderr);
     try std.testing.expect(nm_result.term == .exited and nm_result.term.exited == 0);

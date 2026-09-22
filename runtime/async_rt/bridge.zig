@@ -202,6 +202,19 @@ pub export fn nox_async_spawn(rt: ?*anyopaque, func: *const fn (*anyopaque) call
     return task;
 }
 
+/// Faz [YENİ] (bkz. plan dosyası "pool_bridge'in çapraz-worker entry-
+/// çalınması yarışını düzeltme"): `nox_async_spawn`nin AYNI `g_scheduler`
+/// erişimi, AMA `scheduler_mod.spawn` (ÇALINABİLİR) YERİNE `scheduler_mod.
+/// spawnPinned` (bkz. onun belge notu) çağırır — SADECE `pool_bridge.zig`nin
+/// `nox_pool_serve`si (HER worker'ın KENDİ accept-döngüsünü ÇALIŞTIRMASI
+/// GEREKEN, YAPIS AL olarak ÇALINAMAMASI gereken görevler) TARAFINDAN
+/// KULLANILIR — `pub fn` (export fn DEĞİL): codegen'in ÜRETTİĞİ HİÇBİR
+/// çağrı sitesi BUNU çağırmaz, SADECE runtime'ın KENDİ İç kullanımı İçİndir.
+pub fn spawnPinnedForCurrentThread(func: *const fn (*anyopaque) callconv(.c) i64, arg: *anyopaque) ?*anyopaque {
+    const task = scheduler_mod.spawnPinned(&g_scheduler.?, i64, func, arg) catch @panic("OOM: spawnPinned");
+    return task;
+}
+
 /// Bir `Task`ı bekler — tamamlanmışsa sonucu hemen, değilse çağıran fiber'ı
 /// askıya alıp döner (bkz. `Task.await_`).
 pub export fn nox_async_await(rt: ?*anyopaque, task: ?*anyopaque) i64 {

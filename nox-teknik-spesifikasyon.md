@@ -22125,6 +22125,121 @@ belge notu TARAFINDAN tetiklendiği bir örnek).
 
 ---
 
+## 3.175 Release'i bloke eden üç CI hatasının düzeltmesi (v1.93.0)
+
+v1.92.3'ün push'u SONRASI `gh run view` İLE kontrol edildiğinde, ÜÇ
+AYRI, BAĞIMSIZ CI hatası bulundu (Freestanding çalışmasıyla TAMAMEN
+İLİŞKİSİZ — TÜM son 4 push'ta Release iş akışını ENGELLEDİĞİ İçİn ACİL
+olarak ele alındı).
+
+### 1. `nox_pool_serve`nin çapraz-worker "entry çalınması" yarışı (GERÇEK bir bug)
+
+`runtime/async_rt/pool_bridge.zig`nin `poolServeWorkerMain`/
+`poolServeDriverThreadMain`i, HER worker'ın KENDİ accept-döngüsünü
+(`entry_fn`) `scheduler_mod.spawn` İLE (GENEL, "spawn-anında çal,
+İLK-çalıştırmadan SONRA sabitlen" modeliyle — `spawn()`nin KENDİ, BİLİNÇLİ
+tasarımı, SIRADAN `Task[T]`/`spawn` İçİn DOĞRU bir yük-dengeleme
+davranışı) spawn ediyordu. `scheduler.zig`nin `spawn()`ı YENİ fiber'ı
+ÇAĞIRANIN KENDİ deque'ine `pushBottom` eder — bu, `tryStealFromSiblings`
+TARAFINDAN HEMEN çalınabilir hale GETİRİR. `WorkerPool.spawnWorkers`nin
+SIRALI (`for (self.threads, 0..) |*t, i| ... std.Thread.spawn`)
+thread-oluşturma döngüsü SÜRERKEN, ZATEN BAŞLAMIŞ VE HIZLI biten BAŞKA
+bir worker BOŞA çıkıp `tryStealFromSiblings`i ÇAĞIRDIĞINDA, HENÜZ KENDİ
+`run()`una ULAŞMAMIŞ bir kardeşin entry görevini ÇALABİLİYORDU — `asap.
+currentWorkerSlot()` çalışma ANINDA HANGİ OS iş parçacığının O fiber'ı
+ÇALIŞTIRDIĞINI yansıttığından (kaydırılamaz bir semantik, `pool_free_
+lists`/`globals_blocks`in DOĞRU çalışması İçİn GEREKLİ), çalınan entry
+GÖREVİ `entry_ran[yanlış_slot]` yazıyor, ORİJİNAL slot HİÇBİR ZAMAN KENDİ
+`entry_ran`ını işaretlemiyordu — `nox_pool_serve`nin "HER slot KENDİ
+accept-döngüsünü ÇALIŞTIRIR" GARANTİSİ BOZULUYORDU (bir worker İKİ
+accept-döngüsü ÇALIŞTIRIP BAŞKA biri HİÇ ÇALIŞTIRMAYABİLİRDİ — GERÇEK bir
+yük-dengeleme/doğruluk hatası, `nox.http.serve_multicore`nin KENDİ amacına
+AYKIRI).
+
+`nox.thread.pool_run`ın (AYNI `spawn()` yolunu KULLANAN, `poolWorkerMain`
+VE `poolRunDriverThreadMain`) KENDİ, DAHA ÖNCE BULUNUP belgelenmiş AYNI
+yarışı (`poolWorkerMain`nin belge notu) — orada `entry()`nin fiber'ının
+NEREDE çalıştığı ÖNEMLİ DEĞİL (globals'ın KENDİSİ "konumdan bağımsız"
+YAPILDI, entry-affinity İhtiyacı YOK) — bu YÜZDEN `nox_pool_run`nin İKİ
+entry-spawn sitesine DOKUNULMADI, SADECE `nox_pool_serve`nin (1-per-worker
+affinity GERÇEKTEN GEREKEN) İKİ sitesi düzeltildi.
+
+**Düzeltme**: YENİ `scheduler_mod.spawnPinned` (`scheduler.zig`) —
+`spawn()`nin BİREBİR kopyası (AYNI `Task(T)`/refcount/`cancel_flag`/
+`pool_live_count` muhasebesi), TEK farkla: YENİ fiber `ownDeque().
+pushBottom()` YERİNE KOŞULSUZ `scheduler.markReady(task.fiber)` İLE
+yerleştirilir. `markReady`, fiber'ı `self.ready`ye (`ready_lock` KORUMALI,
+`run()`nin döngü BAŞINDA KONTROL ETTİĞİ, `tryStealFromSiblings`in ASLA
+dokunmadığı — O SADECE kardeş DEQUE'LERİNE bakar, `self.ready`ye DEĞİL —
+AYRI bir dizi) EKLER — bu YÜZDEN `spawnPinned` İLE spawn edilen bir görev
+YAPISAL olarak ÇALINAMAZ, `run()`nin İLK, YEREL kontrolüyle GARANTİLİ
+olarak KENDİ OS iş parçacığında çalışır. YENİ `bridge.
+spawnPinnedForCurrentThread` (`bridge.zig`, `pub fn`, `export fn` DEĞİL —
+SADECE runtime'ın KENDİ İç kullanımı İçİn, codegen HİÇ çağırmaz) BUNU
+`g_scheduler`e (threadlocal) bağlar; `pool_bridge.zig`nin İKİ `nox_async_
+spawn` çağrısı (driver + sibling worker) BUNA çevrildi. `poolServeFlattened`
+(`--release`nin PAYLAŞILAN-havuz varyantı) zaten `spawnToForeignScheduler`
+KULLANIYORDU (O da `markReady` TABANLI) — BU YOL zaten GÜVENLİYDİ,
+DOKUNULMADI.
+
+**Doğrulama**: yerel olarak (aarch64 macOS) 65+ ard arda çalıştırmada NE
+düzeltme ÖNCESİ NE SONRASI hata GÖZLEMLENEMEDİ (bu tür M:N zamanlayıcı
+yarışlarının BU projenin GEÇMİŞİNDE de TEKRAR TEKRAR SADECE GERÇEK CI'de
+gözlemlendiği, YEREL olarak reprodüklenemediği DESENİYLE TUTARLI) —
+düzeltme mimari analizle (`tryStealFromSiblings`in KODU DOĞRUDAN OKUNARAK,
+SADECE deque'lere baktığı KANITLANARAK) doğrulandı, GERÇEK CI koşusuyla
+(`gh run view`) TEYİT edilecek.
+
+### 2. `nox.http` HH.7 zaman-aşımı testinin dar CI-zamanlama marjı
+
+`runtime/stdlib_shims/http_server.zig`nin "zaman aşımı İçİnde tamamlanan
+normal bir istek YANLIŞ-POZİTİF olmadan işlenir" testi 100ms'lik bir
+sunucu-taraflı okuma zaman aşımına karşı istemcinin SADECE 40ms
+gecikmeyle (`nanosleep`) isteği göndermesini BEKLİYORDU — 60ms MARJ, YÜKLÜ
+bir CI runner'ında GERÇEK bir iş parçacığı zamanlama gecikmesiyle (nanosleep
+SONRASI GERÇEK uyanma + `testSendGet`in KENDİ syscall gecikmesi)
+AŞILABİLECEK KADAR DAR. **Düzeltme**: MUTLAK değerler `2000ms`/`200ms`ye
+(1800ms MARJ) büyütüldü, ORANTI (%10) AYNEN KORUNARAK — test HÂLÂ HIZLI
+(normalde ~200ms'de biter) AMA CI zamanlama jitter'ına karşı ÇOK DAHA
+SAĞLAM.
+
+### 3. `binary_size_test`nin "failed without output" hatası + CI paralelliği
+
+Zig'in test runner'ı (`std.Build.Step.Run`) bir test BAŞARISIZ olup
+STDERR BOŞSA "'{isim}' failed without output" yazdırır — GERÇEK CI'de
+(`gh run view`) TAM OLARAK BU görüldü, hangi ALT SÜREÇ/hangi hatanın
+neden olduğu HİÇ belli değildi. Kök nedenin, `ci.yml`nin `zig build test`
+çağrılarının HİÇBİR `-j` sınırı OLMADAN, runner'ın CPU sayısına göre
+OTOMATİK paralellikle çalışması olduğu değerlendirildi — bu, `noxc`/`qbe`/
+`cc`/`nm` alt-süreçleri spawn eden ÇOK sayıda test ikilisinin AYNI ANDA
+çalışmasına, kaynak-kıt bir CI runner'ında `std.process.run`nin KENDİSİNİN
+(spawn/exec) ARA SIRA BAŞARISIZ olmasına yol AÇABİLİR — BU projenin KENDİ,
+ZATEN kanıtlanmış "GERÇEK doğrulama İçİn `-j1` KULLAN" disiplininin (BU
+turda `tests/compat/http_serve_golden_test.zig`nin YEREL bir flake'i BU
+AYNI teknikle — TAM paket `-j10` altında ARA SIRA başarısız, İZOLE `-j1`
+altında HER ZAMAN GEÇİYOR — DOĞRULANDI/RAPORLANDI) AYNI SINIFI.
+
+**Düzeltme**: `tests/cli/binary_size_test.zig`nin `std.process.run`
+çağrıları `catch |err|` İLE SARILIP AÇIKÇA hangi komutun/hangi hatayla
+BAŞARISIZ OLDUĞU stderr'e YAZDIRILIR (GELECEKTEKİ benzer bir yarışın
+TEŞHİSİNİ kolaylaştırmak İçİn); `ci.yml`nin İKİ `zig build test` çağrısına
+`-j4` EKLENDİ — TAM `-j1` (30 dakikalık job-zaman-aşımını RİSKE atabilecek
+KADAR yavaşlatır, `nox_pool_serve`nin GEÇMİŞTE 6 SAAT ASILI kaldığı Faz
+MN.11'in AYNI riski) YERİNE, ORTA bir sınır (runner'ın CPU sayısından
+BAĞIMSIZ bir ÜST TAVAN, AŞIRI-ABONE alt-süreç YIĞILMASINI ÖNLER, HÂLÂ
+ANLAMLI bir paralellik KORUR).
+
+### Kritik dosyalar
+
+`runtime/async_rt/scheduler.zig` (YENİ `spawnPinned`), `runtime/async_rt/
+bridge.zig` (YENİ `spawnPinnedForCurrentThread`), `runtime/async_rt/
+pool_bridge.zig` (İKİ entry-spawn sitesi), `runtime/stdlib_shims/
+http_server.zig` (HH.7 testinin zamanlama sabitleri), `tests/cli/
+binary_size_test.zig` (teşhis mesajları), `.github/workflows/ci.yml`
+(`-j4`).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

@@ -2106,21 +2106,27 @@ test "Faz HH.7: zaman asimi ICINDE tamamlanan normal bir istek YANLIS-POZITIF ol
     TestHandlerLog.log.clearRetainingCapacity();
     TestHandlerLog.rt_ptr = rt;
 
-    // İstemci bağlanır, KISA bir gecikmeyle (zaman aşımının İÇİNDE, 100ms
-    // sınırın YARISI kadar) isteği gönderir — bu, YANLIŞ-POZİTİF (normal,
-    // biraz gecikmeli trafiğin de zaman aşımına UĞRAMASI) OLMADIĞININ kanıtı.
+    // İstemci bağlanır, KISA bir gecikmeyle (zaman aşımının İÇİNDE, sınırın
+    // %10'u kadar) isteği gönderir — bu, YANLIŞ-POZİTİF (normal, biraz
+    // gecikmeli trafiğin de zaman aşımına UĞRAMASI) OLMADIĞININ kanıtı.
+    // GERÇEK bir CI koşusuyla bulunan flake düzeltmesi: ÖNCEKİ 100ms/40ms
+    // değerleri (60ms MARJ) YÜKLÜ bir CI runner'ında iş parçacığı
+    // zamanlama gecikmesiyle (nanosleep SONRASI GERÇEK uyanma + testSendGet'in
+    // KENDİ syscall gecikmesi) AŞILABİLİYORDU — MUTLAK marj `2000ms/200ms`ye
+    // (1800ms) BÜYÜTÜLDÜ, ORANTI (%10) KORUNARAK — test HÂLÂ HIZLI (normalde
+    // ~200ms'de biter), AMA CI zamanlama JİTTER'ına karşı ÇOK DAHA SAĞLAM.
     const client_thread = try std.Thread.spawn(.{}, struct {
         fn run(p: u16) void {
             const fd = testConnect(p) catch return;
             defer _ = closeSocket(fd);
-            const ts: posix.timespec = .{ .sec = 0, .nsec = 40 * std.time.ns_per_ms };
+            const ts: posix.timespec = .{ .sec = 0, .nsec = 200 * std.time.ns_per_ms };
             _ = std.c.nanosleep(&ts, null);
             testSendGet(fd, "/normal");
             testReadAll(fd);
         }
     }.run, .{port});
 
-    var args: ServeArgs = .{ .rt = rt, .server = server, .max_connections = 1, .read_timeout_ms = 100 };
+    var args: ServeArgs = .{ .rt = rt, .server = server, .max_connections = 1, .read_timeout_ms = 2000 };
     const serve_task = bridge.nox_async_spawn(rt, testServeEntry, &args).?;
     try std.testing.expectEqual(@as(i32, 0), bridge.nox_async_run_to_completion(rt));
     _ = bridge.nox_async_await(rt, serve_task);

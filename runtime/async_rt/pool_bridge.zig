@@ -482,7 +482,10 @@ const PoolServeDriverArgs = struct {
 fn poolServeWorkerMain(rt: *anyopaque, slot: usize, ctx: *PoolServeCtx) void {
     _ = slot;
     bridge.nox_async_init(rt);
-    const entry_task = bridge.nox_async_spawn(rt, ctx.entry_fn, ctx.closure.?) orelse @panic("OOM: nox.http.serve_multicore entry spawn");
+    // Faz [YENİ]: `nox_async_spawn` (ÇALINABİLİR) YERİNE `spawnPinnedForCurrentThread`
+    // — bkz. `scheduler_mod.spawnPinned`nin belge notu, GERÇEK bir CI
+    // koşusuyla bulunan çapraz-worker "entry çalınması" yarışının düzeltmesi.
+    const entry_task = bridge.spawnPinnedForCurrentThread(ctx.entry_fn, ctx.closure.?) orelse @panic("OOM: nox.http.serve_multicore entry spawn");
     poolWorkerRunAndCleanup(rt, entry_task);
 }
 
@@ -501,8 +504,16 @@ fn poolServeDriverThreadMain(args: *PoolServeDriverArgs) void {
     // ASLA 0'DAN başlamaz (bkz. `poolWorkerMain`nin belge notundaki
     // "slot 0'DAN ÖNCE başlayan kardeş" yarışı — BURADA HER slot KENDİ
     // spawn'ını KENDİSİ yaptığından, o yarış YAPISAL olarak zaten YOK).
+    // Faz [YENİ]: `nox_pool_run`nin AKSİNE (bkz. YUKARIDAKİ `nox_pool_run`
+    // varyantının belge notu, "globals'ı KONUMDAN BAĞIMSIZ yap" çözümü)
+    // `nox_pool_serve`nin "HER slot KENDİ accept-döngüsünü ÇALIŞTIRIR"
+    // GARANTİSİ, entry görevinin BAŞKA bir worker'a ÇALINMASIYLA GERÇEKTEN
+    // BOZULUR (bir worker İKİ accept-döngüsü ÇALIŞTIRIR, BAŞKA biri HİÇ) —
+    // bu YÜZDEN `spawnPinnedForCurrentThread` (ÇALINAMAZ) KULLANILIR, GERÇEK
+    // bir CI koşusuyla bulunan bir yarışın düzeltmesi (bkz. `scheduler_mod.
+    // spawnPinned`nin belge notu).
     bridge.nox_async_init(pool.rt);
-    const entry_task = bridge.nox_async_spawn(pool.rt, args.ctx.entry_fn, closure) orelse @panic("OOM: nox.http.serve_multicore entry spawn");
+    const entry_task = bridge.spawnPinnedForCurrentThread(args.ctx.entry_fn, closure) orelse @panic("OOM: nox.http.serve_multicore entry spawn");
 
     pool.spawnWorkers(*PoolServeCtx, poolServeWorkerMain, args.ctx) catch @panic("OOM: nox.http.serve_multicore worker'ları");
 

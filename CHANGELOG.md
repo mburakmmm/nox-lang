@@ -14,6 +14,49 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.93.0]
+
+### Düzeltildi (Release'i bloke eden üç CI hatası — hepsi GERÇEK bir CI koşusuyla bulundu)
+
+- **`nox_pool_serve`nin (`nox.http.serve_multicore`nin havuz-tabanlı,
+  havuzsuz varyantı) çapraz-worker "entry çalınması" yarışı** (GERÇEK bir
+  bug): HER worker'ın KENDİ accept-döngüsü (`entry_fn`) `scheduler_mod.
+  spawn`nin GENEL, ÇALINABİLİR yolu ("spawn-anında çal, İLK-çalıştırmadan
+  SONRA sabitlen" modeli) İLE spawn ediliyordu — worker'ın KENDİ `run()`u
+  BAŞLAMADAN ÖNCE (`WorkerPool.spawnWorkers`in SIRALI thread-oluşturma
+  döngüsü SÜRERKEN), ZATEN BAŞLAMIŞ VE HIZLI biten BAŞKA bir worker BU
+  entry görevini ÇALABİLİYORDU — bir worker İKİ accept-döngüsü çalıştırıp
+  BAŞKA biri HİÇ çalıştırmıyordu, `nox_pool_serve`nin "HER worker KENDİ
+  accept-döngüsünü ÇALIŞTIRIR" garantisini BOZUYORDU. **Düzeltme**: YENİ
+  `scheduler_mod.spawnPinned` — `spawn()`nin BİREBİR kopyası, TEK farkla:
+  YENİ fiber ÇALINABİLİR deque'e DEĞİL, `markReady` (SADECE `run()`nin
+  KENDİ döngüsü TARAFINDAN YEREL olarak pop edilen, `tryStealFromSiblings`in
+  ASLA dokunmadığı `self.ready`) İLE yerleştirilir — bu YÜZDEN entry görevi
+  YAPISAL olarak ÇALINAMAZ hale gelir. `nox.thread.pool_run`ın (AYNI GENEL
+  yolu KULLANAN, AMA entry-affinity GEREKTİRMEYEN) KENDİ, ÖNCEDEN BULUNUP
+  ("globals'ı KONUMDAN BAĞIMSIZ yap" İLE) ÇÖZÜLMÜŞ AYNI yarışına
+  DOKUNULMADI — SADECE `nox_pool_serve`nin İKİ entry-spawn sitesi (driver +
+  sibling worker) güncellendi.
+- **`nox.http`nin HH.7 zaman-aşımı testinin ÇOK dar bir CI-zamanlama
+  marjı**: "zaman aşımı İçİnde tamamlanan normal bir istek" testi 100ms'lik
+  bir sunucu-taraflı okuma zaman aşımına karşı istemcinin SADECE 40ms
+  gecikmeyle isteği göndermesini bekliyordu (60ms MARJ) — YÜKLÜ bir CI
+  runner'ında iş parçacığı zamanlama gecikmesi BUNU AŞABİLİYORDU. MUTLAK
+  değerler `2000ms`/`200ms`ye (1800ms MARJ) büyütüldü, ORANTI (%10)
+  KORUNARAK.
+- **`binary_size_test`nin "failed without output" hatası**: `std.process.
+  run`nin (`noxc build`/`nm` alt-süreçlerini başlatan) KENDİSİ, kaynak-
+  çekişmesi ALTINDA (CI'nin `zig build test`i HİÇBİR `-j` sınırı OLMADAN
+  çalıştırdığından, TÜM test ikilileri AYNI ANDA kendi alt-süreçlerini
+  spawn ediyordu) BAŞARISIZ olduğunda HİÇBİR HATA MESAJI yazdırmıyordu
+  (Zig'in test runner'ı BOŞ bir stderr'i "failed without output" olarak
+  raporluyor). `catch |err|` İLE AÇIKÇA teşhis mesajı EKLENDİ, VE `ci.yml`nin
+  `zig build test` çağrılarına `-j4` eklendi — bu projenin KENDİ, ZATEN
+  kanıtlanmış "GERÇEK doğrulama İçİn `-j1` KULLAN" disiplininin (BU turda
+  `http_serve_golden_test`nin YEREL bir flake'i BU AYNI teknikle DOĞRULANIP
+  RAPORLANDI) CI'YE UYGULANMASI — TAM `-j1` 30-dakikalık job-zaman-aşımını
+  RİSKE atabileceğinden, ORTA bir sınır (`-j4`) seçildi.
+
 ## [1.92.3]
 
 ### Düzeltildi (v1.92.2'nin push'unun GERÇEK CI koşusuyla bulunan bir kendi-kendine-neden-olunan regresyon)

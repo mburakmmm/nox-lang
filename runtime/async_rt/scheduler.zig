@@ -1044,6 +1044,63 @@ pub fn spawn(scheduler: *Scheduler, comptime T: type, func: *const fn (*anyopaqu
     return task;
 }
 
+/// Faz [YENİ] (bkz. plan dosyası "pool_bridge'in çapraz-worker entry-
+/// çalınması yarışını düzeltme"): `spawn()`nin (yukarısı) BİREBİR AYNI
+/// kopyası — TEK fark, YENİ fiber'ın YERLEŞTİRİLDİĞİ yer. `spawn()`
+/// KASITLI olarak "spawn-anında çal, İLK-çalıştırmadan SONRA sabitlen"
+/// modelini uygular (KENDİ deque'ine `pushBottom`, bu YÜZDEN BAŞKA bir
+/// worker `tryStealFromSiblings`İYLE bunu HEMEN çalabilir) — SIRADAN
+/// `spawn`/`Task[T]` İçİn bu DOĞRU/istenen bir yük-dengeleme davranışıdır.
+/// AMA `nox_pool_serve`nin (bkz. `pool_bridge.zig`) "HER worker KENDİ
+/// accept-döngüsünü ÇALIŞTIRIR" GARANTİSİ BUNUNLA ÇELİŞİR: worker i'nin
+/// entry görevi (`poolServeWorkerMain`/`poolServeDriverThreadMain`de
+/// spawn edilir) `spawn()`la KULLANILIRSA, worker i'nin KENDİ `run()`u
+/// BAŞLAMADAN ÖNCE (ör. `WorkerPool.spawnWorkers`in SIRALI, ZAMAN ALAN
+/// thread-oluşturma döngüsü SÜRERKEN, ZATEN BAŞLAMIŞ BAŞKA bir worker
+/// KENDİ entry'sini HIZLI bitirip boşa çıktığında) BAŞKA bir worker
+/// TARAFINDAN ÇALINABİLİR — worker i'nin `entry_ran`/`pool_live_count`
+/// muhasebesi BOZULUR (GERÇEK bir CI koşusuyla, `nox_pool_serve`nin
+/// "TÜM slotlar (0 DAHİL) KENDİ entry'sini ÇALIŞTIRIR" testinde
+/// TEKRARLANABİLİR şekilde bulundu).
+///
+/// **Çözüm**: YENİ fiber `ownDeque().pushBottom()` (ÇALINABİLİR) YERİNE
+/// KOŞULSUZ `scheduler.markReady(task.fiber)` (self.ready — SADECE `run()`
+/// döngüsünün KENDİSİ TARAFINDAN, YEREL olarak pop edilir; `tryStealFrom
+/// Siblings` SADECE kardeş DEQUE'LERİNE bakar, `self.ready`ye ASLA
+/// DOKUNMAZ, bkz. `tryStealFromSiblings`in gövdesi) İLE yerleştirilir —
+/// bu YÜZDEN `run()`nin döngü BAŞINDAKİ `self.ready` kontrolü (bkz.
+/// `run()`nin İLK satırları) BU fiber'ı HER ZAMAN, HERHANGİ bir kardeş
+/// çalmadan ÖNCE, YEREL olarak bulur. `spawn()`nin KENDİ `Task(T)`/
+/// refcount/cancel_flag/`pool_live_count` muhasebesi BİREBİR KORUNUR —
+/// SADECE yerleştirme mekanizması değişir, dönen `Task(T)` tutamacı
+/// `await_()`/`destroy_task` İLE TAMAMEN NORMAL şekilde kullanılabilir.
+pub fn spawnPinned(scheduler: *Scheduler, comptime T: type, func: *const fn (*anyopaque) callconv(.c) T, arg: *anyopaque) !*Task(T) {
+    const task = try scheduler.allocator.create(Task(T));
+    task.* = .{ .scheduler = scheduler, .func = func, .arg = arg };
+    const stack = try scheduler.acquireStack();
+    task.fiber = Fiber.createWithStack(scheduler.allocator, Task(T).entryTrampoline, task, stack) catch |e| {
+        scheduler.releaseStack(stack);
+        return e;
+    };
+    task.fiber.cancel_flag = &task.cancel_requested;
+    if (scheduler.pool_live_count) |plc| {
+        _ = plc.fetchAdd(1, .monotonic);
+    } else {
+        scheduler.live_count += 1;
+    }
+    // `spawn()`nin AKSİNE: HER ZAMAN `markReady` — deque'e HİÇ DOKUNULMAZ,
+    // bu YÜZDEN `tryStealFromSiblings` BU fiber'ı ASLA GÖREMEZ. `markReady`
+    // KENDİSİ `is_foreign == false` (AYNI iş parçacığından KENDİ zamanlayıcına
+    // çağrıldığından) İKEN epoch'u ARTIRMAZ — `spawn()`nin deque-push dalının
+    // AYNI `poolWideDeadlockCheck`-doğruluğu gerekçesiyle BURADA da elle
+    // artırılır (bu çağrı NORMALDE `run()` BAŞLAMADAN ÖNCE yapılsa da,
+    // fonksiyonun KENDİSİNİ GELECEKTEKİ BAŞKA çağrı sitelerine de GÜVENLİ
+    // kılmak İçİn).
+    if (scheduler.pool_activity_epoch) |epoch| _ = epoch.fetchAdd(1, .release);
+    scheduler.markReady(task.fiber);
+    return task;
+}
+
 /// Faz MN.9.3: `nox.http.serve_multicore`nin havuz-tabanlı `nox_pool_serve`
 /// lowering'inin (bkz. `pool_bridge.zig`nin `broadcastRunOnEachWorker`ı)
 /// çekirdek ilkeli — `spawn()`nin AKSİNE (TEK-üretici, SADECE ÇAĞIRANIN
