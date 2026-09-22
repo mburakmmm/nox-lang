@@ -137,31 +137,27 @@ jobs:
         run: zig build
 
       # Faz [YENİ] (bkz. plan dosyası "CI'daki 3 hatayı düzeltme"): `-j4`
-      # eklendi — `zig build test`nin DAHA ÖNCE (bu satır YOKKEN) HİÇBİR
-      # `-j` sınırı OLMADAN, runner'ın raporladığı CPU sayısına göre
-      # OTOMATİK/SINIRSIZ paralellikle çalışması, GERÇEK bir CI koşusuyla
-      # (`gh run view`, v1.92.2/v1.92.3'ün push'ları) ÜÇ AYRI, BAĞIMSIZ
-      # test dosyasında (worker-pool'ın çapraz-worker yarışı HARİÇ — O AYRI,
-      # gerçek bir bug İDİ VE AYRICA düzeltildi — `http_server.zig`'in
-      # zaman-aşımı MARJI testi VE `binary_size_test`'in `noxc build`/`nm`
-      # ALT SÜREÇ çağrıları) "kaynak-çekişmesi" SINIFI hatalarla İLİŞKİLİ
-      # OLDUĞU GÖZLEMLENDİ — bu projenin KENDİ, ZATEN kanıtlanmış "GERÇEK
-      # doğrulama İçİn `-j1` KULLAN" disiplininin (bkz. `tests/compat/
-      # http_serve_golden_test.zig`nin YEREL flake'inin BU AYNI teknikle
-      # DOĞRULANIP ÇÖZÜLDÜĞÜ, BU turda) CI'YE de UYGULANMASI — TAM `-j1`
-      # (30 dakikalık job-zaman-aşımını RİSKE ATABİLECEK KADAR yavaşlatır)
-      # YERİNE, ORTA bir sınır (`-j4`) — runner'ın CPU sayısından BAĞIMSIZ
-      # bir ÜST TAVAN koyup AŞIRI-ABONE (over-subscribed) eşzamanlı
-      # `noxc`/`qbe`/`cc`/`nm` alt-süreç YIĞILMASINI ÖNLER, HÂLÂ ANLAMLI
-      # bir paralellik KORUR.
+      # BURADA DENENDİ VE GERİ ALINDI — v1.93.0'ın push'unda `gh run view`
+      # İLE GERÇEKTEN kanıtlandı: `-j4`, Linux (x86-64)'te `zig build test`in
+      # NORMALDE birkaç dakikada bittiği yerde 30-dakikalık job-zaman-aşımına
+      # KADAR ASILI KALMASINA yol AÇTI (`worker_pool.zig`nin KENDİ çapraz-
+      # worker çalma testi "failed without output" İLE başarısız OLDUKTAN
+      # HEMEN SONRA, İKİ AYRI 10+ DAKİKALIK SESSİZ boşluk gözlemlendi) —
+      # AZALTILMIŞ paralellik, "kaynak-çekişmesini AZALTMAK" YERİNE BAŞKA,
+      # DAHA KÖTÜ bir zamanlama koşuluna (muhtemelen ÖNCEDEN VAR OLAN, farklı
+      # paralellik seviyelerinde FARKLI davranan bir M:N zamanlayıcı yarışı)
+      # yol AÇTI. Bu YÜZDEN `-j` sınırı KALDIRILDI (ESKİ, sınırsız/otomatik
+      # davranışa DÖNÜLDÜ) — `binary_size_test`in "failed without output"
+      # hatası SADECE teşhis mesajlarıyla (bkz. `tests/cli/binary_size_
+      # test.zig`) ele alındı, CI paralelliğine AYRICA dokunulmadı.
       - name: zig build test (Debug)
-        run: zig build test -j4
+        run: zig build test
 
       - name: zig build (ReleaseFast)
         run: zig build -Doptimize=ReleaseFast
 
       - name: zig build test (ReleaseFast)
-        run: zig build test -Doptimize=ReleaseFast -j4
+        run: zig build test -Doptimize=ReleaseFast
 
   # Faz LL.1 (bkz. nox-teknik-spesifikasyon.md §3.71): GERÇEK Windows
   # desteği YOK — `runtime/async_rt/io_reactor.zig` şu an yalnızca macOS

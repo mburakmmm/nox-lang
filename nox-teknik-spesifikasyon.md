@@ -22229,6 +22229,30 @@ MN.11'in AYNI riski) YERİNE, ORTA bir sınır (runner'ın CPU sayısından
 BAĞIMSIZ bir ÜST TAVAN, AŞIRI-ABONE alt-süreç YIĞILMASINI ÖNLER, HÂLÂ
 ANLAMLI bir paralellik KORUR).
 
+### 4. Takip: `-j4`nin GERİ ALINMASI (v1.93.1)
+
+v1.93.0'ın push'u SONRASI `gh run view` İLE kontrol edildiğinde, madde
+3'ün `-j4`sının BEKLENENİN TERSİNE davrandığı GÖRÜLDÜ: Linux (x86-64)
+`zig build test`i (NORMALDE birkaç dakikada biten) TAM 30-dakikalık
+job-zaman-aşımına KADAR ASILI KALDI — loglar `worker_pool.zig`nin KENDİ
+çapraz-worker çalma testinin "failed without output" İLE başarısız
+OLDUĞUNU, HEMEN ARDINDAN İKİ AYRI 10+ DAKİKALIK TAMAMEN sessiz boşluk
+OLDUĞUNU gösterdi (GERÇEK bir hang, sadece "yavaşlık" DEĞİL). Linux
+(aarch64)'ta AYRICA, İLGİSİZ bir HTTP eşzamanlılık testi
+(`http_serve_multicore_golden_test.zig`, "N=2 iş parçacığı") YENİ bir
+başarısızlıkla karşılaştı. **Değerlendirme**: AZALTILMIŞ build-paralelliği
+"kaynak-çekişmesini AZALTMAK" YERİNE, M:N zamanlayıcının KENDİ (BAŞKA
+paralellik seviyelerinde FARKLI davranabilen) iç-zamanlama koşullarını
+DEĞİŞTİRİP DAHA KÖTÜ bir sonuca yol AÇMIŞ görünüyor — bu HİPOTEZ TEYİT
+EDİLEMEDİ (CI'de tekrar tekrar deney yapmak PAHALI/YAVAŞ), bu YÜZDEN
+GÜVENLİ TARAF SEÇİLDİ: `-j4` TAMAMEN geri alınıp `ci.yml` ESKİ (sınırsız/
+otomatik paralellik) davranışına DÖNDÜRÜLDÜ. Madde 1'in (`spawnPinned`)
+VE madde 2'nin (HH.7 marjı) düzeltmeleri BUNDAN ETKİLENMEZ, DEĞİŞMEDEN
+kalır — SADECE CI-paralelliği DENEYİ geri alındı. `binary_size_test`nin
+"failed without output" hatası HÂLÂ (madde 3'ün teşhis mesajları HARİÇ)
+TAM olarak ÇÖZÜLMEDİ — GELECEKTE TEKRAR gözlemlenirse, ARTIK GERÇEK bir
+hata mesajıyla teşhis edilebilecek.
+
 ### Kritik dosyalar
 
 `runtime/async_rt/scheduler.zig` (YENİ `spawnPinned`), `runtime/async_rt/
@@ -22236,7 +22260,7 @@ bridge.zig` (YENİ `spawnPinnedForCurrentThread`), `runtime/async_rt/
 pool_bridge.zig` (İKİ entry-spawn sitesi), `runtime/stdlib_shims/
 http_server.zig` (HH.7 testinin zamanlama sabitleri), `tests/cli/
 binary_size_test.zig` (teşhis mesajları), `.github/workflows/ci.yml`
-(`-j4`).
+(`-j4` EKLENDİ, SONRA v1.93.1'de GERİ ALINDI).
 
 ---
 

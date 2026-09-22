@@ -14,6 +14,26 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.93.1]
+
+### Düzeltildi (v1.93.0'ın KENDİ push'unun GERÇEK CI koşusuyla bulunan bir kendi-kendine-neden-olunan regresyon)
+
+- `ci.yml`ye v1.93.0'da eklenen `-j4` sınırı GERİ ALINDI — GERÇEK bir CI
+  koşusuyla (`gh run view`) KANITLANDI: `-j4`, Linux (x86-64)'te `zig
+  build test`in NORMALDE birkaç dakikada bittiği yerde 30-dakikalık
+  job-zaman-aşımına KADAR ASILI KALMASINA yol AÇTI (`worker_pool.zig`nin
+  KENDİ çapraz-worker çalma testi "failed without output" İLE başarısız
+  OLDUKTAN HEMEN SONRA, İKİ AYRI 10+ DAKİKALIK SESSİZ boşluk gözlemlendi),
+  VE Linux (aarch64)'ta AYRI, İLGİSİZ bir HTTP eşzamanlılık testinde
+  (`http_serve_multicore_golden_test.zig`) YENİ bir başarısızlığa NEDEN
+  OLDU. AZALTILMIŞ build-paralelliği, "kaynak-çekişmesini AZALTMAK"
+  YERİNE M:N zamanlayıcının KENDİ, ÖNCEDEN VAR OLAN iç-zamanlama
+  varsayımlarını FARKLI/DAHA KÖTÜ şekilde ETKİLEMİŞ görünüyor — `-j`
+  sınırı TAMAMEN kaldırılıp ESKİ (sınırsız/otomatik) davranışa DÖNÜLDÜ.
+  `nox_pool_serve`nin çapraz-worker yarışı düzeltmesi (`spawnPinned`,
+  v1.93.0) İLE `nox.http`nin HH.7 zaman-aşımı marjı genişletmesi
+  DEĞİŞMEDEN/DOĞRU kalıyor — SADECE CI paralellik denemesi GERİ ALINDI.
+
 ## [1.93.0]
 
 ### Düzeltildi (Release'i bloke eden üç CI hatası — hepsi GERÇEK bir CI koşusuyla bulundu)
