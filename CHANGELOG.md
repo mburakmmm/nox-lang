@@ -14,6 +14,58 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.98.0]
+
+### Değiştirildi (`nox_pool_run` çapraz-worker çalma testinin (task_66e267b4) kalıcı düzeltmesi)
+
+- `runtime/async_rt/pool_bridge.zig`nin "GERÇEK spawn/await İÇEREN bir
+  entry, TÜM sonuçlar doğru VE kanıtlanmış çapraz-worker çalma" testi
+  (`stolen_count > 0` iddiası), `runtime/async_rt/worker_pool.zig`nin
+  v1.95.0'da düzeltilen `StealTestCtx` yarışıyla AYNI SINIFTAN, AMA
+  AYRI/BAĞIMSIZ bir kök nedene sahip GERÇEK bir yarıştı: `poolRunDriverThreadMain`
+  `entry_task`i (bu testin `Global.realEntry`i) kardeş worker'lar
+  `spawnWorkers` İLE başlatılmadan ÖNCE spawn EDİYOR (Faz MN.8 Bulgu A'nın
+  KENDİ, doğru düzeltmesi) — AMA `realEntry`nin KENDİSİ 30 alt-görevi
+  HİÇBİR yield noktası OLMADAN spawn EDİP HEMEN ardından SIRAYLA `await`
+  ÇAĞIRDIĞINDAN, driver'ın `run()` döngüsü kardeşler OS TARAFINDAN
+  GERÇEKTEN ZAMANLANMADAN TÜM 30 görevi KENDİ deque'İNDEN TEK BAŞINA
+  tüketebiliyordu — `stolen_count == 0`, özellikle CI'nin ağır paralel
+  yükü ALTINDA ARA SIRA gözlemlenen bir başarısızlık.
+- Düzeltme, `worker_pool.zig`nin KANITLANMIŞ "bariyer + GERÇEK uyku"
+  desenini BURAYA taşır: `nox_pool_run`a ARTIK `null` YERİNE bir
+  `globals_init_fn` geçirilir — bu callback (HEM driver HEM HER kardeş
+  TARAFINDAN, `poolRunDriverThreadMain`/`poolWorkerMain`nin KENDİ, ZATEN
+  VAR OLAN çağrı noktalarından TAM OLARAK BİR KEZ çağrılır) bir "worker
+  başladı" sayacını ARTIRIR. `realEntry`, TÜM 4 worker (1 driver + 3
+  kardeş) KENDİ çağrısını yapana KADAR bir bariyerde bekler, SONRA 30
+  görevi spawn edip 5ms'lik GERÇEK bir uyku (`sleepMs`, `worker_pool.zig`nin
+  AYNI `nanosleep`-tabanlı yardımcısı) İLE kardeşlere GERÇEK bir OS
+  zaman dilimi tanır, ANCAK SONRA `await` döngüsüne başlar.
+- Doğrulama: `zig build async-rt-test` (Debug+ReleaseFast) TEMİZ;
+  20 `yes`-süreci İLE TÜM CPU çekirdekleri DOYURULUP (`worker_pool.zig`nin
+  v1.95.0'daki AYNI reprodüksiyon yöntemi) `zig build async-rt-test
+  -Doptimize=ReleaseFast` **40/40 KEZ** TEMİZ geçti (ÖNCEKİ davranışla
+  KARŞILAŞTIRMA İçİn ELLE doğrulanan orijinal, DÜZELTİLMEMİŞ kod bu AYNI
+  yük altında ARA SIRA `stolen_count == 0` İLE başarısız oluyordu); TAM
+  paket `zig build test` (Debug+ReleaseFast) SIFIR regresyonla geçti.
+- `tests/compat/http_serve_multicore_golden_test.zig`nin N=2 eşzamanlı-
+  istemci testi de (v1.95.1'in CI koşusunda GÖZLEMLENEN İKİNCİ aday)
+  AYNI yöntemle (20 `yes`-süreci ALTINDA, 25 ARDIŞIK çalıştırma)
+  İNCELENDİ — TEK bir başarısızlık BİLE ÜRETİLEMEDİ. Bu testin mekanizması
+  (İKİ BAĞIMSIZ OS iş parçacığının AYNI, GERÇEK bir `listen()` fd'sinde
+  kernel-seviyesi `accept()` + TCP dinleme kuyruğu (backlog) çağırması)
+  `nox_pool_run`/`worker_pool.zig`nin fiber-seviyesi, kullanıcı-alanı
+  work-stealing yarışıyla YAPISAL olarak FARKLIDIR — "bariyer+gerçek-
+  uyku" deseninin BURADA doğrudan bir karşılığı YOK, VE bu test Faz
+  TEST.3'ün `ChildWatchdog`ı TARAFINDAN ZATEN korunuyor (GERÇEK bir
+  mekanizma bozulursa test SESSİZCE geçmez, 20 saniye SONRA HIZLI/AÇIK
+  bir şekilde başarısız olur). `task_66e267b4`nin CHANGELOG'daki KENDİ,
+  ÖNCEDEN yazılmış tanımı (v1.80.8) da BUNU zaten SADECE `pool_bridge`/
+  `worker_pool`in İÇ çapraz-worker yarışı OLARAK sınırlıyordu — bu YÜZDEN
+  BU testte BİLİNÇLİ olarak HİÇBİR DEĞİŞİKLİK YAPILMADI (spekülatif bir
+  "düzeltme" İCAT ETMEK yerine, dürüstçe "reprodüklenemedi" OLARAK
+  raporlanıyor).
+
 ## [1.97.0]
 
 ### Eklendi (Faz F.5 — GERÇEK QEMU bare-metal boot testi ARTIK CI'de çalışıyor)

@@ -730,6 +730,17 @@ test "pickMainWorkerCount: NOX_POOL_WORKERS HER İKİ dalı da (multicore/multic
 
 // ---- Birim testleri (Faz MN.7a) -----------------------------------------
 
+/// `worker_pool.zig`nin `sleepMs`iyle AYNI, KANITLANMIŞ desen (bu Zig
+/// sürümünde `std.Thread.sleep` YOK) — "kasıtlı, küçük tekrar" konvansiyonu
+/// (bu dosyanın KENDİ, İLK kopyası).
+fn sleepMs(ms: i64) void {
+    const ts: posix.timespec = .{
+        .sec = @divTrunc(ms, std.time.ms_per_s),
+        .nsec = @mod(ms, std.time.ms_per_s) * std.time.ns_per_ms,
+    };
+    _ = std.c.nanosleep(&ts, null);
+}
+
 test "nox_pool_run: GERÇEK spawn/await İÇEREN bir entry, TÜM sonuçlar doğru VE kanıtlanmış çapraz-worker çalma" {
     const testing = std.testing;
 
@@ -772,24 +783,60 @@ test "nox_pool_run: GERÇEK spawn/await İÇEREN bir entry, TÜM sonuçlar doğr
     // işaretçi KULLANILIR (test SADECE Zig-seviyesindedir).
     var tasks: [STEAL_TEST_N_TASKS]?*anyopaque = @splat(null);
 
+    // GERÇEKTEN gözlemlenen, ARA SIRA (özellikle CI'nin ağır paralel
+    // yükü altında) tetiklenen bir yarış (bkz. `worker_pool.zig`nin
+    // `StealTestCtx`sindeki AYNI sınıf hata, orada barrier+gerçek-uyku
+    // İLE düzeltildi): driver'ın `run()`u `entry_task`i (`realEntry`)
+    // ÇALIŞTIRIRKEN, `realEntry` 30 görevi spawn EDİP HEMEN ardından
+    // (HİÇBİR yield noktası OLMADAN) İLK göreve `await` çağırırsa,
+    // askıya-alma SADECE driver'ın KENDİ `run()` döngüsünü DEVAM
+    // ETTİRİR — DRIVER, kardeş worker'lar (`spawnWorkers`, `nox_pool_
+    // run` İçİnde entry_task'TAN SONRA başlatılır) OS TARAFINDAN
+    // GERÇEKTEN ZAMANLANMADAN, KENDİ deque'indeki 30 görevi TEK BAŞINA
+    // TÜKETEBİLİR — `stolen_count == 0`. AYNI barrier+gerçek-uyku
+    // deseni BURADA da uygulanır: `globals_init_fn` (HEM driver HEM
+    // HER kardeş TARAFINDAN, TAM OLARAK BİR KEZ, `poolRunDriverThreadMain`/
+    // `poolWorkerMain`nin KENDİ, ZATEN VAR OLAN çağrı NOKTALARINDAN —
+    // bkz. bu dosyanın üstündeki belge notları — çağrılır) BİR "worker
+    // BAŞLADI" SAYACI OLARAK YENİDEN KULLANILIR: TÜM 4 worker (1 driver
+    // + 3 kardeş) KENDİ çağrısını YAPANA kadar `realEntry` BEKLER,
+    // SONRA görevleri spawn EDİP KISA bir GERÇEK uyku (`sleepMs`) İLE
+    // kardeşlere GERÇEK bir OS zaman dilimi TANIR — TAM OLARAK `worker_
+    // pool.zig`nin KANITLANMIŞ ÇÖZÜMÜ.
+    const POOL_RUN_TOTAL_WORKERS: usize = 4;
+
     const Global = struct {
         var shared_ptr: *Shared = undefined;
         var child_args_ptr: *[STEAL_TEST_N_TASKS]ChildArg = undefined;
         var tasks_ptr: *[STEAL_TEST_N_TASKS]?*anyopaque = undefined;
+        var workers_started: std.atomic.Value(usize) = .init(0);
+
+        fn globalsInit(rt: *anyopaque) callconv(.c) i64 {
+            _ = rt;
+            _ = workers_started.fetchAdd(1, .release);
+            return 0;
+        }
 
         fn realEntry(rt: *anyopaque) callconv(.c) i64 {
+            // Bariyer — bkz. yukarıdaki test-üstü not: sürücünün KENDİ
+            // `globals_init_fn` çağrısı (`poolRunDriverThreadMain`,
+            // `entry_task` spawn edilmeden ÖNCE) ZATEN olmuş olur; BURADA
+            // 3 kardeşin de KENDİ çağrısını YAPTIĞI (dolayısıyla `run()`un
+            // steal-döngüsüne ÇOK YAKIN OLDUKLARI) beklenir.
+            while (workers_started.load(.acquire) < POOL_RUN_TOTAL_WORKERS) {
+                std.Thread.yield() catch {};
+            }
             var i: usize = 0;
             while (i < STEAL_TEST_N_TASKS) : (i += 1) {
                 child_args_ptr[i] = .{ .index = i, .shared = shared_ptr };
                 tasks_ptr[i] = bridge.nox_async_spawn(rt, Fn.child, &child_args_ptr[i]).?;
             }
-            // NOT (GERÇEK bir yarışın KENDİSİ `nox_pool_run`ın İçİNDE
-            // düzeltildiği İçİn ARTIK burada bir `yield`/`sleep`e GEREK
-            // YOK — bkz. `poolWorkerMain`nin belge notu): kardeş worker'lar
-            // `entry()` SPAWN EDİLDİKTEN SONRA başlatıldığından (`pool_
-            // live_count >= 1` HER ZAMAN GARANTİLİ), erken-başlayan bir
-            // kardeşin `run()`u YANLIŞLIKLA "iş yok" SANIP DERHAL dönme
-            // riski YAPISAL olarak ORTADAN KALKTI.
+            // KRİTİK — bariyer TEK BAŞINA yetersizdi (worker_pool.zig'in
+            // AYNI, break→red→fix İLE kanıtlanmış bulgusu): kardeşlerin
+            // `globals_init_fn`i ÇAĞIRMIŞ olması, run()'un steal-döngüsüne
+            // GERÇEKTEN ULAŞTIKLARI/OS TARAFINDAN GERÇEKTEN ZAMANLANDIKLARI
+            // anlamına GELMEZ — GERÇEK bir uyku GEREKİR.
+            sleepMs(5);
             // `nox_async_spawn`ın döndürdüğü `Task` struct'ı OTOMATİK
             // serbest bırakılmaz (bkz. proje belleği "Task[T]/Channel[T]/
             // vb. yeniden-atama sızıntısı düzeltmesi" — BİREBİR AYNI sınıf)
@@ -808,7 +855,7 @@ test "nox_pool_run: GERÇEK spawn/await İÇEREN bir entry, TÜM sonuçlar doğr
     Global.shared_ptr = &shared;
     Global.child_args_ptr = &child_args;
 
-    const rc = nox_pool_run(null, 4, Global.realEntry, null, null);
+    const rc = nox_pool_run(null, @intCast(POOL_RUN_TOTAL_WORKERS), Global.realEntry, Global.globalsInit, null);
     try testing.expectEqual(@as(i32, 0), rc);
 
     try testing.expect(shared.tasks_done.load(.acquire));

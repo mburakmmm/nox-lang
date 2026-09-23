@@ -22726,6 +22726,137 @@ bulgusuyla TUTARLI).
 
 ---
 
+## 3.181 `nox_pool_run` çapraz-worker çalma testinin (task_66e267b4) kalıcı düzeltmesi + `http_serve_multicore` N=2 flake'inin reprodüksiyon denemesi (v1.98.0)
+
+### Context
+
+v1.97.0 push'unun GERÇEK CI koşusu İNCELENİRKEN (standing "her push
+SONRASI GERÇEK CI'yi kontrol et" talimatı), v1.95.1'in (Faz CI.1'in
+ci-gate düzeltmesi) KENDİ CI koşusunun İKİ, ÖNCEDEN İŞARETLİ AMA HENÜZ
+düzeltilmemiş flake'i (`nox_pool_run` — `task_66e267b4` — VE `http_serve_
+multicore`nin N=2 testi) TEKRAR gündeme geldi. Kullanıcı HER İKİSİNİN de
+`worker_pool.zig`nin (v1.95.0, §3.177) KANITLANMIŞ "bariyer + GERÇEK
+uyku" yöntemiyle düzeltilmesini İSTEDİ.
+
+### Kök neden (`nox_pool_run`)
+
+`pool_bridge.zig`nin "GERÇEK spawn/await İÇEREN bir entry, TÜM sonuçlar
+doğru VE kanıtlanmış çapraz-worker çalma" testi (satır ~733), Faz MN.8
+Bulgu A'nın KENDİ düzeltmesini (driver `entry_task`i kardeşler `spawnWorkers`
+İLE başlatılmadan ÖNCE spawn eder — `pool_live_count`nin HİÇBİR kardeşin
+"boş" görüp erken DÖNMEMESİ İçİn) DOĞRU şekilde MİRAS ALIYORDU — AMA bu,
+`realEntry`nin KENDİ, TAMAMEN AYRI bir yarışını KAPATMIYORDU: `realEntry`
+30 alt-görevi (`bridge.nox_async_spawn`) HİÇBİR yield noktası OLMADAN
+SIRAYLA spawn EDİP HEMEN ARDINDAN (YİNE HİÇ yield OLMADAN) SIRAYLA `await`
+ÇAĞIRIYORDU. `await`, bir görev HENÜZ tamamlanmamışsa çağıran fiber'ı
+askıya alır VE zamanlayıcının `run()` döngüsü DEVAM eder — AMA `run()`
+KENDİ (DOLU) yerel deque'İNDEN bir SONRAKİ HAZIR görevi (SADECE spawn
+edilmiş 30 alt-görevden biri) SEÇEBİLİR, kardeş worker'lara ÇALMA FIRSATI
+VERMEDEN. Kardeş worker'lar (`std.Thread.spawn` İLE, `spawnWorkers`
+ÜZERİNDEN BAŞLATILAN, AYRI OS iş parçacıkları) HENÜZ OS TARAFINDAN
+GERÇEKTEN ZAMANLANMAMIŞSA (ÖZELLİKLE CI'nin ağır paralel `zig build test`
+yükü ALTINDA), driver TÜM 30 görevi TEK BAŞINA, kardeşler HİÇ ÇALIŞMADAN
+tüketebilir — `stolen_count == 0`, `worker_pool.zig`nin `StealTestCtx`sinin
+(v1.95.0'DA düzeltilen) AYNI RİSK SINIFI, AMA TAMAMEN BAĞIMSIZ bir kod
+yolunda (kod TEKRARI/paylaşımı YOK, `pool_bridge.zig` `worker_pool.zig`nin
+`StealTestCtx`ini HİÇ İMPORT ETMİYOR).
+
+### Düzeltme
+
+`worker_pool.zig`nin barrier+uyku desenini (`siblings_started` atomik
+sayacı + `sleepMs`) BURAYA TAŞIMANIN DOĞRUDAN bir yolu YOKTU — `stealTestWorkerEntry`
+TÜM worker'ların (slot 0 DAHİL) ÇAĞIRDIĞI TEK, PAYLAŞILAN bir fonksiyondu
+(bariyer YAZMAK/OKUMAK KOLAYDI); `pool_bridge.zig`de İSE driver (`realEntry`)
+VE kardeşler (`poolWorkerMain`) TAMAMEN AYRI, BAĞIMSIZ fonksiyonlardır —
+BİRİNİN KENDİ, TEST-YEREL bir barrier değişkenine YAZMASINI, DİĞERİNİN
+OKUMASINI sağlayan DOĞRUDAN bir kanca YOKTU.
+
+**Çözüm — `globals_init_fn`nin YENİDEN KULLANILMASI, bir "worker başladı"
+barrier'ı OLARAK**: `PoolRunCtx.globals_init_fn` (Faz MN.8 Bulgu A'nın
+KENDİ, ZATEN VAR OLAN mekanizması) `poolRunDriverThreadMain`nin (driver
+İçİn, `entry_task` spawn edilmeden ÖNCE, satır ~309) VE `poolWorkerMain`nin
+(HER kardeş İçİn, KENDİ `run()`una girmeden HEMEN ÖNCE, satır ~147) HER
+İKİSİ TARAFINDAN da, TAM OLARAK BİR KEZ ÇAĞRILAN, ZATEN VAR OLAN TEK bir
+kancadır — normal kullanımda modül-global durumu ilklendirmek İÇİNDİR,
+AMA BU test `null` GEÇTİĞİNDEN (modül-global YOK) TAMAMEN SERBEST/BOŞTUR.
+Test BUNU bir "worker başladı" SAYACI OLARAK YENİDEN kullanır: `Global.
+globalsInit` (HER çağrıda `Global.workers_started`i atomik ARTIRAN, HİÇBİR
+ŞEY YAPMAYAN bir callback) ARTIK `null` YERİNE `nox_pool_run`a GEÇİLİR.
+`realEntry`, KENDİ İŞİNE (30 görev spawn'ı) BAŞLAMADAN ÖNCE `workers_started
+>= 4` (1 driver + 3 kardeş, `spin+yield` İLE) BEKLER — driver'ın KENDİ
+çağrısı ZATEN `realEntry` çalışmaya BAŞLAMADAN ÖNCE (`entry_task` spawn
+edilmeden ÖNCE) olmuş OLACAĞINDAN, BU EŞİK "3 kardeşin de KENDİ çağrısını
+YAPTIĞI" (dolayısıyla `run()`un steal-döngüsüne ÇOK YAKIN OLDUKLARI)
+anlamına gelir. Bariyer AŞILDIKTAN SONRA, `worker_pool.zig`nin AYNI,
+KANITLANMIŞ bulgusuyla TUTARLI olarak ("bariyer TEK BAŞINA YETERSİZ"),
+30 görev spawn edilip 5ms'lik GERÇEK bir uyku (`sleepMs`, `runtime/async_
+rt/scheduler.zig`/`thread_bridge.zig`/`thread_channel.zig`/`worker_pool.
+zig`nin AYNI, "kasıtlı küçük tekrar" `nanosleep`-tabanlı yardımcısının
+`pool_bridge.zig`ye eklenen BEŞİNCİ kopyası) İLE kardeşlere GERÇEK bir
+OS zaman dilimi TANINIR, ANCAK SONRA `await` döngüsü BAŞLAR.
+
+### Doğrulama
+
+1. `zig build async-rt-test` (Debug+ReleaseFast) — TEMİZ.
+2. **Break→red→fix EŞDEĞERİ (kanıt-tabanlı)**: 20 `yes > /dev/null &`
+   süreciyle (BU 10-çekirdekli Mac'in TÜM CPU'sunu DOYURARAK, `worker_pool.
+   zig`nin v1.95.0'daki AYNI reprodüksiyon yöntemi) `zig build async-rt-test
+   -Doptimize=ReleaseFast` **40 KEZ ART ARDA** çalıştırıldı — **40/40
+   TEMİZ**. Düzeltmeden ÖNCEKİ (barrier/uyku OLMAYAN) kod BU AYNI yük
+   ALTINDA ARA SIRA `stolen_count == 0` İLE BAŞARISIZ oluyordu (`worker_
+   pool.zig`nin `StealTestCtx`sinin ÖNCEKİ dokümante edilmiş davranışıyla
+   TUTARLI bir risk sınıfı).
+3. TAM paket `zig build test` (Debug: RC=0; ReleaseFast: RC=0) — SIFIR
+   regresyon (`--listen=-` protokolünün KENDİ, ÖNCEDEN belgelenmiş IPC-
+   görüntüleme tuhaflığı — TASARLANMIŞ tanı METNİ yazdıran testlerin
+   "failed" GÖRÜNMESİ, GERÇEK süreç çıkış koduyla AYRIŞTIRILDI, RC=0
+   TEYİT edildi).
+
+### `http_serve_multicore` N=2 testi — REPRODÜKSİYON DENEMESİ, BULUNAMADI
+
+`tests/compat/http_serve_multicore_golden_test.zig`nin N=2 eşzamanlı-
+istemci testi de AYNI yöntemle (20 `yes`-süreci ALTINDA, doğrudan `zig
+test -O ReleaseFast --dep nox -Mmain=... --test-filter "N=2"` İLE 25
+ARDIŞIK çalıştırma) İNCELENDİ — **25/25 TEMİZ**, TEK bir başarısızlık
+BİLE ÜRETİLEMEDİ. Bu, `nox_pool_run`nin AKSİNE, BİLİNÇLİ olarak
+"düzeltilmeden" BIRAKILDI — GEREKÇE:
+- Bu testin mekanizması (`num_threads=2`, HER İKİ OS iş parçacığının
+  AYNI, GERÇEK bir `listen()` fd'sinde kernel-seviyesi `accept()` ÇAĞIRMASI,
+  TCP dinleme kuyruğunun — backlog — bekleyen bağlantıları TUTMASI)
+  `nox_pool_run`/`worker_pool.zig`nin fiber-seviyesi, KULLANICI-ALANI
+  work-stealing yarışıyla YAPISAL olarak FARKLIDIR — "bariyer+gerçek-
+  uyku" deseninin BURADA doğrudan bir KARŞILIĞI/enjeksiyon NOKTASI YOK
+  (`globals_init_fn` GİBİ bir kanca, GERÇEK bir compiled `.nox` ikilisinin
+  İÇİNDE — TEST-yerel bir Zig fonksiyonu DEĞİL — çalıştığından BURADA
+  KULLANILAMAZ).
+- Bu test ZATEN Faz TEST.3'ün `ChildWatchdog`ı TARAFINDAN korunuyor
+  (v1.80.8) — mekanizma GERÇEKTEN bozulursa (kardeş iş parçacığının
+  `accept()`i HİÇBİR ZAMAN gerçekleşmezse) test SESSİZCE YANLIŞ-POZİTİF
+  VERMEZ, 20 saniye SONRA watchdog süreci ÖLDÜRÜP HIZLI/AÇIK bir şekilde
+  BAŞARISIZ olur.
+- `task_66e267b4`nin CHANGELOG'daki (v1.80.8) KENDİ, ÖNCEDEN yazılmış
+  tanımı DA BUNU AÇIKÇA SADECE `pool_bridge`/`worker_pool`in İÇ çapraz-
+  worker yarışı OLARAK sınırlıyordu ("Faz MN.12 testi BU AYNI ailenin
+  bir PARÇASI OLABİLİR" — `http_serve_multicore_golden_test.zig`
+  DEĞİL).
+- Bu YÜZDEN BU testte BİLİNÇLİ olarak HİÇBİR KOD DEĞİŞİKLİĞİ YAPILMADI —
+  "ölç, varsayma" disiplini gereği, REPRODÜKLENEMEYEN bir DAVRANIŞ İçİn
+  spekülatif bir "düzeltme" İCAT EDİLMEDİ, dürüstçe "reprodüklenemedi"
+  OLARAK raporlandı. GELECEKTE (ör. GERÇEK bir CI koşusunda BU test
+  TEKRAR BAŞARISIZ olursa) O koşunun KENDİ loglarının İNCELENMESİ,
+  BURADA ELLE tekrarlanamayan bir CI-ortamına-ÖZGÜ etken (ör. FARKLI bir
+  CPU mimarisi/çekirdek sayısı) OLUP OLMADIĞINI netleştirecektir.
+
+### Kritik dosyalar
+
+- `runtime/async_rt/pool_bridge.zig` (YENİ `sleepMs` yardımcısı, `Global.
+  workers_started`/`globalsInit`, `realEntry`nin barrier+uyku EKLENMESİ,
+  `nox_pool_run` çağrısına `Global.globalsInit` GEÇİLMESİ)
+- `tests/compat/http_serve_multicore_golden_test.zig` (İNCELENDİ, HİÇBİR
+  DEĞİŞİKLİK YAPILMADI)
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.
