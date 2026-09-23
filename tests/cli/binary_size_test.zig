@@ -31,6 +31,37 @@ fn writeTempSource(gpa: std.mem.Allocator, io: std.Io, source: []const u8, tmp: 
     return std.fmt.allocPrint(gpa, "{s}/prog.nox", .{path_buf[0..len]});
 }
 
+fn sleepMs(ms: i64) void {
+    const ts: std.c.timespec = .{
+        .sec = @divTrunc(ms, std.time.ms_per_s),
+        .nsec = @mod(ms, std.time.ms_per_s) * std.time.ns_per_ms,
+    };
+    _ = std.c.nanosleep(&ts, null);
+}
+
+/// GERÇEK CI'de gözlemlenen bir flake'in düzeltmesi (bkz. CHANGELOG/
+/// nox-teknik-spesifikasyon.md): `-j4`nin geri alınmasıyla (STW-bariyeri
+/// deadlock düzeltmesi, v1.94.0) `zig build test` ARTIK TAM paralellikte
+/// çalışıyor — ÇOK sayıda eşzamanlı test ikilisinin spawn/exec baskısı
+/// ALTINDA, `std.process.run` ARA SIRA GEÇİCİ bir hatayla (`error.
+/// SystemResources`/benzeri) BAŞARISIZ olabiliyor (satır 67-77'nin ZATEN
+/// belgelediği, `catch |err|` İLE teşhis edilen AMA daha ÖNCE retry
+/// EDİLMEYEN kök neden). Küçük, SINIRLI bir retry (3 deneme, artan kısa
+/// gecikmelerle) BU GEÇİCİ hata sınıfını GÜVENLE aşar — GERÇEK/kalıcı bir
+/// hata (noxc'nin KENDİ bir derleme hatası, argüman hatası VB.) İSE HER
+/// denemede AYNI şekilde BAŞARISIZ OLACAĞINDAN, retry SADECE birkaç yüz
+/// milisaniyelik bir gecikme EKLER, YANLIŞ bir "başarı" ÜRETMEZ.
+fn runWithRetry(gpa: std.mem.Allocator, io: std.Io, argv: []const []const u8) !std.process.RunResult {
+    var attempt: usize = 0;
+    while (true) : (attempt += 1) {
+        return std.process.run(gpa, io, .{ .argv = argv }) catch |err| {
+            if (attempt >= 2) return err;
+            sleepMs(200 * @as(i64, @intCast(attempt + 1)));
+            continue;
+        };
+    }
+}
+
 test "noxc build: smtp/postgres kullanmayan basit bir program dead-stripping ile küçük kalır" {
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
     // v1.80.5 (bkz. CHANGELOG.md/nox-teknik-spesifikasyon.md §3.155): GERÇEK
@@ -72,10 +103,13 @@ test "noxc build: smtp/postgres kullanmayan basit bir program dead-stripping ile
     // KENDİSİ (spawn/exec, kaynak-çekişmesi ALTINDA `error.SystemResources`
     // GİBİ bir hata İLE) BAŞARISIZ OLDUĞUNDA `try` SESSİZCE ÜST-SEVİYEYE
     // YAYILIYORDU — `catch |err|` İLE AÇIKÇA HANGİ komutun/hangi hatayla
-    // BAŞARISIZ OLDUĞU stderr'e YAZDIRILIR (GELECEKTE benzer bir yarışın
-    // TEŞHİSİNİ kolaylaştırmak İçİn — CI paralelliği AYRICA `-j4`YE
-    // düşürüldü, bkz. `ci.yml`).
-    const build_result = std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "build", src_path, "-o", bin_path } }) catch |err| {
+    // BAŞARISIZ OLDUĞU stderr'e YAZDIRILIR. v1.94.1: `runWithRetry`
+    // (yukarıda) BU GEÇİCİ hata sınıfını (retry İLE) GÜVENLE AŞAR —
+    // `-j4`nin v1.93.1'de geri alınmasıyla (STW-bariyeri deadlock
+    // düzeltmesi İçİn ZORUNLU) CI ARTIK TAM paralellikte çalıştığından,
+    // bu GEÇİCİ spawn baskısı KALICI olarak VAR (bir daha `-j`
+    // düşürülmeyecek).
+    const build_result = runWithRetry(gpa, io, &.{ noxcPath(), "build", src_path, "-o", bin_path }) catch |err| {
         std.debug.print("noxc build spawn basarisiz: {t}\n", .{err});
         return err;
     };
@@ -91,7 +125,7 @@ test "noxc build: smtp/postgres kullanmayan basit bir program dead-stripping ile
     // stripping GERÇEKTEN çalışıyorsa bu fonksiyonların KODU (ve sembol
     // girdisi) ikiliden TAMAMEN elenir (stripped-out kod, `nm`de HİÇ
     // görünmez — local/`t` sembol olarak bile kalmaz).
-    const nm_result = std.process.run(gpa, io, .{ .argv = &.{ "nm", bin_path } }) catch |err| {
+    const nm_result = runWithRetry(gpa, io, &.{ "nm", bin_path }) catch |err| {
         std.debug.print("nm spawn basarisiz: {t}\n", .{err});
         return err;
     };
@@ -150,12 +184,12 @@ test "noxc build: nox.json.decode + sınıf + cycle-collector (5-sembol dlsym li
     const bin_path = try std.fmt.allocPrint(gpa, "{s}/prog_out", .{tmp_dir_path});
     defer gpa.free(bin_path);
 
-    const build_result = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "build", src_path, "-o", bin_path } });
+    const build_result = try runWithRetry(gpa, io, &.{ noxcPath(), "build", src_path, "-o", bin_path });
     defer gpa.free(build_result.stdout);
     defer gpa.free(build_result.stderr);
     try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
 
-    const run_result = try std.process.run(gpa, io, .{ .argv = &.{bin_path} });
+    const run_result = try runWithRetry(gpa, io, &.{bin_path});
     defer gpa.free(run_result.stdout);
     defer gpa.free(run_result.stderr);
     try std.testing.expect(run_result.term == .exited and run_result.term.exited == 0);

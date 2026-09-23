@@ -14,6 +14,48 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.95.0]
+
+### Düzeltildi (v1.94.0'ın GERÇEK CI koşusuyla bulunan iki AYRI, İLGİSİZ test flake'i)
+
+- **`worker_pool.zig`'in TEK-turlu çapraz-worker çalma testi**
+  (`"WorkerPool: GERÇEK spawn/await, TÜM sonuçlar doğru VE kanıtlanmış
+  çapraz-worker çalma"`) — bu test KENDİ, ÖNCEDEN belgelenmiş bir yarışa
+  SAHİPTİ: worker 0 200 önemsiz görev spawn edip HEMEN KENDİ `sched.run()`
+  ÇAĞRISINA GEÇİYORDU, kardeşlerin `std.Thread.spawn`ının OS TARAFINDAN
+  GERÇEKTEN ZAMANLANDIĞINI SADECE 8 `std.Thread.yield()` İLE "UMUYORDU" —
+  BU HİÇBİR ZAMAN GERÇEK bir GARANTİ DEĞİLDİ. YEREL olarak, TÜM CPU
+  çekirdeklerini DOYURAN GERÇEK bir yük ALTINDA (`yes` süreçleriyle)
+  BU AÇIKÇA yeniden ÜRETİLDİ (2/40 başarısızlık) — GERÇEK CI koşusunun
+  (v1.94.0 push'u) TAM OLARAK BU testte gördüğü hatayla BİREBİR AYNI.
+  **Düzeltme (iki parça, BİRLİKTE ZORUNLU)**: (1) YENİ bir `siblings_
+  started` atomik SAYAÇ — worker 0 ARTIK görev spawn ETMEDEN/`ready`i
+  AYARLAMADAN ÖNCE, TÜM kardeşlerin `attachToPool` SONRASI GERÇEKTEN
+  ÇALIŞMAYA BAŞLAYIP `ready`i SPIN-WAIT İLE beklemeye BAŞLADIĞINI
+  KANITLAR (8-yield TAHMİNİNİN yerini alan GERÇEK bir bariyer); (2) YENİ
+  bir GERÇEK zaman uykusu (`sleepMs(5)`, `std.Thread.yield()`in AKSİNE
+  OS zamanlayıcısına "BU iş parçacığını BİR SÜRELİĞİNE ÇALIŞTIRMA"
+  GARANTİSİ VEREN) — `ready`i AYARLADIKTAN SONRA, worker 0'ın KENDİ
+  `sched.run()`una BAŞLAMASINI ERTELEYİP ZATEN spin-wait'teki kardeşlere
+  GERÇEK bir çalışma PENCERESİ TANIR. **YALNIZ (1) YETERSİZDİ** (ELLE,
+  GERÇEK bir break→red→fix denemesiyle KANITLANDI: bariyer TEK BAŞINA
+  AYNI yük altında 4/40 başarısızlık ÜRETTİ) — (1)+(2) BİRLİKTE, AYNI
+  yük altında (VE DAHA AĞIR, 20x CPU aşırı-doyurma) 140/140 denemede
+  SIFIR başarısızlık VERDİ.
+- **`binary_size_test`nin GERÇEK CI'de "failed without output" İLE
+  BAŞARISIZ olması** — v1.93.1'in `-j4`yi geri alması (STW-bariyeri
+  deadlock düzeltmesi İçİn ZORUNLU, v1.94.0) `zig build test`i TEKRAR
+  TAM paralellikte çalıştırmaya BAŞLADI — bu testin KENDİ `std.process.
+  run` çağrıları (`noxc build`/`nm`), ÇOK sayıda eşzamanlı test ikilisinin
+  spawn/exec baskısı ALTINDA, ARA SIRA GEÇİCİ bir hatayla (`error.
+  SystemResources`/benzeri) BAŞARISIZ olabiliyordu (dosyanın KENDİ,
+  ÖNCEDEN eklenmiş teşhis notunun AÇIKÇA belgelediği kök neden). **Düzeltme**:
+  YENİ, PAYLAŞILAN `runWithRetry` yardımcısı — HER `std.process.run`
+  çağrısını (4 site) EN FAZLA 3 deneme, ARTAN kısa gecikmelerle (200/400ms)
+  SARAR — GEÇİCİ spawn hatalarını GÜVENLE aşar, GERÇEK/kalıcı bir hata
+  (noxc'nin KENDİ bir derleme hatası VB.) İSE HER denemede AYNI şekilde
+  BAŞARISIZ OLACAĞINDAN retry YANLIŞ bir "başarı" ÜRETMEZ.
+
 ## [1.94.0]
 
 ### Düzeltildi (GERÇEK, önceden var olan bir STW-bariyeri deadlock'u — Faz MN.6/MN.7/MN.8/MN.11'in ÜÇÜNCÜ, DAHA DERİN bir varyantı, gdb İLE KANITLANDI)

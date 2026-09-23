@@ -383,6 +383,20 @@ test "WorkerPool: create/destroy tek başına (worker yok) sızmaz" {
 
 // ---- Faz MN.4/5.8: GERÇEK spawn/await + KANITLANMIŞ çapraz-worker çalma ----
 
+/// `scheduler.zig`nin KENDİ `sleepMs`iyle AYNI, KANITLANMIŞ desen
+/// (`std.Thread`da bir `sleep` metodu YOK, Zig 0.16.0) — KASITLI, KÜÇÜK
+/// bir tekrar (bu dosyanın `scheduler.zig`nin ÖZEL fonksiyonuna erişimi
+/// YOK). BU test-yardımcısı SADECE macOS/Linux'ta ÇAĞRILIR (`worker-pool-
+/// test` Windows CI'de HİÇ ÇALIŞMIYOR — `windows-frontend` işi SADECE
+/// `zig build frontend-test` çalıştırır), bu YÜZDEN Windows dalı GEREKMEZ.
+fn sleepMs(ms: i64) void {
+    const ts: std.c.timespec = .{
+        .sec = @divTrunc(ms, std.time.ms_per_s),
+        .nsec = @mod(ms, std.time.ms_per_s) * std.time.ns_per_ms,
+    };
+    _ = std.c.nanosleep(&ts, null);
+}
+
 const STEAL_TEST_N_TASKS = 200;
 
 const StealTestChildArg = struct {
@@ -406,6 +420,8 @@ fn stealTestChildFn(arg: *anyopaque) callconv(.c) i64 {
     return @intCast(a.index * 2);
 }
 
+const STEAL_TEST_N_SIBLINGS: usize = 3;
+
 const StealTestCtx = struct {
     pool: *WorkerPool,
     /// Slot 0 TÜM görevleri spawn EDENE kadar diğer worker'ların
@@ -413,6 +429,19 @@ const StealTestCtx = struct {
     /// HENÜZ HİÇ spawn ETMEDEN `pool_live_count == 0` GÖRÜP HEMEN
     /// (YANLIŞLIKLA "iş yok") DÖNEBİLİRDİ.
     ready: std.atomic.Value(bool) = .init(false),
+    /// GERÇEK bir CI koşusunda GÖZLEMLENEN bir flake'in (bkz. CHANGELOG/
+    /// nox-teknik-spesifikasyon.md) düzeltmesi — ÖNCEDEN worker 0 SADECE
+    /// 8 `std.Thread.yield()` İLE "kardeşler muhtemelen zamanlandı" diye
+    /// UMUYORDU (bu, GERÇEK bir ZAMAN GARANTİSİ DEĞİL, özellikle CPU-
+    /// kısıtlı/ağır-YÜKLÜ CI runner'larında). ARTIK worker 0, HERHANGİ bir
+    /// görev spawn ETMEDEN/`ready`i AYARLAMADAN ÖNCE, TÜM kardeşlerin
+    /// KENDİ OS iş parçacığı gövdesinde GERÇEKTEN ÇALIŞMAYA BAŞLADIĞINI
+    /// (`attachToPool` SONRASI, `ready`i kontrol ETMEDEN HEMEN ÖNCE bu
+    /// sayacı ARTIRDIKLARINI) BEKLER — bu, kardeşlerin `ready` GÖRÜNÜR
+    /// OLDUĞUNDA ZATEN spin-wait'te OLDUĞUNU (dolayısıyla `sched.run()`a
+    /// NEREDEYSE ANINDA gireceklerini) GARANTİ EDER, "8 yield YETERLİ mi"
+    /// TAHMİNİNİ TAMAMEN ORTADAN KALDIRIR.
+    siblings_started: std.atomic.Value(usize) = .init(0),
     tasks: [STEAL_TEST_N_TASKS]*scheduler_mod.Task(i64) = undefined,
     child_args: [STEAL_TEST_N_TASKS]StealTestChildArg = undefined,
     executed_by: [STEAL_TEST_N_TASKS]std.atomic.Value(usize) = @splat(std.atomic.Value(usize).init(STEAL_TEST_NOT_RUN)),
@@ -442,23 +471,37 @@ fn stealTestWorkerEntry(rt: *anyopaque, slot: usize, ctx: *StealTestCtx) void {
     }) catch {};
 
     if (slot == 0) {
+        // bkz. `StealTestCtx.siblings_started`'ın belge notu — TÜM
+        // kardeşlerin GERÇEKTEN çalışmaya BAŞLAYIP `ready`i spin-wait
+        // İLE BEKLEMEYE BAŞLADIĞINI KANITLAMADAN görev spawn ETMEYİZ/
+        // `ready`i AYARLAMAYIZ (ÖNCEKİ "8 yield yeterli mi" TAHMİNİNİN
+        // YERİNE GEÇEN, GERÇEK bir bariyer).
+        while (ctx.siblings_started.load(.acquire) < STEAL_TEST_N_SIBLINGS) {
+            std.Thread.yield() catch {};
+        }
         var i: usize = 0;
         while (i < STEAL_TEST_N_TASKS) : (i += 1) {
             ctx.child_args[i] = .{ .index = i, .executed_by = &ctx.executed_by };
             ctx.tasks[i] = scheduler_mod.spawn(&sched, i64, stealTestChildFn, &ctx.child_args[i]) catch @panic("spawn basarisiz");
         }
         ctx.ready.store(true, .release);
-        // Faz MN.4/5.8: 200 önemsiz (I/O'suz, hemen dönen) görev worker
-        // 0'ın KENDİ deque'inde `run()` BAŞLAMADAN ÖNCE bile ÇOK HIZLI
-        // tüketilebilir — kardeşlerin `std.Thread.spawn`ı HENÜZ
-        // ZAMANLANMAMIŞSA HİÇBİR ŞEY çalamadan test yanlışlıkla
-        // BAŞARISIZ olabilir (GERÇEKTEN gözlemlendi, ender bir zamanlama
-        // yarışı — çalma mantığının KENDİSİNDE bir hata DEĞİL). Birkaç
-        // `yield`, OS zamanlayıcısına kardeşleri ÇALIŞTIRMASI İçİn adil
-        // bir fırsat tanır.
-        var y: usize = 0;
-        while (y < 8) : (y += 1) std.Thread.yield() catch {};
+        // KRİTİK — `siblings_started` bariyeri TEK BAŞINA YETERSİZ (ELLE,
+        // GERÇEK bir break→red→fix denemesiyle KANITLANDI: TÜM CPU
+        // çekirdeklerini DOYURAN bir ağır yük ALTINDA, kardeşler `ready`i
+        // spin-wait İLE BEKLERKEN bile, worker 0 (ZATEN ÇALIŞAN/zamanlanmış
+        // bir iş parçacığı) OS zamanlayıcısından KESİNTİSİZ bir sonraki
+        // zaman dilimini alıp 200 önemsiz görevin TAMAMINI TEK BAŞINA
+        // bitirebiliyordu — kardeşler HİÇBİR ZAMAN çalıştırılmadan). Kısa,
+        // GERÇEK bir zaman uykusu (`sleepMs`, `std.Thread.yield()`in AKSİNE
+        // OS zamanlayıcısına "BU iş parçacığını BİR SÜRELİĞİNE çalıştırma"
+        // GARANTİSİ verir) worker 0'ın KENDİ `sched.run()`una BAŞLAMASINI
+        // erteleyip, ZATEN spin-wait'te olan kardeşlere GERÇEK bir çalışma
+        // penceresi TANIR — bu ikisinin BİRLİKTE (bariyer + GERÇEK
+        // gecikme) çalıştığı, AYNI yük altında TEKRARLANAN denemelerle
+        // doğrulandı.
+        sleepMs(5);
     } else {
+        _ = ctx.siblings_started.fetchAdd(1, .release);
         while (!ctx.ready.load(.acquire)) std.Thread.yield() catch {};
     }
 

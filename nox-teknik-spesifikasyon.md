@@ -22395,6 +22395,98 @@ kalıcı-çıkış noktası), `runtime/alloc/cycle_detector.zig`
 
 ---
 
+## 3.177 v1.94.0'ın GERÇEK CI koşusuyla bulunan iki test flake'inin düzeltmesi (v1.95.0)
+
+### Context
+
+v1.94.0'ın push'u SONRASI GERÇEK CI [koşusu](
+https://github.com/mburakmmm/nox-lang/actions/runs/35837751071)
+kontrol edildi — STW-bariyeri düzeltmesi DOĞRULANDI (Linux işleri ARTIK
+17-20 dakikada bitiyor, 30-dakikalık zaman aşımına HİÇ takılmıyor,
+macOS/Windows TAMAMEN yeşil) AMA Linux'un İKİ platformu (x86-64/aarch64)
+İKİ AYRI, İLGİSİZ, TEK-testlik başarısızlıkla sonuçlandı — İKİSİ de
+GERÇEK, HIZLI (hang DEĞİL) hatalardı. Kullanıcı HER İKİSİNİN de
+düzeltilmesini SEÇTİ.
+
+### 1. `worker_pool.zig`'in TEK-turlu çapraz-worker çalma testi
+
+`stealTestWorkerEntry`'nin ESKİ tasarımı: worker 0, 200 önemsiz (I/O'suz,
+ANINDA dönen) görev spawn EDİP `ready`i AYARLADIKTAN SONRA, kardeşlerin
+KENDİ `std.Thread.spawn`ının OS TARAFINDAN GERÇEKTEN zamanlandığını
+SADECE **8 `std.Thread.yield()`** İLE "umuyordu" — `std.Thread.yield()`
+(POSIX'te `sched_yield()`) HİÇBİR ZAMAN "BAŞKA BİR belirli iş parçacığı
+şimdi ÇALIŞACAK" GARANTİSİ VERMEZ, sadece ÇAĞIRANIN KENDİ zaman
+dilimini GÖNÜLLÜ olarak BIRAKIR — AYNI çekirdekte BEKLEYEN BAŞKA BİR
+iş parçacığı YOKSA (VEYA TÜM çekirdekler DOLUYSA) HİÇBİR ŞEY YAPMAYABİLİR.
+
+**Yerel reprodüksiyon** (bu Mac'te, 10 çekirdek): 12 `yes > /dev/null &`
+İLE TÜM çekirdekler DOYURULUP ESKİ kod 40 KEZ çalıştırıldığında **2/40**
+başarısızlık ÜRETTİ — GERÇEK CI koşusunda GÖZLEMLENENLE (`try testing.
+expect(stolen_count > 0);`, satır 496) BİREBİR AYNI assertion'da.
+
+**İLK düzeltme denemesi YETERSİZ kaldı (break→red→fix İLE KANITLANDI)**:
+SADECE bir `siblings_started` atomik BARİYERİ (worker 0'ın görev spawn
+ETMEDEN/`ready`i AYARLAMADAN ÖNCE, TÜM kardeşlerin `attachToPool`
+SONRASI GERÇEKTEN OS TARAFINDAN çalıştırılıp `ready`i spin-wait İLE
+beklemeye BAŞLADIĞINI KANITLAMASI) EKLENDİĞİNDE, AYNI yük altında YENİDEN
+test edildi — **4/40** başarısızlık (BEKLENENİN AKSİNE, DAHA KÖTÜ) —
+ÇÜNKÜ bariyer SADECE "kardeşler ÇALIŞMAYA BAŞLADI Mİ" sorusunu ÇÖZÜYORDU,
+"ready GÖRÜNÜR OLDUKTAN SONRA kardeşler GERÇEKTEN BİR ZAMAN DİLİMİ ALDI
+MI" sorusunu DEĞİL — worker 0 (ZATEN çalışan/öncelikli bir iş parçacığı)
+`ready`i AYARLAR AYARLAMAZ KENDİ `sched.run()`una GEÇİP 200 görevin
+TAMAMINI (HER biri ANINDA/sanal) TEK BİR zaman diliminde BİTİREBİLİYORDU
+— kardeşler HİÇBİR ZAMAN bir sonraki OS zaman dilimini ALAMADAN.
+
+**Nihai düzeltme (İKİ parça, BİRLİKTE ZORUNLU)**:
+1. `StealTestCtx`e YENİ `siblings_started: atomic(usize)` alanı —
+   worker 0 görev spawn ETMEDEN ÖNCE `siblings_started.load(.acquire) <
+   STEAL_TEST_N_SIBLINGS` (3) OLDUĞU SÜRECE `yield()` İLE BEKLER; HER
+   kardeş (`attachToPool` SONRASI, `ready`i kontrol ETMEDEN HEMEN ÖNCE)
+   `siblings_started.fetchAdd(1, .release)` ÇAĞIRIR.
+2. `ready.store(true, .release)` SONRASI, worker 0 `sched.run()`una
+   GEÇMEDEN ÖNCE **GERÇEK bir zaman uykusu** (`sleepMs(5)` — `scheduler.
+   zig`nin AYNI, KANITLANMIŞ `std.c.nanosleep`-tabanlı deseni, BU dosyada
+   KASITLI, KÜÇÜK bir kopya OLARAK EKLENDİ) ÇAĞIRIR — `std.Thread.
+   yield()`in AKSİNE, GERÇEK bir uyku OS zamanlayıcısına "BU iş
+   parçacığını EN AZ N milisaniye BOYUNCA ÇALIŞTIRMA" GARANTİSİ VERİR,
+   BU YÜZDEN ZATEN spin-wait'teki (madde 1 SAYESİNDE KANITLANMIŞ olarak
+   GERÇEKTEN ÇALIŞAN) kardeşlere GERÇEK bir çalışma PENCERESİ AÇAR.
+
+**Doğrulama**: AYNI 12x CPU-doyurma yükü altında 60 ART ARDA deneme
+(SIFIR başarısızlık), SONRA DAHA AĞIR bir 20x doyurma altında 80 DAHA
+(YİNE SIFIR başarısızlık) — TOPLAM **140/140** — İKİ parçanın BİRLİKTE
+GERÇEKTEN etkili OLDUĞUNUN kanıtı.
+
+### 2. `binary_size_test`nin "failed without output" başarısızlığı
+
+v1.93.1'in `-j4`yi geri alması (STW-bariyeri düzeltmesi İçİn ZORUNLU)
+`zig build test`i TEKRAR TAM paralellikte çalıştırmaya BAŞLADI —
+`binary_size_test.zig`nin KENDİ `std.process.run` çağrıları (`noxc
+build`/`nm`), ÇOK sayıda eşzamanlı test ikilisinin spawn/exec baskısı
+ALTINDA ARA SIRA GEÇİCİ bir hatayla BAŞARISIZ olabiliyordu (dosyanın
+KENDİ, ÖNCEDEN EKLENMİŞ `v1.80.5`/CI hata-düzeltme notunun ZATEN
+belgelediği, AMA o zaman HENÜZ retry EDİLMEMİŞ kök neden — o turda
+SADECE teşhis mesajı EKLENMİŞ, `-j4` İLE "azaltmaya" ÇALIŞILMIŞTI, ki O
+`-j4` ARTIK KALICI olarak GERİ ALINDI).
+
+**Düzeltme**: YENİ, PAYLAŞILAN `runWithRetry(gpa, io, argv)` yardımcısı
+— `std.process.run`'ı SARAR, HATA ALDIĞINDA EN FAZLA 2 KEZ (TOPLAM 3
+deneme) 200/400 ms ARTAN gecikmelerle YENİDEN DENER. Dosyadaki TÜM 4
+`std.process.run` çağrı sitesi (İKİ test, HER birinde İKİ subprocess-
+spawn) BUNU KULLANACAK şekilde GÜNCELLENDİ. GERÇEK/kalıcı bir hata
+(noxc'nin KENDİ derleme hatası VB.) İSE retry HİÇBİR ŞEYİ GİZLEMEZ (HER
+denemede AYNI şekilde BAŞARISIZ olur) — SADECE GEÇİCİ kaynak-çekişmesi
+hatalarını (`error.SystemResources`/benzeri) GÜVENLE aşar.
+
+### Kritik dosyalar
+
+`runtime/async_rt/worker_pool.zig` (YENİ `sleepMs`/`STEAL_TEST_N_
+SIBLINGS`/`StealTestCtx.siblings_started`, `stealTestWorkerEntry`'nin
+bariyer+gerçek-uyku mantığı), `tests/cli/binary_size_test.zig` (YENİ
+`sleepMs`/`runWithRetry`, 4 çağrı sitesi güncellenir).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.
