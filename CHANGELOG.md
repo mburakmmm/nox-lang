@@ -14,6 +14,23 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.97.0]
+
+### Eklendi (Faz F.5 — GERÇEK QEMU bare-metal boot testi ARTIK CI'de çalışıyor)
+
+- `tests/golden/kernel_boot_x86_64_test.zig` (Faz F.4'ün, x86_64
+  bare-metal kernel'i GERÇEK bir QEMU'da çalıştırıp 6 checkpoint string'ini
+  VE `isa-debug-exit`in KESİN çıkış kodunu doğrulayan testi) ZATEN
+  `build.zig`nin `test_step`ine BAĞLIYDI, AMA `qemu-system-x86_64` PATH'te
+  BULUNAMADIĞINDA `SkipZigTest` İLE SESSİZCE atlanıyordu — CI'de qemu HİÇ
+  KURULMUYORDU, bu YÜZDEN bu test v1.92.0'DAN (Faz F.4) BERİ CI'de HİÇ
+  GERÇEKTEN ÇALIŞMAMIŞTI (sadece geliştirici makinelerinde, qemu ELLE
+  kurulduğunda). `ci.yml`nin ana matrisine (macOS: `brew install qemu`,
+  Linux: `apt-get install qemu-system-x86` — HER İKİSİ de x86_64'ü, HOST
+  mimarisinden BAĞIMSIZ olarak EMÜLE eder) YENİ birer kurulum adımı
+  eklendi — `build.zig`ye/test koduna HİÇBİR DEĞİŞİKLİK GEREKMEDİ (test
+  ZATEN doğru bağlıydı, sadece ortam eksikti).
+
 ## [1.96.0]
 
 ### Düzeltildi (GPT-5.6 incelemesinde bulunup DOĞRULANAN iki GERÇEK hata)

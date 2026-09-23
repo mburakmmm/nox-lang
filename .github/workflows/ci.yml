@@ -133,6 +133,26 @@ jobs:
           make -C /tmp/qbe-1.3 -j"$(nproc)"
           sudo cp /tmp/qbe-1.3/qbe /usr/local/bin/qbe
 
+      # Faz F.5 (bkz. nox-teknik-spesifikasyon.md §3.179 — GPT-5.6
+      # incelemesinin bulduğu boşluk): `tests/golden/kernel_boot_x86_64_
+      # test.zig` (Faz F.4'ün GERÇEK QEMU bare-metal boot testi) ZATEN
+      # `test_step`e bağlı (`build.zig`) VE `qemu-system-x86_64` PATH'te
+      # YOKSA `SkipZigTest` İLE SESSİZCE atlanıyordu — CI'de qemu HİÇ
+      # KURULMUYORDU, bu YÜZDEN bu test bugüne kadar CI'de HİÇ GERÇEKTEN
+      # ÇALIŞMADI. `qemu-system-x86_64`, host mimarisinden BAĞIMSIZ olarak
+      # x86_64'ü EMÜLE eder (macOS-14/aarch64 runner'da da, Linux/aarch64
+      # runner'da da ÇALIŞIR — YEREL olarak Mac'in KENDİ aarch64 host'unda
+      # DOĞRULANDI).
+      - name: qemu kur (macOS)
+        if: runner.os == 'macOS'
+        run: brew install qemu
+
+      - name: qemu kur (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86
+
       - name: zig build (Debug)
         run: zig build
 

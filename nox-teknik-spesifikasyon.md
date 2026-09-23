@@ -22663,9 +22663,9 @@ doğrulamaya GENİŞLETİLİR).
 
 ## Kapsam DIŞI (bu turda — kalan 2 SEÇİLEN madde AYRI ele alınacak)
 
-- **F.5 — QEMU kernel-boot testini CI'ye eklemek** — AYRI, KENDİ bölümünde
-  ele alınacak (orta boy, `ci.yml`ye qemu kurulumu + `kernel-boot-test`
-  adımı gerektirir).
+- **F.5 — QEMU kernel-boot testini CI'ye eklemek** — BU sözlerin YAZILDIĞI
+  ANDA henüz açık BIRAKILMIŞTI, AMA AYNI oturumda HEMEN ARDINDAN (bkz.
+  §3.180) TAMAMLANDI.
 - **Sistem tipleri (`u8`/`u16`/.../`usize`/`isize`) + `rawptr[T]` +
   `volatile_load`/`store`** — BÜYÜK, YENİ dil sözdizimi/tip-sistemi
   genişletmesi GEREKTİRİR, AYRI bir Plan Mode turu.
@@ -22673,6 +22673,56 @@ doğrulamaya GENİŞLETİLİR).
   DAYANDIĞI "10/10 kırmızı" İDDİASI YANLIŞ ÇIKTIĞINDAN (bkz. Context),
   ACİL DEĞİL — GELECEKTE bir savunma-derinliği İyileştirmesi OLARAK
   değerlendirilebilir.
+
+---
+
+## 3.180 Faz F.5 — GERÇEK QEMU bare-metal boot testini CI'ye ekleme (v1.97.0)
+
+### Context
+
+§3.179'un SEÇİLEN 4 maddesinin ÜÇÜNCÜSÜ. Araştırma (`build.zig`nin
+`kernel-boot-test` bölümünü OKUYARAK) BEKLENENDEN ÇOK DAHA BASİT bir
+GERÇEK olduğunu ORTAYA ÇIKARDI: `tests/golden/kernel_boot_x86_64_test.
+zig`in KENDİ `RunArtifact`ı (`kernel_boot_test_run`) ZATEN `test_step.
+dependOn(...)` İLE `zig build test`in NORMAL akışına BAĞLIYDI (Faz F.4'ün
+KENDİ, ÖNCEDEN yazılmış build.zig kodu) — TEK eksik, testin KENDİ İÇİNDEKİ
+"`qemu-system-x86_64` PATH'te YOKSA `SkipZigTest`" GÜVENLİ-atlama dalıydı,
+VE `ci.yml` HİÇBİR yerde qemu KURMUYORDU. Bu YÜZDEN F.5, `build.zig`/test
+KODUNA HİÇBİR DOKUNUŞ GEREKTİRMEDİ — SADECE `ci.yml`nin ana matrisine
+(macOS+Linux, Windows HARİÇ — `windows-frontend` işi zaten SADECE
+`frontend-test` çalıştırır, `test_step`e HİÇ ULAŞMAZ) qemu kurulum
+adımları EKLENDİ.
+
+### Uygulama
+
+`ci.yml`nin `qbe kur` adımlarının HEMEN YANINA:
+- **macOS**: `brew install qemu` (qemu-system-x86_64 DAHİL TÜM QEMU
+  sistem-emülatörlerini kurar).
+- **Linux** (HEM x86-64 HEM aarch64 runner — `runner.os == 'Linux'` HER
+  ikisini de kapsar): `sudo apt-get install -y -qq qemu-system-x86`
+  (Ubuntu/Debian'ın x86_64 EMÜLASYONU İçİn paket adı).
+
+**Kritik doğrulama gerekçesi**: `qemu-system-x86_64`, HOST mimarisinden
+BAĞIMSIZ olarak x86_64'ü EMÜLE eder — macOS-14 runner'ı (aarch64) VE
+Linux/aarch64 runner'ının İKİSİ de bu BİNARY'yi ÇALIŞTIRABİLİR (BU Mac'in
+KENDİ aarch64 host'unda YEREL olarak DOĞRULANDI, F.4'ün KENDİ araştırma
+turunun "Zig'in cross-compile'ı GERÇEK bir x86_64 makineye HİÇ GEREK YOK"
+bulgusuyla TUTARLI).
+
+### Doğrulama
+
+1. `zig build kernel-boot-test` (BU Mac'te, qemu YEREL kurulu) — RC=0,
+   TEMİZ tamamlandı.
+2. `zig build test` (TAM paket, Debug) — kernel-boot-test'in ARTIK `test_
+   step`in bir PARÇASI olarak (SkipZigTest DEĞİL, GERÇEKTEN çalışarak)
+   dahil olduğu, GENEL suite'in HÂLÂ TEMİZ (RC=0) geçtiği doğrulandı.
+3. `.github/workflows/ci.yml`nin YAML söz dizimi geçerliliği kontrol
+   edildi.
+
+### Kritik dosyalar
+
+`.github/workflows/ci.yml` (ana matrise 2 YENİ qemu-kurulum adımı —
+`build.zig`/test koduna HİÇBİR DOKUNUŞ GEREKMEDİ).
 
 ---
 
