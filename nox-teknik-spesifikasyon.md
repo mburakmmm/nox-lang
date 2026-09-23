@@ -22558,6 +22558,124 @@ poll-döngüsüne çevrilir, YENİ `timeout-minutes: 40`).
 
 ---
 
+## 3.179 GPT-5.6'nın v1.89.1-v1.92.0 (Freestanding Nox) incelemesi — DOĞRULANAN 2 GERÇEK hata + 2 madde (v1.96.0)
+
+### Context
+
+Kullanıcı, `main`in v1.92.0'DAN v1.95.1'E İLERLEDİĞİ (STW-bariyeri/test-
+flake/release-gate düzeltmeleri ARASINDA) bir dönemde yazılmış, harici
+bir (GPT-5.6) freestanding-Nox incelemesini paylaştı — 22 maddelik, DETAYLI
+bir analiz, SONUNDA 9 maddelik bir öncelik listesi ÖNERİYORDU. Bu inceleme
+DOĞRUDAN uygulanmadan ÖNCE HER somut/doğrulanabilir İDDİASI KODUN KENDİSİNE
+karşı KONTROL EDİLDİ (bu projenin "ölç, varsayma" disipliniyle TUTARLI):
+
+- **DOĞRULANDI**: `release.yml`nin paketleme adımı (`build.zig`nin HER
+  platformda KOŞULSUZ ürettiği) `noxrt-freestanding.o`'yu HİÇ kopyalamıyor
+  — GERÇEK, DOĞRULANMIŞ bir üretim-paketleme hatası.
+- **DOĞRULANDI (ampirik olarak, GERÇEK bir `.nox` dosyasıyla `noxc check`
+  VE `noxc build` İKİSİ de ÇALIŞTIRILARAK)**: `ptr_*`/`detach`/`adopt`
+  builtin'lerinin "yalnızca lowlevel: İçİnde" kısıtlaması SADECE codegen'de
+  vardı — `noxc check` bir `lowlevel:` bloğu OLMADAN `ptr_from_int(4096);
+  ptr_read_int(p)` İçEREN bir programı "tip hatasi yok" DİYE KABUL ediyordu,
+  `noxc build` İSE AYNI programı GENEL bir "desteklenmeyen yapı" mesajıyla
+  reddediyordu.
+- **YANLIŞ/GÜNCEL DEĞİL**: incelemenin "`external-fixtures.yml` v1.81'den
+  BERİ 10/10 KIRMIZI" İDDİASI `gh run list --workflow=external-fixtures.
+  yml --limit 10` İLE KONTROL EDİLDİĞİNDE DOĞRULANAMADI — GERÇEKTE son 8
+  koşunun 7'si YEŞİL (SADECE v1.92.0'ın KENDİ koşusu BAŞARISIZ olmuş,
+  TEKİL/İZOLE bir olay). Release gate'in `ci.yml`nin YANINDA `external-
+  fixtures.yml`i de İSTEMESİ (belirtilen mimari argüman) YİNE de MAKUL BİR
+  savunma-derinliği fikridir, AMA "ŞU AN kırık bir şeyi düzeltmek" DEĞİL,
+  "gelecekte OLASI bir regresyona karşı EK bir kilit" olarak DEĞERLENDİRİLDİ
+  — BU turun kapsamı DIŞINDA bırakıldı.
+
+Kullanıcı 9 maddelik öneri listesinden 4'ünü SEÇTİ: (1) release paketleme
+düzeltmesi, (2) `check`/`build` semantik tutarsızlığı, (3) F.5 (QEMU'yu
+CI'ye ekleme), (4) sistem tipleri + `rawptr[T]` + `volatile` (BÜYÜK,
+Plan Mode gerektirir). BU bölüm SADECE (1) VE (2)'yi kapsar.
+
+### 1. Release paketleme düzeltmesi
+
+`.github/workflows/release.yml`nin HEM `build` (macOS/Linux, `cp` İLE)
+HEM `windows-x64` (`Copy-Item` İLE) işlerinin "Paketle" adımına, `noxrt.o`
+satırının HEMEN YANINA, `noxrt-freestanding.o`yu kopyalayan TEK satırlık
+bir EKLEME yapıldı. `noxrt-freestanding-x86_64.o`/`boot_x86_64.o`/
+`kernel.ld` (TAM bare-metal kernel geliştirme İçİn GEREKEN, DAHA GENİŞ
+bir dosya kümesi) BİLİNÇLİ olarak KAPSAM DIŞI bırakıldı — bunlar `zig
+build kernel-boot-test`in KENDİ, SOURCE-checkout-İçİ akışının bir PARÇASI
+(F.4'ün KENDİ "Kapsam Dışı" notu — kurulu bir toolchain'den bare-metal
+kernel geliştirmeyi BİRİNCİ-SINIF bir özellik yapmak AYRI/DAHA BÜYÜK bir
+karar, BU turun kapsamı SADECE "MEVCUT, ÇALIŞAN `--profile freestanding`
+akışının kurulu bir `noxc`ta da ÇALIŞMASI").
+
+### 2. `check`/`build` semantik tutarsızlığının düzeltilmesi
+
+`compiler/typecheck/checker.zig`ya:
+- YENİ `Checker.in_lowlevel_depth: usize = 0` alanı — codegen'in AYNI-
+  isimli, AYRI/BAĞIMSIZ sayacıyla (checker codegen'i import EDEMEZ) AYNI
+  ROL/AMAÇ.
+- `checkStmt`in `.lowlevel_stmt` dalı ARTIK `self.in_lowlevel_depth += 1;
+  defer self.in_lowlevel_depth -= 1;` İLE bloğun KENDİ gövdesini SARAR
+  (codegen'in `stmt.zig:237-239`teki `genLowLevel`ıyla AYNI KAPSAM — İÇ
+  İÇE bir `lowlevel:` GEÇERLİ VE derinlik DOĞAL olarak ARTAR/AZALIR).
+- YENİ `TypeError.LowlevelRequired` + YENİ paylaşılan yardımcı
+  `requireLowlevel(self, builtin_name) TypeError!void` — `self.in_
+  lowlevel_depth == 0` İSE `"'{s}' yalnızca bir 'lowlevel:' bloğu içinde
+  kullanılabilir"` mesajıyla HATA verir.
+- `checkCall`in 9 `ptr_*` builtin bloğu + `detach` bloğu, HER BİRİNİN
+  BAŞINA `try self.requireLowlevel(name);` çağrısı EKLENDİ.
+- `checkExprExpected`in `adopt`nin BEKLENEN-tip BAŞARI YOLU (`checkCall`nin
+  BAĞLAMSIZ-`adopt` dalı ZATEN KOŞULSUZ hata VERİYORDU, dokunulmadı) da
+  AYNI `try self.requireLowlevel("adopt");` çağrısını ALDI.
+
+**Regresyon-yönetimi**: `tests/cli/lowlevel_manual_test.zig`nin 3 MEVCUT
+kırmızı-takım testi (`ptr_read_int`/`detach`/`adopt`nin `lowlevel:`
+DIŞINDA reddi) DAHA ÖNCE `build_result.stderr`in "desteklenmeyen bir
+yapı" (ESKİ, GENEL codegen mesajı) İçERDİĞİNİ doğruluyordu — düzeltme
+SONRASI bu METİN ARTIK ÜRETİLMİYOR (YERİNE DAHA AÇIKLAYICI `LowlevelRequired`
+mesajı GELİYOR), bu YÜZDEN testler GÜNCELLENDİ: HEM `noxc check` HEM
+`noxc build`nin (İKİSİ de) `stderr`inde `"LowlevelRequired"` ARADIĞI,
+İKİ AYRI alt-süreç çağrısına GENİŞLETİLDİ — testin KENDİ AMACI (bu
+programların REDDEDİLDİĞİNİ kanıtlamak) DEĞİŞMEDİ, SADECE `check`in DE
+ARTIK doğru reddettiği EKLENDİ (bu, TAM OLARAK bu turun düzelttiği
+BOŞLUĞUN kanıtıdır).
+
+### Doğrulama
+
+1. Ampirik ÖNCESİ/SONRASI: `/tmp/illegal_lowlevel.nox` (`lowlevel:`
+   OLMADAN `ptr_from_int`+`ptr_read_int`) — DÜZELTMEDEN ÖNCE `noxc check`
+   "tip hatasi yok" (exit 0) diyordu, `noxc build` GENEL bir mesajla
+   reddediyordu; DÜZELTMEDEN SONRA İKİSİ de AYNI, DOĞRU `LowlevelRequired`
+   mesajıyla `exit 1` VERİYOR.
+2. POZİTİF regresyon-yok: `lowlevel:` İçİNDE GEÇERLİ `ptr_*` kullanımı
+   (`tests/golden/codegen_cases/lowlevel_ptr_*`) DEĞİŞMEDEN geçmeye DEVAM
+   ediyor (`in_lowlevel_depth`, İÇERİDEYKEN > 0).
+3. `zig build test` (TAM paket, Debug+ReleaseFast) — TÜM MEVCUT testler
+   (3 GÜNCELLENEN kırmızı-takım testi DAHİL) DEĞİŞMEDEN geçiyor.
+
+### Kritik dosyalar
+
+`.github/workflows/release.yml` (HER İKİ paketleme adımına 1'er satır),
+`compiler/typecheck/checker.zig` (`in_lowlevel_depth` alanı, `.lowlevel_
+stmt` dalı, YENİ `LowlevelRequired`/`requireLowlevel`, 10 çağrı sitesi),
+`tests/cli/lowlevel_manual_test.zig` (3 test, `check`+`build` İKİ AYRI
+doğrulamaya GENİŞLETİLİR).
+
+## Kapsam DIŞI (bu turda — kalan 2 SEÇİLEN madde AYRI ele alınacak)
+
+- **F.5 — QEMU kernel-boot testini CI'ye eklemek** — AYRI, KENDİ bölümünde
+  ele alınacak (orta boy, `ci.yml`ye qemu kurulumu + `kernel-boot-test`
+  adımı gerektirir).
+- **Sistem tipleri (`u8`/`u16`/.../`usize`/`isize`) + `rawptr[T]` +
+  `volatile_load`/`store`** — BÜYÜK, YENİ dil sözdizimi/tip-sistemi
+  genişletmesi GEREKTİRİR, AYRI bir Plan Mode turu.
+- **`external-fixtures.yml`in release gate'e DAHİL edilmesi** — incelemenin
+  DAYANDIĞI "10/10 kırmızı" İDDİASI YANLIŞ ÇIKTIĞINDAN (bkz. Context),
+  ACİL DEĞİL — GELECEKTE bir savunma-derinliği İyileştirmesi OLARAK
+  değerlendirilebilir.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

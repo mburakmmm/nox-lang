@@ -14,6 +14,36 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.96.0]
+
+### Düzeltildi (GPT-5.6 incelemesinde bulunup DOĞRULANAN iki GERÇEK hata)
+
+- **Release paketi freestanding runtime nesnesini TAŞIMIYORDU**: `zig
+  build` HER platformda KOŞULSUZ olarak `zig-out/lib/noxrt-freestanding.o`
+  ÜRETİYOR (`compiler/project.zig`nin `resolveResourceDirs`ı `noxc build
+  --profile freestanding`nin linker adımı İçİn BUNU ARAR) AMA `.github/
+  workflows/release.yml`nin paketleme adımı (HEM macOS/Linux HEM Windows)
+  BUNU HİÇ kopyalamıyordu — GitHub Release'den `install.sh`/`install.ps1`
+  İLE kurulan bir `noxc`, `--profile freestanding` derlemesinde "dosya
+  bulunamadı" İLE BAŞARISIZ olurdu (kaynaktan derleyenler ETKİLENMİYORDU).
+  Düzeltme: HER İKİ paketleme adımına da `noxrt-freestanding.o` EKLENDİ.
+- **`noxc check`/`noxc build` `lowlevel:` kısıtlamasında ANLAŞMAZ HALDEYDİ**:
+  `ptr_from_int`/`ptr_to_int`/`ptr_add`/`ptr_read_int`/`ptr_read_float`/
+  `ptr_read_bool`/`ptr_write_int`/`ptr_write_float`/`ptr_write_bool`/
+  `detach`/`adopt`in "yalnızca bir `lowlevel:` bloğu İçİnde kullanılabilir"
+  kısıtlaması SADECE codegen'in `in_lowlevel_depth`inde uygulanıyordu —
+  `noxc check` BU builtin'leri BİR `lowlevel:` bloğunun DIŞINDA da (tür
+  olarak GEÇERLİ sayıp) SESSİZCE KABUL EDİYORDU, SADECE `noxc build`
+  codegen aşamasında GENEL/YANILTICI bir "desteklenmeyen yapı" mesajıyla
+  reddediyordu (GERÇEK NEDENİ HİÇ GÖSTERMEDEN) — GERÇEK, ampirik olarak
+  DOĞRULANAN bir `check`/`build` semantik tutarsızlığı. Düzeltme: checker'a
+  YENİ bir `in_lowlevel_depth` sayacı (`.lowlevel_stmt`in KENDİ gövdesinde
+  artırılıp/azaltılan, codegen'in KENDİ, AYRI sayacıyla AYNI İSİM/AMAÇ AMA
+  BAĞIMSIZ) + YENİ `LowlevelRequired` tanı kodu EKLENDİ — BU 11 builtin'in
+  HER BİRİ ARTIK `noxc check`TE de, `noxc build`DA da AYNI, DOĞRU/AÇIKLAYICI
+  mesajla ("'{isim}' yalnızca bir 'lowlevel:' bloğu içinde kullanılabilir")
+  reddedilir.
+
 ## [1.95.1]
 
 ### Düzeltildi (GERÇEK — `release.yml`nin ci-gate'i v1.80.2'DEN BERİ, 15 SÜRÜM BOYUNCA, İSTİSNASIZ HER releasei engelledi)

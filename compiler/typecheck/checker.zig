@@ -94,6 +94,18 @@ pub const TypeError = error{
     /// bkz. `checkFreestandingImportAllowed`) — `TypeMismatch`e AŞIRI
     /// YÜKLEMEK yerine ayrı, grep-lenebilir bir tanı kodu.
     FreestandingModuleForbidden,
+    /// v1.95.2 (bkz. nox-teknik-spesifikasyon.md §3.179 — GPT-5.6 incelemesinin
+    /// buldu, DOĞRULANDI): `ptr_from_int`/`ptr_to_int`/`ptr_add`/`ptr_read_*`/
+    /// `ptr_write_*`/`detach`/`adopt` DAHA ÖNCE bir `lowlevel:` bloğu
+    /// DIŞINDA KOŞULSUZ TİP olarak kabul EDİLİYORDU ("yalnızca lowlevel:
+    /// içinde" kısıtlaması SADECE codegen'in `in_lowlevel_depth`inde
+    /// UYGULANIYORDU) — `noxc check`in `noxc build`DAN FARKLI (checker
+    /// geçer, codegen `error.Unsupported`la reddeder, KULLANICIYA gerçek
+    /// nedeni GÖSTERMEYEN GENEL bir mesajla) davranmasına yol AÇIYORDU.
+    /// ARTIK checker'ın KENDİ `in_lowlevel_depth`i BU builtin'lerin
+    /// ÇAĞRILDIĞI NOKTADA kontrol edilir — `TypeMismatch`e AŞIRI YÜKLEMEK
+    /// yerine ayrı, grep-lenebilir bir tanı kodu.
+    LowlevelRequired,
     OutOfMemory,
 };
 
@@ -358,6 +370,19 @@ pub const Checker = struct {
     /// `enterExprRecursion`/`exitExprRecursion` İLE `defer` üzerinden
     /// otomatik sıfırlanır (parser'ın KENDİ deseniyle BİREBİR AYNI).
     expr_depth: usize = 0,
+    /// v1.95.2 (bkz. nox-teknik-spesifikasyon.md §3.179): checker-taraflı
+    /// karşılığı — codegen'in `Codegen.in_lowlevel_depth`i (bkz.
+    /// `codegen_qbe/codegen.zig:1245`) İLE AYNI İSİM/AMAÇ, AMA TAMAMEN
+    /// AYRI/BAĞIMSIZ bir sayaç (checker codegen'i import EDEMEZ). `.lowlevel_
+    /// stmt`in KENDİ `checkStmt` dalında ARTIRILIP/AZALTILIR — `ptr_*`/
+    /// `detach`/`adopt` builtin'lerinin ÇAĞRILDIĞI NOKTADA `== 0` İSE
+    /// `LowlevelRequired` hatası verir (DAHA ÖNCE checker'ın BUNU HİÇ
+    /// KONTROL ETMEMESİ, `noxc check`in bu builtin'leri bir `lowlevel:`
+    /// bloğu DIŞINDA da SESSİZCE kabul edip, SADECE `noxc build`nin
+    /// codegen aşamasında GENEL bir "desteklenmeyen yapı" hatasıyla
+    /// reddetmesine yol açıyordu — GERÇEK bir `check`/`build` semantik
+    /// tutarsızlığı, GPT-5.6 incelemesinde bulunup DOĞRULANDI).
+    in_lowlevel_depth: usize = 0,
     /// Faz U.4.5 (bkz. `checkExpr`nin `.identifier` dalı): üst-düzey
     /// (non-generic) bir `def`in BARE adı, ÇAĞRI DIŞINDA bir bağlamda
     /// (bir değişkene atama, bir listeye/alana KOYMA) kullanıldığında bu
@@ -529,6 +554,16 @@ pub const Checker = struct {
 
     fn exitExprRecursion(self: *Checker) void {
         self.expr_depth -= 1;
+    }
+
+    /// v1.95.2 (bkz. nox-teknik-spesifikasyon.md §3.179): `ptr_*`/`detach`/
+    /// `adopt` builtin'lerinin HER BİRİNİN ÇAĞRILDIĞI NOKTADA (arg-sayısı/
+    /// tip kontrolünden ÖNCE) çağrılır — `self.in_lowlevel_depth == 0` İSE
+    /// (bir `lowlevel:` bloğunun DIŞINDayız) `LowlevelRequired` hatası verir.
+    fn requireLowlevel(self: *Checker, builtin_name: []const u8) TypeError!void {
+        if (self.in_lowlevel_depth == 0) {
+            return self.fail(error.LowlevelRequired, "'{s}' yalnızca bir 'lowlevel:' bloğu içinde kullanılabilir", .{builtin_name});
+        }
     }
 
     /// Faz T.2: bir bağımsız birimin (fonksiyon/sınıf/metod/gevşek deyim)
@@ -3903,6 +3938,11 @@ pub const Checker = struct {
                 var before_it = ctx.scope.vars.keyIterator();
                 while (before_it.next()) |k| try before.put(self.allocator, k.*, {});
 
+                // v1.95.2: `codegen_qbe/stmt.zig`nin `genLowLevel`ıyla AYNI
+                // KAPSAM (SADECE bu bloğun KENDİ gövdesi — iç içe bir
+                // `lowlevel:` GEÇERLİ VE derinlik DOĞAL olarak ARTAR).
+                self.in_lowlevel_depth += 1;
+                defer self.in_lowlevel_depth -= 1;
                 for (ll.body) |s| try self.checkStmt(ctx, s);
 
                 var to_remove: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -4240,6 +4280,7 @@ pub const Checker = struct {
         // kanıtlanmış deseni) HEDEFİN BEKLENEN TİPİNDEN çıkarılır.
         if (expr == .call and expr.call.callee.* == .identifier and std.mem.eql(u8, expr.call.callee.identifier, "adopt")) {
             const c = expr.call;
+            try self.requireLowlevel("adopt");
             if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'adopt' tam olarak 1 argüman alır", .{});
             const p_t = try self.checkExpr(ctx, c.args[0]);
             if (p_t != .ptr) return self.fail(error.TypeMismatch, "'adopt' bir ptr alır", .{});
@@ -5081,55 +5122,65 @@ pub const Checker = struct {
                 }
                 // Faz F.3 (bkz. plan dosyası "Dil uzantısı: 'lowlevel:'in
                 // 'manuel katman'a genişletilmesi"): 9 yeni `ptr`
-                // aritmetiği/okuma-yazma + `detach` yerleşiği — HEPSİ
-                // checker'da TÜR olarak KOŞULSUZ kabul edilir ("yalnızca
-                // lowlevel: içinde" kısıtlaması SADECE codegen'de,
-                // `in_lowlevel_depth` sayacı üzerinden uygulanır — bkz.
-                // plan dosyasının "Context" bölümündeki madde 2).
+                // aritmetiği/okuma-yazma + `detach` yerleşiği. v1.95.2
+                // (bkz. nox-teknik-spesifikasyon.md §3.179): ARTIK checker'ın
+                // KENDİSİ de "yalnızca lowlevel: içinde" kısıtlamasını
+                // `requireLowlevel` İLE uyguluyor (`noxc check`in `noxc
+                // build`la AYNI davranması İçİn — DAHA ÖNCE bu kısıtlama
+                // SADECE codegen'in `in_lowlevel_depth`inde vardı).
                 if (std.mem.eql(u8, name, "ptr_from_int")) {
+                    try self.requireLowlevel(name);
                     if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_from_int' tam olarak 1 argüman alır", .{});
                     if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'ptr_from_int' bir int alır", .{});
                     return .ptr;
                 }
                 if (std.mem.eql(u8, name, "ptr_to_int")) {
+                    try self.requireLowlevel(name);
                     if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_to_int' tam olarak 1 argüman alır", .{});
                     if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_to_int' bir ptr alır", .{});
                     return .int;
                 }
                 if (std.mem.eql(u8, name, "ptr_add")) {
+                    try self.requireLowlevel(name);
                     if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_add' tam olarak 2 argüman alır (p: ptr, n: int)", .{});
                     if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_add' argümanı 1 (p) ptr olmalıdır", .{});
                     if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'ptr_add' argümanı 2 (n) int olmalıdır", .{});
                     return .ptr;
                 }
                 if (std.mem.eql(u8, name, "ptr_read_int")) {
+                    try self.requireLowlevel(name);
                     if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_read_int' tam olarak 1 argüman alır", .{});
                     if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_read_int' bir ptr alır", .{});
                     return .int;
                 }
                 if (std.mem.eql(u8, name, "ptr_read_float")) {
+                    try self.requireLowlevel(name);
                     if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_read_float' tam olarak 1 argüman alır", .{});
                     if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_read_float' bir ptr alır", .{});
                     return .float;
                 }
                 if (std.mem.eql(u8, name, "ptr_read_bool")) {
+                    try self.requireLowlevel(name);
                     if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_read_bool' tam olarak 1 argüman alır", .{});
                     if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_read_bool' bir ptr alır", .{});
                     return .boolean;
                 }
                 if (std.mem.eql(u8, name, "ptr_write_int")) {
+                    try self.requireLowlevel(name);
                     if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_write_int' tam olarak 2 argüman alır (p: ptr, v: int)", .{});
                     if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_write_int' argümanı 1 (p) ptr olmalıdır", .{});
                     if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'ptr_write_int' argümanı 2 (v) int olmalıdır", .{});
                     return .none;
                 }
                 if (std.mem.eql(u8, name, "ptr_write_float")) {
+                    try self.requireLowlevel(name);
                     if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_write_float' tam olarak 2 argüman alır (p: ptr, v: float)", .{});
                     if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_write_float' argümanı 1 (p) ptr olmalıdır", .{});
                     if (try self.checkExpr(ctx, c.args[1]) != .float) return self.fail(error.TypeMismatch, "'ptr_write_float' argümanı 2 (v) float olmalıdır", .{});
                     return .none;
                 }
                 if (std.mem.eql(u8, name, "ptr_write_bool")) {
+                    try self.requireLowlevel(name);
                     if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_write_bool' tam olarak 2 argüman alır (p: ptr, v: bool)", .{});
                     if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_write_bool' argümanı 1 (p) ptr olmalıdır", .{});
                     if (try self.checkExpr(ctx, c.args[1]) != .boolean) return self.fail(error.TypeMismatch, "'ptr_write_bool' argümanı 2 (v) bool olmalıdır", .{});
@@ -5140,6 +5191,7 @@ pub const Checker = struct {
                 // sonucu DEĞİL (v1 sınırı, "tek-sahiplik" varsayımını basit
                 // tutmak için). Tipi list/dict/class/str olmalıdır.
                 if (std.mem.eql(u8, name, "detach")) {
+                    try self.requireLowlevel(name);
                     if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'detach' tam olarak 1 argüman alır", .{});
                     if (c.args[0] != .identifier) {
                         return self.fail(error.TypeMismatch, "'detach' yalnızca düz bir yerel değişkene uygulanabilir — bir sınıf alanına/ifadenin sonucuna değil", .{});

@@ -145,6 +145,16 @@ jobs:
           cp zig-out/bin/noxlsp "$stage/bin/"
           cp "$(command -v qbe)" "$stage/bin/qbe"
           cp zig-out/lib/noxrt.o "$stage/lib/"
+          # v1.95.2: `zig build` (bkz. build.zig'in "R.3+F.1 tamamlama"
+          # bölümü) HER ZAMAN, host mimarisi + freestanding OS İçİn, İKİNCİ
+          # bir `noxrt-freestanding.o` da ÜRETİR (`b.getInstallStep()`e
+          # KOŞULSUZ bağlı) — `compiler/project.zig`nin `resolveResourceDirs`ı
+          # `<install-root>/lib/noxrt-freestanding.o`yu ARAR (`noxc build
+          # --profile freestanding`nin GERÇEK linker adımı) — BU dosya
+          # DAHA ÖNCE pakete HİÇ KOPYALANMIYORDU, GitHub Release İLE kurulan
+          # bir `noxc` `--profile freestanding` derlemesinde "dosya bulunamadı"
+          # İLE BAŞARISIZ olurdu (kaynaktan derleyenler ETKİLENMİYORDU).
+          cp zig-out/lib/noxrt-freestanding.o "$stage/lib/"
           cp -R zig-out/lib/nox "$stage/lib/"
           cp README.md LICENSE CHANGELOG.md "$stage/"
           tar czf "${stage}.tar.gz" "$stage"
@@ -236,6 +246,10 @@ jobs:
           Copy-Item "zig-out\bin\noxlsp.exe" "$stage\bin\"
           Copy-Item "$env:RUNNER_TEMP\qbe.exe" "$stage\bin\"
           Copy-Item "zig-out\lib\noxrt.o" "$stage\lib\"
+          # v1.95.2: macOS/Linux paketleme adımıyla AYNI düzeltme — bkz. onun
+          # belge notu (`noxrt-freestanding.o`, `zig build`in HER platformda
+          # KOŞULSUZ ürettiği İKİNCİ nesne dosyası).
+          Copy-Item "zig-out\lib\noxrt-freestanding.o" "$stage\lib\"
           Copy-Item "zig-out\lib\swap_asm.o" "$stage\lib\"
           Copy-Item -Recurse "zig-out\lib\nox" "$stage\lib\"
           Copy-Item README.md, LICENSE, CHANGELOG.md "$stage\"
