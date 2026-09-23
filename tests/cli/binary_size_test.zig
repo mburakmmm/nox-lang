@@ -131,7 +131,22 @@ test "noxc build: smtp/postgres kullanmayan basit bir program dead-stripping ile
     };
     defer gpa.free(nm_result.stdout);
     defer gpa.free(nm_result.stderr);
+    // v1.98.0 (bkz. nox-teknik-spesifikasyon.md): GERÇEK CI koşusunda BU
+    // testin "failed without output" İLE (HİÇBİR teşhis METNİ OLMADAN)
+    // BAŞARISIZ OLDUĞU gözlemlendi — `build_result`nin AKSİNE, `nm_result`nin
+    // İDDİALARINDAN ÖNCE HİÇBİR `std.debug.print` YOKTU (bu YÜZDEN `nm`
+    // GERÇEKTEN sıfır-dışı bir çıkışla BAŞARISIZ olursa/beklenen sembol
+    // BULUNAMAZSA teşhis SESSİZCE kayboluyordu). `build_result`nin AYNI
+    // "başarısızsa YAZDIR" desenİ BURAYA da eklenir.
+    if (!(nm_result.term == .exited and nm_result.term.exited == 0)) {
+        std.debug.print("nm basarisiz, term={any}\nstdout:\n{s}\nstderr:\n{s}\n", .{ nm_result.term, nm_result.stdout, nm_result.stderr });
+    }
     try std.testing.expect(nm_result.term == .exited and nm_result.term.exited == 0);
+    if (std.mem.indexOf(u8, nm_result.stdout, "nox_smtp_connect_raw") != null or
+        std.mem.indexOf(u8, nm_result.stdout, "nox_pg_exec_params_raw") != null)
+    {
+        std.debug.print("dead-stripping BEKLENMEDIK sekilde basarisiz - ilgisiz semboller nm ciktisinda bulundu:\n{s}\n", .{nm_result.stdout});
+    }
     try std.testing.expect(std.mem.indexOf(u8, nm_result.stdout, "nox_smtp_connect_raw") == null);
     try std.testing.expect(std.mem.indexOf(u8, nm_result.stdout, "nox_pg_exec_params_raw") == null);
 
@@ -143,6 +158,9 @@ test "noxc build: smtp/postgres kullanmayan basit bir program dead-stripping ile
     // sembol kontrolüdür, BU sınır SADECE "aşırı şişkinliğe" karşı bir
     // savunma-derinliği regresyon bekçisidir).
     const stat = try tmp.dir.statFile(io, "prog_out", .{});
+    if (stat.size >= 10 * 1024 * 1024) {
+        std.debug.print("ikili beklenenden BUYUK: {d} bayt\n", .{stat.size});
+    }
     try std.testing.expect(stat.size < 10 * 1024 * 1024);
 }
 
@@ -187,11 +205,17 @@ test "noxc build: nox.json.decode + sınıf + cycle-collector (5-sembol dlsym li
     const build_result = try runWithRetry(gpa, io, &.{ noxcPath(), "build", src_path, "-o", bin_path });
     defer gpa.free(build_result.stdout);
     defer gpa.free(build_result.stderr);
+    if (!(build_result.term == .exited and build_result.term.exited == 0)) {
+        std.debug.print("noxc build basarisiz, term={any}\nstdout:\n{s}\nstderr:\n{s}\n", .{ build_result.term, build_result.stdout, build_result.stderr });
+    }
     try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
 
     const run_result = try runWithRetry(gpa, io, &.{bin_path});
     defer gpa.free(run_result.stdout);
     defer gpa.free(run_result.stderr);
+    if (!(run_result.term == .exited and run_result.term.exited == 0)) {
+        std.debug.print("program calisirken basarisiz oldu, term={any}\nstdout:\n{s}\nstderr:\n{s}\n", .{ run_result.term, run_result.stdout, run_result.stderr });
+    }
     try std.testing.expect(run_result.term == .exited and run_result.term.exited == 0);
     try std.testing.expectEqualStrings("a\n1\n800\n", run_result.stdout);
     // DebugAllocator'ın sızıntı/UAF kontrolü BOŞ stderr İLE kanıtlanır —

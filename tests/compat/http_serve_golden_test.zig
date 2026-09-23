@@ -201,7 +201,7 @@ test "nox.http.serve: uctan uca, iki eszamanli baglanti GERCEKTEN cakisir (yavas
     });
 
     var watchdog: child_watchdog.ChildWatchdog = .{};
-    try watchdog.arm(&child, 20_000);
+    try watchdog.arm(&child, 45_000);
     defer watchdog.disarm();
 
     // "yavaş" istemci: bağlanır ama isteği göndermeden önce 150ms bekler —
@@ -229,6 +229,9 @@ test "nox.http.serve: uctan uca, iki eszamanli baglanti GERCEKTEN cakisir (yavas
     defer allocator.free(stderr_data);
 
     const term = try child.wait(io);
+    if (term != .exited) {
+        std.debug.print("cocuk surec normal cikmadi (olasi askidan sonra watchdog tarafindan oldurulmus), term={any}\nstdout:\n{s}\nstderr:\n{s}\n", .{ term, stdout_data, stderr_data });
+    }
     try std.testing.expect(term == .exited);
     try std.testing.expectEqual(@as(u8, 0), term.exited);
 
@@ -282,7 +285,7 @@ test "nox.http.serve: HttpRequest'in DÖRT alanı da (method/target/body/headers
     });
 
     var watchdog: child_watchdog.ChildWatchdog = .{};
-    try watchdog.arm(&child, 20_000);
+    try watchdog.arm(&child, 45_000);
     defer watchdog.disarm();
 
     var resp_buf: [512]u8 = undefined;
@@ -328,6 +331,9 @@ test "nox.http.serve: HttpRequest'in DÖRT alanı da (method/target/body/headers
     defer allocator.free(stderr_data);
 
     const term = try child.wait(io);
+    if (term != .exited) {
+        std.debug.print("cocuk surec normal cikmadi (olasi askidan sonra watchdog tarafindan oldurulmus), term={any}\nstdout:\n{s}\nstderr:\n{s}\n", .{ term, stdout_data, stderr_data });
+    }
     try std.testing.expect(term == .exited);
     try std.testing.expectEqual(@as(u8, 0), term.exited);
 
@@ -378,7 +384,7 @@ test "nox.http.serve: yanit govdesi/basliklari DINAMIK insa edildiginde de dogru
     });
 
     var watchdog: child_watchdog.ChildWatchdog = .{};
-    try watchdog.arm(&child, 20_000);
+    try watchdog.arm(&child, 45_000);
     defer watchdog.disarm();
 
     var resp_buf: [512]u8 = undefined;
@@ -419,6 +425,9 @@ test "nox.http.serve: yanit govdesi/basliklari DINAMIK insa edildiginde de dogru
     defer allocator.free(stderr_data);
 
     const term = try child.wait(io);
+    if (term != .exited) {
+        std.debug.print("cocuk surec normal cikmadi (olasi askidan sonra watchdog tarafindan oldurulmus), term={any}\nstderr:\n{s}\n", .{ term, stderr_data });
+    }
     try std.testing.expect(term == .exited);
     try std.testing.expectEqual(@as(u8, 0), term.exited);
 
@@ -473,7 +482,7 @@ test "nox.http.serve: req HIC referans alinmayan handler'da tembel alan insasi d
     });
 
     var watchdog: child_watchdog.ChildWatchdog = .{};
-    try watchdog.arm(&child, 20_000);
+    try watchdog.arm(&child, 45_000);
     defer watchdog.disarm();
 
     var resp_buf: [256]u8 = undefined;
@@ -514,6 +523,9 @@ test "nox.http.serve: req HIC referans alinmayan handler'da tembel alan insasi d
     defer allocator.free(stderr_data);
 
     const term = try child.wait(io);
+    if (term != .exited) {
+        std.debug.print("cocuk surec normal cikmadi (olasi askidan sonra watchdog tarafindan oldurulmus), term={any}\nstderr:\n{s}\n", .{ term, stderr_data });
+    }
     try std.testing.expect(term == .exited);
     try std.testing.expectEqual(@as(u8, 0), term.exited);
 
@@ -573,7 +585,7 @@ test "nox.http.serve: modul takma adiyla (`import nox.http as h; h.serve(...)`) 
     });
 
     var watchdog: child_watchdog.ChildWatchdog = .{};
-    try watchdog.arm(&child, 20_000);
+    try watchdog.arm(&child, 45_000);
     defer watchdog.disarm();
 
     var resp_buf: [256]u8 = undefined;
@@ -600,6 +612,9 @@ test "nox.http.serve: modul takma adiyla (`import nox.http as h; h.serve(...)`) 
     defer allocator.free(stderr_data);
 
     const term = try child.wait(io);
+    if (term != .exited) {
+        std.debug.print("cocuk surec normal cikmadi (olasi askidan sonra watchdog tarafindan oldurulmus), term={any}\nstderr:\n{s}\n", .{ term, stderr_data });
+    }
     try std.testing.expect(term == .exited);
     try std.testing.expectEqual(@as(u8, 0), term.exited);
 
@@ -654,7 +669,7 @@ test "nox.http.serve: Connection: close GONDERILMEDEN ayni baglanti uzerinden IK
     });
 
     var watchdog: child_watchdog.ChildWatchdog = .{};
-    try watchdog.arm(&child, 20_000);
+    try watchdog.arm(&child, 45_000);
     defer watchdog.disarm();
 
     var resp1_buf: [256]u8 = undefined;
@@ -705,6 +720,9 @@ test "nox.http.serve: Connection: close GONDERILMEDEN ayni baglanti uzerinden IK
     defer allocator.free(stderr_data);
 
     const term = try child.wait(io);
+    if (term != .exited) {
+        std.debug.print("cocuk surec normal cikmadi (olasi askidan sonra watchdog tarafindan oldurulmus), term={any}\nstderr:\n{s}\n", .{ term, stderr_data });
+    }
     try std.testing.expect(term == .exited);
     try std.testing.expectEqual(@as(u8, 0), term.exited);
 

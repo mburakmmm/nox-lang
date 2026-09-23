@@ -153,6 +153,21 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq qemu-system-x86
 
+      # v1.98.0: `kernel_boot_x86_64_test.zig`nin `objcopy -O elf32-i386`
+      # POST-LINK dönüşümü (bkz. o dosyanın belge notu — QEMU'nun Multiboot1
+      # yükleyicisi ELF64 KABUL ETMİYOR), Linux (aarch64) runner'ının
+      # ÖNTANIMLI `binutils` paketinde `objcopy: invalid bfd target` İLE
+      # BAŞARISIZ oluyordu (v1.97.0'ın GERÇEK CI koşusunda GÖZLEMLENDİ) —
+      # ARM64 için paketlenen `objcopy`, x86 BFD hedeflerini (elf32-i386)
+      # İÇERMİYOR. `binutils-multiarch`, `objcopy`/`objdump`/vb.yi TÜM
+      # mimarilerin BFD hedeflerini destekleyecek şekilde DEĞİŞTİRİR
+      # (Debian/Ubuntu'nun KENDİ, standart çözümü) — Linux/x86-64 runner'ı
+      # da AYNI adımı ALIR (zararsız, native hedef ZATEN destekleniyordu).
+      - name: binutils-multiarch kur (Linux — objcopy elf32-i386 hedefi için)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y -qq binutils-multiarch
+
       - name: zig build (Debug)
         run: zig build
 

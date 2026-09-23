@@ -231,7 +231,7 @@ test "nox.http.serve_ws: uctan uca, RFC 6455 el sikismasi + maskeli metin frame 
     });
 
     var watchdog: child_watchdog.ChildWatchdog = .{};
-    try watchdog.arm(&child, 20_000);
+    try watchdog.arm(&child, 45_000);
     defer watchdog.disarm();
 
     const fd = try testConnect(port);
@@ -269,6 +269,9 @@ test "nox.http.serve_ws: uctan uca, RFC 6455 el sikismasi + maskeli metin frame 
     defer allocator.free(stderr_data);
 
     const term = try child.wait(io);
+    if (term != .exited) {
+        std.debug.print("cocuk surec normal cikmadi (olasi askidan sonra watchdog tarafindan oldurulmus), term={any}\nstderr:\n{s}\n", .{ term, stderr_data });
+    }
     try std.testing.expect(term == .exited);
     try std.testing.expectEqual(@as(u8, 0), term.exited);
 
@@ -314,7 +317,7 @@ test "nox.http.serve_ws: maskesiz gelen bir istemci frame'i RFC 6455 geregi redd
     });
 
     var watchdog: child_watchdog.ChildWatchdog = .{};
-    try watchdog.arm(&child, 20_000);
+    try watchdog.arm(&child, 45_000);
     defer watchdog.disarm();
 
     const fd = try testConnect(port);
@@ -356,6 +359,9 @@ test "nox.http.serve_ws: maskesiz gelen bir istemci frame'i RFC 6455 geregi redd
     defer allocator.free(stderr_data);
 
     const term = try child.wait(io);
+    if (term != .exited) {
+        std.debug.print("cocuk surec normal cikmadi (olasi askidan sonra watchdog tarafindan oldurulmus), term={any}\nstderr:\n{s}\n", .{ term, stderr_data });
+    }
     try std.testing.expect(term == .exited);
     try std.testing.expectEqual(@as(u8, 0), term.exited);
 

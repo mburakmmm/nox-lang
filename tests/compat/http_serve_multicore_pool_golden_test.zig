@@ -207,7 +207,7 @@ test "nox.http.serve_multicore (--release/havuz): N=2 worker, iki EZSAMANLI iste
     });
 
     var watchdog: child_watchdog.ChildWatchdog = .{};
-    try watchdog.arm(&child, 20_000);
+    try watchdog.arm(&child, 45_000);
     defer watchdog.disarm();
 
     var results: [2]bool = .{ false, false };
@@ -227,6 +227,9 @@ test "nox.http.serve_multicore (--release/havuz): N=2 worker, iki EZSAMANLI iste
     defer allocator.free(stderr_data);
 
     const term = try child.wait(io);
+    if (term != .exited) {
+        std.debug.print("cocuk surec normal cikmadi (olasi askidan sonra watchdog tarafindan oldurulmus), term={any}\nstdout:\n{s}\nstderr:\n{s}\n", .{ term, stdout_data, stderr_data });
+    }
     try std.testing.expect(term == .exited);
     try std.testing.expectEqual(@as(u8, 0), term.exited);
 

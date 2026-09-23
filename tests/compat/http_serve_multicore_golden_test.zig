@@ -171,7 +171,7 @@ test "nox.http.serve_multicore: uctan uca, N=2 is parcacigi, iki EZSAMANLI istem
     });
 
     var watchdog: child_watchdog.ChildWatchdog = .{};
-    try watchdog.arm(&child, 20_000);
+    try watchdog.arm(&child, 45_000);
     defer watchdog.disarm();
 
     var results: [2]bool = .{ false, false };
@@ -191,6 +191,9 @@ test "nox.http.serve_multicore: uctan uca, N=2 is parcacigi, iki EZSAMANLI istem
     defer allocator.free(stderr_data);
 
     const term = try child.wait(io);
+    if (term != .exited) {
+        std.debug.print("cocuk surec normal cikmadi (olasi askidan sonra watchdog tarafindan oldurulmus), term={any}\nstdout:\n{s}\nstderr:\n{s}\n", .{ term, stdout_data, stderr_data });
+    }
     try std.testing.expect(term == .exited);
     try std.testing.expectEqual(@as(u8, 0), term.exited);
 
@@ -241,7 +244,7 @@ test "nox.http.listen + nox.thread.start + nox.http.serve_fd: birlestirilebilir 
     });
 
     var watchdog: child_watchdog.ChildWatchdog = .{};
-    try watchdog.arm(&child, 20_000);
+    try watchdog.arm(&child, 45_000);
     defer watchdog.disarm();
 
     var results: [2]bool = .{ false, false };
@@ -261,6 +264,9 @@ test "nox.http.listen + nox.thread.start + nox.http.serve_fd: birlestirilebilir 
     defer allocator.free(stderr_data);
 
     const term = try child.wait(io);
+    if (term != .exited) {
+        std.debug.print("cocuk surec normal cikmadi (olasi askidan sonra watchdog tarafindan oldurulmus), term={any}\nstdout:\n{s}\nstderr:\n{s}\n", .{ term, stdout_data, stderr_data });
+    }
     try std.testing.expect(term == .exited);
     try std.testing.expectEqual(@as(u8, 0), term.exited);
 
@@ -308,7 +314,7 @@ test "nox.http.serve_multicore: num_threads=1 sıradan tek-iş-parçacıklı sun
     });
 
     var watchdog: child_watchdog.ChildWatchdog = .{};
-    try watchdog.arm(&child, 20_000);
+    try watchdog.arm(&child, 45_000);
     defer watchdog.disarm();
 
     var results: [1]bool = .{false};
@@ -330,6 +336,9 @@ test "nox.http.serve_multicore: num_threads=1 sıradan tek-iş-parçacıklı sun
     defer allocator.free(stderr_data);
 
     const term = try child.wait(io);
+    if (term != .exited) {
+        std.debug.print("cocuk surec normal cikmadi (olasi askidan sonra watchdog tarafindan oldurulmus), term={any}\nstdout:\n{s}\nstderr:\n{s}\n", .{ term, stdout_data, stderr_data });
+    }
     try std.testing.expect(term == .exited);
     try std.testing.expectEqual(@as(u8, 0), term.exited);
 

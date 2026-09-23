@@ -22855,6 +22855,184 @@ BİLE ÜRETİLEMEDİ. Bu, `nox_pool_run`nin AKSİNE, BİLİNÇLİ olarak
 - `tests/compat/http_serve_multicore_golden_test.zig` (İNCELENDİ, HİÇBİR
   DEĞİŞİKLİK YAPILMADI)
 
+**GÜNCELLEME (v1.99.0)**: bu bölümün "reprodüklenemedi" sonucu KISMEN
+GEÇERSİZ KALDI — `gh run list --workflow=ci.yml --limit 50` İLE YAPILAN
+GENİŞ bir denetimde, BU testin GERÇEKTEN, İKİ AYRI GERÇEK CI koşusunda
+(v1.95.0/v1.95.1) `term == .exited` İDDİASINDA (watchdog'un çocuk süreci
+20 saniye SONRA ÖLDÜRMESİYLE) BAŞARISIZ OLDUĞU BULUNDU — SADECE BU
+oturumun 20-`yes`-süreçlik YEREL simülasyonu (25 ardışık çalıştırma, HEPSİ
+TEMİZ) bunu YAKALAYAMADI. Kesin kök neden (SO_REUSEPORT dağılımı/
+`SharedServeBudget` polling etkileşimi) YİNE de KANITLANAMADI — bkz. §3.182.
+
+---
+
+## 3.182 Kalan bilinen CI hataları/flake'lerinin toplu düzeltmesi (v1.99.0)
+
+### Context
+
+Kullanıcının "release hâlâ v1.80.1'de takılı, sebebini açıkla" sorusu
+ÜZERİNE `gh run list --workflow=ci.yml --limit 50` İLE yapılan GERÇEK
+bir denetim ÇARPICI bir gerçeği ORTAYA ÇIKARDI: `release.yml`'in ci-gate'i
+(§3.178, v1.95.1) ARTIK DOĞRU çalışıyor (GERÇEKTEN polling yapıp GERÇEK
+CI sonucunu bekliyor — run süreleri 6-8 saniyeden GERÇEK ~20-30 dakikaya
+ÇIKTI, bu POLLING'İN GERÇEKTEN ÇALIŞTIĞININ kanıtı) — AMA `ci.yml`'in
+KENDİSİ son ~50 push'un (v1.69.0'dan v1.98.0'a, ~2 hafta) NEREDEYSE
+TAMAMINDA kırmızıydı. Kullanıcı "sıradaki release'de TÜM CI hatalarının/
+flake'lerin düzeltilmiş olmasını" İSTEDİ.
+
+Gerçek CI loglarından SAMPLE alınarak (`gh run view --log-failed`) ÜÇ
+AYRI, GERÇEK/BAĞIMSIZ kök nedene sahip hata BULUNDU:
+
+### 1. Faz F.5'in QEMU objcopy hatası (Linux/aarch64)
+
+v1.97.0'ın GERÇEK CI koşusunda (`gh run view 35854414941`), Linux
+(aarch64) İşi `objcopy: /home/.../kernel.elf: invalid bfd target`
+İLE BAŞARISIZ oluyordu — `tests/golden/kernel_boot_x86_64_test.zig`'in
+`objcopy -O elf32-i386 -S kernel64.elf kernel.elf` (POST-LINK ELF64→
+ELF32/EM_386 konteyner dönüşümü, QEMU'nun Multiboot1 yükleyicisinin
+ELF64'ü REDDETMESİNİN düzeltmesi) BU runner'ın ÖNTANIMLI `binutils`ında
+DESTEKLENMİYORDU — ARM64 İçİn paketlenen `objcopy`, x86 BFD hedeflerini
+(elf32-i386) İçermiyor (macOS VE Linux/x86-64 runner'ları BU sorunu
+YAŞAMADI, doğrulandı: `gh run view` çıktısında SADECE Linux/aarch64
+başarısız).
+
+**Düzeltme**: `.github/workflows/ci.yml`'in "qemu kur (Linux)" adımının
+YANINA `sudo apt-get install -y -qq binutils-multiarch` (Debian/Ubuntu'nun
+KENDİ, standart çözümü — `objcopy`/`objdump`/vb.yi TÜM mimarilerin BFD
+hedeflerini destekleyecek şekilde DEĞİŞTİRİR) EKLENDİ. **Savunma-derinliği**:
+`kernel_boot_x86_64_test.zig`'in KENDİSİ de GÜÇLENDİRİLDİ — `objcopy`
+çağrısı `"invalid bfd target"`/`"unsupported bfd target"` İçEREN bir
+stderr İLE BAŞARISIZ OLURSA (paket kurulumu HERHANGİ bir nedenle
+başarısız olursa BİLE), test SERT bir hata (`error.KernelConvertFailed`)
+YERİNE `error.SkipZigTest` DÖNER — `qbe`/`qemu-system-x86_64` PATH'te
+YOKKEN ZATEN uygulanan "harici araç yetersizse ana takımı KIRMA" ilkesiyle
+TUTARLI.
+
+### 2. `binary_size_test.zig`'in "failed without output" hatası
+
+v1.96.0'ın GERÇEK CI koşusunda (`gh run view 35853500366`), Linux
+(aarch64) İşinde `'binary_size_test.test.noxc build: smtp/postgres
+kullanmayan basit bir program dead-stripping ile küçük kalır' failed
+without output` — HİÇBİR teşhis metni YOKTU. Kaynak koduna bakıldığında
+KÖK NEDEN NET: `build_result`in (satır ~112-121) `!(term == .exited and
+term.exited == 0)` İSE `std.debug.print` İLE tam teşhis yazan deseni,
+`nm_result`in (satır ~128-136) İDDİALARINDAN ÖNCE HİÇ YOKTU — `nm`
+GERÇEKTEN sıfır-dışı bir çıkışla BAŞARISIZ olursa (VEYA beklenmedik
+semboller bulunursa) teşhis TAMAMEN SESSİZCE kayboluyordu, TAM OLARAK
+gözlemlenen "failed without output" DAVRANIŞIYLA TUTARLI.
+
+**Düzeltme**: `build_result`in AYNI "başarısızsa yazdır" deseni `nm_result`,
+boyut kontrolü, VE ikinci testin (`nox.json.decode`+cycle-collector)
+`build_result`/`run_result` iddialarına da EKLENDİ — HİÇBİRİNİN davranışı
+değişmedi, SADECE gelecekteki HERHANGİ bir başarısızlık ARTIK TEŞHİS
+edilebilir.
+
+### 3. HTTP golden test ailesinin (Faz TEST.3'ün `ChildWatchdog`ı, 6
+   dosya/16 çağrı sitesi) `term == .exited` iddiasından ÖNCE teşhis eksikliği
+
+`gh run list --workflow=ci.yml --limit 50` taramasında, `http_serve_
+multicore_golden_test.zig`'in N=2 eşzamanlı-istemci testinin (v1.95.0
+VE v1.95.1'in GERÇEK CI koşularında, `gh run view 35849331961`/
+`35850574986`) İKİ KEZ `tests/compat/http_serve_multicore_golden_test.
+zig:194:5: try std.testing.expect(term == .exited);` SATIRINDA (yani
+`ChildWatchdog`ın çocuk süreci ~20 saniye SONRA `SIGKILL` İLE
+ÖLDÜRMESİYLE) BAŞARISIZ OLDUĞU bulundu — §3.181'in "reprodüklenemedi"
+sonucunu KISMEN GEÇERSİZ kılan bir bulgu (bu oturumun 20-`yes`-süreçlik
+YEREL simülasyonu, 25 ardışık çalıştırmada bunu HİÇ YAKALAYAMAMIŞTI —
+GERÇEK CI'nin, ÖZELLİKLE sınırlı-vCPU'lu Linux/aarch64 runner'ının ÇOK
+sayıda paralel `zig build test` ikilisiyle YARIŞTIĞI kaynak-çekişme
+profili, BU makinede TEKRARLANAMADI).
+
+**Kök-neden araştırması** (`compiler/codegen_qbe/http_intrinsics.zig`nin
+`genHttpServeMulticore`si + `runtime/stdlib_shims/http_server.zig`nin
+`serveImpl`i OKUNARAK): `.qbe` (bu testin backend'i, `--release` DEĞİL)
+modunda, `serve_multicore(port, handle, 2, 1)` HER worker'ın KENDİ
+BAĞIMSIZ `SO_REUSEPORT` soketini AÇTIĞI bir tasarım kullanır (Faz MN.11)
+— kernel BU İKİ soket ARASINDA gelen bağlantıları DAĞITIR, bu dağıtım
+DENGESİZ olabilir (Faz MN.11.1'in KENDİ, ÖNCEDEN bulduğu problem).
+`max_connections=1` (SINIRLI/`is_bounded`) OLDUĞUNDAN, `SharedServeBudget`
+mekanizması (paylaşılan atomik bir "toplam sunulan" sayacı, HER worker
+`SHARED_BUDGET_POLL_MS=25`lik pencerelerle `nonBlockingAcceptWithTimeout`
+İLE poll edip kota DOLUNCA KENDİ döngüsünden TEMİZ çıkar) DEVREDE olmalı
+— TEORİDE bu, bir worker'ın kendi soketine HİÇ bağlantı gelmese BİLE
+DİĞER worker'ın kotayı doldurduğunu FARK EDİP GRACEFUL çıkmasını sağlar.
+KESİN kök neden (bu mekanizmanın NEDEN GERÇEK CI'nin ağır kaynak-
+çekişmesi ALTINDA yeterli OLMADIĞI — worker OS iş parçacığının kendisinin
+İLK ZAMANLANMASININ 20 saniyeyi AŞMASI mı, yoksa `SharedServeBudget`
+polling'inde BAŞKA bir ETKİLEŞİM mi) BU oturumda KANITLANAMADI (yerel
+reprodüksiyon BAŞARISIZ) — "ölç, varsayma" disipliniyle TUTARLI olarak
+SPEKÜLATİF bir mekanizma değişikliği YAPILMADI.
+
+**Düzeltme (savunma-derinliği + gelecekteki teşhis)**: HTTP golden test
+ailesindeki TÜM 16 `term == .exited` çağrı sitesine (`http_serve_
+multicore_golden_test.zig` ×3, `http_serve_multicore_pool_golden_test.
+zig` ×1, `http_serve_golden_test.zig` ×6, `http_serve_tls_golden_test.
+zig` ×2, `http_serve_ws_golden_test.zig` ×2, `router_module_state_golden_
+test.zig` ×2) İKİ değişiklik uygulandı: (a) `term != .exited` İSE
+`term`/mevcut stdout(varsa)/stderr'i yazdıran bir teşhis bloğu
+(`binary_size_test`in AYNI deseni) EKLENDİ, (b) `ChildWatchdog` zaman
+aşımı 20 saniyeden **45 saniyeye** ÇIKARILDI (GERÇEK CI'nin bu oturumun
+YEREL simülasyonundan DAHA AĞIR bir kaynak-çekişmesi yaşadığının
+GÖZLEMLENMESİYLE ORANTILI, makul bir ek pay — mutlu-yol testleri hâlâ
+<1-2 saniyede bittiğinden bu, GERÇEK bir hang'i MASKELEMEZ, sadece
+GERÇEKÇİ CI-gecikmelerine daha fazla tolerans TANIR).
+
+### 4. Windows'un `IoReactor.registerWithTimeout` zaman-aşımı testi
+
+**v1.98.0'ın GERÇEK CI koşusunda, Windows İşİNDE bulundu** (v1.99.0'ın
+KENDİ turu SIRASINDA, ÜÇ maddenin İLK sürümü PUSH EDİLMEDEN ÖNCE): `zig
+build async-rt-test`, `io_reactor.test.IoReactor.registerWithTimeout:
+fd HIC hazir OLMAZSA zaman asimina UGRAR` testinde `expected 1, found 0`
+İLE BAŞARISIZ OLDU. Kök neden (`runtime/async_rt/io_reactor.zig`nin
+`WindowsReactor.poll`u OKUNARAK): `registerWithTimeout` `ctx.deadline_ms
+= monotonicMs() + timeout_ms` (50ms) hesaplıyor; `poll()` `remaining =
+max(0, deadline_ms - now_before)`yi `WSAPoll`e `timeout_ms` OLARAK
+geçiriyor. **Windows'un KENDİ, varsayılan zamanlayıcı GRANÜLERLİĞİ**
+(`timeBeginPeriod` ÇAĞRILMADIĞI SÜRECE ~15.6ms) YÜZÜNDEN `WSAPoll`,
+İSTENEN sürenin TAMAMI DOLMADAN (birkaç ms ERKEN) DÖNEBİLİR — BU durumda
+`now_after >= ctx.deadline_ms` KOŞULU (satır 618) HENÜZ SAĞLANMADIĞINDAN
+ctx `still_pending`e GERİ konur VE TEK bir `poll()` çağrısı `n=0` döner.
+kqueue/epoll'un (`EVFILT_TIMER`/`timerfd`) DAHA İNCE zamanlayıcı
+çözünürlüğü YÜZÜNDEN macOS/Linux'ta bu PRATİKTE tetiklenmez — bu YÜZDEN
+BU turda İLK KEZ, Windows CI'de gözlemlendi.
+
+**Bu bir GERÇEK mantık hatası DEĞİL** — `poll()`nin KENDİSİ DOĞRU (bir
+SONRAKİ çağrıda `now_after` KESİNLİKLE `deadline_ms`i geçmiş OLACAĞINDAN
+timeout GERÇEKLEŞİR) — SORUN, testin `poll()`ü SADECE BİR KEZ çağırıp
+TEK-çağrı garantisi VARSAYMASIYDI. ÜRETİM kodu (`Scheduler.run()`)
+`poll()`ü ZATEN bir DÖNGÜDE tekrar tekrar çağırıyor — test AYNI, GERÇEKÇİ
+kullanım desenine getirildi: `n >= 1` OLANA kadar (SINIRLI, 20 deneme
+İLE — sonsuz bir askı RİSKİNİ ORTADAN KALDIRMAK İçİn) tekrar `poll()`
+çağırır.
+
+### Doğrulama
+
+1. `zig ast-check` (9 değiştirilen dosya).
+2. `zig build async-rt-test` (Debug+ReleaseFast) — TEMİZ (`io_reactor.zig`
+   değişikliği İçİn hedefli doğrulama, BU makine macOS/aarch64 OLDUĞUNDAN
+   Windows dalı BURADA DOĞRUDAN test EDİLEMEDİ — GERÇEK doğrulama BİR
+   SONRAKİ CI koşusuna BIRAKILDI).
+3. `zig build test` (TAM paket, Debug: RC=0; ReleaseFast: RC=0) — SIFIR
+   regresyon.
+4. `.github/workflows/ci.yml`'in YAML söz dizimi geçerliliği kontrol
+   edildi.
+5. **Kapsam DIŞI (bilinçli)**: `SharedServeBudget`/`SO_REUSEPORT`
+   mekanizmasının KENDİSİNE bir DEĞİŞİKLİK YAPILMADI — kesin kök neden
+   KANITLANAMADIĞINDAN, spekülatif bir "düzeltme" yerine teşhis-
+   iyileştirme + gerçekçi bir zaman payı TERCİH EDİLDİ. Bu test
+   GELECEKTE TEKRAR başarısız OLURSA, ARTIK TAM bir teşhis (term/stdout/
+   stderr) mevcut olacaktır.
+
+### Kritik dosyalar
+
+`.github/workflows/ci.yml`, `runtime/async_rt/io_reactor.zig`, `tests/
+golden/kernel_boot_x86_64_test.zig`, `tests/cli/binary_size_test.zig`,
+`tests/compat/http_serve_multicore_golden_test.zig`, `tests/compat/
+http_serve_multicore_pool_golden_test.zig`, `tests/compat/http_serve_
+golden_test.zig`, `tests/compat/http_serve_tls_golden_test.zig`, `tests/
+compat/http_serve_ws_golden_test.zig`, `tests/compat/router_module_
+state_golden_test.zig`.
+
 ---
 
 ## 5. Hata Yönetimi

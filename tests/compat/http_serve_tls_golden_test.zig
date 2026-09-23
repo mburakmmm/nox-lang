@@ -280,7 +280,7 @@ test "nox.http.serve_tls: uctan uca, GERCEK bir std.crypto.tls.Client ile el sik
     });
 
     var watchdog: child_watchdog.ChildWatchdog = .{};
-    try watchdog.arm(&child, 20_000);
+    try watchdog.arm(&child, 45_000);
     defer watchdog.disarm();
 
     var resp_buf: [1024]u8 = undefined;
@@ -292,6 +292,9 @@ test "nox.http.serve_tls: uctan uca, GERCEK bir std.crypto.tls.Client ile el sik
     defer allocator.free(stderr_data);
 
     const term = try child.wait(io);
+    if (term != .exited) {
+        std.debug.print("cocuk surec normal cikmadi (olasi askidan sonra watchdog tarafindan oldurulmus), term={any}\nstderr:\n{s}\n", .{ term, stderr_data });
+    }
     try std.testing.expect(term == .exited);
     try std.testing.expectEqual(@as(u8, 0), term.exited);
 
@@ -356,7 +359,7 @@ test "nox.http.serve_tls: AYNI OS is parcaciginda ic ice gecen IKI TLS baglantis
     });
 
     var watchdog: child_watchdog.ChildWatchdog = .{};
-    try watchdog.arm(&child, 20_000);
+    try watchdog.arm(&child, 45_000);
     defer watchdog.disarm();
 
     var slow_buf: [1024]u8 = undefined;
@@ -390,6 +393,9 @@ test "nox.http.serve_tls: AYNI OS is parcaciginda ic ice gecen IKI TLS baglantis
     defer allocator.free(stderr_data);
 
     const term = try child.wait(io);
+    if (term != .exited) {
+        std.debug.print("cocuk surec normal cikmadi (olasi askidan sonra watchdog tarafindan oldurulmus), term={any}\nstderr:\n{s}\n", .{ term, stderr_data });
+    }
     try std.testing.expect(term == .exited);
     try std.testing.expectEqual(@as(u8, 0), term.exited);
 

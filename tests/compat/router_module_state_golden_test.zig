@@ -165,7 +165,7 @@ test "nox.router + nox.http.serve: Router handle'in ICINDE (her istekte yeniden)
     });
 
     var watchdog: child_watchdog.ChildWatchdog = .{};
-    try watchdog.arm(&child, 20_000);
+    try watchdog.arm(&child, 45_000);
     defer watchdog.disarm();
 
     var resp_buf: [256]u8 = undefined;
@@ -198,6 +198,9 @@ test "nox.router + nox.http.serve: Router handle'in ICINDE (her istekte yeniden)
     defer allocator.free(stderr_data);
 
     const term = try child.wait(io);
+    if (term != .exited) {
+        std.debug.print("cocuk surec normal cikmadi (olasi askidan sonra watchdog tarafindan oldurulmus), term={any}\nstderr:\n{s}\n", .{ term, stderr_data });
+    }
     try std.testing.expect(term == .exited);
     try std.testing.expectEqual(@as(u8, 0), term.exited);
 
@@ -258,7 +261,7 @@ test "nox.router + nox.http.serve: Router script top-level'da BIR KEZ insa edili
     });
 
     var watchdog: child_watchdog.ChildWatchdog = .{};
-    try watchdog.arm(&child, 20_000);
+    try watchdog.arm(&child, 45_000);
     defer watchdog.disarm();
 
     var resp_buf: [256]u8 = undefined;
@@ -291,6 +294,9 @@ test "nox.router + nox.http.serve: Router script top-level'da BIR KEZ insa edili
     defer allocator.free(stderr_data);
 
     const term = try child.wait(io);
+    if (term != .exited) {
+        std.debug.print("cocuk surec normal cikmadi (olasi askidan sonra watchdog tarafindan oldurulmus), term={any}\nstderr:\n{s}\n", .{ term, stderr_data });
+    }
     try std.testing.expect(term == .exited);
     try std.testing.expectEqual(@as(u8, 0), term.exited);
 

@@ -869,8 +869,26 @@ test "IoReactor.registerWithTimeout: fd HIC hazir OLMAZSA zaman asimina UGRAR" {
     // yüzden KISA (50ms) zaman aşımı GERÇEKTEN ateşlemek ZORUNDADIR.
     try reactor.registerWithTimeout(fds[0], .read, 50, &ctx);
 
+    // v1.99.0 (GERÇEK Windows CI koşusunda GÖZLEMLENDİ — bkz. nox-teknik-
+    // spesifikasyon.md): `WindowsReactor.poll`nin `timeout_ms` hesaplaması
+    // `WSAPoll`e GEÇİRİLİYOR — AMA Windows'un KENDİ varsayılan zamanlayıcı
+    // GRANÜLERLİĞİ (~15.6ms, `timeBeginPeriod` çağrılmadığı SÜRECE) YÜZÜNDEN
+    // `WSAPoll`, İSTENEN sürenin TAMAMI DOLMADAN (birkaç ms ERKEN) dönebilir
+    // — BU durumda `now_after >= ctx.deadline_ms` KOŞULU henüz SAĞLANMAZ,
+    // `ctx` `still_pending`e GERİ konur VE TEK bir `poll()` çağrısı `n=0`
+    // döner (GERÇEK bir mantık hatası DEĞİL — kqueue/epoll'un DAHA İNCE
+    // zamanlayıcı çözünürlüğü YÜZÜNDEN macOS/Linux'ta pratikte NEREDEYSE
+    // HİÇ tetiklenmez, ama Windows'ta GERÇEKTEN gözlemlendi). ÜRETİM kodu
+    // (`Scheduler.run()`) `poll()`ü zaten BİR DÖNGÜDE tekrar tekrar çağırır
+    // — BU test de AYNI, GERÇEKÇİ kullanım desenini izler: `n >= 1`
+    // OLANA kadar (makul, SINIRLI bir deneme sayısıyla — sonsuz bir askı
+    // RİSKİNİ ORTADAN KALDIRMAK İçİn) tekrar `poll()` çağırır.
     var spy = MarkReadySpy{};
-    const n = try reactor.poll(&spy);
+    var n: usize = 0;
+    var attempt: usize = 0;
+    while (n == 0 and attempt < 20) : (attempt += 1) {
+        n = try reactor.poll(&spy);
+    }
     try std.testing.expectEqual(@as(usize, 1), n);
     try std.testing.expectEqual(@as(?*Fiber, fake_fiber), spy.marked);
     try std.testing.expectEqual(WaitResult.timed_out, ctx.result);

@@ -14,6 +14,90 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.99.0]
+
+### Değiştirildi (kalan bilinen CI hataları/flake'lerinin toplu düzeltmesi)
+
+Kullanıcının "release'in neden 1.80.1'de takıldığı" sorusu ÜZERİNE
+`gh run list --workflow=ci.yml --limit 50` İLE YAPILAN GERÇEK bir
+denetim, `ci.yml`'in son ~50 push'un NEREDEYSE TAMAMINDA kırmızı
+OLDUĞUNU (v1.95.1'in ci-gate düzeltmesi ARTIK doğru — GERÇEKTEN polling
+yapıp GERÇEK CI sonucunu BEKLİYOR — ama arkasındaki CI'nin KENDİSİ
+sürekli KIRMIZI olduğundan HİÇBİR release yayımlanamadığını) ORTAYA
+ÇIKARDI. Bu, GERÇEK CI loglarından SAMPLE alınarak İNCELENDİ VE üç
+AYRI, GERÇEK kök nedene sahip hata BULUNDU/DÜZELTİLDİ:
+
+1. **Faz F.5'in QEMU objcopy hatası (Linux/aarch64)**: `kernel_boot_
+   x86_64_test.zig`'in `objcopy -O elf32-i386` POST-LINK dönüşümü,
+   Linux (aarch64) runner'ının ÖNTANIMLI `binutils`ında `objcopy:
+   invalid bfd target` İLE BAŞARISIZ oluyordu (v1.97.0'ın GERÇEK CI
+   koşusunda GÖZLEMLENDİ) — ARM64 İçİn paketlenen `objcopy`, x86 BFD
+   hedeflerini (elf32-i386) İÇERMİYOR. `ci.yml`'e `binutils-multiarch`
+   kurulum adımı EKLENDİ (Debian/Ubuntu'nun KENDİ standart çözümü);
+   AYRICA testin KENDİSİ de savunma-derinliği OLARAK GÜÇLENDİRİLDİ —
+   `objcopy` yine de bu hedefi desteklemezse (paket kurulumu HERHANGİ
+   bir NEDENLE başarısız olursa) test SERT bir hata YERİNE `SkipZigTest`
+   OLUR (`qbe`/`qemu-system-x86_64` PATH'te YOKKEN ZATEN uygulanan AYNI
+   "harici araç yetersizse ana takımı KIRMA" ilkesiyle TUTARLI).
+2. **`binary_size_test.zig`'in "failed without output" hatası**: KÖK
+   NEDEN bulundu — `nm_result`in İDDİALARINDAN (VE boyut kontrolünden)
+   ÖNCE, `build_result`in AKSİNE, HİÇBİR `std.debug.print` teşhis
+   çağrısı YOKTU. `nm` GERÇEKTEN sıfır-dışı bir çıkışla BAŞARISIZ
+   olursa (VEYA beklenmedik semboller BULUNURSA) teşhis TAMAMEN
+   SESSİZCE kayboluyordu (GERÇEK CI'de TAM OLARAK bu görüldü). Tüm
+   iddialardan ÖNCE `build_result`in KENDİ desenini İZLEYEN diagnostik
+   yazdırma EKLENDİ (HEM bu testte HEM `nox.json`/cycle-collector
+   testinin İKİ ÇIPLAK iddiasında).
+3. **HTTP golden test ailesinin (6 dosya, 16 çağrı sitesi — Faz TEST.3'ün
+   `ChildWatchdog`ının ZATEN korduğu, AYNI orijinal liste) `term ==
+   .exited` İDDİASINDAN ÖNCE HİÇBİR teşhis YAZDIRMAMASI**: `http_serve_
+   multicore_golden_test.zig`'in N=2 eşzamanlı-istemci testi GERÇEK
+   CI'de (v1.95.0/v1.95.1'in koşularında) İKİ KEZ `term == .exited`
+   İDDİASINDA (watchdog'un çocuk süreci 20 saniye SONRA ÖLDÜRMESİYLE)
+   BAŞARISIZ OLDU — SIFIR teşhis metniyle. Bu 16 sitenin HEPSİNE (a)
+   `term != .exited` İSE `term`/mevcut stdout(VARSA)/stderr'i yazdıran
+   bir teşhis bloğu (`binary_size_test`in AYNI deseni) VE (b) watchdog
+   zaman aşımının 20s'den **45s**'ye ÇIKARILMASI (GERÇEK CI'nin — özellikle
+   sınırlı vCPU'lu Linux/aarch64 runner'ının, ÇOK sayıda paralel `zig
+   build test` ikilisiyle YARIŞIRKEN — bu oturumun 20-`yes`-süreçlik
+   YEREL simülasyonundan DAHA AĞIR bir kaynak-çekişmesi yaşadığının
+   GÖZLEMLENMESİYLE ORANTILI, makul bir ek pay) EKLENDİ. Kök neden (HANGİ
+   worker'ın `SO_REUSEPORT` altında bağlantı ALAMADIĞI/`SharedServeBudget`
+   polling'inin NEDEN yeterli olmadığı) KESİN olarak KANITLANAMADI —
+   GERÇEK CI'nin kaynak-çekişme PROFİLİ bu makinede TEKRARLANAMADI (20
+   `yes`-süreciyle 25 ardışık çalıştırma TEMİZ geçti) — bu YÜZDEN bu
+   madde DÜRÜSTÇE "zamanlama-duyarlı, kesin kök nedeni KANITLANAMAYAN"
+   OLARAK belgelenir; teşhis EKLENMESİ, BİR SONRAKİ gerçek başarısızlıkta
+   (varsa) KESİN teşhisi SAĞLAYACAKTIR.
+
+4. **Windows'un `IoReactor.registerWithTimeout` zaman-aşımı testi**: v1.98.0'ın
+   GERÇEK CI koşusunda (Windows işi) `expected 1, found 0` İLE BAŞARISIZ
+   OLDU — `WindowsReactor.poll`nin `WSAPoll`e geçirdiği zaman aşımı,
+   Windows'un KENDİ varsayılan zamanlayıcı granülerliği (~15.6ms) YÜZÜNDEN
+   İSTENEN sürenin TAMAMI DOLMADAN (birkaç ms ERKEN) dönebiliyor — BU
+   durumda `now_after >= ctx.deadline_ms` KOŞULU henüz SAĞLANMADIĞINDAN
+   TEK bir `poll()` çağrısı `n=0` döner (kqueue/epoll'un DAHA İNCE
+   zamanlayıcı çözünürlüğü YÜZÜNDEN macOS/Linux'ta pratikte tetiklenmez).
+   Düzeltme: test, ÜRETİM kodunun (`Scheduler.run()`) ZATEN yaptığı GİBİ
+   `poll()`ü `n >= 1` OLANA kadar (SINIRLI, 20 deneme İLE) bir DÖNGÜDE
+   çağıracak şekilde GÜNCELLENDİ — TEK-çağrı varsayımı KALDIRILDI.
+
+Doğrulama: `zig ast-check` (9 dosya); TAM paket `zig build test`
+(Debug: RC=0; ReleaseFast: RC=0) SIFIR regresyonla geçti; `.github/
+workflows/ci.yml`'in YAML söz dizimi geçerliliği kontrol edildi.
+
+### Kritik dosyalar
+
+`.github/workflows/ci.yml` (`binutils-multiarch` kurulum adımı),
+`runtime/async_rt/io_reactor.zig` (Windows zaman-aşımı testi döngüye alındı),
+`tests/golden/kernel_boot_x86_64_test.zig` (objcopy hata-mesajı
+kontrolüyle `SkipZigTest`), `tests/cli/binary_size_test.zig` (3 YENİ
+teşhis bloğu), `tests/compat/http_serve_multicore_golden_test.zig`/
+`http_serve_multicore_pool_golden_test.zig`/`http_serve_golden_test.
+zig`/`http_serve_tls_golden_test.zig`/`http_serve_ws_golden_test.zig`/
+`router_module_state_golden_test.zig` (16 çağrı sitesinin HEPSİNE
+teşhis bloğu + 45s watchdog zaman aşımı).
+
 ## [1.98.0]
 
 ### Değiştirildi (`nox_pool_run` çapraz-worker çalma testinin (task_66e267b4) kalıcı düzeltmesi)

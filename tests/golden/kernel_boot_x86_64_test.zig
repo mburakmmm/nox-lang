@@ -182,6 +182,18 @@ test "Faz F.4: kernel_demo.nox GERÇEK bir x86_64 kernel imajına derlenip QEMU'
     defer allocator.free(convert_result.stdout);
     defer allocator.free(convert_result.stderr);
     if (convert_result.term != .exited or convert_result.term.exited != 0) {
+        // v1.98.0 (GERÇEK CI'de GÖZLEMLENDİ — Linux/aarch64 runner'ının
+        // öntanımlı `binutils`ı bu BFD hedefini taşımıyordu): `objcopy`nin
+        // KENDİSİ VAR AMA `elf32-i386` HEDEFİNİ DESTEKLEMİYORSA (`ci.yml`
+        // artık `binutils-multiarch` KURUYOR, AMA BAŞKA bir ortamda/gelecekte
+        // BU YİNE de olabilir) — `qbe`/`qemu-system-x86_64` PATH'te YOKKEN
+        // AYNI şekilde SessiZCE atlanan "harici araç yetersiz" durumuyla
+        // TUTARLI olarak, bu da bir SERT hata YERİNE `SkipZigTest` OLUR.
+        if (std.mem.indexOf(u8, convert_result.stderr, "invalid bfd target") != null or
+            std.mem.indexOf(u8, convert_result.stderr, "unsupported bfd target") != null)
+        {
+            return error.SkipZigTest;
+        }
         std.debug.print("{s} (elf32-i386 donusumu) basarisiz:\nstdout: {s}\nstderr: {s}\n", .{ objcopy_name, convert_result.stdout, convert_result.stderr });
         return error.KernelConvertFailed;
     }
