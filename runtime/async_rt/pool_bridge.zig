@@ -967,10 +967,20 @@ test "nox_pool_run: Faz MN.8 Bulgu A - sibling worker'lar globals_init_fn ile KE
     const Global = struct {
         var mismatch_count: std.atomic.Value(usize) = .init(0);
         var stolen_count: std.atomic.Value(usize) = .init(0);
+        // v1.99.0 (bkz. "nox_pool_run: GERÇEK spawn/await İÇEREN bir entry..."
+        // testinin AYNI, KANITLANMIŞ düzeltmesi — GERÇEK CI'de bu testin
+        // KENDİSİ de AYNI RİSK SINIFIYLA `stolen_count == 0` İLE BAŞARISIZ
+        // OLDU): `globalsInitFn` ZATEN HEM driver HEM HER kardeş TARAFINDAN
+        // TAM OLARAK BİR KEZ çağrıldığından (bkz. `poolRunDriverThreadMain`/
+        // `poolWorkerMain`nin belge notları), bu SAYAÇ "worker başladı"
+        // bariyeri OLARAK da YENİDEN kullanılır — ESKİ, ZAYIF "8 kez yield"
+        // sezgiselinin YERİNE.
+        var workers_started: std.atomic.Value(usize) = .init(0);
 
         fn globalsInitFn(rt: *anyopaque) callconv(.c) i64 {
             const slot = asap.currentWorkerSlot();
             asap.nox_globals_set(rt, @ptrFromInt(0x1000 + slot));
+            _ = workers_started.fetchAdd(1, .release);
             return 0;
         }
 
@@ -1002,25 +1012,28 @@ test "nox_pool_run: Faz MN.8 Bulgu A - sibling worker'lar globals_init_fn ile KE
             // çağırdığı — `entry()`nin fiber'ı BİR KARDEŞE ÇALINSA BİLE
             // slot 0'ın globals'ı GÜVENDE).
 
+            // v1.99.0 — bkz. yukarıdaki `workers_started`in belge notu:
+            // ESKİ "8 kez yield" sezgiselinin YERİNE GERÇEK bir bariyer.
+            // `globalsInitFn` ARTIK driver DAHİL TÜM `N_WORKERS` worker
+            // TARAFINDAN çağrılana kadar BEKLENİR (driver'ın KENDİ çağrısı
+            // — `poolRunDriverThreadMain`, `entry_task` SPAWN EDİLMEDEN
+            // ÖNCE — ZATEN olmuş OLACAĞINDAN, BU EŞİK "TÜM kardeşlerin de
+            // KENDİ çağrısını YAPTIĞI" anlamına gelir).
+            while (workers_started.load(.acquire) < N_WORKERS) {
+                std.Thread.yield() catch {};
+            }
             var i: usize = 0;
             while (i < N_TASKS) : (i += 1) {
                 tasks[i] = bridge.nox_async_spawn(rt, childFn, rt).?;
             }
-            // v1.80.4 (bkz. plan dosyası "CI hang + stolen_count flake
-            // araştırması"): `worker_pool.zig`nin `stealTestWorkerEntry`sinin
-            // AYNI, KANITLANMIŞ deseni — TÜM görevler spawn edildikten
-            // SONRA, ilk `await`e (ve dolayısıyla driver'ın KENDİ deque'ini
-            // tüketmeye BAŞLAMASINA) geçmeden ÖNCE, OS zamanlayıcısına
-            // kardeş worker'ları GERÇEKTEN ÇALIŞTIRMASI İçİn adil bir
-            // fırsat tanınır — AKSİ HALDE (ÖZELLİKLE kaynak-kısıtlı/paylaşımlı
-            // CI runner'larında) driver'ın KENDİ OS iş parçacığı 30 görevin
-            // TAMAMINI hiçbir kardeş ÇALIŞMAYA BAŞLAMADAN tüketebilir —
-            // `stolen_count`in KENDİSİ HİÇ artmaz (test'in AMACI olan
-            // çapraz-worker çalmayı KANITLAMAK BAŞARISIZ olur, GERÇEK CI'de
-            // GÖZLEMLENDİ) — bu bir zamanlayıcı hatası DEĞİL, TESTİN KENDİ
-            // zorlama mekanizmasının EKSİKLİĞİYDİ.
-            var y: usize = 0;
-            while (y < 8) : (y += 1) std.Thread.yield() catch {};
+            // KRİTİK — bariyer TEK BAŞINA yetersizdi (`worker_pool.zig`nin
+            // `StealTestCtx`sinin AYNI, break→red→fix İLE kanıtlanmış
+            // bulgusu, bkz. yukarıdaki "GERÇEK spawn/await İÇEREN bir
+            // entry" testinin AYNI düzeltmesi): kardeşlerin `globals_init_
+            // fn`i ÇAĞIRMIŞ olması, `run()`un steal-döngüsüne GERÇEKTEN
+            // ULAŞTIKLARI/OS TARAFINDAN GERÇEKTEN ZAMANLANDIKLARI anlamına
+            // GELMEZ — GERÇEK bir uyku GEREKİR.
+            sleepMs(5);
             i = 0;
             while (i < N_TASKS) : (i += 1) {
                 _ = bridge.nox_async_await(rt, tasks[i]);

@@ -14,6 +14,47 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.99.1]
+
+### Düzeltildi (bkz. nox-teknik-spesifikasyon.md §3.183)
+
+- **GÜNCELLEME**: v1.99.0'ın eklediği teşhis-yazdırma, `http_serve_
+  multicore`'un N=2 testinin bir SONRAKİ GERÇEK CI başarısızlığında
+  (Linux/aarch64) TAM olarak amaçlandığı GİBİ işe YARADI — v1.99.0'da
+  "kesin kök neden KANITLANAMADI, muhtemelen SO_REUSEPORT/`SharedServeBudget`
+  zamanlaması" OLARAK belgelenen hipotez **YANLIŞTI**: gerçek çıktı `***
+  stack smashing detected ***: terminated` idi — GERÇEK bir bellek-bozulması
+  hatası, bir zamanlama sorunu DEĞİL.
+- OrbStack İçİnde bir Linux/aarch64 konteynerinde YALITILMIŞ bir
+  reprodüksiyonla kanıtlandı: çöküş `runtime/async_rt/thread_bridge.zig`nin
+  `nox_thread_join`ında (çapraz-OS-iş-parçacığı tamamlanma pipe'ını
+  BEKLERKEN bir fiber GERÇEKTEN askıya alınıp SONRA devam ettirildiğinde)
+  Zig'in KENDİ yığın-koruyucusu (stack-protector) TARAFINDAN yakalanıyordu.
+  `runtime/async_rt/swap_aarch64.S`nin (fiber bağlam-değişimi) `x18`i
+  (AAPCS64'ün "platform yazmacı") HİÇ kaydedip geri YÜKLEMEDİĞİ bulundu
+  — `Context`e EKLENİP kaydedildi/geri yüklendi. **Dürüstçe belirtilir**:
+  kesin, tek-satırlık bir mekanik kanıt (hangi kodun x18'e GÜVENDİĞİ)
+  BULUNAMADI (yeniden-üretme oranı ortama göre DEĞİŞKENDİ) — bu SIFIR-
+  riskli/SIFIR-maliyetli bir savunma-derinliği düzeltmesi OLARAK, düşük
+  risk + gözlemsel destek (AYNI reprodüksiyon senaryosunda 10/10 temiz
+  koşu, ÖNCESİNDE GERÇEK çöküşler VARDI) temelinde uygulandı.
+- `runtime/async_rt/pool_bridge.zig`nin İKİNCİ, v1.98.0'da DEĞİŞTİRİLMEMİŞ
+  bir testi ("Faz MN.8 Bulgu A") AYNI risk sınıfını (zayıf "8 kez yield"
+  zorlaması) taşıyordu VE GERÇEKTEN başarısız oldu — v1.98.0'ın KANITLANMIŞ
+  "bariyer + gerçek 5ms uyku" deseni buna da uygulandı.
+
+### Doğrulama
+
+`zig ast-check`; TAM paket `zig build test` (Debug+ReleaseFast, SIFIR
+regresyon); Linux/aarch64 konteynerinde 20 `yes`-süreciyle CPU DOYURULUP
+`zig build async-rt-test -Doptimize=ReleaseFast` 40/40 temiz; N=2 HTTP
+reprodüksiyonu 10/10 temiz (x18 düzeltmesiyle).
+
+### Kritik dosyalar
+
+`runtime/async_rt/fiber.zig`, `runtime/async_rt/swap_aarch64.S`,
+`runtime/async_rt/pool_bridge.zig`.
+
 ## [1.99.0]
 
 ### Değiştirildi (kalan bilinen CI hataları/flake'lerinin toplu düzeltmesi)

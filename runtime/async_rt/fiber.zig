@@ -75,6 +75,29 @@ pub const Context = switch (builtin.cpu.arch) {
         d13: u64 = 0,
         d14: u64 = 0,
         d15: u64 = 0,
+        /// v1.99.1 (bkz. CHANGELOG/nox-teknik-spesifikasyon.md §3.183):
+        /// `http_serve_multicore`nin N=2 testinde Linux/aarch64 CI'de
+        /// GERÇEK, tekrarlanabilir bir `*** stack smashing detected ***`
+        /// çökmesi bulundu — `nox_thread_join` (thread_bridge.zig), QBE'nin
+        /// ÜRETTİĞİ `main_body` içinden, GERÇEKTEN bir fiber askıya alınıp
+        /// (çapraz-OS-iş-parçacığı tamamlanma pipe'ını bekleyerek) SONRA
+        /// devam ettirildiğinde ETKİLENİYOR. Kök neden %100 KANITLANAMADI
+        /// (yeniden-üretme oranı ortama göre DEĞİŞKEN, ağır izleme
+        /// araçları — valgrind/`record full`/yazılım watchpoint'i —
+        /// SESSİZCE MASKELİYOR) — AMA `x18` (AAPCS64'ün "platform
+        /// yazmacı") `nox_swap_context`ta HİÇ kaydedilip geri
+        /// YÜKLENMİYORDU, VE bunu EKLEMEK (aşağıdaki `swap_aarch64.S`
+        /// değişikliğiyle BİRLİKTE) GÖZLEMLENEN çöküşü ORTADAN
+        /// KALDIRDI (10/10 temiz koşu, ÖNCESİNDE aynı senaryoda GERÇEK
+        /// çökmeler GÖZLEMLENMİŞTİ). BU, düşük-riskli/SIFIR-maliyetli bir
+        /// savunma-derinliği EKLEMESİDİR (x18'i kaydetmek HİÇBİR ZAMAN
+        /// YANLIŞ olamaz, sadece EKSİK bırakılması potansiyel olarak
+        /// YANLIŞ olabilir) — KESİN mekanik kanıt (hangi kodun x18'e
+        /// GÜVENDİĞİ) BULUNAMADI, bu YÜZDEN bu DÜZELTMENİN kendisi
+        /// "ölç, varsayma" disiplinine göre KESİN bir kanıt DEĞİL,
+        /// gözlemsel/deneysel bir DÜZELTMEDİR — sorun TEKRAR ortaya
+        /// çıkarsa BU alan/yorum İLK bakılacak yerdir.
+        x18: usize = 0,
     },
     // Bkz. `swap_x86_64.S`nin belge notu — callee-saved yazmaçlar yığında
     // yaşadığından tek alan yeterlidir.

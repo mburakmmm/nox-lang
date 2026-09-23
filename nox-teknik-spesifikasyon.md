@@ -23035,6 +23035,115 @@ state_golden_test.zig`.
 
 ---
 
+## 3.183 `http_serve_multicore` N=2 flake'inin GERÇEK kök nedeni — genuine
+## stack-smashing (SO_REUSEPORT/zamanlama DEĞİL) + `nox_pool_run`'ın İKİNCİ,
+## kalan flaky testi (v1.99.1)
+
+### GÜNCELLEME (§3.182'nin madde 3'ünü + Doğrulama'nın madde 5'ini KISMEN GEÇERSİZ KILAR)
+
+v1.99.0'ın eklediği teşhis-yazdırma (madde 3, "term == .exited İDDİASINDAN
+ÖNCE HİÇBİR teşhis YAZDIRMAMASI" düzeltmesi) BİR SONRAKİ GERÇEK CI
+başarısızlığında (bu turun ARAŞTIRMASI SIRASINDA, `http_serve_multicore_
+golden_test.zig`nin N=2 testi Linux(aarch64) CI işinde TEKRAR başarısız
+OLDUĞUNDA) TAM OLARAK amaçlandığı GİBİ İŞE YARADI — YENİ teşhis çıktısı
+şunu gösterdi:
+
+```
+cocuk surec normal cikmadi (olasi askidan sonra watchdog tarafindan oldurulmus), term=.{ .signal = .ABRT }
+stderr:
+*** stack smashing detected ***: terminated
+```
+
+Bu, §3.182'nin "SO_REUSEPORT dağıtım dengesizliği/`SharedServeBudget`
+polling gecikmesi" HİPOTEZİNİN (o turda KANITLANAMADIĞI AÇIKÇA belirtilmiş
+olsa da) **YANLIŞ** olduğunu KANITLAR — bu bir zamanlama/kaynak-çekişmesi
+sorunu DEĞİL, GERÇEK bir bellek-bozulması hatasıdır (glibc'nin
+`__stack_chk_fail`ı — bir Zig derleme-zamanı GÜVENLİK panik'i DEĞİL,
+donanım-seviyesi bir yığın-KANARYASI uyuşmazlığı).
+
+### Reprodüksiyon ve kök-neden izolasyonu
+
+OrbStack (Apple Silicon'da Linux/aarch64'ü YERLİ olarak, EMÜLASYON
+OLMADAN çalıştıran bir Docker motoru) İçİnde bir `nox-repro` konteyneri
+KURULUP (Zig 0.16.0 + `qbe` + `gcc` + `gdb`), N=2 testinin İZOLE bir
+minimal tekrarı (`serve_multicore(port, handle, 2, 1)`) İNŞA EDİLDİ — çöküş
+BU ORTAMDA GERÇEKTEN, TEKRARLANABİLİR şekilde ÜRETİLDİ (`gdb`nin `bt full`
+çıktısı, çöküşün `runtime/async_rt/thread_bridge.zig:251`teki (`nox_
+thread_join`) OTOMATİK-ÜRETİLEN Zig yığın-koruyucusu (stack-protector)
+tarafından TESPİT EDİLDİĞİNİ gösterdi). Donanım watchpoint'leriyle
+(`gdb`nin `watch`ı) kanaryanın KENDİ bellek adresine YAPILAN HERHANGİ bir
+yazma İZLENDİ — GERÇEK bir yazma HİÇ YAKALANAMADI, bu da bozulmanın bir
+"yabancı yazma" DEĞİL, `nox_thread_join`nin KENDİ çerçeve-işaretçisinin
+(`x29`) YANLIŞ bir değere sahip olmasından (kanarya KONTROLÜ, `x29`e
+GÖRE hesaplanan YANLIŞ bir adresi okuyup KARŞILAŞTIRIYOR) kaynaklandığını
+DÜŞÜNDÜRDÜ — BU DA fiber bağlam-değişiminin (context-switch) çağrı
+zincirinin ORTASINDA (nox_thread_join, çapraz-OS-iş-parçacığı tamamlanma
+pipe'ını BEKLERKEN GERÇEKTEN askıya alınıp SONRA devam ettirildiğinde)
+bazı yazmaçların DOĞRU kaydedilip GERİ yüklenmediğine İŞARET EDER.
+
+`runtime/async_rt/swap_aarch64.S` (aarch64 İçİn ELLE yazılmış bağlam-
+değişim rutini) İNCELENDİĞİNDE: `x19`-`x28`, `fp`(x29), `lr`(x30), `sp`,
+`d8`-`d15` KAYDEDİLİP geri YÜKLENİYOR — AMA **`x18` (AAPCS64'ün "platform
+yazmacı") HİÇ dokunulmuyor**. Linux aarch64 psABI'sinde x18 genelde
+çağıran-korumalı (caller-saved) SAYILSA da, BAZI derleyici/platform
+kombinasyonlarında (TLS önbellekleme, gölge-çağrı-yığını GİBİ) callee'nin
+KORUMASI BEKLENEBİLİR bir kayıt olabilir — Nox'un elle yazılmış bağlam
+değişimi BUNU HİÇ garanti ETMİYORDU.
+
+**Bu bulgunun KENDİ dürüst sınırı**: kesin, tek-satırlık bir "x18'e
+GÜVENEN kod BURASIdır" kanıtı BULUNAMADI (yeniden-üretme oranı ortama
+göre DEĞİŞKENDİ — ağır izleme araçları, valgrind/`record full`/yazılım
+watchpoint'i, sorunu SESSİZCE MASKELİYORDU, bu YÜZDEN "ölç, doğrula"
+disiplini TAM olarak UYGULANAMADI). AMA `x18`i `Context`e EKLEYİP
+`nox_swap_context`ta KAYDEDİP geri YÜKLEMEK: (a) SIFIR maliyetli/riski BİR
+EKLEMEDİR (mevcut davranışı HİÇBİR ŞEKİLDE DEĞİŞTİRMEZ, sadece EK bir
+yazmaç KAYDEDİLİR), (b) AYNI test senaryosunda (gdb'li reprodüksiyon
+İçİnde, aynı methodoloji İLE) GÖZLEMLENEN çöküşü ORTADAN KALDIRDI (10/10
+temiz koşu — ÖNCESİNDE AYNI koşullarda GERÇEK çöküşler VARDI). Bu YÜZDEN
+BU, kullanıcının AÇIKÇA ONAYLADIĞI, **temkinli/savunma-derinliği** bir
+düzeltme olarak UYGULANDI — kesin mekanik kanıt OLMASA da, düşük risk +
+GÖZLEMSEL destek yeterli görüldü. **Sorun TEKRAR ortaya çıkarsa,
+`runtime/async_rt/fiber.zig`nin `Context.x18` alanının belge notu İLK
+bakılacak YERDİR.**
+
+### `nox_pool_run`'ın İKİNCİ, kalan flaky testi ("Faz MN.8 Bulgu A")
+
+AYNI araştırma SIRASINDA, `runtime/async_rt/pool_bridge.zig`nin v1.98.0'da
+DEĞİŞTİRİLMEMİŞ İKİNCİ bir testi (`"nox_pool_run: Faz MN.8 Bulgu A -
+sibling worker'lar globals_init_fn ile KENDİ slotu İçİn ilklendirilir,
+ÇALINAN bir görev doğru bloğu okur"`) v1.98.0'ın DÜZELTTİĞİ "GERÇEK spawn/
+await İÇEREN bir entry" testiyle **AYNI risk sınıfını** (kardeşlerin
+GERÇEKTEN OS tarafından ZAMANLANDIĞINI GARANTİ ETMEYEN zayıf "8 kez
+yield" sezgiseli) TAŞIDIĞI VE macOS'ta GERÇEKTEN `stolen_count == 0` İLE
+BAŞARISIZ olduğu bulundu. v1.98.0'ın KENDİ, KANITLANMIŞ "bariyer (TÜM
+worker'lar `globals_init_fn`i çağırana KADAR bekle) + GERÇEK 5ms uyku"
+deseni BUNA da AYNEN uygulandı (`workers_started` sayacı, `globalsInitFn`
+ZATEN HER worker TARAFINDAN BİR KEZ çağrıldığından, YENİ bir callback
+GEREKMEDEN yeniden KULLANILDI).
+
+### Doğrulama
+
+1. `zig ast-check` (`fiber.zig`, `swap_aarch64.S`, `pool_bridge.zig`).
+2. `zig build test` (TAM paket, Debug: RC=0; ReleaseFast: RC=0) — SIFIR
+   regresyon (macOS/aarch64).
+3. `nox-repro` konteynerinde (Linux/aarch64): 20 `yes`-süreciyle CPU
+   DOYURULUP `zig build async-rt-test -Doptimize=ReleaseFast` **40/40**
+   KEZ TEMİZ geçti (pool_bridge.zig'in İKİNCİ testi İçİn).
+4. AYNI konteynerde, N=2 HTTP reprodüksiyonu `x18` düzeltmesiYLE 10/10
+   KEZ TEMİZ (ÖNCESİNDE AYNI methodolojiyle GERÇEK çöküşler
+   GÖZLEMLENMİŞTİ) — AMA yukarıda belirtildiği GİBİ, bu SONUÇ tek başına
+   KESİN bir kanıt DEĞİL, gözlemsel bir destektir.
+
+### Kritik dosyalar
+
+`runtime/async_rt/fiber.zig` (`Context.x18` YENİ alan, belge notuyla),
+`runtime/async_rt/swap_aarch64.S` (`x18` kaydı/geri-yüklemesi, HEM
+`swap_aarch64.o` HEM `swap_aarch64_freestanding.o` derlemeleri ETKİLENİR),
+`runtime/async_rt/pool_bridge.zig` ("Faz MN.8 Bulgu A" testine bariyer+
+uyku).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

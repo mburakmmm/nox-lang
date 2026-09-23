@@ -17,6 +17,7 @@
  *   0:x19 8:x20 16:x21 24:x22 32:x23 40:x24 48:x25 56:x26 64:x27 72:x28
  *   80:fp 88:lr 96:sp
  *   104:d8 112:d9 120:d10 128:d11 136:d12 144:d13 152:d14 160:d15
+ *   168:x18 (v1.99.1 — bkz. fiber.zig'in Context.x18 belge notu)
  *
  * Faz R.1 (bkz. docs/uretim-hazirlik-analizi.md): bu dosya `.S` (BÜYÜK
  * harf) uzantısına sahiptir ki `cc`/`zig cc` onu C ÖN İŞLEMCİSİNDEN
@@ -60,6 +61,7 @@ SYM(nox_swap_context):
     str d13, [x0, #144]
     str d14, [x0, #152]
     str d15, [x0, #160]
+    str x18, [x0, #168]
 
     ldr x19, [x1, #0]
     ldr x20, [x1, #8]
@@ -83,4 +85,5 @@ SYM(nox_swap_context):
     ldr d13, [x1, #144]
     ldr d14, [x1, #152]
     ldr d15, [x1, #160]
+    ldr x18, [x1, #168]
     ret
