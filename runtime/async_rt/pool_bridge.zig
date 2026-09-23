@@ -836,7 +836,26 @@ test "nox_pool_run: GERÇEK spawn/await İÇEREN bir entry, TÜM sonuçlar doğr
             // `globals_init_fn`i ÇAĞIRMIŞ olması, run()'un steal-döngüsüne
             // GERÇEKTEN ULAŞTIKLARI/OS TARAFINDAN GERÇEKTEN ZAMANLANDIKLARI
             // anlamına GELMEZ — GERÇEK bir uyku GEREKİR.
-            sleepMs(5);
+            //
+            // v1.99.2 (bkz. CHANGELOG/nox-teknik-spesifikasyon.md): SABİT
+            // `sleepMs(5)` GERÇEK CI'de (bu makinenin YEREL simülasyonundan
+            // DAHA AĞIR kaynak-çekişmesiyle) `stolen_count == 0` İLE
+            // BAŞARISIZ OLDU — `worker_pool.zig`nin AYNI, artan geri-çekilme
+            // (backoff) düzeltmesi BURAYA da taşındı (bkz. `StealTestCtx`nin
+            // AYNI belge notu).
+            const backoffs = [_]i64{ 5, 20, 50, 100, 200 };
+            for (backoffs) |ms| {
+                sleepMs(ms);
+                var any_stolen = false;
+                for (&shared_ptr.executed_by) |*ex| {
+                    const by = ex.load(.seq_cst);
+                    if (by != NOT_RUN and by != 0) {
+                        any_stolen = true;
+                        break;
+                    }
+                }
+                if (any_stolen) break;
+            }
             // `nox_async_spawn`ın döndürdüğü `Task` struct'ı OTOMATİK
             // serbest bırakılmaz (bkz. proje belleği "Task[T]/Channel[T]/
             // vb. yeniden-atama sızıntısı düzeltmesi" — BİREBİR AYNI sınıf)
@@ -1033,7 +1052,17 @@ test "nox_pool_run: Faz MN.8 Bulgu A - sibling worker'lar globals_init_fn ile KE
             // fn`i ÇAĞIRMIŞ olması, `run()`un steal-döngüsüne GERÇEKTEN
             // ULAŞTIKLARI/OS TARAFINDAN GERÇEKTEN ZAMANLANDIKLARI anlamına
             // GELMEZ — GERÇEK bir uyku GEREKİR.
-            sleepMs(5);
+            //
+            // v1.99.2 (bkz. CHANGELOG/nox-teknik-spesifikasyon.md): SABİT
+            // `sleepMs(5)` GERÇEK CI'de yetersiz kalabildiğinden (bkz.
+            // yukarıdaki "GERÇEK spawn/await İÇEREN bir entry" testinin
+            // AYNI düzeltmesi), artan geri-çekilme (backoff) İLE
+            // `stolen_count`in KENDİSİ GÖZLEMLENEREK ERKEN çıkılır.
+            const backoffs = [_]i64{ 5, 20, 50, 100, 200 };
+            for (backoffs) |ms| {
+                sleepMs(ms);
+                if (stolen_count.load(.seq_cst) > 0) break;
+            }
             i = 0;
             while (i < N_TASKS) : (i += 1) {
                 _ = bridge.nox_async_await(rt, tasks[i]);

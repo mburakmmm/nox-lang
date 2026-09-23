@@ -14,6 +14,37 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.99.2]
+
+### Düzeltildi (bkz. nox-teknik-spesifikasyon.md §3.184)
+
+- **GÜNCELLEME (dürüst düzeltme)**: v1.99.1'in "x18 düzeltmesi çöküşü
+  ORTADAN KALDIRDI (10/10 temiz)" iddiası GERÇEK CI TARAFINDAN ÇÜRÜTÜLDÜ
+  — v1.99.1 push edildikten SONRAKİ GERÇEK CI koşusu (`35912506219`),
+  `x18` düzeltmesi YERİNDEYKEN BİLE, `http_serve_multicore`'un N=2 testinin
+  Linux(aarch64) işinde AYNI `stack smashing detected` çöküşüyle TEKRAR
+  başarısız OLDU. Bu testin Linux/aarch64'teki GERÇEK kök nedeni HÂLÂ
+  KANITLANAMAMIŞ, AÇIK bir sorun olarak KALIYOR — `x18` kaydı zararsız
+  olduğundan GERİ ALINMADI, ama "sorunu çözdü" iddiası GERİ ÇEKİLDİ.
+- **GERÇEKTEN işe yarayan düzeltme**: AYNI CI koşusu, `nox_pool_run`'ın
+  v1.98.0'da ZATEN düzeltilmiş bir testinin Linux(x86-64) işinde AYNI
+  risk sınıfıyla (SABİT `sleepMs(5)` bariyeri yetersiz kaldı) TEKRAR
+  başarısız olduğunu gösterdi — "task_66e267b4" ailesinin ÜÇÜNCÜ tekrarı.
+  SABİT gecikme, üç sitenin (`worker_pool.zig`'in `StealTestCtx`si +
+  `pool_bridge.zig`'in iki testi) HEPSİNDE artan bir geri-çekilmeyle
+  (5,20,50,100,200ms, "herhangi bir görev çalındı mı" kontrolüyle erken
+  çıkan) DEĞİŞTİRİLDİ.
+
+### Doğrulama
+
+`zig ast-check`; `zig build worker-pool-test`/`async-rt-test`
+(Debug+ReleaseFast) TEMİZ; TAM paket `zig build test` (Debug+ReleaseFast)
+SIFIR regresyon.
+
+### Kritik dosyalar
+
+`runtime/async_rt/worker_pool.zig`, `runtime/async_rt/pool_bridge.zig`.
+
 ## [1.99.1]
 
 ### Düzeltildi (bkz. nox-teknik-spesifikasyon.md §3.183)

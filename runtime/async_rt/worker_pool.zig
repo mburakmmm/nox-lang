@@ -496,10 +496,34 @@ fn stealTestWorkerEntry(rt: *anyopaque, slot: usize, ctx: *StealTestCtx) void {
         // OS zamanlayıcısına "BU iş parçacığını BİR SÜRELİĞİNE çalıştırma"
         // GARANTİSİ verir) worker 0'ın KENDİ `sched.run()`una BAŞLAMASINI
         // erteleyip, ZATEN spin-wait'te olan kardeşlere GERÇEK bir çalışma
-        // penceresi TANIR — bu ikisinin BİRLİKTE (bariyer + GERÇEK
-        // gecikme) çalıştığı, AYNI yük altında TEKRARLANAN denemelerle
-        // doğrulandı.
-        sleepMs(5);
+        // penceresi TANIR.
+        //
+        // v1.99.2 (bkz. CHANGELOG/nox-teknik-spesifikasyon.md): SABİT bir
+        // `sleepMs(5)` GERÇEK GitHub Actions CI'sinde (bu oturumun 20-`yes`-
+        // süreçlik YEREL simülasyonundan DAHA AĞIR bir kaynak-çekişmesiyle)
+        // HÂLÂ yetersiz kalabildiği GÖZLEMLENDİ (`pool_bridge.zig`nin AYNI
+        // deseni ÖDÜNÇ ALAN testi GERÇEK CI'de `stolen_count == 0` İLE
+        // BAŞARISIZ oldu) — SABİT bir gecikme HER ZAMAN pathological bir
+        // gecikme SENARYOSU KARŞISINDA yetersiz KALABİLİR. Bunun YERİNE,
+        // artan (5,20,50,100,200ms — TOPLAM 375ms, ihmal edilebilir bir
+        // test maliyeti) bir GERİ-ÇEKİLME (backoff) İLE, HERHANGİ bir
+        // görevin ÇALINDIĞI (executed_by'ın worker 0 DIŞINDA bir değer
+        // ALDIĞI) GÖZLEMLENDİĞİ ANDA ERKEN çıkılır (hızlı/normal durumda
+        // SIFIR ek maliyet) — SADECE gerçekten HİÇBİR şey çalınmamışsa
+        // TÜM 375ms tüketilir.
+        const backoffs = [_]i64{ 5, 20, 50, 100, 200 };
+        for (backoffs) |ms| {
+            sleepMs(ms);
+            var any_stolen = false;
+            for (&ctx.executed_by) |*ex| {
+                const by = ex.load(.seq_cst);
+                if (by != STEAL_TEST_NOT_RUN and by != 0) {
+                    any_stolen = true;
+                    break;
+                }
+            }
+            if (any_stolen) break;
+        }
     } else {
         _ = ctx.siblings_started.fetchAdd(1, .release);
         while (!ctx.ready.load(.acquire)) std.Thread.yield() catch {};

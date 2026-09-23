@@ -23144,6 +23144,78 @@ uyku).
 
 ---
 
+## 3.184 §3.183'ün "x18" hipotezi GERÇEK CI TARAFINDAN ÇÜRÜTÜLDÜ + `nox_pool_run`
+## backoff'unun İKİNCİ, GERÇEK CI'de gözlemlenen KANITI (v1.99.2)
+
+### GÜNCELLEME (§3.183'ün "x18 düzeltmesi çöküşü ORTADAN KALDIRDI" iddiasını GEÇERSİZ KILAR)
+
+v1.99.1 push edildikten SONRA GERÇEK CI koşusu (`gh run view 35912506219`),
+`x18` düzeltmesi YERİNDEYKEN BİLE, `http_serve_multicore`'un N=2 testinin
+Linux(aarch64) işinde **AYNI** `*** stack smashing detected ***: terminated`
+çöküşüyle TEKRAR başarısız OLDUĞUNU gösterdi. Bu, §3.183'ün "x18
+düzeltmesi 10/10 temiz koşuyla çöküşü ORTADAN KALDIRDI" GÖZLEMSEL
+sonucunun **YANLIŞ bir POZİTİF** olduğunu KANITLAR — yeniden-üretme
+oranının konteyner ortamında GÜVENİLMEZ/DALGALI olması (§3.183'ün KENDİ
+"dürüst sınır" notunun ÖNCEDEN uyardığı TAM OLARAK bu risk), "düzeltme
+SONRASI 10/10 temiz" sonucunu TESADÜFEN üretmiş — GERÇEK kök neden
+`x18`in KENDİSİ DEĞİLDİ (EN AZINDAN TEK BAŞINA yeterli DEĞİLDİ). `x18`
+kaydı/geri-yüklemesi KENDİSİ ZARARSIZ olduğundan KOD'DAN GERİ ALINMADI
+(SIFIR maliyetli/riski bir genel-doğruluk iyileştirmesi olarak KALIR)
+AMA §3.183'ün "sorunu ÇÖZDÜ" ÇERÇEVELEMESİ **GERİ ÇEKİLİR**: `http_serve_
+multicore`'un N=2 testinin Linux/aarch64'teki GERÇEK kök nedeni **HÂLÂ
+KANITLANAMAMIŞ, AÇIK bir sorundur** — canlı hata-ayıklama (GDB'nin donanım
+watchpoint'leri, disassembly İncelemeleri) BU turda da KESİN bir mekanik
+kanıta ULAŞAMADI (aynı senaryonun disassembly'si BİLE derlemeler arasında
+KARARSIZ/DEĞİŞKEN çıktı — bazı derlemelerde `nox_thread_join`nin KENDİSİ
+BİLE bir yığın-koruyucusu (stack-protector) TAŞIMIYORDU, derleyicinin
+optimizasyon SEZGİSELİNE bağlı olarak).
+
+### `nox_pool_run`'ın GERÇEKTEN İŞE YARAYAN düzeltmesi — artan geri-çekilme (backoff)
+
+AYNI CI koşusu, `runtime/async_rt/pool_bridge.zig`nin v1.98.0'da ZATEN
+DÜZELTİLMİŞ "GERÇEK spawn/await İÇEREN bir entry, TÜM sonuçlar doğru VE
+kanıtlanmış çapraz-worker çalma" testinin Linux(x86-64) işinde **AYNI
+risk sınıfıyla** (`stolen_count > 0` iddiası) TEKRAR başarısız OLDUĞUNU
+GÖSTERDİ — SABİT `sleepMs(5)` bariyerinin GERÇEK GitHub Actions
+runner'larının kaynak-çekişme profilinde (bu makinenin 20-`yes`-süreçlik
+YEREL simülasyonundan DAHA AĞIR) HÂLÂ yetersiz kalabildiğinin SOMUT
+kanıtı. Bu, "task_66e267b4" ailesinin AYNI risk sınıfının ÜÇÜNCÜ
+tekrarıydı (`worker_pool.zig`nin `StealTestCtx`si, `pool_bridge.zig`nin
+İKİ testi — HEPSİ AYNI SABİT `sleepMs(5)` desenini PAYLAŞIYORDU).
+
+**Düzeltme**: SABİT bir gecikme SABİT olduğundan HER ZAMAN pathological
+bir gecikme senaryosu KARŞISINDA yetersiz KALABİLİR — bunun YERİNE ÜÇ
+sitenin (worker_pool.zig'in `StealTestCtx`si + pool_bridge.zig'in İKİ
+testi) HEPSİNE artan (5,20,50,100,200ms — toplam 375ms, ihmal edilebilir
+bir test maliyeti) bir GERİ-ÇEKİLME (backoff) EKLENDİ: HER adımda GERÇEK
+bir uyku SONRASI "HERHANGİ bir görev worker 0 DIŞINDA ÇALIŞTI MI"
+kontrolü yapılır, GERÇEKLEŞTİĞİ ANDA ERKEN çıkılır (hızlı/normal durumda
+SIFIR ek maliyet — İLK 5ms'lik denemenin KENDİSİ ZATEN genelde YETERLİ),
+SADECE GERÇEKTEN hiçbir şey çalınmamışsa TÜM 375ms tüketilir.
+
+### Doğrulama
+
+`zig ast-check`; `zig build worker-pool-test`/`async-rt-test`
+(Debug+ReleaseFast) TEMİZ; TAM paket `zig build test` (Debug+ReleaseFast)
+SIFIR regresyon.
+
+### Kritik dosyalar
+
+`runtime/async_rt/worker_pool.zig` (`StealTestCtx`nin backoff'u),
+`runtime/async_rt/pool_bridge.zig` (İKİ testin backoff'u).
+
+### Kapsam DIŞI (dürüstçe, açık bırakılan)
+
+`http_serve_multicore`'un N=2 testinin Linux/aarch64'teki GERÇEK
+stack-smashing kök nedeni — BU turda da KANITLANAMADI. Test HÂLÂ
+CI'de ARA SIRA (rastgele) başarısız OLABİLİR; teşhis-yazdırma (v1.99.0)
++ `x18` kaydı (v1.99.1, zararsız) YERİNDE KALIR, AMA KESİN bir düzeltme
+İçİn GEREKEN, DAHA DERİN bir araştırma (muhtemelen GERÇEK CI runner'ında
+bir core-dump/backtrace toplama mekanizması EKLEMEK, YEREL reprodüksiyonun
+GÜVENİLMEZLİĞİNE bel BAĞLAMADAN) AYRI bir GELECEKTEKİ tura BIRAKILDI.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.
