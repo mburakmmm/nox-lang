@@ -596,6 +596,35 @@ pub const PoolExtension = struct {
     /// worker'ları (0 DAHİL) kapsaması GEREKTİĞİNDEN, `pool_free_lists`/
     /// `globals_blocks`nin AKSİNE off-by-one KAYDIRMASI YAPILMAZ.
     pool_wake_fds: [MAX_POOL_WORKERS]std.atomic.Value(i32) = @splat(.init(-1)),
+    /// Faz [YENİ] (bkz. plan dosyası "STW bariyeri kilitlenmesi düzeltmesi"
+    /// — GERÇEK bir gdb backtrace'İYLE bulunan, önceden var olan bir yarış):
+    /// `nox_cycle_possible_root`ün (cycle_detector.zig) `pool_stw_requested`i
+    /// AYARLAMASI İLE bir worker'ın `run()`dan KALICI olarak ÇIKMASI (bkz.
+    /// `pool_active_workers`in belge notu) ARTIK BU kilit ALTINDA
+    /// SERİLEŞTİRİLİYOR — `pool_stw_requested`/`pool_live_count` BAĞIMSIZ
+    /// atomikler OLDUĞUNDAN, aralarında memory-ordering'in ÇÖZEMEYECEĞİ
+    /// GERÇEK bir wall-clock TOCTOU yarışı VARDI: bir worker `pool_live_
+    /// count==0` GÖRÜP `pool_stw_requested==false` gördüğü TAM ANDA, BAŞKA
+    /// bir worker'ın eşiği AŞIP `pool_stw_requested`i O SIRADA true YAPMASI
+    /// mümkündü — İKİSİ de BAĞIMSIZ/ilişkisiz atomikler olduğundan, HİÇBİR
+    /// memory-ordering annotasyonu bunu ÖNLEYEMEZ (gerçekten EŞ ZAMANLI,
+    /// sıralanmamış İKİ olay). Bu kilit, İKİ tarafı da (round-talep +
+    /// kalıcı-çıkış) KARŞILIKLI-DIŞLAR.
+    pool_stw_lock: SpinLock = .{},
+    /// Faz [YENİ]: bariyerin "KAÇ katılımcı bekleniyor" sayısı — ARTIK
+    /// SABİT `sibling_deques.len` DEĞİL (bir worker `run()`dan KALICI
+    /// olarak çıktığında ASLA azalmayan bu statik sayı, TAM OLARAK
+    /// yukarıdaki bug'ın KÖK NEDENİYDİ) — `WorkerPool.create()`da
+    /// `n_workers`e İLKLENİR, `pool_stw_lock` ALTINDA HER worker'ın
+    /// KALICI çıkışında BİR AZALTILIR (`scheduler.zig`nin `tryPermanentExit`i).
+    pool_active_workers: std.atomic.Value(usize) = .init(0),
+    /// Faz [YENİ]: bir STW round'u TALEP EDİLDİĞİNDE (`pool_stw_lock`
+    /// ALTINDA) `pool_active_workers`in O ANKİ değeri BURAYA KOPYALANIR —
+    /// `stwParticipate`nin "SON gelen kim" kontrolü ARTIK BUNU kullanır
+    /// (`sibling_deques.len` YERİNE) — kilit SAYESİNDE bu round AKTİFKEN
+    /// `pool_active_workers` DEĞİŞEMEYECEĞİNDEN, round'un beklediği sayı
+    /// TUTARLI kalır.
+    pool_stw_round_n: std.atomic.Value(usize) = .init(0),
     /// Faz MN.9.3: HER worker slotunun KENDİ `*Scheduler`ı (`bridge.zig`nin
     /// `nox_async_init`i, havuzlu dalında, `attachToPool` SONRASI, KENDİ
     /// `g_worker_slot`una YAZAR) — `runtime/async_rt/pool_bridge.zig`nin

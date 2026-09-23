@@ -14,6 +14,56 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.94.0]
+
+### Düzeltildi (GERÇEK, önceden var olan bir STW-bariyeri deadlock'u — Faz MN.6/MN.7/MN.8/MN.11'in ÜÇÜNCÜ, DAHA DERİN bir varyantı, gdb İLE KANITLANDI)
+
+- v1.93.1'in `-j4` geri alımı SONRASI GERÇEK CI'de Linux'un (HEM x86-64
+  HEM aarch64) `zig build test -Doptimize=ReleaseFast`i HÂLÂ 30-dakikalık
+  job-zaman-aşımına takılıyordu — `-j4`nin İLGİSİZ OLDUĞU AÇIKÇA
+  kanıtlandı. Kullanıcının "şimdi derinlemesine araştır" talimatıyla
+  YEREL bir aarch64 Docker konteynerinde (`--cpus=4`, GERÇEK `clang`
+  kurulu, TAM `zig build test` yükü altında) hang 5/6 denemede
+  YENİDEN üretildi VE `gdb -p <pid> -batch -ex 'thread apply all bt'`
+  İLE HER worker iş parçacığının canlı yığın izi ALINDI.
+- **Kök neden**: `runtime/async_rt/scheduler.zig`nin `stwParticipate()`
+  bariyerinin katılımcı SAYISI (`n`), `self.sibling_deques.len`
+  (HAVUZ-OLUŞTURMA anındaki SABİT worker SAYISI) İDİ — bir worker
+  `run()`dan KALICI olarak (TÜM görevler bitince, `plc==0`) çıktığında
+  BU sayı HİÇBİR ZAMAN azaltılmıyordu. EĞER bir worker'ın "artık
+  hiç görev yok, kalıcı çık" kararı İLE BAŞKA bir worker'ın (cycle-
+  collector eşiği aşıldığında) "yeni bir STW round'u BAŞLAT" kararı TAM
+  OLARAK AYNI ANDA (İKİ BAĞIMSIZ atomik ÜZERİNDE, ARALARINDA HİÇBİR
+  happens-before İLİŞKİSİ OLMADAN) gerçekleşirse, çıkan worker
+  `stw_requested==false`i GÖRÜP round'a HİÇ KATILMADAN AYRILIYORDU —
+  kalan worker'lar ARTIK ULAŞILAMAZ bir katılımcı sayısını BEKLEYEREK
+  `stwParticipate()`in İçİnde SONSUZA KADAR dönüyordu. Faz MN.11'in
+  MEVCUT düzeltmesi SADECE "AYNI fiber'ın KENDİSİ `plc`yi 0'a
+  İNDİRDİĞİ VE `stw_requested`i de KENDİSİ AYARLADIĞI" durumu (release-
+  acquire sıralamasıyla) kapsıyordu — BU turun bulduğu, GERÇEKTEN
+  eşzamanlı, ÇAPRAZ-worker yarışını KAPSAMIYORDU.
+- **Düzeltme**: `runtime/async_rt/asap.zig`'in `PoolExtension`ına YENİ
+  `pool_stw_lock: SpinLock`, `pool_active_workers: atomic(usize)`,
+  `pool_stw_round_n: atomic(usize)` alanları EKLENDİ — bir worker'ın
+  "kalıcı olarak çık" kararı (`pool_active_workers`i AZALTMAK) İLE
+  cycle-collector'ın "YENİ bir STW round'u İSTE" kararı (`stw_
+  requested`i AYARLAYIP O ANKİ `pool_active_workers`i `pool_stw_
+  round_n`e KAYDETMEK) AYNI kilit ALTINDA, birbirini DIŞLAYARAK
+  yapılıyor. `stwParticipate()` ARTIK SABİT `sibling_deques.len`
+  YERİNE, HER round İçİn AYRI KAYDEDİLEN `stw_round_n`i okuyor — bu
+  YÜZDEN katılımcı sayısı HER ZAMAN O ANDA GERÇEKTEN AYAKTA olan
+  worker sayısını YANSITIYOR, ULAŞILAMAZ bir sayıya YAKALANAMAZ.
+  `Scheduler`e YENİ `tryPermanentExit()` yardımcısı (KİLİT altında,
+  `stw_requested`i KONTROL EDİP GÜVENLİYSE `pool_active_workers`i
+  azaltıyor) EKLENDİ, `run()`nun İKİ KALICI-çıkış NOKTASI (`plc==0` VE
+  `poolWideDeadlockCheck`) BUNU KULLANACAK şekilde SADELEŞTİRİLDİ.
+- **Doğrulama**: DÜZELTMEDEN ÖNCE AYNI Docker ortamında (4-CPU, GERÇEK
+  `clang`, TAM `zig build test` yükü) hang 5/6 denemede üretiliyordu;
+  DÜZELTMEDEN SONRA 15/15 ardışık deneme (HİÇBİRİ 900 saniyeyi
+  AŞMADAN, 17-330 saniye ARASINDA) TEMİZ tamamlandı — SIFIR hang.
+  Debug+ReleaseFast TAM paket + `NOX_STRESS_ROUNDS`/MN.6'nın KENDİ
+  regresyon testi DEĞİŞMEDEN geçiyor.
+
 ## [1.93.1]
 
 ### Düzeltildi (v1.93.0'ın KENDİ push'unun GERÇEK CI koşusuyla bulunan bir kendi-kendine-neden-olunan regresyon)

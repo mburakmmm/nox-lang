@@ -249,12 +249,35 @@ pub export fn nox_cycle_possible_root(rt: ?*anyopaque, p: ?*anyopaque) void {
         if (state.worker_pool == null) {
             collectLocked(rt, state, gc);
         } else if (comptime !is_freestanding) {
-            if (state.pool_ext.?.pool_stw_requested.cmpxchgStrong(false, true, .acq_rel, .monotonic) == null) {
-                if (builtin.os.tag != .windows) {
-                    for (&state.pool_ext.?.pool_wake_fds) |*fd_atomic| {
-                        const fd = fd_atomic.load(.monotonic);
-                        if (fd >= 0) self_pipe.signalWakeFd(@intCast(fd));
-                    }
+            // Faz [YENİ] (bkz. plan dosyası "STW bariyeri kilitlenmesi
+            // düzeltmesi" — GERÇEK bir gdb backtrace'İYLE bulunan, önceden
+            // var olan bir yarış): ÖNCEDEN `cmpxchgStrong` TEK BAŞINA (bkz.
+            // `pool_stw_requested`in belge notu) YARIŞI KAZANAN çağrıyı
+            // belirliyordu AMA `pool_active_workers`e (bir worker'ın AYNI
+            // ANDA `run()`dan KALICI çıkışıyla) HİÇBİR karşılıklı-dışlama
+            // SAĞLAMIYORDU — `pool_stw_lock` ALTINDA yapmak (`scheduler.
+            // zig`nin `tryPermanentExit`inin AYNI kilidi kullanması SAYESİNDE)
+            // BU İKİ olayı SERİLEŞTİRİR. Kilit ALTINDA "zaten true mu"
+            // kontrolü, `cmpxchgStrong`in "SADECE YARIŞI KAZANAN" garantisiyle
+            // AYNI (kilit SAYESİNDE artık GERÇEK bir CAS'a GEREK YOK — hiçbir
+            // BAŞKA iş parçacığı AYNI ANDA BU değeri DEĞİŞTİREMEZ).
+            const ext = state.pool_ext.?;
+            ext.pool_stw_lock.lock();
+            const already_requested = ext.pool_stw_requested.load(.monotonic);
+            if (!already_requested) {
+                // `pool_active_workers`in O ANKİ değeri BU round'un
+                // katılımcı sayısı OLARAK DONDURULUR (bkz. `stwParticipate`nin
+                // `stw_round_n` okumasının belge notu) — `pool_stw_requested`in
+                // HEMEN ALTINDAKİ `.release` store, BU yazmayı da (program
+                // sırasına göre ÖNCE olduğundan) senkronize eder.
+                ext.pool_stw_round_n.store(ext.pool_active_workers.load(.monotonic), .monotonic);
+                ext.pool_stw_requested.store(true, .release);
+            }
+            ext.pool_stw_lock.unlock();
+            if (!already_requested and builtin.os.tag != .windows) {
+                for (&ext.pool_wake_fds) |*fd_atomic| {
+                    const fd = fd_atomic.load(.monotonic);
+                    if (fd >= 0) self_pipe.signalWakeFd(@intCast(fd));
                 }
             }
         }

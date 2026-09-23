@@ -85,6 +85,12 @@ pub const PoolLink = struct {
     stw_requested: *std.atomic.Value(bool),
     stw_arrived: *std.atomic.Value(usize),
     stw_sense: *std.atomic.Value(bool),
+    /// Faz [YENİ] (bkz. plan dosyası "STW bariyeri kilitlenmesi düzeltmesi"
+    /// — bkz. `asap.PoolExtension.pool_stw_lock`in belge notu, GERÇEK bir
+    /// gdb backtrace'İYLE bulunan yarışın TAM açıklaması).
+    stw_lock: *SpinLock,
+    active_workers: *std.atomic.Value(usize),
+    stw_round_n: *std.atomic.Value(usize),
     /// Faz MN.6: HER worker'ın wake-fd YAZMA ucuna işaretçilerin dizisi
     /// (`RuntimeState.pool_wake_fds`e karşılık gelir, AYNI `own_slot`
     /// İNDEKSİYLE) — `attachToPool`, KENDİ `wake_write_fd`sini `wake_fds
@@ -186,6 +192,10 @@ pub const Scheduler = struct {
     stw_requested: ?*std.atomic.Value(bool) = null,
     stw_arrived: ?*std.atomic.Value(usize) = null,
     stw_sense: ?*std.atomic.Value(bool) = null,
+    /// Faz [YENİ]: bkz. `PoolLink`in AYNI-adlı alanlarının belge notu.
+    stw_lock: ?*SpinLock = null,
+    active_workers: ?*std.atomic.Value(usize) = null,
+    stw_round_n: ?*std.atomic.Value(usize) = null,
     /// Faz MN.6: BU worker'ın KENDİ "sense" biti — PAYLAŞILMAZ, SADECE
     /// bu `Scheduler`ın KENDİ iş parçacığı OKUR/YAZAR (bkz. proje planı,
     /// "sense-reversing barrier" tasarım notu — TEK bir paylaşılan bayrağın
@@ -247,6 +257,9 @@ pub const Scheduler = struct {
         self.stw_requested = link.stw_requested;
         self.stw_arrived = link.stw_arrived;
         self.stw_sense = link.stw_sense;
+        self.stw_lock = link.stw_lock;
+        self.active_workers = link.active_workers;
+        self.stw_round_n = link.stw_round_n;
         self.collect_fn = link.collect_fn;
         self.rt = link.rt;
         const fds = try self_pipe.makeSelfPipe();
@@ -442,7 +455,17 @@ pub const Scheduler = struct {
         if (!reqp.load(.acquire)) return;
         self.stw_local_sense = !self.stw_local_sense;
         const arrived = self.stw_arrived.?;
-        const n = self.sibling_deques.len;
+        // Faz [YENİ] (bkz. plan dosyası "STW bariyeri kilitlenmesi
+        // düzeltmesi"): ARTIK SABİT `sibling_deques.len` DEĞİL — bu round
+        // TALEP EDİLDİĞİNDE (`pool_stw_lock` ALTINDA) `pool_active_workers`in
+        // O ANKİ değerinden KOPYALANAN, BU ROUND'a ÖZGÜ katılımcı sayısı
+        // (bkz. `tryPermanentExit`/`nox_cycle_possible_root`). `reqp.load(
+        // .acquire)`in (YUKARIDA) BU değerin YAZILMASINDAN (SIRALI olarak
+        // ÖNCE, cycle_detector.zig'in `pool_stw_lock` ALTINDAKİ store'u)
+        // SONRA TETİKLENEN release-store'u GÖRMESİ, release-acquire
+        // senkronizasyonu SAYESİNDE BU okumanın da DOĞRU/GÜNCEL değeri
+        // GÖRMESİNİ GARANTİ eder.
+        const n = self.stw_round_n.?.load(.acquire);
         if (arrived.fetchAdd(1, .acq_rel) + 1 == n) {
             // SON varan → lider. TÜM n worker ARTIK KANITLANMIŞ şekilde
             // fiber'ın ORTASINDA DEĞİL — collect'i GÜVENLE çalıştırabiliriz.
@@ -469,6 +492,39 @@ pub const Scheduler = struct {
         } else {
             while (self.stw_sense.?.load(.acquire) != self.stw_local_sense) sleepMs(1);
         }
+    }
+
+    /// Faz [YENİ] (bkz. plan dosyası "STW bariyeri kilitlenmesi düzeltmesi"
+    /// — GERÇEK bir gdb backtrace'İYLE bulunan yarışın DOĞRUDAN düzeltmesi):
+    /// `run()`nün İKİ KALICI-çıkış noktası (aşağıda) bu yardımcıyı çağırır,
+    /// `sibling_deques.len`e SABİT değil, `pool_active_workers`e DİNAMİK
+    /// bağlı BİR katılımcı sayısı gerektiren STW bariyerinden GÜVENLE
+    /// çıkabilmek İçİn. `pool_stw_lock` (bkz. `PoolExtension`nin AYNI-adlı
+    /// alanının belge notu), "bu worker KALICI olarak çıkıyor" KARARIYLA
+    /// "BAŞKA bir worker YENİ bir STW round'u TALEP EDİYOR" (cycle_detector.
+    /// zig) kararını KARŞILIKLI-DIŞLAR — bu İKİSİ AYRI/bağımsız atomikler
+    /// (`stw_requested`/`active_workers`) OLDUĞUNDAN, kilitSİZ hallerinde
+    /// memory-ordering'in ÇÖZEMEYECEĞİ GERÇEK bir wall-clock TOCTOU yarışı
+    /// vardı (BİR worker'ın plc==0/stw_requested==false GÖRDÜĞÜ TAM ANDA
+    /// BAŞKA bir worker'ın stw_requested'ı true YAPMASI — ARALARINDA HİÇBİR
+    /// happens-before edge OLMAYAN, GENUİNE eş zamanlı İKİ olay).
+    ///
+    /// `true` dönerse ÇAĞIRAN GÜVENLE `return`/`return error.Deadlock`
+    /// edebilir (bu worker artık HİÇBİR STW round'unun beklediği sayıya
+    /// DAHİL DEĞİL — `pool_active_workers` ZATEN azaltıldı). `false`
+    /// dönerse (TAM O ANDA bir round TALEP EDİLDİĞİ İçİn, bu worker HÂLÂ
+    /// beklenen sayıya DAHİL) ÇAĞIRAN `stwParticipate()`i çağırıp
+    /// `continue` ETMELİDİR — round KAPANDIKTAN SONRA çıkış YENİDEN
+    /// denenir (bir SONRAKİ `while(true)` turunda).
+    fn tryPermanentExit(self: *Scheduler) bool {
+        const lockp = self.stw_lock orelse return true; // havuzsuz — bariyer YOK
+        lockp.lock();
+        defer lockp.unlock();
+        if (self.stw_requested) |reqp| {
+            if (reqp.load(.monotonic)) return false;
+        }
+        if (self.active_workers) |aw| _ = aw.fetchSub(1, .monotonic);
+        return true;
     }
 
     /// Faz MN.4: KENDİ deque'i BOŞ İKEN kardeşlerden (round-robin, KENDİ
@@ -648,33 +704,26 @@ pub const Scheduler = struct {
                     // **GERÇEK, worker_pool.zig'in KENDİ STW-stres testinde
                     // DENEYEREK bulunan bir hata İçİN EKLENDİ (37+ dakika
                     // ASILI KALAN bir test İLE gözlemlendi, `sample` İLE
-                    // teşhis edildi)**: BU worker `plc==0` GÖRÜP run()'DAN
-                    // KALICI olarak `return` ettiğinde, EĞER TAM O ANDA
-                    // BAŞKA bir worker'ın (henüz TAMAMLANMAMIŞ) fiber'ı bir
-                    // STW round'u ZATEN İSTEMİŞSE (`stw_requested=true`,
-                    // O fiber HENÜZ BİTMEDİĞİNDEN `plc` HÂLÂ onu SAYIYORDU,
-                    // ama SONRA O fiber de BİTİP `plc`yi 0'A İNDİRDİ) — BU
-                    // worker O round'a ASLA KATILMAZ (`stwParticipate`,
-                    // SADECE `while(true)` döngüsünün BAŞINDA çağrılır, BU
-                    // `return` YOLU HİÇ oraya UĞRAMAZ) — bariyerin GEREKTİRDİĞİ
-                    // `n = sibling_deques.len` katılımcı SAYISI KALICI olarak
-                    // EKSİK KALIR, KALAN worker'lar `stw_sense`i SONSUZA KADAR
-                    // BEKLER. Düzeltme: `stw_requested` bekliyorsa ÖNCE
-                    // katıl, SONRA (round KAPANDIKTAN SONRA) YENİDEN plc'yi
-                    // kontrol et — `plc`nin fetchSub'ı (aşağıda) `.release`,
-                    // BU okuma `.acquire` OLDUĞUNDAN (release-sequence
-                    // kuralı gereği), BU worker plc==0'ı GÖRDÜĞÜ AN, O 0'ı
-                    // ÜRETEN fiber'ın KENDİ ÖNCESİNDE yazdığı `stw_requested`
-                    // DEĞERİNİ de GARANTİLİ olarak görür — bu YÜZDEN AŞAĞIDAKİ
-                    // kontrol "kaçırma" YAŞAMAZ.
+                    // teşhis edildi — Faz MN.7a/MN.11)**: BU worker `plc==0`
+                    // GÖRÜP run()'DAN KALICI olarak `return` ettiğinde, EĞER
+                    // TAM O ANDA BAŞKA bir worker'ın (henüz TAMAMLANMAMIŞ)
+                    // fiber'ı bir STW round'u ZATEN İSTEMİŞSE bariyerin
+                    // GEREKTİRDİĞİ katılımcı SAYISI KALICI olarak EKSİK KALIR,
+                    // KALAN worker'lar `stw_sense`i SONSUZA KADAR BEKLER.
+                    // MN.11'in ORİJİNAL düzeltmesi (`self.stw_requested.load(
+                    // .acquire)` — `plc`nin `.release` fetchSub'ıyla release-
+                    // sequence İLE eşleşen) SADECE "BU worker'ın KENDİ pcl==0
+                    // GÖRME ANI İLE AYNI fiber'ın ÖNCESİNDE yazdığı istek"
+                    // durumunu KAPSIYORDU — Faz [YENİ]nin GERÇEK gdb kanıtıyla
+                    // bulduğu (bkz. `tryPermanentExit`nin belge notu) daha
+                    // GENİŞ TOCTOU yarışını (BAŞKA/İLİŞKİSİZ bir worker'ın,
+                    // BAĞIMSIZ bir atomik ÜZERİNDEN, GERÇEKTEN eş zamanlı
+                    // İSTEĞİ) KAPSAMIYORDU — `tryPermanentExit`, İKİSİNİ de
+                    // (kilit ALTINDA) KAPSAYAN TAM/genel çözümdür.
                     if (plc.load(.acquire) == 0) {
-                        if (self.stw_requested) |reqp| {
-                            if (reqp.load(.acquire)) {
-                                self.stwParticipate();
-                                continue;
-                            }
-                        }
-                        return;
+                        if (self.tryPermanentExit()) return;
+                        self.stwParticipate();
+                        continue;
                     }
                     if (self.waiting_on_io > 0) {
                         // KENDİ fiber'larımızdan biri G/Ç bekliyor —
@@ -687,23 +736,18 @@ pub const Scheduler = struct {
                     }
                     if (self.poolWideDeadlockCheck()) {
                         // Faz MN.11 (bkz. plan dosyası "poolWideDeadlockCheck'in
-                        // kaçırdığı STW-katılım yolu"): satır ~650-658'in
-                        // `plc==0` düzeltmesiyle AYNI hata SINIFI, AYNI çözüm
-                        // — bu worker KALICI olarak `run()`dan ÇIKMADAN ÖNCE,
-                        // TAM O ANDA bir STW round'u TALEP EDİLMİŞ Mİ diye
-                        // kontrol eder; EDİLDİYSE ÖNCE katılır (round'un `n`
-                        // katılımcı SAYISI EKSİK KALMASIN diye — aksi halde
-                        // KALAN worker'lar `stwParticipate`nin bekleme
-                        // döngüsünde SONSUZA KADAR beklerdi), SONRA (round
-                        // KAPANDIKTAN SONRA) deadlock durumu YENİDEN
-                        // değerlendirilir.
-                        if (self.stw_requested) |reqp| {
-                            if (reqp.load(.acquire)) {
-                                self.stwParticipate();
-                                continue;
-                            }
-                        }
-                        return error.Deadlock;
+                        // kaçırdığı STW-katılım yolu") + Faz [YENİ] (bkz.
+                        // `tryPermanentExit`nin belge notu — AYNI hata SINIFI,
+                        // AYNI/GENELLEŞTİRİLMİŞ çözüm): bu worker KALICI olarak
+                        // `run()`dan ÇIKMADAN ÖNCE, TAM O ANDA bir STW round'u
+                        // TALEP EDİLMİŞ Mİ diye (`pool_stw_lock` ALTINDA, BAŞKA
+                        // bir worker'ın GERÇEKTEN eş zamanlı isteğini de
+                        // KAPSAYACAK şekilde) kontrol eder; EDİLDİYSE ÖNCE
+                        // katılır, SONRA (round KAPANDIKTAN SONRA) deadlock
+                        // durumu YENİDEN değerlendirilir.
+                        if (self.tryPermanentExit()) return error.Deadlock;
+                        self.stwParticipate();
+                        continue;
                     }
                     continue;
                 }
@@ -1473,6 +1517,14 @@ test "Faz MN.6: STW bariyeri (sense-reversal) ART ARDA round'larda KİLİTLENMED
         stw_requested: std.atomic.Value(bool) = .init(false),
         stw_arrived: std.atomic.Value(usize) = .init(0),
         stw_sense: std.atomic.Value(bool) = .init(false),
+        // Faz [YENİ]: bu test `stw_requested`i DOĞRUDAN (sürücüden) CAS'lar,
+        // `tryPermanentExit`/kilit YOLUNU HİÇ egzersiz ETMEZ — `stw_round_n`
+        // BU YÜZDEN SABİT N'e eşitlenip HİÇ değiştirilmez (`stwParticipate`nin
+        // ARTIK `sibling_deques.len` YERİNE BUNU okuduğu değişiklikle
+        // UYUMLU kalması İçİn).
+        stw_lock: SpinLock = .{},
+        active_workers: std.atomic.Value(usize) = .init(N),
+        stw_round_n: std.atomic.Value(usize) = .init(N),
         collect_count: std.atomic.Value(usize) = .init(0),
         live_count: std.atomic.Value(usize) = .init(0),
         waiting_on_io: std.atomic.Value(usize) = .init(0),
@@ -1503,6 +1555,9 @@ test "Faz MN.6: STW bariyeri (sense-reversal) ART ARDA round'larda KİLİTLENMED
                 .stw_requested = &shared.stw_requested,
                 .stw_arrived = &shared.stw_arrived,
                 .stw_sense = &shared.stw_sense,
+                .stw_lock = &shared.stw_lock,
+                .active_workers = &shared.active_workers,
+                .stw_round_n = &shared.stw_round_n,
                 .wake_fds = &shared.wake_fds,
                 .collect_fn = &fakeCollect,
                 .rt = shared,

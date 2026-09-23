@@ -22264,6 +22264,137 @@ binary_size_test.zig` (teşhis mesajları), `.github/workflows/ci.yml`
 
 ---
 
+## 3.176 STW-bariyeri deadlock'unun ÜÇÜNCÜ, DAHA DERİN varyantı (v1.94.0)
+
+### Context
+
+v1.93.1'in (§3.175 madde 4) `-j4` geri alımı SONRASI GERÇEK CI'de HÂLÂ
+Linux'un (HEM x86-64 HEM aarch64) `zig build test -Doptimize=ReleaseFast`i
+30-dakikalık job-zaman-aşımına takılıyordu — `gh run view`/`gh run list`
+İLE bu KESİN olarak DOĞRULANDI (`-j4`nin İLGİSİZ OLDUĞU, kök nedenin
+BAŞKA bir yerde olduğu KANITLANDI). Kullanıcının "şimdi derinlemesine
+araştır" talimatıyla YEREL bir GERÇEK reprodüksiyon araştırması BAŞLATILDI.
+
+### Reprodüksiyon metodolojisi (OrbStack Docker, aarch64-native)
+
+Bu Mac'in KENDİ aarch64 mimarisiyle EŞLEŞEN bir Linux Docker konteyneri
+(`--cpus=4`, CI'nin KENDİ kaynak-kısıtlı ortamını TAKLİT ETMEK İçİn)
+kullanıldı. ÜÇ ÖNEMLİ metodolojik bulgu:
+1. Konteynere REPO'yu bind-mount ETMEK, önceden macOS'ta ÜRETİLMİŞ Mach-O
+   nesnelerinin (`build.zig`'in swap-asm derleme adımının ürettiği
+   `swap_aarch64.o`) Linux derlemesine YANLIŞLIKLA KARIŞMASINA yol
+   AÇTI (`ld.lld: unknown file type`) — çözüm: `git clone --depth 1
+   file:///repo /work` İLE İZOLE bir kopya kullanmak.
+2. Docker'ın `--cpus=N`i GERÇEK bir cgroup KOTASI UYGULAR AMA konteyner
+   İçİNDEN `nproc`/`/proc/cpuinfo` HÂLÂ HOST'un TAM çekirdek sayısını
+   RAPORLAR (BİLİNEN bir Docker sınırlaması) — kota YİNE DE GERÇEK
+   zamanlamayı KISITLIYOR, `nproc`nin YALAN söylemesine RAĞMEN.
+3. `clang` KURULU OLMAYAN bir konteyner, TÜM LLVM-backend testlerinin
+   "clang bulunamadi" İLE ANINDA (GERÇEK İş YAPMADAN) başarısız
+   OLMASINA yol AÇAR — BU YÜZDEN İLK denemeler (izole `async-rt-test`,
+   HAFİF yük) hang'i HİÇ ÜRETMEDİ; `clang` KURULDUKTAN SONRA, TAM `zig
+   build test` (AĞIR yük — ÇOK sayıda paralel test ikilisi + GERÇEK LLVM
+   derlemesi) hang'i **5/6 denemede** GÜVENİLİR şekilde ÜRETTİ.
+
+`gdb -p <pid> -batch -ex 'thread apply all bt'` İLE takılı sürecin HER
+worker iş parçacığının canlı yığın izi ALINDI — BU, kök nedeni KESİN
+olarak TEŞHİS ETTİ.
+
+### Kök neden
+
+`runtime/async_rt/scheduler.zig`'in `stwParticipate()` fonksiyonu
+(cycle-collector'ın Bacon-Rajan GC'sinin GÜVENLE çalışabilmesi İçİn TÜM
+havuz worker'larını BİR güvenli noktada SENKRONİZE eden kooperatif
+"stop-the-world" bariyeri, Faz MN.6) katılımcı SAYISINI (`n`) `self.
+sibling_deques.len`den ALIYORDU — havuz OLUŞTURULDUĞUNDA SABİTLENEN,
+DEĞİŞMEYEN TOPLAM worker sayısı. AMA bir worker `run()`dan KALICI olarak
+çıktığında (TÜM görevler bittiğinde, `plc==0` doğal tamamlanma yolu) BU
+sayı HİÇ AZALTILMIYORDU.
+
+**Somut yarış senaryosu**: bir worker (ör. slot 0, "run to completion"
+test deseninde) TAM O ANDA `stw_requested==false` GÖRÜP `run()`dan
+KALICI olarak ÇIKARKEN, BAŞKA bir worker'ın görev-tamamlama döngüsü
+(`cycle_detector.zig`'in `nox_cycle_possible_root`ı) TAM O ANDA,
+BAĞIMSIZ bir atomik ÜZERİNDEN (HİÇBİR happens-before İLİŞKİSİ OLMADAN —
+İKİ olay FARKLI atomiklerde, FARKLI iş parçacıklarında) `stw_requested=
+true` AYARLARSA, çıkan worker BUNU HİÇ GÖRMEDEN AYRILIR. Kalan N-1
+worker `arrived+1==n` (n HÂLÂ ORİJİNAL, artık ULAŞILAMAZ TOPLAM sayı)
+BEKLEYEREK `stwParticipate()`'in `while (stw_sense != local_sense)
+sleepMs(1)` dalında SONSUZA KADAR döner.
+
+Bu, AYNI alt-sistemin (Faz MN.6/MN.7a/MN.7b/MN.8/MN.11) ÜÇÜNCÜ, DAHA
+DERİN bir varyantıydı — Faz MN.11'in MEVCUT düzeltmesi (worker'ın
+KALICI çıkışTAN ÖNCE `stw_requested`i KONTROL ETMESİ) SADECE "AYNI
+fiber'ın KENDİSİ `plc`yi 0'a İNDİRDİĞİ VE `stw_requested`i de KENDİSİ
+AYARLADIĞI" durumu (release-acquire sıralamasıyla, `plc` ÜZERİNDEN)
+KAPSIYORDU — BU turun bulduğu, GERÇEKTEN eşzamanlı, ÇAPRAZ-worker
+(FARKLI atomikler, FARKLI iş parçacıkları) yarışını KAPSAMIYORDU.
+
+### Düzeltme
+
+`runtime/alloc/asap.zig`'in `PoolExtension`ına YENİ üç alan:
+```zig
+pool_stw_lock: SpinLock = .{},
+pool_active_workers: std.atomic.Value(usize) = .init(0),
+pool_stw_round_n: std.atomic.Value(usize) = .init(0),
+```
+(`SpinLock`, `runtime/async_rt/spinlock.zig`'in ZATEN var olan, KANITLANMIŞ
+primitifi — `asap.SpinLock` OLARAK yeniden dışa aktarılıyor; Zig 0.16.0'da
+`std.Thread.Mutex` YOK, sadece bloklamayan `std.atomic.Mutex`/IO-kapsamlı
+`std.Io.Mutex` VAR, İKİSİ de UYGUN DEĞİL.)
+
+`WorkerPool.create()`, `n_workers`i `pool_active_workers`e YAZAR.
+`runtime/async_rt/scheduler.zig`'e:
+- `PoolLink`/`Scheduler` YENİ `stw_lock`/`active_workers`/`stw_round_n`
+  alanları TAŞIR (`attachToPool()` BUNLARI bağlar).
+- `stwParticipate()`in `const n = self.sibling_deques.len;` satırı
+  `const n = self.stw_round_n.?.load(.acquire);` OLUR.
+- YENİ `tryPermanentExit(self) bool`: KİLİDİ ALIR, `stw_requested`
+  AYARLIYSA `false` (worker KATILMALI) döner, DEĞİLSE `pool_active_
+  workers`i AZALTIP `true` (worker GÜVENLE KALICI çıkabilir) döner —
+  `run()`nun İKİ KALICI-çıkış NOKTASI (`plc==0` VE `poolWideDeadlockCheck`)
+  ARTIK BU TEK, PAYLAŞILAN yardımcıyı KULLANIR.
+
+`runtime/alloc/cycle_detector.zig`'in `nox_cycle_possible_root`ı, YENİ
+bir STW round'u İSTERKEN AYNI kilidi ALIR: `stw_requested` ZATEN
+AYARLIYSA HİÇBİR ŞEY YAPMAZ (round ZATEN talep EDİLMİŞ), DEĞİLSE O
+ANKİ `pool_active_workers`i `pool_stw_round_n`e KAYDEDİP `stw_requested`i
+AYARLAR — BÖYLECE HER round'un KENDİ, O ANDA GERÇEKTEN AYAKTA OLAN
+worker sayısı KAYDEDİLİR, ULAŞILAMAZ bir sayıya HİÇBİR ZAMAN
+YAKALANMAZ. Kilit SIRALAMASI: `cycle_gc_lock` (ÖNCEDEN alınmış) →
+`pool_stw_lock` — TEK sıra, `tryPermanentExit` ASLA `cycle_gc_lock`a
+DOKUNMADIĞINDAN deadlock RİSKİ YOK.
+
+### Doğrulama
+
+DÜZELTMEDEN ÖNCE AYNI Docker ortamında (4-CPU, GERÇEK `clang`, TAM `zig
+build test` yükü) hang **5/6** denemede ÜRETİLİYORDU; DÜZELTMEDEN SONRA
+**15/15** ardışık deneme (HİÇBİRİ 900 saniyelik zaman-aşımını AŞMADAN,
+17-330 saniye ARASINDA — İLK çalıştırma soğuk-cache derlemesi İçerdiğinden
+DAHA UZUN) TEMİZ tamamlandı, SIFIR hang. Aynı ortamda, DÜZELTİLMEMİŞ
+BASELINE'A karşı bir KONTROL çalıştırması da (o ÇALIŞMADA HANG
+OLUŞMAMIŞTI — 6 denemeden 1'inin BAŞARILI olması BEKLENEN oran İLE
+TUTARLI) YAPILDI VE gözlemlenen 3 test başarısızlığının (`nox_pool_run`
+"stolen_count" — ÖNCEDEN İŞARETLİ, AYRI bir flake [task_66e267b4];
+`http_serve_multicore_golden_test`; `binary_size_test`) DÜZELTİLMİŞ
+KODLA BİREBİR AYNI ŞEKİLDE, DÜZELTİLMEMİŞ baseline'da da GÖRÜLDÜĞÜ
+DOĞRULANDI — BU YÜZDEN bu 3 başarısızlık DÜZELTMEYLE İLGİSİZ, ortam-
+ÖZGÜ/ÖNCEDEN var olan sorunlardır (kanıt: AYNI komut, AYNI konteyner,
+SADECE kod DEĞİŞTİ; başarısızlıklar DEĞİŞMEDİ). Debug+ReleaseFast TAM
+paket + MN.6'nın KENDİ regresyon testi DEĞİŞMEDEN geçiyor.
+
+### Kritik dosyalar
+
+`runtime/alloc/asap.zig` (`PoolExtension`ya 3 YENİ alan), `runtime/
+async_rt/worker_pool.zig` (`WorkerPool.create()` + `attachToPool`
+çağrı SİTELERİ), `runtime/async_rt/bridge.zig` (production `attachToPool`
+çağrısı), `runtime/async_rt/scheduler.zig` (`PoolLink`/`Scheduler`
+alanları, `stwParticipate`, YENİ `tryPermanentExit`, `run()`'un İKİ
+kalıcı-çıkış noktası), `runtime/alloc/cycle_detector.zig`
+(`nox_cycle_possible_root`nin kilit-korumalı STW-talep mantığı).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

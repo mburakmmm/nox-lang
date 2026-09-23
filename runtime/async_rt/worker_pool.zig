@@ -92,6 +92,13 @@ pub const WorkerPool = struct {
     pool_stw_arrived: *std.atomic.Value(usize),
     pool_stw_sense: *std.atomic.Value(bool),
     wake_fds: []std.atomic.Value(i32),
+    /// Faz [YENİ] (bkz. plan dosyası "STW bariyeri kilitlenmesi düzeltmesi"):
+    /// `state.pool_stw_lock`/`pool_active_workers`/`pool_stw_round_n`e
+    /// (bkz. `asap.zig`) DOĞRUDAN İşaretçiler — AYNI desen, `Scheduler.
+    /// attachToPool`e `PoolLink`in YENİ alanları OLARAK geçirilir.
+    pool_stw_lock: *asap.SpinLock,
+    pool_active_workers: *std.atomic.Value(usize),
+    pool_stw_round_n: *std.atomic.Value(usize),
 
     /// TEK paylaşılan `RuntimeState`yi kurar, `arc_owner_pool` kapasitesini
     /// `n_workers`e YÜKSELTİR (Debug-only etki — bkz. `asap.
@@ -136,6 +143,11 @@ pub const WorkerPool = struct {
         errdefer state.allocator().destroy(pool_ext);
         pool_ext.* = .{};
         state.pool_ext = pool_ext;
+        // Faz [YENİ] (bkz. plan dosyası "STW bariyeri kilitlenmesi düzeltmesi"):
+        // bariyerin "kaç katılımcı bekleniyor" sayısı BAŞLANGIÇTA n_workers'a
+        // eşitlenir — HER worker `run()`dan KALICI olarak çıktığında
+        // (`tryPermanentExit`) BİR AZALTILIR.
+        pool_ext.pool_active_workers.store(n_workers, .monotonic);
 
         // Çağıran iş parçacığı HER ZAMAN slot 0'dır.
         asap.setWorkerSlot(0);
@@ -153,6 +165,9 @@ pub const WorkerPool = struct {
             .pool_stw_requested = &pool_ext.pool_stw_requested,
             .pool_stw_arrived = &pool_ext.pool_stw_arrived,
             .pool_stw_sense = &pool_ext.pool_stw_sense,
+            .pool_stw_lock = &pool_ext.pool_stw_lock,
+            .pool_active_workers = &pool_ext.pool_active_workers,
+            .pool_stw_round_n = &pool_ext.pool_stw_round_n,
             .wake_fds = pool_ext.pool_wake_fds[0..],
         };
         // `bridge.zig`nin `nox_async_init`i BUNU görüp `Scheduler.
@@ -418,6 +433,9 @@ fn stealTestWorkerEntry(rt: *anyopaque, slot: usize, ctx: *StealTestCtx) void {
         .stw_requested = ctx.pool.pool_stw_requested,
         .stw_arrived = ctx.pool.pool_stw_arrived,
         .stw_sense = ctx.pool.pool_stw_sense,
+        .stw_lock = ctx.pool.pool_stw_lock,
+        .active_workers = ctx.pool.pool_active_workers,
+        .stw_round_n = ctx.pool.pool_stw_round_n,
         .wake_fds = ctx.pool.wake_fds,
         .collect_fn = &cycle_detector.nox_cycle_collect,
         .rt = rt,
@@ -551,6 +569,9 @@ fn cycleStressWorkerEntry(rt: *anyopaque, slot: usize, ctx: *CycleStressCtx) voi
         .stw_requested = ctx.pool.pool_stw_requested,
         .stw_arrived = ctx.pool.pool_stw_arrived,
         .stw_sense = ctx.pool.pool_stw_sense,
+        .stw_lock = ctx.pool.pool_stw_lock,
+        .active_workers = ctx.pool.pool_active_workers,
+        .stw_round_n = ctx.pool.pool_stw_round_n,
         .wake_fds = ctx.pool.wake_fds,
         .collect_fn = &countingCollectFn,
         .rt = rt,
@@ -667,6 +688,9 @@ fn chanStressWorkerEntry(rt: *anyopaque, slot: usize, ctx: *ChanStressCtx) void 
         .stw_requested = ctx.pool.pool_stw_requested,
         .stw_arrived = ctx.pool.pool_stw_arrived,
         .stw_sense = ctx.pool.pool_stw_sense,
+        .stw_lock = ctx.pool.pool_stw_lock,
+        .active_workers = ctx.pool.pool_active_workers,
+        .stw_round_n = ctx.pool.pool_stw_round_n,
         .wake_fds = ctx.pool.wake_fds,
         .collect_fn = &cycle_detector.nox_cycle_collect,
         .rt = rt,
@@ -818,6 +842,9 @@ fn taskAwaitStressWorkerEntry(rt: *anyopaque, slot: usize, ctx: *TaskAwaitStress
         .stw_requested = ctx.pool.pool_stw_requested,
         .stw_arrived = ctx.pool.pool_stw_arrived,
         .stw_sense = ctx.pool.pool_stw_sense,
+        .stw_lock = ctx.pool.pool_stw_lock,
+        .active_workers = ctx.pool.pool_active_workers,
+        .stw_round_n = ctx.pool.pool_stw_round_n,
         .wake_fds = ctx.pool.wake_fds,
         .collect_fn = &cycle_detector.nox_cycle_collect,
         .rt = rt,
