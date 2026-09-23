@@ -22487,6 +22487,77 @@ bariyer+gerçek-uyku mantığı), `tests/cli/binary_size_test.zig` (YENİ
 
 ---
 
+## 3.178 `release.yml`nin ci-gate'i — v1.80.2'DEN BERİ 15 SÜRÜM BOYUNCA HER releasei engelleyen tasarım hatası (v1.95.1)
+
+### Context
+
+Kullanıcı GitHub'da "latest release"in HÂLÂ v1.80.1'de takılı KALDIĞINI
+fark ETTİ (BU turda kod GERÇEKTEN `main`de v1.95.0'A İLERLEMİŞ olmasına
+RAĞMEN). `gh run list --workflow=release.yml --limit 10` İLE DOĞRULANDI:
+`v1.80.2`den (Faz CI.1, §3.152'nin ci-gate mekanizmasının EKLENDİĞİ
+sürüm) `v1.95.0`A KADAR, ARADAKİ 15 sürümün HEPSİNDE release çalışması
+**TAM OLARAK 6-8 saniyede** BAŞARISIZ OLMUŞ — HİÇBİR İSTİSNA YOK.
+
+### Kök neden
+
+Faz CI.1'in `ci-gate` job'u (o zamanki tasarım gerekçesi TAMAMEN
+DOĞRUYDU: "`v1.76.0`'dan `v1.79.0`'a KADAR CI kırmızıyken release
+yayımlanıyordu, bunu ÖNLE") **TEK-ATIŞLIK** bir kontrol İDİ: `gh api
+.../workflows/ci.yml/runs?head_sha=$sha` sorgusunu BİR KEZ çağırıp,
+`status != completed` İSE ANINDA `exit 1` yapıyordu. AMA `release.yml`
+(`on: push: tags: ["v*"]`) VE `ci.yml` (`on: push` — `main`e HER push'ta)
+İKİSİ de AYNI push OLAYINA, NEREDEYSE AYNI ANDA (bu projenin KENDİ
+"push origin main && push origin vX.Y.Z" ritüeli SAYESİNDE, birkaç
+SANİYE ARAYLA) tetikleniyor — `ci.yml` İSE (3-platform matris, HER İşte
+ReleaseFast+Debug TAM `zig build test`) **17-30 DAKİKA** sürüyor. Bu
+YÜZDEN `ci-gate` her ÇALIŞTIĞINDA, `ci.yml`nin AYNI commit İçİn SADECE
+BAŞLAMIŞ (VEYA HENÜZ HİÇ KAYDEDİLMEMİŞ) olduğunu GÖRÜYOR, "HENÜZ
+tamamlanmadı" İLE ANINDA BAŞARISIZ OLUYORDU — **CI'NİN GERÇEKTEN yeşil
+OLUP OLMAYACAĞINDAN TAMAMEN BAĞIMSIZ olarak, HER SEFERİNDE**. Bu, "CI
+kırmızıydı" SORUNUNUN DEVAMI DEĞİL — ci-gate'in KENDİSİ, TASARIM GEREĞİ,
+BU push-timing MODELİYLE ASLA GEÇEMEZDİ.
+
+### Düzeltme
+
+`ci-gate` ARTIK bir `while true; do ... done` DÖNGÜSÜNDE poll eder (30
+saniyelik ARALIKLARLA, `elapsed` SAYACIYLA, EN FAZLA `max_wait_s=2100`
+— 35 dakika, `ci.yml`nin KENDİ HER-işteki `timeout-minutes: 30`
+sınırının ÜZERİNDE CÖMERT bir pay): HER turda `ci.yml`nin BU SHA İçİn
+`status`unu SORGULAR, `completed` OLMADIĞI SÜRECE (VEYA HİÇ BULUNAMADIĞI
+SÜRECE) 30 saniye UYUYUP TEKRAR DENER; `completed` OLDUĞUNDA `conclusion`u
+kontrol EDİP `success` DEĞİLSE `exit 1` (GÜVENLİK garantisi DEĞİŞMEDİ),
+`success` İSE `break` İLE devam eder. Job'un KENDİ `timeout-minutes: 40`
+(GitHub Actions'ın VARSAYILAN 360 dakikalık job zaman aşımından ÇOK DAHA
+DAR bir SINIR, gate'in KENDİSİNİN de sonsuza kadar ASILI KALMAMASI İçİn)
+EKLENDİ.
+
+**Maliyet notu**: bu job artık (CI süresine BAĞLI olarak) 10-25 dakika
+BOYUNCA bir `ubuntu-latest` runner'ı "meşgul" TUTUYOR — AMA job'un
+KENDİSİ HİÇBİR GERÇEK İş YAPMIYOR (SADECE `sleep`+`gh api` çağrısı), bu
+YÜZDEN CI-dakikası MALİYETİ İHMAL EDİLEBİLİR düzeydedir.
+
+### Sonuç ve geriye dönük etki
+
+v1.80.2-v1.94.0 ARASINDAKİ 14 sürüm HİÇBİR ZAMAN GERÇEK bir GitHub
+Release OLARAK yayımlanmadı — kod `main`de VE HER commit'in KENDİ git
+tag'i (`vX.Y.Z`) VARDI (bu YÜZDEN `git log`/`git tag` GEÇMİŞİ TAM VE
+DOĞRU), SADECE `gh release` varlık paketleri (`install.sh`nin İNDİRDİĞİ
+tarball'lar) EKSİKTİ — `install.sh` İLE KURULUM YAPAN kullanıcılar BU
+SÜRE BOYUNCA v1.80.1'DE KALMIŞ olacaktı (KAYNAKTAN `zig build` yapanlar
+ETKİLENMEDİ). Bu düzeltme SONRASI `v1.95.1` (VE SONRAKİ HER sürüm) ARTIK
+GERÇEKTEN yayımlanacak. Geçmiş 14 sürümün `workflow_dispatch`/`gh run
+rerun` İLE GERİYE DÖNÜK yayımlanıp YAYIMLANMAYACAĞI (VEYA SADECE
+`v1.95.1`den İTİBAREN İLERİYE dönük BAŞLANMASI) kullanıcının AYRI kararı
+— BU turda kod-seviyesi düzeltme YAPILDI, geçmiş release'lerin YENİDEN
+tetiklenmesi AYRI bir operasyonel adımdır.
+
+### Kritik dosyalar
+
+`.github/workflows/release.yml` (`ci-gate` job'u — tek-atışlık kontrol
+poll-döngüsüne çevrilir, YENİ `timeout-minutes: 40`).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

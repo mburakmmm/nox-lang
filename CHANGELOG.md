@@ -14,6 +14,35 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.95.1]
+
+### Düzeltildi (GERÇEK — `release.yml`nin ci-gate'i v1.80.2'DEN BERİ, 15 SÜRÜM BOYUNCA, İSTİSNASIZ HER releasei engelledi)
+
+- Kullanıcı GitHub'da "latest release"in HÂLÂ v1.80.1'de takılı KALDIĞINI
+  fark ETTİ — `gh run list --workflow=release.yml` İLE DOĞRULANDI:
+  v1.80.2'den (Faz CI.1, ci-gate'in EKLENDİĞİ sürüm) v1.95.0'A KADAR HER
+  TEK release çalışması **6-8 saniyede** BAŞARISIZ olmuş. **Kök neden**:
+  `ci-gate`'in ORİJİNAL kontrolü TEK-ATIŞLIKTI (poll YOK) — `release.yml`
+  `v*` etiketi push edildiğinde ANINDA tetiklenirken, `ci.yml` (AYNI
+  commit'in `main`e push'uyla TETİKLENEN, TAMAMEN AYRI bir workflow)
+  17-30 DAKİKA sürüyor — gate HER ZAMAN "ci.yml HENÜZ tamamlanmadı" İLE
+  BAŞARISIZ oluyordu, CI'nin GERÇEKTEN yeşil olup OLMAMASINDAN TAMAMEN
+  BAĞIMSIZ olarak. **Bu, CI'nin kendisinin kırmızı olmasından KAYNAKLANMIYORDU
+  — gate'in KENDİSİ, tasarım gereği, ASLA geçemiyordu.**
+- **Düzeltme**: `ci-gate` ARTIK bir `while` DÖNGÜSÜNDE poll eder (30
+  saniyede bir, EN FAZLA 35 dakika — `ci.yml`nin KENDİ HER-işteki 30-
+  dakikalık sınırının ÜZERİNDE CÖMERT bir pay) — `ci.yml`nin BU commit
+  İçİn GERÇEKTEN `completed` duruma ULAŞMASINI BEKLER, SONRA sonucunu
+  kontrol eder. Güvenlik garantisi DEĞİŞMEDİ (HÂLÂ `conclusion==success`
+  OLMADAN release YAYIMLANMAZ) — SADECE "henüz bitmedi" İLE "gerçekten
+  başarısız" AYIRT edilir hale geldi.
+- **Sonuç**: v1.80.2-v1.94.0 arasındaki 14 sürüm HİÇBİR ZAMAN GERÇEK bir
+  GitHub Release olarak yayımlanmadı (kod `main`de VE her commit'in KENDİ
+  git tag'i VARDI, SADECE `gh release` varlık paketleri EKSİKTİ) — BU
+  düzeltme SONRASI `v1.95.1` (VE sonraki HER sürüm) ARTIK GERÇEKTEN
+  yayımlanacak. Geçmiş sürümlerin GERİYE DÖNÜK yayımlanıp YAYIMLANMAYACAĞI
+  (workflow_dispatch İLE) kullanıcının AYRI kararı.
+
 ## [1.95.0]
 
 ### Düzeltildi (v1.94.0'ın GERÇEK CI koşusuyla bulunan iki AYRI, İLGİSİZ test flake'i)

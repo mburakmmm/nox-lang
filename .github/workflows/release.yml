@@ -44,31 +44,54 @@ jobs:
   ci-gate:
     name: CI durumu kontrolü (tag'lenen commit için)
     runs-on: ubuntu-latest
+    # v1.95.1 (bkz. nox-teknik-spesifikasyon.md): Faz CI.1'in ORİJİNAL
+    # tek-atışlık kontrolü GERÇEK bir tasarım hatası TAŞIYORDU — bu
+    # workflow `v*` etiketi push EDİLDİĞİNDE ANINDA (birkaç SANİYE İçİnde)
+    # tetiklenirken, `ci.yml` (AYNI commit'in `main`e push'uyla TETİKLENEN,
+    # AYRI bir workflow) 17-30 DAKİKA sürüyor — bu YÜZDEN gate HER ZAMAN
+    # (v1.80.2'DEN v1.95.0'A KADAR, 15 SÜRÜM BOYUNCA, İSTİSNASIZ) "ci.yml
+    # HENÜZ tamamlanmadı" İLE 6-8 SANİYEDE BAŞARISIZ oluyordu — CI'nin
+    # GERÇEKTEN yeşil OLUP OLMAMASINDAN TAMAMEN BAĞIMSIZ OLARAK. `timeout-
+    # minutes`, ci.yml'nin KENDİ HER-İşteki 30-dakikalık sınırının ÜZERİNDE
+    # CÖMERT bir pay İLE ayarlanır (job'un KENDİSİ hiçbir iş YAPMADAN
+    # BEKLEDİĞİNDEN ucuz).
+    timeout-minutes: 40
     steps:
-      - name: main'deki ci.yml sonucunu doğrula
+      - name: main'deki ci.yml sonucunu bekle/doğrula (poll)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           sha="${{ github.sha }}"
           echo "Etiketlenen commit: $sha"
-          run_json=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=1" --jq '.workflow_runs[0]')
-          if [ -z "$run_json" ] || [ "$run_json" = "null" ]; then
-            echo "::error::Bu commit için HİÇBİR ci.yml çalışması bulunamadı — CI HENÜZ tetiklenmemiş/tamamlanmamış olabilir. Release DURDURULUYOR."
-            exit 1
-          fi
-          status=$(echo "$run_json" | jq -r '.status')
-          conclusion=$(echo "$run_json" | jq -r '.conclusion')
-          echo "ci.yml durumu: status=$status conclusion=$conclusion"
-          if [ "$status" != "completed" ]; then
-            echo "::error::ci.yml HENÜZ tamamlanmadı (status=$status) — release'in bitmiş bir CI koşusunu beklemesi GEREKİR. Release DURDURULUYOR."
-            exit 1
-          fi
-          if [ "$conclusion" != "success" ]; then
-            echo "::error::ci.yml BU commit İçİn BAŞARISIZ (conclusion=$conclusion) — v1.79.0'ın KENDİ hatasının TEKRARI olmaması İçİn release DURDURULUYOR."
-            exit 1
-          fi
-          echo "ci.yml YEŞİL — release'e devam ediliyor."
+          max_wait_s=2100
+          poll_interval_s=30
+          elapsed=0
+          while true; do
+            run_json=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=1" --jq '.workflow_runs[0]')
+            if [ -n "$run_json" ] && [ "$run_json" != "null" ]; then
+              status=$(echo "$run_json" | jq -r '.status')
+              if [ "$status" = "completed" ]; then
+                conclusion=$(echo "$run_json" | jq -r '.conclusion')
+                echo "ci.yml durumu: status=$status conclusion=$conclusion"
+                if [ "$conclusion" != "success" ]; then
+                  echo "::error::ci.yml BU commit İçİn BAŞARISIZ (conclusion=$conclusion) — v1.79.0'ın KENDİ hatasının TEKRARI olmaması İçİn release DURDURULUYOR."
+                  exit 1
+                fi
+                echo "ci.yml YEŞİL (${elapsed}s beklendi) — release'e devam ediliyor."
+                break
+              fi
+              echo "ci.yml HENÜZ tamamlanmadı (status=$status) — ${elapsed}s beklendi, ${poll_interval_s}s SONRA tekrar kontrol edilecek."
+            else
+              echo "Bu commit için HENÜZ HİÇBİR ci.yml çalışması bulunamadı — ${elapsed}s beklendi, ${poll_interval_s}s SONRA tekrar kontrol edilecek."
+            fi
+            if [ "$elapsed" -ge "$max_wait_s" ]; then
+              echo "::error::ci.yml ${max_wait_s}s İçİnde TAMAMLANMADI (VEYA HİÇ BULUNAMADI) — release DURDURULUYOR (zaman aşımı)."
+              exit 1
+            fi
+            sleep "$poll_interval_s"
+            elapsed=$((elapsed + poll_interval_s))
+          done
 
   build:
     needs: ci-gate
