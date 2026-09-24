@@ -53,6 +53,20 @@ const BindingMap = std.StringHashMapUnmanaged(usize);
 
 pub const Analyzer = struct {
     allocator: std.mem.Allocator,
+    /// v2.0 stabilizasyon yol haritası, madde 2.1 (bkz. nox-teknik-
+    /// spesifikasyon.md §3.188): bu tanılama-only pass, Faz FFI.4'ün
+    /// GERÇEK codegen'i besleyen `retains(...)` mekanizmasından ÖNCEDEN
+    /// HABERSİZDİ — HER çağrı argümanını (extern olsun olmasın) koşulsuz
+    /// kaçış sayıyordu. Bu harita, `analyzeModule` başında bir kez
+    /// `module.body`'deki `.extern_def`lerden kurulur (isim -> parametre-
+    /// indeksi-hizalı `retains` bool dizisi, `codegen_qbe/registration.
+    /// zig`'in AYNI isim-çözümleme mantığının KÜÇÜK bir kopyası) — `.call`
+    /// dalı artık BUNU danışarak extern çağrılarında retained-OLMAYAN
+    /// argümanları kaçış SAYMAZ, GERÇEK derleyici davranışıyla TUTARLI
+    /// hale gelir. Sıradan (extern olmayan) çağrılar ESKİ, muhafazakâr
+    /// "her zaman kaçış" davranışını KORUR (bu pass'in KENDİ, borrow/move
+    /// analizi OLMAYAN tasarımı gereği).
+    extern_retains: std.StringHashMapUnmanaged([]const bool) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) Analyzer {
         return .{ .allocator = allocator };
@@ -60,6 +74,38 @@ pub const Analyzer = struct {
 
     pub fn analyzeModule(self: *Analyzer, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8) !Report {
         var report: Report = .{};
+
+        for (module.body) |stmt| {
+            if (stmt.kind == .extern_def) {
+                const ed = stmt.kind.extern_def;
+                const retains_arr = try self.allocator.alloc(bool, ed.params.len);
+                @memset(retains_arr, false);
+                for (ed.retains) |rname| {
+                    for (ed.params, 0..) |p, i| {
+                        if (std.mem.eql(u8, p.name, rname)) {
+                            retains_arr[i] = true;
+                            break;
+                        }
+                    }
+                }
+                // v2.0 madde 2.2: `@ffi.escape("ad")` — `retains(ad)`ın
+                // decorator-sözdizimli eşdeğeri (bkz. `codegen_qbe/
+                // registration.zig`nin AYNI birleştirmesi).
+                for (ed.decorators) |dec| {
+                    if (!std.mem.eql(u8, dec.name, "ffi.escape")) continue;
+                    for (dec.args) |a| {
+                        if (a != .string_lit) continue;
+                        for (ed.params, 0..) |p, i| {
+                            if (std.mem.eql(u8, p.name, a.string_lit)) {
+                                retains_arr[i] = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                try self.extern_retains.put(self.allocator, ed.name, retains_arr);
+            }
+        }
 
         var loose: std.ArrayListUnmanaged(ast.Stmt) = .empty;
         defer loose.deinit(self.allocator);
@@ -313,8 +359,18 @@ pub const Analyzer = struct {
                 // argümanını hiçbir yerde saklamadığı kesin olarak bilindiği için
                 // (kullanıcı tanımlı fonksiyonların aksine) kaçış saymıyoruz.
                 const is_print = c.callee.* == .identifier and std.mem.eql(u8, c.callee.identifier, "print");
-                for (c.args) |a| {
-                    if (!is_print) markEscapeIfIdentifier(scope, index_of, a, "bir çağrıya argüman olarak geçildiği için");
+                // v2.0 madde 2.1: çağrı bir `extern def`e İSE, argümanın kaçışı
+                // ARTIK o extern fonksiyonun `retains(...)`ına göre belirlenir
+                // (bkz. `Analyzer.extern_retains` belge notu) — sıradan
+                // (extern olmayan) çağrılar İçİn `arr == null`, ESKİ "her zaman
+                // kaçış" davranışı DEĞİŞMEDEN KORUNUR.
+                const extern_retains_arr: ?[]const bool = if (c.callee.* == .identifier)
+                    self.extern_retains.get(c.callee.identifier)
+                else
+                    null;
+                for (c.args, 0..) |a, i| {
+                    const retained = if (extern_retains_arr) |arr| (i < arr.len and arr[i]) else true;
+                    if (!is_print and retained) markEscapeIfIdentifier(scope, index_of, a, "bir çağrıya argüman olarak geçildiği için");
                     self.scanExprEscapes(scope, index_of, a);
                 }
                 switch (c.callee.*) {

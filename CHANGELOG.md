@@ -14,6 +14,29 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.101.0]
+
+### Eklendi
+
+- **`@ffi.escape("param", ...)`/`@ffi.noescape("param", ...)` decorator'ları
+  (bkz. nox-teknik-spesifikasyon.md §3.188, v2.0 yol haritasının 2. maddesinin
+  İLK yarısı)**: `extern def`in mevcut `retains(...)` yan tümcesinin
+  okunabilir decorator-sözdizimli eşdeğeri (BİREBİR aynı IR üretir — YENİ
+  codegen plumbing GEREKMEDİ). `@ffi.noescape` varsayılan davranışı AÇIKÇA
+  belgeler; AYNI parametrenin ikisiyle birden (çelişkili) işaretlenmesi
+  `ConflictingEscapeAnnotation` ile, tanınmayan bir `@ffi.*` decorator adı
+  `UnknownExternDecorator` ile reddedilir.
+
+### Düzeltildi
+
+- **Tanılama-only sahiplik analizi (`compiler/ownership/analysis.zig`,
+  SADECE `--verbose` çıktısını besler) ARTIK `extern def`in `retains(...)`/
+  `@ffi.escape`ından HABERSİZ DEĞİL** — v2.0 yol haritası madde 2
+  araştırması, roadmap'in "extern def argümanları GERÇEK codegen'de
+  koşulsuz kaçış sayılıyor" öncülünün YANLIŞ olduğunu buldu (GERÇEK codegen,
+  Faz FFI.4'ten beri VARSAYILAN olarak kaçmaz sayıyordu) — SADECE bu
+  tanılama pass'i stale'di, ARTIK GERÇEK davranışla TUTARLI.
+
 ## [1.100.0]
 
 ### Eklendi

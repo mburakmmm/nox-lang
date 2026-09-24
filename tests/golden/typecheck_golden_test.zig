@@ -362,6 +362,32 @@ test "golden(typecheck): extern def — retains(bilinmeyen) UnknownRetainedParam
     );
 }
 
+// v2.0 madde 2.2 (bkz. nox-teknik-spesifikasyon.md §3.188): `@ffi.escape`/
+// `@ffi.noescape` decorator'larının `retains(...)`la AYNI doğrulamadan
+// geçtiğinin VE aralarındaki çelişkinin/tanınmayan decorator adlarının
+// YAKALANDIĞININ kanıtı.
+
+test "golden(typecheck): extern def — @ffi.escape(\"xs\") GERÇEK bir parametreyi gösteriyor, OK" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_extern_ffi_escape_decorator_valid.nox"),
+        @embedFile("typecheck_cases/ok_extern_ffi_escape_decorator_valid.expected"),
+    );
+}
+
+test "golden(typecheck): extern def — @ffi.escape + @ffi.noescape AYNI parametrede ConflictingEscapeAnnotation ile reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_extern_ffi_escape_noescape_conflict.nox"),
+        @embedFile("typecheck_cases/err_extern_ffi_escape_noescape_conflict.expected"),
+    );
+}
+
+test "golden(typecheck): extern def — tanınmayan @ffi.* decorator UnknownExternDecorator ile reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_extern_unknown_ffi_decorator.nox"),
+        @embedFile("typecheck_cases/err_extern_unknown_ffi_decorator.expected"),
+    );
+}
+
 test "golden(typecheck): __init__ içermeyen sınıf (alansız, yalnızca metod)" {
     try expectGolden(
         @embedFile("typecheck_cases/ok_class_no_init.nox"),

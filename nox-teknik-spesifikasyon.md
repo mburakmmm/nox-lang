@@ -23488,6 +23488,74 @@ stress.yml` (YENİ `concurrency-torture` job'u).
 
 ---
 
+## 3.188 v2.0 stabilizasyon yol haritası, madde 2 (2.1+2.2) — Explicit FFI Escape Contracts
+
+Roadmap'in 2. maddesi (`@ffi.noescape`/`@ffi.escape(N)`/`@ffi.callback`
+decorator'ları) araştırılırken, ORİJİNAL (harici GPT-5.6 analizinin)
+öncülünün KISMEN YANLIŞ olduğu bulundu: "extern def'ler için derleyicinin
+BUGÜNKÜ 'her şeyi kaçış say' varsayımını daraltır" gerekçesi, GERÇEK
+codegen'i (`compiler/codegen_qbe/{local_escape.zig,inlining.zig}`) DEĞİL,
+SADECE tanılama-amaçlı (`--verbose` çıktısını besleyen, codegen'i HİÇ
+etkilemeyen) `compiler/ownership/analysis.zig`yi tarif ediyordu — GERÇEK
+codegen, Faz FFI.4'ün `retains(name1, name2, ...)` yan tümcesiyle VARSAYILAN
+olarak zaten "kaçmaz" sayıyordu. Bu bulgu kullanıcıya sunuldu, "tam kapsam
+(callback dahil)" seçeneği AÇIKÇA onaylandı (2026-09-24). Bu bölüm 2.1+2.2'yi
+belgeler; `@ffi.callback` (2.3) KENDİ, AYRI bir bölümde (İLERİDE) belgelenir.
+
+### 2.1 — Tanılama pass'i `retains(...)`la senkronize edildi
+
+`compiler/ownership/analysis.zig`'in `.call` dalı ARTIK `module.body`deki
+`.extern_def`lerden bir isim→`retains`-bool-dizisi haritası (`Analyzer.
+extern_retains`, `registration.zig`nin AYNI isim-çözümleme mantığının KÜÇÜK
+bir kopyası) kurar; bir çağrı bir extern fonksiyona İSE VE argüman o
+fonksiyonun `retains(...)`ında (VEYA `@ffi.escape`inde, bkz. 2.2) YOKSA
+kaçış İŞARETLENMEZ. Sıradan (extern olmayan) çağrılar ESKİ, muhafazakâr
+"her zaman kaçış" davranışını KORUR. Golden test: `tests/golden/ownership_
+cases/extern_{no_,}retains_escape.nox`.
+
+### 2.2 — `@ffi.escape("param", ...)`/`@ffi.noescape("param", ...)` decorator sugar'ı
+
+`retains(...)`ın BİREBİR anlamsal eşdeğeri, decorator sözdizimiyle:
+
+```nox
+@ffi.escape("xs")
+extern def keep_ref(xs: list[int]) -> None from "libexample"
+```
+
+- `ast.ExternDef`e `decorators: []const Decorator = &.{}` alanı eklendi
+  (öncesinde SADECE `FuncDef`/`ClassDef`de vardı); parser'ın `parseDecorators`ı
+  ARTIK noktalı (nitelikli) decorator adlarını (`ffi.escape`) da kabul eder
+  (`@route`/`@get` gibi TEK-segment adlar DEĞİŞMEDEN çalışır); `parseDecoratedDef`
+  `.kw_extern` dalıyla genişletildi.
+- **`FuncDef.decorators`in "derleyici ismi yorumlamaz" ilkesinden BİLİNÇLİ
+  bir SAPMA**: `checker.zig`nin `registerExternFunc`ı ARTIK `ed.decorators`ı
+  TARAR — `ffi.escape(...)` isimleri `retains`le AYNI isim-doğrulama koduna
+  KATILIR; `ffi.noescape(...)` isimleri "bu isim escape kümesinde YOK"
+  olduğunu doğrular (çelişki → `ConflictingEscapeAnnotation`); tanınmayan
+  HERHANGİ bir `@ffi.*`-ÖNEKLİ OLMAYAN VEYA üç isimden (escape/noescape/
+  callback) BİRİ OLMAYAN decorator adı → `UnknownExternDecorator`.
+- **Codegen'de YENİ plumbing GEREKMEDİ** — `ffi.escape` kaynaklı isimler,
+  `registration.zig`nin isim→indeks çözümlemesine GEÇMEDEN ÖNCE mevcut
+  `retains` isim listesine birleştirilir (`retains(xs)` İLE `@ffi.escape("xs")`
+  BYTE-BİREBİR AYNI IR üretir — `tests/golden/codegen_cases/extern_arg_
+  ffi_escape_decorator.nox` İLE doğrulandı).
+
+### Doğrulama
+
+`zig build test` (Debug+ReleaseFast) SIFIR regresyon (287 IR-diff fixture'ı,
+0 yeni anlık görüntü — `extern_arg_ffi_escape_decorator.nox` HARİÇ, ki O da
+`retains` eşdeğeriyle BYTE-BİREBİR AYNI). Yeni golden testler: 2 ownership
+(retains/escape İLE/OLMADAN kaçış), 3 typecheck (geçerli @ffi.escape; @ffi.escape+
+@ffi.noescape çelişkisi; tanınmayan @ffi.* decorator).
+
+### Kritik dosyalar
+
+`compiler/ownership/analysis.zig`, `compiler/parser/ast.zig`, `compiler/
+parser/parser.zig`, `compiler/typecheck/checker.zig`, `compiler/codegen_qbe/
+registration.zig`.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

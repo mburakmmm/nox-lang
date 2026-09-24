@@ -96,3 +96,22 @@ test "golden(ownership): raise ile fırlatılan yerel -> ARC" {
         @embedFile("ownership_cases/arc_raise_escape.expected"),
     );
 }
+
+// v2.0 madde 2.1 (bkz. nox-teknik-spesifikasyon.md §3.188): bu iki test,
+// tanılama-only pass'in ARTIK `extern def`in `retains(...)`ını danıştığını
+// kanıtlar — `retains(xs)` YOKSA argüman ASAP kalır (GERÇEK codegen'le
+// TUTARLI, ÖNCEDEN yanlışlıkla ARC gösterirdi), `retains(xs)` VARSA ARC'a
+// terfi eder (DEĞİŞMEDİ).
+test "golden(ownership): v2.0/2.1 — retains(...) OLMAYAN extern çağrı argümanı kaçmaz -> ASAP" {
+    try expectGolden(
+        @embedFile("ownership_cases/extern_no_retains_no_escape.nox"),
+        @embedFile("ownership_cases/extern_no_retains_no_escape.expected"),
+    );
+}
+
+test "golden(ownership): v2.0/2.1 — retains(...) İLE işaretli extern çağrı argümanı kaçar -> ARC" {
+    try expectGolden(
+        @embedFile("ownership_cases/extern_retains_escape.nox"),
+        @embedFile("ownership_cases/extern_retains_escape.expected"),
+    );
+}

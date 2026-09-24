@@ -356,7 +356,16 @@ pub const Parser = struct {
         while (self.check(.at_sign)) {
             const line = self.cur().line;
             _ = self.advance(); // '@'
-            const name = (try self.expect(.identifier)).lexeme;
+            // v2.0 madde 2.2/2.3 (bkz. nox-teknik-spesifikasyon.md §3.188):
+            // `@ffi.escape(...)` gibi NOKTALI (nitelikli) decorator adları —
+            // `@route`/`@get` gibi sıradan TEK-SEGMENT adlar DEĞİŞMEDEN
+            // çalışmaya devam eder (döngü, `.dot` YOKSA hiç girmez).
+            var name = (try self.expect(.identifier)).lexeme;
+            while (self.check(.dot)) {
+                _ = self.advance(); // '.'
+                const seg = (try self.expect(.identifier)).lexeme;
+                name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, seg });
+            }
             var args = std.ArrayList(ast.Expr).empty;
             if (self.match(.l_paren)) {
                 if (!self.check(.r_paren)) {
@@ -373,11 +382,12 @@ pub const Parser = struct {
         return decorators.toOwnedSlice(self.allocator);
     }
 
-    /// `@isim(...)` satırlarının ARDINDAN gelen `def`/`class`e decorator
-    /// listesini İLİŞTİRİR — v1: yalnızca bu ikisi geçerlidir (üst-düzey
+    /// `@isim(...)` satırlarının ARDINDAN gelen `def`/`class`/`extern def`e
+    /// decorator listesini İLİŞTİRİR — yalnızca bu üçü geçerlidir (üst-düzey
     /// deyim dispatch'i, bkz. `parseStmt`in `.at_sign` dalı). `class`
     /// decorator'ları PARSE EDİLİR ama checker AŞAMA 1'de reddeder (bkz.
-    /// plan dosyası "kapsam DIŞI").
+    /// plan dosyası "kapsam DIŞI"). `extern def` decorator'ları (v2.0 madde
+    /// 2.2/2.3: `@ffi.*`) checker'da GERÇEKTEN yorumlanır.
     fn parseDecoratedDef(self: *Parser) ParseError!ast.StmtKind {
         const decorators = try self.parseDecorators();
         return switch (self.curKind()) {
@@ -389,6 +399,14 @@ pub const Parser = struct {
             .kw_class => blk: {
                 var kind = try self.parseClassDef();
                 kind.class_def.decorators = decorators;
+                break :blk kind;
+            },
+            // v2.0 madde 2.2/2.3: `@ffi.escape(...)`/`@ffi.noescape(...)`/
+            // `@ffi.callback(...)`nin `extern def` hedefi — `FuncDef`/
+            // `ClassDef`'in AYNI deseni.
+            .kw_extern => blk: {
+                var kind = try self.parseExternDef();
+                kind.extern_def.decorators = decorators;
                 break :blk kind;
             },
             else => {

@@ -776,6 +776,12 @@ pub fn registerExternFunc(self: *Codegen, ed: ast.ExternDef) CodegenError!void {
     // Faz FFI.4: `ed.retains` (isim listesi, checker TARAFINDAN ZATEN
     // doğrulanmış — bkz. `checker.zig`nin `registerExternFunc`ı) `ed.params`a
     // KARŞI çözülüp İNDEKS-hizalı bir `[]bool`e ÇEVRİLİR.
+    //
+    // v2.0 madde 2.2 (bkz. nox-teknik-spesifikasyon.md §3.188):
+    // `@ffi.escape("ad")` decorator'ı `retains(ad)`ın BİREBİR eşdeğeridir —
+    // checker'ın `registerExternFunc`ı İKİSİNİ ZATEN doğruladığından
+    // (gerçek parametre + `@ffi.noescape`yle çelişki YOK), burada SADECE
+    // isim kümesi BİRLEŞTİRİLİR, YENİDEN doğrulama GEREKMEZ.
     const retains = try self.allocator.alloc(bool, ed.params.len);
     @memset(retains, false);
     for (ed.retains) |rname| {
@@ -783,6 +789,18 @@ pub fn registerExternFunc(self: *Codegen, ed: ast.ExternDef) CodegenError!void {
             if (std.mem.eql(u8, p.name, rname)) {
                 retains[i] = true;
                 break;
+            }
+        }
+    }
+    for (ed.decorators) |dec| {
+        if (!std.mem.eql(u8, dec.name, "ffi.escape")) continue;
+        for (dec.args) |a| {
+            if (a != .string_lit) continue;
+            for (ed.params, 0..) |p, i| {
+                if (std.mem.eql(u8, p.name, a.string_lit)) {
+                    retains[i] = true;
+                    break;
+                }
             }
         }
     }

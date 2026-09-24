@@ -106,6 +106,16 @@ pub const TypeError = error{
     /// ÇAĞRILDIĞI NOKTADA kontrol edilir — `TypeMismatch`e AŞIRI YÜKLEMEK
     /// yerine ayrı, grep-lenebilir bir tanı kodu.
     LowlevelRequired,
+    /// v2.0 madde 2.2 (bkz. nox-teknik-spesifikasyon.md §3.188): bir
+    /// `extern def`e eklenen decorator'ın ADI `ffi.escape`/`ffi.noescape`/
+    /// `ffi.callback` ÜÇLÜSÜNDEN BİRİ DEĞİL — `extern def`in decorator'ları
+    /// (`FuncDef`'in AKSİNE) derleyici tarafından GERÇEKTEN yorumlandığından
+    /// tanınmayan bir isim SESSİZCE YOK SAYILMAZ.
+    UnknownExternDecorator,
+    /// v2.0 madde 2.2: AYNI parametre adı HEM `retains(...)`/`@ffi.escape`
+    /// (kaçar) HEM `@ffi.noescape` (kaçmaz) İLE İŞARETLENDİ — çelişkili bir
+    /// beyan.
+    ConflictingEscapeAnnotation,
     OutOfMemory,
 };
 
@@ -1133,19 +1143,131 @@ pub const Checker = struct {
         // yan tümcesindeki HER isim GERÇEK bir parametre adıyla EŞLEŞMELİDİR
         // — bu, kontratın "checked" tarafıdır (ÖNCEDEN bu beyan İçİn HİÇBİR
         // sözdizimi/doğrulama YOKTU).
-        for (ed.retains) |rname| {
+        //
+        // v2.0 madde 2.2 (bkz. nox-teknik-spesifikasyon.md §3.188):
+        // `@ffi.escape("ad", ...)` decorator'ı `retains(...)`ın BİREBİR
+        // decorator-sözdizimli eşdeğeridir — İKİSİNİN isimleri BİRLEŞTİRİLİP
+        // AYNI doğrulamadan (gerçek bir parametreye karşılık gelme) geçirilir.
+        // `@ffi.noescape("ad", ...)` SADECE varsayılan (kaçmama) davranışını
+        // AÇIKÇA belgeler — `escape_names`de OLMADIĞINI doğrular (çelişki
+        // varsa `ConflictingEscapeAnnotation`). `@ffi.callback(...)`ın KENDİ
+        // doğrulaması AYRI, aşağıdaki `registerExternCallback` adımındadır.
+        // Tanınmayan HERHANGİ bir decorator adı (`FuncDef`in "derleyici ismi
+        // yorumlamaz" ilkesinden BİLİNÇLİ bir SAPMA) reddedilir.
+        var escape_names = std.ArrayList([]const u8).empty;
+        try escape_names.appendSlice(self.allocator, ed.retains);
+        for (ed.decorators) |dec| {
+            const is_escape = std.mem.eql(u8, dec.name, "ffi.escape");
+            const is_noescape = std.mem.eql(u8, dec.name, "ffi.noescape");
+            const is_callback = std.mem.eql(u8, dec.name, "ffi.callback");
+            if (!is_escape and !is_noescape and !is_callback) {
+                return self.fail(error.UnknownExternDecorator, "extern fonksiyon '{s}': bilinmeyen decorator '@{s}' (yalnızca @ffi.escape/@ffi.noescape/@ffi.callback geçerlidir)", .{ ed.name, dec.name });
+            }
+            if (is_escape) {
+                for (dec.args, 0..) |a, i| {
+                    if (a != .string_lit) {
+                        return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@ffi.escape' argümanı {d} yalnızca bir string LİTERALİ olabilir", .{ ed.name, i + 1 });
+                    }
+                    try escape_names.append(self.allocator, a.string_lit);
+                }
+            }
+        }
+        for (escape_names.items) |ename| {
             var found = false;
             for (ed.params) |p| {
-                if (std.mem.eql(u8, p.name, rname)) {
+                if (std.mem.eql(u8, p.name, ename)) {
                     found = true;
                     break;
                 }
             }
             if (!found) {
-                return self.fail(error.UnknownRetainedParam, "extern fonksiyon '{s}': 'retains({s})' bilinmeyen bir parametre adı içeriyor", .{ ed.name, rname });
+                return self.fail(error.UnknownRetainedParam, "extern fonksiyon '{s}': 'retains/@ffi.escape(\"{s}\")' bilinmeyen bir parametre adı içeriyor", .{ ed.name, ename });
+            }
+        }
+        for (ed.decorators) |dec| {
+            if (!std.mem.eql(u8, dec.name, "ffi.noescape")) continue;
+            for (dec.args, 0..) |a, i| {
+                if (a != .string_lit) {
+                    return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@ffi.noescape' argümanı {d} yalnızca bir string LİTERALİ olabilir", .{ ed.name, i + 1 });
+                }
+                const pname = a.string_lit;
+                var found = false;
+                for (ed.params) |p| {
+                    if (std.mem.eql(u8, p.name, pname)) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    return self.fail(error.UnknownRetainedParam, "extern fonksiyon '{s}': '@ffi.noescape(\"{s}\")' bilinmeyen bir parametre adı içeriyor", .{ ed.name, pname });
+                }
+                for (escape_names.items) |ename| {
+                    if (std.mem.eql(u8, ename, pname)) {
+                        return self.fail(error.ConflictingEscapeAnnotation, "extern fonksiyon '{s}': parametre '{s}' hem kaçan (retains/@ffi.escape) HEM kaçmayan (@ffi.noescape) olarak işaretlendi", .{ ed.name, pname });
+                    }
+                }
             }
         }
         try self.functions.put(self.allocator, ed.name, .{ .params = params, .return_type = ret });
+        try self.registerExternCallback(ed, params, ret);
+    }
+
+    /// v2.0 madde 2.3 (bkz. nox-teknik-spesifikasyon.md §3.188):
+    /// `@ffi.callback("param", context_param="param2")` doğrulaması —
+    /// `registerExternFunc`ten AYRILDI (okunabilirlik). `ed.decorators`de
+    /// `ffi.callback` YOKSA HİÇBİR ŞEY yapmaz.
+    fn registerExternCallback(self: *Checker, ed: ast.ExternDef, params: []const Type, ret: Type) TypeError!void {
+        _ = ret;
+        for (ed.decorators) |dec| {
+            if (!std.mem.eql(u8, dec.name, "ffi.callback")) continue;
+            if (dec.args.len < 1 or dec.args.len > 2 or dec.args[0] != .string_lit) {
+                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@ffi.callback' en az \"param_adi\" (callback parametresi) VE opsiyonel bir \"context_param=...\" argümanı bekler", .{ed.name});
+            }
+            const callback_param_name = dec.args[0].string_lit;
+            var callback_idx: ?usize = null;
+            for (ed.params, 0..) |p, i| {
+                if (std.mem.eql(u8, p.name, callback_param_name)) {
+                    callback_idx = i;
+                    break;
+                }
+            }
+            const cb_idx = callback_idx orelse {
+                return self.fail(error.UnknownRetainedParam, "extern fonksiyon '{s}': '@ffi.callback(\"{s}\")' bilinmeyen bir parametre adı içeriyor", .{ ed.name, callback_param_name });
+            };
+            if (params[cb_idx] != .func) {
+                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@ffi.callback' hedefi '{s}' bir fonksiyon TİPİNDE değil", .{ ed.name, callback_param_name });
+            }
+            const cb_func = params[cb_idx].func;
+            if (!isFfiSafeCallbackType(cb_func)) {
+                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@ffi.callback' hedefi '{s}'nin İMZASI FFI-güvenli değil (yalnızca int/float/bool/ptr parametreler VE int/float/bool/ptr/None dönüş)", .{ ed.name, callback_param_name });
+            }
+            if (dec.args.len != 2 or dec.args[1] != .string_lit) {
+                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': v1'de '@ffi.callback' bir \"context_param\" argümanı OLMADAN desteklenmez (userdata yuvası taşımayan C API'leri v1 kapsamı dışındadır)", .{ed.name});
+            }
+            const context_param_name = dec.args[1].string_lit;
+            var context_idx: ?usize = null;
+            for (ed.params, 0..) |p, i| {
+                if (std.mem.eql(u8, p.name, context_param_name)) {
+                    context_idx = i;
+                    break;
+                }
+            }
+            const ctx_idx = context_idx orelse {
+                return self.fail(error.UnknownRetainedParam, "extern fonksiyon '{s}': '@ffi.callback' context_param'ı '{s}' bilinmeyen bir parametre adı içeriyor", .{ ed.name, context_param_name });
+            };
+            if (ctx_idx == cb_idx) {
+                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@ffi.callback' context_param'ı callback parametresinin KENDİSİYLE AYNI olamaz", .{ed.name});
+            }
+            if (params[ctx_idx] != .ptr) {
+                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@ffi.callback' context_param'ı '{s}' bir 'ptr' tipinde değil", .{ ed.name, context_param_name });
+            }
+            if (cb_func.params.len == 0) {
+                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@ffi.callback' hedefi '{s}'nin İMZASI en az bir parametre (SON parametre 'userdata' yuvası SAYILIR) içermeli", .{ ed.name, callback_param_name });
+            }
+            if (cb_func.params[cb_func.params.len - 1] != .ptr) {
+                return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@ffi.callback' hedefi '{s}'nin İMZASININ SON parametresi (userdata yuvası) bir 'ptr' tipinde olmalı", .{ ed.name, callback_param_name });
+            }
+        }
     }
 
     /// Stdlib fazı §F: `extern def`in DÖNÜŞ TİPİ olarak `list[str]` (v1
@@ -1215,7 +1337,38 @@ pub const Checker = struct {
             // GEÇEMEZ. `ptr`in AKSİNE hiçbir Optional temsili ARC-DIŞI
             // DEĞİLDİR (heap tarafı BİLE checker seviyesinde "bu bir null
             // olabilir" anlamı taşır, C tarafı bunu YORUMLAYAMAZ).
-            .list, .class, .task, .channel, .thread_handle, .thread_channel, .task_local, .func, .optional => false,
+            // v2.0 madde 2.3 (bkz. nox-teknik-spesifikasyon.md §3.188,
+            // `@ffi.callback`): bir fonksiyon TİPİ, KENDİ parametrelerinin
+            // HEPSİ VE dönüş tipi SKALER (int/float/bool/ptr, dönüşte
+            // AYRICA `none`/"void") İSE FFI-güvenli sayılır — bu, ham bir
+            // C fonksiyon-işaretçisi imzasıyla (Nox'un normal closure/
+            // `__fnval` temsilinin AKSİNE, bkz. `isFfiSafeCallbackType`nin
+            // belge notu) UYUMLU olduğu anlamına gelir. `str`/`list`/`dict`/
+            // `class` parametre/dönüş İçEREN fonksiyon tipleri (C'nin
+            // ANLAYAMAYACAĞI Nox-özel ARC temsilleri taşıdıkları İçİn)
+            // REDDEDİLİR — mevcut davranış (koşulsuz `false`) KORUNUR.
+            .func => |ft| isFfiSafeCallbackType(ft),
+            .list, .class, .task, .channel, .thread_handle, .thread_channel, .task_local, .optional => false,
+        };
+    }
+
+    /// `isFfiSafeType`'ın `.func` dalının yardımcısı — bkz. onun belge notu.
+    /// Yalnızca `@ffi.callback`in KENDİ trampoline codegen'inin (v2.0 madde
+    /// 2.3) ürettiği ham C ABI'siyle uyumlu, TAMAMEN skaler bir imza mı
+    /// diye SORAR; bir Nox closure'ın GENEL kullanımına (dolaylı Nox-içi
+    /// çağrı, `(rt, env, args...)`) HİÇBİR ETKİSİ YOKTUR — o mekanizma
+    /// (bkz. `codegen_qbe/closures.zig`) BU kısıtlamadan TAMAMEN bağımsız
+    /// çalışmaya devam eder.
+    fn isFfiSafeCallbackType(ft: types.FuncType) bool {
+        for (ft.params) |p| {
+            switch (p) {
+                .int, .float, .boolean, .ptr => {},
+                else => return false,
+            }
+        }
+        return switch (ft.return_type.*) {
+            .int, .float, .boolean, .ptr, .none => true,
+            else => false,
         };
     }
 

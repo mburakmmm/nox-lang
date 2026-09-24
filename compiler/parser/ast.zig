@@ -282,6 +282,15 @@ pub const ExternDef = struct {
     /// istisna). VARSAYILAN (boş dilim): HİÇBİRİ saklanmaz (MEVCUT,
     /// DEĞİŞMEYEN davranış — 196 mevcut extern def'in TAMAMI).
     retains: []const []const u8 = &.{},
+    /// v2.0 madde 2.2/2.3 (bkz. nox-teknik-spesifikasyon.md §3.188):
+    /// `extern def`den HEMEN ÖNCE ayrıştırılan `@ffi.escape(...)`/
+    /// `@ffi.noescape(...)`/`@ffi.callback(...)` decorator'ları —
+    /// `FuncDef.decorators`in AYNI AST temsili (`Decorator`), ama BURADA
+    /// derleyici İSMİ (`ffi.*` önekiyle) GERÇEKTEN yorumlar (checker'daki
+    /// `registerExternFunc`, bkz. `FuncDef.decorators`'ın "derleyici ismi
+    /// yorumlamaz" ilkesinden BİLİNÇLİ bir SAPMA — bu, bu tür SAPMANIN İLK
+    /// örneğidir).
+    decorators: []const Decorator = &.{},
 };
 
 pub const VarDecl = struct {
