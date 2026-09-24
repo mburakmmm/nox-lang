@@ -14,6 +14,25 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.99.3]
+
+### Eklendi (bkz. nox-teknik-spesifikasyon.md §3.185)
+
+- `http_serve_multicore` N=2 testinin Linux/aarch64'teki stack-smashing
+  çöküşü İçİn GERÇEK CI'de bir core-dump/backtrace toplama mekanizması
+  eklendi — §3.184'ün KENDİ "gelecekteki tur" notunun yerine getirilmesi.
+  YEREL Docker reprodüksiyonu (§3.183) güvenilmez olduğundan (valgrind/
+  GDB enstrümantasyonu çöküşü BAZEN MASKELİYORDU), teşhis ARTIK GERÇEK
+  CI runner'ının kendisinden toplanıyor: test, ÇÖKEN `prog` ikilisini
+  (tmpDir silinmeden ÖNCE) kalıcı bir yola kopyalıyor (`NOX_CRASH_
+  ARTIFACTS_DIR`); CI (Linux işleri) `kernel.core_pattern`i yapılandırıp
+  `ulimit -c unlimited` ayarlıyor, test adımı BAŞARISIZ olsa BİLE
+  (`if: always()`) core dosyalarını bulup `gdb`yle GERÇEK bir backtrace'i
+  CI logina yazdırıyor VE core+ikiliyi 14 gün saklanan bir artefact
+  olarak yüklüyor. SAF bir teşhis-altyapısı eklemesi — runtime/derleyici
+  davranışı DEĞİŞMEDİ, henüz aarch64'ün KENDİ kök nedeni ÇÖZÜLMEDİ (bir
+  SONRAKİ gerçek çöküşte artık GERÇEK bir backtrace elde edilecek).
+
 ## [1.99.2]
 
 ### Düzeltildi (bkz. nox-teknik-spesifikasyon.md §3.184)

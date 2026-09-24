@@ -168,6 +168,25 @@ jobs:
         run: |
           sudo apt-get install -y -qq binutils-multiarch
 
+      # Faz [core-dump teşhisi] (bkz. nox-teknik-spesifikasyon.md §3.184'ün
+      # "GELECEKTEKİ bir tur" notu): Linux/aarch64'teki `http_serve_multicore`
+      # N=2 testinin stack-smashing çöküşü YEREL Docker reprodüksiyonuyla
+      # KANITLANAMADI (bkz. v1.99.0/v1.99.1'in KENDİ, dürüstçe belgelenen
+      # "kesin mekanik kanıt bulunamadı" sonucu) — bu YÜZDEN GERÇEK CI
+      # runner'ında, bir SONRAKİ çöküşte GERÇEK bir core dump/backtrace
+      # YAKALAMAK İçİn: kernel'in core-dump hedefini SABİT bir yola (apport/
+      # varsayılan pipe-handler'ı DEVRE DIŞI bırakarak) YÖNLENDİRİR + gdb
+      # kurar. `ulimit -c unlimited` BURADA AYARLANMAZ — GitHub Actions'ın
+      # HER `run:` adımı AYRI bir shell olduğundan ulimit sonraki adıma
+      # TAŞINMAZ, bu YÜZDEN "zig build test (Debug)" adımının KENDİ İçİNDE
+      # ayarlanır.
+      - name: Çekirdek dökümü (core dump) yapılandırması (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y -qq gdb
+          mkdir -p /tmp/nox_cores /tmp/nox_crash_artifacts
+          sudo sysctl -w kernel.core_pattern=/tmp/nox_cores/core.%e.%p
+
       - name: zig build (Debug)
         run: zig build
 
@@ -185,8 +204,62 @@ jobs:
       # davranışa DÖNÜLDÜ) — `binary_size_test`in "failed without output"
       # hatası SADECE teşhis mesajlarıyla (bkz. `tests/cli/binary_size_
       # test.zig`) ele alındı, CI paralelliğine AYRICA dokunulmadı.
+      #
+      # `NOX_CRASH_ARTIFACTS_DIR` (bkz. `tests/compat/http_serve_multicore_
+      # golden_test.zig`nin `maybeSaveCrashArtifact`ı) SADECE Linux'ta
+      # AYARLANIR — o testin ÇÖKEN ikilisini tmpDir SİLİNMEDEN ÖNCE
+      # KAYBOLMAYAN bir yola KOPYALAMASI İçİn (aşağıdaki "her zaman"
+      # adımının GDB'nin sembolize edebileceği bir ikiliye İHTİYACI VAR).
+      # `ulimit -c unlimited` de BURADA (Linux'ta, AYNI shell İçİnde)
+      # ayarlanır — kernel.core_pattern'in KENDİSİ (yukarıdaki adım) HER
+      # zaten süreç İçİn geçerli sistem-genelinde bir ayar, AMA HER sürecin
+      # KENDİ core-dump İZNİ (RLIMIT_CORE) AYRI/miras alınan bir şeydir.
       - name: zig build test (Debug)
-        run: zig build test
+        env:
+          NOX_CRASH_ARTIFACTS_DIR: /tmp/nox_crash_artifacts
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            ulimit -c unlimited
+          fi
+          zig build test
+
+      # `if: always()` — "zig build test (Debug)" BAŞARISIZ olsa BİLE
+      # çalışır (asıl amaç TAM OLARAK BU: bir çöküş OLDUĞUNDA teşhis
+      # üretmek). Core dosyası YOKSA (normal/yeşil bir koşu) SESSİZCE
+      # hiçbir şey yapmadan biter.
+      - name: Çekirdek dökümü analizi (varsa, Linux)
+        if: always() && runner.os == 'Linux'
+        run: |
+          set +e
+          shopt -s nullglob
+          cores=(/tmp/nox_cores/core.*)
+          if [ ${#cores[@]} -eq 0 ]; then
+            echo "Hiç core dosyası bulunamadı (çöküş yoktu VEYA core-dump üretilmedi)."
+            exit 0
+          fi
+          for core in "${cores[@]}"; do
+            echo "=== $core ==="
+            pid=$(echo "$core" | sed -E 's/.*\.([0-9]+)$/\1/')
+            bin=$(ls /tmp/nox_crash_artifacts/*_"$pid" 2>/dev/null | head -n1)
+            if [ -z "$bin" ]; then
+              echo "eslesen kaydedilmis ikili bulunamadi (pid=$pid) — sadece core dosyasindan gdb denenecek"
+              gdb -batch -ex 'bt full' -ex 'info registers' -ex 'thread apply all bt full' --core="$core" || true
+            else
+              echo "ikili: $bin"
+              gdb -batch -ex 'bt full' -ex 'info registers' -ex 'thread apply all bt full' "$bin" --core="$core" || true
+            fi
+          done
+
+      - name: Çekirdek dökümü + ikili artefaktları (varsa, Linux)
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nox-core-dumps-${{ matrix.name }}
+          path: |
+            /tmp/nox_cores/
+            /tmp/nox_crash_artifacts/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: zig build (ReleaseFast)
         run: zig build -Doptimize=ReleaseFast

@@ -23216,6 +23216,91 @@ GÜVENİLMEZLİĞİNE bel BAĞLAMADAN) AYRI bir GELECEKTEKİ tura BIRAKILDI.
 
 ---
 
+## 3.185 GERÇEK CI'de core-dump/backtrace toplama mekanizması eklenmesi
+(§3.184'ün kendi "gelecekteki tur" notunun yerine getirilmesi)
+
+### Context
+
+§3.184'ün KENDİ "Kapsam DIŞI" notu, `http_serve_multicore`'un N=2
+testinin Linux/aarch64'teki stack-smashing kök nedeninin KESİN bir
+düzeltim İçİn "GERÇEK CI runner'ında bir core-dump/backtrace toplama
+mekanizması" GEREKTİRDİĞİNİ AÇIKÇA belirtmişti — YEREL Docker
+reprodüksiyonunun GÜVENİLMEZLİĞİ (bkz. §3.183: valgrind/GDB'nin
+enstrümantasyon YOĞUNLUĞUNA göre çöküşü BAZEN MASKELEMESİ, AYNI script'in
+FARKLI çalıştırmalarda %0-60 arası DEĞİŞEN reprodüksiyon oranı ÜRETMESİ)
+YÜZÜNDEN daha fazla YEREL debug turunun VERİMSİZ olacağı KABUL EDİLMİŞTİ.
+
+### Uygulama
+
+`http_serve_multicore` N=2 testinin (`tests/compat/http_serve_multicore_
+golden_test.zig`) KENDİ `compileToBinary`sinin ürettiği `prog` ikilisi,
+`std.testing.tmpDir`nin İÇİNDE yaşıyor — test fonksiyonu döndüğünde
+(çöksün ya da çökmesin) `defer tmp.cleanup()` bu dizini SİLİYOR. Bir CI
+adımı `zig build test` TAMAMEN BİTTİKTEN SONRA çalışacağından, ORİJİNAL
+ikili o ana kadar ÇOKTAN silinmiş olur — bir core dump'ı sembolize etmek
+İçİn KAYBOLMAYAN bir ikiliye İHTİYAÇ VAR. Bu YÜZDEN:
+
+1. **YENİ `maybeSaveCrashArtifact` yardımcısı** (aynı test dosyasında):
+   `NOX_CRASH_ARTIFACTS_DIR` ortam değişkeni AYARLIYSA (SADECE CI'nin
+   teşhis modunda), `compileToBinary`nin döndürdüğü `bin_path`i (tmpDir
+   silinmeden ÖNCE) O dizine, PID'i taşıyan bir adla (`prog_multicore_
+   n2_<pid>`) kopyalar. Ortam değişkeni AYARLI DEĞİLSE (normal yerel/CI
+   koşusu) SESSİZCE hiçbir şey yapmaz — SIFIR maliyet, SIFIR davranış
+   değişikliği. SADECE N=2 testinin çağrı sitesine EKLENDİ (dosyadaki
+   DİĞER İKİ test AYNI PID'i paylaştığından — HEPSİ TEK bir `zig test`
+   ikilisinde SIRAYLA çalışıyor — aynı hedef dosya adını KULLANMAK
+   BİRBİRLERİNİ EZERDİ; sadece ÇÖKEN test'in KENDİSİ enstrümante edildi).
+2. **`.github/workflows/ci.yml`ye (ana 3-platform matrisi) YENİ, Linux-
+   özel adımlar**:
+   - "zig build test (Debug)"TEN ÖNCE: `gdb` kurulur, `/tmp/nox_cores`/
+     `/tmp/nox_crash_artifacts` dizinleri oluşturulur, `kernel.core_
+     pattern` `/tmp/nox_cores/core.%e.%p`ye YÖNLENDİRİLİR (Ubuntu'nun
+     VARSAYILAN `apport` pipe-handler'ını BYPASS eder — pipe-handler'lar
+     PLAIN core dosyası ÜRETMEZ).
+   - "zig build test (Debug)"nin KENDİSİ `NOX_CRASH_ARTIFACTS_DIR=/tmp/
+     nox_crash_artifacts` ortam değişkenini taşır VE (SADECE Linux'ta)
+     `ulimit -c unlimited`i ÇALIŞTIRDIĞI AYNI shell İçİnde ayarlar
+     (GitHub Actions'ın HER `run:` bloğu AYRI bir shell OLDUĞUNDAN,
+     `ulimit` BİR ÖNCEKİ adımdan MİRAS ALINAMAZ — `zig build test`i
+     ÇAĞIRAN komutla AYNI satırda/blokta olmak ZORUNDADIR, aksi halde
+     çocuk süreçler [`test` ikilisi → `prog`] varsayılan/SIFIR core-dump
+     limitini MİRAS alır).
+   - "zig build test (Debug)"TEN SONRA, **`if: always()`** (test adımı
+     BAŞARISIZ olsa BİLE çalışır — asıl amaç TAM OLARAK budur): `/tmp/
+     nox_cores/core.*` glob'unu tarar, HER core dosyası İçİn dosya
+     adındaki PID'i (`core.<comm>.<pid>`) çıkarıp `/tmp/nox_crash_
+     artifacts/*_<pid>` ile EŞLEŞEN kaydedilmiş ikiliyi arar, `gdb -batch
+     -ex 'bt full' -ex 'info registers' -ex 'thread apply all bt full'`
+     İLE GERÇEK bir backtrace'i DOĞRUDAN CI logina YAZDIRIR (ikili
+     bulunamazsa SADECE core dosyasından, sembolsüz bir dökümle devam
+     eder — TAMAMEN BAŞARISIZ olmak yerine).
+   - AYNI `if: always()` koşuluyla, core dosyalarını + kaydedilmiş
+     ikilileri `actions/upload-artifact@v4` İLE (`if-no-files-found:
+     ignore` — normal/yeşil koşularda HİÇBİR ŞEY yüklenmez) 14 gün
+     saklanan bir artefact OLARAK YÜKLER — GDB'nin CI logunda GÖSTERDİĞİ
+     backtrace'in ÖTESİNDE, DAHA DERİN yerel analiz (ör. `objdump`/farklı
+     bir gdb sürümüyle) İçİn ham dosyalar HER ZAMAN erişilebilir kalır.
+
+### Bilinçli sınır
+
+Bu mekanizma SADECE Linux işlerinde (macOS'un core-dump ayarları KÖKTEN
+FARKLI — `/cores/`, `sudo`-korumalı, AYRI bir mekanizma gerektirir) VE
+SADECE `http_serve_multicore` N=2 testi İçİn (BİLİNEN, TEKRARLAYAN
+ÇÖKME NOKTASI) etkinleştirilmiştir — CI'nin GENEL amaçlı bir "her testi
+core-dump'la enstrümante et" ALTYAPISI DEĞİLDİR (BAŞKA bir test İleride
+BENZER bir kararsızlık gösterirse, AYNI `maybeSaveCrashArtifact` deseni
+O testin KENDİ dosyasına da EKLENEBİLİR).
+
+### Kritik dosyalar
+
+`tests/compat/http_serve_multicore_golden_test.zig` (YENİ
+`maybeSaveCrashArtifact` + N=2 testinin çağrı sitesine 1 satır),
+`.github/workflows/ci.yml` (3 yeni Linux-özel adım: core-dump
+yapılandırması, `zig build test (Debug)`in env/ulimit güncellemesi,
+`if: always()` analiz + artefact-yükleme adımları).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

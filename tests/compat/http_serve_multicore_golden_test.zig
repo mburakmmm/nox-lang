@@ -81,6 +81,24 @@ fn compileToBinary(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, sourc
     return bin_path;
 }
 
+/// Faz [core-dump teşhisi] (bkz. nox-teknik-spesifikasyon.md §3.184):
+/// `NOX_CRASH_ARTIFACTS_DIR` ortam değişkeni AYARLIYSA (SADECE CI'nin
+/// Linux/aarch64 teşhis modunda), `bin_path`'i (tmpDir SİLİNMEDEN ÖNCE —
+/// `defer tmp.cleanup()` test fonksiyonu DÖNENE kadar ÇALIŞMAZ) O dizine,
+/// PID'i taşıyan bir adla KOPYALAR. Gerekçe: CI'nin post-mortem gdb adımı
+/// bir core dump'ı SEMBOLİZE edebilmek İçİn KAYBOLMAYAN bir ikiliye
+/// İHTİYAÇ DUYAR — `tmp.cleanup()` HER test fonksiyonu DÖNDÜĞÜNDE
+/// (crash olsun OLMASIN) çalıştığından, `zig build test` TAMAMEN
+/// BİTTİKTEN SONRA çalışan AYRI bir CI adımı ORİJİNAL `bin_path`'i ARTIK
+/// BULAMAZ. Ortam değişkeni AYARLI DEĞİLSE (normal yerel/CI koşusu)
+/// SESSİZCE hiçbir şey yapmaz — SIFIR maliyet.
+fn maybeSaveCrashArtifact(allocator: std.mem.Allocator, io: std.Io, bin_path: []const u8) void {
+    const dir_path = std.mem.span(std.c.getenv("NOX_CRASH_ARTIFACTS_DIR") orelse return);
+    _ = std.process.run(allocator, io, .{ .argv = &.{ "mkdir", "-p", dir_path } }) catch return;
+    const dest = std.fmt.allocPrint(allocator, "{s}/prog_multicore_n2_{d}", .{ dir_path, std.c.getpid() }) catch return;
+    _ = std.process.run(allocator, io, .{ .argv = &.{ "cp", bin_path, dest } }) catch return;
+}
+
 fn probeFreePort() !u16 {
     const fd = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
     if (fd < 0) return error.SocketFailed;
@@ -163,6 +181,7 @@ test "nox.http.serve_multicore: uctan uca, N=2 is parcacigi, iki EZSAMANLI istem
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const bin_path = try compileToBinary(a, &tmp, source);
+    maybeSaveCrashArtifact(allocator, io, bin_path);
 
     var child = try std.process.spawn(io, .{
         .argv = &.{bin_path},
