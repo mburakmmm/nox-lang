@@ -226,6 +226,24 @@ jobs:
       # çalışır (asıl amaç TAM OLARAK BU: bir çöküş OLDUĞUNDA teşhis
       # üretmek). Core dosyası YOKSA (normal/yeşil bir koşu) SESSİZCE
       # hiçbir şey yapmadan biter.
+      #
+      # v1.99.5: BU adımın İLK sürümü İKİ GERÇEK hata İçeriyordu (v1.99.4'ün
+      # KENDİ push'unun GERÇEK CI koşusunda YAKALANDI): (1) `ls glob* 2>/dev/
+      # null | head -n1` — glob HİÇBİR ŞEYE eşleşmediğinde (nullglob BU
+      # `ls` ÇAĞRISININ KENDİ argüman-genişletmesine, `$(...)` komut
+      # ikamesinin İÇİNDE bile OLSA, GENİŞLEME BOŞ KALDIĞINDA `ls`nin
+      # SIFIR argümanla çağrılmasına VE `ls`nin argümansız HÂLİNİN
+      # ÇALIŞMA DİZİNİNİ LİSTELEMESİNE yol AÇAR) — GERÇEK bir koşuda BU
+      # "AGENTS.md"yi (repo kökünün İLK dosyası) "ikili" SANDI; (2) core
+      # dosyasının PID'i (`%p`) ÇÖKEN alt SÜRECİN (`prog`) PID'idir, AMA
+      # `maybeSaveCrashArtifact` (http_serve_multicore_golden_test.zig)
+      # KENDİ ÜST test SÜRECİNİN PID'ini kaydediyordu — İKİSİ HİÇBİR ZAMAN
+      # EŞLEŞMEZ (bkz. o fonksiyonun GÜNCELLENMİŞ belge notu). Düzeltme:
+      # PID EŞLEŞTİRMEYE ÇALIŞMAK YERİNE (yardımcı ARTIK sabit bir isimle
+      # kaydediyor), kaydedilmiş HER ikili HER core dosyasına karşı
+      # DENENİR (bu test dosyası başına EN FAZLA 1 ikili ürettiğinden ucuz)
+      # VE glob genişlemeleri HER YERDE bash DİZİLERİ (nullglob'un GÜVENLE
+      # çalıştığı TEK yol) İLE yapılır, ASLA `ls`e PIPE EDİLMEZ.
       - name: Çekirdek dökümü analizi (varsa, Linux)
         if: always() && runner.os == 'Linux'
         run: |
@@ -236,16 +254,17 @@ jobs:
             echo "Hiç core dosyası bulunamadı (çöküş yoktu VEYA core-dump üretilmedi)."
             exit 0
           fi
+          bins=(/tmp/nox_crash_artifacts/*)
           for core in "${cores[@]}"; do
             echo "=== $core ==="
-            pid=$(echo "$core" | sed -E 's/.*\.([0-9]+)$/\1/')
-            bin=$(ls /tmp/nox_crash_artifacts/*_"$pid" 2>/dev/null | head -n1)
-            if [ -z "$bin" ]; then
-              echo "eslesen kaydedilmis ikili bulunamadi (pid=$pid) — sadece core dosyasindan gdb denenecek"
+            if [ ${#bins[@]} -eq 0 ]; then
+              echo "kaydedilmis hicbir ikili yok — sadece core dosyasindan gdb denenecek"
               gdb -batch -ex 'bt full' -ex 'info registers' -ex 'thread apply all bt full' --core="$core" || true
             else
-              echo "ikili: $bin"
-              gdb -batch -ex 'bt full' -ex 'info registers' -ex 'thread apply all bt full' "$bin" --core="$core" || true
+              for bin in "${bins[@]}"; do
+                echo "deneniyor ikili: $bin"
+                gdb -batch -ex 'bt full' -ex 'info registers' -ex 'thread apply all bt full' "$bin" --core="$core" || true
+              done
             fi
           done
 

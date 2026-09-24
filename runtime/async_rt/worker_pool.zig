@@ -515,8 +515,26 @@ fn stealTestWorkerEntry(rt: *anyopaque, slot: usize, ctx: *StealTestCtx) void {
         // v1.99.4: BU 375ms'lik pencere de GERÇEK CI'de (v1.99.2/v1.99.3'ün
         // AYNI push'unda, `pool_bridge.zig`nin KARDEŞ sitelerinden biri
         // İLE) TEKRAR YETERSİZ kaldı — pencere ~4 KATINA (~3.175 saniyeye)
-        // ÇIKARILDI. BAŞARILI koşularda SIFIR EK maliyet DEĞİŞMEDİ.
-        const backoffs = [_]i64{ 5, 20, 50, 100, 200, 400, 800, 1600 };
+        // ÇIKARILDI.
+        //
+        // v1.99.5: v1.99.4'ün ~3.175 saniyelik penceresi de GERÇEK CI'de
+        // (AYNI push'un HEMEN SONRAKİ koşusunda, BU SEFER macOS/aarch64'te,
+        // `pool_bridge.zig`nin "Faz MN.8 Bulgu A" testinde) TEKRAR YETERSİZ
+        // kaldı — DÖRDÜNCÜ recurrence. `sleepMs`in KENDİSİ HAM bir `nanosleep`
+        // OLDUĞUNDAN (fiber-farkında DEĞİL — bkz. bu dosyanın/pool_bridge.
+        // zig'in `sleepMs`i), backoff SIRASINDA worker 0'ın KENDİ OS iş
+        // parçacığı TAMAMEN uykuda — TEK SORU kardeş iş parçacıklarının
+        // GERÇEK CI host'unda BU PENCERE İçİnde HİÇ zamanlanıp
+        // ZAMANLANMADIĞI (paylaşılan/AŞIRI-abone bir host'ta OS-seviyesi
+        // AÇLIK, tek bir çözümü OLMAYAN bir risk). Pencere TEKRAR ~4 KATINA
+        // (~12.775 saniyeye) ÇIKARILDI — BAŞARILI koşularda SIFIR EK maliyet
+        // (erken çıkış) DEĞİŞMEDİ. BU sınır DAHA DA aşılırsa, kök sorunun
+        // "daha uzun bekle" İLE ÇÖZÜLEMEYECEK KADAR ciddi bir host-seviyesi
+        // AÇLIK/kaynak-kısıtı OLDUĞU KABUL EDİLMELİ VE AYRI, YAPISAL bir
+        // çözüm (ör. sibling'lerin BAŞLADIĞINI KANITLAYAN daha güçlü bir
+        // bariyer, VEYA testin KENDİSİNİ birden fazla BAĞIMSIZ deneme
+        // turuna bölmek) ARAŞTIRILMALIDIR.
+        const backoffs = [_]i64{ 5, 20, 50, 100, 200, 400, 800, 1600, 3200, 6400 };
         for (backoffs) |ms| {
             sleepMs(ms);
             var any_stolen = false;

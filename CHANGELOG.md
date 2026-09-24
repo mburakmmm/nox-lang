@@ -14,6 +14,43 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.99.5]
+
+### Düzeltildi
+
+- v1.99.4'ün push'unun GERÇEK CI koşusu İKİ AYRI, YENİ bulguyu ortaya
+  çıkardı — İKİSİ de düzeltildi:
+  - `nox_pool_run` backoff'u (üç site: `pool_bridge.zig`nin İKİ testi +
+    `worker_pool.zig`nin `StealTestCtx`si) v1.99.4'ün ~3.175 saniyelik
+    penceresiyle DE (bu SEFER macOS/aarch64'te) TEKRAR `stolen_count ==
+    0` İLE BAŞARISIZ OLDU — DÖRDÜNCÜ recurrence. Pencere TEKRAR ~4 KATINA
+    (~12.775 saniyeye) ÇIKARILDI; BAŞARILI koşularda SIFIR ek maliyet
+    DEĞİŞMEDİ. Kök sorun (GERÇEK CI host'unun DEĞİŞKEN/AŞIRI-abone
+    kaynak-çekişmesi) hâlâ KANITLANMIŞ değil — bu DAHA GENİŞ bir pencere,
+    KESİN bir düzeltme DEĞİL.
+  - GERÇEK CI'de (aarch64/Linux) `http_serve_multicore` N=2 testinin
+    GERÇEK stack-smashing çöküşü BİR KEZ DAHA TETİKLENDİ VE v1.99.3'ün
+    core-dump mekanizması GERÇEKTEN bir `core.prog.<pid>` dosyası
+    ÜRETTİ — AMA analiz adımının İKİ AYRI hatası YÜZÜNDEN doğru
+    sembolize EDİLEMEDİ: (1) `ls glob* 2>/dev/null | head -n1`, glob
+    HİÇBİR ŞEYE eşleşmediğinde `ls`in ARGÜMANSIZ ÇALIŞMA DİZİNİNİ
+    listelemesine yol AÇIYORDU ("AGENTS.md"yi "ikili" SANDI); (2)
+    `maybeSaveCrashArtifact` (http_serve_multicore_golden_test.zig)
+    ÇAĞIRAN test SÜRECİNİN PID'ini kaydediyordu, AMA core dosyasının
+    PID'i ÇÖKEN ALT SÜRECİN (`prog`) PID'i — İKİSİ HİÇBİR ZAMAN eşleşmez.
+    Düzeltme: yardımcı ARTIK sabit bir isimle kaydediyor, analiz adımı
+    PID EŞLEŞTİRMEYE ÇALIŞMIYOR (kaydedilmiş HER ikiliyi HER core
+    dosyasına karşı DENİYOR) VE TÜM glob genişlemeleri bash DİZİLERİYLE
+    yapılıyor (`ls`e HİÇ PIPE EDİLMİYOR). GERÇEK core+ikili çifti (bu
+    turda İNDİRİLİP `lldb` İLE YEREL olarak İNCELENDİ) çöküşün GERÇEKTEN
+    `SIGABRT` (glibc'nin `abort()`/`tkill` yolu, "stack smashing
+    detected"le TUTARLI) OLDUĞUNU DOĞRULADI — AMA TÜM unwind edilen
+    çerçeveler libc'nin İÇİNDE kaldı (Nox-üretimi hiçbir çerçeve
+    GÖRÜNMÜYOR): BU, stack-smashing bug SINIFININ KENDİ, YAPISAL bir
+    sınırı — bozulma, ÇERÇEVE zincirinin KENDİSİNİ yok ettiğinden,
+    HİÇBİR backtrace (sembolize edilmiş OLSA bile) bozulma ANINI/
+    ORİJİNAL çağrı-sitesini GERİ getiremez. Kök neden HÂLÂ AÇIK.
+
 ## [1.99.4]
 
 ### Düzeltildi

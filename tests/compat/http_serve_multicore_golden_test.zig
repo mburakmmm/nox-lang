@@ -81,23 +81,33 @@ fn compileToBinary(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, sourc
     return bin_path;
 }
 
-/// Faz [core-dump teşhisi] (bkz. nox-teknik-spesifikasyon.md §3.184):
+/// Faz [core-dump teşhisi] (bkz. nox-teknik-spesifikasyon.md §3.184/§3.185):
 /// `NOX_CRASH_ARTIFACTS_DIR` ortam değişkeni AYARLIYSA (SADECE CI'nin
 /// Linux/aarch64 teşhis modunda), `bin_path`'i (tmpDir SİLİNMEDEN ÖNCE —
-/// `defer tmp.cleanup()` test fonksiyonu DÖNENE kadar ÇALIŞMAZ) O dizine,
-/// PID'i taşıyan bir adla KOPYALAR. Gerekçe: CI'nin post-mortem gdb adımı
-/// bir core dump'ı SEMBOLİZE edebilmek İçİn KAYBOLMAYAN bir ikiliye
-/// İHTİYAÇ DUYAR — `tmp.cleanup()` HER test fonksiyonu DÖNDÜĞÜNDE
-/// (crash olsun OLMASIN) çalıştığından, `zig build test` TAMAMEN
-/// BİTTİKTEN SONRA çalışan AYRI bir CI adımı ORİJİNAL `bin_path`'i ARTIK
-/// BULAMAZ. Ortam değişkeni AYARLI DEĞİLSE (normal yerel/CI koşusu)
-/// SESSİZCE hiçbir şey yapmaz — SIFIR maliyet.
+/// `defer tmp.cleanup()` test fonksiyonu DÖNENE kadar ÇALIŞMAZ) O dizine
+/// SABİT bir adla KOPYALAR. Gerekçe: CI'nin post-mortem gdb adımı bir
+/// core dump'ı SEMBOLİZE edebilmek İçİn KAYBOLMAYAN bir ikiliye İHTİYAÇ
+/// DUYAR — `tmp.cleanup()` HER test fonksiyonu DÖNDÜĞÜNDE (crash olsun
+/// OLMASIN) çalıştığından, `zig build test` TAMAMEN BİTTİKTEN SONRA
+/// çalışan AYRI bir CI adımı ORİJİNAL `bin_path`'i ARTIK BULAMAZ. Ortam
+/// değişkeni AYARLI DEĞİLSE (normal yerel/CI koşusu) SESSİZCE hiçbir şey
+/// yapmaz — SIFIR maliyet.
+///
+/// v1.99.5: dosya adı ARTIK PID TAŞIMIYOR (v1.99.3'ün İLK sürümü
+/// `std.c.getpid()` KULLANIYORDU — AMA bu, ÇAĞIRAN test SÜRECİNİN PID'i,
+/// çökeni ÜRETEN SPAWN EDİLMİŞ `prog` ALT sürecinin DEĞİL — GERÇEK CI'de
+/// KANITLANDI: core dosyası `core.prog.4831` ADINI taşırken kaydedilen
+/// ikili `prog_multicore_n2_4819` OLARAK KAYDEDİLMİŞTİ, PID'ler HİÇ
+/// EŞLEŞMİYORDU). Bu test dosyasında (VE bir Debug `zig build test`
+/// koşusunda) BU deseni SADECE TEK bir test ürettiğinden, SABİT bir isim
+/// YETERLİ/DOĞRU — CI'nin analiz adımı ARTIK PID EŞLEŞTİRMEYE ÇALIŞMAZ,
+/// SADECE kaydedilmiş HER ikiliyi HER core dosyasına karşı DENER.
 fn maybeSaveCrashArtifact(allocator: std.mem.Allocator, io: std.Io, bin_path: []const u8) void {
     const dir_path = std.mem.span(std.c.getenv("NOX_CRASH_ARTIFACTS_DIR") orelse return);
     const mkdir_result = std.process.run(allocator, io, .{ .argv = &.{ "mkdir", "-p", dir_path } }) catch return;
     allocator.free(mkdir_result.stdout);
     allocator.free(mkdir_result.stderr);
-    const dest = std.fmt.allocPrint(allocator, "{s}/prog_multicore_n2_{d}", .{ dir_path, std.c.getpid() }) catch return;
+    const dest = std.fmt.allocPrint(allocator, "{s}/prog_multicore_n2", .{dir_path}) catch return;
     defer allocator.free(dest);
     const cp_result = std.process.run(allocator, io, .{ .argv = &.{ "cp", bin_path, dest } }) catch return;
     allocator.free(cp_result.stdout);

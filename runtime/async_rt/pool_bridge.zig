@@ -851,7 +851,15 @@ test "nox_pool_run: GERÇEK spawn/await İÇEREN bir entry, TÜM sonuçlar doğr
             // biraz daha uzun bekle" mantığının DOĞAL bir devamı — çalışma
             // hâlâ `stolen_count`in KENDİSİ GÖZLEMLENİR GÖZLEMLENMEZ ERKEN
             // biter, BAŞARILI koşularda EK maliyet YOKTUR.
-            const backoffs = [_]i64{ 5, 20, 50, 100, 200, 400, 800, 1600 };
+            //
+            // v1.99.5: BU AYNI test (`realEntry`, bkz. `Faz MN.8 Bulgu A`)
+            // ~3.175 saniyelik pencereyle de (AYNI push'un HEMEN SONRAKİ
+            // koşusunda, BU SEFER macOS/aarch64'te) TEKRAR BAŞARISIZ OLDU
+            // — DÖRDÜNCÜ recurrence (bkz. `worker_pool.zig`'in AYNI belge
+            // notunun DAHA GENİŞ analizi). Pencere TEKRAR ~4 KATINA (~12.775
+            // saniyeye) ÇIKARILDI, BAŞARILI koşularda SIFIR EK maliyet
+            // DEĞİŞMEDİ.
+            const backoffs = [_]i64{ 5, 20, 50, 100, 200, 400, 800, 1600, 3200, 6400 };
             for (backoffs) |ms| {
                 sleepMs(ms);
                 var any_stolen = false;
@@ -1072,7 +1080,13 @@ test "nox_pool_run: Faz MN.8 Bulgu A - sibling worker'lar globals_init_fn ile KE
             // BAŞARISIZ OLDU — pencere ~4 KATINA (~3.175 saniyeye)
             // ÇIKARILDI (bkz. bu dosyanın ~846. satırındaki KARDEŞ sitenin
             // AYNI belge notu). BAŞARILI koşularda SIFIR EK maliyet.
-            const backoffs = [_]i64{ 5, 20, 50, 100, 200, 400, 800, 1600 };
+            //
+            // v1.99.5: KARDEŞ sitenin (bu dosyanın ~847. satırı, "Faz MN.8
+            // Bulgu A") KENDİSİ ~3.175 saniyelik pencereyle de TEKRAR
+            // BAŞARISIZ OLDU (DÖRDÜNCÜ recurrence, bkz. o sitenin/`worker_
+            // pool.zig`'in AYNI, DAHA GENİŞ belge notu) — TUTARLILIK İçİn
+            // BU site de AYNI ~4 KATINA (~12.775 saniyeye) ÇIKARILDI.
+            const backoffs = [_]i64{ 5, 20, 50, 100, 200, 400, 800, 1600, 3200, 6400 };
             for (backoffs) |ms| {
                 sleepMs(ms);
                 if (stolen_count.load(.seq_cst) > 0) break;
