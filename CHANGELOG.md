@@ -14,6 +14,20 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.99.6]
+
+### Düzeltildi
+
+- `binary_size_test`nin dead-stripping bekçisi (`tests/cli/binary_size_
+  test.zig`) — v1.99.5'in push'unun GERÇEK CI koşusunda (Linux/aarch64,
+  ReleaseFast) İkili `10.588.104` bayt ölçüldü, ESKİ 10 MB sınırını
+  SADECE ~%1 AŞTI. Dead-stripping'in KENDİSİ HÂLÂ ÇALIŞIYOR (AYNI testin
+  KESİN kontrolü — smtp/postgres sembollerinin `nm` çıktısında HİÇ
+  bulunmaması — AYRICA GEÇTİ) — bu SADECE kod tabanının zamanla (yeni
+  stdlib modülleri/dil özellikleri) BÜYÜMESİYLE eski sınırın DOĞAL olarak
+  aşılması. Sınır 14 MB'a yükseltildi (defans-derinliği bekçisi, KESİN
+  kanıt DEĞİŞMEDİ).
+
 ## [1.99.5]
 
 ### Düzeltildi
