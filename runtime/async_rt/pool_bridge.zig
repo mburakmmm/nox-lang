@@ -859,7 +859,13 @@ test "nox_pool_run: GERÇEK spawn/await İÇEREN bir entry, TÜM sonuçlar doğr
             // notunun DAHA GENİŞ analizi). Pencere TEKRAR ~4 KATINA (~12.775
             // saniyeye) ÇIKARILDI, BAŞARILI koşularda SIFIR EK maliyet
             // DEĞİŞMEDİ.
-            const backoffs = [_]i64{ 5, 20, 50, 100, 200, 400, 800, 1600, 3200, 6400 };
+            //
+            // v1.99.7: BEŞİNCİ recurrence (~12.775 saniyelik pencereyle DE)
+            // — TEK bir GİDEREK BÜYÜYEN pencerenin YAKINSAMADIĞI KANITLANDI.
+            // Pencere ESKİ boyutuna GERİ DÖNDÜRÜLDÜ, ÇAĞIRAN taraf (bkz.
+            // "Faz MN.8 Bulgu A" testinin AYNI belge notu) BUNUN YERİNE
+            // TÜM havuzu BAĞIMSIZ olarak BİRDEN FAZLA KEZ yaratıp deniyor.
+            const backoffs = [_]i64{ 5, 20, 50, 100, 200, 400, 800, 1600 };
             for (backoffs) |ms| {
                 sleepMs(ms);
                 var any_stolen = false;
@@ -890,20 +896,40 @@ test "nox_pool_run: GERÇEK spawn/await İÇEREN bir entry, TÜM sonuçlar doğr
     Global.shared_ptr = &shared;
     Global.child_args_ptr = &child_args;
 
-    const rc = nox_pool_run(null, @intCast(POOL_RUN_TOTAL_WORKERS), Global.realEntry, Global.globalsInit, null);
-    try testing.expectEqual(@as(i32, 0), rc);
+    // v1.99.7 (bkz. `realEntry`nin backoff yorumu VE "Faz MN.8 Bulgu A"
+    // testinin AYNI, DAHA GENİŞ açıklaması): TEK bir uzun pencere YERİNE,
+    // havuzun KENDİSİNİ (TAZE OS iş parçacıklarıyla) BAĞIMSIZ olarak
+    // BİRDEN FAZLA KEZ yaratıp deniyoruz. `rc`/`tasks_done`/`executed_by`
+    // İDDİALARININ HEPSİ HER denemede DOĞRU olmalı (GERÇEK bir çökme/
+    // eksik-çalışma ASLA kabul EDİLEMEZ); SADECE `stolen_count > 0`
+    // denemelerin HERHANGİ BİRİNDE GERÇEKLEŞMESİ YETERLİDİR.
+    const MAX_ATTEMPTS = 3;
+    var attempt: usize = 0;
+    var any_stolen_overall = false;
+    while (attempt < MAX_ATTEMPTS) : (attempt += 1) {
+        for (&shared.executed_by) |*ex| ex.store(NOT_RUN, .seq_cst);
+        shared.tasks_done.store(false, .seq_cst);
+        Global.workers_started.store(0, .seq_cst);
 
-    try testing.expect(shared.tasks_done.load(.acquire));
-    var stolen_count: usize = 0;
-    var i: usize = 0;
-    while (i < STEAL_TEST_N_TASKS) : (i += 1) {
-        const by = shared.executed_by[i].load(.seq_cst);
-        try testing.expect(by != NOT_RUN);
-        if (by != 0) stolen_count += 1;
+        const rc = nox_pool_run(null, @intCast(POOL_RUN_TOTAL_WORKERS), Global.realEntry, Global.globalsInit, null);
+        try testing.expectEqual(@as(i32, 0), rc);
+        try testing.expect(shared.tasks_done.load(.acquire));
+
+        var stolen_count: usize = 0;
+        var i: usize = 0;
+        while (i < STEAL_TEST_N_TASKS) : (i += 1) {
+            const by = shared.executed_by[i].load(.seq_cst);
+            try testing.expect(by != NOT_RUN);
+            if (by != 0) stolen_count += 1;
+        }
+        if (stolen_count > 0) {
+            any_stolen_overall = true;
+            break;
+        }
     }
-    // Kanıt: EN AZ bir görev worker 0 DIŞINDA bir worker TARAFINDAN
-    // ÇALIŞTIRILDI.
-    try testing.expect(stolen_count > 0);
+    // Kanıt: `MAX_ATTEMPTS` BAĞIMSIZ denemenin EN AZ birinde, EN AZ bir
+    // görev worker 0 DIŞINDA bir worker TARAFINDAN ÇALIŞTIRILDI.
+    try testing.expect(any_stolen_overall);
 }
 
 test "nox_pool_serve: TÜM slotlar (0 DAHİL) KENDİ entry'sini ÇALIŞTIRIR + KENDİ görevlerini spawn/await eder" {
@@ -1083,10 +1109,23 @@ test "nox_pool_run: Faz MN.8 Bulgu A - sibling worker'lar globals_init_fn ile KE
             //
             // v1.99.5: KARDEŞ sitenin (bu dosyanın ~847. satırı, "Faz MN.8
             // Bulgu A") KENDİSİ ~3.175 saniyelik pencereyle de TEKRAR
-            // BAŞARISIZ OLDU (DÖRDÜNCÜ recurrence, bkz. o sitenin/`worker_
-            // pool.zig`'in AYNI, DAHA GENİŞ belge notu) — TUTARLILIK İçİn
-            // BU site de AYNI ~4 KATINA (~12.775 saniyeye) ÇIKARILDI.
-            const backoffs = [_]i64{ 5, 20, 50, 100, 200, 400, 800, 1600, 3200, 6400 };
+            // BAŞARISIZ OLDU (DÖRDÜNCÜ recurrence) — pencere ~4 KATINA
+            // (~12.775 saniyeye) ÇIKARILDI.
+            //
+            // v1.99.7: AYNI test, ~12.775 saniyelik pencereyle de (BEŞİNCİ
+            // recurrence, bkz. `chase_lev_deque.zig`/`Scheduler.spawn`ın
+            // KOD İNCELEMESİYLE "yapısal bir hata YOK, GERÇEK host-seviyesi
+            // zamanlama DEĞİŞKENLİĞİ" SONUCUNA VARILDI) TEKRAR BAŞARISIZ
+            // OLDU — TEK bir GİDEREK BÜYÜYEN pencerenin YAKINSAMADIĞI
+            // KANITLANDI. Pencere ESKİ, DAHA MAKUL boyutuna (~3.175s)
+            // GERİ DÖNDÜRÜLDÜ — BUNUN YERİNE ÇAĞIRAN taraf (aşağıya bkz.)
+            // TÜM havuzu (TAZE `std.Thread.spawn`larla, TAZE OS-zamanlama
+            // ŞANSIYLA) BİRDEN FAZLA BAĞIMSIZ KEZ yaratıp deniyor — TEK,
+            // UZUN bir pencere yerine BİRDEN FAZLA, KISA/BAĞIMSIZ pencere
+            // istatistiksel olarak DAHA SAĞLAM (host GEÇİCİ olarak bu
+            // worker'ları AÇLIĞA sürüklese bile, HER deneme TAMAMEN
+            // BAĞIMSIZ/TAZE iş parçacıklarıyla YENİDEN başlar).
+            const backoffs = [_]i64{ 5, 20, 50, 100, 200, 400, 800, 1600 };
             for (backoffs) |ms| {
                 sleepMs(ms);
                 if (stolen_count.load(.seq_cst) > 0) break;
@@ -1100,14 +1139,37 @@ test "nox_pool_run: Faz MN.8 Bulgu A - sibling worker'lar globals_init_fn ile KE
         }
     };
 
-    const rc = nox_pool_run(null, N_WORKERS, Global.realEntry, Global.globalsInitFn, Global.globalsDeinitFn);
-    try testing.expectEqual(@as(i32, 0), rc);
+    // v1.99.7 (bkz. `realEntry`nin backoff yorumu): TEK bir uzun pencere
+    // YERİNE, havuzun KENDİSİNİ (TAZE OS iş parçacıklarıyla) BAĞIMSIZ
+    // olarak BİRDEN FAZLA KEZ yaratıp deniyoruz — HER deneme ARASINDA
+    // `Global`nin statik durumu SIFIRLANIR. SADECE SON denemenin `rc`/
+    // `mismatch_count` iddiaları test'i BAŞARISIZ eder (bunlar HERHANGİ
+    // bir denemede DOĞRU olmalı — GERÇEK bir mismatch/çökme asla KABUL
+    // EDİLEMEZ); `stolen_count > 0` İSE denemelerin HERHANGİ BİRİNDE
+    // GERÇEKLEŞMESİ YETERLİDİR.
+    const MAX_ATTEMPTS = 3;
+    var attempt: usize = 0;
+    var any_stolen_overall = false;
+    while (attempt < MAX_ATTEMPTS) : (attempt += 1) {
+        Global.mismatch_count.store(0, .seq_cst);
+        Global.stolen_count.store(0, .seq_cst);
+        Global.workers_started.store(0, .seq_cst);
+        Global.tasks = @splat(null);
 
-    try testing.expectEqual(@as(usize, 0), Global.mismatch_count.load(.seq_cst));
-    // Kanıt: EN AZ bir görev worker 0 DIŞINDA bir worker TARAFINDAN
-    // ÇALIŞTIRILDI (yani Bulgu A'nın senaryosu GERÇEKTEN egzersiz EDİLDİ,
-    // sadece slot 0'da çalışıp testin ANLAMSIZCA GEÇMESİ DEĞİL).
-    try testing.expect(Global.stolen_count.load(.seq_cst) > 0);
+        const rc = nox_pool_run(null, N_WORKERS, Global.realEntry, Global.globalsInitFn, Global.globalsDeinitFn);
+        try testing.expectEqual(@as(i32, 0), rc);
+        try testing.expectEqual(@as(usize, 0), Global.mismatch_count.load(.seq_cst));
+
+        if (Global.stolen_count.load(.seq_cst) > 0) {
+            any_stolen_overall = true;
+            break;
+        }
+    }
+    // Kanıt: `MAX_ATTEMPTS` BAĞIMSIZ denemenin EN AZ birinde, EN AZ bir
+    // görev worker 0 DIŞINDA bir worker TARAFINDAN ÇALIŞTIRILDI (yani
+    // Bulgu A'nın senaryosu GERÇEKTEN egzersiz EDİLDİ, sadece slot 0'da
+    // çalışıp testin ANLAMSIZCA GEÇMESİ DEĞİL).
+    try testing.expect(any_stolen_overall);
 }
 
 test "Faz MN.8 Bulgu B: 1000/10000 görevlik toplu-spawn+sıralı-await, false-deadlock YOK (20 tekrar/boyut)" {

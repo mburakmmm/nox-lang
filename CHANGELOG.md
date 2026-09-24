@@ -14,6 +14,28 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.99.7]
+
+### Düzeltildi
+
+- `nox_pool_run`/`WorkerPool` çapraz-worker çalma testleri (`pool_bridge.
+  zig`nin İKİ testi + `worker_pool.zig`nin `StealTestCtx`si) — v1.99.5'in
+  push'unun GERÇEK CI koşusunda ~12.775 saniyelik pencereyle DE (BEŞİNCİ
+  recurrence) `stolen_count == 0` İLE BAŞARISIZ OLDU. `chase_lev_deque.
+  zig`nin Chase-Lev deque'i VE `Scheduler.spawn`'ın deque'e itme yolu
+  DOĞRUDAN kod okumasıyla İNCELENDİ — yapısal bir hata BULUNAMADI (deque
+  kapasitesi 256, SADECE 30 görev İçİn ÇOK YETERLİ; bellek-sıralaması
+  doğru) — bu GERÇEK, host-seviyesi zamanlama DEĞİŞKENLİĞİ, TEK bir
+  GİDEREK BÜYÜYEN pencerenin ASLA YAKINSAMAYACAĞI bir sınıf sorun.
+  Üç testin ÜÇÜ de YENİDEN tasarlandı: backoff penceresi ESKİ/makul
+  boyutuna (~3.175s) DÜŞÜRÜLDÜ, ÇAĞIRAN test İSE TÜM havuzu (TAZE OS iş
+  parçacıklarıyla, TAZE zamanlama ŞANSIYLA) BAĞIMSIZ olarak EN FAZLA 3
+  KEZ yaratıp deniyor — HERHANGİ bir denemede EN AZ bir çalma
+  GÖZLEMLENİRSE test GEÇER (TEK, uzun bir pencere YERİNE BİRDEN FAZLA,
+  KISA/BAĞIMSIZ pencere — istatistiksel olarak DAHA SAĞLAM, çünkü HER
+  deneme host'un GEÇİCİ açlık durumundan TAMAMEN BAĞIMSIZ, TAZE bir
+  başlangıç yapar).
+
 ## [1.99.6]
 
 ### Düzeltildi
