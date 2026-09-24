@@ -23377,6 +23377,117 @@ gereksiz PRINT (`cancel()`nin ZATEN yutacağı BİR hata İçİn) KALKTI.
 
 ---
 
+## 3.187 v2.0 stabilizasyon yol haritası, madde 1 — Concurrency Torture Suite
+
+Kullanıcı, harici bir GPT-5.6 stratejik analizinin önerdiği 10 maddelik
+"v2.0'a doğru stabilizasyon" yol haritasını, Claude'un ÖNERDİĞİ yeniden
+sıralamayla ONAYLADI (2026-09-24): önce UCUZ/DÜŞÜK-mimari-riskli işler
+(bu madde — torture suite, sonra FFI kaçış sözleşmeleri, sonra genişletilmiş
+QBE↔LLVM uygunluk testi), SONRA daha GENİŞ-dokunuşlu/riskli işler (sabit-
+genişlikli tamsayılar, layout/`@repr`, tipli `ptr[T]`, MMIO, hedef modeli,
+freestanding allocator ABI'si, kernel demo deposu). Bu, o roadmap'in İLK,
+uygulanmış maddesidir.
+
+### Amaç
+
+Seed-tabanlı, DETERMİNİSTİK olarak reproduce edilebilir bir eşzamanlılık
+"torture" testi — GERÇEK Nox kaynağı (`spawn`/`await`/`Task[T].cancel()`/
+`CancelledError`/`try-except`/gerçek dosya G/Ç'si), `nox.thread.pool_run`
+ÜZERİNDEN GERÇEK bir çok-worker (8) M:N havuzunda ÇALIŞTIRILIP: cross-
+worker work-stealing, nested spawn/await, task exception propagation,
+kooperatif iptal VE cycle-collector/GC baskısını AYNI ANDA egzersiz eder.
+Bir seed BAŞARISIZ olursa, O SEED+task-count İLE derlenen ikili DOĞRUDAN
+elle TEKRAR çalıştırılarak birebir reproduce edilebilir.
+
+### Tasarımı DOĞRUDAN etkileyen iki bulgu
+
+- **`nox.random`'ın PRNG durumu FIBER-BAŞINADIR** (`runtime/stdlib_shims/
+  random.zig`'in `Fiber.prng`/`Fiber.prng_seeded`i) — her YENİ spawn
+  edilen fiber KENDİ, TAZE/unseeded durumuyla BAŞLAR ve İLK kullanımda
+  `clock_gettime` İLE OTOMATİK, zamana-bağlı tohumlanır. `entry()`de
+  `nox.random.seed(seed)` çağırmak SADECE `entry`nin KENDİ fiber'ını
+  tohumlar. **Çözüm**: TÜM rastgele kararlar `entry()` İçİNDE, SPAWN'DAN
+  ÖNCE, SIRALI alınıp planlara (`list[int]`/`list[bool]`) yazılır; spawn
+  edilen görevler SADECE bu ÖNCEDEN hesaplanmış parametreleri TÜKETİR.
+- **`Task[T].cancel()` SADECE bir bayrak İŞARETLER** — `CancelledError`,
+  cancel edilen görevin KENDİ gövdesindeki BİR SONRAKİ `await` NOKTASINDA
+  fırlatılır (`tests/golden/codegen_cases/task_cancel_caught.nox` İLE
+  doğrulandı). Checkpoint'siz (saf CPU-döngüsü) bir görevi cancel etmenin
+  HİÇBİR ETKİSİ YOKTUR. **Sonuç**: torture testinde "random cancellation"
+  SADECE kendi İçİNDE bir `await`İ olan (nested-spawn) görev türüne
+  uygulanır.
+
+### Torture kaynağının yapısı
+
+`tests/compat/concurrency_torture_test.zig` İçİNE, `http_soak_test.zig`'in
+AYNI "gömülü çok-satırlı Zig string literali" deseniyle EMBED edilen bir
+`.nox` programı — dört görev türü (`leaf_work`: CPU döngüsü; `io_work`:
+gerçek dosya yaz/oku/sil; `raising_work`: `TortureRaised` fırlatır;
+`nested_work`: İç İçe spawn+await, TEK cancellable tür), `entry()`de
+seed+task_count `nox.os.arg(1)`/`arg(2)`den okunur, TÜM rastgelelik
+spawn'dan ÖNCE sıralı hesaplanır, SONUÇ `"TORTURE_OK <seed> <task_count>
+<completed> <cancelled> <excepted>"` olarak yazdırılır.
+
+### `build.zig`/CI
+
+`stress-test`/`http-soak-test`nin AYNI opt-in deseni: YENİ `concurrency-
+torture-test` adımı (`-Dtorture-seed-count` varsayılan 3, `-Dtorture-
+tasks` varsayılan 3000), **`test_step`e EKLENMEDİ**. `.github/workflows/
+stress.yml`'e YENİ, BAĞIMSIZ `concurrency-torture` job'u (AYNI 3-platform
+matris, nightly cron + `workflow_dispatch`, 30 dk timeout) — `http-soak`ın
+AKSİNE `qbe` KURULUMU GEREKMEZ (torture ikilisi `--release`/LLVM-clang İLE
+derlenir, standart runner image'ları clang'ı ÖN-YÜKLÜ getirir). Yerel
+ölçüm (Apple Silicon, ReleaseFast): 8 seed × 15000 görev ≈ 27 saniye —
+CI job'unun parametreleri (8×15000) BUNA göre seçildi, 30 dk timeout'un
+ÇOK altında.
+
+### GERÇEK bir bulgu: ilk çalıştırmada bir ARC sızıntısı bulundu
+
+Suite'in İLK GERÇEK koşusu (küçük ölçek, 1 seed/50 görev), `_nox_str_
+concat → _nox_rc_alloc` zincirinden İZLENEN bir bellek sızıntısı ORTAYA
+ÇIKARDI — suite'in kendi VAR OLMA GEREKÇESİNİ doğrulayan somut bir sonuç.
+Kök neden: `compiler/codegen_qbe/async_thread.zig`'in `genSpawnExpr`/
+`genSpawnWrapper`ı, `spawn f(...)` argümanlarını heap'e paketlerken/geri
+açarken `str` tipini HİÇ KAPSAMIYORDU — SADECE `list`/`class`/`dict`
+(--release/LLVM-özel) VE `Task`/`Channel`/`ThreadHandle`/`ThreadChannel`
+(backend-bağımsız) İçİn retain-öncesi-paketleme/release-sonrası-paketleme
+çifti VARDI. `str` HER İKİ backend altında da spawn-güvenli OLDUĞUNDAN,
+İNLINE geçirilen (bir yerel değişkene BAĞLI OLMAYAN) TAZE bir `str`
+(concat sonucu VEYA fonksiyon-çağrısı sonucu) spawn argümanı olarak
+verildiğinde HİÇ retain/release EDİLMEDEN sızıyordu.
+
+**Düzeltme**: `genSpawnExpr`e (paketleme ÖNCESİ) backend-bağımsız bir
+`.str` retain dalı + eşleşen release-if-temporary koşulu, `genSpawnWrapper`a
+(açma SONRASI) backend-bağımsız bir eşleşen `.str` release-if-set çağrısı
+eklendi. Dört İZOLE `/tmp/*.nox` repro (yerel-değişken / inline-concat /
+çıplak-literal / inline-fonksiyon-çağrısı spawn argümanı) İLE doğrulandı:
+düzeltme ÖNCESİ inline-concat/inline-çağrı 20/20 sızdırıyordu, literal VE
+yerel-değişken 0 sızdırıyordu; düzeltme SONRASI DÖRDÜ de 0 sızıntı/exit 0.
+Etkilenen TEK golden fixture (`tests/golden/codegen_cases/task_local_
+basic.nox`, bir string literalini spawn argümanı olarak KULLANIYOR) —
+IR anlık görüntüsü YENİDEN oluşturuldu (string literalleri `PINNED_
+REFCOUNT` sentineliyle işaretlendiğinden retain'in KENDİSİ HER ZAMAN
+güvenlidir, davranış DEĞİŞMEDİ, SADECE emitted IR'a yeni retain/release
+çağrıları EKLENDİ).
+
+### Doğrulama
+
+`zig build concurrency-torture-test` (varsayılan küçük ölçek) HIZLI/temiz;
+break→red→fix (cancel'ı checkpoint'siz bir göreve TAŞIYIP etkisiz kaldığı
+doğrulandı, SONRA GERİ ALINDI); AYNI seed+task_count İLE İKİ ÇALIŞTIRMANIN
+`TORTURE_OK` satırı BİREBİR AYNI (determinizm kanıtı); TAM paket `zig
+build test` (Debug+ReleaseFast) — 284 fixture karşılaştırıldı, 1 YENİ
+anlık görüntü (task_local_basic), SIFIR regresyon.
+
+### Kritik dosyalar
+
+`tests/compat/concurrency_torture_test.zig` (YENİ), `build.zig` (YENİ
+`concurrency-torture-test` adımı), `compiler/codegen_qbe/async_thread.zig`
+(`.str` spawn-argümanı ARC sızıntısı düzeltmesi), `.github/workflows/
+stress.yml` (YENİ `concurrency-torture` job'u).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

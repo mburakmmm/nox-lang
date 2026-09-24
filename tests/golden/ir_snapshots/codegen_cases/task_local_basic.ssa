@@ -1663,103 +1663,98 @@ export function $main_task(l %rt) {
     storel %rt, %t21
     %t22 =l add %t21, 8
     storel %t17, %t22
-    %t23 =l add %t21, 16
-    storel %t18, %t23
+    %t23 =w ceql %t18, 0
+    jnz %t23, @retain_skip1, @retain0
+@retain0
+    %t24 =l sub %t18, 16
+    %t25 =l loadl %t24
+    %t26 =l add %t25, 1
+    storel %t26, %t24
+    jmp @retain_done2
+@retain_skip1
+    jmp @retain_done2
+@retain_done2
+    %t27 =l add %t21, 16
+    storel %t18, %t27
     call $nox_channel_retain(l %t19)
-    %t24 =l add %t21, 24
-    storel %t19, %t24
+    %t28 =l add %t21, 24
+    storel %t19, %t28
     call $nox_channel_retain(l %t20)
-    %t25 =l add %t21, 32
-    storel %t20, %t25
-    %t26 =l call $nox_async_spawn(l %rt, l $spawn_wrap_0, l %t21)
-    %t27 =l loadl %t5
-    call $nox_async_destroy_task(l %rt, l %t27)
+    %t29 =l add %t21, 32
+    storel %t20, %t29
+    %t30 =l call $nox_async_spawn(l %rt, l $spawn_wrap_0, l %t21)
+    %t31 =l loadl %t5
+    call $nox_async_destroy_task(l %rt, l %t31)
     storel 0, %t5
-    storel %t26, %t5
-    %t28 =l loadl %t0
-    %t29 =l add $str5, 16
-    %t30 =l loadl %t2
-    %t31 =l loadl %t4
-    %t32 =l call $nox_alloc(l %rt, l 40)
-    storel %rt, %t32
-    %t33 =l add %t32, 8
-    storel %t28, %t33
-    %t34 =l add %t32, 16
-    storel %t29, %t34
-    call $nox_channel_retain(l %t30)
-    %t35 =l add %t32, 24
-    storel %t30, %t35
-    call $nox_channel_retain(l %t31)
-    %t36 =l add %t32, 32
-    storel %t31, %t36
-    %t37 =l call $nox_async_spawn(l %rt, l $spawn_wrap_1, l %t32)
-    %t38 =l loadl %t6
-    call $nox_async_destroy_task(l %rt, l %t38)
+    storel %t30, %t5
+    %t32 =l loadl %t0
+    %t33 =l add $str5, 16
+    %t34 =l loadl %t2
+    %t35 =l loadl %t4
+    %t36 =l call $nox_alloc(l %rt, l 40)
+    storel %rt, %t36
+    %t37 =l add %t36, 8
+    storel %t32, %t37
+    %t38 =w ceql %t33, 0
+    jnz %t38, @retain_skip4, @retain3
+@retain3
+    %t39 =l sub %t33, 16
+    %t40 =l loadl %t39
+    %t41 =l add %t40, 1
+    storel %t41, %t39
+    jmp @retain_done5
+@retain_skip4
+    jmp @retain_done5
+@retain_done5
+    %t42 =l add %t36, 16
+    storel %t33, %t42
+    call $nox_channel_retain(l %t34)
+    %t43 =l add %t36, 24
+    storel %t34, %t43
+    call $nox_channel_retain(l %t35)
+    %t44 =l add %t36, 32
+    storel %t35, %t44
+    %t45 =l call $nox_async_spawn(l %rt, l $spawn_wrap_1, l %t36)
+    %t46 =l loadl %t6
+    call $nox_async_destroy_task(l %rt, l %t46)
     storel 0, %t6
-    storel %t37, %t6
-    %t39 =l loadl %t1
-    %t40 =l call $nox_channel_recv(l %rt, l %t39)
-    %t41 =l loadl %t2
-    %t42 =l call $nox_channel_recv(l %rt, l %t41)
-    %t43 =l loadl %t3
-    call $nox_channel_send(l %rt, l %t43, l 1)
-    %t44 =l loadl %t4
-    call $nox_channel_send(l %rt, l %t44, l 1)
-    %t45 =l loadl %t5
-    %t46 =w call $nox_task_check_cancelled(l %rt)
-    jnz %t46, @task_cancelled0, @task_not_cancelled1
-@task_cancelled0
-    %t47 =l add $str6, 16
-    %t48 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 4, %t48
-    %t49 =l add %t48, 8
-    storel 0, %t49
-    %t50 =l add %t48, 16
-    storel 0, %t50
-    call $Exception___init__(l %rt, l %t48, l %t47)
-    %t51 =w call $nox_exception_pending(l %rt)
-    jnz %t51, @ctor_init_failed2, @ctor_init_cont3
-@ctor_init_failed2
-    %t52 =w ceql %t48, 0
-    jnz %t52, @release_skip5, @release4
-@release4
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t48)
-    jmp @release_done6
-@release_skip5
-    jmp @release_done6
-@release_done6
-    jmp @ctor_init_cont3
-@ctor_init_cont3
-    %t53 =w call $nox_exception_pending(l %rt)
-    jnz %t53, @exc_propagate7, @exc_continue8
-@exc_propagate7
-    %t54 =l loadl %t3
-    call $nox_channel_destroy(l %rt, l %t54)
-    storel 0, %t3
-    %t55 =l loadl %t5
-    call $nox_async_destroy_task(l %rt, l %t55)
-    storel 0, %t5
-    %t56 =l loadl %t0
-    call $nox_tasklocal_destroy(l %rt, l %t56)
-    storel 0, %t0
-    %t57 =l loadl %t6
-    call $nox_async_destroy_task(l %rt, l %t57)
-    storel 0, %t6
-    %t58 =l loadl %t1
-    call $nox_channel_destroy(l %rt, l %t58)
-    storel 0, %t1
-    %t59 =l loadl %t4
-    call $nox_channel_destroy(l %rt, l %t59)
-    storel 0, %t4
-    %t60 =l loadl %t2
-    call $nox_channel_destroy(l %rt, l %t60)
-    storel 0, %t2
-    ret
-@exc_continue8
-    call $nox_raise(l %rt, l %t48, l 33)
+    storel %t45, %t6
+    %t47 =l loadl %t1
+    %t48 =l call $nox_channel_recv(l %rt, l %t47)
+    %t49 =l loadl %t2
+    %t50 =l call $nox_channel_recv(l %rt, l %t49)
+    %t51 =l loadl %t3
+    call $nox_channel_send(l %rt, l %t51, l 1)
+    %t52 =l loadl %t4
+    call $nox_channel_send(l %rt, l %t52, l 1)
+    %t53 =l loadl %t5
+    %t54 =w call $nox_task_check_cancelled(l %rt)
+    jnz %t54, @task_cancelled6, @task_not_cancelled7
+@task_cancelled6
+    %t55 =l add $str6, 16
+    %t56 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 4, %t56
+    %t57 =l add %t56, 8
+    storel 0, %t57
+    %t58 =l add %t56, 16
+    storel 0, %t58
+    call $Exception___init__(l %rt, l %t56, l %t55)
+    %t59 =w call $nox_exception_pending(l %rt)
+    jnz %t59, @ctor_init_failed8, @ctor_init_cont9
+@ctor_init_failed8
+    %t60 =w ceql %t56, 0
+    jnz %t60, @release_skip11, @release10
+@release10
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t56)
+    jmp @release_done12
+@release_skip11
+    jmp @release_done12
+@release_done12
+    jmp @ctor_init_cont9
+@ctor_init_cont9
     %t61 =w call $nox_exception_pending(l %rt)
-    jnz %t61, @exc_propagate9, @exc_continue10
-@exc_propagate9
+    jnz %t61, @exc_propagate13, @exc_continue14
+@exc_propagate13
     %t62 =l loadl %t3
     call $nox_channel_destroy(l %rt, l %t62)
     storel 0, %t3
@@ -1782,90 +1777,90 @@ export function $main_task(l %rt) {
     call $nox_channel_destroy(l %rt, l %t68)
     storel 0, %t2
     ret
-@exc_continue10
-@task_not_cancelled1
-    %t69 =l call $nox_async_await(l %rt, l %t45)
-    %t70 =w call $nox_exception_pending(l %rt)
-    jnz %t70, @exc_propagate11, @exc_continue12
-@exc_propagate11
-    %t71 =l loadl %t3
-    call $nox_channel_destroy(l %rt, l %t71)
+@exc_continue14
+    call $nox_raise(l %rt, l %t56, l 33)
+    %t69 =w call $nox_exception_pending(l %rt)
+    jnz %t69, @exc_propagate15, @exc_continue16
+@exc_propagate15
+    %t70 =l loadl %t3
+    call $nox_channel_destroy(l %rt, l %t70)
     storel 0, %t3
-    %t72 =l loadl %t5
-    call $nox_async_destroy_task(l %rt, l %t72)
+    %t71 =l loadl %t5
+    call $nox_async_destroy_task(l %rt, l %t71)
     storel 0, %t5
-    %t73 =l loadl %t0
-    call $nox_tasklocal_destroy(l %rt, l %t73)
+    %t72 =l loadl %t0
+    call $nox_tasklocal_destroy(l %rt, l %t72)
     storel 0, %t0
-    %t74 =l loadl %t6
-    call $nox_async_destroy_task(l %rt, l %t74)
+    %t73 =l loadl %t6
+    call $nox_async_destroy_task(l %rt, l %t73)
     storel 0, %t6
-    %t75 =l loadl %t1
+    %t74 =l loadl %t1
+    call $nox_channel_destroy(l %rt, l %t74)
+    storel 0, %t1
+    %t75 =l loadl %t4
     call $nox_channel_destroy(l %rt, l %t75)
-    storel 0, %t1
-    %t76 =l loadl %t4
+    storel 0, %t4
+    %t76 =l loadl %t2
     call $nox_channel_destroy(l %rt, l %t76)
-    storel 0, %t4
-    %t77 =l loadl %t2
-    call $nox_channel_destroy(l %rt, l %t77)
     storel 0, %t2
     ret
-@exc_continue12
-    %t78 =l loadl %t6
-    %t79 =w call $nox_task_check_cancelled(l %rt)
-    jnz %t79, @task_cancelled13, @task_not_cancelled14
-@task_cancelled13
-    %t80 =l add $str7, 16
-    %t81 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 4, %t81
-    %t82 =l add %t81, 8
-    storel 0, %t82
-    %t83 =l add %t81, 16
-    storel 0, %t83
-    call $Exception___init__(l %rt, l %t81, l %t80)
-    %t84 =w call $nox_exception_pending(l %rt)
-    jnz %t84, @ctor_init_failed15, @ctor_init_cont16
-@ctor_init_failed15
-    %t85 =w ceql %t81, 0
-    jnz %t85, @release_skip18, @release17
-@release17
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t81)
-    jmp @release_done19
-@release_skip18
-    jmp @release_done19
-@release_done19
-    jmp @ctor_init_cont16
-@ctor_init_cont16
-    %t86 =w call $nox_exception_pending(l %rt)
-    jnz %t86, @exc_propagate20, @exc_continue21
-@exc_propagate20
-    %t87 =l loadl %t3
-    call $nox_channel_destroy(l %rt, l %t87)
+@exc_continue16
+@task_not_cancelled7
+    %t77 =l call $nox_async_await(l %rt, l %t53)
+    %t78 =w call $nox_exception_pending(l %rt)
+    jnz %t78, @exc_propagate17, @exc_continue18
+@exc_propagate17
+    %t79 =l loadl %t3
+    call $nox_channel_destroy(l %rt, l %t79)
     storel 0, %t3
-    %t88 =l loadl %t5
-    call $nox_async_destroy_task(l %rt, l %t88)
+    %t80 =l loadl %t5
+    call $nox_async_destroy_task(l %rt, l %t80)
     storel 0, %t5
-    %t89 =l loadl %t0
-    call $nox_tasklocal_destroy(l %rt, l %t89)
+    %t81 =l loadl %t0
+    call $nox_tasklocal_destroy(l %rt, l %t81)
     storel 0, %t0
-    %t90 =l loadl %t6
-    call $nox_async_destroy_task(l %rt, l %t90)
+    %t82 =l loadl %t6
+    call $nox_async_destroy_task(l %rt, l %t82)
     storel 0, %t6
-    %t91 =l loadl %t1
-    call $nox_channel_destroy(l %rt, l %t91)
+    %t83 =l loadl %t1
+    call $nox_channel_destroy(l %rt, l %t83)
     storel 0, %t1
-    %t92 =l loadl %t4
-    call $nox_channel_destroy(l %rt, l %t92)
+    %t84 =l loadl %t4
+    call $nox_channel_destroy(l %rt, l %t84)
     storel 0, %t4
-    %t93 =l loadl %t2
-    call $nox_channel_destroy(l %rt, l %t93)
+    %t85 =l loadl %t2
+    call $nox_channel_destroy(l %rt, l %t85)
     storel 0, %t2
     ret
-@exc_continue21
-    call $nox_raise(l %rt, l %t81, l 34)
+@exc_continue18
+    %t86 =l loadl %t6
+    %t87 =w call $nox_task_check_cancelled(l %rt)
+    jnz %t87, @task_cancelled19, @task_not_cancelled20
+@task_cancelled19
+    %t88 =l add $str7, 16
+    %t89 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 4, %t89
+    %t90 =l add %t89, 8
+    storel 0, %t90
+    %t91 =l add %t89, 16
+    storel 0, %t91
+    call $Exception___init__(l %rt, l %t89, l %t88)
+    %t92 =w call $nox_exception_pending(l %rt)
+    jnz %t92, @ctor_init_failed21, @ctor_init_cont22
+@ctor_init_failed21
+    %t93 =w ceql %t89, 0
+    jnz %t93, @release_skip24, @release23
+@release23
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t89)
+    jmp @release_done25
+@release_skip24
+    jmp @release_done25
+@release_done25
+    jmp @ctor_init_cont22
+@ctor_init_cont22
     %t94 =w call $nox_exception_pending(l %rt)
-    jnz %t94, @exc_propagate22, @exc_continue23
-@exc_propagate22
+    jnz %t94, @exc_propagate26, @exc_continue27
+@exc_propagate26
     %t95 =l loadl %t3
     call $nox_channel_destroy(l %rt, l %t95)
     storel 0, %t3
@@ -1888,57 +1883,84 @@ export function $main_task(l %rt) {
     call $nox_channel_destroy(l %rt, l %t101)
     storel 0, %t2
     ret
-@exc_continue23
-@task_not_cancelled14
-    %t102 =l call $nox_async_await(l %rt, l %t78)
-    %t103 =w call $nox_exception_pending(l %rt)
-    jnz %t103, @exc_propagate24, @exc_continue25
-@exc_propagate24
-    %t104 =l loadl %t3
-    call $nox_channel_destroy(l %rt, l %t104)
+@exc_continue27
+    call $nox_raise(l %rt, l %t89, l 34)
+    %t102 =w call $nox_exception_pending(l %rt)
+    jnz %t102, @exc_propagate28, @exc_continue29
+@exc_propagate28
+    %t103 =l loadl %t3
+    call $nox_channel_destroy(l %rt, l %t103)
     storel 0, %t3
-    %t105 =l loadl %t5
-    call $nox_async_destroy_task(l %rt, l %t105)
+    %t104 =l loadl %t5
+    call $nox_async_destroy_task(l %rt, l %t104)
     storel 0, %t5
-    %t106 =l loadl %t0
-    call $nox_tasklocal_destroy(l %rt, l %t106)
+    %t105 =l loadl %t0
+    call $nox_tasklocal_destroy(l %rt, l %t105)
     storel 0, %t0
-    %t107 =l loadl %t6
-    call $nox_async_destroy_task(l %rt, l %t107)
+    %t106 =l loadl %t6
+    call $nox_async_destroy_task(l %rt, l %t106)
     storel 0, %t6
-    %t108 =l loadl %t1
-    call $nox_channel_destroy(l %rt, l %t108)
+    %t107 =l loadl %t1
+    call $nox_channel_destroy(l %rt, l %t107)
     storel 0, %t1
-    %t109 =l loadl %t4
-    call $nox_channel_destroy(l %rt, l %t109)
+    %t108 =l loadl %t4
+    call $nox_channel_destroy(l %rt, l %t108)
     storel 0, %t4
-    %t110 =l loadl %t2
-    call $nox_channel_destroy(l %rt, l %t110)
+    %t109 =l loadl %t2
+    call $nox_channel_destroy(l %rt, l %t109)
     storel 0, %t2
     ret
-@exc_continue25
-    %t111 =l loadl %t3
-    call $nox_channel_destroy(l %rt, l %t111)
+@exc_continue29
+@task_not_cancelled20
+    %t110 =l call $nox_async_await(l %rt, l %t86)
+    %t111 =w call $nox_exception_pending(l %rt)
+    jnz %t111, @exc_propagate30, @exc_continue31
+@exc_propagate30
+    %t112 =l loadl %t3
+    call $nox_channel_destroy(l %rt, l %t112)
     storel 0, %t3
-    %t112 =l loadl %t5
-    call $nox_async_destroy_task(l %rt, l %t112)
+    %t113 =l loadl %t5
+    call $nox_async_destroy_task(l %rt, l %t113)
     storel 0, %t5
-    %t113 =l loadl %t0
-    call $nox_tasklocal_destroy(l %rt, l %t113)
+    %t114 =l loadl %t0
+    call $nox_tasklocal_destroy(l %rt, l %t114)
     storel 0, %t0
-    %t114 =l loadl %t6
-    call $nox_async_destroy_task(l %rt, l %t114)
+    %t115 =l loadl %t6
+    call $nox_async_destroy_task(l %rt, l %t115)
     storel 0, %t6
-    %t115 =l loadl %t1
-    call $nox_channel_destroy(l %rt, l %t115)
-    storel 0, %t1
-    %t116 =l loadl %t4
+    %t116 =l loadl %t1
     call $nox_channel_destroy(l %rt, l %t116)
-    storel 0, %t4
-    %t117 =l loadl %t2
+    storel 0, %t1
+    %t117 =l loadl %t4
     call $nox_channel_destroy(l %rt, l %t117)
+    storel 0, %t4
+    %t118 =l loadl %t2
+    call $nox_channel_destroy(l %rt, l %t118)
     storel 0, %t2
-@fn_end26
+    ret
+@exc_continue31
+    %t119 =l loadl %t3
+    call $nox_channel_destroy(l %rt, l %t119)
+    storel 0, %t3
+    %t120 =l loadl %t5
+    call $nox_async_destroy_task(l %rt, l %t120)
+    storel 0, %t5
+    %t121 =l loadl %t0
+    call $nox_tasklocal_destroy(l %rt, l %t121)
+    storel 0, %t0
+    %t122 =l loadl %t6
+    call $nox_async_destroy_task(l %rt, l %t122)
+    storel 0, %t6
+    %t123 =l loadl %t1
+    call $nox_channel_destroy(l %rt, l %t123)
+    storel 0, %t1
+    %t124 =l loadl %t4
+    call $nox_channel_destroy(l %rt, l %t124)
+    storel 0, %t4
+    %t125 =l loadl %t2
+    call $nox_channel_destroy(l %rt, l %t125)
+    storel 0, %t2
+@fn_end32
     ret
 }
 export function l $main_body(l %argp) {
@@ -2197,6 +2219,25 @@ export function l $spawn_wrap_1(l %argp) {
     %t6 =l add %argp, 32
     %t7 =l loadl %t6
     call $worker(l %rt, l %t1, l %t3, l %t5, l %t7)
+    %t8 =w ceql %t3, 0
+    jnz %t8, @release_skip1, @release0
+@release0
+    %t9 =l sub %t3, 16
+    %t10 =l loadl %t9
+    %t11 =l sub %t10, 1
+    storel %t11, %t9
+    %t12 =w cslel %t11, 0
+    jnz %t12, @str_free3, @str_free_skip4
+@str_free3
+    call $nox_str_free_now(l %rt, l %t3)
+    jmp @str_free_done5
+@str_free_skip4
+    jmp @str_free_done5
+@str_free_done5
+    jmp @release_done2
+@release_skip1
+    jmp @release_done2
+@release_done2
     call $nox_channel_destroy(l %rt, l %t5)
     call $nox_channel_destroy(l %rt, l %t7)
     call $nox_free(l %rt, l %argp, l 40)
@@ -2214,6 +2255,25 @@ export function l $spawn_wrap_0(l %argp) {
     %t6 =l add %argp, 32
     %t7 =l loadl %t6
     call $worker(l %rt, l %t1, l %t3, l %t5, l %t7)
+    %t8 =w ceql %t3, 0
+    jnz %t8, @release_skip1, @release0
+@release0
+    %t9 =l sub %t3, 16
+    %t10 =l loadl %t9
+    %t11 =l sub %t10, 1
+    storel %t11, %t9
+    %t12 =w cslel %t11, 0
+    jnz %t12, @str_free3, @str_free_skip4
+@str_free3
+    call $nox_str_free_now(l %rt, l %t3)
+    jmp @str_free_done5
+@str_free_skip4
+    jmp @str_free_done5
+@str_free_done5
+    jmp @release_done2
+@release_skip1
+    jmp @release_done2
+@release_done2
     call $nox_channel_destroy(l %rt, l %t5)
     call $nox_channel_destroy(l %rt, l %t7)
     call $nox_free(l %rt, l %argp, l 40)

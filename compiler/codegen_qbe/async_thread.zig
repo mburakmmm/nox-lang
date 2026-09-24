@@ -367,7 +367,26 @@ pub fn genSpawnExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
         // GÜVENLE hayatta kalır). `emitInlineRetain`nin KENDİSİ `qbeAtomicAdd`
         // ÜZERİNDEN (MN.1) GERÇEKTEN atomiktir — QBE'de BU KOD YOLU HİÇ
         // ÇALIŞMAZ (checker list/class/dict'i `.qbe`de HİÇ GEÇİRMEZ).
-        if (self.backend == .llvm and (av.heap == .list or av.heap == .class or av.heap == .dict)) {
+        if (av.heap == .str) {
+            // Faz [YENİ] (bkz. plan dosyası "Concurrency Torture Suite" —
+            // GERÇEK, torture testinin İLK çalıştırmasında bulunan bir ARC
+            // sızıntısı): `str`, `list`/`class`/`dict`nin AKSİNE (checker'ın
+            // `isSpawnParamSafeType`si) HER İKİ backend'de de spawn-argümanı
+            // OLARAK GEÇERLİDİR — bu YÜZDEN retain'i `self.backend == .llvm`
+            // KOŞULUNA BAĞLAMAK YANLIŞ olurdu (`.qbe` altında da BU KOD YOLU
+            // ÇALIŞMALI). ÖNCEDEN `str` bu switch'in HİÇBİR dalına
+            // GİRMİYORDU — kapanış `str`in HAM işaretçisini retain'SİZ
+            // paketliyordu VE (aşağıdaki release adımı da `str`i
+            // ATLADIĞINDAN) TEMPORARY bir `str` argümanının (ör. `spawn f("a"
+            // + str(i))`) KENDİ TEK sahip olduğu referansı HİÇBİR ZAMAN
+            // serbest BIRAKILMIYORDU — GERÇEK bir kalıcı sızıntı (izole bir
+            // repro İLE doğrulandı: 20 turluk bir döngüde spawn argümanı
+            // olarak DOĞRUDAN geçirilen HER `str` temporary'si TEK TEK
+            // sızdı, AYNI değer bir YEREL değişkene BAĞLANDIĞINDA SIZINTI
+            // YOKTU). Düzeltme: `list`/`class`/`dict`YLE AYNI retain+
+            // release-if-temporary çiftini `str`e de UYGULA.
+            try self.emitInlineRetain(av.text, .str);
+        } else if (self.backend == .llvm and (av.heap == .list or av.heap == .class or av.heap == .dict)) {
             try self.emitInlineRetain(av.text, av.heap);
         } else if (self.isSpawnRefcountedType(av.heap)) {
             // v1.29.12: `Task[T]`/`Channel[T]` (bkz. `ownership.zig`nin
@@ -387,11 +406,14 @@ pub fn genSpawnExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
     // referansını ALDI); bir DEĞİŞKEN İSE bu NO-OP'tur (`releaseIfTemporary`
     // SADECE GERÇEKTEN geçici ifadeler İçİn serbest bırakır), değişkenin
     // KENDİ kapsamı DEĞİŞMEDEN normal şekilde YÖNETMEYE devam eder.
-    if (self.backend == .llvm) {
-        for (call.args, 0..) |a, i| {
-            if (arg_values[i].heap == .list or arg_values[i].heap == .class or arg_values[i].heap == .dict) {
-                try self.releaseIfTemporary(a, arg_values[i]);
-            }
+    // `str`nin retain'i (YUKARIDA) backend-BAĞIMSIZ eklendiğinden, eşleşen
+    // release-if-temporary adımı da backend-BAĞIMSIZ olmalı — `list`/
+    // `class`/`dict`nin KENDİSİ HÂLÂ SADECE LLVM'de spawn-argümanı
+    // OLABİLDİĞİNDEN (checker), o üçü İçİn `self.backend == .llvm` kontrolü
+    // KORUNUR.
+    for (call.args, 0..) |a, i| {
+        if (arg_values[i].heap == .str or (self.backend == .llvm and (arg_values[i].heap == .list or arg_values[i].heap == .class or arg_values[i].heap == .dict))) {
+            try self.releaseIfTemporary(a, arg_values[i]);
         }
     }
     // v1.29.12: YUKARIDAKİ `Task[T]`/`Channel[T]` retain'inin EŞLEŞEN
@@ -488,6 +510,15 @@ pub fn genSpawnWrapper(self: *Codegen, spec: SpawnWrapperSpec) CodegenError!void
     // kapanışın (BU sarmalayıcının) KENDİ retain edilmiş referansı `target_
     // fn` DÖNDÜKTEN SONRA BURADA serbest bırakılmalıdır — `.qbe`de BU KOD
     // YOLU HİÇ ÇALIŞMAZ (checker list/class/dict'i `.qbe`de HİÇ GEÇİRMEZ).
+    // Faz [YENİ]: `genSpawnExpr`nin `str` İçİn EKLENEN (backend-BAĞIMSIZ)
+    // retain'inin EŞLEŞEN yarısı — `str` `list`/`class`/`dict`nin AKSİNE
+    // HER İKİ backend'de de spawn-argümanı OLABİLDİĞİNDEN, bu dal
+    // `self.backend == .llvm` KOŞULUNUN DIŞINDA, AYRICA yaşar.
+    for (spec.sig.params, arg_texts) |p, at| {
+        if (p.heap == .str) {
+            try self.releaseValueIfSet(at, .str, .none, null, null, null);
+        }
+    }
     if (self.backend == .llvm) {
         for (spec.sig.params, arg_texts) |p, at| {
             if (p.heap == .list or p.heap == .class or p.heap == .dict) {

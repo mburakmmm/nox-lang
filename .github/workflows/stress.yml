@@ -19,6 +19,18 @@ name: Eşzamanlılık stres testi (gecelik)
 # testlerini çalıştırır), `http-soak` İSE GERÇEKTEN `noxc build` (qbe+cc)
 # çağırdığından `ci.yml`nin qbe-kurulum adımlarını da GEREKTİRİR — hafif
 # işi GEREKSİZ yere ağırlaştırmamak İçİn AYRI tutuldu.
+#
+# v1.100.0 (bkz. v2.0 stabilizasyon yol haritası, madde 1 — Concurrency
+# Torture Suite): ÜÇÜNCÜ, BAĞIMSIZ bir iş (`concurrency-torture`) eklendi
+# — seed-tabanlı, deterministik reproduce edilebilir bir eşzamanlılık
+# testi, GERÇEK Nox kaynağını `nox.thread.pool_run` ÜZERİNDEN GERÇEK bir
+# çok-worker M:N havuzunda çalıştırıp cross-worker work-stealing/nested
+# spawn-await/task exception propagation/kooperatif iptal/GC baskısını
+# AYNI ANDA egzersiz eder. `http-soak`ın AKSİNE `qbe` KURULUMU GEREKMEZ —
+# torture ikilisi `noxc build --release` (LLVM/clang) İLE derlenir, VE
+# standart runner image'ları clang'ı ÖN-YÜKLÜ getirir (`ci.yml`nin ANA
+# matrisindeki `llvm_golden_test.zig`/`http_serve_multicore_pool_golden_
+# test.zig` AYNI varsayımla, HİÇBİR ek kurulum OLMADAN ZATEN çalışıyor).
 
 on:
   schedule:
@@ -107,3 +119,40 @@ jobs:
 
       - name: zig build http-soak-test (ReleaseFast, 300 saniye)
         run: zig build http-soak-test -Doptimize=ReleaseFast -Dsoak-seconds=300
+
+  # v1.100.0: `http-soak`ın AKSİNE `qbe` GEREKMEZ — torture ikilisi
+  # `noxc build --release` (LLVM/clang) İLE derlenir. Yerel ölçüm: 8
+  # seed × 15000 görev ≈ 27 saniye (Apple Silicon, ReleaseFast) — 30
+  # dakikalık timeout'un ÇOK altında, büyütme payı BIRAKILDI.
+  concurrency-torture:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            name: macOS (aarch64)
+            zig_arch: aarch64-macos
+          - os: ubuntu-latest
+            name: Linux (x86-64)
+            zig_arch: x86_64-linux
+          - os: ubuntu-24.04-arm
+            name: Linux (aarch64)
+            zig_arch: aarch64-linux
+    name: Eşzamanlılık torture (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Zig kur
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-${{ matrix.zig_arch }}-0.16.0.tar.xz"
+          tar xf /tmp/zig.tar.xz -C /tmp
+          echo "/tmp/zig-${{ matrix.zig_arch }}-0.16.0" >>"$GITHUB_PATH"
+
+      - name: zig build (ReleaseFast)
+        run: zig build -Doptimize=ReleaseFast
+
+      - name: zig build concurrency-torture-test (ReleaseFast, 8 seed × 15000 görev)
+        run: zig build concurrency-torture-test -Doptimize=ReleaseFast -Dtorture-seed-count=8 -Dtorture-tasks=15000

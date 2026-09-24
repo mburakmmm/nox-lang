@@ -14,6 +14,37 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.100.0]
+
+### Eklendi
+
+- **Concurrency Torture Suite (bkz. nox-teknik-spesifikasyon.md §3.187,
+  v2.0 stabilizasyon yol haritasının 1. maddesi)**: seed-tabanlı,
+  deterministik olarak reproduce edilebilir bir eşzamanlılık testi —
+  gerçek Nox kaynağı (`spawn`/`await`/`Task[T].cancel()`/`CancelledError`/
+  `try-except`/gerçek dosya G/Ç'si), `nox.thread.pool_run` üzerinden
+  gerçek bir 8-worker M:N havuzunda çalıştırılıp cross-worker work-
+  stealing, nested spawn/await, task exception propagation, kooperatif
+  iptal ve cycle-collector/GC baskısını aynı anda egzersiz eder. Yeni
+  opt-in `zig build concurrency-torture-test` adımı (`-Dtorture-seed-
+  count`/`-Dtorture-tasks`, varsayılan test paketinin PARÇASI DEĞİL) +
+  `.github/workflows/stress.yml`'e yeni, bağımsız `concurrency-torture`
+  job'u (nightly, 3-platform matris, 30 dk timeout, 8 seed × 15000 görev
+  ≈ 27 saniye ölçüldü).
+
+### Düzeltildi
+
+- **`spawn f(...)`e inline geçirilen TEMPORARY bir `str` argümanının ARC
+  sızıntısı (bkz. nox-teknik-spesifikasyon.md §3.187)**: yukarıdaki yeni
+  torture suite'in İLK GERÇEK koşusunda bulundu — `compiler/codegen_qbe/
+  async_thread.zig`'in `genSpawnExpr`/`genSpawnWrapper`ı, spawn argüman
+  paketleme/açma retain-release çiftini `list`/`class`/`dict`/`Task`/
+  `Channel`/`ThreadHandle`/`ThreadChannel` için kapsıyordu ama `str`i HİÇ
+  kapsamıyordu; bir yerel değişkene bağlı OLMAYAN taze bir `str` (concat
+  sonucu veya fonksiyon-çağrısı sonucu) doğrudan `spawn` argümanı olarak
+  verildiğinde sessizce sızıyordu. Dört izole repro ile doğrulandı, her
+  ikisi backend-bağımsız (str hem QBE hem LLVM altında spawn-güvenli).
+
 ## [1.99.8]
 
 ### Düzeltildi

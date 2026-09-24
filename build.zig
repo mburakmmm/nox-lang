@@ -1281,6 +1281,29 @@ pub fn build(b: *std.Build) void {
     const http_soak_test_step = b.step("http-soak-test", "nox.http.serve_multicore/serve_tls soak testi (-Dsoak-seconds, varsayılan 5) — opt-in, YAVAŞ, 'test' adımının PARÇASI DEĞİL");
     http_soak_test_step.dependOn(&soak_run.step);
 
+    // v1.100.0 (bkz. plan dosyası "v2.0 stabilizasyon yol haritası, Madde
+    // 1 — Concurrency Torture Suite"): `stress-test`/`http-soak-test`nin
+    // AYNI "gerçekten opt-in" ilkesi — seed-tabanlı, deterministik olarak
+    // reproduce edilebilir bir eşzamanlılık torture testi. GERÇEK `noxc
+    // build --release`yi çağırır (`nox.thread.pool_run`, `--release`
+    // GEREKTİRDİĞİNDEN), `b.getInstallStep()`e bağımlı.
+    const concurrency_torture_test_mod = b.createModule(.{
+        .root_source_file = b.path("tests/compat/concurrency_torture_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const concurrency_torture_test = b.addTest(.{ .root_module = concurrency_torture_test_mod });
+    concurrency_torture_test.step.dependOn(b.getInstallStep());
+
+    const torture_seed_count = b.option(u32, "torture-seed-count", "concurrency-torture-test adımının deneyeceği seed sayısı (varsayılan: 3)") orelse 3;
+    const torture_tasks = b.option(u32, "torture-tasks", "concurrency-torture-test adımının seed başına görev sayısı (varsayılan: 3000)") orelse 3000;
+    const torture_run = b.addRunArtifact(concurrency_torture_test);
+    torture_run.setEnvironmentVariable("NOX_TORTURE_SEED_COUNT", b.fmt("{d}", .{torture_seed_count}));
+    torture_run.setEnvironmentVariable("NOX_TORTURE_TASKS", b.fmt("{d}", .{torture_tasks}));
+    const concurrency_torture_test_step = b.step("concurrency-torture-test", "seed-tabanlı eşzamanlılık torture testi (-Dtorture-seed-count/-Dtorture-tasks) — opt-in, YAVAŞ, 'test' adımının PARÇASI DEĞİL");
+    concurrency_torture_test_step.dependOn(&torture_run.step);
+
     // Faz F.1 (bkz. plan dosyası "Cross-compile İSKELETİ"): QBE'nin çıktısı
     // freestanding, statik bir ELF olarak linklenebiliyor mu deneyini
     // (`wasm_build_options`nin AYNI "zig'in KENDİ yolunu build_options
