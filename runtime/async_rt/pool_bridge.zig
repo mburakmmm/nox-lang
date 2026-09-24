@@ -843,7 +843,15 @@ test "nox_pool_run: GERÇEK spawn/await İÇEREN bir entry, TÜM sonuçlar doğr
             // BAŞARISIZ OLDU — `worker_pool.zig`nin AYNI, artan geri-çekilme
             // (backoff) düzeltmesi BURAYA da taşındı (bkz. `StealTestCtx`nin
             // AYNI belge notu).
-            const backoffs = [_]i64{ 5, 20, 50, 100, 200 };
+            //
+            // v1.99.4: v1.99.2'nin 5-adımlı/375ms'lik penceresi de GERÇEK
+            // CI'de (aynı push'un AYNI koşusunda, BAŞKA bir siteyle —
+            // "Faz MN.8 Bulgu A" — birlikte) YETERSİZ kaldığı KANITLANDI —
+            // pencere ~4 KATINA (~3.175 saniyeye) ÇIKARILDI. Bu, "GEÇMEZSE
+            // biraz daha uzun bekle" mantığının DOĞAL bir devamı — çalışma
+            // hâlâ `stolen_count`in KENDİSİ GÖZLEMLENİR GÖZLEMLENMEZ ERKEN
+            // biter, BAŞARILI koşularda EK maliyet YOKTUR.
+            const backoffs = [_]i64{ 5, 20, 50, 100, 200, 400, 800, 1600 };
             for (backoffs) |ms| {
                 sleepMs(ms);
                 var any_stolen = false;
@@ -1058,7 +1066,13 @@ test "nox_pool_run: Faz MN.8 Bulgu A - sibling worker'lar globals_init_fn ile KE
             // yukarıdaki "GERÇEK spawn/await İÇEREN bir entry" testinin
             // AYNI düzeltmesi), artan geri-çekilme (backoff) İLE
             // `stolen_count`in KENDİSİ GÖZLEMLENEREK ERKEN çıkılır.
-            const backoffs = [_]i64{ 5, 20, 50, 100, 200 };
+            //
+            // v1.99.4: BU TAM SİTE, v1.99.2'nin 375ms'lik penceresiyle
+            // GERÇEK CI'de (v1.99.2/v1.99.3'ün AYNI push'unda) TEKRAR
+            // BAŞARISIZ OLDU — pencere ~4 KATINA (~3.175 saniyeye)
+            // ÇIKARILDI (bkz. bu dosyanın ~846. satırındaki KARDEŞ sitenin
+            // AYNI belge notu). BAŞARILI koşularda SIFIR EK maliyet.
+            const backoffs = [_]i64{ 5, 20, 50, 100, 200, 400, 800, 1600 };
             for (backoffs) |ms| {
                 sleepMs(ms);
                 if (stolen_count.load(.seq_cst) > 0) break;

@@ -511,7 +511,12 @@ fn stealTestWorkerEntry(rt: *anyopaque, slot: usize, ctx: *StealTestCtx) void {
         // ALDIĞI) GÖZLEMLENDİĞİ ANDA ERKEN çıkılır (hızlı/normal durumda
         // SIFIR ek maliyet) — SADECE gerçekten HİÇBİR şey çalınmamışsa
         // TÜM 375ms tüketilir.
-        const backoffs = [_]i64{ 5, 20, 50, 100, 200 };
+        //
+        // v1.99.4: BU 375ms'lik pencere de GERÇEK CI'de (v1.99.2/v1.99.3'ün
+        // AYNI push'unda, `pool_bridge.zig`nin KARDEŞ sitelerinden biri
+        // İLE) TEKRAR YETERSİZ kaldı — pencere ~4 KATINA (~3.175 saniyeye)
+        // ÇIKARILDI. BAŞARILI koşularda SIFIR EK maliyet DEĞİŞMEDİ.
+        const backoffs = [_]i64{ 5, 20, 50, 100, 200, 400, 800, 1600 };
         for (backoffs) |ms| {
             sleepMs(ms);
             var any_stolen = false;

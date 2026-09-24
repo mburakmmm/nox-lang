@@ -94,9 +94,14 @@ fn compileToBinary(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, sourc
 /// SESSİZCE hiçbir şey yapmaz — SIFIR maliyet.
 fn maybeSaveCrashArtifact(allocator: std.mem.Allocator, io: std.Io, bin_path: []const u8) void {
     const dir_path = std.mem.span(std.c.getenv("NOX_CRASH_ARTIFACTS_DIR") orelse return);
-    _ = std.process.run(allocator, io, .{ .argv = &.{ "mkdir", "-p", dir_path } }) catch return;
+    const mkdir_result = std.process.run(allocator, io, .{ .argv = &.{ "mkdir", "-p", dir_path } }) catch return;
+    allocator.free(mkdir_result.stdout);
+    allocator.free(mkdir_result.stderr);
     const dest = std.fmt.allocPrint(allocator, "{s}/prog_multicore_n2_{d}", .{ dir_path, std.c.getpid() }) catch return;
-    _ = std.process.run(allocator, io, .{ .argv = &.{ "cp", bin_path, dest } }) catch return;
+    defer allocator.free(dest);
+    const cp_result = std.process.run(allocator, io, .{ .argv = &.{ "cp", bin_path, dest } }) catch return;
+    allocator.free(cp_result.stdout);
+    allocator.free(cp_result.stderr);
 }
 
 fn probeFreePort() !u16 {

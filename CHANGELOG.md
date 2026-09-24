@@ -14,6 +14,31 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.99.4]
+
+### Düzeltildi
+
+- v1.99.3'ün `maybeSaveCrashArtifact`ı (core-dump teşhis mekanizması)
+  GERÇEK, kendi-sebep-olduğumuz bir bellek sızıntısı İçEriyordu — `dest`
+  yol dizesi `allocator.free` EDİLMİYORDU VE `NOX_CRASH_ARTIFACTS_DIR`
+  ortam değişkeni yanlışlıkla TÜM platformlarda (SADECE Linux DEĞİL)
+  ayarlanmıştı — GERÇEK CI'de (v1.99.3'ün İLK koşusu) ÜÇ platformun
+  ÜÇÜNDE de (`DebugAllocator`'ın leak-tespiti) `zig build test (Debug)`i
+  BAŞARISIZ ETTİ. `dest` artık serbest bırakılıyor, `std.process.run`ın
+  `mkdir`/`cp` sonuçları da AYNI şekilde serbest bırakılıyor (savunmacı),
+  VE ortam değişkeni SADECE Linux'ta ayarlanıyor.
+- `nox_pool_run`nin "Faz MN.8 Bulgu A" testi (`runtime/async_rt/pool_
+  bridge.zig`) VE `nox_pool_run`nin "GERÇEK spawn/await İÇEREN bir
+  entry" testinin backoff'u (`pool_bridge.zig`) VE `worker_pool.zig`nin
+  `StealTestCtx`si — v1.99.2'nin 5-adımlı/375ms'lik geri-çekilme (backoff)
+  penceresi GERÇEK CI'de (v1.99.2/v1.99.3'ün AYNI push'unda, Linux
+  x86-64'te) BİR KEZ DAHA `stolen_count == 0` İLE BAŞARISIZ OLDU — ÜÇ
+  sitenin de penceresi ~4 KATINA (~3.175 saniyeye, `5,20,50,100,200,400,
+  800,1600`ms) ÇIKARILDI. Başarılı koşularda SIFIR ek maliyet (erken
+  çıkış DEĞİŞMEDİ) — bu, AYNI race sınıfının ÜÇÜNCÜ recurrence'i, HÂLÂ
+  KESİN kök nedeni ÇÖZMÜYOR (gerçek CI kaynak-çekişmesinin ÖNGÖRÜLEMEZ
+  değişkenliği), SADECE gözlem penceresini GENİŞLETİYOR.
+
 ## [1.99.3]
 
 ### Eklendi (bkz. nox-teknik-spesifikasyon.md §3.185)

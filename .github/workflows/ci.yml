@@ -215,11 +215,10 @@ jobs:
       # zaten süreç İçİn geçerli sistem-genelinde bir ayar, AMA HER sürecin
       # KENDİ core-dump İZNİ (RLIMIT_CORE) AYRI/miras alınan bir şeydir.
       - name: zig build test (Debug)
-        env:
-          NOX_CRASH_ARTIFACTS_DIR: /tmp/nox_crash_artifacts
         run: |
           if [ "${{ runner.os }}" = "Linux" ]; then
             ulimit -c unlimited
+            export NOX_CRASH_ARTIFACTS_DIR=/tmp/nox_crash_artifacts
           fi
           zig build test
 
