@@ -14,6 +14,42 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.99.8]
+
+### Düzeltildi
+
+- **SO_REUSEPORT/kqueue "beklenmeyen errno (reactor baglaminda): 2"
+  flake'i (bkz. nox-teknik-spesifikasyon.md §3.186)**: v1.99.7'nin GERÇEK
+  CI koşusunda (`gh run view 35969828184`, macOS aarch64), `http_serve_
+  multicore_pool_golden_test.zig`'in `--release`/havuz (`SharedServeBudget`)
+  N=2 testi `term == .exited`/`term.exited == 0`/`results[0]`/`results[1]`
+  İDDİALARININ HEPSİNİ GEÇTİ (süreç TEMİZ çıktı, HER İKİ istemci de DOĞRU
+  sunuldu) — SADECE "stderr boş olmalı" kontrolü, stderr'de `beklenmeyen
+  errno (reactor baglaminda): 2` (ENOENT) mesajıyla BAŞARISIZ OLDU. Kök
+  neden: `runtime/async_rt/io_reactor.zig`'in `KqueueReactor.cancel()`ı
+  ZATEN belge notunda "EV_ONESHOT kaydı zaten KENDİLİĞİNDEN ateşleyip
+  kalkmış OLABİLİR, BU YÜZDEN ENOENT'i SESSİZCE yok say" diyordu (`sysKevent(
+  ...) catch {}`) — AMA `sysKevent`'in PAYLAŞILAN errno switch'i, ENOENT'i
+  DAHA ÖNCE, `unexpectedErrnoSafe` ÜZERİNDEN KOŞULSUZ bir `diag_sink.report`
+  PRINT'İNE düşürüyordu — hata SESSİZCE yutulsa BİLE PRINT ZATEN
+  gerçekleşmiş oluyordu. Gerçek senaryo: `poll()`'nin `registerWithTimeout`
+  tarafından eklenen EŞLEŞTİRİLMİŞ (fd+zamanlayıcı) EV_ONESHOT çiftinden
+  BİRİ (accept event) ateşlendiğinde `cancel()` DİĞERİNİ (zamanlayıcı) İPTAL
+  ETMEYE ÇALIŞIYOR — zamanlayıcı kernel TARAFINDAN ZATEN KENDİLİĞİNDEN
+  kaldırılmışsa (GERÇEK, ANLAŞILIR bir yarış — `cancel()`nin KENDİ, ÖNCEDEN
+  belgelenmiş beklentisi) `EV_DELETE` `ENOENT` alıyor. **Düzeltme**:
+  `sysKevent`'e AYRI bir `.NOENT => error.StaleKqueueEvent,` dalı EKLENDİ
+  (`unexpectedErrnoSafe`e HİÇ DÜŞMEDEN, PRINT YOK) — `cancel()`'in KENDİ
+  `catch {}`i BUNU YİNE SESSİZCE yutar (davranış AYNI), SADECE gürültülü/
+  YANLIŞ tanı PRINT'i ORTADAN KALKAR. `register`/`registerWithTimeout`'un
+  GERÇEK BAŞARISIZLIK durumundaki `catch @panic(...)` semantiği (Scheduler.
+  suspendForIo*) DEĞİŞMEDİ — SADECE bu YENİ, ayrı hata varyantı İçİn de
+  panik OLUŞUR (aynı, DEĞİŞMEYEN muhafazakâr davranış), SADECE ÖNCESİNDEKİ
+  gereksiz PRINT KALKTI. Bu, v1.99.0 dönemindeki §3.182'nin "kesin kök
+  neden kanıtlanamadı" bulgusundan TAMAMEN AYRI/YENİ bir flake'tir (O,
+  bir `term != .exited` hang/timeout'uydu — BU, TEMİZ bir çıkıştaki
+  gereksiz bir stderr PRINT'idir) — KARIŞTIRILMAMALIDIR.
+
 ## [1.99.7]
 
 ### Düzeltildi

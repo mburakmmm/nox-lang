@@ -179,6 +179,28 @@ const KqueueReactor = if (builtin.os.tag == .macos) struct {
                 .INTR => continue,
                 .ACCES => error.AccessDenied,
                 .NOMEM => error.SystemResources,
+                // Faz [YENİ] (bkz. plan dosyası "SO_REUSEPORT flake'inin
+                // araştırılması"): `cancel()`nin KENDİ belge notu ZATEN
+                // ENOENT'i ("kayıt zaten ateşleyip KENDİLİĞİNDEN kalkmış
+                // OLABİLİR") GÜVENLE/SESSİZCE yok saydığını İDDİA EDİYORDU
+                // — AMA bu switch `unexpectedErrnoSafe`e DÜŞTÜĞÜNDEN, PRINT
+                // (diag_sink.report) `cancel()`nin KENDİ `catch {}`INDEN
+                // ÖNCE, KOŞULSUZ gerçekleşiyordu (hata SESSİZCE yutulsa
+                // BİLE stderr'e ZATEN YAZILMIŞ oluyordu). GERÇEK CI'de
+                // KANITLANDI (`http_serve_multicore_pool_golden_test.zig`,
+                // SharedServeBudget yolu): `poll()`nin `cancel()` çağrısı,
+                // registerWithTimeout'un EŞLEŞTİRİLMİŞ fd+zamanlayıcı
+                // EV_ONESHOT çiftinden BİRİ (zamanlayıcı) kernel TARAFINDAN
+                // ZATEN KENDİLİĞİNDEN kaldırıldıktan SONRA EV_DELETE
+                // denediğinde ENOENT alıyor — TAM OLARAK `cancel()`nin
+                // ÖNGÖRDÜĞÜ, BENİGN bir yarış (süreç ÇÖKMEDİ, HER İKİ
+                // istemci de DOĞRU sunuldu — SADECE gereksiz bir tanı
+                // PRINT'i vardı). BURADA `unexpectedErrnoSafe`e (VE onun
+                // PRINT'ine) DÜŞMEDEN AYRI bir hata döndürülür — `register`/
+                // `registerWithTimeout`nin KENDİ panik-üzerinde-BAŞARISIZLIK
+                // semantiği (`Scheduler.suspendForIo*`nin `catch @panic`ı)
+                // DEĞİŞMEZ, SADECE gürültülü/YANLIŞ bir PRINT ORTADAN KALKAR.
+                .NOENT => error.StaleKqueueEvent,
                 else => |err| unexpectedErrnoSafe(err),
             };
         }

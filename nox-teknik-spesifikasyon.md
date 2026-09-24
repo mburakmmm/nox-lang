@@ -23299,6 +23299,82 @@ O testin KENDİ dosyasına da EKLENEBİLİR).
 yapılandırması, `zig build test (Debug)`in env/ulimit güncellemesi,
 `if: always()` analiz + artefact-yükleme adımları).
 
+## 3.186 SO_REUSEPORT/kqueue "beklenmeyen errno (reactor baglaminda): 2"
+flake'i — `cancel()`nin belgelenmiş-ama-uygulanmamış ENOENT sessizliği (v1.99.8)
+
+### Context
+
+v1.99.7'nin push'u SONRASI kullanıcı "aarch64 stack-smashing'i (hedef,
+zaten AÇIK) YANI SIRA, bu koşuda ortaya çıkan YENİ/FARKLI bir flake'e de
+BAK" TALİMATINI verdi. `gh run view 35969828184` (v1.99.7'nin GERÇEK CI
+koşusu) İLE DOĞRUDAN İNCELENDİ — İKİ İş (macOS aarch64, Linux aarch64)
+başarısızdı: **Linux aarch64** BEKLENEN, ZATEN AÇIK stack-smashing
+hedefiydi (§3.184'ün belgelediği, YAPISAL diagnostik tavanına ULAŞILMIŞ
+sorun) — **macOS aarch64** İSE TAMAMEN FARKLI, YENİ bir test dosyasında
+başarısız oluyordu: `http_serve_multicore_pool_golden_test.zig:238`
+(`--release`/havuz, `SharedServeBudget` yolu, N=2 worker testi).
+
+GERÇEK CI logu İNCELENDİĞİNDE: `term == .exited`, `term.exited == 0`,
+`results[0]`, `results[1]` İDDİALARININ HEPSİ GEÇTİ (süreç TEMİZ çıktı,
+HER İKİ istemci de DOĞRU sunuldu) — SADECE "stderr boş olmalı" kontrolü
+`beklenmeyen errno (reactor baglaminda): 2` (ENOENT) mesajıyla BAŞARISIZ
+oldu. Bu, §3.182'nin "kesin kök neden kanıtlanamadı" bulgusundan (bir
+`term != .exited` HANG'i idi) TAMAMEN AYRI/YENİ bir flake — KARIŞTIRIL-
+MAMALI.
+
+### Kök neden
+
+`runtime/async_rt/io_reactor.zig`nin `KqueueReactor.cancel()`ı (`fd`teki
+BEKLEYEN bir kayıt iptali) ZATEN, BAŞTAN BERİ, KENDİ belge notunda ŞUNU
+İDDİA EDİYORDU: "`ENOENT` (kayıt zaten ateşleyip KENDİLİĞİNDEN kalkmış
+OLABİLİR, bkz. `EV_ONESHOT`) SESSİZCE yok sayılır" — VE bunu `sysKevent(
+...) catch {}` İLE UYGULUYORDU. **AMA** `sysKevent`nin PAYLAŞILAN errno
+switch'i, `.NOENT`i AÇIKÇA ELE ALMIYORDU — genel `else => |err|
+unexpectedErrnoSafe(err)` dalına DÜŞÜYORDU, VE `unexpectedErrnoSafe`
+(diag_sink.report ÜZERİNDEN) KOŞULSUZ bir PRINT yapıyor, `error.Unexpected`
+DÖNDÜRÜYORDU — `cancel()`nin KENDİ `catch {}`İ hatayı SESSİZCE yutuyordu
+AMA PRINT ZATEN, `catch` ÇALIŞMADAN ÖNCE, GERÇEKLEŞMİŞ oluyordu. YANİ
+`cancel()`nin "sessizce yok say" iddiası YALNIZCA HATA-yayılımı İçİn
+doğruydu, stderr-kirliliği İçİn DEĞİL.
+
+**Gerçek senaryo (GERÇEK CI'de tetiklenen)**: `Scheduler.suspendForIoOrTimeout`
+(accept-loop'un `nonBlockingAcceptWithTimeout`i tarafından çağrılır) TEK
+bir `kevent()` çağrısında İKİ EŞLEŞTİRİLMİŞ `EV_ONESHOT` kaydı EKLER —
+(1) `listen_fd` üzerinde EVFILT_READ, (2) AYNI `ident`(=listen_fd) üzerinde
+EVFILT_TIMER (zaman-aşımı). `IoReactor.poll()`, BU İKİSİNDEN BİRİ (ör.
+accept event) ateşlendiğinde `cancel()`i ÇAĞIRARAK DİĞERİNİ (zamanlayıcı)
+İPTAL ETMEYE ÇALIŞIR — AMA zamanlayıcı kernel TARAFINDAN (EV_ONESHOT'un
+KENDİ semantiği gereği) ZATEN KENDİLİĞİNDEN kaldırılmış OLABİLİR (TAM
+OLARAK `cancel()`nin KENDİ, ÖNCEDEN öngördüğü yarış) — bu durumda `EV_
+DELETE` `ENOENT` alır. Sonuç: süreç ÇÖKMEZ/YANLIŞ davranmaz (`cancel()`nin
+hata-yutma mantığı DOĞRU çalışır), AMA stderr'e GEREKSİZ/YANLIŞ bir
+"beklenmeyen errno" tanı mesajı YAZILIR — golden testlerin "stderr boş
+= sızıntı YOK" kontrolünü YANLIŞLIKLA TETİKLER.
+
+### Düzeltme
+
+`sysKevent`'in errno switch'İNE, `.INTR`/`.ACCES`/`.NOMEM`in YANINA, YENİ
+bir `.NOENT => error.StaleKqueueEvent,` dalı EKLENDİ — `unexpectedErrnoSafe`e
+(VE onun KOŞULSUZ PRINT'İNE) HİÇ DÜŞMEDEN, AYRI/sessiz bir hata döner.
+`cancel()`nin KENDİ `catch {}`İ BUNU (VE HER ZAMAN yaptığı GİBİ HERHANGİ
+BAŞKA bir hatayı da) YİNE SESSİZCE yutar — DAVRANIŞ BİREBİR AYNI KALIR,
+SADECE gürültülü/YANLIŞ PRINT ORTADAN KALKAR. `register`/`registerWithTimeout`nin
+KENDİ, GERÇEK-BAŞARISIZLIK durumundaki `catch @panic("kqueue register
+basarisiz")` semantiği (`Scheduler.suspendForIo`/`suspendForIoOrTimeout`)
+DEĞİŞMEDİ — bu YENİ hata varyantı da (`register`/`registerWithTimeout`
+ÜZERİNDEN GENUINE bir başarısızlık OLARAK gelirse) AYNI şekilde PANİK
+ÜRETMEYE devam eder (muhafazakâr davranış KORUNDU), SADECE ÖNCESİNDEKİ
+gereksiz PRINT (`cancel()`nin ZATEN yutacağı BİR hata İçİn) KALKTI.
+
+### Doğrulama
+
+`zig ast-check`; `zig build async-rt-test` (Debug) TEMİZ; TAM paket
+`zig build test` (Debug+ReleaseFast) SIFIR regresyon.
+
+### Kritik dosyalar
+
+`runtime/async_rt/io_reactor.zig`.
+
 ---
 
 ## 5. Hata Yönetimi
