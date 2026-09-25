@@ -1,0 +1,9 @@
+import nox.thread
+
+async def lookup(d: dict[str, str]) -> str:
+    return d["greeting"]
+
+h_dict: dict[str, str] = {"greeting": "merhaba"}
+h: ThreadHandle[str] = nox.thread.start(lookup, h_dict)
+result: str = await h.join()
+print(result)

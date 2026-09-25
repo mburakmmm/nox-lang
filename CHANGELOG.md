@@ -14,6 +14,49 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.102.2]
+
+### Eklendi
+
+- **`backend_conformance_test.zig`nin (Faz HH.1/HH.1.2) kapsamı genişletildi
+  (bkz. nox-teknik-spesifikasyon.md §3.191, v2.0 yol haritasının 3.
+  maddesi)**: 10 yeni test (7 `expectConformant` + 3 `expectDivergence`).
+  Yeni conformant fixture'lar: `dict[K,V]` (şimdiye kadar hiç test
+  edilmemişti), sınıf kalıtımı+hiyerarşik `except`, str işlemleri
+  (birleştirme/indeksleme/f-string/dönüşümler), birinci-sınıf fonksiyon
+  değeri (`__fnval` trampoline), iç içe try/except/finally+with, Go-tarzı
+  `defer`, generic örneklemenin kendi çalışma-zamanı davranışı. Yeni
+  divergence fixture'lar `isSpawnParamSafeType`/`isThreadTransferSafeType`nin
+  LLVM-gevşetilmiş `list`/`class`/`dict` kümesinin 2×3 kombinasyon
+  matrisini (spawn/thread.start × list/class/dict) tamamlıyor — önceden
+  sadece yarısı test ediliyordu.
+
+### Düzeltildi
+
+- **nox-teknik-spesifikasyon.md §3.87'nin iki yanlış iddiası**: "`--release`
+  sadece macOS/arm64'e kapsamlı" ve "float'lar tamamen LLVM yolunun
+  dışında" — ikisi de artık yanlıştı (float zaten çok sayıda mevcut
+  fixture'da LLVM altında test ediliyordu, CI'nin 3-platform matrisi
+  Linux x86-64/aarch64'ü de zaten kapsıyordu) — muhtemelen bu fazın erken
+  bir döneminden kalma, güncellenmemiş bir nottu.
+
+## [1.102.1]
+
+### Değişti
+
+- **CI: `Linux (aarch64)` job'u geçici olarak `continue-on-error` işaretlendi
+  (bkz. nox-teknik-spesifikasyon.md §3.190)** — `http_serve_multicore`/
+  `http_serve_multicore_pool`'ın N=2 testlerinde SADECE bu platformda
+  tetiklenen, v1.99.0/v1.99.1'de kısmen araştırılmış AMA kök nedeni HİÇBİR
+  ZAMAN kesin kanıtlanmamış bir "stack smashing detected" çöküşü, bu turda
+  5 ardışık koşuda %100 tekrarladı (öncesinde nadirdi). Canlı ARM64 Linux
+  donanımına erişim olmadan kanıtlanmamış bir düzeltme commit etmek yerine
+  — v1.99.1'in kendi "gözlemsel, kesin kanıt değil" düzeltmesinin yetersiz
+  kaldığı göz önüne alındığında — diğer TÜM platformlar (macOS aarch64,
+  Linux x86-64, Windows) değişmeden zorunlu kalırken SADECE bu tek, bilinen
+  sorun için `main`i geçici olarak açık tutan bir bayrak eklendi. Kalıcı
+  düzeltme ayrı, canlı donanımlı bir tur gerektirir.
+
 ## [1.102.0]
 
 ### Eklendi

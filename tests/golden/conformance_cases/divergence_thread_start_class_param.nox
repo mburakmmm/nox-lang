@@ -1,0 +1,14 @@
+import nox.thread
+
+class Point:
+    def __init__(self: Point, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+
+async def sum_coords(p: Point) -> int:
+    return p.x + p.y
+
+pt: Point = Point(30, 40)
+h: ThreadHandle[int] = nox.thread.start(sum_coords, pt)
+result: int = await h.join()
+print(result)

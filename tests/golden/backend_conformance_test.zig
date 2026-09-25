@@ -21,6 +21,19 @@
 //! ULAŞMADAN monomorfize edilir) BİLİNÇLİ olarak KAPSAM DIŞI bırakıldı —
 //! ÜÇÜ de backend-özel bir çalışma-zamanı sapma yüzeyi TAŞIMIYOR.
 //!
+//! v2.0 stabilizasyon yol haritası, madde 3 (bkz. nox-teknik-
+//! spesifikasyon.md §3.191): 7 YENİ `expectConformant` fixture'ı (dict[K,V],
+//! sınıf kalıtımı+hiyerarşik except, str işlemleri, birinci-sınıf fonksiyon
+//! değeri, iç içe try/except/finally+with, defer, generic örnekleme'nin
+//! KENDİ çalışma-zamanı davranışı — "ORM/generic çıkarım" hariç tutmasından
+//! FARKLI bir şey) + 3 YENİ `expectDivergence` fixture'ı (`isSpawnParamSafeType`/
+//! `isThreadTransferSafeType`nin LLVM-gevşetilmiş `list`/`class`/`dict`
+//! kümesinin, ÖNCEDEN SADECE YARISI test edilen 2×3 kombinasyon matrisini
+//! TAMAMLAR: dict×spawn, class×thread.start, dict×thread.start). `nox.http.
+//! serve_multicore*` (M:N/LLVM vs M:1/QBE zamanlama farkı NEDENİYLE
+//! `expectConformant`nin KATI stdout-eşitliği modeliyle test EDİLEMEZ)
+//! BİLİNÇLİ olarak BU turda da KAPSAM DIŞI bırakıldı.
+//!
 //! **İKİ test kategorisi**:
 //! - `expectConformant`: HER İKİ backend de ÇALIŞTIRILIR, stdout'ları
 //!   HEM `expected`e HEM BİRBİRİNE eşit olmalı. SADECE deterministik-
@@ -214,6 +227,79 @@ test "conformance: Faz F.3 — detach/ptr_add/ptr_read_int/ptr_write_int her iki
     );
 }
 
+// v2.0 madde 3 (bkz. nox-teknik-spesifikasyon.md §3.191): `dict[K,V]`
+// (literal/indeksleme/`.keys()`/bir sınıf alanı olarak) ŞU ANA KADAR
+// HİÇ conformance-test EDİLMEMİŞTİ — `conformance_list_elements`in dict
+// eşdeğeri.
+test "conformance: dict[K,V] (literal/indeksleme/.keys()/sınıf alanı) her iki backend'de aynı" {
+    try expectConformant(
+        @embedFile("conformance_cases/conformance_dict_elements.nox"),
+        @embedFile("conformance_cases/conformance_dict_elements.expected"),
+    );
+}
+
+// Faz 7'nin vtable/`class_id` hiyerarşik eşleştirmesinin (bir `except
+// Base:`in bir `Derived` örneğini yakalaması) backend-bağımsız olduğunun
+// kanıtı.
+test "conformance: sınıf kalıtımı + hiyerarşik except (Faz 7) her iki backend'de aynı" {
+    try expectConformant(
+        @embedFile("conformance_cases/conformance_inheritance_exception_hierarchy.nox"),
+        @embedFile("conformance_cases/conformance_inheritance_exception_hierarchy.expected"),
+    );
+}
+
+// Mevcut fixture'lar SADECE str'i bir DEĞER olarak taşıyordu — bu, str'in
+// KENDİ işlemlerini (birleştirme/indeksleme/f-string/dönüşümler) test
+// eder.
+test "conformance: str işlemleri (birleştirme/indeksleme/f-string/dönüşümler) her iki backend'de aynı" {
+    try expectConformant(
+        @embedFile("conformance_cases/conformance_string_ops.nox"),
+        @embedFile("conformance_cases/conformance_string_ops.expected"),
+    );
+}
+
+// `closures.zig`nin `__fnval` trampoline'ının (bkz. onun belge notu)
+// backend-bağımsız olduğunun kanıtı — ŞU ANA KADAR sadece closure
+// CAPTURE test ediliyordu, çıplak fonksiyon-DEĞERİ (atama/argüman/
+// dolaylı çağrı) DEĞİL.
+test "conformance: birinci-sınıf fonksiyon değeri (atama/argüman/dolaylı çağrı) her iki backend'de aynı" {
+    try expectConformant(
+        @embedFile("conformance_cases/conformance_function_value.nox"),
+        @embedFile("conformance_cases/conformance_function_value.expected"),
+    );
+}
+
+// ASAP destructor + istisna-unwinding codegen yolunun (bkz. exceptions.zig)
+// İç İçE try/except/finally + with (context manager) kombinasyonunda
+// backend-bağımsız olduğunun kanıtı.
+test "conformance: iç içe try/except/finally + with (context manager) her iki backend'de aynı" {
+    try expectConformant(
+        @embedFile("conformance_cases/conformance_try_except_finally_with.nox"),
+        @embedFile("conformance_cases/conformance_try_except_finally_with.expected"),
+    );
+}
+
+// Go-tarzı `defer`in (checker'ın sentetik FuncDef'ine dayalı `genDeferStmt`,
+// bkz. closures.zig) LIFO sırasının backend-bağımsız olduğunun kanıtı.
+test "conformance: defer (LIFO sırası, birden fazla defer) her iki backend'de aynı" {
+    try expectConformant(
+        @embedFile("conformance_cases/conformance_defer.nox"),
+        @embedFile("conformance_cases/conformance_defer.expected"),
+    );
+}
+
+// Dosyanın üst-notunun "ORM/generic çıkarım SAF derleme-zamanı, sıfır
+// sapma yüzeyi" iddiasını VARSAYIM'DAN KANITLANMIŞ hale getirir —
+// monomorfizasyon SONRASI üretilen somut fonksiyonun/sınıfın KENDİ
+// çalışma-zamanı davranışı (generic çıkarımın KENDİSİ DEĞİL) ŞİMDİYE
+// KADAR dual-backend doğrulanmamıştı.
+test "conformance: generic fonksiyon/sınıf örneklemesinin ÇALIŞMA-ZAMANI davranışı her iki backend'de aynı" {
+    try expectConformant(
+        @embedFile("conformance_cases/conformance_generic_instantiation.nox"),
+        @embedFile("conformance_cases/conformance_generic_instantiation.expected"),
+    );
+}
+
 // --- Belgelenmiş sapma (divergence) testleri: checker.zig'in
 // `isSpawnParamSafeType`/`isThreadTransferSafeType`si + codegen_qbe'nin
 // `pool_run`/decorator KABUL-RED asimetrisi. ---
@@ -256,5 +342,37 @@ test "divergence: decorator kullanımı — QBE kabul eder, LLVM reddeder (Faz L
         @embedFile("conformance_cases/divergence_decorator.nox"),
         .{ .accepted = "1\n" },
         .rejected,
+    );
+}
+
+// v2.0 madde 3 (bkz. nox-teknik-spesifikasyon.md §3.191): `isSpawnParamSafeType`/
+// `isThreadTransferSafeType`nin LLVM altında gevşetilen kümesi `list`/
+// `class`/`dict`'İN ÜÇÜNÜ de içeriyor — yukarıdaki 3 mevcut divergence
+// testi SADECE list (HER İKİ mekanizma İçİn) + class (spawn İçİn)
+// kapsıyordu. Bu ÜÇ YENİ test, 2 mekanizma × 3 tip = 6 kombinasyonluk
+// matrisin KALAN yarısını (dict×spawn, class×thread.start, dict×
+// thread.start) tamamlar.
+
+test "divergence: spawn'a dict[str,str] parametresi — QBE reddeder, LLVM kabul eder" {
+    try expectDivergence(
+        @embedFile("conformance_cases/divergence_spawn_dict_param.nox"),
+        .rejected,
+        .{ .accepted = "merhaba\n" },
+    );
+}
+
+test "divergence: nox.thread.start'a sınıf parametresi — QBE reddeder, LLVM kabul eder" {
+    try expectDivergence(
+        @embedFile("conformance_cases/divergence_thread_start_class_param.nox"),
+        .rejected,
+        .{ .accepted = "70\n" },
+    );
+}
+
+test "divergence: nox.thread.start'a dict[str,str] parametresi — QBE reddeder, LLVM kabul eder" {
+    try expectDivergence(
+        @embedFile("conformance_cases/divergence_thread_start_dict_param.nox"),
+        .rejected,
+        .{ .accepted = "merhaba\n" },
     );
 }

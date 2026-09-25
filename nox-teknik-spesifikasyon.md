@@ -14614,9 +14614,18 @@ eşdeğer hale gelir VE argüman/dönüş tip kısıtı GENİŞLER (`list`/sın�
 farkındalıklı kapanış paketleme İLE, bkz. `stdlib/nox/thread.nox`nin
 GÜNCEL modül belgesi).
 
-**Bilinçli v1 sınırlamaları:** `--release` SADECE macOS/arm64'e kapsamlı
+**Bilinçli v1 sınırlamaları:** ~~`--release` SADECE macOS/arm64'e kapsamlı
 (Windows/Linux LLVM çağrısı ELE ALINMADI); float'lar TAMAMEN LLVM
-yolunun DIŞINDA; `noxc check`/`noxc expand` HER ZAMAN `.qbe` kurallarını
+yolunun DIŞINDA~~ — **v2.0 madde 3'te (bkz. §3.191) GÜNCELLENDİ/DÜZELTİLDİ:
+BU İKİ İDDİA de ARTIK YANLIŞ (muhtemelen bu fazın ERKEN bir döneminden
+KALMA, float desteği EKLENMEDEN ÖNCEKİ bir NOT)** — `ci.yml`nin 3-platform
+matrisi (`zig build test`, HİÇBİR ek clang-kurulum adımı OLMADAN, standart
+runner image'larının ÖN-YÜKLÜ clang'ıyla) `llvm_golden_test.zig`/
+`backend_conformance_test.zig`yi ZATEN Linux x86-64 VE Linux aarch64'te de
+ÇALIŞTIRIYOR (macOS/arm64 İLE SINIRLI DEĞİL); float, `backend_conformance_
+test.zig`nin ÇOK sayıda fixture'ında (`conformance_function_return`/
+`class_field`/`list_elements`/`closure_capture`) LLVM altında BAŞARIYLA test
+EDİLİYOR. `noxc check`/`noxc expand` HER ZAMAN `.qbe` kurallarını
 uygular (BİLİNÇLİ taşınabilirlik-maliyeti — `--release`e ÖZGÜ bir
 programın KAYNAK KODU `noxc check`te HATA verebilir, AYNI kaynak `noxc
 build --release` İLE GERÇEKTEN DERLENEBİLİR); döngü-çözücünün otomatik
@@ -23681,6 +23690,122 @@ yazılmış, skaler-olmayan imza, gölgelenen hedef, çıplak-olmayan hedef).
 (`registerExternCallback`/`checkExternCallbackArgs`/`checkCallbackTargetArg`),
 `compiler/main.zig` (`callback_targets` plumbing'i), `tests/compat/
 {extern_ffi_test.zig,zig_ext/util.zig}`.
+
+---
+
+## 3.190 aarch64 stack-smash'in (§3.184/§3.189) TEKRAR ortaya çıkması — `continue-on-error` geçici önlemi
+
+v1.102.0'ın push'undan SONRA, `Linux (aarch64)` CI job'u 5 ardışık koşuda
+TUTARLI şekilde `http_serve_multicore`/`http_serve_multicore_pool`'ın N=2
+testlerinde `*** stack smashing detected ***` İLE çöktü (`nox_thread_join`,
+`runtime/async_rt/thread_bridge.zig`) — v1.99.0/v1.99.1'in (§3.183/§3.184)
+KISMEN araştırdığı, kesin kök nedeni HİÇBİR ZAMAN kanıtlanamamış AYNI çöküş
+sınıfı, ÖNCEDEN nadir iken BU turda %100 (5/5) tekrarladı.
+
+### Bu turda yapılan araştırma (canlı aarch64 donanımı OLMADAN, statik)
+
+- `swap_aarch64.S`'nin v1.99.1'de eklenen `x18` yazmaç kaydı/geri yüklemesi
+  DOĞRU offsette YERİNDE (bkz. §3.184) — BU önlem REGRESE OLMAMIŞ.
+- `ThreadHandle`/`childThreadMain`/`nox_thread_spawn`/`nox_thread_join`'in
+  TAM yaşam döngüsü (atomik referans sayımı, self-pipe üzerinden çapraz-iş-
+  parçacığı sonuç aktarımı) VE `scheduler.zig`'nin askıya-alma/yığın-havuzu
+  mantığı YENİDEN incelendi — statik okumada YAPISAL bir hata BULUNAMADI.
+- Backtrace'in KENDİSİ `nox_thread_join`in ÖTESİNDE "corrupt stack?" diyor
+  — GDB'nin post-mortem yeniden-yapılandırması GÜVENİLİR DEĞİL, GERÇEK
+  bozulma NOKTASI daha ERKEN bir çağrıda olabilir.
+- Linux x86-64 AYNI testte HİÇ BAŞARISIZ OLMADI — aarch64'ün DAHA ZAYIF
+  bellek sıralama modeliyle TUTARLI bir gözlem (KANIT DEĞİL — eksik BELİRLİ
+  bir bariyer TESPİT EDİLEMEDİ; POSIX pipe `write`/`read` syscall'ları HER
+  İKİ mimaride de TAM bariyer sağlamalı).
+
+### Karar
+
+Canlı ARM64 Linux donanımına erişim OLMADAN (bu oturumun KENDİ ortamı
+macOS/aarch64 — AYNI CPU mimarisi AMA FARKLI OS/glibc davranışı, çöküş
+YEREL olarak REPRODUCE EDİLEMEZ) KANITLANMAMIŞ bir düzeltme COMMIT
+ETMEMEK — v1.99.1'in KENDİ "gözlemsel, kesin kanıt DEĞİL" düzeltmesinin
+YETERSİZ kaldığı GÖZ ÖNÜNE ALINDIĞINDA, KÖRÜ KÖRÜNE bir İKİNCİ tahmin
+GÜRÜLTÜ EKLEME riski TAŞIR. Kullanıcı BUNU ONAYLADI: `.github/workflows/
+ci.yml`nin `test` job'unun matrisine SADECE `Linux (aarch64)` girdisi İçİn
+`continue-on-error: true` (matrix'in `allow_failure` alanı ÜZERİNDEN)
+EKLENDİ — DİĞER platformlar (`macOS aarch64`, `Linux x86-64`, `Windows`)
+DEĞİŞMEDEN ZORUNLU KALIR. Bu **GEÇİCİ** bir önlemdir, açıkça yorumlanmıştır
+— GERÇEK kök neden, canlı ARM64 Linux donanımlı, İNTERAKTİF bir hata
+ayıklama TURU (ASAN'ın "sessizce MASKELEDİĞİ" §3.184'ün KENDİ notu göz
+önünde bulundurularak, muhtemelen ASAN OLMADAN, tekrarlı GERÇEK-donanım
+koşularıyla) GEREKTİRİR — bu tur TAMAMLANINCA `allow_failure` bayrağı
+KALDIRILMALIDIR.
+
+### Kritik dosyalar
+
+`.github/workflows/ci.yml` (`test` job'unun matrisi).
+
+---
+
+## 3.191 v2.0 stabilizasyon yol haritası, madde 3 — QBE↔LLVM Expanded Conformance
+
+`backend_conformance_test.zig`nin (Faz HH.1/HH.1.2) kapsamı genişletildi —
+10 YENİ test (7 `expectConformant` + 3 `expectDivergence`), TÜM MEVCUT
+testler DEĞİŞMEDEN geçmeye devam ediyor.
+
+### Bulunan boşluklar
+
+- `checker.zig`nin `isSpawnParamSafeType`/`isThreadTransferSafeType`si,
+  LLVM altında `list`/`class`/`dict`'İN ÜÇÜNÜ de gevşetiyor — AMA mevcut
+  divergence testleri SADECE list (HER İKİ mekanizma İçİn) + class (SADECE
+  `spawn` İçİn) kapsıyordu. 2 mekanizma × 3 tip = 6 kombinasyonluk matrisin
+  YARISI (dict×spawn, class×thread.start, dict×thread.start) EKSİKTİ.
+- `dict[K,V]` hiçbir zaman conformance-test EDİLMEMİŞTİ (`conformance_
+  list_elements`in dict eşdeğeri yoktu).
+- Sınıf kalıtımı+hiyerarşik `except` (Faz 7), str'in KENDİ işlemleri
+  (birleştirme/indeksleme/f-string/dönüşümler — mevcut fixture'lar str'i
+  SADECE bir DEĞER olarak taşıyordu), birinci-sınıf fonksiyon DEĞERİ
+  (`__fnval` trampoline — mevcut fixture'lar SADECE closure CAPTURE'ı
+  kapsıyordu), iç içe try/except/finally+with kombinasyonu, Go-tarzı
+  `defer`, VE generic örneklemenin KENDİ çalışma-zamanı davranışı (dosyanın
+  "ORM/generic çıkarım SAF derleme-zamanı" hariç-tutmasından FARKLI bir
+  şey — monomorfizasyon SONRASI üretilen somut kodun KENDİSİ HİÇ dual-
+  backend doğrulanmamıştı) — hiçbiri conformance-test EDİLMEMİŞTİ.
+- **Bulunan, gerçek bir belge hatası** (bkz. §3.87'nin düzeltilen notu):
+  "`--release` SADECE macOS/arm64'e kapsamlı" VE "float'lar TAMAMEN LLVM
+  yolunun DIŞINDA" iddiaları YANLIŞTI — float ZATEN ÇOK sayıda mevcut
+  fixture'da LLVM altında test EDİLİYORDU, VE `ci.yml`nin 3-platform
+  matrisi Linux x86-64/aarch64'ü de ZATEN kapsıyordu.
+
+### Eklenen testler
+
+7 `expectConformant`: `conformance_dict_elements`, `conformance_
+inheritance_exception_hierarchy`, `conformance_string_ops`, `conformance_
+function_value`, `conformance_try_except_finally_with`, `conformance_
+defer`, `conformance_generic_instantiation`. HER biri ÖNCE `noxc run`/
+`noxc check`+`noxc build --release` İLE GERÇEKTEN çalıştırılıp GERÇEK
+stdout'u kaydedildi (elle TAHMİN EDİLMEDİ) — SONRA `expectConformant`e
+eklendi, testin KENDİSİ İki backend'in GERÇEKTEN aynı çıktıyı ürettiğini
+doğruladı.
+
+3 `expectDivergence` (2×3 matrisi TAMAMLAR): `divergence_spawn_dict_param`,
+`divergence_thread_start_class_param`, `divergence_thread_start_dict_param`
+— HER üçü de QBE'nin GERÇEKTEN reddettiği (`noxc check` İLE doğrulandı) VE
+LLVM'in GERÇEKTEN kabul edip BEKLENEN stdout'u ürettiği (`noxc build
+--release` İLE doğrulandı) AYRI AYRI teyit edildi.
+
+### Kasıtlı, BU turda da KORUNAN hariç tutmalar
+
+`nox.http.serve_multicore*` (M:N/LLVM vs M:1/QBE zamanlama farkı
+NEDENİYLE `expectConformant`nin KATI stdout-eşitliği modeliyle test
+EDİLEMEZ — sıra-bağımsız bir karşılaştırma mekanizması AYRI/gelecekteki
+bir iş), HPy çağrı yüzeyi (harici bağımlılık), `retains(...)`/extern
+geçici sahiplik (ZATEN IR-seviyesinde ayrı test ediliyor).
+
+### Doğrulama
+
+`zig build test` (Debug+ReleaseFast) — SIFIR regresyon, 10 YENİ test
+TEMİZ geçti.
+
+### Kritik dosyalar
+
+`tests/golden/backend_conformance_test.zig`, `tests/golden/conformance_
+cases/` (10 YENİ `.nox`/`.expected` çifti).
 
 ---
 
