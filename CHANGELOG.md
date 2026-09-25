@@ -14,6 +14,25 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.102.0]
+
+### Eklendi
+
+- **`@ffi.callback("param", "context_param")` (bkz. nox-teknik-
+  spesifikasyon.md §3.189, v2.0 yol haritasının 2. maddesinin son
+  parçası)**: C'nin (belirli, dar/güvenli bir alt-kümede) Nox'a geri çağrı
+  yapabilmesi — bugüne kadar hiç olmayan bir yetenek. Yalnızca üst-düzey,
+  senkron, tamamen skaler (int/float/bool/ptr) imzalı hedef fonksiyonları
+  destekler; C'nin trailing-userdata konvansiyonunu (GLib/libuv/GNU
+  `qsort_r` tarzı) kullanarak `%rt`'yi hiçbir yeni global/thread-local
+  eklemeden (Değişmez İlke #6 ile tam uyumlu) çağrı sitesinden taşır. Hedef
+  fonksiyon başına bir kez üretilen, ham C ABI'sinde statik bir trampoline
+  (`$<isim>__cbtramp`) ile gerçekleşir; callback içinde yakalanmayan bir
+  istisna `$nox_unhandled_exception` ile (garbage bir değerin C'ye
+  sızması yerine) sürece son verir. `context_param`sız (userdata yuvası
+  taşımayan) C API'leri ve kalıcı/asenkron callback kaydı bilinçli olarak
+  v1 kapsamı dışında bırakıldı.
+
 ## [1.101.0]
 
 ### Eklendi

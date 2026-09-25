@@ -209,6 +209,7 @@ const http_intrinsics = @import("http_intrinsics.zig");
 const inlining = @import("inlining.zig");
 const local_escape = @import("local_escape.zig");
 const closures = @import("closures.zig");
+const ffi_callback = @import("ffi_callback.zig");
 const layout = @import("layout.zig");
 const globals_mod = @import("globals.zig");
 const ownership = @import("ownership.zig");
@@ -339,6 +340,7 @@ pub const Codegen = struct {
     pub const genClosureFunc = closures.genClosureFunc;
     pub const genClosureRelease = closures.genClosureRelease;
     pub const genFunctionValueTrampoline = closures.genFunctionValueTrampoline;
+    pub const genFfiCallbackTrampoline = ffi_callback.genFfiCallbackTrampoline;
 
     pub const genClassVtable = layout.genClassVtable;
     pub const genClassRelease = layout.genClassRelease;
@@ -406,6 +408,7 @@ pub const Codegen = struct {
     pub const emitHpyErrorCheckOrRaise = calls.emitHpyErrorCheckOrRaise;
     pub const genHpyMarshalTrailingArgs = calls.genHpyMarshalTrailingArgs;
     pub const releaseTemporaryArgs = calls.releaseTemporaryArgs;
+    pub const genExternCallEmit = calls.genExternCallEmit;
     pub const releaseIfTemporary = calls.releaseIfTemporary;
     pub const currentArena = calls.currentArena;
     pub const genConstruct = calls.genConstruct;
@@ -1294,7 +1297,7 @@ fn collectExplainForBody(gen: *Codegen, allocator: std.mem.Allocator, sink: *std
     }
 }
 
-pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo, backend: Backend, profile: Profile, explain_opts: ?ExplainOptions) CodegenError![]u8 {
+pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo, backend: Backend, profile: Profile, explain_opts: ?ExplainOptions, callback_targets: []const []const u8) CodegenError![]u8 {
     var gen: Codegen = .{ .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos, .defer_synthetic_names = defer_synthetic_names, .from_imports = from_imports, .module_aliases = module_aliases, .backend = backend, .profile = profile };
 
     if (debug_source_path) |path| {
@@ -1453,6 +1456,10 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     // trampoline'lar BURADA üretilir (`.identifier` codegen'inin, bkz.
     // `expr.zig`, referans verdiği sembol HER ZAMAN ÖNCEDEN VAR olur).
     for (functions_used_as_value) |name| try gen.genFunctionValueTrampoline(name);
+    // v2.0 madde 2.3 (bkz. `ffi_callback.zig`nin modül üstü notu): AYNI
+    // "HERHANGİ bir fonksiyon GÖVDESİ üretilmeden ÖNCEKİ TEK nokta" —
+    // `@ffi.callback` hedeflerinin C-ABI trampoline'ları BURADA üretilir.
+    for (callback_targets) |name| try gen.genFfiCallbackTrampoline(name);
 
     // Performans fazı: HANGİ serbest fonksiyon/kurucuların (transitif
     // olarak) ASLA istisna fırlatamayacağı kanıtlanabiliyorsa `genCall`/

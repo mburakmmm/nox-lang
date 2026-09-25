@@ -388,6 +388,67 @@ test "golden(typecheck): extern def — tanınmayan @ffi.* decorator UnknownExte
     );
 }
 
+// v2.0 madde 2.3 (bkz. nox-teknik-spesifikasyon.md §3.189): `@ffi.callback`
+// doğrulamasının (hedef üst-düzey/senkron/imza-eşleşen OLMALI, context_param
+// ZORUNLU, çağrı sitesinde context yuvası YAZILAMAZ, callback imzası
+// SKALER OLMALI) HER kuralının test edilmesi.
+
+test "golden(typecheck): @ffi.callback — geçerli kullanım, OK" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_extern_ffi_callback_valid.nox"),
+        @embedFile("typecheck_cases/ok_extern_ffi_callback_valid.expected"),
+    );
+}
+
+test "golden(typecheck): @ffi.callback — async hedef reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_extern_ffi_callback_async_target.nox"),
+        @embedFile("typecheck_cases/err_extern_ffi_callback_async_target.expected"),
+    );
+}
+
+test "golden(typecheck): @ffi.callback — imza uyuşmazlığı (parametre sayısı) reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_extern_ffi_callback_signature_mismatch.nox"),
+        @embedFile("typecheck_cases/err_extern_ffi_callback_signature_mismatch.expected"),
+    );
+}
+
+test "golden(typecheck): @ffi.callback — context_param eksikse reddedilir (v1 kısıtlaması)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_extern_ffi_callback_missing_context_param.nox"),
+        @embedFile("typecheck_cases/err_extern_ffi_callback_missing_context_param.expected"),
+    );
+}
+
+test "golden(typecheck): @ffi.callback — context_param yuvası çağrı sitesinde yazılırsa ArgumentCountMismatch" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_extern_ffi_callback_context_param_written.nox"),
+        @embedFile("typecheck_cases/err_extern_ffi_callback_context_param_written.expected"),
+    );
+}
+
+test "golden(typecheck): @ffi.callback — skaler-olmayan (str) callback imzası reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_extern_ffi_callback_non_scalar_signature.nox"),
+        @embedFile("typecheck_cases/err_extern_ffi_callback_non_scalar_signature.expected"),
+    );
+}
+
+test "golden(typecheck): @ffi.callback — hedef yerel bir değişkeni gölgeliyorsa reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_extern_ffi_callback_shadowed_target.nox"),
+        @embedFile("typecheck_cases/err_extern_ffi_callback_shadowed_target.expected"),
+    );
+}
+
+test "golden(typecheck): @ffi.callback — çıplak tanımlayıcı olmayan (bağlı metod) hedef reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_extern_ffi_callback_non_identifier_target.nox"),
+        @embedFile("typecheck_cases/err_extern_ffi_callback_non_identifier_target.expected"),
+    );
+}
+
 test "golden(typecheck): __init__ içermeyen sınıf (alansız, yalnızca metod)" {
     try expectGolden(
         @embedFile("typecheck_cases/ok_class_no_init.nox"),

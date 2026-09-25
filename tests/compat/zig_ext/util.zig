@@ -10,6 +10,19 @@ export fn triple(x: i64) callconv(.c) i64 {
     return x * 3;
 }
 
+/// v2.0 madde 2.3 (bkz. nox-teknik-spesifikasyon.md §3.189): `@ffi.callback`
+/// uçtan uca doğrulaması — GERÇEK bir C kütüphanesinin "trailing userdata"
+/// konvansiyonunu (GNU/glibc `qsort_r`, GLib callback'leri, libuv vb. ÇOĞU
+/// C kütüphanesinin izlediği desen — userdata callback'in KENDİ imzasının
+/// SON parametresi olarak GERİ TAŞINIR) taklit eden minimal bir "invoke"
+/// API'si: `cb`yi `a`/`b` (+ `userdata`, Nox tarafının `@ffi.callback`
+/// trampoline'ının `%rt`yi GERİ ALDIĞI yuva) İLE BİR KEZ çağırıp SONUCU
+/// döner.
+export fn nox_test_invoke_callback(cb: ?*const fn (i64, i64, ?*anyopaque) callconv(.c) i64, a: i64, b: i64, userdata: ?*anyopaque) callconv(.c) i64 {
+    const f = cb orelse return -1;
+    return f(a, b, userdata);
+}
+
 const std = @import("std");
 
 /// `noxrt.o`nun `nox_rc_alloc`ı (bkz. `runtime/alloc/arc.zig`) — AYRI

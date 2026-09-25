@@ -49,8 +49,11 @@ fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.process.
     var generic_it = checker_state.generic_functions.keyIterator();
     while (generic_it.next()) |k| try generic_names.append(allocator, k.*);
 
-    const ir = try nox.codegen.generateModule(allocator, module, checker_state.instantiations.items, generic_names.items, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, checker_state.decorated_functions.items, .qbe, .hosted, null);
+    var callback_targets: std.ArrayListUnmanaged([]const u8) = .empty;
+    var cb_target_it = checker_state.callback_targets.keyIterator();
+    while (cb_target_it.next()) |k| try callback_targets.append(allocator, k.*);
 
+    const ir = try nox.codegen.generateModule(allocator, module, checker_state.instantiations.items, generic_names.items, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, checker_state.decorated_functions.items, .qbe, .hosted, null, callback_targets.items);
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -221,6 +224,28 @@ test "extern def: geçici (taze) str argümanı, çağrı sonrası sızdırmaz (
         std.debug.print("program stderr'e beklenmeyen bir çıktı yazdı (olası bellek sızıntısı): {s}\n", .{run_result.stderr});
         return error.UnexpectedStderrOutput;
     }
+}
+
+test "v2.0/2.3 @ffi.callback: C'nin trailing-userdata konvansiyonuyla Nox'a GERÇEKTEN geri çağrı yapması" {
+    // Bkz. nox-teknik-spesifikasyon.md §3.189 — `tests/compat/zig_ext/
+    // util.zig`nin `nox_test_invoke_callback`ı, `%rt`yi context_param
+    // (trailing userdata) üzerinden GERİ TAŞIYAN GERÇEK bir C ABI çağrısı
+    // yapar; derleyicinin ÜRETTİĞİ `add_ints__cbtramp` trampoline'ı BUNU
+    // yakalayıp `add_ints`e (gizli `%rt`yi TEKRAR ekleyerek) dönüştürür.
+    const allocator = std.testing.allocator;
+    const source = try std.fmt.allocPrint(allocator,
+        \\def add_ints(a: int, b: int) -> int:
+        \\    return a + b
+        \\
+        \\@ffi.callback("cb", "userdata")
+        \\extern def nox_test_invoke_callback(cb: (int, int, ptr) -> int, a: int, b: int, userdata: ptr) -> int from "{s}"
+        \\
+        \\print(nox_test_invoke_callback(add_ints, 3, 4))
+        \\
+    , .{build_options.util_o_path});
+    defer allocator.free(source);
+
+    try expectGolden(source, "7\n");
 }
 
 test "extern def: list[str] dönüş tipi FFI-güvenli — indeksleme/ARC serbest bırakma doğru çalışır (sızıntı yok)" {

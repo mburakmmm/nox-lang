@@ -1,0 +1,9 @@
+# v2.0 madde 2.3: callback tipi imzasında `str` (skaler değil — sadece
+# int/float/bool/ptr izinlidir) içeriyor.
+def greet(name: str) -> None:
+    print(name)
+
+@ffi.callback("cb", "userdata")
+extern def nox_ffi23_invoke_str(cb: (str, ptr) -> None, name: str, userdata: ptr) -> None from "fake_ffi23.o"
+
+nox_ffi23_invoke_str(greet, "dunya")

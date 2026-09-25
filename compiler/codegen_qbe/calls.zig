@@ -738,6 +738,54 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             // sıfırla-sonlanan ham işaretçiler olduğundan dönüşüm
             // gerekmez (`hpy_call`/`wasm_call` ile AYNI ücretsiz tasarım).
             if (self.extern_functions.get(name)) |esig| {
+                // v2.0 madde 2.3 (bkz. nox-teknik-spesifikasyon.md §3.189):
+                // `@ffi.callback` taşıyan bir extern def — `context_idx`
+                // yuvası ÇAĞRI SİTESİNDE (checker TARAFINDAN ZATEN
+                // doğrulanmış) HİÇ YAZILMAZ, derleyici `%rt`yi OTOMATİK
+                // doldurur; `param_idx` yuvasındaki argüman (checker'ın
+                // `checkCallbackTargetArg`ı TARAFINDAN ZATEN bare bir üst-
+                // düzey fonksiyon adı OLDUĞU doğrulanmış) NORMAL OLARAK
+                // `genExpr` İLE DEĞERLENDİRİLMEZ — bunun yerine ZATEN
+                // üretilmiş (bkz. `codegen.zig`nin `callback_targets`
+                // geçişi) `$<isim>__cbtramp` trampoline SEMBOLÜNÜN adresi
+                // doğrudan (derleme-anı sabiti) argüman olarak geçirilir.
+                if (esig.callback) |cb| {
+                    if (esig.params.len != c.args.len + 1) return error.Unsupported;
+                    const arg_values = try self.allocator.alloc(Value, esig.params.len);
+                    // `releaseTemporaryArgs` `exprs`/`values`i POZİSYONEL
+                    // olarak eşleştirir (bkz. onun belge notu) — bu YÜZDEN
+                    // `context_idx`/`param_idx` yuvaları İçİn de (ASLA heap-
+                    // yönetimli OLMAYACAKLARINDAN — `isHeapManaged` KISA-
+                    // DEVRE yapar, `release_exprs`teki İçERİK ÖNEMSİZDİR)
+                    // AYNI UZUNLUKTA bir dizi GEREKİR; `c.args[0]` (checker'ın
+                    // `registerExternCallback`ı `param_idx != context_idx`ı
+                    // ZATEN doğruladığından `ed.params.len >= 2`, dolayısıyla
+                    // `c.args.len >= 1` HER ZAMAN GARANTİDİR) ZARARSIZ bir
+                    // dolgu DEĞERİDİR.
+                    const release_exprs = try self.allocator.alloc(ast.Expr, esig.params.len);
+                    var arg_i: usize = 0;
+                    for (esig.params, 0..) |p, pi| {
+                        if (pi == cb.context_idx) {
+                            arg_values[pi] = .{ .text = RT_PARAM, .qtype = .l };
+                            release_exprs[pi] = c.args[0];
+                            continue;
+                        }
+                        if (pi == cb.param_idx) {
+                            const target_name = c.args[arg_i].identifier;
+                            arg_i += 1;
+                            const tramp_sym = try std.fmt.allocPrint(self.allocator, "${s}__cbtramp", .{target_name});
+                            arg_values[pi] = .{ .text = tramp_sym, .qtype = .l };
+                            release_exprs[pi] = c.args[0];
+                            continue;
+                        }
+                        const v0 = try self.genExpr(c.args[arg_i]);
+                        try self.checkNoLowlevelEscape(v0);
+                        arg_values[pi] = try self.convert(v0, p.qtype);
+                        release_exprs[pi] = c.args[arg_i];
+                        arg_i += 1;
+                    }
+                    return try self.genExternCallEmit(name, esig, arg_values, release_exprs);
+                }
                 if (esig.params.len != c.args.len) return error.Unsupported;
                 const arg_values = try self.allocator.alloc(Value, c.args.len);
                 for (c.args, 0..) |a, i| {
@@ -745,68 +793,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     try self.checkNoLowlevelEscape(v0);
                     arg_values[i] = try self.convert(v0, esig.params[i].qtype);
                 }
-                const result_temp: ?[]const u8 = if (esig.ret.qtype == .none) null else try self.newTemp();
-                // `with_rt` (bkz. `ast.ExternDef.needs_rt`in belge notu,
-                // stdlib fazı §D.1): `RT_PARAM` GİZLİCE argüman
-                // listesinin BAŞINA eklenir (normal fonksiyon
-                // çağrılarıyla AYNI kalıp) — Zig tarafının İLK parametresi
-                // `rt: ?*anyopaque` olmalıdır.
-                const extern_args = try self.allocator.alloc(codegen.QbeArg, (if (esig.needs_rt) @as(usize, 1) else 0) + arg_values.len);
-                {
-                    var idx: usize = 0;
-                    if (esig.needs_rt) {
-                        extern_args[idx] = .{ .ty = .l, .text = RT_PARAM };
-                        idx += 1;
-                    }
-                    for (arg_values) |v| {
-                        extern_args[idx] = .{ .ty = v.qtype, .text = v.text };
-                        idx += 1;
-                    }
-                }
-                const extern_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{name});
-                if (result_temp) |rt| {
-                    try self.qbeCall(.{ .name = rt, .ty = esig.ret.qtype }, extern_sym, extern_args);
-                } else {
-                    try self.qbeCall(null, extern_sym, extern_args);
-                }
-                // Faz FFI.1 (bkz. nox-teknik-spesifikasyon.md §3.146): sıradan
-                // fonksiyon çağrı yolunun (satır ~743) AYNI, KANITLANMIŞ
-                // çağrısı — extern def çağrısı da GEÇİCİ (taze/fresh) bir
-                // str/list/dict/class argümanının refcount'unu ÇAĞRI SONRASI
-                // DOĞRU dengeler (`releaseTemporaryArgs`in KENDİ `is_pinned`/
-                // `is_stack_slot`/`always_fresh`/`isTemporaryExpr` korumaları
-                // OLDUĞU GİBİ devreye girer). Sıralama ÖNEMSİZ: extern def
-                // `emitExceptionCheck` HİÇ ÇAĞIRMAZ, dönüş-değeri paketleme
-                // SADECE `esig.ret.*` alanlarını okur, `arg_values`a HİÇ
-                // dokunmaz.
-                try self.releaseTemporaryArgs(c.args, arg_values);
-                // Stdlib fazı §F: `elem_qtype`/`elem_heap_info`/
-                // `elem_is_str` ÖNCEDEN eksikti (yalnızca `qtype`/`heap`
-                // kopyalanıyordu) — D.1.5'in `genFieldRead`de bulunan
-                // `dict_info` eksikliğiyle AYNI KATEGORİDE bir hataydı.
-                // `list[str]` DÖNÜŞ tipi FFI-güvenli sayılınca (bkz.
-                // `isFfiSafeListReturnType`) bu eksiklik GERÇEK bir
-                // çökmeye yol açardı (dönen listenin elemanları `str`
-                // olarak İŞARETLENMEDEN indekslenir/serbest bırakılırdı).
-                // Stdlib fazı §L: `class_name` ÖNCEDEN eksikti (bkz.
-                // yukarıdaki `elem_qtype`/`elem_heap_info`/`elem_is_str`
-                // notu, Alt-Faz F — AYNI KATEGORİDE bir hata). `JsonValue`
-                // DÖNEN bir extern def (`isFfiSafeClassReturnType`)
-                // olmadan ÖNCE HİÇBİR extern def sınıf DÖNDÜRMEDİĞİNDEN
-                // bu eksiklik fark edilmemişti — `class_name` OLMADAN
-                // sonraki `.attribute` okumaları/`genClassRelease`
-                // `self.classes.get(obj.class_name.?)`de ÇÖKERDİ.
-                // Faz FF.3: AYNI KATEGORİDE bir ÜÇÜNCÜ eksiklik — `dict_info`
-                // — `dict[K,V]` DÖNEN bir extern def'in SONUCU BURADAN
-                // GEÇTİĞİNDE (ör. `nox_http_response_headers`) EKSİKTİ;
-                // `dict`in Faz FF.3'ten ÖNCE `isHeapManaged`in DIŞINDA
-                // olması (release YOLU HİÇ TETİKLENMEMESİ) bunu
-                // MASKELİYORDU — `dict` ARTIK TAM ARC'lı OLDUĞUNDAN
-                // `dict_info` OLMADAN `releaseValueIfSet`in `.dict` dalı
-                // `dict_info.?` üzerinde ÇÖKER (bkz. `http_serve_golden_
-                // test.zig`nin bu YOLU KANITLAYAN çökme testi).
-                if (result_temp) |rt| return .{ .text = rt, .qtype = esig.ret.qtype, .heap = esig.ret.heap, .class_name = esig.ret.class_name, .elem_qtype = esig.ret.elem_qtype, .elem_heap_info = esig.ret.elem_heap_info, .elem_is_str = esig.ret.elem_is_str, .dict_info = esig.ret.dict_info };
-                return .{ .text = "0", .qtype = .w };
+                return try self.genExternCallEmit(name, esig, arg_values, c.args);
             }
 
             // Faz U.4.4: `name` bir SIRADAN fonksiyon/sınıf/extern def
@@ -973,6 +960,54 @@ pub fn genParseOrRaise(self: *Codegen, v: Value, valid_fn: []const u8, convert_f
 /// onu doğru şekilde 1'e (tek kalıcı sahip) indirir; getirmediyse
 /// (yalnızca okuduysa) refcount zaten 1'dir, bu release onu 0'a indirip
 /// gerçekten serbest bırakır — iki durumda da doğru.
+/// `genCall`in `extern def` dalının (bkz. onun belge notu, nox-teknik-
+/// spesifikasyon.md §3.20) ORTAK kuyruğu — argümanlar ZATEN `arg_values`e
+/// (esig.params İLE İNDEKS-hizalı) değerlendirilmiş/dönüştürülmüştür.
+/// `release_exprs`, `releaseTemporaryArgs`in POZİSYONEL eşleştirmesi İçİn
+/// `arg_values` İLE AYNI UZUNLUKTA/hizada bir ifade dizisidir (v2.0 madde
+/// 2.3'ün `@ffi.callback` yolunda `c.args`tan FARKLI olabilir — context/
+/// callback yuvaları İçİn ZARARSIZ bir dolgu taşır, bkz. çağıranın belge
+/// notu).
+pub fn genExternCallEmit(self: *Codegen, name: []const u8, esig: types.FuncSig, arg_values: []const Value, release_exprs: []const ast.Expr) CodegenError!Value {
+    const result_temp: ?[]const u8 = if (esig.ret.qtype == .none) null else try self.newTemp();
+    // `with_rt` (bkz. `ast.ExternDef.needs_rt`in belge notu, stdlib fazı
+    // §D.1): `RT_PARAM` GİZLİCE argüman listesinin BAŞINA eklenir (normal
+    // fonksiyon çağrılarıyla AYNI kalıp) — Zig tarafının İLK parametresi
+    // `rt: ?*anyopaque` olmalıdır.
+    const extern_args = try self.allocator.alloc(codegen.QbeArg, (if (esig.needs_rt) @as(usize, 1) else 0) + arg_values.len);
+    {
+        var idx: usize = 0;
+        if (esig.needs_rt) {
+            extern_args[idx] = .{ .ty = .l, .text = RT_PARAM };
+            idx += 1;
+        }
+        for (arg_values) |v| {
+            extern_args[idx] = .{ .ty = v.qtype, .text = v.text };
+            idx += 1;
+        }
+    }
+    const extern_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{name});
+    if (result_temp) |rt| {
+        try self.qbeCall(.{ .name = rt, .ty = esig.ret.qtype }, extern_sym, extern_args);
+    } else {
+        try self.qbeCall(null, extern_sym, extern_args);
+    }
+    // Faz FFI.1 (bkz. nox-teknik-spesifikasyon.md §3.146): extern def
+    // çağrısı da GEÇİCİ (taze/fresh) bir str/list/dict/class argümanının
+    // refcount'unu ÇAĞRI SONRASI DOĞRU dengeler (`releaseTemporaryArgs`in
+    // KENDİ `is_pinned`/`is_stack_slot`/`always_fresh`/`isTemporaryExpr`
+    // korumaları OLDUĞU GİBİ devreye girer). Sıralama ÖNEMSİZ: extern def
+    // `emitExceptionCheck` HİÇ ÇAĞIRMAZ, dönüş-değeri paketleme SADECE
+    // `esig.ret.*` alanlarını okur, `arg_values`a HİÇ dokunmaz.
+    try self.releaseTemporaryArgs(release_exprs, arg_values);
+    // Stdlib fazı §F/§L, Faz FF.3: `elem_qtype`/`elem_heap_info`/
+    // `elem_is_str`/`class_name`/`dict_info` — dönen `list[str]`/sınıf/
+    // `dict[K,V]` değerlerinin doğru ARC izlenmesi İçİn GEREKLİ (bkz. git
+    // geçmişinin AYNI notu).
+    if (result_temp) |rt| return .{ .text = rt, .qtype = esig.ret.qtype, .heap = esig.ret.heap, .class_name = esig.ret.class_name, .elem_qtype = esig.ret.elem_qtype, .elem_heap_info = esig.ret.elem_heap_info, .elem_is_str = esig.ret.elem_is_str, .dict_info = esig.ret.dict_info };
+    return .{ .text = "0", .qtype = .w };
+}
+
 pub fn releaseTemporaryArgs(self: *Codegen, exprs: []const ast.Expr, values: []const Value) CodegenError!void {
     for (exprs, 0..) |e, i| {
         const v = values[i];

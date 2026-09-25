@@ -23556,6 +23556,134 @@ registration.zig`.
 
 ---
 
+## 3.189 v2.0 stabilizasyon yol haritası, madde 2 (2.3) — `@ffi.callback`
+
+§3.188'in devamı: C'nin (belirli, DAR/güvenli bir alt-kümede) Nox'a geri
+çağrı yapabilmesi — bugüne kadar Nox'ta HİÇ olmayan bir yetenek (ters-FFI).
+
+### Tasarımın çekirdek problemi ve çözümü
+
+Nox'un HER derlenmiş fonksiyonu gizli bir `%rt` (RuntimeState*) parametresi
+alır (`registration.zig`nin `genFunction`ı, KOŞULSUZ) — ham bir C fonksiyon-
+işaretçisi yuvası (C kütüphanesinin çağıracağı callback) BUNUN İçİn yer
+AYIRMAZ. `%rt`yi bulmak İçİn YENİ bir global/thread-local EKLEMEK (bazı FFI
+sistemlerinin yaptığı gibi) AGENTS.md'nin İlke #6'sını ("global/gizli
+mutable state yasak") DOĞRUDAN ihlal ederdi. **Çözüm**: `%rt`yi HİÇ
+saklamadan, HER ÇAĞRIDA C'nin KENDİSİNİN GERİ TAŞIDIĞI bir "userdata"
+parametresi ÜZERİNDEN taşımak — GLib/libuv/GNU `qsort_r` gibi ÇOĞU C
+kütüphanesinin izlediği, YERLEŞİK "trailing userdata" konvansiyonu.
+
+### Sözdizimi ve semantik
+
+```nox
+def add_ints(a: int, b: int) -> int:
+    return a + b
+
+@ffi.callback("cb", "userdata")
+extern def nox_test_invoke_callback(cb: (int, int, ptr) -> int, a: int, b: int, userdata: ptr) -> int from "libexample"
+
+print(nox_test_invoke_callback(add_ints, 3, 4))
+```
+
+- `@ffi.callback("cb", "userdata")` — İKİ argüman da POZİSYONEL (Nox'ta
+  anahtar-kelime argümanı sözdizimi YOK): `"cb"` hangi parametrenin
+  callback-tipli olduğu, `"userdata"` hangi parametrenin derleyici
+  tarafından OTOMATİK doldurulacağı ("kullanıcı bu argümanı ÇAĞRI
+  SİTESİNDE YAZMAZ" — arity BUNA göre `params.len - 1`e düşer, YAZILIRSA
+  `ArgumentCountMismatch`).
+- **Sabit, belgelenmiş bir KURAL (v1, genişletilebilir)**: `cb`nin KENDİ
+  fonksiyon-tipi imzasının SON parametresi, C'nin `userdata`yı GERİ
+  TAŞIYACAĞI yuva SAYILIR — checker bu son parametrenin `ptr` olduğunu
+  doğrular. Kullanıcının GERÇEK hedef fonksiyonu (`add_ints`), callback
+  tipinin BU SON parametre HARİÇ kalanıyla eşleşmelidir.
+- **Hedef fonksiyon KISITLAMALARI** (checker'ın `checkCallbackTargetArg`ı):
+  sadece ÜST-DÜZEY, `async` OLMAYAN, `extern def` OLMAYAN, hiçbir yerel
+  değişkeni GÖLGELEMEYEN bir `def` — çağrı sitesindeki argüman İFADESİ
+  salt bir TANIMLAYICI olmalı (lambda/bağlı metod/yakalayan closure/başka
+  HERHANGİ bir ifade REDDEDİLİR). Bu, hedefin çalışma-zamanı temsilinin
+  sabit bir `$isim` sembolü (derleme-anı sabiti) olmasını, HİÇBİR heap/ARC
+  kapatma ortamı GEREKMEMESİNİ sağlar.
+- **Tip güvenliği**: `isFfiSafeType`'a `.func` İçİn YENİ bir dal EKLENDİ —
+  `.func`, KENDİ `params`/`return_type`'ının HEPSİ `int/float/bool/ptr`
+  (dönüşte AYRICA `None`) İSE FFI-güvenli SAYILIR.
+
+### Codegen: sıfır-tahsis, sıfır-global çağrı-sitesi
+
+`nox_test_invoke_callback(...)` çağrısında derleyici: (a) `userdata`
+yuvasına, ÇAĞIRAN Nox fonksiyonunun KENDİ, ZATEN kapsam İçİNDEKİ `%rt`
+değerini DOĞRUDAN geçirir — YENİ bir tahsis/global YOK; (b) `cb` yuvasına,
+hedef fonksiyon İçİn ÖZEL üretilmiş bir trampoline'ın SEMBOL ADRESİNİ
+(`$add_ints__cbtramp`, derleme-anı sabiti) geçirir.
+
+Trampoline (`compiler/codegen_qbe/ffi_callback.zig`, `codegen.zig`nin
+`callback_targets` geçişinde — `functions_used_as_value`nin AYNI "HERHANGİ
+bir fonksiyon gövdesi üretilmeden ÖNCEKİ TEK nokta" deseni — HEDEF fonksiyon
+BAŞINA BİR KEZ üretilir): TAM callback-tipiyle eşleşen (gizli `%rt`/`%env`
+YOK — ham C ABI) statik bir QBE fonksiyonu — SON parametreyi (`userdata`)
+`%rt` OLARAK yorumlar, KALAN parametreleri OLDUĞU GİBİ hedefe (`call
+$add_ints(rt, a, b)`, derleme-anında BİLİNEN — dolaylı DEĞİL) DOĞRUDAN
+iletir. Hedef bir istisna fırlatıp YAKALAMADIYSA (bu sınırın ÖTESİNDE
+Nox'un error-union zinciri YOKTUR), `$nox_unhandled_exception` (ZATEN VAR
+OLAN, `$main`in KENDİ üst-düzey sızıntı yoluyla AYNI `noreturn` process-
+sonlandırma) çağrılır — garbage bir değerin C'ye SIZMASI yerine.
+
+Gerçek üretilmiş IR (`tests/golden/ir_snapshots/codegen_cases/ffi_callback_
+basic.ssa`):
+```
+export function l $add_ints__cbtramp(l %p0, l %p1, l %ctx_rt) {
+@start
+    %t0 =l call $add_ints(l %ctx_rt, l %p0, l %p1)
+    %t1 =w call $nox_exception_pending(l %ctx_rt)
+    jnz %t1, @cb_exc_abort0, @cb_exc_ok1
+@cb_exc_abort0
+    call $nox_unhandled_exception(l %ctx_rt)
+    ret 0
+@cb_exc_ok1
+    ret %t0
+}
+...
+    %t0 =l call $nox_test_invoke_callback(l $add_ints__cbtramp, l 3, l 4, l %rt)
+```
+
+### Bilinçli v1 kısıtlamaları (§9.5 Güven Sınırı disipliniyle TUTARLI)
+
+- `context_param` OLMAYAN C API'leri (userdata yuvası TAŞIMAYAN adi
+  `qsort`/`signal` vb.) v1'de DESTEKLENMEZ — net bir derleme hatasıyla
+  reddedilir.
+- **KALICI/asenkron callback KAYDI** (bir timer/event-loop'un callback'i
+  KAYIT-eden fonksiyon DÖNDÜKTEN ÇOK SONRA çağırması — libuv `uv_timer_
+  start` tarzı) KAPSAM DIŞI — v1 SADECE "eşzamanlı, kayıt-eden çağrı
+  DÖNMEDEN ÖNCE çağrılıp BİTEN" deseni (`qsort_r`/`bsearch` tarzı) hedefler
+  (`%rt`yi ÇAĞIRANIN KENDİ, GEÇİCİ kapsamından almak SADECE bu YÜZDEN
+  güvenlidir).
+- Callback GÖVDESİ `spawn`/`await` KULLANAMAZ (zaten `async`-olmayan bir
+  `def` olma ZORUNLULUĞUNUN DOĞAL bir SONUCU). Callback gövdesi TAM Nox
+  dilini (str/list/dict/ARC/istisna) KULLANABİLİR; TEK belgelenen risk: C
+  kütüphanesi callback'i YABANCI bir OS thread'İNDEN çağırırsa, Debug-
+  modunun `arcOwnerThreadOk` kapasitesi DOLU İSE assert-panik RİSKİ vardır
+  (Release'de SORUNSUZ — ARC koşulsuz atomik).
+
+### Doğrulama
+
+`zig build test` (Debug+ReleaseFast) SIFIR regresyon. Uçtan-uca compat
+testi (`tests/compat/extern_ffi_test.zig`, GERÇEK bir Zig shim'i — glibc
+`qsort_r`in platform-BAĞIMLI parametre SIRASI FARKLILIKLARINDAN KAÇINMAK
+İçİn — `tests/compat/zig_ext/util.zig`nin `nox_test_invoke_callback`ı İLE
+GERÇEK bir C-ABI geri-çağrı yapıp SONUCU doğrular). Golden IR-diff testi
+(`ffi_callback_basic.nox`). 8 typecheck testi (1 OK + 7 negatif: async
+hedef, imza uyuşmazlığı, context_param eksik, context_param çağrı sitesinde
+yazılmış, skaler-olmayan imza, gölgelenen hedef, çıplak-olmayan hedef).
+
+### Kritik dosyalar
+
+`compiler/codegen_qbe/ffi_callback.zig` (YENİ), `compiler/codegen_qbe/
+{types,registration,calls,codegen}.zig`, `compiler/typecheck/checker.zig`
+(`registerExternCallback`/`checkExternCallbackArgs`/`checkCallbackTargetArg`),
+`compiler/main.zig` (`callback_targets` plumbing'i), `tests/compat/
+{extern_ffi_test.zig,zig_ext/util.zig}`.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

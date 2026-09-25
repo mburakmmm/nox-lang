@@ -62,7 +62,11 @@ pub fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.proc
     var fn_value_it = checker_state.functions_used_as_value.keyIterator();
     while (fn_value_it.next()) |k| try functions_used_as_value.append(allocator, k.*);
 
-    const ir = try nox.codegen.generateModule(allocator, module, checker_state.instantiations.items, generic_names.items, checker_state.class_instantiations.items, generic_class_names.items, null, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, .qbe, .hosted, null);
+    var callback_targets: std.ArrayListUnmanaged([]const u8) = .empty;
+    var cb_target_it = checker_state.callback_targets.keyIterator();
+    while (cb_target_it.next()) |k| try callback_targets.append(allocator, k.*);
+
+    const ir = try nox.codegen.generateModule(allocator, module, checker_state.instantiations.items, generic_names.items, checker_state.class_instantiations.items, generic_class_names.items, null, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, .qbe, .hosted, null, callback_targets.items);
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -147,7 +151,11 @@ pub fn compileAndRunLlvm(allocator: std.mem.Allocator, source: []const u8) !std.
     var fn_value_it = checker_state.functions_used_as_value.keyIterator();
     while (fn_value_it.next()) |k| try functions_used_as_value.append(allocator, k.*);
 
-    const ir = try nox.codegen.generateModule(allocator, module, checker_state.instantiations.items, generic_names.items, checker_state.class_instantiations.items, generic_class_names.items, null, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, .llvm, .hosted, null);
+    var callback_targets: std.ArrayListUnmanaged([]const u8) = .empty;
+    var cb_target_it = checker_state.callback_targets.keyIterator();
+    while (cb_target_it.next()) |k| try callback_targets.append(allocator, k.*);
+
+    const ir = try nox.codegen.generateModule(allocator, module, checker_state.instantiations.items, generic_names.items, checker_state.class_instantiations.items, generic_class_names.items, null, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, .llvm, .hosted, null, callback_targets.items);
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

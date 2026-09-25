@@ -1,0 +1,9 @@
+# v2.0 madde 2.3: hedefin parametre SAYISI callback imzasıyla eşleşmiyor
+# (userdata hariç 2 bekleniyor, hedef 1 parametre alıyor).
+def add_one(a: int) -> int:
+    return a + 1
+
+@ffi.callback("cb", "userdata")
+extern def nox_ffi23_invoke(cb: (int, int, ptr) -> int, a: int, b: int, userdata: ptr) -> int from "fake_ffi23.o"
+
+print(nox_ffi23_invoke(add_one, 3, 4))

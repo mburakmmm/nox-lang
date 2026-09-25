@@ -142,6 +142,13 @@ const FuncSig = struct {
     return_type: Type,
 };
 
+/// v2.0 madde 2.3 (bkz. `Checker.extern_callbacks`in belge notu).
+const ExternCallbackConfig = struct {
+    param_idx: usize,
+    context_idx: usize,
+    callback_type: types.FuncType,
+};
+
 /// Faz 1 decorator: `Checker.decorated_functions`in ELEMANI (bkz. onun
 /// belge notu). `args`, decorator'ın string-literal argümanlarının ÇÖZÜLMÜŞ
 /// (tırnaksız/kaçışsız) DEĞERLERİDİR — `ast.Decorator.args`nin HAM `Expr`
@@ -410,6 +417,25 @@ pub const Checker = struct {
     /// ÜRETMESİ İçin `generateModule`e AYNEN `functions_used_as_value` GİBİ
     /// bir parametre olarak geçirilir.
     decorated_functions: std.ArrayListUnmanaged(DecoratedFuncInfo) = .empty,
+    /// v2.0 madde 2.3 (bkz. nox-teknik-spesifikasyon.md §3.189): `extern
+    /// def` ADLARININ kümesi — `self.functions`in AKSİNE (extern VE sıradan
+    /// fonksiyonları AYNI tabloda TUTAR) BU, bir `@ffi.callback` HEDEFİNİN
+    /// (bkz. `checkExternCallbackArgs`) YANLIŞLIKLA BAŞKA bir extern def'i
+    /// GÖSTERMEDİĞİNİ doğrulamak İçİn GEREKLİDİR (extern def'lerin `%rt`
+    /// TAŞIMAYAN, TAMAMEN FARKLI bir çağrı biçimi VARDIR — trampoline'ın
+    /// KENDİ `call $target_fn(rt, ...)` varsayımıyla UYUMSUZDUR).
+    extern_func_names: std.StringHashMapUnmanaged(void) = .{},
+    /// v2.0 madde 2.3: `@ffi.callback` taşıyan HER extern def İçİn — `param_
+    /// idx`/`context_idx` (`ed.params`e göre İNDEKS), `callback_type` (o
+    /// parametrenin KENDİ, ZATEN doğrulanmış fonksiyon tipi). `registerExternCallback`
+    /// TARAFINDAN doldurulur, `checkCall`in `self.functions.get(name)` dalı
+    /// TARAFINDAN (bkz. `checkExternCallbackArgs`) danışılır.
+    extern_callbacks: std.StringHashMapUnmanaged(ExternCallbackConfig) = .{},
+    /// v2.0 madde 2.3: `checkCallbackTargetArg` TARAFINDAN doğrulanmış
+    /// (üst-düzey/senkron/extern-olmayan, imzası eşleşen) HER `@ffi.callback`
+    /// HEDEFİNİN adı — `functions_used_as_value`in AYNI "codegen'e DÜZ isim
+    /// listesi olarak akıtılır" deseni (bkz. `genFfiCallbackTrampoline`).
+    callback_targets: std.StringHashMapUnmanaged(void) = .{},
     /// `instantiateGeneric` tarafından üretilen, somut (monomorphize edilmiş)
     /// fonksiyon tanımları — `main.zig`/codegen bunları modülün geri kalanı
     /// gibi normal, generic olmayan fonksiyonlar olarak derler. Adları
@@ -1209,11 +1235,13 @@ pub const Checker = struct {
             }
         }
         try self.functions.put(self.allocator, ed.name, .{ .params = params, .return_type = ret });
+        try self.extern_func_names.put(self.allocator, ed.name, {});
         try self.registerExternCallback(ed, params, ret);
     }
 
     /// v2.0 madde 2.3 (bkz. nox-teknik-spesifikasyon.md §3.188):
-    /// `@ffi.callback("param", context_param="param2")` doğrulaması —
+    /// `@ffi.callback("param", "context_param")` doğrulaması (İKİ argüman
+    /// da POZİSYONEL — Nox'ta anahtar-kelime argümanı sözdizimi YOK) —
     /// `registerExternFunc`ten AYRILDI (okunabilirlik). `ed.decorators`de
     /// `ffi.callback` YOKSA HİÇBİR ŞEY yapmaz.
     fn registerExternCallback(self: *Checker, ed: ast.ExternDef, params: []const Type, ret: Type) TypeError!void {
@@ -1267,6 +1295,7 @@ pub const Checker = struct {
             if (cb_func.params[cb_func.params.len - 1] != .ptr) {
                 return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@ffi.callback' hedefi '{s}'nin İMZASININ SON parametresi (userdata yuvası) bir 'ptr' tipinde olmalı", .{ ed.name, callback_param_name });
             }
+            try self.extern_callbacks.put(self.allocator, ed.name, .{ .param_idx = cb_idx, .context_idx = ctx_idx, .callback_type = cb_func });
         }
     }
 
@@ -5474,7 +5503,14 @@ pub const Checker = struct {
                     if (self.async_functions.contains(name)) {
                         return self.fail(error.TypeMismatch, "'{s}' bir 'async def' fonksiyonudur, yalnızca 'spawn' ile başlatılabilir", .{name});
                     }
-                    try self.checkArgs(ctx, sig.params, c.args, name);
+                    // v2.0 madde 2.3: `@ffi.callback` taşıyan bir extern def
+                    // çağrısı — özel arity/argüman doğrulaması (bkz.
+                    // `checkExternCallbackArgs`in belge notu).
+                    if (self.extern_callbacks.get(name)) |cb_cfg| {
+                        try self.checkExternCallbackArgs(ctx, sig.params, c.args, name, cb_cfg);
+                    } else {
+                        try self.checkArgs(ctx, sig.params, c.args, name);
+                    }
                     return sig.return_type;
                 }
                 if (self.classes.contains(name)) {
@@ -5815,6 +5851,94 @@ pub const Checker = struct {
                 return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{name});
             }
         }
+    }
+
+    /// v2.0 madde 2.3 (bkz. `Checker.extern_callbacks`in belge notu):
+    /// `checkArgs`in AYNI genel şeklinin, `@ffi.callback` taşıyan bir
+    /// extern def'e ÖZEL biçimi — `cfg.context_idx` yuvası ÇAĞRI SİTESİNDE
+    /// HİÇ YAZILMAZ (derleyici `%rt`yi otomatik doldurur, bkz. `calls.zig`nin
+    /// callback-argüman emisyonu), `cfg.param_idx` yuvası SADECE
+    /// `checkCallbackTargetArg`nin doğruladığı çıplak bir üst-düzey
+    /// fonksiyon adı olabilir.
+    fn checkExternCallbackArgs(self: *Checker, ctx: *FnCtx, params: []const Type, args: []const ast.Expr, name: []const u8, cfg: ExternCallbackConfig) TypeError!void {
+        const expected_arity = params.len - 1;
+        if (args.len != expected_arity) {
+            return self.fail(error.ArgumentCountMismatch, "'{s}' {d} argüman bekler ({d}. parametre '@ffi.callback'in context_param'ıdır, çağrı sitesinde YAZILMAZ — derleyici otomatik doldurur), {d} verildi", .{ name, expected_arity, cfg.context_idx + 1, args.len });
+        }
+        var arg_i: usize = 0;
+        for (params, 0..) |pt, pi| {
+            if (pi == cfg.context_idx) continue;
+            const ae = args[arg_i];
+            arg_i += 1;
+            if (pi == cfg.param_idx) {
+                try self.checkCallbackTargetArg(ctx, ae, cfg.callback_type, name);
+                continue;
+            }
+            const at = try self.checkExprExpected(ctx, ae, pt);
+            if (!self.assignable(pt, at)) {
+                return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{name});
+            }
+        }
+    }
+
+    /// `checkExternCallbackArgs`in yardımcısı: `ae` KESİNLİKLE üst-düzey,
+    /// senkron (`async` OLMAYAN), extern OLMAYAN bir `def`in ÇIPLAK adı
+    /// OLMALI (lambda/bağlı metod/yakalayan closure/başka HERHANGİ bir
+    /// ifade REDDEDİLİR) — hedefin ÇALIŞMA ZAMANI TEMSİLİNİN sabit bir
+    /// `$isim` sembolü (derleme-anı sabiti) OLMASI, trampoline'ın (bkz.
+    /// `compiler/codegen_qbe/ffi_callback.zig`) doğrudan `call $isim(rt,
+    /// ...)` üretebilmesi İçİn GEREKLİDİR. Hedefin KENDİ imzası (gizli
+    /// `%rt` HARİÇ — Nox seviyesinde ZATEN GÖRÜNMEZ), callback tipinin
+    /// SON parametresi (userdata yuvası) HARİÇ kalanıyla TAM eşleşmelidir.
+    fn checkCallbackTargetArg(self: *Checker, ctx: *FnCtx, ae: ast.Expr, cb_type: types.FuncType, extern_name: []const u8) TypeError!void {
+        if (ae != .identifier) {
+            return self.fail(error.TypeMismatch, "'{s}': '@ffi.callback' hedefi yalnızca üst-düzey bir fonksiyonun ÇIPLAK adı olabilir (lambda/bağlı metod/yakalayan closure KABUL EDİLMEZ)", .{extern_name});
+        }
+        const target_name = ae.identifier;
+        // Yerel bir değişken/parametre AYNI adı TAŞIYORSA (gölgeleme)
+        // HEDEF O'DUR, üst-düzey fonksiyon DEĞİL — GG.22'nin AYNI
+        // gölgeleme-öncelik kuralı (bkz. `checkCall`in `.identifier` dalı).
+        if (try ctx.scope.lookup(self.allocator, target_name)) |_| {
+            return self.fail(error.TypeMismatch, "'{s}': '@ffi.callback' hedefi '{s}' yerel bir değişkeni gölgeliyor, üst-düzey bir fonksiyon OLMALI", .{ extern_name, target_name });
+        }
+        if (self.extern_func_names.contains(target_name)) {
+            return self.fail(error.TypeMismatch, "'{s}': '@ffi.callback' hedefi '{s}' bir 'extern def' — yalnızca sıradan (Nox gövdeli) üst-düzey fonksiyonlar callback hedefi olabilir", .{ extern_name, target_name });
+        }
+        if (self.async_functions.contains(target_name)) {
+            return self.fail(error.TypeMismatch, "'{s}': '@ffi.callback' hedefi '{s}' bir 'async def' — callback hedefleri senkron olmalı", .{ extern_name, target_name });
+        }
+        const sig = self.functions.get(target_name) orelse {
+            return self.fail(error.UndefinedFunction, "'{s}': '@ffi.callback' hedefi tanımsız bir fonksiyon: {s}", .{ extern_name, target_name });
+        };
+        const expected_params = cb_type.params[0 .. cb_type.params.len - 1];
+        if (sig.params.len != expected_params.len) {
+            return self.fail(error.TypeMismatch, "'{s}': '@ffi.callback' hedefi '{s}'nin parametre SAYISI callback imzasıyla eşleşmiyor ({d} bekleniyor, {d} bulundu)", .{ extern_name, target_name, expected_params.len, sig.params.len });
+        }
+        for (sig.params, expected_params, 0..) |pt, ept, i| {
+            if (!scalarTypeEql(pt, ept)) {
+                return self.fail(error.TypeMismatch, "'{s}': '@ffi.callback' hedefi '{s}'nin {d}. parametre tipi callback imzasıyla eşleşmiyor", .{ extern_name, target_name, i + 1 });
+            }
+        }
+        if (!scalarTypeEql(sig.return_type, cb_type.return_type.*)) {
+            return self.fail(error.TypeMismatch, "'{s}': '@ffi.callback' hedefi '{s}'nin dönüş tipi callback imzasıyla eşleşmiyor", .{ extern_name, target_name });
+        }
+        try self.callback_targets.put(self.allocator, target_name, {});
+    }
+
+    /// `isFfiSafeCallbackType`in İZİN VERDİĞİ 5 tipin (int/float/bool/ptr/
+    /// none) BASİT, PAYLOAD'SIZ eşitliği — `checkCallbackTargetArg`nin
+    /// yardımcısı, `assignable`in genel (GENİŞLETME İzİn VEREN) kurallarını
+    /// BİLEREK ATLAR: C-ABI trampoline'ının ÜRETTİĞİ HAM bit deseni, hedef
+    /// fonksiyonun beklediğiyle TAM (genişletme/daraltma OLMADAN) eşleşmeli.
+    fn scalarTypeEql(a: Type, b: Type) bool {
+        return switch (a) {
+            .int => b == .int,
+            .float => b == .float,
+            .boolean => b == .boolean,
+            .ptr => b == .ptr,
+            .none => b == .none,
+            else => false,
+        };
     }
 
     // ---- Faz 10: generics (compile-time monomorphization) ----

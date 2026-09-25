@@ -67,6 +67,10 @@ fn generateIr(allocator: std.mem.Allocator, io: std.Io, source: []const u8) !?[]
     var fn_value_it = checker_state.functions_used_as_value.keyIterator();
     while (fn_value_it.next()) |k| try functions_used_as_value.append(allocator, k.*);
 
+    var callback_targets: std.ArrayListUnmanaged([]const u8) = .empty;
+    var cb_target_it = checker_state.callback_targets.keyIterator();
+    while (cb_target_it.next()) |k| try callback_targets.append(allocator, k.*);
+
     const ir = nox.codegen.generateModule(
         allocator,
         module,
@@ -84,6 +88,7 @@ fn generateIr(allocator: std.mem.Allocator, io: std.Io, source: []const u8) !?[]
         .qbe,
         .hosted,
         null,
+        callback_targets.items,
     ) catch return null;
 
     return ir;

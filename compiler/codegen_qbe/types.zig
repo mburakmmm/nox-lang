@@ -172,6 +172,19 @@ pub const FuncSig = struct {
     /// İNDEKS İçİn DEVRE DIŞI kalır). VARSAYILAN (boş dilim): HİÇBİRİ
     /// saklanmaz (MEVCUT davranış).
     retains: []const bool = &.{},
+    /// v2.0 madde 2.3 (bkz. nox-teknik-spesifikasyon.md §3.189): Yalnızca
+    /// `@ffi.callback` taşıyan `extern def`ler İçİn anlamlıdır. `null`
+    /// (varsayılan): bu extern def'in HİÇBİR callback parametresi yok.
+    callback: ?CallbackInfo = null,
+};
+
+/// v2.0 madde 2.3: `FuncSig.callback`in yükü — `params`e göre İNDEKS.
+pub const CallbackInfo = struct {
+    /// Callback-tipli (`(...) -> R`) parametrenin İNDEKSİ.
+    param_idx: usize,
+    /// "userdata" (`%rt`nin ÇAĞRI SİTESİNDE otomatik doldurulduğu) yuvasının
+    /// İNDEKSİ — checker TARAFINDAN ZATEN `ptr` OLARAK doğrulanmış.
+    context_idx: usize,
 };
 
 /// Faz HH.4: `handle` fonksiyonu gövdesinin `req` parametresinin HANGİ
