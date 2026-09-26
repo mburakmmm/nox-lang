@@ -14,6 +14,43 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.103.0]
+
+### Eklendi
+
+- **Sabit-genişlikli tamsayı tipleri (`u8`/`u16`/`u32`/`u64`/`usize`/`i8`/
+  `i16`/`i32`/`i64`/`isize`) — v2.0 yol haritasının 4. maddesi (bkz.
+  nox-teknik-spesifikasyon.md §3.192)**: mevcut `int`i (64-bit, sessizce-
+  sarmalayan) DEĞİŞTİRMEDEN, opt-in bir aile olarak eklendi.
+  - Aritmetik (`+`/`-`/`*`) QBE'de (varsayılan) HER ZAMAN çalışma-zamanı
+    taşma-kontrollüdür (yakalanamaz `nox_int_overflow_trap`); `--release`
+    (LLVM) HER ZAMAN sessizce sarar — Python'un `int`inin sarma
+    davranışından KASITLI bir sapma, backend'e göre seçilen bir ayrışma.
+  - Daraltma cast'leri (`u8(x)` vb.) backend'den BAĞIMSIZ HER ZAMAN
+    aralık-kontrollüdür.
+  - Çıplak literal atama (`x: u8 = 200`, negatifler dahil) derleme-
+    zamanı aralık kontrolüyle `u8(200)` yazmaya gerek kalmadan çalışır.
+  - Karşılaştırmalar işaretliliğe duyarlıdır (`u32`/`u64` büyük değerler
+    artık YANLIŞLIKLA negatif SAYILMAZ).
+  - `list[u8]` vb. — bildirim/literal/`.append()`/indeksleme okuma-yazma/
+    `for...in`/eşitlik/`print` hepsi doğru çalışır (eleman deposu HENÜZ
+    `bool` ile aynı 4-baytlık slotu kullanır — gerçek bayt-paketleme
+    optimizasyonu bilinçli olarak AYRI bir sonraki alt-göreve bırakıldı).
+  - `extern def`/`@ffi.callback` imzalarında tam destek.
+  - Generic fonksiyonlar sabit-genişlikli bir kind üzerinde örneklenebilir.
+
+### Düzeltildi
+
+- **3 gerçek, çalıştırılmadan önce bulunan bellek-bozulması riski**
+  (`list[u8]` desteğini eklerken ortaya çıkan `elem_heap_info != null`
+  invaryant ihlali — bkz. §3.192'nin "Faz D" bölümü): `genIndex`in
+  `emitInlineRetain`e ham bir skaler değeri adres sanıp geçirmesi,
+  `genListAppend`in büyüme yolundaki aynı hata, ve `genListAssign`in
+  `releaseValueIfSet` üzerinden keyfi bir bellek adresini liste başlığı
+  gibi okumaya çalışması. Kök neden düzeltmesi: `elem_heap_info`
+  mekanizmasına DOKUNULMADI, bunun yerine tamamen ayrı bir top-level
+  `elem_fixed_int` alanı eklendi.
+
 ## [1.102.2]
 
 ### Eklendi

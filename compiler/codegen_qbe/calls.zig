@@ -272,6 +272,21 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 if (v.heap == .str) {
                     return self.retainIfAliasing(c.args[0], v);
                 }
+                // v2.0 madde 4: sabit-genişlikli bir kind — `genPrint`in
+                // AYNI widen+işaretlilik-farkında dallanmasi (bkz. onun
+                // belge notu); `bool`in AŞAĞIDAKİ `.w`+`.heap==.none`
+                // dalından ÖNCE kontrol edilmeli (u8/i8/u16/i16/u32/i32
+                // de AYNI `.w` qtype'ı PAYLAŞIYOR).
+                if (v.fixed_int) |kind| {
+                    const widened = try self.widenFixedIntForPrint(v, kind);
+                    const result_t = try self.newTemp();
+                    if (kind.isSigned()) {
+                        try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_int_to_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = widened.text } });
+                    } else {
+                        try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_uint_to_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = widened.text } });
+                    }
+                    return .{ .text = result_t, .qtype = .l, .heap = .str };
+                }
                 // `bool` — `int` (`.l`) VE `float` (`.d`)DEN AYRI, `.w`
                 // qtype'lı TEK ilkel (bkz. `registration.zig`nin `resolveType`
                 // `.boolean` dalı). `nox_bool_to_str` runtime fonksiyonu YOK —
@@ -325,6 +340,16 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 if (c.args.len != 1) return error.Unsupported;
                 const v = try self.genExpr(c.args[0]);
                 const result = try self.genParseOrRaise(v, "nox_str_is_valid_float", "nox_str_to_float", .d, "float(): gecersiz sayi bicimi");
+                try self.releaseIfTemporary(c.args[0], v);
+                return result;
+            }
+            // v2.0 madde 4 (§4): `u8(x)`/`i32(x)`/vb. — DARALTMA cast'i,
+            // checker'ın KENDİ eşdeğer notundaki gerekçeyle backend'DEN
+            // BAĞIMSIZ HER ZAMAN aralık-kontrollü (bkz. `genNarrowingCast`).
+            if (std.meta.stringToEnum(types.FixedIntKind, name)) |target_kind| {
+                if (c.args.len != 1) return error.Unsupported;
+                const v = try self.genExpr(c.args[0]);
+                const result = try self.genNarrowingCast(v, target_kind);
                 try self.releaseIfTemporary(c.args[0], v);
                 return result;
             }
@@ -1645,7 +1670,11 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     // İKEN `elem_heap_info` HER ZAMAN `null`dır (`local_escape.zig`nin
     // SKALER-eleman-tipi KISITLAMASI, bkz. `elemTypeIsScalar`), bu kontrol
     // SADECE netlik İçİn açıkça eklenir.
-    if (obj.elem_heap_info != null and obj.growable_arena == null) {
+    // v2.0 madde 4 (Faz D): `isHeapManaged` KONTROLÜ — bkz. `expr.zig`nin
+    // `genIndex`indeki AYNI bulgu, "elem_heap_info != null" ARTIK
+    // (`list[u8]` GİBİ skaler-AMA-sabit-genişlikli elemanlarda) "heap-
+    // yönetimli" ANLAMINA GELMİYOR.
+    if (obj.elem_heap_info != null and isHeapManaged(obj.elem_heap_info.?.heap) and obj.growable_arena == null) {
         try self.emitListElemRetainLoop(new_ptr, len_t, obj.elem_heap_info.?.heap);
     }
 
@@ -1680,7 +1709,7 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         const skip_free_label = try self.newLabel("append_skip_free");
         try self.qbeJnz(should_free, free_label, skip_free_label);
         try self.qbeLabel(free_label);
-        if (obj.elem_heap_info != null) {
+        if (obj.elem_heap_info != null and isHeapManaged(obj.elem_heap_info.?.heap)) {
             // ESKİ blok BU çağrıda gerçekten ölüyor (`self.attr` GİBİ başka
             // bir alias YOK) — yukarıdaki retain döngüsünün eklediği "fazladan"
             // payı DÜZ bir decrement İLE dengele (TAM özyinelemeli release
@@ -1815,7 +1844,7 @@ pub fn genListPop(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Val
 
     try self.releaseIfTemporary(a.obj.*, obj);
 
-    return abi.valueFromElemDescriptor(result, obj.elem_qtype, obj.elem_heap_info, obj.elem_is_str);
+    return abi.valueFromElemDescriptor(result, obj.elem_qtype, obj.elem_heap_info, obj.elem_is_str, obj.elem_fixed_int);
 }
 
 /// `Channel[T](capacity)`/`ThreadChannel[T](capacity)` (yerleşikler) YA DA

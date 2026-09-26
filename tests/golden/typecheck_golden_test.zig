@@ -1329,3 +1329,24 @@ test "golden(freestanding-profile): varsayilan profil (.hosted) nox.http'yi HALA
         @embedFile("typecheck_cases/ok_freestanding_hosted_default_regression.expected"),
     );
 }
+
+test "golden(typecheck): v2.0 madde 4 — sabit-genişlikli tamsayı int ile örtük karışamaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_fixed_int_mix_with_int.nox"),
+        @embedFile("typecheck_cases/err_fixed_int_mix_with_int.expected"),
+    );
+}
+
+test "golden(typecheck): v2.0 madde 4 — unary '-' işaretsiz bir sabit-genişlikli tipe uygulanamaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_fixed_int_unary_minus_unsigned.nox"),
+        @embedFile("typecheck_cases/err_fixed_int_unary_minus_unsigned.expected"),
+    );
+}
+
+test "golden(typecheck): v2.0 madde 4 — çıplak literal hedef kind'ın aralığına derleme-zamanında sığmalı" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_fixed_int_literal_out_of_range.nox"),
+        @embedFile("typecheck_cases/err_fixed_int_literal_out_of_range.expected"),
+    );
+}

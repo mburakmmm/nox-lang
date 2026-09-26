@@ -22,6 +22,85 @@ pub const Backend = enum { qbe, llvm };
 /// cross-compile GARANTİSİ DEĞİL).
 pub const Profile = enum { hosted, freestanding };
 
+/// v2.0 stabilizasyon yol haritası, madde 4 (bkz. nox-teknik-
+/// spesifikasyon.md §3.192): `u8/u16/u32/u64/usize/i8/i16/i32/i64/isize`
+/// — mevcut `int`i (64-bit, Python-benzeri, sessizce-sarmalayan)
+/// DEĞİŞTİRMEDEN, opt-in bir aile olarak eklenir. TEK parametreli
+/// `Type.fixed_int: FixedIntKind` (10 düz `Type` etiketi YERİNE) — `.list`/
+/// `.task`/`.channel`'ın ZATEN kanıtladığı "payload taşıyan tek-etiket
+/// varyant" deseniyle TUTARLI: Zig'in exhaustive-switch güvenlik ağı HER
+/// `Type` switch'inde SADECE BİR yeni kol gerektirir, GERÇEK 10-kind
+/// farklılaşması (bit genişliği/işaretlilik) SADECE bunun GERÇEKTEN
+/// önemli olduğu yerlerde (`FixedIntKind`in KENDİ küçük switch'i/yardımcı
+/// fonksiyonları) yapılır. `usize`/`isize` `u64`/`i64`'e "collapse"
+/// EDİLMEZ (proje ŞU AN SADECE 64-bit host hedefliyor, davranışsal olarak
+/// BUGÜN özdeşler — isim ayrımı FFI imza okunabilirliği + gelecekte
+/// çoklu-hedef desteği eklenirse tek-nokta değiştirilebilirlik İçİn
+/// ucuzdur, bkz. plan dosyasının "Kapsam Dışı" notu).
+pub const FixedIntKind = enum {
+    u8,
+    u16,
+    u32,
+    u64,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    isize,
+
+    pub fn bitWidth(self: FixedIntKind) u16 {
+        return switch (self) {
+            .u8, .i8 => 8,
+            .u16, .i16 => 16,
+            .u32, .i32 => 32,
+            .u64, .i64, .usize, .isize => 64,
+        };
+    }
+
+    pub fn byteWidth(self: FixedIntKind) usize {
+        return self.bitWidth() / 8;
+    }
+
+    pub fn isSigned(self: FixedIntKind) bool {
+        return switch (self) {
+            .u8, .u16, .u32, .u64, .usize => false,
+            .i8, .i16, .i32, .i64, .isize => true,
+        };
+    }
+
+    pub fn name(self: FixedIntKind) []const u8 {
+        return @tagName(self);
+    }
+
+    /// Bir `int_lit`in (`ast.Expr.int_lit: i64` — Nox tamsayı literalleri
+    /// HER ZAMAN `i64` olarak ayrıştırılır) BU kind'in ARALIĞINA sığıp
+    /// SIĞMADIĞINI derleme-zamanında kontrol eder (bkz. `checkExprExpected`nin
+    /// literal-çıkarım kancası). `u64`/`usize` İçİn üst sınır PRATİKTE
+    /// `i64::MAX`dir — bir Nox literalinin KENDİSİ `i64`i AŞAMAYACAĞINDAN
+    /// (ayrıştırıcının KENDİ, ÖNCEDEN VAR OLAN sınırlaması, bu fonksiyonun
+    /// KAPSAMI DIŞINDA) negatif-olmayan HER `i64` zaten u64'e sığar.
+    pub fn fitsValue(self: FixedIntKind, v: i64) bool {
+        if (self.isSigned()) {
+            return switch (self.bitWidth()) {
+                8 => v >= -128 and v <= 127,
+                16 => v >= -32768 and v <= 32767,
+                32 => v >= -2147483648 and v <= 2147483647,
+                64 => true,
+                else => unreachable,
+            };
+        }
+        if (v < 0) return false;
+        return switch (self.bitWidth()) {
+            8 => v <= 255,
+            16 => v <= 65535,
+            32 => v <= 4294967295,
+            64 => true,
+            else => unreachable,
+        };
+    }
+};
+
 pub const Type = union(enum) {
     int,
     float,
@@ -87,6 +166,8 @@ pub const Type = union(enum) {
     /// `.optional`in kendisi OLAMAZ (checker'ın `typeExprToType`si bunu
     /// zorunlu kılar) — iç içe/anlamsız Optional'lar üretilemez.
     optional: *const Type,
+    /// v2.0 madde 4 (bkz. FixedIntKind'in belge notu).
+    fixed_int: FixedIntKind,
 };
 
 pub const Dict = struct { key: *const Type, value: *const Type };
@@ -104,6 +185,7 @@ pub fn eql(a: Type, b: Type) bool {
         .thread_channel => |elem_a| eql(elem_a.*, b.thread_channel.*),
         .task_local => |elem_a| eql(elem_a.*, b.task_local.*),
         .optional => |elem_a| eql(elem_a.*, b.optional.*),
+        .fixed_int => |k_a| k_a == b.fixed_int,
         .dict => |d_a| eql(d_a.key.*, b.dict.key.*) and eql(d_a.value.*, b.dict.value.*),
         .func => |f_a| blk: {
             const f_b = b.func;
@@ -117,7 +199,7 @@ pub fn eql(a: Type, b: Type) bool {
 }
 
 pub fn isNumeric(t: Type) bool {
-    return t == .int or t == .float;
+    return t == .int or t == .float or t == .fixed_int;
 }
 
 pub fn format(t: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
@@ -163,6 +245,7 @@ pub fn format(t: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             try writer.writeAll(" | None");
         },
         .ptr => try writer.writeAll("ptr"),
+        .fixed_int => |k| try writer.writeAll(k.name()),
         .dict => |d| {
             try writer.writeAll("dict[");
             try format(d.key.*, writer);

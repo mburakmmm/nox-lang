@@ -306,6 +306,31 @@ pub fn qbeOp1(self: *Codegen, dst: []const u8, ty: QbeType, mnemonic: []const u8
         try self.out.writer.print("    {s} = zext i32 {s} to i64\n", .{ dst, a });
         return;
     }
+    // v2.0 madde 4: `extsw` — `extuw`nin İMZALI karşılığı (kaynak ZATEN
+    // TAM 32-bit, `extuw` GİBİ ayrı bir `trunc` GEREKMEZ) — `u32`/`i32`
+    // sabit-genişlikli kind'lerin `.l`ye YÜKSELTİLMESİ İçİn (bkz. `expr.
+    // zig`nin `widenFixedIntForPrint`/`emitCheckedFixedBin32`si).
+    if (std.mem.eql(u8, mnemonic, "extsw")) {
+        try self.out.writer.print("    {s} = sext i32 {s} to i64\n", .{ dst, a });
+        return;
+    }
+    // v2.0 madde 4: `extub`/`extsb`/`extuh`/`extsh` — u8/i8/u16/i16'nın
+    // taşma-kontrolü/sarma round-trip'i (bkz. `expr.zig`nin
+    // `emitCheckedFixedBinNarrow`si) İçİn. QBE'nin AKSİNE (kaynak ZATEN
+    // `w`-genişlikli bir SSA değeri, sadece düşük 8/16 bit ANLAMLI),
+    // LLVM'in tip sistemi TAM eşleşme İSTEDİĞİNDEN ÖNCE `trunc`, SONRA
+    // `zext`/`sext` gerekir — `ty` hedefin `w`(32) mi `l`(64) mi
+    // OLDUĞUNU belirler.
+    if (std.mem.eql(u8, mnemonic, "extub") or std.mem.eql(u8, mnemonic, "extsb") or std.mem.eql(u8, mnemonic, "extuh") or std.mem.eql(u8, mnemonic, "extsh")) {
+        const narrow_bits: u8 = if (std.mem.eql(u8, mnemonic, "extub") or std.mem.eql(u8, mnemonic, "extsb")) 8 else 16;
+        const is_signed = std.mem.eql(u8, mnemonic, "extsb") or std.mem.eql(u8, mnemonic, "extsh");
+        const truncated = try self.newTemp();
+        try self.out.writer.print("    {s} = trunc i32 {s} to i{d}\n", .{ truncated, a, narrow_bits });
+        const dst_bits: u16 = if (ty == .l) 64 else 32;
+        const ext_op: []const u8 = if (is_signed) "sext" else "zext";
+        try self.out.writer.print("    {s} = {s} i{d} {s} to i{d}\n", .{ dst, ext_op, narrow_bits, truncated, dst_bits });
+        return;
+    }
     if (std.mem.eql(u8, mnemonic, "sltof")) {
         try self.out.writer.print("    {s} = sitofp i64 {s} to double\n", .{ dst, a });
         return;

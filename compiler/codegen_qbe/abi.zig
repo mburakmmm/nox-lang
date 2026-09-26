@@ -44,13 +44,35 @@ pub fn qbeSizeOf(t: QbeType) usize {
     };
 }
 
+/// v2.0 madde 4 (bkz. nox-teknik-spesifikasyon.md §3.192): sabit-genişlikli
+/// bir `FixedIntKind`in QBE HESAPLAMA sınıfı (`w` VEYA `l`) — QBE'nin
+/// SADECE bu İKİ ALU sınıfı OLDUĞUNDAN (8/16-bit'lik GERÇEK bir register
+/// YOK), u8/i8/u16/i16/u32/i32 `w`'de, u64/i64/usize/isize `l`'de
+/// hesaplanır. Bu, "hesaplama sınıfı" (register) — `storageSizeOf`
+/// (aşağıda) İSE "depolama genişliği" (bellek, 1/2/4/8 bayt) sorusunu
+/// AYRI olarak yanıtlar (u8/i8/u16/i16 İçİn İKİSİ FARKLIDIR).
+pub fn fixedIntComputeClass(kind: types.FixedIntKind) QbeType {
+    return if (kind.bitWidth() <= 32) .w else .l;
+}
+
+/// `qbeSizeOf`nin GENELLEŞTİRİLMİŞ hali — `fixed_int` DOLUYSA GERÇEK
+/// depolama genişliğini (`.byteWidth()`, 1/2/4/8 bayt) döner, AKSİ HALDE
+/// (mevcut TÜM tipler İçİn — int/float/bool/str/list/dict/ptr/vb.) MEVCUT
+/// `qbeSizeOf(qtype)` davranışı DEĞİŞMEDEN kullanılır. Liste-eleman
+/// depolama offseti hesaplayan TÜM call site'lar (`genListLit` VE liste-
+/// indeksleme) `qbeSizeOf(elem_qtype)` YERİNE BUNU çağırır.
+pub fn storageSizeOf(qtype: QbeType, fixed_int: ?types.FixedIntKind) usize {
+    if (fixed_int) |k| return k.byteWidth();
+    return qbeSizeOf(qtype);
+}
+
 /// Bir KONTEYNERİN (`list[T]`, `Task[T]`, `Channel[T]`) `elem_qtype`/
 /// `elem_heap_info`/`elem_is_str` alanlarından, KENDİSİ okunan TEK bir
 /// elemanın (`text`/`qtype` zaten hesaplanmış) TAM `Value`sini (doğru
 /// `heap`/`class_name`/iç içe `elem_heap_info` ile) yeniden kurar —
 /// `genIndex` (liste indeksleme), `genAwaitExpr` (`Task` sonucu) ve
 /// `genChannelOp` (`Channel.recv`) arasında PAYLAŞILAN tek bir mantık.
-pub fn valueFromElemDescriptor(text: []const u8, qtype: QbeType, container_elem_heap_info: ?*const ElemHeapInfo, container_elem_is_str: bool) Value {
+pub fn valueFromElemDescriptor(text: []const u8, qtype: QbeType, container_elem_heap_info: ?*const ElemHeapInfo, container_elem_is_str: bool, container_elem_fixed_int: ?types.FixedIntKind) Value {
     return .{
         .text = text,
         .qtype = qtype,
@@ -59,6 +81,13 @@ pub fn valueFromElemDescriptor(text: []const u8, qtype: QbeType, container_elem_
         .elem_qtype = if (container_elem_heap_info) |ehi| ehi.elem_qtype else .none,
         .elem_heap_info = if (container_elem_heap_info) |ehi| ehi.nested else null,
         .func_sig = if (container_elem_heap_info) |ehi| ehi.func_sig else null,
+        // v2.0 madde 4 (Faz D): `list[u8]`nin okunan elemanının `fixed_int`
+        // etiketi — TOP-LEVEL `elem_fixed_int` alanından (bkz. `TypeInfo`/
+        // `Value`nin belge notu, `elem_heap_info`nin AKSİNE BUNU AYRI
+        // TUTMANIN gerekçesi) DOĞRUDAN AKITILIR; BUNU AKITMAZSAK `print(
+        // xs[0])` YANLIŞLIKLA `bool` GİBİ davranır (ÇALIŞTIRILIP BULUNAN
+        // GERÇEK hata, `genPrint`in `.w` varsayılan dalına düşer).
+        .fixed_int = container_elem_fixed_int,
         // Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
         // incelemesi", C1): ÖNCEDEN burada HİÇ AKITILMIYORDU — `list[dict[...]]`
         // İÇİNDEN okunan bir eleman (`rows[i]`), o elemanı `["anahtar"]`
@@ -70,7 +99,14 @@ pub fn valueFromElemDescriptor(text: []const u8, qtype: QbeType, container_elem_
     };
 }
 
-pub fn cmpMnemonic(op: ast.BinaryOp, common: QbeType) []const u8 {
+/// v2.0 madde 4 (§7): `signed` — SADECE `common == .w` ile `.lt`/`.le`/
+/// `.gt`/`.ge` VE `common == .l` ile AYNI dörtlü İçİn anlamlıdır (`.eq`/
+/// `.ne` işaretlilikten BAĞIMSIZ, `.w`'nin ÖNCEDEN `bool`e ÖZGÜ dalı
+/// SIRALAMA operatörlerini `unreachable` bırakıyordu — u8/i8/u16/i16/
+/// u32/i32'nin BUGÜN `.w`de hesaplanması BUNU İLK KEZ ULAŞILABİLİR
+/// yapıyor). Mevcut TÜM çağıranlar (`int`/`float`/`bool`) `signed = true`
+/// geçirir — DAVRANIŞ DEĞİŞMEZ (imzalı mnemonikler AYNEN korunur).
+pub fn cmpMnemonic(op: ast.BinaryOp, common: QbeType, signed: bool) []const u8 {
     if (common == .d) {
         return switch (op) {
             .eq => "ceqd",
@@ -86,16 +122,20 @@ pub fn cmpMnemonic(op: ast.BinaryOp, common: QbeType) []const u8 {
         return switch (op) {
             .eq => "ceqw",
             .ne => "cnew",
+            .lt => if (signed) "csltw" else "cultw",
+            .le => if (signed) "cslew" else "culew",
+            .gt => if (signed) "csgtw" else "cugtw",
+            .ge => if (signed) "csgew" else "cugew",
             else => unreachable,
         };
     }
     return switch (op) {
         .eq => "ceql",
         .ne => "cnel",
-        .lt => "csltl",
-        .le => "cslel",
-        .gt => "csgtl",
-        .ge => "csgel",
+        .lt => if (signed) "csltl" else "cultl",
+        .le => if (signed) "cslel" else "culel",
+        .gt => if (signed) "csgtl" else "cugtl",
+        .ge => if (signed) "csgel" else "cugel",
         else => unreachable,
     };
 }

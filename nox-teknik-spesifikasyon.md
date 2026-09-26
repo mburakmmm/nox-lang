@@ -23809,6 +23809,157 @@ cases/` (10 YENİ `.nox`/`.expected` çifti).
 
 ---
 
+## 3.192 v2.0 stabilizasyon yol haritası, madde 4 — Sabit-genişlikli Tamsayı Tipleri (u8/u16/u32/u64/usize/i8/i16/i32/i64/isize)
+
+Roadmap'in EN GENİŞ codegen/ABI dokunuşu — `u8/u16/u32/u64/usize/i8/i16/
+i32/i64/isize` ailesi, mevcut `int`i (64-bit, Python-benzeri, sessizce-
+sarmalayan, DEĞİŞMEDEN kalır) DEĞİŞTİRMEDEN, opt-in bir aile olarak
+eklendi. Faz A-D uygulandı (Faz E/F'nin bir kısmı Faz D'nin İÇİNE
+GÖMÜLÜ oldu — aşağıya bkz.); Faz D'nin SADECE "true byte-packing" alt-
+kısmı BİLİNÇLİ olarak ERTELENDİ (bkz. "Bilinçli olarak ERTELENEN kısım").
+
+### Tasarım özeti
+
+- **Tip temsili**: `Type.fixed_int: FixedIntKind` (10 ayrı `Type` etiketi
+  DEĞİL, TEK payload-taşıyan varyant — `.list`/`.task` İLE AYNI desen).
+  `usize`/`isize`, `u64`/`i64`e "collapse" EDİLMEDİ (davranışsal olarak
+  BUGÜN özdeş, isim ayrımı FFI okunabilirliği + gelecekte 32-bit hedef
+  İçİn ucuz).
+- **Hesaplama sınıfı vs depolama genişliği**: `QbeType` enum'ı GENİŞLE-
+  TİLMEDİ (`.w`/`.l` İKİSİ de KORUNDU) — bunun yerine `TypeInfo`/`Value`/
+  `VarInfo`ye PARALEL bir `fixed_int: ?FixedIntKind` alanı eklendi.
+  u8/i8/u16/i16/u32/i32 `.w`de, u64/i64/usize/isize `.l`de hesaplanır.
+- **Aritmetik taşma kontrolü**: `emitCheckedFixedBin` (`+`/`-`/`*`) —
+  QBE (varsayılan) HER ZAMAN ÇALIŞMA-zamanı kontrollü (taşarsa
+  `nox_int_overflow_trap` İLE yakalanamaz process-abort, `runtime/
+  errors/handle.zig`, `nox_unhandled_exception`in AYNI deseni); `--release`
+  (LLVM) HER ZAMAN sessizce sarar (kontrol dalı HİÇ ÜRETİLMEZ). Üç ayrı
+  alt-yol: 8/16-bit (mask/round-trip `extub`/`extsb`/`extuh`/`extsh`),
+  32-bit (`.l`ye yükseltip hesapla, geri daralt, YENİDEN genişletip
+  karşılaştır — `.w`nin KENDİSİ taşma bayrağı SUNMADIĞINDAN), 64-bit
+  (ÖNCE/SONRA işaret karşılaştırması; çarpma AYRI, bölme-tabanlı kontrol
+  — İMZALI yolda `INT64_MIN / -1`in donanım SIGFPE'sinden KAÇINAN bir
+  ÖZEL durum İÇERİR).
+- **Daraltma cast'leri** (`u8(x)` vb.): `genNarrowingCast` — backend'DEN
+  BAĞIMSIZ HER ZAMAN aralık-kontrollü (ambient aritmetiğin AKSİNE). Tek
+  özel durum: kaynak İMZASIZ 64-bit (`u64`/`usize`), hedef İMZALI 64-bit
+  (`i64`/`isize`) İSE etkin alt sınır `i64::MIN` DEĞİL `0`dır (aksi
+  halde `u64::MAX` YANLIŞLIKLA `i64(-1)`e "sığar" görünürdü).
+- **Promotion/karışım**: `requireSameFixedIntOrNone` — aynı-kind-only,
+  `int`/`float` İLE ÖRTÜK karışım YOK (checker'ın `numericPromote`/
+  `.div`/`.eq,.ne`/`.lt,.le,.gt,.ge` dallarının HEPSİNE uygulanır).
+  Unary `-` işaretsiz bir kind'a derleme-zamanında REDDEDİLİR.
+  **`%`/`//`/`**` sabit-genişlikli kind'lerle HENÜZ DESTEKLENMİYOR**
+  (bkz. "Bilinçli olarak kapsam dışı").
+- **Literal çıkarımı**: `x: u8 = 200` (VE `x: i8 = -5` — negatif BARE
+  literal, `unary neg` ÜZERİNE `int_lit` olarak ayrıştırıldığından AYRI
+  bir dal gerekti) `u8(200)` YAZMAYA GEREK KALMADAN derleme-zamanı
+  aralık kontrolüyle KABUL edilir — SADECE DOĞRUDAN `.int_lit`/`unary
+  neg(int_lit)` düğümleri (sabit-katlanabilir AMA literal OLMAYAN bir
+  ifade, ör. `200 + 1`, BU mekanizmayla YAKALANMAZ, genel aynı-kind-only
+  kuralına düşer).
+- **İşaretlilik**: `cmpMnemonic`e `signed: bool` parametresi eklendi —
+  `.w`/`.l` İKİSİ de artık İşaretsiz karşılaştırma ailesini (`cult*`/
+  `cule*`/`cugt*`/`cuge*`) de üretebiliyor (ÖNCEDEN `.w`nin sıralama
+  dalları `unreachable`di — bool sıralanamazdı; u8/i8/u16/i16/u32/i32
+  BUNU İLK KEZ ulaşılabilir yapıyor).
+- **Print/str desteği**: Faz B'nin BAŞINDA (aritmetik/trap'TEN ÖNCE)
+  tamamlandı — bu OLMADAN HİÇBİR alt-parça golden testle GÖZLEMLENEMEZDİ.
+  `widenFixedIntForPrint` (.w→.l, işaretliliğe göre `extsw`/`extuw`) +
+  YENİ `$fmt_uint`/`$fmt_uint_frag` (%llu, u64/usize İçİn — imzalı
+  `$fmt_int`in %lld'si BÜYÜK imzasız değerleri YANLIŞLIKLA negatif
+  yazdırırdı) + runtime'ın YENİ `nox_uint_to_str`u.
+
+### `list[T]` desteği (Faz D) — **KISMİ**: DOĞRULUK tamamlandı, TRUE byte-packing ERTELENDİ
+
+**Gerçek, ÇALIŞTIRILIP BULUNAN 3 bellek-bozulması riski** (bu maddenin
+EN riskli kısmı): `list[u8]`nin (skaler-AMA-sabit-genişlikli eleman)
+`elem_heap_info`sini DOLDURMA girişimi, kod tabanının PEK ÇOK yerindeki
+"`elem_heap_info != null` ⟺ eleman HEAP-yönetimli" ÖRTÜK invaryantını
+BOZUYORDU:
+
+1. `expr.zig`nin `genIndex`i — taze bir listeden okunan bir elemanı
+   (`isTemporaryExpr`) `emitInlineRetain`e HAM bir SKALER değeri (adres
+   DEĞİL) geçirip bir bellek adresi SANIP atomic-add YAPMAYA çalışırdı.
+2. `calls.zig`nin `genListAppend`ı — büyüme yolunda AYNI şekilde
+   `emitListElemRetainLoop`/`emitListElemPlainDecrementLoop`u (HER İKİSİ
+   de elemanları KOŞULSUZ 8-baytlık İŞARETÇİ SANAR) tetiklerdi.
+3. `stmt.zig`nin `genListAssign`ı (`xs[i] = value`) — EN TEHLİKELİSİ:
+   `releaseValueIfSet`in `else if (elem_heap_info) |info|` dalına
+   düşüp, `ptr`nin (aslında HAM bir skaler) KENDİSİNİ bir `list`
+   SANIP KEYFİ bir bellek adresini list-başlığı gibi OKUMAYA çalışırdı
+   — VE `releaseFnNameFor`nin `.list` dalı, `.heap == .none` OLAN bir
+   `nested` tanımlayıcıyı (`info.nested` yalnızca POINTER null-luğuna
+   bakar, İŞARET ETTİĞİ struct'ın `.heap`ine DEĞİL) hâlâ heap-yönetimli
+   SANIP özyinelemeli çağrısında `error.Unsupported`a DÜŞERDİ.
+
+**Kök neden VE düzeltme**: `elem_heap_info` MEKANİZMASI TAMAMEN
+DOKUNULMADAN bırakıldı (`list[u8]` İçİn `null` KALIR, TÜM retain/release
+kod yolları DEĞİŞMEDEN) — bunun yerine `TypeInfo`/`Value`/`VarInfo`ye
+TAMAMEN AYRI, PARALEL bir TOP-LEVEL `elem_fixed_int: ?FixedIntKind` alanı
+eklendi (`elem_qtype`in yanına). `resolveType`, `genListLit`, `genFor`nin
+döngü-değişkeni kaydı, `valueFromElemDescriptor` (YENİ 5. parametre) HEPSİ
+BU alanı taşır — `elem_heap_info`nin invaryantına HİÇ DOKUNMADAN.
+
+**Doğrulanan davranış**: `list[u8]` bildirimi/literal inşası (`[u8(1),
+u8(2)]`)/`.append()`/indeksleme OKUMA-YAZMA/`for...in`/eşitlik/`print`
+HEPSİ DOĞRU çalışıyor (`print(xs[0])` ARTIK "True" DEĞİL "1" basıyor —
+BULUNUP düzeltilen GERÇEK hata) — HEM QBE HEM `--release` altında.
+
+**Bilinçli olarak ERTELENEN kısım**: elemanların GERÇEK bellek DÜZENİ
+HÂLÂ `bool`inkiyle AYNI (4-baytlık `.w` slotu/eleman) — kullanıcının
+ÖNCEDEN verdiği "tam bayt-paketleme baştan" kararının TAM karşılığı
+(`storageSizeOf`/`qbeLoadSB`/`qbeLoadUH`/vb. İLE 1/2-baytlık GERÇEK
+depolama) HENÜZ UYGULANMADI — bu, `releaseFnNameFor`/`listPayloadSize`/
+LLVM byte-load-store eşleniklerini de kapsayan, AYRI VE KENDİ Plan Mode
+turunu gerektiren bir SONRAKİ alt-görev olarak KALDI (DOĞRULUK riski
+TAŞIMAZ, SADECE bir bellek-yoğunluğu optimizasyonudur — `list[u8]`
+BUGÜN doğru ÇALIŞIYOR, sadece bool kadar YER kaplıyor).
+
+### Bilinçli olarak kapsam dışı (bu turda da)
+
+- Typed raw pointer (`rawptr[T]`)/`volatile_load`/`store` — roadmap'in
+  AÇIKÇA SONRAKİ, AYRI maddeleri (6 VE 7).
+- `%`/`//`/`**` sabit-genişlikli kind'lerle — `genMod`/`genFloorDiv`/
+  `genPow`un `common`i GÖRMEZDEN GELİP "rem"/"div"i HER ZAMAN `.l` SANAN
+  ("common == .w" olabilecek YENİ durumu HİÇ HESABA KATMAYAN) codegen'i
+  DOĞRU ÇALIŞMAZDI — checker BUNU AÇIKÇA reddeder (SESSİZCE yanlış
+  SONUÇ ÜRETMEK yerine derleme-zamanı HATASI TERCİH edildi).
+- Sınıf ALANLARININ bayt-paketlenmesi — kullanıcının kararı SADECE
+  `list[T]` eleman deposunu kapsıyordu.
+- `dict[K,V]`nin sabit-genişlikli anahtar/değer bayt-paketlemesi.
+- Bit-düzeyi operatörler (`&`/`|`/`^`/`<<`/`>>`).
+- `Task[T]`/`Channel[T]`in `toPayload`sının (KOŞULSUZ `extuw`, işaretli
+  bir negatif değeri ZATEN zaman ZAMAN yanlış taşırdı) sabit-genişlikli
+  kind'lerle TAM doğruluğu — `elem_fixed_int` bu payload tiplerine de
+  AKITILDI (`valueFromElemDescriptor` ÜZERİNDEN), AMA `toPayload`nin
+  KENDİSİ işaretliliğe göre `extsw` SEÇMİYOR — AYRI, ÖNCEDEN de var
+  olan bir gedik (BU madde TARAFINDAN YARATILMADI, GENİŞLETİLMEDİ de).
+
+### Doğrulama
+
+`zig build test` (Debug) SIFIR regresyon — 3 GERÇEK bellek-bozulması
+riski (yukarıda) ÇALIŞTIRILMADAN ÖNCE bulunup düzeltildi. Golden testler:
+`codegen_cases/fixed_int_basic.nox` (bildirim/aritmetik/`list[u8]`/cast/
+işaretsiz karşılaştırma), `codegen_cases/fixed_int_overflow_trap.nox`
+(QBE varsayılan taşma tuzağı, `uncaught_exception_with_stderr`), 3
+`typecheck_cases/err_fixed_int_*` (aynı-kind-only reddi, unary-minus
+reddi, literal aralık reddi), 1 YENİ `backend_conformance_test.zig`
+`expectDivergence` VARYANTI (`DivergenceExpectation.traps` — QBE
+"çalışıp SONRA yakalanamaz taşmayla sonlanır" durumunu modelleyen,
+ÖNCEDEN OLMAYAN bir üçüncü seçenek) — wrap-vs-trap asimetrisini
+KASITLI, BELGELENMİŞ bir backend ayrışması OLARAK kayda geçirir.
+
+### Kritik dosyalar
+
+`compiler/typecheck/{types,checker}.zig`, `compiler/codegen_qbe/{types,
+abi,expr,registration,llvm_emit,calls,stmt,inlining}.zig`, `runtime/
+errors/handle.zig`, `runtime/str.zig`, `tests/golden/{codegen_golden_
+test,typecheck_golden_test,backend_conformance_test}.zig` + YENİ
+fixture'lar.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

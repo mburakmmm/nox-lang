@@ -11,6 +11,12 @@ const abi_layout = @import("abi_layout");
 
 pub const QbeType = enum { l, d, w, none };
 
+/// v2.0 madde 4 (bkz. nox-teknik-spesifikasyon.md §3.192): `compiler/
+/// typecheck/types.zig`den yeniden İHRAÇ edilir (`Backend`/`Profile`nin
+/// AYNI deseni, codegen.zig:313/318) — döngüsel bağımlılık YARATMADAN TEK
+/// doğruluk kaynağı. `TypeInfo`/`Value`nin `fixed_int` alanının tipi.
+pub const FixedIntKind = @import("../typecheck/types.zig").FixedIntKind;
+
 /// `task`/`channel`: Faz 21 aşama 4'ün `Task[T]`/`Channel[T]`si — BİLEREK
 /// `isHeapManaged`in DIŞINDA tutulur (ARC/refcount başlığı YOK, zamanlayıcı
 /// kendi ömrünü kendi yönetir, bkz. `runtime/async_rt/bridge.zig`) — ama
@@ -110,6 +116,26 @@ pub const TypeInfo = struct {
     elem_is_str: bool = false,
     dict_info: ?*const DictInfo = null,
     func_sig: ?*const FuncSigInfo = null,
+    /// v2.0 madde 4 (bkz. nox-teknik-spesifikasyon.md §3.192): `null`
+    /// OLMAYAN İSE bu `TypeInfo` bir sabit-genişlikli tamsayıyı (`u8`/
+    /// `i16`/vb.) betimler — `qtype` HÂLÂ "hesaplama sınıfı"nı taşır
+    /// (u8/i8/u16/i16/u32/i32 İçİn `.w`, u64/i64/usize/isize İçİn `.l` —
+    /// QBE'nin YALNIZCA bu İKİ ALU sınıfı OLDUĞUNDAN), GERÇEK "depolama
+    /// genişliği" (1/2/4/8 bayt) İSE BU alandan (`.?.byteWidth()`)
+    /// türetilir (bkz. `abi.zig`nin `storageSizeOf`u). `null` İSE MEVCUT
+    /// TÜM davranış (int/float/bool/str/list/dict/ptr/vb.) AYNEN korunur.
+    fixed_int: ?FixedIntKind = null,
+    /// v2.0 madde 4 (Faz D): `list[u8]`/vb. — bu container'ın (`list[T]`)
+    /// ELEMANLARININ sabit-genişlikli kind'ı, `T` SKALER (heap == .none)
+    /// İKEN. **BİLEREK `elem_heap_info` ÜZERİNDEN DEĞİL, AYRI bir TOP-
+    /// LEVEL alan olarak taşınır**: `elem_heap_info != null` kod tabanının
+    /// PEK ÇOK yerinde (retain/release/predecrement döngüleri) "eleman
+    /// HEAP-yönetimli" ANLAMINA GELİYOR — SKALER bir elemanı ORAYA
+    /// eklemek (İLK denemede yapılıp GERÇEK bir bellek-bozulması/panik
+    /// riskiyle ÇALIŞTIRILMADAN ÖNCE bulunup GERİ ALINDI) o invaryantı
+    /// BOZARDI. `null` İSE MEVCUT davranış (list[int]/list[bool]/vb.)
+    /// AYNEN korunur.
+    elem_fixed_int: ?FixedIntKind = null,
 };
 
 pub const Value = struct {
@@ -121,6 +147,13 @@ pub const Value = struct {
     elem_heap_info: ?*const ElemHeapInfo = null,
     elem_is_str: bool = false,
     dict_info: ?*const DictInfo = null,
+    /// v2.0 madde 4 — `TypeInfo.fixed_int`in AYNI amacı, tekil bir
+    /// ÇALIŞMA-anı `Value` İçİn.
+    fixed_int: ?FixedIntKind = null,
+    /// v2.0 madde 4 (Faz D) — `TypeInfo.elem_fixed_int`in AYNI amacı VE
+    /// AYNI gerekçe ("neden `elem_heap_info` DEĞİL" — bkz. onun belge
+    /// notu), tekil bir ÇALIŞMA-anı `Value` İçİn.
+    elem_fixed_int: ?FixedIntKind = null,
     /// Faz U.4.5: `heap == .closure` OLAN bir değerin STATİK çağrı imzası
     /// (`VarInfo.func_sig` İLE AYNI amaç) — `.index`/`.attribute` ÜZERİNDEN
     /// DOLAYLI çağrı (bkz. `calls.zig`nin `genIndirectCallThroughClosure`ı)
@@ -302,6 +335,15 @@ pub const VarInfo = struct {
     elem_is_str: bool = false,
     dict_info: ?*const DictInfo = null,
     func_sig: ?*const FuncSigInfo = null,
+    /// v2.0 madde 4: `TypeInfo.fixed_int`in AYNI amacı, `VarInfo` tarafı —
+    /// bu değişken/parametrenin sabit-genişlikli bir kind'a (`u8`/vb.)
+    /// bağlı OLUP OLMADIĞI, `.identifier` okuma yolunun `genPrint`/
+    /// aritmetik dallanmalarını doğru yönlendirebilmesi İçİn.
+    fixed_int: ?FixedIntKind = null,
+    /// v2.0 madde 4 (Faz D): `TypeInfo.elem_fixed_int`in AYNI amacı,
+    /// `VarInfo` tarafı — `xs: list[u8]` GİBİ bir değişkenin ELEMAN
+    /// kind'ı.
+    elem_fixed_int: ?FixedIntKind = null,
     is_param: bool = false,
     arena: bool = false,
     /// GG.17 (bkz. nox-teknik-spesifikasyon.md §3.10X): `local_escape.zig`nin

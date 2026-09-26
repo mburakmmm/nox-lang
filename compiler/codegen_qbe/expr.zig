@@ -150,7 +150,32 @@ pub fn convert(self: *Codegen, v: Value, target: QbeType) CodegenError!Value {
     if (v.qtype == .d and target == .l) {
         const t = try self.newTemp();
         try self.qbeOp1(t, .l, "dtosi", v.text);
-        return .{ .text = t, .qtype = .l };
+        return .{ .text = t, .qtype = .l, .fixed_int = v.fixed_int };
+    }
+    // v2.0 madde 4: `u8`/`i16`/vb. gibi `.w`de hesaplanan sabit-genişlikli
+    // kind'lerin literal/`int`-kaynaklı değerleri `genExpr` yolundan HER
+    // ZAMAN `.l` (int'in DOĞAL kayıt sınıfı) olarak gelir — `fromPayload`in
+    // AYNI, ZATEN kanıtlanmış `copy` deseniyle DÜŞÜK 32 bite daraltılır
+    // (aralık kontrolü BURADAN ÖNCE, `checkExprExpected`/`fitsValue`
+    // İLE derleme-zamanında ZATEN yapıldı).
+    if (v.qtype == .l and target == .w) {
+        const t = try self.newTemp();
+        try self.qbeOp1(t, .w, "copy", v.text);
+        return .{ .text = t, .qtype = .w, .fixed_int = v.fixed_int };
+    }
+    // v2.0 madde 4: `'/'`in HER ZAMAN `.float` dönmesi (checker'ın
+    // `.div` dalı) — `.w`de hesaplanan sabit-genişlikli bir kind (u8/i8/
+    // u16/i16/u32/i32) İçİn ÖNCE `.l`ye (işaretliliğe göre `extsw`/
+    // `extuw`, `v.fixed_int` doluysa ONA göre, aksi halde (BURAYA HİÇ
+    // ULAŞMAMASI GEREKEN `bool`, savunmacı) işaretli varsayılır) genişletip
+    // SONRA `sltof` İLE `.d`ye çevrilir.
+    if (v.qtype == .w and target == .d) {
+        const signed = if (v.fixed_int) |k| k.isSigned() else true;
+        const widened = try self.newTemp();
+        try self.qbeOp1(widened, .l, if (signed) "extsw" else "extuw", v.text);
+        const t = try self.newTemp();
+        try self.qbeOp1(t, .d, "sltof", widened);
+        return .{ .text = t, .qtype = .d };
     }
     return error.Unsupported;
 }
@@ -317,7 +342,7 @@ pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
                     try self.qbeLoad(payload, info.elem_qtype, info.elem_qtype, t);
                     break :blk .{ .text = payload, .qtype = info.elem_qtype };
                 }
-                break :blk .{ .text = t, .qtype = info.qtype, .heap = info.heap, .elem_qtype = info.elem_qtype, .class_name = info.class_name, .elem_heap_info = info.elem_heap_info, .elem_is_str = info.elem_is_str, .dict_info = info.dict_info, .func_sig = info.func_sig, .arena = info.arena, .growable_arena = info.growable_arena };
+                break :blk .{ .text = t, .qtype = info.qtype, .heap = info.heap, .elem_qtype = info.elem_qtype, .class_name = info.class_name, .elem_heap_info = info.elem_heap_info, .elem_is_str = info.elem_is_str, .dict_info = info.dict_info, .func_sig = info.func_sig, .arena = info.arena, .growable_arena = info.growable_arena, .fixed_int = info.fixed_int, .elem_fixed_int = info.elem_fixed_int };
             }
             // Bulundu (bkz. proje belleği "modül-seviyesi global durum"
             // planı): yerel/parametre BAŞARISIZ olursa — `buildFunctionValueForIdentifier`
@@ -333,7 +358,7 @@ pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
                 try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
                 const t = try self.newTemp();
                 try self.qbeLoad(t, g.info.qtype, g.info.qtype, addr);
-                break :blk .{ .text = t, .qtype = g.info.qtype, .heap = g.info.heap, .elem_qtype = g.info.elem_qtype, .class_name = g.info.class_name, .elem_heap_info = g.info.elem_heap_info, .elem_is_str = g.info.elem_is_str, .dict_info = g.info.dict_info, .func_sig = g.info.func_sig };
+                break :blk .{ .text = t, .qtype = g.info.qtype, .heap = g.info.heap, .elem_qtype = g.info.elem_qtype, .class_name = g.info.class_name, .elem_heap_info = g.info.elem_heap_info, .elem_is_str = g.info.elem_is_str, .dict_info = g.info.dict_info, .func_sig = g.info.func_sig, .fixed_int = g.info.fixed_int, .elem_fixed_int = g.info.elem_fixed_int };
             }
             break :blk try self.buildFunctionValueForIdentifier(name);
         },
@@ -377,7 +402,7 @@ pub fn genFieldRead(self: *Codegen, a: ast.Attribute) CodegenError!Value {
             try self.emitInlineRetain(result, f.info.heap);
         }
         try self.releaseIfTemporary(a.obj.*, obj);
-        return .{ .text = result, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str, .dict_info = f.info.dict_info, .func_sig = f.info.func_sig };
+        return .{ .text = result, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str, .dict_info = f.info.dict_info, .func_sig = f.info.func_sig, .fixed_int = f.info.fixed_int, .elem_fixed_int = f.info.elem_fixed_int };
     }
     return error.Unsupported;
 }
@@ -401,7 +426,7 @@ pub fn genFieldReadFromValue(self: *Codegen, obj: Value, field_name: []const u8)
         try self.qbeOp2Imm(addr, .l, "add", obj.text, @intCast(f.offset));
         const result = try self.newTemp();
         try self.qbeLoad(result, f.info.qtype, f.info.qtype, addr);
-        return .{ .text = result, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str, .dict_info = f.info.dict_info, .func_sig = f.info.func_sig };
+        return .{ .text = result, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str, .dict_info = f.info.dict_info, .func_sig = f.info.func_sig, .fixed_int = f.info.fixed_int, .elem_fixed_int = f.info.elem_fixed_int };
     }
     return error.Unsupported;
 }
@@ -492,11 +517,19 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
     // sıfıra düşüp (`releaseIfTemporary`) elemanları özyinelemeli olarak
     // serbest bırakırsa (`genListElemRelease`), az önce okuduğumuz
     // elemanı kullanım-sonrası-serbest-bırakmaya çeviririz.
-    if (isTemporaryExpr(idx.obj.*) and obj.elem_heap_info != null) {
+    // v2.0 madde 4 (Faz D): `elem_heap_info != null` ARTIK "eleman HEAP-
+    // yönetimli" ANLAMINA GELMİYOR (bkz. registration.zig'in YENİ `heap
+    // == .none and elem.fixed_int != null` dalı — `list[u8]`nin
+    // `elem_heap_info`si de DOLU, AMA `.heap == .none`) — `isHeapManaged`
+    // KONTROLÜ olmadan `emitInlineRetain`e HAM bir SKALER değer (pointer
+    // DEĞİL) geçirmek, onu BİR BELLEK ADRESİ SANIP atomic-add YAPMAYA
+    // ÇALIŞIRDI (GERÇEK bir bellek bozulması riski — ÇALIŞTIRILMADAN
+    // ÖNCE fark edilip DÜZELTİLDİ).
+    if (isTemporaryExpr(idx.obj.*) and obj.elem_heap_info != null and isHeapManaged(obj.elem_heap_info.?.heap)) {
         try self.emitInlineRetain(result, obj.elem_heap_info.?.heap);
     }
     try self.releaseIfTemporary(idx.obj.*, obj);
-    return valueFromElemDescriptor(result, obj.elem_qtype, obj.elem_heap_info, obj.elem_is_str);
+    return valueFromElemDescriptor(result, obj.elem_qtype, obj.elem_heap_info, obj.elem_is_str, obj.elem_fixed_int);
 }
 
 /// `s[i]` — stdlib fazı §G. Sınır KONTROLÜ QBE'de yapılır (`strlen` +
@@ -651,6 +684,7 @@ fn genEmptyListLit(self: *Codegen, target: anytype) CodegenError!Value {
         .elem_qtype = target.elem_qtype,
         .elem_heap_info = target.elem_heap_info,
         .elem_is_str = target.elem_is_str,
+        .elem_fixed_int = target.elem_fixed_int,
         .arena = arena != null,
         .growable_arena = growable_arena,
     };
@@ -709,6 +743,11 @@ pub fn genListLit(self: *Codegen, elems: []const ast.Expr) CodegenError!Value {
         elem_heap_info = info;
     }
     const elem_is_str = first.heap == .str;
+    // v2.0 madde 4 (Faz D): `[u8(1), u8(2)]` GİBİ bir liste literalinin
+    // eleman kind'ı, İLK elemandan ÇIKARILIR (checker'ın "aynı-kind-only"
+    // kısıtı TÜM elemanların AYNI kind OLMASINI ZATEN garanti eder —
+    // `types.eql` pairwise kontrolü, bkz. modül üstü not).
+    const elem_fixed_int = first.fixed_int;
     const elem_size = qbeSizeOf(elem_qtype);
     const payload_size = LIST_HEADER_SIZE + elem_size * elems.len;
 
@@ -768,7 +807,7 @@ pub fn genListLit(self: *Codegen, elems: []const ast.Expr) CodegenError!Value {
         try self.qbeOp2Imm(addr, .l, "add", t, @intCast(off));
         try self.qbeStore(elem_qtype, v.text, addr);
     }
-    return .{ .text = t, .qtype = .l, .heap = .list, .elem_qtype = elem_qtype, .elem_heap_info = elem_heap_info, .elem_is_str = elem_is_str, .arena = arena != null or growable_arena != null, .is_stack_slot = from_stack_site and arena == null, .growable_arena = growable_arena };
+    return .{ .text = t, .qtype = .l, .heap = .list, .elem_qtype = elem_qtype, .elem_heap_info = elem_heap_info, .elem_is_str = elem_is_str, .elem_fixed_int = elem_fixed_int, .arena = arena != null or growable_arena != null, .is_stack_slot = from_stack_site and arena == null, .growable_arena = growable_arena };
 }
 
 /// `genEmptyListLit`in AYNISI, `{}` (boş dict) İÇİN — `nox_dict_new`nin
@@ -861,9 +900,285 @@ pub fn emitBin(self: *Codegen, mnemonic: []const u8, l: Value, r: Value, result_
     return .{ .text = t, .qtype = result_qtype };
 }
 
+/// v2.0 madde 4 (§3): sabit-genişlikli `+`/`-`/`*`in TEK giriş noktası —
+/// depolama genişliğine göre ÜÇ ayrı alt-yola dağıtır (bkz. plan
+/// dosyasının "Aritmetik taşma kontrolü" bölümü). `--release` (LLVM)
+/// backend'i HER ZAMAN sessizce sarar (kontrol dalı hiç ÜRETİLMEZ) —
+/// bu ayrım HER alt-yolun KENDİ İçİNDE (`self.backend != .qbe` erken
+/// dönüşü) yapılır, TEK bir merkezi dal YERİNE (8/16/32/64-bit yolların
+/// HER BİRİNİN "ham SONUCU nasıl hesaplarım" adımı FARKLI olduğundan).
+pub fn emitCheckedFixedBin(self: *Codegen, mnemonic: []const u8, l: Value, r: Value, kind: types.FixedIntKind) CodegenError!Value {
+    return switch (kind.bitWidth()) {
+        8, 16 => self.emitCheckedFixedBinNarrow(mnemonic, l, r, kind),
+        32 => self.emitCheckedFixedBin32(mnemonic, l, r, kind),
+        64 => self.emitCheckedFixedBin64(mnemonic, l, r, kind),
+        else => unreachable,
+    };
+}
+
+/// u8/i8/u16/i16 — HEPSİ `.w`de (32-bit) hesaplanır. Girdiler ZATEN
+/// [0,255]/[-128,127]/[0,65535]/[-32768,32767] aralığında OLDUĞUNDAN,
+/// `add`/`sub`/`mul`in 32-bit'lik ARA sonucu ASLA 32-bit'i AŞMAZ (EN
+/// KÖTÜ durum `mul`: 65535*65535 < 2^32) — taşma YALNIZCA HEDEF
+/// GENİŞLİKTE olur, bu yüzden DOĞRUDAN `.w`de hesaplayıp SONRA bir
+/// daraltma/genişletme round-trip'İYLE (bkz. `qbeOp1`'in `extub`/`extsb`/
+/// `extuh`/`extsh` mnemonikleri, QBE'nin AYNI zaten var olan bayt/yarım-
+/// kelime granülerlikli talimatları) kontrol etmek yeterlidir.
+pub fn emitCheckedFixedBinNarrow(self: *Codegen, mnemonic: []const u8, l: Value, r: Value, kind: types.FixedIntKind) CodegenError!Value {
+    const raw = try self.emitBin(mnemonic, l, r, .w);
+    const check_mnemonic: []const u8 = switch (kind) {
+        .u8 => "extub",
+        .i8 => "extsb",
+        .u16 => "extuh",
+        .i16 => "extsh",
+        else => unreachable,
+    };
+    // `narrowed` — `raw`nin GERÇEK depolama genişliğine (bkz. `check_
+    // mnemonic`, QBE'nin bayt/yarım-kelime granülerlikli genişletme
+    // talimatları) daraltılıp GERİ genişletilmiş hali. Bu, HEM taşma
+    // TESPİTİ (QBE: `narrowed != raw` İSE taştı) HEM DE `--release`/LLVM'in
+    // SESSİZ SARMASININ KENDİSİDİR (`narrowed`, taşan bir toplamın DOĞRU
+    // "mod 2^genişlik" DEĞERİdir — ÖNCEDEN BURADA hiç HESAPLANMIYORDU,
+    // `raw`nin KENDİSİ [ör. `255u8 + 1` İçİn 32-bit'lik ham `256`]
+    // DOĞRUDAN geri DÖNDÜRÜLÜYORDU, GERÇEK bir "sarma YOK" hatası —
+    // ÇALIŞTIRILIP BULUNDU).
+    const narrowed = try self.newTemp();
+    try self.qbeOp1(narrowed, .w, check_mnemonic, raw.text);
+    if (self.backend != .qbe) return .{ .text = narrowed, .qtype = .w, .fixed_int = kind };
+    const mismatch = try self.newTemp();
+    try self.qbeOp2(mismatch, .w, "cnew", narrowed, raw.text);
+    try self.emitOverflowTrapIfNonzero(mismatch, kind);
+    return .{ .text = narrowed, .qtype = .w, .fixed_int = kind };
+}
+
+/// u32/i32 — `.w`nin KENDİSİ taşma bayrağı SUNMAZ, bu yüzden çekirdek
+/// hesaplama `.l`YE YÜKSELTİLEREK yapılır (32-bit girdilerin add/sub/
+/// mul'ı HER ZAMAN 64-bit'e TAM sığar — İMZASIZ EN KÖTÜ durum
+/// `(2^32-1)^2 < 2^64`, İMZALI en kötü durum `|i32|<=2^31` olduğundan
+/// çarpım büyüklüğü `<=2^62 < 2^63`), SONRA `.w`ye geri daraltılıp AYNI
+/// kind'a göre YENİDEN genişletilerek orijinal 64-bit sonuçla
+/// KARŞILAŞTIRILIR (`widenFixedIntForPrint`in AYNI extsw/extuw deseni,
+/// bkz. onun belge notu — "print İçİn" adı YANILTICI, SAF bit-genişletme
+/// olduğundan burada da GEÇERLİ).
+pub fn emitCheckedFixedBin32(self: *Codegen, mnemonic: []const u8, l: Value, r: Value, kind: types.FixedIntKind) CodegenError!Value {
+    if (self.backend != .qbe) {
+        const raw = try self.emitBin(mnemonic, l, r, .w);
+        return .{ .text = raw.text, .qtype = .w, .fixed_int = kind };
+    }
+    const lw = try self.widenFixedIntForPrint(l, kind);
+    const rw = try self.widenFixedIntForPrint(r, kind);
+    const wide = try self.emitBin(mnemonic, lw, rw, .l);
+    const truncated = try self.newTemp();
+    try self.qbeOp1(truncated, .w, "copy", wide.text);
+    const truncated_val: Value = .{ .text = truncated, .qtype = .w };
+    const rewidened = try self.widenFixedIntForPrint(truncated_val, kind);
+    const mismatch = try self.newTemp();
+    try self.qbeOp2(mismatch, .w, "cnel", rewidened.text, wide.text);
+    try self.emitOverflowTrapIfNonzero(mismatch, kind);
+    return .{ .text = truncated, .qtype = .w, .fixed_int = kind };
+}
+
+/// u64/i64/usize/isize — EN GENİŞ register (`.l`), YÜKSELTME YOK.
+/// `add`/`sub`: ÖNCE/SONRA işaret-karşılaştırma deseni (branch-free bir
+/// koşul üretilip TEK bir `emitOverflowTrapIfNonzero` çağrısına
+/// devredilir). `mul`: KENDİ AYRI, bölme-tabanlı kontrolüne (bkz.
+/// `emitMul64OverflowCheck`in belge notu — İMZALI yol İçİn `INT64_MIN /
+/// -1`in donanım SIGFPE'sinden KAÇINAN AYRI bir özel durum İÇERİR)
+/// devredilir.
+pub fn emitCheckedFixedBin64(self: *Codegen, mnemonic: []const u8, l: Value, r: Value, kind: types.FixedIntKind) CodegenError!Value {
+    const raw = try self.emitBin(mnemonic, l, r, .l);
+    if (self.backend != .qbe) return .{ .text = raw.text, .qtype = .l, .fixed_int = kind };
+    const signed = kind.isSigned();
+    if (std.mem.eql(u8, mnemonic, "mul")) {
+        try self.emitMul64OverflowCheck(l, r, raw, kind, signed);
+        return .{ .text = raw.text, .qtype = .l, .fixed_int = kind };
+    }
+    const cond = try self.newTemp();
+    if (std.mem.eql(u8, mnemonic, "add")) {
+        if (signed) {
+            const l_neg = try self.newTemp();
+            try self.qbeOp2Imm(l_neg, .w, "csltl", l.text, 0);
+            const r_neg = try self.newTemp();
+            try self.qbeOp2Imm(r_neg, .w, "csltl", r.text, 0);
+            const same_sign = try self.newTemp();
+            try self.qbeOp2(same_sign, .w, "ceqw", l_neg, r_neg);
+            const res_neg = try self.newTemp();
+            try self.qbeOp2Imm(res_neg, .w, "csltl", raw.text, 0);
+            const diff_res = try self.newTemp();
+            try self.qbeOp2(diff_res, .w, "cnew", l_neg, res_neg);
+            try self.qbeOp2(cond, .w, "and", same_sign, diff_res);
+        } else {
+            try self.qbeOp2(cond, .w, "cultl", raw.text, l.text);
+        }
+    } else if (std.mem.eql(u8, mnemonic, "sub")) {
+        if (signed) {
+            const l_neg = try self.newTemp();
+            try self.qbeOp2Imm(l_neg, .w, "csltl", l.text, 0);
+            const r_neg = try self.newTemp();
+            try self.qbeOp2Imm(r_neg, .w, "csltl", r.text, 0);
+            const diff_sign = try self.newTemp();
+            try self.qbeOp2(diff_sign, .w, "cnew", l_neg, r_neg);
+            const res_neg = try self.newTemp();
+            try self.qbeOp2Imm(res_neg, .w, "csltl", raw.text, 0);
+            const diff_res = try self.newTemp();
+            try self.qbeOp2(diff_res, .w, "cnew", l_neg, res_neg);
+            try self.qbeOp2(cond, .w, "and", diff_sign, diff_res);
+        } else {
+            try self.qbeOp2(cond, .w, "cultl", l.text, r.text);
+        }
+    } else {
+        return error.Unsupported;
+    }
+    try self.emitOverflowTrapIfNonzero(cond, kind);
+    return .{ .text = raw.text, .qtype = .l, .fixed_int = kind };
+}
+
+/// `u64/i64/usize/isize`in `*`i — EN RİSKLİ alt-parça (bkz. plan notu).
+/// İşaretsiz: `l==0` İSE taşma İMKANSIZ (kısayol), AKSİ HALDE bölme-
+/// tabanlı kontrol (`result /u l != r`). İşaretli: AYNI bölme-tabanlı
+/// kontrol, AMA `l==-1`İKEN bölme YERİNE `r==I64_MIN` DOĞRUDAN kontrol
+/// edilir — donanımın `idiv`i `INT64_MIN / -1`de SIGFPE ÜRETİR (bu,
+/// mantıksal OLARAK da taşan TEK durum), bu yüzden bölme HİÇ ÇALIŞTIRILMAZ.
+pub fn emitMul64OverflowCheck(self: *Codegen, l: Value, r: Value, raw: Value, kind: types.FixedIntKind, signed: bool) CodegenError!void {
+    const trap_label = try self.newLabel("ovf_trap");
+    const ok_label = try self.newLabel("ovf_ok");
+    const l_zero = try self.newTemp();
+    try self.qbeOp2Imm(l_zero, .w, "ceql", l.text, 0);
+    const after_zero_label = try self.newLabel("ovf_after_zero");
+    try self.qbeJnz(l_zero, ok_label, after_zero_label);
+    try self.qbeLabel(after_zero_label);
+    if (signed) {
+        const l_neg1 = try self.newTemp();
+        try self.qbeOp2Imm(l_neg1, .w, "ceql", l.text, -1);
+        const minmin_label = try self.newLabel("ovf_minmin");
+        const div_check_label = try self.newLabel("ovf_div_check");
+        try self.qbeJnz(l_neg1, minmin_label, div_check_label);
+        try self.qbeLabel(minmin_label);
+        const r_is_min = try self.newTemp();
+        try self.qbeOp2Imm(r_is_min, .w, "ceql", r.text, std.math.minInt(i64));
+        try self.qbeJnz(r_is_min, trap_label, ok_label);
+        try self.qbeLabel(div_check_label);
+        const q = try self.newTemp();
+        try self.qbeOp2(q, .l, "div", raw.text, l.text);
+        const mismatch = try self.newTemp();
+        try self.qbeOp2(mismatch, .w, "cnel", q, r.text);
+        try self.qbeJnz(mismatch, trap_label, ok_label);
+    } else {
+        const q = try self.newTemp();
+        try self.qbeOp2(q, .l, "udiv", raw.text, l.text);
+        const mismatch = try self.newTemp();
+        try self.qbeOp2(mismatch, .w, "cnel", q, r.text);
+        try self.qbeJnz(mismatch, trap_label, ok_label);
+    }
+    try self.qbeLabel(trap_label);
+    const name_sym = try self.internFmtString(kind.name());
+    try self.qbeCall(null, "$nox_int_overflow_trap", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = name_sym } });
+    try self.emitDefaultReturn(self.current_ret_qtype);
+    try self.qbeLabel(ok_label);
+}
+
+/// `cond` (bir `.w` bool) sıfır DEĞİLSE `nox_int_overflow_trap`e dallanır
+/// (`nox_unhandled_exception`in AYNI, ZATEN kanıtlanmış "noreturn çağrı +
+/// savunmacı `emitDefaultReturn`" deseni, bkz. `exceptions.zig`nin AYNI
+/// notu) — SIFIRSA doğrudan devam eder.
+pub fn emitOverflowTrapIfNonzero(self: *Codegen, cond: []const u8, kind: types.FixedIntKind) CodegenError!void {
+    const trap_label = try self.newLabel("ovf_trap");
+    const ok_label = try self.newLabel("ovf_ok");
+    try self.qbeJnz(cond, trap_label, ok_label);
+    try self.qbeLabel(trap_label);
+    const name_sym = try self.internFmtString(kind.name());
+    try self.qbeCall(null, "$nox_int_overflow_trap", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = name_sym } });
+    try self.emitDefaultReturn(self.current_ret_qtype);
+    try self.qbeLabel(ok_label);
+}
+
+/// v2.0 madde 4 (§4): `u8(x)`/`i32(x)`/vb. — DARALTMA cast'i. `emitChecked
+/// FixedBin*`in AKSİNE (SADECE QBE'de kontrollü), BU HER ZAMAN (backend
+/// FARK ETMEKSİZİN) aralık-kontrollüdür — plan notu: "sarma SADECE
+/// işlemler sırasında (backend'e göre); dönüşümler HER ZAMAN kontrollü."
+///
+/// Algoritma: `v`yi ÖNCE 64-bit'lik "kanonik" bir `.l` temsile getirir
+/// (`float` İçİn `dtosi`, `.w`de hesaplanan 8/16/32-bit kind'ler İçİn
+/// `widenFixedIntForPrint`in AYNI sign/zero-extend deseni — SONUÇ HER
+/// ZAMAN i64 olarak GÜVENLE karşılaştırılabilir büyüklükte OLDUĞUNDAN
+/// bu genişletmeden SONRA "signed" karşılaştırma HER ZAMAN doğrudur),
+/// SONRA hedef kind'in [min,max] aralığına göre kontrol eder. **Tek
+/// özel durum**: kaynak İMZASIZ 64-bit (`u64`/`usize`) VE hedef `u64`/
+/// `usize` DIŞINDA bir 64-bit hedef (`i64`/`isize`) İSE, kaynağın ham
+/// bit örüntüsü i64::MAX'ı AŞABİLİR (İMZALI yorumda NEGATİF görünür) —
+/// bu durumda GERÇEK kısıt "değer negatif mi" (0'dan büyük-eşit) OLUR,
+/// `i64::MIN` DEĞİL (aksi halde `u64::MAX` YANLIŞLIKLA `i64(-1)`e
+/// "sığar" görünürdü — DENENİP bu tuzak BULUNDU).
+pub fn genNarrowingCast(self: *Codegen, v: Value, target_kind: types.FixedIntKind) CodegenError!Value {
+    var wide: Value = undefined;
+    var source_is_unsigned = false;
+    if (v.qtype == .d) {
+        wide = try self.convert(v, .l);
+    } else if (v.fixed_int) |sk| {
+        if (sk.bitWidth() == 64) {
+            wide = v;
+            source_is_unsigned = !sk.isSigned();
+        } else {
+            wide = try self.widenFixedIntForPrint(v, sk);
+        }
+    } else {
+        wide = v; // düz `int`, zaten `.l`, işaretli.
+    }
+
+    if (target_kind.bitWidth() == 64 and !target_kind.isSigned()) {
+        // Hedef `u64`/`usize`: HERHANGİ bir 64-bit örüntü GEÇERLİDİR —
+        // TEK kısıt, kaynak İMZALIYSA negatif OLMAMASIDIR.
+        if (!source_is_unsigned) {
+            const neg = try self.newTemp();
+            try self.qbeOp2Imm(neg, .w, "csltl", wide.text, 0);
+            try self.emitOverflowTrapIfNonzero(neg, target_kind);
+        }
+    } else {
+        const target_min: i64 = if (!target_kind.isSigned())
+            0
+        else if (source_is_unsigned and target_kind.bitWidth() == 64)
+            0
+        else switch (target_kind.bitWidth()) {
+            8 => -128,
+            16 => -32768,
+            32 => -2147483648,
+            64 => std.math.minInt(i64),
+            else => unreachable,
+        };
+        const target_max: i64 = switch (target_kind.bitWidth()) {
+            8 => if (target_kind.isSigned()) 127 else 255,
+            16 => if (target_kind.isSigned()) 32767 else 65535,
+            32 => if (target_kind.isSigned()) 2147483647 else 4294967295,
+            64 => std.math.maxInt(i64),
+            else => unreachable,
+        };
+        const below = try self.newTemp();
+        try self.qbeOp2Imm(below, .w, "csltl", wide.text, target_min);
+        const above = try self.newTemp();
+        try self.qbeOp2Imm(above, .w, "csgtl", wide.text, target_max);
+        const out_of_range = try self.newTemp();
+        try self.qbeOp2(out_of_range, .w, "or", below, above);
+        try self.emitOverflowTrapIfNonzero(out_of_range, target_kind);
+    }
+
+    if (target_kind.bitWidth() == 64) {
+        return .{ .text = wide.text, .qtype = .l, .fixed_int = target_kind };
+    }
+    const truncated = try self.newTemp();
+    try self.qbeOp1(truncated, .w, "copy", wide.text);
+    return .{ .text = truncated, .qtype = .w, .fixed_int = target_kind };
+}
+
 pub fn emitCmp(self: *Codegen, op: ast.BinaryOp, l: Value, r: Value, common: QbeType) CodegenError!Value {
+    // v2.0 madde 4 (§7): sabit-genişlikli bir kind İSE karşılaştırma
+    // MNEMONİĞİ onun işaretliliğine göre seçilir (checker'ın "aynı-kind-
+    // only" kısıtı — bkz. `requireSameFixedIntOrNone` — İKİ tarafın da
+    // AYNI kind OLMASINI GARANTİ ettiğinden, YALNIZCA `l`ye BAKMAK yeterli).
+    // Hiçbiri fixed_int DEĞİLSE (mevcut int/float/bool) `signed = true`
+    // — DAVRANIŞ DEĞİŞMEZ.
+    const signed = if (l.fixed_int) |k| k.isSigned() else true;
     const t = try self.newTemp();
-    try self.qbeOp2(t, .w, cmpMnemonic(op, common), l.text, r.text);
+    try self.qbeOp2(t, .w, cmpMnemonic(op, common, signed), l.text, r.text);
     return .{ .text = t, .qtype = .w };
 }
 
@@ -1079,11 +1394,15 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
         .l;
     const l = try self.convert(l0, common);
     const r = try self.convert(r0, common);
+    // v2.0 madde 4: checker'ın "aynı-kind-only" kısıtı (bkz.
+    // `requireSameFixedIntOrNone`) İKİ tarafın da AYNI `FixedIntKind`
+    // OLMASINI GARANTİ ettiğinden, YALNIZCA `l0`ye BAKMAK yeterlidir.
+    const fixed_kind: ?types.FixedIntKind = l0.fixed_int;
 
     return switch (b.op) {
-        .add => self.emitBin("add", l, r, common),
-        .sub => self.emitBin("sub", l, r, common),
-        .mul => self.emitBin("mul", l, r, common),
+        .add => if (fixed_kind) |k| self.emitCheckedFixedBin("add", l, r, k) else self.emitBin("add", l, r, common),
+        .sub => if (fixed_kind) |k| self.emitCheckedFixedBin("sub", l, r, k) else self.emitBin("sub", l, r, common),
+        .mul => if (fixed_kind) |k| self.emitCheckedFixedBin("mul", l, r, k) else self.emitBin("mul", l, r, common),
         .floordiv => self.genFloorDiv(l, r, common),
         .mod => blk: {
             const result = try self.genMod(l, r, common);
@@ -1146,6 +1465,19 @@ pub fn genPow(self: *Codegen, l: Value, r: Value, common: QbeType) CodegenError!
     return result;
 }
 
+/// v2.0 madde 4 (Faz B): sabit-genişlikli bir değeri (`u8`/`i16`/vb.)
+/// yazdırma İçİn 8 bayta (QBE `l`) genişletir. `.w`de hesaplanan
+/// kind'ler (u8/i8/u16/i16/u32/i32) İçİn işaretliliğe göre `extsw`
+/// (işaretli) veya `extuw` (işaretsiz) kullanılır — zaten `.l`de
+/// hesaplanan kind'ler (u64/i64/usize/isize) DEĞİŞMEDEN döner.
+pub fn widenFixedIntForPrint(self: *Codegen, v: Value, kind: types.FixedIntKind) CodegenError!Value {
+    if (v.qtype == .l) return v;
+    const t = try self.newTemp();
+    const mnemonic = if (kind.isSigned()) "extsw" else "extuw";
+    try self.qbeOp1(t, .l, mnemonic, v.text);
+    return .{ .text = t, .qtype = .l };
+}
+
 /// `print(<ifade>)`in tek giriş noktası. `list[T]`/sınıf İÇİN
 /// `genPrintFragment`e (özyineli, tırnaksız-OLMAYAN `str` biçimi — bkz.
 /// onun belge notu) yönlenip bir satır sonu ekler; değer tipleri İÇİN
@@ -1157,6 +1489,12 @@ pub fn genPrint(self: *Codegen, v: Value) CodegenError!void {
     if (v.heap == .list or v.heap == .class) {
         try self.genPrintFragment(v);
         try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_newline" }});
+        return;
+    }
+    if (v.fixed_int) |kind| {
+        const widened = try self.widenFixedIntForPrint(v, kind);
+        const fmt: []const u8 = if (kind.isSigned()) "$fmt_int" else "$fmt_uint";
+        try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = fmt }}, &.{.{ .ty = .l, .text = widened.text }});
         return;
     }
     switch (v.qtype) {
@@ -1189,6 +1527,12 @@ pub fn genPrint(self: *Codegen, v: Value) CodegenError!void {
 pub fn genPrintFragment(self: *Codegen, v: Value) CodegenError!void {
     if (v.heap == .list) return self.genPrintList(v);
     if (v.heap == .class) return self.genPrintClass(v);
+    if (v.fixed_int) |kind| {
+        const widened = try self.widenFixedIntForPrint(v, kind);
+        const fmt: []const u8 = if (kind.isSigned()) "$fmt_int_frag" else "$fmt_uint_frag";
+        try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = fmt }}, &.{.{ .ty = .l, .text = widened.text }});
+        return;
+    }
     switch (v.qtype) {
         .l => if (v.heap == .str)
             try self.qbeCallVariadic(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_str_frag" }}, &.{.{ .ty = .l, .text = v.text }})
@@ -1273,7 +1617,7 @@ pub fn genPrintList(self: *Codegen, v: Value) CodegenError!void {
     try self.qbeOp2(addr, .l, "add", v.text, off8);
     const elem = try self.newTemp();
     try self.qbeLoad(elem, v.elem_qtype, v.elem_qtype, addr);
-    try self.genPrintFragment(valueFromElemDescriptor(elem, v.elem_qtype, v.elem_heap_info, v.elem_is_str));
+    try self.genPrintFragment(valueFromElemDescriptor(elem, v.elem_qtype, v.elem_heap_info, v.elem_is_str, v.elem_fixed_int));
 
     const idx_next = try self.newTemp();
     try self.qbeOp2Imm(idx_next, .l, "add", idx_cur, 1);

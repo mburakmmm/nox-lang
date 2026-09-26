@@ -130,6 +130,14 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
             // (`heap = .none`, `list`/`class` gibi ÖZEL bir dispatch
             // GEREKTİRMEZ — düz bir `l` değeridir, `int` gibi).
             if (std.mem.eql(u8, name, "ptr")) return .{ .qtype = .l, .heap = .none };
+            // v2.0 madde 4 (bkz. nox-teknik-spesifikasyon.md §3.192):
+            // sabit-genişlikli tamsayılar — `checker.zig`nin `typeExprToType`ı
+            // İLE AYNI `std.meta.stringToEnum` deseni. `qtype`, kind'in
+            // HESAPLAMA sınıfını taşır (`abi.fixedIntComputeClass`) —
+            // DEPOLAMA genişliği AYRICA `fixed_int` alanından türetilir.
+            if (std.meta.stringToEnum(types.FixedIntKind, name)) |kind| {
+                return .{ .qtype = abi.fixedIntComputeClass(kind), .fixed_int = kind };
+            }
             if (self.classes.contains(name)) return .{ .qtype = .l, .heap = .class, .class_name = name };
             // Bulundu (bkz. proje belleği "from-import class type
             // annotations" görevi, `Codegen.from_imports`in belge notu İLE
@@ -228,6 +236,17 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
             } else if (elem.heap != .none) {
                 return error.Unsupported;
             }
+            // v2.0 madde 4 (Faz D): `list[u8]`/vb. — eleman SKALER (heap=
+            // .none) AMA sabit-genişlikli bir kind taşıyorsa, BUNU `elem_
+            // heap_info` ÜZERİNDEN DEĞİL (bkz. AŞAĞIDAKİ bulgu — `elem_
+            // heap_info != null` KODUN PEK ÇOK yerinde "eleman HEAP-
+            // yönetimli" ANLAMINA GELİYOR, GERÇEK bir bellek-bozulması/
+            // release-adı çözümleme çökmesi riski ÇALIŞTIRILIP BULUNDU),
+            // TAMAMEN AYRI bir TOP-LEVEL `elem_fixed_int` alanıyla taşırız
+            // (bkz. `TypeInfo`/`Value`nin YENİ alanı) — `elem_heap_info`nin
+            // KENDİSİ bu durumda `null` KALIR (mevcut TÜM release/retain
+            // kod yollarının davranışı TAMAMEN DEĞİŞMEZ).
+            const elem_fixed_int = elem.fixed_int;
             // `list[T]`nin KENDİSİ (heap=.list) ARC-yönetimlidir (refcount
             // başlığı, retain-on-alias). `Task[T]`/`Channel[T]`nin KENDİSİ
             // İSE DEĞİLDİR (heap=.task/.channel, `isHeapManaged`in DIŞINDA
@@ -244,6 +263,7 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
                 .elem_qtype = elem.qtype,
                 .elem_heap_info = elem_heap_info,
                 .elem_is_str = elem.heap == .str,
+                .elem_fixed_int = elem_fixed_int,
             };
         },
         // Faz U.4.3: bir closure değeri, ARC pointer AÇISINDAN `class`
@@ -858,7 +878,7 @@ pub fn collectLocals(self: *Codegen, locals: *std.ArrayListUnmanaged(LocalDecl),
                     // KENDİ sahipliğini bozan bir çifte-serbest-bırakma
                     // riski doğardı. `.class`/iç-içe `.list` DIŞINDA
                     // (int/float/bool/str) bu zaten etkisizdir.
-                    var loop_var_info: TypeInfo = .{ .qtype = src.elem_qtype };
+                    var loop_var_info: TypeInfo = .{ .qtype = src.elem_qtype, .fixed_int = src.elem_fixed_int };
                     if (src.elem_heap_info) |ehi| {
                         loop_var_info.heap = ehi.heap;
                         loop_var_info.class_name = ehi.class_name;
@@ -1038,6 +1058,8 @@ pub fn allocSlotEx(self: *Codegen, name: []const u8, info: TypeInfo, is_param: b
         .elem_is_str = info.elem_is_str,
         .dict_info = info.dict_info,
         .func_sig = info.func_sig,
+        .fixed_int = info.fixed_int,
+        .elem_fixed_int = info.elem_fixed_int,
         .is_param = is_param,
         .arena = effective_arena,
         .borrowed_field = borrowed_field,

@@ -414,7 +414,16 @@ pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     const addr = try self.newTemp();
     try self.qbeOp2(addr, .l, "add", obj.text, off16);
 
-    if (obj.elem_heap_info != null or obj.elem_is_str) {
+    // v2.0 madde 4 (Faz D): `elem_heap_info != null` ARTIK "eleman HEAP-
+    // yönetimli" ANLAMINA GELMİYOR (`list[u8]` GİBİ skaler-AMA-sabit-
+    // genişlikli elemanların da `elem_heap_info`si DOLU) — `isHeapManaged`
+    // KONTROLÜ olmadan bu dal, `old_ptr`e YÜKLENEN HAM bir SKALER değeri
+    // (adres DEĞİL) `releaseValueIfSet`e geçirip onu bir `list` SANIP
+    // (fonksiyonun KENDİ `else` dalı) KEYFİ bir bellek adresini
+    // list-başlığı gibi OKUMAYA ÇALIŞIRDI — GERÇEK bir bellek bozulması/
+    // çökme riski (ÇALIŞTIRILMADAN ÖNCE fark edilip DÜZELTİLDİ).
+    const elem_needs_release = (if (obj.elem_heap_info) |ehi| isHeapManaged(ehi.heap) else false) or obj.elem_is_str;
+    if (elem_needs_release) {
         const old_ptr = try self.newTemp();
         try self.qbeLoadL(old_ptr, addr);
         try self.qbeStore(obj.elem_qtype, val.text, addr);

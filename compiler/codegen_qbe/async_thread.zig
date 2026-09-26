@@ -900,7 +900,7 @@ pub fn genThreadHandleJoin(self: *Codegen, a: ast.Attribute) CodegenError!Value 
     const join_sym = if (self.backend == .llvm) "$nox_async_await" else "$nox_thread_join";
     try self.qbeCall(.{ .name = payload_t, .ty = .l }, join_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = handle_val.text } });
     const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, handle_val.elem_qtype);
-    return valueFromElemDescriptor(converted.text, converted.qtype, handle_val.elem_heap_info, handle_val.elem_is_str);
+    return valueFromElemDescriptor(converted.text, converted.qtype, handle_val.elem_heap_info, handle_val.elem_is_str, handle_val.elem_fixed_int);
 }
 
 /// `await <ifade>` — checker ZATEN operandın ya bir `Task` değeri ya da
@@ -962,7 +962,7 @@ pub fn genAwaitExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
     // `nox_exception_pending` `0` döner, akış NORMAL devam eder.
     try self.emitExceptionCheck();
     const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, task_val.elem_qtype);
-    return valueFromElemDescriptor(converted.text, converted.qtype, task_val.elem_heap_info, task_val.elem_is_str);
+    return valueFromElemDescriptor(converted.text, converted.qtype, task_val.elem_heap_info, task_val.elem_is_str, task_val.elem_fixed_int);
 }
 
 /// `t.cancel()` — Faz SC.2 (bkz. plan dosyası "Task[T].cancel() +
@@ -997,7 +997,7 @@ pub fn genChannelOp(self: *Codegen, a: ast.Attribute, args: []const ast.Expr, ch
         const payload_t = try self.newTemp();
         try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_channel_recv", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ch_val.text } });
         const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, ch_val.elem_qtype);
-        return valueFromElemDescriptor(converted.text, converted.qtype, ch_val.elem_heap_info, ch_val.elem_is_str);
+        return valueFromElemDescriptor(converted.text, converted.qtype, ch_val.elem_heap_info, ch_val.elem_is_str, ch_val.elem_fixed_int);
     }
     return error.Unsupported;
 }
@@ -1032,7 +1032,7 @@ pub fn genTaskLocalOp(self: *Codegen, tl_val: Value, a: ast.Attribute, args: []c
         // BİLİNÇLİ OLARAK FARKLI.
         try self.emitInlineRetain(payload_t, elem_heap);
         try self.releaseIfTemporary(a.obj.*, tl_val);
-        return valueFromElemDescriptor(payload_t, tl_val.elem_qtype, tl_val.elem_heap_info, tl_val.elem_is_str);
+        return valueFromElemDescriptor(payload_t, tl_val.elem_qtype, tl_val.elem_heap_info, tl_val.elem_is_str, tl_val.elem_fixed_int);
     }
     if (std.mem.eql(u8, a.attr, "set")) {
         if (args.len != 1) return error.Unsupported;
@@ -1091,7 +1091,7 @@ pub fn genThreadChannelOp(self: *Codegen, a: ast.Attribute, args: []const ast.Ex
         const payload_t = try self.newTemp();
         try self.qbeCall(.{ .name = payload_t, .ty = .l }, fn_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ch_val.text } });
         const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, ch_val.elem_qtype);
-        return valueFromElemDescriptor(converted.text, converted.qtype, ch_val.elem_heap_info, ch_val.elem_is_str);
+        return valueFromElemDescriptor(converted.text, converted.qtype, ch_val.elem_heap_info, ch_val.elem_is_str, ch_val.elem_fixed_int);
     }
     return error.Unsupported;
 }

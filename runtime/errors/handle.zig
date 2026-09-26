@@ -146,6 +146,20 @@ export fn nox_unhandled_exception(rt: ?*anyopaque) noreturn {
     haltProcess();
 }
 
+/// v2.0 madde 4 (§3): sabit-genişlikli bir tamsayı işleminin (`u8`/`i32`/
+/// vb.) QBE (varsayılan, DERLEME-zamanı DEĞİL ÇALIŞMA-zamanı taşma
+/// kontrollü) backend'inde taşması durumunda çağrılır — `--release`
+/// (LLVM) BU çağrıyı hiç ÜRETMEZ (bkz. `emitCheckedFixedBin`'in belge
+/// notu, sessizce sarar). `nox_unhandled_exception`nin AYNI, KASITLI
+/// "yakalanamaz, process-abort" deyimi — bu bir `raise` DEĞİLDİR (AGENTS.
+/// md İlke #3 İLE TUTARLI: QBE çıktısında unwind tablosu/landing pad
+/// ÜRETİLMEZ, `except` İLE YAKALANAMAZ).
+export fn nox_int_overflow_trap(rt: ?*anyopaque, kind_name: ?[*:0]const u8) noreturn {
+    const name = kind_name orelse "?";
+    diag_sink.report(rt, "nox: '{s}' tipinde tamsayı taşması — program sonlandırılıyor\n", .{name});
+    haltProcess();
+}
+
 test "raise sonrası pending true olur, take alır ve temizler" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);

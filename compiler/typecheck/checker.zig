@@ -628,6 +628,13 @@ pub const Checker = struct {
                 if (std.mem.eql(u8, name, "str")) return .str;
                 if (std.mem.eql(u8, name, "None")) return .none;
                 if (std.mem.eql(u8, name, "ptr")) return .ptr;
+                // v2.0 madde 4 (bkz. nox-teknik-spesifikasyon.md §3.192):
+                // sabit-genişlikli tamsayı isimleri — `FixedIntKind`in KENDİ
+                // `@tagName`leriyle BİREBİR eşleşir, `std.meta.stringToEnum`
+                // İLE TEK satırda çözümlenir (10 ayrı `std.mem.eql` YERİNE).
+                if (std.meta.stringToEnum(types.FixedIntKind, name)) |kind| {
+                    return .{ .fixed_int = kind };
+                }
                 if (self.classes.contains(name)) return .{ .class = name };
                 // Bulundu (bkz. proje belleği "from-import class type
                 // annotations" görevi): `checkCall`in `.identifier` dalının
@@ -1377,6 +1384,11 @@ pub const Checker = struct {
             // ANLAYAMAYACAĞI Nox-özel ARC temsilleri taşıdıkları İçİn)
             // REDDEDİLİR — mevcut davranış (koşulsuz `false`) KORUNUR.
             .func => |ft| isFfiSafeCallbackType(ft),
+            // v2.0 madde 4 (bkz. nox-teknik-spesifikasyon.md §3.192):
+            // sabit-genişlikli tamsayılar `int`in AYNI gerekçesiyle FFI-
+            // güvenli — HATTA daha NET bir C-ABI eşleşmesi (`u8`→`uint8_t`
+            // vb.).
+            .fixed_int => true,
             .list, .class, .task, .channel, .thread_handle, .thread_channel, .task_local, .optional => false,
         };
     }
@@ -1391,12 +1403,15 @@ pub const Checker = struct {
     fn isFfiSafeCallbackType(ft: types.FuncType) bool {
         for (ft.params) |p| {
             switch (p) {
-                .int, .float, .boolean, .ptr => {},
+                // v2.0 madde 4: sabit-genişlikli tamsayılar, C-ABI callback
+                // imzalarına `int`ten DAHA net bir eşleşme sağlar (`u8`→
+                // `uint8_t` vb.).
+                .int, .float, .boolean, .ptr, .fixed_int => {},
                 else => return false,
             }
         }
         return switch (ft.return_type.*) {
-            .int, .float, .boolean, .ptr, .none => true,
+            .int, .float, .boolean, .ptr, .none, .fixed_int => true,
             else => false,
         };
     }
@@ -1434,12 +1449,15 @@ pub const Checker = struct {
     fn isSpawnParamSafeType(self: *const Checker, t: Type) bool {
         if (self.backend == .llvm) {
             return switch (t) {
-                .int, .float, .boolean, .str, .none, .task, .channel, .ptr, .thread_channel, .task_local, .list, .class, .dict => true,
+                .int, .float, .boolean, .str, .none, .task, .channel, .ptr, .thread_channel, .task_local, .list, .class, .dict, .fixed_int => true,
                 .thread_handle, .func, .optional => false,
             };
         }
         return switch (t) {
-            .int, .float, .boolean, .str, .none, .task, .channel, .ptr, .thread_channel, .task_local => true,
+            // v2.0 madde 4: `int`in AYNI gerekçesiyle (sabit boyutlu,
+            // ARC-dışı, KOPYALANABİLİR değer) HER İKİ backend'de spawn-
+            // güvenli.
+            .int, .float, .boolean, .str, .none, .task, .channel, .ptr, .thread_channel, .task_local, .fixed_int => true,
             // Faz FF.6: bilinçli v1 sınırlaması — `isFfiSafeType`in AYNI
             // gerekçesiyle, `Optional[T]` `spawn`ın kapanış paketlemesinden
             // GEÇEMEZ.
@@ -1482,12 +1500,13 @@ pub const Checker = struct {
     fn isThreadTransferSafeType(self: *const Checker, t: Type) bool {
         if (self.backend == .llvm) {
             return switch (t) {
-                .int, .float, .boolean, .str, .none, .ptr, .thread_channel, .task, .channel, .task_local, .list, .class, .dict => true,
+                .int, .float, .boolean, .str, .none, .ptr, .thread_channel, .task, .channel, .task_local, .list, .class, .dict, .fixed_int => true,
                 .thread_handle, .func, .optional => false,
             };
         }
         return switch (t) {
-            .int, .float, .boolean, .str, .none, .ptr, .thread_channel => true,
+            // v2.0 madde 4: `int`in AYNI gerekçesiyle taşıma-güvenli.
+            .int, .float, .boolean, .str, .none, .ptr, .thread_channel, .fixed_int => true,
             // Faz FF.6: bilinçli v1 sınırlaması — `isFfiSafeType`in AYNI
             // gerekçesiyle, `Optional[T]` `nox.thread.start`ın sınırından
             // GEÇEMEZ. `task_local` da (`task`/`channel` İLE AYNI
@@ -4469,6 +4488,50 @@ pub const Checker = struct {
             const exp = expected orelse return self.fail(error.UnknownType, "'adopt' yalnızca beklenen tipi bilinen bir bağlamda (var_decl/return/atama/argüman) kullanılabilir", .{});
             return exp;
         }
+        // v2.0 madde 4 (bkz. nox-teknik-spesifikasyon.md §3.192): `x: u8 =
+        // 200` — çıplak bir tamsayı literali, `u8(200)` YAZMAYA GEREK
+        // KALMADAN DOĞRUDAN hedef sabit-genişlikli kind olarak tiplenir
+        // (Zig'in `comptime_int` ergonomisi, `float`e BUGÜN ZATEN çıplak
+        // int-literal atanabilmesiyle TUTARLI) — DEĞER derleme-zamanında
+        // kind'in ARALIĞINA göre kontrol edilir. **Bilinçli dar kapsam**
+        // (yukarıdaki `[]`/`{}` boş-literal deseniyle AYNI disiplin):
+        // SADECE DOĞRUDAN `.int_lit` düğümü tanınır — `x: u8 = 200 + 1`
+        // (sabit-katlanabilir AMA literal OLMAYAN bir ifade) BU mekanizmayla
+        // YAKALANMAZ, `checkExpr`in genel `numericPromote` kuralına DÜŞER
+        // (bkz. onun "aynı-kind-only" kısıtı).
+        if (expr == .int_lit) {
+            if (expected) |exp| {
+                if (exp == .fixed_int) {
+                    const kind = exp.fixed_int;
+                    if (!kind.fitsValue(expr.int_lit)) {
+                        return self.fail(error.TypeMismatch, "{d} değeri '{s}' aralığına sığmıyor", .{ expr.int_lit, kind.name() });
+                    }
+                    return exp;
+                }
+            }
+        }
+        // v2.0 madde 4: `x: i8 = -5` — parser `-5`yi `int_lit(5)` ÜZERİNE
+        // bir `unary neg` OLARAK üretir (BİREBİR `int_lit(-5)` DEĞİL, bkz.
+        // `parser.zig`'in `parseUnary`i), bu YÜZDEN yukarıdaki DOĞRUDAN
+        // `.int_lit` YAKALAMA bunu KAÇIRIR — negatif tamsayı literalleri
+        // İçİn AYRI bir dal GEREKİYOR. İşaretsiz bir kind İçİn negatif
+        // literal HER ZAMAN reddedilir (unary '-'in KENDİSİNİN işaretsiz
+        // tiplerde reddi İLE AYNI gerekçe, bkz. §5).
+        if (expr == .unary and expr.unary.op == .neg and expr.unary.operand.* == .int_lit) {
+            if (expected) |exp| {
+                if (exp == .fixed_int) {
+                    const kind = exp.fixed_int;
+                    if (!kind.isSigned()) {
+                        return self.fail(error.TypeMismatch, "negatif bir değer işaretsiz '{s}' tipine atanamaz", .{kind.name()});
+                    }
+                    const neg_val = -expr.unary.operand.int_lit;
+                    if (!kind.fitsValue(neg_val)) {
+                        return self.fail(error.TypeMismatch, "{d} değeri '{s}' aralığına sığmıyor", .{ neg_val, kind.name() });
+                    }
+                    return exp;
+                }
+            }
+        }
         return self.checkExpr(ctx, expr);
     }
 
@@ -4562,6 +4625,15 @@ pub const Checker = struct {
                 switch (u.op) {
                     .neg => {
                         if (!types.isNumeric(t)) return self.fail(error.TypeMismatch, "unary '-' yalnızca sayısal tiplere uygulanabilir", .{});
+                        // v2.0 madde 4 (§5): işaretsiz sabit-genişlikli
+                        // kind'ler İçİn `-x` derleme-zamanı hatası —
+                        // negatif BARE literalin (`-5`) `checkExprExpected`
+                        // İÇİNDEKİ AYRI dalıyla KARIŞTIRILMAMALI (BU, keyfi
+                        // bir DEĞİŞKEN/ifadeye uygulanan unary eksinin
+                        // GENEL reddi).
+                        if (t == .fixed_int and !t.fixed_int.isSigned()) {
+                            return self.fail(error.TypeMismatch, "unary '-' işaretsiz bir tipe ('{s}') uygulanamaz", .{t.fixed_int.name()});
+                        }
                         break :blk t;
                     },
                     .not_ => {
@@ -4818,14 +4890,40 @@ pub const Checker = struct {
                 if (l == .str and r == .str) break :blk .str;
                 break :blk try self.numericPromote(l, r);
             },
-            .sub, .mul, .mod, .floordiv, .pow => try self.numericPromote(l, r),
+            .sub, .mul => try self.numericPromote(l, r),
+            // v2.0 madde 4: `%`/`//`/`**` sabit-genişlikli tamsayı
+            // kind'leri İçİn HENÜZ DESTEKLENMİYOR — codegen'in `genMod`/
+            // `genFloorDiv`/`genPow`u ("rem"/"div"i HER ZAMAN `.l` SANIP
+            // çağıran, `common`in KENDİSİNİ görmezden gelen) `.w`de
+            // hesaplanan kind'lerle (u8/i8/u16/i16/u32/i32) DOĞRU
+            // ÇALIŞMAZ — bu, `add`/`sub`/`mul`ın (`emitCheckedFixedBin`)
+            // AKSİNE, AYRI bir codegen turu GEREKTİREN, BİLİNÇLİ olarak
+            // ERTELENMİŞ bir kapsam-dışı (SESSİZCE yanlış SONUÇ ÜRETMEK
+            // yerine derleme-zamanı HATASI vermek TERCİH edildi).
+            .mod, .floordiv, .pow => blk: {
+                const result = try self.numericPromote(l, r);
+                if (result == .fixed_int) {
+                    return self.fail(error.TypeMismatch, "'%'/'//' /'**' sabit-genişlikli tamsayı tipleriyle henüz desteklenmiyor — 'int'e dönüştürüp kullanın", .{});
+                }
+                break :blk result;
+            },
             .div => blk: {
                 if (!types.isNumeric(l) or !types.isNumeric(r)) {
                     return self.fail(error.TypeMismatch, "'/' yalnızca sayısal tiplerde kullanılabilir", .{});
                 }
+                // v2.0 madde 4: `/` HER ZAMAN `.float` döner (Python'un
+                // KENDİ `/`si GİBİ, `int`in bugünkü davranışı DEĞİŞMEZ) —
+                // ama bir taraf sabit-genişlikli İSE "aynı-kind-only"
+                // kısıtı YİNE DE uygulanır (aksi halde bu yol SESSİZCE
+                // KAÇARDI, bkz. plan notu).
+                _ = try self.requireSameFixedIntOrNone(l, r);
                 break :blk .float;
             },
             .eq, .ne => blk: {
+                // v2.0 madde 4: sabit-genişlikli bir taraf VARSA TAM
+                // kind eşleşmesi ZORUNLU (mevcut int/float'ın örtük,
+                // eşit-olmayan-serbest karşılaştırma DAVRANIŞI DEĞİŞMEZ).
+                _ = try self.requireSameFixedIntOrNone(l, r);
                 if (types.isNumeric(l) and types.isNumeric(r)) break :blk .boolean;
                 if (types.eql(l, r)) break :blk .boolean;
                 // Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `x !=
@@ -4839,6 +4937,7 @@ pub const Checker = struct {
                 if (!types.isNumeric(l) or !types.isNumeric(r)) {
                     return self.fail(error.TypeMismatch, "sıralama karşılaştırmaları yalnızca sayısal tiplerde çalışır", .{});
                 }
+                _ = try self.requireSameFixedIntOrNone(l, r);
                 break :blk .boolean;
             },
             .and_, .or_ => blk: {
@@ -4887,10 +4986,25 @@ pub const Checker = struct {
         return .{ .name = name, .base = t.optional.*, .narrows_then = (b.op == .ne) };
     }
 
+    /// v2.0 madde 4 (§5): sabit-genişlikli tamsayı ailesinin "aynı-kind-
+    /// only" kısıtı — İKİ TARAF da AYNI `FixedIntKind`sa o kind'ı döner;
+    /// HİÇBİRİ fixed_int DEĞİLSE `null` (çağıran tarafın mevcut int/float
+    /// mantığı DEĞİŞMEDEN devam eder); SADECE BİRİ fixed_int'se YA DA
+    /// İKİSİ FARKLI kind'sa derleme-zamanı hatası — mevcut `int`/`float`
+    /// örtük tanıtma DAVRANIŞI (BUNUNLA KARIŞTIRILMAMALI) DEĞİŞMEZ.
+    fn requireSameFixedIntOrNone(self: *Checker, l: Type, r: Type) TypeError!?types.FixedIntKind {
+        const l_fi: ?types.FixedIntKind = if (l == .fixed_int) l.fixed_int else null;
+        const r_fi: ?types.FixedIntKind = if (r == .fixed_int) r.fixed_int else null;
+        if (l_fi == null and r_fi == null) return null;
+        if (l_fi != null and r_fi != null and l_fi.? == r_fi.?) return l_fi.?;
+        return self.fail(error.TypeMismatch, "sabit-genişlikli tamsayılar farklı türlerle ya da int/float ile örtük karışmaz — açık dönüşüm kullanın", .{});
+    }
+
     fn numericPromote(self: *Checker, l: Type, r: Type) TypeError!Type {
         if (!types.isNumeric(l) or !types.isNumeric(r)) {
             return self.fail(error.TypeMismatch, "aritmetik işlem yalnızca sayısal tiplerde çalışır", .{});
         }
+        if (try self.requireSameFixedIntOrNone(l, r)) |kind| return .{ .fixed_int = kind };
         if (l == .float or r == .float) return .float;
         return .int;
     }
@@ -4961,7 +5075,9 @@ pub const Checker = struct {
                     // KENDİSİ `str`/`bool`i de kabul etmelidir — bu AYRICA
                     // genel bir iyileştirme (`str("zaten bir str")`/
                     // `str(True)` artık DOĞRUDAN da çalışır).
-                    if (t != .int and t != .float and t != .str and t != .boolean) {
+                    // v2.0 madde 4: sabit-genişlikli bir kind (`u8`/vb.)
+                    // `int`in KENDİSİYLE AYNI gerekçeyle kabul edilir.
+                    if (t != .int and t != .float and t != .str and t != .boolean and t != .fixed_int) {
                         return self.fail(error.TypeMismatch, "'str' yalnızca int/float/str/bool üzerinde çalışır", .{});
                     }
                     return .str;
@@ -4984,6 +5100,23 @@ pub const Checker = struct {
                         return self.fail(error.TypeMismatch, "'float' yalnızca str üzerinde çalışır", .{});
                     }
                     return .float;
+                }
+                // v2.0 madde 4 (§4): `u8(x)`/`i32(x)`/vb. — DARALTMA cast'i,
+                // `int(s)`/`float(s)` İLE AYNI özel-işlenen yerleşik kalıp
+                // (bkz. codegen.zig'in `genCall`ı, `genNarrowingCast`).
+                // `int op float → float`in ÖRTÜK, İMPLİCİT tanıtmasının
+                // AKSİNE, BU AÇIK bir dönüşümdür — backend'DEN BAĞIMSIZ HER
+                // ZAMAN aralık-kontrollüdür (bkz. plan notu: "sarma SADECE
+                // işlemler sırasında; dönüşümler HER ZAMAN kontrollü").
+                // Kabul edilen kaynak: `int` + diğer 9 kind + `float`
+                // (`int(float)`nin ZATEN yaptığı kesme deseniyle AYNI).
+                if (std.meta.stringToEnum(types.FixedIntKind, name)) |target_kind| {
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'{s}' tam olarak 1 argüman alır", .{name});
+                    const t = try self.checkExpr(ctx, c.args[0]);
+                    if (t != .int and t != .float and t != .fixed_int) {
+                        return self.fail(error.TypeMismatch, "'{s}' yalnızca int/float/sabit-genişlikli tamsayı tiplerinde çalışır", .{name});
+                    }
+                    return .{ .fixed_int = target_kind };
                 }
                 // Faz 14: `hpy_call`/`wasm_call` — Faz 12/13'ün köprülerini
                 // (bkz. runtime/foreign_bridge.zig) Nox kaynağından
@@ -5937,6 +6070,10 @@ pub const Checker = struct {
             .boolean => b == .boolean,
             .ptr => b == .ptr,
             .none => b == .none,
+            // v2.0 madde 4: TAM kind eşleşmesi ZORUNLU (genişletme/daraltma
+            // YOK) — trampoline HAM bit genişliğini taşıyor, `u8` bir
+            // callback parametresiyse hedef TAM `u8` OLMALI.
+            .fixed_int => |k| b == .fixed_int and b.fixed_int == k,
             else => false,
         };
     }
@@ -6128,6 +6265,7 @@ pub const Checker = struct {
             .str => .{ .simple = "str" },
             .none => .{ .simple = "None" },
             .ptr => .{ .simple = "ptr" },
+            .fixed_int => |k| .{ .simple = k.name() },
             .class => |n| .{ .simple = n },
             .list => |elem| blk: {
                 const args = try self.allocator.alloc(ast.TypeExpr, 1);
@@ -6293,6 +6431,7 @@ pub const Checker = struct {
             .str => try buf.appendSlice(self.allocator, "str"),
             .none => try buf.appendSlice(self.allocator, "None"),
             .ptr => try buf.appendSlice(self.allocator, "ptr"),
+            .fixed_int => |k| try buf.appendSlice(self.allocator, k.name()),
             .class => |n| try buf.appendSlice(self.allocator, n),
             .list => |elem| {
                 try buf.appendSlice(self.allocator, "list_");

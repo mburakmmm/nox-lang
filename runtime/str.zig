@@ -271,6 +271,17 @@ pub export fn nox_int_to_str(rt: ?*anyopaque, n: i64) ?[*:0]u8 {
     return allocStr(rt, s, ASCII_TRUE);
 }
 
+/// v2.0 madde 4: `u64`/`usize` (VE zaten sıfır-genişletilmiş küçük
+/// işaretsiz kind'ler) İçİn — `nox_int_to_str`nin İMZALI `%lld`
+/// karşılığı BÜYÜK (>= 2^63) değerleri YANLIŞLIKLA negatif yazdırır,
+/// bu YÜZDEN AYRI bir işaretsiz biçimlendirici gerekir (bkz. `genPrint`in
+/// AYNI `$fmt_uint` gerekçesi).
+pub export fn nox_uint_to_str(rt: ?*anyopaque, n: u64) ?[*:0]u8 {
+    var buf: [24]u8 = undefined;
+    const s = std.fmt.bufPrint(&buf, "{d}", .{n}) catch return null;
+    return allocStr(rt, s, ASCII_TRUE);
+}
+
 pub export fn nox_float_to_str(rt: ?*anyopaque, f: f64) ?[*:0]u8 {
     var buf: [64]u8 = undefined;
     const s = std.fmt.bufPrint(&buf, "{d}", .{f}) catch return null;

@@ -440,6 +440,13 @@ pub const Codegen = struct {
     pub const genDictLit = expr_mod.genDictLit;
     pub const genUnary = expr_mod.genUnary;
     pub const emitBin = expr_mod.emitBin;
+    pub const emitCheckedFixedBin = expr_mod.emitCheckedFixedBin;
+    pub const emitCheckedFixedBinNarrow = expr_mod.emitCheckedFixedBinNarrow;
+    pub const emitCheckedFixedBin32 = expr_mod.emitCheckedFixedBin32;
+    pub const emitCheckedFixedBin64 = expr_mod.emitCheckedFixedBin64;
+    pub const emitMul64OverflowCheck = expr_mod.emitMul64OverflowCheck;
+    pub const emitOverflowTrapIfNonzero = expr_mod.emitOverflowTrapIfNonzero;
+    pub const genNarrowingCast = expr_mod.genNarrowingCast;
     pub const emitCmp = expr_mod.emitCmp;
     pub const callLibm1 = expr_mod.callLibm1;
     pub const callLibm2 = expr_mod.callLibm2;
@@ -449,6 +456,7 @@ pub const Codegen = struct {
     pub const genPow = expr_mod.genPow;
     pub const genPrint = expr_mod.genPrint;
     pub const genPrintFragment = expr_mod.genPrintFragment;
+    pub const widenFixedIntForPrint = expr_mod.widenFixedIntForPrint;
     pub const internFmtString = expr_mod.internFmtString;
     pub const genPrintList = expr_mod.genPrintList;
     pub const genPrintClass = expr_mod.genPrintClass;
@@ -1330,6 +1338,8 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
             \\data $fmt_rbracket = { b "]", b 0 }
             \\data $fmt_rparen = { b ")", b 0 }
             \\data $fmt_comma_sp = { b ", ", b 0 }
+            \\data $fmt_uint = { b "%llu\n", b 0 }
+            \\data $fmt_uint_frag = { b "%llu", b 0 }
             \\
         );
     } else {
@@ -1350,6 +1360,8 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
             .{ .name = "fmt_rbracket", .bytes = "]" },
             .{ .name = "fmt_rparen", .bytes = ")" },
             .{ .name = "fmt_comma_sp", .bytes = ", " },
+            .{ .name = "fmt_uint", .bytes = "%llu\n" },
+            .{ .name = "fmt_uint_frag", .bytes = "%llu" },
         };
         for (fmt_strings) |fs| {
             const line = try llvm_emit.llvmCStringConstant(allocator, fs.name, fs.bytes);

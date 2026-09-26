@@ -99,6 +99,12 @@ const DivergenceExpectation = union(enum) {
     /// Backend BU programı DERLEYİP ÇALIŞTIRMALI, verilen stdout'u
     /// üretmeli.
     accepted: []const u8,
+    /// v2.0 madde 4: Backend BU programı DERLEYİP ÇALIŞTIRMALI, verilen
+    /// stdout'u üretmeli, AMA SONRA sıfırdan FARKLI bir çıkış koduyla
+    /// (yakalanamaz bir `nox_int_overflow_trap`, `.rejected`in AKSİNE bir
+    /// DERLEME-zamanı reddi DEĞİL) sonlanmalıdır — sabit-genişlikli
+    /// aritmetik taşmasının QBE (varsayılan) tarafındaki KASITLI davranışı.
+    traps: []const u8,
 };
 
 fn expectDivergence(comptime source: []const u8, qbe_expectation: DivergenceExpectation, llvm_expectation: DivergenceExpectation) !void {
@@ -119,6 +125,14 @@ fn expectDivergence(comptime source: []const u8, qbe_expectation: DivergenceExpe
             }
             try std.testing.expectEqualStrings(expected_stdout, result.stdout);
         },
+        .traps => |expected_stdout| {
+            const result = try compile_helpers.compileAndRun(arena.allocator(), source);
+            if (result.term != .exited or result.term.exited == 0) {
+                std.debug.print("QBE programi BEKLENENDEN farkli sonlandi (sifirdan farkli bir cikis kodu bekleniyordu): {s}\n", .{result.stdout});
+                return error.QbeExpectedTrapButSucceeded;
+            }
+            try std.testing.expectEqualStrings(expected_stdout, result.stdout);
+        },
     }
 
     switch (llvm_expectation) {
@@ -132,6 +146,14 @@ fn expectDivergence(comptime source: []const u8, qbe_expectation: DivergenceExpe
             if (result.term != .exited or result.term.exited != 0) {
                 std.debug.print("LLVM programi basarisiz cikti (stderr): {s}\n", .{result.stderr});
                 return error.LlvmProgramFailed;
+            }
+            try std.testing.expectEqualStrings(expected_stdout, result.stdout);
+        },
+        .traps => |expected_stdout| {
+            const result = try compile_helpers.compileAndRunLlvm(arena.allocator(), source);
+            if (result.term != .exited or result.term.exited == 0) {
+                std.debug.print("LLVM programi BEKLENENDEN farkli sonlandi (sifirdan farkli bir cikis kodu bekleniyordu): {s}\n", .{result.stdout});
+                return error.LlvmExpectedTrapButSucceeded;
             }
             try std.testing.expectEqualStrings(expected_stdout, result.stdout);
         },
@@ -374,5 +396,13 @@ test "divergence: nox.thread.start'a dict[str,str] parametresi — QBE reddeder,
         @embedFile("conformance_cases/divergence_thread_start_dict_param.nox"),
         .rejected,
         .{ .accepted = "merhaba\n" },
+    );
+}
+
+test "divergence: v2.0 madde 4 — sabit-genişlikli tamsayı taşması QBE'de tuzağa düşer, --release/LLVM'de sessizce sarar" {
+    try expectDivergence(
+        @embedFile("conformance_cases/divergence_fixed_int_overflow_wrap_vs_trap.nox"),
+        .{ .traps = "255\n" },
+        .{ .accepted = "255\n0\n" },
     );
 }
