@@ -667,6 +667,21 @@ pub const Checker = struct {
                 return self.fail(error.UnknownType, "bilinmeyen tip: {s}", .{name});
             },
             .generic => |g| {
+                // v2.0 madde 6: `ptr[T]` — çıplak `ptr`in (satır ~647'deki
+                // `.simple` dalı, TAMAMEN DEĞİŞMEDEN) tipli karşılığı. `T`
+                // HERHANGİ bir tip OLABİLİR (kullanıcının BİLİNÇLİ kararı,
+                // bkz. plan dosyası §2) — burada HİÇBİR kısıtlama
+                // uygulanmaz (ne `TaskLocal[T]`nin skaler-reddi ne DE
+                // `dict[K,V]`nin K/V izin-listesi GİBİ).
+                if (std.mem.eql(u8, g.name, "ptr")) {
+                    if (g.args.len != 1) {
+                        return self.fail(error.UnknownType, "'ptr' tam olarak bir tip argümanı alır", .{});
+                    }
+                    const elem = try self.typeExprToType(g.args[0]);
+                    const boxed = try self.allocator.create(Type);
+                    boxed.* = elem;
+                    return .{ .typed_ptr = boxed };
+                }
                 if (std.mem.eql(u8, g.name, "list") or std.mem.eql(u8, g.name, "Task") or std.mem.eql(u8, g.name, "Channel") or std.mem.eql(u8, g.name, "ThreadHandle") or std.mem.eql(u8, g.name, "ThreadChannel") or std.mem.eql(u8, g.name, "TaskLocal")) {
                     if (g.args.len != 1) {
                         return self.fail(error.UnknownType, "'{s}' tam olarak bir tip argümanı alır", .{g.name});
@@ -895,8 +910,8 @@ pub const Checker = struct {
     /// disiplini) — YENİ bir stdlib modülü eklendiğinde BURAYA AÇIKÇA
     /// EKLENMEDİĞİ SÜRECE freestanding profilinde OTOMATİK REDDEDİLİR.
     const FREESTANDING_ALLOWED_MODULES = [_][]const u8{
-        "strings", "collections", "json", "regex", "csv", "toml", "yaml",
-        "url",     "validate",    "template", "path", "db", "orm", "gzip",
+        "strings", "collections", "json",     "regex", "csv", "toml", "yaml",
+        "url",     "validate",    "template", "path",  "db",  "orm",  "gzip",
     };
 
     fn isFreestandingAllowedModule(name: []const u8) bool {
@@ -1403,6 +1418,11 @@ pub const Checker = struct {
             // güvenli — HATTA daha NET bir C-ABI eşleşmesi (`u8`→`uint8_t`
             // vb.).
             .fixed_int => true,
+            // v2.0 madde 6: `ptr[T]`, `T` NE OLURSA OLSUN, çıplak `ptr`
+            // İLE AYNI şekilde FFI-güvenli — kullanıcının BİLİNÇLİ kararı
+            // (bkz. plan dosyası §6): tip sistemi Nox-tarafı bir
+            // sözleşmedir, `extern def` sınırının ÖTESİ ZATEN kontrolsüz.
+            .typed_ptr => true,
             .list, .class, .task, .channel, .thread_handle, .thread_channel, .task_local, .optional => false,
         };
     }
@@ -1463,7 +1483,7 @@ pub const Checker = struct {
     fn isSpawnParamSafeType(self: *const Checker, t: Type) bool {
         if (self.backend == .llvm) {
             return switch (t) {
-                .int, .float, .boolean, .str, .none, .task, .channel, .ptr, .thread_channel, .task_local, .list, .class, .dict, .fixed_int => true,
+                .int, .float, .boolean, .str, .none, .task, .channel, .ptr, .typed_ptr, .thread_channel, .task_local, .list, .class, .dict, .fixed_int => true,
                 .thread_handle, .func, .optional => false,
             };
         }
@@ -1471,7 +1491,7 @@ pub const Checker = struct {
             // v2.0 madde 4: `int`in AYNI gerekçesiyle (sabit boyutlu,
             // ARC-dışı, KOPYALANABİLİR değer) HER İKİ backend'de spawn-
             // güvenli.
-            .int, .float, .boolean, .str, .none, .task, .channel, .ptr, .thread_channel, .task_local, .fixed_int => true,
+            .int, .float, .boolean, .str, .none, .task, .channel, .ptr, .typed_ptr, .thread_channel, .task_local, .fixed_int => true,
             // Faz FF.6: bilinçli v1 sınırlaması — `isFfiSafeType`in AYNI
             // gerekçesiyle, `Optional[T]` `spawn`ın kapanış paketlemesinden
             // GEÇEMEZ.
@@ -1514,13 +1534,13 @@ pub const Checker = struct {
     fn isThreadTransferSafeType(self: *const Checker, t: Type) bool {
         if (self.backend == .llvm) {
             return switch (t) {
-                .int, .float, .boolean, .str, .none, .ptr, .thread_channel, .task, .channel, .task_local, .list, .class, .dict, .fixed_int => true,
+                .int, .float, .boolean, .str, .none, .ptr, .typed_ptr, .thread_channel, .task, .channel, .task_local, .list, .class, .dict, .fixed_int => true,
                 .thread_handle, .func, .optional => false,
             };
         }
         return switch (t) {
             // v2.0 madde 4: `int`in AYNI gerekçesiyle taşıma-güvenli.
-            .int, .float, .boolean, .str, .none, .ptr, .thread_channel, .fixed_int => true,
+            .int, .float, .boolean, .str, .none, .ptr, .typed_ptr, .thread_channel, .fixed_int => true,
             // Faz FF.6: bilinçli v1 sınırlaması — `isFfiSafeType`in AYNI
             // gerekçesiyle, `Optional[T]` `nox.thread.start`ın sınırından
             // GEÇEMEZ. `task_local` da (`task`/`channel` İLE AYNI
@@ -2820,7 +2840,7 @@ pub const Checker = struct {
     /// olarak İŞARETLERDİ (ör. `len(xs)` İçEREN salt-okunur bir yardımcı
     /// bile YAKALANIRDI — GERÇEK bir yanlış-pozitif).
     fn isKnownSafeBuiltinCallee(name: []const u8) bool {
-        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "hpy_new_on", "hpy_getattr_int_on", "hpy_setattr_int_on", "hpy_call_attr_on", "hpy_new_object_on", "hpy_getitem_int_on", "hpy_new_string_writer_on", "hpy_writer_get_str_on", "hpy_new_string_reader_on", "wasm_call", "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach" };
+        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "hpy_new_on", "hpy_getattr_int_on", "hpy_setattr_int_on", "hpy_call_attr_on", "hpy_new_object_on", "hpy_getitem_int_on", "hpy_new_string_writer_on", "hpy_writer_get_str_on", "hpy_new_string_reader_on", "wasm_call", "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach", "ptr_offset", "ptr_read", "ptr_write" };
         for (safe) |s| {
             if (std.mem.eql(u8, name, s)) return true;
         }
@@ -4824,6 +4844,26 @@ pub const Checker = struct {
     /// bir switch'in TÜM dallarının yerel değişkenleri AYNI çerçevede
     /// REZERVE EDİLİR).
     fn checkGenericConstruct(self: *Checker, ctx: *FnCtx, g: ast.GenericConstruct) TypeError!Type {
+        // v2.0 madde 6: `ptr[T](addr: int) -> ptr[T]` — çıplak `ptr`in 9
+        // yerleşiğinin (`ptr_from_int` DAHİL) AYNI `lowlevel`-only güven
+        // sınırı, AMA `adopt`in "atama hedefinden tip çıkar" mekanizmasına
+        // HİÇ GEREK YOK — `T` sözdiziminde ZATEN AÇIKÇA yazılı.
+        if (std.mem.eql(u8, g.name, "ptr")) {
+            try self.requireLowlevel("ptr");
+            if (g.type_args.len != 1) {
+                return self.fail(error.UnknownType, "'ptr' tam olarak bir tip argümanı alır", .{});
+            }
+            const elem_t = try self.typeExprToType(g.type_args[0]);
+            if (g.args.len != 1) {
+                return self.fail(error.ArgumentCountMismatch, "'ptr' kurucusu tam olarak 1 argüman (addr: int) alır", .{});
+            }
+            if (try self.checkExpr(ctx, g.args[0]) != .int) {
+                return self.fail(error.TypeMismatch, "'ptr' kurucusunun argümanı (addr) int olmalıdır", .{});
+            }
+            const boxed = try self.allocator.create(Type);
+            boxed.* = elem_t;
+            return .{ .typed_ptr = boxed };
+        }
         // `ThreadChannel[T](capacity)` — Faz BB.6 (bkz. nox-teknik-
         // spesifikasyon.md §3.52): `Channel[T](capacity)` İLE AYNI
         // sözdizimi/kurucu şekli, AMA eleman tipi
@@ -5575,6 +5615,39 @@ pub const Checker = struct {
                     if (try self.checkExpr(ctx, c.args[1]) != .boolean) return self.fail(error.TypeMismatch, "'ptr_write_bool' argümanı 2 (v) bool olmalıdır", .{});
                     return .none;
                 }
+                // v2.0 madde 6: `ptr_offset(p: ptr[T], n: int) -> ptr[T]` —
+                // `sizeof(T)`e göre ÖLÇEKLENMİŞ aritmetik. Çıplak `ptr_add`
+                // (BAYT-granüler, DEĞİŞMEDEN) İLE AYNI isim ALTINDA
+                // "overload" EDİLMEZ — bu kod tabanının HİÇBİR YERİNDE
+                // olmayan YENİ bir desen olurdu (bkz. plan dosyası §3).
+                if (std.mem.eql(u8, name, "ptr_offset")) {
+                    try self.requireLowlevel(name);
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_offset' tam olarak 2 argüman alır (p: ptr[T], n: int)", .{});
+                    const pt = try self.checkExpr(ctx, c.args[0]);
+                    if (pt != .typed_ptr) return self.fail(error.TypeMismatch, "'ptr_offset' argümanı 1 (p) bir ptr[T] olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'ptr_offset' argümanı 2 (n) int olmalıdır", .{});
+                    return pt;
+                }
+                // v2.0 madde 6: `ptr_read(p: ptr[T]) -> T` / `ptr_write(p:
+                // ptr[T], v: T) -> None` — `T` HERHANGİ bir tip olabilir
+                // (skaler KADAR heap-yönetimli DE, bkz. plan dosyası §5,
+                // Model B).
+                if (std.mem.eql(u8, name, "ptr_read")) {
+                    try self.requireLowlevel(name);
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_read' tam olarak 1 argüman alır", .{});
+                    const pt = try self.checkExpr(ctx, c.args[0]);
+                    if (pt != .typed_ptr) return self.fail(error.TypeMismatch, "'ptr_read' bir ptr[T] alır", .{});
+                    return pt.typed_ptr.*;
+                }
+                if (std.mem.eql(u8, name, "ptr_write")) {
+                    try self.requireLowlevel(name);
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_write' tam olarak 2 argüman alır (p: ptr[T], v: T)", .{});
+                    const pt = try self.checkExpr(ctx, c.args[0]);
+                    if (pt != .typed_ptr) return self.fail(error.TypeMismatch, "'ptr_write' argümanı 1 (p) bir ptr[T] olmalıdır", .{});
+                    const vt = try self.checkExpr(ctx, c.args[1]);
+                    if (!types.eql(vt, pt.typed_ptr.*)) return self.fail(error.TypeMismatch, "'ptr_write' argümanı 2 (v) p'nin T'siyle AYNI tipte olmalıdır", .{});
+                    return .none;
+                }
                 // `detach(x) -> ptr`: `x` ÇIPLAK bir yerel değişken adı
                 // (`.identifier`) OLMAK ZORUNDADIR — bir sınıf alanı/ifade
                 // sonucu DEĞİL (v1 sınırı, "tek-sahiplik" varsayımını basit
@@ -6148,6 +6221,9 @@ pub const Checker = struct {
             // YOK) — trampoline HAM bit genişliğini taşıyor, `u8` bir
             // callback parametresiyse hedef TAM `u8` OLMALI.
             .fixed_int => |k| b == .fixed_int and b.fixed_int == k,
+            // v2.0 madde 6: `ptr[T]`in FFI-callback imza eşleşmesi — TAM
+            // `T` eşleşmesi ZORUNLU (`fixed_int`in AYNI katı gerekçesi).
+            .typed_ptr => |elem| b == .typed_ptr and types.eql(elem.*, b.typed_ptr.*),
             else => false,
         };
     }
@@ -6395,6 +6471,11 @@ pub const Checker = struct {
                 boxed.* = try self.typeToTypeExpr(elem.*);
                 break :blk .{ .optional = boxed };
             },
+            .typed_ptr => |elem| blk: {
+                const args = try self.allocator.alloc(ast.TypeExpr, 1);
+                args[0] = try self.typeToTypeExpr(elem.*);
+                break :blk .{ .generic = .{ .name = "ptr", .args = args } };
+            },
         };
     }
 
@@ -6551,6 +6632,10 @@ pub const Checker = struct {
             },
             .optional => |elem| {
                 try buf.appendSlice(self.allocator, "Optional_");
+                try self.appendMangledType(buf, elem.*);
+            },
+            .typed_ptr => |elem| {
+                try buf.appendSlice(self.allocator, "ptr_");
                 try self.appendMangledType(buf, elem.*);
             },
         }

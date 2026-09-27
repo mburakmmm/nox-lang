@@ -14,6 +14,28 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.105.0]
+
+### Eklendi
+
+- **Tipli `ptr[T]` — v2.0 yol haritasının 6. maddesi (bkz.
+  nox-teknik-spesifikasyon.md §3.194)**: Faz F.3'ün opak, tipsiz
+  `ptr`inin (9 mevcut yerleşik + `detach`/`adopt`) YANINA, onu HİÇ
+  DEĞİŞTİRMEDEN eklenen YENİ bir generic tip:
+  - `ptr[T](addr: int) -> ptr[T]`: `T` HERHANGİ bir tip olabilir —
+    skaler/sabit-genişlikli kind'lar KADAR heap-yönetimli tipler
+    (sınıf/`str`/`list`/`dict`) DAHİL.
+  - `ptr_offset(p, n) -> ptr[T]`: `sizeof(T)`e göre ÖLÇEKLENMİŞ pointer
+    aritmetiği (madde 5'in `sizeof`u ile AYNI formül).
+  - `ptr_read(p) -> T` / `ptr_write(p, v)`: skaler `T` İçİn hizasız
+    (unaligned-safe) okuma/yazma; heap-yönetimli `T` İçİn GERÇEK
+    memcpy-tabanlı kopyalama (Model B) — sınıf-DIŞI tipler (`str`/
+    `list`/`dict`) İçİn bu KENDİLİĞİNDEN "paylaşılan referans"a
+    (Model A) İNDİRGENİR, `class` T İçİn İSE TAMAMEN BAĞIMSIZ bir
+    kopya üretir (İÇ İÇE heap alanları doğru retain edilir).
+  - `ptr[T]`, FFI/`spawn`/thread-transfer sınırlarından çıplak `ptr`
+    İLE AYNI şekilde HER ZAMAN güvenli sayılır.
+
 ## [1.104.0]
 
 ### Eklendi

@@ -421,6 +421,9 @@ pub const Codegen = struct {
     pub const genListSort = calls.genListSort;
     pub const genListPop = calls.genListPop;
     pub const genGenericConstruct = calls.genGenericConstruct;
+    pub const typedPtrStride = calls.typedPtrStride;
+    pub const genTypedPtrLoad = calls.genTypedPtrLoad;
+    pub const genTypedPtrStore = calls.genTypedPtrStore;
 
     pub const genExprForTarget = expr_mod.genExprForTarget;
     pub const boxScalar = expr_mod.boxScalar;
@@ -1292,8 +1295,6 @@ pub const Codegen = struct {
     /// isme takma ad olamaz ya da bir liste literaline eklenemez — arena mı
     /// ARC mı olduğuna bakılmaksızın (bkz. nox-teknik-spesifikasyon.md §3.8).
     in_lowlevel_depth: usize = 0,
-
-
 };
 
 /// `module`'ü QBE IL metnine çevirir. Girdinin Faz 2 tip denetiminden geçmiş

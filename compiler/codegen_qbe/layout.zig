@@ -625,7 +625,10 @@ pub fn genEqCompareOrJump(
         // karşılaştırmasına düşülür (DEĞER eşitliği DEĞİL) — İKİ AYRI
         // kutunun AYNI değeri TAŞISA BİLE eşit SAYILMAYACAĞI, bilinçli
         // bir v1 sınırlamasıdır.
-        .dict, .task, .channel, .closure, .thread_handle, .thread_channel, .boxed_scalar, .task_local => blk: {
+        // v2.0 madde 6: `ptr[T]` de (`dict`/`Task`/`Channel` İLE AYNI
+        // gerekçe) yapısal derinlemesine eşitliğe SAHİP DEĞİL — güvenli
+        // varsayılan: tutamaç-kimliği (pointer/adres) karşılaştırması.
+        .dict, .task, .channel, .closure, .thread_handle, .thread_channel, .boxed_scalar, .task_local, .typed_ptr => blk: {
             const t = try self.newTemp();
             try self.qbeOp2(t, .w, "ceql", va, vb);
             break :blk t;
@@ -733,6 +736,12 @@ pub fn eqMangleFor(self: *Codegen, elem_qtype: QbeType, elem_heap_info: ?*const 
             .thread_channel => "thread_channel",
             .boxed_scalar => "boxed_scalar",
             .task_local => "task_local",
+            // v2.0 madde 6: `list[ptr[T]]` bu turda desteklenmez (bkz. plan
+            // dosyası "kapsam DIŞI") — `resolveType`in `list` dalının elem-
+            // heap izin-listesi `.typed_ptr`i HİÇ KABUL ETMEDİĞİNDEN bu dal
+            // PRATİKTE erişilemez, sadece exhaustive switch GEREKSİNİMİNİ
+            // karşılar.
+            .typed_ptr => "ptr",
             .none => unreachable,
         };
     }

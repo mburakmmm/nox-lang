@@ -1364,3 +1364,17 @@ test "golden(typecheck): v2.0 madde 5 — alt sınıf, taban sınıfın @repr/@p
         @embedFile("typecheck_cases/err_repr_base_layout_mismatch.expected"),
     );
 }
+
+test "golden(typecheck): v2.0 madde 6 — ptr[T] yalnızca bir 'lowlevel:' bloğu içinde kurulabilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_typed_ptr_outside_lowlevel.nox"),
+        @embedFile("typecheck_cases/err_typed_ptr_outside_lowlevel.expected"),
+    );
+}
+
+test "golden(typecheck): v2.0 madde 6 — ptr_write'ın değeri p'nin T'siyle aynı tipte olmalıdır" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_typed_ptr_write_wrong_type.nox"),
+        @embedFile("typecheck_cases/err_typed_ptr_write_wrong_type.expected"),
+    );
+}

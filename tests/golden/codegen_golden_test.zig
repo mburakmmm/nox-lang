@@ -365,6 +365,8 @@ const fixtures = [_]Fixture{
     // sınırları, alan okuma/yazma round-trip'i, packed sınıf eşitliği,
     // VE vtable+kalıtım+packed'in BİRLİKTE çalıştığı bir hiyerarşi.
     .{ .name = "codegen(çalıştır): v2.0 madde 5 — @repr(\"C\")/@packed sınıf düzeni, sizeof/alignof/offsetof, kalıtım+vtable+packed", .kind = .golden, .source = @embedFile("codegen_cases/repr_packed_class_layout.nox"), .expected_stdout = @embedFile("codegen_cases/repr_packed_class_layout.expected") },
+    .{ .name = "codegen(çalıştır): v2.0 madde 6 — ptr[T]: sizeof-ölçekli ptr_offset + skaler ptr_read/ptr_write (hizasız erişim dahil)", .kind = .golden, .source = @embedFile("codegen_cases/typed_ptr_scalar_and_offset.nox"), .expected_stdout = @embedFile("codegen_cases/typed_ptr_scalar_and_offset.expected") },
+    .{ .name = "codegen(çalıştır): v2.0 madde 6 — ptr[T]: heap-yönetimli T için Model A (str, paylaşılan referans) + Model B (sınıf, bağımsız kopya) ptr_read/ptr_write", .kind = .golden, .source = @embedFile("codegen_cases/typed_ptr_heap_managed_model_ab.nox"), .expected_stdout = @embedFile("codegen_cases/typed_ptr_heap_managed_model_ab.expected") },
 };
 
 fn runOneFixture(fx: *const Fixture, result: *FixtureResult) void {
@@ -417,14 +419,6 @@ test "codegen(çalıştır): TÜM golden fixture'lar (gerçek iş-parçacığı 
     if (any_failed) return error.GoldenFixturesFailed;
 }
 
-
-
-
-
-
-
-
-
 // `and`/`or`ın artık GERÇEKTEN kısa devre yaptığını doğrular (bkz.
 // nox-teknik-spesifikasyon.md'nin güncellenen notu) — yan etkili (print
 // eden) bir sağ operand, sol operand sonucu ZATEN belirliyorsa HİÇ
@@ -432,12 +426,10 @@ test "codegen(çalıştır): TÜM golden fixture'lar (gerçek iş-parçacığı 
 // DEĞER sağ operandın KENDİ değeri olmalı (sadece bir kısa-devre
 // sentinel'i değil).
 
-
 // Orijinal hata raporundaki çökme örüntüsünün AYNISI: `pos < n and
 // text[pos] != "X"` — `and` kısa devre YAPMIYORSA `pos == n`/`pos > n`
 // iken `text[pos]` yine de değerlendirilir (boş dizede ya da dizenin TAM
 // SONUNDA bir IndexError'a/NULL-işaretçi çökmesine yol açardı).
-
 
 // `return s[i]` (bir str char-at ifadesini DOĞRUDAN döndürmek) artık
 // sızdırmıyor — `returnNeedsRetain`in `.index` dalı ARTIK `Value.always_fresh`i
@@ -445,49 +437,6 @@ test "codegen(çalıştır): TÜM golden fixture'lar (gerçek iş-parçacığı 
 // düzeltme ÖNCESİ her çağrı başına 1 tahsis sızdırırdı, bu da
 // `expectGolden`in "stderr boş olmalı" kontrolünü (DebugAllocator'ın
 // sızıntı raporu) tetiklerdi.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // Faz M.8 (yeniden ele alındı, bkz. nox-teknik-spesifikasyon.md §3.59):
 // `collectRaiseInfoExpr`in `.call => .identifier` dalı, isim ne
@@ -501,9 +450,6 @@ test "codegen(çalıştır): TÜM golden fixture'lar (gerçek iş-parçacığı 
 // SIZIYORDU (GERÇEK bir denemeyle DOĞRULANDI). Bu test DÜZELTMEDEN ÖNCE
 // KIRMIZI olmalı (beklenen "5" yerine yanlış bir değer/sızıntı hatası).
 
-
-
-
 // Faz M.8 (yeniden ele alındı, bkz. nox-teknik-spesifikasyon.md §3.59): BU,
 // TASARIMIN "istisna asla yutulmaz" ANA garantisini doğrulayan EN KRİTİK
 // testtir. `Chain.level1`in `self.level2()` çağırması VE `compute`nin
@@ -515,9 +461,6 @@ test "codegen(çalıştır): TÜM golden fixture'lar (gerçek iş-parçacığı 
 // hiçbir çağrı sitesinde kontrol YANLIŞLIKLA elenmemeli, `except MyError`
 // HER ZAMAN tetiklenmelidir (5 kez, her biri `e.code`=99 katkı yapar).
 
-
-
-
 // Güvenlik testi: `obj` önce `A` sonra (yalnızca `if` dalında) `B` olarak
 // YENİDEN bildiriliyor — `checker.zig`nin `Scope.declare`si bunu YASAKLAMAZ
 // (bkz. `declareVarType`in belge notu). Bu, `obj`in `var_types`den
@@ -525,14 +468,12 @@ test "codegen(çalıştır): TÜM golden fixture'lar (gerçek iş-parçacığı 
 // MUHAFAZAKÂR (`direct_unsafe`) kalmalı — davranış (doğru sınıfın `get`i
 // çağrılması) BUNDAN HİÇ ETKİLENMEMELİDİR, yalnızca kontrol FAZLADAN kalır.
 
-
 // Pozitif (GERÇEKTEN elenen) durum: `Adder`in HİÇBİR metodu raise ETMEZ —
 // hem `self.inc(x)` (metod içinden) hem `a.double_inc(x)` (yerel değişken
 // üzerinden, `use_local` serbest fonksiyonu içinde) çağrıları DOĞRU
 // çalışmaya devam eder (davranış değişmedi). IR-metni düzeyinde GERÇEKTEN
 // elenmenin gerçekleştiğinin doğrulanması için bkz. aşağıdaki AYRI
 // "IR'da nox_exception_pending YOK" testi (aynı fixture'ı KULLANIR).
-
 
 test "codegen: Faz M.8 — provably-safe metod çağrılarının ÜRETTİĞİ IR'da nox_exception_pending GERÇEKTEN YOK" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -564,7 +505,6 @@ test "codegen: Faz M.8 — provably-safe metod çağrılarının ÜRETTİĞİ IR
 // ETKİLENMEMELİDİR, yalnızca kontrol elenmelidir (bkz. aşağıdaki AYRI
 // "IR'da nox_exception_pending YOK" testi).
 
-
 test "codegen: Faz GG.3 — for-loop içindeki provably-safe metod çağrısının ÜRETTİĞİ IR'da nox_exception_pending GERÇEKTEN YOK" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -595,7 +535,6 @@ test "codegen: Faz GG.3 — for-loop içindeki provably-safe metod çağrısın�
 // gövdesinde AYNI `s`ye AYRI İKİ `s[i]` erişimi VAR (`== "a"` VE `== "n"`),
 // `count_via_for`de İSE `for i in range(len(s)): ... s[i] ...` deseni. Her
 // ikisi de davranış DEĞİŞMEDEN (doğru sayım) çalışır.
-
 
 test "codegen: Faz GG.5 — döngü içinde AYNI str için TEK bir strlen çağrısı (deduplike edildi)" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -663,7 +602,6 @@ test "codegen: Faz GG.5 — döngü içinde AYNI str için TEK bir strlen çağr
 // güvenlik özelliğini (yeniden atanan isimlerin ÖNBELLEKLENMEMESİ) izole
 // doğrular.
 
-
 // Faz GG.5 — YUKARIDAKİ testin KAÇIRDIĞI durumu (BAYAT bir UZUNLUĞUN, DOĞRU
 // bir erişimi YANLIŞLIKLA `IndexError` OLARAK reddetmesi) KAPATIR: `s`
 // KISA (`"ab"`, uzunluk 2) BAŞLAR, döngünün 2. yinelemesinde DAHA UZUN
@@ -702,7 +640,6 @@ test "codegen(çalıştır): Faz GG.5 — bayat önbelleklenmiş uzunluk YANLIŞ
 // ARALIĞINDA olduğu döngünün KENDİ sınırından ZATEN KANITLANMIŞTIR —
 // `sum_list` (`list[int]`) VE `count_char` (`str`) İKİSİ de bu deseni
 // kullanır, davranış (doğru toplam/sayım) DEĞİŞMEDEN çalışır.
-
 
 test "codegen: Faz GG.9 — kanıtlanabilir sınır-içi erişimde IndexError dalı GERÇEKTEN ÜRETİLMEZ" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -769,13 +706,11 @@ test "codegen: Faz GG.9 — döngü içinde yeniden atanan liste İçin IndexErr
 // (üst sınır `len(xs)` bir ÇAĞRI, YA DA `xs`nin KENDİ bilinen literal
 // uzunluğuna eşit bir `int_lit`) GENELLEŞTİRİR.
 
-
 // Bulundu (bkz. proje belleği "f-string + augmented atama" görevi): TÜM 7
 // augmented-atama operatörü, düz f-string, interpolasyonlu f-string, `{{`/
 // `}}` kaçışı, Python klasik iç-içe-tırnak kuralı (`f"{d['key']}"`), VE
 // genişletilmiş `str()`nin (str/bool kabulü) uçtan uca doğru çalıştığını
 // TEK bir fixture'da doğrular.
-
 
 // Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
 // incelemesi", C5): `\r` İKİ AYRI yerde eksikti — `parser.zig`nin
@@ -785,7 +720,6 @@ test "codegen: Faz GG.9 — döngü içinde yeniden atanan liste İçin IndexErr
 // tekrar-üretimle DOĞRULANDI). Bu test HEM düz string HEM f-string
 // içindeki `\r`nin UÇTAN UCA (derle+çalıştır) doğru bayt (13) ürettiğini
 // kanıtlar.
-
 
 // Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
 // incelemesi", C1): `list[dict[K,V]]` (bir dict listesi) ÖNCEDEN
@@ -803,7 +737,6 @@ test "codegen: Faz GG.9 — döngü içinde yeniden atanan liste İçin IndexErr
 // (`--summary all`ın ReleaseFast koşusunda leak-detector'lı derleyici
 // binary'si ÜZERİNDEN) kanıtlar.
 
-
 // Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
 // incelemesi", P5): ÇIPLAK `except:` (tipsiz, HERHANGİ bir istisnayla
 // eşleşen bir yakalama) ARTIK destekleniyor — `finally` ZATEN
@@ -815,22 +748,18 @@ test "codegen: Faz GG.9 — döngü içinde yeniden atanan liste İçin IndexErr
 // stderr'in BOŞ olmasını zorunlu kıldığından (bkz. onun belge notu),
 // bu test aynı zamanda GERÇEK bir bellek-sızıntısı regresyon testidir.
 
-
 // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
 // üst-düzey bir `int` global'in İKİ AYRI fonksiyondan (biri yazar,
 // biri okur) doğru çalıştığını kanıtlar.
-
 
 // Heap-yönetimli bir global (`list[str]`) birden fazla çağrı boyunca
 // doğru büyüdüğünü VE sızıntısız olduğunu (`expectGolden`nin BOŞ-stderr
 // kontrolü — `$nox_deinit_globals`in `releaseValueIfSet` çağrısını
 // doğrular) kanıtlar.
 
-
 // Bir fonksiyonun KENDİ yerelinin AYNI isimde bir global'i gölgelediğini
 // (`shadowed()`), KARDEŞ bir fonksiyonun İSE (`unshadowed()`, hiç yerel
 // bildirmez) AYNI global'i GERÇEKTEN okuyup/yazdığını kanıtlar.
-
 
 // P1c (bkz. kullanıcı repro'su, "P1c — package-module globals + nested
 // closure" olarak bildirildi) — `genNoxInitGlobals`, `module.body`deki HER
@@ -839,7 +768,6 @@ test "codegen: Faz GG.9 — döngü içinde yeniden atanan liste İçin IndexErr
 // VARSAYIYORDU — `y` gibi SAF bir üst-düzey betik değişkeni (hiçbir
 // fonksiyondan erişilmeyen) `_x` GİBİ GERÇEK terfi eden bir global İLE AYNI
 // PROGRAMDA olduğunda `.get(v.name).?` panige/segfault'a yol açıyordu.
-
 
 // C2 (bkz. kullanıcı repro'su, "C2 — package function-type param → import
 // SIGSEGV" olarak bildirildi) — `genIndirectCallThroughClosurePtr` (bir
@@ -850,13 +778,11 @@ test "codegen: Faz GG.9 — döngü içinde yeniden atanan liste İçin IndexErr
 // `dict` değerini serbest bırakmaya çalışırken `dict_info.?`nin null
 // olması yüzünden çöküyordu (derleme-zamanı panik/ReleaseFast'te SIGSEGV).
 
-
 // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı): YENİ `list[T].
 // pop()` ilkeli — `.append`in AKSİNE HİÇBİR ZAMAN yeniden ayırmadığından
 // alıcı keyfi bir ifade olabilir (`self.items.pop()` doğrudan, "yerele
 // kopyala-mutasyona uğrat-geri yaz" dansı GEREKMEZ). Boş listede `IndexError`
 // fırlattığını da kanıtlar.
-
 
 // nox.collections — Stack[T]/Queue[T]/Deque[T]: LIFO/FIFO/çift-uçlu sıra
 // semantiğinin (iki-yığın hilesi DAHİL) doğru çalıştığını kanıtlar. Bu,
@@ -868,13 +794,11 @@ test "codegen: Faz GG.9 — döngü içinde yeniden atanan liste İçin IndexErr
 // import Stack` + `s: Stack[int] = ...` ÖNCEDEN "bilinmeyen generic tip"/
 // "desteklenmeyen bir yapı" hatalarıyla ÇÖKERDİ).
 
-
 // nox.collections — Set[T]/Counter[T]/OrderedDict[K,V]: hepsi `list[T]`
 // üzerinde DOĞRUSAL TARAMA (`==` İLE) kullanır (Nox'ta kullanıcı sınıfları
 // İçin `__hash__` YOK) — bu test tekrarlı `add`ın idempotent kaldığını,
 // `remove`nin çalıştığını VE `OrderedDict`in ekleme SIRASINI koruduğunu
 // kanıtlar.
-
 
 // nox.collections — LRUCache[K,V]/Heap[T]/PriorityQueue[T]: LRU'nun
 // kapasite-aşımında en-eski-kullanılanı tahliye ettiğini, `Heap`in artan
@@ -887,12 +811,10 @@ test "codegen: Faz GG.9 — döngü içinde yeniden atanan liste İçin IndexErr
 // bu da `left >= n` OLSA BİLE `self._items[left]`i (sınır dışı) okuyup
 // GERÇEK bir `IndexError`a yol açıyordu; düzeltme İÇ İÇE `if`lere geçti.
 
-
 // nox.url — `URL.parse` (şema/userinfo/host/port/yol/sorgu/fragment),
 // `percent_encode`/`percent_decode` (çok-baytlı UTF-8 DAHİL round-trip),
 // `query_encode`/`query_decode`, VE basit `join` göreli-yol çözümlemesi.
 // Bozuk bir URL'de (`://` yok) `UrlError` fırlattığını da kanıtlar.
-
 
 // nox.process — `Command.run()`: stdout yakalama, sıfır-olmayan çıkış
 // koduyla stderr yakalama, `set_cwd`, VE bulunamayan bir programda
@@ -972,7 +894,6 @@ test "codegen(çalıştır): nox.process Command.run() — stdout/stderr/cwd/Pro
 // oturumda bulunup düzeltildi (retain-önce-serbest-bırak koruması DAHİL,
 // `str`-değerli sözlükler İçin kullanım-sonrası-serbest-bırakmayı önler).
 
-
 // nox.postgres/nox.mysql — ULAŞILAMAYAN bir adrese karşı `open`/`open_url`nin
 // HER ZAMAN temiz bir PostgresError/MysqlError fırlattığını (çökme YOK)
 // doğrular — CI'da libpq/libmysqlclient KURULU OLMASA (ensureLoaded
@@ -984,7 +905,6 @@ test "codegen(çalıştır): nox.process Command.run() — stdout/stderr/cwd/Pro
 // doğru; mysql: AYNI senaryolar + `MYSQL_FIELD.name`in ham-ofset
 // okumasının GERÇEKTEN doğru sütun adlarını döndürdüğü doğrulandı).
 
-
 // Faz NN.5 (bkz. proje belleği "nyx v2 limitasyon listesi doğrulaması"):
 // `nox.tls`/`nox.websocket`nin ULAŞILAMAYAN bir adrese karşı HER ZAMAN
 // temiz bir TlsError/WebSocketError fırlattığını (çökme/sızıntı YOK)
@@ -995,7 +915,6 @@ test "codegen(çalıştır): nox.process Command.run() — stdout/stderr/cwd/Pro
 // `Sec-WebSocket-Accept` SHA1/base64 hesaplaması, frame maskeleme/çözme
 // hepsi GERÇEK bir sunucuya karşı ÇALIŞTI.
 
-
 // Bulundu (bkz. proje belleği "UTF-8 farkındalığı" görevi): `len(s)`/`s[i]`
 // ÖNCEDEN bayt-tabanlıydı (çok baytlı UTF-8 karakterleri — "café"nin
 // "é"si, "日本語"nin her karakteri — ORTADAN kesiyordu). ARTIK codepoint-
@@ -1003,7 +922,6 @@ test "codegen(çalıştır): nox.process Command.run() — stdout/stderr/cwd/Pro
 // bounds-elision) HEM `while j < len(s)` (GG.5/GG.9 while-genellemesi)
 // desenlerini TEK bir fixture'da doğrular — üçünün de YENİ (codepoint)
 // `len()` semantiğiyle TUTARLI kaldığının kanıtı.
-
 
 test "codegen: Faz GG.9 (while genellemesi) — while j < len(xs): xs[j] IR'ında IndexError dalı GERÇEKTEN ÜRETİLMEZ" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -1027,7 +945,6 @@ test "codegen: Faz GG.9 (while genellemesi) — while j < len(xs): xs[j] IR'ınd
 // lowlevel_arena.nox`nin TAM OLARAK ürettiği GERÇEK kalıp (idx_var'ın
 // var_decl'i "HEMEN ÖNCEKİ deyim" OLMAYABİLİR — bkz. `detectWhileBounds
 // ElideCtx`nin belge notu).
-
 
 test "codegen: Faz GG.9 (while genellemesi) — while j < SABİT: xs[j] IR'ında IndexError dalı GERÇEKTEN ÜRETİLMEZ" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -1076,7 +993,6 @@ test "codegen: Faz GG.9 (while genellemesi) — döngü içinde yeniden atanan l
 // TEK bir hesaplamaya İNDİRGENDİĞİNİN kanıtı (bkz. AŞAĞIDAKİ IR-metni
 // testi).
 
-
 test "codegen: darboğaz #3 — `tally` IR'ında `i % 3` TEK bir `rem` talimatına İNDİRGENİR (3 DEĞİL)" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -1108,27 +1024,21 @@ test "codegen: darboğaz #3 — `tally` IR'ında `i % 3` TEK bir `rem` talimatı
 // (`flag` parametresine bağlı), bu YÜZDEN doğru davranış YALNIZCA
 // GERÇEKTEN ÇALIŞTIRILARAK doğrulanabilir.
 
-
 // AYNI güvenlik sınıfı — `while` gövdesi İÇİNDE `i` yeniden atanıyor;
 // gövdenin KENDİ İÇİNDEKİ (yeniden atamadan ÖNCEKİ/SONRAKİ) İKİ ayrı
 // kullanım DOĞRU (taze) değerleri almalı, VE bu bayat bir ÖN-döngü
 // değerine ASLA geri DÖNMEMELİDİR.
-
 
 // AYNI güvenlik sınıfı — `for x in xs` döngü değişkeninin HER yinelemede
 // (bir `.assign` AST düğümünü BAYPAS EDEN DOĞRUDAN QBE yayınıyla) aldığı
 // YENİ değer, bir ÖNCEKİ yinelemenin (ya da döngüden ÖNCEKİ, varsa AYNI
 // isimli bir değişkenin) önbelleklenmiş `x % 3`ünü ASLA yeniden KULLANMAZ.
 
-
 // AYNI güvenlik sınıfı — bir `if`/`elif`/`else` zincirinin HER dalı `i`yi
 // FARKLI bir biçimde yeniden atıyor; if SONRASI TEK `return i % 3`ün,
 // dalların HERHANGİ BİRİNİN kendi İÇİNDE (branch-yerel olarak) hesapladığı
 // bir değeri YANLIŞLIKLA yeniden KULLANMAMASI gerekir (hiçbiri if'TEN
 // ÖNCE kurulmadığından, if SONRASI HİÇBİR önbellek girdisi OLMAMALIDIR).
-
-
-
 
 test "codegen: lowlevel arenasından bir değeri bloktan return etmek reddedilir (Unsupported)" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -1145,10 +1055,6 @@ test "codegen: lowlevel arenasından bir değeri bloktan return etmek reddedilir
     try std.testing.expectError(error.Unsupported, nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, .hosted, null, &.{}));
 }
 
-
-
-
-
 // Bulundu (nyx framework — bkz. proje belleği "nyx'te farkedilen Nox
 // eksiklikleri" görevi): `closures.zig`nin `buildClosureValue`ı, bir
 // yakalanan (capture) DEĞERİN `func_sig`ini (`heap == .closure` OLAN
@@ -1160,21 +1066,6 @@ test "codegen: lowlevel arenasından bir değeri bloktan return etmek reddedilir
 // — yalnızca FONKSİYON tipi). Tek satırlık eksik alan ATAMASI (`.func_sig
 // = src.func_sig`) İLE düzeltildi; iç içe SARMALAMA (bir closure'ın BAŞKA
 // bir closure'ı yakalayıp SARMASI) DAHİL 500 yinelemede sızıntısız.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 test "codegen: Faz T.3 — debug_source_path VERİLMEDEN dbgfile/dbgloc HİÇ üretilmez (opt-in, sıfır davranış değişikliği)" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -1209,16 +1100,6 @@ test "codegen: Faz T.3 — debug_source_path VERİLİRSE dbgfile + doğru satır
     try std.testing.expect(std.mem.indexOf(u8, ir, "dbgfile \"fibonacci.nox\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, ir, "dbgloc") != null);
 }
-
-
-
-
-
-
-
-
-
-
 
 // GG.13 (bkz. nox-teknik-spesifikasyon.md §3.66): `Point == Point` (küçük,
 // ≤8 alanlı, döngüsüz bir sınıf) ARTIK paylaşılan `$Point_eq`e bir
@@ -1259,7 +1140,6 @@ test "codegen: GG.13 — küçük sınıf '=='inin ÜRETTİĞİ IR'da call \\$Po
 // güvenlik ağının GERÇEKTEN çalıştığı Debug modu DAHİL, `zig build test`
 // İLE) hem doğru sayıyı HEM DE sınırlı bellek kullanımını (dolaylı olarak,
 // çökme/OOM OLMADAN tamamlanarak) doğrular.
-
 
 // GG.14: `forward(literal_str(i))`in inline-splice edilmiş gövdesindeki
 // `return s`in ÜRETTİĞİ IR'da retain'in GERÇEKTEN elendiğini DOĞRUDAN
@@ -1311,7 +1191,6 @@ test "codegen: GG.14 — pinned passthrough'un ÜRETTİĞİ IR'da SADECE dinamik
 // doğrular; aşağıdaki AYRI IR-metni testi elenmenin GERÇEKTEN gerçekleştiğini
 // kanıtlar.
 
-
 test "codegen: GG.15 — lowlevel bloğunun ÜRETTİĞİ IR'da nox_arena_create/alloc GERÇEKTEN YOK" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -1337,7 +1216,6 @@ test "codegen: GG.15 — lowlevel bloğunun ÜRETTİĞİ IR'da nox_arena_create/
 // davranışına DEĞİŞMEDEN düşmelidir (`Point` İçin BİLE, "ya HEPSİ ya
 // HİÇBİRİ" ilkesi GEREĞİ). `expectGolden` davranış/bellek güvenliğini,
 // aşağıdaki IR-metni testi `nox_arena_create`in HÂLÂ ÜRETİLDİĞİNİ kanıtlar.
-
 
 test "codegen: GG.15 — karışık lowlevel bloğunun ÜRETTİĞİ IR'da nox_arena_create HÂLÂ VAR" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -1365,7 +1243,6 @@ test "codegen: GG.15 — karışık lowlevel bloğunun ÜRETTİĞİ IR'da nox_ar
 // yığın slotu KULLANILIR (HER yinelemede YENİDEN kullanılır). `expectGolden`
 // davranışın DEĞİŞMEDİĞİNİ, aşağıdaki AYRI IR-metni testi elenmenin GERÇEKTEN
 // gerçekleştiğini kanıtlar.
-
 
 test "codegen: GG.16 — compute() ÜRETTİĞİ IR'da nox_rc_alloc/nox_arena_alloc GERÇEKTEN YOK" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -1396,7 +1273,6 @@ test "codegen: GG.16 — compute() ÜRETTİĞİ IR'da nox_rc_alloc/nox_arena_all
 // `true` burada GERÇEK bir kullanım-sonrası-serbest-bırakmaya yol açardı
 // (`forward`nin döndürdüğü, `compute`nin YIĞIN ÇERÇEVESİ silindikten SONRA
 // da kullanılan bir işaretçi).
-
 
 test "codegen: GG.16 — kaçan parametrenin ÜRETTİĞİ IR'da nox_rc_alloc HÂLÂ VAR" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -1429,7 +1305,6 @@ test "codegen: GG.16 — kaçan parametrenin ÜRETTİĞİ IR'da nox_rc_alloc HÂ
 // ARTIK stack'e DÖNÜŞÜR (ÖNCEDEN, Tur 1/2/3'te, HER argüman-geçişi
 // KOŞULSUZ kaçış SAYILDIĞINDAN `nox_rc_alloc`TA KALIRDI).
 
-
 test "codegen: GG.20 — salt-okunur yönlendirmenin ÜRETTİĞİ IR'da compute() İçİnde nox_rc_alloc GERÇEKTEN YOK" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -1459,7 +1334,6 @@ test "codegen: GG.20 — salt-okunur yönlendirmenin ÜRETTİĞİ IR'da compute(
 // KALIR — BAŞKA bir container'a yazma HER ZAMAN kaçış sayılır İlkesi
 // GG.20 SONRASI da KORUNUR.
 
-
 test "codegen: GG.20 — mutasyona uğratan yönlendirmenin ÜRETTİĞİ IR'da compute() İçİnde nox_rc_alloc HÂLÂ VAR" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -1485,7 +1359,6 @@ test "codegen: GG.20 — mutasyona uğratan yönlendirmenin ÜRETTİĞİ IR'da c
 // `b_read(xs): return len(xs)` — worklist'in `{b_read,0}`nin GÜVENLİ
 // OLDUĞUNU `{a_forward,0}`YE de YAYDIĞINI (ARBİTRER derinlikte, TEK-
 // seviyeli bir kanıtla SINIRLI KALMADIĞINI) kanıtlar.
-
 
 test "codegen: GG.20 — iki seviyeli TRANSİTİF kanıtın ÜRETTİĞİ IR'da compute() İçİnde nox_rc_alloc GERÇEKTEN YOK" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -1521,7 +1394,6 @@ test "codegen: GG.20 — iki seviyeli TRANSİTİF kanıtın ÜRETTİĞİ IR'da c
 // `compute()`nin KENDİ (sibling) parametresi OLDUĞUNDAN, `compute()`nin
 // yereli `xs` ARTIK stack'e dönüşür.
 
-
 test "codegen: GG.21 — final metoda yönlendirmenin ÜRETTİĞİ IR'da compute() İçİnde nox_rc_alloc GERÇEKTEN YOK" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -1549,7 +1421,6 @@ test "codegen: GG.21 — final metoda yönlendirmenin ÜRETTİĞİ IR'da compute
 // taraması BUNU tohum olarak İŞARETLER, `compute()`nin `xs`i HÂLÂ
 // `nox_rc_alloc`ta KALIR (metod final OLMASI TEK BAŞINA yeterli DEĞİL —
 // metodun KENDİ gövdesi de GERÇEKTEN güvenli OLMALI).
-
 
 test "codegen: GG.21 — mutasyona uğratan final metodun ÜRETTİĞİ IR'da compute() İçİnde nox_rc_alloc HÂLÂ VAR" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -1581,7 +1452,6 @@ test "codegen: GG.21 — mutasyona uğratan final metodun ÜRETTİĞİ IR'da com
 // KALMALI — `xs` HÂLÂ `nox_rc_alloc`ta kalmalı. Yanlış bir "final" kanıtı
 // burada GERÇEK bir kullanım-sonrası-serbest-bırakmaya yol AÇARDI.
 
-
 test "codegen: GG.21 — KIRMIZI-TAKIM — override edilen metodun ÜRETTİĞİ IR'da nox_rc_alloc HÂLÂ VAR" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -1604,8 +1474,6 @@ test "codegen: GG.21 — KIRMIZI-TAKIM — override edilen metodun ÜRETTİĞİ 
     try std.testing.expect(std.mem.indexOf(u8, compute_ir, "nox_rc_alloc") != null);
 }
 
-
-
 test "codegen(çalıştır): ileri referanslı (henüz tanımlanmamış) sınıf tipli alan artık DESTEKLENİYOR" {
     // Stdlib fazı §L: `nox.json`nin `JsonValue`si (bkz. core.nox) KENDİ
     // KENDİNE başvuran bir `list[JsonValue]` alanı taşıdığından, codegen'in
@@ -1620,8 +1488,6 @@ test "codegen(çalıştır): ileri referanslı (henüz tanımlanmamış) sınıf
         @embedFile("codegen_cases/class_field_forward_ref.expected"),
     );
 }
-
-
 
 // GG.12 (bkz. nox-teknik-spesifikasyon.md §3.66): `Box.sum()`daki
 // `local_items: list[int] = self.items` — `self`in bir alanının salt-
@@ -1671,15 +1537,7 @@ test "codegen: GG.12 — self.<alan> salt-okunur kopyasının ÜRETTİĞİ IR'da
 // `checkExprExpected`i + codegen_qbe/expr.zig'in `genExprForTarget`
 // içindeki YENİ `.list_lit` dalı (`genEmptyListLit`).
 
-
-
-
-
-
 // Faz P2.1 (bkz. proje belleği "generic sınıflar" planı).
-
-
-
 
 // `closure_raise_not_swallowed.nox`nin (bkz. yukarisi) AYNI "sessizce
 // yutulmaz" doğrulaması — burada `expectGolden` DEĞİL `expectUncaughtException`
@@ -1691,11 +1549,9 @@ test "codegen: GG.12 — self.<alan> salt-okunur kopyasının ÜRETTİĞİ IR'da
 // sinifla da AYNI sizinti dogrulandi — P2.1'in KENDI kapsamina GİRMEYEN,
 // ayri bir bilinen kisitlama).
 
-
 // Faz 7 (tekli kalıtım, bkz. proje belleği "7 fazlı düzeltme planı"):
 // `super().__init__(...)` ile kurucu zincirleme, override + alan mirası
 // (taban+türetilen alanların TEK bir düz nesnede birleşmesi), sızıntı yok.
-
 
 // Faz 7: taban-tipli bir DEĞİŞKEN/liste/fonksiyon parametresi üzerinden
 // ÇALIŞMA ZAMANI polimorfik dispatch (vtable) — hem doğrudan `a.speak()`
@@ -1703,24 +1559,15 @@ test "codegen: GG.12 — self.<alan> salt-okunur kopyasının ÜRETTİĞİ IR'da
 // fonksiyon parametresi (`make_speak(a: Animal)`) ÜZERİNDEN AYNI şekilde
 // çalışır; sızıntı yok.
 
-
 // Faz 7: `except Base:` bir `Derived` örneğini de YAKALAR (hiyerarşik
 // class_id eşleşmesi, OR-zinciri) — hem TABAN-tipli hem TAM-tipli
 // `except` yan tümcesi AYNI `raise`i doğru şekilde yakalar; sızıntı yok.
-
 
 // Faz 7: `super().metod(...)` (yalnızca `__init__` DEĞİL) — HER ZAMAN
 // DOĞRUDAN (asla vtable ÜZERİNDEN) atanın KENDİ implementasyonuna gider,
 // hem override EDEN sınıfın KENDİSİNDEN hem taban-tipli bir değişken
 // ÜZERİNDEN (override'ın KENDİSİ dolaylı dispatch İLE çağrılsa BİLE
 // override'ın İÇİNDEKİ `super()` çağrısı sonsuz özyinelemeye YOL AÇMAZ).
-
-
-
-
-
-
-
 
 // Faz SC.1 (bkz. plan dosyası "spawn/await sınırında istisna yayılımı
 // düzeltmesi"): `spawn` edilen bir `async def`nin gövdesinde YAKALANMAMIŞ
@@ -1735,13 +1582,6 @@ test "codegen: GG.12 — self.<alan> salt-okunur kopyasının ÜRETTİĞİ IR'da
 // FAZIN `genAwaitExpr` değişikliğinin `continue_label` dalını (istisna
 // YOKSA normal akış) DOĞRUDAN regresyon-test ediyor.
 
-
-
-
-
-
-
-
 // Faz SC.2 (bkz. plan dosyası "Task[T].cancel() + CancelledError"):
 // kooperatif görev iptali — `t.cancel()` bir bayrak İşaretler, GERÇEK
 // iptal (CancelledError fırlatma) cancel edilen task'ın KENDİ kodu bir
@@ -1749,29 +1589,9 @@ test "codegen: GG.12 — self.<alan> salt-okunur kopyasının ÜRETTİĞİ IR'da
 // sınırı — bkz. plan dosyasının "Kapsam DIŞI" notu, HİÇ await YAPMAYAN
 // bir task ASLA kesilemez).
 
-
-
-
-
-
-
-
-
-
 // Faz STD.1 (bkz. plan dosyası "nox.csv"): saf Nox'ta yazılmış RFC 4180
 // uyumlu CSV ayrıştırma/yazma — kullanıcının 5 maddelik yol haritasının
 // 3. maddesinin ("stdlib eksikleri") İLK alt-parçası.
-
-
-
-
-
-
-
-
-
-
-
 
 // Faz STD.2 (bkz. plan dosyası "nox.gzip"): Zig'in `std.compress.flate`
 // sini Nox'a dışa açan gzip sıkıştırma/açma — kullanıcının 5 maddelik
@@ -1782,34 +1602,12 @@ test "codegen: GG.12 — self.<alan> salt-okunur kopyasının ÜRETTİĞİ IR'da
 // `list[int]`in eklenmesini gerektirdi (`compiler/typecheck/checker.zig`
 // `isFfiSafeListType`).
 
-
-
-
-
-
-
-
-
-
 // Faz STD.3 (nox.toml) — kullanıcının 5 maddelik yol haritasının 3.
 // maddesinin ("stdlib eksikleri") 3. alt-parçası. Saf Nox'ta yazıldı
 // (csv.nox'un aynı deseni) — TEK gerçek keşif: Nox'ta `and`/`or` KISA-
 // DEVRE YAPMAZ (her iki operand da her zaman değerlendirilir), bu
 // yüzden toml.nox'un TÜM "pos[0] < n and text[pos[0]] == X" desenleri
 // `_char_at_or_empty`/`_safe_substr` yardımcılarına taşındı.
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // Faz STD.4 (nox.smtp) — kullanıcının 5 maddelik yol haritasının 3.
 // maddesinin ("stdlib eksikleri") 4. alt-parçası. `nox.tls`/`nox.
@@ -1819,7 +1617,6 @@ test "codegen: GG.12 — self.<alan> salt-okunur kopyasının ÜRETTİĞİ IR'da
 // STARTTLS doğrulaması ELLE yapıldı (bkz. proje belleği), harici
 // İnternet erişimine bağımlı olmaması İçin CI'da OTOMATİK DEĞİL.
 
-
 // Faz STD.5 (nox.yaml) — kullanıcının 5 maddelik yol haritasının 3.
 // maddesinin ("stdlib eksikleri") 5. (SONUNCU stdlib-gap) alt-parçası.
 // `nox.toml`nin (Faz STD.3) AYNI "and/or kısa-devre yapmaz" + "fonksiyon-
@@ -1828,25 +1625,6 @@ test "codegen: GG.12 — self.<alan> salt-okunur kopyasının ÜRETTİĞİ IR'da
 // `s[0] == X and <inlinable_fonksiyon_cagrisi>(...)` deseni bir QBE
 // "predecessors not matched in phi" derleme hatasına yol açıyor (bkz.
 // flaglenen takip görevi) — TÜM benzer siteler İç İçe `if`lerle atlatıldı.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // v1.29.12 — GERÇEK, canlı bir SIGSEGV reprodüksiyonuyla bulunan bir hata
 // İçİn eklendi: `Channel[T]` bir sahipten `spawn` İLE BAŞKA bir fiber'a
@@ -1859,37 +1637,6 @@ test "codegen: GG.12 — self.<alan> salt-okunur kopyasının ÜRETTİĞİ IR'da
 // `ch`nin (Channel) refcount'u sahibin `destroy()`u SIRASINDA HÂLÂ `2`
 // (owner + spawn edilen closure) OLDUĞUNDAN struct HAYATTA KALIR,
 // `slow_consumer` DAHA SONRA GÜVENLE `.recv()` çağırıp doğru veriyi alır.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // Darboğaz analizi bulgu #4 (bkz. benchmarks/RESULTS.md, 2026-07-22):
 // `genListEq`nin ürettiği döngü sayacı ESKİDEN bir `alloc8` yığın slotuna
@@ -1922,32 +1669,6 @@ test "codegen: darboğaz #4 — `List_priml_eq`nin gövdesinde ARTIK `alloc8` (�
     try std.testing.expect(std.mem.indexOf(u8, fn_body, " phi ") != null);
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 // Faz FF.3 (bkz. nox-teknik-spesifikasyon.md §3.62) — GERÇEK, ÖNCEDEN
 // VAR OLAN bir bellek-güvenliği hatasını KANITLAR: `dict[K,V]` ARC-
 // yönetimli DEĞİLDİ (`Task`/`Channel` İLE AYNI "tek sahiplilik, koşulsuz
@@ -1961,7 +1682,6 @@ test "codegen: darboğaz #4 — `List_priml_eq`nin gövdesinde ARTIK `alloc8` (�
 // SIGSEGV/exit 139 İLE doğrulandı, manuel çalıştırmayla) — `dict`in
 // `str`/`list`/`class` İLE AYNI ARC modeline taşınmasıyla YEŞİLE döner.
 
-
 // Faz FF.3'ün POZİTİF kanıtı: AYNI `dict` KENDİ adlandırılmış yereli
 // (`shared`) HÂLÂ kapsam İÇİNDEYKEN İKİ AYRI sınıf örneğine (`a.data`/
 // `b.data`) PAYLAŞTIRILIYor — HER ÜÇ sahibin de (yerel + iki alan)
@@ -1971,16 +1691,12 @@ test "codegen: darboğaz #4 — `List_priml_eq`nin gövdesinde ARTIK `alloc8` (�
 // kanıtlar — `dict`in ARTIK `str`/`list`/`class` İLE AYNI, PAYLAŞIM-
 // GÜVENLİ ARC modelinde OLDUĞUNUN pozitif göstergesi.
 
-
-
-
 // Güvenlik bulgusu H-2 (bkz. güvenlik raporu, 20 Temmuz 2026) — DÜZELTİLDİ:
 // `d[key]` eksik bir anahtarda SESSİZCE null döndürüp sonraki HER kullanımda
 // (`len()` gibi) null-pointer çökmesine (SIGSEGV) yol açıyordu; `dict[str,
 // int]`de saklı bir `0` DEĞERİYLE "anahtar YOK" durumu da AYRICA ayırt
 // edilemiyordu (bağımsız bir doğruluk hatası). `genDictGet` artık `nox_dict_
 // contains` İLE ÖNCE varlığı kontrol edip yoksa `KeyError` raise ediyor.
-
 
 // Güvenlik bulgusu H-1 (bkz. güvenlik raporu, 20 Temmuz 2026) — DÜZELTİLDİ:
 // `hpy_call`ın `yol`/`uzantı_adı`/`fonksiyon_adı` argümanları ÖNCEDEN
@@ -2093,11 +1809,9 @@ test "codegen: hpy_call_on'a nested-alanlı bir class argümanı REDDEDİLİR" {
 // (self'in tipi ZATEN `class_name`den BAĞIMSIZ türetiliyor) DOĞRULANMASI,
 // yalnızca DERLENDİĞİNİN DEĞİL.
 
-
 // Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): `class_point.nox` İLE
 // YAPISAL OLARAK AYNI, alanları AÇIKÇA bildirilmiş — davranışın BİREBİR
 // AYNI olduğunun kanıtı.
-
 
 // Faz FF.5: `inferFieldType`nin BUGÜN HİÇ ele ALAMADIĞI bir alan — `value`
 // yalnızca bir `if`/`else` DALI İÇİNDE atanıyor, `registerClass`ın
@@ -2106,75 +1820,22 @@ test "codegen: hpy_call_on'a nested-alanlı bir class argümanı REDDEDİLİR" {
 // KEŞFEDİLMEZDİ — codegen'in `resolveType` bypass'ının GERÇEKTEN
 // çalıştığının, ÖZELLİĞİN ASIL DEĞER ÖNERİSİNİN kanıtı.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 // Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61): `list[int]`/`list[str]`/
 // `list[float]`in HER ÜÇÜ İçin `nox_list_sort_int`/`_str`/`_float`
 // dispatch'inin (`elem_qtype`/`elem_is_str`e göre) doğru fonksiyona
 // yönlendirdiğini kanıtlar.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // Faz EE.1 (bkz. nox-teknik-spesifikasyon.md §3.61): `exists`/`is_file`/
 // `is_dir` HİÇBİR ZAMAN `raise` ETMEZ (`read_to_string`in AKSİNE) — var
 // olan/olmayan bir dosya VE bir dizin ÜZERİNDE ÜÇÜNÜN de doğru sonuç
 // döndürdüğünü kanıtlar.
 
-
 // Faz EE.1: YENİ `nox.path` modülü — saf string manipülasyonu, hiçbir I/O
 // yok, hiçbir fonksiyon raise etmez.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // Güvenlik bulguları M-4/M-5/M-6 (bkz. güvenlik raporu, 20 Temmuz 2026) —
 // DÜZELTİLDİ: `hmac_sha256`/`constant_time_eq`/`secure_random_hex` YENİ
 // eklendi. RFC 4231/2202'nin bilinen "Jefe" test vektörüyle doğrulanır.
-
 
 // Parola hash'leme (argon2id/bcrypt/scrypt) — hash'in KENDİSİ (rastgele
 // tuz İçerdiğinden) deterministik DEĞİLDİR, bu YÜZDEN `crypto_hmac_and_
@@ -2182,58 +1843,15 @@ test "codegen: hpy_call_on'a nested-alanlı bir class argümanı REDDEDİLİR" {
 // SONUÇLARI (bool) VE İKİ hash'in birbirinden FARKLI olduğu (`h1 == h1b`)
 // karşılaştırılır, ham hash dizesi YAZDIRILMAZ.
 
-
 // `nox.uuid.uuid4` — "eksik kütüphaneler" listesinin İLK maddesi, saf Nox
 // (yeni bir runtime ilkeli GEREKMEDİ, bkz. `stdlib/nox/uuid.nox`nin belge
 // notu). Hash'ler GİBİ rastgele OLDUĞUNDAN, `crypto_password_hashing`YLA
 // AYNI desen: ham UUID METNİ YAZDIRILMAZ, yalnızca uzunluk/biçim/farklılık
 // doğrulanır.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 // GG.23 (bkz. plan dosyası "fiber-stack sertleştirmesi", Madde 2):
 // MAX_JSON_NESTING_DEPTH (32) AŞAN bir girdi, `std.json.parseFromSlice`ye
 // HİÇ GEÇİLMEDEN, ÇÖKMEDEN (`JsonError` İLE) reddedilir.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // Faz JJ (bkz. nox-teknik-spesifikasyon.md §3.68'in devamı) — daha önce
 // ÇÖZÜLEMEYEN, ~%100 tekrarlanabilir bir çift-serbest-bırakma/kullanım-
@@ -2248,7 +1866,6 @@ test "codegen: hpy_call_on'a nested-alanlı bir class argümanı REDDEDİLİR" {
 // BİRİNCİYLE AYNI (zaten serbest bırakılmış) adresi kullanıyor VE içeriği
 // çöp veri (`len=0xaaaa` gibi) OLARAK okunuyordu.
 
-
 // Faz NN — Faz JJ'nin "identifier ile taşınan" varyantı: `return xs` (çıplak
 // identifier) İLE bir `list[str]`i döndüren küçük bir fonksiyon, bir `while`
 // döngüsü İÇİNDE TEKRAR TEKRAR inline çağrılıp SONUCU bir `var_decl`e
@@ -2260,26 +1877,16 @@ test "codegen: hpy_call_on'a nested-alanlı bir class argümanı REDDEDİLİR" {
 // list[str] = [...]` var_decl'inin bir sonraki iterasyonda ÖNCEKİ (artık
 // arayana taşınmış) işaretçiyi TEKRAR serbest bıraktığı KANITLANDI.
 
-
 // Faz GG.3 (bkz. nox-teknik-spesifikasyon.md'nin yeni Faz bölümü) — Go-tarzı
 // `defer` anahtar kelimesi. `expectGolden`in stderr-boş kontrolü (bkz. onun
 // belge notu) bu testlerin HEPSİNİN de örtülü bir bellek-sızıntısı testi
 // olmasını sağlar (yakalanan closure argümanlarının doğru retain/release
 // edildiğinin KANITI).
 
-
-
-
-
 // Asıl YENİ yetenek: bir döngü içinde `defer` — bekleyen çağrı SAYISI
 // ÇALIŞMA ZAMANINDA değişir, bu yüzden `finally_stack` gibi TAMAMEN statik
 // bir mekanizmayla KARŞILANAMAZ (bkz. `runtime/alloc/defer_stack.zig`nin
 // belge notu) — bu test TAM OLARAK bunu doğrular.
-
-
-
-
-
 
 // Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi + metadata-tabanlı
 // metaprogramming"): uçtan uca — `@get`/`@post` İLE decore edilmiş İKİ
@@ -2334,7 +1941,6 @@ test "codegen(çalıştır): Faz 1 decorator — router_from_decorators() uçtan
 // `None`e DÖNDÜRDÜĞÜNÜ VE hiçbir sızıntı OLMADIĞINI (DebugAllocator)
 // da doğrular.
 
-
 // Faz OO.3 (bkz. nox-teknik-spesifikasyon.md §3.84): nyx'te farkedilen
 // bir Nox eksikliği (zengin exception stack/source span) — `nox_raise`
 // ARTIK `raise` deyiminin satırını taşır, `$nox_class_name_dispatch`
@@ -2346,7 +1952,6 @@ test "codegen(çalıştır): Faz 1 decorator — router_from_decorators() uçtan
 // pass` sözdiziminin (bkz. `parser.zig`nin sınıf gövdesindeki YENİ `pass`
 // desteği) ÇALIŞTIĞINI da dolaylı olarak DOĞRULAR.
 
-
 // Faz OO.4 (bkz. nox-teknik-spesifikasyon.md §3.85): nyx'te farkedilen
 // bir Nox eksikliği (`dict[int, Record]` YOKTU, checker dict değer
 // tipini int/float/bool/str'e KISITLIYORDU) — ARTIK `.class` DEĞER
@@ -2355,7 +1960,6 @@ test "codegen(çalıştır): Faz 1 decorator — router_from_decorators() uçtan
 // İNŞA+OKUMA+ÜZERİNE-YAZMA (eski Record değerinin serbest bırakıldığını,
 // SIZDIRILMADIĞINI kanıtlar — `expectGolden`nin boş-stderr kontrolü)
 // +`.values()`i kapsar.
-
 
 // GG.17 (bkz. nox-teknik-spesifikasyon.md §3.10X, plan dosyası "ASAP
 // güçlendirmesi — Tur 1"): sıradan (ne `lowlevel:` bloğu İÇİNDE ne bir
@@ -2366,17 +1970,14 @@ test "codegen(çalıştır): Faz 1 decorator — router_from_decorators() uçtan
 // — kanıtlar (`expectGolden`nin boş-stderr kontrolü sızıntı YOK'u
 // GARANTİ eder).
 
-
 // GG.17: dönüştürülen stack slotunun fonksiyon GİRİŞİNDE TEK SEFER
 // ayrılıp BÜYÜK bir döngü BOYUNCA (200.000 tur) TEKRAR TEKRAR GÜVENLE
 // yeniden kullanıldığını (döngü İçİNDE taze bir `alloc8` YAPILSAYDI
 // yığın taşardı — bkz. `ownership.zig`nin "döngü İçİnde taze alloc8"
 // uyarısı) kanıtlar.
 
-
 // GG.17 — NEGATİF (regresyon-yok) kanıtı: bir yerel `return` edilirse
 // (kaçış) `nox_rc_alloc`ta KALIR, dönüştürülmez — davranış DEĞİŞMEZ.
-
 
 // GG.17 — NEGATİF: bir yerel BAŞKA bir fonksiyona ARGÜMAN olarak geçerse
 // `nox_rc_alloc`ta KALIR. GG.20 (bkz. plan dosyası "ASAP güçlendirmesi —
@@ -2388,11 +1989,9 @@ test "codegen(çalıştır): Faz 1 decorator — router_from_decorators() uçtan
 // korur. Salt-okunur bir SERBEST fonksiyona (metod DEĞİL) yönlendirmenin
 // ARTIK GÜVENLİ sayıldığı YENİ pozitif durum İçİn bkz. `gg20_*` fixture'ları.
 
-
 // GG.17 — NEGATİF: bir yerel BAŞKA bir isme atanırsa (takma ad, `ys =
 // xs`) HER İKİSİ de `nox_rc_alloc`ta KALIR — `ownership/analysis.zig`nin
 // "İlke #8" muhafazakârlığıyla TUTARLI.
-
 
 // GG.17 — NEGATİF: `MAX_STACK_ALLOC_SIZE`i (4096 bayt) AŞAN bir literal
 // liste, gerisinde HİÇ kaçmasa BİLE stack `alloc8`'e DÖNÜŞMEZ (bir
@@ -2402,7 +2001,6 @@ test "codegen(çalıştır): Faz 1 decorator — router_from_decorators() uçtan
 // fonksiyon-kapsamlı bir arenaya (`nox_rc_alloc` DEĞİL) DÖNÜŞTÜRÜYOR —
 // bu, Tur 1'in stack-boyutu tavanının BİLİNÇLİ, GÜVENLİ bir GENELLEMESİ
 // (arena, fiber stack'i KULLANMADIĞINDAN AYNI boyut riski TAŞIMAZ).
-
 
 // GG.17 hotfix (v1.42.0) + GG.19 (bkz. plan dosyası "ASAP güçlendirmesi
 // — Tur 3"): bir GG.17-kalifiye YEREL İÇEREN VE AYRICA GG.2 inline-
@@ -2417,35 +2015,28 @@ test "codegen(çalıştır): Faz 1 decorator — router_from_decorators() uçtan
 // GÜVENLE inline EDİLİYOR (`.ssa`da GERÇEK bir `call $helper` YOK,
 // splice edilmiş bir gövde VAR), çıktı DEĞİŞMEDEN `13`.
 
-
 // GG.18 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 2"): boş `[]`
 // literalinden `.append()` İLE büyüyen, SADECE okunan (kaçmayan) bir
 // `list[int]` yereli — `nox_rc_alloc`/`nox_rc_release` YERİNE fonksiyon-
 // kapsamlı bir arena (`nox_arena_create`/`nox_arena_alloc`/`nox_arena_
 // list_grow`/`nox_arena_destroy`) kullanır, sızıntı YOK.
 
-
 // GG.18: BÜYÜK bir N (2000 tur × 50 `.append()`) İLE, arenanın Release-
 // modu HAVUZLAMASININ (`lowlevel.zig`nin `arena_pool`ı) SIK create/destroy
 // döngüsü ALTINDA da doğru/sızıntısız çalıştığını kanıtlar.
 
-
 // GG.18 — NEGATİF: `return`le kaçan bir büyüyen-liste yereli ARC'ta KALIR.
-
 
 // GG.18 — NEGATİF: başka bir fonksiyona argüman olarak geçen büyüyen bir
 // liste arenaya dönüştürülmez (v1'de interprocedural kanıt YOK).
 
-
 // GG.18 — NEGATİF: `.pop()` (v1'de SADECE `.append()` desteklenir,
 // `.pop()`/`.sort()`/BAŞKA metodlar HÂLÂ kaçış sayılır) arenaya dönüştürülmez.
-
 
 // GG.18 — NEGATİF: heap-yönetimli eleman tipi (`list[str]`, v1 SADECE
 // skaler int/float/bool destekler) arenaya dönüştürülmez (Tur 1'in
 // class-alan-release hatasının AYNISINI — elemanların HİÇ release
 // edilmemesini — baştan eler).
-
 
 // GG.19 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 3"): incelemenin
 // KENDİ önerdiği `point_sum(x)` deseni — v1.42.0'da (v1.41.0'ın hotfix'i
@@ -2453,23 +2044,19 @@ test "codegen(çalıştır): Faz 1 decorator — router_from_decorators() uçtan
 // stack-promotion HEM inlining BİRLİKTE çalışıyor (`.ssa`da GERÇEK bir
 // `call $point_sum` YOK).
 
-
 // GG.19: AYNI GG.17-kalifiye `helper()` fonksiyonu AYNI `caller` İçİnde
 // 3 KEZ çağrılıyor — HER splice'ın KENDİ TAZE, ÇAKIŞMAYAN tutamağını
 // aldığını (`.ssa`da 3 AYRI `alloc8`) kanıtlar.
-
 
 // GG.19: AYNI `helper()` HEM `caller_a` HEM `caller_b`DEN (HEM DE
 // STANDALONE) çağrılıyor — HER splice VE `helper`'IN KENDİ standalone
 // derlemesinin (üçü de AYNI AST düğümlerini kullanıyor) BİRBİRİNE
 // ÇAKIŞMADIĞINI kanıtlar.
 
-
 // GG.19: 10 ayrı, KENDİ BAŞINA `MAX_STACK_ALLOC_SIZE` (4096 bayt)
 // İçİnde kalan (4008 bayt, 500 int alanlı) sınıf örneği — TOPLAMDA
 // `MAX_PROMOTED_FRAME_SIZE`i (32 KiB) AŞIYOR. İLK 8'i (8×4008=32064 ≤
 // 32768) stack'e, KALAN 2'si (9×4008=36072 > 32768) arenaya DÜŞMELİ.
-
 
 // GG.22 (bkz. plan dosyası "checkCall gölgeleme-çözümleme düzeltmesi",
 // Madde A): `checkCall`nin `.identifier` dalı ÖNCEDEN `ctx.scope.lookup`u
@@ -2483,28 +2070,22 @@ test "codegen(çalıştır): Faz 1 decorator — router_from_decorators() uçtan
 // Düzeltmeden ÖNCE bu fixture reddedilirdi; düzeltmeden SONRA doğru
 // şekilde derlenip `other`yi çağırır (21 * 2 = 42).
 
-
 // GG.24 (bkz. plan dosyası "genClassRelease'in özyineleme derinliği
 // sertleştirmesi"): `MAX_DIRECT_RELEASE_DEPTH`i (200) AŞAN bir sınıf-
 // zinciri ÖNCEDEN (worklist YOKKEN) ~7.300 düğümde çökerdi — ARTIK
 // `arc.zig`nin derinlik-eşiği worklist'i sayesinde GÜVENLE tamamlanır.
 
-
 // GG.24: eşiğin ÇOK ALTINDA bir zincir — davranış/çıktı ÖNCEKİYLE
 // BİREBİR AYNI kalmalı (doğrudan-çağrı hızlı yolu, SIFIR ek yük).
-
 
 // GG.24: `genListElemRelease`nin sınıf-dispatch dalı — `list[Node]`nin
 // TEK bir elemanının KENDİ derin zinciri.
 
-
 // GG.24: `nox_rc_release_enqueue_dynamic` yolu — polimorfik (`has_vtable`)
 // bir sınıfın derin zinciri.
 
-
 // GG.24: `exceptions.zig`nin bare-`except:` dispatch dalı — derin bir
 // zincir taşıyan bir istisna nesnesi.
-
 
 // GG.25.1: sıradan, KUYRUK-OLMAYAN bir KULLANICI özyinelemesi (bkz.
 // fixture'ın KENDİ belge notu) — Python'un varsayılan özyineleme
@@ -2515,9 +2096,7 @@ test "codegen(çalıştır): Faz 1 decorator — router_from_decorators() uçtan
 // KANITIDIR — GG.24/GG.25'in İLK turunun ÖLÇMEDİĞİ, harici bir
 // incelemenin işaret ettiği riski KALICI olarak kapatır.
 
-
 // Bulundu: `[1, 2,]` gibi sondaki virgüllü bir liste literali (çok satırlı
 // VEYA tek satırlı) `parser.zig`nin `.l_bracket` dalında `UnexpectedToken`
 // hatasıyla çöküyordu — virgülden SONRA HER ZAMAN yeni bir `parseExpr()`
 // bekleniyordu, `]`nin kendisi kontrol edilmiyordu.
-

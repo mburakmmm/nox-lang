@@ -41,7 +41,7 @@ pub const FixedIntKind = @import("../typecheck/types.zig").FixedIntKind;
 /// TEK FARK İÇ DÜZENİ: `{fn_ptr: l @0, release_fn_ptr: l @8, yakalanan_
 /// değerler... @16+}` (sınıfın isimli ALANLARI yerine, checker'ın capture
 /// SIRASINA göre; bkz. `CLOSURE_HEADER_SIZE`).
-pub const HeapKind = enum { none, str, list, class, task, channel, dict, closure, thread_handle, thread_channel, boxed_scalar, task_local };
+pub const HeapKind = enum { none, str, list, class, task, channel, dict, closure, thread_handle, thread_channel, boxed_scalar, task_local, typed_ptr };
 
 /// Faz U.4.4: bir closure heap bloğunun başlık boyutu (bkz. `HeapKind.closure`in
 /// belge notu) — `fn_ptr` + `release_fn_ptr`, HER İKİSİ de `l` (8 bayt).

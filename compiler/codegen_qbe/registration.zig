@@ -150,6 +150,33 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
             return error.Unsupported;
         },
         .generic => |g| {
+            // v2.0 madde 6: `ptr[T]` — çıplak `ptr`in (satır ~132, hiç
+            // dokunulmayan) tipli karşılığı. `list[T]`nin AYNI `elem_qtype`/
+            // `elem_heap_info`/`elem_is_str`/`elem_fixed_int` betimleyici
+            // ailesini yeniden kullanır (bkz. plan dosyası §1) — AMA
+            // `LIST_HEADER_SIZE`/append makinesi OLMADAN (`ptr[T]` başlıksız
+            // DÜZ bir adrestir) VE `heap = .typed_ptr` İLE (ASLA ARC-
+            // izlenmez — `isHeapManaged`e KESİNLİKLE eklenmedi).
+            if (std.mem.eql(u8, g.name, "ptr")) {
+                if (g.args.len != 1) return error.Unsupported;
+                const elem = try self.resolveType(g.args[0]);
+                var elem_heap_info: ?*const ElemHeapInfo = null;
+                if (elem.heap == .class or elem.heap == .list or elem.heap == .str or elem.heap == .closure or elem.heap == .dict) {
+                    const info = try self.allocator.create(ElemHeapInfo);
+                    info.* = .{ .heap = elem.heap, .class_name = elem.class_name, .elem_qtype = elem.elem_qtype, .nested = elem.elem_heap_info, .elem_is_str = elem.elem_is_str, .func_sig = elem.func_sig, .dict_info = elem.dict_info };
+                    elem_heap_info = info;
+                } else if (elem.heap != .none) {
+                    return error.Unsupported;
+                }
+                return .{
+                    .qtype = .l,
+                    .heap = .typed_ptr,
+                    .elem_qtype = elem.qtype,
+                    .elem_heap_info = elem_heap_info,
+                    .elem_is_str = elem.heap == .str,
+                    .elem_fixed_int = elem.fixed_int,
+                };
+            }
             if (std.mem.eql(u8, g.name, "dict")) {
                 if (g.args.len != 2) return error.Unsupported;
                 const key = try self.resolveType(g.args[0]);

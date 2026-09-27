@@ -1,0 +1,107 @@
+class Point:
+    def __init__(self: Point, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+
+# v2.0 madde 6: `ptr_offset`in `sizeof(T)`e göre ölçeklendiğinin
+# doğrudan kanıtı — `sizeof`in KENDİSİ (madde 5) ile eşleştirilir, ve
+# `ptr_offset(p, i)` ile YAZILAN N ardışık elemanın HİÇBİRİ birbirini
+# EZMEZ/ÇAKIŞMAZ (yanlış bir stride bunu HEMEN bozardı).
+print(sizeof(u8))
+print(sizeof(i32))
+print(sizeof(int))
+print(sizeof(Point))
+
+def offset_roundtrip_u8() -> None:
+    lowlevel:
+        buf: list[u8] = [u8(0), u8(0), u8(0), u8(0), u8(0)]
+        base: ptr = detach(buf)
+        base_addr: int = ptr_to_int(base)
+        p: ptr[u8] = ptr[u8](base_addr)
+        i: int = 0
+        while i < 5:
+            ptr_write(ptr_offset(p, i), u8(i * 10 + 1))
+            i = i + 1
+        j: int = 0
+        while j < 5:
+            print(ptr_read(ptr_offset(p, j)))
+            j = j + 1
+
+def offset_roundtrip_i32() -> None:
+    lowlevel:
+        buf: list[i32] = [i32(0), i32(0), i32(0), i32(0)]
+        base: ptr = detach(buf)
+        base_addr: int = ptr_to_int(base)
+        p: ptr[i32] = ptr[i32](base_addr)
+        i: int = 0
+        while i < 4:
+            ptr_write(ptr_offset(p, i), i32(i * 1000 + 7))
+            i = i + 1
+        j: int = 0
+        while j < 4:
+            print(ptr_read(ptr_offset(p, j)))
+            j = j + 1
+
+def offset_roundtrip_class() -> None:
+    lowlevel:
+        buf: list[Point] = [Point(0, 0), Point(0, 0), Point(0, 0)]
+        base: ptr = detach(buf)
+        base_addr: int = ptr_to_int(base)
+        p: ptr[Point] = ptr[Point](base_addr)
+        i: int = 0
+        while i < 3:
+            ptr_write(ptr_offset(p, i), Point(i * 100, i * 100 + 1))
+            i = i + 1
+        # `ptr_read(...)`nin SONUCU (`Point`, heap-yönetimli) BİLEREK bir
+        # İSİMLİ yerele BAĞLANMAZ — `lowlevel:` bloğu İÇİNDE İSİMLİ heap-
+        # yönetimli bir yerel ASLA otomatik serbest bırakılmaz (`ARC
+        # muhasebesi TAMAMEN KAPALI`, bkz. `checkNoLowlevelEscape`), AMA
+        # `genFieldRead`in "taze bir tabanı OKUDUKTAN HEMEN SONRA serbest
+        # bırak" mekanizması BUNDAN BAĞIMSIZ çalışır — bu YÜZDEN sonucu
+        # DOĞRUDAN `.attribute` okuması İçİn kullanmak (bir İSME HİÇ
+        # BAĞLAMADAN) sızıntısız kalır.
+        j: int = 0
+        while j < 3:
+            print(ptr_read(ptr_offset(p, j)).x)
+            print(ptr_read(ptr_offset(p, j)).y)
+            j = j + 1
+
+offset_roundtrip_u8()
+offset_roundtrip_i32()
+offset_roundtrip_class()
+
+def scalar_roundtrip() -> None:
+    lowlevel:
+        buf: list[u8] = [u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0)]
+        base: ptr = detach(buf)
+        base_addr: int = ptr_to_int(base)
+
+        pu8: ptr[u8] = ptr[u8](base_addr)
+        ptr_write(pu8, u8(200))
+        print(ptr_read(pu8))
+
+        # `+ 1` — narrow (i16) genişlik, hizasız (odd) bir adres üzerinde
+        # okuma/yazma: `ptr_read`/`ptr_write`in skaler T yolu HER ZAMAN
+        # `qbeLoadUnaligned`/`qbeStoreUnaligned` kullandığından (bkz. plan
+        # dosyası §4) çökme/YANLIŞ değer OLMADAN çalışmalıdır.
+        pi16: ptr[i16] = ptr[i16](base_addr + 1)
+        ptr_write(pi16, i16(-1000))
+        print(ptr_read(pi16))
+
+        pi32: ptr[i32] = ptr[i32](base_addr + 3)
+        ptr_write(pi32, i32(-70000))
+        print(ptr_read(pi32))
+
+        pint: ptr[int] = ptr[int](base_addr + 8)
+        ptr_write(pint, 123456789)
+        print(ptr_read(pint))
+
+        pfloat: ptr[float] = ptr[float](base_addr + 17)
+        ptr_write(pfloat, 2.5)
+        print(ptr_read(pfloat))
+
+        pbool: ptr[bool] = ptr[bool](base_addr + 25)
+        ptr_write(pbool, True)
+        print(ptr_read(pbool))
+
+scalar_roundtrip()

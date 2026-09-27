@@ -153,6 +153,20 @@ pub export fn nox_rc_alloc(rt: ?*anyopaque, payload_size: usize) ?*anyopaque {
     return base_bytes + HEADER_SIZE;
 }
 
+/// v2.0 madde 6 (bkz. plan dosyası §5, Model B): `ptr[T]`in heap-yönetimli
+/// `T` İçİn `ptr_read`/`ptr_write`inin memcpy-tabanlı KOPYALAMA adımı —
+/// düz, ARC-farkında OLMAYAN bir bayt kopyası (RETAIN sorumluluğu tamamen
+/// ÇAĞIRAN TARAFTADIR — codegen KOPYALADIKTAN SONRA iç içe heap alanlarını
+/// AYRICA retain eder, bkz. `calls.zig`nin `genTypedPtrReadClass`ı).
+/// `dst`/`src` HİÇBİR ZAMAN ÇAKIŞMAZ (`dst` HER ZAMAN TAZE bir `nox_rc_
+/// alloc` tahsisi, `src` KULLANICININ KENDİ, BAĞIMSIZ adresidir).
+pub export fn nox_raw_memcpy(dst: ?*anyopaque, src: ?*anyopaque, len: usize) void {
+    if (len == 0) return;
+    const d: [*]u8 = @ptrCast(dst orelse return);
+    const s: [*]const u8 = @ptrCast(src orelse return);
+    @memcpy(d[0..len], s[0..len]);
+}
+
 /// Refcount'u bir artırır (bir değer başka bir isme/alana atandığında).
 /// Faz MN.1 (bkz. plan dosyası "LLVM-only atomic ARC"): bu fonksiyon
 /// ZATEN gerçek bir çağrı (inline EDİLMİYOR — bkz. `codegen_qbe/

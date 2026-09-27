@@ -1,0 +1,69 @@
+class Box:
+    def __init__(self: Box, n: int, s: str) -> None:
+        self.n = n
+        self.s = s
+
+# v2.0 madde 6 (§5, Model B): sınıf-DIŞI heap T (`str`) — stride HER
+# ZAMAN 8 (SADECE bir pointer), bu YÜZDEN "sizeof(T) bayt kopyala"
+# KENDİLİĞİNDEN Model A'ya (yükle + retain) İNDİRGENİR: `ptr_read`in
+# döndürdüğü değer, `*p`deki AYNI temel string'e bir REFERANSTIR
+# (bağımsız bir kopya DEĞİL) — ama YİNE DE doğru retain edilmiş,
+# sızıntısız/UAF'siz bir referanstır.
+def str_model_a_degenerate() -> None:
+    lowlevel:
+        holder: list[str] = ["hello", "world"]
+        base: ptr = detach(holder)
+        base_addr: int = ptr_to_int(base)
+        elems: ptr[str] = ptr[str](base_addr + 16)
+        print(ptr_read(elems))
+        print(ptr_read(ptr_offset(elems, 1)))
+        ptr_write(elems, "overwritten")
+        print(ptr_read(elems))
+
+# v2.0 madde 6 (§5, Model B): `class` T — stride `sizeof(Box)` (8'den
+# BÜYÜK), bu YÜZDEN GERÇEK bir `nox_rc_alloc` + `nox_raw_memcpy` +
+# İÇ İÇE heap alanların (`s`) retain-fixup'ı. `ptr_read`in döndürdüğü
+# `Box`, `*p`deki ORİJİNALDEN TAMAMEN BAĞIMSIZ bir kopyadır — biri
+# mutasyona uğrasa/`*p`nin ham belleği harici olarak değiştirilse BİLE
+# ÖTEKİ ETKİLENMEZ (aşağıdaki test BUNU doğrudan kanıtlar).
+def box_model_b_independent_copy() -> None:
+    b: Box = Box(42, "hi")
+    lowlevel:
+        base: ptr = detach(b)
+        base_addr: int = ptr_to_int(base)
+        p: ptr[Box] = ptr[Box](base_addr)
+        # okuma ÖNCESİ değer
+        print(ptr_read(p).n)
+        print(ptr_read(p).s)
+        # `*p`nin ham belleğini, `ptr_read`in ürettiği KOPYADAN TAMAMEN
+        # BAĞIMSIZ bir yoldan (çıplak `ptr` + `TAG_SIZE`=8'den hemen
+        # sonraki `n` alanı) DOĞRUDAN bozar:
+        n_field_ptr: ptr = ptr_add(base, 8)
+        ptr_write_int(n_field_ptr, 999999)
+        # `ptr_read`in ÖNCEDEN ürettiği kopyalar ZATEN BAĞIMSIZ
+        # olduğundan (yukarıdaki iki `print`in KENDİSİ birer TEMPORARY
+        # tüketimiydi), bu harici bozulmadan ETKİLENMEZLER — yeniden
+        # okursak GÖRECEĞİMİZ TEK şey `*p`nin GERÇEKTEN bozulduğu:
+        print(ptr_read(p).n)
+        # `detach`in AÇTIĞI döngüyü `adopt` İLE KAPAT (bkz.
+        # `lowlevel_detach_adopt_roundtrip.nox`nin AYNI deseni) — `b`nin
+        # ORİJİNAL bloğu normal ARC izlemesine GERİ DÖNER VE fonksiyon
+        # çıkışında doğru şekilde serbest bırakılır (`detach` TEK BAŞINA
+        # KALICI bir izleme-dışı bırakma OLDUĞUNDAN, bkz. §9.5).
+        b_closed: Box = adopt(base)
+
+def box_model_b_write_roundtrip() -> None:
+    b: Box = Box(1, "a")
+    c: Box = Box(2, "bb")
+    lowlevel:
+        base: ptr = detach(b)
+        base_addr: int = ptr_to_int(base)
+        p: ptr[Box] = ptr[Box](base_addr)
+        ptr_write(p, c)
+        print(ptr_read(p).n)
+        print(ptr_read(p).s)
+        b_closed: Box = adopt(base)
+
+str_model_a_degenerate()
+box_model_b_independent_copy()
+box_model_b_write_roundtrip()

@@ -168,6 +168,15 @@ pub const Type = union(enum) {
     optional: *const Type,
     /// v2.0 madde 4 (bkz. FixedIntKind'in belge notu).
     fixed_int: FixedIntKind,
+    /// v2.0 madde 6: `ptr[T]` — çıplak `ptr`in (satır 152, payload'sız,
+    /// ARC-İZLENMEYEN OPAK işaretçi — BU AYRI, YENİ varyant onun yerini
+    /// ALMAZ, semver stabilite garantisi İçİn TAMAMEN DEĞİŞMEDEN kalır)
+    /// TİPLİ karşılığı. `T` HERHANGİ bir tip OLABİLİR (skaler/sabit-
+    /// genişlikli/heap-yönetimli DAHİL — kullanıcının BİLİNÇLİ kararı,
+    /// bkz. plan dosyası) — okuma/yazma `T`ye göre TİP-DENETİMLİDİR, AMA
+    /// `ptr[T]`nin KENDİSİ HÂLÂ ARC-İZLENMEZ (ne `detach`/`adopt`'un ne
+    /// de `lowlevel`in güven sınırını GENİŞLETMEZ, sadece BİÇİMLENDİRİR).
+    typed_ptr: *const Type,
 };
 
 pub const Dict = struct { key: *const Type, value: *const Type };
@@ -186,6 +195,7 @@ pub fn eql(a: Type, b: Type) bool {
         .task_local => |elem_a| eql(elem_a.*, b.task_local.*),
         .optional => |elem_a| eql(elem_a.*, b.optional.*),
         .fixed_int => |k_a| k_a == b.fixed_int,
+        .typed_ptr => |elem_a| eql(elem_a.*, b.typed_ptr.*),
         .dict => |d_a| eql(d_a.key.*, b.dict.key.*) and eql(d_a.value.*, b.dict.value.*),
         .func => |f_a| blk: {
             const f_b = b.func;
@@ -246,6 +256,11 @@ pub fn format(t: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         },
         .ptr => try writer.writeAll("ptr"),
         .fixed_int => |k| try writer.writeAll(k.name()),
+        .typed_ptr => |elem| {
+            try writer.writeAll("ptr[");
+            try format(elem.*, writer);
+            try writer.writeAll("]");
+        },
         .dict => |d| {
             try writer.writeAll("dict[");
             try format(d.key.*, writer);

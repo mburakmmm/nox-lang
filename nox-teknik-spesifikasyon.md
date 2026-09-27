@@ -24079,6 +24079,124 @@ layout,calls,codegen}.zig`, `tests/golden/{codegen_cases,typecheck_cases}`.
 
 ---
 
+## 3.194 v2.0 stabilizasyon yol haritası, madde 6 — Tipli `ptr[T]`
+
+Faz F.3'ün (v0.x döneminde eklenen) opak, TİPSİZ `ptr`i (9 `lowlevel`-
+only yerleşik: `ptr_from_int`/`ptr_to_int`/`ptr_add`/`ptr_read_*`/
+`ptr_write_*`, artı `detach`/`adopt`) GENİŞLETMEDEN, YANINA EKLENEN
+YENİ bir generic tip: `ptr[T]`. Madde 5'in `sizeof(T)`u bunun doğal
+temel taşı — `ptr_offset`in stride'ı BİREBİR AYNI formülü yeniden
+kullanır.
+
+### Tasarım kararları (kullanıcı tarafından SABİTLENDİ)
+
+- **Çıplak `ptr` + 9 mevcut yerleşik TAMAMEN DEĞİŞMEDEN kalır** —
+  `ptr[T]` YENİ bir tip, geriye dönük UYUMSUZ bir DEĞİŞİKLİK DEĞİL
+  (VERSIONING.md §2 semver garantisi).
+- **`T` HERHANGİ bir tip olabilir** — skaler/sabit-genişlikli kind'lar
+  KADAR heap-yönetimli tipler (sınıf/`str`/`list`/`dict`) DAHİL.
+  Kullanıcı ARC'ı bypass eden riski AÇIKÇA kabul etti (`detach`/
+  `adopt`/`lowlevel` İLE AYNI güven modeli, bkz. AGENTS.md §9.5).
+- **`ptr_offset(p, n)`** `sizeof(T)` İLE ÖLÇEKLENİR — `ptr_add`dan
+  (çıplak `ptr`, bayt-granüler, ÖLÇEKSİZ) BİLEREK AYRI bir isim (bu kod
+  tabanında argüman-tipine göre "overload" HİÇBİR YERDE yok).
+- **Heap-yönetimli `T` İçİn `ptr_read`/`ptr_write`: Model B** — GERÇEK
+  memcpy-tabanlı kopyalama (`adopt`in "aynı referansı damgala" sıfır-
+  maliyetli MEKANİZMASINDAN FARKLI). Sınıf-DIŞI heap tipler (`str`/
+  `list`/`dict`/`closure`) `sizeof`e göre HER ZAMAN 8 bayt (SADECE bir
+  pointer) OLDUĞUNDAN, "sizeof(T) bayt kopyala" bu tipler İçİn
+  KENDİLİĞİNDEN "yükle + retain et"e (Model A'nın KENDİSİ) İNDİRGENİR
+  — AYRI bir özel durum GEREKMEZ. Model B'nin GERÇEKTEN FARK YARATTIĞI
+  TEK yer `class` T'dir (`total_size` GERÇEKTEN 8'den BÜYÜK): YENİ bir
+  `nox_rc_alloc` + `nox_raw_memcpy` (YENİ runtime yardımcısı,
+  `runtime/alloc/arc.zig` — bu kod tabanında QBE `blit` sarmalayıcısı
+  hiç YOKTU) + `cinfo.fields`i gezip HER heap-yönetimli alanı KOPYALANAN
+  adresten okuyup retain eden bir döngü (`genListAppend`in büyüme
+  yolundaki "kopyalanan elemanları retain et" deseniyle BİREBİR AYNI
+  gerekçe).
+- **FFI/spawn/thread-transfer sınırlarından `ptr[T]`, `T` NE OLURSA
+  OLSUN, çıplak `ptr` İLE AYNI şekilde HER ZAMAN güvenli sayılır** —
+  `isFfiSafeType`/`isSpawnParamSafeType`/`isThreadTransferSafeType`nin
+  HER switch'ine `.typed_ptr` bare `.ptr` İLE AYNI gruba eklendi.
+
+### Kurulum ve okuma/yazma
+
+- **`ptr[T](addr: int) -> ptr[T]`**: `checkGenericConstruct`/
+  `genGenericConstruct`e (`Channel[T](cap)`/`TaskLocal[T]()`nin AYNI,
+  `checkCall`dan BAĞIMSIZ isim-bazlı dispatch mekanizması) YENİ bir
+  `"ptr"` dalı — `T` SÖZDİZİMİNDE AÇIKÇA yazılı OLDUĞUNDAN `adopt`in
+  "atama hedefinden tip çıkar" mekanizmasına HİÇ GEREK YOK. Codegen
+  SADECE `addr`i OLDUĞU GİBİ T'nin betimleyicisiyle ETİKETLER — SIFIR
+  runtime maliyeti.
+- **Skaler `T` İçİn `ptr_read`/`ptr_write`**: madde 5'in `narrowLoad`/
+  `narrowStore`ını (`genTypedPtrLoad`/`genTypedPtrStore`, YENİ küçük
+  sarmalayıcılar) YENİDEN KULLANIR, AMA `layout_mode`i HER ZAMAN
+  `.packed_` GİBİ ele alır: `ptr[T]`nin ÇALIŞMA-zamanı adresi (bir
+  sınıf alanının offsetinin AKSİNE) HİÇBİR ZAMAN statik olarak hizalı
+  KANITLANAMAZ, bu YÜZDEN dar OLMAYAN genişlikler (u32/i32/u64/i64/
+  int/float/bool) İçİn BİLE KOŞULSUZ `qbeLoadUnaligned`/
+  `qbeStoreUnaligned` kullanılır (dar kind'lar — u8/i8/u16/i16 — ZATEN
+  bayt/yarım-kelime granüler, hizalama SORUN DEĞİL).
+- **Codegen'in `elem_qtype`/`elem_heap_info`/`elem_is_str`/
+  `elem_fixed_int` alan ailesi** (`list[T]`/`Task[T]`/vb. İçİn ZATEN
+  var olan "eleman betimleyicisi") `ptr[T]`nin `T`sini taşımak İçİn
+  YENİDEN KULLANILDI — YENİ alan GEREKMEDİ, SADECE `HeapKind`e YENİ,
+  AYIRT edici bir `.typed_ptr` etiketi eklendi (`isHeapManaged`e
+  KESİNLİKLE EKLENMEDİ — `.task`/`.channel` İLE AYNI dışlanmış
+  kategori, ARC'a KATILMAZ).
+
+### `lowlevel:` içindeki heap-yönetimli değerlerin YENİ, keşfedilen sınırı
+
+`ptr_read`in `class` T dalı, `lowlevel:` bloğu TARİHİNDE İLK KEZ,
+arena/stack-elision OLMADAN GERÇEK bir `nox_rc_alloc` tahsisi
+ÜRETEBİLEN bir yol açtı. Deneyerek doğrulandı: `checkNoLowlevelEscape`
+(ÖNCEDEN VAR olan, `detach`/`adopt`in güven sınırı) heap-yönetimli
+HERHANGİ bir değerin `in_lowlevel_depth > 0` İKEN (a) DIŞARIYA
+(bloktan sonraki bir değişkene) ATANMASINI VE (b) bir ALAN
+ATAMASININ HEDEFİ olarak MUTASYONA UĞRATILMASINI KOŞULSUZ ENGELLER —
+SADECE `.attribute` OKUMASI (`ptr_read(p).alan`) VE bir İSME HİÇ
+BAĞLANMADAN TEMPORARY olarak tüketilmek SERBESTTİR (`genFieldRead`in
+"taze bir tabanı okuduktan HEMEN SONRA serbest bırak" mekanizması BU
+kısıtlamadan BAĞIMSIZ çalışır). SONUÇ: `ptr_read(p)`in sonucunu
+`lowlevel:` İÇİNDE İSİMLİ bir yerele BAĞLAMAK (`b2: Box = ptr_read(p)`)
+o kopyayı KALICI olarak SIZDIRIR (release YOLU YOK) — DOĞRU kullanım
+YA doğrudan `.attribute` okuması (`ptr_read(p).n`) YA DA orijinal
+`detach`i `adopt(base)` İLE KAPATIP normal ARC izlemesine GERİ DÖNMEK
+(`lowlevel_detach_adopt_roundtrip.nox`nin ZATEN kurduğu desen). Bu YENİ
+bir KISITLAMA DEĞİL — `checkNoLowlevelEscape` HER ZAMAN böyleydi, SADECE
+`ptr_read`in class dalından ÖNCE hiçbir kod yolu bunu TETİKLEMEMİŞTİ.
+
+### Doğrulama
+
+`zig build test` (Debug) SIFIR regresyon. Golden testler:
+`typed_ptr_scalar_and_offset.nox` (`sizeof`e karşı çapraz-doğrulanmış
+`ptr_offset` stride'ı — u8/i32/int/Point; skaler round-trip — u8/i16/
+i32/int/float/bool, İÇİNDE hizasız (tek bayt kaydırılmış) bir i16/i32
+erişimi DAHİL; HEM QBE HEM `--release`), `typed_ptr_heap_managed_
+model_ab.nox` (Model A degenerasyonu — `str`, paylaşılan referans;
+Model B — `class`, harici bellek bozulmasından BAĞIMSIZ GERÇEK bir
+kopya, İÇ İÇE `str` alanının doğru retain edildiği), 2 YENİ
+`typecheck_cases/err_typed_ptr_*` (lowlevel-dışı kullanım, `ptr_write`
+tip uyuşmazlığı).
+
+### Bilinçli olarak kapsam dışı
+
+- `ptr[U]` (U bir GENERİK fonksiyon tip parametresiyken) — SADECE
+  SOMUT `T` desteklenir.
+- `list[ptr[T]]`/`dict[K, ptr[T]]` — konteyner elemanı olarak `ptr[T]`.
+- `volatile_load`/`store`/MMIO (roadmap'in AYRI, SONRAKİ maddesi — §7).
+- `checkNoLowlevelEscape`nin yukarıda belgelenen sınırını GEVŞETME
+  (ör. `ptr_read`in class-dalı sonucuna "güvenli escape" İZNİ VERME) —
+  KAPSAMLI bir tasarım gerektirir, ŞİMDİ YARIM yapılmadı.
+
+### Kritik dosyalar
+
+`compiler/typecheck/{types,checker}.zig`, `compiler/codegen_qbe/{types,
+registration,calls,codegen}.zig`, `runtime/alloc/arc.zig`
+(`nox_raw_memcpy`), `tests/golden/{codegen_cases,typecheck_cases}`.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

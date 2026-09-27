@@ -200,8 +200,39 @@ pub fn genHpyMarshalTrailingArgs(self: *Codegen, mc_temp: []const u8, trailing: 
 /// `ptr_read_float`/`ptr_read_bool`/`ptr_write_int`/`ptr_write_float`/
 /// `ptr_write_bool`/`detach`nin PAYLAŞILAN "yalnızca lowlevel: içinde"
 /// isim-kümesi.
+/// v2.0 madde 6 (bkz. plan dosyası §3): `ptr[T]`in stride'ı — `sizeof(T)`in
+/// KENDİ formülüyle (bkz. bu dosyanın `sizeof`/`alignof` dalı) BİREBİR
+/// AYNI: `T` HER ZAMAN statik olarak bilindiğinden ÇALIŞMA-zamanı
+/// `sizeof()` çağrısı GEREKMEZ, DERLEME-zamanı bir SABİT döner.
+pub fn typedPtrStride(self: *Codegen, p: Value) usize {
+    if (p.elem_heap_info) |ehi| {
+        if (ehi.heap == .class) return self.classes.get(ehi.class_name.?).?.total_size;
+        return 8; // str/list/dict/closure — HER ZAMAN SADECE bir pointer
+    }
+    return abi.storageSizeOf(p.elem_qtype, p.elem_fixed_int);
+}
+
+/// v2.0 madde 6 (bkz. plan dosyası §4): skaler `T` İçİn `ptr_read` —
+/// madde 5'in `narrowLoad`ını YENİDEN KULLANIR, AMA `layout_mode`i HER
+/// ZAMAN `.packed_` GİBİ ele alır: `ptr[T]`nin ÇALIŞMA-zamanı adresi (bir
+/// sınıf alanının offsetinin AKSİNE) HİÇBİR ZAMAN statik olarak hizalı
+/// KANITLANAMAZ, bu YÜZDEN dar OLMAYAN genişlikler İçİn BİLE KOŞULSUZ
+/// hizasız yükleme kullanılır.
+pub fn genTypedPtrLoad(self: *Codegen, p: Value) CodegenError!Value {
+    const ti = types.TypeInfo{ .qtype = p.elem_qtype, .fixed_int = p.elem_fixed_int };
+    const dst = try self.newTemp();
+    try self.narrowLoad(dst, ti, .packed_, p.text);
+    return .{ .text = dst, .qtype = p.elem_qtype, .fixed_int = p.elem_fixed_int };
+}
+
+/// `genTypedPtrLoad`in yazma yönü — bkz. onun belge notu, AYNI gerekçe.
+pub fn genTypedPtrStore(self: *Codegen, p: Value, v: Value) CodegenError!void {
+    const ti = types.TypeInfo{ .qtype = p.elem_qtype, .fixed_int = p.elem_fixed_int };
+    try self.narrowStore(v.text, ti, .packed_, p.text);
+}
+
 fn isPtrManualBuiltin(name: []const u8) bool {
-    const names = [_][]const u8{ "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach" };
+    const names = [_][]const u8{ "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach", "ptr_offset", "ptr_read", "ptr_write" };
     for (names) |n| {
         if (std.mem.eql(u8, n, name)) return true;
     }
@@ -734,6 +765,96 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     const p = try self.genExpr(c.args[0]);
                     const v = try self.genExpr(c.args[1]);
                     try self.qbeStore(.w, v.text, p.text);
+                    return .{ .text = "0", .qtype = .none };
+                }
+                // v2.0 madde 6 (bkz. plan dosyası §3): `ptr_offset(p: ptr[T],
+                // n: int) -> ptr[T]` — `sizeof(T)`e göre ÖLÇEKLENMİŞ, `T`
+                // HER ZAMAN statik olarak bilindiğinden DERLEME-zamanı SABİTİ
+                // bir çarpan (`typedPtrStride`, `sizeof`in KENDİ formülüyle
+                // BİREBİR AYNI).
+                if (std.mem.eql(u8, name, "ptr_offset")) {
+                    if (c.args.len != 2) return error.Unsupported;
+                    const p = try self.genExpr(c.args[0]);
+                    const n = try self.genExpr(c.args[1]);
+                    const stride = self.typedPtrStride(p);
+                    const byte_off = try self.newTemp();
+                    try self.qbeOp2Imm(byte_off, .l, "mul", n.text, @intCast(stride));
+                    const new_addr = try self.newTemp();
+                    try self.qbeOp2(new_addr, .l, "add", p.text, byte_off);
+                    return .{ .text = new_addr, .qtype = .l, .heap = .typed_ptr, .elem_qtype = p.elem_qtype, .elem_heap_info = p.elem_heap_info, .elem_is_str = p.elem_is_str, .elem_fixed_int = p.elem_fixed_int };
+                }
+                // v2.0 madde 6 (bkz. plan dosyası §5): `ptr_read(p: ptr[T])
+                // -> T`. Skaler `T` İçİn dar/hizasız yükleme
+                // (`genTypedPtrLoad`). Heap-yönetimli `T` İçİn Model B:
+                // sınıf-DIŞI (str/list/dict/closure, HER ZAMAN 8-baytlık
+                // POINTER) "yükle + retain et"e (Model A'nın KENDİSİ)
+                // KENDİLİĞİNDEN İNDİRGENİR; `class` T İçİn GERÇEK memcpy +
+                // İÇ İÇE heap alanların retain-fixup'ı.
+                if (std.mem.eql(u8, name, "ptr_read")) {
+                    if (c.args.len != 1) return error.Unsupported;
+                    const p = try self.genExpr(c.args[0]);
+                    if (p.elem_heap_info) |ehi| {
+                        if (ehi.heap == .class) {
+                            const cinfo = self.classes.get(ehi.class_name.?).?;
+                            const stride_lit = try std.fmt.allocPrint(self.allocator, "{d}", .{cinfo.total_size});
+                            const new_ptr = try self.newTemp();
+                            try self.qbeCall(.{ .name = new_ptr, .ty = .l }, "$nox_rc_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = stride_lit } });
+                            try self.qbeCall(null, "$nox_raw_memcpy", &.{ .{ .ty = .l, .text = new_ptr }, .{ .ty = .l, .text = p.text }, .{ .ty = .l, .text = stride_lit } });
+                            for (cinfo.fields.items) |f| {
+                                if (!isHeapManaged(f.info.heap)) continue;
+                                const addr = try self.newTemp();
+                                try self.qbeOp2Imm(addr, .l, "add", new_ptr, @intCast(f.offset));
+                                const fv = try self.newTemp();
+                                try self.qbeLoad(fv, .l, .l, addr);
+                                try self.emitInlineRetain(fv, f.info.heap);
+                            }
+                            return .{ .text = new_ptr, .qtype = .l, .heap = .class, .class_name = ehi.class_name };
+                        }
+                        // Sınıf-DIŞI heap T (str/list/dict/closure) — stride
+                        // HER ZAMAN 8 (SADECE bir pointer), bu YÜZDEN "T bayt
+                        // kopyala" KENDİLİĞİNDEN Model A'ya (yükle+retain)
+                        // İNDİRGENİR, AYRI bir memcpy GEREKMEZ.
+                        const loaded = try self.newTemp();
+                        try self.qbeLoadUnaligned(loaded, .l, .l, p.text);
+                        try self.emitInlineRetain(loaded, ehi.heap);
+                        return .{ .text = loaded, .qtype = .l, .heap = ehi.heap, .class_name = ehi.class_name, .elem_qtype = ehi.elem_qtype, .elem_heap_info = ehi.nested, .elem_is_str = ehi.elem_is_str, .dict_info = ehi.dict_info, .func_sig = ehi.func_sig };
+                    }
+                    return try self.genTypedPtrLoad(p);
+                }
+                // v2.0 madde 6: `ptr_write(p: ptr[T], v: T) -> None`. `v`
+                // ÇAĞIRANIN sahipliğinde KALIR (normal alan-atamasının
+                // "takma ad İSE retain et" deseni, `retainIfAliasing`) —
+                // `*p`de ÖNCEDEN NE OLURSA OLSUN ASLA release EDİLMEZ (raw
+                // bellek, GEÇMİŞİ BİLİNMİYOR — `detach`İLE AYNI güven sınırı).
+                if (std.mem.eql(u8, name, "ptr_write")) {
+                    if (c.args.len != 2) return error.Unsupported;
+                    const p = try self.genExpr(c.args[0]);
+                    const v = try self.genExpr(c.args[1]);
+                    if (p.elem_heap_info) |ehi| {
+                        if (ehi.heap == .class) {
+                            const cinfo = self.classes.get(ehi.class_name.?).?;
+                            const stride_lit = try std.fmt.allocPrint(self.allocator, "{d}", .{cinfo.total_size});
+                            try self.qbeCall(null, "$nox_raw_memcpy", &.{ .{ .ty = .l, .text = p.text }, .{ .ty = .l, .text = v.text }, .{ .ty = .l, .text = stride_lit } });
+                            // `v`nin KENDİSİ hâlâ çağıranda kalır (KENDİ
+                            // sahipliği DEĞİŞMEDİ) — AMA `*p`deki YENİ kopyanın
+                            // İÇ İÇE heap alanları ARTIK BAĞIMSIZ bir ikinci
+                            // referans taşıyor, bu YÜZDEN retain-fixup AYNI
+                            // `ptr_read`in class dalıyla BİREBİR AYNI gerekçe.
+                            for (cinfo.fields.items) |f| {
+                                if (!isHeapManaged(f.info.heap)) continue;
+                                const addr = try self.newTemp();
+                                try self.qbeOp2Imm(addr, .l, "add", p.text, @intCast(f.offset));
+                                const fv = try self.newTemp();
+                                try self.qbeLoad(fv, .l, .l, addr);
+                                try self.emitInlineRetain(fv, f.info.heap);
+                            }
+                        } else {
+                            const retained_v = try self.retainIfAliasing(c.args[1], v);
+                            try self.qbeStoreUnaligned(.l, retained_v.text, p.text);
+                        }
+                    } else {
+                        try self.genTypedPtrStore(p, v);
+                    }
                     return .{ .text = "0", .qtype = .none };
                 }
                 // `detach(x) -> ptr` — `x` çıplak bir isim OLMAK ZORUNDADIR
@@ -1901,6 +2022,33 @@ pub fn genListPop(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Val
 /// GenericConstruct.resolved_class_name`in belge notu) — AÇIK tip argümanlı
 /// bir kurucu çağrısı.
 pub fn genGenericConstruct(self: *Codegen, g: ast.GenericConstruct) CodegenError!Value {
+    // v2.0 madde 6: `ptr[T](addr)` — SIFIR runtime maliyeti, `addr`
+    // değeri OLDUĞU GİBİ `T`nin betimleyicisiyle ETİKETLENİR. 9 `ptr_*`
+    // yerleşiğinin AYNI çift-kontrol deseni (checker `requireLowlevel`
+    // ZATEN doğruladı, BURADA AYRICA savunmacı olarak TEKRAR kontrol
+    // edilir — `Channel`/`TaskLocal` dallarının AKSİNE, `ptr` ailesinin
+    // KENDİ, DAHA SIKI hassasiyeti).
+    if (std.mem.eql(u8, g.name, "ptr")) {
+        try checkInsideLowlevel(self);
+        if (g.type_args.len != 1 or g.args.len != 1) return error.Unsupported;
+        const elem = try self.resolveType(g.type_args[0]);
+        const addr_val = try self.genExpr(g.args[0]);
+        var elem_heap_info: ?*const ElemHeapInfo = null;
+        if (elem.heap == .class or elem.heap == .list or elem.heap == .str or elem.heap == .closure or elem.heap == .dict) {
+            const info = try self.allocator.create(ElemHeapInfo);
+            info.* = .{ .heap = elem.heap, .class_name = elem.class_name, .elem_qtype = elem.elem_qtype, .nested = elem.elem_heap_info, .elem_is_str = elem.elem_is_str, .func_sig = elem.func_sig, .dict_info = elem.dict_info };
+            elem_heap_info = info;
+        }
+        return .{
+            .text = addr_val.text,
+            .qtype = .l,
+            .heap = .typed_ptr,
+            .elem_qtype = elem.qtype,
+            .elem_heap_info = elem_heap_info,
+            .elem_is_str = elem.heap == .str,
+            .elem_fixed_int = elem.fixed_int,
+        };
+    }
     // Faz P2.1: checker `resolved_class_name`i YALNIZCA kullanıcı-tanımlı
     // generic sınıf dalında doldurur (`Channel`/`ThreadChannel` İçin HER
     // ZAMAN `null` kalır) — dolu İSE, sıradan `ClassName(args)` kurucu
