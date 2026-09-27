@@ -14,6 +14,39 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.104.0]
+
+### Eklendi
+
+- **`@repr("C")`/`@packed` sınıf düzeni decorator'ları + `sizeof`/
+  `alignof`/`offsetof` — v2.0 yol haritasının 5. maddesi (bkz.
+  nox-teknik-spesifikasyon.md §3.193)**: bugüne kadar HER sınıf alanı
+  uniform 8-baytlık bir slotta saklanıyordu (`class Point: x: u8` BİLE
+  8 bayt kaplıyordu). Artık:
+  - `@repr("C")`: her alan KENDİ doğal genişliğine (1/2/4/8) göre
+    hizalanır, standart C padding kuralı uygulanır.
+  - `@packed`: SIFIR padding, alanlar bayt-bitişik.
+  - `sizeof(T)`/`alignof(T)`/`offsetof(T, "alan")`: derleme-zamanı
+    sabitleri (`usize` döner), TÜM tipler üzerinde çalışır (sabit-
+    genişlikli kind'lar, `int`/`float`/`bool`/`str`, HERHANGİ bir sınıf).
+  - `@repr("C")`/`@packed` sınıflar tekli kalıtıma VE vtable dispatch'e
+    TAM uyumlu (gerçek bir `Animal`/`Dog` hiyerarşisiyle doğrulandı).
+  - Sınıf başlığı (çalışma-zamanı tag + varsa vtable pointer) HER ÜÇ
+    modda da DEĞİŞMEZ — açıkça belgelenen, "saf C ABI DEĞİL" bir ödün.
+
+### Düzeltildi
+
+- **2 gerçek, çalıştırılmadan önce bulunan hata** (yukarıdaki özelliği
+  eklerken ortaya çıktı): dar (`u8`/`i8`/`u16`/`i16`) bir sınıf alanının
+  okunması/yazılması ÖNCEDEN her zaman 4 baytlık bir yükleme/saklama
+  kullanıyordu — `@packed` bir sınıfta bu, komşu alanın baytlarına
+  taşıp veri bozulmasına yol açıyordu (`print(p.x)` "513" gibi yanlış
+  bir değer basıyordu). Ayrıca sınıf inşasının alan sıfırlama adımı
+  koşulsuz 8 bayt yazıyordu — `@packed` bir sınıfın son alanı 8 bayttan
+  darsa bu, tahsis edilen bellekten taşardı (yığın bozulması riski).
+  İkisi de düzeltildi; varsayılan (dekore edilmemiş) sınıfların davranışı
+  bit-bit değişmedi.
+
 ## [1.103.0]
 
 ### Eklendi

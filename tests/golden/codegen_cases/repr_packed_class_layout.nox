@@ -1,0 +1,76 @@
+@repr("C")
+class ReprMixed:
+    a: u8
+    b: u64
+    c: u32
+    d: bool
+    e: str
+
+    def __init__(self) -> None:
+        self.a = u8(1)
+        self.b = 9999999999
+        self.c = u32(42)
+        self.d = True
+        self.e = "hi"
+
+@packed
+class PackedMixed:
+    a: u8
+    b: u32
+    c: u16
+    d: u8
+
+    def __init__(self) -> None:
+        self.a = u8(1)
+        self.b = u32(1000000)
+        self.c = u16(2000)
+        self.d = u8(9)
+
+rm: ReprMixed = ReprMixed()
+print(rm.a)
+print(rm.b)
+print(rm.c)
+print(rm.d)
+print(rm.e)
+print(sizeof(ReprMixed))
+print(offsetof(ReprMixed, "a"))
+print(offsetof(ReprMixed, "b"))
+print(offsetof(ReprMixed, "c"))
+print(offsetof(ReprMixed, "d"))
+print(offsetof(ReprMixed, "e"))
+
+pm1: PackedMixed = PackedMixed()
+pm2: PackedMixed = PackedMixed()
+print(pm1.a)
+print(pm1.b)
+print(pm1.c)
+print(pm1.d)
+print(sizeof(PackedMixed))
+print(offsetof(PackedMixed, "a"))
+print(offsetof(PackedMixed, "b"))
+print(offsetof(PackedMixed, "c"))
+print(offsetof(PackedMixed, "d"))
+print(pm1 == pm2)
+pm2.d = u8(0)
+print(pm1 == pm2)
+
+@packed
+class Animal:
+    id: u8
+    def __init__(self) -> None:
+        self.id = u8(1)
+    def speak(self) -> str:
+        return "..."
+
+@packed
+class Dog(Animal):
+    breed_code: u16
+    def __init__(self) -> None:
+        self.id = u8(2)
+        self.breed_code = u16(500)
+    def speak(self) -> str:
+        return "Woof"
+
+xs: list[Animal] = [Animal(), Dog()]
+for x in xs:
+    print(x.speak())

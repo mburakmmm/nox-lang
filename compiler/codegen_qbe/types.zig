@@ -500,7 +500,19 @@ pub const ClassInfo = struct {
     /// (bkz. `codegen.zig`, `computeDescendantClassIds`) — kalıtıma
     /// KATILMAYAN bir sınıf İçin TEK elemanlı (yalnızca KENDİ id'si).
     descendant_class_ids: []const usize = &.{},
+    /// v2.0 madde 5: `@repr("C")`/`@packed`in ÇÖZÜLMÜŞ sonucu —
+    /// `registerClass`, `cd.decorators`i (checker'ın AYRI, KENDİ
+    /// `Checker.ClassInfo.layout_mode`inden BAĞIMSIZ olarak — checker
+    /// SADECE geçerliliği/taban-tutarlılığını DOĞRULAR, GERÇEK offset
+    /// aritmetiği TAMAMEN BURADA) yeniden ayrıştırıp doldurur.
+    /// `field_base_offset` (TAG_SIZE + varsa VTABLE_PTR_SIZE) HER ÜÇ
+    /// modda da DEĞİŞMEZ — SADECE alan kısmının düzeni değişir (bkz.
+    /// plan dosyasının "açıkça ifşa edilen ödün" notu).
+    layout_mode: ClassLayoutMode = .default,
 };
+
+/// v2.0 madde 5: bkz. `ClassInfo.layout_mode`in belge notu.
+pub const ClassLayoutMode = enum { default, repr_c, packed_ };
 
 pub const RT_PARAM = "%rt";
 /// Faz P1.2: bkz. `CLOSURE_HEADER_SIZE`nin notu — `abi_layout`den RE-EXPORT.

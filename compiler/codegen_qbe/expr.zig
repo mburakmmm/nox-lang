@@ -379,6 +379,62 @@ pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
     };
 }
 
+/// v2.0 madde 5: bir sınıf ALANINI (`ti`) `addr`den, sahibi sınıfın
+/// `layout_mode`ine göre DOĞRU genişlikte okur. `default` modda (BÜYÜK
+/// ÇOĞUNLUK, DEĞİŞMEMİŞ) her zaman `qbeLoad(dst, ti.qtype, ti.qtype,
+/// addr)` — mevcut davranış BİREBİR korunur (204 fixture'lık IR-birebir
+/// garantisi). `repr_c`/`packed_` modda, u8/i8/u16/i16 alanlar (`.w`de
+/// hesaplanan AMA depoda DAHA DAR olan TEK 4 kind, bkz. `abi.zig`nin
+/// `storageSizeOf`u) bayt/yarım-kelime granülerlikli okumaya YÖNLENDİRİLİR
+/// — DİĞER TÜM genişlikler (u32/i32/u64/i64/int/float/bool/str/sınıf-
+/// pointer/vb.) ZATEN kendi doğal genişliğinde depolandığından (bkz.
+/// `abi.zig`nin `nextFieldOffset`i, boyut==hizalama) normal `qbeLoad`
+/// YETERLİDİR — TEK istisna: `packed_` modda ÖNCESİNDE dar bir alan
+/// varsa BU geniş alan bile hizasız bir adreste OLABİLİR, bu YÜZDEN
+/// `packed_`da `qbeLoadUnaligned` kullanılır (`repr_c`da GEREKMEZ — bkz.
+/// `qbeLoadUnaligned`in KENDİ belge notu, hizalama ZİNCİRLEME korunur).
+pub fn narrowLoad(self: *Codegen, dst: []const u8, ti: types.TypeInfo, layout_mode: types.ClassLayoutMode, addr: []const u8) CodegenError!void {
+    if (layout_mode == .default) {
+        try self.qbeLoad(dst, ti.qtype, ti.qtype, addr);
+        return;
+    }
+    if (ti.fixed_int) |k| {
+        switch (k) {
+            .u8 => return self.qbeLoadUB(dst, addr),
+            .i8 => return self.qbeLoadSB(dst, addr),
+            .u16 => return self.qbeLoadUH(dst, addr),
+            .i16 => return self.qbeLoadSH(dst, addr),
+            else => {},
+        }
+    }
+    if (layout_mode == .packed_) {
+        try self.qbeLoadUnaligned(dst, ti.qtype, ti.qtype, addr);
+    } else {
+        try self.qbeLoad(dst, ti.qtype, ti.qtype, addr);
+    }
+}
+
+/// v2.0 madde 5: `narrowLoad`in yazma yönü — bkz. onun belge notu, AYNI
+/// gerekçe.
+pub fn narrowStore(self: *Codegen, value: []const u8, ti: types.TypeInfo, layout_mode: types.ClassLayoutMode, addr: []const u8) CodegenError!void {
+    if (layout_mode == .default) {
+        try self.qbeStore(ti.qtype, value, addr);
+        return;
+    }
+    if (ti.fixed_int) |k| {
+        switch (k) {
+            .u8, .i8 => return self.qbeStoreB(value, addr),
+            .u16, .i16 => return self.qbeStoreH(value, addr),
+            else => {},
+        }
+    }
+    if (layout_mode == .packed_) {
+        try self.qbeStoreUnaligned(ti.qtype, value, addr);
+    } else {
+        try self.qbeStore(ti.qtype, value, addr);
+    }
+}
+
 pub fn genFieldRead(self: *Codegen, a: ast.Attribute) CodegenError!Value {
     const obj = try self.genExpr(a.obj.*);
     if (obj.heap != .class) return error.Unsupported;
@@ -388,7 +444,7 @@ pub fn genFieldRead(self: *Codegen, a: ast.Attribute) CodegenError!Value {
         const addr = try self.newTemp();
         try self.qbeOp2Imm(addr, .l, "add", obj.text, @intCast(f.offset));
         const result = try self.newTemp();
-        try self.qbeLoad(result, f.info.qtype, f.info.qtype, addr);
+        try self.narrowLoad(result, f.info, cinfo.layout_mode, addr);
         // `obj` TAZE bir değerse (ör. `make_car(i).engine`), okunan alanı
         // döndürmeden ÖNCE `obj`'yi serbest bırakırız (bkz.
         // `releaseIfTemporary`) — ama alanın KENDİSİ heap tipliyse (sınıf
@@ -425,7 +481,7 @@ pub fn genFieldReadFromValue(self: *Codegen, obj: Value, field_name: []const u8)
         const addr = try self.newTemp();
         try self.qbeOp2Imm(addr, .l, "add", obj.text, @intCast(f.offset));
         const result = try self.newTemp();
-        try self.qbeLoad(result, f.info.qtype, f.info.qtype, addr);
+        try self.narrowLoad(result, f.info, cinfo.layout_mode, addr);
         return .{ .text = result, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str, .dict_info = f.info.dict_info, .func_sig = f.info.func_sig, .fixed_int = f.info.fixed_int, .elem_fixed_int = f.info.elem_fixed_int };
     }
     return error.Unsupported;

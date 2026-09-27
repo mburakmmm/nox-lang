@@ -396,6 +396,19 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
     info.base = cd.base;
     info.has_vtable = self.inheriting_classes.contains(cd.name);
     const field_base_offset = TAG_SIZE + (if (info.has_vtable) types.VTABLE_PTR_SIZE else 0);
+    // v2.0 madde 5: `cd.decorators`i BAĞIMSIZ olarak yeniden ayrıştırır
+    // (checker.zig'in `registerClassSignatures`ıyla AYNI mantık, arg
+    // şekli/taban-tutarlılık DOĞRULAMASI checker'da ZATEN yapıldığından
+    // BURADA GÜVENLE varsayılır — sadece SONUCU okur). Faz B: `layout_mode`
+    // BURADA doldurulur AMA offset aritmetiği HENÜZ etkilenmez (Faz D) —
+    // TÜM mevcut IR fixture'larının DEĞİŞMEDEN kalması BUNU KANITLAR.
+    var saw_repr_c = false;
+    var saw_packed = false;
+    for (cd.decorators) |dec| {
+        if (std.mem.eql(u8, dec.name, "repr")) saw_repr_c = true;
+        if (std.mem.eql(u8, dec.name, "packed")) saw_packed = true;
+    }
+    info.layout_mode = if (saw_packed) .packed_ else if (saw_repr_c) .repr_c else .default;
 
     // Faz 7: taban sınıfın (bu noktada `registerClassesInOrder` sayesinde
     // ZATEN TAM kaydedilmiş) alanlarını/metodlarını KOPYALA — "en az
@@ -413,6 +426,15 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
         for (base_info.?.fields.items) |f| try info.fields.append(self.allocator, f);
     }
 
+    // v2.0 madde 5: `@repr("C")`/`@packed` İçin GERÇEK bayt offset'i bir
+    // TAŞINAN "kürsör" İLE hesaplanır — taban sınıf VARSA `base_info.
+    // total_size`ten (base'in KENDİ alanları ZATEN offsetleriyle
+    // KOPYALANDI, kürsör SADECE bu sınıfın KENDİ YENİ alanları İçİn
+    // İLERLER), YOKSA `field_base_offset`ten başlar. `default` mod İçİn
+    // BU DEĞİŞKEN HİÇ KULLANILMAZ — eski `index * FIELD_SLOT_SIZE`
+    // formülü AYNEN korunur (204 fixture'lık IR-birebir garantisi).
+    var layout_cursor: usize = if (base_info) |bi| bi.total_size else field_base_offset;
+
     // Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): AÇIKÇA
     // bildirilen alanlar, `__init__` gövdesi taranmadan ÖNCE (bildirim
     // SIRASIYLA) `info.fields`e eklenir — tipleri `resolveType` İLE
@@ -423,11 +445,12 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
     // "zaten var mı" kontrolü (`exists`), bu ÖNCEDEN eklenmiş alanları
     // OTOMATİK olarak ATLAR — `inferFieldType`e HİÇ uğramazlar.
     for (cd.fields) |fd| {
-        try info.fields.append(self.allocator, .{
-            .name = fd.name,
-            .info = try self.resolveType(fd.type_expr),
-            .offset = field_base_offset + (info.fields.items.len) * FIELD_SLOT_SIZE,
-        });
+        const ft = try self.resolveType(fd.type_expr);
+        const offset = if (info.layout_mode == .default)
+            field_base_offset + (info.fields.items.len) * FIELD_SLOT_SIZE
+        else
+            abi.nextFieldOffset(&layout_cursor, info.layout_mode, ft);
+        try info.fields.append(self.allocator, .{ .name = fd.name, .info = ft, .offset = offset });
     }
     if (init_fd) |init| {
         for (init.body) |stmt| {
@@ -445,13 +468,16 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
             }
             if (exists) continue;
             const ftype = try self.inferFieldType(cd.name, init.params[1..], a.value);
-            try info.fields.append(self.allocator, .{
-                .name = attr.attr,
-                .info = ftype,
-                .offset = field_base_offset + (info.fields.items.len) * FIELD_SLOT_SIZE,
-            });
+            const offset = if (info.layout_mode == .default)
+                field_base_offset + (info.fields.items.len) * FIELD_SLOT_SIZE
+            else
+                abi.nextFieldOffset(&layout_cursor, info.layout_mode, ftype);
+            try info.fields.append(self.allocator, .{ .name = attr.attr, .info = ftype, .offset = offset });
         }
-        info.total_size = field_base_offset + info.fields.items.len * FIELD_SLOT_SIZE;
+        info.total_size = if (info.layout_mode == .default)
+            field_base_offset + info.fields.items.len * FIELD_SLOT_SIZE
+        else
+            layout_cursor;
 
         const iparams = try self.allocator.alloc(TypeInfo, init.params.len - 1);
         for (init.params[1..], 0..) |p, i| iparams[i] = try self.resolveType(p.type_expr);
@@ -466,7 +492,10 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
         info.has_init = bi.has_init;
         info.init_params = bi.init_params;
         info.init_owner = bi.init_owner;
-        info.total_size = field_base_offset + info.fields.items.len * FIELD_SLOT_SIZE;
+        info.total_size = if (info.layout_mode == .default)
+            field_base_offset + info.fields.items.len * FIELD_SLOT_SIZE
+        else
+            layout_cursor;
     } else {
         // `__init__`i olmayan (VE taban sınıfı da OLMAYAN) sınıf (bkz.
         // `ClassInfo.has_init`in belge notu): kurucu 0 argüman alır —
@@ -480,7 +509,10 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
         // yalnızca savunmacı tutarlılık İçin `total_size` yine de
         // alanları HESABA katar.
         info.has_init = false;
-        info.total_size = field_base_offset + info.fields.items.len * FIELD_SLOT_SIZE;
+        info.total_size = if (info.layout_mode == .default)
+            field_base_offset + info.fields.items.len * FIELD_SLOT_SIZE
+        else
+            layout_cursor;
     }
     info.class_id = self.next_class_id;
     self.next_class_id += 1;

@@ -178,6 +178,43 @@ pub fn qbeStoreB(self: *Codegen, value: []const u8, addr: []const u8) CodegenErr
     try self.out.writer.print("    storeb {s}, {s}\n", .{ value, addr });
 }
 
+/// v2.0 madde 5: `qbeLoadUB`nin İMZALI karşılığı — `@repr("C")`/`@packed`
+/// bir sınıfın `i8` alanını okumak İçİn (`u8`/`i8` HER İKİSİ de `storeb`
+/// İLE YAZILIR — bkz. `qbeStoreB`, işaretlilik SADECE OKUMADA fark eder).
+pub fn qbeLoadSB(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+    try self.out.writer.print("    {s} =w loadsb {s}\n", .{ dst, addr });
+}
+
+/// v2.0 madde 5: `u16` alan okuma (`@repr("C")`/`@packed`).
+pub fn qbeLoadUH(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+    try self.out.writer.print("    {s} =w loaduh {s}\n", .{ dst, addr });
+}
+
+/// v2.0 madde 5: `i16` alan okuma (`@repr("C")`/`@packed`).
+pub fn qbeLoadSH(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+    try self.out.writer.print("    {s} =w loadsh {s}\n", .{ dst, addr });
+}
+
+/// v2.0 madde 5: `u16`/`i16` alan yazma (`qbeStoreB`nin yarım-kelime
+/// karşılığı — işaretlilik SADECE OKUMADA fark eder).
+pub fn qbeStoreH(self: *Codegen, value: []const u8, addr: []const u8) CodegenError!void {
+    try self.out.writer.print("    storeh {s}, {s}\n", .{ value, addr });
+}
+
+/// v2.0 madde 5: `@packed` bir sınıfın GENİŞ (u32/u64/int/float/pointer)
+/// bir alanı, ÖNCESİNDE dar bir alan varsa hizasız bir adreste OLABİLİR
+/// — hedef ISA'lar (amd64/arm64) hizasız erişime ZATEN TOLERANSLI
+/// OLDUĞUNDAN, QBE tarafı `qbeLoad`/`qbeStore`den TAMAMEN AYIRT
+/// EDİLEMEZ (bkz. `llvm_emit.zig`nin AYNI-isimli fonksiyonunun belge
+/// notu — orada, LLVM'in KENDİSİ İçİn, GERÇEK bir fark VAR).
+pub fn qbeLoadUnaligned(self: *Codegen, dst: []const u8, dst_ty: QbeType, mem_ty: QbeType, addr: []const u8) CodegenError!void {
+    try qbeLoad(self, dst, dst_ty, mem_ty, addr);
+}
+
+pub fn qbeStoreUnaligned(self: *Codegen, ty: QbeType, value: []const u8, addr: []const u8) CodegenError!void {
+    try qbeStore(self, ty, value, addr);
+}
+
 pub const QbeAllocSize = enum(u8) { four = 4, eight = 8 };
 
 pub fn qbeAlloc(self: *Codegen, dst: []const u8, size: QbeAllocSize, n: usize) CodegenError!void {

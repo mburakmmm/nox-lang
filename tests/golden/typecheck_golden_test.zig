@@ -1350,3 +1350,17 @@ test "golden(typecheck): v2.0 madde 4 — çıplak literal hedef kind'ın aralı
         @embedFile("typecheck_cases/err_fixed_int_literal_out_of_range.expected"),
     );
 }
+
+test "golden(typecheck): v2.0 madde 5 — @repr yalnızca \"C\" argümanını kabul eder" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_repr_bad_arg.nox"),
+        @embedFile("typecheck_cases/err_repr_bad_arg.expected"),
+    );
+}
+
+test "golden(typecheck): v2.0 madde 5 — alt sınıf, taban sınıfın @repr/@packed durumunu eşleştirmelidir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_repr_base_layout_mismatch.nox"),
+        @embedFile("typecheck_cases/err_repr_base_layout_mismatch.expected"),
+    );
+}

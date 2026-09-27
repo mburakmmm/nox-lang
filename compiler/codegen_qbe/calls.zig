@@ -353,6 +353,31 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 try self.releaseIfTemporary(c.args[0], v);
                 return result;
             }
+            // v2.0 madde 5: `sizeof(T)`/`alignof(T)`/`offsetof(T,
+            // "field")` — ÜÇÜ de SAF derleme-zamanı SABİTİ, `genExpr`
+            // çağrısı YOK (bir `int_lit`nin KENDİSİ GİBİ doğrudan bir
+            // tamsayı literali Value'su üretilir, `.fixed_int = .usize`
+            // İLE). `checker.zig` argüman şeklini/geçerliliğini ZATEN
+            // doğruladı — burası SADECE sayıyı hesaplar.
+            if (std.mem.eql(u8, name, "sizeof") or std.mem.eql(u8, name, "alignof")) {
+                if (c.args.len != 1 or c.args[0] != .identifier) return error.Unsupported;
+                const ti = try self.resolveType(.{ .simple = c.args[0].identifier });
+                const n: usize = if (ti.heap == .class)
+                    (if (std.mem.eql(u8, name, "sizeof")) self.classes.get(ti.class_name.?).?.total_size else 8)
+                else
+                    abi.storageSizeOf(ti.qtype, ti.fixed_int);
+                return .{ .text = try std.fmt.allocPrint(self.allocator, "{d}", .{n}), .qtype = .l, .fixed_int = .usize };
+            }
+            if (std.mem.eql(u8, name, "offsetof")) {
+                if (c.args.len != 2 or c.args[0] != .identifier or c.args[1] != .string_lit) return error.Unsupported;
+                const cinfo = self.classes.get(c.args[0].identifier).?;
+                for (cinfo.fields.items) |f| {
+                    if (std.mem.eql(u8, f.name, c.args[1].string_lit)) {
+                        return .{ .text = try std.fmt.allocPrint(self.allocator, "{d}", .{f.offset}), .qtype = .l, .fixed_int = .usize };
+                    }
+                }
+                return error.Unsupported; // erişilemez: checker zaten doğruladı
+            }
             // Faz 14: `hpy_call`/`wasm_call` — bkz. checker.zig'deki
             // eşdeğer not. Runtime'ın `nox_hpy_call`/`nox_wasm_call`sine
             // (bkz. runtime/foreign_bridge.zig) doğrudan çağrıya çevrilir;
@@ -1182,7 +1207,31 @@ pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: Cla
     for (cinfo.fields.items) |f| {
         const addr = try self.newTemp();
         try self.qbeOp2Imm(addr, .l, "add", t, @intCast(f.offset));
-        try self.qbeStoreImmL(0, addr);
+        if (cinfo.layout_mode == .default) {
+            // `default` mod DEĞİŞMEDEN: HER alan zaten 8-baytlık bir slot
+            // (KOŞULSUZ `storel 0` — bir `float` alanı İçİn BİLE GEÇERLİ,
+            // çünkü IEEE754 `0.0`nın bit örüntüsü TÜM-SIFIR, `int`in
+            // sıfırıyla AYNI).
+            try self.qbeStoreImmL(0, addr);
+        } else {
+            // v2.0 madde 5: **GERÇEK, ÇALIŞTIRILMADAN ÖNCE bulunan hata**
+            // — `@packed`/`@repr("C")` bir sınıfın SON alanı 8 bayttan
+            // DARSA (ör. tek bir `u8`), KOŞULSUZ 8-baytlık `storel 0`
+            // `total_size`i AŞIP `nox_rc_alloc`/`nox_arena_alloc`in
+            // AYIRDIĞI bellek bloğundan TAŞARDI (yığın bozulması). BURADA
+            // SADECE alanın KENDİ GERÇEK genişliği kadar sıfırlanır —
+            // BİT ÖRÜNTÜSÜ (0) her tip İçİn (int/float/bool/pointer) AYNI
+            // olduğundan `qtype` yerine SADECE genişliğe göre dallanmak
+            // yeterlidir.
+            const width = abi.storageSizeOf(f.info.qtype, f.info.fixed_int);
+            switch (width) {
+                1 => try self.qbeStoreB("0", addr),
+                2 => try self.qbeStoreH("0", addr),
+                4 => try self.qbeStore(.w, "0", addr),
+                8 => try self.qbeStoreImmL(0, addr),
+                else => unreachable,
+            }
+        }
     }
     // `has_init == false`: sınıfın hiç `__init__`i yok (bkz.
     // `ClassInfo.has_init`in belge notu) — `generateModule` bu sınıf için

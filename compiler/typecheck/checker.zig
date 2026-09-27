@@ -197,7 +197,17 @@ const ClassInfo = struct {
     /// reddeder — bildirilen bir alanın HİÇ atanmadan (ör. heap-tipli İSE
     /// sallanan/null bir işaretçi OLARAK) kalmasını ÖNLER.
     declared_unassigned: std.StringHashMapUnmanaged(void) = .{},
+    /// v2.0 madde 5: `@repr("C")`/`@packed`in ÇÖZÜLMÜŞ sonucu —
+    /// `registerClassSignatures` tarafından doldurulur (bkz. onun belge
+    /// notu). `codegen_qbe`nin KENDİ (bayt-doğru) `ClassInfo`si BUNU
+    /// KULLANMAZ — `cd.decorators`i KENDİSİ BAĞIMSIZ olarak ayrıştırır
+    /// (checker SADECE geçerliliği/tutarlılığı DOĞRULAR, GERÇEK offset
+    /// aritmetiği TAMAMEN codegen tarafındadır).
+    layout_mode: ClassLayoutMode = .default,
 };
+
+/// v2.0 madde 5: bkz. `ClassInfo.layout_mode`in belge notu.
+const ClassLayoutMode = enum { default, repr_c, packed_ };
 
 /// Bir yapısal protokolün (Faz 11) gerektirdiği tek bir metod imzası —
 /// `self` hariç parametre tipleri + dönüş tipi.
@@ -1013,15 +1023,19 @@ pub const Checker = struct {
                 if (self.classes.contains(cd.name) or self.generic_classes.contains(cd.name)) {
                     return self.fail(error.DuplicateDefinition, "sınıf zaten tanımlı: {s}", .{cd.name});
                 }
-                // Faz 1 decorator (bkz. plan dosyası "kapsam DIŞI"): sınıf
-                // decorator'ları PARSE EDİLİR (`ast.ClassDef.decorators`)
-                // ama v1'de HENÜZ desteklenmez — Nox'ta "bir metodu `self`e
-                // bağlı, çağrılabilir bir DEĞER olarak dışarı ver" mekanizması
-                // YOK, bu YÜZDEN sessizce YOK SAYMAK YERİNE AÇIK bir hata
-                // verilir (kullanıcı yanlışlıkla decorator'ının hiçbir ETKİSİ
+                // v2.0 madde 5 (bkz. nox-teknik-spesifikasyon.md §3.19X):
+                // `@repr("C")`/`@packed` ARTIK tanınan İKİ sınıf decorator'ı
+                // — asıl doğrulama (izin-listesi + arg şekli + taban-sınıf
+                // layout-tutarlılığı) `registerClassSignatures`e taşındı
+                // (taban sınıfın `layout_mode`inin BİLİNMESİ gerektiğinden,
+                // BURADAN — Geçiş 1 — ERİŞİLEMEZ). BURADA (Geçiş 1) SADECE
+                // İZİN-LİSTESİNDE OLMAYAN bir decorator adı ERKEN reddedilir
+                // (kullanıcı yanlışlıkla decorator'ının hiçbir ETKİSİ
                 // olmadığını SANMASIN).
-                if (cd.decorators.len > 0) {
-                    return self.fail(error.TypeMismatch, "sınıf decorator'ları henüz desteklenmiyor: @{s} (sınıf: {s}) — v1 yalnızca üst-düzey fonksiyon decorator'larını destekler", .{ cd.decorators[0].name, cd.name });
+                for (cd.decorators) |dec| {
+                    if (!std.mem.eql(u8, dec.name, "repr") and !std.mem.eql(u8, dec.name, "packed")) {
+                        return self.fail(error.TypeMismatch, "sınıf decorator'ları henüz desteklenmiyor: @{s} (sınıf: {s}) — yalnızca @repr(\"C\")/@packed desteklenir", .{ dec.name, cd.name });
+                    }
                 }
                 // Faz P2.1: generic (`type_params.len > 0`) bir sınıf
                 // `self.classes`e ASLA girmez — `registerFunc`in
@@ -2221,6 +2235,28 @@ pub const Checker = struct {
         if (cd.type_params.len > 0) return;
         const info = self.classes.getPtr(cd.name).?; // collectClassNames'de eklendi
         info.base = cd.base;
+        // v2.0 madde 5: `@repr("C")`/`@packed` arg şekli doğrulaması +
+        // `layout_mode` çözümü. `collectClassNames` (Geçiş 1) SADECE
+        // izin-listesindeki adları (`repr`/`packed`) erken doğruladı —
+        // arg şekli VE taban-sınıf tutarlılığı BURADA (taban sınıfın
+        // `layout_mode`i ARTIK BİLİNDİĞİNDEN, `registerClassesInOrder`nin
+        // taban-önce garantisi sayesinde) tamamlanır.
+        var saw_repr_c = false;
+        var saw_packed = false;
+        for (cd.decorators) |dec| {
+            if (std.mem.eql(u8, dec.name, "repr")) {
+                if (dec.args.len != 1 or dec.args[0] != .string_lit or !std.mem.eql(u8, dec.args[0].string_lit, "C")) {
+                    return self.fail(error.TypeMismatch, "@repr yalnızca tek bir \"C\" string argümanını destekler: sınıf {s}", .{cd.name});
+                }
+                saw_repr_c = true;
+            } else if (std.mem.eql(u8, dec.name, "packed")) {
+                if (dec.args.len != 0) {
+                    return self.fail(error.TypeMismatch, "@packed hiçbir argüman almaz: sınıf {s}", .{cd.name});
+                }
+                saw_packed = true;
+            }
+        }
+        info.layout_mode = if (saw_packed) .packed_ else if (saw_repr_c) .repr_c else .default;
         // Faz 7 (tekli kalıtım): taban sınıfın (bu noktada `registerClassesInOrder`
         // sayesinde ZATEN TAM kaydedilmiş) TÜM alanlarını/metodlarını/
         // `init_sig`ini KOPYALA — "en az invaziv strateji" (bkz. Faz 7
@@ -2239,6 +2275,13 @@ pub const Checker = struct {
         if (cd.base) |base_name| {
             const base_info = self.classes.get(base_name) orelse
                 return self.fail(error.UndefinedClass, "sınıf '{s}' bilinmeyen bir taban sınıfa sahip: {s}", .{ cd.name, base_name });
+            // v2.0 madde 5: taban-sınıf layout-tutarlılık kontrolü —
+            // `base_info`nin GÜVENLE (varlığı ZATEN doğrulanmış) burada
+            // olması BEKLENDİĞİNDEN, yukarıdaki `layout_mode` hesabından
+            // SONRA, AMA bu güvenli fetch'İN HEMEN ARDINDAN yapılır.
+            if (info.layout_mode != base_info.layout_mode) {
+                return self.fail(error.TypeMismatch, "sınıf '{s}'in @repr/@packed durumu taban sınıfı '{s}' ile eşleşmiyor (bir sınıf hiyerarşisindeki TÜM sınıflar aynı layout modunu paylaşmalıdır)", .{ cd.name, base_name });
+            }
             var field_it = base_info.fields.iterator();
             while (field_it.next()) |e| try info.fields.put(self.allocator, e.key_ptr.*, e.value_ptr.*);
             var method_it = base_info.methods.iterator();
@@ -5117,6 +5160,37 @@ pub const Checker = struct {
                         return self.fail(error.TypeMismatch, "'{s}' yalnızca int/float/sabit-genişlikli tamsayı tiplerinde çalışır", .{name});
                     }
                     return .{ .fixed_int = target_kind };
+                }
+                // v2.0 madde 5: `sizeof(T)`/`alignof(T)`/`offsetof(T,
+                // "field")` — `T`, çıplak bir tip adı (`.identifier`)
+                // OLMALIDIR; `int(x)`/`u8(x)`nin AKSİNE `checkExpr` BURAYA
+                // HİÇ ÇAĞRILMAZ (bir DEĞİŞKEN aramasına DEĞİL bir TİP
+                // referansına karşılık gelir — `checkExpr`in `.identifier`
+                // dalı bir sınıf/kind adını "tanımsız değişken" SANIP
+                // reddederdi). Kapsam: sabit-genişlikli kind'lar, `int`/
+                // `float`/`bool`/`str`, HERHANGİ bir sınıf (dekore
+                // edilmemiş/varsayılan düzenli DAHİL — kullanıcının BİLE
+                // İSTEDİĞİ, KASITLI olarak geniş kapsam). Üçü de
+                // derleme-zamanı SABİTİ, dönüş `usize` (bkz. codegen.zig'in
+                // `genCall`ı — GERÇEK sayı orada, sınıfların bayt-doğru
+                // `ClassInfo`sinden hesaplanır).
+                if (std.mem.eql(u8, name, "sizeof") or std.mem.eql(u8, name, "alignof")) {
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'{s}' tam olarak 1 argüman alır", .{name});
+                    if (c.args[0] != .identifier) return self.fail(error.TypeMismatch, "'{s}' argümanı bir tip adı (çıplak tanımlayıcı) olmalıdır", .{name});
+                    _ = try self.typeExprToType(.{ .simple = c.args[0].identifier });
+                    return .{ .fixed_int = .usize };
+                }
+                if (std.mem.eql(u8, name, "offsetof")) {
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'offsetof' tam olarak 2 argüman alır (Sınıf, \"alan\")", .{});
+                    if (c.args[0] != .identifier) return self.fail(error.TypeMismatch, "'offsetof' argümanı 1 bir sınıf adı (çıplak tanımlayıcı) olmalıdır", .{});
+                    const t = try self.typeExprToType(.{ .simple = c.args[0].identifier });
+                    if (t != .class) return self.fail(error.TypeMismatch, "'offsetof' yalnızca bir sınıf tipi üzerinde çalışır: {s}", .{c.args[0].identifier});
+                    if (c.args[1] != .string_lit) return self.fail(error.TypeMismatch, "'offsetof' argümanı 2 yalnızca bir string LİTERALİ olabilir", .{});
+                    const cinfo = self.classes.get(t.class) orelse return self.fail(error.UndefinedClass, "bilinmeyen sınıf: {s}", .{t.class});
+                    if (!cinfo.fields.contains(c.args[1].string_lit)) {
+                        return self.fail(error.UndefinedAttribute, "'{s}' sınıfının '{s}' alanı yok", .{ t.class, c.args[1].string_lit });
+                    }
+                    return .{ .fixed_int = .usize };
                 }
                 // Faz 14: `hpy_call`/`wasm_call` — Faz 12/13'ün köprülerini
                 // (bkz. runtime/foreign_bridge.zig) Nox kaynağından

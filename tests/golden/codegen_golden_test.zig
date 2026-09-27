@@ -360,6 +360,11 @@ const fixtures = [_]Fixture{
     // karşılaştırma/`list[T]`/daraltma cast'i/işaretlilik doğruluğu.
     .{ .name = "codegen(çalıştır): v2.0 madde 4 — sabit-genişlikli tamsayı temelleri (aritmetik, list[u8], cast, işaretsiz karşılaştırma)", .kind = .golden, .source = @embedFile("codegen_cases/fixed_int_basic.nox"), .expected_stdout = @embedFile("codegen_cases/fixed_int_basic.expected") },
     .{ .name = "codegen(çalıştır): v2.0 madde 4 — u8 taşması QBE'de (varsayılan) yakalanamaz bir tuzağa düşer", .kind = .uncaught_exception_with_stderr, .source = @embedFile("codegen_cases/fixed_int_overflow_trap.nox"), .expected_stdout = @embedFile("codegen_cases/fixed_int_overflow_trap.expected"), .expected_stderr = "nox: 'u8' tipinde tamsayı taşması — program sonlandırılıyor\n" },
+    // v2.0 madde 5: `@repr("C")`/`@packed` sınıf düzeni + `sizeof`/
+    // `alignof`/`offsetof` — karma alan tipli her iki düzen, hizalama
+    // sınırları, alan okuma/yazma round-trip'i, packed sınıf eşitliği,
+    // VE vtable+kalıtım+packed'in BİRLİKTE çalıştığı bir hiyerarşi.
+    .{ .name = "codegen(çalıştır): v2.0 madde 5 — @repr(\"C\")/@packed sınıf düzeni, sizeof/alignof/offsetof, kalıtım+vtable+packed", .kind = .golden, .source = @embedFile("codegen_cases/repr_packed_class_layout.nox"), .expected_stdout = @embedFile("codegen_cases/repr_packed_class_layout.expected") },
 };
 
 fn runOneFixture(fx: *const Fixture, result: *FixtureResult) void {

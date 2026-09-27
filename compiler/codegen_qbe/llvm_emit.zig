@@ -489,6 +489,61 @@ pub fn qbeStoreB(self: *Codegen, value_raw: []const u8, addr: []const u8) Codege
     try self.out.writer.print("    store i8 {s}, ptr {s}\n", .{ byte_reg, ptr_reg });
 }
 
+/// v2.0 madde 5: `qbeLoadUB`nin İMZALI karşılığı (`i8` alan okuma,
+/// `@repr("C")`/`@packed` sınıf alanları İçin).
+pub fn qbeLoadSB(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+    const ptr_reg = try resolveAddrPtr(self, addr);
+    const byte_reg = try self.newTemp();
+    try self.out.writer.print("    {s} = load i8, ptr {s}\n", .{ byte_reg, ptr_reg });
+    try self.out.writer.print("    {s} = sext i8 {s} to i32\n", .{ dst, byte_reg });
+}
+
+/// v2.0 madde 5: `u16` alan okuma.
+pub fn qbeLoadUH(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+    const ptr_reg = try resolveAddrPtr(self, addr);
+    const half_reg = try self.newTemp();
+    try self.out.writer.print("    {s} = load i16, ptr {s}\n", .{ half_reg, ptr_reg });
+    try self.out.writer.print("    {s} = zext i16 {s} to i32\n", .{ dst, half_reg });
+}
+
+/// v2.0 madde 5: `i16` alan okuma.
+pub fn qbeLoadSH(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+    const ptr_reg = try resolveAddrPtr(self, addr);
+    const half_reg = try self.newTemp();
+    try self.out.writer.print("    {s} = load i16, ptr {s}\n", .{ half_reg, ptr_reg });
+    try self.out.writer.print("    {s} = sext i16 {s} to i32\n", .{ dst, half_reg });
+}
+
+/// v2.0 madde 5: `u16`/`i16` alan yazma (`qbeStoreB`nin yarım-kelime
+/// karşılığı).
+pub fn qbeStoreH(self: *Codegen, value_raw: []const u8, addr: []const u8) CodegenError!void {
+    const value = try renderOperand(self, value_raw);
+    const ptr_reg = try resolveAddrPtr(self, addr);
+    const half_reg = try self.newTemp();
+    try self.out.writer.print("    {s} = trunc i32 {s} to i16\n", .{ half_reg, value });
+    try self.out.writer.print("    store i16 {s}, ptr {s}\n", .{ half_reg, ptr_reg });
+}
+
+/// v2.0 madde 5: `@packed` bir sınıfın GENİŞ (u32/u64/int/float/pointer)
+/// bir alanı, ÖNCESİNDE dar bir alan varsa hizasız bir adreste OLABİLİR.
+/// LLVM'in optimize edicisi `load`/`store`in VARSAYILAN (tipin doğal)
+/// hizalamasını GÜVENLE varsayabilir — bu YÜZDEN (QBE'nin AKSİNE, bkz.
+/// `qbe_emit.zig`nin AYNI-isimli fonksiyonunun belge notu) BURADA
+/// AÇIKÇA `align 1` GEREKİR, aksi halde GERÇEK bir yanlış-derleme
+/// (miscompile) riski VAR (hizasız erişimin varsayılan hizalamayla
+/// UB sayılması).
+pub fn qbeLoadUnaligned(self: *Codegen, dst: []const u8, dst_ty: QbeType, mem_ty: QbeType, addr: []const u8) CodegenError!void {
+    if (dst_ty != mem_ty) return error.Unsupported;
+    const ptr_reg = try resolveAddrPtr(self, addr);
+    try self.out.writer.print("    {s} = load {s}, ptr {s}, align 1\n", .{ dst, llvmTypeName(dst_ty), ptr_reg });
+}
+
+pub fn qbeStoreUnaligned(self: *Codegen, ty: QbeType, value_raw: []const u8, addr: []const u8) CodegenError!void {
+    const value = try renderOperand(self, value_raw);
+    const ptr_reg = try resolveAddrPtr(self, addr);
+    try self.out.writer.print("    store {s} {s}, ptr {s}, align 1\n", .{ llvmTypeName(ty), value, ptr_reg });
+}
+
 /// QBE'nin `%dst =l alloc{4/8} {n}`i — dönüş HER ZAMAN bir `l` (i64)
 /// "işaretçi-olarak-tamsayı" değeridir (bkz. modül üstü not). Faz LLVM.8
 /// (bkz. plan dosyası "LLVM.8: qbeAlloc'nin mem2reg'i engelleyen ptrtoint

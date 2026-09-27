@@ -333,7 +333,11 @@ pub fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {
                     try self.qbeStore(f.info.qtype, val.text, addr);
                     try self.destroyNonArcValue(old_ptr, f.info.heap);
                 } else {
-                    try self.qbeStore(f.info.qtype, val.text, addr);
+                    // v2.0 madde 5: SADECE bu (skaler) dal `narrowStore`
+                    // gerektirir — yukarıdaki İKİ dal HER ZAMAN 8-baytlık
+                    // pointer alanlarını (heap-yönetimli/task-benzeri)
+                    // hedefler, bunlar ASLA daralmaz.
+                    try self.narrowStore(val.text, f.info, cinfo.layout_mode, addr);
                 }
                 try self.releaseIfTemporary(attr.obj.*, obj);
                 return;

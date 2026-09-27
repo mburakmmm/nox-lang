@@ -23960,6 +23960,125 @@ fixture'lar.
 
 ---
 
+## 3.193 v2.0 stabilizasyon yol haritası, madde 5 — `@repr("C")`/`@packed` sınıf düzeni + `sizeof`/`alignof`/`offsetof`
+
+Madde 4'ün (sabit-genişlikli tamsayılar, §3.192) "somut boyutlarına
+bağımlı" olduğu İçİn SONRASINA konulmuştu — bu madde `FixedIntKind.
+byteWidth()`in ÜZERİNE inşa eder. Bugüne kadar HER sınıf alanı, tipinden
+BAĞIMSIZ, uniform 8-baytlık bir slotta (`FIELD_SLOT_SIZE=8`) saklanıyordu
+— `class Point: x: u8` BİLE 8 bayt kaplıyordu. Artık `@repr("C")` (her
+alan KENDİ doğal genişliğine göre hizalanır, standart C padding kuralı)
+ve `@packed` (SIFIR padding, alanlar bayt-bitişik) İKİ opt-in decorator
+olarak eklendi — VE `sizeof(T)`/`alignof(T)`/`offsetof(T, "alan")` bu
+düzenleri (VE var olan HER tipi) sorgulamanın yolu.
+
+### Tasarım kararları
+
+- **Çağrı sözdizimi**: `sizeof(u8)`, `alignof(MyClass)`, `offsetof(
+  MyClass, "field")` — çıplak tip adı NORMAL bir çağrı argümanı
+  POZİSYONUNDA (`int(x)`/`u8(x)` cast'lerinin AYNI "özel-işlenen isim"
+  deseni, YENİ gramer GEREKMEDİ). **Kritik yapısal fark**: checker
+  BURADA `checkExpr`i HİÇ ÇAĞIRMAZ — çıplak bir `u8`/`MyClass` bir
+  DEĞİŞKEN aramasına DEĞİL bir TİP referansına karşılık gelir
+  (`typeExprToType(.{.simple = name})` DOĞRUDAN çağrılır).
+- **Kapsam**: TÜM tipler — sabit-genişlikli kind'lar, `int`/`float`/
+  `bool`/`str`, HERHANGİ bir sınıf (dekore edilmemiş/varsayılan düzenli
+  DAHİL, KULLANICININ AÇIKÇA istediği geniş kapsam — onların İÇ düzeni
+  KASITLI olarak KARARSIZ bir dahili detay olsa BİLE).
+- **Dönüş tipi**: `usize` (madde 4'ün TAM bu amaç İçİn var olan tipi).
+- **Kalıtım tam uyumluluğu**: `@repr("C")`/`@packed` sınıflar tekli
+  kalıtıma (Faz 7) VE vtable dispatch'e TAM katılabilir — GERÇEK bir
+  hiyerarşi (`Animal`/`Dog`, `list[Animal]` polimorfik iterasyon) İLE
+  DOĞRULANDI.
+- **Başlık (TAG_SIZE+VTABLE_PTR_SIZE) HER ÜÇ modda da DEĞİŞMEZ** —
+  **açıkça İFŞA edilen bir "saf C ABI DEĞİL" ödünü**: Nox'un çalışma-
+  zamanı polimorfizmi (isinstance/exception dispatch, vtable) bu
+  başlığa İHTİYAÇ duyar; `@repr("C")`/`@packed` SADECE ALAN kısmının
+  düzenini değiştirir. Benzer şekilde `bool`un doğal boyutu HER ÜÇ
+  modda da 4 bayt kalır (BUGÜNKÜ `.w` temsili, C'nin 1-baytlık
+  `_Bool`ından FARKLI) — İKİNCİ, AÇIKÇA belgelenen ödün.
+- **Taban/alt sınıf layout-tutarlılığı ZORUNLU**: bir sınıfın `base`si
+  VARSA, `@repr`/`@packed` durumu TABAN sınıfınkiyle BİREBİR eşleşmek
+  ZORUNDADIR (aksi halde derleme-zamanı hatası) — karma-düzenli bir
+  hiyerarşinin anlamsız/tanımsız olacağı BİLİNÇLİ bir kısıtlama.
+
+### Layout aritmetiği
+
+`ClassInfo.layout_mode: enum { default, repr_c, packed_ }` (HEM
+checker'ın hafif `ClassInfo`sinde HEM codegen'in bayt-doğru `ClassInfo`
+sinde — İKİSİ `cd.decorators`i BAĞIMSIZ ayrıştırır, checker SADECE
+geçerliliği doğrular). `field_base_offset = TAG_SIZE + (has_vtable ?
+VTABLE_PTR_SIZE : 0)` HER ÜÇ modda AYNI. `default`: ESKİ `index *
+FIELD_SLOT_SIZE(8)` formülü BİREBİR KORUNUR (204 fixture'lık IR-birebir
+garantisi — `layout_mode` alanı Faz B'de "atıl" olarak eklenip TÜM
+mevcut testlerin DEĞİŞMEDEN geçtiği doğrulandı). `repr_c`: her alan
+`storageSizeOf(qtype, fixed_int)` (1/2/4/8, madde 4'ten) kadar boyut/
+hizalamayla, `alignUp(cursor, width)` İLE yerleştirilir. `packed_`: AYNI
+döngü, hizalama OLMADAN (bitişik). Alt sınıfın KENDİ YENİ alanları İçİn
+kürsör `base_info.total_size`ten başlar (taban alanları, offsetleriyle
+BİRLİKTE, DEĞİŞMEDEN kopyalanır — BUGÜNKÜ davranışla AYNI).
+
+### Bulunan, ÇALIŞTIRILMADAN ÖNCE düzeltilen 2 gerçek hata
+
+1. **Dar alan OKUMA/YAZMA bozulması**: `genFieldRead`/`genAssign`in
+   `.attribute` dalı/`genClassEq`/`genClassEqInline` HER ZAMAN alanın
+   HESAPLAMA sınıfıyla (`.w`/`.l`) okuyup/yazıyordu — `@packed` bir
+   sınıfın `u8` alanı `print(p.x)`i YANLIŞLIKLA "513" GİBİ bastı (4-bayt
+   `.w` yüklemesi KOMŞU alanın baytlarına TAŞTI). Düzeltme: YENİ
+   `qbeLoadSB`/`qbeLoadUH`/`qbeLoadSH`/`qbeStoreH` (QBE'nin ZATEN var
+   olan `loadub`/`storeb`sinin eksik kalan bayt/yarım-kelime aileleri) +
+   4 çağrı sitesinde `narrowLoad`/`narrowStore`e (`abi.zig`nin
+   `nextFieldOffset`iyle AYNI ruh) yönlendirme.
+2. **`genConstructFromValues`in sıfırlama-taşması**: HER alanı KOŞULSUZ
+   8-baytlık `storel 0` İLE sıfırlıyordu — `@packed` tek-`u8`-alanlı bir
+   sınıfın (`total_size=9`) TAHSİS EDİLEN belleğinden 7 bayt TAŞARDI.
+   Düzeltme: SADECE `layout_mode != .default` İKEN, alanın KENDİ
+   genişliğine göre (`storeb`/`storeh`/`storew`/`storel`, hepsi `0`)
+   sıfırlama — `default` mod DOKUNULMADAN kalır.
+
+### `@packed` + LLVM/`--release`nin hizasız-erişim riski
+
+`@packed` bir sınıfın alanı (ÖNCESİNDE dar bir alan varsa GENİŞ bir
+alan BİLE) hizasız bir adreste OLABİLİR — QBE'nin hedef ISA'ları
+(amd64/arm64) buna TOLERANSLI, AMA LLVM'in optimize edicisi `load`/
+`store`in VARSAYILAN hizalamasını GÜVENLE varsayar. Çözüm: YENİ
+`qbeLoadUnaligned`/`qbeStoreUnaligned` — LLVM tarafı AÇIKÇA `align 1`
+ile üretir, QBE tarafı `qbeLoad`/`qbeStore`den AYIRT EDİLEMEZ (zaten
+tolere ediyor). `@repr("C")` BUNU GEREKTİRMEZ (başlık HER ZAMAN 8'in
+katı + alan hizası ≤8 OLDUĞUNDAN hizalama ZİNCİRLEME KORUNUR). Karışık
+alan tipli bir `@packed` sınıfın (u8 ARDINDAN u32) `--release` altında
+DOĞRU okuyup yazdığı GERÇEKTEN çalıştırılıp doğrulandı.
+
+### Bilinçli olarak kapsam dışı
+
+- `@repr("C")`/`@packed`in `list[T]` eleman deposuyla etkileşimi (madde
+  4'ten ERTELENEN "gerçek bayt-paketleme" AYRI bir alt-görev — AMA
+  `qbeLoadSB`/`qbeLoadUH`/vb. altyapısı O görev TARAFINDAN da yeniden
+  kullanılabilir).
+- `sizeof`/`alignof`in `list[T]`/`dict[K,V]`/`Task[T]`/vb. GENERİK
+  konteyner tipleri İçİn (bunlar bare `.identifier` OLARAK ayrıştırılmaz).
+- Struct'ın KENDİ hizasına göre `total_size`e trailing padding EKLEME
+  (C'nin dizi-uyumluluğu İçİn yaptığı — Nox'ta HİÇBİR ZAMAN "değer-tipi
+  sınıf dizisi" YOK, nesneler HER ZAMAN heap pointer'ı).
+
+### Doğrulama
+
+`zig build test` (Debug) SIFIR regresyon. Golden testler: `codegen_
+cases/repr_packed_class_layout.nox` (karma alan tipli HER İKİ düzen,
+hizalama sınırları, alan round-trip'i, packed sınıf eşitliği, VE
+vtable+kalıtım+packed'in BİRLİKTE çalıştığı bir hiyerarşi — HEM QBE HEM
+`--release`), 2 YENİ `typecheck_cases/err_repr_*` (kötü `@repr` argümanı,
+taban/alt sınıf layout-uyuşmazlığı).
+
+### Kritik dosyalar
+
+`compiler/typecheck/checker.zig` (decorator izin-listesi, `sizeof`/
+`alignof`/`offsetof` checkCall dalı, layout-tutarlılık kontrolü),
+`compiler/codegen_qbe/{types,registration,qbe_emit,llvm_emit,expr,stmt,
+layout,calls,codegen}.zig`, `tests/golden/{codegen_cases,typecheck_cases}`.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

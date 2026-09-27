@@ -447,6 +447,8 @@ pub const Codegen = struct {
     pub const emitMul64OverflowCheck = expr_mod.emitMul64OverflowCheck;
     pub const emitOverflowTrapIfNonzero = expr_mod.emitOverflowTrapIfNonzero;
     pub const genNarrowingCast = expr_mod.genNarrowingCast;
+    pub const narrowLoad = expr_mod.narrowLoad;
+    pub const narrowStore = expr_mod.narrowStore;
     pub const emitCmp = expr_mod.emitCmp;
     pub const callLibm1 = expr_mod.callLibm1;
     pub const callLibm2 = expr_mod.callLibm2;
@@ -671,6 +673,42 @@ pub const Codegen = struct {
         return switch (self.backend) {
             .qbe => qbe_emit.qbeStoreB(self, value, addr),
             .llvm => llvm_emit.qbeStoreB(self, value, addr),
+        };
+    }
+    pub fn qbeLoadSB(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeLoadSB(self, dst, addr),
+            .llvm => llvm_emit.qbeLoadSB(self, dst, addr),
+        };
+    }
+    pub fn qbeLoadUH(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeLoadUH(self, dst, addr),
+            .llvm => llvm_emit.qbeLoadUH(self, dst, addr),
+        };
+    }
+    pub fn qbeLoadSH(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeLoadSH(self, dst, addr),
+            .llvm => llvm_emit.qbeLoadSH(self, dst, addr),
+        };
+    }
+    pub fn qbeStoreH(self: *Codegen, value: []const u8, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeStoreH(self, value, addr),
+            .llvm => llvm_emit.qbeStoreH(self, value, addr),
+        };
+    }
+    pub fn qbeLoadUnaligned(self: *Codegen, dst: []const u8, dst_ty: QbeType, mem_ty: QbeType, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeLoadUnaligned(self, dst, dst_ty, mem_ty, addr),
+            .llvm => llvm_emit.qbeLoadUnaligned(self, dst, dst_ty, mem_ty, addr),
+        };
+    }
+    pub fn qbeStoreUnaligned(self: *Codegen, ty: QbeType, value: []const u8, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeStoreUnaligned(self, ty, value, addr),
+            .llvm => llvm_emit.qbeStoreUnaligned(self, ty, value, addr),
         };
     }
     pub fn qbeAlloc(self: *Codegen, dst: []const u8, size: QbeAllocSize, n: usize) CodegenError!void {

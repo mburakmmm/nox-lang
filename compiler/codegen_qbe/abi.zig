@@ -7,6 +7,7 @@ const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
 const QbeType = types.QbeType;
 const Value = types.Value;
+const TypeInfo = types.TypeInfo;
 const ElemHeapInfo = types.ElemHeapInfo;
 const HeapKind = types.HeapKind;
 
@@ -64,6 +65,37 @@ pub fn fixedIntComputeClass(kind: types.FixedIntKind) QbeType {
 pub fn storageSizeOf(qtype: QbeType, fixed_int: ?types.FixedIntKind) usize {
     if (fixed_int) |k| return k.byteWidth();
     return qbeSizeOf(qtype);
+}
+
+/// v2.0 madde 5: `x`i `a`nın (2'nin kuvveti) bir sonraki katına yuvarlar
+/// — `@repr("C")`nin standart C hizalama kuralı İçİn.
+fn alignUp(x: usize, a: usize) usize {
+    return (x + a - 1) & ~(a - 1);
+}
+
+/// v2.0 madde 5: `@repr("C")`/`@packed` bir sınıfın BİR SONRAKİ alanının
+/// offset'ini hesaplar VE `cursor`u (İN-OUT) bir SONRAKİ çağrı İçİn
+/// İLERLETİR. `repr_c`: her alan KENDİ doğal hizalamasına (== boyutuna,
+/// `storageSizeOf`nin `abi.zig`deki AYNI TÜM ilkel tipler İçİn boyut==
+/// hizalama gerçeğinden) yuvarlanır. `packed_`: SIFIR hizalama, alanlar
+/// bayt-bitişik. `default` İçİn bu fonksiyon HİÇ ÇAĞRILMAMALIDIR
+/// (çağıran taraf `index * FIELD_SLOT_SIZE`in ESKİ formülünü kullanır —
+/// bkz. `registration.zig`nin `registerClass`ı).
+pub fn nextFieldOffset(cursor: *usize, layout_mode: types.ClassLayoutMode, ti: TypeInfo) usize {
+    const width = storageSizeOf(ti.qtype, ti.fixed_int);
+    return switch (layout_mode) {
+        .default => unreachable,
+        .repr_c => blk: {
+            const offset = alignUp(cursor.*, width);
+            cursor.* = offset + width;
+            break :blk offset;
+        },
+        .packed_ => blk: {
+            const offset = cursor.*;
+            cursor.* = offset + width;
+            break :blk offset;
+        },
+    };
 }
 
 /// Bir KONTEYNERİN (`list[T]`, `Task[T]`, `Channel[T]`) `elem_qtype`/

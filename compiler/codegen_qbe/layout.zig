@@ -499,9 +499,9 @@ pub fn genClassEq(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) Code
         const addr_b = try self.newTemp();
         try self.qbeOp2Imm(addr_b, .l, "add", "%b", @intCast(f.offset));
         const va = try self.newTemp();
-        try self.qbeLoad(va, f.info.qtype, f.info.qtype, addr_a);
+        try self.narrowLoad(va, f.info, cinfo.layout_mode, addr_a);
         const vb = try self.newTemp();
-        try self.qbeLoad(vb, f.info.qtype, f.info.qtype, addr_b);
+        try self.narrowLoad(vb, f.info, cinfo.layout_mode, addr_b);
         try self.genEqCompareOrJump(va, vb, f.info.qtype, f.info.heap, f.info.class_name, f.info.elem_qtype, f.info.elem_heap_info, f.info.elem_is_str, mismatch_label, null);
     }
     try self.qbeRet("1");
@@ -680,9 +680,9 @@ pub fn genClassEqInline(self: *Codegen, cinfo: ClassInfo, a_ptr: []const u8, b_p
         const addr_b = try self.newTemp();
         try self.qbeOp2Imm(addr_b, .l, "add", b_ptr, @intCast(f.offset));
         const va = try self.newTemp();
-        try self.qbeLoad(va, f.info.qtype, f.info.qtype, addr_a);
+        try self.narrowLoad(va, f.info, cinfo.layout_mode, addr_a);
         const vb = try self.newTemp();
-        try self.qbeLoad(vb, f.info.qtype, f.info.qtype, addr_b);
+        try self.narrowLoad(vb, f.info, cinfo.layout_mode, addr_b);
         const is_last = i == cinfo.fields.items.len - 1;
         try self.genEqCompareOrJump(va, vb, f.info.qtype, f.info.heap, f.info.class_name, f.info.elem_qtype, f.info.elem_heap_info, f.info.elem_is_str, mismatch_label, if (is_last) match_label else null);
     }
