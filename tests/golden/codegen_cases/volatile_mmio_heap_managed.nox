@@ -1,0 +1,50 @@
+class Box:
+    def __init__(self: Box, n: int, s: str) -> None:
+        self.n = n
+        self.s = s
+
+# v2.0 madde 7 — bkz. nox-teknik-spesifikasyon.md §3.195. `ptr_read`/
+# `ptr_write`nin (madde 6, `typed_ptr_heap_managed_model_ab.nox`) BİREBİR
+# aynı Model A (str, paylaşılan referans) / Model B (class, bağımsız
+# kopya) senaryosu, SADECE `_volatile` yerleşikleriyle — `class` T dalı
+# `nox_raw_memcpy` ÜZERİNDEN (opak çağrı) çalıştığından volatile'a
+# hiçbir EK kod GEREKTİRMEDİĞİNİ de dolaylı olarak kanıtlar.
+def str_model_a_degenerate() -> None:
+    lowlevel:
+        holder: list[str] = ["hello", "world"]
+        base: ptr = detach(holder)
+        base_addr: int = ptr_to_int(base)
+        elems: ptr[str] = ptr[str](base_addr + 16)
+        print(ptr_read_volatile(elems))
+        print(ptr_read_volatile(ptr_offset(elems, 1)))
+        ptr_write_volatile(elems, "overwritten")
+        print(ptr_read_volatile(elems))
+
+def box_model_b_independent_copy() -> None:
+    b: Box = Box(42, "hi")
+    lowlevel:
+        base: ptr = detach(b)
+        base_addr: int = ptr_to_int(base)
+        p: ptr[Box] = ptr[Box](base_addr)
+        print(ptr_read_volatile(p).n)
+        print(ptr_read_volatile(p).s)
+        n_field_ptr: ptr = ptr_add(base, 8)
+        ptr_write_int(n_field_ptr, 999999)
+        print(ptr_read_volatile(p).n)
+        b_closed: Box = adopt(base)
+
+def box_model_b_write_roundtrip() -> None:
+    b: Box = Box(1, "a")
+    c: Box = Box(2, "bb")
+    lowlevel:
+        base: ptr = detach(b)
+        base_addr: int = ptr_to_int(base)
+        p: ptr[Box] = ptr[Box](base_addr)
+        ptr_write_volatile(p, c)
+        print(ptr_read_volatile(p).n)
+        print(ptr_read_volatile(p).s)
+        b_closed: Box = adopt(base)
+
+str_model_a_degenerate()
+box_model_b_independent_copy()
+box_model_b_write_roundtrip()

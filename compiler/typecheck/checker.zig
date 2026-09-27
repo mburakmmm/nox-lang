@@ -2840,7 +2840,7 @@ pub const Checker = struct {
     /// olarak İŞARETLERDİ (ör. `len(xs)` İçEREN salt-okunur bir yardımcı
     /// bile YAKALANIRDI — GERÇEK bir yanlış-pozitif).
     fn isKnownSafeBuiltinCallee(name: []const u8) bool {
-        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "hpy_new_on", "hpy_getattr_int_on", "hpy_setattr_int_on", "hpy_call_attr_on", "hpy_new_object_on", "hpy_getitem_int_on", "hpy_new_string_writer_on", "hpy_writer_get_str_on", "hpy_new_string_reader_on", "wasm_call", "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach", "ptr_offset", "ptr_read", "ptr_write" };
+        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "hpy_new_on", "hpy_getattr_int_on", "hpy_setattr_int_on", "hpy_call_attr_on", "hpy_new_object_on", "hpy_getitem_int_on", "hpy_new_string_writer_on", "hpy_writer_get_str_on", "hpy_new_string_reader_on", "wasm_call", "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach", "ptr_offset", "ptr_read", "ptr_write", "ptr_read_volatile", "ptr_write_volatile", "memory_fence", "compiler_fence" };
         for (safe) |s| {
             if (std.mem.eql(u8, name, s)) return true;
         }
@@ -5646,6 +5646,40 @@ pub const Checker = struct {
                     if (pt != .typed_ptr) return self.fail(error.TypeMismatch, "'ptr_write' argümanı 1 (p) bir ptr[T] olmalıdır", .{});
                     const vt = try self.checkExpr(ctx, c.args[1]);
                     if (!types.eql(vt, pt.typed_ptr.*)) return self.fail(error.TypeMismatch, "'ptr_write' argümanı 2 (v) p'nin T'siyle AYNI tipte olmalıdır", .{});
+                    return .none;
+                }
+                // v2.0 madde 7 (bkz. plan dosyası §5): `ptr_read_volatile`/
+                // `ptr_write_volatile` — `ptr_read`/`ptr_write` İLE AYNI
+                // kapsam (T HERHANGİ bir tip, heap-yönetimli DAHİL —
+                // kullanıcının KARARI, o emsalden SAPILMADI). Tip kontrolü
+                // BİREBİR AYNI, SADECE isim/mesaj farklı — GERÇEK fark
+                // (volatile niteleyicisi) TAMAMEN codegen'de.
+                if (std.mem.eql(u8, name, "ptr_read_volatile")) {
+                    try self.requireLowlevel(name);
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_read_volatile' tam olarak 1 argüman alır", .{});
+                    const pt = try self.checkExpr(ctx, c.args[0]);
+                    if (pt != .typed_ptr) return self.fail(error.TypeMismatch, "'ptr_read_volatile' bir ptr[T] alır", .{});
+                    return pt.typed_ptr.*;
+                }
+                if (std.mem.eql(u8, name, "ptr_write_volatile")) {
+                    try self.requireLowlevel(name);
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'ptr_write_volatile' tam olarak 2 argüman alır (p: ptr[T], v: T)", .{});
+                    const pt = try self.checkExpr(ctx, c.args[0]);
+                    if (pt != .typed_ptr) return self.fail(error.TypeMismatch, "'ptr_write_volatile' argümanı 1 (p) bir ptr[T] olmalıdır", .{});
+                    const vt = try self.checkExpr(ctx, c.args[1]);
+                    if (!types.eql(vt, pt.typed_ptr.*)) return self.fail(error.TypeMismatch, "'ptr_write_volatile' argümanı 2 (v) p'nin T'siyle AYNI tipte olmalıdır", .{});
+                    return .none;
+                }
+                // v2.0 madde 7 (bkz. plan dosyası §2): `memory_fence()`/
+                // `compiler_fence()` — argümansız sıralama bariyerleri.
+                if (std.mem.eql(u8, name, "memory_fence")) {
+                    try self.requireLowlevel(name);
+                    if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'memory_fence' argüman almaz", .{});
+                    return .none;
+                }
+                if (std.mem.eql(u8, name, "compiler_fence")) {
+                    try self.requireLowlevel(name);
+                    if (c.args.len != 0) return self.fail(error.ArgumentCountMismatch, "'compiler_fence' argüman almaz", .{});
                     return .none;
                 }
                 // `detach(x) -> ptr`: `x` ÇIPLAK bir yerel değişken adı

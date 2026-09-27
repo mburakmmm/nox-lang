@@ -1378,3 +1378,31 @@ test "golden(typecheck): v2.0 madde 6 — ptr_write'ın değeri p'nin T'siyle ay
         @embedFile("typecheck_cases/err_typed_ptr_write_wrong_type.expected"),
     );
 }
+
+test "golden(typecheck): v2.0 madde 7 — ptr_read_volatile yalnızca bir 'lowlevel:' bloğu içinde kullanılabilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_volatile_outside_lowlevel.nox"),
+        @embedFile("typecheck_cases/err_volatile_outside_lowlevel.expected"),
+    );
+}
+
+test "golden(typecheck): v2.0 madde 7 — memory_fence yalnızca bir 'lowlevel:' bloğu içinde kullanılabilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_fence_outside_lowlevel.nox"),
+        @embedFile("typecheck_cases/err_fence_outside_lowlevel.expected"),
+    );
+}
+
+test "golden(typecheck): v2.0 madde 7 — ptr_write_volatile'ın değeri p'nin T'siyle aynı tipte olmalıdır" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_volatile_write_wrong_type.nox"),
+        @embedFile("typecheck_cases/err_volatile_write_wrong_type.expected"),
+    );
+}
+
+test "golden(typecheck): v2.0 madde 7 — memory_fence argüman almaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_fence_with_args.nox"),
+        @embedFile("typecheck_cases/err_fence_with_args.expected"),
+    );
+}

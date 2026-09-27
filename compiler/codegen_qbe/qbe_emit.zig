@@ -215,6 +215,64 @@ pub fn qbeStoreUnaligned(self: *Codegen, ty: QbeType, value: []const u8, addr: [
     try qbeStore(self, ty, value, addr);
 }
 
+/// v2.0 madde 7 (bkz. plan dosyası §3): `ptr_read_volatile`/`ptr_write_
+/// volatile`nin QBE-tarafı ilkelleri — Nox'un KENDİ codegen'i (AST-sıralı,
+/// yeniden-sıralama GEÇİŞİ YOK) VE QBE'nin KENDİSİ (bellek-erişimi
+/// yeniden-sıralayan/birleştiren bir geçişi OLMAYAN, düz bir SSA hattı)
+/// BİRLİKTE "aynı adrese art arda erişimler PROGRAM SIRASINDA KORUNUR"
+/// garantisini ZATEN sağladığından (bkz. `emitInlineRetain`in AYNI, ATOMİK
+/// OLMAYAN load/store'u — TÜM proje tarihinde HİÇ bir doğruluk hatasına
+/// yol AÇMADI), "volatile" QBE'de HİÇBİR EK işaretleyiciye ihtiyaç DUYMAZ
+/// — bu YÜZDEN her biri KENDİ non-volatile karşılığına DÜZ bir passthrough
+/// (bkz. `llvm_emit.zig`nin AYNI-isimli fonksiyonları, ORADA GERÇEK bir
+/// fark VAR).
+pub fn qbeLoadVolatile(self: *Codegen, dst: []const u8, dst_ty: QbeType, mem_ty: QbeType, addr: []const u8) CodegenError!void {
+    try qbeLoad(self, dst, dst_ty, mem_ty, addr);
+}
+
+pub fn qbeStoreVolatile(self: *Codegen, ty: QbeType, value: []const u8, addr: []const u8) CodegenError!void {
+    try qbeStore(self, ty, value, addr);
+}
+
+pub fn qbeLoadUBVolatile(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+    try qbeLoadUB(self, dst, addr);
+}
+
+pub fn qbeLoadSBVolatile(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+    try qbeLoadSB(self, dst, addr);
+}
+
+pub fn qbeLoadUHVolatile(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+    try qbeLoadUH(self, dst, addr);
+}
+
+pub fn qbeLoadSHVolatile(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+    try qbeLoadSH(self, dst, addr);
+}
+
+pub fn qbeStoreBVolatile(self: *Codegen, value: []const u8, addr: []const u8) CodegenError!void {
+    try qbeStoreB(self, value, addr);
+}
+
+pub fn qbeStoreHVolatile(self: *Codegen, value: []const u8, addr: []const u8) CodegenError!void {
+    try qbeStoreH(self, value, addr);
+}
+
+/// v2.0 madde 7 (bkz. plan dosyası §2): `memory_fence()` — QBE'nin HİÇBİR
+/// fence talimatı OLMADIĞINDAN (VE bu derleyicinin QBE IR'ına ham asm
+/// gömme mekanizması HİÇ OLMADIĞINDAN) Zig runtime'ındaki `nox_memory_
+/// fence`e (bkz. `runtime/alloc/lowlevel.zig`) bir ÇAĞRI olarak yayılır.
+pub fn qbeMemoryFence(self: *Codegen) CodegenError!void {
+    try self.qbeCall(null, "$nox_memory_fence", &.{});
+}
+
+/// v2.0 madde 7: `compiler_fence()` — QBE'de GERÇEK bir no-op: Nox'un
+/// KENDİ codegen'i (VE QBE'nin KENDİSİ) zaten yeniden-sıralama YAPMADIĞI
+/// İçİn engellenecek HİÇBİR ŞEY yoktur, HİÇBİR IR metni ÜRETİLMEZ.
+pub fn qbeCompilerFence(self: *Codegen) CodegenError!void {
+    _ = self;
+}
+
 pub const QbeAllocSize = enum(u8) { four = 4, eight = 8 };
 
 pub fn qbeAlloc(self: *Codegen, dst: []const u8, size: QbeAllocSize, n: usize) CodegenError!void {

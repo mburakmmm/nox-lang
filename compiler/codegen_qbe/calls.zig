@@ -231,8 +231,64 @@ pub fn genTypedPtrStore(self: *Codegen, p: Value, v: Value) CodegenError!void {
     try self.narrowStore(v.text, ti, .packed_, p.text);
 }
 
+/// v2.0 madde 7 (bkz. plan dosyası §4): `ptr_read`/`ptr_read_volatile`
+/// arasında PAYLAŞILAN `class` T dalı — `nox_raw_memcpy` ZATEN opak bir
+/// FONKSİYON ÇAĞRISI olduğundan (ne Nox'un KENDİ codegen'i ne LLVM'in
+/// optimize edicisi `readnone`/`pure` işaretlenmemiş bir çağrıyı ELEMEZ/
+/// yeniden SIRALAMAZ), "volatile" BURADA HİÇBİR EK koda ihtiyaç DUYMAZ —
+/// `ptr_read_volatile` bu fonksiyonu HARFİYEN AYNI şekilde çağırır.
+pub fn genPtrClassCopyRead(self: *Codegen, p: Value, ehi: *const ElemHeapInfo) CodegenError!Value {
+    const cinfo = self.classes.get(ehi.class_name.?).?;
+    const stride_lit = try std.fmt.allocPrint(self.allocator, "{d}", .{cinfo.total_size});
+    const new_ptr = try self.newTemp();
+    try self.qbeCall(.{ .name = new_ptr, .ty = .l }, "$nox_rc_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = stride_lit } });
+    try self.qbeCall(null, "$nox_raw_memcpy", &.{ .{ .ty = .l, .text = new_ptr }, .{ .ty = .l, .text = p.text }, .{ .ty = .l, .text = stride_lit } });
+    for (cinfo.fields.items) |f| {
+        if (!isHeapManaged(f.info.heap)) continue;
+        const addr = try self.newTemp();
+        try self.qbeOp2Imm(addr, .l, "add", new_ptr, @intCast(f.offset));
+        const fv = try self.newTemp();
+        try self.qbeLoad(fv, .l, .l, addr);
+        try self.emitInlineRetain(fv, f.info.heap);
+    }
+    return .{ .text = new_ptr, .qtype = .l, .heap = .class, .class_name = ehi.class_name };
+}
+
+/// `genPtrClassCopyRead`in yazma yönü — bkz. onun belge notu, AYNI gerekçe.
+pub fn genPtrClassCopyWrite(self: *Codegen, p: Value, v: Value, ehi: *const ElemHeapInfo) CodegenError!void {
+    const cinfo = self.classes.get(ehi.class_name.?).?;
+    const stride_lit = try std.fmt.allocPrint(self.allocator, "{d}", .{cinfo.total_size});
+    try self.qbeCall(null, "$nox_raw_memcpy", &.{ .{ .ty = .l, .text = p.text }, .{ .ty = .l, .text = v.text }, .{ .ty = .l, .text = stride_lit } });
+    for (cinfo.fields.items) |f| {
+        if (!isHeapManaged(f.info.heap)) continue;
+        const addr = try self.newTemp();
+        try self.qbeOp2Imm(addr, .l, "add", p.text, @intCast(f.offset));
+        const fv = try self.newTemp();
+        try self.qbeLoad(fv, .l, .l, addr);
+        try self.emitInlineRetain(fv, f.info.heap);
+    }
+}
+
+/// v2.0 madde 7 (bkz. plan dosyası §3): `ptr_read_volatile`in skaler-T
+/// yolu — `genTypedPtrLoad`in BİREBİR AYNISI, AMA `narrowLoad`
+/// YERİNE `narrowLoadVolatile` çağırır (LLVM'de GERÇEK `load volatile`,
+/// QBE'de `narrowLoad`dan AYIRT EDİLEMEZ — bkz. `qbeLoadVolatile`nin
+/// belge notu).
+pub fn genTypedPtrLoadVolatile(self: *Codegen, p: Value) CodegenError!Value {
+    const ti = types.TypeInfo{ .qtype = p.elem_qtype, .fixed_int = p.elem_fixed_int };
+    const dst = try self.newTemp();
+    try self.narrowLoadVolatile(dst, ti, p.text);
+    return .{ .text = dst, .qtype = p.elem_qtype, .fixed_int = p.elem_fixed_int };
+}
+
+/// `genTypedPtrLoadVolatile`in yazma yönü — bkz. onun belge notu.
+pub fn genTypedPtrStoreVolatile(self: *Codegen, p: Value, v: Value) CodegenError!void {
+    const ti = types.TypeInfo{ .qtype = p.elem_qtype, .fixed_int = p.elem_fixed_int };
+    try self.narrowStoreVolatile(v.text, ti, p.text);
+}
+
 fn isPtrManualBuiltin(name: []const u8) bool {
-    const names = [_][]const u8{ "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach", "ptr_offset", "ptr_read", "ptr_write" };
+    const names = [_][]const u8{ "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach", "ptr_offset", "ptr_read", "ptr_write", "ptr_read_volatile", "ptr_write_volatile", "memory_fence", "compiler_fence" };
     for (names) |n| {
         if (std.mem.eql(u8, n, name)) return true;
     }
@@ -794,22 +850,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     if (c.args.len != 1) return error.Unsupported;
                     const p = try self.genExpr(c.args[0]);
                     if (p.elem_heap_info) |ehi| {
-                        if (ehi.heap == .class) {
-                            const cinfo = self.classes.get(ehi.class_name.?).?;
-                            const stride_lit = try std.fmt.allocPrint(self.allocator, "{d}", .{cinfo.total_size});
-                            const new_ptr = try self.newTemp();
-                            try self.qbeCall(.{ .name = new_ptr, .ty = .l }, "$nox_rc_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = stride_lit } });
-                            try self.qbeCall(null, "$nox_raw_memcpy", &.{ .{ .ty = .l, .text = new_ptr }, .{ .ty = .l, .text = p.text }, .{ .ty = .l, .text = stride_lit } });
-                            for (cinfo.fields.items) |f| {
-                                if (!isHeapManaged(f.info.heap)) continue;
-                                const addr = try self.newTemp();
-                                try self.qbeOp2Imm(addr, .l, "add", new_ptr, @intCast(f.offset));
-                                const fv = try self.newTemp();
-                                try self.qbeLoad(fv, .l, .l, addr);
-                                try self.emitInlineRetain(fv, f.info.heap);
-                            }
-                            return .{ .text = new_ptr, .qtype = .l, .heap = .class, .class_name = ehi.class_name };
-                        }
+                        if (ehi.heap == .class) return try self.genPtrClassCopyRead(p, ehi);
                         // Sınıf-DIŞI heap T (str/list/dict/closure) — stride
                         // HER ZAMAN 8 (SADECE bir pointer), bu YÜZDEN "T bayt
                         // kopyala" KENDİLİĞİNDEN Model A'ya (yükle+retain)
@@ -832,22 +873,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     const v = try self.genExpr(c.args[1]);
                     if (p.elem_heap_info) |ehi| {
                         if (ehi.heap == .class) {
-                            const cinfo = self.classes.get(ehi.class_name.?).?;
-                            const stride_lit = try std.fmt.allocPrint(self.allocator, "{d}", .{cinfo.total_size});
-                            try self.qbeCall(null, "$nox_raw_memcpy", &.{ .{ .ty = .l, .text = p.text }, .{ .ty = .l, .text = v.text }, .{ .ty = .l, .text = stride_lit } });
-                            // `v`nin KENDİSİ hâlâ çağıranda kalır (KENDİ
-                            // sahipliği DEĞİŞMEDİ) — AMA `*p`deki YENİ kopyanın
-                            // İÇ İÇE heap alanları ARTIK BAĞIMSIZ bir ikinci
-                            // referans taşıyor, bu YÜZDEN retain-fixup AYNI
-                            // `ptr_read`in class dalıyla BİREBİR AYNI gerekçe.
-                            for (cinfo.fields.items) |f| {
-                                if (!isHeapManaged(f.info.heap)) continue;
-                                const addr = try self.newTemp();
-                                try self.qbeOp2Imm(addr, .l, "add", p.text, @intCast(f.offset));
-                                const fv = try self.newTemp();
-                                try self.qbeLoad(fv, .l, .l, addr);
-                                try self.emitInlineRetain(fv, f.info.heap);
-                            }
+                            try self.genPtrClassCopyWrite(p, v, ehi);
                         } else {
                             const retained_v = try self.retainIfAliasing(c.args[1], v);
                             try self.qbeStoreUnaligned(.l, retained_v.text, p.text);
@@ -855,6 +881,59 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     } else {
                         try self.genTypedPtrStore(p, v);
                     }
+                    return .{ .text = "0", .qtype = .none };
+                }
+                // v2.0 madde 7 (bkz. plan dosyası §4): `ptr_read_volatile`/
+                // `ptr_write_volatile` — `ptr_read`/`ptr_write`nin BİREBİR
+                // kopyası, SADECE İKİ noktada farklı: `class` T dalı AYNI
+                // paylaşılan yardımcıyı (`genPtrClassCopyRead`/`Write`)
+                // çağırır (`nox_raw_memcpy` ZATEN opak bir çağrı olduğundan
+                // SIFIR fark), sınıf-DIŞI heap/skaler dallarda İSE
+                // `qbeLoadUnaligned`/`qbeStoreUnaligned`/`genTypedPtrLoad`/
+                // `genTypedPtrStore` YERİNE `qbeLoadVolatile`/
+                // `qbeStoreVolatile`/`genTypedPtrLoadVolatile`/
+                // `genTypedPtrStoreVolatile` kullanılır.
+                if (std.mem.eql(u8, name, "ptr_read_volatile")) {
+                    if (c.args.len != 1) return error.Unsupported;
+                    const p = try self.genExpr(c.args[0]);
+                    if (p.elem_heap_info) |ehi| {
+                        if (ehi.heap == .class) return try self.genPtrClassCopyRead(p, ehi);
+                        const loaded = try self.newTemp();
+                        try self.qbeLoadVolatile(loaded, .l, .l, p.text);
+                        try self.emitInlineRetain(loaded, ehi.heap);
+                        return .{ .text = loaded, .qtype = .l, .heap = ehi.heap, .class_name = ehi.class_name, .elem_qtype = ehi.elem_qtype, .elem_heap_info = ehi.nested, .elem_is_str = ehi.elem_is_str, .dict_info = ehi.dict_info, .func_sig = ehi.func_sig };
+                    }
+                    return try self.genTypedPtrLoadVolatile(p);
+                }
+                if (std.mem.eql(u8, name, "ptr_write_volatile")) {
+                    if (c.args.len != 2) return error.Unsupported;
+                    const p = try self.genExpr(c.args[0]);
+                    const v = try self.genExpr(c.args[1]);
+                    if (p.elem_heap_info) |ehi| {
+                        if (ehi.heap == .class) {
+                            try self.genPtrClassCopyWrite(p, v, ehi);
+                        } else {
+                            const retained_v = try self.retainIfAliasing(c.args[1], v);
+                            try self.qbeStoreVolatile(.l, retained_v.text, p.text);
+                        }
+                    } else {
+                        try self.genTypedPtrStoreVolatile(p, v);
+                    }
+                    return .{ .text = "0", .qtype = .none };
+                }
+                // v2.0 madde 7 (bkz. plan dosyası §2): `memory_fence()`/
+                // `compiler_fence()` — HER İKİSİ de argümansız, dönüş
+                // DEĞERSİZ. Backend-farklılığı TAMAMEN `qbeMemoryFence`/
+                // `qbeCompilerFence`in KENDİ dispatch'İNE bırakılır (bkz.
+                // codegen.zig).
+                if (std.mem.eql(u8, name, "memory_fence")) {
+                    if (c.args.len != 0) return error.Unsupported;
+                    try self.qbeMemoryFence();
+                    return .{ .text = "0", .qtype = .none };
+                }
+                if (std.mem.eql(u8, name, "compiler_fence")) {
+                    if (c.args.len != 0) return error.Unsupported;
+                    try self.qbeCompilerFence();
                     return .{ .text = "0", .qtype = .none };
                 }
                 // `detach(x) -> ptr` — `x` çıplak bir isim OLMAK ZORUNDADIR

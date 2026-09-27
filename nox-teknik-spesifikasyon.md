@@ -24197,6 +24197,119 @@ registration,calls,codegen}.zig`, `runtime/alloc/arc.zig`
 
 ---
 
+## 3.195 v2.0 stabilizasyon yol haritası, madde 7 — Volatile/MMIO + fences
+
+`ptr[T]`nin (madde 6) `ptr_offset`/`ptr_read`/`ptr_write`si HİÇBİR "bu
+erişim ASLA elenemez/yeniden sıralanamaz/birleştirilemez" garantisi
+VERMEZ — bir MMIO register'ı İçİn (HER okuma/yazma GERÇEK bir donanım
+yan etkisi) bu KATASTROFİKTİR. Madde 7 BUNU dört YENİ yerleşikle kapatır:
+`ptr_read_volatile`/`ptr_write_volatile` (HER ZAMAN GERÇEKTEN erişir) +
+`memory_fence()`/`compiler_fence()` (sıralama bariyerleri).
+
+### Tasarım kararları
+
+- **Kapsam**: `ptr_read_volatile`/`ptr_write_volatile`, `ptr_read`/
+  `ptr_write` İLE (madde 6) BİREBİR AYNI kapsamda — `T` HERHANGİ bir tip
+  olabilir (heap-yönetimli DAHİL). Kullanıcı bu kapsamı, madde 6'nın
+  KENDİ emsalinden SAPMAMAK İçİn AÇIKÇA ONAYLADI (bir daraltma ÖNERİLDİ,
+  AMA reddedildi).
+- **YENİ Tip/HeapKind YOK**: dördü de SADECE YENİ yerleşik fonksiyonlar,
+  `ptr[T]`nin KENDİSİ (`.typed_ptr`) HİÇ değişmedi.
+- **QBE↔LLVM asimetrisi** (madde 4/5'in `qbeAtomicAdd`/`qbeLoadUnaligned`
+  ile ZATEN 2 kez kurduğu ŞABLONUN BİREBİR devamı): QBE backend'inin
+  KENDİSİ (düz, ARDIŞIK bir SSA hattı — bellek-erişimi yeniden-sıralayan/
+  birleştiren bir geçişi YOK) VE Nox'un KENDİ codegen'i (AST-sıralı,
+  DOĞRUDAN emisyon — instruction-scheduling YOK) BİRLİKTE "aynı adrese
+  art arda erişimler PROGRAM SIRASINDA KORUNUR" garantisini ZATEN fiilen
+  sağladığından (bkz. `emitInlineRetain`in AYNI, ATOMİK BİLE OLMAYAN
+  load/store'u — proje tarihinde HİÇ bir doğruluk hatasına YOL AÇMADI),
+  **QBE'de "volatile" hiçbir EK işaretleyiciye ihtiyaç DUYMAZ** — SADECE
+  LLVM'in optimize edicisi İçİn GERÇEK bir `volatile` niteleyicisi
+  gerekir.
+- **`memory_fence()`**: QBE'nin HİÇBİR `fence` talimatı OLMADIĞINDAN (VE
+  bu derleyicinin QBE IR'ına ham asm gömme mekanizması HİÇ OLMADIĞINDAN)
+  QBE tarafı Zig runtime'ındaki YENİ `nox_memory_fence()`e (`runtime/
+  alloc/lowlevel.zig` — Katman 4, HEM hosted HEM freestanding'e ZATEN
+  bağlı) bir ÇAĞRI olarak yayılır (mimariye göre `mfence`/`dmb ish`/
+  `fence rw,rw`); LLVM tarafı KENDİ `fence seq_cst`ini kullanır (LLVM'in
+  backend'i BUNU hedefin GERÇEK donanım bariyerine ÇEVİRİR, runtime
+  çağrısı GEREKMEZ).
+- **`compiler_fence()`**: QBE'de GERÇEK bir no-op (HİÇBİR IR metni
+  ÜRETİLMEZ — Nox/QBE ZATEN yeniden-sıralama YAPMADIĞINDAN engellenecek
+  hiçbir şey YOK); LLVM'de `fence syncscope("singlethread") seq_cst`
+  (Rust'ın `compiler_fence`/C11'in `atomic_signal_fence`nin AYNI IR
+  karşılığı — optimize ediciyi engeller, donanım bariyeri ÜRETMEZ).
+- **Sıralama seviyesi**: HER İKİSİ de EN GÜÇLÜ (`seq_cst`) — `Task`/
+  `Channel`nin `acq_rel` kararıyla AYNI gerekçe: "daha ucuz OLMASA da
+  KESİN doğru VE TEK bir yerde uygulanıyor."
+
+### Codegen mekaniği
+
+Madde 5'in `qbeLoadUnaligned`/`qbeLoadUB`/vb. eklemesiyle BİREBİR AYNI,
+TAM dispatch edilen `qbeX` şablonu (`qbe_emit.zig`+`llvm_emit.zig`+
+`codegen.zig`) — 8 YENİ ilkel (`qbeLoadVolatile`/`qbeStoreVolatile`/
+`qbeLoadUBVolatile`/`qbeLoadSBVolatile`/`qbeLoadUHVolatile`/
+`qbeLoadSHVolatile`/`qbeStoreBVolatile`/`qbeStoreHVolatile`) + 2 YENİ
+(`qbeMemoryFence`/`qbeCompilerFence`). QBE tarafı HER BİRİ İçİn KENDİ
+non-volatile karşılığına TEK satırlık bir passthrough; LLVM tarafı
+`volatile`/`fence` niteleyicili GERÇEK bir twin. `expr.zig`ye
+`narrowLoad`/`narrowStore`nin (madde 5) İKİ DAHA BASİT kardeşi
+(`narrowLoadVolatile`/`narrowStoreVolatile` — `layout_mode` PARAMETRESİ
+YOK, `ptr[T]` İçİn HER ZAMAN "hizasız/volatile" varsayılır).
+
+**`class` T (Model B) dalı İçİn SIFIR YENİ kod**: `ptr_read`/
+`ptr_write`nin (madde 6) `class`-dalı kodu (`nox_rc_alloc`+
+`nox_raw_memcpy`+alan-retain-fixup) İKİ paylaşılan yardımcıya
+(`genPtrClassCopyRead`/`genPtrClassCopyWrite`) ÇIKARILIP `ptr_read_
+volatile`/`ptr_write_volatile` TARAFINDAN da HARFİYEN AYNI şekilde
+çağrılır — `nox_raw_memcpy` ZATEN opak bir FONKSİYON ÇAĞRISI olduğundan
+(ne Nox'un KENDİ codegen'i ne LLVM'in optimize edicisi `readnone`/`pure`
+işaretlenmemiş bir çağrıyı ELEMEZ/yeniden SIRALAMAZ) "volatile" BURADA
+HİÇBİR ek işleme ihtiyaç DUYMAZ.
+
+### Doğrulama
+
+`zig build test` (Debug) SIFIR regresyon — refaktörün (class-dalı
+çıkarma) İNERT olduğu, `typed_ptr_heap_managed_model_ab.nox`nin `tests/
+golden/ir_snapshots/`teki ÇEKİLİ (checked-in) anlık görüntüsüyle
+BAYT-BİREBİR eşleşmeye DEVAM etmesiyle (`codegen_ir_diff_test.zig`)
+OTOMATİK KANITLANDI (AYRI bir test YAZILMASI GEREKMEDİ — MEVCUT altyapı
+BUNU ZATEN yapıyordu). Manuel IR incelemesiyle DOĞRULANDI: `compiler_
+fence()`in QBE IR'ı ÇAĞRI VARKEN/YOKKEN bayt-birebir aynı (SIFIR ek
+satır); `memory_fence()`in QBE IR'ı `call $nox_memory_fence(` İÇERİYOR;
+LLVM IR'ı SIRASIYLA `fence seq_cst` VE `fence syncscope("singlethread")
+seq_cst` İÇERİYOR; skaler `ptr_read_volatile`/`ptr_write_volatile`nin
+LLVM IR'ı (dar VE geniş genişliklerin HEPSİNDE) `load volatile`/`store
+volatile` İÇERİYOR. Golden testler: `volatile_mmio_scalar_and_fences.nox`
+(u8/i16/i32/int/float/bool round-trip, hizasız bir i16/i32 erişimi
+DAHİL, ARADA `memory_fence()`/`compiler_fence()` çağrılarıyla), `volatile_
+mmio_heap_managed.nox` (madde 6'nın `typed_ptr_heap_managed_model_ab.nox`
+İLE BİREBİR AYNI Model A/Model B senaryosu, SADECE `_volatile`
+yerleşikleriyle), 4 YENİ `typecheck_cases/err_{volatile,fence}_*`
+(lowlevel-dışı kullanım × 2, tip uyuşmazlığı, argüman sayısı hatası) —
+HEM QBE HEM `--release`.
+
+### Bilinçli olarak kapsam dışı
+
+- Gerçek bir MMIO/donanım register'ına karşı ÇALIŞTIRILAN bir test
+  (QEMU/gerçek donanım GEREKTİRİR — madde 10'un `nox-kernel-demo`sunun
+  KENDİ kapsamı).
+- `ptr[U]` (U bir GENERİK fonksiyon tip parametresiyken) — madde 6'dan
+  DEVRALINAN, DEĞİŞMEYEN kısıtlama.
+- Daha ZAYIF/UCUZ bellek sıralama seviyeleri (`acquire`/`release`) —
+  `memory_fence`/`compiler_fence` İçİn TEK, EN GÜÇLÜ (`seq_cst`) seçenek.
+
+### Kritik dosyalar
+
+`compiler/typecheck/checker.zig` (4 YENİ checkCall bloğu), `compiler/
+codegen_qbe/{qbe_emit,llvm_emit,codegen,calls,expr}.zig` (8+2 YENİ `qbeX`
+ilkeli, `narrowLoadVolatile`/`narrowStoreVolatile`, `genTypedPtrLoad
+Volatile`/`genTypedPtrStoreVolatile`, `genPtrClassCopyRead`/`Write`
+REFAKTÖRÜ), `runtime/alloc/lowlevel.zig` (YENİ `nox_memory_fence`),
+`tests/golden/{codegen_cases,typecheck_cases}`.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

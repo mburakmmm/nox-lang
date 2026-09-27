@@ -544,6 +544,89 @@ pub fn qbeStoreUnaligned(self: *Codegen, ty: QbeType, value_raw: []const u8, add
     try self.out.writer.print("    store {s} {s}, ptr {s}, align 1\n", .{ llvmTypeName(ty), value, ptr_reg });
 }
 
+/// v2.0 madde 7 (bkz. plan dosyası §3): `ptr_read_volatile`/`ptr_write_
+/// volatile`nin LLVM-tarafı ilkelleri — `qbeLoadUnaligned`/
+/// `qbeStoreUnaligned`in AYNISI (`align 1`, ÇÜNKÜ `ptr[T]`nin ÇALIŞMA-
+/// zamanı adresi HİÇBİR ZAMAN statik hizalı KANITLANAMAZ), AMA EK olarak
+/// `volatile` niteleyicisi taşır — LLVM'in optimize edicisi, `volatile`
+/// OLMAYAN bir yüklemeyi/saklamayı (KULLANILMIYORSA/art arda AYNI adrese
+/// yazılıyorsa) ÖZGÜRCE ELER/BİRLEŞTİRİR; `volatile` BUNU KOŞULSUZ
+/// ENGELLER (bkz. `qbe_emit.zig`nin AYNI-isimli fonksiyonlarının belge
+/// notu — QBE'de BÖYLE bir risk YOK, orası düz bir passthrough).
+pub fn qbeLoadVolatile(self: *Codegen, dst: []const u8, dst_ty: QbeType, mem_ty: QbeType, addr: []const u8) CodegenError!void {
+    if (dst_ty != mem_ty) return error.Unsupported;
+    const ptr_reg = try resolveAddrPtr(self, addr);
+    try self.out.writer.print("    {s} = load volatile {s}, ptr {s}, align 1\n", .{ dst, llvmTypeName(dst_ty), ptr_reg });
+}
+
+pub fn qbeStoreVolatile(self: *Codegen, ty: QbeType, value_raw: []const u8, addr: []const u8) CodegenError!void {
+    const value = try renderOperand(self, value_raw);
+    const ptr_reg = try resolveAddrPtr(self, addr);
+    try self.out.writer.print("    store volatile {s} {s}, ptr {s}, align 1\n", .{ llvmTypeName(ty), value, ptr_reg });
+}
+
+pub fn qbeLoadUBVolatile(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+    const ptr_reg = try resolveAddrPtr(self, addr);
+    const byte_reg = try self.newTemp();
+    try self.out.writer.print("    {s} = load volatile i8, ptr {s}\n", .{ byte_reg, ptr_reg });
+    try self.out.writer.print("    {s} = zext i8 {s} to i32\n", .{ dst, byte_reg });
+}
+
+pub fn qbeLoadSBVolatile(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+    const ptr_reg = try resolveAddrPtr(self, addr);
+    const byte_reg = try self.newTemp();
+    try self.out.writer.print("    {s} = load volatile i8, ptr {s}\n", .{ byte_reg, ptr_reg });
+    try self.out.writer.print("    {s} = sext i8 {s} to i32\n", .{ dst, byte_reg });
+}
+
+pub fn qbeLoadUHVolatile(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+    const ptr_reg = try resolveAddrPtr(self, addr);
+    const half_reg = try self.newTemp();
+    try self.out.writer.print("    {s} = load volatile i16, ptr {s}\n", .{ half_reg, ptr_reg });
+    try self.out.writer.print("    {s} = zext i16 {s} to i32\n", .{ dst, half_reg });
+}
+
+pub fn qbeLoadSHVolatile(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+    const ptr_reg = try resolveAddrPtr(self, addr);
+    const half_reg = try self.newTemp();
+    try self.out.writer.print("    {s} = load volatile i16, ptr {s}\n", .{ half_reg, ptr_reg });
+    try self.out.writer.print("    {s} = sext i16 {s} to i32\n", .{ dst, half_reg });
+}
+
+pub fn qbeStoreBVolatile(self: *Codegen, value_raw: []const u8, addr: []const u8) CodegenError!void {
+    const value = try renderOperand(self, value_raw);
+    const ptr_reg = try resolveAddrPtr(self, addr);
+    const byte_reg = try self.newTemp();
+    try self.out.writer.print("    {s} = trunc i32 {s} to i8\n", .{ byte_reg, value });
+    try self.out.writer.print("    store volatile i8 {s}, ptr {s}\n", .{ byte_reg, ptr_reg });
+}
+
+pub fn qbeStoreHVolatile(self: *Codegen, value_raw: []const u8, addr: []const u8) CodegenError!void {
+    const value = try renderOperand(self, value_raw);
+    const ptr_reg = try resolveAddrPtr(self, addr);
+    const half_reg = try self.newTemp();
+    try self.out.writer.print("    {s} = trunc i32 {s} to i16\n", .{ half_reg, value });
+    try self.out.writer.print("    store volatile i16 {s}, ptr {s}\n", .{ half_reg, ptr_reg });
+}
+
+/// v2.0 madde 7 (bkz. plan dosyası §2): `memory_fence()` — LLVM'in KENDİ
+/// `fence seq_cst`i (kapsam BELİRTİLMEMİŞ, TÜM iş parçacıkları): LLVM'in
+/// backend'i BUNU hedefin GERÇEK donanım bariyerine (`mfence`/`dmb ish`/
+/// `fence rw,rw`) ÇEVİRİR — bu YÜZDEN bir runtime ÇAĞRISI GEREKMEZ (QBE'nin
+/// AKSİNE, bkz. `qbe_emit.zig`nin AYNI-isimli fonksiyonunun belge notu).
+pub fn qbeMemoryFence(self: *Codegen) CodegenError!void {
+    try self.out.writer.writeAll("    fence seq_cst\n");
+}
+
+/// v2.0 madde 7: `compiler_fence()` — Rust'ın `compiler_fence`/C11'in
+/// `atomic_signal_fence`nin AYNI LLVM IR karşılığı: `syncscope("singlethread")`
+/// optimize ediciyi BU noktanın ÖTESİNDE bellek erişimini yeniden-
+/// sıralamaktan ALIKOYAR, AMA donanım bariyeri ÜRETMEZ (TEK iş parçacığı
+/// kapsamı — `memory_fence`in AKSİNE).
+pub fn qbeCompilerFence(self: *Codegen) CodegenError!void {
+    try self.out.writer.writeAll("    fence syncscope(\"singlethread\") seq_cst\n");
+}
+
 /// QBE'nin `%dst =l alloc{4/8} {n}`i — dönüş HER ZAMAN bir `l` (i64)
 /// "işaretçi-olarak-tamsayı" değeridir (bkz. modül üstü not). Faz LLVM.8
 /// (bkz. plan dosyası "LLVM.8: qbeAlloc'nin mem2reg'i engelleyen ptrtoint

@@ -367,6 +367,8 @@ const fixtures = [_]Fixture{
     .{ .name = "codegen(çalıştır): v2.0 madde 5 — @repr(\"C\")/@packed sınıf düzeni, sizeof/alignof/offsetof, kalıtım+vtable+packed", .kind = .golden, .source = @embedFile("codegen_cases/repr_packed_class_layout.nox"), .expected_stdout = @embedFile("codegen_cases/repr_packed_class_layout.expected") },
     .{ .name = "codegen(çalıştır): v2.0 madde 6 — ptr[T]: sizeof-ölçekli ptr_offset + skaler ptr_read/ptr_write (hizasız erişim dahil)", .kind = .golden, .source = @embedFile("codegen_cases/typed_ptr_scalar_and_offset.nox"), .expected_stdout = @embedFile("codegen_cases/typed_ptr_scalar_and_offset.expected") },
     .{ .name = "codegen(çalıştır): v2.0 madde 6 — ptr[T]: heap-yönetimli T için Model A (str, paylaşılan referans) + Model B (sınıf, bağımsız kopya) ptr_read/ptr_write", .kind = .golden, .source = @embedFile("codegen_cases/typed_ptr_heap_managed_model_ab.nox"), .expected_stdout = @embedFile("codegen_cases/typed_ptr_heap_managed_model_ab.expected") },
+    .{ .name = "codegen(çalıştır): v2.0 madde 7 — volatile/MMIO: skaler ptr_read_volatile/ptr_write_volatile (hizasız erişim dahil) + memory_fence/compiler_fence", .kind = .golden, .source = @embedFile("codegen_cases/volatile_mmio_scalar_and_fences.nox"), .expected_stdout = @embedFile("codegen_cases/volatile_mmio_scalar_and_fences.expected") },
+    .{ .name = "codegen(çalıştır): v2.0 madde 7 — volatile/MMIO: heap-yönetimli T için Model A/Model B ptr_read_volatile/ptr_write_volatile", .kind = .golden, .source = @embedFile("codegen_cases/volatile_mmio_heap_managed.nox"), .expected_stdout = @embedFile("codegen_cases/volatile_mmio_heap_managed.expected") },
 };
 
 fn runOneFixture(fx: *const Fixture, result: *FixtureResult) void {

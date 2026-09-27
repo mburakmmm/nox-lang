@@ -124,6 +124,28 @@ export fn nox_arena_pool_drain(rt: ?*anyopaque) void {
     }
 }
 
+/// v2.0 madde 7 (bkz. nox-teknik-spesifikasyon.md §3.195): `memory_fence()`
+/// için GERÇEK donanım tam-bariyeri — QBE'nin HİÇBİR fence talimatı
+/// OLMADIĞINDAN (VE bu derleyicinin QBE IR'ına ham asm gömme mekanizması
+/// HİÇ OLMADIĞINDAN, bkz. plan dosyası "QBE'nin HİÇBİR fence talimatı YOK"
+/// bulgusu) codegen bunu bir ÇAĞRI olarak yayar; LLVM tarafı KENDİ `fence
+/// seq_cst`ini kullanır (bkz. compiler/codegen_qbe/llvm_emit.zig), BU
+/// fonksiyona HİÇ ihtiyaç DUYMAZ. `lib.zig`/`lib_freestanding.zig`nin
+/// İKİSİ de BU dosyayı (Katman 4) import ETTİĞİNDEN, `build.zig`e HİÇBİR
+/// DOKUNUŞ GEREKMEDEN hosted VE freestanding ikili dosyalara bağlanır.
+pub export fn nox_memory_fence() void {
+    switch (builtin.cpu.arch) {
+        .x86_64 => asm volatile ("mfence" ::: .{ .memory = true }),
+        .aarch64 => asm volatile ("dmb ish" ::: .{ .memory = true }),
+        .riscv64 => asm volatile ("fence rw, rw" ::: .{ .memory = true }),
+        else => @compileError("nox_memory_fence: desteklenmeyen mimari"),
+    }
+}
+
+test "nox_memory_fence çökmeden çalışır" {
+    nox_memory_fence();
+}
+
 test "arena tahsisi yazılabilir/okunabilir; destroy sonrası sızıntı yok" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);

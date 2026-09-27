@@ -424,6 +424,10 @@ pub const Codegen = struct {
     pub const typedPtrStride = calls.typedPtrStride;
     pub const genTypedPtrLoad = calls.genTypedPtrLoad;
     pub const genTypedPtrStore = calls.genTypedPtrStore;
+    pub const genPtrClassCopyRead = calls.genPtrClassCopyRead;
+    pub const genPtrClassCopyWrite = calls.genPtrClassCopyWrite;
+    pub const genTypedPtrLoadVolatile = calls.genTypedPtrLoadVolatile;
+    pub const genTypedPtrStoreVolatile = calls.genTypedPtrStoreVolatile;
 
     pub const genExprForTarget = expr_mod.genExprForTarget;
     pub const boxScalar = expr_mod.boxScalar;
@@ -452,6 +456,8 @@ pub const Codegen = struct {
     pub const genNarrowingCast = expr_mod.genNarrowingCast;
     pub const narrowLoad = expr_mod.narrowLoad;
     pub const narrowStore = expr_mod.narrowStore;
+    pub const narrowLoadVolatile = expr_mod.narrowLoadVolatile;
+    pub const narrowStoreVolatile = expr_mod.narrowStoreVolatile;
     pub const emitCmp = expr_mod.emitCmp;
     pub const callLibm1 = expr_mod.callLibm1;
     pub const callLibm2 = expr_mod.callLibm2;
@@ -712,6 +718,70 @@ pub const Codegen = struct {
         return switch (self.backend) {
             .qbe => qbe_emit.qbeStoreUnaligned(self, ty, value, addr),
             .llvm => llvm_emit.qbeStoreUnaligned(self, ty, value, addr),
+        };
+    }
+    // v2.0 madde 7: `ptr_read_volatile`/`ptr_write_volatile`nin ilkelleri
+    // — bkz. plan dosyası §3, `qbeLoadUnaligned`in AYNI dispatch şablonu.
+    pub fn qbeLoadVolatile(self: *Codegen, dst: []const u8, dst_ty: QbeType, mem_ty: QbeType, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeLoadVolatile(self, dst, dst_ty, mem_ty, addr),
+            .llvm => llvm_emit.qbeLoadVolatile(self, dst, dst_ty, mem_ty, addr),
+        };
+    }
+    pub fn qbeStoreVolatile(self: *Codegen, ty: QbeType, value: []const u8, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeStoreVolatile(self, ty, value, addr),
+            .llvm => llvm_emit.qbeStoreVolatile(self, ty, value, addr),
+        };
+    }
+    pub fn qbeLoadUBVolatile(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeLoadUBVolatile(self, dst, addr),
+            .llvm => llvm_emit.qbeLoadUBVolatile(self, dst, addr),
+        };
+    }
+    pub fn qbeLoadSBVolatile(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeLoadSBVolatile(self, dst, addr),
+            .llvm => llvm_emit.qbeLoadSBVolatile(self, dst, addr),
+        };
+    }
+    pub fn qbeLoadUHVolatile(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeLoadUHVolatile(self, dst, addr),
+            .llvm => llvm_emit.qbeLoadUHVolatile(self, dst, addr),
+        };
+    }
+    pub fn qbeLoadSHVolatile(self: *Codegen, dst: []const u8, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeLoadSHVolatile(self, dst, addr),
+            .llvm => llvm_emit.qbeLoadSHVolatile(self, dst, addr),
+        };
+    }
+    pub fn qbeStoreBVolatile(self: *Codegen, value: []const u8, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeStoreBVolatile(self, value, addr),
+            .llvm => llvm_emit.qbeStoreBVolatile(self, value, addr),
+        };
+    }
+    pub fn qbeStoreHVolatile(self: *Codegen, value: []const u8, addr: []const u8) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeStoreHVolatile(self, value, addr),
+            .llvm => llvm_emit.qbeStoreHVolatile(self, value, addr),
+        };
+    }
+    // v2.0 madde 7: `memory_fence()`/`compiler_fence()` — bkz. plan
+    // dosyası §2.
+    pub fn qbeMemoryFence(self: *Codegen) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeMemoryFence(self),
+            .llvm => llvm_emit.qbeMemoryFence(self),
+        };
+    }
+    pub fn qbeCompilerFence(self: *Codegen) CodegenError!void {
+        return switch (self.backend) {
+            .qbe => qbe_emit.qbeCompilerFence(self),
+            .llvm => llvm_emit.qbeCompilerFence(self),
         };
     }
     pub fn qbeAlloc(self: *Codegen, dst: []const u8, size: QbeAllocSize, n: usize) CodegenError!void {

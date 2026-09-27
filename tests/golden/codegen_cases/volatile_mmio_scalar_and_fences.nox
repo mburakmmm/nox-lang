@@ -1,0 +1,38 @@
+# v2.0 madde 7 — bkz. nox-teknik-spesifikasyon.md §3.195. `ptr_read`/
+# `ptr_write`nin (madde 6) BİREBİR aynı skaler round-trip senaryosu,
+# SADECE `_volatile` yerleşikleriyle — hizasız (tek bayt kaydırılmış)
+# bir i16/i32 erişimi DAHİL. `memory_fence()`/`compiler_fence()`nin de
+# derlenip çalıştığını (davranışı DEĞİŞTİRMEDİĞİNİ) doğrular.
+def scalar_roundtrip() -> None:
+    lowlevel:
+        buf: list[u8] = [u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0), u8(0)]
+        base: ptr = detach(buf)
+        base_addr: int = ptr_to_int(base)
+
+        pu8: ptr[u8] = ptr[u8](base_addr)
+        ptr_write_volatile(pu8, u8(200))
+        print(ptr_read_volatile(pu8))
+        compiler_fence()
+
+        pi16: ptr[i16] = ptr[i16](base_addr + 1)
+        ptr_write_volatile(pi16, i16(-1000))
+        print(ptr_read_volatile(pi16))
+        memory_fence()
+
+        pi32: ptr[i32] = ptr[i32](base_addr + 3)
+        ptr_write_volatile(pi32, i32(-70000))
+        print(ptr_read_volatile(pi32))
+
+        pint: ptr[int] = ptr[int](base_addr + 8)
+        ptr_write_volatile(pint, 123456789)
+        print(ptr_read_volatile(pint))
+
+        pfloat: ptr[float] = ptr[float](base_addr + 17)
+        ptr_write_volatile(pfloat, 2.5)
+        print(ptr_read_volatile(pfloat))
+
+        pbool: ptr[bool] = ptr[bool](base_addr + 25)
+        ptr_write_volatile(pbool, True)
+        print(ptr_read_volatile(pbool))
+
+scalar_roundtrip()

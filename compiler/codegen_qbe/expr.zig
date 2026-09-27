@@ -435,6 +435,37 @@ pub fn narrowStore(self: *Codegen, value: []const u8, ti: types.TypeInfo, layout
     }
 }
 
+/// v2.0 madde 7 (bkz. plan dosyası §3): `ptr_read_volatile`nin skaler-T
+/// yolu — `narrowLoad`in `.packed_` dalıyla AYNI genişlik-dispatch'i,
+/// AMA `layout_mode` PARAMETRESİ ALMAZ (`ptr[T]` İçİn her zaman "hizasız/
+/// volatile" varsayılır, `genTypedPtrLoad`in ZATEN yaptığı GİBİ) VE
+/// dar-OLMAYAN genişlikler İçİn `qbeLoadUnaligned` YERİNE `qbeLoadVolatile`
+/// çağırır (LLVM'de GERÇEK `load volatile`, QBE'de AYIRT EDİLEMEZ).
+pub fn narrowLoadVolatile(self: *Codegen, dst: []const u8, ti: types.TypeInfo, addr: []const u8) CodegenError!void {
+    if (ti.fixed_int) |k| {
+        switch (k) {
+            .u8 => return self.qbeLoadUBVolatile(dst, addr),
+            .i8 => return self.qbeLoadSBVolatile(dst, addr),
+            .u16 => return self.qbeLoadUHVolatile(dst, addr),
+            .i16 => return self.qbeLoadSHVolatile(dst, addr),
+            else => {},
+        }
+    }
+    try self.qbeLoadVolatile(dst, ti.qtype, ti.qtype, addr);
+}
+
+/// `narrowLoadVolatile`in yazma yönü — bkz. onun belge notu, AYNI gerekçe.
+pub fn narrowStoreVolatile(self: *Codegen, value: []const u8, ti: types.TypeInfo, addr: []const u8) CodegenError!void {
+    if (ti.fixed_int) |k| {
+        switch (k) {
+            .u8, .i8 => return self.qbeStoreBVolatile(value, addr),
+            .u16, .i16 => return self.qbeStoreHVolatile(value, addr),
+            else => {},
+        }
+    }
+    try self.qbeStoreVolatile(ti.qtype, value, addr);
+}
+
 pub fn genFieldRead(self: *Codegen, a: ast.Attribute) CodegenError!Value {
     const obj = try self.genExpr(a.obj.*);
     if (obj.heap != .class) return error.Unsupported;

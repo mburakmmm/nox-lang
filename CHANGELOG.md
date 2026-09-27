@@ -14,6 +14,25 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.106.0]
+
+### Eklendi
+
+- **Volatile/MMIO + fences — v2.0 yol haritasının 7. maddesi (bkz.
+  nox-teknik-spesifikasyon.md §3.195)**: `ptr[T]`in (madde 6) `ptr_read`/
+  `ptr_write`si HİÇBİR "bu erişim ASLA elenemez/yeniden sıralanamaz"
+  garantisi vermiyordu — bir MMIO register'ı İçİn bu KATASTROFİKTİ. Artık:
+  - `ptr_read_volatile(p: ptr[T]) -> T` / `ptr_write_volatile(p: ptr[T],
+    v: T) -> None`: `ptr_read`/`ptr_write` İLE AYNI kapsam (`T` HERHANGİ
+    bir tip, heap-yönetimli DAHİL), AMA HER erişim GERÇEKTEN gerçekleşir
+    — LLVM'de GERÇEK `volatile` niteleyicisiyle, QBE'de (zaten yeniden-
+    sıralama YAPMAYAN bir backend olduğundan) AYIRT EDİLEMEZ.
+  - `memory_fence()`: GERÇEK donanım tam-bariyeri (`mfence`/`dmb ish`/
+    `fence rw,rw`).
+  - `compiler_fence()`: derleyici-SEVİYESİ sıralama bariyeri (donanım
+    bariyeri YOK) — QBE'de GERÇEK bir no-op.
+  - Dördü de SADECE `lowlevel:` bloğu İÇİNDE kullanılabilir.
+
 ## [1.105.0]
 
 ### Eklendi
