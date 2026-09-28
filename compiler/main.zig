@@ -798,7 +798,7 @@ fn installOrUpdatePackage(
     defer std.Io.Dir.cwd().deleteTree(io, scratch_dir_path) catch {};
     const scratch_bin_path = try std.fmt.allocPrint(a, "{s}/{s}", .{ scratch_dir_path, bin_spec.name });
 
-    const compiled_path = try buildOne(gpa, io, a, bin_source_path, false, scratch_bin_path, nox_home, resource_dirs, false, false, .hosted, fetch_policy);
+    const compiled_path = try buildOne(gpa, io, a, bin_source_path, false, scratch_bin_path, nox_home, resource_dirs, false, false, .hosted, fetch_policy, null, false);
 
     const bin_dir_path = try project.resolveGlobalBinDir(a, nox_home);
     try std.Io.Dir.cwd().createDirPath(io, bin_dir_path);
@@ -949,6 +949,19 @@ const BuildOpts = struct {
     /// (bkz. `buildOne`). VARSAYILAN `.hosted` — mevcut TÜM davranış
     /// DEĞİŞMEDEN kalır.
     profile: codegen.Profile = .hosted,
+    /// v2.0 madde 8 (bkz. nox-teknik-spesifikasyon.md §3.196): `--target
+    /// <isim>` — `profile == .freestanding` İKEN `qbe_target.nameForArch`in
+    /// (x86_64/aarch64/riscv64) çıplak mimari adlarından biri; `profile ==
+    /// .hosted` İKEN `qbe_target.hostedTargetInfo`nin (macos-arm64/linux-
+    /// x64/linux-arm64/windows-x64) platform isimlerinden biri. VARSAYILAN
+    /// `null` — SIFIR davranış değişikliği (HOST'un KENDİ mimarisi/OS'u).
+    target: ?[]const u8 = null,
+    /// v2.0 madde 8: `--emit-asm` — `qbe -t ...` çalıştırıldıktan HEMEN
+    /// SONRA linkleme TAMAMEN ATLANIR, ham `.s` yolu döner. Eski, dâhilî
+    /// `NOX_FREESTANDING_KERNEL_ARCH`in "hangi mimari" + "linklemeyi atla"
+    /// İKİ SORUMLULUĞUNUN İKİNCİSİ — ARTIK profile/target-nötr, AÇIKÇA
+    /// adlandırılmış BAĞIMSIZ bir bayrak.
+    emit_asm: bool = false,
 };
 
 fn parseBuildOpts(args: []const []const u8) BuildOpts {
@@ -977,6 +990,11 @@ fn parseBuildOpts(args: []const []const u8) BuildOpts {
                     std.process.exit(1);
                 }
             }
+        } else if (std.mem.eql(u8, arg, "--target")) {
+            i += 1;
+            if (i < args.len) opts.target = args[i];
+        } else if (std.mem.eql(u8, arg, "--emit-asm")) {
+            opts.emit_asm = true;
         } else if (opts.path == null) {
             opts.path = arg;
         }
@@ -1001,8 +1019,28 @@ fn cmdBuild(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
         std.debug.print("{s}", .{usage});
         std.process.exit(1);
     };
-    const out = try buildOne(gpa, io, a, path_arg, opts.verbose, opts.output, nox_home, resource_dirs, opts.debug_info, opts.release, opts.profile, fetch_policy);
+    const out = try buildOne(gpa, io, a, path_arg, opts.verbose, opts.output, nox_home, resource_dirs, opts.debug_info, opts.release, opts.profile, fetch_policy, opts.target, opts.emit_asm);
     printOk("derlendi: {s}\n", .{out});
+}
+
+/// v2.0 madde 8: `opts.target` HOST'un KENDİ mimarisine/platformuna karşılık
+/// GELİYOR MU — `cmdRun`nin çapraz-derlenmiş bir ikiliyi ÇALIŞTIRMA
+/// GİRİŞİMİNİ AÇIK bir hatayla reddetmesi İçİn.
+fn isRunnableOnHost(profile: codegen.Profile, target: []const u8) bool {
+    if (profile == .freestanding) return std.mem.eql(u8, target, @tagName(builtin.cpu.arch));
+    const host_name: []const u8 = switch (builtin.os.tag) {
+        .macos => switch (builtin.cpu.arch) {
+            .aarch64 => "macos-arm64",
+            else => "macos-x64",
+        },
+        .windows => "windows-x64",
+        .linux => switch (builtin.cpu.arch) {
+            .aarch64 => "linux-arm64",
+            else => "linux-x64",
+        },
+        else => "",
+    };
+    return std.mem.eql(u8, target, host_name);
 }
 
 /// `noxc run`/`noxc test` (Faz O §P.2 — `test`in GERÇEK `*_test.nox` keşif/
@@ -1013,23 +1051,30 @@ fn cmdBuild(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
 /// KAYNAĞIN YANINA DEĞİL) derler, çalıştırılabilir dosyayı stdio'yu
 /// MİRAS ALARAK çalıştırır, çocuğun çıkış kodunu AYNEN yansıtır.
 fn cmdRun(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy) !void {
-    // Faz F.4: `NOX_FREESTANDING_KERNEL_ARCH` (bkz. `buildOne`nin belge
-    // notu) DÂHİLÎ bir test kancasıdır — SETLENDİĞİNDE `buildOne` linklenmemiş
-    // BİR `.s` dosyası döner, `runAndWait` BUNU ÇALIŞTIRAMAZ. Bu, kullanıcı
-    // hatası DEĞİL (SADECE dâhilî mekanizma) AMA ucuz bir savunma.
-    if (std.c.getenv("NOX_FREESTANDING_KERNEL_ARCH") != null) {
-        printErr("noxc run: NOX_FREESTANDING_KERNEL_ARCH ayarliyken calistirilamaz (dahili bir test kancasidir, sadece 'noxc build' ile linklenmemis .s uretir)\n", .{});
-        std.process.exit(1);
-    }
     const split = splitOnDoubleDash(args);
     const opts = parseBuildOpts(split.before);
     const path_arg = opts.path orelse {
         std.debug.print("kullanim: noxc run [--dump|-v] <dosya.nox> [-- argv...]\n", .{});
         std.process.exit(1);
     };
+    // v2.0 madde 8: `--emit-asm` linklenmemiş BİR `.s` dosyası döner,
+    // `runAndWait` BUNU ÇALIŞTIRAMAZ; çapraz-derlenmiş bir `--target`
+    // (HOST'tan FARKLI) İSE üretilen ikili BU makinede ÇALIŞTIRILAMAZ —
+    // eski `NOX_FREESTANDING_KERNEL_ARCH`in `cmdRun` reddiyle AYNI ruh,
+    // ARTIK genel.
+    if (opts.emit_asm) {
+        printErr("noxc run: --emit-asm ile calistirilamaz (linklenmemis .s uretir, sadece 'noxc build' ile kullanin)\n", .{});
+        std.process.exit(1);
+    }
+    if (opts.target) |t| {
+        if (!isRunnableOnHost(opts.profile, t)) {
+            printErr("noxc run: --target {s} bu makinede calistirilamaz (capraz-derlenmis bir ikili) - 'noxc build' kullanin\n", .{t});
+            std.process.exit(1);
+        }
+    }
 
     const cache_bin_path = try cacheBinPath(io, a, path_arg);
-    const bin_path = try buildOne(gpa, io, a, path_arg, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.release, opts.profile, fetch_policy);
+    const bin_path = try buildOne(gpa, io, a, path_arg, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.release, opts.profile, fetch_policy, opts.target, opts.emit_asm);
 
     const code = try runAndWait(io, a, bin_path, split.after);
     std.process.exit(code);
@@ -1074,7 +1119,7 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
     if (opts.path) |t| {
         if (std.mem.endsWith(u8, t, ".nox")) {
             const cache_bin_path = try cacheBinPath(io, a, t);
-            const bin_path = try buildOne(gpa, io, a, t, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.release, opts.profile, fetch_policy);
+            const bin_path = try buildOne(gpa, io, a, t, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.release, opts.profile, fetch_policy, opts.target, opts.emit_asm);
             const code = try runAndWait(io, a, bin_path, &.{});
             std.process.exit(code);
         }
@@ -1100,7 +1145,7 @@ fn cmdTest(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []con
         const fa = file_arena.allocator();
 
         const cache_bin_path = try cacheBinPath(io, fa, file);
-        const bin_path = try buildOne(gpa, io, fa, file, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.release, opts.profile, fetch_policy);
+        const bin_path = try buildOne(gpa, io, fa, file, opts.verbose, cache_bin_path, nox_home, resource_dirs, opts.debug_info, opts.release, opts.profile, fetch_policy, opts.target, opts.emit_asm);
         const code = runAndWait(io, fa, bin_path, &.{}) catch 1;
         if (code == 0) {
             printOk("GECTI: {s}\n", .{file});
@@ -1820,7 +1865,7 @@ fn computeLinkerVisibilityArgs() []const []const u8 {
 /// yolunu döner. Hata durumlarında (mevcut davranışla BİREBİR aynı mesaj/
 /// çıkış kodu) doğrudan `std.process.exit(1)` çağırır — `cmdBuild`/`cmdRun`
 /// bu davranışı DEĞİŞTİRMEDEN miras alır.
-fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: []const u8, verbose: bool, output_override: ?[]const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, debug_info: bool, release: bool, profile: codegen.Profile, fetch_policy: fetch.FetchPolicy) ![]const u8 {
+fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: []const u8, verbose: bool, output_override: ?[]const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, debug_info: bool, release: bool, profile: codegen.Profile, fetch_policy: fetch.FetchPolicy, target: ?[]const u8, emit_asm: bool) ![]const u8 {
     // Faz R.3+F.1 tamamlama (bkz. plan dosyası): `--release` (LLVM) yolu
     // GERÇEK OS iş parçacıklarına dayanan paylaşılan bir `WorkerPool`
     // kurar (Task[T]/Channel[T] DAHİL, TÜM `spawn`lar İçİn) — freestanding
@@ -2033,23 +2078,43 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
 
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ssa_path, .data = ir });
 
-    // Faz F.4 (bkz. plan dosyası "Gerçek bare-metal boot zinciri"): DÂHİLÎ,
-    // belgelenmemiş bir test kancası — genel-amaçlı bir `--target` CLI
-    // bayrağı YERİNE (BU projenin "Kapsam Dışı" disipliniyle TUTARLI), SADECE
-    // `profile == .freestanding` İKEN okunur. VARSAYILAN (AYARLANMAMIŞ)
-    // durumda davranış BİREBİR DEĞİŞMEZ.
-    const kernel_arch: ?[]const u8 = if (profile == .freestanding)
-        (if (std.c.getenv("NOX_FREESTANDING_KERNEL_ARCH")) |v| std.mem.span(v) else null)
+    // v2.0 madde 8 (bkz. nox-teknik-spesifikasyon.md §3.196): kamuya açık
+    // `--target <isim>` — `profile`e göre YORUMLANIR: `.freestanding`
+    // İKEN `nameForArch`in çıplak mimari adları (x86_64/aarch64/riscv64),
+    // `.hosted` İKEN `hostedTargetInfo`nin platform isimleri (macos-arm64/
+    // linux-x64/linux-arm64/windows-x64) — İKİ sözlük ASLA ÇAKIŞMAZ, bu
+    // YÜZDEN YANLIŞ profil İçİn bir isim vermek DOĞAL olarak (AYRI bir
+    // uyuşmazlık kontrolüne GEREK KALMADAN) "bilinmeyen hedef" hatasına
+    // düşer. Eski, dâhilî `NOX_FREESTANDING_KERNEL_ARCH` TAMAMEN SİLİNDİ —
+    // `--target`/`--emit-asm` YERİNİ ALDI.
+    const hosted_target: ?qbe_target.HostedTargetInfo = if (profile == .hosted and target != null)
+        (qbe_target.hostedTargetInfo(target.?) orelse {
+            printErr("--target: bilinmeyen hosted hedef '{s}' (gecerli degerler: macos-arm64, linux-x64, linux-arm64, windows-x64)\n", .{target.?});
+            std.process.exit(1);
+        })
     else
         null;
 
-    const qbe_arch_name: []const u8 = if (kernel_arch) |ka|
-        qbe_target.nameForArch(ka) orelse {
-            printErr("NOX_FREESTANDING_KERNEL_ARCH: bilinmeyen mimari '{s}'\n", .{ka});
+    const qbe_arch_name: []const u8 = if (hosted_target) |ht|
+        ht.qbe_target
+    else if (profile == .freestanding and target != null)
+        (qbe_target.nameForArch(target.?) orelse {
+            printErr("--target: bilinmeyen freestanding mimarisi '{s}' (gecerli degerler: x86_64, aarch64, riscv64)\n", .{target.?});
             std.process.exit(1);
-        }
+        })
     else
         qbe_target.name(profile == .freestanding);
+
+    // v2.0 madde 8: `runtime/async_rt/fiber.zig`nin mimari kapısı riscv64
+    // İçİn HİÇBİR context-switch İMPLEMENTASYONU TAŞIMIYOR (bkz. plan
+    // dosyasının araştırma notu) — `noxrt-freestanding-riscv64.o` BUGÜN
+    // İNŞA EDİLEMEZ, bu YÜZDEN GERÇEK bir link denemesi (yani `--emit-asm`
+    // OLMADAN) AÇIK bir hatayla reddedilir. `--emit-asm` İLE (SADECE ham
+    // `.s`, linksiz) YİNE de çalışır.
+    if (profile == .freestanding and target != null and std.mem.eql(u8, target.?, "riscv64") and !emit_asm) {
+        printErr("--target riscv64: freestanding runtime'i henuz yok (fiber.zig'in context-switch implementasyonu riscv64'u desteklemiyor) - sadece --emit-asm ile ham .s uretilebilir\n", .{});
+        std.process.exit(1);
+    }
 
     const qbe_result = try std.process.run(gpa, io, .{
         .argv = &.{ "qbe", "-t", qbe_arch_name, "-o", asm_path, ssa_path },
@@ -2061,10 +2126,11 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         std.process.exit(1);
     }
 
-    // `kernel_arch` VARSA linkleme TAMAMEN ATLANIR — HAM `.s` dosyası
-    // (`asm_path`) çıktı OLARAK DÖNÜLÜR, F.4'ün KENDİ kernel-link adımına
-    // (`tests/golden/kernel_boot_x86_64_test.zig`) girdi olması İçİn.
-    if (kernel_arch != null) {
+    // v2.0 madde 8: `--emit-asm` — `qbe -t ...` çalıştırıldıktan HEMEN
+    // SONRA linkleme TAMAMEN ATLANIR, ham `.s` yolu döner (eski `kernel_
+    // arch != null`in "return asm_path" davranışının BİREBİR AYNISI, AMA
+    // ARTIK profile-nötr, AÇIKÇA adlandırılmış BAĞIMSIZ bir bayrak).
+    if (emit_asm) {
         return asm_path;
     }
 
@@ -2077,11 +2143,21 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // `ld`sine ÖZGÜ, `zig cc`nin İÇ LLD'si FARKLI bir sözdizimi
     // bekleyebilir — v1 basitliği İçİn, AYRI bir gelecekteki iyileştirme).
     if (profile == .freestanding) {
-        const freestanding_triple = try std.fmt.allocPrint(a, "{s}-freestanding-none", .{@tagName(builtin.cpu.arch)});
+        // v2.0 madde 8: `target` VARSA (`--target x86_64`/`aarch64`) SABİT
+        // hedefli `noxrt-freestanding-generic-{arch}.o`ya (bkz. build.zig'in
+        // `addFreestandingRuntimeChain`ı) bağlanır — YOKSA (VARSAYILAN,
+        // SIFIR davranış değişikliği) `builtin.cpu.arch`in HOST-arch'lı
+        // `resource_dirs.noxrt_freestanding_path`ine.
+        const freestanding_arch_name: []const u8 = target orelse @tagName(builtin.cpu.arch);
+        const freestanding_triple = try std.fmt.allocPrint(a, "{s}-freestanding-none", .{freestanding_arch_name});
+        const freestanding_runtime_path: []const u8 = if (target != null)
+            try std.fmt.allocPrint(a, "{s}/lib/noxrt-freestanding-generic-{s}.o", .{ resource_dirs.install_root, freestanding_arch_name })
+        else
+            resource_dirs.noxrt_freestanding_path;
         var zig_argv: std.ArrayListUnmanaged([]const u8) = .empty;
         try zig_argv.appendSlice(a, &.{
-            "zig", "cc", "-target", freestanding_triple, "-ffreestanding", "-nostdlib", "-static",
-            "-o", bin_path, asm_path, resource_dirs.noxrt_freestanding_path,
+            "zig", "cc",     "-target", freestanding_triple,       "-ffreestanding", "-nostdlib", "-static",
+            "-o",  bin_path, asm_path,  freestanding_runtime_path,
         });
         try appendExternLinkArgs(a, &zig_argv, module);
 
@@ -2101,6 +2177,13 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         return bin_path;
     }
 
+    // v2.0 madde 8: `hosted_target` VARSA (`--target linux-x64`/vb.)
+    // `zig cc -target <triple>` İLE ÇAPRAZ-derlenmiş linkleme; YOKSA
+    // (VARSAYILAN, SIFIR davranış değişikliği) host `cc` + `resource_
+    // dirs.noxrt_path`. `-lntdll`/`-lws2_32`/`-lcrypt32`/`swap_asm`
+    // eklemeleri `builtin.os.tag == .windows` (HOST) YERİNE `target_is_
+    // windows` (HEDEFİN OS'u) KOŞULUYLA yapılır.
+    const target_is_windows = if (hosted_target) |ht| ht.is_windows else builtin.os.tag == .windows;
     // Faz Q.3: runtime nesne dosyasının yolu artık `resource_dirs.noxrt_path`
     // (bkz. `project.resolveResourceDirs`) — `noxc`nin KENDİ çalıştırılabilir
     // dosya konumuna göre çözülür, CWD'ye (proje köküne) BAĞIMLI DEĞİLDİR.
@@ -2117,14 +2200,28 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // "TÜM genel sembolleri dışa aç" karşılığı `-Wl,--export-all-symbols`dir
     // (`linker_visibility_args`, YUKARIDA — LLVM yoluyla PAYLAŞILDI).
     var cc_argv: std.ArrayListUnmanaged([]const u8) = .empty;
-    try cc_argv.append(a, "cc");
+    const runtime_object_path: []const u8 = if (hosted_target) |ht|
+        try std.fmt.allocPrint(a, "{s}/lib/{s}.o", .{ resource_dirs.install_root, ht.runtime_object_name })
+    else
+        resource_dirs.noxrt_path;
+    if (hosted_target) |ht| {
+        try cc_argv.appendSlice(a, &.{ "zig", "cc", "-target", ht.zig_triple });
+    } else {
+        try cc_argv.append(a, "cc");
+    }
     try cc_argv.appendSlice(a, linker_visibility_args);
-    try cc_argv.appendSlice(a, &.{ "-o", bin_path, asm_path, resource_dirs.noxrt_path });
+    try cc_argv.appendSlice(a, &.{ "-o", bin_path, asm_path, runtime_object_path });
     // Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71): Windows'ta fiber
     // bağlam değişimi assembly'si `noxrt.o`nun DIŞINDA, AYRI kurulur (bkz.
     // `ResourceDirs.swap_asm_path`ın belge notu) — bu YÜZDEN NİHAİ bağlamaya
     // AYRI bir girdi olarak eklenmesi GEREKİR.
-    if (builtin.os.tag == .windows) try cc_argv.append(a, resource_dirs.swap_asm_path);
+    if (target_is_windows) {
+        const swap_asm_path: []const u8 = if (hosted_target) |ht|
+            try std.fmt.allocPrint(a, "{s}/lib/swap_asm-{s}.o", .{ resource_dirs.install_root, ht.runtime_object_name })
+        else
+            resource_dirs.swap_asm_path;
+        try cc_argv.append(a, swap_asm_path);
+    }
     try cc_argv.append(a, "-lm");
     // Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71): Zig'in KENDİ std
     // kütüphanesi (Windows dosya/iş parçacığı/zamanlayıcı ilkelleri İçin
@@ -2136,7 +2233,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // eklenmesi GEREKİR (GERÇEK Windows CI'de `undefined reference to
     // 'WSAGetLastError'`/`'NtCreateFile'`/`'CertOpenSystemStoreW'`/... İLE
     // doğrulandı).
-    if (builtin.os.tag == .windows) try cc_argv.appendSlice(a, &.{ "-lntdll", "-lws2_32", "-lcrypt32" });
+    if (target_is_windows) try cc_argv.appendSlice(a, &.{ "-lntdll", "-lws2_32", "-lcrypt32" });
     try appendExternLinkArgs(a, &cc_argv, module);
 
     const cc_result = try std.process.run(gpa, io, .{

@@ -24310,6 +24310,134 @@ REFAKTÖRÜ), `runtime/alloc/lowlevel.zig` (YENİ `nox_memory_fence`),
 
 ---
 
+## 3.196 v2.0 stabilizasyon yol haritası, madde 8 — Genel-amaçlı `--target`
+
+Bugüne kadar `noxc build`in emisyon hedefi HER ZAMAN `noxc`nin KENDİSİNİN
+DERLENDİĞİ makine İDİ — TEK istisna, `--profile freestanding` İKEN
+`qbe -t`nin hedef mimarisini override EDEBİLEN AMA linklemeyi TAMAMEN
+ATLAYAN dâhilî/belgelenmemiş `NOX_FREESTANDING_KERNEL_ARCH` env-
+değişkeniydi (SADECE `tests/golden/kernel_boot_x86_64_test.zig`nin KENDİ
+manuel link adımına HAM `.s` sağlamak İçİn). Madde 8 BUNU kamuya açık,
+GERÇEKTEN LİNKLENMİŞ bir binary üreten `--target <isim>`/`--emit-asm`
+bayraklarına GENELLEŞTİRİR — HEM freestanding HEM (kullanıcının AÇIKÇA
+GENİŞLETTİĞİ kapsamla) hosted profillerde.
+
+### Tasarım kararları
+
+- **Kapsam, kullanıcı TARAFINDAN GENİŞLETİLDİ**: `--target` HEM
+  `--profile freestanding` HEM (varsayılan) `hosted` İçİn ÇALIŞIR.
+  Hosted çapraz-derleme bu kod tabanının HİÇ denemediği GERÇEK bir YENİ
+  yetenek — BU oturumda GERÇEKTEN çalıştırılan denemelerle (bu aarch64/
+  macOS makineden `zig cc -target x86_64-linux-gnu`/`aarch64-linux-gnu`/
+  `x86_64-windows-gnu`/`aarch64-macos`) doğrulandı.
+- **İki AYRI, ÇAKIŞMAYAN isim sözlüğü**: `--profile freestanding` İKEN
+  ÇIPLAK mimari adları (`x86_64`/`aarch64`/`riscv64`, `qbe_target.
+  nameForArch`in MEVCUT kümesi); `--profile hosted` İKEN `.github/
+  workflows/release.yml`nin GERÇEK, sevk edilen 4 platform isminin
+  BİREBİR AYNISI (`macos-arm64`/`linux-x64`/`linux-arm64`/`windows-x64`,
+  `qbe_target.hostedTargetInfo`, YENİ). YANLIŞ profil İçİn bir isim
+  vermek DOĞAL olarak (AYRI bir uyuşmazlık kontrolüne GEREK KALMADAN)
+  "bilinmeyen hedef" hatasına düşer.
+- **riscv64 (freestanding) linkleme AÇIK bir hatayla REDDEDİLİR**:
+  `runtime/async_rt/fiber.zig`nin mimari kapısı riscv64 İçİn HİÇBİR
+  context-switch İMPLEMENTASYONU TAŞIMIYOR (`swap_riscv64.S` YOK) —
+  `--emit-asm` İLE (SADECE ham `.s`, linksiz) YİNE de çalışır.
+- **`--emit-asm`, `--target`den BAĞIMSIZ, AYRI bir bayrak**: eski `NOX_
+  FREESTANDING_KERNEL_ARCH`in İKİ SORUMLULUĞU ("hangi mimari" + "linklemeyi
+  atla") BURADA AYRIŞTIRILIR — HER İKİ profilde de kullanılabilir.
+
+### `build.zig` — HER kombinasyon İçİn KOŞULSUZ runtime nesnesi
+
+Faz F.4'ün ZATEN kanıtladığı `noxrt_kernel` şablonu (`b.
+resolveTargetQuery` + KENDİ `swap_asm` derlemesi + `bundle_compiler_rt`)
+İKİ YENİ paylaşılan yardımcıya (`addFreestandingRuntimeChain`/
+`addHostedRuntimeChain`) ÇIKARILIP HER hedef İçİn ÇAĞRILIR: freestanding
+İçİn `noxrt-freestanding-generic-{x86_64,aarch64}.o` (riscv64 HARİÇ —
+fiber.zig'in kapısına ÇARPAR), hosted İçİn `noxrt-{macos-arm64,linux-x64,
+linux-arm64,windows-x64}.o`. `noxrt-freestanding-generic-*` İSİMLERİ
+BİLEREK `noxrt_kernel`in `noxrt-freestanding-x86_64.o`SUNDAN (KERNEL-özgü,
+`kernel.zig`yi force-ref eden `lib_freestanding_kernel.zig` kökünden,
+İTEM 10'un nesnesi) AYRIŞTIRILIR — İKİSİ FARKLI kök dosyalardan derlenen
+FARKLI nesnelerdir.
+
+**BU turda GERÇEK bir derlemeyle ÖLÇÜLEREK bulunan 2 gerçek düzeltme**
+(riscv64/hosted ÖNCESİ mevcut OLMAYAN, BU maddeyle İLK KEZ egzersiz
+edilen kod yolları):
+1. `lib_freestanding.zig`nin `printfReal`i (`x86_64`in `VaList`ı İçİn,
+   `builtin.cpu.arch == .x86_64` İKEN AKTİF) Zig'in SELF-HOSTED x86_64
+   backend'inin (VARSAYILAN, `-fllvm` OLMADAN) "auto does not support
+   var args" İLE REDDETTİĞİ bir varargs fonksiyonu — `noxrt_kernel`in
+   `lidt`-özgü `use_llvm` gerekçesinden FARKLI AMA AYNI çözüm: `x86_64`
+   freestanding zincirlerinin HEPSİ ARTIK `use_llvm = true`.
+2. `std.c.arc4random_buf` Linux'ta SADECE Android YA DA glibc ≥2.36
+   (2022) İKEN gerçek bir implementasyona sahip, AKSİ HALDE `void` —
+   `runtime/collections/dict.zig`/`hpy_bridge/context.zig`/`stdlib_
+   shims/crypto.zig` ARTIK Linux'ta `std.c.getrandom` KULLANIYOR (glibc
+   ≥2.25 [2017] İKEN, musl'da KOŞULSUZ gerçek — ÇOK DAHA GENİŞ bir
+   uyumluluk tabanı, macOS/Windows yolları DEĞİŞMEDİ).
+
+### `compiler/main.zig` — `--target`/`--emit-asm` + hedef-koşullu linkleme
+
+`BuildOpts`e `target: ?[]const u8`/`emit_asm: bool` (VARSAYILAN `null`/
+`false` — SIFIR davranış değişikliği). `buildOne`, `target`e göre `qbe
+-t` hedefini (`nameForArch`/`hostedTargetInfo`) VE linker sürücüsünü
+seçer: hosted+`target` VARSA `cc` YERİNE `zig cc -target <triple>` (
+freestanding'in MEVCUT desenine BENZER, hosted İçİn GENELLEŞTİRİLDİ),
+`-lntdll`/`-lws2_32`/`-lcrypt32`/`swap_asm` eklemeleri `builtin.os.tag`
+(HOST) YERİNE hedefin OS'una göre. `NOX_FREESTANDING_KERNEL_ARCH` env-
+değişkeni TAMAMEN SİLİNDİ.
+
+### Bilinen sınırlama — `windows-x64` çapraz-derleme (upstream QBE hatası)
+
+`.github/workflows/release.yml`nin Windows işi KENDİ `qbe`sini
+KAYNAKTAN derlerken `winabi.c`ye BİR METİN-YAMASI uygular ("GERÇEK bir
+upstream `amd64_win` ABI hatasının" düzeltmesi — bir spill/reload kopyası
+YANLIŞ register sınıfı [`Kl`, `instr->cls` YERİNE] kullanıyor). BU
+oturumda, bu YAMAYA SAHİP OLMAYAN stok bir `qbe` İLE `--target
+windows-x64` denendiğinde AYNI hata GERÇEKTEN gözlemlendi (`movsd %r10,
+24(%rdi)` GİBİ geçersiz bir komut). BU YÜZDEN: `--target windows-x64`
+İLE TAM link, SADECE release.yml'in KENDİ yamalı `qbe`siyle GÜVENİLİR
+çalışır — standart/stok bir `qbe` kurulumuyla (BU projenin `ci.yml`sinin
+macOS/Linux runner'ları DAHİL) BAŞARISIZ OLABİLİR. Golden test BU YÜZDEN
+`windows-x64`i SADECE `--emit-asm` İLE (ham `.s`, linksiz) doğrular —
+TAM link denemez.
+
+### Doğrulama
+
+`zig build test` (Debug) SIFIR regresyon. `zig build kernel-boot-test`
+(GERÇEK QEMU boot, `--target x86_64 --profile freestanding --emit-asm`e
+GEÇİLDİ) DEĞİŞMEDEN geçer. Golden test (`target_flag_test.zig`): `macos-
+arm64`/`linux-x64`/`linux-arm64` (TAM link) + `x86_64`/`aarch64`
+freestanding (TAM link) İçİn ham ELF başlığından (`e_machine`, harici bir
+araca BAĞIMLI OLMADAN) DOĞRU mimari doğrulanır; `windows-x64` SADECE
+`--emit-asm` İLE (yukarıdaki BİLİNEN sınırlama); riscv64 linksiz reddi +
+`--emit-asm` İLE çalışması; profil/hedef uyuşmazlığı reddi (HER İKİ
+yönde); `--target` VERİLMEDEN davranışın DEĞİŞMEDİĞİ.
+
+### Bilinçli olarak kapsam dışı
+
+- macOS'un KENDİSİNE, macOS-DIŞI bir host'tan çapraz-derleme (Apple SDK
+  GEREKTİREBİLİR, HİÇ denenmedi — release.yml ZATEN macOS'u SADECE
+  native bir macOS runner'da İNŞA EDİYOR).
+- `macos-x64` (release.yml'in ŞU AN sevk ETMEDİĞİ bir kombinasyon).
+- riscv64 İçİn GERÇEK bir hosted/freestanding runtime İMPLEMENTASYONU.
+- `build.zig`nin KENDİ `-Dtarget` bayrağı (noxc'nin/noxrt'un KENDİSİNİN
+  HANGİ makine İçİn DERLENDİĞİ) — TAMAMEN AYRI, DEĞİŞMEYEN bir eksen.
+- Gerçek bir donanım/QEMU üzerinde HER hosted hedefin ÇALIŞTIRILMASI
+  (ELF/PE başlık doğrulaması YETERLİ SAYILDI).
+
+### Kritik dosyalar
+
+`build.zig` (`addFreestandingRuntimeChain`/`addHostedRuntimeChain` + 6
+YENİ zincir), `compiler/qbe_target.zig` (`hostedTargetInfo`, YENİ),
+`compiler/project.zig` (`ResourceDirs.install_root`), `compiler/main.zig`
+(`--target`/`--emit-asm`, `isRunnableOnHost`, `NOX_FREESTANDING_KERNEL_
+ARCH`in silinmesi), `runtime/{collections/dict,hpy_bridge/context,
+stdlib_shims/crypto}.zig` (`linuxGetRandom`), `tests/golden/{kernel_
+boot_x86_64_test.zig,target_flag_test.zig}`.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

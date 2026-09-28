@@ -109,11 +109,24 @@ export fn nox_crypto_scrypt_verify_raw(hash: ?[*:0]const u8, password: ?[*:0]con
 fn secureRandomBuf(buf: []u8) void {
     if (builtin.os.tag == .windows) {
         _ = SystemFunction036(buf.ptr, @intCast(buf.len));
+    } else if (builtin.os.tag == .linux) {
+        linuxGetRandom(buf);
     } else {
         std.c.arc4random_buf(buf.ptr, buf.len);
     }
 }
 extern "advapi32" fn SystemFunction036(buf: [*]u8, len: u32) callconv(.c) u8;
+
+/// v2.0 madde 8: `runtime/collections/dict.zig`nin AYNI-isimli fonksiyonuyla
+/// AYNI gerekçe/keşif — bkz. onun belge notu.
+fn linuxGetRandom(buf: []u8) void {
+    var filled: usize = 0;
+    while (filled < buf.len) {
+        const n = std.c.getrandom(buf.ptr + filled, buf.len - filled, 0);
+        if (n <= 0) return;
+        filled += @intCast(n);
+    }
+}
 
 export fn nox_crypto_sha256_hex_raw(rt: ?*anyopaque, data: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const d = data orelse return dupeToNoxStr(rt, "");

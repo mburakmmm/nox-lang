@@ -50,16 +50,41 @@ pub fn name(is_freestanding: bool) []const u8 {
     };
 }
 
-/// Faz F.4 (bkz. plan dosyası "Gerçek bare-metal boot zinciri"): `name()`nin
+/// Faz F.4 (bkz. plan dosyası "Gerçek bare-metal boot zinciri"), v2.0 madde
+/// 8'de KAMUYA AÇILDI (bkz. nox-teknik-spesifikasyon.md §3.196): `name()`nin
 /// (yukarıda, DEĞİŞMEDEN) comptime-bilinen `builtin.cpu.arch`ının AKSİNE,
-/// ÇALIŞMA-ZAMANI bir arch-ADI stringinden `qbe -t` hedefini çözer — SADECE
-/// `NOX_FREESTANDING_KERNEL_ARCH` (dâhilî/belgelenmemiş bir test kancası,
-/// bkz. `main.zig`nin `buildOne`ı) SETLENDİĞİNDE kullanılır. Bilinmeyen bir
+/// ÇALIŞMA-ZAMANI bir arch-ADI stringinden `qbe -t` hedefini çözer — kamuya
+/// açık `--target <isim>` bayrağının (`--profile freestanding` İLE)
+/// BACKING İMPLEMENTASYONU (ESKİDEN dâhilî/belgelenmemiş `NOX_FREESTANDING_
+/// KERNEL_ARCH` env-değişkeniydi, ARTIK TAMAMEN SİLİNDİ). Bilinmeyen bir
 /// arch adı İçİn `null` döner (ÇALIŞMA-ZAMANI girdisi OLDUĞUNDAN `@compileError`
 /// KULLANILAMAZ) — çağıran taraf AÇIK bir hatayla `exit(1)` yapar.
 pub fn nameForArch(arch_name: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, arch_name, "x86_64")) return "amd64_sysv";
     if (std.mem.eql(u8, arch_name, "aarch64")) return "arm64";
     if (std.mem.eql(u8, arch_name, "riscv64")) return "rv64";
+    return null;
+}
+
+/// v2.0 madde 8 (bkz. nox-teknik-spesifikasyon.md §3.196): kamuya açık
+/// `--target <isim>` bayrağının HOSTED (varsayılan profil) tarafı —
+/// `.github/workflows/release.yml`nin GERÇEK, sevk edilen 4 platform
+/// isminin (`macos-arm64`/`linux-x64`/`linux-arm64`/`windows-x64`)
+/// BİREBİR AYNISI (YENİ bir isimlendirme İCAT EDİLMEDİ). `qbe_target`,
+/// `runtime_object_name` (`build.zig`nin AYNI isimle kurduğu `noxrt-
+/// <isim>.o`) VE `zig_triple` (`zig cc -target`in beklediği, `swap_asm`
+/// çapraz-derlemesinde de kullanılan üçlü) döner.
+pub const HostedTargetInfo = struct {
+    qbe_target: []const u8,
+    runtime_object_name: []const u8,
+    zig_triple: []const u8,
+    is_windows: bool,
+};
+
+pub fn hostedTargetInfo(target_name: []const u8) ?HostedTargetInfo {
+    if (std.mem.eql(u8, target_name, "macos-arm64")) return .{ .qbe_target = "arm64_apple", .runtime_object_name = "noxrt-macos-arm64", .zig_triple = "aarch64-macos", .is_windows = false };
+    if (std.mem.eql(u8, target_name, "linux-x64")) return .{ .qbe_target = "amd64_sysv", .runtime_object_name = "noxrt-linux-x64", .zig_triple = "x86_64-linux-gnu", .is_windows = false };
+    if (std.mem.eql(u8, target_name, "linux-arm64")) return .{ .qbe_target = "arm64", .runtime_object_name = "noxrt-linux-arm64", .zig_triple = "aarch64-linux-gnu", .is_windows = false };
+    if (std.mem.eql(u8, target_name, "windows-x64")) return .{ .qbe_target = "amd64_win", .runtime_object_name = "noxrt-windows-x64", .zig_triple = "x86_64-windows-gnu", .is_windows = true };
     return null;
 }

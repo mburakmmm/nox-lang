@@ -1,7 +1,9 @@
 //! Faz F.4 (bkz. plan dosyası "Gerçek bare-metal boot zinciri (x86_64)"):
 //! Bu FAZIN FALSIFIABLE deneyi — `runtime/freestanding/x86_64/kernel_demo.
-//! nox`u GERÇEKTEN `noxc build --profile freestanding` (`NOX_FREESTANDING_
-//! KERNEL_ARCH=x86_64` dâhilî kancasıyla) derleyip, `zig cc`yi linker
+//! nox`u GERÇEKTEN `noxc build --target x86_64 --profile freestanding
+//! --emit-asm` (v2.0 madde 8'in kamuya açık bayrağı, bkz. nox-teknik-
+//! spesifikasyon.md §3.196 — ESKİDEN dâhilî `NOX_FREESTANDING_KERNEL_
+//! ARCH=x86_64` env-değişkeniydi) İLE derleyip, `zig cc`yi linker
 //! sürücüsü olarak kullanarak `runtime/freestanding/x86_64/kernel.ld`
 //! (linker script) + `boot_x86_64.o` (boot.S) + `noxrt-freestanding-x86_64.o`
 //! ile birleştirir, SONUCU GERÇEK bir `qemu-system-x86_64` çalıştırmasıyla
@@ -16,24 +18,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
-
-/// `std.process.run`nin `environ_map == null` İKEN çocuk sürece HANGİ
-/// çevreyi geçireceği BU Zig sürümünde `setenv()` İLE yapılan çalışma-
-/// zamanı MUTASYONLARI YANSITMIYOR (doğrudan denenip GÖZLENDİ) — bu YÜZDEN
-/// mevcut süreç çevresini (`std.c.environ`) KOPYALAYIP `NOX_FREESTANDING_
-/// KERNEL_ARCH`i EKLEYEN, AÇIKÇA geçirilen bir `Environ.Map` kullanılır.
-fn buildEnvironWithKernelArch(allocator: std.mem.Allocator) !std.process.Environ.Map {
-    var map = std.process.Environ.Map.init(allocator);
-    errdefer map.deinit();
-    var i: usize = 0;
-    while (std.c.environ[i]) |entry_ptr| : (i += 1) {
-        const entry: [:0]const u8 = std.mem.span(entry_ptr);
-        const eq_idx = std.mem.indexOfScalar(u8, entry, '=') orelse continue;
-        try map.put(entry[0..eq_idx], entry[eq_idx + 1 ..]);
-    }
-    try map.put("NOX_FREESTANDING_KERNEL_ARCH", "x86_64");
-    return map;
-}
 
 /// Faz TEST.3'ün `tests/compat/child_watchdog.zig`sinin AYNI, KASITLI
 /// küçük kopyası — modül-kök sınırları YÜZÜNDEN (bu dosya `tests/golden/`
@@ -123,15 +107,13 @@ test "Faz F.4: kernel_demo.nox GERÇEK bir x86_64 kernel imajına derlenip QEMU'
     const kernel_elf_path = try std.fmt.allocPrint(allocator, "{s}/kernel.elf", .{dir_path});
     defer allocator.free(kernel_elf_path);
 
-    // (3) `noxc build --profile freestanding <kernel_src> -o <tmp>/kernel`
-    // — `NOX_FREESTANDING_KERNEL_ARCH=x86_64` dâhilî kancasıyla (bkz.
-    // `compiler/main.zig`nin `buildOne`ı) linkleme ATLANIR, `<tmp>/kernel.s`
-    // (HAM QBE assembly) döner.
-    var kernel_env = try buildEnvironWithKernelArch(allocator);
-    defer kernel_env.deinit();
+    // (3) `noxc build --target x86_64 --profile freestanding --emit-asm
+    // <kernel_src> -o <tmp>/kernel` — v2.0 madde 8'in kamuya açık bayrağı
+    // (bkz. nox-teknik-spesifikasyon.md §3.196), ESKİ dâhilî `NOX_
+    // FREESTANDING_KERNEL_ARCH=x86_64` env-değişkeninin YERİNE — linkleme
+    // ATLANIR, `<tmp>/kernel.s` (HAM QBE assembly) döner.
     const build_result = try std.process.run(allocator, io, .{
-        .argv = &.{ build_options.noxc_path, "build", "--profile", "freestanding", build_options.kernel_src_path, "-o", kernel_stem },
-        .environ_map = &kernel_env,
+        .argv = &.{ build_options.noxc_path, "build", "--target", "x86_64", "--profile", "freestanding", "--emit-asm", build_options.kernel_src_path, "-o", kernel_stem },
     });
     defer allocator.free(build_result.stdout);
     defer allocator.free(build_result.stderr);

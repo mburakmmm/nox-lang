@@ -14,6 +14,29 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.107.0]
+
+### Eklendi
+
+- **Genel-amaçlı `--target` — v2.0 yol haritasının 8. maddesi (bkz.
+  nox-teknik-spesifikasyon.md §3.196)**: Bugüne kadar `noxc build`in
+  emisyon hedefi HER ZAMAN `noxc`nin KENDİSİNİN derlendiği makineydi —
+  TEK istisna, dâhilî/belgelenmemiş bir env-değişkeniydi. Artık:
+  - `--target <isim>`: `--profile freestanding` İçİn `x86_64`/`aarch64`/
+    `riscv64`; `--profile hosted` (varsayılan) İçİn `macos-arm64`/
+    `linux-x64`/`linux-arm64`/`windows-x64` — release.yml'in KENDİ sevk
+    ettiği 4 platformla BİREBİR AYNI. Hosted çapraz-derleme (`zig cc
+    -target ...` İLE) TAMAMEN YENİ bir yetenek.
+  - `--emit-asm`: `qbe -t ...` çalıştırıldıktan SONRA linklemeyi ATLAR,
+    ham `.s` döner — `--target`den BAĞIMSIZ, her İKİ profilde kullanılır.
+  - riscv64 (freestanding) linkleme AÇIK bir hatayla reddedilir (runtime
+    HENÜZ context-switch İMPLEMENTASYONU TAŞIMIYOR) — `--emit-asm` İLE
+    yine çalışır.
+  - **Bilinen sınırlama**: `--target windows-x64` İLE TAM link, SADECE
+    `release.yml`nin KENDİ yamalı (upstream bir `amd64_win` ABI hatası
+    İçİn) `qbe`siyle GÜVENİLİR çalışır — stok bir `qbe` kurulumuyla
+    BAŞARISIZ OLABİLİR (`--emit-asm` İLE HALA çalışır).
+
 ## [1.106.0]
 
 ### Eklendi

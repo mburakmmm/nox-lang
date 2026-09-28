@@ -152,6 +152,13 @@ pub const ResourceDirs = struct {
     /// nesnesi — `--profile freestanding` İKEN `buildOne`nin linker çağrısı
     /// `noxrt_path` YERİNE BUNU kullanır.
     noxrt_freestanding_path: []const u8,
+    /// v2.0 madde 8 (bkz. plan dosyası §3): kamuya açık `--target` bayrağı
+    /// İçİn — `resolveInstallRoot`nun ZATEN hesapladığı `base` yerelinin
+    /// DIŞA AÇILMASI. `buildOne`, AÇIK bir `--target` VARSA BUNDAN KENDİSİ
+    /// hedefe-özgü runtime nesnesinin (`noxrt-<isim>.o`) yolunu üretir —
+    /// `noxrt_path`/`noxrt_freestanding_path` (SABİT, `--target`SİZ
+    /// varsayılan durum İçİn) DEĞİŞMEDEN kalır.
+    install_root: []const u8,
 };
 
 /// `resource_dir_override` VERİLMİŞSE (`main.zig`de `NOX_RESOURCE_DIR`
@@ -179,6 +186,7 @@ pub fn resolveResourceDirs(a: Allocator, io: Io, resource_dir_override: ?[]const
         .noxrt_path = try std.fmt.allocPrint(a, "{s}/lib/noxrt.o", .{base}),
         .swap_asm_path = try std.fmt.allocPrint(a, "{s}/lib/swap_asm.o", .{base}),
         .noxrt_freestanding_path = try std.fmt.allocPrint(a, "{s}/lib/noxrt-freestanding.o", .{base}),
+        .install_root = base,
     };
 }
 

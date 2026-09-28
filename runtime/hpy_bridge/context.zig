@@ -1285,11 +1285,24 @@ threadlocal var g_hpy_hash_seed_init: bool = false;
 fn hpySecureRandomBuf(buf: []u8) void {
     if (builtin.os.tag == .windows) {
         _ = SystemFunction036(buf.ptr, @intCast(buf.len));
+    } else if (builtin.os.tag == .linux) {
+        linuxGetRandom(buf);
     } else {
         std.c.arc4random_buf(buf.ptr, buf.len);
     }
 }
 extern "advapi32" fn SystemFunction036(buf: [*]u8, len: u32) callconv(.c) u8;
+
+/// v2.0 madde 8: `runtime/collections/dict.zig`nin AYNI-isimli fonksiyonuyla
+/// AYNI gerekçe/keşif — bkz. onun belge notu.
+fn linuxGetRandom(buf: []u8) void {
+    var filled: usize = 0;
+    while (filled < buf.len) {
+        const n = std.c.getrandom(buf.ptr + filled, buf.len - filled, 0);
+        if (n <= 0) return;
+        filled += @intCast(n);
+    }
+}
 
 fn hpyHashSeed() u64 {
     if (!g_hpy_hash_seed_init) {
@@ -2291,7 +2304,7 @@ fn ctxAsStructUnicode(ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque {
     _ = ctx;
     const obj = objOf(h) orelse return null;
     if (obj.tag != .str_) return null;
-    return @constCast(@ptrCast(obj.str_data.ptr));
+    return @ptrCast(@constCast(obj.str_data.ptr));
 }
 
 fn ctxAsStructTuple(ctx: *HPyContext, h: HPy) callconv(.c) ?*anyopaque {
@@ -2572,9 +2585,9 @@ fn ctxCapsuleGet(ctx: *HPyContext, capsule: HPy, key: c_int, utf8_name: ?[*:0]co
     }
     return switch (key) {
         HPY_CAPSULE_KEY_POINTER => obj.capsule_pointer,
-        HPY_CAPSULE_KEY_NAME => @constCast(@ptrCast(obj.capsule_name)),
+        HPY_CAPSULE_KEY_NAME => @ptrCast(@constCast(obj.capsule_name)),
         HPY_CAPSULE_KEY_CONTEXT => obj.capsule_context,
-        HPY_CAPSULE_KEY_DESTRUCTOR => @constCast(@ptrCast(obj.capsule_destructor)),
+        HPY_CAPSULE_KEY_DESTRUCTOR => @ptrCast(@constCast(obj.capsule_destructor)),
         else => null,
     };
 }
@@ -4531,15 +4544,15 @@ pub fn destroyContext(allocator: std.mem.Allocator, ctx: *HPyContext) void {
     state.tracked_globals.deinit(allocator);
 
     const singletons = [_]HPy{
-        ctx.h_None,                ctx.h_True,           ctx.h_False,
-        ctx.h_Exception,           ctx.h_BaseException,  ctx.h_TypeError,
-        ctx.h_ValueError,          ctx.h_RuntimeError,   ctx.h_IndexError,
-        ctx.h_KeyError,            ctx.h_AttributeError, ctx.h_OverflowError,
-        ctx.h_ZeroDivisionError,   ctx.h_MemoryError,    ctx.h_StopIteration,
-        ctx.h_NotImplementedError, ctx.h_ImportError,    ctx.h_OSError,
+        ctx.h_None,                ctx.h_True,               ctx.h_False,
+        ctx.h_Exception,           ctx.h_BaseException,      ctx.h_TypeError,
+        ctx.h_ValueError,          ctx.h_RuntimeError,       ctx.h_IndexError,
+        ctx.h_KeyError,            ctx.h_AttributeError,     ctx.h_OverflowError,
+        ctx.h_ZeroDivisionError,   ctx.h_MemoryError,        ctx.h_StopIteration,
+        ctx.h_NotImplementedError, ctx.h_ImportError,        ctx.h_OSError,
         ctx.h_LookupError,         ctx.h_UnicodeEncodeError, ctx.h_UnicodeDecodeError,
-        ctx.h_LongType,            ctx.h_FloatType,      ctx.h_BoolType,
-        ctx.h_UnicodeType,         ctx.h_TupleType,      ctx.h_ListType,
+        ctx.h_LongType,            ctx.h_FloatType,          ctx.h_BoolType,
+        ctx.h_UnicodeType,         ctx.h_TupleType,          ctx.h_ListType,
         ctx.h_BytesType,           ctx.h_SliceType,
     };
     for (singletons) |h| allocator.destroy(objOf(h).?);

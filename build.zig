@@ -31,6 +31,164 @@ fn optimizeModeSlug(mode: std.builtin.OptimizeMode) []const u8 {
     };
 }
 
+/// v2.0 madde 8 (bkz. plan dosyası §2): `noxrt_freestanding`/`noxrt_kernel`in
+/// ZATEN KANITLANMIŞ şablonu (`b.resolveTargetQuery` + KENDİ `swap_asm`
+/// derlemesi + `bundle_compiler_rt`) — HOST mimarisinden BAĞIMSIZ, SABİT
+/// bir mimari İçİn `runtime/lib_freestanding.zig` kökünden bir runtime
+/// nesnesi zinciri kurar. TEK bir yerde toplanır (`--target` bayrağının
+/// desteklediği HER freestanding mimarisi İçİn NEREDEYSE-özdeş bloğun
+/// TEKRARINI önlemek İçİn — 2 çağrı sitesi, kod tekrarı YOK).
+fn addFreestandingRuntimeChain(
+    b: *std.Build,
+    optimize: std.builtin.OptimizeMode,
+    arch: std.Target.Cpu.Arch,
+    install_name: []const u8,
+) *std.Build.Step.Compile {
+    const fs_target = b.resolveTargetQuery(.{ .cpu_arch = arch, .os_tag = .freestanding, .abi = .none });
+    const abi_layout_mod = b.createModule(.{
+        .root_source_file = b.path("shared/abi_layout.zig"),
+        .target = fs_target,
+        .optimize = optimize,
+    });
+    const diag_sink_mod = b.createModule(.{
+        .root_source_file = b.path("runtime/errors/diag_sink.zig"),
+        .target = fs_target,
+        .optimize = optimize,
+    });
+    const mod = b.createModule(.{
+        .root_source_file = b.path("runtime/lib_freestanding.zig"),
+        .target = fs_target,
+        .optimize = optimize,
+        .link_libc = false,
+        .imports = &.{
+            .{ .name = "abi_layout", .module = abi_layout_mod },
+            .{ .name = "diag_sink", .module = diag_sink_mod },
+        },
+    });
+    const swap_src: []const u8 = switch (arch) {
+        .aarch64 => "runtime/async_rt/swap_aarch64.S",
+        .x86_64 => "runtime/async_rt/swap_x86_64.S",
+        else => @panic("addFreestandingRuntimeChain: desteklenmeyen mimari"),
+    };
+    const swap_o_path = b.fmt("runtime/async_rt/swap_{s}_{s}.o", .{ @tagName(arch), install_name });
+    const compile_swap = b.addSystemCommand(&.{
+        b.graph.zig_exe, "cc",
+        "-target",       b.fmt("{s}-freestanding-none", .{@tagName(arch)}),
+        "-c",            "-o",
+        swap_o_path,     swap_src,
+    });
+    mod.addObjectFile(b.path(swap_o_path));
+    const obj = b.addObject(.{ .name = install_name, .root_module = mod });
+    // `noxrt_freestanding`/`noxrt_kernel`in AYNI, ÖLÇÜLMÜŞ gerekçesi —
+    // `b.addObject`nin (`.kind == .obj`) ürettiği nesne dosyaları İçİn
+    // `bundle_compiler_rt`in VARSAYILANI `false`dır.
+    obj.bundle_compiler_rt = true;
+    // v2.0 madde 8: BU turda GERÇEK bir derlemeyle ÖLÇÜLEREK bulundu —
+    // `lib_freestanding.zig`nin `printfReal`i (`x86_64`in `VaList`ı/
+    // `@cVaStart`ı İçİn, `builtin.cpu.arch == .x86_64` İKEN AKTİF) Zig'in
+    // SELF-HOSTED x86_64 backend'inin (VARSAYILAN, `-fllvm` OLMADAN)
+    // "auto does not support var args" İLE REDDETTİĞİ bir varargs
+    // fonksiyonu — `noxrt_kernel`in `lidt`-özgü `use_llvm` gerekçesinden
+    // FARKLI AMA AYNI çözüm: LLVM backend'i varargs'ı DOĞRU işliyor.
+    if (arch == .x86_64) obj.use_llvm = true;
+    obj.step.dependOn(&compile_swap.step);
+    const install = b.addInstallFile(obj.getEmittedBin(), b.fmt("lib/{s}.o", .{install_name}));
+    b.getInstallStep().dependOn(&install.step);
+    return obj;
+}
+
+/// v2.0 madde 8: `addFreestandingRuntimeChain`in hosted karşılığı — SABİT
+/// bir (mimari, OS) çifti İçİn `runtime/lib.zig` kökünden bir runtime
+/// nesnesi zinciri kurar. Windows hedefi KENDİ çapraz-derlenmiş `swap_
+/// asm`ını da üretir (Faz LL.6'nın COFF-özgü `build-obj` hatası —
+/// `compiler/main.zig`nin bağlama adımına AYRI bir girdi olarak verilir,
+/// `noxrt.o`nun İÇİNE GÖMÜLMEZ, bkz. `swap_asm_path`ın belge notu).
+fn addHostedRuntimeChain(
+    b: *std.Build,
+    optimize: std.builtin.OptimizeMode,
+    arch: std.Target.Cpu.Arch,
+    os_tag: std.Target.Os.Tag,
+    abi: std.Target.Abi,
+    install_name: []const u8,
+) struct { obj: *std.Build.Step.Compile, swap_asm_o_path: ?[]const u8 } {
+    const os_target = b.resolveTargetQuery(.{ .cpu_arch = arch, .os_tag = os_tag, .abi = abi });
+    const abi_layout_mod = b.createModule(.{
+        .root_source_file = b.path("shared/abi_layout.zig"),
+        .target = os_target,
+        .optimize = optimize,
+    });
+    const diag_sink_mod = b.createModule(.{
+        .root_source_file = b.path("runtime/errors/diag_sink.zig"),
+        .target = os_target,
+        .optimize = optimize,
+    });
+    const hpy_bridge_mod = b.createModule(.{
+        .root_source_file = b.path("runtime/hpy_bridge/lib.zig"),
+        .target = os_target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const wasm_bridge_mod = b.createModule(.{
+        .root_source_file = b.path("runtime/wasm_bridge/lib.zig"),
+        .target = os_target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
+        },
+    });
+    const mod = b.createModule(.{
+        .root_source_file = b.path("runtime/lib.zig"),
+        .target = os_target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
+            .{ .name = "wasm_bridge", .module = wasm_bridge_mod },
+            .{ .name = "abi_layout", .module = abi_layout_mod },
+            .{ .name = "diag_sink", .module = diag_sink_mod },
+        },
+    });
+    const swap_src: []const u8 = switch (arch) {
+        .aarch64 => "runtime/async_rt/swap_aarch64.S",
+        .x86_64 => "runtime/async_rt/swap_x86_64.S",
+        else => @panic("addHostedRuntimeChain: desteklenmeyen mimari"),
+    };
+    // Faz LL.6'nın AYNI kural: Windows (COFF) hedefinde `swap_asm.o`
+    // `noxrt.o`nun İÇİNE GÖMÜLMEZ, AYRI bir dosya olarak kurulur.
+    if (os_tag != .windows) {
+        const swap_o_path = b.fmt("runtime/async_rt/swap_{s}_{s}.o", .{ @tagName(arch), install_name });
+        const compile_swap = b.addSystemCommand(&.{
+            b.graph.zig_exe, "cc",
+            "-target",       b.fmt("{s}-{s}-{s}", .{ @tagName(arch), @tagName(os_tag), @tagName(abi) }),
+            "-c",            "-o",
+            swap_o_path,     swap_src,
+        });
+        mod.addObjectFile(b.path(swap_o_path));
+        const obj_pre = b.addObject(.{ .name = install_name, .root_module = mod });
+        obj_pre.step.dependOn(&compile_swap.step);
+        const install = b.addInstallFile(obj_pre.getEmittedBin(), b.fmt("lib/{s}.o", .{install_name}));
+        b.getInstallStep().dependOn(&install.step);
+        return .{ .obj = obj_pre, .swap_asm_o_path = null };
+    } else {
+        const swap_o_path = b.fmt("runtime/async_rt/swap_{s}_{s}.o", .{ @tagName(arch), install_name });
+        const compile_swap = b.addSystemCommand(&.{
+            b.graph.zig_exe, "cc",
+            "-target",       b.fmt("{s}-{s}-{s}", .{ @tagName(arch), @tagName(os_tag), @tagName(abi) }),
+            "-c",            "-o",
+            swap_o_path,     swap_src,
+        });
+        const obj = b.addObject(.{ .name = install_name, .root_module = mod });
+        obj.step.dependOn(&compile_swap.step);
+        const install = b.addInstallFile(obj.getEmittedBin(), b.fmt("lib/{s}.o", .{install_name}));
+        b.getInstallStep().dependOn(&install.step);
+        const install_swap = b.addInstallFile(b.path(swap_o_path), b.fmt("lib/swap_asm-{s}.o", .{install_name}));
+        install_swap.step.dependOn(&compile_swap.step);
+        b.getInstallStep().dependOn(&install_swap.step);
+        return .{ .obj = obj, .swap_asm_o_path = b.fmt("lib/swap_asm-{s}.o", .{install_name}) };
+    }
+}
+
 pub fn build(b: *std.Build) void {
     if (builtin.zig_version.order(EXPECTED_ZIG_VERSION) != .eq) {
         std.debug.print(
@@ -96,8 +254,9 @@ pub fn build(b: *std.Build) void {
     // değişikliği.
     const compile_swap_asm = if (is_freestanding) b.addSystemCommand(&.{
         b.graph.zig_exe, "cc",
-        "-target", b.fmt("{s}-freestanding-none", .{@tagName(target.result.cpu.arch)}),
-        "-c", "-o", swap_asm_o_path, swap_asm_src,
+        "-target",       b.fmt("{s}-freestanding-none", .{@tagName(target.result.cpu.arch)}),
+        "-c",            "-o",
+        swap_asm_o_path, swap_asm_src,
     }) else b.addSystemCommand(&.{
         "cc", "-c", "-o", swap_asm_o_path, swap_asm_src,
     });
@@ -388,9 +547,10 @@ pub fn build(b: *std.Build) void {
         .x86_64 => .{ "runtime/async_rt/swap_x86_64.S", "runtime/async_rt/swap_x86_64_freestanding.o" },
     };
     const compile_swap_asm_freestanding = b.addSystemCommand(&.{
-        b.graph.zig_exe, "cc",
-        "-target", b.fmt("{s}-freestanding-none", .{@tagName(b.graph.host.result.cpu.arch)}),
-        "-c", "-o", swap_asm_freestanding_o_path, swap_asm_freestanding_src,
+        b.graph.zig_exe,              "cc",
+        "-target",                    b.fmt("{s}-freestanding-none", .{@tagName(b.graph.host.result.cpu.arch)}),
+        "-c",                         "-o",
+        swap_asm_freestanding_o_path, swap_asm_freestanding_src,
     });
     noxrt_freestanding_mod.addObjectFile(b.path(swap_asm_freestanding_o_path));
     const noxrt_freestanding = b.addObject(.{
@@ -481,9 +641,10 @@ pub fn build(b: *std.Build) void {
     // YORUM/KOD AYRIMI YAPMADAN eşleştirir).
     const swap_asm_kernel_o_path = "runtime/async_rt/swap_x86_64_kernel.o";
     const compile_swap_asm_kernel = b.addSystemCommand(&.{
-        b.graph.zig_exe, "cc",
-        "-target", "x86_64-freestanding-none",
-        "-c", "-o", swap_asm_kernel_o_path, "runtime/async_rt/swap_x86_64.S",
+        b.graph.zig_exe,        "cc",
+        "-target",              "x86_64-freestanding-none",
+        "-c",                   "-o",
+        swap_asm_kernel_o_path, "runtime/async_rt/swap_x86_64.S",
     });
     noxrt_kernel_mod.addObjectFile(b.path(swap_asm_kernel_o_path));
     const noxrt_kernel = b.addObject(.{
@@ -507,15 +668,48 @@ pub fn build(b: *std.Build) void {
     const install_noxrt_kernel = b.addInstallFile(noxrt_kernel.getEmittedBin(), "lib/noxrt-freestanding-x86_64.o");
     b.getInstallStep().dependOn(&install_noxrt_kernel.step);
 
+    // v2.0 madde 8 (bkz. plan dosyası §2): kamuya açık `--target` bayrağının
+    // freestanding tarafı — HOST mimarisinden BAĞIMSIZ, SABİT x86_64/aarch64
+    // zincirleri. `noxrt-freestanding-generic-*` İSİMLERİ BİLEREK `noxrt_
+    // kernel`in `noxrt-freestanding-x86_64.o`SUNDAN (YUKARIDA, KERNEL-özgü,
+    // `kernel.zig`yi force-ref eden `lib_freestanding_kernel.zig` kökünden)
+    // AYRIŞTIRILIR — İKİSİ FARKLI kök dosyalardan (`lib_freestanding.zig`
+    // vs `lib_freestanding_kernel.zig`) derlenen FARKLI nesnelerdir, AYNI
+    // dosya adını PAYLAŞAMAZLAR. riscv64 İçİn zincir EKLENMEZ (`fiber.zig`nin
+    // mimari kapısına çarpar — bkz. plan dosyasının araştırma notu).
+    _ = addFreestandingRuntimeChain(b, optimize, .x86_64, "noxrt-freestanding-generic-x86_64");
+    _ = addFreestandingRuntimeChain(b, optimize, .aarch64, "noxrt-freestanding-generic-aarch64");
+
+    // v2.0 madde 8: kamuya açık `--target` bayrağının hosted tarafı —
+    // `.github/workflows/release.yml`nin GERÇEK, sevk edilen 4 platformuyla
+    // BİREBİR AYNI isimler (`macos-arm64`/`linux-x64`/`linux-arm64`/
+    // `windows-x64` — `macos-x64` GİBİ sevk EDİLMEYEN bir kombinasyon
+    // İCAT EDİLMEZ, bkz. plan dosyasının "Kapsam DIŞI" notu).
+    // NOT (BU turda GERÇEK bir derlemeyle ÖLÇÜLEREK bulundu): `.gnu` ABI'si
+    // (glibc, VERSİYON PİNLENMEDEN) Zig'in VARSAYILAN, GENİŞ-uyumluluk
+    // glibc TABANINDA `arc4random_buf`i (glibc 2.36'da EKLENDİ) TAŞIMIYOR —
+    // "type 'void' not a function" İLE BAŞARISIZ oluyordu. Düzeltme:
+    // `runtime/collections/dict.zig`/`hpy_bridge/context.zig`/`stdlib_
+    // shims/crypto.zig`, Linux'ta `arc4random_buf` YERİNE `std.c.getrandom`
+    // KULLANACAK şekilde güncellendi (`getrandom` glibc'de ≥2.25 [2017]
+    // İKEN, musl'da KOŞULSUZ gerçek bir implementasyona sahip — ÇOK DAHA
+    // GENİŞ bir uyumluluk tabanı, native CI derlemeleriyle (glibc, dinamik)
+    // AYNI ABI/bağlama biçimini KORUR).
+    _ = addHostedRuntimeChain(b, optimize, .aarch64, .macos, .none, "noxrt-macos-arm64");
+    _ = addHostedRuntimeChain(b, optimize, .x86_64, .linux, .gnu, "noxrt-linux-x64");
+    _ = addHostedRuntimeChain(b, optimize, .aarch64, .linux, .gnu, "noxrt-linux-arm64");
+    _ = addHostedRuntimeChain(b, optimize, .x86_64, .windows, .gnu, "noxrt-windows-x64");
+
     // `boot.S` (Multiboot1 header + 32-bit boot stub + long-mode geçişi +
     // GDT + ISR trambolinleri) — `noxrt_kernel_mod`nin PARÇASI DEĞİL, ayrı
     // derlenip `kernel_boot_x86_64_test.zig`nin KENDİ, SONRAKİ link adımında
     // (madde 9) DOĞRUDAN kullanılır (`swap_asm_o_path`nin AYNI, kaynak-
     // ağacı-İçİ nesne-dosyası konvansiyonu).
     const compile_boot_x86_64 = b.addSystemCommand(&.{
-        b.graph.zig_exe, "cc",
-        "-target", "x86_64-freestanding-none",
-        "-c", "-o", "runtime/freestanding/x86_64/boot_x86_64.o", "runtime/freestanding/x86_64/boot.S",
+        b.graph.zig_exe,                             "cc",
+        "-target",                                   "x86_64-freestanding-none",
+        "-c",                                        "-o",
+        "runtime/freestanding/x86_64/boot_x86_64.o", "runtime/freestanding/x86_64/boot.S",
     });
     b.getInstallStep().dependOn(&compile_boot_x86_64.step);
 
@@ -1342,9 +1536,8 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("tests/golden/kernel_boot_x86_64_test.zig"),
         .target = target,
         .optimize = optimize,
-        // `shared_mem_test.zig`'in AYNI gerekçesi — bu dosya `extern "c" fn
-        // setenv` KULLANIR (`NOX_FREESTANDING_KERNEL_ARCH`i alt-sürece
-        // AKTARMAK İçİn, bkz. testin belge notu).
+        // `shared_mem_test.zig`'in AYNI gerekçesi — bu dosya `std.c.
+        // nanosleep`i (ChildWatchdog'un poll döngüsü) KULLANIR.
         .link_libc = true,
         .imports = &.{
             .{ .name = "build_options", .module = kernel_boot_options.createModule() },
@@ -1363,4 +1556,25 @@ pub fn build(b: *std.Build) void {
     // AMA opt-in bir `zig build kernel-boot-test` de HAZIR bekler.
     const kernel_boot_test_step = b.step("kernel-boot-test", "Faz F.4'ün x86_64 QEMU boot testini (GERÇEK bare-metal çalıştırma) çalıştırır — qemu/qbe PATH'te olmalı");
     kernel_boot_test_step.dependOn(&kernel_boot_test_run.step);
+
+    // v2.0 madde 8 (bkz. plan dosyası, Faz E): kamuya açık `--target`/
+    // `--emit-asm` bayraklarının GERÇEK `noxc build` çağrılarıyla
+    // doğrulanması — `kernel_boot_options`nin AYNI `noxc_path` deseni.
+    const target_flag_options = b.addOptions();
+    target_flag_options.addOption([]const u8, "noxc_path", "zig-out/bin/noxc");
+    const target_flag_mod = b.createModule(.{
+        .root_source_file = b.path("tests/golden/target_flag_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "build_options", .module = target_flag_options.createModule() },
+        },
+    });
+    const target_flag_test = b.addTest(.{ .root_module = target_flag_mod });
+    // Bu test `noxc`nin KENDİSİ DIŞINDA (bkz. yukarıdaki `install_noxc`)
+    // TÜM YENİ hedef-özgü runtime nesnelerine (`noxrt-linux-x64.o`/vb.)
+    // İHTİYAÇ DUYAR — `run_noxc`nin AYNI "TAM kurulum adımına bağımlı ol"
+    // deseni (satır ~754).
+    target_flag_test.step.dependOn(b.getInstallStep());
+    test_step.dependOn(&b.addRunArtifact(target_flag_test).step);
 }

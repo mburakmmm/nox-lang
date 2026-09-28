@@ -69,7 +69,6 @@ const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 /// İTİBAREN `dispatch_registry`nin (bkz. onun modül üstü notu) program-
 /// başlangıcında BİR KEZ kaydedilen, statik tablosu KULLANILIR (ÖNCEDEN
 /// `dlsym` İLE ÇALIŞMA ZAMANINDA aranıyordu).
-
 /// `payload`i (`Entry.key`/`.value`) bir sınıf örneği İŞARETÇİSİ olarak
 /// yorumlayıp `nox_class_release_dispatch`e (tag'i KENDİ İLK `TAG_SIZE`
 /// baytından okuyarak) dağıtır — `payload == 0` (hiç ATANMAMIŞ) İSE
@@ -130,7 +129,6 @@ fn keysEqual(key_is_str: bool, a: i64, b: i64) bool {
 /// taşınsaydı OLACAK hata) İMKANSIZ hale gelir. Bu, `nox_dict_contains`ın
 /// ABI'sine (`rt` parametresi EKLENDİ) VE onu çağıran codegen sitesine
 /// dokunan, Faz MN.4'ün İLK GERÇEK codegen/checker DEĞİŞİKLİĞİDİR.
-
 /// Faz F.0.7 (bkz. nox-teknik-spesifikasyon.md — "Kritik düzeltme #3"):
 /// `secureRandomBuf`nin KOŞULSUZ `std.c.arc4random_buf`/`SystemFunction036`
 /// bağımlılığı freestanding hedeflerde HİÇ mevcut DEĞİLDİR — F.0.1-F.0.5'in
@@ -166,11 +164,32 @@ fn secureRandomBuf(buf: []u8) void {
     if (comptime is_freestanding) return;
     if (builtin.os.tag == .windows) {
         _ = SystemFunction036(buf.ptr, @intCast(buf.len));
+    } else if (builtin.os.tag == .linux) {
+        linuxGetRandom(buf);
     } else {
         std.c.arc4random_buf(buf.ptr, buf.len);
     }
 }
 extern "advapi32" fn SystemFunction036(buf: [*]u8, len: u32) callconv(.c) u8;
+
+/// v2.0 madde 8 (bkz. plan dosyası): BU turda GERÇEK bir çapraz-derlemeyle
+/// ÖLÇÜLEREK bulundu — `std.c.arc4random_buf` Linux'ta SADECE Android YA DA
+/// glibc ≥2.36 İKEN gerçek bir implementasyona sahiptir (bkz. Zig'in KENDİ
+/// `std.c.zig`si), AKSİ HALDE `void` — `-target x86_64-linux-musl`/`-gnu`
+/// (versiyon PİNLENMEDEN, Zig'in VARSAYILAN GENİŞ-uyumluluk tabanı) İLE
+/// DERLEME hatasına yol açıyordu. `std.c.getrandom` İSE musl'da KOŞULSUZ,
+/// glibc'de ≥2.25 İKEN (2017, Ubuntu 18.04+) gerçek — ÇOK DAHA GENİŞ bir
+/// uyumluluk tabanı sağlar; getrandom(2) KÜÇÜK istekler İçİn ATOMİK OLSA
+/// da (≤256 bayt), döngü GENEL doğruluk İçİn (`nox.crypto`nin BÜYÜK
+/// istekleri DAHİL) tutulur.
+fn linuxGetRandom(buf: []u8) void {
+    var filled: usize = 0;
+    while (filled < buf.len) {
+        const n = std.c.getrandom(buf.ptr + filled, buf.len - filled, 0);
+        if (n <= 0) return; // en-iyi-çaba — GERÇEK bir hata sonsuz döngüye YOL AÇMAMALI
+        filled += @intCast(n);
+    }
+}
 
 fn hashSeed(rt: ?*anyopaque) u64 {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));
