@@ -887,6 +887,67 @@ pub fn build(b: *std.Build) void {
     const noxrt_test_step = b.step("noxrt-test", "Yalnızca noxrt_test'i (runtime/ altındaki TÜM Zig-seviyesi testler) çalıştırır (hızlı yineleme İçİn)");
     noxrt_test_step.dependOn(&b.addRunArtifact(noxrt_test).step);
 
+    // v2.0 madde 9 (bkz. plan dosyası "Freestanding Allocator ABI"):
+    // `lib_freestanding.zig`, `noxrt_freestanding_mod`/`noxrt_kernel_mod`
+    // ÜZERİNDEN SADECE freestanding-OS hedeflerine (host'ta ÇALIŞTIRILAMAZ)
+    // derleniyordu — `nox_allocator_install`/`kernel_vtable` mekanizmasını
+    // GERÇEK bir QEMU/kernel GEREKMEDEN sınamak İçİn, `noxrt_freestanding_
+    // mod`nin AYNI "kendi bağımsız target/abi_layout/diag_sink" deseni, AMA
+    // OS freestanding DEĞİL — host'un KENDİSİ (native, `zig test` İLE
+    // DOĞRUDAN ÇALIŞTIRILABİLİR) bir kök. `dict.zig`nin `secureRandomBuf`ı
+    // (hosted OS dalında `std.c.arc4random_buf`/`getrandom` ÇAĞIRDIĞINDAN)
+    // `link_libc = true` GEREKTİRİR (`noxrt_mod`nin AYNI Faz R.1 gerekçesi).
+    const alloc_abi_target = b.resolveTargetQuery(.{});
+    const abi_layout_mod_alloc = b.createModule(.{
+        .root_source_file = b.path("shared/abi_layout.zig"),
+        .target = alloc_abi_target,
+        .optimize = optimize,
+    });
+    const diag_sink_mod_alloc = b.createModule(.{
+        .root_source_file = b.path("runtime/errors/diag_sink.zig"),
+        .target = alloc_abi_target,
+        .optimize = optimize,
+    });
+    // `noxrt_test`in `noxrt_mod`u DOĞRUDAN test ETTİĞİ (root_module =
+    // tested file'ın KENDİSİ) AYNI desen — `g_kernel_alloc_fn`/`g_kernel_
+    // heap_backing`/`kernel_vtable` dosya-ÖZEL (pub OLMAYAN) OLDUĞUNDAN,
+    // testler `lib_freestanding.zig`nin KENDİ İÇİNDE (`test "..." {...}`
+    // bloğu OLARAK) yaşamalı — AYRI bir dış test dosyası bu duruma HİÇ
+    // erişemezdi.
+    const alloc_abi_test_mod = b.createModule(.{
+        .root_source_file = b.path("runtime/lib_freestanding.zig"),
+        .target = alloc_abi_target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "abi_layout", .module = abi_layout_mod_alloc },
+            .{ .name = "diag_sink", .module = diag_sink_mod_alloc },
+        },
+    });
+    const alloc_abi_swap_arch: enum { aarch64, x86_64 } = switch (alloc_abi_target.result.cpu.arch) {
+        .aarch64 => .aarch64,
+        .x86_64 => .x86_64,
+        else => @panic("runtime/async_rt şu an yalnızca aarch64/x86-64 hedeflerini destekler"),
+    };
+    const alloc_abi_swap_src, const alloc_abi_swap_o_path = switch (alloc_abi_swap_arch) {
+        .aarch64 => .{ "runtime/async_rt/swap_aarch64.S", "runtime/async_rt/swap_aarch64_alloc_abi.o" },
+        .x86_64 => .{ "runtime/async_rt/swap_x86_64.S", "runtime/async_rt/swap_x86_64_alloc_abi.o" },
+    };
+    const compile_alloc_abi_swap_asm = b.addSystemCommand(&.{
+        "cc", "-c", "-o", alloc_abi_swap_o_path, alloc_abi_swap_src,
+    });
+    alloc_abi_test_mod.addObjectFile(b.path(alloc_abi_swap_o_path));
+    const alloc_abi_test = b.addTest(.{ .root_module = alloc_abi_test_mod });
+    // `addFreestandingRuntimeChain`nin AYNI, ÖLÇÜLMÜŞ gerekçesi —
+    // `lib_freestanding.zig`nin `printfReal`i x86_64'te (OS'tan BAĞIMSIZ,
+    // SADECE `builtin.cpu.arch`e bağlı) self-hosted backend'in reddettiği
+    // bir varargs fonksiyonu.
+    if (alloc_abi_swap_arch == .x86_64) alloc_abi_test.use_llvm = true;
+    alloc_abi_test.step.dependOn(&compile_alloc_abi_swap_asm.step);
+    test_step.dependOn(&b.addRunArtifact(alloc_abi_test).step);
+    const alloc_abi_test_step = b.step("alloc-abi-test", "Yalnızca freestanding allocator ABI'sinin (nox_allocator_install) host-natif testini çalıştırır (hızlı yineleme İçİn)");
+    alloc_abi_test_step.dependOn(&b.addRunArtifact(alloc_abi_test).step);
+
     // "nox" modülünü dışarıdan tüketen ayrı test dosyaları (tests/unit, tests/golden).
     const external_test_files = [_][]const u8{
         "tests/unit/lexer_test.zig",

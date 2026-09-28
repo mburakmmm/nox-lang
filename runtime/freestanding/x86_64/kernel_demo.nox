@@ -8,86 +8,35 @@ extern def nox_kernel_phys_base() -> int from "zig-out/lib/noxrt-freestanding-x8
 extern def nox_kernel_phys_limit() -> int from "zig-out/lib/noxrt-freestanding-x86_64.o"
 extern def nox_kernel_trigger_breakpoint() -> None from "zig-out/lib/noxrt-freestanding-x86_64.o"
 
-# Serbest-liste tabanlı fiziksel sayfa allocator — SAF Nox'ta, F.3'ün
-# `lowlevel:`+`ptr_*` yerleşikleriyle (YENİ bir builtin EKLENMEDEN) yazılır.
-# Durum (head/free_count/total) `nox_kernel_phys_base()`nin döndürdüğü
-# SABİT "kontrol sayfası"nın KENDİSİNDE tutulur — modül-global mutasyona
-# bağımlılık YOK (`nox_kernel_phys_base()` HER ÇAĞRIDA AYNI, deterministik
-# adresi döner, bu YÜZDEN kontrol sayfasının adresini AYRICA saklamaya
-# gerek yoktur).
-#
-# Kontrol sayfası düzeni (8 baytlık slotlar):
-#   offset 0:  head        (bir SONRAKİ serbest sayfanın adresi, 0 = yok)
-#   offset 8:  free_count  (şu an serbest olan sayfa sayısı)
-#   offset 16: total       (page_init()'in ayırdığı TOPLAM sayfa sayısı)
-#
-# Serbest sayfaların KENDİSİ İLK 8 baytlarında bir SONRAKİ serbest sayfanın
-# adresini taşır (tek-bağlı liste, ekstra bellek GEREKTİRMEZ).
+# v2.0 madde 9 (bkz. plan dosyası "Freestanding Allocator ABI"): AŞAĞIDAKİ
+# 4 fonksiyon ÖNCEDEN SAF Nox'ta (`lowlevel:`+`ptr_*` ÜZERİNDEN, "kontrol
+# sayfası" hilesiyle durum tutarak) yazılıydı — AMA bu gövdelerin DERLENMİŞ
+# hali `nox_arena_create(rt)`/`nox_arena_destroy(rt)` ÇAĞIRIYOR (BU turda
+# GERÇEK assembly OKUNARAK bulundu), yani GEÇERLİ bir `rt` OLMADAN ÇÖKER —
+# TAM DA `rt`yi BOOTSTRAP ETMEK İçİn bunlardan bellek almak İSTEDİĞİMİZ
+# İçİn bir tavuk-yumurta sorunu. Bu YÜZDEN İMZALARI/DAVRANIŞLARI/checkpoint
+# etkileşimleri DEĞİŞMEDEN, İÇ implementasyonları `runtime/freestanding/
+# x86_64/kernel.zig`nin `rt`-BAĞIMSIZ, GERÇEK serbest-listesine delege eden
+# İNCE `extern def` sarmalayıcılarına ÇEVRİLDİ — `nox_allocator_install`
+# ABI'sinin (aynı Zig dosyası) KULLANDIĞI AYNI havuz, bu YÜZDEN aşağıdaki
+# `SHARED_POOL_OK` checkpoint'i managed heap'in GERÇEKTEN AYNI fiziksel
+# sayfa havuzundan beslendiğini kanıtlayabilir.
+extern def nox_page_init() -> int from "zig-out/lib/noxrt-freestanding-x86_64.o"
+extern def nox_alloc_page() -> int from "zig-out/lib/noxrt-freestanding-x86_64.o"
+extern def nox_free_page(addr: int) -> None from "zig-out/lib/noxrt-freestanding-x86_64.o"
+extern def nox_free_pages() -> int from "zig-out/lib/noxrt-freestanding-x86_64.o"
 
 def page_init() -> int:
-    total: int = 0
-    lowlevel:
-        base: int = nox_kernel_phys_base()
-        limit: int = nox_kernel_phys_limit()
-        control: ptr = ptr_from_int(base)
-        first_page: int = base + 4096
-        count: int = (limit - first_page) // 4096
-        head: int = 0
-        if count > 0:
-            head = first_page
-        i: int = 0
-        while i < count:
-            page_addr: int = first_page + i * 4096
-            next_addr: int = 0
-            if i < count - 1:
-                next_addr = first_page + (i + 1) * 4096
-            page_ptr: ptr = ptr_from_int(page_addr)
-            ptr_write_int(page_ptr, next_addr)
-            i = i + 1
-        ptr_write_int(control, head)
-        count_slot: ptr = ptr_add(control, 8)
-        ptr_write_int(count_slot, count)
-        total_slot: ptr = ptr_add(control, 16)
-        ptr_write_int(total_slot, count)
-        total = count
-    return total
+    return nox_page_init()
 
 def alloc_page() -> int:
-    result: int = 0
-    lowlevel:
-        base: int = nox_kernel_phys_base()
-        control: ptr = ptr_from_int(base)
-        head: int = ptr_read_int(control)
-        if head != 0:
-            next_ptr: ptr = ptr_from_int(head)
-            next_addr: int = ptr_read_int(next_ptr)
-            ptr_write_int(control, next_addr)
-            count_slot: ptr = ptr_add(control, 8)
-            count: int = ptr_read_int(count_slot)
-            ptr_write_int(count_slot, count - 1)
-            result = head
-    return result
+    return nox_alloc_page()
 
 def free_page(addr: int) -> None:
-    lowlevel:
-        base: int = nox_kernel_phys_base()
-        control: ptr = ptr_from_int(base)
-        head: int = ptr_read_int(control)
-        page_ptr: ptr = ptr_from_int(addr)
-        ptr_write_int(page_ptr, head)
-        ptr_write_int(control, addr)
-        count_slot: ptr = ptr_add(control, 8)
-        count: int = ptr_read_int(count_slot)
-        ptr_write_int(count_slot, count + 1)
+    nox_free_page(addr)
 
 def free_pages() -> int:
-    result: int = 0
-    lowlevel:
-        base: int = nox_kernel_phys_base()
-        control: ptr = ptr_from_int(base)
-        count_slot: ptr = ptr_add(control, 8)
-        result = ptr_read_int(count_slot)
-    return result
+    return nox_free_pages()
 
 # --- Demo çekirdek: EN GÜVENLİ sıra (bkz. plan dosyasının madde 7'si) ---
 
@@ -107,5 +56,21 @@ if p1 != 0 and p2 != 0 and p1 != p2 and p3 == p1:
 xs: list[int] = [1, 2, 3]
 xs.append(4)
 print("HEAP_OK")
+
+# v2.0 madde 9: managed heap'in (`list[int]`/ARC/RuntimeState'in KENDİSİ)
+# GERÇEKTEN `page_init`/`alloc_page`in (YUKARIDAKİ `PAGE_ALLOC_OK`) AYNI
+# fiziksel sayfa havuzundan beslendiğinin KANITI. `total` (`page_init()`nin
+# döndürdüğü, HİÇ değişmeyen TOPLAM sayfa sayısı) İLE `free_pages()`i
+# (ŞU AN müsait sayfa sayısı) karşılaştırmak — `nox_allocator_install`
+# İLE kurulan kernel bump allocator'ın, Nox'un KENDİ `RuntimeState`sini
+# bootstrap ETMEK İçİn `main`e atlanmadan HEMEN ÖNCE (BU turda GERÇEK bir
+# QEMU çalıştırmasıyla, `DBG_ALLOC_PAGE` teşhis çıktısıyla DOĞRULANDI) EN
+# AZINDAN BİR sayfayı ZATEN tükettiğinin dolaylı AMA KESİN kanıtı — bağlantı
+# KOPUK olsaydı (eski, AYRI 4 MiB FBA'ya geri düşülseydi) `free_pages()`
+# HİÇBİR ZAMAN `total`dan KÜÇÜK OLMAZDI (bu turda gerçekten ölçülerek
+# doğrulandı — kararlı/tekrarlanabilir bir sinyal, `list[T]`nin İç
+# tahsis boyutlarına BAĞIMLI DEĞİL).
+if free_pages() < total:
+    print("SHARED_POOL_OK")
 
 print("ALL_CHECKPOINTS_OK")

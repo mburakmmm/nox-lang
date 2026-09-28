@@ -24436,6 +24436,126 @@ ARCH`in silinmesi), `runtime/{collections/dict,hpy_bridge/context,
 stdlib_shims/crypto}.zig` (`linuxGetRandom`), `tests/golden/{kernel_
 boot_x86_64_test.zig,target_flag_test.zig}`.
 
+## 3.197 v2.0 stabilizasyon yol haritası, madde 9 — Freestanding Allocator ABI
+
+Bugüne kadar `--profile freestanding` derlemelerinde YÖNETİLEN Nox heap'i
+(list/dict/ARC/RuntimeState — HER ŞEY) `runtime/lib_freestanding.zig`nin
+`nox_runtime_init_freestanding()`sinin KOŞULSUZ kurduğu, SABİT/statik
+4 MiB'lık bir `.bss` arabelleği (`FixedBufferAllocator`) ÜZERİNDEN
+besleniyordu — GERÇEK bir kernel PMM İLE HİÇBİR bağlantısı YOK. Madde 9,
+kernel PMM İLE Nox'un yönetilen runtime'ı ARASINDAKİ GERÇEK bir kontratı
+(`nox_allocator_install(kernel_alloc, kernel_free)`) tanımlar VE (kullanıcının
+GENİŞLETTİĞİ kapsamla) BU repodaki `kernel_demo.nox`nin GERÇEK, GERÇEKTEN
+QEMU'da doğrulanan fiziksel sayfa havuzuna bağlar.
+
+### Tasarım kararları
+
+- **Kapsam, kullanıcı TARAFINDAN GENİŞLETİLDİ**: sadece bir kontrat
+  YETMEDİ — `page_init`/`alloc_page`/`free_page` GERÇEKTEN yönetilen
+  heap'e bağlandı (madde 10'un ayrı `nox-kernel-demo` reposuna
+  ERTELENMEDEN).
+- **ABI'ye alignment PARAMETRESİ EKLENDİ** (`kernel_alloc(size,
+  alignment)`/`kernel_free(ptr, size, alignment)`): `RuntimeState`nin
+  `pool_free_lists_slot0` alanının `align(std.atomic.cache_line)`
+  (genelde 64 bayt) hizalama ihtiyacını KARŞILAMAK İçİn — `alignment`
+  DÜZ bir bayt-sayısı `usize` (Zig'e ÖZGÜ `std.mem.Alignment`/`ret_addr`
+  YOK), `aligned_alloc`/`posix_memalign`in AYNI, sıradan C sözleşmesi.
+- **GERÇEK bir mimari engel BULUNDU VE ÇÖZÜLDÜ**: `kernel_demo.nox`daki
+  `alloc_page()`/`page_init()`nin DERLENMİŞ gövdesi (BU turda GERÇEK
+  assembly OKUNARAK doğrulandı) `nox_arena_create(rt)`/`nox_arena_
+  destroy(rt)` ÇAĞIRIYOR — GEÇERLİ bir `rt` OLMADAN ÇÖKER, AMA TAM DA
+  `rt`yi BOOTSTRAP ETMEK İçİn bunlardan bellek almak İSTİYORDUK
+  (tavuk-yumurta). **Çözüm:** bu 4 fonksiyonun Nox İMZALARI/DAVRANIŞLARI/
+  checkpoint etkileşimleri DEĞİŞMEDEN, İÇ implementasyonları `kernel.
+  zig`nin `rt`-BAĞIMSIZ, YENİ bir Zig-native serbest-listesine (`nox_
+  page_init`/`nox_alloc_page`/`nox_free_page`/`nox_free_pages`) delege
+  eden İNCE `extern def` sarmalayıcılarına ÇEVRİLDİ.
+
+### `runtime/lib_freestanding.zig` — C-ABI + Zig-tarafı adaptör
+
+`NoxKernelAllocFn`/`NoxKernelFreeFn` (düz `usize` boyut/hizalama, `ret_
+addr` YOK) + `nox_allocator_install(alloc_fn, free_fn)` — `g_kernel_
+alloc_fn`/`g_kernel_free_fn` (invariant #6'nın `g_kernel_fba_ready` İLE
+AYNI, ZATEN kabul edilmiş bootstrap-durumu istisnası, bkz. AGENTS.md §2/
+§9.5). `kernel_vtable: std.mem.Allocator.VTable` bu C fonksiyonlarını
+Zig'in `Alignment`/`ret_addr`sine köprüler (`toByteUnits()`/
+`fromByteUnits()`); `resize`/`remap` HER ZAMAN başarısız (sözleşme-yasal,
+SADECE kopyalama MALİYETİ). `nox_runtime_init_freestanding()`nin BAŞINA
+TEK bir kontrol EKLENDİ: `g_kernel_alloc_fn != null` İSE `kernel_vtable`
+KULLANILIR, AKSİ HALDE (VARSAYILAN, kurulum YOKSA) ESKİ 4 MiB FBA
+DEĞİŞMEDEN çalışmaya DEVAM eder (madde 8'in "opt-in, varsayılan DEĞİŞMEZ"
+disipliniyle AYNI). Host-NATİF bir `zig build alloc-abi-test` (`build.
+zig`, `lib_freestanding.zig`yi normal/host target İLE derler — freestanding
+OS'A İHTİYAÇ YOK) BU mekanizmayı GERÇEK bir QEMU/kernel GEREKMEDEN,
+kurulum ÖNCESİ/SONRASI tahsislerin doğru arabelleğe düştüğünü VE
+hizalamanın `@alignOf(RuntimeState)`e UYDUĞUNU DOĞRUDAN doğrular.
+
+### `runtime/freestanding/x86_64/kernel.zig` — GERÇEK, `rt`-bağımsız sayfa havuzu
+
+`nox_kernel_phys_base()..nox_kernel_phys_limit()` ÜZERİNDE, `kernel_demo.
+nox`nin ESKİ SAF-Nox algoritmasının (tek-bağlı serbest liste) BİREBİR Zig
+karşılığı — durum (`g_page_head`/`g_page_free_count`/`g_page_total`) düz
+dosya-kapsamlı `var`larda (Nox tarafındaki "kontrol sayfası" hilesi
+GEREKMEZ). `ensurePageInit()` İDEMPOTENT: HEM `nox_freestanding_early_
+init` (bootstrap SIRASINDA) HEM `kernel_demo.nox`nin KENDİ `page_init()`
+sarmalayıcısı BUNU tetikleyebilir, İKİNCİ çağrı serbest listeyi
+SIFIRLAMAZ. Basit bir bump/sayfa-üstü katman (`kernelAlloc`/`kernelFree`)
+`nox_alloc_page()`in SABİT 4096-baytlık sayfalarını Nox'un yönetilen
+heap'inin DEĞİŞKEN boyutlu isteklerine bağlar — **v1 sınırları** (AÇIKÇA
+belgelenir): TEK bir tahsis 4096 baytı AŞAMAZ (çoklu-sayfa BİTİŞİK ayırma
+YOK), `kernelFree` bump-İçİ sub-page geri-kazanım YAPMAZ (SADECE tam-sayfa
+granülerliğinde, `nox_free_page` ÜZERİNDEN — HER ZAMAN sözleşme-yasal,
+SADECE bellek İSRAFI). `nox_freestanding_early_init()`e TEK YENİ satır:
+`nox_allocator_install(kernelAlloc, kernelFree)`.
+
+### `kernel_demo.nox` — sarmalayıcılar + `SHARED_POOL_OK`
+
+`page_init`/`alloc_page`/`free_page`/`free_pages` ARTIK `nox_page_init`/
+`nox_alloc_page`/`nox_free_page`/`nox_free_pages`e (AYNI `.o`, link-time
+çözümlenen `extern def`) delege eden TEK satırlık sarmalayıcılar —
+`PAGE_ALLOC_OK`/`HEAP_OK` DEĞİŞMEDEN geçer. YENİ `SHARED_POOL_OK`
+checkpoint'i: `page_init()`in döndürdüğü `total` (HİÇ değişmeyen TOPLAM
+sayfa sayısı) İLE `free_pages()`i (ŞU AN müsait sayfa sayısı)
+karşılaştırır — `free_pages() < total` olması, managed heap'in (`Runtime
+State`nin KENDİ bootstrap tahsisi DAHİL) `main`e atlanmadan ÖNCE BİLE
+AYNI havuzdan sayfa tükettiğinin KESİN kanıtıdır (bağlantı KOPUK olsaydı,
+eski AYRI 4 MiB FBA'ya geri düşülürdü VE `free_pages()` ASLA `total`dan
+küçük OLMAZDI). **Not:** BU turda GERÇEK bir QEMU çalıştırmasıyla (geçici
+teşhis çıktısı İLE) `xs.append(4)` GİBİ KÜÇÜK bir `list[int]` büyümesinin
+TEK bir GPA/`DebugAllocator` tahsis isteğinin (görülen boyutlar: 122→304
+→698→1864→5918 bayt) HIZLA `kernelAlloc`nin 4096-baytlık v1 sınırını
+AŞABİLDİĞİ (ÖNCEDEN "küçük list HİÇ ihtiyaç DUYMAZ" varsayımının YANLIŞ
+olduğu) ÖLÇÜLEREK bulundu — bu YÜZDEN `SHARED_POOL_OK`, opak liste-büyüme
+boyutlarına BAĞIMLI OLMAYAN, DETERMİNİSTİK `total`/`free_pages()`
+karşılaştırmasını kullanır.
+
+### Doğrulama
+
+`zig build test` (Debug, `alloc-abi-test` DAHİL) SIFIR regresyon. `zig
+build kernel-boot-test` (GERÇEK QEMU boot): `PAGE_ALLOC_OK`/`HEAP_OK`
+DEĞİŞMEDEN + YENİ `SHARED_POOL_OK` geçer. Madde 8'in generic freestanding
+zincirlerinde (`kernel.zig`yi HİÇ force-ref ETMEYEN `noxrt-freestanding-
+generic-*`) `nox_allocator_install` HİÇ ÇAĞRILMADIĞINDAN VARSAYILAN FBA
+davranışı DEĞİŞMEDİ (`target_flag_test.zig` DEĞİŞMEDEN geçer).
+
+### Bilinçli olarak kapsam dışı
+
+- Sub-page geri-kazanım (`kernelFree` v1'de bump-İçİ frees'i YOK sayar).
+- 4096 bayttan BÜYÜK TEK bir tahsis (çoklu-sayfa BİTİŞİK ayırma).
+- riscv64/aarch64 İçİn AYNI GERÇEK kernel PMM bağlantısı (`nox_kernel_
+  phys_base`/`limit` ŞU AN x86_64-özgü `kernel.zig`ye ÖZGÜ).
+- `nox-kernel-demo`nun (madde 10, AYRI repo) KENDİ, DAHA GENİŞ PMM/VMM
+  ihtiyaçları (sayfa tabloları, GERÇEK bir VMM).
+
+### Kritik dosyalar
+
+`runtime/lib_freestanding.zig` (ABI + adaptör + kurulum-kontrolü + host-
+natif test), `runtime/freestanding/x86_64/kernel.zig` (`nox_page_init`/
+`nox_alloc_page`/`nox_free_page`/`nox_free_pages`/`kernelAlloc`/
+`kernelFree`), `runtime/freestanding/x86_64/kernel_demo.nox` (sarmalayıcılar
++ `SHARED_POOL_OK`), `tests/golden/kernel_boot_x86_64_test.zig` (YENİ
+checkpoint), `build.zig` (`alloc-abi-test` zinciri), AGENTS.md (§2/§9.5).
+
 ---
 
 ## 5. Hata Yönetimi

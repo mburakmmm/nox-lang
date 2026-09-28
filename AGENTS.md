@@ -29,7 +29,7 @@ Bu kurallar hiçbir görev, optimizasyon veya "geçici çözüm" gerekçesiyle i
 3. **QBE çıktısında hiçbir zaman unwind tablosu / landing pad üretilmez.** Hata yayılımı yalnızca örtük error-union dönüş zinciriyle yapılır.
 4. **C eklentilerine hiçbir zaman ham `PyObject*` veya Nox nesnesinin bellek adresi verilmez.** Tüm dış erişim opaque handle üzerinden geçer.
 5. **WASM entegrasyonu bir derleme hedefi değildir**, yalnızca bir kütüphane içe aktarma mekanizmasıdır. QBE'ye WASM backend'i eklemeye çalışan kod bu depoya kabul edilmez.
-6. **Global/gizli mutable state yasak.** Runtime, allocator'ları her zaman açıkça parametre olarak alır (Zig idiomu).
+6. **Global/gizli mutable state yasak.** Runtime, allocator'ları her zaman açıkça parametre olarak alır (Zig idiomu). **Dar, belgelenmiş istisna:** freestanding runtime'ın kendi tek-seferlik bootstrap durumu (ör. `lib_freestanding.zig`'in `g_kernel_fba_ready`/`g_kernel_alloc_fn`/`g_kernel_free_fn`'i, bkz. §3.197) bu yasağın kapsadığı genel/gizli runtime durumu DEĞİLDİR — `nox_freestanding_early_init`in `main`e atlanmadan ÖNCE, KOŞULSUZ ve tam olarak bir kez çalıştırdığı, dışa açık/belgelenmiş bir kurulum adımıdır.
 7. **Her yeni dil özelliği, en az bir "golden test" (kaynak → beklenen QBE IR/davranış) ile birlikte gelir.**
 
 ---
@@ -202,6 +202,15 @@ AÇIKÇA UYARMAZ.**
   ARC atomiklik resmileştirmesiyle AYNI kategori — "gelecekte ele
   alınacak" olarak işaretlenmiş, ŞİMDİ rastgele bir PR'ın parçası olarak
   YARIM yapılmamalı).
+- **v2.0 madde 9 (bkz. §3.197): `nox_allocator_install` (freestanding
+  runtime'ın kernel-sağlanan allocator ABI'si) AYNI güven sınırının bir
+  UZANTISIDIR.** Bir kernel/bootstrap yazarının kaydettiği `kernel_alloc`/
+  `kernel_free` fonksiyon çiftleri, Nox'un yönetilen heap'inin (list/dict/
+  ARC/RuntimeState — HER ŞEY) TÜM bellek isteklerini KARŞILAR — bu YÜZDEN
+  `extern def` gibi, TAM native yetkiyle çalışır VE Nox TARAFINDAN
+  DOĞRULANMAZ/SANDBOX'LANMAZ. Bu fonksiyonlardaki bir hata (yanlış
+  hizalama, GERÇEKTE sahiplenilmeyen bellek döndürmek) Nox'un KENDİ tip/
+  sahiplik garantilerinin TAMAMEN DIŞINDadır ve TÜM programı bozabilir.
 
 ---
 

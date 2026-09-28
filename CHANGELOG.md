@@ -14,6 +14,29 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.108.0]
+
+### Eklendi
+
+- **Freestanding Allocator ABI — v2.0 yol haritasının 9. maddesi (bkz.
+  nox-teknik-spesifikasyon.md §3.197)**: `--profile freestanding`
+  derlemelerinde YÖNETİLEN Nox heap'i (list/dict/ARC/RuntimeState — HER
+  ŞEY) ŞİMDİYE KADAR SABİT/statik 4 MiB'lık bir `.bss` arabelleğinden
+  besleniyordu — GERÇEK bir kernel fiziksel bellek yöneticisiyle HİÇBİR
+  bağlantısı YOKTU. Artık:
+  - `nox_allocator_install(kernel_alloc, kernel_free)`: bir kernelin
+    KENDİ fiziksel sayfa allocator'ını Nox'un yönetilen heap'ine
+    enjekte eden yeni, dar bir C-ABI (`size`/`alignment` düz `usize`,
+    Zig'e özgü tip YOK) — kurulum YAPILMAZSA (varsayılan durum) davranış
+    ESKİ 4 MiB arabellekle BİREBİR DEĞİŞMEDEN kalır.
+  - `runtime/freestanding/x86_64/kernel_demo.nox`nin (GERÇEK QEMU'da
+    çalıştırılan demo çekirdek) `page_init`/`alloc_page`/`free_page`/
+    `free_pages`ı ARTIK GERÇEKTEN bu ABI'nin arkasındaki AYNI fiziksel
+    sayfa havuzunu paylaşıyor — yeni `SHARED_POOL_OK` checkpoint'i
+    (`zig build kernel-boot-test`, GERÇEK QEMU) bunu doğrudan kanıtlar.
+  - Yeni, host-natif `zig build alloc-abi-test`: mekanizmayı GERÇEK bir
+    QEMU/kernel gerekmeden (kurulum öncesi/sonrası + hizalama) doğrular.
+
 ## [1.107.0]
 
 ### Eklendi

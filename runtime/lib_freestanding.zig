@@ -84,7 +84,86 @@ var g_kernel_heap_backing: [KERNEL_HEAP_BYTES]u8 align(16) = undefined;
 var g_kernel_fba: std.heap.FixedBufferAllocator = undefined;
 var g_kernel_fba_ready: bool = false;
 
+/// v2.0 yol haritası madde 9 (bkz. plan dosyası "Freestanding Allocator
+/// ABI"): yukarıdaki `g_kernel_fba`nın SABİT 4 MiB'lık `.bss` arabelleği
+/// GERÇEK bir kernel PMM'e HİÇ bağlı DEĞİLDİ — bu ABI, bir kernel'in KENDİ
+/// fiziksel sayfa allocator'ını (`extern def`/C/asm İLE yazılmış HERHANGİ
+/// biri) `nox_allocator_install` ÜZERİNDEN Nox'un yönetilen heap'ine
+/// (ARC/list/dict/class TAMAMI) enjekte etmesini sağlar. `alignment` DÜZ
+/// bir bayt-sayısı `usize`dır (Zig'e ÖZGÜ `std.mem.Alignment`/`ret_addr`
+/// YOK) — `aligned_alloc`/`posix_memalign`nin AYNI, sıradan C sözleşmesi,
+/// böylece bir kernel yazarı BUNU Zig'in KENDİ `Allocator.VTable`ını
+/// bilmeden implemente EDEBİLİR. Kurulum YAPILMAZSA (`g_kernel_alloc_fn ==
+/// null`, VARSAYILAN durum) davranış AŞAĞIDAKİ 4 MiB FBA İLE BİREBİR
+/// DEĞİŞMEDEN KALIR — madde 8'in `--target` bayrağının "opt-in, varsayılan
+/// DEĞİŞMEZ" disipliniyle AYNI.
+///
+/// **Güven sınırı notu** (bkz. AGENTS.md §9.5): `alloc_fn`/`free_fn`,
+/// Nox'un KENDİ tip/sahiplik garantilerinin DIŞINDA, TAM native yetkiyle
+/// çalışır — `extern def`in KENDİSİ gibi, bu fonksiyonların KENDİ doğruluğu/
+/// bellek güvenliği BU ABI TARAFINDAN HİÇ doğrulanmaz/sandbox'lanmaz.
+pub const NoxKernelAllocFn = *const fn (size: usize, alignment: usize) callconv(.c) ?*anyopaque;
+pub const NoxKernelFreeFn = *const fn (ptr: ?*anyopaque, size: usize, alignment: usize) callconv(.c) void;
+
+/// `g_kernel_fba_ready`nin AYNI, ZATEN kabul edilmiş bootstrap-durumu
+/// istisnası (bkz. AGENTS.md §2, invariant #6) — freestanding runtime'ın
+/// KENDİ tek-seferlik kurulumu İçİn dar bir global, "gizli mutable state"
+/// YASAĞININ kapsadığı GENEL runtime durumu DEĞİL.
+var g_kernel_alloc_fn: ?NoxKernelAllocFn = null;
+var g_kernel_free_fn: ?NoxKernelFreeFn = null;
+
+export fn nox_allocator_install(alloc_fn: NoxKernelAllocFn, free_fn: NoxKernelFreeFn) callconv(.c) void {
+    g_kernel_alloc_fn = alloc_fn;
+    g_kernel_free_fn = free_fn;
+}
+
+fn kernelAllocAdapter(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+    _ = ctx;
+    _ = ret_addr;
+    const f = g_kernel_alloc_fn orelse return null;
+    const raw = f(len, alignment.toByteUnits()) orelse return null;
+    return @ptrCast(raw);
+}
+
+fn kernelResizeAdapter(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+    _ = ctx;
+    _ = memory;
+    _ = alignment;
+    _ = new_len;
+    _ = ret_addr;
+    // v1: HER ZAMAN başarısız — sözleşme-yasal (SADECE bir kopyalama
+    // MALİYETİ, ASLA bir doğruluk hatası), ABI'yi 2 fonksiyonda TUTAR.
+    return false;
+}
+
+fn kernelRemapAdapter(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+    _ = ctx;
+    _ = memory;
+    _ = alignment;
+    _ = new_len;
+    _ = ret_addr;
+    return null;
+}
+
+fn kernelFreeAdapter(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+    _ = ctx;
+    _ = ret_addr;
+    const f = g_kernel_free_fn orelse return;
+    f(memory.ptr, memory.len, alignment.toByteUnits());
+}
+
+const kernel_vtable: std.mem.Allocator.VTable = .{
+    .alloc = kernelAllocAdapter,
+    .resize = kernelResizeAdapter,
+    .remap = kernelRemapAdapter,
+    .free = kernelFreeAdapter,
+};
+
 pub export fn nox_runtime_init_freestanding() callconv(.c) ?*anyopaque {
+    if (g_kernel_alloc_fn != null) {
+        const installed: std.mem.Allocator = .{ .ptr = undefined, .vtable = &kernel_vtable };
+        return asap.nox_runtime_init_with_allocator(installed);
+    }
     if (!g_kernel_fba_ready) {
         g_kernel_fba = std.heap.FixedBufferAllocator.init(&g_kernel_heap_backing);
         g_kernel_fba_ready = true;
@@ -184,6 +263,54 @@ export fn printf(fmt: ?[*:0]const u8, ...) callconv(.c) c_int {
     var ap = @cVaStart();
     defer @cVaEnd(&ap);
     return @intCast(printfReal(f, &ap));
+}
+
+/// v2.0 madde 9 (bkz. plan dosyası "Freestanding Allocator ABI", Faz B):
+/// `nox_allocator_install`/`kernel_vtable` mekanizmasını GERÇEK bir
+/// QEMU/kernel GEREKMEDEN, host-NATİF bir `zig build test` çalışmasıyla
+/// doğrular. TEK bir test fonksiyonunda, SIRALI 2 aşama olarak yazılır
+/// (dosya-kapsamlı `g_kernel_fba_ready`/`g_kernel_alloc_fn` PAYLAŞILDIĞINDAN
+/// — AYRI `test` bildirimlerine bölmek, Zig'in test-çalıştırma SIRASINA
+/// SESSİZCE bağımlı KILARDI).
+var g_test_kernel_buf: [64 * 1024]u8 align(std.atomic.cache_line) = undefined;
+var g_test_kernel_offset: usize = 0;
+
+fn testKernelAlloc(size: usize, alignment: usize) callconv(.c) ?*anyopaque {
+    const base = @intFromPtr(&g_test_kernel_buf);
+    const aligned = std.mem.alignForward(usize, base + g_test_kernel_offset, alignment) - base;
+    if (aligned + size > g_test_kernel_buf.len) return null;
+    g_test_kernel_offset = aligned + size;
+    return @ptrFromInt(base + aligned);
+}
+
+fn testKernelFree(ptr: ?*anyopaque, size: usize, alignment: usize) callconv(.c) void {
+    _ = ptr;
+    _ = size;
+    _ = alignment;
+}
+
+test "nox_runtime_init_freestanding: kurulum öncesi/sonrası doğru arabelleğe düşer" {
+    // Aşama 1 — kurulum YOK (varsayılan durum): tahsis `g_kernel_heap_
+    // backing`in (4 MiB'lık, SABİT `.bss` arabelleği) ARALIĞINA düşmeli.
+    const rt1 = nox_runtime_init_freestanding() orelse return error.InitFailed;
+    const rt1_addr = @intFromPtr(rt1);
+    const backing_start = @intFromPtr(&g_kernel_heap_backing);
+    const backing_end = backing_start + KERNEL_HEAP_BYTES;
+    try std.testing.expect(rt1_addr >= backing_start and rt1_addr < backing_end);
+
+    // Aşama 2 — SENTETİK bir kernel allocator `nox_allocator_install` İLE
+    // kurulur: tahsis ARTIK O ikinci arabelleğin ARALIĞINA düşmeli, VE
+    // adres `@alignOf(RuntimeState)`e (cache-line hizalamalı `pool_free_
+    // lists_slot0` alanı YÜZÜNDEN genelde 64 bayt) UYGUN olmalı — bu
+    // ABI'nin `alignment` parametresinin (kullanıcının 2. kararı) GERÇEKTEN
+    // İŞLEDİĞİNİN kanıtı.
+    nox_allocator_install(testKernelAlloc, testKernelFree);
+    const rt2 = nox_runtime_init_freestanding() orelse return error.InitFailed;
+    const rt2_addr = @intFromPtr(rt2);
+    const test_buf_start = @intFromPtr(&g_test_kernel_buf);
+    const test_buf_end = test_buf_start + g_test_kernel_buf.len;
+    try std.testing.expect(rt2_addr >= test_buf_start and rt2_addr < test_buf_end);
+    try std.testing.expectEqual(@as(usize, 0), rt2_addr % @alignOf(asap.RuntimeState));
 }
 
 // `lib.zig`nin AYNI zorunlu force-ref bloğu — bu modüllerin `export fn`

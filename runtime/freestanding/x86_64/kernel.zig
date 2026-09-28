@@ -146,7 +146,25 @@ export fn nox_freestanding_early_init() callconv(.c) void {
     diag_sink.nox_register_diag_sink(serialDiagSink);
     picMaskAll();
     idtInstall();
+    // v2.0 madde 9 (bkz. plan dosyası "Freestanding Allocator ABI"):
+    // Nox'un yönetilen heap'ini (list/dict/ARC — HER ŞEY) BU çekirdeğin
+    // GERÇEK, aşağıdaki fiziksel sayfa havuzuna (`kernelAlloc`/`kernelFree`)
+    // bağlar — `rt` HENÜZ bootstrap EDİLMEDEN (`nox_runtime_init_
+    // freestanding` BUNDAN SONRA, `boot.S`nin `main`e atlamasıyla çağrılır)
+    // GÜVENLE çalışır, ÇÜNKÜ `kernelAlloc`/`nox_alloc_page`/`ensurePageInit`
+    // HİÇBİRİ `rt`ye ihtiyaç DUYMAZ (bkz. aşağıdaki bölümün belge notu).
+    nox_allocator_install(kernelAlloc, kernelFree);
 }
+
+/// `runtime/lib_freestanding.zig`nin `export fn nox_allocator_install`ı —
+/// AYNI final nesneye (`noxrt-freestanding-x86_64.o`) derlendiğinden,
+/// modül-İçİ bir `@import` YERİNE sıradan bir C-ABI `extern fn` BİLDİRİMİ
+/// YETERLİ (`kernel_demo.nox`nin `extern def ... from "..."`ının AYNI
+/// ilkesi, AMA link-time çözümlemesi AYNI derleme İçİnde olur).
+extern fn nox_allocator_install(
+    alloc_fn: *const fn (size: usize, alignment: usize) callconv(.c) ?*anyopaque,
+    free_fn: *const fn (ptr: ?*anyopaque, size: usize, alignment: usize) callconv(.c) void,
+) callconv(.c) void;
 
 /// `boot.S`nin `main`den DÖNDÜKTEN SONRA çağırdığı, QEMU `isa-debug-exit`
 /// mekanizmasını (GERÇEK donanımda ETKİSİZ bir ISA portu) kullanan çıkış
@@ -181,4 +199,123 @@ export fn nox_kernel_phys_limit() callconv(.c) i64 {
 
 export fn nox_kernel_trigger_breakpoint() callconv(.c) void {
     asm volatile ("int3");
+}
+
+// ---------------------------------------------------------------------
+// v2.0 madde 9 (bkz. plan dosyası "Freestanding Allocator ABI"): GERÇEK,
+// `rt`-BAĞIMSIZ bir fiziksel sayfa serbest-listesi — `kernel_demo.nox`nin
+// KENDİ `page_init`/`alloc_page`/`free_page`/`free_pages`ının (SAF Nox'ta
+// yazılmış, `lowlevel:`+`ptr_*` ÜZERİNDEN, "kontrol sayfası" hilesiyle
+// durum tutan) BİREBİR algoritmik karşılığı — AMA durum BURADA düz Zig
+// dosya-kapsamlı `var`larında (Zig'in KENDİSİ SORUNSUZ, "kontrol sayfası"
+// hilesi GEREKMEZ). `rt`ye (RuntimeState) HİÇ ihtiyaç DUYMADIĞINDAN,
+// `nox_freestanding_early_init`in bootstrap SIRASINDA GÜVENLE çağrılabilir
+// — `alloc_page()`nin DERLENMİŞ Nox gövdesinin (`nox_arena_create(rt)`/
+// `nox_arena_destroy(rt)` çağırdığı, bu YÜZDEN GEÇERLİ bir `rt` OLMADAN
+// ÇÖKECEĞİ, BU turda GERÇEK assembly OKUNARAK bulunan) tavuk-yumurta
+// SORUNUNUN çözümü.
+// ---------------------------------------------------------------------
+
+var g_page_init_done: bool = false;
+var g_page_head: i64 = 0;
+var g_page_free_count: i64 = 0;
+var g_page_total: i64 = 0;
+
+/// İDEMPOTENT: HEM `nox_freestanding_early_init` (bootstrap SIRASINDA)
+/// HEM `kernel_demo.nox`nin KENDİ `page_init()` sarmalayıcısı (managed Nox
+/// koşarken) BUNU ÇAĞIRABİLİR — İKİNCİ çağrı serbest listeyi SIFIRLAMAZ
+/// (aksi halde bootstrap SIRASINDA ZATEN dağıtılmış sayfalar YETİM kalırdı).
+fn ensurePageInit() void {
+    if (g_page_init_done) return;
+    g_page_init_done = true;
+    const base = nox_kernel_phys_base();
+    const limit = nox_kernel_phys_limit();
+    // `kernel_demo.nox`nin ESKİ algoritmasıyla BİREBİR: İLK sayfa (`base`)
+    // BİLİNÇLİ olarak serbest listeye DAHİL EDİLMEZ (ESKİ implementasyonda
+    // "kontrol sayfası" olarak KULLANILIYORDU — BURADA durum Zig `var`
+    // larında OLDUĞUNDAN o sayfa ARTIK kullanılmıyor, AMA sayı/davranış
+    // PARİTESİ İçİn AYNI TABAN kaydırması KORUNUR).
+    const first_page = base + 4096;
+    const count: i64 = @divTrunc(limit - first_page, 4096);
+    var head: i64 = 0;
+    if (count > 0) head = first_page;
+    var i: i64 = 0;
+    while (i < count) : (i += 1) {
+        const page_addr = first_page + i * 4096;
+        var next_addr: i64 = 0;
+        if (i < count - 1) next_addr = first_page + (i + 1) * 4096;
+        const page_ptr: *i64 = @ptrFromInt(@as(usize, @intCast(page_addr)));
+        page_ptr.* = next_addr;
+    }
+    g_page_head = head;
+    g_page_free_count = count;
+    g_page_total = count;
+}
+
+export fn nox_page_init() callconv(.c) i64 {
+    ensurePageInit();
+    return g_page_total;
+}
+
+export fn nox_alloc_page() callconv(.c) i64 {
+    ensurePageInit();
+    if (g_page_head == 0) return 0;
+    const head = g_page_head;
+    const next_ptr: *i64 = @ptrFromInt(@as(usize, @intCast(head)));
+    g_page_head = next_ptr.*;
+    g_page_free_count -= 1;
+    return head;
+}
+
+export fn nox_free_page(addr: i64) callconv(.c) void {
+    ensurePageInit();
+    const page_ptr: *i64 = @ptrFromInt(@as(usize, @intCast(addr)));
+    page_ptr.* = g_page_head;
+    g_page_head = addr;
+    g_page_free_count += 1;
+}
+
+export fn nox_free_pages() callconv(.c) i64 {
+    ensurePageInit();
+    return g_page_free_count;
+}
+
+/// Basit bir bump/sayfa-üstü katman — Nox'un yönetilen heap'inin
+/// DEĞİŞKEN boyutlu isteklerini (`nox_alloc_page`nin SADECE SABİT
+/// 4096-baytlık sayfalar VERMESİNE karşılık) `nox_allocator_install`
+/// ABI'sine (bkz. `lib_freestanding.zig`) bağlar.
+var g_bump_page: i64 = 0;
+var g_bump_offset: usize = 0;
+
+/// **v1 sınırı** (AÇIKÇA belgelenir, bkz. plan dosyasının "Kapsam DIŞI"
+/// bölümü): `size`/`alignment` bir sayfadan (4096 bayt) BÜYÜKSE `null`
+/// döner — çoklu-sayfa BİTİŞİK ayırma DESTEKLENMEZ (`kernel_demo.nox`nin
+/// KENDİ kullanımı, küçük `list[int]`, BUNA HİÇ ihtiyaç DUYMUYOR).
+fn kernelAlloc(size: usize, alignment: usize) callconv(.c) ?*anyopaque {
+    if (alignment > 4096 or size > 4096) return null;
+    const page_base: usize = if (g_bump_page != 0) @intCast(g_bump_page) else 0;
+    const aligned_offset = if (g_bump_page != 0) std.mem.alignForward(usize, page_base + g_bump_offset, alignment) - page_base else 0;
+    if (g_bump_page == 0 or aligned_offset + size > 4096) {
+        const p = nox_alloc_page();
+        if (p == 0) return null;
+        g_bump_page = p;
+        const new_base: usize = @intCast(p);
+        const new_aligned_offset = std.mem.alignForward(usize, new_base, alignment) - new_base;
+        if (new_aligned_offset + size > 4096) return null;
+        g_bump_offset = new_aligned_offset + size;
+        return @ptrFromInt(new_base + new_aligned_offset);
+    }
+    g_bump_offset = aligned_offset + size;
+    return @ptrFromInt(page_base + aligned_offset);
+}
+
+/// **v1 sınırı** (AÇIKÇA belgelenir): bump-İçİ sub-page geri-kazanım YOK —
+/// SADECE tam-sayfa granülerliğinde geri kazanım VAR (`nox_free_page`
+/// ÜZERİNDEN, bu bump katmanı TARAFINDAN ŞU AN hiç ÇAĞRILMAZ). Bu HER
+/// ZAMAN sözleşme-yasal bir seçimdir (SADECE bellek İSRAFI, ASLA bir
+/// doğruluk hatası).
+fn kernelFree(ptr: ?*anyopaque, size: usize, alignment: usize) callconv(.c) void {
+    _ = ptr;
+    _ = size;
+    _ = alignment;
 }

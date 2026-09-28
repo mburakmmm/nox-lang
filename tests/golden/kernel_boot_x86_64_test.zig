@@ -7,8 +7,11 @@
 //! sürücüsü olarak kullanarak `runtime/freestanding/x86_64/kernel.ld`
 //! (linker script) + `boot_x86_64.o` (boot.S) + `noxrt-freestanding-x86_64.o`
 //! ile birleştirir, SONUCU GERÇEK bir `qemu-system-x86_64` çalıştırmasıyla
-//! doğrular (SIRAYLA basılan 6 checkpoint string'i + `isa-debug-exit`in
-//! KESİN `33` çıkış kodu).
+//! doğrular (SIRAYLA basılan 7 checkpoint string'i + `isa-debug-exit`in
+//! KESİN `33` çıkış kodu). v2.0 madde 9 (bkz. plan dosyası "Freestanding
+//! Allocator ABI"): `SHARED_POOL_OK`, managed heap'in (`list[int]`)
+//! GERÇEKTEN `page_init`/`alloc_page`in AYNI fiziksel sayfa havuzundan
+//! beslendiğini (`nox_allocator_install` ÜZERİNDEN) kanıtlar.
 //!
 //! `qbe`/`qemu-system-x86_64` PATH'te YOKSA (CI'de — F.5'in KENDİ, gelecekteki
 //! işi — qemu HENÜZ KURULMUYOR) test SESSİZCE `SkipZigTest` ile atlanır
@@ -266,6 +269,7 @@ test "Faz F.4: kernel_demo.nox GERÇEK bir x86_64 kernel imajına derlenip QEMU'
     try std.testing.expect(std.mem.indexOf(u8, stdout_data, "IDT_OK") != null);
     try std.testing.expect(std.mem.indexOf(u8, stdout_data, "PAGE_ALLOC_OK") != null);
     try std.testing.expect(std.mem.indexOf(u8, stdout_data, "HEAP_OK") != null);
+    try std.testing.expect(std.mem.indexOf(u8, stdout_data, "SHARED_POOL_OK") != null);
     try std.testing.expect(std.mem.indexOf(u8, stdout_data, "ALL_CHECKPOINTS_OK") != null);
     try std.testing.expect(std.mem.indexOf(u8, stdout_data, "KERNEL_FAULT") == null);
 
