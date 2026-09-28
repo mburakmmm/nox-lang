@@ -72,7 +72,11 @@ export fn nox_arena_create(rt: ?*anyopaque) ?*anyopaque {
 /// KENDİ Zig-seviyesi çağrısına da İHTİYACI VAR.
 pub export fn nox_arena_alloc(arena_ptr: ?*anyopaque, size: usize) ?*anyopaque {
     const handle: *ArenaHandle = @ptrCast(@alignCast(arena_ptr orelse return null));
-    const mem = handle.arena.allocator().alloc(u8, size) catch return null;
+    // `runtime/alloc/asap.zig`nin `nox_alloc`ındaki AYNI düzeltme/gerekçe —
+    // arena İçİnde inşa edilen list/class başlıkları da 8-bayt hizalama
+    // VARSAYAR, `.alloc(u8, ...)`in ÖRTÜK 1-baytlık hizalaması BUNU
+    // GARANTİ ETMİYORDU.
+    const mem = handle.arena.allocator().alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(usize)), size) catch return null;
     return mem.ptr;
 }
 

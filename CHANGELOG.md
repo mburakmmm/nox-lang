@@ -14,6 +14,23 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.108.1]
+
+### Düzeltildi
+
+- **`nox_allocator_install` altında tekrarlı `str` indeksleme çökmesi
+  (bkz. nox-teknik-spesifikasyon.md §3.198)**: `nox_alloc`/`nox_arena_
+  alloc`, ARC/liste/sınıf başlıklarının GERÇEKTEN ihtiyaç duyduğu 8-bayt
+  hizalamayı DEĞİL, `.alloc(u8,...)`in ÖRTÜK 1-baytlık hizalamasını
+  İSTİYORDU — MEVCUT tüm allocator'lar (page_allocator/smp_allocator/
+  DebugAllocator) BUNU fazlasıyla karşıladığından hata GİZLİ kalmıştı,
+  AMA madde 9'un `nox_allocator_install` ABI'siyle enjekte edilen sıkı-
+  paketleyen bir allocator ALTINDA (`nox-kernel-demo`nun Faz 6
+  çalışmasında GERÇEK bir QEMU çökmesiyle BULUNDU) GERÇEK bir #UD'e yol
+  açıyordu. `asap.zig`/`lowlevel.zig`/`cycle_detector.zig` düzeltildi;
+  `kernel_demo.nox`ya kalıcı bir `STR_REPEAT_INDEX_OK` regresyon
+  checkpoint'i eklendi.
+
 ## [1.108.0]
 
 ### Eklendi

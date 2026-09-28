@@ -833,20 +833,49 @@ pub export fn nox_runtime_deinit(rt: ?*anyopaque) void {
     bootstrap_allocator.destroy(state);
 }
 
+/// v2.0 madde 9'un `nox_allocator_install` ABI'si (bkz. `lib_freestanding.
+/// zig`nin `kernel_vtable`ı) İLE bulunan GERÇEK bir hata: `.alloc(u8,
+/// size)` `u8`nin DOĞAL hizalamasını (1 bayt) İSTER — bu, page_allocator/
+/// smp_allocator/DebugAllocator GİBİ MEVCUT allocator'ların HEPSİNİN
+/// (İÇ uygulama detayı OLARAK) fazlasıyla KARŞILADIĞI, AMA Zig'in
+/// allocator SÖZLEŞMESİNİN ASLA GARANTİ ETMEDİĞİ bir varsayımdı — `nox_
+/// rc_alloc`nin `rc: *i64` (8-baytlık ARC refcount başlığı, `align(1)`
+/// OLARAK İŞARETLENMEMİŞ) BU 8-bayt hizalamayı ÖRTÜK olarak VARSAYIYORDU.
+/// SIKI PAKETLEYEN (`alignment`i harfiyen alan) bir bump allocator
+/// enjekte edildiğinde (`nox-kernel-demo` reposunun Faz 6'sında, GERÇEK
+/// bir QEMU çalıştırmasıyla BULUNDU — `s[0]` sonrası `s[1]`in tahsisi
+/// 8'e HİZALANMAMIŞ bir adres alıyordu, `@alignCast`in Debug-modu GÜVENLİK
+/// kontrolü #UD İLE PANİKLİYORDU) bu varsayım BOZULUYORDU. Düzeltme:
+/// hizalamayı AÇIKÇA `@alignOf(usize)`e (8 bayt — TÜM ARC/liste/sınıf
+/// başlıklarının GERÇEK ihtiyacı) SABİTLE — bu, DİĞER TÜM allocator'lar
+/// İçİn SIFIR davranış DEĞİŞİKLİĞİDİR (zaten EN AZ bu kadar hizalıyorlardı).
+/// `pub` — `nox_alloc`ın `state.allocator()`e GEÇTİĞİ hizalamayı DIŞA
+/// açar: `nox_alloc` ile ALLOCATE edilmiş bir belleği `state.allocator().
+/// free(...)` ile DOĞRUDAN (bu dosyanın KENDİ `nox_free`si HARİCİNDE)
+/// serbest bırakan HERHANGİ bir çağıran (ör. `cycle_detector.zig`nin
+/// `ChildrenBuf.deinit`ı) AYNI hizalamayı KULLANMAK ZORUNDADIR — aksi
+/// halde Zig'in allocator SÖZLEŞMESİ İHLAL edilir (`DebugAllocator`
+/// hosted'da BUNU GERÇEKTEN yakalar: "Allocation alignment 8 does not
+/// match free alignment 1").
+pub const nox_alloc_alignment = std.mem.Alignment.fromByteUnits(@alignOf(usize));
+
 /// `size` bayt tahsis eder. Başarısızlıkta `null` döner.
 pub export fn nox_alloc(rt: ?*anyopaque, size: usize) ?*anyopaque {
     const state: *RuntimeState = @ptrCast(@alignCast(rt orelse return null));
-    const mem = state.allocator().alloc(u8, size) catch return null;
+    const mem = state.allocator().alignedAlloc(u8, nox_alloc_alignment, size) catch return null;
     return mem.ptr;
 }
 
 /// Daha önce `nox_alloc(rt, size)` ile tahsis edilmiş belleği serbest bırakır.
 /// `size`, tahsis anındaki ile birebir aynı olmalıdır (Zig allocator sözleşmesi).
+/// `nox_alloc`nin AYNI, AÇIK hizalamasıyla (`rawFree`, Zig'in allocator
+/// sözleşmesinin GEREKTİRDİĞİ ÜZERE, tahsis ANINDAKİYLE AYNI hizalamayı
+/// BEKLER).
 pub export fn nox_free(rt: ?*anyopaque, ptr: ?*anyopaque, size: usize) void {
     const p = ptr orelse return;
     const state: *RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const bytes: [*]u8 = @ptrCast(p);
-    state.allocator().free(bytes[0..size]);
+    state.allocator().rawFree(bytes[0..size], nox_alloc_alignment, @returnAddress());
 }
 
 // Faz F.0.2 (bkz. plan dosyası "Allocator enjeksiyonu"): `nox_runtime_

@@ -24556,6 +24556,69 @@ natif test), `runtime/freestanding/x86_64/kernel.zig` (`nox_page_init`/
 + `SHARED_POOL_OK`), `tests/golden/kernel_boot_x86_64_test.zig` (YENİ
 checkpoint), `build.zig` (`alloc-abi-test` zinciri), AGENTS.md (§2/§9.5).
 
+## 3.198 Hata düzeltmesi: `nox_allocator_install` altında tekrarlı `str` indeksleme çökmesi
+
+**Bulunuş:** `nox-kernel-demo` (madde 10, AYRI repo) reposunun Faz 6
+(interaktif shell) çalışması SIRASINDA — `PRINTABLE[byte - 32]` (str
+indeksleme) İKİ KEZ ART ARDA kullanılınca GERÇEK bir #UD (invalid opcode,
+Zig'in `debug.defaultPanic`ı) çökmesiyle KARŞILAŞILDI. GERÇEK bir QEMU
+çalıştırmasıyla KESİN olarak İZOLE EDİLDİ:
+
+```nox
+s: str = "ab"
+print(s[0])   # ÇALIŞIR
+print(s[1])   # ÇÖKERDİ (düzeltilmeden ÖNCE)
+```
+
+**Kök neden** (hedefli `diag_sink` diagnostic'leriyle, adım-adım GERÇEK
+QEMU çalıştırmasıyla İZOLE EDİLDİ): `runtime/alloc/asap.zig`nin `nox_
+alloc`ı `state.allocator().alloc(u8, size)` çağırıyordu — `u8`nin DOĞAL
+hizalaması (1 bayt) İSTENİYORDU. AMA `runtime/alloc/arc.zig`nin `nox_rc_
+alloc`ı, dönen adresi DOĞRUDAN `rc: *i64` (8-baytlık ARC refcount başlığı,
+`align(1)` OLARAK İŞARETLENMEMİŞ) OLARAK yorumluyor — 8-BAYT hizalama
+ÖRTÜK olarak VARSAYILIYORDU. `page_allocator`/`smp_allocator`/
+`DebugAllocator` GİBİ MEVCUT allocator'ların HEPSİ (İÇ uygulama detayı
+OLARAK) BUNU fazlasıyla KARŞILADIĞINDAN bu varsayım HİÇBİR ZAMAN
+BOZULMAMIŞTI — AMA madde 9'un `nox_allocator_install` ABI'si İLE enjekte
+edilen, `alignment`i HARFİYEN alan SIKI-PAKETLEYEN bir bump allocator
+ALTINDA (`nox-kernel-demo`nun `kernelAlloc`ı — nox-lang'in KENDİ referans
+implementasyonuyla BİREBİR AYNI), İKİNCİ bir 18-baytlık tahsis BİRİNCİSİNİN
+HEMEN ARDINA (8-hizalı olmayan bir OFSETE) düşüyor, `@ptrCast(@alignCast(
+base))`nin Debug-modu GÜVENLİK kontrolü #UD İLE PANİKLİYORDU.
+
+**Düzeltme:** `runtime/alloc/asap.zig`ye `pub const nox_alloc_alignment
+= std.mem.Alignment.fromByteUnits(@alignOf(usize))` (8 bayt) EKLENDİ;
+`nox_alloc`/`nox_free` bunu `alignedAlloc`/`rawFree` İLE AÇIKÇA KULLANIR
+(`.alloc`/`.free`in ÖRTÜK 1-baytlık varsayılanı YERİNE). AYNI hata sınıfı
+`runtime/alloc/lowlevel.zig`nin `nox_arena_alloc`ında (arena İçİnde inşa
+edilen list/class başlıkları AYNI 8-bayt varsayımını taşır) DA bulunup
+düzeltildi. Bu değişiklik, `runtime/alloc/cycle_detector.zig`nin `Children
+Buf.deinit`ının (`nox_trace_dispatch`in `nox_alloc`lu arabelleğini
+DOĞRUDAN `.free()` İLE — 1-baytlık örtük hizalamayla — serbest bırakıyordu)
+VE `fakeTraceDispatch`/`fakeTraceDispatchDiamond` test yardımcılarının
+(AYNI arabelleği `.alloc(u8,...)` İLE tahsis ediyordu) hizalama
+sözleşmesini de AÇIĞA ÇIKARDI — HOSTED profilde `zig build test`
+çalıştırıldığında `DebugAllocator`ın KENDİSİ "Allocation alignment 8 does
+not match free alignment 1" HATASIYLA BUNU GERÇEKTEN yakaladı (madde 9'a
+KADAR bu uyuşmazlık her ZAMAN 1↔1 OLARAK TUTARLIYDI, benim değişikliğim
+BUNU AÇIĞA ÇIKARDI) — HER İKİSİ de AYNI `asap.nox_alloc_alignment`
+sabitini kullanacak şekilde düzeltildi.
+
+**Kalıcı regresyon kanıtı:** `runtime/freestanding/x86_64/kernel_demo.nox`ya
+YENİ bir `STR_REPEAT_INDEX_OK` checkpoint'i eklendi (`s[0]`/`s[1]` ART
+ARDA indekslenip DOĞRU karakterleri verdiğini GERÇEK QEMU'da kanıtlar) —
+`tests/golden/kernel_boot_x86_64_test.zig`ye YENİ bir `indexOf` assert'i
+EKLENDİ. `zig build test` (Debug/hosted, hem ARC hem cycle-detector
+testleri DAHİL) VE `zig build kernel-boot-test` (freestanding, GERÇEK
+QEMU) SIFIR regresyonla geçer.
+
+**Kritik dosyalar:** `runtime/alloc/asap.zig` (`nox_alloc_alignment`,
+`nox_alloc`/`nox_free`), `runtime/alloc/lowlevel.zig` (`nox_arena_alloc`),
+`runtime/alloc/cycle_detector.zig` (`ChildrenBuf.deinit`, `fakeTrace
+Dispatch`/`fakeTraceDispatchDiamond`), `runtime/freestanding/x86_64/
+kernel_demo.nox` (`STR_REPEAT_INDEX_OK`), `tests/golden/kernel_boot_
+x86_64_test.zig` (YENİ assert).
+
 ---
 
 ## 5. Hata Yönetimi

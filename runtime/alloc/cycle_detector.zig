@@ -164,7 +164,11 @@ const ChildrenBuf = struct {
         // BAŞINA geri döner.
         if (self.raw_len == 0) return;
         const raw_ptr: [*]u8 = @ptrCast(@alignCast(self.items.ptr - 1));
-        state.allocator().free(raw_ptr[0..self.raw_len]);
+        // `nox_trace_dispatch`in GERÇEKTEN kullandığı `nox_alloc` İLE AYNI
+        // hizalama (bkz. `asap.nox_alloc_alignment`nin belge notu) — düz
+        // `.free()` (align=1 çıkarır) İLE GERÇEK bir hizalama-uyuşmazlığı
+        // (`DebugAllocator` hosted'da YAKALADI) VARDI, düzeltildi.
+        state.allocator().rawFree(raw_ptr[0..self.raw_len], asap.nox_alloc_alignment, @returnAddress());
     }
 };
 
@@ -516,7 +520,9 @@ fn fakeTraceDispatch(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) callconv(.c) ?*a
     // bu, ARC başlığı/trace-buffer'la SAYISAL olarak ÇAKIŞSA da AYRI bir
     // ABI gerçeğidir (bkz. `abi_layout.TAG_SIZE`nin belge notu).
     const field_addr: *const ?*anyopaque = @ptrFromInt(@intFromPtr(p.?) + TAG_SIZE);
-    const buf = state.allocator().alloc(u8, TRACE_BUF_LEN_SIZE + TRACE_BUF_SLOT_SIZE) catch return null;
+    // `ChildrenBuf.deinit`in (asap.nox_alloc_alignment İLE) serbest
+    // bıraktığı AYNI hizalama İLE tahsis edilmeli.
+    const buf = state.allocator().alignedAlloc(u8, asap.nox_alloc_alignment, TRACE_BUF_LEN_SIZE + TRACE_BUF_SLOT_SIZE) catch return null;
     const len_ptr: *i64 = @ptrCast(@alignCast(buf.ptr));
     len_ptr.* = 1;
     const child_ptr: *?*anyopaque = @ptrFromInt(@intFromPtr(buf.ptr) + TRACE_BUF_LEN_SIZE);
@@ -615,7 +621,9 @@ fn newFakeObject2(rt: ?*anyopaque) *anyopaque {
 fn fakeTraceDispatchDiamond(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) callconv(.c) ?*anyopaque {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));
     const n_fields: usize = if (tag == 2) 2 else 1;
-    const buf = state.allocator().alloc(u8, TRACE_BUF_LEN_SIZE + n_fields * TRACE_BUF_SLOT_SIZE) catch return null;
+    // `fakeTraceDispatch`in AYNI gerekçesi — `ChildrenBuf.deinit`in
+    // hizalamasıyla EŞLEŞMELİ.
+    const buf = state.allocator().alignedAlloc(u8, asap.nox_alloc_alignment, TRACE_BUF_LEN_SIZE + n_fields * TRACE_BUF_SLOT_SIZE) catch return null;
     const len_ptr: *i64 = @ptrCast(@alignCast(buf.ptr));
     len_ptr.* = @intCast(n_fields);
     const children_ptr: [*]?*anyopaque = @ptrFromInt(@intFromPtr(buf.ptr) + TRACE_BUF_LEN_SIZE);

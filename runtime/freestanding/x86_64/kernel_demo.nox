@@ -73,4 +73,18 @@ print("HEAP_OK")
 if free_pages() < total:
     print("SHARED_POOL_OK")
 
+# GERÇEK bir regresyon düzeltmesinin kalıcı kanıtı (bkz. nox-teknik-
+# spesifikasyon.md §3.198): `nox_allocator_install` İLE enjekte edilen,
+# SIKI PAKETLEYEN bir bump allocator ALTINDA, ART ARDA İKİ tek-karakterli
+# `str` indekslemesi (`s[0]` sonrası `s[1]`) GERÇEK bir #UD (invalid
+# opcode) çökmesine yol AÇIYORDU — `nox_alloc`/`nox_arena_alloc`nin
+# `.alloc(u8, ...)` çağrısı `u8`nin DOĞAL (1 bayt) hizalamasını İSTEDİĞİ,
+# AMA `nox_rc_alloc`nin `i64` ARC başlığının 8-bayt hizalama VARSAYDIĞI
+# İçİn — sıkı-paketleyen BİR allocator'da (page_allocator/smp_allocator
+# GİBİ diğerlerinin AKSİNE) BU varsayım BOZULUYORDU. Düzeltildi (`asap.
+# nox_alloc_alignment`).
+s: str = "ab"
+if s[0] == "a" and s[1] == "b":
+    print("STR_REPEAT_INDEX_OK")
+
 print("ALL_CHECKPOINTS_OK")
