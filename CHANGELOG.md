@@ -14,6 +14,30 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.110.4]
+
+### Düzeltildi
+
+- **GERÇEK bir use-after-free hatası — `nox.tls`/`nox.websocket` (bkz.
+  nox-teknik-spesifikasyon.md §3.206)**: v3 sertleştirme yol haritasının
+  10. maddesi (stdlib/API denetimi). `close()` çağrısı bağlantı struct'ını
+  serbest bırakıyordu ama bunu işaretlemiyordu — `close()`dan sonra
+  `write`/`read`/`is_open`/`send_text`/`recv` çağırmak (veya `close()`u
+  ikinci kez çağırmak) serbest bırakılmış belleği okuyor/yeniden serbest
+  bırakıyordu. `TlsStream`/`WebSocketClient`e bir `closed` bayrağı
+  eklendi, `close()` artık idempotent.
+- **`nox.crypto`ya `CryptoError` eklendi**: argon2/bcrypt/scrypt/sha*/
+  hmac_sha256 iç hatada sessizce boş dize döndürüyordu, artık
+  `CryptoError` fırlatıyor; `secure_random_hex` geçersiz `n_bytes`i
+  açıkça reddediyor.
+
+### Eklendi
+
+- `nox.mysql.Connection.changes()` (`sqlite.Connection.changes()`ile
+  simetri), `nox.strings.pad_left`/`pad_right`/`zfill`, `nox.collections.
+  Set[T].union`/`intersection`/`difference` (`list[T]` döner),
+  `nox.tls.TlsStream.is_open()`.
+
 ## [1.110.3]
 
 ### Düzeltildi

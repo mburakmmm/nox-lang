@@ -25287,6 +25287,116 @@ adımı), `compiler/codegen_qbe/llvm_emit.zig` (2 düzeltme: `arithOpFor`
 
 ---
 
+## 3.206 v3 sertleştirme yol haritası, madde 10 — Stdlib/API denetimi (37 modül) + GERÇEK bir use-after-free hatası
+
+**Bağlam:** v3 yol haritasının 10. maddesi. Kullanıcı kapsamı "API
+tutarlılığı + eksik-fonksiyon taraması" OLARAK belirledi. Bir Explore
+alt-göreviyle TÜM 37 `nox.*` stdlib modülü (arch/x86_64 DAHİL) taranıp
+9 bulgu raporlandı; HER biri BAĞIMSIZ olarak DOĞRULANDI (bkz. AGENTS.md'nin
+"trust but verify" ilkesi) — bazı iddialar DOĞRULAMA sırasında GERÇEKTEN
+yanlış/eksik ÇIKTI (aşağıya bkz.).
+
+### Uygulanan düzeltmeler (6 madde, TÜMÜ doğrulanıp test edildi)
+
+1. **`nox.crypto`ya `CryptoError` eklendi** — TEK I/O-benzeri modül
+   (`nox.fs`/`nox.json`/`nox.sqlite`/vb.nin AKSİNE) HİÇ özel exception
+   sınıfı TAŞIMIYORDU. `runtime/stdlib_shims/crypto.zig` incelemesi
+   GERÇEK bir sessiz-hata deseni ORTAYA ÇIKARDI: `argon2_hash`/
+   `bcrypt_hash`/`scrypt_hash`/`sha*`/`hmac_sha256` içteki HERHANGİ bir
+   `strHash` hatasında SESSİZCE boş dize `""` DÖNÜYORDU (`catch return
+   dupeToNoxStr(rt, "")` deseni) — çağıran taraf AYIRT EDEMİYORDU. Tüm
+   sarmalayıcılar ARTIK `""` sonucunu KONTROL EDİP `CryptoError`
+   fırlatıyor; `secure_random_hex` AYRICA `n_bytes <= 0`u AÇIKÇA
+   reddediyor (ÖNCEDEN SESSİZCE `""` dönerdi).
+2. **`nox.mysql.Connection`ye `changes()` eklendi** — `sqlite.Connection.
+   changes()`İLE SİMETRİ İçİn (MySQL zaten `mysql_affected_rows`i
+   `execute()` İçİNDE KULLANIYORDU, sadece AYRI bir metot OLARAK
+   SUNULMUYORDU). Postgres'e EKLENMEDİ — `postgres.nox`nin KENDİ belge
+   notu BUNUN Postgres'te bir SONUÇ özelliği olduğunu (bağlantı-durumu
+   DEĞİL) zaten AÇIKÇA gerekçelendiriyor, doğrulamada BU gerekçe GEÇERLİ
+   bulundu.
+3. **`nox.strings`ye `pad_left`/`pad_right`/`zfill` eklendi** — `nox.time.
+   pad2`nin (time.nox) KENDİ, YALNIZCA 2-haneli özel durumu ZATEN bu genel
+   yardımcının EKSİKLİĞİNİN kanıtıydı.
+4. **`nox.collections.Set[T]`ye `union`/`intersection`/`difference`
+   eklendi** — Stack/Queue/Deque/Heap/PriorityQueue/Counter/OrderedDict
+   TAM donanımlıyken `Set` SADECE contains/add/remove/size taşıyordu.
+   **GERÇEKTEN denenip BULUNAN bir derleyici sınırlaması:** bu üç metot
+   İLK ÖNCE `Set[T]` DÖNDÜRECEK şekilde yazıldı (`result: Set[T] =
+   Set[T]()`), AMA checker "bilinmeyen tip: T" İLE reddetti — İZOLE bir
+   tekrar-üretimle (`class Box[T]: ... def clone(self: Box) -> Box[T]:
+   result: Box[T] = Box[T]()`) DOĞRULANDI: generic bir sınıfın KENDİ
+   metodu İçİNDEN KENDİ `T`siyle yeniden İNŞA edilmesi HİÇBİR yerde
+   ÇALIŞMIYOR — bu, AYRI, KENDİ Plan Mode turunu gerektiren bir derleyici
+   sınırlaması (BU denetimin kapsamı DIŞINDA bırakıldı). Düzeltme: üç
+   metot `list[T]` döner (`Set[T]` YERİNE) — çağıran isterse `Set[T]()`e
+   sarabilir.
+5. **`nox.tls.TlsStream`ye `is_open()` eklendi** — `nox.websocket.
+   WebSocketClient.is_open()`İLE SİMETRİ İçİn.
+6. **GERÇEK, ÖNCEDEN VAR OLAN bir use-after-free hatası bulunup
+   düzeltildi (bulgu #5'in doğrulanması SIRASINDA, plansız):**
+   `runtime/stdlib_shims/tls.zig`nin `nox_tls_close_raw`ı VE `runtime/
+   stdlib_shims/websocket.zig`nin `nox_ws_close_raw`ı, `conn.connected`ı
+   SIFIRLAMADAN DOĞRUDAN `gpa.destroy(conn)` ÇAĞIRIYORDU — `close()`dan
+   SONRA `write`/`read`/`is_open`/`send_text`/`recv` ÇAĞIRMAK (VEYA
+   `close()`u İKİNCİ KEZ çağırmak, bir ÇİFT-serbest-bırakma) SERBEST
+   BIRAKILMIŞ belleği OKUYORDU/YENİDEN serbest bırakıyordu. `nox.
+   websocket`nin KENDİ belge notu ("bağlantı kapandıysa... `is_open()`
+   ARTIK `False` döner") BU YANLIŞ kullanımı ZATEN ÖNERİYORDU. Düzeltme:
+   `TlsStream`/`WebSocketClient`e Nox-tarafı bir `self.closed: bool`
+   bayrağı eklendi — HER metot `self.handle`e DOKUNMADAN ÖNCE BUNU
+   kontrol eder, `close()` İDEMPOTENT hale geldi. **`WebSocketServerConn`
+   BU hatayı TAŞIMIYORDU** (KENDİ `nox_ws_server_close_raw`ı struct'ı HİÇ
+   `destroy` ETMİYOR — sunucu-tarafı bağlantı ömrü AYRI YÖNETİLİYOR) —
+   doğrulanıp AYNI bayrak ORAYA EKLENMEDİ (gereksiz karmaşıklık
+   olurdu).
+
+### Doğrulamada YANLIŞ/eksik ÇIKAN 1 bulgu
+
+Agent'ın "`bcrypt_hash`, 72 bayttan uzun parolada `strHash` HATASI verir"
+iddiası, GERÇEK bir 100 baytlık parolayla test EDİLDİĞİNDE YANLIŞ ÇIKTI
+(Zig'in `pwhash.bcrypt`ı `silently_truncate_password = false` İLE BİLE
+HATA VERMEDİ — hash BAŞARIYLA üretildi). `CryptoError` düzeltmesi YİNE DE
+GEÇERLİ/DEĞERLİ (`""` sentineli BAŞKA gerçek hata yollarından — OOM,
+`null` argüman — HÂLÂ ULAŞILABİLİR), AMA doğrulama olmadan bu SPESİFİK
+iddia (yorum/hata mesajı OLARAK) YANLIŞLIKLA kalıcı hale GELİRDİ — "ölç,
+varsayma" disiplininin BU turda da neden KRİTİK olduğunun kanıtı.
+
+### Kapsam dışı bırakılan 3 bulgu (KENDİ kararlarını gerektirir, BU turda YAPILMADI)
+
+1. `nox.toml`/`nox.yaml`nin `dump`/`encode` KARŞILIĞI YOK (SADECE
+   `parse`/`get`) — GERÇEK, doğru bir TOML/YAML serileştiricisi YAZMAK
+   (iç içe tablo/dizi/tırnak-kaçırma kuralları DAHİL) BAŞLI BAŞINA
+   ÖNEMLİ bir özellik EKLEMESİDİR, BU denetimin "ses/eksik-fonksiyon
+   TARAMASI" kapsamının ÖTESİNDE.
+2. Format modülleri ARASINDA fiil TUTARSIZLIĞI (`json.decode`/`toml.
+   parse`/`yaml.parse`/`csv.parse`; `json.encode`/`csv.write`) — TUTARLI
+   hale getirmek MEVCUT, YAYIMLANMIŞ public API'yi YENİDEN ADLANDIRMAK
+   (KIRICI bir değişiklik) ANLAMINA gelir, KULLANICI KARARI GEREKTİRİR.
+3. `nox.time.DateTime`nin ters dönüşümü (`to_epoch_ms`) YOK — modülün
+   KENDİ belge notu BUNU "bilinçli v1 sınırlaması" OLARAK zaten
+   işaretliyor; doğru bir takvim→epoch dönüştürücü YAZMAK (artık-yıl/ay
+   uzunluğu kuralları DAHİL) GERÇEK bir doğruluk RİSKİ taşır, ACELEYE
+   getirilmemeli.
+
+### Doğrulama
+
+`zig build test` — SIFIR regresyon (297 IR anlık görüntüsünden 47'si
+BİLİNÇLİ OLARAK güncellendi — TAMAMI, doğrulanmış, SAF EKLEME nedenli
+büyüme: `nox.strings`/`nox.crypto` GİBİ GENİŞ ÇAPTA transitif olarak
+İçE aktarılan modüllere eklenen YENİ fonksiyon/sınıf desteğinin, bunları
+HİÇ ÇAĞIRMAYAN fixture'ların BİLE birleştirilmiş programına eklenmesi —
+DAVRANIŞ DEĞİŞİKLİĞİ YOK). Elle yazılan doğrulama programlarıyla: `zfill`/
+`pad_left`/`pad_right` DOĞRU çıktı verdi; `Set[int]().union/intersection/
+difference` DOĞRU boyutlar (4/2/1) verdi; `secure_random_hex(0)` ARTIK
+`CryptoError` fırlatıyor (ÖNCEDEN sessizce `""` dönerdi).
+
+**Kritik dosyalar:** `stdlib/nox/{crypto,mysql,strings,collections,tls,
+websocket}.nox`, 47 IR anlık görüntüsü (`tests/golden/ir_snapshots/
+codegen_cases/`).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

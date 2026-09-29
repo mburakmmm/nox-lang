@@ -4,8 +4,23 @@
 # GEREKİR (sonuç ARC'lı bir `str`, 64 karakterlik küçük harf hex).
 extern def nox_crypto_sha256_hex_raw(data: str) -> str from "zig-out/lib/noxrt.o" with_rt
 
+# v3 sertleştirme yol haritası, madde 10 (bkz. nox-teknik-spesifikasyon.md
+# ilgili bölüm, stdlib/API denetimi): `nox.crypto`, benzer TÜM I/O-benzeri
+# stdlib modüllerinin (`nox.fs`/`nox.json`/`nox.sqlite`/vb.) AKSİNE ÖNCEDEN
+# HİÇBİR özel exception sınıfı TAŞIMIYORDU — Zig kabuğu (`runtime/stdlib_
+# shims/crypto.zig`) `strHash`in (argon2/bcrypt/scrypt) ya da bir `null`
+# argümanın tetiklediği HERHANGİ bir iç hatada SESSİZCE boş dize `""`
+# DÖNÜYORDU — çağıran taraf BUNU AYIRT EDEMİYORDU (bkz. o dosyanın `catch
+# return dupeToNoxStr(rt, "")` deseni). Aşağıdaki sarmalayıcılar ARTIK bu
+# sentineli KONTROL EDİP `CryptoError` fırlatıyor.
+class CryptoError(Exception):
+    pass
+
 def sha256(data: str) -> str:
-    return nox_crypto_sha256_hex_raw(data)
+    result: str = nox_crypto_sha256_hex_raw(data)
+    if result == "":
+        raise CryptoError("sha256 basarisiz")
+    return result
 
 # Faz III.9 (bkz. nox-teknik-spesifikasyon.md §3.69) — `sha256` İLE AYNI
 # desen: Zig'in KENDİ `std.crypto.hash.Sha1`/`sha2.Sha512`si.
@@ -19,10 +34,16 @@ extern def nox_crypto_sha512_hex_raw(data: str) -> str from "zig-out/lib/noxrt.o
 # İLGİLİ hash İhtiyaçları İçin `sha256`/`sha512` (çakışma-dirençli) YA DA
 # mesaj DOĞRULAMASI İçin `hmac_sha256` (aşağı bkz.) TERCİH EDİN.
 def sha1(data: str) -> str:
-    return nox_crypto_sha1_hex_raw(data)
+    result: str = nox_crypto_sha1_hex_raw(data)
+    if result == "":
+        raise CryptoError("sha1 basarisiz")
+    return result
 
 def sha512(data: str) -> str:
-    return nox_crypto_sha512_hex_raw(data)
+    result: str = nox_crypto_sha512_hex_raw(data)
+    if result == "":
+        raise CryptoError("sha512 basarisiz")
+    return result
 
 # Güvenlik bulguları M-4/M-5/M-6 (bkz. güvenlik raporu) — DÜZELTİLDİ:
 # stdlib'de HMAC/zaman-sabit-karşılaştırma/güvenli-rastgelelik
@@ -36,7 +57,10 @@ extern def nox_crypto_secure_random_hex_raw(n_bytes: int) -> str from "zig-out/l
 # mesaj bütünlüğü/kimlik DOĞRULAMASI İçin GÜVENLİDİR (saldırgan anahtarı
 # BİLMEDEN geçerli bir MAC üretemez).
 def hmac_sha256(key: str, data: str) -> str:
-    return nox_crypto_hmac_sha256_hex_raw(key, data)
+    result: str = nox_crypto_hmac_sha256_hex_raw(key, data)
+    if result == "":
+        raise CryptoError("hmac_sha256 basarisiz")
+    return result
 
 # İKİ dizeyi ZAMAN-SABİT (constant-time) karşılaştırır — bir belirteç/
 # parola-özeti/HMAC doğrulaması yaparken `==` YERİNE BUNU kullanın: `==`
@@ -52,6 +76,8 @@ def constant_time_eq(a: str, b: str) -> bool:
 # YERİNE KULLANILMALIDIR. `n_bytes` 256'yı AŞARSA sessizce 256'ya kırpılır
 # (GERÇEKÇİ HERHANGİ bir token/anahtar büyüklüğünün ÇOK ÜSTÜNDE).
 def secure_random_hex(n_bytes: int) -> str:
+    if n_bytes <= 0:
+        raise CryptoError("n_bytes pozitif olmali")
     return nox_crypto_secure_random_hex_raw(n_bytes)
 
 # Parola hash'leme (argon2id/bcrypt/scrypt) — Zig'in KENDİ `std.crypto.
@@ -76,7 +102,10 @@ extern def nox_crypto_scrypt_verify_raw(hash: str, password: str) -> int from "z
 # algoritma) İLE bir parolayı hash'ler — dönen dize (`$argon2id$v=19$...`)
 # doğrudan saklanabilir, doğrulama İçin `argon2_verify`ye geçilir.
 def argon2_hash(password: str) -> str:
-    return nox_crypto_argon2_hash_raw(password)
+    result: str = nox_crypto_argon2_hash_raw(password)
+    if result == "":
+        raise CryptoError("argon2_hash basarisiz")
+    return result
 
 # `argon2_hash`nin ürettiği bir hash'e karşı bir parolayı doğrular. Yanlış
 # parola VE bozuk/geçersiz bir `hash` (ör. BAŞKA bir algoritmadan gelen)
@@ -89,7 +118,10 @@ def argon2_verify(hash: str, password: str) -> bool:
 # uyumluluk/dosya-boyutu ÖNEMLİYSE argon2id YERİNE tercih edilebilir
 # (60 karakterlik SABİT uzunluk, argon2/scrypt'in AKSİNE).
 def bcrypt_hash(password: str) -> str:
-    return nox_crypto_bcrypt_hash_raw(password)
+    result: str = nox_crypto_bcrypt_hash_raw(password)
+    if result == "":
+        raise CryptoError("bcrypt_hash basarisiz")
+    return result
 
 def bcrypt_verify(hash: str, password: str) -> bool:
     return nox_crypto_bcrypt_verify_raw(hash, password) != 0
@@ -99,7 +131,10 @@ def bcrypt_verify(hash: str, password: str) -> bool:
 # DAHA dirençlidir ama OWASP varsayılan parametreleriyle (128 MB/çağrı)
 # argon2id'den DAHA maliyetlidir.
 def scrypt_hash(password: str) -> str:
-    return nox_crypto_scrypt_hash_raw(password)
+    result: str = nox_crypto_scrypt_hash_raw(password)
+    if result == "":
+        raise CryptoError("scrypt_hash basarisiz")
+    return result
 
 def scrypt_verify(hash: str, password: str) -> bool:
     return nox_crypto_scrypt_verify_raw(hash, password) != 0

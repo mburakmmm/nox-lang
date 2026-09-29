@@ -109,3 +109,27 @@ def repeat(s: str, n: int) -> str:
 
 def eq_ignore_case(a: str, b: str) -> bool:
     return nox_strings_eq_ignore_case_raw(a, b) != 0
+
+# v3 sertleştirme yol haritası, madde 10 (bkz. nox-teknik-spesifikasyon.md
+# ilgili bölüm, stdlib/API denetimi): `contains` İLE AYNI ilke — SAF Nox'ta
+# kalır (Zig'e taşımaya değecek kadar sık çağrılan/performans-kritik bir
+# yol DEĞİL). `nox.time.pad2`nin (time.nox) KENDİ, YALNIZCA 2-haneli özel
+# durumunu genellemiş hâli — `nox.time` BUNU kendi başına YENİDEN
+# uyguluyordu (bkz. o dosyanın belge notu), TAM DA bu genel yardımcının
+# EKSİK olduğunun kanıtı.
+def pad_left(s: str, width: int, ch: str) -> str:
+    result: str = s
+    while len(result) < width:
+        result = ch + result
+    return result
+
+def pad_right(s: str, width: int, ch: str) -> str:
+    result: str = s
+    while len(result) < width:
+        result = result + ch
+    return result
+
+# Python'un `str.zfill`iyle AYNI isim/davranış — `pad_left(s, width, "0")`
+# İçİn KISA yol.
+def zfill(s: str, width: int) -> str:
+    return pad_left(s, width, "0")

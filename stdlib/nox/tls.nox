@@ -30,8 +30,21 @@ class TlsError(Exception):
 class TlsStream:
     def __init__(self: TlsStream, handle: ptr) -> None:
         self.handle = handle
+        # v3 sertleştirme yol haritası, madde 10 (bkz. nox-teknik-
+        # spesifikasyon.md ilgili bölüm, stdlib/API denetimi) — GERÇEK bir
+        # kullanım-sonrası-serbest-bırakma (use-after-free) hatası
+        # BULUNUP düzeltildi: `nox_tls_close_raw` (`runtime/stdlib_shims/
+        # tls.zig`) `conn.connected`ı SIFIRLAMADAN `gpa.destroy(conn)`
+        # ÇAĞIRIYORDU — `close()`dan SONRA `write`/`read`/(eklenen)
+        # `is_open` ÇAĞIRMAK (VEYA `close()`u İKİNCİ KEZ çağırmak, bir
+        # ÇİFT-serbest-bırakma) SERBEST BIRAKILMIŞ belleği OKUYORDU/
+        # YENİDEN serbest bırakıyordu. Bu bayrak TÜM metotları `self.
+        # handle`e DOKUNMADAN ÖNCE korur.
+        self.closed = False
 
     def write(self: TlsStream, data: str) -> int:
+        if self.closed:
+            raise TlsError("akis zaten kapatildi")
         n: int = nox_tls_write_raw(self.handle, data, len(data))
         if n < 0:
             raise TlsError("TLS yazma basarisiz: " + nox_tls_errmsg_raw(self.handle))
@@ -40,9 +53,22 @@ class TlsStream:
     # En fazla `max_len` bayt okur — bağlantı temiz kapandıysa BOŞ dize
     # döner (hata DEĞİL, çağıran BUNU "artık veri yok" olarak yorumlamalı).
     def read(self: TlsStream, max_len: int) -> str:
+        if self.closed:
+            raise TlsError("akis zaten kapatildi")
         return nox_tls_read_raw(self.handle, max_len)
 
+    # `nox.websocket`nin `WebSocketClient.is_open()`iyle SİMETRİ İçİn
+    # eklendi (v3 madde 10) — `nox_tls_ok_raw`nin ZATEN VAR OLAN, `connect`
+    # İçİnde de kullanılan AYNI durum sorgusu.
+    def is_open(self: TlsStream) -> bool:
+        if self.closed:
+            return False
+        return nox_tls_ok_raw(self.handle) != 0
+
     def close(self: TlsStream) -> None:
+        if self.closed:
+            return
+        self.closed = True
         nox_tls_close_raw(self.handle)
 
 # `host`e (port üzerinden) TCP+TLS bağlantısı kurar — sistemin CA

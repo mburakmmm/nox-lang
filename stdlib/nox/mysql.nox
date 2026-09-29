@@ -195,6 +195,16 @@ class Connection:
     def last_insert_rowid(self: Connection) -> int:
         return nox_mysql_insert_id_raw(self.handle)
 
+    # v3 sertleştirme yol haritası, madde 10 (stdlib/API denetimi):
+    # `sqlite.Connection.changes()`İLE SİMETRİ İçİn — MySQL BUNU DA
+    # DOĞRUDAN destekler (`mysql_affected_rows`, ZATEN `execute()`in
+    # KULLANDIĞI AYNI bağlantı-durumu sorgusu). Postgres'te BU YOK (bkz.
+    # `postgres.nox`nin KENDİ belge notu — Postgres'te "değişen satır"
+    # bir SONUÇ özelliğidir, bağlantı-durumu DEĞİL, bu YÜZDEN `execute()`
+    # zaten TEK yoldur).
+    def changes(self: Connection) -> int:
+        return nox_mysql_affected_rows_raw(self.handle)
+
     def close(self: Connection) -> None:
         nox_mysql_close_raw(self.handle)
 
