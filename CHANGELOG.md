@@ -14,6 +14,22 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.110.3]
+
+### Düzeltildi
+
+- **2 GERÇEK LLVM emisyon eksikliği (bkz. nox-teknik-spesifikasyon.md
+  §3.205)**: v3 sertleştirme yol haritasının 9. maddesi ("derleyici
+  fuzzing") kapsamında eklenen YENİ, opt-in `zig build backend-
+  differential-corpus-test` adımıyla (codegen_cases'in TÜM ~277
+  fixture'ını HEM QBE HEM LLVM'de çalıştırıp stdout'ları karşılaştırır)
+  bulundu: bitwise kaydırma (`<<`/`>>`, v1.109.0) ve fixed-width sıralama/
+  işaretsiz karşılaştırma (u8/i8/u16/i16/u32/i32 sıralaması + u8/u16/u32/
+  u64/usize karşılaştırması, v1.80.0 civarı) `noxc build --release`
+  altında `error.Unsupported` İLE reddediliyordu — hiçbiri daha önce
+  LLVM altında test edilmemişti. `compiler/codegen_qbe/llvm_emit.zig`ye
+  15 eksik tablo girdisi eklendi (`arithOpFor`'a 3, `cmpSpecFor`'a 12).
+
 ## [1.110.2]
 
 ### Değişti

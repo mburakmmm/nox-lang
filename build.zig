@@ -1582,6 +1582,28 @@ pub fn build(b: *std.Build) void {
     const concurrency_torture2_test_step = b.step("concurrency-torture2-test", "ThreadChannel[T]/Channel[T]/list[T]-transfer seed-tabanlı torture testi (-Dtorture2-seed-count/-Dtorture2-tasks) — opt-in, YAVAŞ, 'test' adımının PARÇASI DEĞİL");
     concurrency_torture2_test_step.dependOn(&torture2_run.step);
 
+    // v3 sertleştirme yol haritası, madde 9 (bkz. nox-teknik-spesifikasyon.md
+    // ilgili bölüm) — "derleyici fuzzing": `tests/golden/codegen_cases`nin
+    // TÜM (~265) fixture'ını HEM QBE HEM LLVM'de derleyip çalıştırır, stdout'ları
+    // karşılaştırır — `backend_conformance_test.zig`nin (SADECE ~25 ELLE
+    // seçilmiş fixture, 'test' adımının PARÇASI) AYNI fikrinin TÜM korpusa
+    // genişletilmiş hâli. Fixture başına 2 backend × (QBE: qbe+cc, LLVM:
+    // clang) alt-süreç zinciri GEREKTİRDİĞİNDEN (HTTP soak/concurrency
+    // torture İLE AYNI gerekçeyle) 'test' adımının PARÇASI DEĞİLDİR — opt-in.
+    const backend_differential_corpus_test_mod = b.createModule(.{
+        .root_source_file = b.path("tests/golden/backend_differential_corpus_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "nox", .module = nox_mod },
+        },
+    });
+    const backend_differential_corpus_test = b.addTest(.{ .root_module = backend_differential_corpus_test_mod });
+    backend_differential_corpus_test.step.dependOn(b.getInstallStep());
+    const backend_differential_corpus_test_step = b.step("backend-differential-corpus-test", "codegen_cases korpusunun TAMAMını QBE/LLVM'de çalıştırıp fark testine tabi tutar — opt-in, YAVAŞ, 'test' adımının PARÇASI DEĞİL");
+    backend_differential_corpus_test_step.dependOn(&b.addRunArtifact(backend_differential_corpus_test).step);
+
     // Faz F.1 (bkz. plan dosyası "Cross-compile İSKELETİ"): QBE'nin çıktısı
     // freestanding, statik bir ELF olarak linklenebiliyor mu deneyini
     // (`wasm_build_options`nin AYNI "zig'in KENDİ yolunu build_options

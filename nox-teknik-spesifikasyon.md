@@ -25199,6 +25199,94 @@ KARARININ ZATEN ÇALIŞTIRILABİLİR/KANITLANMIŞ hâlidir.
 
 ---
 
+## 3.205 v3 sertleştirme yol haritası, madde 9 — Derleyici fuzzing (korpus-çapında QBE↔LLVM fark testi) + 2 GERÇEK LLVM emisyon eksikliği
+
+**Bağlam:** v3 yol haritasının 9. maddesi. Dış analizin önerdiği
+"differential (QBE vs LLVM, aynı geçerli rastgele programlar)" fikri,
+sıfırdan tip-doğru RASTGELE Nox programı ÜRETEN bir jeneratör (tam bir
+gramer/ownership-farkında fuzzer, KENDİ başına AYRI VE BÜYÜK bir proje
+olurdu) YERİNE, ZATEN VAR OLAN, ZATEN QBE altında kanıtlanmış TÜM
+`codegen_cases/` korpusunu (`fixture_corpus.zig`, ~277 fixture) HEM QBE
+HEM LLVM'de çalıştırıp KARŞILAŞTIRAN bir test İLE GERÇEKLEŞTİRİLDİ —
+`backend_conformance_test.zig`nin (Faz HH.1, SADECE ~25 ELLE seçilmiş
+fixture) AYNI fikrinin TÜM korpusa genişletilmiş, OTOMATİK hâli.
+
+### Altyapı: `fixture_corpus.zig` çıkarımı
+
+`codegen_golden_test.zig`nin 265+ UNIFORM `Fixture` verisi (kaynak/kind/
+beklenen stdout), `compile_helpers.zig` İLE AYNI "test bloğu OLMAYAN
+paylaşılan veri" desenine UYGUN OLARAK YENİ `tests/golden/fixture_corpus.
+zig`ye taşındı (`pub` yapıldı) — DAVRANIŞ SIFIR DEĞİŞTİ, SADECE YENİ
+`backend_differential_corpus_test.zig`nin de AYNI veriyi (kod TEKRARI
+OLMADAN) kullanabilmesi İçİn.
+
+### GERÇEKTEN bulunan 2 LLVM emisyon eksikliği
+
+Testin İLK çalıştırması (denylist HENÜZ yokken) 4 "fark" raporladı — İKİSİ
+GERÇEK, ÖNCEDEN HİÇ FARK EDİLMEMİŞ hatalardı (`compiler/codegen_qbe/llvm_
+emit.zig`):
+
+1. **Bitwise kaydırma (`<<`/`>>`, v3 madde 2, v1.109.0) LLVM'de HİÇ
+   ÇALIŞMIYORDU** — `genCheckedShift`in (expr.zig) ürettiği QBE mnemonikleri
+   (`"shl"`/`"sar"`/`"shr"`) `arithOpFor` tablosunda HİÇ eşlenmemişti
+   (`&`/`|`/`^`/`~` zaten "and"/"or"/"xor" ÜZERİNDEN ÇALIŞIYORDU, SADECE
+   kaydırma EKSİKTİ) — `noxc build --release` bitwise kaydırma İçEREN
+   HERHANGİ bir programı `error.Unsupported` İLE reddediyordu. Düzeltme:
+   `"shl"→"shl"`, `"sar"→"ashr"`, `"shr"→"lshr"` eşlemeleri eklendi.
+2. **Fixed-width sıralama/işaretsiz karşılaştırma (v2.0 madde 4, v1.80.0
+   civarı) LLVM'de HİÇ ÇALIŞMIYORDU** — `abi.zig`nin `cmpMnemonic`i, `bool`un
+   (`.w` genişlik, ÖNCESİNDE sıralama karşılaştırması checker TARAFINDAN
+   REDDEDİLDİĞİNDEN `unreachable`di) fixed-width tiplerle (u8/i8/u16/i16/
+   u32/i32) İLK KEZ ULAŞILABİLİR kıldığı `.w`-genişlikli İŞARETLİ sıralama
+   ailesini (`csltw`/`cslew`/`csgtw`/`csgew`) VE (HER İKİ genişlikte, `.w`/
+   `.l`) TÜM İŞARETSİZ aileyi (`cult*`/`cule*`/`cugt*`/`cuge*`, u8/u16/u32/
+   u64/usize İçİn GEREKLİ) ÜRETİYORDU, AMA `cmpSpecFor` tablosu BUNLARIN
+   HİÇBİRİNİ eşlemiyordu — `noxc build --release` u8/i8/u16/i16/u32/i32
+   sıralaması VEYA HERHANGİ bir işaretsiz (u8/u16/u32/u64/usize)
+   karşılaştırma İçEREN HERHANGİ bir programı `error.Unsupported` İLE
+   reddediyordu. Düzeltme: 12 EKSİK tablo girdisi eklendi (`slt`/`sle`/
+   `sgt`/`sge` VE `ult`/`ule`/`ugt`/`uge`, i32+i64).
+
+**Neden ÖNCEDEN yakalanmamıştı:** `backend_conformance_test.zig`nin ELLE
+seçilmiş ~25 fixture'ı ne bitwise kaydırma NE DE fixed-width karşılaştırma
+İçERİYORDU — v3 madde 4'ün (freestanding v0.1 dondurma) `BITWISE_OK`
+doğrulaması SADECE QBE altında (freestanding, LLVM SEÇENEĞİ bile YOK)
+yapılmıştı; v2.0 madde 4'ün KENDİ doğrulaması da (§3.192) SADECE QBE
+golden testleriydi. Bu, TAM DA korpus-ÇAPINDA (elle seçilmiş birkaç
+fixture DEĞİL) bir fark testinin DEĞERİNİN kanıtıdır.
+
+### Kasıtlı-asimetri denylist'i (4 fixture — GERÇEKTEN bulundu/DOĞRULANDI, spekülasyon DEĞİL)
+
+- `async_deadlock.nox`/`thread_spawn_ordering.nox`: GERÇEK zamanlama/
+  zamanlayıcı davranışına (kasıtlı deadlock TESPİTİ VEYA `sleep_ms` İLE
+  yarışan eşzamanlı görevler) dayanır.
+- `task_reassignment_frees_old.nox` (İLK çalıştırmada GERÇEKTEN "1\n2\n"
+  vs "2\n1\n" farkıyla YAKALANDI): bir Task HEMEN yeniden atanıp İLK
+  görev HİÇ await EDİLMEDEN bağımsız çalıştığından, İKİ görevin YAZDIRMA
+  SIRASI zamanlayıcıya bağlıdır (testin amacı sızıntı/UAF OLMAMASI, çıktı
+  SIRASI DEĞİL).
+- `fixed_int_overflow_trap.nox`: v3 madde 7'nin (§3.204) KASITLI, KALICI
+  wrap-vs-trap tasarım kararı — "düzeltilecek" bir hata DEĞİL.
+
+### Doğrulama
+
+`zig build backend-differential-corpus-test` (YENİ, opt-in build adımı —
+fixture başına 2 backend × alt-süreç zinciri GEREKTİRDİĞİNDEN 'test'
+adımının PARÇASI DEĞİL, concurrency-torture/http-soak İLE AYNI gerekçe):
+273 fixture çalıştırıldı (277 - 4 denylist), **0 FARK**. `zig build test`
+SIFIR regresyon (`llvm_emit.zig`nin İKİ tablosuna SADECE YENİ girdi
+EKLENDİ, mevcut hiçbir eşleme DEĞİŞMEDİ — 297 IR anlık görüntüsünden
+HİÇBİRİ etkilenmedi, beklenen: bu değişiklikler SADECE `.ll` çıktısını
+etkiler, QBE `.ssa` metnini DEĞİL).
+
+**Kritik dosyalar:** `tests/golden/fixture_corpus.zig` (YENİ, `codegen_
+golden_test.zig`den ÇIKARILDI), `tests/golden/backend_differential_
+corpus_test.zig` (YENİ), `build.zig` (`backend-differential-corpus-test`
+adımı), `compiler/codegen_qbe/llvm_emit.zig` (2 düzeltme: `arithOpFor`
++3 girdi, `cmpSpecFor` +12 girdi).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

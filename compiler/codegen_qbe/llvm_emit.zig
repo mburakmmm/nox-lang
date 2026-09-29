@@ -252,6 +252,31 @@ fn cmpSpecFor(mnemonic: []const u8) ?CmpSpec {
         .{ "cslel", .{ .float = false, .pred = "sle", .operand_ty = "i64" } },
         .{ "csgtl", .{ .float = false, .pred = "sgt", .operand_ty = "i64" } },
         .{ "csgel", .{ .float = false, .pred = "sge", .operand_ty = "i64" } },
+        // v3 sertleştirme yol haritası, madde 9 (bkz. nox-teknik-
+        // spesifikasyon.md ilgili bölüm) — "derleyici fuzzing" TARAFINDAN
+        // bulunan GERÇEK bir eksiklik: v2.0 madde 4'ün (sabit-genişlikli
+        // tamsayılar, v1.80.0 civarı) `abi.zig`nin `cmpMnemonic`i, `bool`un
+        // (`.w` genişlik, öncesinde SIRALAMA karşılaştırması İMKANSIZDI —
+        // checker BUNU reddederdi) İLK KEZ ULAŞILABİLİR kıldığı `.w`-
+        // genişlikli SIRALAMA ailesini (`csltw`/`cslew`/`csgtw`/`csgew`)
+        // VE (HER İKİ genişlikte) TÜM işaretsiz aileyi (`cult*`/`cule*`/
+        // `cugt*`/`cuge*`) ÜRETİYORDU, AMA BU TABLO hiçbirini eşlemiyordu
+        // — `noxc build --release` u8/i8/u16/i16/u32/i32 SIRALAMA
+        // karşılaştırması VEYA HERHANGİ bir işaretsiz (`u8`/`u16`/`u32`/
+        // `u64`/`usize`) karşılaştırma İçEREN HERHANGİ bir programı
+        // `error.Unsupported` İLE reddediyordu.
+        .{ "csltw", .{ .float = false, .pred = "slt", .operand_ty = "i32" } },
+        .{ "cslew", .{ .float = false, .pred = "sle", .operand_ty = "i32" } },
+        .{ "csgtw", .{ .float = false, .pred = "sgt", .operand_ty = "i32" } },
+        .{ "csgew", .{ .float = false, .pred = "sge", .operand_ty = "i32" } },
+        .{ "cultw", .{ .float = false, .pred = "ult", .operand_ty = "i32" } },
+        .{ "culew", .{ .float = false, .pred = "ule", .operand_ty = "i32" } },
+        .{ "cugtw", .{ .float = false, .pred = "ugt", .operand_ty = "i32" } },
+        .{ "cugew", .{ .float = false, .pred = "uge", .operand_ty = "i32" } },
+        .{ "cultl", .{ .float = false, .pred = "ult", .operand_ty = "i64" } },
+        .{ "culel", .{ .float = false, .pred = "ule", .operand_ty = "i64" } },
+        .{ "cugtl", .{ .float = false, .pred = "ugt", .operand_ty = "i64" } },
+        .{ "cugel", .{ .float = false, .pred = "uge", .operand_ty = "i64" } },
     };
     for (table) |entry| {
         if (std.mem.eql(u8, entry[0], mnemonic)) return entry[1];
@@ -272,6 +297,24 @@ fn arithOpFor(mnemonic: []const u8, ty: QbeType) ?[]const u8 {
     if (std.mem.eql(u8, mnemonic, "or")) return "or";
     if (std.mem.eql(u8, mnemonic, "and")) return "and";
     if (std.mem.eql(u8, mnemonic, "xor")) return "xor";
+    // v3 sertleştirme yol haritası, madde 9 (bkz. nox-teknik-spesifikasyon.md
+    // ilgili bölüm) — "derleyici fuzzing" TARAFINDAN bulunan GERÇEK bir
+    // eksiklik: bitwise `<<`/`>>` (v3 madde 2, v1.109.0) `genCheckedShift`in
+    // (expr.zig) ürettiği "shl"/"sar"/"shr" mnemoniklerini QBE tarafında
+    // KULLANIYORDU, AMA bu ÜÇÜ BURADA HİÇ eşlenmemişti — `noxc build
+    // --release` bitwise kaydırma İÇEREN HERHANGİ bir programı `error.
+    // Unsupported` İLE reddediyordu (`&`/`|`/`^`/`~` zaten "and"/"or"/
+    // "xor" ÜZERİNDEN ÇALIŞIYORDU, sadece kaydırma EKSİKTİ). QBE "shl"
+    // MANTIKSAL sol kaydırmadır (işaretliliğe BAKMAZ) → LLVM `shl`; "sar"
+    // ARİTMETİK sağ kaydırmadır (işaret-genişletmeli) → LLVM `ashr`;
+    // "shr" MANTIKSAL sağ kaydırmadır (sıfır-genişletmeli) → LLVM `lshr`.
+    // Kaydırma miktarı operandı (`b`) çağıran TARAFTA (`genCheckedShift`in
+    // `try self.convert(r0, l0.qtype)`si) ZATEN `ty` İLE AYNI genişliğe
+    // getirildiğinden, LLVM'in "her iki operand da AYNI tamsayı tipinde
+    // olmalı" kısıtı BURADA otomatik SAĞLANIR.
+    if (std.mem.eql(u8, mnemonic, "shl")) return "shl";
+    if (std.mem.eql(u8, mnemonic, "sar")) return "ashr";
+    if (std.mem.eql(u8, mnemonic, "shr")) return "lshr";
     return null;
 }
 
