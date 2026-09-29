@@ -24936,6 +24936,90 @@ DEĞİL — bağımsız bir repo, elle çalıştırılır):
 
 ---
 
+## 3.202 v3 sertleştirme yol haritası, madde 5 — `nox.arch.x86_64` stdlib modülü
+
+**Bağlam:** v3 yol haritasının 5. maddesi. `nox-kernel-demo`nun (v2.0
+madde 10, AYRI repo) KENDİ, KENDİ dosyasına vendor edilmiş `outb`/`inb`/
+`outl`/`inl` sarmalayıcılarının (o reponun KENDİ belge notu: "Nox'un
+dilinde ARTIK HİÇBİR port-I/O yerleşiği YOK — bu dışa-açık sarmalayıcılar
+TEK yol") RESMİ, YENİDEN KULLANILABİLİR karşılığı: `nox.arch.x86_64`,
+port G/Ç (`outb`/`inb`/`outw`/`inw`/`outl`/`inl`) VE temel kesme kontrolü
+(`enable_interrupts`/`disable_interrupts`/`halt`) sağlar.
+
+### Tasarım kararları
+
+1. **Nesne dosyası yerleşimi:** yeni 9 Zig `export fn`, Multiboot'a-özgü
+   `runtime/freestanding/x86_64/kernel.zig`ye (`lib_freestanding_kernel.
+   zig`) DEĞİL, ARCH-NÖTR, HER `--profile freestanding --target x86_64`
+   derlemesinin OTOMATİK bağladığı GENERİK nesneye (`runtime/lib_
+   freestanding.zig` → `noxrt-freestanding-generic-x86_64.o`) EKLENDİ —
+   bu YÜZDEN `nox.arch.x86_64`, TAM Multiboot boot zincirini GEREKTİRMEDEN
+   (`kernel.ld`/`boot.S` OLMADAN) HERHANGİ bir sıradan freestanding
+   programda KULLANILABİLİR. `printf_real`in (§3.16x) AYNI comptime-arch-
+   guard deseni (`if (comptime builtin.cpu.arch != .x86_64) return;`)
+   İZLENDİ — diğer mimarilerin (aarch64) nesne çıktısı bu sembolleri HİÇ
+   İÇERMEZ (derleme hatası YOK, sessizce atlanır).
+2. **YENİ, SİMETRİK "hosted-forbidden" checker mekanizması:** ÖNCEKİ
+   `FREESTANDING_ALLOWED_MODULES` (Faz F.2, §3.16x) TEK yönlüydü — bir
+   modül SADECE `.freestanding`de KISITLI olabiliyordu, `.hosted`de HER
+   ZAMAN serbestti. `nox.arch.x86_64` (`outb`/`inb`/`cli`/`sti`/`hlt`
+   AYRICALIKLI, ring-0'a ÖZGÜ talimatlar taşıdığından) TERS yönde de
+   kısıtlanmalı: `.hosted`de (varsayılan profil) çalıştırılırsa GERÇEK bir
+   Genel Koruma Hatasına (#GP) yol açar. Bu YÜZDEN YENİ, SİMETRİK bir
+   mekanizma eklendi (`compiler/typecheck/checker.zig`): `HOSTED_FORBIDDEN_
+   MODULES` + `isHostedForbiddenModule` + `checkHostedImportAllowed` +
+   YENİ `HostedModuleForbidden` `TypeError` varyantı — `.hosted` profilinde
+   `import nox.arch.*` derleme-zamanında REDDEDİLİR (çalışma-zamanı
+   çökmesine BIRAKILMAZ, bkz. AGENTS.md İlke #1'in "asla sessiz çökme"
+   ruhu).
+3. **GERÇEKTEN karşılaşılan bir "fonksiyon zaten tanımlı" hatası — `_raw`
+   soneki (bkz. `stdlib/nox/os.nox`nin AYNI, ÖNCEDEN yaşanmış tuzağı):**
+   `module_loader.zig`nin `mangleWith`i, İçE AKTARILAN BİR stdlib
+   modülünün KENDİ üst-düzey `def` adlarını `<modül-yolu>_<ad>` OLARAK
+   mangle EDER — `nox.arch.x86_64`nin `outb` sarmalayıcısı BU YÜZDEN
+   `nox_arch_x86_64_outb` OLUR. `extern def`ler ASLA mangle EDİLMEDİĞİNDEN,
+   bu isim (Zig export fn'i AYNI adı taşıdığından) GERÇEK bir isim
+   çakışmasına (`DuplicateDefinition`) yol AÇTI — BU turda `noxc build`
+   GERÇEKTEN çalıştırılarak YAKALANDI. Düzeltme: TÜM 9 Zig `export fn` +
+   karşılık gelen `extern def` `_raw` soneki ALDI (`nox_arch_x86_64_outb_
+   raw` vb.), sarmalayıcı adları (`outb` vb.) DEĞİŞMEDİ.
+4. **Parametre tipleri `int`e bırakıldı** (fixed-width `u8`/`u16`/`u32`
+   DEĞİL) — repo genelinde 212 ÖNCEDEN VAR OLAN `extern def`in HİÇBİRİ
+   fixed-width tip KULLANMIYOR, bu YÜZDEN tutarlılık İçİn `int` seçildi.
+   Bir araştırma alt-göreviyle DOĞRULANDI: `compiler/codegen_qbe/calls.
+   zig`nin extern-çağrı codegen'i (`genExternCallEmit`) Zig tarafının
+   GERÇEK imzasından TAMAMEN BAĞIMSIZDIR — SADECE Nox-taraflı `int`
+   anotasyonunu QBE `l` (64-bit) genişliğine çevirir. Bu, x86_64 SysV C
+   ABI'siyle GÜVENLİDİR: çağrılan Zig fonksiyonu (`asm volatile` İLE
+   `%al`/`%dx`/`%eax` GİBİ AYNI kaydın alt-genişlikli bir alt-kaydını
+   okur) 64-bit kaydın YUKARI baytlarını HİÇ göz ARDI ETMEZ — SADECE
+   İLGİLİ alt-kaydı kullanır, bu YÜZDEN üst baytların İÇERİĞİ ÖNEMSİZDİR.
+
+### Doğrulama
+
+- YENİ checker golden testleri (`tests/golden/typecheck_cases/ok_
+  freestanding_arch_x86_64_allowed.*`, `err_hosted_arch_forbidden.*`):
+  `.freestanding`de KABUL, `.hosted`de (varsayılan) `HostedModuleForbidden`
+  İLE REDDEDİLİR.
+- GERÇEK QEMU'da (`zig build kernel-boot-test`) YENİ `ARCH_X86_64_OK`
+  checkpoint'i (`kernel_demo.nox`): `disable_interrupts` → CMOS RTC
+  "saniye" yazmacı okuma (port 0x70/0x71, standart/yan-etkisiz) →
+  `enable_interrupts` → KULLANILMAYAN bir ISA portundan (0x300) okuma
+  (donanımsız portlar x86'da HER ZAMAN 0xFF döner) — TÜM değerler
+  BEKLENEN aralıkta, GERÇEKTEN GEÇTİ.
+- `zig build test` — SIFIR regresyon (mevcut `FreestandingModuleForbidden`
+  hata mesajı fixture'larına `/arch` soneki eklendi, "izin verilenler"
+  listesi genişlediği İçİn).
+
+**Kritik dosyalar:** `stdlib/nox/arch/x86_64.nox` (YENİ), `runtime/lib_
+freestanding.zig` (9 YENİ `export fn`), `compiler/typecheck/checker.zig`
+(`HostedModuleForbidden` + `checkHostedImportAllowed`), `runtime/
+freestanding/x86_64/kernel_demo.nox` (`ARCH_X86_64_OK`), `tests/golden/
+kernel_boot_x86_64_test.zig` (YENİ assert), `tests/golden/typecheck_
+golden_test.zig` + `typecheck_cases/*` (YENİ 2 golden test).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

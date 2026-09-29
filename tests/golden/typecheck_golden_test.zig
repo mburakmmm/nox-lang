@@ -1330,6 +1330,28 @@ test "golden(freestanding-profile): varsayilan profil (.hosted) nox.http'yi HALA
     );
 }
 
+// v3 sertleştirme yol haritası, madde 5 (bkz. nox-teknik-spesifikasyon.md
+// ilgili bölüm): `nox.arch.x86_64` — YENİ, SİMETRİK "hosted-forbidden"
+// mekanizması (`checkHostedImportAllowed`). `.freestanding`de İZİN
+// VERİLİR (yukarıdaki allowlist testleriyle AYNI aile), AMA `.hosted`de
+// (varsayılan profil) AÇIKÇA REDDEDİLİR — bu TERS yön, hiçbir ÖNCEKİ
+// `FREESTANDING_ALLOWED_MODULES` girdisinde YOKTU (hepsi TEK yönlü:
+// SADECE freestanding'de kısıtlı, hosted'de HER ZAMAN serbest).
+
+test "golden(freestanding-profile): nox.arch.x86_64 freestanding'de kabul edilir" {
+    try expectGoldenFreestanding(
+        @embedFile("typecheck_cases/ok_freestanding_arch_x86_64_allowed.nox"),
+        @embedFile("typecheck_cases/ok_freestanding_arch_x86_64_allowed.expected"),
+    );
+}
+
+test "golden(hosted-profile): nox.arch.x86_64 varsayilan (.hosted) profilde reddedilir (ring-0 GKH riski)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_hosted_arch_forbidden.nox"),
+        @embedFile("typecheck_cases/err_hosted_arch_forbidden.expected"),
+    );
+}
+
 test "golden(typecheck): v2.0 madde 4 — sabit-genişlikli tamsayı int ile örtük karışamaz" {
     try expectGolden(
         @embedFile("typecheck_cases/err_fixed_int_mix_with_int.nox"),

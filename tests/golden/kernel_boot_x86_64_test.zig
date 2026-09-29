@@ -281,6 +281,12 @@ test "Faz F.4: kernel_demo.nox GERÇEK bir x86_64 kernel imajına derlenip QEMU'
     // madde 2) `--profile freestanding` altında da doğru çalıştığının
     // GERÇEK QEMU kanıtı.
     try std.testing.expect(std.mem.indexOf(u8, stdout_data, "BITWISE_OK") != null);
+    // v3 sertleştirme yol haritası, madde 5 (bkz. nox-teknik-spesifikasyon.md
+    // ilgili bölüm): `nox.arch.x86_64`nin (YENİ port G/Ç stdlib modülü)
+    // GERÇEK QEMU'da `outb`/`inb`/`enable_interrupts`/`disable_interrupts`i
+    // doğru çalıştırdığının kanıtı (CMOS RTC okuma + kullanılmayan port
+    // 0xFF kontrolü, bkz. `kernel_demo.nox`nin belge notu).
+    try std.testing.expect(std.mem.indexOf(u8, stdout_data, "ARCH_X86_64_OK") != null);
     try std.testing.expect(std.mem.indexOf(u8, stdout_data, "ALL_CHECKPOINTS_OK") != null);
     try std.testing.expect(std.mem.indexOf(u8, stdout_data, "KERNEL_FAULT") == null);
 

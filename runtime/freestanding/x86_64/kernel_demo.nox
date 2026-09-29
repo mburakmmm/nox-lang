@@ -4,6 +4,20 @@
 # derlediği TEK kaynak dosya. `nox_kernel_phys_base`/`_limit`/`_trigger_
 # breakpoint`, `runtime/freestanding/x86_64/kernel.zig`nin (boot.S ile
 # BİRLİKTE `noxrt-freestanding-x86_64.o`ya derlenir) dışa açtığı yardımcılardır.
+#
+# v3 sertleştirme yol haritası, madde 5 (bkz. nox-teknik-spesifikasyon.md
+# ilgili bölüm) — `nox.arch.x86_64`nin (YENİ port G/Ç stdlib modülü)
+# `ARCH_X86_64_OK` checkpoint'i İçİn import edilir. Bu modülün KENDİ
+# `extern def`leri `noxrt-freestanding-generic-x86_64.o`yu ADRESLER, AMA
+# o dosyanın KÖK Zig dosyası (`runtime/lib_freestanding.zig`) BURADAKİ
+# `noxrt-freestanding-x86_64.o`nun (kernel.zig'in KÖK dosyası, `lib_
+# freestanding_kernel.zig`, `lib_freestanding.zig`yi de force-ref EDER)
+# İÇİNE de DERLENDİĞİNDEN, GERÇEK sembol ZATEN mevcuttur — bu dosyanın
+# KENDİ manuel `zig cc` link satırı (`tests/golden/kernel_boot_x86_64_
+# test.zig`) SADECE `noxrt-freestanding-x86_64.o`yu geçirir, BAŞKA bir
+# nesne dosyası GEREKMEZ.
+import nox.arch.x86_64
+
 extern def nox_kernel_phys_base() -> int from "zig-out/lib/noxrt-freestanding-x86_64.o"
 extern def nox_kernel_phys_limit() -> int from "zig-out/lib/noxrt-freestanding-x86_64.o"
 extern def nox_kernel_trigger_breakpoint() -> None from "zig-out/lib/noxrt-freestanding-x86_64.o"
@@ -100,5 +114,27 @@ x: int = 42
 y: int = 12
 if (x & y) == 8 and (x | y) == 46 and (x ^ y) == 38 and (x << 2) == 168 and (x >> 1) == 21 and (~x) == -43:
     print("BITWISE_OK")
+
+# v3 sertleştirme yol haritası, madde 5 — `nox.arch.x86_64`nin GERÇEK
+# QEMU'da (bkz. AGENTS.md İlke #7, "ölç, varsayma" kültürü) çalıştığının
+# kanıtı: CMOS RTC "saniye" yazmacının (port 0x70=112 İndeks, 0x71=113
+# VERİ — HER x86 PC'de standart, q35 dahil) GÜVENLİ, YAN ETKİSİZ okunuşu
+# — RTC erişimi sırasında kesmelerin `disable_interrupts`/`enable_
+# interrupts` İLE çevrelenmesi de GERÇEK OSDev pratiğidir (registerın
+# YARIM güncellenmiş HALDE okunmasını önler). Değer HER ZAMAN geçerli BCD
+# olmalı (0-89 ONALIK aralığında = 0x00-0x59, alt nibble <= 9) — bu,
+# `outb`/`inb`in DOĞRU çalıştığının dolaylı AMA KESİN kanıtıdır (yanlış
+# çalışsaydı port 0x71 anlamsız/tutarsız bir bayt dönerdi). Port 0x300
+# (768) BİLİNÇLİ OLARAK KULLANILMAYAN bir ISA G/Ç portu — donanımsız bir
+# porttan okuma x86'da (GERÇEK donanım VE QEMU'da) HER ZAMAN 0xFF (255)
+# döner, bu YÜZDEN `inl`/`inw`in aksine EN BASİT/EN DETERMİNİSTİK `inb`
+# doğrulaması.
+nox.arch.x86_64.disable_interrupts()
+nox.arch.x86_64.outb(112, 0)
+seconds_bcd: int = nox.arch.x86_64.inb(113)
+nox.arch.x86_64.enable_interrupts()
+unused_port_value: int = nox.arch.x86_64.inb(768)
+if seconds_bcd >= 0 and seconds_bcd <= 89 and (seconds_bcd & 15) <= 9 and unused_port_value == 255:
+    print("ARCH_X86_64_OK")
 
 print("ALL_CHECKPOINTS_OK")

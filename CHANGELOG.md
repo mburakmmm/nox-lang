@@ -14,6 +14,22 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.110.0]
+
+### Eklendi
+
+- **`nox.arch.x86_64` stdlib modülü (bkz. nox-teknik-spesifikasyon.md
+  §3.202)**: v3 sertleştirme yol haritasının 5. maddesi. x86_64 port
+  G/Ç (`outb`/`inb`/`outw`/`inw`/`outl`/`inl`) + temel kesme kontrolü
+  (`enable_interrupts`/`disable_interrupts`/`halt`) — `nox-kernel-demo`
+  (AYRI repo) reposunun KENDİ vendor edilmiş sarmalayıcılarının RESMİ,
+  YENİDEN KULLANILABİLİR karşılığı. **YALNIZCA `--profile freestanding`
+  altında kullanılabilir** — YENİ, SİMETRİK bir "hosted-forbidden"
+  checker mekanizması (`HostedModuleForbidden`), `.hosted` (varsayılan)
+  profilinde bu modülü derleme-zamanında REDDEDER (ring-0'a özgü,
+  ayrıcalıklı talimatlar bir #GP'ye yol açacağından). GERÇEK QEMU'da
+  (`ARCH_X86_64_OK` checkpoint'i, CMOS RTC round-trip) doğrulandı.
+
 ## [1.109.2]
 
 ### Eklendi

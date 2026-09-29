@@ -1,0 +1,64 @@
+# v3 sertleştirme yol haritası, madde 5 (bkz. nox-teknik-spesifikasyon.md
+# ilgili bölüm) — x86_64 port G/Ç + temel kesme kontrolü. `nox-kernel-demo`
+# (v2.0 madde 10, AYRI repo) reposunun KENDİ, KENDİ dosyasına vendor edilmiş
+# `outb`/`inb`/`outl`/`inl` sarmalayıcılarının (o reponun KENDİ belge notu:
+# "Nox'un dilinde ARTIK HİÇBİR port-I/O yerleşiği YOK — bu dışa-açık
+# sarmalayıcılar TEK yol") RESMİ, YENİDEN KULLANILABİLİR karşılığı.
+#
+# **YALNIZCA `--profile freestanding` altında kullanılabilir** — checker
+# bunu HEM `.freestanding`de (izin verir) HEM `.hosted`de (REDDEDER, bkz.
+# `compiler/typecheck/checker.zig`nin `checkHostedImportAllowed`ı) AÇIKÇA
+# uygular: bu talimatlar (`in`/`out`/`cli`/`sti`/`hlt`) AYRICALIKLIDIR
+# (ring-0), normal bir programda (ring-3) çalıştırılmaları bir Genel
+# Koruma Hatasına (#GP) yol açar — derleme zamanında yakalanır, çalışma
+# zamanı çökmesine BIRAKILMAZ.
+#
+# **Güven sınırı (bkz. AGENTS.md §9.5):** bu fonksiyonlar `lowlevel:`
+# GEREKTİRMEDEN çağrılabilir — port G/Ç, herhangi bir `extern def` GİBİ,
+# TAMAMEN AYRI, çıplak native yetkiye sahip KENDİ güven sınırıdır.
+#
+# **`_raw` soneki (bkz. `stdlib/nox/os.nox`nin AYNI, ÖNCEDEN GERÇEKTEN
+# yaşanmış tuzağı):** `module_loader.zig`nin `mangleWith`i, BU modülün
+# KENDİ üst-düzey `def` adlarını `nox_arch_x86_64_<ad>` OLARAK mangle
+# EDER (3 segmentli modül yolu: `nox`/`arch`/`x86_64`) — `outb`
+# sarmalayıcısı BU YÜZDEN `nox_arch_x86_64_outb` OLUR. `extern def`ler
+# ASLA mangle EDİLMEDİĞİNDEN, bu isim GERÇEK Zig sembolüyle ÇAKIŞIRDI
+# ("fonksiyon zaten tanımlı" derleme hatası — BU turda GERÇEKTEN
+# karşılaşıldı, `runtime/lib_freestanding.zig`nin AYNI belge notuna bkz.).
+
+extern def nox_arch_x86_64_outb_raw(port: int, value: int) -> None from "zig-out/lib/noxrt-freestanding-generic-x86_64.o"
+extern def nox_arch_x86_64_inb_raw(port: int) -> int from "zig-out/lib/noxrt-freestanding-generic-x86_64.o"
+extern def nox_arch_x86_64_outw_raw(port: int, value: int) -> None from "zig-out/lib/noxrt-freestanding-generic-x86_64.o"
+extern def nox_arch_x86_64_inw_raw(port: int) -> int from "zig-out/lib/noxrt-freestanding-generic-x86_64.o"
+extern def nox_arch_x86_64_outl_raw(port: int, value: int) -> None from "zig-out/lib/noxrt-freestanding-generic-x86_64.o"
+extern def nox_arch_x86_64_inl_raw(port: int) -> int from "zig-out/lib/noxrt-freestanding-generic-x86_64.o"
+extern def nox_arch_x86_64_enable_interrupts_raw() -> None from "zig-out/lib/noxrt-freestanding-generic-x86_64.o"
+extern def nox_arch_x86_64_disable_interrupts_raw() -> None from "zig-out/lib/noxrt-freestanding-generic-x86_64.o"
+extern def nox_arch_x86_64_halt_raw() -> None from "zig-out/lib/noxrt-freestanding-generic-x86_64.o"
+
+def outb(port: int, value: int) -> None:
+    nox_arch_x86_64_outb_raw(port, value)
+
+def inb(port: int) -> int:
+    return nox_arch_x86_64_inb_raw(port)
+
+def outw(port: int, value: int) -> None:
+    nox_arch_x86_64_outw_raw(port, value)
+
+def inw(port: int) -> int:
+    return nox_arch_x86_64_inw_raw(port)
+
+def outl(port: int, value: int) -> None:
+    nox_arch_x86_64_outl_raw(port, value)
+
+def inl(port: int) -> int:
+    return nox_arch_x86_64_inl_raw(port)
+
+def enable_interrupts() -> None:
+    nox_arch_x86_64_enable_interrupts_raw()
+
+def disable_interrupts() -> None:
+    nox_arch_x86_64_disable_interrupts_raw()
+
+def halt() -> None:
+    nox_arch_x86_64_halt_raw()

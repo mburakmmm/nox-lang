@@ -94,6 +94,13 @@ pub const TypeError = error{
     /// bkz. `checkFreestandingImportAllowed`) — `TypeMismatch`e AŞIRI
     /// YÜKLEMEK yerine ayrı, grep-lenebilir bir tanı kodu.
     FreestandingModuleForbidden,
+    /// v3 sertleştirme yol haritası, madde 5 (bkz. nox-teknik-
+    /// spesifikasyon.md ilgili bölüm): `FreestandingModuleForbidden`in
+    /// TERS yönü — `.hosted` profilinde, `HOSTED_FORBIDDEN_MODULES`de
+    /// OLAN bir `nox.*` modülü (ör. `nox.arch.x86_64` — ring-0'a özgü,
+    /// AYRICALIKLI işlemci talimatları taşır, normal bir programda
+    /// çalıştırılması bir #GP'ye yol açar) `import` EDİLDİ.
+    HostedModuleForbidden,
     /// v1.95.2 (bkz. nox-teknik-spesifikasyon.md §3.179 — GPT-5.6 incelemesinin
     /// buldu, DOĞRULANDI): `ptr_from_int`/`ptr_to_int`/`ptr_add`/`ptr_read_*`/
     /// `ptr_write_*`/`detach`/`adopt` DAHA ÖNCE bir `lowlevel:` bloğu
@@ -912,6 +919,11 @@ pub const Checker = struct {
     const FREESTANDING_ALLOWED_MODULES = [_][]const u8{
         "strings", "collections", "json",     "regex", "csv", "toml", "yaml",
         "url",     "validate",    "template", "path",  "db",  "orm",  "gzip",
+        // v3 madde 5: `nox.arch.*` — ring-0'a özgü, ARTIK isteğe bağlı bir
+        // yetenek OLARAK freestanding'de İZİN VERİLİR (`checkHostedImportAllowed`
+        // AŞAĞIDA TERSİNİ, `.hosted`de REDDİ, uygular — bu modül SADECE
+        // freestanding'de kullanılabilir/anlamlıdır).
+        "arch",
     };
 
     fn isFreestandingAllowedModule(name: []const u8) bool {
@@ -925,7 +937,32 @@ pub const Checker = struct {
         if (self.profile != .freestanding) return;
         if (segments.len < 2 or !std.mem.eql(u8, segments[0], "nox")) return;
         if (isFreestandingAllowedModule(segments[1])) return;
-        return self.fail(error.FreestandingModuleForbidden, "'nox.{s}' modülü 'freestanding' profilinde kullanılamaz (OS/libc bağımlılığı taşıyor — izin verilenler: strings/collections/json/regex/csv/toml/yaml/url/validate/template/path/db/orm/gzip)", .{segments[1]});
+        return self.fail(error.FreestandingModuleForbidden, "'nox.{s}' modülü 'freestanding' profilinde kullanılamaz (OS/libc bağımlılığı taşıyor — izin verilenler: strings/collections/json/regex/csv/toml/yaml/url/validate/template/path/db/orm/gzip/arch)", .{segments[1]});
+    }
+
+    /// v3 sertleştirme yol haritası, madde 5 — `checkFreestandingImportAllowed`in
+    /// TERS yönü: `nox.arch.*` GİBİ ring-0'a özgü, AYRICALIKLI işlemci
+    /// talimatları (`outb`/`cli`/`hlt`/vb.) taşıyan bir modül, `.hosted`
+    /// profilinde (normal bir programda) İMPORT edilirse DERLEME ZAMANINDA
+    /// reddedilir — bu talimatların ring-3'te ÇALIŞTIRILMASI bir Genel
+    /// Koruma Hatasına (#GP) yol açar; bu, hatayı ÇALIŞMA ZAMANINA (GERÇEK
+    /// bir çökmeye) bırakmak YERİNE, derleme zamanında YAKALAR.
+    const HOSTED_FORBIDDEN_MODULES = [_][]const u8{
+        "arch",
+    };
+
+    fn isHostedForbiddenModule(name: []const u8) bool {
+        for (HOSTED_FORBIDDEN_MODULES) |m| {
+            if (std.mem.eql(u8, m, name)) return true;
+        }
+        return false;
+    }
+
+    fn checkHostedImportAllowed(self: *Checker, segments: []const []const u8) TypeError!void {
+        if (self.profile != .hosted) return;
+        if (segments.len < 2 or !std.mem.eql(u8, segments[0], "nox")) return;
+        if (!isHostedForbiddenModule(segments[1])) return;
+        return self.fail(error.HostedModuleForbidden, "'nox.{s}' modülü YALNIZCA 'freestanding' profilinde kullanılabilir (ring-0'a özgü, ayrıcalıklı işlemci talimatları taşır — normal bir programda çalıştırılması bir Genel Koruma Hatasına yol açar)", .{segments[1]});
     }
 
     fn collectImports(self: *Checker, module: ast.Module) TypeError!void {
@@ -940,6 +977,7 @@ pub const Checker = struct {
                         try self.module_aliases.put(self.allocator, alias, imp.segments);
                     }
                     try self.checkFreestandingImportAllowed(imp.segments);
+                    try self.checkHostedImportAllowed(imp.segments);
                 },
                 .from_import_stmt => |fi| {
                     const joined = try self.joinSegments(fi.segments, '.');
@@ -954,6 +992,7 @@ pub const Checker = struct {
                         try self.from_imports_orig_name.put(self.allocator, local_name, nm.name);
                     }
                     try self.checkFreestandingImportAllowed(fi.segments);
+                    try self.checkHostedImportAllowed(fi.segments);
                 },
                 else => {},
             }

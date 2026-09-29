@@ -265,6 +265,108 @@ export fn printf(fmt: ?[*:0]const u8, ...) callconv(.c) c_int {
     return @intCast(printfReal(f, &ap));
 }
 
+// v3 sertleştirme yol haritası, madde 5 (bkz. nox-teknik-spesifikasyon.md
+// ilgili bölüm): `nox.arch.x86_64` stdlib modülünün TEK, resmi çalışma
+// zamanı temeli — port G/Ç (`outb`/`inb`/`outw`/`inw`/`outl`/`inl`) VE
+// TEMEL kesme kontrolü (`halt`/`enable_interrupts`/`disable_interrupts`).
+// `nox-kernel-demo` (v2.0 madde 10, AYRI repo) reposunun KENDİ, sadece
+// KENDİ dosyasına VENDOR EDİLMİŞ `outb`/`inb`/`outl`/`inl`inin (o reponun
+// KENDİ belge notu: "Nox'un dilinde ARTIK HİÇBİR port-I/O yerleşiği YOK
+// — bu dışa-açık sarmalayıcılar TEK yol") RESMİ, YENİDEN KULLANILABİLİR
+// KARŞILIĞI — HER YENİ freestanding x86_64 projesinin AYNI kodu YENİDEN
+// yazmasına GEREK KALMAZ. `builtin.cpu.arch == .x86_64` DIŞINDAKİ HER
+// hedefte bu fonksiyonların GÖVDESİ hiç ANALİZ EDİLMEZ (bkz. `printf_
+// real`in AYNI deseni) — `noxrt-freestanding-generic-aarch64.o` GİBİ
+// diğer mimarilerin nesne çıktısı BUNLARI HİÇ İÇERMEZ (derleme HATASI
+// da VERMEZ, sadece SESSİZCE atlanır).
+//
+// **Güven sınırı notu (bkz. AGENTS.md §9.5):** bu fonksiyonlar (`extern
+// def` aracılığıyla) `lowlevel:` bloğu GEREKTİRMEDEN Nox'tan çağrılabilir
+// — port G/Ç TAMAMEN AYRI, KENDİ güven modeline sahiptir (herhangi bir
+// `extern def` GİBİ, ÇIPLAK native yetki). `stdlib/nox/arch/x86_64.nox`
+// bunu `nox.arch.x86_64` İSMİYLE saran İNCE bir sarmalayıcıdır.
+//
+// **`_raw` soneki (bkz. `stdlib/nox/os.nox`nin AYNI, ÖNCEDEN GERÇEKTEN
+// yaşanmış tuzağı):** `module_loader.zig`nin `mangleWith`i, `nox.arch.
+// x86_64` GİBİ İÇE AKTARILAN BİR stdlib modülünün KENDİ üst-düzey `def`
+// adlarını `<modül-yolu>_<ad>` OLARAK mangle EDER — `outb` sarmalayıcısı
+// BU YÜZDEN `nox_arch_x86_64_outb` OLUR. `extern def`ler ASLA mangle
+// EDİLMEDİĞİNDEN, BU isim BURADAKİ GERÇEK Zig sembolüyle ÇAKIŞIRDI
+// ("fonksiyon zaten tanımlı" derleme hatası — BU turda GERÇEKTEN
+// karşılaşıldı). `_raw` soneki BU çakışmayı önler.
+export fn nox_arch_x86_64_outb_raw(port: u16, value: u8) callconv(.c) void {
+    if (comptime builtin.cpu.arch != .x86_64) return;
+    asm volatile ("outb %[value], %[port]"
+        :
+        : [value] "{al}" (value),
+          [port] "{dx}" (port),
+    );
+}
+
+export fn nox_arch_x86_64_inb_raw(port: u16) callconv(.c) u8 {
+    if (comptime builtin.cpu.arch != .x86_64) return 0;
+    return asm volatile ("inb %[port], %[result]"
+        : [result] "={al}" (-> u8),
+        : [port] "{dx}" (port),
+    );
+}
+
+export fn nox_arch_x86_64_outw_raw(port: u16, value: u16) callconv(.c) void {
+    if (comptime builtin.cpu.arch != .x86_64) return;
+    asm volatile ("outw %[value], %[port]"
+        :
+        : [value] "{ax}" (value),
+          [port] "{dx}" (port),
+    );
+}
+
+export fn nox_arch_x86_64_inw_raw(port: u16) callconv(.c) u16 {
+    if (comptime builtin.cpu.arch != .x86_64) return 0;
+    return asm volatile ("inw %[port], %[result]"
+        : [result] "={ax}" (-> u16),
+        : [port] "{dx}" (port),
+    );
+}
+
+export fn nox_arch_x86_64_outl_raw(port: u16, value: u32) callconv(.c) void {
+    if (comptime builtin.cpu.arch != .x86_64) return;
+    asm volatile ("outl %[value], %[port]"
+        :
+        : [value] "{eax}" (value),
+          [port] "{dx}" (port),
+    );
+}
+
+export fn nox_arch_x86_64_inl_raw(port: u16) callconv(.c) u32 {
+    if (comptime builtin.cpu.arch != .x86_64) return 0;
+    return asm volatile ("inl %[port], %[result]"
+        : [result] "={eax}" (-> u32),
+        : [port] "{dx}" (port),
+    );
+}
+
+/// `sti` — kesmeleri ETKİNLEŞTİRİR. `nox-kernel-demo`nun `nox_timer_
+/// start`ının KENDİ İÇİNE gömdüğü `sti`nin AYRI, YENİDEN KULLANILABİLİR
+/// karşılığı.
+export fn nox_arch_x86_64_enable_interrupts_raw() callconv(.c) void {
+    if (comptime builtin.cpu.arch != .x86_64) return;
+    asm volatile ("sti");
+}
+
+/// `cli` — kesmeleri DEVRE DIŞI bırakır.
+export fn nox_arch_x86_64_disable_interrupts_raw() callconv(.c) void {
+    if (comptime builtin.cpu.arch != .x86_64) return;
+    asm volatile ("cli");
+}
+
+/// `hlt` — İşlemciyi BİR SONRAKİ kesmeye kadar durdurur (bkz. `nox-kernel-
+/// demo`nun `haltForever`ının AYNI `hlt` talimatı — burada TEK bir çağrı,
+/// döngü Nox tarafında YAZILABİLİR).
+export fn nox_arch_x86_64_halt_raw() callconv(.c) void {
+    if (comptime builtin.cpu.arch != .x86_64) return;
+    asm volatile ("hlt");
+}
+
 /// v2.0 madde 9 (bkz. plan dosyası "Freestanding Allocator ABI", Faz B):
 /// `nox_allocator_install`/`kernel_vtable` mekanizmasını GERÇEK bir
 /// QEMU/kernel GEREKMEDEN, host-NATİF bir `zig build test` çalışmasıyla
