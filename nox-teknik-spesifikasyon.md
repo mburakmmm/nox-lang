@@ -25115,6 +25115,90 @@ growable_arena_loop_safety,growable_arena_positive,stack_local_size_cap}.ssa`
 
 ---
 
+## 3.204 v3 sertleştirme yol haritası, madde 7 — Backend/mod semantiği kilitleme (taşma davranışı, KASITLI OLARAK DONDURULDU)
+
+**Bağlam:** v3 yol haritasının 7. maddesi. Dış analizin ORİJİNAL çerçevesi
+("iki backend'i uyumlu hale getirme") **YANLIŞTI** — `nox.arch.x86_64`
+(§3.202)/Concurrency Torture Suite 2 (§3.203) GİBİ maddelerin AKSİNE, bu
+madde YENİ kod YAZMA işi DEĞİLDİ: QBE↔LLVM backend seçimi (`compiler/
+main.zig`nin `if (opts.release) .llvm else .qbe`ı) ZATEN Debug/Release
+moduna SIKI sıkıya bağlı, VE `backend_conformance_test.zig`nin (bkz.
+§3.192, v2.0 madde 4) `expectDivergence` ailesi bu asimetrilerin ÇOĞUNU
+ZATEN bilinçli/belgelenmiş olarak KAYDA GEÇİRMİŞTİ. Bu maddenin GERÇEK
+işi, TEK bir AÇIK soruyu KAPATMAKTI: **sabit-genişlikli tamsayı (u8/u16/
+u32/u64/usize/i8/i16/i32/i64/isize) taşma davranışının (QBE=varsayılan
+→ çalışma-zamanında yakalanamaz `nox_int_overflow_trap`; `--release`/LLVM
+→ HER ZAMAN sessizce sarma, kontrol dalı HİÇ ÜRETİLMEZ, bkz. §3.192)
+BACKEND SEÇİMİNE bu kadar SIKI bağlı KALMASI mı, YOKSA `--release`den
+BAĞIMSIZ, KENDİ AYRI bir bayrağa (`--overflow-checks` GİBİ) mi
+AYRILMALI?** (Düz `int`, 64-bit/Python-benzeri/sessizce-sarmalayan —
+BU eksenin TAMAMEN DIŞINDA, HER İKİ backend'de de DEĞİŞMEDEN kalır.)
+
+### Kullanıcı kararı (AskUserQuestion, AGENTS.md §16.3 — mimariyi
+etkileyen bir karar, SESSİZCE İLERLENMEDİ)
+
+Kullanıcıya 4 seçenek sunuldu: (1) mevcut eşleşmeyi DONDUR (kod DEĞİŞMEZ,
+SADECE spesifikasyona açıkça yaz), (2) BAĞIMSIZ bir `--overflow-checks`
+bayrağıyla AYIR (GERÇEK mimari iş — HER checked-overflow codegen sitesinin
+`backend==.qbe` kontrolü YENİ bağımsız bir bayrağa taşınmalı), (3) HER
+ZAMAN tuzağa düşür (`--release`nin sessiz sarma yolu KALDIRILIR), (4) HER
+ZAMAN sessizce sar (QBE'nin tuzağı KALDIRILIR). **Kullanıcı (1)i seçti:
+mevcut eşleşme KASITLI OLARAK DONDURULDU — kod SIFIR DEĞİŞİKLİK.**
+
+### Dondurulan, kalıcı semantik (v1.0'dan İTİBAREN, GERİYE dönük de geçerli)
+
+- **`int` (64-bit, Python-benzeri):** taşma HER ZAMAN, HER İKİ backend'de
+  de SESSİZCE SARAR (donanımın DOĞAL `add`/`sub`/`mul`i, HİÇBİR kontrol
+  dalı YOK). Bu, backend/modDAN TAMAMEN BAĞIMSIZDIR VE hiçbir zaman
+  değişmedi — BU maddenin kapsamı DIŞINDA.
+- **Sabit-genişlikli tipler (u8/u16/u32/u64/usize/i8/i16/i32/i64/isize):**
+  taşma davranışı **BACKEND SEÇİMİNİN KENDİSİNE KİLİTLİDİR, KASITLI OLARAK,
+  KALICI OLARAK** — AYRI bir "overflow-checks" bayrağı ASLA eklenmeyecek:
+  - **QBE (varsayılan, bayraksız `noxc build`):** HER ZAMAN çalışma-
+    zamanı kontrollü — taşma `nox_int_overflow_trap` İLE yakalanamaz bir
+    process-abort'a yol açar (`nox_unhandled_exception`in AYNI deseni).
+  - **`--release` (LLVM):** HER ZAMAN sessizce sarar — kontrol dalı HİÇ
+    ÜRETİLMEZ (sıfır çalışma-zamanı maliyeti).
+  - **Gerekçe (Zig'in KENDİ Debug/ReleaseSafe/ReleaseFast felsefesiyle
+    BİREBİR AYNI):** güvenlik VE hız AYNI eksende, KASITLI olarak
+    BİRLİKTE hareket eder — geliştirme sırasında (varsayılan QBE) taşma
+    hataları ERKEN/GÜRÜLTÜLÜ yakalanır (bu projenin TÜM tarihi boyunca
+    TEKRARLANAN bir tema: GERÇEK hatalar HEP "ölç, varsayma" disipliniyle,
+    çökmeler İZLENEREK bulundu — bkz. §3.203'ün arena-sızıntısı, §3.200'ün
+    6 bellek-güvenliği hatası); üretimde (`--release`) maksimum hız
+    İSTENİR, kullanıcı BU noktada ZATEN test etmiş/güvenmiş SAYILIR.
+    "Hızlı+kontrollü" VEYA "yavaş+kontrolsüz" GİBİ çapraz kombinasyonlar
+    kasıtlı olarak SUNULMAZ — bu, ek CLI yüzeyi/codegen dallanması
+    GEREKTİRİRDİ, VE dış analizin "iki backend'i uyumlu hale getirme"
+    çerçevesinin AKSİNE, İKİ backend'in ZATEN FARKLI AMAÇLARA (hızlı-
+    yineleme vs üretim) hizmet ettiği GERÇEĞİYLE ÇELİŞirdi.
+- **Bu KARAR geriye dönük OLARAK da geçerlidir** — v2.0 madde 4'ün (v1.80.0
+  civarı) ZATEN uyguladığı davranışta HİÇBİR KOD DEĞİŞİKLİĞİ YOKTUR; bu
+  madde SADECE o davranışı AÇIK, KASITLI, KALICI bir tasarım kararı OLARAK
+  (bir "henüz karara bağlanmamış açık soru" DEĞİL) kayda geçirir.
+
+### Kapsam dışı (BİLİNÇLİ)
+
+- Backend'lerin DAVRANIŞÇA "uyumlu" hale getirilmesi — `backend_
+  conformance_test.zig`nin `expectDivergence` ailesi (spawn/thread.start'a
+  list/class/dict parametresi, `pool_run`, decorator, BU maddenin taşma
+  asimetrisi) HEPSİ KASITLI/kalıcı asimetrilerdir, "düzeltilecek hatalar"
+  DEĞİL.
+- Yeni bir `--overflow-checks` (veya benzeri) CLI bayrağı — kullanıcı
+  KARARIYLA AÇIKÇA REDDEDİLDİ.
+
+### Doğrulama
+
+Kod DEĞİŞMEDİĞİNDEN `zig build test` zaten YEŞİL (regresyon RİSKİ YOK —
+bu madde SIFIR satır kod dokunuşu). `backend_conformance_test.zig`nin
+`divergence_fixed_int_overflow_wrap_vs_trap` testi (§3.192) BU maddenin
+KARARININ ZATEN ÇALIŞTIRILABİLİR/KANITLANMIŞ hâlidir.
+
+**Kritik dosyalar:** SADECE `nox-teknik-spesifikasyon.md` (bu bölüm) +
+`CHANGELOG.md` — kod tabanında HİÇBİR dosya DEĞİŞMEDİ.
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

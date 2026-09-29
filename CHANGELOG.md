@@ -14,6 +14,20 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.110.2]
+
+### Değişti
+
+- **Backend/mod semantiği kilitleme — taşma davranışı KASITLI OLARAK
+  DONDURULDU (bkz. nox-teknik-spesifikasyon.md §3.204)**: v3 sertleştirme
+  yol haritasının 7. maddesi. Kod değişikliği YOK — sabit-genişlikli
+  tamsayı (u8/u16/.../isize) taşma davranışının (QBE=yakalanamaz trap,
+  `--release`/LLVM=sessiz sarma) backend seçimine sıkı bağlı KALMASI,
+  kullanıcı kararıyla (AskUserQuestion, 4 seçenek sunuldu) KALICI bir
+  tasarım kararı olarak belgelendi — bağımsız bir `--overflow-checks`
+  bayrağı AÇIKÇA REDDEDİLDİ. Düz `int` (64-bit) bu eksenin dışında,
+  her iki backend'de de değişmeden sessizce sarmaya devam eder.
+
 ## [1.110.1]
 
 ### Düzeltildi
