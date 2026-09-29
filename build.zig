@@ -1559,6 +1559,29 @@ pub fn build(b: *std.Build) void {
     const concurrency_torture_test_step = b.step("concurrency-torture-test", "seed-tabanlı eşzamanlılık torture testi (-Dtorture-seed-count/-Dtorture-tasks) — opt-in, YAVAŞ, 'test' adımının PARÇASI DEĞİL");
     concurrency_torture_test_step.dependOn(&torture_run.step);
 
+    // v3 sertleştirme yol haritası, madde 6 (bkz. nox-teknik-spesifikasyon.md
+    // ilgili bölüm) — "Concurrency Torture Suite 2": YUKARIDAKİ Suite 1'in
+    // AYNI "gerçekten opt-in, GERÇEK --release derlemesi" deseni, AMA
+    // ThreadChannel[T]/Channel[T]/spawn sınırı üzerinden list[T] transferini
+    // hedefleyen AYRI bir kaynak/AYRI env değişkenleri (`NOX_TORTURE2_*`) —
+    // İKİ suite'in meta-koşuları BİRBİRİNİ ETKİLEMEZ.
+    const concurrency_torture2_test_mod = b.createModule(.{
+        .root_source_file = b.path("tests/compat/concurrency_torture2_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const concurrency_torture2_test = b.addTest(.{ .root_module = concurrency_torture2_test_mod });
+    concurrency_torture2_test.step.dependOn(b.getInstallStep());
+
+    const torture2_seed_count = b.option(u32, "torture2-seed-count", "concurrency-torture2-test adımının deneyeceği seed sayısı (varsayılan: 3)") orelse 3;
+    const torture2_tasks = b.option(u32, "torture2-tasks", "concurrency-torture2-test adımının seed başına görev sayısı (varsayılan: 300)") orelse 300;
+    const torture2_run = b.addRunArtifact(concurrency_torture2_test);
+    torture2_run.setEnvironmentVariable("NOX_TORTURE2_SEED_COUNT", b.fmt("{d}", .{torture2_seed_count}));
+    torture2_run.setEnvironmentVariable("NOX_TORTURE2_TASKS", b.fmt("{d}", .{torture2_tasks}));
+    const concurrency_torture2_test_step = b.step("concurrency-torture2-test", "ThreadChannel[T]/Channel[T]/list[T]-transfer seed-tabanlı torture testi (-Dtorture2-seed-count/-Dtorture2-tasks) — opt-in, YAVAŞ, 'test' adımının PARÇASI DEĞİL");
+    concurrency_torture2_test_step.dependOn(&torture2_run.step);
+
     // Faz F.1 (bkz. plan dosyası "Cross-compile İSKELETİ"): QBE'nin çıktısı
     // freestanding, statik bir ELF olarak linklenebiliyor mu deneyini
     // (`wasm_build_options`nin AYNI "zig'in KENDİ yolunu build_options

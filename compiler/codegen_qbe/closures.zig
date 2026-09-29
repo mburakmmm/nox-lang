@@ -295,6 +295,11 @@ pub fn genClosureFunc(self: *Codegen, spec: ClosureFuncSpec) CodegenError!void {
 
     try self.genStmts(spec.fd.body, ret_info.qtype);
     try self.drainDeferIfSet();
+    // bkz. `registration.zig`nin `genFunction`ındaki AYNI, GERÇEK arena-
+    // sızıntısı düzeltmesinin notu (v3 sertleştirme yol haritası madde 6)
+    // — spawn/thread-start sarmalayıcı gövdeleri İçİn AYNI örtük düşme-
+    // çıkışı boşluğu.
+    try self.drainFunctionArena();
     try self.releaseAllLocals();
 
     const end_label = try self.newLabel("fn_end");

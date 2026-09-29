@@ -1209,6 +1209,18 @@ pub fn genFunction(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
 
     try self.genStmts(fd.body, ret_info.qtype);
     try self.drainDeferIfSet();
+    // v3 sertleştirme yol haritası, madde 6 (bkz. nox-teknik-spesifikasyon.md
+    // ilgili bölüm): "Concurrency Torture Suite 2" TARAFINDAN bulunan GERÇEK
+    // bir arena sızıntısı — `stmt.zig`nin `.return_stmt`i (AÇIK dönüş) HER
+    // ZAMAN `drainFunctionArena()`yı çağırıyordu, AMA fonksiyon gövdesi AÇIK
+    // bir `return` OLMADAN SONA erdiğinde (örtük düşme-çıkışı, BURASI) bu
+    // ÇAĞRI HİÇ YAPILMIYORDU — `self.function_arena` (GG.19'un "growable
+    // arena" optimizasyonu, bkz. `local_escape.zig`) set edilmiş AMA HİÇBİR
+    // ZAMAN yıkılmamış OLARAK kalıyordu (GERÇEK, `DebugAllocator` İLE
+    // DOĞRULANMIŞ bir sızıntı — en ufak reprodüksiyon: `def f() -> None:
+    // kinds: list[int] = []` gibi TEK BAŞINA KULLANILMAYAN bir liste,
+    // `async`/thread/spawn GEREKMEDEN BİLE).
+    try self.drainFunctionArena();
     try self.releaseAllLocals();
 
     const end_label = try self.newLabel("fn_end");
@@ -1290,6 +1302,10 @@ pub fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) Codegen
 
     try self.genStmts(m.body, ret_info.qtype);
     try self.drainDeferIfSet();
+    // bkz. `genFunction`nin AYNI, GERÇEK arena-sızıntısı düzeltmesinin notu
+    // (v3 sertleştirme yol haritası madde 6) — metotlar İçİn AYNI örtük
+    // düşme-çıkışı boşluğu.
+    try self.drainFunctionArena();
     try self.releaseAllLocals();
 
     const end_label = try self.newLabel("fn_end");
@@ -1392,6 +1408,11 @@ pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool, wants_m
     for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
     try self.prepareInlineSites(stmts);
     try self.genStmts(stmts, .w);
+    // bkz. `genFunction`nin AYNI, GERÇEK arena-sızıntısı düzeltmesinin notu
+    // (v3 sertleştirme yol haritası madde 6) — `main`in üst-düzey deyimleri
+    // İçİn AYNI örtük düşme-çıkışı boşluğu (bu ARTIK `zig build test`teki
+    // HER top-level, `async` OLMAYAN programı KAPSAR).
+    try self.drainFunctionArena();
     try self.releaseAllLocals();
     if (self.module_globals.count() > 0) {
         try self.qbeCall(null, "$nox_deinit_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
@@ -1444,6 +1465,12 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_poo
     for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
     try self.prepareInlineSites(stmts);
     try self.genStmts(stmts, .l);
+    // bkz. `genFunction`nin AYNI, GERÇEK arena-sızıntısı düzeltmesinin notu
+    // (v3 sertleştirme yol haritası madde 6) — `$main_body` İçİn (`async`
+    // KULLANAN programların üst-düzey deyimleri, TAM DA "Concurrency
+    // Torture Suite 2"nin REPRODÜKSİYONUNU tetikleyen yol) AYNI örtük
+    // düşme-çıkışı boşluğu.
+    try self.drainFunctionArena();
     try self.releaseAllLocals();
     try self.qbeCall(null, "$nox_free", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%argp" }, .{ .ty = .l, .text = "8" } });
     const end_label = try self.newLabel("fn_end");

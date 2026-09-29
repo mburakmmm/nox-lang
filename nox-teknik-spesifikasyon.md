@@ -25020,6 +25020,101 @@ golden_test.zig` + `typecheck_cases/*` (YENİ 2 golden test).
 
 ---
 
+## 3.203 v3 sertleştirme yol haritası, madde 6 — Concurrency Torture Suite 2 + GERÇEK bir arena-sızıntısı hatası
+
+**Bağlam:** v3 yol haritasının 6. maddesi. `concurrency_torture_test.zig`
+(v1.100.0, Suite 1) SADECE `spawn`/`await`/`Task[T]` egzersiz ediyordu —
+`ThreadChannel[T]` (`nox.thread.start`, AYRI bir OS iş parçacığı), aynı
+paylaşılan havuz İçİNDE `Channel[T]`, VE `spawn` sınırı ÜZERİNDEN
+`list[T]` transferi (`--release`-SINIRLI, MN.9.2) HİÇ SINANMAMIŞTI. Suite
+1'in AYNI seed-tabanlı/deterministik altyapı deseni (`masterPrngFromEnv`/
+`nextSeed`/`ChildWatchdog`) TEKRAR KULLANILARAK YENİ, AYRI bir `tests/
+compat/concurrency_torture2_test.zig` yazıldı (`concurrency-torture2-test`
+build adımı, `NOX_TORTURE2_*` env değişkenleri — Suite 1'in meta-koşusunu
+ETKİLEMEZ).
+
+### GERÇEK, `DebugAllocator` İLE DOĞRULANMIŞ bir arena-sızıntısı bulundu VE düzeltildi
+
+Suite 2'nin İLK çalıştırması (henüz düzeltme YOKKEN) `completed=task_count`
+(TÜM sonuçlar DOĞRU, veri bozulması YOK) AMA `error(DebugAllocator):
+memory address ... leaked` çıktısı ÜRETTİ — SAF bir bellek-sızıntısı,
+doğruluk hatası DEĞİL. Sistematik izolasyonla (bkz. metodoloji AŞAĞIDA)
+KESİN, GERÇEKTEN EN UFAK reprodüksiyon 3 satıra İNDİRİLDİ:
+
+```nox
+def entry() -> None:
+    kinds: list[int] = []
+    print("DONE")
+
+entry()
+```
+
+**Kök neden:** GG.19'un "growable arena" optimizasyonu (bkz. `local_
+escape.zig`nin `materializeConstructSite`i) — bir fonksiyonun KAÇMADIĞI
+kanıtlanan `list[T]`/sınıf yerelleri, TEK, fonksiyon-çapında bir arenadan
+(`self.function_arena`, İLK KULLANIMDA `nox_arena_create` İLE yaratılır)
+tahsis edilir VE fonksiyonun HER çıkış yolunda `nox_arena_destroy` İLE
+TOPLU yıkılır. `stmt.zig`nin `.return_stmt`i (AÇIK `return`) HER ZAMAN
+`drainFunctionArena()`yı çağırıyordu — AMA fonksiyon gövdesi AÇIK bir
+`return` OLMADAN SONA erdiğinde (örtük düşme-çıkışı) bu çağrı 5 AYRI
+codegen giriş noktasında da EKSİKTİ: `genFunction`/`genMethod`/`genMain`/
+`genMainAsync` (`registration.zig`) VE closure/thread-start sarmalayıcı
+gövdesi (`closures.zig`). `self.function_arena` set ediliyor AMA HİÇBİR
+ZAMAN yıkılmıyordu.
+
+**İzolasyon metodolojisi (bkz. AGENTS.md İlke #7'nin "ölç, varsayma"
+disiplini):** İlk bulgu ThreadChannel/Channel/list-transferini KARIŞIK
+rastgele dispatch ALTINDA gösterdi; sistematik bisection (tek-tek
+`nox.thread.start`/`Channel[T]`/`list[T]` transferini İZOLE eden AYRI
+`.nox` fixture'ları, SONRA rastgele/deterministik dispatch'i AYRIŞTIRAN
+adımlar) `nox.thread`/`Channel[T]`in KENDİLERİNİN SUÇSUZ olduğunu
+KANITLADI — TEK gerekli koşul "fonksiyonda arena-uygun bir `list[T]`
+yereli VAR + fonksiyon AÇIK `return` OLMADAN bitiyor" idi. Bu, `async`/
+thread'den TAMAMEN BAĞIMSIZ, GENEL bir hataydı — `nox.thread`/`Channel[T]`
+SADECE bunu `entry()`nin (AÇIK `return`ü OLMAYAN, `pool_run`in gerektirdiği
+imza) DOĞAL bir örneği olarak YÜZEYE ÇIKARDI.
+
+**Düzeltme:** `drainFunctionArena()` çağrısı 5 EKSİK örtük-düşme-çıkışı
+noktasına da EKLENDİ (`registration.zig`nin `genFunction`/`genMethod`/
+`genMain`/`genMainAsync`ı + `closures.zig`nin sarmalayıcı-gövdesi
+çıkışı). `drainArenas()`/`drainFinally()` (`lowlevel:`/`with`/`try-
+finally`e özgü) KASITLI olarak DOKUNULMADI — bu turda REPRODÜKSİYONLA
+DOĞRULANAN kapsam SADECE `function_arena`, spekülatif bir genişletme
+YAPILMADI (aynı sınıf hata BAŞKA bir yerde de OLABİLİR, AMA bu, KENDİ
+kanıtını gerektiren AYRI bir soru).
+
+**Yan etki — 4 ÖNCEDEN VAR OLAN fixture'ın IR anlık görüntüsü değişti**
+(`gg19_aggregate_stack_budget`/`growable_arena_loop_safety`/`growable_
+arena_positive`/`stack_local_size_cap` — HER birinde TEK satırlık bir
+`call $nox_arena_destroy(...)` eklendi, `@after_returnN`/`@fn_endN`
+arasında): bu fixture'lar GG.19 optimizasyonunu ZATEN egzersiz ediyordu
+AMA `codegen_golden_test.zig` (SADECE program ÇIKTISINI doğrular, `Debug
+Allocator` sızıntı denetimi YOK) bu hatayı YAKALAYAMAZDI — TAM DA
+`concurrency_torture2_test.zig`nin (GERÇEK `DebugAllocator`lı bir alt
+süreç çalıştıran) bu sınıf hatayı YAKALAYABİLMESİNİN gerekçesi.
+
+### Doğrulama
+
+- Minimal reprodüksiyon (YUKARIDAKİ 3 satır) düzeltmeDEN ÖNCE sızıntı
+  gösterdi, düzeltmeDEN SONRA TEMİZ.
+- `concurrency-torture2-test` (5 seed × 800 görev, ThreadChannel/Channel/
+  list-transfer KARIŞIK) — TEMİZ (sıfır sızıntı, `completed==task_count`
+  HER seed'de).
+- `concurrency-torture-test` (Suite 1, REGRESYON kontrolü) — DEĞİŞMEDEN
+  geçer.
+- `zig build test` — SIFIR regresyon (297 IR anlık görüntüsünden 4'ü
+  BİLİNÇLİ OLARAK, YUKARIDAKİ gerekçeyle güncellendi).
+
+**Kritik dosyalar:** `tests/compat/concurrency_torture2_test.zig` (YENİ),
+`build.zig` (`concurrency-torture2-test` adımı), `compiler/codegen_qbe/
+registration.zig` (4 düzeltme: `genFunction`/`genMethod`/`genMain`/
+`genMainAsync`), `compiler/codegen_qbe/closures.zig` (1 düzeltme),
+`tests/golden/ir_snapshots/codegen_cases/{gg19_aggregate_stack_budget,
+growable_arena_loop_safety,growable_arena_positive,stack_local_size_cap}.ssa`
+(güncellendi).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

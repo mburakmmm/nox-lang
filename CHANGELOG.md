@@ -14,6 +14,24 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.110.1]
+
+### Düzeltildi
+
+- **GERÇEK bir arena-sızıntısı — GG.19'un "growable arena" optimizasyonu
+  (bkz. nox-teknik-spesifikasyon.md §3.203)**: v3 sertleştirme yol
+  haritasının 6. maddesi ("Concurrency Torture Suite 2") TARAFINDAN
+  bulundu. Bir fonksiyon gövdesi AÇIK bir `return` OLMADAN (örtük düşme-
+  çıkışı) SONA erdiğinde, arena-uygun bir `list[T]`/sınıf yereli İçİn
+  tahsis edilen fonksiyon-çapında arena HİÇBİR ZAMAN yıkılmıyordu (5 AYRI
+  codegen giriş noktasında EKSİK `drainFunctionArena()` çağrısı —
+  `genFunction`/`genMethod`/`genMain`/`genMainAsync` + closure/thread-
+  start sarmalayıcı gövdesi). En ufak reprodüksiyon: `def f() -> None:
+  kinds: list[int] = []` (kullanılmayan bir liste, `async`/thread/spawn
+  GEREKMEDEN). YENİ `ThreadChannel[T]`/`Channel[T]`/`spawn` sınırı
+  üzerinden `list[T]` transferini hedefleyen seed-tabanlı, deterministik
+  bir `concurrency-torture2-test` eklendi.
+
 ## [1.110.0]
 
 ### Eklendi
