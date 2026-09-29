@@ -91,6 +91,7 @@ const fixtures = [_]Fixture{
     .{ .name = "codegen(çalıştır): fibonacci (özyineleme + while + print)", .kind = .golden, .source = @embedFile("codegen_cases/fibonacci.nox"), .expected_stdout = @embedFile("codegen_cases/fibonacci.expected") },
     .{ .name = "codegen(çalıştır): tam bölme ve mod işaret düzeltmesi (negatif işlenenler)", .kind = .golden, .source = @embedFile("codegen_cases/floordiv_mod_signs.nox"), .expected_stdout = @embedFile("codegen_cases/floordiv_mod_signs.expected") },
     .{ .name = "codegen(çalıştır): v3 madde 2 — bitwise operatörler (&/|/^/~/<</>>>, int/u8/i8/bool, geçersiz kaydırma miktarı istisnası)", .kind = .golden, .source = @embedFile("codegen_cases/bitwise_ops.nox"), .expected_stdout = @embedFile("codegen_cases/bitwise_ops.expected") },
+    .{ .name = "codegen(çalıştır): v3 madde 3 — isimli bir yerelde tutulan istisnayı raise edip fonksiyon sınırı ötesinde yakalamak artık ÇÖKMEDEN doğru değeri okur (DÜZELTME öncesi SIGSEGV veriyordu, lowlevel HİÇ gerekmez)", .kind = .golden, .source = @embedFile("codegen_cases/raise_named_local_cross_function.nox"), .expected_stdout = @embedFile("codegen_cases/raise_named_local_cross_function.expected") },
     .{ .name = "codegen(çalıştır): üs alma (pow) ve karışık int/float aritmetik", .kind = .golden, .source = @embedFile("codegen_cases/pow_and_float_mix.nox"), .expected_stdout = @embedFile("codegen_cases/pow_and_float_mix.expected") },
     .{ .name = "codegen(çalıştır): bool yazdırma ve mantıksal operatörler", .kind = .golden, .source = @embedFile("codegen_cases/bool_logic.nox"), .expected_stdout = @embedFile("codegen_cases/bool_logic.expected") },
     .{ .name = "codegen(çalıştır): and/or gerçekten kısa devre yapar (yan etkili sağ operand)", .kind = .golden, .source = @embedFile("codegen_cases/short_circuit_and_or.nox"), .expected_stdout = @embedFile("codegen_cases/short_circuit_and_or.expected") },
@@ -1056,6 +1057,42 @@ test "codegen: lowlevel arenasından bir değeri bloktan return etmek reddedilir
         .err => return error.FixtureNotWellTyped,
     }
     try std.testing.expectError(error.Unsupported, nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, .hosted, null, &.{}));
+}
+
+// v3 madde 3 (ownership/ptr[T] red-team, bkz. nox-teknik-spesifikasyon.md
+// ilgili bölüm): `rejected_lowlevel_escape.nox`nin AYNI deseninin (return
+// yoluyla kaçış) DÖRT KARDEŞİ — HEPSİ GERÇEK, `noxc build`+çalıştırılarak
+// KANITLANMIŞ bellek-güvenliği hataları (çökme/sessiz bozulma) OLARAK
+// BULUNDU, düzeltmeden ÖNCE bu dört fixture SESSİZCE DERLENİP çöküyor/
+// bozuyordu — düzeltmeden SONRA HEPSİ derleme-zamanında REDDEDİLİR.
+
+fn expectRejected(source: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const tokens = try nox.lexer.tokenize(allocator, source);
+    const module = try nox.parser.parseModule(allocator, tokens);
+    switch (nox.checker.check(allocator, module)) {
+        .ok => {},
+        .err => return error.FixtureNotWellTyped,
+    }
+    try std.testing.expectError(error.Unsupported, nox.codegen.generateModule(allocator, module, &.{}, &.{}, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, &.{}, .qbe, .hosted, null, &.{}));
+}
+
+test "codegen: lowlevel arenasında inşa edilen bir değeri bir closure'da yakalamak reddedilir (Unsupported) — DÜZELTME öncesi komşu belleği sessizce bozuyordu" {
+    try expectRejected(@embedFile("codegen_cases/rejected_lowlevel_closure_capture.nox"));
+}
+
+test "codegen: lowlevel arenasında inşa edilen bir istisnayı raise etmek reddedilir (Unsupported) — DÜZELTME öncesi arena yıkıldıktan SONRA okunuyordu" {
+    try expectRejected(@embedFile("codegen_cases/rejected_lowlevel_raise.nox"));
+}
+
+test "codegen: lowlevel içinde arena-dışı bir isme yeniden atama yapmak reddedilir (Unsupported) — DÜZELTME öncesi GERÇEK bir SIGBUS'a yol açıyordu" {
+    try expectRejected(@embedFile("codegen_cases/rejected_lowlevel_identifier_reassign.nox"));
+}
+
+test "codegen: detach() edilmiş bir değişkene lowlevel içinde yeniden atama yapmak reddedilir (Unsupported) — DÜZELTME öncesi GERÇEK bir SIGSEGV'e yol açıyordu" {
+    try expectRejected(@embedFile("codegen_cases/rejected_lowlevel_detach_reassign.nox"));
 }
 
 // Bulundu (nyx framework — bkz. proje belleği "nyx'te farkedilen Nox

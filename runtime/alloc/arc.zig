@@ -243,6 +243,38 @@ pub export fn nox_rc_free_payload(rt: ?*anyopaque, ptr: ?*anyopaque, payload_siz
     asap.nox_free(rt, base, total);
 }
 
+/// v3 madde 3 (ownership/ptr[T] red-team, bkz. nox-teknik-spesifikasyon.md
+/// ilgili bölüm): `list[ClassType]`/`dict[K, ClassType]` alanları İÇEREN
+/// bir sınıfın `$ClassName_gc_free`si (döngü çözücünün `collectWhite`'ı
+/// TARAFINDAN çağrılır, bkz. `runtime/alloc/cycle_detector.zig`nin AYNI
+/// fonksiyonun belge notu — "gc_free ASLA sınıf-tipli çocuklara
+/// DOKUNMAMALI, onlar SADECE collectWhite'ın KENDİ özyinelemesiyle
+/// İŞLENMELİDİR") İÇİN — `list[ClassType]` alanının KENDİSİNİ (liste
+/// YAPISI) serbest bırakır, AMA İÇİNDEKİ HER elemanın refcount'una HİÇ
+/// DOKUNMAZ. **DÜZELTME (GERÇEK, `runtime/alloc/cycle_detector.zig`nin
+/// KENDİ birim testiyle BULUNAN bir hata):** `genClassGcFree`nin ÖNCEDEN
+/// bu alanlar İçİn çağırdığı NORMAL `releaseValueIfSet` (→ `$List_
+/// ClassName_release` → HER elemanı `nox_rc_release_enqueue_fixed`
+/// ARACILIĞIYLA `$ClassName_release`e — DOLAYISIYLA `nox_cycle_possible_
+/// root`a — GÖNDERİR) trial-deletion'ın ZATEN SIFIRA indirdiği bir
+/// çocuğun refcount'unu TEKRAR azaltıp `nox_cycle_possible_root`u
+/// TEKRAR tetikliyordu — bu, `collectWhite`in KENDİ worklist'İNDE HÂLÂ
+/// BEKLEYEN o çocuğun rengini (`white`den `purple`ye) DEĞİŞTİRİP
+/// KOLLECTWHITE'IN onu SESSİZCE ATLAMASINA (`if (meta.color != .white)
+/// continue;`) yol AÇIYORDU — net etki: BÖYLE bir alan taşıyan HİÇBİR
+/// A↔B döngüsü ASLA GERÇEKTEN toplanmıyordu (sonsuz sızıntı, gerçek bir
+/// program çalıştırmasıyla `DebugAllocator`ın "leaked" raporuyla
+/// KANITLANDI).
+pub export fn nox_list_shallow_gc_free(rt: ?*anyopaque, ptr: ?*anyopaque) void {
+    const p = ptr orelse return;
+    if (nox_rc_predecrement(p) == 0) return; // BAŞKA bir sahibi VAR — dokunma.
+    const bytes: [*]u8 = @ptrCast(p);
+    const cap_ptr: *align(1) const i64 = @ptrCast(bytes + 8);
+    const cap: usize = @intCast(@max(cap_ptr.*, 0));
+    const list_header_size = abi_layout.LIST_HEADER_SIZE;
+    nox_rc_free_payload(rt, p, list_header_size + cap * 8);
+}
+
 fn refcountOf(ptr: *anyopaque) *i64 {
     const bytes: [*]u8 = @ptrCast(ptr);
     const base = bytes - HEADER_SIZE;

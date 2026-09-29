@@ -15,6 +15,7 @@ const Codegen = codegen.Codegen;
 const QbeType = types.QbeType;
 const HeapKind = types.HeapKind;
 const ElemHeapInfo = types.ElemHeapInfo;
+const DictInfo = types.DictInfo;
 const ClassField = types.ClassField;
 const ClassInfo = types.ClassInfo;
 const ClassIdEntry = types.ClassIdEntry;
@@ -114,9 +115,32 @@ pub fn genClassRelease(self: *Codegen, class_name: []const u8, cinfo: ClassInfo)
     // İÇİN bu iki çağrı da GEREKSİZ (asla bir döngünün kaynağı OLAMAZLAR)
     // — performans İÇİN atlanır (ÇOĞUNLUK vakada, sıradan bir sınıfta,
     // sıfır ek maliyet).
+    // v3 madde 3 (ownership/ptr[T] red-team, bkz. nox-teknik-
+    // spesifikasyon.md ilgili bölüm): **DÜZELTME (GERÇEK, bu turun
+    // ASIL kök nedeni — `genClassTrace`/`genClassGcFree`nin list/dict
+    // düzeltmeleri TEK BAŞINA YETERSİZDİ)** — bu bayrak ÖNCEDEN SADECE
+    // `f.info.heap == .class` alanlarını sayıyordu; bir sınıfın TEK
+    // "döngü kaynağı" olabilme yolu `list[ClassType]`/`dict[K,
+    // ClassType]` alanlarıysa (`Node`nin `children: list[Node]` alanı
+    // GİBİ), `has_class_field` HİÇBİR ZAMAN `true` OLMUYOR — bu YÜZDEN
+    // `nox_cycle_possible_root` HİÇ ÇAĞRILMIYOR, nesne predecrement
+    // sıfıra düşmediğinde (GERÇEK bir döngünün parçası OLDUĞUNDA) YALNIZ
+    // BAŞINA BIRAKILIYOR — döngü çözücü onu ASLA GÖRMÜYOR, SONSUZA DEK
+    // sızıyordu (GERÇEK bir program çalıştırmasıyla, `DebugAllocator`ın
+    // "leaked" raporuyla KANITLANDI — `genClassTrace`/`genClassGcFree`
+    // düzeltmeleri TEK BAŞINA bu belirtiyi GİDEREMEDİ, ÇÜNKÜ collectWhite
+    // hiçbir zaman ÇAĞRILMIYORDU).
     var has_class_field = false;
     for (cinfo.fields.items) |f| {
         if (f.info.heap == .class) {
+            has_class_field = true;
+            break;
+        }
+        if (f.info.heap == .list and f.info.elem_heap_info != null and f.info.elem_heap_info.?.heap == .class) {
+            has_class_field = true;
+            break;
+        }
+        if (f.info.heap == .dict and f.info.dict_info != null and f.info.dict_info.?.value_is_class) {
             has_class_field = true;
             break;
         }
@@ -200,8 +224,32 @@ pub fn genClassTrace(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) C
 
     var class_fields: std.ArrayListUnmanaged(ClassField) = .empty;
     defer class_fields.deinit(self.allocator);
+    // v3 madde 3 (ownership/ptr[T] red-team, bkz. nox-teknik-
+    // spesifikasyon.md ilgili bölüm): **DÜZELTME (GERÇEK, bir kaçış-
+    // taramasında BULUNAN, sonsuz-sızıntı sınıfı bir hata)** — bu fonksiyon
+    // ÖNCEDEN SADECE `f.info.heap == .class` alanlarını topluyordu.
+    // `list[ClassType]`/`dict[K, ClassType]` alanları (HeapKind.list/.dict,
+    // `.class`DAN AYRI) TAMAMEN GÖRMEZDEN GELİNİYORDU — bu modülün ESKİ
+    // belge notu "bugün yalnızca sınıf örnekleri arasında GERÇEK bir A↔B
+    // döngüsü kurulabilir" diyordu, AMA bu YANLIŞTI: `a.children.append(b)`
+    // GİBİ bir çağrı `b`yi RETAIN EDER (bkz. `calls.zig`nin `genListAppend`ı),
+    // AMA bu referans ESKİ `$ClassName_trace`nin GÖRDÜĞÜ hiçbir yere
+    // YAZILMAZDI — döngü çözücü BÖYLE bir A↔B'yi ASLA tespit EDEMİYORDU
+    // (GERÇEK bir birim testiyle, `runtime/alloc/cycle_detector.zig`,
+    // KANITLANDI: 0/2 nesne toplanıyordu). Şimdi list/dict-of-class
+    // alanları da AYRI listelerde toplanıp aşağıda İZLENİYOR.
+    var list_class_fields: std.ArrayListUnmanaged(ClassField) = .empty;
+    defer list_class_fields.deinit(self.allocator);
+    var dict_class_fields: std.ArrayListUnmanaged(ClassField) = .empty;
+    defer dict_class_fields.deinit(self.allocator);
     for (cinfo.fields.items) |f| {
-        if (f.info.heap == .class) try class_fields.append(self.allocator, f);
+        if (f.info.heap == .class) {
+            try class_fields.append(self.allocator, f);
+        } else if (f.info.heap == .list and f.info.elem_heap_info != null and f.info.elem_heap_info.?.heap == .class) {
+            try list_class_fields.append(self.allocator, f);
+        } else if (f.info.heap == .dict and f.info.dict_info != null and f.info.dict_info.?.value_is_class) {
+            try dict_class_fields.append(self.allocator, f);
+        }
     }
 
     const trace_sym = try std.fmt.allocPrint(self.allocator, "${s}_trace", .{class_name});
@@ -209,9 +257,105 @@ pub fn genClassTrace(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) C
     try self.qbeFuncParam(.l, RT_PARAM, true);
     try self.qbeFuncParam(.l, "%p", false);
     try self.qbeFuncHeaderEnd();
+
+    // Hızlı yol — list/dict-tipli sınıf alanı YOKSA, ESKİ (tamamen
+    // derleme-zamanı sabit boyutlu) kod ÜRETİLİR, SIFIR ek maliyetle
+    // (bu, sınıfların BÜYÜK çoğunluğu İçİn geçerlidir).
+    if (list_class_fields.items.len == 0 and dict_class_fields.items.len == 0) {
+        const buf = try self.newTemp();
+        try self.qbeCall(.{ .name = buf, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{TRACE_BUF_LEN_SIZE + class_fields.items.len * TRACE_BUF_SLOT_SIZE}) } });
+        try self.qbeStoreImmL(@intCast(class_fields.items.len), buf);
+        for (class_fields.items, 0..) |f, i| {
+            const addr = try self.newTemp();
+            try self.qbeOp2Imm(addr, .l, "add", "%p", @intCast(f.offset));
+            const fv = try self.newTemp();
+            try self.qbeLoadL(fv, addr);
+            const slot = try self.newTemp();
+            try self.qbeOp2Imm(slot, .l, "add", buf, @intCast(TRACE_BUF_LEN_SIZE + i * TRACE_BUF_SLOT_SIZE));
+            try self.qbeStoreL(fv, slot);
+        }
+        try self.qbeRet(buf);
+        try self.qbeFuncEnd();
+        return;
+    }
+
+    // Yavaş yol: list/dict-of-class alanları VAR — toplam çocuk sayısı
+    // ÇALIŞMA ZAMANINDA (liste/dict uzunluklarına bağlı) belirlenir, bu
+    // yüzden İKİ geçişli bir strateji kullanılır: (1) SAYIM geçişi —
+    // arabellek boyutunu hesapla, (2) DOLDURMA geçişi — HEM doğrudan
+    // sınıf alanlarını (sabit yuvalar) HEM liste/dict elemanlarını
+    // (çalışma-zamanı ARTAN bir yazma-indeksiyle) yaz.
+    const count_slot = try self.newTemp();
+    try self.qbeAlloc(count_slot, .eight, 8);
+    try self.qbeStoreImmL(@intCast(class_fields.items.len), count_slot);
+
+    for (list_class_fields.items) |f| {
+        const faddr = try self.newTemp();
+        try self.qbeOp2Imm(faddr, .l, "add", "%p", @intCast(f.offset));
+        const list_ptr = try self.newTemp();
+        try self.qbeLoadL(list_ptr, faddr);
+        const is_null = try self.newTemp();
+        try self.qbeOp2Imm(is_null, .w, "ceql", list_ptr, 0);
+        const skip_label = try self.newLabel("trace_list_len_skip");
+        const have_label = try self.newLabel("trace_list_len_have");
+        const after_label = try self.newLabel("trace_list_len_after");
+        try self.qbeJnz(is_null, skip_label, have_label);
+        try self.qbeLabel(have_label);
+        const len_v = try self.newTemp();
+        try self.qbeLoadL(len_v, list_ptr);
+        const cur_count = try self.newTemp();
+        try self.qbeLoadL(cur_count, count_slot);
+        const new_count = try self.newTemp();
+        try self.qbeOp2(new_count, .l, "add", cur_count, len_v);
+        try self.qbeStoreL(new_count, count_slot);
+        try self.qbeJmp(after_label);
+        try self.qbeLabel(skip_label);
+        try self.qbeJmp(after_label);
+        try self.qbeLabel(after_label);
+    }
+
+    for (dict_class_fields.items) |f| {
+        const faddr = try self.newTemp();
+        try self.qbeOp2Imm(faddr, .l, "add", "%p", @intCast(f.offset));
+        const dict_ptr = try self.newTemp();
+        try self.qbeLoadL(dict_ptr, faddr);
+        const is_null = try self.newTemp();
+        try self.qbeOp2Imm(is_null, .w, "ceql", dict_ptr, 0);
+        const skip_label = try self.newLabel("trace_dict_len_skip");
+        const have_label = try self.newLabel("trace_dict_len_have");
+        const after_label = try self.newLabel("trace_dict_len_after");
+        try self.qbeJnz(is_null, skip_label, have_label);
+        try self.qbeLabel(have_label);
+        const len_v = try self.newTemp();
+        try self.qbeCall(.{ .name = len_v, .ty = .l }, "$nox_dict_len", &.{.{ .ty = .l, .text = dict_ptr }});
+        const cur_count = try self.newTemp();
+        try self.qbeLoadL(cur_count, count_slot);
+        const new_count = try self.newTemp();
+        try self.qbeOp2(new_count, .l, "add", cur_count, len_v);
+        try self.qbeStoreL(new_count, count_slot);
+        try self.qbeJmp(after_label);
+        try self.qbeLabel(skip_label);
+        try self.qbeJmp(after_label);
+        try self.qbeLabel(after_label);
+    }
+
+    const total_count = try self.newTemp();
+    try self.qbeLoadL(total_count, count_slot);
+    const size_bytes_a = try self.newTemp();
+    try self.qbeOp2Imm(size_bytes_a, .l, "mul", total_count, @intCast(TRACE_BUF_SLOT_SIZE));
+    const size_bytes = try self.newTemp();
+    try self.qbeOp2Imm(size_bytes, .l, "add", size_bytes_a, @intCast(TRACE_BUF_LEN_SIZE));
     const buf = try self.newTemp();
-    try self.qbeCall(.{ .name = buf, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{TRACE_BUF_LEN_SIZE + class_fields.items.len * TRACE_BUF_SLOT_SIZE}) } });
-    try self.qbeStoreImmL(@intCast(class_fields.items.len), buf);
+    try self.qbeCall(.{ .name = buf, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = size_bytes } });
+    try self.qbeStoreL(total_count, buf);
+
+    const write_idx_slot = try self.newTemp();
+    try self.qbeAlloc(write_idx_slot, .eight, 8);
+    try self.qbeStoreImmL(@intCast(class_fields.items.len), write_idx_slot);
+
+    // Doğrudan sınıf alanları — SABİT yuvalar (0..class_fields.len),
+    // tıpkı hızlı yoldaki GİBİ (bunlar İçİn çalışma-zamanı bir sayaca
+    // gerek YOK, sayıları ZATEN derleme-zamanında bilinir).
     for (class_fields.items, 0..) |f, i| {
         const addr = try self.newTemp();
         try self.qbeOp2Imm(addr, .l, "add", "%p", @intCast(f.offset));
@@ -221,8 +365,117 @@ pub fn genClassTrace(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) C
         try self.qbeOp2Imm(slot, .l, "add", buf, @intCast(TRACE_BUF_LEN_SIZE + i * TRACE_BUF_SLOT_SIZE));
         try self.qbeStoreL(fv, slot);
     }
+
+    for (list_class_fields.items) |f| {
+        const faddr = try self.newTemp();
+        try self.qbeOp2Imm(faddr, .l, "add", "%p", @intCast(f.offset));
+        const list_ptr = try self.newTemp();
+        try self.qbeLoadL(list_ptr, faddr);
+        const is_null = try self.newTemp();
+        try self.qbeOp2Imm(is_null, .w, "ceql", list_ptr, 0);
+        const skip_label = try self.newLabel("trace_list_fill_skip");
+        const have_label = try self.newLabel("trace_list_fill_have");
+        const after_label = try self.newLabel("trace_list_fill_after");
+        try self.qbeJnz(is_null, skip_label, have_label);
+        try self.qbeLabel(have_label);
+        const len_v = try self.newTemp();
+        try self.qbeLoadL(len_v, list_ptr);
+        try self.emitTraceCopyLoop(list_ptr, len_v, buf, write_idx_slot, "trace_list_fill");
+        try self.qbeJmp(after_label);
+        try self.qbeLabel(skip_label);
+        try self.qbeJmp(after_label);
+        try self.qbeLabel(after_label);
+    }
+
+    for (dict_class_fields.items) |f| {
+        const faddr = try self.newTemp();
+        try self.qbeOp2Imm(faddr, .l, "add", "%p", @intCast(f.offset));
+        const dict_ptr = try self.newTemp();
+        try self.qbeLoadL(dict_ptr, faddr);
+        const is_null = try self.newTemp();
+        try self.qbeOp2Imm(is_null, .w, "ceql", dict_ptr, 0);
+        const skip_label = try self.newLabel("trace_dict_fill_skip");
+        const have_label = try self.newLabel("trace_dict_fill_have");
+        const after_label = try self.newLabel("trace_dict_fill_after");
+        try self.qbeJnz(is_null, skip_label, have_label);
+        try self.qbeLabel(have_label);
+        // `nox_dict_values` (bkz. `runtime/collections/dict.zig`) DEĞER
+        // başına bir retain yapan, GERÇEK bir `list[ClassType]` (ARC
+        // başlıklı, `nox_rc_alloc`la tahsisli) döner — `d.values()`nin
+        // KENDİ, ZATEN VAR OLAN çalışma zamanı ilkeli, İKİNCİ bir mekanizma
+        // İCAT EDİLMEDİ. Anahtar tipi (`key_is_str`) DEĞER çıkarımını
+        // ETKİLEMEZ, bu YÜZDEN HER ZAMAN `0` geçilir.
+        const values_list = try self.newTemp();
+        try self.qbeCall(.{ .name = values_list, .ty = .l }, "$nox_dict_values", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = dict_ptr }, .{ .ty = .w, .text = "0" }, .{ .ty = .w, .text = "1" }, .{ .ty = .l, .text = "8" } });
+        const len_v = try self.newTemp();
+        try self.qbeLoadL(len_v, values_list);
+        try self.emitTraceCopyLoop(values_list, len_v, buf, write_idx_slot, "trace_dict_fill");
+        // `values_list`in KENDİSİ (geçici) serbest bırakılır — İÇİNDEKİ HER
+        // sınıf değeri `nox_dict_values`in KENDİSİ TARAFINDAN BİR KEZ
+        // retain edilmişti; bu release SADECE o retain'i geri alır —
+        // elemanların KENDİLERİ (orijinal dict HÂLÂ REFERANS TUTTUĞUNDAN)
+        // serbest BIRAKILMAZ (bkz. `releaseValueIfSet`in `.list` dalı,
+        // AYNI "refcount>0 İSE sadece azalt" güvenliği).
+        const elem_info = try self.allocator.create(ElemHeapInfo);
+        elem_info.* = .{ .heap = .class, .class_name = f.info.dict_info.?.value_class_name };
+        try self.releaseValueIfSet(values_list, .list, .l, null, elem_info, null);
+        try self.qbeJmp(after_label);
+        try self.qbeLabel(skip_label);
+        try self.qbeJmp(after_label);
+        try self.qbeLabel(after_label);
+    }
+
     try self.qbeRet(buf);
     try self.qbeFuncEnd();
+}
+
+/// `genClassTrace`nin yavaş yolunun ORTAK "bir `list[ClassType]`nin (ya da
+/// `nox_dict_values`in döndürdüğü GEÇİCİ listenin) TÜM elemanlarını
+/// `buf`nin İÇİNE, `write_idx_slot`teki ÇALIŞMA-ZAMANI yazma-indeksinden
+/// BAŞLAYARAK kopyala, indeksi HER elemanda artır" döngüsü — hem gerçek
+/// bir `list[T]` alanı HEM `nox_dict_values`in geçici sonucu AYNI bayt
+/// düzenini (`LIST_HEADER_SIZE` + 8-baytlık işaretçi elemanları)
+/// TAŞIDIĞINDAN TEK bir yardımcı yeterlidir.
+pub fn emitTraceCopyLoop(self: *Codegen, list_ptr: []const u8, len_v: []const u8, buf: []const u8, write_idx_slot: []const u8, comptime label_prefix: []const u8) CodegenError!void {
+    const i_slot = try self.newTemp();
+    try self.qbeAlloc(i_slot, .eight, 8);
+    try self.qbeStoreImmL(0, i_slot);
+    const cond_label = try self.newLabel(label_prefix ++ "_cond");
+    const body_label = try self.newLabel(label_prefix ++ "_body");
+    const loop_end_label = try self.newLabel(label_prefix ++ "_loopend");
+    try self.qbeJmp(cond_label);
+    try self.qbeLabel(cond_label);
+    const cur_i = try self.newTemp();
+    try self.qbeLoadL(cur_i, i_slot);
+    const cmp = try self.newTemp();
+    try self.qbeOp2(cmp, .w, "csltl", cur_i, len_v);
+    try self.qbeJnz(cmp, body_label, loop_end_label);
+    try self.qbeLabel(body_label);
+    const elem_off = try self.newTemp();
+    try self.qbeOp2Imm(elem_off, .l, "mul", cur_i, 8);
+    const elem_off2 = try self.newTemp();
+    try self.qbeOp2Imm(elem_off2, .l, "add", elem_off, @intCast(LIST_HEADER_SIZE));
+    const elem_addr = try self.newTemp();
+    try self.qbeOp2(elem_addr, .l, "add", list_ptr, elem_off2);
+    const elem_v = try self.newTemp();
+    try self.qbeLoadL(elem_v, elem_addr);
+    const wi = try self.newTemp();
+    try self.qbeLoadL(wi, write_idx_slot);
+    const wi_off = try self.newTemp();
+    try self.qbeOp2Imm(wi_off, .l, "mul", wi, @intCast(TRACE_BUF_SLOT_SIZE));
+    const wi_off2 = try self.newTemp();
+    try self.qbeOp2Imm(wi_off2, .l, "add", wi_off, @intCast(TRACE_BUF_LEN_SIZE));
+    const slot_addr = try self.newTemp();
+    try self.qbeOp2(slot_addr, .l, "add", buf, wi_off2);
+    try self.qbeStoreL(elem_v, slot_addr);
+    const wi_next = try self.newTemp();
+    try self.qbeOp2Imm(wi_next, .l, "add", wi, 1);
+    try self.qbeStoreL(wi_next, write_idx_slot);
+    const i_next = try self.newTemp();
+    try self.qbeOp2Imm(i_next, .l, "add", cur_i, 1);
+    try self.qbeStoreL(i_next, i_slot);
+    try self.qbeJmp(cond_label);
+    try self.qbeLabel(loop_end_label);
 }
 
 /// Faz S.3: HER sınıf İÇİN `$ClassName_gc_free(rt, p)` üretir —
@@ -256,6 +509,56 @@ pub fn genClassGcFree(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) 
     try self.qbeFuncHeaderEnd();
     for (cinfo.fields.items) |f| {
         if (f.info.heap == .class) continue; // bkz. yukarıdaki belge notu
+        // v3 madde 3 (bkz. `nox_list_shallow_gc_free`/`nox_dict_shallow_
+        // gc_free_class_values`in belge notu, `runtime/alloc/arc.zig`/
+        // `runtime/collections/dict.zig`) — DÜZELTME: list[ClassType]/
+        // dict[K, ClassType] alanları da (DOĞRUDAN `.class` alanları
+        // GİBİ) sınıf-tipli ÇOCUKLARA erişebildiğinden, NORMAL `release
+        // ValueIfSet` (elemanları/değerleri NORMAL ARC İLE serbest
+        // bırakır, `nox_cycle_possible_root`u TEKRAR tetikleyip
+        // `collectWhite`in worklist'İNİ BOZAR) YERİNE "sığ" bir serbest
+        // bırakma kullanılır — SADECE liste/dict'in KENDİ yapısı serbest
+        // bırakılır, İÇİNDEKİ sınıf değerlerine HİÇ DOKUNULMAZ (onlar
+        // `collectWhite`in KENDİ özyinelemesiyle AYRICA ele alınır).
+        if (f.info.heap == .list and f.info.elem_heap_info != null and f.info.elem_heap_info.?.heap == .class) {
+            const addr = try self.newTemp();
+            try self.qbeOp2Imm(addr, .l, "add", "%p", @intCast(f.offset));
+            const fv = try self.newTemp();
+            try self.qbeLoadL(fv, addr);
+            const is_null = try self.newTemp();
+            try self.qbeOp2Imm(is_null, .w, "ceql", fv, 0);
+            const skip_label = try self.newLabel("gcfree_list_skip");
+            const have_label = try self.newLabel("gcfree_list_have");
+            const after_label = try self.newLabel("gcfree_list_after");
+            try self.qbeJnz(is_null, skip_label, have_label);
+            try self.qbeLabel(have_label);
+            try self.qbeCall(null, "$nox_list_shallow_gc_free", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = fv } });
+            try self.qbeJmp(after_label);
+            try self.qbeLabel(skip_label);
+            try self.qbeJmp(after_label);
+            try self.qbeLabel(after_label);
+            continue;
+        }
+        if (f.info.heap == .dict and f.info.dict_info != null and f.info.dict_info.?.value_is_class) {
+            const addr = try self.newTemp();
+            try self.qbeOp2Imm(addr, .l, "add", "%p", @intCast(f.offset));
+            const fv = try self.newTemp();
+            try self.qbeLoadL(fv, addr);
+            const is_null = try self.newTemp();
+            try self.qbeOp2Imm(is_null, .w, "ceql", fv, 0);
+            const skip_label = try self.newLabel("gcfree_dict_skip");
+            const have_label = try self.newLabel("gcfree_dict_have");
+            const after_label = try self.newLabel("gcfree_dict_after");
+            try self.qbeJnz(is_null, skip_label, have_label);
+            try self.qbeLabel(have_label);
+            const key_is_str_lit: []const u8 = if (f.info.dict_info.?.key_is_str) "1" else "0";
+            try self.qbeCall(null, "$nox_dict_shallow_gc_free_class_values", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = fv }, .{ .ty = .w, .text = key_is_str_lit } });
+            try self.qbeJmp(after_label);
+            try self.qbeLabel(skip_label);
+            try self.qbeJmp(after_label);
+            try self.qbeLabel(after_label);
+            continue;
+        }
         if (isHeapManaged(f.info.heap)) {
             const addr = try self.newTemp();
             try self.qbeOp2Imm(addr, .l, "add", "%p", @intCast(f.offset));

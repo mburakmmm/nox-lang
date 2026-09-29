@@ -1,0 +1,16 @@
+class MyError:
+    code: int
+    def __init__(self: MyError, code: int) -> None:
+        self.code = code
+
+def inner() -> None:
+    e: MyError = MyError(42)
+    raise e
+
+def outer() -> None:
+    try:
+        inner()
+    except MyError as err:
+        print(err.code)
+
+outer()

@@ -345,6 +345,7 @@ pub const Codegen = struct {
     pub const genClassVtable = layout.genClassVtable;
     pub const genClassRelease = layout.genClassRelease;
     pub const genClassTrace = layout.genClassTrace;
+    pub const emitTraceCopyLoop = layout.emitTraceCopyLoop;
     pub const genClassGcFree = layout.genClassGcFree;
     pub const genClassReleaseDispatch = layout.genClassReleaseDispatch;
     pub const genClassNameDispatch = layout.genClassNameDispatch;
@@ -474,6 +475,7 @@ pub const Codegen = struct {
     pub const genPrintClass = expr_mod.genPrintClass;
 
     pub const emitExceptionCheck = exceptions.emitExceptionCheck;
+    pub const emitExceptionCheckExcept = exceptions.emitExceptionCheckExcept;
 
     pub const genStmts = stmt_mod.genStmts;
     pub const genLowLevel = stmt_mod.genLowLevel;

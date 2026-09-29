@@ -22,8 +22,27 @@ const isHeapManaged = abi.isHeapManaged;
 pub fn genRaise(self: *Codegen, expr: ast.Expr) CodegenError!void {
     const obj = try self.genExpr(expr);
     if (obj.heap != .class) return error.Unsupported;
+    // v3 madde 3 (ownership/ptr[T] red-team, bkz. nox-teknik-spesifikasyon.md
+    // ilgili bölüm): **DÜZELTME (GERÇEK, bir kaçış-taramasında BULUNAN bir
+    // hata)** — `return`/`.attribute` ataması GİBİ diğer TÜM "bu değer artık
+    // kalıcı olarak kapsam-dışına taşınıyor" siteleri `checkNoLowlevelEscape`
+    // çağırırken, `raise` bunu EKSİK bırakıyordu. Bir `lowlevel:` bloğu
+    // İÇİNDE inşa edilip `raise` edilen bir istisna, `except`in YAKALADIĞI
+    // fonksiyon sınırının ÖTESİNE (ki bu, arananın KENDİ arenasının
+    // `emitExceptionCheck`in yakalanmamış-dalının `drainArenas()`ıYLA
+    // YIKILMASINDAN SONRA anlamına gelir) kaçabiliyordu — `except` bloğu
+    // SONRADAN, TAMAMEN ALAKASIZ bir nesnenin verisini okuyordu (GERÇEK bir
+    // veri-bozulması İLE KANITLANDI). `return`İN AYNI muhafazakâr, "lowlevel
+    // İÇİNDEYKEN/arena-etiketliyken HER ZAMAN reddet" kuralı burada da
+    // uygulanır.
+    try self.checkNoLowlevelEscape(obj);
     try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
-    try self.emitExceptionCheck();
+    // Bkz. `emitExceptionCheckExcept`in belge notu — `return`nin AYNI
+    // `except_name` deseni: `raise <isim>` İSE (bare identifier), o yerel
+    // artık "sahiplik nox_raise'e TAŞINDI" sayılır, aşağıdaki fonksiyon-
+    // terk-etme dalının serbest bırakma listesinden HARİÇ TUTULUR.
+    const except_name: ?[]const u8 = if (expr == .identifier) expr.identifier else null;
+    try self.emitExceptionCheckExcept(except_name);
 }
 
 /// Şu an aktif olan (en içten en dışa) tüm `finally` gövdelerini satır
@@ -832,6 +851,25 @@ pub fn markRecursiveFuncs(self: *Codegen, info_map: *const std.StringHashMapUnma
 /// bir `try` varsa (`current_catch_label`) oraya, yoksa doğrudan bu
 /// fonksiyonun erken (temizlenmiş) çıkışına dallanır.
 pub fn emitExceptionCheck(self: *Codegen) CodegenError!void {
+    return self.emitExceptionCheckExcept(null);
+}
+
+/// `emitExceptionCheck` İLE AYNI, ama `except_name` (bir yerel değişkenin
+/// adı) verilmişse, aşağıdaki "yakalanmadı, fonksiyonu terk ediyoruz"
+/// dalında `releaseAllLocals`in YERİNE `releaseAllLocalsExcept(except_name)`
+/// kullanır. **DÜZELTME (v3 madde 3'te BULUNAN, `lowlevel` GEREKTİRMEYEN,
+/// GERÇEK bir SIGSEGV):** `genRaise`, bir İSME bağlı bir istisna nesnesini
+/// (`raise e`) `$nox_raise`e verdiğinde, `nox_raise`in KENDİSİ retain
+/// YAPMAZ (`runtime/errors/handle.zig`nin `nox_raise`ı, işaretçiyi
+/// DOĞRUDAN bekleyen-istisna yuvasına YAZAR) — bu, `return e`nin AYNI
+/// "sahiplik çağırana TAŞINDI" ilişkisidir (bkz. `stmt.zig`nin `return`
+/// dalındaki `except_name` deseni). AMA `emitExceptionCheck`in BU
+/// fonksiyonu terk eden dalı KOŞULSUZ `releaseAllLocals()` çağırıyordu —
+/// `e`yi de İÇİNE ALARAK — bu, `except` bloğunun DAHA SONRA okuyacağı AYNI
+/// nesneyi ERKEN serbest bırakıp bir kullanım-sonrası-serbest-bırakmaya
+/// yol açıyordu (GERÇEK bir SIGSEGV İLE KANITLANDI, `lowlevel` HİÇ
+/// KULLANILMADAN).
+pub fn emitExceptionCheckExcept(self: *Codegen, except_name: ?[]const u8) CodegenError!void {
     const pending = try self.newTemp();
     try self.qbeCall(.{ .name = pending, .ty = .w }, "$nox_exception_pending", &.{.{ .ty = .l, .text = RT_PARAM }});
     const propagate_label = try self.newLabel("exc_propagate");
@@ -861,7 +899,7 @@ pub fn emitExceptionCheck(self: *Codegen) CodegenError!void {
         try self.drainArenas();
         try self.drainFunctionArena();
         try self.drainDeferIfSet();
-        try self.releaseAllLocals();
+        try self.releaseAllLocalsExcept(except_name);
         try self.emitDefaultReturn(self.current_ret_qtype);
     }
     try self.qbeLabel(continue_label);

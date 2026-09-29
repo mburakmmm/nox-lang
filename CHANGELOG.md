@@ -14,6 +14,26 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.109.1]
+
+### Düzeltildi
+
+- **Ownership/`ptr[T]` red-team taraması — 6 GERÇEK bellek-güvenliği
+  hatası (bkz. nox-teknik-spesifikasyon.md §3.200)**: v3 sertleştirme
+  yol haritasının 3. maddesi. `checkNoLowlevelEscape`nin eksik olduğu 4
+  kaçış rotası düzeltildi — `lowlevel:` içinde inşa edilen bir değerin
+  `raise` edilmesi (arena yıkıldıktan sonra okuma), düz `<isim> =
+  <değer>` ataması (SIGBUS), `detach()` edilmiş bir değişkene yeniden
+  atama (SIGSEGV), ve closure yakalama (komşu belleğe sessiz yazma) artık
+  derleme zamanında reddediliyor. Ayrıca: isimli bir yerelde tutulan bir
+  istisnayı `raise` edip fonksiyon sınırı ötesinde yakalamak artık
+  ÇÖKMEDEN çalışıyor (`lowlevel` hiç gerekmeden, SIGSEGV veriyordu).
+  `list[ClassType]`/`dict[K, ClassType]` alanları üzerinden kurulan A↔B
+  sınıf döngüleri artık döngü çözücü tarafından doğru toplanıyor (üç
+  ayrı kod yolunda düzeltme gerekti — sonsuz sızıntı veriyordu, gerçek
+  bir programda `DebugAllocator` ile doğrulandı: 1000 yinelemede
+  4000→0 sızıntı). `zig build test` sıfır regresyon.
+
 ## [1.109.0]
 
 ### Eklendi

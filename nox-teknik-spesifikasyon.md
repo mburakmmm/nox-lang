@@ -24727,6 +24727,147 @@ re-export), `compiler/fmt/formatter.zig` (`binPrec`/`binOpStr`/
 
 ---
 
+## 3.200 v3 sertleştirme yol haritası, madde 3 — Ownership/`ptr[T]` red-team: 6 GERÇEK bellek-güvenliği hatası
+
+**Bağlam:** kullanıcının onayladığı 12 maddelik "v3 sertleştirme yol
+haritası"nın 3. maddesi — ASAP/ARC/`lowlevel`/`ptr[T]` sınırında
+sistematik bir güvenlik/doğruluk taraması. İki paralel araştırma agent'ı
+(biri ASAP/ARC/döngü-çözücü, diğeri `lowlevel`/`ptr[T]`/`extern def` güven
+sınırı) GERÇEK `noxc build`+çalıştırmayla DOĞRULANMIŞ **6 GERÇEK hata**
+buldu — hiçbiri spekülasyon değil, HEPSİ somut bir Nox kaynak deseni +
+gözlemlenen ÇÖKME/bozulma/sızıntı İLE kanıtlandı.
+
+### 1-4: `checkNoLowlevelEscape`nin (bkz. §9.5, `compiler/codegen_qbe/
+ownership.zig`) EKSİK olduğu 3 kaçış rotası + 1 closure-özel hata
+
+`return`/`.attribute` ataması GİBİ "bu değer artık kalıcı olarak kapsam-
+dışına taşınıyor" siteleri bu kontrolü ÇAĞIRIRKEN, AŞAĞIDAKİ DÖRT site
+EKSİK bırakıyordu:
+
+1. **`raise <isim>`** (`compiler/codegen_qbe/exceptions.zig`nin `genRaise`ı)
+   — `lowlevel:` İÇİNDE inşa edilip `raise` edilen bir istisna, `except`in
+   YAKALADIĞI fonksiyon sınırının ÖTESİNE (arananın arenası YIKILDIKTAN
+   SONRA) kaçabiliyordu — `except` bloğu SONRADAN TAMAMEN ALAKASIZ bir
+   nesnenin verisini okuyordu (GERÇEK bir veri-bozulmasıYLA KANITLANDI).
+2. **Düz `<isim> = <değer>` ataması** (`compiler/codegen_qbe/stmt.zig`nin
+   `genAssign`ının `.identifier` dalı) — bir arena değeri arena-DIŞI bir
+   slota SESSİZCE yazılabiliyordu, arena yıkılınca DANGLING bir işaretçi
+   bırakarak (GERÇEK bir SIGBUS İLE KANITLANDI).
+3. **Aynı `.identifier` dalının serbest-bırakma KORUMASI** `.var_decl`nin
+   KARDEŞ korumasıyla (`!info.borrowed_field`/`!info.is_stack_local`/
+   `!info.manual`) EŞLEŞMİYORDU — `detach()` edilmiş bir değişkene
+   yeniden atama, HÂLÂ CANLI olan ham `ptr`ı ARC'nin ERKEN serbest
+   bırakmasına yol açıyordu (GERÇEK bir SIGSEGV İLE KANITLANDI).
+4. **Closure yakalama** (`compiler/codegen_qbe/closures.zig`nin
+   `buildClosureValue`ı) — arena-etiketli bir değeri KOŞULSUZ `emitInline
+   Retain` İLE "retain" ediyordu; arena tahsislerinin ARC başlığı
+   OLMADIĞINDAN bu, KOMŞU arena belleğine (ör. bitişik bir listenin
+   elemanına) SESSİZCE yazıyordu — closure'ı HİÇ ÇAĞIRMADAN bile (GERÇEK
+   bir bellek bozulmasıYLA, closure hiç çağrılmadan bile tetiklenerek
+   KANITLANDI).
+
+**Düzeltme:** dört site de `checkNoLowlevelEscape`i (closure'da: `src_
+slot.arena`/`heap` ile inşa edilmiş bir `Value` üzerinden) çağıracak
+şekilde güncellendi — HEPSİ artık derleme-zamanında `error.Unsupported`
+İLE reddedilir (mevcut, "aşırı-geniş ama güvenli" kaçış-önleme felsefesiyle
+TUTARLI).
+
+### 5: `raise`in `releaseAllLocals`i (`lowlevel` GEREKTİRMEZ)
+
+`emitExceptionCheck`in "yakalanmadı, fonksiyonu terk ediyoruz" dalı
+KOŞULSUZ `releaseAllLocals()` çağırıyordu — `raise <isim>`in `<isim>`i
+DE (nox_raise'in KENDİSİ retain YAPMADIĞI İçİn) BUNA DAHİL EDİYORDU,
+`except`in DAHA SONRA okuyacağı AYNI nesneyi ERKEN serbest bırakıp bir
+kullanım-sonrası-serbest-bırakmaya yol AÇIYORDU (GERÇEK bir SIGSEGV İLE
+KANITLANDI, `lowlevel` HİÇ KULLANILMADAN — bu, en TEMEL/en GENİŞ etkili
+bulgudur, ÇÜNKÜ herhangi bir "yerel bir değişkende tutulan istisnayı
+raise et" deseni bunu tetikler). **Düzeltme:** `return`in AYNI `except_
+name` deseni (bkz. `stmt.zig`nin `return_stmt`ı) `raise`e de uygulandı —
+`emitExceptionCheck`, `except_name: ?[]const u8` alan bir `emitException
+CheckExcept`e ayrıştırıldı (eski imza KORUNDU, `null` İLE sarmalar);
+`genRaise`, `raise`edilen ifade bir çıplak isimse bunu GEÇİRİR.
+
+### 6: `list[ClassType]`/`dict[K, ClassType]` alanları ÜZERİNDEN kurulan
+A↔B döngüleri döngü çözücü TARAFINDAN HİÇ GÖRÜLMÜYORDU (sonsuz sızıntı)
+
+`runtime/alloc/cycle_detector.zig`nin KENDİ modül üstü notu "bugün
+yalnızca sınıf örnekleri arasında GERÇEK bir A↔B döngüsü kurulabilir"
+diyordu — bu YANLIŞTI: `a.children.append(b)` GİBİ bir çağrı `b`yi RETAIN
+EDER, ama BU referans hiçbir yere RAPORLANMIYORDU. Kök neden **ÜÇ AYRI
+yerde** (tek bir düzeltme YETERSİZDİ, her biri KENDİ gerçek programıyla
+DOĞRULANDI):
+
+1. **`genClassTrace`** (`compiler/codegen_qbe/layout.zig`) — SADECE `f.
+   info.heap == .class` alanlarını topluyordu, `list[ClassType]`/
+   `dict[K, ClassType]` alanlarını (AYRI `HeapKind`ler) TAMAMEN
+   GÖRMEZDEN geliyordu. **Düzeltme:** yeni bir "yavaş yol" — İKİ geçişli
+   (SAYIM, SONRA DOLDURMA) bir strateji, çalışma-zamanı liste/dict
+   uzunluklarına göre DİNAMİK boyutlu bir arabellek İNŞA eder (`dict[K,
+   ClassType]` İçİn `nox_dict_values`in KENDİSİ, ZATEN VAR olan çalışma
+   zamanı ilkeli, İKİNCİ bir mekanizma İCAT EDİLMEDEN kullanılır). List/
+   dict alanı OLMAYAN sınıflar İçİn ESKİ, SIFIR-ek-maliyetli yol
+   DEĞİŞMEDEN korunur.
+2. **`genClassGcFree`** (AYNI dosya) — `collectWhite`in KENDİ belge
+   notunun kurduğu değişmezi ("gc_free ASLA sınıf-tipli çocuklara
+   DOKUNMAMALI, onlar SADECE collectWhite'ın KENDİ özyinelemesiyle
+   İŞLENMELİDİR") İHLAL EDİYORDU — list/dict-of-class alanları İçİn
+   NORMAL `releaseValueIfSet` çağırıyordu, BU DA (`nox_rc_release_
+   enqueue_fixed`nin sığ-derinlik DOĞRUDAN-çağrı yolu ÜZERİNDEN)
+   `nox_cycle_possible_root`u TEKRAR tetikleyip `collectWhite`in KENDİ
+   worklist'İNDE HÂLÂ BEKLEYEN bir çocuğun rengini (`white`den `purple`ye)
+   DEĞİŞTİRİYOR, bu da `collectWhite`in onu SESSİZCE ATLAMASINA (GERÇEK
+   bir SEGFAULT/UAF İLE, DÜZELTİLMEDEN ÖNCEKİ davranışı BİREBİR taklit
+   eden bir birim testiyle KANITLANDI) yol AÇIYORDU. **Düzeltme:** İKİ
+   YENİ, GENEL (element tipinden BAĞIMSIZ) çalışma-zamanı fonksiyonu —
+   `nox_list_shallow_gc_free` (`runtime/alloc/arc.zig`) VE `nox_dict_
+   shallow_gc_free_class_values` (`runtime/collections/dict.zig`) —
+   liste/dict'in KENDİ yapısını serbest bırakır, İÇİNDEKİ sınıf
+   değerlerine HİÇ DOKUNMAZ (anahtar `str`İSE HÂLÂ normal serbest
+   bırakılır — döngüyle İLİŞKİSİZ).
+3. **`genClassRelease`nin `has_class_field`ı** (AYNI dosya) — **BU TURUN
+   ASIL kök nedeniydi; 1 VE 2 TEK BAŞINA YETERSİZDİ** — bu bayrak DA
+   SADECE `.class` alanlarını sayıyordu; `Node`nin (`children: list
+   [Node]`) `has_class_field`ı HİÇBİR ZAMAN `true` OLMUYORDU — bu YÜZDEN
+   predecrement SIFIRA düşmediğinde `nox_cycle_possible_root` HİÇ
+   ÇAĞRILMIYORDU, nesne YALNIZ BAŞINA (RC=1, GERÇEK bir döngünün parçası
+   OLARAK) bırakılıp döngü çözücü TARAFINDAN ASLA GÖRÜLMÜYORDU. **Bu,
+   1 VE 2'nin düzeltilmesinden SONRA BİLE sızıntının SÜRMESİNİN nedeniydi**
+   — `collectWhite` hiçbir zaman ÇAĞRILMIYORDU. **Düzeltme:** AYNI
+   list/dict-of-class kontrolü BURAYA da eklendi.
+
+**Doğrulama metodolojisi (`ölç, varsayma`):** İlk RSS-tabanlı deneme
+(peak bellek ölçümü) allocator gürültüsü YÜZÜNDEN YANILTICIYDI (normal
+programlar da RSS'i doğrusal büyütür) — GERÇEK kanıt, `zig build test`in
+KENDİ `DebugAllocator`ı ALTINDA gerçek bir `noxc`-derlenmiş program
+çalıştırılıp "leaked:" satırlarının SAYILMASIYLA elde EDİLDİ (1000
+yinelemeli bir A↔B `list`-döngüsü testi, düzeltme ÖNCESİ 4000 sızıntı
+[2000 sınıf örneği + 2000 liste arabelleği], düzeltme SONRASI **0**).
+Kök nedeni İZOLE ETMEK İçİn `runtime/errors/diag_sink.zig`nin (freestanding-
+GÜVENLİ, ZATEN var olan) `report()` fonksiyonu GEÇİCİ olarak `nox_cycle_
+possible_root`/`traceChildren`/`collectLocked`e eklenip KALDIRILDI —
+`nox_cycle_possible_root`in HİÇ ÇAĞRILMADIĞI GÖZLEMİ (3. bulgunun KESİN
+kanıtı) BU şekilde bulundu.
+
+**Golden/birim testleri:** `tests/golden/codegen_cases/rejected_lowlevel_
+{closure_capture,raise,identifier_reassign,detach_reassign}.nox` (4 YENİ
+"reddedilir" testi, `expectRejected` yardımcısıyla), `raise_named_local_
+cross_function.nox`/`.expected` (5. bulgunun DAVRANIŞSAL kanıtı — artık
+"42" basıyor, ÖNCEDEN SIGSEGV), `runtime/alloc/cycle_detector.zig`ye YENİ
+bir birim testi ("list[T]/dict[K,V] ÜZERİNDEN kurulan A<->B döngüsü...").
+`zig build test` SIFIR regresyonla geçer.
+
+**Kritik dosyalar:** `compiler/codegen_qbe/exceptions.zig` (`genRaise`,
+`emitExceptionCheckExcept`), `compiler/codegen_qbe/stmt.zig` (`genAssign`
+`.identifier` dalı), `compiler/codegen_qbe/closures.zig`
+(`buildClosureValue`), `compiler/codegen_qbe/layout.zig` (`genClassTrace`,
+`genClassGcFree`, `genClassRelease`nin `has_class_field`ı,
+`emitTraceCopyLoop`), `compiler/codegen_qbe/codegen.zig` (yeni
+re-export'lar), `runtime/alloc/arc.zig` (`nox_list_shallow_gc_free`),
+`runtime/collections/dict.zig` (`nox_dict_shallow_gc_free_class_values`),
+`runtime/alloc/cycle_detector.zig` (YENİ birim testi).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

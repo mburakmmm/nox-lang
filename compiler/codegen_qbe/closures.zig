@@ -59,27 +59,30 @@ pub fn buildClosureValue(self: *Codegen, fd: ast.FuncDef) CodegenError![]const u
     const captures = try self.allocator.alloc(ClosureCaptureField, capture_names.len);
     for (capture_names, 0..) |name, i| {
         const src = self.vars.get(name) orelse return error.Unsupported;
-        captures[i] = .{ .name = name, .info = .{
-            .qtype = src.qtype,
-            .heap = src.heap,
-            .elem_qtype = src.elem_qtype,
-            .class_name = src.class_name,
-            .elem_heap_info = src.elem_heap_info,
-            .elem_is_str = src.elem_is_str,
-            .dict_info = src.dict_info,
-            // Bulundu (nyx framework — bkz. proje belleği "nyx'te farkedilen
-            // Nox eksiklikleri" görevi): bu alan EKSİKTİ — `heap == .closure`
-            // OLAN bir yakalanan (capture) değerin STATİK çağrı imzası
-            // (`func_sig`) BURADA kopyalanmadığından, iç içe `def`in KENDİ
-            // gövdesi yakalanan bir FONKSİYON-TİPLİ değeri (ör. `handler(x)`)
-            // ÇAĞIRMAYA çalıştığında `genCall`nin dolaylı-çağrı yolu
-            // `func_sig`i `null` BULUP `error.Unsupported` dönüyordu — SADECE
-            // fonksiyon-tipli yakalamalar ETKİLENİYORDU (list/dict/str/sınıf
-            // GİBİ VERİ tipi yakalamalar `func_sig` KULLANMADIĞINDAN
-            // sorunsuzdu). `allocSlot` (bkz. `registration.zig`) BU alanı
-            // zaten doğru taşıyordu — eksik olan yalnızca BURASIYDI.
-            .func_sig = src.func_sig,
-        } };
+        captures[i] = .{
+            .name = name,
+            .info = .{
+                .qtype = src.qtype,
+                .heap = src.heap,
+                .elem_qtype = src.elem_qtype,
+                .class_name = src.class_name,
+                .elem_heap_info = src.elem_heap_info,
+                .elem_is_str = src.elem_is_str,
+                .dict_info = src.dict_info,
+                // Bulundu (nyx framework — bkz. proje belleği "nyx'te farkedilen
+                // Nox eksiklikleri" görevi): bu alan EKSİKTİ — `heap == .closure`
+                // OLAN bir yakalanan (capture) değerin STATİK çağrı imzası
+                // (`func_sig`) BURADA kopyalanmadığından, iç içe `def`in KENDİ
+                // gövdesi yakalanan bir FONKSİYON-TİPLİ değeri (ör. `handler(x)`)
+                // ÇAĞIRMAYA çalıştığında `genCall`nin dolaylı-çağrı yolu
+                // `func_sig`i `null` BULUP `error.Unsupported` dönüyordu — SADECE
+                // fonksiyon-tipli yakalamalar ETKİLENİYORDU (list/dict/str/sınıf
+                // GİBİ VERİ tipi yakalamalar `func_sig` KULLANMADIĞINDAN
+                // sorunsuzdu). `allocSlot` (bkz. `registration.zig`) BU alanı
+                // zaten doğru taşıyordu — eksik olan yalnızca BURASIYDI.
+                .func_sig = src.func_sig,
+            },
+        };
     }
 
     const total_size = CLOSURE_HEADER_SIZE + 8 * captures.len;
@@ -98,6 +101,25 @@ pub fn buildClosureValue(self: *Codegen, fd: ast.FuncDef) CodegenError![]const u
         const addr = try self.newTemp();
         try self.qbeOp2Imm(addr, .l, "add", block, @intCast(offset));
         const src_slot = self.vars.get(c.name).?;
+        // v3 madde 3 (ownership/ptr[T] red-team, bkz. nox-teknik-
+        // spesifikasyon.md ilgili bölüm): **DÜZELTME (GERÇEK, bir
+        // kaçış-taramasında BULUNAN, SESSİZ bellek bozulmasına yol açan
+        // bir hata)** — bu döngü `emitInlineRetain`i KOŞULSUZ çağırıyordu;
+        // ARC başlığının payload'dan HEMEN ÖNCEKİ 8 baytta olduğunu
+        // VARSAYAR (bkz. `emitInlineRetain`in belge notu) — AMA arena
+        // tahsisli (`lowlevel:` İÇİNDE inşa edilmiş) bir değerin BÖYLE
+        // bir başlığı YOKTUR (`nox_arena_alloc`, bkz. §8 Katman 4).
+        // Yakalanan değer arena-etiketliyse, bu "retain" KOMŞU arena
+        // belleğine (ör. bitişik bir listenin elemanına) SESSİZCE yazıyordu
+        // — GERÇEK bir veri bozulmasıYLA KANITLANDI. `return`/`.attribute`/
+        // `raise`in AYNI muhafazakâr kuralı (bkz. `checkNoLowlevelEscape`)
+        // burada da uygulanır — bu, `self.in_lowlevel_depth > 0`İKEN de
+        // (arena-etiketli OLMASA BİLE) reddeder, ÇÜNKÜ closure'ın KENDİSİ
+        // arenanın ÖMRÜNÜN ÖTESİNE kaçabilir (bkz. plan dosyasının "Kapsam
+        // Dışı" notu — closure'ın KENDİ kaçışı AYRI, daha geniş bir konu).
+        if (isHeapManaged(c.info.heap)) {
+            try self.checkNoLowlevelEscape(.{ .text = "", .qtype = src_slot.qtype, .heap = src_slot.heap, .arena = src_slot.arena, .class_name = src_slot.class_name });
+        }
         const v = try self.newTemp();
         try self.qbeLoad(v, src_slot.qtype, src_slot.qtype, src_slot.slot);
         if (isHeapManaged(c.info.heap)) try self.emitInlineRetain(v, c.info.heap);

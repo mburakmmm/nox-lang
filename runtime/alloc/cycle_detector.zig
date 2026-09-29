@@ -678,6 +678,48 @@ fn deinitRuntimeExpectNoLeak(rt: ?*anyopaque) !void {
     std.heap.page_allocator.destroy(state);
 }
 
+// v3 madde 3 (ownership/ptr[T] red-team, bkz. nox-teknik-spesifikasyon.md
+// ilgili bölüm): `wireField`, HEM retain eder HEM alanı `fakeTraceDispatch`in
+// GÖRECEĞİ konuma YAZAR — GERÇEK bir `self.next = child` atamasının BİREBİR
+// modelidir. AŞAĞIDAKİ test BİLİNÇLİ olarak `wireField` KULLANMAZ — SADECE
+// `arc.nox_rc_retain`i DOĞRUDAN çağırıp alanı BOŞ (`null`) bırakır — bu,
+// `genClassTrace`nin (`compiler/codegen_qbe/layout.zig`) `list`/`dict`
+// TİPLİ bir alanı (GERÇEK bir `a.children.append(b)`nin YAPTIĞI GİBİ
+// `b`yi RETAIN EDER ama `$Node_trace`nin ÜRETTİĞİ alan listesine HİÇ
+// GİRMEZ, ÇÜNKÜ o fonksiyon YALNIZCA `f.info.heap == .class` alanları
+// TOPLAR) davranışının BİREBİR SİMÜLASYONUDUR — **BU DAVRANIŞ v3 madde 3
+// İLE `compiler/codegen_qbe/layout.zig`nin `genClassTrace`ı DÜZELTİLDİ**
+// (list/dict-of-class alanları da İZLENİYOR); BU test HÂLÂ (BİLİNÇLİ
+// olarak) `wireField` KULLANMADAN, DÜZELTME-ÖNCESİ davranışı TAKLİT ederek
+// KALICI bir REGRESYON kilidi olarak KALIYOR (derleyicinin KENDİSİ düzeldi,
+// AMA algoritmanın "trace hiçbir çocuk raporlamazsa döngü KESİNLİKLE
+// KAÇIRILIR" özelliği DOĞRU/beklenen — bu test O KURALI kanıtlıyor).
+test "v3 madde 3: trace() çocuk raporlamazsa (list/dict-of-class alanının DÜZELTME-ÖNCESİ simülasyonu) A<->B döngüsü nox_cycle_collect TARAFINDAN KAÇIRILIR" {
+    injectFakeDispatch();
+
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+
+    const a = newFakeObject(rt);
+    const b = newFakeObject(rt);
+    arc.nox_rc_retain(b);
+    arc.nox_rc_retain(a);
+
+    simulateRelease(rt, a);
+    simulateRelease(rt, b);
+
+    try testing.expectEqual(@as(i64, 1), refcountOf(a).*);
+    try testing.expectEqual(@as(i64, 1), refcountOf(b).*);
+
+    nox_cycle_collect(rt);
+
+    try testing.expectEqual(@as(usize, 0), g_fake_freed_count);
+
+    arc.nox_rc_release(rt, b, FAKE_PAYLOAD_SIZE);
+    arc.nox_rc_release(rt, a, FAKE_PAYLOAD_SIZE);
+
+    try deinitRuntimeExpectNoLeak(rt);
+}
+
 test "Faz S.3: gerçek A<->B döngüsü (self-referans YOLUYLA kurulan), nox_cycle_collect ikisini de sızmadan serbest bırakır" {
     injectFakeDispatch();
 

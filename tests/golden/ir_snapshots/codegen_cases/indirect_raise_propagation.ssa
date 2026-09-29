@@ -686,59 +686,63 @@ export function $JsonValue_release(l %rt, l %p) {
     %t2 =l sub %t1, 1
     storel %t2, %t0
     %t3 =w cslel %t2, 0
-    jnz %t3, @release_free0, @release_done1
+    jnz %t3, @release_free0, @release_possible_root2
+@release_possible_root2
+    call $nox_cycle_possible_root(l %rt, l %p)
+    jmp @release_done1
 @release_free0
+    call $nox_cycle_forget(l %rt, l %p)
     %t4 =l add %p, 32
     %t5 =l loadl %t4
     %t6 =w ceql %t5, 0
-    jnz %t6, @release_skip3, @release2
-@release2
+    jnz %t6, @release_skip4, @release3
+@release3
     %t7 =l sub %t5, 16
     %t8 =l loadl %t7
     %t9 =l sub %t8, 1
     storel %t9, %t7
     %t10 =w cslel %t9, 0
-    jnz %t10, @str_free5, @str_free_skip6
-@str_free5
+    jnz %t10, @str_free6, @str_free_skip7
+@str_free6
     call $nox_str_free_now(l %rt, l %t5)
-    jmp @str_free_done7
-@str_free_skip6
-    jmp @str_free_done7
-@str_free_done7
-    jmp @release_done4
-@release_skip3
-    jmp @release_done4
-@release_done4
+    jmp @str_free_done8
+@str_free_skip7
+    jmp @str_free_done8
+@str_free_done8
+    jmp @release_done5
+@release_skip4
+    jmp @release_done5
+@release_done5
     %t11 =l add %p, 40
     %t12 =l loadl %t11
     %t13 =w ceql %t12, 0
-    jnz %t13, @release_skip9, @release8
-@release8
+    jnz %t13, @release_skip10, @release9
+@release9
     call $List_JsonValue_release(l %rt, l %t12)
-    jmp @release_done10
-@release_skip9
-    jmp @release_done10
-@release_done10
+    jmp @release_done11
+@release_skip10
+    jmp @release_done11
+@release_done11
     %t14 =l add %p, 48
     %t15 =l loadl %t14
     %t16 =w ceql %t15, 0
-    jnz %t16, @release_skip12, @release11
-@release11
+    jnz %t16, @release_skip13, @release12
+@release12
     call $List_str_release(l %rt, l %t15)
-    jmp @release_done13
-@release_skip12
-    jmp @release_done13
-@release_done13
+    jmp @release_done14
+@release_skip13
+    jmp @release_done14
+@release_done14
     %t17 =l add %p, 56
     %t18 =l loadl %t17
     %t19 =w ceql %t18, 0
-    jnz %t19, @release_skip15, @release14
-@release14
+    jnz %t19, @release_skip16, @release15
+@release15
     call $List_JsonValue_release(l %rt, l %t18)
-    jmp @release_done16
-@release_skip15
-    jmp @release_done16
-@release_done16
+    jmp @release_done17
+@release_skip16
+    jmp @release_done17
+@release_done17
     call $nox_rc_free_payload(l %rt, l %p, l 64)
     jmp @release_done1
 @release_done1
@@ -825,9 +829,108 @@ export function w $JsonValue_eq(l %rt, l %a, l %b) {
 }
 export function l $JsonValue_trace(l %rt, l %p) {
 @start
-    %t0 =l call $nox_alloc(l %rt, l 8)
+    %t0 =l alloc8 8
     storel 0, %t0
-    ret %t0
+    %t1 =l add %p, 40
+    %t2 =l loadl %t1
+    %t3 =w ceql %t2, 0
+    jnz %t3, @trace_list_len_skip0, @trace_list_len_have1
+@trace_list_len_have1
+    %t4 =l loadl %t2
+    %t5 =l loadl %t0
+    %t6 =l add %t5, %t4
+    storel %t6, %t0
+    jmp @trace_list_len_after2
+@trace_list_len_skip0
+    jmp @trace_list_len_after2
+@trace_list_len_after2
+    %t7 =l add %p, 56
+    %t8 =l loadl %t7
+    %t9 =w ceql %t8, 0
+    jnz %t9, @trace_list_len_skip3, @trace_list_len_have4
+@trace_list_len_have4
+    %t10 =l loadl %t8
+    %t11 =l loadl %t0
+    %t12 =l add %t11, %t10
+    storel %t12, %t0
+    jmp @trace_list_len_after5
+@trace_list_len_skip3
+    jmp @trace_list_len_after5
+@trace_list_len_after5
+    %t13 =l loadl %t0
+    %t14 =l mul %t13, 8
+    %t15 =l add %t14, 8
+    %t16 =l call $nox_alloc(l %rt, l %t15)
+    storel %t13, %t16
+    %t17 =l alloc8 8
+    storel 0, %t17
+    %t18 =l add %p, 40
+    %t19 =l loadl %t18
+    %t20 =w ceql %t19, 0
+    jnz %t20, @trace_list_fill_skip6, @trace_list_fill_have7
+@trace_list_fill_have7
+    %t21 =l loadl %t19
+    %t22 =l alloc8 8
+    storel 0, %t22
+    jmp @trace_list_fill_cond9
+@trace_list_fill_cond9
+    %t23 =l loadl %t22
+    %t24 =w csltl %t23, %t21
+    jnz %t24, @trace_list_fill_body10, @trace_list_fill_loopend11
+@trace_list_fill_body10
+    %t25 =l mul %t23, 8
+    %t26 =l add %t25, 16
+    %t27 =l add %t19, %t26
+    %t28 =l loadl %t27
+    %t29 =l loadl %t17
+    %t30 =l mul %t29, 8
+    %t31 =l add %t30, 8
+    %t32 =l add %t16, %t31
+    storel %t28, %t32
+    %t33 =l add %t29, 1
+    storel %t33, %t17
+    %t34 =l add %t23, 1
+    storel %t34, %t22
+    jmp @trace_list_fill_cond9
+@trace_list_fill_loopend11
+    jmp @trace_list_fill_after8
+@trace_list_fill_skip6
+    jmp @trace_list_fill_after8
+@trace_list_fill_after8
+    %t35 =l add %p, 56
+    %t36 =l loadl %t35
+    %t37 =w ceql %t36, 0
+    jnz %t37, @trace_list_fill_skip12, @trace_list_fill_have13
+@trace_list_fill_have13
+    %t38 =l loadl %t36
+    %t39 =l alloc8 8
+    storel 0, %t39
+    jmp @trace_list_fill_cond15
+@trace_list_fill_cond15
+    %t40 =l loadl %t39
+    %t41 =w csltl %t40, %t38
+    jnz %t41, @trace_list_fill_body16, @trace_list_fill_loopend17
+@trace_list_fill_body16
+    %t42 =l mul %t40, 8
+    %t43 =l add %t42, 16
+    %t44 =l add %t36, %t43
+    %t45 =l loadl %t44
+    %t46 =l loadl %t17
+    %t47 =l mul %t46, 8
+    %t48 =l add %t47, 8
+    %t49 =l add %t16, %t48
+    storel %t45, %t49
+    %t50 =l add %t46, 1
+    storel %t50, %t17
+    %t51 =l add %t40, 1
+    storel %t51, %t39
+    jmp @trace_list_fill_cond15
+@trace_list_fill_loopend17
+    jmp @trace_list_fill_after14
+@trace_list_fill_skip12
+    jmp @trace_list_fill_after14
+@trace_list_fill_after14
+    ret %t16
 }
 export function $JsonValue_gc_free(l %rt, l %p) {
 @start
@@ -855,13 +958,13 @@ export function $JsonValue_gc_free(l %rt, l %p) {
     %t7 =l add %p, 40
     %t8 =l loadl %t7
     %t9 =w ceql %t8, 0
-    jnz %t9, @release_skip7, @release6
-@release6
-    call $List_JsonValue_release(l %rt, l %t8)
-    jmp @release_done8
-@release_skip7
-    jmp @release_done8
-@release_done8
+    jnz %t9, @gcfree_list_skip6, @gcfree_list_have7
+@gcfree_list_have7
+    call $nox_list_shallow_gc_free(l %rt, l %t8)
+    jmp @gcfree_list_after8
+@gcfree_list_skip6
+    jmp @gcfree_list_after8
+@gcfree_list_after8
     %t10 =l add %p, 48
     %t11 =l loadl %t10
     %t12 =w ceql %t11, 0
@@ -875,13 +978,13 @@ export function $JsonValue_gc_free(l %rt, l %p) {
     %t13 =l add %p, 56
     %t14 =l loadl %t13
     %t15 =w ceql %t14, 0
-    jnz %t15, @release_skip13, @release12
-@release12
-    call $List_JsonValue_release(l %rt, l %t14)
-    jmp @release_done14
-@release_skip13
-    jmp @release_done14
-@release_done14
+    jnz %t15, @gcfree_list_skip12, @gcfree_list_have13
+@gcfree_list_have13
+    call $nox_list_shallow_gc_free(l %rt, l %t14)
+    jmp @gcfree_list_after14
+@gcfree_list_skip12
+    jmp @gcfree_list_after14
+@gcfree_list_after14
     call $nox_rc_free_payload(l %rt, l %p, l 64)
     ret
 }

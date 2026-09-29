@@ -248,16 +248,34 @@ pub fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {
         .identifier => |name| {
             if (self.vars.get(name)) |info| {
                 const v0 = try self.genExprForTarget(a.value, info);
+                // v3 madde 3 (ownership/ptr[T] red-team, bkz. nox-teknik-
+                // spesifikasyon.md ilgili bölüm): **DÜZELTME (GERÇEK, bir
+                // kaçış-taramasında BULUNAN bir hata)** — `.attribute`
+                // ataması (aşağıda) `checkNoLowlevelEscape`i HEM alıcı HEM
+                // YENİ değer İçİn çağırır ("bir isme atamakla AYNI anlamı
+                // taşır" — bkz. onun belge notu); BU dal (düz `<isim> =
+                // <değer>`, TAM OLARAK AYNI "kalıcı paylaşım" anlamını
+                // taşır) bu çağrıyı EKSİK bırakıyordu — bir arena değeri
+                // (ör. `lowlevel:` İÇİNDE `pt = Point(...)`) arena-DIŞI bir
+                // slota SESSİZCE yazılabiliyordu, arena yıkılınca DANGLING
+                // bir işaretçi bırakarak (GERÇEK bir SIGBUS İLE KANITLANDI).
+                try self.checkNoLowlevelEscape(v0);
                 const retained = try self.retainIfAliasing(a.value, v0);
                 const val = try self.convert(retained, info.qtype);
                 // Bkz. `var_decl` kolundaki aynı gerekçe: arena yerelleri asla
                 // ARC ile serbest bırakılmaz (arenanın toplu yıkımı zaten
                 // bunu yapar) — aksi halde döngü içinde yeniden atama, önceki
                 // yinelemede zaten yıkılmış bir arenaya ait belleği tekrar
-                // serbest bırakmaya çalışır.
-                if (isHeapManaged(info.heap) and !info.is_param and !info.arena) {
+                // serbest bırakmaya çalışır. **DÜZELTME (v3 madde 3): `var_decl`nin
+                // AYNI korumasıyla (`stmt.zig`nin YUKARISI) TAM eşleşecek
+                // şekilde `!info.borrowed_field`/`!info.is_stack_local`/
+                // `!info.manual` de EKLENDİ** — SONUNCUSU EKSİK OLDUĞUNDAN
+                // `detach()` edilmiş bir değişkene yeniden atama, HÂLÂ CANLI
+                // olan ham `ptr`ı ARC'nin ERKEN serbest bırakmasına yol
+                // açıyordu (GERÇEK bir SIGSEGV İLE KANITLANDI).
+                if (isHeapManaged(info.heap) and !info.is_param and !info.arena and !info.borrowed_field and !info.is_stack_local and !info.manual) {
                     try self.releaseSlotIfSet(info);
-                } else if ((info.heap == .task or info.heap == .channel or info.heap == .thread_handle or info.heap == .thread_channel or info.heap == .task_local) and !info.is_param and !info.arena) {
+                } else if ((info.heap == .task or info.heap == .channel or info.heap == .thread_handle or info.heap == .thread_channel or info.heap == .task_local) and !info.is_param and !info.arena and !info.borrowed_field and !info.is_stack_local and !info.manual) {
                     // Faz S.1: `Task[T]`/`Channel[T]`/`ThreadHandle[T]`/
                     // `ThreadChannel[T]` yeniden atamada ESKİ değer artık
                     // sızmaz — `destroyNonArcSlotIfSet`

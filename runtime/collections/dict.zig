@@ -439,6 +439,28 @@ pub export fn nox_dict_release(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32
     arc.nox_rc_free_payload(rt, ptr, @sizeOf(Dict));
 }
 
+/// v3 madde 3 (ownership/ptr[T] red-team, bkz. nox-teknik-spesifikasyon.md
+/// ilgili bölüm): `nox_list_shallow_gc_free`in (`runtime/alloc/arc.zig`)
+/// AYNI gerekçesi/DÜZELTMESİ — `dict[K, ClassType]` alanı İÇEREN bir
+/// sınıfın `$ClassName_gc_free`si İçİn. `nox_dict_release`DEN TEK farkı:
+/// DEĞER sınıf-tipliyse `releaseClassPayload` (→ `nox_cycle_possible_
+/// root`u TEKRAR tetikleyip `collectWhite`in worklist'İNİ BOZAN normal
+/// ARC release) ASLA çağrılmaz — anahtar (`str` İSE) HÂLÂ normal serbest
+/// bırakılır (döngü ile İLİŞKİSİZ, `trace()`in raporladığı HİÇBİR şeye
+/// karışmaz).
+pub export fn nox_dict_shallow_gc_free_class_values(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32) void {
+    const ptr = dp orelse return;
+    if (arc.nox_rc_predecrement(ptr) == 0) return;
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
+    const d: *Dict = @ptrCast(@alignCast(ptr));
+    for (d.entries.items) |e| {
+        if (key_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(e.key));
+    }
+    d.entries.deinit(state.allocator());
+    d.index.deinit(state.allocator());
+    arc.nox_rc_free_payload(rt, ptr, @sizeOf(Dict));
+}
+
 test "nox_dict_new/set/get/contains/len/destroy — int anahtar/değer" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
