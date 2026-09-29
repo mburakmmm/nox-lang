@@ -276,6 +276,11 @@ test "Faz F.4: kernel_demo.nox GERÇEK bir x86_64 kernel imajına derlenip QEMU'
     try std.testing.expect(std.mem.indexOf(u8, stdout_data, "HEAP_OK") != null);
     try std.testing.expect(std.mem.indexOf(u8, stdout_data, "SHARED_POOL_OK") != null);
     try std.testing.expect(std.mem.indexOf(u8, stdout_data, "STR_REPEAT_INDEX_OK") != null);
+    // v3 sertleştirme yol haritası, madde 4 (bkz. nox-teknik-spesifikasyon.md
+    // ilgili bölüm): bitwise operatörlerin (`&`/`|`/`^`/`<<`/`>>`/`~`, v3
+    // madde 2) `--profile freestanding` altında da doğru çalıştığının
+    // GERÇEK QEMU kanıtı.
+    try std.testing.expect(std.mem.indexOf(u8, stdout_data, "BITWISE_OK") != null);
     try std.testing.expect(std.mem.indexOf(u8, stdout_data, "ALL_CHECKPOINTS_OK") != null);
     try std.testing.expect(std.mem.indexOf(u8, stdout_data, "KERNEL_FAULT") == null);
 

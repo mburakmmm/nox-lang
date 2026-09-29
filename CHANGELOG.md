@@ -14,6 +14,20 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.109.2]
+
+### Eklendi
+
+- **Freestanding v0.1 dondurma (bkz. nox-teknik-spesifikasyon.md
+  §3.201)**: v3 sertleştirme yol haritasının 4. maddesi. Bitwise
+  operatörlerin (`&`/`|`/`^`/`<<`/`>>`/`~`, v1.109.0) `--profile
+  freestanding` altında da doğru çalıştığı GERÇEK QEMU'da kanıtlandı
+  (`BITWISE_OK` checkpoint'i, `runtime/freestanding/x86_64/kernel_demo.
+  nox`). "Nox freestanding v0.1"in kanıtlanmış kapsamı (x86_64 boot
+  zinciri, PMM, yönetilen heap, bitwise operatörler) VE bilinçli
+  sınırları (aarch64/riscv64 boot-testi yok, SMP yok, `nox.thread`
+  freestanding'de kanıtlanmadı) açıkça belgelendi.
+
 ## [1.109.1]
 
 ### Düzeltildi

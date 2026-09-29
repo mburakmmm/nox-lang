@@ -24868,6 +24868,74 @@ re-export'lar), `runtime/alloc/arc.zig` (`nox_list_shallow_gc_free`),
 
 ---
 
+## 3.201 v3 sertleştirme yol haritası, madde 4 — Freestanding v0.1 dondurma
+
+**Bağlam:** v3 yol haritasının 4. maddesi. Bu madde YENİ bir özellik
+EKLEMEDİ — Faz F.0-F.5'in (§3.161-§3.180) VE AYRI `nox-kernel-demo`
+reposunun (v2.0 madde 10) ZATEN KANITLADIĞI freestanding yeteneklerinin
+KAPSAMINI AÇIKÇA belgeleyip DONDURDU, VE v3 madde 2'nin (bitwise
+operatörler) `--profile freestanding` altında da doğru çalıştığını
+GERÇEK QEMU'da KANITLADI (bitwise operatörler bu OTURUMDA eklendiği İçİn
+freestanding altında HENÜZ SINANMAMIŞTI — TAM DA bu operatörlerin asıl
+hedeflendiği alan sayfa-tablosu bayrakları/port-I/O maskeleri GİBİ kernel
+kodu olduğundan, bu doğrulama ÖNEMLİYDİ).
+
+### Dondurulan kapsam — "Nox freestanding v0.1"
+
+**x86_64, GERÇEK QEMU'da boot-test EDİLMİŞ, TAM zincir** (`tests/golden/
+kernel_boot_x86_64_test.zig` + `runtime/freestanding/x86_64/kernel_demo.
+nox`, HER commit'te CI'de ÇALIŞIR):
+
+| Yetenek | Kanıt |
+|---|---|
+| Multiboot1 boot + uzun-mod geçişi + GDT | Faz F.4 (§3.173) |
+| Seri port (UART) çıkışı | Faz F.4 |
+| IDT + gerçek bir kesme (breakpoint, `#BP`) | `IDT_OK` checkpoint'i |
+| Fiziksel sayfa allocator'ı (PMM) | `PAGE_ALLOC_OK` |
+| Yönetilen heap (`list[T]`/ARC/`RuntimeState`) — kernel'in KENDİ sayfa havuzundan besleniyor | `HEAP_OK`/`SHARED_POOL_OK` |
+| `nox_allocator_install` ABI'si (v2.0 madde 9) | Aynı checkpoint'ler |
+| `str` indeksleme (sıkı-paketleyen allocator ALTINDA, v1.108.1 regresyonu) | `STR_REPEAT_INDEX_OK` |
+| **Bitwise operatörler (`&`/`|`/`^`/`<<`/`>>`/`~`, v3 madde 2) — BU MADDEDE eklendi** | `BITWISE_OK` (YENİ) |
+
+**x86_64, AYRI `nox-kernel-demo` reposunda (v2.0 madde 10) GERÇEK QEMU'da
+KANITLANMIŞ, GENİŞLETİLMİŞ zincir** (nox-lang'in KENDİ CI'sinin PARÇASI
+DEĞİL — bağımsız bir repo, elle çalıştırılır):
+
+- Yukarıdakilerin HEPSİ, PLUS: VMM (dinamik sayfa tablosu yönetimi, SAF
+  Nox'ta — o repo İNŞA EDİLDİĞİNDE bitwise operatör OLMADIĞINDAN `//`/
+  `%`/`*` ARİTMETİK TRIKLERİYLE, bkz. o reponun README'si — **v0.1
+  dondurulması sonrası, İSTENİRSE, GERÇEK `&`/`|`/`<<` İLE YENİDEN
+  yazılabilir, AMA bu BİLİNÇLİ olarak bu turun KAPSAMI DIŞINDA
+  bırakıldı** — çalışan, kanıtlanmış kod DEĞİŞTİRİLMEDEN kalır), GERÇEK
+  bir #PF (sayfa hatası) yakalama, PCI bus enumeration (SAF Nox'ta,
+  `class`/`list[T]` İLE), 8259 PIC + PIT timer kesmesi (GERÇEK, tekrarlanan
+  donanım kesmesi), interaktif seri-port shell'i (polling-tabanlı).
+
+### Dondurulmuş, BİLİNÇLİ v0.1 sınırları (KAPSAM DIŞI, GELECEK bir tur)
+
+- **Yalnızca x86_64 GERÇEK boot-test EDİLDİ.** aarch64/riscv64 İçİn
+  `--target` (v2.0 madde 8, §3.196) İLE freestanding NESNE dosyaları
+  DERLENEBİLİYOR (`noxrt-freestanding-generic-{aarch64,x86_64}.o`), AMA
+  HİÇBİRİ İçİn `kernel_boot_x86_64_test.zig`nin AYNI, GERÇEK bir QEMU
+  boot-testi YOK — bu, AYRI bir GELECEK madde.
+- **Tek çekirdek (SMP/çoklu-işlemci) YOK** — `nox-kernel-demo`nun KENDİ
+  timer/PIC kurulumu TEK bir CPU çekirdeğini VARSAYAR.
+- **`nox.thread`/M:N zamanlayıcının freestanding'de ÇALIŞTIĞI KANITLANMADI**
+  — `runtime/lib_freestanding.zig` (Faz F.0.7) scheduler/fiber/Task/
+  Channel'ı DERLER, AMA gerçek bir freestanding programın BUNLARI
+  KULLANDIĞI bir QEMU testi YOK (kernel_demo.nox TEK-iş-parçacıklı).
+- **HPy/CPython uyumluluk katmanı freestanding'de TEST EDİLMEDİ** (doğal
+  olarak — C eklentileri bir işletim sistemi VARSAYAR).
+
+**Doğrulama:** `zig build kernel-boot-test` (GERÇEK QEMU, x86_64) YENİ
+`BITWISE_OK` checkpoint'İYLE GEÇER. `zig build test` SIFIR regresyon.
+
+**Kritik dosyalar:** `runtime/freestanding/x86_64/kernel_demo.nox`
+(`BITWISE_OK` checkpoint'i), `tests/golden/kernel_boot_x86_64_test.zig`
+(YENİ assert).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.
