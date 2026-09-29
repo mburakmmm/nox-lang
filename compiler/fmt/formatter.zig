@@ -56,23 +56,31 @@ pub fn formatModule(allocator: std.mem.Allocator, module: ast.Module, trivia: []
 
 /// İkili operatörün precedence'ı — SAYI BÜYÜDÜKÇE daha SIKI bağlanır.
 /// `compiler/parser/parser.zig`nin precedence-climbing zincirinin (parseOr
-/// → parseAnd → parseNot → parseComparison → parseAddSub → parseMulDiv →
-/// parseUnary → parsePower → parsePostfix) TERS (yazdırma) yönüdür.
+/// → parseAnd → parseNot → parseComparison → parseBitOr → parseBitXor →
+/// parseBitAnd → parseShift → parseAddSub → parseMulDiv → parseUnary →
+/// parsePower → parsePostfix) TERS (yazdırma) yönüdür. v3 madde 2
+/// (bitwise operatörler) İLE comparison(4)/add-sub(eski 5) ARASINA 4 yeni
+/// kademe (bit_or/bit_xor/bit_and/shift) EKLENDİĞİNDEN TÜM sayılar
+/// (eski göreli SIRA KORUNARAK) YENİDEN numaralandırıldı.
 fn binPrec(op: ast.BinaryOp) u8 {
     return switch (op) {
         .or_ => 1,
         .and_ => 2,
         .eq, .ne, .lt, .le, .gt, .ge => 4,
-        .add, .sub => 5,
-        .mul, .div, .floordiv, .mod => 6,
-        .pow => 8,
+        .bit_or => 5,
+        .bit_xor => 6,
+        .bit_and => 7,
+        .shl, .shr => 8,
+        .add, .sub => 9,
+        .mul, .div, .floordiv, .mod => 10,
+        .pow => 12,
     };
 }
 
 fn unaryPrec(op: ast.UnaryOp) u8 {
     return switch (op) {
         .not_ => 3,
-        .neg => 7,
+        .neg, .invert => 11,
     };
 }
 
@@ -93,6 +101,11 @@ fn binOpStr(op: ast.BinaryOp) []const u8 {
         .ge => ">=",
         .and_ => "and",
         .or_ => "or",
+        .bit_and => "&",
+        .bit_or => "|",
+        .bit_xor => "^",
+        .shl => "<<",
+        .shr => ">>",
     };
 }
 
@@ -527,6 +540,7 @@ const Printer = struct {
                 switch (u.op) {
                     .neg => try self.writer.writeAll("-"),
                     .not_ => try self.writer.writeAll("not "),
+                    .invert => try self.writer.writeAll("~"),
                 }
                 try self.printExprAt(u.operand.*, my_prec, .loose);
                 if (need_parens) try self.writer.writeAll(")");

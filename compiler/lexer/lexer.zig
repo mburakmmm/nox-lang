@@ -453,7 +453,34 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
                 }
             },
             '|' => {
-                try tokens.append(allocator, mkToken(.pipe, "|", line, col, i));
+                if (peek(source, i + 1) == '=') {
+                    try tokens.append(allocator, mkToken(.pipe_eq, "|=", line, col, i));
+                    i += 2;
+                } else {
+                    try tokens.append(allocator, mkToken(.pipe, "|", line, col, i));
+                    i += 1;
+                }
+            },
+            '&' => {
+                if (peek(source, i + 1) == '=') {
+                    try tokens.append(allocator, mkToken(.amp_eq, "&=", line, col, i));
+                    i += 2;
+                } else {
+                    try tokens.append(allocator, mkToken(.amp, "&", line, col, i));
+                    i += 1;
+                }
+            },
+            '^' => {
+                if (peek(source, i + 1) == '=') {
+                    try tokens.append(allocator, mkToken(.caret_eq, "^=", line, col, i));
+                    i += 2;
+                } else {
+                    try tokens.append(allocator, mkToken(.caret, "^", line, col, i));
+                    i += 1;
+                }
+            },
+            '~' => {
+                try tokens.append(allocator, mkToken(.tilde, "~", line, col, i));
                 i += 1;
             },
             '@' => {
@@ -479,7 +506,15 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
                 }
             },
             '<' => {
-                if (peek(source, i + 1) == '=') {
+                if (peek(source, i + 1) == '<') {
+                    if (peek(source, i + 2) == '=') {
+                        try tokens.append(allocator, mkToken(.lt_lt_eq, "<<=", line, col, i));
+                        i += 3;
+                    } else {
+                        try tokens.append(allocator, mkToken(.lt_lt, "<<", line, col, i));
+                        i += 2;
+                    }
+                } else if (peek(source, i + 1) == '=') {
                     try tokens.append(allocator, mkToken(.lt_eq, "<=", line, col, i));
                     i += 2;
                 } else {
@@ -488,7 +523,15 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
                 }
             },
             '>' => {
-                if (peek(source, i + 1) == '=') {
+                if (peek(source, i + 1) == '>') {
+                    if (peek(source, i + 2) == '=') {
+                        try tokens.append(allocator, mkToken(.gt_gt_eq, ">>=", line, col, i));
+                        i += 3;
+                    } else {
+                        try tokens.append(allocator, mkToken(.gt_gt, ">>", line, col, i));
+                        i += 2;
+                    }
+                } else if (peek(source, i + 1) == '=') {
                     try tokens.append(allocator, mkToken(.gt_eq, ">=", line, col, i));
                     i += 2;
                 } else {

@@ -212,6 +212,21 @@ pub fn isNumeric(t: Type) bool {
     return t == .int or t == .float or t == .fixed_int;
 }
 
+/// v3 madde 2 (bitwise operatörler): `&`/`|`/`^`/`~`/`<<`/`>>`in TEK
+/// başına (bool KARIŞIMI OLMADAN) kabul ettiği operand tipleri — `int`/
+/// sabit-genişlikli tamsayı, `float` DEĞİL. **`bool` BİLİNÇLİ olarak
+/// BURAYA DAHİL DEĞİL** (nox-lang'in KENDİ HPy köprüsünün "bool int gibi
+/// davranır" emsalinden — codegen'in `common` hesaplamasında GERÇEKTEN
+/// bulunan bir bit-genişliği uyuşmazlığı YÜZÜNDEN — BİLİNÇLİ olarak
+/// SAPILDI, bkz. `checker.zig`nin `.bit_and, .bit_or, .bit_xor` dalının
+/// belge notu): `bool & bool` çağıranın KENDİSİ AYRICA, `.boolean` sonucu
+/// DÖNECEK şekilde ele alınır — `bool`in HERHANGİ bir `int`/sabit-
+/// genişlikli tiple KARIŞMASI (ya bu fonksiyona hiç girmeden, ya da
+/// girip REDDEDİLEREK) tamamen ENGELLENİR.
+pub fn isBitwiseEligible(t: Type) bool {
+    return t == .int or t == .fixed_int;
+}
+
 pub fn format(t: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     switch (t) {
         .int => try writer.writeAll("int"),

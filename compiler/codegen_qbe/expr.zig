@@ -978,6 +978,40 @@ pub fn genUnary(self: *Codegen, u: ast.Unary) CodegenError!Value {
             try self.qbeOp2Imm(t, .w, "xor", operand.text, 1);
             break :blk .{ .text = t, .qtype = .w };
         },
+        // v3 madde 2 (bitwise operatörler): `~x` — TÜM bitleri ters
+        // çevirir (`xor -1`). **İNCE bir nokta (GERÇEKTEN düşünülüp
+        // DOĞRULANDI, tahmin YÜRÜTÜLMEDİ):** `emitCheckedFixedBinNarrow`nin
+        // belge notunun KURDUĞU değişmez — bir u8/i8/u16/i16 değeri HER
+        // ZAMAN `.w` yazmacında KENDİ genişliğine göre DOĞRU şekilde
+        // işaret-genişletilmiş/sıfır-genişletilmiş TUTULUR — `and`/`or`/
+        // `xor` (İKİLİ) BU değişmezi OTOMATİK KORUR (HER çıktı biti
+        // YALNIZCA KENDİ konumundaki giriş bitlerine bağlıdır; üst
+        // "genişletme" bitleri zaten SABİT bir desen olduğundan sonuç da
+        // sabit bir desen ÜRETİR) — AMA `~` (tekli, `xor -1`) İŞARETSİZ
+        // dar kind'lerde (u8/u16) BU DEĞİŞMEZİ BOZAR: sıfır-genişletilmiş
+        // üst bitler (HER ZAMAN 0) `-1` İLE XOR'lanınca TÜMÜ 1'e döner
+        // (0xFFFFFF...), OYSA işaretsiz bir kind'in değişmezi üst
+        // bitlerin HER ZAMAN 0 KALMASINI gerektirir (alt baytın DEĞERİNDEN
+        // BAĞIMSIZ) — bu YÜZDEN işaretsiz dar kind'ler İçİn XOR'DAN SONRA
+        // AYRICA sıfır-genişletme (extub/extuh) GEREKİR. İşaretli dar
+        // kind'ler (i8/i16) İçİn BU SORUN YOK (işaret-genişletme, "üst
+        // bitler = işaret biti" olduğundan, invert SONRASI da OTOMATİK
+        // doğru kalır — YENİ işaret biti de ters çevrilmiş OLUR, İKİSİ
+        // TUTARLI). u32/i32/u64/i64/plain int İçİn zaten TÜM yazmaç
+        // genişliği "mantıksal" genişlikle ÇAKIŞTIĞINDAN ek adım GEREKMEZ.
+        .invert => blk: {
+            const t = try self.newTemp();
+            try self.qbeOp2Imm(t, operand.qtype, "xor", operand.text, -1);
+            if (operand.fixed_int) |k| {
+                if (!k.isSigned() and (k == .u8 or k == .u16)) {
+                    const ext_mnemonic: []const u8 = if (k == .u8) "extub" else "extuh";
+                    const narrowed = try self.newTemp();
+                    try self.qbeOp1(narrowed, .w, ext_mnemonic, t);
+                    break :blk .{ .text = narrowed, .qtype = .w, .fixed_int = k };
+                }
+            }
+            break :blk .{ .text = t, .qtype = operand.qtype, .fixed_int = operand.fixed_int };
+        },
     };
 }
 
@@ -1473,6 +1507,17 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
         return self.emitBin("div", l, r, .d);
     }
 
+    // v3 madde 2 (bitwise operatörler): `<<`/`>>` kaydırma miktarının
+    // ÇALIŞMA ZAMANI doğrulaması GEREKTİRDİĞİNDEN (checker bunu derleme
+    // zamanında YAPAMAZ, miktar keyfi bir ifade olabilir) — VE sonucun
+    // genişliği/işaretliliği `l0`nin KENDİSİNDEN (`r0`nin DEĞİL) geldiğinden
+    // — aşağıdaki GENEL `common` hesaplamasının (İKİ operandı da AYNI
+    // genişliğe zorlayan) DIŞINDA, KENDİ ÖZEL yoluna sahiptir (bkz.
+    // `genCheckedShift`in belge notu).
+    if (b.op == .shl or b.op == .shr) {
+        return self.genCheckedShift(b.op, l0, r0);
+    }
+
     const common: QbeType = if (l0.qtype == .d or r0.qtype == .d)
         .d
     else if (l0.qtype == .w or r0.qtype == .w)
@@ -1508,8 +1553,111 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
         },
         .pow => self.genPow(l, r, common),
         .eq, .ne, .lt, .le, .gt, .ge => self.emitCmp(b.op, l, r, common),
-        .div, .and_, .or_ => unreachable,
+        // v3 madde 2: bitwise `&`/`|`/`^` — taşma RİSKİ olmadığından
+        // (`add`/`sub`/`mul`ın AKSİNE, bkz. `emitCheckedFixedBin`in belge
+        // notu) sabit-genişlikli kind'ler İçİN de DOĞRUDAN `common`
+        // genişliğinde hesaplanabilir — bit-per-bit işlemler ekstra
+        // genişlikten ETKİLENMEZ (her bit BAĞIMSIZ hesaplanır). **DÜZELTME
+        // (GERÇEK bir hata, `bitwise_ops.nox` golden test'İYLE
+        // YAKALANDI):** `emitBin`in dönüşü `fixed_int` alanını HİÇ
+        // DOLDURMAZ (`null` KALIR) — checker `u8&u8` İçİn `fixed_int(u8)`
+        // döndürse BİLE, bu etiket EKLENMEZSE `genPrint` sonucu (yanlışlıkla,
+        // `.w`+`fixed_int==null` deseni SIRADAN bir `bool`la ÇAKIŞTIĞINDAN)
+        // "True"/"False" olarak BASAR — `add`/`sub`/`mul`ın `emitCheckedFixedBin`
+        // ARACILIĞIYLA ZATEN yaptığı GİBİ, sonuca `fixed_kind` AÇIKÇA
+        // damgalanmalı.
+        .bit_and => blk: {
+            var v = try self.emitBin("and", l, r, common);
+            v.fixed_int = fixed_kind;
+            break :blk v;
+        },
+        .bit_or => blk: {
+            var v = try self.emitBin("or", l, r, common);
+            v.fixed_int = fixed_kind;
+            break :blk v;
+        },
+        .bit_xor => blk: {
+            var v = try self.emitBin("xor", l, r, common);
+            v.fixed_int = fixed_kind;
+            break :blk v;
+        },
+        .div, .and_, .or_, .shl, .shr => unreachable,
     };
+}
+
+/// v3 madde 2 (bitwise operatörler, bkz. nox-teknik-spesifikasyon.md ilgili
+/// bölüm): `<<`/`>>`in TEK giriş noktası. Kaydırma miktarının GEÇERLİ
+/// ARALIKTA ([0, bit-genişliği)) olduğunu ÇALIŞMA ZAMANINDA doğrular
+/// (checker bunu derleme zamanında YAPAMAZ — miktar keyfi bir ifade
+/// olabilir) — kullanıcı KARARI: geçersizse SESSİZCE maskelemek YERİNE
+/// bir `ValueError` fırlatılır (platformdan bağımsız/deterministik
+/// davranış, bkz. proje belleği "v3 sertleştirme yol haritası"). `>>`in
+/// KENDİSİ işaretliliğe göre `sar` (aritmetik, işaretli tipler/`int`) ya
+/// da `shr` (mantıksal, işaretsiz sabit-genişlikli tipler) İLE derlenir —
+/// C/Rust/Zig'in (VE nox-lang'in KENDİ HPy köprüsünün, `runtime/hpy_
+/// bridge/context.zig`nin `bitwiseBinOp`ının, orada `>>` Zig'in KENDİ
+/// işaretli `i64`i için HER ZAMAN aritmetik) AYNI emsali. `genParseOrRaise`
+/// (calls.zig) İLE AYNI "önce doğrula, hata dalında raise et, phi'siz
+/// ok'e atla" deseni — TEK fark, ok-dalının hesapladığı DEĞER (`add`/`sub`
+/// GİBİ değil) `r0`ye DEĞİL `l0`nin genişliğine göre yeniden hesaplanır.
+pub fn genCheckedShift(self: *Codegen, op: ast.BinaryOp, l0: Value, r0: Value) CodegenError!Value {
+    const fixed_kind: ?types.FixedIntKind = l0.fixed_int;
+    const width: i64 = if (fixed_kind) |k| k.bitWidth() else 64;
+    const signed: bool = if (fixed_kind) |k| k.isSigned() else true;
+
+    const neg_t = try self.newTemp();
+    try self.qbeOp2Imm(neg_t, .w, "csltl", r0.text, 0);
+    const hi_t = try self.newTemp();
+    try self.qbeOp2Imm(hi_t, .w, "csgel", r0.text, width);
+    const bad_t = try self.newTemp();
+    try self.qbeOp2(bad_t, .w, "or", neg_t, hi_t);
+
+    const err_label = try self.newLabel("shift_err");
+    const ok_label = try self.newLabel("shift_ok");
+    try self.qbeJnz(bad_t, err_label, ok_label);
+    try self.qbeLabel(err_label);
+
+    const msg_value = try self.emitStringLiteral("kaydirma miktari gecersiz (negatif ya da tipin bit genisligini asiyor)");
+    const ve_cinfo = self.classes.get("ValueError") orelse return error.Unsupported;
+    const ve_obj = try self.genConstructFromValues("ValueError", ve_cinfo, &.{msg_value}, null);
+    try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ve_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
+    try self.emitExceptionCheck();
+    try self.qbeJmp(ok_label);
+
+    try self.qbeLabel(ok_label);
+    const r = try self.convert(r0, l0.qtype);
+    const mnemonic: []const u8 = if (op == .shl) "shl" else if (signed) "sar" else "shr";
+    const t = try self.newTemp();
+    try self.qbeOp2(t, l0.qtype, mnemonic, l0.text, r.text);
+    // **`<<` İçİn dar (8/16-bit) kind'lerde AYRICA yeniden-daraltma
+    // GEREKİR (`~`in AYNI belge notundaki gerekçe) — sola kaydırma bitleri
+    // YUKARI taşıdığından, dar bir değerin "genişletme" bölgesine GERÇEK
+    // veri sızdırabilir (ör. `u8(200) << 2`, ham 32-bit'te 800 verir,
+    // OYSA u8 MANTIĞI 32'ye SARMALIDIR — Zig'in/Rust'ın/C'nin KENDİ `<<`
+    // operatörüyle AYNI, SESSİZ sarma semantiği, `add`/`sub`/`mul`ın
+    // taşma-TUZAKLAMASINDAN BİLİNÇLİ olarak FARKLI: bit kaydırmada üst
+    // bitlerin "kaybolması" HER ZAMAN kasıtlı/beklenen bir işlemdir, bir
+    // mantık hatası GÖSTERGESİ DEĞİL). `>>` (sar/shr) İçİN bu adım
+    // GEREKMEZ — sağa kaydırma ZATEN üst (genişletme) bitlerinden
+    // GELDİĞİNDEN sonucun KENDİSİ otomatik olarak doğru kalır (bkz. plan
+    // dosyasının doğrulaması).
+    if (op == .shl) {
+        if (fixed_kind) |k| {
+            if (k == .u8 or k == .i8 or k == .u16 or k == .i16) {
+                const ext_mnemonic: []const u8 = switch (k) {
+                    .u8 => "extub",
+                    .i8 => "extsb",
+                    .u16 => "extuh",
+                    .i16 => "extsh",
+                    else => unreachable,
+                };
+                const narrowed = try self.newTemp();
+                try self.qbeOp1(narrowed, .w, ext_mnemonic, t);
+                return .{ .text = narrowed, .qtype = .w, .fixed_int = k };
+            }
+        }
+    }
+    return .{ .text = t, .qtype = l0.qtype, .fixed_int = fixed_kind };
 }
 
 pub fn genFloorDiv(self: *Codegen, l: Value, r: Value, common: QbeType) CodegenError!Value {

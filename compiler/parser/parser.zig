@@ -32,7 +32,6 @@ pub const ParseError = error{
     RecursionLimitExceeded,
 };
 
-
 pub const Parser = struct {
     allocator: std.mem.Allocator,
     tokens: []const Token,
@@ -214,6 +213,11 @@ pub const Parser = struct {
             .slash_slash_eq => .floordiv,
             .percent_eq => .mod,
             .star_star_eq => .pow,
+            .amp_eq => .bit_and,
+            .pipe_eq => .bit_or,
+            .caret_eq => .bit_xor,
+            .lt_lt_eq => .shl,
+            .gt_gt_eq => .shr,
             else => null,
         };
         if (aug_op) |op| {
@@ -830,7 +834,7 @@ pub const Parser = struct {
     }
 
     fn parseComparison(self: *Parser) ParseError!ast.Expr {
-        var left = try self.parseAddSub();
+        var left = try self.parseBitOr();
         while (true) {
             const op: ast.BinaryOp = switch (self.curKind()) {
                 .eq_eq => .eq,
@@ -839,6 +843,56 @@ pub const Parser = struct {
                 .lt_eq => .le,
                 .gt => .gt,
                 .gt_eq => .ge,
+                else => break,
+            };
+            _ = self.advance();
+            const right = try self.parseBitOr();
+            const old_left = left;
+            left = .{ .binary = .{ .op = op, .left = try self.box(old_left), .right = try self.box(right) } };
+        }
+        return left;
+    }
+
+    /// v3 madde 2 (bitwise operatörler): `|`/`^`/`&`/`<<`/`>>` — Python'un
+    /// KENDİ önceliği (karşılaştırmalardan SIKI, toplama/çıkarmadan GEVŞEK;
+    /// `|` en gevşek, SONRA `^`, SONRA `&`, SONRA kaydırma) BİREBİR izlenir.
+    /// `parseMulDiv`in AYNI şekli (bkz. onun belge notu).
+    fn parseBitOr(self: *Parser) ParseError!ast.Expr {
+        var left = try self.parseBitXor();
+        while (self.match(.pipe)) {
+            const right = try self.parseBitXor();
+            const old_left = left;
+            left = .{ .binary = .{ .op = .bit_or, .left = try self.box(old_left), .right = try self.box(right) } };
+        }
+        return left;
+    }
+
+    fn parseBitXor(self: *Parser) ParseError!ast.Expr {
+        var left = try self.parseBitAnd();
+        while (self.match(.caret)) {
+            const right = try self.parseBitAnd();
+            const old_left = left;
+            left = .{ .binary = .{ .op = .bit_xor, .left = try self.box(old_left), .right = try self.box(right) } };
+        }
+        return left;
+    }
+
+    fn parseBitAnd(self: *Parser) ParseError!ast.Expr {
+        var left = try self.parseShift();
+        while (self.match(.amp)) {
+            const right = try self.parseShift();
+            const old_left = left;
+            left = .{ .binary = .{ .op = .bit_and, .left = try self.box(old_left), .right = try self.box(right) } };
+        }
+        return left;
+    }
+
+    fn parseShift(self: *Parser) ParseError!ast.Expr {
+        var left = try self.parseAddSub();
+        while (true) {
+            const op: ast.BinaryOp = switch (self.curKind()) {
+                .lt_lt => .shl,
+                .gt_gt => .shr,
                 else => break,
             };
             _ = self.advance();
@@ -889,6 +943,12 @@ pub const Parser = struct {
             defer self.exitRecursion();
             const operand = try self.parseUnary();
             return .{ .unary = .{ .op = .neg, .operand = try self.box(operand) } };
+        }
+        if (self.match(.tilde)) {
+            try self.enterRecursion();
+            defer self.exitRecursion();
+            const operand = try self.parseUnary();
+            return .{ .unary = .{ .op = .invert, .operand = try self.box(operand) } };
         }
         if (self.match(.kw_await)) {
             try self.enterRecursion();

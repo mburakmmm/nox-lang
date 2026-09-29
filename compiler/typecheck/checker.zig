@@ -4703,6 +4703,13 @@ pub const Checker = struct {
                         if (t != .boolean) return self.fail(error.TypeMismatch, "'not' yalnızca bool ile kullanılabilir", .{});
                         break :blk .boolean;
                     },
+                    // v3 madde 2 (bitwise operatörler): bkz. `types.
+                    // isBitwiseEligible`in belge notu (nox-lang'in KENDİ
+                    // HPy köprüsündeki emsalin genişlemesi).
+                    .invert => {
+                        if (!types.isBitwiseEligible(t)) return self.fail(error.TypeMismatch, "unary '~' yalnızca int/sabit-genişlikli tamsayı tiplerine uygulanabilir (float/bool desteklenmez — bool için önce 'int(...)' ile dönüştürün)", .{});
+                        break :blk if (t == .fixed_int) t else .int;
+                    },
                 }
             },
             .binary => |b| try self.checkBinary(ctx, b),
@@ -5028,6 +5035,52 @@ pub const Checker = struct {
                     return self.fail(error.TypeMismatch, "'and'/'or' yalnızca bool ile kullanılabilir", .{});
                 }
                 break :blk .boolean;
+            },
+            // v3 madde 2 (bitwise operatörler, bkz. nox-teknik-
+            // spesifikasyon.md ilgili bölüm): **DÜZELTME (KODLAMA
+            // SIRASINDA GERÇEKTEN bulunan bir codegen tutarsızlığı
+            // ÜZERİNE) — `bool`, `int`/sabit-genişlikli tamsayıyla ÖRTÜK
+            // KARIŞMAZ.** İlk tasarım (nox-lang'in KENDİ HPy köprüsündeki
+            // "bool int gibi davranır" emsalini AYNEN izleyerek) `bool İLE
+            // int`in KARIŞABİLECEĞİNİ VARSAYIYORDU — AMA codegen'in
+            // `common` hesaplaması (bkz. `genBinary`nin belge notu:
+            // "l0.qtype==.w İSE common=.w") bir `bool` (HER ZAMAN `.w`)
+            // İLE bir `int`i (HER ZAMAN `.l`) KARIŞTIRINCA sonucu `.w`de
+            // (32-bit) HESAPLAR — OYSA checker `.int` (64-bit TEMSİL
+            // BEKLENTİSİ) döndürseydi, ÇAĞIRAN TARAF (ör. `print`) bunu
+            // YANLIŞ genişlikte OKURDU (GERÇEK bir bit-genişliği
+            // uyuşmazlığı, tahmin DEĞİL). Bu YÜZDEN kural BASİTLEŞTİRİLDİ:
+            // İKİ TARAF da `.boolean` İSE sonuç `.boolean` (codegen'in
+            // KENDİ `.w` temsiliyle TAM uyumlu); AKSİ HALDE (int/fixed_int
+            // karışımı) `bool`in KARIŞMASI TAMAMEN REDDEDİLİR (Nox'un
+            // GENEL "örtük sayısal tip karışımı YOK" ilkesiyle TUTARLI,
+            // `requireSameFixedIntOrNone`in int/fixed_int İçİn ZATEN
+            // yaptığı GİBİ) — açık dönüşüm (`int(flag) & 5`) gerekir.
+            .bit_and, .bit_or, .bit_xor => blk: {
+                if (l == .boolean and r == .boolean) break :blk .boolean;
+                if (l == .boolean or r == .boolean) {
+                    return self.fail(error.TypeMismatch, "'&'/'|'/'^' bool'u int/sabit-genişlikli tamsayıyla örtük karıştırmaz — açık dönüşüm kullanın", .{});
+                }
+                if (!types.isBitwiseEligible(l) or !types.isBitwiseEligible(r)) {
+                    return self.fail(error.TypeMismatch, "'&'/'|'/'^' yalnızca int/sabit-genişlikli tamsayı tiplerinde kullanılabilir (float desteklenmez)", .{});
+                }
+                const fk = try self.requireSameFixedIntOrNone(l, r);
+                break :blk if (fk) |k| Type{ .fixed_int = k } else .int;
+            },
+            // v3 madde 2: `<<`/`>>` — sol işlenen bitwise-uygun olmalı;
+            // kaydırma MİKTARI (sağ işlenen) BİLİNÇLİ olarak sade `int`e
+            // KISITLANIR (bir "sayı" kavramının kendisi, sol işlenenin
+            // genişliğinden BAĞIMSIZ — bkz. `genCheckedShift`in belge
+            // notu, ÇALIŞMA ZAMANI aralık kontrolü BURADA DEĞİL orada
+            // yapılır çünkü miktar keyfi bir ifade olabilir).
+            .shl, .shr => blk: {
+                if (!types.isBitwiseEligible(l)) {
+                    return self.fail(error.TypeMismatch, "'<<'/'>>' sol işleneni yalnızca int/sabit-genişlikli tamsayı olabilir (float/bool desteklenmez — bool için önce 'int(...)' ile dönüştürün)", .{});
+                }
+                if (r != .int) {
+                    return self.fail(error.TypeMismatch, "'<<'/'>>' kaydırma miktarı 'int' olmalı", .{});
+                }
+                break :blk if (l == .fixed_int) l else .int;
             },
         };
     }

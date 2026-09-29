@@ -61,7 +61,7 @@ pub const Param = struct {
     self_inferred: bool = false,
 };
 
-pub const UnaryOp = enum { neg, not_ };
+pub const UnaryOp = enum { neg, not_, invert };
 pub const BinaryOp = enum {
     add,
     sub,
@@ -78,6 +78,11 @@ pub const BinaryOp = enum {
     ge,
     and_,
     or_,
+    bit_and,
+    bit_or,
+    bit_xor,
+    shl,
+    shr,
 };
 
 pub const Expr = union(enum) {

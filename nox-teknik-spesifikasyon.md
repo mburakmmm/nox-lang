@@ -24621,6 +24621,112 @@ x86_64_test.zig` (YENİ assert).
 
 ---
 
+## 3.199 v3 sertleştirme yol haritası, madde 2 — Bitwise operatörler (`&`/`|`/`^`/`~`/`<<`/`>>`)
+
+**Bağlam:** Nox'ta bu maddeye KADAR bitwise operatör YOKTU (lexer'ın
+`TokenKind`ı DOĞRULANDI — `&`/`^`/`~`/`<<`/`>>` HİÇBİR ŞEKİLDE
+TANINMIYORDU, `|` yalnızca `T | None` tip sözdiziminde kullanılıyordu).
+Bu, dış (GPT 5.6 atıflı) bir strateji analizinin ÖNERDİĞİ, kullanıcının
+ONAYLADIĞI 12 maddelik "v3 sertleştirme yol haritası"nın 2. maddesidir
+(1. madde — aarch64 stack-smash — kullanıcı kararıyla AÇIK bırakıldı).
+
+**Sözdizimi/öncelik:** Python'ın KENDİ önceliği BİREBİR izlenir — `or` >
+`and` > `not` > karşılaştırmalar (`==`/`!=`/`<`/vb.) > `|` > `^` > `&` >
+`<<`/`>>` > `+`/`-` > `*`/`/`/`//`/`%` > tekli `-`/`~` > `**`. `~` tekli
+operatör olarak `parseUnary`da (aynı kademede unary `-`) tanınır. Parser
+zincirine `parseComparison`/`parseAddSub` ARASINA `parseBitOr → parseBit
+Xor → parseBitAnd → parseShift` DÖRT yeni kademe EKLENDİ (bkz. `compiler/
+parser/parser.zig`).
+
+**Tip kuralları (`compiler/typecheck/checker.zig`nin `checkBinary`ı +
+unary `.invert` dalı, `types.isBitwiseEligible`):**
+- `&`/`|`/`^`/`~`/`<<`/`>>` yalnızca `int`/sabit-genişlikli tamsayı
+  operandları kabul eder — `float` DESTEKLENMEZ (nox-lang'in KENDİ HPy
+  köprüsünün, `runtime/hpy_bridge/context.zig`nin `ctxInvert`/
+  `bitwiseBinOp`ının, Faz QQ'DA ZATEN benimsediği "Python'la tutarlı: bit
+  işlemleri yalnızca int/bool için, float'ın bit işlemi yok" kararının
+  derleyici seviyesindeki genişlemesi).
+- **`bool` İSTİSNASI (kodlama SIRASINDA GERÇEKTEN bulunan bir codegen
+  tutarsızlığı ÜZERİNE BİLİNÇLİ olarak DARALTILDI):** ilk tasarım HPy
+  köprüsünün "bool int gibi davranır" emsalini AYNEN izleyip `bool`u
+  `int`le ÖRTÜK KARIŞTIRMAYI planlıyordu — AMA codegen'in `genBinary`
+  içindeki `common` genişlik hesaplaması (`l0.qtype==.w İSE common=.w`)
+  bir `bool` (HER ZAMAN `.w`) İLE bir `int`i (HER ZAMAN `.l`) KARIŞTIRINCA
+  sonucu YANLIŞ genişlikte (`.w`, 32-bit) ÜRETİYORDU — OYSA checker `.int`
+  (64-bit TEMSİL BEKLENTİSİ) döndürseydi, ÇAĞIRAN taraf (`print` GİBİ)
+  BUNU yanlış okurdu. Bu YÜZDEN kural BASİTLEŞTİRİLDİ: `bool & bool` (VE
+  `|`/`^`) → `.boolean` (codegen'in KENDİ `.w` temsiliyle TAM uyumlu);
+  `bool`un `int`/sabit-genişlikli tamsayıyla HERHANGİ bir KARIŞIMI
+  TAMAMEN REDDEDİLİR (açık `int(...)` dönüşümü GEREKİR) — Nox'un GENEL
+  "örtük sayısal tip karışımı YOK" ilkesiyle (`requireSameFixedIntOrNone`
+  İLE AYNI felsefe) TUTARLI. `~bool`/`bool << n` DE AYNI gerekçeyle
+  REDDEDİLİR.
+- `&`/`|`/`^`/`~` sonucu: İKİ TARAF da AYNI sabit-genişlikli kind İSE o
+  kind (`requireSameFixedIntOrNone`), İKİ TARAF da `bool` İSE `bool`,
+  AKSİ HALDE `int`.
+- `<<`/`>>` sonucu: sol işlenenin tipi (fixed_int İSE AYNI kind, AKSİ
+  HALDE `int`) — kaydırma MİKTARI (sağ işlenen) BİLİNÇLİ olarak sade
+  `int`e KISITLANIR.
+
+**Kaydırma semantiği — KULLANICI KARARI (AskUserQuestion İLE AÇIKÇA
+soruldu, VARSAYILMADI, bkz. AGENTS.md §16.3):** `>>` işaretliliğe göre
+derlenir — `int`/`i8`/`i16`/`i32`/`i64` İçİn ARİTMETİK (`sar`, işaret
+biti KORUNUR), `u8`/`u16`/`u32`/`u64` İçİn MANTIKSAL (`shr`, sıfır-
+doldurmalı) — C/Rust/Zig'in (VE nox-lang'in KENDİ HPy köprüsünün) AYNI
+emsali. **Kaydırma miktarı GEÇERSİZSE (negatif YA DA tipin bit genişliğine
+eşit/fazla) `ValueError` FIRLATILIR** — platformdan bağımsız/deterministik
+davranış SESSİZCE maskeleme YERİNE tercih edildi (kullanıcının, "sessiz
+maskeleme UB/platforma-bağımlı davranışı GİZLİCE benimser, Nox'un
+'deterministik' pusulasıyla GERİLİMLİDİR" gerekçesiyle YAPTIĞI AÇIK
+seçim). Bu, `genCheckedShift`in (`compiler/codegen_qbe/expr.zig`)
+çalışma-zamanı doğrulamasıyla UYGULANIR — checker bunu DERLEME ZAMANINDA
+YAPAMAZ (miktar keyfi bir ifade OLABİLİR).
+
+**Codegen'de GERÇEKTEN bulunan İKİ hassas köşe (tahmin DEĞİL, golden
+test'le YAKALANIP DÜZELTİLDİ):**
+1. `&`/`|`/`^` sonucunun `Value.fixed_int` etiketi `emitBin`in KENDİSİ
+   TARAFINDAN DOLDURULMAZ (`null` KALIR) — bu AÇIKÇA elle set EDİLMEZSE,
+   `u8 & u8` GİBİ bir sonuç `genPrint`in `.w`+`fixed_int==null` deseninin
+   (SIRADAN bir `bool`la ÇAKIŞTIĞINDAN) "True"/"False" OLARAK YANLIŞ
+   basılmasına yol açıyordu — `add`/`sub`/`mul`ın `emitCheckedFixedBin`
+   ARACILIĞIYLA ZATEN yaptığı GİBİ, sonuca `fixed_kind` AÇIKÇA damgalandı.
+2. **`~`/`<<` dar (8/16-bit) kind'lerde EK bir daraltma/yeniden-genişletme
+   ADIMI GEREKTİRİR** — `emitCheckedFixedBinNarrow`nin kurduğu değişmez
+   (bir u8/i8/u16/i16 değeri `.w` yazmacında HER ZAMAN kendi genişliğine
+   göre doğru işaret/sıfır-genişletilmiş TUTULUR) İKİLİ `and`/`or`/`xor`
+   TARAFINDAN OTOMATİK KORUNUR (her çıktı biti YALNIZCA kendi konumundaki
+   giriş bitlerine bağlıdır) — AMA tekli `~` (`xor -1`, İŞARETSİZ dar
+   kind'lerde: sıfır-genişletilmiş üst bitler TÜMÜ 1'e döner, değişmez
+   BOZULUR) VE `<<` (bitleri YUKARI taşıdığından "genişletme" bölgesine
+   GERÇEK veri sızdırabilir, ör. `u8(200) << 2` ham 32-bit'te 800 verir,
+   OYSA u8 32'ye SARMALIDIR) İçİn AYRI bir extub/extsb/extuh/extsh
+   yeniden-genişletme adımı GEREKİR. `>>` (sar/shr) İçİN bu adım GEREKMEZ
+   — sağa kaydırma ZATEN üst (genişletme) bitlerinden GELDİĞİNDEN sonuç
+   OTOMATİK doğru kalır. **`<<`nin bit-kaybı (taşan bitlerin ATILMASI)
+   `add`/`sub`/`mul`ın taşma-TUZAKLAMASINDAN BİLİNÇLİ olarak FARKLIDIR**
+   — Zig'in/Rust'ın/C'nin KENDİ `<<` operatörüyle AYNI, SESSİZ sarma
+   semantiği (bit kaydırmada üst bitlerin kaybolması HER ZAMAN kasıtlı/
+   beklenen bir işlemdir, bir mantık hatası GÖSTERGESİ DEĞİL).
+
+**Golden test:** `tests/golden/codegen_cases/bitwise_ops.nox`/`.expected`
+— int/u8/i8/bool operandları, TÜM operatörler, VE `1 << n` İçİN üç `n`
+değeriyle (geçerli, negatif, aşırı) hem BAŞARI hem `ValueError` YOLUNU
+kanıtlar (`tests/golden/codegen_golden_test.zig`ye eklendi). `zig build
+test` SIFIR regresyonla geçer (296 IR-diff karşılaştırması DAHİL).
+
+**Kritik dosyalar:** `compiler/lexer/token.zig` (`amp`/`caret`/`tilde`/
+`lt_lt`/`gt_gt` + `_eq` varyantları), `compiler/lexer/lexer.zig`,
+`compiler/parser/ast.zig` (`BinaryOp.bit_and/bit_or/bit_xor/shl/shr`,
+`UnaryOp.invert`), `compiler/parser/parser.zig` (`parseBitOr/BitXor/
+BitAnd/Shift`), `compiler/typecheck/types.zig` (`isBitwiseEligible`),
+`compiler/typecheck/checker.zig` (`checkBinary`, unary `.invert` dalı),
+`compiler/codegen_qbe/expr.zig` (`genBinary`, `genCheckedShift`,
+`genUnary`), `compiler/codegen_qbe/codegen.zig` (`genCheckedShift`
+re-export), `compiler/fmt/formatter.zig` (`binPrec`/`binOpStr`/
+`unaryPrec`).
+
+---
+
 ## 5. Hata Yönetimi
 
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.

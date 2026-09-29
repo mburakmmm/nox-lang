@@ -63,10 +63,18 @@ pub const TokenKind = enum {
     r_brace,
     arrow, // ->
     /// Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `T | None`
-    /// (Optional) tip ifadesinin ayracı. `|` dilde BAŞKA HİÇBİR yerde
-    /// (ne değer ne tip pozisyonunda) kullanılmadığından bu YENİ token
-    /// SIFIR çakışma riski taşır.
+    /// (Optional) tip ifadesinin ayracı. **v3 madde 2 (bitwise operatörler,
+    /// bkz. nox-teknik-spesifikasyon.md ilgili bölüm) İLE ARTIK bu iddia
+    /// GÜNCEL DEĞİL** — `|` ARTIK değer ifadelerinde de (bitwise-or)
+    /// kullanılıyor; iki kullanım `parseTypeExpr` (tip konumu) İLE değer-
+    /// ifade zincirinin (`parseBitOr`) AYRI giriş noktaları OLDUĞUNDAN
+    /// sözdizimsel olarak ASLA karışmaz — token'ın KENDİSİ tek/paylaşımlı.
     pipe, // |
+    amp, // &
+    caret, // ^
+    tilde, // ~
+    lt_lt, // <<
+    gt_gt, // >>
     /// Faz 1 (bkz. nox-teknik-spesifikasyon.md decorator bölümü): `@isim`
     /// decorator satırının başlatıcısı. Dilde BAŞKA HİÇBİR yerde
     /// kullanılmadığından SIFIR çakışma riski taşır.
@@ -100,6 +108,11 @@ pub const TokenKind = enum {
     slash_slash_eq, // //=
     percent_eq, // %=
     star_star_eq, // **=
+    amp_eq, // &=
+    pipe_eq, // |=
+    caret_eq, // ^=
+    lt_lt_eq, // <<=
+    gt_gt_eq, // >>=
 
     // structure
     newline,

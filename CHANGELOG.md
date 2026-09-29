@@ -14,6 +14,23 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.109.0]
+
+### Eklendi
+
+- **Bitwise operatörler (`&`/`|`/`^`/`~`/`<<`/`>>`, bkz. nox-teknik-
+  spesifikasyon.md §3.199)** — v3 sertleştirme yol haritasının 2.
+  maddesi. Python'ın KENDİ operatör önceliği izlenir; `int`/sabit-
+  genişlikli tamsayı operandları kabul eder (`float` desteklenmez,
+  nox-lang'in KENDİ HPy köprüsündeki emsalle TUTARLI); `bool`, `int`/
+  sabit-genişlikli tamsayıyla ÖRTÜK KARIŞMAZ (açık dönüşüm gerekir —
+  kodlama SIRASINDA GERÇEKTEN bulunan bir codegen bit-genişliği
+  uyuşmazlığı ÜZERİNE bilinçli olarak daraltıldı). `>>` işaretliliğe
+  göre aritmetik/mantıksal derlenir; geçersiz kaydırma miktarı (negatif
+  ya da tipin bit genişliğini aşan) bir `ValueError` fırlatır (sessiz
+  maskeleme YERİNE, kullanıcı kararıyla). Yeni golden test:
+  `tests/golden/codegen_cases/bitwise_ops.nox`.
+
 ## [1.108.1]
 
 ### Düzeltildi
