@@ -1,0 +1,41 @@
+from nox.buffer import Buffer
+
+# v4 Faz A madde 5 (bkz. nox-teknik-spesifikasyon.md §3.2xx): bu fixture,
+# `list[u8]`e (fixed-int eleman) İNDEKSLE ATAMANIN (`genListAssign`nin
+# ASAP-arena ile YANLIŞLIKLA çakışan `checkNoLowlevelEscape` kontrolü
+# yüzünden ÖNCEDEN TAMAMEN ÇALIŞMAYAN) GERÇEK codegen düzeltmesini de
+# DOLAYLI olarak EGZERSİZ eder (`Buffer.set`/`fill`/`copy_from`nin HEPSİ
+# `self._data[i] = v`yi kullanır).
+
+b1: Buffer = Buffer(5)
+print(b1.len())
+b1.set(0, u8(10))
+b1.set(2, u8(30))
+b1.set(4, u8(50))
+print(b1.get(0))
+print(b1.get(1))
+print(b1.get(2))
+print(b1.get(4))
+
+b1.fill(u8(7))
+print(b1.get(0))
+print(b1.get(4))
+
+b2: Buffer = Buffer(3)
+b2.set(0, u8(1))
+b2.set(1, u8(2))
+b2.set(2, u8(3))
+
+b3: Buffer = Buffer(5)
+b3.copy_from(b2)
+print(b3.get(0))
+print(b3.get(1))
+print(b3.get(2))
+print(b3.get(3))
+print(b3.get(4))
+
+# ters yönde (dst daha KÜÇÜK) — min(len) kadar kopyalanmalı
+b4: Buffer = Buffer(2)
+b4.copy_from(b3)
+print(b4.get(0))
+print(b4.get(1))

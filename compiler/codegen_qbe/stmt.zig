@@ -394,9 +394,23 @@ pub fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {
 /// değeri yaz, SONRA eskiyi serbest bırak" sırasını izler. `obj` (ÇAĞIRAN
 /// TARAFINDAN önceden değerlendirilmiş) her ZAMAN `.heap == .list`
 /// GARANTİLİDİR (bkz. `genAssign`in `.index` dalı).
+///
+/// v4 Faz A madde 5 (bkz. nox-teknik-spesifikasyon.md §3.2xx) — GERÇEK,
+/// önceden keşfedilmemiş bir hata: BU fonksiyon ÖNCEDEN `obj` (ALICI
+/// listenin KENDİSİ) üzerinde `checkNoLowlevelEscape` ÇAĞIRIYORDU — ASAP
+/// (Katman 1) `xs: list[u8] = [...]` GİBİ KAÇMAYAN (escape-safe) bir
+/// listeyi ARENA'ya sınıflandırdığında (`obj.arena == true`), BU kontrol
+/// `xs[i] = v`yi (SAF bir YERİNDE MUTASYON — `genIndex`in OKUMA yolu,
+/// AŞAĞIDAKİ SATIR SATIR AYNI `obj.text` adresini kullanır, HİÇBİR
+/// `checkNoLowlevelEscape` ÇAĞIRMAZ) YANLIŞLIKLA "bilinmeyen tip: T"
+/// SINIFI bir `error.Unsupported`la reddediyordu — bir ARENA değerinin
+/// KENDİ ADRESİNE yazmak, o değeri HİÇBİR yere "kaçırmaz" (aksine, `genIndex`
+/// İLE TAM SİMETRİK, GÜVENLİ bir işlemdir). Kontrol SİLİNDİ — `value_v0`
+/// (YENİ yazılan DEĞER, aşağıda) üzerindeki AYRI `checkNoLowlevelEscape`
+/// çağrısı (GERÇEKTEN bir arena-değerinin LİSTEYE kaçmasını önlediği İçİn)
+/// KORUNDU, DEĞİŞMEDİ.
 pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast.Expr) CodegenError!void {
     if (obj.heap != .list) return error.Unsupported;
-    try self.checkNoLowlevelEscape(obj);
     const index_v = try self.genExpr(idx.index.*);
 
     const len_t = try self.newTemp();

@@ -14,6 +14,29 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.116.0]
+
+### Eklendi
+
+- **`nox.buffer.Buffer` — sahip olunan bayt arabelleği (bkz. nox-teknik-
+  spesifikasyon.md §3.212, v4 Faz A madde 5)**: `Buffer(n)`, `len()`,
+  `get(i)`, `set(i, v)`, `fill(v)`, `copy_from(other)`. Saf `list[u8]`
+  sarmalayıcısı — bilinçli olarak ham işaretçi/`lowlevel:` kullanmaz
+  (nedeni spesifikasyonda belgelendi: `detach()` ARC'den kalıcı bir
+  çıkıştır, tekrarlanan kullanımı refcount sızdırırdı).
+
+### Düzeltildi
+
+- **GERÇEK bir codegen hatası: `list[T]`e (sabit-genişlikli eleman
+  tipiyle — `u8`/`i32`/vb.) İNDEKSLE ATAMA hiçbir koşulda çalışmıyordu**
+  (`list[int]` her zaman çalışıyordu). Kök neden: `genListAssign`
+  alıcı listenin kendisi üzerinde gereksiz bir `checkNoLowlevelEscape`
+  çağırıyordu — ASAP'ın (Katman 1) kaçmayan bir listeyi arena'ya
+  sınıflandırdığı her durumda bunu (saf bir YERİNDE mutasyonu, bir
+  kaçış/takma-ad OLMAYAN bir işlemi) yanlışlıkla reddediyordu — okuma
+  yolu (`genIndex`) aynı kontrolü hiç yapmıyordu (ve her zaman doğru
+  çalışıyordu). `Buffer.set()` yazılırken gerçekten denenip bulundu.
+
 ## [1.115.0]
 
 ### Eklendi

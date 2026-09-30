@@ -1,0 +1,72 @@
+# nox.buffer — sahip OLUNAN (owned) bayt arabelleği.
+#
+# v4 (2.0 öncesi son mimari stdlib katmanlaşması, Faz A), madde 5 (bkz.
+# nox-teknik-spesifikasyon.md §3.2xx). `list[u8]`den FARKLI bir
+# abstraction: sabit boyutlu (büyümez/küçülmez), sistem-programlama
+# niyetini (ağ paketi/dosya-sistemi tamponu/kernel MMIO arabelleği vb.)
+# AÇIKÇA taşıyan bir tip.
+#
+# **`Buffer.alloc(n)` DEĞİL, `Buffer(n)`:** önerinin örnek sözdizimi
+# (`Buffer.alloc(n)`) bir STATİK/sınıf METODU çağırıyormuş gibi
+# okunuyordu — Nox'ta `@staticmethod` GİBİ bir decorator/mekanizma
+# YOKTUR (TÜM metodlar bir `self` örneği ÜZERİNDEN çağrılır). Bu YÜZDEN
+# kurucu DOĞRUDAN `__init__` OLARAK sunulur: `Buffer(n)`.
+#
+# **`list[u8]` sarmalayıcısı, ham işaretçi DEĞİL:** `get`/`set`/`fill`/
+# `copy_from` SAF `list[u8]` indeksleme/atama ÜZERİNDEN çalışır — YENİ
+# hiçbir `lowlevel:`/`ptr[T]` kullanmaz. Bu BİLİNÇLİ bir tasarım kararı:
+# `detach()` Nox'un ARC'sinden KALICI/GERİ ALINAMAZ bir çıkıştır (bkz.
+# AGENTS.md §9.5'in güven sınırı) — Nox'un ŞU AN kullanıcı koduna
+# HİÇBİR manuel "free" ilkeli SUNMADIĞINDAN, `Buffer`nin KENDİ arka
+# belleğini (`as_ptr()` GİBİ bir yöntemle) TEKRAR TEKRAR `detach` etmesi
+# HER ÇAĞRIDA +1 refcount SIZDIRIRDI (GERÇEKTEN akıl yürütülüp BİLİNÇLİ
+# olarak KAÇINILDI) — `nox.mem` İLE gerçek sıfır-kopya interop, `Span`
+# (Faz A madde 6) BU İLİŞKİYİ (ödünç alma/yaşam süresi) NET bir şekilde
+# tanımladıktan SONRAYA bırakıldı.
+#
+# **GERÇEK bir codegen hatası BULUNUP DÜZELTİLDİ (bu madde sırasında):**
+# `list[u8]`e (VEYA HERHANGİ bir sabit-genişlikli eleman tipine) İNDEKSLE
+# ATAMA (`xs[i] = v`) ÖNCEDEN TAMAMEN ÇALIŞMIYORDU — ASAP'ın (Katman 1)
+# KAÇMAYAN bir listeyi ARENA'ya sınıflandırdığı HER durumda `genListAssign`
+# YANLIŞLIKLA reddediyordu (`checkNoLowlevelEscape`nin ALICI üzerinde
+# GEREKSİZ çağrılması — okuma yolu, `genIndex`, AYNI kontrolü HİÇ
+# yapmıyordu). Düzeltilmeden `Buffer.set()` (VE list[u8] kullanan HERHANGİ
+# bir kod) ÇALIŞAMAZDI.
+
+class Buffer:
+    _data: list[u8]
+
+    def __init__(self, n: int) -> None:
+        d: list[u8] = []
+        i: int = 0
+        while i < n:
+            d.append(u8(0))
+            i = i + 1
+        self._data = d
+
+    def len(self: Buffer) -> int:
+        return len(self._data)
+
+    def get(self: Buffer, i: int) -> u8:
+        return self._data[i]
+
+    def set(self: Buffer, i: int, v: u8) -> None:
+        self._data[i] = v
+
+    def fill(self: Buffer, v: u8) -> None:
+        i: int = 0
+        n: int = len(self._data)
+        while i < n:
+            self._data[i] = v
+            i = i + 1
+
+    # `other`den, İKİSİNİN de UZUNLUĞUNUN küçüğü kadar bayt kopyalar.
+    def copy_from(self: Buffer, other: Buffer) -> None:
+        n: int = len(self._data)
+        on: int = other.len()
+        if on < n:
+            n = on
+        i: int = 0
+        while i < n:
+            self._data[i] = other.get(i)
+            i = i + 1

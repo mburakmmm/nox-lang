@@ -1,0 +1,21 @@
+# v4 Faz A madde 5 (bkz. nox-teknik-spesifikasyon.md §3.2xx): GERÇEK bir
+# codegen hatasının İZOLE kanıtı — `list[u8]`e (HERHANGİ bir sabit-
+# genişlikli eleman tipine) İNDEKSLE ATAMA (`xs[i] = v`) ÖNCEDEN
+# TAMAMEN ÇALIŞMIYORDU: ASAP (Katman 1) kaçmayan bu listeyi ARENA'ya
+# sınıflandırdığından, `genListAssign`in ALICI üzerindeki GEREKSİZ
+# `checkNoLowlevelEscape` çağrısı SESSİZCE reddediyordu — `genIndex`in
+# (OKUMA yolu) AYNI kontrolü HİÇ YAPMAMASIYLA ASİMETRİKTİ.
+xs: list[u8] = [u8(1), u8(2), u8(3), u8(4), u8(5)]
+xs[1] = u8(99)
+xs[4] = u8(200)
+print(xs[0])
+print(xs[1])
+print(xs[2])
+print(xs[3])
+print(xs[4])
+
+ys: list[i32] = [i32(-1), i32(-2), i32(-3)]
+ys[0] = i32(1000000)
+print(ys[0])
+print(ys[1])
+print(ys[2])

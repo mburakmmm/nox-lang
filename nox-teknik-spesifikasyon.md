@@ -26080,6 +26080,81 @@ inline edilebilir bir generic fonksiyon KULLANDIĞINDAN — IR anlık
 görüntüsü, düzeltme SONUCU değişen `fixed_int` damgası YÜZÜNDEN KASITLI
 olarak YENİDEN OLUŞTURULDU).
 
+## 3.212 v4 (2.0 öncesi son mimari stdlib katmanlaşması, Faz A), madde 5 — `Buffer` + GERÇEK bir codegen hatası (`list[T]` sabit-genişlikli eleman indeksle atama)
+
+**Bağlam:** Faz A'nın 5. maddesi — sahip OLUNAN (owned) bayt arabelleği,
+`list[u8]`den FARKLI bir abstraction. Uygulama SIRASINDA, madde 3/4'ün
+AYNI deseniyle, GERÇEK bir codegen hatası bulundu — BU SEFER `Buffer`nin
+KENDİSİNİ TAMAMEN engelleyen bir sınırlama.
+
+### Tasarım kararları
+
+- **`Buffer.alloc(n)` DEĞİL, `Buffer(n)`:** önerinin örnek sözdiziminin
+  (`Buffer.alloc(n)`) ima ettiği bir STATİK/sınıf metodu Nox'ta YOKTUR
+  (`@staticmethod` GİBİ bir mekanizma yok — TÜM metodlar bir `self`
+  örneği üzerinden çağrılır). Kurucu DOĞRUDAN `__init__` OLARAK sunuldu.
+- **`list[u8]` sarmalayıcısı, ham işaretçi DEĞİL — BİLİNÇLİ bir karar:**
+  `get`/`set`/`fill`/`copy_from` SAF `list[u8]` indeksleme/atama
+  üzerinden çalışır, YENİ hiçbir `lowlevel:`/`ptr[T]` KULLANMAZ. İLK
+  tasarım (`self._data`yı `detach()` İLE HAM bir `ptr[u8]`e ÇEVİRİP
+  ÖNBELLEKLEMEK, `nox.mem` İLE sıfır-kopya interop İçİn) GERÇEKTEN akıl
+  yürütülüp REDDEDİLDİ: `detach()` ARC'den KALICI/GERİ ALINAMAZ bir
+  ÇIKIŞTIR (bkz. AGENTS.md §9.5) — Nox'un ŞU AN kullanıcı koduna HİÇBİR
+  manuel "free" ilkeli SUNMADIĞINDAN, hem `self._data`yı (normal ARC
+  YAŞAM DÖNGÜSÜ İçİn) HEM bir DETACHED ham işaretçiyi (HIZLI erişim İçİn)
+  AYNI ANDA tutmak, HER `detach` çağrısında +1 refcount SIZDIRIRDI (kalıcı,
+  HİÇBİR ZAMAN dengelenmeyen bir sızıntı — her Buffer İçİn BİR KEZ DEĞİL,
+  `as_ptr()` HER ÇAĞRILDIĞINDA BÜYÜYEN). `nox.mem` İLE GERÇEK sıfır-kopya
+  interop, `Span`in (Faz A madde 6) ödünç-alma/yaşam-süresi İLİŞKİSİNİ
+  NET tanımlamasından SONRAYA bilinçli olarak BIRAKILDI.
+
+### GERÇEK bulgu: `list[T]` sabit-genişlikli eleman indeksle atama TAMAMEN ÇALIŞMIYORDU
+
+`Buffer.set()`i (`self._data[i] = v`) yazıp test EDERKEN, `list[u8]`e
+(VE HERHANGİ bir sabit-genişlikli eleman tipine — `list[i32]` DAHİL,
+`u8`e ÖZGÜ DEĞİL) İNDEKSLE ATAMANIN HİÇBİR koşulda çalışmadığı
+GERÇEKTEN denenip bulundu — İZOLE, minimal bir tekrar-üretimle (`xs:
+list[u8] = [...]; xs[1] = u8(99)`) KÖK NEDEN belirlendi: `list[int]`
+(sabit-genişlikli OLMAYAN) İNDEKSLE atama HER ZAMAN ÇALIŞIYORDU,
+`list[u8]`/`list[i32]` İSE HİÇBİR ZAMAN.
+
+**Kök neden:** `compiler/codegen_qbe/stmt.zig`nin `genListAssign`ı
+(`xs[i] = value`), ALICI listenin (`obj`) ÜZERİNDE GEREKSİZ bir
+`checkNoLowlevelEscape(obj)` çağırıyordu. ASAP (Katman 1, escape
+analizi) KAÇMAYAN bir `list[u8]` literalini SIKLIKLA bir ARENA
+değeri olarak sınıflandırır (`obj.arena == true`) — `checkNoLowlevelEscape`
+İSE "HERHANGİ bir ARENA heap-değeri bir çağrıya argüman/alıcı OLAMAZ,
+DÖNDÜRÜLEMEZ ya da BAŞKA bir isme takma ad OLAMAZ" kuralını uygular
+(bkz. onun belge notu). AMA `xs[i] = v` bir çağrı/dönüş/takma-ad DEĞİLDİR
+— SAF bir YERİNDE MUTASYONDUR (`obj.text` adresine DOĞRUDAN bir `qbeStore`).
+`genIndex`in (OKUMA yolu, `xs[i]`) AYNI ALICI üzerinde HİÇBİR `checkNoLowlevelEscape`
+çağrısı YAPMAMASI (VE her zaman doğru ÇALIŞMASI) BUNU KANITLAR — ASİMETRİK,
+YANLIŞLIKLA UYGULANMIŞ bir kısıtlamaydı. `obj` üzerindeki çağrı SİLİNDİ;
+`value_v0` (YENİ yazılan DEĞER) üzerindeki AYRI `checkNoLowlevelEscape`
+çağrısı (GERÇEKTEN bir arena-değerinin LİSTEYE KAÇMASINI önlediği İçİn)
+KORUNDU, DEĞİŞMEDİ.
+
+Bu, madde 10/§3.206'nın "list[T] byte-packing hâlâ ERTELENMİŞ" notuyla
+KARIŞTIRILMAMALIDIR — O, ELEMANLARIN BAYT-SIKI PAKETLENMESİYLE (depolama
+YOĞUNLUĞU) İLGİLİ AYRI bir konu; BU bulgu İSE İNDEKSLE ATAMANIN (mevcut,
+paketlenmemiş DÜZENLE BİLE) TAMAMEN ÇALIŞMAMASIYLA İLGİLİDİR — İKİSİ
+FARKLI, BAĞIMSIZ sorunlardır.
+
+### `Buffer`nin KENDİSİ
+
+`Buffer(n)` (sıfırla DOLDURULMUŞ `n` baytlık arabellek), `len()`, `get(i)`,
+`set(i, v)`, `fill(v)`, `copy_from(other)` (İKİSİNİN de uzunluğunun
+KÜÇÜĞÜ kadar bayt kopyalar). HİÇBİR yeni capability GEREKTİRMEZ.
+
+### Test
+
+`tests/golden/codegen_cases/list_fixed_int_index_assign.nox` (bulgunun
+İZOLE kanıtı, `list[u8]`/`list[i32]`) VE `nox_buffer_owned_byte_buffer.nox`
+(`Buffer`nin TAM API'si) — İKİSİ de `fixture_corpus.zig`ye kaydedildi.
+`zig build test` sıfır regresyon (HİÇBİR mevcut fixture `list[T]` sabit-
+genişlikli eleman İNDEKSLE ATAMA KULLANMADIĞINDAN IR anlık görüntüleri
+ETKİLENMEDİ).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
@@ -26116,8 +26191,11 @@ KALICI olarak açık bırakılan 2 madde: AArch64 Linux CI stack-smash kökü
 kararıyla ŞİMDİLİK KAPATILMAYAN bulgulardır.
 
 **Sıradaki adım:** v3'ten HEMEN SONRA başlayan v4 (2.0 öncesi son mimari
-stdlib katmanlaşması, Faz A, bkz. §3.208-§3.211 + proje belleği `project_
+stdlib katmanlaşması, Faz A, bkz. §3.208-§3.212 + proje belleği `project_
 v4_pre20_stdlib_roadmap`) — madde 1 (capability modeli, §3.208), madde 2
 (generic self-instantiation düzeltmesi, §3.209), madde 3 (`nox.mem`,
-§3.210) VE madde 4 (`nox.bits` + `fixed_int` damgalama hatası, §3.211)
-TAMAMLANDI; sırada madde 5 (`Buffer`) VAR.
+§3.210), madde 4 (`nox.bits` + `fixed_int` damgalama hatası, §3.211) VE
+madde 5 (`Buffer` + `list[T]` indeksle atama hatası, §3.212) TAMAMLANDI;
+sırada madde 6 (`Span`) VAR — AGENTS.md İlke #1'in "ownership hiçbir
+zaman kullanıcı sözdiziminde görünmez" kuralıyla nasıl UYUMLU olacağı
+KENDİ, ÖZEL bir karar noktası GEREKTİRİR.

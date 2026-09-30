@@ -94,6 +94,13 @@ pub const fixtures = [_]Fixture{
     // ÇIPLAK çağrı sonucu `print`e verildiğinde "True"/"False" YANLIŞ
     // basılması) DOLAYLI olarak EGZERSİZ eder.
     .{ .name = "codegen(çalıştır): nox.bits rotl/rotr/swap/endian/mask/bit-ops", .kind = .golden, .source = @embedFile("codegen_cases/nox_bits_rotate_swap_endian_mask.nox"), .expected_stdout = @embedFile("codegen_cases/nox_bits_rotate_swap_endian_mask.expected") },
+    // v4 Faz A madde 5 (bkz. nox-teknik-spesifikasyon.md §3.2xx): nox.buffer
+    // — sahip olunan bayt arabelleği. `genListAssign`in ASAP-arena ile
+    // yanlışlıkla çakışan `checkNoLowlevelEscape` kontrolünün (list[u8]
+    // İNDEKSLE ATAMA ÖNCEDEN TAMAMEN ÇALIŞMIYORDU) GERÇEK düzeltmesini
+    // DOLAYLI olarak EGZERSİZ eder.
+    .{ .name = "codegen(çalıştır): nox.buffer.Buffer get/set/fill/copy_from", .kind = .golden, .source = @embedFile("codegen_cases/nox_buffer_owned_byte_buffer.nox"), .expected_stdout = @embedFile("codegen_cases/nox_buffer_owned_byte_buffer.expected") },
+    .{ .name = "codegen(çalıştır): list[u8]/list[i32] indeksle atama (checkNoLowlevelEscape/ASAP-arena düzeltmesi)", .kind = .golden, .source = @embedFile("codegen_cases/list_fixed_int_index_assign.nox"), .expected_stdout = @embedFile("codegen_cases/list_fixed_int_index_assign.expected") },
     .{ .name = "codegen(çalıştır): nox.url parse/percent-encode-decode/query/join", .kind = .golden, .source = @embedFile("codegen_cases/url_parse_encode_decode.nox"), .expected_stdout = @embedFile("codegen_cases/url_parse_encode_decode.expected") },
     .{ .name = "codegen(çalıştır): gecici alici uzerinde istisna firlatan metod/pop()/indeksleme sizmaz", .kind = .golden, .source = @embedFile("codegen_cases/temporary_receiver_raises_no_leak.nox"), .expected_stdout = @embedFile("codegen_cases/temporary_receiver_raises_no_leak.expected") },
     .{ .name = "codegen(çalıştır): nox.postgres/nox.mysql — ulasilamayan baglantida temiz hata", .kind = .golden, .source = @embedFile("codegen_cases/postgres_mysql_connect_error.nox"), .expected_stdout = @embedFile("codegen_cases/postgres_mysql_connect_error.expected") },

@@ -1004,6 +1004,10 @@ pub const Checker = struct {
         // `nox.bits` — SAF bitwise operatör sarmalayıcısı, `nox.mem`in
         // AYNI gerekçeyle HİÇBİR OS/libc bağımlılığı TAŞIMAZ.
         .{ .name = "bits", .caps = &.{} },
+        // v4 Faz A madde 5 (bkz. nox-teknik-spesifikasyon.md §3.2xx):
+        // `nox.buffer` — SAF `list[u8]` sarmalayıcısı, `nox.mem`/`nox.bits`
+        // İLE AYNI gerekçeyle HİÇBİR OS/libc bağımlılığı TAŞIMAZ.
+        .{ .name = "buffer", .caps = &.{} },
         .{ .name = "collections", .caps = &.{} },
         .{ .name = "crypto", .caps = &.{} },
         .{ .name = "csv", .caps = &.{} },
