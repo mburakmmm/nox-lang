@@ -25691,6 +25691,148 @@ SEMANTİĞİ artık DONDURULMUŞTUR:
 HÂLÂ SERBESTTİR (MINOR sürüm) — DONAN ŞEY, MEVCUT davranışın GERİYE
 DÖNÜK DEĞİŞMEYECEĞİ GARANTİSİDİR, YENİ ekleme YASAĞI DEĞİL.
 
+## 3.208 v4 (2.0 öncesi son mimari stdlib katmanlaşması, Faz A), madde 1 — Capability modeli
+
+**Bağlam:** v3 yol haritası TAMAMEN BİTTİKTEN (§3.207) HEMEN SONRA,
+kullanıcı harici bir analizin (pasted content, "GPT 5.6 SOL" atıflı)
+önerdiği "stdlib'i `Core`/`Systems`/`Hosted` KATMANLARINA ayırma" fikrini
+paylaştı. Önerinin TAMAMI v3'ün TÜMÜNDEN BÜYÜK olduğundan, YALNIZCA
+"Faz A" (temel/foundation, 7 madde) somut bir görev listesine ÇEVRİLDİ —
+bkz. proje belleği `project_v4_pre20_stdlib_roadmap`. BU bölüm Faz A'nın
+İLK (VE mimariyi ETKİLEYEN, bu YÜZDEN AGENTS.md §16.3 UYARINCA ÖNCE
+kullanıcıya SUNULUP ONAYLANAN) maddesini belgeler.
+
+### Sorun
+
+`checker.zig`nin ESKİ `FREESTANDING_ALLOWED_MODULES`/`HOSTED_FORBIDDEN_
+MODULES`si (v3 madde 5, bkz. §3.202) İKİ DÜZ, ADSIZ liste İDİ — bir
+modül YA "freestanding'de serbest" YA "yasak" İDİ, ARADA hiçbir
+KADEMELİLİK YOKTU. Önerinin flagship örneği (`nox.crypto` MODÜLÜNÜN
+KENDİSİ serbest AMA `nox.crypto.random`/`secure_random_hex` GİBİ TEK BİR
+fonksiyonun OS entropisi GEREKTİRMESİ) bu İKİLİ modelle İFADE EDİLEMEZDİ
+— `nox.crypto` YA TAMAMEN YASAKLANIRDI (sha256 GİBİ SAF fonksiyonlar da
+DAHİL, GEREKSİZ bir KISITLAMA) YA TAMAMEN SERBEST BIRAKILIRDI (`secure_
+random_hex`in GERÇEK entropi ihtiyacı GÖRMEZDEN gelinirdi).
+
+### Kullanıcı kararları (AskUserQuestion, 2 tur)
+
+1. **Granülerlik:** "Alt-modül/fonksiyon seviyesi" (ÖNERİNİN TAM `nox.
+   crypto`/`nox.crypto.random` örneğiyle EŞLEŞEN, DAHA ZOR/TAM seçenek —
+   modül-seviyesi bir kaba taneli seçenek YERİNE).
+2. **Kapsam:** "Tüm 37 modüle AÇIK capability etiketi" (`stdlib/nox/*.nox`
+   + `arch/x86_64.nox` — SADECE ÖNCEKİ 16 değil, TAMAMI SINIFLANDIRILDI).
+3. **Mekanizma** (BEN İKİ somut tasarım SUNUP ONAY ALDIM): (a) MODÜL-
+   seviyesi capability'ler checker.zig'de BİR Zig tablosunda (ESKİ
+   allowlist'in DOĞRUDAN genellemesi, HİÇBİR .nox dosyasına dokunmadan);
+   (b) SEMBOL-seviyesi İçİn `@ffi.escape`/`@ffi.noescape`/`@ffi.callback`
+   İLE AYNI decorator altyapısını (`ast.FuncDef`/`ast.ExternDef`nin İKİSİ
+   de `decorators` alanı TAŞIR, ÖNCEDEN doğrulandı) yeniden kullanan YENİ
+   bir `@capability.requires("entropy")` decorator'ı, ÇAĞRI NOKTASINDA
+   (import DEĞİL) denetlenir.
+
+Bu tasarım, BİLİNÇLİ olarak §3.207'nin (nyx/aether'i kıran, sembol
+yeniden-adlandırma/taşıma kaynaklı) regresyon SINIFINI TEKRARLAMAKTAN
+KAÇINIR: `secure_random_hex` ASLA yeniden ADLANDIRILMADI/TAŞINMADI —
+sadece ÜZERİNE bir decorator EKLENDİ, import yolu (`nox.crypto.secure_
+random_hex`) DEĞİŞMEDİ.
+
+### Uygulama
+
+**`compiler/typecheck/checker.zig`:**
+- `Capability` enum (9 üye): `filesystem`/`network`/`clock`/`entropy`/
+  `threads`/`process`/`shared_memory`/`libc_math`/`arch_x86_64`. Önerinin
+  aspirasyonel örnek kümesi (`heap`/`raw-memory` DAHİL) BİREBİR
+  KOPYALANMADI — `heap` BUGÜN HİÇBİR modül importunu AYIRT ETMİYOR
+  (freestanding de `nox_allocator_install` İLE heap SAĞLAR, bkz. AGENTS.md
+  İlke #6'nın istisnası), `raw-memory` İSE dil-seviyesi bir kavram
+  (`ptr[T]`/`lowlevel:`), STDLIB modülü DEĞİL. HER üye, `runtime/stdlib_
+  shims/*.zig`nin KENDİSİ OKUNARAK doğrulandı — ör. `crypto.zig`nin
+  `argon2_hash`/`bcrypt_hash`/`scrypt_hash`sinin `pwhash.*.strHash`ı
+  (AÇIKÇA verilen bir tuz PARAMETRESİ OLMADAN) TUZ'u (salt) KENDİ İÇİNDE
+  OS entropisinden ÜRETTİĞİ GÖZLEMLENEREK bu ÜÇÜ de `secure_random_hex`
+  İLE AYNI şekilde işaretlendi (`*_verify` fonksiyonları İSE SADECE
+  KARŞILAŞTIRMA yapar, RNG GEREKTİRMEZ — İŞARETSİZ KALDI).
+- `MODULE_CAPABILITIES` — 36 `nox.*` modülü (`stdlib/nox/*.nox`) + `arch`
+  (`stdlib/nox/arch/x86_64.nox`) = TOPLAM 37, HER BİRİ `[]Capability`ye
+  eşlenir. 21'i BOŞ küme (`&.{}`, HER profilde serbest); 16'sı EN AZ bir
+  capability GEREKTİRİR.
+- `profileGrants(profile, cap)` — `.hosted` `arch_x86_64` DIŞINDA HER ŞEYİ
+  sağlar, `.freestanding` SADECE `arch_x86_64`ü sağlar (BUGÜNKÜ davranışın
+  BİREBİR AYNISI).
+- `checkModuleCapabilitiesAllowed` — ESKİ `checkFreestandingImportAllowed`/
+  `checkHostedImportAllowed` İKİLİSİNİN YERİNE TEK bir fonksiyon (capability
+  SİMETRİK OLDUĞUNDAN İKİ AYRI mekanizmaya GEREK KALMADI — `nox.arch`
+  `arch_x86_64` GEREKTİRİR, `.hosted` BUNU SAĞLAMADIĞINDAN orada
+  reddedilir, v3 madde 5'in AYRI "HOSTED_FORBIDDEN_MODULES"UYLA AYNI
+  SONUÇ). Bilinmeyen bir modül adı (TABLOYA HENÜZ EKLENMEMİŞ) `.freestanding`
+  de GÜVENLİ VARSAYILANLA (deny-by-default, ESKİ allowlist'in AYNI
+  disiplini) reddedilir.
+- `capability_functions: StringHashMapUnmanaged([]const Capability)` +
+  `registerCapabilityDecorator` (HEM `registerDecorators`/`FuncDef` HEM
+  `registerExternFunc`/`ExternDef`DEN ÇAĞRILAN ORTAK gövde) — `@capability.
+  requires(...)` taşıyan HER sembolü kaydeder. `extern def`in "tanınmayan
+  decorator REDDİ" listesine (`@ffi.escape`/`@ffi.noescape`/`@ffi.callback`)
+  4. üye OLARAK EKLENDİ.
+- `checkCapabilityCall` — `resolveMangledCall` (nitelikli VE `from X import`
+  ÇAĞRILARININ PAYLAŞTIĞI ORTAK gövde) VE `checkCall`in ÇIPLAK-tanımlayıcı
+  dalının HER İKİSİNDEN, `self.functions.get(...)` BAŞARILI OLDUKTAN HEMEN
+  SONRA çağrılır — MEVCUT profil GEREKEN capability'lerden HERHANGİ BİRİNİ
+  SAĞLAMIYORSA YENİ `error.CapabilityNotGranted` İLE reddeder.
+- `nox.crypto.nox` — `secure_random_hex`/`argon2_hash`/`bcrypt_hash`/
+  `scrypt_hash` `@capability.requires("entropy")` İLE işaretlendi; `sha256`/
+  `sha1`/`sha512`/`hmac_sha256`/`constant_time_eq`/`*_verify` İŞARETSİZ
+  (modülün KENDİSİ `MODULE_CAPABILITIES`de `&.{}` — HER profilde import
+  EDİLEBİLİR).
+
+### GERÇEK, önceden keşfedilmemiş bir hata: `module_loader.zig`nin decorator'ları SESSİZCE DÜŞÜRMESİ
+
+`renameTopLevelFuncDef`/`renameNestedFuncDef` (`compiler/module_loader.
+zig`), bir stdlib modülünün top-level `FuncDef`ini mangled ada göre YENİDEN
+İNŞA EDERKEN YENİ bir struct-literal DÖNDÜRÜYORDU — `.decorators` ALANI bu
+literalde HİÇ YOKTU, bu YÜZDEN `ast.FuncDef.decorators`in VARSAYILAN
+DEĞERİNE (`&.{}`, BOŞ) SESSİZCE düşüyordu. `@route`/`@get` GİBİ decorator'lar
+HER ZAMAN KULLANICI kodunda YAZILDIĞINDAN (stdlib'in KENDİ .nox dosyaları
+İçİNDE HİÇ KULLANILMADIĞINDAN) bu yol daha ÖNCE HİÇ egzersiz EDİLMEMİŞTİ.
+`nox.crypto.secure_random_hex`e `@capability.requires("entropy")`
+EKLENİNCE GERÇEKTEN denenip YAKALANDI: `noxc check --profile freestanding`
+HİÇBİR hata VERMEDEN geçiyordu (decorator SESSİZCE KAYBOLUYORDU). Düzeltme:
+HER İKİ fonksiyon da ARTIK `.decorators = fd.decorators` İÇERİYOR.
+
+### Test
+
+- `tests/cli/profile_test.zig`ye 4 YENİ test: `nox.random`ın (`nox.math`
+  ÜZERİNDEN) TRANSİTİF olarak reddi (capability modeline geçişin `nox.
+  random`ın KENDİ MODÜL-seviyesi kümesini BOŞ YAPMASININ bir regresyon
+  OLMADIĞINI, GERÇEK module_loader birleştirmesiyle kanıtlar), `nox.crypto`
+  MODÜL olarak serbest AMA `secure_random_hex` ÇAĞRISI `CapabilityNotGranted`
+  İLE reddi, `nox.crypto.sha256`nin (işaretsiz sembol) SERBEST kabulü.
+- `tests/golden/typecheck_golden_test.zig` — 6 mevcut modül-red testinin
+  (`fs`/`http`/`thread`/`time`/`math`/`hosted-arch`) mesaj METNİ
+  GÜNCELLENDİ (DAVRANIŞ AYNI, SADECE "izin verilenler: ..." SABİT
+  listesinin YERİNİ "gerekli capability: '<ad>'" ALDI). `err_freestanding_
+  random_forbidden` → `ok_freestanding_random_allowed_standalone` OLARAK
+  YENİDEN ADLANDIRILDI (BU testin KENDİSİ module_loader birleştirmesi
+  YAPMADIĞINDAN — bkz. dosya-üstü not — `nox.random`ın YALNIZ BAŞINA artık
+  GERÇEKTEN capability-siz OLDUĞU doğru şekilde "OK" döner; GERÇEK uçtan-
+  uca davranış YUKARIDAKİ `profile_test.zig`de AYRICA kanıtlanır).
+  `err_extern_unknown_ffi_decorator` mesaj METNİ `@capability.requires`i
+  DAHİL ETMEK İçİn güncellendi.
+- `tests/golden/codegen_cases/{crypto_hmac_and_secure_random,uuid_v4,
+  crypto_password_hashing,crypto_sha256_known_vectors,crypto_sha1_sha512_
+  known_vectors}.nox`nin IR anlık görüntüleri YENİDEN OLUŞTURULDU
+  (decorator'lı fonksiyonlar ARTIK `$__nox_decorators` statik tablosuna
+  GİRDİ EKLİYOR — KASITLI, doğru bir codegen değişikliği).
+
+### Kapsam DIŞI (BİLİNÇLİ)
+
+Generic (`type_params.len > 0`) bir fonksiyonun `@capability.requires`
+İLE işaretlenmesi — `instantiateGeneric`in KENDİ `self.functions.get(mangled)`
+önbellek-vuruşu YOLU `checkCapabilityCall`ı ÇAĞIRMAZ. Mevcut 37 modülün
+capability-taşıyan HİÇBİR sembolü generic OLMADIĞINDAN (`secure_random_hex`/
+`argon2_hash`/`bcrypt_hash`/`scrypt_hash`nin HİÇBİRİ `type_params` TAŞIMAZ)
+BU GERÇEK bir boşluk DEĞİL, sadece EGZERSİZ EDİLMEMİŞ bir yol — GELECEKTE
+generic BİR capability-taşıyan fonksiyon EKLENİRSE AYRICA ELE ALINMALIDIR.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
@@ -25726,5 +25868,7 @@ KALICI olarak açık bırakılan 2 madde: AArch64 Linux CI stack-smash kökü
 — HER İKİSİ de KENDİ, AYRI, gelecekteki bir tur GEREKTİREN, kullanıcı
 kararıyla ŞİMDİLİK KAPATILMAYAN bulgulardır.
 
-**Sıradaki adım:** yeni bir yol haritası/öncelik listesi — kullanıcı
-kararı BEKLİYOR.
+**Sıradaki adım:** v3'ten HEMEN SONRA başlayan v4 (2.0 öncesi son mimari
+stdlib katmanlaşması, Faz A, bkz. §3.208 + proje belleği `project_v4_
+pre20_stdlib_roadmap`) — madde 1 (capability modeli, §3.208) TAMAMLANDI;
+sırada madde 2 (generic self-instantiation düzeltmesi) VAR.

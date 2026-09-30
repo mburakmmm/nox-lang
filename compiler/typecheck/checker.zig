@@ -101,6 +101,14 @@ pub const TypeError = error{
     /// AYRICALIKLI işlemci talimatları taşır, normal bir programda
     /// çalıştırılması bir #GP'ye yol açar) `import` EDİLDİ.
     HostedModuleForbidden,
+    /// v4 (Faz A madde 1, bkz. nox-teknik-spesifikasyon.md §3.2xx): `@capability.
+    /// requires(...)` taşıyan bir fonksiyon/extern def, MEVCUT profilin
+    /// SAĞLAMADIĞI bir capability GEREKTİRİYOR — `FreestandingModuleForbidden`/
+    /// `HostedModuleForbidden`in AKSİNE (import NOKTASINDA, MODÜL düzeyinde),
+    /// BU ÇAĞRI NOKTASINDA (SEMBOL düzeyinde) tetiklenir — ör. `nox.crypto`
+    /// KENDİSİ HER profilde import EDİLEBİLİR ama `secure_random_hex(...)`
+    /// ÇAĞRISI 'freestanding'de BU hatayla reddedilir.
+    CapabilityNotGranted,
     /// v1.95.2 (bkz. nox-teknik-spesifikasyon.md §3.179 — GPT-5.6 incelemesinin
     /// buldu, DOĞRULANDI): `ptr_from_int`/`ptr_to_int`/`ptr_add`/`ptr_read_*`/
     /// `ptr_write_*`/`detach`/`adopt` DAHA ÖNCE bir `lowlevel:` bloğu
@@ -434,6 +442,15 @@ pub const Checker = struct {
     /// ÜRETMESİ İçin `generateModule`e AYNEN `functions_used_as_value` GİBİ
     /// bir parametre olarak geçirilir.
     decorated_functions: std.ArrayListUnmanaged(DecoratedFuncInfo) = .empty,
+    /// v4 (Faz A madde 1, bkz. nox-teknik-spesifikasyon.md §3.2xx): `@capability.
+    /// requires("entropy")` GİBİ bir decorator taşıyan HER üst-düzey `def`/
+    /// `extern def` İçin — `registerDecorators`/`registerExternFunc` TARAFINDAN
+    /// doldurulur, `checkCall`in ÇAĞRI NOKTASI kontrolü (`checkCapabilityCall`)
+    /// TARAFINDAN danışılır. Sembol ADI/YERİ hiçbir zaman DEĞİŞMEZ — modül-
+    /// seviyesi `MODULE_CAPABILITIES`in AKSİNE, BU tamamen EK/katmanlı bir
+    /// kısıtlamadır (ör. `nox.crypto` modülünün KENDİSİ capability-SİZDİR
+    /// ama `secure_random_hex` ÇAĞRISI `entropy` GEREKTİRİR).
+    capability_functions: std.StringHashMapUnmanaged([]const Capability) = .{},
     /// v2.0 madde 2.3 (bkz. nox-teknik-spesifikasyon.md §3.189): `extern
     /// def` ADLARININ kümesi — `self.functions`in AKSİNE (extern VE sıradan
     /// fonksiyonları AYNI tabloda TUTAR) BU, bir `@ffi.callback` HEDEFİNİN
@@ -910,59 +927,149 @@ pub const Checker = struct {
     /// TAMAMEN GÜVENLİDİR (yalnızca AST'nin KENDİSİNDEN okur). Ana Geçiş 3
     /// döngüsü artık bu İKİ deyim türünü NO-OP olarak GEÇER (bkz. AŞAĞIDAKİ
     /// `checkModule`).
-    /// Faz F.2: `collectImports`in `.freestanding` profilinde uyguladığı
-    /// allowlist — HER modül BU turda TEK TEK doğrulandı (Zig shim'i +
-    /// KENDİ iç `import`ları OKUNARAK, bkz. plan dosyası). ŞÜPHEDE HER
-    /// ZAMAN DIŞARIDA BIRAKILDI (`isSpawnParamSafeType`nin AYNI muhafazakâr
-    /// disiplini) — YENİ bir stdlib modülü eklendiğinde BURAYA AÇIKÇA
-    /// EKLENMEDİĞİ SÜRECE freestanding profilinde OTOMATİK REDDEDİLİR.
-    const FREESTANDING_ALLOWED_MODULES = [_][]const u8{
-        "strings", "collections", "json",     "regex", "csv", "toml", "yaml",
-        "url",     "validate",    "template", "path",  "db",  "orm",  "gzip",
-        // v3 madde 5: `nox.arch.*` — ring-0'a özgü, ARTIK isteğe bağlı bir
-        // yetenek OLARAK freestanding'de İZİN VERİLİR (`checkHostedImportAllowed`
-        // AŞAĞIDA TERSİNİ, `.hosted`de REDDİ, uygular — bu modül SADECE
-        // freestanding'de kullanılabilir/anlamlıdır).
-        "arch",
+    /// v4 (Faz A madde 1, bkz. nox-teknik-spesifikasyon.md §3.2xx): stdlib
+    /// modüllerinin GEREKTİRDİĞİ işletim sistemi/donanım yeteneklerinin
+    /// ADLANDIRILMIŞ kümesi — ESKİ `FREESTANDING_ALLOWED_MODULES`/
+    /// `HOSTED_FORBIDDEN_MODULES`in (2 DÜZ, adsız liste) YERİNİ alır. HER
+    /// üye, o capability'yi GERÇEKTEN GEREKTİREN en az bir `extern def`in
+    /// (`runtime/stdlib_shims/*.zig`si OKUNARAK) DOĞRULANMASIYLA türetildi
+    /// — önerinin aspirasyonel örnek kümesi (`heap`/`raw-memory` DAHİL)
+    /// BİREBİR KOPYALANMADI: `heap` BUGÜN hiçbir modül importunu AYIRT
+    /// ETMİYOR (freestanding de `nox_allocator_install` İLE heap SAĞLAR),
+    /// `raw-memory` İSE dil-seviyesi bir kavram (`ptr[T]`/`lowlevel:`),
+    /// bir STDLIB modülü DEĞİL — bu YÜZDEN İKİSİ DE bu kümede YOK.
+    const Capability = enum {
+        filesystem,
+        network,
+        clock,
+        entropy,
+        threads,
+        process,
+        shared_memory,
+        libc_math,
+        arch_x86_64,
+
+        fn label(self: Capability) []const u8 {
+            return switch (self) {
+                .filesystem => "filesystem",
+                .network => "network",
+                .clock => "clock",
+                .entropy => "entropy",
+                .threads => "threads",
+                .process => "process",
+                .shared_memory => "shared_memory",
+                .libc_math => "libc_math",
+                .arch_x86_64 => "arch_x86_64",
+            };
+        }
+
+        fn fromName(name: []const u8) ?Capability {
+            inline for (std.meta.fields(Capability)) |f| {
+                if (std.mem.eql(u8, f.name, name)) return @enumFromInt(f.value);
+            }
+            return null;
+        }
     };
 
-    fn isFreestandingAllowedModule(name: []const u8) bool {
-        for (FREESTANDING_ALLOWED_MODULES) |m| {
-            if (std.mem.eql(u8, m, name)) return true;
-        }
-        return false;
+    /// `.hosted` HER capability'yi `arch_x86_64` DIŞINDA sağlar (ring-0'a
+    /// özgü, ayrıcalıklı işlemci talimatları ring-3'te bir #GP'ye yol
+    /// açar — v3 madde 5'in AYNI gerekçesi). `.freestanding` İSE SADECE
+    /// `arch_x86_64`ü sağlar (BUGÜNKÜ davranışın BİREBİR aynısı — freestanding
+    /// v0.1'in kendisi HİÇBİR OS/libc/ağ/saat/threading katmanına sahip
+    /// DEĞİL, bkz. nox-teknik-spesifikasyon.md freestanding bölümü).
+    fn profileGrants(profile: types.Profile, cap: Capability) bool {
+        return switch (profile) {
+            .hosted => cap != .arch_x86_64,
+            .freestanding => cap == .arch_x86_64,
+        };
     }
 
-    fn checkFreestandingImportAllowed(self: *Checker, segments: []const []const u8) TypeError!void {
-        if (self.profile != .freestanding) return;
-        if (segments.len < 2 or !std.mem.eql(u8, segments[0], "nox")) return;
-        if (isFreestandingAllowedModule(segments[1])) return;
-        return self.fail(error.FreestandingModuleForbidden, "'nox.{s}' modülü 'freestanding' profilinde kullanılamaz (OS/libc bağımlılığı taşıyor — izin verilenler: strings/collections/json/regex/csv/toml/yaml/url/validate/template/path/db/orm/gzip/arch)", .{segments[1]});
-    }
+    const ModuleCaps = struct { name: []const u8, caps: []const Capability };
 
-    /// v3 sertleştirme yol haritası, madde 5 — `checkFreestandingImportAllowed`in
-    /// TERS yönü: `nox.arch.*` GİBİ ring-0'a özgü, AYRICALIKLI işlemci
-    /// talimatları (`outb`/`cli`/`hlt`/vb.) taşıyan bir modül, `.hosted`
-    /// profilinde (normal bir programda) İMPORT edilirse DERLEME ZAMANINDA
-    /// reddedilir — bu talimatların ring-3'te ÇALIŞTIRILMASI bir Genel
-    /// Koruma Hatasına (#GP) yol açar; bu, hatayı ÇALIŞMA ZAMANINA (GERÇEK
-    /// bir çökmeye) bırakmak YERİNE, derleme zamanında YAKALAR.
-    const HOSTED_FORBIDDEN_MODULES = [_][]const u8{
-        "arch",
+    /// TÜM 37 `nox.*` stdlib modülünün (`stdlib/nox/*.nox` + `arch/x86_64.nox`)
+    /// AÇIK capability sınıflandırması — her biri İLGİLİ dosyanın KENDİ
+    /// `extern def`leri OKUNARAK doğrulandı (ör. `crypto.nox`nin `argon2_
+    /// hash`/`bcrypt_hash`/`scrypt_hash`si `runtime/stdlib_shims/crypto.zig`de
+    /// `pwhash.*.strHash`in TUZ'u KENDİ İÇİNDE OS entropisinden ürettiğini
+    /// GÖSTERİR — bu YÜZDEN modül-seviyesinde DEĞİL, sembol-seviyesinde
+    /// `@capability.requires("entropy")` OLARAK işaretlenir, AŞAĞIDAKİ
+    /// `registerDecorators`e bkz.). Transitif bağımlılıklar (ör. `nox.
+    /// random`ın kendi İÇİNDE `import nox.math` yapması) BURADA AYRICA
+    /// KODLANMAZ — `collectImports` HER `import` deyimini (KULLANICININ
+    /// programı VE stdlib'in KENDİ iç importları DAHİL) TEK TEK doğruladığı
+    /// İçİn transitivite ZATEN OTOMATİK/ÜCRETSİZ ÇALIŞIR.
+    const MODULE_CAPABILITIES = [_]ModuleCaps{
+        .{ .name = "arch", .caps = &.{.arch_x86_64} },
+        .{ .name = "collections", .caps = &.{} },
+        .{ .name = "crypto", .caps = &.{} },
+        .{ .name = "csv", .caps = &.{} },
+        .{ .name = "db", .caps = &.{} },
+        .{ .name = "fs", .caps = &.{.filesystem} },
+        .{ .name = "gzip", .caps = &.{} },
+        .{ .name = "http", .caps = &.{.network} },
+        .{ .name = "json", .caps = &.{} },
+        .{ .name = "log", .caps = &.{.clock} },
+        .{ .name = "math", .caps = &.{.libc_math} },
+        .{ .name = "mysql", .caps = &.{.network} },
+        .{ .name = "orm", .caps = &.{} },
+        .{ .name = "os", .caps = &.{.process} },
+        .{ .name = "path", .caps = &.{} },
+        .{ .name = "postgres", .caps = &.{.network} },
+        .{ .name = "process", .caps = &.{.process} },
+        .{ .name = "random", .caps = &.{} },
+        .{ .name = "reflect", .caps = &.{} },
+        .{ .name = "regex", .caps = &.{} },
+        .{ .name = "router", .caps = &.{} },
+        .{ .name = "sharedmem", .caps = &.{.shared_memory} },
+        .{ .name = "smtp", .caps = &.{.network} },
+        .{ .name = "sqlite", .caps = &.{.filesystem} },
+        .{ .name = "strings", .caps = &.{} },
+        .{ .name = "template", .caps = &.{} },
+        .{ .name = "test", .caps = &.{} },
+        .{ .name = "testmod", .caps = &.{} },
+        .{ .name = "thread", .caps = &.{.threads} },
+        .{ .name = "time", .caps = &.{.clock} },
+        .{ .name = "tls", .caps = &.{.network} },
+        .{ .name = "toml", .caps = &.{} },
+        .{ .name = "url", .caps = &.{} },
+        .{ .name = "uuid", .caps = &.{} },
+        .{ .name = "validate", .caps = &.{} },
+        .{ .name = "websocket", .caps = &.{.network} },
+        .{ .name = "yaml", .caps = &.{} },
     };
 
-    fn isHostedForbiddenModule(name: []const u8) bool {
-        for (HOSTED_FORBIDDEN_MODULES) |m| {
-            if (std.mem.eql(u8, m, name)) return true;
+    fn moduleCapabilities(name: []const u8) ?[]const Capability {
+        for (MODULE_CAPABILITIES) |m| {
+            if (std.mem.eql(u8, m.name, name)) return m.caps;
         }
-        return false;
+        return null;
     }
 
-    fn checkHostedImportAllowed(self: *Checker, segments: []const []const u8) TypeError!void {
-        if (self.profile != .hosted) return;
+    /// ESKİ `checkFreestandingImportAllowed`/`checkHostedImportAllowed`
+    /// İKİLİSİNİN YERİNE — capability SİMETRİK olduğundan (bir modül bir
+    /// capability GEREKTİRİR, bir profil ONU YA SAĞLAR YA DA SAĞLAMAZ) TEK
+    /// bir fonksiyon HER İKİ yönü de KAPSAR: `nox.arch` `arch_x86_64`
+    /// GEREKTİRİR, `.hosted` BUNU SAĞLAMADIĞINDAN `.hosted`de reddedilir —
+    /// v3 madde 5'in AYRI "HOSTED_FORBIDDEN_MODULES" listesiyle YAPTIĞI
+    /// AYNI şey, ARTIK AYRI bir mekanizma OLMADAN. Bilinmeyen bir modül adı
+    /// (BURAYA HENÜZ EKLENMEMİŞ) `.freestanding`de GÜVENLİ VARSAYILANLA
+    /// (deny-by-default, ESKİ allowlist'in AYNI disiplini) reddedilir;
+    /// `.hosted`de (varsayılan, İZİN VEREN profil) sorun DEĞİLDİR.
+    fn checkModuleCapabilitiesAllowed(self: *Checker, segments: []const []const u8) TypeError!void {
         if (segments.len < 2 or !std.mem.eql(u8, segments[0], "nox")) return;
-        if (!isHostedForbiddenModule(segments[1])) return;
-        return self.fail(error.HostedModuleForbidden, "'nox.{s}' modülü YALNIZCA 'freestanding' profilinde kullanılabilir (ring-0'a özgü, ayrıcalıklı işlemci talimatları taşır — normal bir programda çalıştırılması bir Genel Koruma Hatasına yol açar)", .{segments[1]});
+        const caps = moduleCapabilities(segments[1]) orelse {
+            if (self.profile == .freestanding) {
+                return self.fail(error.FreestandingModuleForbidden, "'nox.{s}' modülü 'freestanding' profilinde kullanılamaz (henüz sınıflandırılmamış bir stdlib modülü — güvenli varsayılan: reddet)", .{segments[1]});
+            }
+            return;
+        };
+        for (caps) |cap| {
+            if (profileGrants(self.profile, cap)) continue;
+            return switch (self.profile) {
+                .freestanding => self.fail(error.FreestandingModuleForbidden, "'nox.{s}' modülü 'freestanding' profilinde kullanılamaz (gerekli capability: '{s}' — bu profil sağlamıyor)", .{ segments[1], cap.label() }),
+                .hosted => self.fail(error.HostedModuleForbidden, "'nox.{s}' modülü 'hosted' profilinde kullanılamaz (gerekli capability: '{s}' — bu profil sağlamıyor; yalnızca 'freestanding'de kullanılabilir)", .{ segments[1], cap.label() }),
+            };
+        }
     }
 
     fn collectImports(self: *Checker, module: ast.Module) TypeError!void {
@@ -976,8 +1083,7 @@ pub const Checker = struct {
                     if (imp.alias) |alias| {
                         try self.module_aliases.put(self.allocator, alias, imp.segments);
                     }
-                    try self.checkFreestandingImportAllowed(imp.segments);
-                    try self.checkHostedImportAllowed(imp.segments);
+                    try self.checkModuleCapabilitiesAllowed(imp.segments);
                 },
                 .from_import_stmt => |fi| {
                     const joined = try self.joinSegments(fi.segments, '.');
@@ -991,8 +1097,7 @@ pub const Checker = struct {
                         try self.from_imports.put(self.allocator, local_name, mangled);
                         try self.from_imports_orig_name.put(self.allocator, local_name, nm.name);
                     }
-                    try self.checkFreestandingImportAllowed(fi.segments);
-                    try self.checkHostedImportAllowed(fi.segments);
+                    try self.checkModuleCapabilitiesAllowed(fi.segments);
                 },
                 else => {},
             }
@@ -1261,8 +1366,23 @@ pub const Checker = struct {
             const is_escape = std.mem.eql(u8, dec.name, "ffi.escape");
             const is_noescape = std.mem.eql(u8, dec.name, "ffi.noescape");
             const is_callback = std.mem.eql(u8, dec.name, "ffi.callback");
-            if (!is_escape and !is_noescape and !is_callback) {
-                return self.fail(error.UnknownExternDecorator, "extern fonksiyon '{s}': bilinmeyen decorator '@{s}' (yalnızca @ffi.escape/@ffi.noescape/@ffi.callback geçerlidir)", .{ ed.name, dec.name });
+            // v4 (Faz A madde 1): `@capability.requires(...)` — `@ffi.*`
+            // ÜÇLÜSÜNÜN YANINA, extern def'lerde de İZİN VERİLEN 4. decorator
+            // (ör. `nox.crypto.secure_random_hex_raw`nin KENDİSİ İŞARETLENEBİLİR
+            // — bkz. `registerCapabilityDecorator`).
+            const is_capability = std.mem.eql(u8, dec.name, "capability.requires");
+            if (!is_escape and !is_noescape and !is_callback and !is_capability) {
+                return self.fail(error.UnknownExternDecorator, "extern fonksiyon '{s}': bilinmeyen decorator '@{s}' (yalnızca @ffi.escape/@ffi.noescape/@ffi.callback/@capability.requires geçerlidir)", .{ ed.name, dec.name });
+            }
+            if (is_capability) {
+                const arg_values = try self.allocator.alloc([]const u8, dec.args.len);
+                for (dec.args, 0..) |a, i| {
+                    if (a != .string_lit) {
+                        return self.fail(error.TypeMismatch, "extern fonksiyon '{s}': '@capability.requires' argümanı {d} yalnızca bir string LİTERALİ olabilir", .{ ed.name, i + 1 });
+                    }
+                    arg_values[i] = a.string_lit;
+                }
+                try self.registerCapabilityDecorator(ed.name, dec.name, arg_values);
             }
             if (is_escape) {
                 for (dec.args, 0..) |a, i| {
@@ -1679,12 +1799,48 @@ pub const Checker = struct {
                 arg_values[i] = a.string_lit;
             }
             if (is_handler_shaped) try self.functions_used_as_value.put(self.allocator, fd.name, {});
+            try self.registerCapabilityDecorator(fd.name, dec.name, arg_values);
             try self.decorated_functions.append(self.allocator, .{
                 .func_name = fd.name,
                 .decorator_name = dec.name,
                 .args = arg_values,
                 .is_handler_shaped = is_handler_shaped,
             });
+        }
+    }
+
+    /// v4 (Faz A madde 1): `@capability.requires("entropy", ...)` — hem
+    /// sıradan `def` (`registerDecorators`) hem `extern def` (`registerExternFunc`,
+    /// AŞAĞIDA) TARAFINDAN PAYLAŞILAN ORTAK gövde. `dec_name` "capability.
+    /// requires" DEĞİLSE NO-OP (bu ÇAĞRI NOKTASI zaten `fd.decorators`/`ed.
+    /// decorators`in HER girdisi İçİn döngüde çalışır — `@ffi.*`/`@route`
+    /// GİBİ İLGİSİZ decorator'lar BURADA sessizce ATLANIR).
+    fn registerCapabilityDecorator(self: *Checker, func_name: []const u8, dec_name: []const u8, arg_values: []const []const u8) TypeError!void {
+        if (!std.mem.eql(u8, dec_name, "capability.requires")) return;
+        if (arg_values.len == 0) {
+            return self.fail(error.TypeMismatch, "'@capability.requires' en az bir capability adı bekler (fonksiyon: {s})", .{func_name});
+        }
+        const caps = try self.allocator.alloc(Capability, arg_values.len);
+        for (arg_values, 0..) |name, i| {
+            caps[i] = Capability.fromName(name) orelse
+                return self.fail(error.TypeMismatch, "'@capability.requires(\"{s}\")': bilinmeyen capability adı (fonksiyon: {s})", .{ name, func_name });
+        }
+        try self.capability_functions.put(self.allocator, func_name, caps);
+    }
+
+    /// `resolveMangledCall`/`checkCall`in `.identifier` dalı TARAFINDAN,
+    /// `self.functions.get(...)` BAŞARILI olduktan HEMEN SONRA çağrılır —
+    /// `name` (mangled VEYA çıplak, bağlama göre) `capability_functions`de
+    /// KAYITLIYSA VE MEVCUT profil GEREKEN capability'lerden BİRİNİ BİLE
+    /// SAĞLAMIYORSA reddeder. Modül-seviyesi `checkModuleCapabilitiesAllowed`in
+    /// (import NOKTASI) AKSİNE, BU ÇAĞRI NOKTASINDA çalışır — `nox.crypto`
+    /// KENDİSİ HER profilde import EDİLEBİLİR, ama `secure_random_hex(...)`
+    /// GİBİ tek TEK işaretli bir ÇAĞRI 'freestanding'de BURADA reddedilir.
+    fn checkCapabilityCall(self: *Checker, name: []const u8) TypeError!void {
+        const caps = self.capability_functions.get(name) orelse return;
+        for (caps) |cap| {
+            if (profileGrants(self.profile, cap)) continue;
+            return self.fail(error.CapabilityNotGranted, "'{s}' çağrısı '{s}' profilinde reddedildi (gerekli capability: '{s}' — bu profil sağlamıyor)", .{ name, @tagName(self.profile), cap.label() });
         }
     }
 
@@ -1801,6 +1957,7 @@ pub const Checker = struct {
                 return self.fail(error.TypeMismatch, "'{s}' bir 'async def' fonksiyonudur, yalnızca 'spawn' ile başlatılabilir", .{mangled});
             }
             try self.checkArgs(ctx, sig.params, c.args, mangled);
+            try self.checkCapabilityCall(mangled);
             c.callee.* = .{ .identifier = mangled };
             return sig.return_type;
         }
@@ -5917,6 +6074,7 @@ pub const Checker = struct {
                     } else {
                         try self.checkArgs(ctx, sig.params, c.args, name);
                     }
+                    try self.checkCapabilityCall(name);
                     return sig.return_type;
                 }
                 if (self.classes.contains(name)) {

@@ -129,6 +129,91 @@ test "noxc build --profile freestanding: TRANSITIF olarak yasakli bir modul (nox
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "nox.http") != null);
 }
 
+// v4 (Faz A madde 1, bkz. nox-teknik-spesifikasyon.md §3.2xx): capability
+// modeline geçişin (`checker.zig`nin ESKİ 2 düz listesinin YERİNE `Modül →
+// []Capability` tablosu) KENDİSİ, `nox.random`ın MODÜL-seviyesi capability
+// kümesini BOŞ (`&.{}`) YAPTI — `random.nox`nin KENDİ `extern def`leri
+// (seed/randint/random) OS-bağımsızdır. AMA `random.nox` KENDİ İÇİNDE
+// `import nox.math` YAPAR (gaussian-benzeri fonksiyonlar İçİn sqrt/log/cos)
+// — `nox.math`in `libc_math` capability'si freestanding'de SAĞLANMADIĞINDAN
+// `nox.random` YİNE (TRANSİTİF olarak, `nox.router`->`nox.http`İLE AYNI
+// mekanizma) reddedilir. BU test, `typecheck_golden_test.zig`nin (module_
+// loader birleştirmesi YAPMAYAN) izole "nox.random dogrudan reddedilir"
+// testinin ARTIK "OK" DÖNMESİNİN (modül-seviyesinde GERÇEKTEN capability-
+// SİZ olduğu İçİn) bir REGRESYON OLMADIĞINI, GERÇEK uçtan-uca davranışın
+// DEĞİŞMEDİĞİNİ kanıtlar.
+test "noxc build --profile freestanding: nox.random TRANSITIF olarak (nox.math uzerinden) reddedilir" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try writeTempSource(gpa, io,
+        \\import nox.random
+        \\
+        \\print("hic calismamali")
+        \\
+    , &tmp);
+    defer gpa.free(path);
+
+    const result = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "build", "--profile", "freestanding", path } });
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    try std.testing.expect(result.term == .exited and result.term.exited == 1);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "nox.math") != null);
+}
+
+// v4 (Faz A madde 1): `@capability.requires("entropy")` — capability
+// modelinin SEMBOL-seviyesi (alt-modül/fonksiyon) tarafı, MODÜL-seviyesi
+// yukarıdaki testlerin AKSİNE. `nox.crypto`nin KENDİSİ HİÇBİR capability
+// GEREKTİRMEZ (`sha256` GİBİ SAF hesaplama fonksiyonları HER profilde
+// çalışır) — ama `secure_random_hex` GERÇEK OS entropisi istediğinden TEK
+// BAŞINA işaretlenmiştir. Bu, ÖNERİNİN flagship örneğinin (`nox.crypto` vs
+// `nox.crypto.random`) sembol-seviyesinde, HİÇBİR sembol yeniden adlandırma/
+// TAŞIMA OLMADAN nasıl KARŞILANDIĞINI kanıtlar (madde 12'nin nyx/aether
+// regresyonuyla AYNI hatayı TEKRARLAMAMAK İçİn BİLİNÇLİ bir tasarım kararı,
+// bkz. proje belleği).
+test "noxc build --profile freestanding: nox.crypto MODUL olarak serbest ama secure_random_hex CAGRISI capability eksikliginden reddedilir" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try writeTempSource(gpa, io,
+        \\import nox.crypto
+        \\
+        \\h: str = nox.crypto.secure_random_hex(16)
+        \\print(h)
+        \\
+    , &tmp);
+    defer gpa.free(path);
+
+    const result = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "check", "--profile", "freestanding", path } });
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    try std.testing.expect(result.term == .exited and result.term.exited == 1);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "CapabilityNotGranted") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "entropy") != null);
+}
+
+test "noxc check --profile freestanding: nox.crypto.sha256 (capability-siz sembol) SERBESTCE kabul edilir" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try writeTempSource(gpa, io,
+        \\import nox.crypto
+        \\
+        \\h: str = nox.crypto.sha256("merhaba")
+        \\print(h)
+        \\
+    , &tmp);
+    defer gpa.free(path);
+
+    const result = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "check", "--profile", "freestanding", path } });
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    try std.testing.expect(result.term == .exited and result.term.exited == 0);
+}
+
 test "noxc build (varsayilan profil = hosted): nox.http HALA serbestce kullanilabilir (regresyon-yok)" {
     const io = std.testing.io;
     const gpa = std.testing.allocator;

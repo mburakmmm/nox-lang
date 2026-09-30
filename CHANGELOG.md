@@ -14,6 +14,36 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.112.0]
+
+### Eklendi
+
+- **v4 (2.0 öncesi son mimari stdlib katmanlaşması, Faz A), madde 1 —
+  capability modeli (bkz. nox-teknik-spesifikasyon.md §3.208)**: `checker.
+  zig`nin ESKİ `FREESTANDING_ALLOWED_MODULES`/`HOSTED_FORBIDDEN_MODULES`
+  İKİLİSİ (2 düz, adsız liste) YENİ bir `Capability` enum (9 üye:
+  filesystem/network/clock/entropy/threads/process/shared_memory/
+  libc_math/arch_x86_64) + `Modül → []Capability` tablosuyla (TÜM 37
+  stdlib modülü sınıflandırıldı, KULLANICI onaylı) DEĞİŞTİRİLDİ. YENİ
+  `@capability.requires("entropy")` decorator'ı (`@ffi.escape`/`@ffi.
+  noescape`/`@ffi.callback` İLE AYNI altyapı) SEMBOL-seviyesinde İNCE
+  taneli kısıtlama sağlar — ör. `nox.crypto` MODÜLÜNÜN KENDİSİ HER
+  profilde serbesttir AMA `secure_random_hex`/`argon2_hash`/`bcrypt_hash`/
+  `scrypt_hash` (GERÇEK OS entropisi kullandıkları DOĞRULANDI) TEK TEK
+  işaretlenip ÇAĞRI NOKTASINDA denetlenir — HİÇBİR sembol yeniden
+  ADLANDIRILMADI/TAŞINMADI (v3 madde 12'nin nyx/aether regresyonuyla AYNI
+  hata sınıfından KAÇINMAK İçİn BİLİNÇLİ).
+
+### Düzeltildi
+
+- **`compiler/module_loader.zig`nin decorator'ları SESSİZCE düşürmesi**:
+  `renameTopLevelFuncDef`/`renameNestedFuncDef`, bir stdlib fonksiyonunu
+  mangled ada göre yeniden inşa ederken `.decorators` alanını HİÇ
+  KOPYALAMIYORDU — `@route`/`@get` GİBİ decorator'lar HER ZAMAN KULLANICI
+  kodunda yazıldığından bu yol daha önce hiç egzersiz edilmemiş, GERÇEKTEN
+  denenip (BU madde İçİn `nox.crypto.secure_random_hex`e decorator
+  eklenince) yakalanmıştı.
+
 ## [1.111.3]
 
 ### Değişti

@@ -75,6 +75,12 @@ def constant_time_eq(a: str, b: str) -> bool:
 # random`nin (BİLİNÇLİ OLARAK kriptografik güvenlik iddiası TAŞIMAYAN)
 # YERİNE KULLANILMALIDIR. `n_bytes` 256'yı AŞARSA sessizce 256'ya kırpılır
 # (GERÇEKÇİ HERHANGİ bir token/anahtar büyüklüğünün ÇOK ÜSTÜNDE).
+# v4 (Faz A madde 1, bkz. nox-teknik-spesifikasyon.md §3.2xx): `nox.crypto`
+# modülünün KENDİSİ capability-SİZDİR (`sha256`/`hmac_sha256`/vb. HER
+# profilde import/çağrılabilir) — ama BU fonksiyon GERÇEK OS entropisi
+# İSTEDİĞİNDEN sembol-seviyesinde işaretlenir (`freestanding`de HENÜZ bir
+# entropi kaynağı YOK).
+@capability.requires("entropy")
 def secure_random_hex(n_bytes: int) -> str:
     if n_bytes <= 0:
         raise CryptoError("n_bytes pozitif olmali")
@@ -101,6 +107,12 @@ extern def nox_crypto_scrypt_verify_raw(hash: str, password: str) -> int from "z
 # Argon2id (OWASP'ın 2024 parola-saklama önerisinde İLK sırada önerilen
 # algoritma) İLE bir parolayı hash'ler — dönen dize (`$argon2id$v=19$...`)
 # doğrudan saklanabilir, doğrulama İçin `argon2_verify`ye geçilir.
+# v4 madde 1: `strHash` TUZ'u (salt) KENDİ İÇİNDE OS entropisinden
+# üretir (`runtime/stdlib_shims/crypto.zig`nin `pwhash.argon2.strHash`ı,
+# AÇIKÇA verilen bir tuz PARAMETRESİ YOK) — bu YÜZDEN `secure_random_hex`
+# İLE AYNI gerekçeyle işaretlenir. `argon2_verify` İSE SADECE VERİLEN bir
+# hash/parolayı KARŞILAŞTIRIR, RNG GEREKTİRMEZ — işaretsiz KALIR.
+@capability.requires("entropy")
 def argon2_hash(password: str) -> str:
     result: str = nox_crypto_argon2_hash_raw(password)
     if result == "":
@@ -117,6 +129,7 @@ def argon2_verify(hash: str, password: str) -> bool:
 # bcrypt İLE bir parolayı hash'ler ($2b$... biçimi) — eski sistemlerle
 # uyumluluk/dosya-boyutu ÖNEMLİYSE argon2id YERİNE tercih edilebilir
 # (60 karakterlik SABİT uzunluk, argon2/scrypt'in AKSİNE).
+@capability.requires("entropy")
 def bcrypt_hash(password: str) -> str:
     result: str = nox_crypto_bcrypt_hash_raw(password)
     if result == "":
@@ -130,6 +143,7 @@ def bcrypt_verify(hash: str, password: str) -> bool:
 # alternatif, ÖZEL donanım (ASIC/FPGA) saldırılarına argon2id/bcrypt'ten
 # DAHA dirençlidir ama OWASP varsayılan parametreleriyle (128 MB/çağrı)
 # argon2id'den DAHA maliyetlidir.
+@capability.requires("entropy")
 def scrypt_hash(password: str) -> str:
     result: str = nox_crypto_scrypt_hash_raw(password)
     if result == "":

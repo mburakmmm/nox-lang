@@ -1309,10 +1309,20 @@ test "golden(freestanding-profile): nox.time dogrudan reddedilir" {
     );
 }
 
-test "golden(freestanding-profile): nox.random dogrudan reddedilir" {
+// v4 (Faz A madde 1, bkz. nox-teknik-spesifikasyon.md §3.2xx): capability
+// modeline geçişten SONRA `nox.random`ın MODÜL-seviyesi capability kümesi
+// BOŞTUR (`random.nox`nin KENDİ `extern def`leri OS-bağımsızdır) — bu
+// YÜZDEN TEK BAŞINA (`random.nox`nin KENDİ İÇİNDEKİ `import nox.math`
+// SATIRI, YUKARIDAKİ dosya-üstü nottaki "transitif yakalama BU dosyanın
+// kapsamı DIŞINDA" gerekçesiyle, BURADA MERGE EDİLMEDİĞİNDEN) "OK"
+// DÖNER — BU BİR REGRESYON DEĞİL: GERÇEK uçtan-uca davranış (module_
+// loader'ın GERÇEK birleştirmesinden GEÇEREK) DEĞİŞMEDİ, bkz. `tests/
+// cli/profile_test.zig`nin "nox.random TRANSITIF olarak (nox.math
+// uzerinden) reddedilir" testi.
+test "golden(freestanding-profile): nox.random TEK BASINA (transitif merge OLMADAN) capability-sizdir" {
     try expectGoldenFreestanding(
-        @embedFile("typecheck_cases/err_freestanding_random_forbidden.nox"),
-        @embedFile("typecheck_cases/err_freestanding_random_forbidden.expected"),
+        @embedFile("typecheck_cases/ok_freestanding_random_allowed_standalone.nox"),
+        @embedFile("typecheck_cases/ok_freestanding_random_allowed_standalone.expected"),
     );
 }
 

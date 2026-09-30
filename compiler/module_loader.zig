@@ -432,6 +432,17 @@ fn renameTopLevelFuncDef(a: std.mem.Allocator, fd: ast.FuncDef, map: *const Rena
         .return_type = try renameTypeExpr(a, fd.return_type, map),
         .body = try renameStmts(a, fd.body, map),
         .is_async = fd.is_async,
+        // v4 (Faz A madde 1, bkz. nox-teknik-spesifikasyon.md §3.2xx):
+        // GERÇEK, önceden keşfedilmemiş bir hata — BU struct-literal
+        // `fd.decorators`i HİÇ KOPYALAMIYORDU, `ast.FuncDef.decorators`in
+        // VARSAYILAN DEĞERİNE (`&.{}`, BOŞ) SESSİZCE düşüyordu. `@route`/
+        // `@get` GİBİ decorator'lar HER ZAMAN KULLANICI kodunda YAZILDIĞI
+        // İçİn (STDLİB'in KENDİ .nox dosyaları İçİNDE HİÇ KULLANILMADIĞI
+        // İçİn) BU yol daha ÖNCE HİÇ egzersiz EDİLMEMİŞTİ — `nox.crypto.
+        // secure_random_hex`e `@capability.requires("entropy")` EKLENİNCE
+        // (BU madde) GERÇEKTEN denenip YAKALANDI (decorator SESSİZCE
+        // KAYBOLUYOR, checker HİÇBİR hata VERMİYORDU).
+        .decorators = fd.decorators,
     };
 }
 
@@ -452,6 +463,8 @@ fn renameNestedFuncDef(a: std.mem.Allocator, fd: ast.FuncDef, map: *const Rename
         .return_type = try renameTypeExpr(a, fd.return_type, map),
         .body = try renameStmts(a, fd.body, map),
         .is_async = fd.is_async,
+        // `renameTopLevelFuncDef`in AYNI düzeltmesi (bkz. onun belge notu).
+        .decorators = fd.decorators,
     };
 }
 
