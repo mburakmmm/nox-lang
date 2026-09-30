@@ -25455,30 +25455,43 @@ IR anlık görüntüleri (`tests/golden/ir_snapshots/`).
 
 ## 5. Hata Yönetimi
 
+**Durum: UYGULANDI (bu bölüm, projenin en başındaki tasarım taslağıydı —
+v3 sertleştirme yol haritası madde 11'de GERÇEK, güncel duruma göre
+yeniden yazıldı; ayrıntılı uygulama tarihi İçİn §3.x'in ilgili alt
+bölümlerine bkz.).**
+
 - Sözdizimsel olarak Python'ın `try` / `except` / `raise` / `finally` yapısı korunur.
-- **Runtime gerçekleştirimi Zig tarzı error union'a dayanır:** `raise`, gizlice bir hata-döndürme zincirine (implicit error-return threading) çevrilir; QBE'de unwind tablosu / landing pad mekanizması **kullanılmaz** (QBE bunu desteklemiyor).
-- Python'ın sınıf hiyerarşili exception modelini (`except ValueError`, alt sınıf yakalama, `raise X from Y`) desteklemek için error union, Zig'in ham hata kümesinden farklı olarak **tip bilgisi taşıyan bir exception handle** içerir; `except` bloğu bu handle üzerinde runtime'da bir isinstance kontrolü yapar.
-- `finally` ve `with` (context manager) temizliği, Katman 1'deki ASAP destructor mekanizmasıyla **aynı codegen yoluna** oturtulmalıdır: başarı ve hata yollarında aynı "kapsam çıkışında temizlik çalıştır" mantığı işlemelidir.
-- **Açık soru / risk:** C tarafından gelen kod (ör. NumPy) kendi hata sinyalini (errno, dönüş kodu, C++ exception, longjmp) kullanıyorsa Nox'un error-union varsayımını bilmez. Sınırda bir trampoline/çeviri katmanı gereklidir; bu katmanın `lowlevel` bloğu ile nasıl disipline edileceği netleştirilmeli.
+- **Runtime gerçekleştirimi Zig tarzı error union'a dayanır:** `raise`, gizlice bir hata-döndürme zincirine (implicit error-return threading) çevrilir; QBE'de unwind tablosu / landing pad mekanizması **kullanılmaz** (İlke #3 — QBE'nin KENDİSİ bunu desteklemediği İçİn DEĞİL, dilin KENDİ tasarım kararı GEREĞİ; LLVM/`--release` backend'i de AYNI örtük error-union zincirini KULLANIR, kendi unwind mekanizmasına GEÇMEZ — bkz. v3 madde 7/§3.204'ün backend semantiği kilitlemesi).
+- Python'ın sınıf hiyerarşili exception modelini (`except ValueError`, alt sınıf yakalama) desteklemek İçİn error union, Zig'in ham hata kümesinden farklı olarak **tip bilgisi taşıyan bir `ExceptionHandle`** içerir; `except` bloğu bu handle üzerinde runtime'da bir isinstance/vtable kontrolü yapar (Faz 7'nin tekli-kalıtım vtable dispatch'i — bkz. §3.200'ün ownership red-team turunda bu YOLUN KENDİSİNDE bulunup düzeltilen bir bellek-güvenliği hatası).
+- `finally` ve `with` (context manager) temizliği, ASAP destructor mekanizmasıyla **aynı codegen yoluna** oturur (`drainFinally`, hem başarı hem hata çıkış yollarında).
+- **ÇÖZÜLDÜ — C/WASM sınırında yabancı hata sinyali:** her `extern`/HPy/WASM sembolü İçİn derleyici bir trampoline üretir; dönüşte İLGİLİ sınırın KENDİ hata konvansiyonu kontrol edilip (HPy: `ctx_Err_Occurred` eşdeğeri; WASM: trap/dönüş kodu) sonuç Nox `ExceptionHandle`'ına çevrilir (AGENTS.md §9, uygulama: HPy Tier 0-3, bkz. §6). **Dürüstlük notu:** AGENTS.md §9'un tarif ettiği "trampoline sınırında izole bir `setjmp`/`longjmp` bariyeri" (ham C exception/longjmp'in Nox çerçevelerine sızmasını engellemek İçİn) — BU denetimde `runtime/`de HİÇBİR `setjmp`/`longjmp` ÇAĞRISI BULUNAMADI: bu, GERÇEKTEN KARŞILAŞILAN bir ihtiyaç OLMADIĞI İçİn (HPy'nin KENDİ hata modeli bir bayrak-kontrolüdür, longjmp KULLANMAZ; WASM trap'leri de AYRI bir dönüş-kodu yoluyla ele alınır) HENÜZ İNŞA EDİLMEMİŞ, SAVUNMACI bir tasarım İLKESİDİR — "uygulandı" DEĞİL, "İHTİYAÇ DUYULDUĞUNDA uygulanacak" olarak KAYDA GEÇİRİLİR (bir sonraki ajanın AGENTS.md'yi OKUYUP "zaten var" SANMAMASI İçİn).
 
 ---
 
 ## 6. C Eklenti Modeli (HPy Esinli)
 
+**Durum: UYGULANDI — 180/180 `ctx_*` fonksiyonu GERÇEK, tipli fonksiyon
+işaretçileriyle BAĞLI** (Faz PP-ZZ, bkz. §3.19'un kapanışı; 3'ü YAPISAL
+olarak imkansız oldukları İçİn dokümante `@panic` İLE — "sahte
+implemente edilmemiş" DEĞİL). Tier 0-3'ün TÜMÜ, HER ekleme GERÇEK bir
+HPy 0.9.0 C uzantısıyla (`tests/compat/hpy_ext/noxtest.c`) uçtan-uca
+DOĞRULANARAK tamamlandı — bu, AGENTS.md §10'un "Tier 0/1 eklemesi GERÇEK
+bir C eklentisiyle doğrulanmalı" KURALININ TAM OLARAK İZLENDİĞİNİN
+kanıtıdır.
+
 - Mevcut Python C eklentilerini (NumPy, Pandas vb.) desteklemek için klasik `PyObject *` tabanlı C-API yerine **opaque handle (kapalı kulp)** modeli kullanılır.
 - C eklentisine nesnenin bellek adresi değil, bir kulp/kimlik verilir; referans sayacı veya iç yapı doğrudan değiştirilemez, her işlem Zig runtime API'si üzerinden talep edilir.
-- Bu mimari gerçek HPy projesiyle örtüşüyor ve doğru bir yön.
-- **Kritik risk:** Ekosistemdeki mevcut C eklentilerinin büyük çoğunluğu hâlâ klasik CPython C-API'sine yazılı, HPy'ye değil. "Yeni wrapper ile destekleme" hedefi, pratikte CPython C-API'sini Nox'un handle sistemi üzerinde emüle eden bir **uyumluluk katmanı** (PyPy'nin `cpyext`'i, GraalPython'ın uyumluluk katmanı benzeri) gerektirir. Bu, alternatif Python implementasyonu projelerini tarihsel olarak en çok yavaşlatan mühendislik yüküdür.
-- **Karar:** Mümkün olan **en geniş HPy/CPython API desteği** hedeflenir, önceliklendirilmiş katmanlar halinde (Tier 0-3, ayrıntılar için AGENTS.md §10). Öncelik gerçek dünya kullanım sıklığına göre belirlenir: önce nesne yaşam döngüsü + modül init, sonra buffer/sequence/number protokolleri (NumPy/Pandas sınıfı kütüphaneler için kritik), sonra GC/weakref/subclassing, en son uzun kuyruk (descriptor, metaclass, capsule).
+- **Bilinçli, KALICI v1 sınırı (ARTIK "risk" DEĞİL, DONMUŞ karar):** Nox'un opaque-handle modeli klasik CPython C-API'sini (`PyObject*` doğrudan işaretçi aritmetiği yapan eklentiler) DEĞİL, SADECE HPy Universal ABI'siyle YAZILMIŞ/UYUMLU eklentileri destekler — bir `cpyext`-tarzı TAM CPython C-API emülasyon katmanı KAPSAM DIŞINDADIR (dış ekosistemin klasik-API'den HPy'ye geçiş HIZINA bağlı bir GELECEK kararı, bu turun kapsamı DIŞINDA).
 
 ---
 
 ## 7. WASM Entegrasyonu
 
-- QBE'nin kendisi WASM'ı hedeflemiyor; bu nedenle Nox, kendisini WASM'a derlemek yerine **WASM modüllerini içe aktarıp kütüphane olarak kullanma** yönünde tasarlanmıştır.
-- Zig runtime'ı içine gömülü bir WASM çalışma zamanı (wasmtime/wasmer C API'si veya hafif bir native Zig yorumlayıcı) entegre edilir.
-- WASM modüllerinin export ettiği fonksiyonlar, Bölüm 6'daki handle sistemi üzerinden Nox fonksiyonu gibi çağrılabilir hale getirilir.
-- Bu yaklaşım, QBE'nin CFG'sinden yapılandırılmış kontrol akışı çıkarma gibi çok daha zor bir mühendislik işinden kaçınır.
+**Durum: UYGULANDI** (Faz 13, bkz. §3.13). `nox.wasm_call(yol, fonksiyon_adı, argüman) -> int` builtin'i GERÇEK bir `.wasm` modülünü çalışma zamanında yükleyip çağırır — `tests/golden/codegen_cases/wasm_call_builtin.nox` GERÇEK bir Nox programından GERÇEK bir WASM modülünü çağırdığını kanıtlar (bkz. §3.13'ün "ana takımda" notu — `hpy_call`nin AKSİNE bu golden test `zig build test`in KENDİSİNİN bir PARÇASI, harici bir araç zinciri GEREKTİRMEZ).
+
+- QBE'nin kendisi WASM'ı hedeflemiyor; bu nedenle Nox, kendisini WASM'a derlemek yerine **WASM modüllerini içe aktarıp kütüphane olarak kullanma** yönünde tasarlanmıştır (bu, İlke #5'in KALICI, ASLA değişmeyecek gerekçesidir — QBE'ye bir WASM backend'i EKLEMEYE çalışan hiçbir görev bu depoya KABUL EDİLMEZ).
+- WASM modüllerinin export ettiği fonksiyonlar, Bölüm 6'daki AYNI opaque handle sistemi üzerinden çağrılabilir hale getirilir — İKİ AYRI FFI mekanizması YOKTUR.
+- **Bilinçli, KALICI v1 sınırı:** `wasm_call`, `i32`-yalnızca ve dallanmasız bir WASM alt-kümesini hedefler (bkz. §3.13/§3.38'in LEB128 varint taşma sınırı düzeltmesi) — genel-amaçlı, TAM WASM modülü çağırma (çoklu tip/bellek paylaşımı/dallanma) bir GELECEK genişletmesidir.
 
 ---
 
@@ -25486,31 +25499,97 @@ IR anlık görüntüleri (`tests/golden/ir_snapshots/`).
 
 | | **Nox** | **Mojo** | **mypyc** |
 |---|---|---|---|
-| Derleyici alt yapısı | QBE (minimal, ~10k LOC) | MLIR/LLVM | CPython C-API |
-| Tipleme | Zorunlu statik | Kademeli/opsiyonel | Zorunlu statik (fonksiyon bazlı) |
-| Bellek modeli | ASAP + ARC + döngü çözücü (görünmez) | Ownership + borrow checker (kısmen açık: `read`/`mut`/`owned`) | CPython refcount (değişmedi) |
-| C eklenti modeli | HPy tarzı opaque handle + uyumluluk katmanı | CPython runtime üzerinden Python modül importu | Doğrudan CPython C-API |
-| WASM | Runtime içine gömülü, kütüphane olarak import | Yok (ayrı hedef) | Yok |
+| Derleyici alt yapısı | QBE (varsayılan, hızlı derleme) **+ LLVM (`--release`, optimize edilmiş üretim derlemesi — v3 madde 7/§3.204'ün KASITLI, KALICI "iki backend = iki amaç" kararı)** | MLIR/LLVM | CPython C-API |
+| Tipleme | Zorunlu statik (fixed-width tamsayı ailesi DAHİL, v2.0 madde 4/§3.192) | Kademeli/opsiyonel | Zorunlu statik (fonksiyon bazlı) |
+| Bellek modeli | ASAP + ARC + döngü çözücü (görünmez, KULLANICI SÖZDİZİMİNDE HİÇBİR İZİ YOK) | Ownership + borrow checker (kısmen açık: `read`/`mut`/`owned`) | CPython refcount (değişmedi) |
+| C eklenti modeli | HPy Universal ABI (180/180 `ctx_*`, Tier 0-3 TAMAMLANDI) | CPython runtime üzerinden Python modül importu | Doğrudan CPython C-API |
+| WASM | Runtime içine gömülü, kütüphane olarak import (UYGULANDI, i32-yalnızca alt-küme) | Yok (ayrı hedef) | Yok |
+| Eşzamanlılık | `spawn`/`await`/`Task`/`Channel` (M:1 fiber varsayılan; `--release`de GERÇEK, iş-çalan M:N havuzu) + `nox.thread` (OS iş parçacıkları) | Yok (v1 itibarıyla) | Yok (GIL'e bağlı) |
+| Freestanding/bare-metal | v0.1 dondu (x86_64, GERÇEK QEMU boot-testli — §3.201) | Yok | Yok |
 
 ---
 
 ## 9. Tasarım Kararları — Durum Tablosu
 
+**Not:** bu tablo projenin İLK 5 temel tasarım kararını (hâlâ TAMAMEN
+geçerli, DEĞİŞMEDİ) listeler — SONRAKİ yüzlerce ayrıntılı karar (her biri
+KENDİ gerekçesi/alternatifleriyle) §3.x'in İLGİLİ alt bölümünde
+belgelenir; bu tablo o günlüğün YERİNE GEÇMEZ, SADECE en temel/hiçbir
+zaman yeniden AÇILMAYAN 5 kararı bir bakışta özetler.
+
 | # | Soru | Karar | Detay |
 |---|---|---|---|
-| 1 | Ownership ipucu sözdizimi | **Tamamen örtük, hiçbir açık sözdizimi yok** | §4 Katman 1 |
+| 1 | Ownership ipucu sözdizimi | **Tamamen örtük, hiçbir açık sözdizimi yok** | §3.3 (Katman 1/2 kararı) |
 | 2 | Generics/polimorfizm mekanizması | **Compile-time monomorphization + yapısal protokoller, heterojen durumlarda örtük vtable fallback** | AGENTS.md §12 |
-| 3 | C/WASM sınırında hata sinyali çevirisi | **Derleyici tarafından otomatik üretilen trampoline fonksiyonlar** | AGENTS.md §9 |
-| 4 | CPython C-API uyumluluk kapsamı | **Katmanlı öncelik (Tier 0-3), en geniş HPy desteği hedefi** | §6, AGENTS.md §10 |
-| 5 | `lowlevel` bloğu ve tip sistemi | **`lowlevel` içinde de zorunlu statik tipleme geçerli; yalnızca bellek tahsisi gevşer** | §4 Katman 4 |
+| 3 | C/WASM sınırında hata sinyali çevirisi | **Derleyici tarafından otomatik üretilen trampoline fonksiyonları** | §5, AGENTS.md §9 |
+| 4 | CPython C-API uyumluluk kapsamı | **Katmanlı öncelik (Tier 0-3) — TAMAMLANDI, 180/180 `ctx_*`** | §6, §3.19 |
+| 5 | `lowlevel` bloğu ve tip sistemi | **`lowlevel` içinde de zorunlu statik tipleme geçerli; yalnızca bellek tahsisi gevşer** | §3.8 (Katman 4) |
+
+**v3 sertleştirme turunda EK OLARAK KALICI hale getirilen 2 karar**
+(bu tablonun İLK 5 kararıyla AYNI "bir daha AÇILMAYACAK" statüsünde):
+
+| # | Soru | Karar | Detay |
+|---|---|---|---|
+| 6 | Sabit-genişlikli tamsayı taşma davranışının backend'e bağlılığı | **KASITLI, KALICI olarak backend seçimine kilitli** (QBE=her zaman yakalanamaz trap, `--release`=her zaman sessiz sarma) — bağımsız bir `--overflow-checks` bayrağı ASLA EKLENMEYECEK | §3.204 |
+| 7 | HPy/CPython uyumluluk kapsamının nihai sınırı | **Universal ABI (HPy) TAMAMLANDI; klasik `PyObject*` C-API emülasyonu KAPSAM DIŞI (KALICI)** | §6 |
 
 Uygulama detayları için bkz. `AGENTS.md`.
 
 ---
 
-## 10. Sonraki Adımlar
+## 10. Semantik Dondurma Bildirimi (v3 sertleştirme yol haritası, madde 11)
 
-- [ ] Bölüm 9'daki açık soruların çözülmesi
-- [ ] Gramer/EBNF taslağının çıkarılması
-- [ ] QBE IR'a çeviri örneklerinin (ASAP destructor, error union) prototiplenmesi
-- [ ] Minimal HPy uyumluluk katmanı için kapsam belirleme
+**Bu bölüm, `VERSIONING.md`nin §2'sinin ("Aynı MAJOR sürüm İÇİNDE...
+DERLENEN/ÇALIŞAN geçerli bir `.nox` programı... AYNI şekilde derlenir ve
+AYNI çalışma zamanı davranışını üretir") ZATEN İMA ETTİĞİ garantiyi
+AÇIKÇA, RESMİ olarak İLAN EDER** — v3 sertleştirme yol haritasının 1-10.
+maddeleri (§3.196-§3.206) TAMAMLANDIKTAN SONRA, Nox v1.x'in dil/stdlib
+SEMANTİĞİ artık DONDURULMUŞTUR:
+
+- **Dil sözdizimi/tip sistemi/sahiplik modeli** (§2-§4'ün TÜM İlkeleri,
+  §3.1-§3.192'nin fixed-width tamsayı ailesi DAHİL) — checker'ın kabul
+  ettiği programlar KÜMESİ v1.x İçİnde KÜÇÜLMEZ.
+- **Backend semantiği** (§3.204) — QBE↔LLVM davranış asimetrileri
+  (`backend_conformance_test.zig`nin `expectDivergence` ailesi) KASITLI
+  VE KALICIDIR, "düzeltilecek" olarak YENİDEN AÇILMAZ.
+- **Stdlib (`nox.*`) fonksiyon imzaları** — `VERSIONING.md` §3'ün
+  Kullanımdan Kaldırma Politikası GEREĞİ, v3 madde 10'da (§3.206) kurulan
+  emsal İZLENİR: bir fonksiyon ADI değiştirilirken ESKİ isim EN AZ bir
+  MINOR sürüm (v2.0.0'a KADAR) İNCE bir sarmalayıcı OLARAK ÇALIŞMAYA
+  DEVAM EDER.
+- **Freestanding v0.1** (§3.201) — dondurulmuş kapsam TABLOSU orada
+  sabit kalır; aarch64/riscv64 boot-testi/SMP/`nox.thread` freestanding
+  desteği GELECEK, AYRI maddelerdir.
+- **KALICI olarak "v1 sınırlaması" işaretlenip GELECEK bir MINOR/MAJOR'a
+  BIRAKILAN, KASITLI BOŞLUKLAR (KAPANMASI beklenmez, "hata" DEĞİLDİR):**
+  klasik CPython C-API emülasyonu (§6), genel-amaçlı/çok-dallanmalı WASM
+  desteği (§7), `list[u8]`nin GERÇEK bayt-paketlenmesi (§3.192), AArch64
+  Linux CI'daki KANITLANAMAMIŞ stack-smash kökü (bkz. proje belleği
+  `project_aarch64_stack_smash_ci_workaround`), Platform Services
+  birleştirmesi (v3 madde 8, kullanıcı kararıyla ATLANDI).
+
+**Bu bölümden SONRA** yeni bir dil özelliği/stdlib fonksiyonu EKLEMEK
+HÂLÂ SERBESTTİR (MINOR sürüm) — DONAN ŞEY, MEVCUT davranışın GERİYE
+DÖNÜK DEĞİŞMEYECEĞİ GARANTİSİDİR, YENİ ekleme YASAĞI DEĞİL.
+
+## 11. Sonraki Adımlar
+
+**v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
+başladı) — 1-11 TAMAMLANDI (bu bölüm madde 11'in KENDİSİDİR):
+
+1. ✅ AArch64 stack-smash — kök neden KANITLANAMADI (`continue-on-error`
+   CI bayrağı KALDI), yeniden-üretim ALTYAPISI KURULDU.
+2. ✅ Bitwise operatörler (`&`/`|`/`^`/`~`/`<<`/`>>`).
+3. ✅ Ownership/`ptr[T]` red-team — 6 GERÇEK bellek-güvenliği hatası.
+4. ✅ Freestanding v0.1 dondurma.
+5. ✅ `nox.arch.x86_64` stdlib modülü.
+6. ✅ Concurrency Torture Suite 2 — GERÇEK bir arena-sızıntısı hatası.
+7. ✅ Backend/mod semantiği kilitleme (taşma davranışı donduruldu).
+8. ⏭️ Platform Services birleştirme — kullanıcı kararıyla ATLANDI.
+9. ✅ Derleyici fuzzing — 2 GERÇEK LLVM emisyon eksikliği.
+10. ✅ Stdlib/API denetimi — GERÇEK bir use-after-free hatası + `nox.
+    toml`/`nox.yaml.dump` + `DateTime.to_epoch_ms`.
+11. ✅ Semantik dondurma + spesifikasyon (BU bölüm).
+
+**Sıradaki (ve SON) madde:**
+- [ ] 12. RC + release qualification.

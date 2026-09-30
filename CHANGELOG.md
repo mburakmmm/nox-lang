@@ -14,6 +14,21 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.111.1]
+
+### Değişti
+
+- **Semantik dondurma bildirimi (bkz. nox-teknik-spesifikasyon.md §10)**:
+  v3 sertleştirme yol haritasının 11. maddesi. Kod değişikliği yok —
+  `nox-teknik-spesifikasyon.md`nin §5-§10'u (Hata Yönetimi/C Eklenti
+  Modeli/WASM/Karşılaştırmalı Konumlandırma/Tasarım Kararları/Sonraki
+  Adımlar), projenin en başındaki tasarım taslağı halinde kalmış, çoktan
+  çözülmüş "açık soru"/"risk" olarak listeliyordu — güncel duruma göre
+  yeniden yazıldı (180/180 HPy `ctx_*`, WASM entegrasyonu, backend
+  semantiği kilitlemesi dahil) ve `VERSIONING.md`nin zaten ima ettiği
+  "v1.x semantikleri artık sabit" kararını resmileştiren yeni bir
+  "Semantik Dondurma Bildirimi" bölümü eklendi.
+
 ## [1.111.0]
 
 ### Eklendi
