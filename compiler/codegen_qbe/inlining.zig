@@ -1400,6 +1400,13 @@ pub fn genInlinedCall(self: *Codegen, c: ast.Call, site: InlineSiteInfo) Codegen
             .elem_heap_info = r.info.elem_heap_info,
             .elem_is_str = r.info.elem_is_str,
             .dict_info = r.info.dict_info,
+            // v4 Faz A madde 4 (bkz. nox-teknik-spesifikasyon.md §3.2xx):
+            // `genCall`in AYNI bulgusu (bkz. onun belge notu) — BU splice
+            // (inline edilmiş çağrı) yolu, KÜÇÜK/basit fonksiyonların
+            // (ör. `nox.bits`nin `to_le32`/`rotl_u8` GİBİ tek-satırlık
+            // yardımcıları) EN SIK isabet ETTİĞİ yoldur, bu YÜZDEN BU
+            // eksiklik `genCall`inkinden BİLE daha SIK GÖZLENDİ.
+            .fixed_int = r.info.fixed_int,
             // GG.16: `c.callee`nin (BU splice'ın KENDİ çağrı sitesi —
             // ör. `make_data()`) `tryRegisterCrossCallStackSlots` TARAFINDAN
             // İŞARETLENİP İŞARETLENMEDİĞİNİ kontrol eder — bkz. `Codegen.

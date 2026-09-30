@@ -1880,7 +1880,12 @@ pub fn genPrintClass(self: *Codegen, v: Value) CodegenError!void {
         try self.qbeOp2Imm(addr, .l, "add", v.text, @intCast(f.offset));
         const fv = try self.newTemp();
         try self.qbeLoad(fv, f.info.qtype, f.info.qtype, addr);
-        try self.genPrintFragment(.{ .text = fv, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str });
+        // v4 Faz A madde 4 (bkz. nox-teknik-spesifikasyon.md §3.2xx):
+        // `genCall`/`genInlinedCall`in AYNI bulgusu — bir sınıfın
+        // sabit-genişlikli tamsayı ALANI (`x: u8` GİBİ) `print(obj)`
+        // İLE basıldığında `fixed_int` DAMGALANMADIĞINDAN "True"/"False"
+        // OLARAK YANLIŞ basılıyordu.
+        try self.genPrintFragment(.{ .text = fv, .qtype = f.info.qtype, .heap = f.info.heap, .elem_qtype = f.info.elem_qtype, .class_name = f.info.class_name, .elem_heap_info = f.info.elem_heap_info, .elem_is_str = f.info.elem_is_str, .fixed_int = f.info.fixed_int });
     }
     try self.qbeCall(null, "$printf", &.{.{ .ty = .l, .text = "$fmt_rparen" }});
 }

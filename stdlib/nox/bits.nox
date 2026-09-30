@@ -1,0 +1,157 @@
+# nox.bits — mask/rotate/endian yardımcıları.
+#
+# v4 (2.0 öncesi son mimari stdlib katmanlaşması, Faz A), madde 4 (bkz.
+# nox-teknik-spesifikasyon.md §3.2xx). Büyük ölçüde SAF Nox — v3
+# sertleştirme yol haritası madde 2'nin (bkz. §3.199) bitwise operatörleri
+# (`&`/`|`/`^`/`~`/`<<`/`>>`) ZATEN VAR; bu modül SADECE onların ÜZERİNE
+# ergonomik, isimlendirilmiş yardımcı fonksiyonlar KURAR. Hiçbir yeni
+# capability/OS bağımlılığı TAŞIMAZ — freestanding'de de KULLANILABİLİR
+# (kernel kodu TAM DA rotate/endian/mask işlemlerinin en SIK KULLANILDIĞI
+# yer: sayfa tablosu bayrakları, ağ paketi/dosya-sistemi başlıkları, vb.).
+#
+# **Kaydırma miktarı GEÇERSİZLİĞİ (bkz. §3.199):** `>>`/`<<` MİKTARI
+# tipin bit genişliğine EŞİT/FAZLA İSE `ValueError` fırlatır — `rotl_*`/
+# `rotr_*` bu YÜZDEN `n`i ÖNCE `% genişlik`e indirger (Python'un KENDİ
+# floor-mod semantiği, NEGATİF `n` İçİn de HER ZAMAN [0, genişlik)
+# aralığında kalır) VE `0` özel durumunu (kaydırmasız, `x`in KENDİSİ)
+# AYRI ele alır (aksi halde `genişlik - 0 = genişlik` GEÇERSİZ bir
+# kaydırma miktarı OLURDU).
+
+def rotl_u8(x: u8, n: int) -> u8:
+    shift: int = n % 8
+    if shift == 0:
+        return x
+    return (x << shift) | (x >> (8 - shift))
+
+def rotr_u8(x: u8, n: int) -> u8:
+    shift: int = n % 8
+    if shift == 0:
+        return x
+    return (x >> shift) | (x << (8 - shift))
+
+def rotl_u16(x: u16, n: int) -> u16:
+    shift: int = n % 16
+    if shift == 0:
+        return x
+    return (x << shift) | (x >> (16 - shift))
+
+def rotr_u16(x: u16, n: int) -> u16:
+    shift: int = n % 16
+    if shift == 0:
+        return x
+    return (x >> shift) | (x << (16 - shift))
+
+def rotl_u32(x: u32, n: int) -> u32:
+    shift: int = n % 32
+    if shift == 0:
+        return x
+    return (x << shift) | (x >> (32 - shift))
+
+def rotr_u32(x: u32, n: int) -> u32:
+    shift: int = n % 32
+    if shift == 0:
+        return x
+    return (x >> shift) | (x << (32 - shift))
+
+def rotl_u64(x: u64, n: int) -> u64:
+    shift: int = n % 64
+    if shift == 0:
+        return x
+    return (x << shift) | (x >> (64 - shift))
+
+def rotr_u64(x: u64, n: int) -> u64:
+    shift: int = n % 64
+    if shift == 0:
+        return x
+    return (x >> shift) | (x << (64 - shift))
+
+# Bayt sırasını TERSİNE çevirir (endian SWAP) — `to_be_*`/`from_be_*`nin
+# (AŞAĞIDA) temel yapı taşı.
+def swap16(x: u16) -> u16:
+    return u16((x >> 8) | (x << 8))
+
+def swap32(x: u32) -> u32:
+    b0: u32 = (x & u32(255)) << 24
+    b1: u32 = (x & u32(65280)) << 8
+    b2: u32 = (x & u32(16711680)) >> 8
+    b3: u32 = (x & u32(4278190080)) >> 24
+    return b0 | b1 | b2 | b3
+
+def swap64(x: u64) -> u64:
+    b0: u64 = (x & u64(255)) << 56
+    b1: u64 = (x & u64(65280)) << 40
+    b2: u64 = (x & u64(16711680)) << 24
+    b3: u64 = (x & u64(4278190080)) << 8
+    b4: u64 = (x & u64(1095216660480)) >> 8
+    b5: u64 = (x & u64(280375465082880)) >> 24
+    b6: u64 = (x & u64(71776119061217280)) >> 40
+    # `0xFF00000000000000` (18374686479671623680) `int` LİTERALİ olarak
+    # İFADE EDİLEMEZ (i64::MAX'ı AŞAR, bkz. `parser.zig`nin sayı ayrıştırma
+    # SINIRI) — bunun yerine ÇALIŞMA ZAMANINDA `u64(255) << 56` OLARAK
+    # HESAPLANIR (derleme-zamanı literal AYRIŞTIRMASINA hiç TAKILMAZ).
+    top_byte_mask: u64 = u64(255) << 56
+    b7: u64 = (x & top_byte_mask) >> 56
+    return b0 | b1 | b2 | b3 | b4 | b5 | b6 | b7
+
+# Little-endian <-> yerel dönüşüm — Nox'un ŞU ANKİ TÜM hedefleri
+# (amd64/arm64/riscv64, bkz. v2.0 madde 8'in `--target` desteği) KÜÇÜK-
+# UÇLU (little-endian) OLDUĞUNDAN bunlar BUGÜN birer NO-OP'tur — AMA
+# İSİMLENDİRİLMİŞ olarak var olmaları KENDİ BAŞINA değerlidir: bir ağ
+# paketi/dosya-formatı ayrıştırıcısı `nox.bits.to_le32(x)` YAZDIĞINDA
+# NİYETİNİ belgeler VE gelecekte BÜYÜK-UÇLU bir hedef eklenirse (BUGÜN
+# planlanmıyor) TEK değişiklik noktası BURASI olur, HER çağrı sitesi
+# DEĞİL.
+def to_le16(x: u16) -> u16:
+    return x
+
+def from_le16(x: u16) -> u16:
+    return x
+
+def to_le32(x: u32) -> u32:
+    return x
+
+def from_le32(x: u32) -> u32:
+    return x
+
+def to_le64(x: u64) -> u64:
+    return x
+
+def from_le64(x: u64) -> u64:
+    return x
+
+# Big-endian <-> yerel dönüşüm — KÜÇÜK-uçlu hedeflerde `swap_*` İLE AYNI.
+def to_be16(x: u16) -> u16:
+    return swap16(x)
+
+def from_be16(x: u16) -> u16:
+    return swap16(x)
+
+def to_be32(x: u32) -> u32:
+    return swap32(x)
+
+def from_be32(x: u32) -> u32:
+    return swap32(x)
+
+def to_be64(x: u64) -> u64:
+    return swap64(x)
+
+def from_be64(x: u64) -> u64:
+    return swap64(x)
+
+# `(1 << n) - 1` — alt `n` bitin TAMAMI 1 olan bir maske (ör. `mask(3)`
+# == `0b111` == 7). `n` 0..63 aralığında olmalıdır (`n == 64` `<<`nin
+# KENDİ geçersiz-kaydırma denetimine TAKILIR, bkz. §3.199).
+def mask(n: int) -> int:
+    return (1 << n) - 1
+
+def test_bit(x: int, pos: int) -> bool:
+    return ((x >> pos) & 1) == 1
+
+def set_bit(x: int, pos: int) -> int:
+    return x | (1 << pos)
+
+def clear_bit(x: int, pos: int) -> int:
+    return x & (~(1 << pos))
+
+def toggle_bit(x: int, pos: int) -> int:
+    return x ^ (1 << pos)

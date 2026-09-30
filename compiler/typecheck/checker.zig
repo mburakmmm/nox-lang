@@ -1000,6 +1000,10 @@ pub const Checker = struct {
     /// İçİn transitivite ZATEN OTOMATİK/ÜCRETSİZ ÇALIŞIR.
     const MODULE_CAPABILITIES = [_]ModuleCaps{
         .{ .name = "arch", .caps = &.{.arch_x86_64} },
+        // v4 Faz A madde 4 (bkz. nox-teknik-spesifikasyon.md §3.2xx):
+        // `nox.bits` — SAF bitwise operatör sarmalayıcısı, `nox.mem`in
+        // AYNI gerekçeyle HİÇBİR OS/libc bağımlılığı TAŞIMAZ.
+        .{ .name = "bits", .caps = &.{} },
         .{ .name = "collections", .caps = &.{} },
         .{ .name = "crypto", .caps = &.{} },
         .{ .name = "csv", .caps = &.{} },

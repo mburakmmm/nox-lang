@@ -87,6 +87,13 @@ pub const fixtures = [_]Fixture{
     // İçİn GEREKLİ oldukları İçİn EKLENDİ (ikisi de bu fixture TARAFINDAN
     // dolaylı EGZERSİZ EDİLİR).
     .{ .name = "codegen(çalıştır): nox.mem copy/move (çakışan/çakışmayan)/set/volatile", .kind = .golden, .source = @embedFile("codegen_cases/nox_mem_copy_move_set_volatile.nox"), .expected_stdout = @embedFile("codegen_cases/nox_mem_copy_move_set_volatile.expected") },
+    // v4 Faz A madde 4 (bkz. nox-teknik-spesifikasyon.md §3.2xx): nox.bits
+    // — rotate/swap/endian/mask yardımcıları. BU fixture, `genCall`/
+    // `genInlinedCall`/`genMethodCall`/`genPrintClass`nin (BEŞ AYRI site)
+    // `fixed_int` DAMGALAMA eksikliğini (u8/u16/u32 dönen fonksiyonların
+    // ÇIPLAK çağrı sonucu `print`e verildiğinde "True"/"False" YANLIŞ
+    // basılması) DOLAYLI olarak EGZERSİZ eder.
+    .{ .name = "codegen(çalıştır): nox.bits rotl/rotr/swap/endian/mask/bit-ops", .kind = .golden, .source = @embedFile("codegen_cases/nox_bits_rotate_swap_endian_mask.nox"), .expected_stdout = @embedFile("codegen_cases/nox_bits_rotate_swap_endian_mask.expected") },
     .{ .name = "codegen(çalıştır): nox.url parse/percent-encode-decode/query/join", .kind = .golden, .source = @embedFile("codegen_cases/url_parse_encode_decode.nox"), .expected_stdout = @embedFile("codegen_cases/url_parse_encode_decode.expected") },
     .{ .name = "codegen(çalıştır): gecici alici uzerinde istisna firlatan metod/pop()/indeksleme sizmaz", .kind = .golden, .source = @embedFile("codegen_cases/temporary_receiver_raises_no_leak.nox"), .expected_stdout = @embedFile("codegen_cases/temporary_receiver_raises_no_leak.expected") },
     .{ .name = "codegen(çalıştır): nox.postgres/nox.mysql — ulasilamayan baglantida temiz hata", .kind = .golden, .source = @embedFile("codegen_cases/postgres_mysql_connect_error.nox"), .expected_stdout = @embedFile("codegen_cases/postgres_mysql_connect_error.expected") },

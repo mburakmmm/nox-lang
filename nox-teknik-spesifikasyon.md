@@ -25989,6 +25989,97 @@ ergonomi boşluğu.
 (bulgu #1'in İZOLE kanıtı) — İKİSİ de `fixture_corpus.zig`ye kaydedildi.
 `zig build test` sıfır regresyon.
 
+## 3.211 v4 (2.0 öncesi son mimari stdlib katmanlaşması, Faz A), madde 4 — `nox.bits` + GERÇEK bir codegen hatası (5 ayrı site, `fixed_int` damgalama eksikliği)
+
+**Bağlam:** Faz A'nın 4. maddesi — mask/rotate/endian yardımcıları. Madde
+3'ün (§3.210) AKSİNE bu madde İçİn kendi karar noktası İŞARETLENMEMİŞTİ
+("büyük ölçüde SAF Nox olarak yazılabilir" — v3 madde 2'nin bitwise
+operatörleri, bkz. §3.199, ZATEN VAR). Uygulama BEKLENDİĞİ GİBİ basitti
+— AMA test SIRASINDA GERÇEK, ÖNEMLİ BİR codegen hatası bulundu.
+
+### `nox.bits`nin KENDİSİ
+
+`rotl_u8/u16/u32/u64`, `rotr_u8/u16/u32/u64` (kaydırma miktarı ÖNCE
+`% genişlik`e indirgenir — Python'un floor-mod'u NEGATİF `n` İçİn de HER
+ZAMAN [0, genişlik) verir — VE `0` özel durumu AYRI ele alınır, aksi
+halde `genişlik - 0 = genişlik` `>>`/`<<`nin KENDİ geçersiz-kaydırma
+denetimine TAKILIRDI, bkz. §3.199), `swap16/32/64` (bayt sırası TERSİNE
+çevirme), `to_le*`/`from_le*` (Nox'un TÜM hedefleri küçük-uçlu OLDUĞUNDAN
+BUGÜN birer no-op, AMA niyeti BELGELEYEN isimlendirilmiş fonksiyonlar
+OLARAK değerli), `to_be*`/`from_be*` (= `swap_*`), `mask`/`test_bit`/
+`set_bit`/`clear_bit`/`toggle_bit`. HİÇBİR yeni capability GEREKTİRMEZ
+(`MODULE_CAPABILITIES`de `&.{}`) — freestanding'de de kullanılabilir.
+
+**`u64`nin EN ÜST bayt maskesi (`0xFF00000000000000` = 18374686479671623680)
+bir `int` LİTERALİ olarak İFADE EDİLEMEDİ** (i64::MAX'ı AŞAR, `parser.
+zig`nin sayı ayrıştırma SINIRI) — `u64(255) << 56` OLARAK ÇALIŞMA
+ZAMANINDA HESAPLANDI (derleme-zamanı literal ayrıştırmasına hiç TAKILMAZ).
+
+### GERÇEK bulgu: `fixed_int` damgalama eksikliği (5 AYRI codegen sitesi)
+
+`nox.bits`nin fonksiyonlarını `print(nox.bits.rotl_u8(...))` GİBİ
+DOĞRUDAN (bir DEĞİŞKENE ATANMADAN) ÇAĞIRDIĞIMDA, u8/u16/u32 DÖNEN HER
+çağrı (u64 DEĞİL — bkz. aşağıdaki gerekçe) SESSİZCE "True"/"False"
+BASTI — GERÇEK sayı DEĞİL. `x: u8 = f(); print(x)` İSE HER ZAMAN
+ÇALIŞIYORDU. İZOLE, minimal bir tekrar-üretimle (`def ident(x: u32) ->
+u32: return x`) KÖK neden BULUNDU:
+
+`compiler/codegen_qbe/types.zig`nin `Value.fixed_int`i (NULL olmayan İSE
+bir sabit-genişlikli tamsayıyı BETİMLER) `genPrint`in `.w`+`fixed_int==
+null` desenini (SIRADAN bir `bool`la — o da HER ZAMAN `.w` — ÇAKIŞTIĞINDAN)
+`True`/`False` formatlamasından AYIRT ETMEK İçİn KULLANILIR (v3 madde
+2/§3.199'un AYNI kategoride BULUP DÜZELTTİĞİ bir hatayla AYNI KÖK —
+ORADA SADECE `&`/`|`/`^` İKİLİ operatörleri İçİn düzeltilmişti). **BEŞ
+AYRI kod yolu bu tag'i bir FONKSİYON/METOD ÇAĞRISININ dönüş `Value`sine
+KOPYALAMAYI UNUTUYORDU** — HEPSİ `u64`nin (QBE'nin `.l` sınıfı, `bool`un
+`.w`sıyla HİÇ ÇAKIŞMADIĞINDAN) DEĞİL, SADECE `u8`/`u16`/`u32`nin (QBE'nin
+`.w` sınıfı) YANLIŞ basılmasına yol AÇIYORDU:
+
+1. `calls.zig`nin `genCall`ı (SIRADAN, inline EDİLMEMİŞ serbest fonksiyon
+   çağrısı) — `sig.ret.fixed_int` struct-literalde HİÇ YOKTU.
+2. `calls.zig`nin `genIndirectCallThroughClosurePtr`ı (closure ÜZERİNDEN
+   dolaylı çağrı) — AYNI eksiklik.
+3-4. `calls.zig`nin `genMethodCall`ının İKİ dönüş yolu (vtable'lı/vtable'sız
+   sınıf hiyerarşisi dalları) — AYNI eksiklik, İKİ KEZ tekrarlanmış.
+5. `inlining.zig`nin `genInlinedCall`ı (inline-edilmiş çağrı — `nox.bits`
+   GİBİ KÜÇÜK/tek-satırlık fonksiyonların EN SIK isabet ETTİĞİ yol,
+   bu YÜZDEN bu madde TARAFINDAN İLK yakalanan site BUYDU).
+
+**YAN bulgu (AYNI kök, ALTINCI bir site):** `expr.zig`nin `genPrintClass`ı
+— bir SINIFIN sabit-genişlikli tamsayı ALANI (`x: u8` GİBİ) `print(obj)`
+İLE basıldığında da AYNI şekilde YANLIŞ basıyordu (`f.info.fixed_int`
+KOPYALANMIYORDU). GERÇEKTEN denenip (`class Foo: def __init__(self, v:
+u8) -> None: ...`) doğrulandı, düzeltildi.
+
+Her ALTI site TEK satırlık bir düzeltmeyle (`.fixed_int = <kaynak>.
+fixed_int` alanını struct-literale EKLEMEK) giderildi.
+
+### Kapsam DIŞI (BİLİNÇLİ, GELECEKTEKİ bir denetim GEREKTİRİR)
+
+AYNI taramada (`grep -rn "elem_is_str = "`) `list[u8]`/`dict[str, u8]`
+GİBİ bir KOLEKSİYONUN ELEMANININ sabit-genişlikli tamsayı olduğu
+durumlarda (ör. `xs[i]` İNDEKSLEME, `ElemHeapInfo` İNŞASI — `calls.zig`
+satır 863/906/1756/1776, `closures.zig`, `expr.zig`nin `genIndex`i,
+`registration.zig` DAHİL, ONLARCA site) `elem_fixed_int`in AYNI şekilde
+TUTARLI kopyalanıp kopyalanmadığı DOĞRULANMADI — BU, `nox.bits`nin KENDİ
+test kapsamının DIŞINDA (SADECE SKALER parametre/dönüş/alan İçİn test
+edildi, KOLEKSİYON ELEMANI İçİn DEĞİL). `ElemHeapInfo`nin KENDİSİ zaten
+`fixed_int` alanı TAŞIMAZ (`elem_fixed_int` AYRI, `Value`/`VarInfo`/
+`TypeInfo` düzeyinde tutulur) — bu YÜZDEN bu, KAPSAMLI, KENDİ AYRI
+denetimini HAK EDEN bir takip maddesidir, BU turun RASTGELE bir PARÇASI
+OLARAK YARIM yapılmamalıdır (AGENTS.md'nin "gelecekte ele alınacak"
+disiplini).
+
+### Test
+
+`tests/golden/codegen_cases/nox_bits_rotate_swap_endian_mask.nox` — TÜM
+fonksiyonlar, `n==0`/`n==genişlik`/NEGATİF `n` özel durumları DAHİL.
+`fixture_corpus.zig`ye kaydedildi. `zig build test` sıfır regresyon (1
+mevcut fixture'ın — `sizeof_alignof_generic_type_param.nox`, KENDİSİ DE
+inline edilebilir bir generic fonksiyon KULLANDIĞINDAN — IR anlık
+görüntüsü, düzeltme SONUCU değişen `fixed_int` damgası YÜZÜNDEN KASITLI
+olarak YENİDEN OLUŞTURULDU).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
@@ -26025,7 +26116,8 @@ KALICI olarak açık bırakılan 2 madde: AArch64 Linux CI stack-smash kökü
 kararıyla ŞİMDİLİK KAPATILMAYAN bulgulardır.
 
 **Sıradaki adım:** v3'ten HEMEN SONRA başlayan v4 (2.0 öncesi son mimari
-stdlib katmanlaşması, Faz A, bkz. §3.208-§3.210 + proje belleği `project_
+stdlib katmanlaşması, Faz A, bkz. §3.208-§3.211 + proje belleği `project_
 v4_pre20_stdlib_roadmap`) — madde 1 (capability modeli, §3.208), madde 2
-(generic self-instantiation düzeltmesi, §3.209) VE madde 3 (`nox.mem`,
-§3.210) TAMAMLANDI; sırada madde 4 (`nox.bits`) VAR.
+(generic self-instantiation düzeltmesi, §3.209), madde 3 (`nox.mem`,
+§3.210) VE madde 4 (`nox.bits` + `fixed_int` damgalama hatası, §3.211)
+TAMAMLANDI; sırada madde 5 (`Buffer`) VAR.

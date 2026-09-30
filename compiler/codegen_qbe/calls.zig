@@ -125,7 +125,9 @@ pub fn genIndirectCallThroughClosurePtr(self: *Codegen, closure_ptr: []const u8,
     try self.emitExceptionCheck();
 
     if (result_temp) |rt| {
-        return .{ .text = rt, .qtype = ret_qtype, .heap = fsig.ret.heap, .elem_qtype = fsig.ret.elem_qtype, .class_name = fsig.ret.class_name, .elem_heap_info = fsig.ret.elem_heap_info, .elem_is_str = fsig.ret.elem_is_str, .dict_info = fsig.ret.dict_info };
+        // v4 Faz A madde 4: `genCall`in AYNI bulgusu (bkz. onun belge
+        // notu) — dolaylı (closure ÜZERİNDEN) çağrı yolu.
+        return .{ .text = rt, .qtype = ret_qtype, .heap = fsig.ret.heap, .elem_qtype = fsig.ret.elem_qtype, .class_name = fsig.ret.class_name, .elem_heap_info = fsig.ret.elem_heap_info, .elem_is_str = fsig.ret.elem_is_str, .dict_info = fsig.ret.dict_info, .fixed_int = fsig.ret.fixed_int };
     }
     return .{ .text = "0", .qtype = .w };
 }
@@ -1109,7 +1111,20 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             if (!self.must_not_raise.contains(name)) try self.emitExceptionCheck();
 
             if (result_temp) |rt| {
-                return .{ .text = rt, .qtype = sig.ret.qtype, .heap = sig.ret.heap, .elem_qtype = sig.ret.elem_qtype, .class_name = sig.ret.class_name, .elem_heap_info = sig.ret.elem_heap_info, .elem_is_str = sig.ret.elem_is_str };
+                // v4 Faz A madde 4 (bkz. nox-teknik-spesifikasyon.md
+                // §3.2xx): GERÇEK, önceden keşfedilmemiş bir hata — bu
+                // struct-literal `sig.ret.fixed_int`i HİÇ KOPYALAMIYORDU,
+                // `Value.fixed_int`in VARSAYILAN DEĞERİNE (`null`) SESSİZCE
+                // düşüyordu. Sonuç: `def f() -> u8: ...` GİBİ bir fonksiyonun
+                // dönüşü DOĞRUDAN kullanıldığında (ör. `print(f())`, bir
+                // DEĞİŞKENE ATANMADAN) `genPrint`in `.w`+`fixed_int==null`
+                // deseni (SIRADAN bir `bool`la ÇAKIŞTIĞINDAN, bkz. §3.199'un
+                // AYNI kategorideki bulgusu) SESSİZCE "True"/"False"
+                // BASIYORDU — `x: u8 = f(); print(x)` İSE ÇALIŞIYORDU
+                // (`x`in KENDİ değişken slotu fixed_int'i AYRICA taşır).
+                // `nox.bits`nin (bu madde) `print(nox.bits.rotl_u8(...))`
+                // GİBİ ÇAĞRILARI GERÇEKTEN denenip YAKALANDI.
+                return .{ .text = rt, .qtype = sig.ret.qtype, .heap = sig.ret.heap, .elem_qtype = sig.ret.elem_qtype, .class_name = sig.ret.class_name, .elem_heap_info = sig.ret.elem_heap_info, .elem_is_str = sig.ret.elem_is_str, .fixed_int = sig.ret.fixed_int };
             }
             return .{ .text = "0", .qtype = .w };
         },
@@ -1620,7 +1635,9 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
     }
 
     if (result_temp) |rt| {
-        return .{ .text = rt, .qtype = msig.sig.ret.qtype, .heap = msig.sig.ret.heap, .elem_qtype = msig.sig.ret.elem_qtype, .class_name = msig.sig.ret.class_name, .elem_heap_info = msig.sig.ret.elem_heap_info, .elem_is_str = msig.sig.ret.elem_is_str };
+        // v4 Faz A madde 4 (bkz. nox-teknik-spesifikasyon.md §3.2xx): genCall'ın
+        // AYNI bulgusu (bkz. onun belge notu) — metod çağrısı dönüş yolu.
+        return .{ .text = rt, .qtype = msig.sig.ret.qtype, .heap = msig.sig.ret.heap, .elem_qtype = msig.sig.ret.elem_qtype, .class_name = msig.sig.ret.class_name, .elem_heap_info = msig.sig.ret.elem_heap_info, .elem_is_str = msig.sig.ret.elem_is_str, .fixed_int = msig.sig.ret.fixed_int };
     }
     return .{ .text = "0", .qtype = .w };
 }
@@ -1680,7 +1697,9 @@ pub fn genSuperMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Ex
     try self.releaseTemporaryArgs(args, arg_values);
     try self.emitExceptionCheck();
     if (result_temp) |rt| {
-        return .{ .text = rt, .qtype = msig.sig.ret.qtype, .heap = msig.sig.ret.heap, .elem_qtype = msig.sig.ret.elem_qtype, .class_name = msig.sig.ret.class_name, .elem_heap_info = msig.sig.ret.elem_heap_info, .elem_is_str = msig.sig.ret.elem_is_str };
+        // v4 Faz A madde 4 (bkz. nox-teknik-spesifikasyon.md §3.2xx): genCall'ın
+        // AYNI bulgusu (bkz. onun belge notu) — metod çağrısı dönüş yolu.
+        return .{ .text = rt, .qtype = msig.sig.ret.qtype, .heap = msig.sig.ret.heap, .elem_qtype = msig.sig.ret.elem_qtype, .class_name = msig.sig.ret.class_name, .elem_heap_info = msig.sig.ret.elem_heap_info, .elem_is_str = msig.sig.ret.elem_is_str, .fixed_int = msig.sig.ret.fixed_int };
     }
     return .{ .text = "0", .qtype = .w };
 }

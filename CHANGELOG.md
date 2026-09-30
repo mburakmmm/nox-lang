@@ -14,6 +14,29 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.115.0]
+
+### Eklendi
+
+- **`nox.bits` — mask/rotate/endian yardımcıları (bkz. nox-teknik-
+  spesifikasyon.md §3.211, v4 Faz A madde 4)**: `rotl_u8/u16/u32/u64`,
+  `rotr_u8/u16/u32/u64`, `swap16/32/64`, `to_le*`/`from_le*`/`to_be*`/
+  `from_be*`, `mask`/`test_bit`/`set_bit`/`clear_bit`/`toggle_bit`.
+  Mevcut bitwise operatörlerin (v3 madde 2) üzerine kurulu, saf Nox.
+
+### Düzeltildi
+
+- **GERÇEK bir codegen hatası — `fixed_int` damgalama eksikliği, 6 ayrı
+  site**: `u8`/`u16`/`u32` döndüren bir fonksiyon/metodun ÇAĞRI sonucu
+  DOĞRUDAN (bir değişkene atanmadan) `print()`e verildiğinde SESSİZCE
+  "True"/"False" olarak yanlış basılıyordu (QBE'nin `.w` yazmaç sınıfını
+  `bool` ile paylaştığından). `genCall`, `genIndirectCallThroughClosurePtr`,
+  `genMethodCall`ın iki dönüş yolu, `genInlinedCall` (küçük fonksiyonların
+  en sık isabet ettiği yol — `nox.bits` yazılırken GERÇEKTEN denenip
+  bulundu) ve `genPrintClass`ın (sınıf alanı basımı) HEPSİ dönüş `Value`ye
+  `fixed_int` etiketini kopyalamayı unutuyordu — altısı da düzeltildi.
+  `u64` (QBE'nin `.l` sınıfı, `bool` ile çakışmaz) etkilenmemişti.
+
 ## [1.114.0]
 
 ### Eklendi
