@@ -25833,6 +25833,81 @@ capability-taşıyan HİÇBİR sembolü generic OLMADIĞINDAN (`secure_random_he
 BU GERÇEK bir boşluk DEĞİL, sadece EGZERSİZ EDİLMEMİŞ bir yol — GELECEKTE
 generic BİR capability-taşıyan fonksiyon EKLENİRSE AYRICA ELE ALINMALIDIR.
 
+## 3.209 v4 (2.0 öncesi son mimari stdlib katmanlaşması, Faz A), madde 2 — Generic self-instantiation düzeltmesi
+
+**Bağlam:** v3 madde 10/§3.206'da İZOLE bir tekrar-üretimle BULUNAN, GERÇEK
+bir derleyici sınırlaması: `class Box[T]:` KENDİ metodu İçİNDEN `Box[T]()`
+İNŞA EDEMİYORDU ("bilinmeyen tip: T" İLE reddediliyordu) — `nox.collections.
+Set.union/intersection/difference`nin `Set[T]` YERİNE `list[T]` DÖNMESİNİN
+KÖK nedeni de BUYDU.
+
+### Kök neden
+
+`instantiateGenericClass`, generic bir sınıfı SOMUT bir tipe (ör. `Box[int]`)
+göre `T`→`int` bağlarken `substituteStmt`i çağırıyordu — AMA `substituteStmt`
+(KENDİ eski belge notunun da İTİRAF ETTİĞİ gibi) **SADECE `var_decl.
+type_expr`i** değiştiriyordu. `result: Box[T] = Box[T](self.value)` gibi bir
+satırda `Box[T] = ...` KISMI (ÇIPLAK tip ANNOTASYONU) doğru substituted
+oluyordu, ama sağdaki `Box[T](self.value)` (bir `ast.Expr.generic_construct`
+İFADESİ, `GenericConstruct.type_args: []TypeExpr` alanı İçİNDE "T"yi taşır)
+`substituteStmt`in HİÇ dokunmadığı bir `Expr` ağacı İÇİNDE gömülüydü —
+`var_decl`in `.value` alanı DA (yalnızca `.type_expr` DEĞİL) DEĞİŞTİRİLMEDEN
+paylaşılıyordu. Sonuç: somutlaştırılmış (`Box__int`) metodun gövdesi HÂLÂ
+ÇIPLAK "T" içeren bir `Box[T](...)` çağrısı taşıyordu — bu, ARTIK var
+OLMAYAN bir `T` bağlamasında `typeExprToType`/`checkGenericConstruct`
+TARAFINDAN "bilinmeyen tip: T" İLE reddediliyordu.
+
+### Düzeltme
+
+`ast.Expr`in TypeExpr taşıyan TEK varyantı `.generic_construct.type_args`
+OLDUĞUNDAN (diğer TÜM varyantlar SADECE alt-ifadeleri YAPISAL olarak
+İÇERİR), YENİ bir `substituteExpr` (+ `substituteExprs` yardımcısı)
+eklendi — `substituteTypeExpr`in AYNI "bindings'te BULUNAN bir isim SOMUT
+tipe ÇEVRİLİR" deseniyle, AMA TÜM `Expr` ağacını (unary/binary/call/
+attribute/index/list_lit/dict_lit/await/spawn/generic_construct) özyinelemeli
+GEZEREK. `substituteStmt` da ARTIK `var_decl.value`/`assign`/`if-while-for`nin
+KOŞULU/`return_stmt`/`raise_stmt`/`with_stmt.ctx_expr`/`defer_stmt.call`
+DAHİL HER `Expr`-taşıyan alanı `substituteExpr` ÜZERİNDEN GEÇİRİR (ÖNCEDEN
+BUNLARIN TAMAMI "hiç TypeExpr içermez" GEREKÇESİYLE OLDUĞU GİBİ
+paylaşılıyordu — YANLIŞ gerekçe: `Expr`in KENDİSİ TypeExpr içermeyebilir
+AMA İÇİNDEKİ bir `generic_construct` İÇEREBİLİR).
+
+**Yan bulgu (GERÇEK, ayrı bir hata DEĞİL, sadece EGZERSİZ EDİLMEMİŞ):**
+`GenericConstruct.resolved_class_name: *?[]const u8` alanı bir POINTER'dır
+(checker'ın somutlaştırma SONUCUNU YAZDIĞI paylaşılan hücre) — substitute
+edilmiş bir `generic_construct` İçin BU pointer'ın TAZE (yeni `null`)
+olması GEREKİR (ORİJİNAL şablonun KENDİ çözüm hücresiyle PAYLAŞILAMAZ,
+aksi halde `Box[T]`nin ŞABLON-İçİ çözümü İLE `Box[int]`nin somutlaştırılmış
+çözümü AYNI hücreyi YARIŞTIRIRDI) — `substituteExpr`in `.generic_construct`
+dalı BUNU AÇIKÇA TAZE bir işaretçiyle YAPAR.
+
+### Uygulanan iyileştirme: `nox.collections.Set`
+
+Kök neden düzeltildikten SONRA, `Set.union`/`intersection`/`difference`
+(v3 madde 10'da `list[T]` dönmeye ZORLANMIŞTI) `Set[T]` DÖNECEK şekilde
+YENİDEN YAZILDI (`Set[T]()` İNŞA edip `.add(...)` ile doldurarak) — API
+ARTIK beklenen/doğal şekli taşıyor (`set1.union(set2)` bir `Set[T]`
+döner, bir `list[T]` DEĞİL).
+
+### Test
+
+`tests/golden/codegen_cases/generic_class_self_instantiation.nox` (YENİ,
+`fixture_corpus.zig`ye kaydedildi) — hem İZOLE `Box[T]` senaryosunu (KENDİ
+metodundan KENDİSİNİ inşa) HEM `Set.union`/`intersection`/`difference`nin
+YENİ `Set[T]` dönüşünü (boyut + üyelik) doğrular. `zig build test` sıfır
+regresyon (2 mevcut `nox.collections` fixture'ının IR anlık görüntüsü,
+`Set`in metod gövdeleri DEĞİŞTİĞİ İçİn, KASITLI olarak YENİDEN OLUŞTURULDU).
+
+### Kapsam DIŞI (BİLİNÇLİ)
+
+`nox.toml`/`nox.yaml`nin dump yardımcılarının `out: list[str]` PARAMETRESİNİ
+MUTATE edememesi (v3 madde 10'da AYRI bir minimal repro İLE bulunan, İLİŞKİLİ
+AMA FARKLI bir sınırlama — bir PLAIN fonksiyon parametresinin `.append()`
+İLE MUTATE edilmesi `error.Unsupported` İLE reddediliyor) BU maddenin
+KAPSAMI DIŞINDA kaldı — kök nedeni `substituteStmt`/`substituteExpr` İLE
+İLGİSİZ (generic OLMAYAN, sıradan bir fonksiyonda BİLE tekrarlanabilir,
+bkz. proje belleği), AYRI bir derleyici incelemesi GEREKTİRİR.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
@@ -25869,6 +25944,7 @@ KALICI olarak açık bırakılan 2 madde: AArch64 Linux CI stack-smash kökü
 kararıyla ŞİMDİLİK KAPATILMAYAN bulgulardır.
 
 **Sıradaki adım:** v3'ten HEMEN SONRA başlayan v4 (2.0 öncesi son mimari
-stdlib katmanlaşması, Faz A, bkz. §3.208 + proje belleği `project_v4_
-pre20_stdlib_roadmap`) — madde 1 (capability modeli, §3.208) TAMAMLANDI;
-sırada madde 2 (generic self-instantiation düzeltmesi) VAR.
+stdlib katmanlaşması, Faz A, bkz. §3.208-§3.209 + proje belleği `project_
+v4_pre20_stdlib_roadmap`) — madde 1 (capability modeli, §3.208) VE madde 2
+(generic self-instantiation düzeltmesi, §3.209) TAMAMLANDI; sırada madde 3
+(`nox.mem`) VAR.

@@ -75,6 +75,11 @@ pub const fixtures = [_]Fixture{
     .{ .name = "codegen(çalıştır): nox.collections Stack/Queue/Deque", .kind = .golden, .source = @embedFile("codegen_cases/collections_stack_queue_deque.nox"), .expected_stdout = @embedFile("codegen_cases/collections_stack_queue_deque.expected") },
     .{ .name = "codegen(çalıştır): nox.collections Set/Counter/OrderedDict", .kind = .golden, .source = @embedFile("codegen_cases/collections_set_counter_ordereddict.nox"), .expected_stdout = @embedFile("codegen_cases/collections_set_counter_ordereddict.expected") },
     .{ .name = "codegen(çalıştır): nox.collections LRUCache/Heap/PriorityQueue", .kind = .golden, .source = @embedFile("codegen_cases/collections_lru_heap_priority.nox"), .expected_stdout = @embedFile("codegen_cases/collections_lru_heap_priority.expected") },
+    // v4 Faz A madde 2 (bkz. nox-teknik-spesifikasyon.md §3.2xx): generic
+    // bir sınıfın KENDİ metodu İçİNDEN KENDİSİNİ (Box[T]()) yeniden İNŞA
+    // edebilmesi + bunun flagship gerçek tüketicisi (nox.collections.Set.
+    // union/intersection/difference'ın artık list[T] DEĞİL Set[T] dönmesi).
+    .{ .name = "codegen(çalıştır): generic sınıf kendi metodundan kendini örnekler (Box[T]) + Set.union/intersection/difference Set[T] döner", .kind = .golden, .source = @embedFile("codegen_cases/generic_class_self_instantiation.nox"), .expected_stdout = @embedFile("codegen_cases/generic_class_self_instantiation.expected") },
     .{ .name = "codegen(çalıştır): nox.url parse/percent-encode-decode/query/join", .kind = .golden, .source = @embedFile("codegen_cases/url_parse_encode_decode.nox"), .expected_stdout = @embedFile("codegen_cases/url_parse_encode_decode.expected") },
     .{ .name = "codegen(çalıştır): gecici alici uzerinde istisna firlatan metod/pop()/indeksleme sizmaz", .kind = .golden, .source = @embedFile("codegen_cases/temporary_receiver_raises_no_leak.nox"), .expected_stdout = @embedFile("codegen_cases/temporary_receiver_raises_no_leak.expected") },
     .{ .name = "codegen(çalıştır): nox.postgres/nox.mysql — ulasilamayan baglantida temiz hata", .kind = .golden, .source = @embedFile("codegen_cases/postgres_mysql_connect_error.nox"), .expected_stdout = @embedFile("codegen_cases/postgres_mysql_connect_error.expected") },

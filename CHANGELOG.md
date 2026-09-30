@@ -14,6 +14,27 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.113.0]
+
+### Düzeltildi
+
+- **v4 (2.0 öncesi son mimari stdlib katmanlaşması, Faz A), madde 2 —
+  generic self-instantiation düzeltmesi (bkz. nox-teknik-spesifikasyon.md
+  §3.209)**: `class Box[T]:` GİBİ generic bir sınıf KENDİ metodu İçİNDEN
+  KENDİSİNİ (`Box[T]()`) artık İNŞA edebiliyor — v3 madde 10'da bulunan
+  "bilinmeyen tip: T" hatası, `instantiateGenericClass`in çağırdığı
+  `substituteStmt`nin SADECE `var_decl.type_expr`i değiştirip `Expr` ağacına
+  gömülü tip argümanlarını (`Box[T](...)` GİBİ bir `.generic_construct`
+  ÇAĞRISI) HİÇ GEZMEMESİNDEN kaynaklanıyordu. Yeni `substituteExpr` (+
+  `substituteStmt`nin TÜM `Expr`-taşıyan alanları artık ondan geçirmesi)
+  bunu düzeltti.
+
+### Değişti
+
+- **`nox.collections.Set.union`/`intersection`/`difference`** artık
+  (kök neden düzeltildiği İçİn) doğru şekilde `Set[T]` DÖNER — v3 madde
+  10'daki geçici `list[T]` iş-etrafı KALDIRILDI.
+
 ## [1.112.0]
 
 ### Eklendi

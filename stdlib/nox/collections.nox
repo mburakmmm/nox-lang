@@ -211,43 +211,40 @@ class Set[T]:
     # spesifikasyon.md ilgili bölüm, stdlib/API denetimi): bir "Set"in
     # İLK beklenen üye işlemleri — Stack/Queue/Deque/Heap/PriorityQueue/
     # Counter/OrderedDict'in HEPSİ tam donanımlıyken `Set` SADECE contains/
-    # add/remove/size TAŞIYORDU. **`list[T]` döner, `Set[T]` DEĞİL:**
-    # `Set[T]()`nin (bir generic sınıfın KENDİ metodu İçİNDEN, KENDİ sınırlı
-    # `T`siyle yeniden İNŞA edilmesi) `noxc`ta GERÇEKTEN denenip bulunan bir
-    # sınır olduğu ORTAYA ÇIKTI — checker "bilinmeyen tip: T" İLE reddediyor
-    # (İZOLE, minimal bir tekrar-üretimle DOĞRULANDI: generic bir sınıfın
-    # BAŞKA bir metodu İçİNDEN AYNI sınıfı KENDİ `T`siyle yeniden inşa etmek
-    # HİÇBİR yerde ÇALIŞMIYOR — bu, KENDİ Plan Mode turunu GEREKTİREN AYRI
-    # bir derleyici sınırlaması, BU denetimin kapsamı DIŞINDA). Çağıran
-    # taraf isterse dönen `list[T]`yi `Set()`e sarabilir.
-    def union(self: Set, other: Set) -> list[T]:
-        result: list[T] = []
+    # add/remove/size TAŞIYORDU. ÖNCEDEN `list[T]` DÖNÜYORDU (`Set[T]`
+    # DEĞİL) — `Set[T]()`nin (bir generic sınıfın KENDİ metodu İçİNDEN,
+    # KENDİ sınırlı `T`siyle yeniden İNŞA edilmesi) `noxc`ta "bilinmeyen
+    # tip: T" İLE reddedildiği GERÇEK bir derleyici sınırlaması YÜZÜNDENDİ.
+    # v4 Faz A madde 2 (bkz. nox-teknik-spesifikasyon.md §3.2xx) BU
+    # sınırlamayı (`substituteStmt`in `Expr` ağaçlarını GEZMEMESİ kök
+    # nedeniyle) DÜZELTTİ — ARTIK doğru şekilde `Set[T]` DÖNER.
+    def union(self: Set, other: Set) -> Set[T]:
+        result: Set[T] = Set[T]()
         i: int = 0
         while i < len(self.items):
-            result.append(self.items[i])
+            result.add(self.items[i])
             i = i + 1
         j: int = 0
         while j < len(other.items):
-            if not self.contains(other.items[j]):
-                result.append(other.items[j])
+            result.add(other.items[j])
             j = j + 1
         return result
 
-    def intersection(self: Set, other: Set) -> list[T]:
-        result: list[T] = []
+    def intersection(self: Set, other: Set) -> Set[T]:
+        result: Set[T] = Set[T]()
         i: int = 0
         while i < len(self.items):
             if other.contains(self.items[i]):
-                result.append(self.items[i])
+                result.add(self.items[i])
             i = i + 1
         return result
 
-    def difference(self: Set, other: Set) -> list[T]:
-        result: list[T] = []
+    def difference(self: Set, other: Set) -> Set[T]:
+        result: Set[T] = Set[T]()
         i: int = 0
         while i < len(self.items):
             if not other.contains(self.items[i]):
-                result.append(self.items[i])
+                result.add(self.items[i])
             i = i + 1
         return result
 

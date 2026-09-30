@@ -6790,11 +6790,108 @@ pub const Checker = struct {
         };
     }
 
-    /// Bir gövdeyi (`[]Stmt`) derin kopyalar; yalnızca `var_decl.type_expr`
-    /// tip parametresi içerebilir (parametre/dönüş tipleri ayrıca ele alınır)
-    /// — ifadelerin kendisi (hesaplama, `Expr` ağaçları) hiç değişmediği için
-    /// olduğu gibi paylaşılır. İç içe bloklar (if/while/for/try/lowlevel)
-    /// özyinelemeli olarak yeniden inşa edilir.
+    /// v4 (Faz A madde 2, bkz. nox-teknik-spesifikasyon.md §3.2xx): `ast.
+    /// Expr`in TEK TypeExpr-taşıyan varyantı (`.generic_construct.type_args`,
+    /// bkz. `ast.GenericConstruct`in belge notu) İçİn — `substituteTypeExpr`in
+    /// AYNI (bindings'te BULUNAN bir isim SOMUT tipe ÇEVRİLİR, YOKSA
+    /// OLDUĞU GİBİ) deseni, AMA `Expr` ağacının TAMAMINI (yapısal olarak,
+    /// `substituteStmt`in İÇ İÇE bloklar İçin yaptığının AYNISI) gezerek.
+    /// `generic_construct` DIŞINDA HİÇBİR `Expr` varyantı ÇIPLAK bir
+    /// `TypeExpr` TAŞIMAZ — bu YÜZDEN diğer TÜM dallar SADECE yapısal
+    /// (alt-ifadeleri özyinelemeli DOLAŞIR, KENDİLERİ hiçbir şey
+    /// DEĞİŞTİRMEZ). `resolved_class_name` YENİ, TAZE bir `null`
+    /// işaretçisiyle başlatılır — checker BU somut örneklemeyi AYRI
+    /// TEKRAR çözümleyecektir (ORİJİNAL, generic şablonun ÇÖZÜMÜYLE
+    /// KARIŞTIRILMAMALI, ör. `Box[T]`nin şablon-İÇİ çözümü `Box`a,
+    /// somutlaştırılmış `Box[int]`nin çözümü İSE `Box__int`e gider).
+    fn substituteExpr(self: *Checker, e: ast.Expr, bindings: *const std.StringHashMapUnmanaged(Type)) TypeError!ast.Expr {
+        return switch (e) {
+            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => e,
+            .unary => |u| blk: {
+                const operand = try self.allocator.create(ast.Expr);
+                operand.* = try self.substituteExpr(u.operand.*, bindings);
+                break :blk .{ .unary = .{ .op = u.op, .operand = operand } };
+            },
+            .binary => |b| blk: {
+                const left = try self.allocator.create(ast.Expr);
+                left.* = try self.substituteExpr(b.left.*, bindings);
+                const right = try self.allocator.create(ast.Expr);
+                right.* = try self.substituteExpr(b.right.*, bindings);
+                break :blk .{ .binary = .{ .op = b.op, .left = left, .right = right } };
+            },
+            .call => |c| blk: {
+                const callee = try self.allocator.create(ast.Expr);
+                callee.* = try self.substituteExpr(c.callee.*, bindings);
+                break :blk .{ .call = .{ .callee = callee, .args = try self.substituteExprs(c.args, bindings) } };
+            },
+            .attribute => |a| blk: {
+                const obj = try self.allocator.create(ast.Expr);
+                obj.* = try self.substituteExpr(a.obj.*, bindings);
+                break :blk .{ .attribute = .{ .obj = obj, .attr = a.attr } };
+            },
+            .index => |ix| blk: {
+                const obj = try self.allocator.create(ast.Expr);
+                obj.* = try self.substituteExpr(ix.obj.*, bindings);
+                const idx = try self.allocator.create(ast.Expr);
+                idx.* = try self.substituteExpr(ix.index.*, bindings);
+                break :blk .{ .index = .{ .obj = obj, .index = idx } };
+            },
+            .list_lit => |elems| .{ .list_lit = try self.substituteExprs(elems, bindings) },
+            .dict_lit => |pairs| blk: {
+                const out = try self.allocator.alloc(ast.DictPair, pairs.len);
+                for (pairs, 0..) |p, i| out[i] = .{
+                    .key = try self.substituteExpr(p.key, bindings),
+                    .value = try self.substituteExpr(p.value, bindings),
+                };
+                break :blk .{ .dict_lit = out };
+            },
+            .await_expr => |inner| blk: {
+                const ptr = try self.allocator.create(ast.Expr);
+                ptr.* = try self.substituteExpr(inner.*, bindings);
+                break :blk .{ .await_expr = ptr };
+            },
+            .spawn_expr => |inner| blk: {
+                const ptr = try self.allocator.create(ast.Expr);
+                ptr.* = try self.substituteExpr(inner.*, bindings);
+                break :blk .{ .spawn_expr = ptr };
+            },
+            .generic_construct => |g| blk: {
+                const type_args = try self.allocator.alloc(ast.TypeExpr, g.type_args.len);
+                for (g.type_args, 0..) |ta, i| type_args[i] = try self.substituteTypeExpr(ta, bindings);
+                const resolved = try self.allocator.create(?[]const u8);
+                resolved.* = null;
+                break :blk .{ .generic_construct = .{
+                    .name = g.name,
+                    .type_args = type_args,
+                    .args = try self.substituteExprs(g.args, bindings),
+                    .resolved_class_name = resolved,
+                } };
+            },
+        };
+    }
+
+    fn substituteExprs(self: *Checker, exprs: []const ast.Expr, bindings: *const std.StringHashMapUnmanaged(Type)) TypeError![]ast.Expr {
+        const out = try self.allocator.alloc(ast.Expr, exprs.len);
+        for (exprs, 0..) |e, i| out[i] = try self.substituteExpr(e, bindings);
+        return out;
+    }
+
+    /// Bir gövdeyi (`[]Stmt`) derin kopyalar — `var_decl.type_expr` GİBİ
+    /// ÇIPLAK `TypeExpr` sitelerinin YANI SIRA, HER `Expr`-taşıyan alan da
+    /// (`substituteExpr` ÜZERİNDEN) gezilir. İç içe bloklar (if/while/for/
+    /// try/lowlevel/with) özyinelemeli olarak yeniden inşa edilir.
+    /// v4 (Faz A madde 2, bkz. nox-teknik-spesifikasyon.md §3.2xx): ÖNCEDEN
+    /// (Faz P2.1) BU fonksiyon SADECE `var_decl.type_expr`i değiştiriyordu
+    /// — TÜM `Expr` alanları (var_decl.value/assign/return_stmt/raise_stmt/
+    /// if-while-for'un KOŞULU/with_stmt.ctx_expr/defer_stmt.call DAHİL)
+    /// OLDUĞU GİBİ (henüz T'yi TAŞIYAN, SOMUTLAŞTIRILMAMIŞ haliyle)
+    /// PAYLAŞILIYORDU — bu, generic bir sınıfın KENDİ metodu İçİNDEN
+    /// KENDİSİNİ (`Box[T]()`) İNŞA ETMESİNİN "bilinmeyen tip: T" İLE
+    /// REDDEDİLMESİNİN KÖK NEDENİYDİ (`Box[T](self.value)` bir `.generic_
+    /// construct` İFADESİDİR, ÇIPLAK bir tip ANNOTASYONU DEĞİL — ESKİ
+    /// substituteStmt bunu HİÇ GÖRMÜYORDU). Bulundu (bkz. proje belleği
+    /// "generic self-instantiation" görevi) — `Box[T]`in KENDİ metodu
+    /// İçİNDEN `Box[T]()` çağırması İZOLE bir tekrar-üretimle DOĞRULANDI.
     fn substituteStmts(self: *Checker, stmts: []const ast.Stmt, bindings: *const std.StringHashMapUnmanaged(Type)) TypeError![]ast.Stmt {
         const out = try self.allocator.alloc(ast.Stmt, stmts.len);
         for (stmts, 0..) |s, i| out[i] = try self.substituteStmt(s, bindings);
@@ -6807,25 +6904,32 @@ pub const Checker = struct {
         // (Faz 10) ÜRETTİĞİ deyimlerin de doğru bir kaynak konumu taşımasını
         // sağlar (`s` DEĞİŞMEDEN döndürüldüğü `else` dalı zaten otomatik).
         const kind: ast.StmtKind = switch (s.kind) {
+            .expr_stmt => |e| .{ .expr_stmt = try self.substituteExpr(e, bindings) },
             .var_decl => |v| .{ .var_decl = .{
                 .name = v.name,
                 .type_expr = try self.substituteTypeExpr(v.type_expr, bindings),
-                .value = v.value,
+                .value = try self.substituteExpr(v.value, bindings),
+            } },
+            .assign => |a| .{ .assign = .{
+                .target = try self.substituteExpr(a.target, bindings),
+                .value = try self.substituteExpr(a.value, bindings),
             } },
             .if_stmt => |f| blk: {
                 const elifs = try self.allocator.alloc(ast.ElifClause, f.elif_clauses.len);
                 for (f.elif_clauses, 0..) |ec, i| {
-                    elifs[i] = .{ .cond = ec.cond, .body = try self.substituteStmts(ec.body, bindings) };
+                    elifs[i] = .{ .cond = try self.substituteExpr(ec.cond, bindings), .body = try self.substituteStmts(ec.body, bindings) };
                 }
                 break :blk .{ .if_stmt = .{
-                    .cond = f.cond,
+                    .cond = try self.substituteExpr(f.cond, bindings),
                     .then_body = try self.substituteStmts(f.then_body, bindings),
                     .elif_clauses = elifs,
                     .else_body = if (f.else_body) |eb| try self.substituteStmts(eb, bindings) else null,
                 } };
             },
-            .while_stmt => |w| .{ .while_stmt = .{ .cond = w.cond, .body = try self.substituteStmts(w.body, bindings) } },
-            .for_stmt => |f| .{ .for_stmt = .{ .var_name = f.var_name, .iterable = f.iterable, .body = try self.substituteStmts(f.body, bindings) } },
+            .while_stmt => |w| .{ .while_stmt = .{ .cond = try self.substituteExpr(w.cond, bindings), .body = try self.substituteStmts(w.body, bindings) } },
+            .for_stmt => |f| .{ .for_stmt = .{ .var_name = f.var_name, .iterable = try self.substituteExpr(f.iterable, bindings), .body = try self.substituteStmts(f.body, bindings) } },
+            .return_stmt => |re| .{ .return_stmt = if (re) |e| try self.substituteExpr(e, bindings) else null },
+            .raise_stmt => |e| .{ .raise_stmt = try self.substituteExpr(e, bindings) },
             .try_stmt => |t| blk: {
                 const ecs = try self.allocator.alloc(ast.ExceptClause, t.except_clauses.len);
                 for (t.except_clauses, 0..) |ec, i| {
@@ -6839,13 +6943,19 @@ pub const Checker = struct {
             },
             .lowlevel_stmt => |ll| .{ .lowlevel_stmt = .{ .body = try self.substituteStmts(ll.body, bindings) } },
             .with_stmt => |w| .{ .with_stmt = .{
-                .ctx_expr = w.ctx_expr,
+                .ctx_expr = try self.substituteExpr(w.ctx_expr, bindings),
                 .binding = w.binding,
                 .body = try self.substituteStmts(w.body, bindings),
             } },
-            // expr_stmt/assign/return_stmt/raise_stmt/pass_stmt hiç TypeExpr
-            // içermez; func_def/class_def bir fonksiyon gövdesi içinde zaten
-            // reddedilir (bkz. checkStmt) — bu yüzden buraya hiç ulaşmazlar.
+            .defer_stmt => |d| blk: {
+                const callee = try self.allocator.create(ast.Expr);
+                callee.* = try self.substituteExpr(d.call.callee.*, bindings);
+                break :blk .{ .defer_stmt = .{ .call = .{ .callee = callee, .args = try self.substituteExprs(d.call.args, bindings) } } };
+            },
+            // pass_stmt/import_stmt/from_import_stmt hiç Expr/TypeExpr
+            // içermez; func_def/class_def/protocol_def/extern_def bir
+            // fonksiyon gövdesi içinde zaten reddedilir (bkz. checkStmt) —
+            // bu yüzden buraya hiç ulaşmazlar.
             else => return s,
         };
         return .{ .kind = kind, .line = s.line };
@@ -6944,15 +7054,12 @@ pub const Checker = struct {
     /// burada `T` DIŞARIDAN (sınıf düzeyinde) bağlanan bir isimdir, metodun
     /// KENDİ `type_params`ı HER ZAMAN boş kalır.
     ///
-    /// **Bilinen, DEVREDEN sınırlama (`substituteStmt`nin belge notuyla AYNI):**
-    /// yalnızca `var_decl.type_expr` değiştirilir — bir metodun GÖVDESİ
-    /// KENDİ `T`sini kullanan BAŞKA bir generic kurucu (`Channel[T](...)`
-    /// gibi) çağırırsa, o iç `.generic_construct.type_args`i BURADA
-    /// YÜRÜNMEDİĞİNDEN `T` somutlaştırma ANINDA çözülemez ve tip hatası
-    /// verir. Bu, generic FONKSİYONLARDAN miras kalan bir kısıttır (bu
-    /// biletin KAPSAMI DIŞINDA — `substituteStmt`i TÜM ifade-gömülü
-    /// `TypeExpr` sitelerini gezecek şekilde genişletmek çok daha büyük,
-    /// ayrı bir değişiklik olurdu).
+    /// v4 Faz A madde 2 (bkz. nox-teknik-spesifikasyon.md §3.2xx) İLE
+    /// DÜZELTİLDİ: `substituteStmt`/`substituteExpr` ARTIK `var_decl.
+    /// type_expr`in YANI SIRA HER `Expr`-gömülü `TypeExpr` sitesini de
+    /// (ör. bir metodun GÖVDESİ KENDİ `T`sini kullanan BAŞKA bir generic
+    /// kurucuyu, `Box[T](...)`/`Channel[T](...)` GİBİ, ÇAĞIRDIĞINDA) gezer
+    /// — bkz. `substituteExpr`in belge notu.
     fn instantiateGenericClass(self: *Checker, gcd: ast.ClassDef, bound_types: []const Type) TypeError!Type {
         if (bound_types.len != gcd.type_params.len) {
             return self.fail(error.ArgumentCountMismatch, "'{s}' {d} tip argümanı bekler, {d} verildi", .{ gcd.name, gcd.type_params.len, bound_types.len });

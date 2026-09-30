@@ -1,0 +1,46 @@
+from nox.collections import Set
+
+# v4 Faz A madde 2 (bkz. nox-teknik-spesifikasyon.md §3.2xx): bir generic
+# sınıfın KENDİ metodu İçİNDEN KENDİSİNİ (KENDİ sınırlı T'siyle) yeniden
+# İNŞA edebilmesi — daha önce "bilinmeyen tip: T" ile reddediliyordu.
+class Box[T]:
+    value: T
+
+    def __init__(self, v: T) -> None:
+        self.value = v
+
+    def clone(self: Box) -> Box[T]:
+        result: Box[T] = Box[T](self.value)
+        return result
+
+b: Box[int] = Box[int](42)
+c: Box[int] = b.clone()
+print(c.value)
+
+# nox.collections.Set.union/intersection/difference — flagship gerçek
+# tüketici: v3 madde 10'da "list[T]" dönmeye zorlanmıştı, ARTIK Set[T]
+# döner.
+s1: Set[int] = Set[int]()
+s1.add(1)
+s1.add(2)
+s1.add(3)
+
+s2: Set[int] = Set[int]()
+s2.add(2)
+s2.add(3)
+s2.add(4)
+
+u: Set[int] = s1.union(s2)
+print(u.size())
+print(u.contains(1))
+print(u.contains(4))
+
+i: Set[int] = s1.intersection(s2)
+print(i.size())
+print(i.contains(2))
+print(i.contains(1))
+
+d: Set[int] = s1.difference(s2)
+print(d.size())
+print(d.contains(1))
+print(d.contains(2))
