@@ -25362,38 +25362,94 @@ GEÇERLİ/DEĞERLİ (`""` sentineli BAŞKA gerçek hata yollarından — OOM,
 iddia (yorum/hata mesajı OLARAK) YANLIŞLIKLA kalıcı hale GELİRDİ — "ölç,
 varsayma" disiplininin BU turda da neden KRİTİK olduğunun kanıtı.
 
-### Kapsam dışı bırakılan 3 bulgu (KENDİ kararlarını gerektirir, BU turda YAPILMADI)
+### Devam — kullanıcı kararıyla 3 kapsam-dışı bulgu de AYNI turda ele alındı
 
-1. `nox.toml`/`nox.yaml`nin `dump`/`encode` KARŞILIĞI YOK (SADECE
-   `parse`/`get`) — GERÇEK, doğru bir TOML/YAML serileştiricisi YAZMAK
-   (iç içe tablo/dizi/tırnak-kaçırma kuralları DAHİL) BAŞLI BAŞINA
-   ÖNEMLİ bir özellik EKLEMESİDİR, BU denetimin "ses/eksik-fonksiyon
-   TARAMASI" kapsamının ÖTESİNDE.
-2. Format modülleri ARASINDA fiil TUTARSIZLIĞI (`json.decode`/`toml.
-   parse`/`yaml.parse`/`csv.parse`; `json.encode`/`csv.write`) — TUTARLI
-   hale getirmek MEVCUT, YAYIMLANMIŞ public API'yi YENİDEN ADLANDIRMAK
-   (KIRICI bir değişiklik) ANLAMINA gelir, KULLANICI KARARI GEREKTİRİR.
-3. `nox.time.DateTime`nin ters dönüşümü (`to_epoch_ms`) YOK — modülün
-   KENDİ belge notu BUNU "bilinçli v1 sınırlaması" OLARAK zaten
-   işaretliyor; doğru bir takvim→epoch dönüştürücü YAZMAK (artık-yıl/ay
-   uzunluğu kuralları DAHİL) GERÇEK bir doğruluk RİSKİ taşır, ACELEYE
-   getirilmemeli.
+İlk geçişte "kendi kararını gerektirir" diye kapsam dışı bırakılan 3
+bulgu, kullanıcıya SORULUP ("madde 11'e geçmeden önce ele alalım mı?")
+"Şimdi ele al" YANITIYLA BU AYNI turda TAMAMLANDI:
+
+**1. Format modülleri arası fiil standardizasyonu — kullanıcı `parse`/
+`dump` çiftini SEÇTİ** (AskUserQuestion, 3 seçenek sunuldu: parse/dump,
+decode/encode, HİÇBİRİ-sadece-alias): `nox.json.decode`→`parse`,
+`nox.json.encode`→`dump`, `nox.json.encode_pretty`→`dump_pretty`,
+`nox.csv.write`→`dump`, `nox.csv.write_row`→`dump_row` — TÜM internal
+çağıranlar (`validate.nox`, 9 json golden fixture'ı, 1 csv fixture'ı,
+`binary_size_test.zig`nin gömülü kaynağı) YENİ isimlere GÜNCELLENDİ.
+`nox.json`nin SAF-İç ÖZYİNELEMELİ yardımcıları (`encode_array`/
+`encode_object`/vb. — HİÇBİR yerde harici ÇAĞRILMADIĞI DOĞRULANDI)
+TUTARLILIK İçİn `dump_array`/`dump_object`/vb. OLARAK da yeniden
+adlandırıldı.
+   **GERÇEKTEN yakalanan bir semver-politika ÇELİŞKİSİ:** `decode`/
+   `encode`/`write`/`write_row` İLK ÖNCE TAMAMEN KALDIRILMIŞTI — AMA
+   `VERSIONING.md`nin §3'ü ("Kullanımdan Kaldırma Politikası") bir
+   fonksiyonun GERÇEK kaldırılmadan ÖNCE EN AZ BİR MINOR sürüm boyunca
+   ÇALIŞMAYA DEVAM ETMESİNİ (deprecated İşaretli) ZORUNLU KILAR — GERÇEK
+   kaldırma SADECE bir SONRAKİ MAJOR sürümde (v2.0.0) olabilir. Bu
+   ÇELİŞKİ kullanıcıya AÇIKÇA sorulup ("eski isimleri deprecated alias
+   olarak GERİ EKLE" mi, "MAJOR sürüme geç" mi) kullanıcı BİRİNCİYİ
+   seçti — dört eski isim İNCE, tek-satırlık sarmalayıcılar OLARAK GERİ
+   EKLENDİ (`decode(s) { return parse(s) }` deseni), HER İKİ dosyanın
+   SONUNA "KULLANIMDAN KALDIRILMIŞ (deprecated)" başlıklı AYRI bir
+   bölüm OLARAK. Bu, MINOR bir sürüm artışını (KIRICI DEĞİL) DOĞRU
+   KILAR.
+
+**2. `nox.toml.dump`/`nox.yaml.dump` YAZILDI** (GERÇEK, `parse`nin AYNI
+"bilinçli v1" alt-kümesini üreten serileştiriciler — array-of-tables/
+inline-table/çok-satırlı-string/tarih-saat ÜRETMEZ, çünkü `parse` bunları
+zaten HİÇ OKUMAZ). **GERÇEKTEN denenip BULUNAN İKİNCİ bir derleyici
+sınırlaması** (bulgu #4'ün `Set[T]` sınırlamasıyla AYNI KATEGORİDE, AMA
+FARKLI bir kök neden): sade bir fonksiyon PARAMETRESİ (`out: list[str]`)
+üzerinde, hiçbir yeniden atama OLMADAN DOĞRUDAN `.append()` çağırmak
+(bir "çıkış parametresi" deseni) `error.Unsupported` İLE reddediliyordu
+— İZOLE bir tekrar-üretimle (`def fill(v: Box, out: list[str]) -> None:
+... out.append(k)`) DOĞRULANDI. Düzeltme: TÜM özyinelemeli yardımcılar
+(`_toml_dump_table`, `_yaml_dump_mapping`, `_yaml_dump_sequence`) KENDİ
+`list[str]`ini DÖNER, çağıran taraf BİRLEŞTİRİR (`self.items = items`
+YENİDEN-ATAMA deseninin AYNI ailesi). YAML tarafında AYRICA GERÇEKTEN
+bulunup düzeltilen bir İNDENTASYON hatası: bir dizi ÖĞESİ olan İç İçe
+bir mapping/sequence'e özyinelemeli çağrı `level + 1` YERİNE `level`
+GEÇİRİLMELİYDİ ("- " ÖNEKİNİN KENDİSİ zaten bir seviyelik görsel kaymayı
+sağladığından, `level + 1` bunu İKİ KEZ uygulayıp GERÇEK, çalıştırılıp
+GÖZLEMLENEN fazla-girinti hatasına yol açıyordu — İLK deneme YANLIŞ
+girintili YAML ürettiği İçİn round-trip'te `YamlError` fırlatarak
+YAKALANDI). String skalerler HER ZAMAN çift-tırnaklı yazılır (plain-
+scalar belirsizliğinden — `"true"`/`"123"` GİBİ bir dizenin bool/int İLE
+KARIŞMASINDAN — KAÇINMAK İçİn, `nox.json`nin AYNI ilkesi).
+
+**3. `nox.time.DateTime.to_epoch_ms()` YAZILDI** — `runtime/stdlib_
+shims/time.zig`ye Howard Hinnant'ın KAMU malı/savaş-test edilmiş "civil-
+den-epoch-güne" algoritması (`daysFromCivil`, bkz. http://howardhinnant.
+github.io/date_algorithms.html) EKLENEREK — sıfırdan İCAT EDİLMİŞ bir
+takvim aritmetiği DEĞİL, `nox.crypto`/`nox.json`nin "savaş-test edilmiş
+bir algoritma KULLAN" ilkesinin AYNISI. 3 GERÇEK sabit değerle (1970-01-01
+epoch 0; 2000-03-01 — bir artık-yıl SINIRINI kapsayan; 2024-02-29 12:34:56
+— bir artık GÜN) VE `now()`e karşı bir round-trip İLE (Zig unit testleri
++ GERÇEK bir Nox programı) doğrulandı — 3 sabitin KENDİSİ Python'un
+`datetime`iyle (TAMAMEN BAĞIMSIZ bir İKİNCİ implementasyon) BAĞIMSIZ
+olarak ÇAPRAZ-doğrulandı.
 
 ### Doğrulama
 
-`zig build test` — SIFIR regresyon (297 IR anlık görüntüsünden 47'si
-BİLİNÇLİ OLARAK güncellendi — TAMAMI, doğrulanmış, SAF EKLEME nedenli
-büyüme: `nox.strings`/`nox.crypto` GİBİ GENİŞ ÇAPTA transitif olarak
-İçE aktarılan modüllere eklenen YENİ fonksiyon/sınıf desteğinin, bunları
-HİÇ ÇAĞIRMAYAN fixture'ların BİLE birleştirilmiş programına eklenmesi —
+`zig build test` — SIFIR regresyon (TÜM IR anlık görüntüleri BİLİNÇLİ
+OLARAK güncellendi — SAF EKLEME/yeniden-adlandırma nedenli büyüme,
 DAVRANIŞ DEĞİŞİKLİĞİ YOK). Elle yazılan doğrulama programlarıyla: `zfill`/
 `pad_left`/`pad_right` DOĞRU çıktı verdi; `Set[int]().union/intersection/
 difference` DOĞRU boyutlar (4/2/1) verdi; `secure_random_hex(0)` ARTIK
-`CryptoError` fırlatıyor (ÖNCEDEN sessizce `""` dönerdi).
+`CryptoError` fırlatıyor; `nox.toml.dump`/`nox.yaml.dump` (İç İçe tablo/
+mapping/sequence-of-mapping DAHİL) parse→dump→parse round-trip'te DEĞERCE
+eşit bir ağaç ÜRETTİ; `DateTime.to_epoch_ms()` 3 bilinen sabitle VE
+`now()`e karşı EŞLEŞTİ. 3 YENİ golden test fixture'ı eklendi
+(`toml_dump_roundtrip`, `yaml_dump_roundtrip`, `time_datetime_to_epoch_
+ms_roundtrip`).
 
 **Kritik dosyalar:** `stdlib/nox/{crypto,mysql,strings,collections,tls,
-websocket}.nox`, 47 IR anlık görüntüsü (`tests/golden/ir_snapshots/
-codegen_cases/`).
+websocket,json,csv,toml,yaml,time,validate}.nox`, `runtime/stdlib_shims/
+time.zig` (`daysFromCivil`/`nox_time_to_epoch_ms_raw`), `tests/cli/
+binary_size_test.zig` (gömülü kaynak güncellemesi), `tests/golden/
+fixture_corpus.zig` (4 YENİ + 5 güncellenmiş test adı), 4 YENİ golden
+fixture (`toml_dump_roundtrip`, `yaml_dump_roundtrip`, `time_datetime_
+to_epoch_ms_roundtrip`, `json_csv_deprecated_aliases_still_work`), TÜM
+IR anlık görüntüleri (`tests/golden/ir_snapshots/`).
 
 ---
 

@@ -1,0 +1,14 @@
+import nox.toml
+
+src: str = "title = \"Nox\"\nversion = 2\npi = 3.5\nready = true\ntags = [1, 2, 3]\n\n[server]\nhost = \"localhost\"\nport = 8080\n\n[server.tls]\nenabled = true\n"
+v: nox.toml.TomlValue = nox.toml.parse(src)
+out: str = nox.toml.dump(v)
+print(out)
+v2: nox.toml.TomlValue = nox.toml.parse(out)
+print(nox.toml.get(v2, "title").s)
+print(nox.toml.get(v2, "version").i)
+print(nox.toml.get(v2, "pi").f)
+print(nox.toml.get(v2, "ready").b)
+print(nox.toml.get(v2, "server.host").s)
+print(nox.toml.get(v2, "server.port").i)
+print(nox.toml.get(v2, "server.tls.enabled").b)

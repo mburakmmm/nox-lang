@@ -31,8 +31,14 @@ def pad2(n: int) -> str:
 
 # Stdlib fazı V.4 — `DateTime`: bir epoch-ms değerinin takvim bileşenlerine
 # (`std.time.epoch` ile, bkz. `runtime/stdlib_shims/time.zig`nin belge
-# notu) AYRIŞTIRILMIŞ hâli. Bilinçli v1 sınırlaması: yalnızca AYRIŞTIRMA
-# (epoch-ms -> DateTime) — ters yön (DateTime -> epoch-ms) YOK.
+# notu) AYRIŞTIRILMIŞ hâli.
+#
+# v3 sertleştirme yol haritası, madde 10 (bkz. nox-teknik-spesifikasyon.md
+# ilgili bölüm, stdlib/API denetimi): "yalnızca AYRIŞTIRMA, ters yön YOK"
+# v1 sınırlaması `to_epoch_ms()` İLE KAPATILDI — Zig tarafı Howard
+# Hinnant'ın KAMU malı/savaş-test edilmiş "civil-den-epoch-güne" algoritmasını
+# (`daysFromCivil`, bkz. `runtime/stdlib_shims/time.zig`nin belge notu)
+# kullanır, sıfırdan İCAT EDİLMİŞ bir takvim aritmetiği DEĞİL.
 class DateTime:
     def __init__(self: DateTime, year: int, month: int, day: int, hour: int, minute: int, second: int) -> None:
         self.year = year
@@ -46,12 +52,16 @@ class DateTime:
     def to_str(self: DateTime) -> str:
         return str(self.year) + "-" + pad2(self.month) + "-" + pad2(self.day) + " " + pad2(self.hour) + ":" + pad2(self.minute) + ":" + pad2(self.second)
 
+    def to_epoch_ms(self: DateTime) -> int:
+        return nox_time_to_epoch_ms_raw(self.year, self.month, self.day, self.hour, self.minute, self.second)
+
 extern def nox_time_year_raw(ms: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_time_month_raw(ms: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_time_day_raw(ms: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_time_hour_raw(ms: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_time_minute_raw(ms: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_time_second_raw(ms: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_time_to_epoch_ms_raw(year: int, month: int, day: int, hour: int, minute: int, second: int) -> int from "zig-out/lib/noxrt.o"
 
 def from_epoch_ms(ms: int) -> DateTime:
     return DateTime(

@@ -355,3 +355,111 @@ def get(root: TomlValue, dotted_path: str) -> TomlValue:
         current = current.tbl[key]
         i = i + 1
     return current
+
+# v3 sertleştirme yol haritası, madde 10 (bkz. nox-teknik-spesifikasyon.md
+# ilgili bölüm, stdlib/API denetimi) — `dump`: `parse`nin TERS yönü,
+# ÖNCEDEN HİÇ YOKTU (`nox.json`nin `parse`/`dump` çiftiyle TUTARLILIK
+# İçİn eklendi). `parse`nin AYNI "bilinçli v1" kapsamıyla SINIRLI —
+# array-of-tables/inline-table/çok-satırlı string/tarih-saat ÜRETMEZ
+# (parser ZATEN bunları hiç OKUMUYOR, bu YÜZDEN bir round-trip'te HİÇ
+# ORTAYA ÇIKMAZLAR). Kaçış kümesi `_parse_basic_string`nin KABUL ETTİĞİ
+# AYNI beş kaçışın (`\"`/`\\`/`\n`/`\t`/`\r`) TAM TERSİDİR — `\r` (bayt 13)
+# `nox.json`nin AYNI nedenle (Nox lexer'ının `\r`yi TANIMAMASI) YAPTIĞI
+# GİBİ `nox.strings.byte_at` İLE bayt-değeri karşılaştırılarak yakalanır.
+def _toml_dump_escape(s: str) -> str:
+    out: str = "\""
+    i: int = 0
+    n: int = len(s)
+    while i < n:
+        c: str = s[i]
+        if c == "\"":
+            out = out + "\\\""
+        elif c == "\\":
+            out = out + "\\\\"
+        elif c == "\n":
+            out = out + "\\n"
+        elif c == "\t":
+            out = out + "\\t"
+        elif nox.strings.byte_at(s, i) == 13:
+            out = out + "\\r"
+        else:
+            out = out + c
+        i = i + 1
+    return out + "\""
+
+def _toml_dump_scalar(v: TomlValue) -> str:
+    if is_string(v):
+        return _toml_dump_escape(v.s)
+    if is_int(v):
+        return str(v.i)
+    if is_float(v):
+        return str(v.f)
+    if is_bool(v):
+        if v.b:
+            return "true"
+        return "false"
+    if is_array(v):
+        return _toml_dump_array(v)
+    raise TomlError("bir tablo degeri skaler/dizi baglaminda dump edilemez")
+
+def _toml_dump_array(v: TomlValue) -> str:
+    out: str = "["
+    i: int = 0
+    n: int = len(v.arr)
+    while i < n:
+        if i > 0:
+            out = out + ", "
+        out = out + _toml_dump_scalar(v.arr[i])
+        i = i + 1
+    return out + "]"
+
+# `v`nin (bir tablo) KENDİ düz (skaler/dizi) anahtarlarını `key = value`
+# OLARAK, SONRA (TOML'un KENDİ kuralı — İç İçe bir tablonun HER ZAMAN
+# çevreleyen düz anahtarlardan SONRA gelmesi GEREKİR) her İç İçe tabloyu
+# `[prefix.key]` başlığıyla ÖZYİNELEMELİ olarak İçEREN TAM satır listesini
+# DÖNER. **`out: list[str]` bir "çıkış parametresi" OLARAK (çağıran
+# tarafta önceden oluşturulup İçİNE `.append()` edilerek) DEĞİL, DÖNÜŞ
+# DEĞERİ olarak tasarlandı — GERÇEKTEN denenip BULUNAN bir derleyici
+# sınırlaması YÜZÜNDEN: sade bir fonksiyon PARAMETRESİ üzerinde (bir
+# `self.alan`a YENİDEN ATAMADAN, bkz. `Set.add`nin `items: list[T] =
+# self.items; items.append(v); self.items = items` deseni) DOĞRUDAN
+# `.append()` çağırmak `error.Unsupported` İLE reddediliyordu (İZOLE bir
+# tekrar-üretimle DOĞRULANDI) — bu YÜZDEN HER özyinelemeli çağrı KENDİ
+# `list[str]`ini DÖNDÜRÜP çağıran taraf bunları BİRLEŞTİRİR.
+def _toml_dump_table(v: TomlValue, prefix: str) -> list[str]:
+    lines: list[str] = []
+    keys: list[str] = v.tbl.keys()
+    n: int = len(keys)
+    i: int = 0
+    while i < n:
+        k: str = keys[i]
+        val: TomlValue = v.tbl[k]
+        if not is_table(val):
+            lines.append(k + " = " + _toml_dump_scalar(val))
+        i = i + 1
+    j: int = 0
+    while j < n:
+        k2: str = keys[j]
+        val2: TomlValue = v.tbl[k2]
+        if is_table(val2):
+            full_key: str = k2
+            if prefix != "":
+                full_key = prefix + "." + k2
+            lines.append("[" + full_key + "]")
+            nested: list[str] = _toml_dump_table(val2, full_key)
+            m: int = 0
+            while m < len(nested):
+                lines.append(nested[m])
+                m = m + 1
+        j = j + 1
+    return lines
+
+# `v` (KÖK bir tablo — `parse`nin döndürdüğü AYNI şekil) TOML metnine
+# çevrilir. `nox.toml.parse(nox.toml.dump(v))` bir round-trip'te (aynı
+# değerlerle) DEĞERCE eşit bir ağaç ÜRETİR (anahtar SIRASI/biçimlendirme
+# aynen KORUNMAZ İDDİASI YOK — SADECE anlamsal eşitlik).
+def dump(v: TomlValue) -> str:
+    if not is_table(v):
+        raise TomlError("dump yalnizca kok tablo degerini kabul eder")
+    lines: list[str] = _toml_dump_table(v, "")
+    return nox.strings.join(lines, "\n") + "\n"

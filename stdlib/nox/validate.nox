@@ -81,11 +81,11 @@ def validate(v: JsonValue, schema: Schema) -> list[str]:
 
 # `s` (ör. bir `HttpRequest.body`) GEÇERSİZ JSON İSE, çökmek/istisna
 # fırlatmak YERİNE bunu da AYNI hata-mesajı listesine tek bir girdi
-# olarak ekler — çağıranın `nox.json.decode`nin fırlattığı `JsonError`i
-# AYRICA yakalaması GEREKMEZ.
+# olarak ekler — çağıranın `nox.json.parse`nin (v3 madde 10'a KADAR
+# `decode`) fırlattığı `JsonError`i AYRICA yakalaması GEREKMEZ.
 def validate_json_str(s: str, schema: Schema) -> list[str]:
     try:
-        v: JsonValue = nox.json.decode(s)
+        v: JsonValue = nox.json.parse(s)
         return validate(v, schema)
     except JsonError as e:
         errors: list[str] = []

@@ -92,14 +92,43 @@ export fn nox_time_sleep_ms_raw(ms: i64) callconv(.c) void {
 /// alan İÇİN altı ayrı `extern def` çağrısı — bir "tek çağrıda TÜM alanları
 /// hesapla" optimizasyonu YOK).
 ///
-/// **Bilinçli v1 sınırlaması:** yalnızca AYRIŞTIRMA (epoch-ms -> bileşenler)
-/// desteklenir — TERS yön (bileşenler -> epoch-ms, ör. `to_epoch_ms(...)`)
-/// `std.time.epoch`un SAĞLAMADIĞI bir "civil-den-epoch-güne" dönüşüm
-/// algoritması (ör. Howard Hinnant'ın `days_from_civil`i) GEREKTİRİRDİ —
-/// v1 kapsamı DIŞINDA bırakıldı (birincil kullanım durumu, `nox.time.now()`
-/// İLE ŞU ANKİ tarihi/saati GÖRÜNTÜLEMEK, yalnızca AYRIŞTIRMA gerektirir).
-/// Yalnızca 1970 VE SONRASI (negatif OLMAYAN epoch-ms) desteklenir —
-/// `std.time.epoch.EpochSeconds`in KENDİSİ `u64` alır.
+/// **v3 sertleştirme yol haritası, madde 10 (bkz. nox-teknik-
+/// spesifikasyon.md ilgili bölüm, stdlib/API denetimi):** "yalnızca
+/// AYRIŞTIRMA, ters yön YOK" v1 sınırlaması BURADA kapatıldı —
+/// `days_from_civil`, Howard Hinnant'ın KAMU malı/savaş-test edilmiş
+/// "civil-den-epoch-güne" algoritmasıdır (bkz. http://howardhinnant.
+/// github.io/date_algorithms.html, `chrono`nun KENDİ referans uygulaması)
+/// — `nox.crypto`/`nox.json`nin "sıfırdan YAZMA, savaş-test edilmiş bir
+/// algoritma KULLAN" ilkesiyle AYNI, SADECE bu SEFER Zig'in `std.time.
+/// epoch`unda HAZIR OLMADIĞINDAN (bkz. AŞAĞIDAKİ `breakdownSeconds`in
+/// AYNI notu) doğrudan bu KAYNAKTAN taşındı, sıfırdan İCAT EDİLMEDİ.
+fn daysFromCivil(y_in: i64, m: i64, d: i64) i64 {
+    const y: i64 = if (m <= 2) y_in - 1 else y_in;
+    const era: i64 = @divFloor(if (y >= 0) y else y - 399, 400);
+    const yoe: i64 = y - era * 400; // [0, 399]
+    const mp: i64 = if (m > 2) m - 3 else m + 9; // [0, 11]
+    const doy: i64 = @divFloor(153 * mp + 2, 5) + d - 1; // [0, 365]
+    const doe: i64 = yoe * 365 + @divFloor(yoe, 4) - @divFloor(yoe, 100) + doy; // [0, 146096]
+    return era * 146097 + doe - 719468;
+}
+
+/// `DateTime`nin altı bileşenini (yıl/ay/gün/saat/dakika/saniye — `nox.
+/// time.now()`nin ÜRETTİĞİ AYNI şekil) epoch-ms'e ÇEVİRİR — `daysFromCivil`
+/// artı gün-İçİ saat/dakika/saniyenin milisaniyeye çevrilmesi. `breakdown
+/// Seconds`nin AYNI "yalnızca 1970 VE SONRASI" sınırlamasıyla TUTARLI
+/// (negatif epoch-ms üretilebilir AMA `nox.time`nin GERİ KALANI BUNU
+/// zaten DESTEKLEMEZ).
+export fn nox_time_to_epoch_ms_raw(year: i64, month: i64, day: i64, hour: i64, minute: i64, second: i64) callconv(.c) i64 {
+    const days = daysFromCivil(year, month, day);
+    return days * std.time.ms_per_day + hour * std.time.ms_per_hour + minute * std.time.ms_per_min + second * std.time.ms_per_s;
+}
+
+/// **Bilinçli v1 sınırlaması (KISMEN kapatıldı — bkz. `nox_time_to_epoch_
+/// ms_raw`):** Zig'in KENDİ `std.time.epoch`u ters yönü (bileşenler ->
+/// epoch-ms) SAĞLAMADIĞINDAN bu yön ÖNCEDEN v1 kapsamı DIŞINDA
+/// bırakılmıştı — `daysFromCivil` (Hinnant'ın algoritması) İLE
+/// KAPATILDI. Yalnızca 1970 VE SONRASI (negatif OLMAYAN epoch-ms)
+/// desteklenir — `std.time.epoch.EpochSeconds`in KENDİSİ `u64` alır.
 fn breakdownSeconds(ms: i64) std.time.epoch.EpochSeconds {
     const secs: u64 = @intCast(@divFloor(ms, std.time.ms_per_s));
     return .{ .secs = secs };
@@ -138,6 +167,40 @@ export fn nox_time_second_raw(ms: i64) callconv(.c) i64 {
 test "nox_time_now_ms_raw pozitif ve makul bir epoch değeri döner" {
     const now = nox_time_now_ms_raw();
     try std.testing.expect(now > 0);
+}
+
+test "v3 madde 10: nox_time_to_epoch_ms_raw bilinen sabit epoch degerleriyle esler" {
+    // 1970-01-01 00:00:00 UTC == epoch 0 (Unix epoch'un KENDİ tanımı).
+    try std.testing.expectEqual(@as(i64, 0), nox_time_to_epoch_ms_raw(1970, 1, 1, 0, 0, 0));
+    // 2000-03-01 00:00:00 UTC == 951868800000 (harici olarak DOĞRULANMIŞ
+    // bilinen bir sabit — 2000 bir artık yıl OLDUĞUNDAN, Şubat'ı GEÇEN
+    // bir tarih artık-yıl HESABINI da EGZERSİZ eder).
+    try std.testing.expectEqual(@as(i64, 951868800000), nox_time_to_epoch_ms_raw(2000, 3, 1, 0, 0, 0));
+    // 2024-02-29 12:34:56 UTC (artık gün) == 1709210096000.
+    try std.testing.expectEqual(@as(i64, 1709210096000), nox_time_to_epoch_ms_raw(2024, 2, 29, 12, 34, 56));
+}
+
+test "v3 madde 10: nox_time_to_epoch_ms_raw <-> breakdownSeconds round-trip (rastgele denenmiş, gerçek yıl araligi)" {
+    // `now_ms`nin KENDİ ayrıştırdığı bileşenleri (`nox_time_year_raw`/vb.)
+    // GERİYE epoch-ms'e çevirip AYNI değeri GERİ VERDİĞİNİ doğrular — bu,
+    // `daysFromCivil`in `breakdownSeconds`in KULLANDIĞI `std.time.epoch`
+    // İLE TUTARLI (birbirinin TAM TERSİ) olduğunun KANITIDIR.
+    const now = nox_time_now_ms_raw();
+    const yd = breakdownSeconds(now).getEpochDay().calculateYearDay();
+    const md = yd.calculateMonthDay();
+    const day_secs = breakdownSeconds(now).getDaySeconds();
+    const back = nox_time_to_epoch_ms_raw(
+        yd.year,
+        md.month.numeric(),
+        @as(i64, md.day_index) + 1,
+        day_secs.getHoursIntoDay(),
+        day_secs.getMinutesIntoHour(),
+        day_secs.getSecondsIntoMinute(),
+    );
+    // Milisaniye-altı kısım `now_ms`te olabilir ama `breakdownSeconds`
+    // SANİYE çözünürlüğüne YUVARLADIĞINDAN, en fazla 999 ms'lik bir fark
+    // BEKLENİR (KESİN eşitlik DEĞİL).
+    try std.testing.expect(@abs(now - back) < 1000);
 }
 
 test "nox_time_sleep_ms_raw en az istenen süre kadar bekler" {

@@ -1,0 +1,20 @@
+import nox.yaml
+
+src: str = "name: nox\nversion: 2\npi: 3.5\nready: true\ntags:\n  - 1\n  - 2\n  - 3\nserver:\n  host: localhost\n  port: 8080\nitems:\n  - name: a\n    value: 1\n  - name: b\n    value: 2\n"
+v: nox.yaml.YamlValue = nox.yaml.parse(src)
+out: str = nox.yaml.dump(v)
+print(out)
+v2: nox.yaml.YamlValue = nox.yaml.parse(out)
+print(nox.yaml.get(v2, "name").s)
+print(nox.yaml.get(v2, "version").i)
+print(nox.yaml.get(v2, "pi").f)
+print(nox.yaml.get(v2, "ready").b)
+print(nox.yaml.get(v2, "server.host").s)
+print(nox.yaml.get(v2, "server.port").i)
+tags: nox.yaml.YamlValue = nox.yaml.get(v2, "tags")
+print(len(tags.arr))
+print(tags.arr[0].i)
+items: nox.yaml.YamlValue = nox.yaml.get(v2, "items")
+print(len(items.arr))
+print(items.arr[0].mapping["name"].s)
+print(items.arr[1].mapping["value"].i)

@@ -14,6 +14,32 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.111.0]
+
+### Eklendi
+
+- **`nox.toml.dump`/`nox.yaml.dump` (bkz. nox-teknik-spesifikasyon.md
+  §3.206)**: v3 sertleştirme yol haritasının 10. maddesinin devamı.
+  `parse`nin ters yönü — TOML/YAML serileştiricileri (`parse`nin AYNI
+  "bilinçli v1" kapsamı: array-of-tables/inline-table/çok-satırlı-
+  string/tarih-saat üretmez). Parse→dump→parse round-trip'te iç içe
+  tablo/mapping/sequence-of-mapping dahil doğrulandı.
+- **`nox.time.DateTime.to_epoch_ms()`**: Howard Hinnant'ın kamu malı
+  "civil-den-epoch-güne" algoritması (`daysFromCivil`,
+  `runtime/stdlib_shims/time.zig`) ile — "yalnızca ayrıştırma, ters yön
+  yok" v1 sınırlaması kapatıldı. 3 bilinen sabitle (biri artık-yıl
+  sınırını, biri artık günü kapsayan) ve `now()`e karşı doğrulandı.
+
+### Değişti
+
+- **Format modülleri arası fiil standardizasyonu**: `nox.json.decode`/
+  `encode`/`encode_pretty` → `parse`/`dump`/`dump_pretty`;
+  `nox.csv.write`/`write_row` → `dump`/`dump_row` — `nox.toml`/
+  `nox.yaml`nin zaten kullandığı `parse`/`dump` çiftiyle tutarlı hale
+  getirildi. **Kırıcı değil**: eski isimler `VERSIONING.md` §3'ün
+  (Kullanımdan Kaldırma Politikası) gereği ince, deprecated
+  sarmalayıcılar olarak korunuyor — en erken v2.0.0'da kaldırılabilir.
+
 ## [1.110.4]
 
 ### Düzeltildi

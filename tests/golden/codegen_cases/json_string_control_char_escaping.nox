@@ -6,11 +6,11 @@ import nox.json
 # bu GECERSIZ JSON idi ve round-trip decode COKUYORDU. Bu test \t/\r'nin
 # artik dogru escape edildigini VE round-trip'in basarili oldugunu
 # dogrular.
-v: JsonValue = nox.json.decode("\"a\\tb\\rc\"")
+v: JsonValue = nox.json.parse("\"a\\tb\\rc\"")
 print(nox.json.as_string(v))
 
-out: str = nox.json.encode(v)
+out: str = nox.json.dump(v)
 print(out)
 
-v2: JsonValue = nox.json.decode(out)
+v2: JsonValue = nox.json.parse(out)
 print(nox.json.as_string(v2) == nox.json.as_string(v))

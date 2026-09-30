@@ -2723,7 +2723,7 @@ export function l $nox_strings_zfill(l %rt, l %p_s, l %p_width) {
 @fn_end1
     ret 0
 }
-export function l $nox_json_decode(l %rt, l %p_s) {
+export function l $nox_json_parse(l %rt, l %p_s) {
 @start
     %t0 =l alloc8 8
     %t1 =l alloc8 8
@@ -2803,7 +2803,7 @@ export function l $nox_json_decode(l %rt, l %p_s) {
     storel 0, %t1
     ret 0
 @exc_continue17
-    call $nox_raise(l %rt, l %t11, l 34)
+    call $nox_raise(l %rt, l %t11, l 43)
     %t24 =w call $nox_exception_pending(l %rt)
     jnz %t24, @exc_propagate21, @exc_continue22
 @exc_propagate21
@@ -3017,7 +3017,7 @@ export function l $nox_json_array_get(l %rt, l %p_v, l %p_i) {
 @exc_propagate7
     ret 0
 @exc_continue8
-    call $nox_raise(l %rt, l %t11, l 68)
+    call $nox_raise(l %rt, l %t11, l 77)
     %t17 =w call $nox_exception_pending(l %rt)
     jnz %t17, @exc_propagate9, @exc_continue10
 @exc_propagate9
@@ -3100,7 +3100,7 @@ export function l $nox_json_object_key(l %rt, l %p_v, l %p_i) {
 @exc_propagate7
     ret 0
 @exc_continue8
-    call $nox_raise(l %rt, l %t11, l 74)
+    call $nox_raise(l %rt, l %t11, l 83)
     %t17 =w call $nox_exception_pending(l %rt)
     jnz %t17, @exc_propagate9, @exc_continue10
 @exc_propagate9
@@ -3170,7 +3170,7 @@ export function l $nox_json_object_value(l %rt, l %p_v, l %p_i) {
 @exc_propagate7
     ret 0
 @exc_continue8
-    call $nox_raise(l %rt, l %t11, l 77)
+    call $nox_raise(l %rt, l %t11, l 86)
     %t17 =w call $nox_exception_pending(l %rt)
     jnz %t17, @exc_propagate9, @exc_continue10
 @exc_propagate9
@@ -3198,7 +3198,7 @@ export function l $nox_json_object_value(l %rt, l %p_v, l %p_i) {
 @fn_end15
     ret 0
 }
-export function l $nox_json_encode_string(l %rt, l %p_s) {
+export function l $nox_json_dump_string(l %rt, l %p_s) {
 @start
     %t0 =l alloc8 8
     %t1 =l alloc8 8
@@ -3584,7 +3584,7 @@ export function l $nox_json_encode_string(l %rt, l %p_s) {
 @fn_end92
     ret 0
 }
-export function l $nox_json_encode(l %rt, l %p_v) {
+export function l $nox_json_dump(l %rt, l %p_v) {
 @start
     %t0 =l alloc8 8
     %t1 =l alloc8 8
@@ -3727,7 +3727,7 @@ export function l $nox_json_encode(l %rt, l %p_v) {
     jmp @inline_done26
 @inline_done26
     %t63 =l loadl %t14
-    %t64 =l call $nox_json_encode_string(l %rt, l %t63)
+    %t64 =l call $nox_json_dump_string(l %rt, l %t63)
     %t65 =w ceql %t63, 0
     jnz %t65, @release_skip32, @release31
 @release31
@@ -3766,19 +3766,19 @@ export function l $nox_json_encode(l %rt, l %p_v) {
     jnz %t75, @if_then41, @if_end38
 @if_then41
     %t76 =l loadl %t0
-    %t77 =l call $nox_json_encode_array(l %rt, l %t76)
+    %t77 =l call $nox_json_dump_array(l %rt, l %t76)
     ret %t77
 @after_return42
     jmp @if_end38
 @if_end38
     %t78 =l loadl %t0
-    %t79 =l call $nox_json_encode_object(l %rt, l %t78)
+    %t79 =l call $nox_json_dump_object(l %rt, l %t78)
     ret %t79
 @after_return43
 @fn_end44
     ret 0
 }
-export function l $nox_json_encode_array(l %rt, l %p_v) {
+export function l $nox_json_dump_array(l %rt, l %p_v) {
 @start
     %t0 =l alloc8 8
     %t1 =l alloc8 8
@@ -3929,7 +3929,7 @@ export function l $nox_json_encode_array(l %rt, l %p_v) {
     storel 0, %t1
     ret 0
 @exc_continue28
-    call $nox_raise(l %rt, l %t48, l 68)
+    call $nox_raise(l %rt, l %t48, l 77)
     %t60 =w call $nox_exception_pending(l %rt)
     jnz %t60, @exc_propagate35, @exc_continue36
 @exc_propagate35
@@ -3979,7 +3979,7 @@ export function l $nox_json_encode_array(l %rt, l %p_v) {
     jmp @inline_done19
 @inline_done19
     %t75 =l loadl %t8
-    %t76 =l call $nox_json_encode(l %rt, l %t75)
+    %t76 =l call $nox_json_dump(l %rt, l %t75)
     %t77 =w ceql %t75, 0
     jnz %t77, @release_skip48, @release47
 @release47
@@ -4085,7 +4085,7 @@ export function l $nox_json_encode_array(l %rt, l %p_v) {
 @fn_end75
     ret 0
 }
-export function l $nox_json_encode_object(l %rt, l %p_v) {
+export function l $nox_json_dump_object(l %rt, l %p_v) {
 @start
     %t0 =l alloc8 8
     %t1 =l alloc8 8
@@ -4240,7 +4240,7 @@ export function l $nox_json_encode_object(l %rt, l %p_v) {
     storel 0, %t1
     ret 0
 @exc_continue28
-    call $nox_raise(l %rt, l %t51, l 74)
+    call $nox_raise(l %rt, l %t51, l 83)
     %t63 =w call $nox_exception_pending(l %rt)
     jnz %t63, @exc_propagate35, @exc_continue36
 @exc_propagate35
@@ -4290,7 +4290,7 @@ export function l $nox_json_encode_object(l %rt, l %p_v) {
     jmp @inline_done19
 @inline_done19
     %t78 =l loadl %t8
-    %t79 =l call $nox_json_encode_string(l %rt, l %t78)
+    %t79 =l call $nox_json_dump_string(l %rt, l %t78)
     %t80 =w ceql %t78, 0
     jnz %t80, @release_skip48, @release47
 @release47
@@ -4412,7 +4412,7 @@ export function l $nox_json_encode_object(l %rt, l %p_v) {
     storel 0, %t1
     ret 0
 @exc_continue74
-    call $nox_raise(l %rt, l %t109, l 77)
+    call $nox_raise(l %rt, l %t109, l 86)
     %t121 =w call $nox_exception_pending(l %rt)
     jnz %t121, @exc_propagate81, @exc_continue82
 @exc_propagate81
@@ -4462,7 +4462,7 @@ export function l $nox_json_encode_object(l %rt, l %p_v) {
     jmp @inline_done65
 @inline_done65
     %t136 =l loadl %t11
-    %t137 =l call $nox_json_encode(l %rt, l %t136)
+    %t137 =l call $nox_json_dump(l %rt, l %t136)
     %t138 =w ceql %t136, 0
     jnz %t138, @release_skip94, @release93
 @release93
@@ -4617,7 +4617,7 @@ export function l $nox_json_indent_str(l %rt, l %p_indent, l %p_level) {
 @fn_end3
     ret 0
 }
-export function l $nox_json_encode_pretty(l %rt, l %p_v, l %p_indent) {
+export function l $nox_json_dump_pretty(l %rt, l %p_v, l %p_indent) {
 @start
     %t0 =l alloc8 8
     %t1 =l alloc8 8
@@ -4625,13 +4625,13 @@ export function l $nox_json_encode_pretty(l %rt, l %p_v, l %p_indent) {
     storel %p_indent, %t1
     %t2 =l loadl %t0
     %t3 =l loadl %t1
-    %t4 =l call $nox_json_encode_pretty_at(l %rt, l %t2, l %t3, l 0)
+    %t4 =l call $nox_json_dump_pretty_at(l %rt, l %t2, l %t3, l 0)
     ret %t4
 @after_return0
 @fn_end1
     ret 0
 }
-export function l $nox_json_encode_pretty_at(l %rt, l %p_v, l %p_indent, l %p_level) {
+export function l $nox_json_dump_pretty_at(l %rt, l %p_v, l %p_indent, l %p_level) {
 @start
     %t0 =l alloc8 8
     %t1 =l alloc8 8
@@ -4660,7 +4660,7 @@ export function l $nox_json_encode_pretty_at(l %rt, l %p_v, l %p_indent, l %p_le
     %t13 =l loadl %t0
     %t14 =l loadl %t1
     %t15 =l loadl %t2
-    %t16 =l call $nox_json_encode_pretty_array(l %rt, l %t13, l %t14, l %t15)
+    %t16 =l call $nox_json_dump_pretty_array(l %rt, l %t13, l %t14, l %t15)
     ret %t16
 @after_return4
     jmp @if_end0
@@ -4682,19 +4682,19 @@ export function l $nox_json_encode_pretty_at(l %rt, l %p_v, l %p_indent, l %p_le
     %t23 =l loadl %t0
     %t24 =l loadl %t1
     %t25 =l loadl %t2
-    %t26 =l call $nox_json_encode_pretty_object(l %rt, l %t23, l %t24, l %t25)
+    %t26 =l call $nox_json_dump_pretty_object(l %rt, l %t23, l %t24, l %t25)
     ret %t26
 @after_return9
     jmp @if_end5
 @if_end5
     %t27 =l loadl %t0
-    %t28 =l call $nox_json_encode(l %rt, l %t27)
+    %t28 =l call $nox_json_dump(l %rt, l %t27)
     ret %t28
 @after_return10
 @fn_end11
     ret 0
 }
-export function l $nox_json_encode_pretty_array(l %rt, l %p_v, l %p_indent, l %p_level) {
+export function l $nox_json_dump_pretty_array(l %rt, l %p_v, l %p_indent, l %p_level) {
 @start
     %t0 =l alloc8 8
     %t1 =l alloc8 8
@@ -4971,7 +4971,7 @@ export function l $nox_json_encode_pretty_array(l %rt, l %p_v, l %p_indent, l %p
     storel 0, %t4
     ret 0
 @exc_continue51
-    call $nox_raise(l %rt, l %t89, l 68)
+    call $nox_raise(l %rt, l %t89, l 77)
     %t107 =w call $nox_exception_pending(l %rt)
     jnz %t107, @exc_propagate64, @exc_continue65
 @exc_propagate64
@@ -5045,7 +5045,7 @@ export function l $nox_json_encode_pretty_array(l %rt, l %p_v, l %p_indent, l %p
     %t129 =l loadl %t1
     %t130 =l loadl %t2
     %t131 =l add %t130, 1
-    %t132 =l call $nox_json_encode_pretty_at(l %rt, l %t128, l %t129, l %t131)
+    %t132 =l call $nox_json_dump_pretty_at(l %rt, l %t128, l %t129, l %t131)
     %t133 =w ceql %t128, 0
     jnz %t133, @release_skip83, @release82
 @release82
@@ -5287,7 +5287,7 @@ export function l $nox_json_encode_pretty_array(l %rt, l %p_v, l %p_indent, l %p
 @fn_end148
     ret 0
 }
-export function l $nox_json_encode_pretty_object(l %rt, l %p_v, l %p_indent, l %p_level) {
+export function l $nox_json_dump_pretty_object(l %rt, l %p_v, l %p_indent, l %p_level) {
 @start
     %t0 =l alloc8 8
     %t1 =l alloc8 8
@@ -5568,7 +5568,7 @@ export function l $nox_json_encode_pretty_object(l %rt, l %p_v, l %p_indent, l %
     storel 0, %t4
     ret 0
 @exc_continue51
-    call $nox_raise(l %rt, l %t92, l 74)
+    call $nox_raise(l %rt, l %t92, l 83)
     %t110 =w call $nox_exception_pending(l %rt)
     jnz %t110, @exc_propagate64, @exc_continue65
 @exc_propagate64
@@ -5639,7 +5639,7 @@ export function l $nox_json_encode_pretty_object(l %rt, l %p_v, l %p_indent, l %
     jmp @inline_done42
 @inline_done42
     %t131 =l loadl %t14
-    %t132 =l call $nox_json_encode_string(l %rt, l %t131)
+    %t132 =l call $nox_json_dump_string(l %rt, l %t131)
     %t133 =w ceql %t131, 0
     jnz %t133, @release_skip83, @release82
 @release82
@@ -5801,7 +5801,7 @@ export function l $nox_json_encode_pretty_object(l %rt, l %p_v, l %p_indent, l %
     storel 0, %t4
     ret 0
 @exc_continue115
-    call $nox_raise(l %rt, l %t167, l 77)
+    call $nox_raise(l %rt, l %t167, l 86)
     %t185 =w call $nox_exception_pending(l %rt)
     jnz %t185, @exc_propagate128, @exc_continue129
 @exc_propagate128
@@ -5875,7 +5875,7 @@ export function l $nox_json_encode_pretty_object(l %rt, l %p_v, l %p_indent, l %
     %t207 =l loadl %t1
     %t208 =l loadl %t2
     %t209 =l add %t208, 1
-    %t210 =l call $nox_json_encode_pretty_at(l %rt, l %t206, l %t207, l %t209)
+    %t210 =l call $nox_json_dump_pretty_at(l %rt, l %t206, l %t207, l %t209)
     %t211 =w ceql %t206, 0
     jnz %t211, @release_skip147, @release146
 @release146
@@ -6117,6 +6117,61 @@ export function l $nox_json_encode_pretty_object(l %rt, l %p_v, l %p_indent, l %
 @fn_end212
     ret 0
 }
+export function l $nox_json_decode(l %rt, l %p_s) {
+@start
+    %t0 =l alloc8 8
+    storel %p_s, %t0
+    %t1 =l loadl %t0
+    %t2 =l call $nox_json_parse(l %rt, l %t1)
+    %t3 =w call $nox_exception_pending(l %rt)
+    jnz %t3, @exc_propagate0, @exc_continue1
+@exc_propagate0
+    ret 0
+@exc_continue1
+    ret %t2
+@after_return2
+@fn_end3
+    ret 0
+}
+export function l $nox_json_encode(l %rt, l %p_v) {
+@start
+    %t0 =l alloc8 8
+    storel %p_v, %t0
+    %t1 =l loadl %t0
+    %t2 =l call $nox_json_dump(l %rt, l %t1)
+    ret %t2
+@after_return0
+@fn_end1
+    ret 0
+}
+export function l $nox_json_encode_pretty(l %rt, l %p_v, l %p_indent) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    %t2 =l alloc8 8
+    %t3 =l alloc8 8
+    %t4 =l alloc8 8
+    storel 0, %t4
+    storel %p_v, %t0
+    storel %p_indent, %t1
+    %t5 =l loadl %t0
+    storel %t5, %t2
+    %t6 =l loadl %t1
+    storel %t6, %t3
+    %t7 =l loadl %t2
+    %t8 =l loadl %t3
+    %t9 =l call $nox_json_dump_pretty_at(l %rt, l %t7, l %t8, l 0)
+    storel %t9, %t4
+    jmp @inline_done0
+@after_inline_return1
+    jmp @inline_done0
+@inline_done0
+    %t10 =l loadl %t4
+    ret %t10
+@after_return2
+@fn_end3
+    ret 0
+}
 export function l $nox_validate__object_get(l %rt, l %p_v, l %p_key) {
 @start
     %t0 =l alloc8 8
@@ -6196,7 +6251,7 @@ export function l $nox_validate__object_get(l %rt, l %p_v, l %p_key) {
 @exc_propagate14
     ret 0
 @exc_continue15
-    call $nox_raise(l %rt, l %t32, l 74)
+    call $nox_raise(l %rt, l %t32, l 83)
     %t38 =w call $nox_exception_pending(l %rt)
     jnz %t38, @exc_propagate16, @exc_continue17
 @exc_propagate16
@@ -6289,7 +6344,7 @@ export function l $nox_validate__object_get(l %rt, l %p_v, l %p_key) {
 @exc_propagate37
     ret 0
 @exc_continue38
-    call $nox_raise(l %rt, l %t67, l 77)
+    call $nox_raise(l %rt, l %t67, l 86)
     %t73 =w call $nox_exception_pending(l %rt)
     jnz %t73, @exc_propagate39, @exc_continue40
 @exc_propagate39
@@ -7301,7 +7356,7 @@ export function l $nox_validate_validate_json_str(l %rt, l %p_s, l %p_schema) {
     storel %p_s, %t0
     storel %p_schema, %t1
     %t5 =l loadl %t0
-    %t6 =l call $nox_json_decode(l %rt, l %t5)
+    %t6 =l call $nox_json_parse(l %rt, l %t5)
     %t7 =w call $nox_exception_pending(l %rt)
     jnz %t7, @exc_propagate3, @exc_continue4
 @exc_propagate3

@@ -10,8 +10,9 @@
 //! 2. Boyut kanıtı: aynı ikilinin boyutu, düzeltme ÖNCESİ (yaklaşık 7+ MB)
 //!    durumdan AÇIKÇA küçük (makul bir üst sınır).
 //! 3. Fonksiyonel kanıt (KRİTİK — 5-sembol listesinin DOĞRU olduğunun asıl
-//!    kanıtı): `nox.json.decode` + bir sınıf örneği + cycle-collector'ı
-//!    tetikleyen (>700 örnek) bir program doğru çalışır.
+//!    kanıtı): `nox.json.parse` (v3 madde 10'a kadar `decode`) + bir sınıf
+//!    örneği + cycle-collector'ı tetikleyen (>700 örnek) bir program doğru
+//!    çalışır.
 //!
 //! `nm`/dead-stripping Windows'ta (PE/MinGW, blanket `--export-all-symbols`,
 //! bilinçli olarak DEĞİŞTİRİLMEDİ) anlamlı değil — bu testler SADECE macOS/
@@ -172,7 +173,7 @@ test "noxc build: smtp/postgres kullanmayan basit bir program dead-stripping ile
     try std.testing.expect(stat.size < 14 * 1024 * 1024);
 }
 
-test "noxc build: nox.json.decode + sınıf + cycle-collector (5-sembol dlsym listesi) doğru çalışır" {
+test "noxc build: nox.json.parse + sınıf + cycle-collector (5-sembol dlsym listesi) doğru çalışır" {
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
     const io = std.testing.io;
     const gpa = std.testing.allocator;
@@ -188,7 +189,7 @@ test "noxc build: nox.json.decode + sınıf + cycle-collector (5-sembol dlsym li
         \\        self.other = self
         \\
         \\data: str = "{\"a\": 1, \"b\": [1, 2, 3]}"
-        \\v: JsonValue = nox.json.decode(data)
+        \\v: JsonValue = nox.json.parse(data)
         \\print(nox.json.object_key(v, 0))
         \\print(nox.json.as_number(nox.json.object_value(v, 0)))
         \\

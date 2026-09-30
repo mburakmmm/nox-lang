@@ -2393,102 +2393,309 @@ export function l $nox_time_instant_now(l %rt) {
 @fn_end1
     ret 0
 }
-export function $worker(l %rt, l %p_tc) {
-@start
-    %t0 =l alloc8 8
-    %t1 =l alloc8 8
-    storel %p_tc, %t0
-    storel 0, %t1
-    jmp @while_cond0
-@while_cond0
-    %t2 =l loadl %t1
-    %t3 =w csltl %t2, 20
-    jnz %t3, @while_body1, @while_end2
-@while_body1
-    %t4 =l loadl %t0
-    %t5 =l loadl %t1
-    call $nox_threadchannel_send_val(l %rt, l %t4, l %t5)
-    %t6 =l loadl %t1
-    %t7 =l add %t6, 1
-    storel %t7, %t1
-    jmp @while_cond0
-@while_end2
-@fn_end3
-    ret
-}
-export function l $main_body(l %argp) {
-@start
-    %rt =l loadl %argp
-    %t0 =l alloc8 8
-    storel 0, %t0
-    %t1 =l alloc8 8
-    storel 0, %t1
-    %t2 =l alloc8 8
-    %t3 =l alloc8 8
-    %t4 =l alloc8 8
-    %t5 =l call $nox_threadchannel_new(l %rt, l 1)
-    %t6 =l loadl %t0
-    call $nox_threadchannel_destroy(l %rt, l %t6)
-    storel 0, %t0
-    storel %t5, %t0
-    %t7 =l loadl %t0
-    %t8 =l call $nox_thread_spawn(l %rt, l $thread_wrap_0, l %t7, w 0, w 0)
-    %t9 =l loadl %t1
-    call $nox_thread_destroy(l %rt, l %t9)
-    storel 0, %t1
-    storel %t8, %t1
-    storel 0, %t2
-    jmp @while_cond0
-@while_cond0
-    %t10 =l loadl %t2
-    %t11 =w csltl %t10, 20
-    jnz %t11, @while_body1, @while_end2
-@while_body1
-    storel 1, %t4
-    %t12 =l loadl %t4
-    call $nox_time_sleep_ms_raw(l %t12)
-    jmp @inline_done3
-@inline_done3
-    %t13 =l loadl %t0
-    %t14 =l call $nox_threadchannel_recv_val(l %rt, l %t13)
-    storel %t14, %t3
-    %t15 =l loadl %t3
-    call $printf(l $fmt_int, ..., l %t15)
-    %t16 =l loadl %t2
-    %t17 =l add %t16, 1
-    storel %t17, %t2
-    jmp @while_cond0
-@while_end2
-    %t18 =l loadl %t1
-    %t19 =l call $nox_thread_join(l %rt, l %t18)
-    %t20 =l loadl %t0
-    call $nox_threadchannel_destroy(l %rt, l %t20)
-    storel 0, %t0
-    %t21 =l loadl %t1
-    call $nox_thread_destroy(l %rt, l %t21)
-    storel 0, %t1
-    call $nox_free(l %rt, l %argp, l 8)
-@fn_end4
-    ret 0
-}
 export function w $main(w %argc, l %argv) {
 @start
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
-    call $nox_async_init(l %rt)
-    %t0 =l call $nox_alloc(l %rt, l 8)
-    storel %rt, %t0
-    %t1 =l call $nox_async_spawn(l %rt, l $main_body, l %t0)
-    %t2 =w call $nox_async_run_to_completion(l %rt)
-    jnz %t2, @deadlock0, @no_deadlock1
-@deadlock0
-    call $nox_async_deadlock_abort(l %rt)
-    ret 0
-@no_deadlock1
-    call $nox_async_destroy_task(l %rt, l %t1)
-    call $nox_async_deinit(l %rt)
+    %t0 =l alloc8 8
+    storel 0, %t0
+    %t1 =l alloc8 8
+    storel 0, %t1
+    %t2 =l alloc8 8
+    storel 0, %t2
+    %t3 =l alloc8 8
+    storel 0, %t3
+    %t4 =l alloc8 8
+    %t5 =l alloc8 8
+    storel 0, %t5
+    %t6 =l alloc8 8
+    %t7 =l alloc8 8
+    storel 0, %t7
+    %t8 =l alloc8 8
+    %t9 =l alloc8 8
+    storel 0, %t9
+    storel 0, %t4
+    %t10 =l loadl %t4
+    %t11 =l call $nox_time_year_raw(l %t10)
+    %t12 =l loadl %t4
+    %t13 =l call $nox_time_month_raw(l %t12)
+    %t14 =l loadl %t4
+    %t15 =l call $nox_time_day_raw(l %t14)
+    %t16 =l loadl %t4
+    %t17 =l call $nox_time_hour_raw(l %t16)
+    %t18 =l loadl %t4
+    %t19 =l call $nox_time_minute_raw(l %t18)
+    %t20 =l loadl %t4
+    %t21 =l call $nox_time_second_raw(l %t20)
+    %t22 =l call $nox_rc_alloc(l %rt, l 56)
+    storel 4, %t22
+    %t23 =l add %t22, 8
+    storel 0, %t23
+    %t24 =l add %t22, 16
+    storel 0, %t24
+    %t25 =l add %t22, 24
+    storel 0, %t25
+    %t26 =l add %t22, 32
+    storel 0, %t26
+    %t27 =l add %t22, 40
+    storel 0, %t27
+    %t28 =l add %t22, 48
+    storel 0, %t28
+    call $nox_time_DateTime___init__(l %rt, l %t22, l %t11, l %t13, l %t15, l %t17, l %t19, l %t21)
+    storel %t22, %t5
+    jmp @inline_done0
+@after_inline_return1
+    jmp @inline_done0
+@inline_done0
+    %t29 =l loadl %t5
+    %t30 =l loadl %t0
+    %t31 =w ceql %t30, 0
+    jnz %t31, @release_skip3, @release2
+@release2
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t30, l $nox_time_DateTime_release)
+    jmp @release_done4
+@release_skip3
+    jmp @release_done4
+@release_done4
+    storel 0, %t0
+    storel %t29, %t0
+    %t32 =l loadl %t0
+    %t33 =l call $nox_time_DateTime_to_str(l %rt, l %t32)
+    call $printf(l $fmt_str, ..., l %t33)
+    %t34 =w ceql %t33, 0
+    jnz %t34, @release_skip6, @release5
+@release5
+    %t35 =l sub %t33, 16
+    %t36 =l loadl %t35
+    %t37 =l sub %t36, 1
+    storel %t37, %t35
+    %t38 =w cslel %t37, 0
+    jnz %t38, @str_free8, @str_free_skip9
+@str_free8
+    call $nox_str_free_now(l %rt, l %t33)
+    jmp @str_free_done10
+@str_free_skip9
+    jmp @str_free_done10
+@str_free_done10
+    jmp @release_done7
+@release_skip6
+    jmp @release_done7
+@release_done7
+    %t39 =l loadl %t0
+    %t40 =l call $nox_time_DateTime_to_epoch_ms(l %rt, l %t39)
+    call $printf(l $fmt_int, ..., l %t40)
+    storel 951868800000, %t6
+    %t41 =l loadl %t6
+    %t42 =l call $nox_time_year_raw(l %t41)
+    %t43 =l loadl %t6
+    %t44 =l call $nox_time_month_raw(l %t43)
+    %t45 =l loadl %t6
+    %t46 =l call $nox_time_day_raw(l %t45)
+    %t47 =l loadl %t6
+    %t48 =l call $nox_time_hour_raw(l %t47)
+    %t49 =l loadl %t6
+    %t50 =l call $nox_time_minute_raw(l %t49)
+    %t51 =l loadl %t6
+    %t52 =l call $nox_time_second_raw(l %t51)
+    %t53 =l call $nox_rc_alloc(l %rt, l 56)
+    storel 4, %t53
+    %t54 =l add %t53, 8
+    storel 0, %t54
+    %t55 =l add %t53, 16
+    storel 0, %t55
+    %t56 =l add %t53, 24
+    storel 0, %t56
+    %t57 =l add %t53, 32
+    storel 0, %t57
+    %t58 =l add %t53, 40
+    storel 0, %t58
+    %t59 =l add %t53, 48
+    storel 0, %t59
+    call $nox_time_DateTime___init__(l %rt, l %t53, l %t42, l %t44, l %t46, l %t48, l %t50, l %t52)
+    storel %t53, %t7
+    jmp @inline_done11
+@after_inline_return12
+    jmp @inline_done11
+@inline_done11
+    %t60 =l loadl %t7
+    %t61 =l loadl %t1
+    %t62 =w ceql %t61, 0
+    jnz %t62, @release_skip14, @release13
+@release13
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t61, l $nox_time_DateTime_release)
+    jmp @release_done15
+@release_skip14
+    jmp @release_done15
+@release_done15
+    storel 0, %t1
+    storel %t60, %t1
+    %t63 =l loadl %t1
+    %t64 =l call $nox_time_DateTime_to_str(l %rt, l %t63)
+    call $printf(l $fmt_str, ..., l %t64)
+    %t65 =w ceql %t64, 0
+    jnz %t65, @release_skip17, @release16
+@release16
+    %t66 =l sub %t64, 16
+    %t67 =l loadl %t66
+    %t68 =l sub %t67, 1
+    storel %t68, %t66
+    %t69 =w cslel %t68, 0
+    jnz %t69, @str_free19, @str_free_skip20
+@str_free19
+    call $nox_str_free_now(l %rt, l %t64)
+    jmp @str_free_done21
+@str_free_skip20
+    jmp @str_free_done21
+@str_free_done21
+    jmp @release_done18
+@release_skip17
+    jmp @release_done18
+@release_done18
+    %t70 =l loadl %t1
+    %t71 =l call $nox_time_DateTime_to_epoch_ms(l %rt, l %t70)
+    call $printf(l $fmt_int, ..., l %t71)
+    storel 1709210096000, %t8
+    %t72 =l loadl %t8
+    %t73 =l call $nox_time_year_raw(l %t72)
+    %t74 =l loadl %t8
+    %t75 =l call $nox_time_month_raw(l %t74)
+    %t76 =l loadl %t8
+    %t77 =l call $nox_time_day_raw(l %t76)
+    %t78 =l loadl %t8
+    %t79 =l call $nox_time_hour_raw(l %t78)
+    %t80 =l loadl %t8
+    %t81 =l call $nox_time_minute_raw(l %t80)
+    %t82 =l loadl %t8
+    %t83 =l call $nox_time_second_raw(l %t82)
+    %t84 =l call $nox_rc_alloc(l %rt, l 56)
+    storel 4, %t84
+    %t85 =l add %t84, 8
+    storel 0, %t85
+    %t86 =l add %t84, 16
+    storel 0, %t86
+    %t87 =l add %t84, 24
+    storel 0, %t87
+    %t88 =l add %t84, 32
+    storel 0, %t88
+    %t89 =l add %t84, 40
+    storel 0, %t89
+    %t90 =l add %t84, 48
+    storel 0, %t90
+    call $nox_time_DateTime___init__(l %rt, l %t84, l %t73, l %t75, l %t77, l %t79, l %t81, l %t83)
+    storel %t84, %t9
+    jmp @inline_done22
+@after_inline_return23
+    jmp @inline_done22
+@inline_done22
+    %t91 =l loadl %t9
+    %t92 =l loadl %t2
+    %t93 =w ceql %t92, 0
+    jnz %t93, @release_skip25, @release24
+@release24
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t92, l $nox_time_DateTime_release)
+    jmp @release_done26
+@release_skip25
+    jmp @release_done26
+@release_done26
+    storel 0, %t2
+    storel %t91, %t2
+    %t94 =l loadl %t2
+    %t95 =l call $nox_time_DateTime_to_str(l %rt, l %t94)
+    call $printf(l $fmt_str, ..., l %t95)
+    %t96 =w ceql %t95, 0
+    jnz %t96, @release_skip28, @release27
+@release27
+    %t97 =l sub %t95, 16
+    %t98 =l loadl %t97
+    %t99 =l sub %t98, 1
+    storel %t99, %t97
+    %t100 =w cslel %t99, 0
+    jnz %t100, @str_free30, @str_free_skip31
+@str_free30
+    call $nox_str_free_now(l %rt, l %t95)
+    jmp @str_free_done32
+@str_free_skip31
+    jmp @str_free_done32
+@str_free_done32
+    jmp @release_done29
+@release_skip28
+    jmp @release_done29
+@release_done29
+    %t101 =l loadl %t2
+    %t102 =l call $nox_time_DateTime_to_epoch_ms(l %rt, l %t101)
+    call $printf(l $fmt_int, ..., l %t102)
+    %t103 =l call $nox_rc_alloc(l %rt, l 56)
+    storel 4, %t103
+    %t104 =l add %t103, 8
+    storel 0, %t104
+    %t105 =l add %t103, 16
+    storel 0, %t105
+    %t106 =l add %t103, 24
+    storel 0, %t106
+    %t107 =l add %t103, 32
+    storel 0, %t107
+    %t108 =l add %t103, 40
+    storel 0, %t108
+    %t109 =l add %t103, 48
+    storel 0, %t109
+    call $nox_time_DateTime___init__(l %rt, l %t103, l 2024, l 2, l 29, l 12, l 34, l 56)
+    %t110 =l loadl %t3
+    %t111 =w ceql %t110, 0
+    jnz %t111, @release_skip34, @release33
+@release33
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t110, l $nox_time_DateTime_release)
+    jmp @release_done35
+@release_skip34
+    jmp @release_done35
+@release_done35
+    storel 0, %t3
+    storel %t103, %t3
+    %t112 =l loadl %t3
+    %t113 =l call $nox_time_DateTime_to_epoch_ms(l %rt, l %t112)
+    call $printf(l $fmt_int, ..., l %t113)
+    %t114 =l loadl %t0
+    %t115 =w ceql %t114, 0
+    jnz %t115, @release_skip37, @release36
+@release36
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t114, l $nox_time_DateTime_release)
+    jmp @release_done38
+@release_skip37
+    jmp @release_done38
+@release_done38
+    storel 0, %t0
+    %t116 =l loadl %t1
+    %t117 =w ceql %t116, 0
+    jnz %t117, @release_skip40, @release39
+@release39
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t116, l $nox_time_DateTime_release)
+    jmp @release_done41
+@release_skip40
+    jmp @release_done41
+@release_done41
+    storel 0, %t1
+    %t118 =l loadl %t3
+    %t119 =w ceql %t118, 0
+    jnz %t119, @release_skip43, @release42
+@release42
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t118, l $nox_time_DateTime_release)
+    jmp @release_done44
+@release_skip43
+    jmp @release_done44
+@release_done44
+    storel 0, %t3
+    %t120 =l loadl %t2
+    %t121 =w ceql %t120, 0
+    jnz %t121, @release_skip46, @release45
+@release45
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t120, l $nox_time_DateTime_release)
+    jmp @release_done47
+@release_skip46
+    jmp @release_done47
+@release_done47
+    storel 0, %t2
     call $nox_runtime_deinit(l %rt)
+@fn_end48
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {
@@ -2641,14 +2848,6 @@ export function w $List_JsonValue_eq(l %rt, l %a, l %b) {
 @listeq_true4
     ret 1
 @listeq_lendiff0
-    ret 0
-}
-export function l $thread_wrap_0(l %argp) {
-@start
-    %rt =l loadl %argp
-    %t0 =l add %argp, 8
-    %t1 =l loadl %t0
-    call $worker(l %rt, l %t1)
     ret 0
 }
 data $__nox_decorators = { l 0 }

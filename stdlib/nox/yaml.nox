@@ -440,3 +440,147 @@ def get(root: YamlValue, dotted_path: str) -> YamlValue:
         current = current.mapping[key]
         i = i + 1
     return current
+
+# v3 sertleştirme yol haritası, madde 10 (bkz. nox-teknik-spesifikasyon.md
+# ilgili bölüm, stdlib/API denetimi) — `dump`: `parse`nin TERS yönü,
+# ÖNCEDEN HİÇ YOKTU. BLOK-stili çıktı üretir (`parse`nin desteklediği AYNI
+# alt-küme — akış-stili DEĞİL, en OKUNAKLI/standart YAML biçimi). String
+# skalerler HER ZAMAN çift-tırnaklı yazılır (`nox.json`nin AYNI
+# "belirsizlikten KAÇIN" ilkesi — plain/tırnaksız bir skalerin `true`/
+# `123`/`null` İLE YANLIŞLIKLA karışması RİSKİNİ TAMAMEN ortadan kaldırır,
+# `_parse_plain_scalar`nin TAM DA çözdüğü belirsizliğe YENİDEN
+# DÜŞMEMEK İçİn). `Set.union` GİBİ metotlarda BULUNAN AYNI derleyici
+# sınırlaması (bkz. `toml.nox`nin `_toml_dump_table`ının notu) BURADA da
+# GEÇERLİ — TÜM özyinelemeli yardımcılar `list[str]` DÖNER, bir `out`
+# parametresini MUTASYONA UĞRATMAZ.
+def _yaml_dump_escape(s: str) -> str:
+    out: str = "\""
+    i: int = 0
+    n: int = len(s)
+    while i < n:
+        c: str = s[i]
+        if c == "\"":
+            out = out + "\\\""
+        elif c == "\\":
+            out = out + "\\\\"
+        elif c == "\n":
+            out = out + "\\n"
+        elif c == "\t":
+            out = out + "\\t"
+        elif nox.strings.byte_at(s, i) == 13:
+            out = out + "\\r"
+        else:
+            out = out + c
+        i = i + 1
+    return out + "\""
+
+def _yaml_dump_scalar(v: YamlValue) -> str:
+    if is_null(v):
+        return "null"
+    if is_bool(v):
+        if v.b:
+            return "true"
+        return "false"
+    if is_int(v):
+        return str(v.i)
+    if is_float(v):
+        return str(v.f)
+    if is_string(v):
+        return _yaml_dump_escape(v.s)
+    raise YamlError("sequence/mapping bir skaler baglaminda dump edilemez")
+
+def _yaml_indent(level: int) -> str:
+    return nox.strings.repeat("  ", level)
+
+def _yaml_dump_mapping(v: YamlValue, level: int) -> list[str]:
+    lines: list[str] = []
+    base: str = _yaml_indent(level)
+    keys: list[str] = v.mapping.keys()
+    i: int = 0
+    n: int = len(keys)
+    while i < n:
+        k: str = keys[i]
+        val: YamlValue = v.mapping[k]
+        if is_mapping(val):
+            child: list[str] = _yaml_dump_mapping(val, level + 1)
+            if len(child) == 0:
+                lines.append(base + k + ": {}")
+            else:
+                lines.append(base + k + ":")
+                j: int = 0
+                while j < len(child):
+                    lines.append(child[j])
+                    j = j + 1
+        elif is_sequence(val):
+            child2: list[str] = _yaml_dump_sequence(val, level + 1)
+            if len(child2) == 0:
+                lines.append(base + k + ": []")
+            else:
+                lines.append(base + k + ":")
+                m: int = 0
+                while m < len(child2):
+                    lines.append(child2[m])
+                    m = m + 1
+        else:
+            lines.append(base + k + ": " + _yaml_dump_scalar(val))
+        i = i + 1
+    return lines
+
+# Bir dizi elemanının KENDİSİ bir eşleme/dizi İSE, YAML'ın KENDİ kuralı
+# ("- " işaretinin İLK satıra, ONUN KENDİ girintisinin YERİNE geçmesi,
+# SONRAKİ satırların "- " İLE AYNI GENİŞLİKTE [2 karakter] EK girinti
+# alması) burada elle uygulanır.
+def _yaml_dump_sequence(v: YamlValue, level: int) -> list[str]:
+    lines: list[str] = []
+    base: str = _yaml_indent(level)
+    i: int = 0
+    n: int = len(v.arr)
+    while i < n:
+        item: YamlValue = v.arr[i]
+        if is_mapping(item):
+            # `level + 1` DEĞİL `level`: "- " ÖNEKİNİN KENDİSİ (aşağıdaki
+            # `"  " + child[j]`) zaten BİR seviyelik görsel kaymayı
+            # SAĞLIYOR — `level + 1` geçmek bunu İKİ KEZ uygulayıp yanlış
+            # (fazla) girinti ÜRETİRDİ (GERÇEKTEN denenip DÜZELTİLDİ).
+            child: list[str] = _yaml_dump_mapping(item, level)
+            if len(child) == 0:
+                lines.append(base + "- {}")
+            else:
+                first: str = nox.strings.trim_start(child[0])
+                lines.append(base + "- " + first)
+                j: int = 1
+                while j < len(child):
+                    lines.append("  " + child[j])
+                    j = j + 1
+        elif is_sequence(item):
+            child2: list[str] = _yaml_dump_sequence(item, level)
+            if len(child2) == 0:
+                lines.append(base + "- []")
+            else:
+                first2: str = nox.strings.trim_start(child2[0])
+                lines.append(base + "- " + first2)
+                k: int = 1
+                while k < len(child2):
+                    lines.append("  " + child2[k])
+                    k = k + 1
+        else:
+            lines.append(base + "- " + _yaml_dump_scalar(item))
+        i = i + 1
+    return lines
+
+# `v` (KÖK bir mapping YA DA sequence — `parse`nin döndürebileceği İKİ
+# olası kök şekli) YAML metnine çevrilir. `nox.yaml.parse(nox.yaml.
+# dump(v))` bir round-trip'te DEĞERCE eşit bir ağaç ÜRETİR (anahtar SIRASI/
+# biçimlendirme aynen KORUNMAZ İDDİASI YOK — SADECE anlamsal eşitlik).
+def dump(v: YamlValue) -> str:
+    if is_mapping(v):
+        lines: list[str] = _yaml_dump_mapping(v, 0)
+        if len(lines) == 0:
+            return "{}\n"
+        return nox.strings.join(lines, "\n") + "\n"
+    if is_sequence(v):
+        lines2: list[str] = _yaml_dump_sequence(v, 0)
+        if len(lines2) == 0:
+            return "[]\n"
+        return nox.strings.join(lines2, "\n") + "\n"
+    raise YamlError("dump yalnizca kok mapping/sequence degerini kabul eder")

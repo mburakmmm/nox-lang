@@ -4,7 +4,7 @@
 # programa KOŞULSUZ bağlanması YÜZÜNDEN ZORUNLU bir tasarım kararı).
 #
 # STRATEJİ 1 (kullanıcının "tam olarak yapalım" talebiyle seçilen, bkz. plan
-# dosyası): `nox.json.decode`, Zig'in `std.json`iyle (savaş-test edilmiş,
+# dosyası): `nox.json.parse`, Zig'in `std.json`iyle (savaş-test edilmiş,
 # keyfi iç içe/kaçış/sayı ayrıştırması) ayrıştırır — Nox tarafında KARAKTER
 # KARAKTER bir ayrıştırıcı YAZILMAZ. Zig kabuğu (`runtime/stdlib_shims/
 # json.zig`), ayrıştırılan ağacı ÖZYİNELEMELİ olarak gezip HER düğüm için
@@ -19,6 +19,15 @@
 # elemanlı) `list[T]` değerleridir (bkz. core.nox'un belge notu) — bu sayede
 # ne kendine-başvuran bir literal ne de bir `MAX_CHILDREN` sınırı GEREKİR
 # (GERÇEKTEN "tam" — keyfi derinlik).
+#
+# v3 sertleştirme yol haritası, madde 10 (bkz. nox-teknik-spesifikasyon.md
+# ilgili bölüm, stdlib/API denetimi): `decode`/`encode`/`encode_pretty`
+# (v1.110.4'e kadarki isimler) `parse`/`dump`/`dump_pretty` OLARAK YENİDEN
+# ADLANDIRILDI — `nox.toml`/`nox.yaml`nin (ARTIK dump'ı da OLAN) `parse`/
+# `dump` çiftiyle TÜM format modülleri (json/toml/yaml/csv) ARASINDA
+# TUTARLI KILINMASI İçİn, kullanıcının AÇIKÇA seçtiği KIRICI bir yeniden
+# adlandırma (v2.0'dan ÖNCE, semantik dondurma'DAN [madde 11] HEMEN ÖNCE
+# — bu tam da BÖYLE bir kararın YAPILABİLECEĞİ SON pencere).
 
 import nox.strings
 
@@ -28,7 +37,7 @@ class JsonError(Exception):
 extern def nox_json_decode_raw(s: str) -> JsonValue from "zig-out/lib/noxrt.o" with_rt
 extern def nox_json_last_op_ok() -> int from "zig-out/lib/noxrt.o"
 
-def decode(s: str) -> JsonValue:
+def parse(s: str) -> JsonValue:
     v: JsonValue = nox_json_decode_raw(s)
     if nox_json_last_op_ok() == 0:
         raise JsonError("gecersiz JSON: " + s)
@@ -79,10 +88,10 @@ def object_value(v: JsonValue, i: int) -> JsonValue:
 # Faz II devamı (bkz. nox-teknik-spesifikasyon.md §3.67, test kapsamı
 # genişletmesi sırasında BULUNAN, GERÇEK bir düzeltme) — ÖNCEKİ sürüm
 # yalnızca `"`/`\`/`\n`i escape ediyordu; bir `\t` (VEYA CR baytı) İÇEREN
-# bir dizeyi `encode` ETTİĞİNDE ham (escape'siz) kontrol karakterini
+# bir dizeyi `dump` ETTİĞİNDE ham (escape'siz) kontrol karakterini
 # ÇIKTIYA yazıyordu — bu GEÇERSİZ JSON'dur (JSON spesifikasyonu bir dize
 # İÇİNDEKİ HER kontrol karakterinin escape EDİLMESİNİ ZORUNLU kılar) ve
-# `nox.json.decode(nox.json.encode(v))` (round-trip) bir `\t` İÇEREN
+# `nox.json.parse(nox.json.dump(v))` (round-trip) bir `\t` İÇEREN
 # GERÇEK bir girdide YAKALANMAMIŞ bir istisnayla ÇÖKÜYORDU (Zig'in
 # `std.json`ı ham kontrol karakterini REDDEDİYOR). `\t`, `\n` İLE AYNI
 # (basit literal karşılaştırma) YOLLA eklendi. **CR (bayt 13, `\r`) İSE
@@ -108,7 +117,7 @@ def object_value(v: JsonValue, i: int) -> JsonValue:
 # genel `\u00XX` yolu BURADA UYGULANMADI — kullanıcıya (görülen çökme
 # GERÇEK VE CİDDİ olduğundan) AYRI bir derleyici-hatası görevi olarak
 # bildirildi, bu fazın kapsamı DIŞINDA bırakıldı.
-def encode_string(s: str) -> str:
+def dump_string(s: str) -> str:
     out: str = "\""
     i: int = 0
     while i < len(s):
@@ -128,7 +137,7 @@ def encode_string(s: str) -> str:
         i = i + 1
     return out + "\""
 
-def encode(v: JsonValue) -> str:
+def dump(v: JsonValue) -> str:
     if is_null(v):
         return "null"
     if is_bool(v):
@@ -138,52 +147,52 @@ def encode(v: JsonValue) -> str:
     if is_number(v):
         return str(as_number(v))
     if is_string(v):
-        return encode_string(as_string(v))
+        return dump_string(as_string(v))
     if is_array(v):
-        return encode_array(v)
-    return encode_object(v)
+        return dump_array(v)
+    return dump_object(v)
 
-def encode_array(v: JsonValue) -> str:
+def dump_array(v: JsonValue) -> str:
     out: str = "["
     i: int = 0
     n: int = array_len(v)
     while i < n:
         if i > 0:
             out = out + ","
-        out = out + encode(array_get(v, i))
+        out = out + dump(array_get(v, i))
         i = i + 1
     return out + "]"
 
-def encode_object(v: JsonValue) -> str:
+def dump_object(v: JsonValue) -> str:
     out: str = "{"
     i: int = 0
     n: int = object_len(v)
     while i < n:
         if i > 0:
             out = out + ","
-        out = out + encode_string(object_key(v, i)) + ":" + encode(object_value(v, i))
+        out = out + dump_string(object_key(v, i)) + ":" + dump(object_value(v, i))
         i = i + 1
     return out + "}"
 
-# Faz III.10 (bkz. nox-teknik-spesifikasyon.md §3.69) — `encode_pretty`:
-# `encode`in girintili varyantı, SAF Nox (HİÇ runtime değişikliği GEREKMEDİ,
+# Faz III.10 (bkz. nox-teknik-spesifikasyon.md §3.69) — `dump_pretty`:
+# `dump`in girintili varyantı, SAF Nox (HİÇ runtime değişikliği GEREKMEDİ,
 # `nox.strings.repeat` — Faz III.2 — İLE girinti dizeleri üretilir).
 # `indent`, SEVİYE BAŞINA boşluk SAYISIDIR (ör. `2` -> Python'un
 # `json.dumps(v, indent=2)`si İLE AYNI biçim).
 def indent_str(indent: int, level: int) -> str:
     return nox.strings.repeat(" ", indent * level)
 
-def encode_pretty(v: JsonValue, indent: int) -> str:
-    return encode_pretty_at(v, indent, 0)
+def dump_pretty(v: JsonValue, indent: int) -> str:
+    return dump_pretty_at(v, indent, 0)
 
-def encode_pretty_at(v: JsonValue, indent: int, level: int) -> str:
+def dump_pretty_at(v: JsonValue, indent: int, level: int) -> str:
     if is_array(v):
-        return encode_pretty_array(v, indent, level)
+        return dump_pretty_array(v, indent, level)
     if is_object(v):
-        return encode_pretty_object(v, indent, level)
-    return encode(v)
+        return dump_pretty_object(v, indent, level)
+    return dump(v)
 
-def encode_pretty_array(v: JsonValue, indent: int, level: int) -> str:
+def dump_pretty_array(v: JsonValue, indent: int, level: int) -> str:
     n: int = array_len(v)
     if n == 0:
         return "[]"
@@ -193,11 +202,11 @@ def encode_pretty_array(v: JsonValue, indent: int, level: int) -> str:
     while i < n:
         if i > 0:
             out = out + ",\n"
-        out = out + inner + encode_pretty_at(array_get(v, i), indent, level + 1)
+        out = out + inner + dump_pretty_at(array_get(v, i), indent, level + 1)
         i = i + 1
     return out + "\n" + indent_str(indent, level) + "]"
 
-def encode_pretty_object(v: JsonValue, indent: int, level: int) -> str:
+def dump_pretty_object(v: JsonValue, indent: int, level: int) -> str:
     n: int = object_len(v)
     if n == 0:
         return "{}"
@@ -207,6 +216,26 @@ def encode_pretty_object(v: JsonValue, indent: int, level: int) -> str:
     while i < n:
         if i > 0:
             out = out + ",\n"
-        out = out + inner + encode_string(object_key(v, i)) + ": " + encode_pretty_at(object_value(v, i), indent, level + 1)
+        out = out + inner + dump_string(object_key(v, i)) + ": " + dump_pretty_at(object_value(v, i), indent, level + 1)
         i = i + 1
     return out + "\n" + indent_str(indent, level) + "}"
+
+# --- KULLANIMDAN KALDIRILMIŞ (deprecated) takma adlar ---
+#
+# v3 sertleştirme yol haritası, madde 10 (bkz. nox-teknik-spesifikasyon.md
+# ilgili bölüm): `decode`/`encode`/`encode_pretty`, `parse`/`dump`/
+# `dump_pretty` OLARAK yeniden adlandırıldı. `VERSIONING.md`nin §3'ü
+# ("Kullanımdan Kaldırma Politikası") bir fonksiyonun KALDIRILMADAN ÖNCE
+# EN AZ BİR MINOR sürüm boyunca ÇALIŞMAYA DEVAM ETMESİNİ (deprecated
+# İŞARETLİ) ZORUNLU kılar — GERÇEK kaldırma yalnızca bir SONRAKİ MAJOR
+# sürümde (v2.0.0) olabilir. Bu YÜZDEN eski isimler İNCE sarmalayıcılar
+# OLARAK KORUNUR — YENİ kod `parse`/`dump`/`dump_pretty` KULLANMALIDIR,
+# bu üçü SADECE GERİYE-DÖNÜK UYUMLULUK İçİndir.
+def decode(s: str) -> JsonValue:
+    return parse(s)
+
+def encode(v: JsonValue) -> str:
+    return dump(v)
+
+def encode_pretty(v: JsonValue, indent: int) -> str:
+    return dump_pretty(v, indent)
