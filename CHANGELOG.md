@@ -14,6 +14,22 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.111.2]
+
+### Düzeltildi
+
+- **KRİTİK: `nyx`/`aether` (harici, gerçek Nox framework'leri) test
+  paketlerini kıran bir üretim regresyonu (bkz. nox-teknik-
+  spesifikasyon.md §3.207)**: v3 sertleştirme yol haritasının 12.
+  (son) maddesi — RC + release qualification. v1.111.0'ın `nox.json`
+  yeniden adlandırmasında iç özyinelemeli yardımcılar (`encode_string`/
+  `encode_array`/`encode_object`/`encode_pretty_at`/`encode_pretty_
+  array`/`encode_pretty_object`) takma ad olmadan kaldırılmıştı —
+  bu depo dışındaki gerçek tüketiciler (nox-lang'in kendi CI'sinin
+  nyx/aether entegrasyon testleri) bunlara doğrudan bağımlıydı. 6
+  fonksiyon da `VERSIONING.md` §3'ün deprecation politikası gereği
+  ince sarmalayıcılar olarak geri eklendi.
+
 ## [1.111.1]
 
 ### Değişti

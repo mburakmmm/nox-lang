@@ -239,3 +239,35 @@ def encode(v: JsonValue) -> str:
 
 def encode_pretty(v: JsonValue, indent: int) -> str:
     return dump_pretty(v, indent)
+
+# v3 sertleştirme yol haritası, madde 12 (RC + release qualification) —
+# GERÇEK bir üretim hatası burada bulunup düzeltildi: `encode_array`/
+# `encode_object`/`encode_pretty_at`/`encode_pretty_array`/`encode_pretty_
+# object`/`encode_string` (v1.110.4'e kadarki isimler) İç ÖZYİNELEMELİ
+# yardımcılar SANILIP (BAŞINDA `_` OLMADIĞI İçİn TEKNİK olarak PUBLIC,
+# nox-lang MONOREPO'sunun İçİNDE HİÇBİR çağıran BULUNAMADIĞI İçİn
+# "harici çağıran YOK" diye YANLIŞLIKLA doğrulanmış) takma ad OLMADAN
+# kaldırılmıştı — GERÇEK, harici (nox-lang deposu DIŞINDAKİ) tüketiciler
+# (`nyx`/`aether` framework'lerinin CI entegrasyon testleri, bkz. proje
+# belleği) BUNLARI DOĞRUDAN ÇAĞIRIYORDU, `dump_string`/`dump_array`/vb.
+# İSİMLERİYLE DEĞİL — GERÇEK bir üretim regresyonu (v1.111.0'dan İTİBAREN,
+# nyx/aether'in HER İKİSİNİN de TÜM test paketleri BAŞARISIZ OLDU).
+# `VERSIONING.md` §3 gereği AYNI deprecated-sarmalayıcı deseni BURAYA da
+# uygulanır.
+def encode_string(s: str) -> str:
+    return dump_string(s)
+
+def encode_array(v: JsonValue) -> str:
+    return dump_array(v)
+
+def encode_object(v: JsonValue) -> str:
+    return dump_object(v)
+
+def encode_pretty_at(v: JsonValue, indent: int, level: int) -> str:
+    return dump_pretty_at(v, indent, level)
+
+def encode_pretty_array(v: JsonValue, indent: int, level: int) -> str:
+    return dump_pretty_array(v, indent, level)
+
+def encode_pretty_object(v: JsonValue, indent: int, level: int) -> str:
+    return dump_pretty_object(v, indent, level)

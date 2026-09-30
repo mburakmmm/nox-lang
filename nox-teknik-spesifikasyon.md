@@ -25453,6 +25453,74 @@ IR anlık görüntüleri (`tests/golden/ir_snapshots/`).
 
 ---
 
+## 3.207 v3 sertleştirme yol haritası, madde 12 — RC + release qualification: GERÇEK bir üretim regresyonu (nyx/aether'in TÜM test paketini kıran)
+
+**Bağlam:** v3 yol haritasının 12. (SON) maddesi. Somut kapsam: mevcut
+GitHub Actions CI/Release iş akışlarının GERÇEK durumunu kontrol etmek
+(`gh run list`) — bu, tam da bu maddenin AMACINA hizmet eden İLK adımdı,
+ÇÜNKÜ hemen GERÇEK, KRİTİK bir bulgu ORTAYA ÇIKARDI.
+
+### Bulgu: v1.111.0'dan İTİBAREN `nyx`/`aether`in HER İKİSİNİN de TÜM test paketi KIRILMIŞTI
+
+`main`e giden EN SON push'un tetiklediği "Harici entegrasyon fixture'ları
+(Aether + Nyx)" iş akışı (bu depo DIŞINDAKİ, GERÇEK, bağımsız Nox
+framework'lerinin — `nyx` v0.17.0'ın 45 test dosyası, `aether` v0.6.5'in
+20 test dosyası — nox-lang'in ANLIK `main`ine karşı ÇALIŞTIRILDIĞI,
+ÖNCEDEN VAR OLAN bir CI mekanizması) **BAŞARISIZ** OLDU — HER İKİ
+framework'ün de NEREDEYSE TÜM test dosyaları AYNI hatayla:
+
+```
+tip hatasi (UndefinedFunction): satır N: 'nox.json' modülünün 'encode_string' adlı bir üyesi yok
+```
+
+**Kök neden:** v3 madde 10'un (§3.206) ikinci turunda (`decode`/`encode`/
+`encode_pretty` → `parse`/`dump`/`dump_pretty` yeniden adlandırması)
+`nox.json`nin İç ÖZYİNELEMELİ yardımcıları (`encode_array`/`encode_
+object`/`encode_pretty_at`/`encode_pretty_array`/`encode_pretty_object`/
+`encode_string`) `dump_array`/vb. OLARAK YENİDEN adlandırılırken —
+"HİÇBİR yerde harici ÇAĞRILMADIĞI DOĞRULANDI" GEREKÇESİYLE (bkz. §3.206)
+— takma ad OLMADAN bırakılmıştı. **BU doğrulama EKSİKTİ:** SADECE
+nox-lang MONOREPO'sunun KENDİ İçİNDE (stdlib + testler) arandı — `nyx`/
+`aether` GİBİ nox-lang'in DIŞINDAKİ, GERÇEK tüketici projeleri HİÇ
+KONTROL EDİLMEMİŞTİ. Bu fonksiyonlar `_` ÖNEKİ TAŞIMADIĞINDAN (sadece
+"iç kullanım İçİn" bir KONVANSİYON, derleyici TARAFINDAN dayatılan bir
+GERÇEK gizlilik DEĞİL) TEKNİK olarak zaten HER ZAMAN public API'nin bir
+PARÇASIYDI — VE en az iki GERÇEK, bağımsız proje BUNLARA DOĞRUDAN
+bağımlıydı.
+
+**Düzeltme:** `decode`/`encode`/`encode_pretty` İLE AYNI desen — 6 EKSİK
+fonksiyon da (`encode_string`/`encode_array`/`encode_object`/`encode_
+pretty_at`/`encode_pretty_array`/`encode_pretty_object`) İNCE
+sarmalayıcılar OLARAK GERİ EKLENDİ (`VERSIONING.md` §3'ün AYNI
+Kullanımdan Kaldırma Politikası GEREĞİ). Golden test genişletildi
+(`json_csv_deprecated_aliases_still_work.nox`), TÜM 6 fonksiyon
+KONTROL EDİLDİ.
+
+**Ders (BU denetimin EN değerli bulgusu):** bir stdlib fonksiyonunun
+"harici çağıran yok" diye DOĞRULANMASI, SADECE nox-lang'in KENDİ
+monorepo'sunu ARAMAKLA YETİNİLEMEZ — GERÇEK dış tüketiciler (bu projenin
+KENDİ CI'sinin `nyx`/`aether` entegrasyon testleri GİBİ) VARSA, YENİDEN
+ADLANDIRMA/KALDIRMA kararları ONLARA KARŞI da (en azından bu CI'nin
+KENDİSİNİ ÇALIŞTIRARAK) doğrulanmalıdır. Bu, "release qualification"
+maddesinin TAM OLARAK NEDEN VAR OLDUĞUNUN kanıtıdır — bir "semantik
+dondurma" (§3.206'nın KENDİSİ) bile, GERÇEK CI çalıştırılıp
+DOĞRULANMADAN "tamamlandı" SAYILAMAZ.
+
+### Doğrulama
+
+Minimal reprodüksiyon (`nox.json.encode_string("hello")`) düzeltmeDEN
+ÖNCE `UndefinedFunction` verdi, SONRA doğru çalıştı. `zig build test`
+SIFIR regresyon. GERÇEK CI'nin (nyx/aether) bu düzeltmeyle YENİDEN
+YEŞİL olup OLMADIĞI, düzeltme main'e push EDİLDİKTEN SONRA doğrulanacak
+(bu KAYIT, push ÖNCESİ yazıldı — "ölç, varsayma" disiplini GEREĞİ,
+GERÇEK CI sonucunu İDDİA ETMEDEN ÖNCE BEKLENMELİ).
+
+**Kritik dosyalar:** `stdlib/nox/json.nox` (6 YENİ deprecated takma ad),
+`tests/golden/codegen_cases/json_csv_deprecated_aliases_still_work.nox`
+(genişletildi).
+
+---
+
 ## 5. Hata Yönetimi
 
 **Durum: UYGULANDI (bu bölüm, projenin en başındaki tasarım taslağıydı —
