@@ -14,6 +14,33 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.118.0]
+
+### Eklendi
+
+- **`nox.binary` — `BinaryReader`/`BinaryWriter` (bkz. nox-teknik-
+  spesifikasyon.md §3.214, v4 Faz A madde 7 — SON madde)**: `Buffer`
+  üzerine kurulu, okuma/yazma imleci tutan bir cephe —
+  `read_u8`/`read_i8`/`read_u16_le`/`read_u16_be`/`read_i16_le`/
+  `read_i16_be`/`read_u32_le`/`read_u32_be`/`read_i32_le`/`read_i32_be`/
+  `read_u64_le`/`read_u64_be`/`read_i64_le`/`read_i64_be` + simetrik
+  `write_*` ailesi, `position`/`remaining`/`seek`. **v4 Faz A'nın 7/7
+  maddesi TAMAMLANDI.**
+
+### Bulundu (kapsam dışı bırakıldı — ayrı bir inceleme gerektirir)
+
+- **Generic bir sınıfın tip parametresi çapraz-modül (başka bir
+  modülden içe aktarılmış) bir sınıfa bağlandığında codegen çöküyor**
+  (`Box[Buffer]` gibi) — `noxc check` kabul eder, `noxc build`/`run`
+  "desteklenmeyen bir yapı" hatasıyla çöker. Aynı desen yerel bir
+  sınıfla sorunsuz çalışır. `BinaryReader`/`BinaryWriter` bu yüzden
+  `Span` değil sadece `Buffer` kabul eder.
+- **Sabit-genişlikli tamsayı dönüşümlerinin değer-korumalı olması,
+  bit-korumalı olmaması** (`i8(u8_degeri >= 128)` taşma hatasıyla
+  çöker) — binary format ayrıştırma için kritik bir ayrım, bayt-bazında
+  inşa/ayrıştırma tekniğiyle (her bayt [0,255] her zaman hedef tipe
+  sığar) aşıldı.
+
 ## [1.117.0]
 
 ### Eklendi

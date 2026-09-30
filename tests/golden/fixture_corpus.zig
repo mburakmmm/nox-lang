@@ -105,6 +105,12 @@ pub const fixtures = [_]Fixture{
     // onaylı tasarım). Span'in KENDİ sınırının Buffer'ın sınırından DAHA
     // DAR olabildiğini VE bunun AYRICA denetlendiğini kanıtlar.
     .{ .name = "codegen(çalıştır): nox.buffer.Span (güvenli, ARC-korumalı pencere)", .kind = .golden, .source = @embedFile("codegen_cases/nox_buffer_span_safe_window.nox"), .expected_stdout = @embedFile("codegen_cases/nox_buffer_span_safe_window.expected") },
+    // v4 Faz A madde 7 (SON madde, bkz. nox-teknik-spesifikasyon.md
+    // §3.2xx): nox.binary — BinaryReader/BinaryWriter. Tüm genişlikler/
+    // işaretlilik/endian KOMBİNASYONLARI + iki-tümleyen ASİMETRİSİNİN
+    // (MIN değerin POZİTİF karşılığı olmaması) DOĞRU ele alındığını
+    // kanıtlar.
+    .{ .name = "codegen(çalıştır): nox.binary BinaryReader/BinaryWriter (tüm genişlik/işaret/endian)", .kind = .golden, .source = @embedFile("codegen_cases/nox_binary_reader_writer_roundtrip.nox"), .expected_stdout = @embedFile("codegen_cases/nox_binary_reader_writer_roundtrip.expected") },
     .{ .name = "codegen(çalıştır): list[u8]/list[i32] indeksle atama (checkNoLowlevelEscape/ASAP-arena düzeltmesi)", .kind = .golden, .source = @embedFile("codegen_cases/list_fixed_int_index_assign.nox"), .expected_stdout = @embedFile("codegen_cases/list_fixed_int_index_assign.expected") },
     .{ .name = "codegen(çalıştır): nox.url parse/percent-encode-decode/query/join", .kind = .golden, .source = @embedFile("codegen_cases/url_parse_encode_decode.nox"), .expected_stdout = @embedFile("codegen_cases/url_parse_encode_decode.expected") },
     .{ .name = "codegen(çalıştır): gecici alici uzerinde istisna firlatan metod/pop()/indeksleme sizmaz", .kind = .golden, .source = @embedFile("codegen_cases/temporary_receiver_raises_no_leak.nox"), .expected_stdout = @embedFile("codegen_cases/temporary_receiver_raises_no_leak.expected") },

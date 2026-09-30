@@ -1,0 +1,271 @@
+# nox.binary — BinaryReader/BinaryWriter (ELF/PCI/ACPI/ağ paketi/dosya-
+# sistemi GİBİ ikili formatları `ptr_read`/`ptr_write` KULLANMADAN
+# ERGONOMİK ayrıştırmayı/üretmeyi hedefler).
+#
+# v4 (2.0 öncesi son mimari stdlib katmanlaşması, Faz A), madde 7 (SON
+# madde, bkz. nox-teknik-spesifikasyon.md §3.2xx). `Buffer`ye (madde 5)
+# BAĞIMLI — okuma/yazma imleci (cursor) TUTAN İNCE bir cephe.
+#
+# **`Buffer` ÜZERİNDEN ÇALIŞIR, `Span` ÜZERİNDEN DEĞİL (BİLİNÇLİ, GERÇEK
+# bir derleyici sınırlaması YÜZÜNDEN):** GERÇEKTEN denenip bulundu —
+# `BinaryReader`/`BinaryWriter`i `Buffer`/`Span`in İKİSİNİ de kabul edecek
+# şekilde GENERIC (`class BinaryReader[T]: _src: T`) YAZMAK checker'ı
+# GEÇER (`noxc check` SIFIR hata verir) AMA codegen'de "desteklenmeyen
+# bir yapı" İLE ÇÖKER — GENERIC bir sınıfın tip parametresi BAŞKA bir
+# MODÜLDEN İÇE AKTARILMIŞ (mangled adlı) bir sınıfa BAĞLANDIĞINDA
+# (`Box[Buffer]` GİBİ, `Buffer` `nox.buffer`den İçe aktarıldığında)
+# codegen'in monomorphization yolu BAŞARISIZ olur — AYNI sınıf YEREL
+# olarak TANIMLANDIĞINDA (`Box[Holder]`, `Holder` AYNI dosyada) SORUNSUZ
+# ÇALIŞIR (İZOLE, minimal bir tekrar-üretimle DOĞRULANDI). Bu, `Span`in
+# KENDİSİNİN `Buffer`ye bağımlı OLMASINA RAĞMEN (generic OLMADAN,
+# DOĞRUDAN bir alan olarak) ÇALIŞMASIYLA ÇELİŞMEZ — sorun özel olarak
+# GENERIC SINIF TİP PARAMETRESİNİN çapraz-modül bir sınıfa bağlanmasında.
+# BU maddenin kapsamı DIŞINDA bırakıldı (AYRI, kendi incelemesini hak
+# eden bir derleyici hatası) — `BinaryReader`/`BinaryWriter` bu YÜZDEN
+# SADECE `Buffer` alır. Bir `Span` üzerinde ayrıştırma yapmak isteyen
+# kod, ŞİMDİLİK `span.get(i)`yi DOĞRUDAN çağırmaya devam edebilir.
+#
+# **Tüm sabit-genişlikli okuma/yazmalar, bayt-bayt İNŞA/AYRIŞTIRMA
+# kullanır (`ptr_read`/`ptr_write` DEĞİL) — HER ZAMAN HEDEF tipin KENDİ
+# aritmetiğinde (`u8(byte) -> uN`/`iN`, SONRA kaydır/VEYA'la) — `nox.bits`
+# modülünün `swap32`/`swap64`sindeki AYNI teknik. Bu, `iN(uN_deger)` GİBİ
+# bir ARA dönüşümün (KONTROLLÜ, TAŞMA-reddeden — bkz. nox-teknik-
+# spesifikasyon.md §3.199) yanlışlıkla bir GEÇERLİ iki-tümleyen bit
+# örüntüsünü "taşma" SANIP REDDETMESİNİ ÖNLER (GERÇEKTEN denenip
+# bulundu: `i16(u16(65535))` bir taşma hatasıYLA ÇÖKER, ÇÜNKÜ dönüşüm
+# DEĞER-korumalı değil BİT-korumalıdır bekleniyordu).
+
+from nox.buffer import Buffer
+
+class BinaryReader:
+    _buf: Buffer
+    _pos: int
+
+    def __init__(self, buf: Buffer) -> None:
+        self._buf = buf
+        self._pos = 0
+
+    def position(self: BinaryReader) -> int:
+        return self._pos
+
+    def remaining(self: BinaryReader) -> int:
+        return self._buf.len() - self._pos
+
+    def seek(self: BinaryReader, pos: int) -> None:
+        self._pos = pos
+
+    def read_u8(self: BinaryReader) -> u8:
+        v: u8 = self._buf.get(self._pos)
+        self._pos = self._pos + 1
+        return v
+
+    # `i8(u8_deger)` DOĞRUDAN GÜVENLİ DEĞİLDİR (bkz. modül-üstü not —
+    # dönüşümler DEĞER-korumalı VE aralık-kontrollüdür, BİT-korumalı
+    # DEĞİL) — `u8`nin [128,255] aralığı `i8`in POZİTİF aralığını [0,127]
+    # AŞAR. `i16`ye GENİŞLETİLİP (HER u8 değeri i16'ya sığar, HER ZAMAN
+    # GÜVENLİ) ORADA ayarlanıp SONRA daraltılır.
+    def read_i8(self: BinaryReader) -> i8:
+        b: u8 = self.read_u8()
+        v: i16 = i16(b)
+        if v >= i16(128):
+            v = v - i16(256)
+        return i8(v)
+
+    def read_u16_le(self: BinaryReader) -> u16:
+        b0: u16 = u16(self.read_u8())
+        b1: u16 = u16(self.read_u8())
+        return b0 | (b1 << 8)
+
+    def read_u16_be(self: BinaryReader) -> u16:
+        b0: u16 = u16(self.read_u8())
+        b1: u16 = u16(self.read_u8())
+        return (b0 << 8) | b1
+
+    def read_i16_le(self: BinaryReader) -> i16:
+        b0: i16 = i16(self.read_u8())
+        b1: i16 = i16(self.read_u8())
+        return b0 | (b1 << 8)
+
+    def read_i16_be(self: BinaryReader) -> i16:
+        b0: i16 = i16(self.read_u8())
+        b1: i16 = i16(self.read_u8())
+        return (b0 << 8) | b1
+
+    def read_u32_le(self: BinaryReader) -> u32:
+        b0: u32 = u32(self.read_u8())
+        b1: u32 = u32(self.read_u8())
+        b2: u32 = u32(self.read_u8())
+        b3: u32 = u32(self.read_u8())
+        return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
+
+    def read_u32_be(self: BinaryReader) -> u32:
+        b0: u32 = u32(self.read_u8())
+        b1: u32 = u32(self.read_u8())
+        b2: u32 = u32(self.read_u8())
+        b3: u32 = u32(self.read_u8())
+        return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
+
+    def read_i32_le(self: BinaryReader) -> i32:
+        b0: i32 = i32(self.read_u8())
+        b1: i32 = i32(self.read_u8())
+        b2: i32 = i32(self.read_u8())
+        b3: i32 = i32(self.read_u8())
+        return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
+
+    def read_i32_be(self: BinaryReader) -> i32:
+        b0: i32 = i32(self.read_u8())
+        b1: i32 = i32(self.read_u8())
+        b2: i32 = i32(self.read_u8())
+        b3: i32 = i32(self.read_u8())
+        return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
+
+    def read_u64_le(self: BinaryReader) -> u64:
+        b0: u64 = u64(self.read_u8())
+        b1: u64 = u64(self.read_u8())
+        b2: u64 = u64(self.read_u8())
+        b3: u64 = u64(self.read_u8())
+        b4: u64 = u64(self.read_u8())
+        b5: u64 = u64(self.read_u8())
+        b6: u64 = u64(self.read_u8())
+        b7: u64 = u64(self.read_u8())
+        return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24) | (b4 << 32) | (b5 << 40) | (b6 << 48) | (b7 << 56)
+
+    def read_u64_be(self: BinaryReader) -> u64:
+        b0: u64 = u64(self.read_u8())
+        b1: u64 = u64(self.read_u8())
+        b2: u64 = u64(self.read_u8())
+        b3: u64 = u64(self.read_u8())
+        b4: u64 = u64(self.read_u8())
+        b5: u64 = u64(self.read_u8())
+        b6: u64 = u64(self.read_u8())
+        b7: u64 = u64(self.read_u8())
+        return (b0 << 56) | (b1 << 48) | (b2 << 40) | (b3 << 32) | (b4 << 24) | (b5 << 16) | (b6 << 8) | b7
+
+    def read_i64_le(self: BinaryReader) -> i64:
+        b0: i64 = i64(self.read_u8())
+        b1: i64 = i64(self.read_u8())
+        b2: i64 = i64(self.read_u8())
+        b3: i64 = i64(self.read_u8())
+        b4: i64 = i64(self.read_u8())
+        b5: i64 = i64(self.read_u8())
+        b6: i64 = i64(self.read_u8())
+        b7: i64 = i64(self.read_u8())
+        return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24) | (b4 << 32) | (b5 << 40) | (b6 << 48) | (b7 << 56)
+
+    def read_i64_be(self: BinaryReader) -> i64:
+        b0: i64 = i64(self.read_u8())
+        b1: i64 = i64(self.read_u8())
+        b2: i64 = i64(self.read_u8())
+        b3: i64 = i64(self.read_u8())
+        b4: i64 = i64(self.read_u8())
+        b5: i64 = i64(self.read_u8())
+        b6: i64 = i64(self.read_u8())
+        b7: i64 = i64(self.read_u8())
+        return (b0 << 56) | (b1 << 48) | (b2 << 40) | (b3 << 32) | (b4 << 24) | (b5 << 16) | (b6 << 8) | b7
+
+class BinaryWriter:
+    _buf: Buffer
+    _pos: int
+
+    def __init__(self, buf: Buffer) -> None:
+        self._buf = buf
+        self._pos = 0
+
+    def position(self: BinaryWriter) -> int:
+        return self._pos
+
+    def seek(self: BinaryWriter, pos: int) -> None:
+        self._pos = pos
+
+    def write_u8(self: BinaryWriter, v: u8) -> None:
+        self._buf.set(self._pos, v)
+        self._pos = self._pos + 1
+
+    def write_i8(self: BinaryWriter, v: i8) -> None:
+        self.write_u8(u8(i16(v) & i16(255)))
+
+    def write_u16_le(self: BinaryWriter, v: u16) -> None:
+        self.write_u8(u8(v & u16(255)))
+        self.write_u8(u8((v >> 8) & u16(255)))
+
+    def write_u16_be(self: BinaryWriter, v: u16) -> None:
+        self.write_u8(u8((v >> 8) & u16(255)))
+        self.write_u8(u8(v & u16(255)))
+
+    def write_i16_le(self: BinaryWriter, v: i16) -> None:
+        self.write_u8(u8(v & i16(255)))
+        self.write_u8(u8((v >> 8) & i16(255)))
+
+    def write_i16_be(self: BinaryWriter, v: i16) -> None:
+        self.write_u8(u8((v >> 8) & i16(255)))
+        self.write_u8(u8(v & i16(255)))
+
+    def write_u32_le(self: BinaryWriter, v: u32) -> None:
+        self.write_u8(u8(v & u32(255)))
+        self.write_u8(u8((v >> 8) & u32(255)))
+        self.write_u8(u8((v >> 16) & u32(255)))
+        self.write_u8(u8((v >> 24) & u32(255)))
+
+    def write_u32_be(self: BinaryWriter, v: u32) -> None:
+        self.write_u8(u8((v >> 24) & u32(255)))
+        self.write_u8(u8((v >> 16) & u32(255)))
+        self.write_u8(u8((v >> 8) & u32(255)))
+        self.write_u8(u8(v & u32(255)))
+
+    def write_i32_le(self: BinaryWriter, v: i32) -> None:
+        self.write_u8(u8(v & i32(255)))
+        self.write_u8(u8((v >> 8) & i32(255)))
+        self.write_u8(u8((v >> 16) & i32(255)))
+        self.write_u8(u8((v >> 24) & i32(255)))
+
+    def write_i32_be(self: BinaryWriter, v: i32) -> None:
+        self.write_u8(u8((v >> 24) & i32(255)))
+        self.write_u8(u8((v >> 16) & i32(255)))
+        self.write_u8(u8((v >> 8) & i32(255)))
+        self.write_u8(u8(v & i32(255)))
+
+    def write_u64_le(self: BinaryWriter, v: u64) -> None:
+        self.write_u8(u8(v & u64(255)))
+        self.write_u8(u8((v >> 8) & u64(255)))
+        self.write_u8(u8((v >> 16) & u64(255)))
+        self.write_u8(u8((v >> 24) & u64(255)))
+        self.write_u8(u8((v >> 32) & u64(255)))
+        self.write_u8(u8((v >> 40) & u64(255)))
+        self.write_u8(u8((v >> 48) & u64(255)))
+        self.write_u8(u8((v >> 56) & u64(255)))
+
+    def write_u64_be(self: BinaryWriter, v: u64) -> None:
+        self.write_u8(u8((v >> 56) & u64(255)))
+        self.write_u8(u8((v >> 48) & u64(255)))
+        self.write_u8(u8((v >> 40) & u64(255)))
+        self.write_u8(u8((v >> 32) & u64(255)))
+        self.write_u8(u8((v >> 24) & u64(255)))
+        self.write_u8(u8((v >> 16) & u64(255)))
+        self.write_u8(u8((v >> 8) & u64(255)))
+        self.write_u8(u8(v & u64(255)))
+
+    # `u64(...)`nin (64-bitlik mask literali `18446744073709551615` HİÇ
+    # İFADE EDİLEMEDİĞİNDEN — i64::MAX'ı AŞAR — VE `u64(negatif_int)`
+    # HER ZAMAN reddedildiğinden) `write_i16_le`/`write_i32_le`nin
+    # İZLEDİĞİ "maskele SONRA u16/u32'e çevir" deseni BURADA UYGULANAMAZ
+    # — DOĞRUDAN `i64` aritmetiğinde bayt-bayt AYRIŞTIRILIR (`read_i64_le`
+    # İLE AYNI teknik, TERS yönde).
+    def write_i64_le(self: BinaryWriter, v: i64) -> None:
+        self.write_u8(u8(v & i64(255)))
+        self.write_u8(u8((v >> 8) & i64(255)))
+        self.write_u8(u8((v >> 16) & i64(255)))
+        self.write_u8(u8((v >> 24) & i64(255)))
+        self.write_u8(u8((v >> 32) & i64(255)))
+        self.write_u8(u8((v >> 40) & i64(255)))
+        self.write_u8(u8((v >> 48) & i64(255)))
+        self.write_u8(u8((v >> 56) & i64(255)))
+
+    def write_i64_be(self: BinaryWriter, v: i64) -> None:
+        self.write_u8(u8((v >> 56) & i64(255)))
+        self.write_u8(u8((v >> 48) & i64(255)))
+        self.write_u8(u8((v >> 40) & i64(255)))
+        self.write_u8(u8((v >> 32) & i64(255)))
+        self.write_u8(u8((v >> 24) & i64(255)))
+        self.write_u8(u8((v >> 16) & i64(255)))
+        self.write_u8(u8((v >> 8) & i64(255)))
+        self.write_u8(u8(v & i64(255)))

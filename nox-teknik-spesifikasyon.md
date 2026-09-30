@@ -26208,6 +26208,100 @@ VE inşa-zamanı sınır denetimini kanıtlar. `fixture_corpus.zig`ye kaydedildi
 `nox_buffer_owned_byte_buffer.nox`, `Buffer`nin KENDİSİ `span()` metodu
 ALDIĞINDAN — IR anlık görüntüsü KASITLI olarak YENİDEN OLUŞTURULDU).
 
+## 3.214 v4 (2.0 öncesi son mimari stdlib katmanlaşması, Faz A), madde 7 (SON MADDE) — `nox.binary` + İKİ GERÇEK bulgu
+
+**Bağlam:** Faz A'nın 7. VE SON maddesi — `BinaryReader`/`BinaryWriter`,
+ELF/PCI/ACPI/ağ paketi/dosya-sistemi GİBİ ikili formatları `ptr_read`/
+`ptr_write` KULLANMADAN ergonomik ayrıştırmayı/üretmeyi hedefler.
+`Buffer`ye (madde 5) BAĞIMLI. Bu madde TAMAMLANDIĞINDA Faz A'nın
+TAMAMI (7/7 madde) BİTMİŞ olur.
+
+### Bulgu #1: GERÇEK bir codegen hatası — generic sınıf tip parametresi çapraz-modül bir sınıfa BAĞLANDIĞINDA ÇÖKER
+
+`BinaryReader`/`BinaryWriter`i HEM `Buffer` HEM `Span` kabul edecek
+şekilde GENERIC (`class BinaryReader[T]: _src: T`) yazmaya ÇALIŞIRKEN
+bulundu: `noxc check` SIFIR hata verir (checker'ın `instantiateGenericClass`ı
+DOĞRU çalışır) AMA `noxc build`/`run` "desteklenmeyen bir yapı" İLE
+ÇÖKER. İZOLE, minimal bir tekrar-üretimle (`class Box[T]: v: T; ...;
+box: Box[Buffer] = Box[Buffer](b)`, `Buffer` `nox.buffer`den İçe
+aktarıldığında) KANITLANDI — AYNI desen YEREL bir sınıfla (`Box[Holder]`,
+`Holder` AYNI dosyada TANIMLIYSA) SORUNSUZ ÇALIŞIR. Kök neden HENÜZ
+İZOLE EDİLMEDİ (checker'ın KENDİSİ `from_imports` geri-düşüşünü (bkz.
+§3.208'in `typeExprToType`i) ZATEN doğru uyguluyor — sorun codegen'in
+monomorphization yolunda, muhtemelen SIRALAMA/kayıt bağımlılığı, AMA
+BU KESİNLEŞTİRİLMEDİ). `Span`in KENDİSİNİN `Buffer`ye bağımlı OLMASINA
+RAĞMEN (generic OLMADAN, `_buf: Buffer` DOĞRUDAN bir alan olarak) SORUNSUZ
+ÇALIŞMASIYLA ÇELİŞMEZ — sorun ÖZEL olarak generic sınıf TİP PARAMETRESİNİN
+çapraz-modül bir sınıfa bağlanmasında. **BU maddenin kapsamı DIŞINDA
+bırakıldı** (AYRI, kendi incelemesini hak eden bir derleyici hatası,
+proje belleğine kaydedildi) — `BinaryReader`/`BinaryWriter` bu YÜZDEN
+SADECE `Buffer` alır (generic DEĞİL). Bir `Span` üzerinde ayrıştırma
+yapmak isteyen kod, ŞİMDİLİK `span.get(i)`yi DOĞRUDAN çağırmaya devam
+edebilir.
+
+### Bulgu #2: sabit-genişlikli tamsayı dönüşümleri DEĞER-korumalıdır, BİT-korumalı DEĞİL — binary format ayrıştırma İçİn KRİTİK bir ayrım
+
+`read_i8`/`write_i8` yazılırken GERÇEKTEN denenip bulundu: `i8(u8_degeri)`
+(VEYA HERHANGİ bir AYNI-genişlikte işaretli↔işaretsiz dönüşüm, ör.
+`u8(i8_degeri)`) `u8_degeri >= 128` (SIRASIYLA `i8_degeri < 0`) İÇİN
+"tamsayı taşması" İLE ÇÖKER — v2.0 madde 4'ün (bkz. §3.199) "dönüşümler
+HER ZAMAN aralık-kontrollüdür" kuralı BURADA TAM OLARAK bu ANLAMA gelir:
+`iN(x)`/`uN(x)` DEĞERİN KENDİSİNİN hedef tipin ARALIĞINA sığıp sığmadığını
+kontrol eder, KAYNAK BİT ÖRÜNTÜSÜNÜ olduğu gibi yeniden-yorumlamaz. BU,
+İKİLİ (binary) format ayrıştırma İçİn (ki BİT-korumalı yeniden-yorumlama
+GEREKTİRİR — ham bir `0xFF` baytının `i8` OLARAK -1 OKUNMASI GİBİ) KRİTİK
+bir ayrımdır ve GERÇEKTEN ÇÖKEREK keşfedildi.
+
+**Çözüm deseni (HER işaretli okuma/yazma İçİn UYGULANDI):** HER bayt
+AYRI AYRI, HER ZAMAN HEDEF tipin KENDİ aritmetiğine (`iN(tek_bir_bayt)`
+— BİR bayt [0,255] HER ZAMAN HERHANGİ bir `iN`nin (i8 HARİÇ — aşağıya
+bkz.) ARALIĞINA SIĞAR, bu YÜZDEN GÜVENLİDİR) döner, SONRA kaydırma/VEYA
+İLE birleştirilir (`nox.bits`nin `swap32`/`swap64`sindeki AYNI teknik —
+kaydırma/VEYA/VE operatörleri BİT-korumalıdır, DEĞER-korumalı DEĞİL,
+bu YÜZDEN dönüşümlerin AKSİNE burada sorun YOKTUR). **`i8` ÖZEL bir
+durumdur:** TEK bir baytın KENDİSİ zaten 8 bit OLDUĞUNDAN "byte-bazında
+inşa" tekniği UYGULANAMAZ (bölünecek başka bir bayt YOK) — bunun yerine
+`i16`ye GENİŞLETİLİP (HER u8 değeri i16'ya HER ZAMAN sığar, GÜVENLİ),
+ORADA `>= 128 İSE -256 ekle` AYARLAMASI yapılıp SONRA `i8`e DARALTILIR
+(bu noktada değer ZATEN [-128,127] aralığındadır, GÜVENLİ). **`i64`
+DE ÖZEL bir durumdur (TERS gerekçeyle):** Nox'ta `i64`DEN DAHA GENİŞ bir
+işaretli tip YOKTUR, bu YÜZDEN `u64`ten `i64`e "genişletip ayarlama"
+YAPILAMAZ — `read_i64_le`/`be` DOĞRUDAN `i64` aritmetiğinde bayt-bayt
+İNŞA EDİLİR (`u64` ARA DEĞERİ HİÇ kullanılmaz). TÜM MIN/MAX sınır
+değerleri (i8/i16/i32/i64'ün İKİ-TÜMLEYEN ASİMETRİSİ — MIN'in POZİTİF
+karşılığı YOKTUR) GERÇEK QEMU/noxc İLE test edilip DOĞRULANDI.
+
+### `nox.binary`nin KENDİSİ
+
+`BinaryReader(buf)`: `position`/`remaining`/`seek`/`read_u8`/`read_i8`/
+`read_u16_le`/`read_u16_be`/`read_i16_le`/`read_i16_be`/`read_u32_le`/
+`read_u32_be`/`read_i32_le`/`read_i32_be`/`read_u64_le`/`read_u64_be`/
+`read_i64_le`/`read_i64_be`. `BinaryWriter(buf)`: SİMETRİK `write_*`
+ailesi. HİÇBİR yeni capability GEREKTİRMEZ.
+
+### Test
+
+`tests/golden/codegen_cases/nox_binary_reader_writer_roundtrip.nox` —
+TÜM genişlik/işaretlilik/endian KOMBİNASYONLARI + TÜM MIN/MAX sınır
+değerleri. `fixture_corpus.zig`ye kaydedildi. `zig build test` sıfır
+regresyon.
+
+### Faz A KAPANIŞI
+
+**v4 Faz A'nın TÜM 7 maddesi TAMAMLANDI** (§3.208-§3.214): capability
+modeli, generic self-instantiation düzeltmesi, `nox.mem`, `nox.bits`,
+`Buffer`, `Span`, `nox.binary`. Bu süreçte TOPLAM 9 GERÇEK, önceden
+keşfedilmemiş derleyici hatası bulunup DÜZELTİLDİ (madde 1'in
+module_loader decorator kaybı; madde 2'nin substituteExpr eksikliği;
+madde 3'ün 3'lü sizeof/ptr[T]-unification/ptr_to_int bulgusu; madde 4'ün
+6 site'lık fixed_int damgalama eksikliği; madde 5'in list[T] indeksle
+atama hatası) VE 1 tanesi (madde 7'nin generic+çapraz-modül sınıf
+bulgusu) BİLİNÇLİ olarak KENDİ AYRI incelemesine BIRAKILDI. Faz B
+(mevcut stdlib'i profile-neutral hale getirme) VE Faz C (dogfood: aynı
+testleri hosted+freestanding+QBE+LLVM'de çalıştırma) HENÜZ
+PLANLANMADI — proje belleği `project_v4_pre20_stdlib_roadmap`nin
+KENDİ notu.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
@@ -26244,10 +26338,12 @@ KALICI olarak açık bırakılan 2 madde: AArch64 Linux CI stack-smash kökü
 kararıyla ŞİMDİLİK KAPATILMAYAN bulgulardır.
 
 **Sıradaki adım:** v3'ten HEMEN SONRA başlayan v4 (2.0 öncesi son mimari
-stdlib katmanlaşması, Faz A, bkz. §3.208-§3.213 + proje belleği `project_
-v4_pre20_stdlib_roadmap`) — madde 1 (capability modeli, §3.208), madde 2
-(generic self-instantiation düzeltmesi, §3.209), madde 3 (`nox.mem`,
-§3.210), madde 4 (`nox.bits` + `fixed_int` damgalama hatası, §3.211),
-madde 5 (`Buffer` + `list[T]` indeksle atama hatası, §3.212) VE madde 6
-(`Span`, §3.213) TAMAMLANDI; sırada madde 7 (`nox.binary`, SON madde —
-`BinaryReader`/`BinaryWriter`, `Buffer`/`Span`e BAĞIMLI) VAR.
+stdlib katmanlaşması) **Faz A'sı TAMAMEN BİTTİ** (7/7 madde, bkz.
+§3.208-§3.214 + proje belleği `project_v4_pre20_stdlib_roadmap`) —
+capability modeli, generic self-instantiation düzeltmesi, `nox.mem`,
+`nox.bits`, `Buffer`, `Span`, `nox.binary`. Faz B (mevcut stdlib'i
+profile-neutral hale getirme) VE Faz C (dogfood: hosted+freestanding+
+QBE+LLVM'de aynı testler) HENÜZ PLANLANMADI — kullanıcı kararı
+BEKLİYOR. AYRICA, KENDİ AYRI incelemesini BEKLEYEN 1 AÇIK bulgu:
+generic sınıf tip parametresinin çapraz-modül bir sınıfa bağlanması
+codegen'de ÇÖKER (bkz. §3.214'ün bulgu #1'i).

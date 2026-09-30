@@ -1007,6 +1007,7 @@ pub const Checker = struct {
         // v4 Faz A madde 5 (bkz. nox-teknik-spesifikasyon.md §3.2xx):
         // `nox.buffer` — SAF `list[u8]` sarmalayıcısı, `nox.mem`/`nox.bits`
         // İLE AYNI gerekçeyle HİÇBİR OS/libc bağımlılığı TAŞIMAZ.
+        .{ .name = "binary", .caps = &.{} },
         .{ .name = "buffer", .caps = &.{} },
         .{ .name = "collections", .caps = &.{} },
         .{ .name = "crypto", .caps = &.{} },
