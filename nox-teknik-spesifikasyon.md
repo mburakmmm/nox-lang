@@ -26155,6 +26155,59 @@ KÜÇÜĞÜ kadar bayt kopyalar). HİÇBİR yeni capability GEREKTİRMEZ.
 genişlikli eleman İNDEKSLE ATAMA KULLANMADIĞINDAN IR anlık görüntüleri
 ETKİLENMEDİ).
 
+## 3.213 v4 (2.0 öncesi son mimari stdlib katmanlaşması, Faz A), madde 6 — `Span`
+
+**Bağlam:** Faz A'nın 6. maddesi — sahip OLMAYAN (non-owning), bitişik
+bellek görünümü. Bu madde, roadmap'te AÇIKÇA "kendi karar noktası"
+olarak işaretlenmişti: AGENTS.md İlke #1'in ("ownership hiçbir zaman
+kullanıcı sözdiziminde görünmez") "non-owning" bir tiple NASIL uyumlu
+olacağı.
+
+### Kullanıcı kararı (AskUserQuestion)
+
+İki seçenek SUNULDU:
+- **(a) Gerçek ham/non-owning görünüm** (önerinin orijinal vizyonu,
+  Rust/C++ slice tarzı): `Span`in `_addr: int` + `_len` taşıması,
+  `Buffer`yi CANLI TUTMAMASI. `Buffer.span()` çağrıldığında BİR KEZ
+  `detach` İLE adres önbelleklenir — AMA Nox'un ŞU AN kullanıcı koduna
+  HİÇBİR manuel "free" ilkeli SUNMAMASI YÜZÜNDEN (bkz. §3.212'nin
+  `Buffer` tasarım kararı, AYNI gerekçe) HER `.span()` ÇAĞRISI +1
+  refcount SIZDIRIRDI.
+- **(b) Güvenli, ARC-korumalı pencere:** `Span`in KENDİ İÇİNDE `_buf:
+  Buffer` (NORMAL, retained bir referans) TUTMASI, `get`/`set`in
+  `self._buf.get/set(start+i)`e DELEGE etmesi. HİÇBİR sızıntı/sarkan-
+  işaretçi riski YOK.
+
+**(b) SEÇİLDİ** — AGENTS.md İlke #1 VE Nox'un GENEL otomatik-bellek
+felsefesiyle TAM TUTARLI olduğu İçİn. Bedel: `Buffer`ye bağlı OLMAYAN
+ham bellek (`nox.mem`/kernel MMIO) ÜZERİNDE DOĞRUDAN `Span` inşa
+EDİLEMEZ — o durumlar `ptr[T]`i DOĞRUDAN kullanmaya devam eder (BU,
+BİLİNÇLİ KABUL EDİLEN bir sınırlamadır).
+
+### `Span`nin KENDİSİ
+
+`Span(buf, start, end)` (`[start, end)`, Python'un KENDİ dilim [slice]
+kuralı) VE `Buffer.span(start, end) -> Span` (ergonomik kurucu). `len()`/
+`get(i)`/`set(i, v)` — İKİ AYRI sınır denetimi katmanı: (1) `Span`in
+KENDİ `_len`ine göre (`i < 0 veya i >= self._len` İSE `IndexError`,
+`Buffer`nin TOPLAM uzunluğundan DAHA DAR olabilir), (2) altta yatan
+`Buffer.get`/`set`in KENDİ (`list[u8]` indekslemesinden MİRAS kalan)
+sınır denetimi. Aynı `Buffer` üzerinde birden FAZLA `Span` (ÇAKIŞAN
+aralıklarla BİLE) AYNI ANDA var OLABİLİR — `Span`ler SADECE OKUR/YAZAR,
+kendi ARALARINDA hiçbir ALIAS/ÇAKIŞMA denetimi YAPMAZLAR (Rust'ın ÖDÜNÇ
+ALMA denetleyicisinin AKSİNE — Nox BUNU BİLİNÇLİ olarak HEDEFLEMEZ,
+tıpkı `list[T]`in İKİ farklı DEĞİŞKENDEN AYNI ANDA erişilebilmesi GİBİ).
+
+### Test
+
+`tests/golden/codegen_cases/nox_buffer_span_safe_window.nox` — `Span`in
+`Buffer`ı GERÇEKTEN canlı tuttuğunu (yazma İKİ yönde de YANSIR), KENDİ
+sınırının `Buffer`ınkinden DAHA DAR olabildiğini (VE bunun AYRI denetlendiğini)
+VE inşa-zamanı sınır denetimini kanıtlar. `fixture_corpus.zig`ye kaydedildi.
+`zig build test` sıfır regresyon (1 mevcut fixture'ın —
+`nox_buffer_owned_byte_buffer.nox`, `Buffer`nin KENDİSİ `span()` metodu
+ALDIĞINDAN — IR anlık görüntüsü KASITLI olarak YENİDEN OLUŞTURULDU).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
@@ -26191,11 +26244,10 @@ KALICI olarak açık bırakılan 2 madde: AArch64 Linux CI stack-smash kökü
 kararıyla ŞİMDİLİK KAPATILMAYAN bulgulardır.
 
 **Sıradaki adım:** v3'ten HEMEN SONRA başlayan v4 (2.0 öncesi son mimari
-stdlib katmanlaşması, Faz A, bkz. §3.208-§3.212 + proje belleği `project_
+stdlib katmanlaşması, Faz A, bkz. §3.208-§3.213 + proje belleği `project_
 v4_pre20_stdlib_roadmap`) — madde 1 (capability modeli, §3.208), madde 2
 (generic self-instantiation düzeltmesi, §3.209), madde 3 (`nox.mem`,
-§3.210), madde 4 (`nox.bits` + `fixed_int` damgalama hatası, §3.211) VE
-madde 5 (`Buffer` + `list[T]` indeksle atama hatası, §3.212) TAMAMLANDI;
-sırada madde 6 (`Span`) VAR — AGENTS.md İlke #1'in "ownership hiçbir
-zaman kullanıcı sözdiziminde görünmez" kuralıyla nasıl UYUMLU olacağı
-KENDİ, ÖZEL bir karar noktası GEREKTİRİR.
+§3.210), madde 4 (`nox.bits` + `fixed_int` damgalama hatası, §3.211),
+madde 5 (`Buffer` + `list[T]` indeksle atama hatası, §3.212) VE madde 6
+(`Span`, §3.213) TAMAMLANDI; sırada madde 7 (`nox.binary`, SON madde —
+`BinaryReader`/`BinaryWriter`, `Buffer`/`Span`e BAĞIMLI) VAR.

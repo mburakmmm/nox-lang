@@ -14,6 +14,21 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.117.0]
+
+### Eklendi
+
+- **`nox.buffer.Span` — sahip olmayan, ARC-korumalı bellek penceresi
+  (bkz. nox-teknik-spesifikasyon.md §3.213, v4 Faz A madde 6)**:
+  `Span(buf, start, end)` / `Buffer.span(start, end)`, `len()`, `get(i)`,
+  `set(i, v)`. Kullanıcı onaylı mimari karar: `Span` kendi içinde
+  `Buffer`ye normal, retained bir referans tutar (Buffer'ı canlı tutar,
+  asla sarkmaz) — gerçek bir ham/non-owning görünüm YERİNE (ki bu, Nox'un
+  şu an manuel "free" ilkeli olmaması yüzünden her `.span()` çağrısında
+  refcount sızdırırdı). AGENTS.md İlke #1 ile tutarlı. Span'in kendi
+  sınırı, altta yatan Buffer'ın sınırından daha dar olabilir ve bu ayrıca
+  denetlenir.
+
 ## [1.116.0]
 
 ### Eklendi

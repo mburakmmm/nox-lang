@@ -32,6 +32,47 @@
 # GEREKSİZ çağrılması — okuma yolu, `genIndex`, AYNI kontrolü HİÇ
 # yapmıyordu). Düzeltilmeden `Buffer.set()` (VE list[u8] kullanan HERHANGİ
 # bir kod) ÇALIŞAMAZDI.
+#
+# **`Span` (Faz A madde 6) — KULLANICI ONAYLI karar: GÜVENLİ, ARC-korumalı
+# bir "pencereli görünüm", GERÇEK (Rust/C++ tarzı) sahiplenmeyen bir ham
+# görünüm DEĞİL.** İKİ seçenek SUNULDU: (a) `Span`in `_addr: int` + `_len`
+# taşıması, `Buffer`yi CANLI TUTMAMASI (`Buffer.span()` çağrıldığında BİR
+# KEZ `detach` İLE adres önbelleklenir — Nox'un manuel "free" ilkeli
+# OLMADIĞINDAN HER çağrıda +1 refcount SIZDIRIRDI), (b) `Span`in KENDİ
+# İÇİNDE `_buf: Buffer` (NORMAL, retained bir referans) TUTMASI, `get`/
+# `set`in `self._buf.get/set(start+i)`e DELEGE etmesi — HİÇBİR sızıntı/
+# sarkan-işaretçi riski YOK, AGENTS.md İlke #1 ("ownership hiçbir zaman
+# kullanıcı sözdiziminde görünmez") VE Nox'un GENEL otomatik-bellek
+# felsefesiyle TAM TUTARLI. (b) SEÇİLDİ — bedel: `Buffer`ye bağlı
+# OLMAYAN ham bellek (`nox.mem`/kernel MMIO) ÜZERİNDE DOĞRUDAN `Span`
+# inşa EDİLEMEZ (o durumlar `ptr[T]`i DOĞRUDAN kullanmaya devam eder).
+
+class Span:
+    _buf: Buffer
+    _start: int
+    _len: int
+
+    # `buf`nin `[start, end)` aralığını (uçları DAHİL değil-hariç, Python'un
+    # KENDİ dilim [slice] kuralı) KAPSAYAN bir pencere.
+    def __init__(self, buf: Buffer, start: int, end: int) -> None:
+        if start < 0 or end < start or end > buf.len():
+            raise IndexError("Span araligi Buffer sinirlarinin disinda")
+        self._buf = buf
+        self._start = start
+        self._len = end - start
+
+    def len(self: Span) -> int:
+        return self._len
+
+    def get(self: Span, i: int) -> u8:
+        if i < 0 or i >= self._len:
+            raise IndexError("Span indeksi sinirlarin disinda")
+        return self._buf.get(self._start + i)
+
+    def set(self: Span, i: int, v: u8) -> None:
+        if i < 0 or i >= self._len:
+            raise IndexError("Span indeksi sinirlarin disinda")
+        self._buf.set(self._start + i, v)
 
 class Buffer:
     _data: list[u8]
@@ -70,3 +111,8 @@ class Buffer:
         while i < n:
             self._data[i] = other.get(i)
             i = i + 1
+
+    # `[start, end)` aralığını kapsayan bir `Span` (bkz. `Span`in modül-
+    # üstü notu) — `self`yi CANLI TUTAR (normal, retained bir referans).
+    def span(self: Buffer, start: int, end: int) -> Span:
+        return Span(self, start, end)

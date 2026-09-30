@@ -1,0 +1,43 @@
+from nox.buffer import Buffer, Span
+
+# v4 Faz A madde 6 (bkz. nox-teknik-spesifikasyon.md §3.2xx): Span —
+# kullanıcı onaylı "güvenli, ARC-korumalı pencere" tasarımı. `Span`
+# `Buffer`yi CANLI TUTAR (normal, retained bir referans) — HİÇBİR ham
+# işaretçi/detach/lowlevel: YOK.
+
+b: Buffer = Buffer(10)
+i: int = 0
+while i < 10:
+    b.set(i, u8(i * 10))
+    i = i + 1
+
+s: Span = b.span(2, 6)
+print(s.len())
+print(s.get(0))
+print(s.get(1))
+print(s.get(3))
+
+# Span üzerinden yazma, Buffer'a GERÇEKTEN yansır (aynı ARC-korumalı
+# nesneyi paylaşıyorlar).
+s.set(0, u8(99))
+print(b.get(2))
+print(b.get(0))
+
+# Span'in KENDİ sınırı, Buffer'ın sınırından DAHA DAR — Span'in
+# dışındaki (ama Buffer'ın içindeki) bir indeks REDDEDİLMELİ.
+try:
+    s.get(4)
+    print("HATA: reddedilmeliydi")
+except IndexError:
+    print("span_bounds_ok")
+
+# Buffer'ın kendi sınırının DIŞINDA bir Span inşa etmek REDDEDİLMELİ.
+try:
+    s2: Span = b.span(8, 20)
+    print("HATA: reddedilmeliydi")
+except IndexError:
+    print("construct_bounds_ok")
+
+# Tam-aralık Span.
+full: Span = Span(b, 0, b.len())
+print(full.len())
