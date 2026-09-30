@@ -25506,18 +25506,69 @@ maddesinin TAM OLARAK NEDEN VAR OLDUĞUNUN kanıtıdır — bir "semantik
 dondurma" (§3.206'nın KENDİSİ) bile, GERÇEK CI çalıştırılıp
 DOĞRULANMADAN "tamamlandı" SAYILAMAZ.
 
-### Doğrulama
+### Doğrulama — düzeltmeDEN SONRA, GERÇEK CI'ye karşı
 
 Minimal reprodüksiyon (`nox.json.encode_string("hello")`) düzeltmeDEN
 ÖNCE `UndefinedFunction` verdi, SONRA doğru çalıştı. `zig build test`
-SIFIR regresyon. GERÇEK CI'nin (nyx/aether) bu düzeltmeyle YENİDEN
-YEŞİL olup OLMADIĞI, düzeltme main'e push EDİLDİKTEN SONRA doğrulanacak
-(bu KAYIT, push ÖNCESİ yazıldı — "ölç, varsayma" disiplini GEREĞİ,
-GERÇEK CI sonucunu İDDİA ETMEDEN ÖNCE BEKLENMELİ).
+SIFIR regresyon. **Düzeltme (v1.111.2) main'e push EDİLDİKTEN SONRA
+GERÇEK CI izlendi (`gh run watch`) — "Harici entegrasyon fixture'ları
+(Aether + Nyx)" iş akışı YENİDEN YEŞİL oldu (HEM Nyx HEM Aether'in TÜM
+test dosyaları GEÇTİ), `main`in KENDİ CI'si de YEŞİL** (TEK istisna:
+`Linux (aarch64)` işi — bu, `continue-on-error` İLE İŞARETLİ, ÖNCEDEN
+BİLİNEN/belgelenen AArch64 stack-smash sorunu, YENİ bir regresyon
+DEĞİL). v1.111.2'nin GitHub Release'i (4 platform ikilisi: windows-x64/
+linux-arm64/macos-arm64/linux-x64) BAŞARIYLA yayımlandı.
+
+**AYRICA bulunan (GERÇEK CI/Release geçmişi taranırken) bir işlem
+boşluğu:** `v1.110.4`nin git tag'i VAR AMA GitHub Release'i YOK — o anın
+hızlı ardışık etiketlemesi (`main`e birkaç dakika arayla art arda push)
+YÜZÜNDEN CI'si İPTAL EDİLMİŞ, release iş akışının KENDİ güvenlik kapısı
+(v1.79.0'ın GEÇMİŞTEKİ bir hatasının TEKRARINI önlemek İçİn — bkz. o
+iş akışının KENDİ AŞAĞIDAKİ notu) yayını DURDURMUŞTU. Kullanıcıya
+sorulup ("geriye dönük release'i tetikle" mi "olduğu gibi bırak" mı)
+**"olduğu gibi bırak" seçildi** — v1.110.4, İçERİĞİ TAMAMEN v1.111.x
+TARAFINDAN KAPSANDIĞINDAN (kimse ONA İHTİYAÇ DUYMAZ) pratik bir DEĞER
+TAŞIMIYOR, SADECE tarihsel bir kayıt olarak KALIYOR.
 
 **Kritik dosyalar:** `stdlib/nox/json.nox` (6 YENİ deprecated takma ad),
 `tests/golden/codegen_cases/json_csv_deprecated_aliases_still_work.nox`
 (genişletildi).
+
+### Devam — TÜM opt-in (varsayılan `zig build test`in PARÇASI OLMAYAN,
+YAVAŞ) test paketlerinin release-öncesi SÜPÜRMESİ
+
+"RC + release qualification"in DOĞAL bir PARÇASI olarak, bu depoya
+şimdiye KADAR eklenmiş TÜM opt-in/yavaş build adımları TEK TEK
+ÇALIŞTIRILDI (`zig build test`in KENDİSİ bunları HİÇ İçERMEZ, bkz. HER
+birinin KENDİ "'test' adımının PARÇASI DEĞİL" notu):
+
+| Adım | Sonuç |
+|---|---|
+| `concurrency-torture-test` (5 seed × 3000 görev) | Ana koşu TEMİZ; AYRI bir "determinizm kanıtı" alt-testi ~6 denemede 1 kez BAŞARISIZ oldu (aşağıya bkz.) |
+| `concurrency-torture2-test` (5 seed × 500 görev) | TEMİZ |
+| `kernel-boot-test` (GERÇEK QEMU, x86_64) | TEMİZ |
+| `http-soak-test` (10 saniye) | TEMİZ |
+| `backend-differential-corpus-test` | TEMİZ (277 fixture, 0 FARK) |
+
+**GERÇEK, NADİR bir bulgu — `concurrency-torture-test`nin KENDİ
+"determinizm kanıtı" testi ~6 çalıştırmada 1 KEZ BAŞARISIZ oldu:** AYNI
+SABİT seed (123456789) İKİ ARDIŞIK çalıştırmada FARKLI bir sonuç
+üretti (`TORTURE_OK 123456789 3000 2182 82 736` vs `... 2181 83 736` —
+`completed`/`cancelled` sayıları 1 KAYDI, TOPLAM AYNI kaldı). **Kök
+neden (analiz EDİLDİ, TAM DOĞRULANMADI — AArch64 İLE AYNI statüde
+BIRAKILDI):** `nested_work`in TEK checkpoint'i (`await inner`) İLE
+DIŞARIDAN gelen `t3.cancel()` çağrısı ARASINDAKİ yarış, `--release`in
+GERÇEK M:N iş-çalan zamanlayıcısında (8 GERÇEK OS iş parçacığı) OS
+zamanlama JİTTER'INA bağlıdır — PRNG tohumu SADECE MANTIKSAL kararları
+(hangi görev İPTAL EDİLECEK) sabitler, GERÇEK iş parçacığı zamanlamasını
+(nested_work'ün fiber'ı `await`e ULAŞMADAN mı, yoksa cancel bayrağı
+SETLENMEDEN mi ÖNCE çalışır) DEĞİL. **Kullanıcı kararıyla** (AArch64
+madde 1'in AYNI ÖRÜNTÜSÜ): DERİN kök-neden araştırması BAŞLATILMADI —
+bilgilendirici bir not OLARAK kaydedilip AYRI, KENDİ turunu gerektiren
+bir gelecek görev OLARAK bırakıldı; `concurrency_torture_test.zig`nin
+KENDİSİ DEĞİŞTİRİLMEDİ (testin İDDİASI, SEYREK DE OLSA, HENÜZ tam
+olarak DOĞRU DEĞİL — bu KASITLI olarak KAYDA geçirilir, "düzeltildi"
+DENMEZ).
 
 ---
 
@@ -25643,7 +25694,8 @@ DÖNÜK DEĞİŞMEYECEĞİ GARANTİSİDİR, YENİ ekleme YASAĞI DEĞİL.
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
-başladı) — 1-11 TAMAMLANDI (bu bölüm madde 11'in KENDİSİDİR):
+başladı, 2026-09-30 BİTTİ) — **TÜM 12 MADDE TAMAMLANDI** (madde 8 HARİÇ,
+BİLİNÇLİ olarak ATLANDI):
 
 1. ✅ AArch64 stack-smash — kök neden KANITLANAMADI (`continue-on-error`
    CI bayrağı KALDI), yeniden-üretim ALTYAPISI KURULDU.
@@ -25657,7 +25709,22 @@ başladı) — 1-11 TAMAMLANDI (bu bölüm madde 11'in KENDİSİDİR):
 9. ✅ Derleyici fuzzing — 2 GERÇEK LLVM emisyon eksikliği.
 10. ✅ Stdlib/API denetimi — GERÇEK bir use-after-free hatası + `nox.
     toml`/`nox.yaml.dump` + `DateTime.to_epoch_ms`.
-11. ✅ Semantik dondurma + spesifikasyon (BU bölüm).
+11. ✅ Semantik dondurma + spesifikasyon.
+12. ✅ RC + release qualification (BU bölüm) — GERÇEK CI/Release
+    geçmişi taranarak `nyx`/`aether`i kıran KRİTİK bir üretim
+    regresyonu (§3.207) bulunup düzeltildi, TÜM opt-in/yavaş test
+    paketleri süpürüldü (1 nadir, kaydedilmiş determinizm bulgusu
+    HARİÇ TEMİZ), v1.111.2'nin GERÇEK CI'si + Release'i (4 platform)
+    doğrulandı.
 
-**Sıradaki (ve SON) madde:**
-- [ ] 12. RC + release qualification.
+**v3 sertleştirme yol haritası TAMAMLANDI.** Nox v1.111.2 itibarıyla:
+dil/stdlib semantiği DONMUŞ (§10), GERÇEK CI/harici entegrasyon
+testleri (`nyx`/`aether`) YEŞİL, TÜM opt-in kalite kapıları (concurrency
+torture ×2, backend fark testi, kernel-boot, http-soak) TEMİZ. Bilinçli,
+KALICI olarak açık bırakılan 2 madde: AArch64 Linux CI stack-smash kökü
+(madde 1), concurrency-torture'ın nadir determinizm bulgusu (madde 12)
+— HER İKİSİ de KENDİ, AYRI, gelecekteki bir tur GEREKTİREN, kullanıcı
+kararıyla ŞİMDİLİK KAPATILMAYAN bulgulardır.
+
+**Sıradaki adım:** yeni bir yol haritası/öncelik listesi — kullanıcı
+kararı BEKLİYOR.

@@ -14,6 +14,21 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.111.3]
+
+### Değişti
+
+- **v3 sertleştirme yol haritası TAMAMLANDI (bkz. nox-teknik-
+  spesifikasyon.md §3.207/§11)**: madde 12'nin (RC + release
+  qualification) geri kalanı — GERÇEK CI/Release izlendi (v1.111.2'nin
+  hem `main` CI'si hem `nyx`/`aether` entegrasyon testleri hem 4
+  platformlu Release'i doğrulandı), TÜM opt-in/yavaş test paketleri
+  (concurrency torture ×2, backend fark testi, kernel-boot, http-soak)
+  çalıştırıldı. Kod değişikliği yok — sadece belgeleme. `concurrency-
+  torture-test`in kendi "determinizm kanıtı" testinde nadir (~6
+  denemede 1) bir bulgu kaydedildi (AArch64 madde 1'le aynı statüde,
+  kendi gelecek turu bekliyor) — kod DEĞİŞMEDİ.
+
 ## [1.111.2]
 
 ### Düzeltildi
