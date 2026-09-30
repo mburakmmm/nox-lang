@@ -1,0 +1,60 @@
+import nox.mem
+
+# NOT: `detach(list[T])` listenin BAŞINDAKİ 16-baytlık başlığa (length+
+# capacity) işaret eden bir ptr döner — GERÇEK eleman verisi 16 bayt
+# SONRA başlar (bkz. `nox.mem`nin KENDİ modül-üstü notu, `shared/
+# abi_layout.zig`nin `LIST_HEADER_SIZE`ı). `ptr_add(raw, 16)` bunu atlar.
+def data_ptr(raw: ptr) -> ptr:
+    lowlevel:
+        return ptr_add(raw, 16)
+
+def test_copy_and_set() -> None:
+    lowlevel:
+        src_buf: list[int] = [1, 2, 3, 4, 5]
+        src: ptr[int] = ptr[int](ptr_to_int(data_ptr(detach(src_buf))))
+
+        dst_buf: list[int] = [0, 0, 0, 0, 0]
+        dst: ptr[int] = ptr[int](ptr_to_int(data_ptr(detach(dst_buf))))
+
+        nox.mem.copy(dst, src, 5)
+        print(ptr_read(ptr_offset(dst, 0)))
+        print(ptr_read(ptr_offset(dst, 4)))
+
+        nox.mem.set(dst, 99, 5)
+        print(ptr_read(ptr_offset(dst, 2)))
+
+def test_move_overlap_forward() -> None:
+    lowlevel:
+        buf: list[int] = [1, 2, 3, 4, 5, 0, 0]
+        base: ptr[int] = ptr[int](ptr_to_int(data_ptr(detach(buf))))
+        # kaydır: [1,2,3,4] -> pozisyon 1'den itibaren (üst üste biner,
+        # dst > src) — SONDAN BAŞA kopyalanmalı.
+        nox.mem.move(ptr_offset(base, 1), base, 4)
+        i: int = 0
+        while i < 7:
+            print(ptr_read(ptr_offset(base, i)))
+            i = i + 1
+
+def test_move_overlap_backward() -> None:
+    lowlevel:
+        buf: list[int] = [0, 1, 2, 3, 4, 5]
+        base: ptr[int] = ptr[int](ptr_to_int(data_ptr(detach(buf))))
+        # kaydır: pozisyon 1'den başlayan 4 elemanı pozisyon 0'a al
+        # (dst < src) — BAŞTAN SONA kopyalanmalı.
+        nox.mem.move(base, ptr_offset(base, 1), 4)
+        i: int = 0
+        while i < 6:
+            print(ptr_read(ptr_offset(base, i)))
+            i = i + 1
+
+def test_volatile() -> None:
+    lowlevel:
+        buf: list[int] = [42]
+        p: ptr[int] = ptr[int](ptr_to_int(data_ptr(detach(buf))))
+        nox.mem.write_volatile(p, 7)
+        print(nox.mem.read_volatile(p))
+
+test_copy_and_set()
+test_move_overlap_forward()
+test_move_overlap_backward()
+test_volatile()

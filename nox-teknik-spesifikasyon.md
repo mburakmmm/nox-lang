@@ -25908,6 +25908,87 @@ KAPSAMI DIŞINDA kaldı — kök nedeni `substituteStmt`/`substituteExpr` İLE
 İLGİSİZ (generic OLMAYAN, sıradan bir fonksiyonda BİLE tekrarlanabilir,
 bkz. proje belleği), AYRI bir derleyici incelemesi GEREKTİRİR.
 
+## 3.210 v4 (2.0 öncesi son mimari stdlib katmanlaşması, Faz A), madde 3 — `nox.mem`
+
+**Bağlam:** Faz A'nın 3. maddesi — typed ptr toplu bellek işlemleri
+(copy/move/set) + volatile cephesi. Bu madde, mevcut `lowlevel:`/`ptr[T]`
+İLE İLİŞKİSİNİN "kendi karar noktası" GEREKTİRDİĞİ AÇIKÇA işaretlenmişti
+(bkz. proje belleği `project_v4_pre20_stdlib_roadmap`).
+
+### Tasarım kararı (kullanıcı onaylı)
+
+`nox.mem.copy`/`move`/`set`/`read_volatile`/`write_volatile` NORMAL/
+güvenli stdlib fonksiyonlarıdır — ÇAĞIRAN kod KENDİ `lowlevel:` bloğunu
+YAZMAK ZORUNDA DEĞİLDİR. Modülün KENDİ implementasyonu (mevcut
+`ptr_read`/`ptr_write`/`ptr_offset`/`ptr_to_int` — HEPSİ TEK BAŞINA bir
+`lowlevel:` bloğu GEREKTİRİR) `lowlevel:`i İÇİNDE KULLANIR ve DIŞARI
+SIZDIRMAZ — `nox.sqlite`nin KENDİ `extern def`lerini gizlemesiyle AYNI
+desen. AGENTS.md İlke #2'yle (`lowlevel` yalnızca tahsis STRATEJİSİNİ
+gevşetir) TUTARLI: BU seçim TAMAMEN derleyici/stdlib İçİ bir uygulama
+detayıdır.
+
+### Uygulama sırasında bulunan, GERÇEK 3 AYRI derleyici sınırlaması
+
+`nox.mem`i YAZARKEN, madde 2'nin (§3.209) `substituteStmt`/`substituteExpr`
+düzeltmesiyle AYNI AİLEDEN (generic tip parametresi çözümlemesi) 2 YENİ,
+daha önce HİÇ egzersiz edilmemiş sınırlama GERÇEKTEN denenip bulundu —
+İKİSİ de `nox.mem`in KENDİSİ İçİn GEREKLİYDİ:
+
+1. **`sizeof(T)`/`alignof(T)`/`offsetof(T, ...)` generic bir fonksiyonun
+   KENDİ tip parametresiyle çağrılamıyordu** ("bilinmeyen tip: T"). Kök
+   neden: `T` burada bir `ast.TypeExpr` DEĞİL, çıplak bir `Expr.identifier`
+   dır (`checkCall`in `sizeof`/`alignof`/`offsetof` işlemesi `typeExprToType`e
+   `.simple = c.args[0].identifier` OLARAK geçirir) — bu YÜZDEN madde 2'nin
+   YENİ `substituteExpr`i BİLE bunu (genel `.call` dalı ARGÜMANLARI SADECE
+   birer DEĞİŞKEN referansıymış gibi ele aldığından) SUBSTITUTE ETMİYORDU.
+   Düzeltme: `substituteExpr`in `.call` dalına, callee "sizeof"/"alignof"/
+   "offsetof" İSE VE İLGİLİ argüman `bindings`te bulunan bir isimse, o
+   argümanı SOMUT tipin adına (`typeToTypeExpr`in ürettiği `.simple` ismi)
+   çeviren ÖZEL bir kontrol eklendi.
+2. **`unifyTypeExpr` `ptr[T]`i HİÇ TANIMIYORDU** — `list[T]`/`dict[K,V]`nin
+   AYNI unification deseni `ptr` İçİn HİÇ YOKTU, bu YÜZDEN `def copy[T](dst:
+   ptr[T], ...)` GİBİ bir generic fonksiyonun `T`sini bir `ptr[T]`
+   ARGÜMANINDAN çıkarması "bilinmeyen generic tip: ptr" İLE reddediliyordu.
+   Düzeltme: `unifyTypeExpr`e `list`/`dict` İLE AYNI desende bir `ptr`
+   dalı eklendi.
+3. **`ptr_to_int` SADECE çıplak `ptr` kabul ediyordu, `ptr[T]` DEĞİL** —
+   `move`nin ÇAKIŞMA (overlap) yönünü (kaynak/hedef adres KARŞILAŞTIRMASI
+   İLE) belirlemesi İçİn GEREKLİYDİ. Codegen'in `ptr_to_int` koluna bkz.
+   (`calls.zig`): tip-etiketten TAMAMEN BAĞIMSIZ, SADECE `genExpr`in
+   ürettiği QBE `.l` değerini AYNEN döner — `ptr[T]`in ÇALIŞMA ZAMANINDA
+   `ptr` İLE BİREBİR AYNI temsile SAHİP OLDUĞU İçİn BU genişletme SIFIR
+   codegen değişikliği GEREKTİRDİ, SADECE checker'ın kabul ettiği tip
+   kümesi genişletildi.
+
+### `move`nin çakışma-güvenliği
+
+C'nin `memcpy` (çakışmayan) vs `memmove` (çakışan-güvenli) ayrımıyla AYNI
+gerekçe: `dst`in adresi `src`ten BÜYÜKSE (İLERİ kaydırma, üst üste biner)
+SONDAN BAŞA, DEĞİLSE BAŞTAN SONA kopyalanır — HER İKİ durumda da henüz
+OKUNMAMIŞ bir kaynak baytının ÜZERİNE asla YAZILMAZ. Adres karşılaştırması
+YUKARIDAKİ bulgu #3 (`ptr_to_int`in `ptr[T]`e genişletilmesi) SAYESİNDE
+TAHSİSSİZ (allocation-free) yapılır.
+
+### GERÇEKTEN keşfedilen, dokümantasyona geçirilen bir "tuzak"
+
+`detach(bir list[T])` listenin BAŞINDAKİ 16-baytlık başlığa (length+
+capacity, bkz. `shared/abi_layout.zig`nin `LIST_HEADER_SIZE`ı) işaret eden
+bir ptr döner — GERÇEK eleman verisi 16 bayt SONRA başlar. Bu, `nox.mem`in
+KENDİ testi YAZILIRKEN GERÇEKTEN düşülen bir tuzaktı (`detach`+`ptr_offset`
+DOĞRUDAN kullanıldığında SESSİZCE YANLIŞ değerler OKUNUYORDU — ÇÖKME YOK,
+sadece SESSİZ veri BOZULMASI). `nox.mem`in KENDİ modül-üstü notuna VE
+golden test fixture'ının KENDİSİNE (`ptr_add(raw, 16)` İLE AÇIKÇA atlama)
+KALICI bir UYARI olarak eklendi — `Buffer`/`Span` (Faz A madde 5-6) BU
+başlığı KENDİ İÇLERİNDE gizleyecek, BİLİNÇLİ olarak İLERİYE bırakılan bir
+ergonomi boşluğu.
+
+### Test
+
+`tests/golden/codegen_cases/nox_mem_copy_move_set_volatile.nox` (copy +
+İKİ yönlü move + set + volatile) VE `sizeof_alignof_generic_type_param.nox`
+(bulgu #1'in İZOLE kanıtı) — İKİSİ de `fixture_corpus.zig`ye kaydedildi.
+`zig build test` sıfır regresyon.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
@@ -25944,7 +26025,7 @@ KALICI olarak açık bırakılan 2 madde: AArch64 Linux CI stack-smash kökü
 kararıyla ŞİMDİLİK KAPATILMAYAN bulgulardır.
 
 **Sıradaki adım:** v3'ten HEMEN SONRA başlayan v4 (2.0 öncesi son mimari
-stdlib katmanlaşması, Faz A, bkz. §3.208-§3.209 + proje belleği `project_
-v4_pre20_stdlib_roadmap`) — madde 1 (capability modeli, §3.208) VE madde 2
-(generic self-instantiation düzeltmesi, §3.209) TAMAMLANDI; sırada madde 3
-(`nox.mem`) VAR.
+stdlib katmanlaşması, Faz A, bkz. §3.208-§3.210 + proje belleği `project_
+v4_pre20_stdlib_roadmap`) — madde 1 (capability modeli, §3.208), madde 2
+(generic self-instantiation düzeltmesi, §3.209) VE madde 3 (`nox.mem`,
+§3.210) TAMAMLANDI; sırada madde 4 (`nox.bits`) VAR.

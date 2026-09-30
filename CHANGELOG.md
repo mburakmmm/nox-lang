@@ -14,6 +14,33 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.114.0]
+
+### Eklendi
+
+- **`nox.mem` — typed ptr toplu bellek işlemleri (bkz. nox-teknik-
+  spesifikasyon.md §3.210, v4 Faz A madde 3)**: `copy`/`move`/`set`/
+  `read_volatile`/`write_volatile` — NORMAL/güvenli stdlib fonksiyonları
+  (çağıran kod kendi `lowlevel:` bloğunu yazmaz), mevcut `ptr_read`/
+  `ptr_write`/`ptr_offset`/`ptr_to_int` (v2.0 madde 6-7) üzerine kurulu
+  ergonomik bir cephe. `move`, `memcpy`/`memmove` ayrımıyla aynı gerekçeyle
+  çakışan bölgeleri güvenle ele alır (adres karşılaştırmasıyla yön seçer).
+
+### Düzeltildi
+
+- **3 GERÇEK, birbiriyle ilişkili derleyici sınırlaması** (`nox.mem`
+  yazılırken bulundu): (1) `sizeof(T)`/`alignof(T)`/`offsetof(T, ...)`
+  generic bir fonksiyonun KENDİ tip parametresiyle çağrılamıyordu
+  ("bilinmeyen tip: T") — `T` bir `TypeExpr` değil çıplak bir `Expr.
+  identifier` olduğundan madde 2'nin `substituteExpr`i bile bunu
+  substituted etmiyordu; (2) `unifyTypeExpr` `ptr[T]`i hiç tanımıyordu —
+  `def copy[T](dst: ptr[T], ...)` gibi bir generic fonksiyonun `T`sini bir
+  `ptr[T]` argümanından çıkarması "bilinmeyen generic tip: ptr" ile
+  reddediliyordu; (3) `ptr_to_int` sadece çıplak `ptr` kabul ediyordu,
+  `ptr[T]` değil (move'un çakışma yönünü belirlemesi için gerekliydi —
+  codegen'in kendisi tip-etiketten bağımsız olduğundan sıfır codegen
+  değişikliği gerektirdi).
+
 ## [1.113.0]
 
 ### Düzeltildi

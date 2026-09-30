@@ -1,0 +1,13 @@
+# v4 Faz A madde 3 (bkz. nox-teknik-spesifikasyon.md §3.2xx): `sizeof(T)`/
+# `alignof(T)` — ÖNCEDEN generic bir fonksiyonun KENDİ tip parametresiyle
+# çağrıldığında "bilinmeyen tip: T" ile reddediliyordu (`T` bir `ast.
+# TypeExpr` DEĞİL, çıplak bir `Expr.identifier` olduğundan, `nox.mem`in
+# KENDİ implementasyonu İçİn GEREKLİ olan generic instantiation substitution
+# yolundan HİÇ GEÇMİYORDU). `substituteExpr`in `sizeof`/`alignof`/`offsetof`
+# İçİn ÖZEL işlemesiyle düzeltildi.
+def size_and_align[T](x: T) -> usize:
+    return sizeof(T) + alignof(T)
+
+print(size_and_align(42))
+print(size_and_align(3.14))
+print(size_and_align(True))

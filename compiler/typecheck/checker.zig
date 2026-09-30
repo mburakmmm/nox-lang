@@ -1010,6 +1010,11 @@ pub const Checker = struct {
         .{ .name = "json", .caps = &.{} },
         .{ .name = "log", .caps = &.{.clock} },
         .{ .name = "math", .caps = &.{.libc_math} },
+        // v4 Faz A madde 3 (bkz. nox-teknik-spesifikasyon.md §3.2xx):
+        // `nox.mem` — SAF `ptr[T]`/`lowlevel:` sarmalayıcısı, HİÇBİR OS/libc
+        // bağımlılığı TAŞIMAZ (freestanding'de de, `ptr[T]`in KENDİSİ
+        // ÇEKİRDEK dil özelliği OLDUĞUNDAN, KULLANILABİLİR).
+        .{ .name = "mem", .caps = &.{} },
         .{ .name = "mysql", .caps = &.{.network} },
         .{ .name = "orm", .caps = &.{} },
         .{ .name = "os", .caps = &.{.process} },
@@ -5815,7 +5820,17 @@ pub const Checker = struct {
                 if (std.mem.eql(u8, name, "ptr_to_int")) {
                     try self.requireLowlevel(name);
                     if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'ptr_to_int' tam olarak 1 argüman alır", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "'ptr_to_int' bir ptr alır", .{});
+                    // v4 Faz A madde 3 (bkz. nox-teknik-spesifikasyon.md
+                    // §3.2xx): ÖNCEDEN SADECE çıplak `ptr` kabul edilirdi —
+                    // `ptr[T]` (`.typed_ptr`) ÇALIŞMA ZAMANINDA TAMAMEN AYNI
+                    // temsile (ham bir işaretçi) SAHİP OLDUĞUNDAN (codegen
+                    // `calls.zig`nin `ptr_to_int` koluna bkz. — tip-etiketten
+                    // BAĞIMSIZ, SADECE `genExpr`in ürettiği QBE `.l`
+                    // değerini AYNEN döner) genişletildi — `nox.mem.move`nin
+                    // ÇAKIŞMA (overlap) yönünü belirlemek İçİn adres
+                    // KARŞILAŞTIRMASI GEREKTİRDİĞİNDEN.
+                    const pt = try self.checkExpr(ctx, c.args[0]);
+                    if (pt != .ptr and pt != .typed_ptr) return self.fail(error.TypeMismatch, "'ptr_to_int' bir ptr ya da ptr[T] alır", .{});
                     return .int;
                 }
                 if (std.mem.eql(u8, name, "ptr_add")) {
@@ -6610,6 +6625,20 @@ pub const Checker = struct {
                     }
                     return;
                 }
+                // v4 Faz A madde 3 (bkz. nox-teknik-spesifikasyon.md
+                // §3.2xx): `ptr[T]` — `list`/`dict`nin AYNI unification
+                // deseni, ÖNCEDEN HİÇ YOKTU (`nox.mem.copy[T](dst: ptr[T],
+                // ...)` GİBİ bir generic fonksiyonun `T`sini bir `ptr[T]`
+                // ARGÜMANINDAN çıkarması GEREKTİĞİNDE "bilinmeyen generic
+                // tip: ptr" İLE reddediliyordu — GERÇEKTEN denenip
+                // bulundu, `nox.mem`in KENDİSİ İçİn GEREKLİ).
+                if (std.mem.eql(u8, g.name, "ptr") and g.args.len == 1) {
+                    switch (actual) {
+                        .typed_ptr => |elem| try self.unifyTypeExpr(g.args[0], elem.*, type_params, bindings, fn_name),
+                        else => return self.fail(error.TypeMismatch, "'{s}' argümanı için tip uyuşmazlığı", .{fn_name}),
+                    }
+                    return;
+                }
                 return self.fail(error.UnknownType, "bilinmeyen generic tip: {s}", .{g.name});
             },
             // Faz U.4.1: generic fonksiyonlarda fonksiyon-tipi parametreler
@@ -6822,7 +6851,33 @@ pub const Checker = struct {
             .call => |c| blk: {
                 const callee = try self.allocator.create(ast.Expr);
                 callee.* = try self.substituteExpr(c.callee.*, bindings);
-                break :blk .{ .call = .{ .callee = callee, .args = try self.substituteExprs(c.args, bindings) } };
+                const args = try self.substituteExprs(c.args, bindings);
+                // v4 Faz A madde 3 (bkz. nox-teknik-spesifikasyon.md
+                // §3.2xx): `sizeof(T)`/`alignof(T)`/`offsetof(T, "alan")` —
+                // `T` burada bir `ast.TypeExpr` DEĞİL, çıplak bir `Expr.
+                // identifier`dır (`checkCall`in kendi belge notuna bkz.:
+                // `typeExprToType`e `.simple = c.args[0].identifier` OLARAK
+                // geçirilir) — bu YÜZDEN normal `TypeExpr` substitution
+                // yolundan HİÇ GEÇMEZ, YUKARIDAKİ genel `substituteExprs`
+                // "T"yi bir DEĞİŞKEN adıymış gibi OLDUĞU GİBİ bırakır.
+                // GERÇEKTEN denenip bulundu (bkz. proje belleği "generic
+                // self-instantiation" görevi — `sizeof(T)` bir generic
+                // fonksiyon İçİNDE "bilinmeyen tip: T" İLE reddediliyordu,
+                // `nox.mem`in KENDİ implementasyonu İçİn GEREKLİ). Callee
+                // "sizeof"/"alignof"/"offsetof" İSE VE İLGİLİ argüman
+                // `bindings`te bulunan bir isimse, argümanı SOMUT tipin
+                // adına (`typeToTypeExpr`in ürettiği `.simple` ismi) çeviririz.
+                if (c.callee.* == .identifier and args.len >= 1 and args[0] == .identifier) {
+                    const fname = c.callee.identifier;
+                    const is_type_name_arg = std.mem.eql(u8, fname, "sizeof") or std.mem.eql(u8, fname, "alignof") or std.mem.eql(u8, fname, "offsetof");
+                    if (is_type_name_arg) {
+                        if (bindings.get(args[0].identifier)) |bound_t| {
+                            const te = try self.typeToTypeExpr(bound_t);
+                            if (te == .simple) args[0] = .{ .identifier = te.simple };
+                        }
+                    }
+                }
+                break :blk .{ .call = .{ .callee = callee, .args = args } };
             },
             .attribute => |a| blk: {
                 const obj = try self.allocator.create(ast.Expr);

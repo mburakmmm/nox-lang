@@ -80,6 +80,13 @@ pub const fixtures = [_]Fixture{
     // edebilmesi + bunun flagship gerçek tüketicisi (nox.collections.Set.
     // union/intersection/difference'ın artık list[T] DEĞİL Set[T] dönmesi).
     .{ .name = "codegen(çalıştır): generic sınıf kendi metodundan kendini örnekler (Box[T]) + Set.union/intersection/difference Set[T] döner", .kind = .golden, .source = @embedFile("codegen_cases/generic_class_self_instantiation.nox"), .expected_stdout = @embedFile("codegen_cases/generic_class_self_instantiation.expected") },
+    // v4 Faz A madde 3 (bkz. nox-teknik-spesifikasyon.md §3.2xx): nox.mem
+    // — typed ptr toplu bellek işlemleri (copy/move/set) + volatile
+    // cephesi. `unifyTypeExpr`in ptr[T] tip-çıkarımı desteği + `sizeof(T)`
+    // İçİn generic tip-parametresi substitution'ının İKİSİ de BU madde
+    // İçİn GEREKLİ oldukları İçİn EKLENDİ (ikisi de bu fixture TARAFINDAN
+    // dolaylı EGZERSİZ EDİLİR).
+    .{ .name = "codegen(çalıştır): nox.mem copy/move (çakışan/çakışmayan)/set/volatile", .kind = .golden, .source = @embedFile("codegen_cases/nox_mem_copy_move_set_volatile.nox"), .expected_stdout = @embedFile("codegen_cases/nox_mem_copy_move_set_volatile.expected") },
     .{ .name = "codegen(çalıştır): nox.url parse/percent-encode-decode/query/join", .kind = .golden, .source = @embedFile("codegen_cases/url_parse_encode_decode.nox"), .expected_stdout = @embedFile("codegen_cases/url_parse_encode_decode.expected") },
     .{ .name = "codegen(çalıştır): gecici alici uzerinde istisna firlatan metod/pop()/indeksleme sizmaz", .kind = .golden, .source = @embedFile("codegen_cases/temporary_receiver_raises_no_leak.nox"), .expected_stdout = @embedFile("codegen_cases/temporary_receiver_raises_no_leak.expected") },
     .{ .name = "codegen(çalıştır): nox.postgres/nox.mysql — ulasilamayan baglantida temiz hata", .kind = .golden, .source = @embedFile("codegen_cases/postgres_mysql_connect_error.nox"), .expected_stdout = @embedFile("codegen_cases/postgres_mysql_connect_error.expected") },
@@ -310,6 +317,10 @@ pub const fixtures = [_]Fixture{
     // VE vtable+kalıtım+packed'in BİRLİKTE çalıştığı bir hiyerarşi.
     .{ .name = "codegen(çalıştır): v2.0 madde 5 — @repr(\"C\")/@packed sınıf düzeni, sizeof/alignof/offsetof, kalıtım+vtable+packed", .kind = .golden, .source = @embedFile("codegen_cases/repr_packed_class_layout.nox"), .expected_stdout = @embedFile("codegen_cases/repr_packed_class_layout.expected") },
     .{ .name = "codegen(çalıştır): v2.0 madde 6 — ptr[T]: sizeof-ölçekli ptr_offset + skaler ptr_read/ptr_write (hizasız erişim dahil)", .kind = .golden, .source = @embedFile("codegen_cases/typed_ptr_scalar_and_offset.nox"), .expected_stdout = @embedFile("codegen_cases/typed_ptr_scalar_and_offset.expected") },
+    // v4 Faz A madde 3 (bkz. nox-teknik-spesifikasyon.md §3.2xx): sizeof(T)/
+    // alignof(T) artık generic bir fonksiyonun KENDİ tip parametresiyle
+    // çağrılabiliyor (bkz. substituteExpr'in belge notu).
+    .{ .name = "codegen(çalıştır): sizeof(T)/alignof(T) generic fonksiyonun kendi tip parametresiyle", .kind = .golden, .source = @embedFile("codegen_cases/sizeof_alignof_generic_type_param.nox"), .expected_stdout = @embedFile("codegen_cases/sizeof_alignof_generic_type_param.expected") },
     .{ .name = "codegen(çalıştır): v2.0 madde 6 — ptr[T]: heap-yönetimli T için Model A (str, paylaşılan referans) + Model B (sınıf, bağımsız kopya) ptr_read/ptr_write", .kind = .golden, .source = @embedFile("codegen_cases/typed_ptr_heap_managed_model_ab.nox"), .expected_stdout = @embedFile("codegen_cases/typed_ptr_heap_managed_model_ab.expected") },
     .{ .name = "codegen(çalıştır): v2.0 madde 7 — volatile/MMIO: skaler ptr_read_volatile/ptr_write_volatile (hizasız erişim dahil) + memory_fence/compiler_fence", .kind = .golden, .source = @embedFile("codegen_cases/volatile_mmio_scalar_and_fences.nox"), .expected_stdout = @embedFile("codegen_cases/volatile_mmio_scalar_and_fences.expected") },
     .{ .name = "codegen(çalıştır): v2.0 madde 7 — volatile/MMIO: heap-yönetimli T için Model A/Model B ptr_read_volatile/ptr_write_volatile", .kind = .golden, .source = @embedFile("codegen_cases/volatile_mmio_heap_managed.nox"), .expected_stdout = @embedFile("codegen_cases/volatile_mmio_heap_managed.expected") },

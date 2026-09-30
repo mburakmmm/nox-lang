@@ -1,0 +1,72 @@
+# nox.mem — sistem-programlama için typed pointer toplu bellek işlemleri
+# (copy/move/set) + volatile okuma/yazma cephesi.
+#
+# v4 (2.0 öncesi son mimari stdlib katmanlaşması, Faz A), madde 3 (bkz.
+# nox-teknik-spesifikasyon.md §3.2xx). Mevcut `lowlevel:`/`ptr[T]`/
+# `ptr_read`/`ptr_write`/`ptr_offset`/`ptr_to_int` (v2.0 madde 6-7)
+# İLE İLİŞKİSİ: BU modül YENİ bir ilkel EKLEMEZ — SADECE, HER BİRİ
+# TEK BAŞINA bir `lowlevel:` bloğu GEREKTİREN o ilkelleri, `lowlevel:`i
+# ÇAĞIRANDAN GİZLEYEN ERGONOMİK bir cephe (facade) sağlar. AGENTS.md
+# İlke #2'yle TUTARLI: `lowlevel`in KENDİSİ yalnızca bellek tahsis
+# STRATEJİSİNİ (ve — burada — ham bellek erişiminin GÜVEN sınırını)
+# gevşetir; bu SEÇİM tamamen derleyici/stdlib İÇİ bir uygulama detayıdır,
+# `nox.sqlite`nin KENDİ `extern def`lerini ÇAĞIRANDAN gizlemesiyle AYNI
+# desen (kullanıcı KENDİ `lowlevel:` bloğunu YAZMAK ZORUNDA DEĞİLDİR).
+#
+# **DİKKAT — `detach(bir list[T])` İLE KULLANIRKEN:** `detach` bir
+# `list[T]`nin BAŞINDAKİ 16-baytlık başlığa (length+capacity, bkz.
+# `shared/abi_layout.zig`nin `LIST_HEADER_SIZE`ı) işaret eden bir ptr
+# döner — GERÇEK eleman verisi 16 bayt SONRA başlar. `nox.mem.copy(dst,
+# ptr[T](ptr_to_int(detach(xs))), n)` GİBİ DOĞRUDAN bir kullanım bu
+# başlığı YANLIŞLIKLA veri SANIP OKUR/YAZAR — çağıran taraf `ptr_add(...,
+# 16)` İLE bunu KENDİSİ atlamalıdır (bkz. `tests/golden/codegen_cases/
+# nox_mem_copy_move_set_volatile.nox`nin KENDİ örneği). Bu, `Buffer`/`Span`
+# (Faz A madde 5-6) İçİn HENÜZ ÇÖZÜLMEMİŞ, bilinçli olarak İLERİYE
+# bırakılan bir ergonomi boşluğudur — o türler BU başlığı KENDİ İÇLERİNDE
+# gizleyecektir.
+
+def copy[T](dst: ptr[T], src: ptr[T], count: int) -> None:
+    lowlevel:
+        i: int = 0
+        while i < count:
+            ptr_write(ptr_offset(dst, i), ptr_read(ptr_offset(src, i)))
+            i = i + 1
+
+# `copy`den FARKI: `dst`/`src` ÇAKIŞAN (overlapping) bellek bölgelerini
+# GÜVENLE ele alır (C'nin `memcpy` vs `memmove` ayrımıyla AYNI gerekçe).
+# `dst` `src`in İLERİSİNDEYSE (adresçe BÜYÜKSE) SONDAN BAŞA, DEĞİLSE
+# BAŞTAN SONA kopyalanır — HER İKİ durumda da henüz OKUNMAMIŞ bir
+# kaynak baytının ÜZERİNE yazılmaz.
+def move[T](dst: ptr[T], src: ptr[T], count: int) -> None:
+    lowlevel:
+        if ptr_to_int(dst) > ptr_to_int(src):
+            i: int = count - 1
+            while i >= 0:
+                ptr_write(ptr_offset(dst, i), ptr_read(ptr_offset(src, i)))
+                i = i - 1
+        else:
+            j: int = 0
+            while j < count:
+                ptr_write(ptr_offset(dst, j), ptr_read(ptr_offset(src, j)))
+                j = j + 1
+
+# `dst`ten başlayarak `count` ADET `T`-boyutlu yuvaya AYNI `value`yi yazar
+# (C'nin `memset`inin, BAYT-granüler DEĞİL TİP-granüler genellemesi).
+def set[T](dst: ptr[T], value: T, count: int) -> None:
+    lowlevel:
+        i: int = 0
+        while i < count:
+            ptr_write(ptr_offset(dst, i), value)
+            i = i + 1
+
+# `ptr_read_volatile`/`ptr_write_volatile`nin (v2.0 madde 7) İNCE
+# sarmalayıcıları — derleyici optimizasyonlarının (yeniden sıralama/
+# elemine etme) ATLAMAMASI GEREKEN bellek-eşlemeli G/Ç (MMIO) gibi
+# erişimler İçin.
+def read_volatile[T](p: ptr[T]) -> T:
+    lowlevel:
+        return ptr_read_volatile(p)
+
+def write_volatile[T](p: ptr[T], value: T) -> None:
+    lowlevel:
+        ptr_write_volatile(p, value)
