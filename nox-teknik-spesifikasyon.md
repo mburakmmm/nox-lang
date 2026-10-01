@@ -26905,6 +26905,64 @@ Düzeltme, canlı olarak doğrulandı: `zig build concurrency-torture-test`
 vs 83 farklı çıktı) — test YİNE DE geçti (bilgilendirici not basıldı).
 `zig build test`: 171/171 adım, sıfır regresyon.
 
+## 3.222 Aether NOX_LIMITATIONS.md yol haritası, madde 1 — çapraz-modül sınıf kalıtımı
+
+**Bağlam:** `/Users/melihburakmemis/Documents/aether` (Nox üzerine inşa
+edilmiş, NestJS tarzı bir framework) kendi `docs/NOX_LIMITATIONS.md`'sinde
+Nox'un (1.104.0 anında) 19 dil/runtime boşluğunu belgelemişti. Bu turda
+TÜMÜ v1.124.0'a karşı tek tek doğrulandı (17'si hâlâ açık, 1'i — nitelikli
+tip adları — çözülmüş AMA dokümana işlenmemiş, 1'i kısmen çözülmüş) ve
+kullanıcı kararıyla TAMAMININ (önceki turlarda bilinçli tasarım kararı
+olarak bırakılan 3 madde DAHİL) çözülmesine karar verildi — kolaydan zora
+sıralı bir yol haritası (bkz. plan dosyası) onaylandı. **Bu bölüm, o yol
+haritasının İLK (en küçük) maddesini kapsar.**
+
+**Kök sorun:** `from pkg.mod import Base` İLE bağlanan bir sınıfın
+`class Derived(Base):` TABANI olarak kullanılması `sınıf 'Derived'
+bilinmeyen bir taban sınıfa sahip: Base` İLE reddediliyordu —
+`checker.zig`'in `registerClassSignatures`i `self.classes.get(base_name)`yi
+ÇIPLAK (from-import çözümlemesi OLMADAN) çağırıyordu, `typeExprToType`/
+constructor-call çözümlemesinin (AYNI dosyada, ÇOK ÖNCE) ZATEN kullandığı
+`self.from_imports` GERİ DÜŞÜŞÜNE SAHİP DEĞİLDİ.
+
+**İKİ ayrı gerçek gap bulundu** (canlı bir repro — gerçek git paketi +
+`nox.json` `requires[]` — İLE doğrulandı, SADECE varsayılmadı):
+1. `registerClassSignatures`'ın taban-sınıf fetch'i (checker.zig) —
+   `from_imports` geri düşüşü EKLENDİ, ÇÖZÜLEN ad `info.base`e YAZILIR
+   (ÇIPLAK `cd.base` DEĞİL) — `isSubclassOf`/`super()` çözümlemesi GİBİ
+   `info.base`i okuyan TÜM sonraki tüketiciler OTOMATİK doğru çalışır.
+2. **(Golden test YAZILIRKEN bulunan, canlı denemeyle ORTAYA ÇIKAN İKİNCİ
+   bir gap):** `ensureClassBodyChecked`'ın tabanın `__init__`inde `self.
+   <ad> = ...` İLE (AÇIKÇA bir `FieldDecl` OLMADAN) ÇIKARSANAN alanları
+   türetilen sınıfa TAMAMLAYICI olarak KOPYALAYAN adımı da AYNI ÇIPLAK
+   `cd.base` sorununa SAHİPTİ — türetilen sınıf `__init__`ini HİÇ override
+   ETMEDİĞİNDE (SADECE tabanın `__init__`ine GÜVENDİĞİNDE) ÇIKARSANAN
+   alanlar (`self.tag` GİBİ) TÜRETİLEN sınıfa HİÇ YAYILMIYORDU
+   (`UndefinedAttribute`). AYNI `from_imports` geri düşüşü BURAYA da
+   eklendi.
+
+**Codegen tarafında ÜÇÜNCÜ bir gap (checker DÜZELTİLİNCE ortaya çıkan):**
+`registration.zig`'in `registerClassesInOrder`/`computeInheritingClasses`/
+`registerClass`i de ÇIPLAK `cd.base`i DOĞRUDAN kullanıyordu (checker'ın
+KENDİ `self.from_imports`ı codegen'e TAŞINMAZ — codegen AYRI bir geçiş).
+Çözüm: codegen'in KENDİ bir çözümleme YENİDEN UYGULAMASI (§3.216'nın AYNI
+tuzağı — ayrı türetilmiş mangling/çözümleme mantığının ÇAKIŞMASI riski)
+YERİNE, checker'ın ZATEN DOĞRU hesapladığı `class_name → resolved_base_
+name` haritası (`checker_state.classes`den türetilir) `main.zig` TARAFINDAN
+`codegen.generateModule`e YENİ bir `resolved_bases` parametresi OLARAK
+aktarılır — codegen SADECE OKUR, KENDİ mantığı YOK.
+
+### Test
+
+`tests/cli/package_resolution_test.zig`e YENİ bir uçtan-uca test —
+GERÇEK bir git fixture paketi (`nox.json`'ın `requires[]`i) + `from
+aether.container import Injectable; class Svc(Injectable): ...` deseni,
+HEM `super().__init__()` HEM ÇIKARSANMIŞ alan yayılımını (derived
+`__init__`i override ETMEDEN) HEM GERÇEK `noxc build`+çalıştırmayı
+doğrular. `zig build test`: 171/171 adım, sıfır regresyon (41 mevcut
+`generateModule` çağrı sitesi YENİ `resolved_bases` parametresiyle
+mekanik olarak güncellendi, davranış DEĞİŞMEDİ — hepsi `.empty` geçer).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

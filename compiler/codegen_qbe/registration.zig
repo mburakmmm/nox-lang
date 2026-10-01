@@ -390,6 +390,16 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
 /// gerekçe/tasarım). Checker BU sıralamayı ZATEN doğruladığından (döngüsel
 /// kalıtım/bilinmeyen taban DERLEME buraya HİÇ ULAŞAMAZ) burada SADECE
 /// savunmacı bir `error.Unsupported` vardır.
+/// Bulundu (Aether NOX_LIMITATIONS.md madde 13 — çapraz-modül sınıf
+/// kalıtımı, bkz. `Codegen.resolved_bases`nin belge notu): `cd.base`
+/// ÇIPLAK bir from-import ismi OLABİLİR — checker'ın ZATEN DOĞRU
+/// çözümlediği adı (`resolved_bases`, `cd.name` anahtarlı) TERCİH eder,
+/// YOKSA (taban YOK ya da harita bu sınıfı HİÇ İÇERMİYOR) `cd.base`e
+/// GERİ DÜŞER.
+fn resolveClassBase(resolved_bases: std.StringHashMapUnmanaged([]const u8), cd: ast.ClassDef) ?[]const u8 {
+    return resolved_bases.get(cd.name) orelse cd.base;
+}
+
 pub fn registerClassesInOrder(self: *Codegen, class_defs: []const ast.ClassDef) CodegenError!void {
     var remaining: std.ArrayListUnmanaged(ast.ClassDef) = .empty;
     try remaining.appendSlice(self.allocator, class_defs);
@@ -399,7 +409,8 @@ pub fn registerClassesInOrder(self: *Codegen, class_defs: []const ast.ClassDef) 
         var i: usize = 0;
         while (i < remaining.items.len) {
             const cd = remaining.items[i];
-            const ready = cd.base == null or processed.contains(cd.base.?);
+            const base_name = resolveClassBase(self.resolved_bases, cd);
+            const ready = base_name == null or processed.contains(base_name.?);
             if (ready) {
                 try self.registerClass(cd);
                 try processed.put(self.allocator, cd.name, {});
@@ -420,10 +431,10 @@ pub fn registerClassesInOrder(self: *Codegen, class_defs: []const ast.ClassDef) 
 /// KENDİ nesne düzeni, HENÜZ KAYDEDİLMEMİŞ bir alt sınıfın var OLUP
 /// OLMADIĞINA bağlı olduğundan — bkz. Faz 7 tasarım notu, "ileri bilgi
 /// problemi").
-pub fn computeInheritingClasses(allocator: std.mem.Allocator, class_defs: []const ast.ClassDef) !std.StringHashMapUnmanaged(void) {
+pub fn computeInheritingClasses(allocator: std.mem.Allocator, class_defs: []const ast.ClassDef, resolved_bases: std.StringHashMapUnmanaged([]const u8)) !std.StringHashMapUnmanaged(void) {
     var set: std.StringHashMapUnmanaged(void) = .{};
     for (class_defs) |cd| {
-        if (cd.base) |b| {
+        if (resolveClassBase(resolved_bases, cd)) |b| {
             try set.put(allocator, cd.name, {});
             try set.put(allocator, b, {});
         }
@@ -438,7 +449,7 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
     }
 
     var info: types.ClassInfo = .{};
-    info.base = cd.base;
+    info.base = resolveClassBase(self.resolved_bases, cd);
     info.has_vtable = self.inheriting_classes.contains(cd.name);
     const field_base_offset = TAG_SIZE + (if (info.has_vtable) types.VTABLE_PTR_SIZE else 0);
     // v2.0 madde 5: `cd.decorators`i BAĞIMSIZ olarak yeniden ayrıştırır
@@ -466,7 +477,7 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
     // sırası (checker'ın taban-önce GÖVDE DENETİM sırasından FARKLI
     // olarak) TEK BAŞINA yeterlidir.
     var base_info: ?types.ClassInfo = null;
-    if (cd.base) |base_name| {
+    if (info.base) |base_name| {
         base_info = self.classes.get(base_name).?;
         for (base_info.?.fields.items) |f| try info.fields.append(self.allocator, f);
     }

@@ -685,3 +685,99 @@ test "noxc fetch: onbellek silinse bile kilitli SHA'dan sapmaz (dal ilerlemis ol
     try std.testing.expect(std.mem.indexOf(u8, lock_after_fetch2, sha1) != null);
     try std.testing.expect(std.mem.indexOf(u8, lock_after_fetch2, sha2) == null);
 }
+
+// Aether NOX_LIMITATIONS.md madde 13 — çapraz-modül sınıf kalıtımı: `from
+// pkg.mod import Base` İLE bağlanan bir sınıfın `class Derived(Base):`
+// TABANI olarak kullanılması ÖNCEDEN `sınıf 'Derived' bilinmeyen bir taban
+// sınıfa sahip: Base` İLE REDDEDİLİYORDU — `registerClassSignatures`in
+// (checker.zig) `self.classes.get(base_name)`si `typeExprToType`/constructor-
+// call çözümlemesinin ZATEN kullandığı `from_imports` GERİ DÜŞÜŞÜNE SAHİP
+// DEĞİLDİ. Bu test (1) tip hatası ALMADAN derlenmesini, (2) tabanın `__init__`
+// İÇİNDE AÇIKÇA bir `FieldDecl` OLMADAN ÇIKARSANAN bir alanın (`self.tag =
+// ...`) türetilen sınıfa (`__init__`ini HİÇ override ETMESE BİLE) doğru
+// yayıldığını, (3) `super().__init__()`in çapraz-modül tabanı DOĞRU
+// çağırdığını GERÇEK bir build+run İLE doğrular.
+test "ucdan uca: capraz-modul sinif kalitimi (from pkg import Base; class D(Base)) dogru calisir" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var pkg = std.testing.tmpDir(.{});
+    defer pkg.cleanup();
+    try pkg.dir.writeFile(io, .{
+        .sub_path = "container.nox",
+        .data =
+        \\class Injectable:
+        \\    def __init__(self: Injectable) -> None:
+        \\        self.tag = "base"
+        \\
+        \\    def describe(self: Injectable) -> str:
+        \\        return self.tag
+        \\
+        ,
+    });
+    var pkg_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const pkg_path = try absPath(io, pkg.dir, &pkg_buf);
+    try initFixtureRepo(io, std.testing.allocator, pkg_path);
+
+    var proj = std.testing.tmpDir(.{});
+    defer proj.cleanup();
+    var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const proj_path = try absPath(io, proj.dir, &proj_buf);
+
+    const manifest_json = try std.fmt.allocPrint(a,
+        \\{{"name":"proj","entry":"main.nox","requires":[{{"alias":"aether","repo":"{s}","ref":"main"}}]}}
+    , .{pkg_path});
+    try proj.dir.writeFile(io, .{ .sub_path = "nox.json", .data = manifest_json });
+    try proj.dir.writeFile(io, .{
+        .sub_path = "main.nox",
+        .data =
+        \\from aether.container import Injectable
+        \\
+        \\class Svc(Injectable):
+        \\    def __init__(self: Svc, extra: str) -> None:
+        \\        super().__init__()
+        \\        self.extra = extra
+        \\
+        \\class PlainSvc(Injectable):
+        \\    def shout(self: PlainSvc) -> str:
+        \\        return self.tag + "!"
+        \\
+        \\s: Svc = Svc("hello")
+        \\print(s.describe())
+        \\print(s.extra)
+        \\p: PlainSvc = PlainSvc()
+        \\print(p.shout())
+        \\
+        ,
+    });
+
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const home_path = try absPath(io, home.dir, &home_buf);
+
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+    try env_map.put("NOX_HOME", home_path);
+
+    const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{proj_path});
+    const bin_path = try std.fmt.allocPrint(a, "{s}/main", .{proj_path});
+
+    const build_result = try std.process.run(std.testing.allocator, io, .{
+        .argv = &.{ noxcPath(), "build", main_path },
+        .environ_map = &env_map,
+    });
+    defer std.testing.allocator.free(build_result.stdout);
+    defer std.testing.allocator.free(build_result.stderr);
+    if (build_result.term != .exited or build_result.term.exited != 0) {
+        std.debug.print("build basarisiz, stderr: {s}\n", .{build_result.stderr});
+    }
+    try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
+
+    const run_result = try std.process.run(std.testing.allocator, io, .{ .argv = &.{bin_path} });
+    defer std.testing.allocator.free(run_result.stdout);
+    defer std.testing.allocator.free(run_result.stderr);
+    try std.testing.expectEqualStrings("base\nhello\nbase!\n", run_result.stdout);
+}

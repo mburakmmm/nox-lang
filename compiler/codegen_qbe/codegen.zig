@@ -1174,6 +1174,19 @@ pub const Codegen = struct {
     /// İHTİYAÇ DUYAR (`registration.zig`nin `resolveType`inin `.simple`
     /// dalına bkz.).
     from_imports: std.StringHashMapUnmanaged([]const u8) = .{},
+    /// Bulundu (Aether NOX_LIMITATIONS.md madde 13 — çapraz-modül sınıf
+    /// kalıtımı): `ast.ClassDef.base` DA (`from_imports`in belge notundaki
+    /// AYNI "değer olarak akar, in-place güncelleme codegen'e GÖRÜNMEZ"
+    /// kısıtına TABİ) `from X import Base` İLE bağlanan ÇIPLAK bir isim
+    /// OLABİLİR — checker.zig'in `registerClassSignatures`i (ZATEN
+    /// `self.from_imports` geri-düşüşüyle) HER sınıf İçİn DOĞRU çözülmüş
+    /// taban adını HESAPLAR (`Checker.classes[cd.name].base`), bu harita
+    /// (`class_name → resolved_base_name`, SADECE taban sınıfı OLANLAR
+    /// İçİn) `main.zig` TARAFINDAN DOĞRUDAN o haritadan türetilip aktarılır
+    /// — codegen KENDİ (potansiyel olarak CHECKER'ınkinden SAPAN, §3.216'nın
+    /// AYNI tuzağı) bir çözümleme YENİDEN UYGULAMAZ, SADECE OKUR
+    /// (`registration.zig`nin `resolveClassBase`ına bkz.).
+    resolved_bases: std.StringHashMapUnmanaged([]const u8) = .{},
     /// Faz NN.2 (bkz. proje belleği "nyx v2 limitasyon listesi doğrulaması"):
     /// `checker.zig`nin `Checker.module_aliases`iyle AYNI TİP/anahtar (bir
     /// modül takma adı → hedef modülün TAM segment dizisi, ör. `import
@@ -1417,8 +1430,8 @@ fn collectExplainForBody(gen: *Codegen, allocator: std.mem.Allocator, sink: *std
     }
 }
 
-pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo, backend: Backend, profile: Profile, explain_opts: ?ExplainOptions, callback_targets: []const []const u8) CodegenError![]u8 {
-    var gen: Codegen = .{ .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos, .defer_synthetic_names = defer_synthetic_names, .from_imports = from_imports, .module_aliases = module_aliases, .backend = backend, .profile = profile };
+pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo, backend: Backend, profile: Profile, explain_opts: ?ExplainOptions, callback_targets: []const []const u8, resolved_bases: std.StringHashMapUnmanaged([]const u8)) CodegenError![]u8 {
+    var gen: Codegen = .{ .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos, .defer_synthetic_names = defer_synthetic_names, .from_imports = from_imports, .module_aliases = module_aliases, .backend = backend, .profile = profile, .resolved_bases = resolved_bases };
 
     if (debug_source_path) |path| {
         gen.debug_info = true;
@@ -1521,7 +1534,7 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
         }
     }
     for (extra_classes) |cd| try class_defs_to_register.append(gen.allocator, cd);
-    gen.inheriting_classes = try registration.computeInheritingClasses(gen.allocator, class_defs_to_register.items);
+    gen.inheriting_classes = try registration.computeInheritingClasses(gen.allocator, class_defs_to_register.items, gen.resolved_bases);
     try gen.registerClassesInOrder(class_defs_to_register.items);
 
     // Faz 7: TÜM sınıflar kaydedildikten SONRA (KENDİ + TÜM atalarının

@@ -2511,7 +2511,20 @@ pub const Checker = struct {
         // erken dönüşten ETKİLENMEZ.
         if (cd.type_params.len > 0) return;
         const info = self.classes.getPtr(cd.name).?; // collectClassNames'de eklendi
-        info.base = cd.base;
+        // Bulundu (Aether NOX_LIMITATIONS.md madde 13 — çapraz-modül sınıf
+        // kalıtımı): `cd.base` ÇIPLAK bir isimse (ör. `from pkg.mod import
+        // Injectable` İLE bağlanan "Injectable") VE `self.classes`te BÖYLE
+        // bir isim YOKSA (sınıf GERÇEKTE mangled bir adla — "pkg_mod_
+        // Injectable" — kayıtlıysa), `typeExprToType`nin (~satır 688) VE
+        // constructor-call çözümlemesinin (~satır 2236 civarı) ZATEN
+        // kullandığı AYNI `self.from_imports` GERİ DÜŞÜŞÜ burada da
+        // uygulanır — ÇÖZÜLMÜŞ adı `info.base`e YAZARIZ (ÇIPLAK adı DEĞİL)
+        // ki SONRAKİ TÜM tüketiciler (super()/vtable zinciri, satır ~862/
+        // ~6257) DOĞRU, mangled adla çalışsın.
+        info.base = if (cd.base) |b|
+            (if (self.classes.contains(b)) b else self.from_imports.get(b) orelse b)
+        else
+            null;
         // v2.0 madde 5: `@repr("C")`/`@packed` arg şekli doğrulaması +
         // `layout_mode` çözümü. `collectClassNames` (Geçiş 1) SADECE
         // izin-listesindeki adları (`repr`/`packed`) erken doğruladı —
@@ -2549,7 +2562,7 @@ pub const Checker = struct {
         // TAMAMLAYICI kopyalama YAPAR — bkz. onun belge notu. Metodlar
         // BURADA TAM kopyalanır (metod imzaları HER ZAMAN açık/tam bilinir,
         // çıkarım YOK) — ikinci bir metod-kopyalama adımına GEREK yoktur.
-        if (cd.base) |base_name| {
+        if (info.base) |base_name| {
             const base_info = self.classes.get(base_name) orelse
                 return self.fail(error.UndefinedClass, "sınıf '{s}' bilinmeyen bir taban sınıfa sahip: {s}", .{ cd.name, base_name });
             // v2.0 madde 5: taban-sınıf layout-tutarlılık kontrolü —
@@ -4243,7 +4256,21 @@ pub const Checker = struct {
     fn ensureClassBodyChecked(self: *Checker, cd: ast.ClassDef) TypeError!void {
         if (self.class_body_checked.contains(cd.name)) return;
         try self.class_body_checked.put(self.allocator, cd.name, {});
-        if (cd.base) |base_name| {
+        // Bulundu (Aether NOX_LIMITATIONS.md madde 13 — çapraz-modül sınıf
+        // kalıtımı): `cd.base` burada da ÇIPLAK bir from-import ismi
+        // OLABİLİR — `registerClassSignatures`in AYNI `from_imports` geri
+        // düşüşü (bkz. onun belge notu) BURADA da UYGULANIR, aksi HALDE
+        // `class_defs_by_name.get(base_name)` ÇIPLAK adla HİÇ BULAMAZ, bu
+        // fonksiyonun ASIL AMACI olan "ÇIKARSANMIŞ (inferred) alanları
+        // tabandan türetilene TAMAMLAYICI KOPYALAMA" adımı SESSİZCE
+        // ATLANIR (türetilen sınıf, tabanın KENDİ `__init__`inde `self.
+        // <ad> = ...` İLE ÇIKARSANAN — AÇIKÇA bildirilmemiş — alanları
+        // GÖREMEZ).
+        const base_name_resolved = if (cd.base) |b|
+            (if (self.classes.contains(b)) b else self.from_imports.get(b) orelse b)
+        else
+            null;
+        if (base_name_resolved) |base_name| {
             if (self.class_defs_by_name.get(base_name)) |base_cd| {
                 try self.ensureClassBodyChecked(base_cd);
                 // Taban gövdesi ARTIK denetlendi (ÇIKARSANMIŞ alanlar DAHİL

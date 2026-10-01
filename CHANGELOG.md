@@ -14,6 +14,24 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.125.0]
+
+### Düzeltildi
+
+- **Çapraz-modül sınıf kalıtımı artık çalışıyor (Aether NOX_LIMITATIONS.md
+  madde 1, bkz. nox-teknik-spesifikasyon.md §3.222)**: `from pkg.mod
+  import Base` ile bağlanan bir sınıfın `class Derived(Base): ...`
+  tabanı olarak kullanılması önceden `sınıf 'Derived' bilinmeyen bir
+  taban sınıfa sahip: Base` ile reddediliyordu. İki ayrı gerçek gap
+  bulunup düzeltildi: checker'ın taban-sınıf çözümlemesi (`from_imports`
+  geri düşüşü eksikti) ve çıkarsanmış (inferred) alanların türetilen
+  sınıfa tamamlayıcı kopyalanması (derived sınıf `__init__`ini override
+  etmediğinde `UndefinedAttribute` veriyordu). Codegen tarafında da aynı
+  sorun bulundu — `main.zig` artık checker'ın doğru çözdüğü taban adlarını
+  `resolved_bases` olarak codegen'e aktarıyor (codegen kendi başına bir
+  çözümleme yeniden uygulamıyor). Gerçek bir git-paketi fixture'ıyla
+  (`nox.json` `requires[]`) uçtan uca doğrulandı.
+
 ## [1.124.0]
 
 ### Düzeltildi

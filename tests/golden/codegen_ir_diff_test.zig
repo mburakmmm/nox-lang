@@ -89,6 +89,7 @@ fn generateIr(allocator: std.mem.Allocator, io: std.Io, source: []const u8) !?[]
         .hosted,
         null,
         callback_targets.items,
+        .empty,
     ) catch return null;
 
     return ir;
