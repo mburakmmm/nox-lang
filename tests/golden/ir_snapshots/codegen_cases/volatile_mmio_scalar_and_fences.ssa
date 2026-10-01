@@ -1790,9 +1790,11 @@ export function $scalar_roundtrip(l %rt) {
 @fn_end73
     ret
 }
-export function l $main_body(l %argp) {
+export function w $main(w %argc, l %argv) {
 @start
-    %rt =l loadl %argp
+    %rt =l call $nox_runtime_init()
+    call $nox_os_init(w %argc, l %argv)
+    call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
     call $scalar_roundtrip(l %rt)
     %t0 =w call $nox_exception_pending(l %rt)
     jnz %t0, @exc_propagate0, @exc_continue1
@@ -1800,28 +1802,8 @@ export function l $main_body(l %argp) {
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue1
-    call $nox_free(l %rt, l %argp, l 8)
-@fn_end2
-    ret 0
-}
-export function w $main(w %argc, l %argv) {
-@start
-    %rt =l call $nox_runtime_init()
-    call $nox_os_init(w %argc, l %argv)
-    call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
-    call $nox_async_init(l %rt)
-    %t0 =l call $nox_alloc(l %rt, l 8)
-    storel %rt, %t0
-    %t1 =l call $nox_async_spawn(l %rt, l $main_body, l %t0)
-    %t2 =w call $nox_async_run_to_completion(l %rt)
-    jnz %t2, @deadlock0, @no_deadlock1
-@deadlock0
-    call $nox_async_deadlock_abort(l %rt)
-    ret 0
-@no_deadlock1
-    call $nox_async_destroy_task(l %rt, l %t1)
-    call $nox_async_deinit(l %rt)
     call $nox_runtime_deinit(l %rt)
+@fn_end2
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

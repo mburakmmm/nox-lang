@@ -68,7 +68,23 @@ const ChannelI64 = channel_mod.Channel(i64);
 /// KULLANILIR (bağlayıcı SEMBOL adını çözer, HİÇBİR `@import` GEREKMEZ).
 extern fn nox_raise(rt: ?*anyopaque, obj: ?*anyopaque, line: i64) callconv(.c) void;
 
-threadlocal var g_scheduler: ?scheduler_mod.Scheduler = null;
+/// Bulundu (bkz. proje belleği "v4 pre20 stdlib roadmap"): `threadlocal
+/// var` freestanding'de GERÇEK bir #GP çökmesine yol AÇIYORDU — `boot.S`
+/// HİÇBİR ZAMAN TLS kurmaz (`FS_BASE` MSR'ı initialize EDİLMEZ), bu
+/// YÜZDEN `%fs:offset`-bağıl erişim anlamsız bir adrese çözümleniyordu
+/// (GERÇEK bir QEMU/GDB oturumuyla, TAM OLARAK BU atamada — `nox_async_
+/// init`in AŞAĞIDAKİ `g_scheduler = Scheduler.init(...)` satırı —
+/// KANITLANDI). Çözüm: freestanding (HER ZAMAN tek-çekirdekli, GERÇEK
+/// OS iş parçacığı ASLA YOK) İçİn düz bir `var`a düşülür — hosted'da
+/// (`is_freestanding == false`, comptime'da ELENİR) `threadlocal`
+/// davranışı (bkz. AŞAĞIDAKİ "g_scheduler threadlocal" testi) BİREBİR
+/// DEĞİŞMEDEN kalır. Depolama artık `GSchedulerSlot.value` ÜZERİNDEN
+/// erişilir (TÜM aşağıdaki kullanım siteleri bu YENİ adı kullanır).
+const GSchedulerSlot = if (is_freestanding) struct {
+    var value: ?scheduler_mod.Scheduler = null;
+} else struct {
+    threadlocal var value: ?scheduler_mod.Scheduler = null;
+};
 
 /// Stdlib fazı §D.1.3 (bkz. nox-teknik-spesifikasyon.md) — `nox.http`in
 /// Zig kabuğu (giden istekler İÇİN arka plan iş parçacığı + tamamlanma
@@ -84,7 +100,7 @@ threadlocal var g_scheduler: ?scheduler_mod.Scheduler = null;
 /// (bloklayan) bir bekleyişe düşer (senkron kod için tamamen GÜVENLİDİR,
 /// çünkü zaten korunacak BAŞKA bir fiber YOKTUR).
 pub fn currentFiberScheduler() ?*scheduler_mod.Scheduler {
-    if (g_scheduler) |*s| {
+    if (GSchedulerSlot.value) |*s| {
         if (s.current != null) return s;
     }
     return null;
@@ -99,7 +115,7 @@ pub fn currentFiberScheduler() ?*scheduler_mod.Scheduler {
 /// burada panik ATILMAZ, ÇÜNKÜ TaskLocal fiber DIŞINDA da SÖZDİZİMSEL
 /// olarak ÇAĞRILABİLİR bir metod çağrısıdır — checker BUNU kısıtlamaz).
 pub fn currentFiber() ?*fiber_mod.Fiber {
-    if (g_scheduler) |*s| return s.current;
+    if (GSchedulerSlot.value) |*s| return s.current;
     return null;
 }
 
@@ -120,11 +136,11 @@ pub export fn nox_async_init(rt: ?*anyopaque) void {
     // reaktörün `kqueue()`sini açtığından fallible — bu, `nox_rc_alloc`ın
     // `null` dönmesi kadar SON DERECE nadir bir kaynak tükenmesi senaryosudur
     // (bkz. `markReady`in AYNI gerekçeyle kullandığı `@panic`).
-    g_scheduler = scheduler_mod.Scheduler.init(allocatorFromRt(rt)) catch @panic("async zamanlayici baslatilamadi (kqueue)");
+    GSchedulerSlot.value = scheduler_mod.Scheduler.init(allocatorFromRt(rt)) catch @panic("async zamanlayici baslatilamadi (kqueue)");
     // Faz MN.9.1: `scheduler.zig`nin standalone `currentScheduler()`ıyla
     // eşitlenir — bkz. onun belge notu (`Channel[T]`nin çapraz-worker
     // düzeltmesi BUNA dayanır).
-    scheduler_mod.setCurrentScheduler(&g_scheduler.?);
+    scheduler_mod.setCurrentScheduler(&GSchedulerSlot.value.?);
 
     // Faz MN.4/5: `rt`nin `RuntimeState.worker_pool`u SET İSE (bkz.
     // `worker_pool.zig`nin `WorkerPool.create`ı) bu OS iş parçacığı bir
@@ -148,7 +164,7 @@ pub export fn nox_async_init(rt: ?*anyopaque) void {
         if (state.worker_pool) |wp_ptr| {
             const pool: *worker_pool_mod.WorkerPool = @ptrCast(@alignCast(wp_ptr));
             const slot = asap.currentWorkerSlot();
-            g_scheduler.?.attachToPool(.{
+            GSchedulerSlot.value.?.attachToPool(.{
                 .own_slot = slot,
                 .sibling_deques = pool.deque_list,
                 .live_count = pool.pool_live_count,
@@ -170,7 +186,7 @@ pub export fn nox_async_init(rt: ?*anyopaque) void {
             // İLE HEDEFLEYEBİLMESİ İçİn KENDİ `*Scheduler`ını (`attachToPool`
             // BAŞARILI OLDUKTAN SONRA, ARTIK GÜVENLE ÇALINABİLİR/uyandırılabilir
             // OLDUĞUNDA) yayınlar.
-            state.pool_ext.?.pool_scheduler_ptrs[slot].store(&g_scheduler.?, .release);
+            state.pool_ext.?.pool_scheduler_ptrs[slot].store(&GSchedulerSlot.value.?, .release);
         }
     }
 }
@@ -184,8 +200,8 @@ pub export fn nox_async_init(rt: ?*anyopaque) void {
 /// EKSİKTİ.
 pub export fn nox_async_deinit(rt: ?*anyopaque) void {
     _ = rt;
-    if (g_scheduler) |*s| s.deinit();
-    g_scheduler = null;
+    if (GSchedulerSlot.value) |*s| s.deinit();
+    GSchedulerSlot.value = null;
     scheduler_mod.setCurrentScheduler(null);
 }
 
@@ -201,7 +217,7 @@ pub export fn nox_async_spawn(rt: ?*anyopaque, func: *const fn (*anyopaque) call
     // async_init`de ZATEN `attachToPool` İLE bağlandığından BURADA AYRICA
     // `rt`ye bakmaya GEREK YOK.
     _ = rt;
-    const task = scheduler_mod.spawn(&g_scheduler.?, i64, func, arg.?) catch @panic("OOM: spawn");
+    const task = scheduler_mod.spawn(&GSchedulerSlot.value.?, i64, func, arg.?) catch @panic("OOM: spawn");
     return task;
 }
 
@@ -214,7 +230,7 @@ pub export fn nox_async_spawn(rt: ?*anyopaque, func: *const fn (*anyopaque) call
 /// KULLANILIR — `pub fn` (export fn DEĞİL): codegen'in ÜRETTİĞİ HİÇBİR
 /// çağrı sitesi BUNU çağırmaz, SADECE runtime'ın KENDİ İç kullanımı İçİndir.
 pub fn spawnPinnedForCurrentThread(func: *const fn (*anyopaque) callconv(.c) i64, arg: *anyopaque) ?*anyopaque {
-    const task = scheduler_mod.spawnPinned(&g_scheduler.?, i64, func, arg) catch @panic("OOM: spawnPinned");
+    const task = scheduler_mod.spawnPinned(&GSchedulerSlot.value.?, i64, func, arg) catch @panic("OOM: spawnPinned");
     return task;
 }
 
@@ -340,7 +356,7 @@ pub export fn nox_async_destroy_task(rt: ?*anyopaque, task: ?*anyopaque) void {
 /// tamamlandı. `1`: `error.Deadlock` (bkz. `nox_async_deadlock_abort`).
 pub export fn nox_async_run_to_completion(rt: ?*anyopaque) i32 {
     _ = rt;
-    g_scheduler.?.run() catch |e| switch (e) {
+    GSchedulerSlot.value.?.run() catch |e| switch (e) {
         error.Deadlock => return 1,
     };
     return 0;
@@ -365,7 +381,7 @@ pub export fn nox_async_deadlock_abort(rt: ?*anyopaque) noreturn {
 
 export fn nox_channel_new(rt: ?*anyopaque, capacity: i64) ?*anyopaque {
     const ch = allocatorFromRt(rt).create(ChannelI64) catch @panic("OOM: channel");
-    ch.* = ChannelI64.init(&g_scheduler.?, @intCast(capacity));
+    ch.* = ChannelI64.init(&GSchedulerSlot.value.?, @intCast(capacity));
     return ch;
 }
 
@@ -431,8 +447,8 @@ test "nox_async_spawn + nox_async_await, i64 payload uçtan uca" {
 
     const t: *TaskI64 = @ptrCast(@alignCast(task));
     allocatorFromRt(rt).destroy(t);
-    g_scheduler.?.deinit();
-    g_scheduler = null;
+    GSchedulerSlot.value.?.deinit();
+    GSchedulerSlot.value = null;
 }
 
 test "nox_channel_new/send/recv, i64 payload uçtan uca" {
@@ -447,8 +463,8 @@ test "nox_channel_new/send/recv, i64 payload uçtan uca" {
     const c: *ChannelI64 = @ptrCast(@alignCast(ch));
     c.deinit();
     allocatorFromRt(rt).destroy(c);
-    g_scheduler.?.deinit();
-    g_scheduler = null;
+    GSchedulerSlot.value.?.deinit();
+    GSchedulerSlot.value = null;
 }
 
 // Faz BB.1: `g_scheduler`nin `threadlocal`a çevrilmesinin GERÇEKTEN iki

@@ -14,6 +14,44 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.122.0]
+
+### Eklendi
+
+- **v4 Faz C — dogfood test altyapısı (bkz. nox-teknik-spesifikasyon.md
+  §3.219)**: `tests/golden/freestanding_dogfood_test.zig` (`kernel_boot_
+  x86_64_test.zig`nin tek-dosya modelini HERHANGİ bir `.nox` kaynağını
+  GERÇEK QEMU'da çalıştırıp checkpoint doğrulayan `expectFreestandingBoot`
+  yardımcısına genelleştirir) + `tests/golden/freestanding_dogfood_corpus.nox`
+  (capability-siz/saf bir test kümesi — çekirdek dil + nox.math/bits/mem/
+  buffer/binary/collections/console/time'ın saf kısmı — HEM hosted HEM
+  GERÇEK QEMU'da AYNI checkpoint'leri bastığı kanıtlanır). `zig build
+  freestanding-dogfood-test` yeni adımı.
+- **Fiber yığını için stack-provider (`runtime/freestanding/x86_64/
+  kernel.zig`)**: `nox_allocator_install`ın genel heap için yaptığının
+  aynısı, fiber yığınları için — sabit boyutlu statik bir havuzdan (8 ×
+  192 KiB) hizmet eder. Bu olmadan `spawn`/`await` freestanding'de HİÇ
+  çalışmıyordu.
+
+### Düzeltildi
+
+- **GERÇEK, önceden keşfedilmemiş bir hata: `threadlocal var g_scheduler`/
+  `g_current_scheduler` freestanding'de #GP çökmesine yol açıyordu** (bkz.
+  nox-teknik-spesifikasyon.md §3.219) — bare-metal boot zinciri TLS hiç
+  kurmadığından (`FS_BASE` MSR'ı initialize edilmez) bu threadlocal'lara
+  erişim anlamsız bir adrese çözümleniyordu. GERÇEK bir QEMU/LLDB gdbstub
+  oturumuyla (register-seviyesi analiz) kesin olarak izole edildi.
+  **Async/fiber desteği (`spawn`/`await`/`Task[T]`/`Channel[T]`)
+  freestanding'de bu düzeltmeden ÖNCE hiçbir zaman gerçekten
+  çalışmıyordu** — artık gerçekten çalışıyor (GERÇEK QEMU'da doğrulandı).
+  Hosted davranış tamamen değişmedi (`is_freestanding` comptime dalıyla
+  seçilen depolama).
+- **GERÇEK bir ikinci hata: `moduleUsesAsync`nin aşırı-geniş
+  `.generic_construct => true` kontrolü**: HERHANGİ bir generic sınıf
+  örneklemesini (`Box[int](5)` gibi, sadece `Channel[T](...)` değil)
+  yanlışlıkla "async kullanıyor" sayıp `main`i gereksiz yere fiber
+  sarmalına çeviriyordu — sadece `Channel[T](...)` için daraltıldı.
+
 ## [1.121.0]
 
 ### Değişti

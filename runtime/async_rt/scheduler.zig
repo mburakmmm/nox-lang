@@ -123,12 +123,26 @@ pub const PoolLink = struct {
 /// `suspendCurrent`/`markReady` YANLIŞ worker'ın durumuna dokunuyordu.
 /// `currentScheduler()` (ÇAĞIRANIN KENDİ, GERÇEKTEN ÇALIŞAN worker'ının
 /// scheduler'ı) BU YÜZDEN `self.scheduler` YERİNE kullanılmalıdır.
-threadlocal var g_current_scheduler: ?*Scheduler = null;
+/// Bulundu (bkz. proje belleği "v4 pre20 stdlib roadmap"): `threadlocal
+/// var` freestanding'de GERÇEK bir #GP çökmesine yol AÇIYORDU — bare-metal
+/// kernel'in boot zinciri (`boot.S`) HİÇBİR ZAMAN TLS kurmaz (`FS_BASE`
+/// MSR'ı HİÇ initialize EDİLMEZ), bu YÜZDEN `%fs:offset`-bağıl bir erişim
+/// anlamsız bir adrese çözümleniyordu (GERÇEK bir QEMU/GDB oturumuyla
+/// KANITLANDI — bkz. `nox_async_init`in `g_scheduler = Scheduler.init(...)`
+/// ataması). Çözüm: freestanding (HER ZAMAN tek-çekirdekli, GERÇEK OS
+/// iş parçacığı ASLA YOK) İçİn düz (threadlocal OLMAYAN) bir `var`a
+/// düşülür — hosted'da (`is_freestanding == false`, comptime'da ELENİR)
+/// `threadlocal` davranışı BİREBİR DEĞİŞMEDEN kalır.
+const CurrentSchedulerSlot = if (is_freestanding) struct {
+    var value: ?*Scheduler = null;
+} else struct {
+    threadlocal var value: ?*Scheduler = null;
+};
 pub fn currentScheduler() ?*Scheduler {
-    return g_current_scheduler;
+    return CurrentSchedulerSlot.value;
 }
 pub fn setCurrentScheduler(s: ?*Scheduler) void {
-    g_current_scheduler = s;
+    CurrentSchedulerSlot.value = s;
 }
 
 pub const Scheduler = struct {

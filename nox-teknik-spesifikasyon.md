@@ -26585,6 +26585,135 @@ fixture'ı — HEPSİ `nox.time`yi transitif/doğrudan İÇERDİĞİNDEN) kasıt
 olarak YENİDEN OLUŞTURULDU, sayısal çıktılar DEĞİŞMEDİ. `zig build test`:
 168/168 adım, sıfır regresyon.
 
+## 3.219 v4 (2.0 öncesi son mimari stdlib katmanlaşması), Faz C — dogfood altyapısı + 3 GERÇEK freestanding async hatası
+
+**Bağlam:** Faz C (orijinal önerinin "aynı testleri hosted+freestanding×
+QBE+LLVM'de çalıştırma" başlığı) kullanıcının onayıyla 3 maddeye
+somutlaştırıldı. **Somutlaştırma SIRASINDA keşfedilen GERÇEK bulgu:**
+orijinal "4 hücreli matris" tasviri YANLIŞ varsayıma dayanıyordu —
+`freestanding×LLVM` MİMARİ olarak ZATEN engelli (`--release` LLVM yolu
+GERÇEK OS `WorkerPool`u gerektirir, freestanding'de YOK — `main.zig`nin
+`buildOne`i bunu KOŞULSUZ reddeder, `tests/cli/freestanding_build_test.zig`de
+ZATEN test edilmiş). GERÇEK matris 3 hücrelidir: hosted×QBE/hosted×LLVM/
+freestanding×QBE — SON hücre ÖNCEDEN SADECE `kernel_boot_x86_64_test.zig`nin
+TEK hardcoded dosyasıyla (`kernel_demo.nox`) test ediliyordu,
+`fixture_corpus.zig`nin zengin korpusuyla HİÇ bağlantısı YOKTU.
+
+### Madde 1 — Genelleştirilmiş freestanding QEMU test altyapısı
+
+`tests/golden/freestanding_dogfood_test.zig`: `kernel_boot_x86_64_test.
+zig`nin build/link/objcopy/QEMU-çalıştırma adımlarını `expectFreestandingBoot(
+allocator, io, source: []const u8, expected_checkpoints: []const []const
+u8) !void` adlı PARAMETRİK bir yardımcıya genelleştirir — HERHANGİ bir
+`.nox` kaynağını (geçici bir dosyaya yazıp) GERÇEK QEMU'da çalıştırıp
+checkpoint listesini doğrular. `build.zig`ye `kernel_boot_options`in AYNI
+yol kümesini kullanan YENİ bir test modülü + `zig build freestanding-
+dogfood-test` adımı eklendi.
+
+### Madde 2 — Paylaşılan dogfood korpusu (dogfood'un ASIL ÖZÜ)
+
+`tests/golden/freestanding_dogfood_corpus.nox`: capability-siz/saf bir
+test kümesi (çekirdek dil + `nox.math`/`nox.bits`/`nox.mem`/`nox.buffer`/
+`nox.binary`/`nox.collections`/`nox.console`/`nox.time`nin saf kısmı) —
+`freestanding_dogfood_test.zig`nin TEK testi BUNU HEM `noxc run` (hosted)
+İLE çalıştırıp stdout'u SATIR SATIR checkpoint listesine çevirir, HEM
+AYNI checkpoint listesini madde 1'in yardımcısıyla GERÇEK QEMU'da
+doğrular — statik bir `expected` sabiti DEĞİL, hosted çalışmasının
+KENDİ çıktısı referans alınır (dogfood'un TAM OLARAK istediği: "AYNI
+test, AYNI çıktı, İKİ ortamda").
+
+### Madde 2'nin ORTAYA ÇIKARDIĞI 3 GERÇEK, önceden keşfedilmemiş hata
+
+Korpusa generic sınıf örneklemesi (`Stack[int]()`/`Set[int]()`) EKLENİRKEN
+GERÇEK bir #GP (General Protection Fault) çökmesiyle karşılaşıldı — İZOLE
+edilip (GERÇEK bir QEMU/LLDB gdbstub oturumuyla, register-seviyesi analiz
+İLE) ÜÇ AYRI, GERÇEK hata bulundu:
+
+**Bulgu #1 — `moduleUsesAsync`nin aşırı-geniş `.generic_construct => true`
+kontrolü:** `compiler/codegen_qbe/async_thread.zig`nin `exprUsesAsync`i
+HERHANGİ bir generic sınıf örneklemesini (`Box[int](5)` GİBİ, SADECE
+`Channel[T](...)` DEĞİL) koşulsuz "async kullanıyor" SAYIYORDU — `main`i
+GEREKSİZ yere `genMainAsync`e (fiber scheduler sarmalı) ÇEVİRİYORDU. İZOLE
+bir repro (`Box[int](5)`, HİÇBİR gerçek async YOK) BUNU KANITLADI. Düzeltme:
+SADECE `gc.name == "Channel"` koşulsuz `true` döner, DİĞER TÜM generic
+örneklemeler SADECE `args`e recurse eder (`exprUsesMulticorePool`nin AYNI,
+ZATEN doğru deseniyle TUTARLI hâle getirildi).
+
+**Bulgu #2 — KÖK NEDEN: `threadlocal var g_scheduler`/`g_current_scheduler`
+freestanding'de TLS OLMADAN çöküyordu:** GERÇEK bir QEMU/LLDB gdbstub
+oturumuyla (tam register dump + backtrace İLE) KANITLANDI — çökme
+`nox_async_init`in `g_scheduler = Scheduler.init(...)` atamasında,
+HEDEF adresin (TLS'e `%fs:offset` İLE erişilen `threadlocal var`ın
+KENDİSİ) `0xf000ff53f000fd83` GİBİ anlamsız bir değere ÇÖZÜLMESİYLE
+oluşuyordu — `boot.S` TLS'i HİÇ KURMAZ (`FS_BASE` MSR'ı initialize
+EDİLMEZ), freestanding HER ZAMAN tek-çekirdekli OLDUĞUNDAN BUNA hiç
+ihtiyaç DUYULMAMIŞTI, AMA `bridge.zig`/`scheduler.zig`nin bu İKİ
+`threadlocal var`ı KOŞULSUZ `threadlocal`dı. **Bu, async/fiber
+desteğinin (`spawn`/`await`/`Task[T]`/`Channel[T]`) freestanding'de
+HİÇBİR ZAMAN test EDİLMEMİŞ VE AKTİF OLARAK ÇALIŞMADIĞI anlamına
+gelir** — `lib_freestanding.zig`nin ÖNCEKİ bir belge notunun "freestanding
+profilinde ÇALIŞIR" iddiası YANLIŞTI (GERÇEKTEN DOĞRULANMAMIŞ). Düzeltme:
+`is_freestanding` comptime dalıyla SEÇİLEN bir depolama (`GSchedulerSlot`/
+`CurrentSchedulerSlot` — freestanding'de düz `var`, hosted'da (DEĞİŞMEDEN)
+`threadlocal var`) — hosted davranışı SIFIR etkilenir (`g_scheduler
+threadlocal: iki gerçek OS iş parçacığı bağımsız çalışır` testi
+DEĞİŞMEDEN geçer).
+
+**Bulgu #3 — EKSİK özellik (bug DEĞİL): fiber yığını İçİn HİÇBİR "stack
+provider" kayıtlı DEĞİLDİ:** Bulgu #2 düzeltildikten SONRA ORTAYA ÇIKTI —
+`nox_async_spawn` ARTIK TEMİZ bir `@panic("OOM: spawn")`e (Zig'in
+`defaultPanic`inin freestanding dalı, `@trap()` → GERÇEK `#UD`, vektör 6
+— rastgele bir çökme DEĞİL, KASITLI bir trap) düşüyordu — `runtime/
+async_rt/fiber.zig`nin `allocGuardedStack`ı freestanding'de (`g_stack_
+provider` kayıtlı DEĞİLSE, ki HİÇBİR YERDE kayıtlı DEĞİLDİ) KOŞULSUZ
+`error.StackAllocFailed` dönüyordu. Çözüm: `runtime/freestanding/x86_64/
+kernel.zig`ye SABİT boyutlu, statik bir havuzdan (`g_fiber_stack_pool`,
+`MAX_FIBER_STACKS=8` × `fiber.STACK_SIZE` 192 KiB = 1.5 MiB `.bss`)
+hizmet eden bir `StackProvider` implementasyonu EKLENDİ (`nox_allocator_
+install`ın GENEL heap İçİn yaptığının AYNI deseni) — `nox_alloc_page`nin
+SAYFA-başına GRANÜLERLİĞİ (fiber yığınının BİTİŞİK 192 KiB İHTİYACIYLA
+ÇELİŞEN) VE ardışık `nox_alloc_page` çağrılarının FİZİKSEL bitişiklik
+GARANTİ ETMEMESİ YÜZÜNDEN SABİT statik havuz, v1 İçİn EN BASİT/EN GÜVENLİ
+çözüm olarak seçildi (havuz TÜKENİRSE `null`/`error.StackAllocFailed`,
+SESSİZ bir bellek bozulması DEĞİL).
+
+**Sonuç:** gerçek `spawn`/`await`/`Task[T]` ARTIK freestanding'de
+GERÇEKTEN uçtan uca çalışıyor (GERÇEK QEMU'da doğrulandı — `async def
+compute(x: int) -> int: return x * 2` + `spawn`+`await`, `42` BASIYOR).
+Generic sınıf örneklemesi (`Stack[int]()`/`Set[int]()`) ARTIK gereksiz
+async sarmalayıcıyı tetiklemiyor. Dogfood korpusuna HER İKİSİ de kalıcı
+olarak EKLENDİ (`SPAWN_OK` checkpoint'i).
+
+### Madde 3 — Backend conformance doğrulaması
+
+`backend_conformance_test.zig` (QBE↔LLVM) BU turda eklenen HİÇBİR
+değişiklikten (`exprUsesAsync` DÜZELTMESİ HER İKİ backend İçİn DE AYNI
+kod yolundan geçer; `threadlocal`→comptime-gated `var` SAF runtime,
+backend-BAĞIMSIZ) ETKİLENMEDİĞİ İçİn YENİ bir conformance fixture'ı
+GEREKMEDİ — MEVCUT suite'in sıfır regresyonla geçtiği doğrulandı (BU,
+Faz C'nin "backend'ler arasında YENİ bir sapma YOK" iddiasının KENDİSİ).
+
+### Test
+
+`tests/golden/freestanding_dogfood_test.zig` (YENİ, `expectFreestandingBoot`
+yardımcısı + hosted-karşılaştırma testi) + `tests/golden/freestanding_dogfood_corpus.nox`
+(YENİ, `SPAWN_OK` DAHİL). 12 IR anlık görüntüsü (generic sınıf/`typed_ptr`/
+`collections` fixture'ları — HEPSİ `.generic_construct`ın ARTIK async
+sarmalayıcıyı TETİKLEMEDİĞİNDEN `main`in kodu DEĞİŞTİĞİNDEN) kasıtlı
+olarak YENİDEN OLUŞTURULDU, sayısal çıktılar DEĞİŞMEDİ. `zig build test`:
+171/171 adım, sıfır regresyon. `zig build kernel-boot-test`/`zig build
+freestanding-dogfood-test`: İKİSİ de GERÇEK QEMU'da yeşil.
+
+### Faz C KAPANIŞI
+
+**v4 Faz C'nin TÜM 3 maddesi TAMAMLANDI.** Dogfood altyapısı kuruldu,
+paylaşılan bir korpus hosted+freestanding parite'sini KANITLIYOR, backend
+conformance DOĞRULANDI. Bu süreçte bulunan 3 GERÇEK hata (ikisi düzeltme,
+biri yeni özellik) async/fiber desteğini freestanding'de İLK KEZ
+GERÇEKTEN ÇALIŞIR hâle getirdi — bu, projenin "ölç, varsayma" kültürünün
+(AGENTS.md İlke #7) EN NET örneklerinden biridir: dogfood'un KENDİSİ
+olmasaydı bu 3 hata muhtemelen UZUN SÜRE keşfedilmeyecekti.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
@@ -26627,9 +26756,15 @@ getirme) BAŞLADI — madde 1 (`nox.math`/`nox.random`, §3.215)
 TAMAMLANDI; `nox.log`nin `clock` bağımlılığı İçİN AYRI bir `nox.console`
 modülü eklendi (§3.217, `nox.log` DEĞİŞMEDEN kaldı); 37 modül taraması
 (§3.218) `nox.time`yi SEMBOL-seviyesinde capability-siz hale getirdi
-(`nox.crypto` deseni). Proje belleği `project_v4_pre20_stdlib_roadmap`nin
-KENDİ notuna bkz. — 37 modül taraması TAMAMLANDI, BAŞKA bir aday
-BULUNAMADI, Faz B'nin bu ekseni KAPANDI. Faz C (dogfood: hosted+
-freestanding+QBE+LLVM'de aynı testler) HENÜZ PLANLANMADI. §3.214'ün
+(`nox.crypto` deseni) — **Faz B TAMAMEN KAPANDI**. **Faz C** (dogfood:
+hosted+freestanding×QBE+LLVM'de aynı testler) de **TAMAMEN BİTTİ**
+(3/3 madde, §3.219) — bu süreçte async/fiber desteğinin (`spawn`/
+`await`/`Task[T]`) freestanding'de HİÇBİR ZAMAN GERÇEKTEN ÇALIŞMADIĞI
+keşfedilip 3 GERÇEK hata/eksiklik (TLS/`threadlocal` çökmesi +
+`moduleUsesAsync`nin aşırı-geniş `.generic_construct` kontrolü + eksik
+fiber-stack-provider) düzeltildi — ARTIK GERÇEKTEN çalışıyor. §3.214'ün
 bulgu #1'i (generic sınıf + çapraz-modül tip parametresi codegen hatası)
-§3.216'da DÜZELTİLDİ — ARTIK AÇIK bulgu YOK.
+§3.216'da DÜZELTİLDİ — ARTIK AÇIK bulgu YOK. **Faz D** (CI hatalarını
+tamamen çözme — AArch64 stack-smash + concurrency-torture'ın nadir
+determinizm bulgusu) kullanıcının KENDİ sözleriyle Faz C SONRASI
+BAŞLAYACAK, HENÜZ BAŞLAMADI.

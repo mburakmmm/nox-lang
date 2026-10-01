@@ -176,7 +176,21 @@ pub fn matchIntrinsicKind(callee: ast.Expr) ?IntrinsicKind {
 
 pub fn exprUsesAsync(expr: ast.Expr) bool {
     return switch (expr) {
-        .await_expr, .spawn_expr, .generic_construct => true,
+        .await_expr, .spawn_expr => true,
+        // Bulundu (bkz. proje belleği "v4 pre20 stdlib roadmap"): BU dal
+        // ÖNCEDEN HERHANGİ bir `.generic_construct`u (`Box[int](5)` GİBİ,
+        // `Channel[T](...)` DIŞINDA HERHANGİ bir generic sınıf örneklemesi
+        // DAHİL) koşulsuz "async kullanıyor" SAYIYORDU — `main`i GEREKSİZ
+        // yere `genMainAsync`e (fiber scheduler sarmalı) ÇEVİRİYORDU.
+        // Sadece `Channel[T](...)` GERÇEKTEN async-İLGİLİDİR (bir
+        // kanal İNŞASI zamanlayıcı durumu GEREKTİRİR); `exprUsesMulticorePool`in
+        // AYNI `.generic_construct` dalıyla (SADECE `args`e recurse eder,
+        // KOŞULSUZ `true` DÖNMEZ) TUTARLI hâle getirildi.
+        .generic_construct => |gc| blk: {
+            if (std.mem.eql(u8, gc.name, "Channel")) break :blk true;
+            for (gc.args) |a| if (exprUsesAsync(a)) break :blk true;
+            break :blk false;
+        },
         .unary => |u| exprUsesAsync(u.operand.*),
         .binary => |b| exprUsesAsync(b.left.*) or exprUsesAsync(b.right.*),
         .call => |c| blk: {

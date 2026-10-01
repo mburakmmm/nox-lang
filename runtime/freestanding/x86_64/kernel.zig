@@ -10,6 +10,16 @@
 
 const std = @import("std");
 const diag_sink = @import("diag_sink");
+/// v4 Faz C (bkz. nox-teknik-spesifikasyon.md §3.2xx): `spawn`/`await`nin
+/// freestanding'de GERÇEKTEN uçtan uca çalışması İçİn (madde 1'in 2 GERÇEK
+/// hatasını — TLS/`threadlocal` çökmesi + `moduleUsesAsync`nin aşırı-geniş
+/// `.generic_construct` kontrolü — düzelttikten SONRA KEŞFEDİLEN üçüncü,
+/// AYRI bir eksik: fiber yığını ayırmak İçİn bir "stack provider" HİÇ
+/// kayıtlı DEĞİLDİ, `nox_async_spawn` HER ZAMAN `error.StackAllocFailed`
+/// İLE temiz bir `@panic`/`@trap()`e (#UD) düşüyordu) — `runtime/async_rt/
+/// fiber.zig`nin `StackProvider` arayüzü (`nox_allocator_install`ın GENEL
+/// heap İçİn yaptığının AYNISI, AMA fiber yığınları İçİn) BURADA somutlaştırılır.
+const fiber_mod = @import("../../async_rt/fiber.zig");
 
 // ---------------------------------------------------------------------
 // `outb`/`inb` — Zig 0.16'nın inline-asm sözdizimi doğrudan
@@ -154,7 +164,60 @@ export fn nox_freestanding_early_init() callconv(.c) void {
     // GÜVENLE çalışır, ÇÜNKÜ `kernelAlloc`/`nox_alloc_page`/`ensurePageInit`
     // HİÇBİRİ `rt`ye ihtiyaç DUYMAZ (bkz. aşağıdaki bölümün belge notu).
     nox_allocator_install(kernelAlloc, kernelFree);
+    // v4 Faz C: fiber yığını sağlayıcısı — AŞAĞIDAKİ `fiberStackAlloc`/
+    // `fiberStackFree`, SABİT boyutlu STATİK bir havuzdan (`g_fiber_stack_
+    // pool`) hizmet eder. `nox_allocator_install`ın SAYFA-TABANLI genel
+    // heap'inin AKSİNE: `fiber.STACK_SIZE` (192 KiB) `kernelAlloc`ın TEK
+    // bir isteği İçİn SINADIĞI 4096-bayt sınırını ZATEN AŞAR (kernelAlloc
+    // BİLİNÇLİ olarak tek-sayfa-üstü isteği reddeder, bkz. onun belge
+    // notu) VE `nox_alloc_page`nin art arda çağrıları FİZİKSEL olarak
+    // BİTİŞİK sayfalar GARANTİ ETMEZ (basit bir LIFO serbest-liste) — bir
+    // fiber yığınının TEK, BİTİŞİK bir bellek bloğu OLMASI GEREKTİĞİNDEN
+    // (yığın işaretçisi aritmetiği BUNU VARSAYAR) SABİT bir statik
+    // havuz, BU v1 İçİn EN BASİT/EN GÜVENLİ çözümdür.
+    fiber_mod.nox_register_stack_provider(&fiber_stack_provider);
 }
+
+// ---------------------------------------------------------------------
+// v4 Faz C: fiber yığını sağlayıcısı (`fiber.StackProvider`) — SABİT
+// boyutlu, statik bir havuzdan HİZMET eder (`g_kernel_heap_backing`nin
+// AYNI "sabit .bss arabelleği" deseni, bkz. `lib_freestanding.zig`).
+// **v1 sınırı** (AÇIKÇA belgelenir): EN FAZLA `MAX_FIBER_STACKS` (8) EŞ
+// ZAMANLI CANLI fiber — freestanding v0.1'in KENDİ kapsamı İçİn (BİR
+// kernel demo'su, AĞIR eşzamanlılık HEDEFLEMİYOR) YETERLİ; havuz
+// TÜKENİRSE `alloc` `null` döner, `nox_async_spawn` BUNU `error.
+// StackAllocFailed`e ÇEVİRİP temiz bir `@panic` İLE sonlanır (sessiz
+// bir bellek bozulması DEĞİL).
+// ---------------------------------------------------------------------
+
+const MAX_FIBER_STACKS = 8;
+var g_fiber_stack_pool: [MAX_FIBER_STACKS][fiber_mod.STACK_SIZE]u8 align(fiber_mod.STACK_ALIGN) = undefined;
+var g_fiber_stack_used: [MAX_FIBER_STACKS]bool = @splat(false);
+
+fn fiberStackAlloc(ctx: ?*anyopaque) ?[]align(fiber_mod.STACK_ALIGN) u8 {
+    _ = ctx;
+    for (&g_fiber_stack_used, 0..) |*used, i| {
+        if (!used.*) {
+            used.* = true;
+            return &g_fiber_stack_pool[i];
+        }
+    }
+    return null;
+}
+
+fn fiberStackFree(ctx: ?*anyopaque, stack: []align(fiber_mod.STACK_ALIGN) u8) void {
+    _ = ctx;
+    const base = @intFromPtr(stack.ptr);
+    for (&g_fiber_stack_pool, 0..) |*slot, i| {
+        if (@intFromPtr(slot) == base) {
+            g_fiber_stack_used[i] = false;
+            return;
+        }
+    }
+}
+
+const fiber_stack_vtable: fiber_mod.StackProviderVTable = .{ .alloc = fiberStackAlloc, .free = fiberStackFree };
+const fiber_stack_provider: fiber_mod.StackProvider = .{ .ctx = null, .vtable = &fiber_stack_vtable };
 
 /// `runtime/lib_freestanding.zig`nin `export fn nox_allocator_install`ı —
 /// AYNI final nesneye (`noxrt-freestanding-x86_64.o`) derlendiğinden,

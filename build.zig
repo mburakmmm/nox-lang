@@ -1663,6 +1663,37 @@ pub fn build(b: *std.Build) void {
     const kernel_boot_test_step = b.step("kernel-boot-test", "Faz F.4'ün x86_64 QEMU boot testini (GERÇEK bare-metal çalıştırma) çalıştırır — qemu/qbe PATH'te olmalı");
     kernel_boot_test_step.dependOn(&kernel_boot_test_run.step);
 
+    // v4 Faz C madde 1+2 (bkz. nox-teknik-spesifikasyon.md §3.2xx):
+    // `kernel_boot_options`in AYNI yol kümesi + `noxc_path`in (hosted
+    // karşılaştırma İçİn `noxc run`) VE `dogfood_corpus_path`in (hosted
+    // çalıştırma İçİn GERÇEK bir dosya yolu — `@embedFile` SADECE
+    // freestanding derlemesi İçİn KULLANILIR) EKLENMESİ.
+    const dogfood_options = b.addOptions();
+    dogfood_options.addOption([]const u8, "zig_exe_path", b.graph.zig_exe);
+    dogfood_options.addOption([]const u8, "noxc_path", "zig-out/bin/noxc");
+    dogfood_options.addOption([]const u8, "kernel_ld_path", "runtime/freestanding/x86_64/kernel.ld");
+    dogfood_options.addOption([]const u8, "boot_obj_path", "runtime/freestanding/x86_64/boot_x86_64.o");
+    dogfood_options.addOption([]const u8, "noxrt_kernel_obj_path", "zig-out/lib/noxrt-freestanding-x86_64.o");
+    dogfood_options.addOption([]const u8, "dogfood_corpus_path", "tests/golden/freestanding_dogfood_corpus.nox");
+    const dogfood_mod = b.createModule(.{
+        .root_source_file = b.path("tests/golden/freestanding_dogfood_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "build_options", .module = dogfood_options.createModule() },
+        },
+    });
+    const dogfood_test = b.addTest(.{ .root_module = dogfood_mod });
+    dogfood_test.step.dependOn(&install_noxc.step);
+    dogfood_test.step.dependOn(&install_noxrt_kernel.step);
+    dogfood_test.step.dependOn(&compile_boot_x86_64.step);
+    dogfood_test.step.dependOn(&install_stdlib.step);
+    const dogfood_test_run = b.addRunArtifact(dogfood_test);
+    test_step.dependOn(&dogfood_test_run.step);
+    const dogfood_test_step = b.step("freestanding-dogfood-test", "Faz C'nin paylaşılan dogfood korpusunu HEM hosted HEM GERÇEK QEMU'da çalıştırıp karşılaştırır — qemu/qbe PATH'te olmalı");
+    dogfood_test_step.dependOn(&dogfood_test_run.step);
+
     // v2.0 madde 8 (bkz. plan dosyası, Faz E): kamuya açık `--target`/
     // `--emit-asm` bayraklarının GERÇEK `noxc build` çağrılarıyla
     // doğrulanması — `kernel_boot_options`nin AYNI `noxc_path` deseni.
