@@ -26855,6 +26855,56 @@ exponential_shuffle/random_seeded_reproducible) kasıtlı olarak YENİDEN
 OLUŞTURULDU. `zig build test`: 171/171 adım, sıfır regresyon (iki ardışık
 çalıştırmada da STABİL, 0 yeni anlık görüntü).
 
+## 3.221 Faz D — concurrency-torture'ın "determinizm kanıtı" testi düzeltildi
+
+**Bağlam:** v3 sertleştirme yol haritasının (§3.207, madde 12) KENDİ
+notu: `concurrency-torture-test`in "aynı seed iki kez BİREBİR aynı
+sonucu üretir" testi ~6 denemede 1 KEZ başarısız oluyordu (AYNI sabit
+seed İKİ ardışık çalıştırmada FARKLI `completed`/`cancelled` sayıları
+ÜRETİYORDU). O turda "GERÇEK OS jitter'ına bağlı" olarak TEŞHİS EDİLDİ
+ama DERİN araştırma başlatılmadı (kullanıcı kararıyla).
+
+**Kök neden (bu turda KESİNLEŞTİRİLDİ):** `kind==3` dalı `t3: Task[int]
+= spawn nested_work(param)` SONRASI (eğer `cancels[j]`) HEMEN `t3.
+cancel()` çağırır. `spawn()`nin KENDİSİ "spawn-anında çal, İLK-
+çalıştırmadan SONRA sabitlen" modeliyle çalıştığından (bkz. `scheduler.
+zig`nin `spawnPinned`/`spawn` belge notu), spawn edilen görev ÇAĞIRAN
+fiber HİÇ yield ETMEDEN, GERÇEK bir BAŞKA OS iş parçacığında (8 GERÇEK
+worker, `--release`/LLVM) HEMEN çalışmaya BAŞLAYABİLİR — `nested_work`in
+TEK checkpoint'i (`await inner`) `cancel()`DEN ÖNCE ZATEN geçilmiş
+OLABİLİR. Bu, PRNG'nin SADECE MANTIKSAL kararları (HANGİ görev iptal
+EDİLSİN) sabitlediği, GERÇEK iş parçacığı ZAMANLAMASINI DEĞİL — yani
+`cancel()` İLE checkpoint ARASINDAKİ yarış GERÇEKTEN, MİMARİ olarak
+kaçınılmaz (work-stealing'in KENDİSİNİ — spawn edilen görevün ERKEN
+görünürlüğünü KALDIRARAK — değiştirmek BÜYÜK bir zamanlayıcı davranış
+REGRESYONU olurdu, bu YÜZDEN DÜŞÜNÜLMEDİ).
+
+**Düzeltme (kullanıcı onaylı — "testi doğru iddiaya daralt"):** testin
+KENDİSİ, mimarinin GARANTİ EDEMEYECEĞİ bir şeyi ("bit-bit aynı çıktı,
+`completed`/`cancelled` DAHİL") iddia EDİYORDU — bu bir RUNTIME hatası
+DEĞİL, bir TEST-doğruluğu sorunuydu. `torture_source`a 3 YENİ, SADECE
+PRNG kararlarından türetilen (HİÇBİR GERÇEK zamanlama/checkpoint'e BAĞLI
+OLMAYAN) sayaç eklendi: `completed_k01` (kind 0+1, hiç cancel YOK),
+`t3_no_cancel` (kind 3, `cancels[j]==false` — cancel() HİÇ ÇAĞRILMAZ,
+HER ZAMAN tamamlanır), `t3_cancel_requested` (kind 3, `cancels[j]==
+true` — YARIŞ-bağımlı TEK alt-küme). Determinizm testi ARTIK:
+1. SADECE bu 3 deterministik alt-kümenin iki çalıştırma ARASINDA
+   BİREBİR eşit olduğunu doğrular (GERÇEK determinizm iddiası).
+2. HER çalıştırmada `completed+cancelled+excepted==task_count` YAPISAL
+   değişmezini AYRICA doğrular (hiçbir görev kaybolmadı/çökmedi,
+   yarıştan BAĞIMSIZ).
+3. `cancelled`in KENDİSİNİ (yarış-bağımlı) KASITLI olarak KARŞILAŞTIRMAZ
+   — farklıysa SADECE bilgilendirici bir log basar (test BAŞARISIZ
+   OLMAZ).
+
+### Test
+
+Düzeltme, canlı olarak doğrulandı: `zig build concurrency-torture-test`
+5 ardışık çalıştırmadan 1'İNDE GERÇEKTEN yarışı tetikledi
+(`t3_cancel_requested=83` İKİ çalıştırmada da eşleşti, `cancelled` 82
+vs 83 farklı çıktı) — test YİNE DE geçti (bilgilendirici not basıldı).
+`zig build test`: 171/171 adım, sıfır regresyon.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
@@ -26911,5 +26961,10 @@ dogfood checkpoint sıralaması ZORUNLU hale getirildi, capability kontrolü
 METOD çağrılarını da KAPSAYACAK şekilde genişletildi, `nox.random`ın
 threadlocal fallback'i PROAKTİF olarak sertleştirildi, VE `nox.math`nin
 v1.119.0'daki semver İHLALİ `nox.mathx` İLE KALICI olarak düzeltildi.
-**Faz D** (CI hatalarını tamamen çözme — AArch64 stack-smash +
-concurrency-torture'ın nadir determinizm bulgusu) ŞİMDİ BAŞLIYOR.
+**Faz D** (CI hatalarını tamamen çözme) BAŞLADI: AArch64 stack-smash'in
+kök nedeni HÂLÂ AÇIK (derinlemesine araştırıldı, 5 hipotez çürütüldü —
+bkz. proje belleği "aarch64 stack-smash CI workaround", canlı donanım
+watchpoint'i gerektiriyor), AMA concurrency-torture'ın nadir determinizm
+bulgusu KÖK NEDENİYLE BİRLİKTE ÇÖZÜLDÜ (§3.221) — bu bir runtime hatası
+DEĞİL, testin kendi iddiasının mimarinin garanti edemeyeceği bir şeyi
+(bit-bit aynı çıktı) talep etmesiydi.

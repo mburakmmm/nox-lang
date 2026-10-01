@@ -69,6 +69,41 @@ fn absPath(io: std.Io, dir: std.Io.Dir, buf: []u8) ![]const u8 {
     return buf[0..len];
 }
 
+/// `TORTURE_OK <seed> <task_count> <completed> <cancelled> <excepted>
+/// <completed_k01> <t3_no_cancel> <t3_cancel_requested>` satırını ayrıştırır
+/// — bkz. aşağıdaki determinizm testinin belge notu.
+const TortureResult = struct {
+    seed: i64,
+    task_count: i64,
+    completed: i64,
+    cancelled: i64,
+    excepted: i64,
+    completed_k01: i64,
+    t3_no_cancel: i64,
+    t3_cancel_requested: i64,
+};
+
+fn parseTortureLine(stdout_data: []const u8) !TortureResult {
+    const line_start = std.mem.indexOf(u8, stdout_data, "TORTURE_OK") orelse return error.TortureLineNotFound;
+    var it = std.mem.tokenizeScalar(u8, stdout_data[line_start..], ' ');
+    _ = it.next(); // "TORTURE_OK"
+    var fields: [8]i64 = undefined;
+    for (0..8) |idx| {
+        const tok = it.next() orelse return error.TortureLineTruncated;
+        fields[idx] = std.fmt.parseInt(i64, std.mem.trimEnd(u8, tok, "\r\n"), 10) catch return error.TortureLineMalformed;
+    }
+    return .{
+        .seed = fields[0],
+        .task_count = fields[1],
+        .completed = fields[2],
+        .cancelled = fields[3],
+        .excepted = fields[4],
+        .completed_k01 = fields[5],
+        .t3_no_cancel = fields[6],
+        .t3_cancel_requested = fields[7],
+    };
+}
+
 const torture_source =
     \\import nox.random
     \\import nox.os
@@ -118,6 +153,9 @@ const torture_source =
     \\    completed: int = 0
     \\    cancelled: int = 0
     \\    excepted: int = 0
+    \\    completed_k01: int = 0
+    \\    t3_no_cancel: int = 0
+    \\    t3_cancel_requested: int = 0
     \\    j: int = 0
     \\    while j < task_count:
     \\        kind: int = kinds[j]
@@ -126,11 +164,13 @@ const torture_source =
     \\            t0: Task[int] = spawn leaf_work(param)
     \\            v0: int = await t0
     \\            completed = completed + 1
+    \\            completed_k01 = completed_k01 + 1
     \\        elif kind == 1:
     \\            path: str = "/tmp/nox_torture_" + str(seed) + "_" + str(j) + ".tmp"
     \\            t1: Task[int] = spawn io_work(path, "payload-" + str(j))
     \\            v1: int = await t1
     \\            completed = completed + 1
+    \\            completed_k01 = completed_k01 + 1
     \\        elif kind == 2:
     \\            t2: Task[int] = spawn raising_work("boom-" + str(j))
     \\            try:
@@ -139,6 +179,10 @@ const torture_source =
     \\            except TortureRaised as e:
     \\                excepted = excepted + 1
     \\        else:
+    \\            if cancels[j]:
+    \\                t3_cancel_requested = t3_cancel_requested + 1
+    \\            else:
+    \\                t3_no_cancel = t3_no_cancel + 1
     \\            t3: Task[int] = spawn nested_work(param)
     \\            if cancels[j]:
     \\                t3.cancel()
@@ -149,7 +193,7 @@ const torture_source =
     \\                cancelled = cancelled + 1
     \\        j = j + 1
     \\
-    \\    print("TORTURE_OK " + str(seed) + " " + str(task_count) + " " + str(completed) + " " + str(cancelled) + " " + str(excepted))
+    \\    print("TORTURE_OK " + str(seed) + " " + str(task_count) + " " + str(completed) + " " + str(cancelled) + " " + str(excepted) + " " + str(completed_k01) + " " + str(t3_no_cancel) + " " + str(t3_cancel_requested))
     \\
     \\nox.thread.pool_run(8, entry)
     \\
@@ -230,10 +274,32 @@ test "concurrency torture: seed-tabanlı, deterministik reproduce edilebilir eş
     }
 }
 
-// Determinizm kanıtı — AYNI seed+task_count İLE İKİ AYRI ÇALIŞTIRMANIN
-// `TORTURE_OK` satırının (completed/cancelled/excepted sayıları DAHİL)
-// BİREBİR AYNI olduğunu doğrular (bkz. plan dosyasının "Doğrulama"
-// bölümü madde 3).
+// v3 sertleştirme yol haritası madde 12'nin bulgusu (bkz. proje belleği
+// "v3 hardening roadmap" + nox-teknik-spesifikasyon.md): BU testin ESKİ
+// hâli (`TORTURE_OK` satırının TAMAMINI, `completed`/`cancelled` DAHİL,
+// bit-bit KARŞILAŞTIRMAK) MİMARİNİN GARANTİ EDEMEYECEĞİ bir şey İDDİA
+// EDİYORDU: `kind==3` dalında `t3.cancel()`, SPAWN EDİLEN görev (GERÇEK
+// work-stealing İLE, ÇAĞIRAN fiber YIELD ETMEDEN BİLE, BAŞKA bir GERÇEK
+// OS iş parçacığında) ÇOKTAN KENDİ TEK checkpoint'ini (`await inner`)
+// GEÇMİŞ OLABİLECEĞİNDEN, `cancel()` İLE o checkpoint ARASINDAKİ yarış
+// GERÇEK OS zamanlama jitter'ına BAĞLIDIR — PRNG SADECE MANTIKSAL
+// kararları (HANGİ görev iptal EDİLSİN) sabitler, GERÇEK iş parçacığı
+// ZAMANLAMASINI DEĞİL. Bu, `--release`in GERÇEK M:N (8 OS iş parçacığı)
+// zamanlayıcısının DOĞASINDA olan bir özellik — "düzeltilecek bir hata"
+// DEĞİL (work-stealing'in KENDİSİNİ — ERKEN görünürlüğü KALDIRARAK —
+// değiştirmek BÜYÜK bir zamanlayıcı davranış REGRESYONU olurdu).
+//
+// **Düzeltme (kullanıcı onaylı):** test, GERÇEKTEN deterministik olan
+// alt-kümeyi (`completed_k01`/`t3_no_cancel`/`t3_cancel_requested` —
+// HEPSİ SADECE PRNG kararlarından TÜRETİLİR, HİÇBİR GERÇEK zamanlama
+// ÇAĞRISI/checkpoint'i İÇERMEZ) AYRI alanlar olarak İZLER VE SADECE
+// BUNLARIN iki çalıştırma ARASINDA BİREBİR eşit olduğunu doğrular —
+// `t3_cancel_requested` alt-kümesinin GERÇEKTE kaç tanesinin cancel
+// edildiği (`cancelled`) KASITLI olarak KARŞILAŞTIRILMAZ (yarış-bağımlı,
+// iki ayrı çalıştırmada FARKLI olabilir — BU ARTIK bir test başarısızlığı
+// DEĞİL). Her İKİ çalıştırmada da `completed+cancelled+excepted==
+// task_count` YAPISAL değişmezi AYRICA doğrulanır (çökme/kaybolan görev
+// YOK garantisi, yarıştan BAĞIMSIZ).
 test "concurrency torture: aynı seed iki kez BİREBİR aynı sonucu üretir (determinizm kanıtı)" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
@@ -288,5 +354,38 @@ test "concurrency torture: aynı seed iki kez BİREBİR aynı sonucu üretir (de
         outputs[i] = stdout_data;
     }
 
-    try std.testing.expectEqualStrings(outputs[0], outputs[1]);
+    const r0 = try parseTortureLine(outputs[0]);
+    const r1 = try parseTortureLine(outputs[1]);
+
+    // Girdiler (seed/task_count) trivially eşit — gerçek doğrulama BUNLARIN
+    // altındaki deterministik ayrıştırılmış alanlar.
+    try std.testing.expectEqual(r0.seed, r1.seed);
+    try std.testing.expectEqual(r0.task_count, r1.task_count);
+
+    // HER çalıştırmada YAPISAL değişmez: hiçbir görev kaybolmadı/çökmedi —
+    // yarıştan TAMAMEN BAĞIMSIZ, HER İKİ çalıştırmada da doğru olmalı.
+    try std.testing.expectEqual(r0.task_count, r0.completed + r0.cancelled + r0.excepted);
+    try std.testing.expectEqual(r1.task_count, r1.completed + r1.cancelled + r1.excepted);
+
+    // GERÇEK determinizm iddiası: SADECE PRNG kararlarından türetilen
+    // (hiçbir gerçek zamanlama/checkpoint'e BAĞLI OLMAYAN) alt-kümeler
+    // iki çalıştırma arasında BİREBİR eşit olmalı.
+    try std.testing.expectEqual(r0.completed_k01, r1.completed_k01);
+    try std.testing.expectEqual(r0.t3_no_cancel, r1.t3_no_cancel);
+    try std.testing.expectEqual(r0.t3_cancel_requested, r1.t3_cancel_requested);
+
+    // Bilinçli olarak KARŞILAŞTIRILMAYAN: `completed`/`cancelled`in KENDİSİ
+    // (t3_cancel_requested alt-kümesinin GERÇEKTE ne kadarının cancel
+    // edildiği — bkz. yukarıdaki belge notu, GERÇEK OS zamanlama jitter'ına
+    // bağlı, kalıcı olarak deterministik KILINAMAZ). Görünürlük İçİn
+    // bilgilendirici bir log (test BAŞARISIZ OLMAZ, SADECE bilgi verir):
+    if (r0.cancelled != r1.cancelled) {
+        std.debug.print(
+            "NOT: t3_cancel_requested={d} alt-kümesinin GERÇEK cancel/complete " ++
+                "dağılımı iki çalıştırma arasında farklı (run0.cancelled={d}, " ++
+                "run1.cancelled={d}) — BU BEKLENEN bir durumdur (gerçek OS " ++
+                "zamanlama jitter'ı, bkz. testin belge notu), BAŞARISIZLIK DEĞİL.\n",
+            .{ r0.t3_cancel_requested, r0.cancelled, r1.cancelled },
+        );
+    }
 }

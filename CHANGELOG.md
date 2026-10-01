@@ -14,6 +14,26 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.124.0]
+
+### Düzeltildi
+
+- **`concurrency-torture-test`'in "determinizm kanıtı" testi düzeltildi
+  (bkz. nox-teknik-spesifikasyon.md §3.221, v3 madde 12'nin açık
+  bırakılan bulgusu)**: test, aynı seed'in iki çalıştırmasının
+  `completed`/`cancelled` sayıları DAHİL bit-bit aynı çıktı vermesini
+  bekliyordu — bu, mimarinin (gerçek OS thread work-stealing) garanti
+  edemeyeceği bir şeydi: `t3.cancel()`, spawn edilen görev çağıran fiber
+  hiç yield etmeden gerçek bir başka OS iş parçacığında çoktan kendi tek
+  checkpoint'ini geçmiş olabileceğinden, gerçek zamanlama jitter'ına
+  bağlı bir yarış koşuluydu (PRNG sadece mantıksal kararları sabitler,
+  gerçek iş parçacığı zamanlamasını değil). Test artık sadece PRNG'den
+  türetilen, gerçekten deterministik alt-kümeleri (`completed_k01`/
+  `t3_no_cancel`/`t3_cancel_requested`) karşılaştırıyor; yarışa bağlı
+  `cancelled` sayısı artık bilgilendirici bir not olarak loglanıyor,
+  test başarısızlığına yol açmıyor. Canlı olarak doğrulandı: 5
+  ardışık çalıştırmadan birinde yarış gerçekten tetiklendi, test geçti.
+
 ## [1.123.0]
 
 ### Eklendi
