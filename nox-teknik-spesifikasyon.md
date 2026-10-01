@@ -26445,6 +26445,60 @@ GETİRİLMEDİ (kapsam DIŞI bırakıldı — bu SADECE kök-neden düzeltmesidi
 görevdir). Düzeltme, gelecekte biri BUNU yapmak İSTERSE artık ÖNÜNDE
 engel OLMADIĞINI garanti eder.
 
+## 3.217 v4 (2.0 öncesi son mimari stdlib katmanlaşması), Faz B devamı — `nox.console` (zaman damgasız, capability-siz günlükleme)
+
+**Bağlam:** §3.215'te `nox.log`nin `clock` bağımlılığı İNCELENMİŞ ama
+"temiz bir kaldırma yolu yok" GEREKÇESİYLE DEĞİŞTİRİLMEMİŞTİ. Kullanıcı
+BU turda "yine de ele al" DEDİ — zaman damgasız bir PARALEL API fikri
+üzerinde duruldu.
+
+**GERÇEKTEN test edilip KANITLANAN, iki katmanlı bir mimari engel**
+(tahmin YÜRÜTÜLMEDİ — İKİ İZOLE repro İLE DOĞRULANDI):
+
+1. **Capability kontrolü İMPORT segment-ADINA göre yapılır, dosya
+   İÇERİĞİNE göre DEĞİL:** `checkModuleCapabilitiesAllowed`, `import
+   nox.X`in `X`ini (`MODULE_CAPABILITIES` tablosundaki TEK bir girdi)
+   kontrol eder — AYNI dosya İçİNDE "bazen clock gerektiren, bazen
+   gerektirmeyen" fonksiyonlar OLSA BİLE, modülün TEK bir capability
+   etiketi VARDIR, dosyanın HANGİ kısmının kullanıldığına bakılmaz.
+2. **Nox, çağrılsın ÇAĞRILMASIN, HER üst-düzey fonksiyonu KOŞULSUZ
+   type-check eder** — İZOLE bir repro İLE KANITLANDI: `import nox.crypto`
+   + HİÇBİR YERDE çağrılmayan bir `wrapper()` fonksiyonu (İÇİNDE
+   `secure_random_hex(8)` çağrısı barındıran) tek başına, `wrapper()`
+   HİÇ çağrılmasa BİLE, freestanding derlemesini `CapabilityNotGranted`
+   İLE ÇÖKERTTİ. (Buna KARŞIN `import nox.crypto` TEK BAŞINA, hiçbir
+   gated fonksiyon çağrılmadan, SORUNSUZ geçer — fark: `secure_random_
+   hex`in KENDİSİ çağrılıp çağrılmadığı, onun İÇİNDE tanımlı OLUP
+   OLMAMASI değil.)
+
+**Sonuç:** (1)+(2) BİRLİKTE, `nox.log`nin KENDİ dosyası İÇİNE zaman-
+damgasız bir fonksiyon EKLEMENİN İŞE YARAMAYACAĞINI kanıtlar —
+`import nox.log` ifadesinin KENDİSİ (merged body'de HÂLÂ bulunan `import
+nox.time` İFADESİ yüzünden, `collectImports`in HER import deyimini
+KOŞULSUZ taradığı, GERÇEKTEN test edilip KANITLANAN gerçeği) freestanding'de
+HER ZAMAN reddedilirdi — modül İÇİNDEKİ fonksiyonlardan HİÇBİRİ
+çağrılmasa BİLE.
+
+**Çözüm (kullanıcı onaylı, 3 seçenekten):** `nox.log` AYNEN/DEĞİŞMEDEN
+bırakıldı (hosted-only, zaman damgalı). TAMAMEN AYRI, KENDİ capability-
+siz YENİ bir stdlib modülü eklendi: **`nox.console`**
+(`stdlib/nox/console.nox`) — `nox.log` İLE AYNI `[DEBUG]`/`[INFO]`/
+`[WARN]`/`[ERROR]` biçimi (`format`/`debug`/`info`/`warn`/`error`), AMA
+zaman damgası YOK, `nox.time`e HİÇ BAĞIMLI DEĞİL, HİÇBİR Zig shim/extern
+def İÇERMEZ (SAF Nox) — bu YÜZDEN GERÇEKTEN build+link OLUR (`noxc
+build --profile freestanding` İLE DOĞRULANDI). Çıktısı (zaman damgası
+OLMADIĞINDAN) DETERMİNİSTİKTİR — `nox.log`nin golden testinin (`log_
+format_structure.nox`) `nox.strings.starts_with`/`contains` DOLAYLI
+kontrolüne İHTİYAÇ DUYMADAN TAM eşleşmeyle test edilebilir.
+
+### Test
+
+`tests/golden/codegen_cases/console_log_no_timestamp.nox` (TAM eşleşme,
+deterministik) + `tests/cli/profile_test.zig`nin 2 YENİ testi:
+`nox.console`nin GERÇEKTEN build+link OLDUĞU, `nox.log`nin HÂLÂ
+(DEĞİŞMEDEN) yasaklı OLDUĞU (regresyon kanıtı). `zig build test`: sıfır
+regresyon.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
@@ -26484,9 +26538,11 @@ kararıyla ŞİMDİLİK KAPATILMAYAN bulgulardır.
 stdlib katmanlaşması) **Faz A'sı TAMAMEN BİTTİ** (7/7 madde, bkz.
 §3.208-§3.214). **Faz B** (mevcut stdlib'i profile-neutral hale
 getirme) BAŞLADI — madde 1 (`nox.math`/`nox.random`, §3.215)
-TAMAMLANDI; proje belleği `project_v4_pre20_stdlib_roadmap`nin KENDİ
-notuna bkz. (henüz madde listesi TAM somutlaştırılmadı — kullanıcı
-seçimine göre genişleyebilir). Faz C (dogfood: hosted+freestanding+
-QBE+LLVM'de aynı testler) HENÜZ PLANLANMADI. §3.214'ün bulgu #1'i
-(generic sınıf + çapraz-modül tip parametresi codegen hatası) §3.216'da
-DÜZELTİLDİ — ARTIK AÇIK bulgu YOK.
+TAMAMLANDI; `nox.log`nin `clock` bağımlılığı İçİN AYRI bir `nox.console`
+modülü eklendi (§3.217, `nox.log` DEĞİŞMEDEN kaldı). Proje belleği
+`project_v4_pre20_stdlib_roadmap`nin KENDİ notuna bkz. (Faz B'nin DAHA
+FAZLA maddesi var mı HENÜZ somutlaştırılmadı — kullanıcı seçimine göre
+genişleyebilir). Faz C (dogfood: hosted+freestanding+QBE+LLVM'de aynı
+testler) HENÜZ PLANLANMADI. §3.214'ün bulgu #1'i (generic sınıf +
+çapraz-modül tip parametresi codegen hatası) §3.216'da DÜZELTİLDİ —
+ARTIK AÇIK bulgu YOK.

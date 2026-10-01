@@ -1008,6 +1008,11 @@ pub const Checker = struct {
         .{ .name = "binary", .caps = &.{} },
         .{ .name = "buffer", .caps = &.{} },
         .{ .name = "collections", .caps = &.{} },
+        // v4 Faz B (bkz. nox-teknik-spesifikasyon.md §3.2xx): `nox.console`
+        // — `nox.log` İLE AYNI seviyeli format, AMA ZAMAN DAMGASI (VE onun
+        // `nox.time`/`clock` bağımlılığı) YOK — `nox.bits`/`nox.mem` İLE AYNI
+        // gerekçeyle HİÇBİR OS/libc bağımlılığı TAŞIMAZ.
+        .{ .name = "console", .caps = &.{} },
         .{ .name = "crypto", .caps = &.{} },
         .{ .name = "csv", .caps = &.{} },
         .{ .name = "db", .caps = &.{} },

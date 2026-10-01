@@ -1,0 +1,35 @@
+# v4 Faz B (bkz. nox-teknik-spesifikasyon.md §3.2xx) — `nox.console`:
+# `nox.log` İLE AYNI seviyeli ("[DEBUG]"/"[INFO]"/"[WARN]"/"[ERROR]")
+# konsol günlükleme biçimi, AMA ZAMAN DAMGASI YOK — BU YÜZDEN `nox.time`e
+# (VE onun `clock` capability'sine) HİÇ BAĞIMLI DEĞİL, freestanding'de de
+# kullanılabilir.
+#
+# BULUNDU (bkz. proje belleği "v4 pre20 stdlib roadmap" planı): `nox.log`
+# İçİNE zaman damgasız varyantlar EKLEMEK mimari olarak İŞE YARAMAZ —
+# capability kontrolü `import nox.X` İçİN segment-ADINA ("log") göre
+# yapılır (dosya İçERİĞİNE göre DEĞİL) VE Nox KOŞULSUZ olarak HER
+# üst-düzey fonksiyonu (çağrılsa da ÇAĞRILMASA da) type-check eder — bu
+# YÜZDEN `nox.log`nin KENDİ dosyası İÇİNDE bir zaman-damgasız fonksiyon
+# TANIMLAMAK bile, AYNI dosyadaki (kullanılmayan) clock-tabanlı
+# fonksiyonlar YÜZÜNDEN `import nox.log`u freestanding'de KOŞULSUZ
+# ÇÖKERTİRDİ (GERÇEKTEN test edilip KANITLANDI). Çözüm: TAMAMEN AYRI,
+# KENDİ capability-SİZ bir modül.
+#
+# `nox.log` DEĞİŞMEDEN kalır (hosted-only, zaman damgalı) — BU modül
+# ONUN YERİNE DEĞİL, YANINDA, freestanding/zaman-damgasız kullanım
+# İçİndir.
+
+def format(level: str, message: str) -> str:
+    return "[" + level + "] " + message
+
+def debug(message: str) -> None:
+    print(format("DEBUG", message))
+
+def info(message: str) -> None:
+    print(format("INFO", message))
+
+def warn(message: str) -> None:
+    print(format("WARN", message))
+
+def error(message: str) -> None:
+    print(format("ERROR", message))

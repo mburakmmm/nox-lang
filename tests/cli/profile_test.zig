@@ -193,6 +193,61 @@ test "noxc build --profile freestanding: nox.math GERÇEKTEN build+link olur (li
     try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
 }
 
+// v4 Faz B (bkz. nox-teknik-spesifikasyon.md §3.2xx): `nox.console` —
+// `nox.log` İLE AYNI seviyeli format, AMA ZAMAN DAMGASI (`nox.time`/
+// `clock`) YOK — bu YÜZDEN GERÇEKTEN build+link OLUR (hiçbir Zig shim/
+// extern def İÇERMEZ, SAF Nox). `nox.log`nin KENDİSİ İçİNE zaman-damgasız
+// bir varyant EKLEMEK mimari olarak İŞE YARAMAZ OLDUĞU (bkz. AŞAĞIDAKİ
+// "nox.log HÂLÂ yasaklı" testi + proje belleği) İçİn AYRI bir modül
+// olarak eklendi.
+test "noxc build --profile freestanding: nox.console GERÇEKTEN build+link olur (zaman damgasiz, clock bagimsiz)" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try writeTempSource(gpa, io,
+        \\import nox.console
+        \\
+        \\nox.console.debug("x")
+        \\print(nox.console.format("INFO", "y"))
+        \\
+    , &tmp);
+    defer gpa.free(path);
+
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir_len = try tmp.dir.realPath(io, &path_buf);
+    const out_path = try std.fmt.allocPrint(gpa, "{s}/prog_bin", .{path_buf[0..dir_len]});
+    defer gpa.free(out_path);
+
+    const build_result = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "build", "--profile", "freestanding", path, "-o", out_path } });
+    defer gpa.free(build_result.stdout);
+    defer gpa.free(build_result.stderr);
+    try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
+}
+
+// `nox.console` eklenmesinin `nox.log`a HİÇBİR ŞEKİLDE dokunmadığının
+// regresyon kanıtı — `nox.log` HÂLÂ (nox.time'ın transitif `clock`
+// capability'si YÜZÜNDEN) freestanding'de TAMAMEN yasaklı, DEĞİŞMEDEN.
+test "noxc check --profile freestanding: nox.log HÂLÂ (degismeden) yasaklidir" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try writeTempSource(gpa, io,
+        \\import nox.log
+        \\
+        \\print(1)
+        \\
+    , &tmp);
+    defer gpa.free(path);
+
+    const result = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "check", "--profile", "freestanding", path } });
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    try std.testing.expect(result.term == .exited and result.term.exited != 0);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "nox.time") != null);
+}
+
 // v4 (Faz A madde 1): `@capability.requires("entropy")` — capability
 // modelinin SEMBOL-seviyesi (alt-modül/fonksiyon) tarafı, MODÜL-seviyesi
 // yukarıdaki testlerin AKSİNE. `nox.crypto`nin KENDİSİ HİÇBİR capability

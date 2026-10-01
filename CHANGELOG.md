@@ -14,6 +14,23 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.120.0]
+
+### Eklendi
+
+- **`nox.console` — zaman damgasız, capability-siz konsol günlükleme
+  (bkz. nox-teknik-spesifikasyon.md §3.217)**: `nox.log` ile aynı
+  `[DEBUG]`/`[INFO]`/`[WARN]`/`[ERROR]` biçimi (`format`/`debug`/`info`/
+  `warn`/`error`), ama zaman damgası yok — `nox.time`/`clock`
+  capability'sine hiç bağımlı değil, saf Nox (hiçbir Zig shim/extern def
+  yok), bu yüzden freestanding'de de GERÇEKTEN build+link olur. `nox.log`
+  nin KENDİ dosyası içine zaman-damgasız bir varyant eklemenin mimari
+  olarak işe yaramadığı GERÇEKTEN test edilip kanıtlandı (capability
+  kontrolü import segment-adına göre yapılıyor, Nox da çağrılsın
+  çağrılmasın her üst-düzey fonksiyonu koşulsuz type-check ediyor) — bu
+  yüzden `nox.log` AYNEN/değişmeden bırakıldı, `nox.console` tamamen
+  ayrı bir modül olarak eklendi.
+
 ## [1.119.1]
 
 ### Düzeltildi
