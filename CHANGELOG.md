@@ -14,6 +14,27 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.119.1]
+
+### Düzeltildi
+
+- **Generic sınıf + çapraz-modül tip parametresi codegen çökmesi (bkz.
+  nox-teknik-spesifikasyon.md §3.216)**: `Box[T]` gibi bir generic
+  sınıfın `T`si BAŞKA bir modülden (`from nox.buffer import Buffer`)
+  gelen bir sınıfa bağlandığında (`Box[Buffer]`) `noxc build`/`run`
+  "desteklenmeyen bir yapı" hatasıyla çöküyordu (`noxc check` sıfır
+  hata veriyordu, aynı desen `T` yerel bir sınıfa bağlandığında
+  sorunsuzdu). Kök neden: `codegen_qbe/registration.zig`nin
+  `appendMangledTypeExprName`i, checker'ın zaten kaydettiği mangled
+  sınıf adını (`Box__nox_buffer_Buffer`) `ast.TypeExpr` üzerinden
+  yeniden hesaplarken `.simple` dalında çıplak ismi (`"Buffer"`)
+  kullanıyordu — `resolveType`in kendi `.simple` dalındaki
+  `from_imports` geri-düşüşünden yoksundu, bu yüzden checker'ın
+  ürettiği gerçek mangled isimle hiç eşleşmiyordu. Düzeltildi (§3.214'ün
+  bulgu #1'i, v1.118.0'da bulunup bilinçli olarak kendi incelemesine
+  bırakılmıştı). Yeni golden test eklendi. `zig build test`: sıfır
+  regresyon.
+
 ## [1.119.0]
 
 ### Eklendi

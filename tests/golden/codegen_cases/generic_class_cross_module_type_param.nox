@@ -1,0 +1,34 @@
+# Bulundu (bkz. proje belleği "generic sınıf + çapraz-modül tip
+# parametresi" hatası, v4 Faz A madde 7 çalışmasında keşfedildi):
+# `Box[T]`nin `T`si BAŞKA bir modülden (`from nox.buffer import Buffer`)
+# gelen bir sınıfa bağlandığında (`Box[Buffer]`) codegen "desteklenmeyen
+# bir yapı" İLE ÇÖKÜYORDU — checker SIFIR hata veriyordu, AYNI desen `T`
+# AYNI dosyada tanımlı bir sınıfa bağlandığında SORUNSUZDU. Kök neden:
+# `registration.zig`nin `appendMangledTypeExprName`i (generic sınıf
+# somutlaştırmasının mangled adını `ast.TypeExpr` üzerinden YENİDEN
+# hesaplayan fonksiyon) `.simple` dalında ÇIPLAK ismi (`"Buffer"`)
+# kullanıyordu — `resolveType`in KENDİ `.simple` dalındaki `from_imports`
+# geri-düşüşünden YOKSUNDU, bu YÜZDEN checker'ın ürettiği GERÇEK mangled
+# isimle (`Box__nox_buffer_Buffer`) HİÇ eşleşmiyordu. Düzeltildi.
+from nox.buffer import Buffer
+
+class Box[T]:
+    v: T
+    def __init__(self: Box, v: T) -> None:
+        self.v = v
+
+def make_box(b: Buffer) -> Box[Buffer]:
+    return Box[Buffer](b)
+
+b: Buffer = Buffer(5)
+b.set(0, 42)
+box: Box[Buffer] = Box[Buffer](b)
+print(box.v.len())
+print(box.v.get(0))
+
+box2: Box[Buffer] = make_box(b)
+print(box2.v.get(0))
+
+boxes: list[Box[Buffer]] = [box, box2]
+print(boxes[1].v.len())
+print("GENERIC_CROSS_MODULE_OK")

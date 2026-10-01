@@ -26386,6 +26386,65 @@ check`), `nox.math`nin GERÇEKTEN build+link OLDUĞU (`noxc build` —
 çağrılardan nitelikli çağrılara GEÇİŞ YÜZÜNDEN — IR anlık görüntüsü
 KASITLI olarak YENİDEN OLUŞTURULDU, SAYISAL ÇIKTILAR DEĞİŞMEDİ).
 
+## 3.216 Generic sınıf + çapraz-modül tip parametresi codegen hatası — DÜZELTİLDİ
+
+**Bağlam:** §3.214'ün bulgu #1'i (v1.118.0'da BULUNDU, `nox.binary`
+yazılırken, BİLİNÇLİ olarak KENDİ AYRI incelemesine BIRAKILMIŞTI, bkz.
+proje belleği `project_generic_cross_module_class_bug`). Bu tur, o
+incelemeyi yapıp KÖK NEDENİ buldu ve düzeltti.
+
+**Tekrar-üretim** (İZOLE): `from nox.buffer import Buffer` + `class
+Box[T]: v: T; ...` + `box: Box[Buffer] = Box[Buffer](b)`. `noxc check`
+SIFIR hata veriyordu, `noxc build`/`run` "desteklenmeyen bir yapı"
+HATASIYLA ÇÖKÜYORDU. AYNI desen `T` AYNI DOSYADA tanımlı bir sınıfa
+bağlandığında SORUNSUZDU.
+
+**Kök neden** (`main.zig`nin `codegen.generateModule` çağrısını GEÇİCİ
+olarak `catch` ETMEDEN bırakıp Zig'in KENDİ `@errorReturnTrace()`sini
+GERÇEK bir çalıştırmada okutarak KESİNLEŞTİRİLDİ — tahmin YÜRÜTÜLMEDİ):
+`compiler/codegen_qbe/registration.zig`nin `resolveType`i, bir generic
+sınıf tip ifadesiyle (`Box[Buffer]`) karşılaştığında checker'ın ZATEN
+monomorphize edip `self.classes`e kaydettiği mangled adı (`Box__nox_
+buffer_Buffer`) `appendMangledTypeExprName` ÜZERİNDEN SAF `ast.TypeExpr`
+üzerinde YENİDEN HESAPLAR (checker'ın ÇÖZÜLMÜŞ `Type`sine codegen BU
+noktada erişemediğinden). `resolveType`in KENDİ `.simple` dalı (bir
+ÇIPLAK sınıf adı çözerken) `self.from_imports`e BAKAN bir geri-düşüşe
+SAHİPTİ (`from X import Y` İLE bağlanan sınıflar İçin) — AMA
+`appendMangledTypeExprName`nin `.simple` dalı BU geri-düşüşten
+YOKSUNDU, ÇIPLAK ismi (`"Buffer"`) OLDUĞU GİBİ yazıyordu. Sonuç:
+codegen'in hesapladığı mangled ad (`Box__Buffer`) checker'ın
+GERÇEKTEN kaydettiği adla (`Box__nox_buffer_Buffer`) HİÇBİR ZAMAN
+eşleşmiyordu, `self.classes.contains(mangled)` BAŞARISIZ oluyordu,
+`error.Unsupported`a düşülüyordu. `T` YEREL bir sınıfa bağlandığında
+SORUNSUZ ÇALIŞMASININ nedeni TAM OLARAK BU: yerel bir sınıf adı
+`from_imports`te YOKTUR, bu YÜZDEN "ÇIPLAK ismi olduğu gibi yaz"
+davranışı ZATEN DOĞRU sonucu veriyordu — hata SADECE `from_imports`
+geri-düşüşü GEREKEN (çapraz-modül) durumda AÇIĞA ÇIKIYORDU.
+
+**Düzeltme:** `appendMangledTypeExprName`nin `.simple` dalına,
+`resolveType`inkiyle AYNI `self.from_imports.get(name)` geri-düşüşü
+EKLENDİ — bulunursa mangled (modül-önekli) isim yazılır, bulunamazsa
+ÇIPLAK isim (ESKİ davranış) KORUNUR.
+
+**Doğrulama:** İzole repro artık DERLENİP ÇALIŞIYOR. Genişletilmiş bir
+test (alan okuma, metod çağrısı, fonksiyon parametresi/dönüş tipi
+olarak `Box[Buffer]`, `list[Box[Buffer]]`) DOĞRU çıktı veriyor, sızıntı
+YOK. `zig build test`: 168/168 adım, 1063/1064 test (1 BİLİNEN atlama)
+— sıfır regresyon.
+
+### Test
+
+`tests/golden/codegen_cases/generic_class_cross_module_type_param.nox`
+— `fixture_corpus.zig`ye kaydedildi, IR anlık görüntüsü oluşturuldu.
+
+### Etkilenen tasarım geri alınabilir mi?
+
+`nox.binary`nin `BinaryReader`/`BinaryWriter`ı BU turda GENERIC hale
+GETİRİLMEDİ (kapsam DIŞI bırakıldı — bu SADECE kök-neden düzeltmesidir,
+`nox.binary`nin KENDİ API'sini genişletmek AYRI, İSTEĞE BAĞLI bir
+görevdir). Düzeltme, gelecekte biri BUNU yapmak İSTERSE artık ÖNÜNDE
+engel OLMADIĞINI garanti eder.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
@@ -26428,7 +26487,6 @@ getirme) BAŞLADI — madde 1 (`nox.math`/`nox.random`, §3.215)
 TAMAMLANDI; proje belleği `project_v4_pre20_stdlib_roadmap`nin KENDİ
 notuna bkz. (henüz madde listesi TAM somutlaştırılmadı — kullanıcı
 seçimine göre genişleyebilir). Faz C (dogfood: hosted+freestanding+
-QBE+LLVM'de aynı testler) HENÜZ PLANLANMADI. AYRICA, KENDİ AYRI
-incelemesini BEKLEYEN 1 AÇIK bulgu: generic sınıf tip parametresinin
-çapraz-modül bir sınıfa bağlanması codegen'de ÇÖKER (bkz. §3.214'ün
-bulgu #1'i).
+QBE+LLVM'de aynı testler) HENÜZ PLANLANMADI. §3.214'ün bulgu #1'i
+(generic sınıf + çapraz-modül tip parametresi codegen hatası) §3.216'da
+DÜZELTİLDİ — ARTIK AÇIK bulgu YOK.

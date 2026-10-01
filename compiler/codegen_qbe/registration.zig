@@ -90,7 +90,25 @@ fn appendMangledTypeExprName(self: *Codegen, buf: *std.ArrayListUnmanaged(u8), t
         // adları — checker'ın `appendMangledType`inde AYNI ÇIPLAK isim
         // olarak (`Type.class`in taşıdığı isim, TAM OLARAK bir `.simple`
         // TypeExpr'in yazıldığı GİBİ) yazılır.
-        .simple => |name| try buf.appendSlice(self.allocator, name),
+        //
+        // Bulundu (bkz. proje belleği "generic sınıf + çapraz-modül tip
+        // parametresi" hatası): checker'ın `appendMangledType`i `.class`
+        // dalında ZATEN ÇÖZÜLMÜŞ bir `Type` üzerinde çalışır — `from X
+        // import Y` İLE getirilen bir sınıf İçin bu HER ZAMAN mangled
+        // (modül-önekli) isimdir (`resolveType`in KENDİ `.simple` dalındaki
+        // AYNI `from_imports` geri-düşüşüyle TUTARLI, bkz. yukarısı). BU
+        // fonksiyon İSE checker'ın `Type`sine HİÇ erişemediğinden (SAF
+        // `ast.TypeExpr` üzerinde çalışır) `name` ÇIPLAK kalır (`Box[Buffer]`
+        // GİBİ bir generic tip ARGÜMANI olarak kullanıldığında) — bu
+        // GERİ-DÜŞÜŞ EKLENMEDEN checker'ın ürettiği `Box__nox_buffer_Buffer`
+        // mangled adıyla ASLA eşleşmiyordu (`error.Unsupported`).
+        .simple => |name| {
+            if (self.from_imports.get(name)) |mangled| {
+                try buf.appendSlice(self.allocator, mangled);
+            } else {
+                try buf.appendSlice(self.allocator, name);
+            }
+        },
         .generic => |g| {
             if (std.mem.eql(u8, g.name, "dict") and g.args.len == 2) {
                 try buf.appendSlice(self.allocator, "dict_");
