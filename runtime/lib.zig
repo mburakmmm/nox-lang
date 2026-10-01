@@ -34,6 +34,7 @@ pub const list_sort = @import("collections/list_sort.zig");
 pub const http_client = @import("stdlib_shims/http_client.zig");
 pub const http_server = @import("stdlib_shims/http_server.zig");
 pub const strings_shim = @import("stdlib_shims/strings.zig");
+pub const math_shim = @import("stdlib_shims/math.zig");
 pub const os_shim = @import("stdlib_shims/os.zig");
 pub const fs_shim = @import("stdlib_shims/fs.zig");
 pub const path_shim = @import("stdlib_shims/path.zig");
@@ -83,6 +84,7 @@ comptime {
     _ = http_client;
     _ = http_server;
     _ = strings_shim;
+    _ = math_shim;
     _ = os_shim;
     _ = fs_shim;
     _ = path_shim;

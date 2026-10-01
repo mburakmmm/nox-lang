@@ -39,6 +39,14 @@ pub const chase_lev_deque = @import("async_rt/chase_lev_deque.zig");
 pub const str = @import("str.zig");
 pub const dict = @import("collections/dict.zig");
 pub const list_sort = @import("collections/list_sort.zig");
+/// v4 Faz B, madde 1 (bkz. nox-teknik-spesifikasyon.md §3.2xx): `nox.math`
+/// ARTIK Zig'in KENDİ `std.math`ı üzerine kurulu (ESKİDEN bare `extern def
+/// ... from "m"`, libm'e DOĞRUDAN bağlıydı — freestanding'de HİÇBİR libc/
+/// libm YOK). `stdlib_shims/math.zig` HİÇBİR OS/libc bağımlılığı
+/// TAŞIMADIĞINDAN (SADECE `@sin`/`@sqrt`/vb. Zig BUILTIN'leri + `std.
+/// math`nin SAF Zig algoritmaları) BU KÖKE GÜVENLE import EDİLİR —
+/// `http_client.zig`/vb.nin (yukarıdaki modül-üstü not) AKSİNE.
+pub const math_shim = @import("stdlib_shims/math.zig");
 
 // Faz R.3+F.1 tamamlama (bkz. plan dosyası "Faz R.3 + F.1'in
 // tamamlanması"): BU turda GERÇEK bir `noxc build --profile freestanding`
@@ -433,4 +441,5 @@ comptime {
     _ = str;
     _ = dict;
     _ = list_sort;
+    _ = math_shim;
 }

@@ -33,10 +33,10 @@ def random() -> float:
 
 # Faz III.8 (bkz. nox-teknik-spesifikasyon.md §3.69) — SAF Nox (HİÇ Zig/
 # extern def değişikliği GEREKMEDİ), MEVCUT `random()` + `nox.math.sqrt`/
-# `log`/`cos`/`pi` üzerine kurulu. `nox.math`nin belge notundaki AYNI
-# asimetri BURADA da geçerli: `sqrt`/`log`/`cos` `extern def` OLDUKLARINDAN
-# ÇIPLAK çağrılır (`nox.math.sqrt(...)` DEĞİL); yalnızca `pi()` (sıradan
-# bir `func_def`) NİTELİKLİ çağrılır.
+# `log`/`cos`/`pi` üzerine kurulu. v4 Faz B madde 1 (bkz. nox-teknik-
+# spesifikasyon.md §3.2xx): `nox.math`nin ESKİ "sqrt/log/cos extern def
+# OLDUĞUNDAN ÇIPLAK çağrılır" asimetrisi ÇÖZÜLDÜĞÜNDEN (ARTIK NORMAL,
+# NİTELİKLİ çağrılan fonksiyonlar), BURADA da nitelikli çağrılırlar.
 import nox.math
 
 # Standart normal dağılım (ortalama 0, standart sapma 1) — Box-Muller
@@ -48,14 +48,14 @@ def normal() -> float:
     while u1 == 0.0:
         u1 = random()
     u2: float = random()
-    return sqrt(-2.0 * log(u1)) * cos(2.0 * nox.math.pi() * u2)
+    return nox.math.sqrt(-2.0 * nox.math.log(u1)) * nox.math.cos(2.0 * nox.math.pi() * u2)
 
 # Üstel dağılım (hız parametresi `rate`, ortalama `1/rate`) — ters-CDF
 # örneklemesi. `u` `[0.0, 1.0)` OLDUĞUNDAN `1.0 - u` HER ZAMAN `(0.0, 1.0]`
 # içindedir — `log(0)` senaryosu HİÇ oluşmaz.
 def exponential(rate: float) -> float:
     u: float = random()
-    return (0.0 - 1.0) * log(1.0 - u) / rate
+    return (0.0 - 1.0) * nox.math.log(1.0 - u) / rate
 
 # Fisher-Yates karıştırma — `list[T]` ÜZERİNDE YERİNDE (in-place) çalışır,
 # genel-amaçlı `[T]` fonksiyon generic'i (bkz. `tests/golden/codegen_cases/

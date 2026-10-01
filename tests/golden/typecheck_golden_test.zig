@@ -1326,10 +1326,15 @@ test "golden(freestanding-profile): nox.random TEK BASINA (transitif merge OLMAD
     );
 }
 
-test "golden(freestanding-profile): nox.math dogrudan reddedilir (libm bagimliligi)" {
+// v4 Faz B, madde 1 (bkz. nox-teknik-spesifikasyon.md §3.2xx): `nox.math`
+// ARTIK libm'e DEĞİL, Zig'in KENDİ `std.math`ına (libc-bağımsız) bağlı
+// olduğundan `libc_math` capability'si KALDIRILDI — `nox.math` ARTIK
+// freestanding'de de SERBESTTİR (ÖNCEDEN "libm bağımlılığı" GEREKÇESİYLE
+// TAMAMEN REDDEDİLİYORDU).
+test "golden(freestanding-profile): nox.math serbesttir (ARTIK libc-bağımsız)" {
     try expectGoldenFreestanding(
-        @embedFile("typecheck_cases/err_freestanding_math_forbidden.nox"),
-        @embedFile("typecheck_cases/err_freestanding_math_forbidden.expected"),
+        @embedFile("typecheck_cases/ok_freestanding_math_allowed.nox"),
+        @embedFile("typecheck_cases/ok_freestanding_math_allowed.expected"),
     );
 }
 

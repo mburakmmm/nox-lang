@@ -1325,15 +1325,141 @@ export function d $sum_float(l %rt, l %p_xs) {
 @fn_end4
     ret d_0
 }
-export function d $nox_math_ln(l %rt, d %p_x) {
+export function d $nox_math_sqrt(l %rt, d %p_x) {
 @start
     %t0 =l alloc8 8
     stored %p_x, %t0
     %t1 =d loadd %t0
-    %t2 =d call $log(d %t1)
+    %t2 =d call $nox_math_sqrt_raw(d %t1)
     ret %t2
 @after_return0
 @fn_end1
+    ret d_0
+}
+export function d $nox_math_pow(l %rt, d %p_x, d %p_y) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    stored %p_x, %t0
+    stored %p_y, %t1
+    %t2 =d loadd %t0
+    %t3 =d loadd %t1
+    %t4 =d call $nox_math_pow_raw(d %t2, d %t3)
+    ret %t4
+@after_return0
+@fn_end1
+    ret d_0
+}
+export function d $nox_math_floor(l %rt, d %p_x) {
+@start
+    %t0 =l alloc8 8
+    stored %p_x, %t0
+    %t1 =d loadd %t0
+    %t2 =d call $nox_math_floor_raw(d %t1)
+    ret %t2
+@after_return0
+@fn_end1
+    ret d_0
+}
+export function d $nox_math_ceil(l %rt, d %p_x) {
+@start
+    %t0 =l alloc8 8
+    stored %p_x, %t0
+    %t1 =d loadd %t0
+    %t2 =d call $nox_math_ceil_raw(d %t1)
+    ret %t2
+@after_return0
+@fn_end1
+    ret d_0
+}
+export function d $nox_math_sin(l %rt, d %p_x) {
+@start
+    %t0 =l alloc8 8
+    stored %p_x, %t0
+    %t1 =d loadd %t0
+    %t2 =d call $nox_math_sin_raw(d %t1)
+    ret %t2
+@after_return0
+@fn_end1
+    ret d_0
+}
+export function d $nox_math_cos(l %rt, d %p_x) {
+@start
+    %t0 =l alloc8 8
+    stored %p_x, %t0
+    %t1 =d loadd %t0
+    %t2 =d call $nox_math_cos_raw(d %t1)
+    ret %t2
+@after_return0
+@fn_end1
+    ret d_0
+}
+export function d $nox_math_tan(l %rt, d %p_x) {
+@start
+    %t0 =l alloc8 8
+    stored %p_x, %t0
+    %t1 =d loadd %t0
+    %t2 =d call $nox_math_tan_raw(d %t1)
+    ret %t2
+@after_return0
+@fn_end1
+    ret d_0
+}
+export function d $nox_math_log(l %rt, d %p_x) {
+@start
+    %t0 =l alloc8 8
+    stored %p_x, %t0
+    %t1 =d loadd %t0
+    %t2 =d call $nox_math_log_raw(d %t1)
+    ret %t2
+@after_return0
+@fn_end1
+    ret d_0
+}
+export function d $nox_math_exp(l %rt, d %p_x) {
+@start
+    %t0 =l alloc8 8
+    stored %p_x, %t0
+    %t1 =d loadd %t0
+    %t2 =d call $nox_math_exp_raw(d %t1)
+    ret %t2
+@after_return0
+@fn_end1
+    ret d_0
+}
+export function d $nox_math_atan2(l %rt, d %p_y, d %p_x) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    stored %p_y, %t0
+    stored %p_x, %t1
+    %t2 =d loadd %t0
+    %t3 =d loadd %t1
+    %t4 =d call $nox_math_atan2_raw(d %t2, d %t3)
+    ret %t4
+@after_return0
+@fn_end1
+    ret d_0
+}
+export function d $nox_math_ln(l %rt, d %p_x) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    %t2 =l alloc8 8
+    stored %p_x, %t0
+    %t3 =d loadd %t0
+    stored %t3, %t1
+    %t4 =d loadd %t1
+    %t5 =d call $nox_math_log_raw(d %t4)
+    stored %t5, %t2
+    jmp @inline_done0
+@after_inline_return1
+    jmp @inline_done0
+@inline_done0
+    %t6 =d loadd %t2
+    ret %t6
+@after_return2
+@fn_end3
     ret d_0
 }
 export function d $nox_math_pi(l %rt) {
@@ -1453,57 +1579,87 @@ export function d $nox_random_normal(l %rt) {
     %t3 =l alloc8 8
     %t4 =l alloc8 8
     %t5 =l alloc8 8
-    %t6 =d call $nox_random_random_raw()
-    stored %t6, %t2
+    %t6 =l alloc8 8
+    %t7 =l alloc8 8
+    %t8 =l alloc8 8
+    %t9 =l alloc8 8
+    %t10 =l alloc8 8
+    %t11 =l alloc8 8
+    %t12 =d call $nox_random_random_raw()
+    stored %t12, %t2
     jmp @inline_done0
 @after_inline_return1
     jmp @inline_done0
 @inline_done0
-    %t7 =d loadd %t2
-    stored %t7, %t0
+    %t13 =d loadd %t2
+    stored %t13, %t0
     jmp @while_cond2
 @while_cond2
-    %t8 =d loadd %t0
-    %t9 =w ceqd %t8, d_0
-    jnz %t9, @while_body3, @while_end4
+    %t14 =d loadd %t0
+    %t15 =w ceqd %t14, d_0
+    jnz %t15, @while_body3, @while_end4
 @while_body3
-    %t10 =d call $nox_random_random_raw()
-    stored %t10, %t3
+    %t16 =d call $nox_random_random_raw()
+    stored %t16, %t3
     jmp @inline_done5
 @after_inline_return6
     jmp @inline_done5
 @inline_done5
-    %t11 =d loadd %t3
-    stored %t11, %t0
+    %t17 =d loadd %t3
+    stored %t17, %t0
     jmp @while_cond2
 @while_end4
-    %t12 =d call $nox_random_random_raw()
-    stored %t12, %t4
+    %t18 =d call $nox_random_random_raw()
+    stored %t18, %t4
     jmp @inline_done7
 @after_inline_return8
     jmp @inline_done7
 @inline_done7
-    %t13 =d loadd %t4
-    stored %t13, %t1
-    %t14 =d neg d_2
-    %t15 =d loadd %t0
-    %t16 =d call $log(d %t15)
-    %t17 =d mul %t14, %t16
-    %t18 =d call $sqrt(d %t17)
-    stored d_3.141592653589793, %t5
+    %t19 =d loadd %t4
+    stored %t19, %t1
+    %t20 =d neg d_2
+    %t21 =d loadd %t0
+    stored %t21, %t5
+    %t22 =d loadd %t5
+    %t23 =d call $nox_math_log_raw(d %t22)
+    stored %t23, %t6
     jmp @inline_done9
 @after_inline_return10
     jmp @inline_done9
 @inline_done9
-    %t19 =d loadd %t5
-    %t20 =d mul d_2, %t19
-    %t21 =d loadd %t1
-    %t22 =d mul %t20, %t21
-    %t23 =d call $cos(d %t22)
-    %t24 =d mul %t18, %t23
-    ret %t24
-@after_return11
-@fn_end12
+    %t24 =d loadd %t6
+    %t25 =d mul %t20, %t24
+    stored %t25, %t7
+    %t26 =d loadd %t7
+    %t27 =d call $nox_math_sqrt_raw(d %t26)
+    stored %t27, %t8
+    jmp @inline_done11
+@after_inline_return12
+    jmp @inline_done11
+@inline_done11
+    %t28 =d loadd %t8
+    stored d_3.141592653589793, %t9
+    jmp @inline_done13
+@after_inline_return14
+    jmp @inline_done13
+@inline_done13
+    %t29 =d loadd %t9
+    %t30 =d mul d_2, %t29
+    %t31 =d loadd %t1
+    %t32 =d mul %t30, %t31
+    stored %t32, %t10
+    %t33 =d loadd %t10
+    %t34 =d call $nox_math_cos_raw(d %t33)
+    stored %t34, %t11
+    jmp @inline_done15
+@after_inline_return16
+    jmp @inline_done15
+@inline_done15
+    %t35 =d loadd %t11
+    %t36 =d mul %t28, %t35
+    ret %t36
+@after_return17
+@fn_end18
     ret d_0
 }
 export function d $nox_random_exponential(l %rt, d %p_rate) {
@@ -1511,25 +1667,35 @@ export function d $nox_random_exponential(l %rt, d %p_rate) {
     %t0 =l alloc8 8
     %t1 =l alloc8 8
     %t2 =l alloc8 8
+    %t3 =l alloc8 8
+    %t4 =l alloc8 8
     stored %p_rate, %t0
-    %t3 =d call $nox_random_random_raw()
-    stored %t3, %t2
+    %t5 =d call $nox_random_random_raw()
+    stored %t5, %t2
     jmp @inline_done0
 @after_inline_return1
     jmp @inline_done0
 @inline_done0
-    %t4 =d loadd %t2
-    stored %t4, %t1
-    %t5 =d sub d_0, d_1
-    %t6 =d loadd %t1
-    %t7 =d sub d_1, %t6
-    %t8 =d call $log(d %t7)
-    %t9 =d mul %t5, %t8
-    %t10 =d loadd %t0
-    %t11 =d div %t9, %t10
-    ret %t11
-@after_return2
-@fn_end3
+    %t6 =d loadd %t2
+    stored %t6, %t1
+    %t7 =d sub d_0, d_1
+    %t8 =d loadd %t1
+    %t9 =d sub d_1, %t8
+    stored %t9, %t3
+    %t10 =d loadd %t3
+    %t11 =d call $nox_math_log_raw(d %t10)
+    stored %t11, %t4
+    jmp @inline_done2
+@after_inline_return3
+    jmp @inline_done2
+@inline_done2
+    %t12 =d loadd %t4
+    %t13 =d mul %t7, %t12
+    %t14 =d loadd %t0
+    %t15 =d div %t13, %t14
+    ret %t15
+@after_return4
+@fn_end5
     ret d_0
 }
 export function w $main(w %argc, l %argv) {

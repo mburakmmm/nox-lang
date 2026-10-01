@@ -14,6 +14,30 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.119.0]
+
+### Eklendi
+
+- **v4 Faz B, madde 1 — `nox.math` libc-bağımsız hale getirildi (bkz.
+  nox-teknik-spesifikasyon.md §3.215)**: `sqrt`/`pow`/`floor`/`ceil`/
+  `sin`/`cos`/`tan`/`log`/`exp`/`atan2` artık libm'e değil, Zig'in kendi
+  `std.math`ına (libc-bağımsız — `@sqrt`/`@sin`/vb. dil builtin'leri +
+  `pow`/`atan2`/doğal `log`'un musl'dan portlanmış saf Zig algoritmaları)
+  bağlı — `nox.math` artık freestanding'de de kullanılabilir (GERÇEKTEN
+  build+link olduğu doğrulandı). `nox.random` (kendi extern def'leri
+  zaten OS-bağımsızdı, sadece transitif `import nox.math` yüzünden
+  engelleniyordu) bunun doğal sonucu olarak ÜCRETSİZ serbest kaldı.
+
+### Değişti
+
+- **DAVRANIŞ DEĞİŞİKLİĞİ**: `nox.math`nin `sqrt`/`pow`/`floor`/`ceil`/
+  `sin`/`cos`/`tan`/`log`/`exp`/`atan2`si artık NİTELİKLİ çağrılır
+  (`nox.math.sqrt(...)` veya `from nox.math import sqrt`) — eski "libm
+  extern def olduklarından mangle edilmezler, sadece çıplak `sqrt(...)`
+  çalışır, `nox.math.sqrt(...)` ÇALIŞMAZ" asimetrisi çözüldü. Monorepo
+  içindeki tüm çıplak kullanım siteleri (`nox.random`nin `normal`/
+  `exponential`i + 2 golden test) tarandı ve güncellendi.
+
 ## [1.118.0]
 
 ### Eklendi

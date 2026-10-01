@@ -946,7 +946,6 @@ pub const Checker = struct {
         threads,
         process,
         shared_memory,
-        libc_math,
         arch_x86_64,
 
         fn label(self: Capability) []const u8 {
@@ -958,7 +957,6 @@ pub const Checker = struct {
                 .threads => "threads",
                 .process => "process",
                 .shared_memory => "shared_memory",
-                .libc_math => "libc_math",
                 .arch_x86_64 => "arch_x86_64",
             };
         }
@@ -1018,7 +1016,10 @@ pub const Checker = struct {
         .{ .name = "http", .caps = &.{.network} },
         .{ .name = "json", .caps = &.{} },
         .{ .name = "log", .caps = &.{.clock} },
-        .{ .name = "math", .caps = &.{.libc_math} },
+        // v4 Faz B, madde 1 (bkz. nox-teknik-spesifikasyon.md §3.2xx):
+        // `nox.math` ARTIK libm'e DEĞİL, Zig'in KENDİ `std.math`ına
+        // (libc-bağımsız) bağlıdır — `libc_math` capability'si KALDIRILDI.
+        .{ .name = "math", .caps = &.{} },
         // v4 Faz A madde 3 (bkz. nox-teknik-spesifikasyon.md §3.2xx):
         // `nox.mem` — SAF `ptr[T]`/`lowlevel:` sarmalayıcısı, HİÇBİR OS/libc
         // bağımlılığı TAŞIMAZ (freestanding'de de, `ptr[T]`in KENDİSİ

@@ -1325,15 +1325,141 @@ export function d $sum_float(l %rt, l %p_xs) {
 @fn_end4
     ret d_0
 }
-export function d $nox_math_ln(l %rt, d %p_x) {
+export function d $nox_math_sqrt(l %rt, d %p_x) {
 @start
     %t0 =l alloc8 8
     stored %p_x, %t0
     %t1 =d loadd %t0
-    %t2 =d call $log(d %t1)
+    %t2 =d call $nox_math_sqrt_raw(d %t1)
     ret %t2
 @after_return0
 @fn_end1
+    ret d_0
+}
+export function d $nox_math_pow(l %rt, d %p_x, d %p_y) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    stored %p_x, %t0
+    stored %p_y, %t1
+    %t2 =d loadd %t0
+    %t3 =d loadd %t1
+    %t4 =d call $nox_math_pow_raw(d %t2, d %t3)
+    ret %t4
+@after_return0
+@fn_end1
+    ret d_0
+}
+export function d $nox_math_floor(l %rt, d %p_x) {
+@start
+    %t0 =l alloc8 8
+    stored %p_x, %t0
+    %t1 =d loadd %t0
+    %t2 =d call $nox_math_floor_raw(d %t1)
+    ret %t2
+@after_return0
+@fn_end1
+    ret d_0
+}
+export function d $nox_math_ceil(l %rt, d %p_x) {
+@start
+    %t0 =l alloc8 8
+    stored %p_x, %t0
+    %t1 =d loadd %t0
+    %t2 =d call $nox_math_ceil_raw(d %t1)
+    ret %t2
+@after_return0
+@fn_end1
+    ret d_0
+}
+export function d $nox_math_sin(l %rt, d %p_x) {
+@start
+    %t0 =l alloc8 8
+    stored %p_x, %t0
+    %t1 =d loadd %t0
+    %t2 =d call $nox_math_sin_raw(d %t1)
+    ret %t2
+@after_return0
+@fn_end1
+    ret d_0
+}
+export function d $nox_math_cos(l %rt, d %p_x) {
+@start
+    %t0 =l alloc8 8
+    stored %p_x, %t0
+    %t1 =d loadd %t0
+    %t2 =d call $nox_math_cos_raw(d %t1)
+    ret %t2
+@after_return0
+@fn_end1
+    ret d_0
+}
+export function d $nox_math_tan(l %rt, d %p_x) {
+@start
+    %t0 =l alloc8 8
+    stored %p_x, %t0
+    %t1 =d loadd %t0
+    %t2 =d call $nox_math_tan_raw(d %t1)
+    ret %t2
+@after_return0
+@fn_end1
+    ret d_0
+}
+export function d $nox_math_log(l %rt, d %p_x) {
+@start
+    %t0 =l alloc8 8
+    stored %p_x, %t0
+    %t1 =d loadd %t0
+    %t2 =d call $nox_math_log_raw(d %t1)
+    ret %t2
+@after_return0
+@fn_end1
+    ret d_0
+}
+export function d $nox_math_exp(l %rt, d %p_x) {
+@start
+    %t0 =l alloc8 8
+    stored %p_x, %t0
+    %t1 =d loadd %t0
+    %t2 =d call $nox_math_exp_raw(d %t1)
+    ret %t2
+@after_return0
+@fn_end1
+    ret d_0
+}
+export function d $nox_math_atan2(l %rt, d %p_y, d %p_x) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    stored %p_y, %t0
+    stored %p_x, %t1
+    %t2 =d loadd %t0
+    %t3 =d loadd %t1
+    %t4 =d call $nox_math_atan2_raw(d %t2, d %t3)
+    ret %t4
+@after_return0
+@fn_end1
+    ret d_0
+}
+export function d $nox_math_ln(l %rt, d %p_x) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    %t2 =l alloc8 8
+    stored %p_x, %t0
+    %t3 =d loadd %t0
+    stored %t3, %t1
+    %t4 =d loadd %t1
+    %t5 =d call $nox_math_log_raw(d %t4)
+    stored %t5, %t2
+    jmp @inline_done0
+@after_inline_return1
+    jmp @inline_done0
+@inline_done0
+    %t6 =d loadd %t2
+    ret %t6
+@after_return2
+@fn_end3
     ret d_0
 }
 export function d $nox_math_pi(l %rt) {
@@ -1423,44 +1549,107 @@ export function w $main(w %argc, l %argv) {
     %t1 =l alloc8 8
     %t2 =l alloc8 8
     %t3 =l alloc8 8
-    %t4 =d call $sin(d d_0)
-    call $printf(l $fmt_float, ..., d %t4)
-    %t5 =d call $cos(d d_0)
-    call $printf(l $fmt_float, ..., d %t5)
-    %t6 =d call $tan(d d_0)
-    call $printf(l $fmt_float, ..., d %t6)
-    %t7 =d call $log(d d_2.718281828459045)
-    call $printf(l $fmt_float, ..., d %t7)
-    stored d_2.718281828459045, %t0
-    %t8 =d loadd %t0
-    %t9 =d call $log(d %t8)
-    stored %t9, %t1
+    %t4 =l alloc8 8
+    %t5 =l alloc8 8
+    %t6 =l alloc8 8
+    %t7 =l alloc8 8
+    %t8 =l alloc8 8
+    %t9 =l alloc8 8
+    %t10 =l alloc8 8
+    %t11 =l alloc8 8
+    %t12 =l alloc8 8
+    %t13 =l alloc8 8
+    %t14 =l alloc8 8
+    %t15 =l alloc8 8
+    %t16 =l alloc8 8
+    stored d_0, %t0
+    %t17 =d loadd %t0
+    %t18 =d call $nox_math_sin_raw(d %t17)
+    stored %t18, %t1
     jmp @inline_done0
 @after_inline_return1
     jmp @inline_done0
 @inline_done0
-    %t10 =d loadd %t1
-    call $printf(l $fmt_float, ..., d %t10)
-    %t11 =d call $exp(d d_1)
-    call $printf(l $fmt_float, ..., d %t11)
-    %t12 =d call $atan2(d d_1, d d_1)
-    call $printf(l $fmt_float, ..., d %t12)
-    stored d_3.141592653589793, %t2
+    %t19 =d loadd %t1
+    call $printf(l $fmt_float, ..., d %t19)
+    stored d_0, %t2
+    %t20 =d loadd %t2
+    %t21 =d call $nox_math_cos_raw(d %t20)
+    stored %t21, %t3
     jmp @inline_done2
 @after_inline_return3
     jmp @inline_done2
 @inline_done2
-    %t13 =d loadd %t2
-    call $printf(l $fmt_float, ..., d %t13)
-    stored d_2.718281828459045, %t3
+    %t22 =d loadd %t3
+    call $printf(l $fmt_float, ..., d %t22)
+    stored d_0, %t4
+    %t23 =d loadd %t4
+    %t24 =d call $nox_math_tan_raw(d %t23)
+    stored %t24, %t5
     jmp @inline_done4
 @after_inline_return5
     jmp @inline_done4
 @inline_done4
-    %t14 =d loadd %t3
-    call $printf(l $fmt_float, ..., d %t14)
+    %t25 =d loadd %t5
+    call $printf(l $fmt_float, ..., d %t25)
+    stored d_2.718281828459045, %t6
+    %t26 =d loadd %t6
+    %t27 =d call $nox_math_log_raw(d %t26)
+    stored %t27, %t7
+    jmp @inline_done6
+@after_inline_return7
+    jmp @inline_done6
+@inline_done6
+    %t28 =d loadd %t7
+    call $printf(l $fmt_float, ..., d %t28)
+    stored d_2.718281828459045, %t8
+    %t29 =d loadd %t8
+    %t30 =d call $nox_math_log(l %rt, d %t29)
+    stored %t30, %t9
+    jmp @inline_done8
+@after_inline_return9
+    jmp @inline_done8
+@inline_done8
+    %t31 =d loadd %t9
+    call $printf(l $fmt_float, ..., d %t31)
+    stored d_1, %t10
+    %t32 =d loadd %t10
+    %t33 =d call $nox_math_exp_raw(d %t32)
+    stored %t33, %t11
+    jmp @inline_done10
+@after_inline_return11
+    jmp @inline_done10
+@inline_done10
+    %t34 =d loadd %t11
+    call $printf(l $fmt_float, ..., d %t34)
+    stored d_1, %t12
+    stored d_1, %t13
+    %t35 =d loadd %t12
+    %t36 =d loadd %t13
+    %t37 =d call $nox_math_atan2_raw(d %t35, d %t36)
+    stored %t37, %t14
+    jmp @inline_done12
+@after_inline_return13
+    jmp @inline_done12
+@inline_done12
+    %t38 =d loadd %t14
+    call $printf(l $fmt_float, ..., d %t38)
+    stored d_3.141592653589793, %t15
+    jmp @inline_done14
+@after_inline_return15
+    jmp @inline_done14
+@inline_done14
+    %t39 =d loadd %t15
+    call $printf(l $fmt_float, ..., d %t39)
+    stored d_2.718281828459045, %t16
+    jmp @inline_done16
+@after_inline_return17
+    jmp @inline_done16
+@inline_done16
+    %t40 =d loadd %t16
+    call $printf(l $fmt_float, ..., d %t40)
     call $nox_runtime_deinit(l %rt)
-@fn_end6
+@fn_end18
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

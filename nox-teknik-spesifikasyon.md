@@ -26302,6 +26302,90 @@ testleri hosted+freestanding+QBE+LLVM'de çalıştırma) HENÜZ
 PLANLANMADI — proje belleği `project_v4_pre20_stdlib_roadmap`nin
 KENDİ notu.
 
+## 3.215 v4 (2.0 öncesi son mimari stdlib katmanlaşması), Faz B madde 1 — `nox.math` libc-bağımsız hale getirildi (+ `nox.random` ÜCRETSİZ serbest kaldı)
+
+**Bağlam:** Faz A TAMAMEN BİTTİKTEN HEMEN SONRA başlayan Faz B'nin
+("mevcut stdlib'i profile-neutral hale getirme") İLK maddesi — orijinal
+önerinin KENDİSİ bu fazı somut maddelere AYIRMAMIŞTI, kullanıcı BU turda
+`nox.math`nin TAM libm-kaldırma işini (SADECE `sqrt` DEĞİL, TÜM
+transandantal fonksiyonlar DAHİL) AÇIKÇA ONAYLADI.
+
+### Kök sorun
+
+`nox.math`nin `sqrt`/`pow`/`floor`/`ceil`/`sin`/`cos`/`tan`/`log`/`exp`/
+`atan2`si DOĞRUDAN libm'e (`extern def ... from "m"`) BAĞLIYDI —
+freestanding'de HİÇBİR libc/libm BAĞLANMADIĞINDAN bu, `nox.math`yi
+TAMAMEN hosted-only YAPIYORDU (`libc_math` capability'si, bkz. §3.208).
+`nox.random` İSE KENDİ `extern def`leri (seed/randint/random) OS-bağımsız
+OLMASINA RAĞMEN, KENDİ İÇİNDE `import nox.math` YAPTIĞINDAN (gaussian/
+exponential dağılımlar İçİn `sqrt`/`log`/`cos` KULLANIR) TRANSİTİF olarak
+AYNI ŞEKİLDE engelleniyordu.
+
+### Çözüm: Zig'in KENDİ `std.math`ı — `nox.sqlite`nin parola hash'lemesiyle AYNI "harici bağımlılık YOK" ilkesi
+
+YENİ `runtime/stdlib_shims/math.zig` — `sqrt`/`floor`/`ceil`/`sin`/`cos`/
+`tan`/`exp` Zig'in KENDİ DİL-düzeyi BUILTIN'leri (`@sqrt`/`@floor`/vb.,
+LLVM intrinsic'lerine/donanım komutlarına İNDİRİLİR, libc'ye HİÇ
+DOKUNMAZ); `pow`/`atan2`/doğal `log` İSE `std.math`nin musl'DAN PORTLANMIŞ,
+SAF Zig algoritmalarıdır. Bu dosya HEM `lib.zig`e (hosted) HEM
+`lib_freestanding.zig`e (freestanding — HİÇBİR OS bağımlılığı
+TAŞIMADIĞINDAN `http_client.zig`/vb.nin AKSİNE BU KÖKE GÜVENLE import
+EDİLDİ) KABLOLANDI. `stdlib/nox/math.nox` ARTIK bu `_raw` sarmalayıcıları
+çağıran NORMAL (mangle edilen) fonksiyonlardır.
+
+**YAN fayda (BİLİNÇLİ bir davranış DEĞİŞİKLİĞİ — aşağıya bkz.):** `nox.
+math`nin ESKİ "sqrt/pow/floor/ceil/sin/cos/tan/log/exp/atan2 extern def
+OLDUKLARINDAN (mangle EDİLMEZLER) SADECE ÇIPLAK çağrılabilir, `nox.math.
+sqrt(...)` ÇALIŞMAZ" asimetrisi (bkz. ESKİ dosya-üstü not) ÇÖZÜLDÜ — bu
+fonksiyonlar ARTIK HER ZAMAN `nox.math.sqrt(...)` (nitelikli) VEYA `from
+nox.math import sqrt` (from-import) İLE çağrılabilir.
+
+### GERÇEKTEN keşfedilen, DÜZELTİLEN bir regresyon RİSKİ
+
+Wrapper'a geçiş, ÇIPLAK (`import nox.math` SONRASI nitelik OLMADAN)
+çağrıları KIRAR — v3 madde 12'nin nyx/aether dersiyle (monorepo-only
+doğrulama YETERSİZDİR) TUTARLI olarak, MONOREPO İÇİNDE TÜM çıplak
+kullanım siteleri TARANDI VE DÜZELTİLDİ: `stdlib/nox/random.nox`nin
+`normal()`/`exponential()`si (`sqrt`/`log`/`cos` çıplak çağırıyordu,
+ARTIK `nox.math.sqrt`/`nox.math.log`/`nox.math.cos`) VE 2 golden test
+fixture'ı (`math_basic.nox`/`math_trig_log_constants.nox`). Harici bir
+tüketici (nyx/aether) BULUNAMADI (bu modülün onlarda KULLANILDIĞINA DAİR
+KANIT YOK) — AMA BU, "kanıt yok" YALNIZCA "o anda aranmadı" anlamına
+GELEBİLECEĞİNDEN (AYNI dersin KENDİSİ), bu DEĞİŞİKLİK AÇIKÇA commit
+mesajında/burada belgelenir.
+
+### `libc_math` capability'si KALDIRILDI
+
+`Capability` enum'undan `libc_math` TAMAMEN SİLİNDİ (ARTIK hiçbir modül
+KULLANMIYOR). `nox.math`nin `MODULE_CAPABILITIES` girdisi `&.{}`ye
+değişti — `nox.random` ZATEN `&.{}` idi (DEĞİŞMEDİ, SADECE TRANSİTİF
+engeli KALKTI).
+
+### `nox.log`nin clock bağımlılığı — İNCELENDİ, BİLİNÇLİ olarak DEĞİŞTİRİLMEDİ
+
+`nox.log`nin `debug`/`info`/`warn`/`error`si `nox.time.now_ms()` İLE
+zaman damgası GÖMER — freestanding v0.1'in HİÇBİR clock KAYNAĞI
+OLMADIĞINDAN (`nox.arch.x86_64`de BİLE YOK) bu bağımlılığı "temiz"
+bir şekilde KALDIRMANIN İKİ yolu VAR: (a) zaman damgasını TAMAMEN
+KALDIRMAK (TÜM ÇAĞIRANLAR İçİn ÇIKTI FORMATINI DEĞİŞTİRİR, İSTENMEYEN)
+VEYA (b) PARALEL, zaman damgasız bir VARYANT EKLEMEK (KARMAŞIKLIK
+EKLER, GERÇEK bir freestanding kullanım örneği OLMADAN SPEKÜLATİF).
+İKİSİ de BU turda YAPILMADI — `nox.log` `clock` capability'siyle
+(hosted-only) KALDI, bu BİLİNÇLİ bir KARAR (freestanding'in KENDİ bir
+clock kaynağı KAZANMASINI BEKLEMEK daha TUTARLI bir çözüm sunar).
+
+### Test
+
+`tests/golden/typecheck_golden_test.zig`nin (İZOLE checker) "nox.math
+serbesttir" testi (ESKİ "dogrudan reddedilir" testinin YERİNE) VE
+`tests/cli/profile_test.zig`nin (GERÇEK module_loader birleştirmesi)
+3 YENİ testi: `nox.random`ın ARTIK capability-serbest OLDUĞU (`noxc
+check`), `nox.math`nin GERÇEKTEN build+link OLDUĞU (`noxc build` —
+`nox.strings`nin AKSİNE, `math_shim` `lib_freestanding.zig`e KABLOLANDI).
+`zig build test` sıfır regresyon (5 mevcut fixture'ın — ÇIPLAK
+çağrılardan nitelikli çağrılara GEÇİŞ YÜZÜNDEN — IR anlık görüntüsü
+KASITLI olarak YENİDEN OLUŞTURULDU, SAYISAL ÇIKTILAR DEĞİŞMEDİ).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
@@ -26339,11 +26423,12 @@ kararıyla ŞİMDİLİK KAPATILMAYAN bulgulardır.
 
 **Sıradaki adım:** v3'ten HEMEN SONRA başlayan v4 (2.0 öncesi son mimari
 stdlib katmanlaşması) **Faz A'sı TAMAMEN BİTTİ** (7/7 madde, bkz.
-§3.208-§3.214 + proje belleği `project_v4_pre20_stdlib_roadmap`) —
-capability modeli, generic self-instantiation düzeltmesi, `nox.mem`,
-`nox.bits`, `Buffer`, `Span`, `nox.binary`. Faz B (mevcut stdlib'i
-profile-neutral hale getirme) VE Faz C (dogfood: hosted+freestanding+
-QBE+LLVM'de aynı testler) HENÜZ PLANLANMADI — kullanıcı kararı
-BEKLİYOR. AYRICA, KENDİ AYRI incelemesini BEKLEYEN 1 AÇIK bulgu:
-generic sınıf tip parametresinin çapraz-modül bir sınıfa bağlanması
-codegen'de ÇÖKER (bkz. §3.214'ün bulgu #1'i).
+§3.208-§3.214). **Faz B** (mevcut stdlib'i profile-neutral hale
+getirme) BAŞLADI — madde 1 (`nox.math`/`nox.random`, §3.215)
+TAMAMLANDI; proje belleği `project_v4_pre20_stdlib_roadmap`nin KENDİ
+notuna bkz. (henüz madde listesi TAM somutlaştırılmadı — kullanıcı
+seçimine göre genişleyebilir). Faz C (dogfood: hosted+freestanding+
+QBE+LLVM'de aynı testler) HENÜZ PLANLANMADI. AYRICA, KENDİ AYRI
+incelemesini BEKLEYEN 1 AÇIK bulgu: generic sınıf tip parametresinin
+çapraz-modül bir sınıfa bağlanması codegen'de ÇÖKER (bkz. §3.214'ün
+bulgu #1'i).

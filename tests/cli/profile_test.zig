@@ -129,20 +129,20 @@ test "noxc build --profile freestanding: TRANSITIF olarak yasakli bir modul (nox
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "nox.http") != null);
 }
 
-// v4 (Faz A madde 1, bkz. nox-teknik-spesifikasyon.md §3.2xx): capability
-// modeline geçişin (`checker.zig`nin ESKİ 2 düz listesinin YERİNE `Modül →
-// []Capability` tablosu) KENDİSİ, `nox.random`ın MODÜL-seviyesi capability
-// kümesini BOŞ (`&.{}`) YAPTI — `random.nox`nin KENDİ `extern def`leri
-// (seed/randint/random) OS-bağımsızdır. AMA `random.nox` KENDİ İÇİNDE
-// `import nox.math` YAPAR (gaussian-benzeri fonksiyonlar İçİn sqrt/log/cos)
-// — `nox.math`in `libc_math` capability'si freestanding'de SAĞLANMADIĞINDAN
-// `nox.random` YİNE (TRANSİTİF olarak, `nox.router`->`nox.http`İLE AYNI
-// mekanizma) reddedilir. BU test, `typecheck_golden_test.zig`nin (module_
-// loader birleştirmesi YAPMAYAN) izole "nox.random dogrudan reddedilir"
-// testinin ARTIK "OK" DÖNMESİNİN (modül-seviyesinde GERÇEKTEN capability-
-// SİZ olduğu İçİn) bir REGRESYON OLMADIĞINI, GERÇEK uçtan-uca davranışın
-// DEĞİŞMEDİĞİNİ kanıtlar.
-test "noxc build --profile freestanding: nox.random TRANSITIF olarak (nox.math uzerinden) reddedilir" {
+// v4 Faz B, madde 1 (bkz. nox-teknik-spesifikasyon.md §3.2xx): BU test
+// ÖNCEDEN "nox.random nox.math UZERINDEN TRANSİTİF olarak reddedilir"i
+// kanıtlıyordu — `nox.math`in `libc_math` capability'si KALDIRILDIĞINDAN
+// (ARTIK libm'e DEĞİL, Zig'in KENDİ `std.math`ına bağlı) bu ARTIK DOĞRU
+// DEĞİL: `nox.random` (KENDİ `extern def`leri ZATEN OS-bağımsızdı, SADECE
+// TRANSİTİF `import nox.math`ı YÜZÜNDEN reddediliyordu) ARTIK capability
+// SEVİYESİNDE SERBESTTİR. `noxc check`in (`build` DEĞİL) kullanılması
+// BİLİNÇLİDİR — `random.zig`nin KENDİSİ (OTOMATİK tohumlama İçİn
+// `clock_gettime` ÇAĞIRIR, bkz. onun belge notu) HENÜZ `lib_freestanding.
+// zig`e KABLOLANMADI (`nox.strings`nin AYNI, ÖNCEDEN KABUL EDİLMİŞ
+// "capability-serbest AMA henüz linklenemez" boşluğu, bkz. aşağıdaki
+// "izin verilen bir stdlib modülü" testi) — BU test SADECE capability
+// DÜZEYİNİ (checker) kanıtlar, TAM linklemeyi DEĞİL.
+test "noxc check --profile freestanding: nox.random ARTIK capability-serbesttir (nox.math'ın libc_math'ı kaldırıldı)" {
     const io = std.testing.io;
     const gpa = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
@@ -150,16 +150,47 @@ test "noxc build --profile freestanding: nox.random TRANSITIF olarak (nox.math u
     const path = try writeTempSource(gpa, io,
         \\import nox.random
         \\
-        \\print("hic calismamali")
+        \\print(1)
         \\
     , &tmp);
     defer gpa.free(path);
 
-    const result = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "build", "--profile", "freestanding", path } });
+    const result = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "check", "--profile", "freestanding", path } });
     defer gpa.free(result.stdout);
     defer gpa.free(result.stderr);
-    try std.testing.expect(result.term == .exited and result.term.exited == 1);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "nox.math") != null);
+    try std.testing.expect(result.term == .exited and result.term.exited == 0);
+}
+
+// v4 Faz B, madde 1 (bkz. nox-teknik-spesifikasyon.md §3.2xx): `nox.math`
+// (`nox.strings`in AKSİNE, bkz. yukarıdaki "henüz linklenemez" testi)
+// ARTIK GERÇEKTEN build+link OLUR — `runtime/stdlib_shims/math.zig`
+// (SAF Zig/`std.math`, HİÇBİR OS bağımlılığı) `lib_freestanding.zig`nin
+// KÖKÜNE DOĞRUDAN import EDİLDİ (`http_client.zig`/vb.nin AKSİNE, bkz.
+// onun belge notu).
+test "noxc build --profile freestanding: nox.math GERÇEKTEN build+link olur (libc-bağımsız std.math)" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try writeTempSource(gpa, io,
+        \\import nox.math
+        \\
+        \\print(nox.math.sqrt(4.0))
+        \\print(nox.math.pow(2.0, 10.0))
+        \\print(nox.math.sin(0.0))
+        \\
+    , &tmp);
+    defer gpa.free(path);
+
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir_len = try tmp.dir.realPath(io, &path_buf);
+    const out_path = try std.fmt.allocPrint(gpa, "{s}/prog_bin", .{path_buf[0..dir_len]});
+    defer gpa.free(out_path);
+
+    const build_result = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "build", "--profile", "freestanding", path, "-o", out_path } });
+    defer gpa.free(build_result.stdout);
+    defer gpa.free(build_result.stderr);
+    try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
 }
 
 // v4 (Faz A madde 1): `@capability.requires("entropy")` — capability
