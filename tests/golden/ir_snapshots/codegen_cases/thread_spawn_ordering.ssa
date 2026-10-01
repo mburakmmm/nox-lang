@@ -1774,14 +1774,17 @@ export function l $nox_time_Instant_elapsed(l %rt, l %p_self) {
 @start
     %t0 =l alloc8 8
     storel %p_self, %t0
-    %t1 =l loadl %t0
-    %t2 =l call $nox_time_Instant_elapsed_ms(l %rt, l %t1)
-    %t3 =l call $nox_rc_alloc(l %rt, l 16)
-    storel 3, %t3
-    %t4 =l add %t3, 8
-    storel 0, %t4
-    call $nox_time_Duration___init__(l %rt, l %t3, l %t2)
-    ret %t3
+    %t1 =l call $nox_time_monotonic_ms_raw()
+    %t2 =l loadl %t0
+    %t3 =l add %t2, 8
+    %t4 =l loadl %t3
+    %t5 =l sub %t1, %t4
+    %t6 =l call $nox_rc_alloc(l %rt, l 16)
+    storel 3, %t6
+    %t7 =l add %t6, 8
+    storel 0, %t7
+    call $nox_time_Duration___init__(l %rt, l %t6, l %t5)
+    ret %t6
 @after_return0
 @fn_end1
     ret 0

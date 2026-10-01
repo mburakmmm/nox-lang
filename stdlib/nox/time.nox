@@ -109,15 +109,30 @@ class Duration:
     def as_ms(self: Duration) -> int:
         return self.ms
 
+# Bulundu (bkz. proje belleği "v4 pre20 stdlib roadmap"nin §3.219
+# SONRASI incelemesi): `instant_now()`nin KENDİ `@capability.requires
+# ("clock")` kapısı `Instant(0)` GİBİ DOĞRUDAN bir inşayı HİÇ ENGELLEMEZ
+# (`__init__` SADECE `self.ms = ms` atar, saati HİÇ OKUMAZ — BİLİNÇLİ
+# olarak İŞARETSİZ bırakılır) — `elapsed_ms()`in KENDİSİ artık metod-
+# seviyesinde İŞARETLİDİR, bu YÜZDEN `Instant(0).elapsed_ms()` ARTIK
+# NASIL inşa EDİLDİĞİNE BAKILMAKSIZIN freestanding'de reddedilir (ÖNCEDEN
+# SESSİZCE `0` dönerdi — çökme DEĞİL ama YANLIŞ bir sonuç RİSKİYDİ).
 class Instant:
     def __init__(self: Instant, ms: int) -> None:
         self.ms = ms
 
+    @capability.requires("clock")
     def elapsed_ms(self: Instant) -> int:
         return nox_time_monotonic_ms_raw() - self.ms
 
+    # `self.elapsed_ms()`yi (ARTIK İŞARETLİ) ÇAĞIRMAZ — `now()`nin AYNI
+    # gerekçesi: Nox'un koşulsuz "her sınıfın HER metodu type-check
+    # edilir" kuralı YÜZÜNDEN, BU metod işaretli BİR metodu ÇAĞIRSAYDI,
+    # `import nox.time` TEK BAŞINA (`elapsed()` HİÇ çağrılmasa BİLE)
+    # freestanding'de reddedilirdi. DOĞRUDAN raw extern'i çağırır.
+    @capability.requires("clock")
     def elapsed(self: Instant) -> Duration:
-        return Duration(self.elapsed_ms())
+        return Duration(nox_time_monotonic_ms_raw() - self.ms)
 
 @capability.requires("clock")
 def instant_now() -> Instant:

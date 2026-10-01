@@ -37,16 +37,36 @@ const WinSeed = if (builtin.os.tag == .windows) struct {
 /// KALAN `threadlocal` çift, SADECE fiber DIŞINDA (`bridge.currentFiber()
 /// == null`, senkron üst-düzey kod) ÇAĞRILDIĞINDA kullanılan YEDEKTİR,
 /// BUGÜNKÜ (Faz BB.1) davranışla BİREBİR aynı.
-threadlocal var g_prng_fallback: std.Random.DefaultPrng = std.Random.DefaultPrng.init(0);
-threadlocal var g_seeded_fallback: bool = false;
+///
+/// Bulundu (bkz. proje belleği "v4 pre20 stdlib roadmap"nin §3.219 TLS
+/// bulgusu — `bridge.zig`nin `g_scheduler`ıYLA AYNI hata sınıfı): ham
+/// `threadlocal var`, freestanding'de (`boot.S` TLS'i HİÇ KURMADIĞINDAN)
+/// GERÇEK bir #GP çökmesine yol AÇARDI. `nox.random` ŞU AN `lib_
+/// freestanding.zig`e KABLOLANMADIĞINDAN (Zig'in tembel analizi BU
+/// dosyayı freestanding derlemesinden TAMAMEN dışlar) HENÜZ GERÇEKTEN
+/// tetiklenemez — AMA `nox.math`/`nox.time`nin AYNI şekilde SONRADAN
+/// kablolanması (bkz. §3.215/§3.218) ÖRNEĞİ GÖSTERİYOR Kİ bu HER AN
+/// değişebilir; `is_freestanding` comptime dalıyla ÖNCEDEN düzeltmek
+/// (hosted davranışı SIFIR etkilenir) savunmacı VE ucuzdur.
+const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
+const PrngFallbackSlot = if (is_freestanding) struct {
+    var value: std.Random.DefaultPrng = std.Random.DefaultPrng.init(0);
+} else struct {
+    threadlocal var value: std.Random.DefaultPrng = std.Random.DefaultPrng.init(0);
+};
+const SeededFallbackSlot = if (is_freestanding) struct {
+    var value: bool = false;
+} else struct {
+    threadlocal var value: bool = false;
+};
 
 fn prngPtr() *std.Random.DefaultPrng {
     if (bridge.currentFiber()) |f| return &f.prng;
-    return &g_prng_fallback;
+    return &PrngFallbackSlot.value;
 }
 fn seededPtr() *bool {
     if (bridge.currentFiber()) |f| return &f.prng_seeded;
-    return &g_seeded_fallback;
+    return &SeededFallbackSlot.value;
 }
 
 fn ensureSeeded() void {

@@ -1540,164 +1540,6 @@ export function d $nox_mathx_abs(l %rt, d %p_x) {
 @fn_end4
     ret d_0
 }
-export function $nox_random_seed(l %rt, l %p_s) {
-@start
-    %t0 =l alloc8 8
-    storel %p_s, %t0
-    %t1 =l loadl %t0
-    call $nox_random_seed_raw(l %t1)
-@fn_end0
-    ret
-}
-export function l $nox_random_randint(l %rt, l %p_lo, l %p_hi) {
-@start
-    %t0 =l alloc8 8
-    %t1 =l alloc8 8
-    storel %p_lo, %t0
-    storel %p_hi, %t1
-    %t2 =l loadl %t0
-    %t3 =l loadl %t1
-    %t4 =l call $nox_random_randint_raw(l %t2, l %t3)
-    ret %t4
-@after_return0
-@fn_end1
-    ret 0
-}
-export function d $nox_random_random(l %rt) {
-@start
-    %t0 =d call $nox_random_random_raw()
-    ret %t0
-@after_return0
-@fn_end1
-    ret d_0
-}
-export function d $nox_random_normal(l %rt) {
-@start
-    %t0 =l alloc8 8
-    %t1 =l alloc8 8
-    %t2 =l alloc8 8
-    %t3 =l alloc8 8
-    %t4 =l alloc8 8
-    %t5 =l alloc8 8
-    %t6 =l alloc8 8
-    %t7 =l alloc8 8
-    %t8 =l alloc8 8
-    %t9 =l alloc8 8
-    %t10 =l alloc8 8
-    %t11 =l alloc8 8
-    %t12 =d call $nox_random_random_raw()
-    stored %t12, %t2
-    jmp @inline_done0
-@after_inline_return1
-    jmp @inline_done0
-@inline_done0
-    %t13 =d loadd %t2
-    stored %t13, %t0
-    jmp @while_cond2
-@while_cond2
-    %t14 =d loadd %t0
-    %t15 =w ceqd %t14, d_0
-    jnz %t15, @while_body3, @while_end4
-@while_body3
-    %t16 =d call $nox_random_random_raw()
-    stored %t16, %t3
-    jmp @inline_done5
-@after_inline_return6
-    jmp @inline_done5
-@inline_done5
-    %t17 =d loadd %t3
-    stored %t17, %t0
-    jmp @while_cond2
-@while_end4
-    %t18 =d call $nox_random_random_raw()
-    stored %t18, %t4
-    jmp @inline_done7
-@after_inline_return8
-    jmp @inline_done7
-@inline_done7
-    %t19 =d loadd %t4
-    stored %t19, %t1
-    %t20 =d neg d_2
-    %t21 =d loadd %t0
-    stored %t21, %t5
-    %t22 =d loadd %t5
-    %t23 =d call $nox_math_log_raw(d %t22)
-    stored %t23, %t6
-    jmp @inline_done9
-@after_inline_return10
-    jmp @inline_done9
-@inline_done9
-    %t24 =d loadd %t6
-    %t25 =d mul %t20, %t24
-    stored %t25, %t7
-    %t26 =d loadd %t7
-    %t27 =d call $nox_math_sqrt_raw(d %t26)
-    stored %t27, %t8
-    jmp @inline_done11
-@after_inline_return12
-    jmp @inline_done11
-@inline_done11
-    %t28 =d loadd %t8
-    stored d_3.141592653589793, %t9
-    jmp @inline_done13
-@after_inline_return14
-    jmp @inline_done13
-@inline_done13
-    %t29 =d loadd %t9
-    %t30 =d mul d_2, %t29
-    %t31 =d loadd %t1
-    %t32 =d mul %t30, %t31
-    stored %t32, %t10
-    %t33 =d loadd %t10
-    %t34 =d call $nox_math_cos_raw(d %t33)
-    stored %t34, %t11
-    jmp @inline_done15
-@after_inline_return16
-    jmp @inline_done15
-@inline_done15
-    %t35 =d loadd %t11
-    %t36 =d mul %t28, %t35
-    ret %t36
-@after_return17
-@fn_end18
-    ret d_0
-}
-export function d $nox_random_exponential(l %rt, d %p_rate) {
-@start
-    %t0 =l alloc8 8
-    %t1 =l alloc8 8
-    %t2 =l alloc8 8
-    %t3 =l alloc8 8
-    %t4 =l alloc8 8
-    stored %p_rate, %t0
-    %t5 =d call $nox_random_random_raw()
-    stored %t5, %t2
-    jmp @inline_done0
-@after_inline_return1
-    jmp @inline_done0
-@inline_done0
-    %t6 =d loadd %t2
-    stored %t6, %t1
-    %t7 =d sub d_0, d_1
-    %t8 =d loadd %t1
-    %t9 =d sub d_1, %t8
-    stored %t9, %t3
-    %t10 =d loadd %t3
-    %t11 =d call $nox_math_log_raw(d %t10)
-    stored %t11, %t4
-    jmp @inline_done2
-@after_inline_return3
-    jmp @inline_done2
-@inline_done2
-    %t12 =d loadd %t4
-    %t13 =d mul %t7, %t12
-    %t14 =d loadd %t0
-    %t15 =d div %t13, %t14
-    ret %t15
-@after_return4
-@fn_end5
-    ret d_0
-}
 export function w $main(w %argc, l %argv) {
 @start
     %rt =l call $nox_runtime_init()
@@ -1720,161 +1562,94 @@ export function w $main(w %argc, l %argv) {
     %t14 =l alloc8 8
     %t15 =l alloc8 8
     %t16 =l alloc8 8
-    %t17 =l alloc8 8
-    %t18 =l alloc8 8
-    %t19 =l alloc8 8
-    %t20 =l alloc8 8
-    %t21 =l alloc8 8
-    %t22 =l alloc8 8
-    storel 42, %t6
-    %t23 =l loadl %t6
-    call $nox_random_seed_raw(l %t23)
+    stored d_0, %t0
+    %t17 =d loadd %t0
+    %t18 =d call $nox_math_sin_raw(d %t17)
+    stored %t18, %t1
+    jmp @inline_done0
+@after_inline_return1
     jmp @inline_done0
 @inline_done0
-    storel 1, %t7
-    storel 10, %t8
-    %t24 =l loadl %t7
-    %t25 =l loadl %t8
-    %t26 =l call $nox_random_randint_raw(l %t24, l %t25)
-    storel %t26, %t9
-    jmp @inline_done1
-@after_inline_return2
-    jmp @inline_done1
-@inline_done1
-    %t27 =l loadl %t9
-    storel %t27, %t0
-    %t28 =l loadl %t0
-    %t29 =w csgel %t28, 1
-    jnz %t29, @print_true3, @print_false4
-@print_true3
-    call $printf(l $fmt_bool_true)
-    jmp @print_done5
-@print_false4
-    call $printf(l $fmt_bool_false)
-    jmp @print_done5
-@print_done5
-    %t30 =l loadl %t0
-    %t31 =w cslel %t30, 10
-    jnz %t31, @print_true6, @print_false7
-@print_true6
-    call $printf(l $fmt_bool_true)
-    jmp @print_done8
-@print_false7
-    call $printf(l $fmt_bool_false)
-    jmp @print_done8
-@print_done8
-    %t32 =d call $nox_random_random_raw()
-    stored %t32, %t10
-    jmp @inline_done9
-@after_inline_return10
-    jmp @inline_done9
-@inline_done9
-    %t33 =d loadd %t10
-    stored %t33, %t1
-    %t34 =d loadd %t1
-    %t35 =w cged %t34, d_0
-    jnz %t35, @print_true11, @print_false12
-@print_true11
-    call $printf(l $fmt_bool_true)
-    jmp @print_done13
-@print_false12
-    call $printf(l $fmt_bool_false)
-    jmp @print_done13
-@print_done13
-    %t36 =d loadd %t1
-    %t37 =w cltd %t36, d_1
-    jnz %t37, @print_true14, @print_false15
-@print_true14
-    call $printf(l $fmt_bool_true)
-    jmp @print_done16
-@print_false15
-    call $printf(l $fmt_bool_false)
-    jmp @print_done16
-@print_done16
-    storel 7, %t11
-    %t38 =l loadl %t11
-    call $nox_random_seed_raw(l %t38)
-    jmp @inline_done17
-@inline_done17
-    storel 0, %t12
-    storel 100, %t13
-    %t39 =l loadl %t12
-    %t40 =l loadl %t13
-    %t41 =l call $nox_random_randint_raw(l %t39, l %t40)
-    storel %t41, %t14
-    jmp @inline_done18
-@after_inline_return19
-    jmp @inline_done18
-@inline_done18
-    %t42 =l loadl %t14
-    storel %t42, %t2
-    storel 7, %t15
-    %t43 =l loadl %t15
-    call $nox_random_seed_raw(l %t43)
-    jmp @inline_done20
-@inline_done20
-    storel 0, %t16
-    storel 100, %t17
-    %t44 =l loadl %t16
-    %t45 =l loadl %t17
-    %t46 =l call $nox_random_randint_raw(l %t44, l %t45)
-    storel %t46, %t18
-    jmp @inline_done21
-@after_inline_return22
-    jmp @inline_done21
-@inline_done21
-    %t47 =l loadl %t18
-    storel %t47, %t3
-    %t48 =l loadl %t2
-    %t49 =l loadl %t3
-    %t50 =w ceql %t48, %t49
-    jnz %t50, @print_true23, @print_false24
-@print_true23
-    call $printf(l $fmt_bool_true)
-    jmp @print_done25
-@print_false24
-    call $printf(l $fmt_bool_false)
-    jmp @print_done25
-@print_done25
-    storel 7, %t19
-    %t51 =l loadl %t19
-    call $nox_random_seed_raw(l %t51)
-    jmp @inline_done26
-@inline_done26
-    %t52 =d call $nox_random_random_raw()
-    stored %t52, %t20
-    jmp @inline_done27
-@after_inline_return28
-    jmp @inline_done27
-@inline_done27
-    %t53 =d loadd %t20
-    stored %t53, %t4
-    storel 7, %t21
-    %t54 =l loadl %t21
-    call $nox_random_seed_raw(l %t54)
-    jmp @inline_done29
-@inline_done29
-    %t55 =d call $nox_random_random_raw()
-    stored %t55, %t22
-    jmp @inline_done30
-@after_inline_return31
-    jmp @inline_done30
-@inline_done30
-    %t56 =d loadd %t22
-    stored %t56, %t5
-    %t57 =d loadd %t4
-    %t58 =d loadd %t5
-    %t59 =w ceqd %t57, %t58
-    jnz %t59, @print_true32, @print_false33
-@print_true32
-    call $printf(l $fmt_bool_true)
-    jmp @print_done34
-@print_false33
-    call $printf(l $fmt_bool_false)
-    jmp @print_done34
-@print_done34
+    %t19 =d loadd %t1
+    call $printf(l $fmt_float, ..., d %t19)
+    stored d_0, %t2
+    %t20 =d loadd %t2
+    %t21 =d call $nox_math_cos_raw(d %t20)
+    stored %t21, %t3
+    jmp @inline_done2
+@after_inline_return3
+    jmp @inline_done2
+@inline_done2
+    %t22 =d loadd %t3
+    call $printf(l $fmt_float, ..., d %t22)
+    stored d_0, %t4
+    %t23 =d loadd %t4
+    %t24 =d call $nox_math_tan_raw(d %t23)
+    stored %t24, %t5
+    jmp @inline_done4
+@after_inline_return5
+    jmp @inline_done4
+@inline_done4
+    %t25 =d loadd %t5
+    call $printf(l $fmt_float, ..., d %t25)
+    stored d_2.718281828459045, %t6
+    %t26 =d loadd %t6
+    %t27 =d call $nox_math_log_raw(d %t26)
+    stored %t27, %t7
+    jmp @inline_done6
+@after_inline_return7
+    jmp @inline_done6
+@inline_done6
+    %t28 =d loadd %t7
+    call $printf(l $fmt_float, ..., d %t28)
+    stored d_2.718281828459045, %t8
+    %t29 =d loadd %t8
+    %t30 =d call $nox_mathx_log(l %rt, d %t29)
+    stored %t30, %t9
+    jmp @inline_done8
+@after_inline_return9
+    jmp @inline_done8
+@inline_done8
+    %t31 =d loadd %t9
+    call $printf(l $fmt_float, ..., d %t31)
+    stored d_1, %t10
+    %t32 =d loadd %t10
+    %t33 =d call $nox_math_exp_raw(d %t32)
+    stored %t33, %t11
+    jmp @inline_done10
+@after_inline_return11
+    jmp @inline_done10
+@inline_done10
+    %t34 =d loadd %t11
+    call $printf(l $fmt_float, ..., d %t34)
+    stored d_1, %t12
+    stored d_1, %t13
+    %t35 =d loadd %t12
+    %t36 =d loadd %t13
+    %t37 =d call $nox_math_atan2_raw(d %t35, d %t36)
+    stored %t37, %t14
+    jmp @inline_done12
+@after_inline_return13
+    jmp @inline_done12
+@inline_done12
+    %t38 =d loadd %t14
+    call $printf(l $fmt_float, ..., d %t38)
+    stored d_3.141592653589793, %t15
+    jmp @inline_done14
+@after_inline_return15
+    jmp @inline_done14
+@inline_done14
+    %t39 =d loadd %t15
+    call $printf(l $fmt_float, ..., d %t39)
+    stored d_2.718281828459045, %t16
+    jmp @inline_done16
+@after_inline_return17
+    jmp @inline_done16
+@inline_done16
+    %t40 =d loadd %t16
+    call $printf(l $fmt_float, ..., d %t40)
     call $nox_runtime_deinit(l %rt)
-@fn_end35
+@fn_end18
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

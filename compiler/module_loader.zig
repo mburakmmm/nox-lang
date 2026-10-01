@@ -416,6 +416,18 @@ fn renameMethodDef(a: std.mem.Allocator, m: ast.FuncDef, map: *const RenameMap) 
         .return_type = try renameTypeExpr(a, m.return_type, map),
         .body = try renameStmts(a, m.body, map),
         .is_async = m.is_async,
+        // Bulundu (bkz. proje belleği "v4 pre20 stdlib roadmap"nin §3.219
+        // SONRASI incelemesi — `Instant.elapsed_ms` üzerindeki `@capability.
+        // requires("clock")` bulgusu): `renameTopLevelFuncDef`in Faz A
+        // madde 1'de DÜZELTİLEN AYNI hatası (decorator'ların struct-
+        // literal'da EKSİK olması YÜZÜNDEN SESSİZCE DÜŞMESİ) BU fonksiyonu
+        // HİÇ ETKİLEMEMİŞTİ — METODLAR o zaman HİÇ decorator TAŞIMIYORDU
+        // (parser BUNU henüz DESTEKLEMİYORDU), bu YÜZDEN eksiklik GİZLİ
+        // kalmıştı. Decorator argümanları (`capability.requires`in SADECE
+        // string LİTERALİ alan argümanları) HİÇBİR Nox SEMBOLÜNE atıfta
+        // BULUNMADIĞINDAN yeniden adlandırma GEREKMEZ, m.decorators
+        // OLDUĞU GİBİ kopyalanır.
+        .decorators = m.decorators,
     };
 }
 

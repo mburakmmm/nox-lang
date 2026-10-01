@@ -26714,6 +26714,147 @@ GERÇEKTEN ÇALIŞIR hâle getirdi — bu, projenin "ölç, varsayma" kültürü
 (AGENTS.md İlke #7) EN NET örneklerinden biridir: dogfood'un KENDİSİ
 olmasaydı bu 3 hata muhtemelen UZUN SÜRE keşfedilmeyecekti.
 
+## 3.220 v4 Faz C SONRASI — dış incelemenin (GPT-5.6) doğru tespit ettiği 4 madde
+
+**Bağlam:** v1.122.0'ın (§3.219) dışarıdan bir incelemesi (kullanıcı
+tarafından yapıştırılan, GPT-5.6 etiketli bir analiz — kod okunarak
+TEK TEK doğrulandı, hiçbiri KÖRLEMESİNE kabul EDİLMEDİ) 4 madde tespit
+etti: (1) dogfood testinin checkpoint SIRALAMASINI DOĞRULAMAMASI (sadece
+VARLIĞI kontrol ediyordu), (2) `Instant.elapsed_ms()`/`elapsed()`nin
+METOD olmaları YÜZÜNDEN `instant_now()`nin `@capability.requires("clock")`
+kapısını TAMAMEN ATLAYABİLMESİ, (3) `nox.random`ın otomatik tohumlamasının
+`clock_gettime`yi KOŞULSUZ çağırması (freestanding-güvenliği HENÜZ
+KANITLANMAMIŞ, bu YÜZDEN dogfood korpusuna BİLİNÇLİ olarak DAHİL
+EDİLMEMİŞTİ — DOĞRU), (4) v1.119.0'ın (§3.215) `nox.math`yi çıplak→
+nitelikli-SADECE çevirmesinin VERSIONING.md'nin "MINOR sürümde önceden
+geçerli hiçbir .nox dosyası bozulmaz" garantisini İHLAL ETMESİ (proje
+v1.0.0'ı ÇOKTAN GEÇTİĞİNDEN bu garanti FİİLEN YÜRÜRLÜKTE). AArch64
+stack-smash CI bulgusunun (proje belleği "aarch64 stack-smash CI
+workaround") BU 4 maddeyle İLİŞKİSİ de SORULDU — kod okunarak KESİN
+OLARAK "İLİŞKİSİZ" olduğu doğrulandı (crash HOSTED Linux'ta, `nox.random`/
+`nox.time`/`nox.math`e HİÇ DEĞİNMEYEN bir thread-join yolunda oluşuyor;
+§3.219'un TLS hatası İSE SADECE freestanding'e özgüydü, TAMAMEN FARKLI
+bir senaryo).
+
+### Madde 1 — Dogfood checkpoint SIRALAMASI artık ZORUNLU
+
+`tests/golden/freestanding_dogfood_test.zig`nin doğrulama döngüsü ÖNCEDEN
+her checkpoint'in `stdout`UN HERHANGİ bir YERİNDE bulunup BULUNMADIĞINI
+(sırasız `indexOf`) kontrol ediyordu — bu, checkpoint'lerin YANLIŞ SIRADA
+basılmasını (ör. bir ÖNCEKİ bölümün hata YOLUNA sessizce DÜŞÜP SONRAKİ
+checkpoint'i baştan BASMASI gibi bir regresyonu) YAKALAYAMAZDI. Artık bir
+`cursor` İLE SIRALI eşleştirme yapılır: her checkpoint, bir ÖNCEKİNİN
+bittiği NOKTADAN SONRA aranır — SIRA ihlali `error.CheckpointNotFoundInOrder`
+ile BAŞARISIZ olur.
+
+### Madde 2 — Metod-seviyesinde capability zorlaması (checker genişletmesi)
+
+**Kök sorun:** capability kontrolü (`checkCapabilityCall`) ÖNCEDEN SADECE
+SERBEST fonksiyon çağrılarını (`checkCall`nin `.identifier` dalı) kapsardı
+— bir METODUN gövdesi işaretli bir SERBEST fonksiyonu çağırdığında kontrol
+ÇALIŞIRDI, ama bir METOD (`Instant.elapsed_ms()` gibi) KENDİSİ işaretli
+olduğunda VE başka bir METOD tarafından çağrıldığında (`elapsed()`nin
+`self.elapsed_ms()`yi çağırması gibi) HİÇBİR kontrolden GEÇMEZDİ —
+freestanding'de `Instant(0).elapsed_ms()` SESSİZCE (çökme OLMADAN) YANLIŞ
+bir sonuç (raw clock extern'ini GERÇEKTEN çağırarak) dönebiliyordu.
+
+**Düzeltme (4 katmanlı):**
+1. **Parser** (`compiler/parser/parser.zig`nin `parseClassDef`'i) —
+   metod gövdesi döngüsüne `@` (decorator) dalı EKLENDİ (ÖNCEDEN HİÇ YOKTU,
+   bir metodu decorate ETMEK `UnexpectedToken` İLE ÇÖKERDİ).
+2. **Module loader** (`compiler/module_loader.zig`nin `renameMethodDef`'i)
+   — `.decorators` alanını EKSİK BIRAKAN struct literal'ı DÜZELTİLDİ (AYNI
+   hatanın ÜÇÜNCÜ tekrarı — `renameTopLevelFuncDef`/`renameNestedFuncDef`
+   İçİn DAHA ÖNCE düzeltilmişti, metodlar İçİn HİÇ test EDİLMEMİŞTİ çünkü
+   HİÇBİR metod decorator TAŞIMIYORDU).
+3. **Checker** (`compiler/typecheck/checker.zig`) — `checkMethodCapabilityCall`
+   (sınıf adı + metod adını `"ClassName.methodName"` olarak NİTELEYEREK
+   `checkCapabilityCall`e devreden YENİ bir yardımcı) hem NORMAL metod
+   çağrısı dalına (`info.method_owners.get(a.attr)` İLE KALITIM ZİNCİRİNİ
+   DOĞRU çözerek) hem `super().method(...)` dalına EKLENDİ. `registerClassSignatures`
+   metod decorator'larını (`@capability.requires` dışındaki HERHANGİ bir
+   decorator'ı REDDEDEREK) kaydeder.
+4. **`nox.time`** (`Instant.elapsed_ms`/`elapsed`) — İKİSİ de `@capability.
+   requires("clock")` İLE işaretlendi. `elapsed()`, `self.elapsed_ms()`yi
+   (ARTIK işaretli) DEĞİL, DOĞRUDAN `nox_time_monotonic_ms_raw()`yi çağırır
+   — AGAIN AYNI "koşulsuz top-level type-check" tuzağından KAÇINMAK İçİn
+   (bkz. `now()`/§3.218'in AYNI deseni).
+
+### Test
+
+`compiler/parser/parser.zig`ye YENİ bir birim testi (metod üzerinde
+decorator PARSE edilir). `tests/cli/profile_test.zig`ye YENİ bir golden
+test (`Instant(0).elapsed_ms()` freestanding'de `CapabilityNotGranted`
+İLE REDDEDİLİR). 8 IR anlık görüntüsü (nox.time'ı transitif olarak
+import eden HER fixture) kasıtlı olarak YENİDEN OLUŞTURULDU.
+
+### Madde 3 — `nox.random`ın threadlocal fallback'i (proaktif, BULUNAN EK bir hata)
+
+GPT-5.6'nın TESPİT ETMEDİĞİ, kod okunurken BAĞIMSIZ olarak bulunan bir
+madde: `runtime/stdlib_shims/random.zig`nin `g_prng_fallback`/`g_seeded_
+fallback`si §3.219'un `g_scheduler` hatasıyla (bkz. ilgili bölüm) AYNI
+sınıftan bir `threadlocal var` kullanıyordu — freestanding'in `boot.S`'si
+`FS_BASE` MSR'ını HİÇ kurmadığından, HERHANGİ bir `threadlocal var`
+erişimi `#GP`ye yol açar. ŞU AN `random.zig` `lib_freestanding.zig`'e
+KABLOLANMADIĞINDAN (bkz. aşağıdaki madde 4'ün "HENÜZ freestanding-güvenli
+KANITLANMADI" notu) BU hata LATENT'TİR — AMA §3.219'un `GSchedulerSlot`
+deseniyle (comptime-gated: freestanding'de düz `var`, hosted'de
+`threadlocal var`) PROAKTİF olarak düzeltildi.
+
+### Madde 4 — `nox.math` semver ihlali: `nox.mathx` ile KALICI çözüm
+
+**Kök sorun:** v1.119.0 (§3.215) `nox.math`yi (sqrt/pow/floor/ceil/sin/
+cos/tan/log/exp/atan2) çıplak-çağrılabilir/libm-bağımlı halden nitelikli-
+SADECE/libc-bağımsız hale ÇEVİRMİŞTİ — bu, `import nox.math; sqrt(x)`
+YAZAN ÖNCEDEN GEÇERLİ kodu KIRDI. Proje v1.0.0'ı ÇOKTAN GEÇTİĞİNDEN
+VERSIONING.md'nin "MINOR/PATCH sürümde önceden geçerli hiçbir .nox
+dosyası bozulmaz" garantisi BU değişiklik İçİn FİİLEN yürürlükteydi —
+İHLAL EDİLMİŞTİ.
+
+**Mimari kısıt (neden "ikisi birden, AYNI modülde" İMKANSIZ):** `extern
+def`ler ASLA mangle EDİLMEZ (SADECE ÇIPLAK çağrılabilirler), normal
+`def`ler HER ZAMAN mangle EDİLİR (SADECE nitelikli/`from`-import ile
+çağrılabilirler) — AYNI isim AYNI dosyada İKİSİNİ BİRDEN OLAMAZ (derleyici
+duplicate-tanım hatası verir).
+
+**Çözüm:** `nox.math` ESKİ (pre-1.119.0) çıplak-çağrılabilir/libm-bağımlı/
+`libc_math`-capability-gated (hosted-only) haline TAM olarak GERİ
+DÖNDÜRÜLDÜ — HİÇBİR ÖNCEDEN geçerli kod KIRILMAZ. v1.119.0'ın
+TANITTIĞI libc-bağımsız/nitelikli-SADECE/capability-siz davranış KALICI
+olarak YENİ bir modüle, **`nox.mathx`**'e TAŞINDI (`runtime/stdlib_shims/
+math.zig`nin AYNI `_raw` Zig sembolleri PAYLAŞILIR — HİÇBİR mantık
+TEKRARLANMAZ, SADECE `.nox` yüzeyi FARKLIDIR). `stdlib/nox/random.nox`
+(capability-siz KALMASI İçİn) `nox.math` DEĞİL `nox.mathx`i import edecek
+şekilde GÜNCELLENDİ. `compiler/typecheck/checker.zig`ye `libc_math`
+capability'si GERİ EKLENDİ (`math` İçİn), `mathx` capability-siz olarak
+KAYDEDİLDİ.
+
+**v2.0'a not:** BU iki modülün (MAJOR sürümde kırıcı değişikliklere İZİN
+VERİLDİĞİNDE) BİRLEŞTİRİLMESİ (muhtemelen `nox.math`nin KENDİSİNİN
+`nox.mathx`nin BUGÜNKÜ davranışını ALMASI, `nox.mathx`nin KALDIRILMASI)
+PLANLANMAKTADIR — bu, projenin "kırıcı değişiklik GEREKİYORSA bir sonraki
+MAJOR'a ERTELE" ilkesinin SOMUT bir örneğidir.
+
+### Test
+
+`stdlib/nox/math.nox`/`math.zig` DEĞİŞMEDİ (davranış ESKİ haline döndü).
+YENİ `stdlib/nox/mathx.nox`. `tests/golden/codegen_cases/math_basic.nox`/
+`math_trig_log_constants.nox` ESKİ (çıplak-çağrı) içeriğine GERİ
+DÖNDÜRÜLDÜ; YENİ `mathx_basic.nox`/`mathx_trig_log_constants.nox`
+(nitelikli) EKLENDİ. `tests/golden/typecheck_cases/err_freestanding_
+math_forbidden.*` GERİ GETİRİLDİ (`nox.math` YİNE freestanding'de
+REDDEDİLİR), YENİ `ok_freestanding_mathx_allowed.*` EKLENDİ (`nox.mathx`
+SERBESTTİR). `tests/cli/profile_test.zig`ye YENİ bir "nox.math HÂLÂ
+reddedilir" build-seviyesi testi EKLENDİ (v1.119.0'dan ÖNCE var olan AMA
+O COMMIT'TE KALDIRILAN testin GERİ GETİRİLMİŞ hâli), mevcut build+link
+testi `nox.mathx`i hedefleyecek şekilde GÜNCELLENDİ. `tests/golden/
+freestanding_dogfood_corpus.nox` `nox.mathx`i kullanacak şekilde
+GÜNCELLENDİ. 5 IR anlık görüntüsü (math_basic/math_trig_log_constants +
+`nox.random`ı transitif olarak import eden uuid_v4/random_normal_
+exponential_shuffle/random_seeded_reproducible) kasıtlı olarak YENİDEN
+OLUŞTURULDU. `zig build test`: 171/171 adım, sıfır regresyon (iki ardışık
+çalıştırmada da STABİL, 0 yeni anlık görüntü).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
@@ -26764,7 +26905,11 @@ keşfedilip 3 GERÇEK hata/eksiklik (TLS/`threadlocal` çökmesi +
 `moduleUsesAsync`nin aşırı-geniş `.generic_construct` kontrolü + eksik
 fiber-stack-provider) düzeltildi — ARTIK GERÇEKTEN çalışıyor. §3.214'ün
 bulgu #1'i (generic sınıf + çapraz-modül tip parametresi codegen hatası)
-§3.216'da DÜZELTİLDİ — ARTIK AÇIK bulgu YOK. **Faz D** (CI hatalarını
-tamamen çözme — AArch64 stack-smash + concurrency-torture'ın nadir
-determinizm bulgusu) kullanıcının KENDİ sözleriyle Faz C SONRASI
-BAŞLAYACAK, HENÜZ BAŞLAMADI.
+§3.216'da DÜZELTİLDİ — ARTIK AÇIK bulgu YOK. Faz C SONRASI, dışarıdan bir
+incelemenin (GPT-5.6) tespit ettiği 4 madde (§3.220) TAMAMEN ÇÖZÜLDÜ:
+dogfood checkpoint sıralaması ZORUNLU hale getirildi, capability kontrolü
+METOD çağrılarını da KAPSAYACAK şekilde genişletildi, `nox.random`ın
+threadlocal fallback'i PROAKTİF olarak sertleştirildi, VE `nox.math`nin
+v1.119.0'daki semver İHLALİ `nox.mathx` İLE KALICI olarak düzeltildi.
+**Faz D** (CI hatalarını tamamen çözme — AArch64 stack-smash +
+concurrency-torture'ın nadir determinizm bulgusu) ŞİMDİ BAŞLIYOR.

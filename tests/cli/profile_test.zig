@@ -131,18 +131,20 @@ test "noxc build --profile freestanding: TRANSITIF olarak yasakli bir modul (nox
 
 // v4 Faz B, madde 1 (bkz. nox-teknik-spesifikasyon.md §3.2xx): BU test
 // ÖNCEDEN "nox.random nox.math UZERINDEN TRANSİTİF olarak reddedilir"i
-// kanıtlıyordu — `nox.math`in `libc_math` capability'si KALDIRILDIĞINDAN
-// (ARTIK libm'e DEĞİL, Zig'in KENDİ `std.math`ına bağlı) bu ARTIK DOĞRU
-// DEĞİL: `nox.random` (KENDİ `extern def`leri ZATEN OS-bağımsızdı, SADECE
-// TRANSİTİF `import nox.math`ı YÜZÜNDEN reddediliyordu) ARTIK capability
-// SEVİYESİNDE SERBESTTİR. `noxc check`in (`build` DEĞİL) kullanılması
-// BİLİNÇLİDİR — `random.zig`nin KENDİSİ (OTOMATİK tohumlama İçİn
-// `clock_gettime` ÇAĞIRIR, bkz. onun belge notu) HENÜZ `lib_freestanding.
-// zig`e KABLOLANMADI (`nox.strings`nin AYNI, ÖNCEDEN KABUL EDİLMİŞ
-// "capability-serbest AMA henüz linklenemez" boşluğu, bkz. aşağıdaki
-// "izin verilen bir stdlib modülü" testi) — BU test SADECE capability
-// DÜZEYİNİ (checker) kanıtlar, TAM linklemeyi DEĞİL.
-test "noxc check --profile freestanding: nox.random ARTIK capability-serbesttir (nox.math'ın libc_math'ı kaldırıldı)" {
+// kanıtlıyordu. v4 Faz B madde 1 SONRASI semver düzeltmesi (bkz.
+// nox-teknik-spesifikasyon.md ilgili bölüm): `nox.math`nin `libc_math`
+// capability'si GERİ GETİRİLDİ (ESKİ çıplak-çağrı davranışını KORUMAK
+// İçİn) — AMA `random.nox` ARTIK `nox.math` DEĞİL capability-siz
+// `nox.mathx`i import ettiğinden (bkz. `random.nox`nin KENDİ belge notu)
+// `nox.random` YİNE DE capability SEVİYESİNDE SERBESTTİR. `noxc check`in
+// (`build` DEĞİL) kullanılması BİLİNÇLİDİR — `random.zig`nin KENDİSİ
+// (OTOMATİK tohumlama İçİn `clock_gettime` ÇAĞIRIR, bkz. onun belge
+// notu) HENÜZ `lib_freestanding.zig`e KABLOLANMADI (`nox.strings`nin
+// AYNI, ÖNCEDEN KABUL EDİLMİŞ "capability-serbest AMA henüz linklenemez"
+// boşluğu, bkz. aşağıdaki "izin verilen bir stdlib modülü" testi) — BU
+// test SADECE capability DÜZEYİNİ (checker) kanıtlar, TAM linklemeyi
+// DEĞİL.
+test "noxc check --profile freestanding: nox.random ARTIK capability-serbesttir (nox.mathx kullanır)" {
     const io = std.testing.io;
     const gpa = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
@@ -161,23 +163,25 @@ test "noxc check --profile freestanding: nox.random ARTIK capability-serbesttir 
     try std.testing.expect(result.term == .exited and result.term.exited == 0);
 }
 
-// v4 Faz B, madde 1 (bkz. nox-teknik-spesifikasyon.md §3.2xx): `nox.math`
-// (`nox.strings`in AKSİNE, bkz. yukarıdaki "henüz linklenemez" testi)
-// ARTIK GERÇEKTEN build+link OLUR — `runtime/stdlib_shims/math.zig`
+// v4 Faz B madde 1 SONRASI semver düzeltmesi (bkz. nox-teknik-
+// spesifikasyon.md ilgili bölüm): libc-bağımsız/build+link-edilebilir
+// davranış KALICI olarak `nox.mathx`e TAŞINDI (`nox.math`nin KENDİSİ
+// ESKİ libm-bağımlı/hosted-only haline GERİ DÖNDÜRÜLDÜ, bkz. AŞAĞIDAKİ
+// "nox.math HÂLÂ reddedilir" testi) — `runtime/stdlib_shims/math.zig`
 // (SAF Zig/`std.math`, HİÇBİR OS bağımlılığı) `lib_freestanding.zig`nin
 // KÖKÜNE DOĞRUDAN import EDİLDİ (`http_client.zig`/vb.nin AKSİNE, bkz.
 // onun belge notu).
-test "noxc build --profile freestanding: nox.math GERÇEKTEN build+link olur (libc-bağımsız std.math)" {
+test "noxc build --profile freestanding: nox.mathx GERÇEKTEN build+link olur (libc-bağımsız std.math)" {
     const io = std.testing.io;
     const gpa = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const path = try writeTempSource(gpa, io,
-        \\import nox.math
+        \\import nox.mathx
         \\
-        \\print(nox.math.sqrt(4.0))
-        \\print(nox.math.pow(2.0, 10.0))
-        \\print(nox.math.sin(0.0))
+        \\print(nox.mathx.sqrt(4.0))
+        \\print(nox.mathx.pow(2.0, 10.0))
+        \\print(nox.mathx.sin(0.0))
         \\
     , &tmp);
     defer gpa.free(path);
@@ -191,6 +195,31 @@ test "noxc build --profile freestanding: nox.math GERÇEKTEN build+link olur (li
     defer gpa.free(build_result.stdout);
     defer gpa.free(build_result.stderr);
     try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
+}
+
+// Restorasyon (bkz. yukarıdaki belge notu): `nox.math`nin KENDİSİ ESKİ
+// (pre-1.119.0) libm-bağımlı/hosted-only davranışına GERİ DÖNDÜRÜLDÜĞÜNDEN,
+// freestanding'de `build` seviyesinde de (SADECE `check`/typecheck
+// seviyesinde DEĞİL) REDDEDİLMESİ gerekir — v1.119.0'dan ÖNCE var olan
+// AMA O COMMIT'TE kaldırılan testin GERİ GETİRİLMİŞ hâli.
+test "noxc build --profile freestanding: nox.math HÂLÂ reddedilir (libm bağımlılığı geri döndü)" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try writeTempSource(gpa, io,
+        \\import nox.math
+        \\
+        \\print(nox.math.min(3.0, 5.0))
+        \\
+    , &tmp);
+    defer gpa.free(path);
+
+    const result = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "build", "--profile", "freestanding", path } });
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    try std.testing.expect(result.term == .exited and result.term.exited == 1);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "nox.math") != null);
 }
 
 // v4 Faz B (bkz. nox-teknik-spesifikasyon.md §3.2xx): `nox.console` —
@@ -307,6 +336,38 @@ test "noxc build --profile freestanding: nox.time SAF takvim aritmetigi GERÇEKT
     defer gpa.free(build_result.stdout);
     defer gpa.free(build_result.stderr);
     try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
+}
+
+// Bulundu (bkz. nox-teknik-spesifikasyon.md §3.219 SONRASI incelemesi,
+// dış bir GPT-5.6 incelemesinin doğru tespiti): `instant_now()`nin KENDİ
+// `@capability.requires("clock")` kapısı `Instant(0)` GİBİ DOĞRUDAN bir
+// inşayı HİÇ ENGELLEMİYORDU — `Instant.elapsed_ms()`/`elapsed()` ÖNCEDEN
+// HİÇBİR capability kontrolünden GEÇMEDEN (checker SADECE SERBEST
+// fonksiyon çağrılarını kontrol ediyordu, METOD çağrılarını DEĞİL) GERÇEK
+// bir raw clock extern'i çağırabiliyordu — freestanding'de SESSİZCE
+// YANLIŞ bir sonuç (çökme DEĞİL) RİSKİYDİ. Checker'a METOD-seviyesinde
+// capability kontrolü EKLENDİ (`checkMethodCapabilityCall`); bu test
+// `instant_now()`nin kapısını ATLAYAN bu YOLUN artık GERÇEKTEN
+// reddedildiğini kanıtlar.
+test "noxc check --profile freestanding: Instant(0).elapsed_ms() instant_now() kapisini ATLAYAMAZ, METOD-seviyesinde reddedilir" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try writeTempSource(gpa, io,
+        \\from nox.time import Instant
+        \\
+        \\i: Instant = Instant(0)
+        \\print(i.elapsed_ms())
+        \\
+    , &tmp);
+    defer gpa.free(path);
+
+    const result = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "check", "--profile", "freestanding", path } });
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    try std.testing.expect(result.term == .exited and result.term.exited != 0);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "CapabilityNotGranted") != null);
 }
 
 // v4 (Faz A madde 1): `@capability.requires("entropy")` — capability

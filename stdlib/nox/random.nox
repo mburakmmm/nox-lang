@@ -32,12 +32,15 @@ def random() -> float:
     return nox_random_random_raw()
 
 # Faz III.8 (bkz. nox-teknik-spesifikasyon.md §3.69) — SAF Nox (HİÇ Zig/
-# extern def değişikliği GEREKMEDİ), MEVCUT `random()` + `nox.math.sqrt`/
-# `log`/`cos`/`pi` üzerine kurulu. v4 Faz B madde 1 (bkz. nox-teknik-
-# spesifikasyon.md §3.2xx): `nox.math`nin ESKİ "sqrt/log/cos extern def
-# OLDUĞUNDAN ÇIPLAK çağrılır" asimetrisi ÇÖZÜLDÜĞÜNDEN (ARTIK NORMAL,
-# NİTELİKLİ çağrılan fonksiyonlar), BURADA da nitelikli çağrılırlar.
-import nox.math
+# extern def değişikliği GEREKMEDİ), MEVCUT `random()` + `nox.mathx.sqrt`/
+# `log`/`cos`/`pi` üzerine kurulu. v4 Faz B madde 1 SONRASI semver
+# düzeltmesi (bkz. nox-teknik-spesifikasyon.md ilgili bölüm): BURADA
+# `nox.math` DEĞİL BİLİNÇLİ olarak `nox.mathx` kullanılır — `nox.math`
+# ESKİ (pre-1.119.0) çıplak-çağrılabilir/libm-bağımlı/hosted-only haline
+# GERİ DÖNDÜRÜLDÜĞÜNDEN (bkz. `math.nox`nin KENDİ belge notu), `nox.random`ın
+# capability-SİZ (freestanding'de de KULLANILABİLİR) kalması İçİn libc-
+# bağımsız/capability-siz `nox.mathx`e bağımlı olması GEREKİR.
+import nox.mathx
 
 # Standart normal dağılım (ortalama 0, standart sapma 1) — Box-Muller
 # dönüşümü. `u1 == 0.0` İSE `log(0)` TANIMSIZ (negatif sonsuz) OLACAĞINDAN,
@@ -48,14 +51,14 @@ def normal() -> float:
     while u1 == 0.0:
         u1 = random()
     u2: float = random()
-    return nox.math.sqrt(-2.0 * nox.math.log(u1)) * nox.math.cos(2.0 * nox.math.pi() * u2)
+    return nox.mathx.sqrt(-2.0 * nox.mathx.log(u1)) * nox.mathx.cos(2.0 * nox.mathx.pi() * u2)
 
 # Üstel dağılım (hız parametresi `rate`, ortalama `1/rate`) — ters-CDF
 # örneklemesi. `u` `[0.0, 1.0)` OLDUĞUNDAN `1.0 - u` HER ZAMAN `(0.0, 1.0]`
 # içindedir — `log(0)` senaryosu HİÇ oluşmaz.
 def exponential(rate: float) -> float:
     u: float = random()
-    return (0.0 - 1.0) * nox.math.log(1.0 - u) / rate
+    return (0.0 - 1.0) * nox.mathx.log(1.0 - u) / rate
 
 # Fisher-Yates karıştırma — `list[T]` ÜZERİNDE YERİNDE (in-place) çalışır,
 # genel-amaçlı `[T]` fonksiyon generic'i (bkz. `tests/golden/codegen_cases/

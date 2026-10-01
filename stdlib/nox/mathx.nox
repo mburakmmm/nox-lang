@@ -1,0 +1,96 @@
+# v4 Faz B, madde 1 SONRASI semver düzeltmesi (bkz. nox-teknik-
+# spesifikasyon.md ilgili bölüm). Bu modül, v1.119.0'ın `nox.math`ye
+# GEÇİCİ olarak eklediği libc-bağımsız/nitelikli-SADECE davranışın KALICI
+# evidir — `nox.math`nin KENDİSİ (bkz. `math.nox`nin KENDİ belge notu)
+# VERSIONING.md'nin "MINOR sürümde önceden geçerli hiçbir .nox dosyası
+# bozulmaz" garantisini İHLAL ETMEMEK İçİn ESKİ (pre-1.119.0) çıplak-
+# çağrılabilir/libm-bağımlı haline GERİ DÖNDÜRÜLDÜ.
+#
+# `nox.mathx` — ÖNCEDEN `sqrt`/`pow`/`floor`/`ceil`/`sin`/`cos`/`tan`/
+# `log`/`exp`/`atan2` DOĞRUDAN libm'e (`extern def ... from "m"`) BAĞLIYORDU
+# — freestanding'de HİÇBİR libc/libm bağlanmadığından (bkz. `nox.sqlite`nin
+# parola hash'lemesinin `std.crypto.pwhash`ı KULLANMASIYLA AYNI "harici
+# bağımlılık YOK" ilkesi) `nox.math` ÖNCEDEN TAMAMEN hosted-only idi
+# (`libc_math` capability'si). BU modül `runtime/stdlib_shims/math.zig`nin
+# (Zig'in KENDİ `std.math`ı/BUILTIN'leri — `@sin`/`@sqrt`/vb. doğrudan LLVM
+# intrinsic'lerine/donanım komutlarına İNDİRİLİR, `pow`/`atan2`/doğal `log`
+# İSE SAF Zig algoritmalarıdır, libc'ye HİÇ DOKUNMAZ) `_raw` sarmalayıcılarını
+# çağıran NORMAL (mangle EDİLEN) fonksiyonlardır — `nox.mathx` CAPABILITY-
+# SİZDİR (freestanding'de de KULLANILABİLİR) VE nitelikli çağrılır:
+# `nox.mathx.sqrt(2.0)` (çıplak `sqrt(2.0)` ÇALIŞMAZ — `nox.math`nin
+# AKSİNE, bkz. onun belge notu).
+#
+# Hangisini kullanmalıyım? Freestanding/capability-siz kod YAZIYORSANIZ
+# (veya nitelikli çağrı stilini TERCİH EDİYORSANIZ) `nox.mathx`yi kullanın.
+# Mevcut (pre-1.119.0 tarzı, çıplak-çağrılan, hosted-only) kodu
+# KORUMANIZ GEREKİYORSA `nox.math`i kullanın. v2.0'da (MAJOR sürüm,
+# kırıcı değişikliklere İZİN VERİLDİĞİNDE) bu iki modülün birleştirilmesi
+# planlanmaktadır.
+
+extern def nox_math_sqrt_raw(x: float) -> float from "zig-out/lib/noxrt.o"
+extern def nox_math_pow_raw(x: float, y: float) -> float from "zig-out/lib/noxrt.o"
+extern def nox_math_floor_raw(x: float) -> float from "zig-out/lib/noxrt.o"
+extern def nox_math_ceil_raw(x: float) -> float from "zig-out/lib/noxrt.o"
+extern def nox_math_sin_raw(x: float) -> float from "zig-out/lib/noxrt.o"
+extern def nox_math_cos_raw(x: float) -> float from "zig-out/lib/noxrt.o"
+extern def nox_math_tan_raw(x: float) -> float from "zig-out/lib/noxrt.o"
+extern def nox_math_log_raw(x: float) -> float from "zig-out/lib/noxrt.o"
+extern def nox_math_exp_raw(x: float) -> float from "zig-out/lib/noxrt.o"
+extern def nox_math_atan2_raw(y: float, x: float) -> float from "zig-out/lib/noxrt.o"
+
+def sqrt(x: float) -> float:
+    return nox_math_sqrt_raw(x)
+
+def pow(x: float, y: float) -> float:
+    return nox_math_pow_raw(x, y)
+
+def floor(x: float) -> float:
+    return nox_math_floor_raw(x)
+
+def ceil(x: float) -> float:
+    return nox_math_ceil_raw(x)
+
+def sin(x: float) -> float:
+    return nox_math_sin_raw(x)
+
+def cos(x: float) -> float:
+    return nox_math_cos_raw(x)
+
+def tan(x: float) -> float:
+    return nox_math_tan_raw(x)
+
+def log(x: float) -> float:
+    return nox_math_log_raw(x)
+
+def exp(x: float) -> float:
+    return nox_math_exp_raw(x)
+
+def atan2(y: float, x: float) -> float:
+    return nox_math_atan2_raw(y, x)
+
+def ln(x: float) -> float:
+    return log(x)
+
+# Nox'ta top-level `const` YOK — sabitler, sıradan (mangle edilen,
+# nitelikli çağrılan) fonksiyonlar olarak sunulur: `nox.mathx.pi()`/
+# `nox.mathx.e()`.
+def pi() -> float:
+    return 3.14159265358979323846
+
+def e() -> float:
+    return 2.71828182845904523536
+
+def min(a: float, b: float) -> float:
+    if a < b:
+        return a
+    return b
+
+def max(a: float, b: float) -> float:
+    if a > b:
+        return a
+    return b
+
+def abs(x: float) -> float:
+    if x < 0.0:
+        return 0.0 - x
+    return x

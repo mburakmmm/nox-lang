@@ -1317,13 +1317,13 @@ test "golden(freestanding-profile): nox.time serbesttir (ARTIK MODÜL-seviyesind
 // v4 (Faz A madde 1, bkz. nox-teknik-spesifikasyon.md §3.2xx): capability
 // modeline geçişten SONRA `nox.random`ın MODÜL-seviyesi capability kümesi
 // BOŞTUR (`random.nox`nin KENDİ `extern def`leri OS-bağımsızdır) — bu
-// YÜZDEN TEK BAŞINA (`random.nox`nin KENDİ İÇİNDEKİ `import nox.math`
-// SATIRI, YUKARIDAKİ dosya-üstü nottaki "transitif yakalama BU dosyanın
-// kapsamı DIŞINDA" gerekçesiyle, BURADA MERGE EDİLMEDİĞİNDEN) "OK"
-// DÖNER — BU BİR REGRESYON DEĞİL: GERÇEK uçtan-uca davranış (module_
-// loader'ın GERÇEK birleştirmesinden GEÇEREK) DEĞİŞMEDİ, bkz. `tests/
-// cli/profile_test.zig`nin "nox.random TRANSITIF olarak (nox.math
-// uzerinden) reddedilir" testi.
+// YÜZDEN TEK BAŞINA "OK" DÖNER. v4 Faz B madde 1 SONRASI semver
+// düzeltmesi (bkz. nox-teknik-spesifikasyon.md ilgili bölüm): `random.
+// nox` ARTIK `nox.math` (capability-gated, GERİ DÖNDÜRÜLDÜ) DEĞİL BİLİNÇLİ
+// olarak capability-siz `nox.mathx`i import eder — BU YÜZDEN GERÇEK
+// uçtan-uca (module_loader'ın birleştirmesinden GEÇEN) davranış de
+// AYNI şekilde capability-sizdir, bkz. `tests/cli/profile_test.zig`nin
+// "nox.random ARTIK capability-serbesttir" testi.
 test "golden(freestanding-profile): nox.random TEK BASINA (transitif merge OLMADAN) capability-sizdir" {
     try expectGoldenFreestanding(
         @embedFile("typecheck_cases/ok_freestanding_random_allowed_standalone.nox"),
@@ -1331,15 +1331,26 @@ test "golden(freestanding-profile): nox.random TEK BASINA (transitif merge OLMAD
     );
 }
 
-// v4 Faz B, madde 1 (bkz. nox-teknik-spesifikasyon.md §3.2xx): `nox.math`
-// ARTIK libm'e DEĞİL, Zig'in KENDİ `std.math`ına (libc-bağımsız) bağlı
-// olduğundan `libc_math` capability'si KALDIRILDI — `nox.math` ARTIK
-// freestanding'de de SERBESTTİR (ÖNCEDEN "libm bağımlılığı" GEREKÇESİYLE
-// TAMAMEN REDDEDİLİYORDU).
-test "golden(freestanding-profile): nox.math serbesttir (ARTIK libc-bağımsız)" {
+// v4 Faz B madde 1 SONRASI semver düzeltmesi (bkz. nox-teknik-
+// spesifikasyon.md ilgili bölüm): v1.119.0 `libc_math` capability'sini
+// KALDIRMIŞTI, AMA bu `nox.math`nin çıplak-çağrı davranışını KIRDIĞINDAN
+// (VERSIONING.md ihlali) ESKİ (pre-1.119.0) haline GERİ DÖNDÜRÜLDÜ —
+// `libc_math` GERİ GETİRİLDİ, `nox.math` YİNE "libm bağımlılığı"
+// GEREKÇESİYLE freestanding'de TAMAMEN REDDEDİLİR.
+test "golden(freestanding-profile): nox.math dogrudan reddedilir (libm bagimliligi)" {
     try expectGoldenFreestanding(
-        @embedFile("typecheck_cases/ok_freestanding_math_allowed.nox"),
-        @embedFile("typecheck_cases/ok_freestanding_math_allowed.expected"),
+        @embedFile("typecheck_cases/err_freestanding_math_forbidden.nox"),
+        @embedFile("typecheck_cases/err_freestanding_math_forbidden.expected"),
+    );
+}
+
+// Libc-bağımsız/nitelikli-SADECE davranış KALICI olarak `nox.mathx`e
+// TAŞINDI (bkz. `stdlib/nox/mathx.nox`nin KENDİ belge notu) — bu modül
+// HİÇBİR capability GEREKTİRMEZ, freestanding'de de SERBESTTİR.
+test "golden(freestanding-profile): nox.mathx serbesttir (libc-bağımsız)" {
+    try expectGoldenFreestanding(
+        @embedFile("typecheck_cases/ok_freestanding_mathx_allowed.nox"),
+        @embedFile("typecheck_cases/ok_freestanding_mathx_allowed.expected"),
     );
 }
 

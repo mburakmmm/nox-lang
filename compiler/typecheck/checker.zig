@@ -946,6 +946,13 @@ pub const Checker = struct {
         threads,
         process,
         shared_memory,
+        // v4 Faz B madde 1 SONRASI semver düzeltmesi (bkz. nox-teknik-
+        // spesifikasyon.md ilgili bölüm): `nox.math` ESKİ (pre-1.119.0)
+        // çıplak-çağrılabilir/libm-bağımlı haline GERİ DÖNDÜRÜLDÜĞÜNDEN
+        // (libc-bağımsız davranış KALICI olarak `nox.mathx`e TAŞINDI,
+        // bkz. `stdlib/nox/math.nox`nin KENDİ belge notu) BU capability
+        // GERİ GETİRİLDİ.
+        libc_math,
         arch_x86_64,
 
         fn label(self: Capability) []const u8 {
@@ -957,6 +964,7 @@ pub const Checker = struct {
                 .threads => "threads",
                 .process => "process",
                 .shared_memory => "shared_memory",
+                .libc_math => "libc_math",
                 .arch_x86_64 => "arch_x86_64",
             };
         }
@@ -1021,10 +1029,19 @@ pub const Checker = struct {
         .{ .name = "http", .caps = &.{.network} },
         .{ .name = "json", .caps = &.{} },
         .{ .name = "log", .caps = &.{.clock} },
-        // v4 Faz B, madde 1 (bkz. nox-teknik-spesifikasyon.md §3.2xx):
-        // `nox.math` ARTIK libm'e DEĞİL, Zig'in KENDİ `std.math`ına
-        // (libc-bağımsız) bağlıdır — `libc_math` capability'si KALDIRILDI.
-        .{ .name = "math", .caps = &.{} },
+        // v4 Faz B madde 1 SONRASI semver düzeltmesi (bkz. nox-teknik-
+        // spesifikasyon.md ilgili bölüm): v1.119.0 BU modülü GEÇİCİ olarak
+        // `libc_math`sız YAPMIŞTI, AMA bu çıplak-çağrı davranışını
+        // KIRDIĞINDAN (VERSIONING.md ihlali) ESKİ (pre-1.119.0) haline
+        // GERİ DÖNDÜRÜLDÜ — `libc_math` capability'si GERİ GETİRİLDİ.
+        // Libc-bağımsız/capability-siz davranış İSTEYEN kod `nox.mathx`i
+        // kullanmalıdır (AŞAĞIDA).
+        .{ .name = "math", .caps = &.{.libc_math} },
+        // v4 Faz B madde 1 SONRASI semver düzeltmesi — `nox.math`nin
+        // libc-bağımsız/nitelikli-SADECE (v1.119.0'da TANITILAN) kalıcı
+        // evi. HİÇBİR OS/libc bağımlılığı TAŞIMAZ (bkz. `mathx.nox`nin
+        // KENDİ belge notu).
+        .{ .name = "mathx", .caps = &.{} },
         // v4 Faz A madde 3 (bkz. nox-teknik-spesifikasyon.md §3.2xx):
         // `nox.mem` — SAF `ptr[T]`/`lowlevel:` sarmalayıcısı, HİÇBİR OS/libc
         // bağımlılığı TAŞIMAZ (freestanding'de de, `ptr[T]`in KENDİSİ
@@ -1870,6 +1887,24 @@ pub const Checker = struct {
         }
     }
 
+    /// `checkCapabilityCall`in METOD çağrıları İçİn AYNISI — bkz. proje
+    /// belleği "v4 pre20 stdlib roadmap"nin §3.219 SONRASI incelemesi
+    /// (`nox.time.Instant.elapsed_ms` bulgusu): `@capability.requires`
+    /// ÖNCEDEN SADECE SERBEST fonksiyonlarda ÇALIŞIYORDU, bir METOD
+    /// (`Instant(0).elapsed_ms()` GİBİ, `instant_now()`nin KENDİ kapısını
+    /// TAMAMEN ATLAYARAK) HİÇBİR capability kontrolünden GEÇMEDEN GERÇEK
+    /// bir raw extern'i (saat okuyan) çağırabiliyordu. `owner` HER ZAMAN
+    /// metodun TANIMLANDIĞI sınıfın adıdır (`info.method_owners.get(...)`
+    /// — MİRAS alınan bir metod İçin bu, ALICININ KENDİ sınıfı DEĞİL,
+    /// `@capability.requires`in KAYITLI OLDUĞU TABAN sınıftır) — `capability_
+    /// functions` haritası `"SınıfAdı.metodAdı"` OLARAK NİTELİKLİ anahtarlarla
+    /// paylaşılır (ÇAKIŞMAYI önlemek İçİn, bkz. `registerClassSignatures`nin
+    /// AYNI notu).
+    fn checkMethodCapabilityCall(self: *Checker, owner: []const u8, method_name: []const u8) TypeError!void {
+        const qualified = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ owner, method_name });
+        try self.checkCapabilityCall(qualified);
+    }
+
     /// `fd`nin GERÇEK (etkin) tip parametre listesini hesaplar: açıkça
     /// bildirilenler (`fd.type_params`, ör. `[T]`) BİRLEŞİMİ parametre/dönüş
     /// tiplerinde DOĞRUDAN (yalnızca `list[...]` içinde değil, en dış
@@ -2583,6 +2618,35 @@ pub const Checker = struct {
                 }
                 try info.methods.put(self.allocator, m.name, sig);
                 try info.method_owners.put(self.allocator, m.name, cd.name);
+                // Bulundu (bkz. proje belleği "v4 pre20 stdlib roadmap"nin
+                // §3.219 SONRASI incelemesi — `nox.time.Instant.elapsed_ms`
+                // bulgusu): `@capability.requires(...)` ÖNCEDEN SADECE
+                // SERBEST fonksiyonlarda ÇALIŞIYORDU — bir METOD (ör.
+                // `Instant.elapsed_ms`) GERÇEK OS saatini okuyan bir raw
+                // extern'i DOĞRUDAN çağırabiliyor, HİÇBİR capability
+                // kontrolünden GEÇMEDEN (`instant_now()`nin KENDİ, serbest-
+                // fonksiyon seviyesindeki kapısı `Instant(0)` GİBİ DOĞRUDAN
+                // bir inşayı/metod çağrısını ATLAR) — bu, freestanding'de
+                // SESSİZCE yanlış sonuç (çökme DEĞİL) riski YARATIR.
+                // `method_name_lower.requiresCap.put`, SERBEST fonksiyonların
+                // `capability_functions`ıyla AYNI haritayı PAYLAŞIR, ama
+                // anahtar `"SınıfAdı.metodAdı"` OLARAK NİTELİKLİ edilir
+                // (ÇAKIŞMAYI önlemek İçİn — iki FARKLI sınıf AYNI isimde
+                // bir metoda sahip OLABİLİR).
+                for (m.decorators) |dec| {
+                    if (!std.mem.eql(u8, dec.name, "capability.requires")) {
+                        return self.fail(error.UnknownExternDecorator, "metod '{s}.{s}': yalnızca @capability.requires decorator'ı desteklenir (bkz. @{s})", .{ cd.name, m.name, dec.name });
+                    }
+                    const arg_values = try self.allocator.alloc([]const u8, dec.args.len);
+                    for (dec.args, 0..) |arg, i| {
+                        if (arg != .string_lit) {
+                            return self.fail(error.TypeMismatch, "'@capability.requires' argümanı {d} yalnızca bir string LİTERALİ olabilir (metod: {s}.{s})", .{ i + 1, cd.name, m.name });
+                        }
+                        arg_values[i] = arg.string_lit;
+                    }
+                    const qualified = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ cd.name, m.name });
+                    try self.registerCapabilityDecorator(qualified, dec.name, arg_values);
+                }
             }
         }
     }
@@ -6200,6 +6264,8 @@ pub const Checker = struct {
                     }
                     if (base_info.methods.get(a.attr)) |sig| {
                         try self.checkArgs(ctx, sig.params, c.args, a.attr);
+                        const owner = base_info.method_owners.get(a.attr) orelse base_name;
+                        try self.checkMethodCapabilityCall(owner, a.attr);
                         return sig.return_type;
                     }
                     return self.fail(error.UndefinedMethod, "'{s}' taban sınıfının '{s}' metodu yok", .{ base_name, a.attr });
@@ -6385,6 +6451,8 @@ pub const Checker = struct {
                     return self.fail(error.UndefinedClass, "bilinmeyen sınıf: {s}", .{class_name});
                 if (info.methods.get(a.attr)) |sig| {
                     try self.checkArgs(ctx, sig.params, c.args, a.attr);
+                    const owner = info.method_owners.get(a.attr) orelse class_name;
+                    try self.checkMethodCapabilityCall(owner, a.attr);
                     return sig.return_type;
                 }
                 // Faz U.4.5: `a.attr` bir METOD DEĞİLSE (method İSİM

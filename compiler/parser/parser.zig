@@ -603,6 +603,18 @@ pub const Parser = struct {
                 _ = try self.expect(.newline);
             } else if (self.check(.identifier) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .colon) {
                 try fields.append(self.allocator, try self.parseClassFieldDecl());
+            } else if (self.check(.at_sign)) {
+                // Bulundu (bkz. proje belleği "v4 pre20 stdlib roadmap"nin
+                // §3.219 SONRASI incelemesi): BU dal ÖNCEDEN HİÇ YOKTU —
+                // bir METOD üzerinde `@capability.requires(...)` GİBİ bir
+                // decorator YAZILAMIYORDU (`parseDecoratedDef`in AYNI
+                // `parseDecorators`ı, SADECE üst-düzey deyimlerde ULAŞILABİLİR
+                // bir yoldu). `fd.decorators` BURADA doldurulur, checker'ın
+                // `registerClassSignatures`ı (`m.decorators`) BUNU okur.
+                const decorators = try self.parseDecorators();
+                var fd = try self.parseFuncDef(name);
+                fd.decorators = decorators;
+                try methods.append(self.allocator, fd);
             } else {
                 try methods.append(self.allocator, try self.parseFuncDef(name));
             }
@@ -1533,4 +1545,31 @@ test "decorator: bir class üzerinde de PARSE edilir (checker aşamasında redde
     const cd = module.body[0].kind.class_def;
     try std.testing.expectEqual(@as(usize, 1), cd.decorators.len);
     try std.testing.expectEqualStrings("controller", cd.decorators[0].name);
+}
+
+// Bulundu (bkz. proje belleği "v4 pre20 stdlib roadmap"nin §3.219 SONRASI
+// incelemesi — `nox.time.Instant.elapsed_ms` bulgusu): bir METOD üzerinde
+// `@decorator` ÖNCEDEN HİÇ PARSE EDİLEMİYORDU (`parseClassDef`nin metod-
+// gövdesi döngüsü `.at_sign`i HİÇ BEKLEMİYORDU, DOĞRUDAN `UnexpectedToken`
+// İLE ÇÖKERDİ) — checker'ın metod-seviyesinde `@capability.requires`
+// desteği EKLENMEDEN ÖNCE BUNA hiç ihtiyaç duyulmamıştı.
+test "decorator: bir METOD üzerinde de PARSE edilir" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const module = try parseSource(arena.allocator(),
+        \\class Foo:
+        \\    def __init__(self: Foo) -> None:
+        \\        pass
+        \\    @capability.requires("clock")
+        \\    def now_ms(self: Foo) -> int:
+        \\        return 0
+        \\
+    );
+    const cd = module.body[0].kind.class_def;
+    try std.testing.expectEqual(@as(usize, 2), cd.methods.len);
+    const m = cd.methods[1];
+    try std.testing.expectEqualStrings("now_ms", m.name);
+    try std.testing.expectEqual(@as(usize, 1), m.decorators.len);
+    try std.testing.expectEqualStrings("capability.requires", m.decorators[0].name);
+    try std.testing.expectEqualStrings("clock", m.decorators[0].args[0].string_lit);
 }

@@ -6,7 +6,7 @@
 //! önyüklemesinde çalıştırıp beklenen checkpoint dizisini doğrular.
 //!
 //! **Dogfood'un ASIL ÖZÜ** (madde 2): `freestanding_dogfood_corpus.nox`
-//! (capability-siz/saf stdlib modülleri — `nox.math`/`nox.bits`/`nox.mem`/
+//! (capability-siz/saf stdlib modülleri — `nox.mathx`/`nox.bits`/`nox.mem`/
 //! `nox.buffer`/`nox.binary`/`nox.collections`/`nox.console`/`nox.time`nin
 //! saf kısmı — + çekirdek dil) HEM hosted (`noxc run`) HEM GERÇEK QEMU'da
 //! çalıştırılır, İKİSİNİN de AYNI checkpoint dizisini bastığı doğrulanır.
@@ -207,8 +207,23 @@ pub fn expectFreestandingBoot(
 
     errdefer std.debug.print("QEMU stdout:\n{s}\nQEMU stderr:\n{s}\n", .{ stdout_data, stderr_data });
 
+    // Bulundu (bkz. nox-teknik-spesifikasyon.md §3.219 SONRASI incelemesi,
+    // dış bir GPT-5.6 incelemesinin doğru tespiti): `indexOf(stdout_data,
+    // cp)` HER checkpoint'i BAĞIMSIZ/SIRASIZ arıyordu — "A/B/C/D" BEKLENİP
+    // QEMU "D/A/C/B" BASSA (VEYA bir checkpoint YANLIŞLIKLA TEKRARLANSA)
+    // test YİNE de GEÇERDİ, ÇÜNKÜ HER cp stdout'UN HERHANGİ bir yerinde
+    // bulunuyordu. Çözüm: bir "cursor" İLE HER checkpoint'i BİR ÖNCEKİNİN
+    // HEMEN SONRASINDA (`stdout_data[cursor..]` İçİnde) ARA — bu, HEM
+    // SIRAYI HEM "her checkpoint TAM OLARAK BİR KEZ, beklenen sırada
+    // ilerler" özelliğini kanıtlar (dogfood'un "hosted VE freestanding
+    // AYNI, SIRALI çıktıyı üretir" iddiasının GERÇEK kanıtı).
+    var cursor: usize = 0;
     for (expected_checkpoints) |cp| {
-        try std.testing.expect(std.mem.indexOf(u8, stdout_data, cp) != null);
+        const rel_pos = std.mem.indexOf(u8, stdout_data[cursor..], cp) orelse {
+            std.debug.print("checkpoint BULUNAMADI (sıradaki, cursor={d}): {s}\n", .{ cursor, cp });
+            return error.CheckpointNotFoundInOrder;
+        };
+        cursor += rel_pos + cp.len;
     }
     try std.testing.expect(std.mem.indexOf(u8, stdout_data, "KERNEL_FAULT") == null);
 

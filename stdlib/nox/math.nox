@@ -1,62 +1,53 @@
-# Stdlib fazı §I — bkz. nox-teknik-spesifikasyon.md. `min`/`max`/`abs`
-# TAMAMEN saf Nox (hiç FFI gerekmez).
+# Stdlib fazı §I — bkz. nox-teknik-spesifikasyon.md. `sqrt`/`pow`/`floor`/
+# `ceil` doğrudan libm'e ince `extern def` sarmalayıcıları (`cc` KOMUTU
+# ZATEN `-lm` bağlıyor, `with_rt` bile GEREKMEZ — ikisi de ARC-dışı
+# float<->float, bkz. Faz 20'nin ZATEN kanıtladığı `from "m"` deseni).
+# `min`/`max`/`abs` İSE TAMAMEN saf Nox (hiç FFI gerekmez).
 #
-# v4 Faz B, madde 1 (bkz. nox-teknik-spesifikasyon.md §3.2xx) — ÖNCEDEN
-# `sqrt`/`pow`/`floor`/`ceil`/`sin`/`cos`/`tan`/`log`/`exp`/`atan2` DOĞRUDAN
-# libm'e (`extern def ... from "m"`) BAĞLIYORDU — freestanding'de HİÇBİR
-# libc/libm bağlanmadığından (bkz. `nox.sqlite`nin parola hash'lemesinin
-# `std.crypto.pwhash`ı KULLANMASIYLA AYNI "harici bağımlılık YOK" ilkesi)
-# `nox.math` ÖNCEDEN TAMAMEN hosted-only idi (`libc_math` capability'si,
-# bkz. §3.208). ARTIK `runtime/stdlib_shims/math.zig`nin (Zig'in KENDİ
-# `std.math`ı/BUILTIN'leri — `@sin`/`@sqrt`/vb. doğrudan LLVM intrinsic'lerine/
-# donanım komutlarına İNDİRİLİR, `pow`/`atan2`/doğal `log` İSE SAF Zig
-# algoritmalarıdır, libc'ye HİÇ DOKUNMAZ) `_raw` sarmalayıcılarını çağıran
-# NORMAL (mangle EDİLEN) fonksiyonlardır — `nox.math` ARTIK CAPABILITY-SİZDİR
-# (freestanding'de de KULLANILABİLİR) VE (YAN fayda) ESKİ "çıplak-çağrı"
-# asimetrisi de ÇÖZÜLDÜ: `nox.math.sqrt(2.0)` ARTIK ÇALIŞIR (ÖNCEDEN
-# SADECE çıplak `sqrt(2.0)` çalışıyordu, `extern def`ler mangle
-# EDİLMEDİĞİNDEN).
+# v4 Faz B madde 1 SONRASI semver düzeltmesi (bkz. nox-teknik-spesifikasyon.
+# md ilgili bölüm, GPT-5.6 incelemesinin doğru tespiti): v1.119.0 BU
+# modülü GEÇİCİ olarak libc-bağımsız/nitelikli-SADECE bir forma ÇEVİRMİŞTİ
+# — AMA bu, VERSIONING.md'nin "MINOR sürümde önceden geçerli hiçbir .nox
+# dosyası bozulmaz" garantisini İHLAL EDİYORDU (`import nox.math; sqrt(x)`
+# çağıran ESKİ kod kırılıyordu). BU dosya ARTIK ESKİ (pre-1.119.0), çıplak-
+# çağrılabilir haline GERİ DÖNDÜRÜLDÜ — libc-bağımsız/nitelikli-SADECE
+# davranış KALICI olarak AYRI bir modüle (`nox.mathx`, bkz. `mathx.nox`nin
+# KENDİ belge notu) TAŞINDI. `nox.math` (BU dosya) hosted-only kalır
+# (`libc_math` capability'si GERİ GETİRİLDİ) — freestanding/capability-siz
+# kod YENİ `nox.mathx`i kullanmalıdır.
+#
+# ÖNEMLİ ASİMETRİ (bilinçli, ÇÖZÜLEMEYEN bir kısıtlama — bkz. `module_
+# loader.zig`in belge notu): `extern def`ler ASLA mangle EDİLMEZ (isimleri
+# GERÇEK bir C ABI sembolüne bağlıdır — `sqrt`in KENDİSİ, `nox_math_sqrt`
+# DEĞİL, libm'de arandığından). Bu yüzden `import nox.math` SONRASI:
+#   - `sqrt`/`pow`/`floor`/`ceil` ÇIPLAK (niteliksiz) çağrılır: `sqrt(2.0)`
+#     — `nox.math.sqrt(2.0)` ÇALIŞMAZ (nitelikli çağrı çözümlemesi yalnızca
+#     MANGLE EDİLMİŞ isimlere bakar, `tryResolveQualifiedCall`in belge
+#     notu).
+#   - `min`/`max`/`abs` (sıradan `func_def`, MANGLE EDİLİR) NİTELİKLİ
+#     çağrılır: `nox.math.min(3.0, 5.0)`.
+# (Sarmalayıcıya AYNI kısa adı vermek — ör. `def sqrt(x): return sqrt(x)`
+# — DENENMEDİ/REDDEDİLDİ: `module_loader`in yeniden adlandırma haritası TEK
+# bir düz ad alanı kullandığından, sarmalayıcının KENDİ adı "sqrt" olsaydı
+# gövdesindeki "sqrt" çağrısı da mangled ada YENİDEN YAZILIR, KENDİ
+# KENDİNİ özyinelemeli çağıran sonsuz bir döngüye yol açardı.)
 
-extern def nox_math_sqrt_raw(x: float) -> float from "zig-out/lib/noxrt.o"
-extern def nox_math_pow_raw(x: float, y: float) -> float from "zig-out/lib/noxrt.o"
-extern def nox_math_floor_raw(x: float) -> float from "zig-out/lib/noxrt.o"
-extern def nox_math_ceil_raw(x: float) -> float from "zig-out/lib/noxrt.o"
-extern def nox_math_sin_raw(x: float) -> float from "zig-out/lib/noxrt.o"
-extern def nox_math_cos_raw(x: float) -> float from "zig-out/lib/noxrt.o"
-extern def nox_math_tan_raw(x: float) -> float from "zig-out/lib/noxrt.o"
-extern def nox_math_log_raw(x: float) -> float from "zig-out/lib/noxrt.o"
-extern def nox_math_exp_raw(x: float) -> float from "zig-out/lib/noxrt.o"
-extern def nox_math_atan2_raw(y: float, x: float) -> float from "zig-out/lib/noxrt.o"
+extern def sqrt(x: float) -> float from "m"
+extern def pow(x: float, y: float) -> float from "m"
+extern def floor(x: float) -> float from "m"
+extern def ceil(x: float) -> float from "m"
 
-def sqrt(x: float) -> float:
-    return nox_math_sqrt_raw(x)
-
-def pow(x: float, y: float) -> float:
-    return nox_math_pow_raw(x, y)
-
-def floor(x: float) -> float:
-    return nox_math_floor_raw(x)
-
-def ceil(x: float) -> float:
-    return nox_math_ceil_raw(x)
-
-def sin(x: float) -> float:
-    return nox_math_sin_raw(x)
-
-def cos(x: float) -> float:
-    return nox_math_cos_raw(x)
-
-def tan(x: float) -> float:
-    return nox_math_tan_raw(x)
-
-def log(x: float) -> float:
-    return nox_math_log_raw(x)
-
-def exp(x: float) -> float:
-    return nox_math_exp_raw(x)
-
-def atan2(y: float, x: float) -> float:
-    return nox_math_atan2_raw(y, x)
+# Faz III.1 (bkz. nox-teknik-spesifikasyon.md §3.69) — `sqrt`/`pow`/`floor`/
+# `ceil` İLE AYNI çıplak-çağrı `extern def ... from "m"` deseni. `ln` YOK
+# (libm'de BÖYLE bir sembol YOK, yalnızca `log` — doğal logaritma) — bu
+# yüzden `ln` AŞAĞIDA `log`u SARAN, NİTELİKLİ çağrılan (`nox.math.ln`) sıradan
+# bir `func_def`dir (`min`/`max`/`abs` İLE AYNI ilke).
+extern def sin(x: float) -> float from "m"
+extern def cos(x: float) -> float from "m"
+extern def tan(x: float) -> float from "m"
+extern def log(x: float) -> float from "m"
+extern def exp(x: float) -> float from "m"
+extern def atan2(y: float, x: float) -> float from "m"
 
 def ln(x: float) -> float:
     return log(x)

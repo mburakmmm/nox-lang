@@ -14,6 +14,41 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.123.0]
+
+### Eklendi
+
+- **`nox.mathx` — `nox.math`nin libc-bağımsız/nitelikli-SADECE kalıcı evi
+  (bkz. nox-teknik-spesifikasyon.md §3.220, madde 4)**: v1.119.0 `nox.math`yi
+  çıplak-çağrılabilir/libm-bağımlı halden nitelikli-SADECE/libc-bağımsız
+  hale çevirmişti — bu, `import nox.math; sqrt(x)` yazan önceden geçerli
+  kodu kırdığından VERSIONING.md'nin semver garantisini ihlal ediyordu.
+  `nox.math` ESKİ (pre-1.119.0) davranışına tam olarak geri döndürüldü
+  (`libc_math` capability'si geri getirildi, hosted-only); libc-bağımsız/
+  capability-siz davranış kalıcı olarak `nox.mathx`e taşındı (aynı Zig
+  `_raw` sembolleri paylaşılır, kod tekrarı yok). `nox.random` artık
+  `nox.mathx`i import eder (capability-siz kalmaya devam eder).
+- **Checker artık METOD çağrılarında da `@capability.requires` kontrolü
+  yapar (bkz. §3.220, madde 2)**: önceden sadece serbest fonksiyon
+  çağrıları kontrol ediliyordu — bir metodun kendisi işaretliyken başka
+  bir metod tarafından çağrıldığında hiçbir kontrolden geçmiyordu
+  (`Instant.elapsed()`nin `instant_now()`nin capability kapısını
+  atlayabilmesi gibi). Parser artık metodların `@` decorator'ını kabul
+  ediyor; `module_loader.zig`nin `renameMethodDef`'indeki decorator'ları
+  sessizce düşüren bir hata (aynı hatanın üçüncü tekrarı) düzeltildi.
+  `nox.time`nin `Instant.elapsed_ms`/`elapsed`si artık işaretli.
+
+### Düzeltildi
+
+- **Dogfood testi artık checkpoint SIRALAMASINI da doğruluyor (bkz.
+  §3.220, madde 1)**: `tests/golden/freestanding_dogfood_test.zig`
+  önceden her checkpoint'in sadece VARLIĞINI (sırasız) kontrol ediyordu
+  — artık sıralı bir `cursor` ile eşleştirme yapılıyor.
+- **`nox.random`ın threadlocal PRNG fallback'i freestanding-güvenli hale
+  getirildi (proaktif, bkz. §3.220, madde 3)**: §3.219'un `g_scheduler`
+  hatasıyla aynı sınıftan bir potansiyel #GP riski, henüz linklenmeden
+  önce düzeltildi.
+
 ## [1.122.0]
 
 ### Eklendi
