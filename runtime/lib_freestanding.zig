@@ -47,6 +47,16 @@ pub const list_sort = @import("collections/list_sort.zig");
 /// math`nin SAF Zig algoritmaları) BU KÖKE GÜVENLE import EDİLİR —
 /// `http_client.zig`/vb.nin (yukarıdaki modül-üstü not) AKSİNE.
 pub const math_shim = @import("stdlib_shims/math.zig");
+/// v4 Faz B devamı (bkz. nox-teknik-spesifikasyon.md §3.2xx): `nox.time`
+/// ARTIK MODÜL-seviyesinde capability-SİZDİR (`time.nox`nin belge notu) —
+/// SAF takvim aritmetiği (`to_epoch_ms_raw`/`year_raw`/vb.) HİÇBİR OS/libc
+/// bağımlılığı TAŞIMADIĞINDAN bu KÖKE GÜVENLE import EDİLİR. `now_ms_raw`/
+/// `monotonic_ms_raw`/`sleep_ms_raw` (GERÇEKTEN `std.c.clock_gettime`e
+/// bağlı) `time.zig`nin KENDİ `is_freestanding` guard'ıyla SIFIR döner —
+/// Nox tarafı BUNLARI `@capability.requires("clock")` İLE ÇAĞRILMAKTAN
+/// ZATEN men eder, bu stub'lar SADECE linker'ın sembolleri ÇÖZEBİLMESİ
+/// İçİndir (Nox'un "her üst-düzey fonksiyon koşulsuz derlenir" kuralı).
+pub const time_shim = @import("stdlib_shims/time.zig");
 
 // Faz R.3+F.1 tamamlama (bkz. plan dosyası "Faz R.3 + F.1'in
 // tamamlanması"): BU turda GERÇEK bir `noxc build --profile freestanding`
@@ -442,4 +452,5 @@ comptime {
     _ = dict;
     _ = list_sort;
     _ = math_shim;
+    _ = time_shim;
 }

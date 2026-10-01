@@ -1302,10 +1302,15 @@ test "golden(freestanding-profile): nox.fs dogrudan reddedilir" {
     );
 }
 
-test "golden(freestanding-profile): nox.time dogrudan reddedilir" {
+// v4 Faz B devamı (bkz. nox-teknik-spesifikasyon.md §3.2xx): `nox.time`
+// ARTIK MODÜL-seviyesinde capability-SİZ (SADECE `now_ms`/`sleep_ms`/
+// `now`/`instant_now` sembol-seviyesinde `clock` gerektirir) olduğundan
+// `import nox.time` ARTIK freestanding'de SERBESTTİR (ÖNCEDEN KOŞULSUZ
+// reddediliyordu).
+test "golden(freestanding-profile): nox.time serbesttir (ARTIK MODÜL-seviyesinde capability-siz)" {
     try expectGoldenFreestanding(
-        @embedFile("typecheck_cases/err_freestanding_time_forbidden.nox"),
-        @embedFile("typecheck_cases/err_freestanding_time_forbidden.expected"),
+        @embedFile("typecheck_cases/ok_freestanding_time_allowed.nox"),
+        @embedFile("typecheck_cases/ok_freestanding_time_allowed.expected"),
     );
 }
 

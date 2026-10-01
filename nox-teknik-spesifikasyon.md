@@ -26499,6 +26499,92 @@ deterministik) + `tests/cli/profile_test.zig`nin 2 YENİ testi:
 (DEĞİŞMEDEN) yasaklı OLDUĞU (regresyon kanıtı). `zig build test`: sıfır
 regresyon.
 
+## 3.218 v4 (2.0 öncesi son mimari stdlib katmanlaşması), Faz B devamı — `nox.time` sembol-seviyesinde capability-siz hale getirildi (37 modül taraması)
+
+**Bağlam:** Kullanıcı "37 modülü tara" DEDİ — Faz A'nın capability
+modelinin (§3.208) ZATEN sınıflandırdığı 37 stdlib modülü, `nox.log`/
+`nox.console` (§3.217) deneyiminden çıkan dersle (MODÜL-seviyesi
+capability'yi SEMBOL-seviyesine İNDİRGEMEK, `nox.crypto`nin deseni)
+yeniden GÖZDEN GEÇİRİLDİ.
+
+**Bulgu:** 37 modülün ÇOĞU (fs/http/mysql/os/postgres/process/sharedmem/
+smtp/sqlite/thread/tls/websocket) orijinal önerinin KENDİ notuyla
+KAPSAM DIŞI (GERÇEK OS kaynakları — dosya/ağ/süreç/thread/paylaşılan
+bellek — bunlar İÇİN capability GEREKSİNİMİ GERÇEKTİR, "kaldırılacak bir
+engel" DEĞİL). `nox.arch` zaten TERS yönde özel (freestanding-ONLY).
+`nox.log` §3.217'de ELE ALINDI (AYNEN bırakıldı + `nox.console` eklendi).
+**TEK gerçek, kalan aday: `nox.time`** — `nox.log` İLE AYNI "karışık
+modül" profiliydi: `now_ms`/`sleep_ms`/`monotonic_ms` GERÇEKTEN saati
+OKUR, AMA `DateTime`/`from_epoch_ms`/`DateTime.to_epoch_ms`/`Duration`
+(VERİLEN bir `ms` üzerinde SAF takvim aritmetiği, Howard Hinnant'ın
+algoritması + Zig'in `std.time.epoch`u) saati HİÇ OKUMAZ.
+
+**`nox.log`den FARKLI olarak BU SEFER çözülebilir olmasının nedeni:**
+`nox.log`nin problemi "aynı DOSYADA karışık fonksiyonlar" olduğundan
+(dosya TEK bir modül-seviyesi capability etiketi taşıdığından) ayrı bir
+modül GEREKTİRİYORDU. `nox.time`nin SORUNU FARKLI: `nox.crypto`nin
+`secure_random_hex`i GİBİ, saf VE kirli fonksiyonlar ZATEN AYRI, bağımsız
+isimler (SIRADAN fonksiyon çağrıları, birbirini TEK bir yerde
+ÇAĞIRMIYORLAR — `DateTime`/`from_epoch_ms` `now_ms`/`sleep_ms`yi HİÇ
+kullanmaz). BU YÜZDEN `nox.crypto` deseni (modül-seviyesi capability-siz
++ sembol-seviyesinde SADECE kirli fonksiyonlar işaretli) DOĞRUDAN
+uygulanabilirdi — **TEK bir incelik/DÜZELTME GEREKTİ:** `now()` fonksiyonu
+ESKİDEN `now_ms()`yi (işaretlenecek sarmalayıcı) ÇAĞIRIYORDU — Nox'un
+koşulsuz top-level type-check kuralı YÜZÜNDEN BU, `now()` HİÇ çağrılmasa
+BİLE `import nox.time`i freestanding'de çökertirdi (§3.217'nin `nox.log`
+bulgusuyla AYNI mekanizma). Düzeltme: `now()` ARTIK `now_ms()` YERİNE
+DOĞRUDAN `nox_time_now_ms_raw()`yi çağırır (RAW extern, HİÇ işaretli
+DEĞİL) — `now()`nin KENDİSİ AYRICA `@capability.requires("clock")` İLE
+işaretlenir (çağrılması YİNE reddedilir), ama gövdesi ARTIK BAŞKA bir
+işaretli sembole DOKUNMAZ.
+
+**İKİNCİ bir katman: linker.** `noxc build --profile freestanding`
+(SADECE `check` DEĞİL) GERÇEKTEN denendiğinde (Nox'un "HER üst-düzey
+fonksiyon KOŞULSUZ derlenir" kuralı YÜZÜNDEN `now_ms`/`sleep_ms`/`now`/
+`instant_now`nin GÖVDELERİ — ÇAĞRILMASALAR BİLE — HER ZAMAN QBE IR'ına
+GİRER) `nox_time_now_ms_raw`/`nox_time_sleep_ms_raw`/`nox_time_monotonic_
+ms_raw` sembollerinin LİNKER TARAFINDAN çözülmesi GEREKTİĞİ GERÇEKTEN
+denenip bulundu — bunlar `std.c.clock_gettime`/`nanosleep`e (libc,
+freestanding'de YOK) bağlı olduğundan DOĞRUDAN wire edilemezdi.
+Çözüm: `runtime/stdlib_shims/time.zig`nin BU ÜÇ fonksiyonu `is_
+freestanding` guard'ıyla (`str.zig`/`arc.zig`nin AYNI deseni) SIFIR döner
+— `std.c.*`ye HİÇ ERİŞMEDEN (Zig yalnızca ALINAN `if` dalını analiz
+eder). Bu stub'lar ASLA GERÇEKTEN çağrılmaz (capability kontrolü ZATEN
+engeller) — SADECE linker'ın sembolleri çözebilmesi İçİndir. SAF
+fonksiyonlar (`to_epoch_ms_raw`/`year_raw`/vb.) HİÇBİR değişiklik
+GEREKTİRMEDİ, DOĞRUDAN `lib_freestanding.zig`e force-ref edildi (`nox.
+math`nin AYNI deseni).
+
+**Sonuç:** `import nox.time` ARTIK freestanding'de SERBEST. `DateTime`/
+`from_epoch_ms`/`DateTime.to_epoch_ms`/`Duration` GERÇEKTEN build+link
+olur (`noxc build --profile freestanding` İLE DOĞRULANDI) — ör. bir
+donanım RTC'sinden (`nox.arch.x86_64.inb`, bkz. `kernel_demo.nox`nin
+`ARCH_X86_64_OK` checkpoint'i) okunan bir epoch-ms değeri ARTIK `nox.
+time.from_epoch_ms`/`DateTime.to_str` İLE biçimlendirilebilir — ELLE
+takvim aritmetiği YAZMAYA gerek YOK. `now_ms`/`sleep_ms`/`now`/
+`instant_now` HÂLÂ (DOĞRU olarak) `CapabilityNotGranted` İLE reddedilir.
+Hosted davranış TAMAMEN DEĞİŞMEDİ (`profileGrants(.hosted, .clock) ==
+true`, decorator hosted'da SIFIR etkili — doğrulandı).
+
+**37 modül taramasının SONUCU:** `nox.time` DIŞINDA başka bir "karışık
+modül" adayı BULUNAMADI — kalan TÜM capability-gated modüller GERÇEK OS
+kaynak gereksinimleri (KAPSAM DIŞI). Faz B'nin bu alt-görevi BURADA
+KAPANIR.
+
+### Test
+
+`tests/golden/typecheck_cases/ok_freestanding_time_allowed.{nox,expected}`
+(ESKİ `err_freestanding_time_forbidden`den yeniden adlandırıldı — `nox.
+time` ARTIK serbest). `tests/cli/profile_test.zig`nin 2 YENİ testi:
+`now_ms` çağrısının capability eksikliğinden reddedildiği, SAF takvim
+aritmetiğinin GERÇEKTEN build+link OLDUĞU. `nox.log`nin KENDİ regresyon
+testi (§3.217) GÜNCELLENDİ (hata mesajı ARTIK 'nox.time' DEĞİL 'nox.log'
+gösteriyor — `nox.log`nin KENDİ modül-seviyesi `.clock`i DEĞİŞMEDİĞİNDEN).
+8 IR anlık görüntüsü (`log_format_structure`/3 `time_*`/3 `thread_*`
+fixture'ı — HEPSİ `nox.time`yi transitif/doğrudan İÇERDİĞİNDEN) kasıtlı
+olarak YENİDEN OLUŞTURULDU, sayısal çıktılar DEĞİŞMEDİ. `zig build test`:
+168/168 adım, sıfır regresyon.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
@@ -26539,10 +26625,11 @@ stdlib katmanlaşması) **Faz A'sı TAMAMEN BİTTİ** (7/7 madde, bkz.
 §3.208-§3.214). **Faz B** (mevcut stdlib'i profile-neutral hale
 getirme) BAŞLADI — madde 1 (`nox.math`/`nox.random`, §3.215)
 TAMAMLANDI; `nox.log`nin `clock` bağımlılığı İçİN AYRI bir `nox.console`
-modülü eklendi (§3.217, `nox.log` DEĞİŞMEDEN kaldı). Proje belleği
-`project_v4_pre20_stdlib_roadmap`nin KENDİ notuna bkz. (Faz B'nin DAHA
-FAZLA maddesi var mı HENÜZ somutlaştırılmadı — kullanıcı seçimine göre
-genişleyebilir). Faz C (dogfood: hosted+freestanding+QBE+LLVM'de aynı
-testler) HENÜZ PLANLANMADI. §3.214'ün bulgu #1'i (generic sınıf +
-çapraz-modül tip parametresi codegen hatası) §3.216'da DÜZELTİLDİ —
-ARTIK AÇIK bulgu YOK.
+modülü eklendi (§3.217, `nox.log` DEĞİŞMEDEN kaldı); 37 modül taraması
+(§3.218) `nox.time`yi SEMBOL-seviyesinde capability-siz hale getirdi
+(`nox.crypto` deseni). Proje belleği `project_v4_pre20_stdlib_roadmap`nin
+KENDİ notuna bkz. — 37 modül taraması TAMAMLANDI, BAŞKA bir aday
+BULUNAMADI, Faz B'nin bu ekseni KAPANDI. Faz C (dogfood: hosted+
+freestanding+QBE+LLVM'de aynı testler) HENÜZ PLANLANMADI. §3.214'ün
+bulgu #1'i (generic sınıf + çapraz-modül tip parametresi codegen hatası)
+§3.216'da DÜZELTİLDİ — ARTIK AÇIK bulgu YOK.

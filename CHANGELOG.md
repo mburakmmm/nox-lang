@@ -14,6 +14,28 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.121.0]
+
+### Değişti
+
+- **`nox.time` sembol-seviyesinde capability-siz hale getirildi (bkz.
+  nox-teknik-spesifikasyon.md §3.218, 37 modül taraması)**: `import
+  nox.time` artık freestanding'de serbest — `DateTime`/`from_epoch_ms`/
+  `DateTime.to_epoch_ms`/`Duration` (saf takvim aritmetiği, saati hiç
+  okumaz) GERÇEKTEN build+link olur (doğrulandı). Sadece gerçekten saat
+  okuyan fonksiyonlar (`now_ms`/`sleep_ms`/`now`/`instant_now`)
+  sembol-seviyesinde `@capability.requires("clock")` ile işaretli (`nox.
+  crypto` ile aynı desen) — çağrılmaları freestanding'de hâlâ (doğru
+  olarak) reddedilir. Hosted davranış tamamen değişmedi. `runtime/
+  stdlib_shims/time.zig`nin 3 clock-dokunan fonksiyonu freestanding'de
+  sıfır döner (asla gerçekten çağrılmaz, sadece linker için).
+
+### Düzeltildi
+
+- 37 stdlib modülü taraması sonucu: `nox.time` dışında başka bir "karışık
+  modül" adayı bulunamadı — kalan tüm capability-gated modüller gerçek
+  OS kaynak gereksinimleri (kapsam dışı, değiştirilmedi).
+
 ## [1.120.0]
 
 ### Eklendi

@@ -15,9 +15,20 @@
 extern def nox_time_now_ms_raw() -> int from "zig-out/lib/noxrt.o"
 extern def nox_time_sleep_ms_raw(ms: int) -> None from "zig-out/lib/noxrt.o"
 
+# v4 Faz B devamı (bkz. nox-teknik-spesifikasyon.md §3.2xx): `nox.time`
+# ARTIK MODÜL-seviyesinde capability-SİZ (`import nox.time` HER profilde
+# serbest) — SADECE GERÇEKTEN duvar-saatini/monotonik saati OKUYAN
+# fonksiyonlar (`now_ms`/`sleep_ms`/`now`/`instant_now`) sembol-seviyesinde
+# `@capability.requires("clock")` İLE işaretlenir (`nox.crypto`nin AYNI
+# deseni). `DateTime`/`Duration`/`from_epoch_ms`/`DateTime.to_epoch_ms`
+# (hepsi VERİLEN bir `ms` üzerinde SAF takvim aritmetiği, GERÇEK saati HİÇ
+# OKUMAZ) İŞARETSİZ KALDI — freestanding'de de kullanılabilirler (ör. BİR
+# donanım RTC'sinden okunan değerle).
+@capability.requires("clock")
 def now_ms() -> int:
     return nox_time_now_ms_raw()
 
+@capability.requires("clock")
 def sleep_ms(ms: int) -> None:
     nox_time_sleep_ms_raw(ms)
 
@@ -73,8 +84,16 @@ def from_epoch_ms(ms: int) -> DateTime:
         nox_time_second_raw(ms)
     )
 
+#  (bkz. yukarının belge notu): `now_ms()`nin KENDİSİ DEĞİL, DOĞRUDAN
+# `nox_time_now_ms_raw()`yi çağırır — Nox'un KOŞULSUZ (çağrılsın
+# çağrılmasın) üst-düzey fonksiyon type-check'i YÜZÜNDEN, `now()`nin
+# gövdesi `now_ms()`yi (işaretli) ÇAĞIRSAYDI, `import nox.time` TEK
+# BAŞINA freestanding'de HER ZAMAN reddedilirdi (`now()` HİÇ çağrılmasa
+# BİLE) — GERÇEKTEN test edilip KANITLANDI (bkz. proje belleği
+# "v4 pre20 stdlib roadmap"nin nox.console notu, AYNI mimari engel).
+@capability.requires("clock")
 def now() -> DateTime:
-    return from_epoch_ms(now_ms())
+    return from_epoch_ms(nox_time_now_ms_raw())
 
 # Faz III.7 — `Instant`/`Duration`: `now_ms`nin duvar-saati (`.REALTIME`,
 # sistem saati DEĞİŞTİRİLİRSE GERİYE sıçrayabilir) yerine `nox_time_
@@ -100,5 +119,6 @@ class Instant:
     def elapsed(self: Instant) -> Duration:
         return Duration(self.elapsed_ms())
 
+@capability.requires("clock")
 def instant_now() -> Instant:
     return Instant(nox_time_monotonic_ms_raw())

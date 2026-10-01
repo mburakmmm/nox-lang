@@ -17,6 +17,24 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+/// v4 Faz B devamı (bkz. nox-teknik-spesifikasyon.md §3.2xx): `nox.time`
+/// ARTIK `lib_freestanding.zig`e de KABLOLANIYOR (SAF takvim aritmetiği
+/// — `to_epoch_ms_raw`/`year_raw`/`month_raw`/vb. — freestanding'de de
+/// KULLANILABİLİR OLSUN diye), AMA `now_ms_raw`/`monotonic_ms_raw`/
+/// `sleep_ms_raw`nin KENDİSİ `std.c.clock_gettime`/`nanosleep`e bağlıdır
+/// (libc, freestanding'de YOK). `str.zig`/`arc.zig`nin AYNI `is_
+/// freestanding` deseni — bu üç fonksiyonun gövdesi `std.c.*`ye HİÇ
+/// ERİŞMEDEN SIFIR döner (`diag_sink.zig`nin `defaultStderrSink`iyle AYNI
+/// gerekçe: Zig yalnızca ALINAN `if` dalını analiz eder, bu YÜZDEN
+/// `std.c.clock_gettime`nin freestanding'de DERLENEMEZ OLMASI sorun
+/// DEĞİLDİR). BU ASLA GERÇEKTEN ÇAĞRILMAZ — Nox tarafı `nox.time.now_ms`/
+/// `sleep_ms`/`instant_now`yu `@capability.requires("clock")` İLE
+/// sembol-seviyesinde işaretler (`stdlib/nox/time.nox`nin belge notu),
+/// freestanding profili BUNU asla GRANT ETMEZ — SADECE Nox'un "HER
+/// üst-düzey fonksiyon KOŞULSUZ derlenir" kuralı YÜZÜNDEN, linker'ın BU
+/// sembolleri ÇÖZEBİLMESİ GEREKİR (çağrılmasalar bile).
+const is_freestanding = builtin.os.tag == .freestanding or builtin.os.tag == .other;
+
 /// Faz LL.4 (bkz. nox-teknik-spesifikasyon.md §3.71): bu Zig sürümünde
 /// `std.c.clockid_t` Windows İçin `void`dir (`.windows` dalı HİÇ
 /// case'lenmemiş, `else => void`) — `clock_gettime`/`nanosleep` BU YÜZDEN
@@ -52,6 +70,7 @@ const WinTime = if (builtin.os.tag == .windows) struct {
 } else struct {};
 
 export fn nox_time_now_ms_raw() callconv(.c) i64 {
+    if (comptime is_freestanding) return 0;
     if (builtin.os.tag == .windows) return WinTime.nowMs();
     var ts: std.c.timespec = undefined;
     _ = std.c.clock_gettime(.REALTIME, &ts);
@@ -63,6 +82,7 @@ export fn nox_time_now_ms_raw() callconv(.c) i64 {
 /// saati GERİYE/İLERİYE ayarlansa BİLE ASLA geri sıçramaz — `Instant.
 /// elapsed_ms`in DOĞRULUĞU İÇİN ZORUNLU, `now_ms`nin duvar-saati AKSİNE).
 export fn nox_time_monotonic_ms_raw() callconv(.c) i64 {
+    if (comptime is_freestanding) return 0;
     if (builtin.os.tag == .windows) return WinTime.monotonicMs();
     var ts: std.c.timespec = undefined;
     _ = std.c.clock_gettime(.MONOTONIC, &ts);
@@ -70,6 +90,7 @@ export fn nox_time_monotonic_ms_raw() callconv(.c) i64 {
 }
 
 export fn nox_time_sleep_ms_raw(ms: i64) callconv(.c) void {
+    if (comptime is_freestanding) return;
     if (ms <= 0) return;
     if (builtin.os.tag == .windows) {
         WinTime.Sleep(@intCast(ms));

@@ -1048,7 +1048,13 @@ pub const Checker = struct {
         .{ .name = "test", .caps = &.{} },
         .{ .name = "testmod", .caps = &.{} },
         .{ .name = "thread", .caps = &.{.threads} },
-        .{ .name = "time", .caps = &.{.clock} },
+        // v4 Faz B devamı (bkz. nox-teknik-spesifikasyon.md §3.2xx):
+        // `nox.time` ARTIK MODÜL-seviyesinde capability-SİZ — SADECE
+        // `now_ms`/`sleep_ms`/`now`/`instant_now` (GERÇEKTEN saati OKUYAN
+        // fonksiyonlar) sembol-seviyesinde `@capability.requires("clock")`
+        // İLE işaretli (`nox.crypto`nin AYNI deseni). `DateTime`/`Duration`/
+        // `from_epoch_ms`/vb. (SAF takvim aritmetiği) HER profilde serbest.
+        .{ .name = "time", .caps = &.{} },
         .{ .name = "tls", .caps = &.{.network} },
         .{ .name = "toml", .caps = &.{} },
         .{ .name = "url", .caps = &.{} },

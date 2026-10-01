@@ -226,8 +226,12 @@ test "noxc build --profile freestanding: nox.console GERÇEKTEN build+link olur 
 }
 
 // `nox.console` eklenmesinin `nox.log`a HİÇBİR ŞEKİLDE dokunmadığının
-// regresyon kanıtı — `nox.log` HÂLÂ (nox.time'ın transitif `clock`
-// capability'si YÜZÜNDEN) freestanding'de TAMAMEN yasaklı, DEĞİŞMEDEN.
+// regresyon kanıtı — `nox.log`nin KENDİ MODÜL-seviyesi capability'si
+// (`.clock`) DEĞİŞMEDEN kaldı, bu YÜZDEN freestanding'de TAMAMEN yasaklı
+// kalmaya devam eder. (`nox.time`nin KENDİSİ v4 Faz B devamında — bkz.
+// nox-teknik-spesifikasyon.md §3.2xx — MODÜL-seviyesinde capability-siz
+// hâle GETİRİLDİ, ama `nox.log`nin KENDİ girdisi BUNDAN ETKİLENMEDİ; hata
+// artık 'nox.time' DEĞİL 'nox.log' adını gösterir.)
 test "noxc check --profile freestanding: nox.log HÂLÂ (degismeden) yasaklidir" {
     const io = std.testing.io;
     const gpa = std.testing.allocator;
@@ -245,7 +249,64 @@ test "noxc check --profile freestanding: nox.log HÂLÂ (degismeden) yasaklidir"
     defer gpa.free(result.stdout);
     defer gpa.free(result.stderr);
     try std.testing.expect(result.term == .exited and result.term.exited != 0);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "nox.time") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "nox.log") != null);
+}
+
+// v4 Faz B devamı (bkz. nox-teknik-spesifikasyon.md §3.2xx): `nox.time`
+// ARTIK MODÜL olarak serbest — AMA `now_ms`/`sleep_ms`/`now`/`instant_now`
+// (GERÇEKTEN saat OKUYAN fonksiyonlar) sembol-seviyesinde `@capability.
+// requires("clock")` İLE işaretli (`nox.crypto`nin AYNI deseni, bkz.
+// YUKARIDAKİ "secure_random_hex" testi).
+test "noxc check --profile freestanding: nox.time MODUL olarak serbest ama now_ms CAGRISI capability eksikliginden reddedilir" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try writeTempSource(gpa, io,
+        \\import nox.time
+        \\
+        \\print(nox.time.now_ms())
+        \\
+    , &tmp);
+    defer gpa.free(path);
+
+    const result = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "check", "--profile", "freestanding", path } });
+    defer gpa.free(result.stdout);
+    defer gpa.free(result.stderr);
+    try std.testing.expect(result.term == .exited and result.term.exited != 0);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "clock") != null);
+}
+
+// `nox.time`nin SAF takvim aritmetiği (`DateTime`/`from_epoch_ms`/
+// `to_epoch_ms`) GERÇEKTEN build+link OLUR (`nox.math`/`nox.console`nin
+// AYNI deseni — `time.zig`nin `now_ms_raw`/`sleep_ms_raw`/`monotonic_
+// ms_raw`ı `is_freestanding` guard'ıyla sıfır döner, ASLA GERÇEKTEN
+// çağrılmaz, SADECE linker'ın sembolleri çözebilmesi İçİn VARDIR).
+test "noxc build --profile freestanding: nox.time SAF takvim aritmetigi GERÇEKTEN build+link olur" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try writeTempSource(gpa, io,
+        \\import nox.time
+        \\
+        \\dt: nox.time.DateTime = nox.time.DateTime(2024, 3, 15, 10, 30, 0)
+        \\print(dt.to_str())
+        \\print(dt.to_epoch_ms())
+        \\print(nox.time.from_epoch_ms(dt.to_epoch_ms()).to_str())
+        \\
+    , &tmp);
+    defer gpa.free(path);
+
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir_len = try tmp.dir.realPath(io, &path_buf);
+    const out_path = try std.fmt.allocPrint(gpa, "{s}/prog_bin", .{path_buf[0..dir_len]});
+    defer gpa.free(out_path);
+
+    const build_result = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "build", "--profile", "freestanding", path, "-o", out_path } });
+    defer gpa.free(build_result.stdout);
+    defer gpa.free(build_result.stderr);
+    try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
 }
 
 // v4 (Faz A madde 1): `@capability.requires("entropy")` — capability

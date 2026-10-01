@@ -2332,52 +2332,45 @@ export function l $nox_time_now(l %rt) {
 @start
     %t0 =l alloc8 8
     %t1 =l alloc8 8
-    %t2 =l alloc8 8
-    storel 0, %t2
-    %t3 =l call $nox_time_now_ms_raw()
-    storel %t3, %t0
+    storel 0, %t1
+    %t2 =l call $nox_time_now_ms_raw()
+    storel %t2, %t0
+    %t3 =l loadl %t0
+    %t4 =l call $nox_time_year_raw(l %t3)
+    %t5 =l loadl %t0
+    %t6 =l call $nox_time_month_raw(l %t5)
+    %t7 =l loadl %t0
+    %t8 =l call $nox_time_day_raw(l %t7)
+    %t9 =l loadl %t0
+    %t10 =l call $nox_time_hour_raw(l %t9)
+    %t11 =l loadl %t0
+    %t12 =l call $nox_time_minute_raw(l %t11)
+    %t13 =l loadl %t0
+    %t14 =l call $nox_time_second_raw(l %t13)
+    %t15 =l call $nox_rc_alloc(l %rt, l 56)
+    storel 4, %t15
+    %t16 =l add %t15, 8
+    storel 0, %t16
+    %t17 =l add %t15, 16
+    storel 0, %t17
+    %t18 =l add %t15, 24
+    storel 0, %t18
+    %t19 =l add %t15, 32
+    storel 0, %t19
+    %t20 =l add %t15, 40
+    storel 0, %t20
+    %t21 =l add %t15, 48
+    storel 0, %t21
+    call $nox_time_DateTime___init__(l %rt, l %t15, l %t4, l %t6, l %t8, l %t10, l %t12, l %t14)
+    storel %t15, %t1
     jmp @inline_done0
 @after_inline_return1
     jmp @inline_done0
 @inline_done0
-    %t4 =l loadl %t0
-    storel %t4, %t1
-    %t5 =l loadl %t1
-    %t6 =l call $nox_time_year_raw(l %t5)
-    %t7 =l loadl %t1
-    %t8 =l call $nox_time_month_raw(l %t7)
-    %t9 =l loadl %t1
-    %t10 =l call $nox_time_day_raw(l %t9)
-    %t11 =l loadl %t1
-    %t12 =l call $nox_time_hour_raw(l %t11)
-    %t13 =l loadl %t1
-    %t14 =l call $nox_time_minute_raw(l %t13)
-    %t15 =l loadl %t1
-    %t16 =l call $nox_time_second_raw(l %t15)
-    %t17 =l call $nox_rc_alloc(l %rt, l 56)
-    storel 4, %t17
-    %t18 =l add %t17, 8
-    storel 0, %t18
-    %t19 =l add %t17, 16
-    storel 0, %t19
-    %t20 =l add %t17, 24
-    storel 0, %t20
-    %t21 =l add %t17, 32
-    storel 0, %t21
-    %t22 =l add %t17, 40
-    storel 0, %t22
-    %t23 =l add %t17, 48
-    storel 0, %t23
-    call $nox_time_DateTime___init__(l %rt, l %t17, l %t6, l %t8, l %t10, l %t12, l %t14, l %t16)
-    storel %t17, %t2
-    jmp @inline_done2
-@after_inline_return3
-    jmp @inline_done2
-@inline_done2
-    %t24 =l loadl %t2
-    ret %t24
-@after_return4
-@fn_end5
+    %t22 =l loadl %t1
+    ret %t22
+@after_return2
+@fn_end3
     ret 0
 }
 export function l $nox_time_instant_now(l %rt) {
@@ -2476,7 +2469,7 @@ export function w $main(w %argc, l %argv) {
     %t43 =l add %t42, 48
     %t44 =l loadl %t43
     call $printf(l $fmt_int, ..., l %t44)
-    %t45 =l call $nox_time_now_ms(l %rt)
+    %t45 =l call $nox_time_now_ms_raw()
     %t46 =l call $nox_time_from_epoch_ms(l %rt, l %t45)
     storel %t46, %t4
     jmp @inline_done5
@@ -2683,11 +2676,11 @@ export function w $List_JsonValue_eq(l %rt, l %a, l %b) {
 @listeq_lendiff0
     ret 0
 }
-data $__nox_decorators = { l 0 }
-data $__nox_decorator_args = { l 0 }
+data $__nox_decorators = { l $str11+16, l $str12+16, l 1, l 0, l 0, l $str14+16, l $str15+16, l 1, l 1, l 0, l $str17+16, l $str18+16, l 1, l 2, l 0, l $str20+16, l $str21+16, l 1, l 3, l 0 }
+data $__nox_decorator_args = { l $str13+16, l $str16+16, l $str19+16, l $str22+16 }
 export function l $__nox_reflect_decorator_count(l %rt) {
 @start
-    ret 0
+    ret 4
 }
 export function l $__nox_reflect_decorator_target_name(l %rt, l %i) {
 @start
@@ -2749,3 +2742,15 @@ data $str7 = { l 1073741824, l 2305843009213693953, b "0", b 0 }
 data $str8 = { l 1073741824, l 2305843009213693953, b ":", b 0 }
 data $str9 = { l 1073741824, l 2305843009213693953, b "0", b 0 }
 data $str10 = { l 1073741824, l 2305843009213693953, b "0", b 0 }
+data $str11 = { l 1073741824, l 2305843009213693967, b "nox_time_now_ms", b 0 }
+data $str12 = { l 1073741824, l 2305843009213693971, b "capability.requires", b 0 }
+data $str13 = { l 1073741824, l 2305843009213693957, b "clock", b 0 }
+data $str14 = { l 1073741824, l 2305843009213693969, b "nox_time_sleep_ms", b 0 }
+data $str15 = { l 1073741824, l 2305843009213693971, b "capability.requires", b 0 }
+data $str16 = { l 1073741824, l 2305843009213693957, b "clock", b 0 }
+data $str17 = { l 1073741824, l 2305843009213693964, b "nox_time_now", b 0 }
+data $str18 = { l 1073741824, l 2305843009213693971, b "capability.requires", b 0 }
+data $str19 = { l 1073741824, l 2305843009213693957, b "clock", b 0 }
+data $str20 = { l 1073741824, l 2305843009213693972, b "nox_time_instant_now", b 0 }
+data $str21 = { l 1073741824, l 2305843009213693971, b "capability.requires", b 0 }
+data $str22 = { l 1073741824, l 2305843009213693957, b "clock", b 0 }
