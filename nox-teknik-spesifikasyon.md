@@ -27157,6 +27157,62 @@ başarısız) — `nox_http_server_port`in ZATEN kanıtlanmış AYNI tip çiftin
 değerlendirildi, AMA GERÇEK doğrulama CI'nin native Windows runner'ına
 BIRAKILDI.
 
+## 3.226 Aether NOX_LIMITATIONS.md yol haritası, Faz A.4 — `nox.json.JsonWriter`
+
+**Bağlam:** §3.222/§3.224/§3.225'in AYNI yol haritasının madde 18'i —
+`dump`/`dump_pretty`nin (VE kullanıcının KENDİ `"{" + ... + "}"` tarzı
+el-yapımı birleştirmesinin) HER `+` İşleminde YENİ bir string kopyası
+ÜRETMESİ (O(n²) toplam maliyet), büyük bir HTTP yanıt gövdesi GİBİ
+senaryolarda PERFORMANS sorunu olabilir.
+
+**Çözüm:** YENİ `JsonWriter` sınıfı — `begin_object`/`end_object`/
+`begin_array`/`end_array`/`write_key`/`write_string`/`write_int`/
+`write_float`/`write_bool`/`write_null`/`write_value` (mevcut bir
+`JsonValue` alt-ağacını `dump` İLE GÖMMEK İçİn) metodlarıyla parçaları
+BİR `list[str]`DE TOPLAR, `build()` ÇAĞRILDIĞINDA TEK bir `nox.strings.
+join` (GERÇEKTEN O(n) — ÖNCE TOPLAM uzunluk hesaplanır, bkz. `nox_
+strings_join_raw`) İLE BİRLEŞTİRİR. Mevcut `dump`/`dump_pretty`/`parse`
+API'leri DEĞİŞMEDEN kalır (saf bir EKLEME, kırıcı DEĞİL).
+
+**Tasarım — "bekleyen anahtar" (`pending_key`):** `write_key("x")`
+HİÇBİR ŞEY YAZMAZ, SADECE BEKLEMEYE alır — virgül/anahtar yazımı bir
+SONRAKİ `write_*`/`begin_*` çağrısında gerçekleşir. Bu, `write_string`/
+`write_int`/vb.nin TEK bir kod yoluyla HEM nesne-değeri (anahtardan
+hemen sonra, virgülsüz) HEM dizi-elemanı (virgüllü, anahtarsız)
+bağlamında GÜVENLE kullanılabilmesini sağlar.
+
+**GERÇEK bir engelle karşılaşıldı (yazarken BULUNDU, ÖNCEDEN
+bilinmiyordu):** İlk taslak `self.parts: list[str] = []`i (tip
+anotasyonuyla) DOĞRUDAN `__init__` İÇİNDE bir alan atamasına
+YAZMIŞTI — bu bir `UnexpectedToken` ayrıştırma hatasıyla ÇÖKTÜ: Nox'ta
+`self.<alan>` atamaları tip anotasyonu TAŞIYAMAZ, alan tipleri SINIF
+GÖVDESİNDE (`parts: list[str]`, `stdlib/nox/collections.nox`nin
+`Stack`/`Queue`sü GİBİ) AYRI bildirilip `__init__` İÇİNDE SADECE
+`self.parts = []` (anotasyonSUZ) atanmalıdır — düzeltildi. **İKİNCİ,
+DAHA ÖNEMLİ bir engel:** `self.parts.append(...)` DOĞRUDAN çağrıldığında
+`'append' yalnızca bir değişken üzerinde çağrılabilir` tip hatası
+verdi — bu, Faz B.4'ün (bu YOL HARİTASININ KENDİSİNİN DAHA SONRAKİ bir
+maddesi, bkz. §3.222'nin plan dosyası) TAM OLARAK ele aldığı, HENÜZ
+ÇÖZÜLMEMİŞ `obj.field.append(x)` boşluğudur — `stdlib/nox/collections.
+nox`nin ZATEN belgelediği "yerele kopyala → mutasyona uğrat → geri yaz"
+dansı (`_push_part`/`_push_comma_frame` yardımcı metodlarına TOPLANDI)
+İLE AŞILDI (`.pop()`/indeksli atama bu dansı GEREKTİRMEZ).
+
+### Test
+
+`tests/golden/codegen_cases/json_writer_incremental_builder.nox` — iç
+içe nesne/dizi, TÜM değer türleri (string/int/float/bool/null, KAÇIŞ
+gerektiren bir dize DAHİL), `write_value` İLE mevcut bir `JsonValue`nun
+gömülmesi, boş nesne/dizi — çıktı HEM doğrudan karşılaştırılır HEM
+`nox.json.parse` İLE GERİ OKUNUP alanları doğrulanarak GERÇEKTEN
+geçerli JSON ürettiği kanıtlanır. **Yan not:** `nox.json`a YENİ bir
+sınıf eklemek, modülü (transitif OLARAK `nox.validate` DAHİL) import
+eden 11 MEVCUT fixture'ın IR'ını DEĞİŞTİRDİ (JsonWriter'ın ÜRETİLEN
+metod/release fonksiyonları HER import edende KOŞULSUZ emisyon —
+tree-shaking YOK, bilinen bir mimari özellik) — davranışları DEĞİŞMEDİ,
+snapshot'ları yeniden üretildi. `zig build test`: 171/171 adım, sıfır
+regresyon (iki ardışık temiz çalıştırmayla doğrulandı).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

@@ -1,0 +1,62 @@
+# Aether NOX_LIMITATIONS.md yol haritası, Faz A.4 (bkz. nox-teknik-
+# spesifikasyon.md ilgili bölüm): `nox.json.JsonWriter` — iç içe nesne/
+# dizi, TÜM değer türleri (string/int/float/bool/null), kaçış gerektiren
+# bir dize, VE mevcut bir JsonValue'nun write_value ile gömülmesi. Çıktı
+# hem KENDİSİ doğrudan karşılaştırılır HEM `nox.json.parse` ile GERİ
+# OKUNUP alanları doğrulanarak GERÇEKTEN geçerli JSON ürettiği kanıtlanır.
+import nox.json
+
+w: nox.json.JsonWriter = nox.json.JsonWriter()
+w.begin_object()
+w.write_key("name")
+w.write_string("ayse \"test\"")
+w.write_key("age")
+w.write_int(30)
+w.write_key("score")
+w.write_float(9.5)
+w.write_key("active")
+w.write_bool(True)
+w.write_key("deleted_at")
+w.write_null()
+w.write_key("tags")
+w.begin_array()
+w.write_string("a")
+w.write_string("b")
+w.write_int(3)
+w.end_array()
+w.write_key("address")
+w.begin_object()
+w.write_key("city")
+w.write_string("istanbul")
+w.end_object()
+nested: JsonValue = nox.json.parse("{\"x\":1,\"y\":[2,3]}")
+w.write_key("extra")
+w.write_value(nested)
+w.end_object()
+
+out: str = w.build()
+print(out)
+
+parsed: JsonValue = nox.json.parse(out)
+print(nox.json.as_string(nox.json.object_value(parsed, 0)))
+print(nox.json.as_number(nox.json.object_value(parsed, 1)))
+print(nox.json.as_bool(nox.json.object_value(parsed, 3)))
+print(nox.json.is_null(nox.json.object_value(parsed, 4)))
+tags: JsonValue = nox.json.object_value(parsed, 5)
+print(nox.json.array_len(tags))
+print(nox.json.as_string(nox.json.array_get(tags, 0)))
+addr: JsonValue = nox.json.object_value(parsed, 6)
+print(nox.json.as_string(nox.json.object_value(addr, 0)))
+extra: JsonValue = nox.json.object_value(parsed, 7)
+print(nox.json.as_number(nox.json.object_value(extra, 0)))
+
+# Boş nesne/dizi.
+w2: nox.json.JsonWriter = nox.json.JsonWriter()
+w2.begin_object()
+w2.end_object()
+print(w2.build())
+
+w3: nox.json.JsonWriter = nox.json.JsonWriter()
+w3.begin_array()
+w3.end_array()
+print(w3.build())

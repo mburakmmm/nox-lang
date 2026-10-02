@@ -271,3 +271,133 @@ def encode_pretty_array(v: JsonValue, indent: int, level: int) -> str:
 
 def encode_pretty_object(v: JsonValue, indent: int, level: int) -> str:
     return dump_pretty_object(v, indent, level)
+
+# Aether NOX_LIMITATIONS.md yol haritası, Faz A.4 (bkz. nox-teknik-
+# spesifikasyon.md ilgili bölüm, madde 18): `JsonWriter` — bir HTTP
+# yanıt gövdesi gibi büyük bir JSON belgesini, ÖNCE bir `JsonValue`
+# ağacı İNŞA ETMEDEN (ya da `dump_object`/`dump_array`nin KENDİ `out =
+# out + ...` döngülerinde OLDUĞU gibi TEKRARLANAN `str` birleştirmesi
+# İLE, HER birleştirme YENİ bir kopya ÜRETTİĞİNDEN O(n²)) ARTIMLI
+# olarak yazmak İçin. `self.parts: list[str]` İÇİNDE TOPLANAN PARÇALAR
+# SADECE `build()` ÇAĞRILDIĞINDA TEK bir `nox.strings.join` (GERÇEKTEN
+# O(n) — ÖNCE TOPLAM uzunluk hesaplanır, SONRA TEK bir arabellek
+# doldurulur, bkz. `runtime/stdlib_shims/strings.zig`nin `nox_strings_
+# join_raw`ı) İLE BİRLEŞTİRİLİR.
+#
+# Mevcut `dump`/`dump_pretty`/`parse` API'leri BU sınıfla HİÇBİR şekilde
+# DEĞİŞTİRİLMEDİ (saf bir EKLEME) — `JsonValue` ağacı ZATEN elindeyse
+# `write_value` İLE `JsonWriter`e GÖMÜLEBİLİR (iki yaklaşımı KARIŞTIRMAK
+# güvenlidir).
+#
+# **Tasarım — "bekleyen anahtar" (`pending_key`):** `write_key("x")`
+# HİÇBİR ŞEY YAZMAZ, SADECE `x`i BEKLEMEYE alır — asıl virgül/anahtar
+# yazımı bir SONRAKİ `write_*`/`begin_*` çağrısında (`_emit_prefix`
+# İÇİNDE) gerçekleşir. Bu, `write_string`/`write_int`/vb.nin TEK bir
+# KOD YOLUYLA HEM nesne-değeri (anahtardan HEMEN sonra, virgülsüz) HEM
+# dizi-elemanı (virgüllü, anahtarsız) bağlamında GÜVENLE kullanılabilmesini
+# SAĞLAR — çağıranın HANGİ bağlamda olduğunu AYRI metodlarla belirtmesi
+# GEREKMEZ.
+class JsonWriter:
+    parts: list[str]
+    need_comma_stack: list[bool]
+    pending_key: str
+    has_pending_key: bool
+
+    def __init__(self: JsonWriter) -> None:
+        self.parts = []
+        self.need_comma_stack = []
+        self.pending_key = ""
+        self.has_pending_key = False
+
+    # `.append()`in alıcısı ÇIPLAK bir yerel İSİM olmak ZORUNDADIR (bkz.
+    # `stdlib/nox/collections.nox`nin AYNI notu — `obj.field.append(x)`
+    # HENÜZ desteklenmiyor) — bu YÜZDEN HER iki liste alanı İçİn de
+    # "yerele kopyala → mutasyona uğrat → geri yaz" dansı BURADA, TEK bir
+    # yerde toplanır (`.pop()`/indeksli atama bu dansı GEREKTİRMEZ,
+    # DOĞRUDAN `self.alan` üzerinde çağrılabilir — AŞAĞIDAKİ `pop()`/
+    # `[n - 1] = True` satırlarına bkz.).
+    def _push_part(self: JsonWriter, s: str) -> None:
+        parts: list[str] = self.parts
+        parts.append(s)
+        self.parts = parts
+
+    def _push_comma_frame(self: JsonWriter, v: bool) -> None:
+        stack: list[bool] = self.need_comma_stack
+        stack.append(v)
+        self.need_comma_stack = stack
+
+    # İÇİNDE bulunulan (en İÇTEKİ) konteynerin daha ÖNCE bir öğe
+    # yazıp YAZMADIĞINA göre virgül ekler (VE bayrağı `True`ya çeker),
+    # SONRA bekleyen bir anahtar VARSA onu (escape edilmiş hâliyle)
+    # ve `:`yi yazar. HER `write_*`/`begin_*`in İLK adımı BUDUR.
+    def _emit_prefix(self: JsonWriter) -> None:
+        n: int = len(self.need_comma_stack)
+        if n > 0:
+            if self.need_comma_stack[n - 1]:
+                self._push_part(",")
+            self.need_comma_stack[n - 1] = True
+        if self.has_pending_key:
+            self._push_part(dump_string(self.pending_key))
+            self._push_part(":")
+            self.has_pending_key = False
+
+    # Bir SONRAKİ `write_*`/`begin_*` çağrısının (asıl DEĞER) bir nesne
+    # ÜYESİNİN anahtarı olarak yazılmasını SAĞLAR — SADECE `begin_object`/
+    # `end_object` İLE AÇILMIŞ bir kapsamda ANLAMLIDIR (bir dizi İçİnde
+    # çağrılırsa `pending_key` sessizce YOK SAYILMAZ, bir SONRAKİ elemana
+    # YANLIŞLIKLA bir anahtar EKLER — ÇAĞIRANIN SORUMLULUĞU, bkz. modül
+    # üstü not: "programcı YANLIŞ KULLANIMI İçİn savunmacı KONTROL YOK").
+    def write_key(self: JsonWriter, key: str) -> None:
+        self.pending_key = key
+        self.has_pending_key = True
+
+    def begin_object(self: JsonWriter) -> None:
+        self._emit_prefix()
+        self._push_part("{")
+        self._push_comma_frame(False)
+
+    def end_object(self: JsonWriter) -> None:
+        self.need_comma_stack.pop()
+        self._push_part("}")
+
+    def begin_array(self: JsonWriter) -> None:
+        self._emit_prefix()
+        self._push_part("[")
+        self._push_comma_frame(False)
+
+    def end_array(self: JsonWriter) -> None:
+        self.need_comma_stack.pop()
+        self._push_part("]")
+
+    def write_string(self: JsonWriter, s: str) -> None:
+        self._emit_prefix()
+        self._push_part(dump_string(s))
+
+    def write_int(self: JsonWriter, n: int) -> None:
+        self._emit_prefix()
+        self._push_part(str(n))
+
+    def write_float(self: JsonWriter, n: float) -> None:
+        self._emit_prefix()
+        self._push_part(str(n))
+
+    def write_bool(self: JsonWriter, b: bool) -> None:
+        self._emit_prefix()
+        if b:
+            self._push_part("true")
+        else:
+            self._push_part("false")
+
+    def write_null(self: JsonWriter) -> None:
+        self._emit_prefix()
+        self._push_part("null")
+
+    # Zaten elde var olan bir `JsonValue` alt-ağacını OLDUĞU GİBİ gömer
+    # (`dump` İLE) — iki inşa YAKLAŞIMININ (artımlı yazıcı + hazır ağaç)
+    # KARIŞTIRILABİLMESİ İçİn.
+    def write_value(self: JsonWriter, v: JsonValue) -> None:
+        self._emit_prefix()
+        self._push_part(dump(v))
+
+    def build(self: JsonWriter) -> str:
+        return nox.strings.join(self.parts, "")

@@ -14,6 +14,19 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.128.0]
+
+### Eklendi
+
+- **`nox.json.JsonWriter` (bkz. nox-teknik-spesifikasyon.md §3.226,
+  Aether NOX_LIMITATIONS.md madde 18)**: büyük bir JSON belgesini
+  artımlı olarak yazmak için `begin_object`/`end_object`/`begin_array`/
+  `end_array`/`write_key`/`write_string`/`write_int`/`write_float`/
+  `write_bool`/`write_null`/`write_value`/`build` metodları — `dump`in
+  tekrarlanan `str` birleştirmesinin O(n²) maliyeti yerine, parçalar
+  toplanıp sonunda TEK bir O(n) `nox.strings.join` ile birleştirilir.
+  Mevcut `dump`/`dump_pretty`/`parse` API'leri değişmedi.
+
 ## [1.127.0]
 
 ### Eklendi
