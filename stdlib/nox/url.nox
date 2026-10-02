@@ -219,6 +219,40 @@ def query_encode(params: dict[str, str]) -> str:
         i = i + 1
     return nox.strings.join(parts, "&")
 
+# Aether NOX_LIMITATIONS.md yol haritası, Faz A.5 (bkz. nox-teknik-
+# spesifikasyon.md ilgili bölüm, madde 17): `dict[str, str]`in KENDİSİ
+# (ör. `URL.query`/`query_decode`in dönüş tipi) bilinçli olarak
+# DEĞİŞTİRİLMEDİ (tipli bir "query değeri" temsiline geçmek KIRICI
+# olurdu) — YERİNE, ZATEN elde olan bir sorgu `dict`i üzerinde tip
+# DÖNÜŞÜMÜ/DOĞRULAMASI yapan bu üç yardımcı EKLENDİ. Anahtar EKSİKSE YA
+# DA DEĞER HEDEF tipe DÖNÜŞTÜRÜLEMİYORSA (ikisi de) HER ZAMAN `ValueError`
+# fırlatılır — ÇAĞIRAN, `KeyError` (eksik) İLE "geçersiz BİÇİM" (ör.
+# `int("abc")`in KENDİ `ValueError`ı) arasında AYRI AYRI `except`
+# YAZMAK ZORUNDA KALMAZ, TEK bir hata TÜRÜ yeterlidir.
+def query_int(q: dict[str, str], key: str) -> int:
+    if not q.contains(key):
+        raise ValueError("sorgu parametresi eksik: " + key)
+    return int(q[key])
+
+def query_float(q: dict[str, str], key: str) -> float:
+    if not q.contains(key):
+        raise ValueError("sorgu parametresi eksik: " + key)
+    return float(q[key])
+
+# `"true"`/`"1"` -> `True`, `"false"`/`"0"` -> `False` — BAŞKA HERHANGİ
+# bir değer (ör. `"yes"`, boş dize, büyük/küçük harf farklı bir
+# yazım) `ValueError` fırlatır (sessizce `False`a DÜŞMEK YERİNE, GERÇEK
+# bir YAZIM hatasını GİZLEMEMEK İçİn bilinçli bir seçim).
+def query_bool(q: dict[str, str], key: str) -> bool:
+    if not q.contains(key):
+        raise ValueError("sorgu parametresi eksik: " + key)
+    v: str = q[key]
+    if v == "true" or v == "1":
+        return True
+    if v == "false" or v == "0":
+        return False
+    raise ValueError("sorgu parametresi gecersiz bool degeri: " + key + "=" + v)
+
 def query_decode(s: str) -> dict[str, str]:
     result: dict[str, str] = {}
     if len(s) == 0:

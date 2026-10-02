@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.129.0]
+
+### Eklendi
+
+- **`nox.url.query_int`/`query_float`/`query_bool` (bkz. nox-teknik-
+  spesifikasyon.md §3.227, Aether NOX_LIMITATIONS.md madde 17)**: bir
+  sorgu `dict[str, str]`inden tipli değer okuma yardımcıları — anahtar
+  eksikse ya da değer hedef tipe dönüştürülemiyorsa (ikisi de) tek,
+  tutarlı bir `ValueError` fırlatır. `query_bool`, `"true"`/`"1"` ve
+  `"false"`/`"0"` dışındaki değerlerde de `ValueError` fırlatır.
+
 ## [1.128.0]
 
 ### Eklendi

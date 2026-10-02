@@ -27213,6 +27213,42 @@ tree-shaking YOK, bilinen bir mimari özellik) — davranışları DEĞİŞMEDİ
 snapshot'ları yeniden üretildi. `zig build test`: 171/171 adım, sıfır
 regresyon (iki ardışık temiz çalıştırmayla doğrulandı).
 
+## 3.227 Aether NOX_LIMITATIONS.md yol haritası, Faz A.5 — `nox.url.query_int`/`query_float`/`query_bool`
+
+**Bağlam:** §3.222/§3.224-§3.226'nın AYNI yol haritasının madde 17'si —
+`HttpRequest`in sorgu parametrelerinin (`nox.url.parse(req.target).
+query` İLE erişilen) HER ZAMAN `dict[str, str]` olması, bir framework'ün
+(ör. `page=2` GİBİ bir sayfalama parametresini) tipli OKUMASI İçİn HER
+seferinde `int(q["page"])`i EL İLE, eksik anahtar İLE geçersiz biçim
+İKİ AYRI hata YOLUNU (`KeyError` vs `ValueError`) AYRI AYRI ele ALARAK
+yazmasını gerektiriyordu.
+
+**Kasıtlı tasarım kararı:** `dict[str, str]`in KENDİSİ (`URL.query`/
+`query_decode`in dönüş tipi) DEĞİŞTİRİLMEDİ — tipli bir "sorgu değeri"
+temsiline (ör. `JsonValue`nin KENDİ `kind`-etiketli tasarımı GİBİ)
+geçmek KIRICI olurdu VE bu maddenin KENDİ kapsamının ÇOK ÖTESİNDE bir
+mimari değişiklik gerektirirdi. YERİNE, `nox.url`e ÜÇ saf yardımcı
+EKLENDİ: `query_int`/`query_float`/`query_bool` — ZATEN elde olan bir
+`dict[str, str]` + anahtar alır, anahtar EKSİKSE YA DA değer HEDEF tipe
+dönüştürülemiyorsa (`int`/`float`in KENDİ ayrıştırma hatası DAHİL)
+HER İKİ durumda da TEK, TUTARLI bir hata türü (`ValueError`) fırlatır
+— çağıranın `KeyError`/`ValueError`ı AYRI AYRI yakalaması GEREKMEZ.
+`query_bool`, `"true"`/`"1"`i `True`, `"false"`/`"0"`ı `False` sayar;
+BAŞKA herhangi bir değer (ör. `"yes"`) sessizce `False`a DÜŞMEK YERİNE
+`ValueError` fırlatır (bir yazım hatasını GİZLEMEMEK İçİn bilinçli).
+
+### Test
+
+`tests/golden/codegen_cases/url_query_typed_coercion.nox` — geçerli
+int/float/bool değerleri, eksik bir anahtar (ÜÇÜ de), `int`e geçersiz
+biçim (`"1.5"`i `query_int`e vermek), VE `query_bool`nin tanımadığı bir
+yazım (`"yes"`) — HEPSİ `ValueError`. `zig build test`: 171/171 adım,
+sıfır regresyon (iki ardışık temiz çalıştırmayla doğrulandı — `nox.url`e
+YENİ fonksiyon eklemek, onu transitif olarak import eden 2 BAŞKA
+fixture'ın [`tls_websocket_connect_error`/`postgres_mysql_connect_error`]
+IR'ını da DEĞİŞTİRDİ, §3.226'nın AYNI "tree-shaking yok" mimari
+özelliği — davranışları DEĞİŞMEDİ, snapshot'ları yeniden üretildi).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

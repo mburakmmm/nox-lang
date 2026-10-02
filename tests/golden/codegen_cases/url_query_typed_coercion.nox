@@ -1,0 +1,37 @@
+# Aether NOX_LIMITATIONS.md yol haritası, Faz A.5 (bkz. nox-teknik-
+# spesifikasyon.md ilgili bölüm): `nox.url.query_int`/`query_float`/
+# `query_bool` — geçerli değerler, eksik anahtar, geçersiz biçim (HER
+# İKİSİ de ValueError), ve bool'un kabul ettiği/reddettiği yazımlar.
+import nox.url
+
+q: dict[str, str] = nox.url.query_decode("page=2&ratio=1.5&active=true&flag=0&weird=yes")
+
+print(nox.url.query_int(q, "page"))
+print(nox.url.query_float(q, "ratio"))
+print(nox.url.query_bool(q, "active"))
+print(nox.url.query_bool(q, "flag"))
+
+try:
+    nox.url.query_int(q, "missing")
+except ValueError as e:
+    print(e.message)
+
+try:
+    nox.url.query_int(q, "ratio")
+except ValueError as e2:
+    print(e2.message)
+
+try:
+    nox.url.query_float(q, "missing")
+except ValueError as e3:
+    print(e3.message)
+
+try:
+    nox.url.query_bool(q, "weird")
+except ValueError as e4:
+    print(e4.message)
+
+try:
+    nox.url.query_bool(q, "missing")
+except ValueError as e5:
+    print(e5.message)
