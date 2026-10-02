@@ -567,6 +567,7 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
         const msg_value = try self.emitStringLiteral("liste indeksi sinirlarin disinda");
         const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
         const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
+        try self.emitExceptionLineStore(ie_obj.text, "IndexError", self.current_raise_line);
         try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ie_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
         // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı): bu dal
         // KOŞULSUZ raise edip ATLADIĞINDAN, `obj` (taban liste) TEMPORARY
@@ -667,6 +668,7 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
         const msg_value = try self.emitStringLiteral("str indeksi sinirlarin disinda");
         const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
         const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
+        try self.emitExceptionLineStore(ie_obj.text, "IndexError", self.current_raise_line);
         try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ie_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
         // Bkz. `genIndex`in AYNI belge notu — Faz NN kök-neden düzeltmesinden
         // (bkz. `ownership.zig`nin `releaseNamedLocalsExcept`i) SONRA GÜVENLE
@@ -1620,6 +1622,7 @@ pub fn genCheckedShift(self: *Codegen, op: ast.BinaryOp, l0: Value, r0: Value) C
     const msg_value = try self.emitStringLiteral("kaydirma miktari gecersiz (negatif ya da tipin bit genisligini asiyor)");
     const ve_cinfo = self.classes.get("ValueError") orelse return error.Unsupported;
     const ve_obj = try self.genConstructFromValues("ValueError", ve_cinfo, &.{msg_value}, null);
+    try self.emitExceptionLineStore(ve_obj.text, "ValueError", self.current_raise_line);
     try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ve_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
     try self.emitExceptionCheck();
     try self.qbeJmp(ok_label);

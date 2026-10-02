@@ -16,6 +16,16 @@
 class Exception:
     def __init__(self: Exception, message: str) -> None:
         self.message = message
+        # Aether NOX_LIMITATIONS.md yol haritası, Faz A.2 (bkz. nox-
+        # teknik-spesifikasyon.md ilgili bölüm): `raise` deyiminin KAYNAK
+        # SATIRI — BURADA SIFIR olarak başlar (HENÜZ raise EDİLMEDİ),
+        # `nox_raise`in HER çağrı sitesinden HEMEN SONRA codegen
+        # tarafından üretilen EK bir alan-yazma İLE (`.message`in KENDİSİ
+        # GİBİ inşa-zamanında DEĞİL) GERÇEK `raise` ANINDA doldurulur —
+        # `__init__` ÇAĞRILDIĞI an (ör. `e = SomeError("x")`) İLE `raise
+        # e` deyiminin KENDİSİ FARKLI satırlarda OLABİLİR, bu YÜZDEN
+        # satır bilgisi KONSTRÜKTÖRDE DEĞİL, raise ANINDA yazılmalıdır.
+        self.line = 0
 
 class ValueError(Exception):
     pass

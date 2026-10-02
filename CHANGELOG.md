@@ -14,6 +14,24 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.126.0]
+
+### Eklendi
+
+- **`nox.base64` (bkz. nox-teknik-spesifikasyon.md §3.224, Aether
+  NOX_LIMITATIONS.md madde 16)**: standart (RFC 4648 §4) ve URL-safe
+  (§5) base64 `encode`/`encode_url`/`decode`. Tamamen saf Nox, yeni bir
+  Zig shim gerektirmedi. `decode` hem standart hem URL-safe alfabeyi
+  aynı anda kabul eder.
+- **`nox.jwt` (aynı bölüm)**: HS256 (HMAC-SHA256) JWT `sign`/`verify`.
+  Kasıtlı olarak yalnızca HS256 destekler ("alg confusion" saldırılarına
+  karşı önlem) ve payload'ı ham JSON metni olarak taşır (`nox.json`a
+  bağımlı değildir).
+- **`Exception.line` (aynı bölüm, madde 9)**: tüm `Exception` alt
+  sınıfları artık `raise` anının gerçek kaynak satırını taşıyan bir
+  `line: int` alanına sahip. `Exception`den türemeyen sınıflar güvenle
+  etkilenmez.
+
 ## [1.125.1]
 
 ### Düzeltildi

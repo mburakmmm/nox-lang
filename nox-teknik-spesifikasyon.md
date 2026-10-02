@@ -27030,6 +27030,70 @@ güncelledi — davranışları DEĞİŞMEDİ, sadece KENDİ fonksiyon sınırla
 ERKEN noktada (raise anında) oluyor. `zig build test`: 171/171 adım,
 sıfır regresyon (iki ardışık temiz çalıştırmayla doğrulandı).
 
+## 3.224 Aether NOX_LIMITATIONS.md yol haritası, Faz A.1+A.2 — `nox.base64`/`nox.jwt` + `Exception.line`
+
+**Bağlam:** §3.222'nin AYNI yol haritasının "Faz A" (bağımsız/düşük-
+riskli stdlib eklemeleri) alt-maddelerinden İLK İKİSİ — madde 16
+(`nox.base64`/`nox.jwt`) ve madde 9 (`Exception.line`).
+
+### A.1 — `nox.base64` + `nox.jwt`
+
+`stdlib/nox/base64.nox`: standart (RFC 4648 §4, `+`/`/`, `=` dolgulu) VE
+URL-safe (§5, `-`/`_`, dolgusuz) base64 encode/decode. TAMAMEN SAF Nox —
+HİÇBİR yeni Zig shim/`extern def` GEREKMEDİ: bitwise operatörler
+(v1.109.0) + `nox.strings`in ZATEN var olan HAM bayt ilkelleri
+(`byte_at`/`byte_len`/`char_from_byte`) YETERLİ. `decode`, HEM standart
+HEM URL-safe alfabeyi AYNI ANDA kabul eder (girdinin HANGİ varyantla
+kodlandığını bilmeyi GEREKTİRMEZ). Modül capability-SİZDİR (freestanding
+DAHİL her profilde kullanılabilir).
+
+`stdlib/nox/jwt.nox`: HS256 (HMAC-SHA256) JWT imzalama/doğrulama,
+MEVCUT `nox.base64`/`nox.crypto.hmac_sha256`/`nox.crypto.
+constant_time_eq` üzerine kurulu. **Kasıtlı, dar kapsam:** YALNIZCA
+HS256 desteklenir — `alg` başlığı HER ZAMAN sabit üretilir VE `verify`
+çözülen başlığın bu sabit başlıkla BİREBİR eşleştiğini doğrular (KULLANICI
+girdisinden `alg` OKUYUP dinamik davranmaz) — klasik "alg confusion"/
+"none algorithm" JWT güvenlik açıklarına karşı bilinçli bir önlem.
+Payload temsili kasıtlı olarak HAM JSON metni (`str`)dir, `JsonValue`
+DEĞİL — `nox.jwt`, `nox.json`a bağımlı değildir (çağıran taraf kendi
+`nox.json.dump`/`parse`ını kullanır).
+
+### A.2 — `Exception.line`
+
+`Exception` taban sınıfına (Faz 7 tekli-kalıtım kopyalamasıyla TÜM alt
+sınıflara YAYILIR) `line: int` alanı eklendi — `raise` anının GERÇEK
+kaynak satırını, YAKALANAN örneğin KENDİ alanı olarak taşır (`nox_raise`e
+AYRICA geçirilen, SADECE `nox_unhandled_exception`in raporlaması İçİn
+tutulan skalerden BAĞIMSIZ). Codegen'de yeni `emitExceptionLineStore`
+yardımcısı (`exceptions.zig`), HER `$nox_raise` çağrı sitesinden HEMEN
+ÖNCE çağrılır.
+
+**Bulunan GERÇEK bir hata (golden test regresyonuyla yakalandı):**
+`class_name`nin KENDİ cinfo'su kullanılır, genel `"Exception"` sentineli
+DEĞİL — `raise` Nox'ta HERHANGİ bir sınıf örneğini kabul eder (`Exception`
+kalıtımını ZORUNLU KILMAZ, bkz. `inheritance_hierarchical_except.nox`'un
+`Exception`den TÜREMEYEN `AnimalError`/`DogError`si). `"Exception"`nin
+sabit ofsetini körlemesine kullanmak, FARKLI alan dizilimine sahip bir
+sınıfın rastgele bir baytını `.line` sanıp üzerine yazardı — GERÇEK bir
+bellek bozulması (fixture çöktü). Çözüm: her çağrı sitesi KENDİ raise
+edilen sınıfın adını geçirir, `.line` SADECE o sınıfın KENDİ
+`cinfo.fields`inde VARSA yazılır (`Exception`den türemeyen sınıflar İçİn
+güvenli bir no-op).
+
+### Test
+
+`tests/golden/codegen_cases/base64_and_jwt.nox` — RFC 4648 §10 test
+vektörleri (`""`/`"f"`/`"fo"`/...`"foobar"`), URL-safe roundtrip,
+HERHANGİ bir UTF-8 metninin HAM bayt roundtrip'i, geçersiz karakter
+reddi; JWT sign/verify roundtrip, yanlış secret/kurcalanmış payload/
+bozuk biçim reddi (üçü de `JwtError`). `tests/golden/codegen_cases/
+exception_line.nox` — açık `raise` (`ValueError`), örtük raise
+(`IndexError`/`KeyError`), HENÜZ raise edilmemiş bir örneğin `.line`
+varsayılanı (`0`), VE `Exception`den türemeyen bir sınıfın (`PlainError`)
+güvenle etkilenmediği. `zig build test`: 171/171 adım, sıfır regresyon
+(iki ardışık temiz çalıştırmayla doğrulandı — `http_serve_multicore`nin
+BİLİNEN, ilişkisiz bağlantı-flakiness'i HARİÇ, bkz. proje belleği).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

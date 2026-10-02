@@ -67,6 +67,7 @@ pub fn emitHpyErrorCheckOrRaise(self: *Codegen) CodegenError!void {
     const msg_value: Value = .{ .text = err_t, .qtype = .l, .heap = .str };
     const he_obj = try self.genConstructFromValues("HPyError", he_cinfo, &.{msg_value}, null);
     try self.qbeCall(null, "$nox_str_release", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = err_t } });
+    try self.emitExceptionLineStore(he_obj.text, "HPyError", self.current_raise_line);
     try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = he_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
     try self.emitExceptionCheck();
     try self.qbeJmp(ok_label);
@@ -1195,6 +1196,7 @@ pub fn genParseOrRaise(self: *Codegen, v: Value, valid_fn: []const u8, convert_f
     const msg_value = try self.emitStringLiteral(message);
     const ve_cinfo = self.classes.get("ValueError") orelse return error.Unsupported;
     const ve_obj = try self.genConstructFromValues("ValueError", ve_cinfo, &.{msg_value}, null);
+    try self.emitExceptionLineStore(ve_obj.text, "ValueError", self.current_raise_line);
     try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ve_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
     try self.emitExceptionCheck();
     try self.qbeJmp(ok_label);
@@ -2080,6 +2082,7 @@ pub fn genListPop(self: *Codegen, obj: Value, a: ast.Attribute) CodegenError!Val
     const msg_value = try self.emitStringLiteral("bos liste (list) pop edilemez");
     const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
     const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
+    try self.emitExceptionLineStore(ie_obj.text, "IndexError", self.current_raise_line);
     try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ie_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
     // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı — AYNI
     // sınıf hata, `genMethodCall`in belge notundaki GİBİ): bu dal

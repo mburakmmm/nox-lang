@@ -1,0 +1,36 @@
+# Aether NOX_LIMITATIONS.md yol haritası, Faz A.2 (bkz. nox-teknik-
+# spesifikasyon.md ilgili bölüm): `Exception.line` — raise ANININ GERÇEK
+# kaynak satırını, hem AÇIK `raise` hem ÖRTÜK (IndexError/KeyError)
+# yollar İçİn doğrular. `AnimalError` (Exception'DAN TÜREMEYEN, bkz.
+# tests/golden/codegen_cases/inheritance_hierarchical_except.nox) İLE
+# AYNI "Exception'dan türemeyen sınıflar .line ALMAZ, ÇÖKMEZ" güvenlik
+# özelliğini de ayrıca doğrular.
+
+class PlainError:
+    def __init__(self: PlainError, message: str) -> None:
+        self.message = message
+
+try:
+    raise ValueError("acik raise")
+except ValueError as e:
+    print(e.line)
+
+xs: list[int] = [1, 2, 3]
+try:
+    print(xs[10])
+except IndexError as e:
+    print(e.line)
+
+d: dict[str, int] = {}
+try:
+    print(d["missing"])
+except KeyError as e:
+    print(e.line)
+
+unraised: ValueError = ValueError("henuz raise edilmedi")
+print(unraised.line)
+
+try:
+    raise PlainError("exception'dan turemez")
+except PlainError as e2:
+    print(e2.message)

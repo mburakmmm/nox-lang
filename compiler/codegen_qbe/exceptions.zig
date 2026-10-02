@@ -19,6 +19,41 @@ const RT_PARAM = types.RT_PARAM;
 const CodegenError = abi.CodegenError;
 const isHeapManaged = abi.isHeapManaged;
 
+/// Aether NOX_LIMITATIONS.md madde 9 (bkz. nox-teknik-spesifikasyon.md
+/// ilgili bölüm — Faz A.2): `Exception` taban sınıfının `line: int`
+/// alanına (Faz 7 tekli-kalıtım kopyalamasıyla TÜM alt sınıflara YAYILIR,
+/// bkz. `stdlib/nox/core.nox`nin `Exception.__init__`i) raise ANININ
+/// GERÇEK kaynak satırını yazar — `nox_raise`in KENDİSİNE (ayrı, SADECE
+/// `nox_unhandled_exception`in raporlaması İçİn tutulan bir skaler)
+/// EK OLARAK, YAKALANAN örneğin KENDİ alanı. HER `$nox_raise` çağrı
+/// sitesinden HEMEN ÖNCE çağrılır.
+///
+/// **`class_name`nin KENDİ cinfo'su KULLANILIR, GENEL "Exception" SENTİNELİ
+/// DEĞİL** — BULUNAN GERÇEK bir hata (golden test regresyonuyla
+/// YAKALANDI): `tests/golden/codegen_cases/inheritance_hierarchical_
+/// except.nox`nin `AnimalError`/`DogError`si `Exception`DEN TÜREMEZ
+/// (KENDİ bağımsız `message` alanını TAŞIR) — Nox'ta `raise` HERHANGİ
+/// bir sınıf örneğini kabul eder (`genRaise`nin `obj.heap != .class`
+/// kontrolü, `Exception` kalıtımını ZORUNLU KILMAZ). `"Exception"`nin
+/// SABİT ofsetini KÖRLEMESİNE kullanmak, `Exception`DEN TÜREMEYEN bir
+/// sınıfın (FARKLI alan DİZİLİMİNE sahip) rastgele bir baytını `.line`
+/// SANIP ÜZERİNE YAZARDI — GERÇEK bir bellek bozulmasıydı (fixture
+/// ÇÖKTÜ). Çözüm: HER çağrı sitesi KENDİ (GERÇEKTEN raise edilen)
+/// sınıfın adını geçirir, `.line` SADECE o sınıfın KENDİ `cinfo.fields`
+/// listesinde VARSA yazılır (`Exception`den TÜREMEYEN sınıflar İçİn
+/// GÜVENLİ bir no-op).
+pub fn emitExceptionLineStore(self: *Codegen, obj_text: []const u8, class_name: []const u8, line: i64) CodegenError!void {
+    const cinfo = self.classes.get(class_name) orelse return;
+    for (cinfo.fields.items) |f| {
+        if (!std.mem.eql(u8, f.name, "line")) continue;
+        const addr = try self.newTemp();
+        try self.qbeOp2Imm(addr, .l, "add", obj_text, @intCast(f.offset));
+        const line_text = try std.fmt.allocPrint(self.allocator, "{d}", .{line});
+        try self.qbeStore(f.info.qtype, line_text, addr);
+        return;
+    }
+}
+
 pub fn genRaise(self: *Codegen, expr: ast.Expr) CodegenError!void {
     const obj = try self.genExpr(expr);
     if (obj.heap != .class) return error.Unsupported;
@@ -36,6 +71,7 @@ pub fn genRaise(self: *Codegen, expr: ast.Expr) CodegenError!void {
     // İÇİNDEYKEN/arena-etiketliyken HER ZAMAN reddet" kuralı burada da
     // uygulanır.
     try self.checkNoLowlevelEscape(obj);
+    try self.emitExceptionLineStore(obj.text, obj.class_name.?, self.current_raise_line);
     try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
     // Bkz. `emitExceptionCheckExcept`in belge notu — `return`nin AYNI
     // `except_name` deseni: `raise <isim>` İSE (bare identifier), o yerel

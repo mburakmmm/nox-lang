@@ -429,6 +429,7 @@ pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     const msg_value = try self.emitStringLiteral("liste indeksi sinirlarin disinda");
     const ie_cinfo = self.classes.get("IndexError") orelse return error.Unsupported;
     const ie_obj = try self.genConstructFromValues("IndexError", ie_cinfo, &.{msg_value}, null);
+    try self.emitExceptionLineStore(ie_obj.text, "IndexError", self.current_raise_line);
     try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ie_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
     // Bkz. `genIndex`in AYNI belge notu — Faz NN kök-neden düzeltmesinden
     // (bkz. `ownership.zig`nin `releaseNamedLocalsExcept`i) SONRA GÜVENLE
@@ -560,6 +561,7 @@ pub fn genDictGet(self: *Codegen, obj_expr: ast.Expr, obj: Value, key_expr: ast.
     const msg_value = try self.emitStringLiteral("anahtar bulunamadi");
     const ke_cinfo = self.classes.get("KeyError") orelse return error.Unsupported;
     const ke_obj = try self.genConstructFromValues("KeyError", ke_cinfo, &.{msg_value}, null);
+    try self.emitExceptionLineStore(ke_obj.text, "KeyError", self.current_raise_line);
     try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ke_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
     // Faz NN: `genIndex`/`genListAssign`in AYNI belge notu — kök-neden
     // düzeltmesinden (bkz. `ownership.zig`) SONRA GÜVENLE eklendi. `obj`

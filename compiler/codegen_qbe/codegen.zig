@@ -476,6 +476,7 @@ pub const Codegen = struct {
 
     pub const emitExceptionCheck = exceptions.emitExceptionCheck;
     pub const emitExceptionCheckExcept = exceptions.emitExceptionCheckExcept;
+    pub const emitExceptionLineStore = exceptions.emitExceptionLineStore;
 
     pub const genStmts = stmt_mod.genStmts;
     pub const genLowLevel = stmt_mod.genLowLevel;

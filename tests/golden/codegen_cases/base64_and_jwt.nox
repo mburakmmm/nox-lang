@@ -1,0 +1,61 @@
+# Aether NOX_LIMITATIONS.md yol haritası, Faz A.1 (bkz. nox-teknik-
+# spesifikasyon.md ilgili bölüm): `nox.base64` (RFC 4648 §4/§5 test
+# vektörleri + roundtrip) ve `nox.jwt` (HS256 sign/verify roundtrip +
+# kurcalanmış/geçersiz token reddi) golden testi.
+
+import nox.base64
+import nox.jwt
+import nox.strings
+from nox.base64 import Base64Error
+from nox.jwt import JwtError
+
+# RFC 4648 §10 test vektörleri (standart alfabe).
+print(nox.base64.encode(""))
+print(nox.base64.encode("f"))
+print(nox.base64.encode("fo"))
+print(nox.base64.encode("foo"))
+print(nox.base64.encode("foob"))
+print(nox.base64.encode("fooba"))
+print(nox.base64.encode("foobar"))
+
+print(nox.base64.decode("Zg=="))
+print(nox.base64.decode("Zm9vYmFy"))
+
+# URL-safe: dolgu YOK, `-`/`_` alfabesi — ama decode HER İKİSİNİ de kabul eder.
+url_encoded: str = nox.base64.encode_url("subjects>objects?")
+print(url_encoded)
+print(nox.base64.decode(url_encoded))
+
+# Herhangi bir UTF-8 metninin HAM bayt roundtrip'i (karakter-bazlı DEĞİL).
+utf8_text: str = "merhaba dünya"
+print(nox.base64.decode(nox.base64.encode(utf8_text)) == utf8_text)
+
+try:
+    nox.base64.decode("!!!!")
+except Base64Error as e:
+    print(e.message)
+
+# JWT: sign/verify roundtrip.
+payload: str = "{\"sub\":\"1234\",\"name\":\"ayse\"}"
+token: str = nox.jwt.sign(payload, "cok-gizli-anahtar")
+print(nox.jwt.verify(token, "cok-gizli-anahtar"))
+
+# Yanlış secret ile doğrulama reddedilmeli.
+try:
+    nox.jwt.verify(token, "yanlis-anahtar")
+except JwtError as e:
+    print(e.message)
+
+# Kurcalanmış (payload değiştirilmiş) token reddedilmeli.
+parts: list[str] = nox.strings.split(token, ".")
+tampered: str = parts[0] + "." + nox.base64.encode_url("{\"sub\":\"9999\"}") + "." + parts[2]
+try:
+    nox.jwt.verify(tampered, "cok-gizli-anahtar")
+except JwtError as e:
+    print(e.message)
+
+# Bozuk biçim (nokta eksik) reddedilmeli.
+try:
+    nox.jwt.verify("tek.parca", "cok-gizli-anahtar")
+except JwtError as e:
+    print(e.message)

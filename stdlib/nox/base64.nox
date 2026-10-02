@@ -1,0 +1,140 @@
+# Aether NOX_LIMITATIONS.md yol haritası, Faz A.1 (bkz. nox-teknik-
+# spesifikasyon.md ilgili bölüm) — `nox.base64`: standart + URL-safe
+# base64 encode/decode. TAMAMEN SAF Nox — HİÇBİR yeni Zig shim/extern def
+# GEREKMEDİ: bitwise operatörler (v1.109.0, `&`/`|`/`>>`/`<<`) + `nox.
+# strings`in ZATEN var olan HAM bayt ilkelleri (`byte_at`/`byte_len`/
+# `char_from_byte` — `str`i bir TEK karakter DİZİSİ değil, HAM BAYT
+# dizisi olarak ele almak İçin) YETERLİ. Bu YÜZDEN `nox.json.dump()`nin
+# ürettiği (ASCII-SAFE OLMAYAN — bkz. `json.nox`nin KENDİ belge notu)
+# HERHANGİ bir UTF-8 metni DAHİL, HERHANGİ bir `str`nin HAM bayt
+# temsilini DOĞRU kodlar/çözer (karakter-BAZLI bir yaklaşımın aksine).
+#
+# Modül capability-SİZDİR (HİÇBİR OS/ağ/dosya erişimi YOK) — freestanding
+# DAHİL her profilde kullanılabilir.
+
+import nox.strings
+
+class Base64Error(Exception):
+    pass
+
+def _std_alphabet_char(six_bits: int) -> str:
+    if six_bits < 26:
+        return nox.strings.char_from_byte(65 + six_bits)
+    if six_bits < 52:
+        return nox.strings.char_from_byte(97 + (six_bits - 26))
+    if six_bits < 62:
+        return nox.strings.char_from_byte(48 + (six_bits - 52))
+    if six_bits == 62:
+        return "+"
+    return "/"
+
+def _url_alphabet_char(six_bits: int) -> str:
+    if six_bits < 26:
+        return nox.strings.char_from_byte(65 + six_bits)
+    if six_bits < 52:
+        return nox.strings.char_from_byte(97 + (six_bits - 26))
+    if six_bits < 62:
+        return nox.strings.char_from_byte(48 + (six_bits - 52))
+    if six_bits == 62:
+        return "-"
+    return "_"
+
+# `c`, zaten çıkarılmış HAM bir bayt DEĞERİDİR (`nox.strings.byte_at`den)
+# — hem standart (`+`/`/`) HEM URL-safe (`-`/`_`) alfabeyi AYNI ANDA
+# kabul eder (çoğu olgun base64 çözücünün yaptığı GİBİ, GİRDİNİN HANGİ
+# varyantla kodlandığını BİLMEK gerekmez).
+def _char_value(c: int) -> int:
+    if c >= 65 and c <= 90:
+        return c - 65
+    if c >= 97 and c <= 122:
+        return c - 71
+    if c >= 48 and c <= 57:
+        return c + 4
+    if c == 43 or c == 45:
+        return 62
+    if c == 47 or c == 95:
+        return 63
+    raise Base64Error("gecersiz base64 karakteri")
+
+def _encode_impl(data: str, url_safe: bool) -> str:
+    n: int = nox.strings.byte_len(data)
+    out: str = ""
+    i: int = 0
+    while i + 3 <= n:
+        b0: int = nox.strings.byte_at(data, i)
+        b1: int = nox.strings.byte_at(data, i + 1)
+        b2: int = nox.strings.byte_at(data, i + 2)
+        c0: int = (b0 >> 2) & 63
+        c1: int = ((b0 << 4) | (b1 >> 4)) & 63
+        c2: int = ((b1 << 2) | (b2 >> 6)) & 63
+        c3: int = b2 & 63
+        if url_safe:
+            out = out + _url_alphabet_char(c0) + _url_alphabet_char(c1) + _url_alphabet_char(c2) + _url_alphabet_char(c3)
+        else:
+            out = out + _std_alphabet_char(c0) + _std_alphabet_char(c1) + _std_alphabet_char(c2) + _std_alphabet_char(c3)
+        i = i + 3
+    remaining: int = n - i
+    if remaining == 1:
+        b0: int = nox.strings.byte_at(data, i)
+        c0: int = (b0 >> 2) & 63
+        c1: int = (b0 << 4) & 63
+        if url_safe:
+            out = out + _url_alphabet_char(c0) + _url_alphabet_char(c1)
+        else:
+            out = out + _std_alphabet_char(c0) + _std_alphabet_char(c1) + "=="
+    elif remaining == 2:
+        b0: int = nox.strings.byte_at(data, i)
+        b1: int = nox.strings.byte_at(data, i + 1)
+        c0: int = (b0 >> 2) & 63
+        c1: int = ((b0 << 4) | (b1 >> 4)) & 63
+        c2: int = (b1 << 2) & 63
+        if url_safe:
+            out = out + _url_alphabet_char(c0) + _url_alphabet_char(c1) + _url_alphabet_char(c2)
+        else:
+            out = out + _std_alphabet_char(c0) + _std_alphabet_char(c1) + _std_alphabet_char(c2) + "="
+    return out
+
+# Standart base64 (RFC 4648 §4) — `+`/`/` alfabesi, `=` dolgulu.
+def encode(data: str) -> str:
+    return _encode_impl(data, False)
+
+# URL-safe base64 (RFC 4648 §5) — `-`/`_` alfabesi, dolgu YOK (JWT'nin
+# KENDİ sözleşmesiyle TUTARLI, bkz. `nox.jwt`).
+def encode_url(data: str) -> str:
+    return _encode_impl(data, True)
+
+# HEM standart HEM URL-safe (HEM dolgulu HEM dolgusuz) girdiyi kabul
+# eder — `_char_value`nin belge notuna bkz.
+def decode(s: str) -> str:
+    n: int = nox.strings.byte_len(s)
+    eff_len: int = n
+    while eff_len > 0 and nox.strings.byte_at(s, eff_len - 1) == 61:
+        eff_len = eff_len - 1
+    out: str = ""
+    i: int = 0
+    while i + 4 <= eff_len:
+        v0: int = _char_value(nox.strings.byte_at(s, i))
+        v1: int = _char_value(nox.strings.byte_at(s, i + 1))
+        v2: int = _char_value(nox.strings.byte_at(s, i + 2))
+        v3: int = _char_value(nox.strings.byte_at(s, i + 3))
+        b0: int = ((v0 << 2) | (v1 >> 4)) & 255
+        b1: int = ((v1 << 4) | (v2 >> 2)) & 255
+        b2: int = ((v2 << 6) | v3) & 255
+        out = out + nox.strings.char_from_byte(b0) + nox.strings.char_from_byte(b1) + nox.strings.char_from_byte(b2)
+        i = i + 4
+    remaining: int = eff_len - i
+    if remaining == 1:
+        raise Base64Error("gecersiz base64 uzunlugu")
+    elif remaining == 2:
+        v0: int = _char_value(nox.strings.byte_at(s, i))
+        v1: int = _char_value(nox.strings.byte_at(s, i + 1))
+        b0: int = ((v0 << 2) | (v1 >> 4)) & 255
+        out = out + nox.strings.char_from_byte(b0)
+    elif remaining == 3:
+        v0: int = _char_value(nox.strings.byte_at(s, i))
+        v1: int = _char_value(nox.strings.byte_at(s, i + 1))
+        v2: int = _char_value(nox.strings.byte_at(s, i + 2))
+        b0: int = ((v0 << 2) | (v1 >> 4)) & 255
+        b1: int = ((v1 << 4) | (v2 >> 2)) & 255
+        out = out + nox.strings.char_from_byte(b0) + nox.strings.char_from_byte(b1)
+    return out

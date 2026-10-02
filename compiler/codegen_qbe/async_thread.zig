@@ -961,6 +961,7 @@ pub fn genAwaitExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
         const msg_value = try self.emitStringLiteral("gorev iptal edildi");
         const ce_cinfo = self.classes.get("CancelledError") orelse return error.Unsupported;
         const ce_obj = try self.genConstructFromValues("CancelledError", ce_cinfo, &.{msg_value}, null);
+        try self.emitExceptionLineStore(ce_obj.text, "CancelledError", self.current_raise_line);
         try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ce_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
         try self.emitExceptionCheck();
     }

@@ -1,0 +1,88 @@
+# Aether NOX_LIMITATIONS.md yol haritası, Faz A.1 (bkz. nox-teknik-
+# spesifikasyon.md ilgili bölüm) — `nox.jwt`: HS256 (HMAC-SHA256) JWT
+# imzalama/doğrulama. MEVCUT `nox.base64`/`nox.crypto.hmac_sha256`/
+# `nox.crypto.constant_time_eq`/`nox.strings` üzerine kurulu — HİÇBİR
+# yeni Zig shim GEREKMEDİ.
+#
+# **Kasıtlı, DAR kapsam (v1):** YALNIZCA HS256 desteklenir — `alg`
+# başlığı HER ZAMAN SABİTTİR, kullanıcı TARAFINDAN seçilemez/geçirilemez.
+# Bu, klasik "alg confusion"/"none algorithm" JWT GÜVENLİK açıklarının
+# (saldırganın token'ın KENDİ `alg` alanını `"none"`ya ÇEVİRİP imza
+# doğrulamasını ATLATMASI GİBİ) BİLİNÇLİ bir önlemidir — `verify`,
+# ÇÖZÜLEN başlığın TAM OLARAK bizim ÜRETTİĞİMİZ sabit başlıkla BİREBİR
+# eşleştiğini doğrular, HERHANGİ bir `alg` alanını OKUYUP dinamik
+# DAVRANMAZ.
+#
+# **Payload temsili — KASITLI olarak HAM JSON METNİ (`str`), `JsonValue`
+# DEĞİL:** `nox.jwt`, `nox.json`a (parse/dump) BAĞIMLI DEĞİLDİR —
+# çağıran taraf KENDİ `nox.json.dump(...)`ını kullanarak claims'i
+# serileştirir, `sign`e HAZIR bir JSON string GEÇİRİR; `verify` de
+# DOĞRULANMIŞ payload'ı HAM JSON string OLARAK döner (çağıran taraf
+# İSTERSE `nox.json.parse` İLE ayrıştırır). Bu, modülün bağımlılık
+# yüzeyini EN AZA indirir VE `JsonValue` İNŞASI İçİn (ŞU AN stdlib'de
+# YOK) bir API GEREKTİRMEZ.
+
+import nox.base64
+import nox.crypto
+import nox.strings
+
+class JwtError(Exception):
+    pass
+
+def _hex_digit_value(c: int) -> int:
+    if c >= 48 and c <= 57:
+        return c - 48
+    if c >= 97 and c <= 102:
+        return c - 87
+    if c >= 65 and c <= 70:
+        return c - 55
+    raise JwtError("gecersiz hex basamagi")
+
+# `nox.crypto.hmac_sha256`nin HEX-kodlu çıktısını HAM baytlara çevirir —
+# JWT imzası HAM baytların base64url'i olmalıdır, hex METNİNİN DEĞİL.
+def _hex_to_raw(hex: str) -> str:
+    n: int = nox.strings.byte_len(hex)
+    out: str = ""
+    i: int = 0
+    while i + 1 < n:
+        hi: int = _hex_digit_value(nox.strings.byte_at(hex, i))
+        lo: int = _hex_digit_value(nox.strings.byte_at(hex, i + 1))
+        out = out + nox.strings.char_from_byte((hi << 4) | lo)
+        i = i + 2
+    return out
+
+def _header() -> str:
+    return "{\"alg\":\"HS256\",\"typ\":\"JWT\"}"
+
+# `payload_json` (ÖNCEDEN `nox.json.dump(...)` İLE serileştirilmiş) İçin
+# bir HS256 JWT ÜRETİR — `<base64url(header)>.<base64url(payload)>.
+# <base64url(hmac_sha256_raw(secret, ilk_iki_bolum))>`.
+def sign(payload_json: str, secret: str) -> str:
+    header_b64: str = nox.base64.encode_url(_header())
+    payload_b64: str = nox.base64.encode_url(payload_json)
+    signing_input: str = header_b64 + "." + payload_b64
+    sig_raw: str = _hex_to_raw(nox.crypto.hmac_sha256(secret, signing_input))
+    return signing_input + "." + nox.base64.encode_url(sig_raw)
+
+# `token`i doğrular (imza + başlığın TAM OLARAK `_header()`e eşit olduğu
+# — bkz. modül-üstü not, "alg confusion" önlemi) VE doğrulanmış payload'ı
+# HAM JSON METNİ olarak döner. Doğrulama BAŞARISIZSA (bozuk biçim, YANLIŞ
+# imza, YANLIŞ/beklenmeyen başlık) `JwtError` fırlatır — ÇAĞIRAN TARAF
+# bunu YAKALAMALIDIR (sessiz bir "gecersiz" DEĞERİ DÖNDÜRÜLMEZ, bilinçli
+# olarak — `nox.crypto`nun KENDİ "sessiz boş dize sentineli" hatasından
+# ÇIKARILAN ders, bkz. `CryptoError`nin belge notu).
+def verify(token: str, secret: str) -> str:
+    parts: list[str] = nox.strings.split(token, ".")
+    if len(parts) != 3:
+        raise JwtError("gecersiz JWT bicimi (3 nokta-ayrilmis bolum bekleniyor)")
+    header_b64: str = parts[0]
+    payload_b64: str = parts[1]
+    sig_b64: str = parts[2]
+    if nox.base64.decode(header_b64) != _header():
+        raise JwtError("desteklenmeyen veya gecersiz JWT basligi (yalnizca HS256 desteklenir)")
+    signing_input: str = header_b64 + "." + payload_b64
+    expected_sig_raw: str = _hex_to_raw(nox.crypto.hmac_sha256(secret, signing_input))
+    expected_sig_b64: str = nox.base64.encode_url(expected_sig_raw)
+    if not nox.crypto.constant_time_eq(sig_b64, expected_sig_b64):
+        raise JwtError("JWT imzasi dogrulanamadi")
+    return nox.base64.decode(payload_b64)
