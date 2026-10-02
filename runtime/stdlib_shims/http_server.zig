@@ -747,23 +747,27 @@ export fn nox_http_server_close(rt: ?*anyopaque, server: ?*anyopaque) callconv(.
     state.allocator().destroy(h);
 }
 
-fn blockingAccept(listen_fd: posix.fd_t) !posix.fd_t {
+fn blockingAccept(listen_fd: posix.fd_t) !io_mod.AcceptResult {
     if (builtin.os.tag == .windows) {
         while (true) {
-            const rc = io_mod.WinSock.accept(@intFromPtr(listen_fd), null, null);
+            var waddr: std.os.windows.ws2_32.sockaddr.in = undefined;
+            var wlen: i32 = @sizeOf(std.os.windows.ws2_32.sockaddr.in);
+            const rc = io_mod.WinSock.accept(@intFromPtr(listen_fd), &waddr, &wlen);
             if (rc != io_mod.WinSock.INVALID_SOCKET) {
                 const conn_fd: posix.fd_t = @ptrFromInt(rc);
                 io_mod.setTcpNodelay(conn_fd);
-                return conn_fd;
+                return .{ .fd = conn_fd, .peer_addr = io_mod.formatPeerAddr(waddr.addr, waddr.port) };
             }
             return error.Unexpected;
         }
     }
     while (true) {
-        const rc = std.c.accept(listen_fd, null, null);
+        var addr: std.c.sockaddr.in = undefined;
+        var len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
+        const rc = std.c.accept(listen_fd, @ptrCast(&addr), &len);
         if (rc >= 0) {
             io_mod.setTcpNodelay(rc);
-            return rc;
+            return .{ .fd = rc, .peer_addr = io_mod.formatPeerAddr(addr.addr, addr.port) };
         }
         switch (posix.errno(rc)) {
             .INTR => continue,
@@ -815,6 +819,13 @@ const ConnCtx = struct {
     // taşınıyordu, HAM `rt` işaretçisinin KENDİSİ YOKTU.
     rt: ?*anyopaque,
     fd: posix.fd_t,
+    /// Aether NOX_LIMITATIONS.md yol haritası, Faz A.3 (bkz. nox-teknik-
+    /// spesifikasyon.md ilgili bölüm): `accept()`in doldurduğu karşı
+    /// tarafın "`ip:port`" adresi — `blockingAccept`/`nonBlockingAccept
+    /// WithTimeout`DAN `serveImpl` TARAFINDAN BURAYA taşınır, `connectionEntry`
+    /// TARAFINDAN `ServerRequest.peer_addr`e (ARC-sahipli bir `str`e)
+    /// çevrilir.
+    peer_addr: io_mod.PeerAddr,
     handler: HandlerFn,
     handler_ctx: ?*anyopaque,
     max_body_bytes: usize,
@@ -861,6 +872,10 @@ const ServerRequest = struct {
     target: ?[*:0]u8,
     body: ?[*:0]u8,
     headers: []const std.http.Header,
+    /// Faz A.3: `connectionEntry` TARAFINDAN `conn.peer_addr`DEN
+    /// (`accept()`in doldurduğu karşı taraf adresi) ARC-sahipli bir `str`
+    /// olarak inşa edilir — `method`/`target`/`body` İLE AYNI disiplin.
+    peer_addr: ?[*:0]u8,
 };
 
 // Faz HH.3 (bkz. nox-teknik-spesifikasyon.md §3.68): `body`/`headers`
@@ -983,6 +998,17 @@ export fn nox_http_request_body(rt: ?*anyopaque, req: ?*anyopaque) callconv(.c) 
     return r.body;
 }
 
+/// Faz A.3 (Aether NOX_LIMITATIONS.md madde 10, bkz. nox-teknik-
+/// spesifikasyon.md ilgili bölüm): `method`/`target`/`body` İLE AYNI
+/// retain-SADECE disiplini — `connectionEntry` ZATEN `r.peer_addr`i
+/// ARC-sahipli olarak inşa etti.
+export fn nox_http_request_peer_addr(rt: ?*anyopaque, req: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+    _ = rt;
+    const r: *ServerRequest = @ptrCast(@alignCast(req orelse return null));
+    if (r.peer_addr) |p| str_mod.nox_str_retain(p);
+    return r.peer_addr;
+}
+
 /// Faz HH.2: `r.headers`nin isim/değerleri ZATEN `connectionEntry`
 /// TARAFINDAN ARC-sahipli olarak inşa edildi — burada YENİDEN `dupeToNoxStr`
 /// İLE kopyalamak YERİNE `retain` edilip dict'e AYNEN eklenir (`nox_dict_set`
@@ -1102,6 +1128,8 @@ fn connectionEntry(arg: *anyopaque) void {
         defer str_mod.nox_str_release(rt, method_str);
         const target_str = http_client.dupeToNoxStr(rt, request.head.target) orelse break;
         defer str_mod.nox_str_release(rt, target_str);
+        const peer_addr_str = http_client.dupeToNoxStr(rt, conn.peer_addr.slice()) orelse break;
+        defer str_mod.nox_str_release(rt, peer_addr_str);
 
         var headers_list: std.ArrayListUnmanaged(std.http.Header) = .empty;
         defer {
@@ -1175,6 +1203,7 @@ fn connectionEntry(arg: *anyopaque) void {
             .target = target_str,
             .body = body_str,
             .headers = headers_list.items,
+            .peer_addr = peer_addr_str,
         };
 
         const resp_payload = conn.handler(conn.handler_ctx, &req_handle);
@@ -1290,13 +1319,14 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
         // ARTIK HİÇ kullanılmıyor (unused ama ZARARSIZ, bilinçli olarak
         // SİLİNMEDİ, bkz. plan dosyası).
         const accept_poll_ms: u32 = if (shared_budget != null) SHARED_BUDGET_POLL_MS else DEFAULT_ACCEPT_POLL_MS;
-        const conn_fd = if (scheduler) |s|
+        const accept_result = if (scheduler) |s|
             (io_mod.nonBlockingAcceptWithTimeout(s, h.listen_fd, accept_poll_ms) catch |e| {
                 if (e == error.Timeout) continue :accept_loop;
                 break :accept_loop;
             })
         else
             blockingAccept(h.listen_fd) catch break :accept_loop;
+        const conn_fd = accept_result.fd;
         served += 1;
 
         // Faz MN.11.1: BAŞKA bir worker AYNI ANDA kotayı ZATEN doldurmuş
@@ -1330,6 +1360,7 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
             .allocator = gpa,
             .rt = rt,
             .fd = conn_fd,
+            .peer_addr = accept_result.peer_addr,
             .handler = handler,
             .handler_ctx = handler_ctx,
             .max_body_bytes = max_body_bytes,

@@ -27094,6 +27094,69 @@ güvenle etkilenmediği. `zig build test`: 171/171 adım, sıfır regresyon
 (iki ardışık temiz çalıştırmayla doğrulandı — `http_serve_multicore`nin
 BİLİNEN, ilişkisiz bağlantı-flakiness'i HARİÇ, bkz. proje belleği).
 
+## 3.225 Aether NOX_LIMITATIONS.md yol haritası, Faz A.3 — `HttpRequest.peer_addr`
+
+**Bağlam:** §3.222/§3.224'ün AYNI yol haritasının madde 10'u — `nox.
+http.serve`in `handle`ına geçirilen `HttpRequest`nin bağlantıyı YAPAN
+istemcinin (karşı tarafın) IP adresini/portunu HİÇ taşımaması (örneğin
+rate-limiting/audit-log/IP-bazlı erişim kontrolü yazmak İSTEYEN bir
+framework İçin eksikti).
+
+**Kök neden:** `accept()`in ÜÇÜNCÜ/dördüncü argümanı (`sockaddr*`/
+`socklen_t*`, karşı tarafın adresini DOLDURAN çıktı parametreleri) `nox.
+http.serve`in TÜM kabul yollarında (`runtime/async_rt/io.zig`nin
+`nonBlockingAccept`/`nonBlockingAcceptWithTimeout`si, `runtime/stdlib_
+shims/http_server.zig`nin `blockingAccept`i — HER İKİSİ de hem POSIX hem
+Windows dallarında) `null, null` olarak geçiliyordu — adres BİLGİSİ
+`accept()` TARAFINDAN ZATEN hesaplanıyor ama ATILIYORDU.
+
+**Çözüm:**
+1. ÜÇ `accept()` çağrı sitesinin ALTISI da (3 fonksiyon × 2 platform
+   dalı) GERÇEK bir `sockaddr_in`/`ws2_32.sockaddr.in` tamponu geçecek
+   şekilde güncellendi — dinleme soketi HER ZAMAN `AF_INET` olduğundan
+   (bkz. `nox_http_listen_fd`) SADECE IPv4 ele alınır. Yeni `io.zig`
+   `PeerAddr`/`AcceptResult`/`formatPeerAddr` (EK bellek tahsisi
+   GEREKTİRMEYEN, sabit 24 baytlık bir tampona `"ip:port"` biçiminde
+   yazan) yardımcıları — `nox_http_server_port`in ZATEN kullandığı
+   `getsockname`/`sockaddr.in` desenini `accept()`e GENİŞLETİR.
+2. `ConnCtx`e (`http_server.zig`) yeni bir `peer_addr: io_mod.PeerAddr`
+   alanı — `serveImpl`nin kabul döngüsünden `connectionEntry`e taşınır.
+3. `connectionEntry`, `method`/`target`/`body` İLE AYNI disiplinle
+   (`http_client.dupeToNoxStr`), `conn.peer_addr`i ARC-sahipli bir `str`e
+   çevirip YENİ `ServerRequest.peer_addr` alanına koyar. Yeni `nox_http_
+   request_peer_addr` erişimcisi (`method`/`target`/`body`nin AYNISI,
+   SADECE `retain`) bunu Nox tarafına sunar.
+4. `stdlib/nox/http.nox`nin `HttpRequest` sınıfına YENİ, GEREKLİ (varsayılan
+   DEĞERSİZ — Nox'ta parametre varsayılan değeri YOK) bir `peer_addr: str`
+   parametresi — **BU, `HttpRequest`i DOĞRUDAN inşa eden (nox.http.serve
+   dışı, ör. `nox.router`i birim test eden) ÇAĞRI SİTELERİ İçİn KIRICI bir
+   değişikliktir** — bulunan 3 site (`tests/golden/codegen_cases/router_
+   basic_routing_and_middleware.nox` + `codegen_golden_test.zig`nin 2
+   satır-içi fixture'ı) YENİ 5. argümanı (`"127.0.0.1:0"`, testin
+   kendisiyle İLGİSİZ bir yer-tutucu) geçirecek şekilde güncellendi.
+5. `compiler/codegen_qbe/types.zig`nin `UsedRequestFields`i + `http_
+   intrinsics.zig`nin `markRequestField`/`genHttpServeWrapper`i, `method`/
+   `target`/`body` İLE AYNI Faz HH.4 tembel-okuma desenini (`handle`
+   `req.peer_addr`e HİÇ dokunmuyorsa pahalı `retain` ATLANIR)
+   `peer_addr`e GENİŞLETTİ.
+
+### Test
+
+`tests/compat/http_serve_golden_test.zig`e YENİ bir uçtan-uca test:
+GERÇEK bir istemci soketi bağlanır, KENDİ `getsockname()`'İYLE kendi
+yerel `ip:port`ini okur, sunucuya bir istek gönderir; sunucunun `handle`ı
+`print(req.peer_addr)` yapar — çocuk sürecin stdout'u istemcinin KENDİ
+okuduğu adresle BİREBİR karşılaştırılır (sahte/varsayımsal bir değer
+DEĞİL, ÇAPRAZ doğrulama). `zig build test`: 171/171 adım, sıfır regresyon
+(iki ardışık temiz çalıştırmayla doğrulandı). **Not:** Windows `accept()`
+dalı (`WinSock.accept`e GERÇEK bir `sockaddr`/`addrlen` çifti geçirilmesi)
+BU oturumda yerel olarak cross-compile EDİLEMEDİ (host'ta Windows-hedefli
+bir `cc`/assembler YOK, `swap_x86_64.S`nin derlenmesi bu YÜZDEN
+başarısız) — `nox_http_server_port`in ZATEN kanıtlanmış AYNI tip çiftini
+(`ws2_32.sockaddr.in`) kullandığından YÜKSEK güvenle doğru olduğu
+değerlendirildi, AMA GERÇEK doğrulama CI'nin native Windows runner'ına
+BIRAKILDI.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

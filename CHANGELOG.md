@@ -14,6 +14,23 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.127.0]
+
+### Eklendi
+
+- **`HttpRequest.peer_addr` (bkz. nox-teknik-spesifikasyon.md §3.225,
+  Aether NOX_LIMITATIONS.md madde 10)**: `nox.http.serve`in `handle`ına
+  geçirilen istek artık bağlantıyı yapan istemcinin IP adresini/portunu
+  (`"ip:port"`, IPv4) `peer_addr: str` alanında taşıyor — `accept()`in
+  zaten hesapladığı ama önceden atılan bilgi artık kullanılıyor.
+
+### Değiştirildi (KIRICI)
+
+- **`HttpRequest`in kurucusu artık 5 argüman alıyor** (`method, target,
+  body, headers, peer_addr`) — `nox.http.serve` dışında `HttpRequest`i
+  doğrudan inşa eden kod (ör. `nox.router`i gerçek bir sunucu olmadan
+  birim test etmek) yeni `peer_addr` argümanını da geçirmelidir.
+
 ## [1.126.0]
 
 ### Eklendi

@@ -1666,12 +1666,12 @@ test "codegen(çalıştır): Faz 1 decorator — router_from_decorators() uçtan
         \\r: Router = nox.reflect.router_from_decorators()
         \\
         \\empty_headers: dict[str, str] = {}
-        \\get_req: HttpRequest = HttpRequest("GET", "/users/42", "", empty_headers)
+        \\get_req: HttpRequest = HttpRequest("GET", "/users/42", "", empty_headers, "127.0.0.1:0")
         \\get_resp: HttpResponse = r.dispatch(get_req)
         \\print(get_resp.status)
         \\print(get_resp.body)
         \\
-        \\post_req: HttpRequest = HttpRequest("POST", "/users", "", empty_headers)
+        \\post_req: HttpRequest = HttpRequest("POST", "/users", "", empty_headers, "127.0.0.1:0")
         \\post_resp: HttpResponse = r.dispatch(post_req)
         \\print(post_resp.status)
         \\print(post_resp.body)

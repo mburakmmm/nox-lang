@@ -34,6 +34,7 @@ pub fn markRequestField(used: *UsedRequestFields, attr: []const u8) void {
     if (std.mem.eql(u8, attr, "target")) used.target = true;
     if (std.mem.eql(u8, attr, "body")) used.body = true;
     if (std.mem.eql(u8, attr, "headers")) used.headers = true;
+    if (std.mem.eql(u8, attr, "peer_addr")) used.peer_addr = true;
 }
 
 /// Faz HH.4: `param_name` isimli tanımlayıcının (`handle`in `req`
@@ -714,6 +715,15 @@ pub fn genHttpServeWrapper(self: *Codegen, spec: HttpServeWrapperSpec) CodegenEr
             req_values[i] = if (spec.used_fields.body) blk: {
                 const t = try self.newTemp();
                 try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_http_request_body", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%req" } });
+                break :blk .{ .text = t, .qtype = .l, .heap = .str };
+            } else try self.emitStringLiteral("");
+        } else if (std.mem.eql(u8, f.name, "peer_addr")) {
+            // Faz A.3: `method`/`target`/`body` İLE AYNI tembel desen —
+            // handle `req.peer_addr`e HİÇ dokunmuyorsa pahalı retain'i
+            // (bkz. HH.2/HH.4) ATLA.
+            req_values[i] = if (spec.used_fields.peer_addr) blk: {
+                const t = try self.newTemp();
+                try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_http_request_peer_addr", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%req" } });
                 break :blk .{ .text = t, .qtype = .l, .heap = .str };
             } else try self.emitStringLiteral("");
         } else if (std.mem.eql(u8, f.name, "headers")) {

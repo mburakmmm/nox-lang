@@ -8,15 +8,22 @@ class HttpResponse:
         self.headers = headers
 
 # stdlib fazı §D.1.6: `nox.http.serve`in `handle` çağrı sitesine geçtiği
-# istek nesnesi — alan SIRASI (method, target, body, headers) codegen'in
-# `genHttpServeWrapper`ının HANGİ `nox_http_request_*` erişimcisini hangi
-# alana yazacağını AD üzerinden çözmesiyle EŞLEŞMELİDİR (bkz. codegen.zig).
+# istek nesnesi — alan SIRASI (method, target, body, headers, peer_addr)
+# codegen'in `genHttpServeWrapper`ının HANGİ `nox_http_request_*`
+# erişimcisini hangi alana yazacağını AD üzerinden çözmesiyle
+# EŞLEŞMELİDİR (bkz. codegen.zig).
+#
+# Aether NOX_LIMITATIONS.md yol haritası, Faz A.3 (bkz. nox-teknik-
+# spesifikasyon.md ilgili bölüm): `peer_addr` — bağlantıyı kabul eden
+# `accept()`in doldurduğu karşı tarafın "`ip:port`" adresi (HER ZAMAN
+# IPv4 — dinleme soketi HER ZAMAN `AF_INET`dir).
 class HttpRequest:
-    def __init__(self: HttpRequest, method: str, target: str, body: str, headers: dict[str, str]) -> None:
+    def __init__(self: HttpRequest, method: str, target: str, body: str, headers: dict[str, str], peer_addr: str) -> None:
         self.method = method
         self.target = target
         self.body = body
         self.headers = headers
+        self.peer_addr = peer_addr
 
 extern def nox_http_get_raw(url: str, headers: dict[str, str]) -> ptr from "zig-out/lib/noxrt.o" with_rt
 extern def nox_http_post_raw(url: str, body: str, headers: dict[str, str]) -> ptr from "zig-out/lib/noxrt.o" with_rt

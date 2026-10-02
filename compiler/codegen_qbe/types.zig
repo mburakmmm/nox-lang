@@ -227,9 +227,10 @@ pub const UsedRequestFields = struct {
     target: bool = false,
     body: bool = false,
     headers: bool = false,
+    peer_addr: bool = false,
 
     pub fn allUsed() UsedRequestFields {
-        return .{ .method = true, .target = true, .body = true, .headers = true };
+        return .{ .method = true, .target = true, .body = true, .headers = true, .peer_addr = true };
     }
 };
 

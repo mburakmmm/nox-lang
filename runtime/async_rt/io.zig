@@ -165,10 +165,45 @@ fn fiberSafeUnexpectedErrno(scheduler: *Scheduler, e: posix.E) error{Unexpected}
     return error.Unexpected;
 }
 
+/// Aether NOX_LIMITATIONS.md yol haritası, Faz A.3 (bkz. nox-teknik-
+/// spesifikasyon.md ilgili bölüm): `accept()`in KENDİSİNİN zaten
+/// doldurduğu (ama ÖNCEDEN `null, null` geçildiği İçİn ATILAN) karşı
+/// tarafın IPv4 adresi/portu — "`ip:port`" biçiminde, sabit boyutlu (ek
+/// bir bellek tahsisi GEREKTİRMEYEN) bir tampon. Dinleme soketi HER ZAMAN
+/// `AF_INET`dir (bkz. `http_server.zig`nin `nox_http_listen_fd`i), bu
+/// YÜZDEN yalnızca IPv4 ele alınır.
+pub const PeerAddr = struct {
+    bytes: [24]u8 = undefined,
+    len: u8 = 0,
+
+    pub fn slice(self: *const PeerAddr) []const u8 {
+        return self.bytes[0..self.len];
+    }
+};
+
+/// `nonBlockingAccept`/`nonBlockingAcceptWithTimeout`/`http_server.zig`nin
+/// `blockingAccept`i ARTIK bu ÜÇLÜYÜ (ham fd + biçimlendirilmiş karşı
+/// taraf adresi) BİRLİKTE döner — ÖNCEDEN SADECE `posix.fd_t` dönüyordu.
+pub const AcceptResult = struct {
+    fd: posix.fd_t,
+    peer_addr: PeerAddr,
+};
+
+pub fn formatPeerAddr(ip_be: u32, port_be: u16) PeerAddr {
+    var out: PeerAddr = .{};
+    const ip = std.mem.bigToNative(u32, ip_be);
+    const port = std.mem.bigToNative(u16, port_be);
+    const s = std.fmt.bufPrint(&out.bytes, "{d}.{d}.{d}.{d}:{d}", .{
+        (ip >> 24) & 0xff, (ip >> 16) & 0xff, (ip >> 8) & 0xff, ip & 0xff, port,
+    }) catch unreachable;
+    out.len = @intCast(s.len);
+    return out;
+}
+
 /// `listen_fd` üzerinde bir bağlantı hazır olana kadar ÇAĞIRAN fiber'ı
 /// (bkz. `Scheduler.suspendForIo`) askıya alır — GERÇEK sonuç alınana ya
 /// da gerçek bir hataya kadar TEKRAR dener.
-pub fn nonBlockingAccept(scheduler: *Scheduler, listen_fd: posix.fd_t) !posix.fd_t {
+pub fn nonBlockingAccept(scheduler: *Scheduler, listen_fd: posix.fd_t) !AcceptResult {
     // Faz [YENİ] (bkz. plan dosyası "setNonBlocking'in her okuma/yazmada
     // gereksiz tekrarını gidermek"): BİLİNÇLİ olarak `bindAndListen()`e
     // TAŞINMADI — `http_server.zig`nin `blockingAccept`i (fiber-siz senkron
@@ -185,12 +220,14 @@ pub fn nonBlockingAccept(scheduler: *Scheduler, listen_fd: posix.fd_t) !posix.fd
     setNonBlocking(listen_fd);
     while (true) {
         if (builtin.os.tag == .windows) {
-            const rc = WinSock.accept(@intFromPtr(listen_fd), null, null);
+            var waddr: std.os.windows.ws2_32.sockaddr.in = undefined;
+            var wlen: i32 = @sizeOf(std.os.windows.ws2_32.sockaddr.in);
+            const rc = WinSock.accept(@intFromPtr(listen_fd), &waddr, &wlen);
             if (rc != WinSock.INVALID_SOCKET) {
                 const conn_fd: posix.fd_t = @ptrFromInt(rc);
                 setTcpNodelay(conn_fd);
                 setNonBlocking(conn_fd);
-                return conn_fd;
+                return .{ .fd = conn_fd, .peer_addr = formatPeerAddr(waddr.addr, waddr.port) };
             }
             if (WinSock.WSAGetLastError() == WinSock.WSAEWOULDBLOCK) {
                 scheduler.suspendForIo(listen_fd, .read);
@@ -203,11 +240,13 @@ pub fn nonBlockingAccept(scheduler: *Scheduler, listen_fd: posix.fd_t) !posix.fd
             if (WinSock.WSAGetLastError() == WinSock.WSAECONNABORTED or WinSock.WSAGetLastError() == WinSock.WSAECONNRESET) continue;
             return error.Unexpected;
         }
-        const rc = std.c.accept(listen_fd, null, null);
+        var addr: std.c.sockaddr.in = undefined;
+        var len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
+        const rc = std.c.accept(listen_fd, @ptrCast(&addr), &len);
         if (rc >= 0) {
             setTcpNodelay(rc);
             setNonBlocking(rc);
-            return rc;
+            return .{ .fd = rc, .peer_addr = formatPeerAddr(addr.addr, addr.port) };
         }
         switch (posix.errno(rc)) {
             .AGAIN => scheduler.suspendForIo(listen_fd, .read),
@@ -233,17 +272,19 @@ pub fn nonBlockingAccept(scheduler: *Scheduler, listen_fd: posix.fd_t) !posix.fd
 /// edebilmesini SAĞLAR — aksi halde kotayı hiç ALAMAYAN bir worker,
 /// `SO_REUSEPORT`nin kernel-seviyesi bağlantı dağılımının kendisine
 /// HİÇBİR ŞEY yönlendirmediği durumda `accept()`te SONSUZA KADAR bekler.
-pub fn nonBlockingAcceptWithTimeout(scheduler: *Scheduler, listen_fd: posix.fd_t, timeout_ms: u32) !posix.fd_t {
+pub fn nonBlockingAcceptWithTimeout(scheduler: *Scheduler, listen_fd: posix.fd_t, timeout_ms: u32) !AcceptResult {
     // Faz [YENİ] — bkz. `nonBlockingAccept`in AYNI notu.
     setNonBlocking(listen_fd);
     while (true) {
         if (builtin.os.tag == .windows) {
-            const rc = WinSock.accept(@intFromPtr(listen_fd), null, null);
+            var waddr: std.os.windows.ws2_32.sockaddr.in = undefined;
+            var wlen: i32 = @sizeOf(std.os.windows.ws2_32.sockaddr.in);
+            const rc = WinSock.accept(@intFromPtr(listen_fd), &waddr, &wlen);
             if (rc != WinSock.INVALID_SOCKET) {
                 const conn_fd: posix.fd_t = @ptrFromInt(rc);
                 setTcpNodelay(conn_fd);
                 setNonBlocking(conn_fd);
-                return conn_fd;
+                return .{ .fd = conn_fd, .peer_addr = formatPeerAddr(waddr.addr, waddr.port) };
             }
             if (WinSock.WSAGetLastError() == WinSock.WSAEWOULDBLOCK) {
                 if (scheduler.suspendForIoOrTimeout(listen_fd, .read, timeout_ms) == .timed_out) return error.Timeout;
@@ -252,11 +293,13 @@ pub fn nonBlockingAcceptWithTimeout(scheduler: *Scheduler, listen_fd: posix.fd_t
             if (WinSock.WSAGetLastError() == WinSock.WSAECONNABORTED or WinSock.WSAGetLastError() == WinSock.WSAECONNRESET) continue;
             return error.Unexpected;
         }
-        const rc = std.c.accept(listen_fd, null, null);
+        var addr: std.c.sockaddr.in = undefined;
+        var len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
+        const rc = std.c.accept(listen_fd, @ptrCast(&addr), &len);
         if (rc >= 0) {
             setTcpNodelay(rc);
             setNonBlocking(rc);
-            return rc;
+            return .{ .fd = rc, .peer_addr = formatPeerAddr(addr.addr, addr.port) };
         }
         switch (posix.errno(rc)) {
             .AGAIN => if (scheduler.suspendForIoOrTimeout(listen_fd, .read, timeout_ms) == .timed_out) return error.Timeout,

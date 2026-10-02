@@ -741,3 +741,86 @@ test "nox.http.serve: Connection: close GONDERILMEDEN ayni baglanti uzerinden IK
     try std.testing.expect(std.mem.indexOf(u8, resp1, "connection: close") == null);
     try std.testing.expect(std.mem.indexOf(u8, resp2, "connection: close") != null);
 }
+
+// Aether NOX_LIMITATIONS.md yol haritası, Faz A.3 (madde 10, bkz. nox-
+// teknik-spesifikasyon.md ilgili bölüm): `req.peer_addr`in `accept()`in
+// KENDİSİNİN doldurduğu GERÇEK istemci adresini (`127.0.0.1:<istemcinin
+// KENDİ yerel portu>`) taşıdığını, istemcinin KENDİ `getsockname()`'iyle
+// (bağlandığı KENDİ yerel adresi) ÇAPRAZ doğrular.
+test "nox.http.serve: req.peer_addr GERCEK istemci adresini (ip:port) tasir" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const port = try probeFreePort();
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const source = try std.fmt.allocPrint(a,
+        \\import nox.http
+        \\
+        \\def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    print(req.peer_addr)
+        \\    return nox_http_HttpResponse(200, "ok", {{}})
+        \\
+        \\nox.http.serve({d}, handle, 1)
+        \\
+    , .{port});
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const bin_path = try compileToBinary(a, &tmp, source);
+
+    var child = try std.process.spawn(io, .{
+        .argv = &.{bin_path},
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 45_000);
+    defer watchdog.disarm();
+
+    var client_local_port: u16 = 0;
+    const client_thread = try std.Thread.spawn(.{}, struct {
+        fn run(p: u16, local_port_out: *u16) void {
+            const fd = testConnect(p) catch return;
+            defer _ = std.c.close(fd);
+            var got: std.c.sockaddr.in = undefined;
+            var got_len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
+            if (std.c.getsockname(fd, @ptrCast(&got), &got_len) == 0) {
+                local_port_out.* = std.mem.bigToNative(u16, got.port);
+            }
+            testSendGet(fd, "/");
+            testReadAll(fd);
+        }
+    }.run, .{ port, &client_local_port });
+    client_thread.join();
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
+    const stdout_data = try stdout_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stdout_data);
+
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
+    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stderr_data);
+
+    const term = try child.wait(io);
+    if (term != .exited) {
+        std.debug.print("cocuk surec normal cikmadi (olasi askidan sonra watchdog tarafindan oldurulmus), term={any}\nstdout:\n{s}\nstderr:\n{s}\n", .{ term, stdout_data, stderr_data });
+    }
+    try std.testing.expect(term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), term.exited);
+
+    if (stderr_data.len != 0) {
+        std.debug.print("program stderr'e beklenmeyen bir çıktı yazdı (olası bellek sızıntısı/UAF): {s}\n", .{stderr_data});
+        return error.UnexpectedStderrOutput;
+    }
+
+    try std.testing.expect(client_local_port != 0);
+    const expected = try std.fmt.allocPrint(a, "127.0.0.1:{d}\n", .{client_local_port});
+    try std.testing.expectEqualStrings(expected, stdout_data);
+}
