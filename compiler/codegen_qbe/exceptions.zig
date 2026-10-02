@@ -42,6 +42,30 @@ pub fn genRaise(self: *Codegen, expr: ast.Expr) CodegenError!void {
     // artık "sahiplik nox_raise'e TAŞINDI" sayılır, aşağıdaki fonksiyon-
     // terk-etme dalının serbest bırakma listesinden HARİÇ TUTULUR.
     const except_name: ?[]const u8 = if (expr == .identifier) expr.identifier else null;
+    // v1.125.1 (gerçek double-free, bkz. nox-teknik-spesifikasyon.md
+    // §3.223): yukarıdaki `except_name` hariç tutması YALNIZCA
+    // `emitExceptionCheckExcept`in "yakalanmadan fonksiyonu terk et"
+    // dallarında (current_catch_label YOKSA) işler — AMA bir `try` bloğu
+    // İÇİNDE `raise <isim>` edildiğinde (current_catch_label VARSA)
+    // `emitExceptionCheckExcept` hiçbir serbest bırakma YAPMADAN doğrudan
+    // dispatch etiketine ZIPLAR, bu YÜZDEN `except_name` hariç tutması HİÇ
+    // ÇALIŞMAZ. Bu durumda `raise e`nin KENDİ yerel slotu (`e`), istisna
+    // `except X as e2:` İLE yakalanıp AYNI nesneye BAŞKA bir yerelden
+    // (`e2`) bağlandığında, fonksiyonun/`main`in kapsam-sonu
+    // `releaseAllLocals`ı HEM `e` HEM `e2`yi (AYNI işaretçiyi) bağımsız
+    // serbest bırakıyor — ÇİFT SERBEST BIRAKMA. Düzeltme: `raise <isim>`
+    // sahipliği GERÇEKTEN taşıdığından, o yerelin KENDİ slotunu BURADA,
+    // `nox_raise` çağrısından HEMEN SONRA sıfırla (`releaseNamedLocalsExcept`in
+    // AYNI hariç-tutma dalının yaptığı GİBİ) — hangi yoldan sonradan serbest
+    // bırakılmaya çalışılırsa çalışılsın (`releaseValueIfSet`in null-koruması
+    // sayesinde) artık GÜVENLİ bir no-op olur.
+    if (except_name) |name| {
+        if (self.vars.get(name)) |info| {
+            if (!info.is_param and !info.arena and isHeapManaged(info.heap)) {
+                try self.qbeStoreImmL(0, info.slot);
+            }
+        }
+    }
     try self.emitExceptionCheckExcept(except_name);
 }
 

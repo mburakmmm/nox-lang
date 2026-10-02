@@ -14,6 +14,24 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.125.1]
+
+### Düzeltildi
+
+- **İsimli bir yerelin AYNI fonksiyon kapsamında raise edilip except ile
+  yakalanması artık çift serbest bırakmıyor (bkz. nox-teknik-
+  spesifikasyon.md §3.223)**: `e: T = T(...); try: raise e; except T as
+  e2: ...` deseni (raise ve onu yakalayan except AYNI fonksiyonda, bir
+  dispatch etiketi aktifken) önceden bir double-free/SIGSEGV'e yol
+  açıyordu — `raise <isim>`in "sahiplik nox_raise'e taşınır" kabulü
+  yalnızca fonksiyon-sınırı-ötesi (yakalanmamış) propagation yollarında
+  işliyordu, AYNI fonksiyon içi dispatch zıplamasında HİÇ uygulanmıyordu;
+  kapsam sonunda hem raise edilen isim hem onu yakalayan except-bağlaması
+  (AYNI nesne, İKİ ayrı yerel) bağımsız serbest bırakılıyordu. Düzeltme:
+  `raise <isim>` artık o ismin KENDİ slotunu HEMEN sıfırlıyor — hangi
+  koddan geçerse geçsin sonraki serbest bırakma denemeleri güvenli bir
+  no-op oluyor.
+
 ## [1.125.0]
 
 ### Düzeltildi

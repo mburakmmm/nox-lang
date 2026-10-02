@@ -1,0 +1,21 @@
+# v1.126.0 (bkz. nox-teknik-spesifikasyon.md ilgili bölüm): GERÇEK bir
+# çift-serbest-bırakma (double-free) hatasının regresyon testi. `e2`
+# try-BLOĞUNUN DIŞINDA bildirilmiş, bare-identifier olarak raise edilmiş;
+# AYNI fonksiyonun (main'in) `except ... as e3:` bloğu AYNI nesneyi BAŞKA
+# bir yerel isme (`e3`) bağlıyor. `raise e2`nin KENDİ try bloğunun
+# İÇİNDE, dispatch için bir `current_catch_label` SET İKEN olması (bkz.
+# `emitExceptionCheckExcept`in current_catch_label dalı — HİÇBİR serbest
+# bırakma yapmadan doğrudan ZIPLAR) `raise_named_local_cross_function.nox`
+# testinin (fonksiyon SINIRI ötesinde raise/catch) KAPSAMADIĞI, FARKLI bir
+# kod yoludur: DÜZELTME öncesi `main`in kapsam-sonu `releaseAllLocals`ı
+# HEM `e2` HEM `e3`yi (AYNI işaretçi) bağımsız serbest bırakıp bir
+# double-free/use-after-free (SIGSEGV) üretiyordu.
+class PlainError:
+    def __init__(self: PlainError, message: str) -> None:
+        self.message = message
+
+e2: PlainError = PlainError("ayni nesne")
+try:
+    raise e2
+except PlainError as e3:
+    print(e3.message)

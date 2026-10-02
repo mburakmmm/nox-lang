@@ -26963,6 +26963,73 @@ doğrular. `zig build test`: 171/171 adım, sıfır regresyon (41 mevcut
 `generateModule` çağrı sitesi YENİ `resolved_bases` parametresiyle
 mekanik olarak güncellendi, davranış DEĞİŞMEDİ — hepsi `.empty` geçer).
 
+## 3.223 İsimli bir yerelin AYNI fonksiyon kapsamında raise edilip except ile yakalanması — çift serbest bırakma (double-free)
+
+**Bağlam:** Bu bölüm, §3.222'nin (Aether NOX_LIMITATIONS.md yol
+haritası) BİR PARÇASI DEĞİLDİR — bağımsız, kullanıcının ayrıca işaretlediği
+bir hata-düzeltme görevidir. Minimal repro:
+
+```nox
+e2: ValueError = ValueError("constructed early")
+try:
+    raise e2
+except ValueError as e3:
+    print(e3.message)
+```
+
+Bu, `DebugAllocator`ın "Double free detected" uyarısıyla ya da (derleme
+ayarına bağlı olarak) doğrudan bir SIGSEGV ile çöküyordu — `lldb` ile
+çöküş noktası `main`in KENDİ kapsam-sonu temizliğine (`alloc.arc.
+releaseWorklistReadTag`, `nox_rc_release_enqueue_dynamic` üzerinden)
+kadar izlendi.
+
+**Kök neden:** `raise <isim>` (bare identifier), `exceptions.zig`'in
+`genRaise`i TARAFINDAN bir "sahiplik taşıma" (move) olarak kabul edilir
+(bkz. `except_name` değişkeninin belge notu) — AMA bu kabul, YALNIZCA
+`emitExceptionCheckExcept`in "yakalanmadan fonksiyonu terk et" dallarında
+(`current_catch_label == null`) GEÇERLİYDİ: o dallar `releaseAllLocalsExcept
+(except_name)` çağırıp isimlendirilen yereli serbest bırakma listesinden
+HARİÇ TUTUYORDU. AMA raise, bir `try` bloğunun İÇİNDE, AYNI fonksiyonda bir
+dispatch etiketi (`current_catch_label`) AKTİFKEN olduğunda,
+`emitExceptionCheckExcept` SADECE `qbeJmp(cl)` ile dispatch'e ZIPLAR — HİÇBİR
+serbest bırakma ÇAĞIRMAZ, bu YÜZDEN `except_name` hariç tutması HİÇ
+ÇALIŞMAZ. `except X as e3:` bloğu daha sonra `exc_ptr`i (raise edilen AYNI
+nesne) DOĞRUDAN `e3`nin KENDİ slotuna yazar (retain OLMADAN — bkz.
+`genTry`). Fonksiyonun/`main`in sonundaki KOŞULSUZ, hariç-tutmasız
+`releaseAllLocals()` ise `self.vars`DEKİ TÜM isimleri (hem `e2` HEM `e3`,
+İKİ AYRI isim, AYNI ALTTAKİ işaretçi) BAĞIMSIZ serbest bırakır — bu, TEK bir
+GERÇEK referansı İKİ KEZ serbest bırakan bir çift-serbest-bırakmadır.
+
+**Düzeltme (dar kapsamlı, AGENTS.md §8 ile uyumlu):** `genRaise`, bir
+bare-identifier raise'den HEMEN SONRA — `emitExceptionCheckExcept`in HANGİ
+dalı ÇALIŞACAK OLURSA OLSUN — o ismin KENDİ slotunu `0`a sıfırlar (AYNEN
+`releaseNamedLocalsExcept`in hariç-tutma dalının YAPTIĞI GİBİ, parametre/
+arena OLMAYAN heap-yönetimli yereller İçİn). Böylece raise edilen isim
+kendi slotunda ARTIK "sıfır/boş" görünür — `releaseValueIfSet`in (bkz.
+ownership.zig) HER ZAMAN uyguladığı null-koruması sayesinde, bu slotu
+SONRADAN HANGİ yoldan (current_catch_label zıplaması SONRASI `main`in
+kapsam-sonu temizliği, `return`, ya da yakalanmamış propagation) serbest
+bırakmaya çalışırsa çalışılsın GÜVENLİ bir no-op olur — gerçek sahiplik
+artık TEK BAŞINA `e3`nin (veya hangi isim yakaladıysa onun) slotunda kalır.
+Bu, önceden VAR OLAN "raise == taşıma" TASARIM NİYETİNİ (İlke #1/§8'in
+ima ettiği, kullanıcıya hiçbir ownership sözdizimi sızdırmayan örtük karar)
+TÜM kod yollarında TUTARLI hale getirir — yeni bir mekanizma İCAT ETMEZ.
+
+### Test
+
+`tests/golden/codegen_cases/raise_named_local_same_scope_no_double_free.
+nox` — repro'nun BİREBİR AYNISI (`PlainError` ile, Exception'dan türeme
+GEREKMEDİĞİNİ de ayrıca doğrular), `.golden` türünde (gerçek `noxc run`
+çalıştırır, DebugAllocator sızıntı/çift-serbest-bırakma denetimi dahil).
+Düzeltme AYRICA `raise_named_local_cross_function.nox`/`arc_raise_escape.
+nox`un (fonksiyon-sınırı-ötesi raise/catch, ÖNCEDEN de doğru çalışan AMA
+ŞİMDİ codegen'i biraz değişen İKİ MEVCUT fixture) IR anlık görüntülerini
+(sadece raise edilen yerelin slotuna yeni bir `storel 0, ...` eklenmesiyle)
+güncelledi — davranışları DEĞİŞMEDİ, sadece KENDİ fonksiyon sınırları
+İÇİNDE ZATEN hariç tutulan bir slotun sıfırlanması artık BURADA da, EN
+ERKEN noktada (raise anında) oluyor. `zig build test`: 171/171 adım,
+sıfır regresyon (iki ardışık temiz çalıştırmayla doğrulandı).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
