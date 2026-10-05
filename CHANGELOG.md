@@ -14,6 +14,19 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.134.0]
+
+### Eklendi
+
+- **`nox.reflect` imza ve constructor metadata'sı (bkz. nox-teknik-
+  spesifikasyon.md §3.232, Aether NOX_LIMITATIONS.md madde 3 + 5)**:
+  `decorator_param_count/param_name/param_type/return_type` ile
+  dekore edilmiş fonksiyonun imzası; `class_count/class_name/
+  class_init_param_count/class_init_param_name/class_init_param_type/
+  class_index` ile her sınıfın `__init__` parametreleri (kendi `__init__`i
+  olmayan sınıf tabanından devralır). Tablolar yalnızca `nox.reflect`
+  kullanan programlara eklenir.
+
 ## [1.133.0]
 
 ### Eklendi

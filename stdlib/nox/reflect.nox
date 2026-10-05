@@ -63,6 +63,54 @@ def decorator_arg_list_len(i: int, j: int) -> int:
 def decorator_arg_list_item(i: int, j: int, k: int) -> str:
     return __nox_reflect_decorator_arg_list_item(i, j, k)
 
+# Aether NOX_LIMITATIONS.md yol haritası, Faz B.5 (madde 3): dekore edilmiş
+# fonksiyonun KENDİ imzası — salt BİLGİ (framework'ler parametre-decorator
+# sarmalayıcıları üretmek İçin). Tip metinleri derleyicinin iç gösterimidir
+# (`int`, `str`, `list[int]`; içe aktarılan sınıflar MANGLE edilmiş adla,
+# ör. `nox_http_HttpRequest` — kullanıcı modülündeki sınıflar çıplak adla).
+# `k` aralık dışıysa boş dize döner.
+def decorator_param_count(i: int) -> int:
+    return __nox_reflect_decorator_param_count(i)
+
+def decorator_param_name(i: int, k: int) -> str:
+    return __nox_reflect_decorator_param_name(i, k)
+
+def decorator_param_type(i: int, k: int) -> str:
+    return __nox_reflect_decorator_param_type(i, k)
+
+def decorator_return_type(i: int) -> str:
+    return __nox_reflect_decorator_return_type(i)
+
+# Faz C.3 (madde 5): HER (generic olmayan) sınıfın `__init__` parametreleri
+# (`self` HARİÇ) — bir DI container'ın KENDİ wiring mantığını yazabilmesi
+# İçin yeterli ham metadata; Nox'un KENDİSİ bir DI çözücü SAĞLAMAZ (bilinçli
+# sınır). Kendi `__init__`i olmayan sınıf TABANININ parametrelerini
+# devralır. Sıra: modül sırası (içe aktarılan stdlib/paket sınıfları DAHİL).
+def class_count() -> int:
+    return __nox_reflect_class_count()
+
+def class_name(i: int) -> str:
+    return __nox_reflect_class_name(i)
+
+def class_init_param_count(i: int) -> int:
+    return __nox_reflect_class_init_param_count(i)
+
+def class_init_param_name(i: int, k: int) -> str:
+    return __nox_reflect_class_init_param_name(i, k)
+
+def class_init_param_type(i: int, k: int) -> str:
+    return __nox_reflect_class_init_param_type(i, k)
+
+# `name` adlı sınıfın `class_*` indeksi, yoksa `-1`.
+def class_index(name: str) -> int:
+    n: int = class_count()
+    i: int = 0
+    while i < n:
+        if class_name(i) == name:
+            return i
+        i = i + 1
+    return -1
+
 # `true` İSE `decorator_handler(i)` GÜVENLE çağrılabilir (fonksiyonun imzası
 # TAM OLARAK `(ctx: Context) -> HttpResponse`dir) — `false` İKEN
 # `decorator_handler(i)` ÇAĞRILMAMALIDIR (null bir kapanışa yol açar).

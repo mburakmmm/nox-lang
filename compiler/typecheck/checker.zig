@@ -179,6 +179,24 @@ pub const DecoratorArg = union(enum) {
 /// Faz 1 decorator: `Checker.decorated_functions`in ELEMANI (bkz. onun
 /// belge notu). `args`, decorator'ın literal argümanlarının ÇÖZÜLMÜŞ
 /// DEĞERLERİDİR — `ast.Decorator.args`nin HAM `Expr` AĞACI DEĞİL.
+/// Faz B.5 + C.3 (bkz. nox-teknik-spesifikasyon.md ilgili bölüm): bir
+/// parametrenin (isim, tip metni) çifti — tip metni `types.format`ın
+/// ürettiği derleyici-içi gösterimdir (ör. `int`, `list[str]`,
+/// `nox_http_HttpRequest` — içe aktarılan sınıflar MANGLE edilmiş adla).
+pub const ParamMeta = struct {
+    name: []const u8,
+    type_name: []const u8,
+};
+
+/// Faz C.3: bir sınıfın `__init__` parametreleri (`self` HARİÇ) —
+/// `nox.reflect.class_*` ile sorgulanır. Kendi `__init__`i olmayan bir
+/// sınıf TABANININ parametrelerini devralır (`init_sig` devralması ile
+/// AYNI).
+pub const ClassCtorInfo = struct {
+    class_name: []const u8,
+    params: []const ParamMeta,
+};
+
 pub const DecoratedFuncInfo = struct {
     /// `registerFunc`e ULAŞTIĞI ANDAKİ `fd.name` — üst-düzey fonksiyonlar
     /// İçin bu ZATEN codegen sembolüyle (VE `functions_used_as_value`nin
@@ -187,6 +205,10 @@ pub const DecoratedFuncInfo = struct {
     func_name: []const u8,
     decorator_name: []const u8,
     args: []const DecoratorArg,
+    /// Faz B.5: dekore edilmiş fonksiyonun KENDİ imzası (salt bilgi —
+    /// framework'ler parametre-decorator sarmalayıcıları üretmek İçin).
+    params: []const ParamMeta = &.{},
+    return_type: []const u8 = "None",
     /// `true` İSE fonksiyonun imzası TAM OLARAK `(ctx: Context) ->
     /// HttpResponse`dir — `nox.reflect.decorator_handler(i)` bu durumda
     /// çağrılabilir bir DEĞER döner (bkz. `functions_used_as_value`e
@@ -453,6 +475,10 @@ pub const Checker = struct {
     /// ÜRETMESİ İçin `generateModule`e AYNEN `functions_used_as_value` GİBİ
     /// bir parametre olarak geçirilir.
     decorated_functions: std.ArrayListUnmanaged(DecoratedFuncInfo) = .empty,
+    /// Faz C.3: HER (generic OLMAYAN) sınıfın `__init__` imzası, MODÜL
+    /// SIRASIYLA (`self.classes` bir hash map'tir — iterasyon sırası
+    /// belirsiz, bu yüzden AYRI sıralı bir liste tutulur).
+    class_ctors: std.ArrayListUnmanaged(ClassCtorInfo) = .empty,
     /// v4 (Faz A madde 1, bkz. nox-teknik-spesifikasyon.md §3.2xx): `@capability.
     /// requires("entropy")` GİBİ bir decorator taşıyan HER üst-düzey `def`/
     /// `extern def` İçin — `registerDecorators`/`registerExternFunc` TARAFINDAN
@@ -1822,6 +1848,42 @@ pub const Checker = struct {
         if (fd.decorators.len > 0) try self.registerDecorators(fd, params, ret);
     }
 
+    /// Faz B.5 + C.3: `nox.reflect`in imza/constructor metadata yerleşikleri
+    /// (`__nox_reflect_decorator_{param_count,param_name,param_type,
+    /// return_type}`, `__nox_reflect_class_{count,name,init_param_count,
+    /// init_param_name,init_param_type}`). Hepsi int argümanlı; sonuç tipi
+    /// tabloda. `name` bunlardan biri DEĞİLSE `null` döner.
+    fn checkReflectMetaIntrinsic(self: *Checker, ctx: *FnCtx, c: ast.Call, name: []const u8) TypeError!?Type {
+        const Entry = struct { name: []const u8, argc: usize, ret: Type };
+        const table = [_]Entry{
+            .{ .name = "__nox_reflect_decorator_param_count", .argc = 1, .ret = .int },
+            .{ .name = "__nox_reflect_decorator_param_name", .argc = 2, .ret = .str },
+            .{ .name = "__nox_reflect_decorator_param_type", .argc = 2, .ret = .str },
+            .{ .name = "__nox_reflect_decorator_return_type", .argc = 1, .ret = .str },
+            .{ .name = "__nox_reflect_class_count", .argc = 0, .ret = .int },
+            .{ .name = "__nox_reflect_class_name", .argc = 1, .ret = .str },
+            .{ .name = "__nox_reflect_class_init_param_count", .argc = 1, .ret = .int },
+            .{ .name = "__nox_reflect_class_init_param_name", .argc = 2, .ret = .str },
+            .{ .name = "__nox_reflect_class_init_param_type", .argc = 2, .ret = .str },
+        };
+        for (table) |e| {
+            if (!std.mem.eql(u8, name, e.name)) continue;
+            if (c.args.len != e.argc) return self.fail(error.ArgumentCountMismatch, "'{s}' tam olarak {d} argüman alır", .{ e.name, e.argc });
+            for (c.args, 0..) |arg, i| {
+                if (try self.checkExpr(ctx, arg) != .int) return self.fail(error.TypeMismatch, "'{s}' argümanı {d} int olmalıdır", .{ e.name, i + 1 });
+            }
+            return e.ret;
+        }
+        return null;
+    }
+
+    /// `types.format`ın ürettiği tip metni (bkz. `ParamMeta`).
+    fn typeText(self: *Checker, t: Type) TypeError![]const u8 {
+        var aw: std.Io.Writer.Allocating = .init(self.allocator);
+        types.format(t, &aw.writer) catch return error.OutOfMemory;
+        return aw.toOwnedSlice() catch return error.OutOfMemory;
+    }
+
     /// Faz 1 decorator (Faz A.6 İLE GENİŞLETİLDİ, bkz. `DecoratorArg`nin
     /// belge notu): `registerFunc`in AYIRDIĞI (sinyal amaçlı) alt adım —
     /// `fd.decorators`nin HER girdisi İçin (a) argümanların string/int/
@@ -1885,10 +1947,14 @@ pub const Checker = struct {
                 }
                 try self.registerCapabilityDecorator(fd.name, dec.name, str_args);
             }
+            const sig_params = try self.allocator.alloc(ParamMeta, fd.params.len);
+            for (fd.params, 0..) |p, pi| sig_params[pi] = .{ .name = p.name, .type_name = try self.typeText(params[pi]) };
             try self.decorated_functions.append(self.allocator, .{
                 .func_name = fd.name,
                 .decorator_name = dec.name,
                 .args = arg_values,
+                .params = sig_params,
+                .return_type = try self.typeText(ret),
                 .is_handler_shaped = is_handler_shaped,
             });
         }
@@ -2670,6 +2736,7 @@ pub const Checker = struct {
             try info.fields.put(self.allocator, fd.name, ft);
             try info.declared_unassigned.put(self.allocator, fd.name, {});
         }
+        var own_init_meta: ?[]const ParamMeta = null;
         for (cd.methods) |m| {
             if (m.type_params.len > 0) {
                 return self.fail(error.TypeMismatch, "metodlar generic olamaz: {s}.{s} (Faz 10 yalnızca serbest fonksiyonları destekler)", .{ cd.name, m.name });
@@ -2688,6 +2755,9 @@ pub const Checker = struct {
             const sig = FuncSig{ .params = params, .return_type = ret };
             if (std.mem.eql(u8, m.name, "__init__")) {
                 info.init_sig = sig;
+                const metas = try self.allocator.alloc(ParamMeta, params.len);
+                for (m.params[1..], 0..) |p, pi| metas[pi] = .{ .name = p.name, .type_name = try self.typeText(params[pi]) };
+                own_init_meta = metas;
             } else {
                 // Faz 7: miras alınan bir metodu EZİYORSA (override) —
                 // v1 katı kuralı, Nox'un genel açık/statik tarzıyla TUTARLI:
@@ -2733,6 +2803,21 @@ pub const Checker = struct {
                 }
             }
         }
+        // Faz C.3: kendi `__init__`i yoksa TABANIN parametrelerini devral
+        // (taban `registerClassSignatures`de ÖNCE işlenir, bu listede ZATEN
+        // vardır); taban da yoksa boş.
+        var ctor_params: []const ParamMeta = own_init_meta orelse &.{};
+        if (own_init_meta == null) {
+            if (info.base) |bn| {
+                for (self.class_ctors.items) |ci| {
+                    if (std.mem.eql(u8, ci.class_name, bn)) {
+                        ctor_params = ci.params;
+                        break;
+                    }
+                }
+            }
+        }
+        try self.class_ctors.append(self.allocator, .{ .class_name = cd.name, .params = ctor_params });
     }
 
     /// Faz 7: iki metod imzasının (self HARİÇ) TAM eşleşip eşleşmediğini
@@ -6187,6 +6272,7 @@ pub const Checker = struct {
                     if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg' argümanı 2 (j) int olmalıdır", .{});
                     return .str;
                 }
+                if (try self.checkReflectMetaIntrinsic(ctx, c, name)) |t| return t;
                 // Faz A.6 (bkz. `DecoratorArg`nin belge notu): `__nox_reflect_
                 // decorator_arg`in int/bool/string-listesi eşdeğerleri — HEPSİ
                 // AYNI (i, j) indeksleme sözleşmesini paylaşır.

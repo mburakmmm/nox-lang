@@ -129,8 +129,13 @@ fn probeFreePort() !u16 {
 /// bağlantı BAŞARILI olana ya da makul bir deneme sayısı tükenene kadar kısa
 /// aralıklarla YENİDEN dener.
 fn testConnect(port: u16) !posix.fd_t {
+    // Pencere 2 sn (200 × 10ms) idi: TÜM test paketi paralel (yük ortalaması
+    // 4-6) çalışırken ikili 2 sn İçİNDE dinlemeye BAŞLAYAMADIĞINDA istemci
+    // SESSİZCE vazgeçiyor (`catch return`), sunucu BİR bağlantı beklerken
+    // 45 sn'lik watchdog'a kadar ASILIYORDU (yük altında iki FARKLI http
+    // testinde gözlendi) — 10 sn'ye çıkarıldı.
     var attempt: usize = 0;
-    while (attempt < 200) : (attempt += 1) {
+    while (attempt < 1000) : (attempt += 1) {
         const fd = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
         if (fd < 0) return error.SocketFailed;
         var addr: std.c.sockaddr.in = .{

@@ -71,7 +71,7 @@ fn generateIr(allocator: std.mem.Allocator, io: std.Io, source: []const u8) !?[]
     var cb_target_it = checker_state.callback_targets.keyIterator();
     while (cb_target_it.next()) |k| try callback_targets.append(allocator, k.*);
 
-    const ir = nox.codegen.generateModule(
+    const ir = nox.codegen.generateModuleWithMeta(
         allocator,
         module,
         checker_state.instantiations.items,
@@ -90,6 +90,7 @@ fn generateIr(allocator: std.mem.Allocator, io: std.Io, source: []const u8) !?[]
         null,
         callback_targets.items,
         .empty,
+        checker_state.class_ctors.items,
     ) catch return null;
 
     return ir;

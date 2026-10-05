@@ -27439,6 +27439,56 @@ from-import/fonksiyon-değer bilgisini geçirir (önceden hepsi `.empty`).
 `zig build test`: üç ardışık temiz çalıştırma (bir önceki koşuda
 `serve_tls` testleri yük kaynaklı flaky düştü, tekrarında geçti).
 
+## 3.232 Aether NOX_LIMITATIONS.md yol haritası, Faz B.5 + C.3 — `nox.reflect` imza/constructor metadata'sı
+
+**Bağlam:** madde 3 (dekore edilmiş fonksiyonun imzası) ve madde 5
+(constructor/parametre tip reflection'ı) — ikisi AYNI "tip metadata dışa
+aktarımı" altyapısını paylaşır, bu yüzden TEK mekanizmayla çözüldü.
+
+**Veri modeli (`checker.zig`):** `ParamMeta {name, type_name}` ve
+`ClassCtorInfo {class_name, params}`. Tip metni `types.format`ın derleyici-
+içi gösterimidir (`int`, `list[str]`; içe aktarılan sınıflar MANGLE edilmiş
+adla — ör. `nox_http_HttpRequest` — kullanıcı modülündekiler çıplak adla).
+`DecoratedFuncInfo`ya `params`/`return_type` eklendi (B.5). Her (generic
+OLMAYAN) sınıfın `__init__` parametreleri (`self` hariç), `self.classes`
+bir hash map (iterasyon sırası belirsiz) olduğundan AYRI, MODÜL SIRALI bir
+`class_ctors` listesinde tutulur; kendi `__init__`i olmayan sınıf
+TABANIN parametrelerini devralır (`init_sig` devralmasıyla aynı).
+
+**Codegen (`decorators.zig`):** dört statik tablo (`$__nox_dec_sigs`,
+`$__nox_dec_sig_params`, `$__nox_class_table`, `$__nox_class_params`;
+dizeler pinned `str`) + dokuz derleyici yerleşiği. Tablolar YALNIZCA
+`nox.reflect` imza/sınıf yerleşiklerini içeren bir program için üretilir
+(`uses_reflect_meta` bayrağı; `reflect.nox` sarmalayıcıları yerleşikleri
+çağırdığından bayrak `nox.reflect` içe aktaran HER programda set olur) —
+diğer programların IR'ı DEĞİŞMEDİ, yalnızca `nox.reflect` içe aktaran tek
+mevcut fixture (`decorator_args_typed_literals`) yeniden üretildi.
+`generateModule` → `generateModuleWithMeta(..., class_ctors)` bölündü;
+eski ad boş meta ile devreder (41 mevcut test çağrısı DEĞİŞMEDİ). LLVM
+backend'de (decorator'larla aynı gerekçe) reddedilir.
+
+**Yüzey (`nox.reflect`):** `decorator_param_count/param_name/param_type/
+return_type`, `class_count/class_name/class_init_param_count/
+class_init_param_name/class_init_param_type`, `class_index(name)` (yoksa
+`-1`). Aralık dışı `k` boş dize döner (çökme yok). Nox'un KENDİSİ bir DI
+çözücü SAĞLAMAZ — metadata'nın kullanımı frameworklere bırakıldı (bilinçli
+sınır).
+
+### Test
+
+`reflect_signature_metadata.nox`: dekore edilmiş fonksiyonun üç
+parametresi (`str`/`int`/`list[float]`) + dönüş tipi (`bool`), kendi
+`__init__`i olan iki sınıf, TABANDAN devralan alt sınıf, hiç `__init__`i
+olmayan sınıf, aralık dışı `k`, olmayan sınıf (`-1`). Golden harness'lar
+(`compile_helpers.zig`, `codegen_ir_diff_test.zig`) artık `class_ctors`
+geçirir (aksi halde sınıf tablosu boş kalıyordu). **Yan bulgu (test
+altyapısı):** paketi paralel çalıştırırken (yük 4-6) iki FARKLI http
+testi 45 sn watchdog'a takıldı — `testConnect` yalnızca 2 sn dener, sunucu
+o sürede dinlemezse istemci sessizce vazgeçer. Pencere 10 sn'ye çıkarıldı
+(varsayım — yük hassasiyeti — sakin sistemde testlerin geçmesiyle
+destekleniyor ama KANITLANMADI). `zig build test`: üç ardışık temiz
+çalıştırma.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

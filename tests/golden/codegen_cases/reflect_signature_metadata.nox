@@ -1,0 +1,60 @@
+# Aether NOX_LIMITATIONS.md yol haritası, Faz B.5 + C.3 (bkz. nox-teknik-
+# spesifikasyon.md ilgili bölüm): `nox.reflect` imza/constructor metadata'sı —
+# dekore edilmiş fonksiyonun parametre isim/tipleri + dönüş tipi, sınıfların
+# `__init__` parametreleri (kendi __init__i olan, TABANDAN devralan, hiç
+# olmayan), `class_index`, aralık-dışı güvenli varsayılanlar.
+import nox.reflect
+
+class Repo:
+    def __init__(self: Repo, dsn: str, pool: int) -> None:
+        self.dsn = dsn
+        self.pool = pool
+
+class Service:
+    def __init__(self: Service, repo: Repo, tags: list[str], debug: bool) -> None:
+        self.repo = repo
+        self.tags = tags
+        self.debug = debug
+
+class AuditService(Service):
+    pass
+
+class Empty:
+    pass
+
+@route("/x")
+def handler(user: str, count: int, scores: list[float]) -> bool:
+    return True
+
+# B.5: dekore edilmiş fonksiyonun imzası.
+print(nox.reflect.decorator_count())
+print(nox.reflect.decorator_param_count(0))
+print(nox.reflect.decorator_param_name(0, 0) + ":" + nox.reflect.decorator_param_type(0, 0))
+print(nox.reflect.decorator_param_name(0, 1) + ":" + nox.reflect.decorator_param_type(0, 1))
+print(nox.reflect.decorator_param_name(0, 2) + ":" + nox.reflect.decorator_param_type(0, 2))
+print(nox.reflect.decorator_return_type(0))
+print("[" + nox.reflect.decorator_param_name(0, 9) + "]")
+
+# C.3: constructor metadata.
+r: int = nox.reflect.class_index("Repo")
+print(nox.reflect.class_init_param_count(r))
+print(nox.reflect.class_init_param_name(r, 0) + ":" + nox.reflect.class_init_param_type(r, 0))
+print(nox.reflect.class_init_param_name(r, 1) + ":" + nox.reflect.class_init_param_type(r, 1))
+
+s: int = nox.reflect.class_index("Service")
+print(nox.reflect.class_init_param_count(s))
+print(nox.reflect.class_init_param_name(s, 0) + ":" + nox.reflect.class_init_param_type(s, 0))
+print(nox.reflect.class_init_param_name(s, 1) + ":" + nox.reflect.class_init_param_type(s, 1))
+print(nox.reflect.class_init_param_name(s, 2) + ":" + nox.reflect.class_init_param_type(s, 2))
+
+# Kendi __init__i olmayan alt sınıf TABANIN parametrelerini devralır.
+a: int = nox.reflect.class_index("AuditService")
+print(nox.reflect.class_init_param_count(a))
+print(nox.reflect.class_init_param_name(a, 0) + ":" + nox.reflect.class_init_param_type(a, 0))
+
+# Hiç __init__i olmayan sınıf: 0 parametre.
+e: int = nox.reflect.class_index("Empty")
+print(nox.reflect.class_init_param_count(e))
+print("[" + nox.reflect.class_init_param_name(e, 0) + "]")
+
+print(nox.reflect.class_index("YokBoyleSinif"))

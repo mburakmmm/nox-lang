@@ -40,6 +40,7 @@ const CodegenError = abi.CodegenError;
 const RT_PARAM = types.RT_PARAM;
 
 pub const DecoratedFuncInfo = checker_mod.DecoratedFuncInfo;
+pub const ClassCtorInfo = checker_mod.ClassCtorInfo;
 
 /// `[func_name_ptr, dec_name_ptr, arg_count, arg_start, is_handler]` — bkz.
 /// modül üstü not. `is_handler` (0/1), `__nox_reflect_decorator_is_handler`
@@ -490,5 +491,168 @@ fn genReflectDecoratorHandler(self: *Codegen, decorated: []const DecoratedFuncIn
         try self.qbeLabel(next_label);
     }
     try self.qbeRet("0");
+    try self.qbeFuncEnd();
+}
+
+// ---- Faz B.5 + C.3: imza / constructor metadata tabloları -------------
+//
+// **Tablo düzenleri (hepsi `l` kelimeleri):**
+//   `$__nox_dec_sigs`        — dekore edilmiş kayıt i'ye 1:1 paralel,
+//                              `[param_count, param_start, return_type_ptr]`
+//   `$__nox_dec_sig_params`  — düzleştirilmiş `(name_ptr, type_ptr)` çiftleri
+//   `$__nox_class_table`     — `[name_ptr, param_count, param_start]`
+//   `$__nox_class_params`    — düzleştirilmiş `(name_ptr, type_ptr)` çiftleri
+// Dizelerin HEPSİ `internPinnedStringConst` İLE pinned birer GERÇEK Nox
+// `str`idir (A.6'nın `$__nox_decorator_args`ıyla AYNI gerekçe). Bu tablolar
+// YALNIZCA `uses_reflect_meta` set EDİLMİŞSE üretilir (bkz. `calls.zig`).
+const SIG_RECORD_WORDS = 3;
+const SIG_RECORD_SIZE = SIG_RECORD_WORDS * 8;
+const PAIR_SIZE = 16;
+
+fn emitMetaPairs(self: *Codegen, params: []const checker_mod.ParamMeta, out: *std.ArrayListUnmanaged([]const u8)) CodegenError!void {
+    for (params) |p| {
+        const name_ptr = try self.internPinnedStringConst(p.name);
+        const type_ptr = try self.internPinnedStringConst(p.type_name);
+        try out.append(self.allocator, name_ptr);
+        try out.append(self.allocator, type_ptr);
+    }
+}
+
+fn emitDataWords(self: *Codegen, sym: []const u8, words: []const []const u8) CodegenError!void {
+    try self.qbeRaw("data ${s} = {{ ", .{sym});
+    if (words.len == 0) {
+        try self.qbeRawAll("l 0");
+    } else {
+        for (words, 0..) |w, i| {
+            if (i > 0) try self.qbeRawAll(", ");
+            try self.qbeRaw("l {s}", .{w});
+        }
+    }
+    try self.qbeRawAll(" }\n");
+}
+
+pub fn genReflectMetadata(self: *Codegen, decorated: []const DecoratedFuncInfo, class_ctors: []const ClassCtorInfo) CodegenError!void {
+    if (!self.uses_reflect_meta) return;
+
+    var sig_words: std.ArrayListUnmanaged([]const u8) = .empty;
+    var sig_pairs: std.ArrayListUnmanaged([]const u8) = .empty;
+    for (decorated) |info| {
+        const start = sig_pairs.items.len / 2;
+        try emitMetaPairs(self, info.params, &sig_pairs);
+        try sig_words.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{d}", .{info.params.len}));
+        try sig_words.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{d}", .{start}));
+        try sig_words.append(self.allocator, try self.internPinnedStringConst(info.return_type));
+    }
+    try emitDataWords(self, "__nox_dec_sigs", sig_words.items);
+    try emitDataWords(self, "__nox_dec_sig_params", sig_pairs.items);
+
+    var class_words: std.ArrayListUnmanaged([]const u8) = .empty;
+    var class_pairs: std.ArrayListUnmanaged([]const u8) = .empty;
+    for (class_ctors) |ci| {
+        const start = class_pairs.items.len / 2;
+        try emitMetaPairs(self, ci.params, &class_pairs);
+        try class_words.append(self.allocator, try self.internPinnedStringConst(ci.class_name));
+        try class_words.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{d}", .{ci.params.len}));
+        try class_words.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{d}", .{start}));
+    }
+    try emitDataWords(self, "__nox_class_table", class_words.items);
+    try emitDataWords(self, "__nox_class_params", class_pairs.items);
+
+    try genMetaWordGetter(self, "__nox_reflect_decorator_param_count", "$__nox_dec_sigs", SIG_RECORD_SIZE, 0, .l);
+    try genMetaWordGetter(self, "__nox_reflect_decorator_return_type", "$__nox_dec_sigs", SIG_RECORD_SIZE, 16, .l);
+    try genMetaPairGetter(self, "__nox_reflect_decorator_param_name", "$__nox_dec_sigs", "$__nox_dec_sig_params", 0);
+    try genMetaPairGetter(self, "__nox_reflect_decorator_param_type", "$__nox_dec_sigs", "$__nox_dec_sig_params", 8);
+
+    try genMetaConstGetter(self, "__nox_reflect_class_count", class_ctors.len);
+    try genMetaWordGetter(self, "__nox_reflect_class_name", "$__nox_class_table", SIG_RECORD_SIZE, 0, .l);
+    try genMetaWordGetter(self, "__nox_reflect_class_init_param_count", "$__nox_class_table", SIG_RECORD_SIZE, 8, .l);
+    try genMetaPairGetter(self, "__nox_reflect_class_init_param_name", "$__nox_class_table", "$__nox_class_params", 0);
+    try genMetaPairGetter(self, "__nox_reflect_class_init_param_type", "$__nox_class_table", "$__nox_class_params", 8);
+}
+
+/// `(rt, i)` → `table[i * stride + field_off]` (ham `l` kelimesi; `str`
+/// alanlarında bu ZATEN pinned dize adresidir).
+fn genMetaWordGetter(self: *Codegen, func_name: []const u8, table: []const u8, stride: usize, field_off: usize, ret_ty: types.QbeType) CodegenError!void {
+    self.temp_counter = 0;
+    self.label_counter = 0;
+    const name_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{func_name});
+    try self.qbeFuncHeaderStart(ret_ty, name_sym);
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%i", false);
+    try self.qbeFuncHeaderEnd();
+    const off = try self.newTemp();
+    try self.qbeOp2Imm(off, .l, "mul", "%i", @intCast(stride));
+    const base = try self.newTemp();
+    try self.qbeOp2(base, .l, "add", table, off);
+    const addr = try self.newTemp();
+    try self.qbeOp2Imm(addr, .l, "add", base, @intCast(field_off));
+    const val = try self.newTemp();
+    try self.qbeLoadL(val, addr);
+    try self.qbeRet(val);
+    try self.qbeFuncEnd();
+}
+
+/// `(rt, i, k)` → `i`. kaydın `k`. `(name, type)` çiftinin `item_off`
+/// alanı. Kayıt düzeni `[... count@8, start@16]` DEĞİL — dekore edilmiş
+/// imza tablosu `[count@0, start@8, ret@16]`, sınıf tablosu `[name@0,
+/// count@8, start@16]` — bu YÜZDEN `count`/`start` ofsetleri tablo
+/// sembolüne göre seçilir. `k` SINIR DIŞIYSA pinned boş dize döner.
+fn genMetaPairGetter(self: *Codegen, func_name: []const u8, table: []const u8, items_table: []const u8, item_off: usize) CodegenError!void {
+    const is_class = std.mem.eql(u8, table, "$__nox_class_table");
+    const count_off: usize = if (is_class) 8 else 0;
+    const start_off: usize = if (is_class) 16 else 8;
+    self.temp_counter = 0;
+    self.label_counter = 0;
+    const name_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{func_name});
+    try self.qbeFuncHeaderStart(.l, name_sym);
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%i", false);
+    try self.qbeFuncParam(.l, "%k", false);
+    try self.qbeFuncHeaderEnd();
+    const rec_off = try self.newTemp();
+    try self.qbeOp2Imm(rec_off, .l, "mul", "%i", SIG_RECORD_SIZE);
+    const rec = try self.newTemp();
+    try self.qbeOp2(rec, .l, "add", table, rec_off);
+    const count_addr = try self.newTemp();
+    try self.qbeOp2Imm(count_addr, .l, "add", rec, @intCast(count_off));
+    const count = try self.newTemp();
+    try self.qbeLoadL(count, count_addr);
+    const in_bounds = try self.newTemp();
+    try self.qbeOp2(in_bounds, .w, "cultl", "%k", count);
+    const ok_label = try self.newLabel("meta_pair_ok");
+    const bad_label = try self.newLabel("meta_pair_bad");
+    try self.qbeJnz(in_bounds, ok_label, bad_label);
+    try self.qbeLabel(bad_label);
+    const empty = try self.emitStringLiteral("");
+    try self.qbeRet(empty.text);
+    try self.qbeLabel(ok_label);
+    const start_addr = try self.newTemp();
+    try self.qbeOp2Imm(start_addr, .l, "add", rec, @intCast(start_off));
+    const start = try self.newTemp();
+    try self.qbeLoadL(start, start_addr);
+    const idx = try self.newTemp();
+    try self.qbeOp2(idx, .l, "add", start, "%k");
+    const pair_off = try self.newTemp();
+    try self.qbeOp2Imm(pair_off, .l, "mul", idx, PAIR_SIZE);
+    const pair = try self.newTemp();
+    try self.qbeOp2(pair, .l, "add", items_table, pair_off);
+    const item_addr = try self.newTemp();
+    try self.qbeOp2Imm(item_addr, .l, "add", pair, @intCast(item_off));
+    const val = try self.newTemp();
+    try self.qbeLoadL(val, item_addr);
+    try self.qbeRet(val);
+    try self.qbeFuncEnd();
+}
+
+/// `(rt)` → sabit `n` (ör. sınıf sayısı).
+fn genMetaConstGetter(self: *Codegen, func_name: []const u8, n: usize) CodegenError!void {
+    self.temp_counter = 0;
+    self.label_counter = 0;
+    const name_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{func_name});
+    try self.qbeFuncHeaderStart(.l, name_sym);
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncHeaderEnd();
+    const n_text = try std.fmt.allocPrint(self.allocator, "{d}", .{n});
+    try self.qbeRet(n_text);
     try self.qbeFuncEnd();
 }

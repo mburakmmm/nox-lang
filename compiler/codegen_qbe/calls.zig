@@ -725,6 +725,24 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$__nox_reflect_decorator_arg", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = i_v.text }, .{ .ty = .l, .text = j_v.text } });
                 return .{ .text = result_temp, .qtype = .l, .heap = .str };
             }
+            // Faz B.5 + C.3: imza/constructor metadata yerleşikleri (hepsi
+            // `(rt, int...)` → `l`; sonuç `str` olanlar pinned dizedir).
+            // `uses_reflect_meta` bayrağı, `decorators.zig`nin tablo/erişimci
+            // üretimini YALNIZCA bu yerleşikleri GERÇEKTEN çağıran programlarla
+            // sınırlar (diğer programların IR'ı DEĞİŞMEZ).
+            if (reflectMetaResult(name)) |ret_is_str| {
+                self.uses_reflect_meta = true;
+                const arg_values = try self.allocator.alloc(codegen.QbeArg, 1 + c.args.len);
+                arg_values[0] = .{ .ty = .l, .text = RT_PARAM };
+                for (c.args, 0..) |arg, i| {
+                    const v = try self.genExpr(arg);
+                    arg_values[1 + i] = .{ .ty = .l, .text = v.text };
+                }
+                const result_temp = try self.newTemp();
+                const sym = try std.fmt.allocPrint(self.allocator, "${s}", .{name});
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, sym, arg_values);
+                return if (ret_is_str) .{ .text = result_temp, .qtype = .l, .heap = .str } else .{ .text = result_temp, .qtype = .l };
+            }
             // Faz A.6: `__nox_reflect_decorator_arg`in int/bool/string-listesi
             // eşdeğerleri — bkz. `decorators.zig`nin `genReflectDecoratorArgKind`/
             // `genReflectDecoratorArgInt`/`genReflectDecoratorArgBool`/
@@ -1562,6 +1580,29 @@ fn isSuperCallExpr(e: ast.Expr) bool {
         },
         else => false,
     };
+}
+
+/// Faz B.5 + C.3: `name` bir imza/constructor metadata yerleşiği İSE
+/// dönüşün `str` olup olmadığını (`true` = pinned `str`, `false` = `int`),
+/// DEĞİLSE `null` döner. Checker'ın `checkReflectMetaIntrinsic` tablosuyla
+/// AYNI küme.
+fn reflectMetaResult(name: []const u8) ?bool {
+    const Entry = struct { name: []const u8, is_str: bool };
+    const table = [_]Entry{
+        .{ .name = "__nox_reflect_decorator_param_count", .is_str = false },
+        .{ .name = "__nox_reflect_decorator_param_name", .is_str = true },
+        .{ .name = "__nox_reflect_decorator_param_type", .is_str = true },
+        .{ .name = "__nox_reflect_decorator_return_type", .is_str = true },
+        .{ .name = "__nox_reflect_class_count", .is_str = false },
+        .{ .name = "__nox_reflect_class_name", .is_str = true },
+        .{ .name = "__nox_reflect_class_init_param_count", .is_str = false },
+        .{ .name = "__nox_reflect_class_init_param_name", .is_str = true },
+        .{ .name = "__nox_reflect_class_init_param_type", .is_str = true },
+    };
+    for (table) |e| {
+        if (std.mem.eql(u8, name, e.name)) return e.is_str;
+    }
+    return null;
 }
 
 pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {

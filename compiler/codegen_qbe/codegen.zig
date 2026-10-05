@@ -353,6 +353,7 @@ pub const Codegen = struct {
     pub const genNoxInitGlobals = globals_mod.genNoxInitGlobals;
     pub const genNoxDeinitGlobals = globals_mod.genNoxDeinitGlobals;
     pub const genDecoratorMetadata = decorators_mod.genDecoratorMetadata;
+    pub const genReflectMetadata = decorators_mod.genReflectMetadata;
     pub const genGcFreeDispatch = layout.genGcFreeDispatch;
     pub const genClassEq = layout.genClassEq;
     pub const genEqCompareOrJump = layout.genEqCompareOrJump;
@@ -1127,6 +1128,10 @@ pub const Codegen = struct {
     /// AYNI desen, `nox.http.serve` çağrı siteleri İÇİN.
     http_serve_wrapper_counter: usize = 0,
     http_serve_wrappers: std.ArrayListUnmanaged(HttpServeWrapperSpec) = .empty,
+    /// Faz B.5 + C.3: `nox.reflect`in imza/constructor metadata yerleşiklerinden
+    /// BİRİ çağrıldıysa `true` — `decorators.zig`nin ilgili tabloları/
+    /// erişimcileri YALNIZCA o zaman üretilir.
+    uses_reflect_meta: bool = false,
     /// Faz "sunucu-tarafı WebSocket Upgrade": `http_serve_wrapper_counter`/
     /// `http_serve_wrappers` İLE AYNI desen, `nox.http.serve_ws*` çağrı
     /// sitelerinin `ws_handle`i İçİn (bkz. `HttpServeWsWrapperSpec`in
@@ -1432,6 +1437,10 @@ fn collectExplainForBody(gen: *Codegen, allocator: std.mem.Allocator, sink: *std
 }
 
 pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo, backend: Backend, profile: Profile, explain_opts: ?ExplainOptions, callback_targets: []const []const u8, resolved_bases: std.StringHashMapUnmanaged([]const u8)) CodegenError![]u8 {
+    return generateModuleWithMeta(allocator, module, extra_functions, generic_template_names, extra_classes, generic_class_template_names, debug_source_path, closure_infos, defer_synthetic_names, from_imports, functions_used_as_value, module_aliases, decorated_functions, backend, profile, explain_opts, callback_targets, resolved_bases, &.{});
+}
+
+pub fn generateModuleWithMeta(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo, backend: Backend, profile: Profile, explain_opts: ?ExplainOptions, callback_targets: []const []const u8, resolved_bases: std.StringHashMapUnmanaged([]const u8), class_ctors: []const decorators_mod.ClassCtorInfo) CodegenError![]u8 {
     var gen: Codegen = .{ .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos, .defer_synthetic_names = defer_synthetic_names, .from_imports = from_imports, .module_aliases = module_aliases, .backend = backend, .profile = profile, .resolved_bases = resolved_bases };
 
     if (debug_source_path) |path| {
@@ -1828,7 +1837,10 @@ pub fn generateModule(allocator: std.mem.Allocator, module: ast.Module, extra_fu
     // İLE AYNI "boşsa üretme" ilkesi).
     if (gen.backend == .qbe) {
         try gen.genDecoratorMetadata(decorated_functions);
-    } else if (decorated_functions.len > 0) {
+        // Faz B.5 + C.3: imza/constructor metadata tabloları — YALNIZCA
+        // ilgili yerleşikler gerçekten çağrıldıysa (`uses_reflect_meta`).
+        try gen.genReflectMetadata(decorated_functions, class_ctors);
+    } else if (decorated_functions.len > 0 or gen.uses_reflect_meta) {
         return error.Unsupported;
     }
 

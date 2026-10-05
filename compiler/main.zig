@@ -1812,7 +1812,7 @@ fn cmdExplain(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
     // hesaplanır.
     const user_stmt_start = module.body.len - user_module.body.len;
     var explain_sink: std.ArrayListUnmanaged(local_escape.ExplainRecord) = .empty;
-    _ = codegen.generateModule(a, module, checker_state.instantiations.items, generic_names.items, checker_state.class_instantiations.items, generic_class_names.items, null, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend, opts.profile, .{ .sink = &explain_sink, .user_stmt_start = user_stmt_start }, callback_targets.items, resolved_bases) catch |err| {
+    _ = codegen.generateModuleWithMeta(a, module, checker_state.instantiations.items, generic_names.items, checker_state.class_instantiations.items, generic_class_names.items, null, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend, opts.profile, .{ .sink = &explain_sink, .user_stmt_start = user_stmt_start }, callback_targets.items, resolved_bases, checker_state.class_ctors.items) catch |err| {
         printErr("explain: kod uretimi basarisiz ({t})\n", .{err});
         std.process.exit(1);
     };
@@ -2042,7 +2042,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // sınırlaması bilinçli olarak KABUL EDİLDİ).
     const debug_source_path: ?[]const u8 = if (debug_info) path_arg else null;
 
-    const ir = codegen.generateModule(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend, profile, null, callback_targets.items, resolved_bases) catch |err| switch (err) {
+    const ir = codegen.generateModuleWithMeta(a, module, instantiations, generic_names.items, class_instantiations, generic_class_names.items, debug_source_path, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, functions_used_as_value.items, checker_state.module_aliases, checker_state.decorated_functions.items, backend, profile, null, callback_targets.items, resolved_bases, checker_state.class_ctors.items) catch |err| switch (err) {
         error.Unsupported => {
             std.debug.print(
                 "codegen: bu program şu an desteklenmeyen bir yapı içeriyor " ++
