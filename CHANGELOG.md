@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.131.0]
+
+### Eklendi
+
+- **`nox.atomic` (bkz. nox-teknik-spesifikasyon.md §3.229, Aether
+  NOX_LIMITATIONS.md madde 12'nin sınırlı çözümü)**: multicore
+  worker'lar arasında paylaşılan `AtomicInt`/`AtomicBool`. Handle bir
+  `int` olduğundan `nox.thread.start` argümanı olarak geçirilebilir.
+  Genel nesne paylaşımı DEĞİLDİR (worker-başına izolasyon korunur).
+
 ## [1.130.0]
 
 ### Eklendi

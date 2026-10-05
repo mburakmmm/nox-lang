@@ -1,0 +1,107 @@
+# Aether NOX_LIMITATIONS.md yol haritası, Faz B.1 (bkz. nox-teknik-
+# spesifikasyon.md ilgili bölüm, madde 12'nin SINIRLI/güvenli çözümü):
+# `nox.atomic` — multicore worker'lar (`nox.thread.start`/`serve_multicore`)
+# arasında paylaşılan TEK 64-bit hücre: sayaç (`AtomicInt`) ve bayrak
+# (`AtomicBool`).
+#
+# **Bilinçli dar kapsam:** genel bir "paylaşılan nesne grafiği" DEĞİLDİR —
+# `globals_blocks`un worker-başına izolasyonu M:N zamanlayıcının kendi
+# güvenliğinin temelidir, kaldırılmadı. `nox.sharedmem` (AYRI süreçler
+# arası) ile KARIŞTIRILMAMALIDIR.
+#
+# **Kullanım deseni:** ana iş parçacığında `new_int(0)` ile yarat,
+# `counter.handle` (bir `int`) değerini worker'a ARGÜMAN olarak geçir
+# (`nox.thread`in zaten desteklediği aktarım tiplerinden biri), worker'da
+# `from_int_handle(h)` ile AYNI hücreye yeni bir sarmalayıcı kur.
+#
+# **Ömür:** hücre birden çok worker'ın ORTAK malıdır — HİÇBİR otomatik
+# serbest bırakma YOKTUR; tüm worker'lar bittikten sonra bir kez `free()`
+# çağırın. `free()` sonrası aynı handle'ı kullanmak GEÇERSİZ bellek
+# erişimidir (çağıranın sorumluluğu).
+
+extern def nox_atomic_new(initial: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_atomic_load(h: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_atomic_store(h: int, value: int) -> None from "zig-out/lib/noxrt.o"
+extern def nox_atomic_add(h: int, delta: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_atomic_cas(h: int, expected: int, desired: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_atomic_free(h: int) -> None from "zig-out/lib/noxrt.o"
+
+class AtomicError(Exception):
+    pass
+
+class AtomicInt:
+    handle: int
+
+    def __init__(self: AtomicInt, handle: int) -> None:
+        self.handle = handle
+
+    def load(self: AtomicInt) -> int:
+        return nox_atomic_load(self.handle)
+
+    def store(self: AtomicInt, value: int) -> None:
+        nox_atomic_store(self.handle, value)
+
+    # `delta`yı atomik ekler, YENİ değeri döner.
+    def add(self: AtomicInt, delta: int) -> int:
+        return nox_atomic_add(self.handle, delta)
+
+    def increment(self: AtomicInt) -> int:
+        return nox_atomic_add(self.handle, 1)
+
+    def decrement(self: AtomicInt) -> int:
+        return nox_atomic_add(self.handle, -1)
+
+    # Değer `expected` ise `desired` yapar, takas olduysa `True` döner.
+    def compare_and_swap(self: AtomicInt, expected: int, desired: int) -> bool:
+        return nox_atomic_cas(self.handle, expected, desired) != 0
+
+    def free(self: AtomicInt) -> None:
+        nox_atomic_free(self.handle)
+
+class AtomicBool:
+    handle: int
+
+    def __init__(self: AtomicBool, handle: int) -> None:
+        self.handle = handle
+
+    def load(self: AtomicBool) -> bool:
+        return nox_atomic_load(self.handle) != 0
+
+    def store(self: AtomicBool, value: bool) -> None:
+        if value:
+            nox_atomic_store(self.handle, 1)
+        else:
+            nox_atomic_store(self.handle, 0)
+
+    def compare_and_swap(self: AtomicBool, expected: bool, desired: bool) -> bool:
+        e: int = 0
+        d: int = 0
+        if expected:
+            e = 1
+        if desired:
+            d = 1
+        return nox_atomic_cas(self.handle, e, d) != 0
+
+    def free(self: AtomicBool) -> None:
+        nox_atomic_free(self.handle)
+
+def new_int(initial: int) -> AtomicInt:
+    h: int = nox_atomic_new(initial)
+    if h == 0:
+        raise AtomicError("atomik hucre tahsis edilemedi")
+    return AtomicInt(h)
+
+def new_bool(initial: bool) -> AtomicBool:
+    v: int = 0
+    if initial:
+        v = 1
+    h: int = nox_atomic_new(v)
+    if h == 0:
+        raise AtomicError("atomik hucre tahsis edilemedi")
+    return AtomicBool(h)
+
+def from_int_handle(h: int) -> AtomicInt:
+    return AtomicInt(h)
+
+def from_bool_handle(h: int) -> AtomicBool:
+    return AtomicBool(h)

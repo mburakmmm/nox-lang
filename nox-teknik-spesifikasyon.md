@@ -27299,6 +27299,39 @@ iki ardışık temiz çalıştırma (bir ara çalıştırmada önceki yarım kal
 bir build'den kalma Zig önbellek `FileNotFound` hatası görüldü, kodla
 ilgisiz, tekrarında geçti).
 
+## 3.229 Aether NOX_LIMITATIONS.md yol haritası, Faz B.1 — `nox.atomic`
+
+**Bağlam:** madde 12 ("multicore worker'lar hiçbir şey paylaşmıyor").
+Tam anlamıyla ÇÖZÜLEMEZ — `globals_blocks`un worker-başına izolasyonu
+M:N zamanlayıcının kendi thread-safety temelidir, kaldırmak büyük bir
+veri-yarışı riski açar. Aether'in KENDİ önerisi de "isteğe bağlı
+süreç-geneli atomik sayaçlar"dır — bu madde YALNIZCA onu çözer.
+
+**Tasarım kararı (plan dosyasından SAPMA, gerekçeli):** plan "statik Zig
+belleğine bağlı" sayaç diyordu; süreç-geneli gizli global durum AGENTS.md
+§2 madde 6'ya aykırı olurdu. Bunun yerine her atomik, AÇIKÇA yaratılan
+(`nox_atomic_new`, `page_allocator`) AYRI bir `std.atomic.Value(i64)`
+hücresidir; ham adresi `int` handle olarak Nox'a verilir (`nox_http_
+listen_fd`nin fd'yi dağıtmasıyla AYNI desen) ve `nox.thread`in zaten
+desteklediği `int` aktarım tipiyle worker'lara geçirilir. Worker'da
+`from_int_handle(h)` AYNI hücreye yeni bir sarmalayıcı kurar.
+
+**Yüzey:** `AtomicInt` (`load`/`store`/`add`/`increment`/`decrement`/
+`compare_and_swap`/`free`), `AtomicBool` (`load`/`store`/
+`compare_and_swap`/`free`), `new_int`/`new_bool`/`from_int_handle`/
+`from_bool_handle`. Capability: `threads` (freestanding'de yok).
+**Ömür:** otomatik serbest bırakma YOKTUR (hücre birden çok worker'ın
+ORTAK malı); tüm worker'lar bittikten sonra bir kez `free()`. `0`
+handle'ı güvenle yok sayılır.
+
+### Test
+
+Zig: üç birim test (temel işlemler, `0` handle, 4 gerçek OS thread ×
+10 000 artış = 40 000). Nox golden `atomic_shared_counter_across_
+threads.nox`: tek-thread API + 4 GERÇEK `nox.thread.start` worker'ı ×
+1000 artış = `4000` (20 ardışık çalıştırmada her seferinde 4000) +
+paylaşılan `AtomicBool`. `zig build test`: üç ardışık temiz çalıştırma.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
