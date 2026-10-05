@@ -857,6 +857,12 @@ const ConnCtx = struct {
     /// codegen'in (`http_intrinsics.zig`) BİLİNÇLİ olarak `false` GEÇTİĞİ
     /// çağrı sitelerinde DEĞİŞİR.
     needs_headers: bool = true,
+    /// Faz B.2: `handler_ctx` bir `HandlerCtx` (atomik referans sayaçlı,
+    /// first-class closure handler'ı taşır) İSE `true` — `serveImpl` her
+    /// bağlantı İçin bir referans ALIR, `connectionEntry` BİTİNCE bırakır
+    /// (bağlantı fiber'ları `serveImpl` döndükten SONRA da handler'ı
+    /// çağırabilir, bkz. HH.1 notu — closure'ın ömrü bu sayaçla korunur).
+    ctx_refcounted: bool = false,
 };
 
 // Faz HH.2 (bkz. nox-teknik-spesifikasyon.md §3.68): `method`/`target`/
@@ -1045,6 +1051,8 @@ fn connectionEntry(arg: *anyopaque) void {
     const gpa = conn.allocator;
     const rt = conn.rt;
     defer gpa.destroy(conn);
+    // `gpa.destroy(conn)`den ÖNCE çalışmalı (LIFO) — `conn.handler_ctx`i okur.
+    defer if (conn.ctx_refcounted) handlerCtxRelease(conn.handler_ctx);
     defer _ = closeSocket(conn.fd);
     // Faz MN.12: bu ARTIK atomik — bkz. `ConnCtx.active_connections`'ın
     // belge notu (`serveImpl`) — bağlantı fiber'ı ÇALINMIŞSA bu `defer`
@@ -1261,7 +1269,61 @@ fn connectionEntry(arg: *anyopaque) void {
 /// AYNEN eski `served`-yerel-sayaçlı yoldur. DOLU İSE (SADECE `serve_
 /// multicore`nin SINIRLI yolu) bkz. `SharedServeBudget`nin belge notu.
 export fn nox_http_serve_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, max_connections: i64, needs_headers: i32, shared_budget: ?*anyopaque) callconv(.c) void {
-    serveImpl(rt, server, handler, handler_ctx, null, max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS, needs_headers != 0, @ptrCast(@alignCast(shared_budget)));
+    serveImpl(rt, server, handler, handler_ctx, null, max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS, (needs_headers & SERVE_FLAG_NEEDS_HEADERS) != 0, (needs_headers & SERVE_FLAG_REFCOUNTED_CTX) != 0, @ptrCast(@alignCast(shared_budget)));
+}
+
+/// `nox_http_serve_raw`/`nox_http_serve_ws_raw`nin `needs_headers`
+/// parametresi ARTIK bir BAYRAK ALANIDIR: bit 0 = header'lar okunuyor,
+/// bit 1 = `handler_ctx` bir `HandlerCtx`. Mevcut çağıranlar 0/1 geçer
+/// (bit 1 HİÇ set değil) — davranış BİREBİR AYNI.
+const SERVE_FLAG_NEEDS_HEADERS: i32 = 1;
+const SERVE_FLAG_REFCOUNTED_CTX: i32 = 2;
+
+/// Faz B.2 (Aether NOX_LIMITATIONS.md madde 4+19): `nox.http.serve*`e bir
+/// closure/bağlı-değer handler'ı geçirebilmek için sarmalayıcıya (`HandlerFn`
+/// `(ctx, req)` imzası DEĞİŞTİRİLMEDEN) taşınan bağlam. QBE sarmalayıcısı
+/// `rt`yi `@0`, closure'ı `@8`den OKUR — bu düzen ABI'dir.
+/// Ömür: `refs` ATOMİK (bağlantı fiber'ları M:N havuzunda başka bir
+/// worker'da bitebilir); serve çağrısının KENDİ payı + her bağlantının payı.
+/// Sıfıra inince closure bırakılır, bağlam serbest bırakılır.
+const HandlerCtx = extern struct {
+    rt: ?*anyopaque,
+    closure: ?*anyopaque,
+    refs: usize,
+};
+
+/// `closure`ı retain eder, `refs = 1` ile yeni bir bağlam döner (çağıranın
+/// payı). Başarısızlıkta `null`.
+export fn nox_http_handler_ctx_new(rt: ?*anyopaque, closure: ?*anyopaque) callconv(.c) ?*anyopaque {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    const ctx = state.allocator().create(HandlerCtx) catch return null;
+    arc.nox_rc_retain(closure);
+    ctx.* = .{ .rt = rt, .closure = closure, .refs = 1 };
+    return ctx;
+}
+
+fn handlerCtxRetain(p: ?*anyopaque) void {
+    const ctx: *HandlerCtx = @ptrCast(@alignCast(p orelse return));
+    _ = @atomicRmw(usize, &ctx.refs, .Add, 1, .monotonic);
+}
+
+fn handlerCtxRelease(p: ?*anyopaque) void {
+    const ctx: *HandlerCtx = @ptrCast(@alignCast(p orelse return));
+    if (@atomicRmw(usize, &ctx.refs, .Sub, 1, .acq_rel) != 1) return;
+    const rt = ctx.rt;
+    if (ctx.closure) |c| {
+        const base: [*]const u8 = @ptrCast(c);
+        const rel_addr: *align(1) const usize = @ptrCast(base + 8);
+        const rel_fn: *const fn (?*anyopaque, ?*anyopaque) callconv(.c) void = @ptrFromInt(rel_addr.*);
+        rel_fn(rt, c);
+    }
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
+    state.allocator().destroy(ctx);
+}
+
+/// `nox_http_handler_ctx_new`in döndürdüğü çağıran payını bırakır.
+export fn nox_http_handler_ctx_release(ctx: ?*anyopaque) callconv(.c) void {
+    handlerCtxRelease(ctx);
 }
 
 /// Faz "sunucu-tarafı WebSocket Upgrade": `nox_http_serve_raw`nin AYNISI,
@@ -1271,7 +1333,7 @@ export fn nox_http_serve_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: Hand
 /// TEK bir sunucu HEM normal HTTP rotalarını HEM DE WS Upgrade'i
 /// KARIŞIK sunabilir. `shared_budget`: bkz. `nox_http_serve_raw`nin notu.
 export fn nox_http_serve_ws_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, ws_handler: websocket_server.WsHandlerFn, max_connections: i64, needs_headers: i32, shared_budget: ?*anyopaque) callconv(.c) void {
-    serveImpl(rt, server, handler, handler_ctx, ws_handler, max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS, needs_headers != 0, @ptrCast(@alignCast(shared_budget)));
+    serveImpl(rt, server, handler, handler_ctx, ws_handler, max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS, (needs_headers & SERVE_FLAG_NEEDS_HEADERS) != 0, (needs_headers & SERVE_FLAG_REFCOUNTED_CTX) != 0, @ptrCast(@alignCast(shared_budget)));
 }
 
 /// `nox_http_serve_raw`nin GERÇEK gövdesi — `max_concurrent`/`max_body_bytes`/
@@ -1281,7 +1343,7 @@ export fn nox_http_serve_ws_raw(rt: ?*anyopaque, server: ?*anyopaque, handler: H
 /// MAX_CONCURRENT_CONNECTIONS`/`READ_TIMEOUT_MS` gibi GERÇEKÇİ (büyük)
 /// varsayılanları BEKLEMEDEN, testlerin KÜÇÜK/HIZLI değerlerle sınırları
 /// GERÇEKTEN EGZERSİZ edebilmesi İÇİNDİR (bkz. aşağıdaki testler).
-fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, ws_handler: ?websocket_server.WsHandlerFn, max_connections: i64, max_concurrent: usize, max_body_bytes: usize, read_timeout_ms: u32, needs_headers: bool, shared_budget: ?*SharedServeBudget) void {
+fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_ctx: ?*anyopaque, ws_handler: ?websocket_server.WsHandlerFn, max_connections: i64, max_concurrent: usize, max_body_bytes: usize, read_timeout_ms: u32, needs_headers: bool, ctx_refcounted: bool, shared_budget: ?*SharedServeBudget) void {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const h: *ServerHandle = @ptrCast(@alignCast(server orelse return));
     const gpa = state.allocator();
@@ -1369,7 +1431,9 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
             .tls_ctx = h.tls_ctx,
             .ws_handler = ws_handler,
             .needs_headers = needs_headers,
+            .ctx_refcounted = ctx_refcounted,
         };
+        if (ctx_refcounted) handlerCtxRetain(handler_ctx);
         // **KÖK NEDEN düzeltmesi (kullanım-sonrası-serbest-bırakma, TLS +
         // fiber zamanlaması — bkz. `tls_server.ctxTakeExtraRef`nin belge
         // notu):** `max_connections` sınırına TAM OLARAK bu bağlantıda
@@ -1644,7 +1708,7 @@ const ServeArgs = struct {
 
 fn testServeEntry(arg: *anyopaque) callconv(.c) i64 {
     const args: *ServeArgs = @ptrCast(@alignCast(arg));
-    serveImpl(args.rt, args.server, TestHandlerLog.handle, null, args.ws_handler, args.max_connections, args.max_concurrent, args.max_body_bytes, args.read_timeout_ms, args.needs_headers, args.shared_budget);
+    serveImpl(args.rt, args.server, TestHandlerLog.handle, null, args.ws_handler, args.max_connections, args.max_concurrent, args.max_body_bytes, args.read_timeout_ms, args.needs_headers, false, args.shared_budget);
     return 0;
 }
 
@@ -1864,7 +1928,7 @@ const ThreadSafeCounter = struct {
 };
 
 fn sharedFdServeEntry(args: *ServeArgs) void {
-    serveImpl(args.rt, args.server, ThreadSafeCounter.handle, args.rt, args.ws_handler, args.max_connections, args.max_concurrent, args.max_body_bytes, args.read_timeout_ms, args.needs_headers, args.shared_budget);
+    serveImpl(args.rt, args.server, ThreadSafeCounter.handle, args.rt, args.ws_handler, args.max_connections, args.max_concurrent, args.max_body_bytes, args.read_timeout_ms, args.needs_headers, false, args.shared_budget);
 }
 
 // Faz DD.1 — `owns_fd`in KENDİSİNİ (bkz. `ServerHandle`in belge notu),
@@ -1993,7 +2057,7 @@ test "Faz Q.5: govde boyutu siniri asilirsa 413 Payload Too Large doner, handler
         }
     }.run, .{ port, &resp_buf, &resp_len });
 
-    serveImpl(rt, server, TestHandlerLog.handle, null, null, 1, DEFAULT_MAX_CONCURRENT_CONNECTIONS, 16, READ_TIMEOUT_MS, true, null);
+    serveImpl(rt, server, TestHandlerLog.handle, null, null, 1, DEFAULT_MAX_CONCURRENT_CONNECTIONS, 16, READ_TIMEOUT_MS, true, false, null);
     client_thread.join();
 
     try std.testing.expectEqual(@as(usize, 0), TestHandlerLog.log.items.len);
@@ -2244,7 +2308,7 @@ const StealProofServeArgs = struct {
 
 fn stealProofServeEntry(arg: *anyopaque) callconv(.c) i64 {
     const args: *StealProofServeArgs = @ptrCast(@alignCast(arg));
-    serveImpl(args.rt, args.server, stealProofHandle, args.ctx, null, args.max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS, true, null);
+    serveImpl(args.rt, args.server, stealProofHandle, args.ctx, null, args.max_connections, DEFAULT_MAX_CONCURRENT_CONNECTIONS, MAX_REQUEST_BODY_BYTES, READ_TIMEOUT_MS, true, false, null);
     return 0;
 }
 

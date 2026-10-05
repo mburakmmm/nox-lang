@@ -175,6 +175,23 @@ pub fn genHttpServe(self: *Codegen, c: ast.Call) CodegenError!Value {
     const port_v = try self.convert(port_v0, .l);
     try self.releaseIfTemporary(c.args[0], port_v0);
 
+    if (staticHandlerName(self, c.args[1]) == null) {
+        // Faz B.2: closure handler — bkz. `registerHttpHandlersExpr`.
+        const h = try registerHttpHandlersExpr(self, c.args[1], null);
+        var mc_text: []const u8 = "0";
+        if (c.args.len == 3) {
+            const mc_v0 = try self.genExpr(c.args[2]);
+            try self.checkNoLowlevelEscape(mc_v0);
+            const mc_v = try self.convert(mc_v0, .l);
+            try self.releaseIfTemporary(c.args[2], mc_v0);
+            mc_text = mc_v.text;
+        }
+        const srv = try self.newTemp();
+        try self.qbeCall(.{ .name = srv, .ty = .l }, "$nox_http_server_listen", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = port_v.text } });
+        try emitServeAndCloseCtx(self, srv, h.wrapper_name, mc_text, h.ws_wrapper_name, h.needs_headers, "0", h.ctx_text, h.refcounted);
+        return .{ .text = "0", .qtype = .none };
+    }
+
     const handle_name = switch (c.args[1]) {
         .identifier => |n| n,
         else => return error.Unsupported,
@@ -233,15 +250,25 @@ pub fn genHttpServe(self: *Codegen, c: ast.Call) CodegenError!Value {
 /// SSA metni geçirir (bkz. `SharedServeBudget`nin runtime tarafındaki
 /// belge notu).
 pub fn emitServeAndClose(self: *Codegen, server: []const u8, wrapper_name: []const u8, max_conn_text: []const u8, ws_wrapper_name: ?[]const u8, needs_headers: bool, shared_budget_text: []const u8) CodegenError!void {
+    return emitServeAndCloseCtx(self, server, wrapper_name, max_conn_text, ws_wrapper_name, needs_headers, shared_budget_text, RT_PARAM, false);
+}
+
+/// Faz B.2: `emitServeAndClose`in `handler_ctx` argümanı AÇIK olan hâli.
+/// `refcounted` İSE `ctx_text` bir `HandlerCtx`dir: `needs_headers`
+/// bayrak-alanının bit 1'i set edilir (runtime her bağlantı İçin bir
+/// referans alır) VE serve BİTİNCE çağıranın kendi payı bırakılır.
+pub fn emitServeAndCloseCtx(self: *Codegen, server: []const u8, wrapper_name: []const u8, max_conn_text: []const u8, ws_wrapper_name: ?[]const u8, needs_headers: bool, shared_budget_text: []const u8, ctx_text: []const u8, refcounted: bool) CodegenError!void {
     const wrapper_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{wrapper_name});
-    const needs_headers_text: []const u8 = if (needs_headers) "1" else "0";
+    const flags: u8 = (if (needs_headers) @as(u8, 1) else 0) | (if (refcounted) @as(u8, 2) else 0);
+    const flags_text = try std.fmt.allocPrint(self.allocator, "{d}", .{flags});
     if (ws_wrapper_name) |wsw| {
         const wsw_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{wsw});
-        try self.qbeCall(null, "$nox_http_serve_ws_raw", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server }, .{ .ty = .l, .text = wrapper_sym }, .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = wsw_sym }, .{ .ty = .l, .text = max_conn_text }, .{ .ty = .w, .text = needs_headers_text }, .{ .ty = .l, .text = shared_budget_text } });
+        try self.qbeCall(null, "$nox_http_serve_ws_raw", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server }, .{ .ty = .l, .text = wrapper_sym }, .{ .ty = .l, .text = ctx_text }, .{ .ty = .l, .text = wsw_sym }, .{ .ty = .l, .text = max_conn_text }, .{ .ty = .w, .text = flags_text }, .{ .ty = .l, .text = shared_budget_text } });
     } else {
-        try self.qbeCall(null, "$nox_http_serve_raw", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server }, .{ .ty = .l, .text = wrapper_sym }, .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = max_conn_text }, .{ .ty = .w, .text = needs_headers_text }, .{ .ty = .l, .text = shared_budget_text } });
+        try self.qbeCall(null, "$nox_http_serve_raw", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server }, .{ .ty = .l, .text = wrapper_sym }, .{ .ty = .l, .text = ctx_text }, .{ .ty = .l, .text = max_conn_text }, .{ .ty = .w, .text = flags_text }, .{ .ty = .l, .text = shared_budget_text } });
     }
     try self.qbeCall(null, "$nox_http_server_close", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = server } });
+    if (refcounted) try self.qbeCall(null, "$nox_http_handler_ctx_release", &.{.{ .ty = .l, .text = ctx_text }});
 }
 
 /// Faz "sunucu-tarafı TLS + WS": `tls_ctx_text` (varsa) `nox_http_server_
@@ -249,13 +276,17 @@ pub fn emitServeAndClose(self: *Codegen, server: []const u8, wrapper_name: []con
 /// davranış BİREBİR ÖNCEKİYLE AYNIDIR (`genHttpServeFd`nin AYNI çağrısı
 /// `null, null` geçer).
 pub fn emitFdServeTail(self: *Codegen, fd_text: []const u8, wrapper_name: []const u8, max_conn_text: []const u8, tls_ctx_text: ?[]const u8, ws_wrapper_name: ?[]const u8, needs_headers: bool) CodegenError!void {
+    return emitFdServeTailCtx(self, fd_text, wrapper_name, max_conn_text, tls_ctx_text, ws_wrapper_name, needs_headers, RT_PARAM, false);
+}
+
+pub fn emitFdServeTailCtx(self: *Codegen, fd_text: []const u8, wrapper_name: []const u8, max_conn_text: []const u8, tls_ctx_text: ?[]const u8, ws_wrapper_name: ?[]const u8, needs_headers: bool, ctx_text: []const u8, refcounted: bool) CodegenError!void {
     const server = try self.newTemp();
     if (tls_ctx_text) |ctx| {
         try self.qbeCall(.{ .name = server, .ty = .l }, "$nox_http_server_from_fd_tls", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = fd_text }, .{ .ty = .l, .text = ctx } });
     } else {
         try self.qbeCall(.{ .name = server, .ty = .l }, "$nox_http_server_from_fd", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = fd_text } });
     }
-    try self.emitServeAndClose(server, wrapper_name, max_conn_text, ws_wrapper_name, needs_headers, "0");
+    try emitServeAndCloseCtx(self, server, wrapper_name, max_conn_text, ws_wrapper_name, needs_headers, "0", ctx_text, refcounted);
 }
 
 /// Faz MN.11: `emitFdServeTail`nin `serve_multicore`-ÖZEL eşleniği —
@@ -291,6 +322,20 @@ pub fn genHttpServeFd(self: *Codegen, c: ast.Call) CodegenError!Value {
     try self.checkNoLowlevelEscape(fd_v0);
     const fd_v = try self.convert(fd_v0, .l);
     try self.releaseIfTemporary(c.args[0], fd_v0);
+
+    if (staticHandlerName(self, c.args[1]) == null) {
+        const h = try registerHttpHandlersExpr(self, c.args[1], null);
+        var mc_text: []const u8 = "0";
+        if (c.args.len == 3) {
+            const mc_v0 = try self.genExpr(c.args[2]);
+            try self.checkNoLowlevelEscape(mc_v0);
+            const mc_v = try self.convert(mc_v0, .l);
+            try self.releaseIfTemporary(c.args[2], mc_v0);
+            mc_text = mc_v.text;
+        }
+        try emitFdServeTailCtx(self, fd_v.text, h.wrapper_name, mc_text, null, h.ws_wrapper_name, h.needs_headers, h.ctx_text, h.refcounted);
+        return .{ .text = "0", .qtype = .none };
+    }
 
     const handle_name = switch (c.args[1]) {
         .identifier => |n| n,
@@ -691,7 +736,12 @@ pub fn genHttpServeWrapper(self: *Codegen, spec: HttpServeWrapperSpec) CodegenEr
     try self.qbeFuncParam(.l, "%ctx", true);
     try self.qbeFuncParam(.l, "%req", false);
     try self.qbeFuncHeaderEnd();
-    try self.qbeOp1(RT_PARAM, .l, "copy", "%ctx");
+    // Faz B.2: closure modunda `%ctx` bir `HandlerCtx`dir (`rt@0`, `closure@8`).
+    if (spec.closure_mode) {
+        try self.qbeLoadL(RT_PARAM, "%ctx");
+    } else {
+        try self.qbeOp1(RT_PARAM, .l, "copy", "%ctx");
+    }
 
     const req_cinfo = self.classes.get(spec.req_class) orelse return error.Unsupported;
     const req_values = try self.allocator.alloc(Value, req_cinfo.fields.items.len);
@@ -759,8 +809,18 @@ pub fn genHttpServeWrapper(self: *Codegen, spec: HttpServeWrapperSpec) CodegenEr
     }
 
     const resp_obj_text = try self.newTemp();
-    const handler_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{spec.handler_fn});
-    try self.qbeCall(.{ .name = resp_obj_text, .ty = .l }, handler_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = req_obj.text } });
+    if (spec.closure_mode) {
+        const closure_addr = try self.newTemp();
+        try self.qbeOp2Imm(closure_addr, .l, "add", "%ctx", 8);
+        const closure_ptr = try self.newTemp();
+        try self.qbeLoadL(closure_ptr, closure_addr);
+        const fn_ptr = try self.newTemp();
+        try self.qbeLoadL(fn_ptr, closure_ptr);
+        try self.qbeCall(.{ .name = resp_obj_text, .ty = .l }, fn_ptr, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = closure_ptr }, .{ .ty = .l, .text = req_obj.text } });
+    } else {
+        const handler_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{spec.handler_fn});
+        try self.qbeCall(.{ .name = resp_obj_text, .ty = .l }, handler_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = req_obj.text } });
+    }
     const resp_obj: Value = .{ .text = resp_obj_text, .qtype = .l, .heap = .class, .class_name = spec.resp_class };
 
     try self.releaseValueIfSet(req_obj.text, req_obj.heap, req_obj.elem_qtype, req_obj.class_name, req_obj.elem_heap_info, req_obj.dict_info);
@@ -800,7 +860,11 @@ pub fn genHttpServeWsWrapper(self: *Codegen, spec: types.HttpServeWsWrapperSpec)
     try self.qbeFuncParam(.l, "%ctx", true);
     try self.qbeFuncParam(.l, "%conn", false);
     try self.qbeFuncHeaderEnd();
-    try self.qbeOp1(RT_PARAM, .l, "copy", "%ctx");
+    if (spec.ctx_is_handler_ctx) {
+        try self.qbeLoadL(RT_PARAM, "%ctx");
+    } else {
+        try self.qbeOp1(RT_PARAM, .l, "copy", "%ctx");
+    }
 
     const conn_cinfo = self.classes.get(spec.conn_class) orelse return error.Unsupported;
     const conn_values = try self.allocator.alloc(Value, conn_cinfo.fields.items.len);
@@ -820,6 +884,73 @@ pub fn genHttpServeWsWrapper(self: *Codegen, spec: types.HttpServeWsWrapperSpec)
 
     try self.qbeRet("0");
     try self.qbeFuncEnd();
+}
+
+/// Faz B.2 (Aether NOX_LIMITATIONS.md madde 4+19): `handle` bir üst-düzey
+/// fonksiyon ADI mı (ESKİ, sembol-tabanlı hızlı yol) — DEĞİLSE (yerel
+/// bir closure değişkeni, bir çağrının döndürdüğü closure, vb.) closure
+/// yoluna düşülür. Yerel değişkenler (`self.vars`) fonksiyon adlarını
+/// GÖLGELER (`genCall`in AYNI öncelik sırası).
+pub fn staticHandlerName(self: *Codegen, e: ast.Expr) ?[]const u8 {
+    switch (e) {
+        .identifier => |n| {
+            if (self.vars.get(n) == null and self.functions.contains(n)) return n;
+        },
+        else => {},
+    }
+    return null;
+}
+
+pub const HttpHandlerRegistration = struct {
+    wrapper_name: []const u8,
+    ws_wrapper_name: ?[]const u8,
+    needs_headers: bool,
+    /// `nox_http_serve_raw`a `handler_ctx` olarak geçirilecek QBE metni —
+    /// ESKİ yolda `RT_PARAM`, closure yolunda bir `HandlerCtx*`.
+    ctx_text: []const u8,
+    refcounted: bool,
+};
+
+/// `registerHttpHandlers`in handler-İFADESİ alan genellemesi: üst-düzey
+/// fonksiyon adı İSE `registerHttpHandlers`e (DEĞİŞMEDEN) devreder; AKSİ
+/// HALDE closure DEĞERİNİ burada değerlendirip `nox_http_handler_ctx_new`
+/// İLE bir `HandlerCtx`e paketler (closure RETAIN edilir; ifade TAZE bir
+/// geçici İSE — ör. `make_handler(app)` — kendi payı hemen bırakılır).
+/// `used_fields` closure'ın gövdesi derleme zamanında BİLİNMEDİĞİNDEN
+/// KONSERVATİF olarak `allUsed()`.
+pub fn registerHttpHandlersExpr(self: *Codegen, handle_expr: ast.Expr, ws_handle_name: ?[]const u8) CodegenError!HttpHandlerRegistration {
+    if (staticHandlerName(self, handle_expr)) |n| {
+        const h = try registerHttpHandlers(self, n, ws_handle_name);
+        return .{ .wrapper_name = h.wrapper_name, .ws_wrapper_name = h.ws_wrapper_name, .needs_headers = h.needs_headers, .ctx_text = RT_PARAM, .refcounted = false };
+    }
+    const cv = try self.genExpr(handle_expr);
+    if (cv.heap != .closure) return error.Unsupported;
+    // Checker (`validateHttpHandler`) imzanın TAM OLARAK `(nox_http_
+    // HttpRequest) -> nox_http_HttpResponse` olduğunu ZATEN doğruladı —
+    // bir çağrının döndürdüğü closure Value'sünün `func_sig`i codegen'de
+    // taşınmadığından (`genCall` dönüşü) sınıf adları SABİT alınır.
+    const req_class: []const u8 = "nox_http_HttpRequest";
+    const resp_class: []const u8 = "nox_http_HttpResponse";
+
+    const ctx = try self.newTemp();
+    try self.qbeCall(.{ .name = ctx, .ty = .l }, "$nox_http_handler_ctx_new", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = cv.text } });
+    try self.releaseIfTemporary(handle_expr, cv);
+
+    const wrapper_name = try std.fmt.allocPrint(self.allocator, "http_serve_wrap_{d}", .{self.http_serve_wrapper_counter});
+    self.http_serve_wrapper_counter += 1;
+    try self.http_serve_wrappers.append(self.allocator, .{ .name = wrapper_name, .handler_fn = "", .req_class = req_class, .resp_class = resp_class, .used_fields = UsedRequestFields.allUsed(), .closure_mode = true });
+
+    var ws_wrapper_name: ?[]const u8 = null;
+    if (ws_handle_name) |wsh| {
+        const ws_sig = self.functions.get(wsh) orelse return error.Unsupported;
+        if (ws_sig.params.len != 1) return error.Unsupported;
+        if (ws_sig.params[0].heap != .class or ws_sig.params[0].class_name == null) return error.Unsupported;
+        const name = try std.fmt.allocPrint(self.allocator, "http_serve_ws_wrap_{d}", .{self.http_serve_ws_wrapper_counter});
+        self.http_serve_ws_wrapper_counter += 1;
+        try self.http_serve_ws_wrappers.append(self.allocator, .{ .name = name, .ws_handler_fn = wsh, .conn_class = ws_sig.params[0].class_name.?, .ctx_is_handler_ctx = true });
+        ws_wrapper_name = name;
+    }
+    return .{ .wrapper_name = wrapper_name, .ws_wrapper_name = ws_wrapper_name, .needs_headers = true, .ctx_text = ctx, .refcounted = true };
 }
 
 /// Faz "sunucu-tarafı TLS + WebSocket Upgrade" (bkz. plan dosyası §6) —
@@ -874,10 +1005,9 @@ pub fn genHttpServeGeneric(self: *Codegen, c: ast.Call, want_tls: bool, want_ws:
     try self.releaseIfTemporary(c.args[idx], port_v0);
     idx += 1;
 
-    const handle_name = switch (c.args[idx]) {
-        .identifier => |n| n,
-        else => return error.Unsupported,
-    };
+    // Faz B.2: `handle` bir üst-düzey fonksiyon adı YA DA closure değeri
+    // olabilir — çözümleme `registerHttpHandlersExpr`de (aşağıda).
+    const handle_expr = c.args[idx];
     idx += 1;
 
     var ws_handle_name: ?[]const u8 = null;
@@ -921,8 +1051,8 @@ pub fn genHttpServeGeneric(self: *Codegen, c: ast.Call, want_tls: bool, want_ws:
         try self.qbeCall(.{ .name = server, .ty = .l }, "$nox_http_server_listen", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = port_v.text } });
     }
 
-    const handlers = try self.registerHttpHandlers(handle_name, ws_handle_name);
-    try self.emitServeAndClose(server, handlers.wrapper_name, max_conn_text, handlers.ws_wrapper_name, handlers.needs_headers, "0");
+    const handlers = try registerHttpHandlersExpr(self, handle_expr, ws_handle_name);
+    try emitServeAndCloseCtx(self, server, handlers.wrapper_name, max_conn_text, handlers.ws_wrapper_name, handlers.needs_headers, "0", handlers.ctx_text, handlers.refcounted);
     return .{ .text = "0", .qtype = .none };
 }
 
@@ -942,10 +1072,9 @@ pub fn genHttpServeFdGeneric(self: *Codegen, c: ast.Call, want_tls: bool, want_w
     try self.releaseIfTemporary(c.args[idx], fd_v0);
     idx += 1;
 
-    const handle_name = switch (c.args[idx]) {
-        .identifier => |n| n,
-        else => return error.Unsupported,
-    };
+    // Faz B.2: `handle` bir üst-düzey fonksiyon adı YA DA closure değeri
+    // olabilir — çözümleme `registerHttpHandlersExpr`de (aşağıda).
+    const handle_expr = c.args[idx];
     idx += 1;
 
     var ws_handle_name: ?[]const u8 = null;
@@ -982,14 +1111,14 @@ pub fn genHttpServeFdGeneric(self: *Codegen, c: ast.Call, want_tls: bool, want_w
         idx += 1;
     }
 
-    const handlers = try self.registerHttpHandlers(handle_name, ws_handle_name);
+    const handlers = try registerHttpHandlersExpr(self, handle_expr, ws_handle_name);
 
     if (want_tls) {
         const server = try self.newTemp();
         try self.qbeCall(.{ .name = server, .ty = .l }, "$nox_http_server_from_fd_tls_owned", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = fd_v.text }, .{ .ty = .l, .text = cert_v.text }, .{ .ty = .l, .text = key_v.text } });
-        try self.emitServeAndClose(server, handlers.wrapper_name, max_conn_text, handlers.ws_wrapper_name, handlers.needs_headers, "0");
+        try emitServeAndCloseCtx(self, server, handlers.wrapper_name, max_conn_text, handlers.ws_wrapper_name, handlers.needs_headers, "0", handlers.ctx_text, handlers.refcounted);
     } else {
-        try self.emitFdServeTail(fd_v.text, handlers.wrapper_name, max_conn_text, null, handlers.ws_wrapper_name, handlers.needs_headers);
+        try emitFdServeTailCtx(self, fd_v.text, handlers.wrapper_name, max_conn_text, null, handlers.ws_wrapper_name, handlers.needs_headers, handlers.ctx_text, handlers.refcounted);
     }
     return .{ .text = "0", .qtype = .none };
 }

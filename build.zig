@@ -964,6 +964,7 @@ pub fn build(b: *std.Build) void {
         "tests/cli/sqlite_test.zig",
         "tests/cli/orm_test.zig",
         "tests/cli/shared_mem_test.zig",
+        "tests/cli/http_handler_check_test.zig",
         "tests/cli/install_test.zig",
         "tests/cli/help_screen_test.zig",
         "tests/cli/explain_test.zig",

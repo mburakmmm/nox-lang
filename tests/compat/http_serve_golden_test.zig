@@ -49,7 +49,22 @@ fn compileToBinary(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, sourc
     var generic_it = checker_state.generic_functions.keyIterator();
     while (generic_it.next()) |k| try generic_names.append(allocator, k.*);
 
-    const ir = try nox.codegen.generateModule(allocator, module, checker_state.instantiations.items, generic_names.items, &.{}, &.{}, null, .empty, .empty, .empty, &.{}, .empty, checker_state.decorated_functions.items, .qbe, .hosted, null, &.{}, .empty);
+    // Faz B.2: closure handler testi İçİn `noxc`nin KENDİ derleme yolunun
+    // (`compiler/main.zig`nin `buildOne`ı) AYNI closure/from_imports/
+    // fonksiyon-değer bilgisini geçir — ÖNCEDEN hepsi `.empty` idi, ki bu
+    // yalnızca closure/from-import KULLANMAYAN kaynaklar İçin yeterliydi.
+    var closure_infos: std.StringHashMapUnmanaged([]const []const u8) = .empty;
+    var closure_it = checker_state.closure_infos.iterator();
+    while (closure_it.next()) |entry| {
+        const names = try allocator.alloc([]const u8, entry.value_ptr.captures.len);
+        for (entry.value_ptr.captures, 0..) |c, i| names[i] = c.name;
+        try closure_infos.put(allocator, entry.key_ptr.*, names);
+    }
+    var fn_values: std.ArrayListUnmanaged([]const u8) = .empty;
+    var fn_value_it = checker_state.functions_used_as_value.keyIterator();
+    while (fn_value_it.next()) |k| try fn_values.append(allocator, k.*);
+
+    const ir = try nox.codegen.generateModule(allocator, module, checker_state.instantiations.items, generic_names.items, &.{}, &.{}, null, closure_infos, checker_state.defer_synthetic_names, checker_state.from_imports, fn_values.items, checker_state.module_aliases, checker_state.decorated_functions.items, .qbe, .hosted, null, &.{}, .empty);
 
     var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const len = try tmp.dir.realPath(io, &path_buf);
@@ -823,4 +838,159 @@ test "nox.http.serve: req.peer_addr GERCEK istemci adresini (ip:port) tasir" {
     try std.testing.expect(client_local_port != 0);
     const expected = try std.fmt.allocPrint(a, "127.0.0.1:{d}\n", .{client_local_port});
     try std.testing.expectEqualStrings(expected, stdout_data);
+}
+
+// Aether NOX_LIMITATIONS.md yol haritası, Faz B.2 (madde 4+19, bkz. nox-
+// teknik-spesifikasyon.md ilgili bölüm): `nox.http.serve`e bir CLOSURE
+// handler'ı — `app` (bir sınıf örneği) yakalayan, bir fonksiyonun DÖNDÜRDÜĞÜ
+// closure DOĞRUDAN geçici olarak verilir. "Yavaş" istemci bağlantıyı açıp
+// isteği 150ms SONRA gönderir: `serve(.., 2)` ikinci bağlantıyı kabul edip
+// DÖNER, yavaş bağlantının fiber'ı handler'ı `serve` döndükten SONRA
+// çağırır — closure'ın ömrünü `HandlerCtx` referans sayacı korumalıdır
+// (aksi halde kullanım-sonrası-serbest-bırakma). stderr BOŞ olmalı.
+test "nox.http.serve: closure handler (sinif yakalayan, gecici donus degeri) — serve dondukten sonra calisan baglanti guvenli" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const port = try probeFreePort();
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const source = try std.fmt.allocPrint(a,
+        \\import nox.http
+        \\class App:
+        \\    def __init__(self: App, greeting: str) -> None:
+        \\        self.greeting = greeting
+        \\        self.hits = 0
+        \\
+        \\def make_handler(app: App) -> (nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\        app.hits = app.hits + 1
+        \\        print(app.greeting + req.target + " " + str(app.hits))
+        \\        return nox_http_HttpResponse(200, "ok", {{"x": "y"}})
+        \\    return handle
+        \\
+        \\app: App = App("merhaba ")
+        \\nox.http.serve({d}, make_handler(app), 2)
+        \\
+    , .{port});
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const bin_path = try compileToBinary(a, &tmp, source);
+
+    var child = try std.process.spawn(io, .{
+        .argv = &.{bin_path},
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 45_000);
+    defer watchdog.disarm();
+
+    const slow_thread = try std.Thread.spawn(.{}, connectSendAndDrain, .{ port, "/slow", @as(u32, 150) });
+    const fast_thread = try std.Thread.spawn(.{}, connectSendAndDrain, .{ port, "/fast", @as(u32, 0) });
+    slow_thread.join();
+    fast_thread.join();
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
+    const stdout_data = try stdout_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stdout_data);
+
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
+    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stderr_data);
+
+    const term = try child.wait(io);
+    if (term != .exited) {
+        std.debug.print("cocuk surec normal cikmadi, term={any}\nstdout:\n{s}\nstderr:\n{s}\n", .{ term, stdout_data, stderr_data });
+    }
+    try std.testing.expect(term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), term.exited);
+
+    if (stderr_data.len != 0) {
+        std.debug.print("program stderr'e beklenmeyen bir çıktı yazdı (olası sızıntı/UAF): {s}\n", .{stderr_data});
+        return error.UnexpectedStderrOutput;
+    }
+
+    // Yakalanan `app` HER iki bağlantıda PAYLAŞILIR (hits 1 sonra 2).
+    try std.testing.expectEqualStrings("merhaba /fast 1\nmerhaba /slow 2\n", stdout_data);
+}
+
+// Faz B.2: `serve_fd` + closure'ın bir YEREL DEĞİŞKENDE tutulması
+// (`h: (...) -> ... = make_handler(app)`; geçici DEĞİL, ödünç alınan bir
+// değişken — `HandlerCtx` onu RETAIN eder, ifade-geçici release'i YOK).
+test "nox.http.serve_fd: closure handler yerel degiskenden" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const port = try probeFreePort();
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const source = try std.fmt.allocPrint(a,
+        \\import nox.http
+        \\
+        \\class App:
+        \\    def __init__(self: App, greeting: str) -> None:
+        \\        self.greeting = greeting
+        \\
+        \\def make_handler(app: App) -> (nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\        print(app.greeting + req.target)
+        \\        return nox_http_HttpResponse(200, "ok", {{"x": "y"}})
+        \\    return handle
+        \\
+        \\app: App = App("selam ")
+        \\h: (nox_http_HttpRequest) -> nox_http_HttpResponse = make_handler(app)
+        \\fd: int = nox.http.listen({d})
+        \\nox.http.serve_fd(fd, h, 1)
+        \\
+    , .{port});
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const bin_path = try compileToBinary(a, &tmp, source);
+
+    var child = try std.process.spawn(io, .{
+        .argv = &.{bin_path},
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 45_000);
+    defer watchdog.disarm();
+
+    const client = try std.Thread.spawn(.{}, connectSendAndDrain, .{ port, "/fd", @as(u32, 0) });
+    client.join();
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
+    const stdout_data = try stdout_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stdout_data);
+
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
+    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stderr_data);
+
+    const term = try child.wait(io);
+    if (term != .exited) {
+        std.debug.print("cocuk surec normal cikmadi, term={any}\nstdout:\n{s}\nstderr:\n{s}\n", .{ term, stdout_data, stderr_data });
+    }
+    try std.testing.expect(term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), term.exited);
+    if (stderr_data.len != 0) {
+        std.debug.print("program stderr'e beklenmeyen bir cikti yazdi: {s}\n", .{stderr_data});
+        return error.UnexpectedStderrOutput;
+    }
+    try std.testing.expectEqualStrings("selam /fd\n", stdout_data);
 }

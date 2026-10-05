@@ -2111,11 +2111,40 @@ pub const Checker = struct {
     /// fonksiyon ADI olarak doğrulanır. `fn_label`, hata mesajlarında
     /// hangi çağrı formunun (`'nox.http.serve'`/`'nox.http.serve_fd'`/
     /// `'nox.http.serve_multicore'`) başarısız olduğunu BELİRTMEK İçindir.
-    fn validateHttpHandler(self: *Checker, fn_label: []const u8, handle_expr: ast.Expr) TypeError!void {
-        const handle_name = switch (handle_expr) {
-            .identifier => |n| n,
-            else => return self.fail(error.NotCallable, "'{s}': 'handle' doğrudan bir fonksiyon adı olmalı (metod/lambda henüz desteklenmiyor)", .{fn_label}),
+    fn validateHttpHandler(self: *Checker, ctx: *FnCtx, fn_label: []const u8, handle_expr: ast.Expr, allow_closure: bool) TypeError!void {
+        // Faz B.2 (Aether NOX_LIMITATIONS.md madde 4+19): `handle` bir üst-
+        // düzey fonksiyon ADI (ESKİ, sembol-tabanlı yol) YA DA — `allow_
+        // closure` İSE — `(HttpRequest) -> HttpResponse` tipli HERHANGİ bir
+        // ifade (closure yakalayan yerel bir `def`, bir çağrının döndürdüğü
+        // closure, ...) olabilir. Yerel bir değişken, aynı adlı bir global
+        // fonksiyonu GÖLGELER (codegen'in `genCall` önceliğiyle AYNI).
+        if (handle_expr == .identifier) {
+            const n = handle_expr.identifier;
+            const is_local = (try ctx.scope.lookup(self.allocator, n)) != null;
+            if (!is_local) return self.validateNamedHttpHandler(fn_label, n);
+        }
+        if (!allow_closure) {
+            return self.fail(error.NotCallable, "'{s}': 'handle' doğrudan bir fonksiyon adı olmalı (closure handler bu varyantta DESTEKLENMEZ: varsayılan derlemede multicore worker'ları AYRI RuntimeState kullanır, ana çalışma zamanındaki bir closure oraya aktarılamaz)", .{fn_label});
+        }
+        const t = try self.checkExpr(ctx, handle_expr);
+        const ft = switch (t) {
+            .func => |f| f,
+            else => return self.fail(error.NotCallable, "'{s}': 'handle' bir fonksiyon adı ya da '(HttpRequest) -> HttpResponse' tipli bir closure olmalı", .{fn_label}),
         };
+        if (ft.params.len != 1) {
+            return self.fail(error.TypeMismatch, "'{s}': 'handle' TAM OLARAK bir parametre almalı (bir HttpRequest)", .{fn_label});
+        }
+        if (ft.params[0] != .class or !std.mem.eql(u8, ft.params[0].class, "nox_http_HttpRequest")) {
+            return self.fail(error.TypeMismatch, "'{s}': 'handle'in parametresi 'HttpRequest' olmalı", .{fn_label});
+        }
+        if (ft.return_type.* != .class or !std.mem.eql(u8, ft.return_type.class, "nox_http_HttpResponse")) {
+            return self.fail(error.TypeMismatch, "'{s}': 'handle' bir 'HttpResponse' döndürmeli", .{fn_label});
+        }
+    }
+
+    /// `validateHttpHandler`in ESKİ (üst-düzey fonksiyon ADI) doğrulaması —
+    /// gövdesi DEĞİŞMEDEN taşındı.
+    fn validateNamedHttpHandler(self: *Checker, fn_label: []const u8, handle_name: []const u8) TypeError!void {
         if (self.async_functions.contains(handle_name)) {
             return self.fail(error.TypeMismatch, "'{s}': 'handle' ('{s}') bir 'async def' OLAMAZ (bağlantı işleyicisi zaten kendi fiber'ında senkron çalışır)", .{ fn_label, handle_name });
         }
@@ -2162,7 +2191,7 @@ pub const Checker = struct {
                 return self.fail(error.TypeMismatch, "'nox.http.serve': 'max_connections' bir 'int' olmalı", .{});
             }
         }
-        try self.validateHttpHandler("nox.http.serve", c.args[1]);
+        try self.validateHttpHandler(ctx, "nox.http.serve", c.args[1], true);
         return .none;
     }
 
@@ -2187,7 +2216,7 @@ pub const Checker = struct {
                 return self.fail(error.TypeMismatch, "'nox.http.serve_fd': 'max_connections' bir 'int' olmalı", .{});
             }
         }
-        try self.validateHttpHandler("nox.http.serve_fd", c.args[1]);
+        try self.validateHttpHandler(ctx, "nox.http.serve_fd", c.args[1], true);
         return .none;
     }
 
@@ -2227,7 +2256,7 @@ pub const Checker = struct {
                 return self.fail(error.TypeMismatch, "'nox.http.serve_multicore': 'max_connections' sabit bir tamsayı olmalı (bir DEĞİŞKEN/ifade değil — derleme zamanında TÜM worker fonksiyonlarına gömülür)", .{});
             }
         }
-        try self.validateHttpHandler("nox.http.serve_multicore", c.args[1]);
+        try self.validateHttpHandler(ctx, "nox.http.serve_multicore", c.args[1], false);
         return .none;
     }
 
@@ -2332,7 +2361,7 @@ pub const Checker = struct {
                 return self.fail(error.TypeMismatch, "'{s}': 'key_path' bir 'str' olmalı", .{fn_label});
             }
         }
-        try self.validateHttpHandler(fn_label, c.args[1]);
+        try self.validateHttpHandler(ctx, fn_label, c.args[1], !is_multicore);
         if (ws_idx) |wi| {
             try self.validateWsHandler(fn_label, c.args[wi]);
         }

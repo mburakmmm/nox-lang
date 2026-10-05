@@ -240,6 +240,10 @@ pub const HttpServeWrapperSpec = struct {
     req_class: []const u8,
     resp_class: []const u8,
     used_fields: UsedRequestFields,
+    /// Faz B.2: `true` İSE `handler_fn` YOKTUR — `%ctx` bir `HandlerCtx`
+    /// (bkz. `runtime/stdlib_shims/http_server.zig`), `rt`yi `@0`, closure'ı
+    /// `@8`den okuyup closure'ı DOLAYLI çağırır.
+    closure_mode: bool = false,
 };
 
 /// Faz "sunucu-tarafı WebSocket Upgrade": `nox.http.serve_ws*` çağrı
@@ -251,6 +255,8 @@ pub const HttpServeWsWrapperSpec = struct {
     name: []const u8,
     ws_handler_fn: []const u8,
     conn_class: []const u8,
+    /// Faz B.2: `true` İSE `%ctx` bir `HandlerCtx`dir (`rt`, `@0`da).
+    ctx_is_handler_ctx: bool = false,
 };
 
 pub const SpawnWrapperSpec = struct {

@@ -27376,6 +27376,69 @@ iç içe büyüten append. Negatif: `err_append_chained_field.nox`;
 `err_list_append_non_identifier_receiver.expected` yalnızca mesaj metni
 değişti. `zig build test`: üç ardışık temiz çalıştırma.
 
+## 3.231 Aether NOX_LIMITATIONS.md yol haritası, Faz B.2 — `serve*` için first-class (closure) handler
+
+**Bağlam:** madde 4 + 19 — `nox.http.serve`in `handle` argümanı ÇIPLAK
+bir üst-düzey fonksiyon adı olmak ZORUNDAYDI (checker'ın "fonksiyonlar
+değer değildir" varsayımı v1.4.0'dan beri ESKİ); `Application` gibi bir
+sınıf örneğini yakalayan bir closure geçirilemiyordu.
+
+**Mekanizma:** `handle` artık `(nox_http_HttpRequest) -> nox_http_
+HttpResponse` tipli HERHANGİ bir ifade olabilir (closure yakalayan yerel
+`def`, bir çağrının döndürdüğü closure, closure tutan yerel değişken).
+Üst-düzey fonksiyon ADI olduğunda ESKİ sembol-tabanlı yol DEĞİŞMEDEN
+çalışır (yerel değişken aynı adlı global fonksiyonu gölgeler, `genCall`
+önceliğiyle aynı). Closure yolunda:
+1. closure değeri değerlendirilir, `nox_http_handler_ctx_new` onu
+   RETAIN edip bir `HandlerCtx {rt@0, closure@8, refs@16}` döner
+   (ifade geçici ise — `make_handler(app)` — kendi payı bırakılır).
+2. Sarmalayıcı (`closure_mode`) `%ctx`ten `rt`yi ve closure'ı okur,
+   closure'ı DOLAYLI çağırır; geri kalan istek/yanıt akışı aynıdır.
+3. `HandlerFn` imzası `(ctx, req)` DEĞİŞMEDİ — yalnızca `ctx`in anlamı.
+
+**Ömür (kritik):** `serveImpl` sınırlı modda son bağlantıyı spawn edip
+fiber'lar bitmeden DÖNER (HH.1 notu) — bağlantı fiber'ı handler'ı `serve`
+döndükten sonra çağırabilir. Bu yüzden `HandlerCtx` ATOMİK referans
+sayaçlıdır: serve çağrısının payı + HER bağlantının payı (`serveImpl`
+retain eder, `connectionEntry`nin `defer`ı bırakır); sıfıra inince
+closure bırakılır ve bağlam serbest kalır. Davranış değişikliği YOK
+(bekleme/drain eklenmedi). `nox_http_serve_raw`/`_ws_raw`in `needs_
+headers` parametresi bir bayrak alanına genişledi (bit 0 = header'lar,
+bit 1 = refcounted ctx) — mevcut çağıranlar 0/1 geçer, davranış aynı.
+
+**Kapsam — NE destekleniyor:** `serve`, `serve_fd` ve (tek-runtime olan)
+`serve_tls`/`serve_ws`/`serve_ws_tls`/`serve_fd_tls`/`serve_fd_ws`/
+`serve_fd_ws_tls`. `ws_handle` HÂLÂ üst-düzey fonksiyon adı olmalıdır
+(closure yoluna geçince WS sarmalayıcısı `rt`yi `HandlerCtx@0`dan okur).
+`used_fields` closure'ın gövdesi bilinmediğinden KONSERVATİF `allUsed()`.
+
+**Kapsam — NE desteklenmiyor (kullanıcı "tüm varyantlar" istedi, ama):**
+`serve_multicore*` (üç varyant) closure handler'ı DERLEME ZAMANINDA
+reddeder. Varsayılan `noxc build`de her worker AYRI bir `RuntimeState`
+kullanır — ana çalışma zamanında yaşayan bir closure'ın ortamı (yakalanan
+sınıf örnekleri) başka bir runtime'a AKTARILAMAZ; worker'ın ifadeyi
+kendi runtime'ında yeniden değerlendirmesi de keyfi yakalamalar İçin
+mümkün DEĞİLDİR. `--release`in paylaşılan `WorkerPool` modunda teorik
+olarak mümkündür, ama iki farklı semantik tek bir derleyici kuralına
+sığmadığından bu turda UYGULANMADI — ayrı, bilinçli bir tasarım turu
+gerektirir.
+
+### Test
+
+`tests/compat/http_serve_golden_test.zig`: (1) sınıf yakalayan, bir
+çağrının DÖNDÜRDÜĞÜ closure'ı DOĞRUDAN geçici olarak veren `serve(.., 2)`
++ "yavaş" istemci (serve döndükten SONRA çalışan bağlantı) — stdout
+`merhaba /fast 1`/`merhaba /slow 2` (yakalanan `app` paylaşılır), stderr
+BOŞ. **Mutasyon testi:** bağlantı-başına retain/release kapatılınca
+test `SEGV` ile düşer (ömür korumasının gerçekten yük taşıdığının
+kanıtı). (2) `serve_fd` + closure'ın yerel değişkende tutulması.
+`tests/cli/http_handler_check_test.zig` (yeni, gerçek `noxc check`):
+multicore'da closure reddi + yanlış imzalı closure reddi. Test
+yardımcısı `compileToBinary` ARTIK `noxc`nin kendi yolu gibi closure/
+from-import/fonksiyon-değer bilgisini geçirir (önceden hepsi `.empty`).
+`zig build test`: üç ardışık temiz çalıştırma (bir önceki koşuda
+`serve_tls` testleri yük kaynaklı flaky düştü, tekrarında geçti).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

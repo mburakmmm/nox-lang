@@ -14,6 +14,23 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.133.0]
+
+### Eklendi
+
+- **`nox.http.serve`/`serve_fd` (ve tek-runtime TLS/WS varyantları) artık
+  closure handler kabul ediyor (bkz. nox-teknik-spesifikasyon.md §3.231,
+  Aether NOX_LIMITATIONS.md madde 4 + 19)**: `handle` bir sınıf örneğini
+  yakalayan closure, bir çağrının döndürdüğü closure ya da closure tutan
+  yerel değişken olabilir. Üst-düzey fonksiyon adı yolu değişmedi.
+  Bağlantı fiber'ları `serve` döndükten sonra da handler'ı çağırabildiğinden
+  closure'ın ömrü atomik referans sayaçlı bir bağlamla korunuyor.
+
+### Sınırlama
+
+- `serve_multicore*` closure handler'ı derleme zamanında reddeder
+  (varsayılan derlemede worker'lar ayrı runtime kullanır).
+
 ## [1.132.0]
 
 ### Eklendi
