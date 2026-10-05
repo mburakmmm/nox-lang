@@ -852,6 +852,13 @@ test "golden(decorator): string-listesi argümanında string-olmayan eleman redd
     );
 }
 
+test "golden(list-append): zincirleme alan alıcısı (a.b.xs.append) reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_append_chained_field.nox"),
+        @embedFile("typecheck_cases/err_append_chained_field.expected"),
+    );
+}
+
 test "golden(decorator): bir sınıf üzerindeki decorator v1'de AÇIKÇA reddedilir" {
     try expectGolden(
         @embedFile("typecheck_cases/err_decorator_on_class.nox"),

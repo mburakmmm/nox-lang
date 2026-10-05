@@ -1,0 +1,83 @@
+# Aether NOX_LIMITATIONS.md yol haritası, Faz B.4 (bkz. nox-teknik-
+# spesifikasyon.md ilgili bölüm): `self.alan.append(x)` / `isim.alan.
+# append(x)` — "yerele kopyala → mutasyona uğrat → geri yaz" dansı OLMADAN.
+# Büyüme yolu (kapasite aşımı) heap-yönetimli elemanlarla (str/sınıf),
+# bir alias VARKEN ve argümanın KENDİSİ aynı alanı büyütürken doğru
+# ARC muhasebesi + sızıntısız çalışmalıdır.
+class Item:
+    def __init__(self: Item, n: int) -> None:
+        self.n = n
+
+class Bag:
+    nums: list[int]
+    names: list[str]
+    items: list[Item]
+
+    def __init__(self: Bag) -> None:
+        self.nums = []
+        self.names = []
+        self.items = []
+
+    def add_num(self: Bag, v: int) -> None:
+        self.nums.append(v)
+
+    def add_name(self: Bag, s: str) -> None:
+        self.names.append(s)
+
+    def add_item(self: Bag, n: int) -> None:
+        self.items.append(Item(n))
+
+    # Argümanın KENDİSİ aynı alanı büyütür: bayat işaretçi OLMAMALI.
+    def next_num(self: Bag) -> int:
+        self.nums.append(len(self.nums) * 100)
+        return len(self.nums)
+
+    def add_via_nested(self: Bag) -> None:
+        self.nums.append(self.next_num())
+
+b: Bag = Bag()
+i: int = 0
+while i < 40:
+    b.add_num(i)
+    b.add_name("n" + str(i))
+    b.add_item(i * 2)
+    i = i + 1
+
+print(len(b.nums))
+print(b.nums[0])
+print(b.nums[39])
+print(len(b.names))
+print(b.names[0])
+print(b.names[39])
+print(len(b.items))
+print(b.items[0].n)
+print(b.items[39].n)
+
+# `isim.alan.append` — çağıran tarafta, metod DIŞINDAN.
+b.nums.append(1000)
+b.names.append("sonuncu")
+b.items.append(Item(777))
+print(b.nums[40])
+print(b.names[40])
+print(b.items[40].n)
+
+# Alias VARKEN büyüme: ESKİ blok alias'ta yaşamaya devam eder (bilinen v1
+# sınırlaması, yerel-dansıyla AYNI), ama çökme/çift-serbest bırakma YOK.
+alias: list[str] = b.names
+j: int = 0
+while j < 70:
+    b.names.append("x")
+    j = j + 1
+print(len(alias) > 0)
+print(len(b.names))
+
+# Argüman aynı alanı büyütüyor: önce len == cap (64) olacak şekilde doldur,
+# böylece İÇ append GERÇEKTEN büyür (ESKİ blok serbest kalır) ve DIŞ append
+# alandan YENİDEN okunan işaretçiyi kullanmak ZORUNDA kalır.
+k: int = len(b.nums)
+while k < 64:
+    b.nums.append(k)
+    k = k + 1
+b.add_via_nested()
+print(len(b.nums))
+print(b.nums[len(b.nums) - 1])

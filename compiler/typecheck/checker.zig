@@ -6506,8 +6506,25 @@ pub const Checker = struct {
                 // gibi bir SLOTU OLMAYAN ifadeler İÇİN DEĞİL).
                 if (obj_t == .list) {
                     if (std.mem.eql(u8, a.attr, "append")) {
-                        if (a.obj.* != .identifier) {
-                            return self.fail(error.TypeMismatch, "'append' yalnızca bir değişken üzerinde çağrılabilir (ör. 'xs.append(v)')", .{});
+                        // Faz B.4 (bkz. nox-teknik-spesifikasyon.md ilgili
+                        // bölüm): alıcı ÇIPLAK bir isim YA DA `<isim>.alan`
+                        // (TEK seviye alan erişimi, `<isim>` bir SINIF
+                        // örneği — ör. `self.items.append(v)`) OLABİLİR.
+                        // Zincirleme (`a.b.c.append`) ve geçici alıcılar
+                        // (`get().alan.append`) HÂLÂ reddedilir: büyüme-
+                        // geri-yazması + geçici-release sıralaması ayrı
+                        // bir risk kategorisidir.
+                        const recv_ok = switch (a.obj.*) {
+                            .identifier => true,
+                            .attribute => |fa| blk: {
+                                if (fa.obj.* != .identifier) break :blk false;
+                                const base_t = try self.checkExpr(ctx, fa.obj.*);
+                                break :blk base_t == .class;
+                            },
+                            else => false,
+                        };
+                        if (!recv_ok) {
+                            return self.fail(error.TypeMismatch, "'append' yalnızca bir değişken ya da 'isim.alan' üzerinde çağrılabilir (ör. 'xs.append(v)', 'self.items.append(v)')", .{});
                         }
                         if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'append' tam olarak 1 argüman alır", .{});
                         const vt = try self.checkExpr(ctx, c.args[0]);

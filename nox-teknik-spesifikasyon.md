@@ -27332,6 +27332,50 @@ threads.nox`: tek-thread API + 4 GERÇEK `nox.thread.start` worker'ı ×
 1000 artış = `4000` (20 ardışık çalıştırmada her seferinde 4000) +
 paylaşılan `AtomicBool`. `zig build test`: üç ardışık temiz çalıştırma.
 
+## 3.230 Aether NOX_LIMITATIONS.md yol haritası, Faz B.4 — `obj.alan.append(x)`
+
+**Bağlam:** madde 15'in kalanı — `self.items.append(x)` `'append'
+yalnızca bir değişken üzerinde çağrılabilir` ile reddediliyordu; her
+çağrı "yerele kopyala → mutasyona uğrat → geri yaz" dansı gerektiriyordu
+(§3.226'da `JsonWriter` yazılırken yeniden karşılaşıldı). Plan dosyasının
+yeniden çerçevelemesi doğrulandı: bu bir ownership/aliasing GÜVENLİK
+açığı değil, saf bir CODEGEN boşluğuydu (büyüme-sonrası yeni işaretçiyi
+geri yazmak için alıcının adresi gerekiyor).
+
+**Çözüm (dar kapsam):** alıcı artık çıplak isim YA DA `<isim>.alan`
+(TEK seviye, `<isim>` bir sınıf örneği). `genListAppend`, büyüme yolunun
+geri yazma adresini `genAssign`in `.attribute` dalıyla AYNI hesapla
+(`taban işaretçisi + alan ofseti`) bulur. Zincirleme (`a.b.xs.append`)
+ve geçici alıcılar (`make().xs.append`) HÂLÂ reddedilir (büyüme-geri-
+yazması + geçici-release sıralaması ayrı bir risk kategorisi, bkz.
+§3.200 red-team'inin tekrarlanan kök nedeni). Hata mesajı güncellendi.
+
+**ARC doğrulaması:** alan doğrudan listenin TEK sahibi olduğundan eski
+blok büyümede `predecrement` ile sıfıra iner → mevcut "serbest bırak +
+retain-telafi" dalı çalışır; net refcount etkisi yerel-dansının
+(`items = self.items` ile refcount 2 → eski blok `self.items = items`de
+özyinelemeli bırakılır) sonucuyla AYNIDIR. Alan alıcısında taban
+`checkNoLowlevelEscape` ile sınanır (`genAssign` ile aynı).
+
+**Bayat işaretçi tuzağı (test ile KANITLANDI):** argümanın KENDİSİ aynı
+alanı büyütebilir (`self.nums.append(self.next_num())`, `next_num` aynı
+listeye append ediyor ve kapasite doluyken büyütüyor) — alıcı değeri
+argümandan ÖNCE okunmuş olsaydı bayat blok üzerinde çalışılırdı. Bu
+yüzden alan alıcısında liste işaretçisi argüman değerlendirmesinden
+SONRA alandan YENİDEN okunur. Mutasyon testi: yeniden okuma kapatılınca
+çıktı sessizce yanlış (`65`/`65`, doğrusu `66`/`65`: eleman kayboldu,
+serbest bırakılmış bloğa yazıldı); açıkken doğru.
+
+### Test
+
+`list_field_direct_append.nox`: 40 iterasyon × 3 alan (`list[int]`/
+`list[str]`/`list[Item]`, çoklu büyüme), metod DIŞINDAN `b.nums.append`,
+alias VARKEN büyüme (bilinen v1 sınırlaması: alias eski bloğu görür,
+yerel-dansıyla AYNI — çökme/çift-serbest-bırakma YOK), len == cap iken
+iç içe büyüten append. Negatif: `err_append_chained_field.nox`;
+`err_list_append_non_identifier_receiver.expected` yalnızca mesaj metni
+değişti. `zig build test`: üç ardışık temiz çalıştırma.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

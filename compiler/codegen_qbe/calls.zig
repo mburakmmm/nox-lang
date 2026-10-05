@@ -1865,25 +1865,43 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     // BU spesifik arena, `local_escape.zig`nin KANITLADIĞI, SKALER-elemanlı
     // bir yerel İçİn ÖZEL olarak yaratıldı.
     if (obj.arena and obj.growable_arena == null) return error.Unsupported;
-    // checker `a.obj.*`in bir `.identifier` OLMASINI ZORUNLU kıldı
-    // (bkz. checker.zig'in `.list` dalı) — codegen bu ŞEKLE GÜVENİR.
-    const recv_name = a.obj.identifier;
-    // Bulundu (bkz. proje belleği "modül-seviyesi global durum" planı):
-    // alıcı YEREL DEĞİL modül-seviyesi bir global OLABİLİR — büyüme
-    // yolunun YENİ işaretçiyi geri yazacağı ADRES ya bir yerelin KENDİ
-    // stack slotu ya da globals bloğundaki ofsetidir (`recv_addr`, HER
-    // İKİ durumda da düz bir `storel val, <adres>` hedefi).
-    const recv_addr: []const u8 = blk: {
-        if (self.vars.get(recv_name)) |var_info| {
-            if (var_info.is_param) return error.Unsupported;
-            break :blk var_info.slot;
-        }
-        const g = self.module_globals.get(recv_name) orelse return error.Unsupported;
-        const block = try self.newTemp();
-        try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_globals_get", &.{.{ .ty = .l, .text = RT_PARAM }});
-        const addr = try self.newTemp();
-        try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
-        break :blk addr;
+    // Faz B.4: alıcı ya çıplak bir isim ya da `<isim>.alan` (TEK seviye,
+    // `<isim>` bir sınıf örneği — checker ZORUNLU kıldı). İkinci durumda
+    // büyüme yolunun yeni işaretçiyi geri yazacağı adres, nesnenin
+    // alan ofsetidir (`genAssign`in `.attribute` dalıyla AYNI hesap).
+    var field_recv = false;
+    const recv_addr: []const u8 = switch (a.obj.*) {
+        .attribute => |fa| blk: {
+            const base = try self.genExpr(fa.obj.*);
+            if (base.heap != .class) return error.Unsupported;
+            try self.checkNoLowlevelEscape(base);
+            const cinfo = self.classes.get(base.class_name.?) orelse return error.Unsupported;
+            for (cinfo.fields.items) |f| {
+                if (!std.mem.eql(u8, f.name, fa.attr)) continue;
+                const addr = try self.newTemp();
+                try self.qbeOp2Imm(addr, .l, "add", base.text, @intCast(f.offset));
+                field_recv = true;
+                break :blk addr;
+            }
+            return error.Unsupported;
+        },
+        else => blk: {
+            const recv_name = a.obj.identifier;
+            // Bulundu (bkz. proje belleği "modül-seviyesi global durum"
+            // planı): alıcı YEREL DEĞİL modül-seviyesi bir global OLABİLİR
+            // — büyüme yolunun YENİ işaretçiyi geri yazacağı ADRES ya bir
+            // yerelin KENDİ stack slotu ya da globals bloğundaki ofsetidir.
+            if (self.vars.get(recv_name)) |var_info| {
+                if (var_info.is_param) return error.Unsupported;
+                break :blk var_info.slot;
+            }
+            const g = self.module_globals.get(recv_name) orelse return error.Unsupported;
+            const block = try self.newTemp();
+            try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_globals_get", &.{.{ .ty = .l, .text = RT_PARAM }});
+            const addr = try self.newTemp();
+            try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
+            break :blk addr;
+        },
     };
 
     const v0 = try self.genExpr(args[0]);
@@ -1891,11 +1909,20 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     const retained = try self.retainIfAliasing(args[0], v0);
     const val = try self.convert(retained, obj.elem_qtype);
     const elem_size = qbeSizeOf(obj.elem_qtype);
+    // Alan alıcısında argümanın değerlendirilmesi (ör. `self.xs.append(
+    // self.make())`, `make` AYNI alanı büyütebilir) `obj.text`i BAYAT
+    // bırakabilir — işaretçi argümandan SONRA alandan YENİDEN okunur.
+    // (Yerel/global alıcıda bu hesap gereksizdir, `obj.text` kullanılır.)
+    const list_text: []const u8 = if (field_recv) blk: {
+        const t = try self.newTemp();
+        try self.qbeLoadL(t, recv_addr);
+        break :blk t;
+    } else obj.text;
 
     const len_t = try self.newTemp();
-    try self.qbeLoadL(len_t, obj.text);
+    try self.qbeLoadL(len_t, list_text);
     const cap_addr = try self.newTemp();
-    try self.qbeOp2Imm(cap_addr, .l, "add", obj.text, 8);
+    try self.qbeOp2Imm(cap_addr, .l, "add", list_text, 8);
     const cap_t = try self.newTemp();
     try self.qbeLoadL(cap_t, cap_addr);
     const has_room = try self.newTemp();
@@ -1945,9 +1972,9 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     if (obj.growable_arena) |arena_handle| {
         // GG.18: `nox_list_grow`nin arena-farkında ikizi — bkz. `runtime/
         // alloc/arc.zig`nin `nox_arena_list_grow`ının belge notu.
-        try self.qbeCall(.{ .name = new_ptr, .ty = .l }, "$nox_arena_list_grow", &.{ .{ .ty = .l, .text = arena_handle }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = copy_bytes }, .{ .ty = .l, .text = new_payload_size } });
+        try self.qbeCall(.{ .name = new_ptr, .ty = .l }, "$nox_arena_list_grow", &.{ .{ .ty = .l, .text = arena_handle }, .{ .ty = .l, .text = list_text }, .{ .ty = .l, .text = copy_bytes }, .{ .ty = .l, .text = new_payload_size } });
     } else {
-        try self.qbeCall(.{ .name = new_ptr, .ty = .l }, "$nox_list_grow", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = copy_bytes }, .{ .ty = .l, .text = new_payload_size } });
+        try self.qbeCall(.{ .name = new_ptr, .ty = .l }, "$nox_list_grow", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = list_text }, .{ .ty = .l, .text = copy_bytes }, .{ .ty = .l, .text = new_payload_size } });
     }
 
     // **Bulundu, GERÇEK bir çift-serbest-bırakma/erken-serbest-bırakma
@@ -2019,7 +2046,7 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     // "çöp" olarak, fonksiyonun `function_arena`sı TOPLU yıkılana kadar
     // yaşar — bu, arenaların DOĞAL/beklenen MODELİDİR).
     if (obj.growable_arena == null) {
-        const should_free = try self.emitInlinePredecrement(obj.text, .list);
+        const should_free = try self.emitInlinePredecrement(list_text, .list);
         const free_label = try self.newLabel("append_free_old");
         const skip_free_label = try self.newLabel("append_skip_free");
         try self.qbeJnz(should_free, free_label, skip_free_label);
@@ -2031,7 +2058,7 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
             // DEĞİL: bu decrement ASLA sıfıra/altına düşemez, çünkü elemanın
             // ÖNCEKİ, GEÇERLİ sahipliği HÂLÂ duruyor — bkz. `genListAppend`nin
             // büyüme-retain notunun tam gerekçesi).
-            try self.emitListElemPlainDecrementLoop(obj.text, len_t, obj.elem_heap_info.?.heap);
+            try self.emitListElemPlainDecrementLoop(list_text, len_t, obj.elem_heap_info.?.heap);
         }
         const old_size = try self.newTemp();
         {
@@ -2039,7 +2066,7 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
             try self.qbeOp2Imm(sz, .l, "mul", cap_t, @intCast(elem_size));
             try self.qbeOp2Imm(old_size, .l, "add", sz, @intCast(LIST_HEADER_SIZE));
         }
-        try self.qbeCall(null, "$nox_rc_free_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .l, .text = old_size } });
+        try self.qbeCall(null, "$nox_rc_free_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = list_text }, .{ .ty = .l, .text = old_size } });
         try self.qbeJmp(skip_free_label);
         try self.qbeLabel(skip_free_label);
     }
@@ -2058,12 +2085,12 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         const off16 = try self.newTemp();
         try self.qbeOp2Imm(off16, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
         const addr = try self.newTemp();
-        try self.qbeOp2(addr, .l, "add", obj.text, off16);
+        try self.qbeOp2(addr, .l, "add", list_text, off16);
         try self.qbeStore(obj.elem_qtype, val.text, addr);
     }
     const fast_new_len = try self.newTemp();
     try self.qbeOp2Imm(fast_new_len, .l, "add", len_t, 1);
-    try self.qbeStoreL(fast_new_len, obj.text);
+    try self.qbeStoreL(fast_new_len, list_text);
     try self.qbeJmp(done_label);
 
     try self.qbeLabel(done_label);

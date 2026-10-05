@@ -14,6 +14,21 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.132.0]
+
+### Eklendi
+
+- **`self.alan.append(x)` / `isim.alan.append(x)` artık doğrudan
+  çalışıyor (bkz. nox-teknik-spesifikasyon.md §3.230, Aether
+  NOX_LIMITATIONS.md madde 15)**: "yerele kopyala → append → geri yaz"
+  dansı gerekmiyor. Yalnızca tek seviye alan erişimi desteklenir;
+  zincirleme (`a.b.xs.append`) ve geçici alıcılar hâlâ reddedilir.
+  Argümanın aynı alanı büyüttüğü durum (bayat işaretçi) güvenli.
+
+### Değiştirildi
+
+- `append` alıcı kısıtı hata mesajının metni güncellendi.
+
 ## [1.131.0]
 
 ### Eklendi
