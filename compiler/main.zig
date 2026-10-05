@@ -1709,7 +1709,19 @@ fn cmdExpand(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []c
             try w.print("  @{s}(", .{d.decorator_name});
             for (d.args, 0..) |arg, i| {
                 if (i > 0) try w.writeAll(", ");
-                try w.print("\"{s}\"", .{arg});
+                switch (arg) {
+                    .string => |s| try w.print("\"{s}\"", .{s}),
+                    .int => |n| try w.print("{d}", .{n}),
+                    .boolean => |b| try w.print("{}", .{b}),
+                    .list_str => |items| {
+                        try w.writeAll("[");
+                        for (items, 0..) |it, k| {
+                            if (k > 0) try w.writeAll(", ");
+                            try w.print("\"{s}\"", .{it});
+                        }
+                        try w.writeAll("]");
+                    },
+                }
             }
             try w.print(") -> {s}", .{d.func_name});
             if (d.is_handler_shaped) {

@@ -845,6 +845,13 @@ test "golden(decorator): literal-olmayan bir decorator argümanı reddedilir" {
     );
 }
 
+test "golden(decorator): string-listesi argümanında string-olmayan eleman reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_decorator_list_non_string_element.nox"),
+        @embedFile("typecheck_cases/err_decorator_list_non_string_element.expected"),
+    );
+}
+
 test "golden(decorator): bir sınıf üzerindeki decorator v1'de AÇIKÇA reddedilir" {
     try expectGolden(
         @embedFile("typecheck_cases/err_decorator_on_class.nox"),

@@ -725,6 +725,51 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$__nox_reflect_decorator_arg", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = i_v.text }, .{ .ty = .l, .text = j_v.text } });
                 return .{ .text = result_temp, .qtype = .l, .heap = .str };
             }
+            // Faz A.6: `__nox_reflect_decorator_arg`in int/bool/string-listesi
+            // eşdeğerleri — bkz. `decorators.zig`nin `genReflectDecoratorArgKind`/
+            // `genReflectDecoratorArgInt`/`genReflectDecoratorArgBool`/
+            // `genReflectDecoratorArgListLen`/`genReflectDecoratorArgListItem`si.
+            if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg_kind")) {
+                if (c.args.len != 2) return error.Unsupported;
+                const i_v = try self.genExpr(c.args[0]);
+                const j_v = try self.genExpr(c.args[1]);
+                const result_temp = try self.newTemp();
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$__nox_reflect_decorator_arg_kind", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = i_v.text }, .{ .ty = .l, .text = j_v.text } });
+                return .{ .text = result_temp, .qtype = .l };
+            }
+            if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg_int")) {
+                if (c.args.len != 2) return error.Unsupported;
+                const i_v = try self.genExpr(c.args[0]);
+                const j_v = try self.genExpr(c.args[1]);
+                const result_temp = try self.newTemp();
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$__nox_reflect_decorator_arg_int", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = i_v.text }, .{ .ty = .l, .text = j_v.text } });
+                return .{ .text = result_temp, .qtype = .l };
+            }
+            if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg_bool")) {
+                if (c.args.len != 2) return error.Unsupported;
+                const i_v = try self.genExpr(c.args[0]);
+                const j_v = try self.genExpr(c.args[1]);
+                const result_temp = try self.newTemp();
+                try self.qbeCall(.{ .name = result_temp, .ty = .w }, "$__nox_reflect_decorator_arg_bool", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = i_v.text }, .{ .ty = .l, .text = j_v.text } });
+                return .{ .text = result_temp, .qtype = .w };
+            }
+            if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg_list_len")) {
+                if (c.args.len != 2) return error.Unsupported;
+                const i_v = try self.genExpr(c.args[0]);
+                const j_v = try self.genExpr(c.args[1]);
+                const result_temp = try self.newTemp();
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$__nox_reflect_decorator_arg_list_len", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = i_v.text }, .{ .ty = .l, .text = j_v.text } });
+                return .{ .text = result_temp, .qtype = .l };
+            }
+            if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg_list_item")) {
+                if (c.args.len != 3) return error.Unsupported;
+                const i_v = try self.genExpr(c.args[0]);
+                const j_v = try self.genExpr(c.args[1]);
+                const k_v = try self.genExpr(c.args[2]);
+                const result_temp = try self.newTemp();
+                try self.qbeCall(.{ .name = result_temp, .ty = .l }, "$__nox_reflect_decorator_arg_list_item", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = i_v.text }, .{ .ty = .l, .text = j_v.text }, .{ .ty = .l, .text = k_v.text } });
+                return .{ .text = result_temp, .qtype = .l, .heap = .str };
+            }
             if (std.mem.eql(u8, name, "__nox_reflect_decorator_is_handler")) {
                 if (c.args.len != 1) return error.Unsupported;
                 const i_v = try self.genExpr(c.args[0]);

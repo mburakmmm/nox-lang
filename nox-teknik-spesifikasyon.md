@@ -27249,6 +27249,56 @@ fixture'ın [`tls_websocket_connect_error`/`postgres_mysql_connect_error`]
 IR'ını da DEĞİŞTİRDİ, §3.226'nın AYNI "tree-shaking yok" mimari
 özelliği — davranışları DEĞİŞMEDİ, snapshot'ları yeniden üretildi).
 
+## 3.228 Aether NOX_LIMITATIONS.md yol haritası, Faz A.6 — decorator argümanları: int/bool/string-listesi
+
+**Bağlam:** §3.222/§3.224-§3.227'nin AYNI yol haritasının madde 2'si —
+decorator argümanları YALNIZCA string literali olabiliyordu
+(`@route.priority(5)` GİBİ bir int argümanı derleme hatasıydı).
+
+**Kapsam kararı (kullanıcı onaylı):** string/int/bool/string-listesi.
+İç içe/karmaşık literal (liste İÇİNDE int, liste İÇİNDE liste vb.)
+HÂLÂ reddedilir.
+
+**Veri modeli:** `checker.zig`de yeni `DecoratorArg` birleşimi
+(`string`/`int`/`boolean`/`list_str`); `DecoratedFuncInfo.args` artık
+`[]const DecoratorArg`. `registerCapabilityDecorator`nin imzası
+(`[]const []const u8`) BİLEREK DEĞİŞMEDİ — üç çağrı sitesi (serbest
+fonksiyon, `extern def`, metod) kendi string-doğrulamasını yapar;
+`@capability.requires`in int/bool/liste argümanı almaması HÂLÂ derleme
+hatasıdır.
+
+**Codegen düzeni (`decorators.zig`):** `$__nox_decorator_args` HÂLÂ
+argüman başına TEK `l` kelimesidir (`j` indeksleme semantiği KORUNDU) —
+anlamı türe göre değişir: string = pinned `str` işaretçisi, int = ham
+değer, bool = 0/1, liste = `(start << 32) | count` paketlenmiş çift.
+1:1 PARALEL yeni `$__nox_decorator_arg_kinds` (0=string/1=int/2=bool/
+3=liste) ve liste öğeleri İçİn YENİ düz `$__nox_decorator_list_items`
+tablosu eklendi.
+
+**`nox.reflect` yüzeyi:** `decorator_arg_kind`/`decorator_arg_int`/
+`decorator_arg_bool`/`decorator_arg_list_len`/`decorator_arg_list_item`
+(+ derleyici yerleşikleri `__nox_reflect_decorator_arg_*`, hem
+`checker.zig` hem `calls.zig`de). Mevcut `decorator_arg` DEĞİŞMEDİ AMA
+artık string-OLMAYAN bir slotta pinned BOŞ dize döner (slotun ham
+sayısal değerini işaretçi sanıp okumak geçersiz bellek erişimi
+olurdu). Diğer yanlış-erişimci çağrıları da ÇÖKMEZ: `0`/`False`/boş
+dize döner.
+
+### Test
+
+`decorator_args_typed_literals.nox` (dört türün hepsi + yanlış
+erişimci varsayılanları), `typecheck_cases/err_decorator_list_non_
+string_element.nox` (listede string-olmayan eleman reddi). Mevcut
+`err_decorator_non_literal_arg.expected` yalnızca MESAJ METNİ değişti
+(kabul edilen literal kümesi genişledi) — reddetme davranışı aynı.
+Decorator tablosu/erişimcileri HER programa koşulsuz emit edildiğinden
+(`genNoxInitGlobals` ile aynı gerekçe) 318 fixture'ın IR snapshot'ı
+yeniden üretildi; fibonacci üzerinde farkın YALNIZCA `__nox_decorator*`/
+`__nox_reflect_decorator*` olduğu elle doğrulandı. `zig build test`:
+iki ardışık temiz çalıştırma (bir ara çalıştırmada önceki yarım kalmış
+bir build'den kalma Zig önbellek `FileNotFound` hatası görüldü, kodla
+ilgisiz, tekrarında geçti).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

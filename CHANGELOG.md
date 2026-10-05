@@ -14,6 +14,23 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.130.0]
+
+### Eklendi
+
+- **Decorator argümanları artık string/int/bool/string-listesi olabilir
+  (bkz. nox-teknik-spesifikasyon.md §3.228, Aether NOX_LIMITATIONS.md
+  madde 2)**: `@config("name", 42, True, ["a", "b"])`. `nox.reflect`e
+  `decorator_arg_kind`/`decorator_arg_int`/`decorator_arg_bool`/
+  `decorator_arg_list_len`/`decorator_arg_list_item` eklendi. İç içe
+  literaller hâlâ reddedilir; yanlış erişimci çağrısı çökmez, güvenli
+  varsayılan döner.
+
+### Değiştirildi
+
+- Decorator argümanı kabul edilmediğinde verilen hata mesajının metni
+  değişti (kabul edilen literal kümesi genişledi).
+
 ## [1.129.0]
 
 ### Eklendi

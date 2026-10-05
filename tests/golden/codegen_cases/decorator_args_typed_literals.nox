@@ -1,0 +1,32 @@
+# Aether NOX_LIMITATIONS.md yol haritası, Faz A.6 (bkz. nox-teknik-
+# spesifikasyon.md ilgili bölüm): decorator argümanları artık string/
+# int/bool/string-listesi literalleri OLABİLİR (ÖNCEDEN SADECE string).
+# `nox.reflect.decorator_arg_kind`/`decorator_arg_int`/`decorator_arg_
+# bool`/`decorator_arg_list_len`/`decorator_arg_list_item` İLE okunur —
+# YANLIŞ erişimcinin GÜVENLİ (çökmesiz) varsayılana düştüğü de ayrıca
+# doğrulanır.
+import nox.reflect
+
+@config("name", 42, True, ["a", "b", "c"])
+def target() -> None:
+    pass
+
+print(nox.reflect.decorator_arg_count(0))
+print(nox.reflect.decorator_arg_kind(0, 0))
+print(nox.reflect.decorator_arg(0, 0))
+print(nox.reflect.decorator_arg_kind(0, 1))
+print(nox.reflect.decorator_arg_int(0, 1))
+print(nox.reflect.decorator_arg_kind(0, 2))
+print(nox.reflect.decorator_arg_bool(0, 2))
+print(nox.reflect.decorator_arg_kind(0, 3))
+print(nox.reflect.decorator_arg_list_len(0, 3))
+print(nox.reflect.decorator_arg_list_item(0, 3, 0))
+print(nox.reflect.decorator_arg_list_item(0, 3, 1))
+print(nox.reflect.decorator_arg_list_item(0, 3, 2))
+
+# Yanlış erişimci: int-kind bir argümanda decorator_arg_bool/decorator_arg
+# cagirmak cokmemeli, guvenli bir varsayilana (False/bos dize) dusmeli.
+print(nox.reflect.decorator_arg_bool(0, 1))
+print(nox.reflect.decorator_arg(0, 1))
+# bool-kind bir argumanda decorator_arg_int cagirmak 0 donmeli.
+print(nox.reflect.decorator_arg_int(0, 2))

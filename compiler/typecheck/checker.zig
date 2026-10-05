@@ -164,10 +164,21 @@ const ExternCallbackConfig = struct {
     callback_type: types.FuncType,
 };
 
+/// Aether NOX_LIMITATIONS.md yol haritası, Faz A.6 (bkz. nox-teknik-
+/// spesifikasyon.md ilgili bölüm, madde 2): bir decorator argümanının
+/// ÇÖZÜLMÜŞ (tırnaksız/kaçışsız) DEĞERİ — v1 BİLEREK string/int/bool/
+/// string-listesi İLE SINIRLIDIR (iç içe/karmaşık literal YOK,
+/// `registerDecorators`in belge notuna bkz.).
+pub const DecoratorArg = union(enum) {
+    string: []const u8,
+    int: i64,
+    boolean: bool,
+    list_str: []const []const u8,
+};
+
 /// Faz 1 decorator: `Checker.decorated_functions`in ELEMANI (bkz. onun
-/// belge notu). `args`, decorator'ın string-literal argümanlarının ÇÖZÜLMÜŞ
-/// (tırnaksız/kaçışsız) DEĞERLERİDİR — `ast.Decorator.args`nin HAM `Expr`
-/// AĞACI DEĞİL.
+/// belge notu). `args`, decorator'ın literal argümanlarının ÇÖZÜLMÜŞ
+/// DEĞERLERİDİR — `ast.Decorator.args`nin HAM `Expr` AĞACI DEĞİL.
 pub const DecoratedFuncInfo = struct {
     /// `registerFunc`e ULAŞTIĞI ANDAKİ `fd.name` — üst-düzey fonksiyonlar
     /// İçin bu ZATEN codegen sembolüyle (VE `functions_used_as_value`nin
@@ -175,7 +186,7 @@ pub const DecoratedFuncInfo = struct {
     /// `module_loader.zig` TARAFINDAN ÖNCEDEN mangle edilmiş olabilir).
     func_name: []const u8,
     decorator_name: []const u8,
-    args: []const []const u8,
+    args: []const DecoratorArg,
     /// `true` İSE fonksiyonun imzası TAM OLARAK `(ctx: Context) ->
     /// HttpResponse`dir — `nox.reflect.decorator_handler(i)` bu durumda
     /// çağrılabilir bir DEĞER döner (bkz. `functions_used_as_value`e
@@ -1808,11 +1819,13 @@ pub const Checker = struct {
         if (fd.decorators.len > 0) try self.registerDecorators(fd, params, ret);
     }
 
-    /// Faz 1 decorator: `registerFunc`in AYIRDIĞI (sinyal amaçlı) alt
-    /// adım — `fd.decorators`nin HER girdisi İçin (a) argümanların
-    /// YALNIZCA string LİTERALİ olduğunu doğrular (`hpy_call`nin AYNI
-    /// deseni, bkz. onun belge notu), (b) fonksiyonu `functions_used_as_
-    /// value`e EKLEYEREK codegen'in bir trampoline ÜRETMESİNİ sağlar
+    /// Faz 1 decorator (Faz A.6 İLE GENİŞLETİLDİ, bkz. `DecoratorArg`nin
+    /// belge notu): `registerFunc`in AYIRDIĞI (sinyal amaçlı) alt adım —
+    /// `fd.decorators`nin HER girdisi İçin (a) argümanların string/int/
+    /// bool/string-listesi literallerinden BİRİ olduğunu doğrular (`hpy_
+    /// call`nin AYNI deseni, bkz. onun belge notu — iç içe/karmaşık
+    /// literal HÂLÂ reddedilir), (b) fonksiyonu `functions_used_as_value`e
+    /// EKLEYEREK codegen'in bir trampoline ÜRETMESİNİ sağlar
     /// (`resolveIdentifierAsFunctionValue`in AYNI mekanizması), (c) imza
     /// TAM OLARAK `(ctx: Context) -> HttpResponse` İSE `is_handler_shaped`
     /// bayrağını işaretler (bkz. `DecoratedFuncInfo`nin belge notu).
@@ -1834,15 +1847,41 @@ pub const Checker = struct {
             params[0] == .class and std.mem.eql(u8, params[0].class, context_name) and
             ret == .class and std.mem.eql(u8, ret.class, http_response_name);
         for (fd.decorators) |dec| {
-            const arg_values = try self.allocator.alloc([]const u8, dec.args.len);
+            const arg_values = try self.allocator.alloc(DecoratorArg, dec.args.len);
             for (dec.args, 0..) |a, i| {
-                if (a != .string_lit) {
-                    return self.fail(error.TypeMismatch, "decorator '@{s}' argümanı {d} yalnızca bir string LİTERALİ olabilir (fonksiyon: {s})", .{ dec.name, i + 1, fd.name });
-                }
-                arg_values[i] = a.string_lit;
+                arg_values[i] = switch (a) {
+                    .string_lit => |s| .{ .string = s },
+                    .int_lit => |n| .{ .int = n },
+                    .bool_lit => |b| .{ .boolean = b },
+                    .list_lit => |items| blk: {
+                        const strs = try self.allocator.alloc([]const u8, items.len);
+                        for (items, 0..) |it, k| {
+                            if (it != .string_lit) {
+                                return self.fail(error.TypeMismatch, "decorator '@{s}' argümanı {d}: liste yalnızca string literalleri içerebilir (fonksiyon: {s})", .{ dec.name, i + 1, fd.name });
+                            }
+                            strs[k] = it.string_lit;
+                        }
+                        break :blk DecoratorArg{ .list_str = strs };
+                    },
+                    else => return self.fail(error.TypeMismatch, "decorator '@{s}' argümanı {d} yalnızca string/int/bool literali ya da string listesi olabilir (fonksiyon: {s})", .{ dec.name, i + 1, fd.name }),
+                };
             }
             if (is_handler_shaped) try self.functions_used_as_value.put(self.allocator, fd.name, {});
-            try self.registerCapabilityDecorator(fd.name, dec.name, arg_values);
+            // `registerCapabilityDecorator`nin imzası (`[]const []const u8`)
+            // DEĞİŞMEDİ — `extern def`/metod decorator çağrı siteleri HÂLÂ
+            // SADECE string literali kabul eder (capability ADLARI zaten
+            // HER ZAMAN string'dir). Burada da AYNI kısıt uygulanır —
+            // `@capability.requires`in argümanları int/bool/liste OLAMAZ.
+            if (std.mem.eql(u8, dec.name, "capability.requires")) {
+                const str_args = try self.allocator.alloc([]const u8, arg_values.len);
+                for (arg_values, 0..) |v, i| {
+                    str_args[i] = switch (v) {
+                        .string => |s| s,
+                        else => return self.fail(error.TypeMismatch, "'@capability.requires' argümanı {d} yalnızca bir string LİTERALİ olabilir (fonksiyon: {s})", .{ i + 1, fd.name }),
+                    };
+                }
+                try self.registerCapabilityDecorator(fd.name, dec.name, str_args);
+            }
             try self.decorated_functions.append(self.allocator, .{
                 .func_name = fd.name,
                 .decorator_name = dec.name,
@@ -6114,6 +6153,40 @@ pub const Checker = struct {
                     if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg' tam olarak 2 argüman alır (i: int, j: int)", .{});
                     if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg' argümanı 1 (i) int olmalıdır", .{});
                     if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg' argümanı 2 (j) int olmalıdır", .{});
+                    return .str;
+                }
+                // Faz A.6 (bkz. `DecoratorArg`nin belge notu): `__nox_reflect_
+                // decorator_arg`in int/bool/string-listesi eşdeğerleri — HEPSİ
+                // AYNI (i, j) indeksleme sözleşmesini paylaşır.
+                if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg_kind")) {
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg_kind' tam olarak 2 argüman alır (i: int, j: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_kind' argümanı 1 (i) int olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_kind' argümanı 2 (j) int olmalıdır", .{});
+                    return .int;
+                }
+                if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg_int")) {
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg_int' tam olarak 2 argüman alır (i: int, j: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_int' argümanı 1 (i) int olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_int' argümanı 2 (j) int olmalıdır", .{});
+                    return .int;
+                }
+                if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg_bool")) {
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg_bool' tam olarak 2 argüman alır (i: int, j: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_bool' argümanı 1 (i) int olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_bool' argümanı 2 (j) int olmalıdır", .{});
+                    return .boolean;
+                }
+                if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg_list_len")) {
+                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg_list_len' tam olarak 2 argüman alır (i: int, j: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_list_len' argümanı 1 (i) int olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_list_len' argümanı 2 (j) int olmalıdır", .{});
+                    return .int;
+                }
+                if (std.mem.eql(u8, name, "__nox_reflect_decorator_arg_list_item")) {
+                    if (c.args.len != 3) return self.fail(error.ArgumentCountMismatch, "'__nox_reflect_decorator_arg_list_item' tam olarak 3 argüman alır (i: int, j: int, k: int)", .{});
+                    if (try self.checkExpr(ctx, c.args[0]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_list_item' argümanı 1 (i) int olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[1]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_list_item' argümanı 2 (j) int olmalıdır", .{});
+                    if (try self.checkExpr(ctx, c.args[2]) != .int) return self.fail(error.TypeMismatch, "'__nox_reflect_decorator_arg_list_item' argümanı 3 (k) int olmalıdır", .{});
                     return .str;
                 }
                 // `i`nin kaydı "handler-şekilli" mi (bkz. `registerDecorators`

@@ -36,6 +36,33 @@ def decorator_arg_count(i: int) -> int:
 def decorator_arg(i: int, j: int) -> str:
     return __nox_reflect_decorator_arg(i, j)
 
+# Aether NOX_LIMITATIONS.md yol haritası, Faz A.6 (bkz. nox-teknik-
+# spesifikasyon.md ilgili bölüm, madde 2): `decorator_arg`in v1'i
+# YALNIZCA string literali kabul ediyordu (ör. `@route.priority(5)`
+# GİBİ bir int argümanı YAZMAK derleme hatasıydı) — artık decorator
+# argümanları string/int/bool/string-listesi OLABİLİR. `decorator_arg_
+# kind(i, j)` HANGİ erişimcinin GÜVENLE çağrılabileceğini söyler:
+# `0`=string (`decorator_arg`), `1`=int (`decorator_arg_int`),
+# `2`=bool (`decorator_arg_bool`), `3`=string-listesi (`decorator_arg_
+# list_len`/`decorator_arg_list_item`). YANLIŞ erişimciyi çağırmak
+# (ör. bir int argümanında `decorator_arg_bool`) ÇÖKMEZ — güvenli bir
+# varsayılan (`0`/`False`/boş dize) döner, bkz. `decorators.zig`nin
+# belge notu.
+def decorator_arg_kind(i: int, j: int) -> int:
+    return __nox_reflect_decorator_arg_kind(i, j)
+
+def decorator_arg_int(i: int, j: int) -> int:
+    return __nox_reflect_decorator_arg_int(i, j)
+
+def decorator_arg_bool(i: int, j: int) -> bool:
+    return __nox_reflect_decorator_arg_bool(i, j)
+
+def decorator_arg_list_len(i: int, j: int) -> int:
+    return __nox_reflect_decorator_arg_list_len(i, j)
+
+def decorator_arg_list_item(i: int, j: int, k: int) -> str:
+    return __nox_reflect_decorator_arg_list_item(i, j, k)
+
 # `true` İSE `decorator_handler(i)` GÜVENLE çağrılabilir (fonksiyonun imzası
 # TAM OLARAK `(ctx: Context) -> HttpResponse`dir) — `false` İKEN
 # `decorator_handler(i)` ÇAĞRILMAMALIDIR (null bir kapanışa yol açar).
