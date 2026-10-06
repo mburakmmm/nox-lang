@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.12]
+
+### Düzeltildi
+
+- **`docs/LANGUAGE.md` güncellendi**: tekli kalıtım, f-string/augmented assignment, metadata
+  decorator'ları ve generic metodlar artık desteklendiğinden eski "desteklenmiyor" ifadeleri
+  düzeltildi. `stdlib/nox/json.nox`teki bayat "ARC hatası" notu temizlendi (Faz JJ'de çözülmüştü).
+
 ## [1.142.11]
 
 ### Düzeltildi

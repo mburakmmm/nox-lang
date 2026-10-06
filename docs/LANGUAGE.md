@@ -27,9 +27,11 @@ Where Nox differs from Python:
   intentional exception — see [`self`](#self-and-classes) below). There
   is no implicit fallback to a dynamic/`Any` type anywhere in the
   language.
-- **No class inheritance, no metaclasses.** A class has methods and
-  fields; there is no `class Dog(Animal):`. Structural polymorphism is
-  provided by [protocols](#protocols) instead.
+- **Single inheritance only, no metaclasses.** `class Dog(Animal):` is
+  supported (methods dispatch through a vtable, `super()` works, and
+  `except Base:` matches subclasses), but there is no multiple
+  inheritance. Structural polymorphism is also available through
+  [protocols](#protocols).
 - **No garbage collector.** Memory is managed by a layered, mostly
   invisible model — see [Memory Model](#memory-model).
 
@@ -76,10 +78,11 @@ Mixed `int`/`float` arithmetic promotes to `float`; the only other
 implicit conversion is `int → float` on assignment.
 
 **Deliberately not supported** (each one considered and explicitly
-deferred, not overlooked): f-strings, augmented assignment (`+=` etc.),
-class inheritance, multiple return values via tuple unpacking,
-`*args`/`**kwargs`, decorators, metaclasses, and dynamic attribute
-manipulation (`setattr`, `exec`, runtime class generation).
+deferred, not overlooked): multiple return values via tuple unpacking,
+`*args`/`**kwargs`, multiple inheritance, metaclasses, and dynamic
+attribute manipulation (`setattr`, `exec`, runtime class generation).
+(f-strings, augmented assignment on variables, single inheritance and
+metadata-only decorators — see `nox.reflect` — are supported.)
 
 ## `self` and Classes
 
@@ -114,9 +117,9 @@ print(c.value)
   compile error, not a null/zeroed value.
 - Fields can only be created inside `__init__`; assigning a brand-new
   `self.<name>` from any other method is a compile error.
-- There is no inheritance, so `except ClassName` and protocol
-  implementation both match by exact class identity, not by a subclass
-  hierarchy.
+- Protocol implementation is structural (no `implements` keyword), and
+  `except ClassName` also matches subclasses of `ClassName` (single
+  inheritance hierarchy).
 
 ## Protocols
 
@@ -167,8 +170,10 @@ x: int = first([1, 2, 3])
 y: str = first(["a", "b"])
 ```
 
-Methods cannot be generic (`def get[T](self, ...)` is rejected) — only
-free functions.
+Methods can be generic too: `def first[T](self, fallback: T) -> T` is
+called as `obj.first[int](5)` or with the type argument inferred from the
+arguments (`obj.first(5)`). Current limits: one type parameter per
+method, and a generic method on a generic class is not supported.
 
 ## Error Handling
 

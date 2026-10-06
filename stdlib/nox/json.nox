@@ -108,22 +108,12 @@ def object_value(v: JsonValue, i: int) -> JsonValue:
 # karakter-döngüsünün O(n²) tahsisi ortadan kalktı. Aşağıdaki tarihsel not
 # eski saf-Nox uygulamanın neden eksik kaldığını açıklar.
 #
-# **TARİHSEL (v1.142.1 öncesi) BİLİNÇLİ v1 SINIRLAMASI:** `\t`/CR/`\n`
-# DIŞINDAKİ diğer C0 kontrol karakterleri (bayt 0-8, 11, 12, 14-31) HÂLÂ
-# escape EDİLMEZ — JSON'un genel `\u00XX` escape'ini EL İLE üretmeyi
-# (hex-basamak arama tablosu + iki fonksiyon çağrısı, TEK bir string
-# birleştirme ifadesinde) DENERKEN GERÇEK, TEKRARLANABİLİR bir DERLEYİCİ
-# hatası bulundu: `list[str]` DÖNEN bir fonksiyon (hex basamak tablosu)
-# bir DÖNGÜ İÇİNDEKİ AYNI ifadede İKİ KEZ çağrıldığında ARC muhasebesi
-# BOZULUYOR (`nox_rc_predecrement`da "incorrect alignment" panikı/SIGSEGV
-# — GG serisinin serbest-fonksiyon inlining'iyle İLGİLİ, muhtemelen
-# `digits` yerel değişkeninin İKİ inline edilmiş kopyası AYNI yığın
-# yuvasını YANLIŞLIKLA PAYLAŞIYOR). Bir `str`-tabanlı arama (`s[i]`)
-# alternatifi ÇÖKMÜYOR ama HER çağrıda bir ARC sızıntısına yol AÇIYOR
-# (DebugAllocator'ın YAKALADIĞI, GERÇEK bir bellek sızıntısı). Bu YÜZDEN
-# genel `\u00XX` yolu BURADA UYGULANMADI — kullanıcıya (görülen çökme
-# GERÇEK VE CİDDİ olduğundan) AYRI bir derleyici-hatası görevi olarak
-# bildirildi, bu fazın kapsamı DIŞINDA bırakıldı.
+# **TARİHSEL NOT (v1.142.1 öncesi):** eski saf-Nox uygulama `\t`/CR/`\n`
+# dışındaki C0 kontrol karakterlerini escape etmiyordu; o dönemde bir
+# `list[str]`-dönen fonksiyonun döngü içinde iki kez çağrılmasının ARC'yi
+# bozduğu sanılmıştı. Bu hata Faz JJ'de kök nedeniyle ÇÖZÜLMÜŞTÜ (yerel
+# slotun release sonrası sıfırlanmaması) — artık ilgili bir sınırlama YOK;
+# `dump_string` tüm C0 karakterlerini Zig tarafında `\u00XX` olarak escape eder.
 def dump_string(s: str) -> str:
     return nox_json_escape_string_raw(s)
 
