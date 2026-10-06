@@ -1174,43 +1174,40 @@ export function $Car_release(l %rt, l %p) {
     %t2 =l sub %t1, 1
     storel %t2, %t0
     %t3 =w cslel %t2, 0
-    jnz %t3, @release_free0, @release_possible_root2
-@release_possible_root2
-    call $nox_cycle_possible_root(l %rt, l %p)
-    jmp @release_done1
+    jnz %t3, @release_free0, @release_done1
 @release_free0
     call $nox_cycle_forget(l %rt, l %p)
     %t4 =l add %p, 8
     %t5 =l loadl %t4
     %t6 =w ceql %t5, 0
-    jnz %t6, @release_skip4, @release3
-@release3
+    jnz %t6, @release_skip3, @release2
+@release2
     %t7 =l sub %t5, 16
     %t8 =l loadl %t7
     %t9 =l sub %t8, 1
     storel %t9, %t7
     %t10 =w cslel %t9, 0
-    jnz %t10, @str_free6, @str_free_skip7
-@str_free6
+    jnz %t10, @str_free5, @str_free_skip6
+@str_free5
     call $nox_str_free_now(l %rt, l %t5)
-    jmp @str_free_done8
-@str_free_skip7
-    jmp @str_free_done8
-@str_free_done8
-    jmp @release_done5
-@release_skip4
-    jmp @release_done5
-@release_done5
+    jmp @str_free_done7
+@str_free_skip6
+    jmp @str_free_done7
+@str_free_done7
+    jmp @release_done4
+@release_skip3
+    jmp @release_done4
+@release_done4
     %t11 =l add %p, 16
     %t12 =l loadl %t11
     %t13 =w ceql %t12, 0
-    jnz %t13, @release_skip10, @release9
-@release9
+    jnz %t13, @release_skip9, @release8
+@release8
     call $nox_rc_release_enqueue_fixed(l %rt, l %t12, l $Point_release)
-    jmp @release_done11
-@release_skip10
-    jmp @release_done11
-@release_done11
+    jmp @release_done10
+@release_skip9
+    jmp @release_done10
+@release_done10
     call $nox_rc_free_payload(l %rt, l %p, l 24)
     jmp @release_done1
 @release_done1

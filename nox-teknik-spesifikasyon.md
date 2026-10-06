@@ -27795,6 +27795,54 @@ gider; repo'nun en yenisi + taze tmp + kurulu SHA kalır), `--all` (en yeni
 sahte SHA da gider, kurulu SHA kalır ve ikili çalışır); geçersiz
 alt komut/seçenek ve boş `NOX_HOME`.
 
+## 3.240 Döngü çözücü: tip-düzeyi döngüsüz sınıflar için olası-kök kaydının atlanması
+
+**Gözlem (Aether HTTP benchmark'ı, ping vs echo):** `sample` profilinde
+`ValidatedBody_release → nox_cycle_possible_root` tek başına thread
+süresinin ~%9'u idi. `genClassRelease` (§3.xx, Faz S.3), sınıf-tipli /
+`list[Sınıf]` / `dict[K, Sınıf]` alanı olan HER sınıf için, refcount
+sıfıra düşmediğinde `nox_cycle_possible_root` çağırıyordu (global kilit +
+hash-map yazımı + eşik aşımında `collectLocked`). Oysa `ValidatedBody`
+gibi bir sahip (bir `list[JsonValue]` tutar) bir referans döngüsünün
+ÜYESİ olamaz: `JsonValue`dan `ValidatedBody`ye dönen hiçbir tip yolu yok.
+
+**Çözüm:** `layout.computeCyclicClasses` (TÜM sınıflar kaydedildikten sonra
+bir kez) tip-düzeyi "işaret eder" grafını kurar — kenarlar `genClassTrace`in
+izlediği alanlarla aynı (sınıf alanı, `list[Sınıf]` elemanı — iç içe
+dahil —, `dict` sınıf değeri); hedef tip `T` ise kenar `T`nin TÜM alt
+sınıflarına gider (alt sınıf örneği ek alanlar taşıyabilir); hedef adı
+bilinmeyen alan → tüm sınıflara kenar (savunmacı). Kendisine dönen yolu
+olan sınıflar `Codegen.cyclic_classes` kümesine girer. `genClassRelease`
+`nox_cycle_possible_root`u YALNIZCA bu kümedeki sınıflar için yayınlar;
+`nox_cycle_forget` davranışı DEĞİŞMEDİ (hâlâ `has_class_field`).
+
+**Doğruluk argümanı:** bir döngü çöpe düştüğünde (son dış referans
+bırakıldığında) kök adayı olarak kaydedilmesi gereken düğümler döngünün
+ÜYELERİDİR ve onlar kümededir; döngüye yalnızca İŞARET EDEN döngüsüz bir
+sahip sıfıra düşünce zaten serbest bırakılır ve alanlarını bırakır (üyeler
+böylece kaydedilir). Tespit edilebilen döngü kümesi değişmez (kenar kümesi
+trace ile aynı).
+
+**Ölçüm (aynı makinede, ReleaseFast, A/B, Aether echo, istek başına sunucu
+CPU'su — başka bir uygulamanın arka plan yükü throughput'u dalgalandırdığı
+için CPU/istek ölçüldü):** 5.70 → 4.90 µs/istek (−%14), 3 ardışık turda
+tutarlı; throughput ~+%16.
+
+**Sınırlar:** `JsonValue`/`Tree` gibi KENDİNE işaret eden tipler hâlâ kayıt
+yapar (tip-düzeyinde döngüsel; statik olarak "ağaç" olduğu kanıtlanamaz).
+Bu tür tipler için kaydın kendisini ucuzlatmak (ör. kilitsiz yerel
+tampon) ayrı, daha büyük bir iştir.
+
+### Test
+
+`cycle_roots_type_level_acyclic.nox` (golden, çalıştırma): kaydı atlanan
+sınıflar (`Holder`, `Base`) varken 3000 turda gerçek döngüler (self-list
+`Tree`, çok biçimli `Owner → Base → Derived.back → Owner`) hâlâ toplanır;
+DebugAllocator sızıntı denetimi. **Mutasyon testi:** alt-sınıf kenarları
+kaldırılınca (`subtree` yerine yalnızca `ti`) test `memory address …
+leaked` ile başarısız olur, sağlam sürümde stderr boş. 20 IR snapshot'ı
+yalnızca `release_possible_root` bloğunun kalkmasıyla değişti.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

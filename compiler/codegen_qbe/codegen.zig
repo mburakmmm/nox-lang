@@ -346,6 +346,7 @@ pub const Codegen = struct {
 
     pub const genClassVtable = layout.genClassVtable;
     pub const genClassRelease = layout.genClassRelease;
+    pub const computeCyclicClasses = layout.computeCyclicClasses;
     pub const genClassTrace = layout.genClassTrace;
     pub const emitTraceCopyLoop = layout.emitTraceCopyLoop;
     pub const genClassGcFree = layout.genClassGcFree;
@@ -1093,6 +1094,13 @@ pub const Codegen = struct {
     /// tarafından, HERHANGİ bir sınıf kaydedilmeden ÖNCE BİR KEZ doldurulur
     /// — bkz. onun belge notu ("ileri bilgi problemi"nin çözümü).
     inheriting_classes: std.StringHashMapUnmanaged(void) = .empty,
+    /// v1.142.0 (bkz. nox-teknik-spesifikasyon.md §3.240): referans
+    /// döngüsüne KATILABİLEN (tip-düzeyi graf üzerinde kendisine dönen bir
+    /// yol OLAN) sınıfların adları — `layout.computeCyclicClasses`
+    /// tarafından, TÜM sınıflar kaydedildikten SONRA BİR KEZ doldurulur.
+    /// `genClassRelease` `nox_cycle_possible_root`u YALNIZCA bu kümedeki
+    /// sınıflar İçin yayınlar.
+    cyclic_classes: std.StringHashMapUnmanaged(void) = .empty,
     /// Faz 7: `genMethod` TARAFINDAN, o metodun AİT olduğu sınıfın adıyla
     /// set edilir — `super()`in (bkz. `calls.zig`nin `genSuperMethodCall`ı)
     /// taban sınıfı bulması İçin.
@@ -1551,6 +1559,7 @@ pub fn generateModuleWithMeta(allocator: std.mem.Allocator, module: ast.Module, 
     for (extra_classes) |cd| try class_defs_to_register.append(gen.allocator, cd);
     gen.inheriting_classes = try registration.computeInheritingClasses(gen.allocator, class_defs_to_register.items, gen.resolved_bases);
     try gen.registerClassesInOrder(class_defs_to_register.items);
+    try gen.computeCyclicClasses();
 
     // Faz 7: TÜM sınıflar kaydedildikten SONRA (KENDİ + TÜM atalarının
     // `class_id`si BİLİNDİĞİNDEN) HER sınıf İçin KENDİSİ + TÜM (transitif)

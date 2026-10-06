@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.0]
+
+### Değişti
+
+- **Döngü çözücü olası-kök kaydı yalnızca döngüye girebilen sınıflar için
+  (bkz. nox-teknik-spesifikasyon.md §3.240)**: `genClassRelease`, sınıf
+  alanlarından hiçbir tip yolu kendisine dönmeyen sınıflar (ör. bir
+  `list[JsonValue]` tutan `ValidatedBody`) için artık `nox_cycle_possible_
+  root` (global kilit + hash yazımı) çağırmaz; alt sınıf kenarları dahil
+  tip-düzeyi grafla belirlenir, gerçek döngüler aynen toplanır. Aether
+  echo benchmark'ında istek başına sunucu CPU'su 5.70 → 4.90 µs (−%14).
+
 ## [1.141.0]
 
 ### Eklendi

@@ -1645,17 +1645,14 @@ export function $Bag_release(l %rt, l %p) {
     %t2 =l sub %t1, 1
     storel %t2, %t0
     %t3 =w cslel %t2, 0
-    jnz %t3, @release_free0, @release_possible_root2
-@release_possible_root2
-    call $nox_cycle_possible_root(l %rt, l %p)
-    jmp @release_done1
+    jnz %t3, @release_free0, @release_done1
 @release_free0
     call $nox_cycle_forget(l %rt, l %p)
     %t4 =l add %p, 8
     %t5 =l loadl %t4
     %t6 =w ceql %t5, 0
-    jnz %t6, @release_skip4, @release3
-@release3
+    jnz %t6, @release_skip3, @release2
+@release2
     %t7 =l add %t5, 8
     %t8 =l loadl %t7
     %t9 =l mul %t8, 8
@@ -1665,37 +1662,37 @@ export function $Bag_release(l %rt, l %p) {
     %t13 =l sub %t12, 1
     storel %t13, %t11
     %t14 =w cslel %t13, 0
-    jnz %t14, @list_free6, @list_free_skip7
-@list_free6
+    jnz %t14, @list_free5, @list_free_skip6
+@list_free5
     call $nox_rc_free_payload(l %rt, l %t5, l %t10)
-    jmp @list_free_done8
-@list_free_skip7
-    jmp @list_free_done8
-@list_free_done8
-    jmp @release_done5
-@release_skip4
-    jmp @release_done5
-@release_done5
+    jmp @list_free_done7
+@list_free_skip6
+    jmp @list_free_done7
+@list_free_done7
+    jmp @release_done4
+@release_skip3
+    jmp @release_done4
+@release_done4
     %t15 =l add %p, 16
     %t16 =l loadl %t15
     %t17 =w ceql %t16, 0
-    jnz %t17, @release_skip10, @release9
-@release9
+    jnz %t17, @release_skip9, @release8
+@release8
     call $List_str_release(l %rt, l %t16)
-    jmp @release_done11
-@release_skip10
-    jmp @release_done11
-@release_done11
+    jmp @release_done10
+@release_skip9
+    jmp @release_done10
+@release_done10
     %t18 =l add %p, 24
     %t19 =l loadl %t18
     %t20 =w ceql %t19, 0
-    jnz %t20, @release_skip13, @release12
-@release12
+    jnz %t20, @release_skip12, @release11
+@release11
     call $List_Item_release(l %rt, l %t19)
-    jmp @release_done14
-@release_skip13
-    jmp @release_done14
-@release_done14
+    jmp @release_done13
+@release_skip12
+    jmp @release_done13
+@release_done13
     call $nox_rc_free_payload(l %rt, l %p, l 32)
     jmp @release_done1
 @release_done1

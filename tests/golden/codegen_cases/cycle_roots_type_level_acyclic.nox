@@ -1,0 +1,68 @@
+# v1.142.0: olası-kök kaydı yalnızca tip-düzeyi döngüye girebilen sınıflar için
+# yayınlanır. Bu test, kaydın ATLANDIĞI sınıfların (Holder, Base) varlığında
+# GERÇEK döngülerin hâlâ toplandığını kanıtlar (DebugAllocator sızıntı denetimi).
+
+# Kendi kendine işaret eden ağaç (list[Tree] alanı) — tip-düzeyi döngüsel.
+class Tree:
+    kids: list[Tree]
+    parent: Tree | None
+    tag: int
+
+    def __init__(self, tag: int) -> None:
+        self.kids = []
+        self.parent = None
+        self.tag = tag
+
+# Döngüsüz bir sahip: Tree tutar ama Tree'den ona dönen yol YOK.
+class Holder:
+    trees: list[Tree]
+    n: int
+
+    def __init__(self) -> None:
+        self.trees = []
+        self.n = 0
+
+# Çok biçimli döngü: Owner -> Base (alt ağacında Derived) -> Derived.back -> Owner.
+class Base:
+    id: int
+
+    def __init__(self, id: int) -> None:
+        self.id = id
+
+class Owner:
+    item: Base
+    name: str
+
+    def __init__(self, item: Base, name: str) -> None:
+        self.item = item
+        self.name = name
+
+class Derived(Base):
+    back: Owner | None
+
+    def __init__(self, id: int) -> None:
+        self.id = id
+        self.back = None
+
+def make_tree_cycle(i: int) -> int:
+    root: Tree = Tree(i)
+    leaf: Tree = Tree(i + 1)
+    root.kids.append(leaf)
+    leaf.parent = root
+    h: Holder = Holder()
+    h.trees.append(root)
+    h.n = len(h.trees)
+    return h.n + root.tag
+
+def make_poly_cycle(i: int) -> int:
+    d: Derived = Derived(i)
+    o: Owner = Owner(d, "o")
+    d.back = o
+    return o.item.id
+
+total: int = 0
+i: int = 0
+while i < 3000:
+    total = total + make_tree_cycle(i) + make_poly_cycle(i)
+    i = i + 1
+print(total)

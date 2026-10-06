@@ -78,6 +78,122 @@ pub fn genClassVtable(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) 
     }
 }
 
+/// v1.142.0 (bkz. nox-teknik-spesifikasyon.md §3.240): bir sınıf örneği
+/// YALNIZCA tip-düzeyi "işaret eder" grafında kendisine dönen bir yol
+/// VARSA bir referans döngüsünün üyesi OLABİLİR. Kenarlar, `genClassTrace`in
+/// İZLEDİĞİ alanlarla AYNIDIR (sınıf-tipli alan, `list[Sınıf]` elemanı,
+/// `dict[K, Sınıf]` değeri); bir alanın hedef tipi `T` ise ÇALIŞMA ZAMANI
+/// değeri `T`nin HERHANGİ bir alt sınıfı da OLABİLİR (alt sınıf örneği
+/// ek alanlar taşıyabilir), bu yüzden kenar `T`nin TÜM alt-ağacına gider.
+/// Hedef sınıf adı bilinmeyen bir alan (savunmacı) TÜM sınıflara kenar sayılır.
+///
+/// Sonuç: bir döngü ASLA kendi üyesi OLMAYAN bir sınıfın örneğini "olası
+/// kök" olarak GEREKTİRMEZ — döngünün son dış referansı bırakıldığında
+/// kaydedilmesi gereken düğümler DÖNGÜNÜN ÜYELERİDİR (onlar da bu kümededir);
+/// döngüye yalnızca İŞARET EDEN bir sahip (ör. bir `list[JsonValue]` tutan
+/// `ValidatedBody`) sıfıra düştüğünde zaten serbest bırakılır ve alanlarını
+/// bırakır. `genClassRelease` bu yüzden `nox_cycle_possible_root`u (global
+/// kilit + hash-map yazımı) YALNIZCA bu kümedeki sınıflar İçin yayınlar.
+pub fn computeCyclicClasses(self: *Codegen) CodegenError!void {
+    const a = self.allocator;
+    self.cyclic_classes.deinit(a);
+    self.cyclic_classes = .empty;
+
+    var names: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer names.deinit(a);
+    var index_of: std.StringHashMapUnmanaged(usize) = .empty;
+    defer index_of.deinit(a);
+    var it = self.classes.iterator();
+    while (it.next()) |e| {
+        try index_of.put(a, e.key_ptr.*, names.items.len);
+        try names.append(a, e.key_ptr.*);
+    }
+    const n = names.items.len;
+    if (n == 0) return;
+
+    // subtree[t] = t ve tüm (dolaylı) alt sınıflarının indeksleri.
+    const subtree = try a.alloc(std.ArrayListUnmanaged(usize), n);
+    defer {
+        for (subtree) |*l| l.deinit(a);
+        a.free(subtree);
+    }
+    for (subtree) |*l| l.* = .empty;
+    for (names.items, 0..) |nm, i| {
+        var cur: ?[]const u8 = nm;
+        var guard: usize = 0;
+        while (cur) |c| : (guard += 1) {
+            if (guard > n) break; // savunmacı: bozuk (döngüsel) kalıtım
+            const ci = index_of.get(c) orelse break;
+            try subtree[ci].append(a, i);
+            cur = self.classes.get(c).?.base;
+        }
+    }
+
+    // adj[r] = r'nin alanlarının işaret edebildiği sınıf indeksleri.
+    const adj = try a.alloc(std.ArrayListUnmanaged(usize), n);
+    defer {
+        for (adj) |*l| l.deinit(a);
+        a.free(adj);
+    }
+    for (adj) |*l| l.* = .empty;
+    for (names.items, 0..) |nm, r| {
+        const cinfo = self.classes.get(nm).?;
+        for (cinfo.fields.items) |f| {
+            var unknown = false;
+            if (f.info.heap == .class) {
+                if (f.info.class_name) |t| {
+                    if (index_of.get(t)) |ti| try adj[r].appendSlice(a, subtree[ti].items) else unknown = true;
+                } else unknown = true;
+            } else if (f.info.heap == .list or f.info.heap == .dict) {
+                // Eleman/değer zincirini (iç içe list[list[Sınıf]] DAHİL) gez.
+                var eh: ?*const ElemHeapInfo = f.info.elem_heap_info;
+                while (eh) |h| : (eh = h.nested) {
+                    if (h.heap == .class) {
+                        if (h.class_name) |t| {
+                            if (index_of.get(t)) |ti| try adj[r].appendSlice(a, subtree[ti].items) else unknown = true;
+                        } else unknown = true;
+                    }
+                }
+                if (f.info.heap == .dict) {
+                    if (f.info.dict_info) |di| {
+                        if (di.value_is_class) {
+                            if (di.value_class_name) |t| {
+                                if (index_of.get(t)) |ti| try adj[r].appendSlice(a, subtree[ti].items) else unknown = true;
+                            } else unknown = true;
+                        }
+                    }
+                }
+            }
+            if (unknown) {
+                var all: usize = 0;
+                while (all < n) : (all += 1) try adj[r].append(a, all);
+            }
+        }
+    }
+
+    // r döngüsel <=> r'den başlayıp r'ye dönen en az bir kenarlı yol var.
+    const visited = try a.alloc(bool, n);
+    defer a.free(visited);
+    var stack: std.ArrayListUnmanaged(usize) = .empty;
+    defer stack.deinit(a);
+    for (names.items, 0..) |nm, r| {
+        @memset(visited, false);
+        stack.clearRetainingCapacity();
+        for (adj[r].items) |s| try stack.append(a, s);
+        var found = false;
+        while (stack.pop()) |u| {
+            if (u == r) {
+                found = true;
+                break;
+            }
+            if (visited[u]) continue;
+            visited[u] = true;
+            for (adj[u].items) |v| if (!visited[v] or v == r) try stack.append(a, v);
+        }
+        if (found) try self.cyclic_classes.put(a, nm, {});
+    }
+}
+
 /// Her sınıf için `$ClassName_release(rt, p)` üretir: refcount'u azaltır
 /// (`nox_rc_predecrement`); sıfıra düştüyse, ÖNCE heap-yönetimli her alanı
 /// (sınıf TİPLİ ya da — bkz. görev "Sınıf alanı list[T] tipinde olabilsin"
@@ -154,7 +270,11 @@ pub fn genClassRelease(self: *Codegen, class_name: []const u8, cinfo: ClassInfo)
     const should_free = try self.emitInlinePredecrement("%p", .class);
     const free_label = try self.newLabel("release_free");
     const done_label = try self.newLabel("release_done");
-    if (has_class_field) {
+    // v1.142.0: `has_class_field` tek başına yetmez — sınıf bir referans
+    // döngüsünün ÜYESİ olamıyorsa (bkz. `computeCyclicClasses`) olası-kök
+    // kaydı (global kilit + hash yazımı) GEREKSİZDİR.
+    const registers_root = has_class_field and self.cyclic_classes.contains(class_name);
+    if (registers_root) {
         const root_label = try self.newLabel("release_possible_root");
         try self.qbeJnz(should_free, free_label, root_label);
         try self.qbeLabel(root_label);
