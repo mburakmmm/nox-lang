@@ -256,7 +256,66 @@ const StrOrIntContext = struct {
     }
 };
 
-const IndexMap = std.HashMapUnmanaged(i64, usize, StrOrIntContext, std.hash_map.default_max_load_percentage);
+/// v1.142.16: `std.HashMapUnmanaged` yerine kompakt açık adresli indeks tablosu — slot başına TEK
+/// `u64`: üst 32 bit hash etiketi (hash'in düşük 32 biti, konum da bundan türer), alt 32 bit
+/// `entries` indeksi + 1 (0 = boş). Anahtarlar yalnızca `entries`te yaşar (tabloda kopya yok):
+/// bir arama, etiket eşleşmedikçe `entries`e hiç dokunmaz; Zig'in metadata + anahtar + değer
+/// ayrı dizilerine karşı büyük tablolarda önbellek ıskası sayısı ~3 → ~2'ye iner. Doğrusal
+/// problama, yük ≤ 0.5. Dict'te silme olmadığından mezar taşı yok. Büyütme anahtara dokunmaz
+/// (konum etiketten türer).
+const IndexTable = struct {
+    slots: []u64 = &.{},
+    count: usize = 0,
+
+    const empty: IndexTable = .{};
+
+    fn deinit(self: *IndexTable, allocator: std.mem.Allocator) void {
+        if (self.slots.len > 0) allocator.free(self.slots);
+        self.* = .{};
+    }
+
+    inline fn find(self: *const IndexTable, entries: []const Entry, key_is_str: bool, key: i64, h: u64) ?usize {
+        if (self.slots.len == 0) return null;
+        const mask = self.slots.len - 1;
+        const tag: u32 = @truncate(h);
+        var pos: usize = @as(usize, tag) & mask;
+        while (true) {
+            const s = self.slots[pos];
+            if (s == 0) return null;
+            if (@as(u32, @truncate(s >> 32)) == tag) {
+                const idx: usize = @intCast((s & 0xFFFF_FFFF) - 1);
+                if (keysEqual(key_is_str, entries[idx].key, key)) return idx;
+            }
+            pos = (pos + 1) & mask;
+        }
+    }
+
+    fn place(slots: []u64, tag: u32, idx: usize) void {
+        const mask = slots.len - 1;
+        var pos: usize = @as(usize, tag) & mask;
+        while (slots[pos] != 0) pos = (pos + 1) & mask;
+        slots[pos] = (@as(u64, tag) << 32) | @as(u64, @intCast(idx + 1));
+    }
+
+    fn grow(self: *IndexTable, allocator: std.mem.Allocator) !void {
+        const new_len: usize = if (self.slots.len == 0) 16 else self.slots.len * 2;
+        const ns = try allocator.alloc(u64, new_len);
+        @memset(ns, 0);
+        for (self.slots) |s| {
+            if (s == 0) continue;
+            place(ns, @truncate(s >> 32), @intCast((s & 0xFFFF_FFFF) - 1));
+        }
+        if (self.slots.len > 0) allocator.free(self.slots);
+        self.slots = ns;
+    }
+
+    /// Anahtarın tabloda OLMADIĞI varsayılır (çağıran `find` ile doğrular).
+    fn insertNew(self: *IndexTable, allocator: std.mem.Allocator, h: u64, idx: usize) !void {
+        if ((self.count + 1) * 2 > self.slots.len) try self.grow(allocator);
+        place(self.slots, @truncate(h), idx);
+        self.count += 1;
+    }
+};
 
 /// Faz HH.5 (bkz. nox-teknik-spesifikasyon.md §3.68): `entries.items.len`
 /// bu eşiğin ALTINDAYKEN `index` hashmap'i HİÇ İNŞA EDİLMEZ — DOĞRUSAL
@@ -269,13 +328,18 @@ const SMALL_MAP_THRESHOLD: usize = 8;
 
 pub const Dict = struct {
     entries: std.ArrayListUnmanaged(Entry) = .empty,
-    index: IndexMap = .empty,
+    index: IndexTable = .empty,
     key_is_str: bool,
     /// `true` OLUNCA `index` ARTIK GÜNCEL VE YETKİLİDİR (bkz. `findIndex`/
     /// `nox_dict_set`) — bir KEZ `true` olduktan SONRA asla `false`'a
     /// DÖNMEZ (bu dict'te silme YOK, yalnızca ekleme/üzerine yazma —
     /// eleman sayısı asla AZALMAZ).
     index_built: bool = false,
+    /// v1.142.16: son BAŞARILI aramanın `entries` indeksi (tek girdilik önbellek). `if d.contains(k):
+    /// d[k] = d[k] + 1` kalıbı aynı anahtarı üç kez arar (contains/get/set); önbellek bunu tek
+    /// gerçek hash aramasına indirir. Dict'te silme olmadığından indeksler kararlıdır (`entries`
+    /// yalnızca büyür), doğrulama `entries[last_idx].key == key` (int: değer, str: aynı işaretçi).
+    last_idx: usize = std.math.maxInt(usize),
 };
 
 fn payloadToStrPtr(v: i64) ?[*:0]u8 {
@@ -294,8 +358,16 @@ fn findIndexLinear(d: *Dict, key: i64) ?usize {
 }
 
 fn findIndex(d: *Dict, key: i64, rt: ?*anyopaque) ?usize {
-    if (!d.index_built) return findIndexLinear(d, key);
-    return d.index.getContext(key, .{ .key_is_str = d.key_is_str, .rt = rt });
+    const li = d.last_idx;
+    if (li < d.entries.items.len and d.entries.items[li].key == key) return li;
+    const found = if (!d.index_built)
+        findIndexLinear(d, key)
+    else blk: {
+        const ctx: StrOrIntContext = .{ .key_is_str = d.key_is_str, .rt = rt };
+        break :blk d.index.find(d.entries.items, d.key_is_str, key, ctx.hash(key));
+    };
+    if (found) |i| d.last_idx = i;
+    return found;
 }
 
 /// `entries`i (TÜMÜNÜ, MEVCUT haliyle) `index`e AKTARIR VE `index_built`i
@@ -307,7 +379,10 @@ fn findIndex(d: *Dict, key: i64, rt: ?*anyopaque) ?usize {
 fn buildIndex(d: *Dict, allocator: std.mem.Allocator, rt: ?*anyopaque) void {
     const ctx: StrOrIntContext = .{ .key_is_str = d.key_is_str, .rt = rt };
     for (d.entries.items, 0..) |e, i| {
-        d.index.putContext(allocator, e.key, i, ctx) catch return;
+        d.index.insertNew(allocator, ctx.hash(e.key), i) catch {
+            d.index.deinit(allocator);
+            return;
+        };
     }
     d.index_built = true;
 }
@@ -334,29 +409,16 @@ pub export fn nox_dict_set(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, va
         const old = d.entries.items[i];
         if (value_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(old.value));
         if (value_is_class != 0) releaseClassPayload(rt, old.value);
-        // `index`in KENDİ sakladığı anahtar (ESKİ pointer, İÇERİK olarak
-        // AYNI ama pointer FARKLI olabilir) YENİ anahtarla DEĞİŞTİRİLİR
-        // (yalnızca DEĞER GÜNCELLENMEZ) — bkz. modül üstü not, "ince tuzak".
-        // Faz HH.5: `index_built` DEĞİLSE `index` BOŞTUR — GÜNCELLEMEYE
-        // GEREK YOK (doğrusal tarama `entries`i DOĞRUDAN okur).
-        if (d.index_built and old.key != key) {
-            // Yalnızca `str` anahtar İÇERİK olarak aynı ama pointer FARKLI ise
-            // buraya gelinir (int anahtar / aynı pointer: `old.key == key`,
-            // `index` zaten doğru). Remove+put (2 arama + mezar taşı) YERİNE
-            // tek aramayla anahtarı YERİNDE değiştir (hash İÇERİKTEN, değişmez).
-            if (d.index.getKeyPtrContext(old.key, ctx)) |kp| {
-                kp.* = key;
-            } else {
-                d.index.putContext(state.allocator(), key, i, ctx) catch {};
-            }
-        }
+        // v1.142.16: anahtarlar yalnızca `entries`te yaşar (indeks tablosunda kopya yok) — aşağıdaki
+        // `entries[i]` güncellemesi (yeni anahtar işaretçisi) tek yetkili güncellemedir.
         if (key_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(old.key));
         d.entries.items[i] = .{ .key = key, .value = value };
     } else {
         d.entries.append(state.allocator(), .{ .key = key, .value = value }) catch return;
+        d.last_idx = d.entries.items.len - 1;
         if (d.index_built) {
             const new_index = d.entries.items.len - 1;
-            d.index.putContext(state.allocator(), key, new_index, ctx) catch {
+            d.index.insertNew(state.allocator(), ctx.hash(key), new_index) catch {
                 _ = d.entries.pop();
             };
         } else if (d.entries.items.len > SMALL_MAP_THRESHOLD) {
@@ -738,4 +800,39 @@ test "Güvenlik M-3: rastgeleleştirilmiş hash tohumuyla SMALL_MAP_THRESHOLD ü
     }
 
     nox_dict_release(rt, d, 1, 0, 0);
+}
+
+test "v1.142.16: kompakt indeks tablosu + son-arama önbelleği — rastgele işlemler std.AutoHashMap modeliyle birebir" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const d = nox_dict_new(rt, 0) orelse return error.AllocFailed;
+    var model = std.AutoHashMap(i64, i64).init(std.testing.allocator);
+    defer model.deinit();
+
+    var prng = std.Random.DefaultPrng.init(0x5eed);
+    const rnd = prng.random();
+    var i: usize = 0;
+    while (i < 60_000) : (i += 1) {
+        const k: i64 = rnd.intRangeAtMost(i64, -2000, 30_000);
+        switch (rnd.uintLessThan(u8, 4)) {
+            0, 1 => {
+                const v: i64 = @intCast(i);
+                nox_dict_set(rt, d, 0, 0, 0, k, v);
+                try model.put(k, v);
+            },
+            2 => {
+                const want = model.get(k);
+                try std.testing.expectEqual(@as(i32, if (want != null) 1 else 0), nox_dict_contains(rt, d, 0, k));
+                // contains sonrası get/set aynı anahtarda önbellekten gitmeli ve tutarlı kalmalı.
+                if (want) |w| try std.testing.expectEqual(w, nox_dict_get(rt, d, 0, k));
+            },
+            else => {
+                try std.testing.expectEqual(model.get(k) orelse 0, nox_dict_get(rt, d, 0, k));
+            },
+        }
+    }
+    try std.testing.expectEqual(@as(i64, @intCast(model.count())), nox_dict_len(d));
+    var it = model.iterator();
+    while (it.next()) |e| try std.testing.expectEqual(e.value_ptr.*, nox_dict_get(rt, d, 0, e.key_ptr.*));
+    nox_dict_release(rt, d, 0, 0, 0);
 }

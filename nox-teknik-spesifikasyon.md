@@ -28166,6 +28166,19 @@ taze argümanlar normal şekilde release edilir.
 `borrowed_param_field_aliases` (salt-okunur/mutasyonlu/return edilen alias'lar, sızıntısız);
 117 IR snapshot'ı (satır içi kurucu) yeniden üretildi.
 
+## 3.252 Dict: kompakt indeks tablosu + son-arama önbelleği (v1.142.16)
+
+`dict` benchmark'ı C'den ~4.6x, Go'dan ~1.5x yavaştı (örnekleme: sürenin ~%80'i
+`HashMapUnmanaged.getIndex`, yani önbellek ıskaları). İki değişiklik: (1) `Dict.last_idx` —
+son başarılı aramanın `entries` indeksi; `if d.contains(k): d[k] = d[k] + 1` kalıbı aynı
+anahtarı üç kez arıyordu (contains/get/set), artık tek gerçek hash araması + iki ucuz doğrulama
+(`entries[last_idx].key == key`; dict'te silme olmadığından indeksler kararlıdır). (2)
+`std.HashMapUnmanaged` yerine `IndexTable`: slot başına tek `u64` (üst 32 bit hash etiketi —
+konum da bundan türer —, alt 32 bit `entries` indeksi + 1), doğrusal problama, yük ≤ 0.5,
+anahtarlar yalnızca `entries`te (tabloda kopya yok; `str` anahtar işaretçisi değişimi artık tek
+yerde). Etiket eşleşmedikçe `entries`e dokunulmaz. Sonuç (M4, ReleaseFast): `dict` 0.088 s → 0.05 s
+(C 0.019 s, Go 0.06 s). Test: std.AutoHashMap modeline karşı 60K rastgele işlem.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

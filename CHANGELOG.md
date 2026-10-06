@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.16]
+
+### Performans
+
+- **Dict**: son-arama önbelleği (contains/get/set üçlüsü tek gerçek arama) + kompakt açık adresli
+  indeks tablosu. `dict` benchmark'ı 0.088 s → 0.05 s. Spec §3.252.
+
 ## [1.142.15]
 
 ### Performans
