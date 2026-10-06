@@ -730,6 +730,9 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             // `uses_reflect_meta` bayrağı, `decorators.zig`nin tablo/erişimci
             // üretimini YALNIZCA bu yerleşikleri GERÇEKTEN çağıran programlarla
             // sınırlar (diğer programların IR'ı DEĞİŞMEZ).
+            // Faz C.1b: `bound_method_fixup.zig`nin ürettiği `obj.ad` bağlama
+            // çağrısı — alan İSE düz okuma, metod İSE bağlı closure.
+            if (std.mem.eql(u8, name, "__nox_bind_method")) return genBindMethod(self, c);
             if (reflectMetaResult(name)) |ret_is_str| {
                 self.uses_reflect_meta = true;
                 const arg_values = try self.allocator.alloc(codegen.QbeArg, 1 + c.args.len);
@@ -1605,6 +1608,63 @@ fn reflectMetaResult(name: []const u8) ?bool {
         if (std.mem.eql(u8, name, e.name)) return e.is_str;
     }
     return null;
+}
+
+/// Faz C.1b (bkz. `bound_method_fixup.zig`): `__nox_bind_method(obj, "ad")`.
+/// `ad` obj'nin sınıfında bir ALAN İSE normal `obj.ad` okumasının AYNISI
+/// (`genExpr(.attribute)`) — AMA bu bir `.call` olarak göründüğünden
+/// çağıran sonucu TAZE sayıp RETAIN ETMEZ, bu yüzden retain BURADA yapılır
+/// (`retainIfAliasing`, `var_decl x = obj.ad`nin AYNI kuralı). `ad` bir
+/// METOD İSE: alıcı RETAIN edilip `{fn_ptr, release_fn, self}` bir closure
+/// bloğuna yakalanır; trampoline (`genBoundMethodTrampoline`) (statik sınıf,
+/// metod) çifti BAŞINA TEK, TEMBEL üretilir. `always_fresh`: blok HİÇBİR
+/// mevcut şeyi aliaslamaz (bkz. `buildFunctionValueForIdentifier`in AYNI
+/// notu).
+fn genBindMethod(self: *Codegen, c: ast.Call) CodegenError!Value {
+    if (c.args.len != 2 or c.args[1] != .string_lit) return error.Unsupported;
+    const attr = c.args[1].string_lit;
+    const obj = try self.genExpr(c.args[0]);
+    if (obj.heap != .class or obj.class_name == null) return error.Unsupported;
+    const class_name = obj.class_name.?;
+    const cinfo = self.classes.get(class_name) orelse return error.Unsupported;
+    for (cinfo.fields.items) |f| {
+        if (std.mem.eql(u8, f.name, attr)) {
+            const attr_expr: ast.Expr = .{ .attribute = .{ .obj = &c.args[0], .attr = attr } };
+            const fv = try self.genExpr(attr_expr);
+            return self.retainIfAliasing(attr_expr, fv);
+        }
+    }
+    const msig = cinfo.methods.get(attr) orelse return error.Unsupported;
+    try self.checkNoLowlevelEscape(obj);
+
+    const key = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ class_name, attr });
+    if (!self.bound_method_seen.contains(key)) {
+        try self.bound_method_seen.put(self.allocator, key, {});
+        try self.bound_method_specs.append(self.allocator, .{
+            .class_name = class_name,
+            .method = attr,
+            .owner = msig.owner,
+            .slot = msig.slot,
+            .has_vtable = cinfo.has_vtable,
+            .sig = msig.sig,
+        });
+    }
+    const base = try std.fmt.allocPrint(self.allocator, "{s}_{s}__bound", .{ class_name, attr });
+    const block = try self.newTemp();
+    const total = types.CLOSURE_HEADER_SIZE + 8;
+    try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_rc_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{total}) } });
+    try self.qbeStoreL(try std.fmt.allocPrint(self.allocator, "${s}", .{base}), block);
+    const rel_addr = try self.newTemp();
+    try self.qbeOp2Imm(rel_addr, .l, "add", block, @intCast(types.CLOSURE_RELEASE_FN_PTR_OFFSET));
+    try self.qbeStoreL(try std.fmt.allocPrint(self.allocator, "${s}_release", .{base}), rel_addr);
+    const self_slot = try self.newTemp();
+    try self.qbeOp2Imm(self_slot, .l, "add", block, @intCast(types.CLOSURE_HEADER_SIZE));
+    try self.emitInlineRetain(obj.text, .class);
+    try self.qbeStoreL(obj.text, self_slot);
+
+    const fsig = try self.allocator.create(FuncSigInfo);
+    fsig.* = .{ .params = msig.sig.params, .ret = msig.sig.ret };
+    return .{ .text = block, .qtype = .l, .heap = .closure, .func_sig = fsig, .always_fresh = true };
 }
 
 pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {

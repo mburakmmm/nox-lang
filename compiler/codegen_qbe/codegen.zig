@@ -240,6 +240,7 @@ const Value = types.Value;
 const FuncSig = types.FuncSig;
 const UsedRequestFields = types.UsedRequestFields;
 const HttpServeWrapperSpec = types.HttpServeWrapperSpec;
+const BoundMethodSpec = types.BoundMethodSpec;
 const HttpServeWsWrapperSpec = types.HttpServeWsWrapperSpec;
 const SpawnWrapperSpec = types.SpawnWrapperSpec;
 const ThreadWrapperSpec = types.ThreadWrapperSpec;
@@ -338,6 +339,7 @@ pub const Codegen = struct {
     pub const setupDeferListIfNeeded = closures.setupDeferListIfNeeded;
     pub const drainDeferIfSet = closures.drainDeferIfSet;
     pub const genClosureFunc = closures.genClosureFunc;
+    pub const genBoundMethodTrampoline = closures.genBoundMethodTrampoline;
     pub const genClosureRelease = closures.genClosureRelease;
     pub const genFunctionValueTrampoline = closures.genFunctionValueTrampoline;
     pub const genFfiCallbackTrampoline = ffi_callback.genFfiCallbackTrampoline;
@@ -1221,6 +1223,9 @@ pub const Codegen = struct {
     /// KENDİ derlemesi SIRASINDA DEĞİL, `generateModule`nin SONUNDA (bkz.
     /// onun ilgili `while` döngüsü) AYRI bir QBE fonksiyonu olarak derlenir.
     closure_funcs: std.ArrayListUnmanaged(ClosureFuncSpec) = .empty,
+    /// Faz C.1b: bağlı-metod trampoline kayıtları (bkz. `BoundMethodSpec`).
+    bound_method_specs: std.ArrayListUnmanaged(BoundMethodSpec) = .empty,
+    bound_method_seen: std.StringHashMapUnmanaged(void) = .empty,
     /// Serbest fonksiyon adlarının (ve `"ClassName___init__"` biçimindeki
     /// kurucu sembollerinin) kümesi — YALNIZCA (transitif olarak) ASLA bir
     /// istisna FIRLATAMAYACAKLARI KANITLANMIŞ olanlar (bkz.
@@ -1770,6 +1775,13 @@ pub fn generateModuleWithMeta(allocator: std.mem.Allocator, module: ast.Module, 
     // `self.current_path` güncellemesi).
     while (gen.closure_funcs.pop()) |spec| {
         try gen.genClosureFunc(spec);
+    }
+
+    // Faz C.1b: her (sınıf, metod) bağlı-değer çifti İçin TEK trampoline —
+    // AYNI "sonda tüket" deseni (kayıtlar closure/fonksiyon gövdeleri
+    // ÜRETİLİRKEN eklenir).
+    while (gen.bound_method_specs.pop()) |spec| {
+        try gen.genBoundMethodTrampoline(spec);
     }
 
     // Faz 21 aşama 4: her `spawn` çağrı sitesi için TEMBEL kaydedilen

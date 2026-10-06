@@ -1,0 +1,71 @@
+# Aether NOX_LIMITATIONS.md yol haritası, Faz C.1b (bkz. nox-teknik-
+# spesifikasyon.md ilgili bölüm, madde 1): `obj.metod` bağlı-metod DEĞERİ —
+# değişkene atama, listeye koyma, çağrı argümanı, fonksiyondan döndürme,
+# mirasta override'a saygı (vtable), alıcının closure'dan SONRA da yaşaması
+# (yerel nesne + döndürülen bağlı metod: stack terfisi/erken serbest
+# bırakma OLMAMALI), döngüde sızıntısız. Alan okuma (metod adıyla
+# çakışmayan) DEĞİŞMEDEN çalışır.
+class Ctl:
+    def __init__(self: Ctl, prefix: str) -> None:
+        self.prefix = prefix
+        self.count = 0
+
+    def show(self: Ctl, id: int) -> str:
+        self.count = self.count + 1
+        return self.prefix + str(id) + "#" + str(self.count)
+
+    def twice(self: Ctl, id: int) -> int:
+        return id * 2
+
+class Base:
+    def __init__(self: Base) -> None:
+        self.tag = "base"
+    def who(self: Base) -> str:
+        return "Base"
+
+class Derived(Base):
+    def who(self: Derived) -> str:
+        return "Derived"
+
+def apply(f: (int) -> str, n: int) -> str:
+    return f(n)
+
+def make(c: Ctl) -> (int) -> int:
+    return c.twice
+
+# Yerel nesne + döndürülen bağlı metod: nesne closure'ı SAYESİNDE yaşar.
+def make_local_bound(prefix: str) -> (int) -> str:
+    local: Ctl = Ctl(prefix)
+    return local.show
+
+ctl: Ctl = Ctl("u")
+h: (int) -> str = ctl.show
+print(h(1))
+print(h(2))
+print(ctl.count)
+print(apply(ctl.show, 7))
+
+fs: list[(int) -> int] = [ctl.twice, make(ctl)]
+print(fs[0](4))
+print(fs[1](5))
+
+# Override: statik tip Base, çalışma zamanı Derived.
+b: Base = Derived()
+w: () -> str = b.who
+print(w())
+
+lb: (int) -> str = make_local_bound("x")
+print(lb(1))
+print(lb(2))
+
+# Döngüde çok sayıda bağlı closure: sızıntı/çift-serbest-bırakma yok.
+total: int = 0
+i: int = 0
+while i < 200:
+    c2: Ctl = Ctl("n")
+    f2: (int) -> int = c2.twice
+    total = total + f2(i)
+    i = i + 1
+print(total)
+
+print(ctl.prefix)

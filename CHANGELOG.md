@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.139.0]
+
+### Eklendi
+
+- **Bağlı-metod değeri `obj.metod` (bkz. nox-teknik-spesifikasyon.md
+  §3.237, Aether NOX_LIMITATIONS.md madde 1)**: bir metod artık `self`e
+  bağlı, çağrılabilir bir değer olarak kullanılabilir
+  (`h: (int) -> str = ctl.show`; değişkene atama, listeye koyma, argüman,
+  döndürme). Override'a saygı gösterir (vtable), alıcı closure tarafından
+  retain edilir (yerel nesne closure'dan önce ölmez). `async` metodlar
+  bağlı değer olamaz.
+
 ## [1.138.0]
 
 ### Eklendi

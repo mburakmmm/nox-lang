@@ -27648,6 +27648,60 @@ KALDIRILDI (artık geçerli); `nox.reflect` içe aktaran iki fixture'ın
 snapshot'ı yeniden üretildi. `zig build test`: iki ardışık temiz
 çalıştırma.
 
+## 3.237 Aether NOX_LIMITATIONS.md yol haritası, Faz C.1b — bağlı-metod değeri (`obj.metod`)
+
+**Bağlam:** madde 1'in ikinci yarısı (kullanıcı kararıyla kapsama
+alındı): decorator'lı bir metodu `self`e BAĞLI, çağrılabilir bir DEĞER
+(`handler: (Context) -> HttpResponse = ctl.show`) olarak kullanabilmek.
+Nox'ta bugüne kadar HİÇ yoktu.
+
+**Mekanizma:** closure bloğu `{fn_ptr, release_fn, self}`; `fn_ptr`
+`$<Sınıf>_<metod>__bound` trampoline'ıdır (`fn(rt, env, args...)` ABI'si:
+`self`i `env+16`dan okur, `has_vtable` İSE alıcının vtable slotu
+ÜZERİNDEN — override'a saygı, değilse `$owner_metod`a doğrudan çağırır;
+istisna kontrolünü dolaylı çağrı sitesi yapar). Alıcı bağlama anında
+RETAIN edilir, closure'ın release fonksiyonu (`genClosureRelease`, tek
+yakalamalı) onu bırakır. Trampoline (statik sınıf, metod) çifti BAŞINA
+TEK, TEMBEL üretilir (`bound_method_specs`).
+
+**Neden bir AST ön geçişi (kritik tasarım kararı):** sahiplik/kaçış
+analizleri (`local_escape.zig`, `inlining.zig`, `ownership/analysis.zig`)
+çıplak `obj.alan` okumasını "kaçış DEĞİL" sayar; `obj.metod` bağlı değeri
+ise alıcıyı closure'a YAKALAR — analizler `obj.ad`ın bir metod olduğunu
+bilemez (tip bilgisi yok), `obj`i stack'e terfi ettirip ARC başlığı
+OLMAYAN bir nesneyi closure'a retain ettirebilirdi (bellek bozulması).
+Bunu ~10 analiz noktasına taşımak yerine `bound_method_fixup.zig` değer
+konumundaki `ident.ad`ı `__nox_bind_method(ident, "ad")` çağrısına yeniden
+yazar (alıcı bir çağrı argümanı olduğundan analizler onu ZATEN muhafazakâr
+sayar). Gerçek ayrım checker (`checkBindMethod`) ve codegen (`genBindMethod`)
+tarafında tip bilgisiyle yapılır: `ad` ALAN İSE düz alan okumasına
+(+ `retainIfAliasing`, çünkü `.call` sonucu taze sayılır) düşer.
+**Yeniden yazma DAR:** yalnızca değeri TÜKETİLEN konumda (argüman, atamanın
+sağı, `var_decl`, `return`, liste/dict elemanı, koşul), taban bir ÇIPLAK
+identifier, `ad` bir sınıfın (`__` ile başlamayan) metodu VE modülde HİÇBİR
+yerde alan olarak (bildirilmiş ya da herhangi bir `x.ad = ...` atamasıyla)
+görülmeyen bir ad İSE. Callee, başka bir `.attribute`/`.index`nin alıcısı
+(`self.items.append(x)` — B.4 şekli BOZULMAZ) ve atama hedefi ASLA
+yeniden yazılmaz.
+
+**Kısıtlar:** `async` metod bağlı değer olamaz (checker reddeder);
+bağlama anında `@capability.requires` kapısı da çalışır (çağrı kapısını
+atlamasın); zincirli taban (`self.ctl.show`) v1 DIŞI (yalnızca çıplak
+identifier tabanı); alıcı `lowlevel`/arena nesnesi OLAMAZ
+(`checkNoLowlevelEscape`).
+
+### Test
+
+`bound_method_values.nox`: değişkene atama + paylaşılan durum (`count`
+bağlı çağrılar arasında artar), listeye koyma, çağrı argümanı, fonksiyondan
+döndürme, override (statik `Base`, çalışma zamanı `Derived` → `Derived`),
+YEREL nesne + döndürülen bağlı metod (nesne closure sayesinde yaşar), 200
+iterasyonluk döngü (sızıntı yok), alan okuma değişmez. **Mutasyon
+testi:** alıcı retain'i kapatılınca program `Double free detected` ile
+212 KB stderr üretir (golden harness stderr'i hata sayar), sağlam sürümde
+0 bayt. Mevcut hiçbir IR snapshot'ı değişmedi. `zig build test`: üç
+ardışık temiz çalıştırma.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

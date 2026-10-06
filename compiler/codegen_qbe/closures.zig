@@ -17,6 +17,8 @@ const ClosureCaptureField = types.ClosureCaptureField;
 const ClosureFuncSpec = types.ClosureFuncSpec;
 const CLOSURE_HEADER_SIZE = types.CLOSURE_HEADER_SIZE;
 const CLOSURE_RELEASE_FN_PTR_OFFSET = types.CLOSURE_RELEASE_FN_PTR_OFFSET;
+const TAG_SIZE = types.TAG_SIZE;
+const BoundMethodSpec = types.BoundMethodSpec;
 const RT_PARAM = types.RT_PARAM;
 const CodegenError = abi.CodegenError;
 const sanitizePathToSymbol = abi.sanitizePathToSymbol;
@@ -429,4 +431,67 @@ pub fn genFunctionValueTrampoline(self: *Codegen, name: []const u8) CodegenError
     try self.qbeFuncEnd();
 
     try self.genClosureRelease(trampoline_name, &.{});
+}
+
+/// Faz C.1b (bkz. `bound_method_fixup.zig`nin belge notu): `obj.metod`
+/// bağlı-metod DEĞERİ İçin closure çağrı ABI'sine (`fn_ptr(rt, env, ...
+/// args)`) uyan trampoline. Closure bloğu `{fn_ptr@0, release_fn@8,
+/// self@16}`dır — `self` (alıcı) `genBindMethod`da RETAIN edilerek
+/// yakalanır, `genClosureRelease` (BURADA tek-yakalamalı) onu bırakır.
+/// Çağrı, DOĞRUDAN metod çağrısıyla (`genMethodCall`) AYNI dispatch'i
+/// kullanır: `has_vtable` İSE alıcının vtable slotu ÜZERİNDEN (override'a
+/// saygı), DEĞİLSE `$owner_metod`a DOĞRUDAN. İstisna kontrolü BURADA
+/// yapılmaz — dolaylı çağrı sitesi (`genIndirectCallThroughClosurePtr`)
+/// HER ZAMAN çağrı SONRASI kontrol eder (`genFunctionValueTrampoline`in
+/// AYNI gerekçesi).
+pub fn genBoundMethodTrampoline(self: *Codegen, spec: BoundMethodSpec) CodegenError!void {
+    const base = try std.fmt.allocPrint(self.allocator, "{s}_{s}__bound", .{ spec.class_name, spec.method });
+    self.temp_counter = 0;
+    self.label_counter = 0;
+    self.mod_cache.deinit(self.allocator);
+    self.mod_cache = .empty;
+
+    const sym = try std.fmt.allocPrint(self.allocator, "${s}", .{base});
+    const sig = spec.sig;
+    try self.qbeFuncHeaderStart(if (sig.ret.qtype == .none) null else sig.ret.qtype, sym);
+    try self.qbeFuncParam(.l, RT_PARAM, true);
+    try self.qbeFuncParam(.l, "%env", false);
+    for (sig.params, 0..) |p, i| {
+        const param_text = try std.fmt.allocPrint(self.allocator, "%p{d}", .{i});
+        try self.qbeFuncParam(p.qtype, param_text, false);
+    }
+    try self.qbeFuncHeaderEnd();
+
+    const self_addr = try self.newTemp();
+    try self.qbeOp2Imm(self_addr, .l, "add", "%env", @intCast(CLOSURE_HEADER_SIZE));
+    const self_ptr = try self.newTemp();
+    try self.qbeLoadL(self_ptr, self_addr);
+
+    const ret_temp: ?[]const u8 = if (sig.ret.qtype == .none) null else try self.newTemp();
+    const call_args = try self.allocator.alloc(codegen.QbeArg, 2 + sig.params.len);
+    call_args[0] = .{ .ty = .l, .text = RT_PARAM };
+    call_args[1] = .{ .ty = .l, .text = self_ptr };
+    for (sig.params, 0..) |p, i| {
+        call_args[2 + i] = .{ .ty = p.qtype, .text = try std.fmt.allocPrint(self.allocator, "%p{d}", .{i}) };
+    }
+    const dst: ?codegen.QbeCallDst = if (ret_temp) |rv| .{ .name = rv, .ty = sig.ret.qtype } else null;
+    if (spec.has_vtable) {
+        const vt_addr = try self.newTemp();
+        try self.qbeOp2Imm(vt_addr, .l, "add", self_ptr, @intCast(TAG_SIZE));
+        const vtable_ptr = try self.newTemp();
+        try self.qbeLoadL(vtable_ptr, vt_addr);
+        const slot_addr = try self.newTemp();
+        try self.qbeOp2Imm(slot_addr, .l, "add", vtable_ptr, @intCast(spec.slot * 8));
+        const fn_ptr = try self.newTemp();
+        try self.qbeLoadL(fn_ptr, slot_addr);
+        try self.qbeCall(dst, fn_ptr, call_args);
+    } else {
+        const method_sym = try std.fmt.allocPrint(self.allocator, "${s}_{s}", .{ spec.owner, spec.method });
+        try self.qbeCall(dst, method_sym, call_args);
+    }
+    try self.qbeRet(ret_temp);
+    try self.qbeFuncEnd();
+
+    const caps = [_]ClosureCaptureField{.{ .name = "self", .info = .{ .qtype = .l, .heap = .class, .class_name = spec.class_name } }};
+    try self.genClosureRelease(base, &caps);
 }

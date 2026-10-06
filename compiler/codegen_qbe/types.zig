@@ -321,6 +321,18 @@ pub const HttpServeMulticoreWorkerSpec = struct {
     bounded: bool = false,
 };
 
+/// Faz C.1b: `obj.metod` BAĞLI-metod DEĞERİ İçin TEMBEL kaydedilen trampoline
+/// (bkz. `closures.zig`nin `genBoundMethodTrampoline`ı) — (statik sınıf,
+/// metod) çifti BAŞINA TEK.
+pub const BoundMethodSpec = struct {
+    class_name: []const u8,
+    method: []const u8,
+    owner: []const u8,
+    slot: usize,
+    has_vtable: bool,
+    sig: FuncSig,
+};
+
 /// Faz U.4.3: bir closure'ın TEK bir yakalanan (capture) değeri.
 pub const ClosureCaptureField = struct { name: []const u8, info: TypeInfo };
 

@@ -44,6 +44,7 @@ const std = @import("std");
 const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
 const index_call_fixup = @import("index_call_fixup.zig");
+const bound_method_fixup = @import("bound_method_fixup.zig");
 const Type = types.Type;
 const span_mod = @import("../span.zig");
 const Span = span_mod.Span;
@@ -2907,6 +2908,9 @@ pub const Checker = struct {
             }
             _ = try index_call_fixup.run(self.allocator, module.body, &generic_names);
         }
+        // Faz C.1b (bkz. `bound_method_fixup.zig`nin belge notu): değer
+        // konumundaki `ident.metod` → `__nox_bind_method(ident, "metod")`.
+        _ = try bound_method_fixup.run(self.allocator, module.body);
         // Bulundu (bkz. `resolveReExportChains`in belge notu): sınıf-tabanlı
         // zincirlerin (BÜYÜK ÇOĞUNLUK — bir TİP konumunda YALNIZCA bir sınıf
         // geçerlidir) `registerSignatures`DEN (Geçiş 2, fonksiyon parametre/
@@ -5683,6 +5687,42 @@ pub const Checker = struct {
         return .int;
     }
 
+    /// `__nox_bind_method(obj, "ad")`: `ad` obj'nin sınıfında bir ALAN ise
+    /// düz alan okumasıdır (`checkAttribute` — davranış değişmez); bir
+    /// METOD ise `obj`e BAĞLI, `self` HARİÇ imzalı bir func değeridir
+    /// (closure alıcıyı yakalar, bkz. codegen `genBindMethod`).
+    fn checkBindMethod(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!Type {
+        if (c.args.len != 2 or c.args[1] != .string_lit) {
+            return self.fail(error.ArgumentCountMismatch, "'__nox_bind_method' (dahili) tam olarak (nesne, \"ad\") alır", .{});
+        }
+        const attr = c.args[1].string_lit;
+        const obj_t = try self.checkExpr(ctx, c.args[0]);
+        try self.requireNotOptional(obj_t, attr);
+        const class_name = switch (obj_t) {
+            .class => |n| n,
+            else => return self.fail(error.TypeMismatch, "'.{s}' yalnızca sınıf örneklerinde kullanılabilir", .{attr}),
+        };
+        const info = self.classes.getPtr(class_name) orelse
+            return self.fail(error.UndefinedClass, "bilinmeyen sınıf: {s}", .{class_name});
+        if (info.fields.get(attr)) |ft| return ft;
+        if (info.methods.get(attr)) |msig| {
+            if (self.class_defs_by_name.get(class_name)) |cd| {
+                for (cd.methods) |m| {
+                    if (m.is_async and std.mem.eql(u8, m.name, attr)) {
+                        return self.fail(error.TypeMismatch, "'async' metod '{s}.{s}' bağlı bir değer olarak kullanılamaz", .{ class_name, attr });
+                    }
+                }
+            }
+            // Bağlama anında da capability kapısı (çağrı kapısını ATLAMAMALI).
+            const owner = info.method_owners.get(attr) orelse class_name;
+            try self.checkMethodCapabilityCall(owner, attr);
+            const ret = try self.allocator.create(Type);
+            ret.* = msig.return_type;
+            return .{ .func = .{ .params = msig.params, .return_type = ret } };
+        }
+        return self.fail(error.UndefinedAttribute, "'{s}' sınıfının '{s}' alanı yok", .{ class_name, attr });
+    }
+
     fn checkAttribute(self: *Checker, ctx: *FnCtx, a: ast.Attribute) TypeError!Type {
         const obj_t = try self.checkExpr(ctx, a.obj.*);
         try self.requireNotOptional(obj_t, a.attr);
@@ -5706,6 +5746,12 @@ pub const Checker = struct {
                 // ÖZEL-işlemesidir (bkz. onun belge notu); BU dal SADECE
                 // `x = super()` / `f(super())` gibi (`checkExpr` ÜZERİNDEN
                 // BURAYA sızan) YANLIŞ kullanımları YAKALAR.
+                // Faz C.1b: `bound_method_fixup.zig`nin ürettiği çağrı —
+                // `obj.ad`in bir ALAN mı yoksa bir METOD mu olduğu BURADA
+                // (tip bilgisiyle) çözülür.
+                if (std.mem.eql(u8, name, "__nox_bind_method")) {
+                    return self.checkBindMethod(ctx, c);
+                }
                 if (std.mem.eql(u8, name, "super")) {
                     return self.fail(error.TypeMismatch, "'super()' yalnızca 'super().metod(...)' ya da 'super().__init__(...)' kalıbında, doğrudan bir metod çağrısının alıcısı olarak kullanılabilir", .{});
                 }
