@@ -800,6 +800,27 @@ pub const HandlerFn = *const fn (?*anyopaque, ?*anyopaque) callconv(.c) ?*anyopa
 const MAX_REQUEST_BODY_BYTES: usize = 10 * 1024 * 1024;
 const DEFAULT_MAX_CONCURRENT_CONNECTIONS: usize = 4096;
 
+/// v1.142.3: eşzamanlı-bağlantı sayacı. ESKİDEN `serveImpl`in YIĞIN
+/// çerçevesindeki bir yerel `std.atomic.Value(usize)`ydi ve her `ConnCtx`
+/// ona bir İŞARETÇİ taşıyordu. `max_connections`a ulaşıldığında `serveImpl`
+/// son bağlantı fiber'ı HENÜZ ÇALIŞMADAN döner (bkz. aşağıdaki kabul-
+/// döngüsü notu) — çerçeve ÇIKARILIR, sayaç yığın belleği başka bir şey
+/// için (ör. `nox_thread_join`ın yerelleri) yeniden KULLANILIR, sonradan
+/// çalışan fiber'ın `fetchSub(1)`i O belleği SESSİZCE azaltırdı: Linux x86-64
+/// CI'de `serve_multicore` N=2 testinin aralıklı SEGV'si (join'in
+/// `ThreadHandle` işaretçi yerelinin 1-2 eksilmesi) ve aarch64'ün
+/// "stack smashing detected" çökmesinin KÖK NEDENİ. Artık yığında DEĞİL:
+/// `serveImpl` ve HER canlı `ConnCtx` birer referans tutar, SON referans
+/// bırakan serbest bırakır (`refs`, `ThreadHandle.owners` ile aynı disiplin).
+const ConnCounter = struct {
+    active: std.atomic.Value(usize) = .init(0),
+    refs: std.atomic.Value(usize) = .init(1), // serveImpl'in KENDİ referansı
+
+    fn unref(self: *ConnCounter, allocator: std.mem.Allocator) void {
+        if (self.refs.fetchSub(1, .acq_rel) == 1) allocator.destroy(self);
+    }
+};
+
 // Faz HH.1: bir `ConnCtx` havuzu (Scheduler.stack_pool'un AYNI "geri
 // dönüştür" deseni) DENENDİ, ama GERÇEK bir kullanım-sonrası-serbest-
 // bırakma tuzağı bulundu: `serveImpl` (fiber yolunda) `max_connections`
@@ -831,7 +852,7 @@ const ConnCtx = struct {
     max_body_bytes: usize,
     /// Faz MN.12: `*std.atomic.Value(usize)` (ÖNCEDEN çıplak `*usize`) —
     /// bkz. `serveImpl`nin YEREL `active_connections`ının belge notu.
-    active_connections: *std.atomic.Value(usize),
+    active_connections: *ConnCounter,
     /// Faz HH.7: bkz. `READ_TIMEOUT_MS`in belge notu — `serveImpl`nin
     /// `max_body_bytes`/`max_concurrent`İYLE AYNI "gerçekçi varsayılanı
     /// BEKLEMEDEN testlerin KÜÇÜK/HIZLI değerlerle sınırı EGZERSİZ
@@ -1057,7 +1078,10 @@ fn connectionEntry(arg: *anyopaque) void {
     // Faz MN.12: bu ARTIK atomik — bkz. `ConnCtx.active_connections`'ın
     // belge notu (`serveImpl`) — bağlantı fiber'ı ÇALINMIŞSA bu `defer`
     // KABUL EDEN worker'DAN FARKLI bir OS iş parçacığında çalışabilir.
-    defer _ = conn.active_connections.fetchSub(1, .monotonic);
+    defer {
+        _ = conn.active_connections.active.fetchSub(1, .monotonic);
+        conn.active_connections.unref(gpa);
+    }
 
     const scheduler = bridge.currentFiberScheduler();
 
@@ -1360,7 +1384,9 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
     // bu YÜZDEN `std.atomic.Value(usize)` (`.monotonic` yeterli, BU sayaç
     // BAŞKA hiçbir belleği senkronize ETMİYOR, salt kabul-kontrolü
     // muhasebesi).
-    var active_connections: std.atomic.Value(usize) = .init(0);
+    const counter = gpa.create(ConnCounter) catch return;
+    counter.* = .{};
+    defer counter.unref(gpa);
 
     var served: i64 = 0;
     accept_loop: while (true) {
@@ -1409,7 +1435,7 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
         // ÖNLER. Bağlantı DAHA `receiveHead`i bile ÇAĞIRMADAN reddedilir
         // (fd sessizce kapatılır, hiçbir HTTP yanıtı YAZILMAZ — reddetmenin
         // KENDİSİNİN ek kaynak tüketmemesi İÇİN en ucuz tepki).
-        if (active_connections.load(.monotonic) >= max_concurrent) {
+        if (counter.active.load(.monotonic) >= max_concurrent) {
             _ = closeSocket(conn_fd);
             continue :accept_loop;
         }
@@ -1426,13 +1452,14 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
             .handler = handler,
             .handler_ctx = handler_ctx,
             .max_body_bytes = max_body_bytes,
-            .active_connections = &active_connections,
+            .active_connections = counter,
             .read_timeout_ms = read_timeout_ms,
             .tls_ctx = h.tls_ctx,
             .ws_handler = ws_handler,
             .needs_headers = needs_headers,
             .ctx_refcounted = ctx_refcounted,
         };
+        _ = counter.refs.fetchAdd(1, .monotonic); // conn'un referansı (connectionEntry bırakır)
         if (ctx_refcounted) handlerCtxRetain(handler_ctx);
         // **KÖK NEDEN düzeltmesi (kullanım-sonrası-serbest-bırakma, TLS +
         // fiber zamanlaması — bkz. `tls_server.ctxTakeExtraRef`nin belge
@@ -1456,7 +1483,7 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
         // bunu HER ZAMAN dengeler — spawn/çağrı BAŞARISIZ OLURSA (aşağıdaki `catch`
         // dalları) `connectionEntry` HİÇ ÇALIŞMAZ, bu yüzden O durumlarda
         // sayaç ELLE geri alınır (bkz. aşağı).
-        _ = active_connections.fetchAdd(1, .monotonic);
+        _ = counter.active.fetchAdd(1, .monotonic);
 
         if (scheduler) |s| {
             // Dil stabilizasyonu fazı §M.4: ÖNCEDEN `Fiber.create` DOĞRUDAN
@@ -1479,14 +1506,16 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
                 // ASLA GERÇEKTEN sıfır referansa DÜŞMEZ (kalıcı bir "referans
                 // sızıntısı", çökme DEĞİL ama YİNE DE bir kaynak sızıntısı).
                 if (conn.tls_ctx) |ctx| tls_server.ctxReleaseExtraRef(ctx);
-                _ = active_connections.fetchSub(1, .monotonic);
+                _ = counter.active.fetchSub(1, .monotonic);
+                counter.unref(gpa); // conn'un referansı (fiber hiç çalışmayacak)
                 gpa.destroy(conn);
                 _ = closeSocket(conn_fd);
                 continue;
             };
             const fiber = fiber_mod.Fiber.createWithStack(gpa, connectionEntry, conn, stack) catch {
                 if (conn.tls_ctx) |ctx| tls_server.ctxReleaseExtraRef(ctx);
-                _ = active_connections.fetchSub(1, .monotonic);
+                _ = counter.active.fetchSub(1, .monotonic);
+                counter.unref(gpa); // conn'un referansı (fiber hiç çalışmayacak)
                 s.releaseStack(stack);
                 gpa.destroy(conn);
                 _ = closeSocket(conn_fd);
@@ -1553,6 +1582,24 @@ fn serveImpl(rt: ?*anyopaque, server: ?*anyopaque, handler: HandlerFn, handler_c
             connectionEntry(conn);
         }
     }
+}
+
+test "ConnCounter: serveImpl + her ConnCtx birer referans tutar, SON bırakan serbest bırakır (sızıntı/çift-free yok)" {
+    const a = std.testing.allocator;
+    const c = try a.create(ConnCounter);
+    c.* = .{};
+    // İki bağlantı referansı al (serveImpl'in kendi başlangıç referansı + 2).
+    _ = c.refs.fetchAdd(1, .monotonic);
+    _ = c.refs.fetchAdd(1, .monotonic);
+    _ = c.active.fetchAdd(2, .monotonic);
+    // serveImpl ÖNCE döner (eski hatalı senaryo: sayaç yığındaydı ve sarkıyordu).
+    c.unref(a);
+    // Bağlantılar SONRADAN biter — sayaç hâlâ geçerli bellek.
+    _ = c.active.fetchSub(1, .monotonic);
+    c.unref(a);
+    try std.testing.expectEqual(@as(usize, 1), c.active.load(.monotonic));
+    _ = c.active.fetchSub(1, .monotonic);
+    c.unref(a); // SON referans: allocator'a geri verilir (std.testing.allocator sızıntıyı yakalar)
 }
 
 // ---- Birim testleri ----------------------------------------------------

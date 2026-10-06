@@ -27911,6 +27911,48 @@ beklenen kazanç ~1 sistem çağrısı/istek olduğundan düşük öncelikli.
 ~0.2 µs (1M ayrıştırma 0.21 s kullanıcı CPU'su) — istek başına ~4.5 µs'nin
 ~%4'ü; ek optimizasyon değer katmıyor.
 
+## 3.243 `serveImpl` yığın-yerel bağlantı sayacı — sarkan işaretçi (CI'nin kronik kırmızısının KÖK NEDENİ)
+
+**Belirti:** `tests/compat/http_serve_multicore_golden_test.zig`nin `serve_multicore
+... N=2` testi v1.127.0'dan beri Linux x86-64 CI'nin (ReleaseFast) ~%50'sinde
+`SIGSEGV` ile düşüyordu (`Release` iş akışı da, v1.141.0/v1.142.1); aarch64'te
+aynı yerde (`nox_thread_join`) "stack smashing detected" (v1.99.1'den beri
+`continue-on-error`, kök neden 3 turda bulunamamıştı). Hata aralıklıydı ve
+`print`/izleme eklenince KAYBOLUYORDU (zamanlamaya duyarlı).
+
+**Yeniden-üretme:** OrbStack amd64 (Rosetta) Ubuntu konteyneri + Zig 0.16 +
+QBE; testin programı bir döngüde çalıştırıldığında ~%15-25 SEGV. `LD_PRELOAD`
+SEGV tutucusu: `nox_thread_join`+259, fault adresi = `handles_arr[1]`in
+(join'in `ThreadHandle*` YEREL kopyası) 1 EKSİĞİ. Bir izleyici iş parçacığıyla
+yığın yereli izlendi: değer ARDIŞIK ikili eksilmelerle (`-1`, `-2`)
+bozuluyordu — bağlantı sayısı kadar.
+
+**Kök neden:** `serveImpl`, eşzamanlı-bağlantı sayacını (`active_connections`)
+YIĞIN ÇERÇEVESİNDE yerel bir `std.atomic.Value(usize)` olarak tutuyor ve her
+`ConnCtx`e bir İŞARETÇİ veriyordu. `max_connections`a ulaşıldığında döngü
+(dolayısıyla `serveImpl`) SON bağlantı fiber'ı HENÜZ ÇALIŞMADAN döner (kodun
+kendi notu: "bu bağlantının fiber'ı HENÜZ BİR KEZ BİLE ÇALIŞTIRILMADAN döner").
+Çerçeve çıkarılır; aynı yığın belleği `nox_thread_join`ın yerellerine (ve
+kaydedilmiş yazmaçlara) YENİDEN KULLANILIR; fiber sonradan çalışınca
+`connectionEntry`nin `defer ... fetchSub(1)`i artık BAŞKA bir şeyin belleğini
+eksiltir. x86-64'te join'in `ThreadHandle*` yereline, aarch64'te kaydedilmiş
+yazmaç/kanarya bölgesine denk geldi (fazla/eksik hizalama çerçeve düzenine
+bağlı). v1.127.0 yalnızca `ConnCtx`/çerçeve boyutlarını değiştirip çakışmayı
+BAŞLATTI (hata ondan önce de vardı).
+
+**Düzeltme:** `ConnCounter` — yığın DEĞİL heap'te (`state.allocator()`), atomik
+`refs` ile (`serveImpl` + her canlı `ConnCtx` birer referans; SON bırakan
+serbest bırakır, `ThreadHandle.owners` ile aynı disiplin). `connectionEntry`
+`active.fetchSub(1)` sonrası `unref`; erken-çıkış (spawn başarısız) yolları da
+`unref`ler.
+
+**Doğrulama:** amd64 konteynerde aynı program 300 tur: ESKİ ~%15-25 SEGV →
+YENİ 0/300. `tests/compat/..._N=2` testi artık aynı ikiliyi ARDIŞIK 12 kez
+çalıştırır (tek tur hatayı çoğu koşuda kaçırıyordu). Birim testi: `ConnCounter`
+refcount/sızıntı. **Not:** aarch64'ün `continue-on-error`ı (v1.102.1) aynı kök
+nedenden olabilir — birkaç yeşil CI koşusu sonrası kaldırılabilir (bu sürümde
+DEĞİŞTİRİLMEDİ).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

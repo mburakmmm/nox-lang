@@ -198,46 +198,54 @@ test "nox.http.serve_multicore: uctan uca, N=2 is parcacigi, iki EZSAMANLI istem
     const bin_path = try compileToBinary(a, &tmp, source);
     maybeSaveCrashArtifact(allocator, io, bin_path);
 
-    var child = try std.process.spawn(io, .{
-        .argv = &.{bin_path},
-        .stdout = .pipe,
-        .stderr = .pipe,
-    });
+    // v1.142.3: AYNI ikili ARDIŞIK 12 kez çalıştırılır — `serveImpl`in yığın-
+    // yerel `active_connections` sayacının sarkan işaretçi hatası (bkz.
+    // `ConnCounter`) turlarda ~%15-25 olasılıkla aralıklı SEGV üretiyordu;
+    // tek tur bunu çoğu koşuda KAÇIRIYORDU (CI'da ~%50 kırmızı), 12 tur
+    // hatalı kodda ~%95+ olasılıkla yakalar.
+    var round: usize = 0;
+    while (round < 12) : (round += 1) {
+        var child = try std.process.spawn(io, .{
+            .argv = &.{bin_path},
+            .stdout = .pipe,
+            .stderr = .pipe,
+        });
 
-    var watchdog: child_watchdog.ChildWatchdog = .{};
-    try watchdog.arm(&child, 45_000);
-    defer watchdog.disarm();
+        var watchdog: child_watchdog.ChildWatchdog = .{};
+        try watchdog.arm(&child, 45_000);
+        defer watchdog.disarm();
 
-    var results: [2]bool = .{ false, false };
-    const t1 = try std.Thread.spawn(.{}, testSendGetAndExpectOk, .{ port, "/a", &results, 0 });
-    const t2 = try std.Thread.spawn(.{}, testSendGetAndExpectOk, .{ port, "/b", &results, 1 });
-    t1.join();
-    t2.join();
+        var results: [2]bool = .{ false, false };
+        const t1 = try std.Thread.spawn(.{}, testSendGetAndExpectOk, .{ port, "/a", &results, 0 });
+        const t2 = try std.Thread.spawn(.{}, testSendGetAndExpectOk, .{ port, "/b", &results, 1 });
+        t1.join();
+        t2.join();
 
-    var stdout_buf: [4096]u8 = undefined;
-    var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
-    const stdout_data = try stdout_reader.interface.allocRemaining(allocator, .unlimited);
-    defer allocator.free(stdout_data);
+        var stdout_buf: [4096]u8 = undefined;
+        var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
+        const stdout_data = try stdout_reader.interface.allocRemaining(allocator, .unlimited);
+        defer allocator.free(stdout_data);
 
-    var stderr_buf: [4096]u8 = undefined;
-    var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
-    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
-    defer allocator.free(stderr_data);
+        var stderr_buf: [4096]u8 = undefined;
+        var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
+        const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+        defer allocator.free(stderr_data);
 
-    const term = try child.wait(io);
-    if (term != .exited) {
-        std.debug.print("cocuk surec normal cikmadi (olasi askidan sonra watchdog tarafindan oldurulmus), term={any}\nstdout:\n{s}\nstderr:\n{s}\n", .{ term, stdout_data, stderr_data });
+        const term = try child.wait(io);
+        if (term != .exited) {
+            std.debug.print("cocuk surec normal cikmadi (olasi askidan sonra watchdog tarafindan oldurulmus), term={any}\nstdout:\n{s}\nstderr:\n{s}\n", .{ term, stdout_data, stderr_data });
+        }
+        try std.testing.expect(term == .exited);
+        try std.testing.expectEqual(@as(u8, 0), term.exited);
+
+        if (stderr_data.len != 0) {
+            std.debug.print("program stderr'e beklenmeyen bir çıktı yazdı (olası bellek sızıntısı): {s}\n", .{stderr_data});
+            return error.UnexpectedStderrOutput;
+        }
+
+        try std.testing.expect(results[0]);
+        try std.testing.expect(results[1]);
     }
-    try std.testing.expect(term == .exited);
-    try std.testing.expectEqual(@as(u8, 0), term.exited);
-
-    if (stderr_data.len != 0) {
-        std.debug.print("program stderr'e beklenmeyen bir çıktı yazdı (olası bellek sızıntısı): {s}\n", .{stderr_data});
-        return error.UnexpectedStderrOutput;
-    }
-
-    try std.testing.expect(results[0]);
-    try std.testing.expect(results[1]);
 }
 
 test "nox.http.listen + nox.thread.start + nox.http.serve_fd: birlestirilebilir ilkeller DOGRUDAN kullanildiginda da calisir" {

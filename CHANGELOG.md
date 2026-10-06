@@ -14,6 +14,20 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.3]
+
+### Düzeltildi
+
+- **`serve_multicore`/`serve*` aralıklı SEGV (CI'nin kronik kırmızısı) — kök
+  neden bulundu (bkz. nox-teknik-spesifikasyon.md §3.243)**: `serveImpl`in
+  eşzamanlı-bağlantı sayacı yığın çerçevesindeydi ve her bağlantı fiber'ı ona
+  işaretçi tutuyordu; `max_connections`a ulaşılıp `serveImpl` döndükten sonra
+  çalışan fiber, yeniden kullanılan yığın belleğini (ör. `nox_thread_join`ın
+  `ThreadHandle*` yereli) eksiltiyordu. Sayaç artık heap'te, atomik
+  referans-sayımlı (`ConnCounter`). Linux x86-64'te v1.127.0'dan beri ~%50
+  kırmızı olan `serve_multicore N=2` testi (ve release iş akışı) düzelir;
+  aarch64 "stack smashing" çökmesi de büyük olasılıkla aynı nedenden.
+
 ## [1.142.2]
 
 ### Dokümantasyon
