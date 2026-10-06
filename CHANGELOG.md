@@ -14,6 +14,19 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.141.0]
+
+### Eklendi
+
+- **`noxc cache prune [--dry-run] [--all]` + otomatik önbellek temizliği
+  (bkz. nox-teknik-spesifikasyon.md §3.239)**: paket önbelleği
+  (`~/.nox/pkg/mod`) eski SHA dizinlerini hiç silmiyordu (gerçek bir
+  kurulumda 2.1 GB'a ulaşmıştı). Yeni komut `installed.json`daki SHA'ları
+  ve her repo'nun en yeni girdisini korur, kalanı ve bayat `pkg/tmp`
+  artıklarını siler. `noxc install`/`refresh` artık kurulan repo'nun eski
+  SHA'larını, `noxc upgrade` ise tüm önbelleği otomatik süpürür
+  (en-iyi-çaba; asıl komutu asla başarısız kılmaz).
+
 ## [1.140.0]
 
 ### Eklendi

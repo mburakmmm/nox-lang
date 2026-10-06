@@ -27751,6 +27751,50 @@ fabrika), iç içe generic metod (`again` → `first[T]`), alt sınıf alıcıs�
 50 iterasyonlu sızıntı döngüsü (DebugAllocator). Typecheck negatifleri:
 iki tip parametresi, çıkarılamayan `T`.
 
+## 3.239 Paket önbelleği temizliği — `noxc cache prune` + install/refresh/upgrade'de otomatik
+
+**Sorun:** `{nox_home}/pkg/mod/<repo>/<sha>` önbelleği içerik-adresli ve hiçbir
+yerde temizlenmiyordu. Her yeni commit (global `install`/`refresh`,
+proje `nox.lock` güncellemesi, yerel-yol bağımlılığı) yeni bir tam kopya
+bırakıyor, eski SHA'lar sonsuza dek kalıyordu — gerçek bir `~/.nox`
+2.1 GB'a ulaşmıştı (aether yerel-yol: 37 SHA dizini/441 MB; nyx: 3×~350 MB).
+Aynı SHA'yı tekrar `install` etmek ise zaten idempotenttir (ölçüldü: 3
+ardışık install → tek dizin, 4.1 MB, `pkg/tmp` boş) — şişme yalnızca
+FARKLI SHA'ların birikmesindendi.
+
+**Çözüm:** `compiler/pkg/cache_prune.zig` (global durum yok; kök, korunacak
+kayıtlar ve seçenekler açık parametre). Bir SHA dizini şu durumlarda
+KORUNUR: (1) `installed.json`da kayıtlıysa; (2) (varsayılan) o repo'nun en
+yeni (mtime) girdisiyse — projelerin güncel `nox.lock` sürümü gereksiz
+yere yeniden indirilmesin. Geri kalanı silinir. Bir saatten eski
+`pkg/tmp/*` (yarım kalmış `stage-*`/`install-scratch-*`) artıkları da
+süpürülür. Önbellek yeniden üretilebilir olduğundan en kötü durum, silinen
+bir `nox.lock` SHA'sı için bir sonraki derlemede ek bir `git clone`dur.
+
+- `noxc cache prune [--dry-run] [--all]`: `--dry-run` silmeden listeler ve
+  açılacak yeri yazar; `--all` en-yeni-korumayı kapatır (yalnızca kurulu
+  SHA'lar kalır).
+- Otomatik: `install`/`refresh` başarıdan sonra YALNIZCA kurulan repo'nun
+  eski SHA'larını siler (en-yeni-koruma kapalı — yeni SHA zaten kayıtlı);
+  `upgrade` başarıdan sonra tüm önbelleği varsayılan kuralla süpürür.
+  Otomatik temizlik en-iyi-çabadır: hata sessizce yutulur, asıl komutu
+  asla başarısız kılmaz; silinen bir şey varsa tek satır bildirir.
+- `uninstall` önbelleğe dokunmaz (davranış değişmedi); yer açmak için
+  `noxc cache prune [--all]`.
+
+**Bilinçli sınırlar:** tanıma yalnızca 40/64 küçük-hex adlı dizinlere
+dayanır (`git rev-parse HEAD` çıktısı); `nox.lock` dosyaları global olarak
+taranmaz (projeler `~/.nox` dışında); mtime "en yeni" sezgisidir.
+
+### Test
+
+`tests/cli/install_test.zig`: refresh sonrası eski SHA'nın otomatik
+silinmesi (toplam SHA dizini 1 kalır, ikili yeni sürümü çalıştırır);
+`cache prune --dry-run` (silmez), varsayılan (eski sahte SHA + bayat tmp
+gider; repo'nun en yenisi + taze tmp + kurulu SHA kalır), `--all` (en yeni
+sahte SHA da gider, kurulu SHA kalır ve ikili çalışır); geçersiz
+alt komut/seçenek ve boş `NOX_HOME`.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

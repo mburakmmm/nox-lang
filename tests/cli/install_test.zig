@@ -434,3 +434,199 @@ test "noxc refresh (argumansiz): TOPLU modda TEK bir paketin basarisizligi DIGER
     defer gpa.free(run_ok.stderr);
     try std.testing.expectEqualStrings("ok-surum-2\n", run_ok.stdout);
 }
+
+// ---- Önbellek temizliği (bkz. nox-teknik-spesifikasyon.md §3.239) ----
+
+fn isShaName(name: []const u8) bool {
+    if (name.len != 40) return false;
+    for (name) |c| switch (c) {
+        '0'...'9', 'a'...'f' => {},
+        else => return false,
+    };
+    return true;
+}
+
+/// `pkg/mod` altında, `.git` içinde OLMAYAN ve `skip_prefix` ile BAŞLAMAYAN
+/// 40-hex adlı dizinlerin sayısı (gerçek paket SHA dizinleri).
+fn countShaDirs(io: std.Io, allocator: std.mem.Allocator, home_dir: std.Io.Dir, skip_prefix: []const u8) !usize {
+    var mod = home_dir.openDir(io, "pkg/mod", .{ .iterate = true }) catch return 0;
+    defer mod.close(io);
+    var walker = try mod.walk(allocator);
+    defer walker.deinit();
+    var n: usize = 0;
+    while (try walker.next(io)) |e| {
+        if (e.kind != .directory) continue;
+        if (std.mem.indexOf(u8, e.path, ".git") != null) continue;
+        if (std.mem.startsWith(u8, e.path, skip_prefix)) continue;
+        if (isShaName(e.basename)) n += 1;
+    }
+    return n;
+}
+
+fn dirExists(io: std.Io, dir: std.Io.Dir, sub_path: []const u8) bool {
+    dir.access(io, sub_path, .{}) catch return false;
+    return true;
+}
+
+fn plantFakeSha(io: std.Io, dir: std.Io.Dir, sub_path: []const u8, mtime_ns: i96) !void {
+    try dir.createDirPath(io, sub_path);
+    var buf: [256]u8 = undefined;
+    const file_path = try std.fmt.bufPrint(&buf, "{s}/payload.txt", .{sub_path});
+    try dir.writeFile(io, .{ .sub_path = file_path, .data = "x" ** 2048 });
+    try dir.setTimestamps(io, sub_path, .{ .modify_timestamp = .{ .new = std.Io.Timestamp.fromNanoseconds(mtime_ns) } });
+}
+
+test "noxc refresh: eski SHA onbellek dizini otomatik temizlenir, kurulu SHA korunur" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+
+    var pkg_dir = std.testing.tmpDir(.{});
+    defer pkg_dir.cleanup();
+    var pkg_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const pkg_path = try absPath(io, pkg_dir.dir, &pkg_buf);
+    try seedInstallablePackage(io, gpa, pkg_dir.dir, pkg_path, "prunecli", "surum-1");
+
+    var home_dir = std.testing.tmpDir(.{});
+    defer home_dir.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const home_path = try absPath(io, home_dir.dir, &home_buf);
+
+    var env = try std.testing.environ.createMap(gpa);
+    defer env.deinit();
+    try env.put("NOX_HOME", home_path);
+
+    {
+        const r = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "install", pkg_path }, .environ_map = &env });
+        defer gpa.free(r.stdout);
+        defer gpa.free(r.stderr);
+        try std.testing.expectEqual(@as(u8, 0), r.term.exited);
+    }
+    try std.testing.expectEqual(@as(usize, 1), try countShaDirs(io, gpa, home_dir.dir, "fake.example"));
+
+    try pkg_dir.dir.writeFile(io, .{ .sub_path = "cli.nox", .data = "print(\"surum-2\")\n" });
+    try commitFixtureUpdate(io, gpa, pkg_path);
+
+    const r2 = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "refresh", "prunecli" }, .environ_map = &env });
+    defer gpa.free(r2.stdout);
+    defer gpa.free(r2.stderr);
+    try std.testing.expectEqual(@as(u8, 0), r2.term.exited);
+    // Yeni SHA eklendi AMA eski SHA temizlendi: toplam hâlâ 1.
+    try std.testing.expectEqual(@as(usize, 1), try countShaDirs(io, gpa, home_dir.dir, "fake.example"));
+    try std.testing.expect(std.mem.indexOf(u8, r2.stderr, "temizlendi") != null or std.mem.indexOf(u8, r2.stderr, "pruned") != null);
+
+    // Kurulu ikili hâlâ çalışıyor.
+    const bin_path = try std.fmt.allocPrint(gpa, "{s}/bin/prunecli{s}", .{ home_path, exeSuffix() });
+    defer gpa.free(bin_path);
+    const run_result = try std.process.run(gpa, io, .{ .argv = &.{bin_path} });
+    defer gpa.free(run_result.stdout);
+    defer gpa.free(run_result.stderr);
+    try std.testing.expectEqualStrings("surum-2\n", run_result.stdout);
+}
+
+test "noxc cache prune: --dry-run silmez; varsayilan en yeni+kurulu korur; --all yalniz kurulu korur; eski pkg/tmp sUpurulur" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+
+    var pkg_dir = std.testing.tmpDir(.{});
+    defer pkg_dir.cleanup();
+    var pkg_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const pkg_path = try absPath(io, pkg_dir.dir, &pkg_buf);
+    try seedInstallablePackage(io, gpa, pkg_dir.dir, pkg_path, "keepcli", "keep");
+
+    var home_dir = std.testing.tmpDir(.{});
+    defer home_dir.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const home_path = try absPath(io, home_dir.dir, &home_buf);
+
+    var env = try std.testing.environ.createMap(gpa);
+    defer env.deinit();
+    try env.put("NOX_HOME", home_path);
+
+    {
+        const r = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "install", pkg_path }, .environ_map = &env });
+        defer gpa.free(r.stdout);
+        defer gpa.free(r.stderr);
+        try std.testing.expectEqual(@as(u8, 0), r.term.exited);
+    }
+
+    // Kurulu OLMAYAN sahte bir repo: eski + yeni SHA, ayrıca bayat/taze pkg/tmp girdileri.
+    const old_ns: i96 = 1_000_000_000 * 1000;
+    const old_sha = "pkg/mod/fake.example/repo/" ++ ("a" ** 40);
+    const new_sha = "pkg/mod/fake.example/repo/" ++ ("b" ** 40);
+    try plantFakeSha(io, home_dir.dir, old_sha, old_ns);
+    try plantFakeSha(io, home_dir.dir, new_sha, old_ns + 10_000_000_000);
+    try home_dir.dir.createDirPath(io, "pkg/tmp/stage-stale");
+    try home_dir.dir.setTimestamps(io, "pkg/tmp/stage-stale", .{ .modify_timestamp = .{ .new = std.Io.Timestamp.fromNanoseconds(old_ns) } });
+    try home_dir.dir.createDirPath(io, "pkg/tmp/stage-fresh");
+
+    // 1) --dry-run: hiçbir şey silinmez.
+    {
+        const r = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "cache", "prune", "--dry-run" }, .environ_map = &env });
+        defer gpa.free(r.stdout);
+        defer gpa.free(r.stderr);
+        try std.testing.expectEqual(@as(u8, 0), r.term.exited);
+        try std.testing.expect(std.mem.indexOf(u8, r.stdout, "silinecek:") != null);
+        try std.testing.expect(std.mem.indexOf(u8, r.stdout, "dry-run") != null);
+    }
+    try std.testing.expect(dirExists(io, home_dir.dir, old_sha));
+    try std.testing.expect(dirExists(io, home_dir.dir, "pkg/tmp/stage-stale"));
+
+    // 2) varsayılan: eski sahte SHA + bayat tmp silinir; yeni sahte SHA (repo'nun en yenisi) + taze tmp + kurulu SHA kalır.
+    {
+        const r = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "cache", "prune" }, .environ_map = &env });
+        defer gpa.free(r.stdout);
+        defer gpa.free(r.stderr);
+        try std.testing.expectEqual(@as(u8, 0), r.term.exited);
+    }
+    try std.testing.expect(!dirExists(io, home_dir.dir, old_sha));
+    try std.testing.expect(dirExists(io, home_dir.dir, new_sha));
+    try std.testing.expect(!dirExists(io, home_dir.dir, "pkg/tmp/stage-stale"));
+    try std.testing.expect(dirExists(io, home_dir.dir, "pkg/tmp/stage-fresh"));
+    try std.testing.expectEqual(@as(usize, 1), try countShaDirs(io, gpa, home_dir.dir, "fake.example"));
+
+    // 3) --all: en yeni sahte SHA da gider; kurulu SHA kalır ve ikili çalışır.
+    {
+        const r = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "cache", "prune", "--all" }, .environ_map = &env });
+        defer gpa.free(r.stdout);
+        defer gpa.free(r.stderr);
+        try std.testing.expectEqual(@as(u8, 0), r.term.exited);
+    }
+    try std.testing.expect(!dirExists(io, home_dir.dir, new_sha));
+    try std.testing.expectEqual(@as(usize, 1), try countShaDirs(io, gpa, home_dir.dir, "fake.example"));
+    const bin_path = try std.fmt.allocPrint(gpa, "{s}/bin/keepcli{s}", .{ home_path, exeSuffix() });
+    defer gpa.free(bin_path);
+    const run_result = try std.process.run(gpa, io, .{ .argv = &.{bin_path} });
+    defer gpa.free(run_result.stdout);
+    defer gpa.free(run_result.stderr);
+    try std.testing.expectEqualStrings("keep\n", run_result.stdout);
+}
+
+test "noxc cache: gecersiz alt komut/secenek net bir hatayla reddedilir" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+
+    var home_dir = std.testing.tmpDir(.{});
+    defer home_dir.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const home_path = try absPath(io, home_dir.dir, &home_buf);
+    var env = try std.testing.environ.createMap(gpa);
+    defer env.deinit();
+    try env.put("NOX_HOME", home_path);
+
+    const r1 = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "cache" }, .environ_map = &env });
+    defer gpa.free(r1.stdout);
+    defer gpa.free(r1.stderr);
+    try std.testing.expect(r1.term == .exited and r1.term.exited != 0);
+
+    const r2 = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "cache", "prune", "--bogus" }, .environ_map = &env });
+    defer gpa.free(r2.stdout);
+    defer gpa.free(r2.stderr);
+    try std.testing.expect(r2.term == .exited and r2.term.exited != 0);
+    try std.testing.expect(std.mem.indexOf(u8, r2.stderr, "--bogus") != null);
+
+    // Boş bir NOX_HOME'da prune hata vermez.
+    const r3 = try std.process.run(gpa, io, .{ .argv = &.{ noxcPath(), "cache", "prune" }, .environ_map = &env });
+    defer gpa.free(r3.stdout);
+    defer gpa.free(r3.stderr);
+    try std.testing.expectEqual(@as(u8, 0), r3.term.exited);
+}

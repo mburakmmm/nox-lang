@@ -242,7 +242,7 @@ pub fn resolveCloneUrl(a: Allocator, repo: []const u8, allow_insecure_transport:
 /// `..`İSE (KARAKTER İÇERİĞİ zaten zararsız olsa BİLE, SEGMENT anlamı
 /// tehlikelidir) `_` İLE DEĞİŞTİRİLİR, böylece SONUÇ asla bir "yukarı çık"
 /// ya da "aynı dizin" bileşeni İÇEREMEZ.
-fn sanitizeRepoForCachePath(a: Allocator, repo: []const u8) ![]const u8 {
+pub fn sanitizeRepoForCachePath(a: Allocator, repo: []const u8) ![]const u8 {
     var s = repo;
     if (std.mem.indexOf(u8, s, "://")) |idx| s = s[idx + 3 ..];
     while (s.len > 0 and s[0] == '/') s = s[1..];

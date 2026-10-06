@@ -36,6 +36,7 @@ const pkg_index = @import("pkg/index.zig");
 const upgrade_mod = @import("pkg/upgrade.zig");
 const registry = @import("pkg/registry.zig");
 const install_mod = @import("pkg/install.zig");
+const cache_prune = @import("pkg/cache_prune.zig");
 const formatter = @import("fmt/formatter.zig");
 const build_options = @import("build_options");
 
@@ -128,6 +129,7 @@ fn printHelp(is_tr: bool) void {
             \\  uninstall <komut>     global kurulu bir paketi kaldirir
             \\  list                  global kurulu paketleri listeler
             \\  refresh [paket]       global kurulu paket(ler)i en son surume gunceller (paket verilmezse TUMUNU gunceller)
+            \\  cache prune [--dry-run] [--all]  paket onbelleginin eski SHA dizinlerini siler (install/refresh/upgrade de otomatik yapar)
             \\  version               sürüm bilgisini yazdırır (--version/-V ile aynı)
             \\
             \\Ortak seçenekler:
@@ -172,6 +174,7 @@ fn printHelp(is_tr: bool) void {
             \\  install <name|repo>   GLOBALLY install a package (needs its own 'bin' entry point)
             \\  uninstall <command>   remove a globally installed package
             \\  list                  list globally installed packages
+            \\  cache prune [--dry-run] [--all]  delete stale package-cache SHA dirs (install/refresh/upgrade also do this automatically)
             \\  version               print version info (same as --version/-V)
             \\
             \\Common options:
@@ -288,7 +291,7 @@ pub fn main(init: std.process.Init) !void {
     if (init.environ_map.get("NOX_INDEX_URL")) |v| registry_policy.index_url = try a.dupe(u8, v);
     if (init.environ_map.get("NOX_PUBLISH_API_BASE")) |v| registry_policy.publish_api_base = try a.dupe(u8, v);
 
-    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, init, check, expand, explain, version, help, upgrade, install, uninstall, list_installed, refresh, legacy };
+    const Subcommand = enum { build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, init, check, expand, explain, version, help, upgrade, install, uninstall, list_installed, refresh, cache, legacy };
     const sub: Subcommand = blk: {
         // Bulundu (kullanıcı geri bildirimi): çıplak `noxc` ÖNCEDEN `.legacy`ye
         // düşüp `cmdBuild`i argümansız çağırıyordu — tek satırlık bir
@@ -323,6 +326,7 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.eql(u8, first, "uninstall")) break :blk .uninstall;
         if (std.mem.eql(u8, first, "list")) break :blk .list_installed;
         if (std.mem.eql(u8, first, "refresh")) break :blk .refresh;
+        if (std.mem.eql(u8, first, "cache")) break :blk .cache;
         break :blk .legacy;
     };
     const rest: []const []const u8 = if (sub == .legacy or all_args.items.len == 0) all_args.items else all_args.items[1..];
@@ -345,11 +349,12 @@ pub fn main(init: std.process.Init) !void {
         .check => try cmdCheck(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
         .expand => try cmdExpand(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
         .explain => try cmdExplain(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy),
-        .upgrade => try cmdUpgrade(a, io, rest, resource_dir_override, upgrade_policy, fetch_policy, is_tr),
+        .upgrade => try cmdUpgrade(a, io, rest, resource_dir_override, upgrade_policy, fetch_policy, is_tr, nox_home),
         .install => try cmdInstall(gpa, io, a, rest, nox_home, resource_dirs, registry_policy, fetch_policy, init.environ_map, is_tr),
         .uninstall => try cmdUninstall(io, a, rest, nox_home),
         .list_installed => try cmdListInstalled(io, a, nox_home),
         .refresh => try cmdRefresh(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy, init.environ_map, is_tr),
+        .cache => try cmdCache(io, a, rest, nox_home),
     }
 }
 
@@ -359,7 +364,7 @@ pub fn main(init: std.process.Init) !void {
 /// GitHub'ın "latest release"i çözülür. `--check`, kurulum/indirmeyi
 /// ATLAYIP yalnızca mevcut/en-son sürümü KARŞILAŞTIRIP raporlar (script'ler
 /// İçin: güncelse çıkış 0, YENİ bir sürüm VARSA çıkış 1).
-fn cmdUpgrade(a: std.mem.Allocator, io: std.Io, args: []const []const u8, resource_dir_override: ?[]const u8, policy: upgrade_mod.UpgradePolicy, fetch_policy: fetch.FetchPolicy, is_tr: bool) !void {
+fn cmdUpgrade(a: std.mem.Allocator, io: std.Io, args: []const []const u8, resource_dir_override: ?[]const u8, policy: upgrade_mod.UpgradePolicy, fetch_policy: fetch.FetchPolicy, is_tr: bool, nox_home: []const u8) !void {
     var check_only = false;
     var explicit_version: ?[]const u8 = null;
     for (args) |arg| {
@@ -423,6 +428,8 @@ fn cmdUpgrade(a: std.mem.Allocator, io: std.Io, args: []const []const u8, resour
         std.process.exit(1);
     };
     if (is_tr) printOk("guncellendi: {s}\n", .{target_tag}) else printOk("upgraded to: {s}\n", .{target_tag});
+    // Eski paket-önbelleği SHA'larını süpür (en iyi çaba — hata sessizce yutulur).
+    autoPruneCache(io, a, nox_home, null, is_tr);
 }
 
 /// Faz Y.1: `noxc search <indeks-dosyasi.json> [sorgu]` — hafif, statik
@@ -831,6 +838,9 @@ fn installOrUpdatePackage(
         printOk("kuruldu: {s} ({s}@{s})\n", .{ bin_spec.name, repo, short_sha });
     }
 
+    // Bu repo'nun eski (artık kurulu olmayan) SHA dizinlerini sil.
+    autoPruneCache(io, a, nox_home, repo, is_tr);
+
     const path_env = environ_map.get("PATH") orelse "";
     if (!install_mod.isDirOnPath(path_env, bin_dir_path)) {
         install_mod.printPathHint(bin_dir_path, is_tr);
@@ -876,6 +886,76 @@ fn cmdRefresh(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
         };
     }
     if (fail_count > 0) std.process.exit(1);
+}
+
+/// `installed.json`daki kayıtları `cache_prune.KeepEntry` listesine çevirir.
+fn installedKeepEntries(io: std.Io, a: std.mem.Allocator, nox_home: []const u8) ![]const cache_prune.KeepEntry {
+    const registry_state = try project.loadInstalledRegistry(a, io, nox_home);
+    const keep = try a.alloc(cache_prune.KeepEntry, registry_state.packages.len);
+    for (registry_state.packages, 0..) |pkg, i| keep[i] = .{ .repo = pkg.repo, .resolved_sha = pkg.resolved_sha };
+    return keep;
+}
+
+/// `install`/`refresh`/`upgrade` sonrası en-iyi-çaba önbellek temizliği:
+/// `only_repo` doluysa YALNIZCA o repo'nun eski SHA'ları (en-yeni-koruma
+/// KAPALI — yeni kurulan SHA zaten `installed.json`da), `null` ise tüm
+/// önbellek (en-yeni-koruma AÇIK — projelerin güncel `nox.lock` sürümleri
+/// yeniden indirilmesin). Her hata sessizce yutulur: temizlik asla
+/// asıl komutu başarısız KILMAZ.
+fn autoPruneCache(io: std.Io, a: std.mem.Allocator, nox_home: []const u8, only_repo: ?[]const u8, is_tr: bool) void {
+    const keep = installedKeepEntries(io, a, nox_home) catch return;
+    const report = cache_prune.prune(a, io, nox_home, keep, .{
+        .only_repo = only_repo,
+        .keep_newest_per_repo = only_repo == null,
+    }) catch return;
+    const n = report.removed_paths.len + report.removed_tmp_entries;
+    if (n == 0) return;
+    const size = cache_prune.formatBytes(a, report.freed_bytes) catch return;
+    if (is_tr) printOk("eski onbellek temizlendi: {d} girdi, {s}\n", .{ n, size }) else printOk("pruned old cache entries: {d}, {s}\n", .{ n, size });
+}
+
+/// `noxc cache prune [--dry-run] [--all]` — paket önbelleğindeki (`pkg/mod`)
+/// artık SHA dizinlerini siler (bkz. `pkg/cache_prune.zig`nin modül üstü
+/// notu). Varsayılan: `installed.json`daki SHA'lar + her repo'nun en yeni
+/// girdisi korunur; `--all` yalnızca kurulu SHA'ları korur; `--dry-run`
+/// hiçbir şey silmeden ne silineceğini ve ne kadar yer açılacağını yazar.
+fn cmdCache(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8) !void {
+    if (args.len == 0 or !std.mem.eql(u8, args[0], "prune")) {
+        std.debug.print("kullanim: noxc cache prune [--dry-run] [--all]\n", .{});
+        std.process.exit(1);
+    }
+    var opts: cache_prune.PruneOptions = .{};
+    for (args[1..]) |arg| {
+        if (std.mem.eql(u8, arg, "--dry-run")) {
+            opts.dry_run = true;
+        } else if (std.mem.eql(u8, arg, "--all")) {
+            opts.keep_newest_per_repo = false;
+        } else {
+            printErr("cache prune: bilinmeyen secenek: {s}\n", .{arg});
+            std.process.exit(1);
+        }
+    }
+    const keep = installedKeepEntries(io, a, nox_home) catch |e| {
+        printErr("cache prune: kurulu-paket kaydi okunamadi: {t}\n", .{e});
+        std.process.exit(1);
+    };
+    const report = cache_prune.prune(a, io, nox_home, keep, opts) catch |e| {
+        printErr("cache prune: basarisiz: {t}\n", .{e});
+        std.process.exit(1);
+    };
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
+    const w = &stdout_writer.interface;
+    for (report.removed_paths) |p| try w.print("{s}{s}\n", .{ if (opts.dry_run) "silinecek: " else "silindi: ", p });
+    const size = try cache_prune.formatBytes(a, report.freed_bytes);
+    try w.print("{s}: {d} onbellek girdisi + {d} gecici artik, {s}; korunan: {d}\n", .{
+        if (opts.dry_run) "dry-run" else "temizlendi",
+        report.removed_paths.len,
+        report.removed_tmp_entries,
+        size,
+        report.kept_entries,
+    });
+    try w.flush();
 }
 
 /// `noxc uninstall <komut-adi>` — `{nox_home}/bin/{komut-adi}[.exe]`i
