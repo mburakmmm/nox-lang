@@ -81,7 +81,13 @@ const Fixer = struct {
     }
 
     fn isMethodCandidate(self: *Fixer, name: []const u8) bool {
-        return self.method_names.contains(name) and !self.field_names.contains(name);
+        // v1.142.11 (GPT-5.6 red-team): modül-global `field_names` dışlaması
+        // KALDIRILDI — ilgisiz bir sınıfın aynı adlı ALANI, başka bir sınıfın
+        // metodunun bağlı-değer olarak kullanımını reddettiriyordu
+        // (`a.value` → "'A' sınıfının 'value' alanı yok"). Ayrım zaten
+        // checker/codegen'de tip bilgisiyle yapılır: `ad` alanysa
+        // `__nox_bind_method` düz alan okumasına düşer (bkz. üst belge notu).
+        return self.method_names.contains(name);
     }
 
     fn fixStmts(self: *Fixer, stmts: []ast.Stmt) std.mem.Allocator.Error!void {

@@ -28076,6 +28076,36 @@ doğrulanamıyor). Testler: `formatPeerAddr6` birim testi, dual-stack kabul (`::
 `127.0.0.1` peer biçimleri) ve `v6_only` reddi Zig testleri (IPv6 yoksa atlanır),
 golden `http_listen_v6`; elle uçtan uca curl doğrulaması yapıldı.
 
+## 3.249 GPT-5.6 red-team bulguları: iç içe döngü sızıntısı + bağlı-metod ad çakışması (v1.142.11)
+
+Dış inceleme (GPT-5.6, v1.142.3) iki olası correctness açığı işaret etti; ikisi de
+çalıştırılarak DOĞRULANDI ve düzeltildi.
+
+**1) İç içe `list[list[Sınıf]]` alanlı döngüler sızıyordu.** `genClassRelease`in
+`has_class_field` kapısı yalnızca tek-seviye alanlara baktığından, iç içe alanlı
+bir sınıf döngüsel (`computeCyclicClasses` zinciri gezer) olsa bile olası-kök
+olarak KAYDEDİLMİYORDU; ayrıca `genClassTrace`/`genClassGcFree` de iç içe listeleri
+görmüyordu (DebugAllocator: 5000 `a.links.append([b]); b.links.append([a])`
+döngüsü sızdırıyordu; bu, v1.142.0'dan ÖNCE de vardı — regresyon değil, eski
+bir boşluk). Düzeltme: (a) kök kaydı kararını tip-düzeyi grafiğin kendisi verir
+(`registers_root = cyclic_classes.contains`; iki ayrı algoritma aynı bilgiyi
+farklı hesaplamasın), (b) iç içe liste alanları için çalışma zamanı yardımcıları
+`nox_list_nested_count/fill/shallow_gc_free` (arc.zig) ve bunları çağıran
+trace/gc_free kodu — iç liste blokları sığ serbest bırakılır, yaprak sınıf
+örneklerine dokunulmaz. `dict[K, list[Sınıf]]` dilde zaten geçersizdir (dict değeri
+yalnızca int/float/bool/str/sınıf). Golden: `cycle_nested_list_class_fields`
+(2 ve 3 seviye, QBE + `--release`, sızıntısız).
+
+**2) Bağlı-metod fixup'ı modül-global alan adı kümesine bakıyordu.** İlgisiz bir
+sınıfın aynı adlı ALANI (`B.value`) başka bir sınıfın metodunun bağlı değer
+olarak kullanımını (`f = a.value`) "'A' sınıfının 'value' alanı yok" ile
+reddettiriyordu. `bound_method_fixup.zig` `isMethodCandidate` artık yalnızca metod
+adı kümesine bakar; ayrım checker/codegen'de tiple yapılır (`__nox_bind_method`
+alan ise düz okumaya düşer, ARC `retainIfAliasing` ile doğru). Maliyet: yalnızca
+ad çakışması olan yerlerde (stdlib'de `nox.validate`) alan okumaları bir çağrı
+yoluyla yapılır (daha muhafazakâr kaçış analizi); davranış aynı. Golden:
+`bound_method_field_name_collision`.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

@@ -1,0 +1,51 @@
+# v1.142.11 (GPT-5.6 red-team): bir sınıfın METOD adı, ilgisiz başka bir
+# sınıfın ALAN adıyla çakışınca bağlı-metod değeri (`a.value`) REDDEDİLİYORDU
+# (fixup modül-global alan adı kümesine bakıyordu). Artık ayrım tipe göredir;
+# alan okumaları (str/list/sınıf alanları dahil) ARC açısından doğru kalır
+# (boş stderr = sızıntı/çift-serbest yok).
+class A:
+    def value(self: A, x: int) -> int:
+        return x + 1
+
+    def items(self: A) -> int:
+        return 7
+
+class Item:
+    n: int
+
+    def __init__(self: Item, n: int) -> None:
+        self.n = n
+
+class B:
+    value: int
+    items: list[str]
+    inner: Item
+
+    def __init__(self: B) -> None:
+        self.value = 123
+        self.items = ["x", "y"]
+        self.inner = Item(5)
+
+def take(xs: list[str]) -> int:
+    return len(xs)
+
+def pick(b: B) -> list[str]:
+    return b.items
+
+a: A = A()
+f: (int) -> int = a.value
+g: () -> int = a.items
+print(f(4))
+print(g())
+
+b: B = B()
+print(b.value)
+print(take(b.items))
+print(len(pick(b)))
+it: list[str] = b.items
+print(it[1])
+n: int = 0
+while n < 3:
+    local: list[str] = b.items
+    n = n + len(local) - 1
+print(n)

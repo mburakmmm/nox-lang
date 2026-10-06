@@ -275,6 +275,68 @@ pub export fn nox_list_shallow_gc_free(rt: ?*anyopaque, ptr: ?*anyopaque) void {
     nox_rc_free_payload(rt, p, list_header_size + cap * 8);
 }
 
+/// v1.142.11 (GPT-5.6 red-team: iç içe `list[list[Sınıf]]` alanları döngü
+/// çözücüye GÖRÜNMÜYORDU): `depth` seviye iç içe bir `list[...[Sınıf]]`nin
+/// yaprak sınıf işaretçilerini sayar/doldurur/sığ-serbest bırakır. Liste
+/// düzeni her seviyede aynıdır (`{len@0, cap@8, işaretçi elemanlar@16...}`).
+fn nestedListElem(bytes: [*]u8, i: usize) ?*anyopaque {
+    const slot: *align(1) const ?*anyopaque = @ptrCast(bytes + abi_layout.LIST_HEADER_SIZE + i * 8);
+    return slot.*;
+}
+
+fn nestedListLen(bytes: [*]u8) usize {
+    const len_ptr: *align(1) const i64 = @ptrCast(bytes);
+    return @intCast(@max(len_ptr.*, 0));
+}
+
+pub export fn nox_list_nested_count(ptr: ?*anyopaque, depth: i64) i64 {
+    const p = ptr orelse return 0;
+    const bytes: [*]u8 = @ptrCast(p);
+    const n = nestedListLen(bytes);
+    if (depth <= 1) return @intCast(n);
+    var total: i64 = 0;
+    var i: usize = 0;
+    while (i < n) : (i += 1) total += nox_list_nested_count(nestedListElem(bytes, i), depth - 1);
+    return total;
+}
+
+/// Yaprakları `buf`ın (8 baytlık uzunluk başlığı + 8 baytlık yuvalar)
+/// `start_idx`inci yuvasından itibaren yazar, YENİ yazma indeksini döner.
+pub export fn nox_list_nested_fill(ptr: ?*anyopaque, depth: i64, buf: ?*anyopaque, start_idx: i64) i64 {
+    const p = ptr orelse return start_idx;
+    const out: [*]u8 = @ptrCast(buf orelse return start_idx);
+    const bytes: [*]u8 = @ptrCast(p);
+    const n = nestedListLen(bytes);
+    var idx = start_idx;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const e = nestedListElem(bytes, i);
+        if (depth <= 1) {
+            const slot: *align(1) ?*anyopaque = @ptrCast(out + abi_layout.TRACE_BUF_LEN_SIZE + @as(usize, @intCast(idx)) * abi_layout.TRACE_BUF_SLOT_SIZE);
+            slot.* = e;
+            idx += 1;
+        } else {
+            idx = nox_list_nested_fill(e, depth - 1, buf, idx);
+        }
+    }
+    return idx;
+}
+
+/// `nox_list_shallow_gc_free`in iç içe karşılığı: iç listelerin KENDİ
+/// bloklarını da serbest bırakır, yaprak sınıf örneklerine DOKUNMAZ.
+pub export fn nox_list_nested_shallow_gc_free(rt: ?*anyopaque, ptr: ?*anyopaque, depth: i64) void {
+    const p = ptr orelse return;
+    if (depth <= 1) return nox_list_shallow_gc_free(rt, p);
+    if (nox_rc_predecrement(p) == 0) return; // BAŞKA bir sahibi VAR — dokunma.
+    const bytes: [*]u8 = @ptrCast(p);
+    const n = nestedListLen(bytes);
+    var i: usize = 0;
+    while (i < n) : (i += 1) nox_list_nested_shallow_gc_free(rt, nestedListElem(bytes, i), depth - 1);
+    const cap_ptr: *align(1) const i64 = @ptrCast(bytes + 8);
+    const cap: usize = @intCast(@max(cap_ptr.*, 0));
+    nox_rc_free_payload(rt, p, abi_layout.LIST_HEADER_SIZE + cap * 8);
+}
+
 fn refcountOf(ptr: *anyopaque) *i64 {
     const bytes: [*]u8 = @ptrCast(ptr);
     const base = bytes - HEADER_SIZE;

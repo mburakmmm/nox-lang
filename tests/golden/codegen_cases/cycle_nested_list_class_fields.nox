@@ -1,0 +1,39 @@
+# v1.142.11 (GPT-5.6 red-team): iç içe `list[list[Sınıf]]` alanlı sınıflar
+# arasındaki referans döngüleri döngü çözücüye GÖRÜNMÜYORDU (olası-kök
+# kaydı/trace/gc_free yalnızca tek-seviye list[Sınıf] alanlarına bakıyordu)
+# — sonsuz sızıntı. Artık 2 ve 3 seviyeli iç içe alanlar toplanır; çıktının
+# yanında boş stderr (DebugAllocator sızıntı raporu YOK) doğrulanır.
+class Node:
+    links: list[list[Node]]
+    def __init__(self: Node) -> None:
+        self.links = []
+
+class Deep:
+    links: list[list[list[Deep]]]
+    name: str
+    def __init__(self: Deep, name: str) -> None:
+        self.links = []
+        self.name = name
+
+def make_cycle() -> None:
+    a: Node = Node()
+    b: Node = Node()
+    a.links.append([b])
+    b.links.append([a])
+
+def make_deep(i: int) -> int:
+    a: Deep = Deep("a" + str(i))
+    b: Deep = Deep("b" + str(i))
+    c: Deep = Deep("c" + str(i))
+    a.links.append([[b, c]])
+    b.links.append([[a], [c]])
+    c.links.append([[a, b]])
+    return len(a.links[0][0]) + len(b.links[0]) + len(c.links[0][0])
+
+i: int = 0
+total: int = 0
+while i < 3000:
+    make_cycle()
+    total = total + make_deep(i)
+    i = i + 1
+print(total)

@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.11]
+
+### Düzeltildi
+
+- **İç içe `list[list[Sınıf]]` alanlı sınıflar arası referans döngüleri artık toplanıyor**
+  (olası-kök kaydı tip-düzeyi grafikten, trace/gc_free iç içe listeleri geziyor). Spec §3.249.
+- **Bağlı-metod değeri, ilgisiz bir sınıfın aynı adlı alanıyla çakışsa da çalışıyor**
+  (`bound_method_fixup` modül-global alan adı dışlaması kaldırıldı).
+
 ## [1.142.10]
 
 ### Eklendi

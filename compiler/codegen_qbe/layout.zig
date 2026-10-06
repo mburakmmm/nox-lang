@@ -273,7 +273,14 @@ pub fn genClassRelease(self: *Codegen, class_name: []const u8, cinfo: ClassInfo)
     // v1.142.0: `has_class_field` tek başına yetmez — sınıf bir referans
     // döngüsünün ÜYESİ olamıyorsa (bkz. `computeCyclicClasses`) olası-kök
     // kaydı (global kilit + hash yazımı) GEREKSİZDİR.
-    const registers_root = has_class_field and self.cyclic_classes.contains(class_name);
+    // `has_class_field` YALNIZCA tek-seviye alanlara (sınıf / `list[Sınıf]` /
+    // `dict[K, Sınıf]`) bakar; iç içe `list[list[Sınıf]]` gibi alanlar onu
+    // `true` YAPMAZ, oysa `computeCyclicClasses` o zinciri GEZER. İki ayrı
+    // algoritma aynı bilgiyi farklı hesapladığından, kararı TİP-DÜZEYİ
+    // grafiğin kendisi verir: sınıf döngüsel ise (bir kenarı vardır, yani
+    // bir sınıf referansı taşır) olası-kök kaydedilir.
+    const registers_root = self.cyclic_classes.contains(class_name);
+    const tracks_cycles = has_class_field or registers_root;
     if (registers_root) {
         const root_label = try self.newLabel("release_possible_root");
         try self.qbeJnz(should_free, free_label, root_label);
@@ -284,7 +291,7 @@ pub fn genClassRelease(self: *Codegen, class_name: []const u8, cinfo: ClassInfo)
         try self.qbeJnz(should_free, free_label, done_label);
     }
     try self.qbeLabel(free_label);
-    if (has_class_field) {
+    if (tracks_cycles) {
         try self.qbeCall(null, "$nox_cycle_forget", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%p" } });
     }
     for (cinfo.fields.items) |f| {
@@ -328,6 +335,25 @@ pub fn genClassRelease(self: *Codegen, class_name: []const u8, cinfo: ClassInfo)
 /// çözücü tarafından KEŞFEDİLİP `nox_gc_free_dispatch`e (bkz.
 /// `genClassGcFree`) YÖNLENDİRİLEBİLİR — dağıtım fonksiyonlarının HER
 /// sınıf İÇİN bir DALI olması GEREKİR (bkz. `genTraceDispatch`).
+/// `list[list[...Sınıf]]` alanı İçin liste SEVİYE sayısını döner (>= 2); düz
+/// `list[Sınıf]` (1 seviye, mevcut yol) ya da sınıf-yapraklı olmayan zincirler
+/// İçin `null`. v1.142.11: iç içe alanlar döngü çözücüye (trace/gc_free)
+/// ÖNCEDEN görünmüyordu.
+fn nestedClassListDepth(info: anytype) ?i64 {
+    if (info.heap != .list) return null;
+    var eh: ?*const ElemHeapInfo = info.elem_heap_info;
+    var depth: i64 = 1;
+    while (eh) |h| : (eh = h.nested) {
+        if (h.heap == .list) {
+            depth += 1;
+            continue;
+        }
+        if (h.heap == .class and depth >= 2) return depth;
+        return null;
+    }
+    return null;
+}
+
 pub fn genClassTrace(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) CodegenError!void {
     self.temp_counter = 0;
     self.label_counter = 0;
@@ -362,8 +388,12 @@ pub fn genClassTrace(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) C
     defer list_class_fields.deinit(self.allocator);
     var dict_class_fields: std.ArrayListUnmanaged(ClassField) = .empty;
     defer dict_class_fields.deinit(self.allocator);
+    var nested_list_fields: std.ArrayListUnmanaged(ClassField) = .empty;
+    defer nested_list_fields.deinit(self.allocator);
     for (cinfo.fields.items) |f| {
-        if (f.info.heap == .class) {
+        if (nestedClassListDepth(f.info) != null) {
+            try nested_list_fields.append(self.allocator, f);
+        } else if (f.info.heap == .class) {
             try class_fields.append(self.allocator, f);
         } else if (f.info.heap == .list and f.info.elem_heap_info != null and f.info.elem_heap_info.?.heap == .class) {
             try list_class_fields.append(self.allocator, f);
@@ -381,7 +411,7 @@ pub fn genClassTrace(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) C
     // Hızlı yol — list/dict-tipli sınıf alanı YOKSA, ESKİ (tamamen
     // derleme-zamanı sabit boyutlu) kod ÜRETİLİR, SIFIR ek maliyetle
     // (bu, sınıfların BÜYÜK çoğunluğu İçİn geçerlidir).
-    if (list_class_fields.items.len == 0 and dict_class_fields.items.len == 0) {
+    if (list_class_fields.items.len == 0 and dict_class_fields.items.len == 0 and nested_list_fields.items.len == 0) {
         const buf = try self.newTemp();
         try self.qbeCall(.{ .name = buf, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{TRACE_BUF_LEN_SIZE + class_fields.items.len * TRACE_BUF_SLOT_SIZE}) } });
         try self.qbeStoreImmL(@intCast(class_fields.items.len), buf);
@@ -457,6 +487,20 @@ pub fn genClassTrace(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) C
         try self.qbeLabel(skip_label);
         try self.qbeJmp(after_label);
         try self.qbeLabel(after_label);
+    }
+
+    for (nested_list_fields.items) |f| {
+        const faddr = try self.newTemp();
+        try self.qbeOp2Imm(faddr, .l, "add", "%p", @intCast(f.offset));
+        const list_ptr = try self.newTemp();
+        try self.qbeLoadL(list_ptr, faddr);
+        const n_leaf = try self.newTemp();
+        try self.qbeCall(.{ .name = n_leaf, .ty = .l }, "$nox_list_nested_count", &.{ .{ .ty = .l, .text = list_ptr }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{nestedClassListDepth(f.info).?}) } });
+        const cur_count = try self.newTemp();
+        try self.qbeLoadL(cur_count, count_slot);
+        const new_count = try self.newTemp();
+        try self.qbeOp2(new_count, .l, "add", cur_count, n_leaf);
+        try self.qbeStoreL(new_count, count_slot);
     }
 
     const total_count = try self.newTemp();
@@ -545,6 +589,18 @@ pub fn genClassTrace(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) C
         try self.qbeLabel(after_label);
     }
 
+    for (nested_list_fields.items) |f| {
+        const faddr = try self.newTemp();
+        try self.qbeOp2Imm(faddr, .l, "add", "%p", @intCast(f.offset));
+        const list_ptr = try self.newTemp();
+        try self.qbeLoadL(list_ptr, faddr);
+        const wi = try self.newTemp();
+        try self.qbeLoadL(wi, write_idx_slot);
+        const wi_next = try self.newTemp();
+        try self.qbeCall(.{ .name = wi_next, .ty = .l }, "$nox_list_nested_fill", &.{ .{ .ty = .l, .text = list_ptr }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{nestedClassListDepth(f.info).?}) }, .{ .ty = .l, .text = buf }, .{ .ty = .l, .text = wi } });
+        try self.qbeStoreL(wi_next, write_idx_slot);
+    }
+
     try self.qbeRet(buf);
     try self.qbeFuncEnd();
 }
@@ -629,6 +685,16 @@ pub fn genClassGcFree(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) 
     try self.qbeFuncHeaderEnd();
     for (cinfo.fields.items) |f| {
         if (f.info.heap == .class) continue; // bkz. yukarıdaki belge notu
+        if (nestedClassListDepth(f.info)) |depth| {
+            // v1.142.11: iç içe `list[list[Sınıf]]` — iç listelerin blokları sığ
+            // serbest bırakılır, yaprak sınıf örneklerine DOKUNULMAZ.
+            const addr = try self.newTemp();
+            try self.qbeOp2Imm(addr, .l, "add", "%p", @intCast(f.offset));
+            const fv = try self.newTemp();
+            try self.qbeLoadL(fv, addr);
+            try self.qbeCall(null, "$nox_list_nested_shallow_gc_free", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = fv }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{depth}) } });
+            continue;
+        }
         // v3 madde 3 (bkz. `nox_list_shallow_gc_free`/`nox_dict_shallow_
         // gc_free_class_values`in belge notu, `runtime/alloc/arc.zig`/
         // `runtime/collections/dict.zig`) — DÜZELTME: list[ClassType]/
