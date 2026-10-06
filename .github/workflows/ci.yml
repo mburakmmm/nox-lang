@@ -128,8 +128,13 @@ jobs:
     # tavanı, `nox_pool_serve` testinin GEÇMİŞTE Linux (x86-64)'te
     # TAM 6 SAAT ASILI KALMASINA (`gh run view 34396549180`) İZİN
     # VERDİ — savunma-derinliği: HERHANGİ bir GELECEKTEKİ hang (BU YA
-    # DA FARKLI bir hata) ARTIK EN FAZLA 30 dakikada AÇIKÇA kırmızı olur.
-    timeout-minutes: 30
+    # DA FARKLI bir hata) ARTIK EN FAZLA 45 dakikada AÇIKÇA kırmızı olur.
+    # v1.142.2→3: 30'dan 45'e çıkarıldı — GitHub'ın macOS (aarch64) runner'ı
+    # aynı iş için 19 ile 30+ dakika arasında DEĞİŞİYOR (v1.142.3'ün İLK
+    # denemesi sağlam testlerle 30 dakikada "cancelled" oldu, yeniden
+    # çalıştırma 19 dakikada yeşil geçti) — 30 dakika gerçek bir hang'i
+    # değil runner dalgalanmasını cezalandırıyordu.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 

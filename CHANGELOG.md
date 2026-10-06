@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.4]
+
+### Değişti
+
+- **CI iş zaman aşımı 30 → 45 dakika (`.github/workflows/ci.yml`)**: macOS
+  (aarch64) runner'ı aynı iş için 19-30+ dakika arasında dalgalanıyor;
+  v1.142.3'ün ilk CI denemesi sağlam testlerle 30 dakika sınırında iptal oldu
+  (yeniden çalıştırma 19 dakikada yeşil). Gerçek hang'ler hâlâ 45 dakikada
+  kırmızı olur. Kod değişikliği yok.
+
 ## [1.142.3]
 
 ### Düzeltildi
