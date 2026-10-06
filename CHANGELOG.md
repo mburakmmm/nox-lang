@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.6]
+
+### Eklendi
+
+- **`benchmarks/cross_lang/` — çapraz-dil benchmark takımı**: uzun çalışan 10 kernel'in
+  (fib, döngü, elek, mandelbrot, matmul, sözlük, string, ikili ağaç, sıralama, collatz)
+  Nox QBE/LLVM, C, Go, Node ve Python karşılaştırması; `build.sh` + `run.py` + README ve
+  `benchmarks/RESULTS.md`ye pointer. Kod değişikliği yok.
+
 ## [1.142.5]
 
 ### Performans

@@ -9,6 +9,11 @@
 `ortam: macos-aarch64 (apple_m4), 10 mantıksal çekirdek` —
 `derleyici: zig 0.16.0` — `derleme modu: ReleaseFast` — `noxc: noxc 1.26.6`.
 
+**Çapraz-dil benchmark (v1.142.5):** uzun çalışan 10 kernel'in Nox/C/Go/Node/Python karşılaştırması
+`benchmarks/cross_lang/` altında (README + `build.sh` + `run.py`); aşağıdaki `zig build bench`
+bölümleri kısa iş yüklerinde süreç başlangıcıyla bulanıktır, gerçek hız için oraya bakın.
+C'ye göre geometrik ortalama: Nox QBE 2.45×, Nox LLVM 2.17×, Go 1.28×, Node 5.43×, Python 23.2×.
+
 ## Bölüm 1 — Stres testleri (yalnızca Nox, büyük N)
 
 Bu testler yalnızca Nox'un büyük ölçekte çökmediğini/sızdırmadığını ve zamanla regresyona uğramadığını doğrular; başka bir dille kıyaslanmaz.
