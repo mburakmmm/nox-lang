@@ -170,6 +170,13 @@ test "conformance: fonksiyon dönüş tipleri (int/bool/float/str/class/list) he
     );
 }
 
+test "conformance: @capability.requires'li stdlib (nox.time/nox.crypto) + kullanıcı fonksiyonu her iki backend'de derlenir ve aynı çalışır" {
+    try expectConformant(
+        @embedFile("conformance_cases/conformance_capability_stdlib_release.nox"),
+        @embedFile("conformance_cases/conformance_capability_stdlib_release.expected"),
+    );
+}
+
 test "conformance: özel bir Exception alt sınıfının int/bool/float/str alanları her iki backend'de aynı" {
     try expectConformant(
         @embedFile("conformance_cases/conformance_exception_payload.nox"),

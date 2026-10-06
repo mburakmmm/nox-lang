@@ -1962,12 +1962,15 @@ pub const Checker = struct {
             ret == .class and std.mem.eql(u8, ret.class, http_response_name);
         for (fd.decorators) |dec| {
             const arg_values = try self.parseDecoratorArgs(dec, fd.name);
-            if (is_handler_shaped) try self.functions_used_as_value.put(self.allocator, fd.name, {});
-            // `registerCapabilityDecorator`nin imzası (`[]const []const u8`)
-            // DEĞİŞMEDİ — `extern def`/metod decorator çağrı siteleri HÂLÂ
-            // SADECE string literali kabul eder (capability ADLARI zaten
-            // HER ZAMAN string'dir). Burada da AYNI kısıt uygulanır —
-            // `@capability.requires`in argümanları int/bool/liste OLAMAZ.
+            // v1.142.7: `@capability.requires(...)` YALNIZCA derleme-zamanı bir
+            // kapıdır (checker `registerCapabilityDecorator` ile kullanır) —
+            // `nox.reflect` metadata tablosuna GİRMEZ (metod decorator'ları
+            // için zaten böyleydi, bkz. `registerClassSignatures`). Eskiden
+            // serbest-fonksiyon biçimi de tabloya giriyordu: `nox.time`/`nox.
+            // crypto` (içlerinde `@capability.requires` var) İthal eden HER
+            // program `decorated_functions.len > 0` oluyor, `--release` (LLVM)
+            // decorator tablolarını emit EDEMEDİĞİ İçin (`generateModule`nin
+            // `error.Unsupported`ı) bu programlar `--release` ile DERLENEMİYORDU.
             if (std.mem.eql(u8, dec.name, "capability.requires")) {
                 const str_args = try self.allocator.alloc([]const u8, arg_values.len);
                 for (arg_values, 0..) |v, i| {
@@ -1977,7 +1980,9 @@ pub const Checker = struct {
                     };
                 }
                 try self.registerCapabilityDecorator(fd.name, dec.name, str_args);
+                continue;
             }
+            if (is_handler_shaped) try self.functions_used_as_value.put(self.allocator, fd.name, {});
             const sig_params = try self.allocator.alloc(ParamMeta, fd.params.len);
             for (fd.params, 0..) |p, pi| sig_params[pi] = .{ .name = p.name, .type_name = try self.typeText(params[pi]) };
             try self.decorated_functions.append(self.allocator, .{

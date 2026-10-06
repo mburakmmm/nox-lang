@@ -28001,6 +28001,32 @@ negatif/sıfır/pozitif/±9e18 girdileri — çıktı Python ile birebir (QBE ve
 toplama → varsayılan). `ptr_map.zig`: tablo + 200K rastgele ekleme/silme gölge-harita
 testi. IR snapshot'ları: yalnızca `//`/`%` dizileri ve liste/str sınır kontrolü değişti.
 
+## 3.245 `@capability.requires` + `--release` ve release ikilisi CPU sabitleme (v1.142.7)
+
+**Bulgu (Nyx/Aether `NOX_LIMITATIONS.md` doğrulaması):** `nox.time` / `nox.crypto`
+gibi `@capability.requires("...")` ile işaretli stdlib fonksiyonlarını İÇE AKTARAN
+herhangi bir program `--release` (LLVM) altında `error.Unsupported` ile
+derlenemiyordu. Kök neden: `registerDecorators` capability decorator'larını da
+`decorated_functions` listesine ekliyordu; LLVM backend'i `decorated_functions`
+(kullanıcı decorator'ı + `nox.reflect` tabloları) için bilinçli olarak
+`Unsupported` döner. Oysa `@capability.requires` YALNIZCA derleme zamanı denetimidir
+(§3.220) — çalışma zamanı metadata'sı GEREKTİRMEZ.
+
+**Düzeltme:** `checker.zig` `registerDecorators` artık `capability.requires`ı ERKEN
+bir dalda yalnızca `registerCapabilityDecorator`a iletir ve `decorated_functions`a
+EKLEMEZ. Kullanıcı decorator'ları + `nox.reflect` davranışı DEĞİŞMEDİ (QBE'de
+tablolar aynen üretilir; LLVM'de hâlâ `Unsupported`). QBE IR'ında capability'li
+stdlib fonksiyonları için ÖLÜ reflect tablosu artık üretilmez (14 IR snapshot'ı
+küçüldü).
+
+**Release ikilisi:** `release.yml` `zig build`i hedef CPU'sunu sabitlemeden
+(`-Dcpu` yok → Zig native CPU) çalıştırdığından, AVX-512'li runner'da üretilen
+`linux-x64` ikilisi AVX-512'siz makinelerde SIGILL (çıkış 132) veriyordu. Matris
+artık `apple_m1` / `x86_64_v2` / `baseline`, Windows `x86_64_v2` sabitler.
+
+**Golden:** `conformance_capability_stdlib_release` (nox.time + nox.crypto, QBE ve
+`--release` AYNI çıktı).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

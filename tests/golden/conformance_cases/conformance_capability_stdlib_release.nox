@@ -1,0 +1,14 @@
+# v1.142.7: nox.time / nox.crypto içlerinde `@capability.requires` taşır — bu decorator
+# yalnızca derleme-zamanı kapısıdır, reflect metadata'sına GİRMEZ; bu yüzden bu modülleri
+# kullanan programlar `--release` (LLVM) ile de derlenmelidir (eskiden "desteklenmeyen yapı").
+import nox.time
+import nox.crypto
+
+@capability.requires("clock")
+def user_clock() -> int:
+    return nox.time.now_ms()
+
+print(len(nox.crypto.sha256("abc")))
+print(nox.time.now_ms() > 0)
+print(user_clock() > 0)
+print(nox.crypto.sha256("abc"))

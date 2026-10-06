@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.7]
+
+### Düzeltildi
+
+- **`--release` + `nox.time`/`nox.crypto`**: `@capability.requires` decorator'ları artık
+  `decorated_functions`a girmiyor (yalnızca derleme zamanı denetimi); bu stdlib
+  modüllerini içe aktaran programlar LLVM backend'inde `error.Unsupported` vermiyor.
+  Golden: `conformance_capability_stdlib_release`. 14 IR snapshot'ı yeniden üretildi.
+- **Release CPU sabitleme**: `release.yml` hedef CPU'yu sabitliyor (`apple_m1` /
+  `x86_64_v2` / `baseline`); native-CPU'lu `linux-x64` ikilisinin AVX-512'siz
+  makinelerde SIGILL vermesi önlendi. Bkz. spec §3.245.
+
 ## [1.142.6]
 
 ### Eklendi

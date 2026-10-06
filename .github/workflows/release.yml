@@ -102,12 +102,15 @@ jobs:
           - os: macos-14
             asset: macos-arm64
             zig_arch: aarch64-macos
+            zig_cpu: apple_m1
           - os: ubuntu-latest
             asset: linux-x64
             zig_arch: x86_64-linux
+            zig_cpu: x86_64_v2
           - os: ubuntu-24.04-arm
             asset: linux-arm64
             zig_arch: aarch64-linux
+            zig_cpu: baseline
     name: ${{ matrix.asset }}
     runs-on: ${{ matrix.os }}
     steps:
@@ -132,8 +135,16 @@ jobs:
           make -C /tmp/qbe-1.3 -j"$(nproc)"
           sudo cp /tmp/qbe-1.3/qbe /usr/local/bin/qbe
 
+      # v1.142.7: `-Dcpu` AÇIKÇA verilir. Varsayılan (`standardTargetOptions`) =
+      # DERLEYEN runner'ın NATIVE CPU'su: ubuntu-latest AVX-512'li bir makinede
+      # `linux-x64` ikilisi (ve ondan türeyen `noxrt.o`, dolayısıyla kullanıcının
+      # derlediği HER program) AVX-512'siz makinelerde SIGILL (çıkış 132) veriyordu
+      # (Nyx CI'sında gözlendi). Sabit, geniş-uyumlu taban: x86-64-v2 (SSE4.2,
+      # 2009+; çalışma zamanı AVX2'ye ihtiyaç duymaz), macOS: apple_m1 (tüm Apple
+      # Silicon), Linux arm64: baseline (Cortex-A72/Pi 4 dahil; LSE atomikleri yok —
+      # ARC atomikleri biraz yavaş ama SIGILL yok).
       - name: zig build (ReleaseFast)
-        run: zig build -Doptimize=ReleaseFast
+        run: zig build -Doptimize=ReleaseFast -Dcpu=${{ matrix.zig_cpu }}
 
       - name: Paketle
         run: |
@@ -224,7 +235,7 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP"
 
       - name: zig build (ReleaseFast)
-        run: zig build -Doptimize=ReleaseFast
+        run: zig build -Doptimize=ReleaseFast -Dcpu=x86_64_v2
 
       - name: Duman testi — noxc.exe run
         shell: pwsh
