@@ -1,0 +1,67 @@
+# Aether NOX_LIMITATIONS.md yol haritası, Faz C.1 (bkz. nox-teknik-
+# spesifikasyon.md ilgili bölüm, madde 1): sınıf ve metod decorator'ları
+# `nox.reflect`e METADATA olarak açılır (ÖNCEDEN sınıf decorator'ı derleme
+# hatasıydı, `@get("/")` gibi bir metod decorator'ı derlemeyi çökertiyordu).
+# `decorator_kind`/`decorator_owner` + A.6/B.5'in arg/imza erişimcileri.
+import nox.reflect
+
+@controller("/users", 2, True)
+class UserController:
+    def __init__(self: UserController, prefix: str) -> None:
+        self.prefix = prefix
+
+    @get("/:id")
+    def show(self: UserController, id: int) -> str:
+        return "x"
+
+    @post("/")
+    @auth(["admin", "ops"])
+    def create(self: UserController, body: str, n: int) -> bool:
+        return True
+
+    def plain(self: UserController) -> int:
+        return 1
+
+@route("/f")
+def free(a: int) -> int:
+    return a
+
+def find(kind: int, dec: str) -> int:
+    n: int = nox.reflect.decorator_count()
+    i: int = 0
+    while i < n:
+        if nox.reflect.decorator_kind(i) == kind and nox.reflect.decorator_name(i) == dec:
+            return i
+        i = i + 1
+    return -1
+
+print(nox.reflect.decorator_count())
+
+c: int = find(1, "controller")
+print(nox.reflect.decorator_target_name(c))
+print(nox.reflect.decorator_arg(c, 0))
+print(nox.reflect.decorator_arg_int(c, 1))
+print(nox.reflect.decorator_arg_bool(c, 2))
+print(nox.reflect.decorator_param_name(c, 0) + ":" + nox.reflect.decorator_param_type(c, 0))
+
+g: int = find(2, "get")
+print(nox.reflect.decorator_owner(g) + "." + nox.reflect.decorator_target_name(g))
+print(nox.reflect.decorator_arg(g, 0))
+print(nox.reflect.decorator_param_count(g))
+print(nox.reflect.decorator_param_name(g, 0) + ":" + nox.reflect.decorator_param_type(g, 0))
+print(nox.reflect.decorator_return_type(g))
+
+# Aynı metodda İKİ decorator.
+a: int = find(2, "auth")
+print(nox.reflect.decorator_target_name(a))
+print(nox.reflect.decorator_arg_list_len(a, 0))
+print(nox.reflect.decorator_arg_list_item(a, 0, 1))
+print(nox.reflect.decorator_param_count(a))
+
+# Üst-düzey fonksiyon kaydı hâlâ kind 0 ve is_handler/owner varsayılanı boş.
+f: int = find(0, "route")
+print(nox.reflect.decorator_target_name(f))
+print("[" + nox.reflect.decorator_owner(f) + "]")
+
+# Dekore EDİLMEMİŞ metod (plain) hiçbir kayıt üretmez.
+print(find(2, "plain"))

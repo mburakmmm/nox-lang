@@ -27609,6 +27609,45 @@ int/float/bool/str/sınıf olmalı) bu madde ile çözülmedi.
 mevcut IR snapshot'ı DEĞİŞMEDİ (saf ön-geçiş). `zig build test`: üç
 ardışık temiz çalıştırma.
 
+## 3.236 Aether NOX_LIMITATIONS.md yol haritası, Faz C.1a — sınıf ve metod decorator metadata'sı
+
+**Bağlam:** madde 1. Sınıf decorator'ları (`@controller("/users")`)
+`registerClassSignatures`/`collectClassNames`te AÇIKÇA reddediliyordu
+("yalnızca @repr/@packed"); `@get("/:id")` gibi bir METOD decorator'ı ise
+`capability.requires` dışında `UnknownExternDecorator` ile derlemeyi
+çökertiyordu (plan dosyasının "AYRICA düzeltilmesi gereken engel" notu).
+Kullanıcı kararıyla kapsam: metadata + bağlı-metod değeri (bu bölüm
+yalnızca METADATA kısmı; bağlı-metod değeri §3.237).
+
+**Çözüm:** AYRI bir tablo YERİNE mevcut dekore-kayıt tablosu (A.6/B.5)
+genişletildi: `DecoratedFuncInfo.kind` (`0` fonksiyon, `1` sınıf, `2`
+metod) + `owner`. Böylece `decorator_name/arg_*/param_*/return_type`
+erişimcilerinin HEPSİ sınıf ve metodlar İçin de çalışır. `repr`/`packed`
+DIŞINDAKİ her sınıf decorator'ı ve `capability.requires` DIŞINDAKİ her
+metod decorator'ı kaydedilir; sınıf kayıtlarında `param_*` sınıfın
+`__init__` imzasını (devralınan dahil), metod kayıtlarında `self` HARİÇ
+metod imzasını verir. Argüman çözümlemesi `parseDecoratorArgs` ortak
+yardımcısına çıkarıldı (fonksiyon/sınıf/metod paylaşır; hata mesajındaki
+"fonksiyon:" → "hedef:"). Yeni yüzey: `nox.reflect.decorator_kind(i)`,
+`decorator_owner(i)`. `decorator_is_handler/handler` yalnızca `kind == 0`.
+
+**Kayıt sırası kaynak sırası DEĞİLDİR:** bir sınıfın metod kayıtları sınıf
+kaydından ÖNCE, üst-düzey fonksiyon kayıtları (ayrı geçişte) onlardan
+SONRA gelir — framework `decorator_kind`/`decorator_name` ile filtrelemeli,
+sıraya GÜVENMEMELİ. Derleyici decorator'ların anlamını yorumlamaz.
+`$__nox_dec_sigs` kaydı 3 → 5 kelime (kind, owner); tablolar yine
+yalnızca `nox.reflect` içe aktaran programlarda üretilir.
+
+### Test
+
+`reflect_class_method_decorators.nox`: sınıf decorator'ı (string/int/bool
+argümanlar), iki metod decorator'ı, AYNI metodda iki decorator (biri
+string-listesi argümanlı), dekore EDİLMEMİŞ metod (kayıt yok), üst-düzey
+fonksiyon (`kind 0`, owner boş). Eski `err_decorator_on_class` testi
+KALDIRILDI (artık geçerli); `nox.reflect` içe aktaran iki fixture'ın
+snapshot'ı yeniden üretildi. `zig build test`: iki ardışık temiz
+çalıştırma.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

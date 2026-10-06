@@ -866,13 +866,6 @@ test "golden(index-call): generic sınıf adındaki yazım hatası eski net mesa
     );
 }
 
-test "golden(decorator): bir sınıf üzerindeki decorator v1'de AÇIKÇA reddedilir" {
-    try expectGolden(
-        @embedFile("typecheck_cases/err_decorator_on_class.nox"),
-        @embedFile("typecheck_cases/err_decorator_on_class.expected"),
-    );
-}
-
 // v1.30.0 (bkz. plan dosyası "list[T]/dict[K,V]/class — spawn-paylaşımlı
 // mutasyonun DERLEME-ZAMANINDA reddi"): bir `spawn` hedefi fonksiyonun
 // `list`/`dict`/`class` tipli paylaşılan parametresinin kendi gövdesinde

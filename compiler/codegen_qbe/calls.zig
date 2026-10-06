@@ -1593,6 +1593,8 @@ fn reflectMetaResult(name: []const u8) ?bool {
         .{ .name = "__nox_reflect_decorator_param_name", .is_str = true },
         .{ .name = "__nox_reflect_decorator_param_type", .is_str = true },
         .{ .name = "__nox_reflect_decorator_return_type", .is_str = true },
+        .{ .name = "__nox_reflect_decorator_kind", .is_str = false },
+        .{ .name = "__nox_reflect_decorator_owner", .is_str = true },
         .{ .name = "__nox_reflect_class_count", .is_str = false },
         .{ .name = "__nox_reflect_class_name", .is_str = true },
         .{ .name = "__nox_reflect_class_init_param_count", .is_str = false },

@@ -505,8 +505,11 @@ fn genReflectDecoratorHandler(self: *Codegen, decorated: []const DecoratedFuncIn
 // Dizelerin HEPSİ `internPinnedStringConst` İLE pinned birer GERÇEK Nox
 // `str`idir (A.6'nın `$__nox_decorator_args`ıyla AYNI gerekçe). Bu tablolar
 // YALNIZCA `uses_reflect_meta` set EDİLMİŞSE üretilir (bkz. `calls.zig`).
-const SIG_RECORD_WORDS = 3;
-const SIG_RECORD_SIZE = SIG_RECORD_WORDS * 8;
+// `$__nox_dec_sigs`: `[param_count, param_start, return_type_ptr, kind,
+// owner_ptr]` (5 kelime; Faz C.1 `kind`/`owner`i ekledi). `$__nox_class_table`:
+// `[name_ptr, param_count, param_start]` (3 kelime).
+const DEC_SIG_RECORD_SIZE = 5 * 8;
+const CLASS_RECORD_SIZE = 3 * 8;
 const PAIR_SIZE = 16;
 
 fn emitMetaPairs(self: *Codegen, params: []const checker_mod.ParamMeta, out: *std.ArrayListUnmanaged([]const u8)) CodegenError!void {
@@ -542,6 +545,8 @@ pub fn genReflectMetadata(self: *Codegen, decorated: []const DecoratedFuncInfo, 
         try sig_words.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{d}", .{info.params.len}));
         try sig_words.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{d}", .{start}));
         try sig_words.append(self.allocator, try self.internPinnedStringConst(info.return_type));
+        try sig_words.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{d}", .{info.kind}));
+        try sig_words.append(self.allocator, try self.internPinnedStringConst(info.owner));
     }
     try emitDataWords(self, "__nox_dec_sigs", sig_words.items);
     try emitDataWords(self, "__nox_dec_sig_params", sig_pairs.items);
@@ -558,14 +563,16 @@ pub fn genReflectMetadata(self: *Codegen, decorated: []const DecoratedFuncInfo, 
     try emitDataWords(self, "__nox_class_table", class_words.items);
     try emitDataWords(self, "__nox_class_params", class_pairs.items);
 
-    try genMetaWordGetter(self, "__nox_reflect_decorator_param_count", "$__nox_dec_sigs", SIG_RECORD_SIZE, 0, .l);
-    try genMetaWordGetter(self, "__nox_reflect_decorator_return_type", "$__nox_dec_sigs", SIG_RECORD_SIZE, 16, .l);
+    try genMetaWordGetter(self, "__nox_reflect_decorator_param_count", "$__nox_dec_sigs", DEC_SIG_RECORD_SIZE, 0, .l);
+    try genMetaWordGetter(self, "__nox_reflect_decorator_return_type", "$__nox_dec_sigs", DEC_SIG_RECORD_SIZE, 16, .l);
+    try genMetaWordGetter(self, "__nox_reflect_decorator_kind", "$__nox_dec_sigs", DEC_SIG_RECORD_SIZE, 24, .l);
+    try genMetaWordGetter(self, "__nox_reflect_decorator_owner", "$__nox_dec_sigs", DEC_SIG_RECORD_SIZE, 32, .l);
     try genMetaPairGetter(self, "__nox_reflect_decorator_param_name", "$__nox_dec_sigs", "$__nox_dec_sig_params", 0);
     try genMetaPairGetter(self, "__nox_reflect_decorator_param_type", "$__nox_dec_sigs", "$__nox_dec_sig_params", 8);
 
     try genMetaConstGetter(self, "__nox_reflect_class_count", class_ctors.len);
-    try genMetaWordGetter(self, "__nox_reflect_class_name", "$__nox_class_table", SIG_RECORD_SIZE, 0, .l);
-    try genMetaWordGetter(self, "__nox_reflect_class_init_param_count", "$__nox_class_table", SIG_RECORD_SIZE, 8, .l);
+    try genMetaWordGetter(self, "__nox_reflect_class_name", "$__nox_class_table", CLASS_RECORD_SIZE, 0, .l);
+    try genMetaWordGetter(self, "__nox_reflect_class_init_param_count", "$__nox_class_table", CLASS_RECORD_SIZE, 8, .l);
     try genMetaPairGetter(self, "__nox_reflect_class_init_param_name", "$__nox_class_table", "$__nox_class_params", 0);
     try genMetaPairGetter(self, "__nox_reflect_class_init_param_type", "$__nox_class_table", "$__nox_class_params", 8);
 }
@@ -610,7 +617,7 @@ fn genMetaPairGetter(self: *Codegen, func_name: []const u8, table: []const u8, i
     try self.qbeFuncParam(.l, "%k", false);
     try self.qbeFuncHeaderEnd();
     const rec_off = try self.newTemp();
-    try self.qbeOp2Imm(rec_off, .l, "mul", "%i", SIG_RECORD_SIZE);
+    try self.qbeOp2Imm(rec_off, .l, "mul", "%i", if (is_class) CLASS_RECORD_SIZE else DEC_SIG_RECORD_SIZE);
     const rec = try self.newTemp();
     try self.qbeOp2(rec, .l, "add", table, rec_off);
     const count_addr = try self.newTemp();

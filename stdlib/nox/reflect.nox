@@ -81,6 +81,23 @@ def decorator_param_type(i: int, k: int) -> str:
 def decorator_return_type(i: int) -> str:
     return __nox_reflect_decorator_return_type(i)
 
+# Aether NOX_LIMITATIONS.md yol haritası, Faz C.1 (madde 1): decorator
+# kaydının NEYE uygulandığı — `0` = üst-düzey fonksiyon, `1` = sınıf
+# (`decorator_target_name` = sınıf adı), `2` = metod (`decorator_target_name`
+# = metod adı, `decorator_owner` = sınıf adı). Sınıf kayıtlarında
+# `decorator_param_*` sınıfın `__init__` imzasını, metod kayıtlarında
+# `self` HARİÇ metod imzasını verir. `decorator_is_handler`/
+# `decorator_handler` SADECE `kind == 0` kayıtlar İçindir. Derleyici
+# decorator'ların ANLAMINI yorumlamaz — `@Controller("/users")` /
+# `@Get("/:id")` yalnızca ham veridir; sınıf/metod decorator'lı bir
+# metodu çağrılabilir bir değer olarak kullanmak İçin `obj.metod`
+# bağlı-metod değeri (Faz C.1b) kullanılır.
+def decorator_kind(i: int) -> int:
+    return __nox_reflect_decorator_kind(i)
+
+def decorator_owner(i: int) -> str:
+    return __nox_reflect_decorator_owner(i)
+
 # Faz C.3 (madde 5): HER (generic olmayan) sınıfın `__init__` parametreleri
 # (`self` HARİÇ) — bir DI container'ın KENDİ wiring mantığını yazabilmesi
 # İçin yeterli ham metadata; Nox'un KENDİSİ bir DI çözücü SAĞLAMAZ (bilinçli

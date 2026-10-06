@@ -14,6 +14,21 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.138.0]
+
+### Eklendi
+
+- **Sınıf ve metod decorator'ları `nox.reflect`e metadata olarak açılıyor
+  (bkz. nox-teknik-spesifikasyon.md §3.236, Aether NOX_LIMITATIONS.md
+  madde 1)**: `@controller("/users")` gibi sınıf decorator'ları ve
+  `@get("/:id")` gibi metod decorator'ları artık derleme hatası vermiyor.
+  `decorator_kind(i)` (0 fonksiyon/1 sınıf/2 metod) ve `decorator_owner(i)`
+  eklendi; mevcut `decorator_*` erişimcileri üçü için de çalışır.
+
+### Değiştirildi
+
+- Decorator argüman hatası mesajında "(fonksiyon: ...)" → "(hedef: ...)".
+
 ## [1.137.0]
 
 ### Düzeltildi

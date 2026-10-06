@@ -210,6 +210,12 @@ pub const DecoratedFuncInfo = struct {
     /// framework'ler parametre-decorator sarmalayıcıları üretmek İçin).
     params: []const ParamMeta = &.{},
     return_type: []const u8 = "None",
+    /// Faz C.1: kaydın neye uygulandığı — `0` = üst-düzey fonksiyon, `1` =
+    /// sınıf (`func_name` = sınıf adı), `2` = metod (`func_name` = metod
+    /// adı, `owner` = sınıf adı). `params`/`return_type` metodlar İçin
+    /// `self` HARİÇ imzayı taşır; sınıf kayıtları İçin `__init__` imzasını.
+    kind: u8 = 0,
+    owner: []const u8 = "",
     /// `true` İSE fonksiyonun imzası TAM OLARAK `(ctx: Context) ->
     /// HttpResponse`dir — `nox.reflect.decorator_handler(i)` bu durumda
     /// çağrılabilir bir DEĞER döner (bkz. `functions_used_as_value`e
@@ -1275,11 +1281,10 @@ pub const Checker = struct {
                 // İZİN-LİSTESİNDE OLMAYAN bir decorator adı ERKEN reddedilir
                 // (kullanıcı yanlışlıkla decorator'ının hiçbir ETKİSİ
                 // olmadığını SANMASIN).
-                for (cd.decorators) |dec| {
-                    if (!std.mem.eql(u8, dec.name, "repr") and !std.mem.eql(u8, dec.name, "packed")) {
-                        return self.fail(error.TypeMismatch, "sınıf decorator'ları henüz desteklenmiyor: @{s} (sınıf: {s}) — yalnızca @repr(\"C\")/@packed desteklenir", .{ dec.name, cd.name });
-                    }
-                }
+                // Faz C.1: `repr`/`packed` DIŞINDAKİ sınıf decorator'ları ARTIK
+                // reddedilmez — `nox.reflect`e METADATA olarak kaydedilir
+                // (bkz. `registerClassSignatures`); derleyici ANLAMINI
+                // yorumlamaz.
                 // Faz P2.1: generic (`type_params.len > 0`) bir sınıf
                 // `self.classes`e ASLA girmez — `registerFunc`in
                 // `generic_functions` İLE AYNI ayrımı (bkz. `generic_classes`
@@ -1861,6 +1866,8 @@ pub const Checker = struct {
             .{ .name = "__nox_reflect_decorator_param_name", .argc = 2, .ret = .str },
             .{ .name = "__nox_reflect_decorator_param_type", .argc = 2, .ret = .str },
             .{ .name = "__nox_reflect_decorator_return_type", .argc = 1, .ret = .str },
+            .{ .name = "__nox_reflect_decorator_kind", .argc = 1, .ret = .int },
+            .{ .name = "__nox_reflect_decorator_owner", .argc = 1, .ret = .str },
             .{ .name = "__nox_reflect_class_count", .argc = 0, .ret = .int },
             .{ .name = "__nox_reflect_class_name", .argc = 1, .ret = .str },
             .{ .name = "__nox_reflect_class_init_param_count", .argc = 1, .ret = .int },
@@ -1876,6 +1883,33 @@ pub const Checker = struct {
             return e.ret;
         }
         return null;
+    }
+
+    /// Bir decorator'ın argümanlarını `DecoratorArg`lara çözer (string/int/
+    /// bool/string-listesi; iç içe literal reddedilir) — fonksiyon, sınıf
+    /// VE metod decorator'ları İçin PAYLAŞILIR. `target`, hata mesajındaki
+    /// hedef adı.
+    fn parseDecoratorArgs(self: *Checker, dec: ast.Decorator, target: []const u8) TypeError![]DecoratorArg {
+        const arg_values = try self.allocator.alloc(DecoratorArg, dec.args.len);
+        for (dec.args, 0..) |a, i| {
+            arg_values[i] = switch (a) {
+                .string_lit => |s| .{ .string = s },
+                .int_lit => |n| .{ .int = n },
+                .bool_lit => |b| .{ .boolean = b },
+                .list_lit => |items| blk: {
+                    const strs = try self.allocator.alloc([]const u8, items.len);
+                    for (items, 0..) |it, k| {
+                        if (it != .string_lit) {
+                            return self.fail(error.TypeMismatch, "decorator '@{s}' argümanı {d}: liste yalnızca string literalleri içerebilir (hedef: {s})", .{ dec.name, i + 1, target });
+                        }
+                        strs[k] = it.string_lit;
+                    }
+                    break :blk DecoratorArg{ .list_str = strs };
+                },
+                else => return self.fail(error.TypeMismatch, "decorator '@{s}' argümanı {d} yalnızca string/int/bool literali ya da string listesi olabilir (hedef: {s})", .{ dec.name, i + 1, target }),
+            };
+        }
+        return arg_values;
     }
 
     /// `types.format`ın ürettiği tip metni (bkz. `ParamMeta`).
@@ -1913,25 +1947,7 @@ pub const Checker = struct {
             params[0] == .class and std.mem.eql(u8, params[0].class, context_name) and
             ret == .class and std.mem.eql(u8, ret.class, http_response_name);
         for (fd.decorators) |dec| {
-            const arg_values = try self.allocator.alloc(DecoratorArg, dec.args.len);
-            for (dec.args, 0..) |a, i| {
-                arg_values[i] = switch (a) {
-                    .string_lit => |s| .{ .string = s },
-                    .int_lit => |n| .{ .int = n },
-                    .bool_lit => |b| .{ .boolean = b },
-                    .list_lit => |items| blk: {
-                        const strs = try self.allocator.alloc([]const u8, items.len);
-                        for (items, 0..) |it, k| {
-                            if (it != .string_lit) {
-                                return self.fail(error.TypeMismatch, "decorator '@{s}' argümanı {d}: liste yalnızca string literalleri içerebilir (fonksiyon: {s})", .{ dec.name, i + 1, fd.name });
-                            }
-                            strs[k] = it.string_lit;
-                        }
-                        break :blk DecoratorArg{ .list_str = strs };
-                    },
-                    else => return self.fail(error.TypeMismatch, "decorator '@{s}' argümanı {d} yalnızca string/int/bool literali ya da string listesi olabilir (fonksiyon: {s})", .{ dec.name, i + 1, fd.name }),
-                };
-            }
+            const arg_values = try self.parseDecoratorArgs(dec, fd.name);
             if (is_handler_shaped) try self.functions_used_as_value.put(self.allocator, fd.name, {});
             // `registerCapabilityDecorator`nin imzası (`[]const []const u8`)
             // DEĞİŞMEDİ — `extern def`/metod decorator çağrı siteleri HÂLÂ
@@ -2685,6 +2701,15 @@ pub const Checker = struct {
             }
         }
         info.layout_mode = if (saw_packed) .packed_ else if (saw_repr_c) .repr_c else .default;
+        // Faz C.1: `repr`/`packed` DIŞINDAKİ her sınıf decorator'ı metadata
+        // olarak kaydedilir (`kind = 1`). İmza (`params`/`return_type`) bu
+        // noktada HENÜZ bilinmez (`__init__` aşağıda işlenir) — kayıt
+        // fonksiyonun SONUNDA, ctor bilgisi hazır olduğunda eklenir.
+        var class_dec_args: std.ArrayListUnmanaged(struct { name: []const u8, args: []DecoratorArg }) = .empty;
+        for (cd.decorators) |dec| {
+            if (std.mem.eql(u8, dec.name, "repr") or std.mem.eql(u8, dec.name, "packed")) continue;
+            try class_dec_args.append(self.allocator, .{ .name = dec.name, .args = try self.parseDecoratorArgs(dec, cd.name) });
+        }
         // Faz 7 (tekli kalıtım): taban sınıfın (bu noktada `registerClassesInOrder`
         // sayesinde ZATEN TAM kaydedilmiş) TÜM alanlarını/metodlarını/
         // `init_sig`ini KOPYALA — "en az invaziv strateji" (bkz. Faz 7
@@ -2790,7 +2815,24 @@ pub const Checker = struct {
                 // bir metoda sahip OLABİLİR).
                 for (m.decorators) |dec| {
                     if (!std.mem.eql(u8, dec.name, "capability.requires")) {
-                        return self.fail(error.UnknownExternDecorator, "metod '{s}.{s}': yalnızca @capability.requires decorator'ı desteklenir (bkz. @{s})", .{ cd.name, m.name, dec.name });
+                        // Faz C.1: `capability.requires` DIŞINDAKİ metod
+                        // decorator'ları (`@Get("/")` vb.) ARTIK derlemeyi
+                        // çökertmez — `nox.reflect`e metadata olarak kaydedilir
+                        // (`kind = 2`; `func_name` = metod adı, `owner` = sınıf).
+                        const sig_params = try self.allocator.alloc(ParamMeta, params.len);
+                        for (m.params[1..], 0..) |p, pi| sig_params[pi] = .{ .name = p.name, .type_name = try self.typeText(params[pi]) };
+                        const qualified_target = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ cd.name, m.name });
+                        try self.decorated_functions.append(self.allocator, .{
+                            .func_name = m.name,
+                            .decorator_name = dec.name,
+                            .args = try self.parseDecoratorArgs(dec, qualified_target),
+                            .params = sig_params,
+                            .return_type = try self.typeText(ret),
+                            .is_handler_shaped = false,
+                            .kind = 2,
+                            .owner = cd.name,
+                        });
+                        continue;
                     }
                     const arg_values = try self.allocator.alloc([]const u8, dec.args.len);
                     for (dec.args, 0..) |arg, i| {
@@ -2819,6 +2861,17 @@ pub const Checker = struct {
             }
         }
         try self.class_ctors.append(self.allocator, .{ .class_name = cd.name, .params = ctor_params });
+        for (class_dec_args.items) |cda| {
+            try self.decorated_functions.append(self.allocator, .{
+                .func_name = cd.name,
+                .decorator_name = cda.name,
+                .args = cda.args,
+                .params = ctor_params,
+                .return_type = "None",
+                .is_handler_shaped = false,
+                .kind = 1,
+            });
+        }
     }
 
     /// Faz 7: iki metod imzasının (self HARİÇ) TAM eşleşip eşleşmediğini
