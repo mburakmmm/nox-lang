@@ -27876,6 +27876,41 @@ gerçek kontrol baytları (`\u0007`, `\u0001`, `\u001b`, `\b`, `\f`), UTF-8, 20 
 girdi, round-trip, `dump` ile nesne anahtarı/değeri. Zig birim testleri:
 `escapeJsonString` tablo testi + 128 baytlık tüm-ASCII `std.json` round-trip.
 
+## 3.242 HTTP sıcak yolu — ölçüldü, UYGULANMADI: kqueue değişiklik gruplama
+
+**Hipotez:** Aether echo profilinde sunucu CPU'sunun ~%62'si `sys` (istek
+başına ~2.8 µs, `user` ~1.7 µs); bir keep-alive isteği ~6 sistem çağrısı
+(`read`→EAGAIN, `kevent` kayıt, `kevent` bekleme, `kevent` zamanlayıcı
+iptali, `read`, `write`). `KqueueReactor.register/registerWithTimeout/
+cancel`ı bir değişiklik kuyruğuna alıp `poll`un bekleme çağrısına tek
+`kevent`te eklemenin (3 → 1) CPU/isteği düşüreceği düşünüldü.
+
+**Deney ve bulgular (hepsi macOS, ReleaseFast, A/B):**
+- Uygulandı: `register*`/`cancel` kuyruğa, `poll` kuyruğu changelist olarak
+  gönderir (`EV_ERROR` olayları işlenir, kuyruk 32'lik parçalara bölünür).
+- **XNU tuzağı:** zamanlayıcı iptalini (`EV_DELETE`, `EVFILT_TIMER`) bekleyen
+  `kevent` çağrısının changelist'ine koymak, 16+ eşzamanlı bağlantıda
+  verimi 250k → ~1-2k req/s'e ÇÖKERTTİ (olaylar gecikiyor/kayboluyor);
+  `EV_ERROR` yok, Python `select.kqueue` ile aynı örüntü ÇALIŞIYOR —
+  nedeni bulunamadı. Zamanlayıcı iptali ayrı (senkron) `kevent`e alınınca
+  ve `EVFILT_TIMER` kimliği `fd` yerine benzersiz sayaç yapılınca tüm
+  eşzamanlılık düzeylerinde (16-200) 225-294k req/s.
+- **Kazanç ölçülemedi:** çalışan varyant (yalnızca `register` gruplanmış)
+  ham `ping` benchmark'ında 6 ardışık turda eski koddan DAHA İYİ DEĞİL
+  (5.06-5.61 vs 4.74-5.55 µs/istek); Aether echo'da gürültü içinde
+  (4.4-6.6 µs). Bir sistem çağrısını kaldırmak, bu makinede, ölçülebilir
+  fark yaratmadı.
+
+**Karar:** değişiklik GERİ ALINDI (riskli XNU davranışı + sıfır ölçülebilir
+kazanç). Gelecekteki bir ajan için not: kqueue `EVFILT_TIMER` iptalini
+changelist'e GRUPLAMAYIN; timer-başına-bekleme yerine kullanıcı-alanı
+deadline yapısı (kevent zaman aşımı = en yakın deadline) denenebilir ama
+beklenen kazanç ~1 sistem çağrısı/istek olduğundan düşük öncelikli.
+
+**JSON ayrıştırma da ölçüldü:** `nox.json.parse` 15 baytlık nesne için
+~0.2 µs (1M ayrıştırma 0.21 s kullanıcı CPU'su) — istek başına ~4.5 µs'nin
+~%4'ü; ek optimizasyon değer katmıyor.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

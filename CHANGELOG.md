@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.2]
+
+### Dokümantasyon
+
+- **HTTP sıcak yolu ölçümleri (bkz. nox-teknik-spesifikasyon.md §3.242)**:
+  kqueue değişiklik gruplaması denendi, XNU'da `EVFILT_TIMER` `EV_DELETE`inin
+  bekleyen `kevent` changelist'inde verimi çökerttiği bulundu ve çalışan
+  varyant ölçülebilir kazanç vermediği için geri alındı; `nox.json.parse`
+  maliyeti ölçüldü (~0.2 µs). Kod değişikliği yok.
+
 ## [1.142.1]
 
 ### Değişti
