@@ -1,0 +1,60 @@
+# Aether NOX_LIMITATIONS.md yol haritası, Faz C.5 (bkz. nox-teknik-
+# spesifikasyon.md ilgili bölüm): `Router.use(middleware)` — next() tabanlı
+# ara katman zinciri: dış→iç çalışma sırası (ilk eklenen en dışta),
+# next ÖNCESİ/SONRASI mantık, yanıtı sarma/değiştirme, next'i ÇAĞIRMAYARAK
+# kısa devre, use_before/use_after ile birlikte çalışma sırası.
+from nox.router import Router, Context
+from nox.http import HttpRequest, HttpResponse
+
+def hello(ctx: Context) -> HttpResponse:
+    print("handler")
+    return HttpResponse(200, "hello", {})
+
+def logger(ctx: Context, next: (Context) -> HttpResponse) -> HttpResponse:
+    print("logger-oncesi")
+    resp: HttpResponse = next(ctx)
+    print("logger-sonrasi " + str(resp.status))
+    return resp
+
+def uppercase(ctx: Context, next: (Context) -> HttpResponse) -> HttpResponse:
+    print("upper-oncesi")
+    resp: HttpResponse = next(ctx)
+    resp.body = resp.body + "!"
+    return resp
+
+def guard(ctx: Context, next: (Context) -> HttpResponse) -> HttpResponse:
+    if ctx.request.target == "/secret":
+        print("guard-reddetti")
+        return HttpResponse(403, "yasak", {})
+    return next(ctx)
+
+def before_hook(ctx: Context) -> HttpResponse | None:
+    print("before")
+    return None
+
+def after_hook(ctx: Context, resp: HttpResponse) -> HttpResponse:
+    print("after")
+    return resp
+
+r: Router = Router()
+r.get("/hello", hello)
+r.get("/secret", hello)
+r.use_before(before_hook)
+r.use(logger)
+r.use(guard)
+r.use(uppercase)
+r.use_after(after_hook)
+
+print("--- /hello")
+a: HttpResponse = r.dispatch(HttpRequest("GET", "/hello", "", {}, "127.0.0.1:0"))
+print(a.status)
+print(a.body)
+
+print("--- /secret (guard kisa devre)")
+b: HttpResponse = r.dispatch(HttpRequest("GET", "/secret", "", {}, "127.0.0.1:0"))
+print(b.status)
+print(b.body)
+
+print("--- /yok")
+c: HttpResponse = r.dispatch(HttpRequest("GET", "/yok", "", {}, "127.0.0.1:0"))
+print(c.status)

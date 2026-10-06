@@ -109,15 +109,24 @@ def _match_path(pattern: str, target: str) -> dict[str, str] | None:
         i = i + 1
     return params
 
+# `middleware`i `nxt` ÜZERİNDEN bir `(Context) -> HttpResponse` closure'ına
+# çevirir (bkz. `Router.use`) — `mw`/`nxt` closure'a YAKALANIR.
+def _wrap(mw: (Context, (Context) -> HttpResponse) -> HttpResponse, nxt: (Context) -> HttpResponse) -> (Context) -> HttpResponse:
+    def step(ctx: Context) -> HttpResponse:
+        return mw(ctx, nxt)
+    return step
+
 class Router:
     routes: list[Route]
     before: list[(Context) -> HttpResponse | None]
     after: list[(Context, HttpResponse) -> HttpResponse]
+    wrappers: list[(Context, (Context) -> HttpResponse) -> HttpResponse]
 
     def __init__(self: Router) -> None:
         self.routes = []
         self.before = []
         self.after = []
+        self.wrappers = []
 
     def add(self: Router, method: str, pattern: str, handler: (Context) -> HttpResponse) -> None:
         routes: list[Route] = self.routes
@@ -151,6 +160,20 @@ class Router:
         after.append(middleware)
         self.after = after
 
+    # Aether NOX_LIMITATIONS.md yol haritası, Faz C.5 (bkz. nox-teknik-
+    # spesifikasyon.md ilgili bölüm, madde 8): Express/Koa tarzı `next()`
+    # tabanlı ara katman. `middleware(ctx, next)`, `next(ctx)`i çağırarak
+    # zincirin geri kalanını (sonraki ara katmanlar + rota işleyicisi)
+    # çalıştırır VE yanıtı SARABİLİR/DEĞİŞTİREBİLİR; `next`i HİÇ çağırmazsa
+    # işleyici atlanır (kısa devre). İLK eklenen ara katman EN DIŞTA çalışır.
+    # Mevcut `use_before`/`use_after` KALDIRILMADI. Sıra: `use_before`lar →
+    # `use` zinciri (işleyici EN İÇTE) → `use_after`lar (zincirin NİHAİ
+    # yanıtına uygulanır).
+    def use(self: Router, middleware: (Context, (Context) -> HttpResponse) -> HttpResponse) -> None:
+        wrappers: list[(Context, (Context) -> HttpResponse) -> HttpResponse] = self.wrappers
+        wrappers.append(middleware)
+        self.wrappers = wrappers
+
     # Kullanıcının TEK `nox.http.serve`/`serve_fd`/`serve_multicore`
     # `handle`sinden ÇAĞRILMASI GEREKEN TEK giriş noktası.
     def dispatch(self: Router, req: HttpRequest) -> HttpResponse:
@@ -182,7 +205,14 @@ class Router:
             if early_resp != None:
                 return early_resp
 
-            resp: HttpResponse = matched_route.handler(ctx)
+            # Faz C.5: işleyiciyi `use` ara katmanlarıyla SAĞDAN SOLA sar —
+            # `wrappers[0]` en dışta olur.
+            chained: (Context) -> HttpResponse = matched_route.handler
+            w: int = len(self.wrappers)
+            while w > 0:
+                w = w - 1
+                chained = _wrap(self.wrappers[w], chained)
+            resp: HttpResponse = chained(ctx)
 
             k: int = 0
             while k < len(self.after):

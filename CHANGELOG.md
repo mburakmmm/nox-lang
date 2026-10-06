@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.136.0]
+
+### Eklendi
+
+- **`Router.use(middleware)` — `next()` tabanlı ara katman (bkz. nox-
+  teknik-spesifikasyon.md §3.234, Aether NOX_LIMITATIONS.md madde 8)**:
+  `middleware(ctx, next)` zincirin geri kalanını `next(ctx)` ile çalıştırır,
+  yanıtı sarabilir ya da `next`i çağırmayarak kısa devre yapabilir; ilk
+  eklenen en dışta çalışır. `use_before`/`use_after` korundu.
+
 ## [1.135.0]
 
 ### Eklendi

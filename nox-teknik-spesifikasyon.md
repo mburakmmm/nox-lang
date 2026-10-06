@@ -27524,6 +27524,45 @@ iç nesne, dört yanlış-kısıt `ValueError`ı. Mevcut `validate_schema_
 json_body` çıktısı DEĞİŞMEDİ (yalnızca IR snapshot'ı yeniden üretildi).
 `zig build test`: iki ardışık temiz çalıştırma.
 
+## 3.234 Aether NOX_LIMITATIONS.md yol haritası, Faz C.5 — `Router.use(middleware)` (`next()` tabanlı)
+
+**Bağlam:** madde 8. Mevcut `use_before`/`use_after` ikilisi bilinçli bir
+tasarım kararıydı; kullanıcı kararıyla Express/Koa tarzı `next()` zinciri
+EKLENDİ (eskiler KALDIRILMADI, geriye uyumlu). B.2'nin (v1.133.0) first-
+class closure altyapısına dayanır.
+
+**API:** `Router.use(middleware: (Context, (Context) -> HttpResponse) ->
+HttpResponse)`. `middleware(ctx, next)`, `next(ctx)` ile zincirin geri
+kalanını çalıştırır ve yanıtı sarabilir/değiştirebilir; `next`i hiç
+çağırmazsa işleyici ATLANIR (kısa devre). İLK eklenen ara katman EN
+DIŞTA çalışır.
+
+**Uygulama:** `Router.wrappers` listesi; `dispatch`te rota eşleşince
+işleyici SAĞDAN SOLA `_wrap(mw, nxt)` ile sarılır (`_wrap`, `mw`/`nxt`yi
+yakalayan bir `(Context) -> HttpResponse` closure'ı döner). Sıra:
+`use_before`lar → `use` zinciri (işleyici EN İÇTE) → `use_after`lar
+(zincirin NİHAİ yanıtına uygulanır). Ara katmanlar yalnızca EŞLEŞEN
+rotalarda çalışır (404 yolunda, `use_before`/`use_after` ile aynı
+şekilde, çalışmaz).
+
+### Test
+
+`router_next_middleware.nox`: üç ara katman (logger/guard/uppercase) +
+`use_before`/`use_after` — çalışma sırası (before → logger → guard →
+uppercase → handler → logger-sonrası → after), yanıt sarma (`hello!`),
+`guard`ın `next`i çağırmadan 403 ile kısa devresi, eşleşmeyen rota
+(404). `nox.router` içe aktaran 3 mevcut fixture'ın IR snapshot'ı yeniden
+üretildi (davranışları değişmedi).
+
+**Altyapı bulgusu (önemli):** bu turun sonunda disk %98 doluydu
+(`.zig-cache` 7.1 GB: 363 artık test geçici dizini + birikmiş test
+ikilileri) ve test çalıştırmaları `NoSpaceLeft`/`ABRT` ile düştü — daha
+önce raporlanan bazı "flaky/askıda kalan" testlerin (iki http testi,
+uzun süren bir golden binary) en azından bir kısmı disk baskısıyla
+ilgili OLABİLİR (KANITLANMADI). `.zig-cache` (gitignore'da, yeniden
+üretilebilir) silinip temiz tam yeniden derleme + test yapıldı: iki
+ardışık temiz çalıştırma.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
