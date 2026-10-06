@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.13]
+
+### Düzeltildi
+
+- v1.142.12'de `json.nox` yorumunun kısalması 14 IR snapshot'ının (satır numaraları) bayatlamasına
+  yol açmıştı ve bu commit testler yeşil doğrulanmadan itilmişti; snapshot'lar yeniden üretildi.
+  Kod değişikliği yok. (v1.142.12 etiketli commit'te CI kırmızı olur; v1.142.13 geçerli sürümdür.)
+
 ## [1.142.12]
 
 ### Düzeltildi
