@@ -553,12 +553,10 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
     if (!self.boundsElideApplies(idx)) {
         const len_t = try self.newTemp();
         try self.qbeLoadL(len_t, obj.text);
-        const neg_t = try self.newTemp();
-        try self.qbeOp2Imm(neg_t, .w, "csltl", index_v.text, 0);
-        const oob_hi_t = try self.newTemp();
-        try self.qbeOp2(oob_hi_t, .w, "csgel", index_v.text, len_t);
+        // v1.142.5: `idx < 0 or idx >= len` TEK işaretsiz karşılaştırma: negatif indeks
+        // işaretsiz yorumlandığında ≥ 2^63 > len olur (3 işlem → 1).
         const oob_t = try self.newTemp();
-        try self.qbeOp2(oob_t, .w, "or", neg_t, oob_hi_t);
+        try self.qbeOp2(oob_t, .w, "cugel", index_v.text, len_t);
         const err_label = try self.newLabel("list_idx_err");
         const ok_label = try self.newLabel("list_idx_ok");
         try self.qbeJnz(oob_t, err_label, ok_label);
@@ -654,12 +652,10 @@ pub fn genStrIndex(self: *Codegen, obj: Value, idx: ast.Index) CodegenError!Valu
             try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_str_char_count", &.{.{ .ty = .l, .text = obj.text }});
             break :blk t;
         };
-        const neg_t = try self.newTemp();
-        try self.qbeOp2Imm(neg_t, .w, "csltl", index_v.text, 0);
-        const oob_hi_t = try self.newTemp();
-        try self.qbeOp2(oob_hi_t, .w, "csgel", index_v.text, len_t);
+        // v1.142.5: `idx < 0 or idx >= len` TEK işaretsiz karşılaştırma: negatif indeks
+        // işaretsiz yorumlandığında ≥ 2^63 > len olur (3 işlem → 1).
         const oob_t = try self.newTemp();
-        try self.qbeOp2(oob_t, .w, "or", neg_t, oob_hi_t);
+        try self.qbeOp2(oob_t, .w, "cugel", index_v.text, len_t);
         const err_label = try self.newLabel("str_idx_err");
         const ok_label = try self.newLabel("str_idx_ok");
         try self.qbeJnz(oob_t, err_label, ok_label);
@@ -1669,8 +1665,26 @@ pub fn genFloorDiv(self: *Codegen, l: Value, r: Value, common: QbeType) CodegenE
         return self.callLibm1("floor", divided);
     }
 
+    // v1.142.5 (bkz. nox-teknik-spesifikasyon.md §3.244) — sabit pozitif bölen
+    // + 2'nin kuvveti: `x // 2^k` Python'un TABAN bölmesiyle (negatiflerde
+    // -∞'a yuvarlama) BİREBİR `sar x, k`dır (aritmetik kaydırma taban
+    // bölmesidir). Ne `div`, ne `rem`, ne düzeltme dizisi.
+    if (optimizations.constPositiveDivisor(r)) |d| {
+        if (l.qtype == .l and l.fixed_int == null) {
+            if (d == 1) return .{ .text = l.text, .qtype = .l };
+            if (std.math.isPowerOfTwo(@as(u64, @intCast(d)))) {
+                const shifted = try self.newTemp();
+                try self.qbeOp2(shifted, .l, "sar", l.text, try std.fmt.allocPrint(self.allocator, "{d}", .{@ctz(@as(u64, @intCast(d)))}));
+                return .{ .text = shifted, .qtype = .l };
+            }
+        }
+    }
+
+    // Tek bölme: kalan, ikinci bir `rem` (QBE bunu SIFIRDAN sdiv+msub'a
+    // çevirir — yani İKİNCİ bir bölme) YERİNE `l - q*r` ile türetilir.
     const q = try self.emitBin("div", l, r, .l);
-    const rem = try self.emitBin("rem", l, r, .l);
+    const prod = try self.emitBin("mul", q, r, .l);
+    const rem = try self.emitBin("sub", l, prod, .l);
 
     const rem_nonzero = try self.newTemp();
     try self.qbeOp2Imm(rem_nonzero, .w, "cnel", rem.text, 0);

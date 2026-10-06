@@ -52,6 +52,7 @@
 const std = @import("std");
 const asap = @import("asap.zig");
 const dispatch_registry = @import("dispatch_registry.zig");
+const ptr_map = @import("ptr_map.zig");
 const abi_layout = @import("abi_layout");
 /// Faz MN.6: `runtime/alloc/`den `runtime/async_rt/`e — `asap.zig`nin
 /// `spinlock.zig` İçİn ZATEN yaptığı AYNI yön, SORUNSUZ (`self_pipe.zig`
@@ -121,11 +122,27 @@ const GcMeta = struct {
 /// doğrudan da çağrılabilir (ör. testler İÇİN deterministik tetikleme).
 const DEFAULT_COLLECT_THRESHOLD: usize = 700;
 
+/// v1.142.5 (bkz. nox-teknik-spesifikasyon.md §3.244): uyarlanabilir eşiğin
+/// ÜST sınırı. Büyük, ÇÖP OLMAYAN, kendine işaret eden yapılar (ör. 2M
+/// düğümlü ikili ağaç) üzerinde her 700 olası-kökte tüm alt-grafiği baştan
+/// dolaşan sabit eşik ikinci-dereceden maliyet üretiyordu (ağaç benchmark'ı:
+/// C'den 111x yavaş, Python'dan 4x yavaş, süre %75 döngü çözücüde). Nim
+/// ORC'nun `rootsThreshold` ayarlamasıyla AYNI fikir: bir toplama VERİMSİZ
+/// (serbest bırakılan < taranan kökün 1/4'ü) ise eşik ikiye katlanır (bu üst
+/// sınıra kadar), VERİMLİ ise varsayılana döner. `roots` + `meta` bellek
+/// maliyeti sınırı: ~1M kök ≈ 8 MB (roots) + ~30 MB (meta) en kötü durumda.
+const MAX_COLLECT_THRESHOLD: usize = 1 << 24;
+
 const CycleGc = struct {
-    meta: std.AutoHashMapUnmanaged(*anyopaque, GcMeta) = .empty,
+    meta: ptr_map.PtrMap(GcMeta) = .empty,
     roots: std.ArrayListUnmanaged(*anyopaque) = .empty,
     possible_roots_since_collect: usize = 0,
     collect_threshold: usize = DEFAULT_COLLECT_THRESHOLD,
+    /// Son `collectRoots`in serbest bıraktığı nesne sayısı (uyarlanabilir eşik İçin).
+    freed_in_collect: usize = 0,
+    /// Son `markGray`in ziyaret ettiği düğüm sayısı: bir toplamın maliyeti ~bununla orantılı,
+    /// eşik de buna göre ölçeklenir (toplama başına maliyet ≥ 2 kayıtla amorti edilir).
+    visited_in_collect: usize = 0,
 
     fn deinit(self: *CycleGc, allocator: std.mem.Allocator) void {
         self.meta.deinit(allocator);
@@ -326,9 +343,22 @@ pub export fn nox_cycle_collect(rt: ?*anyopaque) void {
 /// notu, "YENİDEN-GİRİLEBİLİR DEĞİL" gerekçesi.
 fn collectLocked(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
     gc.possible_roots_since_collect = 0;
+    gc.freed_in_collect = 0;
+    gc.visited_in_collect = 0;
+    const scanned = gc.roots.items.len;
     markRoots(rt, state, gc);
     scanRoots(rt, state, gc);
     collectRoots(rt, state, gc);
+    // Uyarlanabilir eşik (bkz. `MAX_COLLECT_THRESHOLD`): verimsiz toplama →
+    // sıklığı azalt; verimli → varsayılan.
+    if (scanned > 0 and gc.freed_in_collect * 4 < scanned) {
+        // Amortizasyon: bir toplamın maliyeti ~ziyaret edilen düğüm sayısı;
+        // eşik en az bunun 2 katı olsun (toplama başına maliyet kayıt başına O(1)).
+        const by_visits = gc.visited_in_collect *| 2;
+        gc.collect_threshold = @min(@max(gc.collect_threshold *| 2, by_visits), MAX_COLLECT_THRESHOLD);
+    } else {
+        gc.collect_threshold = DEFAULT_COLLECT_THRESHOLD;
+    }
 }
 
 fn markRoots(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
@@ -358,6 +388,7 @@ fn markGray(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: *any
         const meta = gc.meta.getPtr(ptr) orelse continue;
         if (meta.color == .gray) continue;
         meta.color = .gray;
+        gc.visited_in_collect += 1;
 
         var children = traceChildren(rt, ptr);
         defer children.deinit(state);
@@ -488,6 +519,7 @@ fn collectWhite(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: 
         _ = gc.meta.remove(ptr);
         const tag = readTag(ptr);
         nox_gc_free_dispatch(rt, tag, ptr);
+        gc.freed_in_collect += 1;
     }
 }
 
@@ -717,6 +749,48 @@ test "v3 madde 3: trace() çocuk raporlamazsa (list/dict-of-class alanının DÜ
     arc.nox_rc_release(rt, b, FAKE_PAYLOAD_SIZE);
     arc.nox_rc_release(rt, a, FAKE_PAYLOAD_SIZE);
 
+    try deinitRuntimeExpectNoLeak(rt);
+}
+
+test "v1.142.5: uyarlanabilir eşik — verimsiz toplama eşiği büyütür, verimli (çöp bulan) toplama varsayılana döndürür" {
+    injectFakeDispatch();
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
+
+    // CANLI nesneler: dış bir "yerel değişken" referansı (RC=2) tutulur, sonra bir
+    // referans bırakılır (RC=1 → olası kök) — ama nesne HÂLÂ canlı (verimsiz kök).
+    var live: [20]*anyopaque = undefined;
+    for (&live) |*slot| {
+        slot.* = newFakeObject(rt);
+        arc.nox_rc_retain(slot.*); // RC=2
+    }
+    for (live) |p| simulateRelease(rt, p); // RC=1, olası kök (canlı)
+
+    const gc = getGc(state);
+    try testing.expectEqual(DEFAULT_COLLECT_THRESHOLD, gc.collect_threshold);
+    nox_cycle_collect(rt); // 20 kök, 0 serbest → VERİMSİZ
+    try testing.expectEqual(DEFAULT_COLLECT_THRESHOLD * 2, gc.collect_threshold);
+    // Tekrar verimsiz → tekrar ikiye katlanır.
+    for (live) |p| {
+        arc.nox_rc_retain(p);
+        simulateRelease(rt, p);
+    }
+    nox_cycle_collect(rt);
+    try testing.expectEqual(DEFAULT_COLLECT_THRESHOLD * 4, gc.collect_threshold);
+
+    // Gerçek çöp döngüsü → VERİMLİ toplama (2 serbest / 2 kök) → eşik varsayılana döner.
+    const a = newFakeObject(rt);
+    const b = newFakeObject(rt);
+    wireField(a, b);
+    wireField(b, a);
+    simulateRelease(rt, a);
+    simulateRelease(rt, b);
+    nox_cycle_collect(rt);
+    try testing.expectEqual(@as(usize, 2), g_fake_freed_count);
+    try testing.expectEqual(DEFAULT_COLLECT_THRESHOLD, gc.collect_threshold);
+
+    // Canlıları temizle (kalan dış referanslar).
+    for (live) |p| arc.nox_rc_release(rt, p, FAKE_PAYLOAD_SIZE);
     try deinitRuntimeExpectNoLeak(rt);
 }
 

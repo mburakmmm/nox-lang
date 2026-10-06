@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.5]
+
+### Performans
+
+- **"Temiz benchmark" darboğaz turu (bkz. nox-teknik-spesifikasyon.md §3.244)**:
+  ikili ağaç 13.9 s → ~2.3 s (döngü çözücü uyarlanabilir eşik + işaretçi
+  tablosu), `dict[int,int]` 1.75x (üzerine yazmada gereksiz remove+put yok, `int`
+  için `fmix64` karması), sabit bölenli `//`/`%` QBE'de collatz 3.5x
+  (`sar`/`and`, tek bölme), liste/str sınır kontrolü tek işaretsiz karşılaştırma.
+  Davranış değişmedi (Python semantiğiyle birebir testli).
+
 ## [1.142.4]
 
 ### Değişti

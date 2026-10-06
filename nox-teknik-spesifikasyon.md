@@ -27953,6 +27953,54 @@ refcount/sızıntı. **Not:** aarch64'ün `continue-on-error`ı (v1.102.1) aynı
 nedenden olabilir — birkaç yeşil CI koşusu sonrası kaldırılabilir (bu sürümde
 DEĞİŞTİRİLMEDİ).
 
+## 3.244 Performans darboğazı turu (v1.142.5) — "temiz benchmark" bulguları
+
+**Ölçüm (bkz. benchmarks, M4/macOS, ReleaseFast, C=clang -O2, 5 tekrar ortanca):** 10
+çekirdek-iş kernel'i (fib, döngü, elek, mandelbrot, matris çarpımı, sözlük, string,
+ikili ağaç, sıralama, collatz) Nox/C/Go/Node/Python karşılaştırıldı. Zayıf çıkanlar
+ve sonuçları:
+
+1. **İkili ağaç (8.4M düğüm): 13.9 s → ~2.3 s (6x; C 0.125 s, Python 3.3 s).** `sample`:
+   ~%75 döngü çözücüde. İki kök neden: (a) sabit 700 eşiği, büyük ÇÖP OLMAYAN
+   kendine-işaret eden yapılarda her toplamada alt-grafiği baştan dolaşıyordu
+   (ikinci-dereceden); (b) `meta` yan tablosu `std.AutoHashMap` + Wyhash (kayıt/
+   serbest bırakma/ziyaret başına 3 hash işlemi). Düzeltme: (a) **uyarlanabilir
+   eşik** — verimsiz toplama (serbest bırakılan < taranan kökün 1/4'ü) eşiği
+   `max(2x, 2*ziyaret_edilen_düğüm)` yapar (üst sınır 2^24, Nim ORC `rootsThreshold`
+   fikri + amortizasyon), verimli toplama varsayılana (700) döndürür; (b)
+   `runtime/alloc/ptr_map.zig` — Fibonacci karmalı, satır-içi açık adresli işaretçi
+   tablosu. Kalan maliyet: yapıcıda "retain sonra geçici-release" çiftleri her
+   iç düğümde olası-kök kaydı üretiyor (§3.240'ın kapsamadığı: tip kendine işaret
+   ediyor). Kökünden çözüm (yapıcı argümanlarında move/borrow analizi) AYRI, büyük iş.
+2. **Sözlük `dict[int,int]`: 0.14 s → 0.08 s (1.75x; C 0.02, Go 0.063).** Profil:
+   `putContext` %33 (üzerine yazmada `removeContext`+`putContext`), `getIndex` %30,
+   Wyhash %16. Düzeltme: üzerine yazmada anahtar AYNIYSA (int / aynı pointer) hiç dokunma,
+   içerik-aynı-pointer-farklı `str` için `getKeyPtrContext` ile YERİNDE güncelle; `int`
+   anahtarlar için tohumlu `fmix64` karıştırıcı (Wyhash bayt-dizisi yolu yerine; tohum
+   hâlâ süreç-başına rastgele, M-3 hash-flooding savunması korunur).
+3. **Sabit bölenli `//` ve `%` (QBE backend):** collatz 1.98 s → 0.56 s (3.5x), döngü
+   (`% 1000003`) 1.05 s → 0.82 s. `x // 2^k` → `sar x, k` (Python taban bölmesi),
+   `x % 2^k` → `and x, 2^k-1`; diğer pozitif sabitler: `//` tek `div` + `l - q*r` (QBE'nin
+   ikinci `rem`i ikinci bir bölmeydi), `%` `rem` + dallanmasız `rem + (d & (rem>>63))`.
+   QBE'de yüksek-çarpım (`mulh`) YOK, bu yüzden sihirli-sayı bölmesi mümkün değil
+   (`--release`/LLVM bunu zaten yapıyor: collatz 0.76 s).
+4. **Liste erişimi (elek, matmul): düzeltilmedi, ölçüm düzeltildi.** Elek 10M'de 5.4x
+   görünüyordu ama 60M'de 1.8x (0.73 s vs 0.40 s) — küçük boyutta sayfa-hatası/başlangıç
+   baskın; fark `list[bool]`'ün 8 baytlık yuvaları (C 1 bayt). `list[T]` bayt-paketleme
+   daha önce AYRI bir görev olarak ertelenmişti (ABI). Matmul 700³: 1.03 s vs C 0.38 s
+   (~3x): erişim başına çift dolaylama + sınır kontrolü + QBE'nin büyük fonksiyonlarda
+   yığına taşırması; sınır kontrolü tek işaretsiz karşılaştırmaya (`cugel`) indirildi
+   (3 işlem → 1) ama ölçülebilir fark vermedi (dal tahmin ediliyor). Gerçek kazanç
+   döngü-değişmez satır işaretçisi hoisting'i / düz 2B dizi tipi gerektirir.
+
+### Test
+
+`tests/golden/.../const_divisor_floordiv_mod.nox`: sabit bölenler {1,2,3,4,7,8,1000003,2^40},
+negatif/sıfır/pozitif/±9e18 girdileri — çıktı Python ile birebir (QBE ve `--release`).
+`cycle_detector.zig`: uyarlanabilir eşik birim testi (verimsiz → 2x, 4x; çöp bulan
+toplama → varsayılan). `ptr_map.zig`: tablo + 200K rastgele ekleme/silme gölge-harita
+testi. IR snapshot'ları: yalnızca `//`/`%` dizileri ve liste/str sınır kontrolü değişti.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

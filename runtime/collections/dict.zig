@@ -214,6 +214,25 @@ fn hashSeed(rt: ?*anyopaque) u64 {
     return state.dict_hash_seed;
 }
 
+/// v1.142.5 (bkz. nox-teknik-spesifikasyon.md §3.244): `int` anahtarlar
+/// İçİN tohumlu, tek-geçişli bir 64-bit karıştırıcı (MurmurHash3'ün `fmix64`
+/// sonlandırıcısı, tohum önceden XOR'lanır) — `Wyhash.hash(seed, asBytes(&key))`
+/// genel amaçlı bayt-dizisi yolunu (uzunluk dallanması, 8 baytlık okuma
+/// döngüsü) HER dict işleminde yürütüyordu; `dict[int,int]` benchmark'ında
+/// profilin %16'sı. `fmix64` çığ etkisi (avalanche) iyi: her girdi biti çıktının
+/// her bitini ~%50 etkiler — hash tablosunun hem alt (slot) hem üst (parmak
+/// izi) bitleri için yeterli. Tohum süreç başına rastgele (`hashSeed`), yani
+/// hash-flooding savunması (bkz. M-3) AYNEN korunur.
+inline fn mixInt(seed: u64, key: i64) u64 {
+    var k: u64 = @as(u64, @bitCast(key)) ^ seed;
+    k ^= k >> 33;
+    k *%= 0xff51afd7ed558ccd;
+    k ^= k >> 33;
+    k *%= 0xc4ceb9fe1a85ec53;
+    k ^= k >> 33;
+    return k;
+}
+
 /// `index`in hash tablosu Context'i — `key_is_str` ÇALIŞMA ZAMANINDA
 /// (Dict'in KENDİSİNE göre) belirlendiğinden comptime-sabit bir Context
 /// KULLANILAMAZ, bu yüzden HER çağrıda (`getContext`/`putContext`/
@@ -226,7 +245,7 @@ const StrOrIntContext = struct {
     rt: ?*anyopaque,
 
     pub fn hash(self: @This(), key: i64) u64 {
-        if (!self.key_is_str) return std.hash.Wyhash.hash(hashSeed(self.rt), std.mem.asBytes(&key));
+        if (!self.key_is_str) return mixInt(hashSeed(self.rt), key);
         if (key == 0) return 0;
         const p: [*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(key)));
         return std.hash.Wyhash.hash(hashSeed(self.rt), std.mem.sliceTo(p, 0));
@@ -320,9 +339,16 @@ pub export fn nox_dict_set(rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, va
         // (yalnızca DEĞER GÜNCELLENMEZ) — bkz. modül üstü not, "ince tuzak".
         // Faz HH.5: `index_built` DEĞİLSE `index` BOŞTUR — GÜNCELLEMEYE
         // GEREK YOK (doğrusal tarama `entries`i DOĞRUDAN okur).
-        if (d.index_built) {
-            _ = d.index.removeContext(old.key, ctx);
-            d.index.putContext(state.allocator(), key, i, ctx) catch {};
+        if (d.index_built and old.key != key) {
+            // Yalnızca `str` anahtar İÇERİK olarak aynı ama pointer FARKLI ise
+            // buraya gelinir (int anahtar / aynı pointer: `old.key == key`,
+            // `index` zaten doğru). Remove+put (2 arama + mezar taşı) YERİNE
+            // tek aramayla anahtarı YERİNDE değiştir (hash İÇERİKTEN, değişmez).
+            if (d.index.getKeyPtrContext(old.key, ctx)) |kp| {
+                kp.* = key;
+            } else {
+                d.index.putContext(state.allocator(), key, i, ctx) catch {};
+            }
         }
         if (key_is_str != 0) str_mod.nox_str_release(rt, payloadToStrPtr(old.key));
         d.entries.items[i] = .{ .key = key, .value = value };

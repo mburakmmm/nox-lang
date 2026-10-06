@@ -1387,29 +1387,24 @@ export function l $compute(l %rt, l %p_n) {
 @while_body1
     %t6 =l loadl %t2
     %t7 =l rem %t6, 3
-    %t8 =w cnel %t7, 0
-    %t9 =w csltl %t7, 0
-    %t10 =w csltl 3, 0
-    %t11 =w xor %t9, %t10
-    %t12 =w and %t8, %t11
-    %t13 =l extuw %t12
-    %t14 =l mul %t13, 3
-    %t15 =l add %t7, %t14
-    %t16 =w ceql %t15, 0
-    jnz %t16, @if_then4, @if_end3
+    %t8 =l sar %t7, 63
+    %t9 =l and %t8, 3
+    %t10 =l add %t7, %t9
+    %t11 =w ceql %t10, 0
+    jnz %t11, @if_then4, @if_end3
 @if_then4
-    %t17 =l loadl %t1
-    %t18 =l add %t17, 1
-    storel %t18, %t1
+    %t12 =l loadl %t1
+    %t13 =l add %t12, 1
+    storel %t13, %t1
     jmp @if_end3
 @if_end3
-    %t19 =l loadl %t2
-    %t20 =l add %t19, 1
-    storel %t20, %t2
+    %t14 =l loadl %t2
+    %t15 =l add %t14, 1
+    storel %t15, %t2
     jmp @while_cond0
 @while_end2
-    %t21 =l loadl %t1
-    ret %t21
+    %t16 =l loadl %t1
+    ret %t16
 @after_return5
 @fn_end6
     ret 0

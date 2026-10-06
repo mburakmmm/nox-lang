@@ -811,7 +811,44 @@ pub fn copyModCacheAlias(self: *Codegen, from_slot: []const u8, to_slot: []const
     for (to_add.items) |item| try self.mod_cache.put(self.allocator, item.key, item.entry);
 }
 
+/// v1.142.5 (bkz. nox-teknik-spesifikasyon.md §3.244): bölen DERLEME-ZAMANI
+/// POZİTİF tam-sayı sabitiyse değerini döner (`int_lit` Value'su `"{d}"` metni
+/// taşır). `//`/`%` için sabit-bölen özel yollarını seçmek için.
+pub fn constPositiveDivisor(r: Value) ?i64 {
+    if (r.qtype != .l or r.fixed_int != null) return null;
+    if (r.text.len == 0 or r.text.len > 18) return null;
+    for (r.text) |c| if (c < '0' or c > '9') return null;
+    const v = std.fmt.parseInt(i64, r.text, 10) catch return null;
+    return if (v >= 1) v else null;
+}
+
 pub fn genMod(self: *Codegen, l: Value, r: Value, common: QbeType) CodegenError!Value {
+    // Sabit pozitif bölen: Python'un `%`i pozitif bölenle sonucu [0, d)
+    // aralığında verir.
+    //  - 2'nin kuvveti: `x & (d-1)` (iki'nin tümleyeninde negatiflerde de doğru).
+    //  - diğer: `rem = x rem d` (işaret x'inkini taşır), sonra negatifse `+ d`:
+    //    `rem + (d & (rem >> 63))` — dallanmasız, 3 işlem (genel `adjustModSign`
+    //    ~6 işlem + bölenin işaret karşılaştırması).
+    if (common != .d) {
+        if (constPositiveDivisor(r)) |d| {
+            if (l.qtype == .l and l.fixed_int == null) {
+                if (d == 1) return .{ .text = "0", .qtype = .l };
+                if (std.math.isPowerOfTwo(@as(u64, @intCast(d)))) {
+                    const masked = try self.newTemp();
+                    try self.qbeOp2(masked, .l, "and", l.text, try std.fmt.allocPrint(self.allocator, "{d}", .{d - 1}));
+                    return .{ .text = masked, .qtype = .l };
+                }
+                const rem_c = try self.emitBin("rem", l, r, .l);
+                const sign = try self.newTemp();
+                try self.qbeOp2(sign, .l, "sar", rem_c.text, "63");
+                const add_back = try self.newTemp();
+                try self.qbeOp2(add_back, .l, "and", sign, r.text);
+                const result = try self.newTemp();
+                try self.qbeOp2(result, .l, "add", rem_c.text, add_back);
+                return .{ .text = result, .qtype = .l };
+            }
+        }
+    }
     const rem = if (common == .d) try self.callLibm2("fmod", l, r) else try self.emitBin("rem", l, r, .l);
     return self.adjustModSign(rem, r, common);
 }

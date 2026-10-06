@@ -69,6 +69,7 @@ comptime {
     _ = diag_sink;
     _ = lowlevel;
     _ = cycle_detector;
+    _ = @import("alloc/ptr_map.zig");
     _ = defer_stack;
     _ = errors;
     _ = foreign_bridge;

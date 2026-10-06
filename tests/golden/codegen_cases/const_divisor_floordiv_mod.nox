@@ -1,0 +1,31 @@
+# v1.142.5: sabit pozitif bölenli `//` ve `%` özel yolları (2'nin kuvveti → sar/and,
+# diğerleri → tek bölme / dallanmasız işaret düzeltmesi) Python semantiğiyle
+# (taban bölmesi, bölenin işaretini taşıyan kalan) BİREBİR aynı sonucu vermeli —
+# negatif, sıfır, pozitif ve büyük girdilerde.
+def run() -> int:
+    total: int = 0
+    x: int = -1000
+    while x <= 1000:
+        total = total + x // 2 + x % 2
+        total = total + x // 3 * 3 + x % 3 * 7
+        total = total + x // 4 * 5 + x % 4 * 11
+        total = total + x // 7 * 13 + x % 7 * 17
+        total = total + x // 8 * 19 + x % 8 * 23
+        total = total + x // 1 + x % 1
+        total = total + x // 1000003 * 29 + x % 1000003 * 31
+        total = total + x // 1099511627776 * 37 + x % 1099511627776 * 41
+        x = x + 1
+    big: int = -9000000000000000000
+    k: int = 0
+    while k < 20:
+        total = total + big // 2 % 1000 + big % 16 + big // 1000003 % 997 + big % 1000003 % 991
+        big = big + 904444444444444441
+        k = k + 1
+    return total
+
+print(run())
+print(-7 // 2)
+print(-7 % 2)
+print(7 // 2)
+print(-8 // 8)
+print(-9 % 8)

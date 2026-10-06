@@ -1376,23 +1376,18 @@ export function l $classify(l %rt, l %p_i) {
     storel %p_i, %t0
     %t1 =l loadl %t0
     %t2 =l rem %t1, 3
-    %t3 =w cnel %t2, 0
-    %t4 =w csltl %t2, 0
-    %t5 =w csltl 3, 0
-    %t6 =w xor %t4, %t5
-    %t7 =w and %t3, %t6
-    %t8 =l extuw %t7
-    %t9 =l mul %t8, 3
-    %t10 =l add %t2, %t9
-    %t11 =w ceql %t10, 0
-    jnz %t11, @if_then1, @if_end0
+    %t3 =l sar %t2, 63
+    %t4 =l and %t3, 3
+    %t5 =l add %t2, %t4
+    %t6 =w ceql %t5, 0
+    jnz %t6, @if_then1, @if_end0
 @if_then1
     ret 100
 @after_return2
     jmp @if_end0
 @if_end0
-    %t12 =w ceql %t10, 1
-    jnz %t12, @if_then4, @if_end3
+    %t7 =w ceql %t5, 1
+    jnz %t7, @if_then4, @if_end3
 @if_then4
     ret 200
 @after_return5
@@ -1425,24 +1420,19 @@ export function l $tally(l %rt, l %p_n) {
     storel %t9, %t3
     %t10 =l loadl %t3
     %t11 =l rem %t10, 3
-    %t12 =w cnel %t11, 0
-    %t13 =w csltl %t11, 0
-    %t14 =w csltl 3, 0
-    %t15 =w xor %t13, %t14
-    %t16 =w and %t12, %t15
-    %t17 =l extuw %t16
-    %t18 =l mul %t17, 3
-    %t19 =l add %t11, %t18
-    %t20 =w ceql %t19, 0
-    jnz %t20, @if_then5, @if_end4
+    %t12 =l sar %t11, 63
+    %t13 =l and %t12, 3
+    %t14 =l add %t11, %t13
+    %t15 =w ceql %t14, 0
+    jnz %t15, @if_then5, @if_end4
 @if_then5
     storel 100, %t4
     jmp @inline_done3
 @after_inline_return6
     jmp @if_end4
 @if_end4
-    %t21 =w ceql %t19, 1
-    jnz %t21, @if_then8, @if_end7
+    %t16 =w ceql %t14, 1
+    jnz %t16, @if_then8, @if_end7
 @if_then8
     storel 200, %t4
     jmp @inline_done3
@@ -1454,24 +1444,24 @@ export function l $tally(l %rt, l %p_n) {
 @after_inline_return10
     jmp @inline_done3
 @inline_done3
-    %t22 =l loadl %t4
-    %t23 =l add %t8, %t22
-    storel %t23, %t1
-    %t24 =w ceql %t19, 0
-    jnz %t24, @if_then12, @if_end11
+    %t17 =l loadl %t4
+    %t18 =l add %t8, %t17
+    storel %t18, %t1
+    %t19 =w ceql %t14, 0
+    jnz %t19, @if_then12, @if_end11
 @if_then12
-    %t25 =l loadl %t1
-    %t26 =l add %t25, 1
-    storel %t26, %t1
+    %t20 =l loadl %t1
+    %t21 =l add %t20, 1
+    storel %t21, %t1
     jmp @if_end11
 @if_end11
-    %t27 =l loadl %t2
-    %t28 =l add %t27, 1
-    storel %t28, %t2
+    %t22 =l loadl %t2
+    %t23 =l add %t22, 1
+    storel %t23, %t2
     jmp @while_cond0
 @while_end2
-    %t29 =l loadl %t1
-    ret %t29
+    %t24 =l loadl %t1
+    ret %t24
 @after_return13
 @fn_end14
     ret 0

@@ -1400,15 +1400,10 @@ export function l $classify2(l %rt, l %p_i, w %p_flag) {
 @if_end0
     %t11 =l loadl %t0
     %t12 =l rem %t11, 3
-    %t13 =w cnel %t12, 0
-    %t14 =w csltl %t12, 0
-    %t15 =w csltl 3, 0
-    %t16 =w xor %t14, %t15
-    %t17 =w and %t13, %t16
-    %t18 =l extuw %t17
-    %t19 =l mul %t18, 3
-    %t20 =l add %t12, %t19
-    ret %t20
+    %t13 =l sar %t12, 63
+    %t14 =l and %t13, 3
+    %t15 =l add %t12, %t14
+    ret %t15
 @after_return5
 @fn_end6
     ret 0
@@ -1453,103 +1448,88 @@ export function w $main(w %argc, l %argv) {
 @if_end1
     %t18 =l loadl %t0
     %t19 =l rem %t18, 3
-    %t20 =w cnel %t19, 0
-    %t21 =w csltl %t19, 0
-    %t22 =w csltl 3, 0
-    %t23 =w xor %t21, %t22
-    %t24 =w and %t20, %t23
-    %t25 =l extuw %t24
-    %t26 =l mul %t25, 3
-    %t27 =l add %t19, %t26
-    storel %t27, %t2
+    %t20 =l sar %t19, 63
+    %t21 =l and %t20, 3
+    %t22 =l add %t19, %t21
+    storel %t22, %t2
     jmp @inline_done0
 @after_inline_return6
     jmp @inline_done0
 @inline_done0
-    %t28 =l loadl %t2
-    call $printf(l $fmt_int, ..., l %t28)
+    %t23 =l loadl %t2
+    call $printf(l $fmt_int, ..., l %t23)
     storel 1, %t3
     storew 0, %t4
-    %t29 =w loadw %t4
-    jnz %t29, @if_then9, @if_elif10
+    %t24 =w loadw %t4
+    jnz %t24, @if_then9, @if_elif10
 @if_then9
-    %t30 =l loadl %t3
-    %t31 =l add %t30, 5
-    storel %t31, %t3
+    %t25 =l loadl %t3
+    %t26 =l add %t25, 5
+    storel %t26, %t3
     jmp @if_end8
 @if_elif10
-    %t32 =l loadl %t3
-    %t33 =w csgtl %t32, 100
-    jnz %t33, @if_elif_body11, @if_else12
+    %t27 =l loadl %t3
+    %t28 =w csgtl %t27, 100
+    jnz %t28, @if_elif_body11, @if_else12
 @if_elif_body11
-    %t34 =l loadl %t3
-    %t35 =l mul %t34, 2
-    storel %t35, %t3
+    %t29 =l loadl %t3
+    %t30 =l mul %t29, 2
+    storel %t30, %t3
     jmp @if_end8
 @if_else12
-    %t36 =l loadl %t3
-    %t37 =l add %t36, 1
-    storel %t37, %t3
+    %t31 =l loadl %t3
+    %t32 =l add %t31, 1
+    storel %t32, %t3
     jmp @if_end8
 @if_end8
-    %t38 =l loadl %t3
-    %t39 =l rem %t38, 3
-    %t40 =w cnel %t39, 0
-    %t41 =w csltl %t39, 0
-    %t42 =w csltl 3, 0
-    %t43 =w xor %t41, %t42
-    %t44 =w and %t40, %t43
-    %t45 =l extuw %t44
-    %t46 =l mul %t45, 3
-    %t47 =l add %t39, %t46
-    storel %t47, %t5
+    %t33 =l loadl %t3
+    %t34 =l rem %t33, 3
+    %t35 =l sar %t34, 63
+    %t36 =l and %t35, 3
+    %t37 =l add %t34, %t36
+    storel %t37, %t5
     jmp @inline_done7
 @after_inline_return13
     jmp @inline_done7
 @inline_done7
-    %t48 =l loadl %t5
-    call $printf(l $fmt_int, ..., l %t48)
+    %t38 =l loadl %t5
+    call $printf(l $fmt_int, ..., l %t38)
     storel 200, %t6
     storew 0, %t7
-    %t49 =w loadw %t7
-    jnz %t49, @if_then16, @if_elif17
+    %t39 =w loadw %t7
+    jnz %t39, @if_then16, @if_elif17
 @if_then16
-    %t50 =l loadl %t6
-    %t51 =l add %t50, 5
-    storel %t51, %t6
+    %t40 =l loadl %t6
+    %t41 =l add %t40, 5
+    storel %t41, %t6
     jmp @if_end15
 @if_elif17
-    %t52 =l loadl %t6
-    %t53 =w csgtl %t52, 100
-    jnz %t53, @if_elif_body18, @if_else19
+    %t42 =l loadl %t6
+    %t43 =w csgtl %t42, 100
+    jnz %t43, @if_elif_body18, @if_else19
 @if_elif_body18
-    %t54 =l loadl %t6
-    %t55 =l mul %t54, 2
-    storel %t55, %t6
+    %t44 =l loadl %t6
+    %t45 =l mul %t44, 2
+    storel %t45, %t6
     jmp @if_end15
 @if_else19
-    %t56 =l loadl %t6
-    %t57 =l add %t56, 1
-    storel %t57, %t6
+    %t46 =l loadl %t6
+    %t47 =l add %t46, 1
+    storel %t47, %t6
     jmp @if_end15
 @if_end15
-    %t58 =l loadl %t6
-    %t59 =l rem %t58, 3
-    %t60 =w cnel %t59, 0
-    %t61 =w csltl %t59, 0
-    %t62 =w csltl 3, 0
-    %t63 =w xor %t61, %t62
-    %t64 =w and %t60, %t63
-    %t65 =l extuw %t64
-    %t66 =l mul %t65, 3
-    %t67 =l add %t59, %t66
-    storel %t67, %t8
+    %t48 =l loadl %t6
+    %t49 =l rem %t48, 3
+    %t50 =l sar %t49, 63
+    %t51 =l and %t50, 3
+    %t52 =l add %t49, %t51
+    storel %t52, %t8
     jmp @inline_done14
 @after_inline_return20
     jmp @inline_done14
 @inline_done14
-    %t68 =l loadl %t8
-    call $printf(l $fmt_int, ..., l %t68)
+    %t53 =l loadl %t8
+    call $printf(l $fmt_int, ..., l %t53)
     call $nox_runtime_deinit(l %rt)
 @fn_end21
     ret 0

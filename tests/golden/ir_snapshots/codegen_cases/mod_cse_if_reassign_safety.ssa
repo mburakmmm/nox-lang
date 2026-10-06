@@ -1380,39 +1380,29 @@ export function l $f(l %rt, l %p_i, w %p_flag) {
     storew %p_flag, %t1
     %t4 =l loadl %t0
     %t5 =l rem %t4, 3
-    %t6 =w cnel %t5, 0
-    %t7 =w csltl %t5, 0
-    %t8 =w csltl 3, 0
-    %t9 =w xor %t7, %t8
-    %t10 =w and %t6, %t9
-    %t11 =l extuw %t10
-    %t12 =l mul %t11, 3
-    %t13 =l add %t5, %t12
-    storel %t13, %t2
-    %t14 =w loadw %t1
-    jnz %t14, @if_then1, @if_end0
+    %t6 =l sar %t5, 63
+    %t7 =l and %t6, 3
+    %t8 =l add %t5, %t7
+    storel %t8, %t2
+    %t9 =w loadw %t1
+    jnz %t9, @if_then1, @if_end0
 @if_then1
-    %t15 =l loadl %t0
-    %t16 =l add %t15, 1
-    storel %t16, %t0
+    %t10 =l loadl %t0
+    %t11 =l add %t10, 1
+    storel %t11, %t0
     jmp @if_end0
 @if_end0
-    %t17 =l loadl %t0
-    %t18 =l rem %t17, 3
-    %t19 =w cnel %t18, 0
-    %t20 =w csltl %t18, 0
-    %t21 =w csltl 3, 0
-    %t22 =w xor %t20, %t21
-    %t23 =w and %t19, %t22
-    %t24 =l extuw %t23
-    %t25 =l mul %t24, 3
-    %t26 =l add %t18, %t25
-    storel %t26, %t3
-    %t27 =l loadl %t2
-    %t28 =l mul %t27, 100
-    %t29 =l loadl %t3
-    %t30 =l add %t28, %t29
-    ret %t30
+    %t12 =l loadl %t0
+    %t13 =l rem %t12, 3
+    %t14 =l sar %t13, 63
+    %t15 =l and %t14, 3
+    %t16 =l add %t13, %t15
+    storel %t16, %t3
+    %t17 =l loadl %t2
+    %t18 =l mul %t17, 100
+    %t19 =l loadl %t3
+    %t20 =l add %t18, %t19
+    ret %t20
 @after_return2
 @fn_end3
     ret 0
@@ -1436,88 +1426,68 @@ export function w $main(w %argc, l %argv) {
     storew 1, %t1
     %t10 =l loadl %t0
     %t11 =l rem %t10, 3
-    %t12 =w cnel %t11, 0
-    %t13 =w csltl %t11, 0
-    %t14 =w csltl 3, 0
-    %t15 =w xor %t13, %t14
-    %t16 =w and %t12, %t15
-    %t17 =l extuw %t16
-    %t18 =l mul %t17, 3
-    %t19 =l add %t11, %t18
-    storel %t19, %t2
-    %t20 =w loadw %t1
-    jnz %t20, @if_then2, @if_end1
+    %t12 =l sar %t11, 63
+    %t13 =l and %t12, 3
+    %t14 =l add %t11, %t13
+    storel %t14, %t2
+    %t15 =w loadw %t1
+    jnz %t15, @if_then2, @if_end1
 @if_then2
-    %t21 =l loadl %t0
-    %t22 =l add %t21, 1
-    storel %t22, %t0
+    %t16 =l loadl %t0
+    %t17 =l add %t16, 1
+    storel %t17, %t0
     jmp @if_end1
 @if_end1
-    %t23 =l loadl %t0
-    %t24 =l rem %t23, 3
-    %t25 =w cnel %t24, 0
-    %t26 =w csltl %t24, 0
-    %t27 =w csltl 3, 0
-    %t28 =w xor %t26, %t27
-    %t29 =w and %t25, %t28
-    %t30 =l extuw %t29
-    %t31 =l mul %t30, 3
-    %t32 =l add %t24, %t31
-    storel %t32, %t3
-    %t33 =l loadl %t2
-    %t34 =l mul %t33, 100
-    %t35 =l loadl %t3
-    %t36 =l add %t34, %t35
-    storel %t36, %t4
+    %t18 =l loadl %t0
+    %t19 =l rem %t18, 3
+    %t20 =l sar %t19, 63
+    %t21 =l and %t20, 3
+    %t22 =l add %t19, %t21
+    storel %t22, %t3
+    %t23 =l loadl %t2
+    %t24 =l mul %t23, 100
+    %t25 =l loadl %t3
+    %t26 =l add %t24, %t25
+    storel %t26, %t4
     jmp @inline_done0
 @after_inline_return3
     jmp @inline_done0
 @inline_done0
-    %t37 =l loadl %t4
-    call $printf(l $fmt_int, ..., l %t37)
+    %t27 =l loadl %t4
+    call $printf(l $fmt_int, ..., l %t27)
     storel 4, %t5
     storew 0, %t6
-    %t38 =l loadl %t5
-    %t39 =l rem %t38, 3
-    %t40 =w cnel %t39, 0
-    %t41 =w csltl %t39, 0
-    %t42 =w csltl 3, 0
-    %t43 =w xor %t41, %t42
-    %t44 =w and %t40, %t43
-    %t45 =l extuw %t44
-    %t46 =l mul %t45, 3
-    %t47 =l add %t39, %t46
-    storel %t47, %t7
-    %t48 =w loadw %t6
-    jnz %t48, @if_then6, @if_end5
+    %t28 =l loadl %t5
+    %t29 =l rem %t28, 3
+    %t30 =l sar %t29, 63
+    %t31 =l and %t30, 3
+    %t32 =l add %t29, %t31
+    storel %t32, %t7
+    %t33 =w loadw %t6
+    jnz %t33, @if_then6, @if_end5
 @if_then6
-    %t49 =l loadl %t5
-    %t50 =l add %t49, 1
-    storel %t50, %t5
+    %t34 =l loadl %t5
+    %t35 =l add %t34, 1
+    storel %t35, %t5
     jmp @if_end5
 @if_end5
-    %t51 =l loadl %t5
-    %t52 =l rem %t51, 3
-    %t53 =w cnel %t52, 0
-    %t54 =w csltl %t52, 0
-    %t55 =w csltl 3, 0
-    %t56 =w xor %t54, %t55
-    %t57 =w and %t53, %t56
-    %t58 =l extuw %t57
-    %t59 =l mul %t58, 3
-    %t60 =l add %t52, %t59
-    storel %t60, %t8
-    %t61 =l loadl %t7
-    %t62 =l mul %t61, 100
-    %t63 =l loadl %t8
-    %t64 =l add %t62, %t63
-    storel %t64, %t9
+    %t36 =l loadl %t5
+    %t37 =l rem %t36, 3
+    %t38 =l sar %t37, 63
+    %t39 =l and %t38, 3
+    %t40 =l add %t37, %t39
+    storel %t40, %t8
+    %t41 =l loadl %t7
+    %t42 =l mul %t41, 100
+    %t43 =l loadl %t8
+    %t44 =l add %t42, %t43
+    storel %t44, %t9
     jmp @inline_done4
 @after_inline_return7
     jmp @inline_done4
 @inline_done4
-    %t65 =l loadl %t9
-    call $printf(l $fmt_int, ..., l %t65)
+    %t45 =l loadl %t9
+    call $printf(l $fmt_int, ..., l %t45)
     call $nox_runtime_deinit(l %rt)
 @fn_end8
     ret 0

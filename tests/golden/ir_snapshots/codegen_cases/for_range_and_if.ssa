@@ -1386,45 +1386,37 @@ export function w $main(w %argc, l %argv) {
     jnz %t3, @for_body1, @for_end2
 @for_body1
     %t4 =l loadl %t1
-    %t5 =l rem %t4, 2
-    %t6 =w cnel %t5, 0
-    %t7 =w csltl %t5, 0
-    %t8 =w csltl 2, 0
-    %t9 =w xor %t7, %t8
-    %t10 =w and %t6, %t9
-    %t11 =l extuw %t10
-    %t12 =l mul %t11, 2
-    %t13 =l add %t5, %t12
-    %t14 =w ceql %t13, 0
-    jnz %t14, @if_then4, @if_elif5
+    %t5 =l and %t4, 1
+    %t6 =w ceql %t5, 0
+    jnz %t6, @if_then4, @if_elif5
 @if_then4
-    %t15 =l loadl %t0
-    %t16 =l loadl %t1
-    %t17 =l add %t15, %t16
-    storel %t17, %t0
+    %t7 =l loadl %t0
+    %t8 =l loadl %t1
+    %t9 =l add %t7, %t8
+    storel %t9, %t0
     jmp @if_end3
 @if_elif5
-    %t18 =l loadl %t1
-    %t19 =w ceql %t18, 3
-    jnz %t19, @if_elif_body6, @if_else7
+    %t10 =l loadl %t1
+    %t11 =w ceql %t10, 3
+    jnz %t11, @if_elif_body6, @if_else7
 @if_elif_body6
-    %t20 =l loadl %t0
-    %t21 =l add %t20, 100
-    storel %t21, %t0
+    %t12 =l loadl %t0
+    %t13 =l add %t12, 100
+    storel %t13, %t0
     jmp @if_end3
 @if_else7
-    %t22 =l loadl %t0
-    %t23 =l sub %t22, 1
-    storel %t23, %t0
+    %t14 =l loadl %t0
+    %t15 =l sub %t14, 1
+    storel %t15, %t0
     jmp @if_end3
 @if_end3
-    %t24 =l loadl %t1
-    %t25 =l add %t24, 1
-    storel %t25, %t1
+    %t16 =l loadl %t1
+    %t17 =l add %t16, 1
+    storel %t17, %t1
     jmp @for_cond0
 @for_end2
-    %t26 =l loadl %t0
-    call $printf(l $fmt_int, ..., l %t26)
+    %t18 =l loadl %t0
+    call $printf(l $fmt_int, ..., l %t18)
     call $nox_runtime_deinit(l %rt)
 @fn_end8
     ret 0

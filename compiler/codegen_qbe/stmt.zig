@@ -415,12 +415,10 @@ pub fn genListAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
 
     const len_t = try self.newTemp();
     try self.qbeLoadL(len_t, obj.text);
-    const neg_t = try self.newTemp();
-    try self.qbeOp2Imm(neg_t, .w, "csltl", index_v.text, 0);
-    const oob_hi_t = try self.newTemp();
-    try self.qbeOp2(oob_hi_t, .w, "csgel", index_v.text, len_t);
+    // v1.142.5: `idx < 0 or idx >= len` TEK işaretsiz karşılaştırma: negatif indeks
+    // işaretsiz yorumlandığında ≥ 2^63 > len olur (3 işlem → 1).
     const oob_t = try self.newTemp();
-    try self.qbeOp2(oob_t, .w, "or", neg_t, oob_hi_t);
+    try self.qbeOp2(oob_t, .w, "cugel", index_v.text, len_t);
     const err_label = try self.newLabel("list_assign_err");
     const ok_label = try self.newLabel("list_assign_ok");
     try self.qbeJnz(oob_t, err_label, ok_label);
