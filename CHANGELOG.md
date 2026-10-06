@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.8]
+
+### Eklendi
+
+- **`a.b.c.xs.append(x)`**: derin alan zinciri üzerinde `list.append` (kök isim, ara
+  değerler sınıf). Geçici köklü alıcılar hâlâ reddedilir. Spec §3.246.
+
 ## [1.142.7]
 
 ### Düzeltildi

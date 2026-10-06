@@ -852,7 +852,7 @@ test "golden(decorator): string-listesi argümanında string-olmayan eleman redd
     );
 }
 
-test "golden(list-append): zincirleme alan alıcısı (a.b.xs.append) reddedilir" {
+test "golden(list-append): geçici köklü alan zinciri (make().a.xs.append) reddedilir" {
     try expectGolden(
         @embedFile("typecheck_cases/err_append_chained_field.nox"),
         @embedFile("typecheck_cases/err_append_chained_field.expected"),

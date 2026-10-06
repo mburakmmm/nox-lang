@@ -1,0 +1,49 @@
+# Aether NOX_LIMITATIONS.md madde 15: `a.b.c.append(x)` (derin alan zinciri).
+# Büyüme yolu (kapasite aşımı) zincirin SON alanına yeni işaretçiyi geri
+# yazmalı; ara nesneler değişmemeli; str/sınıf elemanlarıyla ARC doğru olmalı.
+class Item:
+    def __init__(self: Item, n: int) -> None:
+        self.n = n
+
+class Inner:
+    nums: list[int]
+    names: list[str]
+    items: list[Item]
+
+    def __init__(self: Inner) -> None:
+        self.nums = []
+        self.names = []
+        self.items = []
+
+class Mid:
+    inner: Inner
+
+    def __init__(self: Mid) -> None:
+        self.inner = Inner()
+
+class Outer:
+    mid: Mid
+
+    def __init__(self: Outer) -> None:
+        self.mid = Mid()
+
+    def push(self: Outer, v: int) -> None:
+        self.mid.inner.nums.append(v)
+
+o: Outer = Outer()
+i: int = 0
+while i < 50:
+    o.mid.inner.nums.append(i)
+    o.mid.inner.names.append("n" + str(i))
+    o.mid.inner.items.append(Item(i * 3))
+    o.push(i + 1000)
+    i = i + 1
+
+print(len(o.mid.inner.nums))
+print(o.mid.inner.nums[0])
+print(o.mid.inner.nums[49])
+print(o.mid.inner.nums[99])
+print(len(o.mid.inner.names))
+print(o.mid.inner.names[49])
+print(len(o.mid.inner.items))
+print(o.mid.inner.items[49].n)

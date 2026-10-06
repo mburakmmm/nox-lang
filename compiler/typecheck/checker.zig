@@ -6764,21 +6764,27 @@ pub const Checker = struct {
                         // bölüm): alıcı ÇIPLAK bir isim YA DA `<isim>.alan`
                         // (TEK seviye alan erişimi, `<isim>` bir SINIF
                         // örneği — ör. `self.items.append(v)`) OLABİLİR.
-                        // Zincirleme (`a.b.c.append`) ve geçici alıcılar
-                        // (`get().alan.append`) HÂLÂ reddedilir: büyüme-
-                        // geri-yazması + geçici-release sıralaması ayrı
-                        // bir risk kategorisidir.
+                        // Zincirleme alan erişimi (`a.b.c.append`, kök bir
+                        // isim, ara değerlerin hepsi sınıf) KABUL edilir;
+                        // geçici alıcılar (`get().alan.append`) HÂLÂ
+                        // reddedilir: büyüme-geri-yazması + geçici-release
+                        // sıralaması ayrı bir risk kategorisidir.
                         const recv_ok = switch (a.obj.*) {
                             .identifier => true,
                             .attribute => |fa| blk: {
-                                if (fa.obj.* != .identifier) break :blk false;
+                                // Zincirleme alan erişimi (`a.b.c.append`):
+                                // kök BİR İSİM olmalı ve zincirdeki HER
+                                // ara değer bir sınıf örneği olmalı —
+                                // çağrı/indeksleme içeren (geçici üreten)
+                                // alıcılar HÂLÂ reddedilir.
+                                if (!isPlainFieldChain(fa.obj.*)) break :blk false;
                                 const base_t = try self.checkExpr(ctx, fa.obj.*);
                                 break :blk base_t == .class;
                             },
                             else => false,
                         };
                         if (!recv_ok) {
-                            return self.fail(error.TypeMismatch, "'append' yalnızca bir değişken ya da 'isim.alan' üzerinde çağrılabilir (ör. 'xs.append(v)', 'self.items.append(v)')", .{});
+                            return self.fail(error.TypeMismatch, "'append' yalnızca bir değişken ya da 'isim.alan[.alan...]' üzerinde çağrılabilir (ör. 'xs.append(v)', 'self.items.append(v)')", .{});
                         }
                         if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'append' tam olarak 1 argüman alır", .{});
                         const vt = try self.checkExpr(ctx, c.args[0]);
@@ -7932,6 +7938,16 @@ pub const CheckOutcome = union(enum) {
 /// `err`, `code`/`message` alanlarında İLK tanılamayı (geriye dönük uyumluluk
 /// İÇİN, `all` alanı EKLENMEDEN ÖNCEKİ tek-hata tüketicileriyle AYNI biçimde),
 /// `all` alanında İSE TÜM (kurtarılmış + varsa fırlatılmış) tanılamaları taşır.
+/// `a`, `a.b`, `a.b.c`… biçiminde SAF alan zinciri mi? (kök bir isim;
+/// çağrı/indeksleme/literal YOK — yani alıcı bir GEÇİCİ üretmez.)
+fn isPlainFieldChain(e: ast.Expr) bool {
+    return switch (e) {
+        .identifier => true,
+        .attribute => |fa| isPlainFieldChain(fa.obj.*),
+        else => false,
+    };
+}
+
 pub fn check(allocator: std.mem.Allocator, module: ast.Module) CheckOutcome {
     var checker = Checker.init(allocator);
     checker.checkModule(module) catch |e| {

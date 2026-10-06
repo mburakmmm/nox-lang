@@ -28027,6 +28027,17 @@ artık `apple_m1` / `x86_64_v2` / `baseline`, Windows `x86_64_v2` sabitler.
 **Golden:** `conformance_capability_stdlib_release` (nox.time + nox.crypto, QBE ve
 `--release` AYNI çıktı).
 
+## 3.246 Derin alan zincirinde `append` (v1.142.8)
+
+`a.b.c.xs.append(x)` — kök bir isim, zincirdeki her ara değer bir sınıf örneği —
+artık kabul edilir (Aether NOX_LIMITATIONS.md madde 15'in kalanı). Checker
+`isPlainFieldChain` ile kökün saf bir alan zinciri olduğunu doğrular; codegen
+`genListAppend` zaten `genExpr(fa.obj)` ile ara nesneyi çözüp son alanın adresine
+(taban + ofset) büyüme-geri-yazması yaptığından değişmedi. Çağrı/indeksleme içeren
+geçici köklü alıcılar (`make().inner.xs.append`) HÂLÂ reddedilir (büyüme-geri-yazması
++ geçici-release sıralaması). Golden: `list_field_chain_append` (QBE ve `--release`
+aynı çıktı), `err_append_chained_field` (geçici kök reddi).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28
