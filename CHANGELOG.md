@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.1]
+
+### Değişti
+
+- **`nox.json.dump_string` Zig'e taşındı (bkz. nox-teknik-spesifikasyon.md
+  §3.241)**: karakter-karakter string birleştirmesi yerine tek bir Zig
+  çağrısı (2 KB dizelerde ~9× daha az CPU). Hata düzeltmesi: TÜM C0
+  kontrol karakterleri artık kaçışlanır (`\u00XX`), böylece `dump` çıktısı
+  her zaman `parse` ile geri okunabilir.
+
 ## [1.142.0]
 
 ### Değişti

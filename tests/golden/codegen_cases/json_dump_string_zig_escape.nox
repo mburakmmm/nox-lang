@@ -1,0 +1,29 @@
+# v1.142.1: nox.json.dump_string artık Zig'de — tüm C0 kontrol karakterleri kaçışlanır,
+# çıktı parse ile geri okunabilir, uzun girdi ve UTF-8 doğru çalışır.
+import nox.json
+import nox.strings
+
+def show(s: str) -> None:
+    d: str = nox.json.dump_string(s)
+    print(d)
+    back: JsonValue = nox.json.parse(d)
+    print(nox.json.as_string(back) == s)
+
+show("")
+show("hello")
+show("a\"b\\c")
+show("l1\nl2\tx")
+show("café 日本")
+# Ham kontrol karakterleri literal olarak yazılamaz — parse ile üretilir.
+ctl: str = nox.json.as_string(nox.json.parse("\"bell\\u0007 soh\\u0001 esc\\u001b bs\\b ff\\f\""))
+show(ctl)
+
+# Uzun girdi (eski karakter-döngüsü O(n^2) tahsis yapardı).
+big: str = nox.strings.repeat("ab\"\n", 5000)
+out: str = nox.json.dump_string(big)
+print(len(out))
+print(nox.json.as_string(nox.json.parse(out)) == big)
+
+# dump/dump_object de aynı yolu kullanır.
+v: JsonValue = nox.json.parse("{\"k\\tey\": \"v\\u0001al\"}")
+print(nox.json.dump(v))

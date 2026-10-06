@@ -27843,6 +27843,39 @@ kaldırılınca (`subtree` yerine yalnızca `ti`) test `memory address …
 leaked` ile başarısız olur, sağlam sürümde stderr boş. 20 IR snapshot'ı
 yalnızca `release_possible_root` bloğunun kalkmasıyla değişti.
 
+## 3.241 `nox.json.dump_string` Zig'e taşındı (v1.142.1)
+
+**Gözlem:** Aether echo profilinde (§3.240 sonrası) `nox_json_dump_string`
+iki küçük dize için bile thread süresinin ~%4'ünü alıyordu. Saf-Nox
+uygulama her karakter için `s[i]` (yeni 1-karakterlik `str`) ve `out + c`
+(yeni birleştirme) tahsis ediyordu.
+
+**Değişiklik:** `runtime/stdlib_shims/json.zig`de `nox_json_escape_string_raw`
+(saf yardımcı `escapeJsonString` + Nox `str` sarmalayıcısı); `stdlib/nox/
+json.nox`nin `dump_string`i tek çağrıya indi. Küçük dizeler yığın
+tamponunda işlenir (`std.heap.stackFallback(4096, page_allocator)`); ilk
+denemede doğrudan `page_allocator` kullanmak her çağrıda mmap/munmap
+yaptığından Aether echo'da istek başına CPU'yu ~2× ARTIRDI (ölçülüp
+düzeltildi — aynı tuzak `strings.zig`nin `upper_raw` vb. kabuklarında da
+var ama onlar sıcak yol değil).
+
+**Davranış değişikliği (hata düzeltmesi):** TÜM C0 kontrol karakterleri
+(0-31) artık kaçışlanır (`\n \t \r \b \f` kısa, diğerleri `\u00XX`).
+Eski sürüm `\t`/`\n`/CR dışındakileri ham yazıyordu ve çıktı
+`nox.json.parse` ile geri OKUNAMIYORDU (bilinen "v1 sınırlaması" kapandı).
+0x7F ve UTF-8 baytları olduğu gibi geçer.
+
+**Ölçüm:** 2 KB'lık dizeyi 2000 kez `dump_string`: kullanıcı CPU'su 0.18 s →
+0.02 s (~9×). Aether echo'daki küçük dizelerde fark gürültü içinde
+(makinede arka plan yükü vardı); kazanç büyük payload'larda görünür.
+
+### Test
+
+`json_dump_string_zig_escape.nox` (golden): kısa kaçışlar, parse ile üretilen
+gerçek kontrol baytları (`\u0007`, `\u0001`, `\u001b`, `\b`, `\f`), UTF-8, 20 KB
+girdi, round-trip, `dump` ile nesne anahtarı/değeri. Zig birim testleri:
+`escapeJsonString` tablo testi + 128 baytlık tüm-ASCII `std.json` round-trip.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

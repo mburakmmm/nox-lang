@@ -444,6 +444,101 @@ fn jsonNestingDepthExceeds(s: []const u8, max_depth: usize) bool {
 /// başlangıç noktasıdır).
 const MAX_JSON_NESTING_DEPTH: usize = 32;
 
+/// v1.142.1 (bkz. nox-teknik-spesifikasyon.md §3.241): `nox.json.dump_string`
+/// ÖNCEDEN saf Nox'ta karakter-karakter dönüyordu (HER karakter için
+/// `s[i]` ile yeni bir `str` + `out + c` ile yeni bir birleştirme tahsisi
+/// — O(n²) tahsis; Aether echo profilinde iki küçük dize için bile
+/// thread süresinin ~%4'ü). `bytes`ı çift tırnaklı, JSON-kaçışlı bir
+/// UTF-8 dizeye çevirir: `"` `\` `\n` `\t` `\r` `\b` `\f` kısa
+/// kaçışlarla, DİĞER C0 kontrol karakterleri (0-31) `\u00XX` ile (JSON
+/// bir dize içindeki HER ham kontrol karakterinin kaçışlanmasını zorunlu
+/// kılar; eski saf-Nox sürümü bunları kaçışlamıyordu, Zig'in `std.json`ı
+/// o çıktıyı geri OKUYAMIYORDU). 0x7F ve ≥0x80 baytlar (UTF-8 devam
+/// baytları dahil) OLDUĞU GİBİ geçer. Çağıran `allocator`dan alınan
+/// dilimin sahibidir.
+fn escapeJsonString(allocator: std.mem.Allocator, bytes: []const u8) std.mem.Allocator.Error![]u8 {
+    var extra: usize = 0;
+    for (bytes) |c| {
+        extra += switch (c) {
+            '"', '\\', '\n', '\t', '\r', 8, 12 => 1,
+            0...7, 11, 14...31 => 5,
+            else => 0,
+        };
+    }
+    const out = try allocator.alloc(u8, bytes.len + extra + 2);
+    var w: usize = 0;
+    out[w] = '"';
+    w += 1;
+    for (bytes) |c| {
+        switch (c) {
+            '"' => {
+                out[w] = '\\';
+                out[w + 1] = '"';
+                w += 2;
+            },
+            '\\' => {
+                out[w] = '\\';
+                out[w + 1] = '\\';
+                w += 2;
+            },
+            '\n' => {
+                out[w] = '\\';
+                out[w + 1] = 'n';
+                w += 2;
+            },
+            '\t' => {
+                out[w] = '\\';
+                out[w + 1] = 't';
+                w += 2;
+            },
+            '\r' => {
+                out[w] = '\\';
+                out[w + 1] = 'r';
+                w += 2;
+            },
+            8 => {
+                out[w] = '\\';
+                out[w + 1] = 'b';
+                w += 2;
+            },
+            12 => {
+                out[w] = '\\';
+                out[w + 1] = 'f';
+                w += 2;
+            },
+            0...7, 11, 14...31 => {
+                const hex = "0123456789abcdef";
+                out[w] = '\\';
+                out[w + 1] = 'u';
+                out[w + 2] = '0';
+                out[w + 3] = '0';
+                out[w + 4] = hex[c >> 4];
+                out[w + 5] = hex[c & 0xF];
+                w += 6;
+            },
+            else => {
+                out[w] = c;
+                w += 1;
+            },
+        }
+    }
+    out[w] = '"';
+    return out;
+}
+
+export fn nox_json_escape_string_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    const slice = if (s) |sp| str_mod.nox_str_slice(sp) else "";
+    // Küçük dizeler (HTTP/JSON'un ezici çoğunluğu) için yığın tamponu:
+    // `page_allocator` HER çağrıda mmap/munmap sistem çağrısı yapar (ölçüldü:
+    // Aether echo'da istek başına CPU'yu ~2x ARTIRDI). Yalnızca 4 KiB'ı
+    // aşan kaçışlı çıktı `page_allocator`a düşer.
+    var sfa = std.heap.stackFallback(4096, std.heap.page_allocator);
+    const allocator = sfa.get();
+    const escaped = escapeJsonString(allocator, slice) catch return null;
+    defer allocator.free(escaped);
+    return dupeToNoxStr(rt, escaped);
+}
+
 export fn nox_json_decode_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(.c) ?*anyopaque {
     // NOT: `s`in null olduğu dal İçin `str_mod.nox_str_slice`e DÜŞMEYİZ —
     // o yol yalnızca GERÇEK bir Nox `str` (görünmez başlıklı) BEKLER, boş
@@ -636,4 +731,33 @@ fn buildNestedArrayJson(allocator: std.mem.Allocator, depth: usize) ![:0]u8 {
     while (i < depth) : (i += 1) buf[depth + 1 + i] = ']';
     buf[buf.len - 1] = 0;
     return buf[0 .. buf.len - 1 :0];
+}
+
+test "escapeJsonString: kısa kaçışlar, C0 -> \\u00XX, UTF-8 ve DEL olduğu gibi" {
+    const a = std.testing.allocator;
+    const cases = [_]struct { in: []const u8, out: []const u8 }{
+        .{ .in = "", .out = "\"\"" },
+        .{ .in = "hello", .out = "\"hello\"" },
+        .{ .in = "a\"b\\c", .out = "\"a\\\"b\\\\c\"" },
+        .{ .in = "l1\nl2\tx\r", .out = "\"l1\\nl2\\tx\\r\"" },
+        .{ .in = "\x08\x0c", .out = "\"\\b\\f\"" },
+        .{ .in = "\x00\x01\x1f", .out = "\"\\u0000\\u0001\\u001f\"" },
+        .{ .in = "caf\xc3\xa9 \x7f", .out = "\"caf\xc3\xa9 \x7f\"" },
+    };
+    for (cases) |c| {
+        const got = try escapeJsonString(a, c.in);
+        defer a.free(got);
+        try std.testing.expectEqualStrings(c.out, got);
+    }
+}
+
+test "escapeJsonString: çıktı std.json ile geri okunabilir (round-trip)" {
+    const a = std.testing.allocator;
+    var raw: [256]u8 = undefined;
+    for (&raw, 0..) |*b, i| b.* = @intCast(i % 128);
+    const escaped = try escapeJsonString(a, &raw);
+    defer a.free(escaped);
+    const parsed = try std.json.parseFromSlice([]const u8, a, escaped, .{});
+    defer parsed.deinit();
+    try std.testing.expectEqualSlices(u8, &raw, parsed.value);
 }
