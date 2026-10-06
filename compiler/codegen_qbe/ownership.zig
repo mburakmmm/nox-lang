@@ -806,7 +806,16 @@ pub fn emitInlinePredecrement(self: *Codegen, ptr: []const u8, heap: HeapKind) C
     // `llvm_emit.zig`nin AYNI-isimli metodu).
     const rc2 = try self.qbeAtomicSub(hdr, 1);
     const should_free = try self.newTemp();
-    try self.qbeOp2Imm(should_free, .w, "cslel", rc2, 0);
+    if (heap == .class) {
+        // v1.142.14: sınıf başlık kelimesinin yüksek 32 biti döngü çözücü
+        // bayraklarını taşır (bkz. `cycle_detector.zig`) — sıfır testi yalnızca
+        // refcount'u (düşük 32 bit) görmelidir.
+        const masked = try self.newTemp();
+        try self.qbeOp2Imm(masked, .l, "and", rc2, 0xFFFFFFFF);
+        try self.qbeOp2Imm(should_free, .w, "ceql", masked, 0);
+    } else {
+        try self.qbeOp2Imm(should_free, .w, "cslel", rc2, 0);
+    }
     return should_free;
 }
 

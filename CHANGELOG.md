@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.14]
+
+### Performans
+
+- **Döngü çözücü durumu ARC başlığında** (renk/buffered/kök yuvası yüksek 32 bitte): olası-kök
+  kaydı ve `forget` hash tablosu + kilit yerine O(1). `trees` benchmark'ı 2.07 s → 0.54 s.
+  `$Sınıf_trace` arabelleği yeniden kullanılır. Spec §3.250. IR snapshot'larının tamamı
+  yeniden üretildi (sınıf release'inde refcount maskesi).
+
 ## [1.142.13]
 
 ### Düzeltildi

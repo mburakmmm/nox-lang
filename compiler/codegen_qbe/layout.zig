@@ -413,7 +413,7 @@ pub fn genClassTrace(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) C
     // (bu, sınıfların BÜYÜK çoğunluğu İçİn geçerlidir).
     if (list_class_fields.items.len == 0 and dict_class_fields.items.len == 0 and nested_list_fields.items.len == 0) {
         const buf = try self.newTemp();
-        try self.qbeCall(.{ .name = buf, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{TRACE_BUF_LEN_SIZE + class_fields.items.len * TRACE_BUF_SLOT_SIZE}) } });
+        try self.qbeCall(.{ .name = buf, .ty = .l }, "$nox_trace_buf_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{TRACE_BUF_LEN_SIZE + class_fields.items.len * TRACE_BUF_SLOT_SIZE}) } });
         try self.qbeStoreImmL(@intCast(class_fields.items.len), buf);
         for (class_fields.items, 0..) |f, i| {
             const addr = try self.newTemp();
@@ -510,7 +510,7 @@ pub fn genClassTrace(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) C
     const size_bytes = try self.newTemp();
     try self.qbeOp2Imm(size_bytes, .l, "add", size_bytes_a, @intCast(TRACE_BUF_LEN_SIZE));
     const buf = try self.newTemp();
-    try self.qbeCall(.{ .name = buf, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = size_bytes } });
+    try self.qbeCall(.{ .name = buf, .ty = .l }, "$nox_trace_buf_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = size_bytes } });
     try self.qbeStoreL(total_count, buf);
 
     const write_idx_slot = try self.newTemp();
@@ -803,7 +803,7 @@ pub fn genTraceDispatch(self: *Codegen, classes: []const ClassIdEntry) CodegenEr
         try self.qbeLabel(next_label);
     }
     const empty = try self.newTemp();
-    try self.qbeCall(.{ .name = empty, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "8" } });
+    try self.qbeCall(.{ .name = empty, .ty = .l }, "$nox_trace_buf_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "8" } });
     try self.qbeStoreImmL(0, empty);
     try self.qbeRet(empty);
     try self.qbeFuncEnd();

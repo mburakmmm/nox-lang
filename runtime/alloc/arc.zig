@@ -203,7 +203,10 @@ pub export fn nox_rc_predecrement(ptr: ?*anyopaque) i32 {
     // `fetchSub` işlem-ÖNCESİ değeri döner (`old`); eski kodun `rc.* <= 0`
     // (post-decrement) karşılaştırması `old <= 1`e denk düşer.
     const old = rc.fetchSub(1, .acq_rel);
-    return if (old <= 1) 1 else 0;
+    // v1.142.14: döngü çözücünün bayrakları (kök yuvası/renk/buffered) başlık
+    // kelimesinin YÜKSEK 32 bitinde yaşar (bkz. `cycle_detector.zig` modül üstü
+    // notu) — sıfır testi yalnızca refcount'u (düşük 32 bit) görmelidir.
+    return if ((old & 0xFFFF_FFFF) <= 1) 1 else 0;
 }
 
 /// `nox_rc_predecrement` 1 döndürdükten SONRA belleği (başlık dahil) gerçekten

@@ -28106,6 +28106,34 @@ ad çakışması olan yerlerde (stdlib'de `nox.validate`) alan okumaları bir ç
 yoluyla yapılır (daha muhafazakâr kaçış analizi); davranış aynı. Golden:
 `bound_method_field_name_collision`.
 
+## 3.250 Döngü çözücü durumu başlıkta: olası-kök kaydı O(1) (v1.142.14)
+
+**Ölçüm (benchmarks/cross_lang, `trees`):** ikili ağaç C'den ~16x yavaştı (2.07 s vs
+0.126 s); örnekleme profili sürenin ~%55'ini döngü çözücüde (hash tablosu + global
+kilit) gösterdi. Deney: olası-kök kaydı kapatıldığında aynı program 0.14 s — yani
+GC muhasebesi sürenin ~%93'üydü. Kök neden: `Node(make(..), make(..))` kurucu
+geçicileri ve `l = node.left` yerel alias'ları her seferinde refcount'u 2→1'e
+indirip nesneyi "olası kök" yapıyor; her kayıt `meta` hash tablosuna yazım + kilit,
+her serbest bırakma hash silme demekti.
+
+**Düzeltme:** `ptr_map` yan tablosu kaldırıldı. ARC başlık kelimesi (8 bayt,
+little-endian) bölündü: bit 0-31 refcount; bit 32-59 `roots` dizisindeki yuva
+indeksi; bit 60-61 renk; bit 62 buffered. Yalnızca SINIF örnekleri bayrak taşır
+(string/liste başlıkları değişmez). `nox_cycle_possible_root` zaten tamponlu ve mor
+ise kilitsiz döner; `nox_cycle_forget` tamponlu değilse kilitsiz döner, tamponluysa
+O(1) tombstone (`roots[idx] = null`) yazar. Toplama (markGray/scan/scanBlack/
+collectRoots) renkleri başlıktan okur/yazar; serbest bırakılan düğümlerin başlığı
+havuz bağlı-listesiyle ezildiğinden `collectRoots` iki aşamalıdır (önce tüm beyaz
+düğümler tespit edilir, sonra serbest bırakılır). Sıfır testi sınıflar için
+`(kelime & 0xFFFFFFFF) == 0` oldu (`emitInlinePredecrement` `.class`,
+`nox_rc_predecrement`). `$Sınıf_trace` arabellekleri artık her ziyarette
+`nox_alloc/free` yerine `nox_trace_buf_alloc` ile yeniden kullanılan tek bir tampon
+kullanır (toplama kilit altında serileşiktir).
+
+**Sonuç:** `trees` 2.07 s → ~0.54 s (QBE) / 0.49 s (LLVM). Kalan maliyet, büyüyen canlı
+ağaç üzerinde tekrarlanan deneme-silme geçişleri; asıl çözüm gereksiz kayıtları
+derleme zamanında elemek (bkz. sonraki sürümler).
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

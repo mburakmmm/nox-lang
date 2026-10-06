@@ -28,13 +28,16 @@
 //!   3. **CollectRoots/CollectWhite:** BEYAZ alt-grafik GÜVENLE serbest
 //!      bırakılır (artık HİÇBİR canlı referans yoktur — kanıtlanmıştır).
 //!
-//! **Nesne başına renk/buffered durumu NEREDE tutulur:** ARC nesnelerinin
-//! KENDİ 8 baytlık başlığı (bkz. `arc.zig`) yalnızca refcount taşır —
-//! bu formatı DEĞİŞTİRMEMEK için (mevcut TÜM inline retain/predecrement QBE
-//! emisyonu/`arc.zig`nin HER çağrı sitesini etkileme riskini almadan) renk/
-//! buffered bilgisi AYRI bir yan tabloda (`CycleGc.meta`, işaretçiden
-//! meta'ya bir `AutoHashMap`) tutulur — daha az önbellek-dostu ama ÇOK daha
-//! az invaziv ve GÜVENLİ bir tasarım kararı.
+//! **Nesne başına renk/buffered durumu NEREDE tutulur (v1.142.14):** ARC
+//! başlığının 8 baytlık kelimesi artık BÖLÜNMÜŞTÜR (little-endian): düşük 32
+//! bit refcount; bit 32-59 `roots` dizisindeki yuva indeksi; bit 60-61 renk;
+//! bit 62 "buffered". Önceki sürümde bu bilgi `ptr_map` yan tablosundaydı
+//! (her olası-kök kaydı = global kilit + hash yazımı + `forget`te hash silme;
+//! ikili ağaç benchmark'ında süre %90+ burada geçiyordu). Artık kayıt: başlık
+//! okuması + dizi eklemesi; `forget`: başlık okuması + O(1) tombstone. SADECE
+//! döngüsel olabilen SINIF örnekleri bayrak taşır; string/liste başlıkları
+//! DEĞİŞMEZ. Sınıf serbest bırakmanın sıfır testi `(kelime & RC_MASK) == 0`
+//! olmalıdır (`emitInlinePredecrement`, `nox_rc_predecrement`).
 //!
 //! **Çocukları KEŞFETME (`traceChildren`):** derleyici EN AZ BİR sınıf İÇEREN
 //! HER programda, HER sınıf İÇİN bir `$ClassName_trace(rt, p) -> l` üretir
@@ -52,7 +55,6 @@
 const std = @import("std");
 const asap = @import("asap.zig");
 const dispatch_registry = @import("dispatch_registry.zig");
-const ptr_map = @import("ptr_map.zig");
 const abi_layout = @import("abi_layout");
 /// Faz MN.6: `runtime/alloc/`den `runtime/async_rt/`e — `asap.zig`nin
 /// `spinlock.zig` İçİn ZATEN yaptığı AYNI yön, SORUNSUZ (`self_pipe.zig`
@@ -111,10 +113,44 @@ const TRACE_BUF_LEN_SIZE = abi_layout.TRACE_BUF_LEN_SIZE;
 const TRACE_BUF_SLOT_SIZE = abi_layout.TRACE_BUF_SLOT_SIZE;
 
 const Color = enum(u2) { black, gray, white, purple };
-const GcMeta = struct {
-    color: Color = .black,
-    buffered: bool = false,
-};
+
+/// Başlık kelimesi düzeni (bkz. modül üstü not).
+const RC_MASK: u64 = 0xFFFF_FFFF;
+const IDX_SHIFT: u6 = 32;
+const IDX_MASK: u64 = ((@as(u64, 1) << 28) - 1) << IDX_SHIFT;
+const COLOR_SHIFT: u6 = 60;
+const COLOR_MASK: u64 = @as(u64, 3) << COLOR_SHIFT;
+const BUFFERED_BIT: u64 = @as(u64, 1) << 62;
+const FLAG_MASK: u64 = IDX_MASK | COLOR_MASK | BUFFERED_BIT;
+
+fn hdrWord(p: *anyopaque) *u64 {
+    const bytes: [*]u8 = @ptrCast(p);
+    return @ptrCast(@alignCast(bytes - ARC_HEADER_SIZE));
+}
+
+fn getColor(p: *anyopaque) Color {
+    return @enumFromInt(@as(u2, @truncate(hdrWord(p).* >> COLOR_SHIFT)));
+}
+
+/// Yalnızca toplama (kilit altında, dünya durmuşken) çağrılır — düz RMW.
+fn setColor(p: *anyopaque, c: Color) void {
+    const h = hdrWord(p);
+    h.* = (h.* & ~COLOR_MASK) | (@as(u64, @intFromEnum(c)) << COLOR_SHIFT);
+}
+
+fn isBuffered(p: *anyopaque) bool {
+    return hdrWord(p).* & BUFFERED_BIT != 0;
+}
+
+fn clearFlags(p: *anyopaque) void {
+    const h = hdrWord(p);
+    h.* &= ~FLAG_MASK;
+}
+
+/// Gerçek refcount (düşük 32 bit).
+fn rcValue(p: *anyopaque) i64 {
+    return @intCast(hdrWord(p).* & RC_MASK);
+}
 
 /// AGENTS.md §8: "Tarama sıklığı/tetikleyici heuristiği ayarlanabilir
 /// olmalı, varsayılan: tahsis baskısı eşiği." — CPython'ın gen0 eşiğine
@@ -130,12 +166,12 @@ const DEFAULT_COLLECT_THRESHOLD: usize = 700;
 /// ORC'nun `rootsThreshold` ayarlamasıyla AYNI fikir: bir toplama VERİMSİZ
 /// (serbest bırakılan < taranan kökün 1/4'ü) ise eşik ikiye katlanır (bu üst
 /// sınıra kadar), VERİMLİ ise varsayılana döner. `roots` + `meta` bellek
-/// maliyeti sınırı: ~1M kök ≈ 8 MB (roots) + ~30 MB (meta) en kötü durumda.
+/// maliyeti sınırı: ~1M kök ≈ 8 MB (roots) en kötü durumda.
 const MAX_COLLECT_THRESHOLD: usize = 1 << 24;
 
 const CycleGc = struct {
-    meta: ptr_map.PtrMap(GcMeta) = .empty,
-    roots: std.ArrayListUnmanaged(*anyopaque) = .empty,
+    /// `null` girdiler: `nox_cycle_forget`in tombstone'ları (serbest bırakılmış kök).
+    roots: std.ArrayListUnmanaged(?*anyopaque) = .empty,
     possible_roots_since_collect: usize = 0,
     collect_threshold: usize = DEFAULT_COLLECT_THRESHOLD,
     /// Son `collectRoots`in serbest bıraktığı nesne sayısı (uyarlanabilir eşik İçin).
@@ -143,9 +179,15 @@ const CycleGc = struct {
     /// Son `markGray`in ziyaret ettiği düğüm sayısı: bir toplamın maliyeti ~bununla orantılı,
     /// eşik de buna göre ölçeklenir (toplama başına maliyet ≥ 2 kayıtla amorti edilir).
     visited_in_collect: usize = 0,
+    /// v1.142.14: `$Sınıf_trace` arabelleği için yeniden kullanılan TEK tampon (toplama
+    /// kilit altında serileşiktir ve arabellek ziyaret başına tam bir kez
+    /// alınıp bırakılır — LIFO). Her ziyarette `nox_alloc`/`free` çifti yoktu
+    /// ikili ağaç profilinde süreyi %40 şişiriyordu.
+    scratch: []u8 = &.{},
+    scratch_in_use: bool = false,
 
     fn deinit(self: *CycleGc, allocator: std.mem.Allocator) void {
-        self.meta.deinit(allocator);
+        if (self.scratch.len > 0) allocator.rawFree(self.scratch, asap.nox_alloc_alignment, @returnAddress());
         self.roots.deinit(allocator);
     }
 };
@@ -157,11 +199,6 @@ fn getGc(state: *asap.RuntimeState) *CycleGc {
         state.cycle_gc = gc;
     }
     return @ptrCast(@alignCast(state.cycle_gc.?));
-}
-
-fn refcountOf(p: *anyopaque) *i64 {
-    const bytes: [*]u8 = @ptrCast(p);
-    return @ptrCast(@alignCast(bytes - ARC_HEADER_SIZE));
 }
 
 fn readTag(p: *anyopaque) i64 {
@@ -181,13 +218,39 @@ const ChildrenBuf = struct {
         // BAŞINA geri döner.
         if (self.raw_len == 0) return;
         const raw_ptr: [*]u8 = @ptrCast(@alignCast(self.items.ptr - 1));
-        // `nox_trace_dispatch`in GERÇEKTEN kullandığı `nox_alloc` İLE AYNI
-        // hizalama (bkz. `asap.nox_alloc_alignment`nin belge notu) — düz
-        // `.free()` (align=1 çıkarır) İLE GERÇEK bir hizalama-uyuşmazlığı
-        // (`DebugAllocator` hosted'da YAKALADI) VARDI, düzeltildi.
-        state.allocator().rawFree(raw_ptr[0..self.raw_len], asap.nox_alloc_alignment, @returnAddress());
+        traceBufFree(state, raw_ptr, self.raw_len);
     }
 };
+
+/// v1.142.14: üretilen `$Sınıf_trace` fonksiyonlarının arabellek tahsisi (eskiden
+/// `$nox_alloc`). Toplama sırasında (kilit altında, ziyaret başına bir kez, LIFO)
+/// çağrıldığından yeniden kullanılan tek bir tampon yeterlidir; tampon meşgulse
+/// (savunmacı) normal tahsise düşer. `traceBufFree` ikisini de ayırt eder.
+pub export fn nox_trace_buf_alloc(rt: ?*anyopaque, size: usize) ?*anyopaque {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    const gc = getGc(state);
+    if (!gc.scratch_in_use) {
+        if (size > gc.scratch.len) {
+            if (gc.scratch.len > 0) state.allocator().rawFree(gc.scratch, asap.nox_alloc_alignment, @returnAddress());
+            gc.scratch = &.{};
+            const cap = @max(size, 256);
+            const mem = state.allocator().alignedAlloc(u8, asap.nox_alloc_alignment, cap) catch return null;
+            gc.scratch = mem;
+        }
+        gc.scratch_in_use = true;
+        return gc.scratch.ptr;
+    }
+    return asap.nox_alloc(rt, size);
+}
+
+fn traceBufFree(state: *asap.RuntimeState, ptr: [*]u8, raw_len: usize) void {
+    const gc = getGc(state);
+    if (gc.scratch.len > 0 and ptr == gc.scratch.ptr) {
+        gc.scratch_in_use = false;
+        return;
+    }
+    state.allocator().rawFree(ptr[0..raw_len], asap.nox_alloc_alignment, @returnAddress());
+}
 
 /// `$nox_trace_dispatch`i çağırıp dönen ham arabelleği (bkz. modül üstü
 /// not) bir Zig dilimine çevirir. `state`, YALNIZCA arabelleği SONRADAN
@@ -238,19 +301,33 @@ pub export fn nox_cycle_possible_root(rt: ?*anyopaque, p: ?*anyopaque) void {
     // bkz.) DOĞRUDAN çağırır, AKSİ HALDE `nox_cycle_collect`in KENDİ
     // kilidini TEKRAR almaya ÇALIŞIR — bu SpinLock YENİDEN-GİRİLEBİLİR
     // (reentrant) DEĞİLDİR, KENDİ KENDİSİYLE KİLİTLENİRDİ.
+    // Hızlı yol (kilitsiz): zaten tamponda VE mor — yapılacak bir şey yok.
+    // Aynı nesne kısa aralıklarla tekrar tekrar bırakılırken (ör. yerel alias'ların
+    // kapsam sonu release'i) global kilit + dizi eklemesi tamamen atlanır.
+    {
+        const w0 = @atomicLoad(u64, hdrWord(ptr), .monotonic);
+        if (w0 & BUFFERED_BIT != 0 and (w0 & COLOR_MASK) == (@as(u64, @intFromEnum(Color.purple)) << COLOR_SHIFT)) return;
+    }
     state.cycle_gc_lock.lock();
     defer state.cycle_gc_lock.unlock();
     const gc = getGc(state);
 
-    const entry = gc.meta.getOrPut(state.allocator(), ptr) catch return;
-    if (!entry.found_existing) entry.value_ptr.* = .{};
-    if (entry.value_ptr.color != .purple) {
-        entry.value_ptr.color = .purple;
-        if (!entry.value_ptr.buffered) {
-            entry.value_ptr.buffered = true;
-            gc.roots.append(state.allocator(), ptr) catch {};
-        }
+    // Kilit altında yeniden kontrol (hızlı yol kilitsiz okur).
+    const h = hdrWord(ptr);
+    if (h.* & BUFFERED_BIT != 0) {
+        // Zaten tamponda (toplamalar arasında buffered ⇒ mor; savunmacı olarak
+        // atomik olarak mora çek — başka bir iş parçacığı refcount'u aynı kelimede
+        // eşzamanlı değiştiriyor olabilir).
+        _ = @atomicRmw(u64, h, .And, ~COLOR_MASK, .monotonic);
+        _ = @atomicRmw(u64, h, .Or, @as(u64, @intFromEnum(Color.purple)) << COLOR_SHIFT, .monotonic);
+        return;
     }
+    const idx = gc.roots.items.len;
+    gc.roots.append(state.allocator(), ptr) catch return;
+    // Refcount'u eşzamanlı artıran/azaltan iş parçacıklarıyla (atomik ARC) çakışmamak
+    // için tek atomik OR: renk=mor, buffered, yuva indeksi.
+    const set: u64 = BUFFERED_BIT | (@as(u64, @intFromEnum(Color.purple)) << COLOR_SHIFT) | ((@as(u64, @intCast(idx)) << IDX_SHIFT) & IDX_MASK);
+    _ = @atomicRmw(u64, h, .Or, set, .monotonic);
 
     gc.possible_roots_since_collect += 1;
     // Faz MN.6: havuzsuz İSE (BUGÜNKÜ gibi) DOĞRUDAN, SENKRON collect —
@@ -317,12 +394,16 @@ pub export fn nox_cycle_possible_root(rt: ?*anyopaque, p: ?*anyopaque) void {
 /// fonksiyonla SİLİNMİŞ) bir kökü SESSİZCE atlar (bkz. `markRoots`).
 pub export fn nox_cycle_forget(rt: ?*anyopaque, p: ?*anyopaque) void {
     const ptr = p orelse return;
+    // Hızlı yol: tamponda değilse (çoğu nesne) yapılacak bir şey yok — kilit yok.
+    if (!isBuffered(ptr)) return;
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));
     state.cycle_gc_lock.lock();
     defer state.cycle_gc_lock.unlock();
     const gc_ptr = state.cycle_gc orelse return; // hiç başlatılmadıysa unutacak bir şey yok
     const gc: *CycleGc = @ptrCast(@alignCast(gc_ptr));
-    _ = gc.meta.remove(ptr);
+    const idx: usize = @intCast((hdrWord(ptr).* & IDX_MASK) >> IDX_SHIFT);
+    if (idx < gc.roots.items.len and gc.roots.items[idx] == ptr) gc.roots.items[idx] = null;
+    clearFlags(ptr);
 }
 
 /// Üç geçişli Bacon-Rajan taraması — bkz. modül üstü not. `nox_cycle_
@@ -362,161 +443,139 @@ fn collectLocked(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void 
 }
 
 fn markRoots(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
-    for (gc.roots.items) |ptr| {
-        const meta = gc.meta.getPtr(ptr) orelse continue; // bkz. `nox_cycle_forget`in belge notu
-        if (meta.color == .purple) {
+    for (gc.roots.items) |maybe_ptr| {
+        const ptr = maybe_ptr orelse continue; // `nox_cycle_forget` tombstone'u
+        if (getColor(ptr) == .purple) {
             markGray(rt, state, gc, ptr);
         } else {
-            meta.buffered = false;
+            // Orijinal `meta.buffered = false`: yalnızca buffered/yuva bayrakları
+            // temizlenir, RENK korunur (kök zaten başka bir kökün alt-grafiğinde
+            // gri/beyaz boyanmış olabilir).
+            hdrWord(ptr).* &= ~(BUFFERED_BIT | IDX_MASK);
         }
     }
 }
 
-/// GG.23 (bkz. plan dosyası "fiber-stack sertleştirmesi"): ÖNCEDEN Zig-
-/// çağrı-yığını (dolayısıyla fiber'ın SABİT 256/128 KiB yığını) ÜZERİNDE
-/// ÖZYİNELEMELİYDİ — GERÇEK bir programın binlerce/milyonlarca nesnelik
-/// bir bağlı-liste/ağaç/önbelleği ARTIK bunu ÇÖKERTEMEZ (worklist HEAP'te,
-/// pratikte SINIRSIZ). "İşlendi mi" kontrolü (`meta.color == .gray`) POP
-/// ANINDA yapıldığından LIFO sırasından TAMAMEN BAĞIMSIZ doğru kalır
-/// (renk-yayılımı SIRADAN bağımsızdır — TÜM erişilebilir düğümler ziyaret
-/// edildiği sürece sıra ÖNEMSİZDİR).
+/// GG.23 (bkz. plan dosyası "fiber-stack sertleştirmesi"): Zig-çağrı-yığını
+/// (dolayısıyla fiber'ın SABİT yığını) ÜZERİNDE ÖZYİNELEMELİ DEĞİL —
+/// worklist HEAP'te. v1.142.14: renk başlıkta; bir düğüm gri boyanırken
+/// (itme anında) işaretlenir, bu yüzden her düğüm tam bir kez işlenir.
 fn markGray(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: *anyopaque) void {
+    if (getColor(root) == .gray) return;
     var stack: std.ArrayListUnmanaged(*anyopaque) = .empty;
     defer stack.deinit(state.allocator());
+    setColor(root, .gray);
     stack.append(state.allocator(), root) catch return;
     while (stack.pop()) |ptr| {
-        const meta = gc.meta.getPtr(ptr) orelse continue;
-        if (meta.color == .gray) continue;
-        meta.color = .gray;
         gc.visited_in_collect += 1;
 
         var children = traceChildren(rt, ptr);
         defer children.deinit(state);
         for (children.items) |maybe_child| {
             const child = maybe_child orelse continue;
-            refcountOf(child).* -= 1;
-            const centry = gc.meta.getOrPut(state.allocator(), child) catch continue;
-            if (!centry.found_existing) centry.value_ptr.* = .{};
+            hdrWord(child).* -%= 1;
+            if (getColor(child) == .gray) continue;
+            setColor(child, .gray);
             stack.append(state.allocator(), child) catch continue;
         }
     }
 }
 
 fn scanRoots(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
-    for (gc.roots.items) |ptr| {
-        if (gc.meta.getPtr(ptr) == null) continue;
+    for (gc.roots.items) |maybe_ptr| {
+        const ptr = maybe_ptr orelse continue;
         scan(rt, state, gc, ptr);
     }
 }
 
-/// GG.23: `markGray`İLE AYNI iteratif dönüşüm — `scanBlack`e devretme
-/// (`refcountOf(ptr).* > 0`) dalı `scanBlack`i (ARTIK KENDİSİ de iteratif,
-/// aşağıya bkz.) DOĞRUDAN çağırır, BU worklist'ten TAMAMEN BAĞIMSIZ
-/// (İKİSİ SIRALI ÇALIŞIR, AYNI ANDA DEĞİL).
+/// `markGray`İLE AYNI iteratif dönüşüm — `scanBlack`e devretme (`rcValue > 0`)
+/// dalı `scanBlack`i DOĞRUDAN çağırır (SIRALI çalışır, aynı anda DEĞİL).
 fn scan(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: *anyopaque) void {
+    _ = gc;
     var stack: std.ArrayListUnmanaged(*anyopaque) = .empty;
     defer stack.deinit(state.allocator());
     stack.append(state.allocator(), root) catch return;
     while (stack.pop()) |ptr| {
-        const meta = gc.meta.getPtr(ptr) orelse continue;
-        if (meta.color != .gray) continue;
-        if (refcountOf(ptr).* > 0) {
-            scanBlack(rt, state, gc, ptr);
+        if (getColor(ptr) != .gray) continue;
+        if (rcValue(ptr) > 0) {
+            scanBlack(rt, state, ptr);
             continue;
         }
-        meta.color = .white;
+        setColor(ptr, .white);
         var children = traceChildren(rt, ptr);
         defer children.deinit(state);
         for (children.items) |maybe_child| {
             const child = maybe_child orelse continue;
+            if (getColor(child) != .gray) continue; // zaten işlenmiş (beyaz/siyah)
             stack.append(state.allocator(), child) catch continue;
         }
     }
 }
 
-/// GG.23 — KRİTİK, İNCE bir doğruluk noktası (bkz. plan dosyasının Madde 1
-/// belge notu): orijinal ÖZYİNELEMELİ `scanBlack` GİRİŞTE "zaten işlendi
-/// mi" KONTROLÜ YAPMIYORDU (`meta.color = .black;` KOŞULSUZ İLK satırdı) —
-/// tekrar-işleme koruması SADECE ÇAĞIRANIN tarafında (`if (centry.value_
-/// ptr.color != .black) scanBlack(child);`) yaşıyordu. Bu, SAF özyinelemede
-/// GÜVENLİYDİ (HER çağrı ÇAĞRI-YIĞINI SAYESİNDE TAMAMEN tamamlanıp GERİ
-/// DÖNDÜKTEN SONRA bir SONRAKİ kardeş kontrol edilir — paylaşılan/"elmas"
-/// bir çocuk İKİNCİ ebeveyn tarafından kontrol edildiğinde ZATEN kesin
-/// olarak siyahtır). **LIFO bir worklist'te BU GARANTİ YOKTUR** — belirli
-/// bir çocuk-sıralamasında AYNI pointer İKİ KEZ push EDİLEBİLİR (HER iki
-/// push de "henüz siyah değil" kontrolünü GEÇER, ÇÜNKÜ HİÇBİRİ henüz
-/// İŞLENMEDİ), İKİNCİ pop'ta TEKRAR işlenirse çocuklarının refcount'u
-/// YANLIŞLIKLA İKİNCİ KEZ artırılırdı. Bu YÜZDEN — orijinal kodda YAZILI
-/// OLMAYAN AMA semantik olarak GEREKLİ bir ek — POP ANINDA `if (meta.color
-/// == .black) continue;` EKLENİR (refcount artışının KENDİSİ HER ZAMAN
-/// ebeveynin çocuk-döngüsünde, push'TAN ÖNCE KOŞULSUZ olduğundan "kaç KEZ
-/// push edildiği"NDEN ETKİLENMEZ — SADECE çocuğun KENDİ alt-ağacının
-/// TEKRAR işlenmesi bu kontrolle ÖNLENİR).
-fn scanBlack(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: *anyopaque) void {
+/// GG.23 — KRİTİK, İNCE bir doğruluk noktası: LIFO worklist'te AYNI pointer
+/// İKİ KEZ push EDİLEBİLİR; ikinci pop'ta TEKRAR işlenirse çocukların
+/// refcount'u YANLIŞLIKLA İKİ KEZ artırılırdı. Bu yüzden POP ANINDA `siyah
+/// mı` kontrolü ŞART (bkz. `scanBlack` diamond testi). Refcount artışı her
+/// zaman ebeveynin çocuk döngüsünde, push'tan ÖNCE koşulsuzdur.
+fn scanBlack(rt: ?*anyopaque, state: *asap.RuntimeState, root: *anyopaque) void {
     var stack: std.ArrayListUnmanaged(*anyopaque) = .empty;
     defer stack.deinit(state.allocator());
     stack.append(state.allocator(), root) catch return;
     while (stack.pop()) |ptr| {
-        const meta = gc.meta.getPtr(ptr) orelse continue;
-        if (meta.color == .black) continue;
-        meta.color = .black;
+        if (getColor(ptr) == .black) continue;
+        setColor(ptr, .black);
         var children = traceChildren(rt, ptr);
         defer children.deinit(state);
         for (children.items) |maybe_child| {
             const child = maybe_child orelse continue;
-            refcountOf(child).* += 1;
-            const centry = gc.meta.getOrPut(state.allocator(), child) catch continue;
-            if (!centry.found_existing) centry.value_ptr.* = .{};
-            if (centry.value_ptr.color != .black) {
+            hdrWord(child).* +%= 1;
+            if (getColor(child) != .black) {
                 stack.append(state.allocator(), child) catch continue;
             }
         }
     }
 }
 
+/// Beyaz (kanıtlanmış çöp) alt-grafikleri TOPLAR ve serbest bırakır. v1.142.14:
+/// renk/meta artık başlıkta olduğundan, serbest bırakılmış bir düğümün
+/// başlığı (havuz bağlı-listesi işaretçisiyle ÜZERİNE YAZILIR) BİR DAHA
+/// OKUNMAMALIDIR — bu yüzden iki aşama: (1) hiçbir şey serbest bırakılmadan
+/// tüm beyaz düğümler tespit edilir (itme anında siyaha boyanır, her düğüm
+/// tam bir kez listelenir), (2) hepsi serbest bırakılır. `gc_free` sınıf-
+/// tipli çocuklara dokunmadığından sıra güvenlik için önemsizdir.
 fn collectRoots(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
-    // Faz S.3: `gc.roots`un bir KOPYASI ÜZERİNDE yinelenmez — asıl liste
-    // BU FONKSİYON SONUNDA tamamen temizlenir (aşağı bkz.); `collectWhite`in
-    // özyinelemeli çağrıları `gc.roots`u DEĞİŞTİRMEZ (yalnızca `gc.meta`yı),
-    // bu yüzden `for (gc.roots.items)` yinelemesi sırasında listenin
-    // KENDİSİ sabit kalır.
-    for (gc.roots.items) |ptr| {
-        const color: Color = if (gc.meta.getPtr(ptr)) |m| blk: {
-            m.buffered = false;
-            break :blk m.color;
-        } else .black;
-        if (color == .white) {
-            collectWhite(rt, state, gc, ptr);
+    var whites: std.ArrayListUnmanaged(*anyopaque) = .empty;
+    defer whites.deinit(state.allocator());
+    var stack: std.ArrayListUnmanaged(*anyopaque) = .empty;
+    defer stack.deinit(state.allocator());
+
+    // Önce TÜM köklerin buffered bayrağını temizle + rengini oku (hiçbir şey
+    // henüz serbest bırakılmadığından başlıklar geçerli).
+    for (gc.roots.items) |maybe_ptr| {
+        const ptr = maybe_ptr orelse continue;
+        const was_white = getColor(ptr) == .white;
+        // Buffered/indeks bayraklarını temizle, rengi koru (white ayrımı için).
+        const h = hdrWord(ptr);
+        h.* &= ~(BUFFERED_BIT | IDX_MASK);
+        if (!was_white) continue;
+        setColor(ptr, .black);
+        stack.append(state.allocator(), ptr) catch continue;
+        whites.append(state.allocator(), ptr) catch continue;
+        while (stack.pop()) |cur| {
+            var children = traceChildren(rt, cur);
+            defer children.deinit(state);
+            for (children.items) |maybe_child| {
+                const child = maybe_child orelse continue;
+                if (getColor(child) != .white) continue;
+                setColor(child, .black);
+                stack.append(state.allocator(), child) catch continue;
+                whites.append(state.allocator(), child) catch continue;
+            }
         }
     }
     gc.roots.clearRetainingCapacity();
-}
 
-/// GG.23: `markGray`İLE AYNI iteratif dönüşüm — orijinal ÖZYİNELEMELİ
-/// sürüm çocukları ÖNCE (post-order) serbest BIRAKIYORDU, BU iteratif
-/// sürüm ebeveyni HEMEN serbest BIRAKIP çocukları SONRA POP EDER (pre-
-/// order'a YAKIN) — GÜVENLİDİR, ÇÜNKÜ `nox_gc_free_dispatch` (`$ClassName_
-/// gc_free`) SINIF-TİPLİ ALANLARA HİÇ DOKUNMAZ (bkz. modül üstü not),
-/// SADECE `ptr`nin KENDİ belleğini/sınıf-OLMAYAN alanlarını serbest
-/// bırakır — `child` pointer'ları `ptr` serbest bırakıldıktan SONRA da
-/// GEÇERLİ kalır, SIRA serbest-bırakma GÜVENLİĞİNİ ETKİLEMEZ.
-fn collectWhite(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: *anyopaque) void {
-    var stack: std.ArrayListUnmanaged(*anyopaque) = .empty;
-    defer stack.deinit(state.allocator());
-    stack.append(state.allocator(), root) catch return;
-    while (stack.pop()) |ptr| {
-        const meta = gc.meta.getPtr(ptr) orelse continue;
-        if (meta.color != .white) continue;
-        meta.color = .black;
-
-        var children = traceChildren(rt, ptr);
-        defer children.deinit(state);
-        for (children.items) |maybe_child| {
-            const child = maybe_child orelse continue;
-            stack.append(state.allocator(), child) catch continue;
-        }
-
-        _ = gc.meta.remove(ptr);
+    for (whites.items) |ptr| {
         const tag = readTag(ptr);
         nox_gc_free_dispatch(rt, tag, ptr);
         gc.freed_in_collect += 1;
@@ -610,6 +669,41 @@ pub fn newFakeObject(rt: ?*anyopaque) *anyopaque {
     const field_addr: *?*anyopaque = @ptrFromInt(@intFromPtr(p) + TAG_SIZE);
     field_addr.* = null;
     return p;
+}
+
+test "v1.142.14: başlık bayrakları — possible_root tamponlar, tekrar çağrı çoğaltmaz, forget tombstone'lar, refcount bozulmaz" {
+    injectFakeDispatch();
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
+
+    const a = newFakeObject(rt);
+    arc.nox_rc_retain(a); // RC=2
+    try testing.expectEqual(@as(i64, 2), rcValue(a));
+    nox_cycle_possible_root(rt, a);
+    try testing.expect(isBuffered(a));
+    try testing.expectEqual(Color.purple, getColor(a));
+    try testing.expectEqual(@as(i64, 2), rcValue(a)); // bayraklar refcount'u etkilemez
+    nox_cycle_possible_root(rt, a); // hızlı yol — çoğaltmaz
+    try testing.expectEqual(@as(usize, 1), getGc(state).roots.items.len);
+
+    // Bayraklı nesnede retain/predecrement düşük 32 bit üzerinde doğru çalışır.
+    arc.nox_rc_retain(a);
+    try testing.expectEqual(@as(i64, 3), rcValue(a));
+    try testing.expectEqual(@as(i32, 0), arc.nox_rc_predecrement(a));
+    try testing.expectEqual(@as(i32, 0), arc.nox_rc_predecrement(a));
+    try testing.expectEqual(@as(i64, 1), rcValue(a));
+    // Son referans: bayraklı olsa BİLE sıfır testi doğru (1 döndürür).
+    try testing.expectEqual(@as(i32, 1), arc.nox_rc_predecrement(a));
+
+    // forget: kök yuvası tombstone'lanır, bayraklar temizlenir; collect serbest
+    // bırakılmış (burada: bırakılacak) nesneye DOKUNMAZ.
+    nox_cycle_forget(rt, a);
+    try testing.expect(!isBuffered(a));
+    try testing.expectEqual(@as(?*anyopaque, null), getGc(state).roots.items[0]);
+    nox_cycle_collect(rt);
+    arc.nox_rc_free_payload(rt, a, FAKE_PAYLOAD_SIZE);
+
+    try deinitRuntimeExpectNoLeak(rt);
 }
 
 // GG.23 (bkz. plan dosyası "fiber-stack sertleştirmesi"): `scanBlack`nin
@@ -739,8 +833,8 @@ test "v3 madde 3: trace() çocuk raporlamazsa (list/dict-of-class alanının DÜ
     simulateRelease(rt, a);
     simulateRelease(rt, b);
 
-    try testing.expectEqual(@as(i64, 1), refcountOf(a).*);
-    try testing.expectEqual(@as(i64, 1), refcountOf(b).*);
+    try testing.expectEqual(@as(i64, 1), rcValue(a));
+    try testing.expectEqual(@as(i64, 1), rcValue(b));
 
     nox_cycle_collect(rt);
 
@@ -810,8 +904,8 @@ test "Faz S.3: gerçek A<->B döngüsü (self-referans YOLUYLA kurulan), nox_cyc
     simulateRelease(rt, a);
     simulateRelease(rt, b);
 
-    try testing.expectEqual(@as(i64, 1), refcountOf(a).*);
-    try testing.expectEqual(@as(i64, 1), refcountOf(b).*);
+    try testing.expectEqual(@as(i64, 1), rcValue(a));
+    try testing.expectEqual(@as(i64, 1), rcValue(b));
     try testing.expectEqual(@as(usize, 0), g_fake_freed_count);
 
     nox_cycle_collect(rt);
@@ -847,16 +941,16 @@ test "Faz S.3: bir döngü İÇİNDEKİ nesne dışarıdan da canlıysa (survivi
     simulateRelease(rt, a); // a'nın TEK dış referansı gider — RC(a)=1 (yalnızca b.next'ten)
     simulateRelease(rt, b); // b'nin ORİJİNAL dış referansı gider — RC(b)=2 (a.next + hayatta kalan)
 
-    try testing.expectEqual(@as(i64, 1), refcountOf(a).*);
-    try testing.expectEqual(@as(i64, 2), refcountOf(b).*);
+    try testing.expectEqual(@as(i64, 1), rcValue(a));
+    try testing.expectEqual(@as(i64, 2), rcValue(b));
 
     nox_cycle_collect(rt);
 
     // HİÇBİRİ toplanmadı — `b`nin GERÇEK dış referansı SAYESİNDE `a` da
     // (b'nin alanı ÜZERİNDEN) geçişli olarak canlı kaldı.
     try testing.expectEqual(@as(usize, 0), g_fake_freed_count);
-    try testing.expectEqual(@as(i64, 1), refcountOf(a).*);
-    try testing.expectEqual(@as(i64, 2), refcountOf(b).*);
+    try testing.expectEqual(@as(i64, 1), rcValue(a));
+    try testing.expectEqual(@as(i64, 2), rcValue(b));
 
     // Testin KENDİSİ sızdırmasın diye elle temizlik: gerçek bir programda
     // BUNU YAPACAK olan "hayatta kalan" referansın KENDİ SONRAKİ serbest
@@ -901,22 +995,23 @@ test "GG.23: scanBlack paylaşılan (elmas) bir çocuğun kendi alt-ağacını T
     // simüle eder — `scanBlack`nin KENDİSİ `nox_cycle_possible_root`/
     // `markGray`/`scan` ÇAĞRILMADAN doğrudan test edilir (beyaz-kutu).
     const gc = getGc(state);
-    try gc.meta.put(state.allocator(), root, .{ .color = .gray });
-    try gc.meta.put(state.allocator(), d, .{ .color = .gray });
-    try gc.meta.put(state.allocator(), b, .{ .color = .gray });
+    _ = gc;
+    setColor(root, .gray);
+    setColor(d, .gray);
+    setColor(b, .gray);
 
-    const e_refcount_before = refcountOf(e).*;
+    const e_refcount_before = rcValue(e);
 
-    scanBlack(rt, state, gc, root);
+    scanBlack(rt, state, root);
 
     // ANA İDDİA: `d`nin traceChildren'ı TAM OLARAK BİR KEZ çalıştı —
     // POP-anı "zaten siyah mı" kontrolü KALDIRILSAYDI (orijinal, GÜVENSİZ
     // davranış) `e`nin refcount'u BURADA +2 OLURDU (d, HEM root'un HEM
     // b'nin push'ları YÜZÜNDEN İKİ KEZ işlenirdi).
-    try testing.expectEqual(e_refcount_before + 1, refcountOf(e).*);
-    try testing.expectEqual(Color.black, gc.meta.get(root).?.color);
-    try testing.expectEqual(Color.black, gc.meta.get(d).?.color);
-    try testing.expectEqual(Color.black, gc.meta.get(b).?.color);
+    try testing.expectEqual(e_refcount_before + 1, rcValue(e));
+    try testing.expectEqual(Color.black, getColor(root));
+    try testing.expectEqual(Color.black, getColor(d));
+    try testing.expectEqual(Color.black, getColor(b));
 
     // Temizlik: BU test `nox_cycle_collect`i (VE dolayısıyla GERÇEK
     // serbest-bırakmayı) hiç ÇAĞIRMADI — 4 nesnenin payload'ları DOĞRUDAN
