@@ -243,10 +243,55 @@ pub fn genLowLevel(self: *Codegen, ll: ast.LowLevelStmt, ret_qtype: QbeType) Cod
     }
 }
 
+/// v1.142.17: `s = s + a + b ...` (yerel `str` değişkeni; ekleme ifadelerinde `s` geçmiyor) —
+/// her ekleme tüm dizeyi kopyalayan O(n²) birleştirme yerine `nox_str_append` ile yerinde
+/// büyütme (bkz. `runtime/str.zig`). Operandlar ÖNCE (kaynak sırasıyla) değerlendirilir; bir
+/// istisna `s`yi yarım değiştirmez. Desen AST düzeyinde doğrulanır (kod yayılmadan `false`).
+fn tryGenStrAppendAssign(self: *Codegen, name: []const u8, info: types.VarInfo, a: ast.Assign) CodegenError!bool {
+    if (info.heap != .str or info.is_param or info.arena or info.borrowed_field or info.is_stack_local or info.manual) return false;
+    if (a.value != .binary) return false;
+    var rights: std.ArrayListUnmanaged(ast.Expr) = .empty;
+    defer rights.deinit(self.allocator);
+    var cur: ast.Expr = a.value;
+    while (cur == .binary and cur.binary.op == .add) {
+        try rights.append(self.allocator, cur.binary.right.*);
+        cur = cur.binary.left.*;
+    }
+    if (rights.items.len == 0) return false;
+    if (cur != .identifier or !std.mem.eql(u8, cur.identifier, name)) return false;
+    for (rights.items) |r| {
+        if (optimizations.exprMentionsName(r, name)) return false;
+    }
+
+    const n = rights.items.len;
+    const values = try self.allocator.alloc(Value, n);
+    const exprs = try self.allocator.alloc(ast.Expr, n);
+    var k: usize = 0;
+    while (k < n) : (k += 1) {
+        const e = rights.items[n - 1 - k];
+        exprs[k] = e;
+        const v = try self.genExpr(e);
+        if (v.heap != .str) return error.Unsupported;
+        try self.checkNoLowlevelEscape(v);
+        values[k] = v;
+    }
+    var acc = try self.newTemp();
+    try self.qbeLoadL(acc, info.slot);
+    for (values) |v| {
+        const res = try self.newTemp();
+        try self.qbeCall(.{ .name = res, .ty = .l }, "$nox_str_append", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = acc }, .{ .ty = .l, .text = v.text } });
+        acc = res;
+    }
+    try self.qbeStoreL(acc, info.slot);
+    for (values, 0..) |v, i| try self.releaseIfTemporary(exprs[i], v);
+    return true;
+}
+
 pub fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {
     switch (a.target) {
         .identifier => |name| {
             if (self.vars.get(name)) |info| {
+                if (try tryGenStrAppendAssign(self, name, info, a)) return;
                 const v0 = try self.genExprForTarget(a.value, info);
                 // v3 madde 3 (ownership/ptr[T] red-team, bkz. nox-teknik-
                 // spesifikasyon.md ilgili bölüm): **DÜZELTME (GERÇEK, bir

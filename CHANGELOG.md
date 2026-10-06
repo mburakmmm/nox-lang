@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.17]
+
+### Performans
+
+- **`s = s + x` yerinde büyütme** (`nox_str_append`, başlıkta kapasite üssü): döngüde dize kurma O(n²)
+  → amortize O(n); 200K birleştirme 2667 ms → ~1 ms. Dize başlığı: uzunluk 52 bit, kapasite üssü 9
+  bit. Spec §3.253.
+
 ## [1.142.16]
 
 ### Performans

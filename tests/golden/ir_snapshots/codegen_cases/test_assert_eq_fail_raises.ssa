@@ -4537,58 +4537,37 @@ export function l $nox_strings_pad_right(l %rt, l %p_s, l %p_width, l %p_ch) {
     %t18 =w csltl %t16, %t17
     jnz %t18, @while_body10, @while_end11
 @while_body10
-    %t19 =l loadl %t3
-    %t20 =l loadl %t2
-    %t21 =l call $nox_str_concat(l %rt, l %t19, l %t20)
-    %t22 =l loadl %t3
-    %t23 =w ceql %t22, 0
-    jnz %t23, @release_skip13, @release12
-@release12
-    %t24 =l sub %t22, 16
-    %t25 =l loadl %t24
-    %t26 =l sub %t25, 1
-    storel %t26, %t24
-    %t27 =w cslel %t26, 0
-    jnz %t27, @str_free15, @str_free_skip16
-@str_free15
-    call $nox_str_free_now(l %rt, l %t22)
-    jmp @str_free_done17
-@str_free_skip16
-    jmp @str_free_done17
-@str_free_done17
-    jmp @release_done14
-@release_skip13
-    jmp @release_done14
-@release_done14
-    storel 0, %t3
+    %t19 =l loadl %t2
+    %t20 =l loadl %t3
+    %t21 =l call $nox_str_append(l %rt, l %t20, l %t19)
     storel %t21, %t3
     jmp @while_cond9
 @while_end11
-    %t28 =l loadl %t3
-    ret %t28
-@after_return18
-    %t29 =l loadl %t3
-    %t30 =w ceql %t29, 0
-    jnz %t30, @release_skip20, @release19
-@release19
-    %t31 =l sub %t29, 16
-    %t32 =l loadl %t31
-    %t33 =l sub %t32, 1
-    storel %t33, %t31
-    %t34 =w cslel %t33, 0
-    jnz %t34, @str_free22, @str_free_skip23
-@str_free22
-    call $nox_str_free_now(l %rt, l %t29)
-    jmp @str_free_done24
-@str_free_skip23
-    jmp @str_free_done24
-@str_free_done24
-    jmp @release_done21
-@release_skip20
-    jmp @release_done21
-@release_done21
+    %t22 =l loadl %t3
+    ret %t22
+@after_return12
+    %t23 =l loadl %t3
+    %t24 =w ceql %t23, 0
+    jnz %t24, @release_skip14, @release13
+@release13
+    %t25 =l sub %t23, 16
+    %t26 =l loadl %t25
+    %t27 =l sub %t26, 1
+    storel %t27, %t25
+    %t28 =w cslel %t27, 0
+    jnz %t28, @str_free16, @str_free_skip17
+@str_free16
+    call $nox_str_free_now(l %rt, l %t23)
+    jmp @str_free_done18
+@str_free_skip17
+    jmp @str_free_done18
+@str_free_done18
+    jmp @release_done15
+@release_skip14
+    jmp @release_done15
+@release_done15
     storel 0, %t3
-@fn_end25
+@fn_end19
     ret 0
 }
 export function l $nox_strings_zfill(l %rt, l %p_s, l %p_width) {

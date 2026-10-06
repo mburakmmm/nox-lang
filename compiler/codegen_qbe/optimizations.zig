@@ -97,7 +97,7 @@ pub fn bodyHasNestedFuncDef(body: []const ast.Stmt) bool {
 /// "kullanılmıyor" sonucuna (ve dolayısıyla GÜVENSİZ bir eleme kararına)
 /// yol açardı — `detectWhileBoundsElideCtx`nin AKSİNE (orada eksik kapsam
 /// sadece fırsatı KAÇIRIR), bu YÜZDEN burada TAM kapsam ZORUNLUDUR.
-fn exprMentionsName(expr: ast.Expr, name: []const u8) bool {
+pub fn exprMentionsName(expr: ast.Expr, name: []const u8) bool {
     return switch (expr) {
         .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => false,
         .identifier => |n| std.mem.eql(u8, n, name),

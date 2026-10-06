@@ -98,6 +98,21 @@ fn poolClassSize(idx: usize) usize {
 /// ÖNLER — düzeltme SONRASI `csel` ORTADAN KALKTI, `blr` YALNIZCA
 /// `pool_ever_active == true` dalında ÜRETİLDİ (TEKRAR `otool -tV` İLE
 /// doğrulandı).
+/// v1.142.17 (`nox_str_append`): `payload` baytlık bir `nox_rc_alloc` isteği havuz sınıfına sığar mı?
+pub fn poolFits(payload: usize) bool {
+    if (!use_pool) return false;
+    return poolClassIndex(payload + HEADER_SIZE) != null;
+}
+
+/// Havuzlu bir tahsisin gerçekte kullanabileceği yük boyutu (sınıf boyutu − başlık); havuzsuzsa `payload`.
+/// Aynı sınıfa düştüğü sürece serbest bırakma boyutu değişmediğinden yerinde büyütme güvenlidir.
+pub fn poolSlotPayloadSize(payload: usize) usize {
+    if (use_pool) {
+        if (poolClassIndex(payload + HEADER_SIZE)) |idx| return poolClassSize(idx) - HEADER_SIZE;
+    }
+    return payload;
+}
+
 noinline fn poolSlotFor(state: *asap.RuntimeState) usize {
     if (state.pool_ever_active.load(.monotonic)) {
         @branchHint(.unlikely);

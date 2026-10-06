@@ -30,7 +30,7 @@ const ASCII_FALSE = abi_layout.STR_ASCII_FALSE;
 /// `str_ptr`den ARC payload işaretçisine (`arc.*` fonksiyonlarının
 /// beklediği "gerçek" işaretçi) döner.
 fn strArcPtr(str_ptr: [*:0]const u8) [*]u8 {
-    const bytes: [*]u8 = @constCast(@ptrCast(str_ptr));
+    const bytes: [*]u8 = @ptrCast(@constCast(str_ptr));
     return bytes - STR_HEADER_SIZE;
 }
 
@@ -118,7 +118,7 @@ fn strAsciiState(str_ptr: [*:0]const u8) u64 {
 fn setStrAsciiState(str_ptr: [*:0]const u8, state: u64) void {
     const h = strHeaderField(str_ptr);
     const len = abi_layout.unpackStrLength(h.*);
-    h.* = abi_layout.packStrHeader(len, state);
+    h.* = abi_layout.packStrHeaderCap(len, state, abi_layout.unpackStrCapExp(h.*));
 }
 
 /// O(1) — paketlenmiş uzunluktan bir Zig dilimi üretir; `runtime/
@@ -206,6 +206,71 @@ pub export fn nox_str_concat(rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const 
     return @ptrCast(data);
 }
 
+/// v1.142.17: `s = s + x` (yerel `s`, `x` ifadelerinde `s` geçmiyor) için yerinde büyütme. `a`
+/// (değişkenin KENDİ referansı) TÜKETİLİR, dönen dize +1 sahiplidir; `b` ödünç alınır.
+/// Münhasır (refcount == 1, literal/pinned DEĞİL) ve kapasite yetiyorsa aynı blokta ekler; yoksa
+/// (amortize) büyütülmüş yeni blok açar, eskisini serbest bırakır. Küçük bloklar (havuz sınıfı ≤ 8 KiB)
+/// havuz sınıfının örtük boşluğundan yararlanır (serbest bırakma boyutu aynı sınıfa düşer);
+/// büyük bloklar başlıktaki `cap_exp` ile 2'nin kuvvetine yuvarlanır. Önceden her ekleme tüm
+/// dizeyi kopyalıyordu (200K `s = s + "ab"` = 2.6 s, O(n²)).
+pub export fn nox_str_append(rt: ?*anyopaque, a: ?[*:0]u8, b: ?[*:0]const u8) ?[*:0]u8 {
+    const pa = a orelse return nox_str_concat(rt, a, b);
+    const pb = b orelse {
+        const r = nox_str_concat(rt, a, b);
+        nox_str_release(rt, a);
+        return r;
+    };
+    const hdr_ptr = strHeaderField(pa);
+    const hdr = hdr_ptr.*;
+    const len_a: usize = @intCast(abi_layout.unpackStrLength(hdr));
+    const len_b: usize = @intCast(strByteLen(pb));
+    const total = len_a + len_b;
+    const cap_exp = abi_layout.unpackStrCapExp(hdr);
+
+    const ascii_a = abi_layout.unpackStrAsciiState(hdr);
+    const ascii_b = strAsciiState(pb);
+    const ascii_state: u64 = blk: {
+        if (ascii_a == ASCII_FALSE or ascii_b == ASCII_FALSE) break :blk ASCII_FALSE;
+        if (ascii_a == ASCII_TRUE and ascii_b == ASCII_TRUE) break :blk ASCII_TRUE;
+        break :blk ASCII_UNKNOWN;
+    };
+
+    const arc_ptr = strArcPtr(pa);
+    const rc_word: *const i64 = @ptrCast(@alignCast(arc_ptr - abi_layout.ARC_HEADER_SIZE));
+    const unique = rc_word.* == 1;
+    const need_payload = STR_HEADER_SIZE + total + 1;
+    if (unique) {
+        const cap_payload: usize = if (cap_exp != 0)
+            (@as(usize, 1) << @intCast(cap_exp))
+        else
+            arc.poolSlotPayloadSize(STR_HEADER_SIZE + len_a + 1);
+        if (need_payload <= cap_payload) {
+            const data: [*]u8 = @ptrCast(pa);
+            @memcpy(data[len_a..][0..len_b], pb[0..len_b]);
+            data[total] = 0;
+            hdr_ptr.* = abi_layout.packStrHeaderCap(total, ascii_state, cap_exp);
+            return pa;
+        }
+    }
+    // Yeni blok: büyük boyutta kapasiteyi 2'nin kuvvetine yuvarla (amortize büyüme).
+    var alloc_payload: usize = need_payload;
+    var new_cap_exp: u64 = 0;
+    if (!arc.poolFits(need_payload)) {
+        alloc_payload = std.math.ceilPowerOfTwo(usize, need_payload) catch need_payload;
+        if (alloc_payload != need_payload) new_cap_exp = std.math.log2_int(usize, alloc_payload);
+    }
+    const raw = arc.nox_rc_alloc(rt, alloc_payload) orelse return null;
+    const base: [*]u8 = @ptrCast(raw);
+    const nh: *align(1) i64 = @ptrCast(base);
+    nh.* = abi_layout.packStrHeaderCap(total, ascii_state, new_cap_exp);
+    const data = base + STR_HEADER_SIZE;
+    @memcpy(data[0..len_a], pa[0..len_a]);
+    @memcpy(data[len_a..][0..len_b], pb[0..len_b]);
+    data[total] = 0;
+    nox_str_release(rt, a);
+    return @ptrCast(data);
+}
+
 /// `ptr`nin refcount'unu bir azaltır; sıfıra/altına düşerse belleği
 /// (`STR_HEADER_SIZE + bayt-uzunluğu + 1` — `nox_rc_alloc`a verilenle AYNI
 /// hesap) gerçekten serbest bırakır. Pinned (literal) dizeler İÇİN
@@ -215,8 +280,7 @@ pub export fn nox_str_release(rt: ?*anyopaque, ptr: ?[*:0]u8) void {
     const p = ptr orelse return;
     const arc_ptr = strArcPtr(p);
     if (arc.nox_rc_predecrement(arc_ptr) != 0) {
-        const len = strByteLen(p);
-        arc.nox_rc_free_payload(rt, arc_ptr, STR_HEADER_SIZE + len + 1);
+        arc.nox_rc_free_payload(rt, arc_ptr, abi_layout.strPayloadSize(strHeaderField(p).*));
     }
 }
 
@@ -231,9 +295,8 @@ pub export fn nox_str_release(rt: ?*anyopaque, ptr: ?[*:0]u8) void {
 /// (çağıran taraf, `releaseValueIfSet`in KENDİ null-kontrolü ZATEN GEÇTİKTEN SONRA
 /// buraya gelir).
 pub export fn nox_str_free_now(rt: ?*anyopaque, ptr: [*:0]u8) void {
-    const len = strByteLen(ptr);
     const arc_ptr = strArcPtr(ptr);
-    arc.nox_rc_free_payload(rt, arc_ptr, STR_HEADER_SIZE + len + 1);
+    arc.nox_rc_free_payload(rt, arc_ptr, abi_layout.strPayloadSize(strHeaderField(ptr).*));
 }
 
 test "nox_str_concat iki dizeyi doğru birleştirir, sıfırla sonlanır" {
@@ -629,4 +692,39 @@ test "nox_str_release: refcount sıfıra düşünce gerçekten serbest bırakır
     arc.nox_rc_retain(strArcPtr(result));
     nox_str_release(rt, result); // refcount: 1 — hâlâ canlı
     nox_str_release(rt, result); // refcount: 0 — serbest bırakıldı
+}
+
+test "v1.142.17: nox_str_append — yerinde büyüme, alias'ta kopya, büyük bloklarda kapasite üssü, doğru serbest bırakma" {
+    const asap = @import("alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer {
+        const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
+        _ = state;
+        asap.nox_runtime_deinit(rt);
+    }
+    const a1 = nox_str_from_bytes(rt, "ab") orelse return error.AllocFailed;
+    var s: [*:0]u8 = a1;
+    const piece = nox_str_from_bytes(rt, "xy") orelse return error.AllocFailed;
+    defer nox_str_release(rt, piece);
+    // alias: ikinci sahip VARKEN ekleme eski bloğu bozmamalı
+    arc.nox_rc_retain(strArcPtr(s));
+    const alias = s;
+    s = nox_str_append(rt, s, piece).?;
+    try std.testing.expect(s != alias);
+    try std.testing.expectEqualStrings("ab", std.mem.sliceTo(alias, 0));
+    try std.testing.expectEqualStrings("abxy", std.mem.sliceTo(s, 0));
+    nox_str_release(rt, alias);
+    // münhasır ve büyüyen: yüzlerce ekleme sonrası içerik ve uzunluk doğru
+    var i: usize = 0;
+    while (i < 5000) : (i += 1) s = nox_str_append(rt, s, piece).?;
+    try std.testing.expectEqual(@as(u64, 4 + 5000 * 2), strByteLen(s));
+    try std.testing.expectEqualStrings("abxyxy", std.mem.sliceTo(s, 0)[0..6]);
+    try std.testing.expectEqual(@as(u8, 0), std.mem.sliceTo(s, 0).ptr[strByteLen(s)]);
+    // kendini ekleme
+    const t = nox_str_from_bytes(rt, "qq") orelse return error.AllocFailed;
+    var tt: [*:0]u8 = t;
+    tt = nox_str_append(rt, tt, tt).?;
+    try std.testing.expectEqualStrings("qqqq", std.mem.sliceTo(tt, 0));
+    nox_str_release(rt, tt);
+    nox_str_release(rt, s);
 }

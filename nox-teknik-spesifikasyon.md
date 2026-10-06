@@ -28179,6 +28179,28 @@ anahtarlar yalnızca `entries`te (tabloda kopya yok; `str` anahtar işaretçisi 
 yerde). Etiket eşleşmedikçe `entries`e dokunulmaz. Sonuç (M4, ReleaseFast): `dict` 0.088 s → 0.05 s
 (C 0.019 s, Go 0.06 s). Test: std.AutoHashMap modeline karşı 60K rastgele işlem.
 
+## 3.253 `s = s + x` yerinde büyütme: O(n²) dize birleştirmesi giderildi (v1.142.17)
+
+**Bulgu (mikro benchmark):** döngüde `s = s + "ab"` (200K iterasyon) 2.67 s sürüyordu — her
+birleştirme tüm dizeyi yeni bir bloğa kopyalıyordu (O(n²)); CPython aynı kalıbı refcount==1
+ise yerinde büyütür (~10 ms). Dize başlığı (8 bayt) yeniden düzenlendi: bit 0-51 uzunluk
+(`STR_LENGTH_BITS` 61→52), bit 52-60 **kapasite üssü** (`cap_exp`; 0 = kapasite tam boyut, bütün
+mevcut tahsis yolları), bit 61-62 ascii durumu. `cap_exp ≠ 0` ise blok yükü TAM OLARAK
+`1 << cap_exp` bayttır ve serbest bırakma `abi_layout.strPayloadSize` ile bu boyutu kullanır
+(`nox_str_release`/`nox_str_free_now`; başka serbest bırakma yolu yok).
+
+`nox_str_append(rt, a, b)`: `a` (değişkenin referansı) tüketilir. refcount==1 ve kapasite
+yetiyorsa aynı blokta ekler; yetmiyorsa amortize büyütülmüş yeni blok açıp eskisini bırakır.
+Havuzlu küçük bloklarda (≤ 8 KiB) havuz sınıfının örtük boşluğu kullanılır (serbest bırakma
+boyutu aynı sınıfa düşer); büyüklerde `cap_exp` ile 2'nin kuvvetine yuvarlanır. Literal
+(pinned) dizeler ve alias'lı (refcount>1) dizeler asla yerinde değişmez.
+
+Derleyici: yerel `str` değişkenine `s = s + a + b ...` ataması (parametre/arena/borrowed/stack
+değil; ekleme ifadelerinde `s` geçmiyor) AST düzeyinde tanınır, operandlar önce (kaynak
+sırasıyla) değerlendirilir, sonra art arda `nox_str_append`. Golden `str_append_in_place`;
+birim test `nox_str_append`. Sonuç: 200K birleştirme 2667 ms → ~1 ms. (Alan hedefli
+`self.buf = self.buf + x` bu sürümde kapsam dışı.)
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

@@ -69,9 +69,15 @@ pub const STR_HEADER_SIZE: usize = 8;
 /// Paketlenmiş `str` başlık alanının alt kaç biti HAM BAYT uzunluğuna
 /// ayrılmış — kalan üst 2 bit `STR_ASCII_*` durumuna. 61 bit, pratikte
 /// ulaşılamayacak kadar büyük bir üst sınır (2^61 bayt) sağlar.
-pub const STR_LENGTH_BITS: u6 = 61;
+pub const STR_LENGTH_BITS: u6 = 52;
 pub const STR_LENGTH_MASK: u64 = (1 << STR_LENGTH_BITS) - 1;
-pub const STR_ASCII_SHIFT: u6 = STR_LENGTH_BITS;
+/// v1.142.17: `nox_str_append` (yerinde büyüyen `s = s + x`) için KAPASİTE üssü: bit 52-60
+/// (9 bit; yalnızca 0..63 kullanılır). 0 = "kapasite = tam boyut" (TÜM mevcut tahsis yolları);
+/// ≠0 = blok yükü (`STR_HEADER_SIZE + bayt + NUL` dahil) TAM OLARAK `1 << cap_exp` bayttır ve
+/// serbest bırakma BU boyutla yapılmalıdır (`strPayloadSize`). Uzunluk 52 bite (4 PB) indi.
+pub const STR_CAP_SHIFT: u6 = 52;
+pub const STR_CAP_MASK: u64 = ((1 << 9) - 1) << STR_CAP_SHIFT;
+pub const STR_ASCII_SHIFT: u6 = 61;
 
 /// ASCII-durumu ÜÇ değerli (iki bit): henüz ÇÖZÜMLENMEMİŞ (`UNKNOWN` —
 /// yapıcı fonksiyon ascii-liği SIFIR maliyetle BİLEMEDİĞİNDE, ör. keyfi
@@ -95,6 +101,23 @@ pub fn packStrHeader(byte_len: u64, ascii_state: u64) i64 {
 pub fn unpackStrLength(packed_header: i64) u64 {
     const bits: u64 = @bitCast(packed_header);
     return bits & STR_LENGTH_MASK;
+}
+
+pub fn packStrHeaderCap(byte_len: u64, ascii_state: u64, cap_exp: u64) i64 {
+    return @bitCast((byte_len & STR_LENGTH_MASK) | ((cap_exp << STR_CAP_SHIFT) & STR_CAP_MASK) | (ascii_state << STR_ASCII_SHIFT));
+}
+
+pub fn unpackStrCapExp(packed_header: i64) u64 {
+    const bits: u64 = @bitCast(packed_header);
+    return (bits & STR_CAP_MASK) >> STR_CAP_SHIFT;
+}
+
+/// `nox_rc_alloc`a verilmiş (ARC başlığı HARİÇ) blok yükü boyutu: kapasite üssü varsa `1 << cap_exp`,
+/// yoksa tam boyut (`STR_HEADER_SIZE + bayt + NUL`). Serbest bırakma HER ZAMAN bunu kullanmalıdır.
+pub fn strPayloadSize(packed_header: i64) usize {
+    const e = unpackStrCapExp(packed_header);
+    if (e != 0) return @as(usize, 1) << @intCast(e);
+    return STR_HEADER_SIZE + @as(usize, @intCast(unpackStrLength(packed_header))) + 1;
 }
 
 pub fn unpackStrAsciiState(packed_header: i64) u64 {

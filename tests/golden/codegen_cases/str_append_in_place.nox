@@ -1,0 +1,81 @@
+# v1.142.17: `s = s + x` (yerel s) yerinde büyür (nox_str_append). Anlam AYNI kalmalı:
+# alias'lar etkilenmez, `s + s`, çok operandlı zincir, unicode, büyük (8 KiB üstü) dizeler,
+# boş eklemeler; boş stderr = sızıntı/yanlış serbest bırakma yok.
+def tag(i: int) -> str:
+    return "<" + str(i) + ">"
+
+def build(n: int) -> str:
+    out: str = ""
+    i: int = 0
+    while i < n:
+        out = out + "ab" + tag(i % 10)
+        i = i + 1
+    return out
+
+# 1. alias güvenliği: t, s'nin eski değerini korur
+s: str = "merhaba"
+t: str = s
+s = s + " dunya"
+print(t)
+print(s)
+
+# 2. kendini ekleme
+u: str = "ab"
+u = u + u
+u = u + u
+print(u)
+
+# 3. alias sonrası ikinci ekleme (artık s'nin kendi bloğu)
+s = s + "!"
+print(s)
+print(t)
+
+# 4. çok operandlı zincir + fonksiyon operandı
+v: str = "x"
+v = v + "-" + tag(7) + "-" + str(42)
+print(v)
+
+# 5. unicode: ascii durumu doğru birleşir
+w: str = "abc"
+w = w + "çğş"
+w = w + "def"
+print(w)
+print(len(w))
+
+# 6. boş eklemeler
+e: str = ""
+e = e + ""
+e = e + "z"
+e = e + ""
+print(e)
+print(len(e))
+
+# 7. büyük dize (8 KiB havuz sınırının üstü): uzunluk + içerik doğru
+big: str = build(20000)
+print(len(big))
+print(big[0])
+print(big[len(big) - 1])
+print(len(build(3)))
+
+# 8. döngüde tekrar tekrar kurup bırak (sızıntı yok)
+k: int = 0
+total: int = 0
+while k < 300:
+    z: str = ""
+    j: int = 0
+    while j < 50:
+        z = z + "q" + str(j)
+        j = j + 1
+    total = total + len(z)
+    k = k + 1
+print(total)
+
+# 9. başka değişkenden çıkan değere ekleme (refcount > 1) — kopya yapılmalı
+base: str = "kok"
+copy1: str = base
+copy1 = copy1 + "1"
+copy2: str = base
+copy2 = copy2 + "2"
+print(base)
+print(copy1)
+print(copy2)
