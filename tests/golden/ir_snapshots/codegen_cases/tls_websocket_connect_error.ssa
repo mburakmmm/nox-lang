@@ -3414,19 +3414,22 @@ export function l $nox_tls_connect(l %rt, l %p_host, l %p_port) {
     storel 0, %t75
     %t76 =l add %t74, 16
     storel 0, %t76
-    call $nox_tls_TlsStream___init__(l %rt, l %t74, l %t73)
-    %t77 =l loadl %t3
-    %t78 =w ceql %t77, 0
-    jnz %t78, @release_skip59, @release58
+    %t77 =l add %t74, 8
+    storel %t73, %t77
+    %t78 =l add %t74, 16
+    storew 0, %t78
+    %t79 =l loadl %t3
+    %t80 =w ceql %t79, 0
+    jnz %t80, @release_skip59, @release58
 @release58
-    %t79 =l sub %t77, 16
-    %t80 =l loadl %t79
-    %t81 =l sub %t80, 1
-    storel %t81, %t79
-    %t82 =w cslel %t81, 0
-    jnz %t82, @str_free61, @str_free_skip62
+    %t81 =l sub %t79, 16
+    %t82 =l loadl %t81
+    %t83 =l sub %t82, 1
+    storel %t83, %t81
+    %t84 =w cslel %t83, 0
+    jnz %t84, @str_free61, @str_free_skip62
 @str_free61
-    call $nox_str_free_now(l %rt, l %t77)
+    call $nox_str_free_now(l %rt, l %t79)
     jmp @str_free_done63
 @str_free_skip62
     jmp @str_free_done63
@@ -3438,18 +3441,18 @@ export function l $nox_tls_connect(l %rt, l %p_host, l %p_port) {
     storel 0, %t3
     ret %t74
 @after_return64
-    %t83 =l loadl %t3
-    %t84 =w ceql %t83, 0
-    jnz %t84, @release_skip66, @release65
+    %t85 =l loadl %t3
+    %t86 =w ceql %t85, 0
+    jnz %t86, @release_skip66, @release65
 @release65
-    %t85 =l sub %t83, 16
-    %t86 =l loadl %t85
-    %t87 =l sub %t86, 1
-    storel %t87, %t85
-    %t88 =w cslel %t87, 0
-    jnz %t88, @str_free68, @str_free_skip69
+    %t87 =l sub %t85, 16
+    %t88 =l loadl %t87
+    %t89 =l sub %t88, 1
+    storel %t89, %t87
+    %t90 =w cslel %t89, 0
+    jnz %t90, @str_free68, @str_free_skip69
 @str_free68
-    call $nox_str_free_now(l %rt, l %t83)
+    call $nox_str_free_now(l %rt, l %t85)
     jmp @str_free_done70
 @str_free_skip69
     jmp @str_free_done70
@@ -12785,29 +12788,32 @@ export function l $nox_websocket_connect(l %rt, l %p_url) {
     storel 0, %t170
     %t171 =l add %t169, 16
     storel 0, %t171
-    call $nox_websocket_WebSocketClient___init__(l %rt, l %t169, l %t168)
-    %t172 =l loadl %t1
-    %t173 =w ceql %t172, 0
-    jnz %t173, @release_skip139, @release138
+    %t172 =l add %t169, 8
+    storel %t168, %t172
+    %t173 =l add %t169, 16
+    storew 0, %t173
+    %t174 =l loadl %t1
+    %t175 =w ceql %t174, 0
+    jnz %t175, @release_skip139, @release138
 @release138
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t172, l $nox_url_URL_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t174, l $nox_url_URL_release)
     jmp @release_done140
 @release_skip139
     jmp @release_done140
 @release_done140
     storel 0, %t1
-    %t174 =l loadl %t7
-    %t175 =w ceql %t174, 0
-    jnz %t175, @release_skip142, @release141
+    %t176 =l loadl %t7
+    %t177 =w ceql %t176, 0
+    jnz %t177, @release_skip142, @release141
 @release141
-    %t176 =l sub %t174, 16
-    %t177 =l loadl %t176
-    %t178 =l sub %t177, 1
-    storel %t178, %t176
-    %t179 =w cslel %t178, 0
-    jnz %t179, @str_free144, @str_free_skip145
+    %t178 =l sub %t176, 16
+    %t179 =l loadl %t178
+    %t180 =l sub %t179, 1
+    storel %t180, %t178
+    %t181 =w cslel %t180, 0
+    jnz %t181, @str_free144, @str_free_skip145
 @str_free144
-    call $nox_str_free_now(l %rt, l %t174)
+    call $nox_str_free_now(l %rt, l %t176)
     jmp @str_free_done146
 @str_free_skip145
     jmp @str_free_done146
@@ -12817,18 +12823,18 @@ export function l $nox_websocket_connect(l %rt, l %p_url) {
     jmp @release_done143
 @release_done143
     storel 0, %t7
-    %t180 =l loadl %t4
-    %t181 =w ceql %t180, 0
-    jnz %t181, @release_skip148, @release147
+    %t182 =l loadl %t4
+    %t183 =w ceql %t182, 0
+    jnz %t183, @release_skip148, @release147
 @release147
-    %t182 =l sub %t180, 16
-    %t183 =l loadl %t182
-    %t184 =l sub %t183, 1
-    storel %t184, %t182
-    %t185 =w cslel %t184, 0
-    jnz %t185, @str_free150, @str_free_skip151
+    %t184 =l sub %t182, 16
+    %t185 =l loadl %t184
+    %t186 =l sub %t185, 1
+    storel %t186, %t184
+    %t187 =w cslel %t186, 0
+    jnz %t187, @str_free150, @str_free_skip151
 @str_free150
-    call $nox_str_free_now(l %rt, l %t180)
+    call $nox_str_free_now(l %rt, l %t182)
     jmp @str_free_done152
 @str_free_skip151
     jmp @str_free_done152
@@ -12840,28 +12846,28 @@ export function l $nox_websocket_connect(l %rt, l %p_url) {
     storel 0, %t4
     ret %t169
 @after_return153
-    %t186 =l loadl %t1
-    %t187 =w ceql %t186, 0
-    jnz %t187, @release_skip155, @release154
+    %t188 =l loadl %t1
+    %t189 =w ceql %t188, 0
+    jnz %t189, @release_skip155, @release154
 @release154
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t186, l $nox_url_URL_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t188, l $nox_url_URL_release)
     jmp @release_done156
 @release_skip155
     jmp @release_done156
 @release_done156
     storel 0, %t1
-    %t188 =l loadl %t7
-    %t189 =w ceql %t188, 0
-    jnz %t189, @release_skip158, @release157
+    %t190 =l loadl %t7
+    %t191 =w ceql %t190, 0
+    jnz %t191, @release_skip158, @release157
 @release157
-    %t190 =l sub %t188, 16
-    %t191 =l loadl %t190
-    %t192 =l sub %t191, 1
-    storel %t192, %t190
-    %t193 =w cslel %t192, 0
-    jnz %t193, @str_free160, @str_free_skip161
+    %t192 =l sub %t190, 16
+    %t193 =l loadl %t192
+    %t194 =l sub %t193, 1
+    storel %t194, %t192
+    %t195 =w cslel %t194, 0
+    jnz %t195, @str_free160, @str_free_skip161
 @str_free160
-    call $nox_str_free_now(l %rt, l %t188)
+    call $nox_str_free_now(l %rt, l %t190)
     jmp @str_free_done162
 @str_free_skip161
     jmp @str_free_done162
@@ -12871,18 +12877,18 @@ export function l $nox_websocket_connect(l %rt, l %p_url) {
     jmp @release_done159
 @release_done159
     storel 0, %t7
-    %t194 =l loadl %t4
-    %t195 =w ceql %t194, 0
-    jnz %t195, @release_skip164, @release163
+    %t196 =l loadl %t4
+    %t197 =w ceql %t196, 0
+    jnz %t197, @release_skip164, @release163
 @release163
-    %t196 =l sub %t194, 16
-    %t197 =l loadl %t196
-    %t198 =l sub %t197, 1
-    storel %t198, %t196
-    %t199 =w cslel %t198, 0
-    jnz %t199, @str_free166, @str_free_skip167
+    %t198 =l sub %t196, 16
+    %t199 =l loadl %t198
+    %t200 =l sub %t199, 1
+    storel %t200, %t198
+    %t201 =w cslel %t200, 0
+    jnz %t201, @str_free166, @str_free_skip167
 @str_free166
-    call $nox_str_free_now(l %rt, l %t194)
+    call $nox_str_free_now(l %rt, l %t196)
     jmp @str_free_done168
 @str_free_skip167
     jmp @str_free_done168

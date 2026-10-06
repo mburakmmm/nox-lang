@@ -390,6 +390,12 @@ pub const FuncSafetyInfo = struct {
     /// ya da bir `await`/`spawn` var — bu durumda BU sembol HER ZAMAN
     /// "güvensiz" sayılır, çağırdıklarından bağımsız olarak.
     direct_unsafe: bool = false,
+    /// v1.142.15: gövde (mevcut) yığın nesnelerini değiştirebilir mi — alan/indeks ataması
+    /// (`__init__`te `self.x = ...` HARİÇ: yeni nesne), mutasyonlu metod, bilinmeyen çağrı
+    /// hedefi, `print`/`await`/`spawn`/`with`/`defer` (fiber'ı başka işe devredebilir).
+    direct_mutates: bool = false,
+    /// Bu gövde bir `__init__` mi (alan atamaları yeni nesneyi başlatır, mutasyon DEĞİL).
+    is_init: bool = false,
     /// Gövdenin çağırdığı serbest fonksiyon/kurucu sembollerinin listesi
     /// (deduplike edilmemiş — önemli değil, yalnızca üyelik kontrolü
     /// için kullanılır). Bu sembollerden HERHANGİ BİRİ güvensizse, BU
@@ -456,6 +462,14 @@ pub fn collectRaiseInfoStmt(self: *Codegen, stmt: ast.Stmt, info: *FuncSafetyInf
             try self.declareVarType(v.name, elem_cn, list_elem_types, poisoned);
         },
         .assign => |a| {
+            switch (a.target) {
+                .attribute => |ta| {
+                    const into_self_in_init = info.is_init and ta.obj.* == .identifier and std.mem.eql(u8, ta.obj.identifier, "self");
+                    if (!into_self_in_init) info.direct_mutates = true;
+                },
+                .index => info.direct_mutates = true,
+                else => {},
+            }
             try self.collectRaiseInfoExpr(a.target, info, class_ctx, var_types, poisoned);
             try self.collectRaiseInfoExpr(a.value, info, class_ctx, var_types, poisoned);
         },
@@ -512,6 +526,7 @@ pub fn collectRaiseInfoStmt(self: *Codegen, stmt: ast.Stmt, info: *FuncSafetyInf
         // gezilir), bu yüzden burası KOŞULSUZ güvensiz kalmaya devam eder.
         .with_stmt => |w| {
             info.direct_unsafe = true;
+            info.direct_mutates = true;
             try self.collectRaiseInfoExpr(w.ctx_expr, info, class_ctx, var_types, poisoned);
             try self.collectRaiseInfoStmts(w.body, info, class_ctx, var_types, poisoned, list_elem_types);
         },
@@ -523,6 +538,7 @@ pub fn collectRaiseInfoStmt(self: *Codegen, stmt: ast.Stmt, info: *FuncSafetyInf
         // kısıtıyla HENÜZ doğrulanmadı).
         .defer_stmt => |d| {
             info.direct_unsafe = true;
+            info.direct_mutates = true;
             try self.collectRaiseInfoExpr(ast.Expr{ .call = d.call }, info, class_ctx, var_types, poisoned);
         },
     }
@@ -533,7 +549,10 @@ pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInf
         // `await`/`spawn`: async istisna yayılımı ZATEN bilinçli olarak
         // eksik/ele alınmamış bir alan (bkz. nox-teknik-spesifikasyon.md
         // §3.21) — bu analiz oraya HİÇ dokunmaz, muhafazakâr kalır.
-        .await_expr, .spawn_expr => info.direct_unsafe = true,
+        .await_expr, .spawn_expr => {
+            info.direct_unsafe = true;
+            info.direct_mutates = true;
+        },
         // Faz P2.1 (bkz. proje belleği "generic sınıflar" planı): `Channel[T](
         // ...)`/`ThreadChannel[T](...)` (yerleşikler, `resolved_class_name`
         // HER ZAMAN `null`) Nox'un istisna mekanizmasına katılmaz (kendi
@@ -576,9 +595,12 @@ pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInf
                     } else if (self.extern_functions.contains(name)) {
                         // `extern def`: Nox'un istisna mekanizmasına HİÇ
                         // katılmaz (bkz. `genCall`in extern dalı) — güvenli.
+                        info.direct_mutates = true; // ama yerel kod HER ŞEYİ yapabilir
                     } else if (std.mem.eql(u8, name, "print") or std.mem.eql(u8, name, "len") or
                         std.mem.eql(u8, name, "str") or std.mem.eql(u8, name, "wasm_call"))
                     {
+                        // `print`/`wasm_call` G/Ç yapar (fiber başka işe geçebilir) — mutasyon say.
+                        if (!std.mem.eql(u8, name, "len") and !std.mem.eql(u8, name, "str")) info.direct_mutates = true;
                         // `genCall`in KENDİ özel dispatch'iyle (satır ~4258
                         // civarı) TUTARLI, AÇIKÇA belgelenmiş "asla raise
                         // etmez" yerleşikler — `int`/`float` BİLEREK BU
@@ -607,6 +629,7 @@ pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInf
                         // testi — düzeltmeden ÖNCE KIRMIZIYDI). BİLİNMEYEN
                         // bir çağrı hedefi HER ZAMAN güvensiz sayılır.
                         info.direct_unsafe = true;
+                        if (!isPureBuiltinFunc(name)) info.direct_mutates = true;
                     }
                 },
                 // Metod çağrısı (`obj.method()`) — Faz M.8 (yeniden ele
@@ -630,14 +653,23 @@ pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInf
                                         const sym = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ class_name, att.attr });
                                         try info.callees.append(self.allocator, sym);
                                         resolved = true;
+                                        // Kalıtım hiyerarşisindeki sınıflarda çağrı sanal dispatch
+                                        // olabilir (alt sınıf geçersiz kılması mutasyon yapabilir).
+                                        if (cinfo.has_vtable) info.direct_mutates = true;
                                     }
                                 }
                             }
                         }
                     }
-                    if (!resolved) info.direct_unsafe = true;
+                    if (!resolved) {
+                        info.direct_unsafe = true;
+                        if (!self.isPureBuiltinMethod(att.attr)) info.direct_mutates = true;
+                    }
                 },
-                else => info.direct_unsafe = true,
+                else => {
+                    info.direct_unsafe = true;
+                    info.direct_mutates = true;
+                },
             }
             for (c.args) |a| try self.collectRaiseInfoExpr(a, info, class_ctx, var_types, poisoned);
         },
@@ -722,6 +754,33 @@ pub fn buildParamListElemTypes(self: *Codegen, params: []const ast.Param) Codege
     return list_elem_types;
 }
 
+/// Yığın nesnelerini DEĞİŞTİRMEYEN ve fiber'ı başka işe geçirmeyen yerleşik serbest
+/// fonksiyonlar (dönüşümler/aritmetik) — `heap_readonly` analizi için.
+fn isPureBuiltinFunc(name: []const u8) bool {
+    const pure = [_][]const u8{ "int", "float", "bool", "abs", "min", "max", "round", "sum" };
+    for (pure) |n| if (std.mem.eql(u8, n, name)) return true;
+    return false;
+}
+
+/// Çözülemeyen alıcıda (`x.metod()`), hiçbir kullanıcı sınıfı bu adı tanımlamıyorsa ve ad
+/// bilinen salt-okunur yerleşik bir metodsa mutasyon yapmaz kabul edilir.
+pub fn isPureBuiltinMethod(self: *Codegen, name: []const u8) bool {
+    const pure = [_][]const u8{ "keys", "values", "items", "get", "contains", "upper", "lower", "strip", "split", "join", "startswith", "endswith", "find", "count" };
+    var known = false;
+    for (pure) |n| {
+        if (std.mem.eql(u8, n, name)) {
+            known = true;
+            break;
+        }
+    }
+    if (!known) return false;
+    var it = self.classes.iterator();
+    while (it.next()) |e| {
+        if (e.value_ptr.methods.contains(name)) return false;
+    }
+    return true;
+}
+
 /// Faz GG.2 (bkz. nox-teknik-spesifikasyon.md §3.67): `computeMustNotRaise`
 /// VE `computeInlinableFunctions`in İKİSİNİN de İHTİYAÇ DUYDUĞU whole-
 /// program `FuncSafetyInfo` haritasını inşa eden ORTAK çekirdek —
@@ -745,7 +804,7 @@ pub fn buildFuncSafetyInfoMap(self: *Codegen, module: ast.Module, extra_function
             },
             .class_def => |cd| {
                 for (cd.methods) |m| {
-                    var info: FuncSafetyInfo = .{};
+                    var info: FuncSafetyInfo = .{ .is_init = std.mem.eql(u8, m.name, "__init__") };
                     var var_types = try self.buildParamVarTypes(m.params, cd.name);
                     var poisoned: std.StringHashMapUnmanaged(void) = .empty;
                     var list_elem_types = try self.buildParamListElemTypes(m.params);
@@ -774,7 +833,7 @@ pub fn buildFuncSafetyInfoMap(self: *Codegen, module: ast.Module, extra_function
     // sayılır (GÜVENLİDİR ama inlining'i SESSİZCE devre dışı bırakır).
     for (extra_classes) |cd| {
         for (cd.methods) |m| {
-            var info: FuncSafetyInfo = .{};
+            var info: FuncSafetyInfo = .{ .is_init = std.mem.eql(u8, m.name, "__init__") };
             var var_types = try self.buildParamVarTypes(m.params, cd.name);
             var poisoned: std.StringHashMapUnmanaged(void) = .empty;
             var list_elem_types = try self.buildParamListElemTypes(m.params);
@@ -838,6 +897,34 @@ pub fn computeMustNotRaise(self: *Codegen, module: ast.Module, extra_functions: 
     while (it.next()) |entry| {
         if (!unsafe_set.contains(entry.key_ptr.*)) {
             try self.must_not_raise.put(self.allocator, entry.key_ptr.*, {});
+        }
+    }
+
+    // v1.142.15: aynı ters çağrı grafiği üzerinde `direct_mutates` tohumlarından ikinci bir
+    // yayılım — kümenin DIŞINDA kalan her sembol (geçişli olarak) yığını değiştirmez.
+    var mut_set: std.StringHashMapUnmanaged(void) = .empty;
+    worklist.clearRetainingCapacity();
+    {
+        var mit = info_map.iterator();
+        while (mit.next()) |entry| {
+            if (entry.value_ptr.direct_mutates) {
+                try mut_set.put(self.allocator, entry.key_ptr.*, {});
+                try worklist.append(self.allocator, entry.key_ptr.*);
+            }
+        }
+    }
+    while (worklist.pop()) |name| {
+        const callers = callers_of.get(name) orelse continue;
+        for (callers.items) |caller| {
+            if (mut_set.contains(caller)) continue;
+            try mut_set.put(self.allocator, caller, {});
+            try worklist.append(self.allocator, caller);
+        }
+    }
+    {
+        var rit = info_map.iterator();
+        while (rit.next()) |entry| {
+            if (!mut_set.contains(entry.key_ptr.*)) try self.heap_readonly.put(self.allocator, entry.key_ptr.*, {});
         }
     }
 

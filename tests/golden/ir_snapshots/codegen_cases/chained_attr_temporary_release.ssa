@@ -1581,23 +1581,17 @@ export function l $make_car(l %rt, l %p_hp) {
     storel 3, %t2
     %t3 =l add %t2, 8
     storel 0, %t3
-    call $Engine___init__(l %rt, l %t2, l %t1)
-    %t4 =l call $nox_rc_alloc(l %rt, l 16)
-    storel 2, %t4
-    %t5 =l add %t4, 8
-    storel 0, %t5
-    call $Car___init__(l %rt, l %t4, l %t2)
-    %t6 =w ceql %t2, 0
-    jnz %t6, @release_skip1, @release0
-@release0
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t2, l $Engine_release)
-    jmp @release_done2
-@release_skip1
-    jmp @release_done2
-@release_done2
-    ret %t4
-@after_return3
-@fn_end4
+    %t4 =l add %t2, 8
+    storel %t1, %t4
+    %t5 =l call $nox_rc_alloc(l %rt, l 16)
+    storel 2, %t5
+    %t6 =l add %t5, 8
+    storel 0, %t6
+    %t7 =l add %t5, 8
+    storel %t2, %t7
+    ret %t5
+@after_return0
+@fn_end1
     ret 0
 }
 export function w $main(w %argc, l %argv) {
@@ -1626,68 +1620,62 @@ export function w $main(w %argc, l %argv) {
     storel 3, %t9
     %t10 =l add %t9, 8
     storel 0, %t10
-    call $Engine___init__(l %rt, l %t9, l %t8)
-    %t11 =l call $nox_rc_alloc(l %rt, l 16)
-    storel 2, %t11
-    %t12 =l add %t11, 8
-    storel 0, %t12
-    call $Car___init__(l %rt, l %t11, l %t9)
-    %t13 =w ceql %t9, 0
-    jnz %t13, @release_skip5, @release4
-@release4
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t9, l $Engine_release)
-    jmp @release_done6
-@release_skip5
-    jmp @release_done6
-@release_done6
-    storel %t11, %t3
+    %t11 =l add %t9, 8
+    storel %t8, %t11
+    %t12 =l call $nox_rc_alloc(l %rt, l 16)
+    storel 2, %t12
+    %t13 =l add %t12, 8
+    storel 0, %t13
+    %t14 =l add %t12, 8
+    storel %t9, %t14
+    storel %t12, %t3
     jmp @inline_done3
-@after_inline_return7
+@after_inline_return4
     jmp @inline_done3
 @inline_done3
-    %t14 =l loadl %t3
-    %t15 =l add %t14, 8
-    %t16 =l loadl %t15
-    %t17 =w ceql %t16, 0
-    jnz %t17, @retain_skip9, @retain8
-@retain8
-    %t18 =l sub %t16, 8
-    %t19 =l loadl %t18
-    %t20 =l add %t19, 1
-    storel %t20, %t18
-    jmp @retain_done10
-@retain_skip9
-    jmp @retain_done10
-@retain_done10
-    %t21 =w ceql %t14, 0
-    jnz %t21, @release_skip12, @release11
+    %t15 =l loadl %t3
+    %t16 =l add %t15, 8
+    %t17 =l loadl %t16
+    %t18 =w ceql %t17, 0
+    jnz %t18, @retain_skip6, @retain5
+@retain5
+    %t19 =l sub %t17, 8
+    %t20 =l loadl %t19
+    %t21 =l add %t20, 1
+    storel %t21, %t19
+    jmp @retain_done7
+@retain_skip6
+    jmp @retain_done7
+@retain_done7
+    %t22 =w ceql %t15, 0
+    jnz %t22, @release_skip9, @release8
+@release8
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t15, l $Car_release)
+    jmp @release_done10
+@release_skip9
+    jmp @release_done10
+@release_done10
+    %t23 =l add %t17, 8
+    %t24 =l loadl %t23
+    %t25 =w ceql %t17, 0
+    jnz %t25, @release_skip12, @release11
 @release11
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t14, l $Car_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t17, l $Engine_release)
     jmp @release_done13
 @release_skip12
     jmp @release_done13
 @release_done13
-    %t22 =l add %t16, 8
-    %t23 =l loadl %t22
-    %t24 =w ceql %t16, 0
-    jnz %t24, @release_skip15, @release14
-@release14
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t16, l $Engine_release)
-    jmp @release_done16
-@release_skip15
-    jmp @release_done16
-@release_done16
-    %t25 =l add %t6, %t23
-    storel %t25, %t1
-    %t26 =l loadl %t0
-    %t27 =l add %t26, 1
-    storel %t27, %t0
+    %t26 =l add %t6, %t24
+    storel %t26, %t1
+    %t27 =l loadl %t0
+    %t28 =l add %t27, 1
+    storel %t28, %t0
     jmp @while_cond0
 @while_end2
-    %t28 =l loadl %t1
-    call $printf(l $fmt_int, ..., l %t28)
+    %t29 =l loadl %t1
+    call $printf(l $fmt_int, ..., l %t29)
     call $nox_runtime_deinit(l %rt)
-@fn_end17
+@fn_end14
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

@@ -1515,39 +1515,40 @@ export function w $main(w %argc, l %argv) {
     storel 2, %t4
     %t5 =l add %t4, 8
     storel 0, %t5
-    call $Adder___init__(l %rt, l %t4, l 10)
-    %t6 =l loadl %t0
-    %t7 =w ceql %t6, 0
-    jnz %t7, @release_skip1, @release0
+    %t6 =l add %t4, 8
+    storel 10, %t6
+    %t7 =l loadl %t0
+    %t8 =w ceql %t7, 0
+    jnz %t8, @release_skip1, @release0
 @release0
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t6, l $Adder_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t7, l $Adder_release)
     jmp @release_done2
 @release_skip1
     jmp @release_done2
 @release_done2
     storel 0, %t0
     storel %t4, %t0
-    %t8 =l loadl %t0
-    %t9 =l call $Adder_double_inc(l %rt, l %t8, l 5)
-    call $printf(l $fmt_int, ..., l %t9)
-    %t10 =l loadl %t0
-    storel %t10, %t1
+    %t9 =l loadl %t0
+    %t10 =l call $Adder_double_inc(l %rt, l %t9, l 5)
+    call $printf(l $fmt_int, ..., l %t10)
+    %t11 =l loadl %t0
+    storel %t11, %t1
     storel 3, %t2
-    %t11 =l loadl %t1
-    %t12 =l loadl %t2
-    %t13 =l call $Adder_double_inc(l %rt, l %t11, l %t12)
-    storel %t13, %t3
+    %t12 =l loadl %t1
+    %t13 =l loadl %t2
+    %t14 =l call $Adder_double_inc(l %rt, l %t12, l %t13)
+    storel %t14, %t3
     jmp @inline_done3
 @after_inline_return4
     jmp @inline_done3
 @inline_done3
-    %t14 =l loadl %t3
-    call $printf(l $fmt_int, ..., l %t14)
-    %t15 =l loadl %t0
-    %t16 =w ceql %t15, 0
-    jnz %t16, @release_skip6, @release5
+    %t15 =l loadl %t3
+    call $printf(l $fmt_int, ..., l %t15)
+    %t16 =l loadl %t0
+    %t17 =w ceql %t16, 0
+    jnz %t17, @release_skip6, @release5
 @release5
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t15, l $Adder_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t16, l $Adder_release)
     jmp @release_done7
 @release_skip6
     jmp @release_done7

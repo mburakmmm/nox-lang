@@ -1524,7 +1524,8 @@ export function l $nox_testmod_make_counter(l %rt, l %p_start) {
     storel 2, %t2
     %t3 =l add %t2, 8
     storel 0, %t3
-    call $nox_testmod_Counter___init__(l %rt, l %t2, l %t1)
+    %t4 =l add %t2, 8
+    storel %t1, %t4
     ret %t2
 @after_return0
 @fn_end1
@@ -1569,23 +1570,24 @@ export function w $main(w %argc, l %argv) {
     storel 2, %t14
     %t15 =l add %t14, 8
     storel 0, %t15
-    call $nox_testmod_Counter___init__(l %rt, l %t14, l %t13)
+    %t16 =l add %t14, 8
+    storel %t13, %t16
     storel %t14, %t5
     jmp @inline_done4
 @after_inline_return5
     jmp @inline_done4
 @inline_done4
-    %t16 =l loadl %t5
-    %t17 =l call $nox_testmod_Counter_increment(l %rt, l %t16)
-    %t18 =w ceql %t16, 0
-    jnz %t18, @release_skip7, @release6
+    %t17 =l loadl %t5
+    %t18 =l call $nox_testmod_Counter_increment(l %rt, l %t17)
+    %t19 =w ceql %t17, 0
+    jnz %t19, @release_skip7, @release6
 @release6
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t16, l $nox_testmod_Counter_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t17, l $nox_testmod_Counter_release)
     jmp @release_done8
 @release_skip7
     jmp @release_done8
 @release_done8
-    call $printf(l $fmt_int, ..., l %t17)
+    call $printf(l $fmt_int, ..., l %t18)
     call $nox_runtime_deinit(l %rt)
 @fn_end9
     ret 0

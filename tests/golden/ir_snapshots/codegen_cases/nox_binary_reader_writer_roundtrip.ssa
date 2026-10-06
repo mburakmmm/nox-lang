@@ -9653,441 +9653,439 @@ export function w $main(w %argc, l %argv) {
     storel 0, %t12
     %t13 =l add %t11, 16
     storel 0, %t13
-    call $nox_binary_BinaryWriter___init__(l %rt, l %t11, l %t10)
-    %t14 =l loadl %t1
-    %t15 =w ceql %t14, 0
-    jnz %t15, @release_skip11, @release10
-@release10
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t14, l $nox_binary_BinaryWriter_release)
-    jmp @release_done12
-@release_skip11
-    jmp @release_done12
-@release_done12
+    %t14 =l add %t11, 8
+    %t15 =w ceql %t10, 0
+    jnz %t15, @retain_skip11, @retain10
+@retain10
+    %t16 =l sub %t10, 8
+    %t17 =l loadl %t16
+    %t18 =l add %t17, 1
+    storel %t18, %t16
+    jmp @retain_done12
+@retain_skip11
+    jmp @retain_done12
+@retain_done12
+    storel %t10, %t14
+    %t19 =l add %t11, 16
+    storel 0, %t19
+    %t20 =l loadl %t1
+    %t21 =w ceql %t20, 0
+    jnz %t21, @release_skip14, @release13
+@release13
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t20, l $nox_binary_BinaryWriter_release)
+    jmp @release_done15
+@release_skip14
+    jmp @release_done15
+@release_done15
     storel 0, %t1
     storel %t11, %t1
-    %t16 =l loadl %t1
-    %t17 =w csltl 200, 0
-    %t18 =w csgtl 200, 255
-    %t19 =w or %t17, %t18
-    jnz %t19, @ovf_trap13, @ovf_ok14
-@ovf_trap13
+    %t22 =l loadl %t1
+    %t23 =w csltl 200, 0
+    %t24 =w csgtl 200, 255
+    %t25 =w or %t23, %t24
+    jnz %t25, @ovf_trap16, @ovf_ok17
+@ovf_trap16
     call $nox_int_overflow_trap(l %rt, l $fmt_lit177)
     ret 0
-@ovf_ok14
-    %t20 =w copy 200
-    call $nox_binary_BinaryWriter_write_u8(l %rt, l %t16, w %t20)
-    %t21 =w call $nox_exception_pending(l %rt)
-    jnz %t21, @exc_propagate15, @exc_continue16
-@exc_propagate15
+@ovf_ok17
+    %t26 =w copy 200
+    call $nox_binary_BinaryWriter_write_u8(l %rt, l %t22, w %t26)
+    %t27 =w call $nox_exception_pending(l %rt)
+    jnz %t27, @exc_propagate18, @exc_continue19
+@exc_propagate18
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue16
-    %t22 =l loadl %t1
-    %t23 =l neg 5
-    %t24 =w csltl %t23, -128
-    %t25 =w csgtl %t23, 127
-    %t26 =w or %t24, %t25
-    jnz %t26, @ovf_trap17, @ovf_ok18
-@ovf_trap17
+@exc_continue19
+    %t28 =l loadl %t1
+    %t29 =l neg 5
+    %t30 =w csltl %t29, -128
+    %t31 =w csgtl %t29, 127
+    %t32 =w or %t30, %t31
+    jnz %t32, @ovf_trap20, @ovf_ok21
+@ovf_trap20
     call $nox_int_overflow_trap(l %rt, l $fmt_lit178)
     ret 0
-@ovf_ok18
-    %t27 =w copy %t23
-    call $nox_binary_BinaryWriter_write_i8(l %rt, l %t22, w %t27)
-    %t28 =w call $nox_exception_pending(l %rt)
-    jnz %t28, @exc_propagate19, @exc_continue20
-@exc_propagate19
+@ovf_ok21
+    %t33 =w copy %t29
+    call $nox_binary_BinaryWriter_write_i8(l %rt, l %t28, w %t33)
+    %t34 =w call $nox_exception_pending(l %rt)
+    jnz %t34, @exc_propagate22, @exc_continue23
+@exc_propagate22
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue20
-    %t29 =l loadl %t1
-    %t30 =l neg 128
-    %t31 =w csltl %t30, -128
-    %t32 =w csgtl %t30, 127
-    %t33 =w or %t31, %t32
-    jnz %t33, @ovf_trap21, @ovf_ok22
-@ovf_trap21
+@exc_continue23
+    %t35 =l loadl %t1
+    %t36 =l neg 128
+    %t37 =w csltl %t36, -128
+    %t38 =w csgtl %t36, 127
+    %t39 =w or %t37, %t38
+    jnz %t39, @ovf_trap24, @ovf_ok25
+@ovf_trap24
     call $nox_int_overflow_trap(l %rt, l $fmt_lit179)
     ret 0
-@ovf_ok22
-    %t34 =w copy %t30
-    call $nox_binary_BinaryWriter_write_i8(l %rt, l %t29, w %t34)
-    %t35 =w call $nox_exception_pending(l %rt)
-    jnz %t35, @exc_propagate23, @exc_continue24
-@exc_propagate23
+@ovf_ok25
+    %t40 =w copy %t36
+    call $nox_binary_BinaryWriter_write_i8(l %rt, l %t35, w %t40)
+    %t41 =w call $nox_exception_pending(l %rt)
+    jnz %t41, @exc_propagate26, @exc_continue27
+@exc_propagate26
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue24
-    %t36 =l loadl %t1
-    %t37 =w csltl 127, -128
-    %t38 =w csgtl 127, 127
-    %t39 =w or %t37, %t38
-    jnz %t39, @ovf_trap25, @ovf_ok26
-@ovf_trap25
+@exc_continue27
+    %t42 =l loadl %t1
+    %t43 =w csltl 127, -128
+    %t44 =w csgtl 127, 127
+    %t45 =w or %t43, %t44
+    jnz %t45, @ovf_trap28, @ovf_ok29
+@ovf_trap28
     call $nox_int_overflow_trap(l %rt, l $fmt_lit180)
     ret 0
-@ovf_ok26
-    %t40 =w copy 127
-    call $nox_binary_BinaryWriter_write_i8(l %rt, l %t36, w %t40)
-    %t41 =w call $nox_exception_pending(l %rt)
-    jnz %t41, @exc_propagate27, @exc_continue28
-@exc_propagate27
-    call $nox_unhandled_exception(l %rt)
-    ret 0
-@exc_continue28
-    %t42 =l loadl %t1
-    %t43 =w csltl 4660, 0
-    %t44 =w csgtl 4660, 65535
-    %t45 =w or %t43, %t44
-    jnz %t45, @ovf_trap29, @ovf_ok30
-@ovf_trap29
-    call $nox_int_overflow_trap(l %rt, l $fmt_lit181)
-    ret 0
-@ovf_ok30
-    %t46 =w copy 4660
-    call $nox_binary_BinaryWriter_write_u16_le(l %rt, l %t42, w %t46)
+@ovf_ok29
+    %t46 =w copy 127
+    call $nox_binary_BinaryWriter_write_i8(l %rt, l %t42, w %t46)
     %t47 =w call $nox_exception_pending(l %rt)
-    jnz %t47, @exc_propagate31, @exc_continue32
-@exc_propagate31
+    jnz %t47, @exc_propagate30, @exc_continue31
+@exc_propagate30
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue32
+@exc_continue31
     %t48 =l loadl %t1
     %t49 =w csltl 4660, 0
     %t50 =w csgtl 4660, 65535
     %t51 =w or %t49, %t50
-    jnz %t51, @ovf_trap33, @ovf_ok34
-@ovf_trap33
+    jnz %t51, @ovf_trap32, @ovf_ok33
+@ovf_trap32
+    call $nox_int_overflow_trap(l %rt, l $fmt_lit181)
+    ret 0
+@ovf_ok33
+    %t52 =w copy 4660
+    call $nox_binary_BinaryWriter_write_u16_le(l %rt, l %t48, w %t52)
+    %t53 =w call $nox_exception_pending(l %rt)
+    jnz %t53, @exc_propagate34, @exc_continue35
+@exc_propagate34
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue35
+    %t54 =l loadl %t1
+    %t55 =w csltl 4660, 0
+    %t56 =w csgtl 4660, 65535
+    %t57 =w or %t55, %t56
+    jnz %t57, @ovf_trap36, @ovf_ok37
+@ovf_trap36
     call $nox_int_overflow_trap(l %rt, l $fmt_lit182)
     ret 0
-@ovf_ok34
-    %t52 =w copy 4660
-    call $nox_binary_BinaryWriter_write_u16_be(l %rt, l %t48, w %t52)
-    %t53 =w call $nox_exception_pending(l %rt)
-    jnz %t53, @exc_propagate35, @exc_continue36
-@exc_propagate35
+@ovf_ok37
+    %t58 =w copy 4660
+    call $nox_binary_BinaryWriter_write_u16_be(l %rt, l %t54, w %t58)
+    %t59 =w call $nox_exception_pending(l %rt)
+    jnz %t59, @exc_propagate38, @exc_continue39
+@exc_propagate38
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue36
-    %t54 =l loadl %t1
-    %t55 =l neg 1
-    %t56 =w csltl %t55, -32768
-    %t57 =w csgtl %t55, 32767
-    %t58 =w or %t56, %t57
-    jnz %t58, @ovf_trap37, @ovf_ok38
-@ovf_trap37
+@exc_continue39
+    %t60 =l loadl %t1
+    %t61 =l neg 1
+    %t62 =w csltl %t61, -32768
+    %t63 =w csgtl %t61, 32767
+    %t64 =w or %t62, %t63
+    jnz %t64, @ovf_trap40, @ovf_ok41
+@ovf_trap40
     call $nox_int_overflow_trap(l %rt, l $fmt_lit183)
     ret 0
-@ovf_ok38
-    %t59 =w copy %t55
-    call $nox_binary_BinaryWriter_write_i16_le(l %rt, l %t54, w %t59)
-    %t60 =w call $nox_exception_pending(l %rt)
-    jnz %t60, @exc_propagate39, @exc_continue40
-@exc_propagate39
+@ovf_ok41
+    %t65 =w copy %t61
+    call $nox_binary_BinaryWriter_write_i16_le(l %rt, l %t60, w %t65)
+    %t66 =w call $nox_exception_pending(l %rt)
+    jnz %t66, @exc_propagate42, @exc_continue43
+@exc_propagate42
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue40
-    %t61 =l loadl %t1
-    %t62 =l neg 32768
-    %t63 =w csltl %t62, -32768
-    %t64 =w csgtl %t62, 32767
-    %t65 =w or %t63, %t64
-    jnz %t65, @ovf_trap41, @ovf_ok42
-@ovf_trap41
+@exc_continue43
+    %t67 =l loadl %t1
+    %t68 =l neg 32768
+    %t69 =w csltl %t68, -32768
+    %t70 =w csgtl %t68, 32767
+    %t71 =w or %t69, %t70
+    jnz %t71, @ovf_trap44, @ovf_ok45
+@ovf_trap44
     call $nox_int_overflow_trap(l %rt, l $fmt_lit184)
     ret 0
-@ovf_ok42
-    %t66 =w copy %t62
-    call $nox_binary_BinaryWriter_write_i16_le(l %rt, l %t61, w %t66)
-    %t67 =w call $nox_exception_pending(l %rt)
-    jnz %t67, @exc_propagate43, @exc_continue44
-@exc_propagate43
+@ovf_ok45
+    %t72 =w copy %t68
+    call $nox_binary_BinaryWriter_write_i16_le(l %rt, l %t67, w %t72)
+    %t73 =w call $nox_exception_pending(l %rt)
+    jnz %t73, @exc_propagate46, @exc_continue47
+@exc_propagate46
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue44
-    %t68 =l loadl %t1
-    %t69 =w csltl 32767, -32768
-    %t70 =w csgtl 32767, 32767
-    %t71 =w or %t69, %t70
-    jnz %t71, @ovf_trap45, @ovf_ok46
-@ovf_trap45
+@exc_continue47
+    %t74 =l loadl %t1
+    %t75 =w csltl 32767, -32768
+    %t76 =w csgtl 32767, 32767
+    %t77 =w or %t75, %t76
+    jnz %t77, @ovf_trap48, @ovf_ok49
+@ovf_trap48
     call $nox_int_overflow_trap(l %rt, l $fmt_lit185)
     ret 0
-@ovf_ok46
-    %t72 =w copy 32767
-    call $nox_binary_BinaryWriter_write_i16_be(l %rt, l %t68, w %t72)
-    %t73 =w call $nox_exception_pending(l %rt)
-    jnz %t73, @exc_propagate47, @exc_continue48
-@exc_propagate47
-    call $nox_unhandled_exception(l %rt)
-    ret 0
-@exc_continue48
-    %t74 =l loadl %t1
-    %t75 =w csltl 305419896, 0
-    %t76 =w csgtl 305419896, 4294967295
-    %t77 =w or %t75, %t76
-    jnz %t77, @ovf_trap49, @ovf_ok50
-@ovf_trap49
-    call $nox_int_overflow_trap(l %rt, l $fmt_lit186)
-    ret 0
-@ovf_ok50
-    %t78 =w copy 305419896
-    call $nox_binary_BinaryWriter_write_u32_le(l %rt, l %t74, w %t78)
+@ovf_ok49
+    %t78 =w copy 32767
+    call $nox_binary_BinaryWriter_write_i16_be(l %rt, l %t74, w %t78)
     %t79 =w call $nox_exception_pending(l %rt)
-    jnz %t79, @exc_propagate51, @exc_continue52
-@exc_propagate51
+    jnz %t79, @exc_propagate50, @exc_continue51
+@exc_propagate50
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue52
+@exc_continue51
     %t80 =l loadl %t1
     %t81 =w csltl 305419896, 0
     %t82 =w csgtl 305419896, 4294967295
     %t83 =w or %t81, %t82
-    jnz %t83, @ovf_trap53, @ovf_ok54
-@ovf_trap53
+    jnz %t83, @ovf_trap52, @ovf_ok53
+@ovf_trap52
+    call $nox_int_overflow_trap(l %rt, l $fmt_lit186)
+    ret 0
+@ovf_ok53
+    %t84 =w copy 305419896
+    call $nox_binary_BinaryWriter_write_u32_le(l %rt, l %t80, w %t84)
+    %t85 =w call $nox_exception_pending(l %rt)
+    jnz %t85, @exc_propagate54, @exc_continue55
+@exc_propagate54
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue55
+    %t86 =l loadl %t1
+    %t87 =w csltl 305419896, 0
+    %t88 =w csgtl 305419896, 4294967295
+    %t89 =w or %t87, %t88
+    jnz %t89, @ovf_trap56, @ovf_ok57
+@ovf_trap56
     call $nox_int_overflow_trap(l %rt, l $fmt_lit187)
     ret 0
-@ovf_ok54
-    %t84 =w copy 305419896
-    call $nox_binary_BinaryWriter_write_u32_be(l %rt, l %t80, w %t84)
-    %t85 =w call $nox_exception_pending(l %rt)
-    jnz %t85, @exc_propagate55, @exc_continue56
-@exc_propagate55
+@ovf_ok57
+    %t90 =w copy 305419896
+    call $nox_binary_BinaryWriter_write_u32_be(l %rt, l %t86, w %t90)
+    %t91 =w call $nox_exception_pending(l %rt)
+    jnz %t91, @exc_propagate58, @exc_continue59
+@exc_propagate58
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue56
-    %t86 =l loadl %t1
-    %t87 =l neg 1
-    %t88 =w csltl %t87, -2147483648
-    %t89 =w csgtl %t87, 2147483647
-    %t90 =w or %t88, %t89
-    jnz %t90, @ovf_trap57, @ovf_ok58
-@ovf_trap57
+@exc_continue59
+    %t92 =l loadl %t1
+    %t93 =l neg 1
+    %t94 =w csltl %t93, -2147483648
+    %t95 =w csgtl %t93, 2147483647
+    %t96 =w or %t94, %t95
+    jnz %t96, @ovf_trap60, @ovf_ok61
+@ovf_trap60
     call $nox_int_overflow_trap(l %rt, l $fmt_lit188)
     ret 0
-@ovf_ok58
-    %t91 =w copy %t87
-    call $nox_binary_BinaryWriter_write_i32_le(l %rt, l %t86, w %t91)
-    %t92 =w call $nox_exception_pending(l %rt)
-    jnz %t92, @exc_propagate59, @exc_continue60
-@exc_propagate59
+@ovf_ok61
+    %t97 =w copy %t93
+    call $nox_binary_BinaryWriter_write_i32_le(l %rt, l %t92, w %t97)
+    %t98 =w call $nox_exception_pending(l %rt)
+    jnz %t98, @exc_propagate62, @exc_continue63
+@exc_propagate62
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue60
-    %t93 =l loadl %t1
-    %t94 =l neg 2147483648
-    %t95 =w csltl %t94, -2147483648
-    %t96 =w csgtl %t94, 2147483647
-    %t97 =w or %t95, %t96
-    jnz %t97, @ovf_trap61, @ovf_ok62
-@ovf_trap61
+@exc_continue63
+    %t99 =l loadl %t1
+    %t100 =l neg 2147483648
+    %t101 =w csltl %t100, -2147483648
+    %t102 =w csgtl %t100, 2147483647
+    %t103 =w or %t101, %t102
+    jnz %t103, @ovf_trap64, @ovf_ok65
+@ovf_trap64
     call $nox_int_overflow_trap(l %rt, l $fmt_lit189)
     ret 0
-@ovf_ok62
-    %t98 =w copy %t94
-    call $nox_binary_BinaryWriter_write_i32_le(l %rt, l %t93, w %t98)
-    %t99 =w call $nox_exception_pending(l %rt)
-    jnz %t99, @exc_propagate63, @exc_continue64
-@exc_propagate63
+@ovf_ok65
+    %t104 =w copy %t100
+    call $nox_binary_BinaryWriter_write_i32_le(l %rt, l %t99, w %t104)
+    %t105 =w call $nox_exception_pending(l %rt)
+    jnz %t105, @exc_propagate66, @exc_continue67
+@exc_propagate66
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue64
-    %t100 =l loadl %t1
-    %t101 =w csltl 2147483647, -2147483648
-    %t102 =w csgtl 2147483647, 2147483647
-    %t103 =w or %t101, %t102
-    jnz %t103, @ovf_trap65, @ovf_ok66
-@ovf_trap65
+@exc_continue67
+    %t106 =l loadl %t1
+    %t107 =w csltl 2147483647, -2147483648
+    %t108 =w csgtl 2147483647, 2147483647
+    %t109 =w or %t107, %t108
+    jnz %t109, @ovf_trap68, @ovf_ok69
+@ovf_trap68
     call $nox_int_overflow_trap(l %rt, l $fmt_lit190)
     ret 0
-@ovf_ok66
-    %t104 =w copy 2147483647
-    call $nox_binary_BinaryWriter_write_i32_be(l %rt, l %t100, w %t104)
-    %t105 =w call $nox_exception_pending(l %rt)
-    jnz %t105, @exc_propagate67, @exc_continue68
-@exc_propagate67
+@ovf_ok69
+    %t110 =w copy 2147483647
+    call $nox_binary_BinaryWriter_write_i32_be(l %rt, l %t106, w %t110)
+    %t111 =w call $nox_exception_pending(l %rt)
+    jnz %t111, @exc_propagate70, @exc_continue71
+@exc_propagate70
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue68
-    %t106 =l loadl %t1
-    %t107 =w csltl 1, 0
-    jnz %t107, @ovf_trap69, @ovf_ok70
-@ovf_trap69
+@exc_continue71
+    %t112 =l loadl %t1
+    %t113 =w csltl 1, 0
+    jnz %t113, @ovf_trap72, @ovf_ok73
+@ovf_trap72
     call $nox_int_overflow_trap(l %rt, l $fmt_lit191)
     ret 0
-@ovf_ok70
-    call $nox_binary_BinaryWriter_write_u64_le(l %rt, l %t106, l 1)
-    %t108 =w call $nox_exception_pending(l %rt)
-    jnz %t108, @exc_propagate71, @exc_continue72
-@exc_propagate71
+@ovf_ok73
+    call $nox_binary_BinaryWriter_write_u64_le(l %rt, l %t112, l 1)
+    %t114 =w call $nox_exception_pending(l %rt)
+    jnz %t114, @exc_propagate74, @exc_continue75
+@exc_propagate74
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue72
-    %t109 =l loadl %t1
-    %t110 =w csltl 1, 0
-    jnz %t110, @ovf_trap73, @ovf_ok74
-@ovf_trap73
+@exc_continue75
+    %t115 =l loadl %t1
+    %t116 =w csltl 1, 0
+    jnz %t116, @ovf_trap76, @ovf_ok77
+@ovf_trap76
     call $nox_int_overflow_trap(l %rt, l $fmt_lit192)
     ret 0
-@ovf_ok74
-    call $nox_binary_BinaryWriter_write_u64_be(l %rt, l %t109, l 1)
-    %t111 =w call $nox_exception_pending(l %rt)
-    jnz %t111, @exc_propagate75, @exc_continue76
-@exc_propagate75
-    call $nox_unhandled_exception(l %rt)
-    ret 0
-@exc_continue76
-    %t112 =l loadl %t1
-    %t113 =l neg 1
-    %t114 =w csltl %t113, -9223372036854775808
-    %t115 =w csgtl %t113, 9223372036854775807
-    %t116 =w or %t114, %t115
-    jnz %t116, @ovf_trap77, @ovf_ok78
-@ovf_trap77
-    call $nox_int_overflow_trap(l %rt, l $fmt_lit193)
-    ret 0
-@ovf_ok78
-    call $nox_binary_BinaryWriter_write_i64_le(l %rt, l %t112, l %t113)
+@ovf_ok77
+    call $nox_binary_BinaryWriter_write_u64_be(l %rt, l %t115, l 1)
     %t117 =w call $nox_exception_pending(l %rt)
-    jnz %t117, @exc_propagate79, @exc_continue80
-@exc_propagate79
+    jnz %t117, @exc_propagate78, @exc_continue79
+@exc_propagate78
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue80
+@exc_continue79
     %t118 =l loadl %t1
-    %t119 =l neg 9223372036854775807
+    %t119 =l neg 1
     %t120 =w csltl %t119, -9223372036854775808
     %t121 =w csgtl %t119, 9223372036854775807
     %t122 =w or %t120, %t121
-    jnz %t122, @ovf_trap81, @ovf_ok82
-@ovf_trap81
+    jnz %t122, @ovf_trap80, @ovf_ok81
+@ovf_trap80
+    call $nox_int_overflow_trap(l %rt, l $fmt_lit193)
+    ret 0
+@ovf_ok81
+    call $nox_binary_BinaryWriter_write_i64_le(l %rt, l %t118, l %t119)
+    %t123 =w call $nox_exception_pending(l %rt)
+    jnz %t123, @exc_propagate82, @exc_continue83
+@exc_propagate82
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue83
+    %t124 =l loadl %t1
+    %t125 =l neg 9223372036854775807
+    %t126 =w csltl %t125, -9223372036854775808
+    %t127 =w csgtl %t125, 9223372036854775807
+    %t128 =w or %t126, %t127
+    jnz %t128, @ovf_trap84, @ovf_ok85
+@ovf_trap84
     call $nox_int_overflow_trap(l %rt, l $fmt_lit194)
     ret 0
-@ovf_ok82
-    %t123 =w csltl 1, -9223372036854775808
-    %t124 =w csgtl 1, 9223372036854775807
-    %t125 =w or %t123, %t124
-    jnz %t125, @ovf_trap83, @ovf_ok84
-@ovf_trap83
+@ovf_ok85
+    %t129 =w csltl 1, -9223372036854775808
+    %t130 =w csgtl 1, 9223372036854775807
+    %t131 =w or %t129, %t130
+    jnz %t131, @ovf_trap86, @ovf_ok87
+@ovf_trap86
     call $nox_int_overflow_trap(l %rt, l $fmt_lit195)
     ret 0
-@ovf_ok84
-    %t126 =l sub %t119, 1
-    %t128 =w csltl %t119, 0
-    %t129 =w csltl 1, 0
-    %t130 =w cnew %t128, %t129
-    %t131 =w csltl %t126, 0
-    %t132 =w cnew %t128, %t131
-    %t127 =w and %t130, %t132
-    jnz %t127, @ovf_trap85, @ovf_ok86
-@ovf_trap85
+@ovf_ok87
+    %t132 =l sub %t125, 1
+    %t134 =w csltl %t125, 0
+    %t135 =w csltl 1, 0
+    %t136 =w cnew %t134, %t135
+    %t137 =w csltl %t132, 0
+    %t138 =w cnew %t134, %t137
+    %t133 =w and %t136, %t138
+    jnz %t133, @ovf_trap88, @ovf_ok89
+@ovf_trap88
     call $nox_int_overflow_trap(l %rt, l $fmt_lit196)
     ret 0
-@ovf_ok86
-    call $nox_binary_BinaryWriter_write_i64_le(l %rt, l %t118, l %t126)
-    %t133 =w call $nox_exception_pending(l %rt)
-    jnz %t133, @exc_propagate87, @exc_continue88
-@exc_propagate87
+@ovf_ok89
+    call $nox_binary_BinaryWriter_write_i64_le(l %rt, l %t124, l %t132)
+    %t139 =w call $nox_exception_pending(l %rt)
+    jnz %t139, @exc_propagate90, @exc_continue91
+@exc_propagate90
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue88
-    %t134 =l loadl %t1
-    %t135 =w csltl 9223372036854775807, -9223372036854775808
-    %t136 =w csgtl 9223372036854775807, 9223372036854775807
-    %t137 =w or %t135, %t136
-    jnz %t137, @ovf_trap89, @ovf_ok90
-@ovf_trap89
+@exc_continue91
+    %t140 =l loadl %t1
+    %t141 =w csltl 9223372036854775807, -9223372036854775808
+    %t142 =w csgtl 9223372036854775807, 9223372036854775807
+    %t143 =w or %t141, %t142
+    jnz %t143, @ovf_trap92, @ovf_ok93
+@ovf_trap92
     call $nox_int_overflow_trap(l %rt, l $fmt_lit197)
     ret 0
-@ovf_ok90
-    call $nox_binary_BinaryWriter_write_i64_be(l %rt, l %t134, l 9223372036854775807)
-    %t138 =w call $nox_exception_pending(l %rt)
-    jnz %t138, @exc_propagate91, @exc_continue92
-@exc_propagate91
+@ovf_ok93
+    call $nox_binary_BinaryWriter_write_i64_be(l %rt, l %t140, l 9223372036854775807)
+    %t144 =w call $nox_exception_pending(l %rt)
+    jnz %t144, @exc_propagate94, @exc_continue95
+@exc_propagate94
     call $nox_unhandled_exception(l %rt)
     ret 0
-@exc_continue92
-    %t139 =l loadl %t0
-    %t140 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 3, %t140
-    %t141 =l add %t140, 8
-    storel 0, %t141
-    %t142 =l add %t140, 16
-    storel 0, %t142
-    call $nox_binary_BinaryReader___init__(l %rt, l %t140, l %t139)
-    %t143 =l loadl %t2
-    %t144 =w ceql %t143, 0
-    jnz %t144, @release_skip94, @release93
-@release93
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t143, l $nox_binary_BinaryReader_release)
-    jmp @release_done95
-@release_skip94
-    jmp @release_done95
-@release_done95
+@exc_continue95
+    %t145 =l loadl %t0
+    %t146 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 3, %t146
+    %t147 =l add %t146, 8
+    storel 0, %t147
+    %t148 =l add %t146, 16
+    storel 0, %t148
+    %t149 =l add %t146, 8
+    %t150 =w ceql %t145, 0
+    jnz %t150, @retain_skip97, @retain96
+@retain96
+    %t151 =l sub %t145, 8
+    %t152 =l loadl %t151
+    %t153 =l add %t152, 1
+    storel %t153, %t151
+    jmp @retain_done98
+@retain_skip97
+    jmp @retain_done98
+@retain_done98
+    storel %t145, %t149
+    %t154 =l add %t146, 16
+    storel 0, %t154
+    %t155 =l loadl %t2
+    %t156 =w ceql %t155, 0
+    jnz %t156, @release_skip100, @release99
+@release99
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t155, l $nox_binary_BinaryReader_release)
+    jmp @release_done101
+@release_skip100
+    jmp @release_done101
+@release_done101
     storel 0, %t2
-    storel %t140, %t2
-    %t145 =l loadl %t2
-    %t146 =w call $nox_binary_BinaryReader_read_u8(l %rt, l %t145)
-    %t147 =w call $nox_exception_pending(l %rt)
-    jnz %t147, @exc_propagate96, @exc_continue97
-@exc_propagate96
-    call $nox_unhandled_exception(l %rt)
-    ret 0
-@exc_continue97
-    %t148 =l extuw %t146
-    call $printf(l $fmt_uint, ..., l %t148)
-    %t149 =l loadl %t2
-    %t150 =w call $nox_binary_BinaryReader_read_i8(l %rt, l %t149)
-    %t151 =w call $nox_exception_pending(l %rt)
-    jnz %t151, @exc_propagate98, @exc_continue99
-@exc_propagate98
-    call $nox_unhandled_exception(l %rt)
-    ret 0
-@exc_continue99
-    %t152 =l extsw %t150
-    call $printf(l $fmt_int, ..., l %t152)
-    %t153 =l loadl %t2
-    %t154 =w call $nox_binary_BinaryReader_read_i8(l %rt, l %t153)
-    %t155 =w call $nox_exception_pending(l %rt)
-    jnz %t155, @exc_propagate100, @exc_continue101
-@exc_propagate100
-    call $nox_unhandled_exception(l %rt)
-    ret 0
-@exc_continue101
-    %t156 =l extsw %t154
-    call $printf(l $fmt_int, ..., l %t156)
+    storel %t146, %t2
     %t157 =l loadl %t2
-    %t158 =w call $nox_binary_BinaryReader_read_i8(l %rt, l %t157)
+    %t158 =w call $nox_binary_BinaryReader_read_u8(l %rt, l %t157)
     %t159 =w call $nox_exception_pending(l %rt)
     jnz %t159, @exc_propagate102, @exc_continue103
 @exc_propagate102
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue103
-    %t160 =l extsw %t158
-    call $printf(l $fmt_int, ..., l %t160)
+    %t160 =l extuw %t158
+    call $printf(l $fmt_uint, ..., l %t160)
     %t161 =l loadl %t2
-    %t162 =w call $nox_binary_BinaryReader_read_u16_le(l %rt, l %t161)
+    %t162 =w call $nox_binary_BinaryReader_read_i8(l %rt, l %t161)
     %t163 =w call $nox_exception_pending(l %rt)
     jnz %t163, @exc_propagate104, @exc_continue105
 @exc_propagate104
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue105
-    %t164 =l extuw %t162
-    call $printf(l $fmt_uint, ..., l %t164)
+    %t164 =l extsw %t162
+    call $printf(l $fmt_int, ..., l %t164)
     %t165 =l loadl %t2
-    %t166 =w call $nox_binary_BinaryReader_read_u16_be(l %rt, l %t165)
+    %t166 =w call $nox_binary_BinaryReader_read_i8(l %rt, l %t165)
     %t167 =w call $nox_exception_pending(l %rt)
     jnz %t167, @exc_propagate106, @exc_continue107
 @exc_propagate106
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue107
-    %t168 =l extuw %t166
-    call $printf(l $fmt_uint, ..., l %t168)
+    %t168 =l extsw %t166
+    call $printf(l $fmt_int, ..., l %t168)
     %t169 =l loadl %t2
-    %t170 =w call $nox_binary_BinaryReader_read_i16_le(l %rt, l %t169)
+    %t170 =w call $nox_binary_BinaryReader_read_i8(l %rt, l %t169)
     %t171 =w call $nox_exception_pending(l %rt)
     jnz %t171, @exc_propagate108, @exc_continue109
 @exc_propagate108
@@ -10097,47 +10095,47 @@ export function w $main(w %argc, l %argv) {
     %t172 =l extsw %t170
     call $printf(l $fmt_int, ..., l %t172)
     %t173 =l loadl %t2
-    %t174 =w call $nox_binary_BinaryReader_read_i16_le(l %rt, l %t173)
+    %t174 =w call $nox_binary_BinaryReader_read_u16_le(l %rt, l %t173)
     %t175 =w call $nox_exception_pending(l %rt)
     jnz %t175, @exc_propagate110, @exc_continue111
 @exc_propagate110
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue111
-    %t176 =l extsw %t174
-    call $printf(l $fmt_int, ..., l %t176)
+    %t176 =l extuw %t174
+    call $printf(l $fmt_uint, ..., l %t176)
     %t177 =l loadl %t2
-    %t178 =w call $nox_binary_BinaryReader_read_i16_be(l %rt, l %t177)
+    %t178 =w call $nox_binary_BinaryReader_read_u16_be(l %rt, l %t177)
     %t179 =w call $nox_exception_pending(l %rt)
     jnz %t179, @exc_propagate112, @exc_continue113
 @exc_propagate112
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue113
-    %t180 =l extsw %t178
-    call $printf(l $fmt_int, ..., l %t180)
+    %t180 =l extuw %t178
+    call $printf(l $fmt_uint, ..., l %t180)
     %t181 =l loadl %t2
-    %t182 =w call $nox_binary_BinaryReader_read_u32_le(l %rt, l %t181)
+    %t182 =w call $nox_binary_BinaryReader_read_i16_le(l %rt, l %t181)
     %t183 =w call $nox_exception_pending(l %rt)
     jnz %t183, @exc_propagate114, @exc_continue115
 @exc_propagate114
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue115
-    %t184 =l extuw %t182
-    call $printf(l $fmt_uint, ..., l %t184)
+    %t184 =l extsw %t182
+    call $printf(l $fmt_int, ..., l %t184)
     %t185 =l loadl %t2
-    %t186 =w call $nox_binary_BinaryReader_read_u32_be(l %rt, l %t185)
+    %t186 =w call $nox_binary_BinaryReader_read_i16_le(l %rt, l %t185)
     %t187 =w call $nox_exception_pending(l %rt)
     jnz %t187, @exc_propagate116, @exc_continue117
 @exc_propagate116
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue117
-    %t188 =l extuw %t186
-    call $printf(l $fmt_uint, ..., l %t188)
+    %t188 =l extsw %t186
+    call $printf(l $fmt_int, ..., l %t188)
     %t189 =l loadl %t2
-    %t190 =w call $nox_binary_BinaryReader_read_i32_le(l %rt, l %t189)
+    %t190 =w call $nox_binary_BinaryReader_read_i16_be(l %rt, l %t189)
     %t191 =w call $nox_exception_pending(l %rt)
     jnz %t191, @exc_propagate118, @exc_continue119
 @exc_propagate118
@@ -10147,114 +10145,144 @@ export function w $main(w %argc, l %argv) {
     %t192 =l extsw %t190
     call $printf(l $fmt_int, ..., l %t192)
     %t193 =l loadl %t2
-    %t194 =w call $nox_binary_BinaryReader_read_i32_le(l %rt, l %t193)
+    %t194 =w call $nox_binary_BinaryReader_read_u32_le(l %rt, l %t193)
     %t195 =w call $nox_exception_pending(l %rt)
     jnz %t195, @exc_propagate120, @exc_continue121
 @exc_propagate120
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue121
-    %t196 =l extsw %t194
-    call $printf(l $fmt_int, ..., l %t196)
+    %t196 =l extuw %t194
+    call $printf(l $fmt_uint, ..., l %t196)
     %t197 =l loadl %t2
-    %t198 =w call $nox_binary_BinaryReader_read_i32_be(l %rt, l %t197)
+    %t198 =w call $nox_binary_BinaryReader_read_u32_be(l %rt, l %t197)
     %t199 =w call $nox_exception_pending(l %rt)
     jnz %t199, @exc_propagate122, @exc_continue123
 @exc_propagate122
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue123
-    %t200 =l extsw %t198
-    call $printf(l $fmt_int, ..., l %t200)
+    %t200 =l extuw %t198
+    call $printf(l $fmt_uint, ..., l %t200)
     %t201 =l loadl %t2
-    %t202 =l call $nox_binary_BinaryReader_read_u64_le(l %rt, l %t201)
+    %t202 =w call $nox_binary_BinaryReader_read_i32_le(l %rt, l %t201)
     %t203 =w call $nox_exception_pending(l %rt)
     jnz %t203, @exc_propagate124, @exc_continue125
 @exc_propagate124
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue125
-    call $printf(l $fmt_uint, ..., l %t202)
-    %t204 =l loadl %t2
-    %t205 =l call $nox_binary_BinaryReader_read_u64_be(l %rt, l %t204)
-    %t206 =w call $nox_exception_pending(l %rt)
-    jnz %t206, @exc_propagate126, @exc_continue127
+    %t204 =l extsw %t202
+    call $printf(l $fmt_int, ..., l %t204)
+    %t205 =l loadl %t2
+    %t206 =w call $nox_binary_BinaryReader_read_i32_le(l %rt, l %t205)
+    %t207 =w call $nox_exception_pending(l %rt)
+    jnz %t207, @exc_propagate126, @exc_continue127
 @exc_propagate126
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue127
-    call $printf(l $fmt_uint, ..., l %t205)
-    %t207 =l loadl %t2
-    %t208 =l call $nox_binary_BinaryReader_read_i64_le(l %rt, l %t207)
-    %t209 =w call $nox_exception_pending(l %rt)
-    jnz %t209, @exc_propagate128, @exc_continue129
+    %t208 =l extsw %t206
+    call $printf(l $fmt_int, ..., l %t208)
+    %t209 =l loadl %t2
+    %t210 =w call $nox_binary_BinaryReader_read_i32_be(l %rt, l %t209)
+    %t211 =w call $nox_exception_pending(l %rt)
+    jnz %t211, @exc_propagate128, @exc_continue129
 @exc_propagate128
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue129
-    call $printf(l $fmt_int, ..., l %t208)
-    %t210 =l loadl %t2
-    %t211 =l call $nox_binary_BinaryReader_read_i64_le(l %rt, l %t210)
-    %t212 =w call $nox_exception_pending(l %rt)
-    jnz %t212, @exc_propagate130, @exc_continue131
+    %t212 =l extsw %t210
+    call $printf(l $fmt_int, ..., l %t212)
+    %t213 =l loadl %t2
+    %t214 =l call $nox_binary_BinaryReader_read_u64_le(l %rt, l %t213)
+    %t215 =w call $nox_exception_pending(l %rt)
+    jnz %t215, @exc_propagate130, @exc_continue131
 @exc_propagate130
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue131
-    call $printf(l $fmt_int, ..., l %t211)
-    %t213 =l loadl %t2
-    %t214 =l call $nox_binary_BinaryReader_read_i64_be(l %rt, l %t213)
-    %t215 =w call $nox_exception_pending(l %rt)
-    jnz %t215, @exc_propagate132, @exc_continue133
+    call $printf(l $fmt_uint, ..., l %t214)
+    %t216 =l loadl %t2
+    %t217 =l call $nox_binary_BinaryReader_read_u64_be(l %rt, l %t216)
+    %t218 =w call $nox_exception_pending(l %rt)
+    jnz %t218, @exc_propagate132, @exc_continue133
 @exc_propagate132
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue133
-    call $printf(l $fmt_int, ..., l %t214)
-    %t216 =l loadl %t2
-    %t217 =l call $nox_binary_BinaryReader_position(l %rt, l %t216)
-    call $printf(l $fmt_int, ..., l %t217)
-    %t218 =l loadl %t2
-    %t219 =l call $nox_binary_BinaryReader_remaining(l %rt, l %t218)
-    %t220 =w call $nox_exception_pending(l %rt)
-    jnz %t220, @exc_propagate134, @exc_continue135
+    call $printf(l $fmt_uint, ..., l %t217)
+    %t219 =l loadl %t2
+    %t220 =l call $nox_binary_BinaryReader_read_i64_le(l %rt, l %t219)
+    %t221 =w call $nox_exception_pending(l %rt)
+    jnz %t221, @exc_propagate134, @exc_continue135
 @exc_propagate134
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue135
-    call $printf(l $fmt_int, ..., l %t219)
-    %t221 =l loadl %t2
-    %t222 =w ceql %t221, 0
-    jnz %t222, @release_skip137, @release136
-@release136
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t221, l $nox_binary_BinaryReader_release)
-    jmp @release_done138
-@release_skip137
-    jmp @release_done138
-@release_done138
-    storel 0, %t2
-    %t223 =l loadl %t0
-    %t224 =w ceql %t223, 0
-    jnz %t224, @release_skip140, @release139
-@release139
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t223, l $nox_buffer_Buffer_release)
-    jmp @release_done141
-@release_skip140
-    jmp @release_done141
-@release_done141
-    storel 0, %t0
-    %t225 =l loadl %t1
-    %t226 =w ceql %t225, 0
-    jnz %t226, @release_skip143, @release142
+    call $printf(l $fmt_int, ..., l %t220)
+    %t222 =l loadl %t2
+    %t223 =l call $nox_binary_BinaryReader_read_i64_le(l %rt, l %t222)
+    %t224 =w call $nox_exception_pending(l %rt)
+    jnz %t224, @exc_propagate136, @exc_continue137
+@exc_propagate136
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue137
+    call $printf(l $fmt_int, ..., l %t223)
+    %t225 =l loadl %t2
+    %t226 =l call $nox_binary_BinaryReader_read_i64_be(l %rt, l %t225)
+    %t227 =w call $nox_exception_pending(l %rt)
+    jnz %t227, @exc_propagate138, @exc_continue139
+@exc_propagate138
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue139
+    call $printf(l $fmt_int, ..., l %t226)
+    %t228 =l loadl %t2
+    %t229 =l call $nox_binary_BinaryReader_position(l %rt, l %t228)
+    call $printf(l $fmt_int, ..., l %t229)
+    %t230 =l loadl %t2
+    %t231 =l call $nox_binary_BinaryReader_remaining(l %rt, l %t230)
+    %t232 =w call $nox_exception_pending(l %rt)
+    jnz %t232, @exc_propagate140, @exc_continue141
+@exc_propagate140
+    call $nox_unhandled_exception(l %rt)
+    ret 0
+@exc_continue141
+    call $printf(l $fmt_int, ..., l %t231)
+    %t233 =l loadl %t2
+    %t234 =w ceql %t233, 0
+    jnz %t234, @release_skip143, @release142
 @release142
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t225, l $nox_binary_BinaryWriter_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t233, l $nox_binary_BinaryReader_release)
     jmp @release_done144
 @release_skip143
     jmp @release_done144
 @release_done144
+    storel 0, %t2
+    %t235 =l loadl %t0
+    %t236 =w ceql %t235, 0
+    jnz %t236, @release_skip146, @release145
+@release145
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t235, l $nox_buffer_Buffer_release)
+    jmp @release_done147
+@release_skip146
+    jmp @release_done147
+@release_done147
+    storel 0, %t0
+    %t237 =l loadl %t1
+    %t238 =w ceql %t237, 0
+    jnz %t238, @release_skip149, @release148
+@release148
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t237, l $nox_binary_BinaryWriter_release)
+    jmp @release_done150
+@release_skip149
+    jmp @release_done150
+@release_done150
     storel 0, %t1
     call $nox_runtime_deinit(l %rt)
-@fn_end145
+@fn_end151
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

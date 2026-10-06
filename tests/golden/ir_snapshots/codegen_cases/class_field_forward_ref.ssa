@@ -1583,49 +1583,43 @@ export function w $main(w %argc, l %argv) {
     storel 2, %t1
     %t2 =l add %t1, 8
     storel 0, %t2
-    call $B___init__(l %rt, l %t1, l 42)
-    %t3 =l call $nox_rc_alloc(l %rt, l 16)
-    storel 3, %t3
-    %t4 =l add %t3, 8
-    storel 0, %t4
-    call $A___init__(l %rt, l %t3, l %t1)
-    %t5 =w ceql %t1, 0
-    jnz %t5, @release_skip1, @release0
+    %t3 =l add %t1, 8
+    storel 42, %t3
+    %t4 =l call $nox_rc_alloc(l %rt, l 16)
+    storel 3, %t4
+    %t5 =l add %t4, 8
+    storel 0, %t5
+    %t6 =l add %t4, 8
+    storel %t1, %t6
+    %t7 =l loadl %t0
+    %t8 =w ceql %t7, 0
+    jnz %t8, @release_skip1, @release0
 @release0
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t1, l $B_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t7, l $A_release)
     jmp @release_done2
 @release_skip1
     jmp @release_done2
 @release_done2
-    %t6 =l loadl %t0
-    %t7 =w ceql %t6, 0
-    jnz %t7, @release_skip4, @release3
+    storel 0, %t0
+    storel %t4, %t0
+    %t9 =l loadl %t0
+    %t10 =l add %t9, 8
+    %t11 =l loadl %t10
+    %t12 =l add %t11, 8
+    %t13 =l loadl %t12
+    call $printf(l $fmt_int, ..., l %t13)
+    %t14 =l loadl %t0
+    %t15 =w ceql %t14, 0
+    jnz %t15, @release_skip4, @release3
 @release3
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t6, l $A_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t14, l $A_release)
     jmp @release_done5
 @release_skip4
     jmp @release_done5
 @release_done5
     storel 0, %t0
-    storel %t3, %t0
-    %t8 =l loadl %t0
-    %t9 =l add %t8, 8
-    %t10 =l loadl %t9
-    %t11 =l add %t10, 8
-    %t12 =l loadl %t11
-    call $printf(l $fmt_int, ..., l %t12)
-    %t13 =l loadl %t0
-    %t14 =w ceql %t13, 0
-    jnz %t14, @release_skip7, @release6
-@release6
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t13, l $A_release)
-    jmp @release_done8
-@release_skip7
-    jmp @release_done8
-@release_done8
-    storel 0, %t0
     call $nox_runtime_deinit(l %rt)
-@fn_end9
+@fn_end6
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

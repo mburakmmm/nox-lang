@@ -1753,23 +1753,24 @@ export function w $main(w %argc, l %argv) {
     storel 2, %t0
     %t1 =l add %t0, 8
     storel 0, %t1
-    call $Helper___init__(l %rt, l %t0)
-    %t2 =l call $compute(l %rt, l %t0)
-    %t3 =w ceql %t0, 0
-    jnz %t3, @release_skip1, @release0
+    %t2 =l add %t0, 8
+    storel 0, %t2
+    %t3 =l call $compute(l %rt, l %t0)
+    %t4 =w ceql %t0, 0
+    jnz %t4, @release_skip1, @release0
 @release0
     call $nox_rc_release_enqueue_fixed(l %rt, l %t0, l $Helper_release)
     jmp @release_done2
 @release_skip1
     jmp @release_done2
 @release_done2
-    %t4 =w call $nox_exception_pending(l %rt)
-    jnz %t4, @exc_propagate3, @exc_continue4
+    %t5 =w call $nox_exception_pending(l %rt)
+    jnz %t5, @exc_propagate3, @exc_continue4
 @exc_propagate3
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue4
-    call $printf(l $fmt_int, ..., l %t2)
+    call $printf(l $fmt_int, ..., l %t3)
     call $nox_deinit_globals(l %rt)
     call $nox_runtime_deinit(l %rt)
 @fn_end5

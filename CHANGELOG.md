@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.15]
+
+### Performans
+
+- **Borrowed alias'lar** (yığını değiştirmeyen fonksiyonlarda `x = param.alan` retain/release'siz) ve
+  **basit `__init__`'lerin satır içi açılması** (alan depolamaları çağrı sitesinde, taze argümanlar
+  taşınır). `trees` benchmark'ı 0.54 s → 0.09 s (başlangıç 2.07 s). Spec §3.251.
+
 ## [1.142.14]
 
 ### Performans

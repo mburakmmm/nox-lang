@@ -1690,101 +1690,104 @@ export function $box_model_b_independent_copy(l %rt) {
     storel 0, %t8
     %t9 =l add %t7, 16
     storel 0, %t9
-    call $Box___init__(l %rt, l %t7, l 42, l %t6)
-    %t10 =l loadl %t0
-    %t11 =w ceql %t10, 0
-    jnz %t11, @release_skip1, @release0
+    %t10 =l add %t7, 8
+    storel 42, %t10
+    %t11 =l add %t7, 16
+    storel %t6, %t11
+    %t12 =l loadl %t0
+    %t13 =w ceql %t12, 0
+    jnz %t13, @release_skip1, @release0
 @release0
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t10, l $Box_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t12, l $Box_release)
     jmp @release_done2
 @release_skip1
     jmp @release_done2
 @release_done2
     storel 0, %t0
     storel %t7, %t0
-    %t12 =l call $nox_arena_create(l %rt)
-    %t13 =l loadl %t0
-    storel %t13, %t1
-    %t14 =l loadl %t1
-    storel %t14, %t2
-    %t15 =l loadl %t2
-    storel %t15, %t3
-    %t16 =l loadl %t3
-    %t17 =l call $nox_rc_alloc(l %rt, l 24)
-    call $nox_raw_memcpy(l %t17, l %t16, l 24)
-    %t18 =l add %t17, 16
-    %t19 =l loadl %t18
-    %t20 =w ceql %t19, 0
-    jnz %t20, @retain_skip4, @retain3
+    %t14 =l call $nox_arena_create(l %rt)
+    %t15 =l loadl %t0
+    storel %t15, %t1
+    %t16 =l loadl %t1
+    storel %t16, %t2
+    %t17 =l loadl %t2
+    storel %t17, %t3
+    %t18 =l loadl %t3
+    %t19 =l call $nox_rc_alloc(l %rt, l 24)
+    call $nox_raw_memcpy(l %t19, l %t18, l 24)
+    %t20 =l add %t19, 16
+    %t21 =l loadl %t20
+    %t22 =w ceql %t21, 0
+    jnz %t22, @retain_skip4, @retain3
 @retain3
-    %t21 =l sub %t19, 16
-    %t22 =l loadl %t21
-    %t23 =l add %t22, 1
-    storel %t23, %t21
+    %t23 =l sub %t21, 16
+    %t24 =l loadl %t23
+    %t25 =l add %t24, 1
+    storel %t25, %t23
     jmp @retain_done5
 @retain_skip4
     jmp @retain_done5
 @retain_done5
-    %t24 =l add %t17, 8
-    %t25 =l loadl %t24
-    %t26 =w ceql %t17, 0
-    jnz %t26, @release_skip7, @release6
+    %t26 =l add %t19, 8
+    %t27 =l loadl %t26
+    %t28 =w ceql %t19, 0
+    jnz %t28, @release_skip7, @release6
 @release6
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t17, l $Box_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t19, l $Box_release)
     jmp @release_done8
 @release_skip7
     jmp @release_done8
 @release_done8
-    call $printf(l $fmt_int, ..., l %t25)
-    %t27 =l loadl %t3
-    %t28 =l call $nox_rc_alloc(l %rt, l 24)
-    call $nox_raw_memcpy(l %t28, l %t27, l 24)
-    %t29 =l add %t28, 16
-    %t30 =l loadl %t29
-    %t31 =w ceql %t30, 0
-    jnz %t31, @retain_skip10, @retain9
+    call $printf(l $fmt_int, ..., l %t27)
+    %t29 =l loadl %t3
+    %t30 =l call $nox_rc_alloc(l %rt, l 24)
+    call $nox_raw_memcpy(l %t30, l %t29, l 24)
+    %t31 =l add %t30, 16
+    %t32 =l loadl %t31
+    %t33 =w ceql %t32, 0
+    jnz %t33, @retain_skip10, @retain9
 @retain9
-    %t32 =l sub %t30, 16
-    %t33 =l loadl %t32
-    %t34 =l add %t33, 1
-    storel %t34, %t32
+    %t34 =l sub %t32, 16
+    %t35 =l loadl %t34
+    %t36 =l add %t35, 1
+    storel %t36, %t34
     jmp @retain_done11
 @retain_skip10
     jmp @retain_done11
 @retain_done11
-    %t35 =l add %t28, 16
-    %t36 =l loadl %t35
-    %t37 =w ceql %t36, 0
-    jnz %t37, @retain_skip13, @retain12
+    %t37 =l add %t30, 16
+    %t38 =l loadl %t37
+    %t39 =w ceql %t38, 0
+    jnz %t39, @retain_skip13, @retain12
 @retain12
-    %t38 =l sub %t36, 16
-    %t39 =l loadl %t38
-    %t40 =l add %t39, 1
-    storel %t40, %t38
+    %t40 =l sub %t38, 16
+    %t41 =l loadl %t40
+    %t42 =l add %t41, 1
+    storel %t42, %t40
     jmp @retain_done14
 @retain_skip13
     jmp @retain_done14
 @retain_done14
-    %t41 =w ceql %t28, 0
-    jnz %t41, @release_skip16, @release15
+    %t43 =w ceql %t30, 0
+    jnz %t43, @release_skip16, @release15
 @release15
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t28, l $Box_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t30, l $Box_release)
     jmp @release_done17
 @release_skip16
     jmp @release_done17
 @release_done17
-    call $printf(l $fmt_str, ..., l %t36)
-    %t42 =w ceql %t36, 0
-    jnz %t42, @release_skip19, @release18
+    call $printf(l $fmt_str, ..., l %t38)
+    %t44 =w ceql %t38, 0
+    jnz %t44, @release_skip19, @release18
 @release18
-    %t43 =l sub %t36, 16
-    %t44 =l loadl %t43
-    %t45 =l sub %t44, 1
-    storel %t45, %t43
-    %t46 =w cslel %t45, 0
-    jnz %t46, @str_free21, @str_free_skip22
+    %t45 =l sub %t38, 16
+    %t46 =l loadl %t45
+    %t47 =l sub %t46, 1
+    storel %t47, %t45
+    %t48 =w cslel %t47, 0
+    jnz %t48, @str_free21, @str_free_skip22
 @str_free21
-    call $nox_str_free_now(l %rt, l %t36)
+    call $nox_str_free_now(l %rt, l %t38)
     jmp @str_free_done23
 @str_free_skip22
     jmp @str_free_done23
@@ -1793,56 +1796,56 @@ export function $box_model_b_independent_copy(l %rt) {
 @release_skip19
     jmp @release_done20
 @release_done20
-    %t47 =l loadl %t1
-    %t48 =l add %t47, 8
-    storel %t48, %t4
-    %t49 =l loadl %t4
-    storel 999999, %t49
-    %t50 =l loadl %t3
-    %t51 =l call $nox_rc_alloc(l %rt, l 24)
-    call $nox_raw_memcpy(l %t51, l %t50, l 24)
-    %t52 =l add %t51, 16
-    %t53 =l loadl %t52
-    %t54 =w ceql %t53, 0
-    jnz %t54, @retain_skip25, @retain24
+    %t49 =l loadl %t1
+    %t50 =l add %t49, 8
+    storel %t50, %t4
+    %t51 =l loadl %t4
+    storel 999999, %t51
+    %t52 =l loadl %t3
+    %t53 =l call $nox_rc_alloc(l %rt, l 24)
+    call $nox_raw_memcpy(l %t53, l %t52, l 24)
+    %t54 =l add %t53, 16
+    %t55 =l loadl %t54
+    %t56 =w ceql %t55, 0
+    jnz %t56, @retain_skip25, @retain24
 @retain24
-    %t55 =l sub %t53, 16
-    %t56 =l loadl %t55
-    %t57 =l add %t56, 1
-    storel %t57, %t55
+    %t57 =l sub %t55, 16
+    %t58 =l loadl %t57
+    %t59 =l add %t58, 1
+    storel %t59, %t57
     jmp @retain_done26
 @retain_skip25
     jmp @retain_done26
 @retain_done26
-    %t58 =l add %t51, 8
-    %t59 =l loadl %t58
-    %t60 =w ceql %t51, 0
-    jnz %t60, @release_skip28, @release27
+    %t60 =l add %t53, 8
+    %t61 =l loadl %t60
+    %t62 =w ceql %t53, 0
+    jnz %t62, @release_skip28, @release27
 @release27
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t51, l $Box_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t53, l $Box_release)
     jmp @release_done29
 @release_skip28
     jmp @release_done29
 @release_done29
-    call $printf(l $fmt_int, ..., l %t59)
-    %t61 =l loadl %t1
-    %t62 =l loadl %t5
-    %t63 =w ceql %t62, 0
-    jnz %t63, @release_skip31, @release30
+    call $printf(l $fmt_int, ..., l %t61)
+    %t63 =l loadl %t1
+    %t64 =l loadl %t5
+    %t65 =w ceql %t64, 0
+    jnz %t65, @release_skip31, @release30
 @release30
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t62, l $Box_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t64, l $Box_release)
     jmp @release_done32
 @release_skip31
     jmp @release_done32
 @release_done32
     storel 0, %t5
-    storel %t61, %t5
-    call $nox_arena_destroy(l %rt, l %t12)
-    %t64 =l loadl %t5
-    %t65 =w ceql %t64, 0
-    jnz %t65, @release_skip34, @release33
+    storel %t63, %t5
+    call $nox_arena_destroy(l %rt, l %t14)
+    %t66 =l loadl %t5
+    %t67 =w ceql %t66, 0
+    jnz %t67, @release_skip34, @release33
 @release33
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t64, l $Box_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t66, l $Box_release)
     jmp @release_done35
 @release_skip34
     jmp @release_done35
@@ -1869,136 +1872,142 @@ export function $box_model_b_write_roundtrip(l %rt) {
     storel 0, %t8
     %t9 =l add %t7, 16
     storel 0, %t9
-    call $Box___init__(l %rt, l %t7, l 1, l %t6)
-    %t10 =l loadl %t0
-    %t11 =w ceql %t10, 0
-    jnz %t11, @release_skip1, @release0
+    %t10 =l add %t7, 8
+    storel 1, %t10
+    %t11 =l add %t7, 16
+    storel %t6, %t11
+    %t12 =l loadl %t0
+    %t13 =w ceql %t12, 0
+    jnz %t13, @release_skip1, @release0
 @release0
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t10, l $Box_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t12, l $Box_release)
     jmp @release_done2
 @release_skip1
     jmp @release_done2
 @release_done2
     storel 0, %t0
     storel %t7, %t0
-    %t12 =l add $str5, 16
-    %t13 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 2, %t13
-    %t14 =l add %t13, 8
-    storel 0, %t14
-    %t15 =l add %t13, 16
-    storel 0, %t15
-    call $Box___init__(l %rt, l %t13, l 2, l %t12)
-    %t16 =l loadl %t1
-    %t17 =w ceql %t16, 0
-    jnz %t17, @release_skip4, @release3
+    %t14 =l add $str5, 16
+    %t15 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 2, %t15
+    %t16 =l add %t15, 8
+    storel 0, %t16
+    %t17 =l add %t15, 16
+    storel 0, %t17
+    %t18 =l add %t15, 8
+    storel 2, %t18
+    %t19 =l add %t15, 16
+    storel %t14, %t19
+    %t20 =l loadl %t1
+    %t21 =w ceql %t20, 0
+    jnz %t21, @release_skip4, @release3
 @release3
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t16, l $Box_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t20, l $Box_release)
     jmp @release_done5
 @release_skip4
     jmp @release_done5
 @release_done5
     storel 0, %t1
-    storel %t13, %t1
-    %t18 =l call $nox_arena_create(l %rt)
-    %t19 =l loadl %t0
-    storel %t19, %t2
-    %t20 =l loadl %t2
-    storel %t20, %t3
-    %t21 =l loadl %t3
-    storel %t21, %t4
-    %t22 =l loadl %t4
-    %t23 =l loadl %t1
-    call $nox_raw_memcpy(l %t22, l %t23, l 24)
-    %t24 =l add %t22, 16
-    %t25 =l loadl %t24
-    %t26 =w ceql %t25, 0
-    jnz %t26, @retain_skip7, @retain6
+    storel %t15, %t1
+    %t22 =l call $nox_arena_create(l %rt)
+    %t23 =l loadl %t0
+    storel %t23, %t2
+    %t24 =l loadl %t2
+    storel %t24, %t3
+    %t25 =l loadl %t3
+    storel %t25, %t4
+    %t26 =l loadl %t4
+    %t27 =l loadl %t1
+    call $nox_raw_memcpy(l %t26, l %t27, l 24)
+    %t28 =l add %t26, 16
+    %t29 =l loadl %t28
+    %t30 =w ceql %t29, 0
+    jnz %t30, @retain_skip7, @retain6
 @retain6
-    %t27 =l sub %t25, 16
-    %t28 =l loadl %t27
-    %t29 =l add %t28, 1
-    storel %t29, %t27
+    %t31 =l sub %t29, 16
+    %t32 =l loadl %t31
+    %t33 =l add %t32, 1
+    storel %t33, %t31
     jmp @retain_done8
 @retain_skip7
     jmp @retain_done8
 @retain_done8
-    %t30 =l loadl %t4
-    %t31 =l call $nox_rc_alloc(l %rt, l 24)
-    call $nox_raw_memcpy(l %t31, l %t30, l 24)
-    %t32 =l add %t31, 16
-    %t33 =l loadl %t32
-    %t34 =w ceql %t33, 0
-    jnz %t34, @retain_skip10, @retain9
+    %t34 =l loadl %t4
+    %t35 =l call $nox_rc_alloc(l %rt, l 24)
+    call $nox_raw_memcpy(l %t35, l %t34, l 24)
+    %t36 =l add %t35, 16
+    %t37 =l loadl %t36
+    %t38 =w ceql %t37, 0
+    jnz %t38, @retain_skip10, @retain9
 @retain9
-    %t35 =l sub %t33, 16
-    %t36 =l loadl %t35
-    %t37 =l add %t36, 1
-    storel %t37, %t35
+    %t39 =l sub %t37, 16
+    %t40 =l loadl %t39
+    %t41 =l add %t40, 1
+    storel %t41, %t39
     jmp @retain_done11
 @retain_skip10
     jmp @retain_done11
 @retain_done11
-    %t38 =l add %t31, 8
-    %t39 =l loadl %t38
-    %t40 =w ceql %t31, 0
-    jnz %t40, @release_skip13, @release12
+    %t42 =l add %t35, 8
+    %t43 =l loadl %t42
+    %t44 =w ceql %t35, 0
+    jnz %t44, @release_skip13, @release12
 @release12
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t31, l $Box_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t35, l $Box_release)
     jmp @release_done14
 @release_skip13
     jmp @release_done14
 @release_done14
-    call $printf(l $fmt_int, ..., l %t39)
-    %t41 =l loadl %t4
-    %t42 =l call $nox_rc_alloc(l %rt, l 24)
-    call $nox_raw_memcpy(l %t42, l %t41, l 24)
-    %t43 =l add %t42, 16
-    %t44 =l loadl %t43
-    %t45 =w ceql %t44, 0
-    jnz %t45, @retain_skip16, @retain15
+    call $printf(l $fmt_int, ..., l %t43)
+    %t45 =l loadl %t4
+    %t46 =l call $nox_rc_alloc(l %rt, l 24)
+    call $nox_raw_memcpy(l %t46, l %t45, l 24)
+    %t47 =l add %t46, 16
+    %t48 =l loadl %t47
+    %t49 =w ceql %t48, 0
+    jnz %t49, @retain_skip16, @retain15
 @retain15
-    %t46 =l sub %t44, 16
-    %t47 =l loadl %t46
-    %t48 =l add %t47, 1
-    storel %t48, %t46
+    %t50 =l sub %t48, 16
+    %t51 =l loadl %t50
+    %t52 =l add %t51, 1
+    storel %t52, %t50
     jmp @retain_done17
 @retain_skip16
     jmp @retain_done17
 @retain_done17
-    %t49 =l add %t42, 16
-    %t50 =l loadl %t49
-    %t51 =w ceql %t50, 0
-    jnz %t51, @retain_skip19, @retain18
+    %t53 =l add %t46, 16
+    %t54 =l loadl %t53
+    %t55 =w ceql %t54, 0
+    jnz %t55, @retain_skip19, @retain18
 @retain18
-    %t52 =l sub %t50, 16
-    %t53 =l loadl %t52
-    %t54 =l add %t53, 1
-    storel %t54, %t52
+    %t56 =l sub %t54, 16
+    %t57 =l loadl %t56
+    %t58 =l add %t57, 1
+    storel %t58, %t56
     jmp @retain_done20
 @retain_skip19
     jmp @retain_done20
 @retain_done20
-    %t55 =w ceql %t42, 0
-    jnz %t55, @release_skip22, @release21
+    %t59 =w ceql %t46, 0
+    jnz %t59, @release_skip22, @release21
 @release21
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t42, l $Box_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t46, l $Box_release)
     jmp @release_done23
 @release_skip22
     jmp @release_done23
 @release_done23
-    call $printf(l $fmt_str, ..., l %t50)
-    %t56 =w ceql %t50, 0
-    jnz %t56, @release_skip25, @release24
+    call $printf(l $fmt_str, ..., l %t54)
+    %t60 =w ceql %t54, 0
+    jnz %t60, @release_skip25, @release24
 @release24
-    %t57 =l sub %t50, 16
-    %t58 =l loadl %t57
-    %t59 =l sub %t58, 1
-    storel %t59, %t57
-    %t60 =w cslel %t59, 0
-    jnz %t60, @str_free27, @str_free_skip28
+    %t61 =l sub %t54, 16
+    %t62 =l loadl %t61
+    %t63 =l sub %t62, 1
+    storel %t63, %t61
+    %t64 =w cslel %t63, 0
+    jnz %t64, @str_free27, @str_free_skip28
 @str_free27
-    call $nox_str_free_now(l %rt, l %t50)
+    call $nox_str_free_now(l %rt, l %t54)
     jmp @str_free_done29
 @str_free_skip28
     jmp @str_free_done29
@@ -2007,34 +2016,34 @@ export function $box_model_b_write_roundtrip(l %rt) {
 @release_skip25
     jmp @release_done26
 @release_done26
-    %t61 =l loadl %t2
-    %t62 =l loadl %t5
-    %t63 =w ceql %t62, 0
-    jnz %t63, @release_skip31, @release30
+    %t65 =l loadl %t2
+    %t66 =l loadl %t5
+    %t67 =w ceql %t66, 0
+    jnz %t67, @release_skip31, @release30
 @release30
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t62, l $Box_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t66, l $Box_release)
     jmp @release_done32
 @release_skip31
     jmp @release_done32
 @release_done32
     storel 0, %t5
-    storel %t61, %t5
-    call $nox_arena_destroy(l %rt, l %t18)
-    %t64 =l loadl %t1
-    %t65 =w ceql %t64, 0
-    jnz %t65, @release_skip34, @release33
+    storel %t65, %t5
+    call $nox_arena_destroy(l %rt, l %t22)
+    %t68 =l loadl %t1
+    %t69 =w ceql %t68, 0
+    jnz %t69, @release_skip34, @release33
 @release33
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t64, l $Box_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t68, l $Box_release)
     jmp @release_done35
 @release_skip34
     jmp @release_done35
 @release_done35
     storel 0, %t1
-    %t66 =l loadl %t5
-    %t67 =w ceql %t66, 0
-    jnz %t67, @release_skip37, @release36
+    %t70 =l loadl %t5
+    %t71 =w ceql %t70, 0
+    jnz %t71, @release_skip37, @release36
 @release36
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t66, l $Box_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t70, l $Box_release)
     jmp @release_done38
 @release_skip37
     jmp @release_done38

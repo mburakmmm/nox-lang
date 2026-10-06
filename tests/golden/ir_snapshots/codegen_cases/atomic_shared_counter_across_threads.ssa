@@ -1882,7 +1882,8 @@ export function l $nox_atomic_new_int(l %rt, l %p_initial) {
     storel 3, %t17
     %t18 =l add %t17, 8
     storel 0, %t18
-    call $nox_atomic_AtomicInt___init__(l %rt, l %t17, l %t16)
+    %t19 =l add %t17, 8
+    storel %t16, %t19
     ret %t17
 @after_return11
 @fn_end12
@@ -1951,7 +1952,8 @@ export function l $nox_atomic_new_bool(l %rt, w %p_initial) {
     storel 2, %t19
     %t20 =l add %t19, 8
     storel 0, %t20
-    call $nox_atomic_AtomicBool___init__(l %rt, l %t19, l %t18)
+    %t21 =l add %t19, 8
+    storel %t18, %t21
     ret %t19
 @after_return13
 @fn_end14
@@ -1966,7 +1968,8 @@ export function l $nox_atomic_from_int_handle(l %rt, l %p_h) {
     storel 3, %t2
     %t3 =l add %t2, 8
     storel 0, %t3
-    call $nox_atomic_AtomicInt___init__(l %rt, l %t2, l %t1)
+    %t4 =l add %t2, 8
+    storel %t1, %t4
     ret %t2
 @after_return0
 @fn_end1
@@ -1981,7 +1984,8 @@ export function l $nox_atomic_from_bool_handle(l %rt, l %p_h) {
     storel 2, %t2
     %t3 =l add %t2, 8
     storel 0, %t3
-    call $nox_atomic_AtomicBool___init__(l %rt, l %t2, l %t1)
+    %t4 =l add %t2, 8
+    storel %t1, %t4
     ret %t2
 @after_return0
 @fn_end1
@@ -2004,43 +2008,44 @@ export function l $bump(l %rt, l %p_h) {
     storel 3, %t7
     %t8 =l add %t7, 8
     storel 0, %t8
-    call $nox_atomic_AtomicInt___init__(l %rt, l %t7, l %t6)
+    %t9 =l add %t7, 8
+    storel %t6, %t9
     storel %t7, %t4
     jmp @inline_done0
 @after_inline_return1
     jmp @inline_done0
 @inline_done0
-    %t9 =l loadl %t4
-    %t10 =l loadl %t1
-    %t11 =w ceql %t10, 0
-    jnz %t11, @release_skip3, @release2
+    %t10 =l loadl %t4
+    %t11 =l loadl %t1
+    %t12 =w ceql %t11, 0
+    jnz %t12, @release_skip3, @release2
 @release2
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t10, l $nox_atomic_AtomicInt_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t11, l $nox_atomic_AtomicInt_release)
     jmp @release_done4
 @release_skip3
     jmp @release_done4
 @release_done4
     storel 0, %t1
-    storel %t9, %t1
+    storel %t10, %t1
     storel 0, %t2
     jmp @while_cond5
 @while_cond5
-    %t12 =l loadl %t2
-    %t13 =w csltl %t12, 1000
-    jnz %t13, @while_body6, @while_end7
+    %t13 =l loadl %t2
+    %t14 =w csltl %t13, 1000
+    jnz %t14, @while_body6, @while_end7
 @while_body6
-    %t14 =l loadl %t1
-    %t15 =l call $nox_atomic_AtomicInt_increment(l %rt, l %t14)
-    %t16 =l loadl %t2
-    %t17 =l add %t16, 1
-    storel %t17, %t2
+    %t15 =l loadl %t1
+    %t16 =l call $nox_atomic_AtomicInt_increment(l %rt, l %t15)
+    %t17 =l loadl %t2
+    %t18 =l add %t17, 1
+    storel %t18, %t2
     jmp @while_cond5
 @while_end7
-    %t18 =l loadl %t1
-    %t19 =w ceql %t18, 0
-    jnz %t19, @release_skip9, @release8
+    %t19 =l loadl %t1
+    %t20 =w ceql %t19, 0
+    jnz %t20, @release_skip9, @release8
 @release8
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t18, l $nox_atomic_AtomicInt_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t19, l $nox_atomic_AtomicInt_release)
     jmp @release_done10
 @release_skip9
     jmp @release_done10
@@ -2048,11 +2053,11 @@ export function l $bump(l %rt, l %p_h) {
     storel 0, %t1
     ret 0
 @after_return11
-    %t20 =l loadl %t1
-    %t21 =w ceql %t20, 0
-    jnz %t21, @release_skip13, @release12
+    %t21 =l loadl %t1
+    %t22 =w ceql %t21, 0
+    jnz %t22, @release_skip13, @release12
 @release12
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t20, l $nox_atomic_AtomicInt_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t21, l $nox_atomic_AtomicInt_release)
     jmp @release_done14
 @release_skip13
     jmp @release_done14
@@ -2077,31 +2082,32 @@ export function l $raise_flag(l %rt, l %p_h) {
     storel 2, %t6
     %t7 =l add %t6, 8
     storel 0, %t7
-    call $nox_atomic_AtomicBool___init__(l %rt, l %t6, l %t5)
+    %t8 =l add %t6, 8
+    storel %t5, %t8
     storel %t6, %t3
     jmp @inline_done0
 @after_inline_return1
     jmp @inline_done0
 @inline_done0
-    %t8 =l loadl %t3
-    %t9 =l loadl %t1
-    %t10 =w ceql %t9, 0
-    jnz %t10, @release_skip3, @release2
+    %t9 =l loadl %t3
+    %t10 =l loadl %t1
+    %t11 =w ceql %t10, 0
+    jnz %t11, @release_skip3, @release2
 @release2
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t9, l $nox_atomic_AtomicBool_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t10, l $nox_atomic_AtomicBool_release)
     jmp @release_done4
 @release_skip3
     jmp @release_done4
 @release_done4
     storel 0, %t1
-    storel %t8, %t1
-    %t11 =l loadl %t1
-    call $nox_atomic_AtomicBool_store(l %rt, l %t11, w 1)
+    storel %t9, %t1
     %t12 =l loadl %t1
-    %t13 =w ceql %t12, 0
-    jnz %t13, @release_skip6, @release5
+    call $nox_atomic_AtomicBool_store(l %rt, l %t12, w 1)
+    %t13 =l loadl %t1
+    %t14 =w ceql %t13, 0
+    jnz %t14, @release_skip6, @release5
 @release5
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t12, l $nox_atomic_AtomicBool_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t13, l $nox_atomic_AtomicBool_release)
     jmp @release_done7
 @release_skip6
     jmp @release_done7
@@ -2109,11 +2115,11 @@ export function l $raise_flag(l %rt, l %p_h) {
     storel 0, %t1
     ret 0
 @after_return8
-    %t14 =l loadl %t1
-    %t15 =w ceql %t14, 0
-    jnz %t15, @release_skip10, @release9
+    %t15 =l loadl %t1
+    %t16 =w ceql %t15, 0
+    jnz %t16, @release_skip10, @release9
 @release9
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t14, l $nox_atomic_AtomicBool_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t15, l $nox_atomic_AtomicBool_release)
     jmp @release_done11
 @release_skip10
     jmp @release_done11

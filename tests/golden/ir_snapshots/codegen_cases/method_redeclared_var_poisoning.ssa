@@ -1559,58 +1559,60 @@ export function l $pick(l %rt, w %p_flag) {
     storel 3, %t3
     %t4 =l add %t3, 8
     storel 0, %t4
-    call $A___init__(l %rt, l %t3)
-    %t5 =l loadl %t2
-    %t6 =w ceql %t5, 0
-    jnz %t6, @release_skip1, @release0
+    %t5 =l add %t3, 8
+    storel 1, %t5
+    %t6 =l loadl %t2
+    %t7 =w ceql %t6, 0
+    jnz %t7, @release_skip1, @release0
 @release0
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t5, l $B_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t6, l $B_release)
     jmp @release_done2
 @release_skip1
     jmp @release_done2
 @release_done2
     storel 0, %t2
     storel %t3, %t2
-    %t7 =w loadw %t0
-    jnz %t7, @if_then4, @if_end3
+    %t8 =w loadw %t0
+    jnz %t8, @if_then4, @if_end3
 @if_then4
-    %t8 =l call $nox_rc_alloc(l %rt, l 16)
-    storel 2, %t8
-    %t9 =l add %t8, 8
-    storel 0, %t9
-    call $B___init__(l %rt, l %t8)
-    %t10 =l loadl %t2
-    %t11 =w ceql %t10, 0
-    jnz %t11, @release_skip6, @release5
+    %t9 =l call $nox_rc_alloc(l %rt, l 16)
+    storel 2, %t9
+    %t10 =l add %t9, 8
+    storel 0, %t10
+    %t11 =l add %t9, 8
+    storel 2, %t11
+    %t12 =l loadl %t2
+    %t13 =w ceql %t12, 0
+    jnz %t13, @release_skip6, @release5
 @release5
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t10, l $B_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t12, l $B_release)
     jmp @release_done7
 @release_skip6
     jmp @release_done7
 @release_done7
     storel 0, %t2
-    storel %t8, %t2
+    storel %t9, %t2
     jmp @if_end3
 @if_end3
-    %t12 =l loadl %t2
-    %t13 =l call $B_get(l %rt, l %t12)
     %t14 =l loadl %t2
-    %t15 =w ceql %t14, 0
-    jnz %t15, @release_skip9, @release8
+    %t15 =l call $B_get(l %rt, l %t14)
+    %t16 =l loadl %t2
+    %t17 =w ceql %t16, 0
+    jnz %t17, @release_skip9, @release8
 @release8
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t14, l $B_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t16, l $B_release)
     jmp @release_done10
 @release_skip9
     jmp @release_done10
 @release_done10
     storel 0, %t2
-    ret %t13
+    ret %t15
 @after_return11
-    %t16 =l loadl %t2
-    %t17 =w ceql %t16, 0
-    jnz %t17, @release_skip13, @release12
+    %t18 =l loadl %t2
+    %t19 =w ceql %t18, 0
+    jnz %t19, @release_skip13, @release12
 @release12
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t16, l $B_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t18, l $B_release)
     jmp @release_done14
 @release_skip13
     jmp @release_done14

@@ -539,6 +539,7 @@ pub fn registerClass(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
         for (init.params[1..], 0..) |p, i| iparams[i] = try self.resolveType(p.type_expr);
         info.init_params = iparams;
         info.init_owner = cd.name;
+        try computeSimpleInit(self, &info, init, iparams);
     } else if (base_info) |bi| {
         // Faz 7: bu sınıfın KENDİ `__init__`i yok — taban sınıfın
         // kurucusunu (parametreleri VE hangi sınıfın onu GERÇEKTEN
@@ -821,6 +822,61 @@ fn collectIdentifierNamesExpr(a: std.mem.Allocator, expr: ast.Expr, out: *std.St
 /// doğrudan bir `__init__` parametresi, `self` (bkz. aşağı), ya da bir
 /// literal. Daha karmaşık ifadeler (checker'ın tam tip çıkarımını burada
 /// yeniden uygulamamak için) bilinçli olarak desteklenmiyor.
+/// v1.142.15: `__init__` gövdesi YALNIZCA `self.alan = parametre` (her parametre en fazla bir kez,
+/// alan tipi parametre tipiyle aynı) ve `self.alan = <int/float/bool/None literal>` atamalarından
+/// (ve `pass`ten) oluşuyorsa `info.simple_init`i doldurur. Varsayılan düzen şart (paketli/C
+/// düzenlerde alan genişlikleri farklı depolanır).
+fn computeSimpleInit(self: *Codegen, info: *types.ClassInfo, init: ast.FuncDef, iparams: []const TypeInfo) CodegenError!void {
+    if (info.layout_mode != .default) return;
+    var stores: std.ArrayListUnmanaged(types.SimpleInitStore) = .empty;
+    const used = try self.allocator.alloc(bool, iparams.len);
+    @memset(used, false);
+    for (init.body) |stmt| {
+        switch (stmt.kind) {
+            .pass_stmt => {},
+            .assign => |a| {
+                if (a.target != .attribute) return;
+                const t = a.target.attribute;
+                if (t.obj.* != .identifier or !std.mem.eql(u8, t.obj.identifier, "self")) return;
+                var field: ?types.ClassField = null;
+                for (info.fields.items) |f| {
+                    if (std.mem.eql(u8, f.name, t.attr)) field = f;
+                }
+                const f = field orelse return;
+                switch (a.value) {
+                    .identifier => |pname| {
+                        var pi: ?usize = null;
+                        for (init.params[1..], 0..) |p, i| {
+                            if (std.mem.eql(u8, p.name, pname)) pi = i;
+                        }
+                        const idx = pi orelse return;
+                        if (used[idx]) return;
+                        const pt = iparams[idx];
+                        if (pt.qtype != f.info.qtype or pt.heap != f.info.heap or pt.fixed_int != f.info.fixed_int) return;
+                        const same_class = (pt.class_name == null and f.info.class_name == null) or
+                            (pt.class_name != null and f.info.class_name != null and std.mem.eql(u8, pt.class_name.?, f.info.class_name.?));
+                        if (!same_class) return;
+                        // Basit tutmak için yalnızca skaler ve düz heap tipler (liste/dict eleman/değer
+                        // bilgisi taşıyan alanlar normal çağrı yoluna kalır).
+                        if (pt.elem_heap_info != null or pt.dict_info != null or pt.func_sig != null) return;
+                        used[idx] = true;
+                        try stores.append(self.allocator, .{ .field = t.attr, .param_index = idx });
+                    },
+                    .int_lit, .bool_lit, .none_lit => {
+                        if (f.info.heap != .none and a.value != .none_lit) return;
+                        if (f.info.qtype == .d or f.info.fixed_int != null) return;
+                        try stores.append(self.allocator, .{ .field = t.attr, .literal = a.value });
+                    },
+                    else => return,
+                }
+            },
+            else => return,
+        }
+    }
+    info.simple_init = try stores.toOwnedSlice(self.allocator);
+    info.simple_init_ok = true;
+}
+
 pub fn inferFieldType(self: *Codegen, class_name: []const u8, init_params: []const ast.Param, expr: ast.Expr) CodegenError!TypeInfo {
     switch (expr) {
         .identifier => |name| {
@@ -1208,6 +1264,8 @@ pub fn genFunction(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
         try locals.append(self.allocator, .{ .name = p.name, .info = try self.resolveType(p.type_expr), .is_param = true });
     }
     try self.collectLocals(&locals, fd.body, false);
+    // v1.142.15: bkz. `markBorrowedAliasLocals`.
+    try self.markBorrowedAliasLocals(&locals, fd.body, fd.name);
 
     const fn_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{fd.name});
     try self.qbeFuncHeaderStart(if (ret_info.qtype == .none) null else ret_info.qtype, fn_sym);
@@ -1227,7 +1285,7 @@ pub fn genFunction(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
     // STACK adresini `nox_rc_free_payload`e geçirip GERÇEK bir SIGBUS'a
     // yol açar (GERÇEKTEN denenip gözlemlendi, break→red→fix).
     try self.registerLocalStackSlots(fd.body, fd.params);
-    for (locals.items) |l| try self.allocSlot(l.name, l.info, l.is_param, l.arena);
+    for (locals.items) |l| try self.allocSlotEx(l.name, l.info, l.is_param, l.arena, l.borrowed_field);
     try self.prepareInlineSites(fd.body);
     for (fd.params) |p| {
         const info = self.vars.get(p.name).?;
@@ -1302,6 +1360,12 @@ pub fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) Codegen
     // geçişle işaretle — `retainIfAliasing`/`releaseOneLocalIfManaged`
     // BU bayrağı görüp gereksiz retain/release trafiğini atlar.
     try self.markBorrowedFieldLocals(&locals, m.body, m.body);
+    // v1.142.15: yığını değiştirmeyen metodlarda parametre-alanı alias'ları (bkz.
+    // `markBorrowedAliasLocals`).
+    {
+        const alias_sym = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ class_name, m.name });
+        try self.markBorrowedAliasLocals(&locals, m.body, alias_sym);
+    }
 
     const fn_name = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ class_name, m.name });
     const fn_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{fn_name});

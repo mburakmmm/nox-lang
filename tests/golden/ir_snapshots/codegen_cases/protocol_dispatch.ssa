@@ -1593,36 +1593,38 @@ export function w $main(w %argc, l %argv) {
     storel 3, %t2
     %t3 =l add %t2, 8
     storel 0, %t3
-    call $Circle___init__(l %rt, l %t2, d d_2)
+    %t4 =l add %t2, 8
+    stored d_2, %t4
     storel %t2, %t0
-    %t4 =l loadl %t0
-    %t5 =d call $Circle_area(l %rt, l %t4)
-    call $printf(l $fmt_float, ..., d %t5)
+    %t5 =l loadl %t0
+    %t6 =d call $Circle_area(l %rt, l %t5)
+    call $printf(l $fmt_float, ..., d %t6)
     jmp @inline_done0
 @inline_done0
-    %t6 =w ceql %t2, 0
-    jnz %t6, @release_skip2, @release1
+    %t7 =w ceql %t2, 0
+    jnz %t7, @release_skip2, @release1
 @release1
     call $nox_rc_release_enqueue_fixed(l %rt, l %t2, l $Circle_release)
     jmp @release_done3
 @release_skip2
     jmp @release_done3
 @release_done3
-    %t7 =l call $nox_rc_alloc(l %rt, l 16)
-    storel 2, %t7
-    %t8 =l add %t7, 8
-    storel 0, %t8
-    call $Square___init__(l %rt, l %t7, d d_3)
-    storel %t7, %t1
-    %t9 =l loadl %t1
-    %t10 =d call $Square_area(l %rt, l %t9)
-    call $printf(l $fmt_float, ..., d %t10)
+    %t8 =l call $nox_rc_alloc(l %rt, l 16)
+    storel 2, %t8
+    %t9 =l add %t8, 8
+    storel 0, %t9
+    %t10 =l add %t8, 8
+    stored d_3, %t10
+    storel %t8, %t1
+    %t11 =l loadl %t1
+    %t12 =d call $Square_area(l %rt, l %t11)
+    call $printf(l $fmt_float, ..., d %t12)
     jmp @inline_done4
 @inline_done4
-    %t11 =w ceql %t7, 0
-    jnz %t11, @release_skip6, @release5
+    %t13 =w ceql %t8, 0
+    jnz %t13, @release_skip6, @release5
 @release5
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t7, l $Square_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t8, l $Square_release)
     jmp @release_done7
 @release_skip6
     jmp @release_done7

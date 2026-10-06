@@ -28134,6 +28134,38 @@ kullanır (toplama kilit altında serileşiktir).
 ağaç üzerinde tekrarlanan deneme-silme geçişleri; asıl çözüm gereksiz kayıtları
 derleme zamanında elemek (bkz. sonraki sürümler).
 
+## 3.251 Gereksiz ARC trafiğini derleme zamanında ele: borrowed alias'lar + basit kurucuların satır içi açılması (v1.142.15)
+
+§3.250'den sonra `trees` hâlâ ~0.33 s idi (C: 0.125 s): her `l = node.left` yerel alias'ı
+(retain + kapsam sonunda release) ve her `Node(make(..), make(..))` kurucu argümanı
+(callee retain + çağıran release) refcount'u 2→1'e indirip nesneyi "olası döngü kökü"
+yapıyordu. İki ayrı, ispatlanabilir eleme:
+
+**1) `heap_readonly` + borrowed alias.** `FuncSafetyInfo`ya `direct_mutates` (+ `is_init`)
+eklendi: alan/indeks ataması (`__init__`te `self.x = ...` HARİÇ), mutasyonlu/bilinmeyen
+metod ve fonksiyon çağrısı, `extern`, `print`/`wasm_call`, `await`/`spawn`/`with`/`defer`,
+kalıtım hiyerarşisindeki (sanal) sınıf metodu çağrısı. `computeMustNotRaise`in ters
+çağrı grafiği üzerinde ikinci bir yayılımla her sembol için `heap_readonly` (geçişli)
+kümesi hesaplanır. Yığını değiştirmeyen bir fonksiyon/metodda, bir PARAMETREYE dayalı
+`x = P.f1.f2…` alan-zinciri kopyası (P yeniden atanmaz; `x` tek bildirim, yeniden
+atanmaz, çıplak `return x` yok; iç içe `def` yok) çağıranın tuttuğu parametre sayesinde
+fonksiyon boyunca canlıdır: `VarInfo.borrowed_field` (GG.12'nin mevcut mekanizması)
+işaretlenir, retain/release atlanır. Alan okuması taze değer üretmez, bu yüzden release'i
+atlamak sızıntı yapmaz. (`print` bilerek mutasyon sayıldı: G/Ç'de fiber başka işe geçip
+alanı değiştirebilir.)
+
+**2) Basit `__init__` satır içi açma.** Gövde yalnızca `self.alan = parametre` (her
+parametre en çok bir kez, tip aynı) ve `self.alan = int/bool/None literal` atamalarından
+oluşuyorsa (`ClassInfo.simple_init`), `genConstructFromValues` (kaynak-düzeyi argümanlı
+çağrılar) kurucuyu ÇAĞIRMAZ: alan depolamaları doğrudan yazılır; argüman ifadesi taze ise
+sahiplik alana taşınır (retain/release/istisna kontrolü yok), değilse
+`retainIfAliasing` — `self.alan = arg_ifadesi` ile birebir aynı kurallar. Kullanılmayan
+taze argümanlar normal şekilde release edilir.
+
+**Sonuç (M4, ReleaseFast):** `trees` 2.07 s → 0.09 s (C 0.125 s, Go 0.11 s). Golden:
+`borrowed_param_field_aliases` (salt-okunur/mutasyonlu/return edilen alias'lar, sızıntısız);
+117 IR snapshot'ı (satır içi kurucu) yeniden üretildi.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

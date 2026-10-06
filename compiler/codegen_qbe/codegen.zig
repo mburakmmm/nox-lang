@@ -405,6 +405,7 @@ pub const Codegen = struct {
     pub const buildParamListElemTypes = exceptions.buildParamListElemTypes;
     pub const buildFuncSafetyInfoMap = exceptions.buildFuncSafetyInfoMap;
     pub const computeMustNotRaise = exceptions.computeMustNotRaise;
+    pub const isPureBuiltinMethod = exceptions.isPureBuiltinMethod;
     pub const dfsMarkRecursive = exceptions.dfsMarkRecursive;
     pub const markRecursiveFuncs = exceptions.markRecursiveFuncs;
 
@@ -520,6 +521,7 @@ pub const Codegen = struct {
 
     pub const collectLoopInvariantStrBases = optimizations.collectLoopInvariantStrBases;
     pub const markBorrowedFieldLocals = optimizations.markBorrowedFieldLocals;
+    pub const markBorrowedAliasLocals = optimizations.markBorrowedAliasLocals;
     pub const detectWhileBoundsElideCtx = optimizations.detectWhileBoundsElideCtx;
     pub const enterStrLenCacheScope = optimizations.enterStrLenCacheScope;
     pub const exitStrLenCacheScope = optimizations.exitStrLenCacheScope;
@@ -1245,6 +1247,10 @@ pub const Codegen = struct {
     /// notu) — her zaman kontrol edilirler, bu yüzden bu alan yalnızca
     /// serbest fonksiyon/kurucu sembolleri içerir.
     must_not_raise: std.StringHashMapUnmanaged(void) = .empty,
+    /// v1.142.15: yığın NESNELERİNİ (alan/eleman/dict ataması, mutasyonlu metod, bilinmeyen/
+    /// IO çağrıları) HİÇ DEĞİŞTİRMEDİĞİ KANITLANAN (geçişli) fonksiyon/metod sembolleri —
+    /// bkz. `markBorrowedAliasLocals`.
+    heap_readonly: std.StringHashMapUnmanaged(void) = .empty,
     /// Faz GG.2 (bkz. nox-teknik-spesifikasyon.md §3.67): "inline edilebilir"
     /// KANITLANMIŞ serbest fonksiyonların (isim → AST gövdesi) haritası —
     /// `computeInlinableFunctions` tarafından doldurulur, `prepareInlineSites`

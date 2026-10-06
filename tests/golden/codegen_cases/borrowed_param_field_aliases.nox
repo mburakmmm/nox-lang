@@ -1,0 +1,80 @@
+# v1.142.15: yığını DEĞİŞTİRMEYEN (heap_readonly) fonksiyonlarda parametre-alanı
+# alias'ları (`l = node.left`) retain/release olmadan borrowed olur. Sızıntı/çift-
+# serbest-bırakma olmamalı (boş stderr) ve MUTASYON YAPAN fonksiyonlarda alias
+# GÜVENLİ kalmalı (alanı değiştirdikten sonra alias hâlâ geçerli).
+class Node:
+    val: int
+    left: Node | None
+    right: Node | None
+    items: list[str]
+
+    def __init__(self: Node, val: int, left: Node | None, right: Node | None) -> None:
+        self.val = val
+        self.left = left
+        self.right = right
+        self.items = ["a", "b"]
+
+    # Salt-okunur METOD: self.left zinciri borrowed olabilir.
+    def total(self: Node) -> int:
+        n: int = self.val
+        l: Node | None = self.left
+        if l != None:
+            n = n + l.total()
+        r: Node | None = self.right
+        if r != None:
+            n = n + r.total()
+        return n
+
+def build(d: int) -> Node:
+    if d == 0:
+        return Node(1, None, None)
+    return Node(d, build(d - 1), build(d - 1))
+
+# Salt-okunur serbest fonksiyon.
+def count(node: Node) -> int:
+    c: int = 1
+    l: Node | None = node.left
+    if l != None:
+        c = c + count(l)
+    r: Node | None = node.right
+    if r != None:
+        c = c + count(r)
+    return c
+
+# Alias ÇIPLAK return edilir → retain gerekir (borrowed OLMAMALI).
+def left_of(node: Node) -> Node | None:
+    l: Node | None = node.left
+    return l
+
+# MUTASYON yapan fonksiyon: alias alanı değiştirdikten SONRA da geçerli kalmalı.
+def detach_and_read(node: Node) -> int:
+    l: Node | None = node.left
+    node.left = None
+    if l != None:
+        return l.val
+    return -1
+
+# Salt-okunur ama liste alanı üzerinde döngü.
+def join_items(node: Node) -> str:
+    its: list[str] = node.items
+    out: str = ""
+    for s in its:
+        out = out + s
+    return out
+
+root: Node = build(6)
+print(root.total())
+print(count(root))
+lf: Node | None = left_of(root)
+if lf != None:
+    print(lf.val)
+print(detach_and_read(root))
+print(count(root))
+print(join_items(root))
+i: int = 0
+acc: int = 0
+while i < 200:
+    t: Node = build(5)
+    acc = acc + count(t) + t.total()
+    i = i + 1
+print(acc)

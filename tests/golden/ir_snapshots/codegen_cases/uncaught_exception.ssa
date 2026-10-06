@@ -1459,10 +1459,11 @@ export function $boom(l %rt) {
     storel 2, %t0
     %t1 =l add %t0, 8
     storel 0, %t1
-    call $MyError___init__(l %rt, l %t0, l 42)
+    %t2 =l add %t0, 8
+    storel 42, %t2
     call $nox_raise(l %rt, l %t0, l 6)
-    %t2 =w call $nox_exception_pending(l %rt)
-    jnz %t2, @exc_propagate0, @exc_continue1
+    %t3 =w call $nox_exception_pending(l %rt)
+    jnz %t3, @exc_propagate0, @exc_continue1
 @exc_propagate0
     ret
 @exc_continue1

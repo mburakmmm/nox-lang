@@ -397,6 +397,120 @@ pub fn markBorrowedFieldLocals(self: *Codegen, locals: *std.ArrayListUnmanaged(L
     }
 }
 
+/// v1.142.15: `body` içinde bir `return <name>` (çıplak tanımlayıcı) var mı — bu durumda yerelin
+/// sahipliği çağırana devredilir (borrowed bir yerel için retain gerekir), bu yüzden elenir.
+fn nameReturnedBare(body: []const ast.Stmt, name: []const u8) bool {
+    for (body) |stmt| {
+        switch (stmt.kind) {
+            .return_stmt => |maybe_e| if (maybe_e) |e| {
+                if (e == .identifier and std.mem.eql(u8, e.identifier, name)) return true;
+            },
+            .if_stmt => |f| {
+                if (nameReturnedBare(f.then_body, name)) return true;
+                for (f.elif_clauses) |ec| if (nameReturnedBare(ec.body, name)) return true;
+                if (f.else_body) |eb| if (nameReturnedBare(eb, name)) return true;
+            },
+            .while_stmt => |w| if (nameReturnedBare(w.body, name)) return true,
+            .for_stmt => |f| if (nameReturnedBare(f.body, name)) return true,
+            .try_stmt => |t| {
+                if (nameReturnedBare(t.try_body, name)) return true;
+                for (t.except_clauses) |ec| if (nameReturnedBare(ec.body, name)) return true;
+                if (t.finally_body) |fb| if (nameReturnedBare(fb, name)) return true;
+            },
+            .lowlevel_stmt => |ll| if (nameReturnedBare(ll.body, name)) return true,
+            .with_stmt => |w| if (nameReturnedBare(w.body, name)) return true,
+            else => {},
+        }
+    }
+    return false;
+}
+
+/// v1.142.15 (ikili ağaç benchmark'ı: `l: Node | None = node.left` yerel alias'larının
+/// retain/release çiftleri her düğümü "olası döngü kökü" yapıyordu): fonksiyon yığını
+/// HİÇ DEĞİŞTİRMİYORSA (`heap_readonly`: alan/eleman ataması, mutasyonlu metod, bilinmeyen/IO
+/// çağrısı yok; çağrılan her şey de öyle), bir PARAMETREYE dayalı `x = P.f1.f2…` alan-zinciri
+/// kopyası parametrenin sahibi (çağıran) tarafından fonksiyon boyunca CANLI tutulur —
+/// retain/release GEREKSİZdir. Koşullar: P yeniden atanmaz; `x` tek bildirim, yeniden atanmaz,
+/// çıplak `return x` yok; iç içe `def` yok. (Alan okuması HER ZAMAN alias'tır — taze değer
+/// üretmez, bu yüzden release'i atlamak sızıntı yapmaz.)
+pub fn markBorrowedAliasLocals(self: *Codegen, locals: *std.ArrayListUnmanaged(LocalDecl), full_body: []const ast.Stmt, func_sym: []const u8) CodegenError!void {
+    if (!self.heap_readonly.contains(func_sym)) return;
+    if (bodyHasNestedFuncDef(full_body)) return;
+    var reassigned: std.StringHashMapUnmanaged(void) = .empty;
+    defer reassigned.deinit(self.allocator);
+    try collectReassignedNames(full_body, &reassigned, self.allocator);
+    try markAliasStmts(locals, full_body, full_body, &reassigned);
+}
+
+fn markAliasStmts(locals: *std.ArrayListUnmanaged(LocalDecl), body: []const ast.Stmt, full_body: []const ast.Stmt, reassigned: *const std.StringHashMapUnmanaged(void)) CodegenError!void {
+    for (body) |stmt| {
+        switch (stmt.kind) {
+            .var_decl => |v| {
+                if (aliasBorrowEligible(v, locals.items, full_body, reassigned)) {
+                    var i = locals.items.len;
+                    while (i > 0) {
+                        i -= 1;
+                        if (std.mem.eql(u8, locals.items[i].name, v.name)) {
+                            locals.items[i].borrowed_field = true;
+                            break;
+                        }
+                    }
+                }
+            },
+            .if_stmt => |f| {
+                try markAliasStmts(locals, f.then_body, full_body, reassigned);
+                for (f.elif_clauses) |ec| try markAliasStmts(locals, ec.body, full_body, reassigned);
+                if (f.else_body) |eb| try markAliasStmts(locals, eb, full_body, reassigned);
+            },
+            .while_stmt => |w| try markAliasStmts(locals, w.body, full_body, reassigned),
+            .for_stmt => |f| try markAliasStmts(locals, f.body, full_body, reassigned),
+            .try_stmt => |t| {
+                try markAliasStmts(locals, t.try_body, full_body, reassigned);
+                for (t.except_clauses) |ec| try markAliasStmts(locals, ec.body, full_body, reassigned);
+                if (t.finally_body) |fb| try markAliasStmts(locals, fb, full_body, reassigned);
+            },
+            .lowlevel_stmt, .with_stmt => {}, // arena/with kapsamları: dokunma
+            else => {},
+        }
+    }
+}
+
+fn aliasBorrowEligible(v: ast.VarDecl, locals: []const LocalDecl, full_body: []const ast.Stmt, reassigned: *const std.StringHashMapUnmanaged(void)) bool {
+    // Değer: parametreye dayalı en az bir alan hop'u.
+    if (v.value != .attribute) return false;
+    var root: ast.Expr = v.value;
+    while (root == .attribute) root = root.attribute.obj.*;
+    if (root != .identifier) return false;
+    const root_name = root.identifier;
+    if (reassigned.contains(root_name)) return false;
+    var root_ok = false;
+    var i = locals.len;
+    while (i > 0) {
+        i -= 1;
+        if (std.mem.eql(u8, locals[i].name, root_name)) {
+            root_ok = locals[i].is_param and locals[i].info.heap == .class and !locals[i].arena;
+            break;
+        }
+    }
+    if (!root_ok) return false;
+
+    // Yerel: heap-yönetimli, tek bildirim, yeniden atanmıyor, çıplak return edilmiyor.
+    var decl_ok = false;
+    i = locals.len;
+    while (i > 0) {
+        i -= 1;
+        if (std.mem.eql(u8, locals[i].name, v.name)) {
+            decl_ok = !locals[i].is_param and !locals[i].arena and abi.isHeapManaged(locals[i].info.heap);
+            break;
+        }
+    }
+    if (!decl_ok) return false;
+    if (varDeclCountForName(full_body, v.name) != 1) return false;
+    if (nameReassignedAfterDecl(full_body, v.name)) return false;
+    if (nameReturnedBare(full_body, v.name)) return false;
+    return true;
+}
+
 pub fn collectLoopInvariantStrBases(self: *Codegen, body: []const ast.Stmt) CodegenError!std.StringHashMapUnmanaged(void) {
     var result: std.StringHashMapUnmanaged(void) = .empty;
     if (bodyHasNestedFuncDef(body)) return result;

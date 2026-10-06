@@ -1523,7 +1523,44 @@ pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: Cla
     // sınıfın KENDİ `__init__`i yoksa (taban sınıftan MİRAS alındı)
     // `cinfo.init_owner` GERÇEK implementasyonu TAŞIYAN sınıfa işaret
     // eder — `class_name`in KENDİSİ DEĞİL (o sembol HİÇ ÜRETİLMEZ).
-    if (cinfo.has_init) {
+    if (cinfo.has_init and cinfo.simple_init_ok and temp_release != null and std.mem.eql(u8, cinfo.init_owner.?, class_name)) {
+        // v1.142.15 "basit `__init__`" satır içi açma: gövde yalnızca `self.alan = parametre`/literal
+        // atamalarından oluştuğundan çağrı + retain/release çifti + istisna kontrolü yerine alan
+        // depolamaları DOĞRUDAN burada yazılır. Argüman ifadesi taze ise sahiplik alana TAŞINIR
+        // (retain/release yok); değilse `retainIfAliasing` retain eder — `self.alan = arg_ifadesi`
+        // atamasıyla BİREBİR aynı kurallar.
+        const tr = temp_release.?;
+        const consumed = try self.allocator.alloc(bool, arg_values.len);
+        @memset(consumed, false);
+        for (cinfo.simple_init) |st| {
+            var fld: ?types.ClassField = null;
+            for (cinfo.fields.items) |f| {
+                if (std.mem.eql(u8, f.name, st.field)) fld = f;
+            }
+            const f = fld orelse return error.Unsupported;
+            const addr = try self.newTemp();
+            try self.qbeOp2Imm(addr, .l, "add", t, @intCast(f.offset));
+            if (st.param_index) |pi| {
+                const retained = try self.retainIfAliasing(tr.exprs[pi], arg_values[pi]);
+                const val = try self.convert(retained, f.info.qtype);
+                try self.qbeStore(f.info.qtype, val.text, addr);
+                consumed[pi] = true;
+            } else if (st.literal) |lit| {
+                const lv = try self.genExprForTarget(lit, f.info);
+                const val = try self.convert(lv, f.info.qtype);
+                try self.qbeStore(f.info.qtype, val.text, addr);
+            }
+        }
+        // Tüketilmeyen (kullanılmayan parametreli) taze argümanlar normal şekilde serbest bırakılır.
+        var rel_exprs: std.ArrayListUnmanaged(ast.Expr) = .empty;
+        var rel_values: std.ArrayListUnmanaged(Value) = .empty;
+        for (tr.exprs, 0..) |e, i| {
+            if (consumed[i]) continue;
+            try rel_exprs.append(self.allocator, e);
+            try rel_values.append(self.allocator, tr.values[i]);
+        }
+        try self.releaseTemporaryArgs(rel_exprs.items, rel_values.items);
+    } else if (cinfo.has_init) {
         const init_owner = cinfo.init_owner.?;
         {
             const init_args = try self.allocator.alloc(codegen.QbeArg, 2 + arg_values.len);

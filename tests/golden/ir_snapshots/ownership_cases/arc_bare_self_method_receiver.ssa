@@ -1504,26 +1504,29 @@ export function w $main(w %argc, l %argv) {
     storel 0, %t3
     %t4 =l add %t2, 16
     storel 0, %t4
-    call $Point___init__(l %rt, l %t2, l 3, l 4)
-    %t5 =l loadl %t0
-    %t6 =w ceql %t5, 0
-    jnz %t6, @release_skip1, @release0
+    %t5 =l add %t2, 8
+    storel 3, %t5
+    %t6 =l add %t2, 16
+    storel 4, %t6
+    %t7 =l loadl %t0
+    %t8 =w ceql %t7, 0
+    jnz %t8, @release_skip1, @release0
 @release0
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t5, l $Point_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t7, l $Point_release)
     jmp @release_done2
 @release_skip1
     jmp @release_done2
 @release_done2
     storel 0, %t0
     storel %t2, %t0
-    %t7 =l loadl %t0
-    %t8 =l call $Point_length_sq(l %rt, l %t7)
-    storel %t8, %t1
     %t9 =l loadl %t0
-    %t10 =w ceql %t9, 0
-    jnz %t10, @release_skip4, @release3
+    %t10 =l call $Point_length_sq(l %rt, l %t9)
+    storel %t10, %t1
+    %t11 =l loadl %t0
+    %t12 =w ceql %t11, 0
+    jnz %t12, @release_skip4, @release3
 @release3
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t9, l $Point_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t11, l $Point_release)
     jmp @release_done5
 @release_skip4
     jmp @release_done5

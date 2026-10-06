@@ -1529,96 +1529,108 @@ export function $run(l %rt) {
     storel 2, %t8
     %t9 =l add %t8, 8
     storel 0, %t9
-    call $Node___init__(l %rt, l %t8, l %t7)
-    %t10 =l loadl %t0
-    %t11 =w ceql %t10, 0
-    jnz %t11, @release_skip7, @release6
-@release6
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t10, l $Node_release)
-    jmp @release_done8
-@release_skip7
-    jmp @release_done8
-@release_done8
+    %t10 =l add %t8, 8
+    %t11 =w ceql %t7, 0
+    jnz %t11, @retain_skip7, @retain6
+@retain6
+    %t12 =l sub %t7, 8
+    %t13 =l loadl %t12
+    %t14 =l add %t13, 1
+    storel %t14, %t12
+    jmp @retain_done8
+@retain_skip7
+    jmp @retain_done8
+@retain_done8
+    storel %t7, %t10
+    %t15 =l loadl %t0
+    %t16 =w ceql %t15, 0
+    jnz %t16, @release_skip10, @release9
+@release9
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t15, l $Node_release)
+    jmp @release_done11
+@release_skip10
+    jmp @release_done11
+@release_done11
     storel 0, %t0
     storel %t8, %t0
-    %t12 =l loadl %t1
-    %t13 =l add %t12, 1
-    storel %t13, %t1
+    %t17 =l loadl %t1
+    %t18 =l add %t17, 1
+    storel %t18, %t1
     jmp @while_cond3
 @while_end5
-    %t14 =l loadl %t0
-    %t15 =w cnel %t14, 0
-    jnz %t15, @if_then10, @if_end9
-@if_then10
-    %t16 =l loadl %t0
-    %t17 =w ceql %t16, 0
-    jnz %t17, @retain_skip12, @retain11
-@retain11
-    %t18 =l sub %t16, 8
-    %t19 =l loadl %t18
-    %t20 =l add %t19, 1
-    storel %t20, %t18
-    jmp @retain_done13
-@retain_skip12
-    jmp @retain_done13
-@retain_done13
-    %t21 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 1, %t21
-    %t22 =l add %t21, 8
-    storel 1, %t22
-    %t23 =l add %t21, 16
-    storel %t16, %t23
-    %t24 =l loadl %t2
-    %t25 =w ceql %t24, 0
-    jnz %t25, @release_skip15, @release14
-@release14
-    call $List_Node_release(l %rt, l %t24)
-    jmp @release_done16
-@release_skip15
-    jmp @release_done16
-@release_done16
-    storel 0, %t2
-    storel %t21, %t2
-    %t26 =l call $nox_rc_alloc(l %rt, l 16)
-    storel 0, %t26
+    %t19 =l loadl %t0
+    %t20 =w cnel %t19, 0
+    jnz %t20, @if_then13, @if_end12
+@if_then13
+    %t21 =l loadl %t0
+    %t22 =w ceql %t21, 0
+    jnz %t22, @retain_skip15, @retain14
+@retain14
+    %t23 =l sub %t21, 8
+    %t24 =l loadl %t23
+    %t25 =l add %t24, 1
+    storel %t25, %t23
+    jmp @retain_done16
+@retain_skip15
+    jmp @retain_done16
+@retain_done16
+    %t26 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 1, %t26
     %t27 =l add %t26, 8
-    storel 0, %t27
-    %t28 =l loadl %t2
-    %t29 =w ceql %t28, 0
-    jnz %t29, @release_skip18, @release17
+    storel 1, %t27
+    %t28 =l add %t26, 16
+    storel %t21, %t28
+    %t29 =l loadl %t2
+    %t30 =w ceql %t29, 0
+    jnz %t30, @release_skip18, @release17
 @release17
-    call $List_Node_release(l %rt, l %t28)
+    call $List_Node_release(l %rt, l %t29)
     jmp @release_done19
 @release_skip18
     jmp @release_done19
 @release_done19
     storel 0, %t2
     storel %t26, %t2
-    jmp @if_end9
-@if_end9
-    %t30 =l add $str0, 16
-    call $printf(l $fmt_str, ..., l %t30)
-    %t31 =l loadl %t0
-    %t32 =w ceql %t31, 0
-    jnz %t32, @release_skip21, @release20
+    %t31 =l call $nox_rc_alloc(l %rt, l 16)
+    storel 0, %t31
+    %t32 =l add %t31, 8
+    storel 0, %t32
+    %t33 =l loadl %t2
+    %t34 =w ceql %t33, 0
+    jnz %t34, @release_skip21, @release20
 @release20
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t31, l $Node_release)
+    call $List_Node_release(l %rt, l %t33)
     jmp @release_done22
 @release_skip21
     jmp @release_done22
 @release_done22
-    storel 0, %t0
-    %t33 =l loadl %t2
-    %t34 =w ceql %t33, 0
-    jnz %t34, @release_skip24, @release23
+    storel 0, %t2
+    storel %t31, %t2
+    jmp @if_end12
+@if_end12
+    %t35 =l add $str0, 16
+    call $printf(l $fmt_str, ..., l %t35)
+    %t36 =l loadl %t0
+    %t37 =w ceql %t36, 0
+    jnz %t37, @release_skip24, @release23
 @release23
-    call $List_Node_release(l %rt, l %t33)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t36, l $Node_release)
     jmp @release_done25
 @release_skip24
     jmp @release_done25
 @release_done25
+    storel 0, %t0
+    %t38 =l loadl %t2
+    %t39 =w ceql %t38, 0
+    jnz %t39, @release_skip27, @release26
+@release26
+    call $List_Node_release(l %rt, l %t38)
+    jmp @release_done28
+@release_skip27
+    jmp @release_done28
+@release_done28
     storel 0, %t2
-@fn_end26
+@fn_end29
     ret
 }
 export function w $main(w %argc, l %argv) {

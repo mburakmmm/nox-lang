@@ -480,6 +480,16 @@ pub const ClassMethodInfo = struct {
     slot: usize = 0,
 };
 
+/// v1.142.15: "basit `__init__`" (gövde yalnızca `self.alan = parametre` / `self.alan = <skaler
+/// literal>` atamaları) — `genConstructFromValues` bu kurucuları ÇAĞIRMADAN, alan
+/// depolamalarını doğrudan çağrı sitesine yazar (retain/release çifti, çağrı ve istisna
+/// kontrolü yok). `param_index == null` → `literal` bir skaler/None literalidir.
+pub const SimpleInitStore = struct {
+    field: []const u8,
+    param_index: ?usize = null,
+    literal: ?ast.Expr = null,
+};
+
 pub const ClassInfo = struct {
     fields: std.ArrayListUnmanaged(ClassField) = .empty,
     total_size: usize = 0,
@@ -490,6 +500,9 @@ pub const ClassInfo = struct {
     has_init: bool = true,
     /// `true`: `__init__`in ASLA istisna fırlatmadığı KANITLANDI.
     init_is_safe: bool = false,
+    /// v1.142.15: bkz. `SimpleInitStore`; `simple_init_ok == false` İKEN `simple_init` boştur.
+    simple_init_ok: bool = false,
+    simple_init: []const SimpleInitStore = &.{},
     /// Faz 7 (tekli kalıtım): `class Derived(Base):` — `ast.ClassDef.base`.
     base: ?[]const u8 = null,
     /// Faz 7: bu sınıf KALITIMA KATILIYOR MU (KENDİSİ türetilmiş YA DA

@@ -1524,7 +1524,8 @@ export function l $nox_testmod_make_counter(l %rt, l %p_start) {
     storel 2, %t2
     %t3 =l add %t2, 8
     storel 0, %t3
-    call $nox_testmod_Counter___init__(l %rt, l %t2, l %t1)
+    %t4 =l add %t2, 8
+    storel %t1, %t4
     ret %t2
 @after_return0
 @fn_end1
@@ -1572,46 +1573,48 @@ export function w $main(w %argc, l %argv) {
     storel 2, %t16
     %t17 =l add %t16, 8
     storel 0, %t17
-    call $nox_testmod_Counter___init__(l %rt, l %t16, l %t15)
+    %t18 =l add %t16, 8
+    storel %t15, %t18
     storel %t16, %t5
     jmp @inline_done4
 @after_inline_return5
     jmp @inline_done4
 @inline_done4
-    %t18 =l loadl %t5
-    %t19 =l call $nox_testmod_Counter_increment(l %rt, l %t18)
-    %t20 =w ceql %t18, 0
-    jnz %t20, @release_skip7, @release6
+    %t19 =l loadl %t5
+    %t20 =l call $nox_testmod_Counter_increment(l %rt, l %t19)
+    %t21 =w ceql %t19, 0
+    jnz %t21, @release_skip7, @release6
 @release6
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t18, l $nox_testmod_Counter_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t19, l $nox_testmod_Counter_release)
     jmp @release_done8
 @release_skip7
     jmp @release_done8
 @release_done8
-    call $printf(l $fmt_int, ..., l %t19)
+    call $printf(l $fmt_int, ..., l %t20)
     storel 5, %t6
-    %t21 =l loadl %t6
-    %t22 =l call $nox_rc_alloc(l %rt, l 16)
-    storel 2, %t22
-    %t23 =l add %t22, 8
-    storel 0, %t23
-    call $nox_testmod_Counter___init__(l %rt, l %t22, l %t21)
-    storel %t22, %t7
+    %t22 =l loadl %t6
+    %t23 =l call $nox_rc_alloc(l %rt, l 16)
+    storel 2, %t23
+    %t24 =l add %t23, 8
+    storel 0, %t24
+    %t25 =l add %t23, 8
+    storel %t22, %t25
+    storel %t23, %t7
     jmp @inline_done9
 @after_inline_return10
     jmp @inline_done9
 @inline_done9
-    %t24 =l loadl %t7
-    %t25 =l call $nox_testmod_Counter_increment(l %rt, l %t24)
-    %t26 =w ceql %t24, 0
-    jnz %t26, @release_skip12, @release11
+    %t26 =l loadl %t7
+    %t27 =l call $nox_testmod_Counter_increment(l %rt, l %t26)
+    %t28 =w ceql %t26, 0
+    jnz %t28, @release_skip12, @release11
 @release11
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t24, l $nox_testmod_Counter_release)
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t26, l $nox_testmod_Counter_release)
     jmp @release_done13
 @release_skip12
     jmp @release_done13
 @release_done13
-    call $printf(l $fmt_int, ..., l %t25)
+    call $printf(l $fmt_int, ..., l %t27)
     call $nox_runtime_deinit(l %rt)
 @fn_end14
     ret 0

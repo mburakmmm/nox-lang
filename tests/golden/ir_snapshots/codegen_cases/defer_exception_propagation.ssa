@@ -1548,10 +1548,11 @@ export function $risky(l %rt) {
     storel 2, %t5
     %t6 =l add %t5, 8
     storel 0, %t6
-    call $MyError___init__(l %rt, l %t5, l %t4)
+    %t7 =l add %t5, 8
+    storel %t4, %t7
     call $nox_raise(l %rt, l %t5, l 11)
-    %t7 =w call $nox_exception_pending(l %rt)
-    jnz %t7, @exc_propagate0, @exc_continue1
+    %t8 =w call $nox_exception_pending(l %rt)
+    jnz %t8, @exc_propagate0, @exc_continue1
 @exc_propagate0
     call $nox_defer_stack_run_all(l %rt, l %t0)
     ret
