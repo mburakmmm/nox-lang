@@ -1,4 +1,4 @@
-# nox.validate — `nox.json` üzerine saf Nox'ta yazılmış basit bir şema
+# nox.validate — `nox.json` üzerine saf Nox'ta yazılmış bir şema
 # doğrulayıcı: bir HTTP istek gövdesi gibi ham JSON metnini/bir
 # `JsonValue`yu bir alan kuralları listesine (isim, beklenen tip,
 # zorunlu mu) karşı doğrular; insan-okunur bir hata mesajı listesi döner
@@ -6,19 +6,58 @@
 # tarafından ZATEN global olarak sağlandığından burada AYRICA
 # import EDİLMEZ (bkz. `nox.json`nin belge notu).
 #
-# Kapsam BİLİNÇLİ olarak DAR tutuldu (tam bir JSON-Schema motoru DEĞİL):
-# yalnızca DÜZ (iç içe OLMAYAN) bir nesnenin alanları İçin varlık +
-# tip kontrolü. İç içe nesne/dizi eleman doğrulaması, `nox.validate`nin
-# KENDİSİNİ kullanıcının rekürsif ÇAĞIRMASIYLA (`validate(nested, alt_şema)`)
-# ELDE EDİLEBİLİR — ayrı bir "nested schema" API'si GEREKMEZ.
+# Aether NOX_LIMITATIONS.md yol haritası, Faz C.4 (bkz. nox-teknik-
+# spesifikasyon.md ilgili bölüm, madde 7): ÖNCEKİ "bilinçli dar kapsam"
+# kararından (iç içe doğrulamayı kullanıcının rekürsif çağırmasına
+# bırakmak) DÖNÜLDÜ — artık şema İÇ İÇE olabilir. Mevcut `require`/
+# `optional`/`validate`/`validate_json_str` API'si VE hata mesajı biçimi
+# DEĞİŞMEDİ (saf ekleme):
+#   - iç içe nesne: `require_object_schema(ad, alt_şema)`,
+#   - dizi elemanı: `require_array_of_kind(ad, tip)` (ör. "string") ya da
+#     `require_array_of_schema(ad, alt_şema)` (nesne dizisi),
+#   - kısıtlar (kural ADIYLA, kural eklendikten SONRA): `min`/`max`
+#     (number), `min_length`/`max_length`/`pattern`/`format` (string).
+# Hata mesajlarındaki alan adı TAM YOLDUR: `address.city`, `items[2].name`.
 import nox.json
+import nox.regex
+import nox.strings
 from nox.json import JsonError
 
 class FieldRule:
+    name: str
+    kind: str
+    required: bool
+    nested: Schema | None
+    elem_kind: str
+    elem_schema: Schema | None
+    has_min: bool
+    min_value: float
+    has_max: bool
+    max_value: float
+    has_min_len: bool
+    min_len: int
+    has_max_len: bool
+    max_len: int
+    pattern: str
+    fmt: str
+
     def __init__(self: FieldRule, name: str, kind: str, required: bool) -> None:
         self.name = name
         self.kind = kind
         self.required = required
+        self.nested = None
+        self.elem_kind = ""
+        self.elem_schema = None
+        self.has_min = False
+        self.min_value = 0.0
+        self.has_max = False
+        self.max_value = 0.0
+        self.has_min_len = False
+        self.min_len = 0
+        self.has_max_len = False
+        self.max_len = 0
+        self.pattern = ""
+        self.fmt = ""
 
 # `require`/`optional`in `kind` parametresi: "string"/"number"/"bool"/
 # "array"/"object"/"null" (bkz. `_matches_kind`).
@@ -34,6 +73,100 @@ class Schema:
         rules: list[FieldRule] = self.rules
         rules.append(FieldRule(name, kind, False))
         self.rules = rules
+
+    def _add(self: Schema, rule: FieldRule) -> None:
+        rules: list[FieldRule] = self.rules
+        rules.append(rule)
+        self.rules = rules
+
+    # İç içe nesne: alan bir JSON nesnesi OLMALI VE `sub`a göre doğrulanır.
+    def require_object_schema(self: Schema, name: str, sub: Schema) -> None:
+        r: FieldRule = FieldRule(name, "object", True)
+        r.nested = sub
+        self._add(r)
+
+    def optional_object_schema(self: Schema, name: str, sub: Schema) -> None:
+        r: FieldRule = FieldRule(name, "object", False)
+        r.nested = sub
+        self._add(r)
+
+    # Dizi: HER eleman `elem_kind` tipinde OLMALI ("string"/"number"/...).
+    def require_array_of_kind(self: Schema, name: str, elem_kind: str) -> None:
+        r: FieldRule = FieldRule(name, "array", True)
+        r.elem_kind = elem_kind
+        self._add(r)
+
+    def optional_array_of_kind(self: Schema, name: str, elem_kind: str) -> None:
+        r: FieldRule = FieldRule(name, "array", False)
+        r.elem_kind = elem_kind
+        self._add(r)
+
+    # Nesne dizisi: HER eleman bir JSON nesnesi OLMALI VE `sub`a göre
+    # doğrulanır (hata yolu `ad[indeks].alan`).
+    def require_array_of_schema(self: Schema, name: str, sub: Schema) -> None:
+        r: FieldRule = FieldRule(name, "array", True)
+        r.elem_schema = sub
+        self._add(r)
+
+    def optional_array_of_schema(self: Schema, name: str, sub: Schema) -> None:
+        r: FieldRule = FieldRule(name, "array", False)
+        r.elem_schema = sub
+        self._add(r)
+
+    def _find(self: Schema, name: str) -> FieldRule:
+        i: int = 0
+        while i < len(self.rules):
+            if self.rules[i].name == name:
+                return self.rules[i]
+            i = i + 1
+        raise ValueError("kural bulunamadi: " + name)
+
+    # Kısıt ayarlayıcıları, ÖNCE eklenmiş bir kuralın ADIYLA çağrılır;
+    # kuralın tipine UYMAYAN bir kısıt (ör. string alana `min`) SESSİZCE
+    # yok sayılmak YERİNE `ValueError` fırlatır (yazım hatasını gizlememek).
+    def min(self: Schema, name: str, v: float) -> None:
+        r: FieldRule = self._find(name)
+        if r.kind != "number":
+            raise ValueError("min yalnizca 'number' alanlarina uygulanir: " + name)
+        r.has_min = True
+        r.min_value = v
+
+    def max(self: Schema, name: str, v: float) -> None:
+        r: FieldRule = self._find(name)
+        if r.kind != "number":
+            raise ValueError("max yalnizca 'number' alanlarina uygulanir: " + name)
+        r.has_max = True
+        r.max_value = v
+
+    def min_length(self: Schema, name: str, n: int) -> None:
+        r: FieldRule = self._find(name)
+        if r.kind != "string":
+            raise ValueError("min_length yalnizca 'string' alanlarina uygulanir: " + name)
+        r.has_min_len = True
+        r.min_len = n
+
+    def max_length(self: Schema, name: str, n: int) -> None:
+        r: FieldRule = self._find(name)
+        if r.kind != "string":
+            raise ValueError("max_length yalnizca 'string' alanlarina uygulanir: " + name)
+        r.has_max_len = True
+        r.max_len = n
+
+    # `pattern`, `nox.regex`in alt kümesidir (bkz. onun belge notu).
+    def pattern(self: Schema, name: str, regex: str) -> None:
+        r: FieldRule = self._find(name)
+        if r.kind != "string":
+            raise ValueError("pattern yalnizca 'string' alanlarina uygulanir: " + name)
+        r.pattern = regex
+
+    # Desteklenen formatlar: "email", "uuid".
+    def format(self: Schema, name: str, fmt: str) -> None:
+        r: FieldRule = self._find(name)
+        if r.kind != "string":
+            raise ValueError("format yalnizca 'string' alanlarina uygulanir: " + name)
+        if fmt != "email" and fmt != "uuid":
+            raise ValueError("bilinmeyen format: " + fmt)
+        r.fmt = fmt
 
 def _object_get(v: JsonValue, key: str) -> JsonValue | None:
     i: int = 0
@@ -59,25 +192,130 @@ def _matches_kind(v: JsonValue, kind: str) -> bool:
         return nox.json.is_null(v)
     return False
 
-# `v`, bir JSON NESNESİ (object) OLMALIDIR — değilse tek bir hatayla
-# erken döner (alan kuralları hiç değerlendirilmez).
-def validate(v: JsonValue, schema: Schema) -> list[str]:
+def _is_hex(b: int) -> bool:
+    return (b >= 48 and b <= 57) or (b >= 97 and b <= 102) or (b >= 65 and b <= 70)
+
+def _is_uuid(s: str) -> bool:
+    if nox.strings.byte_len(s) != 36:
+        return False
+    i: int = 0
+    while i < 36:
+        b: int = nox.strings.byte_at(s, i)
+        if i == 8 or i == 13 or i == 18 or i == 23:
+            if b != 45:
+                return False
+        else:
+            if not _is_hex(b):
+                return False
+        i = i + 1
+    return True
+
+# Basit (RFC'ye TAM uymayan) e-posta denetimi: tam bir `@`, boş olmayan
+# yerel kısım, alan adında `.` (başta/sonda değil), boşluk YOK.
+def _is_email(s: str) -> bool:
+    if nox.strings.contains(s, " "):
+        return False
+    parts: list[str] = nox.strings.split(s, "@")
+    if len(parts) != 2:
+        return False
+    local: str = parts[0]
+    domain: str = parts[1]
+    if len(local) == 0 or len(domain) < 3:
+        return False
+    dot: int = nox.strings.index_of(domain, ".")
+    if dot <= 0:
+        return False
+    if nox.strings.ends_with(domain, "."):
+        return False
+    return True
+
+# `field` (ZATEN `rule.kind`a uyduğu doğrulanmış) için kısıt hataları.
+def _check_constraints(field: JsonValue, rule: FieldRule, full: str) -> list[str]:
     errors: list[str] = []
-    if not nox.json.is_object(v):
-        errors.append("beklenen bir JSON nesnesi (object)")
-        return errors
+    if rule.kind == "number":
+        n: float = nox.json.as_number(field)
+        if rule.has_min and n < rule.min_value:
+            errors.append("alan '" + full + "' en az " + str(rule.min_value) + " olmali")
+        if rule.has_max and n > rule.max_value:
+            errors.append("alan '" + full + "' en fazla " + str(rule.max_value) + " olmali")
+    if rule.kind == "string":
+        sv: str = nox.json.as_string(field)
+        if rule.has_min_len and len(sv) < rule.min_len:
+            errors.append("alan '" + full + "' en az " + str(rule.min_len) + " karakter olmali")
+        if rule.has_max_len and len(sv) > rule.max_len:
+            errors.append("alan '" + full + "' en fazla " + str(rule.max_len) + " karakter olmali")
+        if len(rule.pattern) > 0 and not nox.regex.is_match(rule.pattern, sv):
+            errors.append("alan '" + full + "' desenle eslesmiyor: " + rule.pattern)
+        if rule.fmt == "email" and not _is_email(sv):
+            errors.append("alan '" + full + "' gecerli bir e-posta degil")
+        if rule.fmt == "uuid" and not _is_uuid(sv):
+            errors.append("alan '" + full + "' gecerli bir uuid degil")
+    return errors
+
+# `v` (ZATEN bir JSON nesnesi) için `schema`yı `prefix` yoluyla değerlendirir.
+# Alt-sonuçlar `errors`a bir YEREL değişken üzerinden eklenir (`list[T].
+# append`in alıcısı bir PARAMETRE olamaz, bkz. `genListAppend`), bu yüzden
+# özyineleme YENİ bir liste DÖNER ve çağıran döngüyle birleştirir.
+def _validate_at(v: JsonValue, schema: Schema, prefix: str) -> list[str]:
+    errors: list[str] = []
     i: int = 0
     while i < len(schema.rules):
         rule: FieldRule = schema.rules[i]
+        full: str = prefix + rule.name
         field: JsonValue | None = _object_get(v, rule.name)
         if field == None:
             if rule.required:
-                errors.append("eksik zorunlu alan: '" + rule.name + "'")
+                errors.append("eksik zorunlu alan: '" + full + "'")
         else:
             if not _matches_kind(field, rule.kind):
-                errors.append("alan '" + rule.name + "' icin beklenen tip: " + rule.kind)
+                errors.append("alan '" + full + "' icin beklenen tip: " + rule.kind)
+            else:
+                cons: list[str] = _check_constraints(field, rule, full)
+                k: int = 0
+                while k < len(cons):
+                    errors.append(cons[k])
+                    k = k + 1
+                nested: Schema | None = rule.nested
+                if nested == None:
+                    pass
+                else:
+                    sub_errors: list[str] = _validate_at(field, nested, full + ".")
+                    m: int = 0
+                    while m < len(sub_errors):
+                        errors.append(sub_errors[m])
+                        m = m + 1
+                if rule.kind == "array":
+                    n: int = nox.json.array_len(field)
+                    idx: int = 0
+                    while idx < n:
+                        el: JsonValue = nox.json.array_get(field, idx)
+                        el_path: str = full + "[" + str(idx) + "]"
+                        if len(rule.elem_kind) > 0 and not _matches_kind(el, rule.elem_kind):
+                            errors.append("alan '" + el_path + "' icin beklenen tip: " + rule.elem_kind)
+                        elem_schema: Schema | None = rule.elem_schema
+                        if elem_schema == None:
+                            pass
+                        else:
+                            if not nox.json.is_object(el):
+                                errors.append("alan '" + el_path + "' icin beklenen tip: object")
+                            else:
+                                el_errors: list[str] = _validate_at(el, elem_schema, el_path + ".")
+                                q: int = 0
+                                while q < len(el_errors):
+                                    errors.append(el_errors[q])
+                                    q = q + 1
+                        idx = idx + 1
         i = i + 1
     return errors
+
+# `v`, bir JSON NESNESİ (object) OLMALIDIR — değilse tek bir hatayla
+# erken döner (alan kuralları hiç değerlendirilmez).
+def validate(v: JsonValue, schema: Schema) -> list[str]:
+    if not nox.json.is_object(v):
+        errors: list[str] = []
+        errors.append("beklenen bir JSON nesnesi (object)")
+        return errors
+    return _validate_at(v, schema, "")
 
 # `s` (ör. bir `HttpRequest.body`) GEÇERSİZ JSON İSE, çökmek/istisna
 # fırlatmak YERİNE bunu da AYNI hata-mesajı listesine tek bir girdi

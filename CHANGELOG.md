@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.135.0]
+
+### Eklendi
+
+- **`nox.validate` iç içe şema ve kısıtlar (bkz. nox-teknik-spesifikasyon.md
+  §3.233, Aether NOX_LIMITATIONS.md madde 7)**: iç içe nesne
+  (`require_object_schema`), tipli/nesne dizisi (`require_array_of_kind`/
+  `require_array_of_schema`), kısıtlar (`min`/`max`/`min_length`/
+  `max_length`/`pattern`/`format`). Hata mesajlarında tam alan yolu
+  (`address.city`, `items[2].name`). Mevcut API ve mesaj biçimi değişmedi.
+
 ## [1.134.0]
 
 ### Eklendi

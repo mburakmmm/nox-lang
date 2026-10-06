@@ -27489,6 +27489,41 @@ o sürede dinlemezse istemci sessizce vazgeçer. Pencere 10 sn'ye çıkarıldı
 destekleniyor ama KANITLANMADI). `zig build test`: üç ardışık temiz
 çalıştırma.
 
+## 3.233 Aether NOX_LIMITATIONS.md yol haritası, Faz C.4 — `nox.validate` iç içe şema
+
+**Bağlam:** madde 7. Önceki tur (§bkz. `validate.nox`nin eski başlık
+notu) iç içe doğrulamayı BİLİNÇLİ olarak "kullanıcı özyinelemeli kendisi
+çağırsın" diye dışarıda bırakmıştı; kullanıcı kararıyla bundan DÖNÜLDÜ.
+Derleyici değişikliği GEREKMEDİ — tamamen saf Nox.
+
+**API (saf ekleme; `require`/`optional`/`validate`/`validate_json_str` ve
+hata mesajı biçimi DEĞİŞMEDİ):** `require_object_schema`/
+`optional_object_schema` (iç içe nesne), `require_array_of_kind`/
+`optional_array_of_kind` (tipli eleman dizisi), `require_array_of_schema`/
+`optional_array_of_schema` (nesne dizisi), kural ADIYLA kısıt
+ayarlayıcıları `min`/`max` (number), `min_length`/`max_length`/`pattern`
+(`nox.regex` alt kümesi)/`format` (`"email"`, `"uuid"`) (string). Kısıt
+kuralın tipine uymuyorsa ya da kural yoksa SESSİZCE yok sayılmak yerine
+`ValueError` (yazım hatasını gizlememek). Hata mesajlarındaki alan adı
+TAM YOLDUR: `address.city`, `items[2].name`, `tags[1]`.
+
+**Uygulama notu:** özyineleme `_validate_at(v, schema, prefix)`; `list[T].
+append`in alıcısı bir PARAMETRE olamayacağından (bkz. `genListAppend`)
+fonksiyon YENİ bir liste döner, çağıran döngüyle birleştirir.
+`FieldRule`ın `Schema | None` alanları (`nested`/`elem_schema`) `Schema`ya
+ileri başvuru yapar (karşılıklı özyinelemeli sınıflar çalıştı).
+`format` kontrolleri basit/RFC'ye TAM uymayan sezgiseldir (e-posta: tek
+`@`, alan adında `.`, boşluk yok; uuid: 36 bayt, tire konumları, hex).
+
+### Test
+
+`validate_nested_schema.nox`: tamamen geçerli gövde (`OK`), 10 hatalı
+alanlı gövde (kısıtlar + iç içe `address.city` + `tags[1]` +
+`items[0].qty`/`items[1].sku`/`items[2]`), eksik iç nesne, yanlış tipli
+iç nesne, dört yanlış-kısıt `ValueError`ı. Mevcut `validate_schema_
+json_body` çıktısı DEĞİŞMEDİ (yalnızca IR snapshot'ı yeniden üretildi).
+`zig build test`: iki ardışık temiz çalıştırma.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

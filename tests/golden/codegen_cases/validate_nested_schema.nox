@@ -1,0 +1,69 @@
+# Aether NOX_LIMITATIONS.md yol haritası, Faz C.4 (bkz. nox-teknik-
+# spesifikasyon.md ilgili bölüm): iç içe şema — nesne içinde nesne, nesne
+# dizisi (hata yolu `ad[i].alan`), tipli eleman dizisi, kısıtlar (min/max/
+# uzunluk/pattern/format), eksik zorunlu iç alan, yanlış tip, ve
+# kısıt ayarlayıcılarının yanlış tipli alana ValueError fırlatması.
+import nox.validate
+from nox.validate import Schema
+
+def show(errors: list[str]) -> None:
+    if len(errors) == 0:
+        print("OK")
+    i: int = 0
+    while i < len(errors):
+        print(errors[i])
+        i = i + 1
+
+address: Schema = Schema()
+address.require("city", "string")
+address.optional("zip", "string")
+address.min_length("city", 2)
+
+item: Schema = Schema()
+item.require("sku", "string")
+item.require("qty", "number")
+item.min("qty", 1.0)
+item.max("qty", 99.0)
+
+user: Schema = Schema()
+user.require("name", "string")
+user.require("email", "string")
+user.format("email", "email")
+user.require("id", "string")
+user.format("id", "uuid")
+user.require("age", "number")
+user.min("age", 18.0)
+user.require("code", "string")
+user.pattern("code", "^[A-Z][A-Z][0-9]")
+user.max_length("name", 5)
+user.require_object_schema("address", address)
+user.optional_array_of_kind("tags", "string")
+user.optional_array_of_schema("items", item)
+
+# Tamamen geçerli.
+show(nox.validate.validate_json_str("{\"name\":\"Ada\",\"email\":\"ada@ex.com\",\"id\":\"123e4567-e89b-12d3-a456-426614174000\",\"age\":30,\"code\":\"AB12\",\"address\":{\"city\":\"Ankara\"},\"tags\":[\"a\",\"b\"],\"items\":[{\"sku\":\"x\",\"qty\":2}]}", user))
+
+# Çoklu hata: iç içe eksik/kısa alan, kısıt ihlalleri, eleman tipi, dizi elemanı yolu.
+show(nox.validate.validate_json_str("{\"name\":\"Abcdefgh\",\"email\":\"yanlis\",\"id\":\"zzz\",\"age\":10,\"code\":\"xx\",\"address\":{\"city\":\"A\"},\"tags\":[\"a\",3],\"items\":[{\"sku\":\"x\",\"qty\":500},{\"qty\":1},7]}", user))
+
+# İç içe nesne YOK ve nesne olmayan tip.
+show(nox.validate.validate_json_str("{\"name\":\"Ada\",\"email\":\"ada@ex.com\",\"id\":\"123e4567-e89b-12d3-a456-426614174000\",\"age\":30,\"code\":\"AB12\"}", user))
+show(nox.validate.validate_json_str("{\"name\":\"Ada\",\"email\":\"ada@ex.com\",\"id\":\"123e4567-e89b-12d3-a456-426614174000\",\"age\":30,\"code\":\"AB12\",\"address\":\"duz-metin\"}", user))
+
+# Kısıt ayarlayıcıları yanlış tipli/olmayan kurala ValueError fırlatır.
+try:
+    user.min("name", 1.0)
+except ValueError as e:
+    print(e.message)
+try:
+    user.pattern("age", "x")
+except ValueError as e2:
+    print(e2.message)
+try:
+    user.min("yok", 1.0)
+except ValueError as e3:
+    print(e3.message)
+try:
+    user.format("email", "telefon")
+except ValueError as e4:
+    print(e4.message)
