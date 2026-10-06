@@ -43,6 +43,7 @@
 const std = @import("std");
 const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
+const index_call_fixup = @import("index_call_fixup.zig");
 const Type = types.Type;
 const span_mod = @import("../span.zig");
 const Span = span_mod.Span;
@@ -2838,6 +2839,21 @@ pub const Checker = struct {
         self.module_expr_spans = module.expr_spans;
         try self.collectImports(module);
         try self.collectClassNames(module);
+        // Faz C.6 (bkz. `index_call_fixup.zig`nin belge notu): `name[i](y)`
+        // belirsizliği — `generic_classes` kurulduktan SONRA, HERHANGİ bir
+        // gövde gezen geçişten ÖNCE. Tanınan generic adları = kullanıcı
+        // generic sınıfları + onların `from X import Box` takma adları.
+        {
+            var generic_names: std.StringHashMapUnmanaged(void) = .empty;
+            defer generic_names.deinit(self.allocator);
+            var gc_it = self.generic_classes.keyIterator();
+            while (gc_it.next()) |k| try generic_names.put(self.allocator, k.*, {});
+            var fi_it = self.from_imports.iterator();
+            while (fi_it.next()) |entry| {
+                if (self.generic_classes.contains(entry.value_ptr.*)) try generic_names.put(self.allocator, entry.key_ptr.*, {});
+            }
+            _ = try index_call_fixup.run(self.allocator, module.body, &generic_names);
+        }
         // Bulundu (bkz. `resolveReExportChains`in belge notu): sınıf-tabanlı
         // zincirlerin (BÜYÜK ÇOĞUNLUK — bir TİP konumunda YALNIZCA bir sınıf
         // geçerlidir) `registerSignatures`DEN (Geçiş 2, fonksiyon parametre/

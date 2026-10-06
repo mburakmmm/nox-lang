@@ -27563,6 +27563,52 @@ ilgili OLABİLİR (KANITLANMADI). `.zig-cache` (gitignore'da, yeniden
 üretilebilir) silinip temiz tam yeniden derleme + test yapıldı: iki
 ardışık temiz çalıştırma.
 
+## 3.235 Aether NOX_LIMITATIONS.md yol haritası, Faz C.6 — `name[i](args)` belirsizliği
+
+**Bağlam:** madde 14. Parser, `name[...](...)` kalıbını — bir sembol
+tablosu OLMADAN ayırt EDEMEDİĞİNDEN — HER ZAMAN `generic_construct`
+(`Box[int](3)`) olarak ayrıştırıyordu; `funcs[i](y)` (closure listesini
+indeksleyip sonucu çağırmak) bu yüzden `bilinmeyen generic kurucu: funcs`
+ile reddediliyordu. Parser'ın kendi notu bunu "KALICI belirsizlik" diye
+belgelemişti.
+
+**Çözüm (kullanıcı seçimi: checker geri-düşüşü):** `compiler/typecheck/
+index_call_fixup.zig` — `checkModule` içinde `collectClassNames`ten
+(generic şablon adları kurulur) SONRA, gövde gezen HERHANGİ bir geçişten
+ÖNCE çalışan, AST'yi YERİNDE yeniden yazan bir ön geçiş. Böylece
+sahiplik/kaçış/closure/inlining analizi DAHİL aşağı akıştaki ~36
+`generic_construct` gezinti noktasının HİÇBİRİ yeniden yorumlamayı bilmek
+ZORUNDA KALMAZ — hepsi sıradan bir `call(index(identifier, ...), args)`
+görür (aksi halde `fs`in son kullanımını kaçıran bir analiz erken
+serbest bırakmaya yol açabilirdi).
+
+**Yeniden yazma koşulları (HEPSİ birlikte; aksi halde eski davranış/mesaj
+aynen):** (1) TEK tip argümanı var ve indeks ifadesine çevrilebilir (çıplak
+isim, `a.b`, iç içe `idx[j]`; virgüllü biçimler gerçek generic); (2) ad
+TANINAN bir generic kurucu DEĞİL (`ptr`/`Channel`/`ThreadChannel`/
+`TaskLocal` + kullanıcı generic sınıfları, `from X import Box` takma
+adları DAHİL); (3) ad modülde bir DEĞİŞKEN olarak bildirilmiş (var_decl/
+parametre/for/with/except). (3) sayesinde bir generic sınıf adındaki
+yazım hatası (`Boxx[int](3)`) "tanımsız değişken" yerine eski net
+"bilinmeyen generic kurucu" mesajını vermeye devam eder.
+
+**Bilinen sınırlamalar:** değişken-adı kümesi kapsam-DUYARSIZDIR (modül
+genelinde toplanır) — bir değişkenle AYNI adı taşıyan gerçek bir generic
+sınıf zaten koşul (2) ile korunur. İlk iki koşulu sağlayıp üçüncüyü
+sağlamayan (ör. başka bir modülden `from m import fs` ile gelen değişken)
+kalıp HÂLÂ eski hatayı verir. Dict-değeri-closure (`table[key](x)`)
+dilin AYRI, ilgisiz bir kısıtı yüzünden (`dict` değer tipi
+int/float/bool/str/sınıf olmalı) bu madde ile çözülmedi.
+
+### Test
+
+`index_call_closure_list.nox`: gerçek `Box[int](7)` DEĞİŞMEDEN çalışır;
+`fs[i](5)`, sabit indeks, fonksiyon-döndüren-closure elemanı, iç içe
+`fs[order[j]](3)`, parametre olarak verilen liste, alan üzerinden
+(regresyon). Negatif: `err_generic_ctor_typo_keeps_message`. Hiçbir
+mevcut IR snapshot'ı DEĞİŞMEDİ (saf ön-geçiş). `zig build test`: üç
+ardışık temiz çalıştırma.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

@@ -1006,6 +1006,14 @@ pub const Parser = struct {
     /// YAYILIR) YA DA `]`DEN SONRA `(` GELMEZSE (`xs[i]` — sıradan bir
     /// tanımlayıcı indeksi) GERİ ALINIR.
     ///
+    /// **Faz C.6 NOTU (bu belirsizlik ARTIK checker'da ÇÖZÜLÜR):** AŞAĞIDAKİ
+    /// "KALICI belirsizlik" HÂLÂ parser seviyesinde GEÇERLİDİR (parser
+    /// `name[i](y)`yi HER ZAMAN `generic_construct` ayrıştırır), AMA
+    /// `typecheck/index_call_fixup.zig`nin ön geçişi `name` TANINAN bir
+    /// generic DEĞİLSE ve bir DEĞİŞKEN olarak bildirilmişse onu sıradan
+    /// `call(index(...))`a YERİNDE yeniden yazar — `funcs[i](y)` ARTIK
+    /// çalışır.
+    ///
     /// **Bilinçli, KALICI bir belirsizlik:** `name[i](y)` (TEK bir çıplak
     /// tanımlayıcı + HEMEN ARDINDAN bir çağrı, ör. bir closure listesini
     /// indeksleyip SONUCU çağırmak: `funcs[i](y)`) HER ZAMAN generic-kurucu

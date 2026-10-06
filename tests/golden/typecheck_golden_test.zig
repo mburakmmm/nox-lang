@@ -859,6 +859,13 @@ test "golden(list-append): zincirleme alan alıcısı (a.b.xs.append) reddedilir
     );
 }
 
+test "golden(index-call): generic sınıf adındaki yazım hatası eski net mesajı korur (değişken değilse yeniden yazılmaz)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_generic_ctor_typo_keeps_message.nox"),
+        @embedFile("typecheck_cases/err_generic_ctor_typo_keeps_message.expected"),
+    );
+}
+
 test "golden(decorator): bir sınıf üzerindeki decorator v1'de AÇIKÇA reddedilir" {
     try expectGolden(
         @embedFile("typecheck_cases/err_decorator_on_class.nox"),

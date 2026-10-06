@@ -14,6 +14,19 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.137.0]
+
+### Düzeltildi
+
+- **`name[i](args)` artık çalışıyor (bkz. nox-teknik-spesifikasyon.md
+  §3.235, Aether NOX_LIMITATIONS.md madde 14)**: bir closure/fonksiyon
+  listesini indeksleyip sonucu çağırmak (`fs[i](5)`) önceden
+  `bilinmeyen generic kurucu` ile reddediliyordu. Checker'a eklenen bir
+  ön geçiş, ad tanınan bir generic değilse ve bir değişken olarak
+  bildirilmişse kalıbı sıradan `call(index(...))`a yeniden yazar. Gerçek
+  generic kurucular (`Box[int](3)`) ve generic sınıf adındaki yazım hataları
+  (eski net mesaj) değişmedi.
+
 ## [1.136.0]
 
 ### Eklendi
