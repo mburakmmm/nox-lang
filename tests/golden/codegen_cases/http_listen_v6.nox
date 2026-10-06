@@ -1,0 +1,14 @@
+# v1.142.10: opt-in IPv6 dinleyici API'si derlenir/bağlanır/çalışır.
+# IPv6'sı olmayan bir ortamda (EAFNOSUPPORT) listen_v6 HttpError fırlatır;
+# iki durumda da program aynı çıktıyı verir (gerçek kabul/peer doğrulaması
+# runtime/stdlib_shims/http_server.zig'deki Zig testlerindedir).
+import nox.http
+from nox.http import HttpError
+
+ok: bool = False
+try:
+    fd: int = nox.http.listen_v6(0, False)
+    ok = fd >= 0
+except HttpError as e:
+    ok = True
+print(ok)

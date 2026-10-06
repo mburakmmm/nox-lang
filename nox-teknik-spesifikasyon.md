@@ -28057,6 +28057,25 @@ Sonuç: Aether'in `--release` üretim yolu decorator'larla da çalışır. Önce
 `conformance_decorator_router_release` (router_from_decorators + string/int/bool/liste
 argümanları + imza metadata'sı, QBE ve LLVM aynı çıktı) geldi.
 
+## 3.248 Opt-in IPv6 dinleyici + IPv6 `peer_addr` (v1.142.10)
+
+Aether/Nyx `NOX_LIMITATIONS.md`: "dinleme soketi her zaman `AF_INET`". Kullanıcı
+kararıyla (AGENTS.md §16) **opt-in yeni API** seçildi: `nox.http.listen(port)`
+ve `serve` IPv4-only (`0.0.0.0`) KALIR; yeni `nox.http.listen_v6(port, v6_only)`
+`AF_INET6` dinleyici fd'si döner (`v6_only=False` → dual-stack `::`, IPV6_V6ONLY=0;
+`True` → yalnızca IPv6) ve mevcut `serve_fd(fd, handler)` ile kullanılır.
+
+Kabul döngüleri (`io.zig` `nonBlockingAccept`/`WithTimeout`, `http_server.zig`
+`blockingAccept`) POSIX'te `sockaddr_storage` ile kabul eder ve aileye göre biçimler:
+IPv4 → `a.b.c.d:port` (değişmedi), gerçek IPv6 → `[addr]:port` (RFC 5952 sıkıştırması),
+IPv4-mapped (`::ffff:a.b.c.d`, dual-stack'te IPv4 istemciler) → ESKİ `a.b.c.d:port`
+biçimine normalleştirilir — IP'yi `:` ile bölen mevcut kod IPv4 istemciler için
+bozulmaz. `PeerAddr` tamponu 24 → 56 bayt. **Windows'ta `listen_v6` desteklenmez**
+(`-1` → `HttpError`; Winsock yolu `sockaddr_in6`yı henüz ele almıyor, CI'da
+doğrulanamıyor). Testler: `formatPeerAddr6` birim testi, dual-stack kabul (`::1` ve
+`127.0.0.1` peer biçimleri) ve `v6_only` reddi Zig testleri (IPv6 yoksa atlanır),
+golden `http_listen_v6`; elle uçtan uca curl doğrulaması yapıldı.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

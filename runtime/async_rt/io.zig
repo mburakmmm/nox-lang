@@ -169,11 +169,14 @@ fn fiberSafeUnexpectedErrno(scheduler: *Scheduler, e: posix.E) error{Unexpected}
 /// spesifikasyon.md ilgili bölüm): `accept()`in KENDİSİNİN zaten
 /// doldurduğu (ama ÖNCEDEN `null, null` geçildiği İçİn ATILAN) karşı
 /// tarafın IPv4 adresi/portu — "`ip:port`" biçiminde, sabit boyutlu (ek
-/// bir bellek tahsisi GEREKTİRMEYEN) bir tampon. Dinleme soketi HER ZAMAN
-/// `AF_INET`dir (bkz. `http_server.zig`nin `nox_http_listen_fd`i), bu
-/// YÜZDEN yalnızca IPv4 ele alınır.
+/// bir bellek tahsisi GEREKTİRMEYEN) bir tampon. Varsayılan dinleme soketi
+/// `AF_INET`dir (`nox_http_listen_fd`) ve peer `a.b.c.d:port` olur; v1.142.10'dan
+/// beri opt-in `nox_http_listen_fd_v6` AF_INET6 dinleyicisi de vardır: gerçek
+/// IPv6 peer'ler `[::1]:port` biçimini alır, IPv4-mapped (`::ffff:a.b.c.d`)
+/// peer'ler ise ESKİ `a.b.c.d:port` biçimine NORMALLEŞTİRİLİR.
 pub const PeerAddr = struct {
-    bytes: [24]u8 = undefined,
+    // `[` + en uzun IPv6 metni (39) + `]:65535` = 47; IPv4 `255.255.255.255:65535` = 21.
+    bytes: [56]u8 = undefined,
     len: u8 = 0,
 
     pub fn slice(self: *const PeerAddr) []const u8 {
@@ -188,6 +191,74 @@ pub const AcceptResult = struct {
     fd: posix.fd_t,
     peer_addr: PeerAddr,
 };
+
+/// `accept()`in doldurduğu `sockaddr_storage`dan peer adresini biçimlendirir
+/// (IPv4 → `a.b.c.d:port`, IPv6 → `[addr]:port`, IPv4-mapped → IPv4 biçimi).
+pub fn formatPeerAddrStorage(storage: *const std.c.sockaddr.storage) PeerAddr {
+    if (storage.family == std.c.AF.INET6) {
+        const a6: *const std.c.sockaddr.in6 = @ptrCast(storage);
+        return formatPeerAddr6(a6.addr, a6.port);
+    }
+    const a4: *const std.c.sockaddr.in = @ptrCast(storage);
+    return formatPeerAddr(a4.addr, a4.port);
+}
+
+pub fn formatPeerAddr6(addr: [16]u8, port_be: u16) PeerAddr {
+    const port = std.mem.bigToNative(u16, port_be);
+    var is_mapped = true;
+    for (addr[0..10]) |b| {
+        if (b != 0) is_mapped = false;
+    }
+    if (is_mapped and addr[10] == 0xff and addr[11] == 0xff) {
+        const ip_be: u32 = @bitCast([4]u8{ addr[12], addr[13], addr[14], addr[15] });
+        return formatPeerAddr(ip_be, port_be);
+    }
+    var groups: [8]u16 = undefined;
+    for (&groups, 0..) |*g, i| g.* = (@as(u16, addr[i * 2]) << 8) | addr[i * 2 + 1];
+    // RFC 5952: en uzun (>= 2) sıfır-grup koşusu `::`e sıkıştırılır.
+    var best_start: usize = 8;
+    var best_len: usize = 0;
+    var i: usize = 0;
+    while (i < 8) {
+        if (groups[i] != 0) {
+            i += 1;
+            continue;
+        }
+        var j = i;
+        while (j < 8 and groups[j] == 0) j += 1;
+        if (j - i > best_len) {
+            best_start = i;
+            best_len = j - i;
+        }
+        i = j;
+    }
+    if (best_len < 2) best_start = 8;
+    var out: PeerAddr = .{};
+    var w: usize = 0;
+    out.bytes[w] = '[';
+    w += 1;
+    var k: usize = 0;
+    while (k < 8) {
+        if (k == best_start) {
+            out.bytes[w] = ':';
+            out.bytes[w + 1] = ':';
+            w += 2;
+            k += best_len;
+            continue;
+        }
+        if (k != 0 and k != best_start + best_len) {
+            out.bytes[w] = ':';
+            w += 1;
+        }
+        const piece = std.fmt.bufPrint(out.bytes[w..], "{x}", .{groups[k]}) catch unreachable;
+        w += piece.len;
+        k += 1;
+    }
+    const tail = std.fmt.bufPrint(out.bytes[w..], "]:{d}", .{port}) catch unreachable;
+    w += tail.len;
+    out.len = @intCast(w);
+    return out;
+}
 
 pub fn formatPeerAddr(ip_be: u32, port_be: u16) PeerAddr {
     var out: PeerAddr = .{};
@@ -240,13 +311,13 @@ pub fn nonBlockingAccept(scheduler: *Scheduler, listen_fd: posix.fd_t) !AcceptRe
             if (WinSock.WSAGetLastError() == WinSock.WSAECONNABORTED or WinSock.WSAGetLastError() == WinSock.WSAECONNRESET) continue;
             return error.Unexpected;
         }
-        var addr: std.c.sockaddr.in = undefined;
-        var len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
+        var addr: std.c.sockaddr.storage = undefined;
+        var len: std.c.socklen_t = @sizeOf(std.c.sockaddr.storage);
         const rc = std.c.accept(listen_fd, @ptrCast(&addr), &len);
         if (rc >= 0) {
             setTcpNodelay(rc);
             setNonBlocking(rc);
-            return .{ .fd = rc, .peer_addr = formatPeerAddr(addr.addr, addr.port) };
+            return .{ .fd = rc, .peer_addr = formatPeerAddrStorage(&addr) };
         }
         switch (posix.errno(rc)) {
             .AGAIN => scheduler.suspendForIo(listen_fd, .read),
@@ -293,13 +364,13 @@ pub fn nonBlockingAcceptWithTimeout(scheduler: *Scheduler, listen_fd: posix.fd_t
             if (WinSock.WSAGetLastError() == WinSock.WSAECONNABORTED or WinSock.WSAGetLastError() == WinSock.WSAECONNRESET) continue;
             return error.Unexpected;
         }
-        var addr: std.c.sockaddr.in = undefined;
-        var len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
+        var addr: std.c.sockaddr.storage = undefined;
+        var len: std.c.socklen_t = @sizeOf(std.c.sockaddr.storage);
         const rc = std.c.accept(listen_fd, @ptrCast(&addr), &len);
         if (rc >= 0) {
             setTcpNodelay(rc);
             setNonBlocking(rc);
-            return .{ .fd = rc, .peer_addr = formatPeerAddr(addr.addr, addr.port) };
+            return .{ .fd = rc, .peer_addr = formatPeerAddrStorage(&addr) };
         }
         switch (posix.errno(rc)) {
             .AGAIN => if (scheduler.suspendForIoOrTimeout(listen_fd, .read, timeout_ms) == .timed_out) return error.Timeout,
@@ -717,4 +788,19 @@ test "nonBlockingRead: GERÇEKTEN beklenmeyen bir errno (EBADF — kapalı fd) f
 
     const r = Shared.result orelse return error.ReaderNeverRan;
     try std.testing.expectError(error.Unexpected, r);
+}
+
+test "formatPeerAddr6: IPv6 peer'ler [addr]:port biçimine, IPv4-mapped eski IPv4 biçimine çevrilir" {
+    const loop: [16]u8 = .{0} ** 15 ++ .{1};
+    try std.testing.expectEqualStrings("[::1]:8080", formatPeerAddr6(loop, std.mem.nativeToBig(u16, 8080)).slice());
+    const unspec: [16]u8 = .{0} ** 16;
+    try std.testing.expectEqualStrings("[::]:1", formatPeerAddr6(unspec, std.mem.nativeToBig(u16, 1)).slice());
+    const doc: [16]u8 = .{ 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x42 };
+    try std.testing.expectEqualStrings("[2001:db8::42]:443", formatPeerAddr6(doc, std.mem.nativeToBig(u16, 443)).slice());
+    const full: [16]u8 = .{ 0x20, 0x01, 0x0d, 0xb8, 0x85, 0xa3, 0x00, 0x01, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0 };
+    try std.testing.expectEqualStrings("[2001:db8:85a3:1:1234:5678:9abc:def0]:65535", formatPeerAddr6(full, std.mem.nativeToBig(u16, 65535)).slice());
+    const one_zero: [16]u8 = .{ 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+    try std.testing.expectEqualStrings("[2001:db8:0:1:0:1:0:1]:9", formatPeerAddr6(one_zero, std.mem.nativeToBig(u16, 9)).slice());
+    const mapped: [16]u8 = .{0} ** 10 ++ .{ 0xff, 0xff, 192, 168, 1, 7 };
+    try std.testing.expectEqualStrings("192.168.1.7:5000", formatPeerAddr6(mapped, std.mem.nativeToBig(u16, 5000)).slice());
 }

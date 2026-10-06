@@ -391,6 +391,54 @@ export fn nox_http_listen_fd(rt: ?*anyopaque, port: i64) callconv(.c) i64 {
     return fdToI64(fd);
 }
 
+/// v1.142.10 (Aether/Nyx NOX_LIMITATIONS: "IPv4-only dinleyici"): OPT-IN
+/// IPv6 dinleyici — `nox.http.listen_v6(port, v6_only)`. Varsayılan
+/// `listen`/`serve` davranışı (AF_INET, `0.0.0.0`) DEĞİŞMEZ. `v6_only=false`
+/// İKEN soket dual-stack'tir (`::`, IPV6_V6ONLY=0: IPv4 istemciler de
+/// bağlanır, peer'leri `a.b.c.d:port` biçimine normalleştirilir); `v6_only=
+/// true` İKEN yalnızca IPv6. Dönen fd `nox.http.serve_fd`/`serve_multicore`ın
+/// kabul döngüleriyle (`sockaddr_storage` tabanlı accept) doğrudan çalışır.
+/// Windows'ta DESTEKLENMEZ (`-1`): Winsock yolu henüz `sockaddr_in6`yı ele
+/// almıyor ve CI'da doğrulanamıyor.
+fn bindAndListenV6(port: i64, v6_only: bool) ?posix.fd_t {
+    if (builtin.os.tag == .windows) return null;
+    const fd = std.c.socket(std.c.AF.INET6, std.c.SOCK.STREAM, 0);
+    if (fd < 0) return null;
+    var reuse: c_int = 1;
+    _ = std.c.setsockopt(fd, std.c.SOL.SOCKET, std.c.SO.REUSEADDR, &reuse, @sizeOf(c_int));
+    // `std.c`de IPV6_V6ONLY sabiti yok: Darwin 27, Linux 26; IPPROTO_IPV6 = 41.
+    const ipv6_v6only: c_int = switch (builtin.os.tag) {
+        .linux => 26,
+        else => 27,
+    };
+    var only: c_int = if (v6_only) 1 else 0;
+    if (std.c.setsockopt(fd, 41, @intCast(ipv6_v6only), &only, @sizeOf(c_int)) != 0) {
+        _ = closeSocket(fd);
+        return null;
+    }
+    var addr: std.c.sockaddr.in6 = .{
+        .port = std.mem.nativeToBig(u16, @intCast(port)),
+        .flowinfo = 0,
+        .addr = [_]u8{0} ** 16,
+        .scope_id = 0,
+    };
+    if (std.c.bind(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in6)) != 0) {
+        _ = closeSocket(fd);
+        return null;
+    }
+    if (std.c.listen(fd, 1024) != 0) {
+        _ = closeSocket(fd);
+        return null;
+    }
+    return fd;
+}
+
+export fn nox_http_listen_fd_v6(rt: ?*anyopaque, port: i64, v6_only: i64) callconv(.c) i64 {
+    _ = rt;
+    const fd = bindAndListenV6(port, v6_only != 0) orelse return -1;
+    return fdToI64(fd);
+}
+
 /// Faz "sunucu-tarafı TLS" — `serve_multicore_tls` İçİn: TEK bir dinleme
 /// fd'si + TEK bir paylaşılan `SSL_CTX*` (OpenSSL'in KENDİ belgelerine
 /// göre `SSL_new(ctx)` DIŞINDA `ctx`nin KENDİSİ HİÇ MUTASYONA UĞRAMADIĞI
@@ -762,12 +810,12 @@ fn blockingAccept(listen_fd: posix.fd_t) !io_mod.AcceptResult {
         }
     }
     while (true) {
-        var addr: std.c.sockaddr.in = undefined;
-        var len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
+        var addr: std.c.sockaddr.storage = undefined;
+        var len: std.c.socklen_t = @sizeOf(std.c.sockaddr.storage);
         const rc = std.c.accept(listen_fd, @ptrCast(&addr), &len);
         if (rc >= 0) {
             io_mod.setTcpNodelay(rc);
-            return .{ .fd = rc, .peer_addr = io_mod.formatPeerAddr(addr.addr, addr.port) };
+            return .{ .fd = rc, .peer_addr = io_mod.formatPeerAddrStorage(&addr) };
         }
         switch (posix.errno(rc)) {
             .INTR => continue,
@@ -2440,4 +2488,58 @@ test "serveImpl: GERÇEK çapraz-worker bağlantı çalma — SO_REUSEPORT denge
     // olmak ZORUNDAYDI (`s.markReady(fiber)` koşulsuz KENDİ `ready`
     // listesine EKLERDİ, hiçbir kardeş bunu GÖREMEZDİ).
     try testing.expect(stolen > 0);
+}
+
+test "v1.142.10: IPv6 dual-stack dinleyici — ::1 peer'i [::1]:port, 127.0.0.1 peer'i eski a.b.c.d:port biçiminde raporlanır" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const lfd = bindAndListenV6(0, false) orelse return error.SkipZigTest;
+    defer _ = closeSocket(lfd);
+    var laddr: std.c.sockaddr.in6 = undefined;
+    var llen: std.c.socklen_t = @sizeOf(std.c.sockaddr.in6);
+    try std.testing.expect(std.c.getsockname(lfd, @ptrCast(&laddr), &llen) == 0);
+    const port = laddr.port; // ağ sırasında, doğrudan connect'e verilir
+
+    // IPv6 istemci (::1) — makinede IPv6 loopback yoksa test atlanır.
+    const c6 = std.c.socket(std.c.AF.INET6, std.c.SOCK.STREAM, 0);
+    try std.testing.expect(c6 >= 0);
+    defer _ = closeSocket(c6);
+    var a6: std.c.sockaddr.in6 = .{ .port = port, .flowinfo = 0, .addr = [_]u8{0} ** 15 ++ [_]u8{1}, .scope_id = 0 };
+    if (std.c.connect(c6, @ptrCast(&a6), @sizeOf(std.c.sockaddr.in6)) != 0) return error.SkipZigTest;
+    const r6 = try blockingAccept(lfd);
+    defer _ = closeSocket(r6.fd);
+    var expect6: [32]u8 = undefined;
+    var cl6: std.c.sockaddr.in6 = undefined;
+    var cl6len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in6);
+    try std.testing.expect(std.c.getsockname(c6, @ptrCast(&cl6), &cl6len) == 0);
+    const want6 = try std.fmt.bufPrint(&expect6, "[::1]:{d}", .{std.mem.bigToNative(u16, cl6.port)});
+    try std.testing.expectEqualStrings(want6, r6.peer_addr.slice());
+
+    // IPv4 istemci (127.0.0.1) dual-stack dinleyiciye bağlanır; peer IPv4 biçiminde.
+    const c4 = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
+    try std.testing.expect(c4 >= 0);
+    defer _ = closeSocket(c4);
+    var a4: std.c.sockaddr.in = .{ .port = port, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
+    try std.testing.expect(std.c.connect(c4, @ptrCast(&a4), @sizeOf(std.c.sockaddr.in)) == 0);
+    const r4 = try blockingAccept(lfd);
+    defer _ = closeSocket(r4.fd);
+    var expect4: [32]u8 = undefined;
+    var cl4: std.c.sockaddr.in = undefined;
+    var cl4len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
+    try std.testing.expect(std.c.getsockname(c4, @ptrCast(&cl4), &cl4len) == 0);
+    const want4 = try std.fmt.bufPrint(&expect4, "127.0.0.1:{d}", .{std.mem.bigToNative(u16, cl4.port)});
+    try std.testing.expectEqualStrings(want4, r4.peer_addr.slice());
+}
+
+test "v1.142.10: v6_only=true dinleyici IPv4 istemciyi KABUL ETMEZ" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const lfd = bindAndListenV6(0, true) orelse return error.SkipZigTest;
+    defer _ = closeSocket(lfd);
+    var laddr: std.c.sockaddr.in6 = undefined;
+    var llen: std.c.socklen_t = @sizeOf(std.c.sockaddr.in6);
+    try std.testing.expect(std.c.getsockname(lfd, @ptrCast(&laddr), &llen) == 0);
+    const c4 = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
+    try std.testing.expect(c4 >= 0);
+    defer _ = closeSocket(c4);
+    var a4: std.c.sockaddr.in = .{ .port = laddr.port, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
+    try std.testing.expect(std.c.connect(c4, @ptrCast(&a4), @sizeOf(std.c.sockaddr.in)) != 0);
 }

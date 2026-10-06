@@ -61,6 +61,24 @@ def listen(port: int) -> int:
         raise HttpError("dinleme basarisiz: port " + str(port))
     return fd
 
+# v1.142.10: OPT-IN IPv6 dinleyici (varsayılan `listen` IPv4-only KALIR).
+# `v6_only=False` → dual-stack (`::`): IPv4 istemciler de bağlanır ve
+# `HttpRequest.peer_addr` onlar için ESKİ `a.b.c.d:port` biçiminde kalır;
+# gerçek IPv6 istemciler `[::1]:port` biçimini alır (IP'yi `:` ile bölen
+# kod bunu `rsplit`/köşeli-parantez ile ele almalıdır). Dönen fd
+# `serve_fd(fd, handler)` / `serve_multicore`-benzeri kabul döngüleriyle
+# kullanılır. Windows'ta desteklenmez (`HttpError`).
+extern def nox_http_listen_fd_v6(port: int, v6_only: int) -> int from "zig-out/lib/noxrt.o" with_rt
+
+def listen_v6(port: int, v6_only: bool) -> int:
+    only: int = 0
+    if v6_only:
+        only = 1
+    fd: int = nox_http_listen_fd_v6(port, only)
+    if fd < 0:
+        raise HttpError("IPv6 dinleme basarisiz: port " + str(port))
+    return fd
+
 def get(url: str, headers: dict[str, str]) -> HttpResponse:
     h: ptr = nox_http_get_raw(url, headers)
     if nox_http_response_ok(h) == 0:

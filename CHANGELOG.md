@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.10]
+
+### Eklendi
+
+- **`nox.http.listen_v6(port, v6_only)`**: opt-in IPv6/dual-stack dinleyici (`serve_fd` ile
+  kullanılır); varsayılan `listen`/`serve` IPv4-only kalır. `HttpRequest.peer_addr`
+  gerçek IPv6 istemciler için `[::1]:port`, IPv4 (mapped dahil) için eski `a.b.c.d:port`.
+  Windows'ta desteklenmez. Spec §3.248.
+
 ## [1.142.9]
 
 ### Eklendi
