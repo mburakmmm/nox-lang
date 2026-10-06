@@ -34,6 +34,7 @@ const codegen = @import("codegen.zig");
 const abi = @import("abi.zig");
 const types = @import("types.zig");
 const checker_mod = @import("../typecheck/checker.zig");
+const llvm_emit = @import("llvm_emit.zig");
 
 const Codegen = codegen.Codegen;
 const CodegenError = abi.CodegenError;
@@ -93,99 +94,60 @@ pub fn genDecoratorMetadata(self: *Codegen, decorated: []const DecoratedFuncInfo
 
 fn genDecoratorTable(self: *Codegen, decorated: []const DecoratedFuncInfo) CodegenError!void {
     // `$__nox_decorator_args`in HER elemanı (hâlâ argüman BAŞINA TEK bir
-    // `l` kelimesi) BURADA ya ham bir SAYISAL DEĞER (int/bool/paketlenmiş
-    // liste start+count) ya da bir pinned `str` İŞARETÇİSİ (string) OLARAK
-    // KENDİ İÇERİĞİNİ `data` yönergesine metin OLARAK yazar — `arg_lines`
-    // bu YÜZDEN ÖNCEDEN hesaplanmış, QBE'nin `data` sözdizimine HAZIR
-    // metin PARÇALARIdır (`l {s}`/`l {d}`), `arg_ptrs`in ESKİ "HER ZAMAN
-    // bir işaretçi" varsayımının YERİNE.
-    var arg_lines: std.ArrayListUnmanaged([]const u8) = .empty;
-    var arg_kind_lines: std.ArrayListUnmanaged([]const u8) = .empty;
-    var list_item_ptrs: std.ArrayListUnmanaged([]const u8) = .empty;
-    var records: std.ArrayListUnmanaged(struct { func_name: []const u8, dec_name: []const u8, arg_count: usize, arg_start: usize, is_handler: bool }) = .empty;
+    // `l` kelimesi) ya ham bir SAYISAL DEĞER (int/bool/paketlenmiş liste
+    // start+count) ya da bir pinned `str` İŞARETÇİSİ (`$strN+16`, string)
+    // OLUR. Tablolar BACKEND-NÖTR kelime listeleri olarak biriktirilir
+    // (`emitDataWords` QBE'de `data` direktifi, LLVM'de `[N x i64]` sabiti
+    // üretir — v1.142.9, LLVM `--release` decorator desteği).
+    var arg_words: std.ArrayListUnmanaged([]const u8) = .empty;
+    var arg_kind_words: std.ArrayListUnmanaged([]const u8) = .empty;
+    var list_item_words: std.ArrayListUnmanaged([]const u8) = .empty;
+    var record_words: std.ArrayListUnmanaged([]const u8) = .empty;
 
     for (decorated) |info| {
         const func_name_ptr = try self.internPinnedStringConst(info.func_name);
         const dec_name_ptr = try self.internPinnedStringConst(info.decorator_name);
-        const arg_start = arg_lines.items.len;
+        const arg_start = arg_words.items.len;
         for (info.args) |a| {
             switch (a) {
                 .string => |s| {
-                    const ptr = try self.internPinnedStringConst(s);
-                    try arg_lines.append(self.allocator, try std.fmt.allocPrint(self.allocator, "l {s}", .{ptr}));
-                    try arg_kind_lines.append(self.allocator, try std.fmt.allocPrint(self.allocator, "l {d}", .{ARG_KIND_STRING}));
+                    try arg_words.append(self.allocator, try self.internPinnedStringConst(s));
+                    try arg_kind_words.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{d}", .{ARG_KIND_STRING}));
                 },
                 .int => |n| {
-                    try arg_lines.append(self.allocator, try std.fmt.allocPrint(self.allocator, "l {d}", .{n}));
-                    try arg_kind_lines.append(self.allocator, try std.fmt.allocPrint(self.allocator, "l {d}", .{ARG_KIND_INT}));
+                    try arg_words.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{d}", .{n}));
+                    try arg_kind_words.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{d}", .{ARG_KIND_INT}));
                 },
                 .boolean => |b| {
-                    try arg_lines.append(self.allocator, try std.fmt.allocPrint(self.allocator, "l {d}", .{@intFromBool(b)}));
-                    try arg_kind_lines.append(self.allocator, try std.fmt.allocPrint(self.allocator, "l {d}", .{ARG_KIND_BOOL}));
+                    try arg_words.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{d}", .{@intFromBool(b)}));
+                    try arg_kind_words.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{d}", .{ARG_KIND_BOOL}));
                 },
                 .list_str => |items| {
-                    const list_start = list_item_ptrs.items.len;
+                    const list_start = list_item_words.items.len;
                     for (items) |it| {
-                        try list_item_ptrs.append(self.allocator, try self.internPinnedStringConst(it));
+                        try list_item_words.append(self.allocator, try self.internPinnedStringConst(it));
                     }
                     const packed_val: i64 = (@as(i64, @intCast(list_start)) << 32) | @as(i64, @intCast(items.len));
-                    try arg_lines.append(self.allocator, try std.fmt.allocPrint(self.allocator, "l {d}", .{packed_val}));
-                    try arg_kind_lines.append(self.allocator, try std.fmt.allocPrint(self.allocator, "l {d}", .{ARG_KIND_LIST_STR}));
+                    try arg_words.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{d}", .{packed_val}));
+                    try arg_kind_words.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{d}", .{ARG_KIND_LIST_STR}));
                 },
             }
         }
-        try records.append(self.allocator, .{ .func_name = func_name_ptr, .dec_name = dec_name_ptr, .arg_count = info.args.len, .arg_start = arg_start, .is_handler = info.is_handler_shaped });
+        // Kayıt düzeni: [func_name, dec_name, arg_count, arg_start, is_handler]
+        try record_words.append(self.allocator, func_name_ptr);
+        try record_words.append(self.allocator, dec_name_ptr);
+        try record_words.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{d}", .{info.args.len}));
+        try record_words.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{d}", .{arg_start}));
+        try record_words.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{d}", .{@intFromBool(info.is_handler_shaped)}));
     }
 
-    // `data $sym = {...}` direktifleri BU planın (Faz IR.0-14) KAPSAMI
-    // DIŞINDA (bkz. plan dosyasının "Kapsam DIŞI" notu) — bu döngüler
-    // BİLİNÇLİ olarak `qbeRaw`/`qbeRawAll` KULLANIR.
-    try self.qbeRawAll("data $__nox_decorators = { ");
-    if (records.items.len == 0) {
-        // Sembol HER ZAMAN çözülmeli (bkz. modül üstü not) — kayıt yoksa
-        // tek bir dolgu kelimesi yeterli, hiçbir erişimci geçerli bir
-        // `%i` ile buraya asla ulaşmaz (`decorator_count()` 0 döner).
-        try self.qbeRawAll("l 0");
-    } else {
-        for (records.items, 0..) |r, i| {
-            if (i > 0) try self.qbeRawAll(", ");
-            try self.qbeRaw("l {s}, l {s}, l {d}, l {d}, l {d}", .{ r.func_name, r.dec_name, r.arg_count, r.arg_start, @intFromBool(r.is_handler) });
-        }
-    }
-    try self.qbeRawAll(" }\n");
-
-    try self.qbeRawAll("data $__nox_decorator_args = { ");
-    if (arg_lines.items.len == 0) {
-        try self.qbeRawAll("l 0");
-    } else {
-        for (arg_lines.items, 0..) |line, i| {
-            if (i > 0) try self.qbeRawAll(", ");
-            try self.qbeRawAll(line);
-        }
-    }
-    try self.qbeRawAll(" }\n");
-
-    try self.qbeRawAll("data $__nox_decorator_arg_kinds = { ");
-    if (arg_kind_lines.items.len == 0) {
-        try self.qbeRawAll("l 0");
-    } else {
-        for (arg_kind_lines.items, 0..) |line, i| {
-            if (i > 0) try self.qbeRawAll(", ");
-            try self.qbeRawAll(line);
-        }
-    }
-    try self.qbeRawAll(" }\n");
-
-    try self.qbeRawAll("data $__nox_decorator_list_items = { ");
-    if (list_item_ptrs.items.len == 0) {
-        try self.qbeRawAll("l 0");
-    } else {
-        for (list_item_ptrs.items, 0..) |p, i| {
-            if (i > 0) try self.qbeRawAll(", ");
-            try self.qbeRaw("l {s}", .{p});
-        }
-    }
-    try self.qbeRawAll(" }\n");
+    // Sembol HER ZAMAN çözülmeli (bkz. modül üstü not) — kayıt yoksa
+    // `emitDataWords` tek bir dolgu kelimesi yazar, hiçbir erişimci geçerli
+    // bir `%i` ile buraya asla ulaşmaz (`decorator_count()` 0 döner).
+    try emitDataWords(self, "__nox_decorators", record_words.items);
+    try emitDataWords(self, "__nox_decorator_args", arg_words.items);
+    try emitDataWords(self, "__nox_decorator_arg_kinds", arg_kind_words.items);
+    try emitDataWords(self, "__nox_decorator_list_items", list_item_words.items);
 }
 
 fn genReflectDecoratorCount(self: *Codegen, n: usize) CodegenError!void {
@@ -521,7 +483,16 @@ fn emitMetaPairs(self: *Codegen, params: []const checker_mod.ParamMeta, out: *st
     }
 }
 
+/// `words`ün HER elemanı ya bir ondalık tamsayı ya da bir sembol ifadesi
+/// (`$sym` / `$sym+N`). QBE'de `data $sym = { l w, ... }`; LLVM'de
+/// `[N x i64]` sabiti (bkz. `llvm_emit.llvmWordArrayConstant`). Boş liste,
+/// sembolün HER ZAMAN çözülmesi için tek bir `0` kelimesi yazar.
 fn emitDataWords(self: *Codegen, sym: []const u8, words: []const []const u8) CodegenError!void {
+    if (self.backend == .llvm) {
+        const line = try llvm_emit.llvmWordArrayConstant(self.allocator, sym, words);
+        try self.out.writer.writeAll(line);
+        return;
+    }
     try self.qbeRaw("data ${s} = {{ ", .{sym});
     if (words.len == 0) {
         try self.qbeRawAll("l 0");

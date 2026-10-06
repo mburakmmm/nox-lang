@@ -162,6 +162,35 @@ pub fn llvmPtrArrayConstant(allocator: std.mem.Allocator, name: []const u8, syms
     return std.fmt.allocPrint(allocator, "@{s} = private unnamed_addr constant [{d} x i64] [{s}]\n", .{ name, syms.len, items.items });
 }
 
+/// `words` (ondalık tamsayı ya da `$sym` / `$sym+N` sembol ifadesi) →
+/// `[N x i64]` GLOBAL sabiti — QBE'nin `data $name = { l w1, l w2, ... }`inin
+/// LLVM karşılığı (`decorators.zig` metadata tabloları). Boş liste tek bir
+/// `0` kelimesi yazar.
+pub fn llvmWordArrayConstant(allocator: std.mem.Allocator, name: []const u8, words: []const []const u8) ![]const u8 {
+    var items: std.ArrayListUnmanaged(u8) = .empty;
+    if (words.len == 0) {
+        try items.appendSlice(allocator, "i64 0");
+    }
+    for (words, 0..) |w, i| {
+        if (i != 0) try items.appendSlice(allocator, ", ");
+        if (w.len > 0 and w[0] == '$') {
+            const body = w[1..];
+            if (std.mem.indexOfScalar(u8, body, '+')) |plus| {
+                const entry = try std.fmt.allocPrint(allocator, "i64 add (i64 ptrtoint (ptr @{s} to i64), i64 {s})", .{ body[0..plus], body[plus + 1 ..] });
+                try items.appendSlice(allocator, entry);
+            } else {
+                const entry = try std.fmt.allocPrint(allocator, "i64 ptrtoint (ptr @{s} to i64)", .{body});
+                try items.appendSlice(allocator, entry);
+            }
+        } else {
+            const entry = try std.fmt.allocPrint(allocator, "i64 {s}", .{w});
+            try items.appendSlice(allocator, entry);
+        }
+    }
+    const n: usize = if (words.len == 0) 1 else words.len;
+    return std.fmt.allocPrint(allocator, "@{s} = private unnamed_addr constant [{d} x i64] [{s}]\n", .{ name, n, items.items });
+}
+
 pub fn qbeLabel(self: *Codegen, label: []const u8) CodegenError!void {
     if (self.llvm_block_open) {
         try self.out.writer.print("    br label %{s}\n", .{llLabelRef(label)});

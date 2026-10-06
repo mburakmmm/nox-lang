@@ -46,7 +46,7 @@
 //!   ARASINDA GARANTİLİ AYNI DEĞİLDİR.
 //! - `expectDivergence`: BİLİNÇLİ, BELGELENMİŞ bir backend asimetrisi
 //!   (`checker.zig`nin `isSpawnParamSafeType`/`isThreadTransferSafeType`si
-//!   VEYA `codegen_qbe`nin `pool_run`/decorator KABUL-RED farkı) —
+//!   VEYA `codegen_qbe`nin `pool_run` KABUL-RED farkı) —
 //!   HANGİ backend'in kabul/red ettiğini VE (kabul eden tarafta) beklenen
 //!   çıktıyı DOĞRUDAN İDDİA eder. İncelemenin önerdiği "expected_backend_
 //!   divergence.toml" fikrinin TİP-GÜVENLİ, KOD-İÇİ eşdeğeri — bir veri
@@ -365,12 +365,12 @@ test "divergence: nox.thread.pool_run — QBE reddeder (codegen error.Unsupporte
     );
 }
 
-// TERS yön — bu paketteki TEK "LLVM daha KISITLI" örneği.
-test "divergence: decorator kullanımı — QBE kabul eder, LLVM reddeder (Faz LLVM.4'ün bilinçli kapsam-dışı bırakması)" {
-    try expectDivergence(
-        @embedFile("conformance_cases/divergence_decorator.nox"),
-        .{ .accepted = "1\n" },
-        .rejected,
+// v1.142.9: decorator'lar ve `nox.reflect` tabloları ARTIK her iki backend'de
+// de çalışır (önceki "LLVM daha KISITLI" tek divergence örneği kapandı).
+test "conformance: decorator + nox.reflect + router_from_decorators — QBE ve LLVM aynı çıktı" {
+    try expectConformant(
+        @embedFile("conformance_cases/conformance_decorator_router_release.nox"),
+        @embedFile("conformance_cases/conformance_decorator_router_release.expected"),
     );
 }
 

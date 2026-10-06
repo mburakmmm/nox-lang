@@ -181,9 +181,9 @@ test "augmented atama EKLENDİKTEN SONRA düz aritmetik operatörler değişmedi
     defer arena.deinit();
     const got = try kinds(arena.allocator(), "1 + 1 - 1 * 1 / 1 % 1 ** 1 // 1\n");
     try std.testing.expectEqualSlices(nox.token.TokenKind, &.{
-        .int_lit, .plus,  .int_lit, .minus,      .int_lit, .star, .int_lit,
-        .slash,   .int_lit, .percent, .int_lit,  .star_star, .int_lit,
-        .slash_slash, .int_lit, .newline, .eof,
+        .int_lit, .plus,    .int_lit, .minus,   .int_lit,   .star,    .int_lit,
+        .slash,   .int_lit, .percent, .int_lit, .star_star, .int_lit, .slash_slash,
+        .int_lit, .newline, .eof,
     }, got);
 }
 

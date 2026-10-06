@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.142.9]
+
+### Eklendi
+
+- **`--release` (LLVM) altında kullanıcı decorator'ları ve `nox.reflect` tabloları**:
+  metadata tabloları backend-nötr (`emitDataWords` / `llvmWordArrayConstant`).
+  `divergence_decorator` kapandı, `conformance_decorator_router_release` eklendi.
+  Spec §3.247.
+
 ## [1.142.8]
 
 ### Eklendi

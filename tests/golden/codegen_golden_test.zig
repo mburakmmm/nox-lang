@@ -83,7 +83,6 @@ const FixtureResult = struct {
     err_name: []const u8 = "",
 };
 
-
 fn runOneFixture(fx: *const Fixture, result: *FixtureResult) void {
     const outcome = switch (fx.kind) {
         .golden => expectGolden(fx.source, fx.expected_stdout),

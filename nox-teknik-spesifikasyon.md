@@ -28038,6 +28038,25 @@ geçici köklü alıcılar (`make().inner.xs.append`) HÂLÂ reddedilir (büyüm
 + geçici-release sıralaması). Golden: `list_field_chain_append` (QBE ve `--release`
 aynı çıktı), `err_append_chained_field` (geçici kök reddi).
 
+## 3.247 `--release` (LLVM) altında decorator + `nox.reflect` (v1.142.9)
+
+Önceden decorator'lı fonksiyon içeren ya da `nox.reflect` imza/constructor
+metadata yerleşiklerini kullanan bir program `--release`te `error.Unsupported`
+veriyordu: metadata tabloları `qbeRaw` ile QBE `data` direktifleri olarak
+yazılıyordu. Tablolar artık backend-nötr kelime listeleri (`emitDataWords`,
+kelime = ondalık tamsayı ya da `$sym` / `$sym+N`) olarak biriktirilir; QBE'de
+`data $sym = { l w, ... }`, LLVM'de `llvm_emit.llvmWordArrayConstant` ile
+`[N x i64]` sabiti üretilir (`$sym+N` → `add (ptrtoint, N)` sabit ifadesi). Erişimci
+fonksiyonlar zaten nötr `qbeX` operasyonlarıyla yazıldığından değişmedi;
+`generateModule` artık her iki backend'de de `genDecoratorMetadata` +
+`genReflectMetadata` çağırır. Handler fonksiyon değerleri (`router_from_decorators`)
+mevcut `buildFunctionValueForIdentifier` yolunu kullanır.
+
+Sonuç: Aether'in `--release` üretim yolu decorator'larla da çalışır. Önceki tek
+"LLVM daha kısıtlı" divergence testi (`divergence_decorator`) kapandı; yerine
+`conformance_decorator_router_release` (router_from_decorators + string/int/bool/liste
+argümanları + imza metadata'sı, QBE ve LLVM aynı çıktı) geldi.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

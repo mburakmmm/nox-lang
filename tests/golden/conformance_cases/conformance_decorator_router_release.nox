@@ -1,0 +1,47 @@
+# v1.142.9: kullanıcı decorator'ları + nox.reflect tabloları artık `--release`
+# (LLVM) altında da çalışır. router_from_decorators() handler-şekilli
+# decorator'lı fonksiyonları ÇALIŞMA ZAMANI fonksiyon değerlerine çevirir;
+# decorator_arg_* erişimcileri string/int/bool/liste argümanlarını okur.
+import nox.reflect
+from nox.router import Context, Router
+from nox.http import HttpResponse, HttpRequest
+
+@get("/users/:id")
+def show_user(ctx: Context) -> HttpResponse:
+    return HttpResponse(200, "hello " + ctx.param("id"), {})
+
+@post("/users")
+def create_user(ctx: Context) -> HttpResponse:
+    return HttpResponse(201, "created", {})
+
+@tagged("beta", 7, True, ["a", "b"])
+def not_a_route() -> int:
+    return 1
+
+r: Router = nox.reflect.router_from_decorators()
+
+empty_headers: dict[str, str] = {}
+get_req: HttpRequest = HttpRequest("GET", "/users/42", "", empty_headers, "127.0.0.1:0")
+get_resp: HttpResponse = r.dispatch(get_req)
+print(get_resp.status)
+print(get_resp.body)
+
+post_req: HttpRequest = HttpRequest("POST", "/users", "", empty_headers, "127.0.0.1:0")
+post_resp: HttpResponse = r.dispatch(post_req)
+print(post_resp.status)
+print(post_resp.body)
+
+n: int = nox.reflect.decorator_count()
+print(n)
+i: int = 0
+while i < n:
+    if nox.reflect.decorator_name(i) == "tagged":
+        print(nox.reflect.decorator_target_name(i))
+        print(nox.reflect.decorator_arg(i, 0))
+        print(nox.reflect.decorator_arg_int(i, 1))
+        print(nox.reflect.decorator_arg_bool(i, 2))
+        print(nox.reflect.decorator_arg_list_len(i, 3))
+        print(nox.reflect.decorator_arg_list_item(i, 3, 1))
+        print(nox.reflect.decorator_param_count(i))
+        print(nox.reflect.decorator_return_type(i))
+    i = i + 1

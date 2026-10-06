@@ -1856,14 +1856,13 @@ pub fn generateModuleWithMeta(allocator: std.mem.Allocator, module: ast.Module, 
     // decorator KULLANAN bir program `--release`de AÇIKÇA reddedilir;
     // decorator YOKSA (yaygın durum) SESSİZCE atlanır (`genNoxInitGlobals`
     // İLE AYNI "boşsa üretme" ilkesi).
-    if (gen.backend == .qbe) {
-        try gen.genDecoratorMetadata(decorated_functions);
-        // Faz B.5 + C.3: imza/constructor metadata tabloları — YALNIZCA
-        // ilgili yerleşikler gerçekten çağrıldıysa (`uses_reflect_meta`).
-        try gen.genReflectMetadata(decorated_functions, class_ctors);
-    } else if (decorated_functions.len > 0 or gen.uses_reflect_meta) {
-        return error.Unsupported;
-    }
+    //
+    // v1.142.9: tablolar artık backend-nötr (`emitDataWords`) — LLVM de
+    // desteklenir (önceden `--release` + decorator `error.Unsupported`dı).
+    try gen.genDecoratorMetadata(decorated_functions);
+    // Faz B.5 + C.3: imza/constructor metadata tabloları — YALNIZCA
+    // ilgili yerleşikler gerçekten çağrıldıysa (`uses_reflect_meta`).
+    try gen.genReflectMetadata(decorated_functions, class_ctors);
 
     // Faz LLVM.7 (bkz. plan dosyası): `string_data`/`fmt_data` artık HER
     // İKİ backend'de de gerçek metin üretiyor — `.llvm` dalı `llvm_emit.

@@ -72,10 +72,10 @@ const builtins = [_]BuiltinDoc{
 };
 
 const keywords = [_][]const u8{
-    "def",     "class", "if",     "elif",  "else",   "while", "for",   "in",
-    "return",  "pass",  "and",    "or",    "not",    "True",  "False", "None",
-    "raise",   "try",   "except", "finally", "as",    "protocol", "extern", "from",
-    "async",   "await", "spawn",  "import", "with",  "defer", "lowlevel",
+    "def",    "class", "if",     "elif",    "else", "while",    "for",      "in",
+    "return", "pass",  "and",    "or",      "not",  "True",     "False",    "None",
+    "raise",  "try",   "except", "finally", "as",   "protocol", "extern",   "from",
+    "async",  "await", "spawn",  "import",  "with", "defer",    "lowlevel",
 };
 
 /// `tokens` İÇİNDE (1-tabanlı) `line1`/`col1` konumunu KAPSAYAN bir
