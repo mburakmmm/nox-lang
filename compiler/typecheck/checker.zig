@@ -224,6 +224,11 @@ pub const DecoratedFuncInfo = struct {
     is_handler_shaped: bool,
 };
 
+const GenericMethod = struct {
+    fd: ast.FuncDef,
+    class_stmt: *ast.Stmt,
+};
+
 const ClassInfo = struct {
     /// Faz 7 (tekli kalıtım): `class Derived(Base):` — `ast.ClassDef.base`nin
     /// AYNISI, `registerClassSignatures` tarafından KOPYALANIR. `fields`/
@@ -528,6 +533,14 @@ pub const Checker = struct {
     /// beklerler; `self.classes`e ASLA girmez (bare isimleriyle DOĞRUDAN
     /// inşa/tip OLARAK kullanılamazlar).
     generic_classes: std.StringHashMapUnmanaged(ast.ClassDef) = .{},
+    /// Aether NOX_LIMITATIONS.md Faz C.2: generic METOD şablonları —
+    /// anahtar `"SınıfAdı.metodAdı"`. `extractGenericMethods` ön geçişi
+    /// şablonları sınıfın `methods` listesinden ÇIKARIR (codegen/sahiplik
+    /// analizleri HİÇ generic şablon görmez); somut bir çağrı sitesi
+    /// (`tryResolveGenericMethodCall`) `class_stmt`in `methods` listesine
+    /// somutlaştırılmış metodu YERİNDE ekler.
+    generic_methods: std.StringHashMapUnmanaged(GenericMethod) = .{},
+    generic_method_names: std.StringHashMapUnmanaged(void) = .{},
     /// Faz 7 (tekli kalıtım): `collectClassNames` tarafından doldurulur —
     /// `ensureClassBodyChecked`in bir sınıfın ADINDAN kendi `ast.ClassDef`ine
     /// (taban zincirini YUKARI doğru YÜRÜMEK İçin) geri gitmesi İçin.
@@ -2911,6 +2924,8 @@ pub const Checker = struct {
         // Faz C.1b (bkz. `bound_method_fixup.zig`nin belge notu): değer
         // konumundaki `ident.metod` → `__nox_bind_method(ident, "metod")`.
         _ = try bound_method_fixup.run(self.allocator, module.body);
+        // Faz C.2: generic metod şablonlarını sınıflardan ÇIKAR.
+        try self.extractGenericMethods(module);
         // Bulundu (bkz. `resolveReExportChains`in belge notu): sınıf-tabanlı
         // zincirlerin (BÜYÜK ÇOĞUNLUK — bir TİP konumunda YALNIZCA bir sınıf
         // geçerlidir) `registerSignatures`DEN (Geçiş 2, fonksiyon parametre/
@@ -5737,6 +5752,10 @@ pub const Checker = struct {
     }
 
     fn checkCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!Type {
+        // Faz C.2: `obj.metod[T](...)` / çıkarımlı `obj.metod(...)` generic
+        // metod çağrısı — callee YERİNDE somut metod adına yeniden yazılır,
+        // AŞAĞIDAKİ normal metod-çağrısı yolu aynen devam eder.
+        if (self.generic_method_names.count() > 0) try self.tryResolveGenericMethodCall(ctx, c);
         switch (c.callee.*) {
             .identifier => |name| {
                 // Faz 7 (tekli kalıtım): çıplak `super()` (yani `super().
@@ -7316,6 +7335,15 @@ pub const Checker = struct {
                         }
                     }
                 }
+                // Faz C.2: `self.metod[T](...)` — `T` bir `Expr.identifier`
+                // olarak ayrıştırılır (bir `TypeExpr` DEĞİL); generic bir
+                // metodun gövdesi KENDİ tip parametresini başka bir generic
+                // metoda geçirebilsin diye indeks ifadesi de ikame edilir.
+                if (callee.* == .index and callee.index.obj.* == .attribute and
+                    self.generic_method_names.contains(callee.index.obj.attribute.attr))
+                {
+                    callee.index.index.* = try self.substituteTypeArgExpr(callee.index.index.*, bindings);
+                }
                 break :blk .{ .call = .{ .callee = callee, .args = args } };
             },
             .attribute => |a| blk: {
@@ -7362,6 +7390,41 @@ pub const Checker = struct {
                 } };
             },
         };
+    }
+
+    /// Faz C.2: bir generic-metod çağrısının indeks-biçimli tip argümanını
+    /// (`T`, `list[T]`) `bindings`e göre ikame eder. Çevrilemeyen biçimler
+    /// OLDUĞU GİBİ bırakılır (çağrı sitesi sonra kendi hatasını verir).
+    fn substituteTypeArgExpr(self: *Checker, e: ast.Expr, bindings: *const std.StringHashMapUnmanaged(Type)) TypeError!ast.Expr {
+        switch (e) {
+            .identifier => |n| {
+                const bound = bindings.get(n) orelse return e;
+                return (try self.typeExprToIndexExpr(try self.typeToTypeExpr(bound))) orelse e;
+            },
+            .index => |ix| {
+                if (ix.obj.* != .identifier) return e;
+                const inner = try self.allocator.create(ast.Expr);
+                inner.* = try self.substituteTypeArgExpr(ix.index.*, bindings);
+                return .{ .index = .{ .obj = ix.obj, .index = inner } };
+            },
+            else => return e,
+        }
+    }
+
+    fn typeExprToIndexExpr(self: *Checker, te: ast.TypeExpr) TypeError!?ast.Expr {
+        switch (te) {
+            .simple => |n| return .{ .identifier = n },
+            .generic => |g| {
+                if (g.args.len != 1) return null;
+                const inner = (try self.typeExprToIndexExpr(g.args[0])) orelse return null;
+                const obj = try self.allocator.create(ast.Expr);
+                obj.* = .{ .identifier = g.name };
+                const idx = try self.allocator.create(ast.Expr);
+                idx.* = inner;
+                return .{ .index = .{ .obj = obj, .index = idx } };
+            },
+            else => return null,
+        }
     }
 
     fn substituteExprs(self: *Checker, exprs: []const ast.Expr, bindings: *const std.StringHashMapUnmanaged(Type)) TypeError![]ast.Expr {
@@ -7601,6 +7664,184 @@ pub const Checker = struct {
         try self.class_instantiations.append(self.allocator, concrete);
         try self.checkClassBody(concrete);
         return .{ .class = mangled };
+    }
+
+    /// Faz C.2: üst-düzey (generic OLMAYAN) sınıfların generic metodlarını
+    /// `generic_methods`e taşır ve sınıfın `methods` listesinden çıkarır.
+    /// v1 kapsamı: TEK tip parametresi; generic bir SINIFIN generic metodu
+    /// (sınıf × metod tip-argümanı çarpımı) kapsam DIŞI — o durum
+    /// `registerClassSignatures`in mevcut "metodlar generic olamaz"
+    /// reddine düşer.
+    fn extractGenericMethods(self: *Checker, module: ast.Module) TypeError!void {
+        for (module.body) |*stmt| {
+            if (stmt.kind != .class_def) continue;
+            const cd = &stmt.kind.class_def;
+            if (cd.type_params.len > 0) {
+                for (cd.methods) |m| {
+                    if (m.type_params.len == 0) continue;
+                    self.current_line = stmt.line;
+                    self.current_span = stmt.span;
+                    return self.fail(error.TypeMismatch, "generic sınıfın generic metodu desteklenmiyor: {s}.{s} (v1: yalnızca generic OLMAYAN sınıflarda generic metod)", .{ cd.name, m.name });
+                }
+                continue;
+            }
+            var generic_count: usize = 0;
+            for (cd.methods) |m| {
+                if (m.type_params.len > 0) generic_count += 1;
+            }
+            if (generic_count == 0) continue;
+            self.current_line = stmt.line;
+            self.current_span = stmt.span;
+            const kept = try self.allocator.alloc(ast.FuncDef, cd.methods.len - generic_count);
+            var ki: usize = 0;
+            for (cd.methods) |m| {
+                if (m.type_params.len == 0) {
+                    kept[ki] = m;
+                    ki += 1;
+                    continue;
+                }
+                if (m.type_params.len != 1) {
+                    return self.fail(error.TypeMismatch, "generic metod '{s}.{s}' tek tip parametresi alabilir (v1: `obj.metod[T](...)` tek tip argümanı)", .{ cd.name, m.name });
+                }
+                if (std.mem.startsWith(u8, m.name, "__")) {
+                    return self.fail(error.TypeMismatch, "özel metod '{s}.{s}' generic olamaz", .{ cd.name, m.name });
+                }
+                const key = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ cd.name, m.name });
+                if (self.generic_methods.contains(key)) {
+                    return self.fail(error.DuplicateDefinition, "generic metod '{s}.{s}' zaten tanımlı", .{ cd.name, m.name });
+                }
+                try self.generic_methods.put(self.allocator, key, .{ .fd = m, .class_stmt = stmt });
+                try self.generic_method_names.put(self.allocator, m.name, {});
+            }
+            cd.methods = kept;
+        }
+    }
+
+    /// `obj.metod[T]` indeks ifadesindeki tip argümanını (`int`, `list[str]`,
+    /// iç içe tek-argümanlı generic) bir `TypeExpr`e çevirir; çevrilemezse
+    /// `null`.
+    fn indexExprToTypeExpr(self: *Checker, e: ast.Expr) TypeError!?ast.TypeExpr {
+        switch (e) {
+            .identifier => |n| return .{ .simple = n },
+            .none_lit => return .{ .simple = "None" },
+            .index => |ix| {
+                if (ix.obj.* != .identifier) return null;
+                const inner = (try self.indexExprToTypeExpr(ix.index.*)) orelse return null;
+                const args = try self.allocator.alloc(ast.TypeExpr, 1);
+                args[0] = inner;
+                return .{ .generic = .{ .name = ix.obj.identifier, .args = args } };
+            },
+            else => return null,
+        }
+    }
+
+    fn tryResolveGenericMethodCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!void {
+        const explicit = c.callee.* == .index;
+        const at: ast.Attribute = switch (c.callee.*) {
+            .index => |ix| if (ix.obj.* == .attribute) ix.obj.attribute else return,
+            .attribute => |a| a,
+            else => return,
+        };
+        if (!self.generic_method_names.contains(at.attr)) return;
+        // `super().metod[T](...)` vb. özel alıcılar normal yola bırakılır.
+        if (at.obj.* == .call and at.obj.call.callee.* == .identifier and std.mem.eql(u8, at.obj.call.callee.identifier, "super")) return;
+        const recv_t = try self.checkExpr(ctx, at.obj.*);
+        const recv_class = switch (recv_t) {
+            .class => |n| n,
+            else => return,
+        };
+        // Tanımlayan sınıf: alıcı sınıfından tabana doğru ilk eşleşme.
+        var definer: ?[]const u8 = null;
+        var cur: ?[]const u8 = recv_class;
+        var key: []const u8 = "";
+        while (cur) |name| {
+            const k = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, at.attr });
+            if (self.generic_methods.contains(k)) {
+                definer = name;
+                key = k;
+                break;
+            }
+            const info = self.classes.get(name) orelse break;
+            cur = info.base;
+        }
+        const def_class = definer orelse return;
+        const gm = self.generic_methods.get(key).?;
+        const gfd = gm.fd;
+
+        if (gfd.params.len != c.args.len + 1) {
+            return self.fail(error.ArgumentCountMismatch, "'{s}.{s}' {d} argüman bekler, {d} verildi", .{ def_class, gfd.name, gfd.params.len - 1, c.args.len });
+        }
+
+        var bindings: std.StringHashMapUnmanaged(Type) = .{};
+        defer bindings.deinit(self.allocator);
+        const tp = gfd.type_params[0];
+        if (explicit) {
+            const ix = c.callee.index;
+            const te = (try self.indexExprToTypeExpr(ix.index.*)) orelse
+                return self.fail(error.TypeMismatch, "'{s}.{s}' tip argümanı çözülemedi (yalnızca tip adı ya da tek-argümanlı generic tip)", .{ def_class, gfd.name });
+            try bindings.put(self.allocator, tp, try self.typeExprToType(te));
+        } else {
+            for (gfd.params[1..], c.args) |p, arg| {
+                const at_t: Type = blk: {
+                    if ((arg == .list_lit and arg.list_lit.len == 0) or (arg == .dict_lit and arg.dict_lit.len == 0)) {
+                        if (self.typeExprToType(p.type_expr)) |resolved| break :blk resolved else |_| {}
+                    }
+                    break :blk try self.checkExpr(ctx, arg);
+                };
+                try self.unifyTypeExpr(p.type_expr, at_t, gfd.type_params, &bindings, gfd.name);
+            }
+        }
+        const bound = bindings.get(tp) orelse return self.fail(
+            error.TypeMismatch,
+            "'{s}.{s}' için tip parametresi '{s}' çıkarılamadı (açıkça `obj.{s}[Tip](...)` yazın)",
+            .{ def_class, gfd.name, tp, gfd.name },
+        );
+
+        const mangled = try self.mangleName(gfd.name, &.{bound});
+        const def_info_ptr = self.classes.getPtr(def_class).?;
+        if (!def_info_ptr.methods.contains(mangled)) {
+            const params = try self.allocator.alloc(ast.Param, gfd.params.len);
+            for (gfd.params, 0..) |p, i| {
+                params[i] = .{ .name = p.name, .type_expr = try self.substituteTypeExpr(p.type_expr, &bindings), .self_inferred = p.self_inferred };
+            }
+            const concrete: ast.FuncDef = .{
+                .name = mangled,
+                .type_params = &.{},
+                .params = params,
+                .return_type = try self.substituteTypeExpr(gfd.return_type, &bindings),
+                .body = try self.substituteStmts(gfd.body, &bindings),
+                .is_async = gfd.is_async,
+            };
+            const sig_params = try self.allocator.alloc(Type, params.len - 1);
+            for (params[1..], 0..) |p, i| sig_params[i] = try self.typeExprToType(p.type_expr);
+            const sig = FuncSig{ .params = sig_params, .return_type = try self.typeExprToType(concrete.return_type) };
+            // İmza ÖNCE (özyinelemeli çağrılar aynı örneklemeyi bulsun),
+            // gövde SONRA — `instantiateGeneric`in AYNI sırası. Tanımlayan
+            // sınıfın TÜM alt sınıfları da (kayıt-zamanında düzleştirilmiş
+            // `methods` tablosu olduğundan) metodu görür.
+            var cls_it = self.classes.iterator();
+            while (cls_it.next()) |e| {
+                if (!self.isSubclassOf(e.key_ptr.*, def_class)) continue;
+                try e.value_ptr.methods.put(self.allocator, mangled, sig);
+                try e.value_ptr.method_owners.put(self.allocator, mangled, def_class);
+            }
+            // Sınıfın AST'sine YERİNDE ekle — codegen/sahiplik analizleri
+            // somutlaştırılmış metodu sıradan bir metod olarak görür.
+            const cd = &gm.class_stmt.kind.class_def;
+            const grown = try self.allocator.alloc(ast.FuncDef, cd.methods.len + 1);
+            @memcpy(grown[0..cd.methods.len], cd.methods);
+            grown[cd.methods.len] = concrete;
+            cd.methods = grown;
+            // Çağıran bağlamı (satır/span/yol) bozulmasın diye kaydet-geri yükle.
+            const saved_line = self.current_line;
+            const saved_span = self.current_span;
+            defer {
+                self.current_line = saved_line;
+                self.current_span = saved_span;
+            }
+            try self.checkMethodBody(def_class, concrete, false);
+        }
+        c.callee.* = .{ .attribute = .{ .obj = at.obj, .attr = mangled } };
     }
 
     fn instantiateGeneric(self: *Checker, ctx: *FnCtx, gfd: ast.FuncDef, c: ast.Call) TypeError!Type {

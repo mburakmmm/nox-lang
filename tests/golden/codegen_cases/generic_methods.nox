@@ -1,0 +1,82 @@
+# Faz C.2: generic metodlar — obj.metod[T](args) açık tip argümanı + argümanlardan çıkarım.
+class Item:
+    name: str
+
+    def __init__(self, n: str) -> None:
+        self.name = n
+
+class Container:
+    items: list[Item]
+    base: int
+
+    def __init__(self, base: int) -> None:
+        self.items = []
+        self.base = base
+
+    def add(self, it: Item) -> None:
+        self.items.append(it)
+
+    # T yalnızca dönüş tipinde ve bir parametrede (açık [T] gerekmez).
+    def first[T](self, fallback: T) -> T:
+        return fallback
+
+    # T yalnızca bir fonksiyon-tipli parametrenin dönüşünde.
+    def make[T](self, f: (str) -> T) -> T:
+        return f("made")
+
+    def count_of[T](self, xs: list[T]) -> int:
+        n: int = 0
+        for x in xs:
+            n = n + 1
+        return n + self.base
+
+    # Başka bir generic metoda kendi tip parametresini geçirir.
+    def again[T](self, x: T) -> T:
+        return self.first[T](x)
+
+    def total(self) -> int:
+        return self.count_of[Item](self.items)
+
+class Sub(Container):
+    def extra(self) -> int:
+        return self.base * 10
+
+def item_of(n: str) -> Item:
+    return Item(n)
+
+def upper_tag(n: str) -> str:
+    return "<" + n + ">"
+
+c: Container = Container(100)
+c.add(Item("a"))
+c.add(Item("b"))
+print(c.first[int](5))
+print(c.first[str]("hi"))
+print(c.first(7))
+print(c.first("inferred"))
+z: Item = c.first[Item](Item("z"))
+print(z.name)
+print(c.make[Item](item_of).name)
+print(c.make[str](upper_tag))
+print(c.count_of[str](["x", "y", "z"]))
+print(c.count_of(["p", "q"]))
+print(c.again[Item](Item("q")).name)
+print(c.again(3))
+print(c.total())
+
+# Alt sınıf alıcısı: şablon taban sınıfta, çağrı alt sınıf örneğinde.
+s: Sub = Sub(7)
+s.add(Item("s1"))
+print(s.first[int](9))
+print(s.count_of[Item](s.items))
+print(s.extra())
+
+# Döngüde tekrarlanan çağrı sızıntısız (DebugAllocator).
+i: int = 0
+while i < 50:
+    t: Item = c.first[Item](Item("loop"))
+    u: list[str] = c.first[list[str]](["a", "b"])
+    if len(t.name) != 4:
+        print("hata")
+    i = i + len(u) - 1
+print(i)

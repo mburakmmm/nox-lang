@@ -27702,6 +27702,55 @@ testi:** alıcı retain'i kapatılınca program `Double free detected` ile
 0 bayt. Mevcut hiçbir IR snapshot'ı değişmedi. `zig build test`: üç
 ardışık temiz çalıştırma.
 
+## 3.238 Aether NOX_LIMITATIONS.md yol haritası, Faz C.2 — generic metodlar (`obj.metod[T](args)`)
+
+**Sorun (madde 6):** `def get[T](self, ...) -> T` biçimindeki bir metod
+`registerClassSignatures`da "metodlar generic olamaz" ile reddediliyordu.
+Aether'in `Container.get[T](name) -> T` kalıbında `T` yalnızca DÖNÜŞ
+tipinde göründüğünden argümanlardan çıkarım yetmez — çağrı sitesinde
+açık tip argümanı gerekir.
+
+**Çözüm (AST ön geçişi + çağrı-sitesi örneklemesi, codegen DEĞİŞMEDİ):**
+
+1. `extractGenericMethods` ön geçişi (checkModule, `bound_method_fixup`tan
+   sonra) üst-düzey, generic OLMAYAN sınıfların generic metodlarını
+   `generic_methods` ("Sınıf.metod" → şablon + sınıf deyiminin işaretçisi)
+   tablosuna taşır ve sınıfın `methods` listesinden ÇIKARIR — böylece
+   sahiplik/codegen analizleri generic şablonu HİÇ görmez.
+2. `checkCall` başında `tryResolveGenericMethodCall`: callee
+   `obj.metod[Tip]` (parser'ın zaten ürettiği `call(index(attribute))`
+   şekli — parser DEĞİŞMEDİ) ya da çıkarımlı `obj.metod(...)` ise ve
+   `metod` bir generic metod adıysa, alıcı tipinden tabana doğru
+   TANIMLAYAN sınıf bulunur; tip argümanı (`int`, `list[str]`, sınıf adı)
+   `TypeExpr`e çevrilir (ya da argüman tiplerinden `unifyTypeExpr` ile
+   çıkarılır); `substituteStmts/substituteTypeExpr` ile somut metod
+   (`metod__Tip`, `mangleName`) üretilir.
+3. Somut metod tanımlayan sınıfın (ve tüm alt sınıfların) `info.methods`
+   tablosuna kaydedilir, sınıfın AST `methods` listesine YERİNDE eklenir
+   (codegen onu sıradan bir metod olarak derler, yeni plumbing YOK),
+   gövdesi `checkMethodBody` ile denetlenir ve callee yerinde
+   `.attribute{obj, "metod__Tip"}`e yeniden yazılır. Aynı (sınıf, metod,
+   tip) bir kez örneklenir. Gövde içinden kendi tip parametresini başka
+   generic metoda geçirme (`self.first[T](x)`) için `substituteExpr` indeks
+   biçimli tip argümanını da ikame eder.
+
+**Kısıtlar (v1, bilinçli):** TEK tip parametresi (çoklu: derleme hatası);
+tip argümanı indeks sözdizimiyle yazıldığından virgüllü çok-argümanlı
+tipler (`dict[str,int]`) ifade edilemez; generic bir SINIFIN generic
+metodu (sınıf × metod çarpımı) hâlâ reddedilir; `__` ile başlayan özel
+metodlar generic olamaz; somutlaştırılmış metod virtual DEĞİLDİR (alt
+sınıfta override edilemez — şablon tabanda tanımlanır, alt sınıf
+örneğinden çağrılabilir); fonksiyon-tipli parametrelerden tip çıkarımı
+mevcut serbest-fonksiyon kısıtını paylaşır (açık `[T]` yazın).
+
+### Test
+
+`generic_methods.nox` (golden, çalıştırma): açık `[int]/[str]/[Item]/
+[list[str]]`, çıkarım (`first(7)`), dönüş-yalnız `T` (fonksiyon-tipli
+fabrika), iç içe generic metod (`again` → `first[T]`), alt sınıf alıcısı,
+50 iterasyonlu sızıntı döngüsü (DebugAllocator). Typecheck negatifleri:
+iki tip parametresi, çıkarılamayan `T`.
+
 ## 11. Sonraki Adımlar
 
 **v3 sertleştirme yol haritası** (12 madde, kullanıcı onaylı, 2026-09-28

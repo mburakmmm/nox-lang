@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [1.140.0]
+
+### Eklendi
+
+- **Generic metodlar `obj.metod[T](args)` (bkz. nox-teknik-spesifikasyon.md
+  §3.238, Aether NOX_LIMITATIONS.md madde 6)**: metodlar artık tek bir tip
+  parametresi alabilir (`def get[T](self, d: T) -> T`); çağrı sitesinde
+  açık tip argümanıyla (`b.get[int](5)`) ya da argümanlardan çıkarımla
+  (`b.get(5)`) örneklenir. Alt sınıf alıcısı desteklenir; somut metod
+  sıradan bir metod olarak derlenir. v1: tek tip parametresi, generic
+  sınıfın generic metodu kapsam dışı.
+
 ## [1.139.0]
 
 ### Eklendi

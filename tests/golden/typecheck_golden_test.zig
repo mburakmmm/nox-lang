@@ -259,7 +259,7 @@ test "golden(typecheck): bağlam yoksa boş liste literalinin tipi HÂLÂ çıka
     );
 }
 
-test "golden(typecheck): metodlar generic olamaz" {
+test "golden(typecheck): generic sınıfın generic metodu reddedilir (v1 kapsam dışı)" {
     try expectGolden(
         @embedFile("typecheck_cases/err_generic_method_rejected.nox"),
         @embedFile("typecheck_cases/err_generic_method_rejected.expected"),
@@ -863,6 +863,20 @@ test "golden(index-call): generic sınıf adındaki yazım hatası eski net mesa
     try expectGolden(
         @embedFile("typecheck_cases/err_generic_ctor_typo_keeps_message.nox"),
         @embedFile("typecheck_cases/err_generic_ctor_typo_keeps_message.expected"),
+    );
+}
+
+test "golden(generic-method): iki tip parametreli generic metod reddedilir (v1 tek tip parametresi)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_generic_method_two_type_params.nox"),
+        @embedFile("typecheck_cases/err_generic_method_two_type_params.expected"),
+    );
+}
+
+test "golden(generic-method): çıkarılamayan tip parametresi açık [Tip] ipucuyla reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_generic_method_uninferable.nox"),
+        @embedFile("typecheck_cases/err_generic_method_uninferable.expected"),
     );
 }
 
